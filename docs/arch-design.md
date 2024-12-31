@@ -1,6 +1,6 @@
 ## Arch Design
 
-![1734526673837](image/arch-design/1734526673837.png)
+![HakuTPU-Overall arch](https://github.com/user-attachments/assets/d5222f88-692b-46cd-bdbf-0663eb817afc)
 
 ### hierarchical arch overview
 
@@ -8,10 +8,11 @@ All top level components are connected with AXI4
 
 * XDMA (PCIE connection with host)
 * DRAM (weight or result)
-* URAM (weight or result)
-* BRAM (instructions)
 * Global Controller
-  * Compute Unit
+* NoC Mesh
+  * NoC Router
+  * DRAM Access module
+* Compute Unit
     * Compute Unit Controller (instruction decode)
     * 4 BRAM for input/output register. (3 for operands 1 for output)
     * 1 Tensor Core (4x8x4 gemm, FP8mul FP12 acc)
@@ -27,10 +28,14 @@ All top level components are connected with AXI4
 #### FP16 ALU
 
 In our FP16 ALU, we provide 3 input: A, B, C and 1 output
-and the output will be f(A)*B+C, where f can be 1/x, exp(x) or log(x).
-The f function here will truncate input to FP12 and output FP16.
+and the output will be x1 * x2 + x3
+Where x1, x2, x3 are:
+* x1: A, 1/A, ln(A.exp), exp(A.higher)
+* x2: B, B, 1.0, exp(A.lower)
+* x3: C, C, ln(A.mant), 0.0
 
-#### General Processor
+These four different setup corresponding to:
+A*B+C, B/A + C, ln(A), exp(A)
 
 In our general processor, we will let it to support 2 input and 1 output
 To achieve complex process, we put 4 or more compute stage into this processor, and each compute stage have 4 DSP.
