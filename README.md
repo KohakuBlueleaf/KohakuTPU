@@ -1,5 +1,6 @@
 # [WIP] HakuTPU
 
+![HakuTPU-Overall arch](https://github.com/user-attachments/assets/d5222f88-692b-46cd-bdbf-0663eb817afc)
 An AI accelerator implemenation for Xilinx FPGA
 
 This project based on Xilinx Ultrascale+ FPGA's, utilize their DSP48E2 tile to do efficient FP8 matmul. Than implement vectorized ALU for activation(or related operation).
