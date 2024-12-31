@@ -23,7 +23,13 @@ All top level components are connected with AXI4
       * possibly int8/int32/FP8/FP16/FP24/FP32 inp, int8/int32/FP16/FP32 out,
       * can use up to 16/32DSP if needed. (Can build iterative division implementation in pipeline direclty)
 
-### ALU
+### Compute Unit
+
+#### FP8-12-16 Tensor Core
+In tensor core, we perform A.dot(B) + C operation in mixed precision.
+Where A, B are FP8 and C is FP16. the multiplication result of A.dot(B) will be FP12. Than we use Fp12 adder tree to accumulate until we got A.dot(B).
+Than this FP12 result will be filled zero in tail than add C in FP16 precision.
+That is what 8-12-16 means in our tensor core.
 
 #### FP16 ALU
 
@@ -36,8 +42,3 @@ Where x1, x2, x3 are:
 
 These four different setup corresponding to:
 A*B+C, B/A + C, ln(A), exp(A)
-
-In our general processor, we will let it to support 2 input and 1 output
-To achieve complex process, we put 4 or more compute stage into this processor, and each compute stage have 4 DSP.
-Which means for things like division, exp, log, sqrt, this processor can achieve one cycle throughput with iterative methods (such as newton method).
-Also this processor should support different dtype. (But basically just int32 and fp32, with type conversion at input and output stage)
