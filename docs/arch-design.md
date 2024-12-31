@@ -27,8 +27,10 @@ All top level components are connected with AXI4
 
 #### FP8-12-16 Tensor Core
 In tensor core, we perform A.dot(B) + C operation in mixed precision.
+
 Where A, B are FP8 and C is FP16. the multiplication result of A.dot(B) will be FP12. Than we use Fp12 adder tree to accumulate until we got A.dot(B).
 Than this FP12 result will be filled zero in tail than add C in FP16 precision.
+
 That is what 8-12-16 means in our tensor core.
 
 #### FP16 ALU
