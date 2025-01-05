@@ -19,6 +19,7 @@ We split instructions into 7 type:
 #### Instructions Format and Design
 
 * Computation
+
   * 000/001 | OP | nested loop | A start addr | A len | B, C start addr | B, C len | OUT start addr | OUT buf choice
   * 000/001: convert output to FP8 or not, if convert output to FP8, only lower half of output buffer will be
   * OP: 7bit: tensor/alu | alu opmode
@@ -28,26 +29,58 @@ We split instructions into 7 type:
   * buf choice: 2bit (4buffer)
   * at least 58bit
 * Memory read
+
   * 010 | ram start addr | length | buf choice | start addr
   * ram start addr: 26bit(34 for 16GB, -6 for 256bit align)
   * at least 49bit
 * Memory write
+
   * 011 | ram start addr | length | buf choice | start addr | half
   * half: 1bit: only use lower half bits of buffer, be used if previous output is FP8
   * at least 50bit
 * NoC send
+
   * 100 | target unit | length | buf choice | start addr
   * target unit: 8bit, NoC ID
   * at least 31bit
 * NoC recv
+
   * 101 | source unit | length | buf choice | start addr
   * NoC send/recv should be a pair (on different unit)
   * at least 31bit
 * buffer copy
+
   * 110 | source buf | dest buf | length | src start | dest start | src half | dest half
   * src half: 2bit: 00 or 11 means full read, 01/ 10 means read upper/lower half
   * dest half: 1bit: if src half is 01/10, dest half indicate writing to upper/lower half
   * at least 37bit
 * send signal
+
   * 111 | NoC id | content
   * indicate a series of instruction is done
+
+#### Details
+
+All the instructions are stored in a FIFO and all instruction are blocked instruction. Since each instruction can contain operation which need at most 512x512 cycles. the wasted cycle for decode/process instructions is not a big deal.
+
+All the instructions are sent by global controller
+
+This instruction set also allow standalone usage (you only need to implement fake NoC mesh and implement a global controller) If needed.
+
+Since ram/memory related instruction in compute unit have smallest unit as 128bit. we will need to implement some standalone memory management unit to do things like reshape, transpose or tiling.
+
+### Global Controller
+
+#### Functionality
+
+* Decode high level instructions (if needed)
+* Send instructions to each compute unit,
+* check return signal from compute units
+* communicate with host computer
+
+### Memory Manager
+
+#### Functionality
+
+* Read/Write based on compute unit's request
+* memory alignment management (reshape, transpose, contiguous)
