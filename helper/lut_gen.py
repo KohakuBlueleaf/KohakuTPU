@@ -32,11 +32,12 @@ def generate_inverse_lut_subnormal(
 
     for i in range(1 << input_bits):
         # Convert i to FP12 number (0.mmm format)
-        input_val = 2**(0 - 2**(input_exp_bits-1) + 1) * (i / (1 << input_bits))
+        input_val = 2**(0 - 2**(input_exp_bits-1)+2) * (i / (1 << input_bits))
         if input_val == 0:
             inv_val = 0
         else:
             inv_val = 1.0 / input_val
+        print((i / (1 << input_bits)), input_val, inv_val)
 
         # Convert result to output format
         fp_result = FPNumber.from_float(inv_val, output_exp_bits, output_man_bits)
@@ -160,7 +161,7 @@ def generate_exp_lut_low_frac(
 # Example usage and test
 if __name__ == "__main__":
     # Generate inverse LUT (FP12 to FP16)
-    inv_lut = generate_inverse_lut(5, 6, 5, 10)  # FP12(E5M6) to FP16
+    # inv_lut = generate_inverse_lut(5, 6, 5, 10)  # FP12(E5M6) to FP16
     # results = []
     # for i in range(1 << 6):
     #     results.append(f"{inv_lut[i]:016b}")
@@ -169,18 +170,19 @@ if __name__ == "__main__":
     #     print("".join(reversed(list(i))))
 
     invlut_subnorm = generate_inverse_lut_subnormal(5, 6, 5, 10)
-    # results = []
-    # for i in range(1 << 6):
-    #     results.append(f"{invlut_subnorm[i]:016b}")
-    #     print(f"{invlut_subnorm[i]:016b}: {FPNumber.from_bits(invlut_subnorm[i], 5, 10).to_float()}")
-    # for i in zip(*results):
-    #     print("".join(reversed(list(i))))
+    results = []
+    for i in range(1 << 6):
+        print(i)
+        results.append(f"{invlut_subnorm[i]:016b}")
+        print(f"{invlut_subnorm[i]:016b}: {FPNumber.from_bits(invlut_subnorm[i], 5, 10).to_float()}")
+    for i in zip(*results):
+        print("".join(reversed(list(i))))
 
     # Generate log LUT and log-exp LUT
     # log(x) = log(1.mmmmmm) + e*log(2)
-    log_lut = generate_log_lut(6, 5, 10)  # 6-bit mantissa input to FP16
-    log_lut_subnorm = generate_log_lut_subnorm(6, 5, 10)  # 6-bit mantissa input to FP16
-    log_exp_lut = generate_log_exp_lut(5, 5, 10)  # 5-bit exp input to FP16
+    # log_lut = generate_log_lut(6, 5, 10)  # 6-bit mantissa input to FP16
+    # log_lut_subnorm = generate_log_lut_subnorm(6, 5, 10)  # 6-bit mantissa input to FP16
+    # log_exp_lut = generate_log_exp_lut(5, 5, 10)  # 5-bit exp input to FP16
     # results = []
     # for i in range(1 << 6):
     #     results.append(f"{log_lut[i]:016b}")
@@ -206,55 +208,55 @@ if __name__ == "__main__":
     #     print("".join(reversed(list(i))))
 
     # Generate exp LUT
-    exp_lut_int = generate_exp_lut_int(5, 5, 10)
-    exp_lut_high_frac = generate_exp_lut_high_frac(5, 5, 10)
-    exp_lut_low_frac = generate_exp_lut_low_frac(5, 5, 10)
-    results = []
-    for i in range(1 << 6):
-        results.append(f"{exp_lut_int[i]:016b}")
-        print(f"{exp_lut_int[i]:016b}: {FPNumber.from_bits(exp_lut_int[i], 5, 10).to_float()}")
-    for i in zip(*results):
-        print("".join(reversed(list(i))))
+    # exp_lut_int = generate_exp_lut_int(5, 5, 10)
+    # exp_lut_high_frac = generate_exp_lut_high_frac(5, 5, 10)
+    # exp_lut_low_frac = generate_exp_lut_low_frac(5, 5, 10)
+    # results = []
+    # for i in range(1 << 6):
+    #     results.append(f"{exp_lut_int[i]:016b}")
+    #     print(f"{exp_lut_int[i]:016b}: {FPNumber.from_bits(exp_lut_int[i], 5, 10).to_float()}")
+    # for i in zip(*results):
+    #     print("".join(reversed(list(i))))
 
-    print()
-    results = []
-    for i in range(1 << 6):
-        results.append(f"{exp_lut_high_frac[i]:016b}")
-        print(f"{exp_lut_high_frac[i]:016b}: {FPNumber.from_bits(exp_lut_high_frac[i], 5, 10).to_float()}")
-    for i in zip(*results):
-        print("".join(reversed(list(i))))
+    # print()
+    # results = []
+    # for i in range(1 << 6):
+    #     results.append(f"{exp_lut_high_frac[i]:016b}")
+    #     print(f"{exp_lut_high_frac[i]:016b}: {FPNumber.from_bits(exp_lut_high_frac[i], 5, 10).to_float()}")
+    # for i in zip(*results):
+    #     print("".join(reversed(list(i))))
 
-    print()
-    results = []
-    for i in range(1 << 6):
-        results.append(f"{exp_lut_low_frac[i]:016b}")
-        print(f"{exp_lut_low_frac[i]:016b}: {FPNumber.from_bits(exp_lut_low_frac[i], 5, 10).to_float()}")
-    for i in zip(*results):
-        print("".join(reversed(list(i))))
+    # print()
+    # results = []
+    # for i in range(1 << 6):
+    #     results.append(f"{exp_lut_low_frac[i]:016b}")
+    #     print(f"{exp_lut_low_frac[i]:016b}: {FPNumber.from_bits(exp_lut_low_frac[i], 5, 10).to_float()}")
+    # for i in zip(*results):
+    #     print("".join(reversed(list(i))))
 
-    print()
+    # print()
 
-    # Test inverse function
-    print("\nTesting inverse LUT:")
-    test_values = [1.0, 1.25, 1.5, 1.75, 3.14]
-    for val in test_values:
-        fp12 = FPNumber.from_float(val, 5, 6)
-        lut_result = FPNumber.from_bits(inv_lut[fp12.mantissa], 5, 10)
-        print(f"1/{val:.3f} = {lut_result.to_float():.6f}")
+    # # Test inverse function
+    # print("\nTesting inverse LUT:")
+    # test_values = [1.0, 1.25, 1.5, 1.75, 3.14]
+    # for val in test_values:
+    #     fp12 = FPNumber.from_float(val, 5, 6)
+    #     lut_result = FPNumber.from_bits(inv_lut[fp12.mantissa], 5, 10)
+    #     print(f"1/{val:.3f} = {lut_result.to_float():.6f}")
 
-    # Test log function
-    print("\nTesting log LUT:")
-    for val in test_values:
-        fp_in = FPNumber.from_float(val, 5, 6)
-        lut_result_man = FPNumber.from_bits(log_lut[fp_in.mantissa], 5, 10)
-        lut_result_exp = FPNumber.from_bits(log_exp_lut[fp_in.exponent], 5, 10)
-        final_result = lut_result_man.to_float() + lut_result_exp.to_float()
-        diff = np.log(val) - final_result
-        APE = abs(diff) / np.log(val) * 100 if diff else 0
-        print(
-            f"log({val:.3f}) = {final_result:.6f}"
-            f" (actual = {np.log(val):.6f}, APE = {APE:.2f}%)"
-        )
+    # # Test log function
+    # print("\nTesting log LUT:")
+    # for val in test_values:
+    #     fp_in = FPNumber.from_float(val, 5, 6)
+    #     lut_result_man = FPNumber.from_bits(log_lut[fp_in.mantissa], 5, 10)
+    #     lut_result_exp = FPNumber.from_bits(log_exp_lut[fp_in.exponent], 5, 10)
+    #     final_result = lut_result_man.to_float() + lut_result_exp.to_float()
+    #     diff = np.log(val) - final_result
+    #     APE = abs(diff) / np.log(val) * 100 if diff else 0
+    #     print(
+    #         f"log({val:.3f}) = {final_result:.6f}"
+    #         f" (actual = {np.log(val):.6f}, APE = {APE:.2f}%)"
+    #     )
 
     # Test exp function
     # print("\nTesting exp LUT:")
