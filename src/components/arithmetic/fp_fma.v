@@ -48,7 +48,9 @@ module FP16ExponentFMA(
     assign ab_zero = P[21] & ~possible_of;
 
     always @(posedge clk) begin
-        c_exp_reg1 <= c_exp; c_exp_reg2 <= c_exp_reg1;
+        // c_exp_reg1 <= (c_exp==5'b00000 ? 5'b00001 : c_exp); 
+        c_exp_reg1 <= c_exp;
+        c_exp_reg2 <= c_exp_reg1;
         possible_of <= a_exp[4] & b_exp[4];
     end
 endmodule
@@ -84,6 +86,7 @@ module FP16MantissaFMA(
     reg neg_reg1, neg_reg2, ab_sign_reg1, ab_sign_reg2, c_sign_reg1, c_sign_reg2;
     reg ab_inf_reg1, ab_inf_reg2, ab_zero_reg1, ab_zero_reg2;
     reg ab_subnorm_reg1, ab_subnorm_reg2, c_subnorm_reg1, c_subnorm_reg2;
+    reg a_subnorm_reg1, b_subnorm_reg1, a_subnorm_reg2, b_subnorm_reg2;
     assign ab_subnorm = ab_exp == 5'b00000 | ab_zero;
     assign c_subnorm = c_exp == 5'b00000;
     assign a_subnorm = a_exp == 5'b00000;
@@ -101,6 +104,8 @@ module FP16MantissaFMA(
         ab_subnorm_reg1 <= ab_subnorm; ab_subnorm_reg2 <= ab_subnorm_reg1;
         c_subnorm_reg1 <= c_subnorm; c_subnorm_reg2 <= c_subnorm_reg1;
         c_shift_reg1 <= c_shift; c_shift_reg2 <= c_shift_reg1;
+        a_subnorm_reg1 <= a_subnorm; a_subnorm_reg2 <= a_subnorm_reg1;
+        b_subnorm_reg1 <= b_subnorm; b_subnorm_reg2 <= b_subnorm_reg1;
     end
 
     wire [17:0] B = {~a_subnorm, a_mant};
@@ -183,7 +188,7 @@ module FP16MantissaFMA(
             out = c_mant_reg2;
             out_exp = c_exp_reg2;
         end else begin
-            out_exp = exp + 2 - frac_shift;
+            out_exp = exp + 2 - frac_shift - (c_subnorm_reg2 & ~(a_subnorm_reg2 || b_subnorm_reg2));
             out = result_frac[11:2];
         end
 
