@@ -104,6 +104,7 @@ module InstReceiver #(
                     instruction <= 0;
                     instruction_id <= 0;
                     instruction_valid <= 1'b0;
+                    inst_out_addr_reg <= inst_out_addr_reg;
                 end
             end else if (~instruction_valid & instruction_valid_reg[inst_out_addr_reg]) begin
                 instruction <= instruction_reg[inst_out_addr_reg];
