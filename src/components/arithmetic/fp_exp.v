@@ -7,11 +7,12 @@ module FP16PartialExp (
     wire [4:0] exp = a[14:10];
     wire [9:0] mant = a[9:0];
     wire subnorm = exp==5'b00000;
-    wire [25:0] fixed_point = subnorm?
-                        (exp > 0 
+    wire [25:0] fixed_point = subnorm
+                        ? {16'b0000000000000000, mant} >> 14
+                        : (exp > 15 
                             ? {16'b0000000000000001, mant} << (exp - 15)
                             : {16'b0000000000000001, mant} >> (-exp + 15)
-                        ) : {16'b0000000000000000, mant} >> 14;
+                        );
     wire [10:0] overflow_part;
     wire [4:0] int, high_frac, low_frac;
     wire overflow;

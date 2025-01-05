@@ -88,8 +88,8 @@ module FP16Exponent_tb();
             $display("opmode: %b", opmode);
             // a*b > c (exponent)
             $display("a*b > c (exponent)");
-            a = 16'b0_10001_1110000000;
-            b = 16'b0_01111_1000000000;
+            a = 16'b0_01111_1000000000;
+            b = 16'b0_10001_1110000000;
             c = 16'b0_10000_1111000000;
             for (i = 0; i < 8; i = i + 1) begin
                 in_valid = 1;
@@ -128,9 +128,9 @@ module FP16Exponent_tb();
 
             // a*b == c (exponent)
             $display("a*b == c (exponent)");
-            a = 16'b0_10000_1110000000;
-            b = 16'b0_01111_1000000000;
-            c = 16'b0_10001_1111000000;
+            a = 16'b0_01111_1110000000;
+            b = 16'b0_01110_1000000000;
+            c = 16'b0_01111_1111000000;
             for (i = 0; i < 8; i = i + 1) begin
                 in_valid = 1;
                 a[15] = i[0];
