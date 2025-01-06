@@ -69,6 +69,45 @@ This instruction set also allow standalone usage (you only need to implement fak
 
 Since ram/memory related instruction in compute unit have smallest unit as 128bit. we will need to implement some standalone memory management unit to do things like reshape, transpose or tiling.
 
+#### Implementation
+
+To simplify the implementation of controller, we split it into following parts
+
+* NoC receiver
+* Instruction FIFO
+* Buffers
+* Control State Machine
+  * Instruction Decoder
+  * Buffer Mover SM
+  * Compute SM
+  * Memory Read SM
+  * Memory Write SM
+  * NoC Send SM
+  * NoC Recv SM
+
+To improve efficiency, we allow some different state machine to run together, we split the operation into 3 group:
+
+1. operation: compute/buffer move
+2. read: memory write/NoC send
+3. recv: memory read/NoC recv
+
+Since operation also need "read" of buffer, we only allow recv group to be taken right after operation group.
+
+For recv group, the NoC receiver will wait until "read" state of buffer is 0 than start writing. (or it will enable back-preasure to NoC mesh)
+
+Operation group have highest priority, it will wait until all previous instruction finished than start executing.
+
+##### TL;DR
+
+* operation -> read: blocked
+* operation -> recv: state machine started but enable NoC back preasure until operation done.
+  * backpreasure if address overlapped, instruction should have flag for this
+* read -> recv: state machine started but enable NoC back preasure if address overlapped
+* read -> operation: blocked if address overlapped, instruction should have flag for it
+* recv -> read: concurrent executing
+* recv -> operation: blocked
+* Maximumlly 2 concurrent instruction
+
 ### Global Controller
 
 #### Functionality
