@@ -20,14 +20,18 @@ We split instructions into 7 type:
 
 * Computation
 
-  * 000/001 | OP | nested loop | A start addr | A len | B, C start addr | B, C len | OUT start addr | OUT buf choice
-  * 000/001: convert output to FP8 or not, if convert output to FP8, only lower half of output buffer will be
-  * OP: 7bit: tensor/alu | alu opmode
-  * nested loop: 1bit: flag, use nested loop or zip loop mode
+  * 000 | OP | A start addr | A len | B, C start addr | B, C len | nested loop | OUT start addr | OUT buf choice
+  * OP: 8bit: tensor/alu | output fp8 | alu opmode
   * start addr: 9bit: the start point of reading/writing buffer
   * len: 9bit: how many data to use in this instruction
+  * nested loop: 1bit: flag, use nested loop or zip loop mode
   * buf choice: 2bit (4buffer)
   * at least 58bit
+* Computation (B, C are constant(immediate))
+
+  * 001 | OP | A start addr | A len | im1 | im2 | OUT start addr | OUT buf choice
+  * im: 16bit: immediate number(constant)
+  * at least 71bit
 * Memory read
 
   * 010 | ram start addr | length | buf choice | start addr
