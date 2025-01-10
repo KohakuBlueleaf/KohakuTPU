@@ -57,7 +57,7 @@ module tensorcore (
             for (j = 0; j < 8; j = j + 1) begin
                 wire [11:0] qa, qb, qc, qd;
                 wire out_valid_temp;
-                FP8VectorMul1 fp8mul(
+                FP8VectorMul fp8mul(
                     .clk(clk),
                     .rst(rst),
                     .e5m2mode(e5m2mode),
