@@ -3,11 +3,11 @@ module tensorcore (
     input wire rst,
     input e5m2mode,
     input in_valid,
-    input wire [7:0] a [0:3][0:7],
-    input wire [7:0] b [0:7][0:3],
-    input wire [15:0] c [0:3][0:3],
-    output wire [15:0] d [0:3][0:3],
-    output reg out_valid
+    input wire [255:0] a_in,  // 4x8x8 bits
+    input wire [255:0] b_in,  // 8x4x8 bits
+    input wire [255:0] c_in,  // 4x4x16 bits
+    output wire [255:0] d_out, // 4x4x16 bits
+    output wire out_valid
 );
     reg [11:0] mul_intermediate [0:7][0:3][0:3];
     reg mul_outvalid [0:7][0:3];
@@ -16,7 +16,42 @@ module tensorcore (
     reg [3:0] final_out_valid;
     assign out_valid = final_out_valid == 4'b1111;
 
-    genvar i, j, acc_j;
+    wire [7:0] a [3:0][7:0];  // 4x8 matrix of 8-bit elements
+    wire [7:0] b [7:0][3:0];  // 8x4 matrix of 8-bit elements
+    wire [15:0] c [3:0][3:0]; // 4x4 matrix of 16-bit elements
+    wire [15:0] d [3:0][3:0]; // 4x4 matrix of 16-bit elements
+
+    // Unpack input arrays
+    genvar i, j;
+    generate
+        for (i = 0; i < 4; i = i + 1) begin : unpack_a
+            for (j = 0; j < 8; j = j + 1) begin : unpack_a_inner
+                assign a[i][j] = a_in[i*64 + j*8 +: 8];
+            end
+        end
+        
+        for (i = 0; i < 8; i = i + 1) begin : unpack_b
+            for (j = 0; j < 4; j = j + 1) begin : unpack_b_inner
+                assign b[i][j] = b_in[i*32 + j*8 +: 8];
+            end
+        end
+        
+        for (i = 0; i < 4; i = i + 1) begin : unpack_c
+            for (j = 0; j < 4; j = j + 1) begin : unpack_c_inner
+                assign c[i][j] = c_in[i*64 + j*16 +: 16];
+            end
+        end
+    endgenerate
+    generate
+        for (i = 0; i < 4; i = i + 1) begin : pack_d
+            for (j = 0; j < 4; j = j + 1) begin : pack_d_inner
+                assign d_out[i*64 + j*16 +: 16] = d[i][j];
+            end
+        end
+    endgenerate
+
+
+    genvar acc_j;
     generate
         for (i = 0; i < 4; i = i + 1) begin
             for (j = 0; j < 8; j = j + 1) begin
@@ -38,16 +73,14 @@ module tensorcore (
                     .qc(qc),
                     .qd(qd)
                 );
+                always @(*) begin
+                    mul_intermediate[j][i][0] = qa;
+                    mul_intermediate[j][i][1] = qb;
+                    mul_intermediate[j][i][2] = qc;
+                    mul_intermediate[j][i][3] = qd;
+                end
                 always @(posedge clk) begin
-                    if (out_valid_temp) begin
-                        mul_intermediate[j][i][0] <= qa;
-                        mul_intermediate[j][i][1] <= qb;
-                        mul_intermediate[j][i][2] <= qc;
-                        mul_intermediate[j][i][3] <= qd;
-                        mul_outvalid[j][i] <= 1;
-                    end else begin
-                        mul_outvalid[j][i] <= 0;
-                    end
+                    mul_outvalid[j][i] <= out_valid_temp;
                 end
             end
             for (acc_j = 0; acc_j < 4; acc_j = acc_j + 1) begin
