@@ -15,14 +15,14 @@ module FP8VectorMulPipe_tb;
     reg [7:0] c;
     reg [7:0] d;
     wire [31:0] vec = {d, c, b, a};
-    wire [15:0] qa_out;
-    wire [15:0] qb_out;
-    wire [15:0] qc_out;
-    wire [15:0] qd_out;
-    reg [15:0] qa;
-    reg [15:0] qb;
-    reg [15:0] qc;
-    reg [15:0] qd;
+    wire [11:0] qa_out;
+    wire [11:0] qb_out;
+    wire [11:0] qc_out;
+    wire [11:0] qd_out;
+    reg [11:0] qa;
+    reg [11:0] qb;
+    reg [11:0] qc;
+    reg [11:0] qd;
 
     always @(posedge clk) begin
         if(out_valid) begin
@@ -40,7 +40,7 @@ module FP8VectorMulPipe_tb;
         end
     end
 
-    FP8VectorMulPipe1 fp8 (
+    FP8VectorMul fp8 (
         .clk(clk),
         .rst(rst),
         .e5m2mode(1'b0),

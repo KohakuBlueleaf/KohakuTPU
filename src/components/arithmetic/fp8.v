@@ -1,3 +1,84 @@
+module FP8Mul (
+    input e5m2mode,
+    input [7:0] q,
+    input [7:0] a,
+    output [11:0] qa
+);
+    wire [3:0] q_mant = e5m2mode ? {1'b1, q[1:0], 1'b0} : {1'b1, q[2:0]};
+    wire [3:0] a_mant = e5m2mode ? {1'b1, a[1:0], 1'b0} : {1'b1, a[2:0]};
+
+    // Output Part
+    wire qa_of;
+    wire qa_sign;
+    wire [5:0] qa_exp;
+    wire [5:0] qa_exp_out;
+    wire [7:0] qa_mant = q_mant * a_mant;
+    wire [7:0] qa_mant_out;
+
+    assign qa_exp = e5m2mode ? q[6:2] + a[6:2] + 6'd48 : q[6:3] + a[6:3] + 6'd1;
+    assign qa_sign = q[7] ^ a[7];
+    assign qa_exp_out = qa_exp + qa_mant[7];
+    assign qa_of = qa_exp_out[5] | (qa_exp_out[4:0] == 5'b11111);
+    assign qa_mant_out = qa_mant[7] ? {qa_mant[6:0], 1'b0} : {qa_mant[5:0], 2'b00};
+    assign qa = qa_of ? {qa_sign, 5'b11111, 6'b0} : {qa_sign, qa_exp_out[4:0], qa_mant_out[7:2]};
+endmodule
+
+
+module FP8VectorMul (
+    input clk,
+    input rst,
+    input e5m2mode,
+    input in_valid,
+    input [7:0] q,
+    input [7:0] a,
+    input [7:0] b,
+    input [7:0] c,
+    input [7:0] d,
+
+    output [11:0] qa,
+    output [11:0] qb,
+    output [11:0] qc,
+    output [11:0] qd,
+    output reg out_valid
+);
+    reg [7:0] qin, ain, bin, cin, din;
+    FP8Mul mul1 (
+        .e5m2mode(e5m2mode),
+        .q(qin),
+        .a(ain),
+        .qa(qa)
+    ),
+    mul2 (
+        .e5m2mode(e5m2mode),
+        .q(qin),
+        .a(bin),
+        .qa(qb)
+    ),
+    mul3 (
+        .e5m2mode(e5m2mode),
+        .q(qin),
+        .a(cin),
+        .qa(qc)
+    ),
+    mul4 (
+        .e5m2mode(e5m2mode),
+        .q(qin),
+        .a(din),
+        .qa(qd)
+    );
+
+    always @(posedge clk) begin
+        if(rst) begin
+            out_valid <= 1'b0;
+            qin <= 8'b0; ain <= 8'b0; bin <= 8'b0; cin <= 8'b0; din <= 8'b0;
+        end else begin
+            out_valid <= in_valid;
+            qin <= q; ain <= a; bin <= b; cin <= c; din <= d;
+        end
+    end
+endmodule
+
+
 module FP8VectorMul1 (
     input clk,
     input rst,
