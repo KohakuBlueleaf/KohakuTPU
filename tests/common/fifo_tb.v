@@ -1,4 +1,4 @@
-module uram_fifo_tb();
+module sync_fifo_tb();
 
     // Parameters
     localparam DATA_WIDTH = 16;  // Using smaller width for easier testing
@@ -24,7 +24,7 @@ module uram_fifo_tb();
     reg [DATA_WIDTH-1:0] expected_data;
     
     // Instantiate FIFO
-    uram_fifo #(
+    sync_fifo #(
         .DATA_WIDTH(DATA_WIDTH),
         .FIFO_DEPTH(FIFO_DEPTH),
         .READ_LATENCY(READ_LATENCY)
@@ -169,8 +169,8 @@ module uram_fifo_tb();
     
     // Optional: Dump waveform
     initial begin
-        $dumpfile("uram_fifo_tb.vcd");
-        $dumpvars(0, uram_fifo_tb);
+        $dumpfile("sync_fifo_tb.vcd");
+        $dumpvars(0, sync_fifo_tb);
     end
 
 endmodule
