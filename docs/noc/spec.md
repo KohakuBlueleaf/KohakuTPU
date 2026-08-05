@@ -12,6 +12,9 @@ The network deliberately knows nothing about what a compute unit *is*. It define
 how to address a node, how to frame a message, and what it guarantees. Everything
 above that is the CU's business.
 
+Two modules connect the mesh to the AXI world (§10): the **Global Orchestrator**
+carries the control plane and the **MAS** carries the data plane.
+
 ---
 
 ## 1. Topology and addressing
@@ -355,7 +358,136 @@ retrofitting coherence is not.
 
 ---
 
-## 10. Guarantees
+## 10. AXI interworking
+
+The mesh carries flits; the outside world speaks AXI4. Two modules bridge them,
+and they are deliberately separate because they serve different planes:
+
+| Module | AXI role | NoC role | Plane |
+|---|---|---|---|
+| **Global Orchestrator** | **slave** (host control + status) and **master** (program fetch) | one NoC node | control |
+| **MAS** | **master** only | one NoC node per instance | data |
+
+Splitting them matters. Mixing bulk DRAM traffic with control traffic through one
+attachment point makes the control path's latency hostage to data congestion —
+and the host polls control constantly while touching bulk data rarely.
+
+### 10.1 Flit / AXI word packing
+
+A flit is 288 bits, which is not a multiple of any AXI data width in use:
+
+| AXI width | Beats per flit | Bits used |
+|---|---|---|
+| 64 (`jtag_axi`) | 5 | 288 of 320 |
+| 512 (XDMA `M_AXI`) | 1 | 288 of 512 |
+
+Word `k` carries flit bits `[64k+63 : 64k]`, little-endian, so word 0 holds
+`payload[63:0]` and word 4 holds the header in its upper bits. The unused top bits
+read as zero and are ignored on write. Sending one flit from Tcl is therefore a
+single 5-beat `jaxi::write`, and receiving one a single 5-beat `jaxi::read`.
+
+### 10.2 Global Orchestrator — AXI slave map
+
+64-bit registers. This is the window the host polls; **none of these addresses are
+NoC coordinates**.
+
+| Offset | Name | Access | Contents |
+|---|---|---|---|
+| `0x0000` | `CTRL` | RW | `enable`, `mesh_reset`, `halt` |
+| `0x0008` | `STATUS` | RO | `busy`, `error`, `mesh_ready` |
+| `0x0010` | `CAPS` | RO | `flit_width`, `grid_lo`, `grid_hi`, `n_nodes` |
+| `0x0018` | `IRQ_STATUS` | RW1C | pending event bits |
+| `0x0020` | `IRQ_ENABLE` | RW | mask |
+| `0x0040` | `PROG_ADDR` | RW | DRAM byte address of an instruction program |
+| `0x0048` | `PROG_LEN` | RW | program length in bytes |
+| `0x0050` | `PROG_KICK` | WO | begin fetch + distribute |
+| `0x0058` | `PROG_STATUS` | RO | `running`, `done`, `error`, bytes consumed |
+| `0x0100`–`0x0120` | `TX_FLIT[0..4]` | RW | one outgoing flit |
+| `0x0140` | `TX_KICK` | WO | inject `TX_FLIT` |
+| `0x0148` | `TX_STATUS` | RO | `space`, `full` |
+| `0x0180`–`0x01A0` | `RX_FLIT[0..4]` | RO | head of the receive FIFO |
+| `0x01C0` | `RX_POP` | WO | advance the receive FIFO |
+| `0x01C8` | `RX_STATUS` | RO | `count`, `empty`, `overflow` |
+| `0x1000`–`0x1FFF` | `NODE_STATUS[0..255]` | RO | status mirror, §10.4 |
+
+The `TX_*`/`RX_*` window is a **raw flit mailbox**: it injects and receives
+arbitrary flits with no interpretation. That is deliberate — an address-mapped
+bridge could only ever emit `MEM_RD_REQ`/`MEM_WR_REQ`, and could not produce
+`CU_INST`, `CU_DATA`, `CU_SIGNAL`, or a deliberately malformed flit. As the
+bring-up and test instrument it has to be able to say anything the protocol can.
+
+The mailbox is also the *first* thing to build: it is independently useful before
+the orchestrator's program-fetch logic exists, and it is what makes the mesh
+reachable from `jaxi::write` / `jaxi::read` on real hardware.
+
+### 10.3 Global Orchestrator — AXI master
+
+Instruction programs live in DRAM. The host writes one, sets `PROG_ADDR`/
+`PROG_LEN`, and kicks; the orchestrator fetches it over its AXI master port and
+distributes `CU_INST` packets to the addressed nodes. This keeps the host out of
+the inner loop — otherwise every instruction costs a PCIe round trip.
+
+The orchestrator must respect the target's instruction-FIFO space (§6.1, §7): it
+holds a credit per destination node and stalls locally rather than backpressuring
+the network.
+
+### 10.4 Status mirror
+
+`NODE_STATUS[n]` is a BRAM-backed word per node, updated whenever a `CU_SIGNAL`
+arrives from that node. The host polls **this**, not DRAM:
+
+| Bits | Field |
+|---|---|
+| `[63:56]` | `last_code` — the `CU_SIGNAL` code |
+| `[55:24]` | `last_arg` |
+| `[23:8]` | `signal_count` — increments per signal, so the host can detect an event it did not read |
+| `[7:1]` | reserved |
+| `[0]` | `valid` |
+
+252 nodes x 8 B = 2 KB, one BRAM. The point is latency and isolation: polling DDR4
+across PCIe costs hundreds of nanoseconds per read *and* injects traffic into the
+memory system the CUs are trying to use. Polling a BRAM behind the AXI slave costs
+a BAR read and disturbs nothing.
+
+`signal_count` rather than a sticky flag because the host may poll slower than
+events arrive; a counter tells it how many it missed, a flag does not.
+
+### 10.5 MAS
+
+MAS is a NoC node with an AXI master. It accepts `MEM_RD_REQ`/`MEM_WR_REQ`,
+issues AXI transactions, and returns `MEM_RD_RESP`/`MEM_WR_ACK` to `src_x`/`src_y`
+with `txn_id` echoed.
+
+`MEM_*.addr[33:0]` maps **directly** onto the physical DDR4 map — no translation.
+Which of the four DDR4 channels serves an address is MAS-internal; the protocol
+never exposes it.
+
+Bandwidth is the constraint that decides how many MAS instances you need. One NoC
+link carries `FLIT_W x f`: at 288 bits and 300 MHz that is **10.8 GB/s**. Four
+DDR4-2400 channels supply **76.8 GB/s**. A single MAS node is therefore a ~7x
+bottleneck, and full DRAM bandwidth needs roughly **8 injection points** — either
+several MAS nodes at different mesh positions, or a wider/faster NoC. Size this
+deliberately rather than discovering it later.
+
+### 10.6 Clock domains
+
+The NoC, the orchestrator's AXI slave, and `jtag_axi` should start on **one
+clock** (the 100 MHz `clk_wiz_0` domain on the current carrier). CDC is a
+parameter, default off.
+
+Async FIFOs bring their own class of bug, and debugging them at the same time as a
+new protocol is a false economy. `docs/noc/README.md` already assumes CUs run at
+the same frequency or a power-of-two division, so a single domain is the natural
+starting point. MAS is the first module with a genuine reason to cross domains,
+since the DDR4 user interface runs at 300 MHz.
+
+Note also that anything on the XDMA `axi_aclk` domain is unreachable whenever the
+PCIe link is down — so the orchestrator's slave port belongs on the always-running
+fabric clock, not on XDMA's.
+
+---
+
+## 11. Guarantees
 
 Provided:
 
@@ -373,7 +505,7 @@ Not provided:
 
 ---
 
-## 11. Deferred
+## 12. Deferred
 
 **Multicast.** The dominant reuse pattern in a TPU is one weight tensor reaching
 many CUs. Multicast — one flit replicated at mesh branch points — turns N reads
@@ -402,3 +534,7 @@ buffers. Revisit only if measurement demands it.
 | `CU_CTRL` register map | **first 4 words mandatory**, rest CU-defined |
 | CU discovery | **one `CU_CAPS` word** for now |
 | `CU_SIGNAL` codes | **centrally allocated** `<0x40`, CU-defined above; `arg` always CU-defined |
+| AXI attachment | **two modules**: orchestrator (control, slave+master) and MAS (data, master) |
+| Host control window | **register-mapped mailbox + BRAM status mirror**, not address-mapped |
+| Host status polling | **`NODE_STATUS` BRAM**, never DDR4 |
+| Clock domains | **single clock to start**, CDC a parameter defaulting off |
