@@ -170,7 +170,7 @@ module NoCRouter #(
     ) north_in_switch (
         .clk(clk),
         .rst(rst),
-        .data_in(north_in_port),
+        .data_in(north_in_data),
         .data_valid(north_in_valid),
         .port_busy(north_in_busy),
         .port_out({n2l, n2e, n2s, n2w, n2n}),
@@ -180,7 +180,7 @@ module NoCRouter #(
     east_in_switch (
         .clk(clk),
         .rst(rst),
-        .data_in(east_in_port),
+        .data_in(east_in_data),
         .data_valid(east_in_valid),
         .port_busy(east_in_busy),
         .port_out({e2l, e2e, e2s, e2w, e2n}),
@@ -190,7 +190,7 @@ module NoCRouter #(
     south_in_switch (
         .clk(clk),
         .rst(rst),
-        .data_in(south_in_port),
+        .data_in(south_in_data),
         .data_valid(south_in_valid),
         .port_busy(south_in_busy),
         .port_out({s2l, s2e, s2s, s2w, s2n}),
@@ -200,7 +200,7 @@ module NoCRouter #(
     west_in_switch (
         .clk(clk),
         .rst(rst),
-        .data_in(west_in_port),
+        .data_in(west_in_data),
         .data_valid(west_in_valid),
         .port_busy(west_in_busy),
         .port_out({w2l, w2e, w2s, w2w, w2n}),
@@ -210,7 +210,7 @@ module NoCRouter #(
     local_in_switch (
         .clk(clk),
         .rst(rst),
-        .data_in(local_in_port),
+        .data_in(local_in_data),
         .data_valid(local_in_valid),
         .port_busy(local_in_busy),
         .port_out({l2l, l2e, l2s, l2w, l2n}),
@@ -226,7 +226,7 @@ module NoCRouter #(
         .in_ports({l2n, e2n, s2n, w2n, n2n}),
         .ports_valid({l2nv, e2nv, s2nv, w2nv, n2nv}),
         .ports_clear({l2nc, e2nc, s2nc, w2nc, n2nc}),
-        .port_out(north_out_port),
+        .port_out(north_out_data),
         .out_valid(north_out_valid),
         .busy(north_out_busy)
     ),
@@ -236,7 +236,7 @@ module NoCRouter #(
         .in_ports({l2e, e2e, s2e, w2e, n2e}),
         .ports_valid({l2ev, e2ev, s2ev, w2ev, n2ev}),
         .ports_clear({l2ec, e2ec, s2ec, w2ec, n2ec}),
-        .port_out(east_out_port),
+        .port_out(east_out_data),
         .out_valid(east_out_valid),
         .busy(east_out_busy)
     ),
@@ -246,7 +246,7 @@ module NoCRouter #(
         .in_ports({l2s, e2s, s2s, w2s, n2s}),
         .ports_valid({l2sv, e2sv, s2sv, w2sv, n2sv}),
         .ports_clear({l2sc, e2sc, s2sc, w2sc, n2sc}),
-        .port_out(south_out_port),
+        .port_out(south_out_data),
         .out_valid(south_out_valid),
         .busy(south_out_busy)
     ),
@@ -256,7 +256,7 @@ module NoCRouter #(
         .in_ports({l2w, e2w, s2w, w2w, n2w}),
         .ports_valid({l2wv, e2wv, s2wv, w2wv, n2wv}),
         .ports_clear({l2wc, e2wc, s2wc, w2wc, n2wc}),
-        .port_out(west_out_port),
+        .port_out(west_out_data),
         .out_valid(west_out_valid),
         .busy(west_out_busy)
     ),
@@ -266,7 +266,7 @@ module NoCRouter #(
         .in_ports({l2l, e2l, s2l, w2l, n2l}),
         .ports_valid({l2lv, e2lv, s2lv, w2lv, n2lv}),
         .ports_clear({l2lc, e2lc, s2lc, w2lc, n2lc}),
-        .port_out(local_out_port),
+        .port_out(local_out_data),
         .out_valid(local_out_valid),
         .busy(local_out_busy)
     );

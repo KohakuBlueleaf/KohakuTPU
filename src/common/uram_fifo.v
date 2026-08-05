@@ -42,7 +42,6 @@ module uram_fifo #(
         .dout(rd_data),
         .empty(empty),
         .full(full),
-        .rd_data_count(rd_data_count),
         .rd_rst_busy(rd_rst_busy),
         .wr_rst_busy(wr_rst_busy),
         .din(wr_data),

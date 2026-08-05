@@ -67,59 +67,6 @@ module InstReceiver #(
     reg [DATA_WIDTH-1:0] data_read;
     reg data_next, data_read_valid;
 
-    always @(posedge clk) begin
-        if (rst) begin
-            inst_out_addr_reg <= 0;
-            instruction_valid_reg <= 0;
-            data_valid_reg <= 0;
-            data_read <= 0;
-            data_read_valid <= 0;
-        end else begin
-            if (data_valid) begin
-                data_reg[data_id] <= data;
-                data_valid_reg[data_id] <= 1;
-            end
-            
-            if (data_next) begin
-                if(data_valid_reg[read_inst_addr]) begin
-                    data_read <= data_reg[read_inst_addr];
-                    data_read_valid <= 1;
-                end else begin
-                    data_read <= 0;
-                    data_read_valid <= 0;
-                end
-            end else begin
-                data_read <= data_read;
-                data_read_valid <= 0;
-            end
-            
-            if (instruction_next) begin
-                if(instruction_valid_reg[inst_out_addr_reg]) begin
-                    instruction <= instruction_reg[inst_out_addr_reg];
-                    instruction_valid_reg[inst_out_addr_reg] <= 0;
-                    instruction_id <= inst_out_addr_reg;
-                    instruction_valid <= 1'b1;
-                    inst_out_addr_reg <= inst_out_addr_reg + 1;
-                end else begin
-                    instruction <= 0;
-                    instruction_id <= 0;
-                    instruction_valid <= 1'b0;
-                    inst_out_addr_reg <= inst_out_addr_reg;
-                end
-            end else if (~instruction_valid & instruction_valid_reg[inst_out_addr_reg]) begin
-                instruction <= instruction_reg[inst_out_addr_reg];
-                instruction_valid_reg[inst_out_addr_reg] <= 0;
-                instruction_id <= inst_out_addr_reg;
-                instruction_valid <= 1'b1;
-                inst_out_addr_reg <= inst_out_addr_reg + 1;
-            end else begin
-                instruction <= instruction;
-                instruction_id <= instruction_id;
-                instruction_valid <= instruction_valid;
-                inst_out_addr_reg <= inst_out_addr_reg;
-            end
-        end
-    end
 
     parameter VALID_ADDR_OFFSET = $clog2(STRB_WIDTH);
     parameter WORD_WIDTH = STRB_WIDTH;
@@ -360,4 +307,58 @@ module InstReceiver #(
             s_axi_arready_reg <= s_axi_arready_next;
         end
     end
+    always @(posedge clk) begin
+        if (rst) begin
+            inst_out_addr_reg <= 0;
+            instruction_valid_reg <= 0;
+            data_valid_reg <= 0;
+            data_read <= 0;
+            data_read_valid <= 0;
+        end else begin
+            if (data_valid) begin
+                data_reg[data_id] <= data;
+                data_valid_reg[data_id] <= 1;
+            end
+            
+            if (data_next) begin
+                if(data_valid_reg[read_inst_addr]) begin
+                    data_read <= data_reg[read_inst_addr];
+                    data_read_valid <= 1;
+                end else begin
+                    data_read <= 0;
+                    data_read_valid <= 0;
+                end
+            end else begin
+                data_read <= data_read;
+                data_read_valid <= 0;
+            end
+            
+            if (instruction_next) begin
+                if(instruction_valid_reg[inst_out_addr_reg]) begin
+                    instruction <= instruction_reg[inst_out_addr_reg];
+                    instruction_valid_reg[inst_out_addr_reg] <= 0;
+                    instruction_id <= inst_out_addr_reg;
+                    instruction_valid <= 1'b1;
+                    inst_out_addr_reg <= inst_out_addr_reg + 1;
+                end else begin
+                    instruction <= 0;
+                    instruction_id <= 0;
+                    instruction_valid <= 1'b0;
+                    inst_out_addr_reg <= inst_out_addr_reg;
+                end
+            end else if (~instruction_valid & instruction_valid_reg[inst_out_addr_reg]) begin
+                instruction <= instruction_reg[inst_out_addr_reg];
+                instruction_valid_reg[inst_out_addr_reg] <= 0;
+                instruction_id <= inst_out_addr_reg;
+                instruction_valid <= 1'b1;
+                inst_out_addr_reg <= inst_out_addr_reg + 1;
+            end else begin
+                instruction <= instruction;
+                instruction_id <= instruction_id;
+                instruction_valid <= instruction_valid;
+                inst_out_addr_reg <= inst_out_addr_reg;
+            end
+        end
+    end
+
 endmodule
