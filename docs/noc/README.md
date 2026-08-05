@@ -19,7 +19,7 @@ Since all of our compute unit will run in same or frequency divided by power of 
 
 | NoC Router Arch                                | 2D mesh example                                |
 | ---------------------------------------------- | ---------------------------------------------- |
-| ![1735483831920](image/NoC/1735483831920.png) | ![1735483805869](image/NoC/1735483805869.png) |
+| ![1735483831920](../image/NoC/1735483831920.png) | ![1735483805869](../image/NoC/1735483805869.png) |
 
 ## Router
 
