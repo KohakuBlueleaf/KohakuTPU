@@ -30,7 +30,7 @@ $root = Split-Path $PSScriptRoot -Parent
 $work = Join-Path $env:TEMP "kohakutpu-synthcheck"
 $period = [math]::Round(1000.0 / $Freq, 4)
 
-$common = @("src\common\sync_fifo.v")
+$common = @("src\common\sync_fifo.v", "src\common\kohaku_sdpram.v")
 
 # Module names, not file names -- the router and its ports predate the snake_case
 # convention the newer modules use.
@@ -61,7 +61,37 @@ $targets = @(
     @{ Top = 'noc_tile_1r'
        Src = @("src\kohakunoc\noc_inport.v", "src\kohakunoc\noc_outport.v",
                "src\kohakunoc\noc_router.v", "src\kohakunoc\noc_cu_base.v",
-               "src\kohakunoc\noc_cu_null.v", "src\synth_top\noc_tile_1r.v") }
+               "src\kohakunoc\noc_cu_null.v", "src\synth_top\noc_tile_1r.v") },
+    # MX matmul datapath. mx_mac defaults to MODEL=0, the real DSP48E2, so these
+    # measure the packed cascade rather than inferred multipliers.
+    @{ Top = 'mx_tcu'
+       Src = @("src\kohakutpu\matmul\mx_mac.v", "src\kohakutpu\matmul\mx_tcu.v") },
+    @{ Top = 'mx_cluster'
+       Src = @("src\kohakutpu\matmul\mx_mac.v", "src\kohakutpu\matmul\mx_tcu.v",
+               "src\kohakutpu\matmul\mx_acu.v", "src\kohakutpu\matmul\mx_cluster_core.v",
+               "src\kohakutpu\matmul\mx_cluster.v") },
+    # Explicit memory, so the primitive count for a given shape is measured
+    # rather than argued from the datasheet. PRIM 0/1/2 = distributed/block/ultra.
+    @{ Top = 'sdpram_probe'
+       Src = @("src\synth_top\sdpram_probe.v") },
+    # The production accumulator and the full NoC-attached compute unit.
+    @{ Top = 'mx_acu_fp'
+       Src = @("src\kohakutpu\matmul\mx_fpacc.v", "src\kohakutpu\matmul\mx_acu_fp.v") },
+    # The real architecture: a cluster as a two-port NoC endpoint.
+    @{ Top = 'mx_cluster_cu'
+       Src = @("src\kohakunoc\noc_cu_base.v",
+               "src\kohakutpu\matmul\mx_mac.v", "src\kohakutpu\matmul\mx_tcu.v",
+               "src\kohakutpu\matmul\mx_fpacc.v", "src\kohakutpu\matmul\mx_acu_fp.v",
+               "src\kohakutpu\matmul\mx_cluster_core.v",
+               "src\kohakutpu\matmul\mx_cluster_mgr.v",
+               "src\kohakutpu\matmul\mx_cluster_node.v",
+               "src\kohakutpu\matmul\mx_cluster_cu.v") },
+    @{ Top = 'mx_matmul_cu'
+       Src = @("src\kohakunoc\noc_cu_base.v",
+               "src\kohakutpu\matmul\mx_mac.v", "src\kohakutpu\matmul\mx_tcu.v",
+               "src\kohakutpu\matmul\mx_fpacc.v", "src\kohakutpu\matmul\mx_acu_fp.v",
+               "src\kohakutpu\matmul\mx_cluster_core.v",
+               "src\kohakutpu\matmul\mx_matmul_cu.v") }
 )
 
 if ($Only) { $targets = $targets | Where-Object { $Only -contains $_.Top } }
