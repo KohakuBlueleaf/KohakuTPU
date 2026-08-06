@@ -43,7 +43,12 @@ foreach f $files {
 }
 
 set cmd [list synth_design -top $top -part $part -mode out_of_context]
-if {[llength $generics]} { lappend cmd -generic $generics }
+# Each generic needs its OWN -generic flag. `lappend cmd -generic $generics`
+# appends the whole list as one argument, and eval then flattens it to
+# `-generic A=1 B=2` -- Vivado takes A and silently drops B. With a single
+# generic it happens to work, which is why a five-point DEPTH sweep returned
+# five byte-identical results before this was noticed.
+foreach g $generics { lappend cmd -generic $g }
 if {[catch {eval $cmd} err]} {
     puts "SYNTH FAILED: $err"
     exit 1
