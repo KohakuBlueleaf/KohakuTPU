@@ -325,7 +325,15 @@ module noc_orchestrator #(
     wire [15:0] wsel     = waddr[15:0];
     wire [2:0]  tx_word  = wsel[5:3];              // TX_FLIT index within 0x100..0x120
     wire        is_tx_fl = (wsel >= A_TX_FLIT0) && (wsel < A_TX_FLIT0 + FLIT_WORDS*8);
-    wire        is_stage = (waddr[15:12] == 4'h2);
+    // The staging window must be derived from STAGE_WORDS, not fixed at one 4 KB
+    // page. `waddr[15:12] == 4'h2` covers 0x2000..0x2FFF = 512 words = 102.4
+    // flits, so at the default STAGE_FLITS=128 the last 26 flits of a full
+    // program were decoded as register writes instead. Nothing reported an
+    // error: the program simply stopped early, with the staging RAM holding
+    // whatever was there before. Caught by the first bench with a program longer
+    // than 102 flits (mx_system32_tb, 128).
+    localparam [15:0] STAGE_END = A_STAGE + STAGE_WORDS*8;
+    wire        is_stage = (waddr[15:0] >= A_STAGE) && (waddr[15:0] < STAGE_END);
     // Index relative to A_STAGE. Slicing waddr directly would fold base-address
     // bits into the index -- harmless only while SW_BITS happens to be small
     // enough that 0x2000 aliases to 0, which is not a property to depend on.
