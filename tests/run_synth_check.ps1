@@ -1,0 +1,117 @@
+# run_synth_check.ps1 -- does the NoC RTL close its target frequency?
+#
+#   .\tests\run_synth_check.ps1                 # router, CU base, orchestrator @ 300 MHz
+#   .\tests\run_synth_check.ps1 -Freq 400       # a different target
+#   .\tests\run_synth_check.ps1 -Only noc_router
+#
+# Out-of-context, one module at a time. That answers "is the logic depth sane?",
+# not "will the full mesh close" -- 196 routers plus interconnect will not hold the
+# same slack as one router alone. Use it to catch a design that cannot possibly
+# make the target, and to keep the LUT arithmetic in .plan/decisions.md honest.
+#
+# Each run writes its full Vivado log next to the results, because a synthesis
+# failure is usually explained halfway up the log rather than at the end.
+
+param(
+    [double]$Freq = 300,
+    # the carrier board's actual device (JTAG-DMA-test.xpr), not the faster -2-e
+    [string]$Part = "xcvu13p-fhgb2104-2L-e",
+    [string[]]$Only,
+    # NAME:VALUE pairs joined by '+', e.g. "FIFO_DEPTH:8+MEMORY_TYPE:block".
+    # Not '=' (Vivado's .bat wrappers split on it) and not ',' (powershell -File
+    # splits a string argument on it). Both were learned the hard way.
+    [string]$Generics = "-",
+    [string]$VivadoBin = "D:\Xilinx\Vivado\2024.2\bin",
+    [switch]$KeepWork
+)
+
+$ErrorActionPreference = "Stop"
+$root = Split-Path $PSScriptRoot -Parent
+$work = Join-Path $env:TEMP "kohakutpu-synthcheck"
+$period = [math]::Round(1000.0 / $Freq, 4)
+
+$common = @("src\common\sync_fifo.v")
+
+# Module names, not file names -- the router and its ports predate the snake_case
+# convention the newer modules use.
+$targets = @(
+    @{ Top = 'NoCRouter'
+       Src = @("src\kohakunoc\noc_inport.v", "src\kohakunoc\noc_outport.v",
+               "src\kohakunoc\noc_router.v") },
+    @{ Top = 'noc_cu_base'
+       Src = @("src\kohakunoc\noc_cu_base.v") },
+    @{ Top = 'noc_orchestrator'
+       Src = @("src\kohakunoc\noc_orchestrator.v") },
+    # Two routers wired east-west. A single router cannot measure the link between
+    # routers, and the busy path genuinely crosses it -- see src\synth_top\noc_pair.v.
+    @{ Top = 'noc_pair_synth'
+       Src = @("src\kohakunoc\noc_inport.v", "src\kohakunoc\noc_outport.v",
+               "src\kohakunoc\noc_router.v", "src\synth_top\noc_pair.v") },
+    # The NoC tax, isolated. noc_cu_null has no arithmetic, so the difference
+    # between it and noc_cu_base is the flit-fold that keeps synthesis from
+    # pruning, and the cluster divided by 12 is what one endpoint really costs.
+    @{ Top = 'noc_cu_null'
+       Src = @("src\kohakunoc\noc_cu_base.v", "src\kohakunoc\noc_cu_null.v") },
+    @{ Top = 'noc_cluster_2x2'
+       Src = @("src\kohakunoc\noc_inport.v", "src\kohakunoc\noc_outport.v",
+               "src\kohakunoc\noc_router.v", "src\kohakunoc\noc_cu_base.v",
+               "src\kohakunoc\noc_cu_null.v", "src\synth_top\noc_cluster_2x2.v") },
+    # Same parts at a different router:endpoint ratio (1:5 vs 4:12), so the split
+    # between router cost and endpoint cost is solvable rather than assumed.
+    @{ Top = 'noc_tile_1r'
+       Src = @("src\kohakunoc\noc_inport.v", "src\kohakunoc\noc_outport.v",
+               "src\kohakunoc\noc_router.v", "src\kohakunoc\noc_cu_base.v",
+               "src\kohakunoc\noc_cu_null.v", "src\synth_top\noc_tile_1r.v") }
+)
+
+if ($Only) { $targets = $targets | Where-Object { $Only -contains $_.Top } }
+if (-not $targets) { throw "no matching targets" }
+
+# Not wiped between runs: a parameter sweep is several invocations, and each one
+# wiping the directory would delete the logs the previous one just produced.
+New-Item -ItemType Directory -Force $work | Out-Null
+Push-Location $work
+$results = @()
+try {
+    $env:PATH = "$VivadoBin;$env:PATH"
+    Write-Host "target $Freq MHz ($period ns) on $Part" -ForegroundColor Cyan
+
+    foreach ($t in $targets) {
+        $files = ($common + $t.Src) | ForEach-Object { Join-Path $root $_ }
+        foreach ($f in $files) { if (-not (Test-Path $f)) { throw "missing source: $f" } }
+
+        Write-Host ""
+        Write-Host "=============== $($t.Top) ===============" -ForegroundColor Cyan
+        $tag = if ($Generics -eq "-") { $t.Top } else { "$($t.Top)_$($Generics -replace '[:,+]','_')" }
+        $log = Join-Path $work "$tag.log"
+
+        & vivado.bat -mode batch -nojournal -notrace `
+            -log $log `
+            -source (Join-Path $root "scripts\synth_check.tcl") `
+            -tclargs $t.Top $period $Part $Generics @files 2>&1 |
+            Where-Object { $_ -match '^RESULT|^VERDICT|^  UTIL|^  PATH|^SYNTH FAILED|ERROR:' } |
+            ForEach-Object {
+                if ($_ -match '^VERDICT.*MISSES') { Write-Host $_ -ForegroundColor Red }
+                elseif ($_ -match '^VERDICT')     { Write-Host $_ -ForegroundColor Green }
+                else                              { Write-Host $_ }
+                $script:results += $_
+            }
+
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  synthesis failed -- see $log" -ForegroundColor Red
+            $results += "VERDICT $($t.Top): SYNTHESIS FAILED"
+        }
+    }
+
+    Write-Host ""
+    Write-Host "--- summary ---"
+    $results | Where-Object { $_ -match '^VERDICT' } | ForEach-Object { Write-Host $_ }
+    if ($results -match 'MISSES|FAILED') { exit 1 }
+    exit 0
+}
+finally {
+    Pop-Location
+    if (-not $KeepWork) {
+        Write-Host "logs kept in $work"
+    }
+}
