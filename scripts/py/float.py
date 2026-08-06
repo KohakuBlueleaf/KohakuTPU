@@ -101,7 +101,7 @@ if __name__ == "__main__":
     # Test conversion
     value = 16640.0
     a = FPNumber.from_float(value, 5, 6)
-    ainv = 1/a.to_float()
+    ainv = 1 / a.to_float()
     ainv_fp = FPNumber.from_float(ainv, 5, 10)
     print(f"Original : {a.to_bits():012b}")
     print(f"Inversion: {ainv_fp.to_bits():016b}")

@@ -32,7 +32,7 @@ def generate_inverse_lut_subnormal(
 
     for i in range(1 << input_bits):
         # Convert i to FP12 number (0.mmm format)
-        input_val = 2**(0 - 2**(input_exp_bits-1)+2) * (i / (1 << input_bits))
+        input_val = 2 ** (0 - 2 ** (input_exp_bits - 1) + 2) * (i / (1 << input_bits))
         if input_val == 0:
             inv_val = 0
         else:
@@ -82,7 +82,7 @@ def generate_log_lut_subnorm(
             fp_result = FPNumber.from_float(log_val, output_exp_bits, output_man_bits)
             lut[i] = fp_result.to_bits()
         except (ValueError, OverflowError):
-            lut[i] = int("0"+"1"*(output_exp_bits + output_man_bits), 2)
+            lut[i] = int("0" + "1" * (output_exp_bits + output_man_bits), 2)
 
     return lut
 
@@ -112,7 +112,7 @@ def generate_exp_lut_int(
 
     for sign in [0, 1]:
         for i in range(1 << input_bits):
-            input_val = float(i) * (-1)**sign
+            input_val = float(i) * (-1) ** sign
             exp_val = np.exp(input_val)
 
             # Convert result to output format
@@ -130,7 +130,7 @@ def generate_exp_lut_high_frac(
 
     for sign in [0, 1]:
         for i in range(1 << input_bits):
-            input_val = float(i)/(2**input_bits) * (-1)**sign
+            input_val = float(i) / (2**input_bits) * (-1) ** sign
             exp_val = np.exp(input_val)
 
             # Convert result to output format
@@ -148,7 +148,7 @@ def generate_exp_lut_low_frac(
 
     for sign in [0, 1]:
         for i in range(1 << input_bits):
-            input_val = float(i)/(2**(input_bits*2)) * (-1)**sign
+            input_val = float(i) / (2 ** (input_bits * 2)) * (-1) ** sign
             exp_val = np.exp(input_val)
 
             # Convert result to output format
@@ -174,7 +174,9 @@ if __name__ == "__main__":
     for i in range(1 << 6):
         print(i)
         results.append(f"{invlut_subnorm[i]:016b}")
-        print(f"{invlut_subnorm[i]:016b}: {FPNumber.from_bits(invlut_subnorm[i], 5, 10).to_float()}")
+        print(
+            f"{invlut_subnorm[i]:016b}: {FPNumber.from_bits(invlut_subnorm[i], 5, 10).to_float()}"
+        )
     for i in zip(*results):
         print("".join(reversed(list(i))))
 
