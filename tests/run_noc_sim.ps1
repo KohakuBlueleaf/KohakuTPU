@@ -22,15 +22,18 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
-$work = Join-Path $env:TEMP "hakutpu-nocsim"
+$work = Join-Path $env:TEMP "kohakutpu-nocsim"
 
-$sources = @(
+$rtl = @(
     "src\common\sync_fifo.v",
-    "src\hakunoc\noc_inport.v",
-    "src\hakunoc\noc_outport.v",
-    "src\hakunoc\noc_router.v",
-    "tests\noc\noc_mesh_tb.v"
+    "src\kohakunoc\noc_inport.v",
+    "src\kohakunoc\noc_outport.v",
+    "src\kohakunoc\noc_router.v",
+    "src\kohakunoc\noc_orchestrator.v",
+    "src\kohakunoc\noc_cu_base.v"
 ) | ForEach-Object { Join-Path $root $_ }
+
+$sources = $rtl + @(Join-Path $root "tests\noc\noc_mesh_tb.v")
 
 foreach ($s in $sources) { if (-not (Test-Path $s)) { throw "missing source: $s" } }
 
@@ -73,12 +76,51 @@ try {
         elseif (-not ($out -match 'PASS')) { $failed += "${n}x${n} (no verdict)" }
     }
 
+    # fixed-topology benches: name, extra sources, top
+    $benches = @(
+        @{ Name = 'CU framework under output backpressure'
+           Src  = @("tests\noc\cu_alu.v", "tests\noc\cu_base_tb.v")
+           Top  = 'cu_base_tb' },
+        @{ Name = 'orchestrator (AXI <-> mesh, loopback)'
+           Src  = @("tests\noc\noc_orchestrator_tb.v")
+           Top  = 'noc_orchestrator_tb' },
+        @{ Name = 'system (AXI -> dispatch -> CU -> status -> AXI)'
+           Src  = @("tests\noc\noc_pseudo_cu.v", "tests\noc\noc_system_tb.v")
+           Top  = 'noc_system_tb' },
+        @{ Name = 'multi-CU (3x3, two CU designs, CU->CU traffic)'
+           Src  = @("tests\noc\cu_alu.v", "tests\noc\cu_relay.v", "tests\noc\noc_multicu_tb.v")
+           Top  = 'noc_multicu_tb' }
+    )
+
+    $k = 0
+    foreach ($b in $benches) {
+        $k++
+        Write-Host ""
+        Write-Host "=============== $($b.Name) ===============" -ForegroundColor Cyan
+        $src = $rtl + ($b.Src | ForEach-Object { Join-Path $root $_ })
+        & xvlog.bat -sv -work "wb$k" $src 2>&1 |
+            Where-Object { $_ -match 'ERROR' } | ForEach-Object { Write-Host $_ }
+        if ($LASTEXITCODE -ne 0) { $failed += "$($b.Name) (compile)"; continue }
+
+        & xelab.bat -debug typical -timescale 1ns/1ps -L xpm "wb$k.$($b.Top)" -s "tbb$k" 2>&1 |
+            Where-Object { $_ -match 'ERROR' } | ForEach-Object { Write-Host $_ }
+        if ($LASTEXITCODE -ne 0) { $failed += "$($b.Name) (elaboration)"; continue }
+
+        $out = & xsim.bat "tbb$k" -runall 2>&1
+        $out | Where-Object { $_ -match '^---|^  |FAIL|PASS|=====|WATCHDOG' } |
+            Where-Object { $_ -notmatch 'Build|Copyright|session' } |
+            ForEach-Object { Write-Host $_ }
+        if ($out -match 'WATCHDOG TIMEOUT') { $failed += "$($b.Name) (watchdog)" }
+        elseif ($out -match 'FAIL')         { $failed += $b.Name }
+        elseif (-not ($out -match 'PASS'))  { $failed += "$($b.Name) (no verdict)" }
+    }
+
     Write-Host ""
     if ($failed.Count -gt 0) {
         Write-Host "FAILED: $($failed -join ', ')" -ForegroundColor Red
         exit 1
     }
-    Write-Host "all mesh sizes passed" -ForegroundColor Green
+    Write-Host "all NoC tests passed" -ForegroundColor Green
     exit 0
 }
 finally {
