@@ -1,4 +1,4 @@
-// Self-checking mesh testbench for HakuNoC.
+// Self-checking mesh testbench for KohakuNoC.
 //
 // Builds an N x N mesh, hangs an injector + receiver off every router's local
 // port, and checks the four properties the spec claims in s10:

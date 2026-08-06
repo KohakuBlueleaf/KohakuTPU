@@ -47,11 +47,46 @@
 // DO NOT MODIFY THIS FILE.
 
 
-`ifndef HakuNoCPortIn_v1_0
-`define HakuNoCPortIn_v1_0
+`ifndef KohakuNoCPort_v1_0
+`define KohakuNoCPort_v1_0
 
-interface HakuNoCPortIn_v1_0();
+package parameter_structs;
 
-endinterface // HakuNoCPortIn_v1_0
+  typedef struct packed {
+      bit    portEnabled;
+      integer    portWidth;
+  }portConfig;
+
+  typedef struct packed {
+    // <typeName> <LogicalName> = {<enablement>, <width>}
+    portConfig data;
+    portConfig valid;
+    portConfig busy;
+  }KohakuNoCPort_v1_0_port_configuration;
+
+  parameter KohakuNoCPort_v1_0_port_configuration KohakuNoCPort_v1_0_default_port_configuration = '{data:'{1, -1}, valid:'{1, -1}, busy:'{1, -1}};
+
+endpackage
+
+interface KohakuNoCPort_v1_0 #(parameter_structs::KohakuNoCPort_v1_0_port_configuration port_configuration)();
+  logic [port_configuration.data.portWidth-1:0] data;              // 
+  logic [port_configuration.valid.portWidth-1:0] valid;            // 
+  logic [port_configuration.busy.portWidth-1:0] busy;              // 
+
+  modport MASTER (
+    input busy, 
+    output data, valid
+    );
+
+  modport SLAVE (
+    input data, valid, 
+    output busy
+    );
+
+  modport MONITOR (
+    input data, valid, busy
+    );
+
+endinterface // KohakuNoCPort_v1_0
 
 `endif

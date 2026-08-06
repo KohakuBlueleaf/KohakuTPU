@@ -1,4 +1,4 @@
-// Packet format for HakuNoC. Single source of truth -- docs/noc/spec.md s3-s5
+// Packet format for KohakuNoC. Single source of truth -- docs/noc/spec.md s3-s5
 // describes the same layout in prose.
 //
 // A flit is NOC_FLIT_W bits: a 32-bit header followed by a 256-bit payload.

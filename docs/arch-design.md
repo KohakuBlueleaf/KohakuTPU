@@ -1,6 +1,6 @@
 ## Arch Design
 
-![HakuTPU-Overall arch](https://github.com/user-attachments/assets/d5222f88-692b-46cd-bdbf-0663eb817afc)
+![KohakuTPU-Overall arch](https://github.com/user-attachments/assets/d5222f88-692b-46cd-bdbf-0663eb817afc)
 
 ### hierarchical arch overview
 

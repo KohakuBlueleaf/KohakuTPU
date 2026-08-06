@@ -4,7 +4,7 @@
 // reflection. Does not support exclusive access, AxCACHE/AxPROT semantics, or
 // narrow-transfer read lane replication.
 //
-// Rationale for the handshake structure: docs/axi4-bringup.md
+// Rationale for the handshake structure: docs/axi/bringup.md
 
 `default_nettype none
 
