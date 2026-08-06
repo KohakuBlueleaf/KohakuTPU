@@ -1,0 +1,484 @@
+// Global Orchestrator -- AXI4 slave <-> NoC local port. See docs/noc/spec.md s10.
+//
+// This is the control plane and the bring-up instrument. It gives a host (XDMA,
+// or jtag_axi during development) three things:
+//
+//   a raw flit mailbox   inject and receive ANY flit, including malformed ones.
+//                        An address-mapped bridge could only ever emit
+//                        MEM_RD_REQ/MEM_WR_REQ, so it could never test CU_INST,
+//                        CU_DATA or a bad header -- disqualifying for bring-up.
+//   a status mirror      NODE_STATUS[n], updated from CU_SIGNAL, so the host
+//                        polls a 2 KB register window instead of DDR4. Polling
+//                        DRAM over PCIe costs hundreds of ns per read and injects
+//                        traffic into the memory system the CUs are using.
+//   capability discovery so software can size itself without a hardcoded map.
+//
+// AXI and NoC share one clock (spec s10.6). SmartConnect does the crossing to
+// XDMA/jtag, so there is no CDC in here.
+//
+// The AXI slave FSM is the one from src/kohakuaxi/axi4_ram.v: VALID is never a
+// function of READY, the burst counter rather than WLAST ends a burst, and
+// BID/RID echo AWID/ARID.
+
+`default_nettype none
+
+module noc_orchestrator #(
+    parameter DATA_WIDTH = 64,     // AXI data width; 288-bit flit = 5 beats
+    parameter ADDR_WIDTH = 32,
+    parameter ID_WIDTH   = 4,
+    parameter FLIT_WIDTH = 288,
+    parameter POS_WIDTH  = 4,
+    parameter GRID_LO    = 1,
+    parameter GRID_HI    = 14,
+    parameter ORC_X      = 1,      // our own coordinates, stamped into dispatched
+    parameter ORC_Y      = 1,      // flits so targets can reply without config
+
+    parameter TX_DEPTH   = 16,
+    parameter RX_DEPTH   = 16,
+    parameter STAGE_FLITS = 128    // instruction staging buffer, in flits
+) (
+    input  wire                    clk,
+    input  wire                    resetn,
+
+    // ---- AXI4 slave ----
+    input  wire [ID_WIDTH-1:0]     s_axi_awid,
+    input  wire [ADDR_WIDTH-1:0]   s_axi_awaddr,
+    input  wire [7:0]              s_axi_awlen,
+    input  wire [2:0]              s_axi_awsize,
+    input  wire [1:0]              s_axi_awburst,
+    input  wire                    s_axi_awvalid,
+    output wire                    s_axi_awready,
+    input  wire [DATA_WIDTH-1:0]   s_axi_wdata,
+    input  wire [DATA_WIDTH/8-1:0] s_axi_wstrb,
+    input  wire                    s_axi_wlast,
+    input  wire                    s_axi_wvalid,
+    output wire                    s_axi_wready,
+    output wire [ID_WIDTH-1:0]     s_axi_bid,
+    output wire [1:0]              s_axi_bresp,
+    output wire                    s_axi_bvalid,
+    input  wire                    s_axi_bready,
+    input  wire [ID_WIDTH-1:0]     s_axi_arid,
+    input  wire [ADDR_WIDTH-1:0]   s_axi_araddr,
+    input  wire [7:0]              s_axi_arlen,
+    input  wire [2:0]              s_axi_arsize,
+    input  wire [1:0]              s_axi_arburst,
+    input  wire                    s_axi_arvalid,
+    output wire                    s_axi_arready,
+    output wire [ID_WIDTH-1:0]     s_axi_rid,
+    output wire [DATA_WIDTH-1:0]   s_axi_rdata,
+    output wire [1:0]              s_axi_rresp,
+    output wire                    s_axi_rlast,
+    output wire                    s_axi_rvalid,
+    input  wire                    s_axi_rready,
+
+    // ---- NoC local port ----
+    output reg  [FLIT_WIDTH-1:0]   noc_out_data,
+    output reg                     noc_out_valid,
+    input  wire                    noc_out_busy,
+    input  wire [FLIT_WIDTH-1:0]   noc_in_data,
+    input  wire                    noc_in_valid,
+    output wire                    noc_in_busy
+);
+
+    localparam FLIT_WORDS = (FLIT_WIDTH + DATA_WIDTH - 1) / DATA_WIDTH;  // 5 at 64b
+    localparam PAD_WIDTH  = FLIT_WORDS * DATA_WIDTH;                     // 320
+    localparam [1:0] RESP_OKAY = 2'b00;
+
+    // register map, byte offsets (spec s10.2)
+    localparam [15:0] A_CTRL      = 16'h0000, A_STATUS    = 16'h0008,
+                      A_CAPS      = 16'h0010, A_IRQ_STAT  = 16'h0018,
+                      A_IRQ_EN    = 16'h0020,
+                      A_PROG_DST  = 16'h0040, A_PROG_LEN  = 16'h0048,
+                      A_PROG_KICK = 16'h0050, A_PROG_STAT = 16'h0058,
+                      A_PROG_CRED = 16'h0060,
+                      A_TX_FLIT0  = 16'h0100, A_TX_KICK   = 16'h0140,
+                      A_TX_STATUS = 16'h0148,
+                      A_RX_FLIT0  = 16'h0180, A_RX_POP    = 16'h01C0,
+                      A_RX_STATUS = 16'h01C8;
+
+    // ------------------------------------------------------------ registers
+    reg [DATA_WIDTH-1:0] ctrl_reg, irq_en_reg, irq_stat_reg;
+    reg [PAD_WIDTH-1:0]  tx_stage;          // TX_FLIT[0..4]
+
+    // Instruction dispatch. The host stages CU_INST flits in a local BRAM through
+    // this same AXI slave, then names a destination and kicks. No AXI master is
+    // needed: the orchestrator never fetches from DRAM, it only forwards what the
+    // host already placed here.
+    localparam STAGE_WORDS = STAGE_FLITS * FLIT_WORDS;
+    localparam SW_BITS     = $clog2(STAGE_WORDS);
+    localparam [15:0] A_STAGE = 16'h2000;
+
+    // Measured: this infers LUTRAM (RAM64M8 x100 at STAGE_FLITS=128), not BRAM.
+    // A ram_style="block" attribute here is rejected with "Infeasible attribute"
+    // and silently downgraded, so it is not written -- an ignored attribute reads
+    // like a guarantee. The likely blocker is the read destination being a
+    // variable part-select (prog_flit[prog_word*DATA_WIDTH +: DATA_WIDTH]);
+    // BRAM read data has to land in a plain register. Costs ~1000 LUTs, and there
+    // is one orchestrator per system, so this is not worth a pipeline stage today.
+    // Revisit if STAGE_FLITS grows by an order of magnitude.
+    reg [DATA_WIDTH-1:0] stage_ram [0:STAGE_WORDS-1];
+
+    reg [2*POS_WIDTH-1:0] prog_dst;
+    reg [15:0]            prog_len;      // flits to send
+    reg [15:0]            prog_left;
+    reg [SW_BITS-1:0]     prog_rd;
+    reg [15:0]            prog_credit;   // seeded by the host, refilled on INST_COMPLETE
+    reg                   prog_run;
+    reg                   kick_req;    // one-cycle requests from the AXI write FSM
+    reg                   cred_wr;
+    reg [15:0]            cred_val;
+    reg [2:0]             prog_word;
+    reg [PAD_WIDTH-1:0]   prog_flit;
+
+    wire [DATA_WIDTH-1:0] caps_word =
+        { {(DATA_WIDTH-48){1'b0}},
+          GRID_HI[7:0], GRID_LO[7:0], POS_WIDTH[7:0], FLIT_WIDTH[15:0] };
+
+    // ------------------------------------------------------------- TX FIFO
+    // Two writers: the mailbox (TX_KICK, for bring-up) and the dispatcher. The
+    // dispatcher only runs between kicks, so they never contend -- TX_KICK is
+    // ignored while prog_run is set.
+    reg                   tx_push;
+    reg                   disp_push;
+    reg  [FLIT_WIDTH-1:0] disp_flit;
+    wire                  tx_full, tx_empty;
+    wire [FLIT_WIDTH-1:0] tx_head;
+    wire                  tx_pop = !tx_empty && !noc_out_busy;
+
+    wire                  tx_wr_en   = tx_push | disp_push;
+    wire [FLIT_WIDTH-1:0] tx_wr_data = disp_push ? disp_flit : tx_stage[FLIT_WIDTH-1:0];
+
+    sync_fifo #(.DATA_WIDTH(FLIT_WIDTH), .FIFO_DEPTH(TX_DEPTH),
+                .MEMORY_TYPE("distributed")) u_tx (
+        .clk(clk), .rst(!resetn),
+        .wr_en(tx_wr_en), .wr_data(tx_wr_data), .wr_busy(tx_full),
+        .rd_en(tx_pop),   .rd_data(tx_head),    .rd_busy(tx_empty)
+    );
+
+    // Mirrors OutPortSwitch: sample busy, and only commit a flit to the wire when
+    // it was low. The NoC link is a busy/valid pair, not AXI valid/ready -- a
+    // sender must not assert valid into a full input FIFO.
+    always @(posedge clk) begin
+        if (!resetn) begin
+            noc_out_valid <= 1'b0;
+            noc_out_data  <= {FLIT_WIDTH{1'b0}};
+        end else begin
+            noc_out_valid <= tx_pop;
+            if (tx_pop) noc_out_data <= tx_head;
+        end
+    end
+
+    // ------------------------------------------------------------- RX FIFO
+    wire [3:0] in_type = noc_in_data[FLIT_WIDTH-4*POS_WIDTH-1 -: 4];
+    reg                   rx_pop;
+    wire                  rx_full, rx_empty;
+    wire [FLIT_WIDTH-1:0] rx_head;
+
+    // CU_SIGNAL is summarised into NODE_STATUS and deliberately NOT queued here.
+    // Queuing it would let unread signals fill the FIFO, which raises noc_in_busy
+    // and stops the orchestrator accepting *anything* -- including the very
+    // signals that return dispatch credits. A host that never reads RX would then
+    // wedge the whole control plane, silently, after RX_DEPTH completions.
+    // NODE_STATUS is the intended mechanism for completions (spec s10.4); RX is
+    // for traffic that has no other home, such as CU_CTRL replies.
+    wire in_is_sig = (in_type == 4'h6);
+
+    sync_fifo #(.DATA_WIDTH(FLIT_WIDTH), .FIFO_DEPTH(RX_DEPTH),
+                .MEMORY_TYPE("distributed")) u_rx (
+        .clk(clk), .rst(!resetn),
+        .wr_en(noc_in_valid && !rx_full && !in_is_sig),
+        .wr_data(noc_in_data), .wr_busy(rx_full),
+        .rd_en(rx_pop), .rd_data(rx_head), .rd_busy(rx_empty)
+    );
+    // signals are always absorbed, so they can never be blocked by a full RX
+    assign noc_in_busy = rx_full && !in_is_sig;
+
+    reg rx_overflow;
+    always @(posedge clk) begin
+        if (!resetn)                        rx_overflow <= 1'b0;
+        else if (noc_in_valid && rx_full)   rx_overflow <= 1'b1;
+    end
+
+    // --------------------------------------------------------- status mirror
+    // Indexed by {src_y, src_x} so every coordinate has a slot, border PEs
+    // included. Written from CU_SIGNAL; the flit still also lands in the RX FIFO,
+    // because the host may want the raw packet as well as the summary.
+    localparam N_STATUS = 1 << (2*POS_WIDTH);
+    // Also LUTRAM, measured: RAM256X1D x64. The signal_count read-modify-write
+    // below reads and writes the same address in one cycle, which BRAM cannot do,
+    // so ram_style="block" is rejected here too and is deliberately not written.
+    // 256 x 64 costs a few hundred LUTs for the whole machine's status mirror.
+    reg [63:0] node_status [0:N_STATUS-1];
+
+    wire [POS_WIDTH-1:0] in_src_x = noc_in_data[FLIT_WIDTH-2*POS_WIDTH-1 -: POS_WIDTH];
+    wire [POS_WIDTH-1:0] in_src_y = noc_in_data[FLIT_WIDTH-3*POS_WIDTH-1 -: POS_WIDTH];
+    wire [2*POS_WIDTH-1:0] in_idx = {in_src_y, in_src_x};
+    wire                 in_is_signal = noc_in_valid && in_is_sig;
+
+    wire [7:0]  sig_code = noc_in_data[255 -: 8];
+    wire [31:0] sig_arg  = noc_in_data[247 -: 32];
+    reg  [63:0] status_rd;
+    reg  [15:0] status_count_next;
+
+    integer si;
+    initial for (si = 0; si < N_STATUS; si = si + 1) node_status[si] = 64'd0;
+
+    always @(posedge clk) begin
+        if (in_is_signal) begin
+            // signal_count, not a sticky flag: a host polling slower than events
+            // arrive can tell how many it missed.
+            status_count_next = node_status[in_idx][23:8] + 16'd1;
+            node_status[in_idx] <= {sig_code, sig_arg, status_count_next, 7'd0, 1'b1};
+        end
+    end
+
+    // ------------------------------------------------------------ dispatcher
+    // Reads FLIT_WORDS words per flit out of the staging RAM, rewrites the
+    // destination to prog_dst, and pushes. Stalls on credit rather than on the
+    // network: backpressuring CU_INST into the mesh is the protocol deadlock
+    // spec s7 exists to prevent.
+    wire in_inst_done = noc_in_valid && in_is_sig &&
+                        (noc_in_data[255 -: 8] == 8'h00);   // SIG_INST_COMPLETE
+
+    wire disp_can = prog_run && !tx_full && (prog_credit != 16'd0);
+
+    // All dispatcher state is driven from this one block, including the credit
+    // counter and the kick. The AXI write FSM only *requests* -- it raises
+    // kick_req / cred_wr and this block acts on them.
+    //
+    // Splitting them across both blocks (which is how this was first written)
+    // makes prog_run, prog_left, prog_rd and prog_credit multi-driven. Verilog
+    // simulation resolves that by scheduling order and looks correct; synthesis
+    // reports `multi-driven net on pin Q ... 2nd driver GND` and produces
+    // hardware that does not match. It also degenerated prog_rd enough that
+    // Vivado optimised the staging RAM away entirely.
+    always @(posedge clk) begin
+        disp_push <= 1'b0;
+        if (!resetn) begin
+            prog_run    <= 1'b0;
+            prog_word   <= 3'd0;
+            prog_left   <= 16'd0;
+            prog_rd     <= {SW_BITS{1'b0}};
+            prog_flit   <= {PAD_WIDTH{1'b0}};
+            prog_credit <= 16'd0;
+        end else begin
+            // credit: one per CU_INST flit sent, refilled by SIG_INST_COMPLETE.
+            // A host write wins, so re-seeding between programs is predictable.
+            if (cred_wr)
+                prog_credit <= cred_val;
+            else if (disp_push && !in_inst_done && prog_credit != 16'd0)
+                prog_credit <= prog_credit - 16'd1;
+            else if (in_inst_done && !disp_push)
+                prog_credit <= prog_credit + 16'd1;
+
+            // kick_req only asserts while !prog_run and disp_can requires
+            // prog_run, so these two arms are mutually exclusive
+            if (kick_req && !prog_run && prog_len != 16'd0) begin
+                prog_run  <= 1'b1;
+                prog_left <= prog_len;
+                prog_rd   <= {SW_BITS{1'b0}};
+                prog_word <= 3'd0;
+            end else if (disp_can) begin
+                prog_flit[prog_word*DATA_WIDTH +: DATA_WIDTH] <= stage_ram[prog_rd];
+                prog_rd <= prog_rd + 1'b1;
+                if (prog_word == FLIT_WORDS-1) begin
+                    prog_word <= 3'd0;
+                    disp_push <= 1'b1;
+                    if (prog_left == 16'd1) prog_run <= 1'b0;
+                    else                    prog_left <= prog_left - 16'd1;
+                end else begin
+                    prog_word <= prog_word + 3'd1;
+                end
+            end
+        end
+    end
+
+    // disp_push is non-blocking, so it is high the cycle AFTER the final word has
+    // landed in prog_flit -- the FIFO therefore captures a complete flit, and the
+    // first word of the next flit does not land until the end of that same cycle.
+    // The dispatcher owns the routing header: destination comes from PROG_DST (so
+    // one staged program can go to any node) and source is stamped with our own
+    // coordinates (so the target can reply without being told where we are). The
+    // mailbox path deliberately does neither -- injecting a hand-built header,
+    // including a wrong one, is the point of it.
+    always @(*) begin
+        disp_flit = prog_flit[FLIT_WIDTH-1:0];
+        disp_flit[FLIT_WIDTH-1              -: POS_WIDTH] = prog_dst[POS_WIDTH-1:0];
+        disp_flit[FLIT_WIDTH-POS_WIDTH-1    -: POS_WIDTH] = prog_dst[2*POS_WIDTH-1:POS_WIDTH];
+        disp_flit[FLIT_WIDTH-2*POS_WIDTH-1  -: POS_WIDTH] = ORC_X[POS_WIDTH-1:0];
+        disp_flit[FLIT_WIDTH-3*POS_WIDTH-1  -: POS_WIDTH] = ORC_Y[POS_WIDTH-1:0];
+    end
+
+    // ---------------------------------------------------------- AXI write FSM
+    localparam [1:0] W_IDLE = 2'd0, W_DATA = 2'd1, W_RESP = 2'd2;
+    reg [1:0]            wstate;
+    reg [ADDR_WIDTH-1:0] waddr;
+    reg [7:0]            wlen;
+    reg [ID_WIDTH-1:0]   wid;
+
+    assign s_axi_awready = (wstate == W_IDLE);
+    assign s_axi_wready  = (wstate == W_DATA);
+    assign s_axi_bvalid  = (wstate == W_RESP);
+    assign s_axi_bid     = wid;
+    assign s_axi_bresp   = RESP_OKAY;
+
+    wire [15:0] wsel     = waddr[15:0];
+    wire [2:0]  tx_word  = wsel[5:3];              // TX_FLIT index within 0x100..0x120
+    wire        is_tx_fl = (wsel >= A_TX_FLIT0) && (wsel < A_TX_FLIT0 + FLIT_WORDS*8);
+    wire        is_stage = (waddr[15:12] == 4'h2);
+    // Index relative to A_STAGE. Slicing waddr directly would fold base-address
+    // bits into the index -- harmless only while SW_BITS happens to be small
+    // enough that 0x2000 aliases to 0, which is not a property to depend on.
+    wire [SW_BITS-1:0] stage_widx = (waddr[15:0] - A_STAGE) >> 3;
+
+    integer wb;
+    always @(posedge clk) begin
+        tx_push  <= 1'b0;
+        rx_pop   <= 1'b0;
+        kick_req <= 1'b0;
+        cred_wr  <= 1'b0;
+
+        if (!resetn) begin
+            wstate       <= W_IDLE;
+            waddr        <= {ADDR_WIDTH{1'b0}};
+            wlen         <= 8'd0;
+            wid          <= {ID_WIDTH{1'b0}};
+            ctrl_reg     <= {DATA_WIDTH{1'b0}};
+            irq_en_reg   <= {DATA_WIDTH{1'b0}};
+            irq_stat_reg <= {DATA_WIDTH{1'b0}};
+            prog_dst     <= {(2*POS_WIDTH){1'b0}};
+            prog_len     <= 16'd0;
+            cred_val     <= 16'd0;
+            tx_stage     <= {PAD_WIDTH{1'b0}};
+        end else begin
+            case (wstate)
+                W_IDLE: if (s_axi_awvalid) begin
+                    wid    <= s_axi_awid;
+                    waddr  <= s_axi_awaddr;
+                    wlen   <= s_axi_awlen;
+                    wstate <= W_DATA;
+                end
+                W_DATA: if (s_axi_wvalid) begin
+                    if (is_stage) begin
+                        stage_ram[stage_widx] <= s_axi_wdata;
+                    end else if (is_tx_fl) begin
+                        for (wb = 0; wb < DATA_WIDTH/8; wb = wb + 1)
+                            if (s_axi_wstrb[wb])
+                                tx_stage[tx_word*DATA_WIDTH + wb*8 +: 8] <=
+                                    s_axi_wdata[wb*8 +: 8];
+                    end else begin
+                        case (wsel)
+                            A_CTRL:      ctrl_reg     <= s_axi_wdata;
+                            A_IRQ_EN:    irq_en_reg   <= s_axi_wdata;
+                            A_IRQ_STAT:  irq_stat_reg <= irq_stat_reg & ~s_axi_wdata; // W1C
+                            A_PROG_DST:  prog_dst     <= s_axi_wdata[2*POS_WIDTH-1:0];
+                            A_PROG_LEN:  prog_len     <= s_axi_wdata[15:0];
+                            A_PROG_CRED: begin
+                                             cred_wr  <= 1'b1;
+                                             cred_val <= s_axi_wdata[15:0];
+                                         end
+                            A_PROG_KICK: kick_req <= 1'b1;
+                            // mailbox is ignored mid-dispatch; they share the TX FIFO
+                            A_TX_KICK:   tx_push      <= !tx_full && !prog_run;
+                            A_RX_POP:    rx_pop       <= !rx_empty;
+                            default: ;
+                        endcase
+                    end
+                    waddr <= waddr + (DATA_WIDTH/8);
+                    if (wlen == 8'd0) wstate <= W_RESP;
+                    else              wlen   <= wlen - 8'd1;
+                end
+                W_RESP: if (s_axi_bready) wstate <= W_IDLE;
+                default: wstate <= W_IDLE;
+            endcase
+        end
+    end
+
+    // ----------------------------------------------------------- AXI read FSM
+    localparam R_IDLE = 1'b0, R_DATA = 1'b1;
+    reg                  rstate;
+    reg [ADDR_WIDTH-1:0] raddr;
+    reg [8:0]            rbeats;
+    reg [ID_WIDTH-1:0]   rid;
+    reg [DATA_WIDTH-1:0] rdata_r;
+    reg                  rvalid_r, rlast_r;
+
+    assign s_axi_arready = (rstate == R_IDLE);
+    assign s_axi_rvalid  = rvalid_r;
+    assign s_axi_rdata   = rdata_r;
+    assign s_axi_rlast   = rlast_r;
+    assign s_axi_rid     = rid;
+    assign s_axi_rresp   = RESP_OKAY;
+
+    wire r_can_advance = !rvalid_r || s_axi_rready;
+    wire [15:0] rsel    = raddr[15:0];
+    wire [2:0]  rx_word = rsel[5:3];
+    wire        is_rx_fl = (rsel >= A_RX_FLIT0) && (rsel < A_RX_FLIT0 + FLIT_WORDS*8);
+    wire        is_node  = (raddr[15:12] == 4'h1);
+
+    wire [PAD_WIDTH-1:0] rx_padded = { {(PAD_WIDTH-FLIT_WIDTH){1'b0}}, rx_head };
+
+    reg [DATA_WIDTH-1:0] reg_rd;
+    always @(*) begin
+        reg_rd = {DATA_WIDTH{1'b0}};
+        if (is_rx_fl)
+            reg_rd = rx_padded[rx_word*DATA_WIDTH +: DATA_WIDTH];
+        else case (rsel)
+            A_CTRL:      reg_rd = ctrl_reg;
+            A_CAPS:      reg_rd = caps_word;
+            A_IRQ_EN:    reg_rd = irq_en_reg;
+            A_IRQ_STAT:  reg_rd = irq_stat_reg;
+            A_PROG_DST:  reg_rd = { {(DATA_WIDTH-2*POS_WIDTH){1'b0}}, prog_dst };
+            A_PROG_LEN:  reg_rd = { {(DATA_WIDTH-16){1'b0}}, prog_len };
+            A_PROG_CRED: reg_rd = { {(DATA_WIDTH-16){1'b0}}, prog_credit };
+            A_STATUS:    reg_rd = { {(DATA_WIDTH-3){1'b0}}, 1'b1 /*mesh_ready*/,
+                                    1'b0 /*error*/, (!tx_empty | prog_run) };
+            A_PROG_STAT: reg_rd = { {(DATA_WIDTH-33){1'b0}}, prog_credit,
+                                    prog_left, prog_run };
+            A_TX_STATUS: reg_rd = { {(DATA_WIDTH-17){1'b0}}, tx_full, 16'd0 };
+            A_RX_STATUS: reg_rd = { {(DATA_WIDTH-18){1'b0}}, rx_overflow, rx_empty,
+                                    16'd0 };
+            default:     reg_rd = {DATA_WIDTH{1'b0}};
+        endcase
+    end
+
+    always @(posedge clk) begin
+        if (!resetn) begin
+            rstate   <= R_IDLE;
+            rvalid_r <= 1'b0;
+            rlast_r  <= 1'b0;
+            raddr    <= {ADDR_WIDTH{1'b0}};
+            rbeats   <= 9'd0;
+            rid      <= {ID_WIDTH{1'b0}};
+        end else begin
+            case (rstate)
+                R_IDLE: begin
+                    if (rvalid_r && s_axi_rready) rvalid_r <= 1'b0;
+                    if (s_axi_arvalid) begin
+                        rid    <= s_axi_arid;
+                        raddr  <= s_axi_araddr;
+                        rbeats <= {1'b0, s_axi_arlen} + 9'd1;
+                        rstate <= R_DATA;
+                    end
+                end
+                R_DATA: if (r_can_advance) begin
+                    if (rbeats != 9'd0) begin
+                        rdata_r  <= is_node ? node_status[raddr[3 +: 2*POS_WIDTH]]
+                                            : reg_rd;
+                        rvalid_r <= 1'b1;
+                        rlast_r  <= (rbeats == 9'd1);
+                        rbeats   <= rbeats - 9'd1;
+                        raddr    <= raddr + (DATA_WIDTH/8);
+                    end else begin
+                        rvalid_r <= 1'b0;
+                        rlast_r  <= 1'b0;
+                        rstate   <= R_IDLE;
+                    end
+                end
+            endcase
+        end
+    end
+
+endmodule
+
+`default_nettype wire
