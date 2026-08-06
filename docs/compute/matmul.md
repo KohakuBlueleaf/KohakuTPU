@@ -65,6 +65,38 @@ L3 is how large problems compose, and it never touches the inner loop.
 
 ## 3. Formats, and why L0/L1 are exact
 
+### 3.0 What to call this: AMP FP16-MXFP7, and why the unit is FLOPS
+
+The element format is **MXFP7** — an OCP-style microscaling format: an E8M0
+scale shared by a block of 32, and a 7-bit signed element. The pair is a
+*floating-point* value, because the shared field is a power-of-two exponent:
+
+```
+   value(i,k)  =  2^sA[i]  x  ( a_int[i][k] / 2^6 )
+                  \_ E8M0 _/   \___ 7-bit signed significand ___/
+```
+
+The machine as a whole is **AMP (automatic mixed precision) FP16-MXFP7**:
+
+```
+   operands in memory        FP16          software-visible
+   multiply                  MXFP7         hardware-quantised on the way in
+   accumulate                FP22  S1E7M14 one add per 32 multiplies
+   result out                FP16          software-visible again
+```
+
+So the throughput unit is **FLOPS, not IOPS**. The integer datapath inside the
+DSP is an implementation detail of an MXFP7 multiply — the exponent is simply
+factored out of the block and applied once, which is exactly what makes L0/L1
+exact. Software never sees an integer, and the numbers it puts in and gets out
+are floats.
+
+Throughout these documents "int7" refers specifically to the 7-bit **significand
+field** as it appears inside the DSP packing, never to the format software sees.
+
+> One MAC is counted as 2 FLOPs, a multiply and an add, which is the usual
+> convention.
+
 ### 3.1 The quantisation block is K = 32
 
 Microscaling shares a scale **along the reduction dimension only**. For
@@ -129,7 +161,7 @@ the buffer is holding float data.
         |
         |  normalise once
         v
-   accumulator       FP24  S1E7M16            one add per 32 MACs
+   accumulator       FP22  S1E7M14            one add per 32 MACs
         |
         v
    NoC / DRAM        FP16                     software-visible again
@@ -419,16 +451,24 @@ Fixed by this design:
    cluster                  4 tensor CU + 1 accumulator CU
    cluster throughput       4 x 32 x 4 per cycle
    quantisation block       K = 32
-   element format           int7 + E8M0   (per row of A, per column of B)
+   element format           MXFP7: E8M0 per block of 32 + 7-bit significand
    operand payload          256 bit = 32 x int7 + 4 x E8M0
    L0 / L1 accumulation     exact integer
    supported shapes         M = 4a, N = 4b, K = 32c
+   machine precision        AMP FP16-MXFP7, FP22 accumulate  (s3.0)
+```
+
+Settled since:
+
+```
+   accumulator format       FP22 S1E7M14 -- measured identical to FP24 against
+                            FP64 and exact-int, cheaper, and carries the slack
+                            that takes the CU past 300 MHz. See accumulator.md
 ```
 
 Open:
 
 ```
-   accumulator format       FP24 S1E7M16  vs  FP32     (accuracy, not area)
    accumulator buffer size  sets NoC port count -- pick from a target tile
    peer topology            chain vs tree -- scheduling, not hardware
    rounding in the MAS      quantiser: nearest-even vs truncate vs stochastic

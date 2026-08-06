@@ -7,8 +7,12 @@ Mirrors `src/kohakutpu/`.
 
 | Doc | Covers |
 |---|---|
+| [tensor-isa.md](tensor-isa.md) | **Cluster manager ISA.** Tensor descriptors, the L2/L1/tile hierarchy, convolution as a descriptor |
 | [matmul.md](matmul.md) | **Current design.** Tensor CU, cluster chain, accumulator network — logic level |
 | [matmul-circuit.md](matmul-circuit.md) | The same design at primitive level — DSP48E2 packing, cascade, LUT budget |
+| [matmul-impl.md](matmul-impl.md) | **Built and verified.** One cluster: modules, benches, measured resources |
+| [accumulator.md](accumulator.md) | Accumulator: precision and cost against mantissa width, and how it reached 300 MHz |
+| [timing.md](timing.md) | **Pipeline stages, cycle counts, throughput and every measured resource number** |
 | [arithmetic.md](arithmetic.md) | FP8 mul, FP16 FMA, FP24 FMA, division, log, exp — the bit-level constructions |
 | [dsp.md](dsp.md) | DSP48E2 modes, pipelining, the `(A+D)*B+C` packing this project relies on |
 | [costs.md](costs.md) | Measured resource cost and throughput per unit |

@@ -16,11 +16,19 @@ docs/
 
 ## Start here
 
-- [Overall architecture](arch-design.md) — hierarchy, components, how they fit
+- **[Architecture](arch-design.md)** — the machine top to bottom, how a matmul
+  flows through it, and every headline number in one place. Read this first.
+- [1×5 and 2×2 systems](system.md) — the machine actually running, end to end
+- [Pipeline, cycles and resources](compute/timing.md) — every latency and
+  measured figure for the compute path
 
 ## [Compute](compute/README.md) — `src/kohakutpu/`
 
+- [Tensor Core ISA](compute/tensor-isa.md) — **cluster manager instruction set**: tensor descriptors, L1/L2, and convolution as a memory request
 - [Matmul unit](compute/matmul.md) — **current design**: tensor CU, cluster chain, accumulator network
+- [Matmul circuit](compute/matmul-circuit.md) — DSP48E2 packing and cascade
+- [Matmul implementation](compute/matmul-impl.md) — built, verified, measured
+- [Accumulator](compute/accumulator.md) — precision and cost vs mantissa width, and the 85 → 312 MHz timing history
 - [Arithmetic](compute/arithmetic.md) — FP8/FP16/FP24 constructions, division, log, exp
 - [DSP usage](compute/dsp.md) — DSP48E2 modes, pipelining, operand packing
 - [Costs](compute/costs.md) — measured resource cost and throughput
