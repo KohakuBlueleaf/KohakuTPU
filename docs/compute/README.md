@@ -8,6 +8,7 @@ Mirrors `src/kohakutpu/`.
 | Doc | Covers |
 |---|---|
 | [matmul.md](matmul.md) | **Current design.** Tensor CU, cluster chain, accumulator network — logic level |
+| [matmul-circuit.md](matmul-circuit.md) | The same design at primitive level — DSP48E2 packing, cascade, LUT budget |
 | [arithmetic.md](arithmetic.md) | FP8 mul, FP16 FMA, FP24 FMA, division, log, exp — the bit-level constructions |
 | [dsp.md](dsp.md) | DSP48E2 modes, pipelining, the `(A+D)*B+C` packing this project relies on |
 | [costs.md](costs.md) | Measured resource cost and throughput per unit |
