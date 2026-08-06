@@ -52,7 +52,7 @@ Measured, with `RREADY` held high the entire time (maximally cooperative):
   RVALID   TIMEOUT (after 200 cyc)
 ```
 
-Same probe against `src/hakuaxi/axi4_ram.v`: `RVALID OK (after 1 cyc)`,
+Same probe against `src/kohakuaxi/axi4_ram.v`: `RVALID OK (after 1 cyc)`,
 `RDATA = deadbeefcafebabe`.
 
 **Why simulation passed.** `tests/axi/inst_receive_tb2.v` Test Case 3 drives
@@ -129,7 +129,7 @@ that exact cycle the beat is lost. Read data must be held until `RREADY`.
 
 ## The reference slave
 
-`src/hakuaxi/axi4_ram.v` — a minimal, correct AXI4-Full slave RAM.
+`src/kohakuaxi/axi4_ram.v` — a minimal, correct AXI4-Full slave RAM.
 Parameterised (`DATA_WIDTH`, `ADDR_WIDTH`, `ID_WIDTH`, `DEPTH`), handles
 INCR/FIXED/WRAP bursts, `WSTRB` byte-enables, ID reflection, bursts to 256 beats.
 
@@ -151,7 +151,7 @@ Simulation (auto-detects iverilog, else Vivado xsim):
 
 ```powershell
 .\tests\run_axi_sim.ps1                                  # the reference slave
-.\tests\run_axi_sim.ps1 -Dut src\hakuaxi\mine.v   # your slave, same ports
+.\tests\run_axi_sim.ps1 -Dut src\kohakuaxi\mine.v   # your slave, same ports
 .\tests\run_axi_sim.ps1 -Sim xsim                        # force Vivado
 ```
 
