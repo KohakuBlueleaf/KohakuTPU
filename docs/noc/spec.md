@@ -1,8 +1,8 @@
-# HakuNoC Specification
+# KohakuNoC Specification
 
 **Status: DRAFT, revision 2.** Open questions are marked ❓.
 
-HakuNoC is a 2D-mesh packet network carrying three kinds of traffic:
+KohakuNoC is a 2D-mesh packet network carrying three kinds of traffic:
 
 1. **Memory access** — a node reads/writes DRAM via MAS
 2. **CU ↔ CU data** — bulk transfer from one unit's L1 into another's L1
@@ -92,6 +92,19 @@ Why this matters beyond tidiness:
 Buffers therefore only need to cover the backpressure round-trip — **8 to 32
 flits in LUTRAM/SRL**, not URAM. Measured on the current router: 0 URAM instead of
 15 per node, returning 960 URAM to the caches on a 196-node mesh.
+
+Each input port holds **one** flit beyond its queue, offered to a single output.
+An input therefore has one flit outstanding rather than one per direction, so a
+flit waiting on a congested output blocks the flit behind it even when that one
+would have gone elsewhere — ordinary head-of-line blocking, the price of not
+keeping a `FLIT_WIDTH` register per (input, output) pair. Virtual channels are the
+standard remedy if profiling ever shows it costs more than it saves.
+
+Measured cost per router (`tests/run_synth_check.ps1`, out-of-context on
+xcvu13p-fhgb2104-2L-e, 288-bit flits, depth-32 buffers): **4,095 LUT, 5,960 FF,
+0 BRAM, 0 URAM**, closing 410 MHz against a 300 MHz target. At the 14×14 maximum
+that is 46% of the device's LUTs and 34% of its registers, with the entire BRAM and
+URAM budget left for caches.
 
 ---
 
@@ -197,7 +210,7 @@ is a CU-level contract published by that CU, not a network concern.
 | `[247:240]` | `inst_class` (8) | opaque to the network; CU-defined |
 | `[239:0]` | `inst_body` (240) | first 240 bits of the instruction |
 
-240 bits covers every instruction in `docs/controller.md` (largest is 71) in a
+240 bits covers every instruction in `docs/compute/controller.md` (largest is 71) in a
 single flit. Longer encodings continue in following flits.
 
 ### 5.5 `CU_SIGNAL`
@@ -232,9 +245,15 @@ Every CU, whatever it computes, **must** expose the same two things. This is wha
 makes units pluggable — the global controller can drive, discover and health-check
 any CU without knowing its internals.
 
+`src/kohakunoc/noc_cu_base.v` implements this section in full, so a CU conforms by
+construction rather than by remembering to. It queues completions rather than
+holding one, because a CU that retires faster than a congested link drains would
+otherwise overwrite -- and therefore lose -- the signals that return credits. A CU author writes a datapath and
+nothing else; see [`cu-framework.md`](cu-framework.md).
+
 ### 6.1 Instruction FIFO (`CU_INST`)
 
-A FIFO, because instruction streams are ordered and `docs/controller.md` already
+A FIFO, because instruction streams are ordered and `docs/compute/controller.md` already
 specifies blocking in-order execution.
 
 - **Entries are whole 288-bit flits**, not extracted instruction bodies. Storing
@@ -365,7 +384,7 @@ and they are deliberately separate because they serve different planes:
 
 | Module | AXI role | NoC role | Plane |
 |---|---|---|---|
-| **Global Orchestrator** | **slave** (host control + status) and **master** (program fetch) | one NoC node | control |
+| **Global Orchestrator** | **slave** only | one NoC node | control |
 | **MAS** | **master** only | one NoC node per instance | data |
 
 Splitting them matters. Mixing bulk DRAM traffic with control traffic through one
@@ -398,10 +417,11 @@ NoC coordinates**.
 | `0x0010` | `CAPS` | RO | `flit_width`, `grid_lo`, `grid_hi`, `n_nodes` |
 | `0x0018` | `IRQ_STATUS` | RW1C | pending event bits |
 | `0x0020` | `IRQ_ENABLE` | RW | mask |
-| `0x0040` | `PROG_ADDR` | RW | DRAM byte address of an instruction program |
-| `0x0048` | `PROG_LEN` | RW | program length in bytes |
-| `0x0050` | `PROG_KICK` | WO | begin fetch + distribute |
-| `0x0058` | `PROG_STATUS` | RO | `running`, `done`, `error`, bytes consumed |
+| `0x0040` | `PROG_DST` | RW | `{dst_y, dst_x}` for the next dispatch |
+| `0x0048` | `PROG_LEN` | RW | flits to dispatch |
+| `0x0050` | `PROG_KICK` | WO | begin dispatch |
+| `0x0058` | `PROG_STATUS` | RO | `running`, `flits_left`, `credit` |
+| `0x0060` | `PROG_CREDIT` | RW | seed the instruction-FIFO credit count |
 | `0x0100`–`0x0120` | `TX_FLIT[0..4]` | RW | one outgoing flit |
 | `0x0140` | `TX_KICK` | WO | inject `TX_FLIT` |
 | `0x0148` | `TX_STATUS` | RO | `space`, `full` |
@@ -409,6 +429,7 @@ NoC coordinates**.
 | `0x01C0` | `RX_POP` | WO | advance the receive FIFO |
 | `0x01C8` | `RX_STATUS` | RO | `count`, `empty`, `overflow` |
 | `0x1000`–`0x1FFF` | `NODE_STATUS[0..255]` | RO | status mirror, §10.4 |
+| `0x2000`+ | `STAGE[]` | RW | instruction staging buffer, §10.3 |
 
 The `TX_*`/`RX_*` window is a **raw flit mailbox**: it injects and receives
 arbitrary flits with no interpretation. That is deliberate — an address-mapped
@@ -420,16 +441,40 @@ The mailbox is also the *first* thing to build: it is independently useful befor
 the orchestrator's program-fetch logic exists, and it is what makes the mesh
 reachable from `jaxi::write` / `jaxi::read` on real hardware.
 
-### 10.3 Global Orchestrator — AXI master
+### 10.3 Global Orchestrator — instruction dispatch
 
-Instruction programs live in DRAM. The host writes one, sets `PROG_ADDR`/
-`PROG_LEN`, and kicks; the orchestrator fetches it over its AXI master port and
-distributes `CU_INST` packets to the addressed nodes. This keeps the host out of
-the inner loop — otherwise every instruction costs a PCIe round trip.
+**The orchestrator has no AXI master.** Programs are staged in a local buffer that
+the host writes through the same AXI slave, at `0x2000+`. The host
+then sets `PROG_DST`, `PROG_LEN`, `PROG_CREDIT` and kicks; the dispatcher walks
+the buffer, rewrites each flit's destination to `PROG_DST`, and injects.
 
-The orchestrator must respect the target's instruction-FIFO space (§6.1, §7): it
-holds a credit per destination node and stalls locally rather than backpressuring
-the network.
+This works because **programs here are small** — unlike a CUDA kernel, a KohakuTPU
+instruction is ≤71 bits (`docs/compute/controller.md`) and one flit carries 240 bits of
+body, so a few hundred flits of staging covers a dispatch batch comfortably. A
+local buffer is therefore sufficient, and an entire AXI master implementation
+disappears with it.
+
+Because destination is applied at dispatch rather than baked into the staged
+flits, one staged program can be sent to any node, or to several in turn.
+
+**The staging buffer is single-use while a dispatch is running.** The dispatcher
+streams out of it as it goes, so the host must wait for `PROG_STATUS.running` to
+clear before refilling. That is *not* the same as waiting for the target CU to
+finish executing -- the CU keeps working while the next program is staged and
+dispatched, which is where overlap between programs comes from.
+
+Credits (§6.1, §7): `PROG_CREDIT` seeds the count, each dispatched flit consumes
+one, and `CU_SIGNAL`/`INST_COMPLETE` from the target returns one. The dispatcher
+stalls locally at zero rather than backpressuring `CU_INST` into the mesh, which
+is the protocol deadlock §7 exists to prevent.
+
+> A later option, if programs ever do outgrow the buffer: the orchestrator issues
+> a `MEM_RD_REQ` naming the **CU** as `src`, so MAS delivers instruction data
+> straight to the CU and the orchestrator never touches it. That needs two
+> additions — credit delegation (the issuer holds the credit, not the node named
+> in `src`) and a response-type override so MAS replies `CU_INST` rather than
+> `MEM_RD_RESP`, for which `addr_spare` is the natural home. Deliberately not in
+> v1.
 
 ### 10.4 Status mirror
 
@@ -444,13 +489,31 @@ arrives from that node. The host polls **this**, not DRAM:
 | `[7:1]` | reserved |
 | `[0]` | `valid` |
 
-252 nodes x 8 B = 2 KB, one BRAM. The point is latency and isolation: polling DDR4
+252 nodes x 8 B = 2 KB. The point is latency and isolation: polling DDR4
 across PCIe costs hundreds of nanoseconds per read *and* injects traffic into the
 memory system the CUs are trying to use. Polling a BRAM behind the AXI slave costs
 a BAR read and disturbs nothing.
 
 `signal_count` rather than a sticky flag because the host may poll slower than
 events arrive; a counter tells it how many it missed, a flag does not.
+
+> **Both of the orchestrator's arrays land in LUTRAM, not BRAM** (measured, not
+> assumed: `tests/run_synth_check.ps1`). The staging buffer maps to `RAM64M8 x100`
+> at `STAGE_FLITS = 128` and `NODE_STATUS` to `RAM256X1D x64`; a
+> `ram_style = "block"` attribute on either is rejected as *"Infeasible"* and
+> silently downgraded. `NODE_STATUS` cannot be BRAM as written because
+> `signal_count` is a same-cycle read-modify-write. Together they cost roughly
+> 2.7k LUTs, and there is one orchestrator per system, so this is recorded rather
+> than fixed. It matters only if `STAGE_FLITS` grows by an order of magnitude.
+
+**`CU_SIGNAL` never enters the RX FIFO.** It updates this mirror and is then
+dropped. Queuing it would make an unread RX FIFO fatal: once full, the
+orchestrator raises `noc_in_busy` and stops accepting *any* inbound flit,
+including the `INST_COMPLETE` signals that return dispatch credits (§6.1, §7).
+The machine then stalls after exactly `RX_DEPTH` completions with nothing
+reported anywhere. Signals are therefore always absorbed, and `RX_FLIT` carries
+only traffic that has no other home -- `CU_CTRL` replies, `CU_DATA` addressed to
+the orchestrator, and anything injected during bring-up.
 
 ### 10.5 MAS
 
@@ -534,7 +597,8 @@ buffers. Revisit only if measurement demands it.
 | `CU_CTRL` register map | **first 4 words mandatory**, rest CU-defined |
 | CU discovery | **one `CU_CAPS` word** for now |
 | `CU_SIGNAL` codes | **centrally allocated** `<0x40`, CU-defined above; `arg` always CU-defined |
-| AXI attachment | **two modules**: orchestrator (control, slave+master) and MAS (data, master) |
+| AXI attachment | **two modules**: orchestrator (control, **slave only**) and MAS (data, master) |
+| Instruction source | **staged in orchestrator BRAM**, not fetched from DRAM -- programs are small |
 | Host control window | **register-mapped mailbox + BRAM status mirror**, not address-mapped |
 | Host status polling | **`NODE_STATUS` BRAM**, never DDR4 |
 | Clock domains | **single clock to start**, CDC a parameter defaulting off |
