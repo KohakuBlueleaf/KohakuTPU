@@ -21,14 +21,30 @@ module sync_fifo #(
     input  wire                     wr_en,
     input  wire [DATA_WIDTH-1:0]    wr_data,
     output wire                     wr_busy,
+    // NOT A MARGIN, despite the name and despite PROG_FULL_THRESH being
+    // passed: USE_ADV_FEATURES below is zero, so XPM ties `prog_full` low and
+    // this reduces to `wr_busy`. It has never asserted early.
+    //
+    // That was survivable only because the NoC link now RETRIES -- sender
+    // holds `valid` until a cycle with `busy` low, receiver accepts exactly
+    // then -- which needs no margin at all (docs/noc/spec.md s2.1). Before the
+    // retry existed, every "backpressure on almost-full, not full" comment in
+    // this codebase described something that was not happening, and flits were
+    // being destroyed under congestion.
+    //
+    // Anything that wants a real margin must COUNT FOR ITSELF, as MAG does
+    // with Q_MARGIN. Turning the feature on means editing USE_ADV_FEATURES,
+    // and nothing should depend on this bit until it is.
+    output wire                     wr_almost,
 
     // Read interface
     input  wire                     rd_en,
     output wire [DATA_WIDTH-1:0]    rd_data,
     output wire                     rd_busy
 );
-    wire rd_rst_busy, wr_rst_busy, empty, full;
-    assign wr_busy = full | wr_rst_busy;
+    wire rd_rst_busy, wr_rst_busy, empty, full, prog_full;
+    assign wr_busy   = full | wr_rst_busy;
+    assign wr_almost = full | prog_full | wr_rst_busy;
     assign rd_busy = empty | rd_rst_busy;
 
     xpm_fifo_sync #(
@@ -52,6 +68,7 @@ module sync_fifo #(
         .dout(rd_data),
         .empty(empty),
         .full(full),
+        .prog_full(prog_full),
         .rd_rst_busy(rd_rst_busy),
         .wr_rst_busy(wr_rst_busy),
         .din(wr_data),

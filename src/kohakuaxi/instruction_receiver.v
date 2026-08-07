@@ -319,7 +319,7 @@ module InstReceiver #(
                 data_reg[data_id] <= data;
                 data_valid_reg[data_id] <= 1;
             end
-            
+
             if (data_next) begin
                 if(data_valid_reg[read_inst_addr]) begin
                     data_read <= data_reg[read_inst_addr];
@@ -332,7 +332,7 @@ module InstReceiver #(
                 data_read <= data_read;
                 data_read_valid <= 0;
             end
-            
+
             if (instruction_next) begin
                 if(instruction_valid_reg[inst_out_addr_reg]) begin
                     instruction <= instruction_reg[inst_out_addr_reg];

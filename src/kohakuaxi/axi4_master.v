@@ -1,6 +1,6 @@
 // AXI4-Full master. Reference implementation -- this is the shape MAS needs.
 //
-// Takes one command (address, byte length, read/write) and turns it into as many
+// Takes one command (address, beat count, read/write) and turns it into as many
 // legal AXI bursts as required. The three rules that make burst generation
 // non-trivial, and that a hand-rolled master usually gets wrong:
 //

@@ -56,5 +56,5 @@ module float_display #(
         end
         decoded = $realtobits(decoded_num);
     end
-    
+
 endmodule

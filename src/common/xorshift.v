@@ -11,7 +11,7 @@ module xorshift64 (
     // Internal state
     reg [63:0] state;
     reg [1:0] stage;
-    
+
     // Xorshift64 algorithm
     always @(posedge clk) begin
         if (rst) begin
@@ -57,11 +57,11 @@ module xorshift128_single (
     // Internal state
     reg [63:0] state0, state1;
     wire [63:0] next_state0, next_state1;
-    
+
     // Compute next states combinationally
     assign next_state0 = state1;
     assign next_state1 = state0 ^ ((state0 << 23) ^ (state0 >> 17) ^ state1 ^ (state1 >> 26));
-    
+
     // Update state and output
     always @(posedge clk) begin
         if (rst) begin
@@ -88,15 +88,15 @@ module xorshift256 (
     // Internal state - we use two 128-bit generators with different parameters
     reg [63:0] state0, state1, state2, state3;
     wire [63:0] next_state0, next_state1, next_state2, next_state3;
-    
+
     // First 128-bit generator
     assign next_state0 = state1;
     assign next_state1 = state0 ^ ((state0 << 23) ^ (state0 >> 17) ^ state1 ^ (state1 >> 26));
-    
+
     // Second 128-bit generator (different shift values for better independence)
     assign next_state2 = state3;
     assign next_state3 = state2 ^ ((state2 << 19) ^ (state2 >> 11) ^ state3 ^ (state3 >> 29));
-    
+
     // Update state and output
     always @(posedge clk) begin
         if (rst) begin
@@ -111,7 +111,7 @@ module xorshift256 (
             state3 <= next_state3;
         end
     end
-    
+
     // Combine outputs from both generators
     assign rand_out = {next_state2, next_state3, next_state0, next_state1};
 endmodule
