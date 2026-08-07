@@ -193,9 +193,20 @@ module mx_system32_tb;
     // ======================================================== the problem
     integer signed A  [0:M-1][0:KK-1];
     integer signed B  [0:KK-1][0:N-1];
-    integer        SA [0:M-1];              // E8M0 per row of A
-    integer        SB [0:N-1];              // E8M0 per column of B
+    integer        SA [0:M-1];              // scale exponent, per row of A
+    integer        SB [0:N-1];              // scale exponent, per column of B
     integer        ANCHOR;
+
+    // E5M3 scale field: {E[4:0], M[2:0]}. This bench uses plain powers of two,
+    // so M stays 0 and sf() only biases the exponent. ANCHOR carries 2*SBIAS
+    // to cancel both stored biases; the rest is headroom for FP16.
+    localparam integer SBIAS = 20;
+    function [7:0] sf;
+        input integer v;
+        begin
+            sf = (v + SBIAS) << 3;
+        end
+    endfunction
 
     integer signed exact_c [0:M-1][0:N-1];  // CPU MXFP7 ground truth, integer
     real           fp64_c  [0:M-1][0:N-1];  // FP64 ground truth
@@ -246,7 +257,7 @@ module mx_system32_tb;
         wdata = 0; wlast = 0; bd_we = 0; bd_addr = 0; bd_wdata = 0;
         // K=32 sums reach ~+/-23,000 before scaling; ANCHOR=8 with scales in
         // 0..3 keeps every result inside FP16 range with margin
-        ANCHOR = 8;
+        ANCHOR = 2*SBIAS + 8;
 
         #200;
         repeat (10) @(posedge clk);
@@ -267,7 +278,9 @@ module mx_system32_tb;
                 blocksum = 0;
                 for (k = 0; k < KK; k = k + 1)
                     blocksum = blocksum + A[i][k] * B[k][j];
-                sh = SA[i] + SB[j] - ANCHOR;
+                // only the headroom reaches the result: the other 2*SBIAS of
+                // ANCHOR cancels the bias stored in each scale field
+                sh = SA[i] + SB[j] - (ANCHOR - 2*SBIAS);
                 exact_c[i][j] = blocksum <<< (SA[i] + SB[j]);
                 fp64_c[i][j]  = $itor(blocksum) * (2.0 ** sh);
             end
@@ -275,7 +288,8 @@ module mx_system32_tb;
         for (i = 0; i < M; i = i + 1)
             for (j = 0; j < N; j = j + 1) begin
                 checks = checks + 1;
-                if ($itor(exact_c[i][j]) * (2.0 ** -ANCHOR) != fp64_c[i][j]) begin
+                if ($itor(exact_c[i][j]) * (2.0 ** -(ANCHOR - 2*SBIAS))
+                    != fp64_c[i][j]) begin
                     errors = errors + 1;
                     if (errors <= 4)
                         $display("  FAIL ground-truth models disagree at [%0d][%0d]", i, j);
@@ -294,7 +308,7 @@ module mx_system32_tb;
                     for (k = 0; k < 8; k = k + 1)
                         wtmp[255 - (i*8+k)*7 -: 7] = A[g*4+i][c*8+k][6:0];
                 for (i = 0; i < 4; i = i + 1)
-                    wtmp[31 - i*8 -: 8] = SA[g*4+i][7:0];
+                    wtmp[31 - i*8 -: 8] = sf(SA[g*4+i]);
                 bd_write(WA_BASE + g*4 + c, wtmp);
             end
         for (h = 0; h < GN; h = h + 1)
@@ -304,7 +318,7 @@ module mx_system32_tb;
                     for (j = 0; j < 4; j = j + 1)
                         wtmp[255 - (k*4+j)*7 -: 7] = B[c*8+k][h*4+j][6:0];
                 for (j = 0; j < 4; j = j + 1)
-                    wtmp[31 - j*8 -: 8] = SB[h*4+j][7:0];
+                    wtmp[31 - j*8 -: 8] = sf(SB[h*4+j]);
                 bd_write(WB_BASE + h*4 + c, wtmp);
             end
         $display("    A: %0d words, B: %0d words", GM*4, GN*4);

@@ -15,13 +15,13 @@
 //   host stages a program over AXI  ->  orchestrator dispatches CU_INST
 //   -> CU issues MEM_RD_REQ naming ITSELF as src
 //   -> memory replies MEM_RD_RESP straight to the CU, not via the orchestrator
-//   -> cluster computes 4x32x4 per block, ACU accumulates in FP24
+//   -> cluster computes 4x32x4 per block, ACU accumulates in FP22
 //   -> CU issues MEM_WR_REQ with the FP16 result
 //   -> CU signals completion, orchestrator mirrors it into NODE_STATUS
 //   -> host polls AXI and reads the result back
 //
-// C[4,4] = A[4,256] * B[256,4], as 8 blocks of K=32, with per-block per-row and
-// per-column E8M0 scales -- so this exercises microscaling, not just a matmul.
+// C[4,4] = A[4,256] * B[256,4], as 8 blocks of K=32, with a per-block per-row
+// and per-column scale -- so this exercises microscaling, not just a matmul.
 //
 // PRECISION. Three quantities are compared:
 //
@@ -33,7 +33,7 @@
 //              bench's own model has not drifted.
 //   HARDWARE   the FP16 written back to memory.
 //
-// So the reported error is purely what the FP24 accumulator and the FP16
+// So the reported error is purely what the FP22 accumulator and the FP16
 // emission cost. Quantisation error is NOT included: the operands are already
 // int7 in memory, which is the point at which MAS would have quantised them.
 
@@ -193,9 +193,20 @@ module mx_system_tb;
     // ======================================================== the problem
     integer signed A [0:3][0:255];
     integer signed B [0:255][0:3];
-    integer        SA [0:NBLK-1][0:3];      // E8M0 per block, per row of A
-    integer        SB [0:NBLK-1][0:3];      // E8M0 per block, per column of B
+    integer        SA [0:NBLK-1][0:3];      // scale exponent, per block per row
+    integer        SB [0:NBLK-1][0:3];      // scale exponent, per block per col
     integer        ANCHOR;
+
+    // E5M3 scale field: {E[4:0], M[2:0]}. This bench uses plain powers of two,
+    // so M stays 0 and sf() only biases the exponent. ANCHOR carries 2*SBIAS
+    // to cancel both stored biases; the rest is headroom for FP16.
+    localparam integer SBIAS = 20;
+    function [7:0] sf;
+        input integer v;
+        begin
+            sf = (v + SBIAS) << 3;
+        end
+    endfunction
 
     integer signed exact_c [0:3][0:3];      // CPU int7 ground truth
     real           fp64_c  [0:3][0:3];      // FP64 ground truth
@@ -239,7 +250,7 @@ module mx_system_tb;
         awvalid = 0; wvalid = 0; arvalid = 0; bready = 0; rready = 0;
         awid = 0; arid = 0; awaddr = 0; araddr = 0; awlen = 0; arlen = 0;
         wdata = 0; wlast = 0; bd_we = 0; bd_addr = 0; bd_wdata = 0;
-        ANCHOR = 6;
+        ANCHOR = 2*SBIAS + 6;
 
         #200;
         repeat (10) @(posedge clk);
@@ -269,9 +280,11 @@ module mx_system_tb;
                     blocksum = 0;
                     for (k = 0; k < 32; k = k + 1)
                         blocksum = blocksum + A[i][b*32+k] * B[b*32+k][j];
-                    sh = SA[b][i] + SB[b][j] - ANCHOR;
+                    // only the headroom reaches the result: the other 2*SBIAS
+                    // of ANCHOR cancels the bias stored in each scale field
+                    sh = SA[b][i] + SB[b][j] - (ANCHOR - 2*SBIAS);
                     // exact: shifts here are negative, so track it in FP64 and
-                    // keep the integer form scaled by 2^ANCHOR to stay exact
+                    // keep the integer form scaled by the headroom to stay exact
                     exact_c[i][j] = exact_c[i][j]
                                   + (blocksum <<< (SA[b][i] + SB[b][j]));
                     fp64_c[i][j]  = fp64_c[i][j] + $itor(blocksum) * (2.0 ** sh);
@@ -280,7 +293,8 @@ module mx_system_tb;
         for (i = 0; i < 4; i = i + 1)
             for (j = 0; j < 4; j = j + 1) begin
                 checks = checks + 1;
-                if ($itor(exact_c[i][j]) * (2.0 ** -ANCHOR) != fp64_c[i][j]) begin
+                if ($itor(exact_c[i][j]) * (2.0 ** -(ANCHOR - 2*SBIAS))
+                    != fp64_c[i][j]) begin
                     errors = errors + 1;
                     $display("  FAIL ground-truth models disagree at [%0d][%0d]", i, j);
                 end
@@ -295,7 +309,7 @@ module mx_system_tb;
                     for (k = 0; k < 8; k = k + 1)
                         wtmp[255 - (i*8+k)*7 -: 7] = A[i][b*32 + c*8 + k][6:0];
                 for (i = 0; i < 4; i = i + 1)
-                    wtmp[31 - i*8 -: 8] = SA[b][i][7:0];
+                    wtmp[31 - i*8 -: 8] = sf(SA[b][i]);
                 bd_write(WA_BASE + b*4 + c, wtmp);
             end
             for (c = 0; c < 4; c = c + 1) begin
@@ -304,7 +318,7 @@ module mx_system_tb;
                     for (j = 0; j < 4; j = j + 1)
                         wtmp[255 - (k*4+j)*7 -: 7] = B[b*32 + c*8 + k][j][6:0];
                 for (j = 0; j < 4; j = j + 1)
-                    wtmp[31 - j*8 -: 8] = SB[b][j][7:0];
+                    wtmp[31 - j*8 -: 8] = sf(SB[b][j]);
                 bd_write(WB_BASE + b*4 + c, wtmp);
             end
         end
@@ -397,7 +411,7 @@ module mx_system_tb;
                     if (err < 0.0) err = -err;
                     if (err > worst_rel) worst_rel = err;
                     // FP16 output carries 11 significand bits; allow a few ULP
-                    // for the FP24 accumulation across 8 blocks on top
+                    // for the FP22 accumulation across 8 blocks on top
                     if (err > 4.0 / 1024.0) begin
                         errors = errors + 1;
                         if (errors <= 8)
