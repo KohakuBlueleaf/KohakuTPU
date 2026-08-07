@@ -90,7 +90,8 @@ module noc_orchestrator #(
                       A_IRQ_EN    = 16'h0020,
                       A_PROG_DST  = 16'h0040, A_PROG_LEN  = 16'h0048,
                       A_PROG_KICK = 16'h0050, A_PROG_STAT = 16'h0058,
-                      A_PROG_CRED = 16'h0060,
+                      A_PROG_CRED = 16'h0060, A_PROG_BASE = 16'h0068,
+                      A_SIG_DONE  = 16'h0070,
                       A_TX_FLIT0  = 16'h0100, A_TX_KICK   = 16'h0140,
                       A_TX_STATUS = 16'h0148,
                       A_RX_FLIT0  = 16'h0180, A_RX_POP    = 16'h01C0,
@@ -120,12 +121,19 @@ module noc_orchestrator #(
 
     reg [2*POS_WIDTH-1:0] prog_dst;
     reg [15:0]            prog_len;      // flits to send
+    // First staging slot of this program. Without it every kick restarts at
+    // slot 0, so a second cluster's flits cannot be staged until the first has
+    // consumed its own -- which forces the host to wait for completion between
+    // dispatches and serialises clusters that have no data dependency at all.
+    // With it, N programs live in the window at once and all N run concurrently.
+    reg [15:0]            prog_base;
     reg [15:0]            prog_left;
     reg [SW_BITS-1:0]     prog_rd;
     reg [15:0]            prog_credit;   // seeded by the host, refilled on INST_COMPLETE
     reg                   prog_run;
     reg                   kick_req;    // one-cycle requests from the AXI write FSM
     reg                   cred_wr;
+    reg                   sig_done_clr;
     reg [15:0]            cred_val;
     reg [2:0]             prog_word;
     reg [PAD_WIDTH-1:0]   prog_flit;
@@ -143,7 +151,12 @@ module noc_orchestrator #(
     reg  [FLIT_WIDTH-1:0] disp_flit;
     wire                  tx_full, tx_empty;
     wire [FLIT_WIDTH-1:0] tx_head;
-    wire                  tx_pop = !tx_empty && !noc_out_busy;
+    // Popped only when the output register can take it -- empty, or being
+    // emptied this cycle. A pop decided from `!noc_out_busy` alone commits the
+    // flit to a register that may not be read, and the dispatched CU_INST is
+    // then simply missing from the program.
+    wire                  tx_free = !noc_out_valid || !noc_out_busy;
+    wire                  tx_pop = !tx_empty && tx_free;
 
     wire                  tx_wr_en   = tx_push | disp_push;
     wire [FLIT_WIDTH-1:0] tx_wr_data = disp_push ? disp_flit : tx_stage[FLIT_WIDTH-1:0];
@@ -155,15 +168,14 @@ module noc_orchestrator #(
         .rd_en(tx_pop),   .rd_data(tx_head),    .rd_busy(tx_empty)
     );
 
-    // Mirrors OutPortSwitch: sample busy, and only commit a flit to the wire when
-    // it was low. The NoC link is a busy/valid pair, not AXI valid/ready -- a
-    // sender must not assert valid into a full input FIFO.
+    // Mirrors OutPortSwitch: hold the flit asserted until a cycle in which the
+    // receiver is not busy.
     always @(posedge clk) begin
         if (!resetn) begin
             noc_out_valid <= 1'b0;
             noc_out_data  <= {FLIT_WIDTH{1'b0}};
         end else begin
-            noc_out_valid <= tx_pop;
+            noc_out_valid <= tx_pop | (noc_out_valid && noc_out_busy);
             if (tx_pop) noc_out_data <= tx_head;
         end
     end
@@ -201,8 +213,8 @@ module noc_orchestrator #(
 
     // --------------------------------------------------------- status mirror
     // Indexed by {src_y, src_x} so every coordinate has a slot, border PEs
-    // included. Written from CU_SIGNAL; the flit still also lands in the RX FIFO,
-    // because the host may want the raw packet as well as the summary.
+    // included. This is the ONLY record of a CU_SIGNAL -- the flit itself is
+    // dropped rather than queued, for the reason given at the RX FIFO above.
     localparam N_STATUS = 1 << (2*POS_WIDTH);
     // Also LUTRAM, measured: RAM256X1D x64. The signal_count read-modify-write
     // below reads and writes the same address in one cycle, which BRAM cannot do,
@@ -217,7 +229,6 @@ module noc_orchestrator #(
 
     wire [7:0]  sig_code = noc_in_data[255 -: 8];
     wire [31:0] sig_arg  = noc_in_data[247 -: 32];
-    reg  [63:0] status_rd;
     reg  [15:0] status_count_next;
 
     integer si;
@@ -239,6 +250,25 @@ module noc_orchestrator #(
     // spec s7 exists to prevent.
     wire in_inst_done = noc_in_valid && in_is_sig &&
                         (noc_in_data[255 -: 8] == 8'h00);   // SIG_INST_COMPLETE
+
+    // Completions from EVERY node, in one register. NODE_STATUS is per node, so
+    // waiting on N clusters costs N polls and therefore N command slots, and
+    // the program grows with the machine for a question -- "is everyone
+    // finished" -- whose answer is a single number. One counter makes that one
+    // poll however many clusters there are. Cleared by writing SIG_DONE.
+    //
+    // It counts EVERY signal, matching what NODE_STATUS counts, not just
+    // SIG_INST_COMPLETE. The last instruction of a batch reports
+    // SIG_BATCH_COMPLETE instead (noc_cu_base.v), so counting only
+    // INST_COMPLETE sees N-1 of every N instructions and a host waiting for N
+    // waits forever.
+    reg [15:0] sig_done_count;
+
+    always @(posedge clk) begin
+        if (!resetn)            sig_done_count <= 16'd0;
+        else if (sig_done_clr)  sig_done_count <= 16'd0;
+        else if (in_is_signal)  sig_done_count <= sig_done_count + 16'd1;
+    end
 
     wire disp_can = prog_run && !tx_full && (prog_credit != 16'd0);
 
@@ -276,7 +306,7 @@ module noc_orchestrator #(
             if (kick_req && !prog_run && prog_len != 16'd0) begin
                 prog_run  <= 1'b1;
                 prog_left <= prog_len;
-                prog_rd   <= {SW_BITS{1'b0}};
+                prog_rd   <= prog_base[SW_BITS-1:0] * FLIT_WORDS;
                 prog_word <= 3'd0;
             end else if (disp_can) begin
                 prog_flit[prog_word*DATA_WIDTH +: DATA_WIDTH] <= stage_ram[prog_rd];
@@ -345,6 +375,7 @@ module noc_orchestrator #(
         rx_pop   <= 1'b0;
         kick_req <= 1'b0;
         cred_wr  <= 1'b0;
+        sig_done_clr <= 1'b0;
 
         if (!resetn) begin
             wstate       <= W_IDLE;
@@ -356,6 +387,7 @@ module noc_orchestrator #(
             irq_stat_reg <= {DATA_WIDTH{1'b0}};
             prog_dst     <= {(2*POS_WIDTH){1'b0}};
             prog_len     <= 16'd0;
+            prog_base    <= 16'd0;
             cred_val     <= 16'd0;
             tx_stage     <= {PAD_WIDTH{1'b0}};
         end else begin
@@ -381,6 +413,8 @@ module noc_orchestrator #(
                             A_IRQ_STAT:  irq_stat_reg <= irq_stat_reg & ~s_axi_wdata; // W1C
                             A_PROG_DST:  prog_dst     <= s_axi_wdata[2*POS_WIDTH-1:0];
                             A_PROG_LEN:  prog_len     <= s_axi_wdata[15:0];
+                            A_PROG_BASE: prog_base    <= s_axi_wdata[15:0];
+                            A_SIG_DONE:  sig_done_clr <= 1'b1;
                             A_PROG_CRED: begin
                                              cred_wr  <= 1'b1;
                                              cred_val <= s_axi_wdata[15:0];
@@ -438,6 +472,8 @@ module noc_orchestrator #(
             A_IRQ_STAT:  reg_rd = irq_stat_reg;
             A_PROG_DST:  reg_rd = { {(DATA_WIDTH-2*POS_WIDTH){1'b0}}, prog_dst };
             A_PROG_LEN:  reg_rd = { {(DATA_WIDTH-16){1'b0}}, prog_len };
+            A_PROG_BASE: reg_rd = { {(DATA_WIDTH-16){1'b0}}, prog_base };
+            A_SIG_DONE:  reg_rd = { {(DATA_WIDTH-16){1'b0}}, sig_done_count };
             A_PROG_CRED: reg_rd = { {(DATA_WIDTH-16){1'b0}}, prog_credit };
             A_STATUS:    reg_rd = { {(DATA_WIDTH-3){1'b0}}, 1'b1 /*mesh_ready*/,
                                     1'b0 /*error*/, (!tx_empty | prog_run) };

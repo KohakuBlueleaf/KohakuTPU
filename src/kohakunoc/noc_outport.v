@@ -1,15 +1,22 @@
 // Output port: round-robin arbitration across the five input ports' head flits,
 // and the register that drives the outbound link.
 //
-// This register is the router's only copy of a flit in flight. The input ports
-// present their heads combinationally, so the path from FIFO output through route
-// computation and arbitration into port_out is a single cycle -- one flit per
-// cycle per output, sustained, with no holding registers anywhere upstream.
+// The input ports present their heads from a REGISTER, one flit each, with the
+// output direction already computed (noc_inport.v). So the only combinational
+// path into port_out is arbitration plus the 5:1 mux -- FIFO read and route
+// computation happened a cycle earlier. Driving the arbiter straight from the
+// FIFO output instead saves ~1.5k flip-flops per router and measured 347 MHz
+// against a 300 MHz target, which is not slack that survives placement.
 //
-// grant is combinational and is withheld while the downstream link is busy, so an
-// input port only pops a flit that is genuinely leaving. The NoC link is a
-// busy/valid pair, not AXI valid/ready: valid must never be asserted into a full
-// receiver, and there is no retry if it is.
+// The link is a busy/valid pair WITH RETRY: a flit stays asserted until a cycle
+// in which the receiver is not busy, and grants are withheld while it waits.
+//
+// It did not used to retry -- `busy` cleared out_valid and the flit was simply
+// gone. That is only safe if every receiver accepts unconditionally, and none
+// of them do: each one refuses while its own busy is high, so a flit committed
+// against busy at T and presented at T+1 into a receiver that raised busy at
+// T+1 was destroyed. Silent, and invisible below four clusters because nothing
+// filled. See docs/noc/spec.md s2.1.
 
 module OutPortSwitch #(
     parameter DATA_WIDTH = 288
@@ -45,9 +52,14 @@ module OutPortSwitch #(
         else if (in_reqs[pr5]) sel[pr5] = 1'b1;
     end
 
-    // Nothing is granted while the link is busy, so the flit stays queued in the
-    // input port rather than being popped into a register that cannot drain.
-    assign grants = busy ? 5'b00000 : sel;
+    // The register can take a new flit unless it is holding one the receiver has
+    // not taken. One flit per cycle is sustained while the link is free, because
+    // `room` is also true on the cycle the held flit is being accepted.
+    wire room = !(out_valid && busy);
+
+    // Nothing is granted while the register is occupied, so the flit stays queued
+    // in the input port rather than being popped on top of one that has not left.
+    assign grants = room ? sel : 5'b00000;
 
     always @(posedge clk or posedge rst) begin
         if (rst) begin
@@ -56,7 +68,7 @@ module OutPortSwitch #(
             out_valid <= 1'b0;
         end else begin
             port_rr <= pr2;
-            if (~busy) begin
+            if (room) begin
                 case (sel)
                     5'b00001: port_out <= in_heads[0];
                     5'b00010: port_out <= in_heads[1];
@@ -66,8 +78,6 @@ module OutPortSwitch #(
                     default: ;
                 endcase
                 out_valid <= sel != 5'b00000;
-            end else begin
-                out_valid <= 1'b0;
             end
         end
     end

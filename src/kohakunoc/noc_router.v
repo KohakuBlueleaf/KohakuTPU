@@ -16,7 +16,7 @@ module NoCRouter #(
 )(
     input clk,
     input rst,
-    
+
     // North Port
     (* X_INTERFACE_INFO = "kblueleaf.net:user:KohakuNoCPort:1.0" *)
     (* X_INTERFACE_MODE = "slave" *)
@@ -152,9 +152,10 @@ module NoCRouter #(
     (* X_INTERFACE_PARAMETER = "GROUP local_out" *)
     input wire local_out_busy
 );
-    // One head bus per INPUT port, not one per (input, output) pair. The input
-    // ports hold no flits now, so 25 DATA_WIDTH buses collapse to 5 -- that is
-    // where the flip-flop saving comes from.
+    // One head bus per INPUT port, not one per (input, output) pair. An input
+    // port now holds ONE flit rather than one per direction (noc_inport.v), so
+    // 25 DATA_WIDTH buses collapse to 5 -- that is where the flip-flop saving
+    // comes from.
     wire [DATA_WIDTH-1:0] n_head, e_head, s_head, w_head, l_head;
 
     // Requests, indexed by DESTINATION direction (0:N 1:E 2:S 3:W 4:L), matching
