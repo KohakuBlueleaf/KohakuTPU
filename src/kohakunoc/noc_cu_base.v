@@ -88,19 +88,25 @@ module noc_cu_base #(
     wire       in_ctrl = (in_type == T_CU_CTRL);
 
     wire inst_full, inst_empty, recv_full, recv_empty;
+    wire inst_almost, recv_almost;
     wire [FLIT_WIDTH-1:0] inst_head;
     reg  inst_pop;
 
     // Conservative: stall if EITHER queue is full. busy must be meaningful even
     // when noc_in_valid is low, and the type field is only trustworthy alongside
     // a valid flit.
-    assign noc_in_busy = inst_full | recv_full;
+    // This is plain `full` despite the name: sync_fifo passes
+    // USE_ADV_FEATURES(0), so XPM ties prog_full low and `almost` reduces to
+    // `busy`. Plain full is safe because the link RETRIES -- the sender holds
+    // `valid` and `data` until a cycle with `busy` low -- so nothing is ever
+    // committed against a stale busy. See docs/noc/spec.md s2.1.
+    assign noc_in_busy = inst_almost | recv_almost;
 
     sync_fifo #(.DATA_WIDTH(FLIT_WIDTH), .FIFO_DEPTH(INST_DEPTH),
                 .MEMORY_TYPE(MEM_TYPE)) u_inst (
         .clk(clk), .rst(!resetn),
         .wr_en(noc_in_valid && !noc_in_busy && in_inst),
-        .wr_data(noc_in_data), .wr_busy(inst_full),
+        .wr_data(noc_in_data), .wr_busy(inst_full), .wr_almost(inst_almost),
         .rd_en(inst_pop), .rd_data(inst_head), .rd_busy(inst_empty)
     );
 
@@ -109,7 +115,7 @@ module noc_cu_base #(
                 .MEMORY_TYPE("distributed")) u_recv (
         .clk(clk), .rst(!resetn),
         .wr_en(noc_in_valid && !noc_in_busy && !in_inst && !in_ctrl),
-        .wr_data(noc_in_data), .wr_busy(recv_full),
+        .wr_data(noc_in_data), .wr_busy(recv_full), .wr_almost(recv_almost),
         .rd_en(recv_valid && recv_ready), .rd_data(recv_flit), .rd_busy(recv_empty)
     );
     assign recv_valid = !recv_empty;
@@ -172,7 +178,12 @@ module noc_cu_base #(
     // Signals win: they return dispatch credits, so starving them stalls the
     // orchestrator. CU_CTRL next (a controller may be blocked on discovery), then
     // whatever the datapath wants to send.
-    wire tx_free   = !noc_out_busy;
+    // Free when the output register is empty OR is being emptied this cycle --
+    // not merely when the link is idle. Deciding from `!noc_out_busy` alone pops
+    // the signal FIFO against a link that may be busy by the time the flit is
+    // presented, and the flit is then gone: a lost CU_SIGNAL never returns its
+    // dispatch credit, so the orchestrator waits forever.
+    wire tx_free   = !noc_out_valid || !noc_out_busy;
     wire sig_sent  = sig_pend  && tx_free;
     wire ctrl_sent = ctrl_pend && tx_free && !sig_pend;
     assign send_ready = tx_free && !sig_pend && !ctrl_pend;
@@ -255,7 +266,10 @@ module noc_cu_base #(
             noc_out_valid <= 1'b0;
             noc_out_data  <= {FLIT_WIDTH{1'b0}};
         end else begin
-            noc_out_valid <= sig_sent | ctrl_sent | (send_valid && send_ready);
+            // Hold the flit until the receiver takes it, rather than letting it
+            // expire after one cycle.
+            noc_out_valid <= sig_sent | ctrl_sent | (send_valid && send_ready) |
+                             (noc_out_valid && noc_out_busy);
             if (sig_sent)
                 noc_out_data <= { s_x, s_y, POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
                                   T_CU_SIGNAL, s_id, 1'b1, 3'b000,

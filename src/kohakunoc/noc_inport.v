@@ -48,6 +48,28 @@ module InPortSwitch #(
 );
     wire                  rd_busy;
     wire [DATA_WIDTH-1:0] rd_data;
+    wire                  fifo_full, fifo_almost;
+
+    // ACCEPT ON `valid && !busy`, AND THE SENDER RETRIES. Both halves are
+    // required and neither works alone:
+    //
+    //   a sender that gives up loses a flit. Committing against busy at T and
+    //   presenting at T+1 into a receiver that raised busy at T+1 destroys it.
+    //   That is the flit the write path spent a whole diagnosis looking for --
+    //   a lost MEM_WR_DATA leaves its slot short of `ws_len` forever.
+    //
+    //   accepting unconditionally duplicates a flit. Every endpoint sender
+    //   holds `valid` until it sees `!busy`, and the output port does now too,
+    //   so a write on every cycle the FIFO has room enqueues the same flit
+    //   repeatedly -- and a duplicated MEM_WR_DATA overruns its slot's
+    //   `ws_len`, leaving the surplus flit matching nothing.
+    //
+    // `wr_almost` is NOT the margin its name promises: sync_fifo passes
+    // USE_ADV_FEATURES(0), so XPM ties prog_full low and wr_almost reduces to
+    // wr_busy. What makes plain `full` safe here is the RETRY above, not a
+    // margin -- see docs/noc/spec.md s2.1. Anything that ever needs a real
+    // margin has to count for itself, as MAG does with Q_MARGIN.
+    assign port_busy = fifo_almost;
 
     reg [DATA_WIDTH-1:0] hold;
     reg [4:0]            hold_req;   // one-hot; all zero means the slot is empty
@@ -68,9 +90,10 @@ module InPortSwitch #(
     ) inport_fifo (
         .clk(clk),
         .rst(rst),
-        .wr_en(data_valid),
+        .wr_en(data_valid && !port_busy),
         .wr_data(data_in),
-        .wr_busy(port_busy),
+        .wr_busy(fifo_full),
+        .wr_almost(fifo_almost),
         .rd_en(load),
         .rd_data(rd_data),
         .rd_busy(rd_busy)
@@ -130,5 +153,26 @@ module InPortSwitch #(
 
     assign head_data = hold;
     assign head_req  = hold_req;
+
+`ifndef SYNTHESIS
+    // A flit offered while busy must still be offered next cycle. Testing that
+    // -- rather than "was a flit offered into a full buffer" -- is what tells a
+    // sender that RETRIES apart from one that gave up: the first is the normal
+    // steady state under backpressure, the second silently destroys the flit
+    // and the damage lands modules away as a short write burst or a corrupt L1
+    // entry.
+    reg                  offered;
+    reg [DATA_WIDTH-1:0] offered_d;
+    always @(posedge clk) begin
+        if (rst) offered <= 1'b0;
+        else begin
+            offered   <= data_valid && port_busy;
+            offered_d <= data_in;
+            if (offered && !(data_valid && (data_in == offered_d)))
+                $display("%0t ERROR noc_inport (%0d,%0d): flit LOST -- sender did not hold",
+                         $time, POS_X, POS_Y);
+        end
+    end
+`endif
 
 endmodule
