@@ -3,7 +3,7 @@
 //   noc_cu_base ....... instruction FIFO, CU_CTRL, completion signalling
 //   sequencer ......... decodes CU_INST, fetches operands, runs the datapath
 //   mx_cluster_core ... 4 TCU chained, 4 x 32 x 4 per cycle
-//   mx_acu_fp ......... FP24 accumulation into a resident output tile
+//   mx_acu_fp ......... FP22 accumulation into a resident output tile
 //
 // Operands are fetched from memory by the CU itself, as MEM_RD_REQ naming this
 // CU as src -- so the response comes straight here and never passes through the
@@ -25,7 +25,7 @@
 // Operand flit layout, 256-bit payload:
 //   [255:32]  32 x int7   A: element (i,k) at [255 - (i*8+k)*7 -: 7]
 //                         B: element (k,j) at [255 - (k*4+j)*7 -: 7]
-//   [31:0]    4 x E8M0    A: sa[i] at [31 - i*8 -: 8]
+//   [31:0]    4 x E5M3    A: sa[i] at [31 - i*8 -: 8]
 //                         B: sb[j] at [31 - j*8 -: 8]
 // which is 32*7 + 4*8 = 256 exactly -- int7 is the width that fits.
 
@@ -147,8 +147,7 @@ module mx_matmul_cu #(
     localparam [3:0] S_IDLE  = 4'd0,  S_REQA  = 4'd1,  S_RCVA = 4'd2,
                      S_REQB  = 4'd3,  S_RCVB  = 4'd4,  S_RUN  = 4'd5,
                      S_WAIT  = 4'd6,  S_ACC   = 4'd7,  S_EMIT = 4'd8,
-                     S_WREQ  = 4'd9,  S_WDAT  = 4'd10, S_DONE = 4'd11,
-                     S_EGAP  = 4'd12;
+                     S_WREQ  = 4'd9,  S_WDAT  = 4'd10, S_EGAP = 4'd12;
 
     // The accumulator is single-bank: consecutive commands to the SAME tile
     // address must be at least its reuse distance apart, because a pipelined

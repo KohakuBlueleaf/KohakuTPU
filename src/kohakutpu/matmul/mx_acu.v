@@ -13,16 +13,24 @@
 //     L = signed( P[18:0] )                 no logic
 //     U = P[47:19] + P[18]                  add back the borrow
 //
-// Accumulation here is EXACT FIXED POINT, not FP24. That is deliberate for
-// bring-up: an exact result can be checked against a model bit for bit, so a
-// mismatch is unambiguous. FP24 (S1E7M16) is the production choice -- see
-// docs/compute/matmul-circuit.md s6.2 -- and rounds the 19-bit block result by
-// two bits, which would blur the very failures this is meant to expose.
+// Accumulation here is EXACT FIXED POINT, not floating point. That is
+// deliberate for bring-up: an exact result can be checked against a model bit
+// for bit, so a mismatch is unambiguous. The production accumulator is
+// S1E7M<ACC_MW>, FP22 at the default ACC_MW=14 -- see
+// docs/compute/matmul-circuit.md s6.2 -- and rounds the 19-bit block result,
+// which would blur the very failures this is meant to expose.
 //
-// The scale is E8M0 per row of A and per column of B, so output (i,j) is scaled
-// by 2^(sa[i] + sb[j]). Shifting relative to a caller-supplied anchor keeps the
-// accumulator narrow; the caller is responsible for choosing an anchor that
-// does not make any shift negative.
+// The scale here is a PLAIN 8-BIT EXPONENT per row of A and per column of B, so
+// output (i,j) is scaled by 2^(sa[i] + sb[j]). Shifting relative to a
+// caller-supplied anchor keeps the accumulator narrow; the caller is
+// responsible for choosing an anchor that does not make any shift negative.
+//
+// That is NOT the machine's scale format. The shipping path carries E5M3
+// ({E[4:0], M[2:0]}) and mx_acu_fp multiplies the partial sum by the two
+// mantissas. A mantissa multiply would put a rounding-free but non-trivial
+// product in front of the bit-for-bit comparison this block exists to support,
+// so the exact instrument keeps a pure power-of-two scale and the benches drive
+// it with one.
 
 `default_nettype none
 
@@ -41,8 +49,8 @@ module mx_acu #(
     input  wire         en,
 
     input  wire [383:0] part_in,    // 8 chains x 48, from the last TCU
-    input  wire [31:0]  sa,         // 4 x E8M0, one per row of A
-    input  wire [31:0]  sb,         // 4 x E8M0, one per column of B
+    input  wire [31:0]  sa,         // 4 x 8-bit exponent, one per row of A
+    input  wire [31:0]  sb,         // 4 x 8-bit exponent, one per column of B
     input  wire [7:0]   anchor,     // common exponent for this output tile
     input  wire         in_valid,
     input  wire         acc_clear,  // start a fresh output tile

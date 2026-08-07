@@ -1,6 +1,4 @@
 import numpy as np
-from dataclasses import dataclass
-from typing import Tuple
 from .float import FPNumber
 
 

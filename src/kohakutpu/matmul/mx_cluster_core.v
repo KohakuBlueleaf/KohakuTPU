@@ -7,9 +7,9 @@
 //
 // Split out from mx_cluster so the same verified datapath can feed either
 // accumulator: the exact fixed-point one, which is what lets mx_cluster_tb
-// check bit-for-bit, or the FP24 one a real machine uses. Duplicating the TCU
-// chain to serve both would mean the version under test was not the version
-// that ships.
+// check bit-for-bit, or the floating-point one a real machine uses.
+// Duplicating the TCU chain to serve both would mean the version under test
+// was not the version that ships.
 //
 // Timing -- the W path costs TWO cycles, not one.
 //
