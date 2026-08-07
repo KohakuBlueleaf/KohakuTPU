@@ -29,6 +29,10 @@ module mx_fpacc_tb;
     wire [23:0] ss;
     mx_fpacc_add #(.MW(16)) u_add (.a(aa), .b(bb), .s(ss));
 
+    reg  [23:0] cv;
+    wire [15:0] cf;
+    mx_fpacc_to_fp16 #(.MW(16)) u_cvt (.fpa(cv), .fp16(cf));
+
     integer errors = 0, checks = 0;
 
     function real fp2real(input [23:0] f);
@@ -69,6 +73,35 @@ module mx_fpacc_tb;
                 if (errors <= 12)
                     $display("  FAIL %0s: got %0f want %0f", what, got, want);
             end
+        end
+    endtask
+
+    function real fp16_real(input [15:0] f);
+        real m;
+        integer e;
+        begin
+            if (f[14:10] == 5'd0) fp16_real = 0.0;
+            else begin
+                m = 1.0 + $itor(f[9:0]) / 1024.0;
+                e = f[14:10] - 15;
+                fp16_real = m * (2.0 ** e);
+                if (f[15]) fp16_real = -fp16_real;
+            end
+        end
+    endfunction
+
+    task chk_cvt(input [23:0] f, input real want_v, input [255:0] what);
+        begin
+            cv = f; #1;
+            chk_exact(fp16_real(cf), want_v, what);
+        end
+    endtask
+
+    task chk_cvt_tol(input [23:0] f, input real want_v, input real tol,
+                     input [255:0] what);
+        begin
+            cv = f; #1;
+            chk_real(fp16_real(cf), want_v, tol, what);
         end
     endtask
 
@@ -181,6 +214,55 @@ module mx_fpacc_tb;
                              got_r, want, err_a, 64.0*halfulp*peak);
             end
         end
+
+        // -----------------------------------------------------------------
+        // The accumulator is only useful if what comes OUT of it is right, and
+        // this is the one place the wide format is narrowed. Untested until a
+        // whole-mesh run turned up a single wrong element in 4096: a value
+        // just under a power of two whose fraction rounded up and carried.
+        //
+        // The carry case is the whole point. m11 holds the STORED fraction, so
+        // a carry out of it means the fraction becomes zero and the exponent
+        // increments -- not a right shift, which leaves the carry bit inside
+        // the fraction and returns 1.5*2^(e+1) instead of 1.0*2^(e+1).
+        $display("--- 8. to_fp16: exact values ---");
+        chk_cvt(24'd0, 0.0, "zero");
+        nv = 1;    ne = 0;  #1; chk_cvt(nf,  1.0,   "one");
+        nv = -1;   ne = 0;  #1; chk_cvt(nf, -1.0,   "minus one");
+        nv = 3;    ne = 2;  #1; chk_cvt(nf, 12.0,   "3 * 2^2");
+        nv = 2048; ne = 0;  #1; chk_cvt(nf, 2048.0, "2^11");
+
+        $display("--- 9. to_fp16: rounding that carries out of the fraction ---");
+        // 4095 * 2^(i-11) = (2 - 2^-11) * 2^i, so the stored fraction is all
+        // ones with the round bit set: the carry path, every iteration. The
+        // answer is 2^(i+1) exactly -- a right shift would give 1.5 * 2^(i+1).
+        for (i = 1; i < 12; i = i + 1) begin
+            nv = 4095;
+            ne = i - 11;
+            #1;
+            chk_cvt(nf, 2.0 ** (i + 1), "fraction carry");
+        end
+
+        $display("--- 10. to_fp16: random values inside the FP16 normal range ---");
+        // Only normals are checked against a tolerance. Outside that range the
+        // converter is specified to saturate and to flush, and comparing those
+        // against the accumulator's own value would be testing the bench's
+        // expectations rather than the DUT.
+        for (t = 0; t < 4000; t = t + 1) begin
+            nv = ($random(seed) % 131072);
+            ne = ($random(seed) % 24) - 16;
+            #1;
+            want = fp2real(nf);
+            got_r = want < 0.0 ? -want : want;
+            // half an FP16 ULP, and no more: the converter rounds to nearest.
+            if (got_r >= (2.0 ** -14) && got_r < 65504.0)
+                chk_cvt_tol(nf, want, 1.0/2048.0, "to_fp16");
+        end
+
+        $display("--- 11. to_fp16: saturation and flush ---");
+        nv = 131071; ne = 8;  #1; chk_cvt(nf,  65504.0, "saturate +");
+        nv = -131071; ne = 8; #1; chk_cvt(nf, -65504.0, "saturate -");
+        nv = 1; ne = -30;     #1; chk_cvt(nf,  0.0,     "flush to zero");
 
         $display("========================================");
         if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);

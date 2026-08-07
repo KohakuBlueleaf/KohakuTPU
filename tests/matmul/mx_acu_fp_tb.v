@@ -35,6 +35,23 @@ module mx_acu_fp_tb;
     reg  [383:0] part_in;
     reg  [31:0]  sa, sb;
     reg  [7:0]   anchor;
+
+    // E5M3 scale field: {E[4:0], M[2:0]}, scale = 2^(E-SBIAS)*(1+M/8). This
+    // bench wants plain powers of two, so M stays 0 and sf() just biases the
+    // exponent into place. ANCHOR carries 2*SBIAS to cancel both stored
+    // biases; anything on top of that is deliberate headroom.
+    localparam integer SBIAS = 20;
+    localparam [7:0]   SF0   = SBIAS << 3;      // the field meaning 2^0
+
+    function [7:0] sf;
+        input integer v;
+        begin
+            sf = (v + SBIAS) << 3;
+        end
+    endfunction
+
+    integer ea_i [0:3];      // the exponents sa/sb were built from
+    integer eb_i [0:3];
     reg  [2:0]   op;
     reg  [TAW-1:0] tile_addr;
     reg          cmd_valid;
@@ -146,7 +163,7 @@ module mx_acu_fp_tb;
     initial begin
         seed = 32'h5EED_1234;
         fp16_eps = 1.0 / 1024.0;      // one FP16 ULP
-        part_in = 0; sa = 0; sb = 0; anchor = 0; op = OP_NOP;
+        part_in = 0; sa = {4{SF0}}; sb = {4{SF0}}; anchor = 2*SBIAS; op = OP_NOP;
         tile_addr = 0; cmd_valid = 0; peer_in = 0;
         #200;
         repeat (8) @(posedge clk);
@@ -157,7 +174,7 @@ module mx_acu_fp_tb;
         $display("--- 1. LOAD then EMIT, flat scales ---");
         for (i = 0; i < 16; i = i + 1) iv[i] = (i + 1) * 100;
         pack_parts;
-        sa = 0; sb = 0; anchor = 0;
+        sa = {4{SF0}}; sb = {4{SF0}}; anchor = 2*SBIAS;
         do_op(OP_LOAD, 0);
         do_op(OP_EMIT, 0);
         for (i = 0; i < 16; i = i + 1)
@@ -166,17 +183,25 @@ module mx_acu_fp_tb;
 
         // -----------------------------------------------------------------
         $display("--- 2. per-row / per-column scales applied ---");
-        sa = {8'd4, 8'd3, 8'd2, 8'd1};   // sa[3..0]
-        sb = {8'd3, 8'd2, 8'd1, 8'd0};
-        anchor = 8'd1;
+        // exponents 1..4 and 0..3, encoded into the E5M3 field by sf()
+        for (i = 0; i < 4; i = i + 1) begin
+            ea_i[i] = i + 1;
+            eb_i[i] = i;
+            sa[i*8 +: 8] = sf(ea_i[i]);
+            sb[i*8 +: 8] = sf(eb_i[i]);
+        end
+        anchor = 2*SBIAS + 1;
         for (i = 0; i < 16; i = i + 1) iv[i] = (i % 7) + 1;
         pack_parts;
         do_op(OP_LOAD, 1);
         do_op(OP_EMIT, 1);
         for (i = 0; i < 4; i = i + 1)
             for (j = 0; j < 4; j = j + 1) begin
+                // the INTENDED exponents, not the encoded field: reading the
+                // field back as a bare number was only meaningful when the
+                // field was a bare exponent
                 want_r = $itor((i*4+j) % 7 + 1)
-                       * (2.0 ** (sa[i*8 +: 8] + sb[j*8 +: 8] - anchor));
+                       * (2.0 ** (ea_i[i] + eb_i[j] - 1));
                 chk_rel(fp16_to_real(emit_out[(i*4+j)*16 +: 16]), want_r,
                         fp16_eps, "scaled");
             end
@@ -191,7 +216,7 @@ module mx_acu_fp_tb;
         // anchor is therefore not optional bookkeeping -- it is what makes an
         // FP16 result representable.
         $display("--- 3. 32-block accumulation vs FP64 and exact int ---");
-        sa = 0; sb = 0; anchor = 8;
+        sa = {4{SF0}}; sb = {4{SF0}}; anchor = 2*SBIAS + 8;
         for (i = 0; i < 16; i = i + 1) begin
             model[i] = 0.0; exact[i] = 0;
         end
@@ -219,7 +244,7 @@ module mx_acu_fp_tb;
 
         // -----------------------------------------------------------------
         $display("--- 4. resident tile: 16 sub-tiles kept independently ---");
-        sa = 0; sb = 0; anchor = 0;
+        sa = {4{SF0}}; sb = {4{SF0}}; anchor = 2*SBIAS;
         for (t = 0; t < DEPTH; t = t + 1) begin
             for (i = 0; i < 16; i = i + 1) iv[i] = (t + 1) * (i + 1);
             pack_parts;
@@ -236,7 +261,7 @@ module mx_acu_fp_tb;
         // SEND hands a tile out as FP24; ADD_PEER folds one in. This is how a
         // matmul split across clusters reduces.
         $display("--- 5. peer transfer: SEND then ADD_PEER ---");
-        sa = 0; sb = 0; anchor = 0;
+        sa = {4{SF0}}; sb = {4{SF0}}; anchor = 2*SBIAS;
         for (i = 0; i < 16; i = i + 1) iv[i] = (i + 1) * 7;
         pack_parts;
         do_op(OP_LOAD, 3);
@@ -259,7 +284,7 @@ module mx_acu_fp_tb;
         // The converter must clamp, not wrap. A wrapped exponent would turn a
         // large positive result into a small one silently.
         $display("--- 6. FP16 emission saturates rather than wrapping ---");
-        sa = 0; sb = 0; anchor = 0;
+        sa = {4{SF0}}; sb = {4{SF0}}; anchor = 2*SBIAS;
         for (i = 0; i < 16; i = i + 1) iv[i] = 131071;
         pack_parts;
         do_op(OP_LOAD, 6);
@@ -276,7 +301,7 @@ module mx_acu_fp_tb;
         end
 
         $display("--- 7. FWD passes the chain straight out ---");
-        sa = 0; sb = 0; anchor = 0;
+        sa = {4{SF0}}; sb = {4{SF0}}; anchor = 2*SBIAS;
         for (i = 0; i < 16; i = i + 1) iv[i] = (i + 1) * 11;
         pack_parts;
         do_op(OP_FWD, 5);

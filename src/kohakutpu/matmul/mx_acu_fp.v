@@ -4,7 +4,8 @@
 // The exact fixed-point mx_acu.v remains the bring-up instrument; it is what
 // lets mx_cluster_tb check the datapath bit-for-bit. This is what ships.
 //
-//   stage 1   extract the two packed fields per chain
+//   stage 1   unpack the two chains, take |value| and apply the block scale,
+//             both in one DSP
 //   stage 2a  leading-one search and shift
 //   stage 2b  round and assemble -> accumulator float
 //   stage 3   read the tile, compare exponents, align        <- reads the tile
@@ -42,15 +43,19 @@
 // range is not the tunable. See docs/compute/accumulator.md -- MW=14 measures
 // identically to MW=16 and costs less, and is the default.
 //
-// TIMING: this block closes the whole CU's critical path, at 306.4 MHz with
-// 0.070 ns of slack. Stage 3 is the tight one -- tile read, exponent compare,
-// barrel shift. Three rules keep it that way, and breaking any of them costs
-// 20-60 MHz:
+// TIMING: this block still sets the CU's critical path, and the CU now closes
+// at 325.6 MHz out of context -- WNS +0.155 ns against a 310 MHz target,
+// unplaced, so an upper bound. The binding path is stage 1 -> stage 2a,
+// val_r -> b_sig, at 9 logic levels. Four rules keep it there, and breaking any
+// of them has cost 20-60 MHz:
 //
-//   1. Nothing combinational in front of the tile address. Every select that
+//   1. The magnitude is taken BEFORE the multiply, in the DSP. Taking it after
+//      put a 30-bit two's-complement carry chain between the DSP's output
+//      register and the leading-one search: 0.952 ns of a 3.401 ns path.
+//   2. Nothing combinational in front of the tile address. Every select that
 //      steers stage 3 is registered a stage early (a_sel, b_sel, addr_r2).
-//   2. One mux level on the operands, not a chain of ternaries.
-//   3. Zero-ness travels as one control bit per operand, never as a mask on
+//   3. One mux level on the operands, not a chain of ternaries.
+//   4. Zero-ness travels as one control bit per operand, never as a mask on
 //      the 384-bit data.
 //
 // The same applies to the primitives in mx_fpacc.v: the leading-one search and
@@ -90,7 +95,7 @@ module mx_acu_fp #(
     output reg  [255:0] emit_out,
     output reg          emit_valid,
 
-    output reg          busy
+    output wire         busy
 );
     // DERIVED, never passed in. As two independent parameters these silently
     // disagreed: DEPTH=512 with TAW=4 addressed 16 entries and synthesis
@@ -107,7 +112,23 @@ module mx_acu_fp #(
                      OP_ADD_PEER = 3'd3,
                      OP_SEND     = 3'd4,
                      OP_EMIT     = 3'd5,
-                     OP_FWD      = 3'd6;
+                     OP_FWD      = 3'd6,
+                     // ADD AND HAND THE RESULT OUT, in one command.
+                     //
+                     // A sub-tile's last accumulation already computes its
+                     // finished value at stage 5; a separate OP_EMIT reads the
+                     // same address back and passes it through the same
+                     // pipeline to recover it. That second pass is what a DRAIN
+                     // is, and it costs a command slot per sub-tile -- which
+                     // the sweep has none of, because it issues one command
+                     // every cycle. So a drain could never overlap a sweep and
+                     // was measured at 24% of the machine's time.
+                     //
+                     // Fused, the emit is free: same command, same cycle, no
+                     // re-read. What it needs instead is somewhere to put the
+                     // results, which is a queue and a backpressure signal
+                     // rather than a stage of the run.
+                     OP_ADD_EMIT = 3'd7;
 
     localparam [1:0] OUT_NONE = 2'd0, OUT_EMIT = 2'd1, OUT_SEND = 2'd2;
 
@@ -115,21 +136,95 @@ module mx_acu_fp #(
     // VW is 22, not 29. A K=32 block can only reach +/-131,072 -- 18 bits and a
     // sign. A 29-bit normaliser would build a 29-bit leading-one search and
     // shifter per lane, sixteen times, for range that cannot occur.
-    localparam integer VW = 22;
+    localparam integer VW  = 22;
+    localparam integer VWM = VW + 8;    // widened by the scale mantissa product
 
-    reg signed [VW-1:0] val_r [0:15];
+    // MAGNITUDE, not a signed value, and the sign beside it. See the lane
+    // generate below.
+    reg  [VWM-1:0]      val_r [0:15];
+    reg                 sgn_r [0:15];
     reg  [2:0]          op_r;
     reg  [TAW-1:0]      addr_r;
     reg                 v1;
     reg  [TW-1:0]       peer_r;
     reg signed [9:0]    exp_r [0:15];
 
+    // ---- E5M3 block scale ------------------------------------------------
+    // The scale field is {E[4:0], M[2:0]} and the scale is 2^(E-SBIAS)*(1+M/8).
+    // The exponent halves still just add. The mantissas have to MULTIPLY:
+    //
+    //   (1+Ma/8)(1+Mb/8) = (m8a * m8b) / 64,   m8 = 8+M, so m8a*m8b in [64,225]
+    //
+    // Multiplying the partial sum by m8a*m8b and taking the /64 off the
+    // exponent keeps it EXACT -- no shifter, no rounding, and no precision
+    // lost. The product is 8 bits wider, which is why VWM exists.
+    wire [3:0] ma [0:3];
+    wire [3:0] mb [0:3];
+    wire signed [9:0] ea [0:3];
+    wire signed [9:0] eb [0:3];
+    // The product is declared 8 bits WIDE and on its own. Written inline as
+    // `{1'b0, ma[i]*mb[j]}` the multiply is self-determined to its 4-bit
+    // operand width inside the concatenation, so 8*8 = 64 truncates to 0 --
+    // silently, and every result comes out zero.
+    wire [7:0] mm [0:3][0:3];
+    genvar gs, gt;
+    generate
+    for (gs = 0; gs < 4; gs = gs + 1) begin : g_scale
+        assign ma[gs] = {1'b1, sa[gs*8 +: 3]};              // 8..15
+        assign mb[gs] = {1'b1, sb[gs*8 +: 3]};
+        assign ea[gs] = $signed({5'b0, sa[gs*8+3 +: 5]});   // biased exponent
+        assign eb[gs] = $signed({5'b0, sb[gs*8+3 +: 5]});
+        for (gt = 0; gt < 4; gt = gt + 1) begin : g_mm
+            assign mm[gs][gt] = {4'd0, ma[gs]} * {4'd0, mb[gt]};   // 64..225
+        end
+    end
+    endgenerate
+
+    // ---- lane magnitude, taken BEFORE the multiply -----------------------
+    // `mm` is unsigned, so the product's sign is the chain value's, and
+    //
+    //     |v + r| * mm  =  ((v ^ {W{s}}) + (s ^ r)) * mm,      s = v[W-1]
+    //
+    // which is the same `(v + bit) * mm` shape the odd lanes already had, plus
+    // one XOR level on a register output. Taking the magnitude AFTER the
+    // multiply instead put a
+    // 30-bit two's-complement carry chain between the DSP's output register and
+    // the leading-one search -- 0.952 ns of a 3.401 ns path, four logic levels,
+    // and the reason the CU sat at 294.9 MHz. See docs/compute/accumulator.md.
+    //
+    // `r` is a rounding bit, so `v + r` can only reach zero from v = -1: the
+    // one case where `s` disagrees with the true sign of the sum. The magnitude
+    // is zero there and `is_zero` discards the sign, so it does not matter.
+    wire [VWM-1:0] lane_mag [0:15];
+    wire           lane_sgn [0:15];
+
+    generate
+    for (gs = 0; gs < 4; gs = gs + 1) begin : g_lane_r
+        for (gt = 0; gt < 4; gt = gt + 1) begin : g_lane_c
+            localparam integer F = ((gs/2)*4 + gt) * 48;
+            if ((gs % 2) == 0) begin : g_lo
+                wire        s = part_in[F+18];
+                wire [18:0] x = part_in[F +: 19] ^ {19{s}};
+                assign lane_sgn[gs*4+gt] = s;
+                assign lane_mag[gs*4+gt] = ({1'b0, x} + {19'd0, s}) * mm[gs][gt];
+            end else begin : g_hi
+                wire        s = part_in[F+40];
+                wire        r = part_in[F+18];
+                wire [21:0] x = part_in[F+19 +: 22] ^ {22{s}};
+                assign lane_sgn[gs*4+gt] = s;
+                assign lane_mag[gs*4+gt] = ({1'b0, x} + {22'd0, (s ^ r)})
+                                         * mm[gs][gt];
+            end
+        end
+    end
+    endgenerate
+
     integer i, j;
     always @(posedge clk) begin
         if (rst) begin
             v1 <= 1'b0; op_r <= OP_NOP; addr_r <= {TAW{1'b0}};
             for (i = 0; i < 16; i = i + 1) begin
-                val_r[i] <= {VW{1'b0}}; exp_r[i] <= 10'sd0;
+                val_r[i] <= {VWM{1'b0}}; sgn_r[i] <= 1'b0; exp_r[i] <= 10'sd0;
             end
             peer_r <= {TW{1'b0}};
         end else if (en) begin
@@ -139,14 +234,11 @@ module mx_acu_fp #(
             peer_r <= peer_in;
             for (i = 0; i < 4; i = i + 1)
                 for (j = 0; j < 4; j = j + 1) begin
-                    if (i[0] == 1'b0)
-                        val_r[i*4+j] <= $signed(part_in[((i>>1)*4+j)*48 +: 19]);
-                    else
-                        val_r[i*4+j] <= $signed(part_in[((i>>1)*4+j)*48 + 19 +: 22])
-                                      + $signed({1'b0, part_in[((i>>1)*4+j)*48 + 18]});
-                    exp_r[i*4+j] <= $signed({2'b0, sa[i*8 +: 8]})
-                                  + $signed({2'b0, sb[j*8 +: 8]})
-                                  - $signed({2'b0, anchor});
+                    val_r[i*4+j] <= lane_mag[i*4+j];
+                    sgn_r[i*4+j] <= lane_sgn[i*4+j];
+                    // -6 undoes the /64 the mantissa product carries
+                    exp_r[i*4+j] <= ea[i] + eb[j]
+                                  - $signed({2'b0, anchor}) - 10'sd6;
                 end
         end
     end
@@ -154,15 +246,15 @@ module mx_acu_fp #(
     // ================================================ stage 2a: leading one
     wire [ACC_MW:0] n_sig  [0:15];
     wire [5:0]      n_msb  [0:15];
-    wire            n_g    [0:15], n_s [0:15], n_z [0:15], n_sgn [0:15];
+    wire            n_g    [0:15], n_s [0:15], n_z [0:15];
 
     genvar g;
     generate
     for (g = 0; g < 16; g = g + 1) begin : g_norm_a
-        mx_fpacc_norm_a #(.MW(ACC_MW), .VW(VW)) u_na (
-            .val(val_r[g]),
+        mx_fpacc_norm_a #(.MW(ACC_MW), .VW(VWM)) u_na (
+            .mag(val_r[g]),
             .sig(n_sig[g]), .msb(n_msb[g]), .guard(n_g[g]),
-            .sticky(n_s[g]), .is_zero(n_z[g]), .sign(n_sgn[g])
+            .sticky(n_s[g]), .is_zero(n_z[g])
         );
     end
     endgenerate
@@ -193,7 +285,7 @@ module mx_acu_fp #(
             for (i = 0; i < 16; i = i + 1) begin
                 b_sig[i] <= n_sig[i]; b_msb[i] <= n_msb[i];
                 b_g[i]   <= n_g[i];   b_s[i]   <= n_s[i];
-                b_z[i]   <= n_z[i];   b_sgn[i] <= n_sgn[i];
+                b_z[i]   <= n_z[i];   b_sgn[i] <= sgn_r[i];
                 b_exp[i] <= exp_r[i];
             end
         end
@@ -224,7 +316,6 @@ module mx_acu_fp #(
     // the RAM, the exponent compare and the barrel shift -- the longest chain
     // in the block. All of these are knowable one stage early, so none of them
     // has to be there.
-    reg sel_ld;         // LOAD: operand A is zero, so `rounded` is the chain
     reg [2:0] a_sel;    // align operand A source: 0 = tile, 1 = zero
     reg [2:0] b_sel;    // align operand B source: 0 = chain, 1 = peer, 2 = zero
 
@@ -232,7 +323,6 @@ module mx_acu_fp #(
         if (rst) begin
             chain_r <= {TW{1'b0}}; peer_r2 <= {TW{1'b0}};
             op_r2 <= OP_NOP; addr_r2 <= {TAW{1'b0}}; v2 <= 1'b0;
-            sel_ld <= 1'b0;
             a_sel <= 3'd1; b_sel <= 3'd2;
         end else if (en) begin
             chain_r <= chain_fp;
@@ -240,11 +330,9 @@ module mx_acu_fp #(
             op_r2   <= op_1b;
             v2      <= v1b;
 
-            // held while a fold runs, which is what lets the address reach the
-            // tile RAM with no mux in front of it
+            // only updated on a valid command; everything downstream of it is
+            // gated by v2, so it holds rather than clears
             if (v1b) addr_r2 <= addr_b;
-
-            sel_ld <= v1b && (op_1b == OP_LOAD);
 
             // Operand sources, resolved one stage ahead of the align cycle so
             // nothing combinational sits in front of the tile read.
@@ -252,7 +340,8 @@ module mx_acu_fp #(
                 a_sel <= 3'd1; b_sel <= 3'd0;           // zero + chain
             end else if (v1b && (op_1b == OP_ADD_PEER)) begin
                 a_sel <= 3'd0; b_sel <= 3'd1;           // tile + peer
-            end else if (v1b && (op_1b == OP_ADD)) begin
+            end else if (v1b && ((op_1b == OP_ADD) ||
+                                 (op_1b == OP_ADD_EMIT))) begin
                 a_sel <= 3'd0; b_sel <= 3'd0;           // tile + chain
             end else if (v1b && ((op_1b == OP_EMIT) || (op_1b == OP_SEND))) begin
                 a_sel <= 3'd0; b_sel <= 3'd2;           // tile + zero: pass out
@@ -280,6 +369,13 @@ module mx_acu_fp #(
     //
     // With READ_LAT=2 the address must lead the data by two cycles: sampled at
     // the end of stage 2a, valid during stage 3.
+    // THE SOURCE OF TRUTH for the reuse distance. Two callers encode it
+    // independently and CANNOT see this value: mx_cluster_mgr's pacing buckets
+    // and mx_cluster_cu's `i_wide` both expand `Gm*Gn < 5` into small tests on
+    // Gm and Gn, because computing the product cost the CU 26 MHz. Each carries
+    // an elaboration check that fires if its own copy of 5 stops matching, but
+    // nothing links them to this line -- so changing it means changing all
+    // three.
     localparam integer REUSE_MIN = 5;   // cycles between commands to one address
 
     wire [TW-1:0]  t0;
@@ -292,9 +388,12 @@ module mx_acu_fp #(
             .rd_en(en), .rd_addr(addr_r), .rd_data(t0));
 
     wire norm_iss = v2 && ((op_r2 == OP_LOAD) || (op_r2 == OP_ADD) ||
-                           (op_r2 == OP_ADD_PEER));
+                           (op_r2 == OP_ADD_PEER) || (op_r2 == OP_ADD_EMIT));
     wire fwd_iss  = v2 && (op_r2 == OP_FWD);
     wire sum_iss  = v2 && ((op_r2 == OP_EMIT) || (op_r2 == OP_SEND));
+    // ADD_EMIT both writes the tile back and hands the value out, so it is in
+    // norm_iss (the write) and drives OUT_EMIT (the output) at once.
+    wire out_emit = v2 && ((op_r2 == OP_EMIT) || (op_r2 == OP_ADD_EMIT));
 
     // ONE mux level, on registered selects.
     //   a_sel  0 = tile   1 = zero (LOAD adds the chain to nothing)
@@ -307,9 +406,9 @@ module mx_acu_fp #(
     wire b_zero = (b_sel == 3'd2);
 
     wire       iss_wr  = norm_iss;
-    wire [1:0] iss_wb  = 2'd0;
-    wire [1:0] iss_out = sum_iss ? ((op_r2 == OP_SEND) ? OUT_SEND : OUT_EMIT)
-                                 : OUT_NONE;
+    wire [1:0] iss_out = (v2 && (op_r2 == OP_SEND)) ? OUT_SEND
+                       : out_emit                   ? OUT_EMIT
+                                                    : OUT_NONE;
 
 `ifndef SYNTHESIS
     // The reuse distance is now a CONTRACT, not a structure. Check it, so a
@@ -371,12 +470,12 @@ module mx_acu_fp #(
     reg [TW-1:0]  s3_chain;
     reg [TAW-1:0] s3_addr;
     reg           s3_wr, s3_fwd, v3;
-    reg [1:0]     s3_wb, s3_out;
+    reg [1:0]     s3_out;
 
     always @(posedge clk) begin
         if (rst) begin
             v3 <= 1'b0; s3_addr <= {TAW{1'b0}}; s3_chain <= {TW{1'b0}};
-            s3_wr <= 1'b0; s3_wb <= 2'd0; s3_out <= OUT_NONE; s3_fwd <= 1'b0;
+            s3_wr <= 1'b0; s3_out <= OUT_NONE; s3_fwd <= 1'b0;
             for (i = 0; i < 16; i = i + 1) begin
                 s3_bg[i] <= {SW{1'b0}}; s3_sh[i] <= {SW{1'b0}};
                 s3_sub[i] <= 1'b0; s3_ebig[i] <= 7'd0;
@@ -390,7 +489,6 @@ module mx_acu_fp #(
             s3_addr  <= addr_r2;
             s3_chain <= chain_r;
             s3_wr    <= iss_wr;
-            s3_wb    <= iss_wb;
             s3_out   <= iss_out;
             s3_fwd   <= fwd_iss;
             for (i = 0; i < 16; i = i + 1) begin
@@ -426,12 +524,12 @@ module mx_acu_fp #(
     reg [TW-1:0]  s4_chain;
     reg [TAW-1:0] s4_addr;
     reg           s4_wr, s4_fwd, v4;
-    reg [1:0]     s4_wb, s4_out;
+    reg [1:0]     s4_out;
 
     always @(posedge clk) begin
         if (rst) begin
             v4 <= 1'b0; s4_addr <= {TAW{1'b0}}; s4_chain <= {TW{1'b0}};
-            s4_wr <= 1'b0; s4_wb <= 2'd0; s4_out <= OUT_NONE; s4_fwd <= 1'b0;
+            s4_wr <= 1'b0; s4_out <= OUT_NONE; s4_fwd <= 1'b0;
             for (i = 0; i < 16; i = i + 1) begin
                 s4_norm[i] <= {SW{1'b0}}; s4_lz[i] <= 6'd0; s4_sz[i] <= 1'b0;
                 s4_ebig[i] <= 7'd0; s4_sbig[i] <= 1'b0; s4_lost[i] <= 1'b0;
@@ -442,7 +540,6 @@ module mx_acu_fp #(
             s4_addr  <= s3_addr;
             s4_chain <= s3_chain;
             s4_wr    <= s3_wr;
-            s4_wb    <= s3_wb;
             s4_out   <= s3_out;
             s4_fwd   <= s3_fwd;
             for (i = 0; i < 16; i = i + 1) begin
@@ -468,8 +565,31 @@ module mx_acu_fp #(
     end
     endgenerate
 
-    // Write side of the four tile memories. There is no reset here and there
-    // cannot be -- block RAM has none. zmask covers what a reset used to.
+    // Write side of the tile memory. There is no reset here and there cannot be
+    // -- block RAM has none -- so an address holds x until something writes it.
+    // Nothing reads it before then, and that is a contract on the caller: a tile
+    // must be opened with OP_LOAD, whose align operand A is forced to zero
+    // rather than read from the RAM. OP_ADD into a never-loaded tile reads x.
+    //
+    // What `busy` has to mean is "not safe to take the control mux yet", and
+    // that is strictly more than "a command is in the pipeline". Taking the mux
+    // means issuing an EMIT, which reads a tile address the command still in
+    // flight may be about to write -- so this has to cover the write AND the
+    // REUSE_MIN gap after it, or the read beats the write to the same address.
+    //
+    // A pipeline-only version reads correct and fails only when the whole GEMM
+    // is short enough that its tail has not cleared when DRAIN asks. Every
+    // sub-tile then drains as zero, which looks like a compute bug.
+    reg [3:0] busy_tail;
+    wire      in_flight = cmd_valid || v1 || v1b || v2 || v3 || v4;
+    always @(posedge clk) begin
+        if (rst)            busy_tail <= 4'd0;
+        else if (!en)       busy_tail <= busy_tail;
+        else if (in_flight) busy_tail <= REUSE_MIN[3:0];
+        else if (|busy_tail) busy_tail <= busy_tail - 4'd1;
+    end
+    assign busy = in_flight || (|busy_tail);
+
     wire wr_en = en && v4 && s4_wr;
     assign wr_addr    = s4_addr;
     assign wr_data    = rounded;
@@ -490,18 +610,17 @@ module mx_acu_fp #(
 
     always @(posedge clk) begin
         if (rst) begin
-            peer_valid <= 1'b0; emit_valid <= 1'b0; busy <= 1'b0;
+            peer_valid <= 1'b0; emit_valid <= 1'b0;
             peer_out <= {TW{1'b0}}; emit_out <= 256'd0;
             emit_acc <= {TW{1'b0}}; emit_pend <= 1'b0;
         end else if (en) begin
             peer_valid <= 1'b0;
             emit_valid <= 1'b0;
             emit_pend  <= 1'b0;
-            busy       <= v3 || v4;
 
             if (v4) begin
                 if (s4_out == OUT_SEND) begin
-                    peer_out   <= rounded;      // bank0 + bank1 + bank2
+                    peer_out   <= rounded;
                     peer_valid <= 1'b1;
                 end else if (s4_out == OUT_EMIT) begin
                     emit_acc  <= rounded;
