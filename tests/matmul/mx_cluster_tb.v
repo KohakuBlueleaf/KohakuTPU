@@ -21,8 +21,13 @@
 //   6  streaming    tiles back to back, one per cycle, to prove the systolic
 //                   skew and the cross-TCU W path hold up under a real
 //                   pipeline rather than one isolated tile
-//   7  scales       non-uniform E8M0 per row and column, accumulated over
-//                   several K=32 blocks
+//   7  scales       non-uniform power-of-two scale per row and column,
+//                   accumulated over several K=32 blocks
+//
+// mx_cluster pairs the core with the EXACT accumulator, whose scale is a plain
+// 8-bit exponent rather than the machine's E5M3 -- see mx_acu.v. The scale
+// mantissa is checked in mx_acu_fp_tb; what this bench pins down is the
+// datapath underneath it.
 
 `default_nettype none
 `timescale 1ns/1ps
@@ -272,8 +277,8 @@ module mx_cluster_tb;
         while (q_rd < q_wr) retire("streamed");
 
         // ---------------------------------------------------------------
-        // Non-uniform E8M0 per row and column, accumulated across four K=32
-        // blocks. anchor is chosen so no shift goes negative.
+        // Non-uniform power-of-two scale per row and column, accumulated across
+        // four K=32 blocks. anchor is chosen so no shift goes negative.
         $display("--- 7. per-row / per-column scales, 4 blocks accumulated ---");
         sa = {8'd5, 8'd4, 8'd3, 8'd2};      // sa[3..0] = 5,4,3,2
         sb = {8'd6, 8'd5, 8'd4, 8'd3};

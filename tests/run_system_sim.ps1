@@ -20,9 +20,17 @@
 #
 # Exit code 0 = pass.
 
+# SUPERSEDED, and kept only until someone confirms nothing depends on it.
+# scripts\py\xsim.py runs the same benches, and it names sources in ONE table so
+# that adding a file is one edit rather than one per caller. This script keeps a
+# hand-maintained duplicate of that list, and the duplicate is exactly how it
+# broke: noc_fake_mem.v gained an mx_quant instance and this list never learned
+# about it, so all three benches failed elaboration on an unresolved module
+# while xsim.py kept working. Prefer:
+#     driver\.venv\Scripts\python.exe scripts\py\xsim.py system
 param(
     [int[]]$Model = @(1, 0),
-    [string[]]$Bench = @("mx_system_tb", "mx_system32_tb", "mx_mesh2x2_tb"),
+    [string[]]$Bench = @("mx_system_tb", "mx_system32_tb"),
     [string]$VivadoBin = "D:\Xilinx\Vivado\2024.2\bin",
     [switch]$KeepWork
 )
@@ -49,6 +57,9 @@ $rtl = @(
     "src\kohakutpu\matmul\mx_cluster_mgr.v",
     "src\kohakutpu\matmul\mx_cluster_node.v",
     "src\kohakutpu\matmul\mx_cluster_cu.v",
+    # noc_fake_mem instantiates the quantiser: memory holds FP16 and the CU asks
+    # for MXFP7, so a stub without it hands back raw FP16 as operands.
+    "src\kohakumas\mx_quant.v",
     "tests\noc\noc_fake_mem.v"
 ) | ForEach-Object { Join-Path $root $_ }
 
