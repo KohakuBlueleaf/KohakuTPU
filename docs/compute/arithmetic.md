@@ -1,5 +1,15 @@
 ## Arithmetic Operations
 
+> **The FP8 sections describe the superseded design.** E5M2 and E4M3 below are
+> the old element format; the matmul datapath now uses int7 significands with an
+> E5M3 scale shared by a block of 32, and does the whole K=32 reduction in
+> integer inside the DSP cascade ([`matmul.md`](matmul.md) §3). Nothing here
+> describes the current tensor core.
+>
+> The FP16 FMA, FP12 inversion, exp/log and FP24 constructions are **not**
+> superseded — they are the primitives a vector/ALU unit will be built from, and
+> that unit has not been built yet. Those parts are still the reference.
+
 ### FP8 mul
 
 consider q * (k, v, m) where q,k,v,m are all FP8 floating point number (E5M2 or E4M3)

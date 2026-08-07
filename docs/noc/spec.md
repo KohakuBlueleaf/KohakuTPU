@@ -15,6 +15,13 @@ above that is the CU's business.
 Two modules connect the mesh to the AXI world (§10): the **Global Orchestrator**
 carries the control plane and the **MAS** carries the data plane.
 
+> **As built there is one, and it is MAG.** The orchestrator's mesh-facing half
+> became the *agent* inside MAG, and since it shares MAG's memory ports it is no
+> longer a node in its own right — §10.2, §10.5, and
+> [`../mas/spec.md`](../mas/spec.md) §2.5. The two planes still exist and are
+> still told apart; what tells them apart is the flit's **type** rather than
+> which attachment it arrived at.
+
 ---
 
 ## 1. Topology and addressing
@@ -100,11 +107,75 @@ would have gone elsewhere — ordinary head-of-line blocking, the price of not
 keeping a `FLIT_WIDTH` register per (input, output) pair. Virtual channels are the
 standard remedy if profiling ever shows it costs more than it saves.
 
-Measured cost per router (`tests/run_synth_check.ps1`, out-of-context on
-xcvu13p-fhgb2104-2L-e, 288-bit flits, depth-32 buffers): **4,095 LUT, 5,960 FF,
-0 BRAM, 0 URAM**, closing 410 MHz against a 300 MHz target. At the 14×14 maximum
-that is 46% of the device's LUTs and 34% of its registers, with the entire BRAM and
-URAM budget left for caches.
+Measured cost per router is **4,050 LUT, 5,960 FF, 0 BRAM, 0 URAM**, and the
+2×2 tile it was measured in closes 400.8 MHz against a 300 MHz target. Those
+figures live in one place — [`resource-budget.md`](resource-budget.md) §1, which
+names the instrument — and are not restated elsewhere; this section had a second
+copy that had drifted. At the 14×14 maximum they come to 46% of the device's
+LUTs and 34% of its registers, with the entire BRAM and URAM budget left for
+caches.
+
+### 2.1 The link handshake: `valid` is held until `busy` is low
+
+A link is a `data / valid / busy` triple, and the rule is **exactly two lines**:
+
+- **Sender:** assert `valid` and hold both `valid` and `data` unchanged until a
+  cycle in which `busy` is low. That cycle is the transfer.
+- **Receiver:** accept **iff** `valid && !busy`. Accept once, and never on a
+  cycle when its own `busy` is high.
+
+Nothing else is legal, and the two halves are not independently choosable.
+
+**Why it must retry.** The obvious alternative — sample `busy`, commit a flit
+one cycle later, no retry — is what this NoC used to do, and it is unsound
+because `busy` is a *prediction*. The sender decides at T against `busy(T)`; the
+flit is presented at T+1; the receiver may raise `busy` at T+1. That flit is
+then destroyed. It requires a receiver that is full *and* an upstream that
+committed while it was not, so it appears only under sustained congestion:
+**two clusters never triggered it, four did**, and what it destroyed most often
+was a `MEM_WR_DATA` — leaving MAG's write slot permanently short of `ws_len`, so
+the slot never became ready, the source's next descriptor opened a second slot,
+and a later data flit matched nothing. The machine stopped with every write slot
+free and nothing reported lost. See `.plans/optimization-log.md`.
+
+**Why the receiver must not accept unconditionally.** The mirror-image fix —
+"receiver takes whatever is valid, `busy` is only advisory" — fails against the
+*same* senders. Because they hold, an accept-on-room receiver enqueues the same
+flit once per cycle of backpressure. A duplicated `MEM_WR_DATA` overruns its
+slot's `ws_len`, and the surplus flit then matches nothing: identical symptom,
+opposite cause.
+
+So there is no tolerant middle setting. Every endpoint obeys both lines:
+
+| module | sender | receiver |
+|---|---|---|
+| `noc_outport.v` | holds; `grants` withheld while holding | — |
+| `noc_inport.v` | — | `wr_en = valid && !port_busy` |
+| `noc_cu_base.v` | `tx_free = !out_valid \|\| !out_busy` | `wr_en = valid && !noc_in_busy` |
+| `noc_orchestrator.v` | `tx_pop` gated on the same term | `wr_en = valid && !rx_full` |
+| `mag.v` | `out_free = !out_valid \|\| !out_busy` | `wr_en = valid && !mem_in_busy` |
+
+> **`mag.v` has two senders and two receivers behind one port**, and the retry
+> contract is what lets them share it. Inbound, `mem_in_busy` is the memory
+> engine's occupancy for a memory flit and "the agent is not taking it this
+> cycle" for anything else, so an ungranted port refuses and its sender holds —
+> which is this section's rule, not an extra requirement. Outbound, the agent
+> pre-empts the engine on the port its destination row selects; the engine is
+> already obliged to hold `valid` and `data`, so it simply does. §10.5 and
+> [`../mas/spec.md`](../mas/spec.md) §2.5.
+
+With retry, `busy` may safely be plain `full` — the margin that a
+commit-one-cycle-ahead link needs does not apply. That matters here because
+`sync_fifo`'s `wr_almost` is **not** the margin it appears to be:
+`USE_ADV_FEATURES` is zero, so XPM ties `prog_full` low and `wr_almost` reduces
+to `wr_busy`. Anything that still wants a real margin must count for itself, as
+MAG does with `Q_MARGIN`.
+
+`noc_inport.v` carries the assertion that enforces the sender's half: a flit
+offered while `busy` must still be offered next cycle, unchanged. Testing *that*
+rather than "was a flit offered into a full buffer" is what separates a sender
+that retries — the normal steady state under backpressure — from one that gave
+up.
 
 ---
 
@@ -210,8 +281,10 @@ is a CU-level contract published by that CU, not a network concern.
 | `[247:240]` | `inst_class` (8) | opaque to the network; CU-defined |
 | `[239:0]` | `inst_body` (240) | first 240 bits of the instruction |
 
-240 bits covers every instruction in `docs/compute/controller.md` (largest is 71) in a
-single flit. Longer encodings continue in following flits.
+240 bits covers every CU instruction in a single flit with room to spare — the
+cluster ISA's widest, `FILL`, uses well under half of it
+([`../isa/cluster.md`](../isa/cluster.md) §2). Longer encodings continue in
+following flits, and nothing built so far needs to.
 
 ### 5.5 `CU_SIGNAL`
 
@@ -253,8 +326,9 @@ nothing else; see [`cu-framework.md`](cu-framework.md).
 
 ### 6.1 Instruction FIFO (`CU_INST`)
 
-A FIFO, because instruction streams are ordered and `docs/compute/controller.md` already
-specifies blocking in-order execution.
+A FIFO, because instruction streams are ordered and every CU ISA in this design
+executes blocking and in order — a cluster runs one `FILL`/`GEMM`/`DRAIN` to
+completion before starting the next ([`../isa/cluster.md`](../isa/cluster.md)).
 
 - **Entries are whole 288-bit flits**, not extracted instruction bodies. Storing
   the flit needs no field extraction on the write side, and costs nothing: a
@@ -306,7 +380,9 @@ wider `CU_CAPS`, so the mandatory region stays fixed forever.
 ## 7. Flow control
 
 **Hop-by-hop** (exists): a full input FIFO raises `busy`, the upstream output port
-stalls. Prevents buffer overflow.
+stalls and **holds its flit** until the link clears — §2.1. Prevents buffer
+overflow. Stalling without holding does not: it prevents the overflow by
+discarding the flit that would have caused it.
 
 **End-to-end** (to add): hop-by-hop alone does **not** prevent protocol deadlock.
 If a node's input fills with requests and it cannot inject the response that would
@@ -339,6 +415,19 @@ different reassembly slots, so this is harmless.
 ---
 
 ## 9. Caching
+
+> **Superseded by [`../mas/cache.md`](../mas/cache.md).** The scheme below makes
+> L2 and L3 the same parameterised cache module. That is no longer the plan: the
+> CU-side level is **not a cache** — it has no tags, because the compute unit
+> states its access pattern in the instruction itself, so there is nothing to
+> guess. Only the MAS-side level is tagged. The wire protocol in §5.1/§5.2 is
+> unaffected. Kept here for the reasoning about write policy and storage
+> primitives, which carries over.
+>
+> As built, only L1 exists: `FILL` names a base address and an entry count and
+> the manager writes the result into a dedicated memory. Neither cache level has
+> RTL, so a cluster re-reads its operands from DRAM every pass — which is why the
+> machine is currently fill-bound ([`../arch-design.md`](../arch-design.md) §4.2).
 
 Three levels, all optional except L3:
 
@@ -391,6 +480,29 @@ Splitting them matters. Mixing bulk DRAM traffic with control traffic through on
 attachment point makes the control path's latency hostage to data congestion —
 and the host polls control constantly while touching bulk data rarely.
 
+> **As built the table is one row, and the paragraph above was tested and found
+> too strong.** MAG is a slave to the host, a master to its memory, and presents
+> `MEM_PORTS` NoC attachments which **both** planes use. The control path is not
+> hostage to data congestion, for a reason the original argument did not consider:
+> the agent **wins** outbound arbitration against the memory engine on whichever
+> port its destination row selects, so a busy memory path can never delay a
+> dispatch off the port. Measured, the change was free — 2 CU 256³ unchanged at
+> 18,701 cycles and 87.6% of peak ([`../mas/spec.md`](../mas/spec.md) §2.5).
+>
+> Inbound is weaker and honestly so: a port's link is in-order, so whichever
+> consumer's flit is at the head delays the other's behind it until the
+> round-robin grants it. That is head-of-line blocking, bounded and paid in
+> latency — **except when the agent's RX FIFO is full**, in which case a
+> non-signal control flit is never accepted and the memory traffic behind it on
+> that link stops permanently. Latent rather than live today, and stated in full
+> in [`../isa/memory.md`](../isa/memory.md) §3.2.1. It is a real instance of the
+> §7 class of hazard: a dependency between message *classes*, which sharing an
+> attachment makes possible where two wires did not.
+>
+> The separation the paragraph really wanted was **priority**, not a second wire.
+> Buying it with a wire also bought a defect: MAG hung off two opposite edges of
+> the mesh and every dispatch in the machine left through that one link.
+
 ### 10.1 Flit / AXI word packing
 
 A flit is 288 bits, which is not a multiple of any AXI data width in use:
@@ -407,6 +519,22 @@ single 5-beat `jaxi::write`, and receiving one a single 5-beat `jaxi::read`.
 
 ### 10.2 Global Orchestrator — AXI slave map
 
+> **This block is now the agent inside MAG**, not a standalone NoC node. The
+> registers below are unchanged and still decoded exactly this way; what moved is
+> where they live and how they are reached — `src/kohakumas/mag.v` instantiates
+> the agent and maps this window into its control range at
+> `MAG_BASE = 0x1000_0000`, and `src/kohakuaxi/main_orch.v` is the separate
+> host-facing command-RAM machine that drives them. The authoritative,
+> against-the-RTL version of this table, including the two registers this one
+> predates, is [`../isa/agent.md`](../isa/agent.md) §2.
+>
+> **It has no mesh attachment of its own either.** It shares MAG's memory ports:
+> inbound each port demuxes by flit type, outbound a flit leaves from the port on
+> its destination's row, and the agent answers at port 0's coordinate. So the
+> "one NoC node" this section was written around is now **zero** —
+> [`../isa/agent.md`](../isa/agent.md) §1.1 and
+> [`../mas/spec.md`](../mas/spec.md) §2.5.
+
 64-bit registers. This is the window the host polls; **none of these addresses are
 NoC coordinates**.
 
@@ -422,6 +550,8 @@ NoC coordinates**.
 | `0x0050` | `PROG_KICK` | WO | begin dispatch |
 | `0x0058` | `PROG_STATUS` | RO | `running`, `flits_left`, `credit` |
 | `0x0060` | `PROG_CREDIT` | RW | seed the instruction-FIFO credit count |
+| `0x0068` | `PROG_BASE` | RW | first staging slot of this program — added since, and it is what lets N programs be resident at once |
+| `0x0070` | `SIG_DONE` | RO/W | completions from **every** node in one counter; any write clears it |
 | `0x0100`–`0x0120` | `TX_FLIT[0..4]` | RW | one outgoing flit |
 | `0x0140` | `TX_KICK` | WO | inject `TX_FLIT` |
 | `0x0148` | `TX_STATUS` | RO | `space`, `full` |
@@ -448,11 +578,12 @@ the host writes through the same AXI slave, at `0x2000+`. The host
 then sets `PROG_DST`, `PROG_LEN`, `PROG_CREDIT` and kicks; the dispatcher walks
 the buffer, rewrites each flit's destination to `PROG_DST`, and injects.
 
-This works because **programs here are small** — unlike a CUDA kernel, a KohakuTPU
-instruction is ≤71 bits (`docs/compute/controller.md`) and one flit carries 240 bits of
-body, so a few hundred flits of staging covers a dispatch batch comfortably. A
-local buffer is therefore sufficient, and an entire AXI master implementation
-disappears with it.
+This works because **programs here are small** — a KohakuTPU CU instruction is
+one flit, and one flit carries 240 bits of body, so a few hundred flits of
+staging covers a dispatch batch comfortably. A local buffer is therefore
+sufficient, and an entire AXI master implementation disappears with it. As built,
+`STAGE_FLITS = 128`; a GEMM that needs more is cut into rounds by the driver
+([`../isa/kernel.md`](../isa/kernel.md) §4).
 
 Because destination is applied at dispatch rather than baked into the staged
 flits, one staged program can be sent to any node, or to several in turn.
@@ -462,6 +593,12 @@ streams out of it as it goes, so the host must wait for `PROG_STATUS.running` to
 clear before refilling. That is *not* the same as waiting for the target CU to
 finish executing -- the CU keeps working while the next program is staged and
 dispatched, which is where overlap between programs comes from.
+
+> `PROG_BASE` softened this considerably after the fact. Because a program names
+> its own first slot, several programs live in the window at once and all of them
+> run concurrently — measured at 1.97x on `C[32,32]` across two clusters. Without
+> it, a second cluster's flits cannot be staged until the first has consumed its
+> own, which serialises clusters that share no data at all.
 
 Credits (§6.1, §7): `PROG_CREDIT` seeds the count, each dispatched flit consumes
 one, and `CU_SIGNAL`/`INST_COMPLETE` from the target returns one. The dispatcher
@@ -517,6 +654,17 @@ the orchestrator, and anything injected during bring-up.
 
 ### 10.5 MAS
 
+> As built it is **MAG**: an AXI *slave* facing the host with one AXI master per
+> memory port facing its own memory, plus `MEM_PORTS` NoC attachments — one per
+> mesh row — and the dispatch agent of §10.2–4, which **shares those same
+> attachments** rather than holding one of its own. The wire protocol below is
+> unchanged and is what `src/kohakumas/mag.v` implements. One addition the text
+> below predates: **a read request can ask for quantisation**, and MAG then
+> converts FP16 to int7 + E5M3 on the way out, so the response carries a
+> different element format from the memory it came from. The RTL-accurate
+> version of this section is [`../isa/memory.md`](../isa/memory.md), and §1.1
+> there is the type demux that lets one coordinate serve two consumers.
+
 MAS is a NoC node with an AXI master. It accepts `MEM_RD_REQ`/`MEM_WR_REQ`,
 issues AXI transactions, and returns `MEM_RD_RESP`/`MEM_WR_ACK` to `src_x`/`src_y`
 with `txn_id` echoed.
@@ -554,7 +702,8 @@ fabric clock, not on XDMA's.
 
 Provided:
 
-- **Lossless delivery** — backpressure, never drop
+- **Lossless delivery** — backpressure and retry, never drop and never
+  duplicate; both halves of §2.1, not either one
 - **In-order per (source, destination) pair** — from XY routing
 - **No routing deadlock** — from XY routing
 - **No protocol deadlock** — provided endpoints honour §7 credits
@@ -589,6 +738,8 @@ buffers. Revisit only if measurement demands it.
 |---|---|
 | `POS_WIDTH` | **4** — 16×16 space, 14×14 routers, 56 border PEs, 4 corners invalid |
 | Border-PE routing | **clamp to adjacent router, then one outward hop** — keeps pure XY |
+| Link handshake | **busy/valid WITH RETRY** — sender holds until `busy` is low, receiver accepts iff `valid && !busy`. Both halves, no tolerant middle setting — §2.1 |
+| Receiver `busy` | **plain `full`** — retry removes the need for a margin, and `sync_fifo`'s `wr_almost` is not one (`USE_ADV_FEATURES` is zero) |
 | `MAX_OUTSTANDING` | **parameter, default 8** |
 | L2 write policy | **parameter** — the CU decides |
 | L3 write policy | **write-through** |
@@ -597,7 +748,7 @@ buffers. Revisit only if measurement demands it.
 | `CU_CTRL` register map | **first 4 words mandatory**, rest CU-defined |
 | CU discovery | **one `CU_CAPS` word** for now |
 | `CU_SIGNAL` codes | **centrally allocated** `<0x40`, CU-defined above; `arg` always CU-defined |
-| AXI attachment | **two modules**: orchestrator (control, **slave only**) and MAS (data, master) |
+| AXI attachment | **two modules**: orchestrator (control, **slave only**) and MAS (data, master). **As built, one**: MAG, with the agent sharing its memory ports and the planes told apart by flit type — §10, §10.5 |
 | Instruction source | **staged in orchestrator BRAM**, not fetched from DRAM -- programs are small |
 | Host control window | **register-mapped mailbox + BRAM status mirror**, not address-mapped |
 | Host status polling | **`NODE_STATUS` BRAM**, never DDR4 |

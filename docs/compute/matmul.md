@@ -67,14 +67,33 @@ L3 is how large problems compose, and it never touches the inner loop.
 
 ### 3.0 What to call this: AMP FP16-MXFP7, and why the unit is FLOPS
 
-The element format is **MXFP7** — an OCP-style microscaling format: an E8M0
+The element format is **MXFP7** — a microscaling format in the OCP style: a
 scale shared by a block of 32, and a 7-bit signed element. The pair is a
-*floating-point* value, because the shared field is a power-of-two exponent:
+*floating-point* value:
 
 ```
-   value(i,k)  =  2^sA[i]  x  ( a_int[i][k] / 2^6 )
-                  \_ E8M0 _/   \___ 7-bit signed significand ___/
+   value(i,k)  =  scaleA[i]  x  a_int[i][k]
+
+   scaleA[i]   =  2^(E - 20) x (1 + M/8)      field = { E[4:0], M[2:0] }
+                  \__ E5M3, 8 bits, the same width an E8M0 field would be __/
 ```
+
+**The scale is E5M3, not E8M0**, and that is a deliberate departure from OCP.
+A power-of-two scale can only land the block peak somewhere in `[32,64)` of the
+int7 range, so between zero and a full bit of the significand goes unused, and
+which it is depends on where the peak happens to fall inside its binade. Three
+mantissa bits put the peak in `[56,63]` every time. Measured per element on
+correlated operands, relative error p50 `0.54% -> 0.38%` and p99 `48% -> 23%`.
+
+E5 because the output is FP16: FP16's normal range spans 30 binades and E5
+covers 31 — it just fits, and E4 (16) does not. The three extra exponent bits
+an E8M0 field spends buy range this datapath cannot express anyway.
+
+The cost is one multiply at each end. `mx_quant.v` divides by the scale using
+an eight-entry reciprocal table instead of shifting; `mx_acu_fp.v` multiplies
+the integer partial by `m8a*m8b` and takes the `/64` off the exponent, which
+keeps it exact. The field stays 8 bits, so nothing about the flit format, the
+NoC or L1 changes — only the interpretation.
 
 The machine as a whole is **AMP (automatic mixed precision) FP16-MXFP7**:
 
@@ -103,8 +122,8 @@ Microscaling shares a scale **along the reduction dimension only**. For
 `C[M,N] = A[M,K] · B[K,N]`:
 
 ```
-   A block = 1 row    x 32 K   ->  one E8M0 scale  sA[i]
-   B block = 32 K     x 1 col  ->  one E8M0 scale  sB[j]
+   A block = 1 row    x 32 K   ->  one E5M3 scale  sA[i]
+   B block = 32 K     x 1 col  ->  one E5M3 scale  sB[j]
 ```
 
 Output element `(i,j)` accumulated over one K = 32 block is
@@ -133,7 +152,7 @@ A tensor CU consumes a K = 8 slice per cycle. One slice of a 4-row operand is
 
    255                                                  32  31           0
   +-------------------------------------------------------+--------------+
-  |                32 x int7   (224 bit)                   | 4 x E8M0 (32)|
+  |                32 x int7   (224 bit)                   | 4 x E5M3 (32)|
   +-------------------------------------------------------+--------------+
        element (i,k)  i = 0..3, k = 0..7                     scale per row i
                                                              (shared by all 4
@@ -151,9 +170,9 @@ the buffer is holding float data.
 ```
    DRAM / NoC        FP16 / FP32 / int8        normal dtypes, software-visible
         |
-        |  MAS quantiser (max-tree -> E8M0, shift+round -> int7)
+        |  MAS quantiser (max-tree -> E5M3, shift+round -> int7)
         v
-   L1 (tensor CU)    int7 + E8M0              dense, feeds MAC array at rate
+   L1 (tensor CU)    int7 + E5M3              dense, feeds MAC array at rate
         |
         |  L0 + L1 : exact integer accumulation
         v
@@ -181,7 +200,7 @@ has **no output port to the NoC** — its result goes down the cluster chain.
    L1-A  256 bit/cycle                  L1-B  256 bit/cycle
    +----------------------+             +----------------------+
    | 32 x int7  A[0:4,k]  |             | 32 x int7  B[k,0:4]  |
-   | 4  x E8M0  sA[0:4]   |             | 4  x E8M0  sB[0:4]   |
+   | 4  x E5M3  sA[0:4]   |             | 4  x E5M3  sB[0:4]   |
    +----------+-----------+             +-----------+----------+
               |                                     |
               +------------------+------------------+
@@ -258,7 +277,7 @@ the cluster that talks to the NoC.
       16 x int19 + scale                     peer partial (FP)
               |                                      |
       +-------v--------+                             |
-      |   normalise    |   int + E8M0 -> FP24        |
+      |   normalise    |   int + E5M3 -> FP24        |
       |   (once per    |                             |
       |    K=32 block) |                             |
       +-------+--------+                             |
@@ -302,14 +321,22 @@ through DRAM.
 
 ### 6.2 Precision note
 
-A K = 32 block result is exactly 19 bits. FP24 as `S1E7M16` carries a 17-bit
-significand, so the conversion rounds by 2 bits. E7 is required, not optional:
-the accumulator's exponent is `sA + sB` plus the integer magnitude, and for
-FP16 sources that sum spans roughly -48..+30. An E5 field would overflow on
-ordinary data.
+> The diagrams above say FP24 because that is what this section was written
+> against. **The built accumulator is FP22, `S1E7M14`** — measured identical to
+> FP24 against both FP64 and the exact-integer model, cheaper, and it carries the
+> slack that takes the cluster past 300 MHz. See §10 and
+> [`accumulator.md`](accumulator.md). Everything below about *why* E7 is
+> required is unchanged; only the mantissa width moved.
 
-FP32 is the alternative if the 2 bits matter. Cost is amortised 32:1 either
-way, so this is an accuracy decision, not an area one.
+A K = 32 block result is exactly 19 bits. FP24 as `S1E7M16` carries a 17-bit
+significand, so the conversion rounds by 2 bits; FP22's 15-bit significand
+rounds by 4. E7 is required either way, not optional: the accumulator's exponent
+is `sA + sB` plus the integer magnitude, and for FP16 sources that sum spans
+roughly -48..+30. An E5 field would overflow on ordinary data.
+
+FP32 is the alternative if the bits matter. Cost is amortised 32:1 whichever is
+chosen, so this is an accuracy decision, not an area one — which is exactly what
+made it measurable, and the measurement said FP22.
 
 ---
 
@@ -451,8 +478,9 @@ Fixed by this design:
    cluster                  4 tensor CU + 1 accumulator CU
    cluster throughput       4 x 32 x 4 per cycle
    quantisation block       K = 32
-   element format           MXFP7: E8M0 per block of 32 + 7-bit significand
-   operand payload          256 bit = 32 x int7 + 4 x E8M0
+   element format           MXFP7: E5M3 scale per block of 32 + int7 element
+   scale field              8 bit  = { E[4:0], M[2:0] }, bias 20, anchor 40
+   operand payload          256 bit = 32 x int7 + 4 x E5M3
    L0 / L1 accumulation     exact integer
    supported shapes         M = 4a, N = 4b, K = 32c
    machine precision        AMP FP16-MXFP7, FP22 accumulate  (s3.0)
@@ -464,14 +492,39 @@ Settled since:
    accumulator format       FP22 S1E7M14 -- measured identical to FP24 against
                             FP64 and exact-int, cheaper, and carries the slack
                             that takes the CU past 300 MHz. See accumulator.md
+   accumulator buffer size  a DEPTH parameter on mx_acu_fp, 5 BRAM36 at any
+                            depth up to 512. mx_cluster_cu defaults to TILES =
+                            256; the driver bench runs TILES = 512 sub-tiles =
+                            Gm 16 x Gn 32 = a 64x128 resident output tile
+   quantiser rounding       significand to nearest; the SCALE rounds UP, so a
+                            block's peak lands at or below 63 and never clips.
+                            Rounding the scale down would put the peak past 63
+                            and damage the largest element in the block -- the
+                            one that matters most
 ```
+
+The buffer size is settled in the sense that it is now a number, and unsettled
+in the sense that the number is small. §8.2 said the tile size sets the
+cluster's operand bandwidth; measured end to end, it does. 64 sub-tiles against
+32 L1 entries puts the machine at four tile-ops per L1 entry loaded, which is
+**fill-bound at 6–7% of datapath peak**. No scheduling change moves that ratio;
+only a bigger tile does. The numbers are in [`../system.md`](../system.md) §6
+and the arithmetic is in [`../arch-design.md`](../arch-design.md) §4.2.
+
+> **That was the state when this section was written, and the last sentence is
+> wrong.** The tile did grow, and so did the rest: two clusters now reach 87.6%
+> of datapath peak, and most of the distance came from overlap, residency and a
+> memory port per mesh row rather than from tile size alone. Current figures are
+> [`../perf.md`](../perf.md) §0; §2 there is why "it must be bandwidth" kept
+> being the wrong answer.
 
 Open:
 
 ```
-   accumulator buffer size  sets NoC port count -- pick from a target tile
+   how large the resident tile should be    the ratio above is the argument for
+                                            raising it; BRAM is at 8% while DSP
+                                            is already 99.6% at 45 clusters
    peer topology            chain vs tree -- scheduling, not hardware
-   rounding in the MAS      quantiser: nearest-even vs truncate vs stochastic
    chain bypass             should a cluster degrade to 4 independent CUs?
 ```
 

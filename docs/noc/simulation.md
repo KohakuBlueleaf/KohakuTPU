@@ -189,15 +189,25 @@ and stops issuing when that queue is full.
 
 ## 7. The NoC link protocol, for bench authors
 
-The mesh link is **busy/valid, not AXI valid/ready**, and mixing them up is the
-easiest way to write a broken bench:
+The mesh link is **busy/valid with retry, not AXI valid/ready**, and mixing them
+up is the easiest way to write a broken bench:
 
-- a sender must check `busy` and only then assert `valid` — asserting `valid` into
-  a full input FIFO overflows it
-- `OutPortSwitch` is the reference pattern: sample `busy`, and commit a flit only
-  when it was low
-- a receiver drives `busy` when it cannot accept, and must otherwise take whatever
-  arrives with `valid` — there is no held-valid handshake to fall back on
+- a sender asserts `valid` and **holds** `valid` and `data` unchanged until a
+  cycle in which `busy` is low; that cycle is the transfer
+- a receiver accepts **iff** `valid && !busy`, once, and never on a cycle its own
+  `busy` is high
+- `OutPortSwitch` is the reference sender: `room = !(out_valid && busy)`, so the
+  register only reloads when the flit it holds is gone or going
+
+Both halves are required. A bench sender that drops `valid` when `busy` rises
+destroys the flit; a bench receiver that takes whatever is valid enqueues a real
+sender's held flit once per cycle of backpressure. The two failures look
+identical in a reassembly counter and are opposite in cause —
+[spec.md](spec.md) §2.1.
+
+`noc_inport.v` asserts the sender's half and prints `flit LOST -- sender did not
+hold`. **That message names the bench, not the mesh**, when it fires against a
+hand-written driver.
 
 This is the one place in the project where "VALID must not depend on READY" does
 *not* apply, because it is not AXI.

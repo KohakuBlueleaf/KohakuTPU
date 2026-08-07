@@ -60,9 +60,17 @@ shallow.
 **One tensor core is 20× one endpoint's framework cost.** The NoC framework is not
 what makes a compute unit expensive.
 
-`tensorcore` **misses 300 MHz** (WNS −0.170 ns). The network closes 400 MHz and
-the arithmetic does not, so the compute sets the clock — either pipeline it or run
-those units at the ÷2 rate the clocking scheme already allows (spec §10.6).
+`tensorcore` **misses 300 MHz** (WNS −0.170 ns), and the network closes 400 MHz,
+so on these two numbers the compute would set the clock.
+
+> **Both rows are the superseded FP8→FP12 units** ([`../compute/costs.md`](../compute/costs.md)),
+> and the conclusion no longer holds for what is built. The MXFP7 compute path
+> `mx_cluster_cu` measures **325.6 MHz** out of context (WNS +0.155 ns at a
+> 310 MHz target), against `mx_quant` at 400.6 and `mag_mem_port` at 330.0. The
+> compute does not set the clock any more; nothing in the design currently
+> misses 300 MHz out of context. The ÷2 fallback in spec §10.6 is unused.
+> The LUT/FF/DSP columns are still the right order of magnitude for §3's
+> scaling arithmetic, which is what they are used for below.
 
 ---
 
@@ -71,6 +79,19 @@ those units at the ÷2 rate the clocking scheme already allows (spec §10.6).
 Ratio 10 tensor : 4 vector : 1 general, plus 8 MAS and 4 control endpoints. Mesh
 sized to the smallest `n` with `n² + 4n ≥ endpoints`. General-purpose unit assumed
 at 5,000 LUT — no such unit exists yet, so that column is a placeholder.
+
+> **The 4 control endpoints no longer exist.** The dispatch agent has no node of
+> its own: it shares MAG's ports, which are **MAG ports rather than memory
+> ports** — each carries operand traffic and control traffic, demuxed by flit
+> type ([`../mas/spec.md`](../mas/spec.md) §2.5). So the control column is 0 and
+> the 8 MAS endpoints carry both planes. The row counts below are unchanged in
+> order of magnitude, which is all they are used for.
+>
+> **One cluster is two endpoints, on adjacent routers.** A cluster is one column
+> of a *band* of two mesh rows, manager on the outer row and accumulator
+> directly beneath ([`../system.md`](../system.md) §2.3), so the endpoint count
+> a mesh must carry is twice the tensor-cluster count — which is what the
+> "10 tensor" ratio above is already counting in endpoints, not clusters.
 
 | T / V / G | mesh | endpoints | LUT | of device | DSP | of device |
 |---|---|---|---|---|---|---|

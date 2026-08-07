@@ -71,7 +71,7 @@ Coverage, and what each part is for:
   only thing `+P[18]` fixes
 - **streaming** a new tile every cycle, which is the only way the per-stage skew
   and the cross-TCU W path are actually exercised
-- **scales** non-uniform E8M0 per row and column, accumulated across blocks
+- **scales** non-uniform E5M3 per row and column, accumulated across blocks
 
 ### 2.1 Why two models earned their keep
 
@@ -97,21 +97,37 @@ past it; without that the first tile silently produces nothing.
 
 ## 3. Measured resources
 
-Out-of-context synthesis, `xcvu13p-fhgb2104-2L-e`, 300 MHz target.
+Out-of-context synthesis, `xcvu13p-fhgb2104-2L-e`. The cluster and the FP
+accumulator were re-measured against a **310 MHz target (3.2258 ns)**; the other
+three rows are older 300 MHz-target runs, not re-measured since.
 
 | | LUT | FF | BRAM | DSP | Fmax |
 |---|---|---|---|---|---|
 | `mx_tcu` alone | 336 | 790 | 0 | 64 | 1072.6 MHz |
 | `mx_cluster` (core + exact ACU) | 4,751 | 4,789 | 0 | 256 | 353.6 MHz |
-| `mx_acu_fp` (FP22 accumulator) | 9,945 | 6,232 | 5 | 0 | 349.4 MHz |
-| **`mx_cluster_cu`** (2-port cluster) | **13,921** | 13,042 | **5** | **256** | **322.4 MHz** |
+| `mx_acu_fp` (FP22 accumulator) | — | — | 5 | 16 | 327.7 MHz |
+| **`mx_cluster_cu`** (2-port cluster) | **17,521** | 17,612 | **5** | **272** | **325.6 MHz** |
 | `mx_matmul_cu` (1-port baseline) | 12,973 | 11,486 | 5 | 256 | 306.4 MHz |
+
+The accumulator's *frequency* and *DSP count* were re-measured standalone; its
+**LUT and FF were not**, and the old figures no longer apply, because the
+magnitude now goes through a DSP rather than the fabric
+([`accumulator.md`](accumulator.md) §4.4). Do not quote a LUT or FF number for
+`mx_acu_fp` from this table or from anywhere else until it is re-run. The
+cluster row is a full re-measurement and contains it. These are out-of-context
+numbers — no placement, estimated route — so read every Fmax as an upper bound.
 
 **`mx_cluster_cu` is the deliverable** — the architecture of
 [`tensor-isa.md`](tensor-isa.md): manager with L1, the four-TCU cascade, the
-accumulator, and two NoC ports. It meets 300 MHz with 0.232 ns of slack at
-`ACC_MW=14`, sustaining 512 MXFP7 MACs per cycle, with a **256-deep resident
-tile on five BRAM36**.
+accumulator, and two NoC ports. It clears 300 MHz comfortably, closing at
+**325.6 MHz** (WNS +0.155 ns of 3.2258 ns) at `ACC_MW=14`, sustaining 512 MXFP7
+MACs per cycle, with a **256-deep resident tile on five BRAM36** and no URAM.
+How it got from 294.9 MHz to that is [`accumulator.md`](accumulator.md) §4.4.
+
+The DSP count is **272**, not the cascade's 256: the ACU's scale multiply maps
+into 16 DSP48E2s instead of fabric — one per lane, each `(D+A)*B`, measured on
+the standalone accumulator. That is 16 DSPs spent on a shorter path, and it is
+what moves the DSP-bound cluster count in §4.
 
 `mx_matmul_cu` is the earlier single-port design, kept as a measured baseline;
 it cannot be fed at rate (§1) but it is what the two 1×5 system benches drive.
@@ -174,8 +190,9 @@ closes on.
 
 ### 3.3 The shift clamp (exact ACU)
 
-`shamt = sa + sb - anchor` is nominally 8 bits. Synthesised as such it builds a
-0..255 barrel shifter on every one of 16 lanes:
+`shamt = Ea + Eb - anchor` — the E5M3 scales' exponent halves, with the
+mantissas handled separately by a multiply — is nominally 8 bits. Synthesised
+as such it builds a 0..255 barrel shifter on every one of 16 lanes:
 
 | | LUT | Fmax |
 |---|---|---|
@@ -190,25 +207,35 @@ unchanged; both benches still pass.
 
 ## 4. Full-machine estimate
 
-48 CUs exhausts the DSPs exactly. Using the measured **whole CU**, not the bare
-cluster — this includes the NoC framework, the sequencer and the operand
-buffers, so it is what the device actually has to fit.
+**45 CUs exhausts the DSPs**, not 48: at 272 DSP per cluster, 12,288 / 272 =
+45.2. Using the measured **whole CU**, not the bare cluster — this includes the
+NoC framework, the sequencer and the operand buffers, so it is what the device
+actually has to fit.
 
-| | per cluster | x32 | x48 | of device (x48) |
+Every column but the first is arithmetic on that first column. One cluster is
+what was synthesised; nothing at 32 or 45 clusters has been built, so these are
+budgets rather than results.
+
+| | per cluster | x32 | x45 | of device (x45) |
 |---|---|---|---|---|
-| LUT | 13,921 | 445,472 | 668,208 | **38.7%** |
-| FF | 13,042 | 417,344 | 626,016 | 18.1% |
-| BRAM36 | 5 | 160 | 240 | 8.9% |
-| DSP | 256 | 8,192 | 12,288 | **100%** |
+| LUT | 17,521 | 560,672 | 788,445 | **45.6%** |
+| FF | 17,612 | 563,584 | 792,540 | 22.9% |
+| BRAM36 | 5 | 160 | 225 | 8.4% |
+| DSP | 272 | 8,704 | 12,240 | **99.6%** |
 | URAM | 0 | 0 | 0 | 0% |
-| NoC ports | 2 | 64 | 96 | — |
-| MACs/cycle | 512 | 16,384 | 24,576 | — |
+| NoC ports | 2 | 64 | 90 | — |
+| MACs/cycle | 512 | 16,384 | 23,040 | — |
 
-At 300 MHz, 48 CUs is **~14.7 TFLOPS of AMP FP16-MXFP7**, DSP-bound with LUTs
-at 36%. The 32-CU configuration is ~9.8 TFLOPS on 24% of the LUTs, leaving
-4,096 DSPs for the FP16 vector path.
+At 300 MHz, 45 CUs is **~13.8 TFLOPS of AMP FP16-MXFP7**, DSP-bound with LUTs
+at 46%. The 32-CU configuration — the one the four-partition floorplan actually
+builds — is ~9.8 TFLOPS on 32% of the LUTs, leaving 3,584 DSPs for the FP16
+vector path.
 
-> FLOPS, not IOPS. MXFP7 is a floating-point format — an E8M0 exponent shared
+> The DSP-bound count used to be 48, and it moved because the cluster's DSP
+> count moved from 256 to 272 (§3). Three clusters is the price of the shorter
+> accumulator path; the LUT and BRAM headroom is unaffected either way.
+
+> FLOPS, not IOPS. MXFP7 is a floating-point format — an E5M3 exponent shared
 > across a block of 32 and a 7-bit significand — and the operands and results in
 > memory are FP16. The integer datapath inside the DSP is how an MXFP7 multiply
 > is implemented once the shared exponent is factored out. See
@@ -229,10 +256,11 @@ For scale, against the existing FP8 core (`costs.md`: 12,731 LUT / 64 DSP for
 Same DSP count, same MAC count, different numerics. Essentially all of the
 difference is accumulation leaving the fabric.
 
-> Out-of-context, so utilisation is reliable and timing is optimistic. The
-> whole CU has 0.070 ns of slack against 3.333 ns, and the path is inside the
-> ACU's align stage. That is a thin margin — a device past ~70% full will erode
-> it, and this needs re-checking after place-and-route on a populated die.
+> Out-of-context, so utilisation is reliable and timing is an upper bound: no
+> placement, estimated route. The whole CU has **0.155 ns of slack against
+> 3.2258 ns** — 325.6 MHz, or 8.5% over the 300 MHz the machine is specified at.
+> A device past ~70% full will erode that, and it needs re-checking after
+> place-and-route on a populated die.
 
 ---
 
@@ -251,28 +279,43 @@ Built and verified:
 ```
 
 ```
-   ACU at 300 MHz        312.3 MHz at MW=14, 302.3 at MW=16 -- meets timing
-                         See accumulator.md s4 for the twelve measured steps
-   whole CU at 300 MHz   306.4 MHz at ACC_MW=14, 12,973 LUT, 256 DSP
+   ACU at 300 MHz        327.7 MHz at MW=14, standalone -- meets timing
+                         See accumulator.md s4 for the fourteen measured steps
+                         and s4.4 for the three that followed them.
+                         MW=16 has not been re-measured since MW=14 became
+                         the default; the last figure for it was 302.3 MHz
+   whole CU at 300 MHz   325.6 MHz at ACC_MW=14, 17,521 LUT, 272 DSP,
+                         WNS +0.155 ns against the 3.2258 ns target
+```
+
+Elsewhere, not here:
+
+```
+   quantiser             src/kohakumas/mx_quant.v, on the MAG side of the NoC.
+                         Nothing in the compute path converts FP16 to int7, by
+                         design -- ../isa/memory.md s6.3
+   large resident tile   DEPTH is a parameter and the tile is kohaku_sdpram
+                         with READ_LAT=2, so it is BRAM at any depth. The
+                         driver bench runs TILES = 512 sub-tiles on the same
+                         5 BRAM36; mx_cluster_cu's own default is 256
 ```
 
 Not done:
 
 ```
-   quantiser             lives in MAS; nothing here converts FP16 to int7
    peer link in a system only exercised in the ACU bench, not across clusters
    MEM_WR_ACK            the CU retires on send rather than waiting for the ack
    chain bypass          no mux to degrade a cluster to 4 independent TCUs
-   large resident tile   16 sub-tiles is a register file; a big tile wants BRAM
 ```
 
-The ACU is still the majority of the LUTs and still owns the critical path, but
-it now **meets** the 300 MHz target at both widths.
-[`accumulator.md`](accumulator.md) measures the precision and the cost across
-accumulator widths, identifies MW=14 (FP22) as the better operating point than
-FP24, and records the twelve-step timing history — including the mistake that
-made eight of those steps nearly worthless: three combinational blocks written
-as loops carrying a value between iterations, which synthesise to ~25-level
-serial chains inside a single pipeline stage. Fixing the loops and the operand
-muxes was worth +68 MHz; the six pipeline splits before it were worth +150 MHz
-between them.
+The ACU still owns the critical path — the cluster closes 2.1 MHz below what the
+ACU measures alone — but it now **clears** the 300 MHz target with margin at
+MW=14. [`accumulator.md`](accumulator.md) measures the precision and the cost
+across accumulator widths, identifies MW=14 (FP22) as the better operating point
+than FP24, and records the fourteen-step timing history — including the mistake
+that made eight of those steps nearly worthless: three combinational blocks
+written as loops carrying a value between iterations, which synthesise to
+~25-level serial chains inside a single pipeline stage. Fixing the loops and the
+operand muxes was worth +68 MHz; the six pipeline splits before it were worth
++150 MHz between them. §4.4 there is the three later steps, 294.9 → 325.6 MHz,
+that got the whole cluster over the line.

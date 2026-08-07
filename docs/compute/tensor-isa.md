@@ -8,6 +8,22 @@ Design intent for the datapath is [`matmul.md`](matmul.md); the accumulator is
 [`accumulator.md`](accumulator.md). This document is about everything *around*
 the datapath.
 
+> **This is the agreed design, not what runs.** The descriptor walker is built
+> and its conv2d im2col addressing is validated (`mx_tdesc.v`,
+> `tests/matmul/mx_tdesc_tb.v`), but it is **not wired into the fill engine**.
+> What a cluster executes today is three opcodes — `FILL` takes a base address
+> and an entry count, `GEMM` takes a tile shape, `DRAIN` writes it out — and the
+> addressing that a descriptor would have generated is computed by the driver
+> instead. See [`../isa/cluster.md`](../isa/cluster.md) for the built ISA and
+> [`../isa/kernel.md`](../isa/kernel.md) for where the addressing went.
+>
+> The trade is deliberate and worth naming: the driver can compute any address a
+> descriptor could, so nothing is *unreachable* today — but it must unroll,
+> which is what makes a program grow with the problem and forces rounds. A
+> descriptor moves that loop into hardware. It is the right next step for
+> convolution, where the address pattern is genuinely too irregular to unroll
+> cheaply; it is not needed for GEMM, which is why it has not been.
+
 > **The hard part is the memory instructions, not the control of the TCUs.**
 > Sequencing a 4×32×4 chain is a pair of nested counters. Deciding which bytes
 > of DRAM constitute "the A tile" is where the generality lives — and it is
@@ -137,7 +153,7 @@ consumes, so the layout transform happens once, on the way in.
 ```
    A word   4 rows x 8 K-elements                    B word   8 K x 4 columns
    +---------------------------------+--------+     +---------------------------------+--------+
-   |     32 x MXFP7  (224 bit)       | 4xE8M0 |     |     32 x MXFP7  (224 bit)       | 4xE8M0 |
+   |     32 x MXFP7  (224 bit)       | 4xE5M3 |     |     32 x MXFP7  (224 bit)       | 4xE5M3 |
    +---------------------------------+--------+     +---------------------------------+--------+
     255                            32 31     0       element (k,j)          scale per column j
 ```
@@ -313,7 +329,7 @@ MXFP7 in the multiplier. Something must convert, and with the manager owning its
 own fills there is now a natural home for it.
 
 ```
-   DRAM (FP16) --> [ FILL engine: max-tree over 32 -> E8M0, shift+round -> MXFP7 ] --> L1
+   DRAM (FP16) --> [ FILL engine: max-tree over 32 -> E5M3, shift+round -> MXFP7 ] --> L1
 ```
 
 Putting it in the fill path means L1 and L2 hold MXFP7, so both are 2.3× denser
@@ -340,7 +356,7 @@ cheap place to put it.
                       host, or a loop over descriptors in the manager?
    peer reduction     only needed when M*N < 262,144 and there are not
                       enough output tiles to fill 32 clusters
-   scale layout       E8M0 scales are replicated per K-slice today; a
+   scale layout       E5M3 scales are replicated per K-slice today; a
                       descriptor could gather them separately instead
 ```
 
@@ -356,5 +372,7 @@ building, in this order:
    4  full system test through the orchestrator
 ```
 
-The existing single-node `mx_matmul_cu` (12,973 LUT, 306.4 MHz, 256 DSP) stays
-as the measured baseline to compare the 2-port cluster against.
+The existing single-node `mx_matmul_cu` (12,973 LUT, 306.4 MHz, 256 DSP, from a
+300 MHz-target run and not re-measured since) stays as the measured baseline to
+compare the 2-port cluster against. The 2-port cluster it is compared with now
+measures 17,521 LUT, 325.6 MHz and 272 DSP — [`timing.md`](timing.md) §1.

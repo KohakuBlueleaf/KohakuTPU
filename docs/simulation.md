@@ -6,12 +6,68 @@ have cost real time here. Per-suite detail lives with each module:
 - [`docs/axi/simulation.md`](axi/simulation.md) — AXI4 slave and master benches
 - [`docs/noc/simulation.md`](noc/simulation.md) — mesh, orchestrator, full system
 
+---
+
+## 0. The inner loop is `check.py`, not a runner
+
+```
+   python scripts/py/check.py fast     ~5 s    pure Python, no simulator at all
+   python scripts/py/check.py unit     ~70 s   + the two RTL benches that catch
+                                               most of what breaks
+   python scripts/py/check.py full     ~6 min  every bench and the e2e sweep
+```
+
+Run `fast` after every edit, `unit` before believing anything works, and `full`
+only before calling something done.
+
+The tiering is not politeness about CPU time — it is about whether the question
+gets asked at all. Nearly every bug in this design so far was catchable by
+`fast` or `unit`, and reaching for `full` each time turns a ten-second question
+into a five-minute one, which teaches you to stop asking it. `fast` is pure
+Python because most of the driver is a pure function: building a control program
+records transactions against a `RecordingTransport`, so it can be checked
+without a simulator existing.
+
+`unit` adds `mag_wslot` specifically — cheap, and it covers the one structure
+that has now broken twice under concurrent clusters, both times presenting at
+system level only as a GEMM that never finished.
+
+A single RTL bench, by name — `xsim.py --help` lists them:
+
+```
+   python scripts/py/xsim.py cluster_node    # or mag_system, mag_wslot, acu, ...
+```
+
+`mag_driver_tb` is the exception: it is not in that list, because it is not a
+self-contained bench. The driver builds its operand image and its control
+program, so it is driven from Python instead:
+
+```
+   python driver/run_matmul.py --m 64 --n 64 --k 128    # batch, ~16 s to elaborate
+   python driver/repl.py                                # keeps one snapshot warm
+```
+
+That inversion is the point. The bench does not know what a matmul is; it loads
+files and dumps a result. A wrong control program therefore produces a wrong
+answer *there*, which makes the run a test of the driver and not only of the
+RTL. See [`isa/kernel.md`](isa/kernel.md).
+
+The PowerShell runners still exist and are what the suite docs describe:
+
 ```powershell
-.\tests\run_axi_sim.ps1     # AXI4
-.\tests\run_noc_sim.ps1     # NoC
+.\tests\run_axi_sim.ps1        # AXI4 slave and master
+.\tests\run_noc_sim.ps1        # mesh, orchestrator, CU framework
+.\tests\run_matmul_sim.ps1     # matmul datapath and accumulator
+.\tests\run_system_sim.ps1     # end to end through the NoC
+.\tests\run_mag_sim.ps1        # MAG, main_orch, the driver
+.\tests\run_synth_check.ps1 -Only <top>    # out-of-context Fmax + utilisation
 ```
 
 Exit code 0 = pass. Each prints a `PASS`/`FAIL` banner per bench plus a summary.
+
+> **Never start a second simulation while one is running.** They take an
+> exclusive lock on the work directory; a second run fails and can corrupt the
+> first one's scratch.
 
 ---
 

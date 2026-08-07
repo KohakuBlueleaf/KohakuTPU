@@ -1,5 +1,28 @@
 ## Controller
 
+> **Superseded, and kept only as a record of the abandoned design.** None of the
+> seven instruction types below exist. What a cluster actually executes is three
+> opcodes — `FILL`, `GEMM`, `DRAIN` — described in
+> [`../isa/cluster.md`](../isa/cluster.md); the CU-side framework that receives
+> them is [`../noc/cu-framework.md`](../noc/cu-framework.md), and the global
+> controller sketched at the bottom of this file became `main_orch` plus the
+> dispatch agent ([`../isa/orchestrator.md`](../isa/orchestrator.md),
+> [`../isa/agent.md`](../isa/agent.md)).
+>
+> The reason it collapsed from seven types to three is worth keeping. This ISA
+> put the loop structure *inside* one instruction — nested-loop flags, buffer
+> choices, per-instruction start addresses — so the controller had to be able to
+> express every access pattern the hardware might ever want. The design that
+> replaced it moves the loop up a level: the manager sweeps a resident output
+> tile, the driver computes the addresses, and an instruction only says how big
+> the sweep is. One `GEMM` flit expands into hundreds of accumulator commands
+> without carrying any of them.
+>
+> Kept because the FIFO-of-blocking-instructions structure and the
+> concurrency-group analysis below survived into `noc_cu_base`, and because the
+> buffer-half and address-overlap hazards are the same hazards a vector unit will
+> hit when one is built.
+
 ### Compute Unit Controller
 
 In this section we discuss about the designation of instruction format and functionality of compute unit controller

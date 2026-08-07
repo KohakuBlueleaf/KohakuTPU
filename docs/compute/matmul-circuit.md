@@ -199,6 +199,18 @@ becomes DSP-bound, which is the correct place to be bound on this part.
 Per 128 MACs: **~1,050 LUT versus 12,731 today.** Roughly 12x, and essentially
 all of it comes from moving accumulation out of the fabric.
 
+> **Measured, against these predictions.** The budget above is the datapath
+> only. The built endpoint — manager, L1, sequencer and NoC framework included —
+> measures **17,521 LUT and 272 DSP** per cluster
+> ([`matmul-impl.md`](matmul-impl.md) §3). Two corrections fall out of that: the
+> DSP-bound configuration is **45 clusters, not 48**, because the accumulator
+> spends 16 DSPs that this budget assumed would be fabric — it applies the block
+> scale inside a DSP, which is also what keeps its magnitude off the critical
+> path ([`accumulator.md`](accumulator.md) §4.4); and the LUT total is four
+> times this estimate, essentially all of the difference outside the datapath. The direction of the argument survives — the design is
+> DSP-bound and accumulation left the fabric — but this table is not a
+> utilisation figure to quote.
+
 ### 6.1 Operand skew — use SRLs, and the DSP's own registers first
 
 A cascade adds one pipeline stage per DSP, so the operand for stage `k` must

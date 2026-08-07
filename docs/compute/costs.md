@@ -1,5 +1,17 @@
 ## Resource cost and throughput and latency
 
+> **These are the superseded FP8→FP12→FP16 units.** The element format is no
+> longer FP8 of any flavour — E5M2 and E4M3 below are that old design and say
+> nothing about what the machine does now, which is int7 with an E5M3 block
+> scale ([`matmul.md`](matmul.md) §3). The tensor core these numbers describe
+> has been replaced by `mx_tcu`, whose cost is in
+> [`timing.md`](timing.md) §1: 336 LUT and 64 DSP for a 4×8×4, with every MAC at
+> **0 LUT** because the multiply and the whole K=32 reduction happen inside the
+> DSPs.
+>
+> Kept because this is still the only measured baseline for the FP16 ALU path,
+> which is not built and will need one when it is.
+
 In this documentation we list all the vivado synthesised result to check the resource cost.
 
 * FP8VectorMul:

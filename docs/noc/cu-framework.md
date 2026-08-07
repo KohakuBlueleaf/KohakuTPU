@@ -18,23 +18,42 @@ Every node hanging off a router owes the rest of the machine these. They are not
 style guidance — violating any one of them can wedge the control plane or the
 mesh itself.
 
-### 1.1 Never assert `valid` into a busy link
+### 1.1 Hold `valid` until you see `busy` low — and accept only when your own is
 
-The NoC link is a **busy/valid** pair, not AXI `valid`/`ready`. The receiver
-raises `busy` when it cannot take a flit, and the sender must sample that and
-withhold `valid`. There is no retry and no backpressure *after* the fact: a flit
-presented while the receiver is busy is simply gone.
+The NoC link is a **busy/valid pair with retry**, not AXI `valid`/`ready`. Both
+ends owe one line each, and neither is separately choosable
+([spec.md](spec.md) §2.1):
+
+- **sending:** assert `valid`, and hold `valid` and `data` *unchanged* until a
+  cycle in which `busy` is low. That cycle is the transfer. Withdrawing the flit
+  because `busy` went high destroys it.
+- **receiving:** accept **iff** `valid && !busy`. Never on a cycle your own
+  `busy` is high, and never twice.
+
+The two are one contract because each half is unsound without the other. A
+sender that commits a cycle ahead and does not retry loses the flit whenever the
+receiver raises `busy` in between; a receiver that takes whatever is valid
+enqueues a *holding* sender's flit once per cycle of backpressure, which is
+duplication rather than loss and presents identically downstream.
 
 This is the single most common way to lose packets, and it is invisible in a
-lightly-loaded test — you only see it when a FIFO actually fills.
+lightly-loaded test — you only see it when a FIFO actually fills. `noc_inport.v`
+carries the assertion for the sender's half: a flit offered while `busy` must
+still be offered next cycle, unchanged.
 
-### 1.2 Consume from the inbound link unconditionally, or raise `busy`
+### 1.2 Keep `busy` transient — a queue you are actually draining
 
-The mesh applies hop-by-hop backpressure. A node that stops accepting flits
-without raising `busy` loses them; a node that raises `busy` forever backs
-pressure into its router, then into the router behind it. Head-of-line blocking
-in a mesh is a real deadlock source, so `busy` must be a transient condition
-tied to a queue that is actually being drained.
+The mesh applies hop-by-hop backpressure, so refusing is legal and losing is
+not: raise `busy` and the flit will be re-offered. What is fatal is raising it
+forever — pressure backs into your router, then into the router behind it, and
+head-of-line blocking in a mesh is a real deadlock source. `busy` must be tied
+to a queue that something is emptying.
+
+Do not reach for an almost-full margin instead. Retry is what makes plain
+`full` safe, and `sync_fifo`'s `wr_almost` is not the margin it looks like:
+`USE_ADV_FEATURES` is zero, so `prog_full` is tied low and `wr_almost` reduces
+to `wr_busy`. A CU that wants real headroom has to count its own occupancy
+([spec.md](spec.md) §2.1).
 
 ### 1.3 Expose an ordered instruction FIFO with visible free space
 
@@ -223,7 +242,8 @@ the concurrency comes from.
 
 Before calling a new CU done:
 
-- [ ] `send_valid` is withheld whenever `send_ready` is low
+- [ ] `send_valid` is withheld whenever `send_ready` is low, and a flit already
+      offered is **held unchanged** until it is taken
 - [ ] `recv_ready` is high, or the receive queue is genuinely drained
 - [ ] every issued instruction produces exactly one `exec_done`
 - [ ] `exec_done` is a single-cycle pulse

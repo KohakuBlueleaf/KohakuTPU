@@ -1,12 +1,16 @@
 # Pipeline, cycles and resources
 
 Every latency and every measured number for the compute path, in one place.
-Design intent is [`tensor-isa.md`](tensor-isa.md) and [`matmul.md`](matmul.md);
-this is the accounting.
+Design intent is [`matmul.md`](matmul.md) and [`tensor-isa.md`](tensor-isa.md);
+what the built machine actually executes is [`../isa/`](../isa/README.md). This
+is the accounting.
 
-All synthesis is out-of-context, `xcvu13p-fhgb2104-2L-e`, 300 MHz target
-(3.3333 ns). Out-of-context means utilisation is reliable and timing is
-optimistic — it answers "is the logic deep enough to fail?", not "will it place".
+All synthesis is out-of-context, `xcvu13p-fhgb2104-2L-e`. The cluster and
+accumulator figures come from a re-measurement against a **310 MHz target
+(3.2258 ns)**; the other rows are older runs at 300 MHz (3.3333 ns) and are
+marked as such. Out-of-context means utilisation is reliable and every Fmax here
+is an **upper bound** — nothing is placed and the route is estimated, so it
+answers "is the logic deep enough to fail?", not "will it place".
 
 ---
 
@@ -15,13 +19,30 @@ optimistic — it answers "is the logic deep enough to fail?", not "will it plac
 | module | LUT | FF | BRAM36 | DSP | Fmax |
 |---|---|---|---|---|---|
 | `mx_mac` (one DSP48E2) | 0 | 0 | 0 | 1 | — |
-| `mx_tcu` (4×8×4) | 336 | 790 | 0 | 64 | 1072.6 |
-| `mx_cluster_core` (4 TCU) | ~2,186 | ~3,549 | 0 | 256 | — |
-| `mx_acu_fp` (FP22, DEPTH=16) | 9,945 | 6,232 | 5 | 0 | **349.4** |
+| `mx_tcu` (4×8×4) ‡ | 336 | 790 | 0 | 64 | 1072.6 |
+| `mx_cluster_core` (4 TCU) ‡ | ~2,186 | ~3,549 | 0 | 256 | — |
+| `mx_acu_fp` (FP22 accumulator) † | — | — | 5 | 16 | **327.7** |
 | `mx_cluster_mgr` + node | — | — | 0 | — | — |
-| **`mx_cluster_cu`** (2-port cluster) | **13,921** | 13,042 | **5** | **256** | **322.4** |
-| `mx_matmul_cu` (1-port baseline) | 12,973 | 11,486 | 5 | 256 | 306.4 |
-| `noc_orchestrator` | 2,563 | 2,465 | 0 | 0 | 570.0 |
+| **`mx_cluster_cu`** (2-port cluster) | **17,521** | 17,612 | **5** | **272** | **325.6** |
+| `mx_matmul_cu` (1-port baseline) ‡ | 12,973 | 11,486 | 5 | 256 | 306.4 |
+| `noc_orchestrator` ‡ | 2,563 | 2,465 | 0 | 0 | 570.0 |
+
+`mx_cluster_cu` closes with **WNS +0.155 ns** against the 3.2258 ns target, and
+0 URAM.
+
+> † The ACU's **Fmax and DSP count** come from the standalone re-measurement.
+> Its **LUT and FF do not** — they were not re-measured, and the earlier figures
+> are no longer current because the magnitude now goes through the DSP rather
+> than the fabric ([`accumulator.md`](accumulator.md) §4.4). Its 16 DSPs are one
+> per lane, each mapped `(D+A)*B`, which is exactly the 272 − 256 in the cluster
+> row. For the record, the earlier run measured 9,945 LUT, 6,232 FF and 0 DSP at
+> 349.4 MHz. The cluster row is a full re-measurement and contains the ACU.
+>
+> ‡ Older run, 300 MHz target, and not re-measured since. `mx_matmul_cu` is the
+> superseded single-port design kept as a baseline; it is not on the current
+> path. `mx_cluster_core` was never a run at all — it is the cluster minus its
+> parts (§5), so it was inferred from the *earlier* cluster figure and is stale
+> by the same amount the cluster moved.
 
 Three things worth reading off this:
 
@@ -29,7 +50,9 @@ Three things worth reading off this:
 reduction happen inside the DSPs — the cascade for K=8, the `W` port across CUs.
 
 **The accumulator is still the critical path** of the whole cluster, and after
-all the timing work it is the block everything closes on.
+all the timing work it is the block everything closes on. The cluster closes at
+325.6 MHz and the ACU measures 327.7 MHz standing alone — 2.1 MHz apart, so
+everything else in the cluster is effectively free of the frequency question.
 
 **The resident tile is 5 BRAM36 at any depth up to 512.** A 352-bit port needs
 `ceil(352/72) = 5` primitives; depth is then free. It was 22,845 LUT and missed
@@ -37,16 +60,25 @@ timing when inferred as LUTRAM.
 
 ### Scaling
 
-| | per cluster | ×32 | ×48 | of device (×48) |
+| | per cluster | ×32 | ×45 | of device (×45) |
 |---|---|---|---|---|
-| LUT | 13,921 | 445,472 | 668,208 | **38.7%** |
-| FF | 13,042 | 417,344 | 626,016 | 18.1% |
-| BRAM36 | 5 | 160 | 240 | 8.9% |
-| DSP | 256 | 8,192 | 12,288 | **100%** |
-| NoC ports | 2 | 64 | 96 | — |
+| LUT | 17,521 | 560,672 | 788,445 | **45.6%** |
+| FF | 17,612 | 563,584 | 792,540 | 22.9% |
+| BRAM36 | 5 | 160 | 225 | 8.4% |
+| DSP | 272 | 8,704 | 12,240 | **99.6%** |
+| NoC ports | 2 | 64 | 90 | — |
 
-DSP-bound at 48 clusters: **~14.7 TFLOPS of AMP FP16-MXFP7** at 300 MHz, with
-LUTs at 39% and BRAM at 9%.
+**The right-hand column is 45 clusters, not 48.** The cluster now measures 272
+DSP rather than 256 — the cascade's 256 plus 16 more, because the ACU's scale
+multiply maps into DSP48E2s instead of fabric — and 12,288 / 272 = 45. So the
+DSP-bound configuration is **45 clusters, ~13.8 TFLOPS of AMP FP16-MXFP7** at
+300 MHz, with LUTs at 46% and BRAM at 8%. The 32-cluster configuration, which is
+what the four-partition floorplan actually builds, uses 71% of the DSPs.
+
+**Everything right of the per-cluster column is that column multiplied out.**
+One cluster is what was synthesised; no 32- or 45-cluster build exists, so these
+are budgets, not results — and they say nothing about whether 45 of them place
+and route on one die.
 
 ---
 
@@ -149,20 +181,74 @@ general units need.
 | `mx_cluster_node_tb` | 32×32×32, one GEMM | 2,112 checks, 0.50 ULP worst |
 | `mx_system_tb` | 4×256×4, 1×5 NoC | 35 checks, 0.41 ULP |
 | `mx_system32_tb` | 32×32×32, 1×5 NoC | 2,051 checks, 0.50 ULP |
-| `mx_mesh2x2_tb` | 32×128×64, 2×2 NoC, 2 clusters | 4,096 checks, 0.18 ULP mean |
+| `mag_system_tb` | 16×32×16, MAG + 2 clusters | 257 checks, 0.49 ULP |
+| `mag_driver_tb` | up to 256×256×256, tiled by the driver | see §4.1 |
 
 All identical under `MODEL=0` (real DSP48E2) and `MODEL=1` (behavioural).
+
+The two 1×5 benches drive `mx_matmul_cu`, the deliberately retained single-port
+baseline of §1 — they are not on the cluster path, and they pass.
+
+> **`mx_mesh2x2_tb` was deleted, not fixed.** It had fallen a generation behind
+> on two interfaces at once: it packed the pre-widening instruction layout, and
+> the memory stub it drove wrote a constant where the response word index
+> belongs, so no L1 entry was ever committed and the CU sat in `S_FILL` for
+> ever. The multi-cluster coverage it existed for is `mag_system_tb` and
+> `mag_driver_tb` at `NCL=2` — green, and against the real MAG rather than a
+> stub, which is the stronger test.
+
+### 4.1 Where the cycles actually go
+
+`mag_driver_tb` buckets every cycle by what each CU was doing, because an event
+counter says a `GEMM` happened but not whether the machine spent its time
+computing or waiting for operands — which is the whole question for a dataflow
+design. Shares are of CU-occupancy across both clusters, so they sum to ~100%.
+
+| shape | run cycles | fill | gemm | drain | idle | MAC/cyc | GFLOP/s |
+|---|---|---|---|---|---|---|---|
+| 64×64×128 | 8,213 | 56.7% | 17.3% | 12.1% | 13.8% | 63.8 | 38.3 |
+| 128×128×128 | 32,361 | 61.3% | 17.1% | — | — | 64.8 | 38.9 |
+| 256×256×256 | 239,786 | 71.9% | 13.4% | 6.7% | 7.9% | 70.0 | 42.0 |
+
+> **Superseded — this is the baseline, not the machine.** The fill-bound
+> diagnosis below was acted on, and the 256-cube now runs in **18,701 cycles at
+> 538.3 GFLOP/s, 87.6% of peak**, with eight clusters at 1,856 GFLOP/s. Current
+> figures for every shape and cluster count: [`../perf.md`](../perf.md) §0.
+
+Two clusters peak at 1,024 MAC/cycle = 614 GFLOP/s at 300 MHz, so the machine
+reached 6–7% of its own datapath. `fill` dominating is not a bug and not a
+scheduling problem: the resident tile is small enough that a pass performs only
+four tile-ops per L1 entry it loads. `idle` is the CU waiting on the dispatcher,
+which is neither compute nor bandwidth but is real time; it shrinks as the
+problem grows, because a bigger problem amortises the per-round `GO`.
+
+The read figure that accompanies these (2.62 GB/s on the 256 case) is **demand**
+measured against a bench RAM with no latency. Real memory would not reduce the
+traffic, only lengthen the wait for it, so the fill share on hardware is a
+floor.
 
 ---
 
 ## 5. Caveats
 
-**Out-of-context timing is optimistic.** `mx_cluster_cu` has 0.232 ns of slack;
-a device past ~70% full will erode that, and none of these numbers have been
-through place-and-route on a populated die.
+**Out-of-context timing is an upper bound.** `mx_cluster_cu` has 0.155 ns of
+slack against the 3.2258 ns (310 MHz) target; nothing is placed and the route is
+estimated, so a device past ~70% full will erode that, and none of these numbers
+have been through place-and-route on a populated die.
 
 **`mx_cluster_core` is not measured standalone** — the figures above are
 inferred from the cluster minus its parts, so treat them as approximate.
 
-**The quantiser is not built.** Operands are preloaded as MXFP7; converting FP16
-on the fill path will add logic that is not counted here.
+**The quantiser is not in these numbers.** It is built —
+`src/kohakumas/mx_quant.v` converts FP16 to int7 + E5M3 on the way out of MAG —
+but it lives on the MAG side of the NoC, so none of the cluster figures above
+include it. Measured separately, on the same 310 MHz-target run: **400.6 MHz,
+4,267 LUT, 32 DSP, no BRAM and no URAM.** See
+[`../isa/memory.md`](../isa/memory.md) §6.
+
+**§3 is peak, not achieved.** Everything above answers "what can the datapath
+sustain if operands are there". §4.1's table is the baseline, where they were
+usually not — 64–70 MAC/cycle against a 1,024 MAC/cycle two-cluster peak,
+fill-bound. It has since reached 897 MAC/cycle (87.6%);
+[`../perf.md`](../perf.md) §0 is the current record and
+[`../optimization.md`](../optimization.md) §I is what each change was worth.

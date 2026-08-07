@@ -10,7 +10,7 @@ Design intent: [`matmul.md`](matmul.md) §6. Primitive-level: [`matmul-circuit.m
 ## 1. What is fixed and what is tunable
 
 The accumulator is `S1 E7 M<MW>`. **E7 is not the tunable.** It holds
-`int × 2^(sa+sb)` where `sa` and `sb` are E8M0 block scales; for FP16 sources
+`int × scaleA × scaleB` where the scales are E5M3 block scales; for FP16 sources
 that exponent sum spans roughly −48…+30, so an E5 field overflows on ordinary
 data, not on edge cases.
 
@@ -61,33 +61,57 @@ floor. A shallower sweep would move the cliff down.
 
 ## 3. Cost
 
-Out-of-context, `xcvu13p-fhgb2104-2L-e`, 300 MHz target, 16 lanes plus a
-16-entry resident tile.
-
-`ACC_MW=14`, `DEPTH=16`, block-RAM tile:
+Out-of-context, `xcvu13p-fhgb2104-2L-e`, 16 lanes, `ACC_MW=14`, block-RAM tile.
+Re-measured against a 310 MHz target:
 
 ```
-   mx_acu_fp        9,945 LUT   6,232 FF   5 BRAM36   349.4 MHz
+   mx_acu_fp        327.7 MHz      WNS +0.174 ns of 3.2258 ns
 ```
+
+That run also reports **16 DSPs** — one per lane, each mapped `(D+A)*B`, which
+is §4.4's change showing up in the primitive count, and exactly the 272 − 256
+the cluster measures.
+
+**Its LUT and FF were not re-measured.** The run that produced this block's
+utilisation — 9,945 LUT, 6,232 FF, 5 BRAM36, 0 DSP at 349.4 MHz, `DEPTH=16` —
+predates §4.4, which moved the magnitude into the DSP that applies the block
+scale, so **no current LUT or FF figure for `mx_acu_fp` alone exists**; treat
+the 9,945/6,232 above as history, not as a cost. What is current is the cluster
+containing it: 17,521 LUT, 17,612 FF, 5 BRAM36, 272 DSP
+([`timing.md`](timing.md) §1).
 
 MW=14 (FP22) is the operating point rather than MW=16 (FP24): it measures
 identically against FP64 and exact-int, costs less, and carries more slack. It
 is the default in `mx_acu_fp`, `mx_cluster_cu` and `mx_matmul_cu`.
 
-In context the whole two-port cluster closes at **322.4 MHz**, and the path it
-closes on is still the ACU's align stage — [`matmul-impl.md`](matmul-impl.md)
-§3. The tile is 5 BRAM36 whether `DEPTH` is 16 or 512, because width sets the
-primitive count and depth is then free up to 512.
+> **The MW=16 comparison is not current.** MW=16 has not been synthesised since
+> MW=14 became the default; its last figure was 302.3 MHz, from a 300 MHz-target
+> run several steps of §4 ago. "Costs less and carries more slack" is sound on
+> the evidence that chose the operating point, and it is *not* a claim about
+> what FP24 would measure on today's block. The precision comparison in §2 is
+> unaffected — that is a bench result, not a synthesis result.
+
+In context the whole two-port cluster closes at **325.6 MHz** — 2.1 MHz below
+the accumulator standing alone, so the ACU is still what sets the cluster's
+frequency ([`matmul-impl.md`](matmul-impl.md) §3). *Which* stage inside it is
+now the tight one was not extracted from the latest run; the last two paths that
+had to be fixed were the normaliser's magnitude chain and a predicate in the
+CU's state machine (§4.4). The tile is 5 BRAM36 whether `DEPTH` is 16 or 512,
+because width sets the primitive count and depth is then free up to 512.
+
+All of this is out-of-context: no placement, estimated route, so every Fmax here
+is an upper bound rather than a promise.
 
 ---
 
 ## 4. Timing: 84.7 MHz → 349 MHz, and what actually mattered
 
-The accumulator started at **84.7 MHz** against a 300 MHz target and now clears
-it by 16%. Every step below is measured, out-of-context, with the full 384-check
-suite re-run after each. The worst relative error stayed at 3.339790e-04
-throughout — bit-identical, step for step — so none of this was bought with
-precision.
+The accumulator started at **84.7 MHz** against a 300 MHz target. The fourteen
+steps below took it to 349.4 MHz; §4.4 then rebuilt its front end and it
+measures **327.7 MHz** today, clearing 300 by 9%. Every step below is measured,
+out-of-context, with the full 384-check suite re-run after each. The worst
+relative error stayed at 3.339790e-04 throughout — bit-identical, step for step
+— so none of this was bought with precision.
 
 | Step | Fmax | LUT | FF |
 |---|---|---|---|
@@ -165,12 +189,21 @@ variable or sequential something that is structurally constant or parallel**:
    serial loop carrying a flag   ->  W-deep LUT chain
    variable part-select write    ->  barrel mux across the whole register
    nested ternaries on wide data ->  chained mux levels
+   value computed where only a    ->  a full multiplier in front of a comparator
+     predicate on it is used
+   recomputed every cycle though  ->  that arithmetic inside the state
+     decided once per instruction      machine's clock enable
 ```
 
-All three synthesise to exactly what they say, and none of them can be fixed by
+All five synthesise to exactly what they say, and none of them can be fixed by
 adding pipeline stages around the outside.
 
-There is a fourth, subtler member of the family in §4.2: **structure kept for a
+The last two were found one level up, in `mx_cluster_mgr` and `mx_cluster_cu`
+rather than in the ACU — an 8×8 multiply built to answer "is it below 5?", and a
+boolean recomputed every cycle although both its inputs are latched at decode.
+Together they were worth 29.2 MHz on the whole cluster; §4.4 has both.
+
+There is another, subtler member of the family in §4.2: **structure kept for a
 constraint that no longer exists.** The banks were correct machinery for K-inner
 and pure overhead for K-outer, and nothing failed when they became obsolete —
 they just quietly cost 4× the tile memory and 70 MHz.
@@ -232,6 +265,61 @@ register again.
 **837 MHz standing alone** (`.plan/measurements/memory-primitives.md`). Anything
 slower than that is this module's own logic. Blaming the RAM for the 241 MHz
 result hid a loop-order question for two rounds.
+
+### 4.4 The magnitude before the multiply, and two multiplies nobody wanted
+
+By the time the cluster around this block had grown to its current shape it
+measured **294.9 MHz** against a 310 MHz target. Three changes took it to
+**325.6 MHz**, each measured on its own:
+
+| step | cluster Fmax |
+|---|---|
+| starting point | 294.9 |
+| magnitude taken **before** the multiply rather than after | 296.4 |
+| `tiles_w = Gm*Gn` replaced by the predicate its consumer wanted | 299.9 |
+| `tiles_now >= 5` decoded once per instruction | **325.6** |
+
+**The magnitude was taken after the multiply.** `mx_fpacc_norm_a` computed
+`mag = val[VW-1] ? (~val + 1) : val`, putting a 30-bit two's-complement carry
+chain between the DSP's output register and the leading-one search — 0.952 ns of
+a 3.401 ns path, and 4 of its 12 logic levels (LUT2, CARRY8, LUT1, CARRY8).
+
+It is taken before the multiply instead, inside the DSP that is already applying
+the block scale. The mantissa product `mm` is unsigned, so the product's sign is
+the chain value's, and
+
+```
+   |v + r| * mm  ==  ((v ^ {W{s}}) + (s ^ r)) * mm,       s = v[W-1]
+```
+
+which is the same `(v + bit) * mm` shape the odd lanes already had, plus one XOR
+level. Vivado maps it to DSP mode `(D+A)*B` with `A` the one-bit correction and
+`D` the XORed value. Twelve logic levels became nine, and `mx_fpacc_norm_a` now
+takes an **unsigned** magnitude, with the sign travelling beside the data.
+
+**The other two are one mistake in two places.** `mx_cluster_mgr` computed
+`tiles_w = Gm * Gn` as a full 8×8 fabric multiply, and its only consumer asked a
+five-way question of the answer (`==1`, `==2`, `>=5`) to pick a pacing value.
+Both operands are ≥ 1, so `Gm*Gn < 5` is exactly the shapes (1,≤4), (≤4,1) and
+(2,2) — established by exhaustive enumeration over all 65,536 `(Gm,Gn)` pairs
+rather than by inspection, because this is precisely the kind of equivalence
+that reads as obvious and is not.
+
+`mx_cluster_cu` then had the same multiply again as `tiles_now`, feeding one
+boolean, `gemm_wide = tiles_now >= 5`, consumed only in the `S_GEMM` transition
+— i.e. arriving straight into the state machine's clock enable, 13 logic levels
+deep. But `gm` and `gn` are latched at decode and hold for the whole sweep, so
+that boolean is a property of the **instruction**, not of the cycle. It is now
+decoded once into a register beside `gm_r`/`gn_r`. This single change moved both
+violating timing groups, because both were rooted in it.
+
+**Correctness is unchanged, which is the point of measuring it.** The 2-cluster
+256×256×256 run is 18,701 cycles and bit-identical to the recorded baseline —
+p50 1.70e-04, max 1.00e+00, 20 of 65,536 over 1% and 4 over 10%; against the
+FP64 model, p50 3.88e-03 and p99 2.48e-01. The 4-cluster 256×512×256 run is
+20,647 cycles at 975.1 GFLOP/s, 79.4% of peak, matching the baseline recorded in
+`driver/run_matmul.py`'s own comments exactly (max 2.43e+00, 7 of 131,072 over
+10%).
 
 ---
 
