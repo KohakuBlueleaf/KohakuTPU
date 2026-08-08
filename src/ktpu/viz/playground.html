@@ -334,8 +334,11 @@ INPUTS = {
     "w1": [(64, 64)] * E, "w2": [(64, 64)] * E,
 }`,
 
-  "saturating epilogue": `def kernel(a, b):
-    # the matmul output leaves FP16's range; folding keeps it in ACC24
+  "saturating epilogue": `# The matmul output is 40*40*128 = 204,800 and FP16 stops at 65,504, so it is
+# clamped in the ACCUMULATOR before it ever reaches memory -- mx_acu_fp.v
+# converts at stage 6 on EMIT and a DRAIN writes FP16. No scheduling choice
+# changes that; watch the "clamped" count. Task #49.
+def kernel(a, b):
     return (a @ b) * 0.001
 
 INPUTS = {"a": (64, 128), "b": (128, 64)}`,

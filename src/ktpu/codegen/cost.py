@@ -12,8 +12,9 @@ from ktpu.ir.program import Opcode, Program
 from ktpu.ir.sched import Engine, Schedule
 from ktpu.target import Target
 
-#: Bits per element in memory, by the dtype an instruction names.
-WIDTH = {"fp16": 16, "acc24": 24, "e8m15": 24}
+#: Bits per element in memory, by the dtype an instruction names. Only FP16 and
+#: FP32 exist here: ACC24 and E8M15 are internal formats, never memory words.
+WIDTH = {"fp16": 16, "fp32": 32}
 
 
 @dataclass

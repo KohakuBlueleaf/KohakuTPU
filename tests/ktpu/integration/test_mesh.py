@@ -105,7 +105,8 @@ def test_operands_are_not_interchangeable():
 
     x, w, _ = _rand()
     got, want, _ = _run(fn, (_spec(M, K), _spec(K, N)), (x, w))
-    assert np.abs(got - want).max() < 1e-3
+    # The intermediate is FP16 in memory, not ACC24, so the tolerance is FP16's.
+    assert np.abs(got - want).max() < 5e-3
     assert np.abs(want).max() > 0.1
     assert np.abs(want + got[::-1] * 0).max() > 0.1
 
@@ -126,10 +127,15 @@ def test_folding_does_not_change_the_answer():
     assert np.abs(flat - want).max() < 5e-3
 
 
-def test_folding_is_what_saves_a_result_that_overflows_fp16():
-    """The point of draining ACC24. The unfolded path converts the matmul output
-    to FP16 first, so a value above 65504 is clamped BEFORE the epilogue scales
-    it back into range -- and the clamp is silent (task #49)."""
+def test_folding_does_not_rescue_a_result_that_overflows_fp16():
+    """It was believed that folding drained ACC24 and so kept an out-of-range
+    intermediate alive until the epilogue scaled it back. The hardware does not
+    do that: `mx_acu_fp.v` converts to FP16 at stage 6 on EMIT and DRAIN writes
+    FP16 (isa/cluster.md s5), so the clamp happens in the accumulator either
+    way and folding cannot change it.
+
+    The clamp is still silent, which is task #49 and still open. What folding
+    is actually for is giving the epilogue the producer's tiles and grid."""
     x = np.full((M, K), 40.0)
     w = np.full((K, N), 40.0)
     fn, specs = (lambda a, b: (a @ b) * 0.001), (_spec(M, K), _spec(K, N))
@@ -139,8 +145,8 @@ def test_folding_is_what_saves_a_result_that_overflows_fp16():
 
     assert want.max() > 200.0
     assert m_flat.saturated > 0
-    assert m_fold.saturated == 0
-    assert np.abs(folded - want).max() < 1.0
+    assert m_fold.saturated > 0, "the accumulator clamps on EMIT, folded or not"
+    assert np.abs(folded - want).max() > 100.0
     assert np.abs(flat - want).max() > 100.0
 
 

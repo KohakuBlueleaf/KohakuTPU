@@ -52,10 +52,11 @@ def test_no_scratch_region_exists():
 
 
 def test_the_image_holds_the_operands_the_result_and_nothing_spare():
-    """A and B are 262,144 elements each, the ACC24 stage and the FP16 result
-    are 65,536 each, the bias is 256. Anything beyond that is overhead."""
+    """A and B are 262,144 elements each, the staged matmul output and the
+    result are 65,536 each, the bias is 256 -- all FP16, two per 32-bit word.
+    Anything beyond that is overhead."""
     c = _gelu()
-    want = 131072 + 131072 + 128 + 49152 + 32768
+    want = 131072 + 131072 + 128 + 32768 + 32768
     assert c.image_words == want
 
 
@@ -80,10 +81,14 @@ def test_b_is_refilled_only_when_the_core_changes_column_band():
     assert c.insts["fill"] == 128
 
 
-def test_folding_costs_traffic_and_says_so():
-    """The fold drains ACC24, which is 1.5x FP16, so it moves MORE bytes. It is
-    not a traffic optimisation and the cost model must not pretend otherwise --
-    what it buys is one rounding instead of two."""
+def test_folding_is_free_in_traffic_and_in_instructions():
+    """It used to be believed the fold drained ACC24 at 1.5x FP16 and bought a
+    single rounding for that price. Neither half was true: a DRAIN emits FP16
+    (isa/cluster.md s5) and the accumulator converts at stage 6 on EMIT, so the
+    intermediate is FP16 whether the epilogue is folded or not.
+
+    What the fold actually does is give the epilogue the producer's tiles and
+    grid, so it costs nothing and changes no precision."""
     specs = (
         D.TensorSpec((M, K), FP16),
         D.TensorSpec((K, N), FP16),
@@ -95,7 +100,7 @@ def test_folding_costs_traffic_and_says_so():
 
     folded = _cost(fn, *specs, fold=True)
     flat = _cost(fn, *specs, fold=False)
-    assert folded.dram_write > flat.dram_write
+    assert folded.dram_write == flat.dram_write
     assert folded.total_insts == flat.total_insts
 
 

@@ -45,31 +45,18 @@ def _fp16_words(elems: int) -> int:
     return -(-elems // 2)
 
 
-def _words24(elems: int) -> int:
-    """32-bit words holding `elems` 24-bit values -- ACC24 or raw E8M15."""
-    return -(-elems * 24 // 32)
-
-
-def layout(
-    m: int, k: int, n: int, t: Target, staged: bool = False, scratch: int = 0
-) -> MemoryMap:
+def layout(m: int, k: int, n: int, t: Target) -> MemoryMap:
     """Build the device memory map for one `m x k x n` GEMM.
 
     A is `m x k`, B is `n x k` stored transposed, C is `m x n`. Each is ONE
     image addressed by tile rather than per-cluster bands, so a tile is
     assignable to any cluster.
 
-    `staged` adds an `acc` region: a folded epilogue has the clusters drain
-    ACC24 rather than converting to FP16 on the way out, so the intermediate
-    needs its own span at 1.5x the width. That extra traffic is the price of the
-    fold, and what it buys is that the value is rounded and clamped ONCE, on the
-    vector core's final store, instead of twice.
-
-    `scratch` adds a `tmp` region of that many elements, where a chain too deep
-    for one VMODE pass parks its intermediate between micro-jobs. It is raw
-    E8M15 rather than FP16 for the same reason `acc` is ACC24: a chain of 16 ops
-    that rounded to FP16 three times on the way through would lose more than the
-    ALU does.
+    EVERYTHING IN MEMORY IS FP16 OR FP32. ACC24 is the accumulator's resident
+    tile and E8M15 is the vector lane's operand format; neither is ever a memory
+    word. `mx_acu_fp.v` converts to FP16 at stage 6 on EMIT, and isa/cluster.md
+    s5 has DRAIN writing "n resident sub-tiles into memory as FP16" -- one
+    256-bit word per 4x4 sub-tile, which is 16 elements at 16 bits exactly.
 
     Every figure is in 32-BIT WORDS. Returns the map; `total` is the image size.
     """
@@ -78,26 +65,12 @@ def layout(
     mm.add("b", _fp16_words(n * k), n * k, f"B operand, {n} x {k}, stored transposed")
     c_burst = DRAIN_BURST * t.lanes * t.lanes
     c_elems = -(-(m * n) // c_burst) * c_burst
-    if staged:
-        mm.add(
-            "acc",
-            _words24(c_elems),
-            m * n,
-            f"matmul output, {m} x {n}, acc24, read by the folded epilogue",
-        )
     mm.add(
         "c",
         _fp16_words(c_elems),
         m * n,
         f"C result, {m} x {n}, {t.lanes}x{t.lanes} sub-tiles",
     )
-    if scratch:
-        mm.add(
-            "tmp",
-            _words24(scratch),
-            scratch,
-            "vector scratch, e8m15, between micro-jobs of one chain",
-        )
     return mm
 
 
@@ -182,7 +155,7 @@ def exports_of(sched: Schedule) -> dict[str, frozenset[int]]:
     return {k: frozenset(v) for k, v in wanted.items()}
 
 
-def allocate(sched: Schedule, t: Target, scratch: int = 0) -> tuple[MemoryMap, dict]:
+def allocate(sched: Schedule, t: Target) -> tuple[MemoryMap, dict]:
     """Give every value that needs storage a region, and return `(map, where)`.
 
     `where` maps a level-1 value id to its region name. Regions are named after
@@ -191,23 +164,22 @@ def allocate(sched: Schedule, t: Target, scratch: int = 0) -> tuple[MemoryMap, d
     play in a one-GEMM graph, which is what the packer and the tests use.
 
     Storage goes to every graph input a band reads and to every value in
-    `exports_of`. A band whose output a folded epilogue consumes gets an ACC24
-    region 1.5x the width; everything else is FP16.
-
-    `scratch` adds `tmp` for micro-job spills. Returns `(map, where)`.
+    `exports_of`. **Every region is FP16**, including one a folded epilogue
+    reads back: a DRAIN writes FP16 and the accumulator converts on EMIT, so
+    there is no wider format for a region to be in. A drained region is padded
+    to the drain burst.
     """
     mm = MemoryMap()
     where: dict[int, str] = {}
-    consumed = {b.consumes for b in sched.bands if b.consumes}
     exports = exports_of(sched)
     burst = DRAIN_BURST * t.lanes * t.lanes
 
-    def region(vid: int, elems: int, wide: bool, note: str) -> None:
+    def region(vid: int, elems: int, drained: bool, note: str) -> None:
         if vid in where:
             return
-        pad = -(-elems // burst) * burst if wide else elems
+        pad = -(-elems // burst) * burst if drained else elems
         where[vid] = f"v{vid}"
-        mm.add(where[vid], (_words24 if wide else _fp16_words)(pad), elems, note)
+        mm.add(where[vid], _fp16_words(pad), elems, note)
 
     for b in sched.bands:
         for vid, (kind, w) in sorted(b.ext.items()):
@@ -215,29 +187,21 @@ def allocate(sched: Schedule, t: Target, scratch: int = 0) -> tuple[MemoryMap, d
                 region(vid, b.elems[vid], False, f"input {w}")
 
     for b in sched.bands:
-        wide = b.name in consumed
         for vid in sorted(exports[b.name]):
-            fmt = "acc24, read by a folded epilogue" if wide else "fp16"
             held = b.elems[vid]
-            if b.engine is Engine.MATMUL:
+            drained = b.engine is Engine.MATMUL
+            if drained:
                 held = max(held, b.grid.m * b.tile.m * b.grid.n * b.tile.n)
-            region(vid, held, wide, f"{b.name} produces %{vid}, {fmt}")
+            region(vid, held, drained, f"{b.name} produces %{vid}, fp16")
 
     ins = [where[v] for v, (k, _) in sorted(sched.bands[0].ext.items()) if k == "input"]
     for role, name in zip(("a", "b"), ins, strict=False):
         mm.alias(role, name)
-    first_wide = next((b for b in sched.bands if b.name in consumed), None)
-    if first_wide is not None:
-        mm.alias("acc", where[out_vid(first_wide)])
+    consumed = {b.consumes for b in sched.bands if b.consumes}
+    folded = next((b for b in sched.bands if b.name in consumed), None)
+    if folded is not None:
+        mm.alias("acc", where[out_vid(folded)])
     mm.alias("c", where[out_vid(sched.bands[-1])])
-
-    if scratch:
-        mm.add(
-            "tmp",
-            _words24(scratch),
-            scratch,
-            "vector scratch, e8m15, between micro-jobs of one chain",
-        )
     return mm, where
 
 
@@ -351,7 +315,6 @@ def _emit_matmul(
     where: list[tuple[int, int]],
     t: Target,
     reg: dict[int, str],
-    staged: bool = False,
 ):
     op = b.ops[0]
     a = prog.memory.get(reg[op.ins[0]])
@@ -365,8 +328,7 @@ def _emit_matmul(
     gm, gn = b.tile.m // t.lanes, b.tile.n // t.lanes
     nk = max(1, b.tile.k // t.kblock)
     subtiles = gm * gn
-    words = _words24 if staged else _fp16_words
-    tile_words = words(b.tile.m * b.tile.n)
+    tile_words = _fp16_words(b.tile.m * b.tile.n)
     a_words = _fp16_words(b.tile.m * b.tile.k)
     b_words = _fp16_words(b.tile.n * b.tile.k)
 
@@ -432,7 +394,7 @@ def _emit_matmul(
                 {
                     "word": c.word + (mo * b.grid.n + no) * tile_words,
                     "n": subtiles,
-                    "dtype": "acc24" if staged else "fp16",
+                    "dtype": "fp16",
                 },
             )
         )
@@ -615,8 +577,8 @@ def _emit_vector(
                             }
                         case _ if acc is not None:
                             ld = {
-                                "word": acc.word + _words24(start),
-                                "dtype": "acc24",
+                                "word": acc.word + _fp16_words(start),
+                                "dtype": "fp16",
                                 "src": producer.name,
                                 "tile": spans[min(idxs)][1],
                                 "part": spans[min(idxs)][2],
@@ -711,17 +673,8 @@ def codegen(sched: Schedule, m: int, k: int, n: int, t: Target) -> Program:
     ValueError via `assign` if a band needs an engine the target lacks.
     """
     prog = Program(name=sched.name)
-    consumed = {b.consumes for b in sched.bands if b.consumes}
     exports = exports_of(sched)
-    scratch = max(
-        (
-            scratch_for(b, exports[b.name])
-            for b in sched.bands
-            if b.engine is Engine.VECTOR
-        ),
-        default=0,
-    )
-    prog.memory, reg = allocate(sched, t, scratch)
+    prog.memory, reg = allocate(sched, t)
     where = assign(sched, t)
     by_name = {b.name: b for b in sched.bands}
 
@@ -839,7 +792,7 @@ def codegen(sched: Schedule, m: int, k: int, n: int, t: Target) -> Program:
     for b in sched.bands:
         match b.engine:
             case Engine.MATMUL:
-                _emit_matmul(prog, b, where[b.name], t, reg, b.name in consumed)
+                _emit_matmul(prog, b, where[b.name], t, reg)
             case Engine.VECTOR:
                 _emit_vector(
                     prog,

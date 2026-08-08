@@ -231,13 +231,17 @@ def lower(
     is not.
 
     With `fold_epilogue`, an elementwise run reading only the preceding matmul
-    becomes a band that `consumes` it: same tiles, same order, loaded as ACC24.
-    The clusters then drain without converting, so the intermediate is rounded
-    and clamped ONCE on this band's store rather than twice -- and at FP16's
-    ceiling of 65504 the first clamp is not a rounding but a loss. It does not
-    save the trip through DRAM: nothing in the machine moves a tile from a
-    cluster to a vector core (vector-core.md s9), and ACC24 is the wider of the
-    two. A reduction cannot fold, because it needs the whole output.
+    becomes a band that `consumes` it: same tiles, same order, same FP16.
+
+    It changes no precision. The accumulator converts to FP16 at stage 6 on
+    EMIT (`mx_acu_fp.v`) and a DRAIN writes FP16 (isa/cluster.md s5), so the
+    intermediate is FP16 folded or not, and the clamp at 65504 happens in the
+    accumulator either way. It does not save the trip through DRAM either:
+    nothing moves a tile from a cluster to a vector core (vector-core.md s9).
+
+    What it buys is the grid: the epilogue walks the producer's tiles in the
+    producer's order, so no re-tiling pass is needed. A reduction cannot fold,
+    because it needs the whole output.
 
     `vector_tile` is elements per vector grid instance. Raises ScheduleError via
     `choose_tile`/`grid_for` if a matmul does not fit the target.

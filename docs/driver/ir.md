@@ -26,7 +26,7 @@ first and tested hardest.
 | `FP32` | 32 | host, DRAM | E8 M23 |
 | `FP16` | 16 | host, DRAM, NoC | E5 M10, **the only output format today** |
 | `E8M15` | 24 | vector core | S1 E8 M15, no subnormals |
-| `ACC24` | 24 | matmul accumulator | S1 E7 M16, `BIAS=63` |
+| `ACC24` | 24 | matmul accumulator, **internal — never a memory word** | S1 E7 M16, `BIAS=63` |
 | `MXFP7` | 7 + scale | matmul operands, NoC | int7 with a shared `E5M3` scale per 32 |
 | `INT8/16/32` | | indices, masks | not arithmetic |
 
@@ -75,7 +75,7 @@ Three places, and **none of them is a separate pass over the data**:
 ```
    host upload        FP32 -> FP16      the host is writing the bytes anyway
    read path          FP16 -> MXFP7     mx_quant, already in MAG
-   vector store       E8M15 -> FP16/FP32/ACC24/INT   a field in VST
+   vector store       E8M15 -> FP16/FP32              a field in VST
 ```
 
 That covers every case, which is why the answer to "should there be an explicit
@@ -93,8 +93,9 @@ cast instruction, or a pre-cast pass?" is **neither**:
   8 elements per beat instead of 16. Not free, but not a new mechanism.
 - **Vector core output** — the cast is already a **field on the store**
   ([`../isa/vector.md`](../isa/vector.md) §2), so `cast → store` folds into one
-  instruction at level 2 and costs nothing. Casting to `ACC24` is what makes the
-  split-K epilogue work.
+  instruction at level 2 and costs nothing. The store target is **FP16 or
+  FP32**: the `ACC24` and raw `E8M15` encodings in that field are unresolved
+  against the accumulator as built, and `isa/vector.md` §2 carries the note.
 - A standalone `cast` op still exists at graph level, because a user may want
   one and because the folding pass needs something to fold. If it survives to
   level 3 unfolded, it is a real pass over the data and the cost model will say
@@ -213,7 +214,9 @@ The schedule level makes that a printable object:
 - `SK == 1` — each instance owns its output tile outright and writes it.
 - `SK > 1` — instances sharing `(mo, no)` produce **partials**, which must be
   reduced. That reduction is a second `Band` on the vector core, and it is why
-  `ACC24` is in the type system: the partials never round-trip through FP16
+  `ACC24` is in the type system, though whether a partial can actually be
+  stored in it is unresolved — see `isa/vector.md` §2. If it cannot, split-K
+  partials round-trip through FP16 and the reduction pays for it
   ([`../compute/vector-core.md`](../compute/vector-core.md) §11).
 
 A pass that picks `SK > 1` without emitting the reduction band is invalid, and

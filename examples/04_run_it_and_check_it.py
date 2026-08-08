@@ -91,16 +91,21 @@ print("""
 # ---------------------------------------------------------------------------
 
 print("=" * 72)
-print("2.  what epilogue folding is actually for")
+print("2.  what epilogue folding is, and what it is NOT")
 print("=" * 72)
 print("""
   Folding does NOT save the trip through DRAM -- nothing moves a tile from a
-  cluster to a vector core. What it saves is the CONVERSION: a folded matmul
-  drains ACC24, so the intermediate is rounded and clamped once, at the end,
-  instead of twice.
+  cluster to a vector core. It does NOT save a conversion either: the
+  accumulator converts to FP16 at stage 6 on EMIT (mx_acu_fp.v) and a DRAIN
+  writes FP16 (isa/cluster.md s5), so the intermediate is FP16 either way.
 
-  That only shows up when the intermediate leaves FP16's range. Here every
-  matmul output is 40*40*128 = 204,800, and FP16 stops at 65,504:
+  What it buys is the GRID: the epilogue walks the producer's tiles in the
+  producer's order, so nothing has to re-tile. Free, and worth having.
+
+  This example used to claim folding rescued an out-of-range intermediate by
+  staging ACC24. It does not, and the driver's ACC24 region was a fiction --
+  see below. Every matmul output here is 40*40*128 = 204,800 and FP16 stops at
+  65,504, so BOTH paths clamp:
 """)
 
 
@@ -112,16 +117,19 @@ big_x = np.full((M, K), 40.0)
 big_w = np.full((K, N), 40.0)
 specs = (D.TensorSpec((M, K), FP16), D.TensorSpec((K, N), FP16))
 
-for label, fold in (("folded  (acc24)", True), ("not folded (fp16)", False)):
+for label, fold in (("folded", True), ("not folded", False)):
     g, s, p = build(scaled, *specs, fold=fold)
     out, m = execute(g, s, p, big_x, big_w)
     report(label, out, run_one(g, big_x, big_w), m)
 
 print(f"""
-  The true answer is {(big_x @ big_w).max() * 0.001:.1f}. Unfolded, the matmul
-  output is clamped to 65,504 BEFORE the epilogue scales it, so the answer comes
-  back as 65.5 -- and nothing raises. `mesh.saturated` counts it because a
-  silent clamp is the failure this machine is most able to hide (task #49).
+  The true answer is {(big_x @ big_w).max() * 0.001:.1f}. The matmul output is
+  clamped to 65,504 in the ACCUMULATOR, before it ever reaches memory, so the
+  answer comes back as 65.5 whether the epilogue is folded or not -- and nothing
+  raises. `mesh.saturated` counts it because a silent clamp is the failure this
+  machine is most able to hide. That is task #49 and it is still OPEN: no
+  scheduling choice mitigates it, and the fix has to be a wider drain or a
+  check, not a fold.
 """)
 
 # ---------------------------------------------------------------------------

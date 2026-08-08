@@ -17,7 +17,14 @@ from ktpu.target import Target
 
 #: Explicit significand bits. ACC24 is S1E7M16 and E8M15 is S1E8M15, so both
 #: keep 16 stored bits plus the implicit one; FP16 keeps 10.
+#: Mantissa bits for rounding INTO a format. The accumulator and the vector
+#: lane really do round to acc24 and e8m15; storing them is the separate
+#: question `MEM_BITS` answers.
 SIG = {"fp16": 10, "acc24": 16, "e8m15": 15}
+
+#: Bits per element IN MEMORY, and nothing else may be stored: a DRAIN emits
+#: FP16 (isa/cluster.md s5), the vector core FP32 or FP16 (vector-core.md s1).
+MEM_BITS = {"fp16": 16, "fp32": 32}
 FP16_MAX = 65504.0
 
 
@@ -222,14 +229,27 @@ class Mesh:
         self.load(region, one(arr))
 
     def _at(self, word: int, dtype: str) -> tuple[str, int]:
+        """Region and element index for a memory word.
+
+        Raises MeshFault on an address outside every region, and on any dtype
+        that is not FP16 or FP32: ACC24 lives in the accumulator and E8M15 in
+        the vector lane, and an instruction naming either as a MEMORY dtype is
+        a codegen bug, not a wider access.
+        """
+        if dtype not in MEM_BITS:
+            raise MeshFault(
+                f"{dtype!r} is an internal format and cannot be a memory word; "
+                f"memory holds {', '.join(sorted(MEM_BITS))}"
+            )
+        width = MEM_BITS[dtype]
         for r in self.prog.memory.regions:
             if r.word <= word < r.end:
                 bits = 32 * (word - r.word)
-                if bits % (16 if dtype == "fp16" else 24):
+                if bits % width:
                     raise MeshFault(
                         f"word {word} is not on a {dtype} boundary in {r.name}"
                     )
-                return r.name, bits // (16 if dtype == "fp16" else 24)
+                return r.name, bits // width
         raise MeshFault(f"address {word} is outside every region")
 
     def run(self) -> "Mesh":

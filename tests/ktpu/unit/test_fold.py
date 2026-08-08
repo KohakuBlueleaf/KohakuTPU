@@ -276,20 +276,31 @@ def test_a_chain_leaves_no_scratch_region_at_all():
     assert [r.name for r in prog.memory.regions if r.name == "tmp"] == []
 
 
-def test_no_fp16_appears_anywhere_in_the_middle_of_the_folded_path():
-    """The whole point of the fold. Any FP16 before the last store would be a
-    rounding AND a clamp at 65504 applied to a value that is not final yet.
-
-    The bias is a broadcast of a graph input, genuinely FP16 in DRAM and not the
-    intermediate, so it is excluded by its `bcast` axis rather than by dtype."""
+def test_the_folded_path_is_fp16_because_nothing_else_can_be_stored():
+    """A DRAIN writes FP16 (isa/cluster.md s5: "n resident sub-tiles into memory
+    as FP16", one 256-bit word per 4x4 sub-tile = 16 elements at 16 bits), and
+    `mx_acu_fp.v` converts at stage 6 on EMIT. ACC24 is the accumulator's
+    resident tile and never a memory word, so the intermediate a folded epilogue
+    reads back is FP16 like everything else."""
     prog = _prog()
     acc = prog.memory.get("acc")
     lds = [i for i in _of(prog, Opcode.VLD) if i.fields.get("bcast", "elem") == "elem"]
     assert lds
     for i in lds:
-        assert i.fields["dtype"] == "acc24" and _in(acc, i)
+        assert i.fields["dtype"] == "fp16" and _in(acc, i)
     for i in _of(prog, Opcode.DRAIN):
-        assert i.fields["dtype"] == "acc24" and _in(acc, i)
+        assert i.fields["dtype"] == "fp16" and _in(acc, i)
+
+
+def test_no_instruction_names_an_internal_format_as_a_memory_dtype():
+    """ACC24 and E8M15 are real -- in the accumulator and in the vector lane --
+    but a memory access naming either is a codegen bug. `Mesh._at` refuses them
+    outright; this catches it a level earlier."""
+    prog = _prog()
+    named = {
+        i.fields["dtype"] for i in prog.insts if isinstance(i.fields.get("dtype"), str)
+    }
+    assert named <= {"fp16", "fp32"}, f"internal format in memory: {named}"
 
 
 def test_the_bias_is_a_broadcast_load_and_not_a_materialised_tensor():
@@ -334,7 +345,7 @@ def test_the_load_that_reads_a_resident_tile_names_the_producer_band():
     prog = _prog()
     named = [i for i in _of(prog, Opcode.VLD) if "tile" in i.fields]
     assert named and {i.fields["src"] for i in named} == {"b0"}
-    assert all(i.fields["dtype"] == "acc24" for i in named)
+    assert all(i.fields["dtype"] == "fp16" for i in named)
 
 
 # ---------------------------------------------------------------------------

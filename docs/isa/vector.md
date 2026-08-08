@@ -78,10 +78,38 @@ same word:
          100 INT8          101 INT16   -- for masks and indices, not arithmetic
 ```
 
-**`ACC24` is the matmul interface** and the reason the dtype field is not just
-"FP16 or FP32": it is the cluster accumulator's own format, and loading it is
-what lets the vector core finish a split-K reduction without a lossy trip
-through FP16. See [vector-core.md](../compute/vector-core.md) §11.
+**`ACC24` was intended as the matmul interface** -- the cluster accumulator's own
+format, loaded so a vector core could finish a split-K reduction without a lossy
+trip through FP16 ([vector-core.md](../compute/vector-core.md) §11).
+
+> **Split-K is real, and it does not go through memory.** `mx_acu_fp.v` has
+> peer transfer: `peer_in`/`peer_out` are `16*(ACC_MW+8)` bits -- one 4x4
+> sub-tile at the accumulator's own width, FP22 at the default `ACC_MW=14` and
+> FP24 at 16 -- and `OP_ADD_PEER` adds the incoming partial to the resident
+> tile. **Clusters reduce split-K over the MESH, in the accumulator, without a
+> trip through FP16.** Three widths are therefore in play and they are not the
+> same list:
+>
+> | | |
+> |---|---|
+> | **memory** | FP32, FP16, MXFP7 (read-only). **Never 24-bit.** |
+> | **mesh** | FP32, FP16, and the accumulator width for peer transfer |
+> | **internal** | E8M15 in the lane, the resident tile in the accumulator |
+>
+> **What is unresolved is only this field.** A DRAIN writes FP16
+> ([cluster.md](cluster.md) §5: one 256-bit word per 4x4 sub-tile is 16 elements
+> at 16 bits, with no room for 24) and stage 6 converts on EMIT, so a partial in
+> memory is FP16. `VLD.ACC24` therefore needs the vector core to receive a peer
+> transfer directly, which is a mesh path it does not have today -- not a
+> memory format. `E8M15 (raw)` has no such route at all: it is the lane's own
+> format and `vector-core.md` §1 says software sees FP32 or FP16 and nothing
+> else.
+>
+> The driver used to allocate ACC24 *regions* and emit `dtype: acc24` on a
+> DRAIN. That was fiction and is corrected; memory is FP16/FP32 throughout.
+> Reducing split-K on a **vector** core still needs a decision: give it a peer
+> port, or accept FP16 partials there and keep the wide reduction in the
+> accumulator where it already works.
 
 ---
 

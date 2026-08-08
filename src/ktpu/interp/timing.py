@@ -27,7 +27,9 @@ MACS_PER_CLUSTER = 512
 #: bits occupies `b / FLIT_BITS` cycles on the link that carries it.
 FLIT_BITS = 256
 
-BITS = {"fp16": 16, "acc24": 24, "e8m15": 24, "fp32": 32}
+#: Memory widths. ACC24 and E8M15 are internal and never a memory word, so
+#: they are deliberately absent (isa/cluster.md s5, compute/vector-core.md).
+BITS = {"fp16": 16, "fp32": 32}
 
 
 @dataclass

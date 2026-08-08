@@ -391,7 +391,7 @@ time; a variable sequence length is specialised or padded by the layer above.
 | | |
 |---|---|
 | no subnormals | deliberate — `vector-core.md` §1.3, and free rather than a compromise |
-| FP16 store saturates at 65504, silently | **task #49**, and the reason epilogue folding drains ACC24 |
+| FP16 store saturates at 65504, silently | **task #49**, open. Epilogue folding does NOT mitigate it: the accumulator converts to FP16 on EMIT (`mx_acu_fp.v` stage 6) and a DRAIN writes FP16 (isa/cluster.md §5), so the clamp happens either way |
 | FP32 compute | designed (`vector-core.md` §5, the extended mode) and **not built** |
 | `sin`/`cos` | absent. RoPE uses a host-computed table, which is what everyone does anyway |
 

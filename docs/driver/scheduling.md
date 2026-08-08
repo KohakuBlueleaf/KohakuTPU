@@ -80,13 +80,13 @@ Two rules cut a run:
 ### 1.6 Epilogue folding
 
 An elementwise run reading only the preceding matmul becomes a band that
-`consumes` it — same tiles, same order, loaded as ACC24. `epilogue_grid` derives
+`consumes` it — same tiles, same order, same FP16. `epilogue_grid` derives
 the grid from the producer's tiles, splitting a tile by ROWS while that leaves
 fewer instances than there are vector cores, and `correspondence()` checks it.
 
 **It does not save the trip through DRAM.** Nothing in the machine moves a tile
-from a cluster to a vector core (`vector-core.md` §9), and ACC24 is the wider
-format. §3 is what it does buy.
+from a cluster to a vector core (`vector-core.md` §9). It changes no precision
+either — a DRAIN writes FP16 whatever the schedule. §3 is what it does buy.
 
 ### 1.7 Operand binding
 
@@ -104,9 +104,9 @@ CHAIN, not how long a value lives** — so intermediates stay in registers.
 ```
 band b0  grid(4, 2, sk=1) = 8 instances
   m_ per instance  C[64,128] += A[64,128] @ B[128,128]   x 8 K-chunks of 128
-     whole problem  256 x 1024 x 256   accumulates in acc24
+     whole problem  256 x 1024 x 256   accumulates in acc24, drains fp16
 band b1  grid(4, 2, sk=1) = 8 instances  consumes=b0
-  v_ per instance  16 ops on 64x128 = 8192 elements   reads acc24 resident from b0
+  v_ per instance  16 ops on 64x128 = 8192 elements   reads fp16 resident from b0
 ```
 
 The grids match instance for instance: `correspondence(b0, b1) == (1, 1)`. That
@@ -131,46 +131,42 @@ per core. **Nothing but VALU scales with chain depth**, which is the invariant
 
 ---
 
-## 3. The RAM, justified
+## 3. Folding is free
 
-Folded against unfolded, same kernel, same instruction count:
+Folded against unfolded, same kernel:
 
-| | folded | unfolded | delta |
-|---|---|---|---|
-| device image | 344,192 w | 327,808 w | **+16,384 w = +64 KiB** |
-| dram read | 835,584 w | 819,200 w | +16,384 w |
-| dram write | 81,920 w | 65,536 w | +16,384 w |
-| instructions | 424 | 424 | — |
-| overhead | 0.027 B/flop | 0.026 B/flop | +4% |
+| | folded | unfolded |
+|---|---|---|
+| device image | 327,808 w | 327,808 w |
+| dram read | 819,200 w | 819,200 w |
+| dram write | 65,536 w | 65,536 w |
+| instructions | 424 | 424 |
 
-Every one of those deltas is the same 16,384 words, and it is **exactly one
-thing**: the matmul's output staged as ACC24 instead of FP16.
+**Nothing moves.** Both stage the matmul output as FP16, because FP16 is the
+only thing a cluster can write: `mx_acu_fp.v` converts at stage 6 on EMIT and
+`isa/cluster.md` §5 has DRAIN putting "`n` resident sub-tiles into memory as
+FP16" -- one 256-bit word per 4x4 sub-tile, 16 elements at 16 bits exactly.
 
-```
-  folded     v3   49,152 w   b0 produces %3, acc24
-  unfolded   v3   32,768 w   b0 produces %3, fp16
-```
+> **This section used to claim the opposite** -- that folding staged ACC24 at
+> 1.5x the width, cost 64 KiB, and bought "one rounding instead of two". The
+> driver really did allocate a 1.5x region and emit `dtype: acc24` on the drain,
+> and none of it corresponded to hardware: ACC24 is the accumulator's *resident
+> tile*, never a memory word. The compiler, the simulator and six tests have
+> been corrected.
 
-24 bits against 16 is 1.5x, and `49,152 = 32,768 * 1.5`. Nothing else moved.
+**What folding actually buys** is the grid. `epilogue_grid` derives the
+epilogue's instances from the producer's tiles, so the elementwise pass walks
+the matmul's output in the matmul's own order and no re-tiling pass is needed.
+That is worth having and it is free -- but it is a scheduling win, not a
+numerical one.
 
-**What the 64 KiB buys.** The intermediate is rounded and clamped ONCE, on the
-vector core's final store, instead of twice. At FP16's ceiling of 65,504 the
-first clamp is not a rounding but a loss, and it is silent. Measured, from
-`examples/04_run_it_and_check_it.py` on a kernel whose matmul output is 204,800:
+**What it does NOT buy: range.** A matmul output above 65,504 is clamped in the
+accumulator on EMIT, folded or not. `examples/00_pipeline.py` shows a kernel
+whose true output is 204,800 coming back as 65.5 with 4,096 of 4,096 elements
+clamped -- and folding does not rescue it. Silent FP16 saturation is **task
+#49** and it is still open; nothing in the scheduler mitigates it.
 
-```
-  folded  (acc24)     max abs err 5.00e-02   relative 2.44e-04
-  not folded (fp16)   max abs err 1.39e+02   relative 6.80e-01   clamped 4096
-```
-
-4,096 of 4,096 elements clamped, and the answer comes back as 65.5 where the
-true value is 204.8. **5% more DRAM for a result that is not silently wrong** is
-the trade, and it is the same argument as `vector-core.md` §11.
-
-It is also a *choice*: `lower(graph, target, fold_epilogue=False)` takes the
-smaller image and the FP16 intermediate.
-
-### 3.1 What is NOT in that 64 KiB
+### 3.1 What folding is NOT
 
 An earlier version of this scheduler spilled every VMODE group boundary to a
 `tmp` region in DRAM:

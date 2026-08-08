@@ -141,6 +141,15 @@ INT8 = DType("int8", 8, Kind.INT)
 INT16 = DType("int16", 16, Kind.INT)
 INT32 = DType("int32", 32, Kind.INT)
 
+#: What a MEMORY word may hold, and nothing else may. MXFP7 is read-only, by the
+#: matmul core (isa/cluster.md s5, compute/vector-core.md s1).
+MEMORY_DTYPES = (FP32, FP16, MXFP7)
+
+#: What may cross the MESH, which is wider than memory: `mx_acu_fp.v`'s
+#: `peer_in`/`peer_out` are `16*(ACC_MW+8)` bits, one 4x4 sub-tile at the
+#: accumulator's width -- FP22 at the default ACC_MW=14, FP24 at 16.
+MESH_DTYPES = (FP32, FP16, ACC24)
+
 HOST_DTYPES = (FP32, FP16)
 VECTOR_DTYPES = (E8M15,)
 
