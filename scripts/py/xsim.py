@@ -55,6 +55,62 @@ BENCHES = {
         "vec_alu_tb",
         ["src/kohakutpu/matmul/mx_fpacc.v"] + VECTOR + ["tests/vector/vec_alu_tb.v"],
     ),
+    # The whole core as a NoC endpoint, driven by a simulated NoC stream: the
+    # bench is both the agent and the memory, with no mesh in between.
+    "vec_cu": (
+        "vec_cu_tb",
+        COMMON
+        + ["src/kohakunoc/noc_cu_base.v", "src/kohakutpu/matmul/mx_fpacc.v"]
+        + VECTOR
+        + [
+            "src/kohakutpu/vector/vec_cvt.v",
+            "src/kohakutpu/vector/vec_regfile.v",
+            "src/kohakutpu/vector/vec_lanes.v",
+            "src/kohakutpu/vector/vec_agu.v",
+            "src/kohakutpu/vector/vec_core.v",
+            "src/kohakutpu/vector/vec_cu.v",
+            "tests/vector/vec_cu_tb.v",
+        ],
+    ),
+    # One register-file slice, then sixteen behind a packed bus.
+    "vec_regfile": (
+        "vec_regfile_tb",
+        COMMON
+        + [
+            "src/kohakutpu/vector/vec_regfile.v",
+            "tests/vector/vec_regfile_tb.v",
+        ],
+    ),
+    # The 16-ALU array and its register file: VMODE topologies and reductions.
+    "vec_lanes": (
+        "vec_lanes_tb",
+        COMMON
+        + ["src/kohakutpu/matmul/mx_fpacc.v"]
+        + VECTOR
+        + [
+            "src/kohakutpu/vector/vec_regfile.v",
+            "src/kohakutpu/vector/vec_lanes.v",
+            "tests/vector/vec_lanes_tb.v",
+        ],
+    ),
+    # The load/store edges. mx_fpacc.v is here for mx_lead1, which normalises an
+    # FP16 subnormal on the way in.
+    "vec_cvt": (
+        "vec_cvt_tb",
+        [
+            "src/kohakutpu/matmul/mx_fpacc.v",
+            "src/kohakutpu/vector/vec_cvt.v",
+            "tests/vector/vec_cvt_tb.v",
+        ],
+    ),
+    # Accumulator width -> E8M15, the mesh input a peer transfer arrives on.
+    "vec_cvt_acc": (
+        "vec_cvt_acc_tb",
+        [
+            "src/kohakutpu/vector/vec_cvt_acc.v",
+            "tests/vector/vec_cvt_acc_tb.v",
+        ],
+    ),
     "cluster_node": (
         "mx_cluster_node_tb",
         COMMON + MATMUL + ["tests/matmul/mx_cluster_node_tb.v"],
@@ -170,23 +226,54 @@ def main():
     env = dict(os.environ)
     env["PATH"] = str(VIVADO) + ";" + env["PATH"]
 
-    def run(cmd):
+    # The benches print their own results indented; ERROR lines do NOT match
+    # that shape, because `$display("%0t ERROR ...")` starts with the timestamp
+    # -- a digit. Filtering on the indent alone therefore discarded every
+    # assertion monitor in the project: the NoC's "flit LOST -- sender did not
+    # hold", the accumulator's reuse-window check, the manager's L1-overlap
+    # check, the drain-queue overflow check. All of them exist to make a failure
+    # loud, and all of them were being thrown away before anyone could read one.
+    def keep(ln):
+        return ln.startswith(("---", "    ", "  ", "===")) or "ERROR" in ln
+
+    def run(cmd, stream=False):
         # Windows will not resolve a .bat through CreateProcess, so name it in
         # full rather than relying on PATH.
         # check=False: a failing tool's output is printed below, which is more
         # useful than a traceback that hides it
-        r = subprocess.run(
-            [str(VIVADO / cmd[0])] + cmd[1:],
+        argv = [str(VIVADO / cmd[0])] + cmd[1:]
+        if not stream:
+            r = subprocess.run(
+                argv, cwd=work, env=env, capture_output=True, text=True, check=False
+            )
+            if r.returncode:
+                print(r.stdout[-6000:], r.stderr[-2000:])
+                sys.exit(f"failed: {cmd[0]}")
+            return r.stdout
+
+        # Streamed line by line. A bench that stalls is then diagnosable by how
+        # far it got; captured whole, a run killed on a timeout prints NOTHING,
+        # which is indistinguishable from a run that failed to elaborate.
+        proc = subprocess.Popen(
+            argv,
             cwd=work,
             env=env,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
-            check=False,
+            bufsize=1,
         )
-        if r.returncode:
-            print(r.stdout[-6000:], r.stderr[-2000:])
+        got = []
+        for ln in proc.stdout:
+            got.append(ln)
+            if keep(ln):
+                print(ln, end="", flush=True)
+        proc.wait()
+        out = "".join(got)
+        if proc.returncode:
+            print(out[-6000:])
             sys.exit(f"failed: {cmd[0]}")
-        return r.stdout
+        return out
 
     files = [str(ROOT / p) for p in srcs]
     libs = ["-L", "xpm"]
@@ -211,21 +298,8 @@ def main():
         + tops
         + ["-s", "tb"]
     )
-    out = run(["xsim.bat", "tb", "-runall"])
+    out = run(["xsim.bat", "tb", "-runall"], stream=True)
 
-    # The benches print their own results indented; ERROR lines do NOT match
-    # that shape, because `$display("%0t ERROR ...")` starts with the timestamp
-    # -- a digit. Filtering on the indent alone therefore discarded every
-    # assertion monitor in the project: the NoC's "flit LOST -- sender did not
-    # hold", the accumulator's reuse-window check, the manager's L1-overlap
-    # check, the drain-queue overflow check. All of them exist to make a failure
-    # loud, and all of them were being thrown away before anyone could read one.
-    body = [
-        ln
-        for ln in out.splitlines()
-        if ln.startswith(("---", "    ", "  ", "===")) or "ERROR" in ln
-    ]
-    print("\n".join(body))
     if not args.keep:
         shutil.rmtree(work, ignore_errors=True)
     sys.exit(0 if "  PASS" in out else 1)
