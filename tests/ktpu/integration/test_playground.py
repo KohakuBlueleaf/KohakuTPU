@@ -34,12 +34,18 @@ def test_the_page_offers_examples():
 
 @pytest.mark.parametrize("name", sorted(EXAMPLES), ids=lambda s: s.replace(" ", "_"))
 def test_the_example_compiles_and_matches(name):
+    """The page reports the error distribution and passes no verdict, so the
+    bound lives HERE. The median is the robust statistic: a per-element
+    relative error is unbounded wherever the reference is near zero, which
+    gelu and softmax both produce legitimately."""
     out = compile_kernel(EXAMPLES[name])
     assert out["error"] is None, out["error"]
-    assert "DIVERGES" not in out["check"], out["check"]
-    assert "MATCHES" in out["check"]
-    for level in ("graph", "sched", "prog", "cost"):
+    for level in ("graph", "sched", "prog", "cost", "check"):
         assert out[level], f"{name} rendered no {level}"
+
+    rel, absolute = out["stats"]["rel"], out["stats"]["abs"]
+    assert rel["p50"] < 0.01, f"{name}: median rel err {rel['p50']:.2%}"
+    assert absolute["p99"] < 5e-2, f"{name}: p99 abs err {absolute['p99']:.2e}"
 
 
 def test_a_broken_kernel_reports_instead_of_raising():

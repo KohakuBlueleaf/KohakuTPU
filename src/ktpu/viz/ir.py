@@ -13,6 +13,8 @@ it on a network.
 import html
 import io
 import traceback
+from dataclasses import fields as dc_fields
+from dataclasses import replace
 
 import numpy as np
 
@@ -22,7 +24,7 @@ from ktpu.ir import FP16
 from ktpu.ir.graph import OpKind
 from ktpu.ir.sched import Engine
 from ktpu.passes import lower
-from ktpu.target import VU13P_8CU
+from ktpu.target import VU13P_8CU, Target
 
 #: Op kind -> CSS class, so a reader can find the matmuls and the reductions
 #: without reading every line.
@@ -169,6 +171,66 @@ def render_program(prog, limit: int = 400) -> str:
     )
 
 
+def apply_target(target: Target, cfg: dict | None) -> Target:
+    """`target` with `cfg`'s fields replaced, or unchanged if `cfg` is empty.
+
+    One definition for every route that can override the machine -- the server's
+    command line, the page's controls, and a TARGET dict in the kernel source.
+    Raises ValueError naming the valid fields, because a silently ignored
+    setting looks exactly like a setting that had no effect.
+    """
+    if not cfg:
+        return target
+    valid = {f.name for f in dc_fields(Target)}
+    bad = sorted(set(cfg) - valid)
+    if bad:
+        raise ValueError(
+            f"no machine field named {bad}. Valid: {', '.join(sorted(valid))}"
+        )
+    return replace(target, **cfg)
+
+
+def render_check(st: dict, total: int, saturated: int = 0) -> str:
+    """Per-element error against the float64 reference, as a distribution.
+
+    `st` comes from `hw.sim._stats`, the convention the rest of the repo
+    reports against: elementwise `|got-want|` and `|got-want|/|want|`, never
+    normalised by the tensor peak -- the peak is a property of the matrix, not
+    of the element you are looking at.
+
+    Reports numbers only. Whether a given error is acceptable depends on the
+    kernel and on what consumes it, so that call is not this function's to make.
+    """
+    a, r = st["abs"], st["rel"]
+    line_abs = (
+        f"p50 {a['p50']:.2e}  p90 {a['p90']:.2e}  "
+        f"p99 {a['p99']:.2e}  worst {a['max']:.2e}"
+    )
+    line_rel = (
+        f"p50 {r['p50']:.2%}  p90 {r['p90']:.2%}  "
+        f"p99 {r['p99']:.2%}  worst {r['max']:.2%}"
+    )
+    line_over = (
+        f"1%: {r['over1_n']:,} ({r['over1']:.2%}) &middot; "
+        f"10%: {r['over10_n']:,} ({r['over10']:.2%}) of {total:,}"
+    )
+    rows = [
+        ("abs err", line_abs),
+        ("rel err", line_rel),
+        ("elements over", line_over),
+    ]
+    if saturated:
+        rows.append(("clamped", f"{saturated:,} elements hit FP16's ceiling"))
+    body = "".join(
+        f'<tr><td class="ck">{_esc(k)}</td><td class="cv err">{v}</td></tr>'
+        for k, v in rows
+    )
+    return (
+        '<div class="check"><b>against the float64 reference</b>'
+        f'<table class="ir cost"><tbody>{body}</tbody></table></div>'
+    )
+
+
 def render_cost(cost, timing=None, target=None) -> str:
     """The counted figures, `overhead` first because it is the one to watch.
 
@@ -206,7 +268,16 @@ def render_cost(cost, timing=None, target=None) -> str:
             f"{100 * lo / peak:.1f}% to {100 * hi / peak:.1f}% of the "
             f"{peak:,.0f} GF/s peak &middot; matmul and vector flops both counted"
         )
+        machine = (
+            f"{target.name} &middot; {target.vector_lanes} lanes per vector "
+            f"core &middot; vlmax {target.vlmax} &middot; {target.mhz:g} MHz"
+        )
         cells += [
+            (
+                "machine",
+                f"{target.clusters} mat / {target.vector_cores} vec",
+                machine,
+            ),
             ("cycles", f"{timing.overlapped:,}–{timing.cycles:,}", when),
             ("throughput", f"{lo:,.0f}–{hi:,.0f} GF/s", rate),
             ("busy", f"{mm:.0f}% / {vec:.0f}%", f"matmul / vector &middot; {ops}"),
@@ -247,7 +318,15 @@ def compile_kernel(source: str, target=VU13P_8CU, seed: int = 0) -> dict:
 
     THIS RUNS ARBITRARY PYTHON. Local tool only -- see the module docstring.
     """
-    out = {"error": None, "graph": "", "sched": "", "prog": "", "cost": "", "check": ""}
+    out = {
+        "error": None,
+        "graph": "",
+        "sched": "",
+        "prog": "",
+        "cost": "",
+        "check": "",
+        "stats": None,
+    }
     try:
         import ktpu.dsl as D
         from ktpu.dsl import nn
@@ -271,6 +350,7 @@ def compile_kernel(source: str, target=VU13P_8CU, seed: int = 0) -> dict:
 
         # BY NAME: with optional operands, passing positionally slides the next
         # one into the gap. A parameter absent from INPUTS keeps its default.
+        target = apply_target(target, ns.get("TARGET"))
         names = list(inspect.signature(fn).parameters)
         extra = {n: shapes[n] for n in names if n in shapes}
         missing = [n for n in shapes if n not in names]
@@ -334,15 +414,10 @@ def compile_kernel(source: str, target=VU13P_8CU, seed: int = 0) -> dict:
         got = np.concatenate(
             [mesh.result(f"v{v.vid}").reshape(-1) for v in graph.outputs]
         )
-        rel = float(np.abs(got - want).max() / max(1e-30, np.abs(want).max()))
-        ok = rel < 5e-3
-        out["check"] = (
-            f'<div class="check {"ok" if ok else "bad"}">'
-            f'{"MATCHES" if ok else "DIVERGES"} the float64 reference &middot; '
-            f"relative error {rel:.2e}"
-            + (f" &middot; {mesh.saturated:,} clamped" if mesh.saturated else "")
-            + "</div>"
-        )
+        from ktpu.hw.sim import _stats
+
+        out["stats"] = _stats(got, want)
+        out["check"] = render_check(out["stats"], got.size, mesh.saturated)
     except Exception:  # noqa: BLE001 -- a playground must never 500
         buf = io.StringIO()
         traceback.print_exc(file=buf)

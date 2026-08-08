@@ -19,7 +19,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
-from ktpu.viz.ir import compile_kernel
+import ktpu.target as target_mod
+from ktpu.viz.ir import apply_target, compile_kernel
+
+BASE = target_mod.VU13P_8CU
 
 PAGE = ROOT / "src" / "ktpu" / "viz" / "playground.html"
 MAX_SOURCE = 256 * 1024
@@ -48,22 +51,58 @@ class Handler(BaseHTTPRequestHandler):
         if n > MAX_SOURCE:
             return self._send(413, b"source too large", "text/plain")
         try:
-            source = json.loads(self.rfile.read(n) or b"{}").get("source", "")
+            req = json.loads(self.rfile.read(n) or b"{}")
         except json.JSONDecodeError as exc:
             return self._send(400, str(exc).encode(), "text/plain")
-        body = json.dumps(compile_kernel(source)).encode()
-        return self._send(200, body, "application/json")
+        try:
+            target = apply_target(BASE, req.get("target"))
+        except ValueError as exc:
+            return self._send(400, str(exc).encode(), "text/plain")
+        out = compile_kernel(req.get("source", ""), target)
+        return self._send(200, json.dumps(out).encode(), "application/json")
 
     def log_message(self, fmt, *args):
         """Quiet by default: one line per keystroke-triggered run is noise."""
 
 
 def main() -> None:
+    global BASE
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--port", type=int, default=8770)
+    ap.add_argument(
+        "--target",
+        default="VU13P_8CU",
+        help="a named Target in ktpu.target, e.g. VU13P_MM8 or VU13P_VEC4",
+    )
+    ap.add_argument("--clusters", type=int, help="matmul clusters, overrides --target")
+    ap.add_argument("--vector-cores", type=int, help="vector cores")
+    ap.add_argument("--vector-lanes", type=int, help="ALUs per vector core")
+    ap.add_argument("--mhz", type=float, help="clock, for the seconds figure")
     args = ap.parse_args()
     if not PAGE.exists():
         sys.exit(f"missing page: {PAGE}")
+
+    named = getattr(target_mod, args.target, None)
+    if not isinstance(named, target_mod.Target):
+        have = [
+            k for k, v in vars(target_mod).items() if isinstance(v, target_mod.Target)
+        ]
+        sys.exit(f"no target named {args.target!r}; have {', '.join(sorted(have))}")
+    over = {
+        k: v
+        for k, v in (
+            ("clusters", args.clusters),
+            ("vector_cores", args.vector_cores),
+            ("vector_lanes", args.vector_lanes),
+            ("mhz", args.mhz),
+        )
+        if v is not None
+    }
+    BASE = apply_target(named, over)
+    print(
+        f"machine: {BASE.name}  {BASE.clusters} matmul / {BASE.vector_cores} vector"
+        f"  {BASE.vector_lanes} lanes  {BASE.mhz:g} MHz"
+    )
     # Loopback is not a default here, it is the security boundary: the endpoint
     # runs whatever Python it is handed.
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)

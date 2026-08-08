@@ -89,11 +89,16 @@ code{color:var(--ink)}
 .cost .ck{color:var(--dim);width:130px}
 .cost .cv{font-weight:700;text-align:right;width:130px;
   font-variant-numeric:tabular-nums}
-.check{padding:9px 12px;border-radius:6px;margin:0 0 14px;font-weight:600}
-.check.ok{background:#12301d;color:var(--vec);border:1px solid #1e5535}
-.check.bad{background:#3a1414;color:var(--bad);border:1px solid #6b2222}
+.check{padding:9px 12px;border-radius:6px;margin:0 0 14px;background:var(--panel);
+  border:1px solid var(--line)}
+.check b{color:var(--dim);font-weight:500}
+.check table{margin:6px 0 0}
+.cv.err{font-weight:400;text-align:left;width:auto;font-variant-numeric:tabular-nums}
 pre.err{background:#2a1414;border:1px solid #6b2222;color:#ffb4b4;
   padding:12px;border-radius:6px;white-space:pre-wrap;overflow:auto}
+.arch{color:var(--dim);display:flex;gap:5px;align-items:center}
+.arch input{width:52px;background:#1e2230;color:var(--ink);border:1px solid var(--line);
+  border-radius:5px;padding:4px 6px;font:inherit;text-align:right}
 .hint{color:var(--dim);padding:10px 14px;border-top:1px solid var(--line);
   background:var(--panel)}
 </style>
@@ -101,6 +106,11 @@ pre.err{background:#2a1414;border:1px solid #6b2222;color:#ffb4b4;
 <header>
   <h1>ktpu <small>IR playground &mdash; DSL to level 1, 2, 3, executed</small></h1>
   <select id="ex"></select>
+  <span class="arch">machine
+    <input id="mat" type="number" min="0" max="64" title="matmul clusters">mat
+    <input id="vec" type="number" min="0" max="64" title="vector cores">vec
+    <button id="rst" title="back to the server's own machine">reset</button>
+  </span>
   <button class="run" id="go">Run &#9654;</button>
   <span class="dim" id="stat"></span>
 </header>
@@ -114,6 +124,9 @@ pre.err{background:#2a1414;border:1px solid #6b2222;color:#ffb4b4;
     </div>
     <div class="hint">Define <b>kernel(...)</b> and <b>INPUTS</b>. <b>D</b> is
       <code>ktpu.dsl</code>, <b>nn</b> is <code>ktpu.dsl.nn</code>.
+      <b>CONSTS</b> pins an input to a fixed array;
+      <b>TARGET</b> changes the machine, e.g.
+      <code>TARGET = {"clusters": 8, "vector_cores": 12}</code>.
       Ctrl+Enter runs.</div>
   </div>
   <div id="drag" title="drag to resize"></div>
@@ -172,25 +185,39 @@ INPUTS = {"x": (256, 128), "g": (128,)}`,
 # off is not in the graph at all -- change a constant and re-run to watch the
 # IR change. Operand shapes are derived from these, so they stay consistent.
 #
-#   L         sequence length: how many tokens attend to each other.
+#   LQ        query rows -- how many tokens are asking.
+#   LKV       key/value rows -- how many they may attend to. LQ != LKV is
+#             CROSS attention and works; CAUSAL requires LQ == LKV, because
+#             query block i is aligned to key block i and a shorter query
+#             would attend a prefix that is not its own.
 #   DH        channels per head. q @ k.T contracts over this axis.
-#   BLOCK     how many keys are scored at once; must divide L. This is the
-#             whole point of flash attention -- only an L x BLOCK score tile
-#             ever exists, never the L x L matrix.
+#   BLOCK     how many keys are scored at once; must divide both lengths. This
+#             is the whole point of flash attention -- only an LQ x BLOCK score
+#             tile ever exists, never the LQ x LKV matrix.
 #   BATCH     0 for no batch axis. Above 0 adds a leading batch axis, which
 #             makes the operands rank 4.
 #   HEADS     query heads. 1 is plain single-head attention.
 #   KV_HEADS  key/value heads. Fewer than HEADS is grouped-query attention:
 #             identical flops, proportionally less K/V storage and traffic.
 #   CAUSAL    skip the key blocks above the diagonal (work not done, not a
-#             cheaper mask). Needs the tri constant.
+#             cheaper mask). Needs the tri constant, and LQ == LKV.
 #   USE_WO    fuse the output projection, which collapses the per-head results
 #             into one tensor instead of HEADS of them.
-L, DH, BLOCK = 128, 64, 64
+LQ, LKV = 128, 128
+DH, BLOCK = 64, 64
 BATCH = 0
 HEADS, KV_HEADS = 4, 2
 CAUSAL = True
 USE_WO = True
+
+# Checked HERE, because nothing downstream can catch it: the error stats
+# compare this kernel's level 3 against its own level 1, so a mask that is
+# semantically wrong still agrees with itself.
+if CAUSAL and LQ != LKV:
+    raise ValueError(
+        f"causal aligns query block i to key block i, so it needs LQ == LKV; "
+        f"got LQ={LQ}, LKV={LKV}. Drop CAUSAL for cross attention."
+    )
 
 LOG2E = 1.4426950408889634
 
@@ -200,11 +227,11 @@ LOG2E = 1.4426950408889634
 # head of it is an inner multi-column slice. Transposing is the previous
 # layer's job.
 if BATCH:
-    QSHAPE, KVSHAPE = (BATCH, HEADS, L, DH), (BATCH, KV_HEADS, L, DH)
+    QSHAPE, KVSHAPE = (BATCH, HEADS, LQ, DH), (BATCH, KV_HEADS, LKV, DH)
 elif HEADS > 1:
-    QSHAPE, KVSHAPE = (HEADS, L, DH), (KV_HEADS, L, DH)
+    QSHAPE, KVSHAPE = (HEADS, LQ, DH), (KV_HEADS, LKV, DH)
 else:
-    QSHAPE = KVSHAPE = (L, DH)
+    QSHAPE, KVSHAPE = (LQ, DH), (LKV, DH)
 RANK = len(QSHAPE)
 
 def head(x, b, h):
@@ -249,7 +276,7 @@ def kernel(q, k, v, tri=None, wo=None):
     for b in range(BATCH or 1):
         # causal carries softmax state PER ROW, so each query block is its own
         # result; joining them would need concat, which does not lower.
-        for i in range(L // BLOCK if CAUSAL else 1):
+        for i in range(LQ // BLOCK if CAUSAL else 1):
             joined, per_head = None, []
             for h in range(HEADS):
                 qh = head(q, b, h)
@@ -258,7 +285,7 @@ def kernel(q, k, v, tri=None, wo=None):
                 out = online_softmax(
                     qh[i*BLOCK:(i+1)*BLOCK] if CAUSAL else qh,
                     head(k, b, kv), head(v, b, kv), scale,
-                    0, i + 1 if CAUSAL else L // BLOCK,
+                    0, i + 1 if CAUSAL else LKV // BLOCK,
                     tri if CAUSAL else None,
                 )
                 if USE_WO:
@@ -399,13 +426,24 @@ for (const b of document.querySelectorAll(".tabs button")) b.onclick = () => {
   b.classList.add("on"); $("#" + b.dataset.t).classList.add("on");
 };
 
+// Blank means "whatever the server was started with", so an untouched page
+// reports the real machine instead of one the page invented.
+function machine() {
+  const t = {}, m = $("#mat").value.trim(), v = $("#vec").value.trim();
+  if (m !== "") t.clusters = +m;
+  if (v !== "") t.vector_cores = +v;
+  return t;
+}
+for (const id of ["#mat", "#vec"]) $(id).onchange = () => run();
+$("#rst").onclick = () => { $("#mat").value = ""; $("#vec").value = ""; run(); };
+
 async function run() {
   $("#go").disabled = true; stat.textContent = "compiling…";
   const t0 = performance.now();
   try {
     const r = await fetch("/api/compile", {
       method: "POST", headers: {"content-type": "application/json"},
-      body: JSON.stringify({source: src.value}),
+      body: JSON.stringify({source: src.value, target: machine()}),
     });
     const d = await r.json();
     $("#err").innerHTML = d.error
