@@ -17,6 +17,7 @@ import traceback
 import numpy as np
 
 from ktpu.codegen import codegen, cost_of
+from ktpu.interp.timing import MACS_PER_CLUSTER, time_of
 from ktpu.ir import FP16
 from ktpu.ir.graph import OpKind
 from ktpu.ir.sched import Engine
@@ -168,13 +169,49 @@ def render_program(prog, limit: int = 400) -> str:
     )
 
 
-def render_cost(cost) -> str:
-    """The counted figures, `overhead` first because it is the one to watch."""
+def render_cost(cost, timing=None, target=None) -> str:
+    """The counted figures, `overhead` first because it is the one to watch.
+
+    With `timing`, the cycle figures come first instead: they are a BRACKET,
+    because the model charges every FILL while the machine hides most of them
+    behind the GEMM before them.
+    """
     per = " ".join(
         f'<span class="attr">{_esc(k)} {v}</span>'
         for k, v in sorted(cost.insts.items())
     )
-    cells = [
+    cells = []
+    if timing is not None and target is not None and timing.cycles:
+        hz = target.mhz * 1e6
+        # Both engines, because `flops` counts both: 2mkn per matmul band plus
+        # one per elementwise op per element.
+        mm_peak = MACS_PER_CLUSTER * 2 * target.clusters
+        vec_peak = target.vector_cores * target.vector_lanes
+        peak = max(1, mm_peak + vec_peak) * hz / 1e9
+        lo = cost.flops / (timing.cycles / hz) / 1e9
+        hi = cost.flops / (max(1, timing.overlapped) / hz) / 1e9
+        mm = timing.utilisation("matmul", target.clusters) * 100
+        vec = timing.utilisation("vector", target.vector_cores) * 100
+        ops = " ".join(
+            f'<span class="attr">{_esc(k)} {v:,}</span>'
+            for k, v in sorted(timing.by_op.items())
+        )
+        fast_ms = timing.overlapped / hz * 1e3
+        when = (
+            f"{fast_ms:.3f} to {timing.seconds * 1e3:.3f} ms at "
+            f"{target.mhz:g} MHz &mdash; the low end assumes every FILL hides "
+            "behind the GEMM before it, the high end charges all of them"
+        )
+        rate = (
+            f"{100 * lo / peak:.1f}% to {100 * hi / peak:.1f}% of the "
+            f"{peak:,.0f} GF/s peak &middot; matmul and vector flops both counted"
+        )
+        cells += [
+            ("cycles", f"{timing.overlapped:,}–{timing.cycles:,}", when),
+            ("throughput", f"{lo:,.0f}–{hi:,.0f} GF/s", rate),
+            ("busy", f"{mm:.0f}% / {vec:.0f}%", f"matmul / vector &middot; {ops}"),
+        ]
+    cells += [
         ("overhead", f"{cost.overhead:.3f}", "dram bytes per useful flop"),
         ("instructions", f"{cost.total_insts:,}", per),
         (
@@ -263,7 +300,8 @@ def compile_kernel(source: str, target=VU13P_8CU, seed: int = 0) -> dict:
         out["graph"] = render_graph(graph)
         out["sched"] = render_schedule(sched)
         out["prog"] = render_program(prog)
-        out["cost"] = render_cost(cost_of(prog, sched, target))
+        counted = cost_of(prog, sched, target)
+        out["cost"] = render_cost(counted, time_of(prog, target, counted.flops), target)
 
         rng = np.random.default_rng(seed)
         consts = ns.get("CONSTS") or {}
