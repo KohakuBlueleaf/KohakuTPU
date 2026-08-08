@@ -7,9 +7,9 @@ by recording the transactions and comparing them against a known-good list.
 
 from dataclasses import dataclass
 
-from kohakutpu import device as dev
-from kohakutpu.mxfp7 import ANCHOR
-from kohakutpu.tensor import KBLOCK, LANES
+from ktpu.hw import device as dev
+from ktpu.hw.mxfp7 import ANCHOR
+from ktpu.hw.tensor import KBLOCK, LANES
 
 # CU instruction opcodes (mx_cluster_cu.v)
 OP_FILL = 1
@@ -144,10 +144,10 @@ def cluster_program(a_entries, b_entries, gm, gn, nk, layout, anchor=ANCHOR):
 FLITS_PER_CLUSTER = 4  # FILL A, FILL B, GEMM, DRAIN
 
 
-def build(m, n, k, clusters, layouts, anchor=ANCHOR, concurrent=True):
+def build(m, k, n, clusters, layouts, anchor=ANCHOR, concurrent=True):
     """Whole-machine program for a problem that fits ONE pass per cluster.
 
-    :mod:`kohakutpu.kernel` is the general path -- it tiles, chains K and cuts
+    :mod:`ktpu.hw.kernel` is the general path -- it tiles, chains K and cuts
     rounds. This is the untiled case, kept because it is the smallest complete
     program the machine runs and the only place ``concurrent=False`` exists.
 

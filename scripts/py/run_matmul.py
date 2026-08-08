@@ -1,6 +1,8 @@
 """Run one matmul on the simulated machine, batch style.
 
-    python run_matmul.py [--m 16] [--n 16] [--k 32]
+    python run_matmul.py [--m 16] [--k 32] [--n 16]
+
+Shapes are M, K, N throughout this driver: `C[M,N] = A[M,K] @ B.T[N,K]`.
 
 Every run elaborates the design from scratch, which is right for CI and wrong
 for iterating: use `repl.py` or `server.py` for that, where one snapshot stays
@@ -16,8 +18,8 @@ into memory (``--online`` turns that off) or on every read.
 import argparse
 import sys
 
-from kohakutpu import bench, sim
-from kohakutpu.sim import Session, SimError
+from ktpu.hw import bench, sim
+from ktpu.hw.sim import Session, SimError
 
 
 def _glyph(m):
@@ -69,8 +71,8 @@ def _pipeline(tl, width=104):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--m", type=int, default=16)
-    ap.add_argument("--n", type=int, default=16)
     ap.add_argument("--k", type=int, default=32)
+    ap.add_argument("--n", type=int, default=16)
     ap.add_argument("--seed", type=int, default=0xC0FFEE)
     ap.add_argument("--rebuild", action="store_true", help="force re-elaboration")
     ap.add_argument("--quiet", action="store_true")
@@ -103,13 +105,26 @@ def main():
     )
     args = ap.parse_args()
 
-    preq = {"both": (True, True), "none": (False, False),
-            "a": (True, False), "b": (False, True)}[args.preq]
+    preq = {
+        "both": (True, True),
+        "none": (False, False),
+        "a": (True, False),
+        "b": (False, True),
+    }[args.preq]
     ncl = bench.NCLUSTERS if args.ncl is None else args.ncl
 
-    why = bench.check(args.m, args.n, args.k, ncl, preq)
+    why = bench.check(args.m, args.k, args.n, ncl, preq)
     if why:
         sys.exit("cannot run: " + "; ".join(why))
+
+    # WARNINGS ARE NOT REFUSALS. A shape that saturates the FP16 output runs to
+    # completion and scores as a pass -- `sim._verdict` bounds the worst element
+    # at 10.0 and a clipped element is ~0.37 -- so the only place it can be said
+    # is before the run, next to the shape that caused it.
+    for w in bench.preview(args.m, args.k, args.n, ncl, preq, dist=args.dist)[
+        "warnings"
+    ]:
+        print(f"note: {w}\n")
 
     session = Session()
     if args.rebuild:
@@ -117,8 +132,13 @@ def main():
     try:
         with session as s:
             res = s.run(
-                args.m, args.n, args.k, args.seed,
-                dist=args.dist, ncl=ncl, preq=preq,
+                args.m,
+                args.k,
+                args.n,
+                args.seed,
+                dist=args.dist,
+                ncl=ncl,
+                preq=preq,
             )
     except SimError as e:
         sys.exit(f"simulator error: {e}")
@@ -149,8 +169,10 @@ def main():
         print(f"    {e}")
 
     print()
-    print(f"    C[0,0] hw {res['c_peek'][0][0]:.4f}   "
-          f"fp64 {res['want_peek'][0][0]:.4f}")
+    print(
+        f"    C[0,0] hw {res['c_peek'][0][0]:.4f}   "
+        f"fp64 {res['want_peek'][0][0]:.4f}"
+    )
 
     # Two DIFFERENT questions, and only the first one is ever a bug.
     #   err_hw     hardware against the MXFP7 model -- is the circuit right?
@@ -164,9 +186,11 @@ def main():
     # is large relative to a near-zero result, and the model does not round --
     # from a lost or misplaced sub-tile, which is 16 elements at once. The
     # counts say which, and a bisect is the only other way to find out.
-    print(f"    vs mxfp7 model  p50 {hw['p50']:.2e}  max {hw['max']:.2e}"
-          f"  over1% {hw['over1_n']}/{hw['n']} ({hw['over1']:.2e})"
-          f"  over10% {hw['over10_n']}")
+    print(
+        f"    vs mxfp7 model  p50 {hw['p50']:.2e}  max {hw['max']:.2e}"
+        f"  over1% {hw['over1_n']}/{hw['n']} ({hw['over1']:.2e})"
+        f"  over10% {hw['over10_n']}"
+    )
     print(f"    vs fp64         p50 {tot['p50']:.2e}  p99 {tot['p99']:.2e}")
 
     # The bubble profile, on every run. A change that improves the end-to-end
@@ -176,11 +200,19 @@ def main():
     if p:
         occ, rate, fet = p["occupancy"], p["rate"], p["fetch"]
         print()
-        print(f"    run {p['cycles']['run']} cyc   "
-              f"{rate['macs_per_cycle']:.1f} MAC/cyc of {rate['peak_macs_per_cycle']}   "
-              f"{rate['gflops']:.1f} GFLOP/s ({rate['utilisation'] * 100:.1f}%)")
-        print("    occupancy  " + "  ".join(
-            f"{ph} {occ[ph]['frac'] * 100:.1f}%" for ph in ("fill", "gemm", "drain", "idle")))
+        print(
+            f"    run {p['cycles']['run']} cyc   "
+            f"{rate['macs_per_cycle']:.1f} MAC/cyc of {rate['peak_macs_per_cycle']}   "
+            f"{rate['gflops']:.1f} GFLOP/s ({rate['utilisation'] * 100:.1f}%)"
+        )
+        print(
+            "    occupancy  "
+            + "  ".join(
+                f"{ph} {occ[ph]['frac'] * 100:.1f}%"
+                for ph in ("fill", "gemm", "drain", "idle")
+            )
+        )
+
         # EVERY BUCKET OUT OF THE RESOURCE IT WAS COUNTED ON. The MAG and
         # fabric counters are summed over memory ports, so out of the run
         # alone they exceeded 100% and were not comparable with the CU ones
@@ -192,36 +224,62 @@ def main():
                 for key in keys
             )
 
-        print(f"    mag        {buckets('mag', ('idle', 'qfill', 'qwait', 'qemit', 'wr'))}"
-              f"   (of {p['mem_ports']} port-cycles)")
-        print("    stalls     " + buckets(
-            "stalls", ("in_bp", "out_bp", "cu_send", "cu_dry")))
+        print(
+            f"    mag        {buckets('mag', ('idle', 'qfill', 'qwait', 'qemit', 'wr'))}"
+            f"   (of {p['mem_ports']} port-cycles)"
+        )
+        print(
+            "    stalls     "
+            + buckets("stalls", ("in_bp", "out_bp", "cu_send", "cu_dry"))
+        )
         # WHY a component could not advance, not merely where it was. A stage
         # that got slower shows up here as a named reason.
-        print("    why        " + buckets(
-            "why", ("wack_nob", "wack_blk", "wslot_full", "rfill_dry",
-                    "rwait_emit", "emit_bp")))
-        print("    cu tails   " + buckets("why", ("cu_dwait", "cu_gwait"))
-              + "   * cluster 0 only")
-        print(f"    fetch      first {fet['latency']} cyc   "
-              f"{fet['cycles_per_entry']:.1f} cyc/entry of floor {fet['floor']}   "
-              f"C write amp {p['traffic']['c_write_amplification']:.2f}x")
+        print(
+            "    why        "
+            + buckets(
+                "why",
+                (
+                    "wack_nob",
+                    "wack_blk",
+                    "wslot_full",
+                    "rfill_dry",
+                    "rwait_emit",
+                    "emit_bp",
+                ),
+            )
+        )
+        print(
+            "    cu tails   "
+            + buckets("why", ("cu_dwait", "cu_gwait"))
+            + "   * cluster 0 only"
+        )
+        print(
+            f"    fetch      first {fet['latency']} cyc   "
+            f"{fet['cycles_per_entry']:.1f} cyc/entry of floor {fet['floor']}   "
+            f"C write amp {p['traffic']['c_write_amplification']:.2f}x"
+        )
         # The upload is where pre-quantisation is PAID -- once per tensor,
         # against once per read. Printed next to the run so the trade is
         # visible rather than argued.
         cy = p["cycles"]
-        print(f"    upload     {cy['operand_beats']} beats   "
-              f"{cy['operand_upload']} cyc   "
-              f"round setup {cy['host_upload']} cyc")
+        print(
+            f"    upload     {cy['operand_beats']} beats   "
+            f"{cy['operand_upload']} cyc   "
+            f"round setup {cy['host_upload']} cyc"
+        )
         # Every resource's utilisation side by side. A rate alone cannot say
         # whether the machine is compute-bound, bus-bound or idle.
         # DO NOT ADD THESE. Every link here is full duplex -- AR/R and AW/W are
         # separate AXI channels, the NoC's two directions are separate wires --
         # so what binds is the largest, never the total.
         r = p["resource"]
-        print("    resource   " + "  ".join(
-            f"{k} {r[k] * 100:.1f}%"
-            for k in ("flops", "mem_rd", "mem_wr", "noc_in", "noc_out")))
+        print(
+            "    resource   "
+            + "  ".join(
+                f"{k} {r[k] * 100:.1f}%"
+                for k in ("flops", "mem_rd", "mem_wr", "noc_in", "noc_out")
+            )
+        )
 
     # WHERE the phases were, not just how much of each. Two occupancy totals
     # that exceed the elapsed time prove overlap happened somewhere; only a
@@ -229,8 +287,10 @@ def main():
     tl = res.get("timeline")
     if tl and tl.get("cu"):
         print()
-        print(f"    pipeline   {tl['gap']} cycles/column   "
-              "f fill  g gemm  d drain  UPPER = with gemm  . idle")
+        print(
+            f"    pipeline   {tl['gap']} cycles/column   "
+            "f fill  g gemm  d drain  UPPER = with gemm  . idle"
+        )
         for ln in _pipeline(tl):
             print(ln)
 
@@ -302,8 +362,10 @@ def main():
             mark = "note"
         print(f"    {mark} {c['name']:<22} {c['text']}{limit}")
     if v.get("advisories"):
-        print(f"    {len(v['advisories'])} figure(s) outside their reference "
-              f"— reported, not a failure")
+        print(
+            f"    {len(v['advisories'])} figure(s) outside their reference "
+            f"— reported, not a failure"
+        )
     print("  PASS" if v["pass"] else "  FAIL")
     sys.exit(0 if v["pass"] else 1)
 

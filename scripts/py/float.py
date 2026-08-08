@@ -1,6 +1,6 @@
-import numpy as np
 from dataclasses import dataclass
-from typing import Tuple
+
+import numpy as np
 
 
 @dataclass
@@ -40,11 +40,8 @@ class FPNumber:
         man_int = man_scaled >> extra_bits
         round_up = False
 
-        if guard_bit == 1:
-            if round_bit == 1 or sticky_bit == 1:
-                round_up = True
-            elif man_int & 1 == 1:  # If mantissa is odd, round up
-                round_up = True
+        if guard_bit == 1 and (round_bit or sticky_bit or man_int & 1):
+            round_up = True
 
         if round_up:
             man_int += 1

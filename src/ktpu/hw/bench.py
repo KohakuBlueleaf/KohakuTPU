@@ -18,15 +18,23 @@ constructing MXFP7.
 
 Nothing about the problem is compiled in, which is what lets one elaborated
 snapshot serve any shape :func:`check` accepts -- and that is what makes an
-interactive session possible at all. See :mod:`kohakutpu.sim`.
+interactive session possible at all. See :mod:`ktpu.hw.sim`.
+
+SHAPES ARE ``M, K, N``, everywhere and without exception. A GEMM here is
+``C[M,N] = A[M,K] @ B.T[N,K]``, so K is the contracted dimension and it belongs
+between the two that survive it. Most call sites are three bare integers and
+nothing can catch a transposition, so the order is a hard convention rather
+than a preference: `256x1024x256` is K-heavy, and reading it as N-heavy names a
+completely different problem that runs seven times slower.
 """
 
+import math
 import os
 from dataclasses import dataclass
 
 import numpy as np
 
-from kohakutpu import kernel, matmul, mxfp7, tensor
+from ktpu.hw import kernel, matmul, mxfp7, tensor
 
 # Compile-time capacities of mag_driver_tb.v. A shape that exceeds one of
 # these does not fail loudly in simulation -- it silently computes something
@@ -90,8 +98,9 @@ L1_ENTRIES = L1_A_ENTRIES  # kept for callers that assume one number
 #
 # The default is 2 because that is what every number in .plans/ was measured
 # on. `KOHAKU_NCL=8` re-elaborates for eight, which is the "8 CU per SLR"
-# architecture -- and note the shape has to grow with it: N must be a multiple
-# of NCL * tile.n or the clusters are not all fed.
+# architecture -- and the shape no longer has to grow with it: the output grid
+# is m_tiles x n_tiles, so what a cluster count needs is TILES to hand out, in
+# either dimension, rather than a wide N.
 #   NCL = 2   2x2 mesh, HALF = 1   managers at (1,1) (1,2)
 #   NCL = 4   4x2 mesh, HALF = 2   managers at (1,1) (2,1) (1,2) (2,2)
 #   NCL = 8   4x4 mesh, HALF = 2   ... rows 1..4
@@ -284,7 +293,7 @@ def use_clusters(ncl):
     """Set the machine's cluster count, rebinding CLUSTERS and NCLUSTERS.
 
     NCL is compiled into the bench, so this only describes the machine the next
-    snapshot will be built for -- :meth:`kohakutpu.sim.Session.run` is what
+    snapshot will be built for -- :meth:`ktpu.hw.sim.Session.run` is what
     notices the snapshot went stale and re-elaborates.
     """
     global CLUSTERS, NCLUSTERS
@@ -351,8 +360,8 @@ class Problem:
 
     a: np.ndarray  # [M][K] padded to whole tiles
     bt: np.ndarray  # [N][K] padded, B transposed
-    layouts: list
-    kern: object  # kohakutpu.kernel.Kernel
+    layout: object  # matmul.Layout -- ONE image of each operand and of C
+    kern: object  # ktpu.hw.kernel.Kernel
     programs: list  # one dev.Program per round
     # WHICH clusters of WHICH mesh. Both are needed and they are not the same
     # number: `ncl` below is how many were DISPATCHED to, because there is one
@@ -375,13 +384,18 @@ class Problem:
 
     @property
     def ncl(self):
-        """Clusters this program DISPATCHES to -- one layout each."""
-        return len(self.layouts)
+        """Clusters this program DISPATCHES to.
+
+        Read off the kernel rather than off the memory map: with the output
+        grid split across clusters there is one image, not one region each, so
+        the map no longer counts anything.
+        """
+        return len(self.kern.clusters)
 
     @property
     def mesh_ncl(self):
         """Clusters the MACHINE has, dispatched to or not."""
-        return self.disp["mesh_ncl"] if self.disp else len(self.layouts)
+        return self.disp["mesh_ncl"] if self.disp else self.ncl
 
     @property
     def tile(self):
@@ -399,31 +413,36 @@ class Problem:
         return self.a.astype(np.float64) @ self.bt.astype(np.float64).T
 
 
-def padded_shape(m, n, k, tile, ncl=None):
-    """Round the problem up to whole tiles.
+def _up(v, q):
+    return ((v + q - 1) // q) * q
+
+
+def padded_shape(m, k, n, tile):
+    """Round the problem up to whole tiles, in every dimension.
 
     Partial tiles would make every pass a different size and buy nothing: the
     padding is zeros, and a zero contributes nothing to a dot product nor to a
     block's scale.
 
-    N rounds up to a multiple of ``ncl * tile.n``, which is what feeds every
-    cluster a whole column band.
+    WHOLE TILES AND NOTHING MORE. N used to round up to ``ncl * tile.n`` as
+    well, because a cluster owned a column band and an empty band was not
+    expressible -- so asking for N=16 on eight clusters padded it to 128 and
+    the machine did eight times the arithmetic to answer the same question.
+    The grid distributes output TILES, so a shape with fewer tiles than
+    clusters simply leaves some idle, which costs nothing.
     """
-    ncl = len(CLUSTERS) if ncl is None else ncl
-
-    def up(v, q):
-        return ((v + q - 1) // q) * q
-
-    per = up(up(n, ncl) // ncl, tile.n)
-    return up(m, tile.m), per * ncl, up(k, tile.k)
+    return _up(m, tile.m), _up(k, tile.k), _up(n, tile.n)
 
 
-def _up(v, q):
-    return ((v + q - 1) // q) * q
-
-
-def _tile_for(m, n, k, ncl):
+def _tile_for(m, k, n):
     """The pass shape this problem will run with.
+
+    CHOSEN FROM THE WHOLE PROBLEM. It used to be chosen from ``n // ncl``, the
+    column band one cluster owned, which made the cluster count change the
+    tile: at eight clusters a 256-wide N became a 32-wide band, `gn=16` lost
+    its padding discount, and the search answered `gm=64 gn=8` -- an output
+    block of 256x32, one m-tile, one pass per cluster. The band was never the
+    thing being tiled; the problem is.
 
     ONE definition and three callers -- :func:`check`, :func:`preview` and
     :func:`build`. A preview that chose its own tile would describe a different
@@ -435,50 +454,49 @@ def _tile_for(m, n, k, ncl):
         max(1, k // tensor.KBLOCK),
         L1_B_ENTRIES,
         m=m,
-        n=n // ncl,
         k=k,
+        n=n,
         banks=L1_BANKS,
     )
 
 
-def _host_words(m, n, k):
+def _host_words(m, k, n):
     """Words of `operands.hex` a padded problem needs.
 
     The host pushes FP16 whatever the STORED format is, so this does not shrink
     when the operands are pre-quantised.
     """
     nk = k // tensor.KBLOCK
-    return (m // tensor.LANES + n // tensor.LANES) * nk * (
-        tensor.FP16_ENTRY_BYTES // 32
+    return (
+        (m // tensor.LANES + n // tensor.LANES) * nk * (tensor.FP16_ENTRY_BYTES // 32)
     )
 
 
-def plan(m, n, k, ncl, tile, preq=PREQ):
-    """Where A, each cluster's B slice, and each cluster's C land, in words.
+def plan(m, k, n, tile, preq=PREQ):
+    """Where A, B and C land, in words. ONE image of each, shared.
 
     Sizes come from the TILED layout AND from each operand's stored format, so
     they must be derived the same way the packer walks it -- a mismatch here
     overlaps two operands and the answer is quietly wrong.
+
+    B AND C ARE NO LONGER CUT PER CLUSTER. They were, because a cluster owned a
+    column band of the output and therefore a disjoint slice of both. The grid
+    hands out output TILES instead, and a tile's address has to be the same
+    whichever cluster computes it -- so all three operands are addressed by
+    tile index off one base, which is what A already did.
     """
-    per = n // ncl
     nk = k // tensor.KBLOCK
     a_words = (m // tensor.LANES) * nk * tensor.entry_words(preq[0])
-    b_words = (per // tensor.LANES) * nk * tensor.entry_words(preq[1])
+    b_words = (n // tensor.LANES) * nk * tensor.entry_words(preq[1])
     # C is one word per 4x4 sub-tile, drained DRAIN_BURST words at a time.
-    c_words = _up((m // tensor.LANES) * (per // tensor.LANES), DRAIN_BURST)
+    c_words = _up((m // tensor.LANES) * (n // tensor.LANES), DRAIN_BURST)
 
     b0 = a_words
-    c0 = _up(b0 + b_words * ncl, DRAIN_BURST)
-    return (
-        [
-            matmul.Layout(a_word=0, b_word=b0 + c * b_words, c_word=c0 + c * c_words)
-            for c in range(ncl)
-        ],
-        c0 + c_words * ncl,
-    )
+    c0 = _up(b0 + b_words, DRAIN_BURST)
+    return matmul.Layout(a_word=0, b_word=b0, c_word=c0), c0 + c_words
 
 
-def check(m, n, k, ncl=None, preq=PREQ, use=None, packing="spread"):
+def check(m, k, n, ncl=None, preq=PREQ, use=None, packing="spread"):
     """Every reason this shape will not run, in plain words. Empty means go.
 
     Three things can stop it: a shape below one sub-tile, a device image larger
@@ -489,10 +507,12 @@ def check(m, n, k, ncl=None, preq=PREQ, use=None, packing="spread"):
 
     ``ncl`` is the MESH -- the machine that was elaborated -- and ``use`` is how
     many of its clusters the program actually kicks, defaulting to all of them.
-    EVERY LIMIT BELOW IS A PROPERTY OF ``use``, NOT OF THE MESH: it is the
-    dispatched count that divides N and sizes each cluster's band, so a shape
-    that fits when 8 clusters run can fail when 2 of the same 8 do. Checking
-    against the mesh instead would reject legal shapes and admit illegal ones.
+    NEITHER CHANGES THE SIZE OF ANYTHING BELOW. It used to: the dispatched
+    count divided N and sized each cluster's band, so the same shape could fit
+    on eight clusters and overflow the bench RAM on two of the same eight. The
+    grid splits output tiles across whatever clusters there are, over one
+    shared image, so the footprint is a property of the padded problem alone
+    and the counts are only validated as a machine.
     """
     ncl = len(CLUSTERS) if ncl is None else ncl
     why = []
@@ -510,85 +530,121 @@ def check(m, n, k, ncl=None, preq=PREQ, use=None, packing="spread"):
         why.append(f"unknown packing {packing!r}; use one of {list(PACKINGS)}")
         return why
     if m < tensor.LANES or n < tensor.LANES or k < tensor.KBLOCK:
-        why.append(f"minimum shape is {tensor.LANES}x{tensor.LANES}x{tensor.KBLOCK}")
+        why.append(f"minimum shape is {tensor.LANES}x{tensor.KBLOCK}x{tensor.LANES}")
         return why
 
-    tile = _tile_for(m, n, k, use)
-    mp, np_, kp = padded_shape(m, n, k, tile, use)
-    _, end = plan(mp, np_, kp, use, tile, preq)
+    tile = _tile_for(m, k, n)
+    mp, kp, np_ = padded_shape(m, k, n, tile)
+    _, end = plan(mp, kp, np_, tile, preq)
     if end > WORDS:
         why.append(
-            f"padded to {mp}x{np_}x{kp} the memory image needs {end} words, "
+            f"padded to {mp}x{kp}x{np_} the memory image needs {end} words, "
             f"the bench RAM has {WORDS}"
         )
-    host = _host_words(mp, np_, kp)
+    host = _host_words(mp, kp, np_)
     if host > MAX_HOST:
         why.append(
-            f"padded to {mp}x{np_}x{kp} the host image is {host} words, "
+            f"padded to {mp}x{kp}x{np_} the host image is {host} words, "
             f"the bench upload file holds {MAX_HOST}"
         )
     return why
 
 
-def preview(m, n, k, ncl=None, preq=PREQ, use=None, packing="spread"):
+def preview(m, k, n, ncl=None, preq=PREQ, use=None, packing="spread", dist="lowrank"):
     """What this shape BECOMES, without building operands or simulating.
 
     Every number here comes from the functions the real build uses -- the same
     :func:`_tile_for`, :func:`padded_shape`, :func:`plan` and
-    :func:`kohakutpu.kernel.plan` -- so a preview cannot describe a different
+    :func:`ktpu.hw.kernel.plan` -- so a preview cannot describe a different
     machine from the one that would run. Deriving it independently for speed
     would make it fast and wrong, which on a control panel is worse than slow.
 
     Cheap enough to answer on every keystroke: no operand tensor is allocated
     and nothing is packed. What it costs is the flit build, which is what makes
     the pass and round counts exact rather than estimated.
+
+    ``why`` is what STOPS a run; ``warnings`` is what the run will not tell you
+    afterwards. They are separate lists because they are separate decisions --
+    a shape that saturates the FP16 output still runs, and still answers, and
+    the answer is quietly wrong.
     """
     ncl = len(CLUSTERS) if ncl is None else ncl
     use = ncl if use is None else int(use)
-    why = check(m, n, k, ncl, preq, use, packing)
+    why = check(m, k, n, ncl, preq, use, packing)
     out = {
-        "asked": {"m": m, "n": n, "k": k},
+        "asked": {"m": m, "k": k, "n": n},
         "ncl": ncl,
         "use": use,
         "packing": packing,
         "preq": [bool(preq[0]), bool(preq[1])],
+        "dist": dist,
         "why": why,
+        # Always present, even on the paths that describe nothing else, so a
+        # front end can render it without first asking whether the shape ran.
+        "warnings": [],
         "runnable": not why,
     }
-    # `check` returns early on these, and each of them makes the tile search
-    # itself undefined -- a zero column band divides by zero in the padding
-    # discount. There is nothing to describe beyond the reason.
-    if ncl not in CLUSTER_COUNTS or not 1 <= use <= ncl \
-            or packing not in PACKINGS \
-            or m < tensor.LANES or n < tensor.LANES or k < tensor.KBLOCK:
+    # `check` returns early on these, and a shape below one sub-tile makes the
+    # tile search itself undefined. There is nothing to describe beyond the
+    # reason.
+    if (
+        ncl not in CLUSTER_COUNTS
+        or not 1 <= use <= ncl
+        or packing not in PACKINGS
+        or m < tensor.LANES
+        or n < tensor.LANES
+        or k < tensor.KBLOCK
+    ):
         return out
 
     disp = dispatch(ncl, use, packing)
-    tile = _tile_for(m, n, k, use)
-    mp, np_, kp = padded_shape(m, n, k, tile, use)
-    layouts, end = plan(mp, np_, kp, use, tile, preq)
+    tile = _tile_for(m, k, n)
+    mp, kp, np_ = padded_shape(m, k, n, tile)
+    layout, end = plan(mp, kp, np_, tile, preq)
     kern = kernel.plan(
-        mp, np_, kp, disp["clusters"], layouts, tile,
-        stage_flits=STAGE_FLITS, ncmd=NCMD, preq=preq,
-        l1_a=L1_A_ENTRIES, l1_b=L1_B_ENTRIES,
+        mp,
+        kp,
+        np_,
+        disp["clusters"],
+        layout,
+        tile,
+        stage_flits=STAGE_FLITS,
+        ncmd=NCMD,
+        preq=preq,
+        l1_a=L1_A_ENTRIES,
+        l1_b=L1_B_ENTRIES,
     )
-    per = np_ // use
+    m_tiles, n_tiles = mp // tile.m, np_ // tile.n
+    # AGAINST THE PADDED K, which is the sweep the machine really runs.
+    note = range_note(mp, kp, np_, dist)
+    if note:
+        out["warnings"].append(note)
     # WHICH clusters, and how many memory ports they land on. The port count is
     # the part that is not obvious from `use` alone.
     out["dispatch"] = disp
     out.update(
         {
-            "padded": {"m": mp, "n": np_, "k": kp},
+            "padded": {"m": mp, "k": kp, "n": np_},
             "tile": {
-                "m": tile.m, "n": tile.n, "k": tile.k,
-                "gm": tile.gm, "gn": tile.gn, "nk": tile.nk,
-                "subtiles": tile.gm * tile.gn, "text": str(tile),
+                "m": tile.m,
+                "k": tile.k,
+                "n": tile.n,
+                "gm": tile.gm,
+                "gn": tile.gn,
+                "nk": tile.nk,
+                "subtiles": tile.gm * tile.gn,
+                "text": str(tile),
             },
-            "band": per,
             "grid": {
-                "m_tiles": mp // tile.m,
-                "n_tiles": per // tile.n,
+                "m_tiles": m_tiles,
+                "n_tiles": n_tiles,
                 "chunks": kern.l1.chunks,
+                # The dispatch grid, which is the number the cluster count is
+                # actually measured against: fewer tiles than clusters is the
+                # shape that cannot fill the machine, and it is invisible in
+                # the pass count alone.
+                "tiles": m_tiles * n_tiles,
+                "live": len({p.cluster for p in kern.passes}),
             },
             "passes": len(kern.passes),
             "rounds": len(kern.rounds),
@@ -604,18 +660,26 @@ def preview(m, n, k, ncl=None, preq=PREQ, use=None, packing="spread"):
             # shape is to the wall is the difference between a control that
             # refuses and one that explains.
             "memory": {"words": end, "capacity": WORDS},
-            "host": {"words": _host_words(mp, np_, kp), "capacity": MAX_HOST},
+            "host": {"words": _host_words(mp, kp, np_), "capacity": MAX_HOST},
+            # The output format's headroom, next to the two capacities, because
+            # it is the third wall a shape can walk into -- and the only one
+            # that lets the run finish and report success.
+            "range": {
+                "peak": peak_abs_c(mp, kp, np_, dist),
+                "capacity": FP16_MAX,
+                "dist": dist,
+            },
             # The padding bill, stated rather than buried: the machine really
             # does the padded arithmetic, so a rate quoted against it is a rate
             # for work the caller did not ask for.
-            "macs": mp * np_ * kp,
-            "asked_macs": m * n * k,
+            "macs": mp * kp * np_,
+            "asked_macs": m * k * n,
         }
     )
     return out
 
 
-def operands(m, n, k, seed, dist="lowrank"):
+def operands(m, k, n, seed, dist="lowrank"):
     """Random operands of a chosen character.
 
     The distribution is not a detail. Under `normal` every output is a fully
@@ -645,36 +709,124 @@ def operands(m, n, k, seed, dist="lowrank"):
 
 DISTRIBUTIONS = ("lowrank", "normal", "uniform", "heavy")
 
+# What the OUTPUT format can hold. `mx_fpacc.v` s582 SATURATES at this rather
+# than overflowing, which is the whole problem: a clipped element is a finite,
+# plausible number about 37% below the truth, and every gate passes it -- the
+# worst-element check has a limit of 10.0 and the over-10% check does not gate
+# at all (`sim._verdict`). The accumulator itself is not the constraint; it is
+# S1E7M16 and reaches ~2^64. The conversion on EMIT is.
+FP16_MAX = 65504.0
+# Warn from HALF the ceiling, not from the ceiling. Measured with `lowrank` at
+# M=N=256: K=1024 peaks at 39,296 with nothing clipped, and K=2048 clips 431 of
+# 65,536 elements. One doubling of K separates "fine" from "silently wrong", so
+# the warning has to arrive while there is still headroom to notice it in.
+RANGE_WARN_FRACTION = 0.5
+# Expected |max| of a Gaussian over `mn` samples is sqrt(2 ln mn) sigma. Written
+# out rather than fixed at 4.2 because it moves with the output count, which is
+# the term that differs between a 256-cube and the 8-cluster reference.
 
-def build(m, n, k, seed=0xC0FFEE, ncl=None, dist="lowrank", preq=PREQ,
-          use=None, packing="spread"):
+
+def peak_abs_c(m, k, n, dist="lowrank"):
+    """ESTIMATED largest |C| this shape and generator produce. Not a bound.
+
+    Kept next to :func:`operands` because it is a closed form OF that
+    generator -- if one moves and the other does not, the warning built on it
+    is worse than none. Per element C is a sum of K products, so what differs
+    between the distributions is how those products accumulate:
+
+    * `normal`, `uniform` -- independent and zero mean, so the sum is a random
+      walk and sigma grows as sqrt(K);
+    * `heavy` -- the same, except every 32nd column is scaled 16 on BOTH
+      operands, so that term's variance is 16^4 rather than 1;
+    * `lowrank` -- A and B share a rank-r factor, so the terms are CORRELATED
+      and the sum grows linearly in K. This is the case that matters, because
+      it is the one that resembles real weights and activations, and it is
+      ~4.5x larger than the zero-mean formula would predict.
+
+    Checked against the generator at M=N=256, K=256..4096: within 20% for every
+    distribution, which is the accuracy a warning needs.
+    """
+    if dist == "normal":
+        sigma = math.sqrt(k)
+    elif dist == "uniform":
+        sigma = math.sqrt(k / 9.0)  # var 1/3 per operand, 1/9 per product
+    elif dist == "heavy":
+        per = tensor.KBLOCK
+        sigma = math.sqrt(k * ((per - 1) + 16.0**4) / per)
+    else:
+        # C = A0 (W W.T) B0.T with W rank r; E[W W.T] = k*I, so the Frobenius
+        # norm the output's variance comes from is k*sqrt(r).
+        sigma = k * math.sqrt(max(1, k // 16))
+    return math.sqrt(2 * math.log(max(m * n, 2))) * sigma
+
+
+def range_note(m, k, n, dist="lowrank"):
+    """A sentence about FP16 output range, or None when there is nothing to say.
+
+    An ESTIMATE, and it says so: the alternative is to generate the operands
+    and measure, which costs the thing a preview exists to avoid.
+    """
+    peak = peak_abs_c(m, k, n, dist)
+    if peak < RANGE_WARN_FRACTION * FP16_MAX:
+        return None
+    over = peak > FP16_MAX
+    return (
+        f"FP16 OUTPUT RANGE: with {dist} operands at K={k}, |C| is estimated to "
+        f"reach about {peak:,.0f}"
+        + (
+            f" -- past the {FP16_MAX:,.0f} the output format holds. The "
+            f"accumulator keeps the value; the conversion on EMIT saturates, so "
+            f"clipped elements come back finite and roughly 37% low and no check "
+            f"reports them."
+            if over
+            else f", {peak / FP16_MAX * 100:.0f}% of the {FP16_MAX:,.0f} the output "
+            f"format holds. Saturation is silent, so the margin is worth knowing "
+            f"before it is gone -- doubling K takes it to about "
+            f"{peak_abs_c(m, 2 * k, n, dist):,.0f}."
+        )
+        + " Estimated from the generator's statistics, not measured."
+    )
+
+
+def build(
+    m,
+    k,
+    n,
+    seed=0xC0FFEE,
+    ncl=None,
+    dist="lowrank",
+    preq=PREQ,
+    use=None,
+    packing="spread",
+):
     """A random problem of this shape, tiled into passes and cut into rounds.
 
     ``ncl`` is the elaborated mesh; ``use`` is how many of its clusters this
-    program kicks. Everything that divides the problem keys off ``use``, because
-    a cluster that is never kicked takes no column band.
+    program kicks. Neither divides the problem any more -- the tile and the
+    padding come from the shape alone, and ``use`` only decides how many
+    clusters the output grid is dealt across.
     """
     ncl = len(CLUSTERS) if ncl is None else ncl
     use = ncl if use is None else int(use)
-    tile = _tile_for(m, n, k, use)
-    mp, np_, kp = padded_shape(m, n, k, tile, use)
+    tile = _tile_for(m, k, n)
+    mp, kp, np_ = padded_shape(m, k, n, tile)
 
-    a0, bt0 = operands(m, n, k, seed, dist)
+    a0, bt0 = operands(m, k, n, seed, dist)
     a = np.pad(a0.astype(np.float32), ((0, mp - m), (0, kp - k)))
     bt = np.pad(bt0.astype(np.float32), ((0, np_ - n), (0, kp - k)))
 
-    layouts, _ = plan(mp, np_, kp, use, tile, preq)
+    layout, _ = plan(mp, kp, np_, tile, preq)
     kern = kernel.plan(
         mp,
-        np_,
         kp,
+        np_,
         # DERIVED from the count, not sliced off the module global. Slicing
         # gave the first `ncl` of whatever the global happened to hold, so
         # `build(..., ncl=8)` against a global set for two silently planned a
         # two-cluster program and labelled it eight. `dispatch` also chooses
         # WHICH of the mesh's clusters, which is not the same as the first N.
         dispatch_list(ncl, use, packing),
-        layouts,
+        layout,
         tile,
         stage_flits=STAGE_FLITS,
         ncmd=NCMD,
@@ -683,7 +835,11 @@ def build(m, n, k, seed=0xC0FFEE, ncl=None, dist="lowrank", preq=PREQ,
         l1_b=L1_B_ENTRIES,
     )
     return Problem(
-        a=a, bt=bt, layouts=layouts, kern=kern, programs=kernel.programs(kern),
+        a=a,
+        bt=bt,
+        layout=layout,
+        kern=kern,
+        programs=kernel.programs(kern),
         disp=dispatch(ncl, use, packing),
     )
 
@@ -699,21 +855,25 @@ def upload(prob):
 
     TILE-MAJOR, so each pass's L1 entries are one contiguous run and a FILL is
     a single instruction. See tensor.to_fp16_words_tiled.
+
+    ONE REGION PER OPERAND. B used to be uploaded as ncl separate slices, one
+    per cluster's column band; it is now a single image whose tile index is the
+    global one, which is exactly what `kernel.plan` addresses. The two have to
+    agree entry for entry -- the packer's order IS the driver's addressing --
+    so `tests/test_kernel_banking.py` walks the fills and checks it.
     """
     t = prob.tile
     preq_a, preq_b = prob.kern.preq
+    lay = prob.layout
     words, regions = [], []
 
     src = tensor.to_fp16_words_tiled(prob.a, t.gm, t.nk)
-    regions.append((0, prob.layouts[0].a_word, len(src), int(preq_a), 0))
+    regions.append((0, lay.a_word, len(src), int(preq_a), 0))
     words += src
 
-    per = prob.n // prob.ncl
-    for c, lay in enumerate(prob.layouts):
-        chunk = prob.bt[c * per : (c + 1) * per]
-        src = tensor.to_fp16_words_tiled(chunk, t.gn, t.nk)
-        regions.append((len(words), lay.b_word, len(src), int(preq_b), 1))
-        words += src
+    src = tensor.to_fp16_words_tiled(prob.bt, t.gn, t.nk)
+    regions.append((len(words), lay.b_word, len(src), int(preq_b), 1))
+    words += src
     return words, regions
 
 
@@ -736,8 +896,7 @@ def write_files(work, prob):
     (work / "operands.hex").write_text("\n".join(f"{v:064x}" for v in host) + "\n")
     (work / "uploads.hex").write_text(
         "\n".join(
-            f"{s:08x}{d:08x}{w:08x}{(q | (b << 1)):08x}"
-            for s, d, w, q, b in regions
+            f"{s:08x}{d:08x}{w:08x}{(q | (b << 1)):08x}" for s, d, w, q, b in regions
         )
         + "\n"
     )
@@ -784,22 +943,20 @@ def read_result(work, prob):
         0 if "x" in w else int(w, 16) for w in (work / "result.hex").read_text().split()
     ]
     t = prob.tile
-    per = prob.n // prob.ncl
-    n_tiles = per // t.n
+    n_tiles = prob.n // t.n
     got = np.zeros((prob.m, prob.n))
 
-    for c, lay in enumerate(prob.layouts):
-        for mo in range(prob.m // t.m):
-            for no in range(n_tiles):
-                base = lay.c_word + (mo * n_tiles + no) * t.gm * t.gn
-                for st in range(t.gm * t.gn):
-                    g, h = divmod(st, t.gn)
-                    w = words[base + st]
-                    for i in range(tensor.LANES):
-                        for j in range(tensor.LANES):
-                            bits = (w >> ((i * tensor.LANES + j) * 16)) & 0xFFFF
-                            got[
-                                mo * t.m + g * tensor.LANES + i,
-                                c * per + no * t.n + h * tensor.LANES + j,
-                            ] = mxfp7.fp16_to_float(bits)
+    for mo in range(prob.m // t.m):
+        for no in range(n_tiles):
+            base = prob.layout.c_word + (mo * n_tiles + no) * t.gm * t.gn
+            for st in range(t.gm * t.gn):
+                g, h = divmod(st, t.gn)
+                w = words[base + st]
+                for i in range(tensor.LANES):
+                    for j in range(tensor.LANES):
+                        bits = (w >> ((i * tensor.LANES + j) * 16)) & 0xFFFF
+                        got[
+                            mo * t.m + g * tensor.LANES + i,
+                            no * t.n + h * tensor.LANES + j,
+                        ] = mxfp7.fp16_to_float(bits)
     return got

@@ -16,17 +16,18 @@ import itertools
 import numpy as np
 import pytest
 
-from kohakutpu import bench, sim, tensor
+from ktpu.hw import bench, sim, tensor
 
-# Shapes and machines worth covering together: the cluster count divides N and
-# sizes the memory image, so the same shape is a different problem at each.
+# Shapes and machines worth covering together: the cluster count decides how
+# the output grid is dealt out, so the same shape is a different schedule at
+# each. `(ncl, M, K, N)` -- shapes are M, K, N everywhere in this driver.
 CASES = [
     (2, 256, 256, 256),
     (2, 128, 128, 128),
-    (4, 256, 512, 256),
-    (8, 512, 1024, 256),
+    (4, 256, 256, 512),
+    (8, 512, 256, 1024),
     (1, 64, 128, 128),
-    (2, 16, 16, 32),
+    (2, 16, 32, 16),
 ]
 
 
@@ -39,26 +40,31 @@ def _restore_cluster_count():
 
 
 # ---------------------------------------------------------------- the preview
-@pytest.mark.parametrize("ncl,m,n,k", CASES)
-def test_preview_describes_the_problem_that_would_run(ncl, m, n, k):
+@pytest.mark.parametrize("ncl,m,k,n", CASES)
+def test_preview_describes_the_problem_that_would_run(ncl, m, k, n):
     """The plan panel must not describe a different machine from the run.
 
     It is answered without building operands, so the only thing keeping the two
     in step is that they call the same functions -- which is exactly what this
     pins.
     """
-    p = bench.preview(m, n, k, ncl)
+    p = bench.preview(m, k, n, ncl)
     assert p["runnable"], p["why"]
-    prob = bench.build(m, n, k, ncl=ncl)
+    prob = bench.build(m, k, n, ncl=ncl)
 
-    assert (p["padded"]["m"], p["padded"]["n"], p["padded"]["k"]) == (
-        prob.m, prob.n, prob.k,
+    assert (p["padded"]["m"], p["padded"]["k"], p["padded"]["n"]) == (
+        prob.m,
+        prob.k,
+        prob.n,
     )
     assert p["tile"]["text"] == str(prob.tile)
     assert p["passes"] == len(prob.kern.passes)
     assert p["rounds"] == len(prob.kern.rounds)
     assert p["flits"] == sum(len(x.flits) for x in prob.kern.passes)
-    assert p["band"] == prob.n // prob.ncl
+    assert p["grid"]["m_tiles"] == prob.m // prob.tile.m
+    assert p["grid"]["n_tiles"] == prob.n // prob.tile.n
+    assert p["grid"]["tiles"] == p["passes"], "one pass per output tile"
+    assert p["grid"]["live"] == len({x.cluster for x in prob.kern.passes})
     assert p["grid"]["chunks"] == prob.kern.l1.chunks
     assert p["l1"]["b_resident"] == prob.kern.l1.b_resident
     # The padded problem is the work the machine really does, so a rate quoted
@@ -75,12 +81,66 @@ def test_preview_refuses_what_check_refuses():
     assert any("bench RAM" in w for w in p["why"])
     # A cluster count with no mesh, and a shape below one sub-tile: `check`
     # returns early on both, so the preview has nothing to describe and must
-    # say so rather than divide by a zero column band. Five has no mesh --
-    # the managers do not divide evenly into the left half of the columns.
+    # say so rather than run a tile search on a degenerate shape. Five has no
+    # mesh -- the managers do not divide evenly into the left half of the
+    # columns.
     bad = next(n for n in range(1, 20) if n not in bench.CLUSTER_COUNTS)
-    assert not bench.preview(16, 16, 32, bad)["runnable"]
-    assert "padded" not in bench.preview(16, 16, 32, bad)
-    assert not bench.preview(2, 2, 8, 2)["runnable"]
+    assert not bench.preview(16, 32, 16, bad)["runnable"]
+    assert "padded" not in bench.preview(16, 32, 16, bad)
+    assert not bench.preview(2, 8, 2, 2)["runnable"]
+
+
+# ------------------------------------------------------- the FP16 output range
+@pytest.mark.parametrize("dist", bench.DISTRIBUTIONS)
+@pytest.mark.parametrize("k", [256, 1024, 2048])
+def test_peak_estimate_tracks_the_generator_it_describes(dist, k):
+    """The estimate is a closed form OF `bench.operands`, so it has to be
+    checked against it -- a generator change that left the formula behind would
+    make the warning confidently wrong, which is worse than silence.
+
+    Half an order of magnitude of slack, because it is an estimate of a
+    maximum over a random draw. Measured agreement is within 20%; the bound is
+    loose enough not to fail on a seed and tight enough to catch a formula that
+    has stopped describing the generator at all.
+    """
+    m = n = 256
+    a, bt = bench.operands(m, k, n, 0xC0FFEE, dist)
+    got = np.abs(a.astype(np.float64) @ bt.astype(np.float64).T).max()
+    est = bench.peak_abs_c(m, k, n, dist)
+    assert 0.5 < est / got < 2.0, f"{dist} K={k}: estimated {est:.0f}, saw {got:.0f}"
+
+
+def test_range_note_arrives_before_the_ceiling_and_says_it_is_an_estimate():
+    """Measured with `lowrank` at M=N=256: K=1024 peaks at 39,296 with nothing
+    clipped, K=2048 clips 431 of 65,536. The warning has to be up at 1024 --
+    at 2048 the answer is already quietly wrong."""
+    assert bench.range_note(256, 256, 256) is None
+    warn = bench.range_note(256, 1024, 256)
+    assert warn and "estimate" in warn.lower()
+    assert "past" not in warn, "K=1024 does not clip; do not say it does"
+    over = bench.range_note(256, 2048, 256)
+    assert over and "past" in over
+    # A zero-mean generator does not get there at any K this bench can run.
+    assert bench.range_note(256, 4096, 256, "normal") is None
+
+
+@pytest.mark.parametrize("ncl,m,k,n", CASES)
+def test_preview_always_carries_a_warning_list(ncl, m, k, n):
+    """Separate from `why`: these shapes all RUN, so a front end has to be able
+    to render advice without first asking whether the run was refused."""
+    p = bench.preview(m, k, n, ncl)
+    assert p["warnings"] == []
+    assert p["range"]["capacity"] == bench.FP16_MAX
+    assert p["range"]["peak"] > 0
+
+
+def test_preview_warns_on_a_shape_that_saturates_and_still_runs():
+    p = bench.preview(256, 2048, 256, 2)
+    assert p["runnable"] and not p["why"], "saturation does not stop a run"
+    assert any("FP16 OUTPUT RANGE" in w for w in p["warnings"])
+    assert p["range"]["peak"] > bench.FP16_MAX
+    # And it follows the generator, not just the shape.
+    assert bench.preview(256, 2048, 256, 2, dist="normal")["warnings"] == []
 
 
 def test_build_derives_clusters_from_the_count():
@@ -92,37 +152,38 @@ def test_build_derives_clusters_from_the_count():
     the one dispatched to.
     """
     bench.use_clusters(2)
-    prob = bench.build(256, 1024, 256, ncl=8)
+    prob = bench.build(256, 256, 1024, ncl=8)
     assert prob.ncl == 8
     assert len({p.cluster for p in prob.kern.passes}) == 8
     assert prob.kern.clusters == bench.cluster_list(8)
 
 
 # ------------------------------------------------------------- the geometry
-@pytest.mark.parametrize("ncl,m,n,k", CASES)
-def test_tiling_covers_c_exactly_once(ncl, m, n, k):
+@pytest.mark.parametrize("ncl,m,k,n", CASES)
+def test_tiling_covers_c_exactly_once(ncl, m, k, n):
     """Every output element claimed by exactly one pass.
 
     A hole draws as a grey cell and a double-claim draws as whichever pass was
     listed last, so neither is visible in the picture the panel produces.
     """
-    prob = bench.build(m, n, k, ncl=ncl)
+    prob = bench.build(m, k, n, ncl=ncl)
     t = sim._tiling(prob)
     cover = np.zeros((t["m"], t["n"]), dtype=int)
     for p in t["passes"]:
-        cover[p["row0"]:p["row1"], p["col0"]:p["col1"]] += 1
+        cover[p["row0"] : p["row1"], p["col0"] : p["col1"]] += 1
     assert cover.min() == 1, "a region of C is computed by no pass"
     assert cover.max() == 1, "two passes claim the same region of C"
-    assert t["band"] == prob.n // prob.ncl
+    assert t["grid"]["tiles"] == len(t["passes"])
+    assert t["grid"]["live"] <= ncl
     assert len(t["clusters"]) == ncl
 
 
-@pytest.mark.parametrize("ncl,m,n,k", CASES)
-def test_tiling_rows_and_cols_fill_the_grid_the_page_draws(ncl, m, n, k):
+@pytest.mark.parametrize("ncl,m,k,n", CASES)
+def test_tiling_rows_and_cols_fill_the_grid_the_page_draws(ncl, m, k, n):
     """The page lays out ceil(m/tile.m) x ceil(n/tile.n) cells and indexes them
     by row0/col0 divided by the tile. Both must land on a boundary, or a pass
     silently lands in the cell next door."""
-    prob = bench.build(m, n, k, ncl=ncl)
+    prob = bench.build(m, k, n, ncl=ncl)
     t = sim._tiling(prob)
     rows, cols = t["m"] // t["tile"]["m"], t["n"] // t["tile"]["n"]
     seen = set()
@@ -135,11 +196,11 @@ def test_tiling_rows_and_cols_fill_the_grid_the_page_draws(ncl, m, n, k):
     assert len(seen) == rows * cols
 
 
-@pytest.mark.parametrize("ncl,m,n,k", CASES)
-def test_l1_report_matches_the_program(ncl, m, n, k):
+@pytest.mark.parametrize("ncl,m,k,n", CASES)
+def test_l1_report_matches_the_program(ncl, m, k, n):
     """Residency is READ OFF the flits, so it reports the schedule rather than
     the intent -- which is the one thing residency can silently stop doing."""
-    prob = bench.build(m, n, k, ncl=ncl)
+    prob = bench.build(m, k, n, ncl=ncl)
     li = sim._l1(prob)
     for side in ("a", "b"):
         s = li[side]
@@ -152,20 +213,22 @@ def test_l1_report_matches_the_program(ncl, m, n, k):
         assert li["b"]["fetched"] == li["b"]["unique"]
 
 
-@pytest.mark.parametrize("ncl,m,n,k", CASES)
-def test_memory_regions_do_not_overlap(ncl, m, n, k):
+@pytest.mark.parametrize("ncl,m,k,n", CASES)
+def test_memory_regions_do_not_overlap(ncl, m, k, n):
     """Overlapping two regions is silent: the machine computes happily on
     operands another region has overwritten."""
-    prob = bench.build(m, n, k, ncl=ncl)
+    prob = bench.build(m, k, n, ncl=ncl)
     mm = sim._memory_map(prob)
-    spans = sorted((r["start"], r["start"] + r["words"], r["name"])
-                   for r in mm["regions"])
+    spans = sorted(
+        (r["start"], r["start"] + r["words"], r["name"]) for r in mm["regions"]
+    )
     for (_, a1, na), (b0, _, nb) in itertools.pairwise(spans):
         assert a1 <= b0, f"{na} runs into {nb}"
     assert spans[-1][1] <= mm["total"]
-    # A is one image every cluster reads; B and C are one region each.
-    assert sum(1 for r in mm["regions"] if r["name"] == "A") == 1
-    assert sum(1 for r in mm["regions"] if r["name"].startswith("B")) == ncl
+    # THREE REGIONS AT ANY CLUSTER COUNT. B and C were one region per cluster
+    # while a cluster owned a column band of the output; the grid addresses one
+    # image by tile, so a per-cluster region would name nothing.
+    assert [r["name"] for r in mm["regions"]] == ["A", "B", "C"]
 
 
 @pytest.mark.parametrize("ncl", bench.CLUSTER_COUNTS)
@@ -206,8 +269,9 @@ def test_mesh_matches_the_bench_generate_block(ncl):
 
 
 # ------------------------------------------------------------- the heat maps
-@pytest.mark.parametrize("shape", [(64, 64), (256, 256), (512, 1024),
-                                   (300, 700), (1024, 1024)])
+@pytest.mark.parametrize(
+    "shape", [(64, 64), (256, 256), (512, 1024), (300, 700), (1024, 1024)]
+)
 def test_heat_fits_the_browser_and_keeps_the_worst_element(shape):
     """The page used to receive full matrices and spread them into Math.max,
     which throws above ~100k arguments -- so every shape past the 256-cube
@@ -240,8 +304,12 @@ def test_worst_is_sorted_and_carries_every_format():
     rng = np.random.default_rng(2)
     want = rng.standard_normal((48, 48))
     got = want + rng.standard_normal((48, 48)) * 1e-3
-    refs = {"fp64": want, "mxfp7 model": want * 1.001,
-            "mxfp8/fp32": want * 1.002, "fp16/fp32": want * 1.003}
+    refs = {
+        "fp64": want,
+        "mxfp7 model": want * 1.001,
+        "mxfp8/fp32": want * 1.002,
+        "fp16/fp32": want * 1.003,
+    }
     rel = np.abs(got - want) / np.abs(want)
     rows = sim._worst(got, want, refs, rel)
     assert len(rows) == sim.WORST_ROWS
@@ -255,8 +323,7 @@ def test_worst_is_sorted_and_carries_every_format():
 
 def test_worst_handles_a_matrix_smaller_than_the_table():
     got = np.ones((2, 2))
-    rows = sim._worst(got, got, {"fp64": got, "mxfp7 model": got},
-                      np.zeros((2, 2)))
+    rows = sim._worst(got, got, {"fp64": got, "mxfp7 model": got}, np.zeros((2, 2)))
     assert len(rows) == 4
 
 
@@ -264,15 +331,21 @@ def test_worst_handles_a_matrix_smaller_than_the_table():
 def test_timeline_reports_truncation():
     """The bench stops recording after a fixed number of windows. Drawn without
     this, a short trace looks like a complete picture of a faster machine."""
-    tel = {"trace": {"gap": 64, "cu": {0: [1] * 100}},
-           "host_cycles": 1000, "run_cycles": 90000}
+    tel = {
+        "trace": {"gap": 64, "cu": {0: [1] * 100}},
+        "host_cycles": 1000,
+        "run_cycles": 90000,
+    }
     tl = sim._timeline(tel)
     assert tl["covered_cycles"] == 6400
     assert tl["measured_cycles"] == 91000
     assert tl["truncated"]
 
-    full = {"trace": {"gap": 64, "cu": {0: [1] * 100}},
-            "host_cycles": 100, "run_cycles": 6000}
+    full = {
+        "trace": {"gap": 64, "cu": {0: [1] * 100}},
+        "host_cycles": 100,
+        "run_cycles": 6000,
+    }
     assert not sim._timeline(full)["truncated"]
     assert sim._timeline({}) is None
 
@@ -280,8 +353,11 @@ def test_timeline_reports_truncation():
 def test_timeline_summarises_each_cluster():
     """The exact phase counters exist for two clusters only, so this sampled
     summary is the only per-cluster measurement for the ones in between."""
-    tel = {"trace": {"gap": 64, "cu": {0: [1, 3, 4, 0], 1: [0, 0, 2, 2]}},
-           "host_cycles": 0, "run_cycles": 256}
+    tel = {
+        "trace": {"gap": 64, "cu": {0: [1, 3, 4, 0], 1: [0, 0, 2, 2]}},
+        "host_cycles": 0,
+        "run_cycles": 256,
+    }
     c = sim._timeline(tel)["cluster"]
     assert c[0]["fill"] == 2 and c[0]["gemm"] == 1 and c[0]["drain"] == 1
     assert c[0]["idle"] == 1
@@ -293,8 +369,15 @@ def test_timeline_summarises_each_cluster():
 
 # ----------------------------------------------------------------- the gate
 def _rel(p50=1.7e-4, mx=1.0, over10=1e-5):
-    return {"rel": {"p50": p50, "max": mx, "over10": over10,
-                    "over10_n": int(over10 * 65536), "n": 65536}}
+    return {
+        "rel": {
+            "p50": p50,
+            "max": mx,
+            "over10": over10,
+            "over10_n": int(over10 * 65536),
+            "n": 65536,
+        }
+    }
 
 
 def test_verdict_passes_a_healthy_run():
@@ -332,8 +415,7 @@ def test_verdict_fails_when_nothing_came_out():
     nan = float("nan")
     v = sim._verdict(True, _rel(p50=nan), _rel(p50=3e-3), {})
     assert not v["pass"]
-    assert any(c["name"] == "produced an answer" and not c["pass"]
-               for c in v["checks"])
+    assert any(c["name"] == "produced an answer" and not c["pass"] for c in v["checks"])
 
 
 def test_verdict_fails_on_rtl_assertions_and_on_no_completion():
@@ -348,8 +430,10 @@ def test_verdict_fails_on_rtl_assertions_and_on_no_completion():
 def test_verdict_matches_the_documented_thresholds():
     """The gate is quoted in run_matmul.py's docstring and in the page, so the
     numbers are pinned rather than left to drift."""
-    limits = {c["name"]: c["limit"]
-              for c in sim._verdict(True, _rel(), _rel(p50=3e-3), {})["checks"]}
+    limits = {
+        c["name"]: c["limit"]
+        for c in sim._verdict(True, _rel(), _rel(p50=3e-3), {})["checks"]
+    }
     assert limits["vs mxfp7 model p50"] == 1e-3
     assert limits["vs mxfp7 model worst"] == 10.0
     assert limits["elements over 10%"] == 5e-4
@@ -357,17 +441,17 @@ def test_verdict_matches_the_documented_thresholds():
 
 
 # ------------------------------------------------------------- the sim budget
-@pytest.mark.parametrize("ncl,m,n,k", CASES)
-def test_timeout_budget_scales_with_the_work(ncl, m, n, k):
+@pytest.mark.parametrize("ncl,m,k,n", CASES)
+def test_timeout_budget_scales_with_the_work(ncl, m, k, n):
     """One flat constant could not cover both ends of the range this session
     runs: 180 s was generous for the default shape and too small for the
     eight-cluster reference, which it failed while calling the design stalled."""
     s = sim.Session()
-    prob = bench.build(m, n, k, ncl=ncl)
+    prob = bench.build(m, k, n, ncl=ncl)
     assert s._budget(prob) >= sim.SIM_BASE_SECONDS
     # The estimate is an upper bound on a healthy run, so it must exceed the
     # arithmetic floor -- the run cannot beat peak rate.
-    floor = prob.m * prob.n * prob.k / (sim.MACS_PER_CLUSTER * prob.ncl)
+    floor = prob.m * prob.k * prob.n / (sim.MACS_PER_CLUSTER * prob.ncl)
     assert sim._estimate_cycles(prob) > floor
 
 
@@ -375,9 +459,9 @@ def test_eight_cluster_reference_gets_more_than_it_needed():
     """The reference case completes inside 480 s, measured. The budget has to
     clear that with room, or the guard fires on healthy work again."""
     s = sim.Session()
-    prob = bench.build(512, 1024, 256, ncl=8)
+    prob = bench.build(512, 256, 1024, ncl=8)
     assert s._budget(prob) > 480
-    small = bench.build(16, 16, 32, ncl=2)
+    small = bench.build(16, 32, 16, ncl=2)
     # ... and must not hand a tiny problem the same wait on a wedged simulator.
     assert s._budget(small) < s._budget(prob) / 4
 
@@ -385,7 +469,7 @@ def test_eight_cluster_reference_gets_more_than_it_needed():
 def test_timeout_env_override_wins(monkeypatch):
     monkeypatch.setenv("KOHAKU_SIM_TIMEOUT", "42")
     s = sim.Session()
-    assert s._budget(bench.build(512, 1024, 256, ncl=8)) == 42.0
+    assert s._budget(bench.build(512, 256, 1024, ncl=8)) == 42.0
 
 
 def test_timeout_message_separates_slow_from_silent():
@@ -457,30 +541,39 @@ def test_telemetry_reads_the_whole_profile_into_a_payload():
     assert p["mem_ports"] == 2
     # Every bucket the page draws must have arrived, not defaulted.
     for group, keys in (
-        ("mag", sim.MAG_BASIS), ("stalls", sim.STALL_BASIS), ("why", sim.WHY_BASIS)
+        ("mag", sim.MAG_BASIS),
+        ("stalls", sim.STALL_BASIS),
+        ("why", sim.WHY_BASIS),
     ):
         assert set(p[group]) == set(keys)
         assert all(v["cycles"] > 0 for v in p[group].values())
     assert p["fetch"]["cycles_per_entry"] > 0
-    assert all(p["resource"][k] > 0
-               for k in ("flops", "mem_rd", "mem_wr", "noc_in", "noc_out"))
+    assert all(
+        p["resource"][k] > 0 for k in ("flops", "mem_rd", "mem_wr", "noc_in", "noc_out")
+    )
 
 
-def _payload(ncl=2, m=128, n=128, k=128, log=None):
+def _payload(ncl=2, m=128, k=128, n=128, log=None):
     """A complete payload, built the way a run builds it but with no run.
 
     The answer stands in as the MXFP7 model's, which is what a correct circuit
     produces -- so the structure is exercised end to end and the error panels
     see a real distribution rather than zeros.
     """
-    from kohakutpu import mxfp7
+    from ktpu.hw import mxfp7
 
-    prob = bench.build(m, n, k, ncl=ncl)
+    prob = bench.build(m, k, n, ncl=ncl)
     got = mxfp7.model_matmul(prob.a, prob.bt)
     return sim.payload(
-        prob, got, (BENCH_LOG if log is None else log).splitlines(),
-        asked={"m": m, "n": n, "k": k}, seed=1, dist="lowrank",
-        cold=False, seconds=1.0, budget=300.0,
+        prob,
+        got,
+        (BENCH_LOG if log is None else log).splitlines(),
+        asked={"m": m, "k": k, "n": n},
+        seed=1,
+        dist="lowrank",
+        cold=False,
+        seconds=1.0,
+        budget=300.0,
     )
 
 
@@ -488,21 +581,55 @@ def _payload(ncl=2, m=128, n=128, k=128, log=None):
 # deleting one from the driver fails here instead of rendering as "undefined"
 # in a browser nobody has open.
 PAGE_FIELDS = [
-    "shape", "asked", "seed", "dist", "preq", "tile", "ncl", "frequency",
-    "budget_seconds", "cold", "passes", "rounds", "kernel", "seconds", "log",
-    "telemetry", "profile", "listing", "dispatches", "ncmd", "memory",
+    "shape",
+    "asked",
+    "seed",
+    "dist",
+    "preq",
+    "tile",
+    "ncl",
+    "frequency",
+    "budget_seconds",
+    "cold",
+    "passes",
+    "rounds",
+    "kernel",
+    "seconds",
+    "log",
+    "telemetry",
+    "profile",
+    "listing",
+    "dispatches",
+    "ncmd",
+    "memory",
     # `mesh` is the machine; `dispatch` is which of it this program kicked.
     # They differ whenever a subset runs, and the page needs both to draw an
     # idle cluster as idle rather than as absent.
-    "tiling", "mesh", "dispatch", "l1", "timeline", "a_peek", "bt_peek", "c_peek",
-    "want_peek", "got", "want", "abs_err", "rel_err", "worst", "err_hw",
-    "err_vs", "err_total", "ok", "verdict",
+    "tiling",
+    "mesh",
+    "dispatch",
+    "l1",
+    "timeline",
+    "a_peek",
+    "bt_peek",
+    "c_peek",
+    "want_peek",
+    "got",
+    "want",
+    "abs_err",
+    "rel_err",
+    "worst",
+    "err_hw",
+    "err_vs",
+    "err_total",
+    "ok",
+    "verdict",
 ]
 
 
 @pytest.mark.parametrize("ncl", [1, 2, 4, 8])
 def test_payload_carries_everything_the_page_draws(ncl):
-    d = _payload(ncl=ncl, m=128, n=128 * ncl, k=128)
+    d = _payload(ncl=ncl, m=128, k=128, n=128 * ncl)
     assert set(d) == set(PAGE_FIELDS)
     assert d["ncl"] == ncl
     assert d["verdict"]["pass"], "the model's own answer must score as correct"
@@ -525,7 +652,7 @@ def test_payload_is_json_and_stays_small_at_the_largest_reference():
     were ~100 MB of JSON, which is not a one-second interaction."""
     import json
 
-    d = _payload(ncl=8, m=512, n=1024, k=256)
+    d = _payload(ncl=8, m=512, k=256, n=1024)
     raw = json.dumps(d)
     assert len(raw) < 8_000_000, f"{len(raw) / 1e6:.1f} MB payload"
     # And it must still be the full problem that was measured, not a crop.
@@ -571,14 +698,19 @@ def test_port_summed_buckets_are_divided_by_the_port_count():
     """The MAG and fabric counters are sums over memory ports. Out of the run
     alone they read past 100% and were charted beside cluster-0 counters as if
     the two were comparable."""
-    t = {"mag_idle": 400, "mag_host": 100,
-         "stall_in_bp": 200, "stall_cu_dry": 50,
-         "why_emit_bp": 400, "why_cu_gwait": 25}
+    t = {
+        "mag_idle": 400,
+        "mag_host": 100,
+        "stall_in_bp": 200,
+        "stall_cu_dry": 50,
+        "why_emit_bp": 400,
+        "why_cu_gwait": 25,
+    }
     run, ports = 100, 4
     mag = sim._bucket(t, "mag_", sim.MAG_BASIS, run, ports)
-    assert mag["idle"]["frac"] == pytest.approx(1.0)   # 400 / (100 * 4)
+    assert mag["idle"]["frac"] == pytest.approx(1.0)  # 400 / (100 * 4)
     assert mag["idle"]["basis"] == "ports"
-    assert mag["host"]["frac"] == pytest.approx(1.0)   # 100 / 100, one unit
+    assert mag["host"]["frac"] == pytest.approx(1.0)  # 100 / 100, one unit
     assert mag["host"]["basis"] == "machine"
 
     st = sim._bucket(t, "stall_", sim.STALL_BASIS, run, ports)
@@ -600,10 +732,18 @@ def test_profile_fetch_divides_by_the_cluster_count():
     writes on cluster 0. The command line hard-coded the divisor at 2, which
     was wrong by 2x at four clusters and 4x at eight."""
     t = {
-        "run_cycles": 1000, "host_cycles": 10, "fill_cycles": 800,
-        "gemm_cycles": 0, "drain_cycles": 0, "idle_cycles": 0,
-        "rd_beats": 10, "wr_beats": 10, "beat_bytes": 32,
-        "fetch_entries": 100, "fetch_lat": 30, "fetch_floor": 4,
+        "run_cycles": 1000,
+        "host_cycles": 10,
+        "fill_cycles": 800,
+        "gemm_cycles": 0,
+        "drain_cycles": 0,
+        "idle_cycles": 0,
+        "rd_beats": 10,
+        "wr_beats": 10,
+        "beat_bytes": 32,
+        "fetch_entries": 100,
+        "fetch_lat": 30,
+        "fetch_floor": 4,
         "mem_ports": 4,
     }
     p = sim._profile(t, 64, 64, 64, 8)
@@ -632,7 +772,7 @@ def test_host_word_estimate_matches_the_upload_the_bench_reads():
     prob = bench.build(256, 256, 256, ncl=2)
     words, _ = bench.upload(prob)
     assert sim._host_words(prob) == len(words)
-    assert bench._host_words(prob.m, prob.n, prob.k) == len(words)
+    assert bench._host_words(prob.m, prob.k, prob.n) == len(words)
 
 
 def test_entry_words_halve_when_prequantised():

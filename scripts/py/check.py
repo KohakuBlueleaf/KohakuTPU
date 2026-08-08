@@ -34,10 +34,7 @@ import sys
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-DRIVER = ROOT / "driver"
-PY = DRIVER / ".venv" / "Scripts" / "python.exe"
-if not PY.exists():  # posix layout
-    PY = DRIVER / ".venv" / "bin" / "python"
+PY = sys.executable
 
 # Seconds one check may take before it is declared STALLED and killed. Derived
 # from what a healthy check costs rather than guessed: every bench in `full`
@@ -53,11 +50,12 @@ TIMEOUTS = {}
 
 # (label, argv, cwd). Ordered cheapest first so a failure stops the run early.
 FAST = [
-    ("python tests", [str(PY), "-m", "pytest", "tests/", "-q"], DRIVER),
-    ("ruff", [str(PY), "-m", "ruff", "check", "src", "tests"], DRIVER),
+    ("python tests", [str(PY), "-m", "pytest", "tests/ktpu", "-q"], ROOT),
+    ("ruff", [str(PY), "-m", "ruff", "check", "src/ktpu", "tests", "examples"], ROOT),
+    ("black", [str(PY), "-m", "black", "--check", "-q", "src/ktpu", "tests"], ROOT),
 ]
 UNIT = FAST + [
-    ("mx_quant vs model", [str(PY), "run_quant_check.py"], DRIVER),
+    ("mx_quant vs model", [str(PY), "scripts/py/run_quant_check.py"], ROOT),
     ("cluster_node", [str(PY), "scripts/py/xsim.py", "cluster_node"], ROOT),
     # Cheap, and it covers the one structure that has now broken twice under
     # concurrent clusters. Both times the only symptom at system level was a
@@ -69,11 +67,22 @@ UNIT = FAST + [
     # survives a green `unit`.
     ("mag_system", [str(PY), "scripts/py/xsim.py", "mag_system"], ROOT),
 ]
-FULL_BENCHES = ["fpacc", "acu", "cluster", "cluster_node", "system", "system32",
-                "mag_wslot", "mag_system"]
-FULL = FAST + [("mx_quant vs model", [str(PY), "run_quant_check.py"], DRIVER)] + [
-    (b, [str(PY), "scripts/py/xsim.py", b], ROOT) for b in FULL_BENCHES
+FULL_BENCHES = [
+    "fpacc",
+    "acu",
+    "cluster",
+    "cluster_node",
+    "system",
+    "system32",
+    "mag_wslot",
+    "mag_system",
+    "vec_alu",
 ]
+FULL = (
+    FAST
+    + [("mx_quant vs model", [str(PY), "scripts/py/run_quant_check.py"], ROOT)]
+    + [(b, [str(PY), "scripts/py/xsim.py", b], ROOT) for b in FULL_BENCHES]
+)
 
 TIERS = {"fast": FAST, "unit": UNIT, "full": FULL}
 
@@ -90,8 +99,11 @@ def kill_tree(proc):
     if os.name == "nt":
         # No process groups worth the name on Windows; taskkill /T walks the
         # child list the kernel already keeps.
-        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                       capture_output=True, check=False)
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+            capture_output=True,
+            check=False,
+        )
     else:
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
@@ -106,8 +118,9 @@ def run_check(argv, cwd, timeout):
     # stderr folded into stdout so the tail below reads in the order it
     # happened rather than as two separate streams.
     kw = {} if os.name == "nt" else {"start_new_session": True}
-    proc = subprocess.Popen(argv, cwd=cwd, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, text=True, **kw)
+    proc = subprocess.Popen(
+        argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, **kw
+    )
     try:
         out, _ = proc.communicate(timeout=timeout)
         return proc.returncode == 0, False, out
@@ -120,11 +133,16 @@ def run_check(argv, cwd, timeout):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("tier", choices=sorted(TIERS), nargs="?", default="fast")
-    ap.add_argument("--keep-going", action="store_true",
-                    help="run everything even after a failure")
-    ap.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
-                    help="seconds per check before it is called STALLED "
-                         f"(default {DEFAULT_TIMEOUT})")
+    ap.add_argument(
+        "--keep-going", action="store_true", help="run everything even after a failure"
+    )
+    ap.add_argument(
+        "--timeout",
+        type=int,
+        default=DEFAULT_TIMEOUT,
+        help="seconds per check before it is called STALLED "
+        f"(default {DEFAULT_TIMEOUT})",
+    )
     args = ap.parse_args()
 
     failures = []
@@ -142,17 +160,21 @@ def main():
                 # Said in full, because the whole point is that this is not the
                 # same event as a FAIL: nothing was measured, so the last thing
                 # printed below is where it stopped, not what was wrong.
-                print(f"       STALLED -- no result in {limit} s, killed. "
-                      "This is a hang, not a slow bench.")
+                print(
+                    f"       STALLED -- no result in {limit} s, killed. "
+                    "This is a hang, not a slow bench."
+                )
             tail = [ln for ln in out.splitlines() if ln.strip()]
             for ln in tail[-15:]:
                 print(f"       {ln}")
             if not args.keep_going:
                 break
 
-    print(f"  {'-' * 40}\n  {args.tier}: "
-          f"{'PASS' if not failures else 'FAIL ' + ', '.join(failures)}"
-          f"   {time.time() - total:.1f}s")
+    print(
+        f"  {'-' * 40}\n  {args.tier}: "
+        f"{'PASS' if not failures else 'FAIL ' + ', '.join(failures)}"
+        f"   {time.time() - total:.1f}s"
+    )
     sys.exit(1 if failures else 0)
 
 

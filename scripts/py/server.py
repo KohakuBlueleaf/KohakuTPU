@@ -18,11 +18,11 @@ import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from kohakutpu import bench, tensor
-from kohakutpu.sim import F_TARGET, MACS_PER_CLUSTER, MEASURED, Session, SimError
+from ktpu.hw import bench, tensor
+from ktpu.hw.sim import F_TARGET, MACS_PER_CLUSTER, MEASURED, Session, SimError
 
 HERE = pathlib.Path(__file__).resolve().parent
-PAGE = HERE / "viz" / "index.html"
+PAGE = HERE.parents[1] / "src" / "ktpu" / "viz" / "index.html"
 
 session = None
 session_lock = threading.Lock()
@@ -135,9 +135,10 @@ class Handler(BaseHTTPRequestHandler):
             )
         ncl = int(req.get("ncl", bench.NCLUSTERS))
         return {
+            # M, K, N -- the shape order the whole driver uses.
             "m": int(req.get("m", 16)),
-            "n": int(req.get("n", 16)),
             "k": int(req.get("k", 32)),
+            "n": int(req.get("n", 16)),
             "seed": int(req.get("seed", 0xC0FFEE)),
             "dist": dist,
             # HOW MANY CLUSTERS THE MACHINE HAS. Compiled in, so a change costs
@@ -167,26 +168,44 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(
                 200,
                 json.dumps(
-                    bench.preview(q["m"], q["n"], q["k"], q["ncl"], q["preq"],
-                                  q["use"], q["packing"])
+                    # `dist` too: the FP16 output-range warning is a property
+                    # of the generator as much as of the shape, so a preview
+                    # that ignored it would warn about the wrong operands.
+                    bench.preview(
+                        q["m"],
+                        q["k"],
+                        q["n"],
+                        q["ncl"],
+                        q["preq"],
+                        q["use"],
+                        q["packing"],
+                        q["dist"],
+                    )
                 ),
             )
 
-        # Checked against the DISPATCHED count, not the mesh: it is `use` that
-        # divides N and sizes each cluster's band, so the same shape can fit
-        # when eight clusters run and overflow the bench RAM when two of the
-        # same eight do. Validating against the mesh would reject legal shapes
-        # and admit illegal ones.
-        why = bench.check(q["m"], q["n"], q["k"], q["ncl"], q["preq"],
-                          q["use"], q["packing"])
+        # Both counts, because both can be wrong in ways the run cannot report:
+        # a mesh the bench does not build, or a dispatch subset outside it. The
+        # SIZE of the problem no longer depends on either -- one shared image,
+        # tiled by the shape alone -- so this is a validation of the machine
+        # rather than of the footprint.
+        why = bench.check(
+            q["m"], q["k"], q["n"], q["ncl"], q["preq"], q["use"], q["packing"]
+        )
         if why:
             return self._send(400, json.dumps({"error": "; ".join(why)}))
 
         try:
             result = get_session().run(
-                q["m"], q["n"], q["k"], q["seed"],
-                dist=q["dist"], ncl=q["ncl"], preq=q["preq"],
-                use=q["use"], packing=q["packing"],
+                q["m"],
+                q["k"],
+                q["n"],
+                q["seed"],
+                dist=q["dist"],
+                ncl=q["ncl"],
+                preq=q["preq"],
+                use=q["use"],
+                packing=q["packing"],
             )
         except SimError as e:
             return self._send(500, json.dumps({"error": str(e)}))

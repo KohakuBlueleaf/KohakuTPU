@@ -126,7 +126,7 @@ def unpack_c(words, m, n, gnc_cols):
     Each word is one 4x4 sub-tile of FP16; sub-tile t covers rows
     ``(t // gnc_cols)*4`` and columns ``(t % gnc_cols)*4``.
     """
-    from kohakutpu.mxfp7 import fp16_to_float
+    from ktpu.hw.mxfp7 import fp16_to_float
 
     out = np.zeros((m, n), dtype=np.float64)
     for t, w in enumerate(words):

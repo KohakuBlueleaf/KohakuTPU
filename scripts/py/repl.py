@@ -4,22 +4,26 @@
 
 Type a shape, get a matmul. The design is elaborated once at startup and the
 session stays warm, so each shape after the first costs about a second rather
-than about sixteen -- see kohakutpu.sim.
+than about sixteen -- see ktpu.hw.sim.
 
-    > 16 16 32          M N K
-    > 32 32 32 7        M N K seed
+    > 16 32 16          M K N
+    > 32 32 32 7        M K N seed
     > c                 show the last result's C matrix
     > q                 quit
+
+SHAPES ARE M, K, N -- the contracted dimension in the middle, as everywhere
+else in this driver. Three bare integers: a transposition is a different GEMM
+that runs perfectly well and answers a question nobody asked.
 """
 
 import sys
 
 import numpy as np
 
-from kohakutpu import bench, sim
-from kohakutpu.sim import Session, SimError
+from ktpu.hw import bench, sim
+from ktpu.hw.sim import Session, SimError
 
-HELP = "  <M> <N> <K> [seed] to run   ·   c for the last C   ·   q to quit"
+HELP = "  <M> <K> <N> [seed] to run   ·   c for the last C   ·   q to quit"
 
 
 def show_matrix(name, mat, limit=8, shape=None):
@@ -114,25 +118,33 @@ def main():
                 if last is None:
                     print("  nothing run yet")
                 else:
-                    show_matrix("hardware C", np.array(last["c_peek"]),
-                                limit=64, shape=last["shape"])
+                    show_matrix(
+                        "hardware C",
+                        np.array(last["c_peek"]),
+                        limit=64,
+                        shape=last["shape"],
+                    )
                 continue
 
             parts = line.split()
             try:
-                m, n, k = (int(x) for x in parts[:3])
+                m, k, n = (int(x) for x in parts[:3])
                 seed = int(parts[3]) if len(parts) > 3 else 0xC0FFEE
             except (ValueError, IndexError):
                 print(f"  need three numbers.{HELP}")
                 continue
 
-            why = bench.check(m, n, k)
+            why = bench.check(m, k, n)
             if why:
                 for w in why:
                     print(f"  cannot run: {w}")
                 continue
+            # Said BEFORE the run, because afterwards nothing says it: a
+            # saturated FP16 output scores as a pass.
+            for w in bench.preview(m, k, n)["warnings"]:
+                print(f"  note: {w}")
             try:
-                last = s.run(m, n, k, seed)
+                last = s.run(m, k, n, seed)
             except SimError as e:
                 print(f"  simulator error: {e}")
                 continue

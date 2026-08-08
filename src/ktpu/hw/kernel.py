@@ -37,8 +37,8 @@ nothing about the result depends on where the cuts fall.
 import itertools
 from dataclasses import dataclass, field
 
-from kohakutpu import device as dev
-from kohakutpu import matmul, tensor
+from ktpu.hw import device as dev
+from ktpu.hw import matmul, tensor
 
 WB = 32  # bytes per memory word
 
@@ -75,10 +75,11 @@ class TileShape:
         return self.nk * tensor.KBLOCK
 
     def __str__(self):
-        return f"{self.m}x{self.n}x{self.k}"
+        # M x K x N, like every other shape in the driver.
+        return f"{self.m}x{self.k}x{self.n}"
 
 
-def choose_tile(tiles, l1_a, k_blocks, l1_b=None, m=None, n=None, k=None, banks=2):
+def choose_tile(tiles, l1_a, k_blocks, l1_b=None, m=None, k=None, n=None, banks=2):
     """The pass with the most reuse the hardware can hold.
 
     Ranked by ARITHMETIC INTENSITY first, `2*gm*gn/(gm+gn)` MACs per operand
@@ -135,17 +136,49 @@ def choose_tile(tiles, l1_a, k_blocks, l1_b=None, m=None, n=None, k=None, banks=
             # answers do not move.
             cand = TileShape(gm, gn, nk)
             score = 2 * gm * gn / (gm + gn)
-            if m and n and k:
+            if m and k and n:
                 pm = -(-m // cand.m) * cand.m
-                pn = -(-n // cand.n) * cand.n
                 pk = -(-k // cand.k) * cand.k
-                score *= (m * n * k) / (pm * pn * pk)
+                pn = -(-n // cand.n) * cand.n
+                score *= (m * k * n) / (pm * pk * pn)
             key = (round(score * 4096), nk, -abs(gm - gn))
             if best is None or key > best[0]:
                 best = (key, cand)
     if best is None:
         raise ValueError("no tile fits the hardware limits")
     return best[1]
+
+
+def grid(m_tiles, n_tiles, ncl):
+    """Which output tiles each cluster owns, as ``(mo, no)`` lists.
+
+    THE UNIT OF CROSS-CLUSTER WORK IS AN OUTPUT TILE. Splitting N alone made
+    the machine's width a property of one dimension: a problem with a narrow N
+    ran on one cluster however much work it contained, and worse, the band was
+    what `choose_tile` was asked to tile -- so a narrow band also picked a worse
+    tile and multiplied the shortfall.
+
+    COLUMN-MAJOR, IN CONTIGUOUS BLOCKS, and both halves matter:
+
+    * column-major (``no`` outer, ``mo`` inner) keeps every m-tile that reads
+      one band of B adjacent, so B stays resident across them exactly as it did
+      when a cluster owned a whole band;
+    * contiguous blocks mean a cluster's tiles are a run of that order, so it
+      sees whole bands wherever the division allows -- and when ``ncl`` divides
+      ``n_tiles`` this reproduces the old one-band-per-cluster split exactly,
+      which is what makes the wide shapes provably unchanged.
+
+    A ragged division gives the first clusters one tile more rather than
+    rounding up for everyone: `ceil` would leave the last cluster idle.
+    """
+    tiles = [(mo, no) for no in range(n_tiles) for mo in range(m_tiles)]
+    base, extra = divmod(len(tiles), ncl)
+    owned, at = [], 0
+    for ci in range(ncl):
+        take = base + (1 if ci < extra else 0)
+        owned.append(tiles[at : at + take])
+        at += take
+    return owned
 
 
 @dataclass
@@ -203,11 +236,14 @@ class Kernel:
 
     tile: TileShape
     rounds: list
+    # M, K, N -- the project's shape order everywhere. A GEMM is
+    # C[M,N] = A[M,K] @ B.T[N,K], so K is the contracted dimension and naming
+    # it in the middle is what makes the three-int form readable.
     m: int
-    n: int
     k: int
+    n: int
     clusters: list
-    layouts: list
+    layout: object  # matmul.Layout -- ONE image, shared by every cluster
     preq: tuple = (False, False)  # (A, B) already MXFP7 in memory
     l1: L1Plan = None
 
@@ -227,8 +263,9 @@ class Kernel:
                 f"({self.tile.gm}x{self.tile.gn} sub-tiles, {self.tile.nk} K blocks)"
             ),
             (
-                f"  {len(self.passes)} passes over {len(self.clusters)} clusters, "
-                f"{len(self.rounds)} rounds"
+                f"  {len(self.passes)} passes over "
+                f"{len({p.cluster for p in self.passes})} of "
+                f"{len(self.clusters)} clusters, {len(self.rounds)} rounds"
             ),
             "",
         ]
@@ -250,10 +287,10 @@ class Kernel:
 
 def plan(
     m,
-    n,
     k,
+    n,
     clusters,
-    layouts,
+    layout,
     tile,
     anchor=None,
     stage_flits=128,
@@ -281,28 +318,31 @@ def plan(
     wpe_a = tensor.entry_words(preq_a)
     wpe_b = tensor.entry_words(preq_b)
     ncl = len(clusters)
-    per = n // ncl
     nk_total = k // tensor.KBLOCK
 
     m_tiles = m // tile.m
-    n_tiles = per // tile.n
+    n_tiles = n // tile.n
     chunks = nk_total // tile.nk
     entries_per_chunk_a = tile.gm * tile.nk
     entries_per_chunk_b = tile.gn * tile.nk
+    owned = grid(m_tiles, n_tiles, ncl)
 
-    # WHO SHARES A. Every cluster gets its own N-slice of the output and its
-    # own B, but they all read ONE A image -- `layouts[*].a_word` is the same
-    # word for all of them. And because passes are round-robined below, pass i
-    # of every cluster is the same (mo, ko), so at any moment every cluster is
-    # asking for byte-identical A entries.
+    # WHO SHARES A. There is ONE image of each operand and one of C; a cluster
+    # is told which output tile to compute, not which slice of memory it owns.
+    # So `layout` is the same for everyone and the tile indices are what differ
+    # -- which is the only arrangement in which an output tile can be handed to
+    # any cluster at all.
+    #
+    # Clusters do read byte-identical A entries at the same moment, but only
+    # when the grid gives each of them a whole number of column bands: pass i
+    # of every cluster is then the same (mo, ko). When `n_tiles` is smaller
+    # than the cluster count they are working down a single band together and
+    # it is B that coincides instead.
     #
     # Naming that set on the instruction lets MAG read those bytes from DRAM
     # once and quantise them once, instead of once per cluster for a
     # bit-identical result. It is the only saving here that GROWS with cluster
     # count -- everything else in the fetch path divides a constant.
-    #
-    # B is not shared: each cluster owns a disjoint column band, so its entries
-    # genuinely differ.
     # NOT ARMED, and the reason is a real defect rather than caution.
     #
     # A follower consumes whatever arrives while it is in a FILL -- and it
@@ -354,8 +394,11 @@ def plan(
         return (i % banks_a) * entries_per_chunk_a
 
     def b_bank(i, ko):
-        return ko * entries_per_chunk_b if b_resident \
+        return (
+            ko * entries_per_chunk_b
+            if b_resident
             else (i % banks_b) * entries_per_chunk_b
+        )
 
     def emit_fill(p, sel, word, wpe, n, eoff, preq, peers=()):
         """Append the FILLs for one contiguous run, and say how many.
@@ -389,94 +432,121 @@ def plan(
         return flits
 
     by_cluster = [[] for _ in clusters]
-    for ci, ((cx, cy), lay) in enumerate(zip(clusters, layouts)):
+    for ci, (cx, cy) in enumerate(clusters):
         gi = 0  # sweeps issued by this cluster, which is what picks the bank
-        # COLUMN BAND OUTERMOST, so every m-tile that reads one band of B runs
-        # while that band is still in L1. With m outermost, B[no+1] would
-        # overwrite B[no] before the m loop came back to it and residency would
-        # buy nothing. Immaterial when n_tiles == 1, which is the 256-cube.
-        for no in range(n_tiles):
-            for mo in range(m_tiles):
-                p = Pass(cluster=(cx, cy), mo=mo, no=no)
-                # B for this column band, once, before the m loop reads it.
-                # Emitted on the first pass that needs it; L1 is not cleared
-                # between passes or between rounds, so it stays.
-                if b_resident and mo == 0:
-                    for ko in range(chunks):
-                        b_ent = (no * chunks + ko) * entries_per_chunk_b
-                        emit_fill(p, 1, lay.b_word + b_ent * wpe_b, wpe_b,
-                                  entries_per_chunk_b, b_bank(0, ko), preq_b)
+        held = None  # the column band B is currently holding, when resident
+        for mo, no in owned[ci]:
+            p = Pass(cluster=(cx, cy), mo=mo, no=no)
+            # B for this column band, once, before the m-tiles that read it.
+            # Emitted on the first pass that needs it -- L1 is not cleared
+            # between passes or between rounds, so it stays until the band
+            # changes. `grid` keeps a cluster's tiles column-major, so that is
+            # once per band and not once per pass.
+            if b_resident and no != held:
                 for ko in range(chunks):
-                    # tile-major layout: (tile, chunk) is one contiguous run
-                    a_ent = (mo * chunks + ko) * entries_per_chunk_a
                     b_ent = (no * chunks + ko) * entries_per_chunk_b
-                    ab, bb = a_bank(gi), b_bank(gi, ko)
-                    last_chunk = ko == chunks - 1
-                    if ko == 0:
-                        p.first_a = len(p.flits)
-                        p.first_a_len = -(-entries_per_chunk_a
-                                          // FILL_MAX_ENTRIES)
-                        # The FIRST SWEEP moves ahead of the barrier too, when
-                        # there is one behind it. It only opens tiles whose
-                        # finished values are already in the drain queue -- the
-                        # fused emit put them there on the last accumulate --
-                        # so overwriting the tile memory is safe, and the pass
-                        # gets its compute started while the previous pass's
-                        # write-back is still draining. Only when B is resident,
-                        # so the flits are contiguous (no B fill between).
-                        p.prefetch_len = p.first_a_len + (
-                            1 if (b_resident and chunks > 1) else 0
-                        )
-                    c_word = lay.c_word + (mo * n_tiles + no) * tile.gm * tile.gn
-                    emit_fill(p, 0, lay.a_word + a_ent * wpe_a, wpe_a,
-                              entries_per_chunk_a, ab, preq_a, a_share[ci])
-                    if not b_resident:
-                        emit_fill(p, 1, lay.b_word + b_ent * wpe_b, wpe_b,
-                                  entries_per_chunk_b, bb, preq_b)
-                    emit = fused and last_chunk
-                    p.flits.append(
-                        matmul._flit(
-                            matmul.OP_GEMM,
-                            # An emitting sweep carries the destination: it
-                            # starts producing sub-tiles long before the DRAIN
-                            # behind it is decoded.
-                            addr=(c_word * WB) if emit else 0,
-                            gm=tile.gm,
-                            gn=tile.gn,
-                            nk=tile.nk,
-                            anchor=anchor,
-                            acc=(ko > 0),
-                            aoff=ab,
-                            boff=bb,
-                            emit=emit,
-                        )
+                    emit_fill(
+                        p,
+                        1,
+                        layout.b_word + b_ent * wpe_b,
+                        wpe_b,
+                        entries_per_chunk_b,
+                        b_bank(0, ko),
+                        preq_b,
                     )
-                    p.text.append(
-                        f"GEMM    {tile.gm}x{tile.gn} sub-tiles, {tile.nk} K "
-                        f"blocks, A@{ab} B@{bb}"
-                        + ("  accumulate" if ko else "  load")
-                        + (f"  emit -> word {c_word}" if emit else "")
+                held = no
+            for ko in range(chunks):
+                # tile-major layout: (tile, chunk) is one contiguous run
+                a_ent = (mo * chunks + ko) * entries_per_chunk_a
+                b_ent = (no * chunks + ko) * entries_per_chunk_b
+                ab, bb = a_bank(gi), b_bank(gi, ko)
+                last_chunk = ko == chunks - 1
+                if ko == 0:
+                    p.first_a = len(p.flits)
+                    p.first_a_len = -(-entries_per_chunk_a // FILL_MAX_ENTRIES)
+                    # The FIRST SWEEP moves ahead of the barrier too, when
+                    # there is one behind it. It only opens tiles whose
+                    # finished values are already in the drain queue -- the
+                    # fused emit put them there on the last accumulate -- so
+                    # overwriting the tile memory is safe, and the pass gets
+                    # its compute started while the previous pass's write-back
+                    # is still draining. Only when B is resident, so the flits
+                    # are contiguous (no B fill between).
+                    p.prefetch_len = p.first_a_len + (
+                        1 if (b_resident and chunks > 1) else 0
                     )
-                    gi += 1
-                # sub-tile t of the drain is (row group, col group) within the
-                # output tile; C is stored one word per 4x4 sub-tile
+                # C IS ONE IMAGE ADDRESSED BY TILE, so the destination depends
+                # on the tile and not on who computes it. That is what lets the
+                # grid hand (mo, no) to any cluster: with a per-cluster C base
+                # the output's address changed when the owner did.
+                c_word = layout.c_word + (mo * n_tiles + no) * tile.gm * tile.gn
+                emit_fill(
+                    p,
+                    0,
+                    layout.a_word + a_ent * wpe_a,
+                    wpe_a,
+                    entries_per_chunk_a,
+                    ab,
+                    preq_a,
+                    a_share[ci],
+                )
+                if not b_resident:
+                    emit_fill(
+                        p,
+                        1,
+                        layout.b_word + b_ent * wpe_b,
+                        wpe_b,
+                        entries_per_chunk_b,
+                        bb,
+                        preq_b,
+                    )
+                emit = fused and last_chunk
                 p.flits.append(
                     matmul._flit(
-                        matmul.OP_DRAIN,
-                        addr=c_word * WB,
-                        n=tile.gm * tile.gn,
+                        matmul.OP_GEMM,
+                        # An emitting sweep carries the destination: it starts
+                        # producing sub-tiles long before the DRAIN behind it
+                        # is decoded.
+                        addr=(c_word * WB) if emit else 0,
+                        gm=tile.gm,
+                        gn=tile.gn,
+                        nk=tile.nk,
                         anchor=anchor,
-                        last=True,
-                        fuse=fused,
+                        acc=(ko > 0),
+                        aoff=ab,
+                        boff=bb,
+                        emit=emit,
                     )
                 )
                 p.text.append(
-                    f"DRAIN   {tile.gm * tile.gn} sub-tiles -> word "
-                    f"{c_word}"
-                    + ("   (barrier; the sweep already wrote them)" if fused
-                       else "   (written once)")
+                    f"GEMM    {tile.gm}x{tile.gn} sub-tiles, {tile.nk} K "
+                    f"blocks, A@{ab} B@{bb}"
+                    + ("  accumulate" if ko else "  load")
+                    + (f"  emit -> word {c_word}" if emit else "")
                 )
-                by_cluster[ci].append(p)
+                gi += 1
+            # sub-tile t of the drain is (row group, col group) within the
+            # output tile; C is stored one word per 4x4 sub-tile
+            p.flits.append(
+                matmul._flit(
+                    matmul.OP_DRAIN,
+                    addr=c_word * WB,
+                    n=tile.gm * tile.gn,
+                    anchor=anchor,
+                    last=True,
+                    fuse=fused,
+                )
+            )
+            p.text.append(
+                f"DRAIN   {tile.gm * tile.gn} sub-tiles -> word "
+                f"{c_word}"
+                + (
+                    "   (barrier; the sweep already wrote them)"
+                    if fused
+                    else "   (written once)"
+                )
+            )
+            by_cluster[ci].append(p)
 
     # ---- prefetch the next pass's first operand ---------------------------
     # A pass ends with a barrier that waits for its output tile to reach
@@ -548,10 +618,10 @@ def plan(
         tile=tile,
         rounds=rounds,
         m=m,
-        n=n,
         k=k,
+        n=n,
         clusters=list(clusters),
-        layouts=list(layouts),
+        layout=layout,
         preq=(preq_a, preq_b),
         l1=L1Plan(
             a_entries=l1_a,

@@ -1,7 +1,7 @@
 """A live xsim session: elaborate once, then run problem after problem.
 
     with Session() as s:
-        r = s.run(16, 16, 32)
+        r = s.run(16, 32, 16)      # M, K, N
 
 WHY THIS EXISTS. Compiling and elaborating the design costs ~10 s; the
 simulation itself costs under one. Re-running `xvlog`/`xelab` per experiment
@@ -9,7 +9,7 @@ therefore spends 95% of its time rebuilding something that did not change.
 
 Nothing about the problem is compiled in -- the bench reads its operand and
 program files at time 0 -- so one snapshot serves any shape
-:func:`kohakutpu.bench.check` accepts. `restart` re-executes the initial
+:func:`ktpu.hw.bench.check` accepts. `restart` re-executes the initial
 blocks, which re-reads those files, so a new problem costs only the simulation:
 
     cold  xvlog + xelab + xsim   ~15.6 s
@@ -35,7 +35,7 @@ import time
 
 import numpy as np
 
-from kohakutpu import bench, disasm, formats, mxfp7, tensor
+from ktpu.hw import bench, disasm, formats, mxfp7, tensor
 
 DEFAULT_VIVADO = pathlib.Path(r"D:\Xilinx\Vivado\2024.2\bin")
 SENTINEL = "__KOHAKU_RDY__"
@@ -89,9 +89,7 @@ def _estimate_cycles(prob):
     being high costs only a longer wait on a genuinely wedged simulator.
     """
     upload = _host_words(prob) * UPLOAD_CYCLES_PER_WORD
-    run = RUN_CYCLE_SLACK * prob.m * prob.n * prob.k / (
-        MACS_PER_CLUSTER * prob.ncl
-    )
+    run = RUN_CYCLE_SLACK * prob.m * prob.k * prob.n / (MACS_PER_CLUSTER * prob.ncl)
     writes = sum(len(p.setup) + 4 * len(p.cmds) for p in prob.programs)
     return int(upload + run + writes * HOST_CYCLES_PER_WRITE)
 
@@ -118,16 +116,17 @@ def _timeout_message(budget, quiet, out):
         + ".\nThe bench detects a stalled DESIGN itself -- it ends the run and "
         "reports ROUND-FAIL -- so reaching this instead points at a wedged "
         "simulator or a budget too small for the problem. Raise it with "
-        "KOHAKU_SIM_TIMEOUT=<seconds>.\nlast output:\n  "
-        + "\n  ".join(out[-20:])
+        "KOHAKU_SIM_TIMEOUT=<seconds>.\nlast output:\n  " + "\n  ".join(out[-20:])
     )
 
 
 def _host_words(prob):
     """Words of the FP16 host image, which is what the upload pushes."""
     nk = prob.k // tensor.KBLOCK
-    return (prob.m // tensor.LANES + prob.n // tensor.LANES) * nk * (
-        tensor.FP16_ENTRY_BYTES // 32
+    return (
+        (prob.m // tensor.LANES + prob.n // tensor.LANES)
+        * nk
+        * (tensor.FP16_ENTRY_BYTES // 32)
     )
 
 
@@ -414,9 +413,22 @@ class Session:
             out.append(ln)
             last = time.time()
 
-    def run(self, m, n, k, seed=0xC0FFEE, dist="lowrank", ncl=None,
-            preq=bench.PREQ, use=None, packing="spread"):
+    def run(
+        self,
+        m,
+        k,
+        n,
+        seed=0xC0FFEE,
+        dist="lowrank",
+        ncl=None,
+        preq=bench.PREQ,
+        use=None,
+        packing="spread",
+    ):
         """Build a problem of this shape, simulate it, and score the result.
+
+        ``m, k, n`` -- the project's shape order. Three bare integers, so a
+        transposition here is a different GEMM that runs and answers.
 
         ``ncl`` is HOW MANY CLUSTERS THE MACHINE HAS. It sizes the mesh and the
         cluster array and is compiled in, so changing it re-elaborates the
@@ -457,7 +469,7 @@ class Session:
                 bench.use_clusters(ncl)
             ncl = len(bench.CLUSTERS)
             use = ncl if use is None else int(use)
-            why = bench.check(m, n, k, ncl, preq, use, packing)
+            why = bench.check(m, k, n, ncl, preq, use, packing)
             if why:
                 raise SimError("; ".join(why))
 
@@ -468,8 +480,9 @@ class Session:
             if cold and self.proc is not None:
                 self.close()
             self.start()
-            prob = bench.build(m, n, k, seed, ncl=ncl, dist=dist, preq=preq,
-                               use=use, packing=packing)
+            prob = bench.build(
+                m, k, n, seed, ncl=ncl, dist=dist, preq=preq, use=use, packing=packing
+            )
             bench.write_files(self.work, prob)
 
             t0 = time.time()
@@ -486,10 +499,15 @@ class Session:
             got = bench.read_result(self.work, prob)
 
         return payload(
-            prob, got, out,
-            asked={"m": m, "n": n, "k": k},
-            seed=seed, dist=dist, cold=cold,
-            seconds=elapsed, budget=budget,
+            prob,
+            got,
+            out,
+            asked={"m": m, "k": k, "n": n},
+            seed=seed,
+            dist=dist,
+            cold=cold,
+            seconds=elapsed,
+            budget=budget,
         )
 
 
@@ -526,7 +544,7 @@ def payload(prob, got, log, asked, seed, dist, cold, seconds, budget):
     ok = any("ORCH-OK" in ln for ln in log)
 
     return {
-        "shape": {"m": prob.m, "n": prob.n, "k": prob.k},
+        "shape": {"m": prob.m, "k": prob.k, "n": prob.n},
         "asked": dict(asked),
         "seed": seed,
         "dist": dist,
@@ -554,7 +572,7 @@ def payload(prob, got, log, asked, seed, dist, cold, seconds, budget):
         "seconds": round(seconds, 2),
         "log": log,
         "telemetry": tel,
-        "profile": _profile(tel, prob.m, prob.n, prob.k, prob.ncl),
+        "profile": _profile(tel, prob.m, prob.k, prob.n, prob.ncl),
         "listing": disasm.listing(prob.commands),
         "dispatches": disasm.dispatches(prob.commands),
         "ncmd": len(prob.commands),
@@ -807,8 +825,9 @@ def _round_fail_text(tel):
     if not rf:
         return "no ORCH-OK reported"
     where = (
-        f", {rf['retired']} of {rf['commands']} commands after "
-        f"{rf['cycles']} cyc" if "retired" in rf else ""
+        f", {rf['retired']} of {rf['commands']} commands after " f"{rf['cycles']} cyc"
+        if "retired" in rf
+        else ""
     )
     return f"ROUND-FAIL round {rf['round']} at pc {rf['pc']}{where}"
 
@@ -841,7 +860,7 @@ def _verdict(ok, err_hw, err_total, tel):
             "pass": bool(ok),
             "text": "ORCH-OK" if ok else _round_fail_text(tel),
             "why": "the bench reports its own completion, and names the "
-                   "control step when a round does not retire",
+            "control step when a round does not retire",
         },
         {
             "name": "produced an answer",
@@ -851,7 +870,7 @@ def _verdict(ok, err_hw, err_total, tel):
             "pass": not empty,
             "text": "no finite output" if empty else f"{hw['n']} elements",
             "why": "a hang or a dead datapath leaves C unwritten; that is a "
-                   "failure, where a large error on a real answer is not",
+            "failure, where a large error on a real answer is not",
         },
         # ---- reported, not gating -------------------------------------------
         {
@@ -862,8 +881,8 @@ def _verdict(ok, err_hw, err_total, tel):
             "pass": hw["p50"] < 1e-3,
             "text": f"{hw['p50']:.2e}",
             "why": "is the CIRCUIT right -- both sides see the same format. "
-                   "The most sensitive number here: a mis-slotted fetch moved "
-                   "it 1.70e-4 -> 1.93e-4",
+            "The most sensitive number here: a mis-slotted fetch moved "
+            "it 1.70e-4 -> 1.93e-4",
         },
         {
             "name": "vs mxfp7 model worst",
@@ -873,7 +892,7 @@ def _verdict(ok, err_hw, err_total, tel):
             "pass": hw["max"] < 10.0,
             "text": f"{hw['max']:.2e}",
             "why": "shape and seed, not correctness -- an output that cancels "
-                   "against its own partial sums is large here and right",
+            "against its own partial sums is large here and right",
         },
         {
             "name": "elements over 10%",
@@ -883,8 +902,8 @@ def _verdict(ok, err_hw, err_total, tel):
             "pass": hw["over10"] < 5e-4,
             "text": f"{hw['over10_n']} of {hw['n']}",
             "why": "the COUNT carries the signal: a lost sub-tile corrupts 16 "
-                   "at once, which the worst element cannot distinguish from "
-                   "cancellation",
+            "at once, which the worst element cannot distinguish from "
+            "cancellation",
         },
         {
             "name": "vs fp64 p50",
@@ -919,8 +938,9 @@ def _verdict(ok, err_hw, err_total, tel):
         "checks": checks,
         # What a reader should look at even on a PASS: a reference missed is
         # not a failure, but it is not nothing either.
-        "advisories": [c["name"] for c in checks
-                       if not c.get("gates") and not c["pass"]],
+        "advisories": [
+            c["name"] for c in checks if not c.get("gates") and not c["pass"]
+        ],
     }
 
 
@@ -943,19 +963,18 @@ def _tiling(prob):
     Emitted structurally so the page draws C and colours it, rather than
     re-parsing `Kernel.listing()`.
 
-    `no` is the tile index WITHIN a cluster's column band, not a global one --
-    each cluster owns `n // ncl` columns -- so the global span is computed here
-    once instead of in the browser, where getting it wrong would silently draw
-    a plausible picture of a different machine.
+    `(mo, no)` is a GLOBAL output tile: the grid is dealt across clusters, so
+    two passes of the same cluster need not be adjacent and a cluster's tiles
+    are not a column band. Drawing them by cluster index -- which is what the
+    band layout allowed -- would now put half of them in the wrong place.
     """
     t = prob.tile
-    per = prob.n // prob.ncl
     order = {c: i for i, c in enumerate(prob.kern.clusters)}
     passes = []
     for ri, rnd in enumerate(prob.kern.rounds):
         for p in rnd.passes:
             ci = order[p.cluster]
-            c0 = ci * per + p.no * t.n
+            c0 = p.no * t.n
             r0 = p.mo * t.m
             passes.append(
                 {
@@ -985,13 +1004,21 @@ def _tiling(prob):
             )
     return {
         "m": prob.m,
-        "n": prob.n,
         "k": prob.k,
-        "band": per,
+        "n": prob.n,
+        # The dispatch grid. `tiles` against the cluster count is what says
+        # whether the machine can be filled at all -- fewer tiles than clusters
+        # and some are simply not kicked.
+        "grid": {
+            "m_tiles": prob.m // t.m,
+            "n_tiles": prob.n // t.n,
+            "tiles": (prob.m // t.m) * (prob.n // t.n),
+            "live": len({p.cluster for p in prob.kern.passes}),
+        },
         "tile": {
             "m": t.m,
-            "n": t.n,
             "k": t.k,
+            "n": t.n,
             "gm": t.gm,
             "gn": t.gn,
             "nk": t.nk,
@@ -1016,18 +1043,20 @@ def _l1(prob):
     needs. Deriving the fetched figure from the plan instead would report the
     intent rather than the schedule, which is exactly the thing residency can
     silently stop doing.
+
+    THE TILES ONE CLUSTER OWNS, not the ones the problem has. The grid deals
+    output tiles out, so how many column bands and m-tiles a cluster sees is a
+    property of its share -- taking it from the problem would compare a
+    cluster's fills against everyone's entries and report residency broken.
     """
     lp = prob.kern.l1
-    t = prob.tile
-    per = prob.n // prob.ncl
-    bands = per // t.n
-    m_tiles = prob.m // t.m
 
     fetched = {0: 0, 1: 0}
     first = prob.kern.clusters[0]
-    for p in prob.kern.passes:
-        if p.cluster != first:
-            continue
+    mine = [p for p in prob.kern.passes if p.cluster == first]
+    bands = len({p.no for p in mine})
+    m_tiles = len({p.mo for p in mine})
+    for p in mine:
         for f in p.flits:
             d = disasm.decode_flit(f)
             if d["op_name"] == "FILL":
@@ -1082,42 +1111,43 @@ def _memory_map(prob):
     format: a pre-quantised operand occupies half the words.
     """
     nk = prob.k // 32
-    per = prob.n // prob.ncl
+    lay = prob.layout
     preq_a, preq_b = prob.kern.preq
     a_words = (prob.m // 4) * nk * tensor.entry_words(preq_a)
-    b_words = (per // 4) * nk * tensor.entry_words(preq_b)
-    c_words = (prob.m // 4) * (per // 4)
+    b_words = (prob.n // 4) * nk * tensor.entry_words(preq_b)
+    c_words = (prob.m // 4) * (prob.n // 4)
 
     def fmt(preq):
         return "MXFP7" if preq else "FP16"
 
-    regions = [
-        {
-            "name": "A",
-            "start": prob.layouts[0].a_word,
-            "words": a_words,
-            "what": f"{(prob.m // 4) * nk} L1 entries, {fmt(preq_a)}",
-        }
-    ]
-    for c, lay in enumerate(prob.layouts):
-        regions.append(
+    # THREE REGIONS, whatever the cluster count. B and C used to be cut into
+    # one region per cluster because a cluster owned a column band of the
+    # output; the grid hands out tiles instead, so every cluster addresses the
+    # same image and a per-cluster region would name something that no longer
+    # exists.
+    return {
+        "total": bench.WORDS,
+        "regions": [
             {
-                "name": f"B{c}",
+                "name": "A",
+                "start": lay.a_word,
+                "words": a_words,
+                "what": f"{(prob.m // 4) * nk} L1 entries, {fmt(preq_a)}",
+            },
+            {
+                "name": "B",
                 "start": lay.b_word,
                 "words": b_words,
-                "what": f"{(per // 4) * nk} L1 entries, {fmt(preq_b)}",
-            }
-        )
-    for c, lay in enumerate(prob.layouts):
-        regions.append(
+                "what": f"{(prob.n // 4) * nk} L1 entries, {fmt(preq_b)}",
+            },
             {
-                "name": f"C{c}",
+                "name": "C",
                 "start": lay.c_word,
                 "words": c_words,
                 "what": f"{c_words} sub-tiles, FP16",
-            }
-        )
-    return {"total": bench.WORDS, "regions": regions}
+            },
+        ],
+    }
 
 
 OCCUPANCY = re.compile(
@@ -1134,9 +1164,7 @@ MAGSTATE = re.compile(
     r"wr=(\d+) host=(\d+)"
 )
 
-STALL = re.compile(
-    r"STALL in_bp=(\d+) out_bp=(\d+) cu_send=(\d+) cu_dry=(\d+)"
-)
+STALL = re.compile(r"STALL in_bp=(\d+) out_bp=(\d+) cu_send=(\d+) cu_dry=(\d+)")
 
 FETCH = re.compile(r"FETCH lat=(\d+) entries=(\d+) floor=(\d+)")
 
@@ -1197,8 +1225,13 @@ MACS_PER_CLUSTER = 512  # 4 TCU x 4x8x4, one 4x4 sub-tile x 32 K per cycle
 # deliberately overlapping buckets across ports -- the same mistake as summing
 # the resource budgets, in a different panel.
 MAG_BASIS = {
-    "idle": "ports", "qfill": "ports", "qwait": "ports", "qemit": "ports",
-    "rd": "ports", "wr": "ports", "host": "machine",
+    "idle": "ports",
+    "qfill": "ports",
+    "qwait": "ports",
+    "qemit": "ports",
+    "rd": "ports",
+    "wr": "ports",
+    "host": "machine",
 }
 # `in_bp` COUNTS REFUSALS, NOT CONGESTION -- and it stopped meaning what its
 # name suggests when the agent moved onto the memory ports. A port now asserts
@@ -1209,29 +1242,72 @@ MAG_BASIS = {
 # hunting for a bottleneck that is not there -- which is the third time a
 # derived percentage in this design has changed meaning under its own name.
 STALL_BASIS = {
-    "in_bp": "ports", "out_bp": "ports",
-    "cu_send": "cluster0", "cu_dry": "cluster0",
+    "in_bp": "ports",
+    "out_bp": "ports",
+    "cu_send": "cluster0",
+    "cu_dry": "cluster0",
 }
 WHY_BASIS = {
-    "wack_nob": "ports", "wack_blk": "ports", "wslot_full": "ports",
-    "rfill_dry": "ports", "rwait_emit": "ports", "emit_bp": "ports",
-    "cu_dwait": "cluster0", "cu_gwait": "cluster0",
+    "wack_nob": "ports",
+    "wack_blk": "ports",
+    "wslot_full": "ports",
+    "rfill_dry": "ports",
+    "rwait_emit": "ports",
+    "emit_bp": "ports",
+    "cu_dwait": "cluster0",
+    "cu_gwait": "cluster0",
 }
 
 # Runs measured this session against the current RTL, for the page to offer as
 # presets and to compare a fresh run against. Recorded numbers, and the page
 # must label them as recorded -- they are the value of a comparison only for as
 # long as it is obvious they are not this run's.
+#
+# SHAPES ARE M, K, N. All three have K=256, which is why the K-heavy regime was
+# never measured and the N-only dispatch went unnoticed for as long as it did.
 MEASURED = [
-    {"ncl": 2, "m": 256, "n": 256, "k": 256, "cycles": 18701,
-     "gflops": 538.3, "utilisation": 0.876, "p50": 1.70e-4, "max": 1.00e0,
-     "over1_n": 20, "over10_n": 4, "elements": 65536},
-    {"ncl": 4, "m": 256, "n": 512, "k": 256, "cycles": 20647,
-     "gflops": 975.1, "utilisation": 0.794, "p50": 1.70e-4, "max": 2.43e0,
-     "over1_n": 36, "over10_n": 7, "elements": 131072},
-    {"ncl": 8, "m": 512, "n": 1024, "k": 256, "cycles": 43382,
-     "gflops": 1856.3, "utilisation": 0.755, "p50": 1.71e-4, "max": 2.43e0,
-     "over1_n": 159, "over10_n": 49, "elements": 524288},
+    {
+        "ncl": 2,
+        "m": 256,
+        "k": 256,
+        "n": 256,
+        "cycles": 18701,
+        "gflops": 538.3,
+        "utilisation": 0.876,
+        "p50": 1.70e-4,
+        "max": 1.00e0,
+        "over1_n": 20,
+        "over10_n": 4,
+        "elements": 65536,
+    },
+    {
+        "ncl": 4,
+        "m": 256,
+        "k": 256,
+        "n": 512,
+        "cycles": 20647,
+        "gflops": 975.1,
+        "utilisation": 0.794,
+        "p50": 1.70e-4,
+        "max": 2.43e0,
+        "over1_n": 36,
+        "over10_n": 7,
+        "elements": 131072,
+    },
+    {
+        "ncl": 8,
+        "m": 512,
+        "k": 256,
+        "n": 1024,
+        "cycles": 43382,
+        "gflops": 1856.3,
+        "utilisation": 0.755,
+        "p50": 1.71e-4,
+        "max": 2.43e0,
+        "over1_n": 159,
+        "over10_n": 49,
+        "elements": 524288,
+    },
 ]
 
 
@@ -1249,7 +1325,7 @@ def _bucket(t, prefix, basis, run, ports):
     return out
 
 
-def _profile(t, m, n, k, nclusters):
+def _profile(t, m, k, n, nclusters):
     """Turn the bench's cycle buckets into bandwidth and rate.
 
     Reported per PHASE because the interesting question for a dataflow machine
@@ -1259,7 +1335,7 @@ def _profile(t, m, n, k, nclusters):
     if not run:
         return None
     beat = t.get("beat_bytes", 32)
-    macs = m * n * k
+    macs = m * k * n
     peak = MACS_PER_CLUSTER * nclusters
     # MAG's memory ports. Every per-port counter below is a SUM over them, so
     # the capacity they are measured against scales with the count.
@@ -1333,7 +1409,8 @@ def _profile(t, m, n, k, nclusters):
             "floor": t.get("fetch_floor", 4),
             "cycles_per_entry": (
                 t["fill_cycles"] / (t.get("fetch_entries", 0) * nclusters)
-                if t.get("fetch_entries") else 0.0
+                if t.get("fetch_entries")
+                else 0.0
             ),
         },
         # Not "which state" but "why it could not leave it". A component that
@@ -1442,19 +1519,32 @@ def _telemetry(lines):
             names = {
                 "WHY": (
                     WHY,
-                    ("why_wack_nob", "why_wack_blk", "why_wslot_full",
-                     "why_rfill_dry", "why_rwait_emit", "why_emit_bp",
-                     "why_cu_dwait", "why_cu_gwait"),
+                    (
+                        "why_wack_nob",
+                        "why_wack_blk",
+                        "why_wslot_full",
+                        "why_rfill_dry",
+                        "why_rwait_emit",
+                        "why_emit_bp",
+                        "why_cu_dwait",
+                        "why_cu_gwait",
+                    ),
                 ),
                 "MAGSTATE": (
                     MAGSTATE,
-                    ("mag_idle", "mag_qfill", "mag_qwait", "mag_qemit",
-                     "mag_rd", "mag_wr", "mag_host"),
+                    (
+                        "mag_idle",
+                        "mag_qfill",
+                        "mag_qwait",
+                        "mag_qemit",
+                        "mag_rd",
+                        "mag_wr",
+                        "mag_host",
+                    ),
                 ),
                 "STALL": (
                     STALL,
-                    ("stall_in_bp", "stall_out_bp", "stall_cu_send",
-                     "stall_cu_dry"),
+                    ("stall_in_bp", "stall_out_bp", "stall_cu_send", "stall_cu_dry"),
                 ),
                 "FETCH": (FETCH, ("fetch_lat", "fetch_entries", "fetch_floor")),
                 "UPLOAD": (

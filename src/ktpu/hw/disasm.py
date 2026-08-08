@@ -8,8 +8,8 @@ the class of bug that otherwise only shows up as a wrong number after a
 simulation.
 """
 
-from kohakutpu import device as dev
-from kohakutpu.matmul import FLIT_BITS
+from ktpu.hw import device as dev
+from ktpu.hw.matmul import FLIT_BITS
 
 OPS = {dev.OP_WR: "WR", dev.OP_POLL: "POLL", dev.OP_DONE: "DONE"}
 CU_OPS = {1: "FILL", 2: "GEMM", 3: "DRAIN"}
@@ -93,7 +93,8 @@ def describe_flit(f):
     if f["op_name"] == "FILL":
         which = "B" if f["sel"] else "A"
         peers = (
-            "  shared with " + ", ".join(f"(x={p & 0xF},y={p >> 4})" for p in f["peers"])
+            "  shared with "
+            + ", ".join(f"(x={p & 0xF},y={p >> 4})" for p in f["peers"])
             if f["npeer"]
             else ""
         )
@@ -121,7 +122,7 @@ def listing(commands):
     """Annotated rows for the whole program, staged flits reassembled.
 
     ``commands`` maps index -> [op, addr, data, mask], as recorded by
-    :class:`~kohakutpu.device.RecordingTransport`.
+    :class:`~ktpu.hw.device.RecordingTransport`.
 
     The staging window MAY be reused. Concurrent dispatch gives each cluster
     its own base slot, but the serial path stages every cluster into slots

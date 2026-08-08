@@ -6,7 +6,7 @@ Two independent production implementations:
                 was written against (github.com/microsoft/microxcaling).
   torchao       PyTorch's MX implementation (torchao.prototype.mx_formats).
 
-Our own quantiser lives in :mod:`kohakutpu.formats`. It is NOT the baseline --
+Our own quantiser lives in :mod:`ktpu.hw.formats`. It is NOT the baseline --
 a format comparison where we wrote both the candidate and the yardstick proves
 nothing, because a mistake in the yardstick reads as a win for the candidate.
 These are here so the yardstick is somebody else's code.
@@ -100,5 +100,12 @@ def torchao_quantise(x, kind="E4M3", block=32):
     # back to high precision; the tensor subclass itself refuses .numpy().
     from torchao.prototype.mx_formats.mx_tensor import to_dtype
 
-    hp = to_dtype(mx.qdata, mx.scale, mx.elem_dtype, mx.block_size, torch.float32)
+    # Prefer the METHOD. torchao renames the tensor's fields between releases
+    # -- qdata/data, scale/q_scale, elem_dtype and block_size come and go -- but
+    # `mx.to_dtype(dtype)` has survived all of it. Reaching for the fields is
+    # only the fallback for versions that lack it.
+    if hasattr(mx, "to_dtype"):
+        hp = mx.to_dtype(torch.float32)
+    else:
+        hp = to_dtype(mx.qdata, mx.scale, mx.elem_dtype, mx.block_size, torch.float32)
     return np.asarray(hp.detach().cpu().reshape(t.shape), dtype=np.float64)

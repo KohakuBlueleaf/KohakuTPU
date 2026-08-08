@@ -2,8 +2,8 @@
 
 import numpy as np
 
-from kohakutpu import formats as F
-from kohakutpu import mxfp7
+from ktpu.hw import formats as F
+from ktpu.hw import mxfp7
 
 
 def _blocks(seed=0, rows=32, k=256):

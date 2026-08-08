@@ -1,4 +1,4 @@
-"""Check mx_quant.v against kohakutpu.mxfp7, element by element.
+"""Check mx_quant.v against ktpu.hw.mxfp7, element by element.
 
     python run_quant_check.py
 
@@ -16,7 +16,7 @@ import sys
 
 import numpy as np
 
-from kohakutpu import mxfp7
+from ktpu.hw import mxfp7
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 VIVADO = pathlib.Path(os.environ.get("VIVADO_BIN", r"D:\Xilinx\Vivado\2024.2\bin"))

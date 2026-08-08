@@ -8,8 +8,8 @@ the yardstick would read as a result about the candidate.
 import numpy as np
 import pytest
 
-from kohakutpu import formats as F
-from kohakutpu import refimpl
+from ktpu.hw import formats as F
+from ktpu.hw import refimpl
 
 KINDS = ["E4M3", "E5M2", "E2M3", "E3M2", "E2M1"]
 

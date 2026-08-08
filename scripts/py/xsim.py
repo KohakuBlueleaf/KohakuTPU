@@ -40,7 +40,21 @@ NOC = [
     "src/kohakunoc/noc_cu_base.v",
 ]
 
+VECTOR = [
+    "src/kohakutpu/vector/vec_dsp.v",
+    "src/kohakutpu/vector/vec_delay.v",
+    "src/kohakutpu/vector/vec_tables.v",
+    "src/kohakutpu/vector/vec_alu.v",
+]
+
 BENCHES = {
+    # The vector ALU. mx_fpacc.v is here for mx_lead1 alone -- the leading-one
+    # search is shared rather than duplicated, and its comment is the reason
+    # the search is smear-isolate-encode instead of a loop.
+    "vec_alu": (
+        "vec_alu_tb",
+        ["src/kohakutpu/matmul/mx_fpacc.v"] + VECTOR + ["tests/vector/vec_alu_tb.v"],
+    ),
     "cluster_node": (
         "mx_cluster_node_tb",
         COMMON + MATMUL + ["tests/matmul/mx_cluster_node_tb.v"],
@@ -66,7 +80,7 @@ BENCHES = {
         ["src/kohakutpu/matmul/mx_fpacc.v", "tests/matmul/mx_fpacc_tb.v"],
     ),
     # mx_quant_tb is NOT here. It computes nothing and only dumps what the
-    # circuit produced; the expected values come from kohakutpu.mxfp7, so it is
+    # circuit produced; the expected values come from ktpu.hw.mxfp7, so it is
     # driven by driver/run_quant_check.py, which does the comparison.
     #
     # The two benches below carry mx_quant.v only because noc_fake_mem

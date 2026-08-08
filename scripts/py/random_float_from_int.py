@@ -1,4 +1,5 @@
 import random
+
 from .float import FPNumber
 
 
@@ -11,7 +12,7 @@ def random_int_for_float(exp_bits: int, man_bits: int) -> int:
     """Generate random integer for float"""
     exp_init = (1 << (exp_bits - 1)) - 2
     exp_bits_gen = random.randint(0, 2**exp_init - 1)
-    exp_bits_list = reversed(list(int(i) for i in f"{exp_bits_gen:b}"))
+    exp_bits_list = reversed([int(i) for i in f"{exp_bits_gen:b}"])
     exp = exp_init
     for bit in exp_bits_list:
         if not bit:
@@ -27,8 +28,8 @@ def float_rand(exp_bits: int, man_bits: int):
 
 
 if __name__ == "__main__":
-    from matplotlib import pyplot as plt
     import numpy as np
+    from matplotlib import pyplot as plt
 
     samples = [float_rand(5, 10) for _ in range(50000)]
     print(np.mean(samples), np.std(samples), np.min(samples), np.max(samples))

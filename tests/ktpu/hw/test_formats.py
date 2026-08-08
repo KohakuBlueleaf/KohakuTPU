@@ -9,7 +9,7 @@ indistinguishable from the format being bad.
 import numpy as np
 import pytest
 
-from kohakutpu import formats as F
+from ktpu.hw import formats as F
 
 # Published maxima. E4M3 is 448 because OCP reserves only S.1111.111 as NaN;
 # deriving it as "all-ones exponent reserved" gives 240 and is wrong.

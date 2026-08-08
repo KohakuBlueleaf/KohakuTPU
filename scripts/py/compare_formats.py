@@ -19,14 +19,16 @@ import argparse
 
 import numpy as np
 
-from kohakutpu import formats
+from ktpu.hw import formats
 
 
 def main():
     ap = argparse.ArgumentParser()
+    # M, K, N -- the driver's shape order, so --m --k --n reads the same way
+    # here as everywhere else.
     ap.add_argument("--m", type=int, default=16)
-    ap.add_argument("--n", type=int, default=16)
     ap.add_argument("--k", type=int, default=32)
+    ap.add_argument("--n", type=int, default=16)
     ap.add_argument("--seed", type=int, default=0xC0FFEE)
     ap.add_argument("--limit", type=int, default=24, help="elements to print")
     ap.add_argument("--all", action="store_true", help="print every element")
