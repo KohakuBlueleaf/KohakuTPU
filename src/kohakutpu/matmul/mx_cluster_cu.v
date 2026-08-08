@@ -7,10 +7,9 @@
 // Port 1 (acu)      result write-back.
 //
 // Two ports, not five. The chain eats eight 256-bit operand words per cycle and
-// a port delivers one, so feeding the TCUs directly from the NoC is an 8x
-// deficit no matter how many ports are spent on it. Reuse closes the gap
-// instead: a Gm x Gn sub-tile block needs 4(Gm+Gn)/(Gm*Gn) words per cycle,
-// which is 0.375 at 16x32. See docs/compute/tensor-isa.md s1.
+// a port delivers one, so no port count closes an 8x deficit -- REUSE does: a
+// Gm x Gn sub-tile block needs 4(Gm+Gn)/(Gm*Gn) words per cycle, 0.375 at
+// 16x32. See docs/compute/tensor-isa.md s1.
 //
 // Instruction, in the CU_INST payload:
 //
@@ -126,12 +125,9 @@ module mx_cluster_cu #(
         .inst_space(), .busy()
     );
 
-    // `n` is SIXTEEN bits. A 512-sub-tile resident tile means a DRAIN of 512,
-    // and the 8-bit field this used to have wrapped at 256 -- silently
-    // draining the beginning of the tile a second time, which reads as an
-    // accumulator fault. The fields below it moved down rather than being
-    // overlapped with gm/gn: "this field means something else for that opcode"
-    // is how a decode bug survives review.
+    // `n` is SIXTEEN bits: a 512-sub-tile resident tile means a DRAIN of 512,
+    // and an 8-bit field wraps at 256, silently re-draining the start of the
+    // tile. Fields below it moved down rather than being overlapped with gm/gn.
     wire [3:0]  i_op   = inst_flit[255 -: 4];
     wire [33:0] i_addr = inst_flit[251 -: 34];
     wire [15:0] i_n    = inst_flit[217 -: 16];
@@ -140,51 +136,35 @@ module mx_cluster_cu #(
     wire [7:0]  i_gn   = inst_flit[191 -: 8];
     wire [7:0]  i_nk   = inst_flit[183 -: 8];
     wire [7:0]  i_anch = inst_flit[175 -: 8];
-    // ACCUMULATE. Without it every GEMM starts its first K block with OP_LOAD,
-    // which overwrites the resident tile -- so an output tile could only ever
-    // be produced by ONE instruction, and a K longer than L1 could not be
-    // expressed. With it, K is split into chunks that chain into the same
-    // resident tile, which is what keeps the dataflow output-stationary: the
-    // tile is written to memory once, not once per chunk.
+    // ACCUMULATE. Without it every GEMM opens with OP_LOAD, overwriting the
+    // resident tile, so an output tile could only come from ONE instruction and
+    // a K longer than L1 could not be expressed. With it K splits into chunks
+    // chaining into the same tile, keeping the dataflow output-stationary.
     wire        i_acc  = inst_flit[200];
-    // SHARED FETCH. Every cluster sweeps the same rows of A -- the driver gives
-    // each its own N-slice and they all read one shared A image -- so at any
-    // moment the clusters are issuing byte-identical FILL A requests. Served
-    // separately that is one DRAM read and one run of the quantiser PER
-    // CONSUMER for a bit-identical result, and the quantiser is the one
-    // resource every cluster behind MAG contends for.
+    // SHARED FETCH. Every cluster sweeps the same rows of A, so at any moment
+    // they issue byte-identical FILL A requests; served separately that is one
+    // DRAM read and one quantiser pass PER CONSUMER for a bit-identical result.
     //
-    // `i_peer` lists the other clusters sharing THIS fill, as {y,x} node
-    // indices; `i_npeer` says how many are present. Up to three, so four
-    // destinations in total -- which is not an arbitrary cap: with eight
-    // clusters tiled 4x2 over the output, A is shared by the 2 in a row and B
-    // by the 4 in a column, so four covers the real case exactly and keeps the
-    // emitter a fixed mux rather than a walk over a variable table.
+    // `i_peer` lists the other clusters sharing THIS fill as {y,x} node indices,
+    // `i_npeer` how many are present. Four destinations total is not arbitrary:
+    // with eight clusters tiled 4x2 over the output, A is shared by the 2 in a
+    // row and B by the 4 in a column, so the emitter stays a fixed mux.
     wire [23:0] i_peer  = inst_flit[167 -: 24];
     wire [1:0]  i_npeer = inst_flit[143 -: 2];
-    // PRE-QUANTISED OPERAND. Set when this tensor was already converted on the
-    // way into memory, so the fetch is 4 words instead of 8 FP16 beats and no
-    // quantiser pass. It is a property of the OPERAND, carried by the
-    // instruction, which is what keeps memory free of an address map and the
-    // driver free of MXFP7 -- see docs/isa/memory.md s3.
+    // PRE-QUANTISED OPERAND: already converted on the way into memory, so the
+    // fetch is 4 words instead of 8 FP16 beats and no quantiser pass. A property
+    // of the OPERAND carried by the instruction, which keeps memory free of an
+    // address map -- see docs/isa/memory.md s3.
     wire        i_preq  = inst_flit[141];
     // L1 IS ADDRESSABLE, not one buffer per side. `eoff` says where a FILL
-    // lands; `aoff`/`boff` say where a sweep reads. Together they are what lets
-    // the driver fill one half while the other is being swept -- and what lets
-    // an operand that does not change between passes stay where it is instead
-    // of being fetched again. Both losses were measured: FILL was 22.3% of the
-    // machine's time with the array idle through all of it, and B was re-read
-    // once per m-tile for a quarter of all memory traffic.
+    // lands, `aoff`/`boff` where a sweep reads, so the driver can fill one half
+    // while the other is swept and leave an unchanged operand in place.
     wire [7:0]  i_eoff  = inst_flit[140 -: 8];
     wire [7:0]  i_aoff  = inst_flit[132 -: 8];
     wire [7:0]  i_boff  = inst_flit[124 -: 8];
-    // FUSED DRAIN. A sub-tile's last accumulation already computes its final
-    // value, so handing it out there costs nothing -- while a separate DRAIN
-    // reads all of them back through the same pipeline and needs one
-    // accumulator command per sub-tile, which a sweep has none spare of. That
-    // is why a drain could never overlap a sweep, and it was 24% of the run.
-    // With `emit` the results stream out during the sweep and `fuse` turns
-    // DRAIN into the barrier that waits for them.
+    // FUSED DRAIN. `emit` streams results out during the sweep; `fuse` turns
+    // DRAIN into the barrier that waits for them, instead of a second pass that
+    // needs one accumulator command per sub-tile the sweep has none spare of.
     wire        i_emit  = inst_flit[116];
     wire        i_fuse  = inst_flit[115];
 
@@ -218,18 +198,15 @@ module mx_cluster_cu #(
     // while the previous one's cascade is still draining.
     localparam [15:0] ACU_REUSE_MIN = 16'd5;
 
-    // DECODED ONCE, NOT RECOMPUTED EVERY CYCLE. Whether this GEMM is wide is a
-    // property of the instruction: `i_gm`/`i_gn` are latched into gm_r/gn_r at
-    // decode and hold for the whole sweep. Derived combinationally from those
-    // registers instead, it was an 8x8 fabric multiply feeding the state
-    // machine's own clock enable --
+    // DECODED ONCE, NOT RECOMPUTED EVERY CYCLE. Derived combinationally from
+    // gm_r/gn_r it is an 8x8 fabric multiply feeding the state machine's own
+    // clock enable:
     //
-    //   gn_r -> gm_r*gn_r -> >= REUSE_MIN -> st/CE     13 levels, 299.9 MHz
+    //   gn_r -> gm_r*gn_r -> >= REUSE_MIN -> st/CE     13 levels
     //
-    // and nothing needs the product, only whether it reaches 5. Both operands
-    // are at least 1, so `Gm*Gn < 5` is exactly the shapes (1,<=4), (<=4,1) and
-    // (2,2). Same expansion as mx_cluster_mgr's pacing, and the same reason.
-    // See docs/compute/accumulator.md s4.
+    // Nothing needs the product, only whether it reaches 5. Both operands are at
+    // least 1, so `Gm*Gn < 5` is exactly (1,<=4), (<=4,1) and (2,2) -- the same
+    // expansion as mx_cluster_mgr's pacing. See docs/compute/accumulator.md s4.
     wire [7:0] i_gm_w = (i_gm == 8'd0) ? 8'd1 : i_gm;
     wire [7:0] i_gn_w = (i_gn == 8'd0) ? 8'd1 : i_gn;
     wire       i_wide = !(((i_gm_w == 8'd1) && (i_gn_w <= 8'd4))
@@ -251,12 +228,9 @@ module mx_cluster_cu #(
     wire         drain_busy, drain_valid;
     wire [255:0] drain_data;
     wire [15:0]  drain_idx;
-    // `drain_valid` is now a LEVEL from the drain queue, not a one-cycle
-    // pulse, so the write port says when it has taken a sub-tile rather than
-    // being assumed to be ready the instant one appears. That is what lets the
-    // sequencer run ahead of the write port instead of in lockstep with it.
-    // No longer conditioned on the write port's state: collection runs into one
-    // bank while the other is on the wire.
+    // `drain_valid` is a LEVEL from the drain queue, not a pulse: the write port
+    // says when it has taken a sub-tile rather than being assumed ready the
+    // instant one appears, which lets the sequencer run ahead of it.
     wire         drain_take = drain_valid && !w_full;
 
     mx_cluster_node #(.TILES(TILES), .GA(GA), .GB(GB),
@@ -278,34 +252,22 @@ module mx_cluster_cu #(
                      S_GEMM = 4'd3, S_GWAIT = 4'd4,
                      S_DRAIN = 4'd5, S_DWAIT = 4'd6, S_DONE = 4'd7;
 
-    // There is no PREFETCH parameter any more, and the reason is worth keeping.
-    // It existed to let the CU keep several single-entry reads in flight, as a
-    // way of hiding a round trip the CU was paying once per entry. It could
-    // never work: responses were matched to requests by arrival order, so a
-    // second outstanding read had nowhere to be named -- not a depth that
-    // needed tuning, a field the protocol did not have.
-    //
-    // A descriptor removes the requester instead of pipelining it. One flit
-    // names the whole run and MAG streams it, so there is nothing left to run
-    // ahead. The receive FIFO still bounds how far MAG may run ahead of the
-    // receiver, but it does so as backpressure rather than as a constant this
-    // module has to guess.
+    // No PREFETCH parameter: a descriptor removes the requester rather than
+    // pipelining it. One flit names the whole run and MAG streams it, so there
+    // is nothing left to run ahead. The receive FIFO bounds how far MAG may run
+    // ahead of the receiver, as backpressure rather than as a guessed constant.
 
     reg [3:0]  st;
     reg [33:0] base_r;
-    // req_ent counts entries REQUESTED, rcv_ent entries COMPLETED. Their
-    // difference is the burst count in flight, which is all the requester
-    // needs; neither is an L1 address any more -- the flit carries that.
-    // `n_r` is 16 bits because DRAIN counts sub-tiles and the resident tile
-    // holds 512. FILL's own count still fits 8 bits (gn*nk = 128 at the
-    // largest tile), so the entry cursors stay narrow.
+    // req_ent counts entries REQUESTED, rcv_ent entries COMPLETED; neither is
+    // an L1 address, the flit carries that. `n_r` is 16 bits because DRAIN
+    // counts sub-tiles and the resident tile holds 512; FILL's own count fits 8
+    // (gn*nk = 128 at the largest tile), so the entry cursors stay narrow.
     reg [15:0] n_r;
     reg [7:0]  req_ent, rcv_ent;
-    // Which entry `l1_data` is currently accumulating. One assembly register
-    // is enough while a single MAG serves this CU, because MAG finishes an
-    // entry's four words before starting the next -- so the words of two
-    // entries never interleave. That is a property of the SERVER, not of this
-    // module, so it is asserted below rather than assumed.
+    // Which entry `l1_data` is accumulating. One register is enough only
+    // because a single MAG finishes an entry's four words before starting the
+    // next -- a property of the SERVER, asserted below rather than assumed.
     reg [7:0]  asm_ent;
     reg [15:0] nfill, ngemm, ndrain;
 
@@ -330,26 +292,18 @@ module mx_cluster_cu #(
     assign gemms_done  = ngemm;
     assign drains_done = ndrain;
 
-    // Software never sees MXFP7 either way: an operand is FP16 in memory and
-    // memory quantises it on the way out, or it was quantised on the way IN
-    // and memory streams it. `preq` says which, per FILL, so both operands of
-    // one GEMM may differ -- fixed weights pre-quantised, activations online.
+    // Software never sees MXFP7: an operand is FP16 in memory and memory
+    // quantises it on the way out, or it was quantised on the way IN and memory
+    // streams it. `preq` says which, per FILL, so both operands of one GEMM may
+    // differ. Either way an entry returns as 4 operand flits, and the entry size
+    // lives ONLY in MAG, the module that walks the addresses.
     //   flags[4] QUANT, flags[5] BLAYOUT, flags[6] STREAM
-    // Either way an entry returns as 4 operand flits. The entry size lives
-    // ONLY in MAG, which is the module that walks the addresses -- it used to
-    // be restated here as well, with nothing checking the two agreed.
 
-    // ONE FLIT FOR THE WHOLE RUN.
-    //
-    // The txn field carries the index of the FIRST entry -- `eoff` -- and MAG
-    // adds each entry's position in the run, so every response names the exact
-    // L1 slot it belongs to and the receiver needs no cursor and no offset of
-    // its own. txn was previously a constant 0x01 that nothing read.
-    //
-    // flags[6] STREAM says this is a descriptor rather than a single fetch,
-    // and `cnt` is how many consecutive entries it covers. `n` was already in
-    // the FILL instruction -- the CU used to spend a flit, a MAG queue slot
-    // and a full round trip re-stating it once per entry.
+    // ONE FLIT FOR THE WHOLE RUN. The txn field carries the index of the FIRST
+    // entry -- `eoff` -- and MAG adds each entry's position in the run, so every
+    // response names its exact L1 slot and the receiver needs no cursor of its
+    // own. flags[6] STREAM marks this a descriptor rather than a single fetch,
+    // and `cnt` is how many consecutive entries it covers.
     function [FLIT_WIDTH-1:0] rd_req;
         input [33:0] adr;
         input        blay;
@@ -390,14 +344,10 @@ module mx_cluster_cu #(
             l1_we       <= 1'b0;
             gemm_start  <= 1'b0;
             drain_start <= 1'b0;
-            // Accept a response only when there is somewhere to put it. This
-            // was unconditionally high, which pops the receive FIFO and
-            // DISCARDS anything arriving outside a FILL -- harmless only
-            // because MAG could not answer before the CU asked. It stops being
-            // harmless the moment a fetch is shared between clusters, where
-            // one CU's responses can arrive before the other has decoded its
-            // own FILL. Leaving them in the FIFO is what makes that wait
-            // instead of lose.
+            // Accept a response only when there is somewhere to put it. Held
+            // high it pops the receive FIFO and DISCARDS anything arriving
+            // outside a FILL, which matters as soon as a fetch is shared: one
+            // CU's responses can arrive before another has decoded its own FILL.
             recv_ready  <= (st == S_FILL);
 
             if (send_valid && send_ready) send_valid <= 1'b0;
@@ -424,23 +374,15 @@ module mx_cluster_cu #(
             end
 
             // ---- FILL: one descriptor, then pure reception ---------------
-            // The CU states the run once and then does nothing but place the
-            // words that come back. There is no requester on the critical loop
-            // any more, so the round trip is paid once per FILL rather than
-            // once per entry, and everything after the first entry arrives at
-            // MAG's service rate -- a throughput, not a latency.
-            //
-            // What it was before: 32 separate reads, each a full round trip
-            // the CU sat out. Measured at 512x512x512: 1,579,915 fill cycles
-            // per CU to move 262,144 beats -- 16.6% of the memory system's
-            // capability, the rest of it the CU holding still with one request
-            // outstanding. Fill was 73% of runtime.
+            // The CU states the run once and then only places the words that
+            // come back. No requester on the critical loop, so the round trip is
+            // paid once per FILL rather than once per entry and everything after
+            // the first entry arrives at MAG's service rate -- a throughput, not
+            // a latency.
             S_FILL: begin
-                // The descriptor goes out ONCE, and only from the leader of the
-                // sharing set. A follower sends nothing at all -- its operands
-                // are already on the way, produced by the one DRAM read and
-                // the one pass of the quantiser that the leader's descriptor
-                // caused. `req_ent` marks the decision made either way.
+                // The descriptor goes out ONCE, only from the leader of the
+                // sharing set. A follower sends nothing: its operands are
+                // already on the way. `req_ent` marks the decision either way.
                 if (!send_valid && (req_ent == 8'd0)) begin
                     if (lead) begin
                         send_flit  <= rd_req(base_r, l1_sel, !preq_r, eoff_r,
@@ -498,33 +440,22 @@ module mx_cluster_cu #(
             end
 
             // ---- GEMM -------------------------------------------------
-            // RETIRED ON ISSUE, not on completion. The sweep runs in the
-            // manager and needs nothing from this sequencer once started, so
-            // holding the instruction here only stops the CU from doing the
-            // one thing that would overlap with it -- filling the other half
-            // of L1. Measured: FILL was 22.3% of the machine's time and the
-            // array was idle through every cycle of it.
+            // RETIRED ON ISSUE, not on completion. The sweep runs in the manager
+            // and needs nothing from this sequencer once started, so holding the
+            // instruction here only stops the CU from filling the other half of
+            // L1 -- which is why L1 has to be addressable, or the fill would
+            // land on what the sweep is reading.
             //
-            // What still serialises is stated where it belongs: the NEXT sweep
-            // waits here for the previous one, and a DRAIN waits before taking
-            // the accumulator's control mux. A FILL does not wait, which is the
-            // whole point -- and which is why L1 has to be addressable, or the
-            // fill would land on top of what the sweep is reading.
-            // BACK TO BACK SWEEPS. The next sweep waits for the MANAGER, not
-            // for the cascade behind it: sweep i+1's first command addresses
-            // tile 0, and sweep i last touched tile 0 `gm*gn` cycles before it
-            // stopped issuing, so the accumulator's REUSE_MIN of 5 is cleared
-            // by a factor of a hundred. Waiting for `gemm_busy` instead paid
-            // the ~19-cycle cascade plus the settling tail once per GEMM --
-            // 3,455 cycles per cluster at the 256-cube.
-            //
-            // Guarded on `gm*gn >= REUSE_MIN`, which is the same condition the
-            // manager's own pacing uses. Below it an address DOES recur inside
-            // the reuse window and the conservative wait is the correct one.
+            // BACK TO BACK SWEEPS wait for the MANAGER, not for the cascade
+            // behind it: sweep i+1's first command addresses tile 0, and sweep i
+            // last touched tile 0 `gm*gn` cycles before it stopped issuing, so
+            // REUSE_MIN is cleared by a wide margin. Guarded on
+            // `gm*gn >= REUSE_MIN` -- below that an address DOES recur inside
+            // the window and the conservative `gemm_busy` wait is correct.
             //
             // An EMITTING sweep also waits for the previous tile's results to
-            // have left, because it is what sets `w_base` -- starting it early
-            // would redirect writes that are still in the buffer.
+            // have left, because it sets `w_base`: starting early would redirect
+            // writes still sitting in the buffer.
             S_GEMM: if (!(gemm_wide ? sweep_busy : gemm_busy) &&
                         (!emit_r || !drain_busy)) begin
                 gemm_start <= 1'b1;
@@ -538,27 +469,21 @@ module mx_cluster_cu #(
             // ---- DRAIN -------------------------------------------------
             // `drain_busy` seizes the accumulator's control mux the cycle it
             // rises, so a sweep still in flight would have its results
-            // discarded. That wait used to be implicit in GEMM blocking.
-            // A FUSED drain issues nothing: the sub-tiles came out of the
-            // sweep and are already on their way. It waits for the last of
-            // them to leave the CU, which is what the barrier is for -- and
-            // unlike the issuing form it does NOT wait for `gemm_busy`, so
-            // the results of one tile can still be draining while the next
-            // tile's sweep runs.
+            // discarded. A FUSED drain issues nothing -- the sub-tiles came out
+            // of the sweep -- and does NOT wait for `gemm_busy`, so one tile's
+            // results can drain while the next tile's sweep runs.
             S_DRAIN: if (fuse_r || !gemm_busy) begin
                 drain_n     <= n_r;
                 drain_start <= 1'b1;
                 st <= S_DWAIT;
             end
-            // A DRAIN is not finished when the accumulator stops producing --
-            // it is finished when the last sub-tile's write has LEFT the CU.
-            // `drain_busy` falls as soon as the final value is handed to the
-            // write-back port, while that port still has a REQ/DATA pair to
-            // send. Retiring there makes the instruction's completion signal,
-            // and therefore the round's DONE, run ahead of the memory traffic
-            // it stands for. Benign only while no later round reads what an
-            // earlier one wrote; a K-split reduction (task #12) does exactly
-            // that, and a host reading C back promptly can too.
+            // A DRAIN is finished when the last sub-tile's write has LEFT the
+            // CU, not when the accumulator stops producing: `drain_busy` falls
+            // as soon as the final value reaches the write-back port, which
+            // still has a REQ/DATA pair to send. Retiring there runs the round's
+            // DONE ahead of the memory traffic it stands for -- benign only
+            // while no later round reads what an earlier one wrote, which a
+            // K-split reduction (task #12) does.
             S_DWAIT: if (!drain_start && !drain_busy && w_idle) begin
                 ndrain <= ndrain + 16'd1;
                 st <= S_DONE;
@@ -577,31 +502,23 @@ module mx_cluster_cu #(
     // ================================================ port 1: result write-back
     // The accumulator's own port. Each drained sub-tile is one 256-bit word:
     // a two-flit MEM_WR_REQ, descriptor then data.
-    // A DRAIN'S SUB-TILES ARE ONE BURST. They go to `addr + t*32`, consecutive
-    // 256-bit words, so sending each as its own descriptor+data pair with its
-    // own AXI transaction is the same defect the fetch path had: an
-    // instruction naming a bulk operation executed as individually
-    // acknowledged singles.
+    // A DRAIN'S SUB-TILES ARE ONE BURST: they go to `addr + t*32`, consecutive
+    // 256-bit words. This is what bounds the drain -- MAG retires one
+    // single-beat write per visit to S_IDLE (~4 cycles, of which axi_ram is 3)
+    // while two clusters can produce a pair per cycle between them, so
+    // pipelining the drain alone only wedges MAG's input queue. Amortising one
+    // transaction over WBURST beats is what makes the rate achievable.
     //
-    // It is also the thing that bounds the drain. MAG retires one single-beat
-    // write per visit to S_IDLE -- ~4 cycles, of which axi_ram is 3 -- while
-    // two clusters can produce a pair per cycle between them. No drain fast
-    // enough to help fits through that, so pipelining the drain alone just
-    // wedges MAG's input queue. Amortising one transaction over WBURST beats
-    // is what makes the rate achievable rather than merely desirable.
-    //
-    // WBURST = 1 reduces EXACTLY to the previous behaviour (len = 0, one beat
-    // per descriptor), which is what makes this safe to turn down.
+    // WBURST = 1 reduces EXACTLY to one beat per descriptor (len = 0), which is
+    // what makes this safe to turn down.
     localparam integer WBURST = 8;
     localparam integer WBW    = (WBURST <= 1) ? 1 : $clog2(WBURST);
 
-    // TWO BANKS. A burst is collected into one while the other is being sent,
-    // because the two take almost exactly as long as each other -- 8 sub-tiles
-    // in and 9 flits out -- and running them in sequence made every burst cost
-    // the sum instead of the larger. The sweep pays that: 512 sub-tiles arrive
-    // in 512 consecutive cycles at the end of a pass, `emit_stall` holds the
-    // array once DQ_LIMIT of them are outstanding, and they left at 8 per 17
-    // cycles.
+    // TWO BANKS. A burst is collected into one while the other is sent, because
+    // the two take almost exactly as long -- 8 sub-tiles in, 9 flits out -- so
+    // in sequence every burst costs the sum instead of the larger. The sweep
+    // pays that: 512 sub-tiles arrive in 512 consecutive cycles at the end of a
+    // pass and `emit_stall` holds the array once DQ_LIMIT are outstanding.
     reg [FLIT_WIDTH-1:0] w_flit;
     reg [255:0]          w_buf [0:2*WBURST-1];
     reg                  w_cb, w_sb;   // bank being collected into / sent from
@@ -627,10 +544,8 @@ module mx_cluster_cu #(
     assign w_full = (w_fill == WBURST[WBW:0]);
     // The output register is free when it is empty OR is being emptied THIS
     // cycle. Reloading only once it reads empty costs a cycle per flit, and a
-    // drain is nothing but flits: 512 sub-tiles leave as 64 bursts of 9, so
-    // half the write port's time went to waiting for its own register. The
-    // sweep pays for that directly -- `emit_stall` holds it once DQ_LIMIT
-    // sub-tiles are outstanding, and they drain at half rate.
+    // drain is nothing but flits -- half the write port's time goes to waiting
+    // for its own register, and the sweep pays for it through `emit_stall`.
     wire w_free = !w_valid || !a_out_busy;
     // The write port is idle only when nothing is buffered AND nothing is on
     // the wire. A DRAIN that retires while a burst is still buffered reports
@@ -704,25 +619,21 @@ module mx_cluster_cu #(
     assign a_in_busy   = 1'b0;       // acknowledgements are discarded
 
 `ifndef SYNTHESIS
-    // An x in a memory address is invisible downstream and fatal. Memory
-    // returns x, the quantiser packs x into operand flits, the accumulator
-    // sums x, and the drained tile is a plausible-looking zero -- so the
-    // symptom is "the compute is wrong", pointing at the datapath, several
-    // modules away from the one-line cause.
-    //
-    // Address arithmetic is where it comes from: an out-of-range part-select
-    // or an unsized constant widened past 32 bits. Both elaborate cleanly.
-    // Checked at the producer, so the message names the module that built it.
+    // An x in a memory address is invisible downstream and fatal: memory returns
+    // x, the quantiser packs it, the accumulator sums it, and the drained tile
+    // is a plausible-looking zero -- so the symptom points at the datapath.
+    // It comes from address arithmetic (an out-of-range part-select, an unsized
+    // constant widened past 32 bits), both of which elaborate cleanly. Checked
+    // at the producer so the message names the module that built it.
     always @(posedge clk) begin
         if (resetn && send_valid && (^send_flit[255 -: 34] === 1'bx))
             $display("%0t ERROR mx_cluster_cu: read request address is x", $time);
         if (resetn && w_valid && (w_st == 2'd2) && (^w_flit[255 -: 34] === 1'bx))
             $display("%0t ERROR mx_cluster_cu: write request address is x", $time);
-        // There is ONE assembly register, which is only sufficient because a
-        // single MAG delivers an entry's four words consecutively. Say so
-        // loudly rather than letting a second server -- multicast, a second
-        // MAG, a reordering fetch engine -- interleave two entries into one
-        // and produce a plausible wrong tile several modules downstream.
+        // ONE assembly register, sufficient only because a single MAG delivers
+        // an entry's four words consecutively. A second server -- multicast, a
+        // second MAG, a reordering fetch engine -- would interleave two entries
+        // into one and produce a plausible wrong tile.
         if (resetn && (st == S_FILL) && recv_valid && recv_ready &&
             (rtype == T_MEM_RD_RESP) && (rword != 2'd0) && (rtag !== asm_ent))
             $display("%0t ERROR mx_cluster_cu: response for entry %0d word %0d arrived while assembling entry %0d",

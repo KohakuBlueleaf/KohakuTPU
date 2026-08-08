@@ -1,29 +1,21 @@
 // Main orchestrator: an AXI4 SLAVE so the host can load a control program, and
 // an AXI4 MASTER so it can execute one.
 //
-// It is no longer a NoC node. Its reach into the mesh is an AXI write into a
-// MAG control window, which the MAG turns into a flit -- so the same mechanism
-// serves dispatch, TLB programming and debug injection, and there is no private
-// control fabric. See docs/arch-design.md s6.4.
+// NOT a NoC node: its reach into the mesh is an AXI write into a MAG control
+// window, which MAG turns into a flit, so dispatch, TLB programming and debug
+// injection share one mechanism. See docs/arch-design.md s6.4.
 //
-// THE DRIVER-SIDE INSTRUCTION SET
-//
-// The host writes a list of commands, then writes GO. Three opcodes are enough
-// to express every control sequence the machine needs:
+// THE DRIVER-SIDE INSTRUCTION SET. The host writes a list of commands, then
+// writes GO:
 //
 //   WR    addr, data          issue an AXI write
 //   POLL  addr, mask, want    read addr until (data & mask) == want
 //   DONE  code                stop, latch code, raise the done flag
 //
-// That is deliberately not a rich ISA. Everything interesting -- staging a CU
-// program, dispatching it, waiting for completion -- is already expressible as
-// writes and a poll, because the machine's whole control surface is
-// memory-mapped. Adding branches or arithmetic here would duplicate the host.
-//
-// The value is that a whole run becomes ONE host transaction: load commands,
-// write GO, wait for an interrupt. The host is not in the loop for each poll,
-// which is what makes the same program work over JTAG (slow, high latency) and
-// over PCIe without rewriting the driver.
+// Three opcodes are enough because the machine's whole control surface is
+// memory-mapped; branches or arithmetic here would duplicate the host. The
+// value is that a run becomes ONE host transaction, so the host is not in the
+// loop per poll and the same program works over JTAG and over PCIe.
 
 `default_nettype none
 

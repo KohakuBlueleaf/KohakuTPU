@@ -226,9 +226,13 @@ use.
 The predictions below were made before any of it was built. Recording where
 they held and where they did not is the point of keeping them.
 
+**Shapes in this document are `M x K x N`**, as in the driver and in
+[`perf.md`](perf.md). Strings recorded before that convention have been
+converted; the numbers are the ones measured and only the labels moved.
+
 **256³, 2 clusters, 300 MHz: 42.0 → 538.3 GFLOP/s pre-quantised, 87.6% of the
 1024 MAC/cycle peak.** 12.8x, and eight clusters reach 1,856 GFLOP/s at 75.5%
-on `512x1024x256`. The rates assume 300 MHz, and the modules that gate it now
+on `512x256x1024`. The rates assume 300 MHz, and the modules that gate it now
 measure above it out of context: `mx_cluster_cu` **325.6 MHz** (WNS +0.155 ns at
 a 310 MHz target), `mx_quant` 400.6, `mag_mem_port` 330.0. Those are unplaced,
 so they are upper bounds rather than sign-off. **Both GFLOP/s figures predate
@@ -298,9 +302,10 @@ directions are separate wires, so these are independent budgets and the largest
 one binds):
 
 ```
+                    shapes M x K x N
 2 CU 256³           flops 87.6%  mem_rd 30.3%  mem_wr 20.2%  noc_in 22.8%  noc_out 32.8%
-8 CU 256x1024x256   flops 67.9%  mem_rd 25.5%  mem_wr 17.0%  noc_in 19.2%  noc_out 27.6%
-8 CU 512x1024x256   flops 75.5%  mem_rd 23.6%  mem_wr 18.9%  noc_in 21.3%  noc_out 26.0%
+8 CU 256x256x1024   flops 67.9%  mem_rd 25.5%  mem_wr 17.0%  noc_in 19.2%  noc_out 27.6%
+8 CU 512x256x1024   flops 75.5%  mem_rd 23.6%  mem_wr 18.9%  noc_in 21.3%  noc_out 26.0%
 ```
 
 > **These were measured before the mesh layout change** — clusters were still a
@@ -371,6 +376,46 @@ starves clusters and K-split is the only way to use them. It costs a reduction
 tree across the mesh and an extra pass over C, so it is strictly worse whenever
 N is adequate.
 
+**REVIVED, for a reason that is not occupancy.** The shelving argument above is
+about *filling clusters*, and it survives — but only just, and the correction is
+worth making because an earlier draft of this paragraph overstated it. At
+`Gm=16, Gn=32` the output block is `64 × 128`, so a `256 × 1024 × 256` GEMM
+(M × K × N) has `4 × 2 = **8** output tiles`, not the 128 first claimed —
+`Gm`/`Gn` count 4-element sub-tiles, not elements.
+
+Eight tiles across eight clusters is *exactly* saturated: enough to fill them,
+with no slack for imbalance and nothing left over. So the N-only split was still
+the proximate defect, and a 2D grid still fixes it — but this shape was never
+going to be comfortable, and a third grid dimension has more value here than
+"purely a dispatch bug" suggested. The new argument is **range**.
+
+A dot product over biased operands — every post-ReLU activation — grows
+**linearly in K**, and FP16 saturates at 65,504, so `K = 2048` overflows once
+`mu_a * mu_b > 32`. The accumulator is not the problem: `S1E7M16` reaches ~2^64
+and holds the value intact. `mx_fpacc_to_fp16` destroys it on `EMIT`.
+
+Splitting K does not change the final value, so it does not fix the range by
+itself. What it changes is **where the last additions happen**: each cluster
+emits its partial in the 24-bit accumulator float, and the vector core sums the
+partials in E8M15, whose range is FP32's. One conversion, at the end, instead of
+one per cluster.
+
+So J3's revival condition now reads: *revive when the output grid is too small
+to divide, **or** when K is deep enough that the result does not fit the output
+format* — and the second half arrives much sooner than the first. The blocker
+was never the split; it was not having anywhere to do the final reduction.
+
+> **The first half of that condition has moved, and it is now much rarer.**
+> Dispatch is on the 2D grid `m_tiles x n_tiles`, not on N alone, so what has to
+> be too small is the whole output grid rather than one dimension of it: a
+> tall-skinny GEMM at `Gm=16, Gn=32` supplies `M/64` tiles per column band
+> before N is consulted at all. Only a shape that is small in **both** M and N
+> and deep in K starves clusters now, and that is precisely the shape §11's
+> range argument is about — which is why range, not occupancy, is the live
+> reason.
+[`compute/vector-core.md`](compute/vector-core.md) §11 has the arithmetic and
+the cost (under 5% at S=4).
+
 ### J4. Loop opcodes and address offsets in the orchestrator ISA
 
 **Folded into the dispatch work rather than pursued separately.** The driver
@@ -380,9 +425,9 @@ because dispatch *is* now the multi-cluster limiter — but the measurement says
 the cost is in **delivery order**, not program size:
 
 ```
-8 CU, excess over the compute floor
-  256x1024x256    4 passes/cluster    7,731 cycles
-  512x1024x256    8 passes/cluster   10,614 cycles     ~4,850 fixed + ~720/pass
+8 CU, excess over the compute floor          shapes M x K x N
+  256x256x1024    4 passes/cluster    7,731 cycles
+  512x256x1024    8 passes/cluster   10,614 cycles     ~4,850 fixed + ~720/pass
   2 CU, 16 passes/cluster              7,148 cycles     ~140/pass
 ```
 
@@ -401,7 +446,7 @@ win.** See the dispatch task.
 > which is upstream of the link and unaffected by widening it.
 >
 > **Measured, and it confirms that reading.** 2 CU is identical at 18,701 cycles;
-> 8 CU `512x1024x256` went 43,382 → **43,315**, i.e. 67 cycles of a 10,614-cycle
+> 8 CU `512x256x1024` went 43,382 → **43,315**, i.e. 67 cycles of a 10,614-cycle
 > excess. Dispatch paths got shorter — an agent flit no longer crosses the mesh
 > from the east edge — but **0.6% of the excess is not the excess**, and the
 > per-pass cost above is still what it was. The cursor is the work.

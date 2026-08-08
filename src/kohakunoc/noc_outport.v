@@ -1,22 +1,17 @@
 // Output port: round-robin arbitration across the five input ports' head flits,
 // and the register that drives the outbound link.
 //
-// The input ports present their heads from a REGISTER, one flit each, with the
-// output direction already computed (noc_inport.v). So the only combinational
-// path into port_out is arbitration plus the 5:1 mux -- FIFO read and route
-// computation happened a cycle earlier. Driving the arbiter straight from the
-// FIFO output instead saves ~1.5k flip-flops per router and measured 347 MHz
-// against a 300 MHz target, which is not slack that survives placement.
+// The input ports present their heads from a REGISTER with the output direction
+// already computed (noc_inport.v), so the only combinational path into port_out
+// is arbitration plus the 5:1 mux. Driving the arbiter from the FIFO output
+// instead saves flops but does not clear 300 MHz with placement-proof slack.
 //
 // The link is a busy/valid pair WITH RETRY: a flit stays asserted until a cycle
 // in which the receiver is not busy, and grants are withheld while it waits.
-//
-// It did not used to retry -- `busy` cleared out_valid and the flit was simply
-// gone. That is only safe if every receiver accepts unconditionally, and none
-// of them do: each one refuses while its own busy is high, so a flit committed
-// against busy at T and presented at T+1 into a receiver that raised busy at
-// T+1 was destroyed. Silent, and invisible below four clusters because nothing
-// filled. See docs/noc/spec.md s2.1.
+// Clearing out_valid on `busy` instead destroys the flit -- every receiver
+// refuses while its own busy is high, so one committed against busy at T and
+// presented at T+1 into a receiver busy at T+1 is gone, silently, and invisibly
+// below four clusters because nothing fills. See docs/noc/spec.md s2.1.
 
 module OutPortSwitch #(
     parameter DATA_WIDTH = 288

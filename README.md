@@ -93,10 +93,10 @@ express anyway.
 Software never sees a quantised value. It uploads FP16, `mx_quant.v` converts on
 the way out of the memory gateway, and results come back FP16 — so the machine
 as a whole is **AMP FP16 with an MXFP7 multiply and an FP22 accumulator**, and
-the throughput unit is FLOPS rather than IOPS. `driver/src/kohakutpu/mxfp7.py`
+the throughput unit is FLOPS rather than IOPS. `src/ktpu/hw/mxfp7.py`
 is a *model* of the hardware, used to predict what it will produce so tests can
 check it; MXFP8 and the other OCP formats survive only in
-`driver/src/kohakutpu/formats.py` as comparison baselines.
+`src/ktpu/hw/formats.py` as comparison baselines.
 
 Details: [`docs/compute/matmul.md`](docs/compute/matmul.md) §3 and
 [`docs/isa/memory.md`](docs/isa/memory.md) §6.
@@ -163,7 +163,7 @@ See [`docs/noc/spec.md`](docs/noc/spec.md).
    python scripts/py/check.py unit     ~70 s    + the benches that catch most
    python scripts/py/check.py full     ~6 min   everything
 
-   python driver/run_matmul.py --m 64 --n 64 --k 128
+   python scripts/py/run_matmul.py --m 64 --n 64 --k 128
 ```
 
 Simulation is Vivado `xsim` — the mesh instantiates `xpm_fifo_sync`, which needs
@@ -175,15 +175,30 @@ attributable to one or the other. See
 ## Layout
 
 ```
-   src/kohakunoc/    mesh, routers, CU framework, dispatch agent
-   src/kohakutpu/    compute: matmul datapath, accumulator, cluster
-   src/kohakumas/    memory access gateway, quantiser
-   src/kohakuaxi/    AXI4 slave/master, main orchestrator, crossbar
-   src/common/       sync_fifo, kohaku_sdpram
-   driver/           the Python driver: tiling, control programs, models
-   tests/            benches, one per subsystem
+   src/kohakunoc/    mesh, routers, CU framework, dispatch agent      VERILOG
+   src/kohakutpu/    compute: matmul datapath, accumulator, cluster   VERILOG
+   src/kohakumas/    memory access gateway, quantiser                 VERILOG
+   src/kohakuaxi/    AXI4 slave/master, main orchestrator, crossbar   VERILOG
+   src/common/       sync_fifo, kohaku_sdpram                         VERILOG
+
+   src/ktpu/         the compiler and runtime                         PYTHON
+     ir/             three IR levels: graph, schedule, program
+     passes/         level 1 -> 2: tiling, fusion, epilogue folding
+     codegen/        level 2 -> 3, then 3 -> machine code, plus cost
+     interp/         simulators: level-1 reference, level-3 mesh
+     dsl/            the Python tracer
+     hw/             RTL-facing: formats, MXFP7, device map, xsim session
+     viz/            the visualiser page, served by scripts/py/server.py
+
+   examples/         00..06, each runnable and self-checking
+   tests/            Verilog benches per subsystem, plus tests/ktpu
+   scripts/py/       check.py, xsim.py, server.py, repl.py and friends
    docs/             design intent and measured results
 ```
+
+`src/kohakutpu/` is VERILOG and `src/ktpu/` is PYTHON. The names are close and
+the distinction matters when reading a path in a comment: `src/kohakutpu/vector/
+vec_alu.v` is hardware, `src/ktpu/hw/formats.py` is the model of it.
 
 ## License
 

@@ -7,7 +7,7 @@ Source: [`src/kohakunoc/noc_orchestrator.v`](../../src/kohakunoc/noc_orchestrato
 (the agent itself), [`src/kohakumas/mag.v`](../../src/kohakumas/mag.v) (which
 instantiates it, wires the control AXI window to it, and shares its NoC ports
 with it),
-[`driver/src/kohakutpu/device.py`](../../driver/src/kohakutpu/device.py).
+[`src/ktpu/hw/device.py`](../../src/ktpu/hw/device.py).
 
 ---
 

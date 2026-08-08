@@ -47,6 +47,8 @@ below, which is why there are five rather than one.
 - [Memory protocol](isa/memory.md) — CU ↔ MAG: read, write, and the quantiser
 - [The driver-side contract](isa/kernel.md) — how a GEMM of arbitrary size
   becomes passes and rounds, and why operands are stored tile-major
+- [Vector ISA](isa/vector.md) — **design**: agent → vector core, and the first
+  instruction set in the machine that can branch
 
 ## [Compute](compute/README.md) — `src/kohakutpu/`
 
@@ -55,6 +57,12 @@ below, which is why there are five rather than one.
 - [Matmul circuit](compute/matmul-circuit.md) — DSP48E2 packing and cascade
 - [Matmul implementation](compute/matmul-impl.md) — built, verified, measured
 - [Accumulator](compute/accumulator.md) — precision and cost vs mantissa width, and the 85 → 312 MHz timing history
+- [Vector core](compute/vector-core.md) — the **ALU is built**: E8M15, 3 DSP,
+  324.8 MHz, correctly-rounded FMA and full-rate exp2/log2/inv/rsqrt. The core,
+  register file, L1 and split-K epilogue around it are design
+- [Vector bring-up](compute/vector-bringup.md) — **design**: 4 cores, 4 MAG
+  ports, no matmul in the machine at all, and the driver / codegen / cost model
+  that gets one running before the core RTL exists
 - [Arithmetic](compute/arithmetic.md) — FP8/FP16/FP24 constructions, division, log, exp
 - [DSP usage](compute/dsp.md) — DSP48E2 modes, pipelining, operand packing
 - [Costs](compute/costs.md) — measured resource cost and throughput, for the **superseded** FP8→FP12 units

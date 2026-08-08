@@ -150,12 +150,10 @@ module mx_matmul_cu #(
                      S_WREQ  = 4'd9,  S_WDAT  = 4'd10, S_EGAP = 4'd12;
 
     // The accumulator is single-bank: consecutive commands to the SAME tile
-    // address must be at least its reuse distance apart, because a pipelined
-    // read-modify-write cannot serve back-to-back hits on one address. This CU
-    // sweeps K on the inside and then emits the same tile immediately, so it
-    // has to wait. Costs 8 cycles once per emitted tile, against a whole block
-    // of compute -- and it is the price of the accumulator having no banks.
-    // See mx_acu_fp.v; the ISA avoids this entirely by sweeping K outermost.
+    // address must be at least its reuse distance apart. This CU sweeps K on the
+    // inside and emits the same tile immediately, so it has to wait -- 8 cycles
+    // once per emitted tile. See mx_acu_fp.v; the ISA avoids this by sweeping K
+    // outermost.
     localparam [3:0] EMIT_GAP = 4'd8;
 
     reg [3:0]  egap;
@@ -225,13 +223,11 @@ module mx_matmul_cu #(
                 st <= S_RCVA;
             end
             S_RCVA: if (recv_valid && recv_ready && rtype == T_MEM_RD_RESP) begin
-                // Unrolled over the flit index instead of indexing with it.
-                // `a_buf[(... + {fl,3'd0} + ...)*7 +: 7] <=` is a variable
-                // part-select write: it tells synthesis that any of the 896
-                // bits might come from any position, so it builds a barrel mux
-                // across the whole buffer. Each bit is in fact written by
-                // exactly one value of fl, so unrolling leaves every bit with
-                // one fixed source and a plain enable -- no data mux at all.
+                // Unrolled over the flit index, not indexed by it: a variable
+                // part-select write tells synthesis any of the 896 bits might
+                // come from any position, so it builds a barrel mux across the
+                // whole buffer. Each bit is written by exactly one value of fl,
+                // so unrolling leaves one fixed source and a plain enable.
                 for (f = 0; f < 4; f = f + 1)
                     if (fl == f[2:0])
                         for (i = 0; i < 4; i = i + 1)

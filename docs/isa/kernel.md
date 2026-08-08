@@ -2,10 +2,10 @@
 
 How a GEMM of arbitrary size becomes instructions the machine can hold.
 
-Source: [`driver/src/kohakutpu/kernel.py`](../../driver/src/kohakutpu/kernel.py),
-[`bench.py`](../../driver/src/kohakutpu/bench.py),
-[`device.py`](../../driver/src/kohakutpu/device.py),
-[`tensor.py`](../../driver/src/kohakutpu/tensor.py).
+Source: [`src/ktpu/hw/kernel.py`](../../src/ktpu/hw/kernel.py),
+[`bench.py`](../../src/ktpu/hw/bench.py),
+[`device.py`](../../src/ktpu/hw/device.py),
+[`tensor.py`](../../src/ktpu/hw/tensor.py).
 
 This is the layer above the ISA. Nothing here is hardware; all of it is what the
 hardware's limits force software to do.

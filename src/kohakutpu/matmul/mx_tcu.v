@@ -20,9 +20,8 @@
 // 8 chains x 8 DSP = 64 DSP, 128 MACs/cycle, one 4x8x4 tile per cycle.
 //
 // A cascade adds one pipeline stage per DSP, so stage k's operands must arrive
-// k cycles after stage 0's. That skew is held in shift registers here (SRL32 in
-// hardware -- one LUT per bit at any depth up to 32, versus a register chain
-// which would cost 8x the flip-flops).
+// k cycles after stage 0's. The skew is held in shift registers, which map to
+// SRL32: one LUT per bit at any depth up to 32.
 //
 // Latency: operands at t -> part_out at t + 11.
 //   stage k operands at t+k, its P at t+k+4, so stage 7 completes at t+11.

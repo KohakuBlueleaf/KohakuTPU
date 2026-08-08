@@ -13,55 +13,31 @@
 //   stage 5   round, assemble, write back                    <- writes the tile
 //   stage 6   (EMIT only) convert to FP16
 //
-// Depth is not the constraint -- throughput is. Every stage outside the
-// accumulate loop is a pure feed and can be split freely. Only the loop itself
-// (stage 3 read -> stage 5 write) costs anything to lengthen, and what it costs
-// is banks.
-//
-// ONE BANK, AND THE LOOP ORDER IS WHY.
-//
-// A pipelined adder cannot close a single-cycle accumulate loop: the result of
-// cycle N is not available to cycle N+1. When K was the INNER loop that was the
-// common case -- a stream of back-to-back accumulations into one address -- and
-// it forced three rotating banks plus a fold on EMIT to put them back together.
-//
-// The ISA now sweeps K OUTERMOST (docs/compute/tensor-isa.md s5.1):
-//
-//     for kb:  for g:  for h:      <- an address recurs every Gm*Gn cycles
-//
-// which is 64 at the smallest useful tiling and 512 at the balanced one. There
-// is no tight recurrence left, so the loop can be pipelined as deeply as the
-// memory wants and ONE bank suffices. That removes the banks, the fold, the
-// zero mask, and three quarters of the tile memory.
-//
-// What replaces them is a CONTRACT: consecutive commands to the same tile
-// address must be at least REUSE_MIN cycles apart. It is checked in simulation
-// rather than left implicit, so a caller that sweeps K on the inside fails
-// loudly instead of quietly accumulating into stale data.
+// Depth is not the constraint -- throughput is. Only the accumulate loop
+// (stage 3 read -> stage 5 write) costs anything to lengthen, and the price is
+// banks. It runs on ONE bank because the ISA sweeps K OUTERMOST, which replaces
+// the structure with a CONTRACT: consecutive commands to the same tile address
+// must be at least REUSE_MIN cycles apart. See stage 3 below.
 //
 // ACC_MW sets the mantissa: 16 is FP24, 14 is FP22, 12 is FP20. E7 is fixed;
-// range is not the tunable. See docs/compute/accumulator.md -- MW=14 measures
-// identically to MW=16 and costs less, and is the default.
+// range is not the tunable. MW=14 measures identically to MW=16 and costs less,
+// so it is the default -- see docs/compute/accumulator.md.
 //
-// TIMING: this block still sets the CU's critical path, and the CU now closes
-// at 325.6 MHz out of context -- WNS +0.155 ns against a 310 MHz target,
-// unplaced, so an upper bound. The binding path is stage 1 -> stage 2a,
-// val_r -> b_sig, at 9 logic levels. Four rules keep it there, and breaking any
-// of them has cost 20-60 MHz:
+// TIMING: this block sets the CU's critical path, binding on stage 1 -> stage
+// 2a (val_r -> b_sig) at 9 logic levels. Four rules keep it there, and breaking
+// any of them has cost 20-60 MHz:
 //
 //   1. The magnitude is taken BEFORE the multiply, in the DSP. Taking it after
-//      put a 30-bit two's-complement carry chain between the DSP's output
-//      register and the leading-one search: 0.952 ns of a 3.401 ns path.
+//      puts a 30-bit two's-complement carry chain between the DSP's output
+//      register and the leading-one search.
 //   2. Nothing combinational in front of the tile address. Every select that
 //      steers stage 3 is registered a stage early (a_sel, b_sel, addr_r2).
 //   3. One mux level on the operands, not a chain of ternaries.
 //   4. Zero-ness travels as one control bit per operand, never as a mask on
 //      the 384-bit data.
 //
-// The same applies to the primitives in mx_fpacc.v: the leading-one search and
-// the sticky bits must stay tree-shaped. Written as loops that carry a flag
-// they became 25-deep LUT chains inside a single stage, which no amount of
-// pipelining around the outside can fix.
+// The leading-one search and the sticky bits in mx_fpacc.v must stay
+// tree-shaped for the same reason.
 
 `default_nettype none
 
@@ -113,21 +89,12 @@ module mx_acu_fp #(
                      OP_SEND     = 3'd4,
                      OP_EMIT     = 3'd5,
                      OP_FWD      = 3'd6,
-                     // ADD AND HAND THE RESULT OUT, in one command.
-                     //
-                     // A sub-tile's last accumulation already computes its
-                     // finished value at stage 5; a separate OP_EMIT reads the
-                     // same address back and passes it through the same
-                     // pipeline to recover it. That second pass is what a DRAIN
-                     // is, and it costs a command slot per sub-tile -- which
-                     // the sweep has none of, because it issues one command
-                     // every cycle. So a drain could never overlap a sweep and
-                     // was measured at 24% of the machine's time.
-                     //
-                     // Fused, the emit is free: same command, same cycle, no
-                     // re-read. What it needs instead is somewhere to put the
-                     // results, which is a queue and a backpressure signal
-                     // rather than a stage of the run.
+                     // ADD AND HAND THE RESULT OUT, in one command. A sub-tile's
+                     // last accumulation already computes its finished value at
+                     // stage 5, so a separate OP_EMIT would re-read the address
+                     // and spend a command slot the sweep does not have. Fused,
+                     // the emit needs a queue and backpressure instead of a
+                     // drain phase.
                      OP_ADD_EMIT = 3'd7;
 
     localparam [1:0] OUT_NONE = 2'd0, OUT_EMIT = 2'd1, OUT_SEND = 2'd2;
@@ -162,10 +129,9 @@ module mx_acu_fp #(
     wire [3:0] mb [0:3];
     wire signed [9:0] ea [0:3];
     wire signed [9:0] eb [0:3];
-    // The product is declared 8 bits WIDE and on its own. Written inline as
-    // `{1'b0, ma[i]*mb[j]}` the multiply is self-determined to its 4-bit
-    // operand width inside the concatenation, so 8*8 = 64 truncates to 0 --
-    // silently, and every result comes out zero.
+    // Declared 8 bits WIDE and on its own. Inline as `{1'b0, ma[i]*mb[j]}` the
+    // multiply is self-determined to its 4-bit operand width inside the
+    // concatenation, so 8*8 = 64 truncates to 0 and every result comes out zero.
     wire [7:0] mm [0:3][0:3];
     genvar gs, gt;
     generate
@@ -185,16 +151,14 @@ module mx_acu_fp #(
     //
     //     |v + r| * mm  =  ((v ^ {W{s}}) + (s ^ r)) * mm,      s = v[W-1]
     //
-    // which is the same `(v + bit) * mm` shape the odd lanes already had, plus
-    // one XOR level on a register output. Taking the magnitude AFTER the
-    // multiply instead put a
-    // 30-bit two's-complement carry chain between the DSP's output register and
-    // the leading-one search -- 0.952 ns of a 3.401 ns path, four logic levels,
-    // and the reason the CU sat at 294.9 MHz. See docs/compute/accumulator.md.
+    // which is one XOR level on a register output. Taking the magnitude AFTER
+    // the multiply instead puts a 30-bit two's-complement carry chain between
+    // the DSP's output register and the leading-one search -- see
+    // docs/compute/accumulator.md.
     //
-    // `r` is a rounding bit, so `v + r` can only reach zero from v = -1: the
-    // one case where `s` disagrees with the true sign of the sum. The magnitude
-    // is zero there and `is_zero` discards the sign, so it does not matter.
+    // `r` is a rounding bit, so `v + r` can only reach zero from v = -1: the one
+    // case where `s` disagrees with the true sign of the sum. The magnitude is
+    // zero there and `is_zero` discards the sign.
     wire [VWM-1:0] lane_mag [0:15];
     wire           lane_sgn [0:15];
 
@@ -310,12 +274,9 @@ module mx_acu_fp #(
     reg [TAW-1:0] addr_r2;
     reg           v2;
 
-    // Every select that steers the align stage is REGISTERED, not decoded in
-    // the align cycle. The align stage starts at a LUTRAM read, so anything
-    // combinational in front of the address or the operand mux lands ahead of
-    // the RAM, the exponent compare and the barrel shift -- the longest chain
-    // in the block. All of these are knowable one stage early, so none of them
-    // has to be there.
+    // Every select that steers the align stage is REGISTERED, not decoded in the
+    // align cycle: anything combinational here lands ahead of the tile read, the
+    // exponent compare and the barrel shift, the longest chain in the block.
     reg [2:0] a_sel;    // align operand A source: 0 = tile, 1 = zero
     reg [2:0] b_sel;    // align operand B source: 0 = chain, 1 = peer, 2 = zero
 
@@ -350,32 +311,22 @@ module mx_acu_fp #(
     end
 
     // ================================================ stage 3: read + align
-    // ONE bank, and the tile is an explicitly named memory with its OUTPUT
-    // REGISTER enabled.
-    //
-    // The banks are gone. They existed to close a single-cycle accumulate loop
-    // when K was the inner loop, so the same tile address was hit on
-    // back-to-back cycles. The ISA now sweeps K OUTERMOST
-    // (docs/compute/tensor-isa.md s5.1), so an address recurs only every
-    // Gm*Gn cycles -- 64 at the smallest useful tiling. There is no tight
-    // recurrence left to close, so read latency is free and one bank suffices.
-    // That deletes 3/4 of the tile memory, the EMIT fold, and the zero mask.
+    // ONE bank. Banks existed to close a single-cycle accumulate loop when K was
+    // the inner loop; the ISA now sweeps K OUTERMOST
+    // (docs/compute/tensor-isa.md s5.1), so an address recurs only every Gm*Gn
+    // cycles -- 64 at the smallest useful tiling -- and read latency is free.
     //
     // READ_LAT=2 uses the block RAM's own output register. Without it the path
     // starts at the RAM array access (~1.2 ns clock-to-out) instead of a
-    // flip-flop, which cost ~70 MHz. The same memory measures 837 MHz in
-    // isolation -- see .plan/measurements/memory-primitives.md -- so anything
-    // slower than that is this module's logic, not the RAM.
+    // flip-flop, which cost ~70 MHz. The address must therefore lead the data by
+    // two cycles: sampled at the end of stage 2a, valid during stage 3.
     //
-    // With READ_LAT=2 the address must lead the data by two cycles: sampled at
-    // the end of stage 2a, valid during stage 3.
     // THE SOURCE OF TRUTH for the reuse distance. Two callers encode it
     // independently and CANNOT see this value: mx_cluster_mgr's pacing buckets
     // and mx_cluster_cu's `i_wide` both expand `Gm*Gn < 5` into small tests on
     // Gm and Gn, because computing the product cost the CU 26 MHz. Each carries
-    // an elaboration check that fires if its own copy of 5 stops matching, but
-    // nothing links them to this line -- so changing it means changing all
-    // three.
+    // its own elaboration check, but nothing links them to this line -- changing
+    // it means changing all three.
     localparam integer REUSE_MIN = 5;   // cycles between commands to one address
 
     wire [TW-1:0]  t0;
@@ -411,13 +362,12 @@ module mx_acu_fp #(
                                                     : OUT_NONE;
 
 `ifndef SYNTHESIS
-    // The reuse distance is now a CONTRACT, not a structure. Check it, so a
-    // caller that sweeps K on the inside fails loudly instead of quietly
-    // accumulating into stale data.
-    // A separate valid bit, not a sentinel address. Using {TAW{1'b1}} to mean
-    // "no command" collides with the real top address -- at TAW=4 that is
-    // address 15, which produced a stream of false violations on a design that
-    // was correct.
+    // The reuse distance is a CONTRACT, not a structure, so check it: a caller
+    // that sweeps K on the inside fails loudly instead of quietly accumulating
+    // into stale data.
+    //
+    // A separate valid bit, not a sentinel address: {TAW{1'b1}} meaning "no
+    // command" collides with the real top address, which at TAW=4 is 15.
     reg [TAW-1:0] last_addr [0:REUSE_MIN-1];
     reg           last_vld  [0:REUSE_MIN-1];
     integer rq;
@@ -565,21 +515,17 @@ module mx_acu_fp #(
     end
     endgenerate
 
-    // Write side of the tile memory. There is no reset here and there cannot be
-    // -- block RAM has none -- so an address holds x until something writes it.
-    // Nothing reads it before then, and that is a contract on the caller: a tile
-    // must be opened with OP_LOAD, whose align operand A is forced to zero
-    // rather than read from the RAM. OP_ADD into a never-loaded tile reads x.
+    // The tile memory has no reset -- block RAM has none -- so an address holds
+    // x until written. CONTRACT: a tile must be opened with OP_LOAD, whose align
+    // operand A is forced to zero rather than read from the RAM. OP_ADD into a
+    // never-loaded tile reads x.
     //
-    // What `busy` has to mean is "not safe to take the control mux yet", and
-    // that is strictly more than "a command is in the pipeline". Taking the mux
-    // means issuing an EMIT, which reads a tile address the command still in
-    // flight may be about to write -- so this has to cover the write AND the
-    // REUSE_MIN gap after it, or the read beats the write to the same address.
-    //
-    // A pipeline-only version reads correct and fails only when the whole GEMM
-    // is short enough that its tail has not cleared when DRAIN asks. Every
-    // sub-tile then drains as zero, which looks like a compute bug.
+    // `busy` means "not safe to take the control mux yet", which is MORE than "a
+    // command is in the pipeline": taking the mux issues an EMIT, which reads a
+    // tile address the in-flight command may be about to write, so busy must
+    // cover the write AND the REUSE_MIN gap after it. A pipeline-only version
+    // fails only when the GEMM is short enough that its tail has not cleared
+    // when DRAIN asks, and then every sub-tile drains as zero.
     reg [3:0] busy_tail;
     wire      in_flight = cmd_valid || v1 || v1b || v2 || v3 || v4;
     always @(posedge clk) begin

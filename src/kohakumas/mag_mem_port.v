@@ -3,26 +3,18 @@
 //   NoC mem port ──► intake queues ──► read engine  ──► AXI AR/R
 //                                  └─► write slots  ──► AXI AW/W/B
 //
-// WHY THIS IS A MODULE. It used to be the body of mag.v, one instance serving
-// every cluster in the partition, and that single instance is what stopped the
-// machine scaling: the read engine fetches ONE entry at a time, so eight
-// clusters queue behind one `rs` FSM and one emit buffer. Measured, all
-// pre-quantised, per-cluster work identical:
+// WHY THIS IS A MODULE. The read engine fetches ONE entry at a time, so with a
+// single instance every cluster in the partition queues behind one `rs` FSM and
+// one emit buffer -- the constraint that stopped the machine scaling, and it
+// stopped while nothing was saturated, so it was the server and not bandwidth.
+// See docs/mas/spec.md s2.
 //
-//     2 CU   fetch  7.6 cycles/entry     80.7% of peak
-//     4 CU   fetch 25.6                  66.6%
-//     8 CU   fetch 93.3                  37.1%
+// A port is therefore the unit the machine grows by: its own intake, read engine
+// and quantiser, write slots and AXI channel, serving ~2 clusters.
 //
-// against a floor of 4. Nothing was saturated -- mem_rd 55.6%, noc_out 60.2%
-// at eight -- so it was never bandwidth. It was one server.
-//
-// A port is therefore the unit the machine grows by: give each one its own
-// intake, its own read engine and quantiser, its own write slots and its own
-// AXI channel, and point two clusters at each. See docs/mas/spec.md s2.
-//
-// Everything here is per-port state. Nothing is shared with another port
-// except the address space on the far side of AXI, and the ports never write
-// the same word: each owns the C tiles of its own clusters.
+// Everything here is per-port state. Nothing is shared with another port except
+// the address space on the far side of AXI, and the ports never write the same
+// word: each owns the C tiles of its own clusters.
 
 `default_nettype none
 
@@ -39,14 +31,12 @@ module mag_mem_port #(
     // where this port's NoC endpoint sits
     parameter integer MEM_X      = 0,
     parameter integer MEM_Y      = 1,
-    // TWO per node that can have a write in flight, not one. A CU discards its
+    // TWO per node that can have a write in flight, not one: a CU discards its
     // MEM_WR_ACK and does not wait for it, so its NEXT descriptor arrives while
-    // the previous burst is still on the AXI bus -- every time, by
-    // construction. One slot per CU therefore means the second descriptor
-    // finds nothing free, is never popped, and blocks the data flits behind it
-    // that would have freed one.
-    //
-    // Under-sizing does not corrupt anything on its own; it deadlocks.
+    // the previous burst is still on the AXI bus, every time. With one slot per
+    // CU the second descriptor finds nothing free, is never popped, and blocks
+    // the data flits behind it that would have freed one. Under-sizing does not
+    // corrupt anything; it deadlocks.
     parameter integer WR_SLOTS   = 16,
     parameter integer Q_DEPTH    = 64,
     parameter integer Q_MARGIN   = 4
@@ -116,15 +106,13 @@ module mag_mem_port #(
     // =====================================================================
     // Intake. Backpressure MUST NOT depend on what the flit is: deciding busy
     // from the incoming type means a flit this port cannot classify right now
-    // blocks the port, and because the mesh is in-order behind it, it blocks
-    // everything else too -- including the flit that would free the resource.
+    // blocks the port, and the mesh being in-order behind it, everything else --
+    // including the flit that would free the resource.
     //
     // TWO QUEUES, DEMUXED BY TYPE. With one, a read request at the head that
-    // cannot be taken blocks the write data behind it; that data is what lets a
-    // drain finish, and the drain not finishing keeps its CU in S_DWAIT where
-    // it accepts no responses. Splitting by type does not reintroduce the
-    // hazard above, because busy is still "is there room in both", which
-    // depends only on this module's own state.
+    // cannot be taken blocks the write data behind it, and that data is what
+    // lets a drain finish. Busy is still "is there room in both", which depends
+    // only on this module's own state, so the hazard above does not return.
     // =====================================================================
     wire [FLIT_WIDTH-1:0] rq_flit, wq_flit;
     wire                  rq_empty, rq_full, rq_almost;
@@ -132,18 +120,20 @@ module mag_mem_port #(
     reg                   rq_pop, wq_pop;
     reg [$clog2(Q_DEPTH):0] rq_cnt, wq_cnt;
 
-    // Busy when EITHER is near full, because the port carries both and the
-    // sender cannot be told which one is short of room. Declared above the
-    // queues because the accept term reads it; Vivado rejects
-    // use-before-declaration -- docs/simulation.md s3.
+    // Busy when EITHER is near full: the port carries both and the sender cannot
+    // be told which is short of room. Declared above the queues because the
+    // accept term reads it and Vivado rejects use-before-declaration.
     assign mem_in_busy = (rq_cnt >= (Q_DEPTH - Q_MARGIN)) || rq_almost ||
                          (wq_cnt >= (Q_DEPTH - Q_MARGIN)) || wq_almost;
 
     // ACCEPT EXACTLY WHEN THE SENDER BELIEVES WE DID. The link holds a flit
     // asserted until a cycle with `busy` low, so enqueuing on "is there room"
-    // writes the SAME flit once per cycle of backpressure -- a duplicated
-    // MEM_WR_DATA overruns its slot's `ws_len` and the surplus flit then
-    // matches nothing. docs/noc/spec.md s2.1.
+    // writes the SAME flit once per cycle of backpressure. Either error is
+    // silent and permanent: a duplicated MEM_WR_DATA overruns its slot's
+    // `ws_len` and the surplus matches nothing, while a dropped one leaves the
+    // slot short forever, so it never becomes ready, the source's next
+    // descriptor opens a SECOND slot, and its data matches the older one.
+    // docs/noc/spec.md s2.1.
     wire       mi_take = mem_in_valid && !mem_in_busy;
     wire [3:0] mi_ty = `MP_HDR_TY(mem_in_data);
     wire       mi_rd = mi_take && (mi_ty == T_MEM_RD_REQ);
@@ -164,10 +154,6 @@ module mag_mem_port #(
            .wr_busy(wq_full), .wr_almost(wq_almost),
            .rd_en(wq_pop), .rd_data(wq_flit), .rd_busy(wq_empty));
 
-    // What a lost flit costs is invisible until it is not: a dropped
-    // MEM_WR_DATA leaves its slot short of `ws_len` forever, so the slot never
-    // becomes ready, the source's NEXT descriptor opens a SECOND slot, and its
-    // data then matches the older one.
     always @(posedge clk) begin
         if (!resetn) begin
             rq_cnt <= 0; wq_cnt <= 0;
@@ -234,11 +220,10 @@ module mag_mem_port #(
     // The read engine, with its own state and its own return context.
     //
     // Separate because a streaming fetch occupies the read path for the whole
-    // run -- 32 entries, hundreds of cycles. While `st` was that run, S_IDLE
-    // never came round, so no write slot could be issued: the slots filled,
-    // intake jammed on a write descriptor nothing would accept, and the data
-    // flit behind it reported "no open write". Lengthening one transaction
-    // starved the other two.
+    // run -- 32 entries, hundreds of cycles. Run inside `st`, S_IDLE never comes
+    // round, so no write slot can be issued: the slots fill, intake jams on a
+    // write descriptor nothing will accept, and the data flit behind it reports
+    // "no open write". Lengthening one transaction starves the other two.
     //
     // DECLARED BEFORE THE QUANTISER, because `beat_valid` reads `rs`.
     // ================================================================
@@ -248,11 +233,9 @@ module mag_mem_port #(
     reg [POS_WIDTH-1:0] rd_x, rd_y;
     reg [7:0]  rd_txn;
     // `rd_base` is where the run starts, `rd_cnt` how many entries it covers,
-    // `rd_ent` which one is being fetched. The address sequence is generated
-    // here because this module already generates AXI burst addresses -- the
-    // same counter, one level up. What that removes is not latency but its
-    // REPETITION: the CU used to pay a round trip per entry to re-state what
-    // the instruction already said.
+    // `rd_ent` which one is being fetched. Generated here because this module
+    // already generates AXI burst addresses -- the same counter, one level up --
+    // which removes a round trip per entry, not latency.
     reg [33:0] rd_base;
     reg [7:0]  rd_cnt, rd_ent;
     // Source format for this run, off the REQUEST -- so no address map is held
@@ -266,8 +249,8 @@ module mag_mem_port #(
 
     // Emit buffer: the finished entry, latched so the NEXT entry's AXI read can
     // start immediately. Without it the quantiser's output IS the emit source,
-    // so fetch and emit exclude each other and the two independent interfaces
-    // run at the sum of their times instead of the larger.
+    // so fetch and emit exclude each other and two independent interfaces run at
+    // the sum of their times instead of the larger.
     reg [255:0] e_w0, e_w1, e_w2, e_w3;
     reg [7:0]   e_tag;
     reg         e_act;
@@ -289,12 +272,12 @@ module mag_mem_port #(
     reg         q_rdy;
 
     // ---- FP16 -> MXFP7, so software never sees the internal format --------
-    // One invocation converts one L1 entry: 8 AXI beats in (4 lanes x 32 FP16
-    // = 2048 bit), 4 operand words out (1024 bit). The block scale is shared
-    // along K, so nothing can be emitted until the whole entry has arrived.
+    // One invocation converts one L1 entry: 8 AXI beats in (4 lanes x 32 FP16 =
+    // 2048 bit), 4 operand words out (1024 bit). The block scale is shared along
+    // K, so nothing can be emitted until the whole entry has arrived.
     //
-    // ONE PER PORT, and that is the point of the port: the quantiser is what
-    // every cluster behind a port contends for.
+    // ONE PER PORT: the quantiser is what every cluster behind a port contends
+    // for, which is the point of having ports.
     reg          q_start, q_blay;
     wire         q_done;
     wire [255:0] q_w0, q_w1, q_w2, q_w3;
@@ -315,10 +298,9 @@ module mag_mem_port #(
         .word0(q_w0), .word1(q_w1), .word2(q_w2), .word3(q_w3)
     );
 
-    // One L1 entry is 4 lanes x 32 elements, whatever the bus is wide: 2048
-    // bits as FP16 and 1024 bits as MXFP7. Derived, not written as 7 and 3 --
-    // hardcoding them is what makes a wider bus a silent correctness change
-    // rather than a parameter.
+    // One L1 entry is 4 lanes x 32 elements whatever the bus is wide: 2048 bits
+    // as FP16, 1024 as MXFP7. Derived, not written as 7 and 3 -- hardcoding them
+    // makes a wider bus a silent correctness change rather than a parameter.
     localparam integer Q_ENTRY_BITS  = 2048;
     localparam integer P_ENTRY_BITS  = 1024;
     localparam [33:0]  Q_ENTRY_BYTES = Q_ENTRY_BITS / 8;              // 256
@@ -326,22 +308,19 @@ module mag_mem_port #(
     localparam [7:0]   Q_ARLEN       = Q_ENTRY_BITS / DATA_W - 1;     // 7 at 256b
     localparam [7:0]   P_ARLEN       = P_ENTRY_BITS / DATA_W - 1;     // 3 at 256b
 
-    // The WRITE path's return context. It used to be shared with the read
-    // path, which is why a read and a write could not overlap although they use
-    // disjoint AXI channels.
+    // The WRITE path's own return context. Shared with the read path, a read and
+    // a write cannot overlap despite using disjoint AXI channels.
     reg [POS_WIDTH-1:0] rq_x, rq_y;
     reg [7:0]  rq_txn;
     reg [15:0] n_rd, n_wr;
 
     // Output arbitration, in one place. The emitter and the `st` machine both
-    // produce response flits and there is one output register, so exactly one
-    // of them may drive it per cycle. The emitter wins -- it is the steady
-    // state, and it cannot starve the other: four flits per entry against a
-    // fetch of at least Q_ARLEN+1 beats leaves most cycles free.
+    // produce response flits into one output register, so exactly one may drive
+    // it per cycle. The emitter wins and cannot starve the other: four flits per
+    // entry against a fetch of at least Q_ARLEN+1 beats leaves most cycles free.
     //
-    // `out_free` also covers the cycle a flit is being ACCEPTED, not just an
-    // empty register. Waiting for the register to read empty emits on every
-    // other cycle and halves the response rate for nothing.
+    // `out_free` covers the cycle a flit is being ACCEPTED, not just an empty
+    // register: waiting for the register to read empty halves the response rate.
     wire out_free = !mem_out_valid || !mem_out_busy;
     wire emit_go  = e_act && out_free;
     wire st_out   = out_free && !emit_go;
@@ -350,10 +329,10 @@ module mag_mem_port #(
     assign mem_wr_count = n_wr;
 
     // ---- write reassembly, slots matched by source ------------------------
-    // A write arrives as a descriptor flit and a data flit, and the mesh can
-    // put another node's flit between them. Collecting "the next flit" into the
-    // open write is therefore wrong the moment two nodes write at once. Each
-    // source gets its own slot instead, matched by source coordinate.
+    // A write arrives as a descriptor flit and a data flit and the mesh can put
+    // another node's flit between them, so collecting "the next flit" into the
+    // open write is wrong the moment two nodes write at once. Each source gets
+    // its own slot, matched by source coordinate.
     //
     // A slot walks val -> rdy -> iss -> free. All three bits are needed: with
     // only val and rdy, a slot whose write is ON THE BUS reads as {val, !rdy},
@@ -419,14 +398,12 @@ module mag_mem_port #(
                         rd_free && (st == S_IDLE);
     wire take_rd      = take_rd_e || take_rd_p;
 
-    // A picked slot stops being pickable IMMEDIATELY, not when its write is
-    // acknowledged. Releasing at ack leaves it ready for the cycle the FSM
-    // spends re-entering S_IDLE, so the same write is issued twice -- and while
-    // it repeats itself the next write's turn never comes.
-    //
-    // Only the PLAIN read competes here. A quantised read runs in its own
-    // engine on its own AXI channel, so making writes wait for it would
-    // reintroduce the starvation that splitting them fixed.
+    // A picked slot stops being pickable IMMEDIATELY, not at its write ack:
+    // releasing at ack leaves it ready for the cycle the FSM spends re-entering
+    // S_IDLE, so the same write is issued twice and the next write's turn never
+    // comes. Only the PLAIN read competes here -- a quantised read has its own
+    // engine and AXI channel, and making writes wait for it would reintroduce
+    // the starvation that splitting them fixed.
     wire ws_issue = (st == S_IDLE) && ws_has_pick && !take_rd_p;
 
     always @(*) wq_pop = take_wr_req || take_wr_data;
@@ -447,11 +424,10 @@ module mag_mem_port #(
 `endif
 
     // S_RD_DATA turns each AXI beat straight into a response flit, so it may
-    // only take a beat when the output register is free. Accepting one
-    // unconditionally overwrites a flit the NoC has not taken yet and the beat
-    // is gone. RS_FILL is safe unconditionally: it buffers beats into the
-    // quantiser or into p_w0..3 and emits them later from the emit buffer,
-    // which has its own guard.
+    // take a beat only when the output register is free -- accepting one
+    // unconditionally overwrites a flit the NoC has not taken and the beat is
+    // gone. RS_FILL is safe unconditionally: it buffers into the quantiser or
+    // p_w0..3 and emits later, behind the emit buffer's own guard.
     assign m_rready   = ((st == S_RD_DATA) && st_out) ||
                         ((rs == RS_FILL) && !q_start);
 
@@ -464,8 +440,8 @@ module mag_mem_port #(
 
     // The NoC write path's B latch. m_bready is tied high, so the slave's
     // response is consumed the cycle it appears whether or not S_WR_ACK can act
-    // on it -- and it often cannot, because the read emitter may own the output
-    // register that cycle. A missed B never comes again.
+    // on it -- and often it cannot, the read emitter owning the output register.
+    // A missed B never comes again.
     reg wr_b;
 
     integer wj;
@@ -584,11 +560,10 @@ module mag_mem_port #(
             end
 
             // ---------------- NoC write: one reassembled slot -> AXI
-            // The data came from the slot, matched to its own descriptor by
-            // source, so nothing here depends on flit arrival order. The beat
-            // counter, not the flit stream, decides where the burst ends -- a
-            // requester that miscounts its own data must not be able to
-            // desynchronise the response (docs/axi/simulation.md s4).
+            // The data came from the slot, matched to its descriptor by source,
+            // so nothing here depends on flit arrival order. The beat COUNTER,
+            // not the flit stream, decides where the burst ends: a requester
+            // that miscounts its own data must not desynchronise the response.
             S_WR_DATA: begin
                 if (!m_wvalid) begin
                     m_wdata  <= ws_data[{ws_cur, wb_cnt[WBW-1:0]}];
@@ -624,8 +599,8 @@ module mag_mem_port #(
 
             // ============ the read engine, running alongside ================
             // Same always block as `st` because both drive the one output
-            // register; separate state because they are separate services and
-            // making one wait for the other is what starved the write path.
+            // register; separate state because making one wait for the other is
+            // what starved the write path.
             if (q_done) q_rdy <= 1'b1;
 
             case (rs)
@@ -647,10 +622,10 @@ module mag_mem_port #(
                 rs <= RS_FILL;
             end
             // Issue the NEXT entry's address the moment this one's last beat
-            // lands, rather than after the quantiser has finished with it. The
-            // returning data cannot run ahead: m_rready is low outside RS_FILL.
-            // The only thing this overlaps is the AR-to-first-beat latency,
-            // which was otherwise paid once per entry.
+            // lands, not after the quantiser has finished with it. The returning
+            // data cannot run ahead -- m_rready is low outside RS_FILL -- so
+            // this overlaps only the AR-to-first-beat latency, which would
+            // otherwise be paid once per entry.
             RS_FILL: begin
                 q_start <= 1'b0;
                 // A pre-quantised beat IS an operand word. Captured here, not
@@ -680,8 +655,8 @@ module mag_mem_port #(
             end
             // Hand the finished entry to the emit buffer and start the NEXT
             // fetch in the SAME cycle: the AXI read of entry n+1 and the NoC
-            // emit of entry n use different wires and were serialised only by
-            // sharing the quantiser's output registers.
+            // emit of entry n use different wires, and sharing the quantiser's
+            // output registers is the only thing that would serialise them.
             RS_WAIT: if (q_rdy && !e_act) begin
                 e_w0 <= rd_quant ? q_w0 : p_w0;
                 e_w1 <= rd_quant ? q_w1 : p_w1;
@@ -705,11 +680,10 @@ module mag_mem_port #(
             endcase
 
             // A RESPONSE SAYS WHERE IT BELONGS. `e_tag` is the requester's own
-            // entry index -- the txn it sent, plus this entry's position in the
-            // run -- and the two spare header bits carry the word within the
-            // entry. Together they let the receiver place the flit with no
-            // cursor of its own, which is what stops arrival order from being
-            // load-bearing and is what makes a streaming fetch expressible.
+            // entry index (the txn it sent, plus this entry's position in the
+            // run) and the two spare header bits carry the word within the
+            // entry, so the receiver needs no cursor and arrival order stops
+            // being load-bearing. That is what makes a streaming fetch possible.
             if (emit_go) begin
                 mem_out_data <= { e_dx, e_dy,
                                   MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],

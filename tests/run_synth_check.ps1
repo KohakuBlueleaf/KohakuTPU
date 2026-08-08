@@ -86,6 +86,23 @@ $targets = @(
                "src\kohakutpu\matmul\mx_cluster_mgr.v",
                "src\kohakutpu\matmul\mx_cluster_node.v",
                "src\kohakutpu\matmul\mx_cluster_cu.v") },
+    # The coefficient ROMs alone. Synthesised separately because the estimate in
+    # vector-core.md s9 has to be attributable: the tables are PER LANE (every
+    # lane looks up a different segment on the same cycle), so if they dominate
+    # a lane then they dominate the whole vector core, and that is an
+    # architectural fact rather than a coding detail.
+    @{ Top = 'vec_tab_probe'
+       Src = @("src\kohakutpu\vector\vec_tables.v",
+               "src\synth_top\vec_tab_probe.v") },
+    # One vector ALU lane: three DSP48E2 and the fabric around them. mx_fpacc.v
+    # is here for mx_lead1 alone -- the leading-one search is shared with the
+    # accumulator rather than duplicated, and synthesis prunes the rest.
+    @{ Top = 'vec_alu'
+       Src = @("src\kohakutpu\matmul\mx_fpacc.v",
+               "src\kohakutpu\vector\vec_dsp.v",
+               "src\kohakutpu\vector\vec_delay.v",
+               "src\kohakutpu\vector\vec_tables.v",
+               "src\kohakutpu\vector\vec_alu.v") },
     @{ Top = 'mx_matmul_cu'
        Src = @("src\kohakunoc\noc_cu_base.v",
                "src\kohakutpu\matmul\mx_mac.v", "src\kohakutpu\matmul\mx_tcu.v",

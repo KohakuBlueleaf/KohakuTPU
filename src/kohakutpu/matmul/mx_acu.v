@@ -13,35 +13,27 @@
 //     L = signed( P[18:0] )                 no logic
 //     U = P[47:19] + P[18]                  add back the borrow
 //
-// Accumulation here is EXACT FIXED POINT, not floating point. That is
-// deliberate for bring-up: an exact result can be checked against a model bit
-// for bit, so a mismatch is unambiguous. The production accumulator is
-// S1E7M<ACC_MW>, FP22 at the default ACC_MW=14 -- see
-// docs/compute/matmul-circuit.md s6.2 -- and rounds the 19-bit block result,
-// which would blur the very failures this is meant to expose.
+// Accumulation here is EXACT FIXED POINT: a bring-up instrument, checkable
+// against a model bit for bit. The production accumulator is S1E7M<ACC_MW> --
+// see docs/compute/matmul-circuit.md s6.2.
 //
 // The scale here is a PLAIN 8-BIT EXPONENT per row of A and per column of B, so
-// output (i,j) is scaled by 2^(sa[i] + sb[j]). Shifting relative to a
-// caller-supplied anchor keeps the accumulator narrow; the caller is
-// responsible for choosing an anchor that does not make any shift negative.
+// output (i,j) is scaled by 2^(sa[i] + sb[j]). CONTRACT: the caller must choose
+// an anchor that makes no shift negative.
 //
-// That is NOT the machine's scale format. The shipping path carries E5M3
-// ({E[4:0], M[2:0]}) and mx_acu_fp multiplies the partial sum by the two
-// mantissas. A mantissa multiply would put a rounding-free but non-trivial
-// product in front of the bit-for-bit comparison this block exists to support,
-// so the exact instrument keeps a pure power-of-two scale and the benches drive
-// it with one.
+// That is NOT the machine's scale format -- the shipping path carries E5M3 and
+// mx_acu_fp multiplies the partial sum by the two mantissas. A pure
+// power-of-two scale keeps this block's comparison bit-for-bit.
 
 `default_nettype none
 
 module mx_acu #(
     parameter integer ACCW   = 48,  // accumulator width per output element
-    // Largest scale-vs-anchor difference the accumulator will honour. The shift
-    // amount sa+sb-anchor is nominally 8 bits, and synthesising it as such
-    // builds a 0..255 barrel shifter per lane -- which dominated the cluster's
-    // LUT count for range that cannot be used: a shift past ACCW pushes the
-    // value out of the accumulator anyway. Clamping to 5 bits costs nothing
-    // real and removes three stages of shifter from all 16 lanes.
+    // Largest scale-vs-anchor difference honoured. sa+sb-anchor is nominally 8
+    // bits, which builds a 0..255 barrel shifter per lane and dominated the
+    // cluster's LUT count -- for range that cannot be used, since a shift past
+    // ACCW leaves the accumulator anyway. 5 bits removes three shifter stages
+    // from all 16 lanes.
     parameter integer SH_MAX = 31
 )(
     input  wire         clk,
@@ -107,8 +99,7 @@ module mx_acu #(
     endgenerate
 
     // Shift for element (i,j) relative to the tile anchor, clamped to SH_MAX.
-    // The caller must choose an anchor that keeps every shift inside the range;
-    // a clamp here bounds the hardware, it does not make an out-of-range anchor
+    // The clamp bounds the hardware; it does not make an out-of-range anchor
     // correct.
     function [4:0] shamt;
         input integer ii;

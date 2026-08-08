@@ -1,10 +1,9 @@
 // Driver-in-the-loop: the control program comes from the host driver.
 //
-// Nothing about the computation is described here. The Python driver writes
-// four files and this bench only loads them, replays them over AXI, and dumps
-// memory back. If the driver builds a wrong program, this bench computes a
-// wrong answer, which is exactly the coupling that makes it a real test of the
-// driver.
+// Nothing about the computation is described here: the Python driver writes the
+// files below and this bench loads them, replays them over AXI, and dumps memory
+// back. A wrong program from the driver produces a wrong answer here, which is
+// the coupling that makes this a test OF the driver.
 //
 //   operands.hex   the HOST's 256-bit FP16 image, in upload order
 //   uploads.hex    {src, dst, words, flags}: the regions the host pushes
@@ -13,11 +12,10 @@
 //   rounds.hex     {nsetup, ncmd} per round -- where to cut the two above
 //   result.hex     device memory image after the run
 //
-// Software never sees MXFP7. The host uploads FP16 through MAG's memory
-// window and MAG either stores it verbatim -- to be quantised on every read --
-// or quantises it as it lands, which is what the marker on the write address
-// selects. There is no backdoor preload: the upload is the path XDMA will use
-// and it is tested here rather than assumed.
+// Software never sees MXFP7: the host uploads FP16 through MAG's memory window
+// and the marker on the write address selects whether MAG stores it verbatim or
+// quantises it as it lands. NO backdoor preload -- the upload is the path XDMA
+// will use, tested rather than assumed.
 
 `default_nettype none
 `timescale 1ns/1ps
@@ -47,23 +45,20 @@ module mag_driver_tb;
     // against its own copy of this number, so a disagreement silently
     // overlaps A, B and C rather than failing.
     localparam integer RAM_WORDS = 262144;
-    // CLUSTERS. One per COLUMN of a band, and a band is two rows -- see the
-    // mesh below. `bench.CLUSTERS` in the driver must list exactly the
-    // manager coordinates that mesh produces, or the
-    // dispatcher kicks a node that is not there and the round never retires.
+    // CLUSTERS, one per COLUMN of a band; a band is two rows. `bench.CLUSTERS`
+    // in the driver must list exactly the manager coordinates the mesh below
+    // produces, or the dispatcher kicks a node that is not there and the round
+    // never retires.
 `ifndef NCL
 `define NCL 2
 `endif
     localparam integer NCL = `NCL;
 
-    // Backstop for the one case the progress watchdog cannot see: a stall
-    // inside the HOST phase, before GO, where no counter would move anyway.
-    // The host AXI handshakes are individually bounded (see `AWAIT), so this
-    // only has to outlast the largest legitimate run. That is a MEASURED
-    // number, not an estimate: 512x512x512 took 2,089,993 cycles end to end
-    // when the bench RAM was 2 MB. It is 8 MB now (RAM_WORDS below), so larger
-    // problems fit and the margin is smaller than 1.9x -- 8 CU 512x1024x256
-    // measures 121k cycles including its upload, so the headroom is ample.
+    // Backstop for the one case the progress watchdog cannot see: a stall in the
+    // HOST phase, before GO, where no counter would move anyway. The host AXI
+    // handshakes are individually bounded (see `AWAIT), so this only has to
+    // outlast the largest legitimate run -- a MEASURED bound, not an estimate:
+    // 512x512x512 ran 2,089,993 cycles end to end.
 `ifndef WDOG
 `define WDOG 4000000
 `endif
@@ -85,12 +80,11 @@ module mag_driver_tb;
     reg [63:0] cycles = 0, cyc0 = 0;
     always @(posedge clk) cycles <= rstn ? cycles + 64'd1 : 64'd0;
 
-    // EVERY profile counter is gated on this, and it goes high only once the
+    // EVERY profile counter is gated on this, which goes high only once the
     // operands are in memory. The upload is real traffic through the same AXI
-    // master -- it writes as many beats as the whole of C -- so a counter left
-    // free-running absorbs it and reports the drain writing C twice. It is
-    // measured on its own (`UPLOAD`), because it is paid once per tensor while
-    // everything else here is paid once per pass.
+    // master -- as many beats as the whole of C -- so a free-running counter
+    // absorbs it and reports the drain writing C twice. Measured separately as
+    // `UPLOAD`, being paid once per tensor rather than once per pass.
     reg measure = 1'b0;
 
     // -------------------------------------------------- driver-side AXI
@@ -187,42 +181,28 @@ module mag_driver_tb;
     );
 
     // ------------------------------------------- mesh: NCOL columns x NROW rows
-    // ONE CLUSTER PER COLUMN OF A BAND -- its manager and its accumulator take
-    // the local ports of ADJACENT routers in the same column, the manager on
-    // the band's outer row and the accumulator on the inner one. Nothing is
-    // interleaved: a cluster's two endpoints never straddle another cluster's
-    // router, which is what the old left-half/right-half split did.
-    //
-    // MAG hangs off the WEST edge -- ONE MAG PORT PER ROW, at (0,1)..(0,NROW).
-    // They are MAG ports, not memory ports: each carries operand traffic and
-    // the agent's control traffic, demuxed by flit type inside MAG. The agent
-    // has no node of its own, so the north, south and east edges are free.
-    //
-    // The mesh routes X first, then Y, on CLAMPED coordinates, and it is the
-    // clamp that makes the shape scale: a flit for (0,1) routes toward router
-    // (1,1) and takes the outward west hop only on arriving there. So a row-2
-    // node walks west to column 1, then north to row 1, then out. See
-    // docs/noc/spec.md s2.
-    //
-    //   NCL = 2   2 cols x 2 rows   mgr (1..2,1)   acu (1..2,2)
-    //   NCL = 4   4 cols x 2 rows   mgr (1..4,1)   acu (1..4,2)
-    //   NCL = 8   4 cols x 4 rows   mgr (1..4,1) acu (1..4,2)   band 0
-    //                               acu (1..4,3) mgr (1..4,4)   band 1
-    //
-    // A band need not be FULL -- 3, 5, 6 and 7 clusters simply leave columns
-    // empty. They are supported and merely not optimal, which is the driver's
-    // business to report rather than the mesh generator's to forbid.
-    // MANAGERS OUTSIDE, ACCUMULATORS INSIDE -- two dataflow rings back to back:
+    // ONE CLUSTER PER COLUMN OF A BAND, managers outside and accumulators
+    // inside, so a cluster's two endpoints are ADJACENT routers in one column
+    // rather than straddling another cluster's node:
     //
     //     MAG  mgr mgr mgr mgr      row 1
     //     MAG  acu acu acu acu      row 2
     //     MAG  acu acu acu acu      row 3
     //     MAG  mgr mgr mgr mgr      row 4
     //
-    // A cluster is a COLUMN pair, so its manager and accumulator sit on
-    // ADJACENT routers instead of straddling another cluster's node -- which
-    // is what the left-half/right-half arrangement did, and it put a CU's two
-    // NoC attachments two columns apart with someone else's router between.
+    //   NCL = 2   2 cols x 2 rows   mgr (1..2,1)   acu (1..2,2)
+    //   NCL = 4   4 cols x 2 rows   mgr (1..4,1)   acu (1..4,2)
+    //   NCL = 8   4 cols x 4 rows   mgr (1..4,1) acu (1..4,2)   band 0
+    //                               acu (1..4,3) mgr (1..4,4)   band 1
+    //
+    // MAG hangs off the WEST edge, one port per row at (0,1)..(0,NROW); each
+    // carries operand AND agent control traffic, demuxed by flit type inside
+    // MAG, so north, south and east are free. Routing is X-then-Y on CLAMPED
+    // coordinates, which is what makes the shape scale -- a flit for (0,1)
+    // routes toward router (1,1) and takes the outward hop on arrival. See
+    // docs/noc/spec.md s2.
+    //
+    // A band need not be FULL: 3, 5, 6 and 7 clusters leave columns empty.
     localparam integer NCOL  = (NCL >= 4) ? 4 : NCL;
     localparam integer BANDS = (NCL + NCOL - 1) / NCOL;   // 1 up to 4 CU, 2 at 8
     localparam integer NROW  = BANDS * 2;
@@ -244,16 +224,11 @@ module mag_driver_tb;
     wire s_inv [0:NCOL-1][0:NROW-1], s_outv [0:NCOL-1][0:NROW-1];
     wire s_inb [0:NCOL-1][0:NROW-1], s_outb [0:NCOL-1][0:NROW-1];
 
-    // ONE MAG PORT PER MESH ROW. A port attaches to the NoC rather than to any
-    // cluster, so every cluster can reach every port -- the row only decides
-    // which edge its traffic leaves by. That is the scaling argument: with one
-    // port for the whole partition, `fetch` cycles per entry went
-    // 7.6 -> 25.6 -> 93.3 against a floor of 4 as clusters went 2 -> 4 -> 8,
-    // with nothing saturated. It was one server, not one wire.
-    //
-    // MAG's AXI masters: one per MAG port, plus one for the host upload.
-    // A channel per port is the point -- sharing them would put eight clusters'
-    // read beats back on one AR/R pair -- so the RAM is multi-channel to match.
+    // ONE MAG PORT PER MESH ROW. A port attaches to the NoC, not to a cluster,
+    // so every cluster can reach every port and the row only decides which edge
+    // its traffic leaves by. MAG's AXI masters are one per port plus one for the
+    // host upload -- sharing them would put eight clusters' read beats back on
+    // one AR/R pair -- so the RAM is multi-channel to match.
     localparam integer MEMP = NROW;           // MAG memory ports
     localparam integer NCH  = MEMP + 1;       // AXI channels into the RAM
 
@@ -319,11 +294,8 @@ module mag_driver_tb;
     end
 
     // ---- MAG's ports, one per mesh ROW -----------------------------------
-    // Each sits west of its row, so a node on row y reaches (0,y) by walking
-    // west. They are on DIFFERENT routers on purpose: several ports hanging off
+    // Each sits west of its row. DIFFERENT routers on purpose: several ports on
     // one router would split the server and leave the congestion where it was.
-    // Every port carries operand traffic AND the agent's control traffic,
-    // demuxed by flit type inside MAG -- see src/kohakumas/mag.v.
     for (gy = 0; gy < MEMP; gy = gy + 1) begin : g_mport
         assign mp_in_data[gy*FW +: FW] = w_out[0][gy];
         assign mp_in_valid[gy]         = w_outv[0][gy];
@@ -402,18 +374,15 @@ module mag_driver_tb;
         .mem_in_busy(mp_in_busy),
         .mem_out_data(mp_out_data), .mem_out_valid(mp_out_valid),
         .mem_out_busy(mp_out_busy),
-        // The agent had a node of its own on the EAST edge of row 1, opposite
-        // MAG's own memory ports on the west. It shares those ports now, so
-        // that edge is dead like every other one -- see g_dead_e below.
+        // The agent shares MAG's west ports, so the east edge is dead like
+        // every other one -- see g_dead_e below.
         .mem_rd_count(mag_rd), .mem_wr_count(mag_wr)
     );
 
     // ---- per-port taps for the profile -----------------------------------
-    // Hierarchical, because these are internal state rather than ports -- and
-    // they are what makes the histogram a measurement of the memory system
-    // instead of of its interface. Aliased into arrays so every counter below
-    // sums over the ports rather than naming one, which is what stops the
-    // profile silently describing port 0 on a multi-port machine.
+    // Hierarchical, because these are internal state rather than ports. Aliased
+    // into arrays so every counter below SUMS over the ports rather than naming
+    // one -- otherwise the profile silently describes port 0 alone.
     wire [3:0] mp_st    [0:MEMP-1];
     wire [1:0] mp_rs    [0:MEMP-1];
     wire       mp_eact  [0:MEMP-1], mp_qrdy   [0:MEMP-1];
@@ -491,15 +460,12 @@ module mag_driver_tb;
         localparam integer CX   = gy % NCOL;                    // 0-based column
         localparam integer MROW = (BAND == 0) ? 1 : NROW;       // manager row
         localparam integer AROW = (BAND == 0) ? 2 : NROW - 1;   // accumulator
-        // WHICH ROW'S EDGE THIS CLUSTER LEAVES BY. A MAG port attaches to the
-        // NoC, not to a cluster -- every cluster can reach every port through
-        // the mesh -- so this only chooses where its memory traffic exits.
-        // Columns near MAG exit by their manager's row; the farther half exit
-        // by the accumulator's. That keeps both of a band's ports carrying
-        // traffic instead of leaving one idle, and it suits the directions:
-        // the links are FULL DUPLEX, a manager mostly RECEIVES fill responses
-        // and an accumulator mostly SENDS results, so the two rows load
-        // opposite directions rather than competing for one.
+        // WHICH ROW'S EDGE THIS CLUSTER LEAVES BY -- every cluster can reach
+        // every port through the mesh, so this only chooses the exit. Columns
+        // near MAG exit by their manager's row, the farther half by the
+        // accumulator's, which keeps both of a band's ports busy. It also suits
+        // the directions: the links are FULL DUPLEX, a manager mostly RECEIVES
+        // fill responses and an accumulator mostly SENDS results.
         localparam integer PROW = (CX < (NCOL + 1) / 2) ? MROW : AROW;
         mx_cluster_cu #(.FLIT_WIDTH(FW), .POS_WIDTH(PW),
                         .MGR_X(CX+1), .MGR_Y(MROW),
@@ -532,10 +498,9 @@ module mag_driver_tb;
     endgenerate
 
     // A trace of cluster 0's path from memory request to tile write, enabled
-    // with `run_matmul.py --dbg`. Every stage is here on purpose: a wrong
-    // result end-to-end is only expensive to diagnose when you cannot see
-    // WHICH stage first stopped carrying the right thing. Prefer the component
-    // benches for anything reproducible there -- this is for the rest.
+    // with `run_matmul.py --dbg`. Every stage is here so a wrong end-to-end
+    // result shows WHICH stage first stopped carrying the right thing. Prefer
+    // the component benches for anything reproducible there.
 `ifdef DBG
     always @(posedge clk) if (rstn) begin
         if (u_mag.g_port[0].u_eng.q_start)
@@ -560,33 +525,27 @@ module mag_driver_tb;
     end
 `endif
 
-    // Misattributed write data -- a data flit collected into another node's
-    // write -- is checked inside MAG itself now ("write data with no open
-    // write") and covered directly by mag_wslot_tb. The copy that lived here
-    // compared the incoming source against the write ON THE BUS, which stopped
-    // meaning anything once each source got its own slot.
+    // Misattributed write data is checked inside MAG ("write data with no open
+    // write") and covered directly by mag_wslot_tb, so there is no check here.
 
     // Occupancy: when was each cluster actually doing something? The control
-    // program kicks every cluster before it waits on any, so overlap is as much
-    // a property of the PROGRAM as of the hardware -- and it decides whether a
-    // second cluster buys any throughput at all. Printed always, because a
-    // number nobody measures is a number nobody questions.
+    // program kicks every cluster before waiting on any, so overlap is as much a
+    // property of the PROGRAM as of the hardware, and it decides whether a
+    // second cluster buys any throughput at all.
     reg [63:0] busy0_first = 0, busy0_last = 0, busy1_first = 0, busy1_last = 0;
     reg [63:0] both_cycles = 0;
     wire cu0_busy = cbusy[0];
     wire cu1_busy = cbusy[NCL-1];   // the LAST cluster, so overlap spans all
 
     // ------------------------------------------------- where the cycles go
-    // Event counters say a GEMM happened; they do not say whether the machine
-    // spent its time computing or waiting for operands. That distinction is
-    // the whole question for a dataflow design, so account for it directly:
-    // one bucket per CU phase, plus the memory beats that feed them.
+    // One bucket per CU phase, plus the memory beats that feed them, because
+    // event counters say a GEMM happened but not whether the time went to
+    // computing or to waiting for operands.
     //
-    // S_FREQ/S_FRCV/S_FWR is a FILL: address out, data back, written to L1 --
-    // pure operand movement. S_GEMM/S_GWAIT is the systolic array actually
-    // multiplying. S_DRAIN/S_DWAIT is the output tile leaving the
-    // accumulator. S_IDLE with a program still running is the CU waiting on
-    // the dispatcher, which is neither compute nor bandwidth but is real time.
+    // S_FREQ/S_FRCV/S_FWR is a FILL, pure operand movement. S_GEMM/S_GWAIT is
+    // the array multiplying. S_DRAIN/S_DWAIT is the output tile leaving the
+    // accumulator. S_IDLE with a program still running is the CU waiting on the
+    // dispatcher -- neither compute nor bandwidth, but real time.
     reg [63:0] fill_cyc = 0, gemm_cyc = 0, drain_cyc = 0, idle_cyc = 0;
     reg [63:0] rd_beats = 0, wr_beats = 0, host_cyc = 0, run_cyc = 0;
 
@@ -633,13 +592,11 @@ module mag_driver_tb;
     // "what fraction of every resource is the machine actually using".
     reg [63:0] noc_in = 0, noc_out = 0;
 
-    // The quantised read now has its own state machine and runs CONCURRENTLY
-    // with the write and host paths, so these buckets deliberately overlap and
-    // no longer sum to the elapsed cycles. That is the measurement: qfill and
-    // qemit both being high is the fetch/emit overlap doing its job, and if
-    // they still sum to 100% the two channels are not actually running at once.
-    // Summed over the memory ports, so on a multi-port MAG these read as
-    // port-cycles -- the same convention the CU occupancy buckets already use.
+    // The quantised read has its own state machine and runs CONCURRENTLY with
+    // the write and host paths, so these buckets overlap and do NOT sum to the
+    // elapsed cycles. That is the measurement: qfill and qemit both high is the
+    // fetch/emit overlap working, and summing to 100% means it is not. Summed
+    // over the memory ports, so these read as port-cycles.
     integer mq;
     reg [7:0] nm_idle, nm_rd, nm_wr, nm_qfill, nm_qwait, nm_qemit,
               nm_inbp, nm_outbp;
@@ -683,18 +640,13 @@ module mag_driver_tb;
     end
 
     // ---------------------------------------- WHY, not merely WHERE
-    // A state histogram says S_WR_ACK was 95% occupied. It does not say whether
-    // that was work or waiting, and only the second is a fault. Every counter
-    // below is a state PLUS the reason it could not advance, so a regression
-    // names its own cause instead of needing a bisect.
-    //
-    // This set exists because it was needed: splitting MAG's read engine out
-    // made reads and writes concurrent for the first time, and the read
-    // emitter could then steal the single cycle the write path's B response
-    // was offered on. The response is consumed by the tied-high m_bready
-    // whether or not anyone acts on it, so it was simply gone -- S_WR_ACK then
-    // waited forever. `wack_nob` is that bug, directly: cycles in S_WR_ACK
-    // with no response in hand and none arriving.
+    // A state histogram says S_WR_ACK was 95% occupied, not whether that was
+    // work or waiting -- and only the second is a fault. Every counter below is
+    // a state PLUS the reason it could not advance, so a regression names its
+    // own cause instead of needing a bisect. `wack_nob` is the concrete case:
+    // cycles in S_WR_ACK with no B response in hand and none arriving, which is
+    // what a read emitter stealing the single cycle m_bready consumed it on
+    // looks like.
     reg [63:0] wack_nob = 0, wack_blk = 0, wslot_full = 0;
     reg [63:0] rfill_dry = 0, rwait_emit = 0, emit_bp = 0;
     reg [63:0] cu0_dwait = 0, cu0_gwait = 0;
@@ -737,12 +689,10 @@ module mag_driver_tb;
         if (cst[0] == 4'd4) cu0_gwait <= cu0_gwait + 1;
     end
 
-    // Progress watchdog. Everything the machine retires is counted somewhere
-    // here, so if none of it moves, nothing is happening.
-    // A SUM, not a concatenation. Every term is monotonically increasing, so
-    // the sum is too and any one of them moving moves it -- which is all a
-    // progress watchdog needs, and unlike a concatenation it does not have to
-    // grow a field per cluster.
+    // Progress watchdog: everything the machine retires is counted here, so if
+    // none of it moves nothing is happening. A SUM, not a concatenation --
+    // every term is monotonic, so any one of them moving moves the sum, and
+    // unlike a concatenation it does not grow a field per cluster.
     integer pw;
     reg [63:0] progress;
     always @(*) begin
@@ -796,19 +746,13 @@ module mag_driver_tb;
     end
 
     // ------------------------------------------- the working pipeline, in time
-    // A histogram says how MUCH time each phase took. It cannot say WHEN, and
-    // "when" is the whole question for an overlapped schedule: whether a fill
-    // hid inside the previous sweep is not derivable from two totals, however
-    // precise they are.
+    // A histogram says how MUCH time each phase took, never WHEN -- and whether
+    // a fill hid inside the previous sweep is not derivable from two totals.
     //
-    // Sampled, not logged. One nibble per cluster per TRACE_GAP cycles is a few
-    // hundred points on a 20k-cycle run -- small enough to print in one line
-    // per cluster, dense enough to show a bubble. The nibble is a MASK, not a
-    // state: the phases genuinely overlap, and a sample that had to pick one
-    // would hide exactly the overlap this exists to show.
-    //
-    // ORed across the window rather than sampled instantaneously, so a phase
-    // shorter than the gap still appears.
+    // Sampled, not logged: one nibble per cluster per TRACE_GAP cycles. The
+    // nibble is a MASK, not a state, because the phases genuinely overlap and a
+    // sample forced to pick one would hide what this exists to show. ORed
+    // across the window, so a phase shorter than the gap still appears.
     localparam integer TRACE_GAP = 64;
     localparam integer TRACE_MAX = 2048;
     reg [3:0]  tr     [0:NCL-1][0:TRACE_MAX-1];
@@ -879,14 +823,12 @@ module mag_driver_tb;
 
     // ============================================================ AXI tasks
     // Host AXI, with every handshake BOUNDED. An unbounded `while (!ready)` is
-    // invisible when it never completes: the upload phase runs before GO, so
-    // no round limit covers it, and the only backstop left is the whole-sim
-    // watchdog -- hours away at the speed xsim runs this design. A stall here
-    // then looks exactly like a slow simulation, which is the one thing a
-    // bench must never let happen.
+    // invisible when it never completes: the upload runs before GO, so no round
+    // limit covers it and a stall looks exactly like a slow simulation.
+    //
     // A MACRO, not a task: a task's input is sampled once at call time, so
-    // `while (!cond)` on a task argument spins on the value the signal had
-    // when the task was entered and never observes it going high.
+    // `while (!cond)` on a task argument spins on the value the signal had at
+    // entry and never observes it going high.
     localparam integer HS_LIMIT = 100000;   // cycles allowed per handshake
     integer hs;
     reg     hs_bad = 1'b0;
@@ -987,15 +929,13 @@ module mag_driver_tb;
     // not a load on the fabric, small enough that it adds no real latency.
     localparam integer POLL_GAP = 64;
     // A round is stuck when it stops making PROGRESS, not when it exceeds some
-    // elapsed time. Every size-derived limit is a guess that has to be re-
-    // guessed for the next problem, and guessing it high is what turns a wedge
-    // into a quarter-hour of silence.
+    // elapsed time: a size-derived limit has to be re-guessed per problem, and
+    // guessing high turns a wedge into a quarter-hour of silence.
     //
-    // The bound below is derived from one real quantity: the longest a healthy
-    // machine can go without ANY counter moving. That is one GEMM instruction
-    // -- 8x8 sub-tiles over 4 K blocks, ~2 cycles per tile-op, so ~600 cycles
-    // -- because nothing else retires while the array runs. 20000 is ~30x that
-    // and does not depend on M, N, K, the round count, or the cluster count.
+    // The bound is the longest a HEALTHY machine goes without any counter
+    // moving -- one GEMM instruction, ~600 cycles, since nothing else retires
+    // while the array runs. 20000 is ~30x that and does not depend on M, N, K,
+    // the round count or the cluster count.
     localparam integer STALL_LIMIT = 20000;
 
 
@@ -1093,15 +1033,12 @@ module mag_driver_tb;
             // the problem, so a 512-cube and a 64-cube report a wedge equally
             // fast.
             while (!rv[1] && stall < STALL_LIMIT) begin
-                // BACK OFF between polls. A tight read loop here is not free:
-                // every drv_read is a full AXI transaction through the
-                // crossbar, and the orchestrator is already spinning on its
-                // own SIG_DONE poll on the same bus. Two masters hammering
-                // the fabric for the whole compute is work the SIMULATOR has
-                // to evaluate every cycle, and it dominated the runtime of a
-                // large GEMM -- while telling us nothing, because the answer
-                // is not ready any sooner for being asked more often. A real
-                // host polls a PCIe BAR in microseconds, so a gap is the
+                // BACK OFF between polls: every drv_read is a full AXI
+                // transaction through the crossbar and the orchestrator is
+                // already spinning on SIG_DONE on the same bus. Two masters
+                // hammering the fabric is work the SIMULATOR evaluates every
+                // cycle, and it dominated the runtime of a large GEMM. A real
+                // host polls a PCIe BAR in microseconds, so the gap is the
                 // faithful model as well as the fast one.
                 repeat (POLL_GAP) @(posedge clk);
                 drv_read(ORC_BASE + MO_CTRL, rv);

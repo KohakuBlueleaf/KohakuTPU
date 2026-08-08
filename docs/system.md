@@ -408,10 +408,10 @@ Three things are different in kind, not just in scale.
 **Operands are FP16 in memory.** The driver uploads what software actually has;
 `mx_quant.v` converts to int7 + E5M3 on the way out of MAG, per 32-element block,
 choosing each block's scale. Nothing in the driver produces a quantised value —
-`driver/src/kohakutpu/mxfp7.py` exists only to *predict* what the hardware will
+`src/ktpu/hw/mxfp7.py` exists only to *predict* what the hardware will
 do, so a mismatch is a real disagreement and not two copies of one bug.
 
-**The shape is arbitrary.** `driver/src/kohakutpu/kernel.py` tiles any
+**The shape is arbitrary.** `src/ktpu/hw/kernel.py` tiles any
 `(M, N, K)` onto the one tile the hardware holds and streams the passes as
 rounds. `TILES = 512`, `GA = 128` and `GB = 256` here, so `choose_tile` returns
 `gm=16, gn=32, nk=4` — a **64×128×128** pass — and a 256×256×256 problem is 8

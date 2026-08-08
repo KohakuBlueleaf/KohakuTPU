@@ -1,12 +1,7 @@
 // Cluster with the EXACT fixed-point accumulator: the bring-up configuration.
-//
-//   mx_cluster_core  ->  mx_acu (exact integer)
-//
-// This pairing exists so mx_cluster_tb can check the whole 4x32x4 datapath
-// bit-for-bit against a model, with no rounding anywhere to blur a failure.
-// A real machine pairs the same core with mx_acu_fp instead -- see
-// mx_matmul_cu.v. The core is shared, so the datapath under test is the one
-// that ships.
+// mx_cluster_core -> mx_acu, so mx_cluster_tb can check the whole 4x32x4
+// datapath bit-for-bit with no rounding to blur a failure. A real machine pairs
+// the same core with mx_acu_fp instead -- see mx_matmul_cu.v.
 //
 // 4 x 32 x 4 per cycle. Latency, operands to acc_valid: 17 + 2 = 19 cycles.
 

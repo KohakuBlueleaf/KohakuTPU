@@ -4,24 +4,17 @@
 // passed straight to xpm_memory_sdpram -- it is never left to synthesis to
 // decide from the shape of a reg array.
 //
-// This matters more than it sounds. Whether an array becomes LUTRAM, BRAM or
-// URAM otherwise depends on a reset clause, a read latency, or a heuristic that
-// can change between tool versions -- so both the resource cost AND the read
-// latency of the design can move without the RTL changing. Read latency is not
-// a detail here: it sets how far an address has to lead its data, and every
-// caller has pipeline structure built around that number -- mx_cluster_mgr
-// delays control by two stages to match READ_LAT=1 on L1, and mx_acu_fp uses
-// the block RAM's own output register to keep stage 3 off the RAM array. That
-// has to be a decision in the source, not a synthesis outcome.
+// Left to inference, whether an array becomes LUTRAM, BRAM or URAM depends on a
+// reset clause, a read latency, or a heuristic that can change between tool
+// versions -- so both resource cost AND READ LATENCY can move without the RTL
+// changing. Read latency is not a detail: it sets how far an address must lead
+// its data, and callers have pipeline structure built on that number
+// (mx_cluster_mgr delays control two stages for READ_LAT=1; mx_acu_fp uses the
+// block RAM's output register to keep stage 3 off the array).
 //
 //   MEM_PRIM   "distributed"   LUTRAM. Wide and shallow. READ_LAT 0 or 1.
 //              "block"         RAMB36E2. 512 x 72 at its widest in SDP.
 //              "ultra"         URAM288. 4096 x 72, fixed. Deep and narrow.
-//
-// Same convention as src/common/sync_fifo.v, which names FIFO_MEMORY_TYPE for
-// the same reason. XPM simulates under xsim with -L xpm (the runners already
-// pass it) and synthesises out-of-context without IP packaging, so there is no
-// flow reason to fall back on inference.
 //
 // Choosing a primitive for a given shape:
 //

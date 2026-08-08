@@ -24,6 +24,13 @@ the ACU has no addressing at all, so the manager sweeps.
 | manager → ACU | load, add, emit | [acu.md](acu.md) |
 | CU ↔ MAG | read, write, quantise | [memory.md](memory.md) |
 
+A sixth is **[vector.md](vector.md)** — agent → vector core — and it breaks the
+pattern above deliberately. The five are all straight-line because each
+describes a fixed dataflow; a vector core runs *kernels*, which are written
+rather than generated, so it is the only one with a loop and a predicate. It is
+a sixth **consumer** on the NoC, not a sixth layer: nothing above it changes.
+Design, not built.
+
 Above all five, [kernel.md](kernel.md) is the driver-side contract: how a GEMM of
 arbitrary size becomes passes and rounds, and why the operand layout is what it
 is.

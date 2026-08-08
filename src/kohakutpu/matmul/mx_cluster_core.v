@@ -5,27 +5,22 @@
 //   | TCU 0 |--C->| TCU 1 |--C->| TCU 2 |--C->| TCU 3 |--> part_out
 //   +-------+     +-------+     +-------+     +-------+
 //
-// Split out from mx_cluster so the same verified datapath can feed either
-// accumulator: the exact fixed-point one, which is what lets mx_cluster_tb
-// check bit-for-bit, or the floating-point one a real machine uses.
-// Duplicating the TCU chain to serve both would mean the version under test
-// was not the version that ships.
+// Split out from mx_cluster so the same verified datapath feeds either
+// accumulator -- the exact fixed-point one mx_cluster_tb checks bit-for-bit, or
+// the floating-point one a real machine uses.
 //
-// Timing -- the W path costs TWO cycles, not one.
-//
-// C is registered once (CREG=1), so `c_r <= cin` at edge E captures the value
-// that was already settled before E, i.e. one that became valid after E-1. The
-// ALU then consumes c_r at E+1. So a partial appearing after edge X is not
-// added until edge X+2:
+// TIMING -- the W path costs TWO cycles, not one. C is registered once
+// (CREG=1), so `c_r <= cin` at edge E captures a value valid after E-1, and the
+// ALU consumes c_r at E+1:
 //
 //     TCU c stage-7 P   lands after   E(11 + d_c)
 //     it consumes cin   valid after   E(9  + d_c)
 //     TCU c-1 part_out  valid after   E(11 + d_{c-1})
 //     =>  d_c = d_{c-1} + 2
 //
-// Assuming one cycle here silently drops half the products: the downstream TCU
-// samples its neighbour's partial a cycle early, when the value is still the
-// previous tile's (or zero on the first tile).
+// Assuming one cycle silently drops half the products: the downstream TCU
+// samples its neighbour's partial a cycle early, when it still holds the
+// previous tile's value (or zero on the first tile).
 //
 // Latency, operands to part_valid: 11 + 2*(NTCU-1) = 17 cycles.
 

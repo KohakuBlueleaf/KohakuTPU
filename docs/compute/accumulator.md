@@ -318,7 +318,7 @@ violating timing groups, because both were rooted in it.
 p50 1.70e-04, max 1.00e+00, 20 of 65,536 over 1% and 4 over 10%; against the
 FP64 model, p50 3.88e-03 and p99 2.48e-01. The 4-cluster 256×512×256 run is
 20,647 cycles at 975.1 GFLOP/s, 79.4% of peak, matching the baseline recorded in
-`driver/run_matmul.py`'s own comments exactly (max 2.43e+00, 7 of 131,072 over
+`scripts/py/run_matmul.py`'s own comments exactly (max 2.43e+00, 7 of 131,072 over
 10%).
 
 ---

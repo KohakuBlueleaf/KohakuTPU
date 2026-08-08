@@ -186,8 +186,7 @@ module mx_tdesc #(
     end
 
     // ---- address and bounds ---------------------------------------------
-    // Adder tree over the per-dimension partial sums. No multipliers: the
-    // products were maintained incrementally above.
+    // Adder tree over the per-dimension partial sums.
     reg signed [SW-1:0] off_sum;
     always @(*) begin
         off_sum = {SW{1'b0}};

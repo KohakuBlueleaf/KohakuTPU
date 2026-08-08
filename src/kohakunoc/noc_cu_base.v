@@ -9,11 +9,8 @@
 //     exec_done / exec_result / exec_fault    report it retired
 //     send_* / recv_*                         everything that is not an instruction
 //
-// A CU author writes only the datapath. Framing, routing, completion signalling
-// and CU_CTRL discovery are handled here, which is what makes "insert any compute
-// unit we want" mean anything: a unit conforms by construction rather than by
-// remembering to.
-//
+// A CU author writes only the datapath: framing, routing, completion signalling
+// and CU_CTRL discovery are handled here, so a unit conforms by construction.
 // The framework replies to whoever sent the instruction (`src` of the CU_INST
 // flit), so a CU never needs to be told where its orchestrator is.
 
@@ -92,14 +89,11 @@ module noc_cu_base #(
     wire [FLIT_WIDTH-1:0] inst_head;
     reg  inst_pop;
 
-    // Conservative: stall if EITHER queue is full. busy must be meaningful even
-    // when noc_in_valid is low, and the type field is only trustworthy alongside
-    // a valid flit.
-    // This is plain `full` despite the name: sync_fifo passes
-    // USE_ADV_FEATURES(0), so XPM ties prog_full low and `almost` reduces to
-    // `busy`. Plain full is safe because the link RETRIES -- the sender holds
-    // `valid` and `data` until a cycle with `busy` low -- so nothing is ever
-    // committed against a stale busy. See docs/noc/spec.md s2.1.
+    // Stall if EITHER queue is full: busy must be meaningful even when
+    // noc_in_valid is low, and the type field is only trustworthy alongside a
+    // valid flit. Plain `full` despite the name -- sync_fifo passes
+    // USE_ADV_FEATURES(0) -- which is safe only because the link RETRIES.
+    // See docs/noc/spec.md s2.1.
     assign noc_in_busy = inst_almost | recv_almost;
 
     sync_fifo #(.DATA_WIDTH(FLIT_WIDTH), .FIFO_DEPTH(INST_DEPTH),
@@ -145,11 +139,9 @@ module noc_cu_base #(
     assign inst_flit = inst_head;
 
     // ------------------------------------------------------------ signal TX
-    // Completions are queued, not held in a single register. The datapath can
-    // retire faster than a busy outbound link drains -- one register would let
-    // each new completion overwrite the last, losing credits silently. Depth 16
-    // of 56 bits is a handful of LUTs and lets the CU run ahead of a congested
-    // link instead of stalling on it.
+    // Completions are QUEUED, not held in one register: the datapath can retire
+    // faster than a busy outbound link drains, and one register would let each
+    // completion overwrite the last, losing credits silently.
     localparam SIG_DEPTH = 16;
     localparam SIG_W     = 2*POS_WIDTH + 48;   // rep_x, rep_y, id[8], code[8], arg[32]
 
@@ -165,24 +157,24 @@ module noc_cu_base #(
     // datapath wants to say
     wire [31:0] ret_arg  = (!exec_fault && rep_last) ? {24'd0, rep_id} : exec_result;
 
-    // Issue also stops when the signal queue is full. Executing an instruction we
-    // cannot report is worse than not executing it: the report is what returns the
-    // dispatch credit, so a dropped signal stalls the orchestrator permanently.
+    // Issue also stops when the signal queue is full: the report returns the
+    // dispatch credit, so an instruction executed but unreportable stalls the
+    // orchestrator permanently.
     assign inst_valid = !inst_empty && !in_flight && !sig_full;
 
-    // TX arbitration. Declared here rather than next to the output register
-    // because the state machines above consume these -- Verilog needs the
-    // declaration first, and iverilog letting it slide is exactly how a 288-bit
-    // net became 1 bit elsewhere in this project.
+    // TX arbitration. Declared here, not next to the output register, because
+    // the state machines above consume these and Verilog needs the declaration
+    // first -- iverilog letting that slide is how a 288-bit net became 1 bit
+    // elsewhere in this project.
     //
     // Signals win: they return dispatch credits, so starving them stalls the
-    // orchestrator. CU_CTRL next (a controller may be blocked on discovery), then
-    // whatever the datapath wants to send.
-    // Free when the output register is empty OR is being emptied this cycle --
-    // not merely when the link is idle. Deciding from `!noc_out_busy` alone pops
-    // the signal FIFO against a link that may be busy by the time the flit is
-    // presented, and the flit is then gone: a lost CU_SIGNAL never returns its
-    // dispatch credit, so the orchestrator waits forever.
+    // orchestrator. CU_CTRL next (a controller may be blocked on discovery),
+    // then the datapath.
+    //
+    // `tx_free` covers the register being emptied THIS cycle, not merely an idle
+    // link: deciding from `!noc_out_busy` alone pops the signal FIFO against a
+    // link that may be busy by the time the flit is presented, and a lost
+    // CU_SIGNAL never returns its credit.
     wire tx_free   = !noc_out_valid || !noc_out_busy;
     wire sig_sent  = sig_pend  && tx_free;
     wire ctrl_sent = ctrl_pend && tx_free && !sig_pend;

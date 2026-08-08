@@ -3,7 +3,7 @@
 What the host writes into `main_orch` and what the machine does with it.
 
 Source: [`src/kohakuaxi/main_orch.v`](../../src/kohakuaxi/main_orch.v),
-[`driver/src/kohakutpu/device.py`](../../driver/src/kohakutpu/device.py).
+[`src/ktpu/hw/device.py`](../../src/ktpu/hw/device.py).
 
 ---
 

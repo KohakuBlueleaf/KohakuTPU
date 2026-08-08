@@ -25,7 +25,7 @@ instructions in flight below one CU's instruction FIFO; exceeding that depth
 raises `noc_in_busy`, which backpressures the same mesh link the CU's memory
 read responses arrive on, so it can never drain the FIFO that is blocking it.
 A per-kick seed lets `P` kicks admit `P × n` instructions against a FIFO of 32.
-`Program.seed_credits` in `driver/src/kohakutpu/device.py` carries the argument.
+`Program.seed_credits` in `src/ktpu/hw/device.py` carries the argument.
 
 ---
 

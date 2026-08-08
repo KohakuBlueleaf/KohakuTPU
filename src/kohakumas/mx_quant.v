@@ -1,9 +1,8 @@
 // FP16 -> MXFP7 block quantiser, in the MAG read path.
 //
-// SOFTWARE NEVER SEES MXFP7. Memory holds FP16, which is what a driver uploads
-// and what a framework produces. MXFP7 is an internal encoding that exists
+// SOFTWARE NEVER SEES MXFP7. Memory holds FP16; MXFP7 is an internal encoding
 // between here and the MAC array, and it exists because it is 2.2x denser on
-// the NoC -- a property that is thrown away if the mesh carries FP16.
+// the NoC -- a property thrown away if the mesh carries FP16.
 //
 // One invocation converts ONE L1 entry: 4 lanes x 32 K elements.
 //
@@ -18,30 +17,21 @@
 //
 //   scale = 2^(E - SBIAS) * (1 + M/8)      field = {E[4:0], M[2:0]}
 //
-// A power-of-two scale can only land the block peak somewhere in [32,64) of
-// the int7 range, so between zero and a full bit of the significand goes
-// unused, and which it is depends on where the peak happens to fall inside its
-// binade. Three mantissa bits put the peak in [56,63] every time. Measured on
-// correlated operands, per-element relative error p50 0.54% -> 0.38% and
-// p99 48% -> 23%, for one multiply here and one in the accumulator.
+// A power-of-two scale lands the block peak anywhere in [32,64) of the int7
+// range, so up to a full bit of significand goes unused depending on where the
+// peak falls in its binade. Three mantissa bits put it in [56,63] every time.
 //
 // E5 because the output is FP16: FP16's normal range spans 30 binades and E5
-// covers 31. E4 covers 16 and does not. The three extra exponent bits an E8M0
-// field spends buy range this datapath cannot express anyway.
-//
-// The field is still 8 bits, so nothing about the flit format, the NoC or L1
-// changes -- only the interpretation.
+// covers 31, E4 covers 16. The field is still 8 bits, so the flit format, the
+// NoC and L1 are unchanged -- only the interpretation.
 //
 //   value = q * scale,   anchor = 2*SBIAS, which cancels both stored biases
 //
-// LANE, NOT ROW. The source is always 4 lanes of 32 K. For an A operand a lane
-// is a row of A; for a B operand it is a column of B. Only the output packing
-// differs, which is what `b_layout` selects -- so one circuit serves both and
-// the driver stores both operands in the same shape.
+// LANE, NOT ROW. The source is always 4 lanes of 32 K: for an A operand a lane
+// is a row of A, for a B operand a column of B. Only the output packing differs,
+// which `b_layout` selects.
 //
-// Timing and area rationale -- why the peak rides on the fill beats, why the
-// pack is 32 elements wide, and why the extraction is an 8-bit window rather
-// than a 24-bit barrel shift -- is in docs/mas/quantiser-timing.md.
+// Timing and area rationale: docs/mas/quantiser-timing.md.
 
 `default_nettype none
 
@@ -84,14 +74,12 @@ module mx_quant #(
     localparam signed [7:0] SEXP_MAX = 31 - SBIAS;
 
     // ---- the block peak, accumulated across the fill --------------------
-    // Magnitude order on FP16 is the numeric order of bits [14:0], because the
-    // format is sign-magnitude with the exponent above the mantissa. So the
-    // largest magnitude is a plain unsigned max -- no decoding needed.
+    // FP16 is sign-magnitude with the exponent above the mantissa, so magnitude
+    // order is the plain unsigned order of bits [14:0] -- no decode needed.
     //
     // A beat is 16 elements of ONE lane, so the reduction rides on the eight
     // cycles the fill already spends: two compare levels per beat down to four
-    // partial maxima, then one more cycle to fold them into the lane's pair of
-    // accumulators. Two levels per cycle is the whole depth budget this costs.
+    // partial maxima, then one cycle to fold them into the lane's accumulators.
     reg [14:0] r4 [0:3];              // four partial maxima of one beat
     reg [1:0]  r4_lane;
     reg        r4_first;              // first beat of its lane: load, not max
@@ -126,9 +114,8 @@ module mx_quant #(
 
     // ---- FP16 decode, subnormals included -------------------------------
     // A subnormal has no implicit leading one and an effective exponent of 1.
-    // Flushing them instead would zero most of any block whose peak is below
-    // ~2e-3, which reads as the format being poor on small tensors rather than
-    // as a dropped case.
+    // Flushing them would zero most of any block whose peak is below ~2e-3,
+    // which reads as the format being poor on small tensors.
     function [15:0] decode;      // {e[4:0], sig[10:0]}
         input [14:0] mag15;
         begin
@@ -231,16 +218,13 @@ module mx_quant #(
                 // one cycle for the last beat's fold to land in `acc`
                 pk <= PK_NORM;
             end else if (pk == PK_NORM) begin
-                // Renormalise a subnormal peak into [1024,2048). Flushing
-                // instead would zero most of any block whose peak is below
-                // ~2e-3, which reads as the format being poor on small tensors
-                // rather than as a dropped case.
+                // Renormalise a subnormal peak into [1024,2048).
                 //
-                // BOTH HALVES OF THE ACCUMULATOR ARE RENORMALISED and the
-                // larger one is selected afterwards. Reducing first and
-                // renormalising the winner puts a 15-bit compare in front of an
-                // 11-step shift chain and costs 3.129 ns; here the compare runs
-                // beside the chain and only a 2:1 mux is added to it.
+                // BOTH HALVES OF THE ACCUMULATOR ARE RENORMALISED and the larger
+                // one selected afterwards. Reducing first and renormalising the
+                // winner puts a 15-bit compare in FRONT of an 11-step shift
+                // chain; here the compare runs beside it and adds only a 2:1
+                // mux. See docs/mas/quantiser-timing.md.
                 for (lane = 0; lane < 4; lane = lane + 1) begin
                     for (hh = 0; hh < 2; hh = hh + 1) begin
                         {ef_v, sig_v} = decode(acc[lane*2+hh]);
@@ -261,15 +245,12 @@ module mx_quant #(
                 pk <= PK_SCALE;
             end else if (pk == PK_SCALE) begin
                 // The block scale: the smallest representable one with
-                // peak/scale <= 63, so the peak lands as near the top of int7
-                // as the E5M3 grid allows -- [56,63] rather than the [32,64) a
-                // power-of-two scale could manage. Rounding UP is what keeps
-                // the peak from clipping, and the peak matters most.
+                // peak/scale <= 63. Rounding UP is what keeps the peak from
+                // clipping.
                 //
                 // ceil(n_sig/126) as eight constant compares, not a divide:
                 // n_sig is in [1024,2047] whenever it is nonzero, so the
-                // quotient is in [9,17] and its seven interior boundaries are
-                // known numbers.
+                // quotient is in [9,17] and its interior boundaries are known.
                 for (lane = 0; lane < 4; lane = lane + 1) begin
                     tmp_v = n_sig[lane];
                     ep_v  = n_ep[lane];
@@ -291,11 +272,10 @@ module mx_quant #(
                         smant_v = ceil_v;
                     end
 
-                    // E5 spans 31 binades and peak/63 needs exactly FP16's
-                    // NORMAL range, so a block whose peak is itself subnormal
-                    // wants a scale the field cannot hold. Clamping degrades it
-                    // -- the peak lands below 63 and the block keeps fewer bits
-                    // -- where letting the exponent wrap would corrupt it.
+                    // A block whose peak is itself subnormal wants a scale the
+                    // 5-bit field cannot hold. Clamping DEGRADES it (the peak
+                    // lands below 63, so the block keeps fewer bits); letting
+                    // the exponent wrap would corrupt it.
                     if      (sexp_v < SEXP_MIN) sexp_v = SEXP_MIN;
                     else if (sexp_v > SEXP_MAX) sexp_v = SEXP_MAX;
 
@@ -341,12 +321,10 @@ module mx_quant #(
     end
 
     // ---- pack stage 2: window, round, clamp, sign, place -----------------
-    // AN 8-BIT WINDOW, NOT A 24-BIT BARREL SHIFT. The product is under 2^23
-    // and the block scale is derived from the block peak, so t is in [0,7] for
-    // every element that produces a nonzero result: above that the window is
-    // entirely above the product and the result is zero, below it the element
-    // would exceed the peak and saturates. Seven bits of significand plus the
-    // round bit therefore come out of prod[22:15] shifted by three bits.
+    // AN 8-BIT WINDOW, NOT A 24-BIT BARREL SHIFT. The product is under 2^23 and
+    // the scale comes from the block peak, so t is in [0,7] for every element
+    // that produces a nonzero result: above that the window clears the product
+    // and gives zero, below it the element exceeds the peak and saturates.
     always @(posedge clk) begin
         if (rst) begin
             word0 <= 256'd0; word1 <= 256'd0; word2 <= 256'd0; word3 <= 256'd0;

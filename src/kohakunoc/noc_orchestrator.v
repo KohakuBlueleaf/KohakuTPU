@@ -1,16 +1,13 @@
 // Global Orchestrator -- AXI4 slave <-> NoC local port. See docs/noc/spec.md s10.
 //
-// This is the control plane and the bring-up instrument. It gives a host (XDMA,
-// or jtag_axi during development) three things:
+// The control plane and the bring-up instrument. It gives a host (XDMA, or
+// jtag_axi during development) three things:
 //
-//   a raw flit mailbox   inject and receive ANY flit, including malformed ones.
-//                        An address-mapped bridge could only ever emit
-//                        MEM_RD_REQ/MEM_WR_REQ, so it could never test CU_INST,
-//                        CU_DATA or a bad header -- disqualifying for bring-up.
+//   a raw flit mailbox   inject and receive ANY flit, malformed ones included.
+//                        An address-mapped bridge could only emit
+//                        MEM_RD_REQ/MEM_WR_REQ, never CU_INST or a bad header.
 //   a status mirror      NODE_STATUS[n], updated from CU_SIGNAL, so the host
-//                        polls a 2 KB register window instead of DDR4. Polling
-//                        DRAM over PCIe costs hundreds of ns per read and injects
-//                        traffic into the memory system the CUs are using.
+//                        polls a 2 KB register window rather than DDR4 over PCIe.
 //   capability discovery so software can size itself without a hardcoded map.
 //
 // AXI and NoC share one clock (spec s10.6). SmartConnect does the crossing to
@@ -109,23 +106,19 @@ module noc_orchestrator #(
     localparam SW_BITS     = $clog2(STAGE_WORDS);
     localparam [15:0] A_STAGE = 16'h2000;
 
-    // Measured: this infers LUTRAM (RAM64M8 x100 at STAGE_FLITS=128), not BRAM.
-    // A ram_style="block" attribute here is rejected with "Infeasible attribute"
-    // and silently downgraded, so it is not written -- an ignored attribute reads
-    // like a guarantee. The likely blocker is the read destination being a
-    // variable part-select (prog_flit[prog_word*DATA_WIDTH +: DATA_WIDTH]);
-    // BRAM read data has to land in a plain register. Costs ~1000 LUTs, and there
-    // is one orchestrator per system, so this is not worth a pipeline stage today.
-    // Revisit if STAGE_FLITS grows by an order of magnitude.
+    // Infers LUTRAM (RAM64M8 x100 at STAGE_FLITS=128), not BRAM. NO ram_style
+    // attribute: "block" is rejected as infeasible and silently downgraded, and
+    // an ignored attribute reads like a guarantee. The likely blocker is the
+    // read destination being a variable part-select -- BRAM read data has to
+    // land in a plain register. ~1000 LUTs, one per system; revisit if
+    // STAGE_FLITS grows by an order of magnitude.
     reg [DATA_WIDTH-1:0] stage_ram [0:STAGE_WORDS-1];
 
     reg [2*POS_WIDTH-1:0] prog_dst;
     reg [15:0]            prog_len;      // flits to send
-    // First staging slot of this program. Without it every kick restarts at
-    // slot 0, so a second cluster's flits cannot be staged until the first has
-    // consumed its own -- which forces the host to wait for completion between
-    // dispatches and serialises clusters that have no data dependency at all.
-    // With it, N programs live in the window at once and all N run concurrently.
+    // First staging slot of this program. Without it every kick restarts at slot
+    // 0, so a second cluster's flits cannot be staged until the first has
+    // consumed its own, serialising clusters with no data dependency.
     reg [15:0]            prog_base;
     reg [15:0]            prog_left;
     reg [SW_BITS-1:0]     prog_rd;
@@ -186,13 +179,12 @@ module noc_orchestrator #(
     wire                  rx_full, rx_empty;
     wire [FLIT_WIDTH-1:0] rx_head;
 
-    // CU_SIGNAL is summarised into NODE_STATUS and deliberately NOT queued here.
-    // Queuing it would let unread signals fill the FIFO, which raises noc_in_busy
-    // and stops the orchestrator accepting *anything* -- including the very
-    // signals that return dispatch credits. A host that never reads RX would then
-    // wedge the whole control plane, silently, after RX_DEPTH completions.
-    // NODE_STATUS is the intended mechanism for completions (spec s10.4); RX is
-    // for traffic that has no other home, such as CU_CTRL replies.
+    // CU_SIGNAL is summarised into NODE_STATUS and NOT queued here. Queued,
+    // unread signals fill the FIFO, raise noc_in_busy and stop the orchestrator
+    // accepting anything -- including the signals that return dispatch credits,
+    // so a host that never reads RX wedges the control plane after RX_DEPTH
+    // completions. NODE_STATUS is the mechanism for completions (spec s10.4);
+    // RX is for traffic with no other home, such as CU_CTRL replies.
     wire in_is_sig = (in_type == 4'h6);
 
     sync_fifo #(.DATA_WIDTH(FLIT_WIDTH), .FIFO_DEPTH(RX_DEPTH),
@@ -216,10 +208,9 @@ module noc_orchestrator #(
     // included. This is the ONLY record of a CU_SIGNAL -- the flit itself is
     // dropped rather than queued, for the reason given at the RX FIFO above.
     localparam N_STATUS = 1 << (2*POS_WIDTH);
-    // Also LUTRAM, measured: RAM256X1D x64. The signal_count read-modify-write
-    // below reads and writes the same address in one cycle, which BRAM cannot do,
-    // so ram_style="block" is rejected here too and is deliberately not written.
-    // 256 x 64 costs a few hundred LUTs for the whole machine's status mirror.
+    // Also LUTRAM (RAM256X1D x64): the signal_count read-modify-write below
+    // touches one address in one cycle, which BRAM cannot do, so ram_style
+    // "block" is rejected here too and is deliberately not written.
     reg [63:0] node_status [0:N_STATUS-1];
 
     wire [POS_WIDTH-1:0] in_src_x = noc_in_data[FLIT_WIDTH-2*POS_WIDTH-1 -: POS_WIDTH];
@@ -251,17 +242,14 @@ module noc_orchestrator #(
     wire in_inst_done = noc_in_valid && in_is_sig &&
                         (noc_in_data[255 -: 8] == 8'h00);   // SIG_INST_COMPLETE
 
-    // Completions from EVERY node, in one register. NODE_STATUS is per node, so
-    // waiting on N clusters costs N polls and therefore N command slots, and
-    // the program grows with the machine for a question -- "is everyone
-    // finished" -- whose answer is a single number. One counter makes that one
-    // poll however many clusters there are. Cleared by writing SIG_DONE.
+    // Completions from EVERY node, in one register: NODE_STATUS is per node, so
+    // "is everyone finished" would otherwise cost N polls and grow the program
+    // with the machine. Cleared by writing SIG_DONE.
     //
-    // It counts EVERY signal, matching what NODE_STATUS counts, not just
-    // SIG_INST_COMPLETE. The last instruction of a batch reports
-    // SIG_BATCH_COMPLETE instead (noc_cu_base.v), so counting only
-    // INST_COMPLETE sees N-1 of every N instructions and a host waiting for N
-    // waits forever.
+    // Counts EVERY signal, matching NODE_STATUS, not just SIG_INST_COMPLETE:
+    // the last instruction of a batch reports SIG_BATCH_COMPLETE instead
+    // (noc_cu_base.v), so counting only INST_COMPLETE sees N-1 of every N and a
+    // host waiting for N waits forever.
     reg [15:0] sig_done_count;
 
     always @(posedge clk) begin
@@ -272,16 +260,13 @@ module noc_orchestrator #(
 
     wire disp_can = prog_run && !tx_full && (prog_credit != 16'd0);
 
-    // All dispatcher state is driven from this one block, including the credit
-    // counter and the kick. The AXI write FSM only *requests* -- it raises
-    // kick_req / cred_wr and this block acts on them.
-    //
-    // Splitting them across both blocks (which is how this was first written)
-    // makes prog_run, prog_left, prog_rd and prog_credit multi-driven. Verilog
-    // simulation resolves that by scheduling order and looks correct; synthesis
-    // reports `multi-driven net on pin Q ... 2nd driver GND` and produces
-    // hardware that does not match. It also degenerated prog_rd enough that
-    // Vivado optimised the staging RAM away entirely.
+    // ALL dispatcher state is driven from this one block, credit counter and
+    // kick included; the AXI write FSM only requests, via kick_req / cred_wr.
+    // Split across both blocks, prog_run/prog_left/prog_rd/prog_credit become
+    // multi-driven: simulation resolves that by scheduling order and looks
+    // correct, while synthesis reports `multi-driven net on pin Q ... 2nd driver
+    // GND` and builds something else -- in one case optimising the staging RAM
+    // away entirely.
     always @(posedge clk) begin
         disp_push <= 1'b0;
         if (!resetn) begin
@@ -323,14 +308,13 @@ module noc_orchestrator #(
         end
     end
 
-    // disp_push is non-blocking, so it is high the cycle AFTER the final word has
-    // landed in prog_flit -- the FIFO therefore captures a complete flit, and the
-    // first word of the next flit does not land until the end of that same cycle.
-    // The dispatcher owns the routing header: destination comes from PROG_DST (so
-    // one staged program can go to any node) and source is stamped with our own
-    // coordinates (so the target can reply without being told where we are). The
-    // mailbox path deliberately does neither -- injecting a hand-built header,
-    // including a wrong one, is the point of it.
+    // disp_push is non-blocking, so it is high the cycle AFTER the final word
+    // lands in prog_flit: the FIFO captures a complete flit, and the next flit's
+    // first word does not land until the end of that same cycle.
+    //
+    // The dispatcher owns the routing header -- destination from PROG_DST, source
+    // stamped with our own coordinates so the target can reply. The mailbox path
+    // does neither, because injecting a hand-built (or wrong) header is its point.
     always @(*) begin
         disp_flit = prog_flit[FLIT_WIDTH-1:0];
         disp_flit[FLIT_WIDTH-1              -: POS_WIDTH] = prog_dst[POS_WIDTH-1:0];
@@ -355,18 +339,16 @@ module noc_orchestrator #(
     wire [15:0] wsel     = waddr[15:0];
     wire [2:0]  tx_word  = wsel[5:3];              // TX_FLIT index within 0x100..0x120
     wire        is_tx_fl = (wsel >= A_TX_FLIT0) && (wsel < A_TX_FLIT0 + FLIT_WORDS*8);
-    // The staging window must be derived from STAGE_WORDS, not fixed at one 4 KB
-    // page. `waddr[15:12] == 4'h2` covers 0x2000..0x2FFF = 512 words = 102.4
-    // flits, so at the default STAGE_FLITS=128 the last 26 flits of a full
-    // program were decoded as register writes instead. Nothing reported an
-    // error: the program simply stopped early, with the staging RAM holding
-    // whatever was there before. Caught by the first bench with a program longer
-    // than 102 flits (mx_system32_tb, 128).
+    // The staging window is derived from STAGE_WORDS, not fixed at one 4 KB
+    // page: `waddr[15:12] == 4'h2` covers 0x2000..0x2FFF = 512 words = 102.4
+    // flits, so at STAGE_FLITS=128 a full program's last 26 flits decode as
+    // register writes. Silent -- the program just stops early with the staging
+    // RAM holding whatever was there before.
     localparam [15:0] STAGE_END = A_STAGE + STAGE_WORDS*8;
     wire        is_stage = (waddr[15:0] >= A_STAGE) && (waddr[15:0] < STAGE_END);
-    // Index relative to A_STAGE. Slicing waddr directly would fold base-address
-    // bits into the index -- harmless only while SW_BITS happens to be small
-    // enough that 0x2000 aliases to 0, which is not a property to depend on.
+    // Index relative to A_STAGE. Slicing waddr directly folds base-address bits
+    // into the index, harmless only while SW_BITS is small enough that 0x2000
+    // aliases to 0.
     wire [SW_BITS-1:0] stage_widx = (waddr[15:0] - A_STAGE) >> 3;
 
     integer wb;

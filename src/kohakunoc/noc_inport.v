@@ -6,20 +6,15 @@
 // finish X; it routes toward the adjacent router (GRID_LO,y) and only takes the
 // outward hop on arrival. Pure XY, so the channel dependency graph stays acyclic.
 //
-// This port used to keep five DATA_WIDTH holding registers (one per direction)
-// plus a spill register: 5*288 + 288 = 1728 flip-flops per input, 8640 per router.
-// The benefit was only visible when successive flits diverged, because two flits
-// bound for the SAME output were already serialised -- the second found its slot
-// occupied. One slot replaces all six, at one flit outstanding per input instead
-// of five, which is head-of-line blocking on a congested direction in exchange for
-// two thirds of the router's flip-flops.
+// ONE holding slot, not one per direction: two flits bound for the same output
+// were already serialised, so per-direction slots only helped when successive
+// flits diverged. The trade is head-of-line blocking on a congested direction
+// against two thirds of the router's flip-flops.
 //
-// The slot is kept rather than removed entirely. Feeding the FIFO output straight
-// into the arbiter also works and saves a further ~1.5k flip-flops per router, but
-// it puts FIFO read, route computation, arbitration and a 5:1 DATA_WIDTH mux into
-// one combinational path: measured 347 MHz against a 300 MHz target, and 0.46 ns
-// of out-of-context slack does not survive real placement. Registering here splits
-// that path in two.
+// The slot is kept rather than removed. Feeding the FIFO output straight to the
+// arbiter saves more flops but puts FIFO read, route computation, arbitration
+// and a 5:1 DATA_WIDTH mux in one combinational path, which does not clear
+// 300 MHz with enough slack to survive placement.
 
 module InPortSwitch #(
     parameter DATA_WIDTH  = 288,
@@ -51,24 +46,23 @@ module InPortSwitch #(
     wire                  fifo_full, fifo_almost;
 
     // ACCEPT ON `valid && !busy`, AND THE SENDER RETRIES. Both halves are
-    // required and neither works alone:
+    // required; neither works alone:
     //
-    //   a sender that gives up loses a flit. Committing against busy at T and
+    //   a sender that gives up LOSES a flit -- committing against busy at T and
     //   presenting at T+1 into a receiver that raised busy at T+1 destroys it.
-    //   That is the flit the write path spent a whole diagnosis looking for --
-    //   a lost MEM_WR_DATA leaves its slot short of `ws_len` forever.
     //
-    //   accepting unconditionally duplicates a flit. Every endpoint sender
-    //   holds `valid` until it sees `!busy`, and the output port does now too,
-    //   so a write on every cycle the FIFO has room enqueues the same flit
-    //   repeatedly -- and a duplicated MEM_WR_DATA overruns its slot's
-    //   `ws_len`, leaving the surplus flit matching nothing.
+    //   accepting unconditionally DUPLICATES one, because every sender holds
+    //   `valid` until it sees `!busy`, so a write on every cycle the FIFO has
+    //   room enqueues the same flit repeatedly.
+    //
+    // Either way a MEM_WR_DATA goes missing or arrives twice, and the slot it
+    // belongs to never completes.
     //
     // `wr_almost` is NOT the margin its name promises: sync_fifo passes
     // USE_ADV_FEATURES(0), so XPM ties prog_full low and wr_almost reduces to
-    // wr_busy. What makes plain `full` safe here is the RETRY above, not a
-    // margin -- see docs/noc/spec.md s2.1. Anything that ever needs a real
-    // margin has to count for itself, as MAG does with Q_MARGIN.
+    // wr_busy. What makes plain `full` safe here is the RETRY, not a margin --
+    // see docs/noc/spec.md s2.1. Anything needing a real margin must count for
+    // itself, as MAG does with Q_MARGIN.
     assign port_busy = fifo_almost;
 
     reg [DATA_WIDTH-1:0] hold;
@@ -76,11 +70,11 @@ module InPortSwitch #(
 
     wire taken = |grant;
 
-    // Load whenever the slot is free, including the cycle it is being emptied --
+    // Load whenever the slot is free, INCLUDING the cycle it is being emptied:
     // that is what sustains one flit per cycle rather than one every two.
-    // First-word-fall-through means rd_data is already the head, so rd_en is the
-    // load itself: nothing is popped speculatively, so there is no spill register
-    // holding a flit that was read before it could be placed.
+    // First-word-fall-through makes rd_data the head already, so rd_en is the
+    // load itself -- nothing is popped speculatively and no spill register is
+    // needed.
     wire load = !rd_busy && (hold_req == 5'b00000 || taken);
 
     sync_fifo #(
@@ -155,12 +149,11 @@ module InPortSwitch #(
     assign head_req  = hold_req;
 
 `ifndef SYNTHESIS
-    // A flit offered while busy must still be offered next cycle. Testing that
-    // -- rather than "was a flit offered into a full buffer" -- is what tells a
-    // sender that RETRIES apart from one that gave up: the first is the normal
-    // steady state under backpressure, the second silently destroys the flit
-    // and the damage lands modules away as a short write burst or a corrupt L1
-    // entry.
+    // A flit offered while busy must still be offered next cycle. Testing THAT,
+    // rather than "was a flit offered into a full buffer", is what separates a
+    // sender that retries -- the normal steady state under backpressure -- from
+    // one that gave up, whose damage lands modules away as a short write burst
+    // or a corrupt L1 entry.
     reg                  offered;
     reg [DATA_WIDTH-1:0] offered_d;
     always @(posedge clk) begin

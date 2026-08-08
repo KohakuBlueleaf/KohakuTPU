@@ -14,22 +14,17 @@
 // THE AGENT HAS NO PORT OF ITS OWN. It shares the NoC ports above, which is
 // what the fork on the left means: each port's inbound flits are demuxed BY
 // TYPE -- memory requests to that port's engine, everything else to the agent
-// -- and outbound the agent leaves by the port on its destination's row. It
-// used to hang off a node of its own on the opposite edge of the mesh, which
-// made one module attach at two edges and put every dispatch through one link.
+// -- and outbound the agent leaves by the port on its destination's row.
 //
-// MAG is a SLAVE on the main interconnect, not a master. The interconnect's
-// slave list holds MAGs where it used to hold memory controllers, so nothing
-// was added to it -- the memory moved one level down, behind an adapter.
-// See docs/arch-design.md s6.4.
+// MAG is a SLAVE on the main interconnect, not a master; the memory moved one
+// level down, behind an adapter. See docs/arch-design.md s6.4.
 //
-// SEVERAL MEMORY PORTS, AND THAT IS THE ARCHITECTURE RATHER THAN AN OPTION.
-// A port serves ~2 clusters. It used to be one port for the whole partition,
-// and the single read engine behind it is what stopped the machine scaling:
-// `fetch` cycles per entry went 7.6 -> 25.6 -> 93.3 against a floor of 4 as
-// clusters went 2 -> 4 -> 8, while nothing was saturated (mem_rd 55.6%,
-// noc_out 60.2% at eight). Each port now owns its intake queues, read engine,
-// quantiser, write slots and AXI channel; see mag_mem_port.v.
+// SEVERAL MEMORY PORTS, AND THAT IS THE ARCHITECTURE RATHER THAN AN OPTION. A
+// port serves ~2 clusters. A single read engine is what stopped the machine
+// scaling -- and it stopped while nothing was saturated, so the constraint was
+// the server, not the bandwidth. Each port now owns its intake queues, read
+// engine, quantiser, write slots and AXI channel; see mag_mem_port.v and
+// docs/mas/spec.md.
 //
 // The ports are placed at DIFFERENT mesh nodes on purpose. Routing is X-then-Y
 // on clamped coordinates, so a port at (0,y) draws traffic to router (1,y) --
@@ -169,10 +164,7 @@ module mag #(
     output wire [MEM_PORTS-1:0]            mem_out_valid,
     input  wire [MEM_PORTS-1:0]            mem_out_busy,
 
-    // THE AGENT HAS NO PORT OF ITS OWN. It used to hang off a node of its own
-    // on the far side of the mesh, which made MAG a module attached at two
-    // opposite edges and put every dispatch through one link. It now shares the
-    // memory ports -- see the share layer below.
+    // The agent has no port of its own; it shares these -- see the share layer.
 
     output wire [15:0]           mem_rd_count,
     output wire [15:0]           mem_wr_count
@@ -192,12 +184,10 @@ module mag #(
         .DATA_WIDTH(64), .ADDR_WIDTH(32), .ID_WIDTH(ID_W),
         .FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH),
         .GRID_LO(GRID_LO), .GRID_HI(GRID_HI),
-        // THE AGENT ANSWERS AT PORT 0's ADDRESS. It has no node of its own, so
-        // it borrows one: a CU replying to the source of its CU_INST addresses
-        // (MEM_X, MEM_Y), the flit arrives at port 0, and the demux hands it to
-        // the agent because its type is not a memory type. Memory requests to
-        // the same coordinate still reach the engine. One address, two
-        // consumers, told apart by what the flit is rather than where it went.
+        // THE AGENT ANSWERS AT PORT 0's ADDRESS. A CU replying to the source of
+        // its CU_INST addresses (MEM_X, MEM_Y); the flit arrives at port 0 and
+        // the demux hands it to the agent because its type is not a memory type.
+        // One address, two consumers, told apart by what the flit is.
         .ORC_X(MEM_X), .ORC_Y(MEM_Y), .STAGE_FLITS(STAGE_FLITS)
     ) u_agent (
         .clk(clk), .resetn(resetn),
@@ -220,26 +210,20 @@ module mag #(
     );
 
     // =====================================================================
-    // THE SHARE LAYER: the agent rides the memory ports.
+    // THE SHARE LAYER: the agent rides the memory ports. MAG presents
+    // MEM_PORTS NoC attachments and no more.
     //
-    // MAG presents MEM_PORTS NoC attachments and no more. The agent used to
-    // have a node of its own, which made one module attach at two opposite
-    // edges of the mesh and funnelled every dispatch through a single link.
+    // INBOUND is a demux by TYPE, per port: a memory request is the engine's,
+    // anything else the agent's. The agent has one input, so the ports
+    // round-robin into it, and a port that is not granted holds `busy`.
     //
-    // INBOUND is a demux by TYPE, per port. A memory request is the engine's;
-    // anything else is the agent's. The agent has one input, so the ports
-    // round-robin into it -- and a port that is not granted simply holds
-    // `busy`, which the link's retry contract already requires of its sender.
+    // OUTBOUND is steered by DESTINATION ROW -- a flit for row y leaves from the
+    // port on row y -- so dispatch spreads across all of them.
     //
-    // OUTBOUND is steered by DESTINATION ROW: a flit for row y leaves from the
-    // port that sits on row y, so dispatch spreads across all of them instead
-    // of queueing behind one. That is the point of the change.
-    //
-    // The agent wins arbitration on the way out. Its traffic is a handful of
-    // control flits against a stream of operand words, so the cost to memory is
-    // negligible and it cannot be starved by a busy port -- which engine
-    // priority would allow, and which would stall dispatch exactly when the
-    // machine is at its busiest.
+    // The agent WINS outbound arbitration. Its traffic is a handful of control
+    // flits against a stream of operand words, so the cost to memory is
+    // negligible; engine priority would let a busy port starve dispatch exactly
+    // when the machine is busiest.
     // =====================================================================
     localparam [3:0] T_MEM_RD_REQ  = 4'h0,
                      T_MEM_WR_REQ  = 4'h1,
@@ -294,21 +278,19 @@ module mag #(
     assign agt_in_data  = mem_in_data[agt_sel*FLIT_WIDTH +: FLIT_WIDTH];
     assign agt_in_valid = agt_any;
 
-    // THE AGENT MUST NEVER BLOCK MEMORY, and sharing a link makes that a real
-    // risk rather than a theoretical one. The agent raises `noc_in_busy` when
-    // its RX FIFO is full (noc_orchestrator: `rx_full && !in_is_sig`), and a
-    // host that does not drain the mailbox leaves it full indefinitely. Holding
-    // the port busy for that would stop the MEMORY flits queued behind it on
-    // the same link -- for good, because nothing ever clears the condition.
-    // Before the ports were shared this wedged only the agent's own link.
+    // THE AGENT MUST NEVER BLOCK MEMORY. It raises `noc_in_busy` when its RX
+    // FIFO is full (noc_orchestrator: `rx_full && !in_is_sig`), and a host that
+    // does not drain the mailbox leaves it full indefinitely -- holding the port
+    // busy for that would stop the MEMORY flits behind it on the same link, for
+    // good, because nothing clears the condition.
     //
-    // So a control flit that CANNOT be delivered is accepted and dropped, and
-    // says so. That trades a loss on a path nothing currently uses -- CU_SIGNAL
-    // bypasses RX entirely and the driver does not use the mailbox -- for the
-    // removal of an unbounded stall on the path everything uses.
+    // So a control flit that CANNOT be delivered is accepted, dropped, and
+    // reported. That trades a loss on a path nothing uses (CU_SIGNAL bypasses RX
+    // and the driver does not use the mailbox) for removing an unbounded stall
+    // on the path everything uses.
     //
-    // Waiting one's TURN is different and still holds the port: that is bounded
-    // by MEM_PORTS cycles and is the round-robin working as intended.
+    // Waiting one's TURN is different and still holds the port: bounded by
+    // MEM_PORTS cycles, and the round-robin working as intended.
     wire agt_grant = agt_any && !agt_in_busy;   // taken this cycle
     wire agt_drop  = agt_any &&  agt_in_busy;   // cannot be taken at all
 
@@ -427,12 +409,9 @@ module mag #(
     assign mem_wr_count = wr_sum;
 
     // =====================================================================
-    // The host memory window, on its own AXI channel.
-    //
-    // It used to share one FSM with the NoC write path, which is why a long
-    // upload and a cluster's write could not proceed at once. It is bursty and
-    // rare against a steady state that is neither, so it gets a channel rather
-    // than a share of one.
+    // The host memory window, on its own AXI channel: it is bursty and rare
+    // against a steady state that is neither, and sharing an FSM with the NoC
+    // write path stops a long upload and a cluster's write overlapping.
     // =====================================================================
     localparam [2:0] HS_IDLE = 3'd0, HS_WR = 3'd1, HS_RD = 3'd2, HS_WQ = 3'd3;
     reg [2:0] hst;
@@ -467,14 +446,13 @@ module mag #(
     assign m_arvalid[UP]                     = h_arvalid;
 
     // ---- quantise on the way IN: the upload path -------------------------
-    // The same conversion, moved to where the tensor is WRITTEN. A weight
-    // matrix is read once per output tile and uploaded once, so paying the
-    // quantiser per upload instead of per read divides its cost by the number
-    // of passes -- and halves what the fetch path has to move for good.
+    // The same conversion, moved to where the tensor is WRITTEN. A weight matrix
+    // is uploaded once and read once per output tile, so paying the quantiser
+    // per upload divides its cost by the number of passes and permanently halves
+    // what the fetch path moves.
     //
-    // The marker is on the request (address bits, see HW_QUANT below), never a
-    // range MAG remembers: the driver decides which tensors are pre-quantised
-    // and says so, exactly as it does on the read side.
+    // The marker is on the REQUEST (address bits, HW_QUANT below), never a range
+    // MAG remembers: the driver decides which tensors are pre-quantised.
     localparam [2:0] HQ_IDLE = 3'd0, HQ_FILL = 3'd1, HQ_PACK = 3'd2,
                      HQ_AW   = 3'd3, HQ_W    = 3'd4, HQ_B    = 3'd5,
                      HQ_DONE = 3'd6;
@@ -488,9 +466,8 @@ module mag #(
     wire         hq_done;
     wire [255:0] hq_w0, hq_w1, hq_w2, hq_w3;
 
-    // The upload's OWN quantiser. It used to share the read path's one
-    // instance under a mutex; separate instances remove the mutex and with it
-    // the only reason an upload had to wait for a fetch.
+    // The upload's OWN quantiser, not shared with the read path under a mutex:
+    // the mutex was the only reason an upload had to wait for a fetch.
     mx_quant u_hquant (
         .clk(clk), .rst(!resetn),
         .start(q_start_h),
@@ -534,12 +511,12 @@ module mag #(
                         ((hst == HS_WQ) && (hs == HQ_FILL) && !q_start_h);
     assign sm_bid     = m_bid[UP*ID_W +: ID_W];
     assign sm_bresp   = m_bresp[UP*2 +: 2];
-    // m_bready is tied high, so the slave's write response is consumed the
-    // cycle it appears whether or not the host is ready for it. Passing it
-    // straight through offers the response for exactly one cycle: a host that
-    // raises BREADY after BVALID -- legal AXI, and what a pipelined master does
-    // -- never sees it. Latch it instead. A quantising upload answers once the
-    // LAST entry is in memory, not once the last source beat was taken.
+    // m_bready is tied high, so the slave's write response is consumed the cycle
+    // it appears. Passed straight through it would be offered for exactly one
+    // cycle, and a host that raises BREADY after BVALID -- legal AXI, and what a
+    // pipelined master does -- would never see it, hence `host_b`. A quantising
+    // upload answers once the LAST entry is in memory, not once the last source
+    // beat was taken.
     assign sm_bvalid  = ((hst == HS_WR) && (h_bvalid || host_b)) ||
                         ((hst == HS_WQ) && (hs == HQ_DONE));
     assign sm_rid     = m_rid[UP*ID_W +: ID_W];

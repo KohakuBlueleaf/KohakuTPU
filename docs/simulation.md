@@ -43,8 +43,8 @@ self-contained bench. The driver builds its operand image and its control
 program, so it is driven from Python instead:
 
 ```
-   python driver/run_matmul.py --m 64 --n 64 --k 128    # batch, ~16 s to elaborate
-   python driver/repl.py                                # keeps one snapshot warm
+   python scripts/py/run_matmul.py --m 64 --n 64 --k 128    # batch, ~16 s to elaborate
+   python scripts/py/repl.py                                # keeps one snapshot warm
 ```
 
 That inversion is the point. The bench does not know what a matmul is; it loads

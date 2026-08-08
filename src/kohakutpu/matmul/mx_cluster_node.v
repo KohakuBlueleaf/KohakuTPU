@@ -3,16 +3,14 @@
 //   mgr  ->  tcu -> tcu -> tcu -> tcu  ->  acu
 //   L1       direct DSP cascade (PCOUT/PCIN + W)   resident output tile
 //
-// This is the compute half of the 2-port cluster. The NoC attachment lives
-// above it: the manager takes one port for operands and its own memory
-// requests, the accumulator takes one for results and peer transfer.
+// The compute half of the 2-port cluster: the manager takes one NoC port for
+// operands and its own memory requests, the accumulator takes one for results
+// and peer transfer.
 //
-// The accumulator's control is muxed between two sources. During a sweep it
-// comes from the manager (one command per part_valid, via the ordering FIFO).
-// During a drain it comes from the drain sequencer here, which walks tile
-// addresses and waits on emit_valid for each. It waits rather than counts:
-// the ACU's read-to-emit depth is a design variable, and a drain issued blind
-// against a stale constant would silently return the wrong sub-tile.
+// The accumulator's control is muxed between the manager (during a sweep) and
+// the drain sequencer here (during an explicit drain). The sequencer WAITS on
+// emit_valid rather than counting cycles -- the ACU's read-to-emit depth is a
+// design variable, and a blind drain would return the wrong sub-tile.
 
 `default_nettype none
 
@@ -73,17 +71,16 @@ module mx_cluster_node #(
     wire [7:0]      m_anchor;
 
     // GEMM is finished when the sweep has stopped issuing AND the accumulator
-    // has settled. The manager only knows the first half: its own counters and
-    // command FIFO say nothing about the ~19-deep cascade behind them. DRAIN
-    // takes the accumulator's control mux the cycle it starts, so anything
-    // still in flight when it does is discarded.
+    // has settled. The manager knows only the first half -- its counters say
+    // nothing about the ~19-deep cascade behind them -- and DRAIN takes the
+    // control mux the cycle it starts, discarding anything still in flight.
     wire mgr_busy, acu_busy;
     assign gemm_busy  = mgr_busy || acu_busy;
     assign sweep_busy = mgr_busy;
 
-    // Declared here because the manager above reads them and the drain block
-    // below drives them: the sweep is the producer of emitted sub-tiles now,
-    // so the collector's backpressure runs backwards through it.
+    // The manager above reads these and the drain block below drives them: the
+    // sweep produces emitted sub-tiles, so the collector's backpressure runs
+    // backwards through it.
     wire emit_stall;
     wire emit_issue;
 
@@ -115,30 +112,19 @@ module mx_cluster_node #(
     );
 
     // ---- drain sequencer, PIPELINED --------------------------------------
-    // It used to issue one EMIT and then wait for its result before issuing
-    // the next, so every sub-tile paid the accumulator's whole read-to-emit
-    // depth: ~9 cycles each against a floor of 2 (the write port sends a
-    // descriptor and a data flit per sub-tile, so two cycles is what the
-    // output can absorb). At 512 resident sub-tiles that tail became 23% of
-    // the run.
+    // EMITs issue back to back. Consecutive EMITs address DIFFERENT sub-tiles,
+    // so REUSE_MIN -- which constrains repeats of ONE address -- does not apply
+    // between them and the accumulator accepts a command every cycle. The FIFO
+    // holds results that arrive while the write port is busy.
     //
-    // The wait was never necessary. Consecutive EMITs address DIFFERENT
-    // sub-tiles, so `REUSE_MIN` -- which constrains repeats of ONE address --
-    // does not apply between them, and the accumulator accepts a command every
-    // cycle. What the old code actually needed was somewhere to put results
-    // that arrive while the write port is busy. A small FIFO is that somewhere,
-    // and it turns the depth from a per-sub-tile cost into a one-off.
-    // 16, not 8: xpm_fifo_sync's minimum write depth is 16, and asking for
-    // less does not get a smaller FIFO -- it gets one that does not behave.
-    // The depth only has to cover the accumulator's read-to-emit distance plus
-    // the write port's two-cycle turnaround, so 16 is already slack.
-    // DEEP, because a fused emit arrives in a BURST. The last K block of a
-    // sweep completes one sub-tile per cycle, while memory retires a burst of
-    // WBURST beats in ~11 cycles and serves every cluster. Averaged over a
-    // whole pass the write path keeps up easily -- 512 sub-tiles per 4,096
-    // cycles of compute -- so all the buffer has to do is carry the burst
-    // until the gap after it. Too small and the sweep stalls instead, which is
-    // exactly the serialisation the fusion removes.
+    // DEEP, because a fused emit arrives in a BURST: the last K block of a sweep
+    // completes one sub-tile per cycle, while memory retires a WBURST in ~11
+    // cycles and serves every cluster. Averaged over a pass the write path keeps
+    // up (512 sub-tiles per 4,096 cycles of compute), so the buffer only has to
+    // carry the burst until the gap after it. Too small and the sweep stalls,
+    // which is the serialisation the fusion removes. (Floor of 16 regardless:
+    // xpm_fifo_sync's minimum write depth. Asking for less does not get a
+    // smaller FIFO, it gets one that does not behave.)
     localparam integer DQ_DEPTH = 128;
     // Sub-tiles that may be outstanding: issued into the accumulator but not
     // yet taken by the write port. Bounded rather than trusted, because a
@@ -162,17 +148,14 @@ module mx_cluster_node #(
     reg [TAW-1:0]  d_addr;
     reg            d_cmd;
 
-    // ISSUED MINUS RETIRED: results still inside the accumulator plus results
-    // sitting in the queue. Bounding this against the queue depth is what makes
-    // overflow impossible -- bounding only the in-flight half would let the
-    // pipeline and the queue each fill to DQ_DEPTH, and a result arriving with
-    // nowhere to go loses a sub-tile silently. It is exact and owes nothing to
-    // the pipeline depth, which is a design variable here as everywhere else.
+    // ISSUED MINUS RETIRED: results inside the accumulator plus results in the
+    // queue. Bounding this against the queue depth is what makes overflow
+    // impossible -- bounding only the in-flight half lets the pipeline and the
+    // queue each fill to DQ_DEPTH, silently losing a sub-tile.
     //
     // MAINTAINED, not subtracted. It equals `d_iss - d_pop` at every edge, but
-    // computing it as a 16-bit subtract put it on the arc
-    // `d_pop -> acu_busy_drain -> the ACU's DSP control` and measured 275.8 MHz
-    // against a 300 MHz target. Nothing else on that arc is avoidable.
+    // as a 16-bit subtract it lands on the arc
+    // `d_pop -> acu_busy_drain -> the ACU's DSP control` and misses 300 MHz.
     reg  [15:0] d_out;
     wire        dq_full, dq_empty;
     wire [271:0] dq_head;
@@ -215,23 +198,22 @@ module mx_cluster_node #(
             d_out <= d_out + ((emit_issue && d_fused)     ? 16'd1 : 16'd0)
                            - ((drain_valid && drain_take) ? 16'd1 : 16'd0);
 
-            // An emitting sweep opens a batch. The counters restart here
-            // rather than at the DRAIN, because the results start arriving
-            // long before the DRAIN is decoded -- `drain_idx` is `d_got`, so
-            // restarting late would misplace every sub-tile of the tile.
-            // SET by an emitting sweep, never cleared by a non-emitting one:
-            // the next pass's first sweep may run while this batch is still
-            // draining, and it must not look like the batch ended.
+            // An emitting sweep opens a batch, and the counters restart HERE,
+            // not at the DRAIN: results arrive long before the DRAIN is decoded
+            // and `drain_idx` is `d_got`, so restarting late misplaces every
+            // sub-tile. `d_fused` is set by an emitting sweep and never cleared
+            // by a non-emitting one -- the next pass's first sweep may run while
+            // this batch is still draining.
             if (gemm_start && gemm_emit) begin
                 d_iss <= 16'd0; d_got <= 16'd0; d_pop <= 16'd0;
                 d_out <= 16'd0;
                 d_fused <= 1'b1;
                 d_run <= 1'b0;
             end else if (drain_start && !d_run && drain_fused) begin
-                // A barrier, not an issuer. Waiting for `drain_busy` alone
-                // would be a race: the sweep may have started only cycles
-                // earlier, so nothing is outstanding yet and the barrier would
-                // pass before a single sub-tile had been produced.
+                // A barrier, not an issuer. Waiting on `drain_busy` alone is a
+                // race: the sweep may have started only cycles earlier, so
+                // nothing is outstanding and the barrier passes before a single
+                // sub-tile exists.
                 d_n    <= dn_w;
                 d_wait <= (d_pop < dn_w);
             end else if (drain_start && !d_run) begin
@@ -244,18 +226,11 @@ module mx_cluster_node #(
                 d_fused <= 1'b0;    // an explicit drain DOES take the mux
             end else if (d_run) begin
                 // One EMIT per cycle, held back only by what can still be
-                // absorbed downstream.
-                //
-                // DQ_LIMIT is DQ_DEPTH-16, NOT 1. It was 1 for a while, because
-                // raising it deadlocked the write path: the CU emitted a
-                // MEM_WR_REQ/MEM_WR_DATA pair per sub-tile while MAG retired
-                // one single-word write per visit to S_IDLE, so MAG's input
-                // queue filled and wedged on a data flit whose slot was still
-                // on the AXI bus -- `C write amp 0.01x`, `in_bp 70.4%`.
-                // The write path now collects into slots and retires bursts,
-                // which removed it: 8 CU measures `C write amp 1.00x` and
-                // `in_bp 2.1%`. The bound that remains is the queue's, and it
-                // is what stops a result arriving with nowhere to go.
+                // absorbed downstream. DQ_LIMIT is DQ_DEPTH-16, NOT 1: it was 1
+                // only because the write path once retired a single word per
+                // visit to S_IDLE and deadlocked. It now collects into slots and
+                // retires bursts, so the queue's own depth is the only bound
+                // needed.
                 if ((d_iss < d_n) && (d_out < DQ_LIMIT[15:0])) begin
                     d_op   <= OP_EMIT;
                     d_addr <= d_iss[TAW-1:0];
@@ -277,9 +252,8 @@ module mx_cluster_node #(
     end
 
 `ifndef SYNTHESIS
-    // The bound above is the only thing keeping a result from arriving with
-    // nowhere to go, and losing one sub-tile reads as an accumulator fault
-    // several modules away. Say so instead.
+    // Losing one sub-tile here reads as an accumulator fault several modules
+    // away. Say so instead.
     always @(posedge clk)
         if (!rst && emit_valid && dq_full)
             $display("%0t ERROR mx_cluster_node: drain queue overflow, sub-tile lost",
@@ -288,31 +262,27 @@ module mx_cluster_node #(
 
     // ---- accumulator ----------------------------------------------------
     // The control mux belongs to the drain sequencer only for an EXPLICIT
-    // drain, and `d_cmd` is part of the condition: it is registered, so the
-    // last EMIT reaches the accumulator the cycle AFTER `d_run` falls.
-    // Dropping the mux at `d_run` loses that command -- measured, 252 of 7260
-    // checks in mx_cluster_node_tb.
+    // drain, and `d_cmd` is part of the condition: it is registered, so the last
+    // EMIT reaches the accumulator the cycle AFTER `d_run` falls. Dropping the
+    // mux at `d_run` loses that command.
     //
-    // A FUSED batch never takes the mux at all: the sweep produced it and
-    // still owns the port. `d_fused` therefore has to be STICKY until its own
-    // batch is retired -- clearing it at the next sweep's start handed the mux
-    // to the drain sequencer mid-sweep the moment a pass's first GEMM was
-    // allowed to overlap the previous pass's write-back. That was also
-    // measured: 23,536 cycles and `p99 vs fp64` 4.15e+01. Faster and wrong.
+    // A FUSED batch never takes the mux at all: the sweep produced it and still
+    // owns the port. `d_fused` must therefore be STICKY until its own batch is
+    // retired -- clearing it at the next sweep's start hands the mux to the
+    // drain sequencer mid-sweep as soon as a pass's first GEMM overlaps the
+    // previous pass's write-back. Faster and wrong.
     wire acu_busy_drain = d_run || d_cmd || ((d_out != 16'd0) && !d_fused);
 
     mx_acu_fp #(.DEPTH(TILES), .ACC_MW(ACC_MW)) u_acu (
         .clk(clk), .rst(rst), .en(1'b1),
         .part_in(part_bus),
-        // THE SCALES ARE NOT MUXED. They used to be forced to zero during a
-        // drain, and that was defensive rather than functional: a drain issues
-        // OP_EMIT, which reads the resident tile and never consumes `val_r`.
-        // The mux bought nothing and cost the cluster its clock -- it put
-        // `d_out` into the DSP's own data input:
+        // THE SCALES ARE NOT MUXED. A drain issues OP_EMIT, which reads the
+        // resident tile and never consumes `val_r`, so muxing them buys nothing
+        // and costs the cluster its clock -- it puts `d_out` into the DSP's own
+        // data input:
         //
         //   d_out -> acu_busy_drain -> sa/sb -> mm -> val_r's B port
         //
-        // measured as the critical path at 285.9 MHz against a 300 MHz target.
         // Only the three signals that actually SELECT behaviour are muxed.
         .sa(m_sa),
         .sb(m_sb),

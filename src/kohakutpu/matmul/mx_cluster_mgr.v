@@ -16,18 +16,13 @@
 //
 //     for kb in 0..NK-1:  for g in 0..Gm-1:  for h in 0..Gn-1
 //
-// so a given accumulator address recurs only every Gm*Gn cycles instead of
-// every cycle. That is what lets the accumulator be a plain memory with a
-// synchronous read -- with K inner, back-to-back same-address accumulation
-// cannot close a pipelined adder loop at all. It is a loop-order choice with
-// an architectural consequence.
+// so an accumulator address recurs every Gm*Gn cycles instead of every cycle,
+// which is what lets the accumulator be a plain memory with a synchronous read.
 //
-// THE ACU COMMAND RIDES A FIFO, NOT A MATCHED DELAY. The chain has ~19 cycles
-// of latency and it is a function of NTCU and the skew SRLs. Rather than
-// duplicate that constant here -- where it would rot the moment the chain
-// changes -- each issue pushes {op, addr, scales} into a FIFO and every
-// part_valid pops one. Order is preserved by construction, so alignment holds
-// whatever the latency turns out to be.
+// THE ACU COMMAND RIDES A FIFO, NOT A MATCHED DELAY. The chain's ~19 cycles are
+// a function of NTCU and the skew SRLs, so rather than duplicate that constant
+// here each issue pushes {op, addr, scales} and every part_valid pops one.
+// Order is preserved by construction, whatever the latency turns out to be.
 
 `default_nettype none
 
@@ -53,26 +48,19 @@ module mx_cluster_mgr #(
     input  wire [7:0]   gemm_nk,        // K blocks
     input  wire [7:0]   gemm_anchor,
     input  wire         gemm_acc,   // add into the resident tile, do not reload
-    // WHERE IN L1 THIS SWEEP'S OPERANDS ARE. Without them L1 is one buffer per
-    // side and every FILL must wait for the sweep that is reading it, so the
-    // array idles through every fill and an operand that does not change
-    // between passes is fetched again anyway. With them L1 is addressable: the
-    // driver puts consecutive chunks in different halves and fills one while
-    // the other is swept, and it leaves an operand in place when it is still
-    // wanted. See docs/isa/cluster.md s4.6.
+    // WHERE IN L1 THIS SWEEP'S OPERANDS ARE. They make L1 addressable, so the
+    // driver can fill one region while another is swept and leave an unchanged
+    // operand in place. See docs/isa/cluster.md s4.6.
     input  wire [7:0]   gemm_aoff,
     input  wire [7:0]   gemm_boff,
     // HAND EACH SUB-TILE OUT AS IT FINISHES. Set on the sweep that completes an
     // output tile: every issue of the LAST K block becomes OP_ADD_EMIT, so the
-    // finished value leaves on the same command that produced it. A separate
-    // DRAIN re-reads all of them through the same pipeline, needs one command
-    // slot each, and the sweep has none spare -- which is why it could never
-    // overlap and was 24% of the machine's time.
+    // finished value leaves on the command that produced it rather than needing
+    // a DRAIN pass with a command slot per sub-tile.
     input  wire         gemm_emit,
     // Backpressure from whatever collects those results. Holding the sweep is
-    // the only place the pressure can be applied: once a command is issued its
-    // result WILL come out ~19 cycles later, so there is nothing downstream to
-    // stall.
+    // the only place it can be applied: once a command is issued its result WILL
+    // come out ~19 cycles later, so there is nothing downstream to stall.
     input  wire         emit_stall,
     output wire         emit_issue,     // one pulse per sub-tile handed out
     output wire         gemm_busy,
@@ -135,22 +123,19 @@ module mx_cluster_mgr #(
 
     wire          cmd_empty;      // driven by the ACU command FIFO below
 
-    // REUSE PACING. K is outermost, so an output sub-tile address recurs every
-    // Gm*Gn issues. The accumulator needs REUSE_MIN cycles between two commands
-    // to one address (mx_acu_fp.v), so a tiling smaller than that recurs faster
-    // than the accumulator can turn around and the second command accumulates
-    // onto a stale tile -- silently, and only for part of the K sweep.
-    //
-    // Idle cycles restore the gap. They cost nothing at any tiling big enough
-    // to be worth running: at Gm*Gn >= REUSE_MIN this is zero.
+    // REUSE PACING. An address recurs every Gm*Gn issues, and the accumulator
+    // needs REUSE_MIN cycles between two commands to one address (mx_acu_fp.v).
+    // A smaller tiling recurs faster than the accumulator can turn around and
+    // accumulates onto a stale tile -- silently, and only for part of the sweep.
+    // Idle cycles restore the gap; at Gm*Gn >= REUSE_MIN this is zero.
     localparam integer ACU_REUSE_MIN = 5;
     reg [2:0] pace, pace_n;
 
     // NOTHING HERE NEEDS THE PRODUCT Gm*Gn -- only which of five buckets it
-    // lands in. Written as a multiply it was an 8x8 fabric multiplier whose
-    // 16-bit result fed three comparators, and it closed the whole CU:
+    // lands in. As a multiply it is an 8x8 fabric multiplier whose 16-bit result
+    // feeds three comparators, and it closed the whole CU:
     //
-    //   gn_r -> Gm*Gn -> compare 1 / 2 / >=5 -> pace_n     15 levels, 296.4 MHz
+    //   gn_r -> Gm*Gn -> compare 1 / 2 / >=5 -> pace_n     15 levels
     //
     // Both operands are at least 1, so the buckets are small-value tests on the
     // operands themselves. See docs/compute/accumulator.md s4.
@@ -167,10 +152,9 @@ module mx_cluster_mgr #(
                 || ((gm_w == 8'd2) && (gn_w == 8'd2));
 
 `ifndef SYNTHESIS
-    // Those three shapes are the expansion of `Gm*Gn < 5`, and they do NOT
-    // follow ACU_REUSE_MIN if it moves. Say so at elaboration rather than pace
-    // a short tiling wrong -- which corrupts part of a K sweep and nothing
-    // else, so no bench would necessarily fail.
+    // Those three shapes are the expansion of `Gm*Gn < 5` and do NOT follow
+    // ACU_REUSE_MIN if it moves. Pacing a short tiling wrong corrupts part of a
+    // K sweep and nothing else, so no bench would necessarily fail.
     initial if (ACU_REUSE_MIN != 5)
         $display("ERROR mx_cluster_mgr: pace buckets are expanded for ACU_REUSE_MIN=5, got %0d",
                  ACU_REUSE_MIN);
@@ -181,23 +165,16 @@ module mx_cluster_mgr #(
     wire on_last_kb = (kb + 8'd1 == nk_r);   // every issue of the final K block
     wire last_kb = last_g && on_last_kb;
 
-    // NOT just "the last tile has been issued". The cascade is ~19 cycles deep,
-    // so when the counters finish there are still that many results in flight.
-    // Reporting done there let DRAIN seize the accumulator control mux and cut
-    // them off -- the tail sub-tiles came back as zeros.
+    // NOT just "the last tile has been issued": the cascade is ~19 cycles deep,
+    // so when the counters finish that many results are still in flight, and
+    // DRAIN seizing the control mux there discards them (they come back zero).
     //
-    // `cmd_empty` is the exact condition: every issued tile has a command
-    // sitting in the FIFO until its own part_valid pops it, so an empty FIFO
-    // means the chain has fully drained. No latency constant to keep in sync.
-    // NOT `!cmd_empty`. That is the FIFO's registered flag and it deasserts two
-    // cycles after a push, so between the last pipeline valid dropping and the
-    // flag catching up there is a hole where this reads idle with commands
-    // still queued. DRAIN samples the hole, takes the accumulator's control
-    // mux, and the in-flight sub-tiles are discarded -- they come back zero.
-    //
-    // Only a tiling short enough to finish inside that hole can hit it, which
-    // is why every bench down to Gm*Gn = 3 passed and a 2 sub-tile one did not.
-    // Counting issued-minus-retired is exact and owes nothing to FIFO timing.
+    // NOT `!cmd_empty` either. That is the FIFO's registered flag and it
+    // deasserts two cycles after a push, leaving a hole where this reads idle
+    // with commands still queued. Only a tiling short enough to finish inside
+    // the hole hits it -- every bench down to Gm*Gn = 3 passed, a 2 sub-tile one
+    // did not. Counting issued-minus-retired is exact and owes nothing to FIFO
+    // timing or to any latency constant.
     reg [7:0] pending;
     always @(posedge clk) begin
         if (rst) pending <= 8'd0;
@@ -242,8 +219,8 @@ module mx_cluster_mgr #(
                         : t_is2 ? 3'd2 : 3'd1;
                 pace <= 3'd0;
             end else if (run) begin
-                // Held, not slowed: the sweep issues nothing this cycle and
-                // the counters do not move, so the only cost is the cycle.
+                // Held, not slowed: the counters do not move, so the only cost
+                // is the cycle.
                 if (emit_stall) begin
                     // nothing -- wait for the collector to catch up
                 end else if (pace != 3'd0) pace <= pace - 3'd1;
@@ -253,11 +230,9 @@ module mx_cluster_mgr #(
                     b_rd <= (boff_r + h * nk_r + kb);
                     s1_valid <= 1'b1;
                     // First K block of a NON-accumulating GEMM loads the tile;
-                    // everything else adds to it. `acc_r` is what lets one
-                    // output tile be built by several instructions, which is
-                    // what a K longer than L1 requires -- and it keeps the
-                    // tile in the ACU rather than spilling a partial result to
-                    // memory and reading it back for the next chunk.
+                    // everything else adds to it. `acc_r` lets one output tile
+                    // be built by several instructions -- what a K longer than
+                    // L1 requires -- without spilling the partial to memory.
                     s1_first <= (kb == 8'd0) && !acc_r;
                     // The last K block completes every sub-tile it touches, so
                     // every issue in it -- not only the final one -- carries
@@ -277,15 +252,11 @@ module mx_cluster_mgr #(
         end
     end
 
-    // TWO cycles of control delay, not one. The counters assign a_rd at cycle
-    // T; the RAM sees that address during T+1; with READ_LAT=1 the data is
-    // valid during T+2. Consuming a_ent alongside s1_* (T+1) reads the
-    // PREVIOUS entry, which shifts every result by one sub-tile -- structured,
-    // silent, and it looked like an addressing bug rather than a timing one.
-    //
-    // This is the read latency being visible because the primitive is named.
-    // Inferred LUTRAM with an asynchronous read would have hidden it here and
-    // produced it again as a timing failure later.
+    // TWO cycles of control delay, not one. The counters assign a_rd at cycle T;
+    // the RAM sees that address during T+1; with READ_LAT=1 the data is valid
+    // during T+2. Consuming a_ent alongside s1_* (T+1) reads the PREVIOUS entry,
+    // which shifts every result by one sub-tile -- structured and silent, and it
+    // reads as an addressing bug rather than a timing one.
     always @(posedge clk) begin
         if (rst) begin
             s1b_valid <= 1'b0; s1b_first <= 1'b0; s1b_addr <= {TAW{1'b0}};
@@ -319,11 +290,9 @@ module mx_cluster_mgr #(
     // FIFO would silently drop a command and corrupt one output element.
     localparam integer CW = 3 + TAW + 64 + 8;
 
-    // OP_LOAD_EMIT does not exist and does not need to: an emitting sweep is
-    // the LAST chunk of an output tile, so it is either accumulating into a
-    // tile an earlier chunk opened or it is the only chunk and nk > 1. Either
-    // way `s2_first` and `s2_emit` cannot both be set -- kernel.plan is what
-    // guarantees it, and it falls back to a separate DRAIN when it cannot.
+    // OP_LOAD_EMIT does not exist and does not need to: an emitting sweep is the
+    // LAST chunk of an output tile, so `s2_first` and `s2_emit` cannot both be
+    // set. kernel.plan guarantees it and falls back to a DRAIN when it cannot.
     wire [CW-1:0] cmd_in = { s2_first ? OP_LOAD :
                              s2_emit  ? OP_ADD_EMIT : OP_ADD, s2_addr,
                              s2_sa, s2_sb, anc_r };
@@ -344,11 +313,10 @@ module mx_cluster_mgr #(
     assign acu_cmd    = part_valid && !cmd_empty;
 
 `ifndef SYNTHESIS
-    // A FILL may now run while a sweep does, which is the point of `aoff`/
-    // `boff` -- and it makes L1 a shared resource with no interlock. Landing a
-    // fill on the entries the sweep is reading corrupts a few sub-tiles and
-    // nothing else: the median barely moves and the answer is wrong. The
-    // driver owns the banking, so say plainly when it got it wrong.
+    // A FILL may run while a sweep does -- the point of `aoff`/`boff` -- which
+    // makes L1 a shared resource with no interlock. A fill landing on entries
+    // the sweep is reading corrupts a few sub-tiles and nothing else: the median
+    // barely moves and the answer is wrong. The driver owns the banking.
     always @(posedge clk) if (!rst && gemm_busy && l1_we) begin
         if (!l1_sel && (l1_addr >= {8'd0, aoff_r}) &&
                        (l1_addr <  {8'd0, aoff_r} + gm_r * nk_r))
@@ -363,9 +331,8 @@ module mx_cluster_mgr #(
         $display("%0t ERROR mx_cluster_mgr: ACU command FIFO overflow", $time);
     always @(posedge clk) if (!rst && part_valid && cmd_empty)
         $display("%0t ERROR mx_cluster_mgr: part_valid with no pending command", $time);
-    // An emitting sweep that also opens the tile would need OP_LOAD_EMIT, and
-    // the LOAD wins -- so the sub-tile would be computed and never handed out,
-    // and the drain would wait for results that are not coming.
+    // The LOAD wins, so the sub-tile is computed and never handed out, and the
+    // drain waits for results that are not coming.
     always @(posedge clk) if (!rst && s2_valid && s2_first && s2_emit)
         $display("%0t ERROR mx_cluster_mgr: emitting sweep also opens tile %0d",
                  $time, s2_addr);

@@ -207,7 +207,7 @@ sub-tiles is `Gm = 16` by `Gn = 32`, and `128/16 = 256/32 = 8` K blocks.
 `C[256,256]` is then 8 output tiles, so 8 passes, each sweeping the whole of a
 K = 256 problem at once.
 
-The loop lives in `driver/src/kohakutpu/kernel.py`, not in hardware, because the
+The loop lives in `src/ktpu/hw/kernel.py`, not in hardware, because the
 control ISA has no branches ([`isa/orchestrator.md`](isa/orchestrator.md) §2).
 That is a deliberate trade and it is cheap: **the program is control, and the
 instruction flits are data**. Flits go straight into the staging RAM as host
@@ -230,7 +230,7 @@ read responses** arrive on — so it can never drain the FIFO that is blocking i
 The counter is therefore seeded once per round rather than per kick, and a
 program's last flit retires as `SIG_BATCH_COMPLETE`, which does not refund. The
 full reasoning is in [`isa/agent.md`](isa/agent.md) and in `seed_credits` in
-`driver/src/kohakutpu/device.py`; it is not worth re-deriving.
+`src/ktpu/hw/device.py`; it is not worth re-deriving.
 
 When the passes do not fit, they are cut into **rounds** — each a self-contained
 upload / load / `GO` — and the clusters are round-robined into the list before
@@ -654,7 +654,7 @@ the price is paid once at upload.
                           0 URAM -- clears 300 by 8.5%, out-of-context
    quantiser              BUILT -- src/kohakumas/mx_quant.v, FP16 -> int7+E5M3
                           on the way out of MAG, checked bit-for-bit against
-                          the model in driver/src/kohakutpu/mxfp7.py
+                          the model in src/ktpu/hw/mxfp7.py
    MAG                    BUILT -- src/kohakumas/mag.v: MEM_PORTS memory ports,
                           an AXI master each, write slots, and the dispatch
                           agent SHARING those ports rather than holding a mesh
@@ -663,7 +663,7 @@ the price is paid once at upload.
                           command-RAM machine; the agent (staging, dispatch,
                           credits, NODE_STATUS) lives inside MAG and is no
                           longer a NoC node at all
-   arbitrary-size GEMM    BUILT, in the DRIVER -- driver/src/kohakutpu/kernel.py
+   arbitrary-size GEMM    BUILT, in the DRIVER -- src/ktpu/hw/kernel.py
                           tiles any shape onto one hardware tile and streams
                           the passes as rounds
    tensor descriptors     built and conv2d im2col validated, but NOT wired into

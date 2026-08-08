@@ -1,7 +1,7 @@
 # Where the cycles go, and what it would take to reach peak
 
 Measured, then derived. Every number in the first half came out of a real run
-(`kohakutpu.sim` reports it per run); everything in the second half follows
+(`ktpu.hw.sim` reports it per run); everything in the second half follows
 from those numbers plus the RTL's own constants.
 
 Peak is **512 MAC/cycle per cluster** (4 TCUs, each 4x8x4 = 128 MACs), so the
@@ -15,14 +15,21 @@ Peak is **512 MAC/cycle per cluster** (4 TCUs, each 4x8x4 = 128 MACs), so the
 diagnosis was acted on. `tests/mas/mag_driver_tb.v`, both operands
 pre-quantised, one MAG port per mesh row:
 
-| clusters | shape | run cycles | GFLOP/s | % peak |
+**Shapes are `M x K x N`** — every table in this document, and every shape string
+in the driver. They were written `M x N x K` when these runs were taken, which
+made one string name two different GEMMs: `256x1024x256` read as `M x N x K` is
+the healthy wide shape below, and read as `M x K x N` it is the K-heavy one that
+used to run on a single cluster. Every row here has been **converted**, so the
+numbers are the ones that were measured and only the labels moved.
+
+| clusters | shape M x K x N | run cycles | GFLOP/s | % peak |
 |---|---|---|---|---|
 | 2 | 256x256x256 | 18,701 | 538.3 | 87.6% |
-| 2 | 256x1024x256 | 72,684 | 554.0 | 90.2% |
-| 4 | 256x512x256 | 20,647 | 975.1 | 79.4% |
-| 4 | 256x1024x256 | 41,638 | 967.0 | 78.7% |
-| 8 | 256x1024x256 | 24,115 | 1669.7 | 67.9% |
-| 8 | 512x1024x256 | 43,382 | 1856.3 | 75.5% |
+| 2 | 256x256x1024 | 72,684 | 554.0 | 90.2% |
+| 4 | 256x256x512 | 20,647 | 975.1 | 79.4% |
+| 4 | 256x256x1024 | 41,638 | 967.0 | 78.7% |
+| 8 | 256x256x1024 | 24,115 | 1669.7 | 67.9% |
+| 8 | 512x256x1024 | 43,382 | 1856.3 | 75.5% |
 
 > **EVERY ROW OF THAT TABLE PREDATES THE MESH LAYOUT CHANGE.** It was measured
 > when a cluster was a (row, left-column) pair — manager in the left half of the
@@ -97,11 +104,11 @@ levers are [`optimization.md`](optimization.md) §I–§J.
 > single east-edge attachment ([`mas/spec.md`](mas/spec.md) §2.5). Measured
 > against the rows above, which are the figures from **before** that change:
 >
-> | | before | after |
+> | shape M x K x N | before | after |
 > |---|---|---|
 > | 2 CU 256x256x256 | 18,701 cyc · 538.3 · 87.6% | **identical** |
-> | 4 CU 256x512x256 | `flops` 79.4% | **79.6%** |
-> | 8 CU 512x1024x256 | 43,382 cyc · 1856.3 · 75.5% | **43,315 · 1859.2 · 75.7%** |
+> | 4 CU 256x256x512 | `flops` 79.4% | **79.6%** |
+> | 8 CU 512x256x1024 | 43,382 cyc · 1856.3 · 75.5% | **43,315 · 1859.2 · 75.7%** |
 >
 > Free, and marginally better. The reason is worth naming: an agent flit no
 > longer crosses the mesh from the east edge to reach a cluster, so dispatch
@@ -121,9 +128,9 @@ levers are [`optimization.md`](optimization.md) §I–§J.
 
 ## 1. Measured — the baseline
 
-| shape | run cycles | fill | gemm | drain | idle | MAC/cyc | GFLOP/s | % peak |
+| shape M x K x N | run cycles | fill | gemm | drain | idle | MAC/cyc | GFLOP/s | % peak |
 |---|---|---|---|---|---|---|---|---|
-| 64x64x128 | 8,213 | 56.7% | 17.3% | 12.1% | 13.8% | 63.8 | 38.3 | 6.2% |
+| 64x128x64 | 8,213 | 56.7% | 17.3% | 12.1% | 13.8% | 63.8 | 38.3 | 6.2% |
 | 128x128x128 | 32,361 | 61.3% | 17.1% | 11.6% | 9.8% | 64.8 | 38.9 | 6.3% |
 | 256x256x256 | 239,786 | 71.9% | 13.4% | 6.7% | 7.9% | 70.0 | 42.0 | 6.8% |
 | 512x512x512 | 1,983,413 | 73.0% | 10.3% | 3.4% | 13.3% | 67.7 | 40.6 | 6.6% |
@@ -158,7 +165,7 @@ MAG service FSM               stalls (cycles LOST, not spent)
 >
 > ```
 >    2 CU 256x256x256    in_bp 0.0% -> 39.8%   at an unchanged 18,701 cycles
->    8 CU 512x1024x256   in_bp 0.0% -> 22.4%   at 43,382 -> 43,315 cycles
+>    8 CU 512x256x1024   in_bp 0.0% -> 22.4%   at 43,382 -> 43,315 cycles
 > ```
 >
 > **No time transferred anywhere.** The rates, the cycle counts and the error
@@ -377,12 +384,12 @@ traffic routinely now that it demuxes between two consumers by flit type (§1.1,
 the predicate as well as the denominator**, and treat a stall counter that moves
 while the cycle count does not as a change in meaning until proven otherwise.
 
-Read correctly, on the current machine:
+Read correctly, on the current machine (shapes `M x K x N`):
 
 ```
 2 CU 256x256x256    flops 87.6%  mem_rd 30.3%  mem_wr 20.2%  noc_in 22.8%  noc_out 32.8%
-8 CU 256x1024x256   flops 67.9%  mem_rd 25.5%  mem_wr 17.0%  noc_in 19.2%  noc_out 27.6%
-8 CU 512x1024x256   flops 75.5%  mem_rd 23.6%  mem_wr 18.9%  noc_in 21.3%  noc_out 26.0%
+8 CU 256x256x1024   flops 67.9%  mem_rd 25.5%  mem_wr 17.0%  noc_in 19.2%  noc_out 27.6%
+8 CU 512x256x1024   flops 75.5%  mem_rd 23.6%  mem_wr 18.9%  noc_in 21.3%  noc_out 26.0%
 ```
 
 No memory budget exceeds a third at any cluster count, and the busiest thing in

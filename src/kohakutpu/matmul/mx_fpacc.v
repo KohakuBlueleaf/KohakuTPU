@@ -6,16 +6,10 @@
 //     MW = 11  ->  19 bits   (TF32-ish, but E7 rather than E8)
 //     MW = 10  ->  18 bits
 //
-// E7 is fixed and is NOT the thing to trim. The accumulator holds
+// E7 is fixed and is NOT the thing to trim: the accumulator holds
 // int * 2^(sa+sb), and for FP16 sources that exponent sum spans roughly
-// -48..+30 -- an E5 field overflows on ordinary data. Range is required;
-// mantissa is the tunable.
-//
-// Mantissa is worth trimming because the final result leaves as FP16, which
-// carries 11 significand bits. Anything the accumulator holds beyond what
-// survives that conversion only has to be accurate enough that rounding errors
-// do not compound across the K sweep -- so the useful floor is set by the
-// number of accumulation steps, not by the output format.
+// -48..+30, so an E5 field overflows on ordinary data. Mantissa is the tunable
+// -- see docs/compute/accumulator.md.
 //
 // LAYOUT OF THIS FILE
 //
@@ -27,30 +21,25 @@
 //   mx_fpacc_add        float add, unsplit REFERENCE
 //   mx_fpacc_to_fp16    accumulator float -> FP16, on EMIT only
 //
-// The two modules marked REFERENCE are deliberately written the slow, obvious
-// way and are not instantiated by the ACU. mx_fpacc_tb checks THEM, against a
-// real-number model, which is what pins the arithmetic down. Nothing
-// cross-checks them against the split versions -- those are covered end to end
-// by mx_acu_fp_tb, against FP64 and an exact-integer model. Changing a split
-// module and running only mx_fpacc_tb therefore proves nothing.
+// The two REFERENCE modules are not instantiated by the ACU; mx_fpacc_tb checks
+// THEM against a real-number model. Nothing cross-checks them against the split
+// versions, which are covered end to end by mx_acu_fp_tb. Changing a split
+// module and running only mx_fpacc_tb proves nothing.
 //
 // EVERYTHING ELSE MUST STAY TREE-SHAPED. These blocks sit in the CU's critical
-// path. A search or reduction written as a loop that carries a value between
-// iterations -- `if (!found && x[i]) found = 1` or `lost = lost | x[i]` -- is a
-// serial dependency chain, and synthesis builds exactly that: 25 LUT levels
-// inside one pipeline stage, which is most of a 3.33 ns period on its own. It
-// cost this design ~68 MHz until it was fixed. Use smear-isolate-encode for
-// searches and mask-then-reduce for sticky bits; see mx_lead1.
+// path, and a search or reduction written as a loop that carries a value
+// between iterations -- `if (!found && x[i]) found = 1`, `lost = lost | x[i]`
+// -- synthesises as exactly that serial chain: 25 LUT levels in one stage, most
+// of a 3.33 ns period, and it cost this design ~68 MHz. Use smear-isolate-encode
+// for searches and mask-then-reduce for sticky bits; see mx_lead1.
 
 `default_nettype none
 
 // ---------------------------------------------------------------------------
 // Integer + power-of-two scale -> accumulator float.
 //
-// REFERENCE. Written the obvious way, with serial search loops, and not
-// instantiated by the ACU -- mx_fpacc_norm_a/_b are what ship. Kept so the
-// primitives bench has one readable implementation to check the split, fast
-// versions against.
+// REFERENCE: serial search loops, not instantiated by the ACU. mx_fpacc_norm_a
+// and _b are what ship.
 // ---------------------------------------------------------------------------
 module mx_fpacc_norm #(
     parameter integer MW   = 16,
@@ -105,11 +94,9 @@ module mx_fpacc_norm #(
             e = $signed({1'b0, msb}) + exp_in + BIAS[10:0];
 
             // On a rounding carry the leading one moves to bit MW, so the
-            // fraction is sig_r[MW:1] -- MW bits. Taking sig_r[SW:1] is MW+1
-            // bits and overflows the concatenation, pushing the sign out and
-            // producing a value of the wrong magnitude and sign. MW=16 never
-            // reaches this path (nothing rounds up), so it only appears once
-            // the accumulator is narrowed.
+            // fraction is sig_r[MW:1] -- MW bits. sig_r[SW:1] is MW+1 bits and
+            // overflows the concatenation, pushing the sign out. MW=16 never
+            // reaches this path, so it only appears once MW is narrowed.
             if (sig_r[SW]) fp = {val[VW-1], (e + 11'sd1) & 11'h7F, sig_r[MW:1]};
             else           fp = {val[VW-1], e[6:0], sig_r[MW-1:0]};
         end
@@ -120,13 +107,10 @@ endmodule
 // ---------------------------------------------------------------------------
 // Leading-one position, logarithmic depth.
 //
-// Written as smear-isolate-encode, NOT as a search loop. A loop that carries a
-// `found` flag makes every iteration depend on the one before it, so a W-bit
-// search is a W-deep LUT chain -- synthesis builds literally what is written,
-// and at W=25 that chain alone is the whole clock period. This form is
-// log2(W) levels of OR to smear the leading one rightwards, one AND to isolate
-// it, and six OR reductions to encode it, each of which is a balanced LUT6
-// tree.
+// Smear-isolate-encode, NOT a search loop: log2(W) levels of OR to smear the
+// leading one rightwards, one AND to isolate it, six OR reductions to encode
+// it. A `found`-flag loop would be a W-deep LUT chain instead, and at W=25 that
+// chain alone is the whole clock period.
 // ---------------------------------------------------------------------------
 module mx_lead1 #(
     parameter integer W = 32
@@ -160,18 +144,13 @@ endmodule
 
 
 // ---------------------------------------------------------------------------
-// The normaliser, split so the ACU can register between the halves.
+// The normaliser, split so the ACU can register between the halves. The seam is
+// after the shift: search and shift on one side, round and assemble on the other.
 //
-// Once the adder was pipelined the critical path moved HERE: a 22-bit
-// leading-one search, a bidirectional shift and a rounding carry in one cycle.
-// The seam is after the shift -- search and shift on one side, round and
-// assemble on the other.
-//
-// IT TAKES A MAGNITUDE, NOT A SIGNED VALUE. The sign travels beside the data
-// and belongs to the caller; taking `|val|` here put a two's-complement carry
-// chain at the head of the path, measured at 0.952 ns of 3.401 -- see
-// docs/compute/accumulator.md s4. The ACU produces the magnitude inside the
-// DSP that was already multiplying by the block scale.
+// IT TAKES A MAGNITUDE, NOT A SIGNED VALUE. The sign travels beside the data and
+// belongs to the caller; taking `|val|` here puts a two's-complement carry chain
+// at the head of the path -- see docs/compute/accumulator.md s4. The ACU forms
+// the magnitude inside the DSP that was already multiplying by the block scale.
 // ---------------------------------------------------------------------------
 module mx_fpacc_norm_a #(
     parameter integer MW = 16,
@@ -200,10 +179,9 @@ module mx_fpacc_norm_a #(
     wire [VW+SW-1:0] shifted = big ? (wide >> rsh) : (wide << lsh);
     assign sig = shifted[SW-1:0];
 
-    // Sticky runs alongside the shift instead of after it: build the mask of
-    // bits that fall off the bottom and reduce it once. The loop form -- "for
-    // each bit, if it is below the shift, OR it in" -- is a VW-deep serial
-    // chain with a comparator on every link.
+    // Sticky runs alongside the shift, not after it: mask the bits that fall off
+    // the bottom and reduce once. The loop form is a VW-deep serial chain with a
+    // comparator on every link.
     wire [5:0]    ssh   = (big && rsh >= 6'd1) ? (rsh - 6'd1) : 6'd0;
     wire [VW-1:0] smask = ~({VW{1'b1}} << ssh);
 
@@ -252,24 +230,19 @@ endmodule
 // Accumulator float add, round to nearest even.
 //
 // Significands are carried as 1.f plus GUARD spare bits so alignment, the add
-// and the rounding all happen at one width. Mixing widths here is how an
-// earlier version lost the significand entirely on same-sign operands.
+// and the rounding all happen at ONE width; mixing widths here loses the
+// significand entirely on same-sign operands.
 // ---------------------------------------------------------------------------
-// Split into ALIGN and ROUND so the ACU can register between them. Whole, the
-// path is exponent compare, swap, barrel shift, add, leading-one search,
-// normalise shift and round -- which measured 136 MHz against a 300 MHz target.
-// The seam is after the add: everything before it is alignment, everything
-// after is normalisation.
+// Split into ALIGN and ROUND so the ACU can register between them. The seam is
+// after the add: alignment before, normalisation after.
 module mx_fpacc_align #(
     parameter integer MW = 16
 )(
     input  wire [MW+7:0]   a,
     input  wire [MW+7:0]   b,
-    // Zero-ness as CONTROL rather than data. LOAD adds the chain to nothing and
-    // EMIT/SEND pass the tile out unchanged, so one operand is known zero a
-    // stage early -- but forcing 384 bits of tile data to zero to say so puts a
-    // mux on the widest, latest signal in the block. One bit per operand says
-    // the same thing and travels beside the data instead of in front of it.
+    // Zero-ness as CONTROL rather than data: LOAD and EMIT/SEND know one operand
+    // is zero a stage early, and forcing 384 bits of tile data to zero to say so
+    // would put a mux on the widest, latest signal in the block.
     input  wire            a_zero,
     input  wire            b_zero,
     output reg  [MW+9:0]   bg_o,     // SW+1: the larger operand, 1.f + guard
@@ -292,9 +265,8 @@ module mx_fpacc_align #(
     wire        za = a_zero || (ea == 7'd0);
     wire        zb = b_zero || (eb == 7'd0);
 
-    // One unsigned compare on the concatenation, not an exponent compare AND a
-    // mantissa compare stitched together. {e,m} >= {e,m} is exactly
-    // (ea > eb) || (ea == eb && ma >= mb), but it maps to a single carry chain
+    // One unsigned compare on the concatenation: {e,m} >= {e,m} is exactly
+    // (ea > eb) || (ea == eb && ma >= mb), but maps to a single carry chain
     // instead of a 7-bit compare feeding a 16-bit compare feeding an AND/OR.
     wire        a_ge    = {ea, ma} >= {eb, mb};
     wire [6:0]  e_big   = a_ge ? ea : eb;
@@ -312,11 +284,9 @@ module mx_fpacc_align #(
     wire [7:0]    dcl = (diff >= SW) ? sw8 : diff;
     wire [SW-1:0] shifted = sml >> dcl;
 
-    // The sticky mask is generated by a shift running in PARALLEL with the
-    // alignment shift, then reduced in one OR tree. FPGAs have no wide OR gate,
-    // so the reduction costs a couple of LUT levels -- against SW levels for
-    // the loop that was here before, which chained an OR through a comparator
-    // per bit.
+    // The sticky mask is a shift running in PARALLEL with the alignment shift,
+    // reduced in one OR tree: a couple of LUT levels against SW for a loop that
+    // chains an OR through a comparator per bit.
     wire [SW-1:0] lmask = ~({SW{1'b1}} << dcl);
     wire          lost  = |(sml & lmask);
 
@@ -333,9 +303,9 @@ module mx_fpacc_align #(
         if (za && zb)      zero_o = 1'b1;
         else if (za || zb) pass_o = 1'b1;
         else begin
-            // The add itself belongs to the round stage. Left here it puts a
+            // The add itself belongs to the round stage: left here it puts a
             // 26-bit carry chain after the tile mux, the exponent compare and
-            // the barrel shift, all in one cycle -- measured 217 MHz.
+            // the barrel shift, all in one cycle.
             bg_o = {1'b0, bg};
             sh_o = {1'b0, shifted};
         end
@@ -345,17 +315,12 @@ endmodule
 
 
 // ---------------------------------------------------------------------------
-// The round half, split again.
+// The round half, split again. The seam goes after the shift, matching the
+// normaliser split.
 //
-// Once align and round were separate stages the critical path settled on the
-// round half: a 26-bit add, a 26-bit leading-one search, a 26-bit shift and a
-// rounding carry, all in one cycle. The seam goes after the shift, matching
-// the normaliser split.
-//
-// This one is NOT free: it sits inside the accumulate loop, so it pushes the
-// read-after-write distance from 2 cycles to 3. That was expensive when the
-// ACU closed a single-cycle accumulate loop with rotating banks; with K swept
-// outermost there is no tight recurrence left and the depth is free.
+// This split sits INSIDE the accumulate loop, so it pushes the read-after-write
+// distance from 2 cycles to 3. Free only because K is swept outermost and there
+// is no tight recurrence left.
 // ---------------------------------------------------------------------------
 module mx_fpacc_round_a #(
     parameter integer MW = 16
@@ -432,9 +397,8 @@ module mx_fpacc_round_b #(
 endmodule
 
 
-// REFERENCE. Unsplit float add, kept for the primitives bench so the split
-// align/round_a/round_b chain can be checked against one implementation. Not
-// instantiated by the ACU.
+// REFERENCE. Unsplit float add for the primitives bench; not instantiated by
+// the ACU.
 module mx_fpacc_add #(
     parameter integer MW = 16
 )(
@@ -541,10 +505,9 @@ module mx_fpacc_to_fp16 #(
     reg signed [8:0] e16;
     reg  [10:0]      m11;
 
-    // Rounding only exists when the accumulator carries MORE mantissa than
-    // FP16; below that the mantissa is padded. A runtime `if` will not do here
-    // -- both arms elaborate, and {(10-MW){1'b0}} is an illegal replication
-    // when MW > 10 even though that arm can never run.
+    // Must be a generate, not a runtime `if`: both arms elaborate, and
+    // {(10-MW){1'b0}} is an illegal replication when MW > 10 even though that
+    // arm can never run.
     wire [10:0] m11_w;
     generate
     if (MW > 10) begin : g_round
@@ -566,13 +529,11 @@ module mx_fpacc_to_fp16 #(
             e16 = $signed({2'b0, e}) - 9'sd48;      // bias 63 -> 15
             m11 = m11_w;
 
-            // Rounding carried out of the fraction. m11 holds the STORED
-            // fraction, not the significand -- the leading 1 is implicit -- so
-            // the carry means 1.111..1 rounded to 10.000..0, i.e. the fraction
-            // becomes zero and the exponent goes up. Shifting m11 right instead
-            // leaves the carry bit sitting in the fraction and yields
-            // 1.5*2^(e+1) where 1.0*2^(e+1) was meant: a 50% error, on exactly
-            // the inputs whose fraction is all ones and rounds up.
+            // Rounding carried out of the fraction. m11 is the STORED fraction,
+            // not the significand, so the carry means 1.111..1 rounded to
+            // 10.000..0: fraction to zero, exponent up. Shifting m11 right
+            // instead leaves the carry bit in the fraction and gives
+            // 1.5*2^(e+1) where 1.0*2^(e+1) was meant -- a 50% error.
             if (m11[10]) begin
                 e16 = e16 + 9'sd1;
                 m11 = 11'd0;

@@ -5,7 +5,7 @@ The three instructions a cluster executes.
 Source: [`src/kohakutpu/matmul/mx_cluster_cu.v`](../../src/kohakutpu/matmul/mx_cluster_cu.v)
 (decode and sequencing),
 [`mx_cluster_mgr.v`](../../src/kohakutpu/matmul/mx_cluster_mgr.v) (the GEMM
-sweep), [`driver/src/kohakutpu/matmul.py`](../../driver/src/kohakutpu/matmul.py)
+sweep), [`src/ktpu/hw/matmul.py`](../../src/ktpu/hw/matmul.py)
 (`_flit`, the encoder).
 
 > [`../compute/tensor-isa.md`](../compute/tensor-isa.md) describes a larger ISA

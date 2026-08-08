@@ -9,26 +9,22 @@
 // S = 19 is the maximum, not 20. The packed operand must fit 27 bits signed and
 // the worst case w_hi = w_lo = -64 gives -64*2^20 - 64 = -67,108,928 against a
 // limit of -67,108,864 -- over by exactly 64. At S = 19 the guard is 5 bits,
-// which is cascade depth 32, which is exactly one K=32 block. See
+// which is cascade depth 32, exactly one K=32 block. See
 // docs/compute/matmul-circuit.md s2.
 //
-// The DSP ALU computes  Z + W + X + Y, and we use all four slots:
+// The DSP ALU computes  Z + W + X + Y, and all four slots are used:
 //
 //     X,Y = M      the packed product
 //     Z          = PCIN, the cascade from the DSP above  (or zero at stage 0)
 //     W          = C,    the partial from the previous TCU (last stage only)
 //
-// Taking the cross-TCU partial on W rather than Z is what keeps the chain free.
-// On Z it would have to enter at stage 0, which means the upstream TCU's result
-// must be ready before this TCU starts -- forcing 8 cycles of operand skew per
-// TCU. On W at the last stage the two results are naturally contemporary and
-// only two cycles of alignment are needed (C is registered, then the ALU).
+// The cross-TCU partial is on W, not Z: on Z it would enter at stage 0, so the
+// upstream TCU's result would have to be ready before this TCU starts -- 8
+// cycles of operand skew per TCU. On W at the last stage the two results are
+// contemporary and need two cycles of alignment (C registered, then the ALU).
 //
 // MODEL = 1 swaps the primitive for a behavioural equivalent with identical
-// latency. It exists so the arithmetic can be verified without unisims, which
-// keeps a failure attributable -- and it earned its keep: both models pass the
-// bench, but only after MODEL=0 exposed that BREG had to be 2 rather than 1.
-// The maths was right; the DSP configuration was not.
+// latency, so the arithmetic can be verified without unisims.
 
 `default_nettype none
 
@@ -52,8 +48,6 @@ module mx_mac #(
     output wire signed [47:0] p,
     output wire signed [47:0] pcout
 );
-    // A holds w_hi shifted into place; D holds w_lo. Both are pure wiring: the
-    // DSP's pre-adder performs the packing.
     wire signed [29:0] a_port = $signed({{23{w_hi[6]}}, w_hi}) <<< S;
     wire signed [26:0] d_port = {{20{w_lo[6]}}, w_lo};
     wire signed [17:0] b_port = {{11{act[6]}}, act};
@@ -65,7 +59,6 @@ module mx_mac #(
     localparam [8:0] OPMODE = {WBITS, ZBITS, 4'b0101};
 
     // INMODE 00100 = pre-adder computes (A + D), A from A2, B from B2.
-    // Matches the mode fp_fma.v already uses.
     localparam [4:0] INMODE  = 5'b00100;
     localparam [3:0] ALUMODE = 4'b0000;      // Z + W + X + Y + CIN
 
@@ -76,10 +69,9 @@ module mx_mac #(
             .AMULTSEL("AD"),          // multiplier sees the pre-adder output
             .AREG(1), .ACASCREG(1),
             // BREG=2, not 1. With AMULTSEL="AD" the A/D path reaches the
-            // multiplier through AREG *and* ADREG -- two stages -- so a
-            // single-stage B arrives a cycle early and multiplies against the
-            // wrong operand. Stable operands hide it completely; streaming does
-            // not. BREG=2 puts B on the same two-stage footing.
+            // multiplier through AREG *and* ADREG, so a single-stage B arrives a
+            // cycle early and multiplies against the wrong operand. Stable
+            // operands hide this completely; streaming does not.
             .BREG(2), .BCASCREG(2),
             .DREG(1), .ADREG(1),
             .MREG(1),

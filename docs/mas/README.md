@@ -145,7 +145,7 @@ the tiling, and [`../system.md`](../system.md) §6 reports what it measures.
 **The quantiser is built and lives here.** `mx_quant.v` converts FP16 to
 int7 + E5M3 as data leaves MAG, one scale per 32-element block. Software
 therefore uploads ordinary FP16 and never constructs a quantised value;
-`driver/src/kohakutpu/mxfp7.py` exists only to predict what the hardware will
+`src/ktpu/hw/mxfp7.py` exists only to predict what the hardware will
 produce, so a mismatch is a disagreement between two independent implementations
 rather than two copies of one mistake. See
 [`../isa/memory.md`](../isa/memory.md) §6.
