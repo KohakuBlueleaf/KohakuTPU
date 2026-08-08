@@ -101,6 +101,13 @@ def attention(
         raise ValueError(f"block {block} does not divide q {tlen} / k {klen}")
     if causal and tri is None:
         raise ValueError("causal attention needs tri, a (block, block) 0/1 constant")
+    if causal and tlen != klen:
+        raise ValueError(
+            f"causal with {tlen} query rows against {klen} key rows: query "
+            "block i is aligned to key block i, so a shorter query would "
+            "attend a prefix that is not its own. Slice the keys to match, or "
+            "pass an offset-aware tri per block"
+        )
 
     batch = q.shape[0] if rank == 4 else 1
     heads = q.shape[-3] if rank >= 3 else 1
