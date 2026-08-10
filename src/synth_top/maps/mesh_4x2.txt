@@ -1,0 +1,6 @@
+# Non-square proof: 4 wide, 2 tall. 2 MAG ports, 4 clusters, 10 vector cores.
+# Only legal because noc_inport.v clamps X and Y against separate bounds.
+xxx vec vec vec vec xxx
+mag mat nul mat nul vec
+mag mat nul mat nul vec
+xxx vec vec vec vec xxx

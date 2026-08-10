@@ -1,0 +1,7 @@
+# Efficiency-first 4+4 setup with more router
+xxx nul nul xxx
+mag mat vec nul
+mag mat vec nul
+mag mat vec nul
+mag mat vec nul
+xxx nul nul xxx

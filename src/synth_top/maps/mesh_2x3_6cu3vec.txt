@@ -1,0 +1,33 @@
+# SHIP CANDIDATE: one SLR, 2x3 routers, 6 clusters, 3 vector cores.
+#
+#   xxx vec vec xxx
+#   mag mat mat vec
+#   mag mat mat nul
+#   mag mat mat nul
+#   xxx nul nul xxx
+#
+# Six matmul clusters on the six router locals, three vector cores on edges
+# (two north, one east), three MAG memory ports -- one per row.
+#
+# WHY SIX CLUSTERS AND NOT FOUR. Peak is 307.2 GFLOP/s per cluster at 300 MHz,
+# so four clusters is 4.92 TFLOP/s across four SLRs and CANNOT reach the 5
+# TFLOP/s target even at 100% efficiency. Six is 7.37 peak, ~5.5 achieved.
+# That is the whole reason this config exists.
+#
+# WHY THREE VECTOR CORES AND NOT FOUR. 6+4 measures 331,503 LUT = 76.7% of an
+# SLR, past the ~75% routability ceiling; 6+3 is 295,874 = 68.5%. The fourth
+# core is affordable the moment any of three unbanked items lands -- the
+# alignment-shifter-to-DSP trade (~25,000 LUT, see HANDOFF s0.5), the
+# zero-hardware compiler fusion, or row_rescale/emit_scale -- so treat this as
+# 6+3 NOW rather than 6+3 forever.
+#
+# THE RATIO IS DELIBERATELY MATMUL-WEIGHTED. Attention wants ~1:2 CU:vec today
+# because its vector work is roughly twice its matmul work, so this config is
+# tuned for the FFN/GEMM majority of a real transformer rather than for
+# attention latency. 5+4 at 73.0% is the honest alternative if that inverts.
+
+xxx vec vec xxx
+mag mat mat vec
+mag mat mat nul
+mag mat mat nul
+xxx nul nul xxx

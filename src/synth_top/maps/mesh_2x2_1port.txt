@@ -1,0 +1,8 @@
+# Simplest bring-up: 2x2 routers, ONE MAG port, 2 clusters, 4 vector cores.
+# One mag token means one memory engine, so the module presents three masters
+# instead of four. Both clusters share that engine -- fine at 100 MHz on one
+# DDR, and the thing to grow first when bandwidth starts to bind.
+xxx vec vec xxx
+mag mat nul nul
+nul mat nul nul
+xxx vec vec xxx

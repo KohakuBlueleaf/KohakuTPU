@@ -1,11 +1,15 @@
 // Synchronous FIFO over xpm_fifo_sync.
 //
 // MEMORY_TYPE picks the storage primitive, because the right answer differs by
-// use. Router flit buffers want "distributed": depth only has to cover the
-// backpressure round-trip, and an SRL32 costs ~1 LUT per bit at any depth up to
-// 32, so a URAM there wastes over 97% of a 288 Kbit block. Instruction FIFOs want
-// "block": a RAMB36E2's widest shape is 512x72, so a 288-bit entry is 4 BRAMs and
-// depth 512 fills them exactly.
+// use. Instruction FIFOs want "block": a RAMB36E2's widest shape is 512x72, so a
+// 288-bit entry is 4 BRAMs and depth 512 fills them exactly.
+//
+// ROUTER FLIT BUFFERS NOW WANT "block" TOO, and that reverses the argument this
+// comment used to make. A 32-deep 288-bit buffer really does waste 94% of the 4
+// BRAMs it occupies -- but it is 168 LUT in distributed RAM, the design is
+// LUT-bound and only LUT, and BRAM sits near empty. Measured on one NoCRouter at
+// 320 MHz: 3,751 -> 2,911 LUT for 20 BRAM tiles, 451 -> 410 MHz. The waste is
+// the point of the trade, not an argument against it.
 
 module sync_fifo #(
     parameter DATA_WIDTH        = 288,

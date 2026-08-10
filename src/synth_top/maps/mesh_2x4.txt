@@ -1,0 +1,10 @@
+# The SLR mesh: 2x4 routers, 4 MAG ports, 8 clusters, 8 vector cores.
+# This shape is what the one-local cluster buys. The same 8 clusters needed 16
+# router locals as mgr/acu pairs and therefore a 4x4 grid; at one local each
+# they fit 8 routers, which is 8 fewer NoCRouter at 3,281 LUT apiece.
+xxx vec vec xxx
+mag mat mat vec
+mag mat mat vec
+mag mat mat vec
+mag mat mat vec
+xxx vec vec xxx

@@ -1,0 +1,8 @@
+# Production mesh: 5x4 routers, 4 MAG ports, 8 clusters, 16 vector cores.
+# MAG holds the west edge, vector cores the other three.
+xxx vec vec xxx vec vec xxx
+mag mat nul vec mat nul vec
+mag mat nul vec mat nul vec
+mag mat nul vec mat nul vec
+mag mat nul vec mat nul vec
+xxx vec vec xxx vec vec xxx

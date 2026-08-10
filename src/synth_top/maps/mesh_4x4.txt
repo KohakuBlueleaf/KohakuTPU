@@ -1,0 +1,10 @@
+# Production mesh: 4x4 routers, 4 MAG ports, 8 clusters, 12 vector cores.
+# MAG holds the west edge, vector cores the other three. Kept as the BEFORE
+# shape for the router arithmetic -- mesh_2x4.txt holds the same 8 clusters on
+# half the routers now that a cluster is one node.
+xxx vec vec vec vec xxx
+mag mat nul mat nul vec
+mag mat nul mat nul vec
+mag mat nul mat nul vec
+mag mat nul mat nul vec
+xxx vec vec vec vec xxx

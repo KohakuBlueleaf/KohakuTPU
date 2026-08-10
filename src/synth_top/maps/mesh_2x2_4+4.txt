@@ -1,0 +1,5 @@
+# smallest 4+4 setup
+xxx vec vec xxx
+mag mat mat nul
+mag mat mat nul
+xxx vec vec xxx

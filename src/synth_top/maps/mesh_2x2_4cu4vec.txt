@@ -1,0 +1,26 @@
+# THE SHIP CONFIGURATION: one SLR, 2x2 routers, 4 clusters, 4 vector cores.
+#
+#   xxx vec vec xxx
+#   mag mat mat vec
+#   mag mat mat vec
+#   xxx nul nul xxx
+#
+# Four matmul clusters on the four router locals, four vector cores on edges
+# (two north, two east), two MAG memory ports on the west edge -- one per row,
+# which is what a row IS.
+#
+# WHY 2x2 AND NOT 4x2. A 4x2 buys four memory ports instead of two and costs
+# four more routers, ~11,600 LUT. At four clusters the drain is not port-bound,
+# and the measurement that decides it is the implemented design: a mesh spread
+# over three SLRs had a worst path of 4.6 ns that was 98.3% ROUTING with ZERO
+# logic levels. Routing, not LUT count, is what costs frequency here -- so the
+# smaller mesh is the faster one as well as the cheaper one.
+#
+# The south edge is `nul` rather than two more vector cores: 4+4 is the shape
+# the budget was measured for, and a fifth core has nowhere to fit once MIG and
+# the SmartConnect are placed.
+
+xxx vec vec xxx
+mag mat mat vec
+mag mat mat vec
+xxx nul nul xxx
