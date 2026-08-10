@@ -149,6 +149,9 @@ class Program:
     #: Region name -> its OWN tile geometry. A graph has as many tilings as
     #: matmul shapes, so `tiling` is only the default for `result()`.
     tilings: dict[str, dict] = field(default_factory=dict)
+    #: `(band name, first index, last index + 1)`, in emission order. Dependent
+    #: bands cannot overlap, and nothing in the stream marks where one ends.
+    bands: list[tuple[str, int, int]] = field(default_factory=list)
     name: str = "program"
 
     def emit(self, inst: Inst) -> None:

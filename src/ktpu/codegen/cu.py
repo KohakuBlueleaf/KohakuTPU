@@ -475,6 +475,7 @@ def _emit_vector(
     exports: frozenset[int] = frozenset(),
     feeds_matmul: dict[int, tuple[int, int]] | None = None,
     made_tile: dict[int, tuple[int, int]] | None = None,
+    held: dict[tuple[int, int], dict] | None = None,
 ):
     """Emit ONE program per vector core, looping over the data that core owns.
 
@@ -495,6 +496,13 @@ def _emit_vector(
     With `producer`, the band is a folded epilogue: it loads ACC24 straight from
     the span that band drained, so the intermediate is never converted to FP16
     and the only rounding and the only clamp are on this band's own store.
+
+    `held` carries what each core's VL, VMODE and scalar file already contain,
+    so a band that wants what the last one left is issued without the setup.
+    THE ASSUMPTION IS THAT NOTHING BETWEEN BANDS RESETS THEM: codegen emits one
+    continuous stream per core with no VHALT in it, so the whole program is one
+    kernel, and `prog.rounds` slices it for the dispatcher rather than
+    restarting the core. Pass `None` to issue the setup unconditionally.
     """
     feeds_matmul = feeds_matmul or {}
     made_tile = made_tile or {}
@@ -527,18 +535,26 @@ def _emit_vector(
     for idx in range(b.grid.size):
         owned.setdefault(where[idx], []).append(idx)
 
+    nred = sum(1 for o in b.ops if o.kind in REDUCTION)
     for node, idxs in owned.items():
-        prog.emit(Inst(Opcode.VSETVL, e, node, {"vl": vl}))
-        prog.emit(Inst(Opcode.VSETMD, e, node, {"mode": mode, "depth": depth}))
+        was = {} if held is None else held.setdefault(node, {})
+        if was.get("vl") != vl:
+            prog.emit(Inst(Opcode.VSETVL, e, node, {"vl": vl}))
+            was["vl"] = vl
+        if was.get("md") != (mode, depth):
+            prog.emit(Inst(Opcode.VSETMD, e, node, {"mode": mode, "depth": depth}))
+            was["md"] = (mode, depth)
         for vid, val in sorted(p.consts.items()):
-            prog.emit(
-                Inst(
-                    Opcode.VSETI,
-                    e,
-                    node,
-                    {"sd": sorted(p.consts).index(vid), "imm": val, "vid": vid},
+            sd = sorted(p.consts).index(vid)
+            if was.get(("s", sd)) != val:
+                prog.emit(
+                    Inst(Opcode.VSETI, e, node, {"sd": sd, "imm": val, "vid": vid})
                 )
-            )
+                was[("s", sd)] = val
+        # A reduction writes S[len(consts) + i], so whatever a VSETI put there
+        # is gone and the next band must not assume it survived.
+        for i in range(len(p.consts), len(p.consts) + nred):
+            was.pop(("s", i), None)
         for start, count in _runs(sorted(spans[i][0] for i in idxs), elems):
             word = (feed.word if feed else 0) + _fp16_words(start)
             chunks = per_instance * count
@@ -789,7 +805,9 @@ def codegen(sched: Schedule, m: int, k: int, n: int, t: Target) -> Program:
                 )
             prog.packing[reg[vid]] = spec
 
+    resident: dict[tuple[int, int], dict] = {}
     for b in sched.bands:
+        start = len(prog.insts)
         match b.engine:
             case Engine.MATMUL:
                 _emit_matmul(prog, b, where[b.name], t, reg)
@@ -804,9 +822,12 @@ def codegen(sched: Schedule, m: int, k: int, n: int, t: Target) -> Program:
                     exports[b.name],
                     feeds_matmul,
                     made_tile,
+                    resident,
                 )
             case Engine.HOST:
                 _emit_host(prog, b, where[b.name])
+        if len(prog.insts) > start:
+            prog.bands.append((b.name, start, len(prog.insts)))
 
     cut, cur = [], []
     for i in range(len(prog.insts)):

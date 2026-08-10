@@ -14,6 +14,109 @@ from ktpu.dsl.tracer import Tracer
 LOG2_E = 1.4426950408889634
 
 
+def _pair(v, what: str) -> tuple[int, int]:
+    if isinstance(v, int):
+        return (v, v)
+    a, b = v
+    return (int(a), int(b))
+
+
+def _band(x: Tracer, axis: int, lo: int, hi: int) -> Tracer:
+    key = [slice(None)] * x.rank
+    key[axis] = slice(lo, hi)
+    return x[tuple(key)]
+
+
+def _pick(x: Tracer, axis: int, start: int, count: int, step: int) -> Tracer:
+    """`count` elements from `start` along `axis`, every `step`-th one.
+
+    A strided slice is a gather and the tracer refuses it, so a stride is
+    expressed as reshape-and-drop instead: split the axis into `(count, step)`
+    and keep column 0. That is a view, and the skipped elements are never read.
+    """
+    if step == 1:
+        return _band(x, axis, start, start + count)
+    v = _band(x, axis, start, start + count * step)
+    head, tail = list(v.shape[:axis]), list(v.shape[axis + 1 :])
+    v = v.reshape(*head, count, step, *tail)
+    return v[(slice(None),) * (axis + 1) + (0,)]
+
+
+def conv2d(x: Tracer, w: Tracer, stride=1, padding=0) -> Tracer:
+    """`(N, H, W, C)` against `(KH, KW, C, F)` -> `(N, Ho, Wo, F)`.
+
+    Read as KH*KW matmuls, NOT as an im2col. For one filter tap the input is a
+    plain OFFSET VIEW, so the contraction is `(N*Ho*Wo, C) @ (C, F)` and the
+    taps accumulate into one result. Nothing is materialised and no data moves,
+    which is `docs/compute/tensor-isa.md` §3.2 -- "a convolution is a matmul
+    with a more interesting descriptor" -- with the descriptor carried by the
+    view the slice already is.
+
+    An im2col would expand the operand by KH*KW in both footprint and
+    bandwidth; this expands nothing and costs KH*KW accumulating matmuls, which
+    is the work the convolution was always going to do.
+    """
+    if x.rank != 4:
+        raise ValueError(f"conv2d expects (N, H, W, C), got {x.shape}")
+    if w.rank != 4:
+        raise ValueError(f"conv2d expects a (KH, KW, C, F) filter, got {w.shape}")
+    n, h, wd, c = x.shape
+    kh, kw, cw, f = w.shape
+    if c != cw:
+        raise ValueError(
+            f"conv2d channel mismatch: input has {c}, filter expects {cw} "
+            f"({x.shape} against {w.shape})"
+        )
+    sh, sw = _pair(stride, "stride")
+    ph, pw = _pair(padding, "padding")
+    ho = (h + 2 * ph - kh) // sh + 1
+    wo = (wd + 2 * pw - kw) // sw + 1
+    if ho <= 0 or wo <= 0:
+        raise ValueError(
+            f"conv2d output would be {ho}x{wo}: {x.shape} with a {kh}x{kw} "
+            f"filter, stride {(sh, sw)}, padding {(ph, pw)}"
+        )
+
+    # `_pick` reshapes a whole (count, step) block, so the tail has to exist.
+    # ho*sh >= h + 2*ph - kh + 1 by construction, so hp >= h + 2*ph and the
+    # extra never underruns the requested padding.
+    hp = (kh - 1) + ho * sh
+    wp = (kw - 1) + wo * sw
+    xp = x.pad(((0, 0), (ph, hp - h - ph), (pw, wp - wd - pw), (0, 0)))
+
+    acc = None
+    for ky in range(kh):
+        for kx in range(kw):
+            v = _pick(xp, 1, ky, ho, sh)
+            v = _pick(v, 2, kx, wo, sw)
+            part = v.reshape(n * ho * wo, c) @ w[ky, kx]
+            acc = part if acc is None else acc + part
+    return acc.reshape(n, ho, wo, f)
+
+
+def conv1d(x: Tracer, w: Tracer, stride=1, padding=0) -> Tracer:
+    """`(N, L, C)` against `(K, C, F)` -> `(N, Lo, F)`.
+
+    The 2D case with a unit height, so there is one implementation to be wrong
+    in rather than two.
+    """
+    if x.rank != 3:
+        raise ValueError(f"conv1d expects (N, L, C), got {x.shape}")
+    if w.rank != 3:
+        raise ValueError(f"conv1d expects a (K, C, F) filter, got {w.shape}")
+    n, ell, c = x.shape
+    k, cw, f = w.shape
+    s = stride if isinstance(stride, int) else int(stride[0])
+    p = padding if isinstance(padding, int) else int(padding[0])
+    out = conv2d(
+        x.reshape(n, 1, ell, c),
+        w.reshape(1, k, cw, f),
+        stride=(1, s),
+        padding=(0, p),
+    )
+    return out.reshape(n, out.shape[2], f)
+
+
 def _head(x: Tracer, rank: int, b: int, h: int) -> Tracer:
     """The `(L, D)` slab for batch `b`, head `h`, from a rank 2/3/4 operand.
 
@@ -30,8 +133,40 @@ def _head(x: Tracer, rank: int, b: int, h: int) -> Tracer:
             return x[b][h]
 
 
-def _attend(q, k, v, scale, block, lo, hi, tri=None):
+#: `(x + BIG) - BIG` rounds to an integer while the significand is 16 bits or
+#: fewer; widen it and the sum lands where ulp < 1 and `_ceil` stops rounding.
+BIG = 32768.0
+
+
+def _ceil(x: Tracer) -> Tracer:
+    """An integer no smaller than `x`, in three elementwise ops.
+
+    The level-1 op set has no `ceil` -- the hardware computes `floor` inside
+    `exp2` as a bit slice but never exposes it -- so this is the magic-number
+    round: adding `BIG` pushes every fraction below the ulp, and subtracting it
+    again leaves the integer. The `+ 1` first makes the result at least `x`
+    rather than merely near it, which is what `_attend` needs and rounding to
+    nearest does not give.
+    """
+    return (x + 1.0 + BIG) - BIG
+
+
+def _attend(q, k, v, scale, block, lo, hi, tri=None, pow2_corr=False):
     """Online softmax over key blocks `[lo, hi)`, returning `(rows, D)`.
+
+    `scale` arrives ALREADY IN LOG2 SPACE, so each `exp2` takes its operand
+    directly; `exp2((s - m) * log2 e)` would cost a vector pass per exp2, and
+    `passes/scalefold.py` removes it from kernels not written this way.
+
+    With `pow2_corr`, the running max is rounded UP to an integer so every
+    `corr` is exactly a power of two and the accumulator could apply it as an
+    exponent bias rather than a vector pass -- the `row_rescale` precondition.
+    Up rather than to nearest keeps `s - m` non-positive, so `exp2` cannot
+    overflow. OFF, because it does not pay: `_ceil` is narrow-span work between
+    a wide reduction and its wide consumer, so it splits `[mul, rmax, sub,
+    exp2, sum]` into three bands and sends `s` back through L1. Measured on
+    attention full+causal it costs +170 instructions and +572 vector cycles,
+    and `row_rescale` returns less than that even once built.
 
     `tri` is a 0/1 constant applied to `p` on the LAST block only, which is how
     causal handles the one block straddling the diagonal. Zeroing AFTER the
@@ -44,13 +179,15 @@ def _attend(q, k, v, scale, block, lo, hi, tri=None):
     for j in range(lo, hi):
         s = (q @ k[j * block : (j + 1) * block].transpose()) * scale
         mj = s.max(axis=-1, keepdim=True)
+        if pow2_corr:
+            mj = _ceil(mj)
         if m is None:
             m = mj
-            p = exp2((s - m) * LOG2_E)
+            p = exp2(s - m)
         else:
             m2 = maximum(m, mj)
-            corr = exp2((m - m2) * LOG2_E)
-            p = exp2((s - m2) * LOG2_E)
+            corr = exp2(m - m2)
+            p = exp2(s - m2)
             m = m2
         if tri is not None and j == hi - 1:
             p = p * tri
@@ -72,6 +209,7 @@ def attention(
     causal: bool = False,
     tri: Tracer | None = None,
     wo: Tracer | None = None,
+    pow2_corr: bool = False,
 ):
     """Flash attention: single or multi head, optionally GQA, optionally causal.
 
@@ -86,6 +224,10 @@ def attention(
     would need `concat` (s6.2): `wo` collapses the head axis, causal splits by
     query block. Raises ValueError on a bad or mismatched rank, an indivisible
     block, a kv count not dividing the heads, or `causal` without `tri`.
+
+    `pow2_corr` rounds the running max up so every rescale is a power of two,
+    which `row_rescale` needs and which currently costs more than it saves --
+    see `_attend`.
     """
     rank = len(q.shape)
     if rank not in (2, 3, 4):
@@ -115,7 +257,9 @@ def attention(
     if heads % kv_heads:
         raise ValueError(f"{kv_heads} kv heads does not divide {heads} query heads")
     group = heads // kv_heads
-    scale = chan**-0.5 if scale is None else scale
+    # Into log2 space once, here: `_attend` then exponentiates without a
+    # per-exp2 multiply, and the row max it rounds is already a base-2 one.
+    scale = (chan**-0.5 if scale is None else scale) * LOG2_E
 
     pieces = []
     for b in range(batch):
@@ -132,6 +276,7 @@ def attention(
                     0,
                     i + 1 if causal else klen // block,
                     tri if causal else None,
+                    pow2_corr,
                 )
                 if wo is None:
                     per_head.append(out)

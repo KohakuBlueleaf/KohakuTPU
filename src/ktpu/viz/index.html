@@ -1172,14 +1172,13 @@ function drawMesh(d) {
   // rest of the machine sitting idle.
   const DP = d.dispatch;
   const live = DP ? new Set(DP.clusters.map(c => `${c[0]},${c[1]}`)) : null;
-  const isLive = c => !live || live.has(`${c.mgr[0]},${c.mgr[1]}`);
+  const isLive = c => !live || live.has(`${c.cu[0]},${c.cu[1]}`);
   const livePort = new Set(
     cl.filter(isLive).map(c => `${c.port[0]},${c.port[1]}`));
 
   const byRouter = new Map();
   cl.forEach((c, i) => {
-    byRouter.set(`${c.mgr[0]},${c.mgr[1]}`, { ci:i, kind:"M", on:isLive(c) });
-    byRouter.set(`${c.acu[0]},${c.acu[1]}`, { ci:i, kind:"A", on:isLive(c) });
+    byRouter.set(`${c.cu[0]},${c.cu[1]}`, { ci:i, on:isLive(c) });
   });
 
   let g = "";
@@ -1220,7 +1219,7 @@ function drawMesh(d) {
            `stroke="${e.on ? "none" : col(e.ci)}" stroke-dasharray="${e.on ? "" : "3 3"}"></rect>` +
            `<text x="${bx+BW/2}" y="${by+19}" text-anchor="middle" ` +
            `fill="${e.on ? "" : "currentColor"}">` +
-           `${e.kind === "M" ? "mgr" : "acu"} ${e.ci}</text></g>`;
+           `cu ${e.ci}</text></g>`;
     }
 
   // MAG's ports, one west of each row. They are MAG ports, not memory ports:
@@ -1735,7 +1734,7 @@ function applySelection() {
   });
 
   // The mesh shows the CLUSTER of whatever is active, and the row its traffic
-  // uses: both endpoints walk west along their own row to that row's port.
+  // uses: the node walks west along its own row to that row's port.
   const M = S.data.mesh;
   if (!M) return;
   $("mesh").querySelectorAll(".mesh-node").forEach(n => {
@@ -1744,7 +1743,7 @@ function applySelection() {
     n.classList.toggle("dim", cluster !== null && ci !== cluster);
   });
   const row = cluster === null ? null : M.clusters[cluster].row;
-  const west = cluster === null ? -1 : M.clusters[cluster].acu[0];
+  const west = cluster === null ? -1 : M.clusters[cluster].cu[0];
   $("mesh").querySelectorAll(".mesh-link[data-row]").forEach(l => {
     l.classList.toggle("hot", +l.dataset.row === row && +l.dataset.col < west);
   });

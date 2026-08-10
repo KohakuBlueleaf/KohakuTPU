@@ -18,7 +18,9 @@ import numpy as np
 
 from ktpu.hw import mxfp7
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+# parents[2], not parent.parent: this file is scripts/py/, so two levels up is
+# the repo root and one is scripts/, where src/ does not exist.
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 VIVADO = pathlib.Path(os.environ.get("VIVADO_BIN", r"D:\Xilinx\Vivado\2024.2\bin"))
 ENTRIES = 256
 SRC = ["src/kohakumas/mx_quant.v", "tests/mas/mx_quant_tb.v"]

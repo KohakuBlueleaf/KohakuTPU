@@ -186,27 +186,59 @@ module mx_tdesc #(
     end
 
     // ---- address and bounds ---------------------------------------------
-    // Adder tree over the per-dimension partial sums.
+    // BALANCED REDUCTIONS, and they have to be written out. Both of these were
+    // `acc = acc + term[i]` over NDIM, which is an adder CHAIN NDIM deep, and
+    // for ax_val the tool cannot re-associate it because every link carries a
+    // mux. Together they were 7 of the ship top's 10 worst paths.
+    //
+    // Padded to a power of two so the in-place pairwise fold is ceil(log2)
+    // levels: at NDIM=6 that is 3 instead of 6.
+    localparam integer AN = 1 << $clog2(NDIM + 1);
+
+    integer oi, on2, ok;
+    reg signed [SW-1:0] os_t [0:AN-1];
     reg signed [SW-1:0] off_sum;
     always @(*) begin
-        off_sum = {SW{1'b0}};
-        for (i = 0; i < NDIM; i = i + 1) off_sum = off_sum + psum[i];
+        for (oi = 0; oi < AN;   oi = oi + 1) os_t[oi] = {SW{1'b0}};
+        for (oi = 0; oi < NDIM; oi = oi + 1) os_t[oi] = psum[oi];
+        for (on2 = AN >> 1; on2 > 0; on2 = on2 >> 1)
+            for (ok = 0; ok < on2; ok = ok + 1)
+                os_t[ok] = os_t[ok] + os_t[ok + on2];
+        off_sum = os_t[0];
     end
     assign addr = d_base + {{(AW-SW){off_sum[SW-1]}}, off_sum};
 
+    // ONE SET OF LOOP VARIABLES PER always BLOCK -- sharing them between two
+    // combinational blocks is a simulation race, not a style point.
+    integer xi, xn2, xk;
+    reg signed [XW-1:0] a0_t [0:AN-1];
+    reg signed [XW-1:0] a1_t [0:AN-1];
     reg signed [XW-1:0] ax_val [0:1];
     reg [1:0]           ax_ok;
     always @(*) begin
-        for (i = 0; i < 2; i = i + 1) ax_val[i] = d_abase[i];
-        for (i = 0; i < NDIM; i = i + 1) begin
-            if (d_axis[i] == 2'd1) ax_val[0] = ax_val[0] + apsum[i];
-            if (d_axis[i] == 2'd2) ax_val[1] = ax_val[1] + apsum[i];
+        for (xi = 0; xi < AN; xi = xi + 1) begin
+            a0_t[xi] = {XW{1'b0}};
+            a1_t[xi] = {XW{1'b0}};
         end
-        for (i = 0; i < 2; i = i + 1)
+        a0_t[0] = d_abase[0];
+        a1_t[0] = d_abase[1];
+        // Mask first, THEN reduce: the compare gated every link of the chain.
+        for (xi = 0; xi < NDIM; xi = xi + 1) begin
+            if (d_axis[xi] == 2'd1) a0_t[xi+1] = apsum[xi];
+            if (d_axis[xi] == 2'd2) a1_t[xi+1] = apsum[xi];
+        end
+        for (xn2 = AN >> 1; xn2 > 0; xn2 = xn2 >> 1)
+            for (xk = 0; xk < xn2; xk = xk + 1) begin
+                a0_t[xk] = a0_t[xk] + a0_t[xk + xn2];
+                a1_t[xk] = a1_t[xk] + a1_t[xk + xn2];
+            end
+        ax_val[0] = a0_t[0];
+        ax_val[1] = a1_t[0];
+        for (xi = 0; xi < 2; xi = xi + 1)
             // extent 0 disables the axis, so a descriptor with no padding needs
             // no axis fields set at all
-            ax_ok[i] = (d_aext[i] == {XW{1'b0}}) ||
-                       ((ax_val[i] >= 0) && (ax_val[i] < $signed({1'b0, d_aext[i]})));
+            ax_ok[xi] = (d_aext[xi] == {XW{1'b0}}) ||
+                        ((ax_val[xi] >= 0) && (ax_val[xi] < $signed({1'b0, d_aext[xi]})));
     end
     assign valid = &ax_ok;
 

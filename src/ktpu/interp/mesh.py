@@ -15,12 +15,16 @@ import numpy as np
 from ktpu.ir.program import Opcode, Program
 from ktpu.target import Target
 
-#: Explicit significand bits. ACC24 is S1E7M16 and E8M15 is S1E8M15, so both
-#: keep 16 stored bits plus the implicit one; FP16 keeps 10.
-#: Mantissa bits for rounding INTO a format. The accumulator and the vector
-#: lane really do round to acc24 and e8m15; storing them is the separate
-#: question `MEM_BITS` answers.
-SIG = {"fp16": 10, "acc24": 16, "e8m15": 15}
+#: SIGNIFICAND bits -- stored mantissa PLUS the implicit leading one. FP16 is
+#: M10 so 11, ACC24 is S1E7M16 so 17, E8M15 is S1E8M15 so 16.
+#:
+#: It must be the significand and not the stored mantissa because `quantise`
+#: rounds the output of `frexp`, which lies in [0.5, 1) -- the leading one is
+#: INSIDE the fraction there, so it has to be paid for. Holding the stored
+#: count made every format exactly one bit coarse: `1 + 2^-10` is an exact FP16
+#: value and rounded to 1.0, and 12345 came back 12352 where FP16 gives 12344.
+#: The error was invisible because it only ever made the model PESSIMISTIC.
+SIG = {"fp16": 11, "acc24": 17, "e8m15": 16}
 
 #: Bits per element IN MEMORY, and nothing else may be stored: a DRAIN emits
 #: FP16 (isa/cluster.md s5), the vector core FP32 or FP16 (vector-core.md s1).

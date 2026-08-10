@@ -10,6 +10,7 @@ from dataclasses import dataclass, replace
 
 from ktpu.ir.graph import REDUCTION, VIEW, Graph, OpKind
 from ktpu.ir.sched import Band, Engine, Grid, SchedOp, Schedule, ScheduleError, Tile
+from ktpu.passes import scalefold
 from ktpu.passes.tile import choose_tile, epilogue_grid, grid_for
 from ktpu.target import Target
 
@@ -220,8 +221,112 @@ def engine_for(kind: OpKind) -> Engine | None:
     return Engine.VECTOR
 
 
+def op_span(op) -> int:
+    """Elements one vector op sweeps -- a reduction is sized by its INPUT."""
+    return op.inputs[0].numel if op.kind in REDUCTION else op.out.numel
+
+
+def _group_by_span(graph: Graph, seg: list, after: int | None = None) -> list:
+    """Reorder one run of vector ops so equal-span work is adjacent.
+
+    A band breaks whenever the element count changes, so a small op scheduled
+    between two large ones costs two boundaries and a store/reload of the large
+    tile. Flash attention does exactly that: `ell * corr` is [rows,1] and lands
+    between `exp2` and `p.sum()`, both [rows,block], which is why the steady
+    state emits {sub,mul,exp2} {mul} {sum} where the first iteration emits one
+    fused {sub,mul,exp2,sum}.
+
+    Greedy list schedule: among the ops whose inputs are ready, prefer one whose
+    span matches the group being built, else take the earliest. Dependencies are
+    resolved THROUGH VIEWS -- a reshape is not in `seg`, so matching on the view
+    itself would miss the edge and reorder past a real dependency.
+    """
+    if len(seg) < 3:
+        return seg
+    at = {o.out.vid: i for i, o in enumerate(seg)}
+
+    def roots(op):
+        out = set()
+        for v in op.inputs:
+            try:
+                r = through_views(graph, v)[0]
+            except (KeyError, AttributeError):
+                r = v
+            if (i := at.get(getattr(r, "vid", None))) is not None:
+                out.add(i)
+        return out
+
+    deps = [roots(o) for o in seg]
+    nleft = [len(d) for d in deps]
+    users: list[list[int]] = [[] for _ in seg]
+    for i, d in enumerate(deps):
+        for j in d:
+            users[j].append(i)
+
+    # Only the FIRST band after a matmul can fold into it as an epilogue, so the
+    # run has to start with an op that reads the matmul. Leading with anything
+    # else costs a whole band, which is how the causal kernel got LONGER before
+    # this bias existed: 726 -> 738 instructions.
+    def reads_mm(op):
+        return after is not None and any(v.vid == after for v in op.inputs)
+
+    done = [False] * len(seg)
+    order, cur = [], None
+    for step in range(len(seg)):
+        ready = [i for i in range(len(seg)) if not done[i] and nleft[i] == 0]
+        if step == 0 and after is not None:
+            pick = next((i for i in ready if reads_mm(seg[i])), ready[0])
+        else:
+            pick = next((i for i in ready if op_span(seg[i]) == cur), ready[0])
+        done[pick] = True
+        cur = op_span(seg[pick])
+        order.append(seg[pick])
+        for u in users[pick]:
+            nleft[u] -= 1
+    return order
+
+
+def fuse_order(graph: Graph, enable: bool = True) -> list:
+    """`graph.ops` reordered for band fusion, matmuls acting as barriers.
+
+    Matmuls are not moved: `lower` resolves a vector band's operands against
+    `last_mm`, so reordering them would change which band an external resolves
+    to. Only the elementwise runs between them are rescheduled.
+
+    ON, and it was disabled on the wrong metric. At L=128 D=64 block=64 it
+    costs CAUSAL eight instructions, 531 -> 539, which is what kept it off --
+    but it takes causal's vector cycles 2,043 -> 1,645, a 19.5% WIN, with the
+    arithmetic identical either way.
+
+    One cause for both. Fusing a run whose natural grid is 4 into a band that
+    reduces puts it on the reduction's grid of 8, so the work is issued as
+    eight core programs rather than four AND runs on eight cores rather than
+    four: instructions up, wall clock halved. Idle core-slots across causal's
+    vector bands go 29/88 -> 14/64.
+    """
+    ops = [o for o in graph.ops if engine_for(o.kind) is not None]
+    if not enable:
+        return ops
+    out: list = []
+    seg: list = []
+    after: int | None = None
+    for o in ops:
+        if o.kind is OpKind.MATMUL:
+            out += _group_by_span(graph, seg, after)
+            out.append(o)
+            seg, after = [], o.out.vid
+        else:
+            seg.append(o)
+    return out + _group_by_span(graph, seg, after)
+
+
 def lower(
-    graph: Graph, target: Target, vector_tile: int = 1024, fold_epilogue: bool = True
+    graph: Graph,
+    target: Target,
+    vector_tile: int = 1024,
+    fold_epilogue: bool = True,
+    reorder: bool = True,
+    absorb_scale: bool = True,
 ) -> Schedule:
     """Lower `graph` onto `target`, returning a Schedule.
 
@@ -245,7 +350,13 @@ def lower(
 
     `vector_tile` is elements per vector grid instance. Raises ScheduleError via
     `choose_tile`/`grid_for` if a matmul does not fit the target.
+
+    `absorb_scale` runs `scalefold.absorb`, which REWRITES `graph` in place --
+    it deletes the `* log2 e` before each exp2 and grows the scale above it.
+    The rewrite is idempotent, so lowering the same graph twice agrees.
     """
+    if absorb_scale:
+        scalefold.absorb(graph)
     shared = shared_a_blocking(graph, target)
     sched = Schedule(name=graph.name)
     vid_gen = itertools.count(max((o.out.vid for o in graph.ops), default=0) + 1)
@@ -308,7 +419,7 @@ def lower(
         seen_elems.clear()
         last_mm, mm_out = None, None
 
-    for op in graph.ops:
+    for op in fuse_order(graph, reorder):
         eng = engine_for(op.kind)
         if eng is None:
             continue
@@ -389,6 +500,13 @@ def lower(
                 attrs["red"] = 1
                 for a in op.attrs["axes"]:
                     attrs["red"] *= shape[a]
+                # One band, one reduction width: `flush` sizes the tile from the
+                # first reduction it finds and the rest would run at the wrong VL.
+                if any(
+                    o.kind in REDUCTION and o.attrs.get("red") != attrs["red"]
+                    for o in pending
+                ):
+                    flush()
             pending.append(
                 SchedOp(
                     op.kind,
@@ -402,8 +520,6 @@ def lower(
             seen_elems.update({v.vid: v.numel for v in ins})
             seen_elems[op.out.vid] = op.out.numel
             pending_elems = span
-            if op.kind in REDUCTION:
-                flush()
 
     flush()
     sched.outputs = [v.vid for v in graph.outputs]

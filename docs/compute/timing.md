@@ -88,7 +88,8 @@ and route on one die.
 
 ```
    1    extract the two packed fields per chain
-   2a   leading-one search and shift            <- tile address presented here
+   2a   leading-one search -> one-hot 2^k
+   2a2  the normalising shift, 2 DSPs/lane   <- tile address presented here
    2b   round and assemble -> accumulator float
    3    read the tile, compare exponents, align <- tile data valid here
    4    add, leading-one search, shift
@@ -97,7 +98,8 @@ and route on one die.
 ```
 
 `READ_LAT=2` on the tile, so the address leads the data by two cycles: presented
-at stage 2a, valid at stage 3.
+at stage 2a2, valid at stage 3. Stage 2a2 is ahead of the read, so adding it
+(`accumulator.md` §4.5) left the reuse contract below untouched.
 
 **Contract:** consecutive commands to the same tile address must be ≥ 5 cycles
 apart. There is one bank, so a pipelined read-modify-write cannot serve

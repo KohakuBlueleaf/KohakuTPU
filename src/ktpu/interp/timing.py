@@ -93,12 +93,17 @@ def _flits(elems: int, dtype: str) -> int:
     return -(-elems * BITS.get(dtype, 16) // FLIT_BITS)
 
 
-def cost_of_inst(inst, t: Target) -> int:
+def cost_of_inst(inst, t: Target, vl: int = 0) -> int:
     """Cycles one instruction occupies its own node.
 
     A `vloop` is free itself; its body is charged by the caller, which is why
     this returns 0 for it rather than the loop's total.
+
+    `vl` is the active vector length. Zero means VLMAX, which is what a caller
+    that does not track VSETVL has to assume -- and overcharges by 2x on the
+    VL=64 bands attention's softmax is made of.
     """
+    n = vl or t.vlmax
     f = inst.fields
     match inst.op:
         case Opcode.FILL:
@@ -109,12 +114,12 @@ def cost_of_inst(inst, t: Target) -> int:
         case Opcode.DRAIN:
             return _flits(f["n"] * t.lanes * t.lanes, f.get("dtype", "fp16"))
         case Opcode.VLD | Opcode.VST:
-            elems = f.get("n", t.vlmax)
+            elems = f.get("n", n)
             return max(
                 _flits(elems, f.get("dtype", "fp16")), -(-elems // t.vector_lanes)
             )
         case Opcode.VALU | Opcode.VRED:
-            return -(-t.vlmax // t.vector_lanes)
+            return -(-n // t.vector_lanes)
         case Opcode.VLOOP:
             return 0
         case _:
@@ -160,4 +165,80 @@ def time_of(prog: Program, t: Target, flops: int = 0) -> Timing:
         i += 1
     res.cycles = max(res.per_node.values(), default=0)
     res.rounds = [res.cycles]
+    return res
+
+
+@dataclass
+class Serial:
+    """Cycles when dependent BANDS cannot overlap. The other question.
+
+    `time_of` asks how busy the busiest NODE is, which is right for one GEMM
+    dealt across clusters and wrong for a chain: flash attention is
+    GEMM -> softmax -> GEMM, each needing the one before it complete, so a
+    global max over nodes hides the whole vector program behind the matmuls
+    and reports that softmax is free. This sums the bands instead and takes the
+    max over nodes WITHIN each, which is the other bound.
+
+    Neither is the truth. `time_of` is a lower bound on a dependent program and
+    this is an upper bound on an independent one; a real schedule with some
+    overlap sits between them.
+    """
+
+    cycles: int = 0
+    per_band: dict = field(default_factory=dict)
+    by_engine: dict = field(default_factory=dict)
+    mhz: float = 300.0
+
+    @property
+    def seconds(self) -> float:
+        return self.cycles / (self.mhz * 1e6)
+
+    def share(self, engine: str) -> float:
+        """Fraction of the critical path spent in `engine`'s bands.
+
+        The denominator that keeps an optimisation honest: a 20% saving in a
+        part worth 18% of the program is a 3.6% saving.
+        """
+        if not self.cycles:
+            return 0.0
+        return self.by_engine.get(engine, 0) / self.cycles
+
+
+def serial_of(prog: Program, t: Target) -> Serial:
+    """Cycles for `prog` on `t` with bands run back to back.
+
+    Needs `prog.bands`, which `codegen` records; a Program without it (one
+    built by hand, or by an older codegen) returns zero rather than guessing
+    boundaries out of the instruction stream, because guessing them wrong
+    reads as a plausible number.
+
+    VL is tracked per node across band boundaries, since codegen elides a
+    VSETVL a core already holds and the length would otherwise read as VLMAX.
+    """
+    res = Serial(mhz=t.mhz)
+    vl: dict = {}
+    for name, lo, hi in prog.bands:
+        per_node: dict = {}
+        engine = ""
+        i = lo
+        while i < hi:
+            inst = prog.insts[i]
+            engine = engine or inst.engine.value
+            if inst.op is Opcode.VSETVL:
+                vl[inst.node] = inst.fields["vl"]
+            n = vl.get(inst.node, 0)
+            if inst.op is Opcode.VLOOP:
+                span = inst.fields.get("body", 0)
+                trips = max(1, inst.fields.get("count", 1))
+                body = prog.insts[i + 1 : i + 1 + span]
+                cost = sum(cost_of_inst(x, t, n) for x in body) * trips
+                i += span
+            else:
+                cost = cost_of_inst(inst, t, n)
+            per_node[inst.node] = per_node.get(inst.node, 0) + cost
+            i += 1
+        slowest = max(per_node.values(), default=0)
+        res.per_band[name] = slowest
+        res.by_engine[engine] = res.by_engine.get(engine, 0) + slowest
+        res.cycles += slowest
     return res

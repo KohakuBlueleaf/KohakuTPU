@@ -117,6 +117,9 @@ module mx_lead1 #(
 )(
     input  wire [W-1:0] x,
     output reg  [5:0]   pos,        // index of the most significant set bit
+    // The isolated bit, before it is encoded. A caller that wants 2^pos or
+    // 2^(W-1-pos) already has it here; re-deriving it costs another smear.
+    output wire [W-1:0] oh,
     output wire         nz
 );
     reg [W-1:0] y;
@@ -128,7 +131,7 @@ module mx_lead1 #(
         for (s = 1; s < W; s = s * 2) y = y | (y >> s);
     end
 
-    wire [W-1:0] oh = y & ~(y >> 1);    // exactly one bit: the leading one
+    assign oh = y & ~(y >> 1);          // exactly one bit: the leading one
     assign nz = y[0];                   // smeared, so bit 0 is the OR of all
 
     always @(*) begin
@@ -145,48 +148,84 @@ endmodule
 
 // ---------------------------------------------------------------------------
 // The normaliser, split so the ACU can register between the halves. The seam is
-// after the shift: search and shift on one side, round and assemble on the other.
+// after the shift: search on one side, shift and assemble on the other.
 //
 // IT TAKES A MAGNITUDE, NOT A SIGNED VALUE. The sign travels beside the data and
 // belongs to the caller; taking `|val|` here puts a two's-complement carry chain
 // at the head of the path -- see docs/compute/accumulator.md s4. The ACU forms
 // the magnitude inside the DSP that was already multiplying by the block scale.
+//
+// THE SHIFT IS A MULTIPLY. Left-justifying `mag` so its leading one sits at bit
+// VW-1 makes the significand, the guard bit and the dropped bits FIXED slices,
+// and `mag << k` is `mag * 2^k` -- DSP48E2s instead of a two-direction barrel
+// shifter, a second shifter for the sticky mask and a VW:1 mux for the guard.
+// Measured on the alignment shifter of the same shape: 16 copies cost 1,200 LUT
+// in fabric, 288 LUT + 16 DSP as a multiply.
+//
+// Two things make it fit: the one-hot 2^k is mx_lead1's isolated bit reversed,
+// so it is free; and k spans VW positions against an 18-bit B port, so its top
+// bit stays in fabric as `hi`, a slice select rather than a second shifter.
 // ---------------------------------------------------------------------------
 module mx_fpacc_norm_a #(
-    parameter integer MW = 16,
     parameter integer VW = 22
 )(
     input  wire [VW-1:0] mag,             // unsigned magnitude
-    output wire [MW:0]   sig,             // 1.f, unrounded
+    output wire [15:0]   oh_f,            // 2^(k mod 16), k = VW-1-msb
+    output wire          hi,              // k >= 16
     output wire [5:0]    msb,
-    output wire          guard,
-    output wire          sticky,
     output wire          is_zero
 );
-    localparam integer SW = MW + 1;
+    wire [VW-1:0] oh;
+    wire          nz;
 
-    wire nz;
-
-    mx_lead1 #(.W(VW)) u_l1 (.x(mag), .pos(msb), .nz(nz));
+    mx_lead1 #(.W(VW)) u_l1 (.x(mag), .pos(msb), .oh(oh), .nz(nz));
 
     assign is_zero = !nz;
 
-    wire       big = (msb > MW[5:0]);
-    wire [5:0] rsh = msb - MW[5:0];         // value wider than the mantissa
-    wire [5:0] lsh = MW[5:0] - msb;
+    // oh sits at msb and k is VW-1-msb, so 2^k is oh reversed -- wiring only.
+    wire [VW-1:0] ohk;
+    genvar r;
+    generate
+    for (r = 0; r < VW; r = r + 1) begin : g_rev
+        assign ohk[r] = oh[VW-1-r];
+    end
+    for (r = 0; r < 16; r = r + 1) begin : g_fold
+        assign oh_f[r] = (r < VW) ? (ohk[r] | ((r+16 < VW) ? ohk[r+16] : 1'b0))
+                                  : 1'b0;
+    end
+    endgenerate
 
-    wire [VW+SW-1:0] wide    = {{SW{1'b0}}, mag};
-    wire [VW+SW-1:0] shifted = big ? (wide >> rsh) : (wide << lsh);
-    assign sig = shifted[SW-1:0];
+    assign hi = (VW > 16) ? |ohk[VW-1:16] : 1'b0;
+endmodule
 
-    // Sticky runs alongside the shift, not after it: mask the bits that fall off
-    // the bottom and reduce once. The loop form is a VW-deep serial chain with a
-    // comparator on every link.
-    wire [5:0]    ssh   = (big && rsh >= 6'd1) ? (rsh - 6'd1) : 6'd0;
-    wire [VW-1:0] smask = ~({VW{1'b1}} << ssh);
 
-    assign guard  = big ? mag[ssh] : 1'b0;
-    assign sticky = |(mag & smask);
+// The other half of the shift: with the product left-justified, every field is
+// a constant slice. `hi` moves the window down by 16 rather than shifting again.
+module mx_fpacc_norm_p #(
+    parameter integer MW = 16,
+    parameter integer VW = 22,
+    // Split point. Derived, never passed in: everything at or below the guard
+    // bit has to come from the low half for the slices below to be constant.
+    parameter integer NS = VW - MW - 1
+)(
+    input  wire [NS+15:0] p_lo,         // mag[NS-1:0]  * 2^(k mod 16)
+    input  wire [MW+16:0] p_hi,         // mag[VW-1:NS] * 2^(k mod 16)
+    input  wire           hi,
+    output wire [MW:0]    sig,          // 1.f, unrounded
+    output wire           guard,
+    output wire           sticky
+);
+    localparam integer RW = VW + 16;
+
+    // mag * 2^(k mod 16), reassembled. The halves never overlap -- p_lo tops out
+    // at NS-1+(k mod 16) and p_hi starts at NS+(k mod 16) -- so the OR is exact.
+    wire [RW-1:0] r = {{(MW+1){1'b0}}, p_lo}
+                    | ({{NS{1'b0}}, p_hi} << NS);
+    wire [RW+15:0] rq = {r, 16'b0};
+
+    assign sig    = hi ? rq[VW-1 -: (MW+1)] : r[VW-1 -: (MW+1)];
+    assign guard  = hi ? rq[NS-1]           : r[NS-1];
+    assign sticky = hi ? |rq[NS-2:0]        : |r[NS-2:0];
 endmodule
 
 
@@ -215,12 +254,11 @@ module mx_fpacc_norm_b #(
         end else begin
             round_up = guard & (sticky | sig[0]);
             sig_r    = {1'b0, sig} + {{SW{1'b0}}, round_up};
-            e        = $signed({1'b0, msb}) + exp_in + BIAS[10:0];
-
-            // On a rounding carry the leading one moves to bit MW, so the
-            // fraction is sig_r[MW:1] -- MW bits, not MW+1.
-            if (sig_r[SW]) fp = {sign, (e + 11'sd1) & 11'h7F, sig_r[MW:1]};
-            else           fp = {sign, e[6:0], sig_r[MW-1:0]};
+            e = $signed({1'b0, msb}) + exp_in + BIAS[10:0];
+            // A rounding carry can only come from all-ones, so sig_r is exactly
+            // 2^(MW+1) and the stored fraction is zero either way. Keep the
+            // carry off the wide add: it arrives late, behind the rounding.
+            fp = {sign, e[6:0] + {6'b0, sig_r[SW]}, sig_r[MW-1:0]};
         end
     end
 endmodule
@@ -290,26 +328,20 @@ module mx_fpacc_align #(
     wire [SW-1:0] lmask = ~({SW{1'b1}} << dcl);
     wire          lost  = |(sml & lmask);
 
+    // The add belongs to the round stage: here it puts a 26-bit carry chain
+    // after the tile mux, the exponent compare and the barrel shift, in one cycle.
+    // A zero operand leaves through zero_o/pass_o, which round_b tests before it
+    // reads the sum path, so bg_o/sh_o/lost_o are left ungated.
     always @(*) begin
         e_big_o  = e_big;
         s_big_o  = s_big;
         pass_val = za ? b : a;
-        zero_o   = 1'b0;
-        pass_o   = 1'b0;
-        bg_o     = {(SW+1){1'b0}};
-        sh_o     = {(SW+1){1'b0}};
+        zero_o   = za && zb;
+        pass_o   = za ^ zb;
+        bg_o     = {1'b0, bg};
+        sh_o     = {1'b0, shifted};
         sub_o    = (s_big != s_small);
-
-        if (za && zb)      zero_o = 1'b1;
-        else if (za || zb) pass_o = 1'b1;
-        else begin
-            // The add itself belongs to the round stage: left here it puts a
-            // 26-bit carry chain after the tile mux, the exponent compare and
-            // the barrel shift, all in one cycle.
-            bg_o = {1'b0, bg};
-            sh_o = {1'b0, shifted};
-        end
-        lost_o = (za || zb) ? 1'b0 : lost;
+        lost_o   = lost;
     end
 endmodule
 
@@ -382,12 +414,10 @@ module mx_fpacc_round_b #(
             for (i = 0; i < SW-MW-1; i = i + 1) st = st | norm_i[i];
             up  = g & (st | sig[0]);
 
-            if (up && (sig == {(MW+1){1'b1}})) begin
-                sig   = {1'b1, {MW{1'b0}}};
-                e_out = e_out + 10'sd1;
-            end else begin
-                sig = sig + {{MW{1'b0}}, up};
-            end
+            // As in mx_fpacc_norm_b: all-ones plus one wraps the stored fraction
+            // to zero on its own, so only the exponent needs the carry.
+            e_out = e_out + $signed({9'b0, up & (sig == {(MW+1){1'b1}})});
+            sig   = sig + {{MW{1'b0}}, up};
 
             if (e_out <= 0)        s = {W{1'b0}};
             else if (e_out >= 127) s = {s_big, 7'h7F, {MW{1'b1}}};

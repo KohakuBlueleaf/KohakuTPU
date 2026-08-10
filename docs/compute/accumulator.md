@@ -61,24 +61,18 @@ floor. A shallower sweep would move the cliff down.
 
 ## 3. Cost
 
-Out-of-context, `xcvu13p-fhgb2104-2L-e`, 16 lanes, `ACC_MW=14`, block-RAM tile.
-Re-measured against a 310 MHz target:
+Out-of-context, `xcvu13p-fhgb2104-2L-e`, 16 lanes, `ACC_MW=14`, `DEPTH=16`,
+block-RAM tile, against a 320 MHz target:
 
 ```
-   mx_acu_fp        327.7 MHz      WNS +0.174 ns of 3.2258 ns
+   mx_acu_fp    343.4 MHz   9,901 LUT   5,585 FF   5 BRAM36   48 DSP
 ```
 
-That run also reports **16 DSPs** — one per lane, each mapped `(D+A)*B`, which
-is §4.4's change showing up in the primitive count, and exactly the 272 − 256
-the cluster measures.
-
-**Its LUT and FF were not re-measured.** The run that produced this block's
-utilisation — 9,945 LUT, 6,232 FF, 5 BRAM36, 0 DSP at 349.4 MHz, `DEPTH=16` —
-predates §4.4, which moved the magnitude into the DSP that applies the block
-scale, so **no current LUT or FF figure for `mx_acu_fp` alone exists**; treat
-the 9,945/6,232 above as history, not as a cost. What is current is the cluster
-containing it: 17,521 LUT, 17,612 FF, 5 BRAM36, 272 DSP
-([`timing.md`](timing.md) §1).
+Sixteen of those DSPs are the block-scale multiply, one per lane and each mapped
+`(D+A)*B` — §4.4 showing up in the primitive count. The other 32 are §4.5's
+normalising shift, two per lane. The same run one step earlier, with that shift
+still a barrel shifter in fabric, measured **327.7 MHz, 10,616 LUT, 5,928 FF,
+16 DSP**.
 
 MW=14 (FP22) is the operating point rather than MW=16 (FP24): it measures
 identically against FP64 and exact-int, costs less, and carries more slack. It
@@ -91,13 +85,24 @@ is the default in `mx_acu_fp`, `mx_cluster_cu` and `mx_matmul_cu`.
 > what FP24 would measure on today's block. The precision comparison in §2 is
 > unaffected — that is a bench result, not a synthesis result.
 
-In context the whole two-port cluster closes at **325.6 MHz** — 2.1 MHz below
-the accumulator standing alone, so the ACU is still what sets the cluster's
-frequency ([`matmul-impl.md`](matmul-impl.md) §3). *Which* stage inside it is
-now the tight one was not extracted from the latest run; the last two paths that
-had to be fixed were the normaliser's magnitude chain and a predicate in the
-CU's state machine (§4.4). The tile is 5 BRAM36 whether `DEPTH` is 16 or 512,
-because width sets the primitive count and depth is then free up to 512.
+In context the whole two-port cluster closes at **346.6 MHz**, 15,306 LUT,
+17,754 FF, 5 BRAM36, 304 DSP. Run back to back on the same tree with §4.5
+reverted it is 325.6 MHz and 17,629 LUT / 272 DSP, so in context that step is
+**−2,323 LUT (−13%) and +21.0 MHz** — a larger LUT win than the 715 the block
+shows standing alone, because the cluster was tight enough that Vivado had been
+replicating logic to hold the frequency.
+
+The ACU still sets the cluster's frequency, but on a different path: the binding
+one is now `u_acu/val_r_reg` (a DSP M register) into `u_acu/b_phi_reg` (a DSP A
+port) — the leading-one search feeding the shift DSPs, with nothing else in it.
+The tile is 5 BRAM36 whether `DEPTH` is 16 or 512, because width sets the
+primitive count and depth is then free up to 512.
+
+> `mm_mesh` is not quoted here. Both halves of a before/after pair were run, but
+> `vec_lanes.v` changed between them, and the baseline half's critical path
+> landed in the vector register file rather than the ACU — it measures that work
+> in flight, not this change. The `mm_mesh` run carrying §4.5 met 320 MHz at
+> 324.6 MHz on an ACU path, for what a single point is worth.
 
 All of this is out-of-context: no placement, estimated route, so every Fmax here
 is an upper bound rather than a promise.
@@ -107,8 +112,9 @@ is an upper bound rather than a promise.
 ## 4. Timing: 84.7 MHz → 349 MHz, and what actually mattered
 
 The accumulator started at **84.7 MHz** against a 300 MHz target. The fourteen
-steps below took it to 349.4 MHz; §4.4 then rebuilt its front end and it
-measures **327.7 MHz** today, clearing 300 by 9%. Every step below is measured,
+steps below took it to 349.4 MHz; §4.4 then rebuilt its front end (327.7 MHz)
+and §4.5 moved the normalising shift into DSPs, so it measures **343.4 MHz**
+today, clearing 300 by 14%. Every step below is measured,
 out-of-context, with the full 384-check suite re-run after each. The worst
 relative error stayed at 3.339790e-04 throughout — bit-identical, step for step
 — so none of this was bought with precision.
@@ -279,6 +285,14 @@ measured **294.9 MHz** against a 310 MHz target. Three changes took it to
 | `tiles_w = Gm*Gn` replaced by the predicate its consumer wanted | 299.9 |
 | `tiles_now >= 5` decoded once per instruction | **325.6** |
 
+**This is now the whole machine's number.** `mm_mesh` -- MAG with the memory
+mover, one matmul cluster, one vector core and two routers -- measures 325.6 MHz
+against a 320 MHz target, on the path
+`u_acu/val_r_reg/DSP_M_DATA_INST -> b_sig_reg`. That is this block, and the
+assembled mesh has converged on it exactly: the vector core reaches 336.8 and
+the mover 331.8, so neither contributes any more. **The next MHz has to come
+from here** (`docs/memory-mover/arch.md` §10.2).
+
 **The magnitude was taken after the multiply.** `mx_fpacc_norm_a` computed
 `mag = val[VW-1] ? (~val + 1) : val`, putting a 30-bit two's-complement carry
 chain between the DSP's output register and the leading-one search — 0.952 ns of
@@ -321,13 +335,125 @@ FP64 model, p50 3.88e-03 and p99 2.48e-01. The 4-cluster 256×512×256 run is
 `scripts/py/run_matmul.py`'s own comments exactly (max 2.43e+00, 7 of 131,072 over
 10%).
 
+### 4.5 A variable shift is a multiply, and the DSPs were sitting idle
+
+§4.4 left the block bound on `val_r -> b_sig`: the normaliser's barrel shifter.
+`mx_fpacc_norm_a` left-justified a 30-bit magnitude with a two-direction shift
+over 30 positions, a *second* shifter to build the sticky mask and a 30:1 mux
+for the guard bit — sixteen copies, 21% of the block's LUTs.
+
+Meanwhile the accumulator measured **9,763 LUT / 16 DSP** inside `mm_mesh` while
+the 256-DSP MAC array beside it cost 2,516 LUT. `x << k` is `x * 2^k`, and a
+DSP48E2 is an idle 27×18 multiplier. Measured in isolation, sixteen copies of one
+such shift (a 15-bit significand in a 23-bit guarded field, shifted 0..23, with
+the sticky OR of what falls off):
+
+| 16 copies of one variable shift | LUT | FF | DSP |
+|---|---|---|---|
+| fabric barrel shifter | 1,200 | 704 | 0 |
+| multiply by a one-hot | **288** | 496 | 16 |
+
+Three things had to line up before the accumulator could take it:
+
+- **The one-hot is free.** `mag << k` with `k = VW-1-msb` wants `2^k`, and
+  `mx_lead1` already isolates `2^msb` on the way to encoding `pos`. Reversing
+  that bit vector is wiring, so `oh` became an output of `mx_lead1`.
+- **`k` spans 30 positions and the B port is 18 bits.** Its low four bits pick
+  the one-hot; the fifth stays in fabric as `hi`, a *slice select* on the
+  product rather than a second shifter.
+- **The magnitude is 30 bits and the A port is 27.** Split at `VW-MW-1` and
+  multiplied by the same one-hot, the two halves land in disjoint bit ranges, so
+  `mx_fpacc_norm_p` reassembles them with an OR — no adder — and reads the
+  significand, the guard bit and the sticky bits as constant slices. Two DSPs
+  per lane.
+
+The seam moved with it: stage 2a is now the search alone and a new stage 2a2
+holds the DSPs. **`REUSE_MIN` did not move**, because the new stage sits ahead of
+the tile read and the contract counts read to write.
+
+| | Fmax | LUT | FF | DSP |
+|---|---|---|---|---|
+| `mx_acu_fp`, barrel shifter in fabric | 327.7 | 10,616 | 5,928 | 16 |
+| `mx_acu_fp`, shift as a DSP multiply | **343.4** | **9,901** | **5,585** | 48 |
+| `mx_cluster_cu`, in fabric | 325.6 | 17,629 | 17,782 | 272 |
+| `mx_cluster_cu`, as a DSP multiply | **346.6** | **15,306** | **17,754** | 304 |
+
+−6.7% LUT and +15.7 MHz standing alone, −13% and +21.0 MHz inside the cluster,
+and the critical path leaves `val_r -> b_sig` for the tile RAM's clock-to-out
+into the align stage's sticky bit. That is the first time since this block was
+written that the normaliser's shifter is not the limit.
+
+Three smaller changes went with it, all *output*-identical rather than
+approximate. `mx_fpacc_align` no longer masks `bg_o`/`sh_o`/`lost_o` to zero when
+an operand is zero, and `op_a` is the tile output unmasked — both cases leave
+through `zero_o`/`pass_o`, which `mx_fpacc_round_b` tests before it reads the sum
+path. And the rounding-carry branch in `mx_fpacc_norm_b` and `mx_fpacc_round_b`
+is an exponent increment rather than an MW-bit mux, because all-ones plus one
+wraps the stored fraction to zero on its own.
+
+> **Measure LUTs unflattened when the block is timing-critical.** Those three
+> are −458 LUT of 9,060 with no clock constraint, and **+307** with one: at
+> WNS +0.06 ns Vivado spends LUTs replicating logic, and the replication moves
+> more than the logic does. The flattened, constrained number is the one that
+> ships; the unflattened one is the one that says whether the *logic* shrank.
+
+**What was NOT done, with the numbers.** The other two barrel shifters —
+`mx_fpacc_align`'s alignment shift (the block's single largest cone, 117 LUT per
+lane) and `mx_fpacc_round_a`'s normalise shift (75) — take the same trade and
+would save roughly 1,900 LUT more for 32 DSPs. Both sit **inside the accumulate
+loop**. A DSP there needs AREG+MREG+PREG to hold 320 MHz, which pushes the tile
+read-to-write distance from 3 cycles to 5 and `REUSE_MIN` from 5 to 7 — a
+contract `mx_cluster_mgr` and `mx_cluster_cu` each re-encode by hand, and a
+change to which tilings are legal. It is a real saving behind a real decision,
+not an oversight.
+
+### 4.6 A per-tile output scale: built, measured, CANCELLED
+
+Attention wants `s = (q @ k.T) * scale` and then `* LOG2_E` — two full vector
+passes over a `[64 x 64]` score tile to multiply by two compile-time constants.
+The accumulator can absorb both: `mm = m8a*m8b` reaches the stage-1 DSP on an
+**18-bit B port using only 8 bits**, so a 9-bit constant mantissa folds into the
+same multiply, exactly, with the `/256` coming off the exponent beside the `/64`.
+
+It works, and it was measured rather than argued:
+
+| | Fmax | LUT | DSP |
+|---|---|---|---|
+| feature off | 343.4 | 9,821 | 48 |
+| feature on | 330.7 | 10,673 | 48 |
+
+**+852 LUT, −12.7 MHz, no DSP.** Bit-identity was verified two ways — the gate
+off, and the gate on with the mantissa at 1.0 — both landing on 3.339790e-04.
+
+**It was cancelled anyway, because the host can do it for nothing.** Scaling `Q`
+by the constant before upload gives identical scores, `(C*Q) @ K.T = C*(Q@K.T)`,
+and costs no accuracy at all: MXFP7 is block-scaled, so a uniform factor is
+absorbed entirely into each block's exponent and never touches an int7
+significand. Zero LUT, zero DSP, no ISA change, no quantisation contract.
+
+Two things are worth keeping from it.
+
+**A width cannot be switched off at run time.** The first version made the scale
+always-present with 1.0 as its neutral value. That is bit-identical and *not*
+cost-identical: it measured 10,297 LUT and 330.7 MHz with the scale at 1.0,
+because widening the block-scale product widens the normaliser datapath from 30
+to 39 bits whatever the value in it. A feature that changes a width has to be a
+compile-time parameter, not a neutral run-time value — otherwise the legacy
+build pays for it.
+
+**Ask where else the identity holds before spending fabric on it.** A constant
+factor on a matmul output can be folded into either operand, and operands are
+uploaded once while outputs are produced every cycle. The accumulator is the
+wrong end of that trade.
+
 ---
 
 ## 5. Pipeline as built
 
 ```
    stage 1    extract the two packed fields per chain
-   stage 2a   leading-one search and shift          (mx_lead1, log depth)
+   stage 2a   leading-one search -> one-hot 2^k      (mx_lead1, log depth)
+   stage 2a2  the normalising shift, as 2 DSP multiplies per lane
    stage 2b   round and assemble -> accumulator float
    stage 3    read the tile, compare exponents, align      <- reads the tile
    stage 4    add, leading-one search, shift
@@ -335,8 +461,10 @@ FP64 model, p50 3.88e-03 and p99 2.48e-01. The 4-cluster 256×512×256 run is
    stage 6    (EMIT only) convert to FP16
 ```
 
-Six stages, one accumulate per cycle sustained. The tile address is presented at
-stage 2a because `READ_LAT=2` means data lands two cycles later, during stage 3.
+Seven stages, one accumulate per cycle sustained. The tile address is presented
+at stage 2a2 because `READ_LAT=2` means data lands two cycles later, during
+stage 3. **`REUSE_MIN` did not move when stage 2a2 was added** — it counts the
+tile read to the tile write, and the new stage sits ahead of the read.
 
 Nothing here is a fixed constant anyone has to keep in sync:
 
