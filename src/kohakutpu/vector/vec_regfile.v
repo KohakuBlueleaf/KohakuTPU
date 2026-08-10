@@ -11,13 +11,27 @@
 // READ_LAT = 1, so an address issued in cycle N presents data in cycle N+1.
 // That number is load-bearing for the sequencer's issue pipeline, which is why
 // the primitive is named rather than inferred -- see kohaku_sdpram.v.
+//
+// "block", not "distributed": as LUTRAM this cost 168 LUT per slice, 2,688
+// across the lanes, and the core is LUT-bound with BRAM idle. 48 RAMB18 per
+// core is 24 of an SLR's 672 tiles. URAM is worse -- 4096 x 72 is its smallest
+// shape, so the same 48 ports would spend 15% of an SLR's URAM on 49 Kb.
+//
+// PORT A IS THE EXCEPTION AND STAYS LUTRAM. b and c feed ALU operands, which
+// get a whole cycle. a also feeds `ls_rdata` -> the store converters, and a
+// RAMB18's CLKARDCLK -> DO (~1.5 ns on -2L) in series with a 16-lane E8->FP16
+// normalise measured 286.0 MHz -- below the 300 floor. Registering between the
+// two would cost a cycle on every VST beat, on a machine that is drain-bound.
 
 `default_nettype none
 
 module vec_regfile #(
     parameter integer AW  = 7,
     parameter integer DW  = 24,
-    parameter         PRIM = "distributed"
+    parameter         PRIM = "distributed",
+    // Port A alone, because it is the only one with a consumer that cannot
+    // afford a block RAM's clock-to-out -- see the note above.
+    parameter         PRIM_A = "distributed"
 )(
     input  wire          clk,
 
@@ -34,7 +48,7 @@ module vec_regfile #(
 );
     localparam integer DEPTH = (1 << AW);
 
-    kohaku_sdpram #(.WIDTH(DW), .DEPTH(DEPTH), .MEM_PRIM(PRIM), .READ_LAT(1))
+    kohaku_sdpram #(.WIDTH(DW), .DEPTH(DEPTH), .MEM_PRIM(PRIM_A), .READ_LAT(1))
     u_a (.clk(clk), .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data),
          .rd_en(1'b1), .rd_addr(ra_addr), .rd_data(ra_data));
 

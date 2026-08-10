@@ -76,6 +76,10 @@ module vec_alu #(
     // ---- cycle 0 -> 1 : input registers ----------------------------------
     reg [4:0]  s1_op;
     reg [23:0] s1_a, s1_b, s1_c;
+    // Zero-exponent flags taken BEFORE the register: as `(va_e == 0)` after the
+    // operand mux this put an 8-bit compare in the DSP-E A cone, which is the
+    // ship top's critical path.
+    reg        s1_az, s1_bz;
     // vpipe[k] is readable in cycle k+1, so the instruction sampled at cycle 0
     // is at vpipe[12] during cycle 13, the cycle registered into `out`.
     reg [12:0] vpipe;
@@ -87,6 +91,8 @@ module vec_alu #(
         s1_a  <= a;
         s1_b  <= b;
         s1_c  <= c;
+        s1_az <= (a[22:15] == 8'd0);
+        s1_bz <= (b[22:15] == 8'd0);
     end
 
     // ---- cycle 1 : unpack, select operands, specials, compare, range reduce
@@ -161,7 +167,27 @@ module vec_alu #(
     wire [15:0] va_g = {1'b1, va[14:0]};
     wire [15:0] vb_g = {1'b1, vb[14:0]};
     wire [15:0] vc_g = {1'b1, vc[14:0]};
-    wire        va_z = (va_e == 8'd0), vb_z = (vb_e == 8'd0), vc_z = (vc_e == 8'd0);
+    wire        vc_z = (vc_e == 8'd0);
+
+    // Same values as `(va_e == 0)` / `(vb_e == 0)`, selected from the flags
+    // registered above rather than compared after the mux. E8_ONE's exponent is
+    // 7F and E8_ZERO's is 0, so a compare result yields ~pred.
+    reg va_z, vb_z;
+    always @(*) begin
+        case (s1_op)
+            OP_MAX:   va_z = cmp_lt ? s1_bz : s1_az;
+            OP_MIN:   va_z = cmp_gt ? s1_bz : s1_az;
+            OP_SEL:   va_z = (|s1_c[22:0]) ? s1_az : s1_bz;
+            OP_CMPLT,
+            OP_CMPGT,
+            OP_CMPEQ: va_z = ~pred;
+            default:  va_z = s1_az;
+        endcase
+        case (s1_op)
+            OP_MUL, OP_FMA, OP_FNMA: vb_z = s1_bz;
+            default:                 vb_z = 1'b0;
+        endcase
+    end
 
     // A zero factor must not let a large exponent drag the addend out of range,
     // so a zero product forces both exponents to their minimum. The shift amount
@@ -309,19 +335,21 @@ module vec_alu #(
     );
 
     // ---- cycle 3 : coefficient lookup, DSP-P A/B -------------- doc s4.3 --
-    wire [1:0]  d3_fsel;
-    wire [5:0]  d3_idx;
+    wire [1:0]  d2_fsel, d3_fsel;
     wire [11:0] d3_u;
     wire        d3_ident;
     wire [7:0]  d3_ea;
-    vec_delay #(.W(2),  .D(2)) u_d_fs (.clk(clk), .d(fsel),     .q(d3_fsel));
-    vec_delay #(.W(6),  .D(1)) u_d_ix (.clk(clk), .d(tab_idx),  .q(d3_idx));
+    vec_delay #(.W(2),  .D(1)) u_d_fs (.clk(clk), .d(fsel),     .q(d2_fsel));
+    vec_delay #(.W(2),  .D(1)) u_d_fs3(.clk(clk), .d(d2_fsel),  .q(d3_fsel));
     vec_delay #(.W(12), .D(1)) u_d_u3 (.clk(clk), .d(tab_u),    .q(d3_u));
     vec_delay #(.W(1),  .D(1)) u_d_id (.clk(clk), .d(tab_ident), .q(d3_ident));
     vec_delay #(.W(8),  .D(2)) u_d_ea (.clk(clk), .d(ra_e),     .q(d3_ea));
 
+    // u_d_ix is GONE: the ROM is synchronous, so its own address register is
+    // that stage. tab_idx goes in raw and c0/c1/c2 still land on cycle 3.
     wire signed [21:0] tc0, tc1, tc2;
-    vec_tables u_tab (.fsel(d3_fsel), .idx(d3_idx), .c0(tc0), .c1(tc1), .c2(tc2));
+    vec_tables u_tab (.clk(clk), .fsel(d2_fsel), .idx(tab_idx),
+                      .c0(tc0), .c1(tc1), .c2(tc2));
 
     // exp2's 1.0 and log2's integer part are exact integers at F's own weight,
     // so they ride in beside c0 rather than needing an adder.
@@ -400,7 +428,13 @@ module vec_alu #(
 
     wire [47:0] algn_in  = {d5_gc, 32'b0};
     wire [47:0] algn_out = algn_in >> d5_s;
-    wire        algn_stk = |(algn_in & ~({48{1'b1}} << d5_s));
+
+    // The bits shifted out can only ever be d5_gc's: algn_in[31:0] is zero, so
+    // nothing leaves until s > 32 and then it is exactly d5_gc[s-33:0]. Worth
+    // only 34 LUT -- the 48-bit form ANDed 32 constant zeros and synthesis
+    // already folded them. Kept because it says what it means.
+    wire [15:0] stk_mask = ~(16'hFFFF << (d5_s - 7'd32));
+    wire        algn_stk = (d5_s >= 7'd33) && |(d5_gc & stk_mask);
 
     // ---- cycle 7 : DSP-M A/B ---------------------------- doc s3.2 / s4.3 --
     // The FMA path is padded out to the polynomial path's depth so both retire

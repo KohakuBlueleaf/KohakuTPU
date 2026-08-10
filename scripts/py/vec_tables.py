@@ -233,29 +233,32 @@ def emit(tab, err):
     L.append("`default_nettype none")
     L.append("")
     L.append("module vec_tables (")
+    L.append("    input  wire               clk,")
     L.append("    input  wire [1:0]         fsel,   // 0 exp2, 1 log2, 2 inv, 3 rsqrt")
     L.append(
         "    input  wire [5:0]         idx,    // idx[5] is the octave parity, rsqrt only"
     )
     L.append(
-        "    // rom_style IS REQUIRED, not decoration: synthesised on its own this"
+        "    // SYNCHRONOUS, and rom_style names the primitive rather than leaving"
     )
     L.append(
-        "    // case statement infers a BLOCK RAM, and a BRAM here would add a cycle"
+        "    // it to a heuristic. The one cycle of latency is stated by the RTL, and"
     )
     L.append(
-        "    // of read latency and silently break the pipeline's stage arithmetic."
+        "    // vec_alu drops its own u_d_ix stage to pay for it -- the address was"
     )
-    L.append(
-        "    // Inside vec_alu the heuristic happens to pick LUTs, but relying on a"
-    )
-    L.append("    // heuristic is what CLAUDE.md's rule forbids.")
-    L.append(f'    (* rom_style = "distributed" *) output reg signed [{CW-1}:0] c0,')
-    L.append(f'    (* rom_style = "distributed" *) output reg signed [{CW-1}:0] c1,')
-    L.append(f'    (* rom_style = "distributed" *) output reg signed [{CW-1}:0] c2')
+    L.append("    // already registered, so this is a register MOVE and cycle 3 is")
+    L.append("    // still when c0/c1/c2 land. 3,568 LUT per core -> 16 RAMB36.")
+    L.append(f'    (* rom_style = "block" *) output reg signed [{CW-1}:0] c0,')
+    L.append(f'    (* rom_style = "block" *) output reg signed [{CW-1}:0] c1,')
+    L.append(f'    (* rom_style = "block" *) output reg signed [{CW-1}:0] c2')
     L.append(");")
     L.append("    // One flat case over {fsel, idx}, constant-indexed throughout.")
-    L.append("    always @(*) begin")
+    L.append("    // NON-BLOCKING: u_d_c1 in vec_alu registers c1 on the same edge, so")
+    L.append(
+        "    // blocking assignments here are a scheduler race, not a style point."
+    )
+    L.append("    always @(posedge clk) begin")
     L.append("        case ({fsel, idx})")
     for fsel in (F_EXP2, F_LOG2, F_INV, F_RSQRT):
         nidx = 2 * NSEG if fsel == F_RSQRT else NSEG
@@ -265,10 +268,10 @@ def emit(tab, err):
             a = (fsel << 6) | idx6
             f = [f"-{CW}'sd{-v}" if v < 0 else f"{CW}'sd{v}" for v in (C0, C1, C2)]
             L.append(
-                f"        8'd{a:<3}: begin c0 = {f[0]} ; c1 = {f[1]} ;"
-                f" c2 = {f[2]} ; end"
+                f"        8'd{a:<3}: begin c0 <= {f[0]} ; c1 <= {f[1]} ;"
+                f" c2 <= {f[2]} ; end"
             )
-    L.append("        default: begin c0 = 22'sd0 ; c1 = 22'sd0 ; c2 = 22'sd0 ; end")
+    L.append("        default: begin c0 <= 22'sd0 ; c1 <= 22'sd0 ; c2 <= 22'sd0 ; end")
     L.append("        endcase")
     L.append("    end")
     L.append("endmodule")
