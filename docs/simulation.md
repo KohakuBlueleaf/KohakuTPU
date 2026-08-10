@@ -52,6 +52,22 @@ files and dumps a result. A wrong control program therefore produces a wrong
 answer *there*, which makes the run a test of the driver and not only of the
 RTL. See [`isa/kernel.md`](isa/kernel.md).
 
+**The compiler's own end to end** is the same simulation with the instructions
+coming from the DSL instead of the driver:
+
+```
+   python scripts/py/run_dsl.py --m 64 --k 64 --n 64
+```
+
+A kernel is traced to a level 1 graph, scheduled into level 2 bands, lowered to
+a level 3 program and encoded; **those flits are what the cluster executes**.
+Everything else -- operands, upload regions, control program, RTL -- is the
+driver's, so running this next to `run_matmul.py` on one shape separates a
+compiler fault from a hardware one: the only difference is who emitted the
+instructions. `src/ktpu/hw/fromdsl.py` is the single place the two planners are
+reconciled, and `tests/ktpu/integration/test_machine_code.py` compares them flit
+for flit through that same module.
+
 The PowerShell runners still exist and are what the suite docs describe:
 
 ```powershell
@@ -153,6 +169,17 @@ vanishes. Editing PowerShell paths with `sed` produced `srckohakuaxi<BEL>xi4_ram
 here. Python's `re.sub` has the same hazard *in the replacement string*. Use a real
 editor, or build the backslash with `chr(92)` and a lambda replacement.
 
+**A loop that only waits for a fall reads "already finished" as "not yet
+started".** `mag_system_tb` waited for the mover with `while (mv_busy) ...` one
+edge after issuing the command. While the command was a single wire, `busy` had
+already risen and the loop worked. Moving the command behind AXI added a few
+cycles, the loop found `busy` still low, **exited immediately, read the
+destination mid-transfer, and its "mover never went idle" check passed
+vacuously** — the failure surfaced as 32 words of `x`, several modules from the
+cause. Wait for the rise (bounded) and *then* for the fall. Any bench that polls
+a busy flag straight after issuing work has this latent, and it fails in the
+direction of a false pass.
+
 ---
 
 ## 4. Reading a failure
@@ -165,3 +192,106 @@ Suite-specific symptoms are in the per-module docs. Generally:
 | `no verdict found` | the bench never printed `PASS`/`FAIL`, usually an early `$finish` |
 | compile error only under `xsim` | permissive iverilog let something through, see §3 |
 | passes standalone, fails in the runner | the bench depends on a module another bench also defines; check `Src` |
+
+---
+
+## 5. A verdict that cannot fail on the answer is not a verdict
+
+**2026-08-10.** For a period, every green run in this project — simulator and
+hardware alike — meant only *"it finished and produced finite numbers"*.
+
+It surfaced on silicon. A `128x64x128` matmul on the shipped bitstream returned
+**15,440 of 16,384 elements past 10% relative error** and reported `PASS`. The
+underlying fault was a capacity mismatch (see [`driver/`](driver/README.md) and
+`ktpu.hw.board`), but the fault is not the point — the point is what the verdict
+did with it:
+
+```
+gates=True  pass=True   orchestrator finished    ORCH-OK
+gates=True  pass=True   produced an answer       16384 elements
+gates=False pass=False  vs mxfp7 model p50       9.65e-01     (limit 1e-3)
+gates=False pass=False  vs mxfp7 model worst     3.20e+04
+gates=False pass=False  elements over 10%        15440 of 16384
+gates=False pass=False  vs fp64 p50              9.64e-01
+                                                 verdict.pass = True
+```
+
+Every precision check ran. Every one of them failed. None of them was allowed to
+decide anything, because `sim._verdict` computed `pass` over the `gates: True`
+checks only, and precision carried `gates: False` across the board.
+
+**The original rule was right about one check and over-applied to all four.** Not
+gating on the *worst element* is correct: an output that cancels against its own
+partial sums has a large relative error and a correct circuit, and a good
+`256x64x256` run really does show `worst 2.03` while being right. But `p50` is a
+median over the whole matrix, which cancellation cannot move — a correct run sits
+at `1.7e-04` and a broken one at `9.6e-01`, five thousand times apart with
+nothing in between. And `elements over 10%` was introduced for exactly this job;
+its own `why` string reads *"the COUNT carries the signal: a lost sub-tile
+corrupts 16 at once, which the worst element cannot distinguish from
+cancellation."* The check written to carry the signal was the one not allowed to
+act on it.
+
+### The first fix was still a threshold, and thresholds are the wrong instrument
+
+Gating `p50` and `elements over 10%` closed the hole, and it was the wrong
+shape of answer. **An absolute error limit is a property of the OPERANDS, not
+of the circuit.** Cancelling inputs raise every format's relative error
+together, so any fixed limit can be beaten by choosing values — measured here:
+zero-mean operands take the native format's `p50` from `3.2e-03` to `1.5e-02`,
+which fails a *perfect* circuit against a 1e-3 limit.
+
+**What replaced it: the format ladder.** `formats.ladder()` runs the same
+matmul in every candidate format against FP64 and puts the machine's answer in
+as one more column, so correctness is a *position* rather than a number. On
+silicon:
+
+```
+    int7 + E5M3             3.332e-03  ...      dist to answer 3.049e-04
+    mxfp7 model             3.252e-03  ...      dist to answer 1.699e-04  <- own
+    THE ANSWER              3.280e-03  ...
+```
+
+Two gating measurements come off it, and neither is a fitted constant — both
+are ratios or differences of quantities measured on the *same* operands, so
+extreme inputs move numerator and denominator together:
+
+| | meaning | correct | noise | lost sub-tile |
+|---|---|---|---|---|
+| `detach` | distance to its own model, over what that model costs vs FP64 | 0.052 | 411 | 0.000 |
+| `excess` | elements past 10% that its own model does not have | +0 | +3884 | **+16** |
+
+Both are needed and neither subsumes the other: a median cannot see 16 corrupt
+elements in 4,096, and `excess` is what catches them. A perfect circuit scores
+`0.000 / +0` on normal operands, on operands scaled by 1e6 until the FP16
+output saturates, and on cancelling operands — the three cases a fixed limit
+gets wrong. `tests/ktpu/hw/test_ladder.py` pins all of it.
+
+The old figures are still printed, now with no limit attached at all. They are
+worth reading; they were never worth gating on.
+
+### The method, which is the transferable part
+
+The tempting move was to explain the hardware result. The useful move was to ask
+whether the hole was in the hardware path at all — and `sim.payload` is a pure
+function of `(problem, answer, log)`, so the question can be put to it directly
+with no machine anywhere:
+
+```python
+r = sim.payload(prob, rng.standard_normal((m, n)) * 100, ["ORCH-OK"], ...)
+#  err_hw.rel.p50 1.3194e+00   over10 3959/4096   verdict.pass True
+```
+
+Pure noise passed. That one line separated *"a gap in the new hardware path"*
+from *"this has always been true of every run"* — which are the same symptom and
+completely different problems. **When a check lets something through, reproduce
+it against the checker rather than against the thing that failed.**
+
+### What it says about `payload` being pure
+
+That `payload` could be interrogated this way is not luck; it is the property
+§0 relies on. The same purity that lets `fast` score a run without a simulator
+lets a bad verdict be reproduced without one. A scorer entangled with the
+simulator would have had to be debugged through a fifteen-second elaboration,
+and the "is the simulator affected too?" question could not have been asked at
+all.

@@ -22,12 +22,16 @@ param(
     # splits a string argument on it). Both were learned the hard way.
     [string]$Generics = "-",
     [string]$VivadoBin = "D:\Xilinx\Vivado\2024.2\bin",
+    # Logs and results land here. Two concurrent invocations share it by
+    # default and overwrite each other's <Top>.log; give one its own to compare
+    # a variant against a baseline, or to run beside someone else.
+    [string]$Work = "",
     [switch]$KeepWork
 )
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
-$work = Join-Path $env:TEMP "kohakutpu-synthcheck"
+$work = if ($Work) { $Work } else { Join-Path $env:TEMP "kohakutpu-synthcheck" }
 $period = [math]::Round(1000.0 / $Freq, 4)
 
 $common = @("src\common\sync_fifo.v", "src\common\kohaku_sdpram.v")
@@ -40,6 +44,21 @@ $targets = @(
                "src\kohakunoc\noc_router.v") },
     @{ Top = 'noc_cu_base'
        Src = @("src\kohakunoc\noc_cu_base.v") },
+    # N masters onto one DRAM across two clocks, replacing a SmartConnect that
+    # measured 20,104 LUT at 4S/1M. Override N to price a configuration.
+    @{ Top = 'axi_n1'
+       Src = @("src\common\async_fifo.v", "src\kohakuaxi\axi_n1.v") },
+    # The BD-facing wrapper. Pure wiring, so its area must match `axi_n1` at the
+    # same N -- a difference means something was left unconnected.
+    @{ Top = 'axi_n1_wrap_4'
+       Src = @("src\common\async_fifo.v", "src\kohakuaxi\axi_n1.v",
+               "src\synth_top\axi_n1_wrap_4.v") },
+    # N=5 is 3 MAG ports + upload + mover, the 6-cluster shape. REGISTERED
+    # RATHER THAN DELETED: it shipped generated but unreferenced, and a
+    # generated file no target reads is unverified however green the tier is.
+    @{ Top = 'axi_n1_wrap_5'
+       Src = @("src\common\async_fifo.v", "src\kohakuaxi\axi_n1.v",
+               "src\synth_top\axi_n1_wrap_5.v") },
     @{ Top = 'noc_orchestrator'
        Src = @("src\kohakunoc\noc_orchestrator.v") },
     # Two routers wired east-west. A single router cannot measure the link between
@@ -77,7 +96,7 @@ $targets = @(
     # The production accumulator and the full NoC-attached compute unit.
     @{ Top = 'mx_acu_fp'
        Src = @("src\kohakutpu\matmul\mx_fpacc.v", "src\kohakutpu\matmul\mx_acu_fp.v") },
-    # The real architecture: a cluster as a two-port NoC endpoint.
+    # The real architecture: a cluster as a one-port NoC endpoint.
     @{ Top = 'mx_cluster_cu'
        Src = @("src\kohakunoc\noc_cu_base.v",
                "src\kohakutpu\matmul\mx_mac.v", "src\kohakutpu\matmul\mx_tcu.v",
@@ -103,6 +122,105 @@ $targets = @(
                "src\kohakutpu\vector\vec_delay.v",
                "src\kohakutpu\vector\vec_tables.v",
                "src\kohakutpu\vector\vec_alu.v") },
+    # Philox-4x32-10 alone. One round per cycle, so the path to measure is the
+    # two 32x32 multiplies and the XOR tree around them.
+    @{ Top = 'mm_prng'
+       Src = @("src\kohakumas\mm_prng.v") },
+    # The memory mover: two mx_tdesc walkers, the index buffer, the PRNG and an
+    # AXI master. mx_tdesc carries no multipliers by construction, so if this
+    # misses the target the cause is the descriptor mux or the gather address.
+    @{ Top = 'mm_mover'
+       Src = @("src\kohakutpu\matmul\mx_tdesc.v",
+               "src\kohakumas\mm_prng.v",
+               "src\kohakumas\mm_mover.v") },
+    # The 16-ALU array, and then the whole vector core as a NoC endpoint.
+    # vec_alu was measured alone at 324.8 MHz; these say what the core around it
+    # costs, which nothing measured until the mesh was assembled.
+    @{ Top = 'vec_lanes'
+       Src = @("src\kohakutpu\matmul\mx_fpacc.v",
+               "src\kohakutpu\vector\vec_dsp.v", "src\kohakutpu\vector\vec_delay.v",
+               "src\kohakutpu\vector\vec_tables.v", "src\kohakutpu\vector\vec_alu.v",
+               "src\kohakutpu\vector\vec_regfile.v",
+               "src\kohakutpu\vector\vec_lanes.v") },
+    @{ Top = 'vec_cu'
+       Src = @("src\kohakunoc\noc_cu_base.v",
+               "src\kohakutpu\matmul\mx_fpacc.v",
+               "src\kohakutpu\vector\vec_dsp.v", "src\kohakutpu\vector\vec_delay.v",
+               "src\kohakutpu\vector\vec_tables.v", "src\kohakutpu\vector\vec_alu.v",
+               "src\kohakutpu\vector\vec_cvt.v", "src\kohakutpu\vector\vec_regfile.v",
+               "src\kohakutpu\vector\vec_lanes.v", "src\kohakutpu\vector\vec_agu.v",
+               "src\kohakutpu\vector\vec_core.v", "src\kohakutpu\vector\vec_cu.v") },
+    # The minimal machine: MAG (agent, ports, mover), one cluster, one vector
+    # core, two routers. One-module-at-a-time synthesis cannot say whether the
+    # parts are compatible at the assembly level; this can.
+    @{ Top = 'mm_mesh'
+       Src = @("src\kohakunoc\noc_inport.v", "src\kohakunoc\noc_outport.v",
+               "src\kohakunoc\noc_router.v", "src\kohakunoc\noc_cu_base.v",
+               "src\kohakunoc\noc_orchestrator.v",
+               "src\kohakutpu\matmul\mx_mac.v", "src\kohakutpu\matmul\mx_tcu.v",
+               "src\kohakutpu\matmul\mx_fpacc.v", "src\kohakutpu\matmul\mx_acu_fp.v",
+               "src\kohakutpu\matmul\mx_cluster_core.v",
+               "src\kohakutpu\matmul\mx_cluster_mgr.v",
+               "src\kohakutpu\matmul\mx_cluster_node.v",
+               "src\kohakutpu\matmul\mx_cluster_cu.v",
+               "src\kohakutpu\matmul\mx_tdesc.v",
+               "src\kohakutpu\vector\vec_dsp.v", "src\kohakutpu\vector\vec_delay.v",
+               "src\kohakutpu\vector\vec_tables.v", "src\kohakutpu\vector\vec_alu.v",
+               "src\kohakutpu\vector\vec_cvt.v", "src\kohakutpu\vector\vec_regfile.v",
+               "src\kohakutpu\vector\vec_lanes.v", "src\kohakutpu\vector\vec_agu.v",
+               "src\kohakutpu\vector\vec_core.v", "src\kohakutpu\vector\vec_cu.v",
+               "src\kohakumas\mx_quant.v", "src\kohakumas\mag_mem_port.v",
+               "src\kohakumas\mm_prng.v", "src\kohakumas\mm_mover.v",
+               "src\kohakumas\mag.v", "src\synth_top\mm_mesh.v") },
+    # THE SHIP CONFIGURATION. One SLR, 2x2 routers, 4 clusters, 4 vector cores,
+    # 2 MAG ports -- src\synth_top\maps\mesh_2x2_4cu4vec.txt. This is the only
+    # target that answers "does the machine we intend to build close timing",
+    # and it is LARGE: expect tens of minutes, so run it deliberately rather
+    # than as part of a sweep.
+    @{ Top = 'ktpu_ship_2x2'
+       Src = @("src\kohakunoc\noc_inport.v", "src\kohakunoc\noc_outport.v",
+               "src\kohakunoc\noc_router.v", "src\kohakunoc\noc_cu_base.v",
+               "src\kohakunoc\noc_orchestrator.v",
+               "src\kohakutpu\matmul\mx_mac.v", "src\kohakutpu\matmul\mx_tcu.v",
+               "src\kohakutpu\matmul\mx_fpacc.v", "src\kohakutpu\matmul\mx_acu_fp.v",
+               "src\kohakutpu\matmul\mx_cluster_core.v",
+               "src\kohakutpu\matmul\mx_cluster_mgr.v",
+               "src\kohakutpu\matmul\mx_cluster_node.v",
+               "src\kohakutpu\matmul\mx_cluster_cu.v",
+               "src\kohakutpu\matmul\mx_tdesc.v",
+               "src\kohakutpu\vector\vec_dsp.v", "src\kohakutpu\vector\vec_delay.v",
+               "src\kohakutpu\vector\vec_tables.v", "src\kohakutpu\vector\vec_alu.v",
+               "src\kohakutpu\vector\vec_cvt.v", "src\kohakutpu\vector\vec_regfile.v",
+               "src\kohakutpu\vector\vec_lanes.v", "src\kohakutpu\vector\vec_agu.v",
+               "src\kohakutpu\vector\vec_core.v", "src\kohakutpu\vector\vec_cu.v",
+               "src\kohakumas\mx_quant.v", "src\kohakumas\mag_mem_port.v",
+               "src\kohakumas\mm_prng.v", "src\kohakumas\mm_mover.v",
+               "src\kohakumas\mag.v", "src\synth_top\ktpu_ship_2x2.v") },
+    # 6+4 on 3 rows x 2 cols of routers -- src\synth_top\maps\mesh_3x2_6+4.txt.
+    # Three MAG ports, so five AXI masters: the axi_n1_wrap_5 width.
+    @{ Top = 'ktpu_ship_3x2'
+       Src = @("src\kohakunoc\noc_inport.v", "src\kohakunoc\noc_outport.v",
+               "src\kohakunoc\noc_router.v", "src\kohakunoc\noc_cu_base.v",
+               "src\kohakunoc\noc_orchestrator.v",
+               "src\kohakutpu\matmul\mx_mac.v", "src\kohakutpu\matmul\mx_tcu.v",
+               "src\kohakutpu\matmul\mx_fpacc.v", "src\kohakutpu\matmul\mx_acu_fp.v",
+               "src\kohakutpu\matmul\mx_cluster_core.v",
+               "src\kohakutpu\matmul\mx_cluster_mgr.v",
+               "src\kohakutpu\matmul\mx_cluster_node.v",
+               "src\kohakutpu\matmul\mx_cluster_cu.v",
+               "src\kohakutpu\matmul\mx_tdesc.v",
+               "src\kohakutpu\vector\vec_dsp.v", "src\kohakutpu\vector\vec_delay.v",
+               "src\kohakutpu\vector\vec_tables.v", "src\kohakutpu\vector\vec_alu.v",
+               "src\kohakutpu\vector\vec_cvt.v", "src\kohakutpu\vector\vec_regfile.v",
+               "src\kohakutpu\vector\vec_lanes.v", "src\kohakutpu\vector\vec_agu.v",
+               "src\kohakutpu\vector\vec_core.v", "src\kohakutpu\vector\vec_cu.v",
+               "src\kohakumas\mx_quant.v", "src\kohakumas\mag_mem_port.v",
+               "src\kohakumas\mm_prng.v", "src\kohakumas\mm_mover.v",
+               "src\kohakumas\mag.v", "src\synth_top\ktpu_ship_3x2.v") },
+    # One MAG port. Measured by hand twice and registered only after the second
+    # time -- a target no script names is a target nobody re-measures.
+    @{ Top = 'mag_mem_port'
+       Src = @("src\kohakumas\mx_quant.v", "src\kohakumas\mag_mem_port.v") },
     @{ Top = 'mx_matmul_cu'
        Src = @("src\kohakunoc\noc_cu_base.v",
                "src\kohakutpu\matmul\mx_mac.v", "src\kohakutpu\matmul\mx_tcu.v",

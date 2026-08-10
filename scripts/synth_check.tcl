@@ -35,6 +35,57 @@ if {$gspec ne "-"} {
 
 puts "=== synth_check: $top @ ${period}ns on $part generics {$generics} ==="
 
+# A GENERIC THAT DOES NOT EXIST IS NOT AN ERROR TO VIVADO, IT IS A DEFAULT --
+# and this has now produced a false result three times: a five-point DEPTH sweep
+# that returned five identical numbers (see the -generic note below), and an A/B
+# whose two arms agreed to the digit because the snapshot predated the parameter.
+# The failure is always a PLAUSIBLE number, never a crash, so it is only caught
+# by someone noticing that two things that should differ do not.
+#
+# Textual rather than elaborated, because this has to run BEFORE synth_design:
+# by the time the netlist exists the wrong number has already been produced.
+#
+# THE TOP'S OWN LIST: -generic binds only to the top, so a name declared in a
+# submodule alone is ignored as silently as a typo. Falls back to the
+# whole-file search if the top's header cannot be located.
+set plist ""
+foreach f $files {
+    if {[catch {set fh [open $f r]}]} { continue }
+    set txt [read $fh]
+    close $fh
+    if {[regexp "module\\s+\\m${top}\\M\\s*#\\s*\\((.*?)\n\\)\\(" $txt -> hdr]} {
+        set plist $hdr
+        break
+    }
+}
+
+foreach g $generics {
+    set name [lindex [split $g "="] 0]
+    set seen 0
+    set where "no source declares"
+    if {$plist ne ""} {
+        if {[regexp "parameter\[^\n;\]*\\m${name}\\M" $plist]} { set seen 1 }
+        set where "top module $top does not declare"
+    } else {
+        foreach f $files {
+            if {[catch {set fh [open $f r]}]} { continue }
+            set txt [read $fh]
+            close $fh
+            if {[regexp "parameter\[^\n;\]*\\m${name}\\M" $txt]} { set seen 1 ; break }
+        }
+    }
+    if {!$seen} {
+        puts "SYNTH FAILED: -generic $g names a parameter $where."
+        puts "  Vivado would ignore it silently and synthesise the default,"
+        puts "  which reads as a real measurement. Check the spelling, and"
+        puts "  check the sources are the ones you think -- a snapshot taken"
+        puts "  before the parameter was added looks exactly like this."
+        puts "  A parameter declared only in a SUBMODULE fails here too: it"
+        puts "  must be threaded up to the top before it can be swept."
+        exit 1
+    }
+}
+
 # No auto_detect_xpm here: it is project-mode only and errors with "No open
 # project". Non-project synth_design resolves xpm_fifo_sync on its own.
 foreach f $files {
@@ -54,21 +105,56 @@ if {[catch {eval $cmd} err]} {
     exit 1
 }
 
-create_clock -name clk -period $period [get_ports clk]
+# A port literally called `clk` where there is one, every `*clk*` input where
+# there is not: a two-domain module has neither, and an unconstrained domain
+# reports no paths at all rather than failing.
+set clkports [get_ports -quiet clk]
+if {[llength $clkports] == 0} {
+    set clkports [get_ports -quiet -filter {DIRECTION == IN} *clk*]
+}
+if {[llength $clkports] == 0} {
+    puts "SYNTH FAILED: no clock port found on $top"
+    exit 1
+}
+set clknames {}
+foreach cp $clkports {
+    set nm [get_property NAME $cp]
+    create_clock -name $nm -period $period $cp
+    lappend clknames $nm
+}
+# Without this the worst path is a crossing THROUGH the async FIFO, which is
+# asynchronous by construction and would make the reported Fmax meaningless.
+if {[llength $clknames] > 1} {
+    set grp {}
+    foreach nm $clknames { lappend grp -group [get_clocks $nm] }
+    set_clock_groups -asynchronous {*}$grp
+    puts "  NOTE constrained [llength $clknames] clocks as asynchronous groups"
+}
 
-set worst [lindex [get_timing_paths -delay_type max -max_paths 1] 0]
+# TOP TEN, NOT THE WORST ALONE: mm_mover's ten span 0.046 ns over THREE
+# structures, and the one owning 6 of 10 was not the one owning the worst.
+# -nworst 1 is one path per endpoint, so these are ten distinct cones.
+set paths [get_timing_paths -delay_type max -max_paths 10 -nworst 1]
+set worst [lindex $paths 0]
 set wns [get_property SLACK $worst]
 
 # Where the worst path actually starts and ends. Without this a number like
 # "410 MHz" is unattributable -- in out-of-context mode a port-to-register path is
 # constrained against the whole period, so the worst path may be an artefact of the
 # measurement boundary rather than real logic.
-if {$worst ne ""} {
-    puts "  PATH [get_property STARTPOINT_PIN $worst] -> [get_property ENDPOINT_PIN $worst]"
+set rank 0
+foreach p $paths {
+    incr rank
+    puts [format "  PATH %2d %7.3f  %s -> %s" $rank [get_property SLACK $p] \
+              [get_property STARTPOINT_PIN $p] [get_property ENDPOINT_PIN $p]]
 }
+# A FAILURE, NOT A PASS. Zero paths means the clock reached nothing, or the
+# design has no sequential logic -- either way nothing was measured, and
+# exiting 0 here reported "no paths" in a column the eye reads as a result.
 if {$wns eq "" || $wns eq "undef"} {
-    puts "RESULT $top: no timing paths found"
-    exit 0
+    puts "SYNTH FAILED: $top has no timing paths -- nothing was measured."
+    puts "  The clock was created on: $clknames"
+    exit 1
 }
 
 # Fmax is derived from the achieved period, not from the target: a positive slack

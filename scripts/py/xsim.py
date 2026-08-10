@@ -40,6 +40,14 @@ NOC = [
     "src/kohakunoc/noc_cu_base.v",
 ]
 
+# The mover and its PRNG. mx_tdesc is the descriptor walker they borrow rather
+# than reimplement, and MAG now instantiates all three.
+MOVER = [
+    "src/kohakutpu/matmul/mx_tdesc.v",
+    "src/kohakumas/mm_prng.v",
+    "src/kohakumas/mm_mover.v",
+]
+
 VECTOR = [
     "src/kohakutpu/vector/vec_dsp.v",
     "src/kohakutpu/vector/vec_delay.v",
@@ -47,7 +55,22 @@ VECTOR = [
     "src/kohakutpu/vector/vec_alu.v",
 ]
 
+# xpm_cdc instantiates glbl, so an async FIFO drags it in even at MODEL=1.
+NEEDS_GLBL = {"axi_n1"}
+
 BENCHES = {
+    # N masters onto one slave across two clocks, the SmartConnect replacement.
+    # Randomised backpressure on every channel and both clock ratios in one run,
+    # because the failure mode is a hang rather than a wrong answer.
+    "axi_n1": (
+        "axi_n1_tb",
+        [
+            "src/common/sync_fifo.v",
+            "src/common/async_fifo.v",
+            "src/kohakuaxi/axi_n1.v",
+            "tests/axi/axi_n1_tb.v",
+        ],
+    ),
     # The vector ALU. mx_fpacc.v is here for mx_lead1 alone -- the leading-one
     # search is shared rather than duplicated, and its comment is the reason
     # the search is smear-isolate-encode instead of a loop.
@@ -119,6 +142,19 @@ BENCHES = {
         "mx_acu_fp_tb",
         COMMON + MATMUL + ["tests/matmul/mx_acu_fp_tb.v"],
     ),
+    # Another unit writing into a cluster: operands as CU_DATA instead of as
+    # memory responses, and a peer sub-tile into the resident tile. The bench
+    # is the sender, because nothing in the machine is one yet.
+    "cluster_data": (
+        "mx_cluster_data_tb",
+        COMMON
+        + MATMUL
+        + [
+            "src/kohakunoc/noc_cu_base.v",
+            "src/kohakutpu/matmul/mx_cluster_cu.v",
+            "tests/matmul/mx_cluster_data_tb.v",
+        ],
+    ),
     # The integer-accumulator cluster, superseded by mx_cluster_node's FP
     # accumulator but still built and still tested.
     "cluster": (
@@ -171,6 +207,7 @@ BENCHES = {
         COMMON
         + NOC
         + MATMUL
+        + MOVER
         + [
             "src/kohakutpu/matmul/mx_cluster_cu.v",
             "src/kohakuaxi/axi_xbar2.v",
@@ -182,12 +219,48 @@ BENCHES = {
             "tests/mas/mag_system_tb.v",
         ],
     ),
+    # The minimal machine end to end: MAG, one cluster, one vector core, two
+    # routers, with the bench acting as the agent on r11's local port.
+    "mm_mesh": (
+        "mm_mesh_tb",
+        COMMON
+        + NOC
+        + MATMUL
+        + MOVER
+        + VECTOR
+        + [
+            "src/kohakutpu/matmul/mx_cluster_cu.v",
+            "src/kohakutpu/vector/vec_cvt.v",
+            "src/kohakutpu/vector/vec_regfile.v",
+            "src/kohakutpu/vector/vec_lanes.v",
+            "src/kohakutpu/vector/vec_agu.v",
+            "src/kohakutpu/vector/vec_core.v",
+            "src/kohakutpu/vector/vec_cu.v",
+            "src/kohakumas/mx_quant.v",
+            "src/kohakumas/axi_ram.v",
+            "src/kohakumas/mag_mem_port.v",
+            "src/kohakumas/mag.v",
+            "src/synth_top/mm_mesh.v",
+            "tests/mas/mm_mesh_tb.v",
+        ],
+    ),
+    # The mover alone against an AXI RAM: no MAG, no NoC, no mesh.
+    "mm_mover": (
+        "mm_mover_tb",
+        COMMON + MOVER + ["src/kohakumas/axi_ram.v", "tests/mas/mm_mover_tb.v"],
+    ),
+    # Philox-4x32-10 against the published Random123 vectors.
+    "mm_prng": (
+        "mm_prng_tb",
+        ["src/kohakumas/mm_prng.v", "tests/mas/mm_prng_tb.v"],
+    ),
     # MAG alone, two sources writing concurrently. Cheap, and it covers the
     # write-slot table directly rather than through a whole GEMM.
     "mag_wslot": (
         "mag_wslot_tb",
         COMMON
         + NOC
+        + MOVER
         + [
             "src/kohakumas/mx_quant.v",
             "src/kohakumas/axi_ram.v",
@@ -215,10 +288,17 @@ def main():
     ap.add_argument("--model", type=int, default=1, help="1 = behavioural, 0 = DSP48")
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--define", "-d", action="append", default=[])
+    # Different benches already own different directories; the SAME bench twice
+    # does not, and the second run wipes the first's out from under it.
+    ap.add_argument(
+        "--build-root",
+        default=os.environ.get("KOHAKU_XSIM_BUILD"),
+        help="where xsim_<bench> is built (default build/, env KOHAKU_XSIM_BUILD)",
+    )
     args = ap.parse_args()
 
     top, srcs = BENCHES[args.bench]
-    work = ROOT / "build" / f"xsim_{args.bench}"
+    work = pathlib.Path(args.build_root or ROOT / "build") / f"xsim_{args.bench}"
     if work.exists():
         shutil.rmtree(work)
     work.mkdir(parents=True)
@@ -288,9 +368,13 @@ def main():
     (work / "xvlog.f").write_text("\n".join(opts + files) + "\n")
 
     run(["xvlog.bat", "-sv", "-work", "w", "-f", "xvlog.f"])
-    if args.model == 0:
+    # glbl only where it is needed. Adding it everywhere would hold GSR over
+    # every XPM cell for the first 100 ns, which is a behaviour change to benches
+    # that pass today -- see the trap in docs/simulation.md s3.
+    if args.model == 0 or args.bench in NEEDS_GLBL:
         run(["xvlog.bat", "-work", "w", str(VIVADO / ".." / "data/verilog/src/glbl.v")])
         tops.append("w.glbl")
+    if args.model == 0:
         libs += ["-L", "unisims_ver"]
     run(
         ["xelab.bat", "-debug", "typical", "-timescale", "1ns/1ps"]
