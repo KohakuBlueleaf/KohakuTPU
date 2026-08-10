@@ -68,6 +68,15 @@ module noc_orchestrator #(
     output wire                    s_axi_rvalid,
     input  wire                    s_axi_rready,
 
+    // ---- auxiliary command window, forwarded verbatim ----
+    // A reserved slice of the control window whose writes leave this module
+    // unexamined; MAG binds it to the memory mover. A block design carries
+    // clock, reset and AXI only, so a submodule's command path arrives here.
+    output reg                     aux_cfg_en,
+    output reg  [7:0]              aux_cfg_addr,
+    output reg  [DATA_WIDTH-1:0]   aux_cfg_data,
+    input  wire [DATA_WIDTH-1:0]   aux_stat,
+
     // ---- NoC local port ----
     output reg  [FLIT_WIDTH-1:0]   noc_out_data,
     output reg                     noc_out_valid,
@@ -88,7 +97,7 @@ module noc_orchestrator #(
                       A_PROG_DST  = 16'h0040, A_PROG_LEN  = 16'h0048,
                       A_PROG_KICK = 16'h0050, A_PROG_STAT = 16'h0058,
                       A_PROG_CRED = 16'h0060, A_PROG_BASE = 16'h0068,
-                      A_SIG_DONE  = 16'h0070,
+                      A_SIG_DONE  = 16'h0070, A_AUX_STAT  = 16'h0078,
                       A_TX_FLIT0  = 16'h0100, A_TX_KICK   = 16'h0140,
                       A_TX_STATUS = 16'h0148,
                       A_RX_FLIT0  = 16'h0180, A_RX_POP    = 16'h01C0,
@@ -105,6 +114,12 @@ module noc_orchestrator #(
     localparam STAGE_WORDS = STAGE_FLITS * FLIT_WORDS;
     localparam SW_BITS     = $clog2(STAGE_WORDS);
     localparam [15:0] A_STAGE = 16'h2000;
+
+    // 256 BYTES, not 256 entries: the offset within the window IS `aux_cfg_addr`,
+    // so whatever sits behind it keeps its own register offsets verbatim. An
+    // index here would alias a client's 0x38 onto its 0x00.
+    localparam [15:0] A_AUX_CFG = 16'h0800;
+    localparam [15:0] A_AUX_END = A_AUX_CFG + 16'h0100;
 
     // Infers LUTRAM (RAM64M8 x100 at STAGE_FLITS=128), not BRAM. NO ram_style
     // attribute: "block" is rejected as infeasible and silently downgraded, and
@@ -350,6 +365,7 @@ module noc_orchestrator #(
     // into the index, harmless only while SW_BITS is small enough that 0x2000
     // aliases to 0.
     wire [SW_BITS-1:0] stage_widx = (waddr[15:0] - A_STAGE) >> 3;
+    wire        is_aux = (waddr[15:0] >= A_AUX_CFG) && (waddr[15:0] < A_AUX_END);
 
     integer wb;
     always @(posedge clk) begin
@@ -358,6 +374,7 @@ module noc_orchestrator #(
         kick_req <= 1'b0;
         cred_wr  <= 1'b0;
         sig_done_clr <= 1'b0;
+        aux_cfg_en   <= 1'b0;
 
         if (!resetn) begin
             wstate       <= W_IDLE;
@@ -372,6 +389,8 @@ module noc_orchestrator #(
             prog_base    <= 16'd0;
             cred_val     <= 16'd0;
             tx_stage     <= {PAD_WIDTH{1'b0}};
+            aux_cfg_addr <= 8'd0;
+            aux_cfg_data <= {DATA_WIDTH{1'b0}};
         end else begin
             case (wstate)
                 W_IDLE: if (s_axi_awvalid) begin
@@ -388,6 +407,13 @@ module noc_orchestrator #(
                             if (s_axi_wstrb[wb])
                                 tx_stage[tx_word*DATA_WIDTH + wb*8 +: 8] <=
                                     s_axi_wdata[wb*8 +: 8];
+                    // ONE PULSE PER BEAT, because a client may use consecutive
+                    // writes as a load-then-commit pair; a burst walks `waddr`
+                    // and so writes its registers in order.
+                    end else if (is_aux) begin
+                        aux_cfg_en   <= 1'b1;
+                        aux_cfg_addr <= waddr[7:0];
+                        aux_cfg_data <= s_axi_wdata;
                     end else begin
                         case (wsel)
                             A_CTRL:      ctrl_reg     <= s_axi_wdata;
@@ -456,6 +482,7 @@ module noc_orchestrator #(
             A_PROG_LEN:  reg_rd = { {(DATA_WIDTH-16){1'b0}}, prog_len };
             A_PROG_BASE: reg_rd = { {(DATA_WIDTH-16){1'b0}}, prog_base };
             A_SIG_DONE:  reg_rd = { {(DATA_WIDTH-16){1'b0}}, sig_done_count };
+            A_AUX_STAT:  reg_rd = aux_stat;
             A_PROG_CRED: reg_rd = { {(DATA_WIDTH-16){1'b0}}, prog_credit };
             A_STATUS:    reg_rd = { {(DATA_WIDTH-3){1'b0}}, 1'b1 /*mesh_ready*/,
                                     1'b0 /*error*/, (!tx_empty | prog_run) };

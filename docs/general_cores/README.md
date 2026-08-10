@@ -7,9 +7,10 @@ proposed answer.
 
 | | |
 |---|---|
-| [`memory-mover.md`](memory-mover.md) | a layout and gather engine **inside MAG** |
+| [`../memory-mover/`](../memory-mover/) | a layout, gather and fill engine **inside MAG** -- its own folder |
 | [`cores.md`](cores.md) | four general cores, two on MAG and two on the NoC |
 | [`isa.md`](isa.md) | what they run: an existing soft core, or one of ours |
+| [`programming.md`](programming.md) | how a kernel reaches one, and what codegen emits |
 | [`slr.md`](slr.md) | what changes when the design stops fitting in one SLR |
 
 Nothing here is built. This is a design record so the reasoning survives the

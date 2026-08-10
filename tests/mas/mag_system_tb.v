@@ -246,13 +246,17 @@ module mag_system_tb;
     // shares MAG's memory ports now, so nothing hangs here.
     assign w_in[0][1] = {FW{1'b0}}; assign w_inv[0][1] = 1'b0; assign w_outb[0][1] = 1'b0;
     assign s_in[1][1] = {FW{1'b0}}; assign s_inv[1][1] = 1'b0; assign s_outb[1][1] = 1'b0;
+    // Column 2's locals, which the accumulators used to occupy. A cluster is one
+    // node now, so the routers stay and their locals hang free.
+    assign l_in[1][0] = {FW{1'b0}}; assign l_inv[1][0] = 1'b0; assign l_outb[1][0] = 1'b0;
+    assign l_in[1][1] = {FW{1'b0}}; assign l_inv[1][1] = 1'b0; assign l_outb[1][1] = 1'b0;
 
     // ---------------------------------------------------------------- MAG
     // memory port on (1,1) west = coordinate (0,1)
     // agent  port on (1,2) west = coordinate (0,2)
     // One AXI channel per MAG memory port, plus one for the host upload.
     localparam integer MEMP = 1;
-    localparam integer NCH  = MEMP + 1;
+    localparam integer NCH  = MEMP + 2;   // ports, upload, mover
 
     wire [NCH*4-1:0]    r_awid, r_arid, r_bid, r_rid;
     wire [NCH*34-1:0]   r_awaddr, r_araddr;
@@ -274,6 +278,31 @@ module mag_system_tb;
     reg           h_awvalid = 0, h_wvalid = 0, h_wlast = 0, h_bready = 0;
     reg  [DW-1:0] h_wdata = 0;
     wire          h_awready, h_wready, h_bvalid;
+
+    // the mover's status, brought out of MAG
+    wire         mv_busy;
+    wire [3:0]   mv_fault;
+    wire [31:0]  mv_done;
+    integer      mvspin;
+
+    // Through the CONTROL WINDOW, not a sideband port -- the mover's offsets
+    // pass through A_MV_CFG unchanged, so `a` is still its own register offset.
+    localparam [31:0] A_MV_CFG = 32'h0800;
+    task mvwr(input [7:0] a, input [63:0] d);
+        begin drv_write(MAG_BASE + A_MV_CFG + {24'd0, a}, d); end
+    endtask
+
+    task mvhdr(input sel, input [33:0] base, input [2:0] nd);
+        begin mvwr(8'h10, {17'd0, nd, 6'd0, base, 3'd0, sel}); end
+    endtask
+
+    task mvdim(input sel, input [2:0] d, input [15:0] cnt,
+               input signed [31:0] strd);
+        begin
+            mvwr(8'h18, {12'd0, strd, cnt, d, sel});
+            mvwr(8'h20, 64'd0);
+        end
+    endtask
 
     mag #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(34), .ID_W(4),
           .MEM_PORTS(MEMP),
@@ -316,7 +345,8 @@ module mag_system_tb;
         // The agent used to take the west of row 2 as a node of its own. It
         // shares the memory ports now and answers at (MEM_X, MEM_Y), so that
         // edge is tied off below.
-        .mem_rd_count(mag_rd), .mem_wr_count(mag_wr)
+        .mem_rd_count(mag_rd), .mem_wr_count(mag_wr),
+        .mv_busy(mv_busy), .mv_fault(mv_fault), .mv_done(mv_done)
     );
 
     reg          bd_we = 0;
@@ -345,26 +375,26 @@ module mag_system_tb;
     wire [15:0] f0, g0, d0, f1, g1, d1;
 
     mx_cluster_cu #(.FLIT_WIDTH(FW), .POS_WIDTH(PW),
-                    .MGR_X(1), .MGR_Y(1), .ACU_X(2), .ACU_Y(1),
+                    .CU_X(1), .CU_Y(1),
                     .MEM_X(0), .MEM_Y(1),
                     .TILES(16), .GA(16), .GB(16), .MODEL(MODEL)) cu0 (
         .clk(clk), .resetn(rstn),
-        .m_in_data(l_out[0][0]), .m_in_valid(l_outv[0][0]), .m_in_busy(l_outb[0][0]),
-        .m_out_data(l_in[0][0]), .m_out_valid(l_inv[0][0]), .m_out_busy(l_inb[0][0]),
-        .a_in_data(l_out[1][0]), .a_in_valid(l_outv[1][0]), .a_in_busy(l_outb[1][0]),
-        .a_out_data(l_in[1][0]), .a_out_valid(l_inv[1][0]), .a_out_busy(l_inb[1][0]),
+        .noc_in_data(l_out[0][0]), .noc_in_valid(l_outv[0][0]),
+        .noc_in_busy(l_outb[0][0]),
+        .noc_out_data(l_in[0][0]), .noc_out_valid(l_inv[0][0]),
+        .noc_out_busy(l_inb[0][0]),
         .fills_done(f0), .gemms_done(g0), .drains_done(d0)
     );
 
     mx_cluster_cu #(.FLIT_WIDTH(FW), .POS_WIDTH(PW),
-                    .MGR_X(1), .MGR_Y(2), .ACU_X(2), .ACU_Y(2),
+                    .CU_X(1), .CU_Y(2),
                     .MEM_X(0), .MEM_Y(1),
                     .TILES(16), .GA(16), .GB(16), .MODEL(MODEL)) cu1 (
         .clk(clk), .resetn(rstn),
-        .m_in_data(l_out[0][1]), .m_in_valid(l_outv[0][1]), .m_in_busy(l_outb[0][1]),
-        .m_out_data(l_in[0][1]), .m_out_valid(l_inv[0][1]), .m_out_busy(l_inb[0][1]),
-        .a_in_data(l_out[1][1]), .a_in_valid(l_outv[1][1]), .a_in_busy(l_outb[1][1]),
-        .a_out_data(l_in[1][1]), .a_out_valid(l_inv[1][1]), .a_out_busy(l_inb[1][1]),
+        .noc_in_data(l_out[0][1]), .noc_in_valid(l_outv[0][1]),
+        .noc_in_busy(l_outb[0][1]),
+        .noc_out_data(l_in[0][1]), .noc_out_valid(l_inv[0][1]),
+        .noc_out_busy(l_inb[0][1]),
         .fills_done(f1), .gemms_done(g1), .drains_done(d1)
     );
 
@@ -719,6 +749,65 @@ module mag_system_tb;
                             $display("  FAIL C[%0d][%0d] got %0f want %0f rel %0e",
                                      i, j, got_r, want_r, err);
                     end
+                end
+            end
+
+        // ---- the mover, on MAG's own AXI master, after the GEMM is graded ---
+        // A word transpose, which is the tile-order to entry-order shape. It
+        // shares only the address space with the ports, so a pass here says
+        // the new master reaches memory without disturbing them.
+        $display("--- the memory mover through MAG ---");
+        for (i = 0; i < 32; i = i + 1) begin
+            @(negedge clk);
+            bd_we = 1'b1; bd_addr = 16'd512 + i[15:0];
+            bd_wdata = {8{32'h5A00_0000 | i[31:0]}};
+        end
+        @(negedge clk); bd_we = 1'b0;
+
+        mvhdr(1'b0, 34'h4000, 3'd2);
+        mvdim(1'b0, 3'd0, 16'd4, 32'sd256);
+        mvdim(1'b0, 3'd1, 16'd8, 32'sd32);
+        mvhdr(1'b1, 34'h4400, 3'd2);
+        mvdim(1'b1, 3'd0, 16'd4, 32'sd32);
+        mvdim(1'b1, 3'd1, 16'd8, 32'sd128);
+        mvwr(8'h00, {47'd0, 1'b1, 8'd0, 3'd0, 2'd1, 3'd0});
+
+        // WAIT FOR THE RISE, THEN THE FALL. Watching only for `busy` to fall
+        // reads as "already finished" when it has not yet started, and the
+        // command path is now several cycles of AXI rather than one wire.
+        @(negedge clk);
+        mvspin = 0;
+        while (!mv_busy && mvspin < 1000) begin
+            mvspin = mvspin + 1;
+            @(negedge clk);
+        end
+        mvspin = 0;
+        while (mv_busy && mvspin < 50000) begin
+            mvspin = mvspin + 1;
+            @(negedge clk);
+        end
+        checks = checks + 1;
+        if (mvspin >= 50000) begin
+            errors = errors + 1;
+            $display("  FAIL mover never went idle");
+        end
+        checks = checks + 1;
+        if (mv_fault !== 4'd0) begin
+            errors = errors + 1;
+            $display("  FAIL mover faulted, code %0d", mv_fault);
+        end
+
+        for (i = 0; i < 4; i = i + 1)
+            for (j = 0; j < 8; j = j + 1) begin
+                @(negedge clk); bd_addr = 16'd544 + j*4 + i;
+                @(negedge clk); @(negedge clk);
+                checks = checks + 1;
+                if (bd_rdata !== {8{32'h5A00_0000 | (i*8+j)}}) begin
+                    errors = errors + 1;
+                    if (errors <= 12)
+                        $display("  FAIL moved word [%0d][%0d] got %h want %h",
+                                 i, j, bd_rdata[63:0],
+                                 {2{32'h5A00_0000 | (i*8+j)}});
                 end
             end
 

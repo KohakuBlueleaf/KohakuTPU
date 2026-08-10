@@ -23,8 +23,13 @@ module InPortSwitch #(
     parameter POS_WIDTH   = 4,
     parameter POS_X       = 1,
     parameter POS_Y       = 1,
-    parameter GRID_LO     = 1,   // lowest router coordinate
-    parameter GRID_HI     = 14   // highest router coordinate
+    parameter GRID_LO     = 1,   // lowest router coordinate, both axes
+    parameter GRID_HI     = 14,  // highest, when the grid is square
+    // PER-AXIS so the grid need not be square. Defaulting both to GRID_HI
+    // leaves every existing instantiation bit-identical; a rectangular mesh
+    // overrides them and a square one never mentions them.
+    parameter GRID_X_HI   = GRID_HI,
+    parameter GRID_Y_HI   = GRID_HI
 )(
     input clk,
     input rst,
@@ -106,14 +111,15 @@ module InPortSwitch #(
     wire [POS_WIDTH-1:0] pos_x = rd_data[DATA_WIDTH-1           -: POS_WIDTH];
     wire [POS_WIDTH-1:0] pos_y = rd_data[DATA_WIDTH-POS_WIDTH-1 -: POS_WIDTH];
 
-    localparam [POS_WIDTH-1:0] LO = GRID_LO[POS_WIDTH-1:0];
-    localparam [POS_WIDTH-1:0] HI = GRID_HI[POS_WIDTH-1:0];
+    localparam [POS_WIDTH-1:0] LO  = GRID_LO[POS_WIDTH-1:0];
+    localparam [POS_WIDTH-1:0] XHI = GRID_X_HI[POS_WIDTH-1:0];
+    localparam [POS_WIDTH-1:0] YHI = GRID_Y_HI[POS_WIDTH-1:0];
     localparam [POS_WIDTH-1:0] MX = POS_X[POS_WIDTH-1:0];
     localparam [POS_WIDTH-1:0] MY = POS_Y[POS_WIDTH-1:0];
 
     // destination clamped into the router grid
-    wire [POS_WIDTH-1:0] r_pos_x = (pos_x < LO) ? LO : (pos_x > HI) ? HI : pos_x;
-    wire [POS_WIDTH-1:0] r_pos_y = (pos_y < LO) ? LO : (pos_y > HI) ? HI : pos_y;
+    wire [POS_WIDTH-1:0] r_pos_x = (pos_x < LO) ? LO : (pos_x > XHI) ? XHI : pos_x;
+    wire [POS_WIDTH-1:0] r_pos_y = (pos_y < LO) ? LO : (pos_y > YHI) ? YHI : pos_y;
 
     wire x_done    = (r_pos_x == MX);
     wire y_done    = (r_pos_y == MY);

@@ -181,31 +181,29 @@ module mag_driver_tb;
     );
 
     // ------------------------------------------- mesh: NCOL columns x NROW rows
-    // ONE CLUSTER PER COLUMN OF A BAND, managers outside and accumulators
-    // inside, so a cluster's two endpoints are ADJACENT routers in one column
-    // rather than straddling another cluster's node:
+    // ONE CLUSTER PER ROUTER LOCAL, filling row-major, so the grid is exactly as
+    // large as the cluster count needs: NCL=2 is 1x2, 4 is 1x4, 8 is 2x4.
     //
-    //     MAG  mgr mgr mgr mgr      row 1
-    //     MAG  acu acu acu acu      row 2
-    //     MAG  acu acu acu acu      row 3
-    //     MAG  mgr mgr mgr mgr      row 4
+    // ROWS BEFORE COLUMNS, because a row is a MAG memory port and a column is
+    // not. Four is the ceiling -- mag.v declares four port coordinate pairs -- so
+    // 8 is 2x4 rather than 4x2, which would leave half the ports unbuilt on a
+    // machine whose drain is already its limit.
     //
-    //   NCL = 2   2 cols x 2 rows   mgr (1..2,1)   acu (1..2,2)
-    //   NCL = 4   4 cols x 2 rows   mgr (1..4,1)   acu (1..4,2)
-    //   NCL = 8   4 cols x 4 rows   mgr (1..4,1) acu (1..4,2)   band 0
-    //                               acu (1..4,3) mgr (1..4,4)   band 1
+    // Replaces a two-row band whose inner locals hung free. That kept the mesh
+    // comparable across the accumulator-port merge and has outlived it: the real
+    // machine is maps/mesh_2x4.txt, and a bench with twice the routers measures a
+    // fabric less contended than the one that gets built.
     //
-    // MAG hangs off the WEST edge, one port per row at (0,1)..(0,NROW); each
-    // carries operand AND agent control traffic, demuxed by flit type inside
-    // MAG, so north, south and east are free. Routing is X-then-Y on CLAMPED
-    // coordinates, which is what makes the shape scale -- a flit for (0,1)
-    // routes toward router (1,1) and takes the outward hop on arrival. See
-    // docs/noc/spec.md s2.
-    //
-    // A band need not be FULL: 3, 5, 6 and 7 clusters leave columns empty.
-    localparam integer NCOL  = (NCL >= 4) ? 4 : NCL;
-    localparam integer BANDS = (NCL + NCOL - 1) / NCOL;   // 1 up to 4 CU, 2 at 8
-    localparam integer NROW  = BANDS * 2;
+    // MAG hangs off the WEST edge, one port per row at (0,1)..(0,NROW), each
+    // carrying operand AND agent traffic demuxed by flit type, so north, south
+    // and east are free. Routing is X-then-Y on CLAMPED coordinates: a flit for
+    // (0,1) routes toward router (1,1) and takes the outward hop on arrival.
+    // The last row need not be full. See docs/noc/spec.md s2.
+    localparam integer NROW0 = (NCL >= 4) ? 4 : NCL;      // one MAG port each
+    localparam integer NCOL  = (NCL + NROW0 - 1) / NROW0;
+    // Tighten: 9 clusters over 4 rows needs 3 columns, and 3 columns need only
+    // 3 rows. Without this a fourth row is built whose MAG port serves nothing.
+    localparam integer NROW  = (NCL + NCOL - 1) / NCOL;
     localparam integer GHI   = (NROW > NCOL) ? NROW : NCOL;
 
     wire [FW-1:0] l_in [0:NCOL-1][0:NROW-1], l_out [0:NCOL-1][0:NROW-1];
@@ -230,7 +228,7 @@ module mag_driver_tb;
     // host upload -- sharing them would put eight clusters' read beats back on
     // one AR/R pair -- so the RAM is multi-channel to match.
     localparam integer MEMP = NROW;           // MAG memory ports
-    localparam integer NCH  = MEMP + 1;       // AXI channels into the RAM
+    localparam integer NCH  = MEMP + 2;       // ports, upload, mover
 
     wire [MEMP*FW-1:0] mp_in_data, mp_out_data;
     wire [MEMP-1:0]    mp_in_valid, mp_in_busy, mp_out_valid, mp_out_busy;
@@ -241,7 +239,10 @@ module mag_driver_tb;
       for (gy = 0; gy < NROW; gy = gy + 1) begin : g_row
         NoCRouter #(.DATA_WIDTH(FW), .FIFO_DEPTH(32), .MEMORY_TYPE("distributed"),
                     .POS_WIDTH(PW), .POS_X(gx+1), .POS_Y(gy+1),
-                    .GRID_LO(1), .GRID_HI(GHI)) rtr (
+                    .GRID_LO(1), .GRID_HI(GHI),
+                    // Per axis: the grid is no longer square, and clamping x to
+                    // the larger of the two would route past the last column.
+                    .GRID_X_HI(NCOL), .GRID_Y_HI(NROW)) rtr (
             .clk(clk), .rst(!rstn),
             .local_in_data(l_in[gx][gy]), .local_in_valid(l_inv[gx][gy]), .local_in_busy(l_inb[gx][gy]),
             .local_out_data(l_out[gx][gy]), .local_out_valid(l_outv[gx][gy]), .local_out_busy(l_outb[gx][gy]),
@@ -291,6 +292,17 @@ module mag_driver_tb;
     for (gy = 0; gy < NROW; gy = gy + 1) begin : g_dead_e
         assign e_in[NCOL-1][gy] = {FW{1'b0}};
         assign e_inv[NCOL-1][gy] = 1'b0;  assign e_outb[NCOL-1][gy] = 1'b0;
+    end
+    // Locals with no cluster on them: only the tail of the last row, when the
+    // count does not fill the grid.
+    for (gx = 0; gx < NCOL; gx = gx + 1) begin : g_dead_l
+      for (gy = 0; gy < NROW; gy = gy + 1) begin : g_dead_l_y
+        localparam integer HAS = ((gy * NCOL + gx) < NCL) ? 1 : 0;
+        if (HAS == 0) begin : g_tie
+            assign l_in[gx][gy] = {FW{1'b0}};
+            assign l_inv[gx][gy] = 1'b0;  assign l_outb[gx][gy] = 1'b0;
+        end
+      end
     end
 
     // ---- MAG's ports, one per mesh ROW -----------------------------------
@@ -376,7 +388,10 @@ module mag_driver_tb;
         .mem_out_busy(mp_out_busy),
         // The agent shares MAG's west ports, so the east edge is dead like
         // every other one -- see g_dead_e below.
-        .mem_rd_count(mag_rd), .mem_wr_count(mag_wr)
+        .mem_rd_count(mag_rd), .mem_wr_count(mag_wr),
+        // The mover's command path is behind S_AXI_CTRL now, not a sideband --
+        // the driver bench does not command it, so only the status is read.
+        .mv_busy(), .mv_fault(), .mv_done()
     );
 
     // ---- per-port taps for the profile -----------------------------------
@@ -453,37 +468,23 @@ module mag_driver_tb;
 
     generate
     for (gy = 0; gy < NCL; gy = gy + 1) begin : g_cu
-        // Cluster gy is a COLUMN of one band: manager on the band's OUTER row,
-        // accumulator on the row directly inside it. `bench.CLUSTERS` lists the
-        // manager coordinates and must agree.
-        localparam integer BAND = gy / NCOL;
+        // Cluster gy fills the grid row-major, one per router local.
+        // `bench.CLUSTERS` lists these coordinates and must agree.
         localparam integer CX   = gy % NCOL;                    // 0-based column
-        localparam integer MROW = (BAND == 0) ? 1 : NROW;       // manager row
-        localparam integer AROW = (BAND == 0) ? 2 : NROW - 1;   // accumulator
-        // WHICH ROW'S EDGE THIS CLUSTER LEAVES BY -- every cluster can reach
-        // every port through the mesh, so this only chooses the exit. Columns
-        // near MAG exit by their manager's row, the farther half by the
-        // accumulator's, which keeps both of a band's ports busy. It also suits
-        // the directions: the links are FULL DUPLEX, a manager mostly RECEIVES
-        // fill responses and an accumulator mostly SENDS results.
-        localparam integer PROW = (CX < (NCOL + 1) / 2) ? MROW : AROW;
+        localparam integer CROW = gy / NCOL + 1;                // 1-based row
+        // Its own row's port. Every cluster can reach every port through the
+        // mesh, so this only chooses the exit -- and the nearest exit is the one
+        // reached without a single north-south hop.
+        localparam integer PROW = CROW;
         mx_cluster_cu #(.FLIT_WIDTH(FW), .POS_WIDTH(PW),
-                        .MGR_X(CX+1), .MGR_Y(MROW),
-                        .ACU_X(CX+1), .ACU_Y(AROW),
+                        .CU_X(CX+1), .CU_Y(CROW),
                         .MEM_X(0), .MEM_Y(PROW),
                         .TILES(512), .GA(128), .GB(256), .MODEL(MODEL)) cu (
             .clk(clk), .resetn(rstn),
-            // Manager and accumulator are the SAME column, adjacent rows -- so
-            // the two local ports this CU drives are neighbours on the mesh
-            // rather than two columns apart with another cluster between them.
-            .m_in_data(l_out[CX][MROW-1]), .m_in_valid(l_outv[CX][MROW-1]),
-            .m_in_busy(l_outb[CX][MROW-1]),
-            .m_out_data(l_in[CX][MROW-1]), .m_out_valid(l_inv[CX][MROW-1]),
-            .m_out_busy(l_inb[CX][MROW-1]),
-            .a_in_data(l_out[CX][AROW-1]), .a_in_valid(l_outv[CX][AROW-1]),
-            .a_in_busy(l_outb[CX][AROW-1]),
-            .a_out_data(l_in[CX][AROW-1]), .a_out_valid(l_inv[CX][AROW-1]),
-            .a_out_busy(l_inb[CX][AROW-1]),
+            .noc_in_data(l_out[CX][CROW-1]), .noc_in_valid(l_outv[CX][CROW-1]),
+            .noc_in_busy(l_outb[CX][CROW-1]),
+            .noc_out_data(l_in[CX][CROW-1]), .noc_out_valid(l_inv[CX][CROW-1]),
+            .noc_out_busy(l_inb[CX][CROW-1]),
             .fills_done(cf[gy]), .gemms_done(cg[gy]), .drains_done(cd[gy])
         );
         assign cst[gy]     = cu.st;

@@ -12,7 +12,11 @@ module NoCRouter #(
     parameter POS_X       = 1,
     parameter POS_Y       = 1,
     parameter GRID_LO     = 1,
-    parameter GRID_HI     = 14
+    parameter GRID_HI     = 14,
+    // Per-axis clamp bounds, so the mesh need not be square. Both default to
+    // GRID_HI, which leaves every square instantiation unchanged.
+    parameter GRID_X_HI   = GRID_HI,
+    parameter GRID_Y_HI   = GRID_HI
 )(
     input clk,
     input rst,
@@ -166,6 +170,36 @@ module NoCRouter #(
     // in_heads / in_reqs in OutPortSwitch.
     wire [4:0] gn, ge, gs, gw, gl;
 
+    // ================= turns XY routing can never ask for ==================
+    // Whether each neighbour is a ROUTER. Derived from the clamp bounds rather
+    // than passed in: a second parameter could disagree with the first.
+    localparam N_RTR = (POS_Y > GRID_LO);
+    localparam S_RTR = (POS_Y < GRID_Y_HI);
+    localparam W_RTR = (POS_X > GRID_LO);
+    localparam E_RTR = (POS_X < GRID_X_HI);
+
+    // A router neighbour has already routed what it hands over, so W-in carries
+    // r_pos_x >= MX, E-in r_pos_x <= MX, and N/S-in r_pos_x == MX with r_pos_y
+    // on their own side of MY. An EDGE PE constrains nothing -- it injects.
+    //
+    // The Y-to-X turns die only AWAY from the boundary column: `at_router &&
+    // pos_x < MX` is the OUTWARD HOP to an edge PE and it fires whichever port
+    // the flit arrived on, so a vec core at (x,0) reaching MAG at (0,y) really
+    // is north-in to west-out. Bit order {L,W,S,E,N}, as port_choice.
+    localparam [4:0] N_KILL = {1'b0, (N_RTR && W_RTR), 1'b0, (N_RTR && E_RTR), N_RTR};
+    localparam [4:0] S_KILL = {1'b0, (S_RTR && W_RTR), S_RTR, (S_RTR && E_RTR), 1'b0};
+    localparam [4:0] W_KILL = {1'b0, W_RTR, 1'b0, 1'b0, 1'b0};
+    localparam [4:0] E_KILL = {1'b0, 1'b0, 1'b0, E_RTR, 1'b0};
+    // A U-turn on an EDGE-facing side, and local->local, stay reachable: the way
+    // in is a PE addressing its own coordinate. Killing them too was measured at
+    // ~380 LUT across the mesh, which does not buy a driver-side invariant every
+    // future author would have to know.
+
+    wire [4:0] n_req_m = n_req & ~N_KILL;
+    wire [4:0] e_req_m = e_req & ~E_KILL;
+    wire [4:0] s_req_m = s_req & ~S_KILL;
+    wire [4:0] w_req_m = w_req & ~W_KILL;
+
     // Transpose. An input's grant vector is indexed by destination and an output's
     // by source, so each input collects one bit from each of the five outputs.
     // Bit order here is {local, west, south, east, north}, the same order
@@ -185,7 +219,9 @@ module NoCRouter #(
         .POS_X(POS_X),
         .POS_Y(POS_Y),
         .GRID_LO(GRID_LO),
-        .GRID_HI(GRID_HI)
+        .GRID_HI(GRID_HI),
+        .GRID_X_HI(GRID_X_HI),
+        .GRID_Y_HI(GRID_Y_HI)
     ) north_in_switch (
         .clk(clk), .rst(rst),
         .data_in(north_in_data), .data_valid(north_in_valid), .port_busy(north_in_busy),
@@ -217,36 +253,55 @@ module NoCRouter #(
     ) north_out_switch (
         .clk(clk), .rst(rst),
         .in_heads({l_head, w_head, s_head, e_head, n_head}),
-        .in_reqs ({l_req[0], w_req[0], s_req[0], e_req[0], n_req[0]}),
+        .in_reqs ({l_req[0], w_req_m[0], s_req_m[0], e_req_m[0], n_req_m[0]}),
         .grants(gn),
         .port_out(north_out_data), .out_valid(north_out_valid), .busy(north_out_busy)
     ),
     east_out_switch (
         .clk(clk), .rst(rst),
         .in_heads({l_head, w_head, s_head, e_head, n_head}),
-        .in_reqs ({l_req[1], w_req[1], s_req[1], e_req[1], n_req[1]}),
+        .in_reqs ({l_req[1], w_req_m[1], s_req_m[1], e_req_m[1], n_req_m[1]}),
         .grants(ge),
         .port_out(east_out_data), .out_valid(east_out_valid), .busy(east_out_busy)
     ),
     south_out_switch (
         .clk(clk), .rst(rst),
         .in_heads({l_head, w_head, s_head, e_head, n_head}),
-        .in_reqs ({l_req[2], w_req[2], s_req[2], e_req[2], n_req[2]}),
+        .in_reqs ({l_req[2], w_req_m[2], s_req_m[2], e_req_m[2], n_req_m[2]}),
         .grants(gs),
         .port_out(south_out_data), .out_valid(south_out_valid), .busy(south_out_busy)
     ),
     west_out_switch (
         .clk(clk), .rst(rst),
         .in_heads({l_head, w_head, s_head, e_head, n_head}),
-        .in_reqs ({l_req[3], w_req[3], s_req[3], e_req[3], n_req[3]}),
+        .in_reqs ({l_req[3], w_req_m[3], s_req_m[3], e_req_m[3], n_req_m[3]}),
         .grants(gw),
         .port_out(west_out_data), .out_valid(west_out_valid), .busy(west_out_busy)
     ),
     local_out_switch (
         .clk(clk), .rst(rst),
         .in_heads({l_head, w_head, s_head, e_head, n_head}),
-        .in_reqs ({l_req[4], w_req[4], s_req[4], e_req[4], n_req[4]}),
+        .in_reqs ({l_req[4], w_req_m[4], s_req_m[4], e_req_m[4], n_req_m[4]}),
         .grants(gl),
         .port_out(local_out_data), .out_valid(local_out_valid), .busy(local_out_busy)
     );
+
+`ifndef SYNTHESIS
+    // A mask that is wrong presents as a HANG, not a wrong answer: the request
+    // is never granted, the inport's hold slot never clears, and the fabric
+    // wedges several modules from the cause. Name it at the router instead.
+    // Said ONCE: the request is held forever, so an unguarded report is an
+    // unbounded flood on top of the hang.
+    reg said = 1'b0;
+    always @(posedge clk) begin
+        if (!rst && !said &&
+            (|(n_req & N_KILL) || |(e_req & E_KILL) ||
+             |(s_req & S_KILL) || |(w_req & W_KILL))) begin
+            said <= 1'b1;
+            $display("%0t ERROR NoCRouter(%0d,%0d): a turn XY routing was assumed never to ask for -- n%b/%b e%b/%b s%b/%b w%b/%b as {L,W,S,E,N}. This flit will never be granted.",
+                     $time, POS_X, POS_Y, n_req, N_KILL, e_req, E_KILL,
+                     s_req, S_KILL, w_req, W_KILL);
+        end
+    end
+`endif
 endmodule

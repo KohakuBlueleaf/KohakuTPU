@@ -53,7 +53,7 @@ module mag_wslot_tb;
 
     // One AXI channel per MAG memory port, plus one for the host upload.
     localparam integer MEMP = 1;
-    localparam integer NCH  = MEMP + 1;
+    localparam integer NCH  = MEMP + 2;   // ports, upload, mover
 
     wire [NCH*4-1:0]    m_awid, m_arid, m_bid, m_rid;
     wire [NCH*AW-1:0]   m_awaddr, m_araddr;
@@ -100,7 +100,8 @@ module mag_wslot_tb;
         .mem_out_busy(1'b0),
         // NoC control port: tie off, nothing dispatches here
         // No agent port to tie off: it shares the memory ports now.
-        .mem_rd_count(), .mem_wr_count()
+        .mem_rd_count(), .mem_wr_count(),
+        .mv_busy(), .mv_fault(), .mv_done()
     );
 
     // ---- write-response delay -------------------------------------------
