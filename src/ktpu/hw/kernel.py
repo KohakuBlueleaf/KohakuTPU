@@ -646,22 +646,42 @@ def _slots(passes):
     return starts
 
 
-def control(passes, prog=None):
+def control(passes, prog=None, baseline=None):
     """The control half of a round: clear, seed credit, kick every pass, wait.
 
     The passes in a round have no dependency on each other, so they are all
-    launched before any is awaited, and completion is a single count for the
-    whole machine rather than a poll per cluster.
+    launched before any is awaited.
+
+    `baseline` chooses HOW the round is awaited, and the choice is a
+    correctness one on a mesh where anything else signals:
+
+    * None -- one poll of `A_SIG_DONE` for the whole machine. Cheapest, and
+      sound only while the clusters in this round are the sole source of
+      signals, because that register counts completions from EVERY node.
+    * a mapping of cluster coordinate to its signal count read JUST BEFORE
+      this round -- one poll per cluster against that cluster's own
+      `NODE_STATUS`. Immune to a vector core retiring a kernel or answering a
+      `CU_DATA` burst mid-round, which the shared counter is not.
 
     Used both to MEASURE a candidate round and to build the real one, so the
-    two can never disagree about what a round costs.
+    two can never disagree about what a round costs; the per-cluster form
+    costs one command per cluster rather than one for the round.
     """
     prog = dev.Program() if prog is None else prog
-    prog.clear_done()
+    if baseline is None:
+        prog.clear_done()
     prog.seed_credits(dev.INST_DEPTH)
     for p, base in zip(passes, _slots(passes)):
         prog.kick(*p.cluster, base=base, nflits=len(p.flits))
-    prog.await_all(sum(len(p.flits) for p in passes))
+    if baseline is None:
+        prog.await_all(sum(len(p.flits) for p in passes))
+    else:
+        want = {}
+        for p in passes:
+            c = tuple(p.cluster)
+            want[c] = want.get(c, baseline[c]) + len(p.flits)
+        for c, n in want.items():
+            prog.await_node_at(c[0], c[1], n)
     prog.done(0xC0DE)
     return prog
 

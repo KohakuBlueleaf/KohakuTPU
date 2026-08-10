@@ -12,6 +12,49 @@ against the RTL rather than against the one bench that existed at the time.
 | what a program looks like, and why setup is not commands | [`../isa/orchestrator.md`](../isa/orchestrator.md) §6–7 |
 | how a GEMM of arbitrary size becomes that program | [`../isa/kernel.md`](../isa/kernel.md) |
 
+## Where the host driver lives now
+
+`ktpu.hw.device` (transport + control program), `ktpu.hw.board` (the machine as
+data), `ktpu.hw.fpga` (a live session), `ktpu.hw.runtime` (the device surface:
+allocate, copy, compile, call). `scripts/py/run_fpga.py` is the entry point.
+
+### The packing gap, and why `mm_mover` is the answer
+
+**Recorded, not built.** Nothing below exists, and the first link is the only
+one reachable today.
+
+`runtime.copyin` is a raw byte copy, because that is what a tensor library's
+allocator contract is — no shape, no dtype, no strides, and they cannot be
+added without breaking it. But MAG fetches a **tile-major** FP16 image, which
+`bench.upload` builds host-side. So today **the caller packs**, and that is
+structural rather than a stopgap: the layout has to be fixed by something that
+knows shape and stride, and `copyin` by definition does not.
+
+**`mm_mover` is exactly that something, and it is currently unused.** It is two
+`mx_tdesc` descriptor walkers with per-dimension counts, strides, axes and
+steps — a strided gather/scatter engine, and row-major to tile-major is the
+transformation such an engine exists to perform. The intended shape is:
+`copyin` does a linear DMA into a staging region, then the mover repacks
+on-device into the image MAG reads.
+
+That reframes the mover: it is not a fill utility, it is the missing half of
+the data path. The dependency chain is
+
+    clean copyin -> on-device repack -> mm_mover -> a bitstream carrying the
+    AXI command path (`A_MV_CFG`) -> the block design that wires it
+
+On the shipped card `mv_cfg_en` has no net at all, so the mover cannot be
+commanded and the PRNG inside it is equally unreachable. Host-side packing is
+correct and shippable until that changes.
+
+One driver-side constraint to honour when it does: a descriptor dimension is an
+ORDERED PAIR of writes — `0x18` loads, `0x20` commits — and nothing may
+interleave. A `write_block` that coalesced a descriptor into one contiguous
+burst would be legal AXI and silently wrong, so that path must stay
+word-at-a-time by construction rather than by comment.
+
+---
+
 Two things have changed since, and the old text is wrong about both.
 
 **A program no longer contains the flits.** Instruction flits are *setup data*

@@ -6,26 +6,17 @@ emits is byte-identical to the one `driver.bench.build` emits -- and that stream
 is what `xsim.py mag_driver` executes. Identical bytes mean the RTL cannot tell
 the two apart.
 
-Three things have to be reconciled first, and each is a real interface fact
-rather than an encoding bug:
-
-  units    the legacy `Layout`'s `a_word`/`b_word`/`c_word` count 256-BIT words;
-           a ktpu `Program` counts 32-bit words. A factor of eight.
-  preq     `bench.build` pre-quantises both operands into memory, so its FILLs
-           set the bit. It is a property of the TENSOR and the driver picks it.
-  emit     the legacy GEMM carries C's base and sets `emit`, so the sweep hands
-           sub-tiles out as it finishes and the DRAIN is a barrier (`fuse`).
+The reconciliation the two planners need -- word units, `preq`, `emit` -- lives
+in `ktpu.hw.fromdsl`, which is also what `scripts/py/run_dsl.py` stages into a
+real simulation. Byte-identity here and a scored answer there are then two
+claims about the same code rather than about two reimplementations of it.
 """
 
 import ktpu.dsl as D
-from ktpu.codegen import codegen
-from ktpu.codegen.encode import flit
+from ktpu.hw import fromdsl
+from ktpu.hw.fromdsl import ONE_CU
 from ktpu.ir import FP16
-from ktpu.ir.program import Opcode
 from ktpu.passes import lower
-from ktpu.target import Target
-
-ONE_CU = Target(name="one-cu", clusters=1, vector_cores=0)
 
 
 def _reference(m, k, n):
@@ -36,39 +27,7 @@ def _reference(m, k, n):
 
 
 def _ktpu_flits(prob, m, k, n):
-    """ktpu's flits for the same problem, relocated onto the legacy layout."""
-    graph = D.trace(
-        lambda a, b: a @ b, D.TensorSpec((m, k), FP16), D.TensorSpec((k, n), FP16)
-    )
-    sched = lower(graph, ONE_CU)
-    prog = codegen(sched, m, k, n, ONE_CU)
-
-    lay = prob.layout
-    target = {"v0": lay.a_word * 8, "v1": lay.b_word * 8, "v2": lay.c_word * 8}
-    spans = {r.name: (r.word, r.end) for r in prog.memory.regions}
-
-    for inst in prog.insts:
-        if "word" in inst.fields:
-            for name, (lo, hi) in spans.items():
-                if lo <= inst.fields["word"] < hi and name in target:
-                    inst.fields["word"] += target[name] - lo
-                    break
-        match inst.op:
-            case Opcode.FILL:
-                inst.fields["preq"] = 1
-            case Opcode.GEMM:
-                inst.fields["word"] = target["v2"]
-                inst.fields["emit"] = 1
-            case Opcode.DRAIN:
-                inst.fields["fuse"] = 1
-            case _:
-                pass
-
-    cluster = [
-        i for i in prog.insts if i.op in (Opcode.FILL, Opcode.GEMM, Opcode.DRAIN)
-    ]
-    out = [flit(i, last=i.op is Opcode.DRAIN) for i in cluster]
-    return [out[1], out[0], *out[2:]]
+    return fromdsl.flits(prob, m, k, n)
 
 
 def test_the_flit_stream_is_byte_identical_to_the_planner_xsim_runs():

@@ -92,20 +92,18 @@ L1_A_ENTRIES = 128  # mx_cluster_cu GA
 L1_B_ENTRIES = 256  # mx_cluster_cu GB
 L1_BANKS = 2  # A chunks live at once
 L1_ENTRIES = L1_A_ENTRIES  # kept for callers that assume one number
-# ONE CLUSTER PER MESH ROW, manager at (1,y) and accumulator at (2,y) --
-# mag_driver_tb builds exactly that shape and must be compiled with the same
-# count, which `sim.Session.build` passes as `-d NCL=`.
+# ONE CLUSTER PER ROUTER LOCAL. mag_driver_tb builds exactly the shape
+# :func:`_grid` describes and must be compiled with the same count, which
+# `sim.Session.build` passes as `-d NCL=`.
+#
+#   NCL = 2   1x2 mesh, 1 per row     cu (1,1) (1,2)
+#   NCL = 4   1x4 mesh, 1 per row     cu (1,1)..(1,4)
+#   NCL = 8   2x4 mesh, 2 per row     cu (1,1) (2,1) .. (1,4) (2,4)
 #
 # The default is 2 because that is what every number in .plans/ was measured
-# on. `KOHAKU_NCL=8` re-elaborates for eight, which is the "8 CU per SLR"
-# architecture -- and the shape no longer has to grow with it: the output grid
-# is m_tiles x n_tiles, so what a cluster count needs is TILES to hand out, in
-# either dimension, rather than a wide N.
-#   NCL = 2   2x2 mesh, HALF = 1   managers at (1,1) (1,2)
-#   NCL = 4   4x2 mesh, HALF = 2   managers at (1,1) (2,1) (1,2) (2,2)
-#   NCL = 8   4x4 mesh, HALF = 2   ... rows 1..4
-# A square-ish mesh, not a strip: half the hops to memory on the far side at
-# eight clusters, and the shape an SLR actually lays out.
+# on. `KOHAKU_NCL=8` re-elaborates for eight, the "8 CU per SLR" architecture,
+# and 8 is now the 2x4 of src/synth_top/maps/mesh_2x4.txt rather than a 4x4
+# with half its locals tied off.
 NCLUSTER_ENV = int(os.environ.get("KOHAKU_NCL", "2"))
 
 # mag's memory-port coordinates are MEM_X/MEM_X1/MEM_X2/MEM_X3, so the mesh has
@@ -113,45 +111,85 @@ NCLUSTER_ENV = int(os.environ.get("KOHAKU_NCL", "2"))
 MAX_MEM_ROWS = 4
 
 
-def _grid(ncl):
-    """(columns, clusters per band, rows) for a cluster count.
+# Columns the bench will build. Rows are memory ports and are capped by mag.v;
+# columns are capped only to keep the count list finite.
+MAX_MESH_COLS = 4
 
-    MANAGERS OUTSIDE, ACCUMULATORS INSIDE -- two dataflow rings back to back::
 
-        MAG  mgr mgr mgr mgr      row 1     band 0
-        MAG  acu acu acu acu      row 2
-        MAG  acu acu acu acu      row 3     band 1
-        MAG  mgr mgr mgr mgr      row 4
+# WHICH MACHINE THE COORDINATES DESCRIBE. Not a preference -- a bitstream is
+# one or the other, and sending a flit to the wrong node is a hang.
+#
+#   "merged"  a cluster is ONE NoC node. mx_cluster_cu with CU_X/CU_Y.
+#   "split"   a cluster is TWO -- manager at (x,y), accumulator at (x+1,y).
+#             The machine built before 2026-08-10, and the one on any bitstream
+#             synthesised from that RTL.
+#
+# THE FLIT LAYOUT AND CU_INST ARE IDENTICAL BETWEEN THEM -- not one bit moved
+# -- so the compiler's machine code is valid for both and only the dispatch
+# coordinates differ. That is the whole reason this is a mode and not a branch.
+LAYOUTS = ("merged", "split")
+LAYOUT = os.environ.get("KOHAKU_LAYOUT", "merged")
 
-    A cluster is a COLUMN of one band, so its two endpoints are on ADJACENT
-    routers rather than straddling another cluster's node.
+
+def _grid(ncl, layout=None):
+    """(columns, clusters per row, rows) for a cluster count.
+
+    Merged: ONE CLUSTER PER ROUTER LOCAL, filling row-major, rows before
+    columns because a row is a MAG memory port and a column is not -- 8
+    clusters is 2x4, not 4x2. Mirrors mag_driver_tb.v.
+
+    Split: one cluster per COLUMN of a two-row band, manager on the band's
+    outer row and accumulator on the inner one, so a band costs two rows.
     """
-    ncol = min(4, ncl)
-    bands = (ncl + ncol - 1) // ncol
-    return ncol, ncol, bands * 2
+    if (layout or LAYOUT) == "split":
+        # TWO ADJACENT COLUMNS OF ONE ROW, not two rows of one column. Verified
+        # against the shipped bitstream's synthesis log, which elaborated
+        # MGR_X=1 MGR_Y=1 with ACU_X=2 ACU_Y=1 -- the accumulator is beside its
+        # manager, not below it. Rows are MAG ports and still fill first.
+        nrow = min(MAX_MEM_ROWS, ncl)
+        per_row = (ncl + nrow - 1) // nrow
+        nrow = (ncl + per_row - 1) // per_row
+        return 2 * per_row, per_row, nrow
+    nrow = min(MAX_MEM_ROWS, ncl)
+    ncol = (ncl + nrow - 1) // nrow
+    # Tighten: 9 clusters over 4 rows needs 3 columns, and 3 columns need only
+    # 3 rows. Skipping this builds a fourth row whose MAG port serves nothing.
+    nrow = (ncl + ncol - 1) // ncol
+    return ncol, ncol, nrow
 
 
-# The counts whose mesh the bench can actually generate: the managers have to
-# divide evenly into the left half of the columns, and every row needs a memory
-# port of its own.
-CLUSTER_COUNTS = tuple(
-    n for n in range(1, 2 * MAX_MEM_ROWS + 1) if _grid(n)[2] <= MAX_MEM_ROWS
-)
-# EVERY COUNT UP TO THE ROW BUDGET, not just the ones that tile evenly. A band
-# that is not full is still a mesh the bench can generate -- the spare columns
-# simply have no cluster on them -- so 3, 5, 6 and 7 are SUPPORTED, merely not
-# optimal. Excluding them said "the hardware cannot" when the truth was "the
-# work divides badly", and that is a driver's problem to report, not a mesh
-# generator's to forbid.
+def cluster_counts(layout=None):
+    """Counts whose mesh this layout can build. Split tops out at 8."""
+    if (layout or LAYOUT) == "split":
+        return tuple(
+            n
+            for n in range(1, 2 * MAX_MEM_ROWS + 1)
+            if _grid(n, "split")[2] <= MAX_MEM_ROWS
+        )
+    return tuple(
+        n
+        for n in range(1, MAX_MEM_ROWS * MAX_MESH_COLS + 1)
+        if _grid(n)[0] <= MAX_MESH_COLS
+    )
 
 
-def mesh(ncl):
+CLUSTER_COUNTS = cluster_counts()
+# EVERY COUNT UP TO THE GRID, not just the ones that tile evenly: a last row
+# that is not full is still a mesh the bench can generate, so 3, 5, 6 and 7 are
+# SUPPORTED, merely not optimal. Excluding them said "the hardware cannot" when
+# the truth was "the work divides badly", and that is a driver's problem to
+# report rather than a mesh generator's to forbid.
+#
+# The ceiling was 8, because a cluster used to occupy two rows of locals. One
+# node per cluster lifts it to 16.
+
+
+def mesh(ncl, layout=None):
     """The router grid, cluster endpoints and MAG's ports at this count.
 
     Mirrors the generate block in tests/mas/mag_driver_tb.v: NCOL columns of
-    routers by NROW rows, cluster i at column ``i % HALF`` of row ``i // HALF``
-    with its manager on the left half and its accumulator directly across, and
-    one MAG memory port west of each row.
+    routers by NROW rows, cluster i at column ``i % NCOL`` of row
+    ``i // NCOL``, and one MAG memory port west of each row.
 
     THERE IS NO AGENT NODE. It used to sit east of row 1 -- one module attached
     at both edges of the mesh, with every dispatch through a single link. The
@@ -163,57 +201,64 @@ def mesh(ncl):
     derives the memory map here: a picture of a mesh the machine does not have
     still looks like a mesh.
     """
-    if ncl not in CLUSTER_COUNTS:
+    lay = layout or LAYOUT
+    if lay not in LAYOUTS:
+        raise ValueError(f"unknown layout {lay!r}; use one of {list(LAYOUTS)}")
+    counts = cluster_counts(lay)
+    if ncl not in counts:
         raise ValueError(
-            f"{ncl} clusters is not a mesh this bench builds; "
-            f"use one of {list(CLUSTER_COUNTS)}"
+            f"{ncl} clusters is not a {lay} mesh this bench builds; "
+            f"use one of {list(counts)}"
         )
-    ncol, per_band, nrow = _grid(ncl)
+    ncol, per_band, nrow = _grid(ncl, lay)
 
-    def _cluster(i):
-        band = i // ncol
+    def _merged(i):
         cx = i % ncol
-        # Band 0 hugs the top, band 1 is MIRRORED against the bottom, so the
-        # accumulators meet in the middle and every manager is on an outer row.
-        mrow = 1 if band == 0 else nrow
-        arow = 2 if band == 0 else nrow - 1
-        # Which row's edge this cluster's memory traffic exits by. The port is
-        # on the NoC, not on a cluster, so this is a routing choice rather than
-        # an ownership one -- near columns exit by the manager's row, far ones
-        # by the accumulator's, which keeps both of a band's ports carrying.
-        prow = mrow if cx < (ncol + 1) // 2 else arow
+        crow = i // ncol + 1
+        # Its own row's port: the nearest exit is the one reached without a
+        # north-south hop, and every cluster can still reach every port.
+        return {"cu": [cx + 1, crow], "port": [0, crow], "row": crow}
+
+    def _split(i):
+        row = i // per_band + 1
+        slot = i % per_band
+        # `cu` is the DISPATCH coordinate in both layouts -- the manager here --
+        # so everything downstream reads one key and needs no layout awareness.
+        # The accumulator is the next column along and is never dispatched to;
+        # sending an instruction flit there is a hang, not an error.
         return {
-            "mgr": [cx + 1, mrow],
-            "acu": [cx + 1, arow],
-            "port": [0, prow],
-            "row": mrow,
+            "cu": [2 * slot + 1, row],
+            "acu": [2 * slot + 2, row],
+            "port": [0, row],
+            "row": row,
         }
 
+    place = _split if lay == "split" else _merged
     return {
         "ncl": ncl,
         "ncol": ncol,
         "nrow": nrow,
-        # Clusters per band -- a band is the two rows one ring occupies.
+        "layout": lay,
+        # Clusters per row, which is also how many share that row's MAG port.
         "half": per_band,
-        # Port p is west of row p+1. Both of a cluster's endpoints reach it by
-        # walking west along their own row, so no flit crosses into another
-        # port's row.
+        # Port p is west of row p+1. A cluster reaches its own by walking west
+        # along its row, so no flit crosses into another port's row.
         "ports": [[0, y + 1] for y in range(nrow)],
         # The agent answers HERE, on port 0, rather than at a node of its own.
         "agent_port": [0, 1],
-        "clusters": [_cluster(i) for i in range(ncl)],
+        "clusters": [place(i) for i in range(ncl)],
     }
 
 
-def cluster_list(ncl):
-    """Manager coordinates, which is what a kernel dispatches to."""
-    return [tuple(c["mgr"]) for c in mesh(ncl)["clusters"]]
+def cluster_list(ncl, layout=None):
+    """Cluster dispatch coordinates, which is what a kernel dispatches to."""
+    return [tuple(c["cu"]) for c in mesh(ncl, layout)["clusters"]]
 
 
 PACKINGS = ("spread", "packed")
 
 
-def dispatch(mesh_ncl, use=None, packing="spread"):
+def dispatch(mesh_ncl, use=None, packing="spread", layout=None):
     """Which of a mesh's clusters a program kicks, and what that costs.
 
     NCL is compiled into the bench, but WHICH clusters a program dispatches to
@@ -238,7 +283,7 @@ def dispatch(mesh_ncl, use=None, packing="spread"):
     build: 2 of 8 spread has one port each, like the NCL=2 build, but its flits
     travel a 4x4 mesh rather than a 2x2 one.
     """
-    cl = mesh(mesh_ncl)["clusters"]
+    cl = mesh(mesh_ncl, layout)["clusters"]
     use = len(cl) if use is None else int(use)
     if not 1 <= use <= len(cl):
         raise ValueError(
@@ -271,7 +316,7 @@ def dispatch(mesh_ncl, use=None, packing="spread"):
         "use": use,
         "packing": packing,
         "index": pick,
-        "clusters": [tuple(cl[i]["mgr"]) for i in pick],
+        "clusters": [tuple(cl[i]["cu"]) for i in pick],
         "rows": [cl[i]["row"] for i in pick],
         "ports": sorted(used_ports),
         # Clusters per active port. 1.0 means every dispatched cluster has a
@@ -280,9 +325,9 @@ def dispatch(mesh_ncl, use=None, packing="spread"):
     }
 
 
-def dispatch_list(mesh_ncl, use=None, packing="spread"):
-    """Just the manager coordinates, for callers that want the kernel's view."""
-    return dispatch(mesh_ncl, use, packing)["clusters"]
+def dispatch_list(mesh_ncl, use=None, packing="spread", layout=None):
+    """Just the node coordinates, for callers that want the kernel's view."""
+    return dispatch(mesh_ncl, use, packing, layout)["clusters"]
 
 
 CLUSTERS = cluster_list(NCLUSTER_ENV)
@@ -349,6 +394,12 @@ RTL = [
     "src/kohakumas/mx_quant.v",
     "src/kohakumas/axi_ram.v",
     "src/kohakumas/mag_mem_port.v",
+    # MAG instantiates the memory mover, which instantiates the PRNG and the
+    # descriptor walker. Adding a client to MAG means adding it here too: this
+    # list is what the DSL-to-xsim path elaborates.
+    "src/kohakutpu/matmul/mx_tdesc.v",
+    "src/kohakumas/mm_prng.v",
+    "src/kohakumas/mm_mover.v",
     "src/kohakumas/mag.v",
     "tests/mas/mag_driver_tb.v",
 ]
@@ -434,7 +485,37 @@ def padded_shape(m, k, n, tile):
     return _up(m, tile.m), _up(k, tile.k), _up(n, tile.n)
 
 
-def _tile_for(m, k, n):
+@dataclass(frozen=True)
+class Capacities:
+    """What ONE CLUSTER of the target machine holds.
+
+    Passed rather than read off the module globals, because a bitstream's are
+    frozen the day it is synthesised and the RTL's keep moving. Planning a shape
+    for capacities the machine does not have is SILENT: the CU wraps its tile
+    memory or its L1 and computes on operands that have overwritten each other.
+    Measured on silicon -- planning 128x64x128 for TILES=512 against a machine
+    built with 256 put 15,440 of 16,384 elements past 10% error, and every
+    gating check of the day passed. See :class:`ktpu.hw.board.Board`.
+    """
+
+    tiles: int
+    l1_a: int
+    l1_b: int
+    l1_banks: int
+    stage_flits: int
+
+
+def current_caps():
+    """The module globals, read at CALL time, as a :class:`Capacities`.
+
+    The default for every planner entry point, so a caller that passes nothing
+    behaves exactly as it did before capacities were a parameter -- including
+    picking up a constant a test or a session has patched.
+    """
+    return Capacities(TILES, L1_A_ENTRIES, L1_B_ENTRIES, L1_BANKS, STAGE_FLITS)
+
+
+def tile_for(m, k, n, caps=None):
     """The pass shape this problem will run with.
 
     CHOSEN FROM THE WHOLE PROBLEM. It used to be chosen from ``n // ncl``, the
@@ -447,16 +528,20 @@ def _tile_for(m, k, n):
     ONE definition and three callers -- :func:`check`, :func:`preview` and
     :func:`build`. A preview that chose its own tile would describe a different
     machine from the one that runs, which is worse than showing nothing.
+
+    ``caps`` is the machine being planned for; it defaults to this module's
+    constants, which describe the CURRENT RTL and not necessarily any bitstream.
     """
+    c = caps or current_caps()
     return kernel.choose_tile(
-        TILES,
-        L1_A_ENTRIES,
+        c.tiles,
+        c.l1_a,
         max(1, k // tensor.KBLOCK),
-        L1_B_ENTRIES,
+        c.l1_b,
         m=m,
         k=k,
         n=n,
-        banks=L1_BANKS,
+        banks=c.l1_banks,
     )
 
 
@@ -496,7 +581,7 @@ def plan(m, k, n, tile, preq=PREQ):
     return matmul.Layout(a_word=0, b_word=b0, c_word=c0), c0 + c_words
 
 
-def check(m, k, n, ncl=None, preq=PREQ, use=None, packing="spread"):
+def check(m, k, n, ncl=None, preq=PREQ, use=None, packing="spread", caps=None):
     """Every reason this shape will not run, in plain words. Empty means go.
 
     Three things can stop it: a shape below one sub-tile, a device image larger
@@ -533,7 +618,7 @@ def check(m, k, n, ncl=None, preq=PREQ, use=None, packing="spread"):
         why.append(f"minimum shape is {tensor.LANES}x{tensor.KBLOCK}x{tensor.LANES}")
         return why
 
-    tile = _tile_for(m, k, n)
+    tile = tile_for(m, k, n, caps)
     mp, kp, np_ = padded_shape(m, k, n, tile)
     _, end = plan(mp, kp, np_, tile, preq)
     if end > WORDS:
@@ -550,11 +635,22 @@ def check(m, k, n, ncl=None, preq=PREQ, use=None, packing="spread"):
     return why
 
 
-def preview(m, k, n, ncl=None, preq=PREQ, use=None, packing="spread", dist="lowrank"):
+def preview(
+    m,
+    k,
+    n,
+    ncl=None,
+    preq=PREQ,
+    use=None,
+    packing="spread",
+    dist="lowrank",
+    mesh_layout=None,
+    caps=None,
+):
     """What this shape BECOMES, without building operands or simulating.
 
     Every number here comes from the functions the real build uses -- the same
-    :func:`_tile_for`, :func:`padded_shape`, :func:`plan` and
+    :func:`tile_for`, :func:`padded_shape`, :func:`plan` and
     :func:`ktpu.hw.kernel.plan` -- so a preview cannot describe a different
     machine from the one that would run. Deriving it independently for speed
     would make it fast and wrong, which on a control panel is worse than slow.
@@ -570,7 +666,8 @@ def preview(m, k, n, ncl=None, preq=PREQ, use=None, packing="spread", dist="lowr
     """
     ncl = len(CLUSTERS) if ncl is None else ncl
     use = ncl if use is None else int(use)
-    why = check(m, k, n, ncl, preq, use, packing)
+    caps = caps or current_caps()
+    why = check(m, k, n, ncl, preq, use, packing, caps)
     out = {
         "asked": {"m": m, "k": k, "n": n},
         "ncl": ncl,
@@ -597,8 +694,8 @@ def preview(m, k, n, ncl=None, preq=PREQ, use=None, packing="spread", dist="lowr
     ):
         return out
 
-    disp = dispatch(ncl, use, packing)
-    tile = _tile_for(m, k, n)
+    disp = dispatch(ncl, use, packing, mesh_layout)
+    tile = tile_for(m, k, n, caps)
     mp, kp, np_ = padded_shape(m, k, n, tile)
     layout, end = plan(mp, kp, np_, tile, preq)
     kern = kernel.plan(
@@ -608,11 +705,11 @@ def preview(m, k, n, ncl=None, preq=PREQ, use=None, packing="spread", dist="lowr
         disp["clusters"],
         layout,
         tile,
-        stage_flits=STAGE_FLITS,
+        stage_flits=caps.stage_flits,
         ncmd=NCMD,
         preq=preq,
-        l1_a=L1_A_ENTRIES,
-        l1_b=L1_B_ENTRIES,
+        l1_a=caps.l1_a,
+        l1_b=caps.l1_b,
     )
     m_tiles, n_tiles = mp // tile.m, np_ // tile.n
     # AGAINST THE PADDED K, which is the sweep the machine really runs.
@@ -798,6 +895,8 @@ def build(
     preq=PREQ,
     use=None,
     packing="spread",
+    mesh_layout=None,
+    caps=None,
 ):
     """A random problem of this shape, tiled into passes and cut into rounds.
 
@@ -805,10 +904,16 @@ def build(
     program kicks. Neither divides the problem any more -- the tile and the
     padding come from the shape alone, and ``use`` only decides how many
     clusters the output grid is dealt across.
+
+    ``mesh_layout`` names the coordinate scheme -- "merged" or "split" -- spelled
+    out because `layout` is already the MEMORY map below. ``caps`` is what one
+    cluster HOLDS (:class:`Capacities`); coordinates go wrong loudly and
+    capacities go wrong silently. A hardware caller passes its board's.
     """
     ncl = len(CLUSTERS) if ncl is None else ncl
     use = ncl if use is None else int(use)
-    tile = _tile_for(m, k, n)
+    caps = caps or current_caps()
+    tile = tile_for(m, k, n, caps)
     mp, kp, np_ = padded_shape(m, k, n, tile)
 
     a0, bt0 = operands(m, k, n, seed, dist)
@@ -825,14 +930,14 @@ def build(
         # `build(..., ncl=8)` against a global set for two silently planned a
         # two-cluster program and labelled it eight. `dispatch` also chooses
         # WHICH of the mesh's clusters, which is not the same as the first N.
-        dispatch_list(ncl, use, packing),
+        dispatch_list(ncl, use, packing, mesh_layout),
         layout,
         tile,
-        stage_flits=STAGE_FLITS,
+        stage_flits=caps.stage_flits,
         ncmd=NCMD,
         preq=preq,
-        l1_a=L1_A_ENTRIES,
-        l1_b=L1_B_ENTRIES,
+        l1_a=caps.l1_a,
+        l1_b=caps.l1_b,
     )
     return Problem(
         a=a,
@@ -840,7 +945,7 @@ def build(
         layout=layout,
         kern=kern,
         programs=kernel.programs(kern),
-        disp=dispatch(ncl, use, packing),
+        disp=dispatch(ncl, use, packing, mesh_layout),
     )
 
 
@@ -942,6 +1047,21 @@ def read_result(work, prob):
     words = [
         0 if "x" in w else int(w, 16) for w in (work / "result.hex").read_text().split()
     ]
+    return decode_result(words, prob)
+
+
+def decode_result(words, prob):
+    """Decode device memory, as 256-bit words, into a [M][N] float array.
+
+    Separated from :func:`read_result` because it is the ONLY thing that knows
+    the drain's tile order, and a hardware run gets those words from a DMA read
+    rather than from `result.hex`. Two copies of this walk would be two chances
+    to disagree about the layout, and a layout disagreement reads as a numerical
+    fault several modules away.
+
+    `words` is indexed from the base of device memory, so it must be long enough
+    to reach `prob.layout.c_word + m_tiles*n_tiles*gm*gn`.
+    """
     t = prob.tile
     n_tiles = prob.n // t.n
     got = np.zeros((prob.m, prob.n))

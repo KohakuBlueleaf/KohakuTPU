@@ -254,18 +254,19 @@ def _in(region, inst):
     return region.word <= inst.fields["word"] < region.end
 
 
-def test_a_16_op_chain_touches_memory_exactly_twice():
+def test_a_long_chain_touches_memory_exactly_twice():
     """The one that matters for overhead. VMODE bounds how many ops CHAIN --
     bypass the register file between adjacent ALUs -- it does not bound how long
-    a value lives. Sixteen ops is one load and one store per chunk, plus the
-    bias broadcast; treating each 4-op group as a checkpoint to DRAM cost a
-    245,760-word scratch region and 40% more vector instructions for the same
-    arithmetic."""
+    a value lives. However long the chain, it is one load and one store per
+    chunk plus the bias broadcast; treating each 4-op group as a checkpoint to
+    DRAM cost a 245,760-word scratch region and 40% more vector instructions
+    for the same arithmetic."""
     prog = _prog()
+    ops = sum(len(b.ops) for b in _bands() if b.engine is Engine.VECTOR)
     body = [i for i in prog.insts if i.node == (1, 1)]
     lds = [i for i in body if i.op is Opcode.VLD]
     sts = [i for i in body if i.op is Opcode.VST]
-    assert len([i for i in body if i.op is Opcode.VALU]) == 16
+    assert len([i for i in body if i.op is Opcode.VALU]) == ops
     assert len(sts) == 1
     assert len(lds) == 2
     assert sum(1 for i in lds if i.fields.get("bcast", "elem") != "elem") == 1

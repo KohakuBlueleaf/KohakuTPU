@@ -8,6 +8,18 @@ question that decides whether MXFP7 is the right format.
 Every one of them accumulates in FP32 so the ONLY difference between them is
 the operand format. Changing two things at once and comparing the results
 tells you nothing about either.
+
+CORRECTNESS IS A POSITION ON THIS LADDER, NOT A NUMBER UNDER A LIMIT. An
+absolute error bound is a property of the OPERANDS, not of the circuit --
+cancelling inputs raise every column's relative error together and will fail a
+perfect machine, which is why :func:`ladder` reports no thresholds. What it
+reports instead is `detach`: how far the answer sits from its own format's
+model, divided by what that format costs against FP64. Both terms are measured
+on the same operands, so extreme inputs scale them together and the ratio holds
+still. Under one, the circuit is nearer its own specification than that
+specification is to the truth; far above one, it is not implementing the format
+at all. Measured: 0.05 on working silicon, ~300 on a machine planned for
+capacities it did not have.
 """
 
 import numpy as np
@@ -299,10 +311,16 @@ def all_names():
 
 
 def matmul_in(name, a, bt):
-    """Run the matmul in `name`. FP32 accumulation unless listed in SPECIAL."""
-    if name in SPECIAL_MATMULS:
-        return SPECIAL_MATMULS[name](a, bt)
-    return _mm(ALL_FORMATS[name](a), ALL_FORMATS[name](bt))
+    """Run the matmul in `name`. FP32 accumulation unless listed in SPECIAL.
+
+    Overflow is not an accident here -- asking a narrow format to hold wide
+    operands is the measurement -- so numpy's warnings are silenced and the
+    saturation is reported by :func:`ladder` as `blown` instead.
+    """
+    with np.errstate(over="ignore", invalid="ignore"):
+        if name in SPECIAL_MATMULS:
+            return SPECIAL_MATMULS[name](a, bt)
+        return _mm(ALL_FORMATS[name](a), ALL_FORMATS[name](bt))
 
 
 REFERENCES = {
@@ -311,3 +329,120 @@ REFERENCES = {
     "bf16/fp32": matmul_bf16_fp32,
     "mxfp8/fp32": matmul_mxfp8_fp32,
 }
+
+# The operand format THIS MACHINE implements. `ktpu.hw.mxfp7` models the same
+# thing independently, and the ladder carries both: two implementations that
+# agree are evidence, and one that drifts is a finding.
+NATIVE = "int7 + E5M3"
+
+# Rows and columns of C the ladder is computed on. NOT an approximation: C[i,:]
+# depends only on A[i,:], so slicing A's rows gives exactly those rows of C.
+LADDER_ROWS = 64
+LADDER_COLS = 64
+
+INF = float("inf")
+
+
+def _pcts(v):
+    """Percentiles of a relative-error array, COUNTING what it could not measure.
+
+    Non-finite entries are reported, never dropped to make the rest tidy. A
+    column that overflowed its format is all-inf, and discarding those left it
+    reading as a perfect zero -- fp16 scored 0.000e+00 on operands that had
+    saturated it completely, which is the most flattering possible answer for
+    the worst possible result.
+    """
+    v = np.asarray(v, dtype=np.float64).ravel()
+    # NaN is "no relative error is defined here" -- the reference was zero -- and
+    # leaves the population. Inf is a real result that blew up, and stays in it.
+    undefined = int(np.isnan(v).sum())
+    v = v[~np.isnan(v)]
+    blown = int(np.isinf(v).sum())
+    finite = v[np.isfinite(v)]
+    stat = {
+        "over10": int((finite > 0.10).sum()) + blown,
+        "blown": blown,
+        "undefined": undefined,
+        "n": int(v.size),
+    }
+    if finite.size == 0:
+        return {**stat, "p50": INF, "p90": INF, "p99": INF, "max": INF}
+    # The percentiles are over the whole population including the blown ones,
+    # so a column that overflowed half its elements cannot read as half-perfect.
+    pad = np.concatenate([finite, np.full(blown, np.inf)])
+    return {
+        **stat,
+        "p50": float(np.percentile(pad, 50)),
+        "p90": float(np.percentile(pad, 90)),
+        "p99": float(np.percentile(pad, 99)),
+        "max": float(pad.max()),
+    }
+
+
+def _rel(got, want):
+    """Elementwise |got-want|/|want|; NaN where the reference is exactly zero."""
+    g = np.asarray(got, dtype=np.float64)
+    w = np.asarray(want, dtype=np.float64)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        r = np.where(w != 0, np.abs(g - w) / np.abs(w), np.nan)
+    # inf-inf is NaN, so without this an overflowed matmul reads as "undefined
+    # reference", leaves the population, and the column looks clean.
+    return np.where(~np.isfinite(g) & (w != 0), np.inf, r)
+
+
+def ladder(a, bt, got=None, extra=None, names=None):
+    """The same matmul in every candidate format, as one comparable table.
+
+    THIS IS THE CORRECTNESS INSTRUMENT, and it carries no thresholds. A single
+    error limit is a property of the OPERANDS -- extreme inputs move it without
+    saying anything about the circuit -- whereas a ladder moves together, so
+    what stays meaningful is WHERE the machine sits on it. A fault shows as the
+    hardware column detaching from its own format's while the rest hold station.
+
+    ``got`` is the machine's answer and ``extra`` any further named matrices
+    (the driver's own MXFP7 model arrives this way, so this module need not
+    import it). Returns the per-format distributions against FP64, the pairwise
+    distance from ``got`` to every column, and which column it landed nearest.
+    """
+    a = np.asarray(a, dtype=np.float64)
+    bt = np.asarray(bt, dtype=np.float64)
+    full = (a.shape[0], bt.shape[0])
+    ra = slice(0, min(LADDER_ROWS, a.shape[0]))
+    rb = slice(0, min(LADDER_COLS, bt.shape[0]))
+    a, bt = a[ra], bt[rb]
+
+    cols = {nm: matmul_in(nm, a, bt) for nm in (names or matmul_names())}
+    for nm, mat in (extra or {}).items():
+        cols[nm] = np.asarray(mat, dtype=np.float64)[ra, rb]
+
+    want = matmul_fp64(a, bt)
+    out = {
+        "rows": int(a.shape[0]),
+        "cols": int(bt.shape[0]),
+        "k": int(a.shape[1]),
+        "of": [int(full[0]), int(full[1])],
+        "native": NATIVE,
+        "formats": {nm: _pcts(_rel(mat, want)) for nm, mat in cols.items()},
+    }
+    if got is None:
+        return out
+
+    g = np.asarray(got, dtype=np.float64)[ra, rb]
+    out["hardware"] = _pcts(_rel(g, want))
+    # A right circuit sits on its own format's rung and on no other.
+    out["to"] = {nm: _pcts(_rel(g, mat)) for nm, mat in cols.items()}
+    out["distance"] = {nm: s["p50"] for nm, s in out["to"].items()}
+    out["nearest"] = min(out["distance"], key=out["distance"].get)
+
+    # `extra`'s model wins over NATIVE: it models THIS MACHINE, output format
+    # included, and NATIVE never saturates. See the module docstring.
+    own = next(iter(extra or {}), NATIVE if NATIVE in cols else out["nearest"])
+    cost = out["formats"][own]["p50"]
+    out["own"] = own
+    out["detach"] = (out["distance"][own] / cost) if cost else INF
+    # Elements the answer puts past 10% that its own model does not. Two counts
+    # on the same operands, so this moves with neither scale nor cancellation.
+    out["excess"] = out["hardware"]["over10"] - out["formats"][own]["over10"]
+    if NATIVE in cols and own != NATIVE:
+        out["cross_check"] = _pcts(_rel(cols[own], cols[NATIVE]))["p50"]
+    return out

@@ -424,8 +424,14 @@ class Session:
         preq=bench.PREQ,
         use=None,
         packing="spread",
+        transform=None,
     ):
         """Build a problem of this shape, simulate it, and score the result.
+
+        ``transform`` is called with the built `Problem` before its files are
+        written, so a caller can substitute part of it -- `ktpu.hw.fromdsl`
+        swaps the planner's machine code for the DSL's and everything else,
+        operands included, stays the bench's own.
 
         ``m, k, n`` -- the project's shape order. Three bare integers, so a
         transposition here is a different GEMM that runs and answers.
@@ -483,6 +489,8 @@ class Session:
             prob = bench.build(
                 m, k, n, seed, ncl=ncl, dist=dist, preq=preq, use=use, packing=packing
             )
+            if transform is not None:
+                transform(prob)
             bench.write_files(self.work, prob)
 
             t0 = time.time()
@@ -511,7 +519,7 @@ class Session:
         )
 
 
-def payload(prob, got, log, asked, seed, dist, cold, seconds, budget):
+def payload(prob, got, log, asked, seed, dist, cold, seconds, budget, mesh_layout=None):
     """Everything a front end is given about one run.
 
     SEPARATE FROM THE SIMULATOR ON PURPOSE. Every field below is a pure
@@ -531,6 +539,11 @@ def payload(prob, got, log, asked, seed, dist, cold, seconds, budget):
         "mxfp8/fp32": formats.matmul_mxfp8_fp32(prob.a, prob.bt),
         "mxfp7 model": mxfp7.model_matmul(prob.a, prob.bt),
     }
+    # THE CORRECTNESS INSTRUMENT: the answer as one more column of the format
+    # ladder, so correctness is a position rather than a number under a limit.
+    lad = formats.ladder(
+        prob.a, prob.bt, got, extra={"mxfp7 model": refs["mxfp7 model"]}
+    )
     abs_err = np.abs(got - want)
     rel_err = np.where(want != 0, abs_err / np.abs(want), np.inf)
     tel = _telemetry(log)
@@ -586,7 +599,11 @@ def payload(prob, got, log, asked, seed, dist, cold, seconds, budget):
         # program kicks a subset, and drawing the smaller one would show a
         # machine that does not exist -- a 2x2 picture of a 4x4 device, with the
         # idle clusters and the ports they are still attached to simply absent.
-        "mesh": bench.mesh(prob.mesh_ncl),
+        # `mesh_layout` is the BOARD's, when a board is what ran this. Without
+        # it a hardware caller has to patch a module global to get its own
+        # coordinates drawn -- the last such patch in the driver. None keeps
+        # the bench's default, so every existing caller is unaffected.
+        "mesh": bench.mesh(prob.mesh_ncl, mesh_layout),
         # Which of that mesh's clusters were kicked, which idled, and how many
         # memory ports they landed on.
         "dispatch": prob.disp,
@@ -626,11 +643,12 @@ def payload(prob, got, log, asked, seed, dist, cold, seconds, budget):
         "err_hw": err_hw,
         "err_vs": {k: _stats(v, want) for k, v in refs.items() if k != "fp64"},
         "err_total": err_total,
+        "ladder": lad,
         "ok": ok,
         # ONE definition of pass, shared with run_matmul.py. Two front ends
         # scoring the same run by different rules is how a page reports
         # PASS on a run the command line fails.
-        "verdict": _verdict(ok, err_hw, err_total, tel),
+        "verdict": _verdict(ok, err_hw, err_total, tel, lad),
     }
 
 
@@ -832,19 +850,64 @@ def _round_fail_text(tel):
     return f"ROUND-FAIL round {rf['round']} at pc {rf['pc']}{where}"
 
 
-def _verdict(ok, err_hw, err_total, tel):
+def _ladder_checks(lad):
+    """The two scale-free gates, read off the format ladder.
+
+    Both compare the answer against the SAME operands' other columns, so an
+    extreme input moves numerator and denominator together and neither can be
+    beaten by choosing the operands.
+    """
+    detach, excess, own = lad["detach"], lad["excess"], lad["own"]
+    return [
+        {
+            "name": "sits on its own format",
+            "value": detach,
+            "limit": 1.0,
+            "gates": True,
+            "pass": detach < 1.0,
+            "text": f"detach {detach:.3f}  (nearest: {lad['nearest']})",
+            "why": f"distance to '{own}' over what '{own}' costs against fp64. "
+            "Under one the circuit is nearer its own specification than "
+            "that specification is to the truth. 0.00 correct, 411 noise",
+        },
+        {
+            "name": "no elements its model does not have",
+            "value": float(excess),
+            "limit": 0.0,
+            "gates": True,
+            "pass": excess <= 0,
+            "text": f"excess {excess:+d} past 10% vs the model's "
+            f"{lad['formats'][own]['over10']}",
+            "why": "a difference of two counts on one set of operands. Catches "
+            "what a median cannot: a lost sub-tile of 16 in 4,096 leaves "
+            "detach at 0.000 and shows here as +16",
+        },
+    ]
+
+
+def _verdict(ok, err_hw, err_total, tel, ladder=None):
     """PASS plus every criterion and the value that met or missed it.
 
-    ONLY A BROKEN RUN FAILS. A run fails when the machine did not finish, when
-    an RTL assertion fired, or when nothing usable came out -- a hang, an error,
-    or no answer. Precision is REPORTED against a reference figure and does not
-    gate, because the thresholds were fitted to one family of shapes and do not
-    hold across all of them: an output that cancels against its own partial sums
-    has a large relative error and a correct circuit. Failing on that trains the
-    reader to ignore the verdict, which costs more than it catches.
+    NOTHING HERE IS A THRESHOLD. An absolute error limit is a property of the
+    OPERANDS, not of the circuit -- cancelling inputs raise every format's error
+    together and will fail a perfect machine, so a limit can always be beaten by
+    choosing extreme values. The two gating measurements are instead ratios of
+    quantities measured on the SAME operands, which extreme inputs move together:
 
-    Each check carries `gates`. The ones that gate are the ones that mean the
-    run did not happen; the rest are measurements shown beside a reference.
+      detach   how far the answer sits from its own model, over what that model
+               costs against FP64. Under one, the circuit is nearer its own
+               specification than that specification is to the truth.
+      excess   elements the answer puts past 10% that its own model does not.
+               A difference of two counts, so cancellation cancels out.
+
+    They fail differently and both are needed. Measured: a lost sub-tile of 16
+    elements in 4,096 leaves `detach` at 0.0000 -- a median cannot see 16
+    elements -- and shows up only as `excess` +16. Pure noise is detach 411 and
+    excess +3,884. A perfect circuit on operands scaled 1e6, and on cancelling
+    operands, is 0.0000 and +0 in both: exactly the cases a fixed limit fails.
+
+    The old figures are still reported, now with no limit attached, because they
+    are worth reading and were never worth gating on.
     """
     hw, tot = err_hw["rel"], err_total["rel"]
     # Nothing usable came out. `p50` is only NaN when every element is
@@ -872,24 +935,28 @@ def _verdict(ok, err_hw, err_total, tel):
             "why": "a hang or a dead datapath leaves C unwritten; that is a "
             "failure, where a large error on a real answer is not",
         },
-        # ---- reported, not gating -------------------------------------------
+    ]
+    if ladder:
+        checks += _ladder_checks(ladder)
+    # ---- reported, never gating. No limit, because none of these has one that
+    # survives a change of operands; they are here to be read, not to judge.
+    checks += [
         {
             "name": "vs mxfp7 model p50",
             "value": hw["p50"],
-            "limit": 1e-3,
+            "limit": None,
             "gates": False,
-            "pass": hw["p50"] < 1e-3,
+            "pass": True,
             "text": f"{hw['p50']:.2e}",
-            "why": "is the CIRCUIT right -- both sides see the same format. "
-            "The most sensitive number here: a mis-slotted fetch moved "
-            "it 1.70e-4 -> 1.93e-4",
+            "why": "how far the circuit sits from its own format, in absolute "
+            "terms. `detach` is this same distance made scale-free",
         },
         {
             "name": "vs mxfp7 model worst",
             "value": hw["max"],
-            "limit": 10.0,
+            "limit": None,
             "gates": False,
-            "pass": hw["max"] < 10.0,
+            "pass": True,
             "text": f"{hw['max']:.2e}",
             "why": "shape and seed, not correctness -- an output that cancels "
             "against its own partial sums is large here and right",
@@ -897,20 +964,19 @@ def _verdict(ok, err_hw, err_total, tel):
         {
             "name": "elements over 10%",
             "value": hw["over10"],
-            "limit": 5e-4,
+            "limit": None,
             "gates": False,
-            "pass": hw["over10"] < 5e-4,
+            "pass": True,
             "text": f"{hw['over10_n']} of {hw['n']}",
-            "why": "the COUNT carries the signal: a lost sub-tile corrupts 16 "
-            "at once, which the worst element cannot distinguish from "
-            "cancellation",
+            "why": "the raw count; `excess` is what it is worth against the "
+            "same count for the model",
         },
         {
             "name": "vs fp64 p50",
             "value": tot["p50"],
-            "limit": 1e-2,
+            "limit": None,
             "gates": False,
-            "pass": tot["p50"] < 1e-2,
+            "pass": True,
             "text": f"{tot['p50']:.2e}",
             "why": "what the FORMAT costs, not whether the circuit is right",
         },

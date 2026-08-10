@@ -233,9 +233,8 @@ def test_memory_regions_do_not_overlap(ncl, m, k, n):
 
 @pytest.mark.parametrize("ncl", bench.CLUSTER_COUNTS)
 def test_mesh_matches_the_bench_generate_block(ncl):
-    """One memory port per row, accumulator directly across from its manager,
-    and NO agent node. A picture of a mesh the machine does not have still
-    looks like a mesh.
+    """One memory port per row, one node per cluster, and NO agent node. A
+    picture of a mesh the machine does not have still looks like a mesh.
 
     The agent used to hang off the east edge, which made MAG one module
     attached at both edges of the mesh with every dispatch through a single
@@ -248,24 +247,29 @@ def test_mesh_matches_the_bench_generate_block(ncl):
     assert "agent" not in M, "the agent has no node of its own any more"
     assert M["agent_port"] == [0, 1], "the agent answers on port 0"
     assert M["agent_port"] in M["ports"], "and that must be a real memory port"
-    # MANAGERS OUTSIDE, ACCUMULATORS INSIDE. A cluster is one COLUMN of a band,
-    # so its two endpoints are on ADJACENT routers -- the property the whole
-    # layout exists for. The previous arrangement put them two columns apart
-    # with another cluster's router physically between them.
-    for c in M["clusters"]:
-        assert c["acu"][0] == c["mgr"][0], "endpoints not in the same column"
-        assert abs(c["acu"][1] - c["mgr"][1]) == 1, "endpoints not adjacent"
-        assert c["mgr"][1] in (1, M["nrow"]), "manager not on an outer row"
-        assert 1 <= c["acu"][1] <= M["nrow"]
-        # A MAG port attaches to the NoC, not to a cluster, so this only says
-        # which row's edge the cluster's memory traffic leaves by -- one of its
-        # own two rows, never someone else's band.
-        assert c["port"] in ([0, c["mgr"][1]], [0, c["acu"][1]])
+    # ONE NODE PER CLUSTER, filling the grid row-major. An `acu` key here would
+    # draw a second endpoint the cluster no longer presents.
+    seen = set()
+    for i, c in enumerate(M["clusters"]):
+        assert "acu" not in c, "a cluster has one node, not two"
+        assert c["cu"] == [i % M["ncol"] + 1, i // M["ncol"] + 1]
+        assert tuple(c["cu"]) not in seen, "two clusters on one router local"
+        seen.add(tuple(c["cu"]))
+        # A cluster leaves by its OWN row's port: it is the only exit reachable
+        # without a north-south hop, and MAG presents one port per row.
+        assert c["port"] == [0, c["cu"][1]] == [0, c["row"]]
         assert c["port"] in M["ports"], "port is not one MAG actually presents"
-    # A band need NOT be full: 3, 5, 6 and 7 clusters leave columns empty and
-    # are supported, merely not optimal.
-    assert len(M["clusters"]) == ncl
-    assert bench.cluster_list(ncl) == [tuple(c["mgr"]) for c in M["clusters"]]
+    # ROWS BEFORE COLUMNS -- a row is a memory port and a column is not, so the
+    # grid takes the fewest columns that fit inside the row budget...
+    assert M["nrow"] <= bench.MAX_MEM_ROWS
+    assert M["ncol"] == -(-ncl // min(bench.MAX_MEM_ROWS, ncl))
+    # ...and then as many rows as those columns need. NO EMPTY ROW, ever: 9
+    # clusters is 3x3 and not 3x4, because a fourth row is a MAG memory port
+    # that would serve nothing. The last row may be PARTIAL (5, 7, 10) -- that
+    # is a local without a cluster, which costs nothing.
+    assert M["nrow"] == -(-ncl // M["ncol"])
+    assert M["ncol"] * M["nrow"] >= ncl > M["ncol"] * (M["nrow"] - 1)
+    assert bench.cluster_list(ncl) == [tuple(c["cu"]) for c in M["clusters"]]
 
 
 # ------------------------------------------------------------- the heat maps
@@ -380,32 +384,83 @@ def _rel(p50=1.7e-4, mx=1.0, over10=1e-5):
     }
 
 
+def _lad(detach=0.05, excess=0, own="mxfp7 model"):
+    return {
+        "detach": detach,
+        "excess": excess,
+        "own": own,
+        "nearest": own,
+        "formats": {own: {"over10": 76}},
+    }
+
+
 def test_verdict_passes_a_healthy_run():
-    v = sim._verdict(True, _rel(), _rel(p50=3e-3), {})
+    v = sim._verdict(True, _rel(), _rel(p50=3e-3), {}, _lad())
     assert v["pass"]
     assert all(c["pass"] for c in v["checks"])
+
+
+def test_nothing_that_gates_carries_a_threshold_on_an_ERROR():
+    """The user's rule, enforced structurally rather than by inspection.
+
+    Every gating check is a ratio or a difference of two quantities measured on
+    the same operands. An absolute error limit is a property of the OPERANDS,
+    so it can always be beaten by choosing extreme ones -- which is why the two
+    that used to gate (1e-3 on p50, 5e-4 on the over-10% rate) are gone.
+    """
+    v = sim._verdict(True, _rel(), _rel(p50=3e-3), {}, _lad())
+    named = {c["name"]: c for c in v["checks"] if c["gates"]}
+    assert set(named) == {
+        "orchestrator finished",
+        "produced an answer",
+        "sits on its own format",
+        "no elements its model does not have",
+    }
+    for c in v["checks"]:
+        if not c["gates"]:
+            assert c["limit"] is None, f"{c['name']} still reports a limit"
+
+
+@pytest.mark.parametrize("mx", [2.03, 220.0, 3.2e4])
+def test_a_cancelling_element_never_fails_the_run(mx):
+    """A worst element is shape and seed, not correctness.
+
+    An output that cancels against its own partial sums has a huge relative
+    error and a correct circuit -- a real 256-cube on silicon shows 2.03. It is
+    now reported with no limit at all rather than as a missed reference.
+    """
+    v = sim._verdict(True, _rel(mx=mx), _rel(p50=3e-3), {}, _lad())
+    assert v["pass"]
+    assert v["advisories"] == []
 
 
 @pytest.mark.parametrize(
     "kw,name",
     [
-        ({"p50": 2e-3}, "vs mxfp7 model p50"),
-        ({"mx": 220.0}, "vs mxfp7 model worst"),
-        ({"over10": 2e-3}, "elements over 10%"),
+        ({"detach": 404.7}, "sits on its own format"),
+        ({"excess": 16}, "no elements its model does not have"),
     ],
 )
-def test_precision_is_reported_and_does_not_fail_the_run(kw, name):
-    """A precision figure outside its reference is an ADVISORY, not a failure.
+def test_a_wrong_answer_FAILS_the_run(kw, name):
+    """The two shapes of wrong, and each needs its own gate.
 
-    The thresholds were fitted to one family of shapes. An output that cancels
-    against its own partial sums has a large relative error and a correct
-    circuit, so failing on it marks good runs bad -- and a verdict that cries
-    wolf is one nobody reads. Only a run that did not HAPPEN fails.
+    `detach` 404.7 is the measured 128x64x128 planned for capacities the
+    bitstream did not have; it catches a bulk fault. `excess` +16 is a lost
+    sub-tile, which leaves detach at 0.000 because a median cannot see 16
+    elements in 4,096 -- neither check subsumes the other.
     """
-    v = sim._verdict(True, _rel(**kw), _rel(p50=3e-3), {})
-    assert v["pass"], "a precision miss must not fail an otherwise sound run"
-    assert [c["name"] for c in v["checks"] if not c["pass"]] == [name]
-    assert v["advisories"] == [name], "and it must still be surfaced"
+    v = sim._verdict(True, _rel(), _rel(p50=3e-3), {}, _lad(**kw))
+    assert not v["pass"]
+    assert name in [c["name"] for c in v["checks"] if c["gates"] and not c["pass"]]
+
+
+def test_without_a_ladder_only_the_structural_checks_gate():
+    """No cross-format data means no correctness claim, not a free pass label."""
+    v = sim._verdict(True, _rel(p50=9.6e-1), _rel(p50=9.6e-1), {})
+    assert [c["name"] for c in v["checks"] if c["gates"]] == [
+        "orchestrator finished",
+        "produced an answer",
+    ]
 
 
 def test_verdict_fails_when_nothing_came_out():
@@ -427,17 +482,27 @@ def test_verdict_fails_on_rtl_assertions_and_on_no_completion():
     assert not sim._verdict(False, _rel(), _rel(p50=3e-3), {})["pass"]
 
 
-def test_verdict_matches_the_documented_thresholds():
-    """The gate is quoted in run_matmul.py's docstring and in the page, so the
-    numbers are pinned rather than left to drift."""
+def test_the_only_limits_left_are_the_two_structural_ones():
+    """The error thresholds are GONE, and this is what stops them coming back.
+
+    `1.0` and `0.0` are not fitted numbers. One is "the circuit is nearer its
+    own specification than that specification is to the truth"; the other is
+    "the answer puts no elements past 10% that its own model does not". Both
+    are meanings, and both compare quantities measured on the same operands.
+    """
     limits = {
-        c["name"]: c["limit"]
-        for c in sim._verdict(True, _rel(), _rel(p50=3e-3), {})["checks"]
+        c["name"]: (c["limit"], c["gates"])
+        for c in sim._verdict(True, _rel(), _rel(p50=3e-3), {}, _lad())["checks"]
     }
-    assert limits["vs mxfp7 model p50"] == 1e-3
-    assert limits["vs mxfp7 model worst"] == 10.0
-    assert limits["elements over 10%"] == 5e-4
-    assert limits["vs fp64 p50"] == 1e-2
+    assert limits["sits on its own format"] == (1.0, True)
+    assert limits["no elements its model does not have"] == (0.0, True)
+    for name in (
+        "vs mxfp7 model p50",
+        "vs mxfp7 model worst",
+        "elements over 10%",
+        "vs fp64 p50",
+    ):
+        assert limits[name] == (None, False), f"{name} must not judge anything"
 
 
 # ------------------------------------------------------------- the sim budget
@@ -581,6 +646,9 @@ def _payload(ncl=2, m=128, k=128, n=128, log=None):
 # deleting one from the driver fails here instead of rendering as "undefined"
 # in a browser nobody has open.
 PAGE_FIELDS = [
+    # The cross-format table the correctness judgement is read off. See
+    # ktpu.hw.formats.ladder -- it replaced the error thresholds.
+    "ladder",
     "shape",
     "asked",
     "seed",

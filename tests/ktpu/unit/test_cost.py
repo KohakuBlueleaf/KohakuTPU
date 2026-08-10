@@ -15,6 +15,23 @@ from ktpu.target import VU13P_8CU as T
 M, K, N = 256, 1024, 256
 
 
+def _gelu_ops() -> int:
+    """Vector ops in `gelu(x @ w + b)`'s epilogue: 16 until `scalefold` absorbed
+    `log2 e` into the `2.0 *` inside tanh, 15 after.
+
+    Derived rather than pinned, so what the tests below hold fixed is the ratio
+    of instructions to ops -- the invariant that regressed once.
+    """
+    graph = D.trace(
+        lambda x, w, b: D.gelu(x @ w + b),
+        D.TensorSpec((M, K), FP16),
+        D.TensorSpec((K, N), FP16),
+        D.TensorSpec((N,), FP16),
+    )
+    sched = lower(graph, T)
+    return sum(len(b.ops) for b in sched.bands if b.engine.value == "vector")
+
+
 def _cost(fn, *specs, fold=True):
     graph = D.trace(fn, *specs)
     sched = lower(graph, T, fold_epilogue=fold)
@@ -31,20 +48,20 @@ def _gelu():
 
 
 def test_the_chain_costs_one_instruction_per_op_per_core():
-    """16 ops on 8 cores is 128 VALU and nothing else scales with chain depth.
+    """One VALU per op per core, and nothing else scales with chain depth.
     A per-group memory round trip would make loads and stores scale with it
     too, which is what regressed."""
     c = _gelu()
-    assert c.insts["valu"] == 16 * T.vector_cores
+    assert c.insts["valu"] == _gelu_ops() * T.vector_cores
     assert c.insts["vld"] == 2 * T.vector_cores
     assert c.insts["vst"] == 1 * T.vector_cores
     assert c.insts["vloop"] == T.vector_cores
 
 
 def test_the_vector_loop_body_does_not_scale_with_anything_but_the_ops():
-    """One load of the tile, one broadcast of the bias, 16 ops, one store."""
+    """One load of the tile, one broadcast of the bias, the ops, one store."""
     c = _gelu()
-    assert c.vector_body == (16 + 2 + 1) * T.vector_cores
+    assert c.vector_body == (_gelu_ops() + 2 + 1) * T.vector_cores
 
 
 def test_no_scratch_region_exists():
@@ -70,7 +87,7 @@ def test_overhead_per_flop_stays_under_the_measured_bound():
     a whole column of tiles. That is a scheduling change, not a counting one.
     """
     c = _gelu()
-    assert c.flops == 2 * M * K * N + 16 * M * N
+    assert c.flops == 2 * M * K * N + _gelu_ops() * M * N
     assert c.overhead < 0.03
 
 

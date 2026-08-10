@@ -88,11 +88,11 @@ def _flit(
     #
     # Capped at three peers (four destinations) to match the RTL, which keeps
     # the emitter a fixed mux. That covers the real sharing pattern: with eight
-    # clusters tiled 4x2 over the output, A is shared by the 2 in a row and B
+    # clusters tiled 2x4 over the output, A is shared by the 2 in a row and B
     # by the 4 in a column.
     if len(peers) > 3:
         raise ValueError(f"at most 3 peers per fill, got {len(peers)}")
-    # peer i at [151+8i +: 8], so the three of them fill [174:151] and the RTL
+    # peer i at [144+8i +: 8], so the three of them fill [167:144] and the RTL
     # reads them as one 24-bit field with peer 0 in the low byte.
     for i, node in enumerate(peers):
         p |= (node & 0xFF) << (144 + i * 8)
