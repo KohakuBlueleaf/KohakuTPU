@@ -101,6 +101,46 @@ master die and the four partitions are not symmetric from the host's side.
 - **No published figure** for LUT/FF headroom to reserve for crossing routing.
   The closest AMD gives is "keep any single resource under ~85% in one SLR".
 
+### 2.4 What the host infrastructure costs, measured
+
+Out-of-context per-IP synthesis from the *implemented* `singlemesh` design
+(`JTAG-DMA-test.runs/*_synth_1/*_utilization_synth.rpt`), not estimates:
+
+| IP | LUT | FF | BRAM | DSP |
+|---|---|---|---|---|
+| **XDMA** | **76,319** | 72,059 | 124 | 0 |
+| `smartconnect_0_0` — 4S/1M, uniform 256b, 2 clk | 20,104 | 29,602 | 0 | 0 |
+| `axi_smc_0` — 3S/4M, 512/256/64/32b, 3 clk | 19,709 | 30,115 | 0 | 0 |
+| MIG `ddr4_0` | 19,944 | 21,263 | 25.5 | 3 |
+| `jtag_axi` | 867 | 2,300 | 4 | 0 |
+| `axi_gpio` | 62 | — | — | — |
+
+**XDMA is 17.7% of an SLR on its own** — larger than the MIG and either
+SmartConnect, and it was absent from every budget table until this was measured.
+Whichever die hosts PCIe gives up roughly a vector core to do it.
+
+**The two SmartConnects are not the same job.** `smartconnect_0_0` merges the
+mesh's masters onto one DRAM at one width in two clock domains, and
+`src/kohakuaxi/axi_n1.v` replaces it at **955 LUT** (measured, N=4, 604 MHz).
+`axi_smc_0` does 512→256 width conversion, four-slave address decode and three
+clock domains; nothing here replaces it and it stays.
+
+> Swapping an IP for RTL moves the wiring from the BD's inference to your port
+> list. The rule for surviving that — *an unconnected output is harmless, an
+> undriven input is the fault* — and the wrapper that keeps the interfaces
+> inferable are in [`../axi/bringup.md`](../axi/bringup.md).
+
+**SLL headroom is not the constraint.** The placed design uses 2,765 of 23,040
+on the SLR3↔SLR2 boundary (12.0%), 1,355 on SLR2↔SLR1 (5.9%) and none on
+SLR1↔SLR0. A 64-bit AXI control path is a rounding error against that; even a
+full 288-bit flit link is ~5% of one boundary. What made a cross-SLR *NoC*
+unattractive was the pipeline stage per flit on a fabric whose premise is
+locality — never the wire count.
+
+> `singlemesh` places nothing at all in SLR0 (0 CLB, 0 IO, 0 GT). That is a
+> property of *that* design, which instantiates one DDR4 channel and one mesh —
+> **not** of the board, which wires a channel to every die per §2.2.
+
 ## 3. Where the cut should fall
 
 The traffic classes here are very unequal, so the boundary should land on the

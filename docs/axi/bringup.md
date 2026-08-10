@@ -182,3 +182,42 @@ For the master side: consider not writing one. Xilinx `axi_datamover` (or
 AXI4 burst generation, 4 KB-boundary splitting and reordering for you. Given four
 DDR4 channels you would need at most four instances, and none of that code is
 yours to debug.
+
+## Ports a block design cannot infer
+
+Before a synthesis top goes into a block design, sweep its port list. The rule:
+
+> **An unconnected output is harmless. An undriven input is the fault.**
+
+A flattened bus arrives in a BD as loose wires. Nothing connects them, nothing
+complains, and the logic behind them is unreachable — synthesis prunes it, the
+design builds, meets timing and programs. That is exactly what happened to the
+memory mover's `mv_cfg_*` sideband: the shipped bitstream has no nets on it, so
+the mover and the PRNG behind it were commandable by nothing. Nothing failed.
+The mover simply never moved.
+
+An output left dangling costs at most the cone that feeds it, and the log says so.
+
+Two ways to make an input inferable:
+
+1. **Name the interface.** `X_INTERFACE_INFO` / `X_INTERFACE_PARAMETER` on the
+   ports, with `ASSOCIATED_BUSIF` on each clock, so the BD recognises the bus and
+   connects the whole thing in one action. `src/synth_top/axi_n1_wrap_4.v` does
+   this; `scripts/py/gen_axi_wrap.py` generates it, one wrapper per N because a
+   Verilog port list cannot come from a generate block.
+2. **Put it behind an interface that already exists.** The mover's command path
+   now decodes out of `S_AXI_CTRL` through the orchestrator's aux window instead
+   of arriving on pins of its own.
+
+The sweep itself: every input on the top must belong to an inferable interface,
+or be a clock or a reset. On `ktpu_ship_2x2` the only port that is neither is
+`obs`, and `obs` is an output.
+
+**How to check a wrapper is only wiring.** Synthesise it and the module it wraps
+at the same parameters; the areas must be *identical*. A mis-wire that leaves
+inputs unconnected lets synthesis prune, so the wrapper comes out **smaller** —
+which is why an identical number is evidence here when usually it would be a
+coincidence. `axi_n1_wrap_4` and bare `axi_n1` at N=4 both measure 955 LUT /
+942 FF / 8.5 BRAM / 604.6 MHz. Register each generated wrapper in
+`tests/run_synth_check.ps1`: one that no target names has never been read by a
+tool, however green the tier is.
