@@ -272,18 +272,22 @@ and the reason §2.2's port budget is necessary but not sufficient.
 **A port attaches to the NoC, not to a cluster.** Routing is X-then-Y on clamped
 coordinates ([`../noc/spec.md`](../noc/spec.md) §2), so **every cluster can reach
 every port through the mesh**, and which port a cluster's memory traffic leaves
-by is a routing choice rather than a wiring one. A cluster spans two adjacent
-rows — manager on its band's outer row, accumulator on the inner one
-([`../system.md`](../system.md) §2.3) — so the choice is between those two:
-**columns nearer MAG exit by their manager's row, the farther half by their
-accumulator's.** That keeps both of a band's ports carrying instead of leaving
-one idle, and it suits the directions, because the links are **full duplex** and
-a manager mostly *receives* fill responses while an accumulator mostly *sends*
-results — the two rows load opposite directions rather than competing for one.
-Putting two ports on one router would split the *server* and leave the funnel,
-which is why the ports sit at different mesh nodes; that works because the
-destination is clamped into the grid and the outward hop is taken only on
-arrival.
+by is a routing choice rather than a wiring one. **A cluster is one node on one
+router local**, so it exits by its own row's port — the only one reachable
+without a north-south hop. Putting two ports on one router would split the
+*server* and leave the funnel, which is why the ports sit at different mesh
+nodes; that works because the destination is clamped into the grid and the
+outward hop is taken only on arrival.
+
+> **This replaced a two-row split, and dropping it is a gain rather than a
+> loss.** A cluster used to span two adjacent rows — manager on its band's outer
+> row, accumulator on the inner one — and the columns nearer MAG exited by the
+> manager's row while the farther half exited by the accumulator's, to keep both
+> of a band's ports carrying. That split was measured at **about three points of
+> peak at 8 CU** (`flops` 72.7% against 75.7% when both endpoints shared one
+> row). With one node per cluster the question no longer arises: there is one
+> row, one port, and no split to pay for. Two clusters share a row's port at
+> NCL=8 on the 2x4, which is the same 2:1 ratio the band shape had.
 
 > **That split is measured, and it is not free.** Sending a band's two column
 > groups out by different rows costs about **three points of peak at 8 CU** —

@@ -576,11 +576,31 @@ the entry stride differ.
 
 ## 7. Acknowledgements are discarded
 
-`mx_cluster_cu` ties its accumulator port's `a_in_busy` low and never reads
-`a_in_data`, so `MEM_WR_ACK` is generated, routed, delivered and dropped.
+`mx_cluster_cu` **accepts and drops** `MEM_WR_ACK`: its single NoC local
+demultiplexes inbound flits by type, and `in_ack` is answered with a
+never-busy so the flit is consumed and discarded (`mx_cluster_cu.v` §115).
+So the ack is still generated, routed, delivered and dropped.
+
+> This used to be `a_in_busy` tied low on a port of its own. The behaviour is
+> deliberately unchanged, but the mechanism now matters: with one shared port,
+> an ack that were merely *ignored* would sit at the head of the receive FIFO,
+> hold `noc_in_busy` high for good, and wedge the instructions behind it. It
+> must be actively consumed, which is why the demux answers it rather than
+> leaving it to the FIFO.
 
 It is not useless: the ack is what releases the port's write slot, so it is the
 backpressure that bounds how many of a cluster's writes the port is holding at
 once. The CU does not need to see it because its own `W_IDLE -> W_REQ -> W_DATA`
 loop already keeps one burst open at a time. What it does *not* do is wait for
 the ack, which is exactly why a source needs two slots and not one (§3).
+
+**What discarding it costs, which is not nothing.** A DRAIN retires on `w_idle`
+— the last flit having *left the CU* — not on the ack, so `NODE_STATUS` reports
+a round complete before its writes are committed in DRAM. That is benign only
+while nothing reads what an earlier round wrote, which is true today: the
+planner never re-reads C, K splits inside the cluster through the resident tile
+rather than through memory, and each output tile belongs to one cluster, so no
+read-after-drain exists. A K-split reduction through memory, a mover copy of a
+freshly drained C, or a host readback racing the round would all break it.
+Closing it means retiring DRAIN on the ack instead of on `w_idle` — a change to
+the retirement condition, not to the demux.

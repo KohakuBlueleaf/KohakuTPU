@@ -39,7 +39,11 @@ module mag_mem_port #(
     // corrupt anything; it deadlocks.
     parameter integer WR_SLOTS   = 16,
     parameter integer Q_DEPTH    = 64,
-    parameter integer Q_MARGIN   = 4
+    parameter integer Q_MARGIN   = 4,
+    // "block" MEASURED AND REJECTED: -456 LUT but 330.0 -> 305.3 MHz, under the
+    // 320 floor -- `wq_flit` feeds the slot match and the worst path already
+    // starts at this FIFO's output, where a BRAM CLKARDCLK is far slower.
+    parameter MEM_TYPE           = "distributed"
 )(
     input  wire                clk,
     input  wire                resetn,
@@ -141,14 +145,14 @@ module mag_mem_port #(
                                    (mi_ty == T_MEM_WR_DATA));
 
     sync_fifo #(.DATA_WIDTH(FLIT_WIDTH), .FIFO_DEPTH(Q_DEPTH),
-                .MEMORY_TYPE("distributed"))
+                .MEMORY_TYPE(MEM_TYPE))
     u_rdq (.clk(clk), .rst(!resetn),
            .wr_en(mi_rd), .wr_data(mem_in_data),
            .wr_busy(rq_full), .wr_almost(rq_almost),
            .rd_en(rq_pop), .rd_data(rq_flit), .rd_busy(rq_empty));
 
     sync_fifo #(.DATA_WIDTH(FLIT_WIDTH), .FIFO_DEPTH(Q_DEPTH),
-                .MEMORY_TYPE("distributed"))
+                .MEMORY_TYPE(MEM_TYPE))
     u_wrq (.clk(clk), .rst(!resetn),
            .wr_en(mi_wr), .wr_data(mem_in_data),
            .wr_busy(wq_full), .wr_almost(wq_almost),
@@ -199,6 +203,14 @@ module mag_mem_port #(
                         ? ((rq_flit[199 -: 8] == 8'd0) ? 8'd1 : rq_flit[199 -: 8])
                         : 8'd1;
 
+    // WORDS PER ENTRY, so a client whose line is not 128 bytes can stream too.
+    // 0 KEEPS THE LEGACY 4, which is what every existing requester sends -- the
+    // field is backward compatible by construction. A quantising read ignores
+    // it: mx_quant yields four operand words whatever the source length.
+    wire [7:0] in_ew_raw = rq_flit[165 -: 8];
+    wire [2:0] in_ew = (in_quant || in_ew_raw == 8'd0 || in_ew_raw > 8'd4)
+                     ? 3'd4 : in_ew_raw[2:0];
+
     // EXTRA DESTINATIONS. Every cluster sweeps the same rows of A, so without
     // this the quantiser runs once per CONSUMER rather than once per BYTE for a
     // bit-identical result. The requester is always a destination; these are
@@ -241,6 +253,15 @@ module mag_mem_port #(
     // Source format for this run, off the REQUEST -- so no address map is held
     // here and none is needed.
     reg        rd_quant;
+    // Entry geometry for this run. A legacy request reproduces exactly what the
+    // Q_/P_ localparams used to hardcode.
+    reg [33:0] rd_ebytes;
+    reg [1:0]  rd_elast;    // last word index within an entry
+    // The next entry's address, ACCUMULATED. Computing base + (ent+1)*ebytes
+    // instead cost 86 MHz: against the old localparams that product was a
+    // constant multiply, i.e. a shift, and against a register it is a real
+    // 34-bit multiplier sitting in the AR address path.
+    reg [33:0] rd_anext;
     // A pre-quantised entry is four beats that ARE the four operand words.
     // They land here rather than in the emit buffer directly, because the
     // emitter may still be handing out the previous entry.
@@ -308,6 +329,10 @@ module mag_mem_port #(
     localparam [7:0]   Q_ARLEN       = Q_ENTRY_BITS / DATA_W - 1;     // 7 at 256b
     localparam [7:0]   P_ARLEN       = P_ENTRY_BITS / DATA_W - 1;     // 3 at 256b
 
+    // Declared HERE, not beside `in_ew`: it reads Q_ENTRY_BYTES, and xvlog
+    // rejects the forward reference that synthesis had accepted silently.
+    wire [33:0] in_ebytes = in_quant ? Q_ENTRY_BYTES : ({31'd0, in_ew} << LSB);
+
     // The WRITE path's own return context. Shared with the read path, a read and
     // a write cannot overlap despite using disjoint AXI channels.
     reg [POS_WIDTH-1:0] rq_x, rq_y;
@@ -353,6 +378,16 @@ module mag_mem_port #(
     reg [WBW:0]          ws_len  [0:WR_SLOTS-1];   // beats expected
     reg [WBW:0]          ws_cnt  [0:WR_SLOTS-1];   // beats received
     reg [DATA_W-1:0]     ws_data [0:WR_SLOTS*WBURST-1];
+
+    // "this slot's next beat is its last", per slot and from registered state
+    // only, so `ws_rdy` sees a 1-bit select instead of mux -> add -> compare.
+    wire [WR_SLOTS-1:0] ws_fill_now;
+    genvar gw;
+    generate
+        for (gw = 0; gw < WR_SLOTS; gw = gw + 1) begin : g_fill
+            assign ws_fill_now[gw] = (ws_cnt[gw] + 1'b1 == ws_len[gw]);
+        end
+    endgenerate
 
     integer wi;
     reg [WS_BITS-1:0] ws_free, ws_match, ws_pick;
@@ -469,8 +504,7 @@ module mag_mem_port #(
                 ws_data[{ws_match, ws_cnt[ws_match][WBW-1:0]}] <= wq_flit[DATA_W-1:0];
                 ws_cnt[ws_match] <= ws_cnt[ws_match] + 1'b1;
                 // ready only when the WHOLE burst has landed
-                if (ws_cnt[ws_match] + 1'b1 == ws_len[ws_match])
-                    ws_rdy[ws_match] <= 1'b1;
+                if (ws_fill_now[ws_match]) ws_rdy[ws_match] <= 1'b1;
             end
             // picked: not pickable again. freed only once the write is acked,
             // so the source cannot reuse the slot before its data is safe.
@@ -505,6 +539,7 @@ module mag_mem_port #(
             rd_base <= 34'd0; rd_cnt <= 8'd1; rd_ent <= 8'd0;
             rd_peer <= 24'd0; rd_nd <= 2'd0; e_dst <= 2'd0;
             rd_quant <= 1'b1; p_cnt <= 2'd0;
+            rd_ebytes <= P_ENTRY_BYTES; rd_elast <= 2'd3; rd_anext <= 34'd0;
             p_w0 <= 256'd0; p_w1 <= 256'd0; p_w2 <= 256'd0; p_w3 <= 256'd0;
             e_w0 <= 256'd0; e_w1 <= 256'd0; e_w2 <= 256'd0; e_w3 <= 256'd0;
         end else begin
@@ -611,9 +646,12 @@ module mag_mem_port #(
                 rd_cnt  <= in_count;            // 1 unless STREAM is set
                 rd_ent  <= 8'd0;
                 rd_quant <= in_quant;
+                rd_ebytes <= in_ebytes;
+                rd_anext  <= in_addr + in_ebytes;
+                rd_elast  <= in_ew[1:0] - 2'd1;
                 p_cnt    <= 2'd0;
                 m_araddr  <= in_addr[ADDR_W-1:0];
-                m_arlen   <= in_quant ? Q_ARLEN : P_ARLEN;
+                m_arlen   <= in_quant ? Q_ARLEN : ({5'd0, in_ew} - 8'd1);
                 m_arid    <= {ID_W{1'b0}};
                 m_arvalid <= 1'b1;
                 q_blay  <= in_blay;
@@ -644,10 +682,9 @@ module mag_mem_port #(
                 if (m_rvalid && m_rready && m_rlast) begin
                     rs <= RS_WAIT;
                     if (rd_ent + 8'd1 < rd_cnt) begin
-                        m_araddr  <= rd_base[ADDR_W-1:0]
-                                   + (({26'd0, rd_ent} + 34'd1) *
-                                      (rd_quant ? Q_ENTRY_BYTES : P_ENTRY_BYTES));
-                        m_arlen   <= rd_quant ? Q_ARLEN : P_ARLEN;
+                        m_araddr  <= rd_anext[ADDR_W-1:0];
+                        rd_anext  <= rd_anext + rd_ebytes;
+                        m_arlen   <= rd_quant ? Q_ARLEN : {6'd0, rd_elast};
                         m_arvalid <= 1'b1;
                         n_rd      <= n_rd + 16'd1;
                     end
@@ -687,13 +724,13 @@ module mag_mem_port #(
             if (emit_go) begin
                 mem_out_data <= { e_dx, e_dy,
                                   MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
-                                  T_MEM_RD_RESP, e_tag, (q_emit == 2'd3),
+                                  T_MEM_RD_RESP, e_tag, (q_emit == rd_elast),
                                   1'b0, q_emit,
                                   (q_emit == 2'd0) ? e_w0 :
                                   (q_emit == 2'd1) ? e_w1 :
                                   (q_emit == 2'd2) ? e_w2 : e_w3 };
                 mem_out_valid <= 1'b1;
-                if (q_emit == 2'd3) begin
+                if (q_emit == rd_elast) begin
                     // Same entry, next consumer: re-send the SAME latched words
                     // with a different header. No second AXI read and no second
                     // pass of the quantiser.
