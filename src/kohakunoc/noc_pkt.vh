@@ -22,18 +22,26 @@
 `define NOC_RSVD    258:256
 `define NOC_PAYLOAD 255:0
 
-// message classes. bit 3 separates memory traffic from CU traffic, so the cache
-// filters on one bit.
+// Message classes.
+//
+// INCLUDED BY NOTHING -- every module re-declares these, so a divergence is
+// silent, and one happened: CU_DATA was 0x4 here while mag_mem_port.v and
+// vec_cu.v used 0x4 for MEM_WR_DATA, so a CU_DATA flit reaching MAG would have
+// entered the write queue as data. Resolved in favour of the silicon.
+//
+// Bit 3 no longer partitions memory from CU traffic: five memory messages do
+// not fit in four codes, and no cache exists to filter on it.
 `define NOC_T_MEM_RD_REQ  4'h0
 `define NOC_T_MEM_WR_REQ  4'h1
 `define NOC_T_MEM_RD_RESP 4'h2
 `define NOC_T_MEM_WR_ACK  4'h3
-`define NOC_T_CU_DATA     4'h4
+`define NOC_T_MEM_WR_DATA 4'h4
 `define NOC_T_CU_INST     4'h5
 `define NOC_T_CU_SIGNAL   4'h6
 `define NOC_T_CU_CTRL     4'h7
+`define NOC_T_CU_DATA     4'h8
 `define NOC_T_ERROR       4'hF
-`define NOC_T_IS_MEM(t)   (~(t)[3])
+`define NOC_T_IS_MEM(t)   ((t) <= 4'h4)
 
 // MEM_RD_REQ / MEM_WR_REQ descriptor payload
 `define NOC_MEM_ADDR       255:222   // 34 bits: exactly the 16 GB physical map

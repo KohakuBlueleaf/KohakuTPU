@@ -210,17 +210,24 @@ keeps the router small and lets the protocol evolve without touching it.
 | `0x1` | `MEM_WR_REQ` | CU → MAS | write request; data in following flits |
 | `0x2` | `MEM_RD_RESP` | MAS → CU | read data |
 | `0x3` | `MEM_WR_ACK` | MAS → CU | write completion |
-| `0x4` | `CU_DATA` | CU → CU | bulk L1→L1 transfer |
+| `0x4` | `MEM_WR_DATA` | CU → MAS | write payload following a `MEM_WR_REQ` |
 | `0x5` | `CU_INST` | any → CU | instruction delivery |
 | `0x6` | `CU_SIGNAL` | CU → any | completion / synchronisation |
 | `0x7` | `CU_CTRL` | any → CU | control-register access |
+| `0x8` | `CU_DATA` | CU → CU | bulk L1→L1 transfer |
 | `0xF` | `ERROR` | any | unroutable / malformed / faulted |
 
-`0x8`–`0xE` reserved.
+`0x9`–`0xE` reserved.
 
-`type[3]` splits the two worlds: `0x0–0x3` memory, `0x4–0x7` CU. **The cache
-filters on exactly that bit** — memory messages traverse the cache, CU↔CU messages
-bypass it entirely.
+**`CU_DATA` IS `0x8`, AND `type[3]` NO LONGER PARTITIONS ANYTHING.** This table
+printed `CU_DATA` at `0x4` while `mag_mem_port.v` and `vec_cu.v` had used `0x4`
+for `MEM_WR_DATA` since write bursts gained their own type — so a `CU_DATA` flit
+reaching MAG would have entered the write queue as data. Resolved in favour of
+the silicon, because the collision was only latent while nothing sent `CU_DATA`.
+
+The old rule was that bit 3 separated memory from CU traffic so a cache could
+filter on it. Five memory messages do not fit in four codes, and no cache exists
+to filter on the bit. `NOC_T_IS_MEM(t)` is now `(t) <= 4'h4`.
 
 ---
 
