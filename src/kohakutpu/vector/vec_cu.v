@@ -34,7 +34,11 @@ module vec_cu #(
     parameter integer RECV_DEPTH = 64,
     parameter integer MODEL      = 1,
     parameter integer L1_DEPTH   = 512,
-    parameter         L1_PRIM    = "block"
+    parameter         L1_PRIM    = "block",
+    // A/B'd at RECV_DEPTH=64: -312 LUT, -280 FF, +4 BRAM tiles, and Fmax
+    // identical to the digit (WNS 0.335 both arms, same path). The recv data
+    // path is nowhere near critical here -- unlike the register file's port a.
+    parameter         RECV_MEM   = "block"
 )(
     input  wire                   clk,
     input  wire                   resetn,
@@ -49,8 +53,14 @@ module vec_cu #(
     output wire [31:0]            dbg_cycles,
     output wire                   dbg_fault
 );
+    // CU_DATA is 0x8, NOT the 0x4 docs/noc/spec.md s4 still prints: 0x4 is
+    // MEM_WR_DATA here and in mag_mem_port.v, so a CU_DATA flit carrying it
+    // would have entered MAG's write queue as data. noc_pkt.vh records the
+    // resolution and is included by nothing, so the value is re-declared here.
     localparam [3:0] T_MEM_RD_REQ  = 4'h0, T_MEM_WR_REQ  = 4'h1,
-                     T_MEM_RD_RESP = 4'h2, T_MEM_WR_DATA = 4'h4;
+                     T_MEM_RD_RESP = 4'h2, T_MEM_WR_DATA = 4'h4,
+                     T_CU_SIGNAL   = 4'h6, T_CU_DATA     = 4'h8;
+    localparam [7:0] SIG_DATA_RECEIVED = 8'h03;
 
     localparam [3:0] C_IMEM = 4'd1, C_DESC = 4'd2, C_RUN = 4'd3;
 
@@ -68,8 +78,16 @@ module vec_cu #(
     noc_cu_base #(
         .FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH),
         .POS_X(POS_X), .POS_Y(POS_Y),
-        .CU_TYPE(16'h5643), .CU_VERSION(8'h01), .N_BUFFERS(2),
-        .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH)
+        // CU_VERSION IS A MESH-WIDE BUILD NUMBER, not this endpoint's revision:
+        // the question a driver asks is "is this bitstream the one my compiler
+        // targets". Bump it in EVERY endpoint whenever any ISA or datapath
+        // changes. 0x01 shipped 2026-08; 0x02 is the vector datapath rebuild
+        // (register file to BRAM, VRED kind 5) plus the merged cluster; 0x03 is
+        // CU_DATA -- peer writes into L1, and VDRAIN's to_node sink. Against an
+        // 0x02 bitstream a to_node drain would go to MEMORY in silence, which
+        // is the case this field exists to catch.
+        .CU_TYPE(16'h5643), .CU_VERSION(8'h03), .N_BUFFERS(2),
+        .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH), .RECV_MEM(RECV_MEM)
     ) u_base (
         .clk(clk), .resetn(resetn),
         .noc_in_data(noc_in_data), .noc_in_valid(noc_in_valid),
@@ -79,6 +97,9 @@ module vec_cu #(
         .inst_flit(inst_flit), .inst_valid(inst_valid), .inst_ready(inst_ready),
         .exec_done(exec_done), .exec_result(exec_result),
         .exec_fault(exec_fault),
+        // The kernel's own run against the base's busy count: the difference
+        // between them IS the dispatch overhead.
+        .dbg_ctr({32'd0, cycles}),
         .send_flit(send_flit), .send_valid(send_valid), .send_ready(send_ready),
         .recv_flit(recv_flit), .recv_valid(recv_valid), .recv_ready(recv_ready),
         .inst_space(), .busy()
@@ -93,6 +114,8 @@ module vec_cu #(
 
     wire [3:0] rtype = recv_flit[FLIT_WIDTH-4*POS_WIDTH-1 -: 4];
     wire [7:0] rtag  = recv_flit[FLIT_WIDTH-4*POS_WIDTH-5 -: 8];
+    wire [POS_WIDTH-1:0] rsx = recv_flit[FLIT_WIDTH-2*POS_WIDTH-1 -: POS_WIDTH];
+    wire [POS_WIDTH-1:0] rsy = recv_flit[FLIT_WIDTH-3*POS_WIDTH-1 -: POS_WIDTH];
 
     // ================================================ the core
     reg         ld_en, ld_kind, start;
@@ -113,6 +136,18 @@ module vec_cu #(
     reg  [255:0] rr_data;
     reg         fill_bank;
 
+    reg         cd_valid, cd_fault;
+    reg  [8:0]  cd_addr;
+    reg  [255:0] cd_data;
+
+    wire        nd_valid, nd_sig;
+    wire [3:0]  nd_x, nd_y, nd_buf;
+    wire [15:0] nd_off;
+    wire [7:0]  nd_len, nd_ack;
+    // Assigned rather than part-selected, so POS_WIDTH stays a free parameter.
+    wire [POS_WIDTH-1:0] nd_dx = nd_x;
+    wire [POS_WIDTH-1:0] nd_dy = nd_y;
+
     vec_core #(.MODEL(MODEL), .L1_DEPTH(L1_DEPTH), .L1_PRIM(L1_PRIM)) u_core (
         .clk(clk), .rst(!resetn),
         .ld_en(ld_en), .ld_kind(ld_kind), .ld_addr(ld_addr), .ld_data(ld_data),
@@ -122,25 +157,128 @@ module vec_cu #(
         .rd_req_valid(rd_req_valid), .rd_req_addr(rd_req_addr),
         .rd_req_tag(rd_req_tag), .rd_req_ready(rd_req_ready),
         .rr_valid(rr_valid), .rr_tag(rr_tag), .rr_data(rr_data),
+        .cd_valid(cd_valid), .cd_addr(cd_addr), .cd_data(cd_data),
+        .cd_fault(cd_fault),
         .wr_req_valid(wr_req_valid), .wr_req_addr(wr_req_addr),
-        .wr_req_data(wr_req_data), .wr_req_ready(wr_req_ready)
+        .wr_req_data(wr_req_data), .wr_req_ready(wr_req_ready),
+        .nd_valid(nd_valid), .nd_x(nd_x), .nd_y(nd_y), .nd_buf(nd_buf),
+        .nd_off(nd_off), .nd_len(nd_len), .nd_sig(nd_sig), .nd_ack(nd_ack)
     );
 
     assign dbg_cycles = cycles;
     assign dbg_fault  = fault;
 
-    // ================================================ read responses
+    // ================================================ inbound flits
+    // Fill responses and a peer's CU_DATA share the one receive queue, and the
+    // burst is demultiplexed BY TYPE rather than by position: the router
+    // interleaves whatever arrives, so a MEM_RD_RESP landing between a
+    // descriptor and its data is ordinary rather than a protocol error.
+    // ONE POP PER CYCLE is what keeps `rr_valid` and `cd_valid` exclusive.
+    wire [7:0]  cud_buf = recv_flit[255 -: 8];
+    wire [15:0] cud_off = recv_flit[247 -: 16];
+    wire [7:0]  cud_len = recv_flit[231 -: 8];
+    wire [7:0]  cud_flg = recv_flit[223 -: 8];
+    // Where the completion goes: {ack_y, ack_x}, or 0 for the sender. A CU
+    // answering its sender is useless when the SENDER is another CU -- nothing
+    // consumes it and the host cannot sequence a reader behind the writer. 0 is
+    // an unambiguous sentinel because (0,0) is a mesh CORNER, which touches no
+    // router and can never hold an endpoint (scripts/py/gen_mesh.py).
+    wire [7:0]  cud_ack = recv_flit[215 -: 8];
+
+    // ONE FLAT L1, so `buf_id` is 0 or the burst is not addressed at anything
+    // here; and `offset` is 16 bits against a 9-bit L1, so an out-of-range
+    // burst would wrap and overwrite the bottom of the scratchpad.
+    wire [16:0] cud_end = {1'b0, cud_off} + {9'd0, cud_len};
+    wire        cud_bad = (cud_buf != 8'd0) || (cud_end >= L1_DEPTH[16:0]);
+
+    reg         cd_st, cd_drop, cd_sig;
+    reg  [7:0]  cd_left;
+    reg  [8:0]  cd_ptr;
+
+    reg         sg_pend;
+    reg  [7:0]  sg_buf;
+    // Where the ack GOES, and where the burst CAME FROM. Not the same fact
+    // since the ack can be redirected, and conflating them made every data
+    // flit of a redirected burst look like a second sender's.
+    reg  [POS_WIDTH-1:0] sg_x, sg_y;
+    reg  [POS_WIDTH-1:0] cd_sx, cd_sy;
+
+    reg  [2:0]  wst;                 // declared here because `sg_go` reads it
+    wire        sg_go = sg_pend && (wst == W_IDLE)
+                        && (!send_valid || send_ready);
+
+    wire cd_end_now = recv_valid && recv_ready && (rtype == T_CU_DATA)
+                      && cd_st && (cd_left == 8'd0);
+
+    // A data flit from someone other than the open burst's sender belongs to a
+    // SECOND burst. There is one descriptor and one pointer here, so the two
+    // cannot be told apart by content and merging them would be silent; the
+    // SOURCE tells them apart for the price of one compare. Flits of one burst
+    // cannot arrive out of order -- same source, same destination, so the same
+    // dimension-ordered path -- which is what makes a mismatch conclusive.
+    wire cd_alien = (rsx != cd_sx) || (rsy != cd_sy);
+
     always @(posedge clk) begin
         if (!resetn) begin
             rr_valid <= 1'b0; rr_tag <= 9'd0; rr_data <= 256'd0;
+            cd_valid <= 1'b0; cd_addr <= 9'd0; cd_data <= 256'd0;
+            cd_fault <= 1'b0;
+            cd_st <= 1'b0; cd_drop <= 1'b0; cd_sig <= 1'b0;
+            cd_left <= 8'd0; cd_ptr <= 9'd0;
+            sg_pend <= 1'b0; sg_buf <= 8'd0;
+            sg_x <= {POS_WIDTH{1'b0}}; sg_y <= {POS_WIDTH{1'b0}};
+            cd_sx <= {POS_WIDTH{1'b0}}; cd_sy <= {POS_WIDTH{1'b0}};
             recv_ready <= 1'b0;
         end else begin
-            recv_ready <= 1'b1;
-            rr_valid   <= 1'b0;
-            if (recv_valid && recv_ready && (rtype == T_MEM_RD_RESP)) begin
-                rr_valid <= 1'b1;
-                rr_tag   <= {fill_bank, rtag};
-                rr_data  <= recv_flit[255:0];
+            rr_valid <= 1'b0;
+            cd_valid <= 1'b0;
+            cd_fault <= 1'b0;
+            if (sg_go) sg_pend <= 1'b0;
+
+            // Take nothing while a DATA_RECEIVED is waiting for the link: a
+            // second burst could finish before this one is reported, and one
+            // register would drop a completion, leaving its sender waiting
+            // forever. Bounded -- the send path never waits on this one.
+            recv_ready <= !((sg_pend || (cd_end_now && cd_sig)) && !sg_go);
+
+            if (recv_valid && recv_ready) begin
+                if (rtype == T_MEM_RD_RESP) begin
+                    rr_valid <= 1'b1;
+                    rr_tag   <= {fill_bank, rtag};
+                    rr_data  <= recv_flit[255:0];
+                end else if (rtype == T_CU_DATA) begin
+                    if (!cd_st) begin
+                        cd_st    <= 1'b1;
+                        cd_left  <= cud_len;
+                        cd_ptr   <= cud_off[8:0];
+                        // A rejected burst is still COUNTED OUT, or its data
+                        // flits would be read as the next descriptor.
+                        cd_drop  <= cud_bad;
+                        cd_fault <= cud_bad;
+                        cd_sig   <= cud_flg[0] && !cud_bad;
+                        sg_buf   <= cud_buf;
+                        sg_x     <= (cud_ack != 8'd0) ? cud_ack[3:0] : rsx;
+                        sg_y     <= (cud_ack != 8'd0) ? cud_ack[7:4] : rsy;
+                        cd_sx    <= rsx;
+                        cd_sy    <= rsy;
+                    end else begin
+                        cd_valid <= !cd_drop && !cd_alien;
+                        cd_addr  <= cd_ptr;
+                        cd_data  <= recv_flit[255:0];
+                        cd_ptr   <= cd_ptr + 9'd1;
+                        // Neither burst can be completed from here, so the rest
+                        // of this one is dropped and the kernel is told.
+                        if (cd_alien) begin
+                            cd_fault <= 1'b1;
+                            cd_drop  <= 1'b1;
+                            cd_sig   <= 1'b0;
+                        end
+                        if (cd_left == 8'd0) begin
+                            cd_st <= 1'b0;
+                            if (cd_sig && !cd_alien) sg_pend <= 1'b1;
+                        end else cd_left <= cd_left - 8'd1;
+                    end
+                end
             end
         end
     end
@@ -148,9 +286,10 @@ module vec_cu #(
     // ================================================ outbound memory traffic
     // A fill and a drain never share the send path: they belong to different
     // instructions and vec_core runs one at a time.
-    reg [2:0]  wst;
     reg [33:0] w_addr;
     reg [255:0] w_data;
+    reg        nd_hdr;
+    reg [7:0]  nd_cnt;
 
     always @(posedge clk) begin
         if (!resetn) begin
@@ -158,6 +297,7 @@ module vec_cu #(
             rd_req_ready <= 1'b0; wr_req_ready <= 1'b0;
             wst <= W_IDLE; fill_bank <= 1'b0;
             w_addr <= 34'd0; w_data <= 256'd0;
+            nd_hdr <= 1'b0; nd_cnt <= 8'd0;
         end else begin
             rd_req_ready <= 1'b0;
             wr_req_ready <= 1'b0;
@@ -166,7 +306,15 @@ module vec_cu #(
             if (!send_valid || send_ready) begin
                 case (wst)
                 W_IDLE: begin
-                    if (rd_req_valid && !rd_req_ready) begin
+                    // First: the peer that sent us a burst is blocked on this.
+                    if (sg_pend) begin
+                        send_flit <= { sg_x, sg_y,
+                                       POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
+                                       T_CU_SIGNAL, 8'h00, 1'b1, 3'b000,
+                                       SIG_DATA_RECEIVED, {24'd0, sg_buf},
+                                       216'd0 };
+                        send_valid <= 1'b1;
+                    end else if (rd_req_valid && !rd_req_ready) begin
                         send_flit <= { MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
                                        POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
                                        T_MEM_RD_REQ, rd_req_tag[7:0], 1'b1, 3'b000,
@@ -174,6 +322,29 @@ module vec_cu #(
                         send_valid   <= 1'b1;
                         rd_req_ready <= 1'b1;
                         fill_bank    <= rd_req_tag[8];
+                    // A peer drain: ONE descriptor for the whole walk, then the
+                    // words. The first word waits a beat for the descriptor;
+                    // the walk itself is the memory drain's, unchanged.
+                    end else if (wr_req_valid && !wr_req_ready && nd_valid) begin
+                        if (!nd_hdr) begin
+                            send_flit <= { nd_dx, nd_dy,
+                                POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
+                                T_CU_DATA, 8'h00, 1'b0, 3'b000,
+                                {4'd0, nd_buf}, nd_off, nd_len,
+                                7'd0, nd_sig, nd_ack, 208'd0 };
+                            send_valid <= 1'b1;
+                            nd_hdr     <= 1'b1;
+                            nd_cnt     <= 8'd0;
+                        end else begin
+                            send_flit <= { nd_dx, nd_dy,
+                                POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
+                                T_CU_DATA, 8'h00, (nd_cnt == nd_len), 3'b000,
+                                wr_req_data };
+                            send_valid   <= 1'b1;
+                            wr_req_ready <= 1'b1;
+                            nd_cnt <= nd_cnt + 8'd1;
+                            if (nd_cnt == nd_len) nd_hdr <= 1'b0;
+                        end
                     end else if (wr_req_valid && !wr_req_ready) begin
                         w_addr <= wr_req_addr;
                         w_data <= wr_req_data;

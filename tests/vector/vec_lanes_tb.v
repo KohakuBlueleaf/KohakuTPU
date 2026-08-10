@@ -15,6 +15,7 @@
 
 module vec_lanes_tb;
     localparam [1:0] M_FLAT = 2'd0, M_D2 = 2'd1, M_D4 = 2'd2, M_TREE = 2'd3;
+    localparam [2:0] R_EXPSUM = 3'd5;
     localparam [4:0] OP_MOV = 5'd0, OP_ADD = 5'd3, OP_SUB = 5'd4, OP_MUL = 5'd5;
     localparam [4:0] OP_FMA = 5'd6, OP_MAX = 5'd8, OP_MIN = 5'd9;
     localparam [4:0] OP_CMPLT = 5'd11;
@@ -347,6 +348,23 @@ module vec_lanes_tb;
         run_tree(3'd4, 4'd3, 4'd1, 1'b1);          // DOT of v3 . v1
         chk(red_result, e8i(dot_ref()), "TREE dot", 0);
 
+        $display("--- 7. TREE: EXPSUM writes back AND reduces ---");
+        // exp2 is EXACT at integer arguments, so 0 and 1 give 1.0 and 2.0 and
+        // the whole reference is exact: per chunk 8 of each, 24; over 8, 192.
+        for (c = 0; c < 8; c = c + 1) begin
+            for (el = 0; el < 16; el = el + 1)
+                buf0[el*24 +: 24] = e8i(el & 1);
+            wr_chunk(4'd6, c[2:0], buf0);
+        end
+        run_expsum(4'd6, 4'd7);
+        chk(red_result, e8i(192), "EXPSUM sum", 0);
+        for (c = 0; c < 8; c = c + 1) begin
+            rd_chunk(4'd7, c[2:0]);
+            for (el = 0; el < 16; el = el + 1)
+                chk(ls_rdata[el*24 +: 24], e8i((el & 1) ? 2 : 1),
+                    "EXPSUM elementwise", c*16 + el);
+        end
+
         $display("========================================");
         if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
         else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
@@ -368,6 +386,34 @@ module vec_lanes_tb;
     endfunction
 
     integer tc, tp;
+
+    // Same shape as run_tree's half-rate path, but naming a vector destination:
+    // EXPSUM keeps the leaf result as well as reducing it.
+    task run_expsum(input [3:0] ra, input [3:0] wd);
+        begin
+            mode = M_TREE;
+            red_kind = R_EXPSUM;
+            @(negedge clk); red_init = 1'b1;
+            @(negedge clk); red_init = 1'b0;
+            for (tc = 0; tc < 8; tc = tc + 1)
+                for (tp = 0; tp < 2; tp = tp + 1)
+                    beat(tc[2:0], tp[1:0], ra, ra, ra, wd, 2'd0, 2'd0,
+                         1'b0, 1'b0);
+            drain;
+            beat(3'd0, 2'd0, ra, ra, ra, wd, 2'd0, 2'd0, 1'b0, 1'b1);
+            @(negedge clk);
+            spin = 0;
+            while (!red_valid && spin < 4000) begin
+                spin = spin + 1;
+                @(negedge clk);
+            end
+            if (spin >= 4000) begin
+                errors = errors + 1;
+                $display("  FAIL EXPSUM red_valid never asserted");
+            end
+        end
+    endtask
+
     task run_tree(input [2:0] kind, input [3:0] ra, input [3:0] rb,
                   input half);
         begin

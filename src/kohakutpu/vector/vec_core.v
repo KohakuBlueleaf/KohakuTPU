@@ -23,7 +23,7 @@ module vec_core #(
     parameter integer IMEM_DEPTH = 512,
     parameter integer L1_DEPTH   = 512,
     parameter         L1_PRIM    = "block",
-    parameter         RF_PRIM    = "distributed"
+    parameter         RF_PRIM    = "block"
 )(
     input  wire         clk,
     input  wire         rst,
@@ -49,10 +49,32 @@ module vec_core #(
     input  wire [8:0]   rr_tag,
     input  wire [255:0] rr_data,
 
+    // A peer's CU_DATA landing in L1. SEPARATE FROM THE FILL PORT because every
+    // `rr_valid` decrements `fill_out` and a peer's write has no matching
+    // `fill_issue`: reusing it underflows the count and hangs the NEXT barrier,
+    // an unrelated instruction far from the flit that caused it. Mutually
+    // exclusive with `rr_valid` -- one pop of vec_cu's receive queue feeds both.
+    input  wire         cd_valid,
+    input  wire [8:0]   cd_addr,          // L1 word, already range-checked
+    input  wire [255:0] cd_data,
+    input  wire         cd_fault,         // that burst named a place we lack
+
     output reg          wr_req_valid,
     output reg  [33:0]  wr_req_addr,
     output reg  [255:0] wr_req_data,
-    input  wire         wr_req_ready
+    input  wire         wr_req_ready,
+
+    // A VDRAIN whose sink is a peer rather than memory. Stable from S_MEM0
+    // until the next VFILL/VDRAIN, so vec_cu frames the whole burst from these
+    // and this module still carries no NoC knowledge.
+    output reg          nd_valid,
+    output reg  [3:0]   nd_x,
+    output reg  [3:0]   nd_y,
+    output reg  [3:0]   nd_buf,
+    output reg  [15:0]  nd_off,
+    output reg  [7:0]   nd_len,
+    output reg          nd_sig,
+    output reg  [7:0]   nd_ack
 );
     localparam [4:0] O_VCVT = 5'h12, O_VRED = 5'h13, O_VLD = 5'h14,
                      O_VST = 5'h15, O_VBCAST = 5'h16, O_VSHUF = 5'h17,
@@ -63,11 +85,18 @@ module vec_core #(
     localparam [1:0] SRC_V = 2'd0, SRC_S = 2'd1, SRC_C = 2'd2, SRC_K = 2'd3;
     localparam [1:0] M_FLAT = 2'd0, M_D2 = 2'd1, M_TREE = 2'd3;
     localparam [2:0] DT_FP16 = 3'd1, DT_FP32 = 3'd2;
+    localparam [2:0] R_EXPSUM = 3'd5;
+
+    // One element per leaf, so two phases cover a chunk. SUMSQ, DOT, EXPSUM.
+    function red_half;
+        input [2:0] k;
+        red_half = (k == 3'd3) || (k == 3'd4) || (k == R_EXPSUM);
+    endfunction
     localparam [23:0] E8_ONE = 24'h3F8000;
 
     localparam [7:0] F_DTYPE = 8'd1, F_VSRC = 8'd2, F_CHAIN = 8'd3,
                      F_OPCODE = 8'd4, F_LEN = 8'd5, F_LOOP = 8'd6,
-                     F_VL = 8'd7, F_REDVL = 8'd8;
+                     F_VL = 8'd7, F_REDVL = 8'd8, F_CUDATA = 8'd9;
 
     localparam [4:0] S_IDLE = 5'd0,  S_F1 = 5'd1,   S_F2 = 5'd2,
                      S_DEC = 5'd3,   S_EXEC = 5'd4,
@@ -81,9 +110,14 @@ module vec_core #(
                      S_SETI = 5'd26, S_SETI2 = 5'd27,
                      S_HALT = 5'd28, S_FAULT = 5'd29, S_MEM0 = 5'd30,
                      S_AGW = 5'd31;
+    // `ag_total` is pipelined three deep in vec_agu, so a walk waits for it.
+    localparam [5:0] S_MEMW1 = 6'd32, S_MEMW2 = 6'd33, S_MEMW3 = 6'd35;
+    // L1's output is registered before the load converters, so a VLD chunk
+    // takes one more beat than the BRAM's own read latency.
+    localparam [5:0] S_LDQ = 6'd34;
 
     // ================================================== architectural state
-    reg [4:0]  st;
+    reg [5:0]  st;
     reg [8:0]  pc;
     reg [31:0] ir;
     reg [1:0]  vmode;
@@ -115,6 +149,7 @@ module vec_core #(
     reg [3:0]  shuf_k;
     reg [4:0]  ls_kind;
     reg        bc_to_s;
+    reg        cd_err;
 
     reg [8:0]  im_addr;
     integer    ii;
@@ -195,6 +230,15 @@ module vec_core #(
     wire [1:0] d_lpm = ir[15:14];
     wire signed [13:0] d_off = ir[13:0];
 
+    // VDRAIN's peer overlay. VDRAIN reads `d_op`, `d_ad` and `d_off[8:0]` -- the
+    // L1 start word -- and nothing else, so these bits are free; every encoding
+    // written before this one leaves them zero, which reads as the memory sink.
+    wire       d_nd    = ir[24];
+    wire       d_ndsig = ir[25];
+    wire [3:0] d_ndx   = ir[20:17];
+    wire [3:0] d_ndy   = ir[16:13];
+    wire [3:0] d_ndbuf = ir[12:9];
+
     wire is_alu = (d_op <= 5'h11);
     wire is_cmp = (d_op >= 5'h0B) && (d_op <= 5'h0D);
     // vec_alu numbers the four seeds 16..19; the ISA numbers them 14..17.
@@ -214,7 +258,11 @@ module vec_core #(
     wire fill_issue = (st == S_FILL) && (mem_left != 32'd0) && !rd_req_valid;
     wire alu_issue  = (st == S_ALU) && (bcnt != nbeat)
                                     && !((bcnt == 6'd0) && haz);
-    wire pend_inc   = alu_issue && !g_cmp;
+    // EXPSUM retires a vector write per beat like an ALU op, so it has to be
+    // counted or a later read of vd would not wait for it.
+    wire red_issue  = (st == S_RED) && (bcnt != nbeat)
+                                    && (red_kind == R_EXPSUM);
+    wire pend_inc   = (alu_issue && !g_cmp) || red_issue;
 
     function [23:0] pick;
         input [1:0] sel;
@@ -230,7 +278,17 @@ module vec_core #(
     // round trip costs a mux rather than a third set. VCVT.FP32 is the
     // identity -- E8M15 -> FP32 -> E8M15 is exact (tests/vector/vec_cvt_tb s4).
     wire [255:0] o_f16, o_f32lo, o_f32hi;
-    wire [255:0] cv_src = (ls_kind == O_VCVT) ? o_f16 : l1_q;
+
+    // VCVT's round trip is TWO conversions, and back to back in one cycle they
+    // are the longest path in the vector core. `lw_rdata` is already stable
+    // across S_STW and S_STD, so registering the midpoint costs no state.
+    // The converter input is ONE REGISTER, selected a cycle early. Taking
+    // `l1_q` straight off the BRAM put its clock-to-out in series with a
+    // 16-lane FP16 normalise (286.9 MHz in the mesh); muxing the two sources
+    // at the converter input then put `ls_kind` in series with that same
+    // normalise (310.4 MHz). `ls_kind` is set at decode and stable for the
+    // whole access, so choosing a cycle early chooses the same thing.
+    reg  [255:0] cv_src;
     wire [383:0] i_f16;
     wire [191:0] i_f32;
 
@@ -252,14 +310,27 @@ module vec_core #(
     end
     endgenerate
 
-    // lane rotate: vd[i] = va[(i+k) mod 16]
-    reg [383:0] shuf_out;
-    integer sh;
-    always @(*) begin
-        shuf_out = 384'd0;
-        for (sh = 0; sh < 16; sh = sh + 1)
-            shuf_out[sh*24 +: 24] = lw_rdata[(((sh + shuf_k) & 15))*24 +: 24];
+    // lane rotate: vd[i] = va[(i+k) mod 16], as rotate-by-4k then rotate-by-k.
+    // Two 4:1 stages are one LUT6 per bit each; the flat 16:1 was four.
+    wire [383:0] shuf_hi, shuf_out;
+    generate
+    for (e = 0; e < 16; e = e + 1) begin : g_shf
+        localparam integer H4 = (e+4) % 16, H8 = (e+8) % 16, H12 = (e+12) % 16;
+        assign shuf_hi[e*24 +: 24] =
+            (shuf_k[3:2] == 2'd0) ? lw_rdata[e*24   +: 24]
+          : (shuf_k[3:2] == 2'd1) ? lw_rdata[H4*24  +: 24]
+          : (shuf_k[3:2] == 2'd2) ? lw_rdata[H8*24  +: 24]
+                                  : lw_rdata[H12*24 +: 24];
     end
+    for (e = 0; e < 16; e = e + 1) begin : g_shl
+        localparam integer L1 = (e+1) % 16, L2 = (e+2) % 16, L3 = (e+3) % 16;
+        assign shuf_out[e*24 +: 24] =
+            (shuf_k[1:0] == 2'd0) ? shuf_hi[e*24  +: 24]
+          : (shuf_k[1:0] == 2'd1) ? shuf_hi[L1*24 +: 24]
+          : (shuf_k[1:0] == 2'd2) ? shuf_hi[L2*24 +: 24]
+                                  : shuf_hi[L3*24 +: 24];
+    end
+    endgenerate
 
     reg [383:0] bcast_out;
     integer bi;
@@ -271,8 +342,17 @@ module vec_core #(
 
     // ANY/ALL reduce the PREDICATE file, not the vector file: they never
     // enter the tree, so they cost one cycle and no ALU.
-    wire [127:0] vlmask = (vl >= 8'd128) ? {128{1'b1}}
-                                         : (({128'd1} << vl[6:0]) - 128'd1);
+    //
+    // vlmask is a REGISTER because as an expression it was the whole machine's
+    // critical path: a 128-bit barrel shift and a 128-bit decrement sat in
+    // front of the reduce, and `mm_mesh` reported vl_reg[6] -> sreg_reg at
+    // 304.2 MHz. `vl` only moves on VSETVL, three states before any consumer.
+    reg [127:0] vlmask;
+    always @(posedge clk) begin
+        if (rst) vlmask <= {128{1'b1}};            // vl resets to 128
+        else     vlmask <= (vl >= 8'd128) ? {128{1'b1}}
+                                          : ((128'd1 << vl[6:0]) - 128'd1);
+    end
     wire p_any = |(p_bits & vlmask);
     wire p_all = ((p_bits & vlmask) == vlmask);
 
@@ -299,11 +379,14 @@ module vec_core #(
             rd_req_valid <= 1'b0; wr_req_valid <= 1'b0;
             rd_req_addr <= 34'd0; rd_req_tag <= 9'd0;
             wr_req_addr <= 34'd0; wr_req_data <= 256'd0;
+            nd_valid <= 1'b0; nd_x <= 4'd0; nd_y <= 4'd0; nd_buf <= 4'd0;
+            nd_off <= 16'd0; nd_len <= 8'd0; nd_sig <= 1'b0; nd_ack <= 8'd0;
             ag_start <= 1'b0; ag_step <= 1'b0; ag_sel <= 3'd0; ag_off <= 18'd0;
             l1_we <= 1'b0; l1_waddr <= 9'd0; l1_raddr <= 9'd0;
             l1_wdata <= 256'd0; l1_base <= 9'd0; l1_cur <= 9'd0;
             ls_reg <= 4'd0; ls_dt <= 3'd0; ls_hi <= 1'b0; ls_hold <= 192'd0;
             ls_kind <= 5'd0; shuf_k <= 4'd0; bc_to_s <= 1'b0;
+            cv_src <= 256'd0; cd_err <= 1'b0;
             for (ii = 0; ii < 16; ii = ii + 1) begin
                 sreg[ii] <= 24'd0;
                 pend[ii] <= 5'd0;
@@ -321,6 +404,7 @@ module vec_core #(
             if (rd_req_valid && rd_req_ready) rd_req_valid <= 1'b0;
             if (wr_req_valid && wr_req_ready) wr_req_valid <= 1'b0;
             if (busy) cycles <= cycles + 32'd1;
+            cv_src <= (ls_kind == O_VCVT) ? o_f16 : l1_q;
 
             // A fill response lands where its tag says, whatever the order.
             // `fill_out` is updated ONCE, below: issuing and retiring can land
@@ -329,6 +413,10 @@ module vec_core #(
                 l1_we    <= 1'b1;
                 l1_waddr <= rr_tag;
                 l1_wdata <= rr_data;
+            end else if (cd_valid) begin
+                l1_we    <= 1'b1;
+                l1_waddr <= cd_addr;
+                l1_wdata <= cd_data;
             end
             fill_out <= fill_out + (fill_issue ? 16'd1 : 16'd0)
                                  - (rr_valid   ? 16'd1 : 16'd0);
@@ -343,17 +431,26 @@ module vec_core #(
 
             case (st)
             // ---------------------------------------------------- fetch
+            // A CU_DATA burst this core could not place is reported at the next
+            // instruction boundary -- here if nothing was running when it
+            // arrived, in S_F1 if a kernel was. Dropping it silently is the one
+            // outcome not allowed: the data went nowhere and the kernel would
+            // read stale L1 and be plausibly wrong.
             S_IDLE: if (start) begin
                 pc <= start_pc; im_addr <= start_pc;
                 busy <= 1'b1; halted <= 1'b0; fault <= 1'b0;
                 cycles <= 32'd0; g_have <= 3'd0; lp_act <= 1'b0;
-                st <= S_F2;
+                if (cd_err) begin
+                    cd_err <= 1'b0; fault_code <= F_CUDATA; st <= S_FAULT;
+                end else st <= S_F2;
             end
 
             // The hardware loop closes HERE, not after the case: inside the
             // block `st` still reads its old value, so testing it there would
             // never fire.
-            S_F1: begin
+            S_F1: if (cd_err) begin
+                cd_err <= 1'b0; fault_code <= F_CUDATA; st <= S_FAULT;
+            end else begin
                 if (lp_act && (pc == lp_end)) begin
                     if (lp_cnt > 24'd1) begin
                         lp_cnt  <= lp_cnt - 24'd1;
@@ -432,11 +529,13 @@ module vec_core #(
                     end
                     O_VRED: begin
                         g_ra <= d_va; g_rb <= d_vb; g_rc <= d_va;
-                        g_wd <= 4'd0; g_pr <= d_pr;
+                        // EXPSUM keeps its elementwise result, and its vector
+                        // destination rides in vb -- a unary leaf leaves the
+                        // second source free. Every other kind writes vd only.
+                        g_wd <= (d_vc[2:0] == R_EXPSUM) ? d_vb : 4'd0;
+                        g_pr <= d_pr;
                         red_kind <= d_vc[2:0];
-                        if (d_vc[2:0] == 3'd5) begin
-                            fault_code <= F_OPCODE; st <= S_FAULT;
-                        end else if (d_vc[2:0] >= 3'd6) begin
+                        if (d_vc[2:0] >= 3'd6) begin
                             sreg[d_vd] <= (d_vc[2:0] == 3'd6)
                                         ? (p_any ? E8_ONE : 24'd0)
                                         : (p_all ? E8_ONE : 24'd0);
@@ -449,7 +548,7 @@ module vec_core #(
                             fault_code <= F_OPCODE; st <= S_FAULT;
                         end else begin
                             ls_reg <= d_vd;
-                            nbeat  <= ((d_vc[2:0] == 3'd3) || (d_vc[2:0] == 3'd4))
+                            nbeat  <= red_half(d_vc[2:0])
                                     ? {1'd0, nchunk, 1'b0} : {2'd0, nchunk};
                             red_init <= 1'b1;
                             st <= S_RED;
@@ -473,6 +572,11 @@ module vec_core #(
                         end
                     end
                     O_VFILL, O_VDRAIN: begin
+                        nd_valid <= (d_op == O_VDRAIN) && d_nd;
+                        nd_x     <= d_ndx;
+                        nd_y     <= d_ndy;
+                        nd_buf   <= d_ndbuf;
+                        nd_sig   <= d_ndsig;
                         // A response names its L1 slot through the NoC's 8-bit
                         // txn field, so only one fill may be in flight; a
                         // second waits rather than aliasing the first's tags.
@@ -557,8 +661,9 @@ module vec_core #(
                     iss_ra <= {g_ra, cchunk};
                     iss_rb <= {g_rb, cchunk};
                     iss_rc <= {g_ra, cchunk};
+                    iss_wa <= {g_wd, cchunk};
                     bcnt <= bcnt + 6'd1;
-                    if ((red_kind == 3'd3) || (red_kind == 3'd4)) begin
+                    if (red_half(red_kind)) begin
                         if (cphase == 2'd1) begin
                             cphase <= 2'd0; cchunk <= cchunk + 3'd1;
                         end else cphase <= 2'd1;
@@ -588,7 +693,8 @@ module vec_core #(
                 ag_step  <= 1'b1;
                 st <= S_LDW;
             end
-            S_LDW: st <= S_LDD;
+            S_LDW: st <= S_LDQ;
+            S_LDQ: st <= S_LDD;
             S_LDD: begin
                 if (ls_dt == DT_FP16) begin
                     lw_wdata <= i_f16;
@@ -619,9 +725,11 @@ module vec_core #(
                 st <= S_STW;
             end
             S_STW: st <= S_STD;
-            // A fill response owns L1's single write port, so a VST that would
-            // land on the same cycle holds instead of being silently dropped.
-            S_STD: if (rr_valid && (ls_kind == O_VST)) begin
+            // A fill response or a peer's CU_DATA owns L1's single write port,
+            // so a VST that would land on the same cycle holds instead of being
+            // silently dropped -- the case below assigns `l1_we` last and would
+            // otherwise win.
+            S_STD: if ((rr_valid || cd_valid) && (ls_kind == O_VST)) begin
                 st <= S_STD;
             end else begin
                 case (ls_kind)
@@ -703,12 +811,28 @@ module vec_core #(
             // trustworthy until the state after. Every walk waits here first.
             S_AGW: st <= (ls_kind == O_VLD) ? S_LDA
                        : ((ls_kind == O_VFILL) || (ls_kind == O_VDRAIN))
-                         ? S_MEM0 : S_STR;
+                         ? S_MEMW1 : S_STR;
+
+            S_MEMW1: st <= S_MEMW2;
+            S_MEMW2: st <= S_MEMW3;
+            S_MEMW3: st <= S_MEM0;
 
             S_MEM0: if (ag_total > 32'd256) begin
                 fault_code <= F_LEN; st <= S_FAULT;
             end else begin
                 mem_left <= ag_total;
+                // For a peer drain the descriptor's BASE is the destination L1
+                // offset and its bounds are the count. One CU_DATA descriptor
+                // covers a contiguous run, so a STRIDED walk is not a peer
+                // drain -- the sink would read it as consecutive words.
+                //
+                // Base bits [23:16] are {ack_y, ack_x}, where the sink sends
+                // the completion. The instruction word has one bit left, not
+                // eight, and the base is a 34-bit field of which a peer drain
+                // uses sixteen -- so the room is here and nowhere else.
+                nd_off <= ag_addr[15:0];
+                nd_ack <= ag_addr[23:16];
+                nd_len <= ag_total[7:0] - 8'd1;
                 st <= (ls_kind == O_VFILL) ? S_FILL : S_DRA;
             end
 
@@ -731,6 +855,10 @@ module vec_core #(
             end
             default: st <= S_FAULT;
             endcase
+
+            // LAST, so a fault arriving in the same cycle one is cleared above
+            // is not the one that gets dropped.
+            if (cd_fault) cd_err <= 1'b1;
         end
     end
 

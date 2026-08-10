@@ -100,10 +100,12 @@ trip through FP16 ([vector-core.md](../compute/vector-core.md) §11).
 > ([cluster.md](cluster.md) §5: one 256-bit word per 4x4 sub-tile is 16 elements
 > at 16 bits, with no room for 24) and stage 6 converts on EMIT, so a partial in
 > memory is FP16. `VLD.ACC24` therefore needs the vector core to receive a peer
-> transfer directly, which is a mesh path it does not have today -- not a
-> memory format. `E8M15 (raw)` has no such route at all: it is the lane's own
-> format and `vector-core.md` §1 says software sees FP32 or FP16 and nothing
-> else.
+> transfer directly -- not a memory format. **The mesh path now exists** (§5.1),
+> but it lands raw 256-bit words in L1: it moves whatever the sender put in the
+> flit, so it carries ACC24 only once a sender emits ACC24 and `VLD` learns to
+> read it. Neither is true yet. `E8M15 (raw)` has no such route at all: it is the
+> lane's own format and `vector-core.md` §1 says software sees FP32 or FP16 and
+> nothing else.
 >
 > The driver used to allocate ACC24 *regions* and emit `dtype: acc24` on a
 > DRAIN. That was fiction and is corrected; memory is FP16/FP32 throughout.
@@ -149,12 +151,30 @@ Thirty-two, five bits, no room and no need for more.
 | `1B` | `VLOOP`  | hardware loop: `count = S[va]`, body length `vb` | — |
 | `1C` | `VBAR`   | wait until the named `VFILL`/`VDRAIN` has retired | — |
 | `1D` | `VFILL`  | start an L1 fill from descriptor `A[ad]` | — |
-| `1E` | `VDRAIN` | start an L1 drain to descriptor `A[ad]` | — |
+| `1E` | `VDRAIN` | start an L1 drain, to memory or to a peer CU (§5.1) | — |
 | `1F` | `VHALT`  | signal done to the agent | — |
 
-`VRED` kinds, in the `vc` field: `SUM MAX MIN SUMSQ DOT ARGMAX ANY ALL`.
+`VRED` kinds, in the `vc` field: `SUM MAX MIN SUMSQ DOT EXPSUM ANY ALL`.
 `SUMSQ` is `a*a+c` in the tree nodes and `DOT` is `a*b+c` — both free from the
 node being an FMA rather than an adder.
+
+**`EXPSUM` (kind 5) keeps its elementwise result.** `vd = exp2(va)` written
+back per element, *and* `Σ vd` reduced into `S[vd]`, in one pass — the vector
+destination rides in the `vb` field, which a unary leaf leaves free. It exists
+because softmax is the inner loop of attention and of every normalisation, and
+fusing the two halves removes a pass and a `VSETMD`. Capability-gated as
+`vec_reduce_writeback`; a core without it **faults** on kind 5 rather than
+mis-executing.
+
+Kind 5 previously read `ARGMAX` in this table, but ARGMAX was never implemented
+— the decoder raised `F_OPCODE` on it — and it does not fit the shape anyway,
+returning an index where every other kind returns a value. 5 was the only free
+encoding in a 3-bit field.
+
+The subtract in `exp2(a - m)` is **not** fused: that would be a two-stage leaf,
+and sixteen ALUs cannot hold both a chain and a tree — see
+`docs/compute/vector-core.md` §7.3a. Subtract the row max in a preceding FLAT
+pass, as before.
 
 **The four transcendentals are one pass.** That is the single most consequential
 line in this table: on a GPU they are quarter-rate SFU ops, and softmax,
@@ -219,6 +239,83 @@ perform those copies.
 
 This is the difference between a kernel language and a fixed function, and it is
 worth more than any arithmetic feature in this document.
+
+### 5.1 Peer transfers: `CU_DATA` in both directions
+
+L1 is reachable from the mesh, not only from memory. `CU_DATA` is
+[`../noc/spec.md`](../noc/spec.md) §5.3 — **type `0x8`, not the `0x4` that table
+still prints**; `0x4` is `MEM_WR_DATA` in `vec_cu.v` and `mag_mem_port.v`, and
+`src/kohakunoc/noc_pkt.vh` records the resolution.
+
+**Inbound.** A descriptor flit, then `len+1` pure data flits, the last with
+`last` set. `offset` is in 32-byte granules, which is exactly an L1 word, so it
+is the destination L1 address unchanged. The core has **one flat L1**: `buf_id`
+must be 0, and `offset + len` must be inside `L1_DEPTH`. A burst failing either
+is dropped whole and faults `F_CUDATA` at the next instruction boundary rather
+than wrapping the address and quietly overwriting the scratchpad.
+
+**One burst at a time.** There is one descriptor and one write pointer, so two
+senders' bursts interleaved on the wire would merge into each other — their data
+flits are indistinguishable by content. This is the same shape as the existing
+"one `VFILL` outstanding" rule, and per-sender state is real hardware for a case
+nothing generates yet. It is **detected** rather than prevented: flits of one
+burst cannot arrive out of order (same source and destination, so the same
+dimension-ordered path), which makes a data flit whose source differs from the
+open descriptor's conclusive. It faults `F_CUDATA` and drops the rest, and the
+burst is not acknowledged.
+
+A peer write is **not** a `VFILL` retirement. `VBAR` and `VHALT` wait on
+outstanding *fills*, and nothing here issued a request, so a burst that arrives
+mid-kernel does not satisfy a barrier and does not disturb one. Ordering between
+a peer's write and the kernel that reads it is the sender's problem, and
+`signal_on_complete` is how it is solved: the core answers `SIG_DATA_RECEIVED`
+(`0x03`, `arg = buf_id`) once the last word lands, so the agent can stage the
+`RUN` behind it.
+
+**Where that answer goes is `[215:208]` of the descriptor, `{ack_y, ack_x}`.**
+Zero means the descriptor's source, which is what a host-originated burst uses —
+the dispatcher stamps itself as the source, so the ack lands in
+`NODE_STATUS[receiver]` where the host can see it. Zero is unambiguous because
+`(0,0)` is a mesh **corner**: it touches no router and can never hold an
+endpoint.
+
+A CU-to-CU burst must set it. Left at zero the ack goes to the *sending CU*,
+where nothing consumes it — `vec_cu` drops any flit that is neither a read
+response nor `CU_DATA` — and the host has no way to sequence a reader behind the
+writer. Pointing it at the orchestrator keeps the payload on the mesh and puts
+only the completion where the sequencer can see it.
+
+**Outbound.** `VDRAIN` gains a sink. The bits it did not read are the overlay,
+and every encoding written before this one leaves them zero — which reads as
+`to_node = 0`, memory, so nothing needs re-encoding:
+
+```
+  31    27 26 25 24 23  21 20  17 16  13 12   9  8                  0
+ ┌────────┬──┬──┬──┬──────┬──────┬──────┬──────┬────────────────────┐
+ │  1E    │- │sg│nd│  ad  │ dst_x│ dst_y│buf_id│  L1 start word     │
+ └────────┴──┴──┴──┴──────┴──────┴──────┴──────┴────────────────────┘
+
+  nd  0 sink is memory, A[ad] walks byte addresses -- unchanged
+      1 sink is the CU at (dst_x, dst_y), buffer buf_id
+  sg  ask that sink for SIG_DATA_RECEIVED when the last word lands
+```
+
+With `nd = 1` the descriptor is read differently, because a `CU_DATA` descriptor
+covers **one contiguous run**: `A[ad]`'s *base* is the destination offset in
+32-byte granules and its *bounds* are the count. A strided `A[ad]` is not a peer
+drain — the sink would read the words as consecutive. The L1 side of the walk is
+unchanged: `L1 start word` and upward, one word per flit, capped at 256 by
+`F_LEN` as before.
+
+The base carries one more field, because the instruction word has a single bit
+left and the base has eighteen spare:
+
+```
+  A[ad].base   [33:24] unused   [23:16] {ack_y, ack_x}   [15:0] peer L1 word
+```
+
+So a peer drain that the host must observe is
+`desc(ad, ack_y << 20 | ack_x << 16 | peer_word, dim(1, n))`.
 
 ---
 
