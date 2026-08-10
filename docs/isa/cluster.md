@@ -16,17 +16,37 @@ sweep), [`src/ktpu/hw/matmul.py`](../../src/ktpu/hw/matmul.py)
 
 ---
 
-## 1. One cluster, two ports
+## 1. One cluster, one port
 
 ```
-   NoC <-> manager <-> tcu -> tcu -> tcu -> tcu -> acu <-> NoC
-            L1           direct DSP cascade        resident tile
+   NoC <-> manager <-> tcu -> tcu -> tcu -> tcu -> acu
+            L1           direct DSP cascade      resident tile
 ```
 
-Port 0 (manager) carries instructions in, operand fetches out, and completion
-signals. Port 1 (accumulator) carries result write-back.
+One NoC local at `(CU_X, CU_Y)` carries everything: instructions and fill
+responses in; fetch descriptors, drain writes and completion signals out.
+Inbound is demultiplexed by flit type, the way `mag.v` shares its memory ports.
+Outbound, the fetch descriptor and the drain share one queue and **the fetch
+descriptor wins** — a FILL is a single flit the sequencer is blocked on, so
+delaying it costs a whole memory round trip, while a drain flit is bulk traffic
+behind arithmetic that has already finished and waits at most one flit.
 
-Two ports, not five. The chain eats eight 256-bit operand words per cycle and a
+> **This was two ports until 2026-08-10**, a manager at `MGR_X/MGR_Y` and an
+> accumulator at `ACU_X/ACU_Y`. The second endpoint bought no bandwidth — the
+> link is full duplex and the two ends loaded opposite directions of it. What it
+> cost was a router local: eight clusters at two locals each force a 4x4 mesh
+> where one local each fits 2x4, which is eight `NoCRouter` instances at 3,281
+> LUT apiece.
+>
+> The risk was head-of-line blocking on the shared outbound queue. Measured at
+> 128x128x128 on two clusters: **`cu_send` 0.0%, `out_bp` 0.0%** — the CU is
+> never blocked sending. The machine is drain-bound (`cu_dwait` 62.8%), which is
+> what makes the priority above the right way round rather than arbitrary.
+>
+> **The flit layout below did not change.** Source and destination coordinates
+> keep their positions and simply carry `CU_X/CU_Y` in both directions.
+
+One port, not five. The chain eats eight 256-bit operand words per cycle and a
 port delivers one, so feeding the TCUs directly from the NoC is an 8x deficit no
 matter how many ports are spent on it. Reuse closes the gap instead: a
 `Gm x Gn` sub-tile block needs `4(Gm+Gn)/(Gm*Gn)` words per cycle, which is
@@ -57,7 +77,24 @@ The header is the standard one from [memory.md](memory.md) §1. `CU_INST` is typ
 | `[124:117]` | `boff` | GEMM | base L1 entry on the B side — §4.6 |
 | `[116]` | `emit` | GEMM | hand each sub-tile out as it finishes — §5.1 |
 | `[115]` | `fuse` | DRAIN | barrier only; the sweep already wrote them — §5.1 |
-| `[114:0]` | — | | unused |
+| `[114]` | `abank` | GEMM | which 256-entry half of L1 A this sweep reads — §4.6 |
+| `[113]` | `bbank` | GEMM | ... and of L1 B |
+| `[112]` | `fbank` | FILL | which half this fill writes |
+| `[111]` | `dnode` | DRAIN | send to a NoC node instead of to memory — §10 |
+| `[110:107]` | `dst_x` | DRAIN | destination node |
+| `[106:103]` | `dst_y` | DRAIN | |
+| `[102:95]` | `buf` | DRAIN | the destination's buffer id — §9.3 |
+| `[94:87]` | `dflags` | DRAIN | copied into the descriptor's `flags` byte |
+| `[86:83]` | `dack_y` | DRAIN | where the receiver's completion goes — §9.2 |
+| `[82:79]` | `dack_x` | DRAIN | `0` = back to this cluster |
+| `[78:0]` | — | | unused |
+
+> **The bank bits and the drain destination were specified for the same bits**
+> and do not share them. `[114:112]` belong to `GEMM`/`FILL` and the
+> destination would have been `DRAIN`-only, so overlapping them would have
+> worked — and would have been exactly the opcode-dependent field this section
+> warns about two paragraphs down. The destination moved down three bits
+> instead. Nothing is lost: 87 bits are still spare.
 
 > **`n` is 16 bits, and it had to become so.** The resident tile holds 512
 > sub-tiles, so a `DRAIN` names 512 — which an 8-bit field wraps to 0, draining
@@ -257,7 +294,7 @@ driver owns the banking (§4.6); `mx_cluster_mgr` has a simulation-only check
 that fires if a fill lands inside the range the running sweep is reading,
 because the alternative is a few corrupted sub-tiles and no report.
 
-### 4.6 `aoff`, `boff`, `eoff` — L1 is addressable
+### 4.6 `aoff`, `boff`, `eoff` — L1 is addressable, and banked
 
 `eoff` is where a `FILL` lands; `aoff` and `boff` are where a sweep reads. They
 buy two different things.
@@ -277,6 +314,38 @@ current one before the m loop came back to it.
 `eoff` costs nothing to carry: it rides in the memory request's `txn` field,
 which memory already echoes plus each entry's position in the run — so the
 response names the exact L1 slot and the receiver still needs no cursor.
+
+**L1 is two banks of 256, not one flat 512.** `aoff`, `boff` and `eoff` are
+8-bit fields, so a 512-entry L1 cannot be named by an offset alone: `abank`,
+`bbank` and `fbank` pick the half, and the address is the bank concatenated
+with the offset, truncated to `$clog2(GA)`.
+
+That truncation is what makes it free in both directions. At `GA = 256` the
+bank bit falls off the top and the address is what it always was, so **`0` is
+the lower half and every instruction written before these bits existed still
+addresses exactly what it did**. The alternative — widening `aoff` to 9 bits —
+moves every field below it, which is how a decode bug survives review.
+
+Widening is also what broke first: `GA = 512` alone makes `AAW = 9` while
+`gemm_aoff` stays 8, and `gemm_aoff[AAW-1:0]` overruns the field. Dropping to
+256 to avoid it threw away half the L1 for nothing, because **13 RAMB36 per
+port is the cost at any depth up to 512** — width sets the primitive count and
+the depth is already paid for, the same argument that put `TILES` at 512.
+
+The offset **cannot carry into the bank**: the running address `aoff + g*nk + kb`
+stays 8 bits, so a sweep that overruns its region wraps inside its own half
+rather than walking into the other bank's operands. That is the same silent
+wrap §4.7 already describes, kept silent in the same way.
+
+A `FILL` and a `GEMM` name their banks separately, which is the double
+buffering above with twice the L1 behind it: fill one half while the other is
+swept, then flip a bit instead of recomputing offsets. A `CU_DATA` stream needs
+no bank field at all — `off` counts granules through the whole 512-entry
+buffer, so the bank is simply where the entry index runs off the end of a byte.
+
+> **Two banks is the ceiling.** A deeper L1 needs a second bank bit;
+> `mx_cluster_mgr` reports it at elaboration rather than silently dropping the
+> top address bit.
 
 ### 4.7 When `GEMM` is finished
 
@@ -311,11 +380,19 @@ running 64 left 448 sub-tiles of paid-for depth unused.
 > wraps to 0, which memory coerces to 1. `kernel.choose_tile` caps `nk` for
 > both.
 
+The generated tops now build `GA = GB = 512` — two banks of 256 (§4.6). The
+figure the *compiler* plans against is `bench.py`'s `L1_A_ENTRIES` /
+`L1_B_ENTRIES`, still 128/256: capacity is an upper bound the planner need not
+fill, and at 928 bits wide the cost is 13 RAMB36 per port at **any** depth up
+to 512, so the headroom is free either way.
+
 ## 5. `DRAIN addr, n, anchor, fuse, last`
 
 Get `n` resident sub-tiles into memory as FP16, starting at byte `addr`.
 Sub-tile `t` goes to `addr + t*32` — one 256-bit word per 4x4 sub-tile, in the
 manager's sweep order, row group major.
+
+Or into another unit rather than into memory — §10.
 
 ### 5.1 Fused: the sweep hands them out
 
@@ -437,3 +514,308 @@ The four instructions one cluster runs for one output tile of one K chunk:
 Multiple K chunks repeat the first three and drain once at the end. That is
 `3*chunks + 1` flits per pass, which is what bounds how many passes fit in the
 staging window.
+
+## 9. `CU_DATA` — one unit writing into another
+
+A cluster's operands do not have to come from memory and its results do not
+have to go there. `CU_DATA` is the flit type that carries a bulk transfer
+between two NoC endpoints: another cluster's partial sums, or a vector core's
+output landing directly in L1.
+
+### 9.1 The type is `0x8`
+
+**Not the `0x4` [`../noc/spec.md`](../noc/spec.md) names.** `0x4` is
+`MEM_WR_DATA`. The two would be indistinguishable at MAG, which demultiplexes
+inbound flits by type precisely so that a write's data flits can be recognised
+after the mesh has interleaved something between them — see
+[memory.md](memory.md) §1. A `CU_DATA` flit reaching a memory port would enter
+the write queue as data and be stored.
+
+### 9.2 A stream is a descriptor and its data
+
+One descriptor flit, then `len+1` pure data flits, the last of them carrying the
+header's `last` bit.
+
+| bits | field | meaning |
+|---|---|---|
+| `[255:248]` | `buf` | which buffer of the receiver — §9.3 |
+| `[247:232]` | `off` | first 32-byte granule within that buffer |
+| `[231:224]` | `len` | data flits minus one |
+| `[223:216]` | `flags` | bit 0 `signal_on_complete` |
+| `[215:212]` | `ack_y` | where the completion goes; `0` = the sender |
+| `[211:208]` | `ack_x` | |
+| `[207:0]` | — | unused |
+
+`off` counts **32-byte granules**, which is one data flit's payload, and it
+advances by one per data flit. A stream is therefore a run: the receiver needs
+no cursor of its own and no per-buffer state beyond the one it is filling.
+
+Data flits carry payload only — no length, no index, nothing that has to agree
+with the descriptor. That is what keeps the receiver from having two opinions
+about where a flit goes.
+
+**`flags[0]` asks the receiver to report.** It answers with a `CU_SIGNAL` of
+code `SIG_DATA_RECEIVED` (`0x03`) and `arg = buf`, addressed to the
+**descriptor's** source. Without it a unit that sends and waits would block
+for ever: `noc_cu_base` signals on instruction retirement and a burst is not an
+instruction, so it has no other way to report itself.
+
+Two rules make it trustworthy, and the vector core implements the same pair:
+
+* **It wins the outbound arbiter**, over the fetch descriptor and the drain
+  both. It is one flit, the sender is blocked on it, and the receive path is
+  held until it leaves — so anything queued in front of it is paid twice.
+* **The receive path stalls while one is pending**, so a second burst cannot
+  overwrite the completion the first has not sent yet.
+
+A **rejected** burst is still acknowledged (§9.3). A signal that only arrives
+when the data was good is a signal the sender cannot wait on.
+
+**`ack_x`/`ack_y` say where it goes, and `0` means the descriptor's source** —
+which is what every burst did before the field existed, so host→CU is unchanged.
+It exists because **a CU→CU transfer's completion is otherwise unobservable**:
+the descriptor's source is the *sending* unit, and no CU consumes an ack, so
+nothing could sequence a reader behind a writer. A cluster sending to a vector
+core names the orchestrator, and the host waits on `NODE_STATUS` for it.
+
+`(0,0)` is a safe sentinel because `gen_mesh.py` requires the mesh corners
+empty — a corner touches no router, so no endpoint can ever live there.
+
+> **The ack destination gets its own registers, not the sender's.** They hold
+> the same value whenever the ack is not redirected, so one shared pair passes
+> every test *except* the case the field exists for. The interleave check
+> (§9.2) compares a data flit's source against the open stream's; against the
+> ack destination instead, a redirected burst faults on every flit.
+
+The cluster puts it at `[86:83]`/`[82:79]` of the `DRAIN`; the vector core puts
+it elsewhere. Only the **descriptor** wire format is shared.
+
+> **One open stream per receiver.** The mesh interleaves, and a receiver holds
+> exactly one `{buf, off, left}`, so a second sender's descriptor is consumed as
+> the first sender's data. `mx_cluster_cu` reports it: the header `last` bit
+> stops agreeing with the descriptor's own `len`. There is no arbitration — the
+> driver owns it, the same way it owns L1 banking (§4.6).
+
+### 9.3 A cluster's buffers
+
+| `buf` | destination | granule |
+|---|---|---|
+| `0` | L1 A | one of an entry's 4 words — `entry = off >> 2`, `word = off & 3` |
+| `1` | L1 B | likewise |
+| `2` | the resident output tile, through `OP_ADD_PEER` | half a sub-tile — `subtile = off >> 1` |
+
+`0` and `1` match `sel` on a `FILL`, and a data flit for them is **byte-identical
+to a `MEM_RD_RESP` payload**: 32 int7 elements and the entry's 4 E5M3 scales,
+placed by the same permutation, transposed for B. A sender into L1 is
+substituting for MAG and owes the same format — see §3.
+
+Literally the same permutation: the two sources meet at one placement block in
+`mx_cluster_cu` and differ only in where `{entry, word}` comes from. Building
+the 928-bit unrolled write twice would have been ~900 LUT of duplicate, and the
+copy that no bench exercised would have been the one that drifted.
+
+**A burst is rejected, never wrapped.** `off` is 16 bits against an L1 of `GA`
+entries, so a burst that runs off the end would silently overwrite the bottom
+of the buffer — the quietest possible corruption. The descriptor is range
+checked against the named buffer (`GA*4`, `GB*4`, `TILES*2` granules), an
+unknown `buf` fails it, and a peer burst starting on an odd granule fails it
+too because a sub-tile is a pair.
+
+A rejected burst is **counted out and then dropped**, not skipped: the receiver
+still consumes `len+1` data flits, because otherwise the next data flit is read
+as a descriptor and one bad burst desynchronises every burst after it. Nothing
+is written, the completion signal is still sent, and a sticky error reports
+`SIG_FAULT` at the next instruction boundary — then clears, so one malformed
+burst is one fault and not a CU that faults for ever.
+
+Dropping rather than holding is forced: an unconsumed flit fills the receive
+FIFO, raises `noc_in_busy` for good, and wedges the instruction stream behind
+it.
+
+### 9.4 `buf = 2` — peer accumulation
+
+`mx_acu_fp` has always implemented `OP_ADD_PEER`, `OP_SEND` and `OP_FWD` so that
+one matmul can span clusters. `mx_cluster_node` grounded the ports —
+`peer_in` tied to zero, `peer_out` and `peer_valid` left open — from the merge
+of the manager and accumulator nodes until 2026-08-10, so none of it was
+reachable.
+
+A peer sub-tile is `16 x (ACC_MW+8)` bits — **352 at `ACC_MW = 14`**, the
+accumulator's own float, not FP16. It does not fit one payload, so it is two
+granules: `2t` carries bits `[255:0]` and `2t+1` carries the rest in its
+payload's low bits. A stream whose `off` is odd is a fault, reported.
+
+The value is added into the resident tile, so the sub-tile keeps its full
+accumulator precision across the transfer. That is the whole point: a K-split
+across clusters that went through memory would round to FP16 in between, and a
+`DRAIN`+`FILL` round trip costs the write, the read and the quantiser pass.
+
+Three contracts, none of them structural:
+
+* **The tile must already be open.** `OP_ADD_PEER` reads the tile address it
+  writes, and the tile memory has no reset. The receiving cluster must have run
+  a `GEMM` that opened those sub-tiles with `OP_LOAD` first — see [acu.md](acu.md).
+* **A peer stream and a sweep may not overlap.** The stream waits for
+  `gemm_busy` at its head and then holds the accumulator's control mux for its
+  whole length; `S_GEMM` and `S_DRAIN` wait for the stream to close. Tested once
+  rather than per sub-tile, because `gemm_busy` covers the accumulator's
+  `REUSE_MIN` tail and re-testing it would idle ~12 cycles a sub-tile.
+* **`REUSE_MIN` still applies.** Consecutive peer sub-tiles address different
+  tiles, so it does not bind between them, and the accumulator takes one
+  command per cycle. A stream that revisits a sub-tile within 5 cycles does not.
+
+The command is issued through the drain sequencer's own `d_op`/`d_addr`/`d_cmd`
+registers rather than as a third input to the accumulator's control mux. That
+mux is one level deep by design — `mx_acu_fp` timing rule 2 — and a third source
+would put a second level in front of the tile address. The sequencer is idle
+whenever a peer sub-tile may issue, so the registers are free.
+
+### 9.5 How it is tested
+
+`tests/matmul/mx_cluster_data_tb.v`, bench `cluster_data`. Nothing in the
+machine sends `CU_DATA` yet, so the bench is the sender: it drives flits at the
+CU's NoC local and reads the drain's memory writes back off it.
+
+* **`buf` 0/1** — the same GEMM the other benches run, with the operands
+  arriving as `CU_DATA` instead of as MAG responses. Graded against the FP64
+  model at the tile's peak, which is how `mx_cluster_node_tb` grades.
+* **`buf` 2** — against an **exactly zero** tile, so no float model is needed:
+  zero plus 1.0 is 1.0, and FP16 1.0 is `0x3C00` or the sub-tile did not reach
+  the accumulator, or reached the wrong address.
+* **the two banks** (§4.6) — the lower one gets zeros and the upper the real
+  operands, so one model catches both directions. A bank bit lost on the read
+  path sweeps zeros; lost on the write path, the lower bank is not zero any
+  more. Run at `GA = GB = 512`, the only shape where the bit is not optimised
+  away.
+* **cu→cu, out and back** (§10.2) — the cluster sends its resident tile to
+  itself as `buf` 2 and the bench hands it back, so `OP_ADD_PEER` adds the tile
+  to itself and the answer must be exactly **2T**. That is `OP_SEND`, the
+  two-granule split, the descriptor build, the receive demux, `OP_ADD_PEER` and
+  the completion signal in one check, and 2T needs no model of the
+  accumulator's float — only the tile the ordinary path already produced.
+
+### 9.6 What it costs
+
+`mx_cluster_cu`, out of context at 300 MHz on `xcvu13p-fhgb2104-2L-e`, in the
+bench defaults (`TILES = 256`, `GA = GB = 32`, `L1_PRIM = distributed`) so the
+steps are comparable — the production shape is below.
+
+| | LUT | FF | BRAM | Fmax |
+|---|---|---|---|---|
+| before, peer grounded | 14,808 | 17,385 | 9 | 346.6 MHz |
+| + `buf` 2, peer reachable | 15,802 | 18,833 | 9 | 345.6 MHz |
+| + `buf` 0/1 into L1 | 16,107 | 18,831 | 9 | 345.6 MHz |
+| + banking, `OP_SEND`, signals, rejection | 17,351 | 20,159 | 9 | 343.8 MHz |
+| **total** | **+2,543** | **+2,774** | — | **−2.8** |
+
+**The largest single item is not the receiver.** Grounding `peer_in` let
+synthesis prune `mx_acu_fp`'s four 352-bit peer pipeline registers and the
+352-bit mux in front of the align stage — logic paid for in the source and
+absent from the netlist. That is the first 994 LUT and 1,448 FF.
+
+Reaching L1 costs **305 LUT and no registers**, because the two sources share
+one placement block (§9.3). A second copy of the permutation would have been
+about three times the whole feature.
+
+**In the shape that ships** — `TILES = 512`, `GA = GB = 512`, `L1_PRIM = block`,
+which banking is what makes expressible at all:
+
+| LUT | FF | BRAM | DSP | Fmax |
+|---|---|---|---|---|
+| 16,390 | 18,404 | 35 | 304 | 344.3 MHz |
+
+The ack destination (§9.2) is 22 LUT and 32 FF of that, and does not move the
+frequency: it lands on `sg_flit`, which is registered and idle.
+
+Fewer LUTs than the default despite four times the L1, because block RAM is
+where 928 bits x 512 belongs: 13 RAMB36 per port, 26 for the two, 5 for the
+resident tile and 4 for the receive queue.
+
+> **The critical path moved, and it was worth catching.** `!peer_open` in the
+> sequencer's guard put an 8-bit compare behind `drain_busy` on
+> `d_out -> the state machine's clock enable`, which took the CU from 345.6 to
+> **324.2 MHz** — past the accumulator's own `val_r -> b_plo/b_phi`, which had
+> owned every worst path until then. `peer_open` is a level held for a whole
+> stream, so registering it gives the cycle back for free: 343.8 MHz, and the
+> same LUT count to within five.
+>
+> It is still the binding path, at 0.43 ns of slack against a 3.33 ns target.
+> The accumulator is now second.
+
+## 10. Where a `DRAIN` sends its results
+
+A drain writes to memory, or straight into another unit's buffer. The
+destination rides in the `CU_INST` payload's tail (§2), so a `DRAIN` written
+before these bits existed — all-zero there — still means "to memory":
+
+| bits | field | meaning |
+|---|---|---|
+| `[111]` | `dnode` | `0` memory, as before; `1` a NoC node |
+| `[110:107]` | `dst_x` | destination node, `dnode = 1` only |
+| `[106:103]` | `dst_y` | |
+| `[102:95]` | `buf` | the destination's buffer id — §9.3 |
+| `[94:87]` | `dflags` | copied into the descriptor's `flags` byte |
+| `[86:83]` | `dack_y` | where the receiver sends its completion — §9.2 |
+| `[82:79]` | `dack_x` | `0` meaning back to this cluster |
+
+`addr` keeps its meaning either way: the destination base as a **byte address**.
+A node-addressed drain sends `addr[20:5]` as the descriptor's granule `off`,
+which is the arithmetic the memory path already does — sub-tile `t` goes to
+`addr + t*32`, so granule `addr/32 + t`. One field, computed once by the
+driver, and the hardware shifts.
+
+The burst structure is unchanged: `WBURST = 8` granules become one descriptor
+with `len = 7` and 8 data flits, exactly as they become one `MEM_WR_REQ` with
+`len = 7` and 8 `MEM_WR_DATA` flits.
+
+Only the **semantics** are shared with the vector core, not the bit positions —
+the two instruction words are different shapes. What must agree is the field
+set `{dnode, dst_x, dst_y, buf, dflags}`, `addr` as a byte address with
+`[20:5]` as the granule offset, and the `buf` namespace.
+
+### 10.1 `buf = 2` is a different drain, not a different header
+
+A cluster draining into another cluster's **L1 does not typecheck**: a drain
+emits FP16 sub-tiles and `buf` 0/1 take int7+E5M3 entries (§9.3). Cluster to
+cluster is `buf = 2`, and that is the only version worth having — a K-split
+through memory would round to FP16 in between, which is exactly the precision
+the peer path exists to preserve.
+
+So **`buf` selects the accumulator's opcode**, not just the flit header:
+
+| `buf` | opcode | what leaves |
+|---|---|---|
+| 0, 1, or memory | `OP_EMIT` | one 256-bit FP16 sub-tile per granule |
+| `2` | `OP_SEND` | the accumulator's own float, two granules per sub-tile |
+
+One field, and no second bit that can disagree with it.
+
+A send result is `PW` bits against a 256-bit path, so it becomes two granules —
+the low half on the cycle it arrives and the high half behind it. Widening the
+drain queue and the burst buffer to `PW` instead would have cost 96 bits × 16
+slots to carry a mode they are not in most of the time. It is also why **a send
+drain issues every other cycle**: two granules per command against one flit per
+cycle on the link, so the rates already match, and `mx_cluster_node` reports it
+if two send results ever collide.
+
+`d_iss` therefore counts sub-tiles while `d_got`/`d_pop`/`d_out` count granules.
+`drain_idx` is a granule index in both modes, which is what lets the write port
+stay unaware of the difference.
+
+> **A fused emit cannot be a peer send.** `GEMM.emit` issues `OP_ADD_EMIT`,
+> which produces FP16. A fused drain to a *node* works for `buf` 0/1 — the
+> destination is latched from whichever instruction set `w_base`, so an emitting
+> `GEMM` carries it the same way it carries the address (§5.1) — but `buf = 2`
+> needs an issuing `DRAIN`.
+
+### 10.2 A self-addressed burst deadlocks, by construction
+
+A cluster sending `buf = 2` **to itself**, with the flits looped back live, will
+hang — and the hang is real rather than an artefact of testing. The receive path
+cannot accumulate a peer sub-tile until the send drain has retired (§9.4), so
+holding the flits backpressures the very drain that is trying to retire.
+
+Nothing needs that configuration; peer exists to span clusters. But
+`mx_cluster_data_tb` does run the round trip, by capturing the burst and
+replaying it once the drain has finished — store and forward, which tests both
+halves against each other without the cycle.

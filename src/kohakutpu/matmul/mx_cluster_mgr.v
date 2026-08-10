@@ -53,6 +53,13 @@ module mx_cluster_mgr #(
     // operand in place. See docs/isa/cluster.md s4.6.
     input  wire [7:0]   gemm_aoff,
     input  wire [7:0]   gemm_boff,
+    // WHICH HALF of L1 this sweep reads. An L1 deeper than an 8-bit offset can
+    // name is TWO BANKS of 256 rather than a wider offset field: the address is
+    // {bank, offset} truncated to AAW, so at GA = 256 the bank bit falls off the
+    // top and the address is byte-identical to what it was. Widening `aoff`
+    // instead would have moved every field below it in the instruction.
+    input  wire         gemm_abank,
+    input  wire         gemm_bbank,
     // HAND EACH SUB-TILE OUT AS IT FINISHES. Set on the sweep that completes an
     // output tile: every issue of the LAST K block becomes OP_ADD_EMIT, so the
     // finished value leaves on the command that produced it rather than needing
@@ -109,6 +116,7 @@ module mx_cluster_mgr #(
     // ================================================ sweep counters
     reg [7:0] gm_r, gn_r, nk_r, anc_r;
     reg [7:0] aoff_r, boff_r;
+    reg       abank_r, bbank_r;
     reg       acc_r, emit_r;
     reg [7:0] kb, g, h;
     reg       run, s1_valid;
@@ -160,6 +168,25 @@ module mx_cluster_mgr #(
                  ACU_REUSE_MIN);
 `endif
 
+    // The offset stays 8 bits and CANNOT carry into the bank: `aoff + gm*nk`
+    // beyond 256 wraps inside its own half, which is the same silent wrap the
+    // capacity note in docs/isa/cluster.md s4.7 already describes. Widening the
+    // sum here would instead walk a sweep into the other bank's operands.
+    wire [7:0] a_off8 = aoff_r + g * nk_r + kb;
+    wire [7:0] b_off8 = boff_r + h * nk_r + kb;
+    wire [8:0] a_lin  = {abank_r, a_off8};
+    wire [8:0] b_lin  = {bbank_r, b_off8};
+    wire [8:0] a_st   = {gemm_abank, gemm_aoff};
+    wire [8:0] b_st   = {gemm_bbank, gemm_boff};
+
+`ifndef SYNTHESIS
+    // One bank bit is two banks. A deeper L1 needs a second, and the truncation
+    // below would silently drop the top address bit rather than fail.
+    initial if ((AAW > 9) || (BAW > 9))
+        $display("ERROR mx_cluster_mgr: L1 is two banks of 256, so GA and GB cap at 512 (AAW=%0d BAW=%0d)",
+                 AAW, BAW);
+`endif
+
     wire last_h  = (h + 8'd1 == gn_r);
     wire last_g  = last_h && (g + 8'd1 == gm_r);
     wire on_last_kb = (kb + 8'd1 == nk_r);   // every issue of the final K block
@@ -193,6 +220,7 @@ module mx_cluster_mgr #(
             kb <= 8'd0; g <= 8'd0; h <= 8'd0;
             gm_r <= 8'd1; gn_r <= 8'd1; nk_r <= 8'd1; anc_r <= 8'd0;
             aoff_r <= 8'd0; boff_r <= 8'd0;
+            abank_r <= 1'b0; bbank_r <= 1'b0;
             acc_r <= 1'b0; emit_r <= 1'b0;
             a_rd <= {AAW{1'b0}}; b_rd <= {BAW{1'b0}};
             s1_first <= 1'b0; s1_emit <= 1'b0; s1_addr <= {TAW{1'b0}};
@@ -210,9 +238,11 @@ module mx_cluster_mgr #(
                 emit_r <= gemm_emit;
                 aoff_r <= gemm_aoff;
                 boff_r <= gemm_boff;
+                abank_r <= gemm_abank;
+                bbank_r <= gemm_bbank;
                 kb <= 8'd0; g <= 8'd0; h <= 8'd0;
-                a_rd <= gemm_aoff[AAW-1:0];
-                b_rd <= gemm_boff[BAW-1:0];
+                a_rd <= a_st[AAW-1:0];
+                b_rd <= b_st[BAW-1:0];
                 // one K block never revisits an address, so it never paces
                 pace_n <= (gemm_nk <= 8'd1 || !t_small) ? 3'd0
                         : t_is1 ? 3'd4
@@ -226,8 +256,8 @@ module mx_cluster_mgr #(
                 end else if (pace != 3'd0) pace <= pace - 3'd1;
                 else begin
                     // present addresses for (g,h,kb); the data lands next cycle
-                    a_rd <= (aoff_r + g * nk_r + kb);
-                    b_rd <= (boff_r + h * nk_r + kb);
+                    a_rd <= a_lin[AAW-1:0];
+                    b_rd <= b_lin[BAW-1:0];
                     s1_valid <= 1'b1;
                     // First K block of a NON-accumulating GEMM loads the tile;
                     // everything else adds to it. `acc_r` lets one output tile
@@ -317,15 +347,24 @@ module mx_cluster_mgr #(
     // makes L1 a shared resource with no interlock. A fill landing on entries
     // the sweep is reading corrupts a few sub-tiles and nothing else: the median
     // barely moves and the answer is wrong. The driver owns the banking.
+    // WITHIN A BANK. `l1_addr` is {bank, offset} and a fill into the OTHER half
+    // is the whole point of banking, so comparing the flat address would report
+    // every double-buffered fill as a collision -- and a check that cries wolf
+    // is deleted, which is how the real one gets lost.
+    wire [7:0] fill_off  = l1_addr[7:0];
+    wire       fill_bank = (AAW > 8) ? l1_addr[8] : 1'b0;
+    wire       fill_bnkb = (BAW > 8) ? l1_addr[8] : 1'b0;
     always @(posedge clk) if (!rst && gemm_busy && l1_we) begin
-        if (!l1_sel && (l1_addr >= {8'd0, aoff_r}) &&
-                       (l1_addr <  {8'd0, aoff_r} + gm_r * nk_r))
-            $display("%0t ERROR mx_cluster_mgr: FILL A entry %0d lands inside the running sweep [%0d,%0d)",
-                     $time, l1_addr, aoff_r, aoff_r + gm_r * nk_r);
-        if (l1_sel && (l1_addr >= {8'd0, boff_r}) &&
-                      (l1_addr <  {8'd0, boff_r} + gn_r * nk_r))
-            $display("%0t ERROR mx_cluster_mgr: FILL B entry %0d lands inside the running sweep [%0d,%0d)",
-                     $time, l1_addr, boff_r, boff_r + gn_r * nk_r);
+        if (!l1_sel && (fill_bank == abank_r) &&
+                       ({8'd0, fill_off} >= {8'd0, aoff_r}) &&
+                       ({8'd0, fill_off} <  {8'd0, aoff_r} + gm_r * nk_r))
+            $display("%0t ERROR mx_cluster_mgr: FILL A entry %0d of bank %0d lands inside the running sweep [%0d,%0d)",
+                     $time, fill_off, fill_bank, aoff_r, aoff_r + gm_r * nk_r);
+        if (l1_sel && (fill_bnkb == bbank_r) &&
+                      ({8'd0, fill_off} >= {8'd0, boff_r}) &&
+                      ({8'd0, fill_off} <  {8'd0, boff_r} + gn_r * nk_r))
+            $display("%0t ERROR mx_cluster_mgr: FILL B entry %0d of bank %0d lands inside the running sweep [%0d,%0d)",
+                     $time, fill_off, fill_bnkb, boff_r, boff_r + gn_r * nk_r);
     end
     always @(posedge clk) if (!rst && s2_valid && cmd_full)
         $display("%0t ERROR mx_cluster_mgr: ACU command FIFO overflow", $time);

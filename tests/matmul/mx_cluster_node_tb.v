@@ -77,15 +77,24 @@ module mx_cluster_node_tb;
         // reaches the accumulator's opcode -- so every command came out x and
         // every result was a plausible 1.0.
         .gemm_aoff(8'd0), .gemm_boff(8'd0), .gemm_emit(1'b0),
+        .gemm_abank(1'b0), .gemm_bbank(1'b0),
         .gemm_busy(gemm_busy), .sweep_busy(),
         .drain_start(drain_start), .drain_n(drain_n), .drain_fused(1'b0),
+        // OP_EMIT, not OP_SEND. Left unconnected this is z, the accumulator's
+        // opcode goes x, and every sub-tile drains as a plausible zero.
+        .drain_send(1'b0),
         .drain_busy(drain_busy),
         .drain_data(drain_data), .drain_idx(drain_idx), .drain_valid(drain_valid),
         // The collector takes one sub-tile per cycle it is offered -- which is
         // what the sampling loop below does. Leaving it unconnected is z, so
         // the queue never popped and every sub-tile read back as the same
         // word: a plausible constant, not an error.
-        .drain_take(1'b1)
+        .drain_take(1'b1),
+        // Peer transfer is mx_cluster_cu's to drive; DRIVEN here for the same
+        // reason as the two above.
+        .peer_open(1'b0), .peer_cmd(1'b0), .peer_idx(16'd0),
+        .peer_data({(16*(MW+8)){1'b0}}), .peer_ready(),
+        .peer_out(), .peer_out_valid()
     );
 
     // ---- the problem ----

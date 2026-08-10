@@ -6,7 +6,8 @@
 //
 //   stage 1   unpack the two chains, take |value| and apply the block scale,
 //             both in one DSP
-//   stage 2a  leading-one search and shift
+//   stage 2a  leading-one search -> the one-hot the shift multiplies by
+//   stage 2a2 the normalising shift, as two DSP multiplies per lane
 //   stage 2b  round and assemble -> accumulator float
 //   stage 3   read the tile, compare exponents, align        <- reads the tile
 //   stage 4   add, leading-one search, shift
@@ -23,18 +24,22 @@
 // range is not the tunable. MW=14 measures identically to MW=16 and costs less,
 // so it is the default -- see docs/compute/accumulator.md.
 //
-// TIMING: this block sets the CU's critical path, binding on stage 1 -> stage
-// 2a (val_r -> b_sig) at 9 logic levels. Four rules keep it there, and breaking
-// any of them has cost 20-60 MHz:
+// TIMING: this block sets the CU's critical path. It bound on stage 1 -> stage
+// 2a (val_r -> b_sig) until the normalising shift moved into DSPs; the stage now
+// carries the leading-one search alone. Five rules, each worth 20-60 MHz:
 //
 //   1. The magnitude is taken BEFORE the multiply, in the DSP. Taking it after
 //      puts a 30-bit two's-complement carry chain between the DSP's output
 //      register and the leading-one search.
 //   2. Nothing combinational in front of the tile address. Every select that
-//      steers stage 3 is registered a stage early (a_sel, b_sel, addr_r2).
+//      steers stage 3 is registered a stage early, and registered ALREADY
+//      DECODED (a_zero_r, b_peer_r, b_zero_r, addr_r2) -- an encoded id would
+//      put its equality test back in front of the mux this rule empties.
 //   3. One mux level on the operands, not a chain of ternaries.
 //   4. Zero-ness travels as one control bit per operand, never as a mask on
 //      the 384-bit data.
+//   5. Nothing but the search between val_r and the shift DSPs' input registers.
+//      The one-hot is mx_lead1's isolated bit reversed, so it adds no levels.
 //
 // The leading-one search and the sticky bits in mx_fpacc.v must stay
 // tree-shaped for the same reason.
@@ -125,11 +130,16 @@ module mx_acu_fp #(
     // Multiplying the partial sum by m8a*m8b and taking the /64 off the
     // exponent keeps it EXACT -- no shifter, no rounding, and no precision
     // lost. The product is 8 bits wider, which is why VWM exists.
+    //
+    // A per-tile output scale was evaluated here and CANCELLED: folding the
+    // constant into Q on the host is exactly equivalent and free, because a
+    // uniform factor lands entirely in MXFP7's block exponents. See
+    // docs/compute/accumulator.md s4.6.
     wire [3:0] ma [0:3];
     wire [3:0] mb [0:3];
     wire signed [9:0] ea [0:3];
     wire signed [9:0] eb [0:3];
-    // Declared 8 bits WIDE and on its own. Inline as `{1'b0, ma[i]*mb[j]}` the
+    // Declared WIDE and on their own. Inline as `{1'b0, ma[i]*mb[j]}` the
     // multiply is self-determined to its 4-bit operand width inside the
     // concatenation, so 8*8 = 64 truncates to 0 and every result comes out zero.
     wire [7:0] mm [0:3][0:3];
@@ -208,60 +218,114 @@ module mx_acu_fp #(
     end
 
     // ================================================ stage 2a: leading one
-    wire [ACC_MW:0] n_sig  [0:15];
-    wire [5:0]      n_msb  [0:15];
-    wire            n_g    [0:15], n_s [0:15], n_z [0:15];
+    // The search only, now: it hands on the one-hot 2^k that stage 2a2's DSPs
+    // multiply by, so the barrel shifter that used to sit behind it -- the whole
+    // machine's critical path, val_r -> b_sig -- is gone from the fabric.
+    localparam integer NS = VWM - ACC_MW - 1;   // magnitude split, see norm_p
+
+    wire [15:0] n_ohf [0:15];
+    wire        n_hi  [0:15];
+    wire [5:0]  n_msb [0:15];
+    wire        n_z   [0:15];
 
     genvar g;
     generate
     for (g = 0; g < 16; g = g + 1) begin : g_norm_a
-        mx_fpacc_norm_a #(.MW(ACC_MW), .VW(VWM)) u_na (
+        mx_fpacc_norm_a #(.VW(VWM)) u_na (
             .mag(val_r[g]),
-            .sig(n_sig[g]), .msb(n_msb[g]), .guard(n_g[g]),
-            .sticky(n_s[g]), .is_zero(n_z[g])
+            .oh_f(n_ohf[g]), .hi(n_hi[g]), .msb(n_msb[g]), .is_zero(n_z[g])
         );
     end
     endgenerate
 
-    reg [ACC_MW:0]   b_sig [0:15];
-    reg [5:0]        b_msb [0:15];
-    reg              b_g [0:15], b_s [0:15], b_z [0:15], b_sgn [0:15];
-    reg signed [9:0] b_exp [0:15];
-    reg [2:0]        op_1b;
-    reg [TAW-1:0]    addr_b;
-    reg              v1b;
-    reg [TW-1:0]     peer_b;
+    reg [15:0]       a_ohf [0:15];
+    reg [NS-1:0]     a_lo  [0:15];
+    reg [ACC_MW:0]   a_hi  [0:15];
+    reg              a_h [0:15], a_z [0:15], a_sgn [0:15];
+    reg [5:0]        a_msb [0:15];
+    reg signed [9:0] a_exp [0:15];
+    reg [2:0]        op_1a;
+    reg [TAW-1:0]    addr_a;
+    reg              v1a;
+    reg [TW-1:0]     peer_a;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            v1a <= 1'b0; op_1a <= OP_NOP; addr_a <= {TAW{1'b0}};
+            peer_a <= {TW{1'b0}};
+            for (i = 0; i < 16; i = i + 1) begin
+                a_ohf[i] <= 16'd0; a_lo[i] <= {NS{1'b0}};
+                a_hi[i] <= {(ACC_MW+1){1'b0}}; a_h[i] <= 1'b0;
+                a_msb[i] <= 6'd0; a_z[i] <= 1'b0;
+                a_sgn[i] <= 1'b0; a_exp[i] <= 10'sd0;
+            end
+        end else if (en) begin
+            v1a    <= v1;
+            op_1a  <= op_r;
+            addr_a <= addr_r;
+            peer_a <= peer_r;
+            for (i = 0; i < 16; i = i + 1) begin
+                a_ohf[i] <= n_ohf[i];
+                a_lo[i]  <= val_r[i][NS-1:0];
+                a_hi[i]  <= val_r[i][VWM-1:NS];
+                a_h[i]   <= n_hi[i];   a_msb[i] <= n_msb[i];
+                a_z[i]   <= n_z[i];    a_sgn[i] <= sgn_r[i];
+                a_exp[i] <= exp_r[i];
+            end
+        end
+    end
+
+    // ================================================ stage 2a2: the shift
+    // Two DSPs per lane, because one 27x18 cannot hold VWM bits shifted over VWM
+    // positions. Both halves take the SAME one-hot and the halves of `mag` are
+    // disjoint, so mx_fpacc_norm_p reassembles them with an OR rather than an add.
+    reg [NS+15:0]     b_plo [0:15];
+    reg [ACC_MW+16:0] b_phi [0:15];
+    reg               b_h [0:15], b_z [0:15], b_sgn [0:15];
+    reg [5:0]         b_msb [0:15];
+    reg signed [9:0]  b_exp [0:15];
+    reg [2:0]         op_1b;
+    reg [TAW-1:0]     addr_b;
+    reg               v1b;
+    reg [TW-1:0]      peer_b;
 
     always @(posedge clk) begin
         if (rst) begin
             v1b <= 1'b0; op_1b <= OP_NOP; addr_b <= {TAW{1'b0}};
             peer_b <= {TW{1'b0}};
             for (i = 0; i < 16; i = i + 1) begin
-                b_sig[i] <= {(ACC_MW+1){1'b0}}; b_msb[i] <= 6'd0;
-                b_g[i] <= 1'b0; b_s[i] <= 1'b0; b_z[i] <= 1'b0;
+                b_plo[i] <= {(NS+16){1'b0}}; b_phi[i] <= {(ACC_MW+17){1'b0}};
+                b_h[i] <= 1'b0; b_msb[i] <= 6'd0; b_z[i] <= 1'b0;
                 b_sgn[i] <= 1'b0; b_exp[i] <= 10'sd0;
             end
         end else if (en) begin
-            v1b    <= v1;
-            op_1b  <= op_r;
-            addr_b <= addr_r;
-            peer_b <= peer_r;
+            v1b    <= v1a;
+            op_1b  <= op_1a;
+            addr_b <= addr_a;
+            peer_b <= peer_a;
             for (i = 0; i < 16; i = i + 1) begin
-                b_sig[i] <= n_sig[i]; b_msb[i] <= n_msb[i];
-                b_g[i]   <= n_g[i];   b_s[i]   <= n_s[i];
-                b_z[i]   <= n_z[i];   b_sgn[i] <= sgn_r[i];
-                b_exp[i] <= exp_r[i];
+                b_plo[i] <= a_lo[i] * a_ohf[i];
+                b_phi[i] <= a_hi[i] * a_ohf[i];
+                b_h[i]   <= a_h[i];   b_msb[i] <= a_msb[i];
+                b_z[i]   <= a_z[i];   b_sgn[i] <= a_sgn[i];
+                b_exp[i] <= a_exp[i];
             end
         end
     end
 
     // ================================================ stage 2b: assemble
-    wire [AW-1:0] normed [0:15];
-    wire [TW-1:0] chain_fp;
+    wire [ACC_MW:0] p_sig [0:15];
+    wire            p_g [0:15], p_s [0:15];
+    wire [AW-1:0]   normed [0:15];
+    wire [TW-1:0]   chain_fp;
     generate
     for (g = 0; g < 16; g = g + 1) begin : g_norm_b
+        mx_fpacc_norm_p #(.MW(ACC_MW), .VW(VWM)) u_np (
+            .p_lo(b_plo[g]), .p_hi(b_phi[g]), .hi(b_h[g]),
+            .sig(p_sig[g]), .guard(p_g[g]), .sticky(p_s[g])
+        );
         mx_fpacc_norm_b #(.MW(ACC_MW)) u_nb (
-            .sig(b_sig[g]), .msb(b_msb[g]), .guard(b_g[g]), .sticky(b_s[g]),
+            .sig(p_sig[g]), .msb(b_msb[g]), .guard(p_g[g]), .sticky(p_s[g]),
             .is_zero(b_z[g]), .sign(b_sgn[g]), .exp_in(b_exp[g]),
             .fp(normed[g])
         );
@@ -277,14 +341,17 @@ module mx_acu_fp #(
     // Every select that steers the align stage is REGISTERED, not decoded in the
     // align cycle: anything combinational here lands ahead of the tile read, the
     // exponent compare and the barrel shift, the longest chain in the block.
-    reg [2:0] a_sel;    // align operand A source: 0 = tile, 1 = zero
-    reg [2:0] b_sel;    // align operand B source: 0 = chain, 1 = peer, 2 = zero
+    // Stored DECODED, not as an encoded source id: the equality test that turned
+    // an id into these bits sat in front of the 384-bit mux and the zero flags.
+    reg a_zero_r;       // align operand A is zero rather than the tile
+    reg b_peer_r;       // align operand B is the peer rather than the chain
+    reg b_zero_r;       // align operand B is zero
 
     always @(posedge clk) begin
         if (rst) begin
             chain_r <= {TW{1'b0}}; peer_r2 <= {TW{1'b0}};
             op_r2 <= OP_NOP; addr_r2 <= {TAW{1'b0}}; v2 <= 1'b0;
-            a_sel <= 3'd1; b_sel <= 3'd2;
+            a_zero_r <= 1'b1; b_peer_r <= 1'b0; b_zero_r <= 1'b1;
         end else if (en) begin
             chain_r <= chain_fp;
             peer_r2 <= peer_b;
@@ -298,14 +365,14 @@ module mx_acu_fp #(
             // Operand sources, resolved one stage ahead of the align cycle so
             // nothing combinational sits in front of the tile read.
             if (v1b && (op_1b == OP_LOAD)) begin
-                a_sel <= 3'd1; b_sel <= 3'd0;           // zero + chain
+                a_zero_r <= 1'b1; b_peer_r <= 1'b0; b_zero_r <= 1'b0;  // zero+chain
             end else if (v1b && (op_1b == OP_ADD_PEER)) begin
-                a_sel <= 3'd0; b_sel <= 3'd1;           // tile + peer
+                a_zero_r <= 1'b0; b_peer_r <= 1'b1; b_zero_r <= 1'b0;  // tile+peer
             end else if (v1b && ((op_1b == OP_ADD) ||
                                  (op_1b == OP_ADD_EMIT))) begin
-                a_sel <= 3'd0; b_sel <= 3'd0;           // tile + chain
+                a_zero_r <= 1'b0; b_peer_r <= 1'b0; b_zero_r <= 1'b0;  // tile+chain
             end else if (v1b && ((op_1b == OP_EMIT) || (op_1b == OP_SEND))) begin
-                a_sel <= 3'd0; b_sel <= 3'd2;           // tile + zero: pass out
+                a_zero_r <= 1'b0; b_peer_r <= 1'b0; b_zero_r <= 1'b1;  // pass out
             end
         end
     end
@@ -319,7 +386,10 @@ module mx_acu_fp #(
     // READ_LAT=2 uses the block RAM's own output register. Without it the path
     // starts at the RAM array access (~1.2 ns clock-to-out) instead of a
     // flip-flop, which cost ~70 MHz. The address must therefore lead the data by
-    // two cycles: sampled at the end of stage 2a, valid during stage 3.
+    // two cycles: sampled at the end of stage 2a, valid during stage 2a2.
+    //
+    // REUSE_MIN counts read to write, so the stages AHEAD of the read do not
+    // enter it -- stage 2a2 lengthened the block without touching this number.
     //
     // THE SOURCE OF TRUTH for the reuse distance. Two callers encode it
     // independently and CANNOT see this value: mx_cluster_mgr's pacing buckets
@@ -334,9 +404,11 @@ module mx_acu_fp #(
     wire [TAW-1:0] wr_addr;
     wire           wr_bank_en;
 
+    // addr_a, not addr_r: READ_LAT=2 means the address must be presented two
+    // stages ahead of the align cycle, and stage 2a2 put one more stage between.
     kohaku_sdpram #(.WIDTH(TW), .DEPTH(DEPTH), .MEM_PRIM(TILE_PRIM), .READ_LAT(2))
     u_tile (.clk(clk), .wr_en(wr_bank_en), .wr_addr(wr_addr), .wr_data(wr_data),
-            .rd_en(en), .rd_addr(addr_r), .rd_data(t0));
+            .rd_en(en), .rd_addr(addr_a), .rd_data(t0));
 
     wire norm_iss = v2 && ((op_r2 == OP_LOAD) || (op_r2 == OP_ADD) ||
                            (op_r2 == OP_ADD_PEER) || (op_r2 == OP_ADD_EMIT));
@@ -346,15 +418,13 @@ module mx_acu_fp #(
     // norm_iss (the write) and drives OUT_EMIT (the output) at once.
     wire out_emit = v2 && ((op_r2 == OP_EMIT) || (op_r2 == OP_ADD_EMIT));
 
-    // ONE mux level, on registered selects.
-    //   a_sel  0 = tile   1 = zero (LOAD adds the chain to nothing)
-    //   b_sel  0 = chain  1 = peer   2 = zero (EMIT/SEND pass the tile out)
-    wire [TW-1:0] op_a  = (a_sel == 3'd0) ? t0 : {TW{1'b0}};
-    wire [TW-1:0] op_bb = (b_sel == 3'd0) ? chain_r :
-                          (b_sel == 3'd1) ? peer_r2 : {TW{1'b0}};
+    // ONE mux level, on registered selects, and NOTHING in front of it: these
+    // are the stage-2b flops themselves, not a decode of an encoded source id.
+    wire [TW-1:0] op_a  = t0;
+    wire [TW-1:0] op_bb = b_peer_r ? peer_r2 : chain_r;
 
-    wire a_zero = (a_sel == 3'd1);
-    wire b_zero = (b_sel == 3'd2);
+    wire a_zero = a_zero_r;
+    wire b_zero = b_zero_r;
 
     wire       iss_wr  = norm_iss;
     wire [1:0] iss_out = (v2 && (op_r2 == OP_SEND)) ? OUT_SEND
@@ -527,7 +597,7 @@ module mx_acu_fp #(
     // fails only when the GEMM is short enough that its tail has not cleared
     // when DRAIN asks, and then every sub-tile drains as zero.
     reg [3:0] busy_tail;
-    wire      in_flight = cmd_valid || v1 || v1b || v2 || v3 || v4;
+    wire      in_flight = cmd_valid || v1 || v1a || v1b || v2 || v3 || v4;
     always @(posedge clk) begin
         if (rst)            busy_tail <= 4'd0;
         else if (!en)       busy_tail <= busy_tail;

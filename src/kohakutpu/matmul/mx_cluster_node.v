@@ -40,6 +40,10 @@ module mx_cluster_node #(
     input  wire         gemm_acc,   // add into the resident tile, do not reload
     input  wire [7:0]   gemm_aoff,  // this sweep's base entry in L1 A
     input  wire [7:0]   gemm_boff,  // ... and in L1 B
+    // Which 256-entry half each side reads. A fill's bank rides in `l1_addr`,
+    // which is already wide enough; only the sweep's 8-bit offsets need one.
+    input  wire         gemm_abank,
+    input  wire         gemm_bbank,
     input  wire         gemm_emit,  // hand each sub-tile out as it finishes
     output wire         gemm_busy,
     // The SWEEP alone -- the manager still issuing -- without the ~19-cycle
@@ -52,14 +56,38 @@ module mx_cluster_node #(
     input  wire         drain_start,
     input  wire [15:0]  drain_n,        // number of sub-tiles to emit
     input  wire         drain_fused,    // they came from the sweep; just wait
+    // OP_SEND rather than OP_EMIT: the sub-tile leaves in the accumulator's own
+    // float instead of being converted to FP16, which is the only form worth
+    // sending to another cluster -- a K-split that rounded in between is what
+    // going through memory already does.
+    input  wire         drain_send,
     output wire         drain_busy,
     output wire [255:0] drain_data,     // 16 x FP16, one sub-tile
     output wire [15:0]  drain_idx,
     output wire         drain_valid,
-    input  wire         drain_take      // the write port accepted drain_data
+    input  wire         drain_take,     // the write port accepted drain_data
+
+    // ---- peer transfer -------------------------------------------------
+    // mx_acu_fp's OP_ADD_PEER/OP_SEND/OP_FWD, so a matmul can span clusters:
+    // one cluster's partial output tile is added into another's resident tile
+    // instead of going out to memory and being read back.
+    //
+    // `peer_cmd` offers one sub-tile in the accumulator's own format and
+    // `peer_ready` says the control mux is free to take it. `peer_open` is held
+    // for the whole stream -- the wait for the sweep is paid at its head only.
+    input  wire                     peer_open,
+    input  wire                     peer_cmd,
+    input  wire [15:0]              peer_idx,
+    input  wire [16*(ACC_MW+8)-1:0] peer_data,
+    output wire                     peer_ready,
+    // The send half, for mx_cluster_cu to packetise.
+    output wire [16*(ACC_MW+8)-1:0] peer_out,
+    output wire                     peer_out_valid
 );
     localparam integer TAW = (TILES <= 1) ? 1 : $clog2(TILES);
-    localparam [2:0] OP_NOP = 3'd0, OP_EMIT = 3'd5;
+    localparam [2:0] OP_NOP = 3'd0, OP_ADD_PEER = 3'd3, OP_SEND = 3'd4,
+                     OP_EMIT = 3'd5;
+    localparam integer PW = 16*(ACC_MW+8);
 
     // ---- manager --------------------------------------------------------
     wire [895:0] a_bus, b_bus;
@@ -90,6 +118,7 @@ module mx_cluster_node #(
         .gemm_start(gemm_start), .gemm_gm(gemm_gm), .gemm_gn(gemm_gn),
         .gemm_nk(gemm_nk), .gemm_anchor(gemm_anchor), .gemm_acc(gemm_acc),
         .gemm_aoff(gemm_aoff), .gemm_boff(gemm_boff),
+        .gemm_abank(gemm_abank), .gemm_bbank(gemm_bbank),
         .gemm_emit(gemm_emit), .emit_stall(emit_stall),
         .emit_issue(emit_issue),
         .gemm_busy(mgr_busy),
@@ -131,18 +160,39 @@ module mx_cluster_node #(
     // result arriving with nowhere to go is silently lost.
     localparam integer DQ_LIMIT = DQ_DEPTH - 16;
 
+    // `d_iss` counts SUB-TILES and the other three count GRANULES, because a
+    // send produces two of them per command and an emit one. `drain_idx` is
+    // therefore a granule index in both modes, which is what lets the write
+    // port stay unaware of the difference.
     reg [15:0] d_iss, d_n;      // sub-tiles issued, and how many to issue
-    reg [15:0] d_got;           // results returned by the accumulator
-    reg [15:0] d_pop;           // results the write port has taken
+    reg [15:0] d_got;           // granules returned by the accumulator
+    reg [15:0] d_pop;           // granules the write port has taken
     reg        d_run;
+    reg        d_send;          // this batch is OP_SEND, not OP_EMIT
+    reg        d_gap;           // a send issues every other cycle
     // Whether the batch in flight came from the sweep. A fused batch must NOT
     // take the accumulator's control mux -- the sweep still owns it.
     reg        d_fused;
     reg        d_wait;          // a fused barrier is waiting for its sub-tiles
     wire [15:0] dn_w = (drain_n == 16'd0) ? 16'd1 : drain_n;
 
-    wire [255:0] emit_out;
-    wire         emit_valid;
+    wire [255:0]  emit_out;
+    wire          emit_valid;
+    wire [PW-1:0] acu_peer;
+    wire          acu_peer_v;
+    assign peer_out       = acu_peer;
+    assign peer_out_valid = acu_peer_v;
+
+    // A SEND RESULT IS TWO GRANULES. `peer_out` is PW bits and the queue -- and
+    // every stage of the write-back behind it -- is 256, so the low half goes in
+    // on the cycle it arrives and the high half on the next. Widening the whole
+    // path to PW instead would have cost the drain buffer 96 bits x 16 slots to
+    // carry a mode it is not in most of the time.
+    //
+    // This is also why a send drain issues every OTHER cycle: two granules per
+    // command, one flit per cycle on the link, so the rates already match.
+    reg            pq_pend;
+    reg [PW-257:0] pq_hi;
 
     reg [2:0]      d_op;
     reg [TAW-1:0]  d_addr;
@@ -160,13 +210,27 @@ module mx_cluster_node #(
     wire        dq_full, dq_empty;
     wire [271:0] dq_head;
 
+    wire         dq_wr  = emit_valid || acu_peer_v || pq_pend;
+    wire [255:0] dq_dat = acu_peer_v ? acu_peer[255:0]
+                        : pq_pend    ? {{(512-PW){1'b0}}, pq_hi}
+                                     : emit_out;
+
     sync_fifo #(.DATA_WIDTH(272), .FIFO_DEPTH(DQ_DEPTH),
                 .MEMORY_TYPE("distributed")) u_dq (
         .clk(clk), .rst(rst),
-        .wr_en(emit_valid), .wr_data({d_got, emit_out}),
+        .wr_en(dq_wr), .wr_data({d_got, dq_dat}),
         .wr_busy(dq_full), .wr_almost(),
         .rd_en(drain_valid && drain_take), .rd_data(dq_head), .rd_busy(dq_empty)
     );
+
+    always @(posedge clk) begin
+        if (rst) begin
+            pq_pend <= 1'b0; pq_hi <= {(PW-256){1'b0}};
+        end else begin
+            pq_pend <= acu_peer_v;
+            if (acu_peer_v) pq_hi <= acu_peer[PW-1:256];
+        end
+    end
 
     assign drain_valid = !dq_empty;
     assign drain_idx   = dq_head[271:256];
@@ -179,15 +243,39 @@ module mx_cluster_node #(
     // will come out ~19 cycles later whatever happens downstream.
     assign emit_stall  = (d_out >= DQ_LIMIT[15:0]);
 
+    // ---- peer receive ----------------------------------------------------
+    // Issued through the DRAIN SEQUENCER'S OWN command registers rather than as
+    // a third input to the accumulator's control mux: that mux is one level deep
+    // by design (mx_acu_fp timing rule 2) and a third source would put a second
+    // level in front of the tile address. The sequencer is idle whenever a peer
+    // sub-tile may issue, so its registers are free.
+    //
+    // `gemm_busy` is tested ONCE, at the head of a stream. It covers the
+    // accumulator's REUSE_MIN tail, so re-testing it per sub-tile would idle
+    // ~12 cycles each; inside a stream consecutive sub-tiles address DIFFERENT
+    // tiles, so REUSE_MIN does not apply and the accumulator takes one a cycle.
+    reg p_open;
+    reg [PW-1:0] d_peer;
+
+    assign peer_ready = p_open && !d_run && !d_wait && (d_out == 16'd0);
+    wire   peer_iss   = peer_cmd && peer_ready;
+
+    always @(posedge clk) begin
+        if (rst) p_open <= 1'b0;
+        else     p_open <= peer_open && (p_open || !gemm_busy);
+    end
+
     always @(posedge clk) begin
         if (rst) begin
             d_iss <= 16'd0; d_got <= 16'd0; d_pop <= 16'd0; d_out <= 16'd0;
             d_n <= 16'd0; d_run <= 1'b0; d_fused <= 1'b0; d_wait <= 1'b0;
+            d_send <= 1'b0; d_gap <= 1'b0;
             d_op <= OP_NOP; d_addr <= {TAW{1'b0}}; d_cmd <= 1'b0;
+            d_peer <= {PW{1'b0}};
         end else begin
             d_cmd <= 1'b0;
 
-            if (emit_valid)                d_got <= d_got + 16'd1;
+            if (dq_wr)                     d_got <= d_got + 16'd1;
             if (drain_valid && drain_take) d_pop <= d_pop + 16'd1;
             // A fused sweep is its own issuer: every ADD_EMIT it puts into the
             // accumulator is a sub-tile that will come back.
@@ -208,6 +296,8 @@ module mx_cluster_node #(
                 d_iss <= 16'd0; d_got <= 16'd0; d_pop <= 16'd0;
                 d_out <= 16'd0;
                 d_fused <= 1'b1;
+                d_send <= 1'b0;     // a fused batch is OP_ADD_EMIT, never SEND
+                d_gap <= 1'b0;
                 d_run <= 1'b0;
             end else if (drain_start && !d_run && drain_fused) begin
                 // A barrier, not an issuer. Waiting on `drain_busy` alone is a
@@ -224,6 +314,8 @@ module mx_cluster_node #(
                 d_out <= 16'd0;
                 d_run <= 1'b1;
                 d_fused <= 1'b0;    // an explicit drain DOES take the mux
+                d_send <= drain_send;
+                d_gap  <= 1'b0;
             end else if (d_run) begin
                 // One EMIT per cycle, held back only by what can still be
                 // absorbed downstream. DQ_LIMIT is DQ_DEPTH-16, NOT 1: it was 1
@@ -231,33 +323,54 @@ module mx_cluster_node #(
                 // visit to S_IDLE and deadlocked. It now collects into slots and
                 // retires bursts, so the queue's own depth is the only bound
                 // needed.
-                if ((d_iss < d_n) && (d_out < DQ_LIMIT[15:0])) begin
-                    d_op   <= OP_EMIT;
+                if ((d_iss < d_n) && (d_out < DQ_LIMIT[15:0]) && !d_gap) begin
+                    d_op   <= d_send ? OP_SEND : OP_EMIT;
                     d_addr <= d_iss[TAW-1:0];
                     d_cmd  <= 1'b1;
                     d_iss  <= d_iss + 16'd1;
-                    // This branch issues, so d_out gains one here. `d_fused`
-                    // is low throughout an explicit drain, so the unconditional
-                    // term above contributed nothing but the pop.
-                    d_out  <= d_out + 16'd1
+                    d_gap  <= d_send;
+                    // This branch issues, so d_out gains a granule per result
+                    // here -- two for a send. `d_fused` is low throughout an
+                    // explicit drain, so the unconditional term above
+                    // contributed nothing but the pop.
+                    d_out  <= d_out + (d_send ? 16'd2 : 16'd1)
                             - ((drain_valid && drain_take) ? 16'd1 : 16'd0);
                     if (d_iss + 16'd1 == d_n) d_run <= 1'b0;
-                end
+                end else if (d_gap) d_gap <= 1'b0;
             end
 
             // Last, so a barrier armed and satisfied in the same cycle ends
             // correctly rather than hanging for a transition that has passed.
             if (d_wait && (d_pop >= d_n)) d_wait <= 1'b0;
+
+            // After the chain above, which `peer_ready` has already excluded:
+            // it requires the sequencer idle, so the two never write these
+            // registers on the same cycle. `d_peer` is registered here rather
+            // than read straight off the caller, so `peer_in` is valid on the
+            // cycle `d_cmd` presents the command and the caller owes no hold.
+            if (peer_iss) begin
+                d_op   <= OP_ADD_PEER;
+                d_addr <= peer_idx[TAW-1:0];
+                d_cmd  <= 1'b1;
+                d_peer <= peer_data;
+            end
         end
     end
 
 `ifndef SYNTHESIS
     // Losing one sub-tile here reads as an accumulator fault several modules
     // away. Say so instead.
-    always @(posedge clk)
-        if (!rst && emit_valid && dq_full)
+    always @(posedge clk) begin
+        if (!rst && dq_wr && dq_full)
             $display("%0t ERROR mx_cluster_node: drain queue overflow, sub-tile lost",
                      $time);
+        // The gap between sends is what keeps these apart. If a send ever
+        // issued back to back, the second result would overwrite a high half
+        // that had not been queued yet and one sub-tile would come out spliced.
+        if (!rst && acu_peer_v && pq_pend)
+            $display("%0t ERROR mx_cluster_node: peer results collided, high half lost",
+                     $time);
+    end
 `endif
 
     // ---- accumulator ----------------------------------------------------
@@ -271,6 +384,8 @@ module mx_cluster_node #(
     // retired -- clearing it at the next sweep's start hands the mux to the
     // drain sequencer mid-sweep as soon as a pass's first GEMM overlaps the
     // previous pass's write-back. Faster and wrong.
+    // `d_cmd` is also how a peer sub-tile takes the mux, for the one cycle it
+    // is presented.
     wire acu_busy_drain = d_run || d_cmd || ((d_out != 16'd0) && !d_fused);
 
     mx_acu_fp #(.DEPTH(TILES), .ACC_MW(ACC_MW)) u_acu (
@@ -290,7 +405,7 @@ module mx_cluster_node #(
         .op(acu_busy_drain ? d_op : m_op),
         .tile_addr(acu_busy_drain ? d_addr : m_addr),
         .cmd_valid(acu_busy_drain ? d_cmd : m_cmd),
-        .peer_in({(16*(ACC_MW+8)){1'b0}}), .peer_out(), .peer_valid(),
+        .peer_in(d_peer), .peer_out(acu_peer), .peer_valid(acu_peer_v),
         .emit_out(emit_out), .emit_valid(emit_valid),
         .busy(acu_busy)
     );

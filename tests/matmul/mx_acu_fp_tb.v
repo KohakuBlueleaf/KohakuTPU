@@ -121,7 +121,7 @@ module mx_acu_fp_tb;
             op = o; tile_addr = addr; cmd_valid = 1'b1;
             @(negedge clk);
             cmd_valid = 1'b0; op = OP_NOP;
-            // pipeline is 6 deep, and EMIT/SEND fold three banks in two passes
+            // pipeline is 7 deep, and EMIT/SEND fold three banks in two passes
             // three cycles apart -- give it room rather than tracking exactly
             repeat (16) @(negedge clk);
         end
