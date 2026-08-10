@@ -26,7 +26,11 @@ module noc_cu_base #(
     parameter N_BUFFERS   = 4,
     parameter INST_DEPTH  = 32,         // 512 in production, see spec s6.1
     parameter RECV_DEPTH  = 16,
-    parameter MEM_TYPE    = "distributed"
+    parameter MEM_TYPE    = "distributed",
+    // The receive queue is 288 bits wide and two thirds of this module's LUTs,
+    // so it gets its own knob: `u_sig` is narrow enough that block RAM loses,
+    // and one parameter governing both would force the wrong answer on one.
+    parameter RECV_MEM    = "distributed"
 ) (
     input  wire                   clk,
     input  wire                   resetn,
@@ -48,6 +52,10 @@ module noc_cu_base #(
     input  wire                   exec_done,
     input  wire [31:0]            exec_result,
     input  wire                   exec_fault,
+
+    // Two counters only the datapath can know, read as CU_CTRL index 3.
+    // Tie to zero where there is nothing to report.
+    input  wire [63:0]            dbg_ctr,
 
     // ---- datapath-originated packets (CU_DATA, MEM_*, ...) ----
     input  wire [FLIT_WIDTH-1:0]  send_flit,
@@ -104,9 +112,13 @@ module noc_cu_base #(
         .rd_en(inst_pop), .rd_data(inst_head), .rd_busy(inst_empty)
     );
 
-    // CU_CTRL is answered here, so it never reaches the datapath
+    // CU_CTRL is answered here, so it never reaches the datapath.
+    // `recv_almost` reduces to plain `full` (USE_ADV_FEATURES is 0), and XPM
+    // derives that from the pointers whichever memory backs the data, so
+    // RECV_MEM cannot weaken the backpressure. What it does move is `recv_flit`
+    // onto a BRAM output, in front of whatever reads it combinationally.
     sync_fifo #(.DATA_WIDTH(FLIT_WIDTH), .FIFO_DEPTH(RECV_DEPTH),
-                .MEMORY_TYPE("distributed")) u_recv (
+                .MEMORY_TYPE(RECV_MEM)) u_recv (
         .clk(clk), .rst(!resetn),
         .wr_en(noc_in_valid && !noc_in_busy && !in_inst && !in_ctrl),
         .wr_data(noc_in_data), .wr_busy(recv_full), .wr_almost(recv_almost),
@@ -222,6 +234,18 @@ module noc_cu_base #(
                           INST_DEPTH[15:0], 20'd0};
     wire [63:0] stat_w = {busy, 1'b0 /*error*/, 14'd0, inst_space, 32'd0};
 
+    // COUNTED HERE so every CU type reports cycles identically. Wall clock
+    // cannot substitute: one JTAG access is ~32 ms against us of compute.
+    reg [31:0] ctr_busy, ctr_inst;
+    always @(posedge clk) begin
+        if (!resetn) begin
+            ctr_busy <= 32'd0; ctr_inst <= 32'd0;
+        end else begin
+            if (busy)      ctr_busy <= ctr_busy + 32'd1;
+            if (exec_done) ctr_inst <= ctr_inst + 32'd1;
+        end
+    end
+
     always @(posedge clk) begin
         if (!resetn) begin
             ctrl_pend <= 1'b0; ctrl_val <= 64'd0;
@@ -236,6 +260,8 @@ module noc_cu_base #(
                 case (ctrl_idx)
                     8'd0:    ctrl_val <= caps_w;
                     8'd1:    ctrl_val <= stat_w;
+                    8'd2:    ctrl_val <= {ctr_inst, ctr_busy};
+                    8'd3:    ctrl_val <= dbg_ctr;
                     default: ctrl_val <= 64'd0;
                 endcase
             end else if (ctrl_sent) ctrl_pend <= 1'b0;

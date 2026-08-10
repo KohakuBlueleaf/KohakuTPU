@@ -83,7 +83,8 @@ module mx_matmul_cu #(
     noc_cu_base #(
         .FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH),
         .POS_X(POS_X), .POS_Y(POS_Y),
-        .CU_TYPE(16'h4D58), .CU_VERSION(8'h01), .N_BUFFERS(2),
+        // Mesh-wide build number -- see vec_cu.v.
+        .CU_TYPE(16'h4D58), .CU_VERSION(8'h03), .N_BUFFERS(2),
         .INST_DEPTH(INST_DEPTH)
     ) base (
         .clk(clk), .resetn(resetn),
@@ -91,6 +92,7 @@ module mx_matmul_cu #(
         .noc_out_data(noc_out_data), .noc_out_valid(noc_out_valid), .noc_out_busy(noc_out_busy),
         .inst_flit(inst_flit), .inst_valid(inst_valid), .inst_ready(inst_ready),
         .exec_done(exec_done), .exec_result(exec_result), .exec_fault(1'b0),
+        .dbg_ctr(64'd0),
         .send_flit(send_flit), .send_valid(send_valid), .send_ready(send_ready),
         .recv_flit(recv_flit), .recv_valid(recv_valid), .recv_ready(recv_ready),
         .inst_space(), .busy()

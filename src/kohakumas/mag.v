@@ -49,7 +49,8 @@ module mag #(
     // AXI master channels: one per memory port, plus one for the host upload.
     // Declared here rather than as a body localparam because the port list
     // needs it -- do not override it.
-    parameter integer MP1        = MEM_PORTS + 1,
+    // one per memory port, plus the host upload, plus the memory mover
+    parameter integer MP1        = MEM_PORTS + 2,
     parameter integer MEM_X      = 0,       // port 0
     parameter integer MEM_Y      = 1,
     parameter integer MEM_X1     = 0,       // port 1
@@ -167,10 +168,19 @@ module mag #(
     // The agent has no port of its own; it shares these -- see the share layer.
 
     output wire [15:0]           mem_rd_count,
-    output wire [15:0]           mem_wr_count
+    output wire [15:0]           mem_wr_count,
+
+    // ---- the memory mover: status ----------------------------------------
+    // Its COMMAND path is arch.md s2's next step, now taken: a slice of the
+    // control window, not a boundary port. Loose sideband ports never get wired
+    // in a block design, which left the shipped mover commandable by nothing.
+    output wire                  mv_busy,
+    output wire [3:0]            mv_fault,
+    output wire [31:0]           mv_done
 );
-    // The upload rides one channel past the engines.
+    // The upload rides one channel past the engines, the mover one past that.
     localparam integer UP = MEM_PORTS;           // its channel index
+    localparam integer MV = MEM_PORTS + 1;
 
     localparam integer LSB = $clog2(DATA_W/8);
 
@@ -203,11 +213,28 @@ module mag #(
         .s_axi_arready(sc_arready),
         .s_axi_rid(sc_rid), .s_axi_rdata(sc_rdata), .s_axi_rresp(sc_rresp),
         .s_axi_rlast(sc_rlast), .s_axi_rvalid(sc_rvalid), .s_axi_rready(sc_rready),
+        .aux_cfg_en(mv_cfg_en), .aux_cfg_addr(mv_cfg_addr),
+        .aux_cfg_data(mv_cfg_data), .aux_stat(mv_stat),
         .noc_out_data(agt_out_data), .noc_out_valid(agt_out_valid),
         .noc_out_busy(agt_out_busy),
         .noc_in_data(agt_in_data), .noc_in_valid(agt_in_valid),
         .noc_in_busy(agt_in_busy)
     );
+
+    // The mover's own offsets pass through unchanged, so a driver writes its
+    // 0x38 seed at A_AUX_CFG + 0x38. Readable in one 64-bit load.
+    wire        mv_cfg_en;
+    wire [7:0]  mv_cfg_addr;
+    wire [63:0] mv_cfg_data;
+    // Declared here rather than beside their always block: xvlog rejects a
+    // variable used before declaration, and mv_stat below reads them.
+    reg [15:0] rd_sum, wr_sum;
+
+    // A_AUX_STAT. Memory traffic rides in the padding: rd/wr were summed across
+    // ports, routed to every top and read by nothing. mv_done narrows to 24 to
+    // make room. The traffic counters are 16-bit, so read deltas not totals.
+    wire [63:0] mv_stat = {mv_done[23:0], rd_sum, wr_sum,
+                           mv_fault, 3'd0, mv_busy};
 
     // =====================================================================
     // THE SHARE LAYER: the agent rides the memory ports. MAG presents
@@ -397,7 +424,6 @@ module mag #(
     // Counters summed across ports, so the AXI-level totals stay one number
     // whatever the port count is.
     integer pc;
-    reg [15:0] rd_sum, wr_sum;
     always @(*) begin
         rd_sum = 16'd0; wr_sum = 16'd0;
         for (pc = 0; pc < MEM_PORTS; pc = pc + 1) begin
@@ -444,6 +470,58 @@ module mag #(
     assign m_arsize[UP*3 +: 3]               = LSB[2:0];
     assign m_arburst[UP*2 +: 2]              = 2'b01;
     assign m_arvalid[UP]                     = h_arvalid;
+
+    // =====================================================================
+    // The memory mover, on its own AXI channel. It never touches a port's
+    // state; the only thing it shares is the address space on the far side.
+    // =====================================================================
+    wire [ID_W-1:0]   mv_awid, mv_arid;
+    wire [ADDR_W-1:0] mv_awaddr, mv_araddr;
+    wire [7:0]        mv_awlen, mv_arlen;
+    wire [2:0]        mv_awsize, mv_arsize;
+    wire [1:0]        mv_awburst, mv_arburst;
+    wire              mv_awvalid, mv_wvalid, mv_wlast, mv_arvalid;
+    wire [DATA_W-1:0] mv_wdata;
+    wire [DATA_W/8-1:0] mv_wstrb;
+    wire              mv_bready, mv_rready;
+
+    mm_mover #(.DATA_W(DATA_W), .ADDR_W(ADDR_W), .ID_W(ID_W)) u_mover (
+        .clk(clk), .resetn(resetn),
+        .cfg_en(mv_cfg_en), .cfg_addr(mv_cfg_addr), .cfg_data(mv_cfg_data),
+        .stat_busy(mv_busy), .stat_fault(mv_fault), .stat_done(mv_done),
+        .m_awid(mv_awid), .m_awaddr(mv_awaddr), .m_awlen(mv_awlen),
+        .m_awsize(mv_awsize), .m_awburst(mv_awburst), .m_awvalid(mv_awvalid),
+        .m_awready(m_awready[MV]),
+        .m_wdata(mv_wdata), .m_wstrb(mv_wstrb), .m_wlast(mv_wlast),
+        .m_wvalid(mv_wvalid), .m_wready(m_wready[MV]),
+        .m_bid(m_bid[MV*ID_W +: ID_W]), .m_bresp(m_bresp[MV*2 +: 2]),
+        .m_bvalid(m_bvalid[MV]), .m_bready(mv_bready),
+        .m_arid(mv_arid), .m_araddr(mv_araddr), .m_arlen(mv_arlen),
+        .m_arsize(mv_arsize), .m_arburst(mv_arburst), .m_arvalid(mv_arvalid),
+        .m_arready(m_arready[MV]),
+        .m_rid(m_rid[MV*ID_W +: ID_W]), .m_rdata(m_rdata[MV*DATA_W +: DATA_W]),
+        .m_rresp(m_rresp[MV*2 +: 2]), .m_rlast(m_rlast[MV]),
+        .m_rvalid(m_rvalid[MV]), .m_rready(mv_rready)
+    );
+
+    assign m_awid[MV*ID_W +: ID_W]            = mv_awid;
+    assign m_awaddr[MV*ADDR_W +: ADDR_W]      = mv_awaddr;
+    assign m_awlen[MV*8 +: 8]                 = mv_awlen;
+    assign m_awsize[MV*3 +: 3]                = mv_awsize;
+    assign m_awburst[MV*2 +: 2]               = mv_awburst;
+    assign m_awvalid[MV]                      = mv_awvalid;
+    assign m_wdata[MV*DATA_W +: DATA_W]       = mv_wdata;
+    assign m_wstrb[MV*(DATA_W/8) +: DATA_W/8] = mv_wstrb;
+    assign m_wlast[MV]                        = mv_wlast;
+    assign m_wvalid[MV]                       = mv_wvalid;
+    assign m_bready[MV]                       = mv_bready;
+    assign m_arid[MV*ID_W +: ID_W]            = mv_arid;
+    assign m_araddr[MV*ADDR_W +: ADDR_W]      = mv_araddr;
+    assign m_arlen[MV*8 +: 8]                 = mv_arlen;
+    assign m_arsize[MV*3 +: 3]                = mv_arsize;
+    assign m_arburst[MV*2 +: 2]               = mv_arburst;
+    assign m_arvalid[MV]                      = mv_arvalid;
+    assign m_rready[MV]                       = mv_rready;
 
     // ---- quantise on the way IN: the upload path -------------------------
     // The same conversion, moved to where the tensor is WRITTEN. A weight matrix
@@ -664,6 +742,57 @@ module mag #(
             endcase
         end
     end
+
+`ifndef SYNTHESIS
+    // Sharing `u_hquant` with a port's `u_quant` -- 4,267 LUT, 32 DSP,
+    // quantiser-timing.md s4 -- is free iff they are never busy at once.
+    wire mq_up = (hst == HS_WQ) && (hs != HQ_DONE);
+
+    wire [MEM_PORTS-1:0] mq_rd;
+    genvar gq;
+    generate
+    for (gq = 0; gq < MEM_PORTS; gq = gq + 1) begin : g_qprobe
+        // Held from the first fill beat until the emit buffer takes the words,
+        // so RS_IDLE is the only state that leaves the quantiser free.
+        assign mq_rd[gq] = g_port[gq].u_eng.rd_quant &&
+                           (g_port[gq].u_eng.rs != g_port[gq].u_eng.RS_IDLE);
+    end
+    endgenerate
+
+    integer mq_up_cyc, mq_rd_cyc, mq_ovl_cyc;
+    reg     mq_said_up, mq_said_rd, mq_said_ovl;
+    initial begin
+        mq_up_cyc = 0; mq_rd_cyc = 0; mq_ovl_cyc = 0;
+        mq_said_up = 1'b0; mq_said_rd = 1'b0; mq_said_ovl = 1'b0;
+    end
+
+    // Both sides announce themselves, so a run with no OVERLAP line is evidence:
+    // one announcement alone means that workload never drove the other path.
+    always @(posedge clk) if (resetn) begin
+        if (mq_up) begin
+            mq_up_cyc <= mq_up_cyc + 1;
+            if (!mq_said_up) begin
+                mq_said_up <= 1'b1;
+                $display("  %0t QPROBE mag: upload quantiser active", $time);
+            end
+        end
+        if (|mq_rd) begin
+            mq_rd_cyc <= mq_rd_cyc + 1;
+            if (!mq_said_rd) begin
+                mq_said_rd <= 1'b1;
+                $display("  %0t QPROBE mag: fetch quantiser active", $time);
+            end
+        end
+        // Said once, not per cycle: the question is whether it happens at all,
+        // and the totals are readable from a bench if the answer is yes.
+        if (mq_up && |mq_rd && !mq_said_ovl) begin
+            mq_said_ovl <= 1'b1;
+            $display("  %0t QPROBE mag: OVERLAP -- upload and fetch quantisers busy together, so sharing one would stall a path",
+                     $time);
+        end
+        if (mq_up && |mq_rd) mq_ovl_cyc <= mq_ovl_cyc + 1;
+    end
+`endif
 
 endmodule
 
