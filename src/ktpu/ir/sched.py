@@ -149,6 +149,9 @@ class SchedOp:
     #: Element stride per input. 1 is contiguous; a single-column slice of an
     #: `(T, E)` gate is one value per row, so stride E.
     strides: tuple[int, ...] = ()
+    #: Contiguous elements between stride jumps: element `i` of input `j` is at
+    #: `offs[j] + (i // runs[j]) * strides[j] + i % runs[j]`.
+    runs: tuple[int, ...] = ()
 
     @property
     def tag(self) -> str:
@@ -189,6 +192,10 @@ class Band:
     #: produce. An operand smaller than the tile is a broadcast, and which axis
     #: it broadcasts along is decided from this.
     elems: dict[int, int] = field(default_factory=dict)
+
+    #: Operands that are a strided WINDOW of another value, keyed by the VIEW
+    #: so two halves of one projection stay two operands rather than collapsing.
+    windows: dict[int, dict] = field(default_factory=dict)
 
     #: Logical shape of the widest value this band touches -- the INPUT for a
     #: reduction. Decides row versus column broadcast, per band not per program.

@@ -309,15 +309,26 @@ def test_rank_five_is_refused():
         )
 
 
-def test_the_untransposed_layout_is_the_one_that_does_not_lower():
-    """(L, H*D) is what a QKV projection produces. A head of it is an inner
-    multi-column slice, so it must be transposed to (H, L, D) first -- that is
-    the previous layer's job, see docs/limits.md s6.3."""
+def test_a_head_of_an_untransposed_projection_is_a_window():
+    """(L, H*D) is what a QKV projection produces, and a head of it is an inner
+    multi-column slice: `DH` contiguous elements every `2*DH`. That is one run
+    and one stride, so it lowers -- docs/limits.md s6.3."""
+    graph = D.trace(lambda x: x[:, DH : 2 * DH] * 2.0, spec(L, 2 * DH))
+    sched = lower(graph, TGT)
+    op = sched.bands[0].ops[0]
+    assert (op.offs[0], op.strides[0], op.runs[0]) == (DH, 2 * DH, DH)
+
+
+def test_a_head_of_a_transposed_projection_needs_three_levels():
+    """Every head at once is (H, L, D) over an (L, H*D) buffer: H runs of D,
+    L times. Three levels, and vec_agu carries an offset, a run and a stride."""
     from ktpu.ir.sched import ScheduleError
 
-    graph = D.trace(lambda x: x[:, 0:DH] * 2.0, spec(L, 2 * DH))
-    with pytest.raises(ScheduleError, match="inner axis"):
-        lower(graph, TGT)
+    def fn(x):
+        return x.reshape(L, 2, DH).permute(1, 0, 2) * 2.0
+
+    with pytest.raises(ScheduleError, match="three levels"):
+        lower(D.trace(fn, spec(L, 2 * DH)), TGT)
 
 
 def test_a_constant_read_against_a_drained_tile_is_packed_in_tile_order():

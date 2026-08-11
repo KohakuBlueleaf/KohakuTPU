@@ -39,14 +39,18 @@ from ktpu.dsl.errors import (
     TracerShapeError,
 )
 from ktpu.dsl.library import (
+    geglu,
     gelu,
+    groupnorm,
     layernorm,
+    nearest2x_matrix,
     rmsnorm,
     sigmoid,
     silu,
     softmax,
     split_k_epilogue,
     tanh,
+    upsample_nearest2x,
 )
 from ktpu.dsl.ops import (
     LN_2,
@@ -86,13 +90,16 @@ __all__ = [
     "exp",
     "exp2",
     "fma",
+    "geglu",
     "gelu",
+    "groupnorm",
     "kernel",
     "layernorm",
     "log",
     "log2",
     "maximum",
     "minimum",
+    "nearest2x_matrix",
     "neg",
     "recip",
     "relu",
@@ -106,5 +113,6 @@ __all__ = [
     "sqrt",
     "tanh",
     "trace",
+    "upsample_nearest2x",
     "where",
 ]

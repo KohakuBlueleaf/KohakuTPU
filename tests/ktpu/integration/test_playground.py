@@ -61,12 +61,12 @@ def test_source_without_the_contract_says_so():
     assert "must define kernel(...) and INPUTS" in out["error"]
 
 
-def test_a_reduction_wider_than_one_pass_is_a_clear_error():
-    """VLMAX is 128, so a 256-wide row needs the TREE to carry a partial across
-    passes. Not emitted yet, and it must say that rather than index off the end
-    of a region."""
+def test_a_reduction_wider_than_one_pass_is_split_not_refused():
+    """VLMAX is 128, so a 256-wide row is two passes and a fold of the two
+    partials -- `passes.reduce.split_wide`. It used to be an error."""
     out = compile_kernel(
         "def kernel(x, g):\n    return D.rmsnorm(x, g)\n\n"
         'INPUTS = {"x": (64, 256), "g": (256,)}'
     )
-    assert "VLMAX" in out["error"]
+    assert out["error"] is None, out["error"]
+    assert out["stats"]["rel"]["p50"] < 0.01

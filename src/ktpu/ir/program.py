@@ -146,6 +146,10 @@ class Program:
     #: into its address so the packer must NOT apply another.
     packing: dict[str, dict] = field(default_factory=dict)
 
+    #: Region name -> `{from, off, run, stride, count}`: a GEMM operand the host
+    #: gathers out of a bigger tensor, since a FILL walks one contiguous span.
+    windows: dict[str, dict] = field(default_factory=dict)
+
     #: Region name -> its OWN tile geometry. A graph has as many tilings as
     #: matmul shapes, so `tiling` is only the default for `result()`.
     tilings: dict[str, dict] = field(default_factory=dict)

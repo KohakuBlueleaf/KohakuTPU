@@ -46,15 +46,16 @@ def conv2d(x: Tracer, w: Tracer, stride=1, padding=0) -> Tracer:
     """`(N, H, W, C)` against `(KH, KW, C, F)` -> `(N, Ho, Wo, F)`.
 
     Read as KH*KW matmuls, NOT as an im2col. For one filter tap the input is a
-    plain OFFSET VIEW, so the contraction is `(N*Ho*Wo, C) @ (C, F)` and the
-    taps accumulate into one result. Nothing is materialised and no data moves,
-    which is `docs/compute/tensor-isa.md` §3.2 -- "a convolution is a matmul
-    with a more interesting descriptor" -- with the descriptor carried by the
-    view the slice already is.
+    strided WINDOW of the padded activation -- an offset, a run of `Wo*C` and a
+    stride of `Wp*C` -- so the contraction is `(N*Ho*Wo, C) @ (C, F)` and the
+    taps accumulate into one result. That is `docs/compute/tensor-isa.md` §3.2,
+    "a convolution is a matmul with a more interesting descriptor", with the
+    descriptor being the view the slice already is.
 
-    An im2col would expand the operand by KH*KW in both footprint and
-    bandwidth; this expands nothing and costs KH*KW accumulating matmuls, which
-    is the work the convolution was always going to do.
+    The GRAPH materialises nothing: no value in it is KH*KW times the operand,
+    which is what separates this from an im2col. Level 3's FILL walks one
+    contiguous span, so the host cuts each window out at pack time and
+    `Program.windows` records it -- `docs/limits.md` §6.3.
     """
     if x.rank != 4:
         raise ValueError(f"conv2d expects (N, H, W, C), got {x.shape}")
@@ -82,7 +83,10 @@ def conv2d(x: Tracer, w: Tracer, stride=1, padding=0) -> Tracer:
     # extra never underruns the requested padding.
     hp = (kh - 1) + ho * sh
     wp = (kw - 1) + wo * sw
-    xp = x.pad(((0, 0), (ph, hp - h - ph), (pw, wp - wd - pw), (0, 0)))
+    widths = ((0, 0), (ph, hp - h - ph), (pw, wp - wd - pw), (0, 0))
+    # A 1x1 at padding 0 wants none of it, and an all-zero pad is still a PAD
+    # in the graph -- one the scheduler has to be given a reason to fold away.
+    xp = x.pad(widths) if any(lo or hi for lo, hi in widths) else x
 
     acc = None
     for ky in range(kh):
@@ -115,6 +119,60 @@ def conv1d(x: Tracer, w: Tracer, stride=1, padding=0) -> Tracer:
         padding=(0, p),
     )
     return out.reshape(n, out.shape[2], f)
+
+
+def project_heads(x: Tracer, w: Tracer, heads: int) -> list:
+    """One `(L, dh)` projection per head, from `x` `(L, D)` and `w` `(D, H*dh)`.
+
+    The torch spelling is one GEMM then `reshape(L, H, dh).transpose(1, 2)`, and
+    that transpose is a THREE-level walk of the result -- H runs of dh, L times
+    -- which no address generator here carries. Slicing the WEIGHT instead moves
+    the same window onto an operand the host packs, so it costs nothing at run
+    time: `heads` GEMMs over the same A operand, same total MACs, and each
+    result is contiguous and needs no relayout to become the next one's A.
+
+    Raises ValueError if `heads` does not divide the projection width.
+    """
+    if w.shape[-1] % heads:
+        raise ValueError(f"{heads} heads does not divide a {w.shape[-1]}-wide w")
+    dh = w.shape[-1] // heads
+    return [x @ w[:, h * dh : (h + 1) * dh] for h in range(heads)]
+
+
+def multihead(
+    qs: list,
+    ks: list,
+    vs: list,
+    scale: float | None = None,
+    block: int = 64,
+    wo: Tracer | None = None,
+) -> Tracer:
+    """Flash attention over per-head lists, as `project_heads` returns them.
+
+    `attention` wants one tensor with a head axis, which only exists once the
+    heads are stacked -- a concat. These are already separate values, so the
+    loop over them is the loop `attention` would have unrolled anyway.
+
+    `wo` is `(H*dh, Dm)` and fuses the output projection, summing the heads;
+    without it the heads come back as a tuple. Raises ValueError on mismatched
+    head counts or a block that does not divide the key length.
+    """
+    if not (len(qs) == len(ks) == len(vs)):
+        raise ValueError(f"{len(qs)} q heads, {len(ks)} k, {len(vs)} v")
+    chan = qs[0].shape[-1]
+    scale = (chan**-0.5 if scale is None else scale) * LOG2_E
+    if ks[0].shape[-2] % block:
+        raise ValueError(f"block {block} does not divide {ks[0].shape[-2]} keys")
+
+    joined, per_head = None, []
+    for h, (q, k, v) in enumerate(zip(qs, ks, vs, strict=True)):
+        out = _attend(q, k, v, scale, block, 0, k.shape[-2] // block)
+        if wo is None:
+            per_head.append(out)
+        else:
+            y = out @ wo[h * chan : (h + 1) * chan]
+            joined = y if joined is None else joined + y
+    return joined if wo is not None else tuple(per_head)
 
 
 def _head(x: Tracer, rank: int, b: int, h: int) -> Tracer:

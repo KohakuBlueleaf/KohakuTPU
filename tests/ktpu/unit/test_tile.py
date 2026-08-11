@@ -73,7 +73,31 @@ def test_nk_respects_the_double_buffer():
     chunk i+1 fills, and the overlap was 22.3% of the machine's time."""
     c = choose_tile(1024, 4096, 1024, T)
     assert c.nk <= T.l1_a // (T.l1_a_banks * c.gm)
-    assert c.nk <= T.l1_b // c.gn
+    assert c.nk <= T.l1_b // (T.l1_a_banks * c.gn)
+
+
+@pytest.mark.parametrize("l1", (256, 512, 1024))
+@pytest.mark.parametrize(
+    "m,k,n",
+    [
+        (64, 288, 256),  # off by 8.2e+02 on the card when gn*nk reached 288
+        (64, 320, 256),
+        (64, 320, 320),  # off by 3.5e+03
+        (4096, 320, 320),
+        (1024, 640, 5120),
+        (256, 2560, 1280),
+    ],
+)
+def test_a_chunk_never_outgrows_one_l1_bank(m, k, n, l1):
+    """`aoff`/`boff`/`eoff` are 8-bit offsets WITHIN a bank and the sweep's own
+    `boff + h*nk + kb` is 8 bits, so a chunk of over 256 entries wraps and the
+    sub-tiles past the wrap read another block's operand -- silently."""
+    t = Target(l1_a=l1, l1_b=l1)
+    c = choose_tile(m, k, n, t)
+    bank = l1 // t.l1_a_banks
+    assert c.gm * c.nk <= bank, f"A chunk {c.gm * c.nk} entries wraps"
+    assert c.gn * c.nk <= bank, f"B chunk {c.gn * c.nk} entries wraps"
+    assert c.gn * c.nk <= 256, "no offset field can reach past 256"
 
 
 def test_nk_never_exceeds_the_problems_k():

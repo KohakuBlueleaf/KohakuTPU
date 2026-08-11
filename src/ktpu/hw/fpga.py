@@ -137,7 +137,8 @@ class Session:
     is what lets a test drive the whole session against a fake.
     """
 
-    def __init__(self, board=None, transport=None, timeout: float = 30.0):
+    def __init__(self, board=None, transport=None, timeout: float = 30.0,
+                 preflight: bool = True, realign: bool = False):
         self.board = board if isinstance(board, Board) else Board.select(board)
         if self.board is None:
             raise ValueError(
@@ -153,6 +154,11 @@ class Session:
         # CU_CAPS per node, read once: an endpoint's type cannot change under a
         # live bitstream, and index 3 cannot be decoded without it.
         self._caps: dict = {}
+        # Proved BEFORE any operand goes out: a stale write queue lands every
+        # upload shifted and still reports success.
+        self.write_shift = 0
+        if preflight and hasattr(self.raw, "verify_write_path"):
+            self.write_shift = self.raw.verify_write_path(realign=realign)
 
     # ---- lifecycle ------------------------------------------------------
     def close(self):

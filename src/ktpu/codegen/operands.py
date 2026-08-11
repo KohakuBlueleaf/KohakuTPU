@@ -131,7 +131,13 @@ def plan(band: Band, depth: int, exports: frozenset[int] = frozenset()) -> Plan:
     full = band.grid.size * band.tile.m * band.tile.n
     source = next((v for v, n in made_by.items() if n == band.consumes), -1)
     if source < 0:
-        whole = [v for v in (*made_by, *tensors) if band.elems.get(v, full) == full]
+        # A windowed operand cannot be the tile source: the tile path reads a
+        # contiguous span and the window lives in the load's address.
+        whole = [
+            v
+            for v in (*made_by, *tensors)
+            if band.elems.get(v, full) == full and v not in band.windows
+        ]
         source = min(whole) if whole else -1
     for v, n in made_by.items():
         if v != source:

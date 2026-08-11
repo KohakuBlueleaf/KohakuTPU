@@ -10,6 +10,7 @@ from dataclasses import dataclass, replace
 
 from ktpu.ir.graph import REDUCTION, VIEW, Graph, OpKind
 from ktpu.ir.sched import Band, Engine, Grid, SchedOp, Schedule, ScheduleError, Tile
+from ktpu.passes import reduce as reduce_pass
 from ktpu.passes import scalefold
 from ktpu.passes.tile import choose_tile, epilogue_grid, grid_for
 from ktpu.target import Target
@@ -24,24 +25,192 @@ _SOURCE = frozenset({OpKind.INPUT, OpKind.CONST})
 TRANSPARENT = frozenset({OpKind.RESHAPE, OpKind.EXPAND})
 
 
-def through_views(graph: Graph, v) -> tuple[object, int, bool]:
-    """Resolve a chain of views on `v` into `(root, offset, flipped)`.
+def through_views(graph: Graph, v) -> tuple:
+    """Resolve views on `v` to `(root, off, flipped, stride, run, pads, dims)`.
 
     Views move no data, so the operand a band reads is the ROOT tensor plus an
-    address descriptor (vector-core.md s10: "permute is a permutation of the
-    stride list ... pad and slice are bounds and an offset").
+    address descriptor (vector-core.md s10). Element `i` of the logical span
+    sits at `off + (i // run) * stride + i % run`: `(1, 1)` is contiguous,
+    `(E, 1)` one element per row, `(E, W)` a `W`-wide band -- a GEGLU chunk, a
+    conv filter tap, or one head of a packed projection.
 
-    `offset` is in elements and accumulates OUTER-AXIS slices, which is what a
-    block loop over K/V or over experts produces. `flipped` records a transpose
-    of the last two axes; for a matmul's B operand, already stored transposed,
-    a flip means the region holds it in the orientation the GEMM wants and the
-    packer must NOT transpose again.
+    `flipped` records a transpose of the last two axes; for a matmul's B
+    operand, already stored transposed, a flip means the region holds it in the
+    orientation the GEMM wants and the packer must NOT transpose again. `pads`
+    is the border a zero-pad put around the root before the window was cut, and
+    the offset and stride are then in that PADDED frame -- the host has to
+    build it, because no address generator here injects zeros. `dims` is the
+    full `(extent, stride)` list, and `stride` is DEEP when the walk needs more
+    levels than that: the host can still gather it, no engine can walk it.
 
-    Raises ScheduleError on a slice that is not outer-axis-contiguous, on a
-    permute that is not a transpose of the last two axes, and on PAD or CONCAT.
-    Folding any of those away reads the wrong elements at the right size, which
-    is a plausible wrong answer rather than an error.
+    Raises ScheduleError on a view no descriptor covers at all: a CONCAT, or a
+    pad of something that is already a view. Folding one away reads the wrong
+    elements at the right size, a plausible wrong answer rather than an error.
     """
+    try:
+        return _outer_views(graph, v)
+    except ScheduleError as simple:
+        root, shape, strides, off, pads = _replay(graph, v)
+        del simple
+        flipped, stride, run, dims = _window(shape, strides)
+        return root, off, flipped, stride, run, pads, dims
+
+
+def _rowmajor(shape) -> list[int]:
+    out, acc = [1] * len(shape), 1
+    for i in range(len(shape) - 1, -1, -1):
+        out[i] = acc
+        acc *= shape[i]
+    return out
+
+
+def _merge(shape, strides) -> list[tuple[int, int]]:
+    """`(extent, stride)` per axis, unit axes dropped and neighbours joined.
+
+    Two axes are one run when the outer stride is exactly the inner axis's
+    span, which is what makes `(N, H, W, C)` with C and W intact a single
+    contiguous `W*C`.
+    """
+    dims: list[tuple[int, int]] = []
+    for e, s in zip(reversed(shape), reversed(strides), strict=True):
+        if e == 1:
+            continue
+        if dims and s == dims[-1][0] * dims[-1][1]:
+            dims[-1] = (dims[-1][0] * e, dims[-1][1])
+        else:
+            dims.append((e, s))
+    return list(reversed(dims))
+
+
+def _reshape_strides(shape, strides, new) -> list[int] | None:
+    """Strides for `new` over the same elements, or None if that is not a view.
+
+    Consumes the merged axes innermost first: an axis of extent `e` takes the
+    running stride, which then grows by `e`. A `new` extent that does not
+    divide what is left crosses a discontinuity and has no stride at all.
+    """
+    dims = _merge(shape, strides)
+    i = len(dims) - 1
+    ext, st = dims[i] if i >= 0 else (1, 1)
+    out = [0] * len(new)
+    for j in range(len(new) - 1, -1, -1):
+        while ext == 1 and i > 0:
+            i -= 1
+            ext, st = dims[i]
+        if new[j] == 1:
+            out[j] = ext * st
+            continue
+        if ext % new[j]:
+            return None
+        out[j] = st
+        st *= new[j]
+        ext //= new[j]
+    return out if ext == 1 and i <= 0 else None
+
+
+#: `stride` for a view that no address generator here can walk: its rows are
+#: themselves gapped, so it takes three levels. The host can still gather it.
+DEEP = -1
+
+
+def _window(shape, strides) -> tuple[bool, int, int, list[tuple[int, int]]]:
+    """`(flipped, stride, run, dims)` for a row-major walk of a strided view.
+
+    `dims` is the full `(extent, stride)` list, outermost first, which the host
+    can always walk. `stride` is DEEP when that takes more than the offset,
+    run and stride an address generator carries.
+    """
+    for flip in (False, True):
+        sh, st = list(shape), list(strides)
+        if flip:
+            if len(sh) < 2:
+                continue
+            sh[-2], sh[-1] = sh[-1], sh[-2]
+            st[-2], st[-1] = st[-1], st[-2]
+        dims = _merge(sh, st)
+        if not dims:
+            return flip, 1, 1, [(1, 1)]
+        if len(dims) == 1 and dims[0][1] == 1:
+            return flip, 1, 1, dims
+        if len(dims) == 1 and not flip:
+            return flip, dims[0][1], 1, dims
+        if len(dims) == 2 and dims[1][1] == 1:
+            return flip, dims[0][1], dims[1][0], dims
+    return False, DEEP, 0, _merge(list(shape), list(strides))
+
+
+def _replay(graph: Graph, v) -> tuple[object, list[int], list[int], int]:
+    """Walk `v` back to its root, then forward as `(root, shape, strides, off)`.
+
+    Strides and offset are in ROOT elements. Raises ScheduleError on a view no
+    stride list expresses: a non-zero pad, whose border is not in the root at
+    all, or a concat, which joins two regions and is a view of neither.
+    """
+    chain = []
+    op = graph.producer(v)
+    while op.kind in VIEW:
+        if op.kind is OpKind.CONCAT:
+            raise ScheduleError(
+                f"%{op.out.vid} is a concat of {len(op.inputs)} values; it is a "
+                "view of none of them, so it needs a band that copies"
+            )
+        chain.append(op)
+        op = graph.producer(op.inputs[0])
+
+    root = op.out
+    shape, strides, off = list(root.shape), _rowmajor(root.shape), 0
+    pads, flat = None, False
+    for o in reversed(chain):
+        if flat and o.kind is not OpKind.RESHAPE:
+            raise ScheduleError(
+                f"%{o.out.vid} is a {o.kind.value} of a window whose axes no "
+                "longer line up with its shape; move it before the reshape"
+            )
+        match o.kind:
+            case OpKind.RESHAPE:
+                new = list(o.out.shape)
+                st = _reshape_strides(shape, strides, new)
+                if st is not None:
+                    shape, strides = new, st
+                    continue
+                # A reshape never reorders elements, so the merged dims survive
+                # one that is not a view; only the axis boundaries are lost.
+                dims = _merge(shape, strides)
+                shape = [e for e, _ in dims]
+                strides = [s for _, s in dims]
+                flat = True
+            case OpKind.PERMUTE:
+                order = o.attrs["order"]
+                shape = [shape[i] for i in order]
+                strides = [strides[i] for i in order]
+            case OpKind.EXPAND:
+                new = list(o.out.shape)
+                strides = [0 if n != e else s for e, n, s in zip(shape, new, strides)]
+                shape = new
+            case OpKind.SLICE:
+                begin, end = o.attrs["begin"], o.attrs["end"]
+                off += sum(b * s for b, s in zip(begin, strides))
+                shape = [e - b for b, e in zip(begin, end)]
+            case OpKind.PAD:
+                if not any(lo or hi for lo, hi in o.attrs["pads"]):
+                    continue
+                # The border is not in the root, so the descriptor cannot reach
+                # it: the padded frame has to exist before anything indexes it.
+                if pads is not None or off or strides != _rowmajor(shape):
+                    raise ScheduleError(
+                        f"%{o.out.vid} pads a value that is already a view; the "
+                        "zeros would have to be injected mid-walk, which is "
+                        "mx_tdesc's `valid` bit and no address generator here "
+                        "carries it"
+                    )
+                pads = tuple(o.attrs["pads"])
+                shape = list(o.out.shape)
+                strides = _rowmajor(shape)
+    return root, shape, strides, off, pads
+
+
+def _outer_views(graph: Graph, v) -> tuple[object, int, bool, int, int]:
+    """`through_views` for outer-axis slices, single columns and a transpose."""
     op = graph.producer(v)
     off, flipped, stride = 0, False, 1
     while True:
@@ -93,7 +262,7 @@ def through_views(graph: Graph, v) -> tuple[object, int, bool]:
             "descriptor level 3 does not carry yet; folding it away would read "
             "the wrong elements at the right size"
         )
-    return op.out, off, flipped, stride
+    return op.out, off, flipped, stride, 1, None, None
 
 
 def shared_a_blocking(graph: Graph, target: Target) -> dict[int, tuple[int, int]]:
@@ -118,8 +287,13 @@ def shared_a_blocking(graph: Graph, target: Target) -> dict[int, tuple[int, int]
             continue
         a, b = op.inputs
         choice = choose_tile(a.shape[-2], a.shape[-1], b.shape[-1], target)
-        root = through_views(graph, a)[0]
-        seen.setdefault(root.vid, []).append((choice.tile.m, choice.tile.k))
+        try:
+            view = through_views(graph, a)
+        except ScheduleError:
+            continue
+        # A windowed operand gets a region of its own, so it shares with nothing.
+        key = a.vid if view[3] != 1 else view[0].vid
+        seen.setdefault(key, []).append((choice.tile.m, choice.tile.k))
     return {
         v: (min(m for m, _ in ts), min(k for _, k in ts))
         for v, ts in seen.items()
@@ -327,6 +501,7 @@ def lower(
     fold_epilogue: bool = True,
     reorder: bool = True,
     absorb_scale: bool = True,
+    split_reductions: bool = True,
 ) -> Schedule:
     """Lower `graph` onto `target`, returning a Schedule.
 
@@ -351,10 +526,12 @@ def lower(
     `vector_tile` is elements per vector grid instance. Raises ScheduleError via
     `choose_tile`/`grid_for` if a matmul does not fit the target.
 
-    `absorb_scale` runs `scalefold.absorb`, which REWRITES `graph` in place --
-    it deletes the `* log2 e` before each exp2 and grows the scale above it.
-    The rewrite is idempotent, so lowering the same graph twice agrees.
+    `absorb_scale` runs `scalefold.absorb` and `split_reductions` runs
+    `reduce.split_wide`; both REWRITE `graph` in place and both are idempotent,
+    so lowering the same graph twice agrees.
     """
+    if split_reductions:
+        reduce_pass.split_wide(graph, target.vlmax)
     if absorb_scale:
         scalefold.absorb(graph)
     shared = shared_a_blocking(graph, target)
@@ -367,6 +544,7 @@ def lower(
     chain_src: set[int] = set()
     origin: dict[int, str] = {}
     seen_elems: dict[int, int] = {}
+    seen_windows: dict[int, dict] = {}
 
     def flush() -> None:
         nonlocal pending, pending_elems, last_mm, mm_out
@@ -410,6 +588,11 @@ def lower(
                 consumes=last_mm.name if foldable else None,
                 ext=externals(graph, pending, last_mm, origin),
                 elems=dict(seen_elems),
+                windows={
+                    v: w
+                    for v, w in seen_windows.items()
+                    if any(v in o.ins for o in pending)
+                },
                 shape=widest_shape(graph, pending),
             )
         )
@@ -417,6 +600,7 @@ def lower(
             origin[o.out] = band.name
         pending, pending_elems = [], 0
         seen_elems.clear()
+        seen_windows.clear()
         last_mm, mm_out = None, None
 
     for op in fuse_order(graph, reorder):
@@ -431,20 +615,72 @@ def lower(
             n = b.shape[-1]
             choice = choose_tile(m, k, n, target)
             views = [through_views(graph, v) for v in op.inputs]
-            ins = tuple(x[0] for x in views)
-            if graph.producer(ins[0]).kind is OpKind.MATMUL:
+            # A FILL walks one contiguous span, so a windowed operand is named
+            # by the VIEW and gathered into a region of its own before the GEMM.
+            gathered = {
+                v.vid: {
+                    "off": r[1],
+                    "dims": r[6] if r[6] is not None else [(v.numel, r[3])],
+                    "shape": (v.numel // v.shape[-1], v.shape[-1]),
+                    "pad": r[5],
+                }
+                for v, r in zip(op.inputs, views, strict=True)
+                if r[3] != 1 or r[5] is not None
+            }
+            ins = tuple(
+                v if v.vid in gathered else r[0]
+                for v, r in zip(op.inputs, views, strict=True)
+            )
+            offs = tuple(0 if v.vid in gathered else r[1] for v, r in zip(ins, views))
+            # A DRAIN writes sub-tile order, a FILL reads L1-entry order, and at
+            # bflip=0 B also wants a transpose no engine here does.
+            if views[1][0].vid in origin:
+                raise ScheduleError(
+                    f"the B operand %{b.vid} comes from band "
+                    f"{origin[views[1][0].vid]}, and only a HOST-PACKED operand "
+                    "is in L1-entry order. Bring it back and pass it in, or "
+                    "give the value a relayout band"
+                )
+            for side, v, r in (("A", a, views[0]), ("B", b, views[1])):
+                if r[3] == DEEP and r[0].vid in origin:
+                    raise ScheduleError(
+                        f"the {side} operand %{v.vid} walks {r[6]} of "
+                        f"%{r[0].vid}, which a band computes; that is three "
+                        "levels and only the host gathers those"
+                    )
+                if (r[3] != 1 or r[5]) and r[0].vid in origin and side == "B":
+                    raise ScheduleError(
+                        f"the B operand %{v.vid} is a {r[4]}-wide window of "
+                        f"%{r[0].vid}, which a band computes; only the A side "
+                        "has a relay that lays one out. Slice the weight "
+                        "instead, so the window is over what the host packs"
+                    )
+                if r[5] and r[0].vid in origin:
+                    raise ScheduleError(
+                        f"the {side} operand %{v.vid} is a window of a PADDED "
+                        f"%{r[0].vid}, which a band computes; the border exists "
+                        "only in the host's copy, so the value has to come back "
+                        "and go out padded"
+                    )
+            src_root = views[0][0]
+            if src_root.vid in origin and (
+                graph.producer(src_root).kind is OpKind.MATMUL or a.vid in gathered
+            ):
                 # A DRAIN writes sub-tile order, a FILL reads L1-entry order,
                 # and only a vector store converts. Relayout through one.
-                src = ins[0]
+                n_el = a.numel
+                gathered.pop(a.vid, None)
                 fresh = next(vid_gen)
                 relay = SchedOp(
                     OpKind.MUL,
                     {},
                     engine=Engine.VECTOR,
-                    ins=(src.vid, next(vid_gen)),
+                    ins=(src_root.vid, next(vid_gen)),
                     out=fresh,
+                    offs=(views[0][1], 0),
+                    strides=(views[0][3], 1),
+                    runs=(views[0][4], 1),
                 )
-                n_el = src.numel
                 sched.add(
                     Band(
                         engine=Engine.VECTOR,
@@ -452,16 +688,17 @@ def lower(
                         tile=Tile(m=min(vector_tile, n_el)),
                         ops=[relay],
                         ext={
-                            src.vid: ("value", origin[src.vid]),
+                            src_root.vid: ("value", origin[src_root.vid]),
                             relay.ins[1]: ("const", 1.0),
                         },
-                        elems={src.vid: n_el, fresh: n_el},
-                        shape=tuple(src.shape),
+                        elems={src_root.vid: src_root.numel, fresh: n_el},
+                        shape=tuple(a.shape),
                         name=f"relay{fresh}",
                     )
                 )
                 origin[fresh] = f"relay{fresh}"
-                ins = (Relayed(fresh, src.shape, n_el), ins[1])
+                ins = (Relayed(fresh, a.shape, n_el), ins[1])
+                offs = (0, offs[1])
             if ins[0].vid in shared:
                 tm, tk = shared[ins[0].vid]
                 choice = replace(choice, tile=replace(choice.tile, m=tm, k=tk))
@@ -471,15 +708,18 @@ def lower(
                 engine=Engine.MATMUL,
                 ins=tuple(v.vid for v in ins),
                 out=op.out.vid,
-                offs=tuple(x[1] for x in views),
+                offs=offs,
             )
+            ext = externals(graph, [mm], None, origin)
+            for vid, spec in gathered.items():
+                ext[vid] = ("window", (*ext[vid], spec))
             band = Band(
                 engine=Engine.MATMUL,
                 grid=grid_for(m, n, choice),
                 tile=choice.tile,
                 ops=[mm],
                 residency={"b": True},
-                ext=externals(graph, [mm], None, origin),
+                ext=ext,
                 elems={v.vid: v.numel for v in (*ins, op.out)},
                 shape=tuple(op.out.shape),
             )
@@ -492,7 +732,34 @@ def lower(
             if pending and span != pending_elems:
                 flush()
             views = [through_views(graph, v) for v in op.inputs]
-            ins = tuple(x[0] for x in views)
+            if any(x[5] for x in views):
+                raise ScheduleError(
+                    f"{op.kind.value} %{op.out.vid} reads a padded view; a "
+                    "vector load has bounds but no zero injection, so the pad "
+                    "has to be a GEMM operand the host builds or not exist"
+                )
+            if any(x[3] == DEEP for x in views):
+                bad = next(x for x in views if x[3] == DEEP)
+                raise ScheduleError(
+                    f"{op.kind.value} %{op.out.vid} walks {bad[6]} of "
+                    f"%{bad[0].vid}: three levels, and vec_agu carries an "
+                    "offset, a run and one stride"
+                )
+            # A window is named by the VIEW: both halves of a GEGLU projection
+            # resolve to the same root, and one vid cannot be two operands.
+            ins = tuple(
+                v if r[3] != 1 else r[0]
+                for v, r in zip(op.inputs, views, strict=True)
+            )
+            for v, r in zip(op.inputs, views, strict=True):
+                if r[3] != 1:
+                    seen_windows[v.vid] = {
+                        "root": r[0].vid,
+                        "root_elems": r[0].numel,
+                        "off": r[1],
+                        "stride": r[3],
+                        "run": r[4],
+                    }
             chain_src.update(v.vid for v in ins)
             attrs = dict(op.attrs)
             if op.kind in REDUCTION:
@@ -515,14 +782,29 @@ def lower(
                     out=op.out.vid,
                     offs=tuple(x[1] for x in views),
                     strides=tuple(x[3] for x in views),
+                    runs=tuple(x[4] for x in views),
                 )
             )
             seen_elems.update({v.vid: v.numel for v in ins})
+            seen_elems.update({w["root"]: w["root_elems"] for w in seen_windows.values()})
             seen_elems[op.out.vid] = op.out.numel
             pending_elems = span
 
     flush()
-    sched.outputs = [v.vid for v in graph.outputs]
+    # A result that is a pure reshape of a band's output IS that output: no
+    # band drains the view, and conv2d ends on one.
+    sched.outputs = []
+    for v in graph.outputs:
+        root, off, _flip, stride, _run, pads, _dims = through_views(graph, v)
+        same = stride == 1 and not off and not pads and root.numel == v.numel
+        if root.vid != v.vid and root.vid not in origin and v.vid not in origin:
+            raise ScheduleError(
+                f"%{v.vid} is returned but every op above it is a view of "
+                f"%{root.vid}, so no band computes it and nothing drains it. A "
+                "view moves no data -- an upsample written as reshape, expand "
+                "and reshape lands here, and duplication needs an engine"
+            )
+        sched.outputs.append(root.vid if same and root.vid in origin else v.vid)
     sched.verify()
     return sched
 

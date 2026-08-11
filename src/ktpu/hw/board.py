@@ -87,6 +87,16 @@ class Board:
     transport: str = "xdma"
     source: str = ""
     vectors: tuple = field(default_factory=tuple)
+    # Where this mesh sits in a mesh-of-meshes. One and zero describe every
+    # machine that exists today, and describe it CORRECTLY -- a single mesh is
+    # not a degraded multi-mesh, it is a grid with one node in it. A driver
+    # holding this board and a multi-mesh bitstream is using one of its four
+    # meshes, which should work rather than fault.
+    #
+    # Topology, not version: docs/interlink/boundary.md s1. `cu_version` does
+    # not move for the interlink and must not be used to detect it.
+    mesh_count: int = 1
+    mesh_id: int = 0
 
     def __post_init__(self):
         for name in ("clusters", "ports", "accumulators", "vectors"):
@@ -100,6 +110,30 @@ class Board:
             raise ValueError(
                 f"orchestrator is 'host' or 'device', not {self.orchestrator!r}"
             )
+        if self.mesh_count not in (1, 2, 4):
+            raise ValueError(
+                f"mesh_count is 1, 2 or 4, not {self.mesh_count}: the "
+                "mesh-of-meshes is a grid and the mesh id is two bits"
+            )
+        if not 0 <= self.mesh_id < self.mesh_count:
+            raise ValueError(
+                f"mesh_id {self.mesh_id} is outside 0..{self.mesh_count - 1}"
+            )
+
+    @property
+    def multi_mesh(self) -> bool:
+        return self.mesh_count > 1
+
+    def global_addr(self, mesh: int, word: int) -> int:
+        """Device memory `word` in `mesh`, as a global address for the mover.
+
+        Refuses a mesh this machine does not have, because on a single-mesh
+        bitstream address bits 33:32 are undecoded -- a remote address there
+        aliases into local DRAM instead of faulting.
+        """
+        from ktpu.hw import interlink
+
+        return interlink.global_addr(mesh, self.mem_byte(word), self.mesh_count)
 
     @property
     def ncl(self) -> int:

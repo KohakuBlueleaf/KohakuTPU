@@ -98,6 +98,81 @@ def layernorm(
     return deviation * rsqrt(variance + eps) * g + b
 
 
+def groupnorm(
+    x: Tracer, g: Tracer, b: Tracer, groups: int = 32, eps: float = 1e-5
+) -> Tracer:
+    """GroupNorm over `(N, H, W, C)` or `(C, HW)`, with a PRE-BROADCAST affine.
+
+    The statistics are per `(n, group)` over `C/groups` channels and every
+    spatial position, so the reduction is a reshape to `(N*groups, -1)` and one
+    `layernorm` over its last axis -- 640 elements at C=320, HW=64, which
+    `passes.reduce.split_wide` cuts into five passes of 128.
+
+    `g` and `b` are that view's shape, NOT the `(C,)` torch keeps: the reshape
+    putting the channel axis where a stride-0 read could broadcast it is not a
+    view of this layout. The host repeats instead -- `np.repeat(w, HW)`.
+
+    Raises ValueError if `groups` does not divide the channel count.
+    """
+    n = x.shape[0] if x.rank == 4 else 1
+    chan = x.shape[-1] if x.rank == 4 else x.shape[0]
+    if chan % groups:
+        raise ValueError(f"{groups} groups does not divide {chan} channels")
+    flat = x.reshape(n * groups, x.numel // (n * groups))
+    out = layernorm(flat, g.reshape(flat.shape), b.reshape(flat.shape), eps=eps)
+    return out.reshape(x.shape)
+
+
+def geglu(x: Tracer, w: Tracer) -> Tracer:
+    """`Linear(d, 2h)` then `a * gelu(b)` -- SDXL's feed-forward gate.
+
+    ONE projection and a chunk, not two projections: the halves share the A
+    operand and the same K sweep, so a second GEMM would refill A for nothing.
+    The chunk is an inner-axis slice, which lowers as a window of `h` elements
+    every `2h` -- and `h` must be a multiple of the matmul's tile width, since
+    a window that splits a drained tile is not a run of addresses.
+    """
+    p = x @ w
+    h = p.shape[-1] // 2
+    return p[:, :h] * gelu(p[:, h:])
+
+
+def upsample_nearest2x(x: Tracer, dup: Tracer) -> Tracer:
+    """Nearest 2x on `(N, H, W, C)` -> `(N, 2H, 2W, C)`, as one matmul.
+
+    `dup` is a `(4*H*W, H*W)` 0/1 selection matrix the caller supplies, since a
+    constant is a kernel input here and never folded into the graph.
+
+    The tempting `reshape(N,H,1,W,1,C).expand(...).reshape(...)` traces to a
+    graph of ZERO bands -- every op in it is a view, and a view moves no data.
+    The matmul is the only engine here that moves data across rows, and it
+    costs `4*(H*W)^2*C` MACs: fine at 8x8, 3.4e11 at 128x128.
+    """
+    if x.rank != 4:
+        raise ValueError(f"upsample_nearest2x expects (N, H, W, C), got {x.shape}")
+    n, h, w, c = x.shape
+    if dup.shape != (4 * h * w, h * w):
+        raise ValueError(
+            f"dup must be {(4 * h * w, h * w)} for a {(h, w)} input, got {dup.shape}"
+        )
+    return (dup @ x.reshape(h * w, n * c)).reshape(n, 2 * h, 2 * w, c)
+
+
+def nearest2x_matrix(h: int, w: int):
+    """The `(4*h*w, h*w)` 0/1 matrix `upsample_nearest2x` wants, as numpy.
+
+    Row `(2y+dy)*2w + (2x+dx)` selects source `y*w + x`, which is the nearest
+    rule with an integer scale: every output reads the source it sits on top of.
+    """
+    import numpy as np
+
+    out = np.zeros((4 * h * w, h * w))
+    for y in range(2 * h):
+        for x in range(2 * w):
+            out[y * 2 * w + x, (y // 2) * w + (x // 2)] = 1.0
+    return out
+
+
 def softmax(x: Tracer, axis: int = -1) -> Tracer:
     """Max-subtract, exponentiate, normalise -- the numerically safe form.
 

@@ -9,6 +9,10 @@ from dataclasses import dataclass
 from ktpu.ir.sched import Band, Grid, ScheduleError, Tile
 from ktpu.target import Target
 
+# Entries one CHUNK may hold: `boff + h*nk + kb` is 8 bits
+# (mx_cluster_mgr.v), so entry 256 wraps onto entry 0 and reads another block.
+L1_OFF_SPAN = 256
+
 
 @dataclass(frozen=True)
 class TileChoice:
@@ -40,8 +44,8 @@ def choose_tile(m: int, k: int, n: int, t: Target) -> TileChoice:
     """Pick the output tile for an `m x k x n` GEMM on target `t`.
 
     Searches power-of-two `(gm, gn)` sub-tile counts with `gm*gn <= t.tiles`,
-    taking `nk = min(l1_a // (banks*gm), l1_b // gn, k // kblock)` K blocks per
-    fill. Candidates are ranked by arithmetic intensity `2*gm*gn/(gm+gn)`
+    taking `nk = min(bank // gm, bank // gn, k // kblock)` K blocks per fill,
+    where a bank is `min(l1 // banks, L1_OFF_SPAN)`. Candidates are ranked by arithmetic intensity `2*gm*gn/(gm+gn)`
     multiplied by `useful`, the fraction of the padded problem that is the real
     problem; ties go to larger `nk`, then to the squarer tile.
 
@@ -59,7 +63,11 @@ def choose_tile(m: int, k: int, n: int, t: Target) -> TileChoice:
         for gn in sizes:
             if gm * gn > t.tiles:
                 continue
-            nk = min(t.l1_a // (t.l1_a_banks * gm), t.l1_b // gn, k_blocks)
+            # Dividing B by `l1_b` alone let gn*nk reach 512, and 64x288x256
+            # came back off by 8.2e+02 where 64x256x256 was right.
+            bank_a = min(t.l1_a // t.l1_a_banks, L1_OFF_SPAN)
+            bank_b = min(t.l1_b // t.l1_a_banks, L1_OFF_SPAN)
+            nk = min(bank_a // gm, bank_b // gn, k_blocks)
             if nk < 1:
                 continue
 

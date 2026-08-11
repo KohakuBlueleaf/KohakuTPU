@@ -172,23 +172,58 @@ class Mesh:
         self.loaded.add(name)
 
     def bind(self, name: str, data: np.ndarray) -> None:
-        """Upload a graph input by name into the region allocated for it.
+        """Upload a graph input by name into whatever regions read it.
 
-        Raises MeshFault if no input of that name exists, which is what happens
-        when a kernel's parameter is renamed and the caller is not.
+        An input every matmul reads through a window -- a conv's activation --
+        gets no region of its own, only the gathered copies, so `prog.inputs`
+        does not name it. Raises MeshFault if nothing at all reads `name`.
         """
-        if name not in self.prog.inputs:
+        cuts = {t: w for t, w in self.prog.windows.items() if w["from"] == name}
+        if name not in self.prog.inputs and not cuts:
             raise MeshFault(
-                f"nothing bound for tensor operand {name!r}; "
-                f"this program's inputs are {sorted(self.prog.inputs)}"
+                f"nothing bound for tensor operand {name!r}; this program "
+                f"reads {sorted(set(self.prog.inputs) | self._window_sources())}"
             )
-        region = self.prog.inputs[name]
-        spec = self.prog.packing.get(self._canon(region))
-        if spec:
-            self.put(region, data, spec.get("rows", 0), spec.get("k", 0))
-        else:
-            self.load(region, data)
-        self.named[name] = np.asarray(data, dtype=np.float64).reshape(-1)
+        if name in self.prog.inputs:
+            region = self.prog.inputs[name]
+            spec = self.prog.packing.get(self._canon(region))
+            if spec:
+                self.put(region, data, spec.get("rows", 0), spec.get("k", 0))
+            else:
+                self.load(region, data)
+        arr = np.asarray(data, dtype=np.float64)
+        self.named[name] = arr.reshape(-1)
+        for target, w in cuts.items():
+            self.gather(target, arr, w, arr.shape)
+
+    def _window_sources(self) -> set[str]:
+        return {w["from"] for w in self.prog.windows.values()}
+
+    def gather(self, region: str, src: np.ndarray, w: dict, shape=None) -> None:
+        """Fill `region` with the strided window `w` cut out of `src`.
+
+        `w["dims"]` is `(extent, stride)` outermost first, exactly `mx_tdesc`'s
+        loop nest. A GEMM operand that is a conv filter tap or one head of a
+        packed projection is such a window and a FILL walks one contiguous
+        span, so the host cuts it out at pack time -- which is what
+        `resblock_card.py` does when it materialises the nine tap views. A
+        `pad` means the window is cut from a ZERO-BORDERED copy, since no
+        address generator here injects a zero for an out-of-bounds element.
+        """
+        flat = np.asarray(src, dtype=np.float64).reshape(-1)
+        if w.get("pad"):
+            body = flat.reshape(shape if shape is not None else (flat.size,))
+            flat = np.pad(body, [tuple(p) for p in w["pad"]]).reshape(-1)
+        idx = np.zeros(1, dtype=np.int64) + w["off"]
+        for extent, stride in w["dims"]:
+            idx = (idx[:, None] + np.arange(extent) * stride).reshape(-1)
+        spec = self.prog.packing.get(self._canon(region), {})
+        self.put(
+            region,
+            flat[idx].reshape(w["shape"]),
+            spec.get("rows", 0),
+            spec.get("k", 0),
+        )
 
     def upload(self, band, a: np.ndarray, b: np.ndarray) -> "Mesh":
         """Pack a logical A `(m, k)` and B `(k, n)` into the `a` and `b`
@@ -222,15 +257,15 @@ class Mesh:
                 slab = np.ascontiguousarray(slab.T)
             return pack_operand(slab, rows, k, self.t.lanes, self.t.kblock)
 
-        # `x[h]` is an offset of whole slabs, so each packs on its own --
-        # packing the flattened tensor would interleave heads inside one tile.
-        if arr.ndim > 2:
+        # `x[h]` is an offset of whole slabs, so each packs on its own; a conv
+        # activation is rank 4 and its GEMM rows run ACROSS the slabs instead.
+        if arr.ndim > 2 and rows and arr.shape[-2] % rows == 0:
             self.load(
                 region,
                 np.concatenate([one(s) for s in arr.reshape(-1, *arr.shape[-2:])]),
             )
             return
-        self.load(region, one(arr))
+        self.load(region, one(arr.reshape(-1, arr.shape[-1]) if arr.ndim > 2 else arr))
 
     def _at(self, word: int, dtype: str) -> tuple[str, int]:
         """Region and element index for a memory word.
@@ -265,7 +300,7 @@ class Mesh:
         """
         missing = [
             n for n, r in self.prog.inputs.items() if self._canon(r) not in self.loaded
-        ]
+        ] + [w["from"] for r, w in self.prog.windows.items() if r not in self.loaded]
         if missing:
             raise MeshFault(
                 f"nothing bound for tensor operand(s) {sorted(missing)}; "
@@ -378,6 +413,10 @@ class Mesh:
                 if f.get("gather") == "row":
                     tl = self._tiling(region)
                     row = f["coff"] // f["tn"] + chunk
+                    if f.get("layout") == "flat":
+                        at = off + row * f["tn"]
+                        self.mem[region][at : at + n] = out[:n]
+                        return
                     if f.get("layout") == "entry":
                         rows, kk = f["erows"], f["ek"]
                         blk, local = divmod(row, rows)
@@ -461,7 +500,11 @@ class Mesh:
         if f.get("gather"):
             row = f["coff"] // f["tn"] + chunk
             if f["gather"] == "rowbcast":
-                return np.full(vl, src[off + row % max(1, src.size)])
+                at = row // f.get("lrow", 1)
+                return np.full(vl, src[off + at % max(1, src.size)])
+            if f.get("layout") == "flat":
+                at = off + row * f["tn"]
+                return src[at : at + min(vl, f["tn"])].copy()
             if f.get("layout") == "entry":
                 rows, kk = f["erows"], f["ek"]
                 blk, local = divmod(row, rows)
@@ -472,8 +515,12 @@ class Mesh:
             tile, local = divmod(row, tm)
             return src[off + tile * tm * tn + inv[local]][:vl].copy()
         if mode == "elem":
-            base = off + (f["coff"] + cur if "coff" in f else cur)
-            return src[base : base + vl].copy()
+            at = f["coff"] + cur if "coff" in f else cur
+            if "stride" in f:
+                pos = np.arange(at, at + vl)
+                idx = f["base"] + (pos // f["run"]) * f["stride"] + pos % f["run"]
+                return src[off + idx].copy()
+            return src[off + at : off + at + vl].copy()
 
         # The positions walked here are in the CONSUMING band's tile, not in
         # the operand's own region, so this geometry is the band's.
