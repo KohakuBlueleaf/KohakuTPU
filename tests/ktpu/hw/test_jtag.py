@@ -13,12 +13,19 @@ from ktpu.hw import jtag
 
 
 class FakeSession:
-    """Enough Tcl to answer this driver: a word store and two procs."""
+    """Enough Tcl to answer this driver: a word store and two procs.
 
-    def __init__(self, width=8):
+    `shift` emulates the measured fault -- a write queue holding `shift` beats,
+    so each address is paired with data that many beats earlier and the write
+    still reports success. It is the only way to exercise the realignment path,
+    which by construction cannot be reproduced on hardware that works.
+    """
+
+    def __init__(self, width=8, shift=0):
         self.mem = {}
         self.width = width
         self.scripts = []
+        self.queue = [0] * shift
 
     def __call__(self, script, host=None, port=None, timeout=None):
         self.scripts.append(script)
@@ -31,7 +38,8 @@ class FakeSession:
             addr, beats = rest.split(None, 1)
             for i, b in enumerate(beats.strip("{}").split()):
                 assert len(b) == 16, f"beat {b!r} is not a 64-bit hex word"
-                self.mem[int(addr) + i * 8] = int(b, 16)
+                self.queue.append(int(b, 16))
+                self.mem[int(addr) + i * 8] = self.queue.pop(0)
             return ""
         assert head == "jaxi::read", script
         addr, n = (int(v) for v in rest.split())
@@ -101,6 +109,72 @@ def test_it_sources_the_helpers_only_when_given_a_path(session):
     assert "source {C:/hw/tools/jtag_axi.tcl}" in session.scripts[0]
     jtag.JtagTransport()
     assert "KTPU_JAXI_TCL" in session.scripts[2]
+
+
+# ---- the write-path preflight ----------------------------------------------
+@pytest.fixture
+def skewed(monkeypatch, request):
+    s = FakeSession(shift=request.param)
+    monkeypatch.setattr(jtag, "evaluate", s)
+    return s
+
+
+def test_a_clean_path_verifies_with_no_compensation(session):
+    t = jtag.JtagTransport(tcl="x.tcl", max_block=1 << 20)
+    assert t.verify_write_path() == 0
+    assert t.write_shift == 0
+
+
+@pytest.mark.parametrize("skewed", [1, 2, 8, 17], indirect=True)
+def test_a_skewed_path_is_measured_exactly(skewed):
+    t = jtag.JtagTransport(tcl="x.tcl", max_block=1 << 20)
+    assert t.measure_write_shift() == len(skewed.queue)
+
+
+@pytest.mark.parametrize("skewed", [8], indirect=True)
+def test_a_skew_is_REFUSED_by_default(skewed):
+    """The default must not quietly correct it: a shift means every operand is
+    landing in the wrong place and that is the finding, not an inconvenience."""
+    t = jtag.JtagTransport(tcl="x.tcl", max_block=1 << 20)
+    with pytest.raises(jtag.JtagError, match="lags the write address by 8"):
+        t.verify_write_path()
+    assert t.write_shift == 0
+
+
+@pytest.mark.parametrize("skewed", [1, 2, 8, 17], indirect=True)
+def test_realignment_converges_and_then_a_block_lands_exactly(skewed):
+    d = len(skewed.queue)
+    t = jtag.JtagTransport(tcl="x.tcl", max_block=1 << 20)
+    assert t.verify_write_path(scratch=0x8000, realign=True) == d
+    payload = bytes((i * 7 + 3) & 0xFF for i in range(1024))
+    t.write_block(0x40000, payload)
+    assert t.read_block(0x40000, len(payload)) == payload
+
+
+@pytest.mark.parametrize("skewed", [8], indirect=True)
+def test_a_shift_that_changes_mid_run_is_caught_by_the_head_probe(skewed):
+    """The head probe is the whole guarantee, so it has to fire when it should."""
+    t = jtag.JtagTransport(tcl="x.tcl", max_block=1 << 20)
+    t.verify_write_path(scratch=0x8000, realign=True)
+    skewed.queue.append(0xDEAD)
+    with pytest.raises(jtag.JtagError, match="shifted mid-transfer"):
+        t.write_block(0x40000, bytes(range(64)))
+
+
+def test_an_unexplainable_readback_is_not_called_a_skew(monkeypatch):
+    """Garbage that fits no shift is a different fault and must say so."""
+    s = FakeSession()
+    monkeypatch.setattr(jtag, "evaluate", s)
+    t = jtag.JtagTransport(tcl="x.tcl", max_block=1 << 20)
+    real = s.__call__
+
+    def scramble(script, *a, **kw):
+        out = real(script, *a, **kw)
+        return " ".join("dead0000beef0000" for _ in out.split()) if out else out
+
+    monkeypatch.setattr(jtag, "evaluate", scramble)
+    with pytest.raises(jtag.JtagError, match="matches no shift"):
+        t.measure_write_shift()
 
 
 def test_a_program_lands_the_same_words_as_the_memory_fake(session):
