@@ -42,8 +42,9 @@ LOG2E = 1.4426950408889634
 #: them, which is the only constraint the per-row descriptor scheme imposes.
 WORD_ELEMS = V.WORD_BYTES // 2
 
-#: Where the three routines sit in the core's instruction memory.
-PC_FILL, PC_SOFT, PC_DRAIN = 0, 8, 40
+#: Where the three routines sit in the core's instruction memory. PC_SOFT MUST
+#: clear PC_FILL's nine words: at 8 its VLD overwrote the fill's own VHALT.
+PC_FILL, PC_SOFT, PC_DRAIN = 0, 9, 40
 
 
 def matmul(s, a, bt, m, k, n, timeout):

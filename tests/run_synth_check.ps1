@@ -59,6 +59,11 @@ $targets = @(
     @{ Top = 'axi_n1_wrap_5'
        Src = @("src\common\async_fifo.v", "src\kohakuaxi\axi_n1.v",
                "src\synth_top\axi_n1_wrap_5.v") },
+    # Arbitrate, pack 256->512, cross. 1,942 LUT / 1,634 FF / 361.7 MHz against
+    # a 5S/1M SmartConnect's 24,786 / 35,621 -- docs\mas\dram-port.md.
+    @{ Top = 'mag_dram_port'
+       Src = @("src\common\sync_fifo.v", "src\common\async_fifo.v",
+               "src\kohakumas\mag_dram_port.v") },
     @{ Top = 'noc_orchestrator'
        Src = @("src\kohakunoc\noc_orchestrator.v") },
     # Two routers wired east-west. A single router cannot measure the link between
@@ -221,6 +226,18 @@ $targets = @(
     # time -- a target no script names is a target nobody re-measures.
     @{ Top = 'mag_mem_port'
        Src = @("src\kohakumas\mx_quant.v", "src\kohakumas\mag_mem_port.v") },
+    # The interlink, docs/interlink/. One link end, then the switch that holds
+    # two of them, then the MAG-side adapter. Measured separately because the
+    # question each answers is different: whether a 512-bit registered crossing
+    # is cheap, whether the second routing layer is, and whether the packetiser
+    # is -- and only the first is obviously yes.
+    @{ Top = 'mag_link'
+       Src = @("src\kohakumas\mag_link.v") },
+    @{ Top = 'mag_switch'
+       Src = @("src\kohakumas\il_pkt_arb.v", "src\kohakumas\mag_link.v",
+               "src\kohakumas\mag_switch.v") },
+    @{ Top = 'mag_ilink'
+       Src = @("src\kohakumas\mag_ilink.v") },
     @{ Top = 'mx_matmul_cu'
        Src = @("src\kohakunoc\noc_cu_base.v",
                "src\kohakutpu\matmul\mx_mac.v", "src\kohakutpu\matmul\mx_tcu.v",

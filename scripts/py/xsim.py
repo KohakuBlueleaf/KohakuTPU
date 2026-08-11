@@ -56,7 +56,10 @@ VECTOR = [
 ]
 
 # xpm_cdc instantiates glbl, so an async FIFO drags it in even at MODEL=1.
-NEEDS_GLBL = {"axi_n1"}
+NEEDS_GLBL = {
+    "axi_n1", "mag_dram_port", "mag_dram_port_r1", "mm_mesh_1m",
+    "mag_1m_upload", "interlink_2mesh_1m",
+}
 
 BENCHES = {
     # N masters onto one slave across two clocks, the SmartConnect replacement.
@@ -242,6 +245,114 @@ BENCHES = {
             "src/kohakumas/mag.v",
             "src/synth_top/mm_mesh.v",
             "tests/mas/mm_mesh_tb.v",
+        ],
+    ),
+    # The same machine behind ONE 512-bit master. Proves mag_dram_port carries
+    # mover, vector and cluster traffic, not just directed bursts.
+    "mm_mesh_1m": (
+        "mm_mesh_1m_tb",
+        COMMON
+        + NOC
+        + MATMUL
+        + MOVER
+        + VECTOR
+        + [
+            "src/kohakutpu/matmul/mx_cluster_cu.v",
+            "src/kohakutpu/vector/vec_cvt.v",
+            "src/kohakutpu/vector/vec_regfile.v",
+            "src/kohakutpu/vector/vec_lanes.v",
+            "src/kohakutpu/vector/vec_agu.v",
+            "src/kohakutpu/vector/vec_core.v",
+            "src/kohakutpu/vector/vec_cu.v",
+            "src/kohakumas/mx_quant.v",
+            "src/kohakumas/axi_ram.v",
+            "src/kohakumas/mag_mem_port.v",
+            "src/kohakumas/mag.v",
+            "src/common/async_fifo.v",
+            "src/kohakumas/mag_dram_port.v",
+            "src/synth_top/mm_mesh.v",
+            "src/synth_top/mm_mesh_1m.v",
+            "tests/mas/mm_mesh_1m_tb.v",
+        ],
+    ),
+    # mag_dram_port alone against an AXI RAM: the partial-beat matrix.
+    "mag_dram_port": (
+        "mag_dram_port_tb",
+        COMMON
+        + [
+            "src/kohakumas/axi_ram.v",
+            "src/common/async_fifo.v",
+            "src/kohakumas/mag_dram_port.v",
+            "tests/mas/mag_dram_port_tb.v",
+        ],
+    ),
+    # The same bench at R=1, where packing is an identity and RLOG=1 has to be
+    # bypassed rather than trusted. A wrapper, because -generic_top splits on =.
+    "mag_dram_port_r1": (
+        "mag_dram_port_r1_tb",
+        COMMON
+        + [
+            "src/kohakumas/axi_ram.v",
+            "src/common/async_fifo.v",
+            "src/kohakumas/mag_dram_port.v",
+            "tests/mas/mag_dram_port_tb.v",
+            "tests/mas/mag_dram_port_r1_tb.v",
+        ],
+    ),
+    # The upload path only: host AXI slave -> MAG -> packed master -> DRAM.
+    # mm_mesh discards sm_awready, so this is the only place it is checked.
+    "mag_1m_upload": (
+        "mag_1m_upload_tb",
+        COMMON
+        + MOVER
+        + [
+            "src/kohakunoc/noc_orchestrator.v",
+            "src/kohakumas/mx_quant.v",
+            "src/kohakumas/mag_mem_port.v",
+            "src/kohakumas/il_pkt_arb.v",
+            "src/kohakumas/mag_link.v",
+            "src/kohakumas/mag_link_pipe.v",
+            "src/kohakumas/mag_switch.v",
+            "src/kohakumas/mag_ilink.v",
+            "src/kohakumas/mag.v",
+            "src/common/async_fifo.v",
+            "src/kohakumas/mag_dram_port.v",
+            "src/kohakumas/axi_ram.v",
+            "src/synth_top/mag_1m.v",
+            "tests/mas/mag_1m_upload_tb.v",
+        ],
+    ),
+    # TWO WHOLE MESHES over the interlink, each behind one packed master. A
+    # remote write crosses NoC -> MAG -> link -> far MAG -> far DRAM.
+    "interlink_2mesh_1m": (
+        "interlink_2mesh_1m_tb",
+        COMMON
+        + NOC
+        + MATMUL
+        + MOVER
+        + VECTOR
+        + [
+            "src/kohakutpu/matmul/mx_cluster_cu.v",
+            "src/kohakutpu/vector/vec_cvt.v",
+            "src/kohakutpu/vector/vec_regfile.v",
+            "src/kohakutpu/vector/vec_lanes.v",
+            "src/kohakutpu/vector/vec_agu.v",
+            "src/kohakutpu/vector/vec_core.v",
+            "src/kohakutpu/vector/vec_cu.v",
+            "src/kohakumas/mx_quant.v",
+            "src/kohakumas/axi_ram.v",
+            "src/kohakumas/mag_mem_port.v",
+            "src/kohakumas/il_pkt_arb.v",
+            "src/kohakumas/mag_link.v",
+            "src/kohakumas/mag_link_pipe.v",
+            "src/kohakumas/mag_switch.v",
+            "src/kohakumas/mag_ilink.v",
+            "src/kohakumas/mag.v",
+            "src/common/async_fifo.v",
+            "src/kohakumas/mag_dram_port.v",
+            "src/synth_top/mag_1m.v",
+            "src/synth_top/ktpu_min_1m.v",
+            "tests/mas/interlink_2mesh_1m_tb.v",
         ],
     ),
     # The mover alone against an AXI RAM: no MAG, no NoC, no mesh.

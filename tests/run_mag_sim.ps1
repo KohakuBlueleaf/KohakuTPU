@@ -48,6 +48,18 @@ $rtl = @(
     "src\kohakuaxi\axi_xbar2.v",
     "src\kohakuaxi\main_orch.v",
     "src\kohakumas\axi_ram.v",
+    # MAG's own submodules. Absent from this list until now, so the bench had
+    # been failing elaboration rather than running -- a missing source reads as
+    # a broken test, not a passing one, but only if someone runs it.
+    "src\kohakutpu\matmul\mx_tdesc.v",
+    "src\kohakumas\mm_prng.v",
+    "src\kohakumas\mx_quant.v",
+    "src\kohakumas\mm_mover.v",
+    "src\kohakumas\mag_mem_port.v",
+    "src\kohakumas\il_pkt_arb.v",
+    "src\kohakumas\mag_link.v",
+    "src\kohakumas\mag_switch.v",
+    "src\kohakumas\mag_ilink.v",
     "src\kohakumas\mag.v"
 ) | ForEach-Object { Join-Path $root $_ }
 
