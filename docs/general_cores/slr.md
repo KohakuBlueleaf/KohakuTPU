@@ -81,17 +81,35 @@ channel is anchored to a die by its pinout.
 **This board already wires one channel per SLR** -- but not in the order anyone
 would guess, mapped from the XDC `PACKAGE_PIN`s:
 
-| XDC | SLR | banks |
-|---|---|---|
-| `ddr4_c0` | **SLR3** | 72, 73, 74 |
-| `ddr4_c1` | **SLR2** | 69, 70, 71 |
-| `ddr4_c2` | **SLR0** | 61, 62, 63 |
-| `ddr4_c3` | **SLR1** | 65, 66, 67 |
-| `pcie` (XDMA) | **SLR1** | GTY 224-227 |
+| XDC | SLR | banks | `design_1.bd` inst | refclk pin | also in this SLR |
+|---|---|---|---|---|---|
+| `ddr4_c0` | **SLR3** | 72, 73, 74 | `ddr4_0` | G25 (bank 74) | -- |
+| `ddr4_c1` | **SLR2** | 69, 70, 71 | `ddr4_1` | J26 (bank 71) | the current `singlemesh` |
+| `ddr4_c2` | **SLR0** | 61, 62, 63 | `ddr4_2` | AE31 (bank 63) | nothing, today |
+| `ddr4_c3` | **SLR1** | 65, 66, 67 | `ddr4_3` | AW14 (bank 67) | **XDMA/PCIe** GTY 224-227, `system_clk` AY23, LEDs |
 
-**Channel number is not SLR number**, and `docs/mas/spec.md` §219-247 currently
-draws it as if it were. **XDMA lands in SLR1**, so host traffic enters at the
-master die and the four partitions are not symmetric from the host's side.
+**Exactly one DDR4 controller per SLR**, and that is the fact the multi-mesh
+design rests on: no mesh ever needs a cross-SLR AXI path to reach its own DRAM
+([`../interlink/topology.md`](../interlink/topology.md) §3.1).
+
+**Channel number is not SLR number**, and `docs/mas/spec.md` §2.3 used to draw it
+as if it were; it is corrected. **XDMA lands in SLR1**, so host traffic enters at
+the master die and the four partitions are not symmetric from the host's side.
+
+Cross-checked three ways rather than read once: bank 74 → SLR3 from
+`get_iobanks`; `ddr4_0`'s placed BUFG at clock region X4Y13/X4Y14 in
+`singlemesh_wrapper_clock_utilization_routed.rpt`; and the board PDF's appendix
+(`DDR0_REFCLK_P` G25 … `DDR3_REFCLK_P` AW14), which matches `ddr4_c*.xdc`
+exactly. **Clock regions are 4 rows per SLR** — SLR0 Y0-3, SLR1 Y4-7, SLR2 Y8-11,
+SLR3 Y12-15 — which is what makes a placed BUFG's coordinate an independent
+witness for which die a channel landed on.
+
+> **`design_1.bd` declares the DDR refclks at 100 MHz and the board is 400.**
+> `CONFIG.FREQ_HZ {100000000}` on `c1_sys`/`c2_sys`/`c3_sys` produces four
+> `CRITICAL WARNING [ddr4:2.2-1]`; `singlemesh.bd` — the design actually on the
+> card — says `400160000`. design_1 was never implemented, which is why its
+> value was never caught. **Follow `singlemesh` wherever the two references
+> disagree.** [`../axi/bringup.md`](../axi/bringup.md) §"Block design traps".
 
 ### 2.3 What could not be confirmed
 
@@ -231,20 +249,31 @@ trusting the wrong page.
 | where | issue |
 |---|---|
 | `constraints/sysytem.xdc` line 2 | part is `xcvu13p-fhgb2104-2-e`; everything else, including `tests/run_synth_check.ps1`, says `-2L-e`. The measurements in §2 used `-2L-e`. |
-| `../mas/spec.md` §219-247 | maps SLR0→ch0 … SLR3→ch3. The board is c0→SLR3, c1→SLR2, c2→SLR0, c3→SLR1. |
-| `../arch-design.md` §420-421 vs `../mas/spec.md` §236 | 2,176 DSP / 140k LUT per SLR against 2,048 / 111k. The measured cluster is 272 DSP, so arch-design is the right one; `../perf.md` §522 still uses a stale 256. |
-| per-SLR BRAM | never stated anywhere. It is **672**. |
+| ~~`../mas/spec.md` §219-247~~ | mapped SLR0→ch0 … SLR3→ch3. **FIXED** — §2.3 now names the instances and points here. |
+| `../arch-design.md` §420-421 vs `../mas/spec.md` §2.3 | 2,176 DSP / 140k LUT per SLR against 2,048 / 111k. **Both are low**: the measured cluster is **304** DSP once the accumulator's block-scale and normalising-shift DSPs are counted, so 8 clusters is 2,432. `../mas/spec.md` §2.3 and `../perf.md` §4.1 are corrected; `../arch-design.md` is not. |
+| ~~per-SLR BRAM~~ | never stated anywhere. It is **672** — now in §2. |
 | `../arch-design.md` §344-357, §540-543 | one central SmartConnect fans out to four MAGs -- the one structure that unavoidably spans all four dies -- with no note on placement or pipelining. Needs per-channel `*_SLR_PIPE` (PG247) or an AXI Register Slice in Multi-SLR Crossing mode. |
-| `../perf.md` §528 | mentions "comfortably one HBM stack". **VU13P has no HBM** (DS890 lists "–"). |
-| nowhere | XDMA/PCIe lands in **SLR1**. The host entry point is not symmetric across the four partitions and nothing records it. |
+| ~~`../perf.md` §528~~ | mentioned "comfortably one HBM stack". **VU13P has no HBM** (DS890 lists "–"). **FIXED** — §5 now says four DDR4 channels, which is what the board has. |
+| ~~nowhere~~ | XDMA/PCIe lands in **SLR1**. **RECORDED**, in §2.2 and in `../mas/spec.md` §2.3. |
 
 ## 7. Status
 
-The device facts are in. **Nothing about the topology is decided**, but three
-constraints are now hard rather than assumed: a cluster cannot cross a boundary
-(DSP cascades), a DDR4 channel cannot cross one (pinout), and every crossing
-signal is flop to flop at one cycle plus pipelining.
+The device facts are in, and **the topology question in §3 and §4 is now
+answered**: neither cut. A mesh spanning three SLRs was implemented and its worst
+path was 4.6 ns at **98.3% routing with zero logic levels**, so option (b) — a
+NoC link across the boundary — was rejected on measurement rather than on the SLL
+arithmetic that had looked like the constraint. What replaced it is **four
+independent meshes, one per SLR, each with its own DDR4**, joined MAG to MAG by
+an explicit registered link: [`../interlink/`](../interlink/README.md), with the
+floorplan in [`../interlink/topology.md`](../interlink/topology.md) §3.1.
 
-The single-SLR floorplan in the [README](README.md) stands. What it does not yet
-say is which SLR it is, and that is not a free choice: SLR1 holds the master
-config, the XDMA entry point and `ddr4_c3`.
+Three constraints are hard rather than assumed: a cluster cannot cross a boundary
+(DSP cascades), a DDR4 channel cannot cross one (pinout), and every crossing
+signal is flop to flop at one cycle plus pipelining. The third is why the
+interlink is credit-based — a `TREADY` travelling back across a boundary is the
+combinational crossing all of this exists to avoid.
+
+The single-SLR floorplan in the [README](README.md) stands as the description of
+**one** mesh. Which SLR each of the four occupies is no longer a free choice and
+no longer an open one: one DDR4 controller per die pins each mesh to its own
+memory, and SLR1 additionally holds the master config and the XDMA entry point.

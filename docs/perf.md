@@ -476,57 +476,84 @@ with `TILES`, it clears the 500 target.
 
 ## 4. URAM
 
-The accumulator is `TILES` sub-tiles of 4x4 values. `ACC_MW = 14` mantissa plus
-exponent and sign is ~24 bits, so a sub-tile is 16 x 24 = **384 bits**.
+The accumulator is `TILES` sub-tiles of 4x4 values. At `ACC_MW = 14` a value is
+sign + E7 + M14 = 22 bits, so a sub-tile is 16 x 22 = **352 bits**.
+
+> **This section said 384 bits and 6 URAMs**, from a ~24-bit value. `ACC_MW`
+> settled at 14 rather than 16 ([`compute/accumulator.md`](compute/accumulator.md)
+> §2), which takes the sub-tile to 352 and the array to 5. Every count below is
+> corrected; the argument is unchanged, because it was never about the exact
+> number.
 
 A URAM288 is **4096 deep x 72 bits**. A whole sub-tile must be read or written
-per access, so the array is *width*-limited: `ceil(384/72)` = **6 URAMs** wide,
+per access, so the array is *width*-limited: `ceil(352/72)` = **5 URAMs** wide,
 each 4096 deep.
 
-That is the crux: **6 URAMs give 4096 sub-tiles, and 6 URAMs is also the
+That is the crux: **5 URAMs give 4096 sub-tiles, and 5 URAMs is also the
 minimum for any TILES at all.** Depth is free until 4096.
 
 | TILES | g | URAM/cluster | depth used |
 |---|---|---|---|
-| 256 | 16 | 6 | 6% |
-| 1024 | 32 | 6 | 25% |
-| **4096** | **64** | **6** | **100%** |
+| 256 | 16 | 5 | 6% |
+| 1024 | 32 | 5 | 25% |
+| **4096** | **64** | **5** | **100%** |
 
-So `TILES = 4096` would cost exactly what `TILES = 256` costs, in URAM.
+So `TILES = 4096` costs exactly what `TILES = 256` costs, in URAM.
 
-> **This was NOT taken, and the reasoning above is what to be careful of.** It
-> is right about the primitive count and wrong about what a deep accumulator
-> costs. `TILES = 4096` at `Gm = Gn = 64` makes the output block 256x256, so
-> every dimension of every problem pads up to a multiple of 256 and 32 clusters
-> need an 8192-wide problem to fill. Bandwidth bought by spending output
-> granularity is bandwidth charged back on every shape that is not enormous.
+> **TAKEN, in two steps, and the caution below was half right.**
 >
-> **What was built instead: `TILES = 512` on BRAM, `Gm = 16`, `Gn = 32`.** The
-> resident tile is 352 bits wide against a 72-bit BRAM36 port, so it is
-> `ceil(352/72) = 5` primitives **at any depth up to 512** — the same "depth is
-> free" argument, applied to the primitive that was already being paid for, and
-> spending **no URAM at all**. Intensity 8.0 → 21.3, output block 64x128, so 32
-> clusters fill at a 724-wide problem.
+> **Step 1 was `TILES = 512` on BRAM, `Gm = 16`, `Gn = 32`** — the same "depth is
+> free" argument applied to the primitive that was *already* being paid for:
+> `ceil(352/72) = 5` RAMB36 at any depth up to 512, no URAM at all. Intensity
+> 8.0 → 21.3, output block 64x128, so 32 clusters fill at a 724-wide problem.
 >
-> The URAM stays available for what the architecture still owes: an L2 in MAG,
-> an FP16 vector unit, a general core. Spending all of it on matmul residency
-> was never the plan.
+> **Step 2 is `TILE_PRIM = "ultra"`, `TILES = 4096`**, which is what the
+> generated tops build today. Measured on the 6+0 mesh: **30 URAM for 6 clusters
+> and BRAM 254 → 224**, a 1:1 exchange, because 5 primitives is 5 primitives and
+> only the depth behind them changes. Intensity 21.3 → 64.0.
+> [`compute/accumulator.md`](compute/accumulator.md) §3.1.
+>
+> **The caution about granularity still stands, and it is not the same thing as
+> a cost.** `TILES = 4096` at `Gm = Gn = 64` *permits* a 256x256 output block; it
+> does not impose one. `choose_tile` ranks by intensity **discounted by padding**
+> ([`isa/kernel.md`](isa/kernel.md) §1), so a 300-wide problem still picks a
+> small tile — whereas a 512-deep accumulator cannot offer a large one to a
+> problem that wants it. Treating a ceiling as a shape is what made this read as
+> a rejection.
+>
+> The "do not spend the URAM on matmul" half is answered by measurement rather
+> than by argument: the shipped meshes used **0 of 320 URAM per SLR**, and 5 per
+> cluster does not threaten the L2, the FP16 vector unit or the general core.
 
 ### 4.1 Cost at 32 clusters
 
 ```
-6 URAM/cluster x 32 clusters = 192 URAM
-VU13P has 1280                = 15% of the device
+5 URAM/cluster x 32 clusters = 160 URAM
+VU13P has 1280                = 12.5% of the device
 ```
 
-**192 URAMs, 15%.** For comparison the same 32 clusters need 32 x 256 = 8192
-DSPs of 12288 (67%), so URAM is not close to being the binding resource --
-DSPs are.
+**160 URAMs, 12.5%.** For comparison the same 32 clusters need 32 x **304** =
+9,728 DSPs of 12,288 (**79.2%**), so URAM is not close to being the binding
+resource -- DSPs are, and by more than this section used to say.
+
+> **304, not the 256 an earlier draft assumed.** A cluster is 256 MAC DSPs *plus*
+> the accumulator's: 16 for the block-scale multiply, one per lane, and 32 for
+> the normalising shift, two per lane, since that shift became a multiply by a
+> one-hot ([`compute/accumulator.md`](compute/accumulator.md) §4.4, §4.5). It is
+> the measured figure for the shipped `mx_cluster_cu`
+> ([`isa/cluster.md`](isa/cluster.md) §9.6). The two figures move the same
+> conclusion further in the same direction, which is why this was never caught by
+> the answer looking wrong.
 
 At `TILES = 4096`, g = 64, so 32 clusters (16384 MAC/cycle) need 16384/64 =
-**256 B/cycle** of memory bandwidth = 76.8 GB/s at 300 MHz. That is roughly
-four DDR4 channels, or comfortably one HBM stack. With int7 in DRAM it halves
-to 128 B/cycle.
+**256 B/cycle** of memory bandwidth = 76.8 GB/s at 300 MHz. That is **exactly the
+four DDR4 channels this board has**, one per SLR
+([`general_cores/slr.md`](general_cores/slr.md) §2.2) — so the deep tile is what
+makes the memory system the board already provides sufficient. With int7 in DRAM
+it halves to 128 B/cycle.
+
+> An earlier draft added "or comfortably one HBM stack". **VU13P has no HBM** —
+> DS890 lists "–". There is no such fallback on this part.
 
 ---
 

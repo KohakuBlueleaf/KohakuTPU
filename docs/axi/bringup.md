@@ -221,3 +221,39 @@ coincidence. `axi_n1_wrap_4` and bare `axi_n1` at N=4 both measure 955 LUT /
 942 FF / 8.5 BRAM / 604.6 MHz. Register each generated wrapper in
 `tests/run_synth_check.ps1`: one that no target names has never been read by a
 tool, however green the tier is.
+
+## Block design traps
+
+Two of these cost a real amount of time on the multi-mesh block design, and
+neither produces an error at the point of the mistake.
+
+**Tcl's `format %X` is 32-bit.** Every address above 4 GB comes back truncated:
+`0x400000000` as `0x0`, `0x400800000` as `0x800000`, `id << 32` as `0`. On a
+34-bit map that silently piles all four memory windows and every control
+register onto the bottom of the address space. It is not a Vivado clamp — the
+one offset that survived was the GPIO's, and the only thing distinguishing it
+was that it was passed as a literal rather than through `format`.
+
+```tcl
+    format 0x%llX $addr        ;# not %X
+```
+
+Worth knowing beyond this script: it fails silently, produces a design that
+**validates and builds**, and surfaces much later as overlapping segments.
+
+**`design_1.bd` declares the DDR refclk at 100 MHz and the board is 400.**
+`CONFIG.FREQ_HZ {100000000}` on `c1_sys`/`c2_sys`/`c3_sys`; the board's DDR
+refclks are 400 MHz and `singlemesh.bd` — the design actually on the card —
+says `400160000`. Copying design_1's value produces four
+`CRITICAL WARNING [ddr4:2.2-1]`. design_1 was never implemented, which is why its
+value was never caught.
+
+> **Follow `singlemesh` wherever the two references disagree.** design_1 is the
+> convention for *structure* — how multiple DDR channels are instantiated and
+> wired — and `singlemesh` is the authority on any *value*, because it is the one
+> that has been through implementation. Reading a parameter off a design that was
+> never built is reading an untested claim.
+
+The measured board map those two references describe — which SLR each channel
+lands on, its refclk pin and its bank — is in
+[`../general_cores/slr.md`](../general_cores/slr.md) §2.2.

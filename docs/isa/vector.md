@@ -307,15 +307,30 @@ drain — the sink would read the words as consecutive. The L1 side of the walk 
 unchanged: `L1 start word` and upward, one word per flit, capped at 256 by
 `F_LEN` as before.
 
-The base carries one more field, because the instruction word has a single bit
-left and the base has eighteen spare:
+The base carries the fields the instruction word has no room for — it has a
+single bit left and the base has eighteen spare:
 
 ```
-  A[ad].base   [33:24] unused   [23:16] {ack_y, ack_x}   [15:0] peer L1 word
+  A[ad].base   [33:26] fin   [25:24] mesh   [23:16] {ack_y, ack_x}   [15:0] peer L1 word
 ```
 
 So a peer drain that the host must observe is
 `desc(ad, ack_y << 20 | ack_x << 16 | peer_word, dim(1, n))`.
+
+**`fin` and `mesh` make the drain remote.** `dst_x`/`dst_y` in the instruction
+word then address **this** mesh's MAG port, so the local routers see an ordinary
+local flit and the NoC never learns another mesh exists; `fin` is `{fin_y,
+fin_x}` in the destination mesh and rides the flit's `txn` field, `mesh` rides
+`NOC_RSVD` as `{1'b1, mesh}`, and **both are on every flit of the burst** because
+MAG's encapsulator is stateless. `fin` nonzero is the only thing that makes it
+remote — `(0,0)` is a mesh corner and can hold no endpoint, exactly as for
+`{ack_y, ack_x}` — so every encoding written before the interlink leaves both
+zero and reads as a local drain.
+[`../interlink/paths.md`](../interlink/paths.md) §4 has the far end;
+[`../interlink/boundary.md`](../interlink/boundary.md) §4 has what a driver must
+not do with these bits on single-mesh silicon, where they alias rather than
+fault. The cluster carries the same two values at `CU_INST` `[78:77]`/`[76:69]`
+— shared semantics, different bit positions ([cluster.md](cluster.md) §10.3).
 
 ---
 

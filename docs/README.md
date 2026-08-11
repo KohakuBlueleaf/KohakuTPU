@@ -12,12 +12,17 @@ docs/
 ├── perf.md             where the cycles go, at every shape and cluster count
 ├── optimization.md     every lever, taken or shelved, with the verdict
 ├── dataflow.md         the signal-level before/after for the levers taken
+├── limits.md           what this machine cannot do, and which of those are bugs
 ├── simulation.md       how to run and write benches (all suites)
 │
 ├── isa/                every instruction set, host down to accumulator
+├── driver/             the compiler and runtime -- src/ktpu/
+├── interlink/          four meshes, one machine -- the mesh-of-meshes
 ├── compute/    <->  src/kohakutpu/     what a compute unit does
 ├── noc/        <->  src/kohakunoc/     how units talk to each other
 ├── mas/        <->  src/kohakumas/     how units reach memory
+├── memory-mover/                       DRAM-to-DRAM, and its own ISA
+├── general_cores/                      the scalar side, and crossing SLRs
 └── axi/        <->  src/kohakuaxi/     how the host talks to the machine
 ```
 
@@ -80,6 +85,39 @@ below, which is why there are five rather than one.
 - [Specification](mas/spec.md) — the adapter shape, **built**; address slicing, TLB and bandwidth sizing, **design**
 - [Memory system](mas/cache.md) — **design**: two caches, and why only one has tags
 - [Driver interface](mas/driver.md) — superseded by [isa/](isa/README.md); kept for the measured concurrency numbers
+
+## [The interlink](interlink/README.md) — four meshes, one machine
+
+A mesh spanning three SLRs measured a worst path of **4.6 ns that was 98.3%
+routing with zero logic levels**, so the machine is four independent meshes, one
+per SLR, each with its own DDR4, joined MAG to MAG.
+
+- [README](interlink/README.md) — why four, and why MAG is the boundary
+- [Paths](interlink/paths.md) — the four cross-mesh paths, two built and two not
+- [Boundary](interlink/boundary.md) — **what a driver must not assume**: how to
+  tell one mesh from four, and why every new field reads zero on old silicon
+- [Topology](interlink/topology.md) — ports, the second routing layer, the
+  measured SLR floorplan, and the shipped mesh maps
+- [Protocol](interlink/protocol.md) — packet format, credits, deadlock
+- [Transfers](interlink/transfers.md) — the three kinds and who starts them
+
+## [Driver and compiler](driver/README.md) — `src/ktpu/`
+
+- [The stack](driver/README.md) — the three IR levels and why not MLIR
+- [IR](driver/ir.md), [scheduling](driver/scheduling.md),
+  [DSL](driver/dsl.md), [tinygrad](driver/tinygrad.md)
+- [Hardware API](driver/hardware-api.md) — the transport contract, the four
+  backends, and the guard that is not a cap
+- [Simulators](driver/simulators.md) — what runs a schedule without hardware
+
+## Other subsystems
+
+- [Memory mover](memory-mover/README.md) — DRAM to DRAM without the NoC
+- [General cores and SLRs](general_cores/README.md) — the scalar side, and
+  [crossing SLRs](general_cores/slr.md), which is where the device's measured
+  facts live
+- [What this machine cannot do](limits.md) — the op-set gaps, each marked HW,
+  SW or WORKAROUND
 
 ## AXI — `src/kohakuaxi/`
 

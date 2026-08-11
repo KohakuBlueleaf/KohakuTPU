@@ -784,6 +784,38 @@ cache earns its keep on *reuse with unpredictable addresses*. The vector core
 has neither today. If gather/scatter with computed indices ever lands here (§12
 says it should not), that changes.
 
+### 9.1 The read latency comes from the primitive, not from a constant
+
+`L1_PRIM` and `L1_DEPTH` are parameters, so the walks around L1 derive from them
+rather than assuming the shape they were written for:
+
+```verilog
+   localparam integer L1_LAT = (L1_PRIM == "ultra") ? 2 : 1;
+   localparam integer LAW    = $clog2(L1_DEPTH);
+```
+
+**URAM cannot do `READ_LAT=1` at all** — `xpm_memory` rejects it — so the latency
+is a property of the primitive and not a tuning knob. `S_LDX` and `S_DRX` are
+the states that absorb the extra beat, entered only at `L1_LAT == 2`, and
+`l1_waddr`/`l1_raddr`/`l1_base`/`l1_cur` are `LAW` bits rather than the hardcoded
+9 that pinned the depth at 512. Hardcoding either would fail in the quiet
+direction: a wrong latency reads the beat before the data lands, and a narrow
+address wraps.
+
+**It ships as `"block"`.** At `L1_DEPTH = 512` the whole array is 4 RAMB36 per
+core, so URAM saves four BRAM tiles and costs a cycle on **every** `VLD` and
+`VDRAIN` — and the vector core is schedule-bound rather than capacity-bound
+(softmax is 15 instructions and 3.5 dispatch flits per row at S=64), so a cycle
+on the load path is the wrong thing to spend. That is the opposite verdict to the
+accumulator's, and for the opposite reason: the ACU is already `READ_LAT=2`, so
+URAM is free there ([accumulator.md](accumulator.md) §3.1).
+
+The trade only becomes interesting at a depth BRAM cannot reach, and **a deeper
+vector L1 is blocked somewhere else entirely**: `rd_req_tag` and `rr_tag` are
+9-bit ports, so the fill protocol cannot name an entry past 511 however wide the
+address inside the core is. That is a protocol change, not a memory one, and it
+is what to fix first if depth 4096 is ever wanted.
+
 ---
 
 ## 10. Addressing

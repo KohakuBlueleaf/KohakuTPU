@@ -107,6 +107,63 @@ primitive count and depth is then free up to 512.
 All of this is out-of-context: no placement, estimated route, so every Fmax here
 is an upper bound rather than a promise.
 
+### 3.1 The tile is in URAM on the shipped tops, and `TILES` is 4096
+
+`mx_acu_fp` has taken a `TILE_PRIM` parameter since the tile became an explicit
+memory (§4.3). **`mx_cluster_node` never passed it**, so from the top of the
+design it was unreachable — the module read `"block"` and no generated mesh
+could say otherwise, which is why the trade below had never been measured. It is
+now threaded `gen_mesh.py -> mx_cluster_cu -> mx_cluster_node -> mx_acu_fp`, the
+same path `L1_PRIM` already took.
+
+**URAM costs no pipeline stage here, and that is the whole reason it is free.**
+`READ_LAT=2` is already the operating point — §4.3 attributes ~70 MHz to that
+alone, because `READ_LAT=1` starts the path at the RAM's `CLKARDCLK` rather than
+at a flip-flop — so the align stage already begins from a register, and URAM's
+extra beat is the beat that is already being taken. The vector core's L1 is the
+opposite case and pays for it: `vec_core` runs `READ_LAT=1` and `"ultra"` adds a
+wait state to every `VLD` and `VDRAIN`
+([vector-core.md](vector-core.md) §9).
+
+Measured on the 6+0 mesh, `TILE_PRIM = "ultra"`, `TILES = 4096`:
+
+| | BRAM36 | URAM288 |
+|---|---|---|
+| `TILE_PRIM = "block"`, `TILES = 512` | 254 | 0 |
+| `TILE_PRIM = "ultra"`, `TILES = 4096` | **224** | **30** |
+
+**5 URAM per cluster, and the BRAM fell 1:1** — 30 tiles out, 30 URAMs in. Both
+counts are set by *width*: a sub-tile is 352 bits, against a 72-bit port either
+way, so `ceil(352/72) = 5` primitives whichever primitive it is. What changes is
+the depth that comes with them — 512 for BRAM36, 4096 for URAM288 — so the
+resident output block went **512 to 4096 sub-tiles for nothing**.
+
+What that buys is arithmetic intensity, because `gm*gn <= TILES` is the only
+thing bounding it:
+
+| `TILES` | best power-of-two tile | `2*gm*gn/(gm+gn)` | output block |
+|---|---|---|---|
+| 512 | 16 x 32 | 21.3 | 64 x 128 |
+| **4096** | **64 x 64** | **64.0** | **256 x 256** |
+
+> **[`../perf.md`](../perf.md) §4 rejected exactly this, and the objection was
+> right about the wrong layer.** A 256x256 output block does pad every dimension
+> of every problem up to 256, and that cost is real. But `TILES` is a *ceiling*,
+> not a shape: `choose_tile` ranks candidates by intensity **discounted by
+> padding** ([`../isa/kernel.md`](../isa/kernel.md) §1), so a small problem still
+> picks a small tile out of a deep accumulator, while a shallow one cannot offer
+> a large tile to a problem that wants it. The original argument treated the
+> parameter as if it selected the block. The other half of the objection —
+> "do not spend the URAM on matmul" — is answered by measurement: the shipped
+> meshes used **0 of 320 URAM per SLR**, and 5 per cluster is not what will make
+> URAM binding.
+
+Timing was not re-measured in context. The standalone probe puts 352x4096 in
+URAM at **585 MHz** (`.plan/measurements/memory-primitives.md`) against a cluster
+that closes at 344, and the pipeline argument above says the seam does not move —
+but URAM's clock-to-out is worse than BRAM's and the ACU is what the cluster
+closes on, so treat the in-context figure as unmeasured rather than unchanged.
+
 ---
 
 ## 4. Timing: 84.7 MHz → 349 MHz, and what actually mattered

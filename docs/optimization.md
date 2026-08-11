@@ -137,9 +137,23 @@ that fills the machine 4096×128, one step from 8192-wide. Padding then bills
 This is the trap: it *looks* like an optimization on a 2-cluster square
 benchmark and is a regression on real shapes at real cluster counts.
 
-### D2. Deeper accumulator (URAM) — **REJECT**
+### D2. Deeper accumulator (URAM) — ~~REJECT~~ **TAKEN**, `TILES = 4096`
 Only exists to enable D1. Same objection, plus it spends URAM on granularity
 nobody wants. (This was my recommendation in an earlier draft; it was wrong.)
+
+> **Reversed, on a measurement neither draft had.** `mx_cluster_node` never
+> passed `TILE_PRIM` down, so the trade was unreachable from a generated top and
+> the rejection was argued rather than measured. Threaded through, the 6+0 mesh
+> reads **30 URAM for 6 clusters and BRAM 254 → 224** — a 1:1 exchange, because
+> 352 bits is 5 primitives either way and only the depth behind them changes.
+> `TILES` 512 → 4096 for no net memory, intensity 21.3 → 64.0.
+>
+> The granularity objection survives as a *caution*, not a cost: `TILES` is a
+> ceiling and `choose_tile` discounts by padding, so a small problem still gets
+> a small tile. "It spends URAM on granularity nobody wants" was measuring the
+> wrong thing — the meshes were using 0 of 320 URAM per SLR.
+> [`compute/accumulator.md`](compute/accumulator.md) §3.1,
+> [`perf.md`](perf.md) §4.
 
 ### D3. Larger L1 — **TAKE, but only as part of A10**
 Needed for banking. Not an optimization on its own.
@@ -257,8 +271,8 @@ now. Full table in [`perf.md`](perf.md) §0. Running record:
 | B1 non-draining `acc` chain | TAKE | **superseded** — the tail was a tile-size artefact, and the drain was fixed by fusing it instead |
 | C1 streaming DRAIN | TAKE | **done** — needed burst writes first, then fusing |
 | C2 overlap drain with fill | LATER | **done** — as `OP_ADD_EMIT`, 362.0 → 391.1 |
-| D1 larger tile | REJECT | **partly wrong: TAKEN at 512.** The rejection was right about URAM and wrong about depth already paid for |
-| D2 deeper accumulator (URAM) | REJECT | **still reject**, and `docs/perf.md` §4 was corrected to match |
+| D1 larger tile | REJECT | **wrong: TAKEN, at 512 then 4096.** The rejection was right about depth already paid for and wrong about the ceiling being the shape |
+| D2 deeper accumulator (URAM) | REJECT | **wrong: TAKEN.** `TILE_PRIM` was unreachable from a generated top, so this was argued and never measured; it is 5 URAM in for 5 BRAM out |
 | D3 larger L1 | TAKE with A10 | **done** |
 | E2 round double-buffering | TAKE, cheap | **not needed yet** — idle is 10.8%, one round at this shape |
 | F1 pass ordering | TAKE, required by A4 | **already true**, discovered rather than built |
@@ -270,7 +284,9 @@ now. Full table in [`perf.md`](perf.md) §0. Running record:
 hides per-access overhead rather than removing it, and pays in output
 granularity" is correct — and it does not apply to depth the design is *already
 buying*. The resident tile is 5 BRAM36 at any depth up to 512, so `TILES = 64`
-was leaving 448 sub-tiles unused. That single change was 85.1 → 173.4.
+was leaving 448 sub-tiles unused. That single change was 85.1 → 173.4. The same
+argument then ran a second time one primitive up (D2): 5 URAM288 buys 4096 for
+the 5 BRAM36 that bought 512, so the depth was free twice.
 
 **"Intensity × bytes/cycle" is the right shape of argument and the wrong place
 to stop.** It assumes each operand byte is fetched once, and the *schedule*

@@ -223,23 +223,39 @@ register stage. A design with one big central block fights that; a sliced one
 falls into it naturally:
 
 ```
-   SLR 3   8 clusters   1 MAS slice (2 ports, agent shares them)   DDR ch3
-   SLR 2   8 clusters   1 MAS slice (2 ports, agent shares them)   DDR ch2
-   SLR 1   8 clusters   1 MAS slice (2 ports, agent shares them)   DDR ch1
-   SLR 0   8 clusters   1 MAS slice (2 ports, agent shares them)   DDR ch0
+   SLR 3   8 clusters   1 MAS slice (2 ports, agent shares them)   ddr4_0
+   SLR 2   8 clusters   1 MAS slice (2 ports, agent shares them)   ddr4_1
+   SLR 1   8 clusters   1 MAS slice (2 ports, agent shares them)   ddr4_3  + XDMA
+   SLR 0   8 clusters   1 MAS slice (2 ports, agent shares them)   ddr4_2
 ```
+
+> **Channel number is not SLR number**, and this diagram used to say it was.
+> The board wires c0→SLR3, c1→SLR2, c2→SLR0, c3→SLR1, measured from the XDC
+> pinout and cross-checked against a placed design's clock regions —
+> [`../general_cores/slr.md`](../general_cores/slr.md) §2.2. **XDMA also lands in
+> SLR1**, so the four partitions are not symmetric from the host's side; the one
+> holding PCIe gives up roughly a vector core to do it.
 
 The agent is **not** a separate line in that floorplan any more. It sits inside
 the slice and rides the slice's ports (§2.5), so an SLR's mesh attachments are
 exactly its memory ports.
 
-Per SLR that is roughly 111 kLUT of 432 k (26%), 2,048 DSP of 3,072 (67%), and
-~80–140 URAM of 320 — every dimension comfortable, with the DSPs correctly the
-tightest.
+Per SLR that is roughly 111 kLUT of 432 k (26%), **2,432 DSP of 3,072 (79%)**,
+and ~80–140 URAM of 320 — with the DSPs correctly the tightest, and tighter than
+this said before. A cluster measures **304** DSP, not the 256 of the MAC array
+alone: the accumulator adds 16 for the block scale and 32 for the normalising
+shift ([`../compute/accumulator.md`](../compute/accumulator.md) §4.5).
 
 The only nets that cross SLRs are **mesh links**, which are point-to-point and
 already registered at every router. Nothing about MAS or the orchestrator needs
 to span a die.
+
+> **The mesh does not cross an SLR either, and that was settled by measurement.**
+> An implemented design with one mesh spanning three SLRs had a worst path of
+> 4.6 ns that was **98.3% routing with zero logic levels**. Four independent
+> meshes, one per SLR, joined MAG-to-MAG by an explicit link is what replaced it
+> — so the nets that cross are interlink AXI-Streams, not router links.
+> [`../interlink/README.md`](../interlink/README.md).
 
 > This is the concrete reason to prefer address slicing over a shared cache with
 > a crossbar. The crossbar version is not merely more logic — it is logic that
@@ -284,18 +300,12 @@ outward hop is taken only on arrival.
 > row, accumulator on the inner one — and the columns nearer MAG exited by the
 > manager's row while the farther half exited by the accumulator's, to keep both
 > of a band's ports carrying. That split was measured at **about three points of
-> peak at 8 CU** (`flops` 72.7% against 75.7% when both endpoints shared one
-> row). With one node per cluster the question no longer arises: there is one
+> peak at 8 CU**: `flops` 72.7% against 75.7% when both endpoints shared one row,
+> and it was the *routing* rather than the memory service giving way — `fetch`
+> held at 7.1 → 7.2 cycles/entry and `wslot_full` actually **fell**, 5.5% →
+> 2.1%. With one node per cluster the question no longer arises: there is one
 > row, one port, and no split to pay for. Two clusters share a row's port at
 > NCL=8 on the 2x4, which is the same 2:1 ratio the band shape had.
-
-> **That split is measured, and it is not free.** Sending a band's two column
-> groups out by different rows costs about **three points of peak at 8 CU** —
-> `flops` 72.7% against 75.7% when both of a cluster's endpoints shared one row.
-> It is not the memory service giving way: `fetch` held at 7.1 → 7.2
-> cycles/entry and `wslot_full` *fell* 5.5% → 2.1%. The cost is the routing
-> itself. It is accepted for the physical locality the column layout buys, and
-> **tuning it is deferred until the vector and general cores exist** — see
 > [`../perf.md`](../perf.md) §0.1.
 
 **The ports are MAG ports, not memory ports.** Each carries operand traffic and
@@ -314,6 +324,24 @@ its own `mx_quant` instance, so an upload and a fetch no longer contend — the
 read path used to hold the single quantiser under a mutex. Uploads are bursty
 and rare against a steady state that is neither, so they get a channel rather
 than a share of one.
+
+**MAG therefore exposes `MP1` AXI masters**: `MEM_PORTS + 2` — one per memory
+port, plus the upload and the memory mover — and `MEM_PORTS + 3` at `ILINK=1`,
+where the interlink's landing channel follows at `LK = MEM_PORTS+2`
+([`../interlink/boundary.md`](../interlink/boundary.md) §2). A generated top
+derives the count, but the **order** is `mag.v`'s and a block design wired for
+one width cannot be reused for the other.
+
+> **[dram-port.md](dram-port.md) proposes collapsing all of them to one**, and it
+> is a design on a standalone module, not a description of `mag.v`. Read it for
+> the argument that arbitrate → pack → cross must each happen exactly once and
+> that exposing `N` masters forces that order to be wrong. Two things to hold
+> while reading it: its `N = MEM_PORTS + 3` counts the interlink channel, so a
+> single-mesh MAG is `N = MEM_PORTS + 2`; and it is a different lever from
+> `src/kohakuaxi/axi_n1.v`, which replaces the *external* SmartConnect at 955
+> LUT while leaving MAG's masters as they are
+> ([`../general_cores/slr.md`](../general_cores/slr.md) §2.4). One removes the
+> merge from the fabric; the other removes the need to merge.
 
 **The memory behind them is multi-channel to match.** `src/kohakumas/axi_ram.v`
 takes a `PORTS` parameter — independent AW/W/B and AR/R state per port over one
@@ -795,6 +823,18 @@ this order rather than treating it as a lesser design.
 > standalone, and `READ_LAT=2` hands the align stage a register — but the ACU is
 > what the whole cluster closes on, and URAM's clock-to-out is worse than BRAM's.
 > That measurement decides whether DEPTH 4096 is free or costs a pipeline stage.
+>
+> **Half answered, and the DEPTH 4096 row is now what the generated tops build.**
+> It costs **no** pipeline stage — the ACU is already `READ_LAT=2`, so URAM's
+> extra beat is the beat it was already taking. Resources on the 6+0 mesh:
+> 30 URAM for 6 clusters, BRAM 254 → 224, a 1:1 exchange at 5 primitives per
+> cluster either way ([`../compute/accumulator.md`](../compute/accumulator.md)
+> §3.1). The in-context Fmax has **not** been re-measured, so the clock-to-out
+> half of the question is still open.
+>
+> Note the row above says **5 URAM288, not 6**: at `ACC_MW = 14` a sub-tile is
+> 352 bits, not the 384 an earlier draft of [`../perf.md`](../perf.md) §4
+> assumed.
 
 ---
 

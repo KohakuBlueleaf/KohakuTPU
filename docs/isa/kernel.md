@@ -17,17 +17,34 @@ hardware's limits force software to do.
 The machine holds one tile of the problem at a time:
 
 ```
-   gm * gn     <= TILES     output sub-tiles resident in the accumulator
-   2 * gm * nk <= GA        A's L1 entries -- A is DOUBLE-BUFFERED, so a chunk
-                            may use only half of L1 A
-   gn * nk     <= GB        B's L1 entries
+   gm * gn     <= TILES         output sub-tiles resident in the accumulator
+   gm * nk     <= bank_a        A's L1 entries, in ONE bank
+   gn * nk     <= bank_b        B's likewise
+   bank_x      =  min(l1_x // banks, L1_OFF_SPAN)      L1_OFF_SPAN = 256
 ```
 
 with `TILES = 512`, `GA = 128` and `GB = 256` in `mag_driver_tb`
-([cluster.md](cluster.md) §4.7). A and B have separate capacities, and the
-factor of two on A is what keeps the array working through a fill: the sweep for
-chunk *i* is still reading while chunk *i+1* lands. Anything larger than one
-tile is a loop over it, and `kernel.py` is that loop.
+([cluster.md](cluster.md) §4.7). A and B have separate capacities, and dividing
+by `banks` is what keeps the array working through a fill: the sweep for chunk
+*i* is still reading while chunk *i+1* lands. Anything larger than one tile is a
+loop over it, and `kernel.py` is that loop.
+
+> **Both terms divide, and for a session only one of them did.** The rule used
+> to read `nk = min(l1_a // (banks*gm), l1_b // gn, k_blocks)` — B sized against
+> the *whole* of L1. At `l1_b = 512` and `gn = 32` that plans a 288-entry chunk,
+> whose last offset is 287 against an 8-bit field, and the sub-tiles past the
+> wrap read another K block's B. On silicon `64x288x256` came back with a worst
+> element of **8.23e+02** and `64x320x320` with **3.49e+03**, 5,265 of 20,480
+> elements past 10%, while `64x256x256` beside it was exactly right.
+> [cluster.md](cluster.md) §4.6 has the full table and why it is the *product*
+> `gn*nk`, not capacity, that predicts every case.
+>
+> `L1_OFF_SPAN` is the separate ceiling an 8-bit field imposes whatever L1 grows
+> to, so it is a named constant rather than folded into `l1_b`. `ktpu.hw.kernel`
+> and `ktpu.passes.tile` had the identical defect and are fixed identically;
+> `test_a_chunk_never_outgrows_one_l1_bank` is parametrised over l1 =
+> 256/512/1024 so the constant cannot be lost again. Every previously-passing
+> shape keeps its exact tile — nothing regressed to buy this.
 
 `choose_tile` ranks by **arithmetic intensity, discounted by padding**:
 

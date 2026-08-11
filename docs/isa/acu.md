@@ -22,21 +22,27 @@ Three bits, presented alongside a tile address and a `cmd_valid` strobe.
 | 0 | `NOP` | yes | nothing |
 | 1 | `LOAD` | yes | tile[addr] = chain |
 | 2 | `ADD` | yes | tile[addr] += chain |
-| 3 | `ADD_PEER` | **no** | tile[addr] += peer_in |
-| 4 | `SEND` | **no** | peer_out = tile[addr] |
+| 3 | `ADD_PEER` | **yes** | tile[addr] += peer_in |
+| 4 | `SEND` | **yes** | peer_out = tile[addr] |
 | 5 | `EMIT` | yes | emit_out = fp16(tile[addr]) |
 | 6 | `FWD` | **no** | peer_out = chain |
 | 7 | `ADD_EMIT` | yes | tile[addr] += chain, **and** emit_out = fp16(result) |
 
-> **`ADD_PEER`, `SEND` and `FWD` are not implemented.** The decode, the operand
-> mux and the output paths for all three are fully written inside `mx_acu_fp`,
-> but `mx_cluster_node` instantiates it with `peer_in` tied to zero and
-> `peer_out` / `peer_valid` left unconnected — so `SEND` and `FWD` drive nothing
-> and `ADD_PEER` would add zero. No command source ever issues 3, 4 or 6: the
-> manager emits only `LOAD` and `ADD`, and the drain sequencer emits only
-> `EMIT`. Peer transfer is what a matmul spanning clusters would need; the
-> current kernel gives every cluster its own output columns so nothing is
-> shared. Treat these three as dead code that compiles.
+> **`ADD_PEER` and `SEND` became reachable on 2026-08-10; `FWD` did not.**
+> `mx_cluster_node` used to instantiate `mx_acu_fp` with `peer_in` tied to zero
+> and `peer_out`/`peer_valid` open, so all three were dead code that compiled —
+> `SEND` and `FWD` drove nothing and `ADD_PEER` added zero. It now drives
+> `peer_in` from an inbound `CU_DATA` stream (`buf = 2`) and issues `SEND`
+> instead of `EMIT` when a drain's sink is a peer, which is what makes a matmul
+> able to span clusters at full accumulator precision rather than through an
+> FP16 round trip via memory. [cluster.md](cluster.md) §9.4 and §10.1.
+>
+> **`FWD` still has no command source**, and `mx_cluster_cu` still leaves
+> `mx_cluster_node`'s own `peer_out` port open: a send leaves through the drain
+> queue as two 256-bit granules, not on a direct ACU-to-ACU wire. So the *direct*
+> chain `FWD` exists for is unbuilt, and a K-split across clusters through it is
+> the thing the matmul-only mesh maps explicitly do not attempt
+> ([`../interlink/topology.md`](../interlink/topology.md) §6.2).
 
 ### 1.1 `ADD_EMIT`, and why the port needed it
 

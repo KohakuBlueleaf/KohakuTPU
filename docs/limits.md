@@ -205,16 +205,20 @@ the maximum is unique and wrong (it sums the indices) when it is not.
 
 ### 5.3 Reductions wider than one pass
 
-**SW.** `VLMAX` is 128, and `lower()` now refuses a reduction over more than
-that:
+**CLOSED.** `VLMAX` is 128 and a GroupNorm row is 640, which used to be a
+`ScheduleError`. `passes/reduce.py` splits the reduction instead: reshape the
+row to `(5, 128)`, reduce the inner axis, reduce the five partials. The reshape
+is a view, the second stage is a 128th of the first, and the partial lives in a
+value rather than in the TREE. `sumsq` folds its chunk totals with a plain
+`sum`, since it has already squared.
 
-> `sumsq reduces 256 elements and VLMAX is 128; a row wider than one pass needs
-> the TREE to carry a partial across passes, which is not emitted yet`
+`chunk_width` takes the largest DIVISOR that fits, so 640 splits 5 × 128 and
+320 splits 4 × 80 — an uneven tail would need a mask the tree has not got, and a
+span that is prime above 128 still does not compile.
 
-The hardware has 16 rotating accumulators for exactly this
-([`compute/vector-core.md`](compute/vector-core.md) §7.3). It is unemitted code,
-not missing silicon — but until it lands, `rmsnorm` over a 256-wide row does not
-compile, and that is an ordinary model shape.
+The 16 rotating accumulators ([`compute/vector-core.md`](compute/vector-core.md)
+§7.3) would make this one pass instead of two; they are still unemitted, and it
+is now a performance question rather than a compile failure.
 
 ### 5.4 Multi-axis reduction
 
@@ -229,24 +233,43 @@ reduction band from a single contracted extent. Reduce one axis at a time.
 
 **Partly present, partly WORKAROUND.** A transpose of the last two axes on a
 matmul's B operand is free — it is absorbed by the packer, which is how
-`q @ k.T` works. Anything else, `through_views()` refuses:
+`q @ k.T` works.
 
-> `%12 permutes more than the last two axes; that needs a stride list level 3
-> does not carry`
+A permute that only moves an axis a later slice collapses is also free now:
+`through_views()` replays the whole chain as a stride list and asks whether the
+answer is an offset, a run and one stride. `reshape(L, H, dh).permute(1, 0, 2)[h]`
+is, so the torch head split lowers. What is left over needs three levels —
+`(H, L, dh)` with every head live at once is `H` runs of `dh`, `L` times — and
+that is refused:
+
+> `%3 walks [(4, 3), (6, 12), (3, 1)] of %0: three levels, and vec_agu carries
+> an offset, a run and one stride`
 
 *Workaround:* `P @ A` with `P` a permutation matrix — `n^3` work to move `n^2`
 data, which is only sane for small `n`.
 
-*The right fix is SW, not HW*: `vector-core.md` §10 says a permute is a
-permutation of the stride list and the AGU already takes four `(stride, bound)`
-pairs. Level 3 carries an offset and a single stride today; carrying the full
-list is a compiler change.
+*The rest is SW, not HW*: the AGU takes four `(stride, bound)` pairs and
+`mx_tdesc` six dimensions; level 3 carries one run and one stride. Carrying the
+whole list is a compiler change. Where the operand is HOST-PACKED the compiler
+already walks the full list, which is how a stride-2 conv tap is gathered.
 
 ### 6.2 `concat` and `pad`
 
-**SW.** Both are `OpKind`s at level 1, neither is reachable from the DSL, and
-both are refused below it. `pad` is a bound and an offset on a zeroed region;
-`concat` is two writes into one region. Neither needs hardware.
+**SW.** Both are `OpKind`s at level 1 and both are refused below it. `pad` is a
+bound and an offset on a zeroed region; `concat` is two writes into one region.
+Neither needs hardware.
+
+`pad` has one case that works: a zero border around a GRAPH INPUT that a matmul
+reads through a window is folded into the host's gather, so a padded `conv2d`
+compiles and its taps read zeros outside the image. A pad of anything a band
+computed does not, because the border exists only in the host's copy:
+
+> `the A operand %37 is a window of a PADDED %33, which a band computes; the
+> border exists only in the host's copy, so the value has to come back and go
+> out padded`
+
+That is `mx_tdesc`'s `valid` bit, which the RTL has and level 3's FILL does not
+carry.
 
 This is the most-felt gap on the page, because it is what forces a kernel to
 return several values instead of one. Causal attention carries softmax state per
@@ -260,8 +283,23 @@ a **column** concat that feeds a matmul is not needed at all -- see s6.4.
 
 ### 6.3 Non-contiguous slices
 
-**SW.** Outer-axis slices and single columns lower today; a general strided
-window does not. Same AGU argument as §6.1.
+**Mostly CLOSED.** An inner-axis band lowers: `p[:, :h]` of a `2h`-wide
+projection is `h` contiguous elements every `2h`, one run and one stride, which
+is what a GEGLU chunk and a conv filter tap both are. Two limits remain, and
+both are enforced rather than silently wrong:
+
+- A window over a value a CLUSTER drained must land on tile boundaries — a
+  drained tile is sub-tile order, so half a tile is not a run of addresses:
+  > `band b1 reads a 64-wide window of %2 at offset 64, but %2 is drained in
+  > 64x128 tiles; a window that splits a tile is not a run of addresses`
+- Three levels are refused on an engine and gathered on the host (§6.1).
+
+A window on a MATMUL operand becomes a region of its own, listed in
+`Program.windows`, and the host cuts it out at pack time. That is not a
+compromise: the operand was going to be packed anyway, so the gather is free at
+run time. `scratch/sdxl-fwd/conv_card.py` runs the nine descriptors a traced
+`conv2d` produces on the FPGA and scores p50 2.5e-3 against a direct
+convolution in fp64.
 
 ### 6.4 Two layout rules attention had to obey
 
@@ -273,11 +311,24 @@ then `x[h]` or `x[b][h]`, an outer-axis index, which is a plain offset. That is
 also what torch produces after the usual `view(B, L, H, D).transpose(1, 2)`, so
 nothing unusual is being asked for.
 
-What does NOT lower is the **un-transposed `(L, H*D)`** a QKV projection emits:
-a head of it is `x[:, h*D:(h+1)*D]`, the inner multi-column slice §6.3 refuses.
-So the transpose has to happen before the kernel — it is the previous layer's
-job, and doing it on-device is the memory-movement gap this page already tracks
-(§6.1, and the MMU question in §9).
+The **un-transposed `(L, H*D)`** a QKV projection emits also lowers now: a head
+of it is `x[:, h*D:(h+1)*D]`, `D` contiguous elements every `H*D`, which §6.3
+resolves. Better still, `nn.project_heads` slices the WEIGHT instead --
+`x @ w[:, h*dh:(h+1)*dh]` -- so the window is on an operand the host packs and
+each head's result comes back contiguous, needing no relayout at all.
+
+What still does not work is feeding attention from Q/K/V a BAND computed. A
+GEMM's B operand has to be in L1-entry order and only the host packer produces
+that; the A side has a relayout band and B has none, and at `bflip=0` B would
+also need a transpose no engine here does:
+
+> `the B operand %47 comes from band b3, and only a HOST-PACKED operand is in
+> L1-entry order. Bring it back and pass it in, or give the value a relayout
+> band`
+
+So a transformer block compiles as two kernels with the projection's result
+going out and back, which is what the card path does today. A B-side relayout
+band is the missing compiler piece.
 
 A rank 3 or 4 operand is packed **slab by slab**: `x[h]` is an offset of whole
 `(L, D)` slabs, so packing the flattened tensor would interleave heads inside
@@ -361,6 +412,267 @@ relative to the band instance. Fix the row first, then the k-block mapping.
 Task #62 carries the instruction dump and the order to do it in. The causal
 class is undiagnosed and plausibly shares the same defect.
 
+### 6.7 A vector kernel's L1 footprint has a bad band
+
+**MEASURED, UNEXPLAINED, GUARDED.** A vector kernel whose buffers occupy 352 to
+480 of `vec_core`'s 512 L1 words returns **wrong data in its output buffer** and
+reports success. 320 words and below is clean, and so is exactly 512.
+
+Reproduced on two unrelated kernels, which is what rules out a bug in either:
+
+| kernel | footprints measured clean | footprints measured wrong |
+|---|---|---|
+| `group_norm_kernel` | 256, 288, 320, **512** | 352, 384, 416, 448, 480 |
+| `MapKernel("affine")` | 256, 288, 320, **512** | 352, 384, 416, 448, 480 |
+
+The corruption is 16 L1 words wide in GroupNorm and a longer run in `MapKernel`,
+and its position moves with the footprint, so it is not a fixed address. A first
+model — "a VFILL landing at L1 word F also writes 16 spurious words at F+240" —
+explained every GroupNorm case and was then **falsified** by `MapKernel`, so the
+mechanism is still open. `scratch/sdxl-fwd/gn_sweep.py` and `l1_spur.py`
+reproduce it in about a minute each.
+
+`veckernels.require_l1` refuses the band, so the failure is now an exception at
+build time rather than a wrong number. What it costs: at SDXL's C=320 and 32
+groups a GroupNorm group is `10*hw` elements, so **the spatial extent is capped
+at hw <= 128** — 8x16 works, 12x16 does not.
+
+### 6.8 FIXED 2026-08-11 — the driver never emitted the L1 bank bits
+
+**Root cause and fix, both in the driver. No bitstream involved.**
+
+`eoff`/`aoff`/`boff` are EIGHT bits, so L1 entry 256 wraps to 0. The second
+256-entry bank is reachable only through the bank bit — the ninth bit — and
+`ktpu.hw.matmul._flit` emitted none of the three:
+
+```
+[114] abank   GEMM: which 256-entry half of L1 A this sweep reads
+[113] bbank   GEMM: ... and of L1 B
+[112] fbank   FILL: which half this fill writes
+```
+
+`mx_cluster_cu.v` implements all of it — `i_abank`/`i_bbank`/`i_fbank` at
+lines 245-247, registered at 714, and `pl_ent = {fbank_r, rtag}` at 627. The
+hardware was complete; the driver addressed half of L1 and wrote the other
+half's chunk on top of it.
+
+`kernel.plan`'s `a_bank`/`b_bank` return an ABSOLUTE entry index — `(i %
+banks_a) * entries_per_chunk_a` — which is 256 for the second chunk whenever a
+chunk is 256 entries. Truncated to eight bits that is 0, so **chunk 1's fill
+landed on chunk 0 while the sweep was still reading it**, and both GEMMs read
+`B@0`. `kernel.split` now divides that index into `(bank, offset)` and both are
+emitted; it raises past bank 1, which is all the ISA has.
+
+**The rule this predicted, confirmed on every row: broken iff a chunk is 256
+entries AND there is more than one chunk.** `gn=16` was necessary but never
+causal — it is what lets `nk` reach 16 so `gn*nk` reaches 256; `gn=32` forces
+`nk=8` and a 128-entry chunk, where both live chunks fit in bank 0 at different
+offsets, which is how this survived so long.
+
+Card measurements, same six shapes before and after:
+
+| shape | before, p50 / over 10% | after, p50 / over 10% |
+|---|---|---|
+| 64x576x64 | 1.652e-01 / 2778 of 4096 | **2.182e-05 / 0** |
+| 64x640x64 | 1.699e-01 / 2847 of 4096 | **2.531e-05 / 0** |
+| 64x1024x64 | 1.650e-01 / 2814 of 4096 | **2.489e-05 / 0** |
+| 64x1280x64 | 3.016e-05 / 443 of 4096, max 0.73 | **2.483e-05 / 0** |
+| 77x2048x64 | 6.36e-05 / 1197 of 4928, max 1.08 | **2.433e-05 / 0** |
+| 128x640x64 | 1.43e-01 / 5191 of 8192 | **2.361e-05 / 0** |
+
+Regression check, two shapes that always passed: 64x1024x96 2.770e-05 and
+64x1536x128 2.473e-05, both 0 over 10%.
+
+**Why no simulator caught it:** `bench.py` hardcodes `L1_A_ENTRIES=128,
+L1_B_ENTRIES=256`, so a bank is 64 entries there and a chunk can never reach
+256. Every sim run was a different machine from the card, and a sim PASS on this
+shape means nothing.
+
+**It also recovers half of L1.** `HANDOFF-anchor-largek` filed "the driver emits
+no bank bits, so half of L1 is unreachable" as lost performance. It was a
+correctness bug, and both are now closed.
+
+**End to end on the card**, the BasicTransformerBlock run both ways:
+
+| projections | before | after |
+|---|---|---|
+| per head, N=64 (the broken shape) | 1.21e-02 | **1.07e-03** |
+| full width, N=640 (avoiding it) | 1.07e-03 | **1.07e-03** |
+
+The two now agree digit for digit, at the format's own cost of 1.06e-03 — so the
+workaround is no longer needed and full-width projection is a pure traffic win
+(122 matmuls to 68) rather than a correctness requirement.
+
+#### The compiler path had it worse: a capacity bug in a truncation bug's clothes
+
+`ktpu.codegen` carried the same defect and one more underneath it. `encode.FIELDS`
+had no `abank`/`bbank`/`fbank` at all, so that path structurally could not emit
+them; and `cu.py` laid B out as `boff = ch * b_ent`, one chunk after another with
+no wrap-around, while A alternated with `(ch % 2) * a_ent`.
+
+Adding a guard that refuses an entry index past bank 1 failed **25 tests** on
+`L1 entry 512 is in bank 2`. So `ch * b_ent` did not merely truncate at 256 — it
+addressed past even TWO banks, meaning the compiler path was relying on the 8-bit
+field wrapping for shapes whose B does not fit L1 at all. **A capacity bug
+wearing a truncation bug's clothes**, silent, with the tests passing over it.
+
+Fixed by mirroring the legacy planner's rule: B is resident only when
+`chunks * b_ent` actually fits two banks, and otherwise alternates banks per
+chunk and is refilled. The cost is B residency on shapes that never really had
+it — more B traffic, correct answers.
+
+Nothing was wrong on hardware, because `fromdsl.flits` refuses anything but
+`fill, fill, gemm, drain` and `codegen.encode` has no vector opcodes, so that
+path cannot stage these shapes on the card today. It was a landmine for whoever
+turned it on.
+
+Everything below is the original investigation, kept because the method is the
+reusable part: card scored against `mxfp7.model_matmul` rather than fp64, so the
+format's cost and the machine's error stay separate.
+
+### 6.8.1 How it presented: a 64-wide output with a large K is silently wrong
+
+**MEASURED 2026-08-11 on ship_3x2, card against the machine's OWN MXFP7 model.**
+A GEMM with `N = 64` and a padded `K` above 512 returns wrong data in some
+elements and reports success. `N >= 96` is clean at every `K` measured, including
+2048, so this is selected by N, not by K alone.
+
+| shape | padded | card vs mxfp7 model p50 | max | elements over 10% |
+|---|---|---|---|---|
+| 64x128x64 | 64x128x64 | 2.36e-05 | 2.69e-04 | 0 of 4096 |
+| 64x256x64 | 64x256x64 | 2.25e-05 | 3.24e-04 | 0 of 4096 |
+| 64x384x64 | 64x384x64 | 2.47e-05 | 2.98e-04 | 0 of 4096 |
+| 64x512x64 | 64x512x64 | 2.48e-05 | 2.68e-04 | 0 of 4096 |
+| **64x640x64** | 64x**1024**x64 | **1.61e-01** | 9.51e-01 | **2776 of 4096** |
+| **64x1024x64** | 64x1024x64 | **1.72e-01** | 1.05e+00 | **2874 of 4096** |
+| **128x640x64** | 128x768x64 | **1.43e-01** | 8.51e-01 | **5191 of 8192** |
+| **77x2048x64** | 128x2048x64 | 6.36e-05 | **1.08e+00** | **1197 of 4928** |
+| 64x640x96 | 64x768x128 | 2.71e-05 | 4.09e-04 | 0 of 6144 |
+| 64x640x128 | 64x768x128 | 2.65e-05 | 4.06e-04 | 0 of 8192 |
+| 64x640x640 | 64x768x640 | 2.04e-05 | 3.66e-04 | 0 of 40960 |
+| 77x2048x640 | 128x2048x640 | 2.36e-05 | 4.46e-04 | 0 of 49280 |
+
+`77x2048x64` is the one to remember: **p50 6.36e-05 and a max of 1.08.** A median
+that looks perfect while a quarter of the elements are wrong is the same
+signature as the `nk >= 9` bug in HANDOFF-anchor-largek, and a spot check of the
+median would have passed it.
+
+Reproduced with `run_fpga.py --m 64 --k 640 --n 64` (its own generated operands,
+verdict FAIL, detach 215.9) and independently through `chain.gemm` with real
+checkpoint weights, so it is neither the harness nor the operand content.
+
+### ROOT CAUSE: the host fills both B chunks into the same L1 entries
+
+**This is a HOST-SIDE PROGRAM-CONSTRUCTION BUG, not RTL and not timing. It needs
+no bitstream.** The control program the host issues for `64x640x64` says it
+outright — `disasm.listing` over `prog.setup` + `prog.cmds`:
+
+```
+FILL B  255 entries from 0x800000 -> L1 0      <- B chunk 0
+FILL B    1 entries from 0x80ff00 -> L1 255
+FILL B  255 entries from 0x810000 -> L1 0      <- B chunk 1 OVERWRITES chunk 0
+FILL B    1 entries from 0x81ff00 -> L1 255
+FILL A  255 entries from 0x0      -> L1 0
+FILL A    1 entries from 0xff00   -> L1 255
+GEMM 16x16 over 16 K blocks, A@0 B@0  load
+FILL A  255 entries from 0x10000  -> L1 0
+FILL A    1 entries from 0x1ff00  -> L1 255
+GEMM 16x16 over 16 K blocks, A@0 B@0  accumulate  emit -> 0x1000000
+DRAIN 256 sub-tiles
+```
+
+**Both B chunks are filled before either GEMM runs, into the same L1 range.** The
+second destroys the first, and both GEMMs then read `B@0`, so every K-chunk is
+multiplied by the LAST chunk of B. The A fills ARE correctly interleaved — chunk,
+GEMM, chunk, GEMM — so this is specific to the B side.
+
+`64x640x96`, which passes, interleaves B correctly and moves A's offset:
+
+```
+FILL A 128 -> L1 0  ; FILL B -> L1 0 ; GEMM A@0   B@0 load
+FILL A 128 -> L1 128; FILL B -> L1 0 ; GEMM A@128 B@0 accumulate
+FILL A 128 -> L1 0  ; FILL B -> L1 0 ; GEMM A@0   B@0 accumulate emit
+```
+
+**Confirmed predictively on the card.** If the model is right the output must be
+`sum_i A_i @ B_last`, and it is, at MXFP7-model accuracy — against every
+partial-accumulation alternative, which are all four orders of magnitude worse:
+
+| candidate for the card's wrong output | p50 | over 10% |
+|---|---|---|
+| the CORRECT `sum_i A_i @ B_i` | 1.477e-01 | 2667 of 4096 |
+| partial sum, chunk 0 alone | 2.212e-01 | 3155 of 4096 |
+| partial sum, chunk 1 alone | 1.670e-01 | 2784 of 4096 |
+| **`sum_i A_i @ B_last`** | **2.646e-05** | 158 of 4096 |
+| `sum_i A_i @ B_first` | 1.876e-01 | 2960 of 4096 |
+
+So it is NOT a partial K accumulation. 158 elements (3.9%) still exceed 10%
+against the prediction and are **unexplained** — the median is an exact hit, the
+tail is not, and no mechanism is claimed for it.
+
+Two further measurements pin it down:
+
+* **Deterministic.** Three runs of `64x640x64` gave a bit-identical output,
+  `sha256 62ccc139...`. Not marginal timing.
+* **The card runs it on ONE cluster** (`cu=1`, `rnd=1`), so this is not
+  multi-cluster distribution either.
+
+Why `gn=16` and why two chunks: at `gn=16 nk=16` a B chunk is exactly 256
+entries — one whole L1 bank — so two chunks need two banks, and
+HANDOFF-anchor-largek already records that **the driver emits no bank bits at
+all, so every chunk lives in bank 0**. One chunk has nothing to overwrite, and
+`gn=32` interleaves its fills so an overwrite is harmless.
+
+The `nk >= 9` fix capped the B chunk to one L1 bank; it did not make the second
+chunk land anywhere else.
+
+**The discriminator is `gn=16` with MORE THAN ONE K-CHUNK.** Measured directly by
+holding `N=64` (so `gn` stays 16) and walking `K` across the boundary, with the
+tile and the chunk count printed per row and the answer scored against the MXFP7
+model. Two earlier readings of this were wrong — it is not a tile-selection
+boundary, and the threshold is not 4 chunks:
+
+| shape | padded K | tile | chunks | clusters | | |
+|---|---|---|---|---|---|---|
+| 64x384x64 | 384 | gm=16 gn=16 nk=12 | **1** | 1 | 2.36e-05 | PASS |
+| 64x512x64 | 512 | gm=16 gn=16 nk=16 | **1** | 1 | 2.60e-05 | PASS |
+| 64x576x64 | 1024 | gm=16 gn=16 nk=16 | **2** | 1 | 1.65e-01 | **2778 of 4096 wrong** |
+| 64x640x64 | 1024 | gm=16 gn=16 nk=16 | **2** | 1 | 1.70e-01 | **2847 of 4096 wrong** |
+| 64x1024x64 | 1024 | gm=16 gn=16 nk=16 | **2** | 1 | 1.65e-01 | **2814 of 4096 wrong** |
+| 64x1280x64 | 1536 | gm=16 gn=16 nk=16 | **3** | 1 | 3.02e-05 | **443 of 4096 wrong**, max 0.73 |
+| 64x1024x96 | 1024 | gm=16 gn=32 nk=8 | 4 | 1 | 2.35e-05 | PASS |
+| 64x1024x128 | 1024 | gm=16 gn=32 nk=8 | 4 | 1 | 2.35e-05 | PASS |
+| 64x1024x320 | 1024 | gm=16 gn=32 nk=8 | 4 | 3 | 2.47e-05 | PASS |
+| 64x1536x128 | 1536 | gm=16 gn=32 nk=8 | 6 | 1 | 2.55e-05 | PASS |
+
+Three facts fall out, and the third is the one to design a fix against:
+
+* **One chunk is clean; two is catastrophic.** The failure switches on at the
+  first multi-chunk case, so it is the cross-chunk accumulate, not depth.
+* **`gn=16` is necessary, not merely correlated.** `gn=32` is clean at 4 AND 6
+  chunks. So this is not multi-chunk accumulation in general.
+* **Three chunks is LESS wrong than two** — 443 elements against 2814, with a
+  median that looks perfect. Non-monotonic in the chunk count, which no simple
+  "loses the low bits" story explains.
+
+**The card runs `N=64` on ONE cluster**, so single-cluster execution is not a
+difference between the card and xsim.
+
+`bench.tile_for` — the path `chain.Shape` and therefore the card actually use —
+picks `nk=16` here, not the `nk=4` that calling `choose_tile` directly reports.
+Reproduce against `gm=16 gn=16 nk=16` at K=1024, two chunks.
+
+**What it cost, and why it hit SDXL squarely.** The attention head dim is exactly
+64, so slicing the WEIGHT per head -- which §6.4 recommends, because it returns
+each head contiguous -- landed precisely on the broken shape for every Q/K/V
+projection at C=640 and C=1280.
+
+**The workaround is no longer needed.** Projecting full width (`N = C`) and
+cutting the heads out on the host was the fix before the bank bits were emitted;
+per-head N=64 now scores the same 1.07e-03 end to end. Keep full-width projection
+anyway, but for its own reason: it takes the block's projections from 30 GEMMs to
+6, and the head cut is free because the host already unpacks that drain.
+
 ### 6.5 In-place update at a computed offset (KV cache)
 
 **PRESENT, via the scalar path.** Appending to a KV cache at step `t` writes at
@@ -416,6 +728,23 @@ Ordered by capability gained per unit of work, not by how interesting it is.
    output, and a constant read against a drained tile was stored row-major
    (§6.4). Both read as wrong numbers, not as errors.
 
+   **The area arithmetic says the same thing.** ONE vector core is ~33,000 LUT.
+   A new instruction costing ~3,000 LUT lands in all six for ~18,000 — **half a
+   core's worth of area for a capability every core gains.** Adding cores only
+   wins when the budget genuinely holds two more (24+6 → 24+8); below that,
+   instructions beat cores on area every time. And the schedule, not the
+   silicon, is what is short: softmax is 15 instructions and 3.5 dispatch flits
+   per row, measured at S=64 (227 flits for 64 rows), while `VRED …EXPSUM`,
+   `VFMA` and `VLOOP` are all in the RTL and the lowering emits none of them —
+   15 → 11 instructions and 64 dispatches → 1, with no hardware change.
+
+   **Two of these belong in the cluster rather than the vector core at all.**
+   `mx_acu_fp`'s `OP_ADD` is `tile[addr] += chain` with no matmul, so a residual
+   add and the time-embedding broadcast add are ACU commands. Both run on vec
+   today, and vector is the critical resource in attention — measured 3x
+   matmul's cost on a 20-head, Lq 1024, Lkv 256 block. Spend the vector core
+   only where the ACU cannot reach.
+
 2. **`floor` and friends** (§4.2). One instruction on the existing normaliser,
    and it unblocks on-device index arithmetic, `mod`, and eventually a PRNG.
 
@@ -447,10 +776,10 @@ The refusals are enforced, so they can be exercised. `scripts/py/ir_server.py`
 compiles an arbitrary kernel and shows exactly where it stops:
 
 ```python
-def kernel(x, g):
-    return D.rmsnorm(x, g)
+def kernel(x):
+    return x.reshape(128, 4, 64).permute(1, 0, 2) * 2.0
 
-INPUTS = {"x": (64, 256), "g": (256,)}     # 256 > VLMAX -> §5.3's message
+INPUTS = {"x": (128, 256)}                 # three levels -> §6.1's message
 ```
 
 Anything in this document marked **SW** should produce a clear `ScheduleError`

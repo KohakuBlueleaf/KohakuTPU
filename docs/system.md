@@ -112,6 +112,24 @@ The top-left corner of the result, hardware against FP64:
 
 ### 2.3 The mesh and the two-port cluster — now covered in §6
 
+> **STALE FROM HERE TO THE END OF §2.3: a cluster is ONE node, not two.** The
+> manager and the accumulator were merged onto a single router local on
+> 2026-08-10 — [`isa/cluster.md`](isa/cluster.md) §1 has the measurement and the
+> reason. The second endpoint bought no bandwidth (the link is full duplex and
+> the two ends loaded opposite directions of it) and cost a router local: eight
+> clusters at two locals each force a 4x4 mesh where one local each fits 2x4,
+> which is eight `NoCRouter` instances at 3,281 LUT apiece. Head-of-line blocking
+> on the now-shared outbound queue measured `cu_send` 0.0% and `out_bp` 0.0%.
+>
+> So every `mgr`/`acu` pair below is one `mat` node today, and the band shape —
+> managers on a band's outer row, accumulators on the inner one — no longer
+> exists. What survives unchanged is everything about *ports*: MAG on the west
+> edge, one port per mesh row, off-grid coordinates reached by clamped routing,
+> and clusters split by output column. [`mas/spec.md`](mas/spec.md) §2.4 has the
+> current layout, and [`interlink/topology.md`](interlink/topology.md) §6.2 the
+> maps that are built from it — including ones where a cluster hangs off a router
+> **edge** port rather than a local.
+
 There is no NoC-level mesh bench any more. `mx_mesh2x2_tb` drove
 `mx_cluster_cu` against the `noc_fake_mem` stub and was **deleted**, not
 disabled — see the note at the end of this section. Everything it covered is

@@ -87,7 +87,9 @@ The header is the standard one from [memory.md](memory.md) §1. `CU_INST` is typ
 | `[94:87]` | `dflags` | DRAIN | copied into the descriptor's `flags` byte |
 | `[86:83]` | `dack_y` | DRAIN | where the receiver's completion goes — §9.2 |
 | `[82:79]` | `dack_x` | DRAIN | `0` = back to this cluster |
-| `[78:0]` | — | | unused |
+| `[78:77]` | `dmesh` | DRAIN | destination **mesh**, read only when `dfin` is nonzero — §10.3 |
+| `[76:69]` | `dfin` | DRAIN | `{fin_y, fin_x}` in that mesh; **nonzero is what makes the drain remote** |
+| `[68:0]` | — | | unused |
 
 > **The bank bits and the drain destination were specified for the same bits**
 > and do not share them. `[114:112]` belong to `GEMM`/`FILL` and the
@@ -337,6 +339,42 @@ stays 8 bits, so a sweep that overruns its region wraps inside its own half
 rather than walking into the other bank's operands. That is the same silent
 wrap §4.7 already describes, kept silent in the same way.
 
+> **So a CHUNK may not exceed 256 entries, whatever L1 holds.** This is a second
+> ceiling on top of capacity and it is the one the driver got wrong for a
+> session. `choose_tile` sized the B chunk against the whole of L1 —
+> `nk = min(l1_a // (banks*gm), l1_b // gn, k_blocks)`, the A term divided by
+> `banks` and the B term not — so at `l1_b = 512` and `gn = 32` every `nk >= 9`
+> planned a chunk whose last B offset is past 255. `boff + h*nk + kb` is 8 bits
+> in `mx_cluster_mgr.v`, so entry 256 wraps onto entry 0 and every sub-tile past
+> the wrap multiplies **another K block's B**. The fill listing says it outright:
+> the split continuation of a 288-entry chunk reads `FILL B 33 entries -> L1 255`.
+>
+> On the card, `--board ship_3x2`, worst element against the software MXFP7
+> model:
+>
+> | shape | `gn` | `nk` | last B offset | before | after |
+> |---|---|---|---|---|---|
+> | 64x256x256 | 32 | 8 | 255 — exactly fits | 4.15e-02 | 4.15e-02 |
+> | 64x288x256 | 32 | 9 | **287** | **8.23e+02** | 2.62e-02 |
+> | 64x320x320 | 32 | 10 | **319** | **3.49e+03** | 1.71e-01 |
+>
+> 11 of 11 measured shapes follow that rule exactly, and **it is not a capacity
+> threshold**: 576 B entries passes at (K=256, N=288) and fails at (K=288,
+> N=256) — same entry count, opposite verdict. Neither `nk` alone explains it;
+> `nk = 10` passes at N=64 and N=192 and fails at N=320. Only the *product*
+> `gn*nk` against 256 predicts every case.
+>
+> `L1_OFF_SPAN = 256` in `ktpu.hw.kernel` and `ktpu.passes.tile` is that ceiling
+> named. It does not move when L1 grows: a 1024-entry L1 gives 512-entry banks
+> that an 8-bit offset still cannot reach. [kernel.md](kernel.md) §1.
+
+**The driver emits no bank bits at all today.** `abank`/`bbank`/`fbank` are
+decoded by the RTL and `kernel.plan` writes zero into every one of them, so every
+chunk lives in bank 0 and **half of a 512-entry L1 is unreachable**. That is what
+makes the 256-entry ceiling bind rather than the 512-entry capacity: wiring the
+bank bits through the planner would restore `gn = 32` at `nk >= 9` and give back
+the wider tile these shapes gave up.
+
 A `FILL` and a `GEMM` name their banks separately, which is the double
 buffering above with twice the L1 behind it: fill one half while the other is
 swept, then flip a bit instead of recomputing offsets. A `CU_DATA` stream needs
@@ -365,9 +403,11 @@ hole can hit it, which is why every bench down to `gm*gn = 3` passed and a
 2-sub-tile one did not. Counting issued-minus-retired is exact and owes nothing
 to FIFO timing.
 
-**Capacity.** `gm*nk <= GA`, `gn*nk <= GB`, `gm*gn <= TILES`. All three wrap
-silently when exceeded: L1 addresses truncate to `$clog2(GA)` bits and the tile
-address to `$clog2(TILES)`. `mag_driver_tb` runs `TILES = 512`, `GA = 128`,
+**Capacity.** `gm*nk <= GA`, `gn*nk <= GB`, `gm*gn <= TILES` — **and separately
+`gm*nk <= 256` and `gn*nk <= 256`**, because the running L1 offset is 8 bits
+whatever `GA` and `GB` are (§4.6). All of them wrap silently when exceeded: L1
+addresses truncate to `$clog2(GA)` bits and the tile address to
+`$clog2(TILES)`. `mag_driver_tb` runs `TILES = 512`, `GA = 128`,
 `GB = 256` — the 16x32 tile with `nk = 4`, two banks of A and every K chunk of
 one column band of B (§4.6). `TILES` is 512 because that is what the tile
 memory **already costs**: a sub-tile is 352 bits against a 72-bit BRAM36 port,
@@ -380,11 +420,14 @@ running 64 left 448 sub-tiles of paid-for depth unused.
 > wraps to 0, which memory coerces to 1. `kernel.choose_tile` caps `nk` for
 > both.
 
-The generated tops now build `GA = GB = 512` — two banks of 256 (§4.6). The
-figure the *compiler* plans against is `bench.py`'s `L1_A_ENTRIES` /
-`L1_B_ENTRIES`, still 128/256: capacity is an upper bound the planner need not
-fill, and at 928 bits wide the cost is 13 RAMB36 per port at **any** depth up
-to 512, so the headroom is free either way.
+The generated tops now build `GA = GB = 512` — two banks of 256 (§4.6) — and
+**`TILES = 4096` in URAM** rather than 512 in BRAM, because 352 bits is 5
+primitives either way and only the primitive changes
+([`../compute/accumulator.md`](../compute/accumulator.md) §3.1). The figure the
+*compiler* plans against is `bench.py`'s `L1_A_ENTRIES` / `L1_B_ENTRIES`, still
+128/256: capacity is an upper bound the planner need not fill, and at 928 bits
+wide the cost is 13 RAMB36 per port at **any** depth up to 512, so the headroom
+is free either way.
 
 ## 5. `DRAIN addr, n, anchor, fuse, last`
 
@@ -757,6 +800,8 @@ before these bits existed — all-zero there — still means "to memory":
 | `[94:87]` | `dflags` | copied into the descriptor's `flags` byte |
 | `[86:83]` | `dack_y` | where the receiver sends its completion — §9.2 |
 | `[82:79]` | `dack_x` | `0` meaning back to this cluster |
+| `[78:77]` | `dmesh` | destination mesh, `dfin` nonzero only — §10.3 |
+| `[76:69]` | `dfin` | `{fin_y, fin_x}` in that mesh; nonzero makes it remote |
 
 `addr` keeps its meaning either way: the destination base as a **byte address**.
 A node-addressed drain sends `addr[20:5]` as the descriptor's granule `off`,
@@ -819,3 +864,27 @@ Nothing needs that configuration; peer exists to span clusters. But
 `mx_cluster_data_tb` does run the round trip, by capturing the burst and
 replaying it once the drain has finished — store and forward, which tests both
 halves against each other without the cycle.
+
+### 10.3 `dmesh` and `dfin` — a drain into another mesh
+
+`dst_x`/`dst_y` then address **this mesh's MAG port**, not the far cluster. The
+local routers see an ordinary local-destination flit, so there are no new turn
+cases and no re-proof — the NoC never learns another mesh exists. The real
+destination rides in the flit's `txn` field, which `CU_DATA` does not otherwise
+use, and the mesh id in `NOC_RSVD` as `{1'b1, dmesh}`, **on the descriptor and
+on every payload flit of the burst**: MAG's encapsulator is stateless, and the
+routers interleave bursts from different senders at its port, so a per-burst
+state keyed on source would be the only alternative.
+
+`dfin` nonzero is the *only* thing that makes a drain remote. `(0,0)` is a mesh
+corner and can hold no endpoint — the same reason `dack_x`/`dack_y` use it for
+"back to the sender" — so zero is unambiguously local, and every `DRAIN`
+encoded before the interlink existed leaves both fields zero. That is what lets
+one compiler serve both machines.
+
+The far end is [`../interlink/paths.md`](../interlink/paths.md) §4; the guard a
+driver owes on single-mesh silicon, where these bits reach a MAG with no switch,
+is [`../interlink/boundary.md`](../interlink/boundary.md) §4. The vector core
+carries the same two values in its drain descriptor's **base**, `[25:24]` and
+`[33:26]`. Only the semantics are shared; the bit positions are not, because the
+two instruction words are different shapes.

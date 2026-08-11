@@ -7,10 +7,24 @@ uploads them, kicks the machine and reads the answer back.
 docs/driver/
 ├── README.md        this file: the stack, the layers, and the decisions
 ├── ir.md            the three IR levels, in detail
-├── hardware-api.md  the low-level surface: registers, transport, memory
-├── abi.md           the kernel ABI: how a kernel is staged, entered, and retires
-└── dsl.md           the authoring language and how it traces
+├── scheduling.md    how level 2 decides, and what it may not decide
+├── hardware-api.md  the low-level surface: the transport contract, the four
+│                    backends, and where topology lives
+├── simulators.md    what runs a schedule without hardware, and what each proves
+├── dsl.md           the authoring language and how it traces
+├── caveats.md       everything that has bitten us, and why none of it is
+│                    visible from the code that contains it
+├── compiler-gaps.md what ktpu.codegen cannot emit, and what to build first
+└── tinygrad.md      the automatic frontend, and when it lands
 ```
+
+**Read [`caveats.md`](caveats.md) before trusting a number off the card**, and
+[`compiler-gaps.md`](compiler-gaps.md) before assuming the compiler path can run
+something. Both are current as of 2026-08-11.
+
+The kernel ABI — how a kernel is staged, entered and retires — never became a
+page of its own; it is [`../isa/kernel.md`](../isa/kernel.md) and
+[`../isa/agent.md`](../isa/agent.md), written against the RTL.
 
 ---
 

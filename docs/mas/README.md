@@ -29,6 +29,7 @@ Mirrors `src/kohakumas/` — `mag.v`, `mag_mem_port.v`, `mx_quant.v`, `axi_ram.v
 |---|---|
 | [spec.md](spec.md) | The adapter shape, **built**; address slicing, TLB, ordering and bandwidth sizing, **design** |
 | [quantiser-timing.md](quantiser-timing.md) | **Built and synthesised.** How `mx_quant` went 32.5 → 400.6 MHz, what each stage costs, and the 330.0 MHz `mag_mem_port` around it |
+| [dram-port.md](dram-port.md) | **Standalone, NOT wired into `mag.v`.** `mag_dram_port` — N internal requesters behind **one** AXI master, so arbitrate/pack/cross each happen once |
 | [cache.md](cache.md) | **Design.** The memory system — why there are two kinds of cache and why only one has tags |
 | [driver.md](driver.md) | **Superseded** by [`../isa/`](../isa/README.md); kept for the measured concurrency numbers |
 
