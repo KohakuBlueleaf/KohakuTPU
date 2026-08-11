@@ -46,11 +46,22 @@ module mag #(
     // Named per port rather than packed: a packed field is one shift away from
     // pointing a whole port at the wrong node, and it would elaborate cleanly.
     parameter integer MEM_PORTS  = 1,
+    // The interlink, docs/interlink/. ZERO GENERATES NONE OF IT: no switch, no
+    // links, no extra AXI master, and the remote address decode is a constant
+    // false. The shipping bitstream is ILINK=0 and has to stay identical, so
+    // every addition below is inside a generate or gated by this parameter.
+    parameter integer ILINK      = 0,
+    parameter integer MESH_ID    = 0,
+    parameter integer LINK_W     = 288,
+    parameter integer TUSER_W    = 96,
+    parameter integer IL_RX_BEATS  = 64,
+    parameter integer IL_MAX_BEATS = 32,
     // AXI master channels: one per memory port, plus one for the host upload.
     // Declared here rather than as a body localparam because the port list
     // needs it -- do not override it.
-    // one per memory port, plus the host upload, plus the memory mover
-    parameter integer MP1        = MEM_PORTS + 2,
+    // one per memory port, the host upload, the memory mover, and -- only with
+    // the interlink -- the channel inbound remote writes land through.
+    parameter integer MP1        = MEM_PORTS + 2 + ((ILINK != 0) ? 1 : 0),
     parameter integer MEM_X      = 0,       // port 0
     parameter integer MEM_Y      = 1,
     parameter integer MEM_X1     = 0,       // port 1
@@ -176,13 +187,57 @@ module mag #(
     // in a block design, which left the shipped mover commandable by nothing.
     output wire                  mv_busy,
     output wire [3:0]            mv_fault,
-    output wire [31:0]           mv_done
+    output wire [31:0]           mv_done,
+
+    // ---- the interlink, docs/interlink/topology.md s1 ---------------------
+    // Present on the module at any ILINK because Verilog has no conditional
+    // port. At ILINK=0 every output here is a constant and every input is
+    // unread, so synthesis removes them and the generated top does not expose
+    // them at all -- which is the form the block design sees.
+    output wire [LINK_W-1:0]     link0_out_tdata,
+    output wire [TUSER_W-1:0]    link0_out_tuser,
+    output wire                  link0_out_tlast,
+    output wire                  link0_out_tvalid,
+    input  wire                  link0_out_tready,
+    input  wire [LINK_W-1:0]     link0_in_tdata,
+    input  wire [TUSER_W-1:0]    link0_in_tuser,
+    input  wire                  link0_in_tlast,
+    input  wire                  link0_in_tvalid,
+    output wire                  link0_in_tready,
+
+    output wire [LINK_W-1:0]     link1_out_tdata,
+    output wire [TUSER_W-1:0]    link1_out_tuser,
+    output wire                  link1_out_tlast,
+    output wire                  link1_out_tvalid,
+    input  wire                  link1_out_tready,
+    input  wire [LINK_W-1:0]     link1_in_tdata,
+    input  wire [TUSER_W-1:0]    link1_in_tuser,
+    input  wire                  link1_in_tlast,
+    input  wire                  link1_in_tvalid,
+    output wire                  link1_in_tready
 );
     // The upload rides one channel past the engines, the mover one past that.
     localparam integer UP = MEM_PORTS;           // its channel index
     localparam integer MV = MEM_PORTS + 1;
+    // Only reachable when ILINK is set; at 0 it aliases MV and nothing drives
+    // it, which is why every use of LK is inside the same generate.
+    localparam integer LK = (ILINK != 0) ? MEM_PORTS + 2 : MEM_PORTS + 1;
 
     localparam integer LSB = $clog2(DATA_W/8);
+
+    // ---- interlink nets, declared here because the demux above reads them --
+    // At ILINK=0 the generate at the bottom ties every one of these to a
+    // constant, so each use folds and nothing survives synthesis.
+    wire [1:0]            il_mesh;
+    wire [FLIT_WIDTH-1:0] enc_in_data;
+    wire                  enc_in_valid, enc_in_busy;
+    wire [FLIT_WIDTH-1:0] inj_out_data;
+    wire                  inj_out_valid, inj_out_busy;
+    wire [63:0]           il_stat_q;
+    wire [3:0]            il_stat_sel;
+    // The mover's write channel, between the mover and whatever owns it.
+    wire                  mvx_awready, mvx_wready, mvx_bvalid;
+    wire [1:0]            mvx_bresp;
 
     // =====================================================================
     // The agent. The existing, tested orchestrator: staging RAM, dispatcher,
@@ -215,6 +270,7 @@ module mag #(
         .s_axi_rlast(sc_rlast), .s_axi_rvalid(sc_rvalid), .s_axi_rready(sc_rready),
         .aux_cfg_en(mv_cfg_en), .aux_cfg_addr(mv_cfg_addr),
         .aux_cfg_data(mv_cfg_data), .aux_stat(mv_stat),
+        .aux_stat_sel(il_stat_sel), .aux_stat_q(il_stat_q),
         .noc_out_data(agt_out_data), .noc_out_valid(agt_out_valid),
         .noc_out_busy(agt_out_busy),
         .noc_in_data(agt_in_data), .noc_in_valid(agt_in_valid),
@@ -257,6 +313,12 @@ module mag #(
                      T_MEM_WR_DATA = 4'h4;
     localparam integer TY_LSB = FLIT_WIDTH - 4*POS_WIDTH - 4;
     localparam integer DY_LSB = FLIT_WIDTH - 2*POS_WIDTH;
+    // NOC_RSVD. Bit 2 marks a flit for another mesh and is zero on every flit a
+    // single-mesh build ever produces, which is what makes one compiler serve
+    // both -- docs/interlink/boundary.md s5.
+    localparam integer RS_LSB = FLIT_WIDTH - 4*POS_WIDTH - 16;
+    // NOC_MEM_ADDR's top two bits: the mesh a memory request is aimed at.
+    localparam integer RQ_MESH_LSB = 254;
 
     wire [FLIT_WIDTH-1:0] agt_out_data;
     wire                  agt_out_valid;
@@ -270,15 +332,30 @@ module mag #(
     wire                  eng_in_busy   [0:MEM_PORTS-1];
     wire [POS_WIDTH-1:0]  port_y        [0:MEM_PORTS-1];
 
-    // ---- inbound: is this port's offered flit the engine's or the agent's?
-    wire [MEM_PORTS-1:0] in_is_mem, in_to_agt;
+    // ---- inbound: the engine's, the interlink's, or the agent's? ----------
+    // Three consumers now, told apart by the same flit: a memory type is the
+    // engine's, a remote marker is the interlink's, and what is left is the
+    // agent's. At ILINK=0 the middle case is a constant false and this is the
+    // two-way demux it was before.
+    wire [MEM_PORTS-1:0] in_is_mem, in_is_req, in_is_rem, in_to_agt, in_to_enc;
+    wire [MEM_PORTS-1:0] rq_rem;
     genvar gd;
     generate
     for (gd = 0; gd < MEM_PORTS; gd = gd + 1) begin : g_demux
         wire [3:0] ty = mem_in_data[gd*FLIT_WIDTH + TY_LSB +: 4];
-        assign in_is_mem[gd] = (ty == T_MEM_RD_REQ) || (ty == T_MEM_WR_REQ)
-                            || (ty == T_MEM_WR_DATA);
-        assign in_to_agt[gd] = mem_in_valid[gd] && !in_is_mem[gd];
+        wire       rm = mem_in_data[gd*FLIT_WIDTH + RS_LSB + 2];
+        wire [1:0] rq = mem_in_data[gd*FLIT_WIDTH + RQ_MESH_LSB +: 2];
+        assign in_is_req[gd] = (ty == T_MEM_RD_REQ) || (ty == T_MEM_WR_REQ);
+        assign in_is_mem[gd] = in_is_req[gd] || (ty == T_MEM_WR_DATA);
+        assign in_is_rem[gd] = (ILINK != 0) && !in_is_mem[gd] && rm;
+        assign in_to_agt[gd] = mem_in_valid[gd] && !in_is_mem[gd] && !in_is_rem[gd];
+        assign in_to_enc[gd] = mem_in_valid[gd] && in_is_rem[gd];
+        // A memory request naming another mesh. It is not forwarded -- v1 has
+        // no remote read, and a remote write from a CU would need the same
+        // path -- so the access aliases to local DRAM with the top two address
+        // bits ignored, exactly as it does today, and IL_FAULT records that a
+        // program did something the compiler should have caught.
+        assign rq_rem[gd] = mem_in_valid[gd] && in_is_req[gd] && (rq != il_mesh);
     end
     endgenerate
 
@@ -334,14 +411,45 @@ module mag #(
             agt_rr <= (agt_sel + 1) % MEM_PORTS;
     end
 
-    // ---- outbound: which port does the agent's flit leave from? ----------
+    // ---- inbound arbitration into the interlink's encapsulator -----------
+    // The same round-robin as the agent's, and separate from it: a flit bound
+    // for another mesh and a control flit are different consumers, and sharing
+    // the arbiter would make a stalled link hold up dispatch.
+    reg  [$clog2(MEM_PORTS > 1 ? MEM_PORTS : 2)-1:0] enc_rr;
+    integer ei;
+    reg  [31:0] enc_sel;
+    reg         enc_any;
+    always @(*) begin
+        enc_sel = 32'd0;
+        enc_any = 1'b0;
+        for (ei = MEM_PORTS - 1; ei >= 0; ei = ei - 1) begin
+            if (in_to_enc[(ei + enc_rr) % MEM_PORTS]) begin
+                enc_sel = (ei + enc_rr) % MEM_PORTS;
+                enc_any = 1'b1;
+            end
+        end
+    end
+    assign enc_in_data  = mem_in_data[enc_sel*FLIT_WIDTH +: FLIT_WIDTH];
+    assign enc_in_valid = enc_any;
+
+    always @(posedge clk) begin
+        if (!resetn) enc_rr <= 0;
+        else if (enc_any && !enc_in_busy)
+            enc_rr <= (enc_sel + 1) % MEM_PORTS;
+    end
+
+    // ---- outbound: which port does a flit leave from? --------------------
     wire [POS_WIDTH-1:0] agt_dy = agt_out_data[DY_LSB +: POS_WIDTH];
-    integer ao;
-    reg [31:0] agt_port;
+    wire [POS_WIDTH-1:0] inj_dy = inj_out_data[DY_LSB +: POS_WIDTH];
+    integer ao, io;
+    reg [31:0] agt_port, inj_port;
     always @(*) begin
         agt_port = 32'd0;                       // port 0 unless a row matches
         for (ao = 0; ao < MEM_PORTS; ao = ao + 1)
             if (port_y[ao] == agt_dy) agt_port = ao;
+        inj_port = 32'd0;
+        for (io = 0; io < MEM_PORTS; io = io + 1)
+            if (port_y[io] == inj_dy) inj_port = io;
     end
 
     // =====================================================================
@@ -394,9 +502,11 @@ module mag #(
             .mem_in_busy(eng_in_busy[gp]),
             .mem_out_data(eng_out_data[gp]),
             .mem_out_valid(eng_out_valid[gp]),
-            // Held off while the agent has the link, which the engine already
-            // handles: it holds valid and data until a cycle with busy low.
-            .mem_out_busy(mem_out_busy[gp] || (agt_out_valid && agt_port == gp)),
+            // Held off while the agent or the interlink has the link, which the
+            // engine already handles: it holds valid and data until a cycle
+            // with busy low.
+            .mem_out_busy(mem_out_busy[gp] || (agt_out_valid && agt_port == gp)
+                                           || (inj_out_valid && inj_port == gp)),
             .mem_rd_count(p_rd[gp]), .mem_wr_count(p_wr[gp])
         );
 
@@ -409,17 +519,26 @@ module mag #(
         // yet" holds, and that is bounded by the port count.
         assign mem_in_busy[gp] = in_is_mem[gp]
                                ? eng_in_busy[gp]
-                               : !((agt_sel == gp) && (agt_grant || agt_drop));
+                               : in_is_rem[gp]
+                                 ? !((enc_sel == gp) && !enc_in_busy)
+                                 : !((agt_sel == gp) && (agt_grant || agt_drop));
 
-        // Outbound: the agent wins, the engine holds.
+        // Outbound: the agent wins, then the interlink, then the engine. The
+        // agent's traffic is a handful of control flits; the interlink's is a
+        // burst that a far mesh is already waiting on, and it is bounded by the
+        // credit the far end granted. Neither can hold the engine indefinitely.
         assign mem_out_data[gp*FLIT_WIDTH +: FLIT_WIDTH] =
-            (agt_out_valid && agt_port == gp) ? agt_out_data : eng_out_data[gp];
+            (agt_out_valid && agt_port == gp) ? agt_out_data :
+            (inj_out_valid && inj_port == gp) ? inj_out_data : eng_out_data[gp];
         assign mem_out_valid[gp] =
-            (agt_out_valid && agt_port == gp) ? 1'b1 : eng_out_valid[gp];
+            (agt_out_valid && agt_port == gp) ? 1'b1 :
+            (inj_out_valid && inj_port == gp) ? 1'b1 : eng_out_valid[gp];
     end
     endgenerate
 
     assign agt_out_busy = mem_out_busy[agt_port];
+    assign inj_out_busy = mem_out_busy[inj_port] ||
+                          (agt_out_valid && (agt_port == inj_port));
 
     // Counters summed across ports, so the AXI-level totals stay one number
     // whatever the port count is.
@@ -485,17 +604,23 @@ module mag #(
     wire [DATA_W/8-1:0] mv_wstrb;
     wire              mv_bready, mv_rready;
 
+    // The aux config window is split at offset 0x80: below is the mover's, at
+    // or above is the interlink's. At ILINK=0 the gate is a constant and the
+    // mover sees every write, as it always has -- and the offsets above 0x50
+    // it ignored then are the ones the interlink claims now.
+    wire mv_cfg_mine = mv_cfg_en && ((ILINK == 0) || !mv_cfg_addr[7]);
+
     mm_mover #(.DATA_W(DATA_W), .ADDR_W(ADDR_W), .ID_W(ID_W)) u_mover (
         .clk(clk), .resetn(resetn),
-        .cfg_en(mv_cfg_en), .cfg_addr(mv_cfg_addr), .cfg_data(mv_cfg_data),
+        .cfg_en(mv_cfg_mine), .cfg_addr(mv_cfg_addr), .cfg_data(mv_cfg_data),
         .stat_busy(mv_busy), .stat_fault(mv_fault), .stat_done(mv_done),
         .m_awid(mv_awid), .m_awaddr(mv_awaddr), .m_awlen(mv_awlen),
         .m_awsize(mv_awsize), .m_awburst(mv_awburst), .m_awvalid(mv_awvalid),
-        .m_awready(m_awready[MV]),
+        .m_awready(mvx_awready),
         .m_wdata(mv_wdata), .m_wstrb(mv_wstrb), .m_wlast(mv_wlast),
-        .m_wvalid(mv_wvalid), .m_wready(m_wready[MV]),
-        .m_bid(m_bid[MV*ID_W +: ID_W]), .m_bresp(m_bresp[MV*2 +: 2]),
-        .m_bvalid(m_bvalid[MV]), .m_bready(mv_bready),
+        .m_wvalid(mv_wvalid), .m_wready(mvx_wready),
+        .m_bid(m_bid[MV*ID_W +: ID_W]), .m_bresp(mvx_bresp),
+        .m_bvalid(mvx_bvalid), .m_bready(mv_bready),
         .m_arid(mv_arid), .m_araddr(mv_araddr), .m_arlen(mv_arlen),
         .m_arsize(mv_arsize), .m_arburst(mv_arburst), .m_arvalid(mv_arvalid),
         .m_arready(m_arready[MV]),
@@ -505,16 +630,15 @@ module mag #(
     );
 
     assign m_awid[MV*ID_W +: ID_W]            = mv_awid;
-    assign m_awaddr[MV*ADDR_W +: ADDR_W]      = mv_awaddr;
     assign m_awlen[MV*8 +: 8]                 = mv_awlen;
     assign m_awsize[MV*3 +: 3]                = mv_awsize;
     assign m_awburst[MV*2 +: 2]               = mv_awburst;
-    assign m_awvalid[MV]                      = mv_awvalid;
-    assign m_wdata[MV*DATA_W +: DATA_W]       = mv_wdata;
     assign m_wstrb[MV*(DATA_W/8) +: DATA_W/8] = mv_wstrb;
     assign m_wlast[MV]                        = mv_wlast;
-    assign m_wvalid[MV]                       = mv_wvalid;
     assign m_bready[MV]                       = mv_bready;
+    // AWADDR / AWVALID / WDATA / WVALID are driven by the generate at the
+    // bottom: with the interlink they pass through the address split, without
+    // it they are the mover's own.
     assign m_arid[MV*ID_W +: ID_W]            = mv_arid;
     assign m_araddr[MV*ADDR_W +: ADDR_W]      = mv_araddr;
     assign m_arlen[MV*8 +: 8]                 = mv_arlen;
@@ -742,6 +866,141 @@ module mag #(
             endcase
         end
     end
+
+    // =====================================================================
+    // The interlink. docs/interlink/, and boundary.md s2 for what this costs
+    // when it is absent: nothing, because the else arm is all constants.
+    // =====================================================================
+    generate
+    if (ILINK != 0) begin : g_ilink
+        wire [TUSER_W-1:0] ltx_hdr, lrx_hdr;
+        wire [LINK_W-1:0]  ltx_dat, lrx_dat;
+        wire ltx_hvalid, ltx_hready, ltx_dvalid, ltx_dready, ltx_dlast;
+        wire lrx_hvalid, lrx_hready, lrx_dvalid, lrx_dready, lrx_dlast;
+        wire [63:0] sw_tx0, sw_rx0, sw_st0, sw_tx1, sw_rx1, sw_st1;
+        wire [63:0] sw_fwd, sw_lblk;
+        wire [31:0] sw_c0, sw_c1;
+        wire [3:0]  sw_flt;
+
+        mag_ilink #(
+            .FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH), .DATA_W(DATA_W),
+            .ADDR_W(ADDR_W), .LINK_W(LINK_W), .TUSER_W(TUSER_W),
+            .MESH_ID(MESH_ID), .MAX_BEATS(IL_MAX_BEATS),
+            .MEM_X(MEM_X), .MEM_Y(MEM_Y)
+        ) u_il (
+            .clk(clk), .resetn(resetn),
+            .cfg_en(mv_cfg_en), .cfg_addr(mv_cfg_addr), .cfg_data(mv_cfg_data),
+            .stat_sel(il_stat_sel), .stat_q(il_stat_q), .my_mesh(il_mesh),
+
+            .s_awaddr(mv_awaddr), .s_awvalid(mv_awvalid),
+            .s_awready(mvx_awready),
+            .s_wdata(mv_wdata), .s_wstrb(mv_wstrb), .s_wvalid(mv_wvalid),
+            .s_wready(mvx_wready),
+            .s_bvalid(mvx_bvalid), .s_bresp(mvx_bresp), .s_bready(mv_bready),
+
+            .m_awaddr(m_awaddr[MV*ADDR_W +: ADDR_W]), .m_awvalid(m_awvalid[MV]),
+            .m_awready(m_awready[MV]),
+            .m_wdata(m_wdata[MV*DATA_W +: DATA_W]), .m_wstrb(),
+            .m_wlast(), .m_wvalid(m_wvalid[MV]), .m_wready(m_wready[MV]),
+            .m_bvalid(m_bvalid[MV]), .m_bresp(m_bresp[MV*2 +: 2]), .m_bready(),
+
+            .lk_awaddr(m_awaddr[LK*ADDR_W +: ADDR_W]), .lk_awvalid(m_awvalid[LK]),
+            .lk_awready(m_awready[LK]),
+            .lk_wdata(m_wdata[LK*DATA_W +: DATA_W]),
+            .lk_wstrb(m_wstrb[LK*(DATA_W/8) +: DATA_W/8]),
+            .lk_wlast(m_wlast[LK]), .lk_wvalid(m_wvalid[LK]),
+            .lk_wready(m_wready[LK]),
+            .lk_bvalid(m_bvalid[LK]), .lk_bresp(m_bresp[LK*2 +: 2]),
+            .lk_bready(m_bready[LK]),
+
+            .enc_data(enc_in_data), .enc_valid(enc_in_valid),
+            .enc_busy(enc_in_busy),
+            .inj_data(inj_out_data), .inj_valid(inj_out_valid),
+            .inj_busy(inj_out_busy),
+
+            .ltx_hdr(ltx_hdr), .ltx_hvalid(ltx_hvalid), .ltx_hready(ltx_hready),
+            .ltx_dat(ltx_dat), .ltx_dlast(ltx_dlast), .ltx_dvalid(ltx_dvalid),
+            .ltx_dready(ltx_dready),
+            .lrx_hdr(lrx_hdr), .lrx_hvalid(lrx_hvalid), .lrx_hready(lrx_hready),
+            .lrx_dat(lrx_dat), .lrx_dlast(lrx_dlast), .lrx_dvalid(lrx_dvalid),
+            .lrx_dready(lrx_dready),
+
+            .sw_tx0(sw_tx0), .sw_rx0(sw_rx0), .sw_stall0(sw_st0),
+            .sw_tx1(sw_tx1), .sw_rx1(sw_rx1), .sw_stall1(sw_st1),
+            .sw_fwd(sw_fwd), .sw_lblock(sw_lblk),
+            .sw_cred0(sw_c0), .sw_cred1(sw_c1), .sw_fault(sw_flt),
+            .bad_remote_req(|rq_rem)
+        );
+
+        mag_switch #(
+            .LINK_W(LINK_W), .TUSER_W(TUSER_W), .RX_BEATS(IL_RX_BEATS),
+            .MAX_BEATS(IL_MAX_BEATS)
+        ) u_sw (
+            .clk(clk), .resetn(resetn), .my_mesh(il_mesh),
+            .ltx_hdr(ltx_hdr), .ltx_hvalid(ltx_hvalid), .ltx_hready(ltx_hready),
+            .ltx_dat(ltx_dat), .ltx_dlast(ltx_dlast), .ltx_dvalid(ltx_dvalid),
+            .ltx_dready(ltx_dready),
+            .lrx_hdr(lrx_hdr), .lrx_hvalid(lrx_hvalid), .lrx_hready(lrx_hready),
+            .lrx_dat(lrx_dat), .lrx_dlast(lrx_dlast), .lrx_dvalid(lrx_dvalid),
+            .lrx_dready(lrx_dready),
+            .m0_tdata(link0_out_tdata), .m0_tuser(link0_out_tuser),
+            .m0_tlast(link0_out_tlast), .m0_tvalid(link0_out_tvalid),
+            .m0_tready(link0_out_tready),
+            .s0_tdata(link0_in_tdata), .s0_tuser(link0_in_tuser),
+            .s0_tlast(link0_in_tlast), .s0_tvalid(link0_in_tvalid),
+            .s0_tready(link0_in_tready),
+            .m1_tdata(link1_out_tdata), .m1_tuser(link1_out_tuser),
+            .m1_tlast(link1_out_tlast), .m1_tvalid(link1_out_tvalid),
+            .m1_tready(link1_out_tready),
+            .s1_tdata(link1_in_tdata), .s1_tuser(link1_in_tuser),
+            .s1_tlast(link1_in_tlast), .s1_tvalid(link1_in_tvalid),
+            .s1_tready(link1_in_tready),
+            .ctr_tx0(sw_tx0), .ctr_rx0(sw_rx0), .ctr_stall0(sw_st0),
+            .ctr_tx1(sw_tx1), .ctr_rx1(sw_rx1), .ctr_stall1(sw_st1),
+            .ctr_fwd(sw_fwd), .ctr_lblock(sw_lblk),
+            .cred0_state(sw_c0), .cred1_state(sw_c1), .fault(sw_flt)
+        );
+
+        assign m_arid[LK*ID_W +: ID_W]   = {ID_W{1'b0}};
+        assign m_araddr[LK*ADDR_W +: ADDR_W] = {ADDR_W{1'b0}};
+        assign m_arlen[LK*8 +: 8]        = 8'd0;
+        assign m_arsize[LK*3 +: 3]       = LSB[2:0];
+        assign m_arburst[LK*2 +: 2]      = 2'b01;
+        assign m_arvalid[LK]             = 1'b0;
+        assign m_rready[LK]              = 1'b1;
+        assign m_awid[LK*ID_W +: ID_W]   = {ID_W{1'b0}};
+        assign m_awlen[LK*8 +: 8]        = 8'd0;
+        assign m_awsize[LK*3 +: 3]       = LSB[2:0];
+        assign m_awburst[LK*2 +: 2]      = 2'b01;
+    end else begin : g_no_ilink
+        // The mover owns its channel outright, exactly as before.
+        assign m_awaddr[MV*ADDR_W +: ADDR_W] = mv_awaddr;
+        assign m_awvalid[MV]                 = mv_awvalid;
+        assign m_wdata[MV*DATA_W +: DATA_W]  = mv_wdata;
+        assign m_wvalid[MV]                  = mv_wvalid;
+        assign mvx_awready = m_awready[MV];
+        assign mvx_wready  = m_wready[MV];
+        assign mvx_bvalid  = m_bvalid[MV];
+        assign mvx_bresp   = m_bresp[MV*2 +: 2];
+
+        assign il_mesh       = MESH_ID[1:0];
+        assign il_stat_q     = 64'd0;
+        assign enc_in_busy   = 1'b1;
+        assign inj_out_data  = {FLIT_WIDTH{1'b0}};
+        assign inj_out_valid = 1'b0;
+
+        assign link0_out_tdata  = {LINK_W{1'b0}};
+        assign link0_out_tuser  = {TUSER_W{1'b0}};
+        assign link0_out_tlast  = 1'b0;
+        assign link0_out_tvalid = 1'b0;
+        assign link0_in_tready  = 1'b1;
+        assign link1_out_tdata  = {LINK_W{1'b0}};
+        assign link1_out_tuser  = {TUSER_W{1'b0}};
+        assign link1_out_tlast  = 1'b0;
+        assign link1_out_tvalid = 1'b0;
+        assign link1_in_tready  = 1'b1;
+    end
+    endgenerate
 
 `ifndef SYNTHESIS
     // Sharing `u_hquant` with a port's `u_quant` -- 4,267 LUT, 32 DSP,
