@@ -1,0 +1,11 @@
+# 6+0 on TWO routers. Both are fully packed -- local, north, south and one of
+# west/east are endpoints, the remaining side is the inter-router link -- so
+# six clusters cost two routers instead of four. A router is ~20 BRAM, and
+# BRAM is tighter than LUT once four meshes and four MIGs are on the device.
+#
+# Matmul only: N-splits of large GEMMs, weights resident, one ship in and one
+# out. NOT K-splits -- peer_out is unconnected in mx_cluster_cu, so partial
+# sums from another mesh have no accumulation path.
+xxx mat mat xxx
+mag mat mat mag
+xxx mat mat xxx

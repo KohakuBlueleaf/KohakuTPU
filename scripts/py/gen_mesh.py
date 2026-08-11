@@ -128,11 +128,8 @@ class Mesh:
                 elif t == "vec":
                     self.vecs.append((x, y))
                 elif t == "mat":
-                    if not self._interior(x, y):
-                        raise MeshError(
-                            f"mat at ({x},{y}) is on an edge; a cluster "
-                            "needs a router local"
-                        )
+                    # An edge cluster costs a link, not a router, which is how
+                    # 6 clusters fit a 2x2 grid instead of needing 3x2.
                     self.cus.append((x, y))
 
         if len(self.mags) > 4:
@@ -242,9 +239,9 @@ class Emitter:
         )
 
 
-def emit(mesh, name):
+def emit(mesh, name, ilink=False, mesh_id=0, single=False):
     m, e = mesh, Emitter(mesh, name)
-    nm = len(m.mags) + 2
+    nm = 1 if single else len(m.mags) + (3 if ilink else 2)
 
     # ---- routers -------------------------------------------------------
     for y in range(1, m.ny + 1):
@@ -284,12 +281,27 @@ def emit(mesh, name):
         f", .MEM_X{i or ''}({x}), .MEM_Y{i or ''}({y})"
         for i, (x, y) in enumerate(m.mags)
     )
+    il = (
+        ",\n          .ILINK(1), .MESH_ID(MESH_ID), .LINK_W(LKW), .TUSER_W(LKU)"
+        if ilink
+        else ""
+    )
+    # mag_1m wraps `mag` and arbitrates its masters internally, so the only
+    # difference here is the module name, the width and the memory clock.
+    mod = "mag_1m" if single else "mag"
+    extra = ",\n          .MW(MW)" if single else ""
+    clks = (
+        ",\n        .dram_aclk(dram_aclk), .dram_aresetn(dram_aresetn)"
+        if single
+        else ""
+    )
     e.body.append(
-        f"""    mag #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(AW),
+        f"""    {mod} #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(AW),
           .ID_W(IDW), .MEM_PORTS({len(m.mags)}){coords},
-          .GRID_LO(1), .GRID_HI({max(m.nx, m.ny)}), .STAGE_FLITS(128)) u_mag (
-        .clk(clk), .resetn(resetn),
+          .GRID_LO(1), .GRID_HI({max(m.nx, m.ny)}), .STAGE_FLITS(128){il}{extra}) u_mag (
+        .clk(clk), .resetn(resetn){clks},
 {MAG_AXI}
+{mag_master_axi(single)}{chr(10) + link_conn(ilink) if ilink else ""}
         .mem_in_data({mag_in_cat}), .mem_in_valid(mag_i_v), .mem_in_busy(mag_i_b),
         .mem_out_data(mag_o_d), .mem_out_valid(mag_o_v), .mem_out_busy(mag_o_b),
         .mem_rd_count(mag_rd), .mem_wr_count(mag_wr),
@@ -307,20 +319,23 @@ def emit(mesh, name):
         "noc_out_busy",
     )
     for i, (cx, cy) in enumerate(m.cus):
-        # An endpoint on a router's LOCAL port drives `rev`: the router named
-        # the link and took `fwd` for its own local_in.
-        stem = e.link(f"L{cx}_{cy}")
+        # On a router's LOCAL port an endpoint drives `fwd`, because the router
+        # named the link and took `rev`; on an EDGE the side decides.
+        if m._interior(cx, cy):
+            stem, drives = e.link(f"L{cx}_{cy}"), True
+        else:
+            stem, drives = e.edge_link(cx, cy)
         mmx, mmy = m.nearest_mag(cx, cy)
         # TILES/GA/GB PASSED EXPLICITLY. Omitted, mx_cluster_cu's defaults of
         # 256/32/32 elaborate instead of the 512/128/256 the compiler plans for
         # -- and that mismatch is the 15,440-element silicon fault, silently.
         e.body.append(f"""    mx_cluster_cu #(.FLIT_WIDTH(FW), .POS_WIDTH(PW),
                     .CU_X({cx}), .CU_Y({cy}), .TILES(TILES), .GA(GA), .GB(GB),
-                    .L1_PRIM(L1_PRIM),
+                    .L1_PRIM(L1_PRIM), .TILE_PRIM(TILE_PRIM),
                     .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
                     .MEM_X({mmx}), .MEM_Y({mmy}), .MODEL(MODEL)) u_cu{i} (
         .clk(clk), .resetn(resetn),
-        {e.endpoint_conn(stem, True, NAMES_C)},
+        {e.endpoint_conn(stem, drives, NAMES_C)},
         .fills_done(cu_f[{i}]), .gemms_done(cu_g[{i}]), .drains_done(cu_d[{i}])
     );""")
 
@@ -343,7 +358,7 @@ def emit(mesh, name):
             f"""    vec_cu #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .POS_X({x}), .POS_Y({y}),
              .MEM_X({mmx}), .MEM_Y({mmy}), .MODEL(MODEL),
              .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
-             .L1_DEPTH(L1_DEPTH), .L1_PRIM("block")) u_vec{i} (
+             .L1_DEPTH(L1_DEPTH), .L1_PRIM(VEC_PRIM)) u_vec{i} (
         .clk(clk), .resetn(resetn),
         {e.endpoint_conn(stem, drives, NAMES_V)},
         .dbg_cycles(vc_cyc[{i}]), .dbg_fault(vc_flt[{i}])
@@ -356,10 +371,8 @@ def emit(mesh, name):
     # does the busy coming back at it. Which direction that is depends on which
     # side of the router the link sits on, so it is derived, not assumed.
     used = set()
-    for x, y in m.mags + m.vecs:
+    for x, y in m.mags + m.vecs + m.cus:
         used.add(e.link(f"L{x}_{y}") if m._interior(x, y) else e.edge_link(x, y)[0])
-    for x, y in m.cus:
-        used.add(e.link(f"L{x}_{y}"))
 
     for key, stem in sorted(e.links.items(), key=lambda kv: kv[1]):
         if stem in used or _internal(key, m):
@@ -372,7 +385,7 @@ def emit(mesh, name):
             f" assign {stem}_{b}b = 1'b0;"
         )
 
-    return render(m, e, name, nm)
+    return render(m, e, name, nm, ilink, mesh_id, single)
 
 
 def _absent_drives_fwd(key):
@@ -397,13 +410,81 @@ def _internal(key, m):
     return 1 <= b <= m.ny - 1
 
 
-def master_names(nmag):
+def master_names(nmag, ilink=False, single=False):
+    """Interface names for the AXI masters this mesh presents.
+
+    With `single`, MAG's masters never leave it: mag_1m arbitrates and packs
+    them internally, so the mesh exposes ONE wide master and one memory clock.
+    """
+    if single:
+        return ["M_AXI_DRAM"]
+    return _mag_master_names(nmag, ilink)
+
+
+def _mag_master_names(nmag, ilink=False):
     """Interface names for MAG's masters, in the order mag.v packs them.
 
     Ports 0..nmag-1 are the memory engines, then the host upload path, then the
-    memory mover -- mag.v's MV is MEM_PORTS+1.
+    memory mover -- mag.v's MV is MEM_PORTS+1. With `ilink` the interlink's
+    landing channel follows at LK = MEM_PORTS+2, which is what makes MAG's MP1
+    one wider; the count and the order must match mag.v or every master shifts.
     """
-    return [f"M_AXI_MEM{i}" for i in range(nmag)] + ["M_AXI_UPLOAD", "M_AXI_MOVER"]
+    names = [f"M_AXI_MEM{i}" for i in range(nmag)] + ["M_AXI_UPLOAD", "M_AXI_MOVER"]
+    if ilink:
+        names.append("M_AXI_ILINK")
+    return names
+
+
+# One AXI-Stream per direction per link, named so Vivado infers the interface
+# without an .xci: MAG drives M_AXIS_LINKn and receives S_AXIS_LINKn.
+LINK_FIELDS = [
+    ("tdata", "LKW", "o"),
+    ("tuser", "LKU", "o"),
+    ("tlast", "1", "o"),
+    ("tvalid", "1", "o"),
+    ("tready", "1", "i"),
+]
+
+
+def link_names(nlink=2):
+    return [(f"M_AXIS_LINK{i}", f"S_AXIS_LINK{i}") for i in range(nlink)]
+
+
+def link_decls(ilink):
+    """Port declarations for both ends of every link, or nothing at ILINK=0."""
+    if not ilink:
+        return ""
+    out = [""]
+    for mst, slv in link_names():
+        out.append(f"    // ---- {mst} / {slv} ----")
+        for f, w, d in LINK_FIELDS:
+            rng = "" if w == "1" else f"[{w}-1:0] "
+            m_kind = "output wire" if d == "o" else "input  wire"
+            s_kind = "input  wire" if d == "o" else "output wire"
+            out.append(f"    {m_kind} {rng}{mst}_{f},")
+            out.append(f"    {s_kind} {rng}{slv}_{f},")
+    return "\n".join(out)
+
+
+def link_conn(ilink):
+    """The `.linkN_*` connections on the mag instance, or tie-offs at ILINK=0."""
+    if not ilink:
+        return ""
+    out = []
+    for i, (mst, slv) in enumerate(link_names()):
+        out.append(
+            f"        .link{i}_out_tdata({mst}_tdata), "
+            f".link{i}_out_tuser({mst}_tuser),\n"
+            f"        .link{i}_out_tlast({mst}_tlast), "
+            f".link{i}_out_tvalid({mst}_tvalid),\n"
+            f"        .link{i}_out_tready({mst}_tready),\n"
+            f"        .link{i}_in_tdata({slv}_tdata), "
+            f".link{i}_in_tuser({slv}_tuser),\n"
+            f"        .link{i}_in_tlast({slv}_tlast), "
+            f".link{i}_in_tvalid({slv}_tvalid),\n"
+            f"        .link{i}_in_tready({slv}_tready),"
+        )
+    return "\n".join(out)
 
 
 # Each master gets its OWN named interface rather than a slice of one packed
@@ -442,13 +523,20 @@ MASTER_FIELDS = [
 ]
 
 
-def master_decls(names):
-    """Port declarations for every master interface."""
+def master_decls(names, dw="DW"):
+    """Port declarations for every master interface.
+
+    `dw` names the data width: the single-master mesh presents the MEMORY's
+    width, not the internal beat, because mag_1m packs before the boundary.
+    """
     out = []
     for n in names:
         out.append(f"    // ---- {n} ----")
         for f, w, d in MASTER_FIELDS:
             kind = "output wire" if d == "o" else "input  wire"
+            # EXACT match, not a substring rewrite: "IDW" contains "DW" and a
+            # replace() turns the id width into "IMW".
+            w = {"DW": dw, "DW/8": f"{dw}/8"}.get(w, w)
             rng = "" if w == "1" else f"[{w}-1:0] "
             out.append(f"    {kind} {rng}{n}_{f},")
     return "\n".join(out)
@@ -508,8 +596,17 @@ MAG_AXI = """        .sm_awid(S_AXI_MEM_awid), .sm_awaddr(S_AXI_MEM_awaddr),
         .sc_arready(S_AXI_CTRL_arready),
         .sc_rid(S_AXI_CTRL_rid), .sc_rdata(S_AXI_CTRL_rdata),
         .sc_rresp(S_AXI_CTRL_rresp), .sc_rlast(S_AXI_CTRL_rlast),
-        .sc_rvalid(S_AXI_CTRL_rvalid), .sc_rready(S_AXI_CTRL_rready),
-        .m_awid(mm_awid), .m_awaddr(mm_awaddr), .m_awlen(mm_awlen),
+        .sc_rvalid(S_AXI_CTRL_rvalid), .sc_rready(S_AXI_CTRL_rready),"""
+
+
+# With one master the ports connect straight through; with MP1 they are sliced
+# out of the packed bus the fan-out below drives.
+def mag_master_axi(single):
+    if single:
+        return "\n".join(
+            f"        .m_{f}(M_AXI_DRAM_{f})," for f, _w, _d in MASTER_FIELDS
+        )
+    return """        .m_awid(mm_awid), .m_awaddr(mm_awaddr), .m_awlen(mm_awlen),
         .m_awsize(mm_awsize), .m_awburst(mm_awburst),
         .m_awvalid(mm_awvalid), .m_awready(mm_awready),
         .m_wdata(mm_wdata), .m_wstrb(mm_wstrb), .m_wlast(mm_wlast),
@@ -522,14 +619,68 @@ MAG_AXI = """        .sm_awid(S_AXI_MEM_awid), .sm_awaddr(S_AXI_MEM_awaddr),
         .m_rlast(mm_rlast), .m_rvalid(mm_rvalid), .m_rready(mm_rready),"""
 
 
-def render(m, e, name, nm):
+def render(m, e, name, nm, ilink=False, mesh_id=0, single=False):
     picture = "\n".join("//   " + " ".join(r) for r in m.rows)
     ncu, nvec = len(m.cus), len(m.vecs)
-    mnames = master_names(len(m.mags))
-    ASSOC = ":".join(["S_AXI_MEM", "S_AXI_CTRL"] + mnames)
-    MASTER_DECLS = master_decls(mnames).rstrip(",")
-    MASTER_WIRES = master_wires()
-    MASTER_GLUE = master_glue(mnames)
+    mnames = master_names(len(m.mags), ilink, single)
+    lnames = [n for pair in link_names() for n in pair] if ilink else []
+    # M_AXI_DRAM belongs to dram_aclk. Naming it here too makes the interface
+    # claimed by two clocks and Vivado cannot infer CLK_DOMAIN: BD 41-1732.
+    axi_masters = [] if single else mnames
+    ASSOC = ":".join(["S_AXI_MEM", "S_AXI_CTRL"] + axi_masters + lnames)
+    # The comma is stripped from whichever declaration ends up LAST, so the
+    # links have to be appended before the strip, not after.
+    MASTER_DECLS = (
+        master_decls(mnames, "MW" if single else "DW") + link_decls(ilink)
+    ).rstrip(",")
+    MASTER_SUM = "1" if single else ("MEM_PORTS+3" if ilink else "MEM_PORTS+2")
+    LINK_MASTER_NOTE = ", plus the interlink's landing channel" if ilink else ""
+    LINK_PARAMS = (
+        """    // One flit per beat at 288, so a packet's framing is its own length; 96
+    // is mag.v's TUSER_W.
+    parameter integer LKW      = 288,
+    parameter integer LKU      = 96,
+    // Only the RESET value -- IL_MESH is writable, so the four instances of
+    // this module differ by this parameter alone.
+    parameter integer MESH_ID  = %d,
+"""
+        % mesh_id
+        if ilink
+        else ""
+    )
+    LINK_HEADER = (
+        """
+//
+// INTERLINK ON. Two full-duplex links: M_AXIS_LINKn out, S_AXIS_LINKn in.
+// link0 flips the mesh's x, link1 flips its y (mag_switch.v).
+// TREADY MUST NOT CROSS AN SLR. The far end has to be another mesh's
+// S_AXIS_LINK, whose tready is tied high; a real slave there reintroduces the
+// combinational SLR crossing mag_link.v exists to avoid."""
+        if ilink
+        else ""
+    )
+    # With one master there is no packed bus to fan out -- mag_1m's ports go
+    # straight to the boundary.
+    MASTER_WIRES = "" if single else master_wires()
+    MASTER_GLUE = "" if single else master_glue(mnames)
+    SINGLE_PARAMS = (
+        "    // The MEMORY's beat. mag_1m packs DW up to this before the\n"
+        "    // boundary, so the mesh never exposes the internal width.\n"
+        "    parameter integer MW       = 512,\n"
+        if single
+        else ""
+    )
+    SINGLE_CLKS = (
+        "    (* X_INTERFACE_INFO = \"xilinx.com:signal:clock:1.0 dram_aclk CLK\" *)\n"
+        "    (* X_INTERFACE_PARAMETER = \"ASSOCIATED_BUSIF M_AXI_DRAM,"
+        " ASSOCIATED_RESET dram_aresetn\" *)\n"
+        "    input  wire dram_aclk,\n"
+        "    (* X_INTERFACE_INFO = \"xilinx.com:signal:reset:1.0 dram_aresetn RST\" *)\n"
+        "    (* X_INTERFACE_PARAMETER = \"POLARITY ACTIVE_LOW\" *)\n"
+        "    input  wire dram_aresetn,\n"
+        if single
+        else ""
+    )
     return f"""// {name} -- GENERATED by scripts/py/gen_mesh.py. Do not edit by hand.
 //
 {picture}
@@ -538,9 +689,9 @@ def render(m, e, name, nm):
 // GRID_X_HI={m.nx} GRID_Y_HI={m.ny}: the clamp is per axis, so the grid need not
 // be square. Edge endpoints live outside the router grid and are reached by it.
 //
-// MAG presents MEM_PORTS+2 = {nm} AXI masters -- one per memory port, plus the
-// host upload and the memory mover. Merge them with one SmartConnect in the
-// block design; hand-written arbitration here would duplicate it badly.
+// MAG presents {MASTER_SUM} = {nm} AXI masters -- one per memory port, plus the
+// host upload and the memory mover{LINK_MASTER_NOTE}. Merge them with one SmartConnect in the
+// block design; hand-written arbitration here would duplicate it badly.{LINK_HEADER}
 
 `default_nettype none
 
@@ -551,11 +702,21 @@ module {name} #(
     parameter integer AW       = 34,
     parameter integer IDW      = 4,
     parameter integer NM       = {nm},
-    parameter integer MODEL    = 0,
+{SINGLE_PARAMS}{LINK_PARAMS}    parameter integer MODEL    = 0,
     parameter integer L1_DEPTH = 512,
     // src/ktpu/hw/bench.py's TILES / L1_A_ENTRIES / L1_B_ENTRIES. A generated
     // top that omits them elaborates mx_cluster_cu's 256/32/32 instead.
-    parameter integer TILES    = 512,
+    // 4096 in URAM, not 512 in BRAM: width sets the primitive count (5 either
+    // way) so depth is free, and gm*gn<=TILES bounds arithmetic intensity --
+    // 21.3 at 512 against 64.0 at 4096.
+    parameter integer TILES    = 4096,
+    // mx_acu_fp is already READ_LAT=2, so "ultra" needs no pipeline change.
+    parameter         TILE_PRIM = "ultra",
+    // BLOCK, not ultra. vec_core supports either, but at L1_DEPTH=512 URAM
+    // saves 4 BRAM per core and costs a cycle on every VLD and VDRAIN -- and
+    // the vector core is schedule-bound, not capacity-bound. Worth revisiting
+    // only once rd_req_tag/rr_tag widen past 9 bits and depth 4096 is real.
+    parameter         VEC_PRIM  = "block",
     // 512/512, NOT the compiler's 128/256: capacity is an upper bound the
     // planner need not fill, and at 928 bits wide the BRAM cost is set by
     // WIDTH -- 13 RAMB36 per port at any depth to 512 -- so the extra is free.
@@ -583,7 +744,7 @@ module {name} #(
     (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 axi_aresetn RST" *)
     (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
     input  wire axi_aresetn,
-
+{SINGLE_CLKS}
     input  wire [IDW-1:0]   S_AXI_MEM_awid,
     input  wire [AW-1:0]    S_AXI_MEM_awaddr,
     input  wire [7:0]       S_AXI_MEM_awlen,
@@ -690,11 +851,36 @@ def main():
     ap.add_argument("map", help="the token picture")
     ap.add_argument("-o", "--out", help="output .v (default: stdout)")
     ap.add_argument("-m", "--module", default="ktpu_mesh", help="module name")
+    ap.add_argument(
+        "--ilink",
+        action="store_true",
+        help="expose MAG's two MAG<->MAG links and add the interlink AXI master",
+    )
+    ap.add_argument(
+        "--mesh-id",
+        type=int,
+        default=0,
+        help="this mesh's id in the multi-mesh grid, {y,x}; needs --ilink. "
+        "Writable at runtime through IL_MESH, so one bitstream can occupy "
+        "any position -- this is only the reset value",
+    )
+    ap.add_argument(
+        "--single-master",
+        action="store_true",
+        help="use mag_1m: MAG's masters are arbitrated and packed inside it, so "
+        "the mesh exposes ONE wide AXI master and one dram_aclk instead of "
+        "MEM_PORTS+2. Deletes the per-mesh SmartConnect",
+    )
     args = ap.parse_args()
+
+    if args.mesh_id and not args.ilink:
+        sys.exit("gen_mesh: --mesh-id means nothing without --ilink")
 
     try:
         mesh = Mesh(parse_map(Path(args.map).read_text(encoding="utf-8")))
-        text = emit(mesh, args.module)
+        text = emit(
+            mesh, args.module, args.ilink, args.mesh_id, args.single_master
+        )
     except MeshError as exc:
         sys.exit(f"gen_mesh: {exc}")
 
@@ -703,7 +889,9 @@ def main():
         print(
             f"{args.out}: {mesh.nx}x{mesh.ny} routers, {len(mesh.mags)} mag, "
             f"{len(mesh.cus)} cu, {len(mesh.vecs)} vec, "
-            f"{len(mesh.mags) + 2} AXI masters"
+            f"{1 if args.single_master else len(mesh.mags) + (3 if args.ilink else 2)}"
+            f" AXI master(s)"
+            + (f", interlink mesh_id={args.mesh_id}" if args.ilink else "")
         )
     else:
         print(text)

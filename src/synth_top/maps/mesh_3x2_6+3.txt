@@ -1,0 +1,12 @@
+# 6+3, ROW-LOCAL. Every row is mag|mat|mat|vec, so no endpoint is more than two
+# hops from its own row's mag and nothing crosses a column -- which is the
+# routing pressure mesh_2x3_6cu3vec.txt has, with its vec cores on the north
+# and south edges instead.
+#
+# 6+4 measures 331,503 LUT = 76.7% of an SLR, past the ~75% routability
+# ceiling; 6+3 is 295,874 = 68.5%.
+xxx xxx xxx xxx
+mag mat mat vec
+mag mat mat vec
+mag mat mat vec
+xxx xxx xxx xxx

@@ -1,0 +1,10 @@
+# 6+2 on a 2x2 grid: four clusters on the router locals, two more on the north
+# and south edges of column 1, two vector cores on column 2's. Two routers and
+# one SmartConnect port cheaper than the 3x2 shapes.
+#
+# ~260,200 LUT = ~60.3% of an SLR, DERIVED from per-unit costs rather than
+# measured -- synth it before trusting the number.
+xxx mat vec xxx
+mag mat mat xxx
+mag mat mat xxx
+xxx mat vec xxx

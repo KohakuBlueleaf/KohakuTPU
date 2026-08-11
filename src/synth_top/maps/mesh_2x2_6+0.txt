@@ -1,0 +1,11 @@
+# 6+0: mesh_2x2_6+2.txt with the two vector cores replaced by nul, so the
+# router shape and the mag placement are identical and only the endpoints move.
+#
+# A MATMUL-ONLY MESH. It takes N-SPLITS of large GEMMs -- weights resident, one
+# ship in and one out, no nonlinearity on this mesh. NOT K-splits: peer_out is
+# unconnected in mx_cluster_cu, so partial sums arriving from another mesh have
+# no accumulation path.
+xxx mat nul xxx
+mag mat mat xxx
+mag mat mat xxx
+xxx mat nul xxx

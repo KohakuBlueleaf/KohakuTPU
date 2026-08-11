@@ -1,0 +1,7 @@
+# 6+4 on a 2x2 grid. The east column's clusters hang off the routers' east
+# ports instead of adding a router row: 3x2's routing pressure does not survive
+# four meshes on one device.
+xxx vec vec xxx
+mag mat mat mat
+mag mat mat mat
+xxx vec vec xxx
