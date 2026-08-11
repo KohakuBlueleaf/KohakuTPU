@@ -30,6 +30,11 @@ FIELDS = {
     "boff": (124, 117),
     "emit": (116, 116),
     "fuse": (115, 115),
+    # The ninth bit of an L1 entry index: the offsets above are 8 bits, so entry
+    # 256 truncates to 0 and lands on the live chunk (docs/limits.md s6.8).
+    "abank": (114, 114),
+    "bbank": (113, 113),
+    "fbank": (112, 112),
 }
 
 #: A flit is 288 bits: a 32-bit header above the 256-bit payload. `last` is a

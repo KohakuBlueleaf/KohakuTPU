@@ -11,6 +11,8 @@ from ktpu.codegen.operands import plan
 from ktpu.ir.graph import REDUCTION
 from ktpu.ir.program import Inst, MemoryMap, Opcode, Program
 from ktpu.ir.sched import Band, Engine, Schedule, correspondence
+from ktpu.codegen.encode import EncodeError
+from ktpu.passes.tile import L1_OFF_SPAN
 from ktpu.target import Target
 
 DRAIN_BURST = 8
@@ -18,6 +20,23 @@ DRAIN_BURST = 8
 #: `2 * SBIAS`, which cancels both stored block-scale biases in the accumulator.
 #: A constant of the MXFP7 format, not a tunable -- docs/isa/cluster.md s4.3.
 ANCHOR = 40
+
+
+def _split(entry: int) -> tuple[int, int]:
+    """An absolute L1 entry index as `(bank, offset)`.
+
+    `eoff`/`aoff`/`boff` are EIGHT bits, so entry 256 truncates to 0 and lands on
+    the chunk a sweep is still reading -- measured wrong on ship_3x2 and silent
+    (docs/limits.md s6.8). The bank bit is the ninth bit. Raises EncodeError past
+    bank 1, which is all the ISA carries.
+    """
+    bank, off = divmod(entry, L1_OFF_SPAN)
+    if bank > 1:
+        raise EncodeError(
+            f"L1 entry {entry} is in bank {bank}; the instruction carries one "
+            f"bank bit, so only 0 and 1 exist"
+        )
+    return bank, off
 
 
 def _entries(rows: int, k: int, t: Target) -> int:
@@ -100,6 +119,10 @@ def _bcast(elems: int, tiling: dict, kind: str, full: int) -> str:
         return "col"
     if elems == m:
         return "row"
+    # A band whose logical rows are not the tiling's -- a GroupNorm walking
+    # (32, 128) over a (1, 8, 8, 64) value -- still has one operand per row.
+    if elems and full % elems == 0:
+        return "row" if kind in ("value", "band") else "col"
     return "elem"
 
 
@@ -142,7 +165,9 @@ def exports_of(sched: Schedule) -> dict[str, frozenset[int]]:
             made[o.out] = b.name
     wanted: dict[str, set[int]] = {b.name: set() for b in sched.bands}
     for b in sched.bands:
-        for vid in b.ext:
+        # A band reading a WINDOW names the view, but what has to reach memory
+        # is the whole value the window cuts out of.
+        for vid in [*b.ext, *(w["root"] for w in b.windows.values())]:
             if vid in made and made[vid] != b.name:
                 wanted[made[vid]].add(vid)
     for vid in sched.outputs or [out_vid(sched.bands[-1])]:
@@ -185,6 +210,13 @@ def allocate(sched: Schedule, t: Target) -> tuple[MemoryMap, dict]:
         for vid, (kind, w) in sorted(b.ext.items()):
             if kind == "input":
                 region(vid, b.elems[vid], False, f"input {w}")
+            elif kind == "window":
+                region(vid, b.elems[vid], False, f"window of {w[1]} {w[2]['dims']}")
+
+    for b in sched.bands:
+        for vid, w in sorted(b.windows.items()):
+            if b.ext.get(vid, ("",))[0] == "input":
+                region(w["root"], w["root_elems"], False, f"input {b.ext[vid][1]}")
 
     for b in sched.bands:
         for vid in sorted(exports[b.name]):
@@ -193,6 +225,11 @@ def allocate(sched: Schedule, t: Target) -> tuple[MemoryMap, dict]:
             if drained:
                 held = max(held, b.grid.m * b.tile.m * b.grid.n * b.tile.n)
             region(vid, held, drained, f"{b.name} produces %{vid}, fp16")
+
+    # A view reads its root's region -- the window is in the address, not a copy.
+    for b in sched.bands:
+        for vid, w in b.windows.items():
+            where[vid] = where[w["root"]]
 
     ins = [where[v] for v, (k, _) in sorted(sched.bands[0].ext.items()) if k == "input"]
     for role, name in zip(("a", "b"), ins, strict=False):
@@ -331,13 +368,22 @@ def _emit_matmul(
     tile_words = _fp16_words(b.tile.m * b.tile.n)
     a_words = _fp16_words(b.tile.m * b.tile.k)
     b_words = _fp16_words(b.tile.n * b.tile.k)
+    # B packs column-block minor, so a K-slice moves by a BLOCK and not by
+    # k0*n: attention's wo was exact at 64 columns and 128% wrong at 256.
+    b_kb = max(1, (bb.elems // max(1, mm["n"])) // b.tile.k)
+    b_base = (b_off // max(1, mm["n"])) // b.tile.k
 
     resident: dict[tuple[int, int], int] = {}
     for idx, (mo, no, _ko) in enumerate(b.grid.instances()):
         node = where[idx]
-        keep = b.residency.get("b") and resident.get(node) == no
+        # B is only resident if every chunk FITS: `ch * b_ent` laid all of them
+        # side by side and relied on the 8-bit offset wrapping (limits s6.8).
+        b_fits = chunks * b_ent <= 2 * L1_OFF_SPAN
+        keep = b.residency.get("b") and b_fits and resident.get(node) == no
         resident[node] = no
         for ch in range(chunks):
+            abank, aoff = _split((ch % 2) * a_ent)
+            bbank, boff = _split((ch if b_fits else ch % 2) * b_ent)
             prog.emit(
                 Inst(
                     Opcode.FILL,
@@ -349,7 +395,8 @@ def _emit_matmul(
                         + _fp16_words(a_off)
                         + (mo * chunks + ch) * a_words,
                         "n": a_ent,
-                        "eoff": (ch % 2) * a_ent,
+                        "eoff": aoff,
+                        "fbank": abank,
                     },
                 )
             )
@@ -362,10 +409,10 @@ def _emit_matmul(
                         {
                             "sel": "b",
                             "word": bb.word
-                            + _fp16_words(b_off)
-                            + (no * chunks + ch) * b_words,
+                            + (no * b_kb + b_base + ch) * b_words,
                             "n": b_ent,
-                            "eoff": ch * b_ent,
+                            "eoff": boff,
+                            "fbank": bbank,
                         },
                     )
                 )
@@ -380,8 +427,10 @@ def _emit_matmul(
                         "nk": nk,
                         "anchor": ANCHOR,
                         "acc": int(ch > 0),
-                        "aoff": (ch % 2) * a_ent,
-                        "boff": ch * b_ent,
+                        "aoff": aoff,
+                        "boff": boff,
+                        "abank": abank,
+                        "bbank": bbank,
                         "chunk": ch,
                     },
                 )
@@ -398,6 +447,32 @@ def _emit_matmul(
                 },
             )
         )
+
+
+def band_window(b: Band, vid: int, off: int, run: int, stride: int, tile) -> dict:
+    """A logical `(off, run, stride)` window as an offset into what is STORED.
+
+    A value a cluster drained is in sub-tile order, so a band of `run` columns
+    is a band of `run // tn` whole TILES and the window has to be restated in
+    those units. It only exists if the band lands on tile boundaries; a GEGLU
+    chunk of a 2560-wide projection does, half a tile does not.
+    """
+    if not tile:
+        return {"stride": stride, "base": off, "run": run, "bm": 0, "bn": 0}
+    tm, tn = tile
+    if off % tn or run % tn or stride % tn:
+        raise ValueError(
+            f"band {b.name} reads a {run}-wide window of %{vid} at offset {off}, "
+            f"but %{vid} is drained in {tm}x{tn} tiles; a window that splits a "
+            "tile is not a run of addresses"
+        )
+    return {
+        "stride": (stride // tn) * tm * tn,
+        "base": (off // tn) * tm * tn,
+        "run": (run // tn) * tm * tn,
+        "bm": 0,
+        "bn": 0,
+    }
 
 
 def vmode_for(band: Band) -> tuple[str, int]:
@@ -508,11 +583,17 @@ def _emit_vector(
     made_tile = made_tile or {}
     strided: dict[int, dict] = {}
     for op in b.ops:
-        for v, s, o in zip(op.ins, op.strides or (), op.offs or (), strict=False):
+        runs = op.runs or (1,) * len(op.ins)
+        for v, s, o, r in zip(op.ins, op.strides or (), op.offs or (), runs):
             if s == 1:
                 continue
-            bm, bn = made_tile.get(v, (0, 0))
-            want = {"stride": s, "base": o, "bm": bm, "bn": bn}
+            root = b.windows.get(v, {}).get("root", v)
+            bm, bn = made_tile.get(root, (0, 0))
+            want = (
+                {"stride": s, "base": o, "run": 1, "bm": bm, "bn": bn}
+                if r == 1
+                else band_window(b, v, o, r, s, made_tile.get(root))
+            )
             if strided.setdefault(v, want) != want:
                 raise ValueError(
                     f"band {b.name} reads %{v} at {strided[v]} and at {want}; "
@@ -581,7 +662,7 @@ def _emit_vector(
                                 ),
                                 "bcast": (
                                     "row"
-                                    if vid in strided
+                                    if strided.get(vid, {}).get("run") == 1
                                     else _bcast(
                                         b.elems[vid],
                                         band_shape(b, prog.tiling),
@@ -609,12 +690,22 @@ def _emit_vector(
                             "gather": "row" if flat else "rowbcast",
                             "coff": start,
                             "tn": b.tile.n,
+                            # A 320-wide row split into four passes of 80 walks
+                            # four rows per row of a per-row operand.
+                            "lrow": max(
+                                1,
+                                b.grid.size * b.tile.m // max(1, b.elems.get(vid, 1)),
+                            ),
                         }
                         if flat and vid in feeds_matmul:
                             rows, kk = feeds_matmul[vid]
                             ld |= {"layout": "entry", "erows": rows, "ek": kk}
                         elif flat and src_tile:
                             ld |= {"stm": src_tile[0], "stn": src_tile[1]}
+                        elif flat and not made_tile:
+                            # No cluster ran, so nothing is in sub-tile order and
+                            # a row is the band's own width, not the tiling's.
+                            ld |= {"layout": "flat"}
                     prog.emit(Inst(Opcode.VLD, e, node, {**ld, "vd": vd, "vid": vid}))
                 for op, srcs, dst in job.binds:
                     kind = Opcode.VRED if op.kind in REDUCTION else Opcode.VALU
@@ -654,7 +745,7 @@ def _emit_vector(
                             **(
                                 {"stm": src_tile[0], "stn": src_tile[1]}
                                 if src_tile
-                                else {}
+                                else {} if made_tile else {"layout": "flat"}
                             ),
                         }
                     if vid in feeds_matmul and not scalar:
@@ -718,13 +809,23 @@ def codegen(sched: Schedule, m: int, k: int, n: int, t: Target) -> Program:
         if b.engine is not Engine.VECTOR:
             continue
         src = plan(b, vmode_for(b)[1], exports[b.name]).source
-        shape = made_tile.get(src)
+        shape, gn = made_tile.get(src), made_gn.get(src, 1)
+        # A band that only reads windows still walks the producer's tiles, but
+        # `run // tn` of them per row rather than the producer's whole width.
+        for w in b.windows.values() if shape is None else ():
+            shape = made_tile.get(w["root"])
+            if shape:
+                gn = max(1, w["run"] // shape[1])
+                break
         if shape:
             for o in b.ops:
                 made_tile.setdefault(o.out, shape)
-                made_gn.setdefault(o.out, made_gn.get(src, 1))
+                made_gn.setdefault(o.out, gn)
                 made_shape.setdefault(o.out, b.shape)
-                made_tiles.setdefault(o.out, made_tiles.get(src, 0))
+                made_tiles.setdefault(
+                    o.out,
+                    made_tiles.get(src) or b.elems.get(o.out, 0) // (shape[0] * shape[1]),
+                )
     mmb = by_name.get(last.consumes or "") or next(
         (b for b in reversed(sched.bands) if b.engine is Engine.MATMUL), None
     )
@@ -752,6 +853,14 @@ def codegen(sched: Schedule, m: int, k: int, n: int, t: Target) -> Program:
         for vid, (kind, w) in b.ext.items():
             if kind == "input":
                 prog.inputs[str(w)] = reg[vid]
+            elif kind == "window":
+                src, name, spec = w
+                if src != "input":
+                    raise ValueError(
+                        f"%{vid} is a window of {name}, which {src} produces; "
+                        "only an operand the host packs can be gathered"
+                    )
+                prog.windows[reg[vid]] = {"from": str(name), **spec}
     for b in sched.bands:
         if b.engine is not Engine.MATMUL:
             continue

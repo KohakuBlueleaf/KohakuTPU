@@ -84,6 +84,9 @@ def decode_flit(flit):
         "boff": bits(117, 8),
         "emit": bits(116, 1),
         "fuse": bits(115, 1),
+        "abank": bits(114, 1),
+        "bbank": bits(113, 1),
+        "fbank": bits(112, 1),
         "last": bits(FLIT_BITS - 29, 1),
     }
 
@@ -100,14 +103,15 @@ def describe_flit(f):
         )
         return (
             f"FILL {which}  {f['n']} L1 entries from {f['addr']:#x} -> L1 "
-            f"{f['eoff']}"
+            f"bank{f['fbank']}:{f['eoff']}"
             + ("  pre-quantised" if f["preq"] else "  FP16, quantised on the way out")
             + peers
         )
     if f["op_name"] == "GEMM":
         return (
             f"GEMM  {f['gm']}x{f['gn']} sub-tiles over {f['nk']} K blocks, "
-            f"A@{f['aoff']} B@{f['boff']}, anchor={f['anchor']}"
+            f"A@bank{f['abank']}:{f['aoff']} B@bank{f['bbank']}:{f['boff']}, "
+            f"anchor={f['anchor']}"
             + ("  accumulate" if f["acc"] else "  load")
             + (f"  emit -> {f['addr']:#x}" if f["emit"] else "")
         )

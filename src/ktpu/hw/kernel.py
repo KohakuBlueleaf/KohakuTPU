@@ -47,11 +47,13 @@ WB = 32  # bytes per memory word
 # to 1 -- so the CU waits forever for 255 entries nobody asked for, the whole
 # result is zeros, and nothing reports anything.
 #
-# It does not bound the CHUNK, only the instruction: `eoff` says where a fill
-# lands, so a longer run is two fills at consecutive offsets. That costs one
-# extra descriptor round trip (~29 cycles) and no protocol change at all --
-# which is why the field stays 8 bits and `choose_tile` does not cap `nk`.
+# A longer run is two fills at consecutive `eoff`, one extra descriptor round
+# trip (~29 cycles) and no protocol change.
 FILL_MAX_ENTRIES = 255
+
+# Entries one CHUNK may hold: `boff + h*nk + kb` is 8 bits
+# (mx_cluster_mgr.v), so entry 256 wraps onto entry 0 and reads another block.
+L1_OFF_SPAN = 256
 
 
 @dataclass(frozen=True)
@@ -117,7 +119,11 @@ def choose_tile(tiles, l1_a, k_blocks, l1_b=None, m=None, k=None, n=None, banks=
             # whole of L1 A on one chunk buys a longer chunk and gives back the
             # overlap, and the overlap is worth more -- fill was 22.3% of the
             # machine's time with the array idle throughout.
-            nk = min(l1_a // (banks * gm), l1_b // gn, k_blocks)
+            # Dividing B by `l1_b` alone let gn*nk reach 512, and 64x288x256
+            # came back off by 8.2e+02 where 64x256x256 was right.
+            bank_a = min(l1_a // banks, L1_OFF_SPAN)
+            bank_b = min(l1_b // banks, L1_OFF_SPAN)
+            nk = min(bank_a // gm, bank_b // gn, k_blocks)
             if nk < 1:
                 continue
             # Intensity, 2*gm*gn/(gm+gn), DISCOUNTED BY PADDING.
@@ -400,6 +406,28 @@ def plan(
             else (i % banks_b) * entries_per_chunk_b
         )
 
+    def split(entry):
+        """An absolute L1 entry index as `(bank, offset)`.
+
+        The offset fields are EIGHT bits, so entry 256 wraps to 0 and the second
+        half of L1 is unreachable through the offset alone -- the bank bit is the
+        ninth bit (`mx_cluster_cu.v:627`, `pl_ent = {fbank_r, rtag}`). Emitting
+        it is what lets two 256-entry chunks be live at once; without it the
+        second fill lands on the first and the sweep reads the wrong operand,
+        silently (docs/limits.md s6.8).
+
+        A chunk never straddles a bank: `choose_tile` caps it at L1_OFF_SPAN.
+        Raises ValueError past the second bank, which is all the ISA has.
+        """
+        bank, off = divmod(entry, L1_OFF_SPAN)
+        if bank > 1:
+            raise ValueError(
+                f"L1 entry {entry} is in bank {bank} and the instruction carries "
+                f"one bank bit, so only 0 and 1 exist. The tile asks for more L1 "
+                f"than this machine can address."
+            )
+        return bank, off
+
     def emit_fill(p, sel, word, wpe, n, eoff, preq, peers=()):
         """Append the FILLs for one contiguous run, and say how many.
 
@@ -408,6 +436,7 @@ def plan(
         makes the count field a non-issue: it bounds the INSTRUCTION, not the
         chunk. The extra cost is one descriptor round trip.
         """
+        fbank, base = split(eoff)
         done, flits = 0, 0
         while done < n:
             cnt = min(n - done, FILL_MAX_ENTRIES)
@@ -419,12 +448,13 @@ def plan(
                     sel=sel,
                     peers=peers,
                     preq=preq,
-                    eoff=eoff + done,
+                    eoff=base + done,
+                    fbank=fbank,
                 )
             )
             p.text.append(
                 f"FILL {'B' if sel else 'A'}  {cnt} entries @ word "
-                f"{word + done * wpe} -> L1 {eoff + done}"
+                f"{word + done * wpe} -> L1 bank{fbank}:{base + done}"
                 f"{'  pre-quantised' if preq else ''}"
             )
             done += cnt
@@ -513,8 +543,10 @@ def plan(
                         nk=tile.nk,
                         anchor=anchor,
                         acc=(ko > 0),
-                        aoff=ab,
-                        boff=bb,
+                        aoff=split(ab)[1],
+                        boff=split(bb)[1],
+                        abank=split(ab)[0],
+                        bbank=split(bb)[0],
                         emit=emit,
                     )
                 )

@@ -35,8 +35,18 @@ def _flit(
     eoff=0,
     aoff=0,
     boff=0,
+    abank=0,
+    bbank=0,
+    fbank=0,
     emit=False,
     fuse=False,
+    dnode=False,
+    dst=(0, 0),
+    dbuf=0,
+    dflags=0,
+    dack=(0, 0),
+    dmesh=0,
+    dfin=(0, 0),
 ):
     """Encode one CU_INST flit.
 
@@ -111,6 +121,11 @@ def _flit(
     p |= (eoff & 0xFF) << 133
     p |= (aoff & 0xFF) << 125
     p |= (boff & 0xFF) << 117
+    # The NINTH bit of an L1 entry index: the offsets above are 8 bits, so entry
+    # 256 wraps to 0 and two 256-entry chunks collide (docs/limits.md s6.8).
+    p |= (abank & 1) << 114
+    p |= (bbank & 1) << 113
+    p |= (fbank & 1) << 112
     # FUSED DRAIN. `emit` makes the last K block of a sweep hand each sub-tile
     # out as it completes it, writing to the GEMM's own `addr`; `fuse` turns
     # the DRAIN that follows into a barrier that waits for them instead of
@@ -118,6 +133,38 @@ def _flit(
     # sub-tile and the sweep has none spare, which is why it could not overlap.
     p |= (1 if emit else 0) << 116
     p |= (1 if fuse else 0) << 115
+    # WHERE A DRAIN'S RESULTS GO. Zero is the memory port, which is what an
+    # all-zero tail means -- so a DRAIN encoded before these fields existed
+    # still writes to memory, and this whole block is inert for one.
+    p |= (1 if dnode else 0) << 111
+    p |= (dst[0] & 0xF) << 107
+    p |= (dst[1] & 0xF) << 103
+    p |= (dbuf & 0xFF) << 95
+    p |= (dflags & 0xFF) << 87
+    p |= (dack[1] & 0xF) << 83
+    p |= (dack[0] & 0xF) << 79
+    # ANOTHER MESH. `dfin` nonzero is what makes it remote -- (0,0) is a mesh
+    # corner that can hold no endpoint, so it is an unambiguous sentinel. `dst`
+    # then addresses the LOCAL MAG port and `dfin` the real destination in the
+    # far mesh, which is what keeps the routers unaware that another mesh
+    # exists. docs/interlink/transfers.md s5.
+    fin = (dfin[1] & 0xF) << 4 | (dfin[0] & 0xF)
+    if fin:
+        if not dnode:
+            raise ValueError(
+                "a remote drain is still a node drain: set dnode=True, with "
+                "dst pointing at this mesh's MAG port"
+            )
+        if not (dack[0] or dack[1]):
+            raise ValueError(
+                "a remote drain must name an ack destination. Across meshes "
+                "ack=(0,0) means 'answer the sender', and the sender's "
+                "coordinate exists in the DESTINATION mesh too -- so the "
+                "completion would go to an unrelated local node. mag_ilink "
+                "raises IL_F_ACK0 for this."
+            )
+    p |= (dmesh & 0x3) << 77
+    p |= fin << 69
     return v | p
 
 
@@ -142,6 +189,38 @@ def cluster_program(a_entries, b_entries, gm, gn, nk, layout, anchor=ANCHOR):
 
 
 FLITS_PER_CLUSTER = 4  # FILL A, FILL B, GEMM, DRAIN
+
+
+def remote_drain(board, n, dst_mesh, dst_node, ack_node, dbuf=2, dflags=1,
+                 anchor=ANCHOR, last=True):
+    """A DRAIN whose results land in a CU's L1 in ANOTHER mesh.
+
+    `board` supplies the local MAG port coordinate and the mesh count; `dst_node`
+    and `ack_node` are `(x, y)` in the DESTINATION mesh. `dbuf` is 2 because a
+    cluster-to-cluster drain emits FP16 sub-tiles and L1 takes int7+E5M3 -- buf 2
+    is the accumulator-float mode and nothing else selects it.
+
+    Raises ValueError on a single-mesh board rather than encoding a flit whose
+    remote bits that machine will not decode: the flit would reach MAG, be
+    treated as an ordinary control flit, and be dropped.
+    """
+    if not board.multi_mesh:
+        raise ValueError(
+            f"board {board.name!r} is one mesh, so there is no mesh "
+            f"{dst_mesh} to drain to. On single-mesh silicon the remote header "
+            "bits are not decoded: the burst would reach MAG, be read as a "
+            "control flit and be dropped, with the drop reported and the data "
+            "gone. Drain locally, or point the driver at a multi-mesh board."
+        )
+    if dst_mesh == board.mesh_id:
+        raise ValueError(
+            f"mesh {dst_mesh} is this mesh; use an ordinary node drain"
+        )
+    return _flit(
+        OP_DRAIN, n=n, anchor=anchor, last=last,
+        dnode=True, dst=board.agent, dbuf=dbuf, dflags=dflags,
+        dack=ack_node, dmesh=dst_mesh, dfin=dst_node,
+    )
 
 
 def build(m, k, n, clusters, layouts, anchor=ANCHOR, concurrent=True):

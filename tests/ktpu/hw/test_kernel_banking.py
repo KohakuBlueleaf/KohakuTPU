@@ -50,7 +50,15 @@ FIELDS = {
     "boff": (117, 0xFF),
     "emit": (116, 0x1),
     "fuse": (115, 0x1),
+    "abank": (114, 0x1),
+    "bbank": (113, 0x1),
+    "fbank": (112, 0x1),
 }
+
+def slot_of(bank, off):
+    """An absolute L1 entry. Keying a model of L1 on the offset ALONE is what hid
+    two 256-entry chunks landing on each other (docs/limits.md s6.8)."""
+    return bank * kernel.L1_OFF_SPAN + off
 
 WB = 32  # bytes per memory word
 
@@ -182,6 +190,70 @@ def test_b_is_filled_once_per_column_band():
             f"({len(bands[cluster])} band(s) x {chunks} chunk(s)) -- B is "
             f"being re-read across the m loop"
         )
+
+
+# ship_3x2 has 512/512; `bench.build` hardcodes 128/256, so a chunk there never
+# reaches 256 and every test above is blind to this class.
+CARD_L1 = {"l1_a": 512, "l1_b": 512}
+
+#: Shapes measured WRONG on the card before the bank bits were emitted: each
+#: takes a 256-entry chunk over more than one chunk (docs/limits.md s6.8).
+BANK_SHAPES = [(64, 576, 64), (64, 640, 64), (64, 1024, 64), (64, 1280, 64),
+               (77 + 51, 2048, 64), (128, 640, 64)]
+
+
+def _card_kernel(m, k, n):
+    tile = bench.tile_for(m, k, n, bench.Capacities(
+        tiles=512, l1_a=512, l1_b=512, l1_banks=2, stage_flits=128))
+    m, k, n = bench.padded_shape(m, k, n, tile)
+    return tile, kernel.plan(
+        m, k, n, [(1, 1)], matmul.Layout(0, 1 << 20, 1 << 21), tile,
+        stage_flits=128, ncmd=128, preq=(False, False), **CARD_L1)
+
+
+@pytest.mark.parametrize("shape", BANK_SHAPES)
+def test_a_chunk_is_never_filled_over_a_live_one(shape):
+    """No FILL may land on entries a later GEMM still needs.
+
+    The failure this pins: with a 256-entry chunk, the second fill wrote the
+    SAME 256 entries as the first, and the sweep that had not run yet read the
+    wrong operand. Silent -- 2778 of 4096 elements wrong at 64x576x64, and the
+    card reported success.
+    """
+    tile, kern = _card_kernel(*shape)
+    flits = [f for r in kern.rounds for p in r.passes for f in p.flits]
+    live = {0: {}, 1: {}}  # sel -> slot -> the fill index that owns it
+    pending = []  # fills not yet consumed by a sweep
+    for idx, flit in enumerate(flits):
+        i = decode(flit)
+        if i["op"] == matmul.OP_FILL:
+            for j in range(i["n"]):
+                s = slot_of(i["fbank"], i["eoff"] + j)
+                owner = live[i["sel"]].get(s)
+                assert owner not in pending, (
+                    f"{shape}: FILL {'B' if i['sel'] else 'A'} at flit {idx} "
+                    f"overwrites L1 slot {s}, which fill {owner} wrote and no "
+                    f"sweep has read yet"
+                )
+                live[i["sel"]][s] = idx
+            pending.append(idx)
+        elif i["op"] == matmul.OP_GEMM:
+            pending.clear()
+
+
+@pytest.mark.parametrize("shape", BANK_SHAPES)
+def test_both_banks_are_used_when_a_chunk_fills_one(shape):
+    """A 256-entry chunk must alternate banks, or it has nowhere else to go."""
+    tile, kern = _card_kernel(*shape)
+    flits = [decode(f) for r in kern.rounds for p in r.passes for f in p.flits]
+    chunk_a, chunk_b = tile.gm * tile.nk, tile.gn * tile.nk
+    if max(chunk_a, chunk_b) < kernel.L1_OFF_SPAN:
+        pytest.skip(f"{shape} chunks are {chunk_a}/{chunk_b}, both fit one bank")
+    fills = [f for f in flits if f["op"] == matmul.OP_FILL]
+    assert {f["fbank"] for f in fills} == {0, 1}, (
+        f"{shape}: every fill targets bank {[f['fbank'] for f in fills][:4]}, so "
+        f"a {max(chunk_a, chunk_b)}-entry chunk is overwriting the live one"
+    )
 
 
 # --------------------------------------------------------- the dispatch grid
@@ -416,12 +488,16 @@ def test_fills_name_the_entries_the_packer_wrote(shape, ncl, preq):
                 )
                 assert entry + i["n"] <= img.entries, "FILL runs past the operand"
                 for j in range(i["n"]):
-                    l1[i["sel"]][i["eoff"] + j] = img.marker(entry + j)
+                    l1[i["sel"]][slot_of(i["fbank"], i["eoff"] + j)] = img.marker(
+                        entry + j
+                    )
             elif i["op"] == matmul.OP_GEMM:
                 mo, no, ko = next(sweeps)
                 for g in range(t.gm):
                     for kb in range(t.nk):
-                        slot = i["aoff"] + tensor.entry_index(g, kb, t.nk)
+                        slot = slot_of(
+                            i["abank"], i["aoff"] + tensor.entry_index(g, kb, t.nk)
+                        )
                         assert l1[0].get(slot) == (mo * t.gm + g, ko * t.nk + kb), (
                             f"sweep of tile ({mo},{no}) chunk {ko} reads A slot "
                             f"{slot} expecting group {mo * t.gm + g} block "
@@ -429,7 +505,9 @@ def test_fills_name_the_entries_the_packer_wrote(shape, ncl, preq):
                         )
                 for h in range(t.gn):
                     for kb in range(t.nk):
-                        slot = i["boff"] + tensor.entry_index(h, kb, t.nk)
+                        slot = slot_of(
+                            i["bbank"], i["boff"] + tensor.entry_index(h, kb, t.nk)
+                        )
                         assert l1[1].get(slot) == (no * t.gn + h, ko * t.nk + kb), (
                             f"sweep of tile ({mo},{no}) chunk {ko} reads B slot "
                             f"{slot} expecting group {no * t.gn + h} block "
