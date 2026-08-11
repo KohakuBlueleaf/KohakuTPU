@@ -14,6 +14,8 @@ module float_display #(
     real decoded_num;
     real mantissa_val;
     integer true_exp;
+    // Verilog-2001: Vivado rejects a loop-local `integer` and `i++`.
+    integer i;
 
     always @(float_num) begin
         sign = float_num[EXP_BITS+MANT_BITS];
@@ -21,7 +23,7 @@ module float_display #(
         mantissa = float_num[MANT_BITS-1:0];
         // Convert mantissa to real value
         mantissa_val = 0.0;
-        for (integer i = 0; i < MANT_BITS; i++) begin
+        for (i = 0; i < MANT_BITS; i = i + 1) begin
             if (mantissa[i])
                 mantissa_val = mantissa_val + (2.0 ** (-1 * (MANT_BITS - i)));
         end
