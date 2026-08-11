@@ -104,7 +104,10 @@ def test_no_server_is_unavailable_not_an_oserror():
         jtag.evaluate("puts hi", port=1)
 
 
-def test_it_sources_the_helpers_only_when_given_a_path(session):
+def test_it_sources_the_helpers_only_when_given_a_path(session, monkeypatch):
+    # Exported by anyone who has run the card: without this it fails on their
+    # machine only.
+    monkeypatch.delenv("KTPU_JAXI_TCL", raising=False)
     jtag.JtagTransport(tcl="C:/hw/tools/jtag_axi.tcl")
     assert "source {C:/hw/tools/jtag_axi.tcl}" in session.scripts[0]
     jtag.JtagTransport()
