@@ -74,7 +74,14 @@ module vec_core #(
     output reg  [15:0]  nd_off,
     output reg  [7:0]   nd_len,
     output reg          nd_sig,
-    output reg  [7:0]   nd_ack
+    output reg  [7:0]   nd_ack,
+    // A peer in ANOTHER mesh. Both come from the descriptor base's top ten
+    // bits, which a drain has never used; `nd_fin` nonzero is what makes it
+    // remote, and (0,0) is a mesh corner that can hold no endpoint, so zero is
+    // an unambiguous "local" exactly as it is for `nd_ack`. Every encoding
+    // written before the interlink leaves both zero.
+    output reg  [1:0]   nd_mesh,
+    output reg  [7:0]   nd_fin
 );
     localparam [4:0] O_VCVT = 5'h12, O_VRED = 5'h13, O_VLD = 5'h14,
                      O_VST = 5'h15, O_VBCAST = 5'h16, O_VSHUF = 5'h17,
@@ -98,6 +105,11 @@ module vec_core #(
                      F_OPCODE = 8'd4, F_LEN = 8'd5, F_LOOP = 8'd6,
                      F_VL = 8'd7, F_REDVL = 8'd8, F_CUDATA = 8'd9;
 
+    // URAM CANNOT DO READ_LAT=1 -- xpm_memory rejects it, so the latency is a
+    // property of the primitive and the load/drain walks wait a state longer.
+    localparam integer L1_LAT = (L1_PRIM == "ultra") ? 2 : 1;
+    localparam integer LAW    = (L1_DEPTH <= 1) ? 1 : $clog2(L1_DEPTH);
+
     localparam [4:0] S_IDLE = 5'd0,  S_F1 = 5'd1,   S_F2 = 5'd2,
                      S_DEC = 5'd3,   S_EXEC = 5'd4,
                      S_GA = 5'd5,    S_GB = 5'd6,   S_GC = 5'd7, S_GD = 5'd8,
@@ -115,6 +127,9 @@ module vec_core #(
     // L1's output is registered before the load converters, so a VLD chunk
     // takes one more beat than the BRAM's own read latency.
     localparam [5:0] S_LDQ = 6'd34;
+    // Entered only at L1_LAT=2, where URAM's extra beat has to be absorbed
+    // before the walks may look at l1_q.
+    localparam [5:0] S_LDX = 6'd36, S_DRX = 6'd37;
 
     // ================================================== architectural state
     reg [5:0]  st;
@@ -143,7 +158,7 @@ module vec_core #(
     reg [2:0]  ls_dt;
     reg        ls_hi;
     reg [191:0] ls_hold;
-    reg [8:0]  l1_base, l1_cur;
+    reg [LAW-1:0] l1_base, l1_cur;
     reg [15:0] fill_out;
     reg [31:0] mem_left;
     reg [3:0]  shuf_k;
@@ -163,12 +178,12 @@ module vec_core #(
         .rd_en(1'b1), .rd_addr(im_addr), .rd_data(im_q)
     );
 
-    reg  [8:0]   l1_waddr, l1_raddr;
+    reg  [LAW-1:0] l1_waddr, l1_raddr;
     reg  [255:0] l1_wdata;
     reg          l1_we;
     wire [255:0] l1_q;
     kohaku_sdpram #(.WIDTH(256), .DEPTH(L1_DEPTH), .MEM_PRIM(L1_PRIM),
-                    .READ_LAT(1)) u_l1 (
+                    .READ_LAT(L1_LAT)) u_l1 (
         .clk(clk), .wr_en(l1_we), .wr_addr(l1_waddr), .wr_data(l1_wdata),
         .rd_en(1'b1), .rd_addr(l1_raddr), .rd_data(l1_q)
     );
@@ -381,9 +396,10 @@ module vec_core #(
             wr_req_addr <= 34'd0; wr_req_data <= 256'd0;
             nd_valid <= 1'b0; nd_x <= 4'd0; nd_y <= 4'd0; nd_buf <= 4'd0;
             nd_off <= 16'd0; nd_len <= 8'd0; nd_sig <= 1'b0; nd_ack <= 8'd0;
+            nd_mesh <= 2'd0; nd_fin <= 8'd0;
             ag_start <= 1'b0; ag_step <= 1'b0; ag_sel <= 3'd0; ag_off <= 18'd0;
-            l1_we <= 1'b0; l1_waddr <= 9'd0; l1_raddr <= 9'd0;
-            l1_wdata <= 256'd0; l1_base <= 9'd0; l1_cur <= 9'd0;
+            l1_we <= 1'b0; l1_waddr <= {LAW{1'b0}}; l1_raddr <= {LAW{1'b0}};
+            l1_wdata <= 256'd0; l1_base <= {LAW{1'b0}}; l1_cur <= {LAW{1'b0}};
             ls_reg <= 4'd0; ls_dt <= 3'd0; ls_hi <= 1'b0; ls_hold <= 192'd0;
             ls_kind <= 5'd0; shuf_k <= 4'd0; bc_to_s <= 1'b0;
             cv_src <= 256'd0; cd_err <= 1'b0;
@@ -476,8 +492,8 @@ module vec_core #(
                 cphase  <= 2'd0;
                 bcnt    <= 6'd0;
                 ls_hi   <= 1'b0;
-                l1_base <= d_off[8:0];
-                l1_cur  <= d_off[8:0];
+                l1_base <= d_off[LAW-1:0];
+                l1_cur  <= d_off[LAW-1:0];
                 ag_sel  <= d_ad;
                 ag_off  <= 18'd0;
 
@@ -689,12 +705,13 @@ module vec_core #(
 
             // ---------------------------------------------------- VLD
             S_LDA: begin
-                l1_raddr <= ag_addr[8:0];
+                l1_raddr <= ag_addr[LAW-1:0];
                 ag_step  <= 1'b1;
                 st <= S_LDW;
             end
             S_LDW: st <= S_LDQ;
-            S_LDQ: st <= S_LDD;
+            S_LDQ: st <= (L1_LAT == 2) ? S_LDX : S_LDD;
+            S_LDX: st <= S_LDD;
             S_LDD: begin
                 if (ls_dt == DT_FP16) begin
                     lw_wdata <= i_f16;
@@ -734,7 +751,7 @@ module vec_core #(
             end else begin
                 case (ls_kind)
                 O_VST: begin
-                    l1_waddr <= ag_addr[8:0];
+                    l1_waddr <= ag_addr[LAW-1:0];
                     ag_step  <= 1'b1;
                     l1_we    <= 1'b1;
                     l1_wdata <= (ls_dt == DT_FP16) ? o_f16
@@ -783,7 +800,7 @@ module vec_core #(
                     rd_req_addr  <= ag_addr;
                     rd_req_tag   <= l1_cur;
                     ag_step      <= 1'b1;
-                    l1_cur       <= l1_cur + 9'd1;
+                    l1_cur       <= l1_cur + 1'b1;
                     mem_left     <= mem_left - 32'd1;
                 end
             end
@@ -794,13 +811,14 @@ module vec_core #(
                        l1_raddr <= l1_cur;
                        st <= S_DRW;
                    end
-            S_DRW: st <= S_DRD;
+            S_DRW: st <= (L1_LAT == 2) ? S_DRX : S_DRD;
+            S_DRX: st <= S_DRD;
             S_DRD: if (!wr_req_valid) begin
                 wr_req_valid <= 1'b1;
                 wr_req_addr  <= ag_addr;
                 wr_req_data  <= l1_q;
                 ag_step      <= 1'b1;
-                l1_cur       <= l1_cur + 9'd1;
+                l1_cur       <= l1_cur + 1'b1;
                 mem_left     <= mem_left - 32'd1;
                 st <= S_DRA;
             end
@@ -830,9 +848,11 @@ module vec_core #(
                 // the completion. The instruction word has one bit left, not
                 // eight, and the base is a 34-bit field of which a peer drain
                 // uses sixteen -- so the room is here and nowhere else.
-                nd_off <= ag_addr[15:0];
-                nd_ack <= ag_addr[23:16];
-                nd_len <= ag_total[7:0] - 8'd1;
+                nd_off  <= ag_addr[15:0];
+                nd_ack  <= ag_addr[23:16];
+                nd_mesh <= ag_addr[25:24];
+                nd_fin  <= ag_addr[33:26];
+                nd_len  <= ag_total[7:0] - 8'd1;
                 st <= (ls_kind == O_VFILL) ? S_FILL : S_DRA;
             end
 

@@ -316,7 +316,13 @@ module mx_cluster_node_tb;
         seed = 32'h1234ABCD;
         ANCHOR = 2*SBIAS + HEADROOM;
 
-        #20; @(negedge clk); rst = 0; @(negedge clk);
+        // PAST 100 ns, not past 20. `glbl` holds GSR for the first 100 ns and
+        // every unisim register ignores its own reset until then -- so at
+        // MODEL=0 the first tiling used to run against DSP48E2s that were still
+        // globally reset, and only the first one, which reads as an
+        // arithmetic bug in the datapath rather than as a bench that started
+        // too early.
+        #120; @(negedge clk); rst = 0; @(negedge clk);
 
         $display("--- tilings that finish before the cascade does ---");
         err_before = errors;

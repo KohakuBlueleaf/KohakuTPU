@@ -20,7 +20,10 @@ module mx_cluster_node #(
     parameter integer GB     = 64,
     parameter integer ACC_MW = 14,
     parameter integer MODEL  = 0,
-    parameter         L1_PRIM = "distributed"
+    parameter         L1_PRIM = "distributed",
+    // SEPARATE from L1_PRIM: the accumulator is already READ_LAT=2, so it
+    // takes "ultra" with no pipeline change, where L1 A/B needs one.
+    parameter         TILE_PRIM = "block"
 )(
     input  wire         clk,
     input  wire         rst,
@@ -388,7 +391,7 @@ module mx_cluster_node #(
     // is presented.
     wire acu_busy_drain = d_run || d_cmd || ((d_out != 16'd0) && !d_fused);
 
-    mx_acu_fp #(.DEPTH(TILES), .ACC_MW(ACC_MW)) u_acu (
+    mx_acu_fp #(.DEPTH(TILES), .ACC_MW(ACC_MW), .TILE_PRIM(TILE_PRIM)) u_acu (
         .clk(clk), .rst(rst), .en(1'b1),
         .part_in(part_bus),
         // THE SCALES ARE NOT MUXED. A drain issues OP_EMIT, which reads the

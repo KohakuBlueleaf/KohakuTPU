@@ -144,9 +144,22 @@ module vec_cu #(
     wire [3:0]  nd_x, nd_y, nd_buf;
     wire [15:0] nd_off;
     wire [7:0]  nd_len, nd_ack;
+    wire [1:0]  nd_mesh;
+    wire [7:0]  nd_fin;
     // Assigned rather than part-selected, so POS_WIDTH stays a free parameter.
     wire [POS_WIDTH-1:0] nd_dx = nd_x;
     wire [POS_WIDTH-1:0] nd_dy = nd_y;
+
+    // A drain whose sink is in another mesh. `nd_x`/`nd_y` then address the
+    // LOCAL MAG port, so the routers see an ordinary local flit and the NoC
+    // never learns another mesh exists; the real destination rides in the txn
+    // field, which CU_DATA does not use, and the mesh id in the reserved header
+    // bits. Both on EVERY flit of the burst -- MAG's encapsulator would
+    // otherwise need a CAM keyed on source to reunite a burst whose flits the
+    // routers interleaved with another sender's.
+    wire        nd_rem  = (nd_fin != 8'd0);
+    wire [7:0]  nd_txn  = nd_rem ? nd_fin : 8'h00;
+    wire [2:0]  nd_rsvd = nd_rem ? {1'b1, nd_mesh} : 3'b000;
 
     vec_core #(.MODEL(MODEL), .L1_DEPTH(L1_DEPTH), .L1_PRIM(L1_PRIM)) u_core (
         .clk(clk), .rst(!resetn),
@@ -162,7 +175,8 @@ module vec_cu #(
         .wr_req_valid(wr_req_valid), .wr_req_addr(wr_req_addr),
         .wr_req_data(wr_req_data), .wr_req_ready(wr_req_ready),
         .nd_valid(nd_valid), .nd_x(nd_x), .nd_y(nd_y), .nd_buf(nd_buf),
-        .nd_off(nd_off), .nd_len(nd_len), .nd_sig(nd_sig), .nd_ack(nd_ack)
+        .nd_off(nd_off), .nd_len(nd_len), .nd_sig(nd_sig), .nd_ack(nd_ack),
+        .nd_mesh(nd_mesh), .nd_fin(nd_fin)
     );
 
     assign dbg_cycles = cycles;
@@ -329,7 +343,7 @@ module vec_cu #(
                         if (!nd_hdr) begin
                             send_flit <= { nd_dx, nd_dy,
                                 POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
-                                T_CU_DATA, 8'h00, 1'b0, 3'b000,
+                                T_CU_DATA, nd_txn, 1'b0, nd_rsvd,
                                 {4'd0, nd_buf}, nd_off, nd_len,
                                 7'd0, nd_sig, nd_ack, 208'd0 };
                             send_valid <= 1'b1;
@@ -338,7 +352,7 @@ module vec_cu #(
                         end else begin
                             send_flit <= { nd_dx, nd_dy,
                                 POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
-                                T_CU_DATA, 8'h00, (nd_cnt == nd_len), 3'b000,
+                                T_CU_DATA, nd_txn, (nd_cnt == nd_len), nd_rsvd,
                                 wr_req_data };
                             send_valid   <= 1'b1;
                             wr_req_ready <= 1'b1;

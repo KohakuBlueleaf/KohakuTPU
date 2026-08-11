@@ -52,6 +52,12 @@
 //   [94:87]   dflags  DRAIN: copied into the descriptor's flags byte
 //   [86:83]   dack_y  DRAIN: where the receiver sends its completion,
 //   [82:79]   dack_x         0 meaning back to this cluster
+//   [78:77]   dmesh   DRAIN: the destination MESH, meaningful only when dfin is
+//   [76:69]   dfin           nonzero. dfin is {fin_y, fin_x} in that mesh, and
+//                            nonzero is what makes the drain remote -- (0,0) is
+//                            a mesh corner and can hold no endpoint. Zero in
+//                            every encoding written before the interlink, which
+//                            reads as a local drain. docs/interlink/boundary.md
 //
 // One L1 entry is four consecutive 256-bit operand words -- the four K-slices
 // of one row group (A) or column group (B) -- so FILL asks for entries and
@@ -78,6 +84,9 @@ module mx_cluster_cu #(
     parameter integer RECV_DEPTH = 64,
     parameter integer MODEL      = 0,
     parameter         L1_PRIM    = "distributed",
+    // The accumulator's primitive, separate from L1's: it is already
+    // READ_LAT=2, so "ultra" costs no pipeline change here.
+    parameter         TILE_PRIM  = "block",
     // The receive queue is 288 x RECV_DEPTH and the largest single item in
     // noc_cu_base. Block RAM by default; a knob so the trade can be measured.
     parameter         RECV_MEM   = "block"
@@ -247,6 +256,8 @@ module mx_cluster_cu #(
     wire [3:0]  i_dsty  = inst_flit[106 -: 4];
     wire [7:0]  i_dbuf  = inst_flit[102 -: 8];
     wire [7:0]  i_dflag = inst_flit[94 -: 8];
+    wire [1:0]  i_dmesh = inst_flit[78 -: 2];
+    wire [7:0]  i_dfin  = inst_flit[76 -: 8];
     // Its own field rather than borrowed bits of `dflags`, which is copied into
     // the descriptor's flags byte verbatim and has to stay that.
     wire [3:0]  i_dacky = inst_flit[86 -: 4];
@@ -284,6 +295,8 @@ module mx_cluster_cu #(
     reg  [3:0]   dstx_r, dsty_r;
     reg  [7:0]   dbuf_r, dflag_r;
     reg  [3:0]   dackx_r, dacky_r;
+    reg  [1:0]   dmesh_r;
+    reg  [7:0]   dfin_r;
     reg          acc_r, emit_r, fuse_r;
     wire         sweep_busy;
     // mx_acu_fp's REUSE_MIN. A tiling this size or larger cannot revisit a
@@ -335,7 +348,8 @@ module mx_cluster_cu #(
     wire          peer_open;
 
     mx_cluster_node #(.TILES(TILES), .GA(GA), .GB(GB),
-                      .ACC_MW(ACC_MW), .MODEL(MODEL), .L1_PRIM(L1_PRIM)) u_node (
+                      .ACC_MW(ACC_MW), .MODEL(MODEL), .L1_PRIM(L1_PRIM),
+                      .TILE_PRIM(TILE_PRIM)) u_node (
         .clk(clk), .rst(!resetn),
         .l1_we(l1_we), .l1_sel(l1_sel), .l1_addr(l1_addr), .l1_data(l1_data),
         .gemm_start(gemm_start), .gemm_gm(gm_r), .gemm_gn(gn_r),
@@ -670,6 +684,7 @@ module mx_cluster_cu #(
             dnode_r <= 1'b0; dstx_r <= 4'd0; dsty_r <= 4'd0;
             dbuf_r <= 8'd0; dflag_r <= 8'd0;
             dackx_r <= 4'd0; dacky_r <= 4'd0;
+            dmesh_r <= 2'd0; dfin_r <= 8'd0;
             gemm_start <= 1'b0; drain_start <= 1'b0; drain_n <= 16'd0;
             gm_r <= 8'd1; gn_r <= 8'd1; nk_r <= 8'd1; anch_r <= 8'd0;
             // matches gm_r = gn_r = 1, i.e. one sub-tile: NOT wide
@@ -700,6 +715,7 @@ module mx_cluster_cu #(
                 dnode_r <= i_dnode; dstx_r <= i_dstx; dsty_r <= i_dsty;
                 dbuf_r  <= i_dbuf;  dflag_r <= i_dflag;
                 dackx_r <= i_dackx; dacky_r <= i_dacky;
+                dmesh_r <= i_dmesh; dfin_r  <= i_dfin;
                 emit_r <= i_emit; fuse_r <= i_fuse;
                 peer_r <= i_peer; npeer_r <= i_npeer; preq_r <= i_preq;
                 inst_ready <= 1'b1;
@@ -842,6 +858,8 @@ module mx_cluster_cu #(
     reg [3:0]            w_dx, w_dy;
     reg [7:0]            w_dbuf, w_dflag;
     reg [3:0]            w_ackx, w_acky;
+    reg [1:0]            w_mesh;
+    reg [7:0]            w_fin;
 
     localparam [1:0] W_IDLE = 2'd0, W_REQ = 2'd1, W_DATA = 2'd2;
 
@@ -889,6 +907,14 @@ module mx_cluster_cu #(
     wire [3:0]           w_dty = w_node ? T_CU_DATA : T_MEM_WR_REQ;
     wire [3:0]           w_dtd = w_node ? T_CU_DATA : T_MEM_WR_DATA;
     wire [7:0]           w_dlen = {{(8-WBW-1){1'b0}}, (w_len - 1'b1)};
+    // A node drain aimed at another mesh. `txn` is a constant tag on this path
+    // and CU_DATA has no other use for it, so it carries the final coordinate;
+    // the mesh id goes in the reserved header bits. Both are on the descriptor
+    // AND every payload flit, because MAG's encapsulator is stateless and the
+    // routers interleave bursts from different senders at its port.
+    wire                 w_rem  = w_node && (w_fin != 8'd0);
+    wire [7:0]           w_dtxn = w_rem ? w_fin : 8'h02;
+    wire [2:0]           w_drsv = w_rem ? {1'b1, w_mesh} : 3'b000;
     wire [255:0]         w_desc =
         w_node ? {w_dbuf, w_base[20:5] + w_sfirst, w_dlen, w_dflag,
                   w_acky, w_ackx, 208'd0}
@@ -904,6 +930,7 @@ module mx_cluster_cu #(
             w_node <= 1'b0; w_dx <= 4'd0; w_dy <= 4'd0;
             w_dbuf <= 8'd0; w_dflag <= 8'd0;
             w_ackx <= 4'd0; w_acky <= 4'd0;
+            w_mesh <= 2'd0; w_fin <= 8'd0;
             for (wbi = 0; wbi < 2*WBURST; wbi = wbi + 1) w_buf[wbi] <= 256'd0;
         end else begin
             if (w_take) w_valid <= 1'b0;
@@ -916,6 +943,7 @@ module mx_cluster_cu #(
                 w_dx    <= dstx_r;   w_dy    <= dsty_r;
                 w_dbuf  <= dbuf_r;   w_dflag <= dflag_r;
                 w_ackx  <= dackx_r;  w_acky  <= dacky_r;
+                w_mesh  <= dmesh_r;  w_fin   <= dfin_r;
             end
 
             // Collection is not a state any more -- it runs every cycle there
@@ -943,15 +971,15 @@ module mx_cluster_cu #(
             W_REQ: if (w_free) begin
                 w_flit <= { w_ddx, w_ddy,
                             CU_X[POS_WIDTH-1:0], CU_Y[POS_WIDTH-1:0],
-                            w_dty, 8'h02, 1'b0, 3'b000, w_desc };
+                            w_dty, w_dtxn, 1'b0, w_drsv, w_desc };
                 w_valid <= 1'b1;
                 w_st    <= W_DATA;
             end
             W_DATA: if (w_free) begin
                 w_flit <= { w_ddx, w_ddy,
                             CU_X[POS_WIDTH-1:0], CU_Y[POS_WIDTH-1:0],
-                            w_dtd, 8'h02,
-                            (w_send + 1'b1 == w_len), 3'b000,
+                            w_dtd, w_dtxn,
+                            (w_send + 1'b1 == w_len), w_drsv,
                             w_buf[{w_sb, w_send[WBW-1:0]}] };
                 w_valid <= 1'b1;
                 if (w_send + 1'b1 == w_len) w_st <= W_IDLE;

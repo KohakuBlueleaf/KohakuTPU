@@ -77,6 +77,17 @@ module noc_orchestrator #(
     output reg  [DATA_WIDTH-1:0]   aux_cfg_data,
     input  wire [DATA_WIDTH-1:0]   aux_stat,
 
+    // A READ window to match the write one: 16 words a client can present
+    // without this module knowing what they mean. `aux_stat` alone is one
+    // address, which was enough for the mover and is not enough for anything
+    // that reports per-link state.
+    //
+    // Reads here returned zero before this window existed, and return zero
+    // still when `aux_stat_q` is tied off -- so a bitstream built without a
+    // client behaves exactly as every bitstream before it did.
+    output wire [3:0]              aux_stat_sel,
+    input  wire [DATA_WIDTH-1:0]   aux_stat_q,
+
     // ---- NoC local port ----
     output reg  [FLIT_WIDTH-1:0]   noc_out_data,
     output reg                     noc_out_valid,
@@ -98,6 +109,7 @@ module noc_orchestrator #(
                       A_PROG_KICK = 16'h0050, A_PROG_STAT = 16'h0058,
                       A_PROG_CRED = 16'h0060, A_PROG_BASE = 16'h0068,
                       A_SIG_DONE  = 16'h0070, A_AUX_STAT  = 16'h0078,
+                      A_AUX_STATW = 16'h0080,
                       A_TX_FLIT0  = 16'h0100, A_TX_KICK   = 16'h0140,
                       A_TX_STATUS = 16'h0148,
                       A_RX_FLIT0  = 16'h0180, A_RX_POP    = 16'h01C0,
@@ -465,6 +477,8 @@ module noc_orchestrator #(
     wire [2:0]  rx_word = rsel[5:3];
     wire        is_rx_fl = (rsel >= A_RX_FLIT0) && (rsel < A_RX_FLIT0 + FLIT_WORDS*8);
     wire        is_node  = (raddr[15:12] == 4'h1);
+    wire        is_auxst = (rsel >= A_AUX_STATW) && (rsel < A_AUX_STATW + 16*8);
+    assign      aux_stat_sel = rsel[6:3];
 
     wire [PAD_WIDTH-1:0] rx_padded = { {(PAD_WIDTH-FLIT_WIDTH){1'b0}}, rx_head };
 
@@ -473,6 +487,8 @@ module noc_orchestrator #(
         reg_rd = {DATA_WIDTH{1'b0}};
         if (is_rx_fl)
             reg_rd = rx_padded[rx_word*DATA_WIDTH +: DATA_WIDTH];
+        else if (is_auxst)
+            reg_rd = aux_stat_q;
         else case (rsel)
             A_CTRL:      reg_rd = ctrl_reg;
             A_CAPS:      reg_rd = caps_word;

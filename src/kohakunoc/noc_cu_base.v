@@ -215,6 +215,13 @@ module noc_cu_base #(
                 in_flight <= 1'b1;
                 inst_pop  <= 1'b1;
             end
+            // A datapath must not raise `exec_done` in the same cycle it
+            // raises `inst_ready`: this arm would win, in_flight would drop,
+            // and the new instruction's own completion would find it low and
+            // never be queued. No CU does it -- cu_alu, vec_cu and
+            // mx_cluster_cu all leave a cycle between -- and cu_base_tb's
+            // probe counts accepted, exec_done and FIFO writes to keep it
+            // that way.
             if (exec_done && in_flight) in_flight <= 1'b0;
         end
     end

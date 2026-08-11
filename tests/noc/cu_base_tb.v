@@ -52,12 +52,19 @@ module cu_base_tb;
         end
     endtask
 
-    // count every CU_SIGNAL the CU emits, and accumulate its arg so a lost
-    // signal is distinguishable from a duplicated one
+    // Count every CU_SIGNAL the CU DELIVERS, and accumulate its arg so a lost
+    // signal is distinguishable from a duplicated one.
+    //
+    // `!out_busy` is the whole handshake: noc_cu_base holds a flit asserted
+    // until a cycle the receiver is not busy (noc_cu_base.v s"Hold the flit"),
+    // so counting `out_valid` alone counts one delivered signal once per cycle
+    // it waited -- which is 198 for a signal held across this bench's first
+    // 200-cycle stall, and reads as 198 duplicated signals.
     integer sig_count = 0;
     reg [63:0] sig_arg_sum = 0;
     always @(posedge clk) begin
-        if (resetn && out_valid && out_data[FW-4*PW-1 -: 4] == T_CU_SIGNAL) begin
+        if (resetn && out_valid && !out_busy &&
+            out_data[FW-4*PW-1 -: 4] == T_CU_SIGNAL) begin
             sig_count   <= sig_count + 1;
             sig_arg_sum <= sig_arg_sum + out_data[247 -: 32];
         end
@@ -77,9 +84,23 @@ module cu_base_tb;
         end
     endtask
 
+    // The RTL's own view, so a discrepancy names which side lost the signal.
+    // Both failures this bench once reported were on THIS side: it counted
+    // valid-cycles rather than transfers, and it drove `out_busy` blockingly
+    // from a process woken by the same edge the counter samples on -- so the
+    // count depended on process order within one timestep.
+    integer n_wr = 0, n_done = 0, n_acc = 0;
+    always @(posedge clk) if (resetn) begin
+        if (dut.base.u_sig.wr_en)             n_wr   <= n_wr + 1;
+        if (dut.exec_done)                    n_done <= n_done + 1;
+        if (dut.inst_valid && dut.inst_ready) n_acc  <= n_acc + 1;
+        if (dut.exec_done && dut.inst_ready)
+            $display("  FAIL the datapath raised exec_done and inst_ready together; noc_cu_base drops in_flight and the new instruction's completion is never queued");
+    end
+
     integer i, expect_sum;
     initial begin
-        in_data = 0; in_valid = 0; out_busy = 0;
+        in_data = 0; in_valid = 0; out_busy <= 0;
         repeat (8) @(posedge clk);
         resetn = 1;
         repeat (4) @(posedge clk);
@@ -88,7 +109,7 @@ module cu_base_tb;
         $display("--- 1. link busy while 8 instructions retire ---");
         // op 0 takes 1 cycle, so completions arrive far faster than a blocked
         // link can drain them. Every one must still be delivered.
-        out_busy = 1'b1;
+        out_busy <= 1'b1;
         expect_sum = 0;
         for (i = 0; i < 8; i = i + 1) begin
             push_inst(8'h10 + i[7:0], (i == 7), 8'd0, 32'd100 + i, 24'd1);
@@ -98,8 +119,11 @@ module cu_base_tb;
         chk(retired, 32'd8, "instructions retired");
         chk(sig_count, 32'd0, "signals sent while link busy");
 
-        out_busy = 1'b0;
+        out_busy <= 1'b0;
         repeat (300) @(posedge clk);
+        chk(n_acc,  32'd8, "instructions accepted by the datapath");
+        chk(n_done, 32'd8, "completions raised by the datapath");
+        chk(n_wr,   32'd8, "completions queued by the framework");
         chk(sig_count, 32'd8, "signals after link freed");
         // the last one is a batch report, so it carries the program id, not a
         // result -- account for that when checking the args survived
@@ -112,10 +136,10 @@ module cu_base_tb;
             push_inst(8'h20 + i[7:0], (i == 23), i[7:0] % 8'd7, 32'd7 + i, 24'd3);
         // hold busy in bursts while the program runs
         repeat (12) begin
-            out_busy = 1'b1;  repeat (7) @(posedge clk);
-            out_busy = 1'b0;  repeat (3) @(posedge clk);
+            out_busy <= 1'b1;  repeat (7) @(posedge clk);
+            out_busy <= 1'b0;  repeat (3) @(posedge clk);
         end
-        out_busy = 1'b0;
+        out_busy <= 1'b0;
         repeat (600) @(posedge clk);
         chk(retired,   32'd32, "instructions retired, total");
         chk(sig_count, 32'd24, "signals from the stuttered program");
@@ -135,7 +159,7 @@ module cu_base_tb;
         end
         repeat (100) @(posedge clk);
         chk(sig_count, 32'd0, "no signals escaped a busy link");
-        out_busy = 1'b0;
+        out_busy <= 1'b0;
         repeat (800) @(posedge clk);
         // whatever it accepted, it must eventually signal for all of it
         chk(sig_count, retired - 32'd32, "one signal per accepted instruction");
