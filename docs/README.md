@@ -1,146 +1,194 @@
-# Documentation
+---
+title: KohakuAccel
+summary: A framework for building FPGA accelerators around a compute unit you design.
+tags:
+  - overview
+  - architecture
+---
 
-Design intent and reasoning for KohakuTPU. Each subsystem has a folder mirroring
-its source package; the documents at the top level are the ones that span all of
-them, and `isa/` does the same — it cuts across the packages rather than
-mirroring one.
+# KohakuAccel
 
-```
-docs/
-├── arch-design.md      the machine as a whole
-├── system.md           the machine actually running, end to end
-├── perf.md             where the cycles go, at every shape and cluster count
-├── optimization.md     every lever, taken or shelved, with the verdict
-├── dataflow.md         the signal-level before/after for the levers taken
-├── limits.md           what this machine cannot do, and which of those are bugs
-├── simulation.md       how to run and write benches (all suites)
-│
-├── isa/                every instruction set, host down to accumulator
-├── driver/             the compiler and runtime -- src/ktpu/
-├── interlink/          four meshes, one machine -- the mesh-of-meshes
-├── compute/    <->  src/kohakutpu/     what a compute unit does
-├── noc/        <->  src/kohakunoc/     how units talk to each other
-├── mas/        <->  src/kohakumas/     how units reach memory
-├── memory-mover/                       DRAM-to-DRAM, and its own ISA
-├── general_cores/                      the scalar side, and crossing SLRs
-└── axi/        <->  src/kohakuaxi/     how the host talks to the machine
-```
+A framework for building FPGA accelerators.
 
-## Start here
+You write a compute unit. KohakuAccel is everything else: DRAM and its
+controllers, a memory agent that turns descriptors into transfers, an on-chip
+network that carries instructions to your units and results back, host
+interface, floorplanning across SLRs, clock domains, and the build and
+measurement flow that gets it to close timing.
 
-- **[Architecture](arch-design.md)** — the machine top to bottom, how a matmul
-  flows through it, and every headline number in one place. Read this first.
-- **[Instruction sets](isa/README.md)** — the five ISAs and one worked pass from
-  57 host writes to 320 accumulator commands. **This folder is the most accurate
-  description of what the machine does today**; where anything else disagrees
-  with it, it is right and the other document is behind.
-- [Where the cycles go](perf.md) — **§0 is the current measured rate** at every
-  shape and cluster count; the rest is the diagnosis that got it there
-- [1×5, 2×2 and the driver bench](system.md) — the machine actually running
-- [Pipeline, cycles and resources](compute/timing.md) — every latency and
-  measured figure for the compute path
+## What kind of framework
 
-## [Instruction sets](isa/README.md)
+The word "framework" is load-bearing, so be precise about which one:
 
-Five levels, each narrower than the one above and none able to express the one
-below, which is why there are five rather than one.
+| | is a framework for | serves people who |
+|---|---|---|
+| Vitis HLS | turning C into RTL | do **not** want to write RTL |
+| IP catalogues | assembling vendor blocks | want someone else's datapath |
+| soft-processor overlays | running software on fabric | want a CPU on an FPGA |
+| **KohakuAccel** | **building an accelerator around a datapath you designed** | **want to write the interesting RTL and nothing else** |
 
-- [Control program](isa/orchestrator.md) — host → `main_orch`: `WR`, `POLL`, `DONE`
-- [Dispatch registers](isa/agent.md) — orchestrator → agent: stage, kick, credit
-- [CU instructions](isa/cluster.md) — agent → cluster: `FILL`, `GEMM`, `DRAIN`
-- [Accumulator ops](isa/acu.md) — manager → ACU: `LOAD`, `ADD`, `EMIT`
-- [Memory protocol](isa/memory.md) — CU ↔ MAG: read, write, and the quantiser
-- [The driver-side contract](isa/kernel.md) — how a GEMM of arbitrary size
-  becomes passes and rounds, and why operands are stored tile-major
-- [Vector ISA](isa/vector.md) — **design**: agent → vector core, and the first
-  instruction set in the machine that can branch
+If you want to avoid writing RTL, use HLS. KohakuAccel assumes the datapath is
+the part you care about, and that writing a DDR controller, a DMA engine, an
+on-chip network, a dispatch mechanism and a driver for the fifth time is not.
 
-## [Compute](compute/README.md) — `src/kohakutpu/`
+## Four kinds of thing
 
-- [Tensor Core ISA](compute/tensor-isa.md) — the **agreed design** for tensor descriptors, L1/L2, and convolution as a memory request. Not what is built; [isa/cluster.md](isa/cluster.md) is
-- [Matmul unit](compute/matmul.md) — **current design**: tensor CU, cluster chain, accumulator network
-- [Matmul circuit](compute/matmul-circuit.md) — DSP48E2 packing and cascade
-- [Matmul implementation](compute/matmul-impl.md) — built, verified, measured
-- [Accumulator](compute/accumulator.md) — precision and cost vs mantissa width, and the 85 → 312 MHz timing history
-- [Vector core](compute/vector-core.md) — the **ALU is built**: E8M15, 3 DSP,
-  324.8 MHz, correctly-rounded FMA and full-rate exp2/log2/inv/rsqrt. The core,
-  register file, L1 and split-K epilogue around it are design
-- [Vector bring-up](compute/vector-bringup.md) — **design**: 4 cores, 4 MAG
-  ports, no matmul in the machine at all, and the driver / codegen / cost model
-  that gets one running before the core RTL exists
-- [Arithmetic](compute/arithmetic.md) — FP8/FP16/FP24 constructions, division, log, exp
-- [DSP usage](compute/dsp.md) — DSP48E2 modes, pipelining, operand packing
-- [Costs](compute/costs.md) — measured resource cost and throughput, for the **superseded** FP8→FP12 units
-- [Controller](compute/controller.md) — superseded by [isa/cluster.md](isa/cluster.md)
+"You supply this, we supply that" is too coarse to build against. Everything in
+KohakuAccel is one of four kinds, and every page in this tree says which:
 
-## [NoC](noc/README.md) — `src/kohakunoc/`
+| | what it is | can you change it |
+|---|---|---|
+| **fixed protocol** | flit format, compute-unit port handshake, memory request and response encoding, credit and retry, cross-mesh encapsulation | **No.** Change it and you are not on the framework any more. |
+| **customizable addon** | ships working, *built* to be swapped: the in-MAG transform stage, in-MAG staging, the NoC-endpoint L2 adapter, DRAM-port packing | **Yes** — that is what the slot is for. The default is a starting point, not a decision. |
+| **convention** | how to design a thing well, with worked examples: L1 fill and response tagging, unit-to-unit messaging, how to spend your instruction bits | **Your call.** Some are forced in practice because MAG hands you data in a shape; the rest are advice. Each one says which. |
+| **yours** | the datapath, the memory structure, what the instructions mean, pipeline depth | **Entirely.** |
 
-- [Specification](noc/spec.md) — packet format, routing, CU interface, AXI interworking
-- [CU framework](noc/cu-framework.md) — what every compute unit must have, and what it gets free
-- [Resource budget](noc/resource-budget.md) — measured NoC cost, and what is left for compute
-- [Simulation](noc/simulation.md) — mesh, orchestrator, multi-CU benches
+A convention is not a specification and not a default implementation. It is
+"here is how we did it, here is why, here is what breaks if you deviate."
+Mistaking a convention for a contract wastes effort obeying a suggestion;
+mistaking a contract for a convention produces traffic that routes plausibly
+and means something else. Every page says which it is talking about.
 
-## [MAG](mas/README.md) — memory access gateway — `src/kohakumas/`
+## How much is actually yours
 
-- [Specification](mas/spec.md) — the adapter shape, **built**; address slicing, TLB and bandwidth sizing, **design**
-- [Memory system](mas/cache.md) — **design**: two caches, and why only one has tags
-- [Driver interface](mas/driver.md) — superseded by [isa/](isa/README.md); kept for the measured concurrency numbers
+More than the picture suggests. The two compute units in the reference
+instance share the port and nothing else:
 
-## [The interlink](interlink/README.md) — four meshes, one machine
+| | matrix cluster | vector core |
+|---|---|---|
+| L1 width | 928 bit, split A operand / B operand | 256 bit |
+| L1 count | 4 core + 1 accumulator tile | 1, plus a separate instruction memory |
+| read latency | 1 for L1, 2 for the accumulator | parameterised |
+| register file | none | three mirrored RAMs for three read ports |
 
-A mesh spanning three SLRs measured a worst path of **4.6 ns that was 98.3%
-routing with zero logic levels**, so the machine is four independent meshes, one
-per SLR, each with its own DDR4, joined MAG to MAG.
+Same project, same mesh, same port. 928 bits against 256; five memories
+against two. There is no framework-mandated L1, because there could not be
+one.
 
-- [README](interlink/README.md) — why four, and why MAG is the boundary
-- [Paths](interlink/paths.md) — the four cross-mesh paths, two built and two not
-- [Boundary](interlink/boundary.md) — **what a driver must not assume**: how to
-  tell one mesh from four, and why every new field reads zero on old silicon
-- [Topology](interlink/topology.md) — ports, the second routing layer, the
-  measured SLR floorplan, and the shipped mesh maps
-- [Protocol](interlink/protocol.md) — packet format, credits, deadlock
-- [Transfers](interlink/transfers.md) — the three kinds and who starts them
+What *is* fully defined is **how you receive and send**. That is the trade:
+you design the whole unit, and you never have to work out how to connect it.
+The port is given, the protocol across it is given, and the conventions and
+worked examples show what a well-behaved unit looks like on the wire.
 
-## [Driver and compiler](driver/README.md) — `src/ktpu/`
+Beyond the unit, the framework carries DDR4 controllers, AXI fabric and host
+DMA; the memory agent that turns descriptors into streamed operands; dispatch
+from host to unit and completion back; SLR floorplanning, clock domains and
+runtime frequency control; and the out-of-context measurement flow, timing
+closure practice and bringup path that get it onto real silicon.
 
-- [The stack](driver/README.md) — the three IR levels and why not MLIR
-- [IR](driver/ir.md), [scheduling](driver/scheduling.md),
-  [DSL](driver/dsl.md), [tinygrad](driver/tinygrad.md)
-- [Hardware API](driver/hardware-api.md) — the transport contract, the four
-  backends, and the guard that is not a cap
-- [Simulators](driver/simulators.md) — what runs a schedule without hardware
+## What is actually on the die
 
-## Other subsystems
+    host (PCIe)
+      |
+    XDMA  --------------------------------.
+      |                                    |
+    AXI fabric (kohakuaxi) ----------------+---- JTAG-AXI (debug)
+      |                |                   |
+    DDR4 x N        control              instruction dispatch
+      |                                     |
+    +--------------------------------------------------------+
+    |  MAG (kohakumas)   memory agent, one per mesh           |
+    |    descriptors in -> DRAM traffic -> streamed responses |
+    |    plus two addon slots: transform, staging            |
+    +--------------------------------------------------------+
+      |
+    +--------------------------------------------------------+
+    |  mesh (kohakunoc)                                       |
+    |                                                         |
+    |    router --- router        each router carries local   |
+    |      |          |           ports; endpoints hang off   |
+    |    router --- router        them                        |
+    |      |                                                  |
+    |    [ L2 adapter ]    <- addon, optional                 |
+    |    [ compute unit ]  <- YOURS, inside and out           |
+    +--------------------------------------------------------+
+      |
+    interlink -> other meshes, other SLRs
 
-- [Memory mover](memory-mover/README.md) — DRAM to DRAM without the NoC
-- [General cores and SLRs](general_cores/README.md) — the scalar side, and
-  [crossing SLRs](general_cores/slr.md), which is where the device's measured
-  facts live
-- [What this machine cannot do](limits.md) — the op-set gaps, each marked HW,
-  SW or WORKAROUND
+A **ship** is one complete assembly of the above, floorplanned for a specific
+device. A device image may hold several meshes, one per SLR, joined by the
+interlink.
 
-## AXI — `src/kohakuaxi/`
+The compute unit is the only block you have to write. The addon slots are
+places you *may* write, with something working already in them.
 
-Also home to `main_orch.v`, the host-facing half of the orchestrator; its ISA and
-register map are [isa/orchestrator.md](isa/orchestrator.md).
+## Does your workload fit
 
-- [Bring-up](axi/bringup.md) — why a slave can pass its own testbench and hang on hardware
-- [Simulation](axi/simulation.md) — hostile-master slave bench, burst-legality master bench
+The framework assumes a shape. It fits when:
 
-## Making it faster
+- Work decomposes into units that stream operands in, compute, and stream
+  results out.
+- A unit's working set fits in on-chip memory for the duration of a step.
+- Addresses are known ahead of time — expressible as descriptors, not
+  discovered by following pointers.
+- Units are independent within a step; they synchronise between steps, not
+  inside one.
 
-- [Optimization](optimization.md) — every lever considered, with a verdict:
-  taken, deferred, rejected, or **§J shelved by measurement** with the condition
-  that would revive it
-- [Dataflow](dataflow.md) — the signal-level before/after for the levers taken
+It does not fit when you need pointer chasing or data-dependent addressing,
+tight low-latency coupling *between* units (write one larger unit instead),
+cache coherence between units, or kernels small enough that dispatch dominates
+the work.
 
-## Process
+Saying no here is cheaper than finding out after floorplanning.
 
-- [Simulation setup](simulation.md) — the tiered `check.py` loop, tools, bench
-  conventions, and the tool traps that have cost real time
+## The tree
 
-```
-   python scripts/py/check.py fast     ~5 s     run this after every edit
-   python scripts/py/check.py unit     ~70 s    before believing anything works
-   python scripts/py/check.py full     ~6 min   before calling something done
-```
+**[arch/](arch/)** — what exists and how it maps to real circuit. Start with
+[arch/README](arch/README.md) for the macro view, then the system that concerns
+you: [noc](arch/noc/), [mas](arch/mas/), [ship](arch/ship/) for assembly,
+[physical](arch/physical/) for floorplan and clocking, and
+[axi](arch/axi.md) for the boundary to everything outside.
+
+Each system's README states what it owns, which of the four kinds its parts
+are, what it does *not* own and which neighbour takes over, and where today's
+source disagrees with the decomposition. `axi` is a single page because that
+boundary is closed; the others carry pages beneath them.
+
+**[integrate/](integrate/)** — the surface you build against. Which of the four
+kinds each thing is, how to write a compute unit, the conventions and the
+examples behind them, how to spend your instruction bits, how to fill an addon
+slot, how to choose a mesh, how the software stack plugs in.
+
+**[spec/](spec/)** — normative contracts, and only those. Signals, flit fields,
+encodings, parameters. A unit that satisfies these works; one that does not,
+does not. Anything you are free to ignore is a convention and lives in
+[integrate/](integrate/), not here.
+
+**[workflow/](workflow/)** — the practice: build, measure out of context, close
+timing, simulate, bring up, debug. Hardware has no `pip install`; this is the
+part that is genuinely laborious and where the framework saves the most time.
+
+**[projects/](projects/)** — accelerators built on the framework, at their own
+level. [KohakuTPU](projects/kohakutpu/) is the reference instance: an MXFP7
+tensor accelerator that exercises every part of the framework.
+
+**[notes/](notes/)** — design rationale and open research. Why decisions went
+the way they did, and what is still undecided.
+
+## Numbers
+
+Measurements live with the project that produced them, never in framework docs.
+Any Fmax, LUT count or utilisation figure describes **one accelerator on one
+part** — for the reference instance, `xcvu13p-fhgb2104-2L-e`. Those numbers are
+evidence the framework closes on real silicon. They are not specifications of
+it, and a framework doc that quotes them as if they were is wrong.
+
+## Source layout
+
+    src/
+      kohakuaxi/   AXI utilities: fabric, bridges, address decode
+      kohakumas/   Memory agent: descriptors, DRAM ports, dispatch
+      kohakunoc/   Mesh: router, links, flit protocol, compute-unit port
+      common/      Shared primitives: FIFOs, named memory wrappers
+      kohakutpu/   KohakuTPU's compute units — a project, not the framework
+      synth_top/   Ship assemblies, per device
+      ktpu/        Python driver and compiler stack
+
+    docs/              this tree
+    kohaku_npu_docs/   pre-reframing snapshot, kept verbatim
+    ref/               cloned reference frameworks, git-ignored
+
+## House rule
+
+If a page says "comprehensive", "powerful", or "seamless", it is out of date.
+Say what it does, what it costs, and where it stops.
