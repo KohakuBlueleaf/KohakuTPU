@@ -1,0 +1,177 @@
+---
+title: KohakuTPU
+summary: An MXFP7 tensor accelerator on xcvu13p-fhgb2104-2L-e — the reference instance, and the proof the framework closes on real silicon.
+tags:
+  - kohakutpu
+  - overview
+---
+
+# KohakuTPU
+
+A tensor accelerator built on KohakuAccel. Two compute units — a matmul cluster
+and a vector core — a number format designed around a DSP48E2, an instruction set
+spent on that datapath, and a compiler that plans against the machine's own
+capacities.
+
+**Device: `xcvu13p-fhgb2104-2L-e`.** Every measurement in these pages was taken on
+that part, and they describe *this* accelerator rather than the framework
+([results.md](results.md) §1).
+
+KohakuTPU is the framework's worked example. It is the reason the framework's
+interfaces are the shape they are, it is where a second project looks to see how
+the first one solved something, and it is the evidence that a compute unit written
+against the port contract actually closes timing on a real device.
+
+---
+
+## 1. What it computes
+
+`C = A · B` in **MXFP7**: a 7-bit signed significand with an E5M3 scale shared by
+a block of 32, multiplied inside DSP48E2s and reduced as exact integers, with
+floating point reached once per 32 MACs. Operands and results in memory are FP16;
+the internal format is never visible to software.
+
+| | |
+|---|---|
+| element format | int7 significand + E5M3 scale per 32 along K |
+| tensor CU | 4x8x4 — 64 DSP48E2, 128 MAC/cycle |
+| cluster | 4 tensor CUs + 1 accumulator — 4x32x4, **512 MAC/cycle** |
+| accumulate | `S1 E7 M14` (FP22), one add per 32 multiplies |
+| supported shape | `M = 4a`, `N = 4b`, `K = 32c` |
+| vector core | 16 lanes of E8M15, three DSPs each, four transcendentals at full rate |
+
+The whole machine is **AMP FP16-MXFP7**, so the throughput unit is FLOPS rather
+than IOPS: the integer datapath is an implementation of a floating-point multiply
+whose exponent has been factored out of the block.
+
+## 2. What it demonstrates
+
+**That a compute unit can be almost all datapath.** Every MAC is 0 LUT, 0 FF, 1
+DSP — the multiply and the whole K=32 reduction happen inside the DSPs. Against
+the FP8 design it replaced, the same 128 MACs cost 1,188 LUT instead of 12,731,
+and essentially all of the difference is accumulation leaving the fabric
+([results.md](results.md) §7).
+
+**That the framework's port contract is enough to feed one.** A cluster attaches
+with a single mesh port. It works because the resident output tile creates enough
+operand reuse to bring the demand under one word per cycle — which is an
+arithmetic property of the datapath, not a concession the framework made
+([accumulator.md](accumulator.md) §1).
+
+**That the layering pays for itself.** One `GEMM` flit becomes 256 accumulator
+commands; one `FILL` flit becomes 128 response flits; four flits become a whole
+matmul ([isa.md](isa.md) §8).
+
+**That the thing that limits a dataflow machine is usually not what it looks
+like.** Three separate times a measurement pointed at bandwidth and was wrong, and
+the machine went from 6.8% of its own datapath peak to 87.6% without widening a
+single bus ([results.md](results.md) §8).
+
+### 2.1 Two units, one port — and nothing else in common
+
+This is the project's strongest single piece of evidence about the framework, and
+it is an argument about *flexibility* rather than about fit. KohakuTPU contains
+two compute units. They are the same shape at exactly one place: the mesh port.
+
+| | matmul cluster | vector core |
+|---|---|---|
+| operand memory width | **928 bits** | **256 bits** |
+| operand memories | **two** (`u_l1a`, `u_l1b` — A and B are separate RAMs) | **one** flat scratchpad |
+| memories in the unit | **five** L1-class RAMs: two per manager plus each node's own accumulator tile | operand L1, an instruction memory in distributed LUTRAM, and a register file mirrored three times to synthesise three read ports |
+| read latency | 1 on L1, **2** on the accumulator tile | 1, and the walk derives from the primitive rather than assuming it |
+| what an instruction is | a macro-op — one flit becomes hundreds of internal commands | a program — words loaded into instruction memory, then entered |
+| element format | int7 with a shared block scale | E8M15 |
+
+**Both plug into the identical mesh port.** The framework fixed *how a unit
+receives work and returns results* and nothing else; everything behind that
+boundary diverged completely, down to the number of memories, their widths, their
+primitives and their latencies.
+
+So none of the structure on these pages should be read as "the way a compute unit
+is built". A 928-bit L1 with a separate A and B RAM is what a DSP cascade eating
+eight operand words per cycle needs; a 256-bit flat scratchpad is what a 16-lane
+SIMD core needs. **They are two answers, not one pattern**, and the fact that both
+answers reached the mesh through the same six signals is what the framework is
+claiming.
+
+## 3. Which framework features it exercises
+
+| framework | how KohakuTPU uses it |
+|---|---|
+| [compute-unit port](../../spec/compute-unit-port.md) | two unit types on the same contract — a cluster and a vector core, one with a macro-op and one with a program |
+| [instruction payload](../../spec/instruction-encoding.md) | three cluster opcodes in a 256-bit payload; 32-bit vector words, eight per payload, inside a load-and-run envelope |
+| [flit format](../../spec/flit-format.md) | operand words sized so 32 int7 elements plus 4 scales fill the payload exactly |
+| [memory protocol](../../spec/memory-protocol.md) | streaming descriptors, out-of-order tagged responses, burst writes, and a per-request quantise flag |
+| [memory agent](../../arch/mas/README.md) | KohakuTPU's own quantiser sits in its read path and on its upload path |
+| [mesh](../../arch/noc/README.md) | unit-to-unit bulk transfer, used for peer accumulation at full accumulator width |
+| [ship assembly](../../arch/ship/README.md) | four independent meshes, one per SLR, joined by the interlink |
+| [measurement flow](../../workflow/measure.md) | every figure in [results.md](results.md) |
+
+### 3.1 Which category is which
+
+The tree distinguishes four kinds of thing, and a project page is only useful if
+it says which kind each of its subjects is. For KohakuTPU:
+
+| category | meaning | what falls here |
+|---|---|---|
+| **fixed protocol** | cannot be changed by a project | the mesh port's six signals and its retry flow control; the flit header; how an instruction arrives and a completion returns; the memory request/response protocol |
+| **customizable addon** | ships working, meant to be swapped | **the MXFP7 quantiser** — KohakuTPU's number format plugged into the memory agent's transform stage ([number-format.md](number-format.md) §5); staging or an L2 in the same agent, if it is ever built ([notes/cache/](../../notes/cache/README.md)) |
+| **convention** | how to design a thing — some forced by the agent's design, some free | operands stored tile-major so a fill is one instruction; K swept outermost inside a sweep and innermost across chunks; rounds cut against three limits at once; naming a memory primitive rather than inferring it |
+| **yours** | the project's own, top to bottom | **almost everything else on these pages**: the number format, the DSP packing, the cascade, the accumulator and its tile, the vector ALU, both instruction sets, the compiler, the mesh populations |
+
+**Most of KohakuTPU is in the last row, and saying so is what makes the framework
+claim credible.** A framework that had dictated the datapath would not have needed
+a project to prove anything.
+
+## 4. Status
+
+| | |
+|---|---|
+| matmul datapath | **built and verified** against both a behavioural model and a real DSP48E2 |
+| accumulator | **built**, FP22, resident tile, peer transfer reachable |
+| cluster as an endpoint | **built**, one mesh port, closes with margin |
+| quantiser | **built**, on the memory-agent side, both read and upload paths |
+| vector ALU | **built and measured** — correctly rounded FMA, faithful seeds |
+| vector core around it | **built**, and its instruction set partly so |
+| driver and hand-built encoders | **run on the card** |
+| compiler path | cluster ops emit; **vector ops do not**, deliberately refused |
+| tensor-descriptor ISA | designed, walker built and validated, **not wired in** |
+| chain bypass, `FWD` | **not built** |
+| split-K epilogue on a vector core | **designed, not built** |
+| place-and-route on a populated die | **not done** for any cluster-count configuration |
+
+Two open defects are recorded rather than hidden: **silent FP16 saturation** on
+the way out of the accumulator ([accumulator.md](accumulator.md) §7), and **an L1
+footprint band that returns wrong data**, currently guarded rather than fixed
+([results.md](results.md) §9.1).
+
+## 5. How to read the rest
+
+The order below is the order the decisions were forced, and each page assumes the
+one before it.
+
+1. **[number-format.md](number-format.md)** — MXFP7. The format sets the operand
+   width, which sets the packing, which sets the cascade depth, which sets the
+   block size. Start here or nothing else will look motivated.
+2. **[matmul.md](matmul.md)** — the tensor core: two int7 MACs per DSP sharing an
+   activation through the pre-adder, the packing offset, the guard-bit budget, and
+   the cascade that reduces K=32 without touching the fabric.
+3. **[accumulator.md](accumulator.md)** — the resident output tile, why its size
+   decides the port count, the reuse contract, and where floating point starts.
+4. **[vector-core.md](vector-core.md)** — the second unit: E8M15 chosen so an FMA
+   fits one DSP exactly, and four base-2 seeds at full rate.
+5. **[isa.md](isa.md)** — one worked example of spending the framework's
+   instruction payload bits, at three scales.
+6. **[compiler.md](compiler.md)** — the software stack: three IR levels, tile
+   choice discounted by padding, and the round-cutting a machine without hardware
+   loops forces on its compiler.
+7. **[ship.md](ship.md)** — the device, and why the machine is four meshes.
+8. **[results.md](results.md)** — every measured number, with its conditions.
+
+If you are here to see whether the framework would suit a different datapath,
+read [integrate/](../../integrate/README.md) instead; these pages are specific on
+purpose.
+
+Forward-looking work that has not been decided lives in
+[notes/](../../notes/README.md) — chiefly the staging and cache design space,
+which is where the next structural decision about this machine will be made.
