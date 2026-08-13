@@ -182,10 +182,10 @@ it, and a framework doc that quotes them as if they were is wrong.
       common/      Shared primitives: FIFOs, named memory wrappers
       kohakutpu/   KohakuTPU's compute units — a project, not the framework
       synth_top/   Ship assemblies, per device
-      ktpu/        Python driver and compiler stack
 
+    compiler/          tensors, kernels, schedules, machine code
+    driver/            transports, dispatch, completion
     docs/              this tree
-    kohaku_npu_docs/   pre-reframing snapshot, kept verbatim
     ref/               cloned reference frameworks, git-ignored
 
 ## House rule

@@ -93,10 +93,10 @@ express anyway.
 Software never sees a quantised value. It uploads FP16, `mx_quant.v` converts on
 the way out of the memory gateway, and results come back FP16 — so the machine
 as a whole is **AMP FP16 with an MXFP7 multiply and an FP22 accumulator**, and
-the throughput unit is FLOPS rather than IOPS. `src/ktpu/hw/mxfp7.py`
+the throughput unit is FLOPS rather than IOPS. `compiler/kohakutpu/hw/mxfp7.py`
 is a *model* of the hardware, used to predict what it will produce so tests can
-check it; MXFP8 and the other OCP formats survive only in
-`src/ktpu/hw/formats.py` as comparison baselines.
+check it. MXFP8 and the other OCP formats were kept beside it as comparison
+baselines; they went with the retired `src/ktpu/` and are in git history only.
 
 Details: [`docs/compute/matmul.md`](docs/compute/matmul.md) §3 and
 [`docs/isa/memory.md`](docs/isa/memory.md) §6.
@@ -179,26 +179,29 @@ attributable to one or the other. See
    src/kohakutpu/    compute: matmul datapath, accumulator, cluster   VERILOG
    src/kohakumas/    memory access gateway, quantiser                 VERILOG
    src/kohakuaxi/    AXI4 slave/master, main orchestrator, crossbar   VERILOG
+   src/synth_top/    synthesis wrappers and the L2 adapter            VERILOG
    src/common/       sync_fifo, kohaku_sdpram                         VERILOG
 
-   src/ktpu/         the compiler and runtime                         PYTHON
-     ir/             three IR levels: graph, schedule, program
-     passes/         level 1 -> 2: tiling, fusion, epilogue folding
-     codegen/        level 2 -> 3, then 3 -> machine code, plus cost
-     interp/         simulators: level-1 reference, level-3 mesh
-     dsl/            the Python tracer
-     hw/             RTL-facing: formats, MXFP7, device map, xsim session
-     viz/            the visualiser page, served by scripts/py/server.py
+   compiler/         tensors, kernels, schedules, machine code        PYTHON
+     kohakuaccel/    framework: the kernel language, backend, dispatch
+     kohakutpu/      this project: isa, ops, kernels, meshes, sim, hw, viz
+     ktpugrad/       the tinygrad backend
+   driver/           transports, dispatch, completion                 PYTHON
+     kohakuaccel/    framework: transport, device, unit, machine, sim
+     kohakutpu/      this project: machine, units, clock, host
+     examples/saxpy/ a second project, on the framework alone
 
-   examples/         00..06, each runnable and self-checking
-   tests/            Verilog benches per subsystem, plus tests/ktpu
+   examples/kohakutpu/  01..04 -- people learn by reading the code
+   demos/kohakutpu/     run one -- people learn by looking at the output
+   tests/            Verilog benches per subsystem
    scripts/py/       check.py, xsim.py, server.py, repl.py and friends
    docs/             design intent and measured results
 ```
 
-`src/kohakutpu/` is VERILOG and `src/ktpu/` is PYTHON. The names are close and
-the distinction matters when reading a path in a comment: `src/kohakutpu/vector/
-vec_alu.v` is hardware, `src/ktpu/hw/formats.py` is the model of it.
+`src/kohakutpu/` is VERILOG; `compiler/kohakutpu/` and `driver/kohakutpu/` are
+PYTHON. The names collide and the distinction matters when reading a path in a
+comment: `src/kohakutpu/vector/vec_alu.v` is hardware,
+`compiler/kohakutpu/hw/vector.py` is the model of it.
 
 ## License
 

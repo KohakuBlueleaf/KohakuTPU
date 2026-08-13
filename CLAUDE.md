@@ -5,28 +5,12 @@ part `xcvu13p-fhgb2104-2L-e` at **300 MHz**.
 
 ---
 
-## Two places for writing, and they are not interchangeable
+## Where writing goes
 
-```
-   docs/    durable, external-facing. Design intent, measured results, why.
-   .plan/   internal working state. Git-ignored. Survives across sessions.
-```
-
-**`.plan/` is fully internal — track intermediate results there**, with a nested
-structure rather than one flat pile:
-
-```
-   .plan/
-     README.md          what this directory is
-     macro-plan.md      the roadmap and where we are in it
-     decisions.md       settled calls + reasoning, so they are not relitigated
-     session-log.md     what changed each session, newest first
-     measurements/      raw sweeps and intermediate numbers, one file per topic
-```
-
-Anything measured goes to `.plan/measurements/` as it is produced — Fmax sweeps,
-utilisation runs, parameter studies, dead ends. `docs/` gets the *conclusion*
-once it is settled. A number that only exists in a chat transcript is lost.
+`docs/` is the durable, external-facing tree: design intent, measured results,
+and why. It gets the *conclusion* once it is settled, and the RTL is the source
+of truth it is checked against. A number that only exists in a chat transcript
+is lost.
 
 ---
 
