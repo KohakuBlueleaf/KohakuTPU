@@ -28,6 +28,40 @@ FP16 = np.float16
 LOG2E = 1.4426950408889634
 
 
+def bridge(kernel, *, spread: tuple[str, ...] = ()):
+    """Any KohakuTPU kernel as a callable over tinygrad Tensors.
+
+    `kernel` is a `@L.kernel` -- the library's or **your own**. The returned
+    function takes one Tensor per input port, in signature order, plus the
+    kernel's knobs as keywords, and hands back a Tensor on the KTPU device.
+
+    `spread` names input ports arriving per channel, to broadcast to the first
+    operand's shape, since an elementwise pass reads operands of one length. A
+    name the kernel does not have raises :class:`ValueError` here rather than at
+    the first call. The wrapped call raises :class:`ValueError` for the wrong
+    operand count, a non-fp16 operand or one that will not broadcast, and
+    :class:`RuntimeError` without `install()`.
+    """
+    ports = [p.name for p in kernel.signature.inputs]
+    unknown = [n for n in spread if n not in ports]
+    if unknown:
+        raise ValueError(
+            f"{kernel.name} reads {ports}, so spread={unknown} names nothing; "
+            f"spread lists the operands that arrive per channel"
+        )
+
+    def call(*args: Tensor, **knobs) -> Tensor:
+        return _call(kernel, args, knobs, spread)
+
+    call.__name__ = kernel.name
+    call.__qualname__ = kernel.name
+    call.__doc__ = (
+        f"`{kernel.name}` over tinygrad Tensors: {', '.join(ports)}"
+        f"{' with ' + ', '.join(spread) + ' spread' if spread else ''}."
+    )
+    return call
+
+
 def softmax(x: Tensor) -> Tensor:
     """Row-wise softmax over the last axis, as ONE kernel instead of three.
 
@@ -35,8 +69,7 @@ def softmax(x: Tensor) -> Tensor:
     KTPU device. Raises :class:`ValueError` for any other dtype, and
     :class:`RuntimeError` without `install()`.
     """
-    dev = _rt()
-    return _back(K.softmax(dev.tensor(_held(x, "x"))))
+    return _call(K.softmax, (x,), {}, ())
 
 
 def rmsnorm(x: Tensor, w: Tensor, *, eps: float = 1e-5) -> Tensor:
@@ -47,10 +80,7 @@ def rmsnorm(x: Tensor, w: Tensor, *, eps: float = 1e-5) -> Tensor:
     device. Raises :class:`ValueError` for a non-fp16 operand or a gain that
     does not broadcast to `x`, and :class:`RuntimeError` without `install()`.
     """
-    dev = _rt()
-    held = _held(x, "x")
-    gain = _spread(_held(w, "w"), held.shape, "w")
-    return _back(K.rmsnorm(dev.tensor(held), dev.tensor(gain), eps=eps))
+    return _call(K.rmsnorm, (x, w), {"eps": eps}, ("w",))
 
 
 def layernorm(x: Tensor, w: Tensor, b: Tensor, *, eps: float = 1e-5) -> Tensor:
@@ -61,13 +91,7 @@ def layernorm(x: Tensor, w: Tensor, b: Tensor, *, eps: float = 1e-5) -> Tensor:
     or an affine term that does not broadcast to `x`, and :class:`RuntimeError`
     without `install()`.
     """
-    dev = _rt()
-    held = _held(x, "x")
-    gain = _spread(_held(w, "w"), held.shape, "w")
-    shift = _spread(_held(b, "b"), held.shape, "b")
-    return _back(
-        K.layernorm(dev.tensor(held), dev.tensor(gain), dev.tensor(shift), eps=eps)
-    )
+    return _call(K.layernorm, (x, w, b), {"eps": eps}, ("w", "b"))
 
 
 def attention(
@@ -121,6 +145,25 @@ def attention(
             keys=keys,
         )
     )
+
+
+def _call(kernel, args: tuple, knobs: dict, spread: tuple) -> Tensor:
+    """`kernel` over tinygrad Tensors: realise, run, hand a Tensor back.
+
+    `args` is one Tensor per input port in signature order. Raises
+    :class:`ValueError` for the wrong count, a non-fp16 operand, or a `spread`
+    operand that does not broadcast.
+    """
+    ports = [p.name for p in kernel.signature.inputs]
+    if len(args) != len(ports):
+        raise ValueError(
+            f"{kernel.name} reads {len(ports)} operands {ports}, given {len(args)}"
+        )
+    dev = _rt()
+    held = [_held(t, n) for t, n in zip(args, ports)]
+    wide = held[0].shape
+    held = [_spread(h, wide, n) if n in spread else h for h, n in zip(held, ports)]
+    return _back(kernel(*[dev.tensor(h) for h in held], **knobs))
 
 
 def _rt():

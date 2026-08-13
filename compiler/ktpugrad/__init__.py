@@ -36,7 +36,7 @@ from ktpugrad.device import (
 )
 from ktpugrad.errors import ChainRefused, KTPUUnsupported
 from ktpugrad.generated import FOLDS, KERNELS, build
-from ktpugrad.library import attention, layernorm, rmsnorm, softmax
+from ktpugrad.library import attention, bridge, layernorm, rmsnorm, softmax
 from ktpugrad.match import Addend, Copy, Match, Operand, match_ast, summarise
 from ktpugrad.runner import (
     ChainRunner,
@@ -74,6 +74,7 @@ __all__ = [
     "Scalar",
     "Source",
     "attention",
+    "bridge",
     "build",
     "capture",
     "get_runner",
