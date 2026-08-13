@@ -306,12 +306,16 @@ def to_program(ast, renderer):
     )
 
 
-def capture(run) -> list:
+def capture(run, strict: bool = True) -> list:
     """Every ast `run()` hands to lowering, in order.
 
     0.13 has no `Tensor.schedule`: an ast exists only where `to_program` is
     called with one. This is how a test or a demo sees WHICH kernels an
     expression scheduled, rather than only what it computed.
+
+    With `strict=False` a refusal is swallowed and the asts collected so far
+    are returned -- the ast is handed over BEFORE the kernel is chosen, so an
+    expression this backend declines still has one to look at.
 
     Records through the INSTALLED seam rather than swapping the global again --
     `PatternMatcher` compiles its patterns lazily, so a second swap can bind a
@@ -325,7 +329,11 @@ def capture(run) -> list:
         )
     held, _recording = _recording, []
     try:
-        run()
+        try:
+            run()
+        except KTPUUnsupported:
+            if strict:
+                raise
         return _recording
     finally:
         _recording = held

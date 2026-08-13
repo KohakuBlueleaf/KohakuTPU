@@ -55,9 +55,11 @@ def sinks(tensor):
     """The compute kernels `tensor` schedules, without the copies.
 
     0.13 has no `Tensor.schedule`; the ast exists only where `to_program` is
-    handed one, so realizing under a spy is how a test sees it.
+    handed one, so realizing under a spy is how a test sees it. `strict=False`
+    because half the tests here are ABOUT refusals, and the ast is handed over
+    before the kernel is chosen.
     """
-    return ktpugrad.capture(tensor.realize)
+    return ktpugrad.capture(tensor.realize, strict=False)
 
 
 def rel(got, want) -> float:
@@ -225,7 +227,9 @@ def test_abs_is_one_VABS_and_not_a_select_tree(dev, held):
 
 # ------------------------------------------------------------ what it refuses
 REFUSALS = [
-    ("select", lambda x, y: (x < y).where(x, y), "WHERE"),
+    # THREE operands, so it is a real predicate. `(x < y).where(x, y)` is not:
+    # it is `min(x, y)`, and `_minmax_of` reads it.
+    ("select", lambda x, y: (x < y).where(x + y, y), "WHERE"),
     ("sign", lambda x, y: x.sign(), "CMPNE"),
     ("down a column", lambda x, y: x.sum(axis=0), "only the last axis"),
     ("two axes", lambda x, y: x.sum(axis=(0, 1)), "one SINK of one stored loop nest"),
@@ -245,12 +249,24 @@ def test_an_unspellable_tree_raises_and_names_itself(dev, held, name, build, say
 
 
 def test_predication_in_general_is_still_the_boundary(dev, held):
-    """Two shapes are rewritten; a select that is neither is refused by name."""
+    """The min/max shapes are rewritten; a select that is neither is refused."""
     x, y = held[0], held[1]
     why = ktpugrad.refusal(
-        sinks((ktensor(x) < ktensor(y)).where(ktensor(x), ktensor(y)))[0]
+        sinks((ktensor(x) < ktensor(y)).where(ktensor(x) + ktensor(y), ktensor(y)))[0]
     )
     assert "CMPLT" in why and "WHERE" in why
+
+
+def test_a_min_or_max_written_as_a_select_is_read(dev, held):
+    """`clip` is two of these nested, so refusing them refused `clip`."""
+    x, y = held[0], held[1]
+    wide = [a.astype(np.float64) for a in (x, y)]
+    for build, want in (
+        (lambda a, b: (a < b).where(a, b), np.minimum),
+        (lambda a, b: (a < b).where(b, a), np.maximum),
+    ):
+        got = build(ktensor(x), ktensor(y)).numpy()
+        assert rel(got, want(*wide)) < 5e-3
 
 
 def test_a_refusal_names_every_op_it_could_not_spell(dev, held):

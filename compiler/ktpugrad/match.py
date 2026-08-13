@@ -275,6 +275,10 @@ def _contraction(red, loop: tuple):
     mul = _unwrap(value)
     if mul.op is not Ops.MUL or len(mul.src) != 2:
         return None
+    # THE PRODUCT ITSELF must be fp16: an fp32 matmul over fp16 buffers has its
+    # casts exactly where `_unwrap` peels the accumulator's, and matched here.
+    if mul.dtype is not dtypes.half:
+        return None
     loads = [_load(_unwrap(x), axes) for x in mul.src]
     if any(x is None for x in loads):
         return None

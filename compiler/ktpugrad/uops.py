@@ -46,6 +46,16 @@ def extent(rng) -> int | None:
     return n.arg if n.op is Ops.CONST and type(n.arg) is int else None
 
 
+def reduces(rng) -> bool:
+    """Whether this RANGE is a reduced axis rather than a loop one.
+
+    0.13 tags every range `(id, AxisType)`, so what a read is under is on the
+    range itself -- no flag has to be threaded down the tree to find out.
+    """
+    kind = getattr(rng, "arg", None)
+    return bool(kind) and getattr(kind[1], "name", "") == "REDUCE"
+
+
 def affine(idx, axes: tuple) -> tuple | None:
     """`idx`'s coefficient on each of `axes` -- its stride row -- or None.
 
