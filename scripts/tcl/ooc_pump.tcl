@@ -14,7 +14,7 @@ set ps1  [expr {round($p1 * 1000)}]
 if {$ps1 % 2} { error "OOC_P1 must be an even number of ps, got $p1 ns" }
 set p1   [expr {$ps1 / 1000.0}]
 set p2   [expr {($ps1 / 2) / 1000.0}]
-set out  $root/.plan/ooc/$top$tag
+set out  $root/build/ooc/$top$tag
 
 file mkdir $out
 create_project -in_memory -part xcvu13p-fhgb2104-2L-e

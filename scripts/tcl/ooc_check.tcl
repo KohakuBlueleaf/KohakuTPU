@@ -13,7 +13,7 @@ set top  $::env(OOC_TOP)
 # a sweep overwrites its own earlier results.
 set gen  [expr {[info exists ::env(OOC_GEN)] ? $::env(OOC_GEN) : ""}]
 set tag  [expr {[info exists ::env(OOC_TAG)] ? $::env(OOC_TAG) : ""}]
-set out  $root/.plan/ooc/$top$tag
+set out  $root/build/ooc/$top$tag
 set per  [expr {[info exists ::env(OOC_PERIOD)] ? $::env(OOC_PERIOD) : 3.125}]
 set iod  [expr {[info exists ::env(OOC_IO)] ? $::env(OOC_IO) : $per * 0.30}]
 set clks [expr {[info exists ::env(OOC_CLK)] ? $::env(OOC_CLK) : "clk"}]

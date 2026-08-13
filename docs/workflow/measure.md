@@ -51,7 +51,7 @@ Both are Tcl driven by environment variables, run under `vivado -mode batch`.
 MMCM produces them. `OOC_P1` is the 1x period in ns; the 2x period is derived.
 `OOC_IMPL=1` additionally places and routes.
 
-Both write to `.plan/ooc/<top><tag>/`:
+Both write to `build/ooc/<top><tag>/`:
 
     ooc.xdc              the constraints that were actually applied
     <top>.dcp            checkpoint, so a re-read costs no re-synthesis
