@@ -1,6 +1,6 @@
 ---
 title: Four meshes
-summary: This chip's mesh grid, what an address means across it, which splits the silicon can take, and which one it cannot.
+summary: This chip's mesh chain, what an address means across it, which splits the silicon can take, and which one it cannot.
 tags:
   - kohakutpu
   - interlink
@@ -45,47 +45,61 @@ table — read them off the card rather than trusting a document.
 
 ---
 
-## 2. The grid, and the two links
+## 2. The chain, and the three links
 
-The meshes form a **2x2 grid**, with the mesh id read as `{y, x}`. `mag_switch.v`
-derives each neighbour by flipping one bit — `peer0` flips x, `peer1` flips y:
+The meshes are a **line, not a grid**. An SLL joins only ADJACENT SLRs, so the
+buildable fabric is the SLR stack in order — and the mesh ids are not in SLR
+order:
 
 ```
-        link0            mesh 0 --- mesh 1        link0: 0<->1 and 2<->3
-      +--------+           |           |          link1: 0<->2 and 1<->3
-   0 -+        +- 1        |           |
-      |  grid  |         mesh 2 --- mesh 3        diameter 2:
-   2 -+        +- 3                                 0<->3 and 1<->2 are two hops
-      +--------+
+   SLR0     SLR1     SLR2     SLR3
+   mesh0 ── mesh1 ── mesh3 ── mesh2      link0 is the neighbour one position DOWN
+   pos 0    pos 1    pos 2    pos 3      link1 is the one UP
 ```
 
-Two facts about routing that a kernel author has to design against:
+`mag_switch.v` writes that order exactly once, as `CH_SEQ`, and *derives* each
+neighbour from it rather than taking a configured peer id — a separately
+configured id would be a second place for the topology to be wrong, and the two
+would disagree in silence. The compiler mirrors it as `CHAIN = (0, 1, 3, 2)` in
+`compiler/kohakutpu/rt.py`, and `MachineSpec.mesh_hops` is a breadth-first search
+over the link list built from that.
 
-- **A MAG forwards traffic that is nothing to do with its own mesh.** Diagonal
-  traffic is two hops, so `0 -> 3` passes through mesh_1 or mesh_2. A transfer
-  can therefore be slowed by a mesh it is not addressing.
-- **Routing is XY dimension-order on mesh coordinates**, and that is what makes
-  the second routing layer deadlock-free. It is the same argument the NoC relies
-  on, and it holds only while the mesh-of-meshes is a **grid**. Do not design a
-  traffic pattern that assumes a ring's routing; a ring reintroduces the cycle
-  the turn model exists to break ([interlink/topology.md](../../../kohaku_npu_docs/interlink/topology.md) §2).
+**mesh_0 to mesh_2 is three hops** — the diameter. They are the two ends of the
+line, which is precisely the pair a 2x2 grid would have made adjacent.
 
-A ring *collective* is still fine — the cycle `0 -> 1 -> 3 -> 2 -> 0` uses only
-real links, one hop each. It is a traffic pattern, not a routing change.
+Three facts about routing that a kernel author has to design against:
 
-**One link spans three SLRs.** A 4-cycle cannot embed in a 4-die stack without
-one long edge, and here it is link1 between mesh_0 (SLR0) and mesh_2 (SLR3). That
-is what `mag_link_pipe.v` exists for, and it is legal only because the link
-protocol is credit-based with no ready travelling back. Expect that edge to be
-the slow one.
+- **Routing is ONE COMPARISON** — move one position toward the destination. Position
+  is monotone along a path, so a packet never reverses; the channel dependency
+  graph is two disjoint chains, upward depending only on upward and likewise
+  downward, hence acyclic and deadlock-free by shape. **A ring would close that
+  cycle**, so do not design a traffic pattern that assumes one.
+- **A MAG forwards traffic that is nothing to do with its own mesh.** `0 -> 2`
+  transits mesh_1 and mesh_3, so a transfer can be slowed by a mesh it is not
+  addressing. Transit and local egress merge ROUND-ROBIN rather than
+  transit-first: strict priority would let a saturated through-stream pin the
+  local queue's head, and round-robin bounds a forward's wait at one local packet.
+- **The ends are ends.** mesh_0 has no lower neighbour and mesh_2 no higher one.
+  The unused port is tied off, and a packet arriving there still needing a forward
+  is a fault — the routing above cannot produce one.
+
+A ring *collective* is a traffic pattern rather than a routing change, so it is
+still allowed — but on this fabric its closing edge `2 -> 0` is not a link, and
+costs three hops rather than one.
+
+Every SLL crossing is pipelined by `mag_link_pipe.v`: the placer will pull a
+register into a Laguna site, but retiming will not invent one that was never
+written, so those stages exist in RTL. A plain shift register is correct there
+only because flow control is credit-based, with no ready travelling back.
 
 ---
 
 ## 3. An address is a mesh and an offset
 
-`interlink.global_addr(mesh, byte_addr, mesh_count)` builds `{mesh[1:0],
-local[31:0]}` — 34 bits, 4 GB per mesh, an exact split
-(`src/ktpu/hw/interlink.py`).
+`MachineSpec.global_addr(base, mesh)` builds `{mesh[1:0], local[31:0]}` — 34
+bits, 4 GB per mesh, an exact split (`compiler/kohakuaccel/machinespec.py`). It
+raises for a mesh this machine does not have and for a `base` that does not fit
+one mesh's 4 GB; `MachineSpec.addr_mesh` reads the id back out.
 
 > **On a single-mesh bitstream a remote address does not fault — it ALIASES.**
 > Bits 33:32 are undecoded there, so a transfer meant for another mesh silently
@@ -120,7 +134,7 @@ span several whether or not splitting it buys any speed.
 ## 4. What a drain can already do
 
 The remote path exists in the shipped ISA. `DRAIN` carries two fields
-([isa/cluster.md](../../../kohaku_npu_docs/isa/cluster.md) §10.3):
+(the cluster ISA, §10.3):
 
 | field | meaning |
 |---|---|
@@ -170,7 +184,7 @@ accumulator precision, which is exactly the property a K-split needs.
 > everywhere. Running `0 @ b` on the far cluster to open an exactly-zero tile
 > fixes it. **Any reduce-scatter built on this must open the destination tile
 > before the burst arrives**; that is a scheduling constraint, not a detail
-> ([isa/cluster.md](../../../kohaku_npu_docs/isa/cluster.md) §9.4).
+> (the cluster ISA, §9.4).
 
 One gap before treating a cross-mesh K-split as proven: the measured run added
 into a **zeroed** tile, so it demonstrated delivery-by-addition rather than the
@@ -178,9 +192,8 @@ sum of two genuinely non-zero partials. The add path is certainly live — the
 failure above proves it — but the two-partial case has not been checked. Do that
 before building reduce-scatter on it.
 
-Note that [interlink/topology.md](../../../kohaku_npu_docs/interlink/topology.md)
-§6.2 says a matmul-only mesh "takes N-splits, not K-splits". That is true of the
-direct wire and too strong for the drain path.
+An earlier interlink note said a matmul-only mesh "takes N-splits, not
+K-splits". That is true of the direct wire and too strong for the drain path.
 
 ---
 
@@ -221,7 +234,7 @@ is exactly the kind of claim this project has been wrong about before
 | rung | on this chip | state |
 |---|---|---|
 | 1 | treat all four meshes as one device; the compiler places and inserts crossings | mesh axis exists in the IR; collectives do not |
-| 2 | place weights so traffic avoids the three-SLR link and the two-hop diagonals | manual only |
+| 2 | place weights so traffic stays near in the chain, above all off the three-hop `0 <-> 2` | manual only |
 | 3 | tensor-parallel splits; column, head, and K through the drain path (§5) | manual only |
 | 4 | give mesh_1 the stages needing no vector core | `MachineSpec` can express it; nothing chooses it |
 
