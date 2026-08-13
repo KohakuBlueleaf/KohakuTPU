@@ -1,211 +1,156 @@
-# [WIP] KohakuTPU
+# KohakuTPU
 
-![KohakuTPU-Overall arch](https://github.com/user-attachments/assets/d5222f88-692b-46cd-bdbf-0663eb817afc)
+![KohakuTPU overall architecture](image/README/KohakuTPU-new-arch.png)
 
-An AI accelerator for Xilinx UltraScale+ FPGAs. Compute clusters on a custom NoC
-mesh, reaching DRAM through AXI4, targeting `xcvu13p-fhgb2104-2L-e` at **300
-MHz**. The DSP48E2 tile is what the whole arithmetic design is built around.
+**An open-source AI accelerator for FPGAs — the RTL, the compiler, and the
+driver.** Matrix and vector units on a custom NoC mesh, four meshes on one
+device, programmed from Python.
 
-This project is more for fun than for real usage. If anyone is interested in
-making it work, PRs are welcome.
+> Work in progress, built more for fun and for learning than for production. If
+> you want to make it work for real, PRs are welcome.
 
-**Start at [`docs/README.md`](docs/README.md).**
-[`docs/arch-design.md`](docs/arch-design.md) is the machine top to bottom;
-[`docs/isa/`](docs/isa/README.md) is the most accurate description of what it
-actually executes.
+```python
+from kohakuaccel.lang import dims, loop, units
+from kohakutpu.lang import kernel
 
----
+from kohakutpu import lang as L
 
-## Where it is
+M, K, N = dims("M, K, N")
+LOG2E = 1.4426950408889634
 
-A **two-cluster partition runs a real GEMM of arbitrary size, end to end**: the
-Python driver uploads FP16 operands and a control program over AXI, writes `GO`,
-and reads back FP16 results. Nothing is stubbed but the DRAM controller, which
-is an AXI RAM.
 
-```
-   matmul datapath        built, exact against both the behavioural model and
-                          the real DSP48E2
-   FP22 accumulator       327.7 MHz, 5 BRAM36
-   2-port cluster         325.6 MHz, 17,521 LUT, 17,612 FF, 272 DSP, 5 BRAM36,
-                          0 URAM -- clears 300 by 8.5%
-   NoC mesh + routers     built; lossless, in-order, deadlock-free by routing
-   MAG (memory gateway)   built: arbiter, AXI master, quantiser, dispatch agent
-   main orchestrator      built: a control program of writes and polls
-   driver                 built: tiles any GEMM shape, streams it as rounds
-   SLR floorplan          not written, and the DSP cascade makes it a
-                          correctness requirement rather than an optimisation
-   TLB, cache             not started; v1 needs neither
-   vector / general units not started
+@kernel
+def linear_silu(
+    x=L.In(..., M, K), w=L.In(N, K), y=L.Out(..., M, N), *, gm=8, gn=8, nk=2
+):
+    """silu(x @ w.T), with the activation fused onto the accumulator."""
+    with units(x.tiles(gm), w.tiles(gn)) as (i, j):
+        acc = L.tile(gm, gn, nk)
+        for k in loop(x.chunks32(nk)):
+            acc += x[i, k] @ w[j, k]
+        y[i, j] <<= acc * L.recip(L.exp2(acc * -LOG2E) + 1.0)
 ```
 
-Measured, converted at 300 MHz:
+That last line is a matmul handing its result straight to a vector core over the
+mesh — the activation never becomes a buffer in DRAM. Write the kernel, call it
+like a function, and the compiler places it:
 
-| clusters | shape | run cycles | GFLOP/s | % of peak |
-|---|---|---|---|---|
-| 2 | 256×256×256 | 18,701 | 538.3 | 87.6% |
-| 4 | 256×512×256 | 20,647 | 975.1 | 79.4% |
-| 8 | 512×1024×256 | 43,382 | 1,856.3 | 75.5% |
+```python
+from kohakutpu import api as ktpu
 
-> **That table predates the mesh layout change.** Clusters were placed as a
-> (row, left-column) pair; the RTL now places one cluster per **column of a
-> band**, managers on the outer rows and accumulators inside
-> ([`docs/system.md`](docs/system.md) §2.3). Both 2 CU and 8 CU pass end to end
-> on the new layout, and 8 CU measures 72.7% of peak where the rows above
-> measured 75.7% — the layout costs about three points, paid in routing rather
-> than memory service, in exchange for physical locality and simpler program
-> planning ([`docs/perf.md`](docs/perf.md) §0.1). Read the rows above as figures
-> for the previous topology.
-
-Two clusters peak at 1,024 MAC/cycle = 614 GFLOP/s, so the 256-cube ran at
-87.6% of the datapath. The cycle counts are measured; the rates are those cycles
-converted at 300 MHz, which the cluster clears out-of-context (325.6 MHz). What
-the eight-cluster row is short of is **instruction dispatch serialising across
-clusters**, not memory — no memory budget exceeds a third at any cluster count.
-Every shape and cluster count is in [`docs/perf.md`](docs/perf.md) §0, with the
-fill-bound baseline it started from (6–7% of peak) and why each claim of
-"bandwidth-bound" turned out to be wrong.
-
-## The numeric format
-
-Elements are **int7 with an E5M3 scale shared by a block of 32** along the
-reduction dimension — a microscaling format in the OCP style, but with two
-deliberate departures:
-
-```
-   value(i,k)  =  q[i,k] * scale[i]
-   scale       =  2^(E - 20) * (1 + M/8)      field = { E[4:0], M[2:0] }
+y = linear_silu(ktpu.tensor(x), ktpu.tensor(w))  # no launcher, no addresses
+print(y.numpy())  # the only line that crosses the link
 ```
 
-**The scale is not a power of two.** An E8M0 scale can only land a block's peak
-somewhere in `[32,64)` of the int7 range, so between zero and a full bit of the
-significand goes unused, and which it is depends on where the peak happens to
-fall inside its binade. Three mantissa bits put the peak at 63 every time.
-Measured per element on correlated operands: relative error p50 0.54% → 0.38%,
-p99 48% → 23%. The cost is one small multiply at each end, and the field is
-still 8 bits, so nothing about the flit format or the buffers changes.
+## Status
 
-**The exponent is E5, not E8.** The output format is FP16, whose normal range
-spans 30 binades; E5 covers 31 and just fits, E4 covers 16 and does not. The
-three extra exponent bits an E8M0 field spends buy range this datapath cannot
-express anyway.
+**Hardware — implemented.** Synthesised, implemented, and running on a real
+FPGA: matrix clusters, vector cores, the NoC mesh and its routers, the memory
+agent and quantiser, and the interlink that joins four meshes.
 
-Software never sees a quantised value. It uploads FP16, `mx_quant.v` converts on
-the way out of the memory gateway, and results come back FP16 — so the machine
-as a whole is **AMP FP16 with an MXFP7 multiply and an FP22 accumulator**, and
-the throughput unit is FLOPS rather than IOPS. `compiler/kohakutpu/hw/mxfp7.py`
-is a *model* of the hardware, used to predict what it will produce so tests can
-check it. MXFP8 and the other OCP formats were kept beside it as comparison
-baselines; they went with the retired `src/ktpu/` and are in git history only.
+**Software — a working driver and compiler stack.** Kernels compile to cluster
+*and* vector programs, flash attention runs, and tinygrad works as an optional
+frontend into the same kernel library.
 
-Details: [`docs/compute/matmul.md`](docs/compute/matmul.md) §3 and
-[`docs/isa/memory.md`](docs/isa/memory.md) §6.
+Every measured number, with the conditions it was taken under, is in
+[`results.md`](docs/projects/kohakutpu/results.md).
 
-## The shape of the machine
+## Future work
 
-```
-   host  --AXI4-->  main orchestrator  --AXI4-->  MAG  ====NoC mesh====  clusters
-                    control program              memory + dispatch       compute
-```
+- **L2 cache** in the memory agent, and an L2 adapter at the NoC endpoint
+- **Per-component clock control** and clock gating
+- **Vector ISA** improvements
+- **Memory mover** architecture and ISA — it moves 98 MB/s today, which bounds
+  more than it should
+- **Driver** improvements
 
-A **cluster** is four 4×8×4 tensor CUs chained through the DSP48E2 cascade, plus
-one accumulator holding the output tile resident. 512 MACs/cycle. The four
-tensor CUs are **not** NoC nodes — they are wired to each other by `PCOUT →
-PCIN`, which is why they cost zero LUTs: the multiply *and* the entire K=32
-reduction happen inside the DSPs.
+## What makes it interesting
 
-A cluster takes **two** NoC ports, not five, and the reason is arithmetic. The
-chain consumes eight 256-bit operand words per cycle and one port delivers one,
-so feeding the tensor CUs directly is an 8× deficit however many ports you
-spend. Holding a large output tile resident closes it instead: a cluster
-computing a `Gm × Gn` block needs `4(Gm+Gn)/(Gm·Gn)` words per cycle, which at
-16×32 is 0.375. One port carries operands, one carries results. **64 ports for
-32 clusters, not 160.**
+**A number format built for the DSP.** Elements are int7 with an **E5M3** scale
+shared by a block of 32 — a microscaling format, but the scale is deliberately
+*not* a power of two. An E8M0 scale wastes up to a full bit of significand
+depending on where a block's peak falls in its binade; three mantissa bits put
+that peak at 63 every time. Same 8-bit field, and measured relative error drops
+from p50 0.54% to 0.38%.
 
-Those two ports sit on **adjacent routers in the same column**: a cluster is one
-column of a *band* (two mesh rows), with its manager on the band's outer row and
-its accumulator directly beneath. With two bands the second is mirrored, so
-accumulators meet in the middle and every manager is on an outer row — managers
-outside, accumulators inside, two dataflow rings back to back. MAG hangs off the
-west edge with one port per row, leaving north, south and east free for the
-vector unit and general core. [`docs/system.md`](docs/system.md) §2.3 draws it.
+**MACs that cost zero LUTs.** Four tensor CUs chain through the DSP48E2's
+`PCOUT → PCIN` cascade, so the multiply *and* the whole K=32 reduction happen
+inside the DSPs. The fabric holds control, not arithmetic.
 
-At 45 clusters the device is DSP-bound — 12,240 of 12,288 DSPs — with LUTs at
-46% and BRAM at 8%, giving ~13.8 TFLOPS of peak at 300 MHz. A cluster is 272
-DSPs: 256 in the cascade and 16 in the accumulator, which is why the count is 45
-rather than the 48 an all-fabric accumulator would have allowed. One cluster is
-what has been synthesised; 45 is that measurement multiplied out, not a build.
+**Two mesh ports per cluster, not five.** The DSP chain eats eight operand words
+per cycle and a port delivers one, so more ports never close that gap. Holding a
+large output tile resident does: a `Gm × Gn` block needs `4(Gm+Gn)/(Gm·Gn)` words
+per cycle — 0.375 at 16×32. An arithmetic property, not a concession.
 
-## Why a custom NoC
+**A compiler that knows the machine has no threads.** Six levels, and only
+adjacent ones may appear in one piece of code. A unit is *programmed*, not
+commanded, so there is no `program_id` and no `__syncthreads` — the grid places
+independent programs.
 
-An AXI4 interconnect wide enough to feed 32 or more compute units is a crossbar
-whose cost grows with masters × slaves, carrying machinery this design never
-uses: out-of-order completion by ID, burst reordering, exclusive access. AXI4-
-Lite drops all of that and drops the bandwidth with it. What the machine needs
-is narrower than either — one clock domain, one-flit messages, mostly
-nearest-neighbour traffic — so a mesh built for exactly that is smaller than an
-interconnect configured down to it.
+**A framework, with this chip as its first user.** `kohakuaccel` is the reusable
+half — transport, mesh, dispatch, completion, the kernel language — and it
+imports nothing from `kohakutpu`. A test fails the moment it does, and
+`driver/examples/saxpy/` is a second, unrelated accelerator built on it alone.
 
-288-bit flits, 5-port routers, XY dimension-order routing on clamped
-coordinates, busy/valid links and end-to-end credits. XY is acyclic by
-construction, so deadlock-freedom is a property rather than a test result.
+## Quickstart
 
-| Router | 2D mesh |
-| ---------------------------------------------- | ---------------------------------------------- |
-| ![router](image/README/1735483831920.png) | ![mesh](image/README/1735483805869.png) |
+Python 3.13+, and numpy is the only hard dependency.
 
-See [`docs/noc/spec.md`](docs/noc/spec.md).
-
-## Running it
-
-```
-   python scripts/py/check.py fast     ~5 s     pure Python, no simulator
-   python scripts/py/check.py unit     ~70 s    + the benches that catch most
-   python scripts/py/check.py full     ~6 min   everything
-
-   python scripts/py/run_matmul.py --m 64 --n 64 --k 128
+```bash
+pip install -e .               # the whole tree: compiler, driver, kernels
+pip install -e ".[tinygrad]"   # optional, adds the tinygrad frontend
+pytest                         # 1152 tests, no hardware needed
 ```
 
-Simulation is Vivado `xsim` — the mesh instantiates `xpm_fifo_sync`, which needs
-`-L xpm`, so iverilog is not an option for it. Benches run against both
-`MODEL=1` (behavioural DSP) and `MODEL=0` (the real `DSP48E2`), so a failure is
-attributable to one or the other. See
-[`docs/simulation.md`](docs/simulation.md).
+Nothing reaches the card unless you ask for it — everything runs against unit
+models by default, and `--device card` is a decision rather than a fallback.
 
-## Layout
-
-```
-   src/kohakunoc/    mesh, routers, CU framework, dispatch agent      VERILOG
-   src/kohakutpu/    compute: matmul datapath, accumulator, cluster   VERILOG
-   src/kohakumas/    memory access gateway, quantiser                 VERILOG
-   src/kohakuaxi/    AXI4 slave/master, main orchestrator, crossbar   VERILOG
-   src/synth_top/    synthesis wrappers and the L2 adapter            VERILOG
-   src/common/       sync_fifo, kohaku_sdpram                         VERILOG
-
-   compiler/         tensors, kernels, schedules, machine code        PYTHON
-     kohakuaccel/    framework: the kernel language, backend, dispatch
-     kohakutpu/      this project: isa, ops, kernels, meshes, sim, hw, viz
-     ktpugrad/       the tinygrad backend
-   driver/           transports, dispatch, completion                 PYTHON
-     kohakuaccel/    framework: transport, device, unit, machine, sim
-     kohakutpu/      this project: machine, units, clock, host
-     examples/saxpy/ a second project, on the framework alone
-
-   examples/kohakutpu/  01..04 -- people learn by reading the code
-   demos/kohakutpu/     run one -- people learn by looking at the output
-   tests/            Verilog benches per subsystem
-   scripts/py/       check.py, xsim.py, server.py, repl.py and friends
-   docs/             design intent and measured results
+```bash
+python examples/kohakutpu/01_tensors.py       # learn by reading the code
+python demos/kohakutpu/flash_attention.py     # learn by reading the output
+python -m kohakutpu.viz                       # a kernel, at every level
 ```
 
-`src/kohakutpu/` is VERILOG; `compiler/kohakutpu/` and `driver/kohakutpu/` are
-PYTHON. The names collide and the distinction matters when reading a path in a
-comment: `src/kohakutpu/vector/vec_alu.v` is hardware,
+For the RTL, simulation is Vivado `xsim` (the mesh needs `-L xpm`, so iverilog
+will not do), and benches run against both a behavioural DSP and the real
+`DSP48E2` so a failure is attributable to one or the other:
+
+```bash
+python scripts/py/check.py fast    # ~5 s, pure Python
+python scripts/py/check.py full    # ~6 min, everything
+```
+
+## Documentation
+
+**[`docs/`](docs/README.md)** is written to be read, and every page says what it
+does, what it costs, and where it stops.
+
+| | |
+|---|---|
+| [the framework](docs/integrate/README.md) | what you own, what is fixed, and how to put your own compute unit on it |
+| [the machine](docs/projects/kohakutpu/README.md) | KohakuTPU top to bottom, in the order the decisions were forced |
+| [writing kernels](docs/projects/kohakutpu/writing-kernels.md) | how much of the schedule to say, and what a tiling actually means |
+| [the ISA](docs/projects/kohakutpu/isa.md) | the most accurate description of what it executes |
+| [architecture](docs/arch/README.md) · [specs](docs/spec/README.md) · [workflow](docs/workflow/README.md) | the mesh and memory agent, the normative contracts, and the build/measure/bringup practice |
+
+## Repository
+
+```
+   src/          Verilog: mesh, memory agent, AXI, compute units, ship assemblies
+   compiler/     kernels, schedules and machine code  (kohakuaccel + kohakutpu)
+   driver/       transports, dispatch, completion     (kohakuaccel + kohakutpu)
+   examples/     read the code           demos/    read the output
+   tests/        Verilog benches         scripts/  build, simulate, measure
+```
+
+`src/kohakutpu/` is Verilog; `compiler/kohakutpu/` and `driver/kohakutpu/` are
+Python. The names collide, so when a comment names a path:
+`src/kohakutpu/vector/vec_alu.v` is hardware and
 `compiler/kohakutpu/hw/vector.py` is the model of it.
 
 ## License
 
-This project is still a work in progress. During the WIP state, all source code
-and related resources are released under a custom Kohaku-Code-License (or
-Kohaku-License if needed), an open-access license with some restrictions on
-commercial usage. See the License file.
+Work in progress. During the WIP state, all source code and related resources
+are released under a custom Kohaku-Code-License (or Kohaku-License if needed),
+an open-access license with some restrictions on commercial usage. See the
+License file.
