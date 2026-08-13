@@ -10,41 +10,57 @@ tags:
 # The software stack
 
 What turns a tensor program into flits, uploads them, kicks the machine and reads
-the answer back. `src/ktpu/`, pure Python with numpy for the numeric model and
-nothing else in the core.
+the answer back. `compiler/` and `driver/`, pure Python with numpy for the
+numeric model and nothing else in the core.
 
-The stack exists in two halves that are still converging: a **compiler path**
-(`ktpu.ir`, `ktpu.passes`, `ktpu.codegen`) that has the representation, and a
-**hand-built path** (`ktpu.hw`) that has the working encoders and everything that
-has ever run on the card. §4 is the seam between them, and it is the honest
-status of this project's software.
+The two halves this page used to describe as "still converging" have converged.
+The separate `ktpu.ir` / `ktpu.passes` / `ktpu.codegen` pipeline is retired and
+lives only in git history; one path runs now, `kohakutpu.lang` down to
+`kohakutpu.isa`, and it emits cluster and vector programs alike. **§7 is the
+current status.** §1–§3 are the design reasoning behind the levels, which
+survives the reorganisation even where a module name in them does not.
 
 ---
 
-## 1. Three levels, and why there is an IR at all
+## 1. Six levels, and why there is an IR at all
 
-```
-   user program  (DSL, or tinygrad, or a hand-built graph)
-        |
-        v
-   LEVEL 1   GRAPH      tensors, ops, value semantics
-             shapes, dtypes, no machine in sight
-        |   fuse, choose engine, tile, place, pick the grid
-        v
-   LEVEL 2   SCHEDULE   tiles, grid, memory space, engine assignment,
-             loop order, residency
-        |   encode
-        v
-   LEVEL 3   TARGET     concrete instructions and flits, addresses, rounds
-        |
-        v
-   runtime -> AXI
-```
+Each level says what it **decides** and what it is **not allowed to know**:
 
-Each level answers one question and refuses the other two, and the boundary is
-checkable rather than conventional — a verifier checks each level for the things
-the level below is allowed to know. A tile appearing in a graph-level op is a bug,
-not a shortcut.
+| | Level | Decides | Vocabulary | Must not know |
+|---|---|---|---|---|
+| **L5** | Tensor | *what* to compute | arrays, ops, dtypes | tiles, units, addresses, layout |
+| **L4** | Kernel (DSL) | *how one unit's work is shaped* | grid, sweep, region, accumulator | addresses, coordinates, encodings |
+| **L3** | Graph IR | *what buffers exist, who reads them* | values, ops, regions, lifetimes | byte order, placement, timing |
+| **L2** | Schedule IR | *where things live and run* | bands, placement, **layout, addresses** | bit positions, flit format |
+| **L1** | Unit program | *the instruction stream per unit* | ordered typed instructions | bit positions, routing |
+| **L0** | Bytes | *encoding and dispatch* | payload words, kicks, awaits | what any of it means |
+
+Read the "must not know" column as the actual specification. The rule that makes
+the stack real:
+
+> **Only adjacent levels may appear in one piece of code.**
+
+A file written at L5 may mention L4 ideas. It may not mention L2 ideas. When a
+byte address, a node coordinate or a flit appears in an L5 file, that is not a
+shortcut — it is a **missing layer**, and someone below failed to decide
+something and pushed the decision upward.
+
+Three boundaries carry all the weight, and every past usability complaint is one
+of them being crossed:
+
+- **Memory is L2-and-below.** Allocation, byte addresses, packing, uploads,
+  readback. An L4 or L5 file that names an address has had L2's job handed to it.
+- **Dispatch is L0.** Artifacts, kicks, awaits, credits, node coordinates,
+  staging slots. An L4 file that builds an `Artifact` is doing driver work.
+- **Layout is L2, chosen by L4's tiling.** The kernel's `gm`/`nk` *determine* the
+  byte order an operand needs, but the kernel never packs anything. L2 asks the
+  compiled kernel what layout each port wants and materialises it.
+
+**The one sanctioned escape is device control.** Exactly as `torch.cuda` is the
+only sub-L5 thing a PyTorch program touches, an application may call
+`dev.sync()`, `dev.empty_cache()` and `dev.stats()`. Those are *control*, not
+*data* — they name no address, no layout and no unit. Anything else that seems to
+need crossing a level is a missing API.
 
 **The reason for an IR is a specific defect.** Work was once split on N and only
 N, so a `256 x 1024 x 256` problem at eight clusters got a 32-column band, which
@@ -364,44 +380,29 @@ Level 3 is bytes and no decisions: one program per engine kind, plus the operand
 image. It is also where the disassembler lives, because the only trustworthy check
 that codegen is right is reading back what was emitted.
 
-**There are two encoders and only one of them has ever run on the card.**
+**There were two encoders and only one of them had ever run on the card.** That
+gap is closed: `kohakutpu.isa` emits both kinds, and the hand-packed encoder that
+did run is kept as the witness it is checked against.
 
-| | `ktpu.codegen` | `ktpu.hw` |
+| | `kohakutpu.isa` | `kohakutpu.hw` |
 |---|---|---|
-| cluster ops | yes | yes, and runs |
-| vector ops | **no** | **yes, and runs** |
-| input | IR instructions | hand-built assembler programs |
+| cluster ops | yes, and runs | yes — the witness |
+| vector ops | **yes, and runs** | yes — the witness |
+| input | bands from `kohakutpu.lang` | hand-built assembler programs |
 | field-width checks | yes | yes |
 
-So the compiler can express a vector program in its IR, lower it, schedule it, and
-then not emit it. **This is not a missing table entry**, and it is worth saying
-why before someone adds nine rows to a dictionary: a vector instruction is not a
-flit (§7.1 of [isa.md](isa.md)), so one IR instruction has to expand into a
-variable number of envelope flits plus instruction-memory allocation plus an
-entry; and the envelope opcode space is shared between node types, so the encoder
-cannot be node-agnostic and a mistake is silently executed rather than rejected.
-
-The vector encoding problem is **solved** — it is solved in the driver, against a
-different input type, and not wired to the IR. Filling the gap is substantially a
-matter of teaching codegen to produce what the driver already produces. The
-cluster path is already checked this way: the two encoders' flits are compared
-byte for byte in an integration test, and the vector path needs the same
-relationship.
-
-Two more limits of the compiler path today: the relocation step handles exactly
-one program shape — `fill, fill, gemm, drain` — so multi-pass GEMMs and anything
-with a vector band in it are refused; and there is no decision about what a
-host-side op means in a schedule, so the compiler neither emits host callbacks nor
-refuses programs containing them.
+What made the vector side hard is worth keeping, because it explains the shape of
+`vecemit` rather than a missing table entry: a vector instruction is not a flit
+(§7.1 of [isa.md](isa.md)), so one instruction expands into a variable number of
+envelope flits plus instruction-memory allocation plus an entry; and the envelope
+opcode space is shared between node types, so the encoder cannot be node-agnostic
+and a mistake is silently executed rather than rejected.
 
 **Nothing here is silently wrong on hardware**, because the emitter refuses what
-it cannot handle. The cost is that the compiler path is unusable for real work and
-every kernel goes through the hand-built path instead — which is the direct reason
-large models still perform host repacks. The measurable prize is that those
-repacks are a cost of the hand-built path, not of the hardware.
+it cannot handle and names the knob when it does.
 
-> The two paths drift independently, and that has bitten. The bank fields
-> ([isa.md](isa.md) §4.6) were absent from the compiler path entirely, and its B
+> Two paths drift independently, and that is why there is now one. The bank fields
+> ([isa.md](isa.md) §4.6) were absent from the old compiler path entirely, and its B
 > offset did not merely truncate at 256 — it addressed past two banks. Adding the
 > fields and a range check immediately failed 25 tests: the path had been relying
 > on 8-bit wrap for shapes that do not fit L1 at all. **A capacity bug wearing a
@@ -509,7 +510,7 @@ everywhere else gets the hand-written attention where it matters.
 
 ## 6. Checking a schedule without hardware
 
-`ktpu.interp` executes a schedule directly in Python. It answers two questions
+`kohakutpu.sim` executes a kernel directly in Python. It answers two questions
 the RTL simulator answers expensively and one it cannot answer at all:
 
 | question | with the simulator | with the interpreter |
@@ -547,10 +548,10 @@ replacement for it.
 
 | | |
 |---|---|
-| the hand-built path | encodes cluster and vector programs, uploads, runs on the card |
-| the compiler path, cluster ops | encodes, and is checked byte-for-byte against the hand-built path |
-| the compiler path, vector ops | **not emitted** |
-| the compiler path, multi-pass | **refused**, deliberately |
-| the interpreter | functional and timed levels specified; not the authority |
+| the kernel language | `kohakutpu.lang` — one path, tracing a Python function into bands |
+| cluster ops | encoded by `kohakutpu.isa`, checked byte-for-byte against the hand-packed encoder that has run on the card |
+| vector ops | **emitted**, by `kohakutpu.isa.vecemit` — every fused kernel is a vector program |
+| multi-pass and fused epilogues | supported; `Kernel.relax` stages a fusion the compiler cannot run, so the author never picks |
+| the simulator | `kohakutpu.sim`, three levels from "just compute it" to a mesh model; still not the authority |
 | the DSL | traces by letting value objects flow through an ordinary Python function; runtime-dependent control flow is rejected rather than unrolled |
-| tinygrad | not started, deliberately — build the levels that are needed under every option first |
+| tinygrad | `ktpugrad`, on tinygrad 0.13 — matmul, epilogues and elementwise chains lower and run |

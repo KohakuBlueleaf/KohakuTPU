@@ -134,7 +134,8 @@ a project to prove anything.
 | vector ALU | **built and measured** — correctly rounded FMA, faithful seeds |
 | vector core around it | **built**, and its instruction set partly so |
 | driver and hand-built encoders | **run on the card** |
-| compiler path | cluster ops emit; **vector ops do not**, deliberately refused |
+| compiler path | one path, `kohakutpu.lang` to `kohakutpu.isa`; cluster **and** vector ops emit |
+| tinygrad frontend | **built** on 0.13 — matmul, epilogues and elementwise chains lower and run |
 | tensor-descriptor ISA | designed, walker built and validated, **not wired in** |
 | chain bypass, `FWD` | **not built** |
 | split-K epilogue on a vector core | **designed, not built** |
@@ -162,13 +163,28 @@ one before it.
    fits one DSP exactly, and four base-2 seeds at full rate.
 5. **[isa.md](isa.md)** — one worked example of spending the framework's
    instruction payload bits, at three scales.
-6. **[compiler.md](compiler.md)** — the software stack: three IR levels, tile
-   choice discounted by padding, and the round-cutting a machine without hardware
-   loops forces on its compiler.
+6. **[compiler.md](compiler.md)** — the software stack: six levels and what each
+   is forbidden to know, tile choice discounted by padding, and the
+   round-cutting a machine without hardware loops forces on its compiler.
 7. **[ship.md](ship.md)** — the device, and why the machine is four meshes.
 8. **[multi-mesh.md](multi-mesh.md)** — writing kernels across those four: what an
    address means, which splits the silicon takes, and the one it refuses.
 9. **[results.md](results.md)** — every measured number, with its conditions.
+
+Then the pages about writing against it, in no particular order:
+
+- **[writing-kernels.md](writing-kernels.md)** — how much of the schedule to say,
+  the one rule about stages, and why a tiling is a view rather than a checkpoint.
+- **[fused-epilogue.md](fused-epilogue.md)** — the drain that lands in a vector
+  core's L1 instead of DRAM: the encoding, the sequencing, and the band it fits.
+- **[memory.md](memory.md)** — the two granules that bind every span, why the
+  drained byte order is the fast one, and what a model-sized placement still needs.
+- **[conv2d.md](conv2d.md)** — 3x3 convolution as an implicit GEMM, the branch that
+  runs on today's bitstream, and why the materialised fallback is not viable.
+- **[tinygrad.md](tinygrad.md)** — the optional tensor frontend, what it switches
+  off, and the ops where it is worse than calling the library.
+- **[hardware-wants.md](hardware-wants.md)** — ten asks the compiler and the
+  kernels ran into, each naming the level it was established at.
 
 If you are here to see whether the framework would suit a different datapath,
 read [integrate/](../../integrate/README.md) instead; these pages are specific on
