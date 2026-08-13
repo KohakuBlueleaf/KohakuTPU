@@ -177,7 +177,7 @@ with L.stage(x.parts(part)) as e:
 Work that crosses unit types does **not** have to cross memory. A cluster's
 `DRAIN` addresses either the memory port or a NoC node, and a node-addressed
 drain lands in the receiving vector core's L1
-([`kohaku_npu_docs/isa/cluster.md`](../../../kohaku_npu_docs/isa/cluster.md) §10).
+(the cluster ISA, §10).
 Write the elementwise work on the accumulator and the tile never reaches DRAM:
 
 ```python
@@ -191,8 +191,79 @@ with L.stage(x.tiles(gm), w.tiles(gn)) as (i, j):
 `L.temp(...)` is the other road, and still the right one when the receiving core
 needs the value in row order, when the tiling does not fit an L1, or when you
 simply want the two halves written separately. The compiler falls back to it on
-its own where the fused form does not fit — `.plan/FUSED-EPILOGUE.md` has the
-conditions.
+its own where the fused form does not fit, which is what `Kernel.relax` does.
+
+---
+
+## A tiling is a VIEW, not a memory checkpoint
+
+This is the rule the kernel library is written against, and it is easy to get
+backwards:
+
+> **`with units(...)` declares a TILING. It does not declare a memory boundary.**
+
+A tiling inside a tiling is a **sub-view of the current tile**. That tile may live
+in an accumulator, in a unit's L1, or in registers — so a nested tiling **must not
+force another memory tile**. Where a value lives is a lowering decision the
+compiler makes from residency and capacity; it is not a consequence of the author
+having written a tiling. The sentence to test any change against:
+
+> **A tile or block inside a memory tile should not be another memory tile.**
+
+Four shapes, and **only the last one writes memory**:
+
+1. **One top-level `with units(...)`, multi-dimensional.** Every operand tiled by
+   its own property in one space. No checkpoint; the only thing that leaves is
+   the result. A single tiling does not mean a single block size — this is what
+   lets one tiling cover operands that tile differently, which is why the answer
+   is one `with units(...)` rather than one per operand.
+2. **A tiling inside a tile** — a sub-view, never another memory tile. The nested
+   tiling re-describes the tile the enclosing scope already holds, so it changes
+   how the data is addressed, not where it is. This is how vector work is managed
+   *inside* a matmul tile.
+3. **A loop inside a tile** — iteration, not tiling. Loop-carried state stays in
+   whatever storage class holds it. No checkpoint per iteration.
+4. **Two or more top-level `with units(...)`** — an explicit checkpoint, and it is
+   legal. This is the only shape that writes memory, and it is a deliberate
+   instruction from the author rather than an accident of syntax. Its cost is
+   visible precisely because a second top-level tiling was written.
+
+Two things may still force a checkpoint the author did not write, and both are
+lowering decisions the compiler must **report** rather than perform silently:
+**capacity** (the tile does not fit the accumulator or the unit's L1), and **a
+reduction that genuinely crosses units**. The second is usually a tiling choice
+rather than a law, so the compiler should say which it is.
+
+### Which ops can be an epilogue, and why a row is not a row
+
+> **An op that commutes with a permutation of the elements can be an epilogue.
+> An op that does not needs true row order.**
+
+A drained accumulator is 4x4 sub-tiles, one 32-byte word each, row-major *inside*
+the sub-tile. So L1 word 0 holds logical elements `[0,1,2,3, 64,65,66,67,
+128..131, 192..195]` — **four logical rows interleaved inside every word** — and
+one logical row takes 4 elements from each of `gn` words. Every data path on this
+machine moves whole 32-byte words: `VLD`'s quantum is whole L1 words, and so is
+`VFILL`/`VDRAIN`, a cluster `FILL`, and `CU_DATA`'s granule.
+
+Putting a row on one unit does not make it **addressable as a row**, and no
+tiling fixes that, because the 4x4 sub-tile is fixed hardware. `exp2(s - m)`, a
+mask, and a correction factor all commute and can fuse now; the row reductions
+and `p @ v` do not, and they are exactly the ops that need a de-interleave.
+
+### The accumulator chain is guarded, and the obvious guard was wrong
+
+Writing a key-block loop *outside* the sweep silently computed the wrong answer:
+the `gemm` acc flag is the innermost counter, which restarts at 0 every outer
+iteration, and `acc=0` means "clear the accumulator". At `outer=3` the result was
+1.001x a single pass rather than 3x, compiled clean, with no warning.
+
+`Tile.__init__` now records its birth depth and `__iadd__` refuses when the nest
+has deepened by more than one since. **Refusing on trace loop-depth alone would
+have been wrong** — flash attention's `with units(...)` sits inside a loop, so its
+depth at the sweep is 2, but that loop opened *before* the tile existed and each
+pass opens a new stage with a fresh resident tile, where the flag restarting is
+correct. Only loops opened AFTER the tile can carry its chain.
 
 ---
 
@@ -256,4 +327,8 @@ that scores then softmaxes pays for reordering in between.
 
 `examples/kohakutpu/` writes every kernel out rather than importing one; start at
 `01_tensors.py` and `02_kernel.py`. `demos/kohakutpu/` shows whole networks.
-`.plan/DSL-SPECTRUM.md` is the boundary argument in full.
+
+[fused-epilogue.md](fused-epilogue.md) is the lowering behind the accumulator
+form above, and the band where it fits. [memory.md](memory.md) is why the drained
+byte order is the fast one. [hardware-wants.md](hardware-wants.md) collects what
+the kernels ran into that the silicon or the compiler owes them.
