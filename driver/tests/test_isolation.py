@@ -45,6 +45,7 @@ def test_framework_imports_no_project() -> None:
         [sys.executable, "-c", _PROBE],
         capture_output=True,
         text=True,
+        check=False,
         cwd=str(__import__("pathlib").Path(__file__).resolve().parents[1]),
     )
     assert done.returncode == 0, done.stderr

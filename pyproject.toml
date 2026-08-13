@@ -57,8 +57,10 @@ ignore = ["B008", "C408"]
 # A test harness that reports every failure has to catch every failure; the
 # alternative is a suite that stops at the first one and names only it.
 "compiler/tests/*" = ["BLE001"]
+"driver/tests/*" = ["BLE001"]
 
 [tool.pytest.ini_options]
-# RUN THESE ONE AT A TIME: `compiler/tests` and `driver/tests` both want the
-# module name `tests`, so one invocation over both always collides.
+# Both test roots are packages named `tests`, so the default prepend mode
+# collides on the two `test_isolation.py`; importlib names a module by its path.
+addopts = "--import-mode=importlib"
 testpaths = ["compiler/tests", "driver/tests"]

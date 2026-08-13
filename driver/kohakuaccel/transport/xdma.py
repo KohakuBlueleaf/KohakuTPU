@@ -162,9 +162,12 @@ class XdmaTransport(Transport):
         self.max_xfer, self.min_xfer = max_xfer, min_xfer
         self.device = device if device is not None else find_device(index)
         self.bytes_read = self.bytes_written = 0
+        h2c, c2h = f"{self.device}\\h2c_0", f"{self.device}\\c2h_0"
         try:
-            self._h2c = open(f"{self.device}\\h2c_0", "rb+", buffering=0)
-            self._c2h = open(f"{self.device}\\c2h_0", "rb", buffering=0)
+            # Held for the transport's life and shut by `close()`; a context
+            # manager would close the channel the moment it opened.
+            self._h2c = open(h2c, "rb+", buffering=0)  # noqa: SIM115
+            self._c2h = open(c2h, "rb", buffering=0)  # noqa: SIM115
         except OSError as exc:
             raise TransportUnavailable(f"cannot open XDMA channels ({exc})") from exc
         # Page-aligned staging: the driver pins these pages directly, and a

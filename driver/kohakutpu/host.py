@@ -20,7 +20,6 @@ from kohakuaccel.device import (
 from kohakuaccel.device.registers import A_CAPS
 from kohakuaccel.transport.jtag import JtagTransport
 from kohakuaccel.transport.rebase import Rebased, Window
-
 from ktpu.hw import tensor as T
 
 WORD_BYTES = 32

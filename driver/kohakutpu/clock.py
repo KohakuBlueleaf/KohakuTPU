@@ -17,7 +17,6 @@ credit-based, and the built-in frequency is the verified ceiling.
 import time
 
 from kohakuaccel.transport.base import MASK32, Transport
-
 from ktpu.hw.clock import (
     DEFAULT_D,
     DEFAULT_K,
