@@ -352,7 +352,7 @@ Recorded because the RTL and the surrounding material disagree, and the RTL wins
 |---|---|
 | Reset convention | `noc_cu_base`, `mag` and `noc_orchestrator` take `resetn` (active low, synchronous). `NoCRouter`, `InPortSwitch` and `OutPortSwitch` take `rst` (active high) and the two switches use it **asynchronously**. One mesh, two conventions. |
 | `noc_cu_null` type code | `src/kohakunoc/noc_cu_null.v` declares `T_CU_DATA = 4'h4`. That value is `MEM_WR_DATA`. The correct code is `0x8` (see [flit-format.md](flit-format.md) §3). The null unit only sends to another null unit, so nothing has broken, but the constant is wrong. |
-| `CU_CTRL` map | The pre-reframing snapshot (`kohaku_npu_docs/noc/spec.md` §6.2) lists byte offsets `0x00/0x04/0x08/0x0C` and registers `CU_CONTROL` and `CU_ERROR`. The RTL uses word **indices** 0–3 and the last two are counters. [control-registers.md](control-registers.md) §1 documents the silicon. |
+| `CU_CTRL` map | An earlier pre-reframing snapshot lists byte offsets `0x00/0x04/0x08/0x0C` and registers `CU_CONTROL` and `CU_ERROR`. The RTL uses word **indices** 0–3 and the last two are counters. [control-registers.md](control-registers.md) §1 documents the silicon. |
 | Instruction FIFO depth | The same snapshot mandates depth 512 in block RAM. `INST_DEPTH` defaults to 32 and every instantiation in the tree leaves it there. |
 | Forked base module | `src/synth_top/poc/noc_cu_base.v` is a divergent copy carrying an extra `ASYNC` parameter and a `clk_noc` port. Nothing in the tree references it. The contract above describes `src/kohakunoc/noc_cu_base.v`. |
 

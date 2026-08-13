@@ -128,7 +128,7 @@ produced them, in [projects/](../projects/).
 ## Where the source of truth is
 
 The RTL is the source of truth and this tree is checked against it, not derived
-from an earlier document. Where a header comment, `noc_pkt.vh` macro or the
-pre-reframing snapshot in `kohaku_npu_docs/` disagrees with the silicon, the
+from an earlier document. Where a header comment, a `noc_pkt.vh` macro or an
+earlier pre-reframing snapshot disagrees with the silicon, the
 silicon wins and the disagreement is recorded in the relevant document under
 "Known divergences". Do not resolve one of those by reading the other file.

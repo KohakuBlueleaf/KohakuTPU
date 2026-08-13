@@ -470,7 +470,7 @@ memory-mapped. Branches or arithmetic here would duplicate the host.
 
 | Divergence | Detail |
 |---|---|
-| `CU_CTRL` map versus the snapshot | `kohaku_npu_docs/noc/spec.md` §6.2 lists byte offsets `0x00/0x04/0x08/0x0C` and registers `CU_CONTROL` (RW) and `CU_ERROR`. The RTL uses word **indices** 0–3, has no writable register at all, and indices 2 and 3 are counters. §1.2 is the silicon. |
+| `CU_CTRL` map versus the snapshot | An earlier pre-reframing snapshot lists byte offsets `0x00/0x04/0x08/0x0C` and registers `CU_CONTROL` (RW) and `CU_ERROR`. The RTL uses word **indices** 0–3, has no writable register at all, and indices 2 and 3 are counters. §1.2 is the silicon. |
 | `CU_STATUS.error` | Allocated, tied to zero. A unit's faults are reported through `SIG_FAULT`, not here. |
 | `CTRL`, `IRQ_EN`, `IRQ_STAT` | Storage with no consumer. No interrupt output exists on the orchestrator. |
 | Staging window versus 4 KB | The decode is derived from `STAGE_WORDS` and at the default `STAGE_FLITS = 128` extends past `0x2FFF`. Correct in RTL; a hazard for a host that assumes one page. §2.6. |

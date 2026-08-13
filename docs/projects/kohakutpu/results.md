@@ -518,7 +518,7 @@ SIMULATION two runs of the same shape are bit-identical**, verified by hash.
 > by up to 40% of peak, and a further ~0.3% reproducibly wrong by up to 11,000x.
 > The two sets never overlap. So a difference between two HARDWARE runs is not
 > automatically a real difference — expect ~0.5% disagreement before concluding
-> anything. See §6.5 and `.plan/measurements/accuracy-and-defects.md`.
+> anything. See §6.5.
 
 ### 6.5 The card on realistic operands
 
@@ -553,9 +553,9 @@ one by ~6e-4 rather than the observed 2.139.
 **The blown elements are OPERAND RANGE, and that one is closed.** Their count
 follows operand magnitude and nothing else — scaling an operand by an exact power
 of two (which changes no mantissa) takes 75 blown at a true peak of 5.79 to
-**195** at 11.57 and to **zero** at 1.45. This is the same trap
-`.plan/MESH0-FAULT.md` retracted a hardware narrative over: a contraction driven
-past the drain, saturating at the FP16 maximum. Keep the contraction in range and
+**195** at 11.57 and to **zero** at 1.45. This is the same trap that once
+retracted a whole hardware narrative: a contraction driven past the drain,
+saturating at the FP16 maximum. Keep the contraction in range and
 do not read a saturated element as evidence about the machine.
 
 **The flickering is separate and still open**, and it does not follow magnitude.
@@ -568,8 +568,7 @@ cases with neither run correct, which points at the per-block E8M0 scale rather
 than the multiply-accumulate. Next test is `preq`: host-packed MXFP7 bypasses
 MAG's on-the-fly quantiser entirely.
 
-`scripts/py/nondeterminism.py` reproduces in ~30 seconds;
-`.plan/measurements/accuracy-and-defects.md` §3.3–3.4 has the evidence.
+`scripts/py/nondeterminism.py` reproduces it in ~30 seconds.
 
 The rates recorded in §6.4 above — "4 of 65,536 over 10%", maxima of 1.00 and
 2.43 — are very likely the same phenomenon seen earlier and recorded as a rate

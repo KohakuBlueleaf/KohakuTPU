@@ -117,7 +117,8 @@ position, every message class and the descriptor payload layouts. It is also
 Every module restates the same constants as local parameters or local macros:
 `noc_cu_base.v`, `mag_mem_port.v`, `mag.v`, `noc_orchestrator.v`, `mag_ilink.v`,
 `vec_cu.v` and `synth_top/poc/l2_adapter.v`. The driver restates them again in
-`src/ktpu/hw/device.py`. `mag_ilink.v` says so at the point of restatement:
+`driver/kohakuaccel/device/flit.py`. `mag_ilink.v` says so at the point of
+restatement:
 
 > `// Flit header positions, restated from noc_pkt.vh -- nothing includes it.`
 
