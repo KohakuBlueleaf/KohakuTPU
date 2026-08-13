@@ -6,7 +6,7 @@ that never materialises the score matrix.
 
 ONE IMPLEMENTATION PER KERNEL: two means a caller can pick the slow one. The
 staged and separated variants these were graded against are gone; their
-measurements are in `.plan/measurements/`.
+measurements are recorded with each kernel.
 
 The single-operator kernels the TENSOR level is made of are `kohakutpu.ops` --
 one pass, one operator, nothing composed. A plain `matmul` and every elementwise

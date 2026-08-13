@@ -56,7 +56,7 @@ def mlp(
 
     TWO stages, and two is the floor: `h` has to go back through MAG because the return
     leg a vector core would need -- VC into a cluster's L1 -- cannot carry the
-    format (`.plan/HARDWARE-WANTS.md` §1). What IS saved is the activation's
+    format -- L1 cannot carry MXFP7. What IS saved is the activation's
     own pass: it rides the first contraction's resident tile as it drains.
     """
     h = L.temp(M, F)

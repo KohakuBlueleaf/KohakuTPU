@@ -3,7 +3,7 @@
 The flag is the innermost loop counter and zero CLEARS the tile, so a sweep two
 loops deep restarts on every outer iteration and keeps only the last -- measured
 at **1.001x a single pass instead of 3x**, compiling clean and reporting success.
-`.plan/TILING-NOT-CHECKPOINT.md` recommends that shape, so it will be written
+One tiling with no checkpoint recommends that shape, so it will be written
 deliberately and has to fail loudly first.
 
 The ALLOWED nesting is tested too: a loop outside `with units(...)` opens a new

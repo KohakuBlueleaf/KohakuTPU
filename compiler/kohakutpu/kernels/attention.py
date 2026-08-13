@@ -11,7 +11,7 @@ block. `causal` needs one, since a query block is what selects the keys.
 
 Four stages per key block, and two of them are forced: `weights` is computed on
 a vector core and multiplied on a cluster, and VC -> cluster L1 cannot carry
-MXFP7 (`.plan/HARDWARE-WANTS.md` §1). The other two are one band each.
+MXFP7 -- see the hardware notes below. The other two are one band each.
 """
 
 import numpy as np

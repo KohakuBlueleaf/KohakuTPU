@@ -8,8 +8,7 @@ chosen. The scheduler fuses layer one into `linear_silu` and layer two into
 `matmul`, byte for byte what composing the library by hand produces.
 
 The counters are the same ones every other demo prints, and they say what the
-frontend costs as well as what it buys. Levels 5 and 4 only; the design is in
-`.plan/TINYGRAD.md`.
+frontend costs as well as what it buys. Levels 5 and 4 only.
 """
 
 import argparse

@@ -8,7 +8,7 @@ the sense ``docs/integrate/what-you-own.md`` uses the phrase.
 The RTL side of these definitions is ``src/kohakunoc/noc_pkt.vh``. That header is
 included by nothing and every module restates it by hand; this file is a further
 restatement, correct by agreement rather than by construction. See
-``.plan/RESTRUCTURE-PLAN.md`` s1.F1.
+the framework/project split, F1.
 """
 
 # Bit 28 selects the memory agent over the main orchestrator.

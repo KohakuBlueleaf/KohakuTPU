@@ -8,7 +8,7 @@ tree, and a reduction along the last axis, onto `kohakutpu.lang.vector`'s
 Not a lowering pass. `chains_of` already turns an expression TREE into chains
 with the lifted subexpressions forwarded in registers, and `BandKernel` already
 runs those chains as ONE program, so the work here is choosing our operators for
-theirs and REFUSING the rest. `.plan/TINYGRAD.md` sections 4.2 and 10.
+theirs and REFUSING the rest.
 """
 
 from dataclasses import dataclass
@@ -361,14 +361,14 @@ def _folding(ast, u, axes: tuple, operands: list, unknown: list, folded: list):
 
 
 def _selected(ast, u, axes: tuple, operands: list, unknown: list, folded: list):
-    """`u` as relu, abs or rsqrt in our own arithmetic, or None for anything else.
+    """`u` as relu, abs, rsqrt or a min/max select, in our own arithmetic.
 
     tinygrad spells `relu` `WHERE(CMPLT(0, x), x, 0)`, `abs`
     `x * WHERE(CMPNE(x, 0), WHERE(CMPLT(x, 0), -1, 1), 0)` and `rsqrt`
     `RECIP(SQRT(x))`; ours are `(x + |x|) * 0.5`, a single `VABS` and a single
-    `VRSQRT`. EXACTLY these three shapes and no other -- a compare-and-select in
-    general needs predication no kernel on this machine has run, and reading one
-    as arithmetic would compute a different function and report success.
+    `VRSQRT`. Returns None for anything else -- a compare-and-select in general
+    needs predication no kernel here has run, and reading one as arithmetic
+    would compute a different function and report success.
     """
     held = _rsqrt_of(u)
     if held is not None:
@@ -377,11 +377,48 @@ def _selected(ast, u, axes: tuple, operands: list, unknown: list, folded: list):
     if held is not None:
         return Op(OpKind.ABS, (_node(ast, held, axes, operands, unknown, folded),))
     held = _relu_of(u)
-    if held is None:
+    if held is not None:
+        inner = _node(ast, held, axes, operands, unknown, folded)
+        clamp = Op(OpKind.ADD, (inner, Op(OpKind.ABS, (inner,))))
+        return Op(OpKind.MUL, (clamp, Scalar(0.5)))
+    got = _minmax_of(u)
+    if got is None:
         return None
-    inner = _node(ast, held, axes, operands, unknown, folded)
-    clamp = Op(OpKind.ADD, (inner, Op(OpKind.ABS, (inner,))))
-    return Op(OpKind.MUL, (clamp, Scalar(0.5)))
+    wider, a, b = got
+    args = [_node(ast, s, axes, operands, unknown, folded) for s in (a, b)]
+    return _extremum(wider, *args)
+
+
+def _minmax_of(u):
+    """`(is a maximum, a, b)` for a min/max written as a select, or None.
+
+    `x.clip(lo, hi)` is two of these nested. `WHERE(CMPLT(a, b), b, a)` takes
+    the larger and `WHERE(CMPLT(a, b), a, b)` the smaller -- the ONLY two
+    select shapes read here, because every other one is a real predicate.
+    """
+    if u.op is not Ops.WHERE or len(u.src) != 3:
+        return None
+    cond, first, second = u.src
+    if cond.op is not Ops.CMPLT or len(cond.src) != 2:
+        return None
+    a, b = cond.src
+    if first is b and second is a:
+        return True, a, b
+    if first is a and second is b:
+        return False, a, b
+    return None
+
+
+def _extremum(wider: bool, a, b):
+    """`max(a, b)` or `min(a, b)` as `(a + b +/- |a - b|) * 0.5`.
+
+    Exact on fp16, and it is what :func:`_maximum` already does for their
+    `MAX` -- the same identity whichever way they spelled it.
+    """
+    gap = Op(OpKind.ABS, (Op(OpKind.SUB, (a, b)),))
+    total = Op(OpKind.ADD, (a, b))
+    joined = Op(OpKind.ADD, (total, gap)) if wider else Op(OpKind.SUB, (total, gap))
+    return Op(OpKind.MUL, (joined, Scalar(0.5)))
 
 
 def _sqrt(ast, u, axes: tuple, operands: list, unknown: list, folded: list):
@@ -483,9 +520,9 @@ def _source(ast, u, axes: tuple, operands: list) -> int:
     if got is None:
         _refuse(ast, "a load that is not one plain fp16 read of a buffer")
     index, at, strides = got
-    if len(axes) > 1 and strides[-1] not in (0, 1):
-        # The innermost axis is the one a fold walks, so a stride other than one
-        # there is a fold DOWN A COLUMN however the ranges happened to nest.
+    if axes and U.reduces(axes[-1]) and strides[-1] not in (0, 1):
+        # UNDER A FOLD the innermost axis is the one VRED walks, so a stride
+        # other than one there is a fold DOWN A COLUMN however the ranges nest.
         _refuse(
             ast,
             f"an operand strided {strides[-1]} along the axis being folded; this "

@@ -371,7 +371,7 @@ class ResidentEpilogueKernel:
 
     A cluster's `DRAIN` that names this core writes `words` L1 words of FP16
     sub-tiles -- byte-identical to what a memory drain would have written -- so
-    the epilogue reads L1 directly. `.plan/FUSED-EPILOGUE.md` §4 and §6.
+    the epilogue reads L1 directly.
 
     `operand` is a leaf index read per channel: a bias, laid out by
     `layout.ChannelBias` as one word per column group, filled once and re-read

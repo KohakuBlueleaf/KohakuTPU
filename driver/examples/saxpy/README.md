@@ -72,6 +72,6 @@ difference between them only through what they declared.
 
 There is none yet. `sw/unit.py`'s `SaxpyUnit` is a Python model, and the
 hardware it stands for would be the compute-unit template described in
-`.plan/RESTRUCTURE-PLAN.md` §3 with a multiply-add in the datapath hole. The
+the framework/project split, with a multiply-add in the datapath hole. The
 software stack does not depend on that existing, which is the useful part: a
 driver can be written and tested before there is anything to run it on.

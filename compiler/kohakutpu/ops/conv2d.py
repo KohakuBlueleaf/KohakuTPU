@@ -3,7 +3,8 @@
 A tensor-level operator: one pass, one operation. Fused with a bias or an
 activation it is a KERNEL and lives in `kernels/conv2d.py`.
 
-`.plan/CONV2D.md` §4 branch C has the derivations. Three facts it does not:
+Branch C, whose derivations `compiler/tests/test_conv2d_branch_c.py` checks
+against a hand-computed schedule. Three facts those do not carry:
 
 * `nk` is FORCED to 1 -- two channel blocks of one pixel are `plane*64` bytes
   apart -- so a pass is `3*(9C/32) + 1` flits and cannot amortise;

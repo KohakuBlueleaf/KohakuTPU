@@ -1,7 +1,7 @@
 """The fused row-wise kernels, and what they cost now that they run.
 
 `kohakutpu/kernels/fused.py` writes softmax, rmsnorm, layernorm and group_norm
-in the shape `.plan/TILING-NOT-CHECKPOINT.md` argues for: one tiling, no
+in the shape the fused kernels argue for: one tiling, no
 full-shape temp, the chain as a sequence.
 
 EVERY ASSERTION HERE USED TO BE A REFUSAL, and what is pinned now is the

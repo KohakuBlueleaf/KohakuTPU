@@ -7,7 +7,7 @@ That puts the group size under `VRED`'s vector length -- see :func:`group_norm`.
 TWO PASSES, NOT `E[x^2] - E[x]^2`. The lane carries 16 significand bits and that
 identity cancels: at a group of 8192 with a mean 64 sigma off zero it returns the
 variance 21.5% low, against 2.1e-05 for the form below. Measured, in this lane's
-own arithmetic -- `.plan/measurements/groupnorm.md`.
+own arithmetic.
 """
 
 from kohakuaccel.lang import dims, units

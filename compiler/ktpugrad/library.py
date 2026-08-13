@@ -4,7 +4,7 @@ tinygrad cuts our multi-stage kernels apart before the matcher sees them.
 `x.softmax()` is three of its kernels against one of ours, `layernorm` three,
 and `Tensor.scaled_dot_product_attention` is **five of which none match** -- so
 from that rung attention does not run at all. Re-fusing across those boundaries
-is a pass over a SCHEDULE, which is the line `.plan/TINYGRAD.md` §8 stops at.
+is a pass over a SCHEDULE, which is the line this backend stops at.
 
 Each of these REALISES its inputs, calls the kernel, and hands back a tinygrad
 Tensor -- one realize boundary, where the scheduler breaks its own plan anyway.

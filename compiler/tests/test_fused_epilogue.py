@@ -4,7 +4,7 @@ A `DRAIN` addresses the memory port or a NoC node, so an epilogue can be handed
 straight to a vector core's L1. What is checked here is what can be checked
 WITHOUT the card: the instruction fields, the placement the two halves agree on,
 the byte order of the result, and that the intermediate never gets an address.
-`.plan/FUSED-EPILOGUE.md` §8 lists what only hardware can settle.
+Latency and bandwidth are what only hardware can settle.
 """
 
 import pytest

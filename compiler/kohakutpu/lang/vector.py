@@ -56,7 +56,7 @@ class Resident:
 
     A `DRAIN` may address a NoC node instead of memory, so the accumulator
     arrives in this core's L1 as `gm*gn` words of FP16 sub-tiles -- the same
-    bytes a memory drain would have written. See `.plan/FUSED-EPILOGUE.md`.
+    bytes a memory drain would have written.
     """
 
     gm: int

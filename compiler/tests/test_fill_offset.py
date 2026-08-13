@@ -3,8 +3,8 @@
 `Slice` carries an optional offset in LANES of the entry stream -- 64 bytes, a
 quarter of an L1 entry -- which `TpuBackend._cluster` adds to the fill address.
 It exists because a 3x3 convolution's nine taps are the same operand read at
-nine constant offsets, six of which are not entry-aligned (`.plan/CONV2D.md`
-§4, branch C), and no `gm`, `gn` or `nk` can place one.
+nine constant offsets, six of which are not entry-aligned (branch C), and no
+`gm`, `gn` or `nk` can place one.
 
 The first two tests are the witness the rest of the change is measured against:
 an offset nobody asks for must leave every shipped kernel byte-identical.

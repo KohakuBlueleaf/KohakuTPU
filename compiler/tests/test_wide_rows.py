@@ -176,7 +176,7 @@ def test_the_narrow_arithmetic_is_UNCHANGED_at_one_sub_row(cols):
     Against `layernorm_staged`, which is the arithmetic these kernels were
     written from. Since `fused.py` was promoted the SHIPPED `layernorm` is one
     band with no intermediate in DRAM and is the more accurate of the two --
-    `wide.py` owes it that rewrite. `.plan/measurements/witness-updates.md`.
+    `wide.py` owes it that rewrite.
 
     Equal ERROR rather than equal bits: reduce/apply grouping cuts the two into
     a different number of programs, so they round in different places and land

@@ -259,7 +259,7 @@ class Spread:
 
     An ADDRESS-DEPENDENT operand, and the only one this DSL has. `vec_agu`
     calls it a broadcast and spells it stride 0, so it costs a descriptor
-    dimension and no pass at all -- `.plan/measurements/wide-rows.md` §2.
+    dimension and no pass at all.
     """
 
     def __init__(self, buffer: Buffer, period, take) -> None:
@@ -322,7 +322,7 @@ class Plane:
 
     `x[i, k, off]` fills tile `i` at `off` LANES -- one pixel's 32-channel
     block, 64 bytes. A 3x3 tap IS that offset, which is the whole of branch C
-    (`.plan/CONV2D.md` §4): nine taps, nine constants, one accumulator.
+    (branch C): nine taps, nine constants, one accumulator.
 
     Padding is fixed at 1 because the layout's tail is sized for a 3x3.
     """

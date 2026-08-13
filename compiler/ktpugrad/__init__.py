@@ -22,7 +22,7 @@ The hatch is still the FASTER answer for the row-wise kernels: the scheduler
 gives a reduction its own kernel whatever we do, so a generated `softmax` runs
 as three dispatches against the hatch's one stage.
 
-Design in `.plan/TINYGRAD.md`; the seam is :mod:`ktpugrad.runner`, the hatch is
+The seam is :mod:`ktpugrad.runner`, the hatch is
 :mod:`ktpugrad.library` and the generator is :mod:`ktpugrad.chain`.
 """
 

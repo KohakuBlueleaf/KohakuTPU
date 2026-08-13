@@ -125,7 +125,7 @@ for name, knobs in (
     print(f"  {name:22} {got.stages:>6} {len(got.temps):>5} {got.timing.cycles:>10,}")
 print("\n  Four stages per key block, and TWO of them are forced: `weights` is")
 print("  computed on a vector core and multiplied on a cluster, and VC -> cluster")
-print("  L1 cannot carry MXFP7. See .plan/HARDWARE-WANTS.md section 1.")
+print("  L1 cannot carry MXFP7, so a staged operand widens to fp16 in L1.")
 
 print("\n  READ THE TWO COLUMNS AGAINST EACH OTHER. Unblocked and qblock=64 do")
 print("  the same arithmetic and cost the same CYCLES -- but one is 10 stages")

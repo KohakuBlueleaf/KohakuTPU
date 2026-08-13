@@ -187,7 +187,7 @@ def test_no_shipped_kernel_reads_what_its_own_stage_wrote(name, fn, bound, knobs
 
     Surveyed before turning the guard on -- 33 cases including six tilings, both
     conv2d shapes and the causal and head-axis attention forms -- and nothing
-    was refused. `.plan/measurements/hazard-survey.md`.
+    was refused.
     """
     assert fn.compile(MACHINE, iface.solve(fn.signature, bound), **knobs).stages
 

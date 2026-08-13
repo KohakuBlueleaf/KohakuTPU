@@ -5,7 +5,8 @@
 Every file is labelled with the level it is written at, and touches only that
 level and the one next to it. When a file names something three levels down —
 an address, a node coordinate, a flit — that is a missing API, not a shortcut.
-See `.plan/LEVELS.md`.
+The six levels are L5 tensor, L4 DSL, L3 graph IR, L2 schedule IR, L1 unit
+program, L0 bytes.
 
 Run any of them directly. **They go to the unit models in `kohakutpu.model` by
 default, not to the card** — the same kernels through the same artifact. Reaching

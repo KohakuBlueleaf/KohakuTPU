@@ -121,5 +121,5 @@ for d, hidden in ((64, 256), (512, 2048), (2048, 8192), (4096, 11008)):
     print(f"  {d:>6} {hidden:>7} {params:>12,} {params * 2:>12,}")
 print(f"\n  This arena holds {16 << 20:,} bytes. A 2048-wide layer is 100 MB and a")
 print("  4096-wide one is 314 MB, so NEITHER fits -- one layer, let alone a")
-print("  stack. That is why `.plan/MEMORY-MANAGER.md` exists and why multi-mesh")
-print("  scheduling is on the list rather than being an optimisation.")
+print("  stack. That is why a memory manager and multi-mesh scheduling are on")
+print("  the list rather than being optimisations.")

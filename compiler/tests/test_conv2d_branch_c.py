@@ -1,6 +1,6 @@
 """3x3 conv as a matmul over `[C/32][plane][32]`, on the current bitstream.
 
-Branch C of `.plan/CONV2D.md` §4: store the activation channel-block-major, run
+Branch C: store the activation channel-block-major, run
 with `nk = 1`, and a tap becomes a constant added to the FILL address. Nothing
 in the hardware changes.
 

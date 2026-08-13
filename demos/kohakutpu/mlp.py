@@ -113,7 +113,7 @@ print("  is the whole POINT of fusing. The staged form's cost is a MAG write")
 print("  and read, and NO COUNTER HERE PRICES THAT: `flits` is the mesh,")
 print("  `sent`/`fetched` are the host link, and MAG traffic inside the mesh")
 print("  is measured nowhere. Compare CYCLES for this question, not flits.")
-print("  (.plan/HARDWARE-WANTS.md section 8 is the same gap, in the timing model.)")
+print("  (The timing model has the same gap: it prices no MAG round trip.)")
 
 head("WHY YOU STILL WRITE THE FUSED FORM")
 print("A grid wider than the vector cores CANNOT fuse -- the tile has nowhere")
