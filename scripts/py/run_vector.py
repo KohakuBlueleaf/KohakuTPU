@@ -23,7 +23,6 @@ import io
 import sys
 
 import numpy as np
-
 from ktpu.hw import device as dev
 from ktpu.hw import vector as V
 from ktpu.hw.device import TransportUnavailable

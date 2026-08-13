@@ -15,7 +15,6 @@ import subprocess
 import sys
 
 import numpy as np
-
 from ktpu.hw import mxfp7
 
 # parents[2], not parent.parent: this file is scripts/py/, so two levels up is

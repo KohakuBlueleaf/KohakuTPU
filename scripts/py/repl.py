@@ -19,7 +19,6 @@ that runs perfectly well and answers a question nobody asked.
 import sys
 
 import numpy as np
-
 from ktpu.hw import bench, sim
 from ktpu.hw.sim import Session, SimError
 
@@ -67,9 +66,7 @@ def report(res):
     for e in t.get("errors", []):
         print(f"  {e}")
     print()
-    # The CORNER, at full precision. The whole matrix is no longer carried --
-    # a 512x1024 answer is half a million elements and this only ever showed
-    # the first few of them.
+    # The corner only: a 512x1024 answer is half a million elements.
     show_matrix("hardware C", np.array(res["c_peek"]), shape=s)
     print()
     show_matrix("fp64 reference", np.array(res["want_peek"]), shape=s)

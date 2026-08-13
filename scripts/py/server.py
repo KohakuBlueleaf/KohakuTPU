@@ -67,11 +67,8 @@ def limits():
         "clusters": bench.NCLUSTERS,
         "cluster_counts": list(bench.CLUSTER_COUNTS),
         "snapshot_current": probe.snapshot_is_current(),
-        # THE MESH IS COMPILED IN; THE DISPATCH IS NOT. `mesh_ncl` is what the
-        # warm snapshot was elaborated for and changing it costs a cold rebuild;
-        # `use` picks how many of those clusters a program kicks and costs
-        # nothing, because it is only which coordinates the kernel names. That
-        # is what makes the cluster count a control instead of a rebuild.
+        # `mesh_ncl` is compiled into the snapshot, so changing it costs a cold
+        # rebuild; `use` only picks which of those clusters are kicked.
         "mesh_ncl": bench.NCLUSTERS,
         "use_max": bench.NCLUSTERS,
         "packings": list(bench.PACKINGS),
@@ -82,10 +79,8 @@ def limits():
         "distributions": list(bench.DISTRIBUTIONS),
         "frequency": F_TARGET,
         "measured": MEASURED,
-        # Lets the page estimate a run's length BEFORE it is paid for. `use`
-        # divides the work but not the simulated machine, so wall clock rises
-        # as the cluster count falls -- one cluster doing the whole problem is
-        # the slowest thing the page can be asked for, and it is one click away.
+        # Lets the page estimate a run's length before it is paid for: `use`
+        # divides the work but not the machine, so fewer clusters is slower.
         "macs_per_cluster": MACS_PER_CLUSTER,
     }
 
@@ -122,9 +117,8 @@ class Handler(BaseHTTPRequestHandler):
                 f"unknown distribution {dist!r}; use one of "
                 f"{list(bench.DISTRIBUTIONS)}"
             )
-        # Which operands were quantised on upload. The ANSWER must not depend
-        # on it, so flipping it in the browser is a direct check that the
-        # pre-quantised fetch path is faithful and not just fast.
+        # Which operands were quantised on upload. The answer must not depend
+        # on it, so flipping it checks the pre-quantised fetch path.
         preq = tuple(bool(v) for v in req.get("preq", list(bench.PREQ)))
         if len(preq) != 2:
             raise ValueError("preq must be two booleans, [A, B]")
@@ -158,19 +152,14 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, TypeError, json.JSONDecodeError) as e:
             return self._send(400, json.dumps({"error": f"bad request: {e}"}))
 
-        # NO SIMULATOR. What the shape becomes -- padding, tile, passes,
-        # rounds, memory footprint -- answered from the same functions the run
-        # uses, so the page can say what a control will do BEFORE it costs a
-        # run. It used to be answerable only by running and reading the status
-        # line afterwards, which at eight clusters meant a cold elaboration to
-        # discover N had been padded from 16 to 1024.
+        # No simulator: padding, tile, passes, rounds and footprint come from
+        # the same functions the run uses, so a control can be priced first.
         if self.path == "/api/plan":
             return self._send(
                 200,
                 json.dumps(
-                    # `dist` too: the FP16 output-range warning is a property
-                    # of the generator as much as of the shape, so a preview
-                    # that ignored it would warn about the wrong operands.
+                    # `dist` too: the FP16 output-range warning is a property of
+                    # the generator as much as of the shape.
                     bench.preview(
                         q["m"],
                         q["k"],
@@ -184,11 +173,8 @@ class Handler(BaseHTTPRequestHandler):
                 ),
             )
 
-        # Both counts, because both can be wrong in ways the run cannot report:
-        # a mesh the bench does not build, or a dispatch subset outside it. The
-        # SIZE of the problem no longer depends on either -- one shared image,
-        # tiled by the shape alone -- so this is a validation of the machine
-        # rather than of the footprint.
+        # Both counts: a mesh the bench does not build, or a dispatch subset
+        # outside it, are wrong in ways the run itself cannot report.
         why = bench.check(
             q["m"], q["k"], q["n"], q["ncl"], q["preq"], q["use"], q["packing"]
         )

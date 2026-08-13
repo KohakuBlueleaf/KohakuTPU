@@ -27,7 +27,6 @@ import argparse
 import sys
 
 import numpy as np
-
 from ktpu.hw import bench
 from ktpu.hw import vector as V
 from ktpu.hw.device import TransportUnavailable
@@ -348,10 +347,8 @@ def main():
             b[:, :sq] = v.T
             out = matmul(s, a, b, sq, pad, d, args.timeout)
 
-            # THE TAIL GATES, not just the median. An intermittent fault seen
-            # twice here corrupted one or two ROWS of 64 and left p50 at 5e-5,
-            # so a median-only gate passed both bad runs. Whatever else this
-            # test does, it must not be able to do that again.
+            # The tail gates, not the median: an intermittent fault seen twice
+            # corrupted two rows of 64 and still left p50 at 5e-5.
             ok = report(q, kt, v, d, scores, p, out)
             print("\nPASS" if ok else "\nFAIL")
             return 0 if ok else 1

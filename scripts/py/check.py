@@ -1,4 +1,6 @@
-"""Tiered checks, run in parallel, so the inner loop is seconds and not minutes.
+"""Run one tier of checks in parallel, and report a hang as a hang.
+
+    python scripts/py/check.py [fast|unit|blocks|e2e|full] [-j N]
 
     fast     11 s   DSL and autoschedule against the L1 simulator, pure Python
     unit     40 s   + the RTL benches that have caught the most
@@ -6,20 +8,9 @@
     e2e      40 s   L1 -> machine code -> xsim, planner and DSL both
     full            all of the above
 
-Three separable questions, so three tiers: does the compiler mean the right
-thing (`fast`), does each block do what it says (`blocks`), and do the two
-agree on real hardware (`e2e`). Run `fast` after every edit and `full` only
-before calling something done. Times are measured at -j4, not estimated.
-
-EVERY CHECK IS BOUNDED, AND REPORTS A HANG AS A HANG. A wedged bench does not
-fail -- it runs to its own Verilog watchdog and then grades whatever the
-untouched memory held, so a stall arrives as a wrong answer after a long wait
-and points at the datapath rather than at the module that stopped. That is how
-mx_mesh2x2_tb presented before it was deleted: 556 s, then every output element
-equal to its initial value.
-
-WHAT MAY RUN BESIDE WHAT IS A CORRECTNESS QUESTION, NOT A TUNING ONE -- see
-LANES below. Parallelism here is not "run everything at once and hope".
+Times are measured at -j4. Every check is bounded: one that produces no result
+inside its budget is killed and reported as STALLED, which is a different event
+from a FAIL and is printed as one. Exits non-zero if any check failed.
 """
 
 import argparse
@@ -36,28 +27,24 @@ from concurrent.futures import ThreadPoolExecutor
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 PY = sys.executable
 
-# ~25x what a healthy check costs. A STALLED verdict on a merely slow check
-# would discredit the tier, and parallelism is what spends the margin.
+# ~25x what a healthy check costs at -j4.
 DEFAULT_TIMEOUT = 300
-# Per-check overrides by label, so the default keeps meaning "longer than
-# anything healthy" rather than drifting up to cover one outlier.
+# Per-check overrides by label, for a check that is healthy and slow.
 TIMEOUTS = {}
 
 # ------------------------------------------------------------------- lanes
-# A lane is a resource two checks would FIGHT OVER, not a category.
-#
-#   session   Session compiles into ONE build/sim_session and holds it with a
-#             lock (sim.py s171); a second does not race, it fails outright.
-#   xsim      one build/xsim_<bench> per bench, so distinct benches are
-#             independent -- the same bench twice is not.
-#   py        no simulator, no shared state.
 EXCLUSIVE = {"session"}
 _LANE_LOCKS = {}
 _LANE_LOCKS_GUARD = threading.Lock()
 
 
 def lane_lock(lane):
-    """The lock for an exclusive lane, created once and shared."""
+    """The lock for an exclusive lane, created once and shared.
+
+    A lane is a resource two checks would fight over: `session` is the single
+    `build/sim_session` a Session holds a lock on, `xsim` a build directory per
+    bench, `py` nothing at all. Only the lanes in `EXCLUSIVE` are serialised.
+    """
     with _LANE_LOCKS_GUARD:
         return _LANE_LOCKS.setdefault(lane, threading.Lock())
 
@@ -70,13 +57,8 @@ def py(label, *args):
     return check(label, [str(PY), *args], lane="py")
 
 
-# A build root of our own, so a check never wipes the directory out from under
-# a bench someone is running by hand at the same time.
-#
-# PER-INVOCATION: `--snapshot` isolates the sources and this path did not, so
-# two concurrent checks shared one xsim build directory and destroyed each
-# other's. It reads as a dozen benches failing at once with tool errors
-# ("Unable to open command file xvlog.f"), never an RTL message.
+# Per pid: two concurrent checks sharing one xsim build directory destroy each
+# other's, and it reads as a dozen tool errors at once, never an RTL message.
 CHECK_BUILD = pathlib.Path(
     os.environ.get("KOHAKU_CHECK_BUILD") or (ROOT / "build" / f"check-{os.getpid()}")
 )
@@ -88,8 +70,6 @@ def bench(name, *extra):
 
 
 # ------------------------------------------------------------------- tiers
-# Split by directory: the three parts share nothing, so it is free parallelism
-# and the label names which layer broke.
 FAST = [
     py("pytest unit", "-m", "pytest", "tests/ktpu/unit", "-q"),
     py("pytest hw", "-m", "pytest", "tests/ktpu/hw", "-q"),
@@ -104,38 +84,27 @@ FAST = [
 UNIT = FAST + [
     py("mx_quant vs model", "scripts/py/run_quant_check.py"),
     bench("cluster_node"),
-    # Cheap, and it covers the one structure that has now broken twice under
-    # concurrent clusters. Both times the only symptom at system level was a
-    # GEMM that never finished.
+    # Broken twice under concurrent clusters, both times presenting at system
+    # level only as a GEMM that never finished.
     bench("mag_wslot"),
-    # The only tier-`unit` bench that instantiates mx_cluster_cu. Without it a
-    # change to the CU -- the module most often edited -- is not compiled at
-    # all until the driver bench runs, and a plain declaration-order error
-    # survives a green `unit`.
+    # The only bench in this tier that instantiates mx_cluster_cu, so without
+    # it a declaration-order error in the CU survives a green `unit`.
     bench("mag_system"),
 ]
 
 
 def all_benches():
-    """Every bench xsim.py defines, read FROM xsim.py.
-
-    Listing them here as well would let the two drift, and the failure mode of
-    that drift is silent: a new block gets a bench, nobody adds it to a tier,
-    and `full` stays green while covering less than it did.
-    """
+    """Every bench name `xsim.py` defines, sorted. Read from `xsim.BENCHES`."""
     sys.path.insert(0, str(ROOT / "scripts" / "py"))
     import xsim
 
     return sorted(xsim.BENCHES)
 
 
-# Each block's own simulation, which is the level a fault is cheapest to read
-# at: a failure names the module instead of naming "the machine".
 BLOCKS = [bench(b) for b in all_benches()]
 
-# THE WHOLE COMPILER, on shapes small enough to run every time. Both drive the
-# same RTL through the same Session; the only difference is who emitted the
-# instructions, so running both separates a compiler fault from a hardware one.
+# Both drive the same RTL through the same Session and differ only in who
+# emitted the instructions, which separates a compiler fault from a hardware one.
 E2E = [
     check(
         "planner -> xsim",
@@ -162,13 +131,10 @@ TIERS = {
 
 
 def kill_tree(proc):
-    """Kill `proc` AND its children.
+    """Kill `proc` and every process it spawned.
 
-    The thing that actually hangs is xsim, two levels down: check.py runs
-    xsim.py, which runs xsim.bat, which runs the simulator. Killing only the
-    direct child leaves the simulator running against the same build directory
-    the next attempt is about to delete -- so the timeout would trade one wedged
-    run for a corrupted one, plus a licence nobody released.
+    What hangs is xsim, two levels down. An orphaned simulator holds the build
+    directory the next attempt deletes, and the licence with it.
     """
     if os.name == "nt":
         # No process groups worth the name on Windows; taskkill /T walks the
@@ -186,21 +152,17 @@ def kill_tree(proc):
     proc.kill()
 
 
-# What a check needs to run: sources, benches, the scripts themselves, and the
-# config ruff and black read. Build directories are NOT copied -- they are
-# regenerated, and they are the bulk of the tree.
+# Sources, benches, scripts and the config ruff and black read. Build
+# directories are regenerated and are the bulk of the tree, so they are left.
 SNAP_DIRS = ("src", "tests", "scripts", "examples", "boards")
 SNAP_FILES = ("pyproject.toml", "setup.cfg", "ruff.toml", ".ruff.toml")
 
 
 def make_snapshot(dest):
-    """Copy the sources into `dest` and return it.
+    """Copy the sources into `dest` and return it, replacing what was there.
 
-    A measurement of a tree that is being edited underneath it is not a
-    measurement. This has already cost two whole-machine runs -- one killed by
-    `mx_acu_fp.v` mid-edit, one by `vec_lanes.v` -- both of which looked like
-    regressions and were not. Copying first makes a run reproducible and
-    immune to whatever lands next.
+    A tree edited underneath a run reports the edit as a regression; two whole
+    machine runs were lost that way.
     """
     dest = pathlib.Path(dest)
     if dest.exists():
@@ -217,9 +179,7 @@ def make_snapshot(dest):
 
 def run_check(argv, cwd, timeout, env=None):
     """Run one check. Returns (ok, stalled, output)."""
-    # start_new_session so the whole pipeline is one process group to signal;
-    # stderr folded into stdout so the tail below reads in the order it
-    # happened rather than as two separate streams.
+    # One process group, so a timeout can signal the whole pipeline at once.
     kw = {} if os.name == "nt" else {"start_new_session": True}
     proc = subprocess.Popen(
         argv,
@@ -228,9 +188,8 @@ def run_check(argv, cwd, timeout, env=None):
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
-        # A tool that emits a non-cp950 byte would otherwise raise inside the
-        # reader thread, leaving `out` None and crashing the summary instead of
-        # reporting the failure that produced it.
+        # A non-cp950 byte from a tool otherwise raises in the reader thread and
+        # crashes the summary instead of reporting the failure that produced it.
         errors="replace",
         **kw,
     )
@@ -282,10 +241,8 @@ def main():
         checks = [dict(c, cwd=snap) for c in checks]
         print(f"  snapshot {snap}")
     jobs = max(1, args.jobs)
-    # WITH -j1 A FAILURE STILL STOPS THE RUN, because that is the mode someone
-    # uses when they are bisecting and every later check is noise. In parallel
-    # the work is already in flight, so stopping early would only hide results
-    # that were paid for.
+    # Only at -j1: in parallel the later checks are already in flight, so
+    # stopping early would hide results that were paid for anyway.
     fail_fast = jobs == 1 and not args.keep_going
 
     stop = threading.Event()
@@ -329,9 +286,8 @@ def main():
     for r in failures:
         print(f"\n  --- {r['label']} ---")
         if r["stalled"]:
-            # Said in full, because the whole point is that this is not the
-            # same event as a FAIL: nothing was measured, so the last thing
-            # printed below is where it stopped, not what was wrong.
+            # Nothing was measured, so the lines below say where it stopped
+            # rather than what was wrong.
             print(
                 f"       STALLED -- no result in {r['limit']} s, killed. "
                 "This is a hang, not a slow bench."

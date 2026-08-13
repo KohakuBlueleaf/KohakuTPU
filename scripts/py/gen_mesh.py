@@ -247,9 +247,8 @@ def emit(mesh, name, ilink=False, mesh_id=0, single=False):
     for y in range(1, m.ny + 1):
         for x in range(1, m.nx + 1):
             e.body.append(
-                # DEPTH 512, NOT 32. A 288-bit port is 4 RAMB36 at ANY depth to
-                # 512, so 32 used 6.25% of the memory it already paid for.
-                # Measured on one router: 20 BRAM either way, +130 LUT, -1.8 MHz.
+                # Depth 512, not 32: a 288-bit port is 4 RAMB36 at any depth to
+                # 512. Measured per router: 20 BRAM either way, -1.8 MHz.
                 f"    NoCRouter #(.DATA_WIDTH(FW), .FIFO_DEPTH(512),\n"
                 f'                .MEMORY_TYPE("block"), .POS_WIDTH(PW),\n'
                 f"                .POS_X({x}), .POS_Y({y}), .GRID_LO(1),\n"
@@ -260,9 +259,7 @@ def emit(mesh, name, ilink=False, mesh_id=0, single=False):
             )
 
     # ---- MAG -----------------------------------------------------------
-    # Its NoC ports are one packed bus, so they are gathered here in port order
-    # and sliced by index. Verilog concatenation is most-significant first, so
-    # the list is reversed.
+    # Verilog concatenation is most-significant first, so the list is reversed.
     mag_in, mag_out = [], []
     for i, (x, y) in enumerate(m.mags):
         stem, fwd = e.edge_link(x, y)
@@ -326,9 +323,8 @@ def emit(mesh, name, ilink=False, mesh_id=0, single=False):
         else:
             stem, drives = e.edge_link(cx, cy)
         mmx, mmy = m.nearest_mag(cx, cy)
-        # TILES/GA/GB PASSED EXPLICITLY. Omitted, mx_cluster_cu's defaults of
-        # 256/32/32 elaborate instead of the 512/128/256 the compiler plans for
-        # -- and that mismatch is the 15,440-element silicon fault, silently.
+        # TILES/GA/GB must be explicit: mx_cluster_cu defaults to 256/32/32,
+        # not the 512/128/256 planned for, and that is the 15,440-element fault.
         e.body.append(f"""    mx_cluster_cu #(.FLIT_WIDTH(FW), .POS_WIDTH(PW),
                     .CU_X({cx}), .CU_Y({cy}), .TILES(TILES), .GA(GA), .GB(GB),
                     .L1_PRIM(L1_PRIM), .TILE_PRIM(TILE_PRIM),
@@ -366,10 +362,7 @@ def emit(mesh, name, ilink=False, mesh_id=0, single=False):
         )
 
     # ---- tie off every link nothing claimed ----------------------------
-    # A link has one driver per direction. Where the endpoint is absent, the
-    # direction IT would have driven has none -- data and valid float, and so
-    # does the busy coming back at it. Which direction that is depends on which
-    # side of the router the link sits on, so it is derived, not assumed.
+    # Which direction is undriven depends on the link's side of the router.
     used = set()
     for x, y in m.mags + m.vecs + m.cus:
         used.add(e.link(f"L{x}_{y}") if m._interior(x, y) else e.edge_link(x, y)[0])
@@ -487,9 +480,8 @@ def link_conn(ilink):
     return "\n".join(out)
 
 
-# Each master gets its OWN named interface rather than a slice of one packed
-# bus. Vivado infers an AXI interface per name; a packed bus would arrive in the
-# block design as loose wires needing Slice IP on every field.
+# One named interface per master: Vivado infers AXI by name, and a packed bus
+# arrives in the block design as loose wires needing Slice IP on every field.
 MASTER_FIELDS = [
     ("awid", "IDW", "o"),
     ("awaddr", "AW", "o"),
@@ -636,15 +628,14 @@ def render(m, e, name, nm, ilink=False, mesh_id=0, single=False):
     MASTER_SUM = "1" if single else ("MEM_PORTS+3" if ilink else "MEM_PORTS+2")
     LINK_MASTER_NOTE = ", plus the interlink's landing channel" if ilink else ""
     LINK_PARAMS = (
-        """    // One flit per beat at 288, so a packet's framing is its own length; 96
+        f"""    // One flit per beat at 288, so a packet's framing is its own length; 96
     // is mag.v's TUSER_W.
     parameter integer LKW      = 288,
     parameter integer LKU      = 96,
     // Only the RESET value -- IL_MESH is writable, so the four instances of
     // this module differ by this parameter alone.
-    parameter integer MESH_ID  = %d,
+    parameter integer MESH_ID  = {mesh_id},
 """
-        % mesh_id
         if ilink
         else ""
     )
@@ -652,7 +643,8 @@ def render(m, e, name, nm, ilink=False, mesh_id=0, single=False):
         """
 //
 // INTERLINK ON. Two full-duplex links: M_AXIS_LINKn out, S_AXIS_LINKn in.
-// link0 flips the mesh's x, link1 flips its y (mag_switch.v).
+// link0 is the neighbour one position DOWN the chain and link1 one position UP
+// (mag_switch.v CH_SEQ), so one end's link1 faces the other's link0.
 // TREADY MUST NOT CROSS AN SLR. The far end has to be another mesh's
 // S_AXIS_LINK, whose tready is tied high; a real slave there reintroduces the
 // combinational SLR crossing mag_link.v exists to avoid."""

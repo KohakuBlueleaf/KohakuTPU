@@ -18,7 +18,6 @@ shows you that.
 import argparse
 
 import numpy as np
-
 from ktpu.hw import formats
 
 
@@ -39,10 +38,13 @@ def main():
         default="lowrank",
         choices=["lowrank", "normal", "uniform", "heavy", "relu"],
         help=(
-            "operand distribution. lowrank (default) is CORRELATED, like real "
-            "weights and activations. normal is iid, which is the worst case: "
-            "every output is a fully cancelled sum, so relative error is pinned "
-            "at the operand's own precision no matter how large K is"
+            "operand distribution. lowrank (default) is OPTIMISTIC -- A and B "
+            "share a basis, so their products accumulate coherently. Measured "
+            "against a real ViT-B/16 projection, real weights behave like iid "
+            "`normal`, not like lowrank: a weight and an activation are not "
+            "correlated WITH EACH OTHER, so the sum over K is still fully "
+            "cancelled and relative error stays pinned at the operand's own "
+            "precision however large K is. Use `normal` for a linear layer"
         ),
     )
     ap.add_argument("--rank", type=int, default=0, help="lowrank: rank (default K/16)")
@@ -63,12 +65,8 @@ def main():
     rng = np.random.default_rng(args.seed)
     k = args.k + (-args.k) % formats.KBLOCK
     if args.dist == "lowrank":
-        # CORRELATED operands, which is what real weights and activations are.
-        # The signal then accumulates coherently (~K) while quantisation noise
-        # stays incoherent (~sqrt K), so relative error falls with K. Under iid
-        # operands both grow as sqrt(K) and relative error never improves --
-        # which is why an iid benchmark makes every format look far worse than
-        # it behaves on real tensors.
+        # A and B share `w`, so products accumulate coherently. Real operands do
+        # NOT -- .plan/measurements/accuracy-and-defects.md s2.2.
         r = args.rank or max(1, k // 16)
         w = rng.standard_normal((r, k))
         a = rng.standard_normal((args.m, r)) @ w

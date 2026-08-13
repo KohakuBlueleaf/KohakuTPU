@@ -156,10 +156,8 @@ def build():
             g = seg_fn(fsel, idx6)
             C = quantise(fsel, idx6, fit_quadratic(g))
             tab[(fsel, idx6)] = C
-            # Dense sweep of the ACTUAL circuit against the real function. Every
-            # 8th u -- 128 points per segment, 4k-8k per function -- because the
-            # error surface is a smooth cubic and sampling it finely enough to
-            # find the extremum does not need all 1024.
+            # Every 8th u: 128 points per segment, enough to find the extremum
+            # of an error surface that is a smooth cubic.
             for raw in range(0, 1 << UW, 8):
                 e = abs(eval_fixed(*C, raw) / (1 << Q0) - g(raw / (1 << UW)))
                 if e > worst:

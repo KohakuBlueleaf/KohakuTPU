@@ -29,7 +29,6 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts" / "py"))
 
 from gen_mesh import Mesh, parse_map
-
 from ktpu.hw import bench
 
 # What the log calls each capacity, and where it lands in the board file. Read

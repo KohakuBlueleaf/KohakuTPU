@@ -57,8 +57,12 @@ VECTOR = [
 
 # xpm_cdc instantiates glbl, so an async FIFO drags it in even at MODEL=1.
 NEEDS_GLBL = {
-    "axi_n1", "mag_dram_port", "mag_dram_port_r1", "mm_mesh_1m",
-    "mag_1m_upload", "interlink_2mesh_1m",
+    "axi_n1",
+    "mag_dram_port",
+    "mag_dram_port_r1",
+    "mm_mesh_1m",
+    "mag_1m_upload",
+    "interlink_2mesh_1m",
 }
 
 BENCHES = {
@@ -245,6 +249,31 @@ BENCHES = {
             "src/kohakumas/mag.v",
             "src/synth_top/mm_mesh.v",
             "tests/mas/mm_mesh_tb.v",
+        ],
+    ),
+    # The same machine, with the cluster draining INTO the vector core rather
+    # than into memory: the one path neither cluster_data nor vec_cu joins.
+    "mm_mesh_peer": (
+        "mm_mesh_peer_tb",
+        COMMON
+        + NOC
+        + MATMUL
+        + MOVER
+        + VECTOR
+        + [
+            "src/kohakutpu/matmul/mx_cluster_cu.v",
+            "src/kohakutpu/vector/vec_cvt.v",
+            "src/kohakutpu/vector/vec_regfile.v",
+            "src/kohakutpu/vector/vec_lanes.v",
+            "src/kohakutpu/vector/vec_agu.v",
+            "src/kohakutpu/vector/vec_core.v",
+            "src/kohakutpu/vector/vec_cu.v",
+            "src/kohakumas/mx_quant.v",
+            "src/kohakumas/axi_ram.v",
+            "src/kohakumas/mag_mem_port.v",
+            "src/kohakumas/mag.v",
+            "src/synth_top/mm_mesh.v",
+            "tests/mas/mm_mesh_peer_tb.v",
         ],
     ),
     # The same machine behind ONE 512-bit master. Proves mag_dram_port carries
