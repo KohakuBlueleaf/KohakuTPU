@@ -1,6 +1,6 @@
 """Changing the mesh clock from the host.
 
-`src/ktpu/hw/clock.py` is the arithmetic -- which dividers produce which
+:mod:`kohakutpu.clock.mmcm` is the arithmetic -- which dividers produce which
 frequency, and which ones the MMCM will accept. This is the transport half: how
 those dividers reach the Clocking Wizard, and how to tell that they landed.
 
@@ -17,7 +17,7 @@ credit-based, and the built-in frequency is the verified ceiling.
 import time
 
 from kohakuaccel.transport.base import MASK32, Transport
-from ktpu.hw.clock import (
+from kohakutpu.clock.mmcm import (
     DEFAULT_D,
     DEFAULT_K,
     REG_CLKCFG0,
