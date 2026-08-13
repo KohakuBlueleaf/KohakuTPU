@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kohakuaccel-driver"
+version = "0.1.0"
+description = "Host driver framework for KohakuAccel machines"
+requires-python = ">=3.13"
+dependencies = []
+
+# PEP 420 namespaces shared with compiler/; nothing collides because no module
+# name appears in both -- hence the compiler's `machinespec`, not `machine`.
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["kohakuaccel*", "kohakutpu*"]
+namespaces = true
