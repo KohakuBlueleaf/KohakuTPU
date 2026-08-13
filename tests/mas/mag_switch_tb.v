@@ -1,13 +1,13 @@
-// mag_switch_tb -- four switches wired as the 2x2 grid, and every route in it.
+// mag_switch_tb -- four switches wired as the SLR chain, and every route in it.
 //
-//        mesh0 ──X── mesh1          link0 is X, link1 is Y
-//          │Y          │Y
-//        mesh2 ──X── mesh3
+//        mesh0 ── mesh1 ── mesh3 ── mesh2      link1 is the higher neighbour,
+//        SLR0     SLR1     SLR2     SLR3       link0 the lower, so every link
+//                                              joins one m1 to one s0.
 //
-// Twelve ordered pairs. Four are one hop on X, four are one hop on Y, and four
-// are the diagonals -- which are the only routes that FORWARD, and therefore the
-// only ones that exercise the second routing layer at all. A bench that tested
-// neighbours only would pass with the forward path disconnected.
+// Twelve ordered pairs over four hop counts. Six are one hop, four are two and
+// two are three -- and only the multi-hop ones FORWARD, so a bench testing
+// neighbours only would pass with the forward path disconnected. mesh0<->mesh2
+// is the pair that used to be a link and is now the longest path in the design.
 //
 // Every packet carries a unique txn and a payload seeded from it, so a packet
 // arriving at the wrong mesh is caught by which scoreboard slot it lands in
@@ -49,25 +49,39 @@ module mag_switch_tb;
     wire [3:0]    lrx_hv, lrx_dv, lrx_dl;
     reg  [3:0]    lrx_hr, lrx_dr;
 
-    // AXIS between the four, one bundle per directed edge.
-    wire [LW-1:0] x_td [0:3];
-    wire [UW-1:0] x_tu [0:3];
-    wire [3:0]    x_tl, x_tv;
-    wire [LW-1:0] y_td [0:3];
-    wire [UW-1:0] y_tu [0:3];
-    wire [3:0]    y_tl, y_tv;
+    // One bundle per directed edge, named by which way it leaves the mesh.
+    wire [LW-1:0] dn_td [0:3];
+    wire [UW-1:0] dn_tu [0:3];
+    wire [3:0]    dn_tl, dn_tv;
+    wire [LW-1:0] up_td [0:3];
+    wire [UW-1:0] up_tu [0:3];
+    wire [3:0]    up_tl, up_tv;
 
-    // X partners: 0<->1, 2<->3.   Y partners: 0<->2, 1<->3.
-    function integer xp(input integer m); xp = m ^ 1; endfunction
-    function integer yp(input integer m); yp = m ^ 2; endfunction
+    // The chain, and the only place the SLR order appears in this bench.
+    function integer cpos(input integer m);
+        cpos = (m == 0) ? 0 : (m == 1) ? 1 : (m == 3) ? 2 : 3;
+    endfunction
+    function integer cat(input integer p);
+        cat = (p == 0) ? 0 : (p == 1) ? 1 : (p == 2) ? 3 : 2;
+    endfunction
+    function integer hops(input integer s, input integer d);
+        hops = (cpos(s) > cpos(d)) ? (cpos(s) - cpos(d)) : (cpos(d) - cpos(s));
+    endfunction
 
     wire [63:0] c_fwd [0:3];
     wire [63:0] c_lblk [0:3];
+    wire [63:0] c_st1 [0:3];
     wire [3:0]  flt [0:3];
 
     genvar g;
     generate
     for (g = 0; g < 4; g = g + 1) begin : m
+        localparam integer P    = cpos(g);
+        localparam integer HAS0 = (P != 0) ? 1 : 0;
+        localparam integer HAS1 = (P != 3) ? 1 : 0;
+        localparam integer DN   = (P != 0) ? cat(P - 1) : 0;
+        localparam integer UP   = (P != 3) ? cat(P + 1) : 0;
+
         mag_switch #(.LINK_W(LW), .TUSER_W(UW), .RX_BEATS(RXB),
                      .MAX_BEATS(MAXB)) u (
             .clk(clk), .resetn(resetn), .my_mesh(g[1:0]),
@@ -77,16 +91,20 @@ module mag_switch_tb;
             .lrx_hdr(lrx_hdr[g]), .lrx_hvalid(lrx_hv[g]), .lrx_hready(lrx_hr[g]),
             .lrx_dat(lrx_dat[g]), .lrx_dlast(lrx_dl[g]), .lrx_dvalid(lrx_dv[g]),
             .lrx_dready(lrx_dr[g]),
-            .m0_tdata(x_td[g]), .m0_tuser(x_tu[g]), .m0_tlast(x_tl[g]),
-            .m0_tvalid(x_tv[g]), .m0_tready(1'b1),
-            .s0_tdata(x_td[g^1]), .s0_tuser(x_tu[g^1]), .s0_tlast(x_tl[g^1]),
-            .s0_tvalid(x_tv[g^1]), .s0_tready(),
-            .m1_tdata(y_td[g]), .m1_tuser(y_tu[g]), .m1_tlast(y_tl[g]),
-            .m1_tvalid(y_tv[g]), .m1_tready(1'b1),
-            .s1_tdata(y_td[g^2]), .s1_tuser(y_tu[g^2]), .s1_tlast(y_tl[g^2]),
-            .s1_tvalid(y_tv[g^2]), .s1_tready(),
+            .m0_tdata(dn_td[g]), .m0_tuser(dn_tu[g]), .m0_tlast(dn_tl[g]),
+            .m0_tvalid(dn_tv[g]), .m0_tready(1'b1),
+            .s0_tdata(HAS0 ? up_td[DN] : {LW{1'b0}}),
+            .s0_tuser(HAS0 ? up_tu[DN] : {UW{1'b0}}),
+            .s0_tlast(HAS0 ? up_tl[DN] : 1'b0),
+            .s0_tvalid(HAS0 ? up_tv[DN] : 1'b0), .s0_tready(),
+            .m1_tdata(up_td[g]), .m1_tuser(up_tu[g]), .m1_tlast(up_tl[g]),
+            .m1_tvalid(up_tv[g]), .m1_tready(1'b1),
+            .s1_tdata(HAS1 ? dn_td[UP] : {LW{1'b0}}),
+            .s1_tuser(HAS1 ? dn_tu[UP] : {UW{1'b0}}),
+            .s1_tlast(HAS1 ? dn_tl[UP] : 1'b0),
+            .s1_tvalid(HAS1 ? dn_tv[UP] : 1'b0), .s1_tready(),
             .ctr_tx0(), .ctr_rx0(), .ctr_stall0(),
-            .ctr_tx1(), .ctr_rx1(), .ctr_stall1(),
+            .ctr_tx1(), .ctr_rx1(), .ctr_stall1(c_st1[g]),
             .ctr_fwd(c_fwd[g]), .ctr_lblock(c_lblk[g]),
             .cred0_state(), .cred1_state(), .fault(flt[g])
         );
@@ -209,7 +227,7 @@ module mag_switch_tb;
     endtask
 
     initial begin
-        $display("=== mag_switch: the 2x2 grid, every ordered pair ===");
+        $display("=== mag_switch: the SLR chain 0-1-3-2, every ordered pair ===");
         reset_all;
 
         // ---- 1. all twelve routes, sequentially so a stall is unambiguous
@@ -221,7 +239,7 @@ module mag_switch_tb;
                     txn_n = txn_n + 1;
                 end
 
-        repeat (400) @(posedge clk);
+        repeat (600) @(posedge clk);
 
         for (n = 1; n < txn_n; n = n + 1) begin
             checks = checks + 1;
@@ -238,11 +256,17 @@ module mag_switch_tb;
             end
         end
 
-        // The diagonals are the only forwarding routes, so the forward counter
-        // proves the second routing layer ran rather than being bypassed.
+        // Only mesh1 and mesh3 are interior, so they are the only two that can
+        // forward at all -- and both must have, or a multi-hop route did not run.
         checks = checks + 1;
-        if (c_fwd[1][31:0] == 32'd0 && c_fwd[2][31:0] == 32'd0)
-            fail("no packet was ever forwarded -- the diagonals took some other path");
+        if (c_fwd[1][31:0] == 32'd0)
+            fail("mesh1 never forwarded, so nothing crossed it");
+        checks = checks + 1;
+        if (c_fwd[3][31:0] == 32'd0)
+            fail("mesh3 never forwarded, so nothing crossed it");
+
+        $display("  forwarded: mesh1 %0d, mesh3 %0d packets",
+                 c_fwd[1][31:0], c_fwd[3][31:0]);
 
         // ---- 2. all twelve at once, which is where an arbiter livelocks
         reset_all;
@@ -269,7 +293,7 @@ module mag_switch_tb;
             end
         join
 
-        repeat (2000) @(posedge clk);
+        repeat (3000) @(posedge clk);
         for (n = 0; n < NTXN; n = n + 1)
             if (want_at[n] != -1) begin
                 checks = checks + 1;
@@ -280,34 +304,37 @@ module mag_switch_tb;
                 end
             end
 
-        // ---- 3. a jammed forward path must not stop the rest of the grid.
-        // mesh3 stops consuming, so mesh0's diagonal traffic backs up through
-        // mesh1's forward queue and then through mesh1's outbound Y link. Every
-        // other route must still complete.
+        // ---- 3. a jammed forward path must not stop the rest of the chain.
+        // mesh2 stops consuming, so mesh0's three-hop traffic backs up through
+        // mesh1's and then mesh3's forward queues. Every other route must still
+        // complete.
         //
         // This proves LIVENESS under the jam. It does not prove that mesh0 can
-        // still reach mesh1 while its own diagonal packet is stuck, because
-        // mesh0's local egress is one queue and that is head-of-line blocking by
+        // still reach mesh1 while its own long packet is stuck, because mesh0's
+        // local egress is one queue and that is head-of-line blocking by
         // design -- measured below rather than asserted away.
+        //
+        // 16 packets, not 6: the chain holds a 64-beat class buffer at each of
+        // four hops, so 6*31 beats vanish into them and never reach mesh0.
         reset_all;
-        rx_hold[3] <= 1'b1;
+        rx_hold[2] <= 1'b1;
         repeat (4) @(posedge clk);
 
         fork
             begin : jam
                 integer k;
-                for (k = 0; k < 6; k = k + 1)
-                    send(0, 2'd3, 8'd40 + k[7:0], MAXB[15:0] - 16'd1);
+                for (k = 0; k < 16; k = k + 1)
+                    send(0, 2'd2, 8'd40 + k[7:0], MAXB[15:0] - 16'd1);
             end
             begin : others
                 repeat (200) @(posedge clk);
-                send(1, 2'd0, 8'd10, 16'd3);      // one X hop
-                send(2, 2'd0, 8'd11, 16'd3);      // one Y hop
-                send(2, 2'd1, 8'd12, 16'd3);      // a diagonal that avoids mesh1
+                send(1, 2'd0, 8'd10, 16'd3);      // one hop down
+                send(3, 2'd1, 8'd11, 16'd3);      // one hop down
+                send(3, 2'd0, 8'd12, 16'd3);      // two hops, crossing mesh1
             end
         join_any
 
-        repeat (600) @(posedge clk);
+        repeat (800) @(posedge clk);
         for (n = 10; n <= 12; n = n + 1) begin
             checks = checks + 1;
             if (land_at[n] != want_at[n] || land_bad[n]) begin
@@ -320,14 +347,21 @@ module mag_switch_tb;
         if (c_fwd[1][63:32] == 32'd0)
             fail("the forward path never reported being blocked, so the jam did not happen and the test proved nothing");
 
-        $display("  mesh0 local egress blocked %0d cycles by head-of-line",
-                 c_lblk[0][31:0]);
+        // Backpressure crossing three hops back to the injector. It shows up as
+        // mesh0's link running out of credit, not as `lblock` -- a starved link
+        // stalls the data channel, where ltx_hvalid is already low.
+        checks = checks + 1;
+        if (c_st1[0][31:0] == 32'd0)
+            fail("mesh0's link never ran out of credit, so the jam stayed inside the chain's buffers and no source ever felt it");
 
-        rx_hold[3] <= 1'b0;
-        repeat (2000) @(posedge clk);
+        $display("  mesh0 link1 credit-stalled %0d cycles; local egress blocked %0d by head-of-line",
+                 c_st1[0][31:0], c_lblk[0][31:0]);
 
-        // ---- 4. no fault bit anywhere. F_YTURN in particular means a packet
-        //         asked for the turn the deadlock proof forbids.
+        rx_hold[2] <= 1'b0;
+        repeat (3000) @(posedge clk);
+
+        // ---- 4. no fault bit anywhere. F_NOFWD in particular means a packet
+        //         reached an end of the chain still needing to be forwarded.
         for (n = 0; n < 4; n = n + 1) begin
             checks = checks + 1;
             if (flt[n] != 4'd0) begin

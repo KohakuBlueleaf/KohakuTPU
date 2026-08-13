@@ -169,13 +169,15 @@ module interlink_2mesh_tb;
         .lrx_hdr(l0rx_h), .lrx_hvalid(l0rx_hv), .lrx_hready(l0rx_hr),
         .lrx_dat(l0rx_d), .lrx_dlast(l0rx_dl), .lrx_dvalid(l0rx_dv),
         .lrx_dready(l0rx_dr),
-        .m0_tdata(m0_td), .m0_tuser(m0_tu), .m0_tlast(m0_tl), .m0_tvalid(m0_tv),
-        .m0_tready(1'b1),
-        .s0_tdata(p1_td), .s0_tuser(p1_tu), .s0_tlast(p1_tl), .s0_tvalid(p1_tv),
-        .s0_tready(),
-        .m1_tdata(), .m1_tuser(), .m1_tlast(), .m1_tvalid(), .m1_tready(1'b1),
-        .s1_tdata({LW{1'b0}}), .s1_tuser({UW{1'b0}}), .s1_tlast(1'b0),
-        .s1_tvalid(1'b0), .s1_tready(),
+        // mesh0 sits at the bottom of the chain, so its only neighbour is up
+        // link1; link0 does not exist there and is tied off.
+        .m0_tdata(), .m0_tuser(), .m0_tlast(), .m0_tvalid(), .m0_tready(1'b1),
+        .s0_tdata({LW{1'b0}}), .s0_tuser({UW{1'b0}}), .s0_tlast(1'b0),
+        .s0_tvalid(1'b0), .s0_tready(),
+        .m1_tdata(m0_td), .m1_tuser(m0_tu), .m1_tlast(m0_tl), .m1_tvalid(m0_tv),
+        .m1_tready(1'b1),
+        .s1_tdata(p1_td), .s1_tuser(p1_tu), .s1_tlast(p1_tl), .s1_tvalid(p1_tv),
+        .s1_tready(),
         .ctr_tx0(s0_tx0), .ctr_rx0(s0_rx0), .ctr_stall0(s0_st0),
         .ctr_tx1(s0_tx1), .ctr_rx1(s0_rx1), .ctr_stall1(s0_st1),
         .ctr_fwd(s0_fwd), .ctr_lblock(s0_lbk),
@@ -323,10 +325,12 @@ module interlink_2mesh_tb;
         chk(stat1_q[23:20] == 4'd1,    "IL_CAPS reports mesh 1");
 
         // ---- 2. a LOCAL write must not touch the link -------------------
-        tx_was = s0_tx0[31:0];
+        // link1 is mesh0's only link on the chain, so it is the one that would
+        // carry a leak; its link0 counter is dead and would pass regardless.
+        tx_was = s0_tx1[31:0];
         wr(34'h0_0000_0100, patt(32'hAAAA));
         repeat (20) @(posedge clk);
-        chk(s0_tx0[31:0] == tx_was, "a local write left through the link");
+        chk(s0_tx1[31:0] == tx_was, "a local write left through the link");
         chk(wr_seen == 0, "a local write reached the far mesh");
 
         // ---- 3. remote writes land byte-exact ---------------------------
@@ -398,11 +402,11 @@ module interlink_2mesh_tb;
         chk(s1_flt == 4'd0, "mesh 1's switch raised a fault");
 
         // ---- 8. the numbers, for docs/interlink ------------------------
-        stat0_sel <= 4'd6; @(posedge clk); @(posedge clk);
-        $display("  link0 out of mesh 0: %0d packets, %0d beats",
+        stat0_sel <= 4'd8; @(posedge clk); @(posedge clk);
+        $display("  link1 out of mesh 0: %0d packets, %0d beats",
                  stat0_q[31:0], stat0_q[63:32]);
-        stat0_sel <= 4'd10; @(posedge clk); @(posedge clk);
-        $display("  link0 credit-stalled %0d cycles, idle %0d",
+        stat0_sel <= 4'd11; @(posedge clk); @(posedge clk);
+        $display("  link1 credit-stalled %0d cycles, idle %0d",
                  stat0_q[31:0], stat0_q[63:32]);
 
         $display("--- %0d checks, %0d errors", checks, errors);

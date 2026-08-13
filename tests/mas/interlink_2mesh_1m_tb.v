@@ -12,10 +12,11 @@ module interlink_2mesh_1m_tb;
     always #2   clk  = ~clk;
     always #1.7 dclk = ~dclk;
 
-    // link0 of mesh0 faces link0 of mesh1: mag_switch's peer0 flips mesh x.
-    wire [LW-1:0] lo_d [0:1];
-    wire [UW-1:0] lo_u [0:1];
-    wire [1:0]    lo_l, lo_v;
+    // On the SLR chain mesh0 is the bottom end, so it reaches mesh1 by its UP
+    // link: link1 of mesh0 faces link0 of mesh1, and the other two are dead.
+    wire [LW-1:0] o0_d [0:1], o1_d [0:1];
+    wire [UW-1:0] o0_u [0:1], o1_u [0:1];
+    wire [1:0]    o0_l, o0_v, o1_l, o1_v;
 
     // Per-mesh control slave and one packed master each.
     reg  [31:0] sc_awaddr [0:1];
@@ -84,17 +85,21 @@ module interlink_2mesh_1m_tb;
             .M_AXI_DRAM_rresp(m_rresp[g]), .M_AXI_DRAM_rlast(m_rlast[g]),
             .M_AXI_DRAM_rvalid(m_rvalid[g]), .M_AXI_DRAM_rready(m_rready[g]),
 
-            .M_AXIS_LINK0_tdata(lo_d[g]), .M_AXIS_LINK0_tuser(lo_u[g]),
-            .M_AXIS_LINK0_tlast(lo_l[g]), .M_AXIS_LINK0_tvalid(lo_v[g]),
+            .M_AXIS_LINK0_tdata(o0_d[g]), .M_AXIS_LINK0_tuser(o0_u[g]),
+            .M_AXIS_LINK0_tlast(o0_l[g]), .M_AXIS_LINK0_tvalid(o0_v[g]),
             .M_AXIS_LINK0_tready(1'b1),
-            .S_AXIS_LINK0_tdata(lo_d[1-g]), .S_AXIS_LINK0_tuser(lo_u[1-g]),
-            .S_AXIS_LINK0_tlast(lo_l[1-g]), .S_AXIS_LINK0_tvalid(lo_v[1-g]),
+            .S_AXIS_LINK0_tdata(g == 1 ? o1_d[0] : {LW{1'b0}}),
+            .S_AXIS_LINK0_tuser(g == 1 ? o1_u[0] : {UW{1'b0}}),
+            .S_AXIS_LINK0_tlast(g == 1 ? o1_l[0] : 1'b0),
+            .S_AXIS_LINK0_tvalid(g == 1 ? o1_v[0] : 1'b0),
             .S_AXIS_LINK0_tready(),
-            .M_AXIS_LINK1_tdata(), .M_AXIS_LINK1_tuser(),
-            .M_AXIS_LINK1_tlast(), .M_AXIS_LINK1_tvalid(),
+            .M_AXIS_LINK1_tdata(o1_d[g]), .M_AXIS_LINK1_tuser(o1_u[g]),
+            .M_AXIS_LINK1_tlast(o1_l[g]), .M_AXIS_LINK1_tvalid(o1_v[g]),
             .M_AXIS_LINK1_tready(1'b1),
-            .S_AXIS_LINK1_tdata({LW{1'b0}}), .S_AXIS_LINK1_tuser({UW{1'b0}}),
-            .S_AXIS_LINK1_tlast(1'b0), .S_AXIS_LINK1_tvalid(1'b0),
+            .S_AXIS_LINK1_tdata(g == 0 ? o0_d[1] : {LW{1'b0}}),
+            .S_AXIS_LINK1_tuser(g == 0 ? o0_u[1] : {UW{1'b0}}),
+            .S_AXIS_LINK1_tlast(g == 0 ? o0_l[1] : 1'b0),
+            .S_AXIS_LINK1_tvalid(g == 0 ? o0_v[1] : 1'b0),
             .S_AXIS_LINK1_tready()
         );
 
@@ -214,15 +219,17 @@ module interlink_2mesh_1m_tb;
             chk(wget(1, (32'h2000 >> 5) + i) === {8{32'hAC00_0000 | i[31:0]}},
                 "remote word landed in mesh1 DRAM", i);
 
-        if (errors == 0) $display("PASS interlink_2mesh_1m_tb: %0d checks", checks);
-        else $display("FAIL interlink_2mesh_1m_tb: %0d errors, %0d checks",
+        // Indented, because xsim.py's verdict is `"  PASS" in out` and its
+        // output filter keeps only indented lines. Flush left, it never reports.
+        if (errors == 0) $display("  PASS interlink_2mesh_1m_tb: %0d checks", checks);
+        else $display("  FAIL interlink_2mesh_1m_tb: %0d errors, %0d checks",
                       errors, checks);
         $finish;
     end
 
     initial begin
         #4000000;
-        $display("FAIL interlink_2mesh_1m_tb: watchdog");
+        $display("  FAIL interlink_2mesh_1m_tb: watchdog");
         $finish;
     end
 endmodule
