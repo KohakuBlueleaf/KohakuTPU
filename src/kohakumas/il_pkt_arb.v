@@ -6,8 +6,8 @@
 // packets on one stream, and the receiver, which frames by TLAST and holds one
 // header, has no way to tell that happened.
 //
-// Both are here rather than inline in mag_switch because the switch needs three
-// of them, and three hand-written copies of a per-packet lock is three chances
+// Both are here rather than inline in mag_switch because the switch needs seven
+// of them, and seven hand-written copies of a per-packet lock is seven chances
 // to write the deadlock this module exists to not have.
 
 `default_nettype none
@@ -79,17 +79,20 @@ module il_pkt_mux2 #(
 endmodule
 
 // ----------------------------------------------------------------------------
-// One packet stream to one of four, chosen from the header. Output 3 is a sink
-// that always accepts and discards: a packet with nowhere legal to go has to
-// leave the stream, or it blocks every packet behind it for good.
-module il_pkt_demux4 #(
+// One packet stream to one of N_OUT, chosen from the header. `sel_in == N_OUT`
+// is a sink that always accepts and discards: a packet with nowhere legal to go
+// has to leave the stream, or it blocks every packet behind it for good.
+module il_pkt_demux #(
     parameter integer LINK_W  = 288,
-    parameter integer TUSER_W = 96
+    parameter integer TUSER_W = 96,
+    // Real outputs. SEL_W is derived and must not be overridden.
+    parameter integer N_OUT   = 3,
+    parameter integer SEL_W   = $clog2(N_OUT + 1)
 )(
     input  wire                 clk,
     input  wire                 resetn,
 
-    input  wire [1:0]           sel_in,
+    input  wire [SEL_W-1:0]     sel_in,
     input  wire [TUSER_W-1:0]   i_hdr,
     input  wire                 i_hvalid,
     output wire                 i_hready,
@@ -99,39 +102,44 @@ module il_pkt_demux4 #(
     output wire                 i_dready,
 
     output wire [TUSER_W-1:0]   o_hdr,
-    output wire [2:0]           o_hvalid,
-    input  wire [2:0]           o_hready,
+    output wire [N_OUT-1:0]     o_hvalid,
+    input  wire [N_OUT-1:0]     o_hready,
     output wire [LINK_W-1:0]    o_dat,
     output wire                 o_dlast,
-    output wire [2:0]           o_dvalid,
-    input  wire [2:0]           o_dready,
+    output wire [N_OUT-1:0]     o_dvalid,
+    input  wire [N_OUT-1:0]     o_dready,
 
     output wire                 dropped
 );
-    reg       busy;
-    reg [1:0] sel_r;
+    reg             busy;
+    reg [SEL_W-1:0] sel_r;
 
-    wire [1:0] sel = busy ? sel_r : sel_in;
-    wire       to_sink = (sel == 2'd3);
+    wire [SEL_W-1:0] sel = busy ? sel_r : sel_in;
+    wire             to_sink = (sel == N_OUT[SEL_W-1:0]);
+
+    // The sink's index is one past the last real output, so it is forced in
+    // range before it reaches one -- an out-of-range read returns x.
+    wire [SEL_W-1:0] sel_q = to_sink ? {SEL_W{1'b0}} : sel;
 
     assign o_hdr   = i_hdr;
     assign o_dat   = i_dat;
     assign o_dlast = i_dlast;
 
-    assign o_hvalid[0] = !busy && i_hvalid && (sel == 2'd0);
-    assign o_hvalid[1] = !busy && i_hvalid && (sel == 2'd1);
-    assign o_hvalid[2] = !busy && i_hvalid && (sel == 2'd2);
-    assign o_dvalid[0] =  busy && i_dvalid && (sel == 2'd0);
-    assign o_dvalid[1] =  busy && i_dvalid && (sel == 2'd1);
-    assign o_dvalid[2] =  busy && i_dvalid && (sel == 2'd2);
+    genvar gi;
+    generate
+    for (gi = 0; gi < N_OUT; gi = gi + 1) begin : o
+        assign o_hvalid[gi] = !busy && i_hvalid && (sel == gi[SEL_W-1:0]);
+        assign o_dvalid[gi] =  busy && i_dvalid && (sel == gi[SEL_W-1:0]);
+    end
+    endgenerate
 
-    assign i_hready = !busy && (to_sink ? 1'b1 : o_hready[sel[1:0]]);
-    assign i_dready =  busy && (to_sink ? 1'b1 : o_dready[sel[1:0]]);
+    assign i_hready = !busy && (to_sink ? 1'b1 : o_hready[sel_q]);
+    assign i_dready =  busy && (to_sink ? 1'b1 : o_dready[sel_q]);
     assign dropped  = busy && to_sink && i_dvalid && i_dlast;
 
     always @(posedge clk) begin
         if (!resetn) begin
-            busy <= 1'b0; sel_r <= 2'd0;
+            busy <= 1'b0; sel_r <= {SEL_W{1'b0}};
         end else if (!busy) begin
             if (i_hvalid && i_hready) begin
                 busy  <= 1'b1;
