@@ -1,5 +1,11 @@
 *.out
 *.vcd
+.Xil/
+xsim.dir/
+xvlog.pb
+clockinfo.txt
+ref/
+.vscode/
 
 
 # Byte-compiled / optimized / DLL files

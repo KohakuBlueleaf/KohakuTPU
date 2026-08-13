@@ -44,6 +44,40 @@ design decision, not a synthesis outcome.
 `cat`, `sed`, `head`, heredocs or shell redirection. Enforced by a PreToolUse
 hook.
 
+**A round trip cannot witness a layout.** `unpack(pack(x)) == x` passes just as
+well when pack and unpack are wrong *together* — and every layout here is a
+permutation, so composing one with its own inverse hides an error in either
+half. Rewriting one side for speed is exactly the change that breaks them
+together. Witness a byte order with a **SHA of the packed bytes**, taking the
+digest from the implementation being replaced, and diff new against old across
+shapes *and* truncations before replacing anything. Non-divisible shapes,
+`(1, 1)` and half-written buffers are where they part. Applies to every
+`pack`/`unpack` pair — `Entry`, `Tile`, `ConvEntry` and whatever comes next.
+A layout is the one artefact in the stack that cannot report its own mistakes:
+an operand packed wrong is the right bytes in the wrong places, and every unit
+downstream accepts it.
+
+**A check that cannot fail when the thing is broken is not a check.** Two of
+these ran on the same afternoon and both reported success while the property
+was false. `python $f >/dev/null 2>&1 && echo ran` was asserting on an EXIT
+CODE — and a script that opens a card exits 0 exactly like one that opens the
+simulator, so it could not see the failure it was written for. Grepping stdout
+for `SimDevice` was no better: two examples never print their device, so they
+read as failures while being correct. **Verify the property, not a proxy for
+it.** For "this never touches hardware", booby-trap the card path so an open
+RAISES, then confirm the trap itself fires — a check you have not seen fail is
+an assumption. A test that would pass on a deleted feature is testing nothing.
+
+**A failure count says nothing about the size of the cause.** Removing `FP16`
+from what `rt.py` re-exports took out **96 tests, a third of the suite**, and
+the fix was restoring one name to one import. A module other modules import
+from has an API whether or not anyone wrote it down, so deleting a name there
+is an interface change, not a tidy-up. **Read the first traceback before
+reacting to the count** — a cascade reads as catastrophe and is usually one
+line, and the instinct to revert a whole change costs more than the diagnosis.
+Announce renames of exported names; that one reached a file its author did
+not own.
+
 **Simulate with Vivado `xsim`**, through the runners in `tests/`. The iverilog
 wrapper in the sibling `JTAG-DMA-test` repo is not for this project.
 
