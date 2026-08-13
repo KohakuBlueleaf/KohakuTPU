@@ -284,19 +284,71 @@ def test_a_PER_CHANNEL_operand_beside_the_tile_now_fuses():
     assert got.temps == {}, sorted(got.temps)
 
 
-def test_two_accumulators_in_one_epilogue_are_refused():
-    """One drain hands over one tile."""
+def _flat(trace) -> list:
+    """Every statement of `trace`, in emitted order, depth first."""
+    out: list = []
+
+    def walk(node) -> None:
+        for s in node if isinstance(node, list) else getattr(node, "body", []) or []:
+            if getattr(s, "kind", None):
+                out.append(s)
+            walk(s)
+
+    walk(trace.top)
+    return out
+
+
+def _kinds(trace) -> list[str]:
+    """Just the kinds, which is what an ordering assertion reads."""
+    return [s.kind for s in _flat(trace)]
+
+
+def test_two_accumulators_drain_into_one_core():
+    """One drain hands over one tile, so two tiles are two drains and two slots.
+
+    The cluster holds ONE accumulator, so the first tile has to leave before the
+    second sweep clears it -- the drain is lifted above the tile that overwrites
+    it, and the order below is the whole correctness argument.
+    """
 
     @kernel
     def twice(x=L.In(M, K), w=L.In(N, K), y=L.Out(M, N), *, gm=4, gn=8, nk=2):
         with units(x.tiles(gm), w.tiles(gn)) as (i, j):
-            acc, other = L.tile(gm, gn, nk), L.tile(gm, gn, nk)
+            a = L.tile(gm, gn, nk)
             for k in loop(x.chunks32(nk)):
-                acc += x[i, k] @ w[j, k]
-            y[i, j] <<= acc * other
+                a += x[i, k] @ w[j, k]
+            b = L.tile(gm, gn, nk)
+            for k in loop(x.chunks32(nk)):
+                b += x[i, k] @ w[j, k]
+            y[i, j] <<= a * b
 
-    with pytest.raises(L.LangError, match="accumulators"):
-        twice.trace()
+    kinds = _kinds(twice.trace())
+    assert kinds == [
+        *("fill", "fill", "gemm", "drain"),
+        *("fill", "fill", "gemm", "drain"),
+        "apply",
+    ]
+    drains = [s for s in _flat(twice.trace()) if s.kind == "drain"]
+    assert [s.args["slot"] for s in drains] == [0, 1]
+    assert all(s.args["node"] for s in drains)
+
+
+def test_two_accumulators_must_agree_on_shape():
+    """They land in equal L1 regions on one core, so one shape or none."""
+
+    @kernel
+    def mixed(x=L.In(M, K), w=L.In(N, K), y=L.Out(M, N), *, gm=4, gn=8, nk=2):
+        with units(x.tiles(gm), w.tiles(gn)) as (i, j):
+            a = L.tile(gm, gn, nk)
+            for k in loop(x.chunks32(nk)):
+                a += x[i, k] @ w[j, k]
+            b = L.tile(gm, gn * 2, nk)
+            for k in loop(x.chunks32(nk)):
+                b += x[i, k] @ w[j, k]
+            y[i, j] <<= a * b
+
+    with pytest.raises(L.LangError, match="one shape"):
+        mixed.trace()
 
 
 # ------------------------------------------------------------- the other road

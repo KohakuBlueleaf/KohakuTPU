@@ -35,15 +35,19 @@ def linear_silu(
 
 
 @kernel
-def two_accumulators(
+def mixed_accumulators(
     x=L.In(M, K), w=L.In(N, K), y=L.Out(M, N), *, gm=2, gn=1, nk=2, part=8192
 ):
-    """An epilogue reading TWO tiles: wrong however it is scheduled."""
+    """Two tiles of DIFFERENT shape: wrong however it is scheduled.
+
+    Two tiles are fine and fuse onto one core; two SIZES are not, because the
+    delivered regions are equal spans of one core's L1. Staging cannot fix it.
+    """
     with units(x.tiles(gm), w.tiles(gn)) as (i, j):
         a = L.tile(gm, gn, nk)
-        b = L.tile(gm, gn, nk)
         for k in loop(x.chunks32(nk)):
             a += x[i, k] @ w[j, k]
+        b = L.tile(gm, gn * 2, nk)
         for k in loop(x.chunks32(nk)):
             b += x[i, k] @ w[j, k]
         y[i, j] <<= a * b
@@ -125,6 +129,6 @@ def test_a_refusal_that_staging_cannot_fix_is_NOT_swallowed():
     is worse than the refusal it replaced.
     """
     with pytest.raises(LangError) as caught:
-        plan(two_accumulators, 32, 64)
+        plan(mixed_accumulators, 32, 64)
     assert not isinstance(caught.value, CannotFuse)
-    assert "accumulator" in str(caught.value)
+    assert "one shape" in str(caught.value)

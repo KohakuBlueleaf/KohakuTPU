@@ -166,7 +166,30 @@ which fails L1; at `gm=8, gn=8` it is 8 instances and 64 words, which passes —
 that is why the fused kernel defaults to a bigger tile than the unfused one.
 **Naming the band is the point:** this is a tuning target, not a free win.
 
-## 6. What simulation settled
+## 6. More than one tile
+
+An epilogue may read **several accumulators**, which is what a gated MLP needs:
+`up(x) * silu(gate(x))` is two GEMMs and one elementwise pass. A cluster holds
+ONE accumulator, so this is not two tiles resident at once — it is two sweeps in
+sequence, each drained as it finishes.
+
+Two things make it work. The drains land in **different L1 slots** of the same
+core: slot `r` at word `r * span_w`, so the result moves to `N * span_w` and the
+per-channel operand after it. And the first drain is **lifted above the sweep
+that would clear it** — the compiler emits `sweep, drain, sweep, drain, apply`
+rather than the order the source reads in, because the second GEMM's `acc = 0`
+destroys the first tile otherwise. That reordering is the correctness argument,
+and `test_two_accumulators_drain_into_one_core` pins the statement order.
+
+Every tile must be ONE shape: they land in equal spans, so a mismatch is refused
+rather than served with a span that is wrong for one of them. The ack count
+follows for free — `_bursts` already sums over an instance's node drains, so two
+drains of `gm*gn = 64` produce 16 acknowledgements rather than 8.
+
+The remaining cost is that the sweeps are serial. Overlapping them needs a
+second accumulator, which is [hardware-wants.md](hardware-wants.md) §2.
+
+## 7. What simulation settled
 
 **No bench joined a cluster to a vector core** before this. The RTL send side had
 existed in `mx_cluster_cu.v` since the destination fields were added and nothing

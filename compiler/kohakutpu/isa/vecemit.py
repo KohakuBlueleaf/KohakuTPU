@@ -378,16 +378,26 @@ class ResidentEpilogueKernel:
     at stride 0. Without it this emits exactly what it always did.
     """
 
-    AD_IN, AD_OUT, AD_DRAIN, AD_BFILL, AD_BREAD = 0, 1, 2, 3, 4
-    #: Where the sender is told to put the tile. The read descriptor's base.
+    #: Where slot 0's tile starts. Slot `r` starts `r * span_w` above it.
     PEER_WORD = 0
+    #: A vector core carries eight, and every region below claims one.
+    DESCRIPTORS = 8
     #: Clear of `OUT_REG` and `TMP_REG`.
     SIDE_REG = 9
+
+    @staticmethod
+    def peer_word(words: int, slot: int = 0) -> int:
+        """L1 word where slot `slot`'s delivered tile starts.
+
+        The sender needs this before the epilogue exists, so it is arithmetic on
+        `words` rather than a field of a built kernel.
+        """
+        return slot * (-(-words // CHUNK_WORDS) * CHUNK_WORDS)
 
     def __init__(
         self,
         ops,
-        resident: int,
+        resident,
         consts: dict,
         words: int,
         operand: int | None = None,
@@ -399,17 +409,37 @@ class ResidentEpilogueKernel:
                 f"a {words}-word drain exceeds the 256-entry walk `vec_core` "
                 f"raises F_LEN on; use a smaller gm*gn"
             )
-        self.ops, self.resident, self.words = list(ops), resident, words
+        held = (resident,) if isinstance(resident, int) else tuple(resident)
+        if not held:
+            raise VecEmitError("a resident epilogue reads at least one accumulator")
+        if len(held) > OUT_REG:
+            raise VecEmitError(
+                f"{len(held)} delivered tiles need v0..v{len(held) - 1}, which "
+                f"reaches the output register v{OUT_REG}"
+            )
+        self.ops, self.residents, self.words = list(ops), held, words
+        self.resident = held[0]
         self.operand, self.gm, self.gn = operand, gm, gn
         # A VLD walks a whole VLMAX chunk whatever the tail is, so each region
         # is padded to one and only `words` of it are drained.
         self.span_w = -(-words // CHUNK_WORDS) * CHUNK_WORDS
-        self.side_word = self.PEER_WORD + 2 * self.span_w
+        self.AD_IN = list(range(len(held)))
+        self.AD_OUT, self.AD_DRAIN = len(held), len(held) + 1
+        self.AD_BFILL, self.AD_BREAD = len(held) + 2, len(held) + 3
+        need = self.AD_BREAD + 1 if operand is not None else self.AD_DRAIN + 1
+        if need > self.DESCRIPTORS:
+            raise VecEmitError(
+                f"{len(held)} tiles and {'a' if operand else 'no'} per-channel "
+                f"operand need {need} descriptors; a vector core has "
+                f"{self.DESCRIPTORS}"
+            )
+        self.out_word = len(held) * self.span_w
+        self.side_word = self.out_word + self.span_w
         side = gn if operand is not None else 0
-        require_l1(f"fused epilogue {words}w", 2 * self.span_w + side)
+        require_l1(f"fused epilogue {words}w", self.side_word + side)
 
         asm = Asm()
-        self.sources = {resident: ("V", 0)}
+        self.sources = {at: ("V", r) for r, at in enumerate(held)}
         if operand is not None:
             if not gn or not gm:
                 raise VecEmitError("a per-channel operand needs the tile's gm/gn")
@@ -425,7 +455,8 @@ class ResidentEpilogueKernel:
             body += [V.vfill(self.AD_BFILL, self.side_word), V.vbar()]
         for c in range(self.span_w // CHUNK_WORDS):
             off = c * CHUNK_WORDS
-            body.append(V.vld(0, self.AD_IN, off))
+            for r, _ in enumerate(held):
+                body.append(V.vld(r, self.AD_IN[r], off))
             if operand is not None:
                 # The walk restarts at zero each VLD, so the chunk's own phase
                 # into the `gn` words has to be the offset.
@@ -436,7 +467,7 @@ class ResidentEpilogueKernel:
 
         pre = [V.vseti(S_VL), V.VLMAX] + asm.preamble_consts()
         pre += [V.vsetvl(S_VL), V.vsetmode(V.FLAT)]
-        self.image = pre + body + [V.vdrain(self.AD_DRAIN, self.span_w), V.vhalt()]
+        self.image = pre + body + [V.vdrain(self.AD_DRAIN, self.out_word), V.vhalt()]
 
     def _place(self, src: int, slot: str) -> dict:
         """One operand in one slot, as the `V.alu` keywords that name it."""
@@ -469,10 +500,14 @@ class ResidentEpilogueKernel:
 
     def static_descs(self) -> list[int]:
         """The L1 read and write windows, and the length of the drain."""
-        out = [
-            V.desc_flit(self.AD_IN, 0, self.PEER_WORD),
-            V.desc_flit(self.AD_IN, 1, V.dim(1, CHUNK_WORDS)),
-            V.desc_flit(self.AD_OUT, 0, self.PEER_WORD + self.span_w),
+        out = []
+        for r, _ in enumerate(self.residents):
+            out += [
+                V.desc_flit(self.AD_IN[r], 0, r * self.span_w),
+                V.desc_flit(self.AD_IN[r], 1, V.dim(1, CHUNK_WORDS)),
+            ]
+        out += [
+            V.desc_flit(self.AD_OUT, 0, self.out_word),
             V.desc_flit(self.AD_OUT, 1, V.dim(1, CHUNK_WORDS)),
             V.desc_flit(self.AD_DRAIN, 1, V.dim(V.WORD_BYTES, self.words)),
         ]

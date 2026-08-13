@@ -203,26 +203,54 @@ INPUTS = {"x": (2, 3, 8, 32)}
 REFERENCE = lambda x: x / (1 + np.exp(-x))
 `,
 
-"a refusal -- two accumulators": `M, KD, N = dims("M, K, N")
+"swiglu -- two accumulators, one core": `M, KD, N = dims("M, K, N")
+LOG2E = 1.4426950408889634
+
+@kernel
+def kernel_fn(x=L.In(M, KD), up=L.In(N, KD), gate=L.In(N, KD), y=L.Out(M, N),
+              *, gm=8, gn=8, nk=2):
+    """Two GEMMs fused on ONE vector core, with no temp and no round trip.
+
+    A cluster holds one accumulator, so the first tile is drained ABOVE the
+    sweep that clears it. Two drains into two L1 slots, one vector program
+    reading both. Look at the stages panel: one MG stage, one VC stage.
+    """
+    with units(x.tiles(gm), up.tiles(gn)) as (i, j):
+        a = L.tile(gm, gn, nk)
+        for k in loop(x.chunks32(nk)):
+            a += x[i, k] @ up[j, k]
+        g = L.tile(gm, gn, nk)
+        for k in loop(x.chunks32(nk)):
+            g += x[i, k] @ gate[j, k]
+        y[i, j] <<= a * (g * L.recip(L.exp2(g * -LOG2E) + 1.0))
+
+INPUTS = {"x": (32, 64), "up": (64, 64), "gate": (64, 64)}
+
+def REFERENCE(x, up, gate):
+    a, g = x @ up.T, x @ gate.T
+    return a * (g / (1.0 + np.exp(-g)))
+`,
+
+"a refusal -- two tile shapes": `M, KD, N = dims("M, K, N")
 
 @kernel
 def kernel_fn(x=L.In(M, KD), w=L.In(N, KD), y=L.Out(M, N),
-              *, gm=2, gn=1, nk=2):
-    """An epilogue reading TWO tiles. One drain hands over ONE tile, so this
-    has no lowering and the compiler says so instead of guessing.
+              *, gm=8, gn=8, nk=2):
+    """Two tiles fuse onto one core; two SIZES do not.
 
-    HARDWARE-WANTS section 2: one accumulator per cluster.
+    The delivered tiles land in EQUAL spans of one core's L1, so the compiler
+    says so instead of picking a span and being wrong on one of them.
     """
     with units(x.tiles(gm), w.tiles(gn)) as (i, j):
         a = L.tile(gm, gn, nk)
-        b = L.tile(gm, gn, nk)
         for k in loop(x.chunks32(nk)):
             a += x[i, k] @ w[j, k]
+        b = L.tile(gm, gn * 2, nk)
         for k in loop(x.chunks32(nk)):
             b += x[i, k] @ w[j, k]
         y[i, j] <<= a * b
 
-INPUTS = {"x": (32, 64), "w": (32, 64)}
+INPUTS = {"x": (32, 64), "w": (64, 64)}
 `
 };
 

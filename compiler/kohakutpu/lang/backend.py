@@ -478,7 +478,10 @@ class TpuBackend:
                         self.isa.drain(
                             # A node-addressed drain sends addr[20:5] as the
                             # descriptor's granule off, so this is an L1 word.
-                            addr=ResidentEpilogueKernel.PEER_WORD * LO.WORD_BYTES,
+                            addr=ResidentEpilogueKernel.peer_word(
+                                s.args["gm"] * s.args["gn"], s.args.get("slot", 0)
+                            )
+                            * LO.WORD_BYTES,
                             n=s.args["gm"] * s.args["gn"],
                             dnode=1,
                             dst_x=dst[0],
@@ -1053,10 +1056,16 @@ def _epilogue(compiled, stmt) -> ResidentEpilogueKernel:
             f"{sorted(leaves[n].name for n in side)} beside the accumulator, and "
             f"one core fills ONE of them; lift the rest into their own statement"
         )
+    # Slot order is the order the drains were sequenced in, which is the order
+    # the accumulator held the tiles -- not the order the chain reads them.
+    slots = stmt.args.get("residents")
+    if slots:
+        at = {leaves[n].at: n for n in held}
+        held = [at[le.at] for le in slots]
     try:
         return ResidentEpilogueKernel(
             [(kind, list(srcs)) for kind, srcs in stmt.args["chain"]],
-            held[0],
+            held,
             consts,
             stmt.args["gm"] * stmt.args["gn"],
             operand=side[0] if side else None,

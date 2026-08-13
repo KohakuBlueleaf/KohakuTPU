@@ -96,16 +96,8 @@ class Slice:
         from kohakutpu.lang.vector import Part
 
         every = leaves_of(value.expr)
-        held = [le for le in every if isinstance(le, Resident)]
-        if len(held) != 1:
-            raise LangError(
-                f"this epilogue reads {len(held)} accumulators; one drain hands "
-                f"over one tile, so lift the rest into their own statement"
-            )
-        tile = TILES.get(held[0].at)
-        if tile is None:
-            raise LangError("this epilogue reads an accumulator that cannot land")
-        landed = tile.landed()
+        held, tiles = _ordered([le for le in every if isinstance(le, Resident)])
+        landed = tiles[0].landed()
         per = active().knobs.get("part", PART)
         grid, names = (landed.parts(per),), (ELEM.name,)
         tiled = [le for le in every if isinstance(le, Ref) and le.part is not ELEM]
@@ -118,7 +110,11 @@ class Slice:
                 f"tiling until the grid fits the vector cores, or add the "
                 f"per-channel operand in its own pass"
             )
-        fresh = _reseat(value.expr, held[0], Ref(landed.name, ELEM))
+        # Every tile lands, and each leaf is reseated onto its own buffer -- the
+        # chain is the author's unchanged and only its operands moved.
+        fresh = value.expr
+        for le, tile in zip(held, tiles):
+            fresh = _reseat(fresh, le, Ref(tile.landed().name, ELEM))
         Part(self.buffer, ELEM, grid=grid, names=names, top=True).write(
             Value(fresh, value.shape_rc)
         )
@@ -142,29 +138,37 @@ class Slice:
                 f"the work is now a vector pass over rows. Give it its own "
                 f"index space over the landed buffer and write a part of it"
             )
-        if len(held) != 1:
+        held, tiles = _ordered(held)
+        wide = {(le.gm, le.gn) for le in held}
+        if len(wide) != 1:
             raise LangError(
-                f"this epilogue reads {len(held)} accumulators; one drain hands "
-                f"over one tile, so lift the rest into their own statement"
+                f"this epilogue reads tiles of {sorted(wide)}; they land in equal "
+                f"L1 regions on one core, so every tile must be one shape"
             )
         acc = held[0]
         trace = active()
-        trace.emit(
-            "drain",
-            writes=self.buffer.name,
-            result=self.buffer.name,
-            i=self.i,
-            j=self.j,
-            gm=acc.gm,
-            gn=acc.gn,
-            node=True,
-        )
+        body = trace.stack[-1] if trace.stack else None
+        drains = [
+            trace.emit(
+                "drain",
+                writes=self.buffer.name,
+                result=self.buffer.name,
+                i=self.i,
+                j=self.j,
+                gm=le.gm,
+                gn=le.gn,
+                node=True,
+                slot=slot,
+            )
+            for slot, le in enumerate(held)
+        ]
         trace.emit(
             "apply",
             writes=self.buffer.name,
             reads=tuple(le.name for le in leaves if isinstance(le, Ref)),
             result=self.buffer.name,
             resident=acc,
+            residents=tuple(held),
             i=self.i,
             j=self.j,
             gm=acc.gm,
@@ -174,6 +178,12 @@ class Slice:
             chain=tuple(chain_of(value.expr, leaves)),
             leaves=tuple(leaves),
         )
+        # ONE accumulator: the next tile's first sweep clears it, so each drain
+        # but the last is lifted above the tile that overwrites it.
+        if body is not None:
+            for slot, shift in zip(range(len(drains) - 1), range(len(drains))):
+                body.remove(drains[slot])
+                body.insert(tiles[slot + 1].born_at + shift, drains[slot])
         return self
 
 
@@ -242,6 +252,23 @@ class Product:
         self.a, self.b = a, b
 
 
+def _ordered(held: list) -> tuple[list, list]:
+    """`(residents, tiles)` in the order the accumulator held them.
+
+    Slot order is CREATION order, not the order the expression happens to read
+    them in, because that is the order the drains have to be sequenced in.
+    Raises :class:`LangError` for a leaf whose tile cannot land.
+    """
+    tiles = []
+    for le in held:
+        tile = TILES.get(le.at)
+        if tile is None:
+            raise LangError("this epilogue reads an accumulator that cannot land")
+        tiles.append(tile)
+    order = sorted(range(len(held)), key=lambda r: tiles[r].born_at)
+    return [held[r] for r in order], [tiles[r] for r in order]
+
+
 @dataclass
 class Sweep:
     """`a[i, k] @ b[j, k]` before anywhere to put it."""
@@ -263,6 +290,10 @@ class Tile:
         #: Loops already open when this tile was made. A sweep is chained by the
         #: INNERMOST counter, so only loops opened after this one can carry it.
         self.born = len(active().loops)
+        #: Where in the open body this tile begins. A cluster holds ONE
+        #: accumulator, so the tile before it must drain above this line.
+        at = active().stack
+        self.born_at = len(at[-1]) if at else 0
         self._landed = None
         TILES[self.at] = self
 

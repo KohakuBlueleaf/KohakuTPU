@@ -52,11 +52,16 @@ drain, then b's. Interleaving them compiles, runs, and returns a 123% error,
 because the second GEMM's reset destroys the first tile. `ClusterUnit.acc` is a
 single array; measured on the unit models.
 
-It also forces `two_accumulators` to be refused outright: an epilogue reading two
-tiles has no lowering, since one drain hands over one tile.
+It does **not** stop an epilogue reading two tiles. One drain hands over one
+tile, so two tiles are two drains into two L1 slots of one vector core, and the
+first is sequenced above the sweep that clears it — see
+[fused-epilogue.md](fused-epilogue.md) §6. That is a gated MLP with no temp and
+no MAG round trip, on today's silicon.
 
-**The ask: a second accumulator, or a tile-select on the GEMM's reset.** It would
-let a gated MLP interleave and halve its drain latency.
+What is left is the *interleaving*: the two sweeps still run one after the
+other, so the tile latency is serial. **The ask: a second accumulator, or a
+tile-select on the GEMM's reset**, which would overlap them and halve the drain
+latency rather than enable the fusion at all.
 
 ## 3. No path from an accumulator back into a sweep
 
