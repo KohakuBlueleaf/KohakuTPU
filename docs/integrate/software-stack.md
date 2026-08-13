@@ -13,12 +13,11 @@ tags:
 Every accelerator built on this framework needs the same five things on the host
 side. Only two of them are about your accelerator.
 
-This page is a guide and a design document in roughly equal parts, because the
-software layer is the part of the framework that is **not yet frameworkised**.
-`src/ktpu/` today is KohakuTPU's driver and compiler, not a framework for writing
-drivers, and it contains both halves entangled. §6 says exactly where, and what
-separating them would take. That section is the useful one if you are here to
-build the framework rather than to use it.
+This page is a guide and a design document in roughly equal parts. The split it
+argued for **has since been made**: `kohakuaccel` is the framework, `kohakutpu`
+is this project on top of it, and `driver/tests/test_isolation.py` fails if the
+framework ever imports the project again. §6 maps what moved where, and names
+the couplings that are still uncut.
 
 ---
 
@@ -229,38 +228,43 @@ rather than at the thing that stopped.
 
 ---
 
-## 6. Frameworkisation: where the seam is not
+## 6. Frameworkisation: where the seam now is
 
-Everything above describes what a driver framework should provide. What exists is
-one Python package, `src/ktpu/`, which is KohakuTPU's compiler and runtime and
-contains the framework half inside it. The split is not hard to see, which is the
-good news; it has simply not been made.
+Everything above describes what a driver framework should provide. It now exists:
+`kohakuaccel` is the framework, `kohakutpu` is this project on top of it, both
+under `driver/`. `src/ktpu/`, the one package that used to be both halves at
+once, is retired and survives only in git history.
 
-### What is already framework-shaped
+### Where each piece went
 
-| module | what it is |
+| was | is |
 |---|---|
-| `src/ktpu/hw/device.py` | the register maps, the flit codec, the `Transport` ABC, the recording and memory backends, the control-program builder, the completion helpers. Almost entirely framework |
-| `src/ktpu/hw/jtag.py`, `xdma.py` | the two hardware backends |
-| `src/ktpu/hw/sim.py` | the simulator session |
-| `src/ktpu/hw/clock.py`, `chain.py`, `fpga.py` | runtime frequency, device chain, bitstream handling |
+| `ktpu/hw/device.py` | `kohakuaccel/device/` — `registers.py`, `flit.py`, `program.py`, `discovery.py` |
+| its `Transport` ABC and recording/memory backends | `kohakuaccel/transport/base.py`, `memory.py`, and `split.py`, `rebase.py` |
+| `ktpu/hw/jtag.py`, `xdma.py` | `kohakuaccel/transport/jtag.py`, `xdma.py` |
+| `ktpu/hw/sim.py` | `kohakuaccel/sim/` |
+| `ktpu/target.py` | `kohakuaccel/machine/target.py` (the mechanism) and `kohakutpu/machine.py` (this project's capacities) |
+| `ktpu/hw/clock.py`, `chain.py`, `fpga.py` | `kohakutpu/clock.py` and `host.py`, with chain and bitstream handling folded into `transport/jtag.py` and `device/discovery.py` |
+| `ktpu/hw/mxfp7.py` | `compiler/kohakutpu/hw/mxfp7.py` — an arithmetic model, so it went to the compiler, not the driver |
 
-### Where the two halves are entangled
+### The couplings, and which are cut
 
-These are the specific couplings, each of which has to be cut:
+These were the specific couplings. Four are cut; three are still open, and all
+three of those are RTL or tooling rather than driver Python:
 
 1. **`device.py` knows KohakuTPU's unit types.** It defines constants for the
    matmul and vector unit type codes, and `decode_dbg(word, cu_type)` switches on
    them to name the counters. A framework module carrying a project's type table.
-   *Fix: a registry a project populates.*
+   **Cut:** `kohakuaccel/unit/registry.py` is the registry a project populates,
+   and a type nobody registered reports `UNKNOWN_DBG` instead of crashing.
 
 2. **`board.py` mixes machine geometry with project capacities.** It carries
    genuinely framework facts — mesh geometry, node coordinates, memory port
    coordinates, mesh id and count, transport selection, address rebasing, an
    address-space `verify()` — and also returns project types (`caps()`,
    `target()`), counts clusters specifically, and encodes MXFP7 quantisation
-   flags in `upload_addr()`. *Fix: a framework `Machine`, and a project subclass
-   or side-car for capacities.*
+   flags in `upload_addr()`. **Cut:** `kohakuaccel/machine/` carries the geometry
+   and dispatch limits, `kohakutpu/machine.py` this project's capacities.
 
 3. **`target.py` is entirely project-specific except for two fields.** Cluster
    counts, tile budgets, L1 entry counts, lane and block sizes, vector geometry —
@@ -268,59 +272,60 @@ These are the specific couplings, each of which has to be cut:
    belong with the machine. The `FEATURES` mechanism — an explicit set of
    optional hardware features, with a typo-raising `has()`, gated so that a
    program built for a machine lacking a feature still lowers and still runs — is
-   a *framework* pattern with project-specific member names. *Fix: keep the
-   mechanism, move the names.*
+   a *framework* pattern with project-specific member names. **Cut:** exactly
+   that — `machine/target.py` keeps `FEATURES` and the typo-raising `has()`, and
+   a project subclasses `Target` to declare its own names.
 
 4. **The bench source list is a hand-maintained file list** naming every RTL file
    the driver-to-simulator path elaborates, framework and project mixed. Adding a
-   client to the memory agent means editing it. *Fix: the framework owns its own
-   list; a project appends.*
+   client to the memory agent means editing it. **Still open.** *Fix: the
+   framework owns its own list; a project appends.*
 
 5. **The mesh generator's vocabulary is hardcoded** to three KohakuTPU tokens
-   ([mesh-topology.md](mesh-topology.md) §2). *Fix: a project-supplied token
-   table.*
+   ([mesh-topology.md](mesh-topology.md) §2). **Still open.** *Fix: a
+   project-supplied token table.*
 
-6. **One package name for both halves.** `ktpu` is the compiler, the runtime, the
-   device model and the framework. There is no import you can make that gets you
-   the framework without the project.
+6. **One package name for both halves.** `ktpu` was the compiler, the runtime,
+   the device model and the framework at once, and no import got you the
+   framework without the project. **Cut:** `import kohakuaccel` does, and
+   `driver/tests/test_isolation.py` fails the moment it stops doing so.
 
 7. **The read-path transform's software model lives in the project half but its
    RTL lives in a framework package** — the mirror image of the same problem
-   ([README.md](README.md) §2).
+   ([README.md](README.md) §2). **Still open.**
 
-### What separation would look like
+### What the separation looks like
 
 ```
-    src/
-      kohakudrv/            the driver framework
-        transport.py        the ABC, recording and memory backends
-        backends/           DMA and debug-link backends
-        registers.py        orchestrator and control-register maps
-        flit.py             the codec: headers, message classes, payloads
-        dispatch.py         staging, kick, credits, the control program
-        completion.py       status polling, global count, fault surfacing
-        enumerate.py        discovery, and the per-type decoder registry
-        machine.py          mesh geometry, node table, dispatch limits
-        sim.py              the simulator session and its lock
+    driver/
+      kohakuaccel/          the driver framework
+        transport/          base.py is the ABC; jtag, xdma, memory, split, rebase
+        device/             registers.py, flit.py, program.py, discovery.py
+        unit/               registry.py: what a project declares about its units
+        machine/            target.py: dispatch limits, clock, the FEATURES gate
+        runtime/            loader.py
+        sim/                machine.py, the simulator session
 
-    projects/<name>/sw/
-        isa.py              encoding: your fields, your opcodes
-        capacities.py       your Target, your features
-        schedule.py         your policy
-        model.py            your arithmetic reference
-        decode.py           registers your dbg_ctr decoder
+      kohakutpu/            this project, on top of it
+        machine.py          the capacities: clusters, tiles, lanes, kblock
+        units.py            this project's unit types and their CU_DBG decoders
+        clock.py, host.py   this board's frequency and host entry points
+
+      examples/saxpy/       a SECOND project on the same framework, sharing
+                            nothing with kohakutpu -- its own isa, unit, machine
 ```
 
 The test that the split is real: **a project's software imports the framework and
-the framework imports nothing of the project.** Today that is false in both
-directions.
+the framework imports nothing of the project.** That is
+`test_framework_imports_no_project`, which walks every `kohakuaccel` module in a
+subprocess and fails if importing them pulls in any project module.
 
 There is one more test, and it is the better one: **with no project package
 installed at all, can the framework's driver open a transport, enumerate a mesh,
 stage and dispatch a program, and account for its completions — knowing nothing
-about the units beyond what they publish over the control plane?** Everything in
-§1's first five rows should be able to. If it can, the split is real; if it
-cannot, the entanglement is still load-bearing.
+about the units beyond what they publish over the control plane?** That is what
+`examples/saxpy` is, and `test_example_runs_on_the_framework_alone` grades the
+answer it computes rather than the fact that it ran. Both tests pass.
 
 ---
 

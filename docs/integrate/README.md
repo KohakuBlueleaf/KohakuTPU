@@ -152,8 +152,9 @@ The directory shape that follows from that:
       kohakuaxi/         AXI fabric and bridges
       common/            FIFOs, named memory primitives
       kohakuship/        ship assembly and the mesh generator
-      kohakudrv/         the driver framework: transport, register map,
+      kohakuaccel/       the driver framework: transport, register map,
                          dispatch, completion tracking, flit codec, sim session
+                         (this half is REAL today, at driver/kohakuaccel/ -- §6)
 
     projects/
       <name>/
@@ -166,13 +167,14 @@ The directory shape that follows from that:
 ```
 
 > **This is the shape the tree is moving to, not the shape it has today.**
-> Right now the framework's driver half and KohakuTPU's driver are one package
-> (`src/ktpu/`), KohakuTPU's RTL sits inside `src/` beside the framework's
-> (`src/kohakutpu/`), the mesh generator is `scripts/py/gen_mesh.py`, and ship
-> assemblies are generated into `src/synth_top/`. Where a page below names a
-> file, it names the real one. Where it describes a boundary, it describes the
-> one that should exist. [software-stack.md](software-stack.md) is explicit
-> about which parts of the software layer are not yet separable.
+> The software half has since separated — `driver/kohakuaccel` is the framework
+> and `driver/kohakutpu` this project — but KohakuTPU's RTL (`src/kohakutpu/`)
+> still sits inside `src/` beside the framework's (`src/kohakunoc/`), the mesh
+> generator is `scripts/py/gen_mesh.py`, and ship assemblies are generated into
+> `src/synth_top/`. Where a page below names a file, it names the real one. Where
+> it describes a boundary, it describes the one that should exist.
+> [software-stack.md](software-stack.md) §6 is explicit about which couplings are
+> cut and which are still open.
 
 **KohakuTPU is one project built on this framework** — an MXFP7 tensor
 accelerator. It appears throughout these pages as a worked example and is always

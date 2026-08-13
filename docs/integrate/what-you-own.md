@@ -219,6 +219,48 @@ to report completion, how to be found by a driver. That work is identical for
 every accelerator anyone would build here, it is unglamorous, it is where the
 silent failures live, and it is solved.
 
+### 4.1 The same split, on the software side
+
+`kohakuaccel` is the framework and a project sits on top of it. The line is not
+"generic utilities against specific ones" — it is **mechanism against
+vocabulary**:
+
+| | `kohakuaccel` (mechanism, every project) | a project (vocabulary, one machine) |
+|---|---|---|
+| L5 | tensor/buffer protocol, op registration | the op library |
+| L4 | `dims`, `record`, `kernel`, `In`/`Out`, dim solving, `units`, `loop` | what `<<=`, `@` and `+=` **mean** |
+| L3 | graph, values, bands, lifetimes | which ops exist |
+| L2 | `Arena`, `Buffer`, the **`Layout` protocol**, placement | the layouts themselves |
+| L1 | program-per-unit container | which instructions exist |
+| L0 | `Field`/`InstFormat`, artifacts, dispatch, round packing, await accounting | the ISA field table |
+
+The framework never knows what a layout *means*. It knows a layout can answer
+`nbytes(shape)`, `pack(array)` and `unpack(raw, shape)`. That is the whole
+contract, and it is why the same L2 serves a machine whose native order is 4x4
+sub-tiles and one whose native order is Morton-ordered tiles.
+
+**The generality test.** A ray tracer changes only the right-hand column:
+
+```python
+@kernel
+def render(scene=In(NPRIM, 8), rays=In(NRAY, 8), img=Out(H, W), *, batch=64):
+    with units(rays.tiles(batch)) as i:
+        bvh = L.region(batch, like=scene)     # -> a "load nodes" instruction
+        hit = L.slab(batch)                   # -> the resident hit record
+        for d in loop(scene.depth):
+            hit <<= L.trace(bvh, rays[i, d])  # -> a "trace" instruction
+        img[i] <<= L.shade(hit)               # -> a "shade" instruction
+```
+
+`dims`, `units`, `loop`, `In`/`Out`, dim solving, the arena, the dispatcher and
+the round/await rules are reused untouched. What the project supplies is the
+statement kinds, their layouts, its ISA and its kernel library. The same holds
+for a DSP mesh (`L.fft`, `L.window`) or a CPU mesh (`L.load`, `L.branch`).
+
+The split is enforced rather than intended: `driver/tests/test_isolation.py`
+walks every `kohakuaccel` module in a subprocess and fails if importing them
+pulls in any project module — see [software-stack.md](software-stack.md) §6.
+
 ---
 
 ## 5. Open questions
