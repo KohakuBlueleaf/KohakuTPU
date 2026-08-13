@@ -252,6 +252,7 @@ Seven pages, and they are roughly in the order you will need them.
 | [instruction-set.md](instruction-set.md) | Which bits do I own, which instruction sets already exist that I should be *using*, how do I report done and failed, and how do I keep the encoding sane for a compiler? |
 | [addon-slots.md](addon-slots.md) | What is a slot actually made of, how do I fill one, and what does it take to turn a hardcoded part into one? Worked from real source. |
 | [mesh-topology.md](mesh-topology.md) | How many units, on how many routers, and how does that interact with SLR boundaries and timing closure? |
+| [multi-mesh.md](multi-mesh.md) | My machine has several meshes and they do not share memory — what changes in the IR, where is a split decided, and what does a collective cost? |
 | [software-stack.md](software-stack.md) | What must the host side do for any project, what is project-specific, and what is not frameworkised yet? |
 | [conformance.md](conformance.md) | How do I know I am right, at what level, in what order? |
 

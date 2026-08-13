@@ -460,11 +460,15 @@ A plain shift register is correct here **only because flow control is
 credit-based**. There is no handshake to preserve and no skid buffer, which is
 what makes inserting latency free rather than a redesign.
 
-### `il_pkt_mux2`, `il_pkt_demux4` — `src/kohakumas/il_pkt_arb.v`
+### `il_pkt_mux2`, `il_pkt_demux` — `src/kohakumas/il_pkt_arb.v`
 
-Packet-stream plumbing: one 2:1 merge and one 1:4 split, both locking for the
+Packet-stream plumbing: one 2:1 merge and one 1:N split, both locking for the
 duration of a packet. A mux that re-arbitrates per beat interleaves two packets
 on one stream, and a receiver that frames by `TLAST` cannot tell.
+
+`il_pkt_demux` takes `N_OUT` real outputs and treats `sel_in == N_OUT` as a
+sink that accepts and discards. `mag_switch` uses `N_OUT=4` for local egress
+({link, class}) and `N_OUT=2` for each transit stream's class split.
 
 | Name | Type | Default | Controls | Legal range |
 |---|---|---|---|---|

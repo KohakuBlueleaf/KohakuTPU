@@ -510,9 +510,70 @@ Error profiles from full driver runs:
 | 4 clusters, 256x512x256 | max 2.43e+00, 7 of 131,072 over 10% | — |
 | 8 clusters | p50 1.71e-04, worst 2.43e+00, 49 of 524,288 over 10% | — |
 
-Every result is identical under a behavioural DSP model and a real DSP48E2. **Two
-runs of the same shape are bit-identical**, verified by hash, so a difference
-between runs is a real difference and not noise.
+Every result is identical under a behavioural DSP model and a real DSP48E2. **In
+SIMULATION two runs of the same shape are bit-identical**, verified by hash.
+
+> **On the card they are not.** Measured 2026-08-13 on `multimesh_v3`: repeating
+> one matmul with fixed operands leaves ~0.6% of elements differing between runs
+> by up to 40% of peak, and a further ~0.3% reproducibly wrong by up to 11,000x.
+> The two sets never overlap. So a difference between two HARDWARE runs is not
+> automatically a real difference — expect ~0.5% disagreement before concluding
+> anything. See §6.5 and `.plan/measurements/accuracy-and-defects.md`.
+
+### 6.5 The card on realistic operands
+
+Measured against FP64 on a real ViT-B/16 projection with normalised activations,
+`128x256x256`. **Quote `p50` / `p90` / `>10%`; the max is a defect (§6.6), not a
+property of the format.**
+
+| | rel p50 | rel p90 | >10% |
+|---|---|---|---|
+| software `int7 + E8M0` | 2.26% | 14.16% | 14.0% |
+| software `int7 + E4M3` | 4.06% | 26.84% | 25.3% |
+| **the card**, blown elements excluded | **1.64%** | **10.82%** | **10.8%** |
+
+**The `int7 + E8M0` software model is PESSIMISTIC about this silicon by ~1.4x.**
+Anyone using it to argue a number format should say so; the hardware quantiser is
+better than the model of it, consistently across four operand distributions.
+
+The operand distribution decides the answer, so a figure without one is
+meaningless: the same card measures 0.39% p50 on `lowrank` operands and 1.64% on
+real weights. **`lowrank` is optimistic** — A and B share a basis there, which
+real weights and activations do not — so iid `normal` is the better proxy for a
+linear layer. This corrects earlier guidance that pointed the other way.
+
+### 6.6 Two unexplained observations, open
+
+~0.3% of output elements are **reproducibly** wrong by up to 11,000x (often
+pinned at the FP16 maximum), and a disjoint ~0.6% **flicker** between runs. The
+read path, the write path, K-chunking and multi-mesh are all eliminated, as is
+free accumulation order — reordering moves every element slightly, and would move
+one by ~6e-4 rather than the observed 2.139.
+
+**The blown elements are OPERAND RANGE, and that one is closed.** Their count
+follows operand magnitude and nothing else — scaling an operand by an exact power
+of two (which changes no mantissa) takes 75 blown at a true peak of 5.79 to
+**195** at 11.57 and to **zero** at 1.45. This is the same trap
+`.plan/MESH0-FAULT.md` retracted a hardware narrative over: a contraction driven
+past the drain, saturating at the FP16 maximum. Keep the contraction in range and
+do not read a saturated element as evidence about the machine.
+
+**The flickering is separate and still open**, and it does not follow magnitude.
+Non-deterministic unit assignment is eliminated (the idle set was identical every
+run, and pinning placement changed nothing), as is stale tile state and
+transport — the bad elements sit **one per 4x4 sub-tile**, and sixteen of those
+share one 32-byte word, so no skew or dropped beat can produce it. Between runs
+on byte-identical operands `run1/run0` is an **exact power of two in 75 of 85**
+cases with neither run correct, which points at the per-block E8M0 scale rather
+than the multiply-accumulate. Next test is `preq`: host-packed MXFP7 bypasses
+MAG's on-the-fly quantiser entirely.
+
+`scripts/py/nondeterminism.py` reproduces in ~30 seconds;
+`.plan/measurements/accuracy-and-defects.md` §3.3–3.4 has the evidence.
+
+The rates recorded in §6.4 above — "4 of 65,536 over 10%", maxima of 1.00 and
+2.43 — are very likely the same phenomenon seen earlier and recorded as a rate
+rather than recognised as a defect.
 
 ---
 

@@ -166,7 +166,9 @@ one before it.
    choice discounted by padding, and the round-cutting a machine without hardware
    loops forces on its compiler.
 7. **[ship.md](ship.md)** — the device, and why the machine is four meshes.
-8. **[results.md](results.md)** — every measured number, with its conditions.
+8. **[multi-mesh.md](multi-mesh.md)** — writing kernels across those four: what an
+   address means, which splits the silicon takes, and the one it refuses.
+9. **[results.md](results.md)** — every measured number, with its conditions.
 
 If you are here to see whether the framework would suit a different datapath,
 read [integrate/](../../integrate/README.md) instead; these pages are specific on
