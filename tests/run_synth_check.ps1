@@ -7,7 +7,7 @@
 # Out-of-context, one module at a time. That answers "is the logic depth sane?",
 # not "will the full mesh close" -- 196 routers plus interconnect will not hold the
 # same slack as one router alone. Use it to catch a design that cannot possibly
-# make the target, and to keep the LUT arithmetic in .plan/decisions.md honest.
+# make the target, and to keep the LUT-budget arithmetic honest.
 #
 # Each run writes its full Vivado log next to the results, because a synthesis
 # failure is usually explained halfway up the log rather than at the end.

@@ -1,5 +1,5 @@
 # multimesh v2: SLR-pinned meshes, a two-level control fabric, a retunable mesh
-# clock. Standalone project. Rationale: .plan/HANDOFF-next-build.md.
+# clock. Standalone project. Rationale: docs/projects/kohakutpu/multi-mesh.md.
 
 # MULTIMESH_V2_XPR installs into that project; unset builds the standalone one.
 # The BD is always multimesh_v2, so it never collides with an existing multimesh.

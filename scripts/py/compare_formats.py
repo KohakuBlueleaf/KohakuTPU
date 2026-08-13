@@ -66,7 +66,7 @@ def main():
     k = args.k + (-args.k) % formats.KBLOCK
     if args.dist == "lowrank":
         # A and B share `w`, so products accumulate coherently. Real operands do
-        # NOT -- .plan/measurements/accuracy-and-defects.md s2.2.
+        # NOT.
         r = args.rank or max(1, k // 16)
         w = rng.standard_normal((r, k))
         a = rng.standard_normal((args.m, r)) @ w

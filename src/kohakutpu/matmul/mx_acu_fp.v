@@ -51,8 +51,7 @@ module mx_acu_fp #(
     parameter integer ACC_MW = 14,
     // Storage for the resident tile, named rather than inferred. "block" is
     // 5 BRAM36 for any depth up to 512 and 0 LUT; "distributed" is ~4,000 LUT
-    // at depth 512 and misses 300 MHz by depth 64. See
-    // .plan/measurements/memory-primitives.md.
+    // at depth 512 and misses 300 MHz by depth 64.
     parameter         TILE_PRIM = "block"
 )(
     input  wire         clk,

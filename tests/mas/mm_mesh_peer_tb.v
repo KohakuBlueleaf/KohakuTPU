@@ -1,7 +1,7 @@
 // A CLUSTER DRAINING INTO A VECTOR CORE, over the real mesh.
 
 // mx_cluster_data_tb proves a cluster SENDS CU_DATA and vec_cu_tb proves a
-// vector core RECEIVES one. Neither joins them; .plan/FUSED-EPILOGUE.md does.
+// vector core RECEIVES one. Neither joins them; the fused epilogue does.
 
 //   pass A   DRAIN dnode=1 -> the BENCH, giving the golden FP16 sub-tiles
 //   pass B   DRAIN dnode=1 -> the VECTOR CORE, which writes L1 back to DRAM

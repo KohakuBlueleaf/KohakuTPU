@@ -27,7 +27,7 @@
 // encapsulator takes one flit per cycle across all of them today. 576 bits
 // (two 288-bit slots, two flits per beat) is the shape that becomes worth
 // building then -- measured at 19.2 GB/s and 328 MHz, and reverted here because
-// nothing can currently drive it. `.plan/measurements/interlink.md` s5.
+// nothing can currently drive it.
 //
 // Narrower also buys the thing nobody has measured: 386 nets per direction
 // instead of 674, against a Laguna budget that topology.md s4 flags as the real

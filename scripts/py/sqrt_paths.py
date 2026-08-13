@@ -10,10 +10,10 @@ card, evaluating the seeds as `vec_alu.v` does: the ROM `vec_tables.py`
 generates, the same two Horner stages, `ebase`, leading-one search and round.
 
 The seed path is structural, so it reproduces the ALU rather than approximating
-it; `VMUL` and `VSUB` are taken as correctly rounded, which is what
-`.plan/measurements/vector-alu.md` measured -- 0.500 ulp over a 6000-case random
-sweep and a full 648-case alignment sweep. `check_seeds` reproduces that same
-document's 0.546 and 0.549 ulp, which is what makes this model creditable.
+it; `VMUL` and `VSUB` are taken as correctly rounded, which is what the ALU
+measures -- 0.500 ulp over a 6000-case random sweep and a full 648-case
+alignment sweep. `check_seeds` reproduces the same 0.546 and 0.549 ulp, which is
+what makes this model creditable.
 
 Error is in ulp of E8M15: a 15-bit significand, so one ulp is 2^-15 relative and
 a correctly rounded result is 0.500 by definition.
@@ -79,8 +79,8 @@ def e8_op(fn, *xs):
     """One correctly rounded lane operation over E8M15 patterns.
 
     `VMUL`, `VADD` and `VSUB` all go through the FMA, which
-    `.plan/measurements/vector-alu.md` measures at 0.500 ulp -- correctly
-    rounded -- so rounding the exact result is the model.
+    measures at 0.500 ulp -- correctly rounded -- so rounding the exact result
+    is the model.
     """
     return to_e8(fn(*[from_e8(x) for x in xs]))
 

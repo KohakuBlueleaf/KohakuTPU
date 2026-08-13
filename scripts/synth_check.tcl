@@ -172,8 +172,8 @@ puts "RESULT $top  target [format %.3f $period] ns  WNS [format %.3f $wns] ns\
 report_utilization -hierarchical -hierarchical_depth 3 -file "${top}_hier.rpt"
 puts "  HIER written to ${top}_hier.rpt"
 
-# Utilisation, so the LUT-budget arithmetic in .plan/decisions.md can be checked
-# against something measured. Scraped out of the report text -- report_utilization
+# Utilisation, so the LUT-budget arithmetic can be checked against something
+# measured. Scraped out of the report text -- report_utilization
 # returns a string, not an object, so get_property cannot be used on it.
 set rpt [report_utilization -return_string]
 foreach line [split $rpt "\n"] {

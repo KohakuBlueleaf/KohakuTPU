@@ -1,5 +1,5 @@
 # multimesh v3: v2 plus a control plane that survives PCIe being down.
-# Rationale: .plan/HANDOFF-next-build.md.
+# Rationale: docs/projects/kohakutpu/multi-mesh.md.
 
 # MULTIMESH_V3_XPR installs into that project; unset builds the standalone one.
 # The BD is always multimesh_v3, so it never collides with an existing multimesh.

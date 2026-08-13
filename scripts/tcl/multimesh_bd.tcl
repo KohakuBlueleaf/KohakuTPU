@@ -1,5 +1,5 @@
 # multimesh.bd -- four meshes, four DRAMs, four SLRs. Placement, the measured
-# bank->SLR map and the address split: .plan/HANDOFF-multimesh.md.
+# bank->SLR map and the address split: docs/projects/kohakutpu/multi-mesh.md.
 
 # One DDR4 per SLR, so no mesh crosses an SLR for its own DRAM. mesh0<->mesh2
 # is the one link spanning SLR0..SLR3; pipeline THAT one and no other.

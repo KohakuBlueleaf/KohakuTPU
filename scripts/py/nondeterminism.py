@@ -7,14 +7,14 @@ Two DISJOINT sets, and only one is still a question.
 
 `blown` is OPERAND RANGE and is closed: the count follows magnitude and nothing
 else -- `--scale 0.25` takes it to zero, `--scale 2` triples it. A contraction
-driven past the drain saturates at the FP16 maximum, which is the trap
-`.plan/MESH0-FAULT.md` retracted a hardware narrative over.
+driven past the drain saturates at the FP16 maximum, which is the trap that once
+retracted a whole hardware narrative.
 
 `flickering` is ~0.5% of elements differing between runs and is OPEN. It does
 not follow magnitude, and it is not placement, stale tile state, transport or
-accumulation order -- `.plan/measurements/accuracy-and-defects.md` s3.4 has the
-eliminations. Between runs `run1/run0` is an exact power of two in ~88% of them
-with neither run correct, which points at the per-block E8M0 scale.
+accumulation order -- each of those was eliminated separately. Between runs
+`run1/run0` is an exact power of two in ~88% of them with neither run correct,
+which points at the per-block E8M0 scale.
 
 Operands are uploaded ONCE and read back every run, so upload is held still and
 checked -- which is what separates a transport fault from a datapath one.

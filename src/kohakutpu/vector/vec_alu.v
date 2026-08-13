@@ -263,7 +263,7 @@ module vec_alu #(
     // 0.35 ulp, four times the table's own error. See scripts/py/vec_tables.py.
     //
     // Split across two cycles with the seam after the shift -- whole, this was
-    // the critical path of the entire ALU. See .plan/measurements/vector-alu.md.
+    // the critical path of the entire ALU.
     wire [7:0]  rr_raw  = 8'd134 - ra_e;
     wire [5:0]  rr_sh   = (ra_e > 8'd134)   ? 6'd0
                         : (rr_raw > 8'd26)  ? 6'd26 : rr_raw[5:0];
