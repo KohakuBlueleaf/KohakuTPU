@@ -13,31 +13,76 @@ readme = "README.md"
 requires-python = ">=3.13"
 # numpy for the numeric model and the operand packer, and nothing else in the
 # core. A dependency has to remove more code than it adds.
-dependencies = [
-    "numpy>=1.26",
-    # Without these, `kohakuaccel`, `kohakutpu` and `ktpugrad` go uninstalled.
-    "kohakuaccel-compiler",
-    "kohakuaccel-driver",
-]
+dependencies = ["numpy>=1.26"]
 
 [project.optional-dependencies]
+tinygrad = ["tinygrad>=0.13"]
 dev = ["pytest>=8.0", "ruff>=0.6", "black>=24.0"]
 # torch only to check our MX quantiser against somebody else's; a format
 # comparison where we wrote both sides proves nothing.
 compare = ["torch>=2.4", "torchao>=0.7"]
 
-# `uv pip install -e .` brings the whole tree. compiler/ and driver/ share the
-# `kohakuaccel` and `kohakutpu` PEP 420 namespaces between them.
-[tool.uv.workspace]
-members = ["compiler", "driver"]
-
-[tool.uv.sources]
-kohakuaccel-compiler = { workspace = true }
-kohakuaccel-driver = { workspace = true }
-
-# Nothing at the root ships; the packages live in compiler/ and driver/.
+# A package maps to ONE directory, so the shared `kohakuaccel` and `kohakutpu`
+# namespaces are listed per tree; driver's four are packages to keep their paths.
 [tool.setuptools]
-packages = []
+packages = [
+    "kohakuaccel",
+    "kohakuaccel.analysis",
+    "kohakuaccel.backend",
+    "kohakuaccel.device",
+    "kohakuaccel.frontend",
+    "kohakuaccel.ir",
+    "kohakuaccel.lang",
+    "kohakuaccel.machine",
+    "kohakuaccel.passes",
+    "kohakuaccel.runtime",
+    "kohakuaccel.sim",
+    "kohakuaccel.transport",
+    "kohakuaccel.unit",
+    "kohakutpu",
+    "kohakutpu.clock",
+    "kohakutpu.host",
+    "kohakutpu.hw",
+    "kohakutpu.isa",
+    "kohakutpu.kernels",
+    "kohakutpu.lang",
+    "kohakutpu.machine",
+    "kohakutpu.ops",
+    "kohakutpu.units",
+    "kohakutpu.viz",
+    "ktpugrad",
+]
+
+[tool.setuptools.package-dir]
+"kohakuaccel" = "compiler/kohakuaccel"
+"kohakuaccel.analysis" = "compiler/kohakuaccel/analysis"
+"kohakuaccel.backend" = "compiler/kohakuaccel/backend"
+"kohakuaccel.device" = "driver/kohakuaccel/device"
+"kohakuaccel.frontend" = "compiler/kohakuaccel/frontend"
+"kohakuaccel.ir" = "compiler/kohakuaccel/ir"
+"kohakuaccel.lang" = "compiler/kohakuaccel/lang"
+"kohakuaccel.machine" = "driver/kohakuaccel/machine"
+"kohakuaccel.passes" = "compiler/kohakuaccel/passes"
+"kohakuaccel.runtime" = "driver/kohakuaccel/runtime"
+"kohakuaccel.sim" = "driver/kohakuaccel/sim"
+"kohakuaccel.transport" = "driver/kohakuaccel/transport"
+"kohakuaccel.unit" = "driver/kohakuaccel/unit"
+"kohakutpu" = "compiler/kohakutpu"
+"kohakutpu.clock" = "driver/kohakutpu/clock"
+"kohakutpu.host" = "driver/kohakutpu/host"
+"kohakutpu.hw" = "compiler/kohakutpu/hw"
+"kohakutpu.isa" = "compiler/kohakutpu/isa"
+"kohakutpu.kernels" = "compiler/kohakutpu/kernels"
+"kohakutpu.lang" = "compiler/kohakutpu/lang"
+"kohakutpu.machine" = "driver/kohakutpu/machine"
+"kohakutpu.ops" = "compiler/kohakutpu/ops"
+"kohakutpu.units" = "driver/kohakutpu/units"
+"kohakutpu.viz" = "compiler/kohakutpu/viz"
+"ktpugrad" = "compiler/ktpugrad"
+
+# The playground is one HTML file served by `python -m kohakutpu.viz`.
+[tool.setuptools.package-data]
+"kohakutpu.viz" = ["*.html"]
 
 # black formats, ruff lints. Same line length or they fight over every wrap.
 [tool.black]
