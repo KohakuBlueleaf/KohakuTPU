@@ -173,16 +173,19 @@ foreach row $MESHES {
 }
 
 # ---- MAG <-> MAG ---------------------------------------------------------
-# link0 flips the mesh's x, link1 flips its y. Point to point, no FIFO and no
-# register slice: TREADY MUST NOT CROSS AN SLR, and the far end's S_AXIS_LINK
-# ties it high. Anything that backpressures here reintroduces the
-# combinational crossing mag_link.v exists to avoid.
-foreach pair {{0 0 1} {0 2 3} {1 0 2} {1 1 3}} {
-    lassign $pair lk a b
-    connect_bd_intf_net [get_bd_intf_pins mesh_$a/M_AXIS_LINK$lk] \
-                        [get_bd_intf_pins mesh_$b/S_AXIS_LINK$lk]
-    connect_bd_intf_net [get_bd_intf_pins mesh_$b/M_AXIS_LINK$lk] \
-                        [get_bd_intf_pins mesh_$a/S_AXIS_LINK$lk]
+# The SLR chain: SLR0..SLR3 hold mesh 0, 1, 3, 2 and an SLL joins only ADJACENT
+# SLRs, so each hop leaves the lower mesh by LINK1 and arrives on the upper
+# mesh's LINK0. mesh0's LINK0 and mesh2's LINK1 are the chain's ends and stay
+# unconnected -- three links, not four, and none spans a die it may not.
+# Point to point, no FIFO and no register slice: TREADY MUST NOT CROSS AN SLR,
+# and the far end's S_AXIS_LINK ties it high. Anything that backpressures here
+# reintroduces the combinational crossing mag_link.v exists to avoid.
+foreach hop {{0 1} {1 3} {3 2}} {
+    lassign $hop lo hi
+    connect_bd_intf_net [get_bd_intf_pins mesh_$lo/M_AXIS_LINK1] \
+                        [get_bd_intf_pins mesh_$hi/S_AXIS_LINK0]
+    connect_bd_intf_net [get_bd_intf_pins mesh_$hi/M_AXIS_LINK0] \
+                        [get_bd_intf_pins mesh_$lo/S_AXIS_LINK1]
 }
 
 # ---- the control plane ---------------------------------------------------

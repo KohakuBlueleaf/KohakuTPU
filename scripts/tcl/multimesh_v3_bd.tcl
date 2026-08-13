@@ -1,9 +1,9 @@
-# multimesh v2: SLR-pinned meshes, a two-level control fabric, a retunable mesh
-# clock. Standalone project. Rationale: .plan/HANDOFF-next-build.md.
+# multimesh v3: v2 plus a control plane that survives PCIe being down.
+# Rationale: .plan/HANDOFF-next-build.md.
 
-# MULTIMESH_V2_XPR installs into that project; unset builds the standalone one.
-# The BD is always multimesh_v2, so it never collides with an existing multimesh.
-set design_name multimesh_v2
+# MULTIMESH_V3_XPR installs into that project; unset builds the standalone one.
+# The BD is always multimesh_v3, so it never collides with an existing multimesh.
+set design_name multimesh_v3
 set part        xcvu13p-fhgb2104-2L-e
 set root        C:/Users/apoll/Desktop/code/Project/KohakuTPU
 
@@ -19,12 +19,12 @@ set MESHES {
 # VU13P: four SLRs of four clock-region rows each.
 set SLR_ROWS {0 {Y0 Y3} 1 {Y4 Y7} 2 {Y8 Y11} 3 {Y12 Y15}}
 
-if {[info exists ::env(MULTIMESH_V2_XPR)]} {
-    set proj_dir [file dirname $::env(MULTIMESH_V2_XPR)]
-    open_project $::env(MULTIMESH_V2_XPR)
+if {[info exists ::env(MULTIMESH_V3_XPR)]} {
+    set proj_dir [file dirname $::env(MULTIMESH_V3_XPR)]
+    open_project $::env(MULTIMESH_V3_XPR)
 } else {
-    set proj_dir C:/Users/apoll/Desktop/vivado/multimesh_v2
-    create_project -force multimesh_v2 $proj_dir -part $part
+    set proj_dir C:/Users/apoll/Desktop/vivado/multimesh_v3
+    create_project -force multimesh_v3 $proj_dir -part $part
 }
 set_property target_language Verilog [current_project]
 
@@ -55,7 +55,7 @@ foreach f {
 } { if {![have $root/$f]} { add_files -norecurse -fileset sources_1 $root/$f } }
 update_compile_order -fileset sources_1
 
-# Rebuilding replaces any earlier multimesh_v2. A design named anything else --
+# Rebuilding replaces any earlier multimesh_v3. A design named anything else --
 # multimesh, singlemesh, design_1 -- is never named here and never a candidate.
 set old [get_files -quiet ${design_name}.bd]
 if {[llength $old]} {
@@ -137,7 +137,7 @@ set xdma [create_bd_cell -type ip -vlnv xilinx.com:ip:xdma xdma_0]
 set_property -dict [list \
   CONFIG.axi_data_width {512_bit} CONFIG.axi_id_width {4} \
   CONFIG.axilite_master_en {true} CONFIG.axilite_master_scale {Megabytes} \
-  CONFIG.axilite_master_size {1} CONFIG.axisten_freq {250} \
+  CONFIG.axilite_master_size {16} CONFIG.axisten_freq {250} \
   CONFIG.functional_mode {DMA} CONFIG.mode_selection {Basic} \
   CONFIG.pcie_blk_locn {X0Y1} CONFIG.pf0_device_id {903F} \
   CONFIG.pf0_subsystem_id {0007} CONFIG.pf0_subsystem_vendor_id {10EE} \
@@ -251,7 +251,7 @@ set ctrlclk [list [get_bd_pins jtag_axi_0/aclk] \
                   [get_bd_pins axi_gpio_0/s_axi_aclk] \
                   [get_bd_pins clk_wiz_mesh/s_axi_aclk] \
                   [get_bd_pins rst_ctrl_100M/slowest_sync_clk] \
-                  [get_bd_pins root_smc/aclk1]]
+                  [get_bd_pins root_smc/aclk]]
 set ctrlrst [list [get_bd_pins jtag_axi_0/aresetn] \
                   [get_bd_pins axi_gpio_0/s_axi_aresetn] \
                   [get_bd_pins clk_wiz_mesh/s_axi_aresetn] \
@@ -309,44 +309,44 @@ connect_bd_net -net ddr4_0_ui_clk_sync_rst [get_bd_pins rst_mesh/ext_reset_in]
 connect_bd_net [get_bd_ports pcie_reset]  [get_bd_pins xdma_0/sys_rst_n]
 connect_bd_net [get_bd_pins util_ds_buf_0/IBUF_DS_ODIV2] [get_bd_pins xdma_0/sys_clk]
 connect_bd_net [get_bd_pins util_ds_buf_0/IBUF_OUT]      [get_bd_pins xdma_0/sys_clk_gt]
-connect_bd_net [get_bd_pins xdma_0/axi_aclk]  [get_bd_pins root_smc/aclk]
+# aclk1, NEVER aclk: aclk is SmartConnect's primary and the whole crossbar runs
+# on it, so binding it here freezes JTAG whenever PCIe is unplugged.
+connect_bd_net [get_bd_pins xdma_0/axi_aclk]  [get_bd_pins root_smc/aclk1]
 connect_bd_net [get_bd_pins xdma_0/user_lnk_up] [get_bd_ports user_lnk_up]
 connect_bd_net [get_bd_pins xlconstant_0/dout]  [get_bd_pins xdma_0/usr_irq_req]
 
 # ---- addresses -----------------------------------------------------------
-foreach space {jtag_axi_0/Data xdma_0/M_AXI} {
+# ONE map for every master. A leaf SmartConnect is shared, so an address
+# arriving there must mean one thing -- per-master maps collide on it (BD 5-702).
+foreach space {jtag_axi_0/Data xdma_0/M_AXI xdma_0/M_AXI_LITE} {
+    set s [get_bd_addr_spaces $space]
     foreach id {0 1 2 3} {
-        assign_bd_address -offset [format 0x%llX [expr {$id * 0x100000000}]] \
-            -range 0x100000000 -target_address_space [get_bd_addr_spaces $space] \
-            [get_bd_addr_segs mesh_$id/S_AXI_MEM/reg0] -force
-        assign_bd_address -offset [format 0x%llX [expr {0x400800000 + $id * 0x10000}]] \
-            -range 0x10000 -target_address_space [get_bd_addr_spaces $space] \
+        assign_bd_address -offset [format 0x%X [expr {$id * 0x100000}]] -range 0x100000 \
+            -target_address_space $s \
+            [get_bd_addr_segs ddr4_$id/C0_DDR4_MEMORY_MAP_CTRL/C0_REG] -force
+        assign_bd_address -offset [format 0x%X [expr {0x800000 + $id * 0x10000}]] \
+            -range 0x10000 -target_address_space $s \
             [get_bd_addr_segs mesh_$id/S_AXI_CTRL/reg0] -force
     }
-    foreach i {0 1 2 3} {
-        assign_bd_address -offset [format 0x%llX [expr {0x400000000 + $i * 0x100000}]] \
-            -range 0x100000 -target_address_space [get_bd_addr_spaces $space] \
-            [get_bd_addr_segs ddr4_$i/C0_DDR4_MEMORY_MAP_CTRL/C0_REG] -force
-    }
-    assign_bd_address -offset 0x400400000 -range 0x10000 \
-        -target_address_space [get_bd_addr_spaces $space] \
+    assign_bd_address -offset 0x400000 -range 0x10000 -target_address_space $s \
         [get_bd_addr_segs axi_gpio_0/S_AXI/Reg] -force
-    assign_bd_address -offset 0x400900000 -range 0x10000 \
-        -target_address_space [get_bd_addr_spaces $space] \
+    assign_bd_address -offset 0x900000 -range 0x10000 -target_address_space $s \
         [get_bd_addr_segs clk_wiz_mesh/s_axi_lite/Reg] -force
 }
 
-# M_AXI_LITE is 32-bit; every window above is past 4 GB, so it reaches none.
+# Memory starts at 4 GB, which keeps the whole control aperture inside the reach
+# of xdma_0/M_AXI_LITE -- a 32-bit master, hence the exclusion below.
+foreach space {jtag_axi_0/Data xdma_0/M_AXI} {
+    foreach id {0 1 2 3} {
+        assign_bd_address -offset [format 0x%llX [expr {($id + 1) * 0x100000000}]] \
+            -range 0x100000000 -target_address_space [get_bd_addr_spaces $space] \
+            [get_bd_addr_segs mesh_$id/S_AXI_MEM/reg0] -force
+    }
+}
 set lite [get_bd_addr_spaces xdma_0/M_AXI_LITE]
-foreach s [get_bd_addr_segs -of_objects $lite -excluded -quiet] { }
 foreach id {0 1 2 3} {
     exclude_bd_addr_seg -target_address_space $lite [get_bd_addr_segs mesh_$id/S_AXI_MEM/reg0]
-    exclude_bd_addr_seg -target_address_space $lite [get_bd_addr_segs mesh_$id/S_AXI_CTRL/reg0]
-    exclude_bd_addr_seg -target_address_space $lite \
-        [get_bd_addr_segs ddr4_$id/C0_DDR4_MEMORY_MAP_CTRL/C0_REG]
 }
-exclude_bd_addr_seg -target_address_space $lite [get_bd_addr_segs axi_gpio_0/S_AXI/Reg]
-exclude_bd_addr_seg -target_address_space $lite [get_bd_addr_segs clk_wiz_mesh/s_axi_lite/Reg]
 
 foreach row $MESHES {
     lassign $row id mod slr ddr nmag
@@ -369,7 +369,7 @@ if {[catch {validate_bd_design -force} e]} {
 }
 
 # -import rather than a path: the generated directory is named after the
-# PROJECT, so a literal multimesh_v2.gen is wrong in any other one.
+# PROJECT, so a literal multimesh_v3.gen is wrong in any other one.
 make_wrapper -files [get_files $design_name.bd] -top -import
 set_property top ${design_name}_wrapper [current_fileset]
 
@@ -378,7 +378,12 @@ set_property top ${design_name}_wrapper [current_fileset]
 # each mesh with its own DRAM, not to fence the router.
 set xdc $proj_dir/pblocks.xdc
 set fh [open $xdc w]
-puts $fh "# Generated by scripts/tcl/multimesh_v2_bd.tcl -- do not hand-edit."
+puts $fh "# Generated by scripts/tcl/multimesh_v3_bd.tcl -- do not hand-edit."
+# The BD instance is `multimesh_v<n>_i`, so pinning the version matched NOTHING
+# under v4 and every pblock came out empty. Glob it.
+puts $fh ""
+puts $fh "# The BD instance is multimesh_v<n>_i; the version is globbed so one"
+puts $fh "# floorplan serves every revision of the design."
 array set SLRY $SLR_ROWS
 foreach slr {0 1 2 3} {
     lassign $SLRY($slr) ylo yhi
@@ -386,23 +391,27 @@ foreach slr {0 1 2 3} {
     puts $fh ""
     puts $fh "create_pblock pb_slr$slr"
     puts $fh "resize_pblock \[get_pblocks pb_slr$slr\] -add \{CLOCKREGION_X0${ylo}:CLOCKREGION_X7${yhi}\}"
-    puts $fh "add_cells_to_pblock \[get_pblocks pb_slr$slr\] \[get_cells -quiet {multimesh_i/mesh_$mid}\]"
-    puts $fh "add_cells_to_pblock \[get_pblocks pb_slr$slr\] \[get_cells -quiet {multimesh_i/leaf_smc_$slr}\]"
+    puts $fh "add_cells_to_pblock \[get_pblocks pb_slr$slr\] \[get_cells -quiet {multimesh_v*_i/mesh_$mid}\]"
+    puts $fh "add_cells_to_pblock \[get_pblocks pb_slr$slr\] \[get_cells -quiet {multimesh_v*_i/leaf_smc_$slr}\]"
     puts $fh "set_property CONTAIN_ROUTING false \[get_pblocks pb_slr$slr\]"
 }
 puts $fh ""
 puts $fh "# The root sits with XDMA, whose PCIe block is fixed at PCIE40E4_X0Y1."
-puts $fh "add_cells_to_pblock \[get_pblocks pb_slr1\] \[get_cells -quiet {multimesh_i/root_smc}\]"
+puts $fh "add_cells_to_pblock \[get_pblocks pb_slr1\] \[get_cells -quiet {multimesh_v*_i/root_smc}\]"
 
 close $fh
 add_files -fileset constrs_1 -norecurse $xdc
 # Static, not generated: emitting Tcl braces through `puts` silently swallowed
 # the whole block into an unterminated string the first time.
-add_files -fileset constrs_1 -norecurse $root/scripts/xdc/multimesh_v2_clocks.xdc
+add_files -fileset constrs_1 -norecurse $root/scripts/xdc/multimesh_v3_clocks.xdc
+# LATE, or the clk_wiz generated clocks do not exist yet and every group in it
+# matches nothing -- 16 critical warnings and no async grouping, run of 2026-08-12.
+set_property PROCESSING_ORDER LATE \
+    [get_files -of_objects [get_filesets constrs_1] */multimesh_v3_clocks.xdc]
 
 puts "=== ADDRESS MAP ==="
 foreach s [get_bd_addr_segs -of_objects [get_bd_addr_spaces]] {
     puts [format "%-58s %s +%s" $s [get_property OFFSET $s] [get_property RANGE $s]]
 }
-write_bd_tcl -force -no_ip_version $proj_dir/multimesh_v2_generated.tcl
-puts "=== MULTIMESH V2 BUILT: $proj_dir ==="
+write_bd_tcl -force -no_ip_version $proj_dir/multimesh_v3_generated.tcl
+puts "=== [string toupper $design_name] BUILT: $proj_dir ==="
