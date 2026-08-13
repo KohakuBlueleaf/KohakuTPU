@@ -3,39 +3,41 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ktpu"
+name = "kohakutpu-workspace"
 version = "0.1.0"
-description = "Compiler and runtime for KohakuTPU"
+description = "KohakuTPU: the compiler, the driver, and the tinygrad frontend"
 authors = [
     { name = "Shih-Ying Yeh (KohakuBlueLeaf)", email = "apolloyeh0123@gmail.com" },
 ]
 readme = "README.md"
 requires-python = ">=3.13"
 # numpy for the numeric model and the operand packer, and nothing else in the
-# core. A pure-Python stack stays inspectable; a dependency has to remove more
-# code than it adds. See docs/driver/README.md s5.
-dependencies = ["numpy>=1.26"]
+# core. A dependency has to remove more code than it adds.
+dependencies = [
+    "numpy>=1.26",
+    # Without these, `kohakuaccel`, `kohakutpu` and `ktpugrad` go uninstalled.
+    "kohakuaccel-compiler",
+    "kohakuaccel-driver",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.6", "black>=24.0"]
-# torch is needed only to check our MX quantiser against somebody else's; a
-# format comparison where we wrote both sides proves nothing. See ktpu.hw.refimpl.
+# torch only to check our MX quantiser against somebody else's; a format
+# comparison where we wrote both sides proves nothing.
 compare = ["torch>=2.4", "torchao>=0.7"]
 
-[project.scripts]
-ktpu = "ktpu.cli:main"
+# `uv pip install -e .` brings the whole tree. compiler/ and driver/ share the
+# `kohakuaccel` and `kohakutpu` PEP 420 namespaces between them.
+[tool.uv.workspace]
+members = ["compiler", "driver"]
 
-# src/ is the whole project's source root -- src/kohakunoc, src/kohakutpu and
-# friends are Verilog packages and have no __init__.py, so `find` skips them.
-# `include` says so explicitly rather than relying on that.
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["ktpu*"]
+[tool.uv.sources]
+kohakuaccel-compiler = { workspace = true }
+kohakuaccel-driver = { workspace = true }
 
-# The visualiser is one HTML file served by scripts/py/server.py, so it ships
-# with the package rather than being a separate asset tree.
-[tool.setuptools.package-data]
-"ktpu.viz" = ["*.html"]
+# Nothing at the root ships; the packages live in compiler/ and driver/.
+[tool.setuptools]
+packages = []
 
 # black formats, ruff lints. Same line length or they fight over every wrap.
 [tool.black]
@@ -46,7 +48,17 @@ target-version = ["py313"]
 line-length = 88
 target-version = "py313"
 
+[tool.ruff.lint]
+# B008: `a=L.In(M, K)` is a port declaration, a value, so it cannot be an
+# annotation. C408: an ISA field table reads as `dict(op=1, n=64)`, not quoted.
+ignore = ["B008", "C408"]
+
+[tool.ruff.lint.per-file-ignores]
+# A test harness that reports every failure has to catch every failure; the
+# alternative is a suite that stops at the first one and names only it.
+"compiler/tests/*" = ["BLE001"]
+
 [tool.pytest.ini_options]
-# tests/ mirrors src/: tests/noc, tests/matmul and friends are Verilog benches
-# driven by scripts/py/xsim.py, tests/ktpu is Python.
-testpaths = ["tests/ktpu"]
+# RUN THESE ONE AT A TIME: `compiler/tests` and `driver/tests` both want the
+# module name `tests`, so one invocation over both always collides.
+testpaths = ["compiler/tests", "driver/tests"]
