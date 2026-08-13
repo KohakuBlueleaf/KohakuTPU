@@ -233,9 +233,10 @@ class Compiled:
         against 8.8e-4, silently, reading the earlier shape's array.
 
         NOR ITS LENGTH: a folded array is one instance's STRIDE long, and the
-        two grids stride differently. `linear_scale_separated` at M=2 N=6144 on
-        the traced grid, after the same call on the layout-sized one, read that
-        call's 8,192-long array over a 98,304-element pass: 1.00 error, silent.
+        two grids stride differently. A separated linear+scale kernel, since
+        retired, at M=2 N=6144 on the traced grid, after the same call on the
+        layout-sized one, read that call's 8,192-long array over a pass of
+        98,304 elements: 1.00 error, silent.
         Appended only when set, so every tag already in a cache still names the
         compilation it named before.
         """

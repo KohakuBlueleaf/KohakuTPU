@@ -211,9 +211,9 @@ def _linear_add(m, n) -> dict:
 def test_the_wider_grid_is_off_unless_it_is_asked_for():
     """Additive: a runtime nobody configured emits the program it always did.
 
-    It is a TRADE and not a fix -- `linear_gelu_separated` at this shape costs
-    2.6x the instruction stream for 2x the cores -- so it is the caller's to
-    make, exactly as `reuse_temps` is. Both covers are correct; only one is
+    It is a TRADE and not a fix -- at this shape the wider grid costs 2.6x the
+    instruction stream for 2x the cores -- so it is the caller's to make,
+    exactly as `reuse_temps` is. Both covers are correct; only one is
     the default.
     """
     assert SimDevice(size=ARENA).regrid is False

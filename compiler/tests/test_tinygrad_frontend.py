@@ -7,8 +7,7 @@ rather than computed some other way.
 
 The refusals are asserted as tightly as the matches. A matcher that quietly
 widened would dispatch a wrong kernel and report success, and the ones recorded
-here -- softmax, a batch, fp32 -- are the shapes `.plan/TINYGRAD.md` predicted
-would not fit.
+here -- softmax, a batch, fp32 -- are the shapes this backend does not fit.
 
 The ESCAPE HATCH is held to the same line: `ktpugrad.softmax` and its three
 siblings run, and a refused ast still RAISES, so the hatch is never reached by
@@ -65,9 +64,11 @@ def sinks(tensor):
     """The compute kernels `tensor` schedules, without the copies.
 
     0.13 has no `Tensor.schedule`; the ast exists only where `to_program` is
-    handed one, so realizing under a spy is how a test sees it.
+    handed one, so realizing under a spy is how a test sees it. `strict=False`
+    because several tests here are ABOUT refusals, and the ast is handed over
+    before the kernel is chosen.
     """
-    return ktpugrad.capture(tensor.realize)
+    return ktpugrad.capture(tensor.realize, strict=False)
 
 
 def spent(dev, run):
@@ -177,9 +178,9 @@ def test_the_epilogue_dispatches_the_librarys_program(dev, operands):
     """Same rounds and same flits as the library call, or the fusion is a claim.
 
     A frontend can agree element for element and still have run the unfused
-    pair; what says it did not is the program it dispatched. `plan` prices
-    `linear_silu_separated` cheaper at this shape -- 2 rounds / 112 flits
-    against 3 / 150 -- so that is what both sides of this comparison run.
+    pair; what says it did not is the program it dispatched. `picked` resolves
+    the kernel and the tiling `plan` chose, and both sides of this comparison
+    dispatch exactly that -- see the twin note below for why there is only one.
     """
     xa, wa = operands
     kern, knobs = picked(dev, *xa.shape, wa.shape[0])
@@ -660,7 +661,7 @@ def test_a_retiled_shape_runs_end_to_end(dev):
 
 # ------------------------------------------------------------------- the seam
 def test_another_device_is_not_diverted(dev, operands):
-    """`get_runner` is a global EVERY device lowers through."""
+    """`to_program` is a global EVERY device lowers through."""
     xa, wa = operands
     x, w = xa.astype(np.float32), wa.astype(np.float32)
     got = (Tensor(x, device="CPU") @ Tensor(w, device="CPU").T).numpy()
@@ -672,7 +673,7 @@ def test_installing_twice_leaves_one_seam(dev, operands):
     from tinygrad.engine import realize
 
     ktpugrad.install()
-    assert realize.get_runner is ktpugrad.get_runner
+    assert realize.to_program is ktpugrad.to_program
     xa, wa = operands
     x, w = Tensor(xa, device=ktpugrad.NAME), Tensor(wa, device=ktpugrad.NAME)
     assert (x @ w.T).numpy().shape == (M, N)

@@ -6,7 +6,7 @@ itself is the words IMEM carries. That split is why a vector core is programmed
 rather than commanded: the cluster takes one instruction per dispatch, the vector
 core takes a program and runs it.
 
-The authority is ``src/ktpu/hw/vector.py``, which has run on silicon.
+The authority is ``kohakutpu/hw/vector.py``, which has run on silicon.
 ``compiler/tests/test_ktpu_isa.py`` checks this against it bit for bit.
 """
 

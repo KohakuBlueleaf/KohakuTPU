@@ -1,7 +1,7 @@
 """KohakuTPU's compute-unit ISA, declared as a field table.
 
 The authority is ``src/kohakutpu/matmul/mx_cluster_cu.v`` and the encoder that
-has run on silicon, ``src/ktpu/hw/matmul.py``; ``compiler/tests/test_ktpu_isa.py``
+has run on silicon, ``kohakutpu/hw/matmul.py``; ``compiler/tests/test_ktpu_isa.py``
 checks this against it. Field widths come from :class:`IsaConfig`.
 
 Payload only, 256 bits. The routing header belongs to the driver.

@@ -1,19 +1,19 @@
-"""The row-wise kernels in the shape `.plan/TILING-NOT-CHECKPOINT.md` argues for.
+"""The row-wise kernels, in the shape one tiling with no checkpoint argues for.
 
 Each is ONE stage with every intermediate in a v-register and none in memory.
-Measured at 64x64 against the shipped forms in `activation.py`, `norm.py` and
-`groupnorm.py`: softmax 4 stages/974 words -> 1/290, rmsnorm 4/647 -> 1/264,
-layernorm and group_norm 8/1254 -> 1/416, at equal or lower error.
+Measured at 64x64 against the staged forms they replaced: softmax 4 stages/974
+words -> 1/290, rmsnorm 4/647 -> 1/264, layernorm and group_norm 8/1254 ->
+1/416, at equal or lower error.
 
 `part` must be WHOLE ROWS -- a band steps one row at a time when it reduces --
 but not the whole array: rows split across instances fold identically, so the
 default grids as the staged forms did. A part that cuts a row is refused and
 the message names the knob.
 
-THESE ARE THE SHIPPED KERNELS. `kernels/__init__` exports them as `softmax`,
-`rmsnorm`, `layernorm` and `group_norm`; the staged forms they replaced are
-`*_staged` in `activation.py`, `norm.py` and `groupnorm.py`. Promoting them
-moved four witness digests -- `.plan/measurements/witness-updates.md`.
+THESE ARE THE SHIPPED KERNELS, exported as `softmax`, `rmsnorm`, `layernorm`
+and `group_norm`. Only `group_norm_staged` is still library code; the other
+three staged forms are fixtures in `compiler/tests/test_fused_shape.py`.
+Promoting them moved four witness digests.
 """
 
 from kohakuaccel.lang import dims, units
