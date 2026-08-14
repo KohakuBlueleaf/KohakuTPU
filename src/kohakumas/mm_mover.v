@@ -1,37 +1,45 @@
-// The memory mover: a layout, gather and fill engine with its own AXI master.
-//
-// docs/memory-mover/arch.md. A NEW CLIENT OF MAG, not a modification of it --
-// mag_mem_port.v is untouched, and this sits beside it and the host upload path
-// as one more AXI master. It has no NoC endpoint.
-//
-// Two mx_tdesc walkers, source and destination. The DESTINATION defines the
-// iteration space and the source is stepped in lockstep, which is what makes a
-// source stride of 0 a broadcast with no extra mode. A source element whose
-// `valid` is low injects MV_IMM, which is how padding works; a destination
-// element whose `valid` is low suppresses its write.
-//
-// v1 IS WORD GRANULAR. Descriptors address bytes but every transfer is one
-// 256-bit beat, so strides must be multiples of 32 and a misaligned descriptor
-// faults rather than silently moving the wrong bytes. That covers the case
-// worth having first -- tile order to entry order is a permutation OF WORDS,
-// because both layouts are built out of 256-bit words. Sub-word gather and
-// element transposes need the granule buffer in arch.md s5 and are not here.
-//
-// One outstanding transaction at a time. That is slow and it is deliberate for
-// a first implementation: correctness is checkable, and docs/memory-mover/
-// compiler.md s5 prices the result honestly rather than hiding it.
+// A layout, gather and fill engine with its own AXI master. Two mx_tdesc
+// walkers: the DESTINATION defines the iteration space, so stride 0 broadcasts.
+
+// src_valid low injects MV_IMM, which is how padding works; dst_valid low
+// suppresses the write. Word granular, so a misaligned destination faults.
+
+// An ISSUE engine folds consecutive addresses into bursts and keeps k reads in
+// flight; a WRITE engine drains the FIFO behind it and never waits for B.
+
+// mag_dram_port's return path is shared, so a burst's FIFO space is reserved
+// before its AR and its AW waits until the data is resident.
+
+// WRITE COALESCING IS flags[3], off by default and now SAFE everywhere:
+// mag_ilink's splitter streams a burst since it learned s_awlen. Worth 7.2x.
+
+// 40-bit map: [39] aperture, [38] rsvd, [37:36] mesh, [35:0] local. Nothing here
+// masks the top four, so an aperture descriptor reaches MAG's L2 unchanged.
+
+// THE 4 KB RULE ALREADY SPLITS AT THE MESH BOUNDARY. A mesh is 64 GB and a burst
+// may not leave its 4 KB page, so no coalesced burst can straddle bit 36.
 
 `default_nettype none
 
 module mm_mover #(
     parameter integer DATA_W    = 256,
-    parameter integer ADDR_W    = 34,
+    parameter integer ADDR_W    = 40,
     parameter integer ID_W      = 4,
-    // 8 indices per word. 256 not 128: a 256-bit port is 4 RAMB36 at any depth
-    // to 512, so 128 used a quarter of its own tiles -- and 256 makes the port
-    // address 8 bits, matching ix_wr_a/ix_raddr, which at 128 were 8 bits
-    // against a 7-bit port (Synth 8-689) and silently dropped their top bit.
-    parameter integer IDX_WORDS = 256
+    // 8 indices per word. 256, not 128: a 256-bit port is 4 RAMB36 at any depth
+    // to 512, and at 128 ix_wr_a's top bit was dropped silently (Synth 8-689).
+    parameter integer IDX_WORDS = 256,
+    // Read data staged between the two engines. 512 x 256 b is 4 RAMB36, the
+    // same tile count as any shallower depth, and covers MAX_OUT full bursts.
+    parameter integer FIFO_D    = 512,
+    // Write commands queued ahead. With coalescing off a command is one word,
+    // so at 16 the read round trip was re-exposed once every 16 words.
+    parameter integer CMD_D     = 128,
+    parameter integer MAX_OUT   = 16,       // read bursts in flight
+    // Write bursts awaiting B. At 8 this alone held single-beat writes to
+    // 6.8 cycles a word against a 50-cycle write-to-B; the slave throttles.
+    parameter integer MAX_WOUT  = 32,
+    // 4 KB / 32 B. The AXI4 boundary rule makes any longer burst illegal.
+    parameter integer BURST_MAX = 128
 )(
     input  wire                clk,
     input  wire                resetn,
@@ -48,15 +56,15 @@ module mm_mover #(
     // ---- AXI4 master -----------------------------------------------------
     output reg  [ID_W-1:0]     m_awid,
     output reg  [ADDR_W-1:0]   m_awaddr,
-    output wire [7:0]          m_awlen,
+    output reg  [7:0]          m_awlen,
     output wire [2:0]          m_awsize,
     output wire [1:0]          m_awburst,
     output reg                 m_awvalid,
     input  wire                m_awready,
-    output reg  [DATA_W-1:0]   m_wdata,
+    output wire [DATA_W-1:0]   m_wdata,
     output wire [DATA_W/8-1:0] m_wstrb,
     output wire                m_wlast,
-    output reg                 m_wvalid,
+    output wire                m_wvalid,
     input  wire                m_wready,
     input  wire [ID_W-1:0]     m_bid,
     input  wire [1:0]          m_bresp,
@@ -64,7 +72,7 @@ module mm_mover #(
     output wire                m_bready,
     output reg  [ID_W-1:0]     m_arid,
     output reg  [ADDR_W-1:0]   m_araddr,
-    output wire [7:0]          m_arlen,
+    output reg  [7:0]          m_arlen,
     output wire [2:0]          m_arsize,
     output wire [1:0]          m_arburst,
     output reg                 m_arvalid,
@@ -83,12 +91,33 @@ module mm_mover #(
                      F_AXI = 4'd3, F_MODE = 4'd4, F_EWIDTH = 4'd5,
                      F_ALIGN = 4'd6;
 
-    localparam [4:0] S_IDLE = 5'd0,  S_IXA = 5'd1,  S_IXD = 5'd2,
-                     S_GO   = 5'd3,  S_RD  = 5'd4,  S_RDD = 5'd5,
-                     S_GEN  = 5'd6,  S_WR  = 5'd7,  S_WRB = 5'd8,
-                     S_STEP = 5'd9,  S_DONE = 5'd10, S_FAULT = 5'd11,
-                     S_IXW  = 5'd12, S_GADR = 5'd13, S_GADR2 = 5'd14,
-                     S_GADR3 = 5'd15, S_LAT = 5'd16;
+    // The issue engine. I_GA1..3 are the gather address pipeline and I_LAT is
+    // the element latch; everything else walks one element per cycle in I_RUN.
+    localparam [3:0] I_IDLE = 4'd0,  I_IXA  = 4'd1,  I_IXD  = 4'd2,
+                     I_IXW  = 4'd3,  I_GO   = 4'd4,  I_GA1  = 4'd5,
+                     I_GA2  = 4'd6,  I_GA3  = 4'd7,  I_LAT  = 4'd8,
+                     I_RUN  = 4'd9,  I_FLUSH = 4'd10, I_DRAIN = 4'd11,
+                     I_DONE = 4'd12, I_FAULT = 4'd13;
+
+    localparam [1:0] W_IDLE = 2'd0, W_ARM = 2'd1, W_GEN = 2'd2, W_DATA = 2'd3;
+
+    // What a destination element's data comes from. K_SKIP is a suppressed
+    // write: no read, no command, and it breaks both runs.
+    localparam [1:0] K_RD = 2'd0, K_FILL = 2'd1, K_GEN = 2'd2, K_SKIP = 2'd3;
+
+    localparam integer CNT_W = 16;
+    localparam integer CMD_W = ADDR_W + 10;
+
+    // ADDR_W IS 40 AND SAYS SO BY NAME. Not a floor: the map is ABSOLUTE -- [39]
+    // aperture, [37:36] mesh -- so a narrower build is a DIFFERENT map, not the
+
+    // bottom corner of this one, and mag_ilink's mesh decode slides with it.
+    // Out of range the failure was a part-select naming neither cause nor bound.
+    generate
+    if (ADDR_W != 40) begin : g_addr_w
+        mm_mover_ADDR_W_must_be_40_the_address_map_is_absolute u_bad_param ();
+    end
+    endgenerate
 
     // ================================================== configuration state
     reg [2:0]  mode;
@@ -96,18 +125,11 @@ module mm_mover #(
     reg [7:0]  flags;
     reg [63:0] seed;
     reg [31:0] imm;
-    // Declared with the rest of the configuration, not next to the expression
-    // that reads it: a wire used before its declaration elaborates cleanly in
-    // some tools and as a 1-bit net in others.
+    // Declared here, not beside its reader: a wire used before its declaration
+    // elaborates cleanly in some tools and as a 1-bit net in others.
     reg [ADDR_W-1:0] idx_base, dst_base, d_src_base;
     reg [15:0] idx_count;
 
-    // The walkers' outputs are LATCHED before the control logic sees them.
-    // `valid` is a bounds comparison over the axis accumulators, and left
-    // combinational it lands on m_araddr's clock enable -- a walker register
-    // driving a datapath enable, measured at 254 MHz.
-    reg [ADDR_W-1:0] cur_rd, cur_wr;
-    reg              cur_rv, cur_wv;
     reg [31:0] gath_pitch;
     reg [15:0] gath_words;
 
@@ -125,21 +147,26 @@ module mm_mover #(
     reg signed [15:0] d_abase;
     reg [15:0] d_aext;
 
-    reg [4:0]  st;
+    reg [3:0]  ist;
+    reg [1:0]  wst;
     reg        go;
 
     wire [7:0] reg_sel = {cfg_addr[7:3], 3'b000};
+
+    // Burst caps. flags[7:5] is a log2 cap with 0 meaning BURST_MAX, so a
+    // driver can reproduce the pre-burst behaviour with flags[7:5] = 1.
+    wire [8:0] cap = (flags[7:5] == 3'd0) ? BURST_MAX[8:0]
+                                          : (9'd1 << (flags[7:5] - 3'd1));
+    wire       wcoal = flags[3];
 
     // ================================================== descriptor walkers
     wire [ADDR_W-1:0] src_addr, dst_addr;
     wire src_last, dst_last, src_valid, dst_valid, src_active, dst_active;
 
-    // COMBINATIONAL, not registered pulses. A registered `next` set in S_STEP
-    // is high during S_RD, so the walker advances at the END of S_RD -- the
-    // read then uses position p and the write, three states later, uses p+1.
-    // Driving both from the state keeps every address stable while it is used.
-    wire desc_start = (st == S_GO);
-    wire desc_next  = (st == S_STEP) && !dst_last;
+    reg  elem_adv;                          // combinational, driven below
+
+    wire desc_start = (ist == I_GO);
+    wire desc_next  = elem_adv && !dst_last;
 
     mx_tdesc #(.NDIM(6), .AW(ADDR_W), .CW(16), .SW(32), .XW(16)) u_src (
         .clk(clk), .rst(!resetn),
@@ -168,12 +195,11 @@ module mm_mover #(
     );
 
     // ================================================== index buffer
-    // `ix_we` is registered, so the address and the data have to be registered
-    // WITH it -- using ix_waddr and m_rdata directly writes the next address
-    // with data that is already gone.
+    // `ix_we` is registered, so address and data must be registered WITH it:
+    // ix_waddr and m_rdata direct write the next address with data already gone.
     reg  [7:0]   ix_waddr, ix_raddr, ix_wr_a;
     reg  [255:0] ix_data;
-    reg          ix_we;
+    reg          ix_we, ix_active;
     wire [255:0] ix_q;
     kohaku_sdpram #(.WIDTH(256), .DEPTH(IDX_WORDS), .MEM_PRIM("block"),
                     .READ_LAT(1)) u_ixbuf (
@@ -200,13 +226,6 @@ module mm_mover #(
         .busy(pr_busy), .out_valid(pr_valid), .out(pr_out)
     );
 
-    // The counter is the destination's ABSOLUTE word address, so noise is a
-    // pure function of (seed, address): a region filled by one move and the
-    // same region filled by four moves covering quarters of it produce
-    // identical bytes. Relative to a descriptor base that would not hold, and
-    // the compiler is free to split a fill -- prng.md s3.2.
-    wire [31:0] wpos = {{(32-ADDR_W+5){1'b0}}, cur_wr[ADDR_W-1:5]};
-
     // ================================================== fill pattern
     reg [DATA_W-1:0] fill_word;
     integer fi;
@@ -221,39 +240,223 @@ module mm_mover #(
         end
     end
 
-    reg [DATA_W-1:0] data;
-
     // ================================================== AXI statics
-    assign m_awlen   = 8'd0;
-    assign m_arlen   = 8'd0;
     assign m_awsize  = 3'd5;              // 32 bytes
     assign m_arsize  = 3'd5;
     assign m_awburst = 2'b01;
     assign m_arburst = 2'b01;
     assign m_wstrb   = {(DATA_W/8){1'b1}};
-    assign m_wlast   = 1'b1;
     assign m_bready  = 1'b1;
+    // Space for a whole burst is reserved before its AR goes out, so the read
+    // return can never be refused and never backs up into the shared FIFO.
     assign m_rready  = 1'b1;
-    assign stat_busy = (st != S_IDLE);
+    assign stat_busy = (ist != I_IDLE);
 
-    wire needs_read = (mode == MODE_COPY) || (mode == MODE_TRANSPOSE)
-                   || (mode == MODE_GATHER);
-    // TWO registers before the address, not one. The index has to be captured
-    // out of the BRAM before it reaches the multiplier -- BRAM output straight
-    // into a 32x32 multiply measured 188 MHz -- and the product then has an
-    // adder after it. So: idx_r, then row_base, then the word offset is a plain
-    // add. Two cycles per word, which is one more than nothing and cheap.
+    // TWO registers before the address: BRAM output straight into a 32x32
+    // multiply measured 188 MHz, so the index is captured before the multiplier.
     reg [31:0]       idx_r, prod_r;
     reg [ADDR_W-1:0] row_base;
 
     wire [ADDR_W-1:0] gath_addr =
         row_base + {{(ADDR_W-21){1'b0}}, g_word[15:0], 5'd0};
 
+    // ================================================== element latch
+    reg [ADDR_W-1:0] e_rd, e_wr;
+    reg [1:0]        e_kind;
+    reg              e_last, e_flt;
+
+    wire [ADDR_W-1:0] lt_rd = (mode == MODE_GATHER) ? gath_addr : src_addr;
+    wire              lt_rv = (mode == MODE_GATHER) ? 1'b1      : src_valid;
+    wire              lt_ma = |dst_addr[4:0];
+    wire [1:0]        lt_kind = (!dst_valid || lt_ma)  ? K_SKIP
+                              : (mode == MODE_FILL)     ? K_FILL
+                              : (mode == MODE_GENERATE) ? K_GEN
+                              : lt_rv                   ? K_RD
+                              :                           K_FILL;
+
+    // ================================================== staging FIFO
+    reg  [CNT_W-1:0] occ;                   // reserved + present
+    reg  [CNT_W-1:0] fcnt;                  // present
+    wire             f_wr = m_rvalid && !ix_active;
+    wire             f_rd;                  // driven by the write engine
+    wire [DATA_W-1:0] f_dout;
+    wire             f_empty, f_full;
+
+    sync_fifo #(.DATA_WIDTH(DATA_W), .FIFO_DEPTH(FIFO_D),
+                .MEMORY_TYPE("block")) u_dfifo (
+        .clk(clk), .rst(!resetn),
+        .wr_en(f_wr), .wr_data(m_rdata), .wr_busy(f_full), .wr_almost(),
+        .rd_en(f_rd), .rd_data(f_dout), .rd_busy(f_empty)
+    );
+
+    // ================================================== command FIFO
+    wire             c_wr, c_rd;
+    wire [CMD_W-1:0] c_din, c_dout;
+    wire             c_full, c_empty;
+
+    sync_fifo #(.DATA_WIDTH(CMD_W), .FIFO_DEPTH(CMD_D),
+                .MEMORY_TYPE("distributed")) u_cfifo (
+        .clk(clk), .rst(!resetn),
+        .wr_en(c_wr), .wr_data(c_din), .wr_busy(c_full), .wr_almost(),
+        .rd_en(c_rd), .rd_data(c_dout), .rd_busy(c_empty)
+    );
+
+    wire [ADDR_W-1:0] c_addr = c_dout[ADDR_W-1:0];
+    wire [7:0]        c_len  = c_dout[ADDR_W +: 8];    // beats - 1
+    wire [1:0]        c_kind = c_dout[ADDR_W+8 +: 2];
+
+    // ================================================== run accumulators
+    reg [ADDR_W-1:0] ra_base, wa_base;
+    reg [8:0]        ra_n,    wa_n;
+    reg              ra_open, wa_open;
+    reg [1:0]        wa_kind;
+    reg [7:0]        ar_out, wr_out;
+    // Both sums off the REGISTERED count, so the late enable only selects.
+    wire [7:0]       wr_up = wr_out + 8'd1;
+    wire [7:0]       wr_dn = wr_out - 8'd1;
+    // The room test REGISTERED: as an expression it puts an 8-bit compare on
+    // the m_wready path, -0.109 ns at 3.333 in ktpu_ship_2x2_6c2v_il_pump.
+    reg              wr_room;
+
+    // The address a run extends to, and the words it may still take, are CARRIED
+    // rather than computed: as expressions they put two adders in series on the
+
+    // path to the command FIFO's write enable -- 14 levels, -0.155 ns at 3.33
+    // (OOC, xcvu13p-2L). Registering both is worth 40 MHz.
+    reg [ADDR_W-1:0] ra_nxt, wa_nxt;
+    reg [7:0]        ra_room, wa_room;
+
+    wire [ADDR_W-1:0] w32 = {{(ADDR_W-6){1'b0}}, 6'd32};
+    // 4 KB / 32 B minus the offset already used, clamped by the burst cap.
+    wire [7:0] cap_room = cap[7:0] - 8'd1;
+    wire [7:0] pg_rd    = 8'd127 - {1'b0, e_rd[11:5]};
+    wire [7:0] pg_wr    = 8'd127 - {1'b0, e_wr[11:5]};
+    wire [7:0] ra_room0 = (pg_rd < cap_room) ? pg_rd : cap_room;
+    wire [7:0] wa_room0 = (pg_wr < cap_room) ? pg_wr : cap_room;
+
+    wire ra_ext = ra_open && (e_kind == K_RD) && (e_rd == ra_nxt)
+                  && (ra_room != 8'd0);
+    wire wa_ext = wa_open && wcoal && (e_kind == wa_kind) && (e_kind != K_GEN)
+                  && (e_kind != K_SKIP) && (e_wr == wa_nxt)
+                  && (wa_room != 8'd0);
+
+    wire close_ar = ra_open && !ra_ext;
+    wire close_wc = wa_open && !wa_ext;
+
+    wire ar_slot  = !m_arvalid || m_arready;
+    wire ar_ok    = ar_slot && (ar_out < MAX_OUT[7:0]);
+    wire fifo_room = (occ < FIFO_D[CNT_W-1:0]);
+
+    wire stall_ar   = close_ar && !ar_ok;
+    wire stall_cmd  = close_wc && c_full;
+    wire stall_fifo = (e_kind == K_RD) && !fifo_room;
+    wire stall      = stall_ar || stall_cmd || stall_fifo;
+
+    wire proc = (ist == I_RUN) && !stall;
+
+    // ================================================== write engine
+    reg [ADDR_W-1:0] w_addr;
+    reg [8:0]        w_left;
+    reg [1:0]        w_kind;
+    reg [DATA_W-1:0] gdata;
+    reg              wv_r;
+
+    // A command loads from W_IDLE or straight off the last beat of the burst
+    // before it, so back-to-back bursts cost n+1 cycles rather than n+2.
+    wire w_take = ((wst == W_IDLE) ||
+                   ((wst == W_DATA) && (w_left == 9'd1) && m_wvalid && m_wready))
+                  && !c_empty && (wr_out < MAX_WOUT[7:0]);
+    wire w_endbst = (wst == W_DATA) && m_wvalid && m_wready
+                    && (w_left == 9'd1);
+
+    // A structural `wv_r && !f_empty` here was MEASURED AT -0.182 ns, 18 MHz, on
+    // the m_wready path, and closed nothing `rd_ok` does not. Residency only.
+    assign m_wvalid = wv_r;
+
+    assign c_rd = w_take;
+    assign f_rd = (wst == W_DATA) && (w_kind == K_RD) && m_wvalid && m_wready;
+    assign m_wdata = (w_kind == K_RD) ? f_dout
+                   : (w_kind == K_FILL) ? fill_word : gdata;
+    assign m_wlast = (w_left == 9'd1);
+
+    // The counter is the destination's ABSOLUTE word address, so one fill and
+    // four fills of its quarters produce identical bytes -- prng.md s3.2.
+    // Zero-extended to the 35 bits a 40-bit address needs, so a narrower ADDR_W
+    // still elaborates and 40 is the module's ceiling.
+
+    // The top slice sits ABOVE the half select, so a region under 4 GB generates
+    // exactly the bytes it did when the word address was 32 bits.
+    wire [34:0] wpos = {{(40-ADDR_W){1'b0}}, w_addr[ADDR_W-1:5]};
+    wire [34:0] cpos = {{(40-ADDR_W){1'b0}}, c_addr[ADDR_W-1:5]};
+
+    wire [127:0] gctr_lo = {92'd0, cpos[34:32], 1'b0, cpos[31:0]};
+    wire [127:0] gctr_hi = {92'd0, wpos[34:32], 1'b1, wpos[31:0]};
+
+    // The whole burst must be resident before AW, so a granted write streams at
+    // one beat per cycle and never parks mag_dram_port's write mux.
+    wire [8:0] c_beats  = {1'b0, c_len} + 9'd1;
+    // Net of the beat leaving this cycle: a chained burst starting one word
+    // short drained the FIFO past empty and repeated the previous word.
+    wire [CNT_W-1:0] fcnt_av = fcnt - (f_rd ? {{(CNT_W-1){1'b0}}, 1'b1}
+                                            : {CNT_W{1'b0}});
+    // `fcnt` COUNTS A WORD BEFORE THE FIFO PRESENTS IT. xpm_fifo_sync in fwft
+    // deasserts `empty` some cycles after the write, measured 2 to 6 here, so a
+
+    // pop timed on the count alone samples X -- one word, silently, and only
+    // when the write engine happens to pounce inside that window.
+    wire rd_ok      = !f_empty;
+    // `f_rd` LAST: it carries downstream ready and inside `fcnt_av` it sat ahead
+    // of the comparator. Exactly `fcnt_av >= n`; `>` alone hangs at exact residency.
+    wire fcnt_hi  = |fcnt[CNT_W-1:9];
+    wire ge_w     = fcnt_hi || (fcnt[8:0] >= w_left);
+    wire gt_w     = fcnt_hi || (fcnt[8:0] >  w_left);
+    wire ge_c     = fcnt_hi || (fcnt[8:0] >= c_beats);
+    wire gt_c     = fcnt_hi || (fcnt[8:0] >  c_beats);
+    wire w_ready_rd = (w_kind != K_RD) || (rd_ok && (f_rd ? gt_w : ge_w));
+    wire c_ready    = (c_kind != K_RD) || (rd_ok && (f_rd ? gt_c : ge_c));
+    // Straight into W_DATA when the data is already there: stopping in W_ARM
+    // would cost a third cycle on every single-beat write.
+    wire w_now      = w_take && (c_kind != K_GEN) && c_ready;
+    wire aw_fire    = w_now
+                   || ((wst == W_ARM) && w_ready_rd && (wr_out < MAX_WOUT[7:0]));
+
+    // ================================================== burst hand-off
+
+    // A run held open across a FULL COMMAND FIFO deadlocks only if the write
+    // engine is starved of data; otherwise a flush chops bursts to one word.
+
+    // REGISTERED. Starvation persists until data arrives, so a flush one cycle
+    // late still breaks it, and combinational it put m_wready on the AR enable.
+    reg  w_starve;
+    wire w_starve_d = ((wst == W_ARM) && !w_ready_rd)
+                 || ((wst == W_IDLE) && !c_empty && (c_kind == K_RD) && !c_ready);
+    wire rflush   = (ist == I_RUN) && stall_cmd && ra_open && ar_ok && w_starve;
+    wire flush_ar = (ist == I_FLUSH) && ra_open && ar_ok;
+    wire flush_wc = (ist == I_FLUSH) && !ra_open && wa_open && !c_full;
+
+    wire ar_load = (proc && close_ar) || flush_ar || rflush;
+
+    assign c_wr  = (proc && close_wc) || flush_wc;
+    assign c_din = {wa_kind, wa_n[7:0] - 8'd1, wa_base};
+
+    reg  ar_dec, occ_up, occ_dn;
+    always @(*) begin
+        ar_dec = m_rvalid && m_rlast && (ar_out != 8'd0);
+        occ_up = proc && (e_kind == K_RD);
+        occ_dn = f_rd;
+        // The walkers step on every element the issue engine consumes, except
+        // in GATHER where the address pipeline re-latches from I_LAT.
+        elem_adv = (ist == I_LAT)
+                || (proc && !e_last && !e_flt && (mode != MODE_GATHER));
+    end
+
+    wire err_ax = (m_rvalid && (m_rresp != 2'b00))
+               || (m_bvalid && (m_bresp != 2'b00));
+
     // ================================================== control
-    integer k;
     always @(posedge clk) begin
         if (!resetn) begin
-            st <= S_IDLE; go <= 1'b0;
+            ist <= I_IDLE; wst <= W_IDLE; go <= 1'b0;
             mode <= 3'd0; ewidth <= 2'd1; flags <= 8'd0;
             seed <= 64'd0; imm <= 32'd0;
             idx_base <= {ADDR_W{1'b0}}; idx_count <= 16'd0;
@@ -263,25 +466,34 @@ module mm_mover #(
             ld_sel <= 1'b0; ld_dim <= 3'd0; ld_count <= 16'd1; ld_stride <= 32'd0;
             d_axis <= 2'd0; d_astep <= 16'd0; d_base <= {ADDR_W{1'b0}};
             d_ndim <= 3'd1; d_ax_sel <= 1'b0; d_abase <= 16'd0; d_aext <= 16'd0;
-            m_awvalid <= 1'b0; m_wvalid <= 1'b0; m_arvalid <= 1'b0;
-            m_awaddr <= {ADDR_W{1'b0}}; m_araddr <= {ADDR_W{1'b0}};
-            m_awid <= {ID_W{1'b0}}; m_arid <= {ID_W{1'b0}};
-            m_wdata <= {DATA_W{1'b0}};
+            // AXI payload dropped: the valids qualify it. Config, PRNG seed
+            // state, occupancy counters and status registers all keep theirs.
+            m_awvalid <= 1'b0; wv_r <= 1'b0; m_arvalid <= 1'b0;
             stat_fault <= F_NONE; stat_done <= 32'd0;
             ix_we <= 1'b0; ix_waddr <= 8'd0; ix_raddr <= 8'd0; ix_got <= 16'd0;
-            ix_wr_a <= 8'd0; ix_data <= 256'd0;
+            ix_wr_a <= 8'd0; ix_active <= 1'b0;
             row_base <= {ADDR_W{1'b0}}; idx_r <= 32'd0; prod_r <= 32'd0;
-            cur_rd <= {ADDR_W{1'b0}}; cur_wr <= {ADDR_W{1'b0}};
-            cur_rv <= 1'b0; cur_wv <= 1'b0;
             g_row <= 16'd0; g_word <= 16'd0;
             pr_start <= 1'b0; pr_ctr <= 128'd0; pr_half <= 1'b0;
-            pr_lo <= 128'd0; data <= {DATA_W{1'b0}};
+            pr_lo <= 128'd0;
+            // RESET-RISK: e_rd/e_wr, ra_base/wa_base, ra_nxt/wa_nxt and w_addr
+            // are run accumulators, qualified by e_kind/ra_open/wa_open/w_kind.
+            e_kind <= K_SKIP; e_last <= 1'b0; e_flt <= 1'b0;
+            ra_room <= 8'd0; wa_room <= 8'd0;
+            ra_n <= 9'd0; wa_n <= 9'd0;
+            ra_open <= 1'b0; wa_open <= 1'b0; wa_kind <= K_SKIP;
+            ar_out <= 8'd0; wr_out <= 8'd0; w_starve <= 1'b0;
+            occ <= {CNT_W{1'b0}}; fcnt <= {CNT_W{1'b0}};
+            w_left <= 9'd0; w_kind <= K_SKIP;
         end else begin
             d_hdr_en <= 1'b0; d_dim_en <= 1'b0; d_ax_en <= 1'b0;
             ix_we <= 1'b0; pr_start <= 1'b0; go <= 1'b0;
             idx_r    <= g_index;
             prod_r   <= idx_r * gath_pitch;
             row_base <= d_src_base + {{(ADDR_W-32){1'b0}}, prod_r};
+
+            occ  <= occ  + (occ_up ? 16'd1 : 16'd0) - (occ_dn ? 16'd1 : 16'd0);
+            fcnt <= fcnt + (f_wr   ? 16'd1 : 16'd0) - (f_rd   ? 16'd1 : 16'd0);
 
             // ---- register writes ----
             if (cfg_en) begin
@@ -332,169 +544,231 @@ module mm_mover #(
                 endcase
             end
 
-            case (st)
+            // ================================================ read issue
+            if (ar_load) begin
+                m_araddr  <= ra_base;
+                m_arlen   <= ra_n[7:0] - 8'd1;
+                m_arvalid <= 1'b1;
+            end else if (m_arvalid && m_arready) m_arvalid <= 1'b0;
+
+            ar_out <= ar_out + (ar_load ? 8'd1 : 8'd0)
+                             - (ar_dec  ? 8'd1 : 8'd0);
+
+            // A memory error stops the walk but never the drain: outstanding
+            // bursts still retire, so a fault reports rather than hangs.
+            if (err_ax && (ist != I_IDLE)) stat_fault <= F_AXI;
+
+            case (ist)
             // ------------------------------------------------------------
-            S_IDLE: if (go) begin
+            I_IDLE: if (go) begin
                 stat_fault <= F_NONE;
                 g_row <= 16'd0; g_word <= 16'd0;
                 ix_got <= 16'd0; ix_waddr <= 8'd0; ix_raddr <= 8'd0;
                 pr_half <= 1'b0;
+                ra_open <= 1'b0; wa_open <= 1'b0;
                 if (ewidth == 2'd3) begin
-                    stat_fault <= F_EWIDTH; st <= S_FAULT;
+                    stat_fault <= F_EWIDTH; ist <= I_FAULT;
                 end else if (mode == MODE_TRANSPOSE) begin
-                    stat_fault <= F_MODE; st <= S_FAULT;
+                    stat_fault <= F_MODE; ist <= I_FAULT;
                 end else if (mode == MODE_GATHER) begin
                     if (idx_count > {IDX_WORDS[12:0], 3'd0}) begin
-                        stat_fault <= F_IDXLEN; st <= S_FAULT;
+                        stat_fault <= F_IDXLEN; ist <= I_FAULT;
                     end else begin
                         m_araddr  <= idx_base;
+                        m_arlen   <= 8'd0;
                         m_arvalid <= 1'b1;
-                        st <= S_IXA;
+                        ix_active <= 1'b1;
+                        ist <= I_IXA;
                     end
                 end else begin
-                    st <= S_GO;
+                    ist <= I_GO;
                 end
             end
 
             // ---- gather: pull the whole index vector in first ----
-            S_IXA: if (m_arvalid && m_arready) begin
+            I_IXA: if (m_arvalid && m_arready) begin
                 m_arvalid <= 1'b0;
-                st <= S_IXD;
+                ist <= I_IXD;
             end
-            S_IXD: if (m_rvalid) begin
-                if (m_rresp != 2'b00) begin
-                    stat_fault <= F_AXI; st <= S_FAULT;
+            I_IXD: if (m_rvalid) begin
+                ix_we    <= 1'b1;
+                ix_wr_a  <= ix_waddr;
+                ix_data  <= m_rdata;
+                ix_got   <= ix_got + 16'd8;
+                ix_waddr <= ix_waddr + 8'd1;
+                if (ix_got + 16'd8 >= idx_count) begin
+                    ix_active <= 1'b0;
+                    ist <= I_IXW;
                 end else begin
-                    ix_we    <= 1'b1;
-                    ix_wr_a  <= ix_waddr;
-                    ix_data  <= m_rdata;
-                    ix_got   <= ix_got + 16'd8;
-                    ix_waddr <= ix_waddr + 8'd1;
-                    if (ix_got + 16'd8 >= idx_count) begin
-                        st <= S_IXW;
-                    end else begin
-                        m_araddr  <= m_araddr + {{(ADDR_W-6){1'b0}}, 6'd32};
-                        m_arvalid <= 1'b1;
-                        st <= S_IXA;
-                    end
+                    m_araddr  <= m_araddr + {{(ADDR_W-6){1'b0}}, 6'd32};
+                    m_arvalid <= 1'b1;
+                    ist <= I_IXA;
                 end
             end
 
             // The last index word is written during THIS cycle; reading it in
             // the same cycle would return the old contents (read_first).
-            S_IXW: st <= S_GO;
+            I_IXW: ist <= I_GO;
 
-            S_GO: begin
+            I_GO: begin
                 ix_raddr <= 8'd0;
-                st <= (mode == MODE_GATHER) ? S_GADR : S_LAT;
+                ist <= (mode == MODE_GATHER) ? I_GA1 : I_LAT;
             end
 
             // One cycle for the index to leave the buffer into `idx_r`, one
             // for the multiply, one for the base add.
-            S_GADR:  st <= S_GADR2;
-            S_GADR2: st <= S_GADR3;
-            S_GADR3: st <= S_LAT;
+            I_GA1: ist <= I_GA2;
+            I_GA2: ist <= I_GA3;
+            I_GA3: ist <= I_LAT;
 
-            S_LAT: begin
-                cur_rd <= (mode == MODE_GATHER) ? gath_addr : src_addr;
-                cur_rv <= (mode == MODE_GATHER) ? 1'b1      : src_valid;
-                cur_wr <= dst_addr;
-                cur_wv <= dst_valid;
-                st <= S_RD;
+            I_LAT: begin
+                e_rd   <= lt_rd;
+                e_wr   <= dst_addr;
+                e_kind <= lt_kind;
+                e_last <= dst_last;
+                e_flt  <= dst_valid && lt_ma;
+                ist    <= I_RUN;
             end
 
             // ------------------------------------------------------------
-            S_RD: begin
-                if (mode == MODE_FILL) begin
-                    data <= fill_word;
-                    st <= S_WR;
-                end else if (mode == MODE_GENERATE) begin
-                    pr_ctr   <= {95'd0, pr_half, wpos};
-                    pr_start <= 1'b1;
-                    st <= S_GEN;
-                end else if (needs_read && !cur_rv) begin
-                    data <= fill_word;          // padding: `valid` low injects MV_IMM
-                    st <= S_WR;
-                end else begin
-                    m_araddr  <= cur_rd;
-                    m_arvalid <= 1'b1;
-                    st <= S_RDD;
-                end
-            end
+            I_RUN: begin
+                if (proc) begin
+                    if (e_kind == K_RD) begin
+                        if (ra_ext) begin
+                            ra_n    <= ra_n + 9'd1;
+                            ra_nxt  <= ra_nxt + w32;
+                            ra_room <= ra_room - 8'd1;
+                        end else begin
+                            ra_base <= e_rd; ra_n <= 9'd1; ra_open <= 1'b1;
+                            ra_nxt  <= e_rd + w32;
+                            ra_room <= ra_room0;
+                        end
+                    end else if (close_ar) ra_open <= 1'b0;
 
-            S_RDD: begin
-                if (m_arvalid && m_arready) m_arvalid <= 1'b0;
-                if (m_rvalid) begin
-                    if (m_rresp != 2'b00) begin
-                        stat_fault <= F_AXI; st <= S_FAULT;
-                    end else begin
-                        data <= m_rdata;
-                        st <= S_WR;
-                    end
-                end
-            end
+                    if (e_kind != K_SKIP) begin
+                        if (wa_ext) begin
+                            wa_n    <= wa_n + 9'd1;
+                            wa_nxt  <= wa_nxt + w32;
+                            wa_room <= wa_room - 8'd1;
+                        end else begin
+                            wa_base <= e_wr; wa_n <= 9'd1;
+                            wa_kind <= e_kind; wa_open <= 1'b1;
+                            wa_nxt  <= e_wr + w32;
+                            wa_room <= wa_room0;
+                        end
+                    end else if (close_wc) wa_open <= 1'b0;
 
-            S_GEN: if (pr_valid) begin
-                if (!pr_half) begin
-                    pr_lo   <= pr_out;
-                    pr_half <= 1'b1;
-                    pr_ctr   <= {95'd0, 1'b1, wpos};
-                    pr_start <= 1'b1;
-                end else begin
-                    data    <= {pr_out, pr_lo};
-                    pr_half <= 1'b0;
-                    st <= S_WR;
-                end
-            end
-
-            // ------------------------------------------------------------
-            S_WR: begin
-                if (!cur_wv) begin
-                    st <= S_STEP;
-                end else if (|cur_wr[4:0]) begin
-                    stat_fault <= F_ALIGN; st <= S_FAULT;
-                end else begin
-                    m_awaddr  <= cur_wr;
-                    m_awvalid <= 1'b1;
-                    m_wdata   <= data;
-                    m_wvalid  <= 1'b1;
-                    st <= S_WRB;
-                end
-            end
-
-            S_WRB: begin
-                if (m_awvalid && m_awready) m_awvalid <= 1'b0;
-                if (m_wvalid  && m_wready)  m_wvalid  <= 1'b0;
-                if (m_bvalid) begin
-                    if (m_bresp != 2'b00) begin
-                        stat_fault <= F_AXI; st <= S_FAULT;
-                    end else st <= S_STEP;
-                end
-            end
-
-            S_STEP: begin
-                if (dst_last) begin
-                    st <= S_DONE;
-                end else begin
-                    if (mode == MODE_GATHER) begin
+                    if (e_flt) begin
+                        stat_fault <= F_ALIGN;
+                        ist <= I_FLUSH;
+                    end else if (e_last || (stat_fault == F_AXI)) begin
+                        ist <= I_FLUSH;
+                    end else if (mode == MODE_GATHER) begin
                         if (g_word + 16'd1 == gath_words) begin
                             g_word   <= 16'd0;
                             g_row    <= g_row + 16'd1;
                             ix_raddr <= (g_row + 16'd1) >> 3;
                         end else g_word <= g_word + 16'd1;
-                        st <= S_GADR;
-                    end else st <= S_LAT;
+                        ist <= I_GA1;
+                    end else begin
+                        e_rd   <= lt_rd;
+                        e_wr   <= dst_addr;
+                        e_kind <= lt_kind;
+                        e_last <= dst_last;
+                        e_flt  <= dst_valid && lt_ma;
+                    end
+                end else if (rflush) ra_open <= 1'b0;
+            end
+
+            // Close whatever the last element left open, read side first so a
+            // command never reaches the write engine before its data is asked.
+            I_FLUSH: begin
+                if (ra_open) begin
+                    if (ar_ok) ra_open <= 1'b0;
+                end else if (wa_open) begin
+                    if (!c_full) wa_open <= 1'b0;
+                end else ist <= I_DRAIN;
+            end
+
+            // arch.md s8: a move is not done until its writes have retired.
+            I_DRAIN: if ((wst == W_IDLE) && c_empty && (wr_out == 8'd0)
+                         && (ar_out == 8'd0) && (occ == {CNT_W{1'b0}}))
+                ist <= I_DONE;
+
+            I_DONE: begin
+                if (stat_fault == F_NONE) stat_done <= stat_done + 32'd1;
+                ist <= I_IDLE;
+            end
+
+            I_FAULT: ist <= I_IDLE;
+            default: ist <= I_IDLE;
+            endcase
+
+            // ================================================ write engine
+            if (m_awvalid && m_awready) m_awvalid <= 1'b0;
+
+            if ((wst == W_DATA) && m_wvalid && m_wready) begin
+                w_addr <= w_addr + {{(ADDR_W-6){1'b0}}, 6'd32};
+                w_left <= w_left - 9'd1;
+            end
+
+            if (w_take) begin
+                w_addr <= c_addr;
+                w_left <= c_beats;
+                w_kind <= c_kind;
+                if (c_kind == K_GEN) begin
+                    pr_ctr   <= gctr_lo;
+                    pr_start <= 1'b1;
+                    pr_half  <= 1'b0;
+                    wv_r <= 1'b0;
+                    wst      <= W_GEN;
+                end else if (c_ready) begin
+                    m_awaddr  <= c_addr;
+                    m_awlen   <= c_len;
+                    m_awvalid <= 1'b1;
+                    wv_r      <= 1'b1;
+                    wst       <= W_DATA;
+                end else begin
+                    wv_r <= 1'b0;
+                    wst      <= W_ARM;
+                end
+            end else if (w_endbst) begin
+                wv_r <= 1'b0;
+                wst      <= W_IDLE;
+            end else if (wst == W_GEN) begin
+                if (pr_valid) begin
+                    if (!pr_half) begin
+                        pr_lo    <= pr_out;
+                        pr_half  <= 1'b1;
+                        pr_ctr   <= gctr_hi;
+                        pr_start <= 1'b1;
+                    end else begin
+                        gdata   <= {pr_out, pr_lo};
+                        pr_half <= 1'b0;
+                        wst     <= W_ARM;
+                    end
+                end
+            end else if (wst == W_ARM) begin
+                if (w_ready_rd && (wr_out < MAX_WOUT[7:0])) begin
+                    m_awaddr  <= w_addr;
+                    m_awlen   <= w_left[7:0] - 8'd1;
+                    m_awvalid <= 1'b1;
+                    wv_r      <= 1'b1;
+                    wst       <= W_DATA;
                 end
             end
 
-            S_DONE: begin
-                stat_done <= stat_done + 32'd1;
-                st <= S_IDLE;
-            end
-
-            S_FAULT: st <= S_IDLE;
-            default: st <= S_IDLE;
+            // MUX, not carry-in: `aw_fire` comes off m_wready through w_take and
+            // was 12 levels into this adder, -0.147 ns at 3.333 in mm_mesh.
+            case ({aw_fire, m_bvalid})
+                2'b10:   begin wr_out <= wr_up;
+                               wr_room <= (wr_up < MAX_WOUT[7:0]); end
+                2'b01:   begin wr_out <= wr_dn;
+                               wr_room <= (wr_dn < MAX_WOUT[7:0]); end
+                default: ;
             endcase
+
+            w_starve <= w_starve_d;
         end
     end
 
