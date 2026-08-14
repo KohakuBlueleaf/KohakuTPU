@@ -60,12 +60,10 @@ module mx_acu #(
 
     integer i, j;
     always @(posedge clk) begin
+        // VALIDS ONLY. val_r/sa_r/sb_r/anchor_r are 552 flops that `v1` qualifies
+        // at every use below, and `clear_r` is read only inside `if (v1)`.
         if (rst) begin
-            v1 <= 1'b0; clear_r <= 1'b0; anchor_r <= 8'd0;
-            for (i = 0; i < 16; i = i + 1) val_r[i] <= 30'sd0;
-            for (i = 0; i < 4; i = i + 1) begin
-                sa_r[i] <= 8'd0; sb_r[i] <= 8'd0;
-            end
+            v1 <= 1'b0;
         end else if (en) begin
             v1       <= in_valid;
             clear_r  <= acc_clear;
@@ -112,9 +110,10 @@ module mx_acu #(
     endfunction
 
     always @(posedge clk) begin
+        // RESET-RISK: `acc` is unreset only because `clear_r` LOADS rather than
+        // adds. A sweep starting without acc_clear resumes the previous tile.
         if (rst) begin
             acc_valid <= 1'b0;
-            for (i = 0; i < 16; i = i + 1) acc[i] <= {ACCW{1'b0}};
         end else if (en) begin
             acc_valid <= v1;
             if (v1) begin

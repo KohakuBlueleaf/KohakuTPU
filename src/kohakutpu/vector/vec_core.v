@@ -23,7 +23,10 @@ module vec_core #(
     parameter integer IMEM_DEPTH = 512,
     parameter integer L1_DEPTH   = 512,
     parameter         L1_PRIM    = "block",
-    parameter         RF_PRIM    = "block"
+    parameter         RF_PRIM    = "block",
+    // 34 UNTIL vec_cu's `c_val`/`ld_data` widen IN THE SAME STEP: a narrow
+    // driver leaves [39:34] x, and x in `cbase` makes the whole `addr` sum x.
+    parameter integer AW         = 40
 )(
     input  wire         clk,
     input  wire         rst,
@@ -31,7 +34,7 @@ module vec_core #(
     input  wire         ld_en,
     input  wire         ld_kind,          // 0 = imem, 1 = descriptor
     input  wire [8:0]   ld_addr,          // desc: {ad[2:0], fld[2:0]}
-    input  wire [33:0]  ld_data,
+    input  wire [AW-1:0] ld_data,
 
     input  wire         start,
     input  wire [8:0]   start_pc,
@@ -42,7 +45,7 @@ module vec_core #(
     output reg  [31:0]  cycles,
 
     output reg          rd_req_valid,
-    output reg  [33:0]  rd_req_addr,
+    output reg  [AW-1:0] rd_req_addr,
     output reg  [8:0]   rd_req_tag,
     input  wire         rd_req_ready,
     input  wire         rr_valid,
@@ -60,7 +63,7 @@ module vec_core #(
     input  wire         cd_fault,         // that burst named a place we lack
 
     output reg          wr_req_valid,
-    output reg  [33:0]  wr_req_addr,
+    output reg  [AW-1:0] wr_req_addr,
     output reg  [255:0] wr_req_data,
     input  wire         wr_req_ready,
 
@@ -192,17 +195,18 @@ module vec_core #(
     reg         ag_start, ag_step;
     reg  [2:0]  ag_sel;
     reg signed [17:0] ag_off;
-    wire [33:0] ag_addr;
+    wire [AW-1:0] ag_addr;
     wire        ag_last, ag_busy;
     wire [31:0] ag_total;
 
-    vec_agu u_agu (
+    vec_agu #(.AW(AW)) u_agu (
         .clk(clk), .rst(rst),
         .wr_en(ld_en && ld_kind), .wr_ad(ld_addr[5:3]), .wr_fld(ld_addr[2:0]),
         .wr_val(ld_data),
         .start(ag_start), .sel(ag_sel), .off(ag_off), .step(ag_step),
         .addr(ag_addr), .last(ag_last), .total(ag_total), .busy(ag_busy)
     );
+
 
     // ================================================== lanes
     reg          iss_valid, iss_is_cmp, iss_tail, red_init;
@@ -373,40 +377,27 @@ module vec_core #(
 
     // ================================================== sequencer
     always @(posedge clk) begin
+        // STATE, VALIDS AND NON-ZERO DEFAULTS ONLY: the payloads their valids
+        // qualify came to ~1,700 flops, g_k* and lw_wdata being the worst.
         if (rst) begin
-            st <= S_IDLE; pc <= 9'd0; ir <= 32'd0; im_addr <= 9'd0;
+            st <= S_IDLE; pc <= 9'd0; im_addr <= 9'd0;
             vmode <= M_FLAT; vl <= 8'd128;
             busy <= 1'b0; halted <= 1'b0; fault <= 1'b0; fault_code <= 8'd0;
             cycles <= 32'd0; bcnt <= 6'd0; nbeat <= 6'd0;
             cchunk <= 3'd0; cphase <= 2'd0;
             lp_act <= 1'b0; lp_cnt <= 24'd0; lp_top <= 9'd0; lp_end <= 9'd0;
             g_have <= 3'd0; fill_out <= 16'd0; mem_left <= 32'd0;
-            g_op <= 20'd0; g_sa <= 8'd0; g_sb <= 8'd0; g_sc <= 8'd0;
-            g_ka <= 96'd0; g_kb <= 96'd0; g_kc <= 96'd0;
-            g_ra <= 4'd0; g_rb <= 4'd0; g_rc <= 4'd0; g_wd <= 4'd0;
-            g_pm <= 2'd0; g_pr <= 2'd0; g_cmp <= 1'b0;
             iss_valid <= 1'b0; iss_tail <= 1'b0; red_init <= 1'b0;
             iss_is_cmp <= 1'b0; iss_tmask <= 16'hFFFF;
-            iss_ra <= 7'd0; iss_rb <= 7'd0; iss_rc <= 7'd0; iss_wa <= 7'd0;
-            iss_chunk <= 3'd0; iss_phase <= 2'd0; red_kind <= 3'd0;
-            lw_we <= 1'b0; lw_ract <= 1'b0; lw_waddr <= 7'd0; lw_raddr <= 7'd0;
-            lw_wdata <= 384'd0;
+            lw_we <= 1'b0; lw_ract <= 1'b0;
             rd_req_valid <= 1'b0; wr_req_valid <= 1'b0;
-            rd_req_addr <= 34'd0; rd_req_tag <= 9'd0;
-            wr_req_addr <= 34'd0; wr_req_data <= 256'd0;
-            nd_valid <= 1'b0; nd_x <= 4'd0; nd_y <= 4'd0; nd_buf <= 4'd0;
-            nd_off <= 16'd0; nd_len <= 8'd0; nd_sig <= 1'b0; nd_ack <= 8'd0;
-            nd_mesh <= 2'd0; nd_fin <= 8'd0;
-            ag_start <= 1'b0; ag_step <= 1'b0; ag_sel <= 3'd0; ag_off <= 18'd0;
-            l1_we <= 1'b0; l1_waddr <= {LAW{1'b0}}; l1_raddr <= {LAW{1'b0}};
-            l1_wdata <= 256'd0; l1_base <= {LAW{1'b0}}; l1_cur <= {LAW{1'b0}};
-            ls_reg <= 4'd0; ls_dt <= 3'd0; ls_hi <= 1'b0; ls_hold <= 192'd0;
-            ls_kind <= 5'd0; shuf_k <= 4'd0; bc_to_s <= 1'b0;
-            cv_src <= 256'd0; cd_err <= 1'b0;
-            for (ii = 0; ii < 16; ii = ii + 1) begin
-                sreg[ii] <= 24'd0;
-                pend[ii] <= 5'd0;
-            end
+            nd_valid <= 1'b0;
+            ag_start <= 1'b0;
+            l1_we <= 1'b0; l1_base <= {LAW{1'b0}}; l1_cur <= {LAW{1'b0}};
+            cd_err <= 1'b0;
+            // RESET-RISK: sreg unreset like vec_regfile. pend stays -- it is a
+            // hazard counter and a stale one stalls issue for good.
+            for (ii = 0; ii < 16; ii = ii + 1) pend[ii] <= 5'd0;
             kreg[0] <= 24'h000000; kreg[1] <= E8_ONE;
             kreg[2] <= 24'hBF8000; kreg[3] <= 24'h000000;
         end else begin
@@ -844,10 +835,11 @@ module vec_core #(
                 // covers a contiguous run, so a STRIDED walk is not a peer
                 // drain -- the sink would read it as consecutive words.
                 //
-                // Base bits [23:16] are {ack_y, ack_x}, where the sink sends
-                // the completion. The instruction word has one bit left, not
-                // eight, and the base is a 34-bit field of which a peer drain
-                // uses sixteen -- so the room is here and nowhere else.
+                // Base [23:16] is {ack_y, ack_x}: the instruction word has one
+                // spare bit, not eight, so the room is here and nowhere else.
+
+                // PINNED, NOT ADDRESS BITS. A peer drain reinterprets the base
+                // as this packed record, so widening AW must not move them.
                 nd_off  <= ag_addr[15:0];
                 nd_ack  <= ag_addr[23:16];
                 nd_mesh <= ag_addr[25:24];

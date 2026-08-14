@@ -30,7 +30,7 @@
 
 module axi_n1 #(
     parameter integer N        = 4,
-    parameter integer ADDR_W   = 34,
+    parameter integer ADDR_W   = 40,
     parameter integer DATA_W   = 256,
     parameter integer ID_W     = 4,
     // Address queues need only cover the crossing latency; W and R are sized

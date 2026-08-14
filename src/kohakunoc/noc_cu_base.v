@@ -203,9 +203,9 @@ module noc_cu_base #(
 
     always @(posedge clk) begin
         inst_pop <= 1'b0;
+        // `in_flight` only: the reply fields are qualified by it.
         if (!resetn) begin
             in_flight <= 1'b0;
-            rep_x <= 0; rep_y <= 0; rep_id <= 0; rep_last <= 0;
         end else begin
             if (inst_valid && inst_ready) begin
                 rep_x     <= `HDR_SX(inst_head);
@@ -254,9 +254,9 @@ module noc_cu_base #(
     end
 
     always @(posedge clk) begin
+        // `ctrl_pend` only: the rest is the pending reply it qualifies.
         if (!resetn) begin
-            ctrl_pend <= 1'b0; ctrl_val <= 64'd0;
-            ctrl_x <= 0; ctrl_y <= 0; ctrl_ridx <= 0; ctrl_txn <= 0;
+            ctrl_pend <= 1'b0;
         end else begin
             if (ctrl_hit && !ctrl_pend) begin
                 ctrl_pend <= 1'b1;
@@ -286,26 +286,33 @@ module noc_cu_base #(
     wire [7:0]           s_code = sig_head[39 -: 8];
     wire [31:0]          s_arg  = sig_head[31 -: 32];
 
+    // ONE enable, ONE mux: as an if/else chain Vivado built the zero fields from
+    // the flops' SYNC RESET, and those 288 R pins routed -3.726 ns at 3.334.
+    wire [FLIT_WIDTH-1:0] out_sig =
+        { s_x, s_y, POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
+          T_CU_SIGNAL, s_id, 1'b1, 3'b000,
+          s_code, s_arg, {PAD_SIG{1'b0}} };
+    wire [FLIT_WIDTH-1:0] out_ctrl =
+        { ctrl_x, ctrl_y, POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
+          T_CU_CTRL, ctrl_txn, 1'b1, 3'b000,
+          8'd2 /*read response*/, ctrl_ridx, ctrl_val,
+          {(FLIT_WIDTH-4*POS_WIDTH-16-16-64){1'b0}} };
+    // Priority as the if/else chain had it.
+    wire [FLIT_WIDTH-1:0] out_next = sig_sent  ? out_sig
+                                   : ctrl_sent ? out_ctrl
+                                               : send_flit;
+    wire out_take = sig_sent | ctrl_sent | (send_valid && send_ready);
+
     always @(posedge clk) begin
+        // `noc_out_data` is NOT reset: `noc_out_valid` qualifies it, and the XPM
+        // reset synchroniser reaching 288 flops here was the pumped 1x limiter.
         if (!resetn) begin
             noc_out_valid <= 1'b0;
-            noc_out_data  <= {FLIT_WIDTH{1'b0}};
         end else begin
             // Hold the flit until the receiver takes it, rather than letting it
             // expire after one cycle.
-            noc_out_valid <= sig_sent | ctrl_sent | (send_valid && send_ready) |
-                             (noc_out_valid && noc_out_busy);
-            if (sig_sent)
-                noc_out_data <= { s_x, s_y, POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
-                                  T_CU_SIGNAL, s_id, 1'b1, 3'b000,
-                                  s_code, s_arg, {PAD_SIG{1'b0}} };
-            else if (ctrl_sent)
-                noc_out_data <= { ctrl_x, ctrl_y, POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
-                                  T_CU_CTRL, ctrl_txn, 1'b1, 3'b000,
-                                  8'd2 /*read response*/, ctrl_ridx, ctrl_val,
-                                  {(FLIT_WIDTH-4*POS_WIDTH-16-16-64){1'b0}} };
-            else if (send_valid && send_ready)
-                noc_out_data <= send_flit;
+            noc_out_valid <= out_take | (noc_out_valid && noc_out_busy);
+            if (out_take) noc_out_data <= out_next;
         end
     end
 

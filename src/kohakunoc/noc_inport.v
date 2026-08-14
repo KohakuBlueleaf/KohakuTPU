@@ -140,8 +140,8 @@ module InPortSwitch #(
     wire [4:0] port_choice = {want_local, want_west, want_south, want_east, want_north};
 
     always @(posedge clk, posedge rst) begin
+        // `hold` is not reset: `hold_req` says whether it means anything.
         if (rst) begin
-            hold     <= {DATA_WIDTH{1'b0}};
             hold_req <= 5'b00000;
         end else if (load) begin
             hold     <= rd_data;

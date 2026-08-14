@@ -39,13 +39,13 @@ module mag_link_pipe #(
     reg [W-1:0] stage [0:DEPTH-1];
 
     integer s;
+    // ONLY THE VALID BIT. A Laguna register has no reset, and this module exists
+    // to be placed in one -- resetting the 384-bit payload forbids that site.
     always @(posedge clk) begin
-        if (!resetn) begin
-            for (s = 0; s < DEPTH; s = s + 1) stage[s] <= {W{1'b0}};
-        end else begin
-            stage[0] <= {i_tvalid, i_tlast, i_tuser, i_tdata};
-            for (s = 1; s < DEPTH; s = s + 1) stage[s] <= stage[s-1];
-        end
+        stage[0] <= {i_tvalid, i_tlast, i_tuser, i_tdata};
+        for (s = 1; s < DEPTH; s = s + 1) stage[s] <= stage[s-1];
+        if (!resetn)
+            for (s = 0; s < DEPTH; s = s + 1) stage[s][W-1] <= 1'b0;
     end
 
     wire [W-1:0] sel = stage[(tap == 5'd0) ? 0 : (tap - 5'd1)];

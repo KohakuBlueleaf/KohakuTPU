@@ -227,8 +227,9 @@ module mx_cluster_node #(
     );
 
     always @(posedge clk) begin
+        // `pq_hi` is not reset: `pq_pend` qualifies it.
         if (rst) begin
-            pq_pend <= 1'b0; pq_hi <= {(PW-256){1'b0}};
+            pq_pend <= 1'b0;
         end else begin
             pq_pend <= acu_peer_v;
             if (acu_peer_v) pq_hi <= acu_peer[PW-1:256];
@@ -273,8 +274,9 @@ module mx_cluster_node #(
             d_iss <= 16'd0; d_got <= 16'd0; d_pop <= 16'd0; d_out <= 16'd0;
             d_n <= 16'd0; d_run <= 1'b0; d_fused <= 1'b0; d_wait <= 1'b0;
             d_send <= 1'b0; d_gap <= 1'b0;
-            d_op <= OP_NOP; d_addr <= {TAW{1'b0}}; d_cmd <= 1'b0;
-            d_peer <= {PW{1'b0}};
+            d_cmd <= 1'b0;
+            // d_op/d_addr/d_peer are the ACU's command payload, qualified by
+            // `cmd_valid` -- and d_peer alone is 16*(ACC_MW+8) flops.
         end else begin
             d_cmd <= 1'b0;
 

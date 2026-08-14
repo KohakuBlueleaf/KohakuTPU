@@ -57,9 +57,9 @@ module OutPortSwitch #(
     assign grants = room ? sel : 5'b00000;
 
     always @(posedge clk or posedge rst) begin
+        // `port_out` is not reset: `out_valid` says whether it means anything.
         if (rst) begin
             port_rr   <= 3'd0;
-            port_out  <= {DATA_WIDTH{1'b0}};
             out_valid <= 1'b0;
         end else begin
             port_rr <= pr2;

@@ -191,9 +191,9 @@ module noc_orchestrator #(
     // Mirrors OutPortSwitch: hold the flit asserted until a cycle in which the
     // receiver is not busy.
     always @(posedge clk) begin
+        // `noc_out_data` is not reset: `noc_out_valid` qualifies it.
         if (!resetn) begin
             noc_out_valid <= 1'b0;
-            noc_out_data  <= {FLIT_WIDTH{1'b0}};
         end else begin
             noc_out_valid <= tx_pop | (noc_out_valid && noc_out_busy);
             if (tx_pop) noc_out_data <= tx_head;
@@ -300,8 +300,8 @@ module noc_orchestrator #(
             prog_run    <= 1'b0;
             prog_word   <= 3'd0;
             prog_left   <= 16'd0;
-            prog_rd     <= {SW_BITS{1'b0}};
-            prog_flit   <= {PAD_WIDTH{1'b0}};
+            // prog_rd is loaded at the kick; prog_flit is 320 bits the FIFO
+            // takes only once complete, word by word.
             prog_credit <= 16'd0;
         end else begin
             // credit: one per CU_INST flit sent, refilled by SIG_INST_COMPLETE.
@@ -400,9 +400,8 @@ module noc_orchestrator #(
             prog_len     <= 16'd0;
             prog_base    <= 16'd0;
             cred_val     <= 16'd0;
-            tx_stage     <= {PAD_WIDTH{1'b0}};
-            aux_cfg_addr <= 8'd0;
-            aux_cfg_data <= {DATA_WIDTH{1'b0}};
+            // tx_stage is 320 bits pushed only once the host has written all
+            // five words; aux_cfg_addr/data are qualified by aux_cfg_en above.
         end else begin
             case (wstate)
                 W_IDLE: if (s_axi_awvalid) begin

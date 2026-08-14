@@ -173,9 +173,9 @@ module main_orch #(
 
     always @(posedge clk) begin
         if (!resetn) begin
+            // s_rdata/s_rid/s_rresp are the read response `s_rvalid` qualifies;
+            // raddr is loaded from s_araddr on the accepted AR.
             s_arready <= 1'b1; s_rvalid <= 1'b0; s_rlast <= 1'b0;
-            s_rdata <= 64'd0; s_rid <= {ID_W{1'b0}}; s_rresp <= 2'b00;
-            raddr <= {ADDR_W{1'b0}};
         end else begin
             if (s_arvalid && s_arready) begin
                 raddr <= s_araddr; s_rid <= s_arid;
@@ -220,11 +220,9 @@ module main_orch #(
             est <= E_IDLE; pc <= {PCW{1'b0}};
             busy <= 1'b0; done <= 1'b0; err <= 1'b0;
             code <= 64'd0; npolls <= 32'd0; poll_wait <= 16'd0;
+            // The AXI payloads are qualified by the three valids above, and
+            // cur_* is the decoded command `est` only reads once it has one.
             m_awvalid <= 1'b0; m_wvalid <= 1'b0; m_arvalid <= 1'b0;
-            m_awaddr <= {ADDR_W{1'b0}}; m_araddr <= {ADDR_W{1'b0}};
-            m_wdata <= 64'd0; m_awid <= {ID_W{1'b0}}; m_arid <= {ID_W{1'b0}};
-            cur_op <= 4'd0; cur_addr <= {ADDR_W{1'b0}};
-            cur_data <= 64'd0; cur_mask <= 64'd0;
         end else begin
             if (m_awvalid && m_awready) m_awvalid <= 1'b0;
             if (m_wvalid  && m_wready)  m_wvalid  <= 1'b0;

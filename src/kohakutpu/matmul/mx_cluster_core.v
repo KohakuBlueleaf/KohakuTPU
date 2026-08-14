@@ -85,12 +85,10 @@ module mx_cluster_core #(
             reg [223:0] ad [0:DLY-1];
             reg [223:0] bd [0:DLY-1];
             integer d;
+            // NO RESET: operands, qualified by `vld_sr` below, and an SRL has no
+            // reset pin -- 224 bits x DLY x 2 of flops the tool cannot fold.
             always @(posedge clk) begin
-                if (rst) begin
-                    for (d = 0; d < DLY; d = d + 1) begin
-                        ad[d] <= 224'd0; bd[d] <= 224'd0;
-                    end
-                end else if (en) begin
+                if (en) begin
                     ad[0] <= a_slice[c];
                     bd[0] <= b_slice[c];
                     for (d = 1; d < DLY; d = d + 1) begin

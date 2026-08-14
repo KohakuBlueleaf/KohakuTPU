@@ -44,8 +44,12 @@
 `define NOC_T_IS_MEM(t)   ((t) <= 4'h4)
 
 // MEM_RD_REQ / MEM_WR_REQ descriptor payload
-`define NOC_MEM_ADDR       255:222   // 34 bits: exactly the 16 GB physical map
-`define NOC_MEM_ADDR_SPARE 221:216   // reserved, must be 0
+// 40 bits: [39] special aperture, [38] rsvd, [37:36] mesh, [35:0] 64 GB local.
+// The old 34-bit map is this one's bottom corner -- the spare was always zero.
+`define NOC_MEM_ADDR       255:216
+`define NOC_MEM_SPECIAL    255       // 1 selects a command aperture, not DRAM
+`define NOC_MEM_MESH       253:252   // matches U_DMESH; routing never decodes it
+`define NOC_MEM_APERTURE   251:248   // when SPECIAL: 0 is MAG L2 staging
 `define NOC_MEM_LEN        215:208   // payload flits minus 1
 `define NOC_MEM_FLAGS      207:200
 `define NOC_MEM_F_CACHEABLE  0

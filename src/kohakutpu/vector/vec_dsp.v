@@ -71,9 +71,11 @@ module vec_dsp #(
             .USE_SIMD("ONE48")
         ) u_dsp (
             .CLK(clk),
-            .RSTA(rst), .RSTB(rst), .RSTC(rst), .RSTD(rst),
-            .RSTM(rst), .RSTP(rst), .RSTALLCARRYIN(rst),
-            .RSTALUMODE(rst), .RSTCTRL(rst), .RSTINMODE(rst),
+            // Datapath only; ALUMODEREG is 1 and `alumode` selects an operation,
+            // so RSTALUMODE stays. INMODE/OPMODE regs are 0, so those are inert.
+            .RSTA(1'b0), .RSTB(1'b0), .RSTC(1'b0), .RSTD(1'b0),
+            .RSTM(1'b0), .RSTP(1'b0), .RSTALLCARRYIN(1'b0),
+            .RSTALUMODE(rst), .RSTCTRL(1'b0), .RSTINMODE(1'b0),
             .CEA1(en), .CEA2(en), .CEB1(en), .CEB2(en),
             .CEC(en),  .CED(en),  .CEAD(en), .CEM(en), .CEP(en),
             .CECARRYIN(en), .CECTRL(en), .CEALUMODE(en), .CEINMODE(en),
@@ -98,11 +100,10 @@ module vec_dsp #(
         // makes mx_mac's packing offset S=19 rather than 20.
         wire signed [26:0] ad = (PREADD == 1) ? (a_r[26:0] + d_r) : a_r[26:0];
 
+        // Matches g_prim: only `am_r` is reset, the datapath is not.
         always @(posedge clk) begin
-            if (rst) begin
-                a_r <= 0; b_r <= 0; c_r <= 0; d_r <= 0;
-                am_r <= 0; m_r <= 0; p_r <= 0;
-            end else if (en) begin
+            if (rst) am_r <= 0;
+            else if (en) begin
                 a_r  <= a;
                 b_r  <= b;
                 c_r  <= c;

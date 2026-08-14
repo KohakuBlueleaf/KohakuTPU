@@ -194,12 +194,10 @@ module mx_acu_fp #(
 
     integer i, j;
     always @(posedge clk) begin
+        // ONLY THE VALID AND THE OPCODE, every stage below likewise. The 16-lane
+        // arrays are payload `vN` qualifies; resetting them is flops for nothing.
         if (rst) begin
-            v1 <= 1'b0; op_r <= OP_NOP; addr_r <= {TAW{1'b0}};
-            for (i = 0; i < 16; i = i + 1) begin
-                val_r[i] <= {VWM{1'b0}}; sgn_r[i] <= 1'b0; exp_r[i] <= 10'sd0;
-            end
-            peer_r <= {TW{1'b0}};
+            v1 <= 1'b0; op_r <= OP_NOP;
         end else if (en) begin
             v1     <= cmd_valid;
             op_r   <= op;
@@ -250,14 +248,7 @@ module mx_acu_fp #(
 
     always @(posedge clk) begin
         if (rst) begin
-            v1a <= 1'b0; op_1a <= OP_NOP; addr_a <= {TAW{1'b0}};
-            peer_a <= {TW{1'b0}};
-            for (i = 0; i < 16; i = i + 1) begin
-                a_ohf[i] <= 16'd0; a_lo[i] <= {NS{1'b0}};
-                a_hi[i] <= {(ACC_MW+1){1'b0}}; a_h[i] <= 1'b0;
-                a_msb[i] <= 6'd0; a_z[i] <= 1'b0;
-                a_sgn[i] <= 1'b0; a_exp[i] <= 10'sd0;
-            end
+            v1a <= 1'b0; op_1a <= OP_NOP;
         end else if (en) begin
             v1a    <= v1;
             op_1a  <= op_r;
@@ -290,13 +281,7 @@ module mx_acu_fp #(
 
     always @(posedge clk) begin
         if (rst) begin
-            v1b <= 1'b0; op_1b <= OP_NOP; addr_b <= {TAW{1'b0}};
-            peer_b <= {TW{1'b0}};
-            for (i = 0; i < 16; i = i + 1) begin
-                b_plo[i] <= {(NS+16){1'b0}}; b_phi[i] <= {(ACC_MW+17){1'b0}};
-                b_h[i] <= 1'b0; b_msb[i] <= 6'd0; b_z[i] <= 1'b0;
-                b_sgn[i] <= 1'b0; b_exp[i] <= 10'sd0;
-            end
+            v1b <= 1'b0; op_1b <= OP_NOP;
         end else if (en) begin
             v1b    <= v1a;
             op_1b  <= op_1a;
@@ -347,9 +332,10 @@ module mx_acu_fp #(
     reg b_zero_r;       // align operand B is zero
 
     always @(posedge clk) begin
+        // a_zero_r/b_zero_r reset HIGH, so they stay; chain_r/peer_r2/addr_r2
+        // are 2*TW+TAW of payload that `v2` gates, as the comment below says.
         if (rst) begin
-            chain_r <= {TW{1'b0}}; peer_r2 <= {TW{1'b0}};
-            op_r2 <= OP_NOP; addr_r2 <= {TAW{1'b0}}; v2 <= 1'b0;
+            op_r2 <= OP_NOP; v2 <= 1'b0;
             a_zero_r <= 1'b1; b_peer_r <= 1'b0; b_zero_r <= 1'b1;
         end else if (en) begin
             chain_r <= chain_fp;
@@ -493,14 +479,7 @@ module mx_acu_fp #(
 
     always @(posedge clk) begin
         if (rst) begin
-            v3 <= 1'b0; s3_addr <= {TAW{1'b0}}; s3_chain <= {TW{1'b0}};
-            s3_wr <= 1'b0; s3_out <= OUT_NONE; s3_fwd <= 1'b0;
-            for (i = 0; i < 16; i = i + 1) begin
-                s3_bg[i] <= {SW{1'b0}}; s3_sh[i] <= {SW{1'b0}};
-                s3_sub[i] <= 1'b0; s3_ebig[i] <= 7'd0;
-                s3_sbig[i] <= 1'b0; s3_lost[i] <= 1'b0;
-                s3_zero[i] <= 1'b0; s3_pass[i] <= 1'b0; s3_pval[i] <= {AW{1'b0}};
-            end
+            v3 <= 1'b0;
         end else if (en) begin
             // sum_iss is EMIT/SEND: they produce an output but no tile write,
             // so they must be counted valid separately from iss_wr
@@ -547,13 +526,7 @@ module mx_acu_fp #(
 
     always @(posedge clk) begin
         if (rst) begin
-            v4 <= 1'b0; s4_addr <= {TAW{1'b0}}; s4_chain <= {TW{1'b0}};
-            s4_wr <= 1'b0; s4_out <= OUT_NONE; s4_fwd <= 1'b0;
-            for (i = 0; i < 16; i = i + 1) begin
-                s4_norm[i] <= {SW{1'b0}}; s4_lz[i] <= 6'd0; s4_sz[i] <= 1'b0;
-                s4_ebig[i] <= 7'd0; s4_sbig[i] <= 1'b0; s4_lost[i] <= 1'b0;
-                s4_zero[i] <= 1'b0; s4_pass[i] <= 1'b0; s4_pval[i] <= {AW{1'b0}};
-            end
+            v4 <= 1'b0;
         end else if (en) begin
             v4       <= v3;
             s4_addr  <= s3_addr;
@@ -624,10 +597,10 @@ module mx_acu_fp #(
     endgenerate
 
     always @(posedge clk) begin
+        // peer_out/emit_acc/emit_out are 2*TW+256, each gated by the valid or
+        // pend flag beside it.
         if (rst) begin
-            peer_valid <= 1'b0; emit_valid <= 1'b0;
-            peer_out <= {TW{1'b0}}; emit_out <= 256'd0;
-            emit_acc <= {TW{1'b0}}; emit_pend <= 1'b0;
+            peer_valid <= 1'b0; emit_valid <= 1'b0; emit_pend <= 1'b0;
         end else if (en) begin
             peer_valid <= 1'b0;
             emit_valid <= 1'b0;

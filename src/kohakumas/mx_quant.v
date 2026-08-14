@@ -325,10 +325,10 @@ module mx_quant #(
     // the scale comes from the block peak, so t is in [0,7] for every element
     // that produces a nonzero result: above that the window clears the product
     // and gives zero, below it the element exceeds the peak and saturates.
+    // NO RESET: 1,024 flops both consumers read only after `done`, which a pass
+    // asserts having written all four -- stale words are never visible.
     always @(posedge clk) begin
-        if (rst) begin
-            word0 <= 256'd0; word1 <= 256'd0; word2 <= 256'd0; word3 <= 256'd0;
-        end else if (pk2_valid) begin
+        if (pk2_valid) begin
             for (sj = 0; sj < 32; sj = sj + 1) begin
                 x8_v  = pmul[sj][22:15] >> u_r[sj];
                 sum_v = {1'b0, x8_v[7:1]} + {7'd0, x8_v[0]};   // round to nearest

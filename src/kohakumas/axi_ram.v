@@ -31,7 +31,7 @@
 
 module axi_ram #(
     parameter integer DATA_W = 256,
-    parameter integer ADDR_W = 34,
+    parameter integer ADDR_W = 40,
     parameter integer ID_W   = 4,
     parameter integer WORDS  = 4096,         // DATA_W-bit words
     parameter integer PORTS  = 1

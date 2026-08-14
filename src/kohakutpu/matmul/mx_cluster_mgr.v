@@ -222,8 +222,8 @@ module mx_cluster_mgr #(
             aoff_r <= 8'd0; boff_r <= 8'd0;
             abank_r <= 1'b0; bbank_r <= 1'b0;
             acc_r <= 1'b0; emit_r <= 1'b0;
-            a_rd <= {AAW{1'b0}}; b_rd <= {BAW{1'b0}};
-            s1_first <= 1'b0; s1_emit <= 1'b0; s1_addr <= {TAW{1'b0}};
+            // a_rd/b_rd/s1_addr are addresses `s1_valid` qualifies downstream.
+            s1_first <= 1'b0; s1_emit <= 1'b0;
             pace <= 3'd0; pace_n <= 3'd0;
         end else begin
             s1_valid <= 1'b0;
@@ -288,13 +288,13 @@ module mx_cluster_mgr #(
     // which shifts every result by one sub-tile -- structured and silent, and it
     // reads as an addressing bug rather than a timing one.
     always @(posedge clk) begin
+        // VALIDS ONLY. `a_out`/`b_out` alone are 1,792 flops that `core_valid`
+        // qualifies, and a reset that wide is what makes routing impossible.
         if (rst) begin
-            s1b_valid <= 1'b0; s1b_first <= 1'b0; s1b_addr <= {TAW{1'b0}};
+            s1b_valid <= 1'b0; s1b_first <= 1'b0;
             s1b_emit <= 1'b0; s2_emit <= 1'b0;
             core_valid <= 1'b0; core_first <= 1'b0;
-            a_out <= 896'd0; b_out <= 896'd0;
-            s2_valid <= 1'b0; s2_first <= 1'b0; s2_addr <= {TAW{1'b0}};
-            s2_sa <= 32'd0; s2_sb <= 32'd0;
+            s2_valid <= 1'b0; s2_first <= 1'b0;
         end else begin
             s1b_valid <= s1_valid;
             s1b_first <= s1_first;

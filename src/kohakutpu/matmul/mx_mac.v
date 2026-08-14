@@ -82,9 +82,11 @@ module mx_mac #(
             .USE_SIMD("ONE48")
         ) u_dsp (
             .CLK(clk),
-            .RSTA(rst), .RSTB(rst), .RSTC(rst), .RSTD(rst),
-            .RSTM(rst), .RSTP(rst), .RSTALLCARRYIN(rst),
-            .RSTALUMODE(rst), .RSTCTRL(rst), .RSTINMODE(rst),
+            // NO RESET ON THE DATAPATH. A/B/C/D/M/P are pipeline registers, and
+            // Z is PCIN or 0 -- never P -- so nothing accumulates across reset.
+            .RSTA(1'b0), .RSTB(1'b0), .RSTC(1'b0), .RSTD(1'b0),
+            .RSTM(1'b0), .RSTP(1'b0), .RSTALLCARRYIN(1'b0),
+            .RSTALUMODE(1'b0), .RSTCTRL(1'b0), .RSTINMODE(1'b0),
             .CEA1(en), .CEA2(en), .CEB1(en), .CEB2(en),
             .CEC(en),  .CED(en),  .CEAD(en), .CEM(en), .CEP(en),
             .CECARRYIN(en), .CECTRL(en), .CEALUMODE(en), .CEINMODE(en),
@@ -112,11 +114,9 @@ module mx_mac #(
         wire signed [47:0] z = (Z_SEL == 0) ? pcin : 48'sd0;
         wire signed [47:0] w = (W_SEL == 1) ? c_r  : 48'sd0;
 
+        // Matches g_prim: no datapath reset, so the two build the same pipeline.
         always @(posedge clk) begin
-            if (rst) begin
-                a_r <= 0; d_r <= 0; b_r <= 0; b_r2 <= 0; c_r <= 0;
-                ad_r <= 0; m_r <= 0; p_r <= 0;
-            end else if (en) begin
+            if (en) begin
                 a_r  <= a_port;
                 d_r  <= d_port;
                 b_r  <= b_port;

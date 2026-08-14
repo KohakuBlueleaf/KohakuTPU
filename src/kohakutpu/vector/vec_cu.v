@@ -38,9 +38,17 @@ module vec_cu #(
     // A/B'd at RECV_DEPTH=64: -312 LUT, -280 FF, +4 BRAM tiles, and Fmax
     // identical to the digit (WNS 0.335 both arms, same path). The recv data
     // path is nowhere near critical here -- unlike the register file's port a.
-    parameter         RECV_MEM   = "block"
+    parameter         RECV_MEM   = "block",
+    // `clk` keeps the NoC local port; everything else runs on `unit_clk`, one
+    // noc_local_cdc per direction. 0 elaborates neither and aliases the clock.
+    parameter integer UNIT_CDC   = 0,
+    // xpm_fifo_async's floor is 16, and 32 is +15 LUT. Throughput, not
+    // correctness: the local link retries.
+    parameter integer CDC_DEPTH  = 16
 )(
     input  wire                   clk,
+    // Tie low when UNIT_CDC is 0. It reaches nothing.
+    input  wire                   unit_clk,
     input  wire                   resetn,
 
     input  wire [FLIT_WIDTH-1:0]  noc_in_data,
@@ -75,6 +83,47 @@ module vec_cu #(
     reg  [FLIT_WIDTH-1:0] send_flit;
     reg                   send_valid;
 
+    // ---- the unit's own clock, and the crossing to the NoC's ---------------
+    // `bp_*` is noc_cu_base's port face; at UNIT_CDC 0 it IS the boundary.
+    wire                  u_clk, u_resetn;
+    wire [FLIT_WIDTH-1:0] bp_in_data, bp_out_data;
+    wire                  bp_in_valid, bp_in_busy, bp_out_valid, bp_out_busy;
+
+    generate if (UNIT_CDC) begin : g_ucdc
+        assign u_clk = unit_clk;
+
+        // `resetn` is released on the NoC clock, so its edge means nothing
+        // here. Async-assert, sync-deassert, as mag_link_cdc does.
+        reg [1:0] ur_q;
+        always @(posedge unit_clk or negedge resetn)
+            if (!resetn) ur_q <= 2'b00;
+            else         ur_q <= {ur_q[0], 1'b1};
+        assign u_resetn = ur_q[1];
+
+        noc_local_cdc #(.FLIT_WIDTH(FLIT_WIDTH), .DEPTH(CDC_DEPTH)) u_cdc_in (
+            .wr_clk(clk), .wr_resetn(resetn),
+            .i_data(noc_in_data), .i_valid(noc_in_valid), .i_busy(noc_in_busy),
+            .rd_clk(u_clk), .rd_resetn(u_resetn),
+            .o_data(bp_in_data), .o_valid(bp_in_valid), .o_busy(bp_in_busy)
+        );
+
+        noc_local_cdc #(.FLIT_WIDTH(FLIT_WIDTH), .DEPTH(CDC_DEPTH)) u_cdc_out (
+            .wr_clk(u_clk), .wr_resetn(u_resetn),
+            .i_data(bp_out_data), .i_valid(bp_out_valid), .i_busy(bp_out_busy),
+            .rd_clk(clk), .rd_resetn(resetn),
+            .o_data(noc_out_data), .o_valid(noc_out_valid), .o_busy(noc_out_busy)
+        );
+    end else begin : g_nocdc
+        assign u_clk       = clk;
+        assign u_resetn    = resetn;
+        assign bp_in_data  = noc_in_data;
+        assign bp_in_valid = noc_in_valid;
+        assign noc_in_busy = bp_in_busy;
+        assign noc_out_data  = bp_out_data;
+        assign noc_out_valid = bp_out_valid;
+        assign bp_out_busy   = noc_out_busy;
+    end endgenerate
+
     noc_cu_base #(
         .FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH),
         .POS_X(POS_X), .POS_Y(POS_Y),
@@ -89,11 +138,11 @@ module vec_cu #(
         .CU_TYPE(16'h5643), .CU_VERSION(8'h03), .N_BUFFERS(2),
         .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH), .RECV_MEM(RECV_MEM)
     ) u_base (
-        .clk(clk), .resetn(resetn),
-        .noc_in_data(noc_in_data), .noc_in_valid(noc_in_valid),
-        .noc_in_busy(noc_in_busy),
-        .noc_out_data(noc_out_data), .noc_out_valid(noc_out_valid),
-        .noc_out_busy(noc_out_busy),
+        .clk(u_clk), .resetn(u_resetn),
+        .noc_in_data(bp_in_data), .noc_in_valid(bp_in_valid),
+        .noc_in_busy(bp_in_busy),
+        .noc_out_data(bp_out_data), .noc_out_valid(bp_out_valid),
+        .noc_out_busy(bp_out_busy),
         .inst_flit(inst_flit), .inst_valid(inst_valid), .inst_ready(inst_ready),
         .exec_done(exec_done), .exec_result(exec_result),
         .exec_fault(exec_fault),
@@ -109,7 +158,9 @@ module vec_cu #(
     wire [8:0]  c_addr = inst_flit[251 -: 9];
     wire [2:0]  c_ad   = inst_flit[251 -: 3];
     wire [2:0]  c_fld  = inst_flit[248 -: 3];
-    wire [33:0] c_val  = inst_flit[245 -: 34];
+    // High bits in a TAIL field, matching the cluster: widening [245 -: 34] in
+    // place would shove every field below it down six. All-zero tail = mesh 0.
+    wire [39:0] c_val  = {inst_flit[68 -: 6], inst_flit[245 -: 34]};
     wire [31:0] c_word = inst_flit[31:0];
 
     wire [3:0] rtype = recv_flit[FLIT_WIDTH-4*POS_WIDTH-1 -: 4];
@@ -120,13 +171,13 @@ module vec_cu #(
     // ================================================ the core
     reg         ld_en, ld_kind, start;
     reg  [8:0]  ld_addr, start_pc;
-    reg  [33:0] ld_data;
+    reg  [39:0] ld_data;
     wire        busy, halted, fault;
     wire [7:0]  fault_code;
     wire [31:0] cycles;
 
     wire        rd_req_valid, wr_req_valid;
-    wire [33:0] rd_req_addr, wr_req_addr;
+    wire [39:0] rd_req_addr, wr_req_addr;
     wire [8:0]  rd_req_tag;
     wire [255:0] wr_req_data;
     reg         rd_req_ready, wr_req_ready;
@@ -162,7 +213,7 @@ module vec_cu #(
     wire [2:0]  nd_rsvd = nd_rem ? {1'b1, nd_mesh} : 3'b000;
 
     vec_core #(.MODEL(MODEL), .L1_DEPTH(L1_DEPTH), .L1_PRIM(L1_PRIM)) u_core (
-        .clk(clk), .rst(!resetn),
+        .clk(u_clk), .rst(!u_resetn),
         .ld_en(ld_en), .ld_kind(ld_kind), .ld_addr(ld_addr), .ld_data(ld_data),
         .start(start), .start_pc(start_pc),
         .busy(busy), .halted(halted), .fault(fault), .fault_code(fault_code),
@@ -232,8 +283,8 @@ module vec_cu #(
     // dimension-ordered path -- which is what makes a mismatch conclusive.
     wire cd_alien = (rsx != cd_sx) || (rsy != cd_sy);
 
-    always @(posedge clk) begin
-        if (!resetn) begin
+    always @(posedge u_clk) begin
+        if (!u_resetn) begin
             rr_valid <= 1'b0; rr_tag <= 9'd0; rr_data <= 256'd0;
             cd_valid <= 1'b0; cd_addr <= 9'd0; cd_data <= 256'd0;
             cd_fault <= 1'b0;
@@ -300,17 +351,17 @@ module vec_cu #(
     // ================================================ outbound memory traffic
     // A fill and a drain never share the send path: they belong to different
     // instructions and vec_core runs one at a time.
-    reg [33:0] w_addr;
+    reg [39:0] w_addr;
     reg [255:0] w_data;
     reg        nd_hdr;
     reg [7:0]  nd_cnt;
 
-    always @(posedge clk) begin
-        if (!resetn) begin
+    always @(posedge u_clk) begin
+        if (!u_resetn) begin
             send_valid <= 1'b0; send_flit <= {FLIT_WIDTH{1'b0}};
             rd_req_ready <= 1'b0; wr_req_ready <= 1'b0;
             wst <= W_IDLE; fill_bank <= 1'b0;
-            w_addr <= 34'd0; w_data <= 256'd0;
+            // w_addr/w_data are the staged write the send path qualifies.
             nd_hdr <= 1'b0; nd_cnt <= 8'd0;
         end else begin
             rd_req_ready <= 1'b0;
@@ -332,7 +383,7 @@ module vec_cu #(
                         send_flit <= { MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
                                        POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
                                        T_MEM_RD_REQ, rd_req_tag[7:0], 1'b1, 3'b000,
-                                       rd_req_addr, 6'd0, 8'd0, 8'd0, 200'd0 };
+                                       rd_req_addr, 8'd0, 8'd0, 200'd0 };
                         send_valid   <= 1'b1;
                         rd_req_ready <= 1'b1;
                         fill_bank    <= rd_req_tag[8];
@@ -365,7 +416,7 @@ module vec_cu #(
                         send_flit <= { MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
                                        POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
                                        T_MEM_WR_REQ, 8'h01, 1'b0, 3'b000,
-                                       wr_req_addr, 6'd0, 8'd0, 8'd0, 200'd0 };
+                                       wr_req_addr, 8'd0, 8'd0, 200'd0 };
                         send_valid   <= 1'b1;
                         wr_req_ready <= 1'b1;
                         wst <= W_DATA;
@@ -388,12 +439,13 @@ module vec_cu #(
     localparam [1:0] C_IDLE = 2'd0, C_ACT = 2'd1, C_RUNW = 2'd2, C_RET = 2'd3;
     reg [1:0] cst;
 
-    always @(posedge clk) begin
-        if (!resetn) begin
+    always @(posedge u_clk) begin
+        if (!u_resetn) begin
             cst <= C_IDLE;
             inst_ready <= 1'b0; exec_done <= 1'b0; exec_fault <= 1'b0;
             exec_result <= 32'd0;
-            ld_en <= 1'b0; ld_kind <= 1'b0; ld_addr <= 9'd0; ld_data <= 34'd0;
+            // ld_kind/ld_addr/ld_data are the load payload `ld_en` qualifies.
+            ld_en <= 1'b0;
             start <= 1'b0; start_pc <= 9'd0;
         end else begin
             inst_ready <= 1'b0;
@@ -408,7 +460,7 @@ module vec_cu #(
                 case (c_op)
                 C_IMEM: begin
                     ld_en <= 1'b1; ld_kind <= 1'b0;
-                    ld_addr <= c_addr; ld_data <= {2'd0, c_word};
+                    ld_addr <= c_addr; ld_data <= {8'd0, c_word};
                     cst <= C_RET;
                 end
                 C_DESC: begin

@@ -22,9 +22,20 @@
 
 `default_nettype none
 
+// -d VEC_NO_PIPE_MUX builds the pre-2026-08-14 ALU. Value-less, because
+// xvlog.bat splits `-d NAME=VALUE` at the '=' and drops the value.
+`ifdef VEC_NO_PIPE_MUX
+  `define VL_PM 0
+`else
+  `define VL_PM 1
+`endif
+
 module vec_lanes #(
     parameter integer MODEL   = 1,
-    parameter         RF_PRIM = "block"
+    parameter         RF_PRIM = "block",
+    // Passed DOWN to vec_alu rather than read from a macro there, so the array
+    // and its ALUs cannot disagree about the latency the taps below assume.
+    parameter integer PIPE_MUX = `VL_PM
 )(
     input  wire         clk,
     input  wire         rst,
@@ -114,7 +125,12 @@ module vec_lanes #(
     reg  [3:0]   acc_rd;
     wire [3:0]   acc_wr;
 
-    reg  [MW-1:0] meta [1:56];
+    // ONE ALU's issue-to-retire depth; every tap below moves with it. Left at
+    // 14 while the ALU gained PIPE_MUX's stage, vec_lanes failed 768 of 1158.
+    localparam integer ALAT = 14 + ((PIPE_MUX != 0) ? 1 : 0);
+    localparam integer MDEP = 4*ALAT;
+
+    reg  [MW-1:0] meta [1:MDEP];
     reg  [15:0]   tailv;
     reg  [127:0]  preg [0:3];
 
@@ -151,7 +167,7 @@ module vec_lanes #(
 
     generate
     for (s = 0; s < 16; s = s + 1) begin : g_alu
-        vec_alu #(.MODEL(MODEL)) u_alu (
+        vec_alu #(.MODEL(MODEL), .PIPE_MUX(PIPE_MUX)) u_alu (
             .clk(clk), .rst(rst),
             .in_valid(alu_iv[s]), .op(alu_op[s*5 +: 5]),
             .a(alu_a[s*24 +: 24]), .b(alu_b[s*24 +: 24]), .c(alu_c[s*24 +: 24]),
@@ -184,8 +200,8 @@ module vec_lanes #(
         end
     end
 
-    vec_delay #(.W(4), .D(14)) u_accd (.clk(clk), .d(acc_rd), .q(acc_wr));
-    vec_delay #(.W(1), .D(56)) u_tq   (.clk(clk), .d(d_tail), .q(d_tail_q));
+    vec_delay #(.W(4), .D(ALAT)) u_accd (.clk(clk), .d(acc_rd), .q(acc_wr));
+    vec_delay #(.W(1), .D(MDEP)) u_tq   (.clk(clk), .d(d_tail), .q(d_tail_q));
 
     wire [4:0] comb_op = (d_kind == R_MAX) ? OP_MAX
                        : (d_kind == R_MIN) ? OP_MIN : OP_ADD;
@@ -342,39 +358,41 @@ module vec_lanes #(
     end
 
     // ================================================== metadata pipeline
-    // Loaded beside the ALU input, so tap 14*D is valid the cycle that chain
-    // retires: FLAT 14, D2 28, D4 and TREE 56.
+    // Loaded beside the ALU input, so tap ALAT*D is valid the cycle that chain
+    // retires: FLAT ALAT, D2 2*ALAT, D4 and TREE 4*ALAT.
     assign p_rd_bits = preg[p_rd_sel];
     assign pmask_now = preg[q_pr][q_chunk*16 +: 16];
 
     wire [MW-1:0] meta_in = {d_valid, d_tail, d_is_cmp, q_pr, q_wa, d_phase,
                              pmask_now, q_pm, q_chunk, q_tmask};
 
+    // ONLY MW-1, which is `d_valid` -- a stale one writes back garbage. Payload
+    // resets would cost MW*MDEP flops, because an SRL has no reset pin.
     always @(posedge clk) begin
+        meta[1] <= meta_in;
+        for (mi = 2; mi <= MDEP; mi = mi + 1) meta[mi] <= meta[mi-1];
         if (rst) begin
-            for (mi = 1; mi <= 56; mi = mi + 1) meta[mi] <= {MW{1'b0}};
+            for (mi = 1; mi <= MDEP; mi = mi + 1) meta[mi][MW-1] <= 1'b0;
             tailv <= 16'd0;
         end else begin
-            meta[1] <= meta_in;
-            for (mi = 2; mi <= 56; mi = mi + 1) meta[mi] <= meta[mi-1];
-            tailv <= {tailv[14:0], meta[56][MW-1]};
+            tailv <= {tailv[14:0], meta[MDEP][MW-1]};
         end
     end
 
-    // TREE taps the LEAF latency, not the tree's: a leaf retires at 14 exactly
-    // like FLAT, and the tree's own result never travels this path -- it leaves
-    // on red_result, gated by alu_ovld[14] and d_tail_q.
+    // TREE taps the LEAF latency, not the tree's: a leaf retires at ALAT
+    // exactly like FLAT, and the tree's own result never travels this path --
+    // it leaves on red_result, gated by alu_ovld[14] and d_tail_q.
     wire          red_wb = (red_kind == R_EXPSUM);
-    wire [MW-1:0] wb = (mode == M_FLAT) || (mode == M_TREE) ? meta[14]
-                     : (mode == M_D2)   ? meta[28] : meta[56];
+    wire [MW-1:0] wb = (mode == M_FLAT) || (mode == M_TREE) ? meta[ALAT]
+                     : (mode == M_D2)   ? meta[2*ALAT] : meta[MDEP];
 
     // The ENABLE decode is taken one stage early and registered. `mode` is a
     // register in vec_core, and mode -> width -> slice index -> a 16-way
     // enable decode -> the register file's write port is the longest path in
     // the assembled machine (229 MHz). Measured standalone it hides, because
     // there `mode` is an input with an ideal driver.
-    wire [MW-1:0] wbp = (mode == M_FLAT) || (mode == M_TREE) ? meta[13]
-                      : (mode == M_D2)   ? meta[27] : meta[55];
+    wire [MW-1:0] wbp = (mode == M_FLAT) || (mode == M_TREE) ? meta[ALAT-1]
+                      : (mode == M_D2)   ? meta[2*ALAT-1] : meta[MDEP-1];
 
     wire        p_valid = wbp[MW-1];
     wire        p_tail  = wbp[49];
@@ -472,9 +490,9 @@ module vec_lanes #(
     endgenerate
 
     always @(posedge clk) begin
-        if (rst) begin
-            for (pq = 0; pq < 4; pq = pq + 1) preg[pq] <= 128'd0;
-        end else if (wb_valid && (mode != M_TREE) && wb_cmp) begin
+        // RESET-RISK: 512 flops, unreset like vec_regfile -- a program writes a
+        // predicate before reading it, so reading an unwritten one sees stale.
+        if (wb_valid && (mode != M_TREE) && wb_cmp) begin
             for (pg = 0; pg < 16; pg = pg + 1)
                 if (pred_inph[pg] && wb_tmask[pg])
                     preg[wb_pr][wb_chunk*16 + pg] <= pred_sl[pg];
@@ -512,7 +530,7 @@ module vec_lanes #(
     reg meta_any;
     always @(*) begin
         meta_any = |tailv;
-        for (mj = 1; mj <= 56; mj = mj + 1) meta_any = meta_any | meta[mj][MW-1];
+        for (mj = 1; mj <= MDEP; mj = mj + 1) meta_any = meta_any | meta[mj][MW-1];
     end
     assign pipe_empty = !meta_any && !d_valid && !iss_valid;
 

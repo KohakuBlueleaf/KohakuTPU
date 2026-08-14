@@ -1,4 +1,5 @@
-// The vector ALU: one E8M15 lane, three DSPs, II = 1, latency 14.
+// The vector ALU: one E8M15 lane, three DSPs, II = 1, latency 14, or 15 at
+// PIPE_MUX=1 -- vec_lanes' ALAT tracks it and every tap there moves with it.
 // Design and the three DSP bit maps: docs/compute/vector-core.md s3.1, s3.2, s4.3.
 //
 //     S1 E8 M15,  sig = {1'b1, M}  -- 16 bits, ALWAYS normalised
@@ -44,8 +45,17 @@
 
 `default_nettype none
 
+// PIPE_MUX=1 SHIPS; vec_lanes passes it down, so this default decides only a
+// standalone build. Value-less, because xvlog.bat splits arguments on '='.
+`ifdef VEC_NO_PIPE_MUX
+  `define PM_INIT 0
+`else
+  `define PM_INIT 1
+`endif
+
 module vec_alu #(
-    parameter integer MODEL = 0
+    parameter integer MODEL = 0,
+    parameter integer PIPE_MUX = `PM_INIT
 )(
     input  wire        clk,
     input  wire        rst,
@@ -82,11 +92,13 @@ module vec_alu #(
     reg        s1_az, s1_bz;
     // vpipe[k] is readable in cycle k+1, so the instruction sampled at cycle 0
     // is at vpipe[12] during cycle 13, the cycle registered into `out`.
-    reg [12:0] vpipe;
+    // One deeper under PIPE_MUX: the registered operand mux adds a stage, so the
+    // whole datapath is 15 cycles rather than 14.
+    reg [13:0] vpipe;
 
     always @(posedge clk) begin
-        if (rst) vpipe <= 13'd0;
-        else     vpipe <= {vpipe[11:0], in_valid};
+        if (rst) vpipe <= 14'd0;
+        else     vpipe <= {vpipe[12:0], in_valid};
         s1_op <= op;
         s1_a  <= a;
         s1_b  <= b;
@@ -127,9 +139,30 @@ module vec_alu #(
               : (s1_op == OP_CMPEQ) ? (cmp_eq & ~cmp_nan)
               : 1'b0;
 
-    wire is_poly = (s1_op == OP_EXP2) | (s1_op == OP_LOG2)
-                 | (s1_op == OP_INV)  | (s1_op == OP_RSQRT);
-    wire is_cmp  = (s1_op == OP_CMPLT) | (s1_op == OP_CMPGT) | (s1_op == OP_CMPEQ);
+    // Pre-mux signals, registered under PIPE_MUX to cross the new stage with the
+    // operands. The mux and compare keep the unregistered ones.
+    reg  [4:0]  opD_r;
+    reg         raD_s_r, predD_r;
+    reg  [7:0]  raD_e_r;
+    reg  [14:0] raD_m_r;
+    always @(posedge clk) begin
+        opD_r <= s1_op; raD_s_r <= ra_s; raD_e_r <= ra_e;
+        raD_m_r <= ra_m; predD_r <= pred;
+    end
+    wire [4:0]  opD   = (PIPE_MUX != 0) ? opD_r   : s1_op;
+    wire        raD_s = (PIPE_MUX != 0) ? raD_s_r : ra_s;
+    wire [7:0]  raD_e = (PIPE_MUX != 0) ? raD_e_r : ra_e;
+    wire [14:0] raD_m = (PIPE_MUX != 0) ? raD_m_r : ra_m;
+    wire        predD = (PIPE_MUX != 0) ? predD_r : pred;
+
+    wire raD_z = (raD_e == 8'd0);
+    wire raD_x = (raD_e == 8'hFF);
+    wire raD_n = raD_x &  (|raD_m);
+    wire raD_i = raD_x & ~(|raD_m);
+
+    wire is_poly = (opD == OP_EXP2) | (opD == OP_LOG2)
+                 | (opD == OP_INV)  | (opD == OP_RSQRT);
+    wire is_cmp  = (opD == OP_CMPLT) | (opD == OP_CMPGT) | (opD == OP_CMPEQ);
 
     // ---- operand selection ----------------------------------------------
     // va feeds the multiplier and the exponent path, vb is 1.0 unless this is a
@@ -163,16 +196,28 @@ module vec_alu #(
         endcase
     end
 
-    wire [7:0]  va_e = va[22:15], vb_e = vb[22:15], vc_e = vc[22:15];
-    wire [15:0] va_g = {1'b1, va[14:0]};
-    wire [15:0] vb_g = {1'b1, vb[14:0]};
-    wire [15:0] vc_g = {1'b1, vc[14:0]};
+    // PIPE_MUX=1 is a TIMING PROBE ONLY, one cycle off against the delay lines:
+    // it cuts s1_b -> compare -> va mux -> DSP preadd, the 377 MHz limiter.
+    reg [23:0] va_r, vb_r, vc_r;
+    always @(posedge clk) begin va_r <= va; vb_r <= vb; vc_r <= vc; end
+    wire [23:0] vaU = (PIPE_MUX != 0) ? va_r : va;
+    wire [23:0] vbU = (PIPE_MUX != 0) ? vb_r : vb;
+    wire [23:0] vcU = (PIPE_MUX != 0) ? vc_r : vc;
+
+    wire [7:0]  va_e = vaU[22:15], vb_e = vbU[22:15], vc_e = vcU[22:15];
+    wire [15:0] va_g = {1'b1, vaU[14:0]};
+    wire [15:0] vb_g = {1'b1, vbU[14:0]};
+    wire [15:0] vc_g = {1'b1, vcU[14:0]};
     wire        vc_z = (vc_e == 8'd0);
 
     // Same values as `(va_e == 0)` / `(vb_e == 0)`, selected from the flags
     // registered above rather than compared after the mux. E8_ONE's exponent is
     // 7F and E8_ZERO's is 0, so a compare result yields ~pred.
     reg va_z, vb_z;
+    reg va_zr, vb_zr;
+    always @(posedge clk) begin va_zr <= va_z; vb_zr <= vb_z; end
+    wire vaUz = (PIPE_MUX != 0) ? va_zr : va_z;
+    wire vbUz = (PIPE_MUX != 0) ? vb_zr : vb_z;
     always @(*) begin
         case (s1_op)
             OP_MAX:   va_z = cmp_lt ? s1_bz : s1_az;
@@ -193,12 +238,12 @@ module vec_alu #(
     // so a zero product forces both exponents to their minimum. The shift amount
     // is then deeply negative, which IS the "addend dominates" condition, and the
     // addend passes through unchanged.
-    wire       pz     = va_z | vb_z;
+    wire       pz     = vaUz | vbUz;
     wire [7:0] ea_eff = pz ? 8'd1 : va_e;
     wire [7:0] eb_eff = pz ? 8'd1 : vb_e;
 
-    wire sign_ab = va[23] ^ vb[23];
-    wire fma_neg = sign_ab ^ vc[23];
+    wire sign_ab = vaU[23] ^ vbU[23];
+    wire fma_neg = sign_ab ^ vcU[23];
 
     // x - x is +0, not -0. The sign otherwise comes from whichever term won, and
     // on exact cancellation neither did. Needs both terms genuinely nonzero: an
@@ -206,52 +251,63 @@ module vec_alu #(
     wire cancels = fma_neg & ~pz & ~vc_z;
 
     // ---- specials --------------------------------------------------------
-    wire va_n = (va_e == 8'hFF) &  (|va[14:0]);
-    wire vb_n = (vb_e == 8'hFF) &  (|vb[14:0]);
-    wire vc_n = (vc_e == 8'hFF) &  (|vc[14:0]);
-    wire va_i = (va_e == 8'hFF) & ~(|va[14:0]);
-    wire vb_i = (vb_e == 8'hFF) & ~(|vb[14:0]);
-    wire vc_i = (vc_e == 8'hFF) & ~(|vc[14:0]);
+    wire va_n = (va_e == 8'hFF) &  (|vaU[14:0]);
+    wire vb_n = (vb_e == 8'hFF) &  (|vbU[14:0]);
+    wire vc_n = (vc_e == 8'hFF) &  (|vcU[14:0]);
+    wire va_i = (va_e == 8'hFF) & ~(|vaU[14:0]);
+    wire vb_i = (vb_e == 8'hFF) & ~(|vbU[14:0]);
+    wire vc_i = (vc_e == 8'hFF) & ~(|vcU[14:0]);
 
-    wire p_nan = va_n | vb_n | (va_i & vb_z) | (va_z & vb_i);
+    wire p_nan = va_n | vb_n | (va_i & vbUz) | (vaUz & vb_i);
     wire p_inf = (va_i | vb_i) & ~p_nan;
-    wire f_nan = p_nan | vc_n | (p_inf & vc_i & (sign_ab != vc[23]));
+    wire f_nan = p_nan | vc_n | (p_inf & vc_i & (sign_ab != vcU[23]));
     wire f_inf = (p_inf | vc_i) & ~f_nan;
 
-    reg spec_nan, spec_inf, spec_zero, spec_sign;
+    // vec_cu's limiter is s1_b_reg -> u_d_inf's SRL, 9 levels: this case block.
+    // Free to register -- the delay lines below give back the stage it costs.
+    reg spec_nan_c, spec_inf_c, spec_zero_c, spec_sign_c;
+    // shreg_extract=no or the SRL swallows these back and the 9 levels stay put.
+    (* shreg_extract = "no" *) reg spec_nan, spec_inf, spec_zero, spec_sign;
+    always @(posedge clk) begin
+        spec_nan  <= spec_nan_c;
+        spec_inf  <= spec_inf_c;
+        spec_zero <= spec_zero_c;
+        spec_sign <= spec_sign_c;
+    end
+
     always @(*) begin
-        case (s1_op)
+        case (opD)
             OP_EXP2: begin
                 // e_a > 134 is |x| >= 128, which leaves E8's exponent range in
                 // one direction or the other; which one is the sign of x.
-                spec_nan  = ra_n;
-                spec_inf  = ~ra_n & ~ra_s & (ra_i | (ra_e > 8'd134));
-                spec_zero = ~ra_n &  ra_s & (ra_i | (ra_e > 8'd134));
-                spec_sign = 1'b0;
+                spec_nan_c  = raD_n;
+                spec_inf_c  = ~raD_n & ~raD_s & (raD_i | (raD_e > 8'd134));
+                spec_zero_c = ~raD_n &  raD_s & (raD_i | (raD_e > 8'd134));
+                spec_sign_c = 1'b0;
             end
             OP_LOG2: begin
-                spec_nan  = ra_n | (ra_s & ~ra_z);
-                spec_inf  = ~ra_n & ~(ra_s & ~ra_z) & (ra_i | ra_z);
-                spec_zero = 1'b0;
-                spec_sign = ra_z;                     // log2(0) = -inf
+                spec_nan_c  = raD_n | (raD_s & ~raD_z);
+                spec_inf_c  = ~raD_n & ~(raD_s & ~raD_z) & (raD_i | raD_z);
+                spec_zero_c = 1'b0;
+                spec_sign_c = raD_z;                    // log2(0) = -inf
             end
             OP_INV: begin
-                spec_nan  = ra_n;
-                spec_inf  = ~ra_n & ra_z;
-                spec_zero = ~ra_n & ra_i;
-                spec_sign = ra_s;
+                spec_nan_c  = raD_n;
+                spec_inf_c  = ~raD_n & raD_z;
+                spec_zero_c = ~raD_n & raD_i;
+                spec_sign_c = raD_s;
             end
             OP_RSQRT: begin
-                spec_nan  = ra_n | (ra_s & ~ra_z);
-                spec_inf  = ~ra_n & ~(ra_s & ~ra_z) & ra_z;
-                spec_zero = ~ra_n & ~(ra_s & ~ra_z) & ra_i;
-                spec_sign = 1'b0;
+                spec_nan_c  = raD_n | (raD_s & ~raD_z);
+                spec_inf_c  = ~raD_n & ~(raD_s & ~raD_z) & raD_z;
+                spec_zero_c = ~raD_n & ~(raD_s & ~raD_z) & raD_i;
+                spec_sign_c = 1'b0;
             end
             default: begin                            // the FMA family
-                spec_nan  = f_nan;
-                spec_inf  = f_inf;
-                spec_zero = 1'b0;
-                spec_sign = p_inf ? sign_ab : vc[23];
+                spec_nan_c  = f_nan;
+                spec_inf_c  = f_inf;
+                spec_zero_c = 1'b0;
+                spec_sign_c = p_inf ? sign_ab : vcU[23];
             end
         endcase
     end
@@ -264,18 +320,18 @@ module vec_alu #(
     //
     // Split across two cycles with the seam after the shift -- whole, this was
     // the critical path of the entire ALU.
-    wire [7:0]  rr_raw  = 8'd134 - ra_e;
-    wire [5:0]  rr_sh   = (ra_e > 8'd134)   ? 6'd0
+    wire [7:0]  rr_raw  = 8'd134 - raD_e;
+    wire [5:0]  rr_sh   = (raD_e > 8'd134)  ? 6'd0
                         : (rr_raw > 8'd26)  ? 6'd26 : rr_raw[5:0];
-    wire [25:0] rr_out  = {1'b1, ra_m, 10'b0} >> rr_sh;
+    wire [25:0] rr_out  = {1'b1, raD_m, 10'b0} >> rr_sh;
 
-    wire [1:0]  fsel    = (s1_op == OP_EXP2) ? 2'd0
-                        : (s1_op == OP_LOG2) ? 2'd1
-                        : (s1_op == OP_INV)  ? 2'd2 : 2'd3;
+    wire [1:0]  fsel    = (opD == OP_EXP2) ? 2'd0
+                        : (opD == OP_LOG2) ? 2'd1
+                        : (opD == OP_INV)  ? 2'd2 : 2'd3;
 
     // rsqrt: K = floor((e_a-127)/2). An arithmetic shift is floor for both
     // signs, which is what makes odd and even exponents one expression.
-    wire signed [9:0] rs_k = ($signed({2'b0, ra_e}) - 10'sd127) >>> 1;
+    wire signed [9:0] rs_k = ($signed({2'b0, raD_e}) - 10'sd127) >>> 1;
 
     // ---- cycle 2 : finish the reduction, form the table address ----------
     wire [25:0] r2_out;
@@ -283,11 +339,11 @@ module vec_alu #(
     wire [7:0]  r2_e;
     wire        r2_s, r2_exp2, r2_rsq;
     vec_delay #(.W(26), .D(1)) u_d_rr (.clk(clk), .d(rr_out), .q(r2_out));
-    vec_delay #(.W(15), .D(1)) u_d_rm (.clk(clk), .d(ra_m),   .q(r2_m));
-    vec_delay #(.W(8),  .D(1)) u_d_re (.clk(clk), .d(ra_e),   .q(r2_e));
-    vec_delay #(.W(1),  .D(1)) u_d_rs (.clk(clk), .d(ra_s),   .q(r2_s));
-    vec_delay #(.W(1),  .D(1)) u_d_x2 (.clk(clk), .d(s1_op == OP_EXP2),  .q(r2_exp2));
-    vec_delay #(.W(1),  .D(1)) u_d_rq (.clk(clk), .d(s1_op == OP_RSQRT), .q(r2_rsq));
+    vec_delay #(.W(15), .D(1)) u_d_rm (.clk(clk), .d(raD_m),  .q(r2_m));
+    vec_delay #(.W(8),  .D(1)) u_d_re (.clk(clk), .d(raD_e),  .q(r2_e));
+    vec_delay #(.W(1),  .D(1)) u_d_rs (.clk(clk), .d(raD_s),  .q(r2_s));
+    vec_delay #(.W(1),  .D(1)) u_d_x2 (.clk(clk), .d(opD == OP_EXP2),  .q(r2_exp2));
+    vec_delay #(.W(1),  .D(1)) u_d_rq (.clk(clk), .d(opD == OP_RSQRT), .q(r2_rsq));
 
     // Round and negate in PARALLEL, not in series: -(R+g) is ~R + ~g for a
     // one-bit g. Negating the whole s8.17 word IS the floor/frac split for a
@@ -343,7 +399,7 @@ module vec_alu #(
     vec_delay #(.W(2),  .D(1)) u_d_fs3(.clk(clk), .d(d2_fsel),  .q(d3_fsel));
     vec_delay #(.W(12), .D(1)) u_d_u3 (.clk(clk), .d(tab_u),    .q(d3_u));
     vec_delay #(.W(1),  .D(1)) u_d_id (.clk(clk), .d(tab_ident), .q(d3_ident));
-    vec_delay #(.W(8),  .D(2)) u_d_ea (.clk(clk), .d(ra_e),     .q(d3_ea));
+    vec_delay #(.W(8),  .D(2)) u_d_ea (.clk(clk), .d(raD_e),    .q(d3_ea));
 
     // u_d_ix is GONE: the ROM is synchronous, so its own address register is
     // that stage. tab_idx goes in raw and c0/c1/c2 still land on cycle 3.
@@ -387,7 +443,7 @@ module vec_alu #(
     wire [8:0]  d4_k;
     wire [9:0]  d4_rsk;
     vec_delay #(.W(8),  .D(3)) u_d_ec4 (.clk(clk), .d(vc_e),   .q(d4_ec));
-    vec_delay #(.W(8),  .D(3)) u_d_ea4 (.clk(clk), .d(ra_e),   .q(d4_ea));
+    vec_delay #(.W(8),  .D(3)) u_d_ea4 (.clk(clk), .d(raD_e),  .q(d4_ea));
     vec_delay #(.W(2),  .D(3)) u_d_fs4 (.clk(clk), .d(fsel),   .q(d4_fsel));
     vec_delay #(.W(1),  .D(3)) u_d_pl4 (.clk(clk), .d(is_poly), .q(d4_poly));
     vec_delay #(.W(1),  .D(3)) u_d_cz4 (.clk(clk), .d(vc_z),   .q(d4_cz));
@@ -491,8 +547,9 @@ module vec_alu #(
     vec_delay #(.W(1),  .D(9)) u_d_plA(.clk(clk), .d(is_poly), .q(dA_poly));
     vec_delay #(.W(1),  .D(9)) u_d_ngA(.clk(clk), .d(fma_neg), .q(dA_neg));
     vec_delay #(.W(1),  .D(9)) u_d_sbA(.clk(clk), .d(sign_ab), .q(dA_sab));
-    vec_delay #(.W(1),  .D(9)) u_d_scA(.clk(clk), .d(vc[23]),  .q(dA_scc));
-    vec_delay #(.W(1),  .D(9)) u_d_ssA(.clk(clk), .d(spec_sign), .q(dA_ssign));
+    vec_delay #(.W(1),  .D(9)) u_d_scA(.clk(clk), .d(vcU[23]),  .q(dA_scc));
+    // D one shorter: spec_* is now registered, so this line gives back the flop.
+    vec_delay #(.W(1),  .D(8)) u_d_ssA(.clk(clk), .d(spec_sign), .q(dA_ssign));
     vec_delay #(.W(2),  .D(9)) u_d_fsA(.clk(clk), .d(fsel),    .q(dA_fsel));
     vec_delay #(.W(1),  .D(6)) u_d_snA(.clk(clk), .d(|s_amt),  .q(dA_snz));
     vec_delay #(.W(1),  .D(5)) u_d_stA(.clk(clk), .d(algn_stk), .q(dA_stk));
@@ -561,19 +618,21 @@ module vec_alu #(
 
     wire d12_nan, d12_inf, d12_zero, d12_ssign, d12_pred, d12_canc;
     vec_delay #(.W(1), .D(12)) u_d_can (.clk(clk), .d(cancels),   .q(d12_canc));
-    vec_delay #(.W(1), .D(12)) u_d_nan (.clk(clk), .d(spec_nan),  .q(d12_nan));
-    vec_delay #(.W(1), .D(12)) u_d_inf (.clk(clk), .d(spec_inf),  .q(d12_inf));
-    vec_delay #(.W(1), .D(12)) u_d_zro (.clk(clk), .d(spec_zero), .q(d12_zero));
-    vec_delay #(.W(1), .D(12)) u_d_ssg (.clk(clk), .d(spec_sign), .q(d12_ssign));
-    vec_delay #(.W(1), .D(12)) u_d_prd (.clk(clk), .d(pred & is_cmp), .q(d12_pred));
+    vec_delay #(.W(1), .D(11)) u_d_nan (.clk(clk), .d(spec_nan),  .q(d12_nan));
+    vec_delay #(.W(1), .D(11)) u_d_inf (.clk(clk), .d(spec_inf),  .q(d12_inf));
+    vec_delay #(.W(1), .D(11)) u_d_zro (.clk(clk), .d(spec_zero), .q(d12_zero));
+    // 11 like nan/inf/zero: spec_sign is registered too, and at 12 it arrived a
+    // cycle late -- infinity and zero came out with the wrong sign.
+    vec_delay #(.W(1), .D(11)) u_d_ssg (.clk(clk), .d(spec_sign), .q(d12_ssign));
+    vec_delay #(.W(1), .D(12)) u_d_prd (.clk(clk), .d(predD & is_cmp), .q(d12_pred));
 
     always @(posedge clk) begin
+        // `out`/`out_pred` are not reset: `out_valid` qualifies them, and the
+        // measured PIPE_MUX path ENDED at out_reg's reset pin.
         if (rst) begin
             out_valid <= 1'b0;
-            out       <= 24'd0;
-            out_pred  <= 1'b0;
         end else begin
-            out_valid <= vpipe[12];
+            out_valid <= (PIPE_MUX != 0) ? vpipe[13] : vpipe[12];
             out_pred  <= d12_pred;
             if (d12_nan)                 out <= E8_NAN;
             else if (d12_inf)            out <= {d12_ssign, 8'hFF, 15'd0};

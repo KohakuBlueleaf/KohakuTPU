@@ -163,9 +163,9 @@ module mag_link #(
     assign s_axis_tready = 1'b1;
 
     always @(posedge clk) begin
+        // `r_valid` only: it qualifies the rest.
         if (!resetn) begin
-            r_data <= {LINK_W{1'b0}}; r_user <= {TUSER_W{1'b0}};
-            r_last <= 1'b0; r_valid <= 1'b0;
+            r_valid <= 1'b0;
         end else begin
             r_data  <= s_axis_tdata;
             r_user  <= s_axis_tuser;
@@ -250,9 +250,9 @@ module mag_link #(
     assign tx1_dready = (tst == T_DATA) && (tsel == 1'b1);
 
     always @(posedge clk) begin
+        // Valids only: `q0_hdr`/`q1_hdr` are qualified by them.
         if (!resetn) begin
             q0_val <= 1'b0; q1_val <= 1'b0;
-            q0_hdr <= {TUSER_W{1'b0}}; q1_hdr <= {TUSER_W{1'b0}};
         end else begin
             if (grant0) q0_val <= 1'b0;
             if (grant1) q1_val <= 1'b0;
@@ -306,12 +306,11 @@ module mag_link #(
                             ? {{(CW-8){1'b0}}, 8'hFF} : ret_sel;
 
     always @(posedge clk) begin
+        // FSM, counters and `tvalid` only. `thdr` and the tdata/tuser/tlast
+        // payload are qualified by `tvalid`, which AXI-Stream requires anyway.
         if (!resetn) begin
             tst <= T_IDLE; tsel <= 1'b0; tleft <= 17'd0; csel_r <= 1'b0;
-            thdr <= {TUSER_W{1'b0}}; thdr_first <= 1'b0; csend <= {CW{1'b0}};
-            m_axis_tdata  <= {LINK_W{1'b0}};
-            m_axis_tuser  <= {TUSER_W{1'b0}};
-            m_axis_tlast  <= 1'b0;
+            thdr_first <= 1'b0; csend <= {CW{1'b0}};
             m_axis_tvalid <= 1'b0;
         end else begin
             m_axis_tvalid <= 1'b0;

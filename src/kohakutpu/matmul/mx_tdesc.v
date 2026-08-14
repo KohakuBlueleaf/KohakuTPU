@@ -154,11 +154,9 @@ module mx_tdesc #(
     assign active = run;
 
     always @(posedge clk) begin
+        // Only `run`: `start` clears the walker below at :163.
         if (rst) begin
             run <= 1'b0;
-            for (i = 0; i < NDIM; i = i + 1) begin
-                idx[i] <= {CW{1'b0}}; psum[i] <= {SW{1'b0}}; apsum[i] <= {XW{1'b0}};
-            end
         end else if (start) begin
             run <= 1'b1;
             for (i = 0; i < NDIM; i = i + 1) begin

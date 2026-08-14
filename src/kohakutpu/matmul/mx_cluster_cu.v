@@ -89,9 +89,22 @@ module mx_cluster_cu #(
     parameter         TILE_PRIM  = "block",
     // The receive queue is 288 x RECV_DEPTH and the largest single item in
     // noc_cu_base. Block RAM by default; a knob so the trade can be measured.
-    parameter         RECV_MEM   = "block"
+    parameter         RECV_MEM   = "block",
+    // 1 runs L1 and the DSP cascade on `clk2x`. Driven from mx_cluster_cu_pump,
+    // which derives `clk` from `clk2x` with a BUFGCE_DIV; 0 ignores clk2x.
+    parameter integer PUMP       = 0,
+    // `clk` keeps the NoC local port; everything else runs on `unit_clk`, one
+    // noc_local_cdc per direction. 0 elaborates neither and aliases the clock.
+    parameter integer UNIT_CDC   = 0,
+    // xpm_fifo_async's floor is 16, and 32 is +15 LUT. Throughput, not
+    // correctness: the local link retries.
+    parameter integer CDC_DEPTH  = 16
 )(
     input  wire                   clk,
+    // Tie low when PUMP is 0. It reaches nothing.
+    input  wire                   clk2x,
+    // Tie low when UNIT_CDC is 0. It reaches nothing.
+    input  wire                   unit_clk,
     input  wire                   resetn,
 
     // ---- the cluster's NoC local ----
@@ -170,6 +183,50 @@ module mx_cluster_cu #(
     wire                  tx_valid, tx_ready;
     wire                  sg_take = sg_valid && tx_ready;
 
+    // ---- the unit's own clock, and the crossing to the NoC's ---------------
+    // `bp_*` is noc_cu_base's port face; at UNIT_CDC 0 it IS the boundary.
+    wire                  u_clk, u_resetn;
+    wire [FLIT_WIDTH-1:0] bp_in_data, bp_out_data;
+    wire                  bp_in_valid, bp_out_valid, bp_out_busy;
+    wire                  port_in_busy;
+
+    generate if (UNIT_CDC) begin : g_ucdc
+        assign u_clk = unit_clk;
+
+        // `resetn` is released on the NoC clock, so its edge means nothing
+        // here. Async-assert, sync-deassert, as mag_link_cdc does.
+        reg [1:0] ur_q;
+        always @(posedge unit_clk or negedge resetn)
+            if (!resetn) ur_q <= 2'b00;
+            else         ur_q <= {ur_q[0], 1'b1};
+        assign u_resetn = ur_q[1];
+
+        // An ACK is dropped at the NoC face, so it never costs a FIFO slot.
+        noc_local_cdc #(.FLIT_WIDTH(FLIT_WIDTH), .DEPTH(CDC_DEPTH)) u_cdc_in (
+            .wr_clk(clk), .wr_resetn(resetn),
+            .i_data(noc_in_data), .i_valid(noc_in_valid && !in_ack),
+            .i_busy(port_in_busy),
+            .rd_clk(u_clk), .rd_resetn(u_resetn),
+            .o_data(bp_in_data), .o_valid(bp_in_valid), .o_busy(base_in_busy)
+        );
+
+        noc_local_cdc #(.FLIT_WIDTH(FLIT_WIDTH), .DEPTH(CDC_DEPTH)) u_cdc_out (
+            .wr_clk(u_clk), .wr_resetn(u_resetn),
+            .i_data(bp_out_data), .i_valid(bp_out_valid), .i_busy(bp_out_busy),
+            .rd_clk(clk), .rd_resetn(resetn),
+            .o_data(noc_out_data), .o_valid(noc_out_valid), .o_busy(noc_out_busy)
+        );
+    end else begin : g_nocdc
+        assign u_clk        = clk;
+        assign u_resetn     = resetn;
+        assign bp_in_data   = noc_in_data;
+        assign bp_in_valid  = noc_in_valid && !in_ack;
+        assign port_in_busy = base_in_busy;
+        assign noc_out_data  = bp_out_data;
+        assign noc_out_valid = bp_out_valid;
+        assign bp_out_busy   = noc_out_busy;
+    end endgenerate
+
     noc_cu_base #(
         .FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH),
         .POS_X(CU_X), .POS_Y(CU_Y),
@@ -179,11 +236,11 @@ module mx_cluster_cu #(
         .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
         .RECV_MEM(RECV_MEM)
     ) u_base (
-        .clk(clk), .resetn(resetn),
-        .noc_in_data(noc_in_data), .noc_in_valid(noc_in_valid && !in_ack),
+        .clk(u_clk), .resetn(u_resetn),
+        .noc_in_data(bp_in_data), .noc_in_valid(bp_in_valid),
         .noc_in_busy(base_in_busy),
-        .noc_out_data(noc_out_data), .noc_out_valid(noc_out_valid),
-        .noc_out_busy(noc_out_busy),
+        .noc_out_data(bp_out_data), .noc_out_valid(bp_out_valid),
+        .noc_out_busy(bp_out_busy),
         .inst_flit(inst_flit), .inst_valid(inst_valid), .inst_ready(inst_ready),
         .exec_done(exec_done), .exec_result(exec_result), .exec_fault(fault_r),
         .dbg_ctr({ctr_comp, ctr_fill}),
@@ -192,13 +249,15 @@ module mx_cluster_cu #(
         .inst_space(), .busy()
     );
 
-    assign noc_in_busy = in_ack ? 1'b0 : base_in_busy;
+    assign noc_in_busy = in_ack ? 1'b0 : port_in_busy;
 
     // `n` is SIXTEEN bits: a 512-sub-tile resident tile means a DRAIN of 512,
     // and an 8-bit field wraps at 256, silently re-draining the start of the
     // tile. Fields below it moved down rather than being overlapped with gm/gn.
     wire [3:0]  i_op   = inst_flit[255 -: 4];
-    wire [33:0] i_addr = inst_flit[251 -: 34];
+    // High bits in a TAIL field: widening [251 -: 34] would shove every field
+    // below it down six. All-zero is mesh 0 DRAM, so old instructions still work.
+    wire [39:0] i_addr = {inst_flit[68 -: 6], inst_flit[251 -: 34]};
     wire [15:0] i_n    = inst_flit[217 -: 16];
     wire        i_sel  = inst_flit[201];
     wire [7:0]  i_gm   = inst_flit[199 -: 8];
@@ -347,10 +406,16 @@ module mx_cluster_cu #(
     reg  [PW-257:0] pk_hi;
     wire          peer_open;
 
+    // buf 2 IS the accumulator-float mode. A drain to L1 emits FP16 and L1
+    // takes int7+E5M3, so cluster to cluster is buf 2 or it is a type error.
+    wire node_send = dnode_r && (dbuf_r == BUF_PEER);
+
+    // `peer_out` is docs/isa/cluster.md s10, not built yet.
+    generate if (PUMP == 0) begin : g_p1
     mx_cluster_node #(.TILES(TILES), .GA(GA), .GB(GB),
                       .ACC_MW(ACC_MW), .MODEL(MODEL), .L1_PRIM(L1_PRIM),
                       .TILE_PRIM(TILE_PRIM)) u_node (
-        .clk(clk), .rst(!resetn),
+        .clk(u_clk), .rst(!u_resetn),
         .l1_we(l1_we), .l1_sel(l1_sel), .l1_addr(l1_addr), .l1_data(l1_data),
         .gemm_start(gemm_start), .gemm_gm(gm_r), .gemm_gn(gn_r),
         .gemm_nk(nk_r), .gemm_anchor(anch_r), .gemm_acc(acc_r),
@@ -358,20 +423,35 @@ module mx_cluster_cu #(
         .gemm_abank(abank_r), .gemm_bbank(bbank_r), .gemm_emit(emit_r),
         .gemm_busy(gemm_busy), .sweep_busy(sweep_busy),
         .drain_start(drain_start), .drain_n(drain_n), .drain_fused(fuse_r),
-        // buf 2 IS the accumulator-float mode; nothing else selects it. A drain
-        // to L1 emits FP16 sub-tiles and L1 takes int7+E5M3, so cluster to
-        // cluster is buf 2 or it is a type error -- one field, and no second
-        // bit that can disagree with it.
-        .drain_send(dnode_r && (dbuf_r == BUF_PEER)),
+        .drain_send(node_send),
         .drain_busy(drain_busy),
         .drain_data(drain_data), .drain_idx(drain_idx), .drain_valid(drain_valid),
         .drain_take(drain_take),
         .peer_open(peer_open), .peer_cmd(pk_pend), .peer_idx(pk_idx),
         .peer_data({pk_hi, pk_lo}), .peer_ready(peer_ready),
-        // The SEND direction is the node-addressed drain of docs/isa/cluster.md
-        // s10, which is not built yet.
         .peer_out(), .peer_out_valid()
     );
+    end else begin : g_p2
+    mx_cluster_node_pump #(.TILES(TILES), .GA(GA), .GB(GB),
+                      .ACC_MW(ACC_MW), .MODEL(MODEL), .L1_PRIM(L1_PRIM),
+                      .TILE_PRIM(TILE_PRIM)) u_node (
+        .clk1x(u_clk), .clk2x(clk2x), .rst(!u_resetn),
+        .l1_we(l1_we), .l1_sel(l1_sel), .l1_addr(l1_addr), .l1_data(l1_data),
+        .gemm_start(gemm_start), .gemm_gm(gm_r), .gemm_gn(gn_r),
+        .gemm_nk(nk_r), .gemm_anchor(anch_r), .gemm_acc(acc_r),
+        .gemm_aoff(aoff_r), .gemm_boff(boff_r),
+        .gemm_abank(abank_r), .gemm_bbank(bbank_r), .gemm_emit(emit_r),
+        .gemm_busy(gemm_busy), .sweep_busy(sweep_busy),
+        .drain_start(drain_start), .drain_n(drain_n), .drain_fused(fuse_r),
+        .drain_send(node_send),
+        .drain_busy(drain_busy),
+        .drain_data(drain_data), .drain_idx(drain_idx), .drain_valid(drain_valid),
+        .drain_take(drain_take),
+        .peer_open(peer_open), .peer_cmd(pk_pend), .peer_idx(pk_idx),
+        .peer_data({pk_hi, pk_lo}), .peer_ready(peer_ready),
+        .peer_out(), .peer_out_valid()
+    );
+    end endgenerate
 
     // ================================================ fill / sequencer
     localparam [3:0] S_IDLE = 4'd0, S_FILL = 4'd1,
@@ -383,8 +463,11 @@ module mx_cluster_cu #(
     // is nothing left to run ahead. The receive FIFO bounds how far MAG may run
     // ahead of the receiver, as backpressure rather than as a guessed constant.
 
+    // ENCODING PINNED: the gate's guard on S_IDLE made Vivado extract one-hot,
+    // putting `drain_busy` on every state bit's enable at 296 -> 187 MHz.
+    (* fsm_encoding = "none" *)
     reg [3:0]  st;
-    reg [33:0] base_r;
+    reg [39:0] base_r;
     // req_ent counts entries REQUESTED, rcv_ent entries COMPLETED; neither is
     // an L1 address, the flit carries that. `n_r` is 16 bits because DRAIN
     // counts sub-tiles and the resident tile holds 512; FILL's own count fits 8
@@ -431,7 +514,7 @@ module mx_cluster_cu #(
     // own. flags[6] STREAM marks this a descriptor rather than a single fetch,
     // and `cnt` is how many consecutive entries it covers.
     function [FLIT_WIDTH-1:0] rd_req;
-        input [33:0] adr;
+        input [39:0] adr;
         input        blay;
         input        quant;     // 0 = the operand is already MXFP7
         input [7:0]  ent;
@@ -442,7 +525,7 @@ module mx_cluster_cu #(
             rd_req = { MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
                        CU_X[POS_WIDTH-1:0], CU_Y[POS_WIDTH-1:0],
                        T_MEM_RD_REQ, ent, 1'b1, 3'b000,
-                       adr, 6'd0, 8'd3, {1'b0, 1'b1, blay, quant, 4'b0000},
+                       adr, 8'd3, {1'b0, 1'b1, blay, quant, 4'b0000},
                        cnt, peers, nd, 166'd0 };
         end
     endfunction
@@ -450,8 +533,8 @@ module mx_cluster_cu #(
     // Memory against compute, so a gap in the total has a cause rather than a
     // size. S_FILL is waiting on operands; gemm/sweep is the array running.
     reg [31:0] ctr_fill, ctr_comp;
-    always @(posedge clk) begin
-        if (!resetn) begin
+    always @(posedge u_clk) begin
+        if (!u_resetn) begin
             ctr_fill <= 32'd0; ctr_comp <= 32'd0;
         end else begin
             if (st == S_FILL)            ctr_fill <= ctr_fill + 32'd1;
@@ -538,13 +621,13 @@ module mx_cluster_cu #(
     // `gemm_busy`, and late to fall only delays a sweep.
     reg peer_open_r;
     assign peer_open = peer_open_r;
-    always @(posedge clk) begin
-        if (!resetn) peer_open_r <= 1'b0;
+    always @(posedge u_clk) begin
+        if (!u_resetn) peer_open_r <= 1'b0;
         else         peer_open_r <= (cd_run && (cd_buf == BUF_PEER)) || pk_pend;
     end
 
-    always @(posedge clk) begin
-        if (!resetn) begin
+    always @(posedge u_clk) begin
+        if (!u_resetn) begin
             cd_run <= 1'b0; cd_buf <= 8'd0; cd_off <= 16'd0; cd_left <= 9'd0;
             cd_sx <= 0; cd_sy <= 0; cd_ax <= 0; cd_ay <= 0;
             cd_txn <= 8'd0; cd_flg <= 8'd0;
@@ -628,8 +711,8 @@ module mx_cluster_cu #(
     wire [1:0]  pl_word  = pl_data ? cd_off[1:0]  : rword;
 
     integer bi, bk, bj;
-    always @(posedge clk) begin
-        if (!resetn) begin
+    always @(posedge u_clk) begin
+        if (!u_resetn) begin
             l1_we <= 1'b0; l1_sel <= 1'b0; l1_addr <= 16'd0; l1_data <= 928'd0;
             asm_ent <= 9'd0;
         end else begin
@@ -673,8 +756,8 @@ module mx_cluster_cu #(
         end
     end
 
-    always @(posedge clk) begin
-        if (!resetn) begin
+    always @(posedge u_clk) begin
+        if (!u_resetn) begin
             st <= S_IDLE; req_ent <= 8'd0; rcv_ent <= 8'd0;
             inst_ready <= 1'b0;
             exec_done <= 1'b0; exec_result <= 32'd0;
@@ -691,7 +774,7 @@ module mx_cluster_cu #(
             wide_r <= 1'b0;
             aoff_r <= 8'd0; boff_r <= 8'd0; eoff_r <= 8'd0;
             acc_r <= 1'b0; emit_r <= 1'b0; fuse_r <= 1'b0;
-            base_r <= 34'd0; n_r <= 16'd1;
+            base_r <= 40'd0; n_r <= 16'd1;
             peer_r <= 24'd0; npeer_r <= 2'd0; preq_r <= 1'b0;
             nfill <= 16'd0; ngemm <= 16'd0; ndrain <= 16'd0;
         end else begin
@@ -850,7 +933,7 @@ module mx_cluster_cu #(
     reg [WBW:0]          w_len;    // beats in the burst being sent
     reg [15:0]           w_cfirst; // granule index each bank starts at
     reg [15:0]           w_sfirst;
-    reg [33:0]           w_base;
+    reg [39:0]           w_base;
     // The destination, mirrored beside `w_base` and for the same reason: a
     // fused sweep starts emitting long before its DRAIN is decoded, so it is
     // the instruction that produced the sub-tiles that says where they go.
@@ -860,6 +943,9 @@ module mx_cluster_cu #(
     reg [3:0]            w_ackx, w_acky;
     reg [1:0]            w_mesh;
     reg [7:0]            w_fin;
+    // W_DATA holds while the descriptor is on the wire AND while every payload
+    // flit is, so the state cannot say which one `w_flit` is. This can.
+    reg                  w_isdesc;
 
     localparam [1:0] W_IDLE = 2'd0, W_REQ = 2'd1, W_DATA = 2'd2;
 
@@ -912,26 +998,31 @@ module mx_cluster_cu #(
     // the mesh id goes in the reserved header bits. Both are on the descriptor
     // AND every payload flit, because MAG's encapsulator is stateless and the
     // routers interleave bursts from different senders at its port.
-    wire                 w_rem  = w_node && (w_fin != 8'd0);
+    // A MEMORY drain crosses too: `dfin` then names the far mesh's MAG port,
+    // and MAG's encapsulator injects the burst as ordinary local memory writes.
+    wire                 w_rem  = (w_fin != 8'd0);
     wire [7:0]           w_dtxn = w_rem ? w_fin : 8'h02;
     wire [2:0]           w_drsv = w_rem ? {1'b1, w_mesh} : 3'b000;
     wire [255:0]         w_desc =
         w_node ? {w_dbuf, w_base[20:5] + w_sfirst, w_dlen, w_dflag,
                   w_acky, w_ackx, 208'd0}
-               : {w_base + {18'd0, w_sfirst} * 34'd32, 6'd0, w_dlen, 8'd0, 200'd0};
+               // NOC_MEM_ADDR is [255:216], and a sub-tile sits at base + t*32.
+               : {w_base + {{(40-16){1'b0}}, w_sfirst} * 40'd32,
+                  w_dlen, 8'd0, 200'd0};
 
     integer wbi;
-    always @(posedge clk) begin
-        if (!resetn) begin
+    always @(posedge u_clk) begin
+        if (!u_resetn) begin
             w_valid <= 1'b0; w_st <= W_IDLE; w_flit <= {FLIT_WIDTH{1'b0}};
             w_fill <= 0; w_send <= 0; w_len <= 0;
             w_cb <= 1'b0; w_sb <= 1'b0;
-            w_cfirst <= 16'd0; w_sfirst <= 16'd0; w_base <= 34'd0;
+            w_cfirst <= 16'd0; w_sfirst <= 16'd0; w_base <= 40'd0;
             w_node <= 1'b0; w_dx <= 4'd0; w_dy <= 4'd0;
             w_dbuf <= 8'd0; w_dflag <= 8'd0;
             w_ackx <= 4'd0; w_acky <= 4'd0;
-            w_mesh <= 2'd0; w_fin <= 8'd0;
-            for (wbi = 0; wbi < 2*WBURST; wbi = wbi + 1) w_buf[wbi] <= 256'd0;
+            w_mesh <= 2'd0; w_fin <= 8'd0; w_isdesc <= 1'b0;
+            // `w_buf` is NOT reset -- 2*WBURST x 256 flops whose valid extent is
+            // `w_fill`/`w_send`, both of which are.
         end else begin
             if (w_take) w_valid <= 1'b0;
             // The destination comes from whichever instruction produces the
@@ -973,6 +1064,7 @@ module mx_cluster_cu #(
                             CU_X[POS_WIDTH-1:0], CU_Y[POS_WIDTH-1:0],
                             w_dty, w_dtxn, 1'b0, w_drsv, w_desc };
                 w_valid <= 1'b1;
+                w_isdesc <= 1'b1;
                 w_st    <= W_DATA;
             end
             W_DATA: if (w_free) begin
@@ -982,6 +1074,7 @@ module mx_cluster_cu #(
                             (w_send + 1'b1 == w_len), w_drsv,
                             w_buf[{w_sb, w_send[WBW-1:0]}] };
                 w_valid <= 1'b1;
+                w_isdesc <= 1'b0;
                 if (w_send + 1'b1 == w_len) w_st <= W_IDLE;
                 else                        w_send <= w_send + 1'b1;
             end
@@ -997,17 +1090,22 @@ module mx_cluster_cu #(
     // It comes from address arithmetic (an out-of-range part-select, an unsized
     // constant widened past 32 bits), both of which elaborate cleanly. Checked
     // at the producer so the message names the module that built it.
-    always @(posedge clk) begin
-        if (resetn && send_valid && (^send_flit[255 -: 34] === 1'bx))
+    always @(posedge u_clk) begin
+        if (u_resetn && send_valid && (^send_flit[255 -: 40] === 1'bx))
             $display("%0t ERROR mx_cluster_cu: read request address is x", $time);
-        if (resetn && w_valid && (w_st == 2'd2) && (^w_flit[255 -: 34] === 1'bx))
+        if (u_resetn && w_valid && w_isdesc && (^w_flit[255 -: 40] === 1'bx))
             $display("%0t ERROR mx_cluster_cu: write request address is x", $time);
+        // Gated on w_st alone this read as an address x, which sent the search
+        // to the addressing arithmetic for a defect that was in the tile.
+        if (u_resetn && w_valid && !w_isdesc && (^w_flit[255:0] === 1'bx))
+            $display("%0t ERROR mx_cluster_cu: drained sub-tile %0d carries x",
+                     $time, w_sfirst + w_send);
         // ONE assembly register, sufficient only because a single MAG delivers
         // an entry's four words consecutively and a CU_DATA stream is a run. A
         // second server -- multicast, a second MAG, a reordering fetch engine,
         // two senders into one CU -- would interleave two entries into one and
         // produce a plausible wrong tile.
-        if (resetn && pl_valid && (pl_word != 2'd0) && (pl_ent !== asm_ent))
+        if (u_resetn && pl_valid && (pl_word != 2'd0) && (pl_ent !== asm_ent))
             $display("%0t ERROR mx_cluster_cu: word %0d of entry %0d arrived while assembling entry %0d",
                      $time, pl_word, pl_ent, asm_ent);
         // A data flit whose SOURCE is not the open stream's. Every flit carries
@@ -1015,7 +1113,7 @@ module mx_cluster_cu #(
         // and this is why the ack destination gets its own registers: compare
         // against `cd_ax` instead and a redirected burst faults on every flit,
         // which is the one case the redirect exists for.
-        if (resetn && cd_pop && cd_run &&
+        if (u_resetn && cd_pop && cd_run &&
             ((recv_flit[FLIT_WIDTH-2*POS_WIDTH-1 -: POS_WIDTH] !== cd_sx) ||
              (recv_flit[FLIT_WIDTH-3*POS_WIDTH-1 -: POS_WIDTH] !== cd_sy)))
             $display("%0t ERROR mx_cluster_cu: CU_DATA from (%0d,%0d) spliced into the stream open from (%0d,%0d)",
@@ -1026,19 +1124,19 @@ module mx_cluster_cu #(
         // senders interleave into this CU: the second one's descriptor is
         // consumed as the first one's data and both buffers fill with nonsense,
         // which reads as a wrong tile and nothing else.
-        if (resetn && cd_pop && cd_run &&
+        if (u_resetn && cd_pop && cd_run &&
             (recv_flit[FLIT_WIDTH-4*POS_WIDTH-13] !== (cd_left == 9'd1)))
             $display("%0t ERROR mx_cluster_cu: CU_DATA last disagrees with the descriptor's len, %0d flits left",
                      $time, cd_left);
-        if (resetn && cd_pop && !cd_run && (cd_dbuf == BUF_PEER) && cd_doff[0])
+        if (u_resetn && cd_pop && !cd_run && (cd_dbuf == BUF_PEER) && cd_doff[0])
             $display("%0t ERROR mx_cluster_cu: peer stream starts at odd granule %0d -- a sub-tile is two flits",
                      $time, cd_doff);
-        if (resetn && cd_pop && !cd_run && !cd_fits)
+        if (u_resetn && cd_pop && !cd_run && !cd_fits)
             $display("%0t ERROR mx_cluster_cu: CU_DATA burst rejected -- buf %0d, off %0d, len %0d does not fit",
                      $time, cd_dbuf, cd_doff, cd_dlen);
         // Dropped rather than held, so it costs a flit instead of the CU. Say
         // which type: silent loss is the whole hazard of dropping.
-        if (resetn && recv_valid && recv_ready && !rx_resp && !rx_data)
+        if (u_resetn && recv_valid && recv_ready && !rx_resp && !rx_data)
             $display("%0t ERROR mx_cluster_cu: inbound flit of type %0h discarded",
                      $time, rtype);
     end

@@ -72,11 +72,10 @@ module mm_prng #(
     assign out = {c3, c2, c1, c0};
 
     always @(posedge clk) begin
+        // The counter, key and round state are all loaded from ctr_in/key_in by
+        // `start` before a round reads them, and `out` waits for out_valid.
         if (rst) begin
             busy <= 1'b0; out_valid <= 1'b0; round <= 5'd0; phase <= 2'd0;
-            c0 <= 32'd0; c1 <= 32'd0; c2 <= 32'd0; c3 <= 32'd0;
-            k0 <= 32'd0; k1 <= 32'd0; m_a0 <= 32'd0; m_a2 <= 32'd0;
-            r_hi0 <= 32'd0; r_lo0 <= 32'd0; r_hi1 <= 32'd0; r_lo1 <= 32'd0;
         end else begin
             out_valid <= 1'b0;
             if (start && !busy) begin

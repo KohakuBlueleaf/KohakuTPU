@@ -14,26 +14,32 @@
 
 `default_nettype none
 
-module vec_agu (
+// 40 MATCHES vec_core's default DELIBERATELY: a width differing from its
+// driver's leaves cbase x, and x makes `addr` all x -- silence, not a bad addr.
+module vec_agu #(
+    parameter integer AW = 40
+)(
     input  wire               clk,
     input  wire               rst,
 
     input  wire               wr_en,
     input  wire [2:0]         wr_ad,
     input  wire [2:0]         wr_fld,     // 0 = base, 1..4 = dim 0..3
-    input  wire [33:0]        wr_val,     // dim: {stride[17:0], bound[15:0]}
+    // A BASE is AW wide; a DIM is {stride[17:0], bound[15:0]} at those exact
+    // bits regardless of AW, so widening the port cannot move the dim encoding.
+    input  wire [AW-1:0]      wr_val,
 
     input  wire               start,
     input  wire [2:0]         sel,
     input  wire signed [17:0] off,
     input  wire               step,
 
-    output wire [33:0]        addr,
+    output wire [AW-1:0]      addr,
     output wire               last,
     output wire [31:0]        total,
     output reg                busy
 );
-    reg [33:0] base  [0:7];
+    reg [AW-1:0] base  [0:7];
     reg [17:0] strd  [0:7][0:3];
     reg [15:0] bnd   [0:7][0:3];
 
@@ -44,7 +50,7 @@ module vec_agu (
     always @(posedge clk) begin
         if (rst) begin
             for (d = 0; d < 8; d = d + 1) begin
-                base[d] <= 34'd0;
+                base[d] <= {AW{1'b0}};
                 for (k = 0; k < 4; k = k + 1) begin
                     strd[d][k] <= 18'd0;
                     bnd[d][k]  <= 16'd1;
@@ -63,7 +69,7 @@ module vec_agu (
     // `strd[cur]` where they are used puts an eight-way mux between a register
     // and a multiplier input, and between a register and the address adder.
     // A walk cannot change descriptor once started, so latching costs nothing.
-    reg [33:0] cbase;
+    reg [AW-1:0] cbase;
     reg [15:0] cb0, cb1, cb2, cb3;
     reg signed [17:0] cs0, cs1, cs2, cs3;
 
@@ -71,7 +77,7 @@ module vec_agu (
 
     always @(posedge clk) begin
         if (rst) begin
-            cbase <= 34'd0;
+            cbase <= {AW{1'b0}};
             cb0 <= 16'd1; cb1 <= 16'd1; cb2 <= 16'd1; cb3 <= 16'd1;
             cs0 <= 18'd0; cs1 <= 18'd0; cs2 <= 18'd0; cs3 <= 18'd0;
         end else if (start) begin
@@ -92,9 +98,9 @@ module vec_agu (
     // stride on increment and cleared on wrap, so the only arithmetic left is
     // an adder tree. This is the technique mx_tdesc.v already uses and the
     // reason it carries none either.
-    reg signed [33:0] ps0, ps1, ps2, ps3;
+    reg signed [AW-1:0] ps0, ps1, ps2, ps3;
 
-    assign addr  = cbase + {{16{off[17]}}, off} + ps0 + ps1 + ps2 + ps3;
+    assign addr  = cbase + {{(AW-18){off[17]}}, off} + ps0 + ps1 + ps2 + ps3;
     assign last  = (idx0 == b0 - 16'd1) && (idx1 == b1 - 16'd1)
                 && (idx2 == b2 - 16'd1) && (idx3 == b3 - 16'd1);
 
@@ -114,10 +120,9 @@ module vec_agu (
     reg [31:0] t01, t23, total_r;
     reg [15:0] s01, s23;
     always @(posedge clk) begin
-        if (rst) begin
-            t01 <= 32'd1; t23 <= 32'd1; total_r <= 32'd1;
-            s01 <= 16'd1; s23 <= 16'd1;
-        end else begin
+        // No reset: recomputed unconditionally every cycle, so it is correct one
+        // cycle after release, and `total_r` was the measured PIPE_MUX endpoint.
+        begin
             t01     <= {16'd0, b0} * {16'd0, b1};
             t23     <= {16'd0, b2} * {16'd0, b3};
             s01     <= (t01[31:16] != 16'd0) ? 16'hFFFF : t01[15:0];
@@ -132,31 +137,33 @@ module vec_agu (
     always @(posedge clk) begin
         if (rst) begin
             idx0 <= 16'd0; idx1 <= 16'd0; idx2 <= 16'd0; idx3 <= 16'd0;
-            ps0 <= 34'sd0; ps1 <= 34'sd0; ps2 <= 34'sd0; ps3 <= 34'sd0;
+            ps0 <= {AW{1'b0}}; ps1 <= {AW{1'b0}};
+            ps2 <= {AW{1'b0}}; ps3 <= {AW{1'b0}};
             cur  <= 3'd0;  busy <= 1'b0;
         end else if (start) begin
             idx0 <= 16'd0; idx1 <= 16'd0; idx2 <= 16'd0; idx3 <= 16'd0;
-            ps0 <= 34'sd0; ps1 <= 34'sd0; ps2 <= 34'sd0; ps3 <= 34'sd0;
+            ps0 <= {AW{1'b0}}; ps1 <= {AW{1'b0}};
+            ps2 <= {AW{1'b0}}; ps3 <= {AW{1'b0}};
             cur  <= sel;   busy <= 1'b1;
         end else if (step && busy) begin
             if (last) busy <= 1'b0;
             else if (idx0 + 16'd1 < b0) begin
                 idx0 <= idx0 + 16'd1;
-                ps0  <= ps0 + {{16{cs0[17]}}, cs0};
+                ps0  <= ps0 + {{(AW-18){cs0[17]}}, cs0};
             end else begin
-                idx0 <= 16'd0; ps0 <= 34'sd0;
+                idx0 <= 16'd0; ps0 <= {AW{1'b0}};
                 if (idx1 + 16'd1 < b1) begin
                     idx1 <= idx1 + 16'd1;
-                    ps1  <= ps1 + {{16{cs1[17]}}, cs1};
+                    ps1  <= ps1 + {{(AW-18){cs1[17]}}, cs1};
                 end else begin
-                    idx1 <= 16'd0; ps1 <= 34'sd0;
+                    idx1 <= 16'd0; ps1 <= {AW{1'b0}};
                     if (idx2 + 16'd1 < b2) begin
                         idx2 <= idx2 + 16'd1;
-                        ps2  <= ps2 + {{16{cs2[17]}}, cs2};
+                        ps2  <= ps2 + {{(AW-18){cs2[17]}}, cs2};
                     end else begin
-                        idx2 <= 16'd0; ps2 <= 34'sd0;
+                        idx2 <= 16'd0; ps2 <= {AW{1'b0}};
                         idx3 <= idx3 + 16'd1;
-                        ps3  <= ps3 + {{16{cs3[17]}}, cs3};
+                        ps3  <= ps3 + {{(AW-18){cs3[17]}}, cs3};
                     end
                 end
             end

@@ -65,10 +65,10 @@ module mx_tcu #(
         end else begin : g_delay
             reg [55:0] sr [0:k-1];
             integer d;
+            // NO RESET: an SRL has no reset pin, so one here forces flops and a
+            // net to every stage. Operands are meaningless until `vld_sr` says.
             always @(posedge clk) begin
-                if (rst) begin
-                    for (d = 0; d < k; d = d + 1) sr[d] <= 56'd0;
-                end else if (en) begin
+                if (en) begin
                     sr[0] <= raw;
                     for (d = 1; d < k; d = d + 1) sr[d] <= sr[d-1];
                 end
