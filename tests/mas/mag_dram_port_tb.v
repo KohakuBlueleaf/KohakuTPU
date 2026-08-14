@@ -10,7 +10,7 @@ module mag_dram_port_tb #(
     parameter integer MW = 512
 );
     localparam integer N      = 5;
-    localparam integer ADDR_W = 34;
+    localparam integer ADDR_W = 40;
     localparam integer SW     = 256;
     localparam integer ID_W   = 4;
     localparam integer SBYTES = SW / 8;
@@ -49,6 +49,7 @@ module mag_dram_port_tb #(
         .q_valid(q_valid), .q_ready(q_ready), .q_addr(q_addr),
         .q_len(q_len), .q_write(q_write),
         .w_valid(w_valid), .w_ready(w_ready), .w_data(w_data),
+        .w_strb({(N*SW/8){1'b1}}),
         .r_valid(r_valid), .r_ready(r_ready), .r_data(r_data), .r_last(r_last),
         .b_valid(b_valid),
         .m_aclk(m_aclk), .m_aresetn(resetn),

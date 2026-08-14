@@ -256,10 +256,15 @@ module mag_system_tb;
     // agent  port on (1,2) west = coordinate (0,2)
     // One AXI channel per MAG memory port, plus one for the host upload.
     localparam integer MEMP = 1;
-    localparam integer NCH  = MEMP + 2;   // ports, upload, mover
+    localparam integer NCH  = 1;   // ports, upload, mover
 
     wire [NCH*4-1:0]    r_awid, r_arid, r_bid, r_rid;
-    wire [NCH*34-1:0]   r_awaddr, r_araddr;
+    // NCH*40, not NCH*34. Both mag and axi_ram are ADDR_W=40, so at 34 the
+    // flattened bus is 18 bits short and the TOP channel loses its upper bits.
+
+    // The mover is that channel: `rptr` truncated the X away and stayed 512
+    // while `mem[s_araddr >> LSB]` indexed with it, so beat 0 alone read X.
+    wire [NCH*40-1:0]   r_awaddr, r_araddr;
     wire [NCH*8-1:0]    r_awlen, r_arlen;
     wire [NCH*3-1:0]    r_awsize, r_arsize;
     wire [NCH*2-1:0]    r_awburst, r_arburst, r_bresp, r_rresp;
@@ -273,7 +278,7 @@ module mag_system_tb;
     // Host upload port. Cluster 0's operands go in by backdoor because that is
     // not what this bench is testing; cluster 1's go through here, with the
     // quantise marker in the top address bits.
-    reg  [33:0]   h_awaddr = 0;
+    reg  [39:0]   h_awaddr = 0;
     reg  [7:0]    h_awlen  = 0;
     reg           h_awvalid = 0, h_wvalid = 0, h_wlast = 0, h_bready = 0;
     reg  [DW-1:0] h_wdata = 0;
@@ -292,8 +297,10 @@ module mag_system_tb;
         begin drv_write(MAG_BASE + A_MV_CFG + {24'd0, a}, d); end
     endtask
 
-    task mvhdr(input sel, input [33:0] base, input [2:0] nd);
-        begin mvwr(8'h10, {17'd0, nd, 6'd0, base, 3'd0, sel}); end
+    // `base` is ADDR_W wide and the mover reads it at cfg_data[4 +: ADDR_W], so
+    // the 6-bit filler that padded a 34-bit base to the field is gone at 40.
+    task mvhdr(input sel, input [39:0] base, input [2:0] nd);
+        begin mvwr(8'h10, {17'd0, nd, base, 3'd0, sel}); end
     endtask
 
     task mvdim(input sel, input [2:0] d, input [15:0] cnt,
@@ -304,7 +311,7 @@ module mag_system_tb;
         end
     endtask
 
-    mag #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(34), .ID_W(4),
+    mag #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(40), .ID_W(4),
           .MEM_PORTS(MEMP),
           .MEM_X(0), .MEM_Y(1),
           .GRID_LO(1), .GRID_HI(2), .STAGE_FLITS(128)) u_mag (
@@ -328,17 +335,18 @@ module mag_system_tb;
         .sc_rid(s1_rid), .sc_rdata(s1_rdata), .sc_rresp(s1_rresp),
         .sc_rlast(s1_rlast), .sc_rvalid(s1_rvalid), .sc_rready(s1_rready),
         // master to RAM
-        .m_awid(r_awid), .m_awaddr(r_awaddr), .m_awlen(r_awlen),
-        .m_awsize(r_awsize), .m_awburst(r_awburst),
-        .m_awvalid(r_awvalid), .m_awready(r_awready),
-        .m_wdata(r_wdata), .m_wstrb(r_wstrb), .m_wlast(r_wlast),
-        .m_wvalid(r_wvalid), .m_wready(r_wready),
-        .m_bid(r_bid), .m_bresp(r_bresp), .m_bvalid(r_bvalid), .m_bready(r_bready),
-        .m_arid(r_arid), .m_araddr(r_araddr), .m_arlen(r_arlen),
-        .m_arsize(r_arsize), .m_arburst(r_arburst),
-        .m_arvalid(r_arvalid), .m_arready(r_arready),
-        .m_rid(r_rid), .m_rdata(r_rdata), .m_rresp(r_rresp),
-        .m_rlast(r_rlast), .m_rvalid(r_rvalid), .m_rready(r_rready),
+        .dram_aclk(clk), .dram_aresetn(rstn),
+        .dram_awid(r_awid), .dram_awaddr(r_awaddr), .dram_awlen(r_awlen),
+        .dram_awsize(r_awsize), .dram_awburst(r_awburst),
+        .dram_awvalid(r_awvalid), .dram_awready(r_awready),
+        .dram_wdata(r_wdata), .dram_wstrb(r_wstrb), .dram_wlast(r_wlast),
+        .dram_wvalid(r_wvalid), .dram_wready(r_wready),
+        .dram_bid(r_bid), .dram_bresp(r_bresp), .dram_bvalid(r_bvalid), .dram_bready(r_bready),
+        .dram_arid(r_arid), .dram_araddr(r_araddr), .dram_arlen(r_arlen),
+        .dram_arsize(r_arsize), .dram_arburst(r_arburst),
+        .dram_arvalid(r_arvalid), .dram_arready(r_arready),
+        .dram_rid(r_rid), .dram_rdata(r_rdata), .dram_rresp(r_rresp),
+        .dram_rlast(r_rlast), .dram_rvalid(r_rvalid), .dram_rready(r_rready),
         // NoC
         .mem_in_data(w_out[0][0]), .mem_in_valid(w_outv[0][0]), .mem_in_busy(w_outb[0][0]),
         .mem_out_data(w_in[0][0]), .mem_out_valid(w_inv[0][0]), .mem_out_busy(w_inb[0][0]),
@@ -354,7 +362,7 @@ module mag_system_tb;
     reg  [DW-1:0] bd_wdata = 0;
     wire [DW-1:0] bd_rdata;
 
-    axi_ram #(.DATA_W(DW), .ADDR_W(34), .ID_W(4), .WORDS(1024),
+    axi_ram #(.DATA_W(DW), .ADDR_W(40), .ID_W(4), .WORDS(1024),
               .PORTS(NCH)) u_ram (
         .clk(clk), .resetn(rstn),
         .s_awid(r_awid), .s_awaddr(r_awaddr), .s_awlen(r_awlen),
@@ -510,10 +518,12 @@ module mag_system_tb;
     reg [DW-1:0] hsrc [0:127];
     integer      hb, hn;
 
-    task host_push(input [33:0] dst, input quant, input blay, input integer nb);
+    task host_push(input [39:0] dst, input quant, input blay, input integer nb);
         begin
             hn        = nb;
-            h_awaddr  <= {quant, blay, dst[31:0]};
+            // {special, rsvd, mesh, aperture 0b010, blay} then 4 GB of target.
+            h_awaddr  <= quant ? {4'b1000, 3'b010, blay, dst[31:0]}
+                               : {8'd0, dst[31:0]};
             h_awlen   <= hn[7:0] - 8'd1;
             h_awvalid <= 1'b1;
             h_bready  <= 1'b1;

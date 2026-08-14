@@ -55,8 +55,17 @@ module mx_cluster_data_tb;
     localparam integer MAXGM = 4, MAXGN = 4, MAXNK = 4;
     localparam integer MAXM  = MAXGM*4, MAXN = MAXGN*4, MAXK = MAXNK*32;
 
-    reg clk = 0, resetn = 0;
+    reg resetn = 0;
+`ifdef MX_CU_PUMP
+    // The bench's own clock comes OUT of the DUT's BUFGCE_DIV, which is the
+    // only way to test that the divider and the 1x/2x boundary agree.
+    reg  clk2x = 0;
+    wire clk;
+    always #1 clk2x = ~clk2x;
+`else
+    reg clk = 0;
     always #2 clk = ~clk;
+`endif
 
     reg  [FLIT-1:0] noc_in_data = 0;
     reg             noc_in_valid = 0;
@@ -66,13 +75,23 @@ module mx_cluster_data_tb;
 
     // GA/GB = 512 and block RAM, the production shape: two banks of 256, which
     // is the only configuration where the bank bit is not optimised away.
+`ifdef MX_CU_PUMP
+    mx_cluster_cu_pump #(
+        .FLIT_WIDTH(FLIT), .POS_WIDTH(PWID),
+        .CU_X(CU_X), .CU_Y(CU_Y), .MEM_X(MEM_X), .MEM_Y(MEM_Y),
+        .TILES(256), .GA(512), .GB(512), .ACC_MW(MW), .MODEL(MODEL),
+        .L1_PRIM("block")
+    ) dut (
+        .clk2x(clk2x), .div_clr(1'b0), .clk1x(clk), .resetn(resetn),
+`else
     mx_cluster_cu #(
         .FLIT_WIDTH(FLIT), .POS_WIDTH(PWID),
         .CU_X(CU_X), .CU_Y(CU_Y), .MEM_X(MEM_X), .MEM_Y(MEM_Y),
         .TILES(256), .GA(512), .GB(512), .ACC_MW(MW), .MODEL(MODEL),
         .L1_PRIM("block")
     ) dut (
-        .clk(clk), .resetn(resetn),
+        .clk(clk), .clk2x(1'b0), .resetn(resetn),
+`endif
         .noc_in_data(noc_in_data), .noc_in_valid(noc_in_valid),
         .noc_in_busy(noc_in_busy),
         .noc_out_data(noc_out_data), .noc_out_valid(noc_out_valid),
@@ -156,7 +175,9 @@ module mx_cluster_data_tb;
     always @(posedge clk) if (resetn && noc_out_valid) begin
         case (noc_out_data[FLIT-4*PWID-1 -: 4])
         T_MEM_WR_REQ: begin
-            w_first <= noc_out_data[255 -: 34] >> 5;
+            // 40, not 34: NOC_MEM_ADDR is [255:216]. Read narrow it comes back
+            // shifted, and the sub-tiles land at indices nobody checks.
+            w_first <= noc_out_data[255 -: 40] >> 5;
             w_seen  <= 16'd0;
         end
         T_MEM_WR_DATA: begin

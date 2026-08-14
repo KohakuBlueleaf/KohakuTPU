@@ -228,7 +228,7 @@ module mag_driver_tb;
     // host upload -- sharing them would put eight clusters' read beats back on
     // one AR/R pair -- so the RAM is multi-channel to match.
     localparam integer MEMP = NROW;           // MAG memory ports
-    localparam integer NCH  = MEMP + 2;       // ports, upload, mover
+    localparam integer NCH  = 1;       // ports, upload, mover
 
     wire [MEMP*FW-1:0] mp_in_data, mp_out_data;
     wire [MEMP-1:0]    mp_in_valid, mp_in_busy, mp_out_valid, mp_out_busy;
@@ -321,7 +321,9 @@ module mag_driver_tb;
     // ---------------------------------------------------------------- MAG
 
     wire [NCH*4-1:0]      r_awid, r_arid, r_bid, r_rid;
-    wire [NCH*34-1:0]     r_awaddr, r_araddr;
+    // NCH*40, not NCH*34: mag and axi_ram are ADDR_W=40, and 34 leaves the TOP
+    // channel short so its upper address bits are lost.
+    wire [NCH*40-1:0]     r_awaddr, r_araddr;
     wire [NCH*8-1:0]      r_awlen, r_arlen;
     wire [NCH*3-1:0]      r_awsize, r_arsize;
     wire [NCH*2-1:0]      r_awburst, r_arburst, r_bresp, r_rresp;
@@ -333,10 +335,8 @@ module mag_driver_tb;
     wire [15:0]  mag_rd, mag_wr;
 
     // ---- the upload port: FP16 in, marker on the address ------------------
-    // Bit 33 asks MAG to quantise as it lands; bit 32 selects B packing. AXI
-    // carries no field for either and XDMA exposes none, so the marker rides
-    // in the address, which a host can always control per descriptor.
-    reg  [33:0]   u_awaddr = 0;
+    // Aperture 0x4/0x5 quantises as it lands, its low bit selecting B packing.
+    reg  [39:0]   u_awaddr = 0;
     reg  [7:0]    u_awlen  = 0;
     reg           u_awvalid = 0, u_wvalid = 0, u_wlast = 0, u_bready = 0;
     reg  [DW-1:0] u_wdata = 0;
@@ -346,7 +346,7 @@ module mag_driver_tb;
     // agent node: the agent shares these ports, so MAG attaches to ONE edge.
     // It works because routing clamps the destination into the grid -- a flit
     // for (0,y) walks to router (1,y) and only then takes the outward hop.
-    mag #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(34), .ID_W(4),
+    mag #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(40), .ID_W(4),
           .MEM_PORTS(MEMP),
           .MEM_X(0), .MEM_Y(1),
           .MEM_X1(0), .MEM_Y1(2),
@@ -359,7 +359,7 @@ module mag_driver_tb;
         .sm_wdata(u_wdata), .sm_wstrb({(DW/8){1'b1}}),
         .sm_wlast(u_wlast), .sm_wvalid(u_wvalid), .sm_wready(u_wready),
         .sm_bid(), .sm_bresp(), .sm_bvalid(u_bvalid), .sm_bready(u_bready),
-        .sm_arid(4'd0), .sm_araddr(34'd0), .sm_arlen(8'd0), .sm_arvalid(1'b0),
+        .sm_arid(4'd0), .sm_araddr(40'd0), .sm_arlen(8'd0), .sm_arvalid(1'b0),
         .sm_arready(), .sm_rid(), .sm_rdata(), .sm_rresp(), .sm_rlast(),
         .sm_rvalid(), .sm_rready(1'b1),
         .sc_awid(s1_awid), .sc_awaddr(s1_awaddr), .sc_awlen(s1_awlen),
@@ -371,17 +371,18 @@ module mag_driver_tb;
         .sc_arvalid(s1_arvalid), .sc_arready(s1_arready),
         .sc_rid(s1_rid), .sc_rdata(s1_rdata), .sc_rresp(s1_rresp),
         .sc_rlast(s1_rlast), .sc_rvalid(s1_rvalid), .sc_rready(s1_rready),
-        .m_awid(r_awid), .m_awaddr(r_awaddr), .m_awlen(r_awlen),
-        .m_awsize(r_awsize), .m_awburst(r_awburst),
-        .m_awvalid(r_awvalid), .m_awready(r_awready),
-        .m_wdata(r_wdata), .m_wstrb(r_wstrb), .m_wlast(r_wlast),
-        .m_wvalid(r_wvalid), .m_wready(r_wready),
-        .m_bid(r_bid), .m_bresp(r_bresp), .m_bvalid(r_bvalid), .m_bready(r_bready),
-        .m_arid(r_arid), .m_araddr(r_araddr), .m_arlen(r_arlen),
-        .m_arsize(r_arsize), .m_arburst(r_arburst),
-        .m_arvalid(r_arvalid), .m_arready(r_arready),
-        .m_rid(r_rid), .m_rdata(r_rdata), .m_rresp(r_rresp),
-        .m_rlast(r_rlast), .m_rvalid(r_rvalid), .m_rready(r_rready),
+        .dram_aclk(clk), .dram_aresetn(rstn),
+        .dram_awid(r_awid), .dram_awaddr(r_awaddr), .dram_awlen(r_awlen),
+        .dram_awsize(r_awsize), .dram_awburst(r_awburst),
+        .dram_awvalid(r_awvalid), .dram_awready(r_awready),
+        .dram_wdata(r_wdata), .dram_wstrb(r_wstrb), .dram_wlast(r_wlast),
+        .dram_wvalid(r_wvalid), .dram_wready(r_wready),
+        .dram_bid(r_bid), .dram_bresp(r_bresp), .dram_bvalid(r_bvalid), .dram_bready(r_bready),
+        .dram_arid(r_arid), .dram_araddr(r_araddr), .dram_arlen(r_arlen),
+        .dram_arsize(r_arsize), .dram_arburst(r_arburst),
+        .dram_arvalid(r_arvalid), .dram_arready(r_arready),
+        .dram_rid(r_rid), .dram_rdata(r_rdata), .dram_rresp(r_rresp),
+        .dram_rlast(r_rlast), .dram_rvalid(r_rvalid), .dram_rready(r_rready),
         .mem_in_data(mp_in_data), .mem_in_valid(mp_in_valid),
         .mem_in_busy(mp_in_busy),
         .mem_out_data(mp_out_data), .mem_out_valid(mp_out_valid),
@@ -439,7 +440,7 @@ module mag_driver_tb;
         end
     end
 
-    axi_ram #(.DATA_W(DW), .ADDR_W(34), .ID_W(4), .WORDS(RAM_WORDS),
+    axi_ram #(.DATA_W(DW), .ADDR_W(40), .ID_W(4), .WORDS(RAM_WORDS),
               .PORTS(NCH)) u_ram (
         .clk(clk), .resetn(rstn),
         .s_awid(r_awid), .s_awaddr(r_awaddr), .s_awlen(r_awlen),
@@ -878,11 +879,13 @@ module mag_driver_tb;
     integer    up_b;
     reg [31:0] up_n;
 
-    task host_burst(input integer src, input [33:0] dst, input integer nb,
+    task host_burst(input integer src, input [39:0] dst, input integer nb,
                     input quant, input blay);
         begin
             up_n      = nb;
-            u_awaddr  <= {quant, blay, dst[31:0]};
+            // {special, rsvd, mesh, aperture 0b010, blay} then 4 GB of target.
+            u_awaddr  <= quant ? {4'b1000, 3'b010, blay, dst[31:0]}
+                               : {8'd0, dst[31:0]};
             u_awlen   <= up_n[7:0] - 8'd1;
             u_awvalid <= 1'b1;
             u_bready  <= 1'b1;

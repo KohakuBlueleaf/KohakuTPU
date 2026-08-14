@@ -28,7 +28,7 @@
 // ---------------------------------------------------------------- one master
 module axi_n1_tbm #(
     parameter integer IDX    = 0,
-    parameter integer ADDR_W = 34,
+    parameter integer ADDR_W = 40,
     parameter integer DATA_W = 256,
     parameter integer ID_W   = 4,
     parameter integer NTXN   = 16,
@@ -230,7 +230,7 @@ endmodule
 // ------------------------------------------------------------- the tb proper
 module axi_n1_tb;
     localparam integer NM     = `NM;
-    localparam integer ADDR_W = 34;
+    localparam integer ADDR_W = 40;
     localparam integer DATA_W = 256;
     localparam integer ID_W   = 4;
     localparam integer NTXN   = `NTXN;

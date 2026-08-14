@@ -13,16 +13,16 @@
 `timescale 1ns/1ps
 
 module mm_mover_tb;
-    localparam DW = 256, AW = 34, IDW = 4;
+    localparam DW = 256, AW = 40, IDW = 4;
 
-    localparam [33:0] SRC  = 34'h00000;
-    localparam [33:0] DST  = 34'h01000;
-    localparam [33:0] PADD = 34'h02000;
-    localparam [33:0] GEN1 = 34'h03000;
-    localparam [33:0] GEN2 = 34'h04000;
-    localparam [33:0] TBL  = 34'h05000;
-    localparam [33:0] IDXB = 34'h06000;
-    localparam [33:0] OUT  = 34'h07000;
+    localparam [AW-1:0] SRC  = 40'h00000;
+    localparam [AW-1:0] DST  = 40'h01000;
+    localparam [AW-1:0] PADD = 40'h02000;
+    localparam [AW-1:0] GEN1 = 40'h03000;
+    localparam [AW-1:0] GEN2 = 40'h04000;
+    localparam [AW-1:0] TBL  = 40'h05000;
+    localparam [AW-1:0] IDXB = 40'h06000;
+    localparam [AW-1:0] OUT  = 40'h07000;
 
     reg clk = 0, resetn = 0;
     always #2 clk = ~clk;
@@ -75,6 +75,38 @@ module mm_mover_tb;
 
     integer errors = 0, checks = 0, spin;
 
+    // ---- AXI burst monitor, live under every case below ------------------
+
+    // A burst inside one 4 KB page is inside one mesh and one aperture, since
+    // a mesh is 64 GB: the 40-bit split needs no separate check.
+    integer merr = 0, mchk = 0, n_ar = 0, n_aw = 0;
+    reg [3:0] ar_top, aw_top;
+
+    always @(posedge clk) if (resetn) begin
+        if (arvalid && arready) begin
+            n_ar = n_ar + 1; mchk = mchk + 2; ar_top = araddr[AW-1 -: 4];
+            if (|araddr[4:0]) begin
+                merr = merr + 1;
+                $display("  ERROR AR unaligned %h", araddr);
+            end
+            if (({1'b0, araddr[11:5]} + {1'b0, arlen} + 9'd1) > 9'd128) begin
+                merr = merr + 1;
+                $display("  ERROR AR crosses 4 KB: %h len %0d", araddr, arlen);
+            end
+        end
+        if (awvalid && awready) begin
+            n_aw = n_aw + 1; mchk = mchk + 2; aw_top = awaddr[AW-1 -: 4];
+            if (|awaddr[4:0]) begin
+                merr = merr + 1;
+                $display("  ERROR AW unaligned %h", awaddr);
+            end
+            if (({1'b0, awaddr[11:5]} + {1'b0, awlen} + 9'd1) > 9'd128) begin
+                merr = merr + 1;
+                $display("  ERROR AW crosses 4 KB: %h len %0d", awaddr, awlen);
+            end
+        end
+    end
+
     task chk(input [255:0] got, input [255:0] want, input [255:0] what,
              input integer where);
         begin
@@ -98,10 +130,10 @@ module mm_mover_tb;
         end
     endtask
 
-    // base occupies [43:4] in the register even though ADDR_W is 34, so the
-    // six unused bits must be written explicitly or ndim lands six bits low.
-    task hdr(input sel, input [33:0] base, input [2:0] ndim);
-        begin wr(8'h10, {17'd0, ndim, 6'd0, base, 3'd0, sel}); end
+    // At 40 bits the base fills [43:4] exactly and the old six-bit filler is
+    // gone: writing it now would push ndim six bits high.
+    task hdr(input sel, input [AW-1:0] base, input [2:0] ndim);
+        begin wr(8'h10, {17'd0, ndim, base, 3'd0, sel}); end
     endtask
 
     task dim(input sel, input [2:0] d, input [15:0] cnt,
@@ -211,7 +243,7 @@ module mm_mover_tb;
         hdr(1'b1, GEN1, 3'd1);
         dim(1'b1, 3'd0, 16'd4, 32'sd32, 2'd0, 16'sd0);
         go(3'd3, 2'd1);
-        hdr(1'b1, GEN1 + 34'd128, 3'd1);
+        hdr(1'b1, GEN1 + 40'd128, 3'd1);
         dim(1'b1, 3'd0, 16'd4, 32'sd32, 2'd0, 16'sd0);
         go(3'd3, 2'd1);
         for (i = 0; i < 8; i = i + 1)
@@ -229,7 +261,7 @@ module mm_mover_tb;
 
         // ============ 5. GATHER ============
         $display("--- 5. GATHER, rows of two words ---");
-        wr(8'h30, {8'd0, 16'd5, 6'd0, IDXB});
+        wr(8'h30, {8'd0, 16'd5, IDXB});
         wr(8'h50, {16'd0, 16'd2, 32'd64});
         hdr(1'b0, TBL, 3'd1);
         hdr(1'b1, OUT, 3'd2);
@@ -254,7 +286,7 @@ module mm_mover_tb;
             $display("  FAIL ewidth=3 should fault 5, got %0d", stat_fault);
         end
 
-        hdr(1'b1, DST + 34'd8, 3'd1);
+        hdr(1'b1, DST + 40'd8, 3'd1);
         dim(1'b1, 3'd0, 16'd1, 32'sd32, 2'd0, 16'sd0);
         hdr(1'b0, SRC, 3'd1);
         dim(1'b0, 3'd0, 16'd1, 32'sd32, 2'd0, 16'sd0);
@@ -265,6 +297,41 @@ module mm_mover_tb;
             $display("  FAIL a misaligned destination should fault 6, got %0d",
                      stat_fault);
         end
+
+        // ============ 7. the 40-bit top four bits are carried, not masked ===
+
+        // Aliasing a mesh or an aperture onto local DRAM is the silent failure
+        // the 40-bit map exists to prevent, so check the address on the wire.
+        $display("--- 7. mesh and aperture pass-through ---");
+        ar_top = 4'hF; aw_top = 4'hF;
+        hdr(1'b0, SRC | (40'd1 << 39), 3'd1);           // aperture 0, mesh 0
+        dim(1'b0, 3'd0, 16'd4, 32'sd32, 2'd0, 16'sd0);
+        hdr(1'b1, DST | (40'd2 << 36), 3'd1);           // DRAM, mesh 2
+        dim(1'b1, 3'd0, 16'd4, 32'sd32, 2'd0, 16'sd0);
+        go(3'd0, 2'd1);
+        checks = checks + 1;
+        if (ar_top !== 4'b1000) begin
+            errors = errors + 1;
+            $display("  FAIL AR top four should be 1000, got %b", ar_top);
+        end
+        checks = checks + 1;
+        if (aw_top !== 4'b0010) begin
+            errors = errors + 1;
+            $display("  FAIL AW top four should be 0010, got %b", aw_top);
+        end
+
+        // A run spanning the top of a mesh must split, and the burst monitor
+        // above is what proves it: 128 words from 64 GB minus 2 KB.
+        hdr(1'b0, (40'd1 << 36) - 40'd2048, 3'd1);
+        dim(1'b0, 3'd0, 16'd128, 32'sd32, 2'd0, 16'sd0);
+        hdr(1'b1, (40'd1 << 36) - 40'd2048, 3'd1);
+        dim(1'b1, 3'd0, 16'd128, 32'sd32, 2'd0, 16'sd0);
+        go(3'd0, 2'd1);
+
+        checks = checks + mchk;
+        errors = errors + merr;
+        $display("  %0d AR and %0d AW bursts checked for alignment and 4 KB",
+                 n_ar, n_aw);
 
         $display("========================================");
         if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);

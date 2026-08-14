@@ -5,7 +5,7 @@
 `timescale 1ns/1ps
 
 module mag_1m_upload_tb;
-    localparam FW = 288, PW = 4, DW = 256, AW = 34, IDW = 4, MW = 512;
+    localparam FW = 288, PW = 4, DW = 256, AW = 40, IDW = 4, MW = 512;
     localparam MEMP = 2;
 
     reg clk = 0, resetn = 0, dclk = 0;

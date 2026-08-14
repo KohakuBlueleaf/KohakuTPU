@@ -12,9 +12,17 @@
 `default_nettype none
 `timescale 1ns/1ps
 
-module mm_mesh_peer_tb;
-    localparam FW = 288, PW = 4, DW = 256, AW = 34, IDW = 4;
-    localparam MEMP = 1, NCH = MEMP + 2;
+module mm_mesh_peer_tb #(
+    // HALF periods in ns, against the mesh's 2.0. One rate per TYPE, so a peer
+    // drain crosses from the matmul domain to a genuinely different vector one.
+    parameter integer UNIT_CDC = 0,
+    parameter real    MHP      = 2.0,
+    parameter real    VHP      = 2.0
+);
+    // 34, NOT 40: at AW=40 mm_mover.v:347/:650 fail elaboration on a
+    // non-positive replication constant. Raise once that lands.
+    localparam FW = 288, PW = 4, DW = 256, AW = 40, IDW = 4;
+    localparam MEMP = 1, NCH = 1;
 
     localparam [3:0] T_CU_INST = 4'h5, T_CU_SIGNAL = 4'h6, T_CU_DATA = 4'h8;
     localparam [7:0] SIG_DATA_RECEIVED = 8'h03;
@@ -39,6 +47,10 @@ module mm_mesh_peer_tb;
     reg clk = 0, rst = 1;
     always #2 clk = ~clk;
 
+    reg mat_clk = 0, vec_clk = 0;
+    always #MHP mat_clk = ~mat_clk;
+    always #VHP vec_clk = ~vec_clk;
+
     reg  [FW-1:0] ext_i;
     reg           ext_iv;
     wire          ext_ib;
@@ -61,8 +73,8 @@ module mm_mesh_peer_tb;
     wire        dbg_vflt;
 
     mm_mesh #(.FW(FW), .PW(PW), .DW(DW), .AW(AW), .IDW(IDW), .MEMP(MEMP),
-              .MODEL(1)) dut (
-        .clk(clk), .rst(rst),
+              .UNIT_CDC(UNIT_CDC), .MODEL(1)) dut (
+        .clk(clk), .mat_clk(mat_clk), .vec_clk(vec_clk), .rst(rst),
         .sm_awaddr({AW{1'b0}}), .sm_awlen(8'd0), .sm_awvalid(1'b0),
         .sm_wdata({DW{1'b0}}), .sm_wlast(1'b0), .sm_wvalid(1'b0),
         .sc_awaddr(32'd0), .sc_awvalid(1'b0), .sc_awready(),
@@ -71,18 +83,19 @@ module mm_mesh_peer_tb;
         .sc_araddr(32'd0), .sc_arvalid(1'b0),
         .sc_rdata(), .sc_rvalid(),
         .mv_busy(), .mv_fault(), .mv_done(),
-        .m_awid(r_awid), .m_awaddr(r_awaddr), .m_awlen(r_awlen),
-        .m_awsize(r_awsize), .m_awburst(r_awburst),
-        .m_awvalid(r_awvalid), .m_awready(r_awready),
-        .m_wdata(r_wdata), .m_wstrb(r_wstrb), .m_wlast(r_wlast),
-        .m_wvalid(r_wvalid), .m_wready(r_wready),
-        .m_bid(r_bid), .m_bresp(r_bresp), .m_bvalid(r_bvalid),
-        .m_bready(r_bready),
-        .m_arid(r_arid), .m_araddr(r_araddr), .m_arlen(r_arlen),
-        .m_arsize(r_arsize), .m_arburst(r_arburst),
-        .m_arvalid(r_arvalid), .m_arready(r_arready),
-        .m_rid(r_rid), .m_rdata(r_rdata), .m_rresp(r_rresp),
-        .m_rlast(r_rlast), .m_rvalid(r_rvalid), .m_rready(r_rready),
+        .dram_aclk(clk), .dram_aresetn(!rst),
+        .dram_awid(r_awid), .dram_awaddr(r_awaddr), .dram_awlen(r_awlen),
+        .dram_awsize(r_awsize), .dram_awburst(r_awburst),
+        .dram_awvalid(r_awvalid), .dram_awready(r_awready),
+        .dram_wdata(r_wdata), .dram_wstrb(r_wstrb), .dram_wlast(r_wlast),
+        .dram_wvalid(r_wvalid), .dram_wready(r_wready),
+        .dram_bid(r_bid), .dram_bresp(r_bresp), .dram_bvalid(r_bvalid),
+        .dram_bready(r_bready),
+        .dram_arid(r_arid), .dram_araddr(r_araddr), .dram_arlen(r_arlen),
+        .dram_arsize(r_arsize), .dram_arburst(r_arburst),
+        .dram_arvalid(r_arvalid), .dram_arready(r_arready),
+        .dram_rid(r_rid), .dram_rdata(r_rdata), .dram_rresp(r_rresp),
+        .dram_rlast(r_rlast), .dram_rvalid(r_rvalid), .dram_rready(r_rready),
         .ext_in_data(ext_i), .ext_in_valid(ext_iv), .ext_in_busy(ext_ib),
         .ext_out_data(ext_o), .ext_out_valid(ext_ov), .ext_out_busy(1'b0),
         .dbg_cluster(dbg_cluster), .dbg_vec_cycles(dbg_vcyc),

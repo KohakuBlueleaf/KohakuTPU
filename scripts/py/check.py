@@ -25,7 +25,10 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-PY = sys.executable
+# The repo venv, NOT whatever launched this: it is the only interpreter with
+# tinygrad and both namespace halves installed.
+_VENV = ROOT / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+PY = str(_VENV) if _VENV.exists() else sys.executable
 
 # ~25x what a healthy check costs at -j4.
 DEFAULT_TIMEOUT = 300
@@ -64,24 +67,47 @@ CHECK_BUILD = pathlib.Path(
 )
 
 
-def bench(name, *extra):
-    argv = [str(PY), "scripts/py/xsim.py", name, "--build-root", str(CHECK_BUILD)]
-    return check(name, argv + list(extra), lane="xsim")
+def bench(name, *extra, label=None, root=None):
+    argv = [
+        str(PY),
+        "scripts/py/xsim.py",
+        name,
+        "--build-root",
+        str(root or CHECK_BUILD),
+    ]
+    return check(label or name, argv + list(extra), lane="xsim")
+
+
+def bench_var(name, *extra):
+    """The same bench under extra defines, in a build root of its own.
+
+    `xsim` names the build directory after the bench alone, so a variant left in
+    the shared root races the plain run at -j4 and reads as a tool error.
+    """
+    label = " ".join([name, *extra])
+    return bench(name, *extra, label=label, root=CHECK_BUILD / label.replace(" ", "_"))
 
 
 # ------------------------------------------------------------------- tiers
 FAST = [
-    py("pytest unit", "-m", "pytest", "tests/ktpu/unit", "-q"),
-    py("pytest hw", "-m", "pytest", "tests/ktpu/hw", "-q"),
-    py("pytest integration", "-m", "pytest", "tests/ktpu/integration", "-q"),
-    # `scripts` is in scope because it is not scratch: check.py, xsim.py,
-    # gen_mesh.py and isa_study.py are all load-bearing and were unlinted.
-    py("ruff", "-m", "ruff", "check", "src/ktpu", "tests", "examples", "scripts"),
-    py("black", "-m", "black", "--check", "-q", "src/ktpu", "tests"),
+    py("pytest compiler", "-m", "pytest", "compiler/tests", "-q"),
+    # FROM `driver/`: at the repo root `examples` resolves to the top-level
+    # examples/, and driver/examples/saxpy is then invisible.
+    check(
+        "pytest driver",
+        [PY, "-m", "pytest", "tests", "-q"],
+        cwd=ROOT / "driver",
+    ),
+    # `scripts` is in scope because it is not scratch: check.py, xsim.py and
+    # gen_mesh.py are all load-bearing and were unlinted.
+    py("ruff", "-m", "ruff", "check", "compiler", "driver", "scripts"),
+    py("black", "-m", "black", "--check", "-q", "compiler", "driver", "scripts"),
 ]
 
 # The cheap benches that have historically caught the most.
 UNIT = FAST + [
+    # mx_quant.v's only cross-check against the spec: the bench itself computes
+    # nothing, it only dumps what the circuit produced.
     py("mx_quant vs model", "scripts/py/run_quant_check.py"),
     bench("cluster_node"),
     # Broken twice under concurrent clusters, both times presenting at system
@@ -90,6 +116,9 @@ UNIT = FAST + [
     # The only bench in this tier that instantiates mx_cluster_cu, so without
     # it a declaration-order error in the CU survives a green `unit`.
     bench("mag_system"),
+    # Cheap, and it is the only cover the L2 adapter has: the module shipped
+    # with two OOC runs and no bench at all for months.
+    bench("l2_adapter"),
 ]
 
 
@@ -101,32 +130,32 @@ def all_benches():
     return sorted(xsim.BENCHES)
 
 
-BLOCKS = [bench(b) for b in all_benches()]
-
-# Both drive the same RTL through the same Session and differ only in who
-# emitted the instructions, which separates a compiler fault from a hardware one.
-E2E = [
-    check(
-        "planner -> xsim",
-        [str(PY), "scripts/py/run_matmul.py", "--quiet"],
-        lane="session",
-    ),
-    check(
-        "DSL -> L3 -> xsim",
-        [str(PY), "scripts/py/run_dsl.py", "--m", "64", "--k", "64", "--n", "64"],
-        lane="session",
-    ),
+BLOCKS = [bench(b) for b in all_benches()] + [
+    # `all_benches()` runs every name with NO defines, so the pumped path -- the
+    # one that ships -- had no cover here at all until these three.
+    bench_var("cluster_data", "-d", "MX_CU_PUMP"),
+    bench_var("cluster_node_pump", "-d", "MX_L1OFF"),
+    bench_var("cluster_node_pump", "-d", "MX_L1WRAP"),
+    # The L2 store on MAG's converged path, where the mover and the interlink
+    # can reach it. Same checks as the default placement, so it is an A/B.
+    bench_var("mm_mesh_stage", "-d", "MM_L2_PORT"),
+    bench_var("interlink_stage", "-d", "MM_L2_PORT"),
+    # The MOVER as a requester of the store: DRAM -> aperture -> DRAM.
+    bench_var("mover_l2", "-d", "MV_L2"),
+    # Four meshes with a store in each: forwarding and staging together.
+    bench_var("mover_l2_chain", "-d", "MV_L2"),
 ]
+
+# Compiler-emitted instructions through the real RTL, the one tier that separates
+# a compiler fault from a hardware one. Empty since `src/ktpu` was retired.
+E2E = []
 
 TIERS = {
     "fast": FAST,
     "unit": UNIT,
     "blocks": FAST + BLOCKS,
     "e2e": FAST + E2E,
-    "full": FAST
-    + [py("mx_quant vs model", "scripts/py/run_quant_check.py")]
-    + BLOCKS
-    + E2E,
+    "full": FAST + BLOCKS + E2E,
 }
 
 
@@ -154,7 +183,7 @@ def kill_tree(proc):
 
 # Sources, benches, scripts and the config ruff and black read. Build
 # directories are regenerated and are the bulk of the tree, so they are left.
-SNAP_DIRS = ("src", "tests", "scripts", "examples", "boards")
+SNAP_DIRS = ("src", "tests", "scripts", "examples", "boards", "compiler", "driver")
 SNAP_FILES = ("pyproject.toml", "setup.cfg", "ruff.toml", ".ruff.toml")
 
 
@@ -233,13 +262,18 @@ def main():
     args = ap.parse_args()
 
     checks = TIERS[args.tier]
-    env = None
+    root = ROOT
     if args.snapshot:
-        snap = make_snapshot(args.snapshot)
-        env = dict(os.environ)
-        env["PYTHONPATH"] = str(snap / "src")
-        checks = [dict(c, cwd=snap) for c in checks]
-        print(f"  snapshot {snap}")
+        root = make_snapshot(args.snapshot)
+        # Remapped, not replaced: a check with its own cwd keeps it.
+        checks = [
+            dict(c, cwd=root / pathlib.Path(c["cwd"]).relative_to(ROOT)) for c in checks
+        ]
+        print(f"  snapshot {root}")
+    # `kohakutpu` is a namespace package split across both, so neither half
+    # imports without the other on the path.
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join([str(root / "compiler"), str(root / "driver")])
     jobs = max(1, args.jobs)
     # Only at -j1: in parallel the later checks are already in flight, so
     # stopping early would hide results that were paid for anyway.

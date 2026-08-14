@@ -15,6 +15,7 @@ import pathlib
 import shutil
 import subprocess
 import sys
+import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 VIVADO = pathlib.Path(r"D:\Xilinx\Vivado\2024.2\bin")
@@ -31,6 +32,11 @@ MATMUL = [
     "src/kohakutpu/matmul/mx_cluster_core.v",
     "src/kohakutpu/matmul/mx_cluster_mgr.v",
     "src/kohakutpu/matmul/mx_cluster_node.v",
+    # The double-pumped hierarchy. Parsed everywhere, instantiated only where a
+    # bench asks for it -- mx_cluster_node_pump_tb, or cluster_data -d MX_CU_PUMP.
+    "src/kohakutpu/matmul/mx_acu_fp_pump.v",
+    "src/kohakutpu/matmul/mx_cluster_mgr_pump.v",
+    "src/kohakutpu/matmul/mx_cluster_node_pump.v",
 ]
 NOC = [
     "src/kohakunoc/noc_inport.v",
@@ -38,6 +44,9 @@ NOC = [
     "src/kohakunoc/noc_router.v",
     "src/kohakunoc/noc_orchestrator.v",
     "src/kohakunoc/noc_cu_base.v",
+    # mm_mesh instantiates the addon slot unconditionally; at L2_CU=0 it
+    # generates the straight wire, but it still has to elaborate.
+    "src/kohakunoc/noc_l2_adapter.v",
 ]
 
 # The mover and its PRNG. mx_tdesc is the descriptor walker they borrow rather
@@ -46,6 +55,9 @@ MOVER = [
     "src/kohakutpu/matmul/mx_tdesc.v",
     "src/kohakumas/mm_prng.v",
     "src/kohakumas/mm_mover.v",
+    # mag.v instantiates the staging store unconditionally; at STAGE=0 the
+    # generate is empty, but it still has to elaborate.
+    "src/kohakumas/mag_stage.v",
 ]
 
 VECTOR = [
@@ -55,14 +67,85 @@ VECTOR = [
     "src/kohakutpu/vector/vec_alu.v",
 ]
 
+# One whole mesh behind one packed master, interlink included: everything
+# `ktpu_min_1m` needs. Shared by the 2-mesh and the chain benches.
+MESH_1M = (
+    COMMON
+    + NOC
+    + MATMUL
+    + MOVER
+    + VECTOR
+    + [
+        "src/kohakutpu/matmul/mx_cluster_cu.v",
+        "src/kohakutpu/vector/vec_cvt.v",
+        "src/kohakutpu/vector/vec_regfile.v",
+        "src/kohakutpu/vector/vec_lanes.v",
+        "src/kohakutpu/vector/vec_agu.v",
+        "src/kohakutpu/vector/vec_core.v",
+        "src/kohakutpu/vector/vec_cu.v",
+        "src/kohakumas/mx_quant.v",
+        "src/kohakumas/axi_ram.v",
+        "src/kohakumas/mag_mem_port.v",
+        "src/kohakumas/il_pkt_arb.v",
+        "src/kohakumas/mag_link.v",
+        "src/kohakumas/mag_link_pipe.v",
+        "src/kohakumas/mag_switch.v",
+        "src/kohakumas/mag_ilink.v",
+        "src/kohakumas/mag.v",
+        "src/common/async_fifo.v",
+        "src/kohakumas/mag_stage_port.v",
+        "src/kohakumas/mag_dram_port.v",
+        "src/synth_top/mag_1m.v",
+        "src/synth_top/ktpu_min_1m.v",
+    ]
+)
+
+MESH_CDC = (
+    COMMON
+    + NOC
+    + MATMUL
+    + MOVER
+    + VECTOR
+    + [
+        "src/kohakutpu/matmul/mx_cluster_cu.v",
+        "src/kohakutpu/vector/vec_cvt.v",
+        "src/kohakutpu/vector/vec_regfile.v",
+        "src/kohakutpu/vector/vec_lanes.v",
+        "src/kohakutpu/vector/vec_agu.v",
+        "src/kohakutpu/vector/vec_core.v",
+        "src/kohakutpu/vector/vec_cu.v",
+        "src/kohakumas/mx_quant.v",
+        "src/kohakumas/axi_ram.v",
+        "src/kohakumas/mag_mem_port.v",
+        "src/kohakumas/mag.v",
+        "src/common/async_fifo.v",
+        "src/kohakumas/mag_stage_port.v",
+        "src/kohakumas/mag_dram_port.v",
+        "src/kohakunoc/noc_local_cdc.v",
+        "src/synth_top/mm_mesh.v",
+        "tests/mas/mm_mesh_tb.v",
+        "tests/mas/mm_mesh_cdc_tb.v",
+    ]
+)
+
 # xpm_cdc instantiates glbl, so an async FIFO drags it in even at MODEL=1.
 NEEDS_GLBL = {
     "axi_n1",
+    "mover_chain1",
+    "mover_chain2",
+    "mover_chain4",
     "mag_dram_port",
+    "mag_dram_port_bw",
     "mag_dram_port_r1",
     "mm_mesh_1m",
     "mag_1m_upload",
     "interlink_2mesh_1m",
+    "interlink_stage",
+    "mag_link_cdc",
+    "interlink_cdc_chain",
+    "mm_mesh_cdc",
+    "mm_mesh_cdc_slow",
+    "mm_mesh_peer_cdc",
 }
 
 BENCHES = {
@@ -141,9 +224,35 @@ BENCHES = {
             "tests/vector/vec_cvt_acc_tb.v",
         ],
     ),
+    # The L2 staging adapter in a local link, both faces played by the bench. A
+    # second instance at PASS=1 rides the same stimulus, so bypass is continuous.
+    "l2_adapter": (
+        "noc_l2_adapter_tb",
+        COMMON
+        + [
+            "src/kohakunoc/noc_l2_adapter.v",
+            "tests/noc/noc_l2_adapter_tb.v",
+        ],
+    ),
+    # Agent-side staging: one URAM store behind a reserved range, entry-wide to
+    # the fill path and word-wide to the host.
+    "mag_stage": (
+        "mag_stage_tb",
+        COMMON
+        + [
+            "src/kohakumas/mag_stage.v",
+            "tests/mas/mag_stage_tb.v",
+        ],
+    ),
     "cluster_node": (
         "mx_cluster_node_tb",
         COMMON + MATMUL + ["tests/matmul/mx_cluster_node_tb.v"],
+    ),
+    # The 15 tilings against the pumped node. `-d MX_BASE` swaps in the SHIPPING
+    # single-clock node at the same 1x period, so ns/sweep is a real speed-up.
+    "cluster_node_pump": (
+        "mx_cluster_node_pump_tb",
+        COMMON + MATMUL + ["tests/matmul/mx_cluster_node_pump_tb.v"],
     ),
     "acu": (
         "mx_acu_fp_tb",
@@ -159,6 +268,7 @@ BENCHES = {
         + [
             "src/kohakunoc/noc_cu_base.v",
             "src/kohakutpu/matmul/mx_cluster_cu.v",
+            "src/kohakutpu/matmul/mx_cluster_cu_pump.v",
             "tests/matmul/mx_cluster_data_tb.v",
         ],
     ),
@@ -178,9 +288,8 @@ BENCHES = {
         "mx_fpacc_tb",
         ["src/kohakutpu/matmul/mx_fpacc.v", "tests/matmul/mx_fpacc_tb.v"],
     ),
-    # mx_quant_tb is NOT here. It computes nothing and only dumps what the
-    # circuit produced; the expected values come from ktpu.hw.mxfp7, so it is
-    # driven by driver/run_quant_check.py, which does the comparison.
+    # mx_quant_tb is NOT here: it only dumps what the circuit produced, so
+    # scripts/py/run_quant_check.py drives it and does the comparison.
     #
     # The two benches below carry mx_quant.v only because noc_fake_mem
     # instantiates it. mx_matmul_cu never sets the QUANT flag on a read, so
@@ -223,6 +332,9 @@ BENCHES = {
             "src/kohakumas/axi_ram.v",
             "src/kohakumas/mag_mem_port.v",
             "src/kohakumas/mag.v",
+            "src/common/async_fifo.v",
+            "src/kohakumas/mag_stage_port.v",
+            "src/kohakumas/mag_dram_port.v",
             "tests/mas/mag_system_tb.v",
         ],
     ),
@@ -247,8 +359,73 @@ BENCHES = {
             "src/kohakumas/axi_ram.v",
             "src/kohakumas/mag_mem_port.v",
             "src/kohakumas/mag.v",
+            "src/common/async_fifo.v",
+            "src/kohakumas/mag_stage_port.v",
+            "src/kohakumas/mag_dram_port.v",
             "src/synth_top/mm_mesh.v",
             "tests/mas/mm_mesh_tb.v",
+        ],
+    ),
+    # The same machine with both CUs on an asynchronous unit clock, one arm
+    # faster than the mesh and one slower, neither harmonic with it.
+    "mm_mesh_cdc": ("mm_mesh_cdc_tb", MESH_CDC),
+    "mm_mesh_cdc_slow": ("mm_mesh_cdc_slow_tb", MESH_CDC),
+    # Async unit clocks AND the converged L2 together.
+    "mm_mesh_cdc_l2": ("mm_mesh_cdc_l2_tb", MESH_CDC),
+    # The adapter in mm_mesh's cluster link, found by dispatched instructions:
+    # CU_CTRL programs it, a real DRAIN is intercepted, DRAM stays clean.
+    "mm_mesh_l2": (
+        "mm_mesh_l2_tb",
+        COMMON
+        + NOC
+        + MATMUL
+        + MOVER
+        + VECTOR
+        + [
+            "src/kohakutpu/matmul/mx_cluster_cu.v",
+            "src/kohakutpu/vector/vec_cvt.v",
+            "src/kohakutpu/vector/vec_regfile.v",
+            "src/kohakutpu/vector/vec_lanes.v",
+            "src/kohakutpu/vector/vec_agu.v",
+            "src/kohakutpu/vector/vec_core.v",
+            "src/kohakutpu/vector/vec_cu.v",
+            "src/kohakumas/mx_quant.v",
+            "src/kohakumas/axi_ram.v",
+            "src/kohakumas/mag_mem_port.v",
+            "src/kohakumas/mag.v",
+            "src/common/async_fifo.v",
+            "src/kohakumas/mag_stage_port.v",
+            "src/kohakumas/mag_dram_port.v",
+            "src/synth_top/mm_mesh.v",
+            "tests/mas/mm_mesh_l2_tb.v",
+        ],
+    ),
+    # MAG staging proved rather than observed: DRAM is poisoned under the staged
+    # copy, so a fill that quietly aliased onto DRAM gives a different answer.
+    "mm_mesh_stage": (
+        "mm_mesh_stage_tb",
+        COMMON
+        + NOC
+        + MATMUL
+        + MOVER
+        + VECTOR
+        + [
+            "src/kohakutpu/matmul/mx_cluster_cu.v",
+            "src/kohakutpu/vector/vec_cvt.v",
+            "src/kohakutpu/vector/vec_regfile.v",
+            "src/kohakutpu/vector/vec_lanes.v",
+            "src/kohakutpu/vector/vec_agu.v",
+            "src/kohakutpu/vector/vec_core.v",
+            "src/kohakutpu/vector/vec_cu.v",
+            "src/kohakumas/mx_quant.v",
+            "src/kohakumas/axi_ram.v",
+            "src/kohakumas/mag_mem_port.v",
+            "src/kohakumas/mag.v",
+            "src/common/async_fifo.v",
+            "src/kohakumas/mag_stage_port.v",
+            "src/kohakumas/mag_dram_port.v",
+            "src/synth_top/mm_mesh.v",
+            "tests/mas/mm_mesh_stage_tb.v",
         ],
     ),
     # The same machine, with the cluster draining INTO the vector core rather
@@ -272,8 +449,21 @@ BENCHES = {
             "src/kohakumas/axi_ram.v",
             "src/kohakumas/mag_mem_port.v",
             "src/kohakumas/mag.v",
+            "src/common/async_fifo.v",
+            "src/kohakumas/mag_stage_port.v",
+            "src/kohakumas/mag_dram_port.v",
             "src/synth_top/mm_mesh.v",
             "tests/mas/mm_mesh_peer_tb.v",
+        ],
+    ),
+    # The peer drain with both CUs on an asynchronous unit clock: a burst OUT of
+    # one unit domain and back IN to the other, through the NoC's.
+    "mm_mesh_peer_cdc": (
+        "mm_mesh_peer_cdc_tb",
+        MESH_CDC
+        + [
+            "tests/mas/mm_mesh_peer_tb.v",
+            "tests/mas/mm_mesh_peer_cdc_tb.v",
         ],
     ),
     # The same machine behind ONE 512-bit master. Proves mag_dram_port carries
@@ -298,6 +488,10 @@ BENCHES = {
             "src/kohakumas/mag_mem_port.v",
             "src/kohakumas/mag.v",
             "src/common/async_fifo.v",
+            "src/kohakumas/mag_stage_port.v",
+            "src/kohakumas/mag_dram_port.v",
+            "src/common/async_fifo.v",
+            "src/kohakumas/mag_stage_port.v",
             "src/kohakumas/mag_dram_port.v",
             "src/synth_top/mm_mesh.v",
             "src/synth_top/mm_mesh_1m.v",
@@ -311,6 +505,7 @@ BENCHES = {
         + [
             "src/kohakumas/axi_ram.v",
             "src/common/async_fifo.v",
+            "src/kohakumas/mag_stage_port.v",
             "src/kohakumas/mag_dram_port.v",
             "tests/mas/mag_dram_port_tb.v",
         ],
@@ -323,6 +518,7 @@ BENCHES = {
         + [
             "src/kohakumas/axi_ram.v",
             "src/common/async_fifo.v",
+            "src/kohakumas/mag_stage_port.v",
             "src/kohakumas/mag_dram_port.v",
             "tests/mas/mag_dram_port_tb.v",
             "tests/mas/mag_dram_port_r1_tb.v",
@@ -345,6 +541,10 @@ BENCHES = {
             "src/kohakumas/mag_ilink.v",
             "src/kohakumas/mag.v",
             "src/common/async_fifo.v",
+            "src/kohakumas/mag_stage_port.v",
+            "src/kohakumas/mag_dram_port.v",
+            "src/common/async_fifo.v",
+            "src/kohakumas/mag_stage_port.v",
             "src/kohakumas/mag_dram_port.v",
             "src/kohakumas/axi_ram.v",
             "src/synth_top/mag_1m.v",
@@ -378,16 +578,136 @@ BENCHES = {
             "src/kohakumas/mag_ilink.v",
             "src/kohakumas/mag.v",
             "src/common/async_fifo.v",
+            "src/kohakumas/mag_stage_port.v",
+            "src/kohakumas/mag_dram_port.v",
+            "src/common/async_fifo.v",
+            "src/kohakumas/mag_stage_port.v",
             "src/kohakumas/mag_dram_port.v",
             "src/synth_top/mag_1m.v",
             "src/synth_top/ktpu_min_1m.v",
             "tests/mas/interlink_2mesh_1m_tb.v",
         ],
     ),
+    # Cross-mesh STAGING: mesh 0 drains into mesh 1's aperture 0 over the link,
+    # mesh 1 fills from it locally. Mesh 1's DRAM is poison, so an alias shows.
+    "interlink_stage": (
+        "interlink_stage_tb",
+        COMMON
+        + MOVER
+        + [
+            "src/kohakunoc/noc_orchestrator.v",
+            "src/kohakumas/mx_quant.v",
+            "src/kohakumas/axi_ram.v",
+            "src/kohakumas/mag_mem_port.v",
+            "src/kohakumas/il_pkt_arb.v",
+            "src/kohakumas/mag_link.v",
+            "src/kohakumas/mag_link_pipe.v",
+            "src/kohakumas/mag_switch.v",
+            "src/kohakumas/mag_ilink.v",
+            "src/kohakumas/mag.v",
+            "src/common/async_fifo.v",
+            "src/kohakumas/mag_stage_port.v",
+            "src/kohakumas/mag_dram_port.v",
+            "src/common/async_fifo.v",
+            "src/kohakumas/mag_stage_port.v",
+            "src/kohakumas/mag_dram_port.v",
+            "src/synth_top/mag_1m.v",
+            "tests/mas/interlink_stage_tb.v",
+        ],
+    ),
+    # The mover across the SLR chain at 1, 2 and 4 MAGs, descriptors written to
+    # S_AXI_CTRL the way software writes them. 4 MAGs is mesh0->mesh2, 3 hops.
+    "mover_chain1": ("mover_chain1_tb", MESH_1M + ["tests/mas/mover_chain_tb.v"]),
+    "mover_chain2": ("mover_chain2_tb", MESH_1M + ["tests/mas/mover_chain_tb.v"]),
+    "mover_chain4": ("mover_chain4_tb", MESH_1M + ["tests/mas/mover_chain_tb.v"]),
+    # Run with -d MV_L2: the mover moves DRAM -> aperture 0 -> DRAM, the only
+    # path that makes it a requester of the MAG store.
+    "mover_l2": (
+        "mover_chain1_tb",
+        MESH_1M + ["src/synth_top/ktpu_min_1m_l2.v", "tests/mas/mover_chain_tb.v"],
+    ),
+    # FOUR meshes, a store in each: mesh0 -> mesh3 is three hops through two
+    # transit MAGs, so interlink FORWARDING and staging are exercised together.
+    "mover_l2_chain": (
+        "mover_chain4_tb",
+        MESH_1M + ["src/synth_top/ktpu_min_1m_l2.v", "tests/mas/mover_chain_tb.v"],
+    ),
+    # Forwarding across two hops, and the ordering that makes a DOORBELL mean
+    # "the data ahead of me has landed". Was unregistered, so it never ran.
+    "interlink_4mesh": (
+        "interlink_4mesh_tb",
+        COMMON
+        + [
+            "src/common/async_fifo.v",
+            "src/kohakumas/il_pkt_arb.v",
+            "src/kohakumas/mag_link.v",
+            "src/kohakumas/mag_link_pipe.v",
+            "src/kohakumas/mag_switch.v",
+            "tests/mas/interlink_4mesh_tb.v",
+        ],
+    ),
+    # interlink_2mesh_tb.v is NOT here: it fails its own checks, superseded by
+    # interlink_2mesh_1m. Triage before registering.
+    # The link pair alone: credit and framing, no switch above them.
+    "mag_link": (
+        "mag_link_tb",
+        COMMON
+        + [
+            "src/common/async_fifo.v",
+            "src/kohakumas/il_pkt_arb.v",
+            "src/kohakumas/mag_link.v",
+            "src/kohakumas/mag_link_pipe.v",
+            "tests/mas/mag_link_tb.v",
+        ],
+    ),
     # The mover alone against an AXI RAM: no MAG, no NoC, no mesh.
     "mm_mover": (
         "mm_mover_tb",
         COMMON + MOVER + ["src/kohakumas/axi_ram.v", "tests/mas/mm_mover_tb.v"],
+    ),
+    # Workflow bandwidth: conv A', a large copy, a short-run relayout, a fill.
+    # mm_mover_v1.v is the pre-burst engine, so before and after are measured.
+    "mm_mover_bw": (
+        "mm_mover_bw_tb",
+        COMMON + MOVER + ["tests/mas/mm_mover_v1.v", "tests/mas/mm_mover_bw_tb.v"],
+    ),
+    # What the stock mag_dram_port gives one requester against burst length,
+    # reads in flight and mesh clock: the ceiling mm_mover_bw is measured against.
+    "mag_dram_port_bw": (
+        "mag_dram_port_bw_tb",
+        COMMON
+        + [
+            "src/common/async_fifo.v",
+            "src/kohakumas/mag_stage_port.v",
+            "src/kohakumas/mag_dram_port.v",
+            "tests/mas/mag_dram_port_bw_tb.v",
+        ],
+    ),
+    # The 0-1-3-2 chain at four clocks, swept 1/2/4 deep. Only this bench has
+    # TRANSIT: a packet forwarded through a mesh whose rate neither end shares.
+    "interlink_cdc_chain": (
+        "interlink_cdc_chain_tb",
+        [
+            "src/common/sync_fifo.v",
+            "src/common/async_fifo.v",
+            "src/kohakumas/il_pkt_arb.v",
+            "src/kohakumas/mag_link.v",
+            "src/kohakumas/mag_switch.v",
+            "src/kohakumas/mag_link_cdc.v",
+            "tests/mas/interlink_cdc_chain_tb.v",
+        ],
+    ),
+    # One interlink across two mesh clocks. Three ratios, one non-harmonic,
+    # and enough beats that credit must recirculate through both crossings.
+    "mag_link_cdc": (
+        "mag_link_cdc_tb",
+        [
+            "src/common/sync_fifo.v",
+            "src/common/async_fifo.v",
+            "src/kohakumas/mag_link.v",
+            "src/kohakumas/mag_link_cdc.v",
+            "tests/mas/mag_link_cdc_tb.v",
+        ],
     ),
     # Philox-4x32-10 against the published Random123 vectors.
     "mm_prng": (
@@ -406,6 +726,9 @@ BENCHES = {
             "src/kohakumas/axi_ram.v",
             "src/kohakumas/mag_mem_port.v",
             "src/kohakumas/mag.v",
+            "src/common/async_fifo.v",
+            "src/kohakumas/mag_stage_port.v",
+            "src/kohakumas/mag_dram_port.v",
             "tests/mas/mag_wslot_tb.v",
         ],
     ),
@@ -428,6 +751,18 @@ def main():
     ap.add_argument("--model", type=int, default=1, help="1 = behavioural, 0 = DSP48")
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--define", "-d", action="append", default=[])
+    # Implies --keep: the VCD lives in the build directory.
+    ap.add_argument("--vcd", help="dump this scope, e.g. /mm_mesh_stage_tb/dut")
+    ap.add_argument("--vcd-file", default="dump.vcd")
+    # BUDGET, not -runall: a hung DUT makes the bench spin its whole SPIN_MAX,
+    # so a debug loop should stop at ~1.5x where the answer was due.
+    ap.add_argument("--max-time", help="stop after this sim time, e.g. 200us")
+    ap.add_argument(
+        "--wall",
+        type=float,
+        default=600.0,
+        help="kill the simulation after this many seconds (default 600)",
+    )
     # Different benches already own different directories; the SAME bench twice
     # does not, and the second run wipes the first's out from under it.
     ap.add_argument(
@@ -453,8 +788,14 @@ def main():
     # hold", the accumulator's reuse-window check, the manager's L1-overlap
     # check, the drain-queue overflow check. All of them exist to make a failure
     # loud, and all of them were being thrown away before anyone could read one.
+    # Verdict matched STRIPPED: seven benches print `PASS` against the margin, and
+    # a two-space test failed them all while this filter hid the line saying so.
     def keep(ln):
-        return ln.startswith(("---", "    ", "  ", "===")) or "ERROR" in ln
+        return (
+            ln.startswith(("---", "    ", "  ", "==="))
+            or "ERROR" in ln
+            or ln.strip().startswith(("PASS", "FAIL"))
+        )
 
     def run(cmd, stream=False):
         # Windows will not resolve a .bat through CreateProcess, so name it in
@@ -483,11 +824,25 @@ def main():
             text=True,
             bufsize=1,
         )
+        # WALL CLOCK BOUND. A DUT that hangs makes the bench spin its whole
+        # SPIN_MAX, and standalone xsim has no timeout of its own.
+        deadline = time.monotonic() + args.wall
         got = []
         for ln in proc.stdout:
             got.append(ln)
             if keep(ln):
                 print(ln, end="", flush=True)
+            if time.monotonic() > deadline:
+                print(f"  STALLED past {args.wall}s -- killing")
+                if os.name == "nt":
+                    subprocess.run(
+                        ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                        capture_output=True,
+                        check=False,
+                    )
+                else:
+                    proc.kill()
+                break
         proc.wait()
         out = "".join(got)
         if proc.returncode:
@@ -495,7 +850,9 @@ def main():
             sys.exit(f"failed: {cmd[0]}")
         return out
 
-    files = [str(ROOT / p) for p in srcs]
+    # DEDUPED, order kept: a file listed twice is a duplicate module definition
+    # and xvlog rejects the build.
+    files = [str(ROOT / p) for p in dict.fromkeys(srcs)]
     libs = ["-L", "xpm"]
     tops = [f"w.{top}"]
     if args.model == 0:
@@ -511,7 +868,10 @@ def main():
     # glbl only where it is needed. Adding it everywhere would hold GSR over
     # every XPM cell for the first 100 ns, which is a behaviour change to benches
     # that pass today -- see the trap in docs/simulation.md s3.
-    if args.model == 0 or args.bench in NEEDS_GLBL:
+    # An async FIFO is an xpm_cdc, which instantiates glbl. Detected from the
+    # source list rather than listed per bench: mag.v now always pulls one in.
+    has_cdc = any("async_fifo.v" in f for f in files)
+    if args.model == 0 or args.bench in NEEDS_GLBL or has_cdc:
         run(["xvlog.bat", "-work", "w", str(VIVADO / ".." / "data/verilog/src/glbl.v")])
         tops.append("w.glbl")
     if args.model == 0:
@@ -522,11 +882,35 @@ def main():
         + tops
         + ["-s", "tb"]
     )
-    out = run(["xsim.bat", "tb", "-runall"], stream=True)
+    # --vcd dumps a scope's signals for reading cycle by cycle.
+    if args.vcd:
+        # COUNTED: a wrong scope returns an empty list and writes a VCD with no
+        # $var, which reads as "the signals never moved".
+        (work / "dump.tcl").write_text(
+            f"set objs [get_objects -r {args.vcd}/*]\n"
+            'puts "@@@ VCD [llength $objs] objects"\n'
+            'if {[llength $objs] == 0} { error "scope matched nothing" }\n'
+            f"open_vcd {args.vcd_file}\n"
+            "log_vcd $objs\n"
+            "run -all\n"
+            "flush_vcd\nclose_vcd\nquit\n"
+        )
+        out = run(["xsim.bat", "tb", "-t", "dump.tcl"], stream=True)
+        print(f"  VCD {work / args.vcd_file}")
+    elif args.max_time:
+        (work / "budget.tcl").write_text(
+            f'run {args.max_time}\nputs "@@@ BUDGET {args.max_time} reached"\nquit\n'
+        )
+        out = run(["xsim.bat", "tb", "-t", "budget.tcl"], stream=True)
+    else:
+        out = run(["xsim.bat", "tb", "-runall"], stream=True)
 
-    if not args.keep:
+    if not args.keep and not args.vcd:
         shutil.rmtree(work, ignore_errors=True)
-    sys.exit(0 if "  PASS" in out else 1)
+    verdicts = [ln.strip() for ln in out.splitlines()]
+    passed = any(v.startswith("PASS") for v in verdicts)
+    failed = any(v.startswith("FAIL") for v in verdicts)
+    sys.exit(0 if passed and not failed else 1)
 
 
 if __name__ == "__main__":

@@ -18,8 +18,17 @@
 `default_nettype none
 `timescale 1ns/1ps
 
-module mm_mesh_tb;
-    localparam FW = 288, PW = 4, DW = 256, AW = 34, IDW = 4;
+module mm_mesh_tb #(
+    // HALF periods in ns, against the mesh's 2.0. One rate per TYPE, so the
+    // cluster and the vector core are separate domains, not one shared one.
+    parameter integer UNIT_CDC = 0,
+    parameter real    MHP      = 2.0,
+    parameter real    VHP      = 2.0,
+    // MAG staging on the converged path, so the async unit clocks and the L2
+    // are exercised in one design rather than in two separate benches.
+    parameter integer L2MAG    = 0
+);
+    localparam FW = 288, PW = 4, DW = 256, AW = 40, IDW = 4;
     localparam MEMP = 1, NCH = MEMP + 2;
 
     localparam [3:0] T_CU_INST = 4'h5;
@@ -31,8 +40,13 @@ module mm_mesh_tb;
     reg clk = 0, rst = 1;
     always #2 clk = ~clk;
 
+    reg mat_clk = 0, vec_clk = 0;
+    always #MHP mat_clk = ~mat_clk;
+    always #VHP vec_clk = ~vec_clk;
+
     reg  [FW-1:0] ext_i;
     reg           ext_iv;
+    reg  [255:0]  prog_mem [0:15];   // compiler-emitted payloads, see PROG_HEX
     wire          ext_ib;
     wire [FW-1:0] ext_o;
     wire          ext_ov;
@@ -46,24 +60,27 @@ module mm_mesh_tb;
     wire [3:0]   mv_fault;
     wire [31:0]  mv_done;
 
-    wire [NCH*IDW-1:0]  r_awid, r_arid, r_bid, r_rid;
-    wire [NCH*AW-1:0]   r_awaddr, r_araddr;
-    wire [NCH*8-1:0]    r_awlen, r_arlen;
-    wire [NCH*3-1:0]    r_awsize, r_arsize;
-    wire [NCH*2-1:0]    r_awburst, r_arburst, r_bresp, r_rresp;
-    wire [NCH-1:0]      r_awvalid, r_awready, r_wvalid, r_wready, r_wlast;
-    wire [NCH-1:0]      r_bvalid, r_bready, r_arvalid, r_arready;
-    wire [NCH-1:0]      r_rvalid, r_rready, r_rlast;
-    wire [NCH*DW-1:0]   r_wdata, r_rdata;
-    wire [NCH*DW/8-1:0] r_wstrb;
+    // ONE channel: MAG converges its internal requesters itself now.
+    wire [IDW-1:0]  r_awid, r_arid, r_bid, r_rid;
+    wire [AW-1:0]   r_awaddr, r_araddr;
+    wire [7:0]      r_awlen, r_arlen;
+    wire [2:0]      r_awsize, r_arsize;
+    wire [1:0]      r_awburst, r_arburst, r_bresp, r_rresp;
+    wire            r_awvalid, r_awready, r_wvalid, r_wready, r_wlast;
+    wire            r_bvalid, r_bready, r_arvalid, r_arready;
+    wire            r_rvalid, r_rready, r_rlast;
+    wire [DW-1:0]   r_wdata, r_rdata;
+    wire [DW/8-1:0] r_wstrb;
 
     wire [47:0] dbg_cluster;
     wire [31:0] dbg_vcyc, obs;
     wire        dbg_vflt;
 
     mm_mesh #(.FW(FW), .PW(PW), .DW(DW), .AW(AW), .IDW(IDW), .MEMP(MEMP),
-              .MODEL(1)) dut (
-        .clk(clk), .rst(rst),
+              .UNIT_CDC(UNIT_CDC), .MODEL(1),
+              .L2_MAG(L2MAG), .L2_MAG_BANKS(4), .L2_MAG_ENTRIES(1024),
+              .L2_MAG_AT_PORT(L2MAG)) dut (
+        .clk(clk), .mat_clk(mat_clk), .vec_clk(vec_clk), .rst(rst),
         .sm_awaddr({AW{1'b0}}), .sm_awlen(8'd0), .sm_awvalid(1'b0),
         .sm_wdata({DW{1'b0}}), .sm_wlast(1'b0), .sm_wvalid(1'b0),
         .sc_awaddr(sc_awaddr), .sc_awvalid(sc_awvalid), .sc_awready(sc_awready),
@@ -72,18 +89,19 @@ module mm_mesh_tb;
         .sc_araddr(32'd0), .sc_arvalid(1'b0),
         .sc_rdata(), .sc_rvalid(),
         .mv_busy(mv_busy), .mv_fault(mv_fault), .mv_done(mv_done),
-        .m_awid(r_awid), .m_awaddr(r_awaddr), .m_awlen(r_awlen),
-        .m_awsize(r_awsize), .m_awburst(r_awburst),
-        .m_awvalid(r_awvalid), .m_awready(r_awready),
-        .m_wdata(r_wdata), .m_wstrb(r_wstrb), .m_wlast(r_wlast),
-        .m_wvalid(r_wvalid), .m_wready(r_wready),
-        .m_bid(r_bid), .m_bresp(r_bresp), .m_bvalid(r_bvalid),
-        .m_bready(r_bready),
-        .m_arid(r_arid), .m_araddr(r_araddr), .m_arlen(r_arlen),
-        .m_arsize(r_arsize), .m_arburst(r_arburst),
-        .m_arvalid(r_arvalid), .m_arready(r_arready),
-        .m_rid(r_rid), .m_rdata(r_rdata), .m_rresp(r_rresp),
-        .m_rlast(r_rlast), .m_rvalid(r_rvalid), .m_rready(r_rready),
+        .dram_aclk(clk), .dram_aresetn(!rst),
+        .dram_awid(r_awid), .dram_awaddr(r_awaddr), .dram_awlen(r_awlen),
+        .dram_awsize(r_awsize), .dram_awburst(r_awburst),
+        .dram_awvalid(r_awvalid), .dram_awready(r_awready),
+        .dram_wdata(r_wdata), .dram_wstrb(r_wstrb), .dram_wlast(r_wlast),
+        .dram_wvalid(r_wvalid), .dram_wready(r_wready),
+        .dram_bid(r_bid), .dram_bresp(r_bresp), .dram_bvalid(r_bvalid),
+        .dram_bready(r_bready),
+        .dram_arid(r_arid), .dram_araddr(r_araddr), .dram_arlen(r_arlen),
+        .dram_arsize(r_arsize), .dram_arburst(r_arburst),
+        .dram_arvalid(r_arvalid), .dram_arready(r_arready),
+        .dram_rid(r_rid), .dram_rdata(r_rdata), .dram_rresp(r_rresp),
+        .dram_rlast(r_rlast), .dram_rvalid(r_rvalid), .dram_rready(r_rready),
         .ext_in_data(ext_i), .ext_in_valid(ext_iv), .ext_in_busy(ext_ib),
         .ext_out_data(ext_o), .ext_out_valid(ext_ov), .ext_out_busy(1'b0),
         .dbg_cluster(dbg_cluster), .dbg_vec_cycles(dbg_vcyc),
@@ -96,7 +114,7 @@ module mm_mesh_tb;
     wire [DW-1:0] bd_rdata;
 
     axi_ram #(.DATA_W(DW), .ADDR_W(AW), .ID_W(IDW), .WORDS(2048),
-              .PORTS(NCH)) u_ram (
+              .PORTS(1)) u_ram (
         .clk(clk), .resetn(!rst),
         .s_awid(r_awid), .s_awaddr(r_awaddr), .s_awlen(r_awlen),
         .s_awsize(r_awsize), .s_awburst(r_awburst),
@@ -272,15 +290,32 @@ module mm_mesh_tb;
         chk(dbg_vflt === 1'b0, "vector core did not fault", 0);
 
         @(negedge clk); bd_addr = A_DST >> 5;
-        @(negedge clk); @(negedge clk);
+        // POLLED, not a fixed wait: the write crosses MAG's one dram port and
+        // can still be in its write FIFO when the kernel retires.
+        spin = 0;
+        while ((bd_rdata !== {16{16'h4400}}) && (spin < 4000)) begin
+            spin = spin + 1; @(negedge clk);
+        end
         // 2.0 fetched from DRAM, doubled, written back as FP16 4.0
         chk(bd_rdata === {16{16'h4400}}, "vector result reached DRAM", 0);
 
         // ============ 3. the cluster fetching through MAG ============
         $display("--- 3. cluster: a FILL served by MAG over the mesh ---");
         // op=1 FILL, addr=A_MSRC, n=1 entry, sel=A, quantise on the way out
+`ifdef PROG_HEX
+        // THE COMPILER'S OWN BITS. gen_prog.py writes what kohakutpu.hw.matmul
+        // emits, so an encoder that drifts from the RTL fails here, not on card.
+        // xsim.py runs from build/xsim_<bench>, so the repo root is two up.
+        $readmemh("../../build/prog/mm_mesh_fill.hex", prog_mem);
+        if (prog_mem[0] === {256{1'bx}}) begin
+            $display("FAIL mm_mesh: PROG_HEX set but build/prog/mm_mesh_fill.hex is missing");
+            $finish;
+        end
+        cl_inst(prog_mem[0]);
+`else
         cl_inst({4'd1, A_MSRC, 16'd1, 1'b0, 1'b0, 8'd0, 8'd0, 8'd0, 8'd0,
                  24'd0, 2'd0, 1'b0, 8'd0, 8'd0, 8'd0, 1'b0, 1'b0, 115'd0});
+`endif
         spin = 0;
         while ((dbg_cluster[47:32] == 16'd0) && (spin < 200000)) begin
             spin = spin + 1; @(negedge clk);

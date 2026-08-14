@@ -89,10 +89,10 @@ module vec_cu_tb;
     // Word addressed: one 256-bit line per 32 bytes. Reads are queued and
     // answered after a delay, so the core cannot depend on a fixed latency.
     reg [255:0] dram [0:1023];
-    reg [33:0]  rq_addr [0:63];
+    reg [39:0]  rq_addr [0:63];
     reg [7:0]   rq_tag  [0:63];
     integer     rq_head, rq_tail, rq_wait;
-    reg [33:0]  wr_addr_l;
+    reg [39:0]  wr_addr_l;
     reg         wr_open;
 
     reg  [FW-1:0] mem_flit;
@@ -100,7 +100,9 @@ module vec_cu_tb;
 
     wire [3:0] o_type = out_data[FW-4*PW-1 -: 4];
     wire [7:0] o_txn  = out_data[FW-4*PW-5 -: 8];
-    wire [33:0] o_addr = out_data[255 -: 34];
+    // 40, NOT 34. NOC_MEM_ADDR is [255:216]; decoding the top 34 reads the
+    // address shifted right by six and the drain lands where nothing looks.
+    wire [39:0] o_addr = out_data[255 -: 40];
 
     integer sig_count, dr_count;
     reg [31:0] last_sig_arg, last_dr_arg;

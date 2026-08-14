@@ -28,7 +28,7 @@ module mag_wslot_tb;
     localparam integer FW  = 288;
     localparam integer PW  = 4;
     localparam integer DW  = 256;
-    localparam integer AW  = 34;
+    localparam integer AW  = 40;
 
     localparam [3:0] T_MEM_RD_REQ  = 4'h0,
                      T_MEM_WR_REQ  = 4'h1,
@@ -51,9 +51,9 @@ module mag_wslot_tb;
     wire [FW-1:0] out_data;
     wire          out_valid;
 
-    // One AXI channel per MAG memory port, plus one for the host upload.
+    // ONE AXI channel: MAG converges its internal requesters itself.
     localparam integer MEMP = 1;
-    localparam integer NCH  = MEMP + 2;   // ports, upload, mover
+    localparam integer NCH  = 1;
 
     wire [NCH*4-1:0]    m_awid, m_arid, m_bid, m_rid;
     wire [NCH*AW-1:0]   m_awaddr, m_araddr;
@@ -84,16 +84,17 @@ module mag_wslot_tb;
         .sc_araddr(32'd0), .sc_arvalid(1'b0), .sc_arready(),
         .sc_rdata(), .sc_rresp(), .sc_rvalid(), .sc_rready(1'b1),
         // AXI master to the RAM
-        .m_awid(m_awid), .m_awaddr(m_awaddr), .m_awlen(m_awlen),
-        .m_awvalid(m_awvalid), .m_awready(m_awready),
-        .m_wdata(m_wdata), .m_wstrb(m_wstrb), .m_wlast(m_wlast),
-        .m_wvalid(m_wvalid), .m_wready(m_wready),
-        .m_bid(m_bid), .m_bresp(m_bresp), .m_bvalid(m_bvalid),
-        .m_bready(m_bready),
-        .m_arid(m_arid), .m_araddr(m_araddr), .m_arlen(m_arlen),
-        .m_arvalid(m_arvalid), .m_arready(m_arready),
-        .m_rid(m_rid), .m_rdata(m_rdata), .m_rresp(m_rresp),
-        .m_rlast(m_rlast), .m_rvalid(m_rvalid), .m_rready(m_rready),
+        .dram_aclk(clk), .dram_aresetn(rstn),
+        .dram_awid(m_awid), .dram_awaddr(m_awaddr), .dram_awlen(m_awlen),
+        .dram_awvalid(m_awvalid), .dram_awready(m_awready),
+        .dram_wdata(m_wdata), .dram_wstrb(m_wstrb), .dram_wlast(m_wlast),
+        .dram_wvalid(m_wvalid), .dram_wready(m_wready),
+        .dram_bid(m_bid), .dram_bresp(m_bresp), .dram_bvalid(m_bvalid),
+        .dram_bready(m_bready),
+        .dram_arid(m_arid), .dram_araddr(m_araddr), .dram_arlen(m_arlen),
+        .dram_arvalid(m_arvalid), .dram_arready(m_arready),
+        .dram_rid(m_rid), .dram_rdata(m_rdata), .dram_rresp(m_rresp),
+        .dram_rlast(m_rlast), .dram_rvalid(m_rvalid), .dram_rready(m_rready),
         // NoC memory port -- the whole point of this bench
         .mem_in_data(in_data), .mem_in_valid(in_valid), .mem_in_busy(in_busy),
         .mem_out_data(out_data), .mem_out_valid(out_valid),
@@ -142,7 +143,7 @@ module mag_wslot_tb;
     endgenerate
 
     axi_ram #(.DATA_W(DW), .ADDR_W(AW), .ID_W(4), .WORDS(4096),
-              .PORTS(NCH)) u_ram (
+              .PORTS(1)) u_ram (
         .clk(clk), .resetn(rstn),
         .s_awid(m_awid), .s_awaddr(m_awaddr), .s_awlen(m_awlen),
         .s_awvalid(m_awvalid), .s_awready(m_awready),
@@ -177,10 +178,10 @@ module mag_wslot_tb;
     function [FW-1:0] wr_req;
         input integer sx, sy;
         input [7:0]   txn;
-        input [33:0]  addr;
+        input [AW-1:0] addr;
         begin
             wr_req = hdr(T_MEM_WR_REQ, sx, sy, txn);
-            wr_req[255 -: 34] = addr;
+            wr_req[255 -: AW] = addr;
             // `len` is BEATS MINUS ONE, so one beat is 0. This said 1 and
             // meant "one beat", which was harmless only while MAG ignored the
             // field: once burst writes honoured it, every slot sat waiting for

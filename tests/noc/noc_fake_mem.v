@@ -66,6 +66,8 @@ module noc_fake_mem #(
     wire [POS_WIDTH-1:0] in_sx   = noc_in_data[FLIT_WIDTH-2*POS_WIDTH-1 -: POS_WIDTH];
     wire [POS_WIDTH-1:0] in_sy   = noc_in_data[FLIT_WIDTH-3*POS_WIDTH-1 -: POS_WIDTH];
     wire [7:0]           in_txn  = noc_in_data[HP-5 -: 8];
+    // 34, NOT 40, and MEASURED: widening this to the NOC_MEM_ADDR field breaks
+    // `system` and `system32`, which pass at 34. Their requester is not the CU.
     wire [33:0]          in_addr  = noc_in_data[255 -: 34];
     wire [7:0]           in_len   = noc_in_data[215 -: 8];
     wire [7:0]           in_flags = noc_in_data[207 -: 8];

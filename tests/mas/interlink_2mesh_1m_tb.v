@@ -5,7 +5,7 @@
 `default_nettype none
 
 module interlink_2mesh_1m_tb;
-    localparam FW = 288, PW = 4, DW = 256, AW = 34, IDW = 4, MW = 512;
+    localparam FW = 288, PW = 4, DW = 256, AW = 40, IDW = 4, MW = 512;
     localparam LW = 288, UW = 96;
 
     reg clk = 0, resetn = 0, dclk = 0;
@@ -162,8 +162,8 @@ module interlink_2mesh_1m_tb;
             end
         end
     endtask
-    task mvhdr(input integer m, input sel, input [33:0] base, input [2:0] nd);
-        begin mvwr(m, 8'h10, {17'd0, nd, 6'd0, base, 3'd0, sel}); end
+    task mvhdr(input integer m, input sel, input [AW-1:0] base, input [2:0] nd);
+        begin mvwr(m, 8'h10, {17'd0, nd, base, 3'd0, sel}); end
     endtask
     task mvdim(input integer m, input sel, input [2:0] d, input [15:0] c,
                input signed [31:0] s);
@@ -180,8 +180,10 @@ module interlink_2mesh_1m_tb;
         end
     endtask
 
-    localparam [33:0] SRC = 34'h1000;                  // mesh0 word 128
-    localparam [33:0] DST_REMOTE = {2'b01, 32'h2000};  // mesh1 word 256
+    localparam [39:0] SRC = 40'h1000;                              // mesh0 word 128
+    // Mesh is [37:36] now. At [33:32] this addressed mesh 0's own DRAM and the
+    // remote write landed locally -- wrong data, no fault.
+    localparam [39:0] DST_REMOTE = {2'b00, 2'b01, 4'h0, 32'h2000}; // mesh1 word 256
 
     initial begin
         sc_awvalid = 0; sc_wvalid = 0;
@@ -199,7 +201,7 @@ module interlink_2mesh_1m_tb;
         repeat (40) @(negedge clk);
 
         // DRAM -> DRAM ACROSS THE LINK: mesh0's mover reads its own memory and
-        // writes an address whose [33:32] names mesh 1.
+        // writes an address whose [37:36] names mesh 1.
         $display("--- DRAM(mesh0) -> link -> DRAM(mesh1) ---");
         mvhdr(0, 1'b0, SRC, 3'd1);
         mvdim(0, 1'b0, 3'd0, 16'd8, 32'sd32);

@@ -5,7 +5,7 @@
 `timescale 1ns/1ps
 
 module mm_mesh_1m_tb;
-    localparam FW = 288, PW = 4, DW = 256, AW = 34, IDW = 4;
+    localparam FW = 288, PW = 4, DW = 256, AW = 40, IDW = 4;
     localparam MEMP = 1, NCH = MEMP + 2, MW = 512;
 
     localparam [3:0] T_CU_INST = 4'h5;
