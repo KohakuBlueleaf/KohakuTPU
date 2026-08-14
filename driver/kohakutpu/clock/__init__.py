@@ -20,14 +20,19 @@ from kohakuaccel.transport.base import MASK32, Transport
 from kohakutpu.clock.mmcm import (
     DEFAULT_D,
     DEFAULT_K,
+    OUTPUTS_VERIFIED,
     REG_CLKCFG0,
     REG_CLKCFG2,
     REG_STATUS,
     STATUS_LOCKED,
     ClockError,
     ClockSetting,
+    MultiSetting,
+    reg_clkout,
     registers,
+    registers_multi,
     solve,
+    solve_multi,
 )
 
 #: Offsets from the control window a second AXI4-Lite slave usually lands on.
@@ -171,3 +176,67 @@ def set_mhz(
         f"M={want.m} D={want.d} k={want.k} ({want.mhz} MHz). The mesh is now on "
         f"an unlocked clock: hold it in reset and reload a known-good setting."
     )
+
+
+def wait_lock(transport: Transport, base: int, timeout: float = 2.0) -> None:
+    """Block until the MMCM at `base` locks. Raises ClockError on timeout."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if locked(transport, base):
+            return
+    raise ClockError(
+        f"the MMCM at {base:#x} did not lock within {timeout}s. Whatever it "
+        f"feeds is on an unlocked clock: hold it in reset and reload."
+    )
+
+
+def set_mhz_multi(
+    transport: Transport,
+    base: int,
+    mhz: float,
+    divisors: tuple[int, ...] = (1,),
+    d: int = DEFAULT_D,
+    k: int = DEFAULT_K,
+    timeout: float = 2.0,
+) -> MultiSetting:
+    """Retune one wizard's outputs together, and wait for lock.
+
+    `mhz` is CLKOUT0's; output `n` comes out at CLKOUT0 divided by
+    `divisors[n]`. One MMCM has one VCO, so that ratio is the ONLY spread
+    available and moving CLKOUT0 moves every output with it.
+
+    Returns the setting applied, which is the closest legal one at or below the
+    request. Raises ClockError if it is unreachable or the MMCM does not lock.
+    """
+    if len(divisors) > OUTPUTS_VERIFIED:
+        # Not a warning: the offsets past CLKOUT0 are PG065's stride, and no
+        # hardware here has confirmed them. Verify, then raise OUTPUTS_VERIFIED.
+        raise ClockError(
+            f"CLKOUT1..{len(divisors) - 1} offsets are unverified on this board. "
+            f"Check them against the IP, then raise "
+            f"kohakutpu.clock.mmcm.OUTPUTS_VERIFIED to {len(divisors)}."
+        )
+    want = solve_multi(mhz, divisors, d=d, k=k)
+    for offset, value in registers_multi(want):
+        write32(transport, base + offset, value)
+    wait_lock(transport, base, timeout)
+    return want
+
+
+def read_multi(transport: Transport, base: int, nout: int = 1) -> MultiSetting:
+    """What the wizard at `base` is set to, across `nout` outputs."""
+    cfg0 = read32(transport, base + REG_CLKCFG0)
+    ks = tuple(read32(transport, base + reg_clkout(n)) & 0xFF for n in range(nout))
+    got = MultiSetting(m=(cfg0 >> 8) & 0xFFFF, d=cfg0 & 0xFF, ks=ks)
+    got.check()
+    return got
+
+
+def find_wizards(transport: Transport, bases) -> dict:
+    """Which of `bases` hold something that decodes as a legal configuration.
+
+    Per-mesh clocks mean one wizard per mesh at whatever windows the address
+    map assigned. Returns {base: ClockSetting} for the ones that answer, so a
+    caller can see how many it found rather than assuming four.
+    """
+    return {b: s for b in bases if (s := probe(transport, b)) is not None}

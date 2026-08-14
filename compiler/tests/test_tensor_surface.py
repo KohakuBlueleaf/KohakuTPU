@@ -263,11 +263,12 @@ def test_a_flagless_script_and_a_flagged_one_agree(monkeypatch):
 
 
 def test_an_arena_past_one_mesh_is_refused():
-    """An address wider than 4 GB carries the NEXT mesh's id in bits [33:32].
+    """An address past a mesh's local space carries the NEXT mesh's id.
 
     That request does not fault, it routes: it lands in the other mesh's DRAM.
     The check is in the constructor because there is no later moment at which
-    the top of the arena is wrong in a way anything can see.
+    the top of the arena is wrong in a way anything can see. The boundary is
+    [35:0] since the 40-bit widening, so the base has to clear 64 GB to trip it.
     """
-    with pytest.raises(ValueError, match="4 GB"):
-        Device(card=object(), base=0xFFFF_0000, size=ARENA_SIZE)
+    with pytest.raises(ValueError, match="past one mesh's"):
+        Device(card=object(), base=(1 << 36) - 0x1000, size=ARENA_SIZE)

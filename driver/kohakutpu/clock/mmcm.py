@@ -40,6 +40,22 @@ REG_LOAD = 0x25C
 
 STATUS_LOCKED = 0x1
 
+#: Three words per output -- divide, phase, duty. CLKOUT6's three end at 0x258,
+#: immediately below LOAD, which is the check that the stride is right.
+OUT_MAX = 6
+OUT_STRIDE = 0x0C
+
+#: ONLY CLKOUT0's OFFSET IS PROVEN; the shipped design drives one output. The
+#: rest MUST be verified at bring-up, or a divider lands in a phase register.
+OUTPUTS_VERIFIED = 1
+
+
+def reg_clkout(n: int) -> int:
+    """Offset of output `n`'s divide register."""
+    if not 0 <= n <= OUT_MAX:
+        raise ClockError(f"CLKOUT{n} does not exist; an MMCME4 has 0..{OUT_MAX}")
+    return REG_CLKCFG2 + n * OUT_STRIDE
+
 
 class ClockError(ValueError):
     """A frequency this MMCM cannot produce."""
@@ -137,3 +153,76 @@ def registers(s: ClockSetting) -> list[tuple[int, int]]:
         (REG_CLKCFG2, s.k),
         (REG_LOAD, 0x3),
     ]
+
+
+@dataclass(frozen=True)
+class MultiSetting:
+    """One MMCM configuration across CLKOUT0..CLKOUT`n-1`.
+
+    `m` and `d` are shared because there is ONE VCO. `ks` is the only per-output
+    freedom and every output is VCO/k, so the achievable spread is integer
+    ratios and nothing else; independent rates need a second MMCM.
+    """
+
+    m: int
+    d: int
+    ks: tuple[int, ...]
+
+    @property
+    def pfd_mhz(self) -> float:
+        return FIN_MHZ / self.d
+
+    @property
+    def vco_mhz(self) -> float:
+        return self.pfd_mhz * self.m
+
+    def mhz(self, n: int = 0) -> float:
+        """Output `n`'s frequency."""
+        return self.vco_mhz / self.ks[n]
+
+    def check(self) -> None:
+        """Raise ClockError unless every MMCME4 limit holds, on every output."""
+        if not self.ks:
+            raise ClockError("a setting with no outputs drives nothing")
+        if len(self.ks) > OUT_MAX + 1:
+            raise ClockError(f"{len(self.ks)} outputs; an MMCME4 has {OUT_MAX + 1}")
+        # The shared half is identical for every output, so check it once
+        # through the single-output type rather than restating its limits.
+        for k in self.ks:
+            ClockSetting(m=self.m, d=self.d, k=k).check()
+
+
+def solve_multi(
+    target_mhz: float,
+    divisors: tuple[int, ...] = (1,),
+    d: int = DEFAULT_D,
+    k: int = DEFAULT_K,
+) -> MultiSetting:
+    """The legal multi-output setting closest to `target_mhz` at or below it.
+
+    `target_mhz` is CLKOUT0's; output `n` runs at CLKOUT0 divided by
+    `divisors[n]`, which is what "compute units at half the fabric rate" means
+    on one VCO. `divisors[0]` must be 1. Raises ClockError if any output's
+    divider leaves the MMCM's range, which a large divisor does long before the
+    frequency looks unreasonable.
+    """
+    if not divisors or divisors[0] != 1:
+        raise ClockError(f"divisors[0] is CLKOUT0 itself and must be 1, got {divisors}")
+    base = solve(target_mhz, d=d, k=k)
+    out = MultiSetting(m=base.m, d=base.d, ks=tuple(base.k * v for v in divisors))
+    out.check()
+    return out
+
+
+def registers_multi(s: MultiSetting) -> list[tuple[int, int]]:
+    """The (offset, value) writes that put `s` into a Clocking Wizard.
+
+    Divides only: phase and duty keep whatever the Wizard was built with, which
+    is what the single-output path has always done. LOAD is last, or a
+    half-updated configuration is applied.
+    """
+    s.check()
+    ops = [(REG_CLKCFG0, (s.m << 8) | s.d)]
+    ops += [(reg_clkout(n), kn) for n, kn in enumerate(s.ks)]
+    ops.append((REG_LOAD, 0x3))
+    return ops

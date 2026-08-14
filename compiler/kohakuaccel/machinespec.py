@@ -14,10 +14,15 @@ from dataclasses import dataclass, field, replace
 
 Coord = tuple[int, int]
 
-#: A device address names its mesh in bits [33:32], so an address a unit issues
+#: A device address names its mesh in bits [37:36], so an address a unit issues
 #: is GLOBAL. One mesh does not decode them, which is why a wrong one aliases.
-MESH_SHIFT = 32
+MESH_SHIFT = 36
 MESH_MASK = 0x3
+
+#: Bit 39 selects a command aperture instead of DRAM, and bit 38 is reserved for
+#: a third mesh bit. Neither may be set by an ordinary memory address.
+SPECIAL_BIT = 1 << 39
+RESERVED_BIT = 1 << 38
 
 
 @dataclass(frozen=True)
@@ -260,18 +265,18 @@ class MachineSpec:
         """`base` in that mesh's memory, as the address a unit issues.
 
         Every address in an instruction is global, so a LOCAL one has to say so
-        too: bits [33:32] left at zero mean mesh 0, whichever mesh is running.
+        too: bits [37:36] left at zero mean mesh 0, whichever mesh is running.
         That is why an ordinary matmul on mesh_2 raises `IL_F_RD_REMOTE` and is
         right anyway -- the request aliases to local DRAM instead of routing.
 
         Raises :class:`ValueError` for a mesh this machine does not have, or a
-        `base` that does not fit one mesh's 4 GB.
+        `base` that does not fit one mesh's 64 GB.
         """
         where = self.mesh(mesh).index
         if base >> MESH_SHIFT:
             raise ValueError(
-                f"{base:#x} does not fit one mesh's 4 GB; bits "
-                f"[{MESH_SHIFT + 1}:{MESH_SHIFT}] are the mesh id, not address"
+                f"{base:#x} does not fit one mesh's {1 << MESH_SHIFT:,} bytes; "
+                f"bits [{MESH_SHIFT + 1}:{MESH_SHIFT}] are the mesh id, not address"
             )
         return (where << MESH_SHIFT) | base
 

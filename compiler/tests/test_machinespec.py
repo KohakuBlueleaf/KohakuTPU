@@ -92,21 +92,22 @@ def test_a_mesh_this_machine_does_not_have_is_refused():
 
 # ----------------------------------------------------------- the address map
 def test_a_local_address_says_which_mesh_it_is_local_to():
-    """Bits 33:32 clear mean mesh 0 to the hardware, wherever they are issued.
+    """Bits 37:36 clear mean mesh 0 to the hardware, wherever they are issued.
 
     Measured on the card: an ordinary matmul on mesh_2 emitting bare 32-bit
     addresses raises `IL_F_RD_REMOTE` on every FILL, and is right only because
     an undecoded remote address aliases to local DRAM instead of routing.
     """
     assert CARD.global_addr(0x1800_0000) == 0x1800_0000
-    assert CARD.global_addr(0x1800_0000, mesh=2) == 0x2_1800_0000
-    assert CARD.for_mesh(2).global_addr(0x1800_0000) == 0x2_1800_0000
-    assert MachineSpec.addr_mesh(0x2_1800_0000) == 2
+    assert CARD.global_addr(0x1800_0000, mesh=2) == 0x20_1800_0000
+    assert CARD.for_mesh(2).global_addr(0x1800_0000) == 0x20_1800_0000
+    assert MachineSpec.addr_mesh(0x20_1800_0000) == 2
 
 
 def test_an_address_wider_than_one_mesh_is_refused():
-    with pytest.raises(ValueError, match="does not fit one mesh's 4 GB"):
-        CARD.global_addr(0x1_0000_0000)
+    # 64 GB, not 4: a mesh's local space is [35:0] since the 40-bit widening.
+    with pytest.raises(ValueError, match="does not fit one mesh's"):
+        CARD.global_addr(1 << 36)
 
 
 def test_an_address_on_a_mesh_that_does_not_exist_is_refused():

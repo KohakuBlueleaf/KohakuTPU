@@ -4,9 +4,9 @@ Everything else about a memory manager is a performance question. Overlap is a
 correctness question, and it is silent on the machine -- the second tensor
 writes over the first and both reads succeed.
 
-Randomised rather than case-based. `tests/ktpu/unit/test_memplan.py` covers the
-solved-plan allocator with thirty hand-built cases; this covers the EAGER one,
-where lifetimes come from Python rather than from step order, and it covers it by
+Randomised rather than case-based, and now the only cover: the hand-built cases
+for the solved-plan allocator went with `src/ktpu`. This covers the EAGER
+allocator, where lifetimes come from Python rather than from step order, by
 trying to break the invariant a few thousand times.
 
 Run as ``python -m tests.test_arena`` from ``compiler/``.

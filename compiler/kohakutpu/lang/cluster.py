@@ -115,6 +115,7 @@ class Slice:
         fresh = value.expr
         for le, tile in zip(held, tiles):
             fresh = _reseat(fresh, le, Ref(tile.landed().name, ELEM))
+        _lift(tiles, [t.land_stmt for t in tiles])
         Part(self.buffer, ELEM, grid=grid, names=names, top=True).write(
             Value(fresh, value.shape_rc)
         )
@@ -147,7 +148,6 @@ class Slice:
             )
         acc = held[0]
         trace = active()
-        body = trace.stack[-1] if trace.stack else None
         drains = [
             trace.emit(
                 "drain",
@@ -178,12 +178,7 @@ class Slice:
             chain=tuple(chain_of(value.expr, leaves)),
             leaves=tuple(leaves),
         )
-        # ONE accumulator: the next tile's first sweep clears it, so each drain
-        # but the last is lifted above the tile that overwrites it.
-        if body is not None:
-            for slot, shift in zip(range(len(drains) - 1), range(len(drains))):
-                body.remove(drains[slot])
-                body.insert(tiles[slot + 1].born_at + shift, drains[slot])
+        _lift(tiles, drains)
         return self
 
 
@@ -250,6 +245,22 @@ class Product:
         a.side(0)
         b.side(1)
         self.a, self.b = a, b
+
+
+def _lift(tiles: list, drains: list) -> None:
+    """Move each drain but the last above the tile that overwrites it.
+
+    A cluster holds ONE accumulator, so the sweep opening tile `r+1` clears tile
+    `r`. Emission order is the order the expression read them; execution order
+    has to be the order they were filled.
+    """
+    trace = active()
+    if not trace.stack or len(drains) < 2:
+        return
+    body = trace.stack[-1]
+    for slot in range(len(drains) - 1):
+        body.remove(drains[slot])
+        body.insert(tiles[slot + 1].born_at + slot, drains[slot])
 
 
 def _ordered(held: list) -> tuple[list, list]:
@@ -326,7 +337,9 @@ class Tile:
         rows, cols = self.gm * LO.LANES, self.gn * LO.LANES
         made = Buffer(grid.axes[0] * rows, grid.axes[1] * cols)
         made.name = trace.declare("land", (grid.axes[0] * rows, grid.axes[1] * cols))
-        trace.emit(
+        #: Kept so a second accumulator can lift this above the sweep that
+        #: clears the tile -- one accumulator, so landing order is not free.
+        self.land_stmt = trace.emit(
             "drain",
             writes=made.name,
             result=made.name,

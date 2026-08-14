@@ -32,12 +32,13 @@ CANDIDATES = (0x4_0080_0000, 0x4_0000_0000, 0x8000_0000, 0x1000_0000, 0x0)
 #: of the bitstream, so these are candidates too.
 CONTROL_WINDOWS = (0x4_0080_0000, 0x4_0081_0000, 0x4_0082_0000, 0x4_0083_0000)
 
-#: Each mesh drives its OWN DDR4 through its own AXI master, so these windows do
-#: not overlap and an address in one says nothing about memory in another.
-MEMORY_WINDOWS = (0x0, 0x1_0000_0000, 0x2_0000_0000, 0x3_0000_0000)
+#: Mesh id is `addr[37:36]`. **On a pre-v5 bitstream, which decoded `addr[33:32]`,
+#: this stride reads mesh 0's DRAM for every mesh -- wrong data, no error.**
+MESH_SHIFT = 36
+MEMORY_WINDOWS = tuple(i << MESH_SHIFT for i in range(4))
 
-#: 4 GB per mesh. Verified against the card: markers at 0, 256 MB, 1, 2, 3 GB and
-#: the last word of every window read back distinct, so no window aliases another.
+#: What the card HAS, not what the space allows: 4 GB populated per 64 GB window.
+#: Verified -- markers at 0, 256 MB, 1, 2, 3 GB and each window's last word differ.
 MEMORY_SIZE = 1 << 32
 
 #: The driver's own scratch, in the LAST megabyte of each mesh's DRAM. Calibration

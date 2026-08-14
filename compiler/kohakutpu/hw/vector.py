@@ -330,12 +330,22 @@ def desc_flit(ad: int, fld: int, value: int) -> int:
 
     A dim's value is `{stride[17:0], bound[15:0]}`, and a bound of 0 reads as 1
     so an unused dimension needs no encoding (`vec_agu.v`).
+
+    A BASE is a 40-bit address and is SPLIT: the low 34 stay at [245:212] and
+    the high 6 go to [68:63], so widening moved no field and an address under
+    4 GB in mesh 0 encodes exactly as it always did. Raises
+    :class:`VectorEncodeError` rather than truncating into another mesh.
     """
+    lo, hi = value, 0
+    if fld == 0:
+        lo = _fit("base address", value, 40) & ((1 << 34) - 1)
+        hi = value >> 34
     return _flit(
         2 << 252
         | _fit("ad", ad, 3) << 249
         | _fit("fld", fld, 3) << 246
-        | _fit("descriptor value", value, 34) << 212
+        | _fit("descriptor value", lo, 34) << 212
+        | hi << 63
     )
 
 

@@ -28,7 +28,10 @@ class IsaConfig:
 
     payload_bits: int = 256
     op_bits: int = 4
+    #: The address is SPLIT. `addr_bits` stays where it was and the high bits sit
+    #: in a tail field, so widening moved no other field; see `_tail`.
     addr_bits: int = 34
+    addr_hi_bits: int = 6
     n_bits: int = 16
     grid_bits: int = 8
     pos_bits: int = 4
@@ -80,6 +83,9 @@ def _tail(cfg: IsaConfig) -> list[Field]:
         Field("dack_x", p, default=0),
         Field("dmesh", 2, default=0),
         Field("dfin", g, default=0, doc="{y,x} in the far mesh; nonzero = remote"),
+        # LAST, so `addr`'s high bits cost no other field a bit position. All
+        # zero is mesh 0 DRAM, which is what every pre-40-bit encoding carries.
+        Field("addr_hi", cfg.addr_hi_bits, default=0, doc="addr[39:34]"),
     ]
 
 
@@ -121,7 +127,7 @@ class CuIsa:
                 f"FILL of {n} entries exceeds the {self.cfg.max_fill}-entry "
                 f"streaming count; split it"
             )
-        return self.FILL.encode(addr=addr, n=n, sel=sel, **kw)
+        return self.FILL.encode(n=n, sel=sel, **self._addr(addr), **kw)
 
     def gemm(self, gm: int, gn: int, nk: int, **kw) -> int:
         """A GEMM payload."""
@@ -129,7 +135,23 @@ class CuIsa:
 
     def drain(self, addr: int, n: int, **kw) -> int:
         """A DRAIN payload."""
-        return self.DRAIN.encode(addr=addr, n=n, **kw)
+        return self.DRAIN.encode(n=n, **self._addr(addr), **kw)
+
+    def _addr(self, addr: int) -> dict:
+        """Split a 40-bit address into its two encoded fields.
+
+        Returns ``{"addr": low, "addr_hi": high}``. Raises :class:`ValueError`
+        if `addr` does not fit, because the silent alternative is an address
+        that decodes as a different mesh or as a command aperture.
+        """
+        cfg = self.cfg
+        total = cfg.addr_bits + cfg.addr_hi_bits
+        if not 0 <= addr < (1 << total):
+            raise ValueError(f"address {addr:#x} does not fit {total} bits")
+        return {
+            "addr": addr & ((1 << cfg.addr_bits) - 1),
+            "addr_hi": addr >> cfg.addr_bits,
+        }
 
     def peers(self, nodes) -> dict:
         """Encode up to ``cfg.max_peers`` sharer node indices as fields.

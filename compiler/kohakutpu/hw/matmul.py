@@ -72,10 +72,14 @@ def _flit(
     #   [255:252] op   [251:218] addr(34)  [217:202] n(16)  [201] sel  [200] acc
     #   [199:192] gm   [191:184] gn        [183:176] nk     [175:168] anchor
     #   [167:144] peers(24)                [143:142] npeer  [141] preq
-    #   [140:133] eoff  [132:125] aoff     [124:117] boff
+    #   [140:133] eoff  [132:125] aoff     [124:117] boff   [68:63] addr_hi(6)
     p = 0  # 256-bit payload
     p |= (op & 0xF) << 252
+    # SPLIT, and raise: masking to 34 dropped bit 39, aliasing staging onto DRAM.
+    if not 0 <= addr < (1 << 40):
+        raise ValueError(f"address {addr:#x} does not fit 40 bits")
     p |= (addr & ((1 << 34) - 1)) << 218
+    p |= (addr >> 34) << 63
     p |= (n & 0xFFFF) << 202
     p |= (sel & 1) << 201
     p |= (1 if acc else 0) << 200

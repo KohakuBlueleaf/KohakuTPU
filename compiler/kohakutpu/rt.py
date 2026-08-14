@@ -248,13 +248,13 @@ class Device(Holder, Runtime):
         """Attach to `card` and open an arena of `size` bytes at `base`.
 
         Raises :class:`ValueError` when the arena would run past the mesh's
-        4 GB, since the top of it would carry the NEXT mesh's id and alias
-        silently into that mesh's memory.
+        local space, since the top of it would carry the NEXT mesh's id and
+        alias silently into that mesh's memory.
         """
         if base + size > 1 << MESH_SHIFT:
             raise ValueError(
                 f"an arena of {size:,} bytes at {base:#x} ends at "
-                f"{base + size:#x}, past one mesh's 4 GB; bits "
+                f"{base + size:#x}, past one mesh's {1 << MESH_SHIFT:,}; bits "
                 f"[{MESH_SHIFT + 1}:{MESH_SHIFT}] of the top of it are another "
                 f"mesh's id, not address"
             )
