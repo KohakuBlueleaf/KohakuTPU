@@ -18,6 +18,10 @@ set per  [expr {[info exists ::env(OOC_PERIOD)] ? $::env(OOC_PERIOD) : 3.125}]
 set iod  [expr {[info exists ::env(OOC_IO)] ? $::env(OOC_IO) : $per * 0.30}]
 set clks [expr {[info exists ::env(OOC_CLK)] ? $::env(OOC_CLK) : "clk"}]
 
+# OOC_THREADS, default 32: a mesh-sized synth is the one that notices.
+catch {set_param general.maxThreads \
+    [expr {[info exists ::env(OOC_THREADS)] ? $::env(OOC_THREADS) : 32}]}
+
 file mkdir $out
 
 # -2L, NOT -2: the board is the low-voltage part and it is the slower of the
@@ -36,6 +40,13 @@ foreach c $clks {
 }
 puts $fh "set_input_delay  -clock $primary $iod \[all_inputs\]"
 puts $fh "set_output_delay -clock $primary $iod \[all_outputs\]"
+# OOC_ASYNC=1 puts every clock in its own group. Without it an async FIFO's gray
+# pointers are timed synchronously and a CORRECT crossing fails setup AND hold.
+if {[info exists ::env(OOC_ASYNC)] && $::env(OOC_ASYNC) == 1} {
+    set grp ""
+    foreach c $clks { append grp " -group \[get_clocks $c\]" }
+    puts $fh "set_clock_groups -asynchronous$grp"
+}
 # *reset* as well as *rst*: mx_cluster_cu's port is `resetn`, which matched
 # neither, so its fanout to every DSP's RSTCTRL was timed as the worst path.
 puts $fh "set_false_path -from \[get_ports {*rst* *reset*}\]"
@@ -52,6 +63,29 @@ if {[llength $made] < [llength $clks]} {
     puts "@@@ FAIL only [llength $made] clock(s) created from '$clks'"
     puts "@@@ FAIL ports are: [get_property NAME [get_ports -quiet *]]"
     error "clock constraint did not apply -- set OOC_CLK to the real port names"
+}
+
+# OOC_PLACE=1 places before reporting. MANDATORY FOR ANY DESIGN INSTANTIATING A
+# GLOBAL BUFFER, and the reason is not obvious:
+
+# an UNPLACED clock net is estimated as fabric routing -- a BUFGCE output
+# measured 2.584 ns at fanout 15,641, against a clock PORT's net of `unset`.
+
+# So a gated arm reads ~2.6 ns worse than an ungated one for a buffer whose CELL
+# delay is 28 ps. The number is a placement artifact, not a gating cost.
+if {[info exists ::env(OOC_PLACE)] && $::env(OOC_PLACE) == 1} {
+    opt_design
+    place_design
+    report_utilization    -file $out/util_placed.rpt
+    report_timing_summary -file $out/timing_placed.rpt
+    report_timing -max_paths 50 -nworst 50 -path_type full_clock_expanded \
+                  -input_pins -file $out/timing_placed_all.rpt
+    puts "@@@ PLACED $top"
+    foreach p [get_timing_paths -max_paths 6 -setup] {
+        puts [format "@@@ PLACED %7.3f ns  lvl %-3s  %-42s -> %s" \
+                  [get_property SLACK $p] [get_property LOGIC_LEVELS $p] \
+                  [get_property STARTPOINT_PIN $p] [get_property ENDPOINT_PIN $p]]
+    }
 }
 
 write_checkpoint -force $out/$top.dcp

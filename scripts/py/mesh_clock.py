@@ -16,8 +16,26 @@ import argparse
 from kohakuaccel.device import find_control_window
 from kohakuaccel.transport.jtag import JtagTransport
 from kohakutpu.clock import current, find_wizard, locked, set_mhz
+from kohakutpu.clock.mmcm import OUT_DIV_MAX, ClockError, settings
 from kohakutpu.host import CANDIDATES as HOST_CANDIDATES
-from ktpu.hw.clock import ClockError, settings, solve_best
+
+
+def solve_best(target_mhz: float, d: int = 4):
+    """The legal setting closest to `target_mhz` from below, over every `k`.
+
+    `kohakutpu.clock.mmcm.solve` fixes `k`; this searches it, which is what a
+    bare frequency on the command line means. Raises ClockError if nothing legal
+    sits at or below the target.
+    """
+    under = [
+        s
+        for k in range(1, OUT_DIV_MAX + 1)
+        for s in settings(d, k)
+        if s.mhz <= target_mhz + 1e-9
+    ]
+    if not under:
+        raise ClockError(f"{target_mhz} MHz is below every legal setting at D={d}")
+    return max(under, key=lambda s: s.mhz)
 
 
 def megahertz(text: str) -> float:
@@ -68,9 +86,7 @@ def main() -> int:
 
     try:
         want = solve_best(args.freq, d=args.d) if args.k is None else None
-        got = set_mhz(
-            raw, base, args.freq, d=args.d, k=args.k if args.k else want.k
-        )
+        got = set_mhz(raw, base, args.freq, d=args.d, k=args.k if args.k else want.k)
     except ClockError as exc:
         print(f"\nrefused: {exc}")
         return 1
