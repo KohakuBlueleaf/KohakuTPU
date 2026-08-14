@@ -5,7 +5,7 @@
 
 module mag_dram_port #(
     parameter integer N       = 5,      // MEM_PORTS + 3
-    parameter integer ADDR_W  = 34,
+    parameter integer ADDR_W  = 40,
     parameter integer SW      = 256,    // internal beat
     parameter integer MW      = 512,    // memory beat, SW * a power of two
     parameter integer ID_W    = 4,
@@ -14,6 +14,9 @@ module mag_dram_port #(
     parameter integer BQ      = 16,
     parameter integer ARQ     = 16,
     parameter integer RQ      = 64,
+    // Reads a requester may have in flight. 4 measures 2,744 -> 8,917 MB/s on
+    // 20-word bursts and DEFAULTS OFF: it corrupts memory in mover_chain1.
+    parameter integer RD_OUT  = 1,
     parameter         WR_MEM  = "block"
 )(
     input  wire                  s_aclk,
@@ -28,6 +31,9 @@ module mag_dram_port #(
     input  wire [N-1:0]          w_valid,
     output wire [N-1:0]          w_ready,
     input  wire [N*SW-1:0]       w_data,
+    // Byte enables, CARRIED not synthesised: a requester doing a partial write
+    // has its untouched bytes clobbered otherwise. Tie to all ones for whole beats.
+    input  wire [N*SW/8-1:0]     w_strb,
 
     output wire [N-1:0]          r_valid,
     input  wire [N-1:0]          r_ready,
@@ -94,6 +100,12 @@ module mag_dram_port #(
     wire [RLOG-1:0]  wsel_ph;
     wire             wsel_empty;
 
+    // Bursts a requester may hold PENDING behind the active one, and the widths
+    // the counters need. RD_OUT = 1 keeps the arrays legal and never uses them.
+    localparam integer PD  = (RD_OUT <= 1) ? 1 : (RD_OUT - 1);
+    localparam integer PPW = (PD <= 1) ? 1 : $clog2(PD);
+    localparam integer RCW = $clog2(RD_OUT + 1);
+
     reg  [N-1:0]      rd_busy;
     reg  [IDX_W-1:0]  rr_rd, rr_wr;
     reg  [MW-1:0]     wacc;
@@ -104,24 +116,33 @@ module mag_dram_port #(
     reg  [RLOG-1:0]   rph  [0:N-1];
     reg  [15:0]       rleft[0:N-1];
 
+    // Bursts issued and not yet returning. The ACTIVE burst stays in rph/rleft
+    // so the return path is the same N:1 mux it always was.
+    reg  [RLOG-1:0]   pph  [0:N-1][0:PD-1];
+    reg  [15:0]       plen [0:N-1][0:PD-1];
+    reg  [PPW-1:0]    phd  [0:N-1], ptl [0:N-1];
+    reg  [RCW-1:0]    pn   [0:N-1], rd_cnt [0:N-1];
+
     // ================================================== request arbitration
 
-    // ONE OUTSTANDING READ PER REQUESTER: the id IS the requester, so nothing
-    // sizes a scoreboard and N reads still stay concurrent.
+    // RD_OUT OUTSTANDING READS PER REQUESTER: the id IS the requester and AXI
+    // returns same-id responses in order, so a queue needs no reorder buffer.
     wire [N-1:0] rd_req = q_valid & ~q_write & ~rd_busy;
     wire [N-1:0] wr_req = q_valid &  q_write;
 
     // REGISTERED REQUESTS: q_valid -> scan -> q_ready was the worst path at
     // -0.110 ns, and AXI holds valid until ready so a cycle late is safe.
-    // `wr_gnt` blocks a re-grant for the one cycle the snapshot lags by: reads
-    // are covered by rd_busy, writes have no equivalent and double-granted.
-    reg [N-1:0] rd_req_r, wr_req_r, wr_gnt;   // driven below, past wr_take
+
+    // BOTH sides need a one-cycle re-grant block for the snapshot's lag. At
+    // RD_OUT > 1 rd_busy is no longer that, and a request is taken twice.
+    reg [N-1:0] rd_req_r, wr_req_r, wr_gnt, rd_gnt;
 
     wire [IDX_W-1:0] rd_sel, wr_sel;
     wire             rd_any, wr_any;
 
     mag_dram_rr #(.N(N), .IDX_W(IDX_W)) u_rr_rd (
-        .req(rd_req_r & ~rd_busy), .base(rr_rd), .sel(rd_sel), .any(rd_any));
+        .req(rd_req_r & ~rd_busy & ~rd_gnt), .base(rr_rd), .sel(rd_sel),
+        .any(rd_any));
     mag_dram_rr #(.N(N), .IDX_W(IDX_W)) u_rr_wr (
         .req(wr_req_r & ~wr_gnt), .base(rr_wr), .sel(wr_sel), .any(wr_any));
 
@@ -145,10 +166,12 @@ module mag_dram_port #(
     always @(posedge s_aclk) begin
         if (srst) begin
             rd_req_r <= {N{1'b0}}; wr_req_r <= {N{1'b0}}; wr_gnt <= {N{1'b0}};
+            rd_gnt   <= {N{1'b0}};
         end else begin
             rd_req_r <= rd_req;
             wr_req_r <= wr_req;
             wr_gnt   <= wr_take ? ({{(N-1){1'b0}}, 1'b1} << wr_sel) : {N{1'b0}};
+            rd_gnt   <= rd_take ? ({{(N-1){1'b0}}, 1'b1} << rd_sel) : {N{1'b0}};
         end
     end
 
@@ -219,7 +242,8 @@ module mag_dram_port #(
 
     // AXI4 FORBIDS W INTERLEAVING, so W follows AW order: `wsel` names whose
     // data the mux forwards and for how many source beats.
-    wire [SW-1:0] w_beat = w_data[wsel_id*SW +: SW];
+    wire [SW-1:0]   w_beat = w_data[wsel_id*SW +: SW];
+    wire [SBYTES-1:0] w_bstrb = w_strb[wsel_id*SBYTES +: SBYTES];
     wire          w_fire = wactive && w_valid[wsel_id] && !wq_full;
     wire          w_end  = (wleft == 16'd1);
     wire          w_emit = (wph == RTOP) || w_end;
@@ -237,7 +261,7 @@ module mag_dram_port #(
     wire [MW-1:0]   wacc_next  = wacc |
         ({{(MW-SW){1'b0}}, w_beat} << (wph * SW));
     wire [MW/8-1:0] wstrb_next = wstrb_acc |
-        ({{(MW/8-SBYTES){1'b0}}, {SBYTES{1'b1}}} << (wph * SBYTES));
+        ({{(MW/8-SBYTES){1'b0}}, w_bstrb} << (wph * SBYTES));
 
     async_fifo #(.DATA_WIDTH(MW + MW/8 + 1), .FIFO_DEPTH(WQ),
                  .MEMORY_TYPE(WR_MEM)) u_wq (
@@ -250,9 +274,10 @@ module mag_dram_port #(
     assign m_wvalid = !wq_empty;
 
     always @(posedge s_aclk) begin
+        // `wacc`/`wstrb_acc` are not reset: EVERY burst clears them at :281 and
+        // every emit at :286, so the reset is a second initialisation.
         if (srst) begin
             wactive <= 1'b0; wph <= {RLOG{1'b0}}; wleft <= 16'd0;
-            wacc <= {MW{1'b0}}; wstrb_acc <= {(MW/8){1'b0}};
         end else if (!wactive) begin
             if (!wsel_empty) begin
                 wactive   <= 1'b1;
@@ -327,28 +352,69 @@ module mag_dram_port #(
         assign r_last[g]  = r_valid[g] && (cur_left == 16'd1);
     end endgenerate
 
-    integer k;
-    always @(posedge s_aclk) begin
-        if (srst) begin
-            rd_busy <= {N{1'b0}};
-            for (k = 0; k < N; k = k + 1) begin
-                rph[k] <= {RLOG{1'b0}}; rleft[k] <= 16'd0;
-            end
-        end else begin
-            // Busy at CAPTURE, not at push: between the two the requester must
-            // not be arbitrated again.
-            if (rd_take) rd_busy[rd_sel] <= 1'b1;
-            if (ar_fire) begin
-                rph[s1_rid]   <= rd_ph;
-                rleft[s1_rid] <= rd_len + 16'd1;
-            end
-            if (r_take) begin
-                rleft[rq_id] <= cur_left - 16'd1;
-                if (cur_left == 16'd1) rd_busy[rq_id] <= 1'b0;
-                rph[rq_id] <= (cur_ph == RTOP) ? {RLOG{1'b0}} : cur_ph + 1'b1;
+    // A burst ENDS on its last internal beat, and the next must become active
+    // in the SAME cycle or a bubble opens between back-to-back returns.
+    wire r_fin = r_take && (cur_left == 16'd1);
+
+    integer kp;
+    generate for (g = 0; g < N; g = g + 1) begin : g_rdq
+        wire mine_ar  = ar_fire && (s1_rid == g[IDX_W-1:0]);
+        wire mine_tk  = r_take  && (rq_id  == g[IDX_W-1:0]);
+        wire mine_fin = r_fin   && (rq_id  == g[IDX_W-1:0]);
+
+        wire slot_free = (rleft[g] == 16'd0) || mine_fin;
+        wire do_pop    = mine_fin && (pn[g] != {RCW{1'b0}});
+        wire do_direct = mine_ar && slot_free && !do_pop;
+        wire do_push   = mine_ar && !do_direct;
+
+        // Counted at CAPTURE, not at AR: between the two the requester must not
+        // be arbitrated again, which is what the old one-bit rd_busy did.
+        wire [RCW-1:0] cnt_n =
+            rd_cnt[g] + ((rd_take && (rd_sel == g[IDX_W-1:0])) ? 1'b1 : 1'b0)
+                      - (mine_fin ? 1'b1 : 1'b0);
+
+        always @(posedge s_aclk) begin
+            if (srst) begin
+                rleft[g] <= 16'd0; rph[g] <= {RLOG{1'b0}};
+                phd[g] <= {PPW{1'b0}}; ptl[g] <= {PPW{1'b0}};
+                pn[g] <= {RCW{1'b0}}; rd_cnt[g] <= {RCW{1'b0}};
+                rd_busy[g] <= 1'b0;
+                for (kp = 0; kp < PD; kp = kp + 1) begin
+                    pph[g][kp] <= {RLOG{1'b0}}; plen[g][kp] <= 16'd0;
+                end
+            end else begin
+                rd_cnt[g]  <= cnt_n;
+                // REGISTERED, never a combinational compare into q_ready:
+                // HANDOFF-mag-dram-port.md s1f cost 49 MHz to that once.
+                rd_busy[g] <= (cnt_n >= RD_OUT[RCW-1:0]);
+
+                if (do_pop) begin
+                    rleft[g] <= plen[g][phd[g]] + 16'd1;
+                    rph[g]   <= pph[g][phd[g]];
+                end else if (do_direct) begin
+                    rleft[g] <= rd_len + 16'd1;
+                    rph[g]   <= rd_ph;
+                end else if (mine_fin) begin
+                    rleft[g] <= 16'd0;
+                end else if (mine_tk) begin
+                    rleft[g] <= cur_left - 16'd1;
+                    rph[g]   <= (cur_ph == RTOP) ? {RLOG{1'b0}} : cur_ph + 1'b1;
+                end
+
+                if (do_push) begin
+                    pph[g][ptl[g]]  <= rd_ph;
+                    plen[g][ptl[g]] <= rd_len;
+                    ptl[g] <= (ptl[g] == (PD[PPW-1:0] - 1'b1))
+                              ? {PPW{1'b0}} : ptl[g] + 1'b1;
+                end
+                if (do_pop)
+                    phd[g] <= (phd[g] == (PD[PPW-1:0] - 1'b1))
+                              ? {PPW{1'b0}} : phd[g] + 1'b1;
+                pn[g] <= pn[g] + (do_push ? 1'b1 : 1'b0)
+                                - (do_pop  ? 1'b1 : 1'b0);
             end
         end
-    end
+    end endgenerate
 
     // ================================================== grant
     generate for (g = 0; g < N; g = g + 1) begin : g_qrdy

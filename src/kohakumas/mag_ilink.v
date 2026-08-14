@@ -3,7 +3,7 @@
 // docs/interlink/transfers.md. Four jobs, and they are together because they
 // share the switch's one local port and the register window that reports them:
 //
-//   1. the mover's writes, split by address. `awaddr[33:32] != my_mesh` becomes
+//   1. the mover's writes, split by address. `awaddr[37:36] != my_mesh` becomes
 //      a MEM_WR packet and the write is answered LOCALLY, at once. A posted
 //      write is the whole point -- waiting for a far DRAM would put an SLR
 //      round trip in the mover's per-word loop, and the mover already runs one
@@ -50,7 +50,7 @@ module mag_ilink #(
     parameter integer FLIT_WIDTH = 288,
     parameter integer POS_WIDTH  = 4,
     parameter integer DATA_W     = 256,
-    parameter integer ADDR_W     = 34,
+    parameter integer ADDR_W     = 40,
     parameter integer LINK_W     = 288,
     parameter integer TUSER_W    = 96,
     parameter integer MESH_ID    = 0,
@@ -71,6 +71,9 @@ module mag_ilink #(
 
     // ---- the mover's write channel: slave in, master out ------------------
     input  wire [ADDR_W-1:0]     s_awaddr,
+    // The splitter needs the burst length; m_awlen reaches the local master
+    // straight from the mover (mag.v), so it is not re-driven here.
+    input  wire [7:0]            s_awlen,
     input  wire                  s_awvalid,
     output wire                  s_awready,
     input  wire [DATA_W-1:0]     s_wdata,
@@ -170,7 +173,9 @@ module mag_ilink #(
     // makes it two, and every use below is written against SLOT_W so that
     // change stays local.
     localparam integer SLOT_W = FLIT_WIDTH;
-    localparam integer U_ODD  = 66;         // the last beat carries one slot
+    // 72, not 66: the address field below it is ADDR_W wide, and this header is
+    // its OWN encoding -- widening noc_pkt.vh's spare did not move this one.
+    localparam integer U_ODD  = U_ADDR + ADDR_W;  // last beat carries one slot
 
     // =====================================================================
     // Registers
@@ -224,67 +229,100 @@ module mag_ilink #(
     // =====================================================================
     // The mover's write channel, split by address.
     // =====================================================================
-    reg               aw_got, w_got, rem_r, bpend;
+    // A LOCAL BURST STREAMS. It used to take one AW and one single W beat and
+    // hold until B, which taxed every mover write in an ILINK=1 mesh at one word
+
+    // per DRAM round trip -- measured 26.90 cycles a word through a real mesh,
+    // and it applied to local traffic that never touches the link.
+    localparam [1:0] WS_IDLE = 2'd0, WS_LOC = 2'd1, WS_REM = 2'd2;
+
+    reg [1:0]         ws;
+    reg [8:0]         w_left;         // beats still owed by this burst
     reg [ADDR_W-1:0]  a_r;
     reg [DATA_W-1:0]  d_r;
     reg [DATA_W/8-1:0] st_r;
-    reg               loc_aw, loc_w;
-    reg               ob_wr_req;              // a remote write wants the link
+    reg               loc_aw;
+    reg [5:0]         b_owed;         // B responses owed to the mover
+    reg               ob_wr_req;      // a remote write wants the link
     wire              ob_wr_ack;
 
-    // W is taken only after AW, so remoteness is settled before the data is
-    // committed to one path or the other.
-    assign s_awready = !aw_got;
-    assign s_wready  = aw_got && !w_got;
-    assign s_bvalid  = bpend;
+    // ONE B PER BURST, not per beat: the mover counts B against AW.
+    assign s_awready = (ws == WS_IDLE) && (b_owed < 6'd32);
+    assign s_wready  = (ws == WS_LOC) ? m_wready
+                     : (ws == WS_REM) ? !ob_wr_req : 1'b0;
+    assign s_bvalid  = (b_owed != 6'd0);
     assign s_bresp   = 2'b00;
 
     assign m_awaddr  = a_r;
     assign m_awvalid = loc_aw;
-    assign m_wdata   = d_r;
-    assign m_wstrb   = st_r;
-    assign m_wlast   = 1'b1;
-    assign m_wvalid  = loc_w;
+    assign m_wdata   = s_wdata;
+    assign m_wstrb   = s_wstrb;
+    assign m_wlast   = (w_left == 9'd1);
+    assign m_wvalid  = (ws == WS_LOC) && s_wvalid;
     assign m_bready  = 1'b1;
 
-    wire remote_now = (s_awaddr[ADDR_W-1 -: 2] != mesh_r);
+    // NOT the top two bits -- those are the special flag and a reserved bit. A
+    // DRAM and an aperture address carry the mesh alike, so this never decodes one.
+    localparam integer A_MESH_LO = ADDR_W - 4;
+    wire remote_now = (s_awaddr[A_MESH_LO +: 2] != mesh_r);
+
+    wire w_beat  = s_wvalid && s_wready;
+    wire w_last  = (w_left == 9'd1);
+    wire b_take  = s_bvalid && s_bready;
 
     always @(posedge clk) begin
+        // `a_r`/`d_r` are not reset: `ws` and `loc_aw` qualify them. `st_r` keeps
+        // its all-ones default, which is a meaningful value rather than a clear.
         if (!resetn) begin
-            aw_got <= 1'b0; w_got <= 1'b0; rem_r <= 1'b0; bpend <= 1'b0;
-            a_r <= {ADDR_W{1'b0}}; d_r <= {DATA_W{1'b0}};
+            ws <= WS_IDLE; w_left <= 9'd0; b_owed <= 6'd0;
             st_r <= {(DATA_W/8){1'b1}};
-            loc_aw <= 1'b0; loc_w <= 1'b0; ob_wr_req <= 1'b0;
+            loc_aw <= 1'b0; ob_wr_req <= 1'b0;
         end else begin
-            if (s_awvalid && s_awready) begin
+            if (loc_aw && m_awready) loc_aw <= 1'b0;
+
+            case (ws)
+            WS_IDLE: if (s_awvalid && s_awready) begin
                 a_r    <= s_awaddr;
-                rem_r  <= remote_now && enable_r;
-                aw_got <= 1'b1;
-            end
-            if (s_wvalid && s_wready) begin
-                d_r   <= s_wdata;
-                st_r  <= s_wstrb;
-                w_got <= 1'b1;
-                if (rem_r) ob_wr_req <= 1'b1;
+                w_left <= {1'b0, s_awlen} + 9'd1;
+                if (remote_now && enable_r) ws <= WS_REM;
                 else begin
                     loc_aw <= 1'b1;
-                    loc_w  <= 1'b1;
+                    ws     <= WS_LOC;
                 end
             end
 
-            if (loc_aw && m_awready) loc_aw <= 1'b0;
-            if (loc_w  && m_wready)  loc_w  <= 1'b0;
-            if (m_bvalid && aw_got && w_got && !rem_r) bpend <= 1'b1;
-            if (ob_wr_ack) begin
-                ob_wr_req <= 1'b0;
-                bpend     <= 1'b1;
+            WS_LOC: if (w_beat) begin
+                if (w_last) ws <= WS_IDLE;
+                else        w_left <= w_left - 9'd1;
             end
 
-            if (bpend && s_bready) begin
-                bpend  <= 1'b0;
-                aw_got <= 1'b0;
-                w_got  <= 1'b0;
+            // One packet per word still. The beats are decomposed rather than
+            // gathered, so a remote burst is correct here and not yet fast.
+            WS_REM: begin
+                if (w_beat) begin
+                    d_r  <= s_wdata;
+                    st_r <= s_wstrb;
+                    ob_wr_req <= 1'b1;
+                end
+                if (ob_wr_ack) begin
+                    ob_wr_req <= 1'b0;
+                    a_r <= a_r + {{(ADDR_W-6){1'b0}}, 6'd32};
+                    if (w_last) ws <= WS_IDLE;
+                    else        w_left <= w_left - 9'd1;
+                end
             end
+
+            default: ws <= WS_IDLE;
+            endcase
+
+            // m_bvalid only ever answers a LOCAL burst, so it is not gated on
+            // the current burst: a local B landing after a remote burst began
+
+            // would be dropped, and the mover's outstanding count never retires.
+            b_owed <= b_owed
+                    + (m_bvalid ? 6'd1 : 6'd0)
+                    + (((ws == WS_REM) && ob_wr_ack && w_last) ? 6'd1 : 6'd0)
+                    - (b_take ? 6'd1 : 6'd0);
         end
     end
 
@@ -347,7 +385,10 @@ module mag_ilink #(
     // is reported at the descriptor flit -- the only flit that carries one.
     wire e_isdesc = enc_take && !acc_open;
     wire [7:0] e_ack = enc_data[CUD_ACK_LSB +: 8];
-    assign flt_ack0 = e_isdesc && (e_ack == 8'd0);
+    // CU_DATA ONLY. A memory descriptor carries its burst length in those bits,
+    // and a one-beat remote drain would raise IL_F_ACK0 on every crossing.
+    wire e_iscud = (enc_data[NF_TY +: 4] == 4'h8);
+    assign flt_ack0 = e_isdesc && e_iscud && (e_ack == 8'd0);
 
     always @(posedge clk) begin
         if (!resetn) begin
@@ -416,24 +457,27 @@ module mag_ilink #(
     // construction; the mover hands over one 32-byte write at a time and there
     // is nothing contiguous to gather. The far side reads U_ODD either way, so
     // widening this to a run of words is a change here and nowhere else.
+    // Destination mesh at [ADDR_W-1 -: 2] read {special, reserved} -- 00 for any
+    // DRAM address -- so a remote write looped back into the sender's own DRAM.
     wire [TUSER_W-1:0] hdr_wr = {{(TUSER_W-U_ODD-1){1'b0}}, 1'b1,
-                                 {(U_ODD-U_ADDR-34){1'b0}}, a_r,
+                                 a_r,
                                  16'd0, 8'd0, mesh_r,
-                                 a_r[ADDR_W-1 -: 2], K_MEM_WR};
+                                 a_r[ADDR_W-4 +: 2], K_MEM_WR};
     wire [TUSER_W-1:0] hdr_fl = {{(TUSER_W-U_ODD-1){1'b0}}, acc_nodd,
-                                 {(U_ODD-U_ADDR-34){1'b0}}, 26'd0, acc_fin,
+                                 {(ADDR_W-8){1'b0}}, acc_fin,
                                  acc_nb - 16'd1, 8'd0, mesh_r,
                                  acc_mesh, K_NOC_FLIT};
     wire [TUSER_W-1:0] hdr_db = {{(TUSER_W-U_ODD-1){1'b0}}, 1'b1,
-                                 {(U_ODD-U_ADDR-34){1'b0}}, 34'd0,
+                                 {ADDR_W{1'b0}},
                                  16'd0, door_txn, mesh_r,
                                  door_dst, K_DOORBELL};
 
     always @(posedge clk) begin
+        // `ltx_hdr`/`ltx_dat` are not reset: their valids qualify them.
         if (!resetn) begin
             obst <= OB_IDLE; ob_who <= 2'd0; ob_rr <= 2'd0; ob_left <= 16'd0;
-            ltx_hdr <= {TUSER_W{1'b0}}; ltx_hvalid <= 1'b0;
-            ltx_dat <= {LINK_W{1'b0}};  ltx_dvalid <= 1'b0; ltx_dlast <= 1'b0;
+            ltx_hvalid <= 1'b0;
+            ltx_dvalid <= 1'b0; ltx_dlast <= 1'b0;
             door_sent <= 32'd0;
         end else begin
             case (obst)
@@ -489,7 +533,7 @@ module mag_ilink #(
     reg [3:0]  in_kind;
     reg [1:0]  in_src;
     reg [7:0]  in_txn;
-    reg [33:0] in_addr;
+    reg [ADDR_W-1:0] in_addr;
     reg [15:0] in_left;
     reg [3:0]  wr_out;          // AXI writes issued, BRESP not yet back
     reg        in_slot;         // which half of the beat is next
@@ -529,7 +573,9 @@ module mag_ilink #(
     always @(posedge clk) begin
         if (!resetn) begin
             inst <= IN_HDR; in_kind <= 4'd0; in_src <= 2'd0; in_txn <= 8'd0;
-            in_addr <= 34'd0; in_left <= 16'd0; wr_out <= 4'd0;
+            // in_addr is ADDR_W wide and the header loads it; the 34'd0 here
+            // was a leftover that zero-extended silently.
+            in_left <= 16'd0; wr_out <= 4'd0;
             in_slot <= 1'b0; in_odd <= 1'b0;
             lk_awvalid <= 1'b0; lk_wvalid <= 1'b0;
             lk_awaddr <= {ADDR_W{1'b0}}; lk_wdata <= {DATA_W{1'b0}};
@@ -559,7 +605,7 @@ module mag_ilink #(
                     in_kind <= lrx_hdr[U_KIND  +: 4];
                     in_src  <= lrx_hdr[U_SMESH +: 2];
                     in_txn  <= lrx_hdr[U_TXN   +: 8];
-                    in_addr <= lrx_hdr[U_ADDR  +: 34];
+                    in_addr <= lrx_hdr[U_ADDR  +: ADDR_W];
                     in_left <= lrx_hdr[U_LEN   +: 16] + 16'd1;
                     in_odd  <= lrx_hdr[U_ODD];
                     in_slot <= 1'b0;

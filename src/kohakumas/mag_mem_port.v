@@ -26,7 +26,7 @@ module mag_mem_port #(
     parameter integer FLIT_WIDTH = 288,
     parameter integer POS_WIDTH  = 4,
     parameter integer DATA_W     = 256,
-    parameter integer ADDR_W     = 34,
+    parameter integer ADDR_W     = 40,
     parameter integer ID_W       = 4,
     // where this port's NoC endpoint sits
     parameter integer MEM_X      = 0,
@@ -43,7 +43,15 @@ module mag_mem_port #(
     // "block" MEASURED AND REJECTED: -456 LUT but 330.0 -> 305.3 MHz, under the
     // 320 floor -- `wq_flit` feeds the slot match and the worst path already
     // starts at this FIFO's output, where a BRAM CLKARDCLK is far slower.
-    parameter MEM_TYPE           = "distributed"
+    parameter MEM_TYPE           = "distributed",
+    // ---- MAG L2 staging, aperture 0. 0 generates none of it ---------------
+    // A staged fill reads port A rather than issuing AR; a write uses port B.
+    parameter integer STAGE         = 0,      // a store AT THIS PORT
+    parameter integer AP_DECODE     = 0,      // apertures exist SOMEWHERE
+    parameter integer STAGE_BANKS   = 4,      // 64 URAM, 2 MB
+    parameter integer STAGE_ENTRIES = 16384,
+    parameter integer STAGE_PIPE    = 1,
+    parameter [1:0]   MESH_ID       = 2'd0
 )(
     input  wire                clk,
     input  wire                resetn,
@@ -174,7 +182,10 @@ module mag_mem_port #(
     wire [3:0]  in_ty  = `MP_HDR_TY(rq_flit);
     wire [POS_WIDTH-1:0] in_sx = `MP_SRC_X(rq_flit);
     wire [POS_WIDTH-1:0] in_sy = `MP_SRC_Y(rq_flit);
-    wire [33:0] in_addr  = rq_flit[255 -: 34];
+    // NOC_MEM_ADDR is 40 bits WHATEVER ADDR_W is -- a flit contract, not a width.
+    // Slicing it by ADDR_W read `addr >> 6` on a 34-bit build, silently.
+    localparam integer FA = 40;
+    wire [ADDR_W-1:0] in_addr = rq_flit[255 -: FA];
     wire [7:0]  in_len   = rq_flit[215 -: 8];
     wire [7:0]  in_flags = rq_flit[207 -: 8];
     wire [7:0]  in_txn   = rq_flit[FLIT_WIDTH-4*POS_WIDTH-5 -: 8];
@@ -184,7 +195,7 @@ module mag_mem_port #(
     wire [3:0]  wi_ty  = `MP_HDR_TY(wq_flit);
     wire [POS_WIDTH-1:0] wi_sx = `MP_SRC_X(wq_flit);
     wire [POS_WIDTH-1:0] wi_sy = `MP_SRC_Y(wq_flit);
-    wire [33:0] wi_addr = wq_flit[255 -: 34];
+    wire [ADDR_W-1:0] wi_addr = wq_flit[255 -: FA];
     wire [7:0]  wi_len  = wq_flit[215 -: 8];
     wire [7:0]  wi_txn  = wq_flit[FLIT_WIDTH-4*POS_WIDTH-5 -: 8];
 
@@ -239,8 +250,32 @@ module mag_mem_port #(
     //
     // DECLARED BEFORE THE QUANTISER, because `beat_valid` reads `rs`.
     // ================================================================
-    localparam [1:0] RS_IDLE = 2'd0, RS_FILL = 2'd1, RS_WAIT = 2'd2;
+    localparam [1:0] RS_IDLE = 2'd0, RS_FILL = 2'd1, RS_WAIT = 2'd2,
+                     RS_STG  = 2'd3;
     reg [1:0] rs;
+    reg       rd_stg;                  // this run is served from staging
+
+    // MESH FIRST, THEN APERTURE -- the same order mag_stage decodes in, and the
+    // reason a packet only transiting this mesh is never claimed.
+    function stg_is;
+        input [ADDR_W-1:0] a;
+        stg_is = (STAGE != 0) && a[39] && !a[38] &&
+                 (a[37:36] == MESH_ID) && (a[35:32] == 4'h0);
+    endfunction
+
+    // NOT SERVABLE AT THIS PORT -- narrower than "undefined". mag_stage's
+    // AP_IMPL is the architectural set; a memory port serves staging alone.
+    // AP_DECODE, not STAGE: the drop holds wherever the store lives.
+    function stg_unserved;
+        input [ADDR_W-1:0] a;
+        stg_unserved = (AP_DECODE != 0) && a[39] && !a[38] &&
+                  ((a[37:36] != MESH_ID) || (a[35:32] != 4'h0));
+    endfunction
+
+    reg  [ADDR_W-1:0]     rd_cur;      // the entry being fetched from staging
+    reg                   stg_go;
+    wire [4*DATA_W-1:0]   stg_rdata;
+    wire                  stg_rvalid, stg_b_gnt;
 
     reg [POS_WIDTH-1:0] rd_x, rd_y;
     reg [7:0]  rd_txn;
@@ -248,20 +283,20 @@ module mag_mem_port #(
     // `rd_ent` which one is being fetched. Generated here because this module
     // already generates AXI burst addresses -- the same counter, one level up --
     // which removes a round trip per entry, not latency.
-    reg [33:0] rd_base;
+    reg [ADDR_W-1:0] rd_base;
     reg [7:0]  rd_cnt, rd_ent;
     // Source format for this run, off the REQUEST -- so no address map is held
     // here and none is needed.
     reg        rd_quant;
     // Entry geometry for this run. A legacy request reproduces exactly what the
     // Q_/P_ localparams used to hardcode.
-    reg [33:0] rd_ebytes;
+    reg [ADDR_W-1:0] rd_ebytes;
     reg [1:0]  rd_elast;    // last word index within an entry
     // The next entry's address, ACCUMULATED. Computing base + (ent+1)*ebytes
     // instead cost 86 MHz: against the old localparams that product was a
     // constant multiply, i.e. a shift, and against a register it is a real
-    // 34-bit multiplier sitting in the AR address path.
-    reg [33:0] rd_anext;
+    // full-width multiplier sitting in the AR address path.
+    reg [ADDR_W-1:0] rd_anext;
     // A pre-quantised entry is four beats that ARE the four operand words.
     // They land here rather than in the emit buffer directly, because the
     // emitter may still be handing out the previous entry.
@@ -324,14 +359,15 @@ module mag_mem_port #(
     // makes a wider bus a silent correctness change rather than a parameter.
     localparam integer Q_ENTRY_BITS  = 2048;
     localparam integer P_ENTRY_BITS  = 1024;
-    localparam [33:0]  Q_ENTRY_BYTES = Q_ENTRY_BITS / 8;              // 256
-    localparam [33:0]  P_ENTRY_BYTES = P_ENTRY_BITS / 8;              // 128
+    localparam [ADDR_W-1:0] Q_ENTRY_BYTES = Q_ENTRY_BITS / 8;         // 256
+    localparam [ADDR_W-1:0] P_ENTRY_BYTES = P_ENTRY_BITS / 8;         // 128
     localparam [7:0]   Q_ARLEN       = Q_ENTRY_BITS / DATA_W - 1;     // 7 at 256b
     localparam [7:0]   P_ARLEN       = P_ENTRY_BITS / DATA_W - 1;     // 3 at 256b
 
     // Declared HERE, not beside `in_ew`: it reads Q_ENTRY_BYTES, and xvlog
     // rejects the forward reference that synthesis had accepted silently.
-    wire [33:0] in_ebytes = in_quant ? Q_ENTRY_BYTES : ({31'd0, in_ew} << LSB);
+    wire [ADDR_W-1:0] in_ebytes =
+        in_quant ? Q_ENTRY_BYTES : ({{(ADDR_W-3){1'b0}}, in_ew} << LSB);
 
     // The WRITE path's own return context. Shared with the read path, a read and
     // a write cannot overlap despite using disjoint AXI channels.
@@ -374,7 +410,9 @@ module mag_mem_port #(
     reg                  ws_iss  [0:WR_SLOTS-1];   // issued to AXI, awaiting ack
     reg [POS_WIDTH-1:0]  ws_x    [0:WR_SLOTS-1], ws_y [0:WR_SLOTS-1];
     reg [7:0]            ws_txn  [0:WR_SLOTS-1];
-    reg [33:0]           ws_addr [0:WR_SLOTS-1];
+    reg [ADDR_W-1:0]     ws_addr [0:WR_SLOTS-1];
+    reg                  ws_stg  [0:WR_SLOTS-1];   // lands in staging, not DRAM
+    reg                  ws_bad  [0:WR_SLOTS-1];   // reserved aperture: goes nowhere
     reg [WBW:0]          ws_len  [0:WR_SLOTS-1];   // beats expected
     reg [WBW:0]          ws_cnt  [0:WR_SLOTS-1];   // beats received
     reg [DATA_W-1:0]     ws_data [0:WR_SLOTS*WBURST-1];
@@ -444,17 +482,51 @@ module mag_mem_port #(
     always @(*) wq_pop = take_wr_req || take_wr_data;
     always @(*) rq_pop = take_rd;
 
+    // ---- the staging store, aperture 0 --------------------------------------
+    // Port A is the fill path, entry-wide; port B takes a staged drain's beats.
+    generate if (STAGE != 0) begin : g_stage
+        mag_stage #(.DATA_W(DATA_W), .ADDR_W(ADDR_W), .WORDS(4),
+                    .BANKS(STAGE_BANKS), .ENTRIES(STAGE_ENTRIES),
+                    .PIPE(STAGE_PIPE), .MESH_ID(MESH_ID)) u_stage (
+            .clk(clk), .rst(!resetn),
+            .a_req(stg_go), .a_we(1'b0), .a_addr(rd_cur),
+            .a_wdata({(4*DATA_W){1'b0}}),
+            .a_mine(), .a_gnt(), .a_fault(),
+            .a_rvalid(stg_rvalid), .a_rdata(stg_rdata),
+            .b_req((st == S_WR_DATA) && wr_stg), .b_we(1'b1),
+            .b_addr(m_awaddr + {{(ADDR_W-WBW-1-LSB){1'b0}}, wb_cnt, {LSB{1'b0}}}),
+            .b_wdata(ws_data[{ws_cur, wb_cnt[WBW-1:0]}]),
+            .b_mine(), .b_gnt(stg_b_gnt), .b_rvalid(), .b_rdata()
+        );
+    end else begin : g_nostage
+        assign stg_rvalid = 1'b0;
+        assign stg_rdata  = {(4*DATA_W){1'b0}};
+        assign stg_b_gnt  = 1'b0;
+    end endgenerate
+
 `ifndef SYNTHESIS
     always @(posedge clk) begin
+        if (resetn && in_valid && (in_ty == T_MEM_RD_REQ) && stg_unserved(in_addr))
+            $display("%0t ERROR mag_mem_port(mesh %0d, %0d,%0d):read at %h names a reserved aperture or another mesh -- DROPPED rather than aliased onto DRAM, so the requester will hang",
+                     $time, MESH_ID, MEM_X, MEM_Y, in_addr);
+        if (resetn && wi_valid && (wi_ty == T_MEM_WR_REQ) && stg_unserved(wi_addr))
+            $display("%0t ERROR mag_mem_port(mesh %0d, %0d,%0d):write at %h names a reserved aperture or another mesh -- DROPPED rather than aliased onto DRAM, so the drain will never ack",
+                     $time, MESH_ID, MEM_X, MEM_Y, wi_addr);
         // THE DROP ITSELF, named at the moment it happens. Without this the
         // first symptom is "write data with no open write" hundreds of cycles
         // later and several modules away.
         if (resetn && ((mi_rd && rq_full) || (mi_wr && wq_full)))
-            $display("%0t ERROR mag_mem_port(%0d,%0d): input flit DROPPED -- backpressure is too late",
-                     $time, MEM_X, MEM_Y);
+            $display("%0t ERROR mag_mem_port(mesh %0d, %0d,%0d):input flit DROPPED -- backpressure is too late",
+                     $time, MESH_ID, MEM_X, MEM_Y);
+        if (resetn && take_wr_req)
+            $display("  PROBE %0t mesh %0d slot %0d opened by (%0d,%0d) addr %h len %0d",
+                     $time, MESH_ID, ws_free, wi_sx, wi_sy, wi_addr, wi_len);
+        if (resetn && wi_valid && (wi_ty == T_MEM_WR_DATA) && ws_has_match)
+            $display("  PROBE %0t mesh %0d slot %0d took beat from (%0d,%0d)",
+                     $time, MESH_ID, ws_match, wi_sx, wi_sy);
         if (resetn && wi_valid && (wi_ty == T_MEM_WR_DATA) && !ws_has_match)
-            $display("%0t ERROR mag_mem_port(%0d,%0d): write data from (%0d,%0d) with no open write",
-                     $time, MEM_X, MEM_Y, wi_sx, wi_sy);
+            $display("%0t ERROR mag_mem_port(mesh %0d, %0d,%0d):write data from (%0d,%0d) with no open write",
+                     $time, MESH_ID, MEM_X, MEM_Y, wi_sx, wi_sy);
     end
 `endif
 
@@ -471,6 +543,8 @@ module mag_mem_port #(
     reg               ws_done;     // one-cycle release
     reg [WBW:0]       wb_cnt;      // beat within the burst on the bus
     reg [WBW:0]       wb_len;      // beats in it
+    reg               wr_stg;      // the write on the bus is staged
+    reg               wr_bad;      // ... or names a reserved aperture
     wire [WBW:0]      wb_nxt = wb_cnt + 1'b1;
 
     // The NoC write path's B latch. m_bready is tied high, so the slave's
@@ -495,6 +569,8 @@ module mag_mem_port #(
                 ws_y[ws_free]    <= wi_sy;
                 ws_txn[ws_free]  <= wi_txn;
                 ws_addr[ws_free] <= wi_addr;
+                ws_stg[ws_free]  <= stg_is(wi_addr);
+                ws_bad[ws_free]  <= stg_unserved(wi_addr);
                 // `len` is beats-minus-one. A requester that sends a single
                 // beat writes 0 and gets exactly the old behaviour.
                 ws_len[ws_free]  <= wi_len[WBW:0] + 1'b1;
@@ -533,13 +609,15 @@ module mag_mem_port #(
             wr_b <= 1'b0;
             q_start <= 1'b0; q_blay <= 1'b0; q_emit <= 2'd0;
             ws_cur <= {WS_BITS{1'b0}}; ws_done <= 1'b0;
-            wb_cnt <= 0; wb_len <= 0;
+            wb_cnt <= 0; wb_len <= 0; wr_stg <= 1'b0; wr_bad <= 1'b0;
+            rd_stg <= 1'b0; stg_go <= 1'b0; rd_cur <= {ADDR_W{1'b0}};
             rs <= RS_IDLE; q_rdy <= 1'b0; e_act <= 1'b0; e_tag <= 8'd0;
             rd_x <= 0; rd_y <= 0; rd_txn <= 0;
-            rd_base <= 34'd0; rd_cnt <= 8'd1; rd_ent <= 8'd0;
+            rd_base <= {ADDR_W{1'b0}}; rd_cnt <= 8'd1; rd_ent <= 8'd0;
             rd_peer <= 24'd0; rd_nd <= 2'd0; e_dst <= 2'd0;
             rd_quant <= 1'b1; p_cnt <= 2'd0;
-            rd_ebytes <= P_ENTRY_BYTES; rd_elast <= 2'd3; rd_anext <= 34'd0;
+            rd_ebytes <= P_ENTRY_BYTES; rd_elast <= 2'd3;
+            rd_anext  <= {ADDR_W{1'b0}};
             p_w0 <= 256'd0; p_w1 <= 256'd0; p_w2 <= 256'd0; p_w3 <= 256'd0;
             e_w0 <= 256'd0; e_w1 <= 256'd0; e_w2 <= 256'd0; e_w3 <= 256'd0;
         end else begin
@@ -576,7 +654,11 @@ module mag_mem_port #(
                     m_awaddr  <= ws_addr[ws_pick][ADDR_W-1:0];
                     m_awlen   <= {{(8-WBW-1){1'b0}}, (ws_len[ws_pick] - 1'b1)};
                     m_awid    <= {ID_W{1'b0}};
-                    m_awvalid <= 1'b1;
+                    // A staged write never reaches AXI: no AW, no W, no B. Nor
+                    // does one naming a reserved aperture -- it is dropped.
+                    m_awvalid <= !ws_stg[ws_pick] && !ws_bad[ws_pick];
+                    wr_stg    <= ws_stg[ws_pick];
+                    wr_bad    <= ws_bad[ws_pick];
                     wb_cnt    <= 0;
                     wb_len    <= ws_len[ws_pick];
                     n_wr <= n_wr + 16'd1;
@@ -599,7 +681,22 @@ module mag_mem_port #(
             // so nothing here depends on flit arrival order. The beat COUNTER,
             // not the flit stream, decides where the burst ends: a requester
             // that miscounts its own data must not desynchronise the response.
-            S_WR_DATA: begin
+            // Dropped, and the slot freed rather than wedged: no ack, so the
+            // requester hangs loudly instead of being told a lie.
+            S_WR_DATA: if (wr_bad) begin
+                ws_done <= 1'b1;
+                st      <= S_IDLE;
+            end else if (wr_stg) begin
+                // One word per beat through port B, which is the granularity
+                // the host window uses and needs no burst.
+                if (stg_b_gnt) begin
+                    wb_cnt <= wb_nxt;
+                    if (wb_nxt == wb_len) begin
+                        wr_b <= 1'b1;
+                        st   <= S_WR_ACK;
+                    end
+                end
+            end else begin
                 if (!m_wvalid) begin
                     m_wdata  <= ws_data[{ws_cur, wb_cnt[WBW-1:0]}];
                     m_wlast  <= (wb_nxt == wb_len);
@@ -650,14 +747,41 @@ module mag_mem_port #(
                 rd_anext  <= in_addr + in_ebytes;
                 rd_elast  <= in_ew[1:0] - 2'd1;
                 p_cnt    <= 2'd0;
-                m_araddr  <= in_addr[ADDR_W-1:0];
-                m_arlen   <= in_quant ? Q_ARLEN : ({5'd0, in_ew} - 8'd1);
-                m_arid    <= {ID_W{1'b0}};
-                m_arvalid <= 1'b1;
+                rd_cur   <= in_addr;
                 q_blay  <= in_blay;
-                q_start <= in_quant;
                 n_rd <= n_rd + 16'd1;
-                rs <= RS_FILL;
+                // Staging holds operand words verbatim, so it answers only a
+                // non-quantising fetch; a QUANT read of it belongs to DRAM.
+                if (stg_is(in_addr) && !in_quant) begin
+                    rd_stg  <= 1'b1;
+                    stg_go  <= 1'b1;
+                    q_start <= 1'b0;
+                    rs <= RS_STG;
+                end else if (stg_unserved(in_addr)) begin
+                    rd_stg <= 1'b0;
+                    rs <= RS_IDLE;      // dropped, so it hangs instead of lying
+                end else begin
+                    rd_stg    <= 1'b0;
+                    m_araddr  <= in_addr[ADDR_W-1:0];
+                    m_arlen   <= in_quant ? Q_ARLEN : ({5'd0, in_ew} - 8'd1);
+                    m_arid    <= {ID_W{1'b0}};
+                    m_arvalid <= 1'b1;
+                    q_start <= in_quant;
+                    rs <= RS_FILL;
+                end
+            end
+            // One entry per port-A read, which is what the 1,024-bit line is
+            // for: no AR, no beats, no quantiser.
+            RS_STG: begin
+                stg_go <= 1'b0;
+                if (stg_rvalid) begin
+                    p_w0 <= stg_rdata[0*DATA_W +: DATA_W];
+                    p_w1 <= stg_rdata[1*DATA_W +: DATA_W];
+                    p_w2 <= stg_rdata[2*DATA_W +: DATA_W];
+                    p_w3 <= stg_rdata[3*DATA_W +: DATA_W];
+                    q_rdy <= 1'b1;
+                    rs <= RS_WAIT;
+                end
             end
             // Issue the NEXT entry's address the moment this one's last beat
             // lands, not after the quantiser has finished with it. The returning
@@ -708,9 +832,16 @@ module mag_mem_port #(
                 // quantiser for the entry whose beats are already waiting.
                 if (rd_ent + 8'd1 < rd_cnt) begin
                     rd_ent  <= rd_ent + 8'd1;
-                    q_start <= rd_quant;
+                    q_start <= rd_quant && !rd_stg;
                     p_cnt   <= 2'd0;
-                    rs <= RS_FILL;
+                    // A staged run has no address in flight -- RS_FILL issues
+                    // the next AR early, RS_STG cannot -- so step it here.
+                    if (rd_stg) begin
+                        rd_cur   <= rd_anext;
+                        rd_anext <= rd_anext + rd_ebytes;
+                        stg_go   <= 1'b1;
+                        rs <= RS_STG;
+                    end else rs <= RS_FILL;
                 end else rs <= RS_IDLE;
             end
             default: rs <= RS_IDLE;

@@ -40,7 +40,7 @@ module mag #(
     parameter integer FLIT_WIDTH = 288,
     parameter integer POS_WIDTH  = 4,
     parameter integer DATA_W     = 256,     // AXI memory width == flit payload
-    parameter integer ADDR_W     = 34,
+    parameter integer ADDR_W     = 40,
     parameter integer ID_W       = 4,
     // How many NoC memory endpoints this MAG presents, and where each sits.
     // Named per port rather than packed: a packed field is one shift away from
@@ -56,12 +56,12 @@ module mag #(
     parameter integer TUSER_W    = 96,
     parameter integer IL_RX_BEATS  = 64,
     parameter integer IL_MAX_BEATS = 32,
-    // AXI master channels: one per memory port, plus one for the host upload.
-    // Declared here rather than as a body localparam because the port list
-    // needs it -- do not override it.
-    // one per memory port, the host upload, the memory mover, and -- only with
-    // the interlink -- the channel inbound remote writes land through.
+    // INTERNAL requesters, never leaving MAG: memory ports, host upload, mover,
+    // and with the interlink the one inbound remote writes land through.
     parameter integer MP1        = MEM_PORTS + 2 + ((ILINK != 0) ? 1 : 0),
+    // mag_dram_port packs DATA_W -> MW, so at 512 an 8-beat 256-bit burst
+    // becomes 4 beats. Defaults EQUAL, which is the R=1 no-sub-beat case.
+    parameter integer MW         = DATA_W,
     parameter integer MEM_X      = 0,       // port 0
     parameter integer MEM_Y      = 1,
     parameter integer MEM_X1     = 0,       // port 1
@@ -75,7 +75,15 @@ module mag #(
     parameter integer GRID_LO    = 1,
     parameter integer GRID_HI    = 2,
     parameter integer STAGE_FLITS = 128,
-    parameter integer WR_SLOTS   = 16
+    parameter integer WR_SLOTS   = 16,
+    // MAG L2 staging, special aperture 0. 0 generates none of it.
+    parameter integer STAGE         = 0,
+    parameter integer STAGE_BANKS   = 4,      // 64 URAM, 2 MB
+    parameter integer STAGE_ENTRIES = 16384,
+    parameter integer STAGE_PIPE    = 1,
+    // 0 = a store inside each mag_mem_port, unreachable by mover and interlink
+    // and costing MEM_PORTS x 64 URAM. 1 = one store on the converged path.
+    parameter integer STAGE_AT_PORT = 0
 )(
     input  wire                clk,
     input  wire                resetn,
@@ -134,39 +142,39 @@ module mag #(
     output wire                sc_rvalid,
     input  wire                sc_rready,
 
-    // ---- AXI4 masters: MEM_PORTS engines, then the upload ----------------
-    // Flattened, channel N being the host upload. One channel per port is the
-    // point: sharing them would leave the read beats of eight clusters on one
-    // AR/R pair, which is the constraint the ports exist to remove.
-    output wire [MP1*ID_W-1:0]     m_awid,
-    output wire [MP1*ADDR_W-1:0]   m_awaddr,
-    output wire [MP1*8-1:0]        m_awlen,
-    output wire [MP1*3-1:0]        m_awsize,
-    output wire [MP1*2-1:0]        m_awburst,
-    output wire [MP1-1:0]          m_awvalid,
-    input  wire [MP1-1:0]          m_awready,
-    output wire [MP1*DATA_W-1:0]   m_wdata,
-    output wire [MP1*DATA_W/8-1:0] m_wstrb,
-    output wire [MP1-1:0]          m_wlast,
-    output wire [MP1-1:0]          m_wvalid,
-    input  wire [MP1-1:0]          m_wready,
-    input  wire [MP1*ID_W-1:0]     m_bid,
-    input  wire [MP1*2-1:0]        m_bresp,
-    input  wire [MP1-1:0]          m_bvalid,
-    output wire [MP1-1:0]          m_bready,
-    output wire [MP1*ID_W-1:0]     m_arid,
-    output wire [MP1*ADDR_W-1:0]   m_araddr,
-    output wire [MP1*8-1:0]        m_arlen,
-    output wire [MP1*3-1:0]        m_arsize,
-    output wire [MP1*2-1:0]        m_arburst,
-    output wire [MP1-1:0]          m_arvalid,
-    input  wire [MP1-1:0]          m_arready,
-    input  wire [MP1*ID_W-1:0]     m_rid,
-    input  wire [MP1*DATA_W-1:0]   m_rdata,
-    input  wire [MP1*2-1:0]        m_rresp,
-    input  wire [MP1-1:0]          m_rlast,
-    input  wire [MP1-1:0]          m_rvalid,
-    output wire [MP1-1:0]          m_rready,
+    // ---- ONE AXI4 master, at the DRAM's own width ------------------------
+    // MP1 internal requesters converge in mag_dram_port; AXI exists once, here.
+    input  wire                    dram_aclk,
+    input  wire                    dram_aresetn,
+    output wire [ID_W-1:0]         dram_awid,
+    output wire [ADDR_W-1:0]       dram_awaddr,
+    output wire [7:0]              dram_awlen,
+    output wire [2:0]              dram_awsize,
+    output wire [1:0]              dram_awburst,
+    output wire                    dram_awvalid,
+    input  wire                    dram_awready,
+    output wire [MW-1:0]           dram_wdata,
+    output wire [MW/8-1:0]         dram_wstrb,
+    output wire                    dram_wlast,
+    output wire                    dram_wvalid,
+    input  wire                    dram_wready,
+    input  wire [ID_W-1:0]         dram_bid,
+    input  wire [1:0]              dram_bresp,
+    input  wire                    dram_bvalid,
+    output wire                    dram_bready,
+    output wire [ID_W-1:0]         dram_arid,
+    output wire [ADDR_W-1:0]       dram_araddr,
+    output wire [7:0]              dram_arlen,
+    output wire [2:0]              dram_arsize,
+    output wire [1:0]              dram_arburst,
+    output wire                    dram_arvalid,
+    input  wire                    dram_arready,
+    input  wire [ID_W-1:0]         dram_rid,
+    input  wire [MW-1:0]           dram_rdata,
+    input  wire [1:0]              dram_rresp,
+    input  wire                    dram_rlast,
+    input  wire                    dram_rvalid,
+    output wire                    dram_rready,
 
     // ---- NoC: memory ports, flattened ------------------------------------
     input  wire [MEM_PORTS*FLIT_WIDTH-1:0] mem_in_data,
@@ -224,6 +232,37 @@ module mag #(
     localparam integer LK = (ILINK != 0) ? MEM_PORTS + 2 : MEM_PORTS + 1;
 
     localparam integer LSB = $clog2(DATA_W/8);
+
+    // ---- the internal requesters, converged at the foot of this file -------
+    wire [MP1*ID_W-1:0]     m_awid;
+    wire [MP1*ADDR_W-1:0]   m_awaddr;
+    wire [MP1*8-1:0]        m_awlen;
+    wire [MP1*3-1:0]        m_awsize;
+    wire [MP1*2-1:0]        m_awburst;
+    wire [MP1-1:0]          m_awvalid;
+    wire [MP1-1:0]          m_awready;
+    wire [MP1*DATA_W-1:0]   m_wdata;
+    wire [MP1*DATA_W/8-1:0] m_wstrb;
+    wire [MP1-1:0]          m_wlast;
+    wire [MP1-1:0]          m_wvalid;
+    wire [MP1-1:0]          m_wready;
+    wire [MP1*ID_W-1:0]     m_bid;
+    wire [MP1*2-1:0]        m_bresp;
+    wire [MP1-1:0]          m_bvalid;
+    wire [MP1-1:0]          m_bready;
+    wire [MP1*ID_W-1:0]     m_arid;
+    wire [MP1*ADDR_W-1:0]   m_araddr;
+    wire [MP1*8-1:0]        m_arlen;
+    wire [MP1*3-1:0]        m_arsize;
+    wire [MP1*2-1:0]        m_arburst;
+    wire [MP1-1:0]          m_arvalid;
+    wire [MP1-1:0]          m_arready;
+    wire [MP1*ID_W-1:0]     m_rid;
+    wire [MP1*DATA_W-1:0]   m_rdata;
+    wire [MP1*2-1:0]        m_rresp;
+    wire [MP1-1:0]          m_rlast;
+    wire [MP1-1:0]          m_rvalid;
+    wire [MP1-1:0]          m_rready;
 
     // ---- interlink nets, declared here because the demux above reads them --
     // At ILINK=0 the generate at the bottom ties every one of these to a
@@ -317,8 +356,9 @@ module mag #(
     // single-mesh build ever produces, which is what makes one compiler serve
     // both -- docs/interlink/boundary.md s5.
     localparam integer RS_LSB = FLIT_WIDTH - 4*POS_WIDTH - 16;
-    // NOC_MEM_ADDR's top two bits: the mesh a memory request is aimed at.
-    localparam integer RQ_MESH_LSB = 254;
+    // NOC_MEM_ADDR is [255:216], so addr[37:36] -- the mesh -- is at [253:252].
+    // At 254 this read {special, rsvd} and faulted every LOCAL aperture access.
+    localparam integer RQ_MESH_LSB = 252;
 
     wire [FLIT_WIDTH-1:0] agt_out_data;
     wire                  agt_out_valid;
@@ -347,15 +387,15 @@ module mag #(
         wire [1:0] rq = mem_in_data[gd*FLIT_WIDTH + RQ_MESH_LSB +: 2];
         assign in_is_req[gd] = (ty == T_MEM_RD_REQ) || (ty == T_MEM_WR_REQ);
         assign in_is_mem[gd] = in_is_req[gd] || (ty == T_MEM_WR_DATA);
-        assign in_is_rem[gd] = (ILINK != 0) && !in_is_mem[gd] && rm;
+        // A MEMORY flit may be remote too. The sender marks every flit of the
+        // burst, so the encapsulator stays stateless -- mx_cluster_cu.v:996.
+        assign in_is_rem[gd] = (ILINK != 0) && rm;
         assign in_to_agt[gd] = mem_in_valid[gd] && !in_is_mem[gd] && !in_is_rem[gd];
         assign in_to_enc[gd] = mem_in_valid[gd] && in_is_rem[gd];
-        // A memory request naming another mesh. It is not forwarded -- v1 has
-        // no remote read, and a remote write from a CU would need the same
-        // path -- so the access aliases to local DRAM with the top two address
-        // bits ignored, exactly as it does today, and IL_FAULT records that a
-        // program did something the compiler should have caught.
-        assign rq_rem[gd] = mem_in_valid[gd] && in_is_req[gd] && (rq != il_mesh);
+        // An address naming another mesh on a flit NOT marked remote. That is
+        // the one case still aliased onto local DRAM, and the compiler's bug.
+        assign rq_rem[gd] = mem_in_valid[gd] && in_is_req[gd] &&
+                            !in_is_rem[gd] && (rq != il_mesh);
     end
     endgenerate
 
@@ -469,7 +509,11 @@ module mag #(
         mag_mem_port #(
             .FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH),
             .DATA_W(DATA_W), .ADDR_W(ADDR_W), .ID_W(ID_W),
-            .MEM_X(PX), .MEM_Y(PY), .WR_SLOTS(WR_SLOTS)
+            .MEM_X(PX), .MEM_Y(PY), .WR_SLOTS(WR_SLOTS),
+            .STAGE((STAGE_AT_PORT != 0) ? 0 : STAGE), .AP_DECODE(STAGE),
+            .STAGE_BANKS(STAGE_BANKS),
+            .STAGE_ENTRIES(STAGE_ENTRIES), .STAGE_PIPE(STAGE_PIPE),
+            .MESH_ID(MESH_ID[1:0])
         ) u_eng (
             .clk(clk), .resetn(resetn),
             .m_awid(m_awid[gp*ID_W +: ID_W]),
@@ -498,7 +542,7 @@ module mag #(
             // offered to this port is NOT valid here, so the engine never has
             // to know the agent exists.
             .mem_in_data(mem_in_data[gp*FLIT_WIDTH +: FLIT_WIDTH]),
-            .mem_in_valid(mem_in_valid[gp] && in_is_mem[gp]),
+            .mem_in_valid(mem_in_valid[gp] && in_is_mem[gp] && !in_is_rem[gp]),
             .mem_in_busy(eng_in_busy[gp]),
             .mem_out_data(eng_out_data[gp]),
             .mem_out_valid(eng_out_valid[gp]),
@@ -517,10 +561,12 @@ module mag #(
         // Taken, or dropped because it can never be taken -- either way the
         // port is freed, so memory behind it keeps moving. Only "not your turn
         // yet" holds, and that is bounded by the port count.
-        assign mem_in_busy[gp] = in_is_mem[gp]
-                               ? eng_in_busy[gp]
-                               : in_is_rem[gp]
-                                 ? !((enc_sel == gp) && !enc_in_busy)
+        // REMOTE FIRST, because a memory flit can now be both, and the engine
+        // is not the consumer of one that is leaving this mesh.
+        assign mem_in_busy[gp] = in_is_rem[gp]
+                               ? !((enc_sel == gp) && !enc_in_busy)
+                               : in_is_mem[gp]
+                                 ? eng_in_busy[gp]
                                  : !((agt_sel == gp) && (agt_grant || agt_drop));
 
         // Outbound: the agent wins, then the interlink, then the engine. The
@@ -653,13 +699,13 @@ module mag #(
     // per upload divides its cost by the number of passes and permanently halves
     // what the fetch path moves.
     //
-    // The marker is on the REQUEST (address bits, HW_QUANT below), never a range
+    // The marker is on the REQUEST (an address aperture, below), never a range
     // MAG remembers: the driver decides which tensors are pre-quantised.
     localparam [2:0] HQ_IDLE = 3'd0, HQ_FILL = 3'd1, HQ_PACK = 3'd2,
                      HQ_AW   = 3'd3, HQ_W    = 3'd4, HQ_B    = 3'd5,
                      HQ_DONE = 3'd6;
     reg [2:0]  hs;
-    reg [33:0] hq_dst;      // destination of the entry being built
+    reg [ADDR_W-1:0] hq_dst; // destination of the entry being built
     reg [15:0] hq_left;     // source beats not yet accepted
     reg [3:0]  hq_bcnt;     // beats into the current entry, 0..7
     reg [1:0]  hq_wsel;     // output word on the bus
@@ -690,15 +736,30 @@ module mag #(
     // bits as FP16 and 1024 bits as MXFP7. Derived, not written as 3 -- the
     // burst length is a consequence of the entry size and DATA_W.
     localparam integer P_ENTRY_BITS  = 1024;
-    localparam [33:0]  P_ENTRY_BYTES = P_ENTRY_BITS / 8;             // 128
+    localparam [ADDR_W-1:0] P_ENTRY_BYTES = P_ENTRY_BITS / 8;        // 128
     localparam [7:0]   P_ARLEN       = P_ENTRY_BITS / DATA_W - 1;    // 3 at 256b
 
-    // Address bits that mark an upload for quantisation. AXI carries no field
-    // for this and XDMA exposes none, so the marker rides where a host can
-    // always put it: the two top bits of the window, which is why the window is
-    // 32 bits of the 34-bit space rather than all of it.
-    localparam integer HW_QUANT = ADDR_W - 1;
-    localparam integer HW_BLAY  = ADDR_W - 2;
+    // An APERTURE, not the top bits: those are SPECIAL/rsvd now, so a host write
+    // to MAG L2 staging would otherwise be taken for an upload and quantised.
+    localparam integer HW_SPECIAL  = ADDR_W - 1;      // 39
+    localparam [2:0]   HW_APER_UP  = 3'b010;          // aperture 0x4 / 0x5
+    localparam integer HW_MESH_HI  = ADDR_W - 3;      // 37
+    localparam integer HW_MESH_LO  = ADDR_W - 4;      // 36
+    localparam integer HW_APER_HI  = ADDR_W - 5;      // 35
+    localparam integer HW_APER_LO  = ADDR_W - 7;      // 33
+    localparam integer HW_BLAY     = ADDR_W - 8;      // 32
+
+    // The destination a quantised upload names: its mesh, and 4 GB below it.
+    localparam [ADDR_W-1:0] HW_DST_MASK =
+        ({{(ADDR_W-2){1'b0}}, 2'b11} << HW_MESH_LO) |
+        {{(ADDR_W-32){1'b0}}, 32'hFFFF_FFFF};
+
+    // One expression, used by the decode, the reset path and the bench check --
+    // three places that must agree or an upload quantises in one and not another.
+    function automatic is_upload;
+        input [ADDR_W-1:0] a;
+        is_upload = a[HW_SPECIAL] && (a[HW_APER_HI:HW_APER_LO] == HW_APER_UP);
+    endfunction
 
     reg host_b;   // write response seen, still waiting for the host to take it
 
@@ -734,7 +795,7 @@ module mag #(
     // waiting for beats that will never come. Silent otherwise: it presents as
     // the host AXI hanging, several modules from the cause.
     always @(posedge clk)
-        if (resetn && sm_awvalid && sm_awready && sm_awaddr[HW_QUANT] &&
+        if (resetn && sm_awvalid && sm_awready && is_upload(sm_awaddr) &&
             (({8'd0, sm_awlen} + 16'd1) % 16'd8 != 16'd0))
             $display("%0t ERROR mag: quantising upload of %0d beats is not a whole number of entries",
                      $time, {8'd0, sm_awlen} + 16'd1);
@@ -745,11 +806,10 @@ module mag #(
             hst <= HS_IDLE;
             h_awvalid <= 1'b0; h_arvalid <= 1'b0; h_wvalid <= 1'b0;
             h_wlast <= 1'b0; h_awlen <= 8'd0; h_arlen <= 8'd0;
-            h_awaddr <= {ADDR_W{1'b0}}; h_araddr <= {ADDR_W{1'b0}};
-            h_awid <= {ID_W{1'b0}}; h_arid <= {ID_W{1'b0}};
-            h_wdata <= {DATA_W{1'b0}};
+            // The AR/AW/W payloads are qualified by the three valids above, and
+            // h_wdata alone is DATA_W; hq_dst is loaded before the burst runs.
             host_b <= 1'b0;
-            hs <= HQ_IDLE; hq_dst <= 34'd0; hq_left <= 16'd0;
+            hs <= HQ_IDLE; hq_left <= 16'd0;
             hq_bcnt <= 4'd0; hq_wsel <= 2'd0; hq_blay <= 1'b0;
             hq_b <= 1'b0; q_start_h <= 1'b0;
         end else begin
@@ -759,12 +819,10 @@ module mag #(
 
             case (hst)
             HS_IDLE: begin
-                if (sm_awvalid && sm_awready && sm_awaddr[HW_QUANT]) begin
-                    // Quantise as it lands. The host sends FP16 and names the
-                    // MXFP7 destination; MAG issues its own write bursts, so
-                    // the source and destination burst lengths are unrelated
-                    // and neither side has to know the other's entry size.
-                    hq_dst    <= {2'b00, sm_awaddr[ADDR_W-3:0]};
+                if (sm_awvalid && sm_awready && is_upload(sm_awaddr)) begin
+                    // Quantise as it lands. MAG issues its own write bursts, so
+                    // source and destination burst lengths are unrelated.
+                    hq_dst    <= sm_awaddr & HW_DST_MASK;
                     hq_blay   <= sm_awaddr[HW_BLAY];
                     hq_left   <= {8'd0, sm_awlen} + 16'd1;
                     hq_bcnt   <= 4'd0;
@@ -892,7 +950,7 @@ module mag #(
             .cfg_en(mv_cfg_en), .cfg_addr(mv_cfg_addr), .cfg_data(mv_cfg_data),
             .stat_sel(il_stat_sel), .stat_q(il_stat_q), .my_mesh(il_mesh),
 
-            .s_awaddr(mv_awaddr), .s_awvalid(mv_awvalid),
+            .s_awaddr(mv_awaddr), .s_awlen(mv_awlen), .s_awvalid(mv_awvalid),
             .s_awready(mvx_awready),
             .s_wdata(mv_wdata), .s_wstrb(mv_wstrb), .s_wvalid(mv_wvalid),
             .s_wready(mvx_wready),
@@ -1001,6 +1059,104 @@ module mag #(
         assign link1_in_tready  = 1'b1;
     end
     endgenerate
+
+    // ---- the internal requesters onto ONE AXI master ----------------------
+    // id/resp die here as they did in mag_1m.v:238's shim; nothing reads them.
+    wire [MP1-1:0]        q_valid, q_ready, q_write;
+    wire [MP1*ADDR_W-1:0] q_addr;
+    wire [MP1*16-1:0]     q_len;
+    wire [MP1-1:0]        w_valid_i, w_ready_i;
+    wire [MP1*DATA_W-1:0] w_data_i;
+    wire [MP1*DATA_W/8-1:0] w_strb_i;
+    wire [MP1-1:0]        r_valid_i, r_ready_i, r_last_i;
+    wire [MP1*DATA_W-1:0] r_data_i;
+    wire [MP1-1:0]        b_done;
+
+    genvar rq;
+    generate for (rq = 0; rq < MP1; rq = rq + 1) begin : g_req
+        // WRITE WINS when both are offered: the W beats are already queued
+        // behind it, and a read can wait a burst.
+        wire aw_r = m_awvalid[rq];
+        wire ar_r = m_arvalid[rq] && !aw_r;
+        assign q_valid[rq] = aw_r || ar_r;
+        assign q_write[rq] = aw_r;
+        assign q_addr[rq*ADDR_W +: ADDR_W] = aw_r ? m_awaddr[rq*ADDR_W +: ADDR_W]
+                                                  : m_araddr[rq*ADDR_W +: ADDR_W];
+        assign q_len[rq*16 +: 16] = aw_r ? {8'd0, m_awlen[rq*8 +: 8]}
+                                         : {8'd0, m_arlen[rq*8 +: 8]};
+        assign m_awready[rq] = q_ready[rq] && aw_r;
+        assign m_arready[rq] = q_ready[rq] && ar_r;
+
+        assign w_valid_i[rq] = m_wvalid[rq];
+        assign w_data_i[rq*DATA_W +: DATA_W] = m_wdata[rq*DATA_W +: DATA_W];
+        assign w_strb_i[rq*DATA_W/8 +: DATA_W/8] = m_wstrb[rq*DATA_W/8 +: DATA_W/8];
+        assign m_wready[rq] = w_ready_i[rq];
+
+        assign m_rvalid[rq] = r_valid_i[rq];
+        assign m_rdata[rq*DATA_W +: DATA_W] = r_data_i[rq*DATA_W +: DATA_W];
+        assign m_rlast[rq] = r_last_i[rq];
+        assign m_rid[rq*ID_W +: ID_W] = {ID_W{1'b0}};
+        assign m_rresp[rq*2 +: 2] = 2'b00;
+        assign r_ready_i[rq] = m_rready[rq];
+
+        assign m_bvalid[rq] = b_done[rq];
+        assign m_bid[rq*ID_W +: ID_W] = {ID_W{1'b0}};
+        assign m_bresp[rq*2 +: 2] = 2'b00;
+    end endgenerate
+
+    // ---- L2 on the converged path, before the DRAM port ------------------
+    wire [MP1-1:0]          dq_valid, dq_ready, dq_write;
+    wire [MP1*ADDR_W-1:0]   dq_addr;
+    wire [MP1*16-1:0]       dq_len;
+    wire [MP1-1:0]          dw_valid, dw_ready;
+    wire [MP1*DATA_W-1:0]   dw_data;
+    wire [MP1*DATA_W/8-1:0] dw_strb;
+    wire [MP1-1:0]          dr_valid, dr_ready, dr_last;
+    wire [MP1*DATA_W-1:0]   dr_data;
+    wire [MP1-1:0]          db_done;
+
+    mag_stage_port #(.N(MP1), .ADDR_W(ADDR_W), .SW(DATA_W),
+                     .STAGE((STAGE_AT_PORT != 0) ? STAGE : 0),
+                     .BANKS(STAGE_BANKS), .ENTRIES(STAGE_ENTRIES),
+                     .PIPE(STAGE_PIPE), .MESH_ID(MESH_ID[1:0])) u_l2 (
+        .clk(clk), .rst(!resetn),
+        .q_valid(q_valid), .q_ready(q_ready), .q_addr(q_addr),
+        .q_len(q_len), .q_write(q_write),
+        .w_valid(w_valid_i), .w_ready(w_ready_i), .w_data(w_data_i),
+        .w_strb(w_strb_i),
+        .r_valid(r_valid_i), .r_ready(r_ready_i), .r_data(r_data_i),
+        .r_last(r_last_i), .b_valid(b_done),
+        .dq_valid(dq_valid), .dq_ready(dq_ready), .dq_addr(dq_addr),
+        .dq_len(dq_len), .dq_write(dq_write),
+        .dw_valid(dw_valid), .dw_ready(dw_ready), .dw_data(dw_data),
+        .dw_strb(dw_strb),
+        .dr_valid(dr_valid), .dr_ready(dr_ready), .dr_data(dr_data),
+        .dr_last(dr_last), .db_valid(db_done)
+    );
+
+    mag_dram_port #(.N(MP1), .ADDR_W(ADDR_W), .SW(DATA_W), .MW(MW),
+                    .ID_W(ID_W)) u_dram (
+        .s_aclk(clk), .s_aresetn(resetn),
+        .q_valid(dq_valid), .q_ready(dq_ready), .q_addr(dq_addr),
+        .q_len(dq_len), .q_write(dq_write),
+        .w_valid(dw_valid), .w_ready(dw_ready), .w_data(dw_data),
+        .w_strb(dw_strb),
+        .r_valid(dr_valid), .r_ready(dr_ready), .r_data(dr_data),
+        .r_last(dr_last), .b_valid(db_done),
+        .m_aclk(dram_aclk), .m_aresetn(dram_aresetn),
+        .m_awid(dram_awid), .m_awaddr(dram_awaddr), .m_awlen(dram_awlen),
+        .m_awsize(dram_awsize), .m_awburst(dram_awburst),
+        .m_awvalid(dram_awvalid), .m_awready(dram_awready),
+        .m_wdata(dram_wdata), .m_wstrb(dram_wstrb), .m_wlast(dram_wlast),
+        .m_wvalid(dram_wvalid), .m_wready(dram_wready),
+        .m_bid(dram_bid), .m_bresp(dram_bresp), .m_bvalid(dram_bvalid),
+        .m_bready(dram_bready),
+        .m_arid(dram_arid), .m_araddr(dram_araddr), .m_arlen(dram_arlen),
+        .m_arsize(dram_arsize), .m_arburst(dram_arburst),
+        .m_arvalid(dram_arvalid), .m_arready(dram_arready),
+        .m_rid(dram_rid), .m_rdata(dram_rdata), .m_rresp(dram_rresp),
+        .m_rlast(dram_rlast), .m_rvalid(dram_rvalid), .m_rready(dram_rready)
+    );
 
 `ifndef SYNTHESIS
     // Sharing `u_hquant` with a port's `u_quant` -- 4,267 LUT, 32 DSP,
