@@ -14,7 +14,8 @@
 // block design; hand-written arbitration here would duplicate it badly.
 //
 // INTERLINK ON. Two full-duplex links: M_AXIS_LINKn out, S_AXIS_LINKn in.
-// link0 flips the mesh's x, link1 flips its y (mag_switch.v).
+// link0 is the neighbour one position DOWN the chain and link1 one position UP
+// (mag_switch.v CH_SEQ), so one end's link1 faces the other's link0.
 // TREADY MUST NOT CROSS AN SLR. The far end has to be another mesh's
 // S_AXIS_LINK, whose tready is tied high; a real slave there reintroduces the
 // combinational SLR crossing mag_link.v exists to avoid.
@@ -25,7 +26,7 @@ module ktpu_ship_2x2_6c2v_1m #(
     parameter integer FW       = 288,
     parameter integer PW       = 4,
     parameter integer DW       = 256,
-    parameter integer AW       = 34,
+    parameter integer AW       = 40,
     parameter integer IDW      = 4,
     parameter integer NM       = 1,
     // The MEMORY's beat. mag_1m packs DW up to this before the
@@ -38,9 +39,21 @@ module ktpu_ship_2x2_6c2v_1m #(
     // Only the RESET value -- IL_MESH is writable, so the four instances of
     // this module differ by this parameter alone.
     parameter integer MESH_ID  = 0,
+    parameter integer L2_MAG_BANKS   = 4,      // 64 URAM, 2 MB
+    parameter integer L2_MAG_ENTRIES = 16384,
+    // 8 URAM: 4 per 4096 lines at 256b, and L2_BITS MUST be
+    // 5 + $clog2(DEPTH) or the window and the store differ in size.
+    parameter integer L2_CU_DEPTH = 8192,
+    parameter [39:0]  L2_CU_BASE  = 40'h00_F000_0000,
+    parameter integer L2_CU_BITS  = 18,
+    // A DIFFERENT base from the CU's: two adapters sharing one
+    // aperture means the second never sees a flit.
+    parameter integer L2_VEC_DEPTH = 8192,
+    parameter [39:0]  L2_VEC_BASE  = 40'h00_F100_0000,
+    parameter integer L2_VEC_BITS  = 18,
     parameter integer MODEL    = 0,
     parameter integer L1_DEPTH = 512,
-    // src/ktpu/hw/bench.py's TILES / L1_A_ENTRIES / L1_B_ENTRIES. A generated
+    // driver/kohakutpu/machine's frozen-at-synthesis TILES / GA / GB. A generated
     // top that omits them elaborates mx_cluster_cu's 256/32/32 instead.
     // 4096 in URAM, not 512 in BRAM: width sets the primitive count (5 either
     // way) so depth is free, and gm*gn<=TILES bounds arithmetic intensity --
@@ -69,7 +82,13 @@ module ktpu_ship_2x2_6c2v_1m #(
     // any depth to 512, so the old 32/64 used 6%/12% of their own tiles.
     // Measured on noc_cu_base: 8 BRAM either way, +34 LUT, 574 -> 567 MHz.
     parameter integer INST_DEPTH = 512,
-    parameter integer RECV_DEPTH = 512
+    parameter integer RECV_DEPTH = 512,
+    // Compute units on their own clocks, behind one noc_local_cdc per
+    // direction. ONE RATE PER TYPE, not per instance: every cluster takes
+    // `mat_clk` and every vector core `vec_clk`. THE NoC FABRIC STAYS ONE
+    // CLOCK -- router to router is untouched, so the deadlock argument holds.
+    parameter integer UNIT_CDC  = 0,
+    parameter integer CDC_DEPTH = 16
 )(
     // One clock and one reset for every interface, master and slave alike, so
     // neither carries an s_ or m_ prefix. ASSOCIATED_BUSIF names them all, which
@@ -80,6 +99,11 @@ module ktpu_ship_2x2_6c2v_1m #(
     (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 axi_aresetn RST" *)
     (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
     input  wire axi_aresetn,
+    // Tie both to axi_aclk when UNIT_CDC is 0. They reach nothing.
+    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 mat_clk CLK" *)
+    input  wire mat_clk,
+    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 vec_clk CLK" *)
+    input  wire vec_clk,
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 dram_aclk CLK" *)
     (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF M_AXI_DRAM, ASSOCIATED_RESET dram_aresetn" *)
     input  wire dram_aclk,
@@ -254,6 +278,22 @@ module ktpu_ship_2x2_6c2v_1m #(
     wire [FW-1:0] l014_v2_2_rd; wire l014_v2_2_rv; wire l014_v2_2_rb;
     wire [FW-1:0] l015_L2_2_fd; wire l015_L2_2_fv; wire l015_L2_2_fb;
     wire [FW-1:0] l015_L2_2_rd; wire l015_L2_2_rv; wire l015_L2_2_rb;
+    wire [FW-1:0] cu0_l2_id, cu0_l2_od;
+    wire cu0_l2_iv, cu0_l2_ib, cu0_l2_ov, cu0_l2_ob;
+    wire [FW-1:0] cu1_l2_id, cu1_l2_od;
+    wire cu1_l2_iv, cu1_l2_ib, cu1_l2_ov, cu1_l2_ob;
+    wire [FW-1:0] cu2_l2_id, cu2_l2_od;
+    wire cu2_l2_iv, cu2_l2_ib, cu2_l2_ov, cu2_l2_ob;
+    wire [FW-1:0] cu3_l2_id, cu3_l2_od;
+    wire cu3_l2_iv, cu3_l2_ib, cu3_l2_ov, cu3_l2_ob;
+    wire [FW-1:0] cu4_l2_id, cu4_l2_od;
+    wire cu4_l2_iv, cu4_l2_ib, cu4_l2_ov, cu4_l2_ob;
+    wire [FW-1:0] cu5_l2_id, cu5_l2_od;
+    wire cu5_l2_iv, cu5_l2_ib, cu5_l2_ov, cu5_l2_ob;
+    wire [FW-1:0] vec0_l2_id, vec0_l2_od;
+    wire vec0_l2_iv, vec0_l2_ib, vec0_l2_ov, vec0_l2_ob;
+    wire [FW-1:0] vec1_l2_id, vec1_l2_od;
+    wire vec1_l2_iv, vec1_l2_ib, vec1_l2_ov, vec1_l2_ob;
 
     NoCRouter #(.DATA_WIDTH(FW), .FIFO_DEPTH(512),
                 .MEMORY_TYPE("block"), .POS_WIDTH(PW),
@@ -337,7 +377,9 @@ module ktpu_ship_2x2_6c2v_1m #(
           .ID_W(IDW), .MEM_PORTS(2), .MEM_X(0), .MEM_Y(1), .MEM_X1(0), .MEM_Y1(2),
           .GRID_LO(1), .GRID_HI(2), .STAGE_FLITS(128),
           .ILINK(1), .MESH_ID(MESH_ID), .LINK_W(LKW), .TUSER_W(LKU),
-          .MW(MW)) u_mag (
+          .MW(MW),
+          .STAGE(1), .STAGE_BANKS(L2_MAG_BANKS),
+          .STAGE_ENTRIES(L2_MAG_ENTRIES), .STAGE_AT_PORT(1)) u_mag (
         .clk(clk), .resetn(resetn),
         .dram_aclk(dram_aclk), .dram_aresetn(dram_aresetn),
         .sm_awid(S_AXI_MEM_awid), .sm_awaddr(S_AXI_MEM_awaddr),
@@ -414,74 +456,146 @@ module ktpu_ship_2x2_6c2v_1m #(
         .mem_rd_count(mag_rd), .mem_wr_count(mag_wr),
         .mv_busy(mv_busy), .mv_fault(mv_fault), .mv_done(mv_done)
     );
+    noc_l2_adapter #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DEPTH(L2_CU_DEPTH),
+                     .L2_BASE(L2_CU_BASE), .L2_BITS(L2_CU_BITS), .PASS(0)) u_cu0_l2 (
+        .clk(clk), .rst(!resetn),
+        .rt_data(l002_v1_0_rd), .rt_valid(l002_v1_0_rv), .rt_busy(l002_v1_0_rb),
+        .ru_data(l002_v1_0_fd), .ru_valid(l002_v1_0_fv), .ru_busy(l002_v1_0_fb),
+        .ep_data(cu0_l2_id), .ep_valid(cu0_l2_iv), .ep_busy(cu0_l2_ib),
+        .eu_data(cu0_l2_od), .eu_valid(cu0_l2_ov), .eu_busy(cu0_l2_ob)
+    );
     mx_cluster_cu #(.FLIT_WIDTH(FW), .POS_WIDTH(PW),
                     .CU_X(1), .CU_Y(0), .TILES(TILES), .GA(GA), .GB(GB),
                     .L1_PRIM(L1_PRIM), .TILE_PRIM(TILE_PRIM),
                     .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
+                    .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
                     .MEM_X(0), .MEM_Y(1), .MODEL(MODEL)) u_cu0 (
-        .clk(clk), .resetn(resetn),
-        .noc_out_data(l002_v1_0_fd), .noc_out_valid(l002_v1_0_fv), .noc_out_busy(l002_v1_0_fb), .noc_in_data(l002_v1_0_rd), .noc_in_valid(l002_v1_0_rv), .noc_in_busy(l002_v1_0_rb),
+        .clk(clk), .clk2x(1'b0), .unit_clk(mat_clk), .resetn(resetn),
+        .noc_out_data(cu0_l2_od), .noc_out_valid(cu0_l2_ov), .noc_out_busy(cu0_l2_ob), .noc_in_data(cu0_l2_id), .noc_in_valid(cu0_l2_iv), .noc_in_busy(cu0_l2_ib),
         .fills_done(cu_f[0]), .gemms_done(cu_g[0]), .drains_done(cu_d[0])
+    );
+    noc_l2_adapter #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DEPTH(L2_CU_DEPTH),
+                     .L2_BASE(L2_CU_BASE), .L2_BITS(L2_CU_BITS), .PASS(0)) u_cu1_l2 (
+        .clk(clk), .rst(!resetn),
+        .rt_data(l004_L1_1_rd), .rt_valid(l004_L1_1_rv), .rt_busy(l004_L1_1_rb),
+        .ru_data(l004_L1_1_fd), .ru_valid(l004_L1_1_fv), .ru_busy(l004_L1_1_fb),
+        .ep_data(cu1_l2_id), .ep_valid(cu1_l2_iv), .ep_busy(cu1_l2_ib),
+        .eu_data(cu1_l2_od), .eu_valid(cu1_l2_ov), .eu_busy(cu1_l2_ob)
     );
     mx_cluster_cu #(.FLIT_WIDTH(FW), .POS_WIDTH(PW),
                     .CU_X(1), .CU_Y(1), .TILES(TILES), .GA(GA), .GB(GB),
                     .L1_PRIM(L1_PRIM), .TILE_PRIM(TILE_PRIM),
                     .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
+                    .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
                     .MEM_X(0), .MEM_Y(1), .MODEL(MODEL)) u_cu1 (
-        .clk(clk), .resetn(resetn),
-        .noc_out_data(l004_L1_1_fd), .noc_out_valid(l004_L1_1_fv), .noc_out_busy(l004_L1_1_fb), .noc_in_data(l004_L1_1_rd), .noc_in_valid(l004_L1_1_rv), .noc_in_busy(l004_L1_1_rb),
+        .clk(clk), .clk2x(1'b0), .unit_clk(mat_clk), .resetn(resetn),
+        .noc_out_data(cu1_l2_od), .noc_out_valid(cu1_l2_ov), .noc_out_busy(cu1_l2_ob), .noc_in_data(cu1_l2_id), .noc_in_valid(cu1_l2_iv), .noc_in_busy(cu1_l2_ib),
         .fills_done(cu_f[1]), .gemms_done(cu_g[1]), .drains_done(cu_d[1])
+    );
+    noc_l2_adapter #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DEPTH(L2_CU_DEPTH),
+                     .L2_BASE(L2_CU_BASE), .L2_BITS(L2_CU_BITS), .PASS(0)) u_cu2_l2 (
+        .clk(clk), .rst(!resetn),
+        .rt_data(l008_L2_1_rd), .rt_valid(l008_L2_1_rv), .rt_busy(l008_L2_1_rb),
+        .ru_data(l008_L2_1_fd), .ru_valid(l008_L2_1_fv), .ru_busy(l008_L2_1_fb),
+        .ep_data(cu2_l2_id), .ep_valid(cu2_l2_iv), .ep_busy(cu2_l2_ib),
+        .eu_data(cu2_l2_od), .eu_valid(cu2_l2_ov), .eu_busy(cu2_l2_ob)
     );
     mx_cluster_cu #(.FLIT_WIDTH(FW), .POS_WIDTH(PW),
                     .CU_X(2), .CU_Y(1), .TILES(TILES), .GA(GA), .GB(GB),
                     .L1_PRIM(L1_PRIM), .TILE_PRIM(TILE_PRIM),
                     .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
+                    .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
                     .MEM_X(0), .MEM_Y(1), .MODEL(MODEL)) u_cu2 (
-        .clk(clk), .resetn(resetn),
-        .noc_out_data(l008_L2_1_fd), .noc_out_valid(l008_L2_1_fv), .noc_out_busy(l008_L2_1_fb), .noc_in_data(l008_L2_1_rd), .noc_in_valid(l008_L2_1_rv), .noc_in_busy(l008_L2_1_rb),
+        .clk(clk), .clk2x(1'b0), .unit_clk(mat_clk), .resetn(resetn),
+        .noc_out_data(cu2_l2_od), .noc_out_valid(cu2_l2_ov), .noc_out_busy(cu2_l2_ob), .noc_in_data(cu2_l2_id), .noc_in_valid(cu2_l2_iv), .noc_in_busy(cu2_l2_ib),
         .fills_done(cu_f[2]), .gemms_done(cu_g[2]), .drains_done(cu_d[2])
+    );
+    noc_l2_adapter #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DEPTH(L2_CU_DEPTH),
+                     .L2_BASE(L2_CU_BASE), .L2_BITS(L2_CU_BITS), .PASS(0)) u_cu3_l2 (
+        .clk(clk), .rst(!resetn),
+        .rt_data(l012_L1_2_rd), .rt_valid(l012_L1_2_rv), .rt_busy(l012_L1_2_rb),
+        .ru_data(l012_L1_2_fd), .ru_valid(l012_L1_2_fv), .ru_busy(l012_L1_2_fb),
+        .ep_data(cu3_l2_id), .ep_valid(cu3_l2_iv), .ep_busy(cu3_l2_ib),
+        .eu_data(cu3_l2_od), .eu_valid(cu3_l2_ov), .eu_busy(cu3_l2_ob)
     );
     mx_cluster_cu #(.FLIT_WIDTH(FW), .POS_WIDTH(PW),
                     .CU_X(1), .CU_Y(2), .TILES(TILES), .GA(GA), .GB(GB),
                     .L1_PRIM(L1_PRIM), .TILE_PRIM(TILE_PRIM),
                     .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
+                    .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
                     .MEM_X(0), .MEM_Y(2), .MODEL(MODEL)) u_cu3 (
-        .clk(clk), .resetn(resetn),
-        .noc_out_data(l012_L1_2_fd), .noc_out_valid(l012_L1_2_fv), .noc_out_busy(l012_L1_2_fb), .noc_in_data(l012_L1_2_rd), .noc_in_valid(l012_L1_2_rv), .noc_in_busy(l012_L1_2_rb),
+        .clk(clk), .clk2x(1'b0), .unit_clk(mat_clk), .resetn(resetn),
+        .noc_out_data(cu3_l2_od), .noc_out_valid(cu3_l2_ov), .noc_out_busy(cu3_l2_ob), .noc_in_data(cu3_l2_id), .noc_in_valid(cu3_l2_iv), .noc_in_busy(cu3_l2_ib),
         .fills_done(cu_f[3]), .gemms_done(cu_g[3]), .drains_done(cu_d[3])
+    );
+    noc_l2_adapter #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DEPTH(L2_CU_DEPTH),
+                     .L2_BASE(L2_CU_BASE), .L2_BITS(L2_CU_BITS), .PASS(0)) u_cu4_l2 (
+        .clk(clk), .rst(!resetn),
+        .rt_data(l015_L2_2_rd), .rt_valid(l015_L2_2_rv), .rt_busy(l015_L2_2_rb),
+        .ru_data(l015_L2_2_fd), .ru_valid(l015_L2_2_fv), .ru_busy(l015_L2_2_fb),
+        .ep_data(cu4_l2_id), .ep_valid(cu4_l2_iv), .ep_busy(cu4_l2_ib),
+        .eu_data(cu4_l2_od), .eu_valid(cu4_l2_ov), .eu_busy(cu4_l2_ob)
     );
     mx_cluster_cu #(.FLIT_WIDTH(FW), .POS_WIDTH(PW),
                     .CU_X(2), .CU_Y(2), .TILES(TILES), .GA(GA), .GB(GB),
                     .L1_PRIM(L1_PRIM), .TILE_PRIM(TILE_PRIM),
                     .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
+                    .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
                     .MEM_X(0), .MEM_Y(2), .MODEL(MODEL)) u_cu4 (
-        .clk(clk), .resetn(resetn),
-        .noc_out_data(l015_L2_2_fd), .noc_out_valid(l015_L2_2_fv), .noc_out_busy(l015_L2_2_fb), .noc_in_data(l015_L2_2_rd), .noc_in_valid(l015_L2_2_rv), .noc_in_busy(l015_L2_2_rb),
+        .clk(clk), .clk2x(1'b0), .unit_clk(mat_clk), .resetn(resetn),
+        .noc_out_data(cu4_l2_od), .noc_out_valid(cu4_l2_ov), .noc_out_busy(cu4_l2_ob), .noc_in_data(cu4_l2_id), .noc_in_valid(cu4_l2_iv), .noc_in_busy(cu4_l2_ib),
         .fills_done(cu_f[4]), .gemms_done(cu_g[4]), .drains_done(cu_d[4])
+    );
+    noc_l2_adapter #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DEPTH(L2_CU_DEPTH),
+                     .L2_BASE(L2_CU_BASE), .L2_BITS(L2_CU_BITS), .PASS(0)) u_cu5_l2 (
+        .clk(clk), .rst(!resetn),
+        .rt_data(l011_v1_2_fd), .rt_valid(l011_v1_2_fv), .rt_busy(l011_v1_2_fb),
+        .ru_data(l011_v1_2_rd), .ru_valid(l011_v1_2_rv), .ru_busy(l011_v1_2_rb),
+        .ep_data(cu5_l2_id), .ep_valid(cu5_l2_iv), .ep_busy(cu5_l2_ib),
+        .eu_data(cu5_l2_od), .eu_valid(cu5_l2_ov), .eu_busy(cu5_l2_ob)
     );
     mx_cluster_cu #(.FLIT_WIDTH(FW), .POS_WIDTH(PW),
                     .CU_X(1), .CU_Y(3), .TILES(TILES), .GA(GA), .GB(GB),
                     .L1_PRIM(L1_PRIM), .TILE_PRIM(TILE_PRIM),
                     .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
+                    .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
                     .MEM_X(0), .MEM_Y(2), .MODEL(MODEL)) u_cu5 (
-        .clk(clk), .resetn(resetn),
-        .noc_out_data(l011_v1_2_rd), .noc_out_valid(l011_v1_2_rv), .noc_out_busy(l011_v1_2_rb), .noc_in_data(l011_v1_2_fd), .noc_in_valid(l011_v1_2_fv), .noc_in_busy(l011_v1_2_fb),
+        .clk(clk), .clk2x(1'b0), .unit_clk(mat_clk), .resetn(resetn),
+        .noc_out_data(cu5_l2_od), .noc_out_valid(cu5_l2_ov), .noc_out_busy(cu5_l2_ob), .noc_in_data(cu5_l2_id), .noc_in_valid(cu5_l2_iv), .noc_in_busy(cu5_l2_ib),
         .fills_done(cu_f[5]), .gemms_done(cu_g[5]), .drains_done(cu_d[5])
+    );
+    noc_l2_adapter #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DEPTH(L2_VEC_DEPTH),
+                     .L2_BASE(L2_VEC_BASE), .L2_BITS(L2_VEC_BITS), .PASS(0)) u_vec0_l2 (
+        .clk(clk), .rst(!resetn),
+        .rt_data(l006_v2_0_rd), .rt_valid(l006_v2_0_rv), .rt_busy(l006_v2_0_rb),
+        .ru_data(l006_v2_0_fd), .ru_valid(l006_v2_0_fv), .ru_busy(l006_v2_0_fb),
+        .ep_data(vec0_l2_id), .ep_valid(vec0_l2_iv), .ep_busy(vec0_l2_ib),
+        .eu_data(vec0_l2_od), .eu_valid(vec0_l2_ov), .eu_busy(vec0_l2_ob)
     );
     vec_cu #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .POS_X(2), .POS_Y(0),
              .MEM_X(0), .MEM_Y(1), .MODEL(MODEL),
              .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
+             .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
              .L1_DEPTH(L1_DEPTH), .L1_PRIM(VEC_PRIM)) u_vec0 (
-        .clk(clk), .resetn(resetn),
-        .noc_out_data(l006_v2_0_fd), .noc_out_valid(l006_v2_0_fv), .noc_out_busy(l006_v2_0_fb), .noc_in_data(l006_v2_0_rd), .noc_in_valid(l006_v2_0_rv), .noc_in_busy(l006_v2_0_rb),
+        .clk(clk), .unit_clk(vec_clk), .resetn(resetn),
+        .noc_out_data(vec0_l2_od), .noc_out_valid(vec0_l2_ov), .noc_out_busy(vec0_l2_ob), .noc_in_data(vec0_l2_id), .noc_in_valid(vec0_l2_iv), .noc_in_busy(vec0_l2_ib),
         .dbg_cycles(vc_cyc[0]), .dbg_fault(vc_flt[0])
+    );
+    noc_l2_adapter #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DEPTH(L2_VEC_DEPTH),
+                     .L2_BASE(L2_VEC_BASE), .L2_BITS(L2_VEC_BITS), .PASS(0)) u_vec1_l2 (
+        .clk(clk), .rst(!resetn),
+        .rt_data(l014_v2_2_fd), .rt_valid(l014_v2_2_fv), .rt_busy(l014_v2_2_fb),
+        .ru_data(l014_v2_2_rd), .ru_valid(l014_v2_2_rv), .ru_busy(l014_v2_2_rb),
+        .ep_data(vec1_l2_id), .ep_valid(vec1_l2_iv), .ep_busy(vec1_l2_ib),
+        .eu_data(vec1_l2_od), .eu_valid(vec1_l2_ov), .eu_busy(vec1_l2_ob)
     );
     vec_cu #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .POS_X(2), .POS_Y(3),
              .MEM_X(0), .MEM_Y(2), .MODEL(MODEL),
              .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
+             .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
              .L1_DEPTH(L1_DEPTH), .L1_PRIM(VEC_PRIM)) u_vec1 (
-        .clk(clk), .resetn(resetn),
-        .noc_out_data(l014_v2_2_rd), .noc_out_valid(l014_v2_2_rv), .noc_out_busy(l014_v2_2_rb), .noc_in_data(l014_v2_2_fd), .noc_in_valid(l014_v2_2_fv), .noc_in_busy(l014_v2_2_fb),
+        .clk(clk), .unit_clk(vec_clk), .resetn(resetn),
+        .noc_out_data(vec1_l2_od), .noc_out_valid(vec1_l2_ov), .noc_out_busy(vec1_l2_ob), .noc_in_data(vec1_l2_id), .noc_in_valid(vec1_l2_iv), .noc_in_busy(vec1_l2_ib),
         .dbg_cycles(vc_cyc[1]), .dbg_fault(vc_flt[1])
     );
     assign l005_h2_1_rd = {FW{1'b0}}; assign l005_h2_1_rv = 1'b0; assign l005_h2_1_fb = 1'b0;

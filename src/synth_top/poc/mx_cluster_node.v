@@ -160,7 +160,7 @@ module mx_cluster_node #(
     // ---- pair sum, 2x -> 1x ----------------------------------------------
 
     // Needs the weight clamped to -63: at -64 depth 64 overflows [18:0] by one
-    // LSB (.plan s4.0). `pp` follows VALID, not the clock phase.
+    // LSB. `pp` follows VALID, not the clock phase.
     reg          pp;
     reg [383:0]  p_lo, p_lo_h, p_hi, pair_d;
     reg          pair_v, pair_f;

@@ -19,7 +19,7 @@ module ktpu_mesh_4x2 #(
     parameter integer FW       = 288,
     parameter integer PW       = 4,
     parameter integer DW       = 256,
-    parameter integer AW       = 34,
+    parameter integer AW       = 40,
     parameter integer IDW      = 4,
     parameter integer NM       = 4,
     parameter integer MODEL    = 0,

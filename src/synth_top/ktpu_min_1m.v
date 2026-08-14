@@ -13,7 +13,8 @@
 // block design; hand-written arbitration here would duplicate it badly.
 //
 // INTERLINK ON. Two full-duplex links: M_AXIS_LINKn out, S_AXIS_LINKn in.
-// link0 flips the mesh's x, link1 flips its y (mag_switch.v).
+// link0 is the neighbour one position DOWN the chain and link1 one position UP
+// (mag_switch.v CH_SEQ), so one end's link1 faces the other's link0.
 // TREADY MUST NOT CROSS AN SLR. The far end has to be another mesh's
 // S_AXIS_LINK, whose tready is tied high; a real slave there reintroduces the
 // combinational SLR crossing mag_link.v exists to avoid.
@@ -24,7 +25,7 @@ module ktpu_min_1m #(
     parameter integer FW       = 288,
     parameter integer PW       = 4,
     parameter integer DW       = 256,
-    parameter integer AW       = 34,
+    parameter integer AW       = 40,
     parameter integer IDW      = 4,
     parameter integer NM       = 1,
     // The MEMORY's beat. mag_1m packs DW up to this before the
@@ -39,7 +40,7 @@ module ktpu_min_1m #(
     parameter integer MESH_ID  = 0,
     parameter integer MODEL    = 0,
     parameter integer L1_DEPTH = 512,
-    // src/ktpu/hw/bench.py's TILES / L1_A_ENTRIES / L1_B_ENTRIES. A generated
+    // driver/kohakutpu/machine's frozen-at-synthesis TILES / GA / GB. A generated
     // top that omits them elaborates mx_cluster_cu's 256/32/32 instead.
     // 4096 in URAM, not 512 in BRAM: width sets the primitive count (5 either
     // way) so depth is free, and gm*gn<=TILES bounds arithmetic intensity --
@@ -68,17 +69,28 @@ module ktpu_min_1m #(
     // any depth to 512, so the old 32/64 used 6%/12% of their own tiles.
     // Measured on noc_cu_base: 8 BRAM either way, +34 LUT, 574 -> 567 MHz.
     parameter integer INST_DEPTH = 512,
-    parameter integer RECV_DEPTH = 512
+    parameter integer RECV_DEPTH = 512,
+    // Compute units on their own clocks, behind one noc_local_cdc per
+    // direction. ONE RATE PER TYPE, not per instance: every cluster takes
+    // `mat_clk` and every vector core `vec_clk`. THE NoC FABRIC STAYS ONE
+    // CLOCK -- router to router is untouched, so the deadlock argument holds.
+    parameter integer UNIT_CDC  = 0,
+    parameter integer CDC_DEPTH = 16
 )(
     // One clock and one reset for every interface, master and slave alike, so
     // neither carries an s_ or m_ prefix. ASSOCIATED_BUSIF names them all, which
     // is what makes the block design tie them up on its own.
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 axi_aclk CLK" *)
-    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF S_AXI_MEM:S_AXI_CTRL:M_AXI_DRAM:M_AXIS_LINK0:S_AXIS_LINK0:M_AXIS_LINK1:S_AXIS_LINK1, ASSOCIATED_RESET axi_aresetn" *)
+    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF S_AXI_MEM:S_AXI_CTRL:M_AXIS_LINK0:S_AXIS_LINK0:M_AXIS_LINK1:S_AXIS_LINK1, ASSOCIATED_RESET axi_aresetn" *)
     input  wire axi_aclk,
     (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 axi_aresetn RST" *)
     (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
     input  wire axi_aresetn,
+    // Tie both to axi_aclk when UNIT_CDC is 0. They reach nothing.
+    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 mat_clk CLK" *)
+    input  wire mat_clk,
+    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 vec_clk CLK" *)
+    input  wire vec_clk,
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 dram_aclk CLK" *)
     (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF M_AXI_DRAM, ASSOCIATED_RESET dram_aresetn" *)
     input  wire dram_aclk,
@@ -339,16 +351,18 @@ module ktpu_min_1m #(
                     .CU_X(1), .CU_Y(1), .TILES(TILES), .GA(GA), .GB(GB),
                     .L1_PRIM(L1_PRIM), .TILE_PRIM(TILE_PRIM),
                     .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
+                    .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
                     .MEM_X(0), .MEM_Y(1), .MODEL(MODEL)) u_cu0 (
-        .clk(clk), .resetn(resetn),
+        .clk(clk), .clk2x(1'b0), .unit_clk(mat_clk), .resetn(resetn),
         .noc_out_data(l004_L1_1_fd), .noc_out_valid(l004_L1_1_fv), .noc_out_busy(l004_L1_1_fb), .noc_in_data(l004_L1_1_rd), .noc_in_valid(l004_L1_1_rv), .noc_in_busy(l004_L1_1_rb),
         .fills_done(cu_f[0]), .gemms_done(cu_g[0]), .drains_done(cu_d[0])
     );
     vec_cu #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .POS_X(1), .POS_Y(0),
              .MEM_X(0), .MEM_Y(1), .MODEL(MODEL),
              .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
+             .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
              .L1_DEPTH(L1_DEPTH), .L1_PRIM(VEC_PRIM)) u_vec0 (
-        .clk(clk), .resetn(resetn),
+        .clk(clk), .unit_clk(vec_clk), .resetn(resetn),
         .noc_out_data(l002_v1_0_fd), .noc_out_valid(l002_v1_0_fv), .noc_out_busy(l002_v1_0_fb), .noc_in_data(l002_v1_0_rd), .noc_in_valid(l002_v1_0_rv), .noc_in_busy(l002_v1_0_rb),
         .dbg_cycles(vc_cyc[0]), .dbg_fault(vc_flt[0])
     );

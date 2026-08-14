@@ -8,12 +8,13 @@
 // GRID_X_HI=2 GRID_Y_HI=1: the clamp is per axis, so the grid need not
 // be square. Edge endpoints live outside the router grid and are reached by it.
 //
-// MAG presents MEM_PORTS+3 = 5 AXI masters -- one per memory port, plus the
+// MAG presents 1 = 1 AXI masters -- one per memory port, plus the
 // host upload and the memory mover, plus the interlink's landing channel. Merge them with one SmartConnect in the
 // block design; hand-written arbitration here would duplicate it badly.
 //
 // INTERLINK ON. Two full-duplex links: M_AXIS_LINKn out, S_AXIS_LINKn in.
-// link0 flips the mesh's x, link1 flips its y (mag_switch.v).
+// link0 is the neighbour one position DOWN the chain and link1 one position UP
+// (mag_switch.v CH_SEQ), so one end's link1 faces the other's link0.
 // TREADY MUST NOT CROSS AN SLR. The far end has to be another mesh's
 // S_AXIS_LINK, whose tready is tied high; a real slave there reintroduces the
 // combinational SLR crossing mag_link.v exists to avoid.
@@ -24,9 +25,12 @@ module ktpu_ship_2x1_6c0v_il #(
     parameter integer FW       = 288,
     parameter integer PW       = 4,
     parameter integer DW       = 256,
-    parameter integer AW       = 34,
+    parameter integer AW       = 40,
     parameter integer IDW      = 4,
-    parameter integer NM       = 5,
+    parameter integer NM       = 1,
+    // The MEMORY's beat. mag_1m packs DW up to this before the
+    // boundary, so the mesh never exposes the internal width.
+    parameter integer MW       = 512,
     // One flit per beat at 288, so a packet's framing is its own length; 96
     // is mag.v's TUSER_W.
     parameter integer LKW      = 288,
@@ -36,7 +40,7 @@ module ktpu_ship_2x1_6c0v_il #(
     parameter integer MESH_ID  = 1,
     parameter integer MODEL    = 0,
     parameter integer L1_DEPTH = 512,
-    // src/ktpu/hw/bench.py's TILES / L1_A_ENTRIES / L1_B_ENTRIES. A generated
+    // driver/kohakutpu/machine's frozen-at-synthesis TILES / GA / GB. A generated
     // top that omits them elaborates mx_cluster_cu's 256/32/32 instead.
     // 4096 in URAM, not 512 in BRAM: width sets the primitive count (5 either
     // way) so depth is free, and gm*gn<=TILES bounds arithmetic intensity --
@@ -65,17 +69,34 @@ module ktpu_ship_2x1_6c0v_il #(
     // any depth to 512, so the old 32/64 used 6%/12% of their own tiles.
     // Measured on noc_cu_base: 8 BRAM either way, +34 LUT, 574 -> 567 MHz.
     parameter integer INST_DEPTH = 512,
-    parameter integer RECV_DEPTH = 512
+    parameter integer RECV_DEPTH = 512,
+    // Compute units on their own clocks, behind one noc_local_cdc per
+    // direction. ONE RATE PER TYPE, not per instance: every cluster takes
+    // `mat_clk` and every vector core `vec_clk`. THE NoC FABRIC STAYS ONE
+    // CLOCK -- router to router is untouched, so the deadlock argument holds.
+    parameter integer UNIT_CDC  = 0,
+    parameter integer CDC_DEPTH = 16
 )(
     // One clock and one reset for every interface, master and slave alike, so
     // neither carries an s_ or m_ prefix. ASSOCIATED_BUSIF names them all, which
     // is what makes the block design tie them up on its own.
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 axi_aclk CLK" *)
-    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF S_AXI_MEM:S_AXI_CTRL:M_AXI_MEM0:M_AXI_MEM1:M_AXI_UPLOAD:M_AXI_MOVER:M_AXI_ILINK:M_AXIS_LINK0:S_AXIS_LINK0:M_AXIS_LINK1:S_AXIS_LINK1, ASSOCIATED_RESET axi_aresetn" *)
+    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF S_AXI_MEM:S_AXI_CTRL:M_AXIS_LINK0:S_AXIS_LINK0:M_AXIS_LINK1:S_AXIS_LINK1, ASSOCIATED_RESET axi_aresetn" *)
     input  wire axi_aclk,
     (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 axi_aresetn RST" *)
     (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
     input  wire axi_aresetn,
+    // Tie both to axi_aclk when UNIT_CDC is 0. They reach nothing.
+    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 mat_clk CLK" *)
+    input  wire mat_clk,
+    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 vec_clk CLK" *)
+    input  wire vec_clk,
+    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 dram_aclk CLK" *)
+    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF M_AXI_DRAM, ASSOCIATED_RESET dram_aresetn" *)
+    input  wire dram_aclk,
+    (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 dram_aresetn RST" *)
+    (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
+    input  wire dram_aresetn,
 
     input  wire [IDW-1:0]   S_AXI_MEM_awid,
     input  wire [AW-1:0]    S_AXI_MEM_awaddr,
@@ -129,156 +150,36 @@ module ktpu_ship_2x1_6c0v_il #(
     output wire             S_AXI_CTRL_rvalid,
     input  wire             S_AXI_CTRL_rready,
 
-    // ---- M_AXI_MEM0 ----
-    output wire [IDW-1:0] M_AXI_MEM0_awid,
-    output wire [AW-1:0] M_AXI_MEM0_awaddr,
-    output wire [8-1:0] M_AXI_MEM0_awlen,
-    output wire [3-1:0] M_AXI_MEM0_awsize,
-    output wire [2-1:0] M_AXI_MEM0_awburst,
-    output wire M_AXI_MEM0_awvalid,
-    input  wire M_AXI_MEM0_awready,
-    output wire [DW-1:0] M_AXI_MEM0_wdata,
-    output wire [DW/8-1:0] M_AXI_MEM0_wstrb,
-    output wire M_AXI_MEM0_wlast,
-    output wire M_AXI_MEM0_wvalid,
-    input  wire M_AXI_MEM0_wready,
-    input  wire [IDW-1:0] M_AXI_MEM0_bid,
-    input  wire [2-1:0] M_AXI_MEM0_bresp,
-    input  wire M_AXI_MEM0_bvalid,
-    output wire M_AXI_MEM0_bready,
-    output wire [IDW-1:0] M_AXI_MEM0_arid,
-    output wire [AW-1:0] M_AXI_MEM0_araddr,
-    output wire [8-1:0] M_AXI_MEM0_arlen,
-    output wire [3-1:0] M_AXI_MEM0_arsize,
-    output wire [2-1:0] M_AXI_MEM0_arburst,
-    output wire M_AXI_MEM0_arvalid,
-    input  wire M_AXI_MEM0_arready,
-    input  wire [IDW-1:0] M_AXI_MEM0_rid,
-    input  wire [DW-1:0] M_AXI_MEM0_rdata,
-    input  wire [2-1:0] M_AXI_MEM0_rresp,
-    input  wire M_AXI_MEM0_rlast,
-    input  wire M_AXI_MEM0_rvalid,
-    output wire M_AXI_MEM0_rready,
-    // ---- M_AXI_MEM1 ----
-    output wire [IDW-1:0] M_AXI_MEM1_awid,
-    output wire [AW-1:0] M_AXI_MEM1_awaddr,
-    output wire [8-1:0] M_AXI_MEM1_awlen,
-    output wire [3-1:0] M_AXI_MEM1_awsize,
-    output wire [2-1:0] M_AXI_MEM1_awburst,
-    output wire M_AXI_MEM1_awvalid,
-    input  wire M_AXI_MEM1_awready,
-    output wire [DW-1:0] M_AXI_MEM1_wdata,
-    output wire [DW/8-1:0] M_AXI_MEM1_wstrb,
-    output wire M_AXI_MEM1_wlast,
-    output wire M_AXI_MEM1_wvalid,
-    input  wire M_AXI_MEM1_wready,
-    input  wire [IDW-1:0] M_AXI_MEM1_bid,
-    input  wire [2-1:0] M_AXI_MEM1_bresp,
-    input  wire M_AXI_MEM1_bvalid,
-    output wire M_AXI_MEM1_bready,
-    output wire [IDW-1:0] M_AXI_MEM1_arid,
-    output wire [AW-1:0] M_AXI_MEM1_araddr,
-    output wire [8-1:0] M_AXI_MEM1_arlen,
-    output wire [3-1:0] M_AXI_MEM1_arsize,
-    output wire [2-1:0] M_AXI_MEM1_arburst,
-    output wire M_AXI_MEM1_arvalid,
-    input  wire M_AXI_MEM1_arready,
-    input  wire [IDW-1:0] M_AXI_MEM1_rid,
-    input  wire [DW-1:0] M_AXI_MEM1_rdata,
-    input  wire [2-1:0] M_AXI_MEM1_rresp,
-    input  wire M_AXI_MEM1_rlast,
-    input  wire M_AXI_MEM1_rvalid,
-    output wire M_AXI_MEM1_rready,
-    // ---- M_AXI_UPLOAD ----
-    output wire [IDW-1:0] M_AXI_UPLOAD_awid,
-    output wire [AW-1:0] M_AXI_UPLOAD_awaddr,
-    output wire [8-1:0] M_AXI_UPLOAD_awlen,
-    output wire [3-1:0] M_AXI_UPLOAD_awsize,
-    output wire [2-1:0] M_AXI_UPLOAD_awburst,
-    output wire M_AXI_UPLOAD_awvalid,
-    input  wire M_AXI_UPLOAD_awready,
-    output wire [DW-1:0] M_AXI_UPLOAD_wdata,
-    output wire [DW/8-1:0] M_AXI_UPLOAD_wstrb,
-    output wire M_AXI_UPLOAD_wlast,
-    output wire M_AXI_UPLOAD_wvalid,
-    input  wire M_AXI_UPLOAD_wready,
-    input  wire [IDW-1:0] M_AXI_UPLOAD_bid,
-    input  wire [2-1:0] M_AXI_UPLOAD_bresp,
-    input  wire M_AXI_UPLOAD_bvalid,
-    output wire M_AXI_UPLOAD_bready,
-    output wire [IDW-1:0] M_AXI_UPLOAD_arid,
-    output wire [AW-1:0] M_AXI_UPLOAD_araddr,
-    output wire [8-1:0] M_AXI_UPLOAD_arlen,
-    output wire [3-1:0] M_AXI_UPLOAD_arsize,
-    output wire [2-1:0] M_AXI_UPLOAD_arburst,
-    output wire M_AXI_UPLOAD_arvalid,
-    input  wire M_AXI_UPLOAD_arready,
-    input  wire [IDW-1:0] M_AXI_UPLOAD_rid,
-    input  wire [DW-1:0] M_AXI_UPLOAD_rdata,
-    input  wire [2-1:0] M_AXI_UPLOAD_rresp,
-    input  wire M_AXI_UPLOAD_rlast,
-    input  wire M_AXI_UPLOAD_rvalid,
-    output wire M_AXI_UPLOAD_rready,
-    // ---- M_AXI_MOVER ----
-    output wire [IDW-1:0] M_AXI_MOVER_awid,
-    output wire [AW-1:0] M_AXI_MOVER_awaddr,
-    output wire [8-1:0] M_AXI_MOVER_awlen,
-    output wire [3-1:0] M_AXI_MOVER_awsize,
-    output wire [2-1:0] M_AXI_MOVER_awburst,
-    output wire M_AXI_MOVER_awvalid,
-    input  wire M_AXI_MOVER_awready,
-    output wire [DW-1:0] M_AXI_MOVER_wdata,
-    output wire [DW/8-1:0] M_AXI_MOVER_wstrb,
-    output wire M_AXI_MOVER_wlast,
-    output wire M_AXI_MOVER_wvalid,
-    input  wire M_AXI_MOVER_wready,
-    input  wire [IDW-1:0] M_AXI_MOVER_bid,
-    input  wire [2-1:0] M_AXI_MOVER_bresp,
-    input  wire M_AXI_MOVER_bvalid,
-    output wire M_AXI_MOVER_bready,
-    output wire [IDW-1:0] M_AXI_MOVER_arid,
-    output wire [AW-1:0] M_AXI_MOVER_araddr,
-    output wire [8-1:0] M_AXI_MOVER_arlen,
-    output wire [3-1:0] M_AXI_MOVER_arsize,
-    output wire [2-1:0] M_AXI_MOVER_arburst,
-    output wire M_AXI_MOVER_arvalid,
-    input  wire M_AXI_MOVER_arready,
-    input  wire [IDW-1:0] M_AXI_MOVER_rid,
-    input  wire [DW-1:0] M_AXI_MOVER_rdata,
-    input  wire [2-1:0] M_AXI_MOVER_rresp,
-    input  wire M_AXI_MOVER_rlast,
-    input  wire M_AXI_MOVER_rvalid,
-    output wire M_AXI_MOVER_rready,
-    // ---- M_AXI_ILINK ----
-    output wire [IDW-1:0] M_AXI_ILINK_awid,
-    output wire [AW-1:0] M_AXI_ILINK_awaddr,
-    output wire [8-1:0] M_AXI_ILINK_awlen,
-    output wire [3-1:0] M_AXI_ILINK_awsize,
-    output wire [2-1:0] M_AXI_ILINK_awburst,
-    output wire M_AXI_ILINK_awvalid,
-    input  wire M_AXI_ILINK_awready,
-    output wire [DW-1:0] M_AXI_ILINK_wdata,
-    output wire [DW/8-1:0] M_AXI_ILINK_wstrb,
-    output wire M_AXI_ILINK_wlast,
-    output wire M_AXI_ILINK_wvalid,
-    input  wire M_AXI_ILINK_wready,
-    input  wire [IDW-1:0] M_AXI_ILINK_bid,
-    input  wire [2-1:0] M_AXI_ILINK_bresp,
-    input  wire M_AXI_ILINK_bvalid,
-    output wire M_AXI_ILINK_bready,
-    output wire [IDW-1:0] M_AXI_ILINK_arid,
-    output wire [AW-1:0] M_AXI_ILINK_araddr,
-    output wire [8-1:0] M_AXI_ILINK_arlen,
-    output wire [3-1:0] M_AXI_ILINK_arsize,
-    output wire [2-1:0] M_AXI_ILINK_arburst,
-    output wire M_AXI_ILINK_arvalid,
-    input  wire M_AXI_ILINK_arready,
-    input  wire [IDW-1:0] M_AXI_ILINK_rid,
-    input  wire [DW-1:0] M_AXI_ILINK_rdata,
-    input  wire [2-1:0] M_AXI_ILINK_rresp,
-    input  wire M_AXI_ILINK_rlast,
-    input  wire M_AXI_ILINK_rvalid,
-    output wire M_AXI_ILINK_rready,
+    // ---- M_AXI_DRAM ----
+    output wire [IDW-1:0] M_AXI_DRAM_awid,
+    output wire [AW-1:0] M_AXI_DRAM_awaddr,
+    output wire [8-1:0] M_AXI_DRAM_awlen,
+    output wire [3-1:0] M_AXI_DRAM_awsize,
+    output wire [2-1:0] M_AXI_DRAM_awburst,
+    output wire M_AXI_DRAM_awvalid,
+    input  wire M_AXI_DRAM_awready,
+    output wire [MW-1:0] M_AXI_DRAM_wdata,
+    output wire [MW/8-1:0] M_AXI_DRAM_wstrb,
+    output wire M_AXI_DRAM_wlast,
+    output wire M_AXI_DRAM_wvalid,
+    input  wire M_AXI_DRAM_wready,
+    input  wire [IDW-1:0] M_AXI_DRAM_bid,
+    input  wire [2-1:0] M_AXI_DRAM_bresp,
+    input  wire M_AXI_DRAM_bvalid,
+    output wire M_AXI_DRAM_bready,
+    output wire [IDW-1:0] M_AXI_DRAM_arid,
+    output wire [AW-1:0] M_AXI_DRAM_araddr,
+    output wire [8-1:0] M_AXI_DRAM_arlen,
+    output wire [3-1:0] M_AXI_DRAM_arsize,
+    output wire [2-1:0] M_AXI_DRAM_arburst,
+    output wire M_AXI_DRAM_arvalid,
+    input  wire M_AXI_DRAM_arready,
+    input  wire [IDW-1:0] M_AXI_DRAM_rid,
+    input  wire [MW-1:0] M_AXI_DRAM_rdata,
+    input  wire [2-1:0] M_AXI_DRAM_rresp,
+    input  wire M_AXI_DRAM_rlast,
+    input  wire M_AXI_DRAM_rvalid,
+    output wire M_AXI_DRAM_rready,
     // ---- M_AXIS_LINK0 / S_AXIS_LINK0 ----
     output wire [LKW-1:0] M_AXIS_LINK0_tdata,
     input  wire [LKW-1:0] S_AXIS_LINK0_tdata,
@@ -312,181 +213,9 @@ module ktpu_ship_2x1_6c0v_il #(
     wire resetn = axi_aresetn;
     wire rst    = !resetn;
 
-    wire [NM*IDW-1:0] mm_awid;
-    wire [NM*AW-1:0] mm_awaddr;
-    wire [NM*8-1:0] mm_awlen;
-    wire [NM*3-1:0] mm_awsize;
-    wire [NM*2-1:0] mm_awburst;
-    wire [NM-1:0] mm_awvalid;
-    wire [NM-1:0] mm_awready;
-    wire [NM*DW-1:0] mm_wdata;
-    wire [NM*DW/8-1:0] mm_wstrb;
-    wire [NM-1:0] mm_wlast;
-    wire [NM-1:0] mm_wvalid;
-    wire [NM-1:0] mm_wready;
-    wire [NM*IDW-1:0] mm_bid;
-    wire [NM*2-1:0] mm_bresp;
-    wire [NM-1:0] mm_bvalid;
-    wire [NM-1:0] mm_bready;
-    wire [NM*IDW-1:0] mm_arid;
-    wire [NM*AW-1:0] mm_araddr;
-    wire [NM*8-1:0] mm_arlen;
-    wire [NM*3-1:0] mm_arsize;
-    wire [NM*2-1:0] mm_arburst;
-    wire [NM-1:0] mm_arvalid;
-    wire [NM-1:0] mm_arready;
-    wire [NM*IDW-1:0] mm_rid;
-    wire [NM*DW-1:0] mm_rdata;
-    wire [NM*2-1:0] mm_rresp;
-    wire [NM-1:0] mm_rlast;
-    wire [NM-1:0] mm_rvalid;
-    wire [NM-1:0] mm_rready;
 
-    assign M_AXI_MEM0_awid = mm_awid[0*IDW +: IDW];
-    assign M_AXI_MEM0_awaddr = mm_awaddr[0*AW +: AW];
-    assign M_AXI_MEM0_awlen = mm_awlen[0*8 +: 8];
-    assign M_AXI_MEM0_awsize = mm_awsize[0*3 +: 3];
-    assign M_AXI_MEM0_awburst = mm_awburst[0*2 +: 2];
-    assign M_AXI_MEM0_awvalid = mm_awvalid[0];
-    assign mm_awready[0] = M_AXI_MEM0_awready;
-    assign M_AXI_MEM0_wdata = mm_wdata[0*DW +: DW];
-    assign M_AXI_MEM0_wstrb = mm_wstrb[0*DW/8 +: DW/8];
-    assign M_AXI_MEM0_wlast = mm_wlast[0];
-    assign M_AXI_MEM0_wvalid = mm_wvalid[0];
-    assign mm_wready[0] = M_AXI_MEM0_wready;
-    assign mm_bid[0*IDW +: IDW] = M_AXI_MEM0_bid;
-    assign mm_bresp[0*2 +: 2] = M_AXI_MEM0_bresp;
-    assign mm_bvalid[0] = M_AXI_MEM0_bvalid;
-    assign M_AXI_MEM0_bready = mm_bready[0];
-    assign M_AXI_MEM0_arid = mm_arid[0*IDW +: IDW];
-    assign M_AXI_MEM0_araddr = mm_araddr[0*AW +: AW];
-    assign M_AXI_MEM0_arlen = mm_arlen[0*8 +: 8];
-    assign M_AXI_MEM0_arsize = mm_arsize[0*3 +: 3];
-    assign M_AXI_MEM0_arburst = mm_arburst[0*2 +: 2];
-    assign M_AXI_MEM0_arvalid = mm_arvalid[0];
-    assign mm_arready[0] = M_AXI_MEM0_arready;
-    assign mm_rid[0*IDW +: IDW] = M_AXI_MEM0_rid;
-    assign mm_rdata[0*DW +: DW] = M_AXI_MEM0_rdata;
-    assign mm_rresp[0*2 +: 2] = M_AXI_MEM0_rresp;
-    assign mm_rlast[0] = M_AXI_MEM0_rlast;
-    assign mm_rvalid[0] = M_AXI_MEM0_rvalid;
-    assign M_AXI_MEM0_rready = mm_rready[0];
-    assign M_AXI_MEM1_awid = mm_awid[1*IDW +: IDW];
-    assign M_AXI_MEM1_awaddr = mm_awaddr[1*AW +: AW];
-    assign M_AXI_MEM1_awlen = mm_awlen[1*8 +: 8];
-    assign M_AXI_MEM1_awsize = mm_awsize[1*3 +: 3];
-    assign M_AXI_MEM1_awburst = mm_awburst[1*2 +: 2];
-    assign M_AXI_MEM1_awvalid = mm_awvalid[1];
-    assign mm_awready[1] = M_AXI_MEM1_awready;
-    assign M_AXI_MEM1_wdata = mm_wdata[1*DW +: DW];
-    assign M_AXI_MEM1_wstrb = mm_wstrb[1*DW/8 +: DW/8];
-    assign M_AXI_MEM1_wlast = mm_wlast[1];
-    assign M_AXI_MEM1_wvalid = mm_wvalid[1];
-    assign mm_wready[1] = M_AXI_MEM1_wready;
-    assign mm_bid[1*IDW +: IDW] = M_AXI_MEM1_bid;
-    assign mm_bresp[1*2 +: 2] = M_AXI_MEM1_bresp;
-    assign mm_bvalid[1] = M_AXI_MEM1_bvalid;
-    assign M_AXI_MEM1_bready = mm_bready[1];
-    assign M_AXI_MEM1_arid = mm_arid[1*IDW +: IDW];
-    assign M_AXI_MEM1_araddr = mm_araddr[1*AW +: AW];
-    assign M_AXI_MEM1_arlen = mm_arlen[1*8 +: 8];
-    assign M_AXI_MEM1_arsize = mm_arsize[1*3 +: 3];
-    assign M_AXI_MEM1_arburst = mm_arburst[1*2 +: 2];
-    assign M_AXI_MEM1_arvalid = mm_arvalid[1];
-    assign mm_arready[1] = M_AXI_MEM1_arready;
-    assign mm_rid[1*IDW +: IDW] = M_AXI_MEM1_rid;
-    assign mm_rdata[1*DW +: DW] = M_AXI_MEM1_rdata;
-    assign mm_rresp[1*2 +: 2] = M_AXI_MEM1_rresp;
-    assign mm_rlast[1] = M_AXI_MEM1_rlast;
-    assign mm_rvalid[1] = M_AXI_MEM1_rvalid;
-    assign M_AXI_MEM1_rready = mm_rready[1];
-    assign M_AXI_UPLOAD_awid = mm_awid[2*IDW +: IDW];
-    assign M_AXI_UPLOAD_awaddr = mm_awaddr[2*AW +: AW];
-    assign M_AXI_UPLOAD_awlen = mm_awlen[2*8 +: 8];
-    assign M_AXI_UPLOAD_awsize = mm_awsize[2*3 +: 3];
-    assign M_AXI_UPLOAD_awburst = mm_awburst[2*2 +: 2];
-    assign M_AXI_UPLOAD_awvalid = mm_awvalid[2];
-    assign mm_awready[2] = M_AXI_UPLOAD_awready;
-    assign M_AXI_UPLOAD_wdata = mm_wdata[2*DW +: DW];
-    assign M_AXI_UPLOAD_wstrb = mm_wstrb[2*DW/8 +: DW/8];
-    assign M_AXI_UPLOAD_wlast = mm_wlast[2];
-    assign M_AXI_UPLOAD_wvalid = mm_wvalid[2];
-    assign mm_wready[2] = M_AXI_UPLOAD_wready;
-    assign mm_bid[2*IDW +: IDW] = M_AXI_UPLOAD_bid;
-    assign mm_bresp[2*2 +: 2] = M_AXI_UPLOAD_bresp;
-    assign mm_bvalid[2] = M_AXI_UPLOAD_bvalid;
-    assign M_AXI_UPLOAD_bready = mm_bready[2];
-    assign M_AXI_UPLOAD_arid = mm_arid[2*IDW +: IDW];
-    assign M_AXI_UPLOAD_araddr = mm_araddr[2*AW +: AW];
-    assign M_AXI_UPLOAD_arlen = mm_arlen[2*8 +: 8];
-    assign M_AXI_UPLOAD_arsize = mm_arsize[2*3 +: 3];
-    assign M_AXI_UPLOAD_arburst = mm_arburst[2*2 +: 2];
-    assign M_AXI_UPLOAD_arvalid = mm_arvalid[2];
-    assign mm_arready[2] = M_AXI_UPLOAD_arready;
-    assign mm_rid[2*IDW +: IDW] = M_AXI_UPLOAD_rid;
-    assign mm_rdata[2*DW +: DW] = M_AXI_UPLOAD_rdata;
-    assign mm_rresp[2*2 +: 2] = M_AXI_UPLOAD_rresp;
-    assign mm_rlast[2] = M_AXI_UPLOAD_rlast;
-    assign mm_rvalid[2] = M_AXI_UPLOAD_rvalid;
-    assign M_AXI_UPLOAD_rready = mm_rready[2];
-    assign M_AXI_MOVER_awid = mm_awid[3*IDW +: IDW];
-    assign M_AXI_MOVER_awaddr = mm_awaddr[3*AW +: AW];
-    assign M_AXI_MOVER_awlen = mm_awlen[3*8 +: 8];
-    assign M_AXI_MOVER_awsize = mm_awsize[3*3 +: 3];
-    assign M_AXI_MOVER_awburst = mm_awburst[3*2 +: 2];
-    assign M_AXI_MOVER_awvalid = mm_awvalid[3];
-    assign mm_awready[3] = M_AXI_MOVER_awready;
-    assign M_AXI_MOVER_wdata = mm_wdata[3*DW +: DW];
-    assign M_AXI_MOVER_wstrb = mm_wstrb[3*DW/8 +: DW/8];
-    assign M_AXI_MOVER_wlast = mm_wlast[3];
-    assign M_AXI_MOVER_wvalid = mm_wvalid[3];
-    assign mm_wready[3] = M_AXI_MOVER_wready;
-    assign mm_bid[3*IDW +: IDW] = M_AXI_MOVER_bid;
-    assign mm_bresp[3*2 +: 2] = M_AXI_MOVER_bresp;
-    assign mm_bvalid[3] = M_AXI_MOVER_bvalid;
-    assign M_AXI_MOVER_bready = mm_bready[3];
-    assign M_AXI_MOVER_arid = mm_arid[3*IDW +: IDW];
-    assign M_AXI_MOVER_araddr = mm_araddr[3*AW +: AW];
-    assign M_AXI_MOVER_arlen = mm_arlen[3*8 +: 8];
-    assign M_AXI_MOVER_arsize = mm_arsize[3*3 +: 3];
-    assign M_AXI_MOVER_arburst = mm_arburst[3*2 +: 2];
-    assign M_AXI_MOVER_arvalid = mm_arvalid[3];
-    assign mm_arready[3] = M_AXI_MOVER_arready;
-    assign mm_rid[3*IDW +: IDW] = M_AXI_MOVER_rid;
-    assign mm_rdata[3*DW +: DW] = M_AXI_MOVER_rdata;
-    assign mm_rresp[3*2 +: 2] = M_AXI_MOVER_rresp;
-    assign mm_rlast[3] = M_AXI_MOVER_rlast;
-    assign mm_rvalid[3] = M_AXI_MOVER_rvalid;
-    assign M_AXI_MOVER_rready = mm_rready[3];
-    assign M_AXI_ILINK_awid = mm_awid[4*IDW +: IDW];
-    assign M_AXI_ILINK_awaddr = mm_awaddr[4*AW +: AW];
-    assign M_AXI_ILINK_awlen = mm_awlen[4*8 +: 8];
-    assign M_AXI_ILINK_awsize = mm_awsize[4*3 +: 3];
-    assign M_AXI_ILINK_awburst = mm_awburst[4*2 +: 2];
-    assign M_AXI_ILINK_awvalid = mm_awvalid[4];
-    assign mm_awready[4] = M_AXI_ILINK_awready;
-    assign M_AXI_ILINK_wdata = mm_wdata[4*DW +: DW];
-    assign M_AXI_ILINK_wstrb = mm_wstrb[4*DW/8 +: DW/8];
-    assign M_AXI_ILINK_wlast = mm_wlast[4];
-    assign M_AXI_ILINK_wvalid = mm_wvalid[4];
-    assign mm_wready[4] = M_AXI_ILINK_wready;
-    assign mm_bid[4*IDW +: IDW] = M_AXI_ILINK_bid;
-    assign mm_bresp[4*2 +: 2] = M_AXI_ILINK_bresp;
-    assign mm_bvalid[4] = M_AXI_ILINK_bvalid;
-    assign M_AXI_ILINK_bready = mm_bready[4];
-    assign M_AXI_ILINK_arid = mm_arid[4*IDW +: IDW];
-    assign M_AXI_ILINK_araddr = mm_araddr[4*AW +: AW];
-    assign M_AXI_ILINK_arlen = mm_arlen[4*8 +: 8];
-    assign M_AXI_ILINK_arsize = mm_arsize[4*3 +: 3];
-    assign M_AXI_ILINK_arburst = mm_arburst[4*2 +: 2];
-    assign M_AXI_ILINK_arvalid = mm_arvalid[4];
-    assign mm_arready[4] = M_AXI_ILINK_arready;
-    assign mm_rid[4*IDW +: IDW] = M_AXI_ILINK_rid;
-    assign mm_rdata[4*DW +: DW] = M_AXI_ILINK_rdata;
-    assign mm_rresp[4*2 +: 2] = M_AXI_ILINK_rresp;
-    assign mm_rlast[4] = M_AXI_ILINK_rlast;
-    assign mm_rvalid[4] = M_AXI_ILINK_rvalid;
-    assign M_AXI_ILINK_rready = mm_rready[4];
+
+
 
     wire [NMAG*FW-1:0] mag_o_d;
     wire [NMAG-1:0]    mag_i_v, mag_i_b, mag_o_v, mag_o_b;
@@ -567,11 +296,13 @@ module ktpu_ship_2x1_6c0v_il #(
     assign l005_h2_1_fb = mag_i_b[1];
     assign l000_h0_1_fd = mag_o_d[0*FW +: FW];
     assign l005_h2_1_rd = mag_o_d[1*FW +: FW];
-    mag #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(AW),
+    mag_1m #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(AW),
           .ID_W(IDW), .MEM_PORTS(2), .MEM_X(0), .MEM_Y(1), .MEM_X1(3), .MEM_Y1(1),
           .GRID_LO(1), .GRID_HI(2), .STAGE_FLITS(128),
-          .ILINK(1), .MESH_ID(MESH_ID), .LINK_W(LKW), .TUSER_W(LKU)) u_mag (
+          .ILINK(1), .MESH_ID(MESH_ID), .LINK_W(LKW), .TUSER_W(LKU),
+          .MW(MW)) u_mag (
         .clk(clk), .resetn(resetn),
+        .dram_aclk(dram_aclk), .dram_aresetn(dram_aresetn),
         .sm_awid(S_AXI_MEM_awid), .sm_awaddr(S_AXI_MEM_awaddr),
         .sm_awlen(S_AXI_MEM_awlen), .sm_awvalid(S_AXI_MEM_awvalid),
         .sm_awready(S_AXI_MEM_awready),
@@ -600,17 +331,35 @@ module ktpu_ship_2x1_6c0v_il #(
         .sc_rid(S_AXI_CTRL_rid), .sc_rdata(S_AXI_CTRL_rdata),
         .sc_rresp(S_AXI_CTRL_rresp), .sc_rlast(S_AXI_CTRL_rlast),
         .sc_rvalid(S_AXI_CTRL_rvalid), .sc_rready(S_AXI_CTRL_rready),
-        .m_awid(mm_awid), .m_awaddr(mm_awaddr), .m_awlen(mm_awlen),
-        .m_awsize(mm_awsize), .m_awburst(mm_awburst),
-        .m_awvalid(mm_awvalid), .m_awready(mm_awready),
-        .m_wdata(mm_wdata), .m_wstrb(mm_wstrb), .m_wlast(mm_wlast),
-        .m_wvalid(mm_wvalid), .m_wready(mm_wready),
-        .m_bid(mm_bid), .m_bresp(mm_bresp), .m_bvalid(mm_bvalid), .m_bready(mm_bready),
-        .m_arid(mm_arid), .m_araddr(mm_araddr), .m_arlen(mm_arlen),
-        .m_arsize(mm_arsize), .m_arburst(mm_arburst),
-        .m_arvalid(mm_arvalid), .m_arready(mm_arready),
-        .m_rid(mm_rid), .m_rdata(mm_rdata), .m_rresp(mm_rresp),
-        .m_rlast(mm_rlast), .m_rvalid(mm_rvalid), .m_rready(mm_rready),
+        .m_awid(M_AXI_DRAM_awid),
+        .m_awaddr(M_AXI_DRAM_awaddr),
+        .m_awlen(M_AXI_DRAM_awlen),
+        .m_awsize(M_AXI_DRAM_awsize),
+        .m_awburst(M_AXI_DRAM_awburst),
+        .m_awvalid(M_AXI_DRAM_awvalid),
+        .m_awready(M_AXI_DRAM_awready),
+        .m_wdata(M_AXI_DRAM_wdata),
+        .m_wstrb(M_AXI_DRAM_wstrb),
+        .m_wlast(M_AXI_DRAM_wlast),
+        .m_wvalid(M_AXI_DRAM_wvalid),
+        .m_wready(M_AXI_DRAM_wready),
+        .m_bid(M_AXI_DRAM_bid),
+        .m_bresp(M_AXI_DRAM_bresp),
+        .m_bvalid(M_AXI_DRAM_bvalid),
+        .m_bready(M_AXI_DRAM_bready),
+        .m_arid(M_AXI_DRAM_arid),
+        .m_araddr(M_AXI_DRAM_araddr),
+        .m_arlen(M_AXI_DRAM_arlen),
+        .m_arsize(M_AXI_DRAM_arsize),
+        .m_arburst(M_AXI_DRAM_arburst),
+        .m_arvalid(M_AXI_DRAM_arvalid),
+        .m_arready(M_AXI_DRAM_arready),
+        .m_rid(M_AXI_DRAM_rid),
+        .m_rdata(M_AXI_DRAM_rdata),
+        .m_rresp(M_AXI_DRAM_rresp),
+        .m_rlast(M_AXI_DRAM_rlast),
+        .m_rvalid(M_AXI_DRAM_rvalid),
+        .m_rready(M_AXI_DRAM_rready),
         .link0_out_tdata(M_AXIS_LINK0_tdata), .link0_out_tuser(M_AXIS_LINK0_tuser),
         .link0_out_tlast(M_AXIS_LINK0_tlast), .link0_out_tvalid(M_AXIS_LINK0_tvalid),
         .link0_out_tready(M_AXIS_LINK0_tready),
@@ -632,8 +381,9 @@ module ktpu_ship_2x1_6c0v_il #(
                     .CU_X(1), .CU_Y(0), .TILES(TILES), .GA(GA), .GB(GB),
                     .L1_PRIM(L1_PRIM), .TILE_PRIM(TILE_PRIM),
                     .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
+                    .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
                     .MEM_X(0), .MEM_Y(1), .MODEL(MODEL)) u_cu0 (
-        .clk(clk), .resetn(resetn),
+        .clk(clk), .clk2x(1'b0), .unit_clk(mat_clk), .resetn(resetn),
         .noc_out_data(l002_v1_0_fd), .noc_out_valid(l002_v1_0_fv), .noc_out_busy(l002_v1_0_fb), .noc_in_data(l002_v1_0_rd), .noc_in_valid(l002_v1_0_rv), .noc_in_busy(l002_v1_0_rb),
         .fills_done(cu_f[0]), .gemms_done(cu_g[0]), .drains_done(cu_d[0])
     );
@@ -641,8 +391,9 @@ module ktpu_ship_2x1_6c0v_il #(
                     .CU_X(2), .CU_Y(0), .TILES(TILES), .GA(GA), .GB(GB),
                     .L1_PRIM(L1_PRIM), .TILE_PRIM(TILE_PRIM),
                     .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
+                    .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
                     .MEM_X(3), .MEM_Y(1), .MODEL(MODEL)) u_cu1 (
-        .clk(clk), .resetn(resetn),
+        .clk(clk), .clk2x(1'b0), .unit_clk(mat_clk), .resetn(resetn),
         .noc_out_data(l006_v2_0_fd), .noc_out_valid(l006_v2_0_fv), .noc_out_busy(l006_v2_0_fb), .noc_in_data(l006_v2_0_rd), .noc_in_valid(l006_v2_0_rv), .noc_in_busy(l006_v2_0_rb),
         .fills_done(cu_f[1]), .gemms_done(cu_g[1]), .drains_done(cu_d[1])
     );
@@ -650,8 +401,9 @@ module ktpu_ship_2x1_6c0v_il #(
                     .CU_X(1), .CU_Y(1), .TILES(TILES), .GA(GA), .GB(GB),
                     .L1_PRIM(L1_PRIM), .TILE_PRIM(TILE_PRIM),
                     .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
+                    .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
                     .MEM_X(0), .MEM_Y(1), .MODEL(MODEL)) u_cu2 (
-        .clk(clk), .resetn(resetn),
+        .clk(clk), .clk2x(1'b0), .unit_clk(mat_clk), .resetn(resetn),
         .noc_out_data(l004_L1_1_fd), .noc_out_valid(l004_L1_1_fv), .noc_out_busy(l004_L1_1_fb), .noc_in_data(l004_L1_1_rd), .noc_in_valid(l004_L1_1_rv), .noc_in_busy(l004_L1_1_rb),
         .fills_done(cu_f[2]), .gemms_done(cu_g[2]), .drains_done(cu_d[2])
     );
@@ -659,8 +411,9 @@ module ktpu_ship_2x1_6c0v_il #(
                     .CU_X(2), .CU_Y(1), .TILES(TILES), .GA(GA), .GB(GB),
                     .L1_PRIM(L1_PRIM), .TILE_PRIM(TILE_PRIM),
                     .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
+                    .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
                     .MEM_X(3), .MEM_Y(1), .MODEL(MODEL)) u_cu3 (
-        .clk(clk), .resetn(resetn),
+        .clk(clk), .clk2x(1'b0), .unit_clk(mat_clk), .resetn(resetn),
         .noc_out_data(l008_L2_1_fd), .noc_out_valid(l008_L2_1_fv), .noc_out_busy(l008_L2_1_fb), .noc_in_data(l008_L2_1_rd), .noc_in_valid(l008_L2_1_rv), .noc_in_busy(l008_L2_1_rb),
         .fills_done(cu_f[3]), .gemms_done(cu_g[3]), .drains_done(cu_d[3])
     );
@@ -668,8 +421,9 @@ module ktpu_ship_2x1_6c0v_il #(
                     .CU_X(1), .CU_Y(2), .TILES(TILES), .GA(GA), .GB(GB),
                     .L1_PRIM(L1_PRIM), .TILE_PRIM(TILE_PRIM),
                     .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
+                    .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
                     .MEM_X(0), .MEM_Y(1), .MODEL(MODEL)) u_cu4 (
-        .clk(clk), .resetn(resetn),
+        .clk(clk), .clk2x(1'b0), .unit_clk(mat_clk), .resetn(resetn),
         .noc_out_data(l003_v1_1_rd), .noc_out_valid(l003_v1_1_rv), .noc_out_busy(l003_v1_1_rb), .noc_in_data(l003_v1_1_fd), .noc_in_valid(l003_v1_1_fv), .noc_in_busy(l003_v1_1_fb),
         .fills_done(cu_f[4]), .gemms_done(cu_g[4]), .drains_done(cu_d[4])
     );
@@ -677,8 +431,9 @@ module ktpu_ship_2x1_6c0v_il #(
                     .CU_X(2), .CU_Y(2), .TILES(TILES), .GA(GA), .GB(GB),
                     .L1_PRIM(L1_PRIM), .TILE_PRIM(TILE_PRIM),
                     .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
+                    .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
                     .MEM_X(3), .MEM_Y(1), .MODEL(MODEL)) u_cu5 (
-        .clk(clk), .resetn(resetn),
+        .clk(clk), .clk2x(1'b0), .unit_clk(mat_clk), .resetn(resetn),
         .noc_out_data(l007_v2_1_rd), .noc_out_valid(l007_v2_1_rv), .noc_out_busy(l007_v2_1_rb), .noc_in_data(l007_v2_1_fd), .noc_in_valid(l007_v2_1_fv), .noc_in_busy(l007_v2_1_fb),
         .fills_done(cu_f[5]), .gemms_done(cu_g[5]), .drains_done(cu_d[5])
     );

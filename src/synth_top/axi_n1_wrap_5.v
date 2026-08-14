@@ -12,7 +12,7 @@
 
 module axi_n1_wrap_5 #(
     parameter integer N    = 5,
-    parameter integer AW   = 34,
+    parameter integer AW   = 40,
     parameter integer DW   = 256,
     parameter integer IDW  = 4,
     parameter integer SIDW = IDW + 3
