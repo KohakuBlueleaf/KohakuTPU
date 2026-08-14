@@ -13,7 +13,11 @@ tags:
 A node that owns URAM, sits on a spare local port, and answers memory requests
 like any other endpoint. No router change, no new instruction, no new protocol.
 
-Status: discussion, nothing built.
+Status: **form 2 is built and shipping** as `src/kohakunoc/noc_l2_adapter.v`,
+benched by `tests/noc/noc_l2_adapter_tb.v`, and selected with `gen_mesh.py
+--l2-cu / --l2-vec`. Note the limit form 2 turns out to have: an in-link adapter
+snoops its own endpoint's outbound flits, so it can only serve the unit behind
+it and cannot move data between clusters.
 
 ## Why this is the cheap one
 

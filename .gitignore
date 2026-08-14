@@ -2,7 +2,7 @@
 *.vcd
 .Xil/
 xsim.dir/
-xvlog.pb
+*.pb
 clockinfo.txt
 ref/
 .vscode/

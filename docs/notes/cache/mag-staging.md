@@ -12,7 +12,11 @@ tags:
 One centralised store inside the memory agent. See [README](README.md) for the
 alternatives.
 
-Status: discussion. Nothing built.
+Status: **built and shipping** as `src/kohakumas/mag_stage.v`, arbitrated by
+`src/kohakumas/mag_stage_port.v` on the converged internal path, benched by
+`tests/mas/mag_stage_tb.v`, and selected with `gen_mesh.py --l2-mag`. Two claims
+below are corrected by the RTL -- the line is 1,024 bits and not 936, and
+`xpm_memory_sdpram` is *simple* dual port, so §4's port split is arbitration.
 
 ## 1. Almost none of this needs designing
 

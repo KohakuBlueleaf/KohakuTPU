@@ -290,9 +290,11 @@ answer today.
 package and `mag_dram_port.v` in `src/kohakumas/` solve the same problem with
 the same structure — round-robin, five queues, index-in-ID response routing,
 asynchronous crossing. `mag_dram_port` additionally packs the internal beat up
-to the memory beat. They should be one module with the packing ratio as a
-parameter, in this package, and the composition that uses it
-(`src/synth_top/mag_1m.v`) should not be sitting in a directory of device tops.
+to the memory beat and carries byte strobes. They should be one module with the
+packing ratio as a parameter, in this package. `mag.v` instantiates
+`mag_dram_port` directly — one AXI master per agent — while
+`src/synth_top/mag_1m.v` remains a reusable composition around it that should
+not be sitting in a directory of device tops.
 
 **There are two memory models in two packages.** `src/kohakuaxi/axi4_ram.v` and
 `src/kohakumas/axi_ram.v`. They serve different purposes — reference versus

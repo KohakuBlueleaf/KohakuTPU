@@ -9,7 +9,14 @@ tags:
 
 # Cache and staging: the design space
 
-Status: discussion. Nothing here is built. Numbers marked MEASURED come from the
+Status: **two of the four are built, benched, and in the ship tops** --
+`noc-staging` form 2 as `src/kohakunoc/noc_l2_adapter.v`, and `mag-staging` as
+`src/kohakumas/mag_stage.v` behind `src/kohakumas/mag_stage_port.v`. Each is
+optional and they are selected independently (`gen_mesh.py --l2-mag / --l2-cu /
+--l2-vec`). The four-mesh design carries 8 URAM per CU adapter and 64 per agent
+in 4 banks. No software targets either yet.
+
+Numbers marked MEASURED come from the
 placed multi-mesh run of 2026-08-12 or from out-of-context synthesis; everything
 else is arithmetic or assumption and is labelled. The canonical copies of the
 measured figures are in

@@ -48,6 +48,22 @@ print(y.numpy())  # the only line that crosses the link
 FPGA: matrix clusters, vector cores, the NoC mesh and its routers, the memory
 agent and quantiser, and the interlink that joins four meshes.
 
+**Hardware — synthesised, not yet on silicon.** Verified in simulation against
+real instruction streams and carried through synthesis in the four-mesh design,
+but no hardware run yet:
+
+- **L2** — staging in the memory agent, reached by address, and an adapter at
+  the NoC endpoint, reached by instruction. Either is optional, and they are
+  selected independently by `gen_mesh.py`. The agent's banks are split rather
+  than one array, which measured 337 → 357 → 381 MHz as banking and pipelining
+  were added.
+- **Per-mesh, per-component clock control** — one generator per mesh, with the
+  matrix core, vector core and fabric on separate outputs.
+- **Double-pumped matrix core** — the DSPs take a 2x clock and a `BUFGCE_DIV`
+  derives the fabric's 1x from it, so the two are edge-aligned by construction.
+- **40-bit addressing** throughout, with one global space across all four
+  meshes. See [`address-map.md`](docs/address-map.md).
+
 **Software — a working driver and compiler stack.** Kernels compile to cluster
 *and* vector programs, flash attention runs, and tinygrad works as an optional
 frontend into the same kernel library.
@@ -57,11 +73,10 @@ Every measured number, with the conditions it was taken under, is in
 
 ## Future work
 
-- **L2 cache** in the memory agent, and an L2 adapter at the NoC endpoint
-- **Per-component clock control** and clock gating
 - **Vector ISA** improvements
-- **Memory mover** architecture and ISA — it moves 98 MB/s today, which bounds
-  more than it should
+- **Cross-mesh bandwidth** — the interlink measured 98 MB/s, mover-bound at 3%
+  of the link. The mover's fabric has since been rebuilt; the number has not
+  been retaken on hardware.
 - **Driver** improvements
 
 ## What makes it interesting

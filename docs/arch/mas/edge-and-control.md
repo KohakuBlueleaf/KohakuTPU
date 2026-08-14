@@ -149,8 +149,11 @@ own credit protocol. They live here because MAG hosts the endpoint. Their
 description is in [ship](../ship/), and that is where the package boundary
 should be too.
 
-**`mag_dram_port.v` is not instantiated by `mag.v`.** The composition that gives
-a MAG one AXI master instead of several — arbitration, width packing and the
-clock crossing — is `src/synth_top/mag_1m.v`, a reusable assembly sitting in a
-directory of device tops. See [axi](../axi.md) for the overlap between
-`mag_dram_port.v` and `axi_n1.v`.
+**A MAG presents exactly one AXI master.** Requesters speak an internal
+protocol — `q_valid/q_ready/q_addr/q_len/q_write` plus `w_*` and `r_*` streams —
+and `mag_dram_port.v`, instantiated inside `mag.v`, is the single converter that
+arbitrates them, packs slave width to master width, and carries byte strobes.
+There is no second AXI master anywhere in the agent: AXI is heavy, so it appears
+once, at the boundary. `mag_stage_port.v` claims staged traffic off that same
+converged path before it reaches DRAM. See [axi](../axi.md) for the overlap
+between `mag_dram_port.v` and `axi_n1.v`.
