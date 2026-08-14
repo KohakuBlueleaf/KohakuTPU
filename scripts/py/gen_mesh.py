@@ -239,9 +239,52 @@ class Emitter:
         )
 
 
-def emit(mesh, name, ilink=False, mesh_id=0, single=False):
+def l2_slot(e, tag, stem, drives_fwd, names, base, depth, bits):
+    """Splice a noc_l2_adapter into an endpoint's local link.
+
+    `names` is the endpoint's (in_data, in_valid, in_busy, out_data, out_valid,
+    out_busy). Returns the endpoint's port connections, rebound to the adapter's
+    endpoint face. The router face keeps the link the endpoint used to drive.
+    """
+    i_d, i_v, i_b, o_d, o_v, o_b = names
+    a, b = ("f", "r") if drives_fwd else ("r", "f")
+    w = f"{tag}_l2"
+    e.decls.append(
+        f"    wire [FW-1:0] {w}_id, {w}_od;\n"
+        f"    wire {w}_iv, {w}_ib, {w}_ov, {w}_ob;"
+    )
+    e.body.append(
+        f"""    noc_l2_adapter #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DEPTH({depth}),
+                     .L2_BASE({base}), .L2_BITS({bits}), .PASS(0)) u_{w} (
+        .clk(clk), .rst(!resetn),
+        .rt_data({stem}_{b}d), .rt_valid({stem}_{b}v), .rt_busy({stem}_{b}b),
+        .ru_data({stem}_{a}d), .ru_valid({stem}_{a}v), .ru_busy({stem}_{a}b),
+        .ep_data({w}_id), .ep_valid({w}_iv), .ep_busy({w}_ib),
+        .eu_data({w}_od), .eu_valid({w}_ov), .eu_busy({w}_ob)
+    );"""
+    )
+    return (
+        f".{o_d}({w}_od), .{o_v}({w}_ov), .{o_b}({w}_ob), "
+        f".{i_d}({w}_id), .{i_v}({w}_iv), .{i_b}({w}_ib)"
+    )
+
+
+def emit(
+    mesh,
+    name,
+    ilink=False,
+    mesh_id=0,
+    single=True,
+    mat_pump=False,
+    l2_mag=False,
+    l2_cu=False,
+    l2_vec=False,
+):
+    # ALWAYS SINGLE. MAG converges its internal requesters onto one AXI master
+    # itself, so there is no packed bus left to fan out.
+    single = True
     m, e = mesh, Emitter(mesh, name)
-    nm = 1 if single else len(m.mags) + (3 if ilink else 2)
+    nm = 1
 
     # ---- routers -------------------------------------------------------
     for y in range(1, m.ny + 1):
@@ -287,6 +330,13 @@ def emit(mesh, name, ilink=False, mesh_id=0, single=False):
     # difference here is the module name, the width and the memory clock.
     mod = "mag_1m" if single else "mag"
     extra = ",\n          .MW(MW)" if single else ""
+    # STAGE_AT_PORT=1: one store on the converged path, reachable by the mover
+    # and the interlink. 64 URAM against 256 per-port, measured.
+    if l2_mag:
+        extra += (
+            ",\n          .STAGE(1), .STAGE_BANKS(L2_MAG_BANKS)"
+            ",\n          .STAGE_ENTRIES(L2_MAG_ENTRIES), .STAGE_AT_PORT(1)"
+        )
     clks = (
         ",\n        .dram_aclk(dram_aclk), .dram_aresetn(dram_aresetn)"
         if single
@@ -323,15 +373,42 @@ def emit(mesh, name, ilink=False, mesh_id=0, single=False):
         else:
             stem, drives = e.edge_link(cx, cy)
         mmx, mmy = m.nearest_mag(cx, cy)
+        conn_c = (
+            l2_slot(
+                e,
+                f"cu{i}",
+                stem,
+                drives,
+                NAMES_C,
+                "L2_CU_BASE",
+                "L2_CU_DEPTH",
+                "L2_CU_BITS",
+            )
+            if l2_cu
+            else e.endpoint_conn(stem, drives, NAMES_C)
+        )
         # TILES/GA/GB must be explicit: mx_cluster_cu defaults to 256/32/32,
         # not the 512/128/256 planned for, and that is the 15,440-element fault.
-        e.body.append(f"""    mx_cluster_cu #(.FLIT_WIDTH(FW), .POS_WIDTH(PW),
+        if mat_pump:
+            e.body.append(f"""    mx_cluster_cu_pump #(.FLIT_WIDTH(FW), .POS_WIDTH(PW),
                     .CU_X({cx}), .CU_Y({cy}), .TILES(TILES), .GA(GA), .GB(GB),
                     .L1_PRIM(L1_PRIM), .TILE_PRIM(TILE_PRIM),
                     .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
                     .MEM_X({mmx}), .MEM_Y({mmy}), .MODEL(MODEL)) u_cu{i} (
-        .clk(clk), .resetn(resetn),
-        {e.endpoint_conn(stem, drives, NAMES_C)},
+        .clk2x(mat_clk2x), .div_clr(mat_div_clr), .resetn(resetn),
+        .clk1x(),
+        {conn_c},
+        .fills_done(cu_f[{i}]), .gemms_done(cu_g[{i}]), .drains_done(cu_d[{i}])
+    );""")
+            continue
+        e.body.append(f"""    mx_cluster_cu #(.FLIT_WIDTH(FW), .POS_WIDTH(PW),
+                    .CU_X({cx}), .CU_Y({cy}), .TILES(TILES), .GA(GA), .GB(GB),
+                    .L1_PRIM(L1_PRIM), .TILE_PRIM(TILE_PRIM),
+                    .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
+                    .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
+                    .MEM_X({mmx}), .MEM_Y({mmy}), .MODEL(MODEL)) u_cu{i} (
+        .clk(clk), .clk2x(1'b0), .unit_clk(mat_clk), .resetn(resetn),
+        {conn_c},
         .fills_done(cu_f[{i}]), .gemms_done(cu_g[{i}]), .drains_done(cu_d[{i}])
     );""")
 
@@ -350,13 +427,28 @@ def emit(mesh, name, ilink=False, mesh_id=0, single=False):
         else:
             stem, drives = e.edge_link(x, y)
         mmx, mmy = m.nearest_mag(x, y)
+        conn_v = (
+            l2_slot(
+                e,
+                f"vec{i}",
+                stem,
+                drives,
+                NAMES_V,
+                "L2_VEC_BASE",
+                "L2_VEC_DEPTH",
+                "L2_VEC_BITS",
+            )
+            if l2_vec
+            else e.endpoint_conn(stem, drives, NAMES_V)
+        )
         e.body.append(
             f"""    vec_cu #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .POS_X({x}), .POS_Y({y}),
              .MEM_X({mmx}), .MEM_Y({mmy}), .MODEL(MODEL),
              .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
+             .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
              .L1_DEPTH(L1_DEPTH), .L1_PRIM(VEC_PRIM)) u_vec{i} (
-        .clk(clk), .resetn(resetn),
-        {e.endpoint_conn(stem, drives, NAMES_V)},
+        .clk(clk), .unit_clk(vec_clk), .resetn(resetn),
+        {conn_v},
         .dbg_cycles(vc_cyc[{i}]), .dbg_fault(vc_flt[{i}])
     );"""
         )
@@ -378,7 +470,9 @@ def emit(mesh, name, ilink=False, mesh_id=0, single=False):
             f" assign {stem}_{b}b = 1'b0;"
         )
 
-    return render(m, e, name, nm, ilink, mesh_id, single)
+    return render(
+        m, e, name, nm, ilink, mesh_id, single, mat_pump, l2_mag, l2_cu, l2_vec
+    )
 
 
 def _absent_drives_fwd(key):
@@ -611,7 +705,19 @@ def mag_master_axi(single):
         .m_rlast(mm_rlast), .m_rvalid(mm_rvalid), .m_rready(mm_rready),"""
 
 
-def render(m, e, name, nm, ilink=False, mesh_id=0, single=False):
+def render(
+    m,
+    e,
+    name,
+    nm,
+    ilink=False,
+    mesh_id=0,
+    single=False,
+    mat_pump=False,
+    l2_mag=False,
+    l2_cu=False,
+    l2_vec=False,
+):
     picture = "\n".join("//   " + " ".join(r) for r in m.rows)
     ncu, nvec = len(m.cus), len(m.vecs)
     mnames = master_names(len(m.mags), ilink, single)
@@ -662,13 +768,46 @@ def render(m, e, name, nm, ilink=False, mesh_id=0, single=False):
         if single
         else ""
     )
+    # Each L2 is INDEPENDENT: MAG's store is reached by address, the two
+    # adapters by a CU_CTRL instruction, so none implies another.
+    L2_PARAMS = ""
+    if l2_mag:
+        L2_PARAMS += (
+            "    parameter integer L2_MAG_BANKS   = 4,      // 64 URAM, 2 MB\n"
+            "    parameter integer L2_MAG_ENTRIES = 16384,\n"
+        )
+    if l2_cu:
+        L2_PARAMS += (
+            "    // 8 URAM: 4 per 4096 lines at 256b, and L2_BITS MUST be\n"
+            "    // 5 + $clog2(DEPTH) or the window and the store differ in size.\n"
+            "    parameter integer L2_CU_DEPTH = 8192,\n"
+            "    parameter [39:0]  L2_CU_BASE  = 40'h00_F000_0000,\n"
+            "    parameter integer L2_CU_BITS  = 18,\n"
+        )
+    if l2_vec:
+        L2_PARAMS += (
+            "    // A DIFFERENT base from the CU's: two adapters sharing one\n"
+            "    // aperture means the second never sees a flit.\n"
+            "    parameter integer L2_VEC_DEPTH = 8192,\n"
+            "    parameter [39:0]  L2_VEC_BASE  = 40'h00_F100_0000,\n"
+            "    parameter integer L2_VEC_BITS  = 18,\n"
+        )
+    # `axi_aclk` MUST ITSELF BE A BUFGCE_DIV(2) OF `mat_clk2x` sharing
+    # `mat_div_clr`, or every cluster's NoC port is an untimed crossing.
+    PUMP_CLKS = (
+        '    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 mat_clk2x CLK" *)\n'
+        "    input  wire mat_clk2x,\n"
+        "    input  wire mat_div_clr,\n"
+        if mat_pump
+        else ""
+    )
     SINGLE_CLKS = (
-        "    (* X_INTERFACE_INFO = \"xilinx.com:signal:clock:1.0 dram_aclk CLK\" *)\n"
-        "    (* X_INTERFACE_PARAMETER = \"ASSOCIATED_BUSIF M_AXI_DRAM,"
-        " ASSOCIATED_RESET dram_aresetn\" *)\n"
+        '    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 dram_aclk CLK" *)\n'
+        '    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF M_AXI_DRAM,'
+        ' ASSOCIATED_RESET dram_aresetn" *)\n'
         "    input  wire dram_aclk,\n"
-        "    (* X_INTERFACE_INFO = \"xilinx.com:signal:reset:1.0 dram_aresetn RST\" *)\n"
-        "    (* X_INTERFACE_PARAMETER = \"POLARITY ACTIVE_LOW\" *)\n"
+        '    (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 dram_aresetn RST" *)\n'
+        '    (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)\n'
         "    input  wire dram_aresetn,\n"
         if single
         else ""
@@ -691,12 +830,12 @@ module {name} #(
     parameter integer FW       = 288,
     parameter integer PW       = 4,
     parameter integer DW       = 256,
-    parameter integer AW       = 34,
+    parameter integer AW       = 40,
     parameter integer IDW      = 4,
     parameter integer NM       = {nm},
-{SINGLE_PARAMS}{LINK_PARAMS}    parameter integer MODEL    = 0,
+{SINGLE_PARAMS}{LINK_PARAMS}{L2_PARAMS}    parameter integer MODEL    = 0,
     parameter integer L1_DEPTH = 512,
-    // src/ktpu/hw/bench.py's TILES / L1_A_ENTRIES / L1_B_ENTRIES. A generated
+    // driver/kohakutpu/machine's frozen-at-synthesis TILES / GA / GB. A generated
     // top that omits them elaborates mx_cluster_cu's 256/32/32 instead.
     // 4096 in URAM, not 512 in BRAM: width sets the primitive count (5 either
     // way) so depth is free, and gm*gn<=TILES bounds arithmetic intensity --
@@ -725,7 +864,13 @@ module {name} #(
     // any depth to 512, so the old 32/64 used 6%/12% of their own tiles.
     // Measured on noc_cu_base: 8 BRAM either way, +34 LUT, 574 -> 567 MHz.
     parameter integer INST_DEPTH = 512,
-    parameter integer RECV_DEPTH = 512
+    parameter integer RECV_DEPTH = 512,
+    // Compute units on their own clocks, behind one noc_local_cdc per
+    // direction. ONE RATE PER TYPE, not per instance: every cluster takes
+    // `mat_clk` and every vector core `vec_clk`. THE NoC FABRIC STAYS ONE
+    // CLOCK -- router to router is untouched, so the deadlock argument holds.
+    parameter integer UNIT_CDC  = 0,
+    parameter integer CDC_DEPTH = 16
 )(
     // One clock and one reset for every interface, master and slave alike, so
     // neither carries an s_ or m_ prefix. ASSOCIATED_BUSIF names them all, which
@@ -736,7 +881,12 @@ module {name} #(
     (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 axi_aresetn RST" *)
     (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
     input  wire axi_aresetn,
-{SINGLE_CLKS}
+    // Tie both to axi_aclk when UNIT_CDC is 0. They reach nothing.
+    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 mat_clk CLK" *)
+    input  wire mat_clk,
+    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 vec_clk CLK" *)
+    input  wire vec_clk,
+{PUMP_CLKS}{SINGLE_CLKS}
     input  wire [IDW-1:0]   S_AXI_MEM_awid,
     input  wire [AW-1:0]    S_AXI_MEM_awaddr,
     input  wire [7:0]       S_AXI_MEM_awlen,
@@ -863,6 +1013,34 @@ def main():
         "the mesh exposes ONE wide AXI master and one dram_aclk instead of "
         "MEM_PORTS+2. Deletes the per-mesh SmartConnect",
     )
+    ap.add_argument(
+        "--mat-pump",
+        action="store_true",
+        help="double pump the matmul clusters: emit mx_cluster_cu_pump, whose "
+        "L1 and DSP cascade run on a new mat_clk2x input and whose 1x clock a "
+        "BUFGCE_DIV derives locally. axi_aclk must then be a BUFGCE_DIV(2) of "
+        "mat_clk2x sharing mat_div_clr, or the NoC port is an untimed crossing",
+    )
+    # Three flags, no implied pairing: MAG's store is reached by ADDRESS, the two
+    # adapters by a CU_CTRL INSTRUCTION.
+    ap.add_argument(
+        "--l2-mag",
+        action="store_true",
+        help="MAG staging on the converged internal path (STAGE_AT_PORT=1), so "
+        "the memory mover and the interlink reach it as well as the NoC ports. "
+        "64 URAM, against 256 for one store per memory port",
+    )
+    ap.add_argument(
+        "--l2-cu",
+        action="store_true",
+        help="a noc_l2_adapter in each matmul cluster's local link, 8 URAM each",
+    )
+    ap.add_argument(
+        "--l2-vec",
+        action="store_true",
+        help="a noc_l2_adapter in each vector core's local link, at its own "
+        "aperture base",
+    )
     args = ap.parse_args()
 
     if args.mesh_id and not args.ilink:
@@ -871,7 +1049,15 @@ def main():
     try:
         mesh = Mesh(parse_map(Path(args.map).read_text(encoding="utf-8")))
         text = emit(
-            mesh, args.module, args.ilink, args.mesh_id, args.single_master
+            mesh,
+            args.module,
+            args.ilink,
+            args.mesh_id,
+            args.single_master,
+            args.mat_pump,
+            args.l2_mag,
+            args.l2_cu,
+            args.l2_vec,
         )
     except MeshError as exc:
         sys.exit(f"gen_mesh: {exc}")
