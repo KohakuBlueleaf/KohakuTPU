@@ -1,9 +1,9 @@
-"""Check mx_quant.v against ktpu.hw.mxfp7, element by element.
+"""Check mx_quant.v against kohakutpu.hw.mxfp7, element by element.
 
-    python run_quant_check.py
+    python scripts/py/run_quant_check.py
 
 The Verilog bench only records what the circuit produced. The expected values
-come from the driver's model, which is the spec, so this is a genuine
+come from the compiler's model, which is the spec, so this is a genuine
 cross-check between an implementation and its specification rather than
 between two implementations by the same hand.
 """
@@ -15,7 +15,7 @@ import subprocess
 import sys
 
 import numpy as np
-from ktpu.hw import mxfp7
+from kohakutpu.hw import mxfp7
 
 # parents[2], not parent.parent: this file is scripts/py/, so two levels up is
 # the repo root and one is scripts/, where src/ does not exist.
@@ -121,7 +121,7 @@ def main():
                         bad_q += 1
                         if len(first) < 8:
                             first.append(
-                                f"    entry {e} lane {lane} k {w*8+kk}: "
+                                f"    entry {e} lane {lane} k {w * 8 + kk}: "
                                 f"rtl {q[lane, kk]} model {want}"
                             )
         for lane, s in enumerate(unpack_scales(got[e * 5 + 0])):
@@ -135,7 +135,7 @@ def main():
 
     total = ENTRIES * 4 * 32
     print(f"  significands: {total - bad_q}/{total} match")
-    print(f"  scale fields: {ENTRIES*4 - bad_s}/{ENTRIES*4} match")
+    print(f"  scale fields: {ENTRIES * 4 - bad_s}/{ENTRIES * 4} match")
     for line in first:
         print(line)
     ok = bad_q == 0 and bad_s == 0

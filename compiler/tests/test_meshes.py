@@ -1,8 +1,9 @@
 """Several meshes as one group: what a split means, and what it refuses.
 
 The two hardware-verified prototypes are the specification -- `split_matmul.py`
-(column-parallel, 3.98x compute over four meshes) and `ksplit_matmul.py` (the
-contraction split, 1.76x at one fp16 ULP). What they do that the models cannot
+(column-parallel, 3.98x compute over four meshes) and the contraction split
+(1.76x at one fp16 ULP), whose harness retired with the old stack. What they do
+that the models cannot
 is cross a link, so the collective ARITHMETIC is checked against numpy on
 `SimDevice` and the interlink half is checked as the words it encodes.
 
