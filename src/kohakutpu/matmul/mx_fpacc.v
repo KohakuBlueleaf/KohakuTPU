@@ -310,7 +310,10 @@ module mx_fpacc_align #(
     wire [6:0]  e_big   = a_ge ? ea : eb;
     wire        s_big   = a_ge ? sa : sb;
     wire        s_small = a_ge ? sb : sa;
-    wire [7:0]  diff    = a_ge ? (ea - eb) : (eb - ea);
+    // Exponents only for the SHIFT, and identical: at ea == eb the difference
+    // is zero either way. OOC on mx_acu_fp_pump: -171 LUT, +0.075 ns.
+    wire        e_ge    = (ea >= eb);
+    wire [7:0]  diff    = e_ge ? (ea - eb) : (eb - ea);
 
     wire [SW-1:0] bg  = a_ge ? {1'b1, ma, {GUARD{1'b0}}} : {1'b1, mb, {GUARD{1'b0}}};
     wire [SW-1:0] sml = a_ge ? {1'b1, mb, {GUARD{1'b0}}} : {1'b1, ma, {GUARD{1'b0}}};
