@@ -144,6 +144,9 @@ BLOCKS = [bench(b) for b in all_benches()] + [
     bench_var("mover_l2", "-d", "MV_L2"),
     # Four meshes with a store in each: forwarding and staging together.
     bench_var("mover_l2_chain", "-d", "MV_L2"),
+    # MAG behind noc_local_cdc. The default build takes the direct branch, and
+    # an unelaborated generate branch is not checked at all.
+    bench_var("interlink_2mesh_1m", "-d", "MM_MAG_CDC"),
 ]
 
 # Compiler-emitted instructions through the real RTL, the one tier that separates

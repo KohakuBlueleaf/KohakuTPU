@@ -39,8 +39,15 @@ module sb_line4_tb;
     reg [1:0] exp_b = 2'b00;
 
     reg bus_clk = 0, clk_ctrl = 0, clk_xdma = 0;
-    reg clk_s0 = 0, clk_s1 = 0, clk_s2 = 0, clk_s3 = 0, clk_ddr = 0;
-    always #1.667 clk_ddr = ~clk_ddr;       // 299.9 MHz
+    reg clk_s0 = 0, clk_s1 = 0, clk_s2 = 0, clk_s3 = 0;
+    // FOUR, deliberately unequal: each SLR's MIG has its own ui_clk, so one
+    // shared clock here would leave three of the four crossings untested.
+    reg clk_ddr0 = 0, clk_ddr1 = 0, clk_ddr2 = 0, clk_ddr3 = 0;
+    always #1.667 clk_ddr0 = ~clk_ddr0;     // 299.9 MHz
+    always #1.712 clk_ddr1 = ~clk_ddr1;     // 292.1 MHz
+    always #1.623 clk_ddr2 = ~clk_ddr2;     // 308.1 MHz
+    always #1.749 clk_ddr3 = ~clk_ddr3;     // 285.9 MHz
+    wire [3:0] tb_dclk = {clk_ddr3, clk_ddr2, clk_ddr1, clk_ddr0};
     always #1.250 bus_clk  = ~bus_clk;      // 400.0 MHz
     always #5.000 clk_ctrl = ~clk_ctrl;     // 100.0 MHz
     always #2.000 clk_xdma = ~clk_xdma;     // 250.0 MHz
@@ -191,7 +198,10 @@ module sb_line4_tb;
         .clk_s1(clk_s1), .aresetn_s1(rstn),
         .clk_s2(clk_s2), .aresetn_s2(rstn),
         .clk_s3(clk_s3), .aresetn_s3(rstn),
-        .clk_ddr(clk_ddr), .aresetn_ddr(rstn),
+        .clk_ddr0(clk_ddr0), .aresetn_ddr0(rstn),
+        .clk_ddr1(clk_ddr1), .aresetn_ddr1(rstn),
+        .clk_ddr2(clk_ddr2), .aresetn_ddr2(rstn),
+        .clk_ddr3(clk_ddr3), .aresetn_ddr3(rstn),
         .mp_awid(mp_awid), .mp_awaddr(mp_awaddr), .mp_awlen(mp_awlen),
         .mp_awsize(mp_awsize), .mp_awburst({NM{2'b01}}),
         .mp_awvalid(mp_awvalid), .mp_awready(awrdy),
@@ -227,7 +237,7 @@ module sb_line4_tb;
         localparam integer QS = q / NQ;
         localparam integer QP = q % NQ;
         assign sclk[q] = (QP < 2)  ? tb_mclk[QS]
-                       : (QP == 2) ? clk_ddr : clk_ctrl;
+                       : (QP == 2) ? tb_dclk[QS] : clk_ctrl;
     end
     endgenerate
 

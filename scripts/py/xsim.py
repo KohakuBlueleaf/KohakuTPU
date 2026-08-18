@@ -47,11 +47,16 @@ NOC = [
     # mm_mesh instantiates the addon slot unconditionally; at L2_CU=0 it
     # generates the straight wire, but it still has to elaborate.
     "src/kohakunoc/noc_l2_adapter.v",
+    # Every generated mesh now crosses MAG into the NoC with a pair of these,
+    # and noc_local_cdc is only the wrapper -- async_fifo is what it holds.
+    "src/kohakunoc/noc_local_cdc.v",
+    "src/common/async_fifo.v",
 ]
 
 # The mover and its PRNG. mx_tdesc is the descriptor walker they borrow rather
 # than reimplement, and MAG now instantiates all three.
 MOVER = [
+    "src/kohakuaxi/station/sb_skid.v",
     "src/kohakutpu/matmul/mx_tdesc.v",
     "src/kohakumas/mm_prng.v",
     "src/kohakumas/mm_mover.v",
@@ -85,6 +90,7 @@ MESH_1M = (
         "src/kohakutpu/vector/vec_cu.v",
         "src/kohakumas/mx_quant.v",
         "src/kohakumas/axi_ram.v",
+        "src/kohakuaxi/station/sb_skid.v",
         "src/kohakumas/mag_mem_port.v",
         "src/kohakumas/il_pkt_arb.v",
         "src/kohakumas/mag_link.v",
@@ -116,6 +122,7 @@ MESH_CDC = (
         "src/kohakutpu/vector/vec_cu.v",
         "src/kohakumas/mx_quant.v",
         "src/kohakumas/axi_ram.v",
+        "src/kohakuaxi/station/sb_skid.v",
         "src/kohakumas/mag_mem_port.v",
         "src/kohakumas/mag.v",
         "src/common/async_fifo.v",
@@ -159,6 +166,125 @@ BENCHES = {
             "src/common/async_fifo.v",
             "src/kohakuaxi/axi_n1.v",
             "tests/axi/axi_n1_tb.v",
+        ],
+    ),
+    # The station bus at root_smc's shape -- 3 managers, 9 subordinates, four
+    # non-harmonic clocks, widths 32/512. The SmartConnect replacement candidate.
+    "sb_root9": (
+        "sb_root9_tb",
+        [
+            "src/common/sync_fifo.v",
+            "src/common/async_fifo.v",
+            "src/kohakuaxi/station/sb_skid.v",
+            "src/kohakuaxi/station/sb_hub.v",
+            "src/kohakuaxi/station/sb_station.v",
+            "src/kohakuaxi/station/sb_nmu.v",
+            "src/kohakuaxi/station/sb_nsu.v",
+            "src/kohakuaxi/station/sb_root9.v",
+            "src/kohakuaxi/axi4_ram.v",
+            "tests/axi/sb_axi_check.v",
+            "tests/axi/sb_root9_tb.v",
+        ],
+    ),
+    # Two stations over a link. Everything a single station cannot reach: the
+    # far hub routing on dport, SRC_PASS, and credit flow control.
+    "sb_chain2": (
+        "sb_chain2_tb",
+        [
+            "src/common/sync_fifo.v",
+            "src/common/async_fifo.v",
+            "src/kohakuaxi/station/sb_skid.v",
+            "src/kohakuaxi/station/sb_hub.v",
+            "src/kohakuaxi/station/sb_station.v",
+            "src/kohakuaxi/station/sb_nmu.v",
+            "src/kohakuaxi/station/sb_nsu.v",
+            "src/kohakuaxi/station/sb_link.v",
+            "src/kohakuaxi/station/sb_chain2.v",
+            "src/kohakuaxi/axi4_ram.v",
+            "tests/axi/sb_chain2_tb.v",
+        ],
+    ),
+    # Four stations on a LINE, managers on station 1. Station 3 is two hops, so
+    # this is the only bench that exercises forwarding THROUGH a station.
+    "sb_line4": (
+        "sb_line4_tb",
+        [
+            "src/common/sync_fifo.v",
+            "src/common/async_fifo.v",
+            "src/kohakuaxi/station/sb_skid.v",
+            "src/kohakuaxi/station/sb_hub.v",
+            "src/kohakuaxi/station/sb_nmu.v",
+            "src/kohakuaxi/station/sb_nsu.v",
+            "src/kohakuaxi/station/sb_link.v",
+            "src/kohakuaxi/station/sb_link_cdc.v",
+            "src/kohakuaxi/station/sb_stn_line.v",
+            "src/kohakuaxi/station/sb_line4.v",
+            "src/kohakuaxi/axi4_ram.v",
+            "tests/axi/sb_axi_check.v",
+            "tests/axi/sb_line4_tb.v",
+        ],
+    ),
+    # THE ONLY BENCH where the station bus meets a real mesh. Every other bus
+    # bench drives block RAM, so nothing proved the two protocols agree.
+    "sb_mesh_e2e": (
+        "sb_mesh_e2e_tb",
+        COMMON
+        + NOC
+        + MATMUL
+        + MOVER
+        + VECTOR
+        + [
+            "src/kohakutpu/matmul/mx_cluster_cu.v",
+            "src/kohakutpu/vector/vec_cvt.v",
+            "src/kohakutpu/vector/vec_regfile.v",
+            "src/kohakutpu/vector/vec_lanes.v",
+            "src/kohakutpu/vector/vec_agu.v",
+            "src/kohakutpu/vector/vec_core.v",
+            "src/kohakutpu/vector/vec_cu.v",
+            "src/kohakumas/mx_quant.v",
+            "src/kohakumas/axi_ram.v",
+            "src/kohakumas/mag_mem_port.v",
+            "src/kohakumas/il_pkt_arb.v",
+            "src/kohakumas/mag_link.v",
+            "src/kohakumas/mag_link_pipe.v",
+            "src/kohakumas/mag_switch.v",
+            "src/kohakumas/mag_ilink.v",
+            "src/kohakumas/mag.v",
+            "src/common/async_fifo.v",
+            "src/kohakumas/mag_stage_port.v",
+            "src/kohakumas/mag_dram_port.v",
+            "src/synth_top/mag_1m.v",
+            "src/synth_top/ktpu_min_1m.v",
+            "src/kohakuaxi/station/sb_skid.v",
+            "src/kohakuaxi/station/sb_hub.v",
+            "src/kohakuaxi/station/sb_nmu.v",
+            "src/kohakuaxi/station/sb_nsu.v",
+            "src/kohakuaxi/station/sb_link.v",
+            "src/kohakuaxi/station/sb_link_cdc.v",
+            "src/kohakuaxi/station/sb_stn_line.v",
+            "src/kohakuaxi/station/sb_line4.v",
+            "tests/axi/sb_mesh_e2e_tb.v",
+        ],
+    ),
+    # Four stations, one per SLR: the validation topology. Two links deep in
+    # neither direction -- every leaf hangs off the root, as the BD will wire it.
+    "sb_quad": (
+        "sb_quad_tb",
+        [
+            "src/common/sync_fifo.v",
+            "src/common/async_fifo.v",
+            "src/kohakuaxi/station/sb_skid.v",
+            "src/kohakuaxi/station/sb_hub.v",
+            "src/kohakuaxi/station/sb_station.v",
+            "src/kohakuaxi/station/sb_nmu.v",
+            "src/kohakuaxi/station/sb_nsu.v",
+            "src/kohakuaxi/station/sb_link.v",
+            "src/kohakuaxi/station/sb_stn_root.v",
+            "src/kohakuaxi/station/sb_stn_leaf.v",
+            "src/kohakuaxi/station/sb_quad.v",
+            "src/kohakuaxi/axi4_ram.v",
+            "tests/axi/sb_axi_check.v",
+            "tests/axi/sb_quad_tb.v",
         ],
     ),
     # The vector ALU. mx_fpacc.v is here for mx_lead1 alone -- the leading-one
@@ -330,6 +456,7 @@ BENCHES = {
             "src/kohakuaxi/main_orch.v",
             "src/kohakumas/mx_quant.v",
             "src/kohakumas/axi_ram.v",
+            "src/kohakuaxi/station/sb_skid.v",
             "src/kohakumas/mag_mem_port.v",
             "src/kohakumas/mag.v",
             "src/common/async_fifo.v",
@@ -357,6 +484,7 @@ BENCHES = {
             "src/kohakutpu/vector/vec_cu.v",
             "src/kohakumas/mx_quant.v",
             "src/kohakumas/axi_ram.v",
+            "src/kohakuaxi/station/sb_skid.v",
             "src/kohakumas/mag_mem_port.v",
             "src/kohakumas/mag.v",
             "src/common/async_fifo.v",
@@ -372,6 +500,11 @@ BENCHES = {
     "mm_mesh_cdc_slow": ("mm_mesh_cdc_slow_tb", MESH_CDC),
     # Async unit clocks AND the converged L2 together.
     "mm_mesh_cdc_l2": ("mm_mesh_cdc_l2_tb", MESH_CDC),
+    "mm_mesh_vfast": ("mm_mesh_vfast_tb", MESH_CDC),
+    # MAG behind its own endpoint CDC, and all four component rates at once.
+    "mm_mesh_magclk": ("mm_mesh_magclk_tb", MESH_CDC),
+    "mm_mesh_5clk": ("mm_mesh_5clk_tb", MESH_CDC),
+    "mm_mesh_5clk_l2": ("mm_mesh_5clk_l2_tb", MESH_CDC),
     # The adapter in mm_mesh's cluster link, found by dispatched instructions:
     # CU_CTRL programs it, a real DRAIN is intercepted, DRAM stays clean.
     "mm_mesh_l2": (
@@ -391,6 +524,7 @@ BENCHES = {
             "src/kohakutpu/vector/vec_cu.v",
             "src/kohakumas/mx_quant.v",
             "src/kohakumas/axi_ram.v",
+            "src/kohakuaxi/station/sb_skid.v",
             "src/kohakumas/mag_mem_port.v",
             "src/kohakumas/mag.v",
             "src/common/async_fifo.v",
@@ -419,6 +553,7 @@ BENCHES = {
             "src/kohakutpu/vector/vec_cu.v",
             "src/kohakumas/mx_quant.v",
             "src/kohakumas/axi_ram.v",
+            "src/kohakuaxi/station/sb_skid.v",
             "src/kohakumas/mag_mem_port.v",
             "src/kohakumas/mag.v",
             "src/common/async_fifo.v",
@@ -447,6 +582,7 @@ BENCHES = {
             "src/kohakutpu/vector/vec_cu.v",
             "src/kohakumas/mx_quant.v",
             "src/kohakumas/axi_ram.v",
+            "src/kohakuaxi/station/sb_skid.v",
             "src/kohakumas/mag_mem_port.v",
             "src/kohakumas/mag.v",
             "src/common/async_fifo.v",
@@ -485,6 +621,7 @@ BENCHES = {
             "src/kohakutpu/vector/vec_cu.v",
             "src/kohakumas/mx_quant.v",
             "src/kohakumas/axi_ram.v",
+            "src/kohakuaxi/station/sb_skid.v",
             "src/kohakumas/mag_mem_port.v",
             "src/kohakumas/mag.v",
             "src/common/async_fifo.v",
@@ -533,6 +670,7 @@ BENCHES = {
         + [
             "src/kohakunoc/noc_orchestrator.v",
             "src/kohakumas/mx_quant.v",
+            "src/kohakuaxi/station/sb_skid.v",
             "src/kohakumas/mag_mem_port.v",
             "src/kohakumas/il_pkt_arb.v",
             "src/kohakumas/mag_link.v",
@@ -570,6 +708,7 @@ BENCHES = {
             "src/kohakutpu/vector/vec_cu.v",
             "src/kohakumas/mx_quant.v",
             "src/kohakumas/axi_ram.v",
+            "src/kohakuaxi/station/sb_skid.v",
             "src/kohakumas/mag_mem_port.v",
             "src/kohakumas/il_pkt_arb.v",
             "src/kohakumas/mag_link.v",
@@ -598,6 +737,7 @@ BENCHES = {
             "src/kohakunoc/noc_orchestrator.v",
             "src/kohakumas/mx_quant.v",
             "src/kohakumas/axi_ram.v",
+            "src/kohakuaxi/station/sb_skid.v",
             "src/kohakumas/mag_mem_port.v",
             "src/kohakumas/il_pkt_arb.v",
             "src/kohakumas/mag_link.v",
@@ -724,6 +864,7 @@ BENCHES = {
         + [
             "src/kohakumas/mx_quant.v",
             "src/kohakumas/axi_ram.v",
+            "src/kohakuaxi/station/sb_skid.v",
             "src/kohakumas/mag_mem_port.v",
             "src/kohakumas/mag.v",
             "src/common/async_fifo.v",
