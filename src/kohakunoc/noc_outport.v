@@ -30,22 +30,14 @@ module OutPortSwitch #(
     input wire busy
 );
     reg  [2:0] port_rr;
-    wire [2:0] pr1, pr2, pr3, pr4, pr5;
-    assign pr1 = port_rr;
-    assign pr2 = (port_rr+1)%5;
-    assign pr3 = (port_rr+2)%5;
-    assign pr4 = (port_rr+3)%5;
-    assign pr5 = (port_rr+4)%5;
 
-    reg [4:0] sel;
-    always @(*) begin
-        sel = 5'b0;
-        if      (in_reqs[pr1]) sel[pr1] = 1'b1;
-        else if (in_reqs[pr2]) sel[pr2] = 1'b1;
-        else if (in_reqs[pr3]) sel[pr3] = 1'b1;
-        else if (in_reqs[pr4]) sel[pr4] = 1'b1;
-        else if (in_reqs[pr5]) sel[pr5] = 1'b1;
-    end
+    // Rotate so `port_rr` is bit 0, take the lowest set bit, rotate back. The
+    // else-if chain this replaces was five variable-index muxes in series, each
+    // writing through a decoder, and it sat under `grants`: 888 paths at 11-14.
+    wire [2:0] rr_n  = 3'd5 - port_rr;
+    wire [4:0] rot   = (in_reqs >> port_rr) | (in_reqs << rr_n);
+    wire [4:0] low   = rot & (~rot + 5'd1);
+    wire [4:0] sel   = (low << port_rr) | (low >> rr_n);
 
     // The register can take a new flit unless it is holding one the receiver has
     // not taken. One flit per cycle is sustained while the link is free, because
@@ -62,7 +54,7 @@ module OutPortSwitch #(
             port_rr   <= 3'd0;
             out_valid <= 1'b0;
         end else begin
-            port_rr <= pr2;
+            port_rr <= (port_rr == 3'd4) ? 3'd0 : port_rr + 3'd1;
             if (room) begin
                 case (sel)
                     5'b00001: port_out <= in_heads[0];
