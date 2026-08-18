@@ -60,7 +60,7 @@ module noc_cu_null #(
         .FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH),
         .POS_X(POS_X), .POS_Y(POS_Y),
         // Mesh-wide build number -- see vec_cu.v.
-        .CU_TYPE(CU_TYPE), .CU_VERSION(8'h03), .N_BUFFERS(1),
+        .CU_TYPE(CU_TYPE), .CU_VERSION(8'h04), .N_BUFFERS(1),
         .INST_DEPTH(INST_DEPTH), .MEM_TYPE(MEM_TYPE)
     ) base (
         .clk(clk), .resetn(resetn),

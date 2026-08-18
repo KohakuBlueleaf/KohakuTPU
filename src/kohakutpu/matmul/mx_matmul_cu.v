@@ -84,7 +84,7 @@ module mx_matmul_cu #(
         .FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH),
         .POS_X(POS_X), .POS_Y(POS_Y),
         // Mesh-wide build number -- see vec_cu.v.
-        .CU_TYPE(16'h4D58), .CU_VERSION(8'h03), .N_BUFFERS(2),
+        .CU_TYPE(16'h4D58), .CU_VERSION(8'h04), .N_BUFFERS(2),
         .INST_DEPTH(INST_DEPTH)
     ) base (
         .clk(clk), .resetn(resetn),

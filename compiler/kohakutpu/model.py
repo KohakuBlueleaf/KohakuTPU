@@ -133,7 +133,7 @@ class ClusterUnit(UnitModel):
     """
 
     def __init__(
-        self, version: int = 3, mem_base: int = MEM_BASE, banking: bool = True
+        self, version: int = 4, mem_base: int = MEM_BASE, banking: bool = True
     ) -> None:
         self.caps = encode_caps(MATMUL_CODE, version=version, buffers=BANKS)
         self.mem_base = mem_base
@@ -435,7 +435,7 @@ class VectorUnit(UnitModel):
     fp16 maximum.
     """
 
-    def __init__(self, version: int = 1, mem_base: int = MEM_BASE) -> None:
+    def __init__(self, version: int = 4, mem_base: int = MEM_BASE) -> None:
         self.caps = encode_caps(VECTOR_CODE, version=version, buffers=1)
         self.mem_base = mem_base
         self.imem = np.zeros(IMEM_DEPTH, np.int64)

@@ -128,15 +128,13 @@ module vec_cu #(
     noc_cu_base #(
         .FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH),
         .POS_X(POS_X), .POS_Y(POS_Y),
-        // CU_VERSION IS A MESH-WIDE BUILD NUMBER, not this endpoint's revision:
-        // the question a driver asks is "is this bitstream the one my compiler
-        // targets". Bump it in EVERY endpoint whenever any ISA or datapath
-        // changes. 0x01 shipped 2026-08; 0x02 is the vector datapath rebuild
-        // (register file to BRAM, VRED kind 5) plus the merged cluster; 0x03 is
-        // CU_DATA -- peer writes into L1, and VDRAIN's to_node sink. Against an
-        // 0x02 bitstream a to_node drain would go to MEMORY in silence, which
-        // is the case this field exists to catch.
-        .CU_TYPE(16'h5643), .CU_VERSION(8'h03), .N_BUFFERS(2),
+        // CU_VERSION IS A MESH-WIDE BUILD NUMBER -- "is this bitstream what my
+        // compiler targets". Bump EVERY endpoint on any ISA/datapath change.
+        // 0x01 shipped 2026-08; 0x02 vector-datapath rebuild + merged cluster;
+        // 0x03 CU_DATA peer writes and VDRAIN to_node (on 0x02 that drain hits
+        // MEMORY in silence); 0x04 L2 staging adapters via CU_CTRL, and the
+        // mover's 40-bit descriptors.
+        .CU_TYPE(16'h5643), .CU_VERSION(8'h04), .N_BUFFERS(2),
         .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH), .RECV_MEM(RECV_MEM),
         .MEM_TYPE(MEM_TYPE)
     ) u_base (

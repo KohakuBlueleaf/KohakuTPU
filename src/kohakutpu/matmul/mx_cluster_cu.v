@@ -235,7 +235,7 @@ module mx_cluster_cu #(
         .POS_X(CU_X), .POS_Y(CU_Y),
         // Mesh-wide build number -- see vec_cu.v. 0x03 is the CU_DATA
         // interconnect: unit-to-unit transfer on both halves of the mesh.
-        .CU_TYPE(16'h4D47), .CU_VERSION(8'h03), .N_BUFFERS(2),
+        .CU_TYPE(16'h4D47), .CU_VERSION(8'h04), .N_BUFFERS(2),
         .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
         .RECV_MEM(RECV_MEM), .MEM_TYPE(MEM_TYPE)
     ) u_base (
