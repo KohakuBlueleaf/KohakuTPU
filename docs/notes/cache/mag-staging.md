@@ -67,6 +67,13 @@ URAM sits in columns spread across the die. A centralised block cannot reach all
 ~290 free URAMs in an SLR at frequency, and the most crowded SLR is at **95.80%
 CLB** (MEASURED), so there is no room to route around it.
 
+**SUPERSEDED — the table below is arithmetic on the retracted 936-bit line and
+every figure in it is void.** The status note above records that the built line
+is 1,024 bits. The shipping configuration is set in `scripts/tcl/v6/00_config.tcl`:
+**4 banks × 16,384 entries = 64 URAM per agent.** Nothing here has been recomputed
+against 1,024, because that would be inventing a number rather than measuring one;
+take the budget from the config and the capacity from the RTL.
+
 At 13 URAMs per 936-bit bank:
 
 | URAMs | banks | capacity |

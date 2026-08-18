@@ -107,7 +107,7 @@ Derived from `sb_line4.v:121` at `STNW=2 PORTW=2 SRCW=2 TAGW=4 AW=43`; each
 stream costs `W+2`. Earlier revisions of this table used `AW=40`.
 
 The validation build's placement measures the deployed row directly: **639, 634
-and 646** SLLs on the three boundaries against 629 derived — 2.75–2.80% of
+and 644** SLLs on the three boundaries against 629 derived — 2.75–2.80% of
 budget, and the derivation is good to about 2%.
 
 | | per boundary | % |

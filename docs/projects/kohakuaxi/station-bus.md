@@ -1055,17 +1055,21 @@ map onto them one for one; phase 13 measures bandwidth and asserts nothing.
 Every run carries 3 master-side and 16 slave-side protocol monitors.
 
 **`SB_NQ4 SB_HALFLINK SB_LINKCDC` — exactly what the block design builds —
-passes 606 checks**, including maximum legal bursts, all three masters hammering
+passes 604 checks**, including maximum legal bursts, all three masters hammering
 one station, same-ID ordering across unequal hop counts, and randomised traffic
 under random slave backpressure.
 
+Re-measured 2026-08-18, every row run in one sitting. An earlier revision of this
+table had the deployed and mixed rows the wrong way round — it credited the
+deployed config with 606 and the mixed ones with 604, which is the reverse.
+
 | config | checks |
 |---|---|
-| **deployed config, full stress** | **606** |
+| **deployed config, full stress** | **604** |
 | `SB_FW256`, 512-bit master over a 256-bit fabric | **606** |
-| `SB_MIXPRESET`, four unlike stations on one line | 604 |
-| `SB_MIXPRESET SB_TIMEOUT` at `FW=512` | 604 |
-| `SB_FW256 SB_CRED1`, one credit per link | 604 |
+| `SB_MIXPRESET`, four unlike stations on one line | 606 |
+| `SB_MIXPRESET SB_TIMEOUT` at `FW=512` | 606 |
+| `SB_FW256 SB_CRED1`, one credit per link | 606 |
 | deployed config, before stress phases were added | 139 |
 | `SB_NQ4` / `+FW256` / `+HALFLINK` | 139 each |
 | 2 endpoints per station: default, `LINKCDC`, `FW256`, `CRED1`, `AW32` | 141 each |

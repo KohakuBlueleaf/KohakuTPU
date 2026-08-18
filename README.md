@@ -31,9 +31,11 @@ def linear_silu(
         y[i, j] <<= acc * L.recip(L.exp2(acc * -LOG2E) + 1.0)
 ```
 
-That last line is a matmul handing its result straight to a vector core over the
-mesh — the activation never becomes a buffer in DRAM. Write the kernel, call it
-like a function, and the compiler places it:
+That last line expresses the epilogue as part of the matmul. The fused path is
+built and simulated but **not yet proven on silicon**, and today's scheduler
+still stages the activation through DRAM between the two units — see
+[`fused-epilogue.md`](docs/projects/kohakutpu/fused-epilogue.md). Write the
+kernel, call it like a function, and the compiler places it:
 
 ```python
 from kohakutpu import api as ktpu
@@ -56,7 +58,8 @@ but no hardware run yet:
   the NoC endpoint, reached by instruction. Either is optional, and they are
   selected independently by `gen_mesh.py`. The agent's banks are split rather
   than one array, which measured 337 → 357 → 381 MHz as banking and pipelining
-  were added.
+  were added — out-of-context synthesis at equal URAM, conditions in
+  [`results.md`](docs/projects/kohakutpu/results.md).
 - **Per-mesh, per-component clock control** — one generator per mesh, with the
   matrix core, vector core and fabric on separate outputs.
 - **Double-pumped matrix core** — the DSPs take a 2x clock and a `BUFGCE_DIV`
