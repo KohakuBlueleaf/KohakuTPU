@@ -51,6 +51,11 @@ FIELDS = [
 
 ID_FIELDS = {"awid", "bid", "arid", "rid"}
 
+#: Signals AXI4-Lite lacks. XDMA's M_AXI_LITE cannot connect to a full-AXI4
+#: port (BD 41-1285), and sb_line4 drives these single-beat via MAX_BURST=1.
+LITE_DROP = {"awid", "awlen", "awsize", "awburst", "wlast",
+             "bid", "arid", "arlen", "arsize", "arburst", "rid", "rlast"}
+
 AW = 40
 MAXW = 512
 MAXID = 4
@@ -79,10 +84,12 @@ def ev(expr, dw):
                     .replace("/", "//"))
 
 
-def axi_decls(prefix, dw, mirror):
+def axi_decls(prefix, dw, mirror, lite=False):
     """Port declarations for one AXI interface named `prefix`, DW bits wide."""
     out = []
     for sig, w, d in FIELDS:
+        if lite and sig in LITE_DROP:
+            continue
         kind = d if not mirror else ("o" if d == "i" else "i")
         word = "output wire" if kind == "o" else "input  wire"
         width = str(MAXID) if sig in ID_FIELDS else w
@@ -94,12 +101,18 @@ def axi_decls(prefix, dw, mirror):
     return "\n".join(out)
 
 
-def axi_glue(i, prefix, dw, bus, mirror):
+def axi_glue(i, prefix, dw, bus, mirror, lite=False):
     """Wire named interface `prefix` into packed bus `bus` at index `i`.
 
     `mirror` is True for a manager-side (M_AXI) port, where the packed bus
-    carries what the named port drives out.
+    carries what the named port drives out. `lite` ties off the AXI4 signals
+    the named port does not have, with the constants AXI4-Lite implies.
     """
+    #: Constants AXI4-Lite implies. BOTH directions: a MASTER port mirrors, so
+    #: rlast/bid/rid become things the wrapper drives into the packed bus.
+    tie = {"awlen": "8'd0", "arlen": "8'd0",
+           "awburst": "2'b01", "arburst": "2'b01",
+           "wlast": "1'b1", "rlast": "1'b1"}
     out = []
     for sig, w, d in FIELDS:
         width = str(MAXID) if sig in ID_FIELDS else w
@@ -107,8 +120,18 @@ def axi_glue(i, prefix, dw, bus, mirror):
             sl = f"[{i}]"
         else:
             sl = f"[{i}*{ev(width, MAXW)} +: {ev(width, dw)}]"
-        # `d` is the slave-side direction; a manager port mirrors it.
         drives_in = (d == "i") if not mirror else (d == "o")
+        if lite and sig in LITE_DROP:
+            if drives_in:
+                if sig in ("awsize", "arsize"):
+                    v = f"3'd{(dw // 8).bit_length() - 1}"
+                elif sig in ID_FIELDS:
+                    v = f"{ev(str(MAXID), dw)}'d0"
+                else:
+                    v = tie[sig]
+                out.append(f"    assign {bus}_{sig}{sl} = {v};")
+            # A signal the named port lacks in the other direction is dropped.
+            continue
         if drives_in:
             out.append(f"    assign {bus}_{sig}{sl} = {prefix}_{sig};")
         else:
@@ -578,7 +601,7 @@ endmodule
 """
 
 
-def emit_line4(name, mgr_w, nq, fw):
+def emit_line4(name, mgr_w, nq, fw, mgr_lite=(), loc_lite=()):
     """Wrap sb_line4 so a block design can infer its interfaces.
 
     `mgr_w` is the manager widths (station 1 holds them all); `nq` endpoints per
@@ -587,15 +610,19 @@ def emit_line4(name, mgr_w, nq, fw):
     """
     nm, ns = len(mgr_w), 4 * nq
     portw = max(1, (nq - 1).bit_length()) if nq > 1 else 1
+    # sb_line4 packs station and port indices at one width; STNW is 2 there.
+    dstw = max(2, portw)
     s_names = [f"S{i:02d}_AXI" for i in range(nm)]
     m_names = [f"M{k:02d}_AXI" for k in range(ns)]
     loc_w = [fw if (k % nq) == 0 else 32 for k in range(ns)]
 
-    s_decls = "\n\n".join(axi_decls(p, w, False) for p, w in zip(s_names, mgr_w))
-    m_decls = "\n\n".join(axi_decls(p, w, True) for p, w in zip(m_names, loc_w))
-    s_glue = "\n\n".join(axi_glue(i, p, w, "mp", False)
+    s_decls = "\n\n".join(axi_decls(p, w, False, i in mgr_lite)
+                          for i, (p, w) in enumerate(zip(s_names, mgr_w)))
+    m_decls = "\n\n".join(axi_decls(p, w, True, (k % nq) in loc_lite)
+                          for k, (p, w) in enumerate(zip(m_names, loc_w)))
+    s_glue = "\n\n".join(axi_glue(i, p, w, "mp", False, i in mgr_lite)
                          for i, (p, w) in enumerate(zip(s_names, mgr_w)))
-    m_glue = "\n\n".join(axi_glue(k, p, w, "sp", True)
+    m_glue = "\n\n".join(axi_glue(k, p, w, "sp", True, (k % nq) in loc_lite)
                          for k, (p, w) in enumerate(zip(m_names, loc_w)))
 
     # Each station's endpoints belong to its own local clock; port 2 is DDR and
@@ -623,8 +650,19 @@ def emit_line4(name, mgr_w, nq, fw):
         f"    input  wire aresetn_s{s},"
         for s in range(4))
 
-    ddr_busif = mbusif(lambda k: k % nq == 2)
     ctl_busif = mbusif(lambda k: k % nq >= 3)
+    # Port 2 per station, not one shared clk_ddr: each SLR's DDR4 controller
+    # runs on its own ui_clk, and one clock here forces a crossing IP.
+    ddr_clks = "\n".join(
+        f'    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 clk_ddr{s} CLK" *)\n'
+        f'    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF'
+        f' {mbusif(lambda k, s=s: k // nq == s and k % nq == 2)},'
+        f' ASSOCIATED_RESET aresetn_ddr{s}" *)\n'
+        f"    input  wire clk_ddr{s},\n"
+        f'    (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 aresetn_ddr{s} RST" *)\n'
+        f'    (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)\n'
+        f"    input  wire aresetn_ddr{s},"
+        for s in range(4))
 
     return f"""// {name} -- GENERATED by scripts/py/gen_station_wrap.py. Do not edit by hand.
 //
@@ -652,7 +690,19 @@ module {name} #(
     parameter integer LPB0 = LUT_PER_BRAM, LPB1 = LUT_PER_BRAM,
     parameter integer LPB2 = LUT_PER_BRAM, LPB3 = LUT_PER_BRAM,
     parameter integer TMO0 = TIMEOUT, TMO1 = TIMEOUT,
-    parameter integer TMO2 = TIMEOUT, TMO3 = TIMEOUT
+    parameter integer TMO2 = TIMEOUT, TMO3 = TIMEOUT,
+    // Address map, handed to sb_line4. At 0 its uniform 64 KB map applies,
+    // which cannot express the mesh's 1 TB S_AXI_MEM window.
+    parameter integer DSTW_P       = {dstw},
+    // SIZED literal: `0` types these as a long that cannot hold {ns * AW} bits
+    // (19-3452), and `{{N{{1'b0}}}}` reads its default back quoted (19-594).
+    parameter integer SEG_OVERRIDE = 0,
+    parameter [{ns}*{AW}-1:0]   SEG_BASE_P  = {ns * AW}'h0,
+    parameter [{ns}*{AW}-1:0]   SEG_MASK_P  = {ns * AW}'h0,
+    parameter [{ns}*{AW}-1:0]   SEG_XLT_P   = {ns * AW}'h0,
+    parameter [{ns}*{dstw}-1:0] SEG_DST_P   = {ns * dstw}'h0,
+    parameter [{ns}*{dstw}-1:0] SEG_DPORT_P = {ns * dstw}'h0,
+    parameter [{ns}-1:0]        SEG_VLD_P   = {ns}'h{(1 << ns) - 1:X}
 )(
 {bus_clks}
 
@@ -672,12 +722,7 @@ module {name} #(
 
 {loc_clks}
 
-    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 clk_ddr CLK" *)
-    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF {ddr_busif}, ASSOCIATED_RESET aresetn_ddr" *)
-    input  wire clk_ddr,
-    (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 aresetn_ddr RST" *)
-    (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
-    input  wire aresetn_ddr,
+{ddr_clks}
 
 {s_decls}
 
@@ -725,7 +770,11 @@ module {name} #(
                .OST0(OST0), .OST1(OST1), .OST2(OST2), .OST3(OST3),
                .SFW0(SFW0), .SFW1(SFW1), .SFW2(SFW2), .SFW3(SFW3),
                .LPB0(LPB0), .LPB1(LPB1), .LPB2(LPB2), .LPB3(LPB3),
-               .TMO0(TMO0), .TMO1(TMO1), .TMO2(TMO2), .TMO3(TMO3)) u_line (
+               .TMO0(TMO0), .TMO1(TMO1), .TMO2(TMO2), .TMO3(TMO3),
+               .DSTW_P(DSTW_P), .SEG_OVERRIDE(SEG_OVERRIDE),
+               .SEG_BASE_P(SEG_BASE_P), .SEG_MASK_P(SEG_MASK_P),
+               .SEG_XLT_P(SEG_XLT_P), .SEG_DST_P(SEG_DST_P),
+               .SEG_DPORT_P(SEG_DPORT_P), .SEG_VLD_P(SEG_VLD_P)) u_line (
         .bus_clk0(bus_clk0), .bus_rst0(bus_rst0),
         .bus_clk1(bus_clk1), .bus_rst1(bus_rst1),
         .bus_clk2(bus_clk2), .bus_rst2(bus_rst2),
@@ -736,7 +785,10 @@ module {name} #(
         .clk_s1(clk_s1), .aresetn_s1(aresetn_s1),
         .clk_s2(clk_s2), .aresetn_s2(aresetn_s2),
         .clk_s3(clk_s3), .aresetn_s3(aresetn_s3),
-        .clk_ddr(clk_ddr), .aresetn_ddr(aresetn_ddr),
+        .clk_ddr0(clk_ddr0), .aresetn_ddr0(aresetn_ddr0),
+        .clk_ddr1(clk_ddr1), .aresetn_ddr1(aresetn_ddr1),
+        .clk_ddr2(clk_ddr2), .aresetn_ddr2(aresetn_ddr2),
+        .clk_ddr3(clk_ddr3), .aresetn_ddr3(aresetn_ddr3),
         .mp_awid(mp_awid), .mp_awaddr(mp_awaddr), .mp_awlen(mp_awlen),
         .mp_awsize(mp_awsize), .mp_awburst(mp_awburst),
         .mp_awvalid(mp_awvalid), .mp_awready(mp_awready),
@@ -819,6 +871,12 @@ def main():
     ap.add_argument("--nq", type=int, default=4)
     ap.add_argument("--fw", type=int, default=256)
     ap.add_argument("--mgr-w", default="32,512,32")
+    # Manager indices to declare AXI4-Lite. S02 carries XDMA's M_AXI_LITE,
+    # which will not connect to a full-AXI4 port (BD 41-1285).
+    ap.add_argument("--mgr-lite", default="")
+    # Port indices WITHIN a station to declare AXI4-Lite. Port 2 is the DDR4
+    # controller's C0_DDR4_S_AXI_CTRL, which is Lite.
+    ap.add_argument("--loc-lite", default="")
     ap.add_argument("--loc-w", default="512,32")
     ap.add_argument("--nk", type=int, default=3)
     ap.add_argument("--aw", type=int, default=40)
@@ -837,9 +895,11 @@ def main():
         if w not in (32, FW):
             sys.exit(f"gen_station_wrap: width {w} is neither 32 nor {FW}")
 
+    mgr_lite = {int(x) for x in args.mgr_lite.split(",") if x.strip()}
+    loc_lite = {int(x) for x in args.loc_lite.split(",") if x.strip()}
     name = args.module or f"sb_bd_{args.kind}"
     if args.kind == "line4":
-        text = emit_line4(name, mgr_w, args.nq, args.fw)
+        text = emit_line4(name, mgr_w, args.nq, args.fw, mgr_lite, loc_lite)
     elif args.kind == "root":
         text = emit_root(name, mgr_w, loc_w, args.nk)
     elif args.kind == "leaf":
