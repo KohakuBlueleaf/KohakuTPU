@@ -8,12 +8,15 @@
 # nothing silently -- -of_objects wants nets or pins, not a parent.
 proc ooc_count {label {prefix {}}} {
     set out [format "%-18s" $label]
+    # `[` opens a CHARACTER CLASS in a Vivado glob, so a g_stn[1] prefix matched
+    # the single char `1` and every bracketed instance counted ZERO in silence.
+    set pfx [string map [list "\[" "\\\[" "\]" "\\\]"] $prefix]
     foreach {nm pats} {LUT {LUT?} FF {FD*} LUTRAM {RAMD* RAMS*} SRL {SRL*} \
                        BRAM {RAMB*} MUXF {MUXF*} CARRY {CARRY*}} {
         set n 0
         foreach p $pats {
             set f "REF_NAME =~ $p"
-            if {$prefix ne ""} { append f " && NAME =~ $prefix/*" }
+            if {$prefix ne ""} { append f " && NAME =~ $pfx/*" }
             incr n [llength [get_cells -quiet -hier -filter $f]]
         }
         append out [format "  %s %6d" $nm $n]

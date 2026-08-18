@@ -46,10 +46,15 @@ puts $fh "create_clock -name clk_s0   -period 4.219  \[get_ports clk_s0\]"
 puts $fh "create_clock -name clk_s1   -period 3.333  \[get_ports clk_s1\]"
 puts $fh "create_clock -name clk_s2   -period 5.545  \[get_ports clk_s2\]"
 puts $fh "create_clock -name clk_s3   -period 4.746  \[get_ports clk_s3\]"
-puts $fh "create_clock -name clk_ddr  -period 3.333  \[get_ports clk_ddr\]"
+# clk_ddr0..3, NOT clk_ddr: the scalar port went when port 2 became per-station,
+# so this matched nothing and left all four DDR domains untimed and ungrouped.
+foreach c {clk_ddr0 clk_ddr1 clk_ddr2 clk_ddr3} {
+    puts $fh "create_clock -name $c -period 3.333 \[get_ports $c\]"
+}
 set grp {}
 foreach c {bus_clk0 bus_clk1 bus_clk2 bus_clk3 clk_ctrl clk_xdma \
-           clk_s0 clk_s1 clk_s2 clk_s3 clk_ddr} {
+           clk_s0 clk_s1 clk_s2 clk_s3 \
+           clk_ddr0 clk_ddr1 clk_ddr2 clk_ddr3} {
     append grp " -group \[get_clocks $c\]"
 }
 puts $fh "set_clock_groups -asynchronous$grp"

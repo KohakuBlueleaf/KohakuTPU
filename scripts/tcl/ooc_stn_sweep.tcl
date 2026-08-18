@@ -41,9 +41,12 @@ read_xdc $xdc
 
 puts "@@@ stn sweep nm $nm nq $nq fw $fw lpb $lpb tag $tag"
 
+# LUT_PER_BRAM was parsed, defaulted and printed in the banner but never reached
+# synth_design, so every point of an lpb sweep was the SAME netlist relabelled.
 synth_design -top sb_stn_line -part $part -mode out_of_context \
              -generic NM=$nm -generic NQ=$nq -generic FW=$fw \
-             -generic PORTW=$portw -generic SRCW=$srcw -generic NSTN=4
+             -generic PORTW=$portw -generic SRCW=$srcw -generic NSTN=4 \
+             -generic LUT_PER_BRAM=$lpb
 
 source [file join $root scripts tcl ooc_class.tcl]
 puts "@@@ ============================ $tag"
