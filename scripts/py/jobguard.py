@@ -31,14 +31,17 @@ PROCESS_TERMINATE = 0x0001
 
 
 class _MEMORYSTATUSEX(ctypes.Structure):
-    _fields_ = [("dwLength", wt.DWORD), ("dwMemoryLoad", wt.DWORD),
-                ("ullTotalPhys", ctypes.c_ulonglong),
-                ("ullAvailPhys", ctypes.c_ulonglong),
-                ("ullTotalPageFile", ctypes.c_ulonglong),
-                ("ullAvailPageFile", ctypes.c_ulonglong),
-                ("ullTotalVirtual", ctypes.c_ulonglong),
-                ("ullAvailVirtual", ctypes.c_ulonglong),
-                ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+    _fields_ = [
+        ("dwLength", wt.DWORD),
+        ("dwMemoryLoad", wt.DWORD),
+        ("ullTotalPhys", ctypes.c_ulonglong),
+        ("ullAvailPhys", ctypes.c_ulonglong),
+        ("ullTotalPageFile", ctypes.c_ulonglong),
+        ("ullAvailPageFile", ctypes.c_ulonglong),
+        ("ullTotalVirtual", ctypes.c_ulonglong),
+        ("ullAvailVirtual", ctypes.c_ulonglong),
+        ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+    ]
 
 
 def avail_gb():
@@ -52,9 +55,12 @@ def avail_gb():
 
 
 class JobGuard:
-    def __init__(self, min_free_gb=24.0, poll_s=5.0):
+    # Each driver watches GLOBAL memory but kills only ITS OWN children, so one
+    # dip makes every driver panic: at 24 GB free it cost two probes mid-place.
+    def __init__(self, min_free_gb=6.0, poll_s=5.0, sustain=6):
         self.min_free_gb = min_free_gb
         self.poll_s = poll_s
+        self.sustain = sustain
         self.tripped = False
         self._job = None
         self._stop = threading.Event()
@@ -67,8 +73,8 @@ class JobGuard:
         ctypes.memset(info, 0, 144)
         struct.pack_into("<I", info, 16, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE)
         k32.SetInformationJobObject(
-            self._job, JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
-            ctypes.byref(info), 144)
+            self._job, JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, ctypes.byref(info), 144
+        )
         t = threading.Thread(target=self._watch, daemon=True)
         t.start()
 
@@ -81,21 +87,30 @@ class JobGuard:
         if not _IS_WIN or self._job is None:
             return
         k32 = ctypes.windll.kernel32
-        h = k32.OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, False,
-                            proc.pid)
+        h = k32.OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, False, proc.pid)
         if h:
             k32.AssignProcessToJobObject(self._job, h)
             k32.CloseHandle(h)
 
     def _watch(self):
+        low = 0
         while not self._stop.wait(self.poll_s):
-            if avail_gb() < self.min_free_gb:
-                self.tripped = True
-                sys.stderr.write(
-                    f"jobguard: {avail_gb():.1f} GiB free is under "
-                    f"{self.min_free_gb} -- killing the batch\n")
-                self.close()
-                return
+            if avail_gb() >= self.min_free_gb:
+                low = 0
+                continue
+            # Placement peaks are transient; only a breach that PERSISTS is an
+            # emergency worth throwing away hours of work for.
+            low += 1
+            if low < self.sustain:
+                continue
+            self.tripped = True
+            sys.stderr.write(
+                f"jobguard: {avail_gb():.1f} GiB free stayed under "
+                f"{self.min_free_gb} for {self.sustain * self.poll_s:.0f}s "
+                f"-- killing the batch\n"
+            )
+            self.close()
+            return
 
     def close(self):
         self._stop.set()
@@ -114,10 +129,15 @@ def resume(proc):
     TH32CS_SNAPTHREAD = 0x00000004
 
     class THREADENTRY32(ctypes.Structure):
-        _fields_ = [("dwSize", wt.DWORD), ("cntUsage", wt.DWORD),
-                    ("th32ThreadID", wt.DWORD), ("th32OwnerProcessID", wt.DWORD),
-                    ("tpBasePri", ctypes.c_long), ("tpDeltaPri", ctypes.c_long),
-                    ("dwFlags", wt.DWORD)]
+        _fields_ = [
+            ("dwSize", wt.DWORD),
+            ("cntUsage", wt.DWORD),
+            ("th32ThreadID", wt.DWORD),
+            ("th32OwnerProcessID", wt.DWORD),
+            ("tpBasePri", ctypes.c_long),
+            ("tpDeltaPri", ctypes.c_long),
+            ("dwFlags", wt.DWORD),
+        ]
 
     snap = k32.CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0)
     te = THREADENTRY32()
