@@ -578,8 +578,10 @@ module mag_ilink #(
             in_left <= 16'd0; wr_out <= 4'd0;
             in_slot <= 1'b0; in_odd <= 1'b0;
             lk_awvalid <= 1'b0; lk_wvalid <= 1'b0;
-            lk_awaddr <= {ADDR_W{1'b0}}; lk_wdata <= {DATA_W{1'b0}};
-            inj_valid <= 1'b0; inj_data <= {FLIT_WIDTH{1'b0}};
+            lk_awaddr <= {ADDR_W{1'b0}};
+            // lk_wdata and inj_data are payload; lk_wvalid and inj_valid above
+            // are the qualifiers, so resetting the data as well buys nothing.
+            inj_valid <= 1'b0;
             for (dj = 0; dj < 4; dj = dj + 1) begin
                 dbell_n[dj]  <= 32'd0;
                 dbell_tx[dj] <= 16'd0;
@@ -618,12 +620,14 @@ module mag_ilink #(
                 end
             end
 
+            // LOW 32 ONLY: this lands in local DRAM. mag_stage_port's `mine`
+            // needs a[39], so carrying [37:36] would write 4 GB out of range.
             IN_WR: if (in_act_wr) begin
-                lk_awaddr  <= {2'b00, in_addr[31:0]};
+                lk_awaddr  <= {{(ADDR_W-32){1'b0}}, in_addr[31:0]};
                 lk_awvalid <= 1'b1;
                 lk_wdata   <= in_slotd[DATA_W-1:0];
                 lk_wvalid  <= 1'b1;
-                in_addr    <= in_addr + (34'd1 << LSB);
+                in_addr    <= in_addr + (1 << LSB);
                 if (in_beat_done) begin
                     in_slot <= 1'b0;
                     if (in_last_beat) inst <= IN_HDR;
