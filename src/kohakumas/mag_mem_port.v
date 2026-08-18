@@ -64,6 +64,7 @@ module mag_mem_port #(
     output wire [1:0]          m_awburst,
     output reg                 m_awvalid,
     input  wire                m_awready,
+    (* EXTRACT_RESET = "no" *)
     output reg  [DATA_W-1:0]   m_wdata,
     output wire [DATA_W/8-1:0] m_wstrb,
     output reg                 m_wlast,
@@ -91,6 +92,7 @@ module mag_mem_port #(
     input  wire [FLIT_WIDTH-1:0] mem_in_data,
     input  wire                  mem_in_valid,
     output wire                  mem_in_busy,
+    (* EXTRACT_RESET = "no" *)
     output reg  [FLIT_WIDTH-1:0] mem_out_data,
     output reg                   mem_out_valid,
     input  wire                  mem_out_busy,
@@ -300,14 +302,14 @@ module mag_mem_port #(
     // A pre-quantised entry is four beats that ARE the four operand words.
     // They land here rather than in the emit buffer directly, because the
     // emitter may still be handing out the previous entry.
-    reg [255:0] p_w0, p_w1, p_w2, p_w3;
+    (* EXTRACT_RESET = "no" *) reg [255:0] p_w0, p_w1, p_w2, p_w3;
     reg [1:0]   p_cnt;
 
     // Emit buffer: the finished entry, latched so the NEXT entry's AXI read can
     // start immediately. Without it the quantiser's output IS the emit source,
     // so fetch and emit exclude each other and two independent interfaces run at
     // the sum of their times instead of the larger.
-    reg [255:0] e_w0, e_w1, e_w2, e_w3;
+    (* EXTRACT_RESET = "no" *) reg [255:0] e_w0, e_w1, e_w2, e_w3;
     reg [7:0]   e_tag;
     reg         e_act;
     reg [1:0]   e_dst;
@@ -339,17 +341,33 @@ module mag_mem_port #(
     wire [255:0] q_w0, q_w1, q_w2, q_w3;
     reg  [1:0]   q_emit;
 
+    // The R channel crossed uncut both ways: 85% of m62_c1's failing paths were
+    // 7-11 levels at 90% route. sb_skid's i_ready does not depend on o_ready.
+    wire [DATA_W-1:0] r_data;
+    wire              r_last, r_valid, r_ready;
+
+    sb_skid #(.W(DATA_W + 1)) u_rskid (
+        .clk(clk), .rst(!resetn),
+        .i_valid(m_rvalid), .i_ready(m_rready), .i_data({m_rlast, m_rdata}),
+        .o_valid(r_valid), .o_ready(r_ready), .o_data({r_last, r_data})
+    );
+
+    // The read FIFO's BRAM output reached this quantiser's DSP control through
+    // 9 LUT levels, 4.399 ns, and set the WNS on every SLR1 probe.
+    reg          q_beat_v;
+    reg  [255:0] q_beat;
+    always @(posedge clk) begin
+        q_beat <= r_data;
+        if (!resetn) q_beat_v <= 1'b0;
+        else q_beat_v <= r_ready && r_valid && (rs == RS_FILL) && rd_quant;
+    end
+
     mx_quant u_quant (
         .clk(clk), .rst(!resetn),
         .start(q_start),
         .b_layout(q_blay),
-        // Tied to the ACTUAL handshake, not just to r_valid. With the next
-        // entry's read issued early its data can be waiting on the R channel
-        // while `start` is still asserting, and mx_quant's start branch takes
-        // priority over its store -- so a beat accepted on that cycle would be
-        // consumed and dropped.
-        .beat(m_rdata),
-        .beat_valid(m_rready && m_rvalid && (rs == RS_FILL) && rd_quant),
+        .beat(q_beat),
+        .beat_valid(q_beat_v),
         .need_beat(), .done(q_done),
         .word0(q_w0), .word1(q_w1), .word2(q_w2), .word3(q_w3)
     );
@@ -535,7 +553,7 @@ module mag_mem_port #(
     // unconditionally overwrites a flit the NoC has not taken and the beat is
     // gone. RS_FILL is safe unconditionally: it buffers into the quantiser or
     // p_w0..3 and emits later, behind the emit buffer's own guard.
-    assign m_rready   = ((st == S_RD_DATA) && st_out) ||
+    assign r_ready    = ((st == S_RD_DATA) && st_out) ||
                         ((rs == RS_FILL) && !q_start);
 
     // ---- write intake, independent of the service FSM --------------------
@@ -602,8 +620,7 @@ module mag_mem_port #(
             m_awlen <= 8'd0; m_arlen <= 8'd0; m_wlast <= 1'b0;
             m_awaddr <= {ADDR_W{1'b0}}; m_araddr <= {ADDR_W{1'b0}};
             m_awid <= {ID_W{1'b0}}; m_arid <= {ID_W{1'b0}};
-            m_wdata <= {DATA_W{1'b0}};
-            mem_out_valid <= 1'b0; mem_out_data <= {FLIT_WIDTH{1'b0}};
+            mem_out_valid <= 1'b0;
             rq_x <= 0; rq_y <= 0; rq_txn <= 0;
             n_rd <= 16'd0; n_wr <= 16'd0;
             wr_b <= 1'b0;
@@ -618,8 +635,8 @@ module mag_mem_port #(
             rd_quant <= 1'b1; p_cnt <= 2'd0;
             rd_ebytes <= P_ENTRY_BYTES; rd_elast <= 2'd3;
             rd_anext  <= {ADDR_W{1'b0}};
-            p_w0 <= 256'd0; p_w1 <= 256'd0; p_w2 <= 256'd0; p_w3 <= 256'd0;
-            e_w0 <= 256'd0; e_w1 <= 256'd0; e_w2 <= 256'd0; e_w3 <= 256'd0;
+            // m_wdata, mem_out_data, p_w* and e_w* are payload: m_wvalid,
+            // mem_out_valid, e_act/q_rdy and `st` qualify them, all reset above.
         end else begin
             ws_done <= 1'b0;
             if (mem_out_valid && !mem_out_busy) mem_out_valid <= 1'b0;
@@ -667,13 +684,13 @@ module mag_mem_port #(
             end
 
             // ---------------- NoC read: AXI beats -> MEM_RD_RESP flits
-            S_RD_DATA: if (m_rvalid && m_rready) begin
+            S_RD_DATA: if (r_valid && r_ready) begin
                 mem_out_data <= { rq_x, rq_y,
                                   MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
-                                  T_MEM_RD_RESP, rq_txn, m_rlast, 3'b000,
-                                  m_rdata };
+                                  T_MEM_RD_RESP, rq_txn, r_last, 3'b000,
+                                  r_data };
                 mem_out_valid <= 1'b1;
-                if (m_rlast) st <= S_IDLE;
+                if (r_last) st <= S_IDLE;
             end
 
             // ---------------- NoC write: one reassembled slot -> AXI
@@ -785,7 +802,7 @@ module mag_mem_port #(
             end
             // Issue the NEXT entry's address the moment this one's last beat
             // lands, not after the quantiser has finished with it. The returning
-            // data cannot run ahead -- m_rready is low outside RS_FILL -- so
+            // data runs ahead only as far as the R skid's two entries, which
             // this overlaps only the AR-to-first-beat latency, which would
             // otherwise be paid once per entry.
             RS_FILL: begin
@@ -793,17 +810,17 @@ module mag_mem_port #(
                 // A pre-quantised beat IS an operand word. Captured here, not
                 // written to the emit buffer directly, so the fetch never has
                 // to wait for the previous entry to finish leaving.
-                if (!rd_quant && m_rvalid && m_rready) begin
+                if (!rd_quant && r_valid && r_ready) begin
                     case (p_cnt)
-                        2'd0:    p_w0 <= m_rdata;
-                        2'd1:    p_w1 <= m_rdata;
-                        2'd2:    p_w2 <= m_rdata;
-                        default: p_w3 <= m_rdata;
+                        2'd0:    p_w0 <= r_data;
+                        2'd1:    p_w1 <= r_data;
+                        2'd2:    p_w2 <= r_data;
+                        default: p_w3 <= r_data;
                     endcase
                     p_cnt <= p_cnt + 2'd1;
-                    if (m_rlast) q_rdy <= 1'b1;
+                    if (r_last) q_rdy <= 1'b1;
                 end
-                if (m_rvalid && m_rready && m_rlast) begin
+                if (r_valid && r_ready && r_last) begin
                     rs <= RS_WAIT;
                     if (rd_ent + 8'd1 < rd_cnt) begin
                         m_araddr  <= rd_anext[ADDR_W-1:0];

@@ -111,10 +111,13 @@ module mag_stage #(
     wire [BANKS-1:0] d_aw, d_ar, d_bw, d_br;
     wire [RW-1:0]    d_ar_row, d_br_row;
     wire [EW-1:0]    d_bword;
-    wire [WORDS*DATA_W-1:0] d_wide;
+    wire [BANKS*WORDS*DATA_W-1:0] d_wide;   // one slice per bank
 
     generate if (PIPE != 0) begin : g_disp
-        reg  [WORDS*DATA_W-1:0] wide_q;
+        // One copy per bank: as a single register this was the worst data path,
+        // 4.860 ns at 98.4% route and ZERO logic levels. DONT_TOUCH or merged.
+        (* DONT_TOUCH = "yes" *)
+        reg  [BANKS*WORDS*DATA_W-1:0] wide_q;
         reg  [BANKS-1:0]        aw_q, ar_q, bw_q, br_q;
         reg  [RW-1:0]           arow_q, brow_q;
         reg  [EW-1:0]           bword_q;
@@ -129,7 +132,7 @@ module mag_stage #(
                 bw_q <= b_hit & {BANKS{b_we}};
                 br_q <= b_hit & {BANKS{~b_we}};
                 arow_q <= a_row; brow_q <= b_row; bword_q <= b_word;
-                wide_q <= wide_d;
+                wide_q <= {BANKS{wide_d}};
             end
         end
         assign d_aw = aw_q; assign d_ar = ar_q;
@@ -142,7 +145,7 @@ module mag_stage #(
         assign d_bw = b_hit & {BANKS{b_we}};
         assign d_br = b_hit & {BANKS{~b_we}};
         assign d_ar_row = a_row; assign d_br_row = b_row;
-        assign d_bword = b_word; assign d_wide = wide_d;
+        assign d_bword = b_word; assign d_wide = {BANKS{wide_d}};
     end endgenerate
 
     // ---- the banks ---------------------------------------------------------
@@ -163,7 +166,7 @@ module mag_stage #(
                             .READ_LAT(RLAT)) u_bank (
                 .clk(clk),
                 .wr_en(bk_we), .wr_addr(bk_wrow),
-                .wr_data(d_wide[w*DATA_W +: DATA_W]),
+                .wr_data(d_wide[(g*WORDS + w)*DATA_W +: DATA_W]),
                 .rd_en(1'b1), .rd_addr(bk_rrow),
                 .rd_data(bank_rd[(g*WORDS + w)*DATA_W +: DATA_W])
             );

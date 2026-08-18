@@ -70,12 +70,12 @@ module mm_mover #(
     input  wire [1:0]          m_bresp,
     input  wire                m_bvalid,
     output wire                m_bready,
-    output reg  [ID_W-1:0]     m_arid,
-    output reg  [ADDR_W-1:0]   m_araddr,
-    output reg  [7:0]          m_arlen,
+    output wire [ID_W-1:0]     m_arid,
+    output wire [ADDR_W-1:0]   m_araddr,
+    output wire [7:0]          m_arlen,
     output wire [2:0]          m_arsize,
     output wire [1:0]          m_arburst,
-    output reg                 m_arvalid,
+    output wire                m_arvalid,
     input  wire                m_arready,
     input  wire [ID_W-1:0]     m_rid,
     input  wire [DATA_W-1:0]   m_rdata,
@@ -343,7 +343,25 @@ module mm_mover #(
     wire close_ar = ra_open && !ra_ext;
     wire close_wc = wa_open && !wa_ext;
 
-    wire ar_slot  = !m_arvalid || m_arready;
+    // The AR ready came back from u_dram combinationally into ar_slot -> ar_ok
+    // -> stall -> proc -> c_wr: 1,336 paths at 12-13 levels after the arbiter
+    // shrink took them from 15. sb_skid's i_ready is a flop, so this cuts it.
+    reg  [ADDR_W-1:0] ar_addr_i;
+    reg  [7:0]        ar_len_i;
+    reg               ar_valid_i;
+    wire              ar_ready_i;
+
+    sb_skid #(.W(ADDR_W + 8)) u_arskid (
+        .clk(clk), .rst(!resetn),
+        .i_valid(ar_valid_i), .i_ready(ar_ready_i),
+        .i_data({ar_addr_i, ar_len_i}),
+        .o_valid(m_arvalid), .o_ready(m_arready),
+        .o_data({m_araddr, m_arlen})
+    );
+
+    assign m_arid = {ID_W{1'b0}};
+
+    wire ar_slot  = !ar_valid_i || ar_ready_i;
     wire ar_ok    = ar_slot && (ar_out < MAX_OUT[7:0]);
     wire fifo_room = (occ < FIFO_D[CNT_W-1:0]);
 
@@ -468,7 +486,7 @@ module mm_mover #(
             d_ndim <= 3'd1; d_ax_sel <= 1'b0; d_abase <= 16'd0; d_aext <= 16'd0;
             // AXI payload dropped: the valids qualify it. Config, PRNG seed
             // state, occupancy counters and status registers all keep theirs.
-            m_awvalid <= 1'b0; wv_r <= 1'b0; m_arvalid <= 1'b0;
+            m_awvalid <= 1'b0; wv_r <= 1'b0; ar_valid_i <= 1'b0;
             stat_fault <= F_NONE; stat_done <= 32'd0;
             ix_we <= 1'b0; ix_waddr <= 8'd0; ix_raddr <= 8'd0; ix_got <= 16'd0;
             ix_wr_a <= 8'd0; ix_active <= 1'b0;
@@ -546,10 +564,10 @@ module mm_mover #(
 
             // ================================================ read issue
             if (ar_load) begin
-                m_araddr  <= ra_base;
-                m_arlen   <= ra_n[7:0] - 8'd1;
-                m_arvalid <= 1'b1;
-            end else if (m_arvalid && m_arready) m_arvalid <= 1'b0;
+                ar_addr_i  <= ra_base;
+                ar_len_i   <= ra_n[7:0] - 8'd1;
+                ar_valid_i <= 1'b1;
+            end else if (ar_valid_i && ar_ready_i) ar_valid_i <= 1'b0;
 
             ar_out <= ar_out + (ar_load ? 8'd1 : 8'd0)
                              - (ar_dec  ? 8'd1 : 8'd0);
@@ -574,9 +592,9 @@ module mm_mover #(
                     if (idx_count > {IDX_WORDS[12:0], 3'd0}) begin
                         stat_fault <= F_IDXLEN; ist <= I_FAULT;
                     end else begin
-                        m_araddr  <= idx_base;
-                        m_arlen   <= 8'd0;
-                        m_arvalid <= 1'b1;
+                        ar_addr_i  <= idx_base;
+                        ar_len_i   <= 8'd0;
+                        ar_valid_i <= 1'b1;
                         ix_active <= 1'b1;
                         ist <= I_IXA;
                     end
@@ -586,8 +604,8 @@ module mm_mover #(
             end
 
             // ---- gather: pull the whole index vector in first ----
-            I_IXA: if (m_arvalid && m_arready) begin
-                m_arvalid <= 1'b0;
+            I_IXA: if (ar_valid_i && ar_ready_i) begin
+                ar_valid_i <= 1'b0;
                 ist <= I_IXD;
             end
             I_IXD: if (m_rvalid) begin
@@ -600,8 +618,8 @@ module mm_mover #(
                     ix_active <= 1'b0;
                     ist <= I_IXW;
                 end else begin
-                    m_araddr  <= m_araddr + {{(ADDR_W-6){1'b0}}, 6'd32};
-                    m_arvalid <= 1'b1;
+                    ar_addr_i  <= ar_addr_i + {{(ADDR_W-6){1'b0}}, 6'd32};
+                    ar_valid_i <= 1'b1;
                     ist <= I_IXA;
                 end
             end

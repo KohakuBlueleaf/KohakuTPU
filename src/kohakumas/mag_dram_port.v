@@ -115,6 +115,7 @@ module mag_dram_port #(
     reg               wactive;
     reg  [RLOG-1:0]   rph  [0:N-1];
     reg  [15:0]       rleft[0:N-1];
+    reg  [N-1:0]      rleft_z;
 
     // Bursts issued and not yet returning. The ACTIVE burst stays in rph/rleft
     // so the return path is the same N:1 mux it always was.
@@ -140,11 +141,14 @@ module mag_dram_port #(
     wire [IDX_W-1:0] rd_sel, wr_sel;
     wire             rd_any, wr_any;
 
+    wire [N-1:0] rd_hot, wr_hot;
+
     mag_dram_rr #(.N(N), .IDX_W(IDX_W)) u_rr_rd (
         .req(rd_req_r & ~rd_busy & ~rd_gnt), .base(rr_rd), .sel(rd_sel),
-        .any(rd_any));
+        .gnt(rd_hot), .any(rd_any));
     mag_dram_rr #(.N(N), .IDX_W(IDX_W)) u_rr_wr (
-        .req(wr_req_r & ~wr_gnt), .base(rr_wr), .sel(wr_sel), .any(wr_any));
+        .req(wr_req_r & ~wr_gnt), .base(rr_wr), .sel(wr_sel),
+        .gnt(wr_hot), .any(wr_any));
 
     // THE ARBITER'S CHOICE IS CAPTURED, not used the same cycle: scan, mux,
     // arithmetic and ready on one path cost 49 MHz in a 6+2 mesh.
@@ -362,7 +366,9 @@ module mag_dram_port #(
         wire mine_tk  = r_take  && (rq_id  == g[IDX_W-1:0]);
         wire mine_fin = r_fin   && (rq_id  == g[IDX_W-1:0]);
 
-        wire slot_free = (rleft[g] == 16'd0) || mine_fin;
+        // rleft_z tracks rleft[g]==0 as a bit, so slot_free is one OR instead
+        // of a 16-bit compare: 215 paths sat at 11 levels through this.
+        wire slot_free = rleft_z[g] || mine_fin;
         wire do_pop    = mine_fin && (pn[g] != {RCW{1'b0}});
         wire do_direct = mine_ar && slot_free && !do_pop;
         wire do_push   = mine_ar && !do_direct;
@@ -375,7 +381,8 @@ module mag_dram_port #(
 
         always @(posedge s_aclk) begin
             if (srst) begin
-                rleft[g] <= 16'd0; rph[g] <= {RLOG{1'b0}};
+                rleft[g] <= 16'd0; rleft_z[g] <= 1'b1;
+                rph[g] <= {RLOG{1'b0}};
                 phd[g] <= {PPW{1'b0}}; ptl[g] <= {PPW{1'b0}};
                 pn[g] <= {RCW{1'b0}}; rd_cnt[g] <= {RCW{1'b0}};
                 rd_busy[g] <= 1'b0;
@@ -387,6 +394,12 @@ module mag_dram_port #(
                 // REGISTERED, never a combinational compare into q_ready:
                 // HANDOFF-mag-dram-port.md s1f cost 49 MHz to that once.
                 rd_busy[g] <= (cnt_n >= RD_OUT[RCW-1:0]);
+
+                // Exact: loads write len+1 (len <= 256 by AXI), and mine_tk
+                // cannot hit 0 -- mine_fin takes cur_left==1, r_emit bars 0.
+                if (do_pop || do_direct) rleft_z[g] <= 1'b0;
+                else if (mine_fin)       rleft_z[g] <= 1'b1;
+                else if (mine_tk)        rleft_z[g] <= 1'b0;
 
                 if (do_pop) begin
                     rleft[g] <= plen[g][phd[g]] + 16'd1;
@@ -418,8 +431,8 @@ module mag_dram_port #(
 
     // ================================================== grant
     generate for (g = 0; g < N; g = g + 1) begin : g_qrdy
-        assign q_ready[g] = (rd_take && (rd_sel == g[IDX_W-1:0])) ||
-                            (wr_take && (wr_sel == g[IDX_W-1:0]));
+        // The arbiter's own one-hot, not a decode of its encoded `sel`.
+        assign q_ready[g] = (rd_take && rd_hot[g]) || (wr_take && wr_hot[g]);
     end endgenerate
 
     always @(posedge s_aclk) begin
@@ -443,20 +456,22 @@ module mag_dram_rr #(
     input  wire [N-1:0]     req,
     input  wire [IDX_W-1:0] base,
     output reg  [IDX_W-1:0] sel,
+    output wire [N-1:0]     gnt,
     output wire             any
 );
     assign any = |req;
-    integer i, idx;
-    reg found;
+
+    // Mask then isolate-lowest-set-bit. The serial scan this replaces was N
+    // dependent levels under q_ready: 1,800 paths at 13-15 into u_mover.
+    wire [N-1:0] hi   = req & ({N{1'b1}} << base);
+    wire [N-1:0] pick = (|hi) ? hi : req;
+    assign gnt = pick & (~pick + {{(N-1){1'b0}}, 1'b1});
+
+    integer i;
     always @* begin
-        sel = base; found = 1'b0;
-        for (i = 0; i < N; i = i + 1) begin
-            idx = (i + base) % N;
-            if (!found && req[idx]) begin
-                sel   = idx[IDX_W-1:0];
-                found = 1'b1;
-            end
-        end
+        sel = {IDX_W{1'b0}};
+        for (i = 0; i < N; i = i + 1)
+            sel = sel | (gnt[i] ? i[IDX_W-1:0] : {IDX_W{1'b0}});
     end
 endmodule
 

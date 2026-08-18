@@ -92,6 +92,9 @@ module mag_stage_port #(
     localparam [1:0] S_IDLE = 2'd0, S_WR = 2'd1, S_RD = 2'd2, S_RESP = 2'd3;
     reg [1:0]        st;
     reg [IDX_W-1:0]  id;
+    // Active claimant one-hot, mirroring every `st` assignment below. Decoding
+    // `(id == g)` per port sat 4 levels ahead of u_dram's arbiter, at -0.354.
+    reg [N-1:0]      act_oh;
     reg [ADDR_W-1:0] addr;
     reg [15:0]       left;
     reg              is_wr;
@@ -182,6 +185,7 @@ module mag_stage_port #(
             // `addr` is a payload `st` qualifies, so it stays unreset.
             rd_hold <= 1'b0; rd_out <= 1'b0; req_left <= 16'd0; req_nz <= 1'b0;
             id <= {IDX_W{1'b0}}; left <= 16'd0; is_wr <= 1'b0;
+            act_oh <= {N{1'b0}};
         end else begin
             case (st)
                 S_IDLE: if (take) begin
@@ -198,6 +202,7 @@ module mag_stage_port #(
                     is_wr    <= q_write[gnt_id];
                     st       <= q_write[gnt_id] ? S_WR : S_RD;
                     rr       <= (gnt_id + 1) % N;
+                    act_oh   <= ({{(N-1){1'b0}}, 1'b1} << gnt_id);
                 end
                 S_WR: if (stg_gnt) begin
                     addr <= addr + ASTEP;
@@ -219,11 +224,13 @@ module mag_stage_port #(
                     if (rd_take) begin
                         rd_hold <= 1'b0;
                         left    <= left - 16'd1;
-                        if (left == 16'd1) st <= S_IDLE;
+                        if (left == 16'd1) begin
+                            st <= S_IDLE; act_oh <= {N{1'b0}};
+                        end
                     end
                 end
-                S_RESP: st <= S_IDLE;   // one b_valid pulse
-                default: st <= S_IDLE;
+                S_RESP: begin st <= S_IDLE; act_oh <= {N{1'b0}}; end
+                default: begin st <= S_IDLE; act_oh <= {N{1'b0}}; end
             endcase
         end
     end
@@ -249,7 +256,7 @@ module mag_stage_port #(
     // ---- steer -----------------------------------------------------------
     for (g = 0; g < N; g = g + 1) begin : g_steer
         wire claimed = mine[g];
-        wire active  = (st != S_IDLE) && (id == g[IDX_W-1:0]);
+        wire active  = act_oh[g];
 
         // A claimed request is never offered to the DRAM port, and a forwarded
         // one waits while this requester has a staged burst of the same kind.
