@@ -11,7 +11,10 @@ module ktpu_div2 (
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 clk2x CLK" *)
     input  wire clk2x,
     input  wire clr,
+    // FREQ_HZ or the BD calls the output clock interface incomplete (19-4751).
+    // The block design overrides it; this is only the default.
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 clk1x CLK" *)
+    (* X_INTERFACE_PARAMETER = "FREQ_HZ 300000000" *)
     output wire clk1x
 );
 `ifdef SYNTHESIS

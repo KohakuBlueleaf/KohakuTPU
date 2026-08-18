@@ -1,0 +1,10 @@
+# 8+2 on a 2x2 grid, every port filled: MAG on the west edge, both vector cores
+# on the east, eight clusters on the four router locals and the four north and
+# south edge ports. Uniform edges, so it is the shape's ceiling.
+#
+# ~305k LUT extrapolated from 6+2's ~260,200 plus 22,524 per cluster -- not
+# synthesised, and whether it PLACES is the open question.
+xxx mat mat xxx
+mag mat mat vec
+mag mat mat vec
+xxx mat mat xxx

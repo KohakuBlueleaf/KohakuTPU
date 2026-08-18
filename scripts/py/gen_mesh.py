@@ -304,18 +304,44 @@ def emit(
     # ---- MAG -----------------------------------------------------------
     # Verilog concatenation is most-significant first, so the list is reversed.
     mag_in, mag_out = [], []
+    cdc_body, direct_body = [], []
     for i, (x, y) in enumerate(m.mags):
         stem, fwd = e.edge_link(x, y)
         a, b = ("f", "r") if fwd else ("r", "f")
         mag_out.append(f"{stem}_{a}d")
         mag_in.append(f"{stem}_{b}d")
-        e.body.append(f"    assign {stem}_{a}v = mag_o_v[{i}];")
-        e.body.append(f"    assign mag_o_b[{i}] = {stem}_{a}b;")
-        e.body.append(f"    assign mag_i_v[{i}] = {stem}_{b}v;")
-        e.body.append(f"    assign {stem}_{b}b = mag_i_b[{i}];")
-    for i, w in enumerate(mag_out):
-        e.body.append(f"    assign {w} = mag_o_d[{i}*FW +: FW];")
-    mag_in_cat = "{" + ", ".join(reversed(mag_in)) + "}"
+        # MAG -> router, then router -> MAG. i_busy is the FIFO's wr_full, so
+        # neither side's ready is a function of the other's combinationally.
+        cdc_body.append(
+            f"""        noc_local_cdc #(.FLIT_WIDTH(FW), .DEPTH(CDC_DEPTH)) u_mo{i} (
+            .wr_clk(axi_aclk), .wr_resetn(resetn),
+            .i_data(mag_o_d[{i}*FW +: FW]), .i_valid(mag_o_v[{i}]),
+            .i_busy(mag_o_b[{i}]),
+            .rd_clk(clk), .rd_resetn(resetn),
+            .o_data({stem}_{a}d), .o_valid({stem}_{a}v), .o_busy({stem}_{a}b)
+        );
+        noc_local_cdc #(.FLIT_WIDTH(FW), .DEPTH(CDC_DEPTH)) u_mi{i} (
+            .wr_clk(clk), .wr_resetn(resetn),
+            .i_data({stem}_{b}d), .i_valid({stem}_{b}v), .i_busy({stem}_{b}b),
+            .rd_clk(axi_aclk), .rd_resetn(resetn),
+            .o_data(mag_i_d[{i}*FW +: FW]), .o_valid(mag_i_v[{i}]),
+            .o_busy(mag_i_b[{i}])
+        );"""
+        )
+        direct_body.append(f"""        assign {stem}_{a}d = mag_o_d[{i}*FW +: FW];
+        assign {stem}_{a}v = mag_o_v[{i}];
+        assign mag_o_b[{i}] = {stem}_{a}b;
+        assign mag_i_d[{i}*FW +: FW] = {stem}_{b}d;
+        assign mag_i_v[{i}] = {stem}_{b}v;
+        assign {stem}_{b}b = mag_i_b[{i}];""")
+    e.body.append(
+        "    generate if (MAG_CDC) begin : g_magcdc\n"
+        + "\n".join(cdc_body)
+        + "\n    end else begin : g_magdirect\n"
+        + "\n".join(direct_body)
+        + "\n    end endgenerate"
+    )
+    mag_in_cat = "mag_i_d"
 
     coords = "".join(
         f", .MEM_X{i or ''}({x}), .MEM_Y{i or ''}({y})"
@@ -346,7 +372,7 @@ def emit(
         f"""    {mod} #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(AW),
           .ID_W(IDW), .MEM_PORTS({len(m.mags)}){coords},
           .GRID_LO(1), .GRID_HI({max(m.nx, m.ny)}), .STAGE_FLITS(128){il}{extra}) u_mag (
-        .clk(clk), .resetn(resetn){clks},
+        .clk(mag_clk_i), .resetn(resetn){clks},
 {MAG_AXI}
 {mag_master_axi(single)}{chr(10) + link_conn(ilink) if ilink else ""}
         .mem_in_data({mag_in_cat}), .mem_in_valid(mag_i_v), .mem_in_busy(mag_i_b),
@@ -390,13 +416,15 @@ def emit(
         # TILES/GA/GB must be explicit: mx_cluster_cu defaults to 256/32/32,
         # not the 512/128/256 planned for, and that is the 15,440-element fault.
         if mat_pump:
-            e.body.append(f"""    mx_cluster_cu_pump #(.FLIT_WIDTH(FW), .POS_WIDTH(PW),
+            # NOT mx_cluster_cu_pump: its private BUFGCE_DIV put every cluster on
+            # a clock the NoC never saw, and took no UNIT_CDC to guard it.
+            e.body.append(f"""    mx_cluster_cu #(.FLIT_WIDTH(FW), .POS_WIDTH(PW),
                     .CU_X({cx}), .CU_Y({cy}), .TILES(TILES), .GA(GA), .GB(GB),
                     .L1_PRIM(L1_PRIM), .TILE_PRIM(TILE_PRIM),
                     .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
+                    .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH), .PUMP(1),
                     .MEM_X({mmx}), .MEM_Y({mmy}), .MODEL(MODEL)) u_cu{i} (
-        .clk2x(mat_clk2x), .div_clr(mat_div_clr), .resetn(resetn),
-        .clk1x(),
+        .clk(clk), .clk2x(mat_clk2x), .unit_clk(mat_clk), .resetn(resetn),
         {conn_c},
         .fills_done(cu_f[{i}]), .gemms_done(cu_g[{i}]), .drains_done(cu_d[{i}])
     );""")
@@ -792,12 +820,11 @@ def render(
             "    parameter [39:0]  L2_VEC_BASE  = 40'h00_F100_0000,\n"
             "    parameter integer L2_VEC_BITS  = 18,\n"
         )
-    # `axi_aclk` MUST ITSELF BE A BUFGCE_DIV(2) OF `mat_clk2x` sharing
-    # `mat_div_clr`, or every cluster's NoC port is an untimed crossing.
+    # UG949: `mat_clk2x` and `mat_clk` must be BUFGCE_DIV(1) and (2) off ONE
+    # source sharing CLR, or the pair phase-shifts. The divider is the BD's.
     PUMP_CLKS = (
         '    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 mat_clk2x CLK" *)\n'
         "    input  wire mat_clk2x,\n"
-        "    input  wire mat_div_clr,\n"
         if mat_pump
         else ""
     )
@@ -869,19 +896,26 @@ module {name} #(
     // direction. ONE RATE PER TYPE, not per instance: every cluster takes
     // `mat_clk` and every vector core `vec_clk`. THE NoC FABRIC STAYS ONE
     // CLOCK -- router to router is untouched, so the deadlock argument holds.
-    parameter integer UNIT_CDC  = 0,
+    parameter integer UNIT_CDC  = {1 if mat_pump else 0},
+    // MAG is an endpoint too. At 0 its `enc_in_busy` reaches the router's flow
+    // control combinationally: 12 levels, -0.561, the mesh WNS in every config
+    // measured. The FIFO flags are registered even when both clocks are one.
+    parameter integer MAG_CDC   = {1 if mat_pump else 0},
     parameter integer CDC_DEPTH = 16
 )(
-    // One clock and one reset for every interface, master and slave alike, so
-    // neither carries an s_ or m_ prefix. ASSOCIATED_BUSIF names them all, which
-    // is what makes the block design tie them up on its own.
+    // axi_aclk IS the clock the AXI and AXIS ports run on, which is MAG's: they
+    // all live in mag_1m. noc_clk is the fabric and carries no interface.
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 axi_aclk CLK" *)
     (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF {ASSOC}, ASSOCIATED_RESET axi_aresetn" *)
     input  wire axi_aclk,
     (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 axi_aresetn RST" *)
     (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
     input  wire axi_aresetn,
-    // Tie both to axi_aclk when UNIT_CDC is 0. They reach nothing.
+    // Router to router, one clock, untouched -- so the deadlock argument holds.
+    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 noc_clk CLK" *)
+    input  wire noc_clk,
+    // At UNIT_CDC 0 tie both to noc_clk; they reach nothing. At 1 each unit
+    // runs on its own, behind one noc_local_cdc per direction on its NoC port.
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 mat_clk CLK" *)
     input  wire mat_clk,
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 vec_clk CLK" *)
@@ -947,7 +981,7 @@ module {name} #(
 
     // The instances below are written against clk/resetn; aliasing once here
     // keeps the generator's body independent of the boundary's naming.
-    wire clk    = axi_aclk;
+    wire clk    = noc_clk;
     wire resetn = axi_aresetn;
     wire rst    = !resetn;
 
@@ -955,9 +989,10 @@ module {name} #(
 
 {MASTER_GLUE}
 
-    wire [NMAG*FW-1:0] mag_o_d;
+    wire [NMAG*FW-1:0] mag_o_d, mag_i_d;
     wire [NMAG-1:0]    mag_i_v, mag_i_b, mag_o_v, mag_o_b;
     wire [15:0]        mag_rd, mag_wr;
+    wire mag_clk_i = MAG_CDC ? axi_aclk : clk;
 
     wire [15:0] cu_f [0:NCU-1];
     wire [15:0] cu_g [0:NCU-1];

@@ -1,0 +1,14 @@
+# 4+0 on TWO routers stacked: both clusters per router sit on the local and the
+# EAST edge, both MAG ports on the west, north and south left unpopulated.
+#
+# This mesh shares an SLR with root_smc, xdma and jtag, which put that SLR at
+# 99.27% CLB against 88.70% for the cleanest one. Two clusters are what comes
+# off: -43,450 LUT and -1,598 of L2 adapter, MEASURED post-synth.
+#
+# Matmul only: N-splits of large GEMMs, weights resident, one ship in and one
+# out. NOT K-splits -- peer_out is unconnected in mx_cluster_cu, so partial
+# sums from another mesh have no accumulation path.
+xxx xxx xxx
+mag mat mat
+mag mat mat
+xxx xxx xxx

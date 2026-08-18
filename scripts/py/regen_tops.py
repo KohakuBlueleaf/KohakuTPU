@@ -36,6 +36,13 @@ MANIFEST = [
     # multimesh_v5 instantiates these two and sets L2 CONFIG properties on them.
     # Vivado IGNORES an override naming a parameter that does not exist.
     ("ktpu_ship_2x1_6c0v_1m", "mesh_2x1_6+0.txt", True, True, (True, True, True)),
+    # SLR-balanced pair: the mesh sharing an SLR with root_smc/xdma/jtag drops to
+    # 4 clusters, the other three take a 7th on a port that was already free.
+    ("ktpu_ship_1x2_4c0v_1m", "mesh_1x2_4+0.txt", True, True, (True, True, True)),
+    ("ktpu_ship_2x2_7c2v_1m", "mesh_2x2_7+2.txt", True, True, (True, True, True)),
+    # The probes' 8+2 point. Absent from this list, it never regenerated and
+    # silently held whatever the generator emitted when it was first written.
+    ("ktpu_ship_2x2_8c2v_1m", "mesh_2x2_8+2.txt", True, True, (True, True, True)),
     ("ktpu_ship_2x1_6c0v_il", "mesh_2x1_6+0.txt", True, False),
     ("ktpu_ship_2x2", "mesh_2x2_4cu4vec.txt", False, False),
     ("ktpu_ship_2x2_il", "mesh_2x2_4+4.txt", True, False),

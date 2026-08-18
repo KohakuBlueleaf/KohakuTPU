@@ -1,0 +1,10 @@
+# 7+2 on a 2x2 grid: 6+2 plus one cluster on a previously free EAST port. The
+# grid is unchanged -- only a port that was already there gets an endpoint.
+#
+# +22,524 LUT over 6+2 (21,725 cluster + 799 L2 adapter, MEASURED post-synth),
+# against ~25k of headroom from an 88.70% SLR against a 97% placement ceiling.
+# One east port is still free.
+xxx mat vec xxx
+mag mat mat mat
+mag mat mat xxx
+xxx mat vec xxx
