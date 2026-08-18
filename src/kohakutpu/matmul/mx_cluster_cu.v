@@ -90,6 +90,9 @@ module mx_cluster_cu #(
     // The receive queue is 288 x RECV_DEPTH and the largest single item in
     // noc_cu_base. Block RAM by default; a knob so the trade can be measured.
     parameter         RECV_MEM   = "block",
+    // The instruction FIFO is FLIT_WIDTH x INST_DEPTH, 288x512 in production.
+    // Left distributed it was 3,292 LUTRAM per cluster, 8 clusters of it.
+    parameter         MEM_TYPE   = "block",
     // 1 runs L1 and the DSP cascade on `clk2x`. Driven from mx_cluster_cu_pump,
     // which derives `clk` from `clk2x` with a BUFGCE_DIV; 0 ignores clk2x.
     parameter integer PUMP       = 0,
@@ -234,7 +237,7 @@ module mx_cluster_cu #(
         // interconnect: unit-to-unit transfer on both halves of the mesh.
         .CU_TYPE(16'h4D47), .CU_VERSION(8'h03), .N_BUFFERS(2),
         .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
-        .RECV_MEM(RECV_MEM)
+        .RECV_MEM(RECV_MEM), .MEM_TYPE(MEM_TYPE)
     ) u_base (
         .clk(u_clk), .resetn(u_resetn),
         .noc_in_data(bp_in_data), .noc_in_valid(bp_in_valid),
@@ -342,7 +345,7 @@ module mx_cluster_cu #(
 
     reg          l1_we, l1_sel;
     reg  [15:0]  l1_addr;
-    reg  [927:0] l1_data;
+    (* EXTRACT_RESET = "no" *) reg  [927:0] l1_data;
     // The FILL's own side. `l1_sel` is no longer this: a CU_DATA stream names
     // its side per stream, so the write port's side is registered with the
     // entry that commits it rather than latched from the instruction.
@@ -402,8 +405,8 @@ module mx_cluster_cu #(
     wire          peer_ready;
     reg           pk_pend;
     reg  [15:0]   pk_idx;
-    reg  [255:0]  pk_lo;
-    reg  [PW-257:0] pk_hi;
+    (* EXTRACT_RESET = "no" *) reg  [255:0]  pk_lo;
+    (* EXTRACT_RESET = "no" *) reg  [PW-257:0] pk_hi;
     wire          peer_open;
 
     // buf 2 IS the accumulator-float mode. A drain to L1 emits FP16 and L1
@@ -633,8 +636,9 @@ module mx_cluster_cu #(
             cd_txn <= 8'd0; cd_flg <= 8'd0;
             cd_bad <= 1'b0; fault_r <= 1'b0;
             pk_pend <= 1'b0; pk_idx <= 16'd0;
-            pk_lo <= 256'd0; pk_hi <= {(PW-256){1'b0}};
-            sg_valid <= 1'b0; sg_flit <= {FLIT_WIDTH{1'b0}};
+            // pk_lo/pk_hi and sg_flit are payloads: pk_pend and sg_valid are
+            // the qualifiers, and resetting the data as well is dead silicon.
+            sg_valid <= 1'b0;
         end else begin
             if (pk_pend && peer_ready) pk_pend <= 1'b0;
             if (sg_valid && sg_take)   sg_valid <= 1'b0;
@@ -713,7 +717,9 @@ module mx_cluster_cu #(
     integer bi, bk, bj;
     always @(posedge u_clk) begin
         if (!u_resetn) begin
-            l1_we <= 1'b0; l1_sel <= 1'b0; l1_addr <= 16'd0; l1_data <= 928'd0;
+            // l1_data is NOT reset: l1_we qualifies it and is cleared here and
+            // defaulted low every cycle. 928 R pins per CU bought nothing.
+            l1_we <= 1'b0; l1_sel <= 1'b0; l1_addr <= 16'd0;
             asm_ent <= 9'd0;
         end else begin
             l1_we <= 1'b0;

@@ -69,9 +69,13 @@ module mx_acu_fp #(
     input  wire         cmd_valid,
 
     input  wire [16*(ACC_MW+8)-1:0] peer_in,
+    // Reset-free by construction below; the attribute is what stops Vivado
+    // re-extracting one onto these R pins anyway.
+    (* EXTRACT_RESET = "no" *)
     output reg  [16*(ACC_MW+8)-1:0] peer_out,
     output reg                      peer_valid,
 
+    (* EXTRACT_RESET = "no" *)
     output reg  [255:0] emit_out,
     output reg          emit_valid,
 
@@ -583,7 +587,7 @@ module mx_acu_fp #(
     assign wr_data    = rounded;
     assign wr_bank_en = wr_en;
 
-    reg [TW-1:0] emit_acc;
+    (* EXTRACT_RESET = "no" *) reg [TW-1:0] emit_acc;
     reg          emit_pend;
 
     // ================================================ stage 6: FP16 convert

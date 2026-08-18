@@ -32,8 +32,19 @@ module async_fifo #(
     // Reset busy folded into the flags rather than exposed. XPM holds both for
     // several cycles after reset and a writer that ignores them loses the first
     // beats, which presents as a burst that is short by a random amount.
-    assign wr_full  = full  | wr_rst_busy;
-    assign rd_empty = empty | rd_rst_busy;
+
+    // One LOCAL flag per domain: the macro's rst_busy sits with the FIFO memory
+    // and OR-ing it in drove failing control paths mesh-wide.
+    reg wr_busy_q = 1'b1;
+    always @(posedge wr_clk) begin
+        if (wr_rst) wr_busy_q <= 1'b1;
+        else        wr_busy_q <= wr_rst_busy;
+    end
+    reg rd_busy_q = 1'b1;
+    always @(posedge rd_clk) rd_busy_q <= rd_rst_busy;
+
+    assign wr_full  = full  | wr_busy_q;
+    assign rd_empty = empty | rd_busy_q;
 
     xpm_fifo_async #(
         .CASCADE_HEIGHT(0),

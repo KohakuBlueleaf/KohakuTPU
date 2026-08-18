@@ -43,9 +43,18 @@ module sync_fifo #(
     output wire                     rd_busy
 );
     wire rd_rst_busy, wr_rst_busy, empty, full, prog_full;
-    assign wr_busy   = full | wr_rst_busy;
-    assign wr_almost = full | prog_full | wr_rst_busy;
-    assign rd_busy = empty | rd_rst_busy;
+
+    // A LOCAL copy. The macro's own rst_busy sits with the FIFO memory, and
+    // OR-ing it into wr_busy made it the top driver of failing control paths.
+    reg rst_busy_q = 1'b1;
+    always @(posedge clk) begin
+        if (rst) rst_busy_q <= 1'b1;
+        else     rst_busy_q <= wr_rst_busy | rd_rst_busy;
+    end
+
+    assign wr_busy   = full | rst_busy_q;
+    assign wr_almost = full | prog_full | rst_busy_q;
+    assign rd_busy   = empty | rst_busy_q;
 
     xpm_fifo_sync #(
         .CASCADE_HEIGHT(0),

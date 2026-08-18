@@ -39,6 +39,9 @@ module noc_cu_base #(
     input  wire [FLIT_WIDTH-1:0]  noc_in_data,
     input  wire                   noc_in_valid,
     output wire                   noc_in_busy,
+    // Reset-free RTL is not enough: Vivado re-extracts one from the zero fields
+    // of out_sig/out_ctrl, and those R pins were the design's worst path.
+    (* EXTRACT_RESET = "no" *)
     output reg  [FLIT_WIDTH-1:0]  noc_out_data,
     output reg                    noc_out_valid,
     input  wire                   noc_out_busy,
