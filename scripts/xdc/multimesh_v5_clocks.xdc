@@ -27,6 +27,20 @@
 # The six mag_link_cdc crossings live between the mesh groups below and are
 # therefore untimed here; xpm_fifo_async carries its own scoped CDC constraints.
 
+# BACKBONE, or the placer REFUSES: one reference feeds FIVE MMCMs (ctrl plus one
+# per mesh) across all four SLRs, and rule_bufg_mmcm_3loads caps a BUFGCE at 3.
+# Safe here precisely because the groups below declare the meshes mutually
+# asynchronous -- each MMCM regenerates its own clock and no timing arc depends
+# on reference skew between SLRs. Per-mesh clocks REQUIRE this.
+# ANY_CMT_COLUMN, not BACKBONE: on UltraScale BACKBONE means SAME_CMT_COLUMN and
+# pins every MMCM to one column; UG949 gives this one for DIFFERENT clock regions.
+# NAMED BY A LOAD, NOT THE DRIVER. Three attempts at the driver matched nothing
+# (12-507, 17-55) -- an auto-inserted BUFG has no name until opt_design. clk_in1
+# is an IP boundary pin and always exists, and with the explicit util_ds_buf_bufg
+# in front of it the net it names IS the buffer's output.
+set_property CLOCK_DEDICATED_ROUTE ANY_CMT_COLUMN \
+    [get_nets -of [get_pins multimesh_v5_i/clk_wiz_ctrl/clk_in1]]
+
 set_clock_groups -asynchronous \
     -group [get_clocks -include_generated_clocks -of_objects [get_pins -hier -filter {NAME =~ *clk_wiz_ctrl*clk_out1}]] \
     -group [get_clocks -include_generated_clocks -of_objects [get_pins -hier -filter {NAME =~ *clk_wiz_mesh_0*clk_out*}]] \

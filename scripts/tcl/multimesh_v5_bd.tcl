@@ -36,11 +36,15 @@ set V5_L2_MAG_BANKS [knob V5_L2_MAG_BANKS 4]
 
 # `_pump`: only these carry mat_clk2x/mat_div_clr. With the plain tops clk_out2
 # is generated and left dangling, and the matmul ships at 1x.
+# SLR-BALANCED: mesh_1 shares SLR1 with root_smc/xdma/jtag, measured 99.27% CLB
+# against 88.70% for the cleanest, so it carries 4 clusters and the others 7.
 set psfx [expr {[knob V5_PUMP 1] ? "_pump" : ""}]
+# mesh_3 is on SLR2, whose leaf carries two extra masters -- the SLR3 chain and
+# the GPIO -- so it stays at 6 clusters while SLR0 and SLR3 take a 7th.
 set MESHES [list \
-    [list 0 ktpu_ship_2x2_6c2v_1m$psfx 0 2 2] \
-    [list 1 ktpu_ship_2x1_6c0v_1m$psfx 1 3 2] \
-    [list 2 ktpu_ship_2x2_6c2v_1m$psfx 3 0 2] \
+    [list 0 ktpu_ship_2x2_7c2v_1m$psfx 0 2 2] \
+    [list 1 ktpu_ship_1x2_4c0v_1m$psfx 1 3 2] \
+    [list 2 ktpu_ship_2x2_7c2v_1m$psfx 3 0 2] \
     [list 3 ktpu_ship_2x2_6c2v_1m$psfx 2 1 2]]
 set SLR_ROWS {0 {Y0 Y3} 1 {Y4 Y7} 2 {Y8 Y11} 3 {Y12 Y15}}
 
@@ -79,12 +83,14 @@ set SOURCES {
     src/kohakumas/mag_link_pipe.v src/kohakumas/mag_switch.v
     src/kohakumas/mag_ilink.v src/kohakumas/mag.v
     src/kohakumas/mag_dram_port.v src/synth_top/mag_1m.v
-    src/synth_top/ktpu_ship_2x2_6c2v_1m.v src/synth_top/ktpu_ship_2x1_6c0v_1m.v
+    src/synth_top/ktpu_ship_2x2_7c2v_1m.v src/synth_top/ktpu_ship_1x2_4c0v_1m.v
+    src/synth_top/ktpu_ship_2x2_6c2v_1m.v
     src/kohakutpu/matmul/mx_acu_fp_pump.v src/kohakutpu/matmul/mx_cluster_mgr_pump.v
     src/kohakutpu/matmul/mx_cluster_node_pump.v src/kohakutpu/matmul/mx_cluster_cu_pump.v
     src/synth_top/ktpu_div2.v
+    src/synth_top/ktpu_ship_2x2_7c2v_1m_pump.v
+    src/synth_top/ktpu_ship_1x2_4c0v_1m_pump.v
     src/synth_top/ktpu_ship_2x2_6c2v_1m_pump.v
-    src/synth_top/ktpu_ship_2x1_6c0v_1m_pump.v
 }
 
 # v5 additions. Each is added only if it exists, so this script runs before the
@@ -134,7 +140,8 @@ foreach i {0 1 2 3} {
 }
 create_bd_intf_port -mode Slave  -vlnv xilinx.com:interface:diff_clock_rtl:1.0 pcie_clk
 create_bd_intf_port -mode Master -vlnv xilinx.com:interface:pcie_7x_mgt_rtl:1.0 pcie_lane
-create_bd_intf_port -mode Master -vlnv xilinx.com:interface:gpio_rtl:1.0 led
+# NO led PORT: bank 64 is in SLR1, and an IO anchor there pins the GPIO to the
+# tightest SLR. Channel 2 (link health) is readback and needs no pin at all.
 create_bd_port -dir O user_lnk_up
 set pr [create_bd_port -dir I -type rst pcie_reset]
 set_property CONFIG.POLARITY {ACTIVE_LOW} $pr
@@ -214,15 +221,11 @@ set_property CONFIG.C_BUF_TYPE {IBUFDSGTE} $udb
 set xlc [create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant xlconstant_0]
 set_property -dict [list CONFIG.CONST_VAL {0} CONFIG.CONST_WIDTH {1}] $xlc
 set gpio [create_bd_cell -type ip -vlnv xilinx.com:ip:axi_gpio axi_gpio_0]
-# Channel 2 is read-only link health: 6 `fault` then 6 `ready`. A sticky fault is
-# the only way a partial CDC flush reaches software rather than looking like a hang.
+# ONE CHANNEL, read-only link health: 6 `fault` then 6 `ready`. It WAS channel 2
+# behind the LEDs, so software's data register moves from 0x08 to 0x00.
 set gpio2 [expr {$V5_PER_MESH_CLK ? 1 : 0}]
-set_property -dict [list CONFIG.C_ALL_OUTPUTS {0} CONFIG.C_GPIO_WIDTH {8} \
-                         CONFIG.C_IS_DUAL $gpio2] $gpio
-if {$gpio2} {
-    set_property -dict [list CONFIG.C_ALL_INPUTS_2 {1} \
-                             CONFIG.C_GPIO2_WIDTH {12}] $gpio
-}
+set_property -dict [list CONFIG.C_ALL_INPUTS {1} CONFIG.C_GPIO_WIDTH {12} \
+                         CONFIG.C_IS_DUAL {0}] $gpio
 set jtag [create_bd_cell -type ip -vlnv xilinx.com:ip:jtag_axi jtag_axi_0]
 set_property -dict [list CONFIG.M_AXI_ADDR_WIDTH {64} \
                          CONFIG.M_AXI_DATA_WIDTH {64}] $jtag
@@ -344,16 +347,16 @@ if {[llength $::V5_CDC_READY]} {
                        [get_bd_pins cdc_health_cat/In[expr {$n + $i}]]
     }
     connect_bd_net [get_bd_pins cdc_health_cat/dout] \
-                   [get_bd_pins axi_gpio_0/gpio2_io_i]
+                   [get_bd_pins axi_gpio_0/gpio_io_i]
 }
 
 # ---- the control plane, two levels ---------------------------------------
 # Four leaves plus one port per mesh generator, so the count follows the clocking.
 set nclk [llength $MESHCLK]
 set rsmc [create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect root_smc]
-# 6: two leaf feeds (SLR0, SLR2) plus SLR1's own four slaves, which have no leaf.
-# 4 clocks: ctrl, xdma, mesh_1, ddr -- the domains leaf_smc_1 used to carry.
-set_property -dict [list CONFIG.NUM_SI {3} CONFIG.NUM_MI [expr {6 + $nclk}] \
+# 5: two leaf feeds (SLR0, SLR2) plus SLR1's own three slaves. SLR3 hangs off
+# SLR2 and the GPIO moved there too, so both ports left the tightest SLR.
+set_property -dict [list CONFIG.NUM_SI {3} CONFIG.NUM_MI [expr {5 + $nclk}] \
                          CONFIG.NUM_CLKS {4}] $rsmc
 connect_bd_intf_net [get_bd_intf_pins jtag_axi_0/M_AXI] [get_bd_intf_pins root_smc/S00_AXI]
 connect_bd_intf_net [get_bd_intf_pins xdma_0/M_AXI]      [get_bd_intf_pins root_smc/S01_AXI]
@@ -362,8 +365,8 @@ connect_bd_intf_net [get_bd_intf_pins xdma_0/M_AXI_LITE] [get_bd_intf_pins root_
 array set MESH_ON_SLR {0 0 1 1 2 3 3 2}
 array set DDR_ON_SLR  {0 2 1 3 2 1 3 0}
 
-# Die is SLR0|1|2|3 with the root in SLR1: feeding SLR3 directly is TWO
-# crossings, so it chains off SLR2's leaf and every hop here is exactly one.
+# CHAINED: SLR3 hangs off SLR2's leaf, not the root. Halves its SLL crossings
+# AND drops root_smc a master port, which is LUT out of the tightest SLR.
 array set FEED {0 root_smc/M00_AXI 2 root_smc/M02_AXI 3 leaf_smc_2/M03_AXI}
 
 foreach slr {0 1 2 3} {
@@ -378,14 +381,13 @@ foreach slr {0 1 2 3} {
             [get_bd_intf_pins mesh_$mid/S_AXI_CTRL]
         connect_bd_intf_net [get_bd_intf_pins root_smc/M04_AXI] \
             [get_bd_intf_pins ddr4_$did/C0_DDR4_S_AXI_CTRL]
-        connect_bd_intf_net [get_bd_intf_pins root_smc/M05_AXI] \
-            [get_bd_intf_pins axi_gpio_0/S_AXI]
         continue
     }
-    # SLR2 carries a fourth master: the feed for SLR3.
+    # SLR2's leaf carries two extra masters: the SLR3 chain and the GPIO. Both
+    # are LUT and a crossbar port taken OUT of SLR1, which is the tight one.
     set l [create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect leaf_smc_$slr]
     set_property -dict [list CONFIG.NUM_SI {1} \
-                             CONFIG.NUM_MI [expr {$slr == 2 ? 4 : 3}] \
+                             CONFIG.NUM_MI [expr {$slr == 2 ? 5 : 3}] \
                              CONFIG.NUM_CLKS {3}] $l
 
     set rs [create_bd_cell -type ip -vlnv xilinx.com:ip:axi_register_slice slr_cross_$slr]
@@ -403,23 +405,33 @@ foreach slr {0 1 2 3} {
         [get_bd_intf_pins mesh_$mid/S_AXI_CTRL]
     connect_bd_intf_net [get_bd_intf_pins leaf_smc_$slr/M02_AXI] \
         [get_bd_intf_pins ddr4_$did/C0_DDR4_S_AXI_CTRL]
+    if {$slr == 2} {
+        connect_bd_intf_net [get_bd_intf_pins leaf_smc_$slr/M04_AXI] \
+            [get_bd_intf_pins axi_gpio_0/S_AXI]
+    }
 }
 
 # Every clock controller hangs off the ROOT, on the fixed domain: reaching one
 # must not depend on the clock it is about to change.
 # M%02d, not M0$mi: past 9 the ports are M10.., and M010 does not exist.
-set mi 6
+set mi 5
 foreach w $MESHCLK {
     connect_bd_intf_net [get_bd_intf_pins root_smc/[format M%02d $mi]_AXI] \
                         [get_bd_intf_pins $w/s_axi_lite]
     incr mi
 }
 
-connect_bd_intf_net [get_bd_intf_ports led]      [get_bd_intf_pins axi_gpio_0/GPIO]
 connect_bd_intf_net [get_bd_intf_ports system]   [get_bd_intf_pins util_ds_buf_sys/CLK_IN_D]
+# EXPLICIT BUFG: Vivado's own inserted one exists only from opt_design, so no
+# xdc can name it and rule_bufg_mmcm_3loads fails (5 MMCMs across SLR0..SLR3).
+set sysbuf [create_bd_cell -type ip -vlnv xilinx.com:ip:util_ds_buf util_ds_buf_bufg]
+set_property CONFIG.C_BUF_TYPE {BUFG} $sysbuf
+connect_bd_net [get_bd_pins util_ds_buf_sys/IBUF_OUT] \
+               [get_bd_pins util_ds_buf_bufg/BUFG_I]
+
 set clkin [list [get_bd_pins clk_wiz_ctrl/clk_in1]]
 foreach w $MESHCLK { lappend clkin [get_bd_pins $w/clk_in1] }
-connect_bd_net [get_bd_pins util_ds_buf_sys/IBUF_OUT] {*}$clkin
+connect_bd_net [get_bd_pins util_ds_buf_bufg/BUFG_O] {*}$clkin
 connect_bd_intf_net [get_bd_intf_ports pcie_clk] [get_bd_intf_pins util_ds_buf_0/CLK_IN_D]
 connect_bd_intf_net [get_bd_intf_ports pcie_lane] [get_bd_intf_pins xdma_0/pcie_mgt]
 
@@ -464,6 +476,9 @@ foreach w $MESHCLK {
     set meshrst {}
     foreach id $fed {
         lappend meshclk [get_bd_pins mesh_$id/axi_aclk]
+        # axi_aclk is MAG's and noc_clk the fabric's; v5 drives both from
+        # clk_out1, which is what its "one fabric clock" comment below means.
+        lappend meshclk [get_bd_pins mesh_$id/noc_clk]
         lappend meshrst [get_bd_pins mesh_$id/axi_aresetn]
         foreach row $MESHES {
             lassign $row rid rmod rslr rddr rn
@@ -473,22 +488,20 @@ foreach w $MESHCLK {
                 [expr {$rslr == 1 ? "root_smc/aclk2" : "leaf_smc_$rslr/aclk1"}]]
         }
     }
-    # Every pumped CU divides clk_out2 itself, and a BUFGCE_DIV starts on the
-    # edge CLR released it on -- clk_out1 is NOT interchangeable with that 1x.
     set pumped 0
     foreach id $fed {
         if {[llength [get_bd_pins -quiet mesh_$id/mat_clk2x]]} { set pumped 1 }
     }
+    # clk_out1 IS MAG AND THE NoC: one fabric clock. Only mat_clk comes off the
+    # divider, and UNIT_CDC crosses the matmul into the fabric.
+    connect_bd_net [get_bd_pins $w/clk_out1] {*}$meshclk
     # NO `-net NAME` when the net does not exist yet: that flag SELECTS an
     # existing net, and naming a new one is "does not exist" (BD 41-722).
     if {$pumped} {
         create_bd_cell -type module -reference ktpu_div2 div2_${w}
         connect_bd_net [get_bd_pins $w/clk_out2] [get_bd_pins div2_${w}/clk2x]
-        set_property CONFIG.FREQ_HZ [expr {round(1.2e9 / $V5_UNIT_DIV / 2)}] \
-            [get_bd_pins div2_${w}/clk1x]
-        connect_bd_net [get_bd_pins div2_${w}/clk1x] {*}$meshclk
-    } else {
-        connect_bd_net [get_bd_pins $w/clk_out1] {*}$meshclk
+        # NOT set here: ktpu_div2 declares FREQ_HZ in X_INTERFACE_PARAMETER,
+        # which makes the pin read-only (BD 41-737).
     }
     if {[llength $::V5_CDC_READY]} {
         create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic hold_${w}
@@ -660,17 +673,44 @@ foreach row $MESHES {
     puts $fh "create_pblock pb_slr$slr"
     puts $fh "resize_pblock \[get_pblocks pb_slr$slr\] -add \{CLOCKREGION_X0${ylo}:CLOCKREGION_X7${yhi}\}"
     puts $fh "add_cells_to_pblock \[get_pblocks pb_slr$slr\] \[get_cells -quiet {multimesh_v*_i/mesh_$id}\]"
-    puts $fh "add_cells_to_pblock \[get_pblocks pb_slr$slr\] \[get_cells -quiet {multimesh_v*_i/leaf_smc_$slr}\]"
+    # The controller serving this SLR's mesh, and its reset, belong with it.
+    puts $fh "add_cells_to_pblock \[get_pblocks pb_slr$slr\] \[get_cells -quiet {multimesh_v*_i/ddr4_$ddr}\]"
+    puts $fh "add_cells_to_pblock \[get_pblocks pb_slr$slr\] \[get_cells -quiet {multimesh_v*_i/rst_ddr4_${ddr}_300M}\]"
+    # NOT SLR1 -- it has no leaf, and add_cells_to_pblock on an empty list is a
+    # CRITICAL WARNING (12-1433), not the silent no-op `-quiet` suggests.
+    if {$slr != 1} {
+        puts $fh "add_cells_to_pblock \[get_pblocks pb_slr$slr\] \[get_cells -quiet {multimesh_v*_i/leaf_smc_$slr}\]"
+    }
     # The generator and its reset BELONG TO THE MESH THEY FEED. Left floating,
     # an MMCM lands in another SLR and every clock this mesh uses crosses one.
     if {$V5_PER_MESH_CLK} {
         puts $fh "add_cells_to_pblock \[get_pblocks pb_slr$slr\] \[get_cells -quiet {multimesh_v*_i/clk_wiz_mesh_$id}\]"
         puts $fh "add_cells_to_pblock \[get_pblocks pb_slr$slr\] \[get_cells -quiet {multimesh_v*_i/rst_clk_wiz_mesh_$id}\]"
         puts $fh "add_cells_to_pblock \[get_pblocks pb_slr$slr\] \[get_cells -quiet {multimesh_v*_i/div2_clk_wiz_mesh_$id}\]"
+        # dclr drives that divider's CLR and hold that mesh's reset. Unpinned,
+        # they were free to land in any SLR while the divider they feed was not.
+        puts $fh "add_cells_to_pblock \[get_pblocks pb_slr$slr\] \[get_cells -quiet {multimesh_v*_i/dclr_clk_wiz_mesh_$id}\]"
+        puts $fh "add_cells_to_pblock \[get_pblocks pb_slr$slr\] \[get_cells -quiet {multimesh_v*_i/hold_clk_wiz_mesh_$id}\]"
     }
     puts $fh "set_property CONTAIN_ROUTING false \[get_pblocks pb_slr$slr\]"
 }
 puts $fh "add_cells_to_pblock \[get_pblocks pb_slr1\] \[get_cells -quiet {multimesh_v*_i/root_smc}\]"
+# XDMA's transceivers are already anchored, but its fabric half was free to roam.
+puts $fh "add_cells_to_pblock \[get_pblocks pb_slr1\] \[get_cells -quiet {multimesh_v*_i/xdma_0}\]"
+puts $fh "add_cells_to_pblock \[get_pblocks pb_slr1\] \[get_cells -quiet {multimesh_v*_i/jtag_axi_0}\]"
+puts $fh "add_cells_to_pblock \[get_pblocks pb_slr1\] \[get_cells -quiet {multimesh_v*_i/clk_wiz_ctrl}\]"
+puts $fh "add_cells_to_pblock \[get_pblocks pb_slr1\] \[get_cells -quiet {multimesh_v*_i/rst_ctrl_100M}\]"
+# The clock tree's root. Bank 65 is in SLR1, so it has to sit here anyway.
+puts $fh "add_cells_to_pblock \[get_pblocks pb_slr1\] \[get_cells -quiet {multimesh_v*_i/util_ds_buf_bufg}\]"
+# WRITE SIDE: each SLR then owns its mesh AND the FIFOs for links LEAVING it,
+# and the SLL crossing starts at the FIFO's registered output.
+set MESH_SLR [dict create]
+foreach row $MESHES { lassign $row rid rmod rslr rddr rn; dict set MESH_SLR $rid $rslr }
+foreach hop {{0 1} {1 3} {3 2}} {
+    lassign $hop lo hi
+    puts $fh "add_cells_to_pblock \[get_pblocks pb_slr[dict get $MESH_SLR $lo]\] \[get_cells -quiet {multimesh_v*_i/cdc_${lo}_to_${hi}}\]"
+    puts $fh "add_cells_to_pblock \[get_pblocks pb_slr[dict get $MESH_SLR $hi]\] \[get_cells -quiet {multimesh_v*_i/cdc_${hi}_to_${lo}}\]"
+}
 close $fh
 add_files -fileset constrs_1 -norecurse $xdc
 
