@@ -232,7 +232,9 @@ module mx_cluster_mgr_pump #(
 
     wire last_h  = (h + 8'd1 == gn_r);
     wire last_g  = last_h && (g + 8'd1 == gm_r);
-    wire on_last_kb = (kb + KSTEP >= nk_r);  // every issue of the final K block
+    // 9-bit: at nk_r=255 an 8-bit kb+2 wraps 256->0, this never fires and the
+    // sweep runs forever. The unpumped kb+1==nk_r steps by one and cannot wrap.
+    wire on_last_kb = ({1'b0, kb} + {1'b0, KSTEP} >= {1'b0, nk_r});
     wire last_kb = last_g && on_last_kb;
 
     // NOT just "the last tile has been issued": the cascade is ~19 cycles deep,

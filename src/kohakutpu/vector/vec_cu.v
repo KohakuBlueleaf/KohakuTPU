@@ -17,9 +17,8 @@
 // (vector-core.md s7.2 counts 512 payload bit/cycle from two), not a
 // correctness one, and nothing here depends on it.
 //
-// FILL TAGGING. A read response names its L1 slot through the 8-bit NoC txn
-// field, so one VFILL may be outstanding at a time and vec_core holds a second
-// until the first drains. The bank bit is latched per fill rather than sent.
+// FILL TAGGING. A response names its L1 slot in the 8-bit NoC txn field; the 9th
+// address bit does not fit, so it is kept per outstanding tag. ONE fill spans both.
 
 `default_nettype none
 
@@ -39,6 +38,8 @@ module vec_cu #(
     // identical to the digit (WNS 0.335 both arms, same path). The recv data
     // path is nowhere near critical here -- unlike the register file's port a.
     parameter         RECV_MEM   = "block",
+    // Instruction FIFO storage; see mx_cluster_cu for the LUTRAM it was costing.
+    parameter         MEM_TYPE   = "block",
     // `clk` keeps the NoC local port; everything else runs on `unit_clk`, one
     // noc_local_cdc per direction. 0 elaborates neither and aliases the clock.
     parameter integer UNIT_CDC   = 0,
@@ -136,7 +137,8 @@ module vec_cu #(
         // 0x02 bitstream a to_node drain would go to MEMORY in silence, which
         // is the case this field exists to catch.
         .CU_TYPE(16'h5643), .CU_VERSION(8'h03), .N_BUFFERS(2),
-        .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH), .RECV_MEM(RECV_MEM)
+        .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH), .RECV_MEM(RECV_MEM),
+        .MEM_TYPE(MEM_TYPE)
     ) u_base (
         .clk(u_clk), .resetn(u_resetn),
         .noc_in_data(bp_in_data), .noc_in_valid(bp_in_valid),
@@ -185,7 +187,9 @@ module vec_cu #(
     reg         rr_valid;
     reg  [8:0]  rr_tag;
     reg  [255:0] rr_data;
-    reg         fill_bank;
+    // Per OUTSTANDING TAG, not per fill: one VFILL crosses word 256, so a single
+    // latch banks its early responses by the last request's bit. Written before read.
+    reg         fill_bank_tbl [0:255];
 
     reg         cd_valid, cd_fault;
     reg  [8:0]  cd_addr;
@@ -309,7 +313,7 @@ module vec_cu #(
             if (recv_valid && recv_ready) begin
                 if (rtype == T_MEM_RD_RESP) begin
                     rr_valid <= 1'b1;
-                    rr_tag   <= {fill_bank, rtag};
+                    rr_tag   <= {fill_bank_tbl[rtag], rtag};
                     rr_data  <= recv_flit[255:0];
                 end else if (rtype == T_CU_DATA) begin
                     if (!cd_st) begin
@@ -360,7 +364,7 @@ module vec_cu #(
         if (!u_resetn) begin
             send_valid <= 1'b0; send_flit <= {FLIT_WIDTH{1'b0}};
             rd_req_ready <= 1'b0; wr_req_ready <= 1'b0;
-            wst <= W_IDLE; fill_bank <= 1'b0;
+            wst <= W_IDLE;
             // w_addr/w_data are the staged write the send path qualifies.
             nd_hdr <= 1'b0; nd_cnt <= 8'd0;
         end else begin
@@ -386,7 +390,7 @@ module vec_cu #(
                                        rd_req_addr, 8'd0, 8'd0, 200'd0 };
                         send_valid   <= 1'b1;
                         rd_req_ready <= 1'b1;
-                        fill_bank    <= rd_req_tag[8];
+                        fill_bank_tbl[rd_req_tag[7:0]] <= rd_req_tag[8];
                     // A peer drain: ONE descriptor for the whole walk, then the
                     // words. The first word waits a beat for the descriptor;
                     // the walk itself is the memory drain's, unchanged.
