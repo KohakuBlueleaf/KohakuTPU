@@ -34,6 +34,20 @@ module sb_line4 #(
     // Port 0's slave width. Defaults to the flit width; set it independently to
     // test a wide slave behind a narrow fabric.
     parameter integer WIDE_DW   = FW,
+    // Packed width of the station/port indices; both are 2 in every deployed
+    // shape. A parameter, not a localparam, so the SEG_* overrides can size.
+    parameter integer DSTW_P    = (STNW > PORTW) ? STNW : PORTW,
+    // At 0, the uniform 64 KB map below, which cannot express the mesh's 1 TB
+    // S_AXI_MEM window. sb_nmu semantics: XLT == BASE passes through, 0 strips.
+    parameter integer SEG_OVERRIDE = 0,
+    // Plain 0, not a replication: IPI reads a `{N{1'b0}}` default back as a
+    // bit string it cannot convert (IP_Flow 19-594).
+    parameter [NS*AW-1:0]     SEG_BASE_P  = 0,
+    parameter [NS*AW-1:0]     SEG_MASK_P  = 0,
+    parameter [NS*AW-1:0]     SEG_XLT_P   = 0,
+    parameter [NS*DSTW_P-1:0] SEG_DST_P   = 0,
+    parameter [NS*DSTW_P-1:0] SEG_DPORT_P = 0,
+    parameter [NS-1:0]        SEG_VLD_P   = {NS{1'b1}},
     // Per-station overrides; each defaults to the line-wide scalar above. Only
     // shim-private settings appear here -- anything in the flit is line-global.
     parameter integer OST0 = OST, OST1 = OST, OST2 = OST, OST3 = OST,
@@ -54,7 +68,12 @@ module sb_line4 #(
     input  wire clk_s1,     input wire aresetn_s1,
     input  wire clk_s2,     input wire aresetn_s2,
     input  wire clk_s3,     input wire aresetn_s3,
-    input  wire clk_ddr,    input wire aresetn_ddr,
+    // ONE PER STATION. Each SLR's DDR4 controller runs on its own ui_clk, so a
+    // single clk_ddr would force a crossing IP in front of three of them.
+    input  wire clk_ddr0,   input wire aresetn_ddr0,
+    input  wire clk_ddr1,   input wire aresetn_ddr1,
+    input  wire clk_ddr2,   input wire aresetn_ddr2,
+    input  wire clk_ddr3,   input wire aresetn_ddr3,
 
     input  wire [NM*MAXID-1:0]    mp_awid,
     input  wire [NM*AW-1:0]       mp_awaddr,
@@ -129,7 +148,7 @@ module sb_line4 #(
     localparam integer   NSEG = 4 * NQ;
     // sb_nmu slices BOTH segment tables at DSTW, so station and port indices
     // must be packed at the SAME width; the station narrows them again.
-    localparam integer   DPW  = (STNW > PORTW) ? STNW : PORTW;
+    localparam integer   DPW  = DSTW_P;
 
     // SEG_DST carries the STATION and SEG_DPORT the local port: the NMU does
     // not route, it labels, and each station's route() picks the direction.
@@ -164,10 +183,14 @@ module sb_line4 #(
         end
     endfunction
 
-    localparam [NSEG*AW-1:0]  L_BASE = mk_base(0);
-    localparam [NSEG*AW-1:0]  L_MASK = {NSEG{MSK}};
-    localparam [NSEG*DPW-1:0] L_STN  = mk_stn(0);
-    localparam [NSEG*DPW-1:0] L_PRT  = mk_prt(0);
+    // At SEG_OVERRIDE=0 L_XLT == L_BASE, so sb_nmu's XLT_ID folds the rewrite
+    // away and this is bit-for-bit the map that shipped before the override.
+    localparam [NSEG*AW-1:0]  L_BASE = SEG_OVERRIDE ? SEG_BASE_P : mk_base(0);
+    localparam [NSEG*AW-1:0]  L_MASK = SEG_OVERRIDE ? SEG_MASK_P : {NSEG{MSK}};
+    localparam [NSEG*AW-1:0]  L_XLT  = SEG_OVERRIDE ? SEG_XLT_P  : mk_base(0);
+    localparam [NSEG*DPW-1:0] L_STN  = SEG_OVERRIDE ? SEG_DST_P   : mk_stn(0);
+    localparam [NSEG*DPW-1:0] L_PRT  = SEG_OVERRIDE ? SEG_DPORT_P : mk_prt(0);
+    localparam [NSEG-1:0]     L_VLD  = SEG_OVERRIDE ? SEG_VLD_P   : {NSEG{1'b1}};
 
     // v5's shape: ports 0,1 on the station's mesh clock, port 2 on DDR, the
     // rest on ctrl. A station spanning three domains is the case that matters.
@@ -175,6 +198,8 @@ module sb_line4 #(
     wire [3:0] brst  = {bus_rst3, bus_rst2, bus_rst1, bus_rst0};
     wire [3:0] mclk  = {clk_s3, clk_s2, clk_s1, clk_s0};
     wire [3:0] mrstn = {aresetn_s3, aresetn_s2, aresetn_s1, aresetn_s0};
+    wire [3:0] dclk  = {clk_ddr3, clk_ddr2, clk_ddr1, clk_ddr0};
+    wire [3:0] drstn = {aresetn_ddr3, aresetn_ddr2, aresetn_ddr1, aresetn_ddr0};
 
     function integer port_dom;
         input integer p;
@@ -309,8 +334,8 @@ module sb_line4 #(
                          // the 4 KB bound would provision them for 256.
                          .MAX_BURST((i == 1) ? 0 : 1),
                          .SEG_BASE(L_BASE), .SEG_MASK(L_MASK),
-                         .SEG_XLT(L_BASE), .SEG_DST(L_STN),
-                         .SEG_DPORT(L_PRT), .SEG_VLD({NSEG{1'b1}})) u_nmu (
+                         .SEG_XLT(L_XLT), .SEG_DST(L_STN),
+                         .SEG_DPORT(L_PRT), .SEG_VLD(L_VLD)) u_nmu (
                     .s_aclk((i == 0) ? clk_ctrl : clk_xdma),
                     .s_aresetn((i == 0) ? aresetn_ctrl : aresetn_xdma),
                     .s_awid(mp_awid[i*MAXID +: MAXID]),
@@ -381,9 +406,9 @@ module sb_line4 #(
             localparam integer K  = s*NQ + i;
             localparam integer DW = (i == 0) ? WIDE_DW : 32;
             localparam integer DOM = port_dom(i);
-            wire ep_clk  = (DOM == 0) ? mclk[s]  : (DOM == 1) ? clk_ddr
+            wire ep_clk  = (DOM == 0) ? mclk[s]  : (DOM == 1) ? dclk[s]
                                                              : clk_ctrl;
-            wire ep_rstn = (DOM == 0) ? mrstn[s] : (DOM == 1) ? aresetn_ddr
+            wire ep_rstn = (DOM == 0) ? mrstn[s] : (DOM == 1) ? drstn[s]
                                                              : aresetn_ctrl;
             if (DW < MAXW) begin : g_pad
                 assign sp_wdata[K*MAXW + DW +: MAXW-DW] = {(MAXW-DW){1'b0}};
