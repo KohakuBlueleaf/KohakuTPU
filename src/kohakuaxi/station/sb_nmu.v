@@ -216,6 +216,9 @@ module sb_nmu #(
     reg [NTAG-1:0]  tag_busy;
     reg [MIDW-1:0]  tg_id   [0:NTAG-1];
     reg [LANEW-1:0] tg_lane [0:NTAG-1];
+    // Flits STILL RESERVED for this tag. A subordinate may answer with fewer --
+    // a Lite port tied rlast high, a TIMEOUT SLVERR -- and the rest would leak.
+    reg [8:0]       tg_rsv  [0:NTAG-1];
 
     reg [TAGW-1:0] tag_new;
     reg            tag_avail;
@@ -345,6 +348,7 @@ module sb_nmu #(
                     tag_busy[tag_new] <= 1'b1;
                     tg_id  [tag_new]  <= s_awid;
                     tg_lane[tag_new]  <= {LANEW{1'b0}};
+                    tg_rsv [tag_new]  <= 9'd1;
                 end
             end
 
@@ -353,7 +357,12 @@ module sb_nmu #(
                 tg_id  [tag_new]  <= s_arid;
                 tg_lane[tag_new]  <= (NLANE <= 1) ? {LANEW{1'b0}}
                                                   : s_araddr[LSB +: LANEW];
+                tg_rsv [tag_new]  <= ar_beats;
             end
+
+            // rf_tag is busy and tag_new is free, so this never races the two
+            // writes above for the same entry.
+            if (rsp_pop) tg_rsv[rf_tag] <= tg_rsv[rf_tag] - 9'd1;
 
             if (w_beat) begin
                 w_head <= 1'b0;
@@ -375,10 +384,14 @@ module sb_nmu #(
 
     always @(posedge s_aclk) begin
         if (srst) rsp_credit <= RSD[CW-1:0];
+        // The last term reclaims what a SHORT answer never returned; tg_rsv is
+        // read pre-decrement, so a full-length burst reclaims exactly zero.
         else rsp_credit <= rsp_credit
              - (ar_go              ? {{(CW-9){1'b0}}, ar_beats} : {CW{1'b0}})
              - ((aw_go && aw_hit)  ? {{(CW-1){1'b0}}, 1'b1}     : {CW{1'b0}})
-             + (rsp_pop            ? {{(CW-1){1'b0}}, 1'b1}     : {CW{1'b0}});
+             + (rsp_pop            ? {{(CW-1){1'b0}}, 1'b1}     : {CW{1'b0}})
+             + ((rsp_pop && rsp_last_o)
+                ? {{(CW-9){1'b0}}, (tg_rsv[rf_tag] - 9'd1)}     : {CW{1'b0}});
     end
 
     always @(posedge s_aclk) begin

@@ -20,7 +20,9 @@ module sb_skid #(
     reg [W-1:0] hold_data, out_data;
     reg         hold_valid, out_valid;
 
-    assign i_ready = !hold_valid;
+    // `rst`, not `o_ready`, so no path still spans a station: the reset branch
+    // below captures nothing, so a beat taken while held is accepted and lost.
+    assign i_ready = !hold_valid && !rst;
     assign o_valid = out_valid;
     assign o_data  = out_data;
 
