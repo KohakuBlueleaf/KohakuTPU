@@ -61,13 +61,21 @@ module mm_mesh #(
     // path, where the mover and the interlink can also reach it.
     parameter integer L2_MAG_AT_PORT = 0,
     // ONE RATE PER TYPE: cluster on `mat_clk`, vector core on `vec_clk`.
-    // Routers, MAG and the L2 slot stay on `clk`; only the two CU ports cross.
+    // `clk` is the NoC, and the L2 adapters are part of it, not of the endpoint.
     parameter integer UNIT_CDC  = 0,
-    parameter integer CDC_DEPTH = 16
+    // MAG on `mag_clk` behind a CDC on its NoC port, like every other endpoint.
+    // 0 keeps MAG on `clk`: what shipped, and the only reason it had to.
+    parameter integer MAG_CDC   = 0,
+    parameter integer CDC_DEPTH = 16,
+    // 1 runs the cluster's L1 and cascade on `mat_clk2x`. UG949: the pair must
+    // be BUFGCE_DIV(1) and (2) off one source sharing CLR, or they phase-shift.
+    parameter integer PUMP      = 0
 )(
     input  wire clk,
-    // Tie both to `clk` when UNIT_CDC is 0. They reach nothing.
+    // Tie each to `clk` when its CDC is 0. They reach nothing.
+    input  wire mag_clk,
     input  wire mat_clk,
+    input  wire mat_clk2x,
     input  wire vec_clk,
     input  wire rst,
 
@@ -195,6 +203,31 @@ module mm_mesh #(
 
     wire [15:0] mag_rd, mag_wr;
 
+    // MAG is an endpoint like the others, so its CDC sits at the SAME boundary:
+    // router side on `clk`, MAG side on `mag_clk`, async FIFO between.
+    wire [FW-1:0] mg_i, mg_o;
+    wire mg_iv, mg_ib, mg_ov, mg_ob;
+
+    generate if (MAG_CDC) begin : g_mag_cdc
+        noc_local_cdc #(.FLIT_WIDTH(FW), .DEPTH(CDC_DEPTH)) u_mag_in (
+            .wr_clk(clk),     .wr_resetn(rstn),
+            .i_data(mag_i),   .i_valid(mag_iv), .i_busy(mag_ib),
+            .rd_clk(mag_clk), .rd_resetn(rstn),
+            .o_data(mg_i),    .o_valid(mg_iv),  .o_busy(mg_ib)
+        );
+        noc_local_cdc #(.FLIT_WIDTH(FW), .DEPTH(CDC_DEPTH)) u_mag_out (
+            .wr_clk(mag_clk), .wr_resetn(rstn),
+            .i_data(mg_o),    .i_valid(mg_ov),  .i_busy(mg_ob),
+            .rd_clk(clk),     .rd_resetn(rstn),
+            .o_data(mag_o),   .o_valid(mag_ov), .o_busy(mag_ob)
+        );
+    end else begin : g_mag_direct
+        assign mg_i   = mag_i;  assign mg_iv  = mag_iv; assign mag_ib = mg_ib;
+        assign mag_o  = mg_o;   assign mag_ov = mg_ov;  assign mg_ob  = mag_ob;
+    end endgenerate
+
+    wire mag_clk_i = MAG_CDC ? mag_clk : clk;
+
     mag #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(AW), .ID_W(IDW),
           .MW(MW),
           .MEM_PORTS(MEMP), .MEM_X(0), .MEM_Y(1),
@@ -203,7 +236,7 @@ module mm_mesh #(
           .STAGE(L2_MAG), .STAGE_BANKS(L2_MAG_BANKS),
           .STAGE_ENTRIES(L2_MAG_ENTRIES), .STAGE_PIPE(1),
           .STAGE_AT_PORT(L2_MAG_AT_PORT)) u_mag (
-        .clk(clk), .resetn(rstn),
+        .clk(mag_clk_i), .resetn(rstn),
         .sm_awid({IDW{1'b0}}), .sm_awaddr(sm_awaddr), .sm_awlen(sm_awlen),
         .sm_awvalid(sm_awvalid), .sm_awready(),
         .sm_wdata(sm_wdata), .sm_wstrb({(DW/8){1'b1}}), .sm_wlast(sm_wlast),
@@ -238,8 +271,8 @@ module mm_mesh #(
         .dram_rid(dram_rid), .dram_rdata(dram_rdata), .dram_rresp(dram_rresp),
         .dram_rlast(dram_rlast),
         .dram_rvalid(dram_rvalid), .dram_rready(dram_rready),
-        .mem_in_data(mag_i), .mem_in_valid(mag_iv), .mem_in_busy(mag_ib),
-        .mem_out_data(mag_o), .mem_out_valid(mag_ov), .mem_out_busy(mag_ob),
+        .mem_in_data(mg_i), .mem_in_valid(mg_iv), .mem_in_busy(mg_ib),
+        .mem_out_data(mg_o), .mem_out_valid(mg_ov), .mem_out_busy(mg_ob),
         .mem_rd_count(mag_rd), .mem_wr_count(mag_wr),
         .mv_busy(mv_busy), .mv_fault(mv_fault), .mv_done(mv_done)
     );
@@ -264,9 +297,9 @@ module mm_mesh #(
 
     mx_cluster_cu #(.FLIT_WIDTH(FW), .POS_WIDTH(PW),
                     .CU_X(2), .CU_Y(1), .UNIT_CDC(UNIT_CDC),
-                    .CDC_DEPTH(CDC_DEPTH),
+                    .CDC_DEPTH(CDC_DEPTH), .PUMP(PUMP),
                     .MEM_X(0), .MEM_Y(1), .MODEL(MODEL)) u_cluster (
-        .clk(clk), .clk2x(1'b0), .unit_clk(mat_clk), .resetn(rstn),
+        .clk(clk), .clk2x(mat_clk2x), .unit_clk(mat_clk), .resetn(rstn),
         .noc_in_data(cl_i), .noc_in_valid(cl_iv), .noc_in_busy(cl_ib),
         .noc_out_data(cl_o), .noc_out_valid(cl_ov), .noc_out_busy(cl_ob),
         .fills_done(cf), .gemms_done(cg), .drains_done(cd)

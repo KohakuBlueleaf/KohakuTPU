@@ -22,7 +22,14 @@ module mm_mesh_tb #(
     // HALF periods in ns, against the mesh's 2.0. One rate per TYPE, so the
     // cluster and the vector core are separate domains, not one shared one.
     parameter integer UNIT_CDC = 0,
+    // MAG is an endpoint too: its own rate, behind a CDC on its NoC port.
+    parameter integer MAG_CDC  = 0,
+    // 1 derives `mat_clk` from `mat_clk2x` instead of driving it free, so the
+    // pumped pair is edge-aligned the way BUFGCE_DIV(1)/(2) makes it.
+    parameter integer PUMP     = 0,
     parameter real    MHP      = 2.0,
+    parameter real    M2HP     = 1.0,
+    parameter real    GHP      = 2.0,
     parameter real    VHP      = 2.0,
     // MAG staging on the converged path, so the async unit clocks and the L2
     // are exercised in one design rather than in two separate benches.
@@ -40,9 +47,17 @@ module mm_mesh_tb #(
     reg clk = 0, rst = 1;
     always #2 clk = ~clk;
 
-    reg mat_clk = 0, vec_clk = 0;
-    always #MHP mat_clk = ~mat_clk;
-    always #VHP vec_clk = ~vec_clk;
+    reg mat_free = 0, vec_clk = 0, mag_clk = 0;
+    always #MHP mat_free = ~mat_free;
+    always #VHP vec_clk  = ~vec_clk;
+    always #GHP mag_clk  = ~mag_clk;
+
+    // ktpu_div2's own model of the primitive: O rises WITH an I edge, never a
+    // delta after, or every 1x register samples what 2x has already updated.
+    reg mat_clk2x = 0, mph = 0;
+    always #M2HP mat_clk2x = ~mat_clk2x;
+    always @(negedge mat_clk2x) mph <= ~mph;
+    wire mat_clk = PUMP ? (mat_clk2x & mph) : mat_free;
 
     reg  [FW-1:0] ext_i;
     reg           ext_iv;
@@ -77,10 +92,11 @@ module mm_mesh_tb #(
     wire        dbg_vflt;
 
     mm_mesh #(.FW(FW), .PW(PW), .DW(DW), .AW(AW), .IDW(IDW), .MEMP(MEMP),
-              .UNIT_CDC(UNIT_CDC), .MODEL(1),
+              .UNIT_CDC(UNIT_CDC), .MAG_CDC(MAG_CDC), .PUMP(PUMP), .MODEL(1),
               .L2_MAG(L2MAG), .L2_MAG_BANKS(4), .L2_MAG_ENTRIES(1024),
               .L2_MAG_AT_PORT(L2MAG)) dut (
-        .clk(clk), .mat_clk(mat_clk), .vec_clk(vec_clk), .rst(rst),
+        .clk(clk), .mag_clk(mag_clk), .mat_clk(mat_clk),
+        .mat_clk2x(mat_clk2x), .vec_clk(vec_clk), .rst(rst),
         .sm_awaddr({AW{1'b0}}), .sm_awlen(8'd0), .sm_awvalid(1'b0),
         .sm_wdata({DW{1'b0}}), .sm_wlast(1'b0), .sm_wvalid(1'b0),
         .sc_awaddr(sc_awaddr), .sc_awvalid(sc_awvalid), .sc_awready(sc_awready),
@@ -173,19 +189,23 @@ module mm_mesh_tb #(
     // only path a block design can wire -- so this bench now exercises the one
     // the card will use. `a` is still the mover's own register offset.
     localparam [31:0] A_MV_CFG = 32'h0800;
+    // MAG's AXI slave lives in MAG's domain, so the host drives it there. The
+    // real BD needs an axi_clock_converter here for the same reason.
+    wire host_clk = MAG_CDC ? mag_clk : clk;
+
     task mvwr(input [7:0] a, input [63:0] d);
         begin
-            @(negedge clk);
+            @(negedge host_clk);
             sc_awaddr = A_MV_CFG + {24'd0, a}; sc_awvalid = 1'b1;
-            while (!sc_awready) @(negedge clk);
-            @(negedge clk);
+            while (!sc_awready) @(negedge host_clk);
+            @(negedge host_clk);
             sc_awvalid = 1'b0;
             sc_wdata = d; sc_wvalid = 1'b1;
-            while (!sc_wready) @(negedge clk);
-            @(negedge clk);
+            while (!sc_wready) @(negedge host_clk);
+            @(negedge host_clk);
             sc_wvalid = 1'b0;
-            while (!sc_bvalid) @(negedge clk);
-            @(negedge clk);
+            while (!sc_bvalid) @(negedge host_clk);
+            @(negedge host_clk);
         end
     endtask
     task mvhdr(input sel, input [33:0] base, input [2:0] nd);
@@ -247,7 +267,11 @@ module mm_mesh_tb #(
         mvdim(1'b1, 3'd0, 16'd4, 32'sd32);
         mvdim(1'b1, 3'd1, 16'd4, 32'sd128);
         mvwr(8'h00, {47'd0, 1'b1, 8'd0, 3'd0, 2'd1, 3'd0});
-        @(negedge clk);
+        // Wait for the START, not one edge: `mv_busy` is raised in MAG's domain,
+        // so at any other rate the old single edge polled before it asserted.
+        spin = 0;
+        while (!mv_busy && spin < 10000) begin spin = spin + 1; @(negedge clk); end
+        chk(spin < 10000, "mover started", 0);
         spin = 0;
         while (mv_busy && spin < 100000) begin spin = spin + 1; @(negedge clk); end
         chk(spin < 100000, "mover went idle", 0);

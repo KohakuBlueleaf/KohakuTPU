@@ -35,10 +35,20 @@ module interlink_2mesh_1m_tb;
     wire [1:0]      m_wlast, m_wvalid, m_wready;
     wire [1:0]      m_bvalid, m_bready, m_rlast, m_rvalid, m_rready;
 
+    // MAG_CDC's generate branch is only elaborated when it is taken, so without
+    // this define the noc_local_cdc wrapping MAG's ports has no cover at all.
+`ifdef MM_MAG_CDC
+    localparam MAGCDC = 1;
+`else
+    localparam MAGCDC = 0;
+`endif
+
     genvar g;
     generate for (g = 0; g < 2; g = g + 1) begin : mesh
-        ktpu_min_1m #(.MESH_ID(g), .MODEL(1), .MW(MW)) u (
+        ktpu_min_1m #(.MESH_ID(g), .MODEL(1), .MW(MW),
+                      .MAG_CDC(MAGCDC)) u (
             .axi_aclk(clk), .axi_aresetn(resetn),
+            .noc_clk(clk),
             .dram_aclk(dclk), .dram_aresetn(resetn),
             .S_AXI_MEM_awid({IDW{1'b0}}), .S_AXI_MEM_awaddr({AW{1'b0}}),
             .S_AXI_MEM_awlen(8'd0), .S_AXI_MEM_awvalid(1'b0),

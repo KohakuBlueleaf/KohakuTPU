@@ -24,4 +24,29 @@ module mm_mesh_cdc_l2_tb;
     mm_mesh_tb #(.UNIT_CDC(1), .MHP(1.363), .VHP(2.330), .L2MAG(1)) u_tb ();
 endmodule
 
+// The shipping rates: fabric 250, matmul 300, vector 350.
+module mm_mesh_vfast_tb;
+    mm_mesh_tb #(.UNIT_CDC(1), .MHP(1.667), .VHP(1.429)) u_tb ();
+endmodule
+
+// MAG at 233 against the NoC's 250, so no ratio can align them. Recorded as
+// failing until MAG's NoC port got the CDC every other endpoint already had.
+module mm_mesh_magclk_tb;
+    mm_mesh_tb #(.UNIT_CDC(1), .MAG_CDC(1), .GHP(2.146)) u_tb ();
+endmodule
+
+// All four component rates at once, each behind its own endpoint CDC: MAG 233,
+// NoC 250, vector 300, matmul 500/250 off one divider.
+module mm_mesh_5clk_tb;
+    mm_mesh_tb #(.UNIT_CDC(1), .MAG_CDC(1), .PUMP(1),
+                 .GHP(2.146), .M2HP(1.000), .VHP(1.667)) u_tb ();
+endmodule
+
+// The same with the converged MAG L2, so async endpoints and a store that
+// crosses one are exercised in a single design rather than two.
+module mm_mesh_5clk_l2_tb;
+    mm_mesh_tb #(.UNIT_CDC(1), .MAG_CDC(1), .PUMP(1), .GHP(2.146),
+                 .M2HP(1.000), .VHP(1.667), .L2MAG(1)) u_tb ();
+endmodule
+
 `default_nettype wire
