@@ -25,11 +25,19 @@ connect_bd_net [get_bd_pins rst_ctrl/peripheral_aresetn] \
 # Port 2 of each station runs on THAT SLR's MIG ui_clk, so the station meets
 # the controller in its own domain and no crossing IP sits between them.
 foreach {mid mod} $MESHES {
-    set ddr [dict get $DDR_OF_SLR $mid]
-    connect_bd_net [get_bd_pins ddr4_$ddr/c0_ddr4_ui_clk] \
-                   [get_bd_pins station_bus/clk_ddr$mid]
-    connect_bd_net [get_bd_pins rst_ddr4_$ddr/peripheral_aresetn] \
-                   [get_bd_pins station_bus/aresetn_ddr$mid]
+    if {[v6_has_mesh $mid]} {
+        set ddr [dict get $DDR_OF_SLR $mid]
+        connect_bd_net [get_bd_pins ddr4_$ddr/c0_ddr4_ui_clk] \
+                       [get_bd_pins station_bus/clk_ddr$mid]
+        connect_bd_net [get_bd_pins rst_ddr4_$ddr/peripheral_aresetn] \
+                       [get_bd_pins station_bus/aresetn_ddr$mid]
+    } else {
+        # No MIG on a probe-absent die; the MAG-rate clock stands in.
+        connect_bd_net [get_bd_pins clk_wiz_mesh$mid/clk_out4] \
+                       [get_bd_pins station_bus/clk_ddr$mid]
+        connect_bd_net [get_bd_pins rst_mesh$mid/peripheral_aresetn] \
+                       [get_bd_pins station_bus/aresetn_ddr$mid]
+    }
 }
 
 # ---- managers ------------------------------------------------------------
@@ -85,12 +93,42 @@ set_property -dict [list CONFIG.CONST_VAL {0} CONFIG.CONST_WIDTH {1}] $xlc
 connect_bd_net [get_bd_pins xlconstant_irq/dout] [get_bd_pins xdma_0/usr_irq_req]
 
 # ---- endpoints -----------------------------------------------------------
+# Probe-absent die: the port still terminates on real logic in that SLR, or
+# the bus has nothing to place there.
+proc v6_bram_ep {name dw clkpin rstpin} {
+    set c [create_bd_cell -type ip -vlnv xilinx.com:ip:axi_bram_ctrl $name]
+    set_property -dict [list CONFIG.DATA_WIDTH $dw CONFIG.SINGLE_PORT_BRAM {1} \
+                             CONFIG.ECC_TYPE {0}] $c
+    set m [create_bd_cell -type ip -vlnv xilinx.com:ip:blk_mem_gen ${name}_mem]
+    set_property -dict [list CONFIG.Memory_Type {Single_Port_RAM} \
+                             CONFIG.use_bram_block {BRAM_Controller}] $m
+    connect_bd_intf_net [get_bd_intf_pins $name/BRAM_PORTA] \
+                        [get_bd_intf_pins ${name}_mem/BRAM_PORTA]
+    connect_bd_net [get_bd_pins $clkpin] [get_bd_pins $name/s_axi_aclk]
+    connect_bd_net [get_bd_pins $rstpin] [get_bd_pins $name/s_axi_aresetn]
+}
 foreach {mid mod} $MESHES {
-    set ddr [dict get $DDR_OF_SLR $mid]
     set p0 [format M%02d_AXI [expr {$mid * $NQ + 0}]]
     set p1 [format M%02d_AXI [expr {$mid * $NQ + 1}]]
     set p2 [format M%02d_AXI [expr {$mid * $NQ + 2}]]
     set p3 [format M%02d_AXI [expr {$mid * $NQ + 3}]]
+
+    if {![v6_has_mesh $mid]} {
+        foreach {port dw} [list $p0 $FW $p1 32 $p2 32] {
+            v6_bram_ep ep_s${mid}_[string range $port 0 2] $dw \
+                clk_wiz_mesh$mid/clk_out4 rst_mesh$mid/peripheral_aresetn
+            connect_bd_intf_net [get_bd_intf_pins station_bus/$port] \
+                [get_bd_intf_pins ep_s${mid}_[string range $port 0 2]/S_AXI]
+        }
+        connect_bd_intf_net [get_bd_intf_pins station_bus/$p3] \
+                            [get_bd_intf_pins clk_wiz_mesh$mid/s_axi_lite]
+        connect_bd_net [get_bd_pins clk_wiz_ctrl/clk_out1] \
+                       [get_bd_pins clk_wiz_mesh$mid/s_axi_aclk]
+        connect_bd_net [get_bd_pins rst_ctrl/peripheral_aresetn] \
+                       [get_bd_pins clk_wiz_mesh$mid/s_axi_aresetn]
+        continue
+    }
+    set ddr [dict get $DDR_OF_SLR $mid]
 
     connect_bd_intf_net [get_bd_intf_pins station_bus/$p0] \
                         [get_bd_intf_pins mesh_$mid/S_AXI_MEM]

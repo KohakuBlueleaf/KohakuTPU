@@ -14,12 +14,16 @@ set_param general.maxThreads 16
 
 # bd/mref/<mod>/component.xml is packaged ONCE and the RTL is never re-parsed --
 # BEFORE open_project, because Vivado loads these definitions as it opens.
-set v6_mref $BOARD_DIR/[file rootname [file tail $MAIN_XPR]].gen/sources_1/bd/mref
+set v6_gens [list $BOARD_DIR/[file rootname [file tail $MAIN_XPR]].gen]
+# A standalone/probe project keeps its own .gen across create_project -force.
+if {$proj_dir ne $BOARD_DIR} { lappend v6_gens $proj_dir/${design_name}.gen }
 set v6_dropped {}
-foreach m [concat [dict values $MESHES] {sb_bd_line4 ktpu_div2 mag_link_cdc}] {
-    if {[file isdirectory $v6_mref/$m]} {
-        file delete -force $v6_mref/$m
-        lappend v6_dropped $m
+foreach g $v6_gens {
+    foreach m [concat [dict values $MESHES] {sb_bd_line4 ktpu_div2 mag_link_cdc}] {
+        if {[file isdirectory $g/sources_1/bd/mref/$m]} {
+            file delete -force $g/sources_1/bd/mref/$m
+            lappend v6_dropped $m
+        }
     }
 }
 puts "@@@ v6 mref: dropped [llength $v6_dropped] stale module-reference cache(s)"

@@ -1,27 +1,27 @@
 # RTL for multimesh v6. Order is irrelevant; update_compile_order sorts it.
 
 set V6_SOURCES {
-    src/common/sync_fifo.v
-    src/common/async_fifo.v
-    src/common/kohaku_sdpram.v
+    src/kohakuaccel/common/sync_fifo.v
+    src/kohakuaccel/common/async_fifo.v
+    src/kohakuaccel/common/kohaku_sdpram.v
 
-    src/kohakuaxi/station/sb_skid.v
-    src/kohakuaxi/station/sb_hub.v
-    src/kohakuaxi/station/sb_nmu.v
-    src/kohakuaxi/station/sb_nsu.v
-    src/kohakuaxi/station/sb_link.v
-    src/kohakuaxi/station/sb_link_cdc.v
-    src/kohakuaxi/station/sb_stn_line.v
-    src/kohakuaxi/station/sb_line4.v
-    src/synth_top/sb_v6_bus.v
+    src/kohakuaccel/common/sb_skid.v
+    src/kohakuaccel/axi/station/sb_hub.v
+    src/kohakuaccel/axi/station/sb_nmu.v
+    src/kohakuaccel/axi/station/sb_nsu.v
+    src/kohakuaccel/axi/link/sb_link.v
+    src/kohakuaccel/axi/link/sb_link_cdc.v
+    src/kohakuaccel/axi/topo/sb_stn_line.v
+    src/kohakuaccel/axi/topo/sb_line4.v
+    src/kohakuaccel/axi/bd/sb_v6_bus.v
 
-    src/kohakunoc/noc_inport.v
-    src/kohakunoc/noc_outport.v
-    src/kohakunoc/noc_router.v
-    src/kohakunoc/noc_cu_base.v
-    src/kohakunoc/noc_orchestrator.v
-    src/kohakunoc/noc_l2_adapter.v
-    src/kohakunoc/noc_local_cdc.v
+    src/kohakuaccel/noc/router/noc_inport.v
+    src/kohakuaccel/noc/router/noc_outport.v
+    src/kohakuaccel/noc/router/noc_router.v
+    src/kohakuaccel/noc/endpoint/noc_cu_base.v
+    src/kohakuaccel/noc/ctrl/noc_orchestrator.v
+    src/kohakuaccel/noc/endpoint/noc_l2_adapter.v
+    src/kohakuaccel/noc/endpoint/noc_local_cdc.v
 
     src/kohakutpu/matmul/mx_mac.v
     src/kohakutpu/matmul/mx_tcu.v
@@ -35,7 +35,7 @@ set V6_SOURCES {
     src/kohakutpu/matmul/mx_cluster_node_pump.v
     src/kohakutpu/matmul/mx_cluster_cu.v
     src/kohakutpu/matmul/mx_cluster_cu_pump.v
-    src/kohakutpu/matmul/mx_tdesc.v
+    src/kohakuaccel/mas/mover/mx_tdesc.v
 
     src/kohakutpu/vector/vec_dsp.v
     src/kohakutpu/vector/vec_delay.v
@@ -48,25 +48,25 @@ set V6_SOURCES {
     src/kohakutpu/vector/vec_core.v
     src/kohakutpu/vector/vec_cu.v
 
-    src/kohakumas/mx_quant.v
-    src/kohakumas/mag_mem_port.v
-    src/kohakumas/mag_stage.v
-    src/kohakumas/mag_stage_port.v
-    src/kohakumas/mm_prng.v
-    src/kohakumas/mm_mover.v
-    src/kohakumas/il_pkt_arb.v
-    src/kohakumas/mag_link.v
-    src/kohakumas/mag_link_cdc.v
-    src/kohakumas/mag_link_pipe.v
-    src/kohakumas/mag_switch.v
-    src/kohakumas/mag_ilink.v
-    src/kohakumas/mag.v
-    src/kohakumas/mag_dram_port.v
+    src/kohakutpu/transform/mx_quant.v
+    src/kohakuaccel/mas/core/mag_mem_port.v
+    src/kohakuaccel/mas/core/mag_stage.v
+    src/kohakuaccel/mas/core/mag_stage_port.v
+    src/kohakuaccel/mas/mover/mm_prng.v
+    src/kohakuaccel/mas/mover/mm_mover.v
+    src/kohakuaccel/mas/interlink/il_pkt_arb.v
+    src/kohakuaccel/mas/interlink/mag_link.v
+    src/kohakuaccel/mas/interlink/mag_link_cdc.v
+    src/kohakuaccel/mas/interlink/mag_link_pipe.v
+    src/kohakuaccel/mas/interlink/mag_switch.v
+    src/kohakuaccel/mas/interlink/mag_ilink.v
+    src/kohakuaccel/mas/core/mag.v
+    src/kohakuaccel/mas/core/mag_dram_port.v
 
-    src/synth_top/mag_1m.v
-    src/synth_top/ktpu_div2.v
-    src/synth_top/ktpu_ship_2x2_7c2v_1m_pump.v
-    src/synth_top/ktpu_ship_2x2_6c2v_1m_pump.v
+    src/kohakutpu/top/mag_1m.v
+    src/kohakuaccel/common/clk/ktpu_div2.v
+    src/kohakutpu/top/generated/ktpu_ship_2x2_7c2v_1m_pump.v
+    src/kohakutpu/top/generated/ktpu_ship_2x2_6c2v_1m_pump.v
 }
 
 # Named, not globbed: a stray file under src/ must not silently enter the build.

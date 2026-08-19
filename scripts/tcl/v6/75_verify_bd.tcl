@@ -6,8 +6,10 @@
 set here [file dirname [file normalize [info script]]]
 source $here/00_config.tcl
 
-if {![file exists $MAIN_XPR]} { error "no project at $MAIN_XPR" }
-open_project $MAIN_XPR
+# A probe build lives in its own project, never the main one.
+set v6_xpr [expr {$PROBE_SLR >= 0 ? "$proj_dir/${design_name}.xpr" : $MAIN_XPR}]
+if {![file exists $v6_xpr]} { error "no project at $v6_xpr" }
+open_project $v6_xpr
 
 set fail 0
 proc bad {msg} { global fail ; incr fail ; puts "@@@ FAIL $msg" }
@@ -36,6 +38,7 @@ if {[catch {validate_bd_design -quiet} vmsg]} {
 # ---- 2. every mesh is the module the config names ------------------------
 puts "\n=== meshes ==="
 foreach {mid mod} $MESHES {
+    if {![v6_has_mesh $mid]} { continue }
     set c [get_bd_cells -quiet mesh_$mid]
     if {![llength $c]} { bad "mesh_$mid absent" ; continue }
     set ref [get_property CONFIG.Component_Name $c]
@@ -60,6 +63,7 @@ proc srcpin {pin} {
     return [string trimleft [lindex $src 0] /]
 }
 foreach {mid mod} $MESHES {
+    if {![v6_has_mesh $mid]} { continue }
     foreach {pin want} [list axi_aclk clk_wiz_mesh$mid/clk_out4 \
                              noc_clk  clk_wiz_mesh$mid/clk_out1 \
                              vec_clk  clk_wiz_mesh$mid/clk_out3 \
@@ -74,6 +78,7 @@ foreach {mid mod} $MESHES {
 # ---- 4. each mesh's DRAM is the controller in its own die ----------------
 puts "\n=== mesh <-> ddr4 pairing ==="
 foreach {mid mod} $MESHES {
+    if {![v6_has_mesh $mid]} { continue }
     set ddr [dict get $DDR_OF_SLR $mid]
     set got [srcpin mesh_$mid/dram_aclk]
     puts [format "  mesh_%s dram_aclk <- %s  (want ddr4_%s)" $mid $got $ddr]
@@ -95,6 +100,17 @@ if {![llength $sb]} { bad "station_bus absent" } else {
     }
 }
 
+# ---- 5b. bus clock rate ---------------------------------------------------
+# By PIN FREQ_HZ: under OVERRIDE_MMCM the requested frequency can lie.
+puts "\n=== bus clocks ==="
+set want_hz [expr {int($BUS_MHZ * 1e6)}]
+foreach {mid mod} $MESHES {
+    set hz [get_property -quiet CONFIG.FREQ_HZ \
+                [get_bd_pins -quiet clk_wiz_bus$mid/clk_out1]]
+    puts [format "  clk_wiz_bus%s/clk_out1  %s Hz" $mid $hz]
+    if {$hz ne "$want_hz"} { bad "clk_wiz_bus$mid runs at $hz, want $want_hz" }
+}
+
 # ---- 6. the address map ---------------------------------------------------
 
 # An unassigned segment is BD 41-1356 at generate, and an excluded one is a
@@ -103,6 +119,7 @@ puts "\n=== address segments ==="
 set nass [llength [get_bd_addr_segs -quiet -excluded]]
 puts "  excluded segments: $nass"
 foreach {mid mod} $MESHES {
+    if {![v6_has_mesh $mid]} { continue }
     set ddr [dict get $DDR_OF_SLR $mid]
     # The segments MAPPED INTO the space, not the addressables it could reach.
     set segs [get_bd_addr_segs -quiet \
@@ -120,8 +137,9 @@ foreach f [get_files -quiet -of_objects [get_filesets constrs_1]] {
     puts [format "  %-44s enabled=%s order=%s" [file tail $f] \
           [get_property is_enabled $f] [get_property -quiet PROCESSING_ORDER $f]]
 }
-foreach need [list ${design_name}_pblocks.xdc ${design_name}_clocks.xdc \
-                   ddr4_c0.xdc ddr4_c1.xdc ddr4_c2.xdc ddr4_c3.xdc pcie.xdc] {
+set v6_need [list ${design_name}_pblocks.xdc ${design_name}_clocks.xdc pcie.xdc]
+foreach i {0 1 2 3} { if {[v6_has_ddr $i]} { lappend v6_need ddr4_c${i}.xdc } }
+foreach need $v6_need {
     set f [get_files -quiet -of_objects [get_filesets constrs_1] *$need]
     if {![llength $f]} { bad "constraint $need is not in constrs_1" } \
     elseif {![get_property is_enabled [lindex $f 0]]} { bad "$need is disabled" }

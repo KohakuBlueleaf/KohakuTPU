@@ -55,16 +55,16 @@ create_project -force $design_name $proj_dir -part $part
 set_property target_language Verilog [current_project]
 
 set SRC {
-    src/common/sync_fifo.v src/common/kohaku_sdpram.v src/common/async_fifo.v
-    src/kohakunoc/noc_inport.v src/kohakunoc/noc_outport.v
-    src/kohakunoc/noc_router.v src/kohakunoc/noc_cu_base.v
-    src/kohakunoc/noc_orchestrator.v src/kohakunoc/noc_l2_adapter.v
-    src/kohakunoc/noc_local_cdc.v
+    src/kohakuaccel/common/sync_fifo.v src/kohakuaccel/common/kohaku_sdpram.v src/kohakuaccel/common/async_fifo.v
+    src/kohakuaccel/noc/router/noc_inport.v src/kohakuaccel/noc/router/noc_outport.v
+    src/kohakuaccel/noc/router/noc_router.v src/kohakuaccel/noc/endpoint/noc_cu_base.v
+    src/kohakuaccel/noc/ctrl/noc_orchestrator.v src/kohakuaccel/noc/endpoint/noc_l2_adapter.v
+    src/kohakuaccel/noc/endpoint/noc_local_cdc.v
     src/kohakutpu/matmul/mx_mac.v src/kohakutpu/matmul/mx_tcu.v
     src/kohakutpu/matmul/mx_fpacc.v src/kohakutpu/matmul/mx_acu_fp.v
     src/kohakutpu/matmul/mx_cluster_core.v src/kohakutpu/matmul/mx_cluster_mgr.v
     src/kohakutpu/matmul/mx_cluster_node.v src/kohakutpu/matmul/mx_cluster_cu.v
-    src/kohakutpu/matmul/mx_tdesc.v
+    src/kohakuaccel/mas/mover/mx_tdesc.v
     src/kohakutpu/matmul/mx_acu_fp_pump.v src/kohakutpu/matmul/mx_cluster_mgr_pump.v
     src/kohakutpu/matmul/mx_cluster_node_pump.v src/kohakutpu/matmul/mx_cluster_cu_pump.v
     src/kohakutpu/vector/vec_dsp.v src/kohakutpu/vector/vec_delay.v
@@ -72,25 +72,29 @@ set SRC {
     src/kohakutpu/vector/vec_cvt.v src/kohakutpu/vector/vec_regfile.v
     src/kohakutpu/vector/vec_lanes.v src/kohakutpu/vector/vec_agu.v
     src/kohakutpu/vector/vec_core.v src/kohakutpu/vector/vec_cu.v
-    src/kohakumas/mx_quant.v src/kohakumas/mag_mem_port.v
-    src/kohakumas/mm_prng.v src/kohakumas/mm_mover.v
-    src/kohakumas/il_pkt_arb.v src/kohakumas/mag_link.v
-    src/kohakumas/mag_link_cdc.v src/kohakumas/mag_link_pipe.v
-    src/kohakumas/mag_switch.v src/kohakumas/mag_ilink.v src/kohakumas/mag.v
-    src/kohakumas/mag_dram_port.v src/kohakumas/mag_stage.v
-    src/kohakumas/mag_stage_port.v src/synth_top/mag_1m.v
-    src/synth_top/ktpu_div2.v src/synth_top/ktpu_pumpclk.v
-    src/kohakuaxi/station/sb_skid.v src/kohakuaxi/station/sb_hub.v
-    src/kohakuaxi/station/sb_nmu.v src/kohakuaxi/station/sb_nsu.v
-    src/kohakuaxi/station/sb_link.v src/kohakuaxi/station/sb_link_cdc.v
-    src/kohakuaxi/station/sb_stn_line.v src/kohakuaxi/station/sb_line4.v
-    src/synth_top/sb_v6_bus.v
+    src/kohakutpu/transform/mx_quant.v src/kohakuaccel/mas/core/mag_mem_port.v
+    src/kohakuaccel/mas/mover/mm_prng.v src/kohakuaccel/mas/mover/mm_mover.v
+    src/kohakuaccel/mas/interlink/il_pkt_arb.v src/kohakuaccel/mas/interlink/mag_link.v
+    src/kohakuaccel/mas/interlink/mag_link_cdc.v src/kohakuaccel/mas/interlink/mag_link_pipe.v
+    src/kohakuaccel/mas/interlink/mag_switch.v src/kohakuaccel/mas/interlink/mag_ilink.v src/kohakuaccel/mas/core/mag.v
+    src/kohakuaccel/mas/core/mag_dram_port.v src/kohakuaccel/mas/core/mag_stage.v
+    src/kohakuaccel/mas/core/mag_stage_port.v src/kohakutpu/top/mag_1m.v
+    src/kohakuaccel/common/clk/ktpu_div2.v src/kohakuaccel/common/clk/ktpu_pumpclk.v
+    src/kohakuaccel/common/sb_skid.v src/kohakuaccel/axi/station/sb_hub.v
+    src/kohakuaccel/axi/station/sb_nmu.v src/kohakuaccel/axi/station/sb_nsu.v
+    src/kohakuaccel/axi/link/sb_link.v src/kohakuaccel/axi/link/sb_link_cdc.v
+    src/kohakuaccel/axi/topo/sb_stn_line.v src/kohakuaccel/axi/topo/sb_line4.v
+    src/kohakuaccel/axi/bd/sb_v6_bus.v
 }
 # Imported, not referenced: each probe then owns a frozen copy of the RTL, so
 # concurrent runs share no source and an edit mid-run cannot change a result.
 set srcs {}
 foreach f $SRC { lappend srcs $root/$f }
-lappend srcs $root/src/synth_top/$mod.v
+if {[file exists $root/src/kohakutpu/top/generated/$mod.v]} {
+    lappend srcs $root/src/kohakutpu/top/generated/$mod.v
+} else {
+    lappend srcs $root/src/kohakutpu/top/$mod.v
+}
 import_files -norecurse -fileset sources_1 $srcs
 update_compile_order -fileset sources_1
 
@@ -199,14 +203,28 @@ connect_bd_net [get_bd_pins clk_wiz_ctrl/clk_out1] [get_bd_pins station_bus/clk_
 connect_bd_net [get_bd_pins rst_ctrl/peripheral_aresetn] [get_bd_pins station_bus/aresetn_ctrl]
 # clk_xdma is wired in the master section: with XDMA present its M_AXI runs on
 # xdma_0/axi_aclk, and using clk_wiz_ctrl there fails BD 41-237 on CLK_DOMAIN.
-connect_bd_net [get_bd_pins ddr4_$ddr/c0_ddr4_ui_clk] [get_bd_pins station_bus/clk_ddr]
-connect_bd_net [get_bd_pins rst_ddr/peripheral_aresetn] [get_bd_pins station_bus/aresetn_ddr]
+# Per-station clk_ddr0..3 (the scalar clk_ddr is retired). Only the target die
+# has a MIG here; the others take their own mesh clock as the port-2 domain.
+foreach slr {0 1 2 3} {
+    if {$slr == $tslr} {
+        connect_bd_net [get_bd_pins ddr4_$ddr/c0_ddr4_ui_clk] \
+                       [get_bd_pins station_bus/clk_ddr$slr]
+        connect_bd_net [get_bd_pins rst_ddr/peripheral_aresetn] \
+                       [get_bd_pins station_bus/aresetn_ddr$slr]
+    } else {
+        connect_bd_net [get_bd_pins [dclk $slr]] \
+                       [get_bd_pins station_bus/clk_ddr$slr]
+        connect_bd_net [get_bd_pins rst_s$slr/peripheral_aresetn] \
+                       [get_bd_pins station_bus/aresetn_ddr$slr]
+    }
+}
 
 # ---- masters -------------------------------------------------------------
-proc jtag_master {name clkpin rstpin} {
+# proto 0 = AXI4, 2 = AXI4LITE (S02 is Lite since the B6 pin work).
+proc jtag_master {name clkpin rstpin {proto 0} {aw 64}} {
     set j [create_bd_cell -type ip -vlnv xilinx.com:ip:jtag_axi $name]
-    set_property -dict [list CONFIG.PROTOCOL {0} CONFIG.M_AXI_ID_WIDTH {4} \
-                             CONFIG.M_AXI_ADDR_WIDTH {64}] $j
+    set_property -dict [list CONFIG.PROTOCOL $proto CONFIG.M_AXI_ID_WIDTH {4} \
+                             CONFIG.M_AXI_ADDR_WIDTH $aw] $j
     connect_bd_net [get_bd_pins $clkpin] [get_bd_pins $name/aclk]
     connect_bd_net [get_bd_pins $rstpin] [get_bd_pins $name/aresetn]
 }
@@ -250,7 +268,7 @@ if {$xdma_on} {
 }
 connect_bd_net [get_bd_pins $xclk] [get_bd_pins station_bus/clk_xdma]
 connect_bd_net [get_bd_pins $xrst] [get_bd_pins station_bus/aresetn_xdma]
-jtag_master jtag_lite $xclk $xrst
+jtag_master jtag_lite $xclk $xrst 2 32
 connect_bd_intf_net [get_bd_intf_pins jtag_lite/M_AXI] [get_bd_intf_pins station_bus/S02_AXI]
 
 # ---- the mesh under test and its DDR -------------------------------------
@@ -286,10 +304,12 @@ foreach lk {M_AXIS_LINK0 M_AXIS_LINK1 S_AXIS_LINK0 S_AXIS_LINK1} {
 
 # ---- endpoints -----------------------------------------------------------
 # Mesh takes ports 0/1 of its station, DDR control port 2; rest is block RAM.
-proc bram_ep {name dw clkpin rstpin} {
+proc bram_ep {name dw clkpin rstpin {lite 0}} {
     set c [create_bd_cell -type ip -vlnv xilinx.com:ip:axi_bram_ctrl $name]
     set_property -dict [list CONFIG.DATA_WIDTH $dw CONFIG.SINGLE_PORT_BRAM {1} \
                              CONFIG.ECC_TYPE {0}] $c
+    # Station ports 2/3 are AXI4LITE since the B6 pin work.
+    if {$lite} { set_property CONFIG.PROTOCOL {AXI4LITE} $c }
     set mm [create_bd_cell -type ip -vlnv xilinx.com:ip:blk_mem_gen ${name}_mem]
     set_property -dict [list CONFIG.Memory_Type {Single_Port_RAM} \
                              CONFIG.use_bram_block {BRAM_Controller}] $mm
@@ -346,11 +366,16 @@ for {set slr 0} {$slr < 4} {incr slr} {
         if {$p < 2} {
             set ck [dclk $slr] ; set rk rst_s$slr/peripheral_aresetn
         } elseif {$p == 2} {
-            set ck ddr4_$ddr/c0_ddr4_ui_clk ; set rk rst_ddr/peripheral_aresetn
+            # Must match that station's clk_ddr$slr wiring above.
+            if {$slr == $tslr} {
+                set ck ddr4_$ddr/c0_ddr4_ui_clk ; set rk rst_ddr/peripheral_aresetn
+            } else {
+                set ck [dclk $slr] ; set rk rst_s$slr/peripheral_aresetn
+            }
         } else {
             set ck clk_wiz_ctrl/clk_out1  ; set rk rst_ctrl/peripheral_aresetn
         }
-        bram_ep ep$k [expr {$p == 0 ? 256 : 32}] $ck $rk
+        bram_ep ep$k [expr {$p == 0 ? 256 : 32}] $ck $rk [expr {$p >= 2}]
         connect_bd_intf_net [get_bd_intf_pins station_bus/$mp] \
                             [get_bd_intf_pins ep$k/S_AXI]
     }

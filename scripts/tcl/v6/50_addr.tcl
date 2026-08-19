@@ -28,11 +28,14 @@ set_property -dict [list \
 
 # NOT excluded, and not optional: MAG's own master. Connecting M_AXI_DRAM does
 # not address it, and unassigned it ties off (v5 hit BD 41-1356 on all four).
+set v6_ndram 0
 foreach {mid mod} $MESHES {
+    if {![v6_has_mesh $mid]} { continue }
     set ddr [dict get $DDR_OF_SLR $mid]
     assign_bd_address \
         -target_address_space [get_bd_addr_spaces mesh_$mid/M_AXI_DRAM] \
         [get_bd_addr_segs ddr4_$ddr/C0_DDR4_MEMORY_MAP/C0_DDR4_ADDRESS_BLOCK] -force
+    incr v6_ndram
 }
 
-puts "@@@ v6 addr: $nseg RTL segments, 4 DRAM assigned"
+puts "@@@ v6 addr: $nseg RTL segments, $v6_ndram DRAM assigned"

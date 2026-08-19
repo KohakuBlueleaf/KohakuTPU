@@ -57,6 +57,7 @@ foreach p [list system_clk_p system_clk_n pcie_reset user_lnk_up \
 }
 
 # Every mesh clock must be 300 and every 2x 600, or a rate was invented.
+# The wizards exist in probe mode too, so the rate check covers all four.
 foreach {mid mod} $MESHES {
     foreach {out want} [list clk_out1 $MESH_MHZ clk_out2 $MAT2X_MHZ \
                              clk_out3 $VEC_MHZ clk_out4 $MESH_MHZ] {
@@ -75,6 +76,7 @@ foreach {mid mod} $MESHES {
 # reported downstream; it just routes badly forever.
 puts "\n=== DDR4 pins per die ==="
 foreach {mid mod} $MESHES {
+    if {![v6_has_mesh $mid]} { continue }
     set ddr [dict get $DDR_OF_SLR $mid]
     set fh [open $BOARD_DIR/ddr4_c${ddr}.xdc r]
     set txt [read $fh] ; close $fh
@@ -126,6 +128,7 @@ foreach p $::V6_CLKPINS {
 # ---- 3. module setup -----------------------------------------------------
 puts "\n=== meshes ==="
 foreach {mid mod} $MESHES {
+    if {![v6_has_mesh $mid]} { continue }
     set cell [get_cells -quiet $top/mesh_$mid]
     if {![llength $cell]} { v6_bad "mesh_$mid absent" ; continue }
     set ref [get_property REF_NAME $cell]
@@ -143,6 +146,7 @@ foreach {mid mod} $MESHES {
 # than read back off the script that wrote it.
 puts "\n=== per-mesh clock sources ==="
 foreach {mid mod} $MESHES {
+    if {![v6_has_mesh $mid]} { continue }
     foreach pin {axi_aclk noc_clk vec_clk mat_clk mat_clk2x dram_aclk} {
         set p [get_pins -quiet $top/mesh_$mid/$pin]
         if {![llength $p]} { v6_bad "mesh_$mid/$pin missing" ; continue }

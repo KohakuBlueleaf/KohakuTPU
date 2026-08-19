@@ -10,13 +10,34 @@ set MAIN_XPR    $BOARD_DIR/JTAG-DMA-test.xpr
 set proj_dir    [expr {[info exists ::env(V6_STANDALONE)]
                        ? "C:/Users/apoll/Desktop/vivado/multimesh_v6" : $BOARD_DIR}]
 
+# Single-mesh probe: V6_PROBE_SLR=<0..3> keeps the WHOLE 4-station bus, all
+# nine MMCMs, XDMA and JTAG, and drops the other dies' mesh+MIG (BRAM stands in
+# on their station ports). Own project dir -- it can never touch the main one.
+#   $env:V6_PROBE_SLR=3; vivado -mode batch -source multimesh_v6_bd.tcl
+set PROBE_SLR [expr {[info exists ::env(V6_PROBE_SLR)] ? $::env(V6_PROBE_SLR) : -1}]
+if {$PROBE_SLR >= 0} {
+    if {$PROBE_SLR > 3} { error "V6_PROBE_SLR must be 0..3, got $PROBE_SLR" }
+    set design_name multimesh_v6p$PROBE_SLR
+    set proj_dir    C:/Users/apoll/Desktop/vivado/probe/v6p$PROBE_SLR
+    set ::env(V6_STANDALONE) 1
+}
+proc v6_has_mesh {mid} {
+    global PROBE_SLR
+    return [expr {$PROBE_SLR < 0 || $PROBE_SLR == $mid}]
+}
+proc v6_has_ddr {i} {
+    global PROBE_SLR DDR_OF_SLR
+    return [expr {$PROBE_SLR < 0 || $i == [dict get $DDR_OF_SLR $PROBE_SLR]}]
+}
+
 # ---- clocks --------------------------------------------------------------
 # 300 everywhere, matmul 2x at 600. A per-die ladder is a fallback needing
 # evidence, never a default.
 set MESH_MHZ    300.000
 set MAT2X_MHZ   600.000
 set VEC_MHZ     300.000
-set BUS_MHZ     300.000
+# 200 is the only station-bus rate verified on hardware.
+set BUS_MHZ     200.000
 set CTRL_MHZ    100.000
 set DDR_MHZ     300.000
 # NOT generated here: XDMA's axi_aclk comes off the PCIe core, set by
@@ -30,6 +51,7 @@ set VCO_M       48.000
 set DIV_MESH    4
 set DIV_MAT2X   2
 set DIV_VEC     4
+set DIV_BUS     6
 
 # ---- meshes --------------------------------------------------------------
 # Mesh id == SLR id. `_pump` tops are the ONLY ones carrying mat_clk2x; a plain

@@ -1,6 +1,7 @@
 # Meshes, their DDR4 controllers, and the mag_link chain between them.
 
 foreach i {0 1 2 3} {
+    if {![v6_has_ddr $i]} { continue }
     create_bd_intf_port -mode Master -vlnv xilinx.com:interface:ddr4_rtl:1.0 c${i}_ddr4
     set p [create_bd_intf_port -mode Slave \
                -vlnv xilinx.com:interface:diff_clock_rtl:1.0 c${i}_sys]
@@ -14,6 +15,7 @@ set_property -dict [list CONFIG.C_OPERATION {not} CONFIG.C_SIZE {1}] $sysrst
 connect_bd_net [get_bd_pins clk_wiz_ctrl/locked] [get_bd_pins ddr_sys_rst/Op1]
 
 foreach i {0 1 2 3} {
+    if {![v6_has_ddr $i]} { continue }
     set d [create_bd_cell -type ip -vlnv xilinx.com:ip:ddr4 ddr4_$i]
     set_property -dict [list \
       CONFIG.C0.DDR4_DataWidth {72} CONFIG.C0.DDR4_InputClockPeriod {2499} \
@@ -37,6 +39,7 @@ proc v6_set_if {cell name value} {
 }
 
 foreach {mid mod} $MESHES {
+    if {![v6_has_mesh $mid]} { continue }
     set ddr [dict get $DDR_OF_SLR $mid]
     create_bd_cell -type module -reference $mod mesh_$mid
     set_property -dict [list CONFIG.MESH_ID $mid CONFIG.GA {512} CONFIG.GB {512} \
@@ -106,6 +109,7 @@ proc v6_link_cdc {name src dst src_wiz dst_wiz} {
 
 foreach hop {{0 1} {1 2} {2 3}} {
     lassign $hop lo hi
+    if {![v6_has_mesh $lo] || ![v6_has_mesh $hi]} { continue }
     v6_link_cdc cdc_${lo}_to_${hi} mesh_$lo/M_AXIS_LINK1 mesh_$hi/S_AXIS_LINK0 \
                 clk_wiz_mesh$lo clk_wiz_mesh$hi
     v6_link_cdc cdc_${hi}_to_${lo} mesh_$hi/M_AXIS_LINK0 mesh_$lo/S_AXIS_LINK1 \
@@ -121,17 +125,25 @@ foreach hop {{0 1} {1 2} {2 3}} {
 # EVERY mesh waits for EVERY crossing -- the chain routes through neighbours.
 # A v5 bench lost beats 0..13 per link: xpm_fifo_async drops writes while busy.
 set nrdy [llength $::V6_CDC_READY]
-create_bd_cell -type ip -vlnv xilinx.com:ip:xlconcat cdc_ready_cat
-set_property CONFIG.NUM_PORTS $nrdy [get_bd_cells cdc_ready_cat]
-for {set i 0} {$i < $nrdy} {incr i} {
-    connect_bd_net [lindex $::V6_CDC_READY $i] [get_bd_pins cdc_ready_cat/In$i]
+if {$nrdy > 0} {
+    create_bd_cell -type ip -vlnv xilinx.com:ip:xlconcat cdc_ready_cat
+    set_property CONFIG.NUM_PORTS $nrdy [get_bd_cells cdc_ready_cat]
+    for {set i 0} {$i < $nrdy} {incr i} {
+        connect_bd_net [lindex $::V6_CDC_READY $i] [get_bd_pins cdc_ready_cat/In$i]
+    }
+    create_bd_cell -type ip -vlnv xilinx.com:ip:util_reduced_logic cdc_ready_all
+    set_property -dict [list CONFIG.C_OPERATION {and} CONFIG.C_SIZE $nrdy] \
+                       [get_bd_cells cdc_ready_all]
+    connect_bd_net [get_bd_pins cdc_ready_cat/dout] [get_bd_pins cdc_ready_all/Op1]
 }
-create_bd_cell -type ip -vlnv xilinx.com:ip:util_reduced_logic cdc_ready_all
-set_property -dict [list CONFIG.C_OPERATION {and} CONFIG.C_SIZE $nrdy] \
-                   [get_bd_cells cdc_ready_all]
-connect_bd_net [get_bd_pins cdc_ready_cat/dout] [get_bd_pins cdc_ready_all/Op1]
 
 foreach {mid mod} $MESHES {
+    if {![v6_has_mesh $mid]} { continue }
+    if {$nrdy == 0} {
+        connect_bd_net [get_bd_pins rst_mesh$mid/peripheral_aresetn] \
+                       [get_bd_pins mesh_$mid/axi_aresetn]
+        continue
+    }
     set h [create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic hold_mesh$mid]
     set_property -dict [list CONFIG.C_OPERATION {and} CONFIG.C_SIZE {1}] $h
     connect_bd_net [get_bd_pins rst_mesh$mid/peripheral_aresetn] \
@@ -141,4 +153,4 @@ foreach {mid mod} $MESHES {
                    [get_bd_pins mesh_$mid/axi_aresetn]
 }
 
-puts "@@@ v6 meshes: [expr {[llength $MESHES] / 2}], $nrdy link CDCs gating reset"
+puts "@@@ v6 meshes: [llength [get_bd_cells -quiet mesh_*]], $nrdy link CDCs gating reset"

@@ -20,7 +20,7 @@ proc v6_import {name} {
     }
     import_files -fileset constrs_1 -norecurse [v6_board $name]
 }
-foreach i {0 1 2 3} { v6_import ddr4_c${i}.xdc }
+foreach i {0 1 2 3} { if {[v6_has_ddr $i]} { v6_import ddr4_c${i}.xdc } }
 v6_import pcie.xdc
 
 # The DDR4 <-> SLR check needs an open design for get_slrs, so it lives in
@@ -42,18 +42,23 @@ foreach {mid mod} $MESHES {
     puts $fh "resize_pblock \[get_pblocks pb_slr$mid\] -add \{CLOCKREGION_X0${ylo}:CLOCKREGION_X7${yhi}\}"
     # g_link is deliberately absent -- its pipeline registers ARE the die
     # crossing and must be free to place across it.
-    foreach c [list station_bus/inst/u_line/g_stn\[$mid\].* \
-                    mesh_$mid ddr4_$ddr rst_ddr4_$ddr \
-                    clk_wiz_mesh$mid rst_mesh$mid div2_mesh$mid dclr_mesh$mid \
-                    clk_wiz_bus$mid rst_bus$mid bus_rst_inv$mid dwc_ctrl$mid] {
-        v6_pin $fh pb_slr$mid $top/$c
+    set cells [list station_bus/inst/u_line/g_stn\[$mid\].* \
+                    clk_wiz_mesh$mid rst_mesh$mid \
+                    clk_wiz_bus$mid rst_bus$mid bus_rst_inv$mid]
+    if {[v6_has_mesh $mid]} {
+        lappend cells mesh_$mid ddr4_$ddr rst_ddr4_$ddr \
+                      div2_mesh$mid dclr_mesh$mid dwc_ctrl$mid
+    } else {
+        lappend cells ep_s${mid}_*
     }
+    foreach c $cells { v6_pin $fh pb_slr$mid $top/$c }
     puts $fh "set_property CONTAIN_ROUTING false \[get_pblocks pb_slr$mid\]"
 }
 # Each SLR owns the FIFOs for links LEAVING it, so an SLL crossing starts at a
 # registered output.
 foreach hop {{0 1} {1 2} {2 3}} {
     lassign $hop lo hi
+    if {![v6_has_mesh $lo] || ![v6_has_mesh $hi]} { continue }
     v6_pin $fh pb_slr$lo $top/cdc_${lo}_to_${hi}
     v6_pin $fh pb_slr$hi $top/cdc_${hi}_to_${lo}
 }
@@ -103,7 +108,9 @@ foreach {mid mod} $MESHES {
 append grp [v6_group clk_wiz_ctrl {clk_out1}]
 # By PIN and by LITERAL PATH: `get_pins -hier -filter NAME` resolves EMPTY here,
 # which makes the whole -group a silent no-op and times every MIG crossing.
-foreach i {0 1 2 3} { append grp [v6_group ddr4_$i {c0_ddr4_ui_clk}] }
+foreach i {0 1 2 3} {
+    if {[v6_has_ddr $i]} { append grp [v6_group ddr4_$i {c0_ddr4_ui_clk}] }
+}
 append grp [v6_group xdma_0 {axi_aclk}]
 append grp " \\\n    -group \[get_clocks -include_generated_clocks pcie_refclk\]"
 puts $fh "set_clock_groups -asynchronous$grp"

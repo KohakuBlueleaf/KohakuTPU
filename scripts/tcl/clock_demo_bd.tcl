@@ -7,7 +7,7 @@ set root     [file normalize [file dirname [info script]]/../..]
 
 create_project -force clock_demo $proj_dir -part $part
 set_property target_language Verilog [current_project]
-add_files -norecurse -fileset sources_1 $root/src/synth_top/ktpu_div2.v
+add_files -norecurse -fileset sources_1 $root/src/kohakuaccel/common/clk/ktpu_div2.v
 
 create_bd_design demo
 current_bd_design demo

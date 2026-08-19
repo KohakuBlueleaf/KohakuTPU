@@ -2,7 +2,7 @@
 """Emit BD-facing wrappers (root, leaf, link) around the station-bus blocks.
 
     gen_station_wrap.py --kind root --nk 3 --mgr-w 32,512,32 --loc-w 512,32 \
-        -o src/synth_top/sb_bd_root.v
+        -o src/kohakuaccel/axi/bd/sb_bd_root.v
 
 Vivado infers an interface from a port NAMING CONVENTION, so the stations'
 flattened buses arrive in a BD as loose wires. Each named port here becomes one

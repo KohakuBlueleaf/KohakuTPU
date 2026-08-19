@@ -38,16 +38,16 @@ if {$srcw < 2} { set srcw 2 }
 set_param general.maxThreads 4
 
 read_verilog [list \
-    [file join $root src common sync_fifo.v] \
-    [file join $root src common async_fifo.v] \
-    [file join $root src kohakuaxi station sb_skid.v] \
-    [file join $root src kohakuaxi station sb_hub.v] \
-    [file join $root src kohakuaxi station sb_nmu.v] \
-    [file join $root src kohakuaxi station sb_nsu.v] \
-    [file join $root src kohakuaxi station sb_link.v] \
-    [file join $root src kohakuaxi station sb_link_cdc.v] \
-    [file join $root src kohakuaxi station sb_stn_line.v] \
-    [file join $root src kohakuaxi station sb_line4.v]]
+    [file join $root src kohakuaccel common sync_fifo.v] \
+    [file join $root src kohakuaccel common async_fifo.v] \
+    [file join $root src kohakuaccel common sb_skid.v] \
+    [file join $root src kohakuaccel axi station sb_hub.v] \
+    [file join $root src kohakuaccel axi station sb_nmu.v] \
+    [file join $root src kohakuaccel axi station sb_nsu.v] \
+    [file join $root src kohakuaccel axi link sb_link.v] \
+    [file join $root src kohakuaccel axi link sb_link_cdc.v] \
+    [file join $root src kohakuaccel axi topo sb_stn_line.v] \
+    [file join $root src kohakuaccel axi topo sb_line4.v]]
 
 # The bus period is the knob under test, so write the XDC per run.
 set xdc $root/build/ooc_line_${tag}.xdc

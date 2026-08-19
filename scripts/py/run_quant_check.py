@@ -22,7 +22,7 @@ from kohakutpu.hw import mxfp7
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 VIVADO = pathlib.Path(os.environ.get("VIVADO_BIN", r"D:\Xilinx\Vivado\2024.2\bin"))
 ENTRIES = 256
-SRC = ["src/kohakumas/mx_quant.v", "tests/mas/mx_quant_tb.v"]
+SRC = ["src/kohakutpu/transform/mx_quant.v", "tests/mas/mx_quant_tb.v"]
 
 
 def operands(entries, seed=1):

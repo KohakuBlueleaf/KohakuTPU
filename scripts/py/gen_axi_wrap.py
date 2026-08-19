@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate a block-design-facing wrapper around `axi_n1`.
 
-    python scripts/py/gen_axi_wrap.py -n 5 -o src/synth_top/axi_n1_wrap_5.v
+    python scripts/py/gen_axi_wrap.py -n 5 -o src/attic/sweeps/axi_n1_wrap_5.v
 
 `axi_n1` takes its N slave interfaces as FLATTENED buses (`s_awid[N*ID_W-1:0]`),
 which is right for RTL and useless in a block design: Vivado infers an AXI

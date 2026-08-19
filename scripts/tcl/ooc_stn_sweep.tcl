@@ -26,11 +26,11 @@ set srcw  [clog2 $nm]
 set_param general.maxThreads 4
 
 read_verilog [list \
-    [file join $root src common sync_fifo.v] \
-    [file join $root src common async_fifo.v] \
-    [file join $root src kohakuaxi station sb_skid.v] \
-    [file join $root src kohakuaxi station sb_hub.v] \
-    [file join $root src kohakuaxi station sb_stn_line.v]]
+    [file join $root src kohakuaccel common sync_fifo.v] \
+    [file join $root src kohakuaccel common async_fifo.v] \
+    [file join $root src kohakuaccel common sb_skid.v] \
+    [file join $root src kohakuaccel axi station sb_hub.v] \
+    [file join $root src kohakuaccel axi topo sb_stn_line.v]]
 
 set xdc $root/build/ooc_stn_${tag}.xdc
 file mkdir $root/build

@@ -5,7 +5,7 @@
 set here [file dirname [file normalize [info script]]]
 source $here/00_config.tcl
 
-set fh [open $root/src/synth_top/sb_v6_bus.v r]
+set fh [open $root/src/kohakuaccel/axi/bd/sb_v6_bus.v r]
 set src [read $fh]
 close $fh
 

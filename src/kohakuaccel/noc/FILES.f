@@ -1,0 +1,9 @@
+kohakuaccel/noc/ctrl/noc_orchestrator.v
+kohakuaccel/noc/endpoint/noc_cu_base.v
+kohakuaccel/noc/endpoint/noc_cu_null.v
+kohakuaccel/noc/endpoint/noc_l2_adapter.v
+kohakuaccel/noc/endpoint/noc_local_cdc.v
+kohakuaccel/noc/noc_pkt.vh
+kohakuaccel/noc/router/noc_inport.v
+kohakuaccel/noc/router/noc_outport.v
+kohakuaccel/noc/router/noc_router.v

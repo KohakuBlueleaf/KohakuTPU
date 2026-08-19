@@ -1,0 +1,11 @@
+kohakutpu/vector/vec_agu.v
+kohakutpu/vector/vec_alu.v
+kohakutpu/vector/vec_core.v
+kohakutpu/vector/vec_cu.v
+kohakutpu/vector/vec_cvt.v
+kohakutpu/vector/vec_cvt_acc.v
+kohakutpu/vector/vec_delay.v
+kohakutpu/vector/vec_dsp.v
+kohakutpu/vector/vec_lanes.v
+kohakutpu/vector/vec_regfile.v
+kohakutpu/vector/vec_tables.v

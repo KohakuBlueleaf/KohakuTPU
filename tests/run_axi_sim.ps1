@@ -1,6 +1,6 @@
 # run_axi_sim.ps1 -- simulate the AXI4 slave with the hostile testbench.
 #
-#   .\tests\run_axi_sim.ps1                    # test src/kohakuaxi/axi4_ram.v
+#   .\tests\run_axi_sim.ps1                    # test src/kohakuaccel/verif/axi4_ram.v
 #   .\tests\run_axi_sim.ps1 -Dut path\to.v     # test a different slave (same ports)
 #
 # Uses Vivado's xsim, so there's nothing extra to install.

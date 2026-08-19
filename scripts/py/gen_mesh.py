@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Generate a mesh top module from a picture of the mesh.
 
-    python scripts/py/gen_mesh.py maps/mesh_2x2.txt -o src/synth_top/ktpu_mesh.v
+    python scripts/py/gen_mesh.py src/kohakutpu/top/maps/mesh_2x2.txt \
+        -o src/kohakutpu/top/generated/ktpu_mesh.v
 
 The map is a grid of THREE-CHARACTER tokens separated by spaces or dashes:
 
@@ -28,6 +29,16 @@ edges, the first and last column the west and east edges. Routers sit at
 two-port cluster, and mx_cluster_cu presents one; a pair form would have no
 module to emit. A map using them is rejected by name.
 
+A PROJECT can register its own unit tokens without touching this file:
+
+    python scripts/py/gen_mesh.py map.txt --tokens my_tokens.py -o top.v
+
+`my_tokens.py` defines `TOKENS = {"tok": emit_fn}` where `emit_fn(i, x, y,
+mem_x, mem_y, conn)` returns one instance's Verilog text. `conn` is the
+endpoint's six `noc_*` port connections already bound to the right link;
+`clk`, `resetn` and the mesh-top parameters (FW, PW, INST_DEPTH, ...) are in
+scope. Worked example: src/examples/saxpy/tokens_saxpy.py.
+
 Non-square grids are supported: the emitted module sets GRID_X_HI and
 GRID_Y_HI separately, which is why noc_inport.v clamps each axis on its own.
 """
@@ -48,11 +59,13 @@ class MeshError(Exception):
     pass
 
 
-def parse_map(text):
+def parse_map(text, extra=frozenset()):
     """Parse the token picture into a list of rows of 3-char tokens.
 
-    Raises MeshError on ragged rows, bad token widths or unknown tokens.
+    `extra` is a project's own unit tokens (--tokens). Raises MeshError on
+    ragged rows, bad token widths or unknown tokens.
     """
+    known = KNOWN | set(extra)
     rows = []
     for lineno, raw in enumerate(text.splitlines(), 1):
         line = raw.split("#", 1)[0].rstrip()
@@ -67,10 +80,10 @@ def parse_map(text):
                     f"line {lineno}: {t!r} named one local of the two-port cluster, "
                     "which no longer exists; a cluster is one 'mat'"
                 )
-            if t not in KNOWN:
+            if t not in known:
                 raise MeshError(
                     f"line {lineno}: unknown token {t!r}; "
-                    f"known are {' '.join(sorted(KNOWN - {'   '}))}"
+                    f"known are {' '.join(sorted(known - {'   '}))}"
                 )
         rows.append(toks)
 
@@ -90,7 +103,7 @@ def parse_map(text):
 class Mesh:
     """The parsed map, resolved into routers, endpoints and their coordinates."""
 
-    def __init__(self, rows):
+    def __init__(self, rows, extra=frozenset()):
         self.rows = rows
         self.ny = len(rows) - 2
         self.nx = len(rows[0]) - 2
@@ -98,6 +111,8 @@ class Mesh:
         self.mags = []  # [(x, y)] in map coordinates
         self.vecs = []  # [(x, y)]
         self.cus = []  # [(x, y)] -- one router local each
+        self.extra = set(extra)
+        self.units = {}  # project token -> [(x, y)]
         self._classify()
 
     def tok(self, x, y):
@@ -131,6 +146,8 @@ class Mesh:
                     # An edge cluster costs a link, not a router, which is how
                     # 6 clusters fit a 2x2 grid instead of needing 3x2.
                     self.cus.append((x, y))
+                elif t in self.extra:
+                    self.units.setdefault(t, []).append((x, y))
 
         if len(self.mags) > 4:
             raise MeshError(f"{len(self.mags)} mag tiles; mag.v declares only 4 ports")
@@ -279,6 +296,7 @@ def emit(
     l2_mag=False,
     l2_cu=False,
     l2_vec=False,
+    tokens=None,
 ):
     # ALWAYS SINGLE. MAG converges its internal requesters onto one AXI master
     # itself, so there is no packed bus left to fan out.
@@ -481,10 +499,25 @@ def emit(
     );"""
         )
 
+    # ---- project units, from the --tokens table ------------------------
+    # Same link discipline as the built-ins; the table supplies only the
+    # instance text, so a new accelerator never edits this file.
+    unit_sites = []
+    for tok in sorted(m.units):
+        for i, (x, y) in enumerate(m.units[tok]):
+            if m._interior(x, y):
+                stem, drives = e.link(f"L{x}_{y}"), True
+            else:
+                stem, drives = e.edge_link(x, y)
+            mmx, mmy = m.nearest_mag(x, y)
+            conn_u = e.endpoint_conn(stem, drives, NAMES_C)
+            e.body.append(tokens[tok](i, x, y, mmx, mmy, conn_u))
+            unit_sites.append((x, y))
+
     # ---- tie off every link nothing claimed ----------------------------
     # Which direction is undriven depends on the link's side of the router.
     used = set()
-    for x, y in m.mags + m.vecs + m.cus:
+    for x, y in m.mags + m.vecs + m.cus + unit_sites:
         used.add(e.link(f"L{x}_{y}") if m._interior(x, y) else e.edge_link(x, y)[0])
 
     for key, stem in sorted(e.links.items(), key=lambda kv: kv[1]):
@@ -1076,13 +1109,33 @@ def main():
         help="a noc_l2_adapter in each vector core's local link, at its own "
         "aperture base",
     )
+    ap.add_argument(
+        "--tokens",
+        help="a project token table: a Python file defining TOKENS = "
+        "{'tok': emit_fn}; see the module docstring for the emit_fn contract",
+    )
     args = ap.parse_args()
 
     if args.mesh_id and not args.ilink:
         sys.exit("gen_mesh: --mesh-id means nothing without --ilink")
 
+    tokens = {}
+    if args.tokens:
+        ns = {}
+        exec(
+            compile(Path(args.tokens).read_text(encoding="utf-8"), args.tokens, "exec"),
+            ns,
+        )
+        tokens = ns["TOKENS"]
+        clash = set(tokens) & (KNOWN | RETIRED)
+        if clash:
+            sys.exit(f"gen_mesh: --tokens redefines built-in {sorted(clash)}")
+
     try:
-        mesh = Mesh(parse_map(Path(args.map).read_text(encoding="utf-8")))
+        mesh = Mesh(
+            parse_map(Path(args.map).read_text(encoding="utf-8"), set(tokens)),
+            set(tokens),
+        )
         text = emit(
             mesh,
             args.module,
@@ -1093,6 +1146,7 @@ def main():
             args.l2_mag,
             args.l2_cu,
             args.l2_vec,
+            tokens,
         )
     except MeshError as exc:
         sys.exit(f"gen_mesh: {exc}")

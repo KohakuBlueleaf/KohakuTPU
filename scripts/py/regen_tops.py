@@ -11,7 +11,7 @@ still carried the pre-chain interlink header after mag_switch.v moved to CH_SEQ.
 carries, and four tops differ by it alone.
 
 The five `ktpu_mesh_*` tops are absent because no map reproduces them and
-nothing references them. See src/synth_top/STALE-TOPS.md.
+nothing references them. See src/attic/STALE-TOPS.md.
 """
 
 import argparse

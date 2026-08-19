@@ -1,0 +1,6 @@
+# The saxpy mesh: one MAG port, two saxpy units, nothing else.
+# `sax` comes from this project's own vocabulary (tokens_saxpy.py, via
+# gen_mesh.py --tokens); the generator itself never learns project tokens.
+xxx sax xxx
+mag nul nul
+xxx sax xxx

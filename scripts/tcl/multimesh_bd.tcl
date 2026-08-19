@@ -37,35 +37,35 @@ set_property target_language Verilog [current_project]
 set root C:/Users/apoll/Desktop/code/Project/KohakuTPU
 proc have {path} { expr {[llength [get_files -quiet $path]] > 0} }
 foreach f {
-    src/common/sync_fifo.v src/common/kohaku_sdpram.v src/common/async_fifo.v
-    src/kohakunoc/noc_inport.v src/kohakunoc/noc_outport.v
-    src/kohakunoc/noc_router.v src/kohakunoc/noc_cu_base.v
-    src/kohakunoc/noc_orchestrator.v
+    src/kohakuaccel/common/sync_fifo.v src/kohakuaccel/common/kohaku_sdpram.v src/kohakuaccel/common/async_fifo.v
+    src/kohakuaccel/noc/router/noc_inport.v src/kohakuaccel/noc/router/noc_outport.v
+    src/kohakuaccel/noc/router/noc_router.v src/kohakuaccel/noc/endpoint/noc_cu_base.v
+    src/kohakuaccel/noc/ctrl/noc_orchestrator.v
     src/kohakutpu/matmul/mx_mac.v src/kohakutpu/matmul/mx_tcu.v
     src/kohakutpu/matmul/mx_fpacc.v src/kohakutpu/matmul/mx_acu_fp.v
     src/kohakutpu/matmul/mx_cluster_core.v src/kohakutpu/matmul/mx_cluster_mgr.v
     src/kohakutpu/matmul/mx_cluster_node.v src/kohakutpu/matmul/mx_cluster_cu.v
-    src/kohakutpu/matmul/mx_tdesc.v
+    src/kohakuaccel/mas/mover/mx_tdesc.v
     src/kohakutpu/vector/vec_dsp.v src/kohakutpu/vector/vec_delay.v
     src/kohakutpu/vector/vec_tables.v src/kohakutpu/vector/vec_alu.v
     src/kohakutpu/vector/vec_cvt.v src/kohakutpu/vector/vec_regfile.v
     src/kohakutpu/vector/vec_lanes.v src/kohakutpu/vector/vec_agu.v
     src/kohakutpu/vector/vec_core.v src/kohakutpu/vector/vec_cu.v
-    src/kohakumas/mx_quant.v src/kohakumas/mag_mem_port.v
-    src/kohakumas/mm_prng.v src/kohakumas/mm_mover.v
-    src/kohakumas/il_pkt_arb.v src/kohakumas/mag_link.v
-    src/kohakumas/mag_link_pipe.v src/kohakumas/mag_switch.v
-    src/kohakumas/mag_ilink.v src/kohakumas/mag.v
-    src/kohakumas/mag_dram_port.v src/synth_top/mag_1m.v
-    src/synth_top/ktpu_ship_2x2_6c2v_1m.v src/synth_top/ktpu_ship_2x1_6c0v_1m.v
+    src/kohakutpu/transform/mx_quant.v src/kohakuaccel/mas/core/mag_mem_port.v
+    src/kohakuaccel/mas/mover/mm_prng.v src/kohakuaccel/mas/mover/mm_mover.v
+    src/kohakuaccel/mas/interlink/il_pkt_arb.v src/kohakuaccel/mas/interlink/mag_link.v
+    src/kohakuaccel/mas/interlink/mag_link_pipe.v src/kohakuaccel/mas/interlink/mag_switch.v
+    src/kohakuaccel/mas/interlink/mag_ilink.v src/kohakuaccel/mas/core/mag.v
+    src/kohakuaccel/mas/core/mag_dram_port.v src/kohakutpu/top/mag_1m.v
+    src/kohakutpu/top/generated/ktpu_ship_2x2_6c2v_1m.v src/kohakutpu/top/generated/ktpu_ship_2x1_6c0v_1m.v
 } { if {![have $root/$f]} { add_files -norecurse -fileset sources_1 $root/$f } }
 
 # Earlier mesh shapes left in the project are dead modules that still elaborate
 # and still confuse a review. Drop every *_il top this design does not use.
 set keep {}
 foreach row $MESHES { lappend keep [lindex $row 1] }
-foreach f [concat [get_files -quiet $root/src/synth_top/ktpu_ship_*_il.v] \
-                  [get_files -quiet $root/src/synth_top/ktpu_ship_*_1m.v]] {
+foreach f [concat [get_files -quiet $root/src/kohakutpu/top/generated/ktpu_ship_*_il.v] \
+                  [get_files -quiet $root/src/kohakutpu/top/generated/ktpu_ship_*_1m.v]] {
     if {[lsearch -exact $keep [file rootname [file tail $f]]] < 0} {
         puts "DROP stale source: $f"
         remove_files $f

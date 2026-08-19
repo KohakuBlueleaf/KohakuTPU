@@ -84,7 +84,7 @@ foreach {mid mod} $MESHES {
 # One fabric clock per station; sb_link_cdc crosses between them. NOT DRP: all
 # NQ=4 ports are taken and a 5th measured +1,610 LUT, bus_clk 346 -> 328 MHz.
 foreach {mid mod} $MESHES {
-    v6_wiz clk_wiz_bus$mid [list [list 1 $BUS_MHZ $DIV_MESH]] 0
+    v6_wiz clk_wiz_bus$mid [list [list 1 $BUS_MHZ $DIV_BUS]] 0
     v6_psr rst_bus$mid clk_wiz_bus$mid/clk_out1 clk_wiz_bus$mid/locked
 }
 
