@@ -1,144 +1,347 @@
-# Kohaku Code License 1.0
+# Kohaku Code License 2.0
 
 **Published by KohakuBlueLeaf**
 
 ## Purpose
 
-The **Kohaku Code License** aims to provide maximum freedom for users to work with software and source code while protecting contributors from liability and ensuring the freedom of end users. It incorporates commercial usage restrictions to balance open access with sustainable development.
+The **Kohaku Code License** aims to provide maximum freedom for users to work
+with software, source code, and hardware designs, while protecting
+contributors from liability and ensuring the freedom of end users. It
+incorporates commercial usage restrictions to balance open access with
+sustainable development.
+
+Version 2.0 extends the license beyond software. The license now covers
+hardware designs (such as RTL) and the physical products built from them.
+The intent is simple: individuals, researchers, and small teams keep maximum
+freedom, including loading the designs onto FPGAs; turning the designs into
+silicon or into revenue-bearing physical products requires a conversation
+with the Author first.
 
 ## Definitions
 
-- **Software**: Any computer program, application, script, library, framework, or other software components, including source code, compiled code, and associated documentation.
+- **Software**: Any computer program, application, script, library,
+  framework, or other software components, including source code, compiled
+  code, and associated documentation.
 
-- **Source Code**: The preferred form for making modifications to the Software, including but not limited to programming language source files, build scripts, configuration files, and documentation.
+- **Hardware Design**: Any description of hardware in any form, including but
+  not limited to RTL and HDL sources, netlists, block designs, constraint
+  files, generated top-level designs, FPGA bitstreams and configuration
+  images, schematics, layout and mask data, and associated documentation.
 
-- **Derived Software**: Any software that is based on, incorporates, or is derived from the original Software. For Derived Software to qualify under this license, it must:
-  - Include complete source code
-  - Provide build instructions or scripts necessary to compile/build the software
+- **Covered Work**: The Software and the Hardware Design published under this
+  License, together with their documentation, individually or in any
+  combination.
+
+- **Source Code**: The preferred form for making modifications to the Covered
+  Work. For Software, this includes programming language source files, build
+  scripts, configuration files, and documentation. For Hardware Design, this
+  includes HDL sources, generator inputs (such as mesh maps and token
+  tables), constraint files, and the scripts needed to regenerate derived
+  files.
+
+- **Derived Work**: Any work that is based on, incorporates, or is derived
+  from the Covered Work. This includes software, hardware designs, **and any
+  Physical Product that embodies the Covered Work or a derivative of it**.
+  For a Derived Work to qualify under this License, it must:
+  - Include complete Source Code
+  - Provide build instructions or scripts necessary to build the work
   - Include documentation sufficient for users to understand basic usage
-  
-  Additionally, any Derived Software that is part of a larger software system must:
-  - Publish all component source code under this license
-  - Provide build and deployment scripts that enable recipients to compile and run the complete system
-  - Ensure that users of the system can be classified as **Software Users**
 
-- **Binary Distribution**: Any compiled, packaged, or otherwise non-source code form of the Software.
+  Additionally, any Derived Work that is part of a larger system must:
+  - Publish all component source under this License
+  - Provide build and deployment scripts that enable recipients to build and
+    run the complete system
+  - Ensure that users of the system can be classified as **Users**
 
-- **Modify**: To alter, transform, or build upon the Software or Source Code.
+- **Physical Product**: Any tangible article that embodies the Covered Work
+  or a Derived Work as **Bound Code** (defined below). Examples include a
+  chip fabricated from the Hardware Design, and a device whose operation
+  depends on the Covered Work as its firmware.
 
-- **Service Provider**: An entity that uses the Software to offer services to **Software Users**, thereby making the **Software Users** the recipients of the service.
+- **Bound Code (Strict Binding)**: The Covered Work or a Derived Work is
+  **bound** to a Physical Product when at least one of the following is true:
+  1. The Hardware Design (or a derivative of it) is physically realized in
+     the product. This includes a Tape-Out, a structured-ASIC or hard-copy
+     conversion, and an FPGA or eFPGA that is factory-programmed with the
+     design and sold as a function of the product.
+  2. The Software (or a derivative of it) executes on the product as its
+     operating system, firmware, BIOS, boot code, or embedded driver, such
+     that the product cannot perform its advertised function without it.
 
-- **Software User**: Any individual or entity that uses the Software, either directly or through services provided by a Service Provider.
+  If neither condition is true, the work is **not** bound to the product.
+  A product that merely bundles, preinstalls, or ships the Covered Work as an
+  application or accessory (for example, an all-in-one PC that ships with the
+  Software preinstalled) is a **software** distribution, and the software
+  rules of this License apply to it, not the Physical Product rules.
 
-- **End-User**: Any individual or entity that utilizes a service or product provided by a Service Provider which incorporates the Software.
+- **Tape-Out**: Any act of committing the Hardware Design, or a Derived Work
+  of it, to semiconductor fabrication. This includes mask generation,
+  multi-project-wafer or shuttle submission, structured-ASIC conversion, and
+  hard-copy conversion of an FPGA design. **Programming an off-the-shelf FPGA
+  or other reconfigurable device is not a Tape-Out** and needs no
+  authorization under this License.
 
-- **Non-Commercial Purpose**: Uses that do not involve direct or indirect payment arising from the use of the Software, including personal use, research, experimentation, testing, or non-commercial organizational use.
+- **Binary Distribution**: Any compiled, packaged, synthesized, or otherwise
+  non-source form of the Covered Work, including FPGA bitstreams.
 
-- **Commercial Usage**: Any entity providing any kind of service or product using the Software in any commercial capacity.
+- **Modify**: To alter, transform, or build upon the Covered Work or its
+  Source Code.
+
+- **Service Provider**: An entity that uses the Covered Work to offer
+  services to **Users**, thereby making the **Users** the recipients of the
+  service.
+
+- **User**: Any individual or entity that uses the Covered Work, either
+  directly or through services provided by a Service Provider.
+
+- **End-User**: Any individual or entity that utilizes a service or product
+  provided by a Service Provider which incorporates the Covered Work.
+
+- **Non-Commercial Purpose**: Uses that do not involve direct or indirect
+  payment arising from the use of the Covered Work, including personal use,
+  research, experimentation, testing, or non-commercial organizational use.
+
+- **Commercial Usage**: Any entity providing any kind of service or product
+  using the Covered Work in any commercial capacity.
+
+- **Total Revenue**: The gross revenue attributable to the product or service
+  that uses the Covered Work, summed over the whole time that product or
+  service has used it. Revenue of the entity that does not arise from that
+  product or service does not count.
+
+- **Author**: KohakuBlueLeaf, the copyright holder of the Covered Work.
+  Contact: **kohaku@kblueleaf.net**.
 
 ## License Grant
 
 ### 1. General Permissions
 
-Subject to compliance with this License, KohakuBlueLeaf grants you a non-exclusive, worldwide, non-transferable, non-sublicensable, revocable, royalty-free, and limited license to access, use, modify, create Derived Software, and distribute the Software for **Non-Commercial Purposes** and **Commercial Usage** under certain conditions.
+Subject to compliance with this License, the Author grants you a
+non-exclusive, worldwide, non-transferable, non-sublicensable, royalty-free,
+and limited license to access, use, modify, create Derived Works, and
+distribute the Covered Work for **Non-Commercial Purposes** and for
+**Commercial Usage** under the conditions below.
+
+This license is **irrevocable for any version of the Covered Work you have
+lawfully received**, except that it terminates automatically upon violation
+of its terms (see Termination). The Author may release future versions of
+the Covered Work under different terms; that choice never affects the
+license you already hold for versions already released.
 
 ### 2. Categories of Use
 
 #### a. Direct Users
-Individuals or entities that use the Software directly for their personal or internal purposes.
+Individuals or entities that use the Covered Work directly for their personal
+or internal purposes. This includes simulation, synthesis, and loading the
+Hardware Design onto reconfigurable devices.
 
 #### b. Service Providers
-Entities that use the Software to offer services or products to Software Users.
+Entities that use the Covered Work to offer services or products to Users.
+
+#### c. Fabricators
+Entities that perform or commission a Tape-Out of the Hardware Design or a
+Derived Work, or that manufacture Physical Products with Bound Code.
 
 ### 3. User Rights
 
-Software Users retain all rights to any data, content, or outputs they create using the Software.
+Users retain all rights to any data, content, or outputs they create using
+the Covered Work.
 
-### 4. Derivative Software
+### 4. Derived Works
 
-Any Derived Software must be published under the **Kohaku Code License**. The minimal requirements include:
-- Complete source code
+Any Derived Work must be licensed under the **Kohaku Code License**, and its
+Source Code must be made available as described in **Source Availability**
+(Restrictions, Section 6). The minimal requirements are:
+- Complete Source Code (for Hardware Design, including generator inputs and
+  everything needed to regenerate derived files)
 - Build instructions or scripts
 - Basic usage documentation
 
-**Additional Requirements for Derived Software in Larger Systems:**
-- All component software must be published under the **Kohaku Code License**
+**Additional requirements for Derived Works in larger systems:**
+- All component work must be licensed under the **Kohaku Code License**
 - Complete build and deployment scripts must be provided
 - Documentation must be sufficient for basic usage
-- Source code for all components must be available
+- Source for all components must be available per **Source Availability**
 
 ## Restrictions
 
-### 1. Commercial Usage
-- **Definition**: **Commercial Usage** is defined as any entity providing any kind of service or product using the Software in any commercial capacity.
-- **Conditions for Requiring a Custom License**: Commercial Usage is prohibited **only if both** of the following conditions are met:
-    - **Total Revenue** exceeds $25,000 USD
-    - **Usage Duration** exceeds 3 months
-- **Revenue Threshold and Usage Duration**:
-    - **Trial Period**: Entities are allowed to engage in **Commercial Usage** without a custom license for a trial period of **up to 3 months**, regardless of total revenue
-    - **Revenue Limit**: Entities with **Total Revenue** below or equal to $25,000 USD are permitted to continue **Commercial Usage** without a custom license
-    - **Exceeding Both Thresholds**: If an entity's **Total Revenue** exceeds $25,000 USD and the **Commercial Usage** period exceeds 3 months, the entity must request an exclusive custom license from the author
-- **Requesting a Custom License**: Contact [Your Contact Email] to request a custom license for Commercial Usage exceeding both thresholds
+### 1. Commercial Usage of Software
 
-### 2. Prohibited Uses
+- **Scope**: Commercial Usage where the Covered Work is used as software and
+  is not Bound Code of a Physical Product. This includes services, hosted
+  products, development tools, and products that merely bundle the Covered
+  Work (see the Bound Code definition).
+- **Conditions for requiring a custom license**: Commercial Usage is
+  prohibited **only if both** of the following conditions are met:
+  - **Total Revenue** exceeds $25,000 USD
+  - **Usage Duration** exceeds 3 months
+- **Trial Period**: Entities may engage in Commercial Usage without a custom
+  license for up to 3 months, regardless of total revenue.
+- **Revenue Limit**: Entities with Total Revenue at or below $25,000 USD may
+  continue Commercial Usage without a custom license.
+- **Exceeding both thresholds**: The entity must request a custom license
+  from the Author at kohaku@kblueleaf.net.
 
-You may not use, modify, copy, reproduce, create Derived Software of, or distribute the Software for:
+### 2. Commercial Usage in Physical Products
+
+- **Scope**: Commercial Usage where the Covered Work or a Derived Work is
+  **Bound Code** of a Physical Product, as defined above. The Strict Binding
+  test decides the scope: if the work is not bound to the product, Section 1
+  applies instead.
+- **Conditions for requiring a custom license**: Commercial Usage is
+  prohibited **only if both** of the following conditions are met:
+  - **Total Revenue** from the Physical Product exceeds $100,000 USD
+  - **Usage Duration** exceeds 6 months
+- **Trial Period**: Entities may sell Physical Products with Bound Code
+  without a custom license for up to 6 months, regardless of total revenue.
+- **Revenue Limit**: Entities with Total Revenue from the product at or below
+  $100,000 USD may continue without a custom license.
+- **Exceeding both thresholds**: The entity must request a custom license
+  from the Author at kohaku@kblueleaf.net.
+- This section does not replace Section 3. A Tape-Out always requires
+  authorization, whatever the revenue.
+
+### 3. Tape-Out Authorization
+
+- **Any Tape-Out of the Hardware Design or of a Derived Work, for commercial
+  or non-commercial purposes, requires prior written contact with, and
+  explicit authorization from, the Author** at kohaku@kblueleaf.net.
+- **No license is granted to create fabrication data absent authorization.**
+  Mask data, tape-out netlists, layout databases, and other fabrication
+  inputs generated from the Hardware Design are Derived Works, and the
+  permission of this License to create them is conditioned on the
+  authorization above. Creating them without authorization is copyright
+  infringement, independent of whether any chip is ever manufactured.
+- As a condition of authorization, the Author may request a reasonable number
+  of engineering samples, or one example product, from the fabrication run.
+- Absence of a response from the Author does not constitute authorization.
+- Programming off-the-shelf reconfigurable devices (FPGA, CPLD, eFPGA
+  development use) is not a Tape-Out and needs no authorization.
+
+### 4. Prohibited Uses
+
+You may not use, modify, copy, reproduce, create Derived Works of, fabricate,
+or distribute the Covered Work for:
 - Military purposes
 - Surveillance purposes
-- Biometric processing
 - Any activity that infringes on third-party rights
-- Any use violating applicable laws
+- Any use violating applicable laws. Applicable laws include both the laws
+  of the Author's jurisdiction (the Republic of China, Taiwan) and the laws
+  of the jurisdiction where you use or distribute the Covered Work
 - Circumventing security measures
 - Imposing additional restrictions on recipients
 
-### 3. Distribution Requirements
+### 5. Distribution Requirements
 
-When distributing the Software or Derived Software, you must:
-- Include complete source code
+When distributing the Covered Work or a Derived Work, you must:
+- Include complete Source Code
 - Include this License
 - Include build instructions
 - Include the following notice:
   ```
-  "This software is licensed under the Kohaku Code License by KohakuBlueLeaf.
-  Copyright 2024 KohakuBlueLeaf.
+  "This work is licensed under the Kohaku Code License by KohakuBlueLeaf.
+  Copyright 2024-2026 KohakuBlueLeaf.
 
   IN NO EVENT SHALL KohakuBlueLeaf BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
-  LIABILITY ARISING FROM THE USE OF THIS SOFTWARE."
+  LIABILITY ARISING FROM THE USE OF THIS WORK."
   ```
-- For Derived Software:
+- For Derived Works:
   - Clearly indicate modifications
-  - Provide complete build system
+  - Provide the complete build system
   - Document basic usage
 - For Service Providers:
-  - Clearly indicate the use of the Software
-  - Provide attribution to original authors
+  - Clearly indicate the use of the Covered Work
+  - Provide attribution to the original authors
   - Make license terms available to users
+- For Physical Products with Bound Code:
+  - Selling or shipping the product is distribution of the bound Derived
+    Work. The complete Source Code of the bound work must be made available
+    under this License, as described in Section 6.
+  - The product documentation must include the notice above and state which
+    parts of the product embody the Covered Work.
+
+### 6. Source Availability
+
+Making Source Code "available" means one of the following:
+1. Publishing it where recipients can access it, for example a public
+   repository; or
+2. Giving every recipient a written offer, or a clearly stated contact
+   method, through which any User or End-User can obtain the complete
+   Source Code on request, at no charge beyond the reasonable cost of
+   transfer.
+
+Every User and End-User of a Derived Work must have a working path to the
+complete Source Code. The path may be publication or the stated contact
+method. The path must not require a purchase, a non-disclosure agreement, or
+acceptance of any additional restriction.
+
+## Exemptions
+
+Any term of this License can be exempted or adjusted for a specific party or
+a specific use by written agreement with the Author. If a restriction in
+this License blocks something you want to do, contact the Author at
+**kohaku@kblueleaf.net** and discuss it. An exemption applies only to the
+named party and the named use, and does not modify this License for anyone
+else.
 
 ## No Harm and No Liability
 
 ### 1. No Harm
 
-Contributors are not liable for any harm arising from the creation or distribution of the Software.
+Contributors are not liable for any harm arising from the creation,
+distribution, or fabrication of the Covered Work.
 
 ### 2. No Liability
 
-The Software is provided "as is" without warranty of any kind. Contributors are not liable for damages arising from Software use.
+The Covered Work is provided "as is" without warranty of any kind. This
+includes, without limitation, any warranty that the Hardware Design is fit
+for fabrication or that a fabricated device will function. Fabrication is at
+the fabricator's own risk. Contributors are not liable for damages arising
+from use of the Covered Work.
 
 ## Patent Grant
 
-Contributors grant you a patent license for any patent claims they can license that are necessarily infringed by the Software.
+Contributors grant you a patent license for any patent claims they can
+license that are necessarily infringed by the Covered Work.
+
+If you institute patent litigation (including a cross-claim or counterclaim)
+alleging that the Covered Work, or a Derived Work, constitutes patent
+infringement, then every license granted to you under this License terminates
+as of the date such litigation is filed.
+
+## Mask Work and Topography Rights
+
+The Author reserves all rights available under semiconductor topography and
+mask work protection regimes (including, without limitation, the Republic of
+China Integrated Circuit Layout Protection Act, the United States
+Semiconductor Chip Protection Act, and the EU topographies directive) in any
+layout or topography derived from the Hardware Design. No right under those
+regimes is granted except through a Tape-Out authorization under
+Restrictions, Section 3.
+
+## Trademarks
+
+This License does not grant any right to use the names "KohakuAccel",
+"KohakuTPU", "KohakuBlueLeaf", or any associated names or logos, except for
+factual attribution. A product or service must not present itself under
+these names without separate written permission.
 
 ## User Rights
 
-Software Users retain all rights to data, content, and outputs created using the Software.
+Users retain all rights to data, content, and outputs created using the
+Covered Work.
 
 ## Interpretation
 
-Ambiguous terms shall be interpreted in favor of maximum freedom for users while preserving the core principles of this License.
+Ambiguous terms shall be interpreted in favor of maximum freedom for users
+while preserving the core principles of this License. Where it is unclear
+whether Section 1 or Section 2 of the Restrictions applies, the Strict
+Binding test decides, and doubt about binding itself is resolved toward
+Section 1 (software).
 
 ## Acceptance
 
-Using the Software constitutes acceptance of these terms.
+Using the Covered Work constitutes acceptance of these terms.
 
 ## Termination
 
@@ -146,14 +349,18 @@ This License terminates automatically upon violation of any terms.
 
 ## Indemnification
 
-You agree to indemnify KohakuBlueLeaf against claims arising from your use of the Software.
+You agree to indemnify KohakuBlueLeaf against claims arising from your use of
+the Covered Work.
 
 ## General Provisions
-- **Governing Law**: This License is governed by the laws of the Republic of China (Taiwan), without regard to conflict of law principles.
-- **Severability**: Invalid provisions shall not affect other terms
-- **Entire Agreement**: This License represents the complete agreement
-- **No Waiver**: Failure to enforce does not constitute waiver
+
+- **Governing Law**: This License is governed by the laws of the Republic of
+  China (Taiwan), without regard to conflict of law principles.
+- **Severability**: Invalid provisions shall not affect other terms.
+- **Entire Agreement**: This License represents the complete agreement.
+- **No Waiver**: Failure to enforce does not constitute waiver.
 
 ## Revisions
 
-KohakuBlueLeaf may publish revised versions of this License. You may choose to use terms of any later version.
+KohakuBlueLeaf may publish revised versions of this License. You may choose
+to use terms of any later version.
