@@ -58,15 +58,17 @@ foreach p [list system_clk_p system_clk_n pcie_reset user_lnk_up \
 
 # Every mesh clock must be 300 and every 2x 600, or a rate was invented.
 # The wizards exist in probe mode too, so the rate check covers all four.
+# `co`, NOT `out`: this file's report directory is $out, and the loop var
+# shadowing it sent every section-5 report into a directory named clk_out4.
 foreach {mid mod} $MESHES {
-    foreach {out want} [list clk_out1 $MESH_MHZ clk_out2 $MAT2X_MHZ \
-                             clk_out3 $VEC_MHZ clk_out4 $MESH_MHZ] {
+    foreach {co want} [list clk_out1 $MESH_MHZ clk_out2 $MAT2X_MHZ \
+                            clk_out3 $VEC_MHZ clk_out4 $MESH_MHZ] {
         set c [get_clocks -quiet -of_objects \
-                   [get_pins -quiet $top/clk_wiz_mesh$mid/$out]]
-        if {![llength $c]} { v6_bad "mesh$mid/$out has no clock" ; continue }
+                   [get_pins -quiet $top/clk_wiz_mesh$mid/$co]]
+        if {![llength $c]} { v6_bad "mesh$mid/$co has no clock" ; continue }
         set got [expr {1000.0 / [get_property PERIOD $c]}]
         if {abs($got - $want) > 1.0} {
-            v6_bad [format "mesh%s/%s is %.1f MHz, want %.1f" $mid $out $got $want]
+            v6_bad [format "mesh%s/%s is %.1f MHz, want %.1f" $mid $co $got $want]
         }
     }
 }
@@ -131,8 +133,15 @@ foreach {mid mod} $MESHES {
     if {![v6_has_mesh $mid]} { continue }
     set cell [get_cells -quiet $top/mesh_$mid]
     if {![llength $cell]} { v6_bad "mesh_$mid absent" ; continue }
+    # A module-reference cell synthesizes as <design>_<inst>_0 wrapping an
+    # `inst` whose REF_NAME is the real module -- which per-IP OOC synthesis
+    # uniquifies to <design>_<inst>_0_<module>, so match the suffix too.
     set ref [get_property REF_NAME $cell]
-    if {$ref ne $mod} { v6_bad "mesh_$mid is $ref, want $mod" }
+    set inner [get_cells -quiet $top/mesh_$mid/inst]
+    set iref [expr {[llength $inner] ? [get_property REF_NAME $inner] : ""}]
+    if {$ref ne $mod && $iref ne $mod && ![string match "*_$mod" $iref]} {
+        v6_bad "mesh_$mid is $ref (inner: $iref), want $mod"
+    }
     set bits {}
     foreach p {MESH_ID L2_MAG_BANKS L2_MAG_ENTRIES L2_CU_DEPTH TILE_PRIM \
                MAG_CDC UNIT_CDC} {
@@ -160,13 +169,17 @@ foreach {mid mod} $MESHES {
 
 # ---- 4. station bus ------------------------------------------------------
 puts "\n=== station bus ==="
-set sb [get_cells -quiet $top/station_bus]
+# CONFIG.* lives on the BD cell, not the netlist cell: a REOPENED session
+# (impl relaunch) reads blanks off the netlist and this guard false-fails.
+open_bd_design [get_files ${design_name}.bd]
+set sbbd [get_bd_cells -quiet /station_bus]
 foreach p {FW OST LINK_CDC LINK_FULL CRED PIPE SEG_OVERRIDE} {
-    puts "  $p = [get_property -quiet CONFIG.$p $sb]"
+    puts "  $p = [get_property -quiet CONFIG.$p $sbbd]"
 }
-if {[get_property -quiet CONFIG.SEG_OVERRIDE $sb] ne "1"} {
+if {[get_property -quiet CONFIG.SEG_OVERRIDE $sbbd] ne "1"} {
     v6_bad "station_bus SEG_OVERRIDE is not 1 -- the uniform 64 KB test map is live"
 }
+current_design v6_synth
 foreach {mid mod} $MESHES {
     foreach sig {clk_ddr aresetn_ddr} {
         if {![llength [get_pins -quiet $top/station_bus/${sig}$mid]]} {

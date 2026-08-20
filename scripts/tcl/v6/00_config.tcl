@@ -63,6 +63,54 @@ set MESHES {
     3 ktpu_ship_2x2_7c2v_1m_pump
 }
 
+# v6.5-small: the reset-architecture discriminator. Full card plumbing (4
+# stations, 4 MIGs, XDMA, link CDCs), but every SLR carries only 2 clusters +
+# 2 vec, the mesh top has per-domain reset entry (kh_rst_sync), and the
+# ready gating moved to ext_reset_in (30_meshes). Own throwaway project.
+#   $env:V65_SMALL=1; vivado -mode batch -source multimesh_v6_bd.tcl
+if {[info exists ::env(V65_SMALL)] && $PROBE_SLR < 0} {
+    set design_name multimesh_v65
+    set proj_dir    C:/Users/apoll/Desktop/vivado/multimesh_v65
+    set ::env(V6_STANDALONE) 1
+    set MESHES {
+        0 ktpu_ship_1x1_2c2v_1m_pump
+        1 ktpu_ship_1x1_2c2v_1m_pump
+        2 ktpu_ship_1x1_2c2v_1m_pump
+        3 ktpu_ship_1x1_2c2v_1m_pump
+    }
+}
+
+# v6.6: the v6.5 reset architecture at production scale. Every SLR 6+2 with
+# split resets, 64-bit JTAG manager, and NO cdc_ready gating (30_meshes).
+#   $env:V66=1; vivado -mode batch -source multimesh_v6_bd.tcl
+if {[info exists ::env(V66)] && $PROBE_SLR < 0} {
+    set design_name multimesh_v66
+    set proj_dir    C:/Users/apoll/Desktop/vivado/multimesh_v66
+    set ::env(V6_STANDALONE) 1
+    set MESHES {
+        0 ktpu_ship_2x2_6c2v_1m_pump
+        1 ktpu_ship_2x2_6c2v_1m_pump
+        2 ktpu_ship_2x2_6c2v_1m_pump
+        3 ktpu_ship_2x2_6c2v_1m_pump
+    }
+}
+
+# v6.7: v6.6 plus built-in any-width conversion in the station bus (NMU packs
+# to flits, NSU unpacks at port width) — every master and subordinate width
+# meets the bus natively, no converter IP. The station RTL is the whole delta.
+#   $env:V67=1; vivado -mode batch -source multimesh_v6_bd.tcl
+if {[info exists ::env(V67)] && $PROBE_SLR < 0} {
+    set design_name multimesh_v67
+    set proj_dir    C:/Users/apoll/Desktop/vivado/multimesh_v67
+    set ::env(V6_STANDALONE) 1
+    set MESHES {
+        0 ktpu_ship_2x2_6c2v_1m_pump
+        1 ktpu_ship_2x2_6c2v_1m_pump
+        2 ktpu_ship_2x2_6c2v_1m_pump
+        3 ktpu_ship_2x2_6c2v_1m_pump
+    }
+}
+
 # 4 banks x 16384 entries IS 64 URAM; the ship top names these, not L2_MAG_URAM.
 # 32 URAM measured WORSE: m72_u32 -0.617 against m72_n5 -0.561 on the same RTL.
 set L2_MAG_BANKS    4

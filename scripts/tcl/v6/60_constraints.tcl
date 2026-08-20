@@ -63,9 +63,10 @@ foreach hop {{0 1} {1 2} {2 3}} {
     v6_pin $fh pb_slr$hi $top/cdc_${hi}_to_${lo}
 }
 # PCIE40E4_X0Y1 and the AY23 reference are both in SLR1, so the fabric half of
-# XDMA and the clock root belong there too.
+# XDMA and the clock root belong there too. xlconstant_irq is NOT pinned:
+# synthesis dissolves a constant into a tie-off and the path resolves empty.
 foreach c {xdma_0 jtag_ctrl clk_wiz_ctrl rst_ctrl \
-           util_ds_buf_bufg util_ds_buf_sys util_ds_buf_pcie xlconstant_irq} {
+           util_ds_buf_bufg util_ds_buf_sys util_ds_buf_pcie} {
     v6_pin $fh pb_slr1 $top/$c
 }
 close $fh
