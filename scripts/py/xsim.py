@@ -24,6 +24,7 @@ COMMON = [
     "src/kohakuaccel/common/sync_fifo.v",
     "src/kohakuaccel/common/kohaku_sdpram.v",
 ]
+
 MATMUL = [
     "src/kohakutpu/matmul/mx_mac.v",
     "src/kohakutpu/matmul/mx_tcu.v",
@@ -203,6 +204,19 @@ BENCHES = {
             "src/kohakuaccel/axi/topo/sb_chain2.v",
             "src/kohakuaccel/verif/axi4_ram.v",
             "tests/axi/sb_chain2_tb.v",
+        ],
+    ),
+    # Width conversion alone: one NMU, one NSU, one clock. -d W_MW/-d W_SDW
+    # pick the ratio, so a failure names the width pair not a system symptom.
+    "sb_width": (
+        "sb_width_tb",
+        [
+            "src/kohakuaccel/common/sync_fifo.v",
+            "src/kohakuaccel/common/async_fifo.v",
+            "src/kohakuaccel/axi/station/sb_nmu.v",
+            "src/kohakuaccel/axi/station/sb_nsu.v",
+            "src/kohakuaccel/verif/axi4_ram.v",
+            "tests/axi/sb_width_tb.v",
         ],
     ),
     # Four stations on a LINE, managers on station 1. Station 3 is two hops, so
@@ -955,6 +969,22 @@ BENCHES = {
     # for is worse than no bench: this one reported wrong ANSWERS for what was
     # actually a hang.
 }
+
+# The e2e bench with a SPLIT-RESET ktpu_min_1m substituted: the v6.5 per-domain
+# reset entry (kh_rst_sync per MAG/mat/vec domain) proven across the bus's
+# fifteen non-harmonic clocks, where a reset released in the wrong domain has
+# the best odds of showing. Regenerate the substituted top with:
+#   python scripts/py/gen_mesh.py src/kohakutpu/top/maps/mesh_1x1_min.txt \
+#     -m ktpu_min_1m --ilink --single-master --split-reset \
+#     -o build/gen/ktpu_min_1m_split.v
+BENCHES["sb_mesh_e2e_sr"] = (
+    "sb_mesh_e2e_tb",
+    [
+        ("build/gen/ktpu_min_1m_split.v" if s.endswith("/ktpu_min_1m.v") else s)
+        for s in BENCHES["sb_mesh_e2e"][1]
+    ]
+    + ["src/kohakuaccel/common/kh_rst_sync.v"],
+)
 
 
 def main():

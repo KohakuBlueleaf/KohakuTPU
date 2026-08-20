@@ -101,6 +101,37 @@ module sb_line4_tb;
     wire [NM*2-1:0]    bresp_v, rresp_v;
     wire [NM*MAXW-1:0] rdata_v;
 
+`ifdef SB_CRED1
+    localparam integer P_CRED = 1;
+`else
+    localparam integer P_CRED = 16;
+`endif
+`ifdef SB_FW256
+    localparam integer P_FW = 256;
+`else
+    localparam integer P_FW = 512;
+`endif
+
+    // Manager 0 is the jtag path at its own 64 bits, straight into the DUT:
+    // the NMU's packer is what has to turn those beats into whole flits.
+    localparam integer JW = 64;
+    wire             j_awrdy, j_wrdy, j_bvld, j_arrdy, j_rvld, j_rlast;
+    wire [1:0]       j_bresp, j_rresp;
+    wire [JW-1:0]    j_rdata;
+    wire [MAXID-1:0] j_bid, j_rid;
+
+    assign j_awrdy = awrdy[0];
+    assign j_wrdy  = wrdy[0];
+    assign j_bvld  = bvld[0];
+    assign j_bresp = bresp_v[1:0];
+    assign j_arrdy = arrdy[0];
+    assign j_rvld  = rvld[0];
+    assign j_rlast = rlast[0];
+    assign j_rdata = rdata_v[JW-1:0];
+    assign j_rresp = rresp_v[1:0];
+    assign j_bid   = {MAXID{1'b0}};
+    assign j_rid   = {MAXID{1'b0}};
+
     wire [NM*MAXID-1:0]  mp_awid   = {awid[2], awid[1], awid[0]};
     wire [NM*AW-1:0]     mp_awaddr = {awaddr[2], awaddr[1], awaddr[0]};
     wire [NM*8-1:0]      mp_awlen  = {awlen[2], awlen[1], awlen[0]};
@@ -130,16 +161,6 @@ module sb_line4_tb;
     wire [NS*MAXW/8-1:0] sp_wstrb;
     wire [31:0]          stat_decerr;
 
-`ifdef SB_CRED1
-    localparam integer P_CRED = 1;
-`else
-    localparam integer P_CRED = 16;
-`endif
-`ifdef SB_FW256
-    localparam integer P_FW = 256;
-`else
-    localparam integer P_FW = 512;
-`endif
     // -d SB_WIDE512 keeps port 0 a 512-bit slave whatever the flit width is:
     // the wide-slave-behind-narrow-fabric case sb_nsu's SDW<=FW rule forbids.
 `ifdef SB_WIDE512
@@ -362,25 +383,27 @@ module sb_line4_tb;
         end
     endtask
 
+    // A 32-bit value as the 64-bit jtag master places it: at its address lane.
     task j_write;
         input [AW-1:0] a;
         begin
             @(negedge clk_ctrl); #TS;
             awid[0] = 4'd1; awaddr[0] = a; awlen[0] = 8'd0;
             awsize[0] = 3'd2; awvld[0] = 1'b1;
-            wdata[0] = {480'd0, pat32(a)};
-            wstrb[0] = {60'd0, 4'hF}; wlast[0] = 1'b1; wvld[0] = 1'b1;
+            wdata[0] = a[2] ? {416'd0, pat32(a), 32'd0} : {448'd0, pat32(a)};
+            wstrb[0] = {56'd0, a[2] ? 8'hF0 : 8'h0F};
+            wlast[0] = 1'b1; wvld[0] = 1'b1;
             brdy[0]  = 1'b1;
             #TS;
-            while (!awrdy[0]) begin @(negedge clk_ctrl); #TS; end
+            while (!j_awrdy) begin @(negedge clk_ctrl); #TS; end
             @(negedge clk_ctrl); #TS; awvld[0] = 1'b0;
-            while (!wrdy[0]) begin @(negedge clk_ctrl); #TS; end
+            while (!j_wrdy) begin @(negedge clk_ctrl); #TS; end
             @(negedge clk_ctrl); #TS; wvld[0] = 1'b0;
-            while (!bvld[0]) begin @(negedge clk_ctrl); #TS; end
-            if (bresp_v[1:0] !== exp_b) begin
+            while (!j_bvld) begin @(negedge clk_ctrl); #TS; end
+            if (j_bresp !== exp_b) begin
                 errors = errors + 1;
                 $display("%0t FAIL jtag write @%h bresp %b exp %b", $time, a,
-                         bresp_v[1:0], exp_b);
+                         j_bresp, exp_b);
             end
             @(negedge clk_ctrl); #TS; brdy[0] = 1'b1;
         end
@@ -394,16 +417,84 @@ module sb_line4_tb;
             arid[0] = 4'd2; araddr[0] = a; arlen[0] = 8'd0;
             arsize[0] = 3'd2; arvld[0] = 1'b1; rrdy[0] = 1'b1;
             #TS;
-            while (!arrdy[0]) begin @(negedge clk_ctrl); #TS; end
+            while (!j_arrdy) begin @(negedge clk_ctrl); #TS; end
             @(negedge clk_ctrl); #TS; arvld[0] = 1'b0;
-            while (!rvld[0]) begin @(negedge clk_ctrl); #TS; end
-            if (rresp_v[1:0] !== exp_resp) begin
+            while (!j_rvld) begin @(negedge clk_ctrl); #TS; end
+            if (j_rresp !== exp_resp) begin
                 errors = errors + 1;
                 $display("%0t FAIL jtag read @%h rresp %b exp %b", $time, a,
-                         rresp_v[1:0], exp_resp);
+                         j_rresp, exp_resp);
             end else if (exp_resp == 2'b00)
-                chk({480'd0, rdata_v[31:0]}, {480'd0, pat32(a)}, a);
+                chk({480'd0, a[2] ? j_rdata[63:32] : j_rdata[31:0]},
+                    {480'd0, pat32(a)}, a);
             @(negedge clk_ctrl); #TS; rrdy[0] = 1'b1;
+        end
+    endtask
+
+    function [63:0] pat64;
+        input [AW-1:0] a;
+        begin pat64 = {pat32(a + 40'd4), pat32(a)}; end
+    endfunction
+
+    task jb_write;
+        input [AW-1:0] a;
+        input [7:0]    len;
+        integer b;
+        begin
+            @(negedge clk_ctrl); #TS;
+            awid[0] = 4'd5; awaddr[0] = a; awlen[0] = len;
+            awsize[0] = 3'd3; awvld[0] = 1'b1; brdy[0] = 1'b1;
+            #TS;
+            while (!j_awrdy) begin @(negedge clk_ctrl); #TS; end
+            @(negedge clk_ctrl); #TS; awvld[0] = 1'b0;
+            for (b = 0; b <= len; b = b + 1) begin
+                wdata[0] = {448'd0, pat64(a + b*8)};
+                wstrb[0] = {56'd0, 8'hFF};
+                wlast[0] = (b == len); wvld[0] = 1'b1;
+                #TS;
+                while (!j_wrdy) begin @(negedge clk_ctrl); #TS; end
+                @(negedge clk_ctrl); #TS; wvld[0] = 1'b0;
+            end
+            while (!j_bvld) begin @(negedge clk_ctrl); #TS; end
+            if (j_bresp !== 2'b00) begin
+                errors = errors + 1;
+                $display("%0t FAIL jtag burst write @%h bresp %b", $time, a,
+                         j_bresp);
+            end
+            @(negedge clk_ctrl); #TS;
+        end
+    endtask
+
+    task jb_read;
+        input [AW-1:0] a;
+        input [7:0]    len;
+        integer b, spin;
+        begin
+            @(negedge clk_ctrl); #TS;
+            arid[0] = 4'd6; araddr[0] = a; arlen[0] = len;
+            arsize[0] = 3'd3; arvld[0] = 1'b1; rrdy[0] = 1'b1;
+            #TS;
+            while (!j_arrdy) begin @(negedge clk_ctrl); #TS; end
+            @(negedge clk_ctrl); #TS; arvld[0] = 1'b0;
+            b = 0; spin = 0;
+            while (b <= len && spin < 20000) begin
+                if (j_rvld) begin
+                    chk({448'd0, j_rdata}, {448'd0, pat64(a + b*8)}, a + b*8);
+                    if ((b == len) !== j_rlast) begin
+                        errors = errors + 1;
+                        $display("%0t FAIL jtag burst rlast beat %0d of %0d",
+                                 $time, b, len);
+                    end
+                    b = b + 1;
+                end
+                spin = spin + 1;
+                @(negedge clk_ctrl); #TS;
+            end
+            if (b <= len) begin
+                errors = errors + 1;
+                $display("%0t FAIL jtag burst read @%h stalled at beat %0d of %0d",
+                         $time, a, b, len);
+            end
         end
     endtask
 
@@ -544,6 +635,7 @@ module sb_line4_tb;
     integer t0, seed;
     integer hop [0:3];
     integer dj_i, dx_i, dl_i;
+    integer ph14_err;
     reg [AW-1:0] ra;
 
     initial begin
@@ -714,6 +806,25 @@ module sb_line4_tb;
                      bw_t1 - bw_t0, 8 * 64 * (P_MW / 8));
         end
 
+        $display("--- phase 14: 64-bit jtag bursts through the built-in conversion");
+        for (s = 0; s < 4; s = s + 1) begin
+            jb_write(adr(s, 0) | 40'h3000, 8'd15);
+            jb_read (adr(s, 0) | 40'h3000, 8'd15);
+        end
+
+        // Hard gate since the NSU splits sub-flit writes itself: a 64-bit op
+        // to a 32-bit endpoint must land both halves.
+        ph14_err = errors;
+        jb_write(adr(0, 1) | 40'h80, 8'd0);
+        j_read (adr(0, 1) | 40'h80, 2'b00);
+        j_read ((adr(0, 1) | 40'h80) + 40'd4, 2'b00);
+        checks = checks + 1;
+        if (errors != ph14_err)
+            $display("    CTRL-PATH: 64-bit op to a 32-bit endpoint LOST %0d check(s)",
+                     errors - ph14_err);
+        else
+            $display("    CTRL-PATH: 64-bit op to a 32-bit endpoint intact");
+
         repeat (200) @(posedge bus_clk);
 
         for (n = 0; n < NM; n = n + 1) begin
@@ -731,6 +842,18 @@ module sb_line4_tb;
         else        $display("PASS  %0d checks", checks);
         $finish;
     end
+
+    // A full clean run ends near 100 ms; a stalled handshake otherwise runs
+    // the simulator forever with no message at all.
+    initial begin
+        #200_000_000;
+        $display("FAIL  watchdog: the bench did not finish in 200 ms");
+        $finish;
+    end
+
+    // Wall-clock beacon: a livelock freezes $time between beats, an event
+    // storm crawls it; either way the last line says WHERE.
+    always #1_000_000 $display("  HB t=%0t", $time);
 endmodule
 
 `default_nettype wire
