@@ -35,7 +35,12 @@ a deployment choice: one station, several, or none on a given station.
 
 A master plugs in through an **NMU** shim, a slave is driven by an **NSU**
 shim, and those two shims are where width, clock domain and protocol are
-resolved — once per port, never pairwise between ports.
+resolved — once per port, never pairwise between ports. The fabric between
+them carries only whole flits. The NMU packs its port's beats into flits,
+whatever the port's width, transfer size or alignment; the NSU unpacks each
+flit into beats of its own port's width. No endpoint ever sees a transfer
+shaped by some other port, and no width appears anywhere except at the two
+ports it belongs to.
 
 ### The switch
 
@@ -91,6 +96,9 @@ reported in; see §2.14 before comparing any of them against a primitive count.
 Every resource figure comes from `scripts/py/ooc_sweep.py`, which records
 utilization, per-clock Fmax and the per-instance breakdown from a single
 synthesis run, so no two rows disagree about which netlist they describe.
+§2.1–2.14 measure the revision whose shims pass narrow traffic through
+unconverted; §2.15 prices the converting shims the current RTL carries,
+against that revision at the deployed configuration.
 
 **Measured or derived.** Resource counts and cycle counts are measured — from
 the netlist and from `sb_line4_tb` respectively. Two things are derived and
@@ -715,9 +723,40 @@ other figure in this document is the site count, so nothing here needs the
 conversion — it exists because primitive counts are what a hand census produces,
 and comparing one against a vendor site count overstates by about 1.6×.
 
-## 3. Design
+### 2.15 The converting shims, priced
 
-### Flit
+The current RTL converts width inside the shims (see *Width rules*): the
+NMU packs beats into whole flits after its request FIFO, the NSU unpacks
+flits into port-width beats before its FIFO and packs read words back into
+flits after its response FIFO. Both A/B columns below are the same
+`sb_bd_line4` at the deployed configuration — `FW=256`, `AW=43`, managers
+64-bit AXI4 + 512-bit AXI4 + 32-bit Lite on station 1, four subordinates
+per station (256 / 32 / 32-Lite / 32-Lite), block-RAM FIFOs
+(`LUT_PER_BRAM=0`) — constrained at fabric 400 MHz / AXI ports 300 MHz,
+differing only in the shim RTL.
+
+| group | pass-through LUT | converting LUT | ΔLUT | ΔFF |
+|---|---|---|---|---|
+| station 0 | 3,204 | 3,906 | +702 | +821 |
+| station 1 (3 managers) | 7,476 | 9,788 | +2,312 | +2,065 |
+| station 2 | 3,686 | 4,425 | +739 | +820 |
+| station 3 | 3,204 | 3,909 | +705 | +824 |
+| links (3 crossings) | 2,228 | 2,228 | +0 | +0 |
+| **total** | **19,842** | **24,314** | **+4,472** | **+4,530** |
+
+Block RAM moves 90 → 90.5 tiles; worst setup slack **+0.185 ns against
++0.031** at the same constraints, so the conversion logic does not set the
+critical path. In the full four-mesh design the same change measures
++3,494 LUTs at top-level synthesis.
+
+The cost sits exactly where conversion happens and nowhere else. Per
+manager shim: the 512-bit NMU — a splitter, whose path did not change — is
+**971 LUTs in both columns**; the 64-bit AXI4 NMU goes 1,146 → 2,135 and
+the 32-bit Lite NMU 1,108 → 1,979, each buying a flit-wide assembly
+register, strobe merge and burst re-expression. The matched-width 256-bit
+NSU moves 635 → 681, because a port needing no conversion has its
+conversion registers pruned at synthesis. The links are untouched because
+the flits they carry are unchanged.
 
 | REQ field | bits | | RSP field | bits |
 |---|---|---|---|---|
@@ -824,13 +863,13 @@ that forces two parameters outright and constrains a third:
 |---|---|---|
 | `AW` | **43** | `mesh_{id}` MEM sits at `(id+1) << 40` |
 | control windows | below 4 GB | `M_AXI_LITE` is 32-bit |
-| `FW` | **≥ 256** | `sb_nsu` supports `SDW ≤ FW` only (`sb_nsu.v:99`), and the widest slave is `mesh_{id}/S_AXI_MEM` at 256 bits |
+| `FW` | **≥ 256** | `sb_nsu` supports `SDW ≤ FW` only (`sb_nsu.v:105`), and the widest slave is `mesh_{id}/S_AXI_MEM` at 256 bits |
 
 An earlier revision of this table read `FW ≥ 512`, on the belief that
 `S_AXI_MEM` was a 512-bit slave. It is 256 (`ktpu_ship_*.v`, `DW=256`). Only
 the XDMA master is 512, and a master wider than the flit is the *supported*
 direction — it splits `SUB = MW/FW` ways in `sb_nmu`. So `FW=256` is a legal
-drop-in, which §2.2 prices and the 606-check `SB_FW256` run demonstrates.
+drop-in, which §2.2 prices and the 673-check `SB_FW256` run demonstrates.
 
 FW=256 halves the fabric and the cross-SLR wires, but it is only available if
 the mesh memory port itself narrows — a mesh change, not a bus option. At a
@@ -856,16 +895,33 @@ under all of these.
 
 ### Width rules
 
-`FW` is independent of the AXI port widths on either side, but the two
-directions are not symmetric.
+`FW` is independent of the AXI port widths on either side. The shims
+convert; the fabric only ever carries whole flits. The two directions are
+not symmetric.
 
-**A master wider than the flit is supported.** `sb_nmu` splits one port beat
-into `SUB = MW/FW` flits. A read reserves its entire response before injecting,
-so the response FIFO is sized in flits, not beats: `RSP_DEPTH` must cover
-`MAXB * SUB`. The module clamps it there rather than trusting the parameter,
-because an undersized FIFO does not overflow — `ar_ok` never asserts and the
-port hangs with no error. A 512-bit master over a 256-bit fabric needs 128 and
-the obvious value of 64 is silently fatal.
+**A master at or below the flit width converts fully.** `sb_nmu` packs
+beats into whole flits *after* its request FIFO: the burst is re-expressed
+in flit units (bytes from `len`/`size`, the span widened by the address
+offset within a flit, the base aligned down), each queued beat carries its
+byte offset and a flit-end mark, and an assembly register merges beats —
+including sub-width beats at any alignment, whose strobes OR together —
+until the flit closes. Reads run the same conversion backwards: the request
+is issued in flits, and each returned flit is served out beat by beat at
+the port's own size, walking a per-tag byte offset. Any `AxSIZE` up to the
+port width, any alignment, and bursts crossing flit boundaries are all
+legal; the FIFOs themselves stay at their §2 widths and depths, which is
+why §2.15's cost lands only in the shims that convert.
+
+**A master wider than the flit splits.** `sb_nmu` splits one port beat
+into `SUB = MW/FW` flits. Its beats must be full-width — the shape a DMA
+data engine produces — and it reaches flit-width subordinates only; the
+declared contract excludes a split manager addressing a sub-flit port, and
+the simulation guard names it. A read reserves its entire response before
+injecting, so the response FIFO is sized in flits, not beats: `RSP_DEPTH`
+must cover `MAXB * SUB`. The module clamps it there rather than trusting
+the parameter, because an undersized FIFO does not overflow — `ar_ok`
+never asserts and the port hangs with no error. A 512-bit master over a
+256-bit fabric needs 128 and the obvious value of 64 is silently fatal.
 
 **`MAX_BURST` is what makes that clamp affordable.** The 4 KB rule permits 256
 beats on a 32-bit port, so clamping every port to its theoretical maximum
@@ -877,6 +933,17 @@ assumption about software. Leave it 0 elsewhere and the 4 KB bound applies. A
 port that exceeds its declared bound stalls rather than corrupting, and the
 simulation guard names it.
 
+**A subordinate at or below the flit width is served at its own width.**
+`sb_nsu` unpacks *before* its FIFO on writes — a flit whose transfer is
+wider than the port splits into `2^(size-SBW)` port-width entries, each
+with its own true strobes, and the burst is re-issued in the port's own
+beats at the port's own size — and packs *after* its response FIFO on
+reads, a slice index riding each entry so an accumulator reassembles the
+flit on the way out. Sub-width transfers pass through at their original
+size with their original strobes. A port whose width equals the flit needs
+none of this and synthesis prunes the machinery (§2.15: +46 LUTs on the
+256-bit NSU).
+
 **A slave wider than the flit is not supported.** `sb_nsu` has a scatter path
 (`NSLICE = FW/SDW`) but no gather path, so `SDW > FW` would drive a wide slave
 from a single narrow flit and replicate read data back — it elaborates,
@@ -885,23 +952,21 @@ generate block instantiates an undefined module to make it an elaboration
 error instead. Such a slave needs an `axi_dwidth_converter` in front of it, or
 `FW` raised to its width.
 
-For KohakuAccel neither rule binds at `FW=256`: the widest master is XDMA at
-512 bits, and the widest slave is the mesh's `S_AXI_MEM` at 256.
+For KohakuAccel the only binding rule at `FW=256` is the split-manager
+contract: the 512-bit XDMA data master reaches the 256-bit mesh `S_AXI_MEM`
+and may not address the 32-bit Lite ports — which it never does, because
+its engine moves data and every register access arrives through the
+XDMA-Lite or JTAG master, both of which convert fully.
 
-**Two conversions the fabric does not do.** A crossbar converts protocol and ID
-width on the way through; the station bus does not, and attaching real endpoints
-rather than block RAM makes that visible:
-
-| slave | mismatch | needs |
-|---|---|---|
-| a MIG's `C0_DDR4_S_AXI_CTRL` | AXI4-Lite, **no ID**, against a station port's AXI4 with a 4-bit ID | a 1×1 SmartConnect; `axi_protocol_converter` keeps the ID and fails BD 41-237 |
-| a 64-bit control port | `gen_station_wrap` emits 32 or `FW` only | `axi_dwidth_converter`, or widening the generator's check |
-
-The second is a generator limit rather than a fabric one — `sb_nsu` accepts any
-`SDW <= FW`, so a 64-bit port is legal RTL and only the wrapper refuses to emit
-it. The first is real: **a design with AXI4-Lite slaves still needs one small
-SmartConnect per such port**, so "replaces the crossbar" means the crossbar's
-routing and arbitration, not its protocol conversion.
+**Protocol at the ports.** A port declared Lite in the generator is emitted
+as a true AXI4-Lite interface — no ID signals, the AXI4-only fields tied to
+the constants Lite implies — so a MIG's `C0_DDR4_S_AXI_CTRL` or a
+`clk_wiz` register port connects directly, no protocol-converter IP and no
+1×1 SmartConnect. `gen_station_wrap` emits ports at 32, 64 or `FW` bits,
+AXI4 or Lite per port; the deployed block design carries exactly one
+external converter, a 32→64 `axi_dwidth_converter` in front of the mesh's
+64-bit CTRL port, which is a deployment choice on that port's width rather
+than a fabric limit.
 
 ### What may differ per station, and what may not
 
@@ -933,7 +998,7 @@ the same line; the storage choice never reaches the flit.
 Verified, not asserted. `sb_line4` takes a per-station override for each
 shim-private parameter, and `-d SB_MIXPRESET` drives all four differently at
 once — outstanding 1/4/8/2, store-and-forward 0/1/1/0, block RAM 0/820/0/820,
-and a 4000-cycle timeout on station 2 alone. That line passes 604 checks,
+and a 4000-cycle timeout on station 2 alone. That line passes 673 checks,
 including the deadlock and ordering phases that cross every boundary between
 unlike stations.
 
@@ -963,7 +1028,7 @@ store-and-forward differs per station; it does not change correctness.
 `NARROW` is a drop-in: the mesh's `S_AXI_MEM` is 256 bits wide, so the fabric
 meets it at full width, and XDMA's 512-bit master splits 2:1 through `sb_nmu`.
 That split is what the `RSP_DEPTH` clamp under *Width rules* exists for; the
-configuration passes the same 606 checks as the 512-bit presets. At 200 MHz it
+configuration passes the same 673 checks as the 512-bit presets. At 200 MHz it
 carries 6.4 GB/s, matching the 512-bit-at-100 MHz SmartConnect it replaces.
 
 `MIN_AREA` drops to one outstanding transaction and removes the
@@ -979,7 +1044,7 @@ storage settings. `NARROW` is the `FW=256` row of §2.2.
 | | |
 |---|---|
 | topology | line, 4 stations, one per SLR, no root |
-| masters | 3, all on station 1: jtag 32-bit @100 MHz, XDMA 512-bit @250 MHz, XDMA-Lite 32-bit @250 MHz |
+| masters | 3, all on station 1: jtag 64-bit AXI4 @100 MHz, XDMA 512-bit @250 MHz, XDMA-Lite 32-bit @250 MHz |
 | slaves | 4 per station: mesh `S_AXI_MEM` 256-bit, mesh CTRL 32-bit, DDR ctrl 32-bit, clk_wiz 32-bit |
 | **no** GPIO endpoint | the interlink status port it existed for is not needed |
 | address width | 43 — mesh MEM sits at `(id+1)<<40`, control windows below 4 GB |
@@ -994,6 +1059,26 @@ supported direction (see *Width rules*).
 
 `sb_line4.v` is this design with `NQ` as a parameter; `NQ=4` is the deployed
 shape.
+
+**The whole line is one module.** The block design instantiates a single
+generated wrapper, `sb_bd_line4` (`src/kohakuaccel/axi/bd/sb_v6_bus.v`),
+which contains all four stations, all three links and every shim; per-SLR
+pblocks then place each station on its die with the links deliberately
+unpinned (§2.9). The wrapper is produced by `scripts/py/gen_station_wrap.py`,
+which names every AXI signal so a block design infers the interfaces, and
+takes the shape on the command line — the deployed one is embedded in the
+generated file's header:
+
+```
+gen_station_wrap.py --kind line4 --nq 4 --fw 256 --mgr-w 64,512,32 \
+    --mgr-lite 2 --loc-lite 2,3 --aw 43 -o src/kohakuaccel/axi/bd/sb_v6_bus.v \
+    -m sb_bd_line4
+```
+
+`--mgr-w` lists the manager widths in station-1 port order, `--mgr-lite` /
+`--loc-lite` declare which manager and which per-station subordinate ports
+are AXI4-Lite, and the same script emits `root`, `leaf`, `link` and `line4`
+kinds. Regenerate rather than edit: the file states this in its first line.
 
 ## 5. Cost model
 
@@ -1054,43 +1139,55 @@ All seven items above are covered by `sb_line4_tb`, whose first twelve phases
 map onto them one for one; phase 13 measures bandwidth and asserts nothing.
 Every run carries 3 master-side and 16 slave-side protocol monitors.
 
-**`SB_NQ4 SB_HALFLINK SB_LINKCDC` — exactly what the block design builds —
-passes 604 checks**, including maximum legal bursts, all three masters hammering
-one station, same-ID ordering across unequal hop counts, and randomised traffic
-under random slave backpressure.
+**`SB_FW256 SB_NQ4 SB_HALFLINK SB_LINKCDC` — exactly what the block design
+builds — passes 671 checks**, including maximum legal bursts, all three
+masters hammering one station, same-ID ordering across unequal hop counts,
+randomised traffic under random slave backpressure, 64-bit jtag bursts
+through the packing shims, and a 64-bit op to a 32-bit endpoint as a hard
+gate.
 
-Re-measured 2026-08-18, every row run in one sitting. An earlier revision of this
-table had the deployed and mixed rows the wrong way round — it credited the
-deployed config with 606 and the mixed ones with 604, which is the reverse.
+Width conversion has its own component bench, `sb_width_tb`: one `sb_nmu`,
+one `sb_nsu` and an `axi4_ram` on a single clock, the pair widths chosen
+with `-d W_MW=<bits> -d W_SDW=<bits>`, ~15 s a run. It drives single
+full-width beats, full-width bursts crossing flit boundaries, sub-width
+singles at even and odd lanes, sub-width bursts, and unaligned starts, and
+checks an address-derived byte pattern end to end. Every width pair on the
+card passes — 64/32/256/512-bit managers against 256/64/32-bit
+subordinates, 24 checks full form, 15 where the manager has no narrower
+transfer to issue — and the one excluded pair (a split manager to a
+sub-flit subordinate, see *Width rules*) is refused by name.
+
+Line-level, re-measured 2026-08-21, every row run in one sitting:
 
 | config | checks |
 |---|---|
-| **deployed config, full stress** | **604** |
-| `SB_FW256`, 512-bit master over a 256-bit fabric | **606** |
-| `SB_MIXPRESET`, four unlike stations on one line | 606 |
-| `SB_MIXPRESET SB_TIMEOUT` at `FW=512` | 606 |
-| `SB_FW256 SB_CRED1`, one credit per link | 606 |
-| deployed config, before stress phases were added | 139 |
-| `SB_NQ4` / `+FW256` / `+HALFLINK` | 139 each |
-| 2 endpoints per station: default, `LINKCDC`, `FW256`, `CRED1`, `AW32` | 141 each |
+| **deployed config (`FW256 NQ4 HALFLINK LINKCDC`)** | **671** |
+| default, `FW=512` | 673 |
+| `SB_FW256`, 512-bit master over a 256-bit fabric | 673 |
+| `SB_NQ4` | 670 |
+| `SB_MIXPRESET`, four unlike stations on one line | 673 |
+| `SB_FW256 SB_CRED1`, one credit per link | 673 |
 | `SB_WIDE512`, 512-bit slave under a 256-bit fabric | rejected at elaboration |
 
 The `SB_FW256` row is the width rule above under test rather than asserted.
 Before `RSP_DEPTH` was clamped to `AXI_MAXB * SUB` that configuration hung with
 no error; it is the configuration §2 recommends, so the clamp is load-bearing
 and not a defensive nicety. `SB_WIDE512` is the unsupported direction: it once
-returned 512 wrong answers out of 606 while elaborating and synthesising
-cleanly, and now fails to elaborate at all.
+returned 512 wrong answers while elaborating and synthesising cleanly, and now
+fails to elaborate at all.
 
 Other benches:
 
 | bench | result |
 |---|---|
+| `sb_width_tb` — every width pair, per pair | 24 / 15 checks |
 | `sb_root9` — single station, 3x9 | 215 checks |
+| `sb_quad` — root and three leaves | 507 checks |
 | `sb_chain2` — two stations over a link | 134 checks |
+| `sb_mesh_e2e` — the bus against a real mesh and DRAM model | 7 checks |
 | `TIMEOUT` containment | proven: `SLVERR`, not a hang |
-| resource measurement of the line | §2.4, §2.5, §2.8, §2.9 |
-| placement with pblocks | running — see §2.9 |
+| resource measurement of the line | §2.4, §2.5, §2.8, §2.9, §2.15 |
+| placement with pblocks | §2.9 |
 
 ## 7. Conclusion
 
@@ -1101,7 +1198,7 @@ reason is given rather than the preference.
 
 | knob | choose | why, in numbers |
 |---|---|---|
-| `FW` | **256** | The widest slave, `S_AXI_MEM`, is 256 bits, so the fabric meets it exactly and the 512-bit XDMA master splits 2:1 (606 checks). 22,106 LUTs against 30,785 at 512 — 28% — and 629 cross-SLR wires against 1,173. At 200 MHz it carries 6.4 GB/s, which is exactly what the 512-bit-at-100 MHz SmartConnect provided. |
+| `FW` | **256** | The widest slave, `S_AXI_MEM`, is 256 bits, so the fabric meets it exactly and the 512-bit XDMA master splits 2:1 (673 checks). 22,106 LUTs against 30,785 at 512 — 28% — and 629 cross-SLR wires against 1,173. At 200 MHz it carries 6.4 GB/s, which is exactly what the 512-bit-at-100 MHz SmartConnect provided. |
 | `AW` | **43** | Forced: mesh MEM sits at `(id+1)<<40`. Costs 3.6% over 32 bits (21,345 → 22,106). |
 | bus clock | **200 MHz** | Meets the bandwidth above. OOC binding clock is `bus_clk1` at 357.9 MHz, 1.79× the target; the routed design closes at +0.068 ns. Area is flat from 150 to 300 MHz (0.3%), so the constraint is free anywhere in that range and there is headroom to raise it later without paying for it. |
 | `LINK_FULL` | **0** | Not a saving — a declaration. Every master sits on station 1, so each boundary needs one REQ stream and one RSP stream, which is what 0 builds. 1 builds four streams and is only correct if masters sit on both sides of a boundary. |
