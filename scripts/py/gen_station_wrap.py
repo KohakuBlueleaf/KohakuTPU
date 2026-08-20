@@ -891,9 +891,11 @@ def main():
 
     mgr_w = [int(x) for x in args.mgr_w.split(",") if x]
     loc_w = [int(x) for x in args.loc_w.split(",") if x]
+    # The line4 kind converts widths itself, so its whitelist follows the
+    # REQUESTED flit width, not the module default.
     for w in mgr_w + loc_w:
-        if w not in (32, FW):
-            sys.exit(f"gen_station_wrap: width {w} is neither 32 nor {FW}")
+        if w not in (32, 64, FW, args.fw):
+            sys.exit(f"gen_station_wrap: width {w} is not 32, 64, {FW} or {args.fw}")
 
     mgr_lite = {int(x) for x in args.mgr_lite.split(",") if x.strip()}
     loc_lite = {int(x) for x in args.loc_lite.split(",") if x.strip()}

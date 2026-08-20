@@ -324,15 +324,16 @@ module sb_line4 #(
         if (s == 1) begin : g_mgr
             wire [31:0] dc [0:NM-1];
             for (i = 0; i < NM; i = i + 1) begin : g_nmu
-                localparam integer MW = (i == 1) ? 512 : 32;
+                // Manager 0 (JTAG) is 64-bit: the driver's word. 16-deep
+                // FIFOs wedged every burst over 16 beats on v6.5 hardware.
+                localparam integer MW = (i == 1) ? 512 : ((i == 0) ? 64 : 32);
                 sb_nmu #(.MW(MW), .MIDW(MAXID), .AW(AW), .FW(FW), .TAGW(TAGW),
                          .DSTW(DPW), .LUT_PER_BRAM(S_LPB),
                          .STORE_FWD(S_SFW), .NSEG(NSEG),
-                         .REQ_DEPTH((i == 1) ? 64 : 16),
-                         .RSP_DEPTH((i == 1) ? 64 : 16),
-                         // The narrow managers are single-beat control ports;
-                         // the 4 KB bound would provision them for 256.
-                         .MAX_BURST((i == 1) ? 0 : 1),
+                         .REQ_DEPTH((i == 2) ? 16 : 64),
+                         .RSP_DEPTH((i == 2) ? 16 : 64),
+                         // Manager 2 stays a single-beat control port.
+                         .MAX_BURST((i == 2) ? 1 : 0),
                          .SEG_BASE(L_BASE), .SEG_MASK(L_MASK),
                          .SEG_XLT(L_XLT), .SEG_DST(L_STN),
                          .SEG_DPORT(L_PRT), .SEG_VLD(L_VLD)) u_nmu (

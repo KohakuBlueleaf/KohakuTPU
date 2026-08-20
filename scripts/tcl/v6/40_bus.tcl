@@ -45,12 +45,16 @@ foreach {mid mod} $MESHES {
 # addressing: the station field is at AW-4 = 39, so 32 bits reach station 0 only.
 proc v6_jtag {name clkpin rstpin} {
     set j [create_bd_cell -type ip -vlnv xilinx.com:ip:jtag_axi $name]
+    # DATA_WIDTH stated, not defaulted: the IP defaults to 32 and the driver
+    # speaks 64-bit words (v6.5 shipped 32-bit by omission).
     set_property -dict [list CONFIG.PROTOCOL {0} CONFIG.M_AXI_ID_WIDTH {4} \
-                             CONFIG.M_AXI_ADDR_WIDTH {64}] $j
+                             CONFIG.M_AXI_ADDR_WIDTH {64} \
+                             CONFIG.M_AXI_DATA_WIDTH {64}] $j
     connect_bd_net [get_bd_pins $clkpin] [get_bd_pins $name/aclk]
     connect_bd_net [get_bd_pins $rstpin] [get_bd_pins $name/aresetn]
 }
 v6_jtag jtag_ctrl clk_wiz_ctrl/clk_out1 rst_ctrl/peripheral_aresetn
+# Straight in at its own width: the station converts width itself.
 connect_bd_intf_net [get_bd_intf_pins jtag_ctrl/M_AXI] \
                     [get_bd_intf_pins station_bus/S00_AXI]
 
