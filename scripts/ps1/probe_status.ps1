@@ -28,7 +28,11 @@
 #>
 param(
     [string]$Root = 'C:\Users\apoll\Desktop\vivado\probe',
-    [string]$Main = 'C:\Users\apoll\Desktop\vivado\JTAG-DMA-test\JTAG-DMA-test.runs\impl_1',
+    # Main-class projects: one row each, showing impl_1 once it has a log,
+    # synth_1 before that. Point at the .runs directory.
+    [string[]]$Main = @(
+        'C:\Users\apoll\Desktop\vivado\multimesh_v65\multimesh_v65.runs'
+    ),
     [int]$TailLines = 600,
     [switch]$Watch,
     [int]$Every = 15,
@@ -222,22 +226,30 @@ function Get-ProbeStatus {
 }
 
 function Get-MainStatus {
-    <# The main-project run as one row, same parser. #>
-    param([string]$RunDir)
-    if (-not $RunDir -or -not (Test-Path $RunDir)) { return $null }
-    $log = Join-Path $RunDir 'runme.log'
+    <# One row per main project: impl_1 once it has a log, synth_1 before. #>
+    param([string]$RunsDir)
+    if (-not $RunsDir -or -not (Test-Path $RunsDir)) { return $null }
+    $implLog = Join-Path $RunsDir 'impl_1\runme.log'
+    $synLog  = Join-Path $RunsDir 'synth_1\runme.log'
+    $isImpl = Test-Path $implLog
+    $log = if ($isImpl) { $implLog } else { $synLog }
     if (-not (Test-Path $log)) { return $null }
     $fi = Get-Item -LiteralPath $log
     $p = Parse-Impl (Get-Tail $log)
     $idle = (New-TimeSpan -Start $fi.LastWriteTime -End (Get-Date))
-    $done = (Get-Tail $log 40).lines -match 'write_bitstream completed|route_design completed successfully'
+    $done = $isImpl -and ((Get-Tail $log 40).lines -match 'write_bitstream completed|route_design completed successfully')
+    $synStep = ''
+    if (-not $isImpl) {
+        $sl = (Get-Tail $log 200).lines | Where-Object { $_ -match '^Start\s+\w' } | Select-Object -Last 1
+        if ($sl) { $synStep = ($sl -replace '^Start\s+', '') }
+    }
     $st = [pscustomobject][ordered]@{
-        probe = 'MAIN:' + (Split-Path $RunDir -Leaf)
-        stage = if ($done) { 'done' } else { switch ($p.cmd) {
+        probe = 'MAIN:' + ((Split-Path $RunsDir -Leaf) -replace '\.runs$', '')
+        stage = if ($done) { 'done' } elseif (-not $isImpl) { 'synth' } else { switch ($p.cmd) {
             'opt_design' { 'opt' } 'place_design' { 'place' }
             'phys_opt_design' { 'physopt' } 'route_design' { 'route' }
             'write_bitstream' { 'bitstream' } default { 'impl' } } }
-        step = $p.phase -replace '^Phase ', ''
+        step = if ($isImpl) { $p.phase -replace '^Phase ', '' } else { $synStep }
         elapsed = '{0:h\hmm\m}' -f (New-TimeSpan -Start $fi.CreationTime -End (Get-Date))
         idle = if ($idle.TotalMinutes -lt 60) { '{0:n0}m' -f $idle.TotalMinutes }
                else { '{0:n0}h{1:n0}m' -f [math]::Floor($idle.TotalHours), $idle.Minutes }
@@ -270,6 +282,39 @@ function Show-Status {
     foreach ($p in $probes) {
         $r = Get-ProbeStatus -Dir $p
         $mine = @($procs | Where-Object { $_.CommandLine -and $_.CommandLine -match [regex]::Escape($p.Name) })
+
+        # An ad-hoc session (RQS, replication, census, ...) working ON this
+        # probe gets its own row, named by its -log file; its memory leaves
+        # the probe's own sum so the totals stay honest.
+        $aux = @()
+        foreach ($ap in $mine) {
+            if ($ap.CommandLine -notmatch '-log\s+"?([^\s"]+\.log)"?') { continue }
+            $lf = $Matches[1]
+            if (-not [System.IO.Path]::IsPathRooted($lf)) { $lf = Join-Path $p.FullName $lf }
+            if ($lf -match '\.runs\\') { continue }
+            if (-not (Test-Path $lf)) { continue }
+            $aux += $ap
+            $afi = Get-Item -LiteralPath $lf
+            $ap2 = Parse-Impl (Get-Tail $lf)
+            $aidle = New-TimeSpan -Start $afi.LastWriteTime -End (Get-Date)
+            $rows += [pscustomobject][ordered]@{
+                probe = $p.Name + ':' + [System.IO.Path]::GetFileNameWithoutExtension($lf)
+                stage = switch ($ap2.cmd) {
+                    'place_design' { 'place' } 'phys_opt_design' { 'physopt' }
+                    'route_design' { 'route' } default { 'session' } }
+                step = $ap2.phase -replace '^Phase ', ''
+                elapsed = '{0:h\hmm\m}' -f (New-TimeSpan -Start $afi.CreationTime -End (Get-Date))
+                idle = '{0:n0}m' -f $aidle.TotalMinutes
+                idleMin = $aidle.TotalMinutes
+                wns = $ap2.wns; dwns = ' '; tns = $ap2.tns; whs = $ap2.whs; ths = $ap2.ths
+                cong = $ap2.cong
+                state = 'running'
+                err = ''
+                memGB = '{0:n1}' -f ($ap.WorkingSetSize / 1GB)
+            }
+        }
+        $mine = @($mine | Where-Object { $_.ProcessId -notin @($aux | ForEach-Object ProcessId) })
+
         if ($mine.Count) {
             $r.memGB = '{0:n1}' -f (($mine | Measure-Object WorkingSetSize -Sum).Sum / 1GB)
             # A live process outranks a stale done-marker from an earlier stage.
@@ -279,8 +324,21 @@ function Show-Status {
         }
         $rows += $r
     }
-    $m = Get-MainStatus -RunDir $Main
-    if ($m) { $rows = @($m) + $rows }
+    foreach ($md in $Main) {
+        $m = Get-MainStatus -RunsDir $md
+        if ($m) {
+            # Same liveness rule as probe rows: a running Vivado holding the
+            # project outranks a quiet log. Route Global Iterations go 45m+
+            # without a log line while fully computing.
+            $proj = (Split-Path $md -Leaf) -replace '\.runs$', ''
+            $mine = @($procs | Where-Object { $_.CommandLine -and $_.CommandLine -match [regex]::Escape($proj) })
+            if ($mine.Count) {
+                $m.state = if ($m.state -eq 'done') { 'done' } else { 'running' }
+                $m.memGB = '{0:n1}' -f (($mine | Measure-Object WorkingSetSize -Sum).Sum / 1GB)
+            }
+            $rows = @($m) + $rows
+        }
+    }
 
     # Deterministic: state rank, then name. No timestamp interleaving.
     $rank = @{ running = 0; retry = 1; pending = 2; done = 3; dead = 4; failed = 4 }
@@ -290,7 +348,10 @@ function Show-Status {
 
     $out = [System.Collections.Generic.List[object]]::new()
     $seg = { param($t, $c) @{ t = $t; c = $c } }
-    $out.Add(@((& $seg ('{0,-14} {1,-9} {2,-7} {3,-6} {4,-9} {5,-11} {6,-7} {7,-9} {8,-10} {9,-6} {10}' -f `
+    # Name column sized to the longest visible run name, floor 14.
+    $nw = 14
+    foreach ($r in $rows) { if ($r.probe.Length -gt $nw) { $nw = $r.probe.Length } }
+    $out.Add(@((& $seg ("{0,-$nw} {1,-9} {2,-7} {3,-6} {4,-9} {5,-11} {6,-7} {7,-9} {8,-10} {9,-6} {10}" -f `
         'run', 'stage', 'elapsed', 'idle', 'wns', 'tns', 'whs', 'congest', 'mem(GB)', 'd', 'phase') 'DarkGray')))
     foreach ($r in $rows) {
         $color = switch ($r.state) {
@@ -301,7 +362,7 @@ function Show-Status {
         $dc = switch ($r.dwns) { '+' { 'Green' } '-' { 'Red' } default { $color } }
         if ($r.state -eq 'dead') { $r.step = "NO PROCESS - $($r.step)" }
         $out.Add(@(
-            (& $seg ('{0,-14} {1,-9} {2,-7} ' -f $r.probe, $r.stage, $r.elapsed) $color),
+            (& $seg ("{0,-$nw} {1,-9} {2,-7} " -f $r.probe, $r.stage, $r.elapsed) $color),
             (& $seg ('{0,-6} ' -f $r.idle) $idleColor),
             (& $seg ('{0,-9} {1,-11} {2,-7} ' -f $r.wns, $r.tns, $r.whs) $color),
             (& $seg ('{0,-9} ' -f $r.cong) $cc),

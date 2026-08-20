@@ -19,8 +19,7 @@ puts "@@@ clocks $nclk"
 if {$nclk == 0} { error "no clocks -- suggestions would be judged on nothing" }
 
 report_qor_assessment -file $out/qor_assessment.rpt
-report_qor_suggestions -file $out/qor_suggestions.rpt \
-                       -output_dir $out -max_paths 200
+report_qor_suggestions -file $out/qor_suggestions.rpt -max_paths 200
 # The RQS object file feeds back into synth/impl via read_qor_suggestions +
 # the runs' -rqs_file options; the .rpt beside it is the human-readable list.
 write_qor_suggestions -force $out/suggestions.rqs
