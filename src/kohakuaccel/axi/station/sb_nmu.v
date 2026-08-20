@@ -125,6 +125,13 @@ module sb_nmu #(
     localparam integer NLANE = (FW > MW) ? (FW / MW) : 1;
     localparam integer LANEW = (NLANE <= 1) ? 1 : $clog2(NLANE);
     localparam integer LSB   = (NLANE <= 1) ? 0 : $clog2(MW/8);
+    localparam integer FBW   = $clog2(FW/8);
+    // PACK assembles beats into whole strobed flits BY BYTE OFFSET, narrow
+    // ports and sub-width beats alike, so the fabric and every endpoint see
+    // only full-width transfers. Without it a burst reaches the subordinate
+    // as an AXI narrow transfer, which the mesh's word-walking memory port
+    // cannot honour (measured on v6.5). MW > FW splits instead.
+    localparam integer PACK  = (SUB <= 1) ? 1 : 0;
     // XPM's async FIFO $finish-es below depth 16, so a Lite port asking for 4
     // kills the simulation at time 0 rather than warning.
     localparam integer RQD   = (REQ_DEPTH < 16) ? 16 : REQ_DEPTH;
@@ -145,8 +152,9 @@ module sb_nmu #(
     localparam integer CW    = (CWR < 9) ? 9 : CWR;
     localparam integer SZ    = $clog2(MW/8);
     // Store the PORT's beat, not the flit's: a 32-bit port queuing 638-bit
-    // flits burns 9 RAMB36 on width at 3% depth use. MW + lane is 102 bits.
-    localparam integer REQ_W = 2*DSTW + TAGW + 3 + AW + 8 + 3 + LANEW
+    // flits burns 9 RAMB36 on width at 3% depth use. The entry carries the
+    // beat's BYTE offset in the flit plus a flit-end mark for the packer.
+    localparam integer REQ_W = 2*DSTW + TAGW + 3 + AW + 8 + 3 + FBW + 1
                                + MW + MW/8;
     localparam integer RSP_W = TAGW + 2 + 2 + FW;
 
@@ -215,7 +223,10 @@ module sb_nmu #(
     // ============================================================= tag table
     reg [NTAG-1:0]  tag_busy;
     reg [MIDW-1:0]  tg_id   [0:NTAG-1];
-    reg [LANEW-1:0] tg_lane [0:NTAG-1];
+    // BYTE offset within the flit, not a lane index: a beat NARROWER than the
+    // port advances its lane every (MW/8)/(1<<size) beats, not every beat.
+    reg [FBW-1:0]   tg_lane [0:NTAG-1];
+    reg [2:0]       tg_sz   [0:NTAG-1];
     // Flits STILL RESERVED for this tag. A subordinate may answer with fewer --
     // a Lite port tied rlast high, a TIMEOUT SLVERR -- and the rest would leak.
     reg [8:0]       tg_rsv  [0:NTAG-1];
@@ -244,7 +255,8 @@ module sb_nmu #(
     reg  [AW-1:0]    w_addr;
     reg  [7:0]       w_len;
     reg  [2:0]       w_size;
-    reg  [LANEW-1:0] w_lane;
+    reg  [2:0]       w_osz;
+    reg  [FBW-1:0]   w_boff;
     reg              w_head;
     reg  [MIDW-1:0]  w_eid;
     reg  [CW-1:0]    rsp_credit;
@@ -261,10 +273,13 @@ module sb_nmu #(
     wire             rsp_pop;
     // In FLITS, not beats: a split read returns SUB flits per beat and every
     // one of them needs reserved room, or the RSP FIFO overruns.
-    wire [8:0]       ar_beats = ({1'b0, s_arlen} + 9'd1) * SUB;
+    wire [8:0]       ar_beats;
 
     // Declared here because the main always block retires tags on them.
     wire b_err, b_nrm, r_err, r_raw, r_nrm, r_eat, g_last;
+    wire rd_fin, rd_wrap;
+    wire [FBW:0] rd_next;
+    reg [8:0] tg_left [0:NTAG-1];
     reg  [((SUB > 1) ? (MW-FW) : 1)-1:0] gath;
     reg  [SUBW-1:0] gsub;
 
@@ -308,26 +323,52 @@ module sb_nmu #(
     wire [8:0] aw_flits = (({1'b0, s_awlen} + 9'd1) * SUB) - 9'd1;
     wire [8:0] ar_flits = (({1'b0, s_arlen} + 9'd1) * SUB) - 9'd1;
 
+    // The burst re-expressed in FLITS for a packing port: aligned base, and a
+    // length covering the head and tail offsets within the first/last flit.
+    wire [17:0] aw_bytes = ({10'd0, s_awlen} + 18'd1) << s_awsize;
+    wire [17:0] ar_bytes = ({10'd0, s_arlen} + 18'd1) << s_arsize;
+    wire [17:0] aw_span  = aw_bytes + {{(18-FBW){1'b0}}, s_awaddr[FBW-1:0]};
+    wire [17:0] ar_span  = ar_bytes + {{(18-FBW){1'b0}}, s_araddr[FBW-1:0]};
+    wire [17:0] aw_pf    = (aw_span >> FBW)
+                           + ((|aw_span[FBW-1:0]) ? 18'd1 : 18'd0);
+    wire [17:0] ar_pf    = (ar_span >> FBW)
+                           + ((|ar_span[FBW-1:0]) ? 18'd1 : 18'd0);
+    wire [AW-1:0] aw_pal = {aw_xadr[AW-1:FBW], {FBW{1'b0}}};
+    wire [AW-1:0] ar_pal = {ar_xadr[AW-1:FBW], {FBW{1'b0}}};
+
+    // Credit is reserved in FLITS, which is what the RSP FIFO holds: a packing
+    // port's read returns whole flits, and a splitting port SUB per beat.
+    assign ar_beats = (PACK != 0) ? ar_pf[8:0]
+                                  : (({1'b0, s_arlen} + 9'd1) * SUB);
+
     wire [DSTW-1:0] hdr_dst  = ar_go ? ar_dst   : w_dst;
     wire [DSTW-1:0] hdr_dpt  = ar_go ? ar_dpt   : w_dpt;
     wire [TAGW-1:0] hdr_tag  = ar_go ? tag_new  : w_tag;
     wire            hdr_head = ar_go ? 1'b1     : w_head;
     wire            hdr_last = ar_go ? 1'b1     : s_wlast;
-    wire [AW-1:0]   hdr_addr = ar_go ? ar_xadr  : w_addr;
-    wire [7:0]      hdr_len  = (SUB > 1) ? (ar_go ? ar_flits[7:0] : w_len)
-                                         : (ar_go ? s_arlen : w_len);
-    wire [2:0]      hdr_size = (SUB > 1) ? FSZ
-                                         : (ar_go ? s_arsize : w_size);
+    wire [AW-1:0]   hdr_addr = ar_go ? ((PACK != 0) ? ar_pal : ar_xadr)
+                                     : w_addr;
+    wire [7:0]      hdr_len  = (SUB > 1)  ? (ar_go ? ar_flits[7:0] : w_len)
+                             : (PACK != 0) ? (ar_go ? (ar_pf[7:0] - 8'd1)
+                                                    : w_len)
+                                           : (ar_go ? s_arlen : w_len);
+    wire [2:0]      hdr_size = ((SUB > 1) || (PACK != 0))
+                             ? FSZ : (ar_go ? s_arsize : w_size);
+
+    // The beat's own end-of-flit mark, computed where the offset is walked:
+    // the packer then needs no per-beat size at all.
+    wire [FBW:0] w_bnext = {1'b0, w_boff} + ({{FBW{1'b0}}, 1'b1} << w_osz);
+    wire         w_fend  = s_wlast || w_bnext[FBW];
 
     wire [REQ_W-1:0] req_in = { hdr_dst, hdr_dpt, hdr_tag, !ar_go, hdr_head,
                                 hdr_last, hdr_addr, hdr_len, hdr_size,
-                                w_lane, s_wdata, s_wstrb };
+                                w_boff, w_fend, s_wdata, s_wstrb };
 
     always @(posedge s_aclk) begin
         if (srst) begin
             wst      <= W_IDLE;
             w_head   <= 1'b1;
-            w_lane   <= {LANEW{1'b0}};
+            w_boff   <= {FBW{1'b0}};
             pri      <= 1'b0;
             tag_busy <= {NTAG{1'b0}};
         end else begin
@@ -337,17 +378,20 @@ module sb_nmu #(
                 w_tag  <= tag_new;
                 w_dst  <= aw_dst;
                 w_dpt  <= aw_dpt;
-                w_addr <= aw_xadr;
-                w_len  <= (SUB > 1) ? aw_flits[7:0] : s_awlen;
-                w_size <= s_awsize;
+                w_addr <= (PACK != 0) ? aw_pal : aw_xadr;
+                w_len  <= (SUB > 1)   ? aw_flits[7:0]
+                        : (PACK != 0) ? (aw_pf[7:0] - 8'd1) : s_awlen;
+                w_size <= ((SUB > 1) || (PACK != 0)) ? FSZ : s_awsize;
                 w_eid  <= s_awid;
                 w_head <= 1'b1;
-                w_lane <= (NLANE <= 1) ? {LANEW{1'b0}} : s_awaddr[LSB +: LANEW];
+                w_osz  <= s_awsize;
+                w_boff <= s_awaddr[FBW-1:0];
                 wst    <= aw_hit ? W_DATA : W_ESINK;
                 if (aw_hit) begin
                     tag_busy[tag_new] <= 1'b1;
                     tg_id  [tag_new]  <= s_awid;
-                    tg_lane[tag_new]  <= {LANEW{1'b0}};
+                    tg_lane[tag_new]  <= {FBW{1'b0}};
+                    tg_sz  [tag_new]  <= s_awsize;
                     tg_rsv [tag_new]  <= 9'd1;
                 end
             end
@@ -355,9 +399,10 @@ module sb_nmu #(
             if (ar_go) begin
                 tag_busy[tag_new] <= 1'b1;
                 tg_id  [tag_new]  <= s_arid;
-                tg_lane[tag_new]  <= (NLANE <= 1) ? {LANEW{1'b0}}
-                                                  : s_araddr[LSB +: LANEW];
+                tg_lane[tag_new]  <= s_araddr[FBW-1:0];
+                tg_sz  [tag_new]  <= s_arsize;
                 tg_rsv [tag_new]  <= ar_beats;
+                tg_left[tag_new]  <= {1'b0, s_arlen} + 9'd1;
             end
 
             // rf_tag is busy and tag_new is free, so this never races the two
@@ -366,19 +411,21 @@ module sb_nmu #(
 
             if (w_beat) begin
                 w_head <= 1'b0;
-                w_lane <= (NLANE <= 1) ? {LANEW{1'b0}} : w_lane + 1'b1;
+                w_boff <= w_bnext[FBW-1:0];
                 if (s_wlast) wst <= W_IDLE;
             end
             if (e_beat && s_wlast)                          wst <= W_ERESP;
             if ((wst == W_ERESP) && s_bvalid && s_bready)   wst <= W_IDLE;
 
             // Free on the MANAGER-visible last beat: with SUB>1 the flits eaten
-            // to fill the gather are not beats and must not retire the tag.
+            // to fill the gather are not beats and must not retire the tag,
+            // and with PACK one flit carries NLANE of them.
             if ((b_nrm && s_bready) ||
-                (r_nrm && s_rready && rsp_last_o)) tag_busy[rf_tag] <= 1'b0;
-            if (r_nrm && s_rready && !rsp_last_o)
-                tg_lane[rf_tag] <= (NLANE <= 1) ? {LANEW{1'b0}}
-                                                : tg_lane[rf_tag] + 1'b1;
+                (r_nrm && s_rready && rd_fin)) tag_busy[rf_tag] <= 1'b0;
+            if (r_nrm && s_rready && !rd_fin) begin
+                tg_lane[rf_tag] <= rd_next[FBW-1:0];
+                tg_left[rf_tag] <= tg_left[rf_tag] - 9'd1;
+            end
         end
     end
 
@@ -418,12 +465,13 @@ module sb_nmu #(
     always @(posedge bus_clk) bus_rst_q <= bus_rst;
 
     wire [REQ_W-1:0] reqf_out;
+    wire             reqf_pop, flit_hav;
 
     async_fifo #(.DATA_WIDTH(REQ_W), .FIFO_DEPTH(RQD),
                  .MEMORY_TYPE(REQ_STY)) u_reqf (
         .wr_clk(s_aclk), .wr_rst(srst), .wr_en(req_push), .wr_data(req_in),
         .wr_full(reqf_full),
-        .rd_clk(bus_clk), .rd_en(flit_go && sub_last), .rd_data(reqf_out),
+        .rd_clk(bus_clk), .rd_en(reqf_pop), .rd_data(reqf_out),
         .rd_empty(reqf_empty)
     );
 
@@ -445,7 +493,7 @@ module sb_nmu #(
             .rd_empty(tokf_empty)
         );
 
-        assign req_valid = (sending || !tokf_empty) && !reqf_empty;
+        assign req_valid = (sending || !tokf_empty) && flit_hav;
 
         always @(posedge bus_clk)
             if (bus_rst_q) sending <= 1'b0;
@@ -453,48 +501,132 @@ module sb_nmu #(
     end else begin : g_nosf
         assign tokf_full  = 1'b0;
         assign tokf_empty = 1'b1;
-        assign req_valid  = !reqf_empty;
+        assign req_valid  = flit_hav;
     end
     endgenerate
 
     // Expand on the READ side: replication is wiring, and the strobe demux is
     // FW/8 bits of (one strobe bit, lane) -- the same cost, moved off the FIFO.
-    wire [LANEW-1:0] o_lane;
+    wire [FBW-1:0]   o_boff;
+    wire             o_fend;
     wire [MW-1:0]    o_data;
     wire [MW/8-1:0]  o_strb;
     wire             o_head, o_last;
+    wire [DSTW-1:0]  o_dst, o_dpt;
+    wire [TAGW-1:0]  o_tag;
+    wire             o_wr;
+    wire [AW-1:0]    o_addr;
+    wire [7:0]       o_len;
+    wire [2:0]       o_size;
 
-    assign {req_dst, req_dport, req_tag, req_wr, o_head, o_last, req_addr,
-            req_len, req_size, o_lane, o_data, o_strb} = reqf_out;
+    assign {o_dst, o_dpt, o_tag, o_wr, o_head, o_last, o_addr,
+            o_len, o_size, o_boff, o_fend, o_data, o_strb} = reqf_out;
+
+    wire [LANEW-1:0] o_lane = (NLANE <= 1) ? {LANEW{1'b0}}
+                                           : o_boff[FBW-1 -: LANEW];
 
     // A READ is NEVER split: start_rd sets no body state at the NSU, so a
     // phantom second flit sits at the queue head forever and deadlocks.
     reg  [SUBW-1:0] subc;
     wire            sub_last = (SUB <= 1) ? 1'b1
-                             : (!req_wr || (subc == SUB[SUBW-1:0]-1'b1));
+                             : (!o_wr || (subc == SUB[SUBW-1:0]-1'b1));
     wire            flit_go  = req_valid && req_ready;
 
     always @(posedge bus_clk)
         if (bus_rst_q)    subc <= {SUBW{1'b0}};
         else if (flit_go) subc <= sub_last ? {SUBW{1'b0}} : subc + 1'b1;
 
-    assign req_head = o_head && (subc == {SUBW{1'b0}});
-    assign req_last = o_last && sub_last;
-
-    // Only the narrow-port form places into lanes; at MW > FW the lane write
-    // would be MW/8 bits into an FW/8 vector.
     generate
-    if (SUB <= 1) begin : g_place
+    if (PACK != 0) begin : g_pack
+        // Beats become a flit HERE, after the FIFO, so the FIFO stays at the
+        // port's own width -- assembling before it is what costs BRAM.
+        reg [FW-1:0]    pk_d;
+        reg [FW/8-1:0]  pk_s;
+        reg             pk_v, pk_head, pk_last, pk_wr;
+        reg [DSTW-1:0]  pk_dst, pk_dpt;
+        reg [TAGW-1:0]  pk_tag;
+        reg [AW-1:0]    pk_addr;
+        reg [7:0]       pk_len;
+        reg [2:0]       pk_size;
+        reg             mid;                     // inside a flit being packed
+
+        wire eat  = !reqf_empty && (!pk_v || flit_go);
+        wire ends = !o_wr || o_last || o_fend;
+
+        // Two SUB-WIDTH beats can land in one lane, so the lane MERGES by
+        // strobe; plain assignment overwrote the earlier beat's bytes.
+        wire [MW-1:0] o_msk;
+        genvar bm;
+        for (bm = 0; bm < MW/8; bm = bm + 1) begin : g_msk
+            assign o_msk[bm*8 +: 8] = {8{o_strb[bm]}};
+        end
+        wire [MW-1:0]   ln_old = mid ? pk_d[o_lane*MW +: MW] : {MW{1'b0}};
+        wire [MW/8-1:0] st_old = mid ? pk_s[o_lane*(MW/8) +: MW/8]
+                                     : {(MW/8){1'b0}};
+
+        always @(posedge bus_clk) begin
+            if (bus_rst_q) begin
+                pk_v <= 1'b0; mid <= 1'b0;
+            end else begin
+                if (eat)         pk_v <= ends;
+                else if (flit_go) pk_v <= 1'b0;
+
+                if (eat) begin
+                    // The flit's identity comes from its FIRST beat only --
+                    // pk_v is low all through assembly, so it cannot mark the
+                    // start (that re-captured head as 0 and no burst opened).
+                    if (!mid) begin
+                        pk_d <= {FW{1'b0}};
+                        pk_s <= {(FW/8){1'b0}};
+                        pk_head <= o_head;
+                        pk_dst <= o_dst; pk_dpt <= o_dpt; pk_tag <= o_tag;
+                        pk_wr  <= o_wr;  pk_addr <= o_addr;
+                        pk_len <= o_len; pk_size <= o_size;
+                    end
+                    pk_d[o_lane*MW     +: MW]   <= (ln_old & ~o_msk)
+                                                   | (o_data & o_msk);
+                    pk_s[o_lane*(MW/8) +: MW/8] <= st_old | o_strb;
+                    pk_last <= o_last;
+                    mid <= !ends;
+                end
+            end
+        end
+
+        assign req_dst = pk_dst; assign req_dport = pk_dpt;
+        assign req_tag = pk_tag; assign req_wr = pk_wr;
+        assign req_addr = pk_addr; assign req_len = pk_len;
+        assign req_size = pk_size;
+        assign req_head = pk_head; assign req_last = pk_last;
+        assign req_data = pk_d;    assign req_strb = pk_s;
+        assign flit_hav = pk_v;
+        assign reqf_pop = eat;
+    end else if (SUB <= 1) begin : g_place
         reg [FW/8-1:0] strb_x;
         always @(*) begin
             strb_x = {(FW/8){1'b0}};
             strb_x[o_lane*(MW/8) +: MW/8] = o_strb;
         end
+        assign req_dst = o_dst; assign req_dport = o_dpt;
+        assign req_tag = o_tag; assign req_wr = o_wr;
+        assign req_addr = o_addr; assign req_len = o_len;
+        assign req_size = o_size;
+        assign req_head = o_head;
+        assign req_last = o_last;
         assign req_data = {NLANE{o_data}};
         assign req_strb = strb_x;
+        assign flit_hav = !reqf_empty;
+        assign reqf_pop = flit_go;
     end else begin : g_split
+        assign req_dst = o_dst; assign req_dport = o_dpt;
+        assign req_tag = o_tag; assign req_wr = o_wr;
+        assign req_addr = o_addr; assign req_len = o_len;
+        assign req_size = o_size;
+        assign req_head = o_head && (subc == {SUBW{1'b0}});
+        assign req_last = o_last && sub_last;
         assign req_data = o_data[subc*FW     +: FW];
         assign req_strb = o_strb[subc*(FW/8) +: FW/8];
+        assign flit_hav = !reqf_empty;
+        assign reqf_pop = flit_go && sub_last;
     end
     endgenerate
 
@@ -510,7 +642,8 @@ module sb_nmu #(
     assign rsp_ready = 1'b1;                    // reserved before injection
 
     // ============================================================ response out
-    wire [LANEW-1:0] rd_lane = (NLANE <= 1) ? {LANEW{1'b0}} : tg_lane[rf_tag];
+    wire [LANEW-1:0] rd_lane = (NLANE <= 1) ? {LANEW{1'b0}}
+                                            : tg_lane[rf_tag][FBW-1 -: LANEW];
 
     // A split read comes back as SUB flits; gather them before the manager
     // sees a beat. The oldest sits low, so the newest concatenates on top.
@@ -552,9 +685,18 @@ module sb_nmu #(
     assign s_rdata  = (SUB <= 1) ? rf_data[rd_lane*MW +: MW]
                                  : {rf_data, gath};
     assign s_rresp  = r_err ? 2'b11  : rf_resp;
-    assign s_rlast  = r_err ? (er_left == 8'd0) : rsp_last_o;
+    assign s_rlast  = r_err ? (er_left == 8'd0) : rd_fin;
 
-    assign rsp_pop  = (b_nrm && s_bready) || r_eat || (r_nrm && s_rready);
+    // A PACKING port serves possibly-many beats out of one flit, so the flit
+    // is popped when the byte walk leaves it or on the manager's last beat.
+    assign rd_next = {1'b0, tg_lane[rf_tag]}
+                     + ({{FBW{1'b0}}, 1'b1} << tg_sz[rf_tag]);
+    assign rd_fin  = (PACK != 0) ? (tg_left[rf_tag] == 9'd1) : rsp_last_o;
+    assign rd_wrap = rd_next[FBW];
+
+    assign rsp_pop  = (b_nrm && s_bready) || r_eat
+                    || (r_nrm && s_rready
+                        && ((PACK == 0) || rd_wrap || rd_fin));
 
 `ifndef SYNTHESIS
     // Only a write INTO a full FIFO is the bug. `wr_full` also carries XPM's
@@ -585,11 +727,13 @@ module sb_nmu #(
                      $time, s_arlen, ar_beats, RSD);
         if (!srst && aw_go && (s_awburst != 2'b01))
             $display("%0t ERROR sb_nmu: AWBURST %b, INCR only", $time, s_awburst);
-        if (!srst && aw_go && (s_awsize != SZ[2:0]))
-            $display("%0t ERROR sb_nmu: AWSIZE %0d, full-width beats only",
+        // Sub-width beats are legal now (byte-offset walk + lane strobes); a
+        // beat WIDER than the port is not a thing AXI can spell.
+        if (!srst && aw_go && (s_awsize > SZ[2:0]))
+            $display("%0t ERROR sb_nmu: AWSIZE %0d exceeds the port width",
                      $time, s_awsize);
-        if (!srst && ar_go && (s_arsize != SZ[2:0]))
-            $display("%0t ERROR sb_nmu: ARSIZE %0d, full-width beats only",
+        if (!srst && ar_go && (s_arsize > SZ[2:0]))
+            $display("%0t ERROR sb_nmu: ARSIZE %0d exceeds the port width",
                      $time, s_arsize);
     end
 `endif
