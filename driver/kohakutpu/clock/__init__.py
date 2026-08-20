@@ -70,13 +70,26 @@ def candidates_near(control: int) -> tuple:
 
 
 def read32(transport: Transport, addr: int) -> int:
-    """One 32-bit register, from whichever half of the 64-bit word holds it."""
+    """One 32-bit register, as one bus beat where the transport can.
+
+    The wizard sits on a Lite port that answers exactly one beat per request:
+    a 64-bit access there is two beats, and each leaks an NMU read credit
+    until the manager port stops accepting reads. The word-RMW fallback is
+    for transports (XDMA, models) whose reads are not beat-counted.
+    """
+    native = getattr(transport, "read32", None)
+    if native is not None:
+        return native(addr) & MASK32
     word = transport.read64(addr & ~7)
     return (word >> (32 if addr & 4 else 0)) & MASK32
 
 
 def write32(transport: Transport, addr: int, value: int) -> None:
     """One 32-bit register, leaving the register beside it alone."""
+    native = getattr(transport, "write32", None)
+    if native is not None:
+        native(addr, value)
+        return
     base = addr & ~7
     word = transport.read64(base)
     if addr & 4:

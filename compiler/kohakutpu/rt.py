@@ -9,6 +9,7 @@ level 5 and lives in :mod:`kohakutpu.api`. Nothing here names a kernel.
 """
 
 import itertools
+import weakref
 
 import numpy as np
 from kohakuaccel.machinespec import MESH_SHIFT, MachineSpec, MeshSpec
@@ -21,6 +22,35 @@ FP16 = np.float16
 #: High in the 512 MB window, clear of whatever earlier sessions left low down.
 ARENA_BASE = 0x1800_0000
 ARENA_SIZE = 1 << 26
+
+#: Live arena spans per mesh, keyed by the mesh's control object -- the one
+#: thing every Device on a mesh shares whatever views wrap the card.
+_ARENAS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+
+
+def _claim_span(anchor, base: int, size: int, owner) -> None:
+    """Refuse an arena overlapping one another live Device holds on this mesh.
+
+    Two Devices on ONE mesh otherwise alias silently: both open at the default
+    base, each uploads over the other's operands, and every address a tensor
+    cached now serves the OTHER device's bytes. Measured on hardware: the
+    second dispatch computes on whatever the last device uploaded, identically
+    every run, while single-device re-dispatch is exact. The span is released
+    when the owning Device is collected.
+    """
+    spans = _ARENAS.setdefault(anchor, {})
+    lo, hi = base, base + size
+    for b, e in spans.values():
+        if lo < e and b < hi:
+            raise ValueError(
+                f"this mesh already has a live arena at [{b:#x}, {e:#x}), "
+                f"overlapping the requested [{lo:#x}, {hi:#x}). A second "
+                f"Device on one mesh shares its DRAM, so give it its own "
+                f"base= and size= instead of the default"
+            )
+    key = id(owner)
+    spans[key] = (lo, hi)
+    weakref.finalize(owner, spans.pop, key, None)
 
 
 class Tensor:
@@ -264,6 +294,7 @@ class Device(Holder, Runtime):
         # Captured, not read through `card.mesh`: a second Device on another mesh
         # moves that default, and dispatch would then aim at the wrong silicon.
         self.mesh = card.mesh
+        _claim_span(self.mesh.ctrl, base, size, self)
         machine = MachineSpec(
             name="kohakutpu",
             meshes=tuple(
@@ -277,7 +308,11 @@ class Device(Holder, Runtime):
         arena = Arena(
             machine.global_addr(base), size, align=BATCH_BYTES, mesh=machine.default
         )
-        super().__init__(machine, arena, card.raw, self.mesh.ctrl)
+        # `global_mem` speaks unit-global addresses on boards whose host
+        # windows live elsewhere; on the flat boards it IS card.raw.
+        super().__init__(
+            machine, arena, getattr(card, "global_mem", card.raw), self.mesh.ctrl
+        )
 
     def dispatch(
         self, payloads: dict, unit: str, name: str = "kernel", nodes=None, acks=None

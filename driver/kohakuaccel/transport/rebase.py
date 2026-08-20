@@ -54,6 +54,50 @@ class Rebased(Transport):
         return f"Rebased({self.inner!r}, mag_base={self.mag_base:#x})"
 
 
+class UnitGlobal(Transport):
+    """Unit-global memory addresses, carried over a host whose windows differ.
+
+    A program computes the addresses UNITS issue -- ``(mesh << shift) | local``
+    -- but a board may expose each mesh's DRAM to the HOST at another base
+    entirely (v6.5: units say ``N << 36``, the host window is ``(N+1) << 40``).
+    This translates per access, from the board's own numbers, so the runtime
+    never learns the difference exists.
+    """
+
+    def __init__(self, inner: Transport, dram_bases, mem_bases, size) -> None:
+        self.inner = inner
+        self.bulk = inner.bulk
+        self.size = size
+        self._spans = sorted(zip(dram_bases, mem_bases), reverse=True)
+
+    def _map(self, addr: int, nbytes: int = WORD_BYTES) -> int:
+        for dram, mem in self._spans:
+            if addr >= dram:
+                local = addr - dram
+                if local + nbytes > self.size:
+                    break
+                return mem + local
+        raise ValueError(
+            f"{addr:#x} is in no mesh's DRAM: bases are "
+            f"{[hex(d) for d, _ in self._spans]}, each {self.size:#x} bytes"
+        )
+
+    def write64(self, addr: int, data: int) -> None:
+        self.inner.write64(self._map(addr), data)
+
+    def read64(self, addr: int) -> int:
+        return self.inner.read64(self._map(addr))
+
+    def write_block(self, addr: int, data: bytes) -> None:
+        self.inner.write_block(self._map(addr, len(data)), data)
+
+    def read_block(self, addr: int, nbytes: int) -> bytes:
+        return self.inner.read_block(self._map(addr, nbytes), nbytes)
+
+    def __repr__(self) -> str:
+        return f"UnitGlobal({self.inner!r}, {len(self._spans)} meshes)"
+
+
 class Window(Transport):
     """`size` bytes of the card starting at `base`, addressed from zero.
 

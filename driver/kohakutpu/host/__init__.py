@@ -11,15 +11,21 @@ written when there was only one keeps working.
 """
 
 import numpy as np
+from kohakuaccel import device as _device_mod
 from kohakuaccel.device import (
+    discovery as _discovery_mod,
     enumerate_mesh,
     find_control_window,
     find_control_windows,
+    program as _program_mod,
     read_agent_caps,
+    registers as _registers_mod,
 )
 from kohakuaccel.device.registers import A_CAPS
+from kohakuaccel.transport import rebase as _rebase_mod
 from kohakuaccel.transport.jtag import JtagTransport
-from kohakuaccel.transport.rebase import Rebased, Window
+from kohakuaccel.transport.rebase import Rebased, UnitGlobal, Window
+from kohakutpu.clock.card import load_board
 from kohakutpu.hw import tensor as T
 
 WORD_BYTES = 32
@@ -60,6 +66,41 @@ def _is_caps(word: int) -> bool:
     return (word & 0xFFFF) == FLIT_WIDTH and 0 < ((word >> 16) & 0xFF) <= 8
 
 
+def board_map(board: dict) -> dict:
+    """Control windows, host memory windows and global DRAM bases from a board.
+
+    The windows a bitstream assigns are not derivable from anything in this
+    repository, so they are read from the board file rather than guessed. Also
+    applies `agent_at_offset_zero`: a top that wires `S_AXI_CTRL` straight to
+    the agent has no control-program engine, so the driver's bit-28 select
+    must not be added to any register address.
+    """
+    n = board["meshes"]
+    ctrl = int(board["ctrl_base"], 16)
+    stride = int(board["ctrl_stride"], 16)
+    wshift = board["mem_window_shift"]
+    woff = board.get("mem_window_offset", 0)
+    dshift = board.get("dram_mesh_shift", MESH_SHIFT)
+    if board.get("agent_at_offset_zero"):
+        # Every module that from-imported MAG_BASE holds its own copy, and
+        # node_status_addr reads the registers module's at call time, so all
+        # five rebind or one path still adds the phantom bit-28 select.
+        for mod in (
+            _device_mod,
+            _discovery_mod,
+            _program_mod,
+            _registers_mod,
+            _rebase_mod,
+        ):
+            mod.MAG_BASE = 0
+    return {
+        "ctrl": [ctrl + i * stride for i in range(n)],
+        "mem": [(i + woff) << wshift for i in range(n)],
+        "dram": [i << dshift for i in range(n)],
+        "size": board.get("mem_words", MEMORY_SIZE // 32) * 32,
+    }
+
+
 class Mesh:
     """One mesh: its control window, its own DRAM, and its enumerated units.
 
@@ -79,15 +120,20 @@ class Mesh:
         ctrl_base: int,
         mem_base: int,
         mem_size: int = MEMORY_SIZE,
+        dram_base: int | None = None,
     ) -> None:
         self.raw = raw
         self.index = index
         self.base, self.mem_base, self.mem_size = ctrl_base, mem_base, mem_size
-        if mem_base != self.dram_base:
+        # A board may reach a mesh's DRAM through a host window at one address
+        # and have its units issue another (v6.5: host (N+1)<<40, units N<<36).
+        # Stated in the board file it is a fact; inferred it is a bug.
+        self._dram_base = dram_base
+        if dram_base is None and mem_base != self.dram_base:
             raise RuntimeError(
                 f"mesh_{index}'s host window is at {mem_base:#x} but a unit on it "
-                f"issues {self.dram_base:#x}; separate the two before using this "
-                f"board, or the same address means two different bytes"
+                f"issues {self.dram_base:#x}; declare both in the board file if "
+                f"that is real, or the same address means two different bytes"
             )
         self.ctrl = Rebased(raw, ctrl_base)
         self.mem = Window(raw, mem_base, mem_size)
@@ -96,14 +142,16 @@ class Mesh:
 
     @property
     def dram_base(self) -> int:
-        """This mesh's DRAM in the global space, from its index alone.
+        """This mesh's DRAM in the global space, as a unit issues it.
 
-        A unit's memory request names its mesh in `addr[33:32]`, so an address
+        A unit's memory request names its mesh in `addr[37:36]`, so an address
         with them clear reads as mesh 0 wherever it is issued -- which is why an
         ordinary matmul off mesh_0 raises `IL_F_RD_REMOTE` and is right anyway,
         the request aliasing to local DRAM rather than routing.
         """
-        return self.index << 32
+        if self._dram_base is not None:
+            return self._dram_base
+        return self.index << MESH_SHIFT
 
     @property
     def agent(self) -> tuple:
@@ -202,21 +250,44 @@ class Card:
     when a card had one mesh. `raw` addresses the card directly.
     """
 
+    @classmethod
+    def from_board(cls, name: str, transport=None, **kw) -> "Card":
+        """A card whose windows come from ``boards/<name>.json``."""
+        return cls(transport, board=load_board(name), **kw)
+
     def __init__(
-        self, transport=None, verify: bool = True, which=None, realign: bool = False
+        self,
+        transport=None,
+        verify: bool = True,
+        which=None,
+        realign: bool = False,
+        board: dict | None = None,
     ) -> None:
+        self.board = board
+        self._map = board_map(board) if board else None
         self.raw = transport or JtagTransport()
+        if board:
+            beats = board.get("max_burst_beats")
+            width = getattr(self.raw, "beat_bytes", None)
+            if beats and width:
+                self.raw.max_block = min(self.raw.max_block, beats * width)
         # Reads first, and from a known register: a write lag measured as a read
         # skew cancels itself on a round trip and hides in every check there is.
         self._calibrate_reads()
+        # A replicating write path (narrow manager, strobes discarded at the
+        # agent) CANNOT satisfy a byte-exact preflight: a beat paints a whole
+        # 32-byte word with its value repeated, and a burst strides by words.
+        # The board says so; the shift calibration would only mis-diagnose it.
+        replicating = bool(board and board.get("host_write_replicates"))
         preflight = getattr(self.raw, "verify_write_path", None)
-        if preflight is not None:
-            preflight(SCRATCH, realign=realign)
+        if preflight is not None and not replicating:
+            at = (self._map["mem"][0] + SCRATCH) if self._map else SCRATCH
+            preflight(at, realign=realign)
         self.meshes = tuple(self._discover(which))
         if not self.meshes:
             raise RuntimeError("no agent answered at any candidate window")
         self.mesh = self.meshes[0]
-        if verify:
+        if verify and not replicating:
             self.mesh.verify_write_path()
 
     def _calibrate_reads(self) -> None:
@@ -229,7 +300,8 @@ class Card:
         probe = getattr(self.raw, "measure_read_skew", None)
         if probe is None:
             return
-        for base in CONTROL_WINDOWS + CANDIDATES:
+        known = tuple(self._map["ctrl"]) if self._map else ()
+        for base in known + CONTROL_WINDOWS + CANDIDATES:
             skew = probe(base + A_CAPS, _is_caps)
             if skew is not None:
                 self.raw.read_skew = skew
@@ -245,6 +317,24 @@ class Card:
         `which` restricts the scan to those mesh indices, which is worth doing
         over JTAG: enumerating one mesh is several hundred accesses.
         """
+        if self._map is not None:
+            wanted = range(len(self._map["ctrl"])) if which is None else which
+            out = []
+            for i in wanted:
+                base = self._map["ctrl"][i]
+                if not find_control_windows(self.raw, [base]):
+                    continue
+                out.append(
+                    Mesh(
+                        self.raw,
+                        i,
+                        base,
+                        self._map["mem"][i],
+                        self._map["size"],
+                        dram_base=self._map["dram"][i],
+                    )
+                )
+            return out
         wanted = range(len(CONTROL_WINDOWS)) if which is None else which
         windows = [CONTROL_WINDOWS[i] for i in wanted]
         found = find_control_windows(self.raw, windows)
@@ -258,6 +348,19 @@ class Card:
             i = CONTROL_WINDOWS.index(base)
             out.append(Mesh(self.raw, i, base, MEMORY_WINDOWS[i], MEMORY_SIZE))
         return out
+
+    @property
+    def global_mem(self):
+        """The transport a runtime addresses with UNIT-GLOBAL memory addresses.
+
+        On a board whose host windows differ from what units issue, this is
+        the translating wrapper; elsewhere it is the raw transport unchanged.
+        """
+        if self._map is None:
+            return self.raw
+        return UnitGlobal(
+            self.raw, self._map["dram"], self._map["mem"], self._map["size"]
+        )
 
     @property
     def base(self) -> int:

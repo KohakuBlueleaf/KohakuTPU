@@ -34,11 +34,11 @@ MAX_SHIFT_BEATS = 8
 _PROBE = 0xC0FFEE5EED000000
 
 
-def _beats(data: bytes) -> list:
-    """`data` as 16-hex-digit little-endian beats, one per 64-bit word."""
+def _beats(data: bytes, bb: int = WORD_BYTES) -> list:
+    """`data` as little-endian hex beats, one per `bb`-byte bus beat."""
     return [
-        f"{int.from_bytes(data[i : i + WORD_BYTES], 'little'):016x}"
-        for i in range(0, len(data), WORD_BYTES)
+        f"{int.from_bytes(data[i : i + bb], 'little'):0{bb * 2}x}"
+        for i in range(0, len(data), bb)
     ]
 
 
@@ -166,6 +166,31 @@ class JtagTransport(Transport):
                     raise TransportUnavailable(f"lost the Tcl server ({exc})") from exc
         raise AssertionError("unreachable")
 
+    def program(self, bitstream: str, probes: str | None = None) -> None:
+        """Reprogram the FPGA: the only recovery for a fabric-wedged port.
+
+        Every MMCM returns to its BUILT configuration — retune the clocks
+        immediately after, before touching anything else.
+        """
+        script = (
+            f"set d [current_hw_device]; "
+            f"set_property PROGRAM.FILE {{{bitstream}}} $d; "
+        )
+        if probes:
+            script += f"set_property PROBES.FILE {{{probes}}} $d; "
+        script += "program_hw_devices $d; refresh_hw_device $d"
+        self._eval(script)
+        self._eval("jaxi::reset_cache; jaxi::connect")
+
+    def reset_core(self) -> None:
+        """Reset the JTAG-AXI master, clearing a wedged channel.
+
+        An oversized burst leaves the port with a transaction it can never
+        finish, and every later access fails with it. This is the recovery
+        that does not cost a reprogram; it does not touch the design.
+        """
+        self._eval("reset_hw_axi [get_hw_axis]; jaxi::reset_cache")
+
     def close(self) -> None:
         """Drop the connection. The next call opens a fresh one."""
         if self._sock is not None:
@@ -196,19 +221,50 @@ class JtagTransport(Transport):
                 "KTPU_JAXI_TCL"
             )
         width = int(self._eval("set ::jaxi::bytes_per_beat").strip())
-        if width != WORD_BYTES:
+        if width not in (4, WORD_BYTES):
             raise TransportUnavailable(
                 f"the JTAG-AXI master is {width * 8} bits wide; this driver "
-                f"addresses {WORD_BYTES * 8}-bit words"
+                f"speaks 32- or 64-bit beats"
             )
+        # The bitstream decides the manager port's width (32 on v6.5/v6.6,
+        # 64 on v6.7); every beat count below scales by what the port reports.
+        self.beat_bytes = width
+
+    def write32(self, addr: int, data: int) -> None:
+        """One 32-bit register as ONE bus beat.
+
+        The Lite ports (DDR controller, clock wizard) answer exactly one beat
+        per request; a 64-bit word there is two beats and leaks an NMU read
+        credit per access until the manager port stops accepting reads. On a
+        64-bit master this therefore issues a TRUE 32-bit (sub-width) txn.
+        """
+        if self.beat_bytes == 4:
+            self._eval(
+                f"jaxi::write {self.base + addr} {{{data & 0xFFFFFFFF:08x}}}"
+            )
+        else:
+            self._eval(f"jaxi::wr32 {self.base + addr} {data & 0xFFFFFFFF}")
+
+    def read32(self, addr: int) -> int:
+        """One 32-bit register as ONE bus beat. See :meth:`write32`."""
+        if self.beat_bytes == 4:
+            words = self._eval(f"jaxi::read {self.base + addr} 1").split()
+            return int(words[0], 16)
+        return int(self._eval(f"jaxi::rd32 {self.base + addr}").strip(), 16)
 
     def write64(self, addr: int, data: int) -> None:
-        self._eval(f"jaxi::write {self.base + addr} {{{data & MASK64:016x}}}")
+        beats = _beats((data & MASK64).to_bytes(WORD_BYTES, "little"), self.beat_bytes)
+        self._eval(f"jaxi::write {self.base + addr} {{{' '.join(beats)}}}")
 
     def read64(self, addr: int) -> int:
-        n = 1 + self.read_skew
+        bpw = WORD_BYTES // self.beat_bytes
+        n = bpw + self.read_skew
         words = self._eval(f"jaxi::read {self.base + addr} {n}").split()
-        return int(words[self.read_skew], 16)
+        sel = words[self.read_skew : self.read_skew + bpw]
+        raw = b"".join(
+            int(w, 16).to_bytes(self.beat_bytes, "little") for w in sel
+        )
+        return int.from_bytes(raw, "little")
 
     def measure_read_skew(self, addr: int, accept, window: int = MAX_SHIFT_BEATS):
         """Beats the master returns ahead of a read, from KNOWN contents.
@@ -228,25 +284,45 @@ class JtagTransport(Transport):
         require_words(len(data))
         if self.write_shift:
             return self._write_shifted(addr, data)
-        for off in range(0, len(data), self.max_block):
-            self._burst(addr + off, _beats(data[off : off + self.max_block]))
+        self._burst(addr, _beats(data, self.beat_bytes))
         return None
 
     def read_block(self, addr: int, nbytes: int) -> bytes:
+        """Address-exact block read: single-beat accesses, batched per round trip.
+
+        A multi-beat read on a wide endpoint STRIDES BY THE ENDPOINT WORD per
+        beat (measured: beat k returns one lane of word k), so a burst cannot
+        return consecutive bytes — every access is one beat. But the SESSION
+        cost is per Tcl round trip, so one eval runs a whole loop of reads and
+        returns the values together.
+        """
         require_words(nbytes)
         out = bytearray()
-        skew = self.read_skew
-        for off in range(0, nbytes, self.max_block):
-            n = min(self.max_block, nbytes - off) // WORD_BYTES
-            words = self._eval(
-                f"jaxi::read {self.base + addr + off} {n + skew}"
-            ).split()
-            for w in words[skew : skew + n]:
-                out += int(w, 16).to_bytes(WORD_BYTES, "little")
+        batch = 256 * self.beat_bytes
+        for off in range(0, nbytes, batch):
+            n = min(batch, nbytes - off) // self.beat_bytes
+            script = (
+                f"set o {{}}; for {{set i 0}} {{$i < {n}}} {{incr i}} {{ "
+                f"lappend o [lindex [jaxi::read "
+                f"[expr {{{self.base + addr + off} + $i * {self.beat_bytes}}}] 1] 0] "
+                f"}}; join $o"
+            )
+            for w in self._eval(script).split():
+                out += int(w, 16).to_bytes(self.beat_bytes, "little")
         return bytes(out)
 
     def _burst(self, addr: int, beats: list) -> None:
-        self._eval(f"jaxi::write {self.base + addr} {{{' '.join(beats)}}}")
+        """One write, split so no single burst exceeds `max_block`.
+
+        Split HERE, not only in `write_block`: the calibration paths build
+        their beats by hand, and a burst past the manager port's FIFO depth
+        wedges it with no error until the next access times out.
+        """
+        step = max(1, self.max_block // self.beat_bytes)
+        for off in range(0, len(beats), step):
+            chunk = beats[off : off + step]
+            at = self.base + addr + off * self.beat_bytes
+            self._eval(f"jaxi::write {at} {{{' '.join(chunk)}}}")
 
     def _write_shifted(self, addr: int, data: bytes) -> None:
         """Write through a queue that pairs each address with `write_shift` beats
@@ -257,9 +333,10 @@ class JtagTransport(Transport):
         Raises :class:`JtagError` if the head does not land where it was sent.
         """
         d = self.write_shift
-        beats = _beats(data)
+        beats = _beats(data, self.beat_bytes)
+        filler = _beats(_PROBE.to_bytes(WORD_BYTES, "little"), self.beat_bytes)[0]
         self._burst(self.scratch, beats[:d])
-        self._burst(addr, beats[d:] + [f"{_PROBE:016x}"] * d)
+        self._burst(addr, beats[d:] + [filler] * d)
         got = self.read_block(addr, WORD_BYTES)
         if got != data[:WORD_BYTES]:
             raise JtagError(
@@ -278,12 +355,15 @@ class JtagTransport(Transport):
         """
         at = self.scratch if scratch is None else scratch
         n = 2 * MAX_SHIFT_BEATS
-        want = [f"{(_PROBE | (i + 1)):016x}" for i in range(n)]
+        patt = b"".join(
+            (_PROBE | (i + 1)).to_bytes(WORD_BYTES, "little") for i in range(n)
+        )
+        want = _beats(patt, self.beat_bytes)
         self._burst(at, want)
         self._burst(at, want)
-        got = _beats(self.read_block(at, n * WORD_BYTES))
+        got = _beats(self.read_block(at, n * WORD_BYTES), self.beat_bytes)
         for d in range(MAX_SHIFT_BEATS):
-            if got[d:] == want[: n - d]:
+            if got[d:] == want[: len(want) - d]:
                 return d
         raise JtagError(
             f"the write path at {at:#x} matches no shift under {MAX_SHIFT_BEATS} "

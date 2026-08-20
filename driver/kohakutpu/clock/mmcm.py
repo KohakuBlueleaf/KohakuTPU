@@ -45,9 +45,10 @@ STATUS_LOCKED = 0x1
 OUT_MAX = 6
 OUT_STRIDE = 0x0C
 
-#: ONLY CLKOUT0's OFFSET IS PROVEN; the shipped design drives one output. The
-#: rest MUST be verified at bring-up, or a divider lands in a phase register.
-OUTPUTS_VERIFIED = 1
+#: CLKOUT0..3 verified on multimesh_v65 hardware (2026-08-20): the config
+#: block at +0x208/0x214/0x220/0x22C read back the built divides 4/2/4/4 on
+#: all four mesh wizards, matching the .xci.
+OUTPUTS_VERIFIED = 4
 
 
 def reg_clkout(n: int) -> int:
