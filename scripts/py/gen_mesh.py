@@ -297,12 +297,19 @@ def emit(
     l2_cu=False,
     l2_vec=False,
     tokens=None,
+    split_reset=False,
 ):
     # ALWAYS SINGLE. MAG converges its internal requesters onto one AXI master
     # itself, so there is no packed bus left to fan out.
     single = True
     m, e = mesh, Emitter(mesh, name)
     nm = 1
+
+    # Per-domain reset names (the 09 reset architecture). The fabric keeps
+    # raw axi_aresetn: its proc_sys_reset already releases on noc_clk.
+    rs_mag = "rstn_mag" if split_reset else "resetn"
+    rs_mat = "rstn_mat" if split_reset else "resetn"
+    rs_vec = "rstn_vec" if split_reset else "resetn"
 
     # ---- routers -------------------------------------------------------
     for y in range(1, m.ny + 1):
@@ -332,7 +339,7 @@ def emit(
         # neither side's ready is a function of the other's combinationally.
         cdc_body.append(
             f"""        noc_local_cdc #(.FLIT_WIDTH(FW), .DEPTH(CDC_DEPTH)) u_mo{i} (
-            .wr_clk(axi_aclk), .wr_resetn(resetn),
+            .wr_clk(axi_aclk), .wr_resetn({rs_mag}),
             .i_data(mag_o_d[{i}*FW +: FW]), .i_valid(mag_o_v[{i}]),
             .i_busy(mag_o_b[{i}]),
             .rd_clk(clk), .rd_resetn(resetn),
@@ -341,7 +348,7 @@ def emit(
         noc_local_cdc #(.FLIT_WIDTH(FW), .DEPTH(CDC_DEPTH)) u_mi{i} (
             .wr_clk(clk), .wr_resetn(resetn),
             .i_data({stem}_{b}d), .i_valid({stem}_{b}v), .i_busy({stem}_{b}b),
-            .rd_clk(axi_aclk), .rd_resetn(resetn),
+            .rd_clk(axi_aclk), .rd_resetn({rs_mag}),
             .o_data(mag_i_d[{i}*FW +: FW]), .o_valid(mag_i_v[{i}]),
             .o_busy(mag_i_b[{i}])
         );"""
@@ -390,7 +397,7 @@ def emit(
         f"""    {mod} #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(AW),
           .ID_W(IDW), .MEM_PORTS({len(m.mags)}){coords},
           .GRID_LO(1), .GRID_HI({max(m.nx, m.ny)}), .STAGE_FLITS(128){il}{extra}) u_mag (
-        .clk(mag_clk_i), .resetn(resetn){clks},
+        .clk(mag_clk_i), .resetn({rs_mag}){clks},
 {MAG_AXI}
 {mag_master_axi(single)}{chr(10) + link_conn(ilink) if ilink else ""}
         .mem_in_data({mag_in_cat}), .mem_in_valid(mag_i_v), .mem_in_busy(mag_i_b),
@@ -442,7 +449,7 @@ def emit(
                     .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
                     .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH), .PUMP(1),
                     .MEM_X({mmx}), .MEM_Y({mmy}), .MODEL(MODEL)) u_cu{i} (
-        .clk(clk), .clk2x(mat_clk2x), .unit_clk(mat_clk), .resetn(resetn),
+        .clk(clk), .clk2x(mat_clk2x), .unit_clk(mat_clk), .resetn({rs_mat}),
         {conn_c},
         .fills_done(cu_f[{i}]), .gemms_done(cu_g[{i}]), .drains_done(cu_d[{i}])
     );""")
@@ -453,7 +460,7 @@ def emit(
                     .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
                     .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
                     .MEM_X({mmx}), .MEM_Y({mmy}), .MODEL(MODEL)) u_cu{i} (
-        .clk(clk), .clk2x(1'b0), .unit_clk(mat_clk), .resetn(resetn),
+        .clk(clk), .clk2x(1'b0), .unit_clk(mat_clk), .resetn({rs_mat}),
         {conn_c},
         .fills_done(cu_f[{i}]), .gemms_done(cu_g[{i}]), .drains_done(cu_d[{i}])
     );""")
@@ -493,7 +500,7 @@ def emit(
              .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
              .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
              .L1_DEPTH(L1_DEPTH), .L1_PRIM(VEC_PRIM)) u_vec{i} (
-        .clk(clk), .unit_clk(vec_clk), .resetn(resetn),
+        .clk(clk), .unit_clk(vec_clk), .resetn({rs_vec}),
         {conn_v},
         .dbg_cycles(vc_cyc[{i}]), .dbg_fault(vc_flt[{i}])
     );"""
@@ -532,7 +539,8 @@ def emit(
         )
 
     return render(
-        m, e, name, nm, ilink, mesh_id, single, mat_pump, l2_mag, l2_cu, l2_vec
+        m, e, name, nm, ilink, mesh_id, single, mat_pump, l2_mag, l2_cu, l2_vec,
+        split_reset,
     )
 
 
@@ -778,7 +786,21 @@ def render(
     l2_mag=False,
     l2_cu=False,
     l2_vec=False,
+    split_reset=False,
 ):
+    # Only axi_aresetn itself crosses domains; each domain releases locally.
+    RST_SYNC = (
+        "\n"
+        "    // Per-domain reset entry (async assert / sync release). The\n"
+        "    // fabric keeps raw axi_aresetn: its reset already releases on\n"
+        "    // noc_clk. Everything else re-synchronizes at its own clock.\n"
+        "    wire rstn_mag, rstn_mat, rstn_vec;\n"
+        "    kh_rst_sync u_rs_mag (.clk(mag_clk_i), .arstn(axi_aresetn), .rstn(rstn_mag));\n"
+        "    kh_rst_sync u_rs_mat (.clk(mat_clk),   .arstn(axi_aresetn), .rstn(rstn_mat));\n"
+        "    kh_rst_sync u_rs_vec (.clk(vec_clk),   .arstn(axi_aresetn), .rstn(rstn_vec));\n"
+        if split_reset
+        else ""
+    )
     picture = "\n".join("//   " + " ".join(r) for r in m.rows)
     ncu, nvec = len(m.cus), len(m.vecs)
     mnames = master_names(len(m.mags), ilink, single)
@@ -1025,7 +1047,7 @@ module {name} #(
     wire [NMAG*FW-1:0] mag_o_d, mag_i_d;
     wire [NMAG-1:0]    mag_i_v, mag_i_b, mag_o_v, mag_o_b;
     wire [15:0]        mag_rd, mag_wr;
-    wire mag_clk_i = MAG_CDC ? axi_aclk : clk;
+    wire mag_clk_i = MAG_CDC ? axi_aclk : clk;{RST_SYNC}
 
     wire [15:0] cu_f [0:NCU-1];
     wire [15:0] cu_g [0:NCU-1];
@@ -1114,6 +1136,13 @@ def main():
         help="a project token table: a Python file defining TOKENS = "
         "{'tok': emit_fn}; see the module docstring for the emit_fn contract",
     )
+    ap.add_argument(
+        "--split-reset",
+        action="store_true",
+        help="per-domain reset entry: one kh_rst_sync (async assert / sync "
+        "release) each for the MAG, matmul and vector domains; only "
+        "axi_aresetn itself crosses domains",
+    )
     args = ap.parse_args()
 
     if args.mesh_id and not args.ilink:
@@ -1147,6 +1176,7 @@ def main():
             args.l2_cu,
             args.l2_vec,
             tokens,
+            args.split_reset,
         )
     except MeshError as exc:
         sys.exit(f"gen_mesh: {exc}")

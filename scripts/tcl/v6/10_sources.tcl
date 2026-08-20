@@ -65,8 +65,10 @@ set V6_SOURCES {
 
     src/kohakutpu/top/mag_1m.v
     src/kohakuaccel/common/clk/ktpu_div2.v
+    src/kohakuaccel/common/kh_rst_sync.v
     src/kohakutpu/top/generated/ktpu_ship_2x2_7c2v_1m_pump.v
     src/kohakutpu/top/generated/ktpu_ship_2x2_6c2v_1m_pump.v
+    src/kohakutpu/top/generated/ktpu_ship_1x1_2c2v_1m_pump.v
 }
 
 # Named, not globbed: a stray file under src/ must not silently enter the build.

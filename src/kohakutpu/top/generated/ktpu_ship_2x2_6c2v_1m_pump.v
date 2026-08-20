@@ -243,6 +243,14 @@ module ktpu_ship_2x2_6c2v_1m_pump #(
     wire [NMAG-1:0]    mag_i_v, mag_i_b, mag_o_v, mag_o_b;
     wire [15:0]        mag_rd, mag_wr;
     wire mag_clk_i = MAG_CDC ? axi_aclk : clk;
+    // Per-domain reset entry (async assert / sync release). The
+    // fabric keeps raw axi_aresetn: its reset already releases on
+    // noc_clk. Everything else re-synchronizes at its own clock.
+    wire rstn_mag, rstn_mat, rstn_vec;
+    kh_rst_sync u_rs_mag (.clk(mag_clk_i), .arstn(axi_aresetn), .rstn(rstn_mag));
+    kh_rst_sync u_rs_mat (.clk(mat_clk),   .arstn(axi_aresetn), .rstn(rstn_mat));
+    kh_rst_sync u_rs_vec (.clk(vec_clk),   .arstn(axi_aresetn), .rstn(rstn_vec));
+
 
     wire [15:0] cu_f [0:NCU-1];
     wire [15:0] cu_g [0:NCU-1];
@@ -375,7 +383,7 @@ module ktpu_ship_2x2_6c2v_1m_pump #(
     );
     generate if (MAG_CDC) begin : g_magcdc
         noc_local_cdc #(.FLIT_WIDTH(FW), .DEPTH(CDC_DEPTH)) u_mo0 (
-            .wr_clk(axi_aclk), .wr_resetn(resetn),
+            .wr_clk(axi_aclk), .wr_resetn(rstn_mag),
             .i_data(mag_o_d[0*FW +: FW]), .i_valid(mag_o_v[0]),
             .i_busy(mag_o_b[0]),
             .rd_clk(clk), .rd_resetn(resetn),
@@ -384,12 +392,12 @@ module ktpu_ship_2x2_6c2v_1m_pump #(
         noc_local_cdc #(.FLIT_WIDTH(FW), .DEPTH(CDC_DEPTH)) u_mi0 (
             .wr_clk(clk), .wr_resetn(resetn),
             .i_data(l000_h0_1_rd), .i_valid(l000_h0_1_rv), .i_busy(l000_h0_1_rb),
-            .rd_clk(axi_aclk), .rd_resetn(resetn),
+            .rd_clk(axi_aclk), .rd_resetn(rstn_mag),
             .o_data(mag_i_d[0*FW +: FW]), .o_valid(mag_i_v[0]),
             .o_busy(mag_i_b[0])
         );
         noc_local_cdc #(.FLIT_WIDTH(FW), .DEPTH(CDC_DEPTH)) u_mo1 (
-            .wr_clk(axi_aclk), .wr_resetn(resetn),
+            .wr_clk(axi_aclk), .wr_resetn(rstn_mag),
             .i_data(mag_o_d[1*FW +: FW]), .i_valid(mag_o_v[1]),
             .i_busy(mag_o_b[1]),
             .rd_clk(clk), .rd_resetn(resetn),
@@ -398,7 +406,7 @@ module ktpu_ship_2x2_6c2v_1m_pump #(
         noc_local_cdc #(.FLIT_WIDTH(FW), .DEPTH(CDC_DEPTH)) u_mi1 (
             .wr_clk(clk), .wr_resetn(resetn),
             .i_data(l009_h0_2_rd), .i_valid(l009_h0_2_rv), .i_busy(l009_h0_2_rb),
-            .rd_clk(axi_aclk), .rd_resetn(resetn),
+            .rd_clk(axi_aclk), .rd_resetn(rstn_mag),
             .o_data(mag_i_d[1*FW +: FW]), .o_valid(mag_i_v[1]),
             .o_busy(mag_i_b[1])
         );
@@ -423,7 +431,7 @@ module ktpu_ship_2x2_6c2v_1m_pump #(
           .MW(MW),
           .STAGE(1), .STAGE_BANKS(L2_MAG_BANKS),
           .STAGE_ENTRIES(L2_MAG_ENTRIES), .STAGE_AT_PORT(1)) u_mag (
-        .clk(mag_clk_i), .resetn(resetn),
+        .clk(mag_clk_i), .resetn(rstn_mag),
         .dram_aclk(dram_aclk), .dram_aresetn(dram_aresetn),
         .sm_awid(S_AXI_MEM_awid), .sm_awaddr(S_AXI_MEM_awaddr),
         .sm_awlen(S_AXI_MEM_awlen), .sm_awvalid(S_AXI_MEM_awvalid),
@@ -513,7 +521,7 @@ module ktpu_ship_2x2_6c2v_1m_pump #(
                     .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
                     .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH), .PUMP(1),
                     .MEM_X(0), .MEM_Y(1), .MODEL(MODEL)) u_cu0 (
-        .clk(clk), .clk2x(mat_clk2x), .unit_clk(mat_clk), .resetn(resetn),
+        .clk(clk), .clk2x(mat_clk2x), .unit_clk(mat_clk), .resetn(rstn_mat),
         .noc_out_data(cu0_l2_od), .noc_out_valid(cu0_l2_ov), .noc_out_busy(cu0_l2_ob), .noc_in_data(cu0_l2_id), .noc_in_valid(cu0_l2_iv), .noc_in_busy(cu0_l2_ib),
         .fills_done(cu_f[0]), .gemms_done(cu_g[0]), .drains_done(cu_d[0])
     );
@@ -531,7 +539,7 @@ module ktpu_ship_2x2_6c2v_1m_pump #(
                     .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
                     .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH), .PUMP(1),
                     .MEM_X(0), .MEM_Y(1), .MODEL(MODEL)) u_cu1 (
-        .clk(clk), .clk2x(mat_clk2x), .unit_clk(mat_clk), .resetn(resetn),
+        .clk(clk), .clk2x(mat_clk2x), .unit_clk(mat_clk), .resetn(rstn_mat),
         .noc_out_data(cu1_l2_od), .noc_out_valid(cu1_l2_ov), .noc_out_busy(cu1_l2_ob), .noc_in_data(cu1_l2_id), .noc_in_valid(cu1_l2_iv), .noc_in_busy(cu1_l2_ib),
         .fills_done(cu_f[1]), .gemms_done(cu_g[1]), .drains_done(cu_d[1])
     );
@@ -549,7 +557,7 @@ module ktpu_ship_2x2_6c2v_1m_pump #(
                     .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
                     .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH), .PUMP(1),
                     .MEM_X(0), .MEM_Y(1), .MODEL(MODEL)) u_cu2 (
-        .clk(clk), .clk2x(mat_clk2x), .unit_clk(mat_clk), .resetn(resetn),
+        .clk(clk), .clk2x(mat_clk2x), .unit_clk(mat_clk), .resetn(rstn_mat),
         .noc_out_data(cu2_l2_od), .noc_out_valid(cu2_l2_ov), .noc_out_busy(cu2_l2_ob), .noc_in_data(cu2_l2_id), .noc_in_valid(cu2_l2_iv), .noc_in_busy(cu2_l2_ib),
         .fills_done(cu_f[2]), .gemms_done(cu_g[2]), .drains_done(cu_d[2])
     );
@@ -567,7 +575,7 @@ module ktpu_ship_2x2_6c2v_1m_pump #(
                     .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
                     .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH), .PUMP(1),
                     .MEM_X(0), .MEM_Y(2), .MODEL(MODEL)) u_cu3 (
-        .clk(clk), .clk2x(mat_clk2x), .unit_clk(mat_clk), .resetn(resetn),
+        .clk(clk), .clk2x(mat_clk2x), .unit_clk(mat_clk), .resetn(rstn_mat),
         .noc_out_data(cu3_l2_od), .noc_out_valid(cu3_l2_ov), .noc_out_busy(cu3_l2_ob), .noc_in_data(cu3_l2_id), .noc_in_valid(cu3_l2_iv), .noc_in_busy(cu3_l2_ib),
         .fills_done(cu_f[3]), .gemms_done(cu_g[3]), .drains_done(cu_d[3])
     );
@@ -585,7 +593,7 @@ module ktpu_ship_2x2_6c2v_1m_pump #(
                     .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
                     .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH), .PUMP(1),
                     .MEM_X(0), .MEM_Y(2), .MODEL(MODEL)) u_cu4 (
-        .clk(clk), .clk2x(mat_clk2x), .unit_clk(mat_clk), .resetn(resetn),
+        .clk(clk), .clk2x(mat_clk2x), .unit_clk(mat_clk), .resetn(rstn_mat),
         .noc_out_data(cu4_l2_od), .noc_out_valid(cu4_l2_ov), .noc_out_busy(cu4_l2_ob), .noc_in_data(cu4_l2_id), .noc_in_valid(cu4_l2_iv), .noc_in_busy(cu4_l2_ib),
         .fills_done(cu_f[4]), .gemms_done(cu_g[4]), .drains_done(cu_d[4])
     );
@@ -603,7 +611,7 @@ module ktpu_ship_2x2_6c2v_1m_pump #(
                     .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
                     .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH), .PUMP(1),
                     .MEM_X(0), .MEM_Y(2), .MODEL(MODEL)) u_cu5 (
-        .clk(clk), .clk2x(mat_clk2x), .unit_clk(mat_clk), .resetn(resetn),
+        .clk(clk), .clk2x(mat_clk2x), .unit_clk(mat_clk), .resetn(rstn_mat),
         .noc_out_data(cu5_l2_od), .noc_out_valid(cu5_l2_ov), .noc_out_busy(cu5_l2_ob), .noc_in_data(cu5_l2_id), .noc_in_valid(cu5_l2_iv), .noc_in_busy(cu5_l2_ib),
         .fills_done(cu_f[5]), .gemms_done(cu_g[5]), .drains_done(cu_d[5])
     );
@@ -620,7 +628,7 @@ module ktpu_ship_2x2_6c2v_1m_pump #(
              .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
              .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
              .L1_DEPTH(L1_DEPTH), .L1_PRIM(VEC_PRIM)) u_vec0 (
-        .clk(clk), .unit_clk(vec_clk), .resetn(resetn),
+        .clk(clk), .unit_clk(vec_clk), .resetn(rstn_vec),
         .noc_out_data(vec0_l2_od), .noc_out_valid(vec0_l2_ov), .noc_out_busy(vec0_l2_ob), .noc_in_data(vec0_l2_id), .noc_in_valid(vec0_l2_iv), .noc_in_busy(vec0_l2_ib),
         .dbg_cycles(vc_cyc[0]), .dbg_fault(vc_flt[0])
     );
@@ -637,7 +645,7 @@ module ktpu_ship_2x2_6c2v_1m_pump #(
              .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
              .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
              .L1_DEPTH(L1_DEPTH), .L1_PRIM(VEC_PRIM)) u_vec1 (
-        .clk(clk), .unit_clk(vec_clk), .resetn(resetn),
+        .clk(clk), .unit_clk(vec_clk), .resetn(rstn_vec),
         .noc_out_data(vec1_l2_od), .noc_out_valid(vec1_l2_ov), .noc_out_busy(vec1_l2_ob), .noc_in_data(vec1_l2_id), .noc_in_valid(vec1_l2_iv), .noc_in_busy(vec1_l2_ib),
         .dbg_cycles(vc_cyc[1]), .dbg_fault(vc_flt[1])
     );

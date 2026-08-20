@@ -24,12 +24,15 @@ sys.path.insert(0, str(ROOT / "scripts" / "py"))
 
 import gen_mesh
 
-TOPS = pathlib.Path("src/synth_top")
-MAPS = TOPS / "maps"
+TOPS = pathlib.Path("src/kohakutpu/top/generated")
+MAPS = pathlib.Path("src/kohakutpu/top/maps")
 
-# (module, map, ilink, single_master[, (l2_mag, l2_cu, l2_vec)])
+# (module, map, ilink, single_master[, (l2_mag, l2_cu, l2_vec)[, split_reset]])
 MANIFEST = [
     ("ktpu_min_1m", "mesh_1x1_min.txt", True, True),
+    # v6.5-small: per-domain reset entry (kh_rst_sync per MAG/mat/vec domain).
+    ("ktpu_ship_1x1_2c2v_1m", "mesh_1x1_2+2.txt", True, True,
+     (True, True, True), True),
     # The same minimal mesh WITH staging, so a bench can prove the memory mover
     # reaches L2 by address -- nothing else instantiates a store in a real top.
     ("ktpu_min_1m_l2", "mesh_1x1_min.txt", True, True, (True, False, False)),
@@ -47,7 +50,7 @@ MANIFEST = [
     ("ktpu_ship_2x2", "mesh_2x2_4cu4vec.txt", False, False),
     ("ktpu_ship_2x2_il", "mesh_2x2_4+4.txt", True, False),
     ("ktpu_ship_2x2_6c0v_il", "mesh_2x2_6+0.txt", True, False),
-    ("ktpu_ship_2x2_6c2v_1m", "mesh_2x2_6+2.txt", True, True, (True, True, True)),
+    ("ktpu_ship_2x2_6c2v_1m", "mesh_2x2_6+2.txt", True, True, (True, True, True), True),
     ("ktpu_ship_2x2_6c2v_il", "mesh_2x2_6+2.txt", True, False),
     ("ktpu_ship_2x2_6c4v_il", "mesh_2x2_6+4.txt", True, False),
     ("ktpu_ship_2x3", "mesh_2x3_6cu3vec.txt", False, False),
@@ -83,6 +86,7 @@ def main():
     for entry in MANIFEST:
         name, mapname, ilink, single = entry[:4]
         l2_mag, l2_cu, l2_vec = entry[4] if len(entry) > 4 else (False, False, False)
+        split = entry[5] if len(entry) > 5 else False
         out = ROOT / TOPS / f"{name}.v"
         src = ROOT / MAPS / mapname
         mesh = gen_mesh.Mesh(gen_mesh.parse_map(src.read_text(encoding="utf-8")))
@@ -95,6 +99,7 @@ def main():
             l2_mag=l2_mag,
             l2_cu=l2_cu,
             l2_vec=l2_vec,
+            split_reset=split,
         )
         if args.pump:
             pout = ROOT / TOPS / f"{name}_pump.v"
@@ -109,6 +114,7 @@ def main():
                 l2_mag=l2_mag,
                 l2_cu=l2_cu,
                 l2_vec=l2_vec,
+                split_reset=split,
             )
             if not (pout.exists() and pout.read_text(encoding="utf-8") == ptext):
                 stale.append(f"{name}_pump")

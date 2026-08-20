@@ -107,6 +107,15 @@ proc v6_link_cdc {name src dst src_wiz dst_wiz} {
     lappend ::V6_CDC_FAULT [get_bd_pins $name/fault]
 }
 
+# The link CDCs take their OWN ungated reset (locked only, on the link/MAG
+# clock): their ready flags clear only after their reset releases, so wiring
+# them from rst_mesh* while rst_mesh* waits on cdc_ready_all would deadlock
+# the release. This is the feedback the Change-1 gating must stay out of.
+foreach {mid mod} $MESHES {
+    if {$PROBE_SLR >= 0} { break }
+    v6_psr rst_cdc$mid clk_wiz_mesh$mid/clk_out4 clk_wiz_mesh$mid/locked
+}
+
 foreach hop {{0 1} {1 2} {2 3}} {
     lassign $hop lo hi
     if {![v6_has_mesh $lo] || ![v6_has_mesh $hi]} { continue }
@@ -114,43 +123,24 @@ foreach hop {{0 1} {1 2} {2 3}} {
                 clk_wiz_mesh$lo clk_wiz_mesh$hi
     v6_link_cdc cdc_${hi}_to_${lo} mesh_$hi/M_AXIS_LINK0 mesh_$lo/S_AXIS_LINK1 \
                 clk_wiz_mesh$hi clk_wiz_mesh$lo
-    connect_bd_net [get_bd_pins rst_mesh$lo/interconnect_aresetn] \
+    connect_bd_net [get_bd_pins rst_cdc$lo/peripheral_aresetn] \
                    [get_bd_pins cdc_${lo}_to_${hi}/s_axis_aresetn] \
                    [get_bd_pins cdc_${hi}_to_${lo}/m_axis_aresetn]
-    connect_bd_net [get_bd_pins rst_mesh$hi/interconnect_aresetn] \
+    connect_bd_net [get_bd_pins rst_cdc$hi/peripheral_aresetn] \
                    [get_bd_pins cdc_${lo}_to_${hi}/m_axis_aresetn] \
                    [get_bd_pins cdc_${hi}_to_${lo}/s_axis_aresetn]
 }
 
-# EVERY mesh waits for EVERY crossing -- the chain routes through neighbours.
-# A v5 bench lost beats 0..13 per link: xpm_fifo_async drops writes while busy.
-set nrdy [llength $::V6_CDC_READY]
-if {$nrdy > 0} {
-    create_bd_cell -type ip -vlnv xilinx.com:ip:xlconcat cdc_ready_cat
-    set_property CONFIG.NUM_PORTS $nrdy [get_bd_cells cdc_ready_cat]
-    for {set i 0} {$i < $nrdy} {incr i} {
-        connect_bd_net [lindex $::V6_CDC_READY $i] [get_bd_pins cdc_ready_cat/In$i]
-    }
-    create_bd_cell -type ip -vlnv xilinx.com:ip:util_reduced_logic cdc_ready_all
-    set_property -dict [list CONFIG.C_OPERATION {and} CONFIG.C_SIZE $nrdy] \
-                       [get_bd_cells cdc_ready_all]
-    connect_bd_net [get_bd_pins cdc_ready_cat/dout] [get_bd_pins cdc_ready_all/Op1]
-}
-
+# Reset rule (owner, 2026-08-20): NO cdc_ready signaling, ever. A mesh's
+# reset follows its OWN wizard's lock (dcm_locked, wired in v6_psr) plus the
+# boot-time ctrl lock on ext_reset_in, so a relock on one mesh can never
+# reset another. The link CDCs run on their own ungated rst_cdcN. v6.5
+# shipped a cdc_ready_all AND-gate here; measured on hardware it made every
+# wizard relock ripple all four meshes, and it is deleted, not disabled.
 foreach {mid mod} $MESHES {
     if {![v6_has_mesh $mid]} { continue }
-    if {$nrdy == 0} {
-        connect_bd_net [get_bd_pins rst_mesh$mid/peripheral_aresetn] \
-                       [get_bd_pins mesh_$mid/axi_aresetn]
-        continue
-    }
-    set h [create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic hold_mesh$mid]
-    set_property -dict [list CONFIG.C_OPERATION {and} CONFIG.C_SIZE {1}] $h
     connect_bd_net [get_bd_pins rst_mesh$mid/peripheral_aresetn] \
-                   [get_bd_pins hold_mesh$mid/Op1]
-    connect_bd_net [get_bd_pins cdc_ready_all/Res] [get_bd_pins hold_mesh$mid/Op2]
-    connect_bd_net [get_bd_pins hold_mesh$mid/Res] \
                    [get_bd_pins mesh_$mid/axi_aresetn]
 }
 
-puts "@@@ v6 meshes: [llength [get_bd_cells -quiet mesh_*]], $nrdy link CDCs gating reset"
+puts "@@@ v6 meshes: [llength [get_bd_cells -quiet mesh_*]], [llength $::V6_CDC_READY] link CDCs (ready flags unconsumed by design)"

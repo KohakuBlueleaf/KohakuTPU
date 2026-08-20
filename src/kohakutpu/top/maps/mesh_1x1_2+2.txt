@@ -1,0 +1,6 @@
+# v6.5-small: 2 clusters + 2 vector cores on one router, one MAG port. Full
+# card plumbing (4 stations, 4 MIGs, XDMA, link CDCs) at ~1/3 the mesh bulk —
+# the reset-architecture discriminator.
+xxx vec xxx
+mag mat mat
+xxx vec xxx
