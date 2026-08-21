@@ -1,6 +1,6 @@
 # Read-only census of the failed v6 impl at the physopt checkpoint (what the
 # router consumed). Decides the -7.596 owner: reset net vs constraints vs
-# congestion (.plan/v7-research/09-reset-architecture.md gate).
+# congestion -- the gate for the per-domain reset work (kh_rst_sync).
 set_param general.maxThreads 16
 
 set dcp {C:/Users/apoll/Desktop/vivado/JTAG-DMA-test/JTAG-DMA-test.runs/impl_1/multimesh_v6_wrapper_physopt.dcp}
