@@ -977,6 +977,100 @@ BENCHES = {
 #   python scripts/py/gen_mesh.py src/kohakutpu/top/maps/mesh_1x1_min.txt \
 #     -m ktpu_min_1m --ilink --single-master --split-reset \
 #     -o build/gen/ktpu_min_1m_split.v
+# One MAG memory port's write path against fairness, ordering and integrity:
+# the component bench for the slot starvation the PE system bench surfaced.
+BENCHES["mag_mem_port"] = (
+    "mag_mem_port_tb",
+    [
+        "src/kohakuaccel/common/sync_fifo.v",
+        "src/kohakuaccel/common/sb_skid.v",
+        "src/kohakuaccel/common/kohaku_sdpram.v",
+        "src/kohakuaccel/mas/core/mag_stage.v",
+        "src/kohakutpu/transform/mx_quant.v",
+        "src/kohakuaccel/mas/core/mag_mem_port.v",
+        "src/kohakuaccel/verif/axi_ram.v",
+        "tests/mas/mag_mem_port_tb.v",
+    ],
+)
+NEEDS_GLBL.add("mag_mem_port")
+
+# ---------------------------------------------------------------- RV32 PE
+# The controller PE (src/kohakuaccel/pe/rv32, docs/arch/pe). Its benches read
+# programs and golden traces from tests/pe/build, which `python
+# tests/pe/tools/rv_gen.py` writes -- run that first or the bench reports no
+# cases. RTL layout: core/ is the pipeline, mem/ the two L1s, noc/ the
+# fabric attach, rv_pe.v the assembly.
+PE_RV32 = [
+    "src/kohakuaccel/common/sync_fifo.v",
+    "src/kohakuaccel/common/kohaku_sdpram.v",
+    "src/kohakuaccel/pe/rv32/mem/rv_ram_be.v",
+    "src/kohakuaccel/pe/rv32/mem/rv_imem.v",
+    "src/kohakuaccel/pe/rv32/mem/rv_spad.v",
+    "src/kohakuaccel/pe/rv32/core/rv_regfile.v",
+    "src/kohakuaccel/pe/rv32/core/rv_bpred.v",
+    "src/kohakuaccel/pe/rv32/core/rv_if.v",
+    "src/kohakuaccel/pe/rv32/core/rv_id.v",
+    "src/kohakuaccel/pe/rv32/core/rv_ex.v",
+    "src/kohakuaccel/pe/rv32/core/rv_mem.v",
+    "src/kohakuaccel/pe/rv32/core/rv_wb.v",
+    "src/kohakuaccel/pe/rv32/core/rv_core.v",
+    "src/kohakuaccel/pe/rv32/mem/rv_l1.v",
+    "src/kohakuaccel/pe/rv32/noc/rv_noc_req.v",
+    "src/kohakuaccel/pe/rv32/rv_pe.v",
+]
+
+# Level 1: the pipeline against the Python model, one instruction at a time.
+BENCHES["rv_core"] = ("rv_core_tb", PE_RV32 + ["tests/pe/tb/rv_core_tb.v"])
+
+# Level 2: the memory frontend -- internal L1, external windows and the NoC
+# requestor -- against a scripted stub that plays the memory agent.
+BENCHES["rv_front"] = (
+    "rv_front_tb",
+    PE_RV32 + ["src/kohakuaccel/noc/endpoint/noc_cu_base.v",
+               "tests/pe/tb/rv_front_tb.v"],
+)
+
+# Level 3: ONE PE, one real router, the real MAG, an AXI RAM. Boot is a NoC
+# write into the instruction window and the standard kick.
+PE_SYS = (
+    PE_RV32
+    + [
+        "src/kohakuaccel/noc/router/noc_inport.v",
+        "src/kohakuaccel/noc/router/noc_outport.v",
+        "src/kohakuaccel/noc/router/noc_router.v",
+        "src/kohakuaccel/noc/ctrl/noc_orchestrator.v",
+        "src/kohakuaccel/noc/endpoint/noc_cu_base.v",
+        "src/kohakuaccel/common/async_fifo.v",
+        "src/kohakuaccel/common/sb_skid.v",
+        "src/kohakuaccel/mas/mover/mx_tdesc.v",
+        "src/kohakuaccel/mas/mover/mm_prng.v",
+        "src/kohakuaccel/mas/mover/mm_mover.v",
+        "src/kohakuaccel/mas/core/mag_stage.v",
+        "src/kohakutpu/transform/mx_quant.v",
+        "src/kohakuaccel/mas/core/mag_mem_port.v",
+        "src/kohakuaccel/mas/core/mag.v",
+        "src/kohakuaccel/mas/core/mag_stage_port.v",
+        "src/kohakuaccel/mas/core/mag_dram_port.v",
+        "src/kohakuaccel/verif/axi4_ram.v",
+    ]
+)
+
+PE_MESH = PE_SYS + ["tests/pe/tb/rv_mesh.v", "tests/pe/tb/rv_agent.v"]
+
+BENCHES["rv_sys"] = ("rv_sys_tb", PE_MESH + ["tests/pe/tb/rv_sys_tb.v"])
+
+# Level 4: isolation, ping-pong, aggregation and the DRAM hand-off, on ONE NoC
+# and ONE MAG. rv_mc1 runs isolation alone, as the other two's floor.
+BENCHES["rv_mc1"] = ("rv_mc1_tb", PE_MESH + ["tests/pe/tb/rv_mc_tb.v",
+                                             "tests/pe/tb/rv_mc1_tb.v"])
+BENCHES["rv_mc2"] = ("rv_mc2_tb", PE_MESH + ["tests/pe/tb/rv_mc_tb.v",
+                                             "tests/pe/tb/rv_mc2_tb.v"])
+BENCHES["rv_mc4"] = ("rv_mc4_tb", PE_MESH + ["tests/pe/tb/rv_mc_tb.v",
+                                             "tests/pe/tb/rv_mc4_tb.v"])
+
+NEEDS_GLBL.update({"rv_core", "rv_front", "rv_sys",
+                   "rv_mc1", "rv_mc2", "rv_mc4"})
+
 BENCHES["sb_mesh_e2e_sr"] = (
     "sb_mesh_e2e_tb",
     [
