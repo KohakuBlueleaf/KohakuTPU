@@ -6,6 +6,12 @@ xsim.dir/
 clockinfo.txt
 ref/
 .vscode/
+*.jou
+
+# xsim leaves work libraries, snapshots and waveforms beside the benches.
+tests/**/w_*/
+tests/**/par_*/
+*.wdb
 
 
 # Byte-compiled / optimized / DLL files
