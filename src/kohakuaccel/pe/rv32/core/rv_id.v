@@ -22,7 +22,14 @@
 `default_nettype none
 
 module rv_id #(
-    parameter integer FWD_X = 1
+    parameter integer FWD_X  = 1,
+    // The KohakuMPE extension seam. At 0 nothing below is elaborated and the
+    // base configuration is bit-identical; at 1 the custom-0 opcode stops being
+    // illegal and the instruction word travels to EX for the vector unit.
+    parameter integer DSP_EN = 0,
+    // Custom-1 is claimed only by a build carrying the float tier; without it
+    // the major is unmapped and a float instruction faults here.
+    parameter integer DSP_F16 = 0
 )(
     input  wire        clk,
     input  wire        resetn,
@@ -83,7 +90,15 @@ module rv_id #(
     output reg         x_ebreak,
     output reg         x_illegal,
     output reg         x_pred_taken,
-    output reg  [31:0] x_pred_target
+    output reg  [31:0] x_pred_target,
+
+    // ---- to the vector unit, at DSP_EN only ----
+    output wire        x_vec,
+    output wire [31:0] x_instr,
+    // A vector load in DECODE. It claims the vector scratchpad's address port
+    // one stage later, so the core bubbles it past a scalar store that is
+    // claiming the same port from MEM.
+    output wire        d_vec_ld
 );
     localparam [3:0] A_ADD = 4'd0, A_SUB = 4'd1, A_SLL = 4'd2, A_SLT  = 4'd3,
                      A_SLTU= 4'd4, A_XOR = 4'd5, A_SRL = 4'd6, A_SRA  = 4'd7,
@@ -113,6 +128,24 @@ module rv_id #(
     reg         n_wen, n_branch, n_jal, n_jalr, n_link, n_load, n_store;
     reg         n_sys, n_ebreak, n_illegal, n_op1_pc, n_op1_zero, n_op2_imm;
     reg         n_use1, n_use2;
+
+    // ---- the extension seam -------------------------------------------------
+    // Declared BEFORE the decode that reads it: xvlog rejects a use-before-
+    // declare that synthesis had accepted silently (rv_l1.v records the same).
+    wire vec_is, vec_use1, vec_wrd, vec_ld;
+    generate
+    if (DSP_EN != 0) begin : g_dsp
+        khd_scalar_decode #(.HAS_F16(DSP_F16)) u_vdec (
+            .instr(f2_instr), .is_khd(vec_is),
+            .use_rs1(vec_use1), .wr_rd(vec_wrd), .is_vld(vec_ld)
+        );
+    end else begin : g_nodsp
+        assign vec_is   = 1'b0;
+        assign vec_use1 = 1'b0;
+        assign vec_wrd  = 1'b0;
+        assign vec_ld   = 1'b0;
+    end
+    endgenerate
 
     wire shift_ok = (f7 == 7'b0000000) || ((f7 == 7'b0100000) && (f3 == 3'b101));
     wire arith_ok = (f7 == 7'b0000000) || ((f7 == 7'b0100000) &&
@@ -205,7 +238,58 @@ module rv_id #(
         end
         default: n_illegal = 1'b1;
         endcase
+
+        // The extension, after the case so it overrides the default refusal.
+        // Its operands live in the vector file, which the scalar hazard unit
+        // does not track: only the address base and the broadcast source are
+        // real scalar reads, and only a reduction is a real scalar write.
+        if (vec_is) begin
+            n_illegal = 1'b0;
+            n_use1    = vec_use1;
+            n_use2    = 1'b0;
+            n_wen     = vec_wrd;
+            n_imm     = imm_i;
+            n_op2_imm = 1'b1;
+        end
     end
+
+    // ---- the instruction word, on its way to the vector unit ---------------
+    generate
+    if (DSP_EN != 0) begin : g_vins
+        // The instruction word travels IF2 -> ID -> EX beside the control bits,
+        // because the vector unit decodes it in EX and there is nowhere else it
+        // could come from. 64 flops, and only in this configuration.
+        reg [31:0] d_ins, x_ins;
+        reg        d_v, x_v, d_ld;
+        assign d_vec_ld = d_ld;
+        always @(posedge clk) begin
+            if (!resetn) begin
+                d_v <= 1'b0;
+                x_v <= 1'b0;
+                d_ld <= 1'b0;
+            end else begin
+                if (!d_hold) begin
+                    d_ins <= f2_instr;
+                    d_v   <= f2_valid && vec_is && !kill;
+                    d_ld  <= f2_valid && vec_ld && !kill;
+                end else if (kill) begin
+                    d_v  <= 1'b0;
+                    d_ld <= 1'b0;
+                end
+                if (!x_hold) begin
+                    x_ins <= d_ins;
+                    x_v   <= d_v && !bubble && !kill;
+                end
+            end
+        end
+        assign x_instr = x_ins;
+        assign x_vec   = x_v;
+    end else begin : g_novins
+        assign x_instr  = 32'd0;
+        assign x_vec    = 1'b0;
+        assign d_vec_ld = 1'b0;
+    end
+    endgenerate
 
     // STRAIGHT OFF THE FETCHED WORD, window data into array address: the ECALL
     // opcode compare that sat here was most of the iteration-3 binding path.

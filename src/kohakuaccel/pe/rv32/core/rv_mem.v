@@ -30,7 +30,8 @@
 
 module rv_mem #(
     parameter integer SPAD_WORDS = 2048,
-    parameter integer POS_WIDTH  = 4
+    parameter integer POS_WIDTH  = 4,
+    parameter integer DSP_EN     = 0
 )(
     input  wire        clk,
     input  wire        resetn,
@@ -92,6 +93,24 @@ module rv_mem #(
     input  wire [1:0]  ctl_cause,
     input  wire [15:0] ctl_wr_out,
 
+    // ---- the vector unit, at DSP_EN only ----
+    // `base_stall` is this stage's OWN stall. The vector unit needs it
+    // separately from `stall_m`: fed the combined signal it would see its own
+    // stall as a reason to hold, which is a loop.
+    input  wire        vec_stall,
+    input  wire        vec_fault,
+    input  wire        vec_w_valid,
+    input  wire [31:0] vec_w_val,
+    output wire        base_stall,
+
+    // A scalar store into the vector scratchpad. It never stalls here: the
+    // vector unit takes it on the port it owns, so nothing about the NoC's
+    // window writer can reach this stage.
+    output wire        vsp_st_valid,
+    output wire [31:0] vsp_st_addr,
+    output wire [3:0]  vsp_st_be,
+    output wire [31:0] vsp_st_data,
+
     // ---- out ----
     output wire        stall_m,
     output wire [31:0] wstage_val,   // the WB value, and the distance-3 forward
@@ -106,7 +125,7 @@ module rv_mem #(
     localparam integer SAW = $clog2(SPAD_WORDS);
 
     localparam [2:0] R_SPAD = 3'd1, R_CTL = 3'd2, R_PEER = 3'd3,
-                     R_DRAM = 3'd4, R_BAD = 3'd7;
+                     R_DRAM = 3'd4, R_VSPAD = 3'd5, R_BAD = 3'd7;
 
     function [2:0] region_of;
         input [31:0] a;
@@ -116,6 +135,7 @@ module rv_mem #(
                 3'd1:    region_of = R_SPAD;
                 3'd2:    region_of = R_CTL;
                 3'd3:    region_of = R_PEER;
+                3'd4:    region_of = R_VSPAD;
                 default: region_of = R_BAD;
             endcase
         end
@@ -125,8 +145,19 @@ module rv_mem #(
     // checks there: a fault found in MEM would have to kill a stage the
     // redirect path does not reach.
     wire [2:0] x_region = region_of(ex_addr);
-    assign ex_bad_region = (x_load || x_store) &&
-                           ((x_region == R_BAD) || (x_load && (x_region == R_PEER)));
+    // The vector scratchpad is STORE ONLY from the scalar side, exactly like a
+    // peer window: a store stages data for the vector unit to read with `vld`,
+    // and a load faults rather than paying for a read port on the scalar load
+    // path -- which is the base core's critical path and the one place it can
+    // least afford another mux. Without the extension the region is unmapped.
+    wire x_bad_vspad = (x_region == R_VSPAD) && ((DSP_EN == 0) || x_load);
+    // The vector unit's own refusals -- an encoding this build does not carry,
+    // or a misaligned vector address -- join here, so every fault the core has
+    // is still raised in one stage and takes one path.
+    assign ex_bad_region = ((x_load || x_store) &&
+                            ((x_region == R_BAD) || x_bad_vspad
+                             || (x_load && (x_region == R_PEER))))
+                         || vec_fault;
 
     wire [2:0] region = region_of(m_addr);
     wire acc   = m_valid && (m_load || m_store);
@@ -134,6 +165,7 @@ module rv_mem #(
     wire is_ct = acc && (region == R_CTL);
     wire is_pe = acc && (region == R_PEER);
     wire is_dr = acc && (region == R_DRAM);
+    wire is_vs = acc && (region == R_VSPAD) && (DSP_EN != 0);
 
     // ---- scratchpad -------------------------------------------------------
     assign spad_addr  = m_addr[SAW+1:2];
@@ -217,9 +249,15 @@ module rv_mem #(
         endcase
     end
 
-    assign stall_m = (is_dr && l1_stall) ||
-                     (is_pe && m_store && !push_ready) ||
-                     ct_stall;
+    assign vsp_st_valid = is_vs && m_store;
+    assign vsp_st_addr  = m_addr;
+    assign vsp_st_be    = m_be;
+    assign vsp_st_data  = m_sdata;
+
+    assign base_stall = (is_dr && l1_stall) ||
+                        (is_pe && m_store && !push_ready) ||
+                        ct_stall;
+    assign stall_m    = base_stall || vec_stall;
 
     // ---- the writeback register -------------------------------------------
     // Only what the extract needs travels: the arrays hand their word straight
@@ -278,7 +316,10 @@ module rv_mem #(
         endcase
     end
 
-    assign wstage_val = w_load ? load_val : w_val;
+    // A reduction's word arrives from the vector unit already registered at the
+    // same edge as everything else here, so it joins at the same place a load's
+    // extracted word does.
+    assign wstage_val = vec_w_valid ? vec_w_val : (w_load ? load_val : w_val);
 
 endmodule
 

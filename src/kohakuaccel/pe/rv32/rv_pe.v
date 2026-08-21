@@ -55,7 +55,22 @@ module rv_pe #(
     // its behavioural model calls $finish at 2 ps, which presents as a bench
     // that produces no output at all rather than as an error.
     parameter integer INST_DEPTH   = 16,
-    parameter integer RECV_DEPTH   = 32
+    parameter integer RECV_DEPTH   = 32,
+    // ---- the KohakuMPE DSP extension. At 0 none of it is elaborated and this
+    // unit is bit-identical to the shipped controller PE. ----
+    parameter integer DSP_EN        = 0,
+    parameter integer DSP_SIMD      = 8,
+    parameter integer DSP_VREGS     = 8,
+    parameter integer DSP_NACC      = 2,
+    parameter integer DSP_VSPAD     = 1024,
+    parameter integer DSP_MULS      = 4,
+    parameter integer DSP_SHIFT     = 1,
+    parameter integer DSP_PERM      = 1,
+    parameter integer DSP_WB        = 0,
+    parameter integer DSP_F16       = 0,
+    parameter integer DSP_NPART     = 16,
+    parameter         DSP_USE_DSP   = "yes",
+    parameter         DSP_VREG_PRIM = "distributed"
 )(
     input  wire                   clk,
     input  wire                   resetn,
@@ -84,8 +99,14 @@ module rv_pe #(
                      T_MEM_WR_ACK  = 4'h3,
                      T_CU_DATA     = 4'h8;
 
-    localparam [7:0] BUF_SPAD = 8'd0, BUF_IMEM = 8'd1,
-                     BUF_SPAD_W = 8'd4, BUF_IMEM_W = 8'd5;
+    // buf_id 3 is reserved to the framework, so the vector scratchpad takes 2
+    // for granules and 6 for a byte-enabled word -- the same pairing the other
+    // two windows have.
+    localparam [7:0] BUF_SPAD = 8'd0, BUF_IMEM = 8'd1, BUF_VSPAD = 8'd2,
+                     BUF_SPAD_W = 8'd4, BUF_IMEM_W = 8'd5, BUF_VSPAD_W = 8'd6;
+
+    localparam integer VWORDS = DSP_VSPAD * DSP_SIMD;
+    localparam integer VWA    = $clog2(VWORDS);
 
     localparam integer PAY = FLIT_WIDTH - 4*POS_WIDTH - 16;
 
@@ -152,7 +173,7 @@ module rv_pe #(
 
     reg  [255:0] gw_buf;
     reg  [2:0]   gw_cnt;
-    reg          gw_busy, gw_imem;
+    reg          gw_busy, gw_imem, gw_vspad;
     // Word address of the granule being walked, wide enough for either window
     // and sliced per array rather than sized to one of them.
     reg  [15:0]  gw_base;
@@ -162,22 +183,31 @@ module rv_pe #(
     assign recv_ready = !gw_busy;
     wire   rx_take    = recv_valid && recv_ready;
 
-    wire cd_is_gran = (cd_buf == BUF_SPAD) || (cd_buf == BUF_IMEM);
-    wire cd_is_word = (cd_buf == BUF_SPAD_W) || (cd_buf == BUF_IMEM_W);
+    wire cd_to_vspad = (DSP_EN != 0) &&
+                       ((cd_buf == BUF_VSPAD) || (cd_buf == BUF_VSPAD_W));
+    wire cd_is_gran = (cd_buf == BUF_SPAD) || (cd_buf == BUF_IMEM)
+                    || ((DSP_EN != 0) && (cd_buf == BUF_VSPAD));
+    wire cd_is_word = (cd_buf == BUF_SPAD_W) || (cd_buf == BUF_IMEM_W)
+                    || ((DSP_EN != 0) && (cd_buf == BUF_VSPAD_W));
     wire cd_to_imem = (cd_buf == BUF_IMEM) || (cd_buf == BUF_IMEM_W);
 
     wire [7:0]  nd_buf = rx_pl[PAY-1 -: 8];
     wire [15:0] nd_off = rx_pl[PAY-9 -: 16];
     wire [7:0]  nd_len = rx_pl[PAY-25 -: 8];
 
-    wire nd_gran = (nd_buf == BUF_SPAD) || (nd_buf == BUF_IMEM);
-    wire nd_word = (nd_buf == BUF_SPAD_W) || (nd_buf == BUF_IMEM_W);
+    wire nd_vspad = (DSP_EN != 0) &&
+                    ((nd_buf == BUF_VSPAD) || (nd_buf == BUF_VSPAD_W));
+    wire nd_gran = (nd_buf == BUF_SPAD) || (nd_buf == BUF_IMEM)
+                 || ((DSP_EN != 0) && (nd_buf == BUF_VSPAD));
+    wire nd_word = (nd_buf == BUF_SPAD_W) || (nd_buf == BUF_IMEM_W)
+                 || ((DSP_EN != 0) && (nd_buf == BUF_VSPAD_W));
     wire nd_imem = (nd_buf == BUF_IMEM) || (nd_buf == BUF_IMEM_W);
     // offset + len must fit the named window, and the check MUST reject rather
     // than wrap (flit-format.md s4.7.1).
     wire [16:0] nd_end = {1'b0, nd_off} + {9'd0, nd_len};
-    wire nd_fits = nd_imem ? (nd_end < (IMEM_WORDS / 8))
-                           : (nd_end < (SPAD_WORDS / 8));
+    wire nd_fits = nd_vspad ? (nd_end < (VWORDS / 8))
+                 : nd_imem  ? (nd_end < (IMEM_WORDS / 8))
+                            : (nd_end < (SPAD_WORDS / 8));
     wire nd_ok   = (nd_gran || nd_word) && nd_fits;
 
     // ---- word-write plumbing into the two windows ---------------------------
@@ -197,7 +227,8 @@ module rv_pe #(
 
     // INDEXED, NOT ROTATED, and measured at +178 LUT the other way: `gw_buf` is
     // loaded whole, so a rotate adds a 2:1 mux on 256 bits to save an 8:1 on 32.
-    assign spad_a_en   = (cd_word_wr && !cd_to_imem) || (gw_busy && !gw_imem);
+    assign spad_a_en   = (cd_word_wr && !cd_to_imem && !cd_to_vspad)
+                       || (gw_busy && !gw_imem && !gw_vspad);
     assign spad_a_we   = gw_busy ? 4'hF : wp_be;
     assign spad_a_addr = gw_busy ? {gw_base[SAW-1:3], gw_cnt}
                                  : {cd_off[SAW-4:0], wp_sel};
@@ -207,6 +238,15 @@ module rv_pe #(
     wire [IAW-1:0] imem_wr_a = gw_busy ? {gw_base[IAW-1:3], gw_cnt}
                                        : {cd_off[IAW-4:0], wp_sel};
     wire [31:0] imem_wr_d    = gw_busy ? gw_buf[{gw_cnt, 5'd0} +: 32] : wp_data;
+
+    // The vector scratchpad is a FLAT word address here; khd_vspad splits it
+    // into a bank and a row, so this path is the same shape as the other two.
+    wire        vsp_wr_en    = (cd_word_wr && cd_to_vspad)
+                             || (gw_busy && gw_vspad);
+    wire [3:0]  vsp_wr_be    = gw_busy ? 4'hF : wp_be;
+    wire [VWA-1:0] vsp_wr_a  = gw_busy ? {gw_base[VWA-1:3], gw_cnt}
+                                       : {cd_off[VWA-4:0], wp_sel};
+    wire [31:0] vsp_wr_d     = gw_busy ? gw_buf[{gw_cnt, 5'd0} +: 32] : wp_data;
 
     always @(posedge clk) begin
         if (!resetn) begin
@@ -234,11 +274,12 @@ module rv_pe #(
             CD_DATA: if (cd_data_beat) begin
                 cd_off <= cd_off + 16'd1;
                 if (cd_gran_wr) begin
-                    gw_buf  <= rx_pl[255:0];
-                    gw_base <= {cd_off[12:0], 3'd0};
-                    gw_cnt  <= 3'd0;
-                    gw_busy <= 1'b1;
-                    gw_imem <= cd_to_imem;
+                    gw_buf   <= rx_pl[255:0];
+                    gw_base  <= {cd_off[12:0], 3'd0};
+                    gw_cnt   <= 3'd0;
+                    gw_busy  <= 1'b1;
+                    gw_imem  <= cd_to_imem;
+                    gw_vspad <= cd_to_vspad;
                 end
                 if (cd_left == 8'd1) cst <= CD_IDLE;
                 else cd_left <= cd_left - 8'd1;
@@ -337,7 +378,13 @@ module rv_pe #(
     rv_core #(
         .IMEM_WORDS(IMEM_WORDS), .SPAD_WORDS(SPAD_WORDS),
         .BTB_ENTRIES(BTB_ENTRIES), .BTB_TAG_W(BTB_TAG_W),
-        .REGFILE_PRIM(REGFILE_PRIM), .FWD_X(FWD_X), .POS_WIDTH(POS_WIDTH)
+        .REGFILE_PRIM(REGFILE_PRIM), .FWD_X(FWD_X), .POS_WIDTH(POS_WIDTH),
+        .DSP_EN(DSP_EN), .DSP_SIMD(DSP_SIMD), .DSP_VREGS(DSP_VREGS),
+        .DSP_NACC(DSP_NACC), .DSP_VSPAD(DSP_VSPAD), .DSP_MULS(DSP_MULS),
+        .DSP_SHIFT(DSP_SHIFT), .DSP_PERM(DSP_PERM), .DSP_WB(DSP_WB),
+        .DSP_F16(DSP_F16), .DSP_NPART(DSP_NPART),
+        .DSP_USE_DSP(DSP_USE_DSP), .DSP_VREG_PRIM(DSP_VREG_PRIM),
+        .MEM_PRIM(MEM_PRIM)
     ) u_core (
         .clk(clk), .resetn(resetn),
         .boot_v(boot_v), .boot_pc(k_pc),
@@ -357,7 +404,9 @@ module rv_pe #(
         .push_data(push_data),
         .retire_valid(dbg_retire_valid), .retire_pc(dbg_retire_pc),
         .retire_rd(dbg_retire_rd), .retire_val(dbg_retire_val),
-        .cycle_ctr(cyc_ctr), .instret_ctr(ret_ctr)
+        .cycle_ctr(cyc_ctr), .instret_ctr(ret_ctr),
+        .vspad_en(vsp_wr_en), .vspad_we(vsp_wr_be),
+        .vspad_word(vsp_wr_a), .vspad_wdata(vsp_wr_d)
     );
 
     assign dbg_run    = core_run;

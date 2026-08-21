@@ -1016,6 +1016,19 @@ PE_RV32 = [
     "src/kohakuaccel/pe/rv32/core/rv_core.v",
     "src/kohakuaccel/pe/rv32/mem/rv_l1.v",
     "src/kohakuaccel/pe/rv32/noc/rv_noc_req.v",
+    # The DSP extension. Parsed everywhere, instantiated only at DSP_EN=1 --
+    # the same shape as the matmul pump hierarchy, and the reason the base
+    # configuration stays bit-identical while the sources are always present.
+    "src/kohakuaccel/pe/rv32/dsp/khd_scalar_decode.v",
+    "src/kohakuaccel/pe/rv32/dsp/khd_mul.v",
+    "src/kohakuaccel/pe/rv32/dsp/khd_padd32.v",
+    "src/kohakuaccel/pe/rv32/dsp/khd_pshift32.v",
+    "src/kohakuaccel/pe/rv32/dsp/khd_lane.v",
+    "src/kohakuaccel/pe/rv32/dsp/khd_perm.v",
+    "src/kohakuaccel/pe/rv32/dsp/khd_reduce.v",
+    "src/kohakuaccel/pe/rv32/dsp/khd_vregfile.v",
+    "src/kohakuaccel/pe/rv32/dsp/khd_vspad.v",
+    "src/kohakuaccel/pe/rv32/dsp/khd_unit.v",
     "src/kohakuaccel/pe/rv32/rv_pe.v",
 ]
 
@@ -1068,8 +1081,67 @@ BENCHES["rv_mc2"] = ("rv_mc2_tb", PE_MESH + ["tests/pe/tb/rv_mc_tb.v",
 BENCHES["rv_mc4"] = ("rv_mc4_tb", PE_MESH + ["tests/pe/tb/rv_mc_tb.v",
                                              "tests/pe/tb/rv_mc4_tb.v"])
 
+# The DSP-class workload suite on the same vehicle as rv_sys: what a kernel
+# COSTS rather than whether the PE is correct. Its cases come from
+# `python tests/pe/tools/rv_dsp_gen.py`.
+BENCHES["rv_dsp"] = ("rv_dsp_tb", PE_MESH + ["tests/pe/tb/rv_dsp_tb.v"])
+
+# The KohakuDSP vector extension (src/kohakuaccel/pe/rv32/dsp). khd_isa.vh is
+# GENERATED from the field table by tests/pe/tools/rv_dsp_emit.py, so the RTL
+# decode and the assembler cannot drift apart; -i puts it on the include path.
+PE_KHD = [
+    "src/kohakuaccel/common/kohaku_sdpram.v",
+    "src/kohakuaccel/pe/rv32/mem/rv_ram_be.v",
+    # The float tier. Parsed always, elaborated only at HAS_F16=1.
+    "src/kohakutpu/matmul/mx_fpacc.v",
+    "src/kohakutpu/vector/vec_dsp.v",
+    "src/kohakutpu/vector/vec_delay.v",
+    "src/kohakutpu/vector/vec_tables.v",
+    "src/kohakutpu/vector/vec_cvt.v",
+    "src/kohakutpu/vector/vec_alu.v",
+    "src/kohakuaccel/pe/rv32/dsp/khd_f16_lane.v",
+    "src/kohakuaccel/pe/rv32/dsp/khd_facc.v",
+    "src/kohakuaccel/pe/rv32/dsp/khd_ffold.v",
+    "src/kohakuaccel/pe/rv32/dsp/khd_mul.v",
+    "src/kohakuaccel/pe/rv32/dsp/khd_padd32.v",
+    "src/kohakuaccel/pe/rv32/dsp/khd_pshift32.v",
+    "src/kohakuaccel/pe/rv32/dsp/khd_lane.v",
+    "src/kohakuaccel/pe/rv32/dsp/khd_perm.v",
+    "src/kohakuaccel/pe/rv32/dsp/khd_reduce.v",
+    "src/kohakuaccel/pe/rv32/dsp/khd_vregfile.v",
+    "src/kohakuaccel/pe/rv32/dsp/khd_vspad.v",
+    "src/kohakuaccel/pe/rv32/dsp/khd_unit.v",
+]
+
+BENCHES["khd_unit"] = ("khd_unit_tb", PE_KHD + ["tests/pe/tb/khd_unit_tb.v"])
+NEEDS_GLBL.add("khd_unit")
+
+# The float tier. Vectors come from tests/pe/tools/khd_f16_vec.py and
+# khd_facc_vec.py; run those first or the benches report no vectors.
+PE_F16 = [
+    "src/kohakuaccel/common/kohaku_sdpram.v",
+    "src/kohakutpu/matmul/mx_fpacc.v",          # mx_lead1, shared not copied
+    "src/kohakutpu/vector/vec_dsp.v",
+    "src/kohakutpu/vector/vec_delay.v",
+    "src/kohakutpu/vector/vec_tables.v",
+    "src/kohakutpu/vector/vec_cvt.v",
+    "src/kohakutpu/vector/vec_alu.v",
+    "src/kohakuaccel/pe/rv32/dsp/khd_f16_lane.v",
+    "src/kohakuaccel/pe/rv32/dsp/khd_facc.v",
+    "src/kohakuaccel/pe/rv32/dsp/khd_ffold.v",
+]
+
+BENCHES["khd_f16_lane"] = ("khd_f16_lane_tb", PE_F16 + ["tests/pe/tb/khd_f16_lane_tb.v"])
+BENCHES["khd_facc"] = ("khd_facc_tb", PE_F16 + ["tests/pe/tb/khd_facc_tb.v"])
+BENCHES["khd_ffold"] = ("khd_ffold_tb", PE_F16 + ["tests/pe/tb/khd_ffold_tb.v"])
+# The partials are an XPM array; the benches already wait 200 ns for GSR.
+NEEDS_GLBL.update({"khd_facc", "khd_ffold"})
+
+#: Directories added to xvlog's include path, for the generated headers.
+INCDIRS = ["src/kohakuaccel/pe/rv32/dsp/generated"]
+
 NEEDS_GLBL.update({"rv_core", "rv_front", "rv_sys",
-                   "rv_mc1", "rv_mc2", "rv_mc4"})
+                   "rv_mc1", "rv_mc2", "rv_mc4", "rv_dsp"})
 
 BENCHES["sb_mesh_e2e_sr"] = (
     "sb_mesh_e2e_tb",
@@ -1198,6 +1270,7 @@ def main():
     # batch script and it splits `-d NAME=VALUE` at the `=`, so the value
     # arrives as a stray filename.
     opts = ["-d " + d for d in args.define + [f"MX_MODEL={args.model}"]]
+    opts += ["-i " + str(ROOT / p) for p in INCDIRS]
     (work / "xvlog.f").write_text("\n".join(opts + files) + "\n")
 
     run(["xvlog.bat", "-sv", "-work", "w", "-f", "xvlog.f"])

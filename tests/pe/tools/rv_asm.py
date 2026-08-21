@@ -49,6 +49,21 @@ class AsmError(Exception):
     pass
 
 
+#: Extension mnemonic handlers, tried in registration order after the base ISA.
+#: A handler takes ``(mnemonic, operand strings, pc, symbols)`` and returns a
+#: list of words, or None if it does not claim the mnemonic.
+#:
+#: A hook rather than an import, so this file stays dependency-free: the DSP
+#: extension's table is built on the compiler package, and a base-ISA gate must
+#: not acquire that dependency to keep running.
+EXTENSIONS = []
+
+
+def register_extension(fn):
+    if fn not in EXTENSIONS:
+        EXTENSIONS.append(fn)
+
+
 def _reg(tok):
     t = tok.strip().lower()
     if t in ABI:
@@ -310,6 +325,11 @@ def _encode(mn, rest, pc, syms, n):
         return [0b1110011]
     if mn == "ebreak":
         return [(1 << 20) | 0b1110011]
+
+    for ext in EXTENSIONS:
+        got = ext(mn, ops, pc, syms)
+        if got is not None:
+            return got
 
     raise AsmError("unknown mnemonic %r" % mn)
 

@@ -37,7 +37,22 @@ module rv_core #(
     parameter integer BTB_TAG_W    = 8,
     parameter         REGFILE_PRIM = "distributed",
     parameter integer FWD_X        = 1,
-    parameter integer POS_WIDTH    = 4
+    parameter integer POS_WIDTH    = 4,
+    // ---- the KohakuMPE DSP extension. At 0 none of it is elaborated. ----
+    parameter integer DSP_EN        = 0,
+    parameter integer DSP_SIMD      = 8,
+    parameter integer DSP_VREGS     = 8,
+    parameter integer DSP_NACC      = 2,
+    parameter integer DSP_VSPAD     = 1024,
+    parameter integer DSP_MULS      = 4,
+    parameter integer DSP_SHIFT     = 1,
+    parameter integer DSP_PERM      = 1,
+    parameter integer DSP_WB        = 0,
+    parameter integer DSP_F16       = 0,
+    parameter integer DSP_NPART     = 16,
+    parameter         DSP_USE_DSP   = "yes",
+    parameter         DSP_VREG_PRIM = "distributed",
+    parameter         MEM_PRIM      = "block"
 )(
     input  wire        clk,
     input  wire        resetn,
@@ -95,7 +110,13 @@ module rv_core #(
     output wire [4:0]  retire_rd,
     output wire [31:0] retire_val,
     output wire [31:0] cycle_ctr,
-    output wire [31:0] instret_ctr
+    output wire [31:0] instret_ctr,
+
+    // ---- the vector scratchpad's NoC window, at DSP_EN only ----
+    input  wire        vspad_en,
+    input  wire [3:0]  vspad_we,
+    input  wire [$clog2(DSP_VSPAD*DSP_SIMD)-1:0] vspad_word,
+    input  wire [31:0] vspad_wdata
 );
     // ---- fetch ----
     wire [31:0] f2_pc, f2_instr, f2_pred_target;
@@ -128,6 +149,16 @@ module rv_core #(
     wire [2:0]  m_f3;
     wire [3:0]  m_be;
 
+    // ---- the DSP extension's wires ----
+    wire        x_vec, d_vec_ld;
+    wire [31:0] x_instr;
+    wire        vec_stall, vec_fault, vec_illegal, vec_misalign, vec_w_valid;
+    wire [31:0] vec_w_val;
+    wire        base_stall;
+    wire        vsp_st_valid;
+    wire [31:0] vsp_st_addr, vsp_st_data;
+    wire [3:0]  vsp_st_be;
+
     // ---- memory / writeback ----
     wire        stall_m;
     wire [31:0] wstage_val;
@@ -154,8 +185,18 @@ module rv_core #(
     wire hz1 = h1_1 || h1_2;
     wire hz2 = h2_1 || h2_2;
 
-    wire stall_d = d_valid &&
-                   (((FWD_X != 0) ? (hz1 && x_load) : hz1) || (hz2 && m_load));
+    // A vector load one instruction behind a scalar store takes a bubble, not a
+    // stall, and the difference is a deadlock: the vector unit's stall holds the
+    // MEM stage too, so a stall waiting on a store IN that stage waits forever.
+    // A bubble holds decode and lets MEM drain, which is what the load-use
+    // hazard beside it already does. `x_store` rather than "a store to the
+    // vector window" on purpose: the region needs the EX adder's output, and
+    // that would put the ALU on the fetch address's path to save a cycle in a
+    // sequence nothing runs.
+    wire dsp_bubble = (DSP_EN != 0) && d_vec_ld && x_store;
+
+    wire stall_d = dsp_bubble || (d_valid &&
+                   (((FWD_X != 0) ? (hz1 && x_load) : hz1) || (hz2 && m_load)));
 
     // Nearest producer wins. A select that names a value which is not ready is
     // harmless because the same condition raised the stall.
@@ -229,7 +270,7 @@ module rv_core #(
         .we(rf_we), .wa(rf_wa), .wd(rf_wd)
     );
 
-    rv_id #(.FWD_X(FWD_X)) u_id (
+    rv_id #(.FWD_X(FWD_X), .DSP_EN(DSP_EN), .DSP_F16(DSP_F16)) u_id (
         .clk(clk), .resetn(resetn),
         .d_hold(hold_front), .x_hold(stall_m), .bubble(stall_d), .kill(ex_redir),
         .f2_instr(f2_instr), .f2_pc(f2_pc), .f2_valid(f2_valid),
@@ -244,7 +285,8 @@ module rv_core #(
         .x_alu(x_alu), .x_branch(x_branch), .x_jal(x_jal), .x_jalr(x_jalr),
         .x_link(x_link), .x_load(x_load), .x_store(x_store), .x_f3(x_f3),
         .x_sys(x_sys), .x_ebreak(x_ebreak), .x_illegal(x_illegal),
-        .x_pred_taken(x_pred_taken), .x_pred_target(x_pred_target)
+        .x_pred_taken(x_pred_taken), .x_pred_target(x_pred_target),
+        .x_vec(x_vec), .x_instr(x_instr), .d_vec_ld(d_vec_ld)
     );
 
     rv_ex u_ex (
@@ -266,7 +308,8 @@ module rv_core #(
         .m_f3(m_f3), .m_be(m_be), .m_sdata(m_sdata)
     );
 
-    rv_mem #(.SPAD_WORDS(SPAD_WORDS), .POS_WIDTH(POS_WIDTH)) u_mem (
+    rv_mem #(.SPAD_WORDS(SPAD_WORDS), .POS_WIDTH(POS_WIDTH),
+             .DSP_EN(DSP_EN)) u_mem (
         .clk(clk), .resetn(resetn),
         .ex_addr(ex_addr), .x_load(x_load), .x_store(x_store),
         .ex_bad_region(ex_bad_region),
@@ -285,10 +328,52 @@ module rv_core #(
         .push_data(push_data),
         .ctl_coreid(coreid), .ctl_arg(arg), .ctl_cycle(cyc_q),
         .ctl_instret(ret_q), .ctl_cause(cause_q), .ctl_wr_out(wr_out),
+        .vec_stall(vec_stall), .vec_fault(vec_fault),
+        .vec_w_valid(vec_w_valid), .vec_w_val(vec_w_val),
+        .base_stall(base_stall),
+        .vsp_st_valid(vsp_st_valid), .vsp_st_addr(vsp_st_addr),
+        .vsp_st_be(vsp_st_be), .vsp_st_data(vsp_st_data),
         .stall_m(stall_m), .wstage_val(wstage_val),
         .w_valid(w_valid), .w_rd(w_rd), .w_wen(w_wen), .w_val(w_val),
         .w_pc(w_pc)
     );
+
+    // ---- the DSP extension --------------------------------------------------
+    // It sees the EX stage exactly as the data arrays do: the instruction word,
+    // the ALU's own sum as an address, and rs1's value for a broadcast. Its
+    // `x_hold` is the MEM stage's OWN stall, not the combined one -- feeding it
+    // the combined signal would make its stall an input to itself.
+    generate
+    if (DSP_EN != 0) begin : g_dsp
+        khd_unit #(.SIMD(DSP_SIMD), .VREGS(DSP_VREGS), .NACC(DSP_NACC),
+                   .VSPAD_ENTRIES(DSP_VSPAD), .MULS(DSP_MULS),
+                   .HAS_SHIFT(DSP_SHIFT), .HAS_PERM(DSP_PERM),
+                   .HAS_F16(DSP_F16), .NPART(DSP_NPART),
+                   .WB_STAGE(DSP_WB),
+                   .USE_DSP(DSP_USE_DSP), .MEM_PRIM(MEM_PRIM),
+                   .VREG_PRIM(DSP_VREG_PRIM)) u_khd (
+            .clk(clk), .resetn(resetn),
+            .x_valid(x_vec && x_valid), .x_instr(x_instr),
+            .x_addr(ex_addr), .x_xdata(x_op1), .x_hold(base_stall),
+            .stall(vec_stall), .x_illegal(vec_illegal),
+            .x_misalign(vec_misalign),
+            .w_sc_valid(vec_w_valid), .w_sc(vec_w_val),
+            .dbg_wr_valid(), .dbg_wr_vd(), .dbg_wr_data(),
+            .noc_en(vspad_en), .noc_we(vspad_we), .noc_word(vspad_word),
+            .noc_wdata(vspad_wdata),
+            .sc_st_valid(vsp_st_valid), .sc_st_addr(vsp_st_addr),
+            .sc_st_be(vsp_st_be), .sc_st_data(vsp_st_data)
+        );
+        assign vec_fault = vec_illegal || vec_misalign;
+    end else begin : g_nodsp
+        assign vec_stall    = 1'b0;
+        assign vec_fault    = 1'b0;
+        assign vec_illegal  = 1'b0;
+        assign vec_misalign = 1'b0;
+        assign vec_w_valid  = 1'b0;
+        assign vec_w_val    = 32'd0;
+    end
+    endgenerate
 
     rv_wb u_wb (
         .w_valid(w_valid), .w_rd(w_rd), .w_wen(w_wen), .w_val(wstage_val),

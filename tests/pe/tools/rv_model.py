@@ -78,8 +78,13 @@ class Machine:
         self.halt_word = 0
 
     # ---- memory ---------------------------------------------------------
+    def region_of(self, a):
+        """The one extension seam in the memory map: an extension adds regions
+        by overriding this, and the base map is unchanged."""
+        return region(a)
+
     def _word(self, a):
-        r = region(a)
+        r = self.region_of(a)
         i = (a & 0x0FFF_FFFF) >> 2
         if r == R_SPAD:
             return self.spad[i % len(self.spad)]
@@ -103,7 +108,7 @@ class Machine:
         return 0
 
     def _store_word(self, a, val, be):
-        r = region(a)
+        r = self.region_of(a)
         base = a & ~3
         if r == R_SPAD:
             i = ((a & 0x0FFF_FFFF) >> 2) % len(self.spad)
@@ -131,7 +136,7 @@ class Machine:
             raise Halt(CAUSE_FAULT, self.pc)
         if f3 == 2 and (a & 3):
             raise Halt(CAUSE_FAULT, self.pc)
-        if region(a) in (R_BAD, R_PEER):
+        if self.region_of(a) in (R_BAD, R_PEER):
             raise Halt(CAUSE_FAULT, self.pc)
         w = self._word(a)
         if f3 == 0:
@@ -149,7 +154,7 @@ class Machine:
             raise Halt(CAUSE_FAULT, self.pc)
         if f3 == 2 and (a & 3):
             raise Halt(CAUSE_FAULT, self.pc)
-        if region(a) == R_BAD:
+        if self.region_of(a) == R_BAD:
             raise Halt(CAUSE_FAULT, self.pc)
         if f3 == 0:
             self._store_word(a, (val & 0xFF) * 0x0101_0101, 1 << (a & 3))
@@ -254,7 +259,7 @@ class Machine:
             raise Halt(CAUSE_EBREAK if (ins >> 20) & 1 else CAUSE_ECALL,
                        self.x[10])
         else:
-            raise Halt(CAUSE_FAULT, pc)
+            val = self.custom(opc, ins, pc)
 
         if val is not None and rd != 0:
             self.x[rd] = val & MASK
@@ -264,6 +269,15 @@ class Machine:
         self.pc = nxt
         self.instret += 1
         return pc, rd, val & MASK
+
+    def custom(self, opc, ins, pc):
+        """The one extension seam: an opcode the base ISA does not define.
+
+        RV32I has none, so this faults and the base model behaves exactly as it
+        did before the hook existed. A subclass returns the value to write to
+        `rd`, or None when the instruction writes no scalar register.
+        """
+        raise Halt(CAUSE_FAULT, pc)
 
     def run(self, limit=200000):
         """Retire until the program halts; return (trace, cause, halt word).
