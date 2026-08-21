@@ -228,6 +228,12 @@ module mx_quant #(
                 for (lane = 0; lane < 4; lane = lane + 1) begin
                     for (hh = 0; hh < 2; hh = hh + 1) begin
                         {ef_v, sig_v} = decode(acc[lane*2+hh]);
+                        // LEFT AS A LOOP DELIBERATELY. Rewritten as smear /
+                        // isolate / one-hot select -- the shape CLAUDE.md
+                        // prescribes -- this measured 3,745 LUT against 3,657
+                        // and the same 343.4 MHz: at 11 bits and 11 iterations
+                        // synthesis already finds it, and the explicit form only
+                        // spends more. The rule earns its keep on WIDE searches.
                         ep_v  = $signed({3'b0, ef_v});
                         tmp_v = sig_v;
                         for (norm = 0; norm < 11; norm = norm + 1)

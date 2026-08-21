@@ -46,6 +46,9 @@
 
 `default_nettype none
 
+// NO SRLs -- see mx_acu_fp_pump.v: every delay here is a wide pipeline payload
+// and an SRL16E costs one LUT per bit at any depth.
+(* shreg_extract = "no" *)
 module mx_acu_fp #(
     parameter integer DEPTH  = 16,          // resident output sub-tiles (4x4 each)
     parameter integer ACC_MW = 14,
@@ -393,6 +396,9 @@ module mx_acu_fp #(
     wire [TAW-1:0] wr_addr;
     wire           wr_bank_en;
 
+    // TW IS 352 AND NOT PADDED TO A MULTIPLE OF 72 -- see mx_acu_fp_pump.v: the
+    // measured gain was -23 LUT on a 21,379-LUT cluster.
+    //
     // addr_a, not addr_r: READ_LAT=2 means the address must be presented two
     // stages ahead of the align cycle, and stage 2a2 put one more stage between.
     kohaku_sdpram #(.WIDTH(TW), .DEPTH(DEPTH), .MEM_PRIM(TILE_PRIM), .READ_LAT(2))

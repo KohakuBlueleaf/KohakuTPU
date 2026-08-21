@@ -218,8 +218,10 @@ module mx_cluster_node #(
                         : pq_pend    ? {{(512-PW){1'b0}}, pq_hi}
                                      : emit_out;
 
+    // "block", not "distributed" -- see mx_cluster_node_pump.v: 272 x 128 is
+    // 624 LUTRAM sites and nothing reads the FIFO's internals.
     sync_fifo #(.DATA_WIDTH(272), .FIFO_DEPTH(DQ_DEPTH),
-                .MEMORY_TYPE("distributed")) u_dq (
+                .MEMORY_TYPE("block")) u_dq (
         .clk(clk), .rst(rst),
         .wr_en(dq_wr), .wr_data({d_got, dq_dat}),
         .wr_busy(dq_full), .wr_almost(),

@@ -287,8 +287,13 @@ module mx_cluster_node_pump #(
                         : pq_pend    ? {{(512-PW){1'b0}}, pq_hi}
                                      : emit_out;
 
+    // "block", not "distributed": 272 x 128 is 624 LUTRAM sites, the largest
+    // single block of distributed RAM in a cluster and 24 of them on the die.
+    // Nothing here reads the FIFO's internals -- `d_got`/`d_pop`/`d_out` are
+    // counters of their own, so a deeper write-to-not-empty latency only delays
+    // `drain_valid`, which the write port already waits on.
     sync_fifo #(.DATA_WIDTH(272), .FIFO_DEPTH(DQ_DEPTH),
-                .MEMORY_TYPE("distributed")) u_dq (
+                .MEMORY_TYPE("block")) u_dq (
         .clk(clk), .rst(rst),
         .wr_en(dq_wr), .wr_data({d_got, dq_dat}),
         .wr_busy(dq_full), .wr_almost(),

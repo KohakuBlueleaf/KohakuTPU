@@ -131,7 +131,7 @@ a project to prove anything.
 | accumulator | **built**, FP22, resident tile, peer transfer reachable |
 | cluster as an endpoint | **built**, one mesh port, closes with margin |
 | quantiser | **built**, on the memory-agent side, both read and upload paths |
-| vector ALU | **built and measured** — correctly rounded FMA, faithful seeds |
+| vector ALU | **built and measured** — FMA within one ulp (correctly rounded outside one stated subtractive corner), faithful seeds |
 | vector core around it | **built**, and its instruction set partly so |
 | driver and hand-built encoders | **run on the card** |
 | compiler path | one path, `kohakutpu.lang` to `kohakutpu.isa`; cluster **and** vector ops emit |

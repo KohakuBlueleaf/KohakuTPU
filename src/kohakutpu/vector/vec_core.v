@@ -173,8 +173,12 @@ module vec_core #(
     integer    ii;
 
     // ================================================== memories
+    // "block", not "distributed": 512 x 32 measured 392 LUT as LUTRAM against
+    // 0 LUT and one RAMB18, at the SAME READ_LAT, so no state moves. `im_q` is
+    // only ever captured into `ir`/`sreg`/`kreg`, two states after the address
+    // is presented, so a block RAM's clock-to-out lands on a plain D pin.
     wire [31:0] im_q;
-    kohaku_sdpram #(.WIDTH(32), .DEPTH(IMEM_DEPTH), .MEM_PRIM("distributed"),
+    kohaku_sdpram #(.WIDTH(32), .DEPTH(IMEM_DEPTH), .MEM_PRIM("block"),
                     .READ_LAT(1)) u_imem (
         .clk(clk), .wr_en(ld_en && !ld_kind), .wr_addr(ld_addr),
         .wr_data(ld_data[31:0]),

@@ -18,7 +18,9 @@ internal.
 
 **Status matters here more than anywhere else in this project.** The ALU is built
 and measured: one lane at 324.8 MHz, 1,249 LUT, 3 DSP, no BRAM, latency 14 with
-II = 1, the FMA correctly rounded and all four transcendental seeds faithful. The
+II = 1, the FMA within one ulp — correctly rounded everywhere except one
+subtractive-alignment corner, stated exactly in §3 — and all four transcendental
+seeds faithful. The
 assembled `vec_lanes` and `vec_cu` are also built and measured. The instruction
 set around them is specified and partly built; the split-K path in §7 is design.
 Every figure is in [results.md](results.md) §3 and §6.3, and where a claim below
@@ -221,6 +223,20 @@ random operands and is exactly what the bench's alignment sweep exists to hit.
 below the addend, so the correctly rounded result *is* the addend and the output
 is `c` verbatim. At `cs = -17` the product is still a guard bit and the normal
 path handles it.
+
+**The rounding property, stated exactly.** Bits shifted out of the 48-bit
+alignment window are carried as a plain sticky. For an effective addition that
+is round-to-nearest-even — correct. For an effective subtraction the discarded
+residue is a borrow, and a plain sticky rounds the wrong way in the cases
+adjacent to the round boundary: the result reads **exactly one ulp high —
+always high, never low**. Reaching it takes three things at once: `s >= 33`
+(residue actually leaving the window), an effective subtraction, and a
+boundary-adjacent bit pattern. A stream built to oversample exponent-distant
+addends measures 19 in 4,000; a banded random suite measures 0 in 6,000. The
+same construction, and therefore the same property, is in `mx_fpacc`'s split
+path. Correcting it means complementing the residue on subtraction — small,
+and natural at the next respin of either datapath; until then this paragraph
+is the contract.
 
 Every arithmetic opcode is this one FMA with different operand sources:
 

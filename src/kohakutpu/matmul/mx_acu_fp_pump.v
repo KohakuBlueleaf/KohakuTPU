@@ -48,6 +48,13 @@
 
 // DOUBLE PUMPED FRONT END: two partials per clk, each with its own E5M3 pair,
 // merged before stage 1. Past that it is mx_acu_fp -- one tile RMW, REUSE_MIN 5.
+//
+// NO SRLs ANYWHERE IN HERE. Every delay in this block is a pipeline stage of a
+// wide payload -- `peer_*` alone is 352 bits through eight stages -- and an
+// SRL16E costs one LUT per bit at ANY depth. Measured on the cluster's TCU skew,
+// the same trade was -1,568 LUT for +9,800 FF with the control-set count and all
+// three clocks unmoved; FF is at 34% and LUT at 66%.
+(* shreg_extract = "no" *)
 module mx_acu_fp_pump #(
     parameter integer DEPTH  = 16,          // resident output sub-tiles (4x4 each)
     parameter integer ACC_MW = 14,
@@ -120,7 +127,10 @@ module mx_acu_fp_pump #(
     reg [2:0]    op_q;
     reg [TAW-1:0] addr_q;
     reg          cmdv_q;
-    reg [TW-1:0] peer_q;
+    // THE PEER CHAIN IS FLOPS, NOT SRLs. `peer_*` is 352 bits through eight
+    // stages and an SRL16E costs one LUT per bit at any depth; the module-level
+    // attribute above does not reach these, so each declaration carries its own.
+    (* shreg_extract = "no" *) reg [TW-1:0] peer_q;
 
     always @(posedge clk) begin
         // VALID AND OPCODE ONLY. part_q is 384 bits and peer_q is TW, both of
@@ -162,7 +172,7 @@ module mx_acu_fp_pump #(
     reg  [2:0]          op_r;
     reg  [TAW-1:0]      addr_r;
     reg                 v1;
-    reg  [TW-1:0]       peer_r;
+    (* shreg_extract = "no" *) reg  [TW-1:0]       peer_r;
     reg signed [9:0]    exp_r [0:15];
 
     // ---- E5M3 block scale ------------------------------------------------
@@ -282,7 +292,7 @@ module mx_acu_fp_pump #(
     reg [2:0]     op_d1, op_d2;
     reg [TAW-1:0] addr_d1, addr_d2;
     reg           cmdv_d1, cmdv_d2;
-    reg [TW-1:0]  peer_d1, peer_d2;
+    (* shreg_extract = "no" *) reg [TW-1:0]  peer_d1, peer_d2;
     // TWO delays, matching lm_a/lm_b: at one, `single` led the data by a cycle
     // and only showed up when it changed between issues, i.e. odd NK > 1.
     reg           sing_d1, sing_d2;
@@ -414,7 +424,7 @@ module mx_acu_fp_pump #(
     reg [2:0]        op_s;
     reg [TAW-1:0]    addr_s;
     reg              v1_s;
-    reg [TW-1:0]     peer_s;
+    (* shreg_extract = "no" *) reg [TW-1:0]     peer_s;
 
     integer q;
     always @(posedge clk) begin
@@ -468,7 +478,7 @@ module mx_acu_fp_pump #(
     reg [2:0]        op_1a;
     reg [TAW-1:0]    addr_a;
     reg              v1a;
-    reg [TW-1:0]     peer_a;
+    (* shreg_extract = "no" *) reg [TW-1:0]     peer_a;
 
     always @(posedge clk) begin
         // The A-half DSP operands, 16 lanes of them, all gated by v1a.
@@ -502,7 +512,7 @@ module mx_acu_fp_pump #(
     reg [2:0]         op_1b;
     reg [TAW-1:0]     addr_b;
     reg               v1b;
-    reg [TW-1:0]      peer_b;
+    (* shreg_extract = "no" *) reg [TW-1:0]      peer_b;
 
     always @(posedge clk) begin
         // The B-half DSP products, 16 lanes, all gated by v1b.
@@ -543,7 +553,7 @@ module mx_acu_fp_pump #(
     end
     endgenerate
 
-    reg [TW-1:0]  chain_r, peer_r2;
+    (* shreg_extract = "no" *) reg [TW-1:0]  chain_r, peer_r2;
     reg [2:0]     op_r2;
     reg [TAW-1:0] addr_r2;
     reg           v2;
@@ -615,6 +625,11 @@ module mx_acu_fp_pump #(
     wire [TAW-1:0] wr_addr;
     wire           wr_bank_en;
 
+    // TW IS 352 AND NOT PADDED TO A MULTIPLE OF 72. Padding to 360 was measured
+    // on the cluster: -23 LUT, -8 control sets, same 5 URAM, same 308.8 MHz and
+    // the same worst path. The memory itself is 0 LUT; what makes this row read
+    // 3,361 in a hierarchical report is mx_fpacc_round_b's write cone.
+    //
     // addr_a, not addr_r: READ_LAT=2 means the address must be presented two
     // stages ahead of the align cycle, and stage 2a2 put one more stage between.
     kohaku_sdpram #(.WIDTH(TW), .DEPTH(DEPTH), .MEM_PRIM(TILE_PRIM), .READ_LAT(2))

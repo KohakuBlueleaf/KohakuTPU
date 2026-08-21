@@ -82,11 +82,12 @@ module mx_cluster_core #(
             assign b_dly[c] = b_slice[c];
         end else begin : g_dn
             localparam integer DLY = 2*c;
-            reg [223:0] ad [0:DLY-1];
-            reg [223:0] bd [0:DLY-1];
+            // FLOPS, NOT SRLs -- see mx_tcu.v: one LUT per bit at any depth, and
+            // these are 2, 4 and 6 deep against a 16-stage SRL.
+            (* shreg_extract = "no" *) reg [223:0] ad [0:DLY-1];
+            (* shreg_extract = "no" *) reg [223:0] bd [0:DLY-1];
             integer d;
-            // NO RESET: operands, qualified by `vld_sr` below, and an SRL has no
-            // reset pin -- 224 bits x DLY x 2 of flops the tool cannot fold.
+            // Still no reset: operands qualified by `vld_sr` below.
             always @(posedge clk) begin
                 if (en) begin
                     ad[0] <= a_slice[c];

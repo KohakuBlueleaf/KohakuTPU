@@ -458,7 +458,7 @@ DSP and a real DSP48E2:
 | products and sums of powers of two | **bit exact** |
 | `a*b - a*b`, `x - x` (and `x - x` is **+0**) | **bit exact** |
 | `exp2(k)`, `log2(2^k)`, `inv(2^k)`, `rsqrt(2^even)` | **bit exact** |
-| **FMA**, including the full alignment sweep | **0.500 ulp — correctly rounded** |
+| **FMA**, including the full alignment sweep | **0.500 ulp on this suite** — one subtractive corner later moved the known bound to 1 ulp, see below |
 | `exp2` | 0.509 ulp |
 | `inv` | 0.546 ulp |
 | `rsqrt` | 0.549 ulp |
@@ -468,6 +468,15 @@ DSP and a real DSP48E2:
 `x = 1` the result approaches zero while its absolute error does not, so one ulp
 shrinks without bound; at large `|x|` the result spans decades and an absolute
 bound falls far below one ulp.
+
+**A later bench moved the FMA's known bound to one ulp.** The DSP-PE float-lane
+bench, built to oversample exponent-distant addends, reached an
+effective-subtraction corner this suite's four mantissa patterns per shifter
+position never land on: discarded alignment residue carried as a plain sticky
+reads exactly one ulp high — 19 of 4,000 on that stream, 0 of 6,000 in this
+suite's random band. The exact statement of the property lives in
+[vector-core.md](vector-core.md) ("The rounding property, stated exactly");
+the same construction is in `mx_fpacc`'s split path.
 
 **The alignment sweep is the load-bearing test.** It walks the exponent difference
 across every barrel-shifter position, which is the only way to reach the case

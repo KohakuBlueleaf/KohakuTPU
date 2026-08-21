@@ -20,8 +20,9 @@
 // 8 chains x 8 DSP = 64 DSP, 128 MACs/cycle, one 4x8x4 tile per cycle.
 //
 // A cascade adds one pipeline stage per DSP, so stage k's operands must arrive
-// k cycles after stage 0's. The skew is held in shift registers, which map to
-// SRL32: one LUT per bit at any depth up to 32.
+// k cycles after stage 0's. The skew is held in FLOPS, not SRLs -- one LUT per
+// bit at any depth is a bad price for chains 2 to 7 deep on a LUT-bound device.
+// See the g_delay block.
 //
 // Latency: operands at t -> part_out at t + 11.
 //   stage k operands at t+k, its P at t+k+4, so stage 7 completes at t+11.
@@ -63,10 +64,14 @@ module mx_tcu #(
         if (k == 0) begin : g_nodelay
             assign stage_op[k] = raw;
         end else begin : g_delay
-            reg [55:0] sr [0:k-1];
+            // FLOPS, NOT SRLs. An SRL16E costs one LUT per bit at ANY depth, so
+            // these chains -- 2 to 7 deep -- pay a full LUT to use at most 7 of
+            // 16 stages. The device is LUT-bound at 66% with FF at 34%, so the
+            // skew belongs in the half of the CLB that is idle.
+            (* shreg_extract = "no" *) reg [55:0] sr [0:k-1];
             integer d;
-            // NO RESET: an SRL has no reset pin, so one here forces flops and a
-            // net to every stage. Operands are meaningless until `vld_sr` says.
+            // Still no reset: operands are meaningless until `vld_sr` says, and
+            // a reset here would add a control set per stage.
             always @(posedge clk) begin
                 if (en) begin
                     sr[0] <= raw;

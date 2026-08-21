@@ -383,15 +383,19 @@ module mag_link #(
         .wr_en(enq && first_now && in_cls), .wr_data(r_user), .wr_busy(h1_full),
         .rd_en(rx1_hvalid && rx1_hready), .rd_data(rx1_hdr), .rd_busy(rx1_hempty)
     );
+    // DATA "block", HEADERS "distributed". A data FIFO is 289 x 64 and costs
+    // 289 LUTRAM sites; the headers are 96 wide and block RAM's cost is set by
+    // width, so it would spend tiles to save a third as much. The design is
+    // LUT-bound with BRAM at 71%, which is the whole reason to take the trade.
     sync_fifo #(.DATA_WIDTH(LINK_W+1), .FIFO_DEPTH(RX_BEATS),
-                .MEMORY_TYPE("distributed")) u_d0 (
+                .MEMORY_TYPE("block")) u_d0 (
         .clk(clk), .rst(!resetn),
         .wr_en(enq && !in_cls), .wr_data({r_last, r_data}), .wr_busy(d0_full),
         .rd_en(rx0_dvalid && rx0_dready), .rd_data({rx0_dlast, rx0_dat}),
         .rd_busy(rx0_dempty)
     );
     sync_fifo #(.DATA_WIDTH(LINK_W+1), .FIFO_DEPTH(RX_BEATS),
-                .MEMORY_TYPE("distributed")) u_d1 (
+                .MEMORY_TYPE("block")) u_d1 (
         .clk(clk), .rst(!resetn),
         .wr_en(enq && in_cls), .wr_data({r_last, r_data}), .wr_busy(d1_full),
         .rd_en(rx1_dvalid && rx1_dready), .rd_data({rx1_dlast, rx1_dat}),
