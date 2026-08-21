@@ -56,6 +56,10 @@ and [architecture](architecture.md) is what it stands on. If you are choosing
 a configuration or floorplanning PEs, [performance](performance.md) then
 [integration](integration.md).
 
+One extension is built on this base and documented as its own set:
+[**dsp**](dsp/) — a uniform-control wide-SIMD datapath behind the same six
+pipeline boundaries, enabled by a parameter and absent without it.
+
 ## Fixed protocol, parameter, or yours
 
 | Thing | Category |
