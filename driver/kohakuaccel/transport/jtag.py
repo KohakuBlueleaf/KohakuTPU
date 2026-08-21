@@ -221,36 +221,35 @@ class JtagTransport(Transport):
                 "KTPU_JAXI_TCL"
             )
         width = int(self._eval("set ::jaxi::bytes_per_beat").strip())
-        if width not in (4, WORD_BYTES):
+        if width != WORD_BYTES:
             raise TransportUnavailable(
-                f"the JTAG-AXI master is {width * 8} bits wide; this driver "
-                f"speaks 32- or 64-bit beats"
+                f"the JTAG-AXI master is {width * 8} bits wide; only the "
+                f"64-bit manager is supported (the 32-bit manager was the "
+                f"v6.5 era and is retired)"
             )
-        # The bitstream decides the manager port's width (32 on v6.5/v6.6,
-        # 64 on v6.7); every beat count below scales by what the port reports.
         self.beat_bytes = width
 
     def write32(self, addr: int, data: int) -> None:
-        """One 32-bit register as ONE bus beat.
+        """One 32-bit register, by 64-bit word read-merge-write.
 
-        The Lite ports (DDR controller, clock wizard) answer exactly one beat
-        per request; a 64-bit word there is two beats and leaks an NMU read
-        credit per access until the manager port stops accepting reads. On a
-        64-bit master this therefore issues a TRUE 32-bit (sub-width) txn.
+        Native 64-bit beats are the only access this core has: Vivado 2024.2
+        ignores sub-width transactions outright. The neighbor register in the
+        same word is rewritten with its just-read value, so W1C/kick-style
+        registers packed 32-bit apart must be written through write64 with
+        the whole word composed.
         """
-        if self.beat_bytes == 4:
-            self._eval(
-                f"jaxi::write {self.base + addr} {{{data & 0xFFFFFFFF:08x}}}"
-            )
+        base = addr & ~0x7
+        word = self.read64(base)
+        if addr & 4:
+            word = (word & 0xFFFFFFFF) | ((data & 0xFFFFFFFF) << 32)
         else:
-            self._eval(f"jaxi::wr32 {self.base + addr} {data & 0xFFFFFFFF}")
+            word = (word & (0xFFFFFFFF << 32)) | (data & 0xFFFFFFFF)
+        self.write64(base, word)
 
     def read32(self, addr: int) -> int:
-        """One 32-bit register as ONE bus beat. See :meth:`write32`."""
-        if self.beat_bytes == 4:
-            words = self._eval(f"jaxi::read {self.base + addr} 1").split()
-            return int(words[0], 16)
-        return int(self._eval(f"jaxi::rd32 {self.base + addr}").strip(), 16)
+        """One 32-bit register, extracted from its 64-bit word."""
+        word = self.read64(addr & ~0x7)
+        return (word >> (32 if addr & 4 else 0)) & 0xFFFFFFFF
 
     def write64(self, addr: int, data: int) -> None:
         beats = _beats((data & MASK64).to_bytes(WORD_BYTES, "little"), self.beat_bytes)

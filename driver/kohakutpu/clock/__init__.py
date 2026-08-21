@@ -70,12 +70,11 @@ def candidates_near(control: int) -> tuple:
 
 
 def read32(transport: Transport, addr: int) -> int:
-    """One 32-bit register, as one bus beat where the transport can.
+    """One 32-bit register, through the transport's native accessor.
 
-    The wizard sits on a Lite port that answers exactly one beat per request:
-    a 64-bit access there is two beats, and each leaks an NMU read credit
-    until the manager port stops accepting reads. The word-RMW fallback is
-    for transports (XDMA, models) whose reads are not beat-counted.
+    64-bit word access is the design (owner ruling 2026-08-21): the JTAG
+    manager is 64-bit and native word reads are silicon-verified on v6.7.
+    The word-RMW fallback serves transports with no 32-bit accessor at all.
     """
     native = getattr(transport, "read32", None)
     if native is not None:

@@ -15,9 +15,11 @@ import json
 import time
 from pathlib import Path
 
-from kohakutpu.clock import read32, write32
+from kohakutpu.clock import read32
 from kohakutpu.clock.mmcm import (
     OUT_DIV_MAX,
+    OUT_MAX,
+    OUT_STRIDE,
     REG_STATUS,
     STATUS_LOCKED,
     ClockError,
@@ -26,6 +28,21 @@ from kohakutpu.clock.mmcm import (
 
 REG_LOAD = 0x25C
 LOAD_DYNAMIC = 0x3
+
+#: PG065 duty registers READ BACK ZERO and REJECT zero on write. A 64-bit
+#: transport writes register pairs, and duty sits paired with CLKOUT1/3's
+#: divider and with LOAD -- so the word must be composed, never read-merged,
+#: or the MMCM faults the transaction (measured on v6.7, 2026-08-21).
+#: The value is percent x 1000.
+DUTY_HALF = 50000
+
+
+def _is_duty(off: int) -> bool:
+    return (
+        off >= 0x210
+        and (off - 0x210) % OUT_STRIDE == 0
+        and (off - 0x210) // OUT_STRIDE <= OUT_MAX
+    )
 
 BOARDS = Path(__file__).resolve().parents[3] / "boards"
 
@@ -45,6 +62,19 @@ class MeshClocks:
         self.nominal_vco = vco_mhz
         self.outputs = {k: v["index"] for k, v in outputs.items()}
         self.nominal = {k: v["nominal_mhz"] for k, v in outputs.items()}
+
+    def _write_cfg(self, off: int, value: int) -> None:
+        """One config register, as the whole 64-bit word it lives in."""
+        base = off & ~0x7
+
+        def half(o: int) -> int:
+            if o == off:
+                return value & 0xFFFFFFFF
+            if _is_duty(o - self.base):
+                return DUTY_HALF
+            return read32(self.t, o) & 0xFFFFFFFF
+
+        self.t.write64(base, half(base) | (half(base + 4) << 32))
 
     def _div_for(self, name: str, mhz: float) -> int:
         if name not in self.outputs:
@@ -78,7 +108,7 @@ class MeshClocks:
         applied when polled over slow transport, so the divider REGISTERS are
         read back after lock as the application check.
         """
-        write32(self.t, self.base + REG_LOAD, LOAD_DYNAMIC)
+        self._write_cfg(self.base + REG_LOAD, LOAD_DYNAMIC)
         deadline = time.time() + timeout
         while time.time() < deadline:
             if self.locked():
@@ -135,9 +165,9 @@ class MeshClocks:
         """One output at exactly `mhz`, the rest as near `others` as the VCO
         allows, in one LOAD. Returns every output's exact rate."""
         m, ks = self.plan_isolated(name, mhz, others)
-        write32(self.t, self.base + 0x200, (m << 8) | 4)
+        self._write_cfg(self.base + 0x200, (m << 8) | 4)
         for out, k in ks.items():
-            write32(self.t, self.base + reg_clkout(self.outputs[out]), k)
+            self._write_cfg(self.base + reg_clkout(self.outputs[out]), k)
         self.vco = 25.0 * m
         self.load(timeout)
         return self.read_all()
@@ -149,10 +179,10 @@ class MeshClocks:
         `set_isolated` retune of M.
         """
         self.vco = self.nominal_vco
-        write32(self.t, self.base + 0x200, (int(self.vco / 25.0) << 8) | 4)
+        self._write_cfg(self.base + 0x200, (int(self.vco / 25.0) << 8) | 4)
         for name, mhz in profile.items():
             k = self._div_for(name, mhz)
-            write32(self.t, self.base + reg_clkout(self.outputs[name]), k)
+            self._write_cfg(self.base + reg_clkout(self.outputs[name]), k)
         self.load(timeout)
         got = self.read_all()
         for name, mhz in profile.items():
