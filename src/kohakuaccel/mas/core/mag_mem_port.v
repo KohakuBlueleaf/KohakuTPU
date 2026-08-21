@@ -446,13 +446,12 @@ module mag_mem_port #(
     endgenerate
 
     integer wi;
-    reg [WS_BITS-1:0] ws_free, ws_match, ws_pick;
-    reg               ws_has_free, ws_has_match, ws_has_pick;
+    reg [WS_BITS-1:0] ws_free, ws_match;
+    reg               ws_has_free, ws_has_match;
 
     always @(*) begin
         ws_free = {WS_BITS{1'b0}};  ws_has_free  = 1'b0;
         ws_match = {WS_BITS{1'b0}}; ws_has_match = 1'b0;
-        ws_pick = {WS_BITS{1'b0}};  ws_has_pick  = 1'b0;
         for (wi = WR_SLOTS-1; wi >= 0; wi = wi - 1) begin
             if (!ws_val[wi]) begin
                 ws_free = wi[WS_BITS-1:0]; ws_has_free = 1'b1;
@@ -463,11 +462,12 @@ module mag_mem_port #(
                 (ws_x[wi] == wi_sx) && (ws_y[wi] == wi_sy)) begin
                 ws_match = wi[WS_BITS-1:0]; ws_has_match = 1'b1;
             end
-            if (ws_val[wi] && ws_rdy[wi]) begin
-                ws_pick = wi[WS_BITS-1:0]; ws_has_pick = 1'b1;
-            end
         end
     end
+
+    // Assigned below the ready-order queue, which reads `ws_issue`.
+    wire               ws_has_pick;
+    wire [WS_BITS-1:0] ws_pick;
 
     // One flit leaves each queue per cycle: a write descriptor when a slot is
     // free, its data when the slot is waiting for it, or a read when the engine
@@ -497,6 +497,29 @@ module mag_mem_port #(
     // the starvation that splitting them fixed.
     wire ws_issue = (st == S_IDLE) && ws_has_pick && !take_rd_p;
 
+    // ISSUE IN READY ORDER, never "lowest ready". Lowest-free allocation
+    // recycles freed low slots, and with reads winning S_IDLE the refill
+    // goes ready before the next pick -- so a lowest-ready pick starves a
+    // ready high slot for the whole stream (measured: an L1 writeback held
+    // 2,300+ cycles by an RMW stream) and lands one source's same-address
+    // writes out of program order. The queue fixes both: ready order IS
+    // per-source program order, and its head is at most WR_SLOTS-1
+    // services from issue. Depth WR_SLOTS: it cannot overflow.
+    wire [WS_BITS-1:0] rdyq_out;
+    wire               rdyq_empty, rdyq_full;
+    wire               rdyq_push = take_wr_data && ws_fill_now[ws_match];
+
+    sync_fifo #(.DATA_WIDTH(WS_BITS), .FIFO_DEPTH(WR_SLOTS),
+                .MEMORY_TYPE("distributed")) u_rdyq (
+        .clk(clk), .rst(!resetn),
+        .wr_en(rdyq_push), .wr_data(ws_match),
+        .wr_busy(rdyq_full), .wr_almost(),
+        .rd_en(ws_issue), .rd_data(rdyq_out), .rd_busy(rdyq_empty)
+    );
+
+    assign ws_has_pick = !rdyq_empty;
+    assign ws_pick     = rdyq_out;
+
     always @(*) wq_pop = take_wr_req || take_wr_data;
     always @(*) rq_pop = take_rd;
 
@@ -523,6 +546,7 @@ module mag_mem_port #(
     end endgenerate
 
 `ifndef SYNTHESIS
+    reg [13:0] pick_wait = 14'd0;
     always @(posedge clk) begin
         if (resetn && in_valid && (in_ty == T_MEM_RD_REQ) && stg_unserved(in_addr))
             $display("%0t ERROR mag_mem_port(mesh %0d, %0d,%0d):read at %h names a reserved aperture or another mesh -- DROPPED rather than aliased onto DRAM, so the requester will hang",
@@ -536,15 +560,34 @@ module mag_mem_port #(
         if (resetn && ((mi_rd && rq_full) || (mi_wr && wq_full)))
             $display("%0t ERROR mag_mem_port(mesh %0d, %0d,%0d):input flit DROPPED -- backpressure is too late",
                      $time, MESH_ID, MEM_X, MEM_Y);
+        // Slot lifetime, one line per descriptor and per beat: thousands of
+        // $display per run at four requesters. -d MAG_WSLOT_PROBE to see them.
+`ifdef MAG_WSLOT_PROBE
         if (resetn && take_wr_req)
             $display("  PROBE %0t mesh %0d slot %0d opened by (%0d,%0d) addr %h len %0d",
                      $time, MESH_ID, ws_free, wi_sx, wi_sy, wi_addr, wi_len);
         if (resetn && wi_valid && (wi_ty == T_MEM_WR_DATA) && ws_has_match)
             $display("  PROBE %0t mesh %0d slot %0d took beat from (%0d,%0d)",
                      $time, MESH_ID, ws_match, wi_sx, wi_sy);
+`endif
         if (resetn && wi_valid && (wi_ty == T_MEM_WR_DATA) && !ws_has_match)
             $display("%0t ERROR mag_mem_port(mesh %0d, %0d,%0d):write data from (%0d,%0d) with no open write",
                      $time, MESH_ID, MEM_X, MEM_Y, wi_sx, wi_sy);
+        // The ready-order queue and the slot table must never disagree, and a
+        // ready head that cannot issue is a wedge whatever fairness says.
+        if (resetn && rdyq_push && rdyq_full)
+            $display("%0t ERROR mag_mem_port(mesh %0d, %0d,%0d):ready queue overflow -- table/queue desync",
+                     $time, MESH_ID, MEM_X, MEM_Y);
+        if (resetn && ws_issue && !ws_rdy[ws_pick])
+            $display("%0t ERROR mag_mem_port(mesh %0d, %0d,%0d):issued slot %0d is not ready -- table/queue desync",
+                     $time, MESH_ID, MEM_X, MEM_Y, ws_pick);
+        if (resetn) begin
+            if (!ws_has_pick || ws_issue) pick_wait <= 14'd0;
+            else                          pick_wait <= pick_wait + 14'd1;
+            if (pick_wait == 14'd8192)
+                $display("%0t ERROR mag_mem_port(mesh %0d, %0d,%0d):ready slot %0d unissued for 8192 cycles",
+                         $time, MESH_ID, MEM_X, MEM_Y, ws_pick);
+        end
     end
 `endif
 
