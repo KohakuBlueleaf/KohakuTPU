@@ -45,8 +45,11 @@ if {![llength [get_clocks -quiet sys_clk]]} {
 }
 # Unconstrained I/O fails at placement, which is the GUI step, not this one.
 puts "\n=== top-level pins ==="
-foreach p [list system_clk_p system_clk_n pcie_reset user_lnk_up \
-                c0_sys_clk_p c1_sys_clk_p c2_sys_clk_p c3_sys_clk_p] {
+set v6_pins [list system_clk_p system_clk_n pcie_reset user_lnk_up]
+foreach i {0 1 2 3} {
+    if {[v6_has_ddr $i]} { lappend v6_pins c${i}_sys_clk_p }
+}
+foreach p $v6_pins {
     set o [get_ports -quiet $p]
     if {![llength $o]} { set o [get_ports -quiet "$p\[0\]"] }
     if {![llength $o]} { v6_bad "port $p matches nothing" ; continue }

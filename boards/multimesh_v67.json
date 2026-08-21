@@ -1,0 +1,35 @@
+{
+  "name": "multimesh_v67",
+  "design": "multimesh_v67",
+  "transport": "jtag",
+  "meshes": 4,
+  "vco_mhz": 1200,
+  "wizard_outputs": {
+    "noc":   {"index": 0, "nominal_mhz": 300},
+    "mat2x": {"index": 1, "nominal_mhz": 600},
+    "vec":   {"index": 2, "nominal_mhz": 300},
+    "mag":   {"index": 3, "nominal_mhz": 300}
+  },
+  "profiles": {
+    "low":  {"noc": 100, "mat2x": 200, "vec": 100, "mag": 100},
+    "mid":  {"noc": 200, "mat2x": 400, "vec": 200, "mag": 200},
+    "ship": {"noc": 300, "mat2x": 600, "vec": 300, "mag": 300}
+  },
+  "idle_profile": "low",
+  "ctrl_stride": "0x10000",
+  "ctrl_base": "0x800000",
+  "wizard_base": "0x900000",
+  "ddrctrl_base": "0x0",
+  "ddrctrl_stride": "0x100000",
+  "mem_window_shift": 40,
+  "mem_window_offset": 1,
+  "dram_mesh_shift": 36,
+  "mem_words": 134217728,
+  "agent_at_offset_zero": true,
+  "max_burst_beats": 8,
+  "bitstream": "C:/Users/apoll/Desktop/vivado/multimesh_v67/multimesh_v67.runs/impl_1/multimesh_v67_wrapper.bit",
+  "probes": "",
+  "host_write_granule": 32,
+  "host_write_replicates": true,
+  "notes": "v6.7: 4x(6+2), width-converting station bus, 64-bit JTAG manager. Map inherits the v6.x convention (50_addr_lit.tcl) and is hardware-verified 2026-08-21: A_STATUS/A_CAPS/A_RX_STATUS read correct on all four meshes, wizard region answers, 8-beat DRAM burst write+readback 8/8 on mesh0 window. INHERITED-UNVERIFIED from v6.5: host_write_replicates, max_burst_beats, single-beat DRAM write lossiness -- re-verify before relying on byte-exact host writes. mesh1 A_CAPS reads 0x0004_0002_0100_0120 (others 0x2_0104_0120): decode pending. mat1x is mat2x/2 via BUFGCE_DIV, retuned only through mat2x."
+}

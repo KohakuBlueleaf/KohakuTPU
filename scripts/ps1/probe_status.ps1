@@ -31,6 +31,9 @@ param(
     # Main-class projects: one row each, showing impl_1 once it has a log,
     # synth_1 before that. Point at the .runs directory.
     [string[]]$Main = @(
+        'C:\Users\apoll\Desktop\vivado\multimesh_v7t\multimesh_v7t.runs',
+        'C:\Users\apoll\Desktop\vivado\multimesh_v7\multimesh_v7.runs',
+        'C:\Users\apoll\Desktop\vivado\multimesh_v67\multimesh_v67.runs',
         'C:\Users\apoll\Desktop\vivado\multimesh_v65\multimesh_v65.runs'
     ),
     [int]$TailLines = 600,

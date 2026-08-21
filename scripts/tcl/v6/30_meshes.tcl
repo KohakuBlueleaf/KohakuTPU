@@ -112,7 +112,7 @@ proc v6_link_cdc {name src dst src_wiz dst_wiz} {
 # them from rst_mesh* while rst_mesh* waits on cdc_ready_all would deadlock
 # the release. This is the feedback the Change-1 gating must stay out of.
 foreach {mid mod} $MESHES {
-    if {$PROBE_SLR >= 0} { break }
+    if {$PROBE_SLR >= 0 || [info exists ::V7MINI]} { break }
     v6_psr rst_cdc$mid clk_wiz_mesh$mid/clk_out4 clk_wiz_mesh$mid/locked
 }
 

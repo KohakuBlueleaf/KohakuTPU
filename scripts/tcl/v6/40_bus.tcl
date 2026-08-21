@@ -99,9 +99,10 @@ connect_bd_net [get_bd_pins xlconstant_irq/dout] [get_bd_pins xdma_0/usr_irq_req
 # ---- endpoints -----------------------------------------------------------
 # Probe-absent die: the port still terminates on real logic in that SLR, or
 # the bus has nothing to place there.
-proc v6_bram_ep {name dw clkpin rstpin} {
+proc v6_bram_ep {name dw clkpin rstpin {proto AXI4}} {
     set c [create_bd_cell -type ip -vlnv xilinx.com:ip:axi_bram_ctrl $name]
-    set_property -dict [list CONFIG.DATA_WIDTH $dw CONFIG.SINGLE_PORT_BRAM {1} \
+    set_property -dict [list CONFIG.DATA_WIDTH $dw CONFIG.PROTOCOL $proto \
+                             CONFIG.SINGLE_PORT_BRAM {1} \
                              CONFIG.ECC_TYPE {0}] $c
     set m [create_bd_cell -type ip -vlnv xilinx.com:ip:blk_mem_gen ${name}_mem]
     set_property -dict [list CONFIG.Memory_Type {Single_Port_RAM} \
@@ -118,9 +119,9 @@ foreach {mid mod} $MESHES {
     set p3 [format M%02d_AXI [expr {$mid * $NQ + 3}]]
 
     if {![v6_has_mesh $mid]} {
-        foreach {port dw} [list $p0 $FW $p1 32 $p2 32] {
+        foreach {port dw proto} [list $p0 $FW AXI4 $p1 32 AXI4 $p2 32 AXI4LITE] {
             v6_bram_ep ep_s${mid}_[string range $port 0 2] $dw \
-                clk_wiz_mesh$mid/clk_out4 rst_mesh$mid/peripheral_aresetn
+                clk_wiz_mesh$mid/clk_out4 rst_mesh$mid/peripheral_aresetn $proto
             connect_bd_intf_net [get_bd_intf_pins station_bus/$port] \
                 [get_bd_intf_pins ep_s${mid}_[string range $port 0 2]/S_AXI]
         }

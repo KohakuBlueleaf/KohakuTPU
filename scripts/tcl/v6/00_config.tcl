@@ -23,10 +23,12 @@ if {$PROBE_SLR >= 0} {
 }
 proc v6_has_mesh {mid} {
     global PROBE_SLR
+    if {[info exists ::V7MINI]} { return 0 }
     return [expr {$PROBE_SLR < 0 || $PROBE_SLR == $mid}]
 }
 proc v6_has_ddr {i} {
     global PROBE_SLR DDR_OF_SLR
+    if {[info exists ::V7MINI]} { return 0 }
     return [expr {$PROBE_SLR < 0 || $i == [dict get $DDR_OF_SLR $PROBE_SLR]}]
 }
 
@@ -108,6 +110,34 @@ if {[info exists ::env(V67)] && $PROBE_SLR < 0} {
         1 ktpu_ship_2x2_6c2v_1m_pump
         2 ktpu_ship_2x2_6c2v_1m_pump
         3 ktpu_ship_2x2_6c2v_1m_pump
+    }
+}
+
+# v7t: the on-silicon station+clock test. EVERY die absent, so 40_bus's probe
+# stand-ins populate all 16 ports: BRAM endpoints on the wizard clocks, the
+# real clk_wiz s_axi_lite on port 3, no mesh, no MIG. Full managers kept.
+#   $env:V7MINI=1; vivado -mode batch -source multimesh_v6_bd.tcl
+if {[info exists ::env(V7MINI)] && $PROBE_SLR < 0} {
+    set design_name multimesh_v7t
+    set proj_dir    C:/Users/apoll/Desktop/vivado/multimesh_v7t
+    set ::env(V6_STANDALONE) 1
+    set ::V7MINI 1
+}
+
+# v7: v6.7 station bus with sb_axi2lite Lite converters (sim-proven),
+# lut-shrunk component RTL, and the ship mesh set m82 x3 + m62 in SLR1.
+#   $env:V7=1; vivado -mode batch -source multimesh_v6_bd.tcl
+if {[info exists ::env(V7)] && $PROBE_SLR < 0} {
+    set design_name multimesh_v7
+    set proj_dir    C:/Users/apoll/Desktop/vivado/multimesh_v7
+    set ::env(V6_STANDALONE) 1
+    # m82 x3 + m62@SLR1 (owner, 2026-08-22): m82_ls placed 96.23% CLB / 89.97%
+    # DSP with workable timing; SLR1's tight logic is the low-rate XDMA/bus.
+    set MESHES {
+        0 ktpu_ship_2x2_8c2v_1m_pump
+        1 ktpu_ship_2x2_6c2v_1m_pump
+        2 ktpu_ship_2x2_8c2v_1m_pump
+        3 ktpu_ship_2x2_8c2v_1m_pump
     }
 }
 

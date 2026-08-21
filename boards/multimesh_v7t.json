@@ -1,0 +1,35 @@
+{
+  "name": "multimesh_v7t",
+  "design": "multimesh_v7t",
+  "transport": "jtag",
+  "meshes": 4,
+  "vco_mhz": 1200,
+  "wizard_outputs": {
+    "noc":   {"index": 0, "nominal_mhz": 300},
+    "mat2x": {"index": 1, "nominal_mhz": 600},
+    "vec":   {"index": 2, "nominal_mhz": 300},
+    "mag":   {"index": 3, "nominal_mhz": 300}
+  },
+  "profiles": {
+    "low":  {"noc": 100, "mat2x": 200, "vec": 100, "mag": 100},
+    "mid":  {"noc": 200, "mat2x": 400, "vec": 200, "mag": 200},
+    "ship": {"noc": 300, "mat2x": 600, "vec": 300, "mag": 300}
+  },
+  "idle_profile": "low",
+  "ctrl_stride": "0x10000",
+  "ctrl_base": "0x800000",
+  "wizard_base": "0x900000",
+  "ddrctrl_base": "0x0",
+  "ddrctrl_stride": "0x100000",
+  "mem_window_shift": 40,
+  "mem_window_offset": 1,
+  "dram_mesh_shift": 36,
+  "mem_words": 1024,
+  "agent_at_offset_zero": false,
+  "max_burst_beats": 8,
+  "bitstream": "C:/Users/apoll/Desktop/vivado/multimesh_v7t/multimesh_v7t.runs/impl_1/multimesh_v7t_wrapper.bit",
+  "probes": "",
+  "host_write_granule": 32,
+  "host_write_replicates": false,
+  "notes": "Station+clock silicon test, v6.x map with sb_axi2lite Lite converters. NO meshes, NO MIGs: port0 = 256b AXI4 BRAM ctrl in the (m+1)<<40 window (BRAM depth small -- stay under mem_words words), port1 = 32b AXI4 BRAM at ctrl_base+m*0x10000, port2 = 32b AXI4-LITE BRAM at m*0x100000 (real WSTRB-honoring Lite slave), port3 = clk_wiz_mesh s_axi_lite at wizard_base+m*0x10000. Wizards VCO 1200, built divides 4/2/4/4, s_axi_lite on the fixed ctrl clock."
+}
