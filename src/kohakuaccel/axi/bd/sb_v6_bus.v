@@ -767,47 +767,73 @@ module sb_bd_line4 #(
     assign sp_rvalid[1] = M01_AXI_rvalid;
     assign M01_AXI_rready = sp_rready[1];
 
-    assign M02_AXI_awaddr = sp_awaddr[2*43 +: 43];
-    assign M02_AXI_awvalid = sp_awvalid[2];
-    assign sp_awready[2] = M02_AXI_awready;
-    assign M02_AXI_wdata = sp_wdata[2*512 +: 32];
-    assign M02_AXI_wstrb = sp_wstrb[2*64 +: 4];
-    assign M02_AXI_wvalid = sp_wvalid[2];
-    assign sp_wready[2] = M02_AXI_wready;
-    assign sp_bid[2*4 +: 4] = 4'd0;
-    assign sp_bresp[2*2 +: 2] = M02_AXI_bresp;
-    assign sp_bvalid[2] = M02_AXI_bvalid;
-    assign M02_AXI_bready = sp_bready[2];
-    assign M02_AXI_araddr = sp_araddr[2*43 +: 43];
-    assign M02_AXI_arvalid = sp_arvalid[2];
-    assign sp_arready[2] = M02_AXI_arready;
-    assign sp_rid[2*4 +: 4] = 4'd0;
-    assign sp_rdata[2*512 +: 32] = M02_AXI_rdata;
-    assign sp_rresp[2*2 +: 2] = M02_AXI_rresp;
-    assign sp_rlast[2] = 1'b1;
-    assign sp_rvalid[2] = M02_AXI_rvalid;
-    assign M02_AXI_rready = sp_rready[2];
+    sb_axi2lite #(.DW(32), .AW(43), .IDW(4)) u_a2l_2 (
+        .clk(clk_ddr0), .resetn(aresetn_ddr0),
+        .s_awid(sp_awid[2*4 +: 4]),
+        .s_awaddr(sp_awaddr[2*43 +: 43]),
+        .s_awlen(sp_awlen[2*8 +: 8]),
+        .s_awvalid(sp_awvalid[2]), .s_awready(sp_awready[2]),
+        .s_wdata(sp_wdata[2*512 +: 32]),
+        .s_wstrb(sp_wstrb[2*64 +: 4]),
+        .s_wlast(sp_wlast[2]),
+        .s_wvalid(sp_wvalid[2]), .s_wready(sp_wready[2]),
+        .s_bid(sp_bid[2*4 +: 4]),
+        .s_bresp(sp_bresp[2*2 +: 2]),
+        .s_bvalid(sp_bvalid[2]), .s_bready(sp_bready[2]),
+        .s_arid(sp_arid[2*4 +: 4]),
+        .s_araddr(sp_araddr[2*43 +: 43]),
+        .s_arlen(sp_arlen[2*8 +: 8]),
+        .s_arvalid(sp_arvalid[2]), .s_arready(sp_arready[2]),
+        .s_rid(sp_rid[2*4 +: 4]),
+        .s_rdata(sp_rdata[2*512 +: 32]),
+        .s_rresp(sp_rresp[2*2 +: 2]),
+        .s_rlast(sp_rlast[2]),
+        .s_rvalid(sp_rvalid[2]), .s_rready(sp_rready[2]),
+        .m_awaddr(M02_AXI_awaddr),
+        .m_awvalid(M02_AXI_awvalid), .m_awready(M02_AXI_awready),
+        .m_wdata(M02_AXI_wdata), .m_wstrb(M02_AXI_wstrb),
+        .m_wvalid(M02_AXI_wvalid), .m_wready(M02_AXI_wready),
+        .m_bresp(M02_AXI_bresp),
+        .m_bvalid(M02_AXI_bvalid), .m_bready(M02_AXI_bready),
+        .m_araddr(M02_AXI_araddr),
+        .m_arvalid(M02_AXI_arvalid), .m_arready(M02_AXI_arready),
+        .m_rdata(M02_AXI_rdata), .m_rresp(M02_AXI_rresp),
+        .m_rvalid(M02_AXI_rvalid), .m_rready(M02_AXI_rready)
+    );
 
-    assign M03_AXI_awaddr = sp_awaddr[3*43 +: 43];
-    assign M03_AXI_awvalid = sp_awvalid[3];
-    assign sp_awready[3] = M03_AXI_awready;
-    assign M03_AXI_wdata = sp_wdata[3*512 +: 32];
-    assign M03_AXI_wstrb = sp_wstrb[3*64 +: 4];
-    assign M03_AXI_wvalid = sp_wvalid[3];
-    assign sp_wready[3] = M03_AXI_wready;
-    assign sp_bid[3*4 +: 4] = 4'd0;
-    assign sp_bresp[3*2 +: 2] = M03_AXI_bresp;
-    assign sp_bvalid[3] = M03_AXI_bvalid;
-    assign M03_AXI_bready = sp_bready[3];
-    assign M03_AXI_araddr = sp_araddr[3*43 +: 43];
-    assign M03_AXI_arvalid = sp_arvalid[3];
-    assign sp_arready[3] = M03_AXI_arready;
-    assign sp_rid[3*4 +: 4] = 4'd0;
-    assign sp_rdata[3*512 +: 32] = M03_AXI_rdata;
-    assign sp_rresp[3*2 +: 2] = M03_AXI_rresp;
-    assign sp_rlast[3] = 1'b1;
-    assign sp_rvalid[3] = M03_AXI_rvalid;
-    assign M03_AXI_rready = sp_rready[3];
+    sb_axi2lite #(.DW(32), .AW(43), .IDW(4)) u_a2l_3 (
+        .clk(clk_ctrl), .resetn(aresetn_ctrl),
+        .s_awid(sp_awid[3*4 +: 4]),
+        .s_awaddr(sp_awaddr[3*43 +: 43]),
+        .s_awlen(sp_awlen[3*8 +: 8]),
+        .s_awvalid(sp_awvalid[3]), .s_awready(sp_awready[3]),
+        .s_wdata(sp_wdata[3*512 +: 32]),
+        .s_wstrb(sp_wstrb[3*64 +: 4]),
+        .s_wlast(sp_wlast[3]),
+        .s_wvalid(sp_wvalid[3]), .s_wready(sp_wready[3]),
+        .s_bid(sp_bid[3*4 +: 4]),
+        .s_bresp(sp_bresp[3*2 +: 2]),
+        .s_bvalid(sp_bvalid[3]), .s_bready(sp_bready[3]),
+        .s_arid(sp_arid[3*4 +: 4]),
+        .s_araddr(sp_araddr[3*43 +: 43]),
+        .s_arlen(sp_arlen[3*8 +: 8]),
+        .s_arvalid(sp_arvalid[3]), .s_arready(sp_arready[3]),
+        .s_rid(sp_rid[3*4 +: 4]),
+        .s_rdata(sp_rdata[3*512 +: 32]),
+        .s_rresp(sp_rresp[3*2 +: 2]),
+        .s_rlast(sp_rlast[3]),
+        .s_rvalid(sp_rvalid[3]), .s_rready(sp_rready[3]),
+        .m_awaddr(M03_AXI_awaddr),
+        .m_awvalid(M03_AXI_awvalid), .m_awready(M03_AXI_awready),
+        .m_wdata(M03_AXI_wdata), .m_wstrb(M03_AXI_wstrb),
+        .m_wvalid(M03_AXI_wvalid), .m_wready(M03_AXI_wready),
+        .m_bresp(M03_AXI_bresp),
+        .m_bvalid(M03_AXI_bvalid), .m_bready(M03_AXI_bready),
+        .m_araddr(M03_AXI_araddr),
+        .m_arvalid(M03_AXI_arvalid), .m_arready(M03_AXI_arready),
+        .m_rdata(M03_AXI_rdata), .m_rresp(M03_AXI_rresp),
+        .m_rvalid(M03_AXI_rvalid), .m_rready(M03_AXI_rready)
+    );
 
     assign M04_AXI_awid = sp_awid[4*4 +: 4];
     assign M04_AXI_awaddr = sp_awaddr[4*43 +: 43];
@@ -869,47 +895,73 @@ module sb_bd_line4 #(
     assign sp_rvalid[5] = M05_AXI_rvalid;
     assign M05_AXI_rready = sp_rready[5];
 
-    assign M06_AXI_awaddr = sp_awaddr[6*43 +: 43];
-    assign M06_AXI_awvalid = sp_awvalid[6];
-    assign sp_awready[6] = M06_AXI_awready;
-    assign M06_AXI_wdata = sp_wdata[6*512 +: 32];
-    assign M06_AXI_wstrb = sp_wstrb[6*64 +: 4];
-    assign M06_AXI_wvalid = sp_wvalid[6];
-    assign sp_wready[6] = M06_AXI_wready;
-    assign sp_bid[6*4 +: 4] = 4'd0;
-    assign sp_bresp[6*2 +: 2] = M06_AXI_bresp;
-    assign sp_bvalid[6] = M06_AXI_bvalid;
-    assign M06_AXI_bready = sp_bready[6];
-    assign M06_AXI_araddr = sp_araddr[6*43 +: 43];
-    assign M06_AXI_arvalid = sp_arvalid[6];
-    assign sp_arready[6] = M06_AXI_arready;
-    assign sp_rid[6*4 +: 4] = 4'd0;
-    assign sp_rdata[6*512 +: 32] = M06_AXI_rdata;
-    assign sp_rresp[6*2 +: 2] = M06_AXI_rresp;
-    assign sp_rlast[6] = 1'b1;
-    assign sp_rvalid[6] = M06_AXI_rvalid;
-    assign M06_AXI_rready = sp_rready[6];
+    sb_axi2lite #(.DW(32), .AW(43), .IDW(4)) u_a2l_6 (
+        .clk(clk_ddr1), .resetn(aresetn_ddr1),
+        .s_awid(sp_awid[6*4 +: 4]),
+        .s_awaddr(sp_awaddr[6*43 +: 43]),
+        .s_awlen(sp_awlen[6*8 +: 8]),
+        .s_awvalid(sp_awvalid[6]), .s_awready(sp_awready[6]),
+        .s_wdata(sp_wdata[6*512 +: 32]),
+        .s_wstrb(sp_wstrb[6*64 +: 4]),
+        .s_wlast(sp_wlast[6]),
+        .s_wvalid(sp_wvalid[6]), .s_wready(sp_wready[6]),
+        .s_bid(sp_bid[6*4 +: 4]),
+        .s_bresp(sp_bresp[6*2 +: 2]),
+        .s_bvalid(sp_bvalid[6]), .s_bready(sp_bready[6]),
+        .s_arid(sp_arid[6*4 +: 4]),
+        .s_araddr(sp_araddr[6*43 +: 43]),
+        .s_arlen(sp_arlen[6*8 +: 8]),
+        .s_arvalid(sp_arvalid[6]), .s_arready(sp_arready[6]),
+        .s_rid(sp_rid[6*4 +: 4]),
+        .s_rdata(sp_rdata[6*512 +: 32]),
+        .s_rresp(sp_rresp[6*2 +: 2]),
+        .s_rlast(sp_rlast[6]),
+        .s_rvalid(sp_rvalid[6]), .s_rready(sp_rready[6]),
+        .m_awaddr(M06_AXI_awaddr),
+        .m_awvalid(M06_AXI_awvalid), .m_awready(M06_AXI_awready),
+        .m_wdata(M06_AXI_wdata), .m_wstrb(M06_AXI_wstrb),
+        .m_wvalid(M06_AXI_wvalid), .m_wready(M06_AXI_wready),
+        .m_bresp(M06_AXI_bresp),
+        .m_bvalid(M06_AXI_bvalid), .m_bready(M06_AXI_bready),
+        .m_araddr(M06_AXI_araddr),
+        .m_arvalid(M06_AXI_arvalid), .m_arready(M06_AXI_arready),
+        .m_rdata(M06_AXI_rdata), .m_rresp(M06_AXI_rresp),
+        .m_rvalid(M06_AXI_rvalid), .m_rready(M06_AXI_rready)
+    );
 
-    assign M07_AXI_awaddr = sp_awaddr[7*43 +: 43];
-    assign M07_AXI_awvalid = sp_awvalid[7];
-    assign sp_awready[7] = M07_AXI_awready;
-    assign M07_AXI_wdata = sp_wdata[7*512 +: 32];
-    assign M07_AXI_wstrb = sp_wstrb[7*64 +: 4];
-    assign M07_AXI_wvalid = sp_wvalid[7];
-    assign sp_wready[7] = M07_AXI_wready;
-    assign sp_bid[7*4 +: 4] = 4'd0;
-    assign sp_bresp[7*2 +: 2] = M07_AXI_bresp;
-    assign sp_bvalid[7] = M07_AXI_bvalid;
-    assign M07_AXI_bready = sp_bready[7];
-    assign M07_AXI_araddr = sp_araddr[7*43 +: 43];
-    assign M07_AXI_arvalid = sp_arvalid[7];
-    assign sp_arready[7] = M07_AXI_arready;
-    assign sp_rid[7*4 +: 4] = 4'd0;
-    assign sp_rdata[7*512 +: 32] = M07_AXI_rdata;
-    assign sp_rresp[7*2 +: 2] = M07_AXI_rresp;
-    assign sp_rlast[7] = 1'b1;
-    assign sp_rvalid[7] = M07_AXI_rvalid;
-    assign M07_AXI_rready = sp_rready[7];
+    sb_axi2lite #(.DW(32), .AW(43), .IDW(4)) u_a2l_7 (
+        .clk(clk_ctrl), .resetn(aresetn_ctrl),
+        .s_awid(sp_awid[7*4 +: 4]),
+        .s_awaddr(sp_awaddr[7*43 +: 43]),
+        .s_awlen(sp_awlen[7*8 +: 8]),
+        .s_awvalid(sp_awvalid[7]), .s_awready(sp_awready[7]),
+        .s_wdata(sp_wdata[7*512 +: 32]),
+        .s_wstrb(sp_wstrb[7*64 +: 4]),
+        .s_wlast(sp_wlast[7]),
+        .s_wvalid(sp_wvalid[7]), .s_wready(sp_wready[7]),
+        .s_bid(sp_bid[7*4 +: 4]),
+        .s_bresp(sp_bresp[7*2 +: 2]),
+        .s_bvalid(sp_bvalid[7]), .s_bready(sp_bready[7]),
+        .s_arid(sp_arid[7*4 +: 4]),
+        .s_araddr(sp_araddr[7*43 +: 43]),
+        .s_arlen(sp_arlen[7*8 +: 8]),
+        .s_arvalid(sp_arvalid[7]), .s_arready(sp_arready[7]),
+        .s_rid(sp_rid[7*4 +: 4]),
+        .s_rdata(sp_rdata[7*512 +: 32]),
+        .s_rresp(sp_rresp[7*2 +: 2]),
+        .s_rlast(sp_rlast[7]),
+        .s_rvalid(sp_rvalid[7]), .s_rready(sp_rready[7]),
+        .m_awaddr(M07_AXI_awaddr),
+        .m_awvalid(M07_AXI_awvalid), .m_awready(M07_AXI_awready),
+        .m_wdata(M07_AXI_wdata), .m_wstrb(M07_AXI_wstrb),
+        .m_wvalid(M07_AXI_wvalid), .m_wready(M07_AXI_wready),
+        .m_bresp(M07_AXI_bresp),
+        .m_bvalid(M07_AXI_bvalid), .m_bready(M07_AXI_bready),
+        .m_araddr(M07_AXI_araddr),
+        .m_arvalid(M07_AXI_arvalid), .m_arready(M07_AXI_arready),
+        .m_rdata(M07_AXI_rdata), .m_rresp(M07_AXI_rresp),
+        .m_rvalid(M07_AXI_rvalid), .m_rready(M07_AXI_rready)
+    );
 
     assign M08_AXI_awid = sp_awid[8*4 +: 4];
     assign M08_AXI_awaddr = sp_awaddr[8*43 +: 43];
@@ -971,47 +1023,73 @@ module sb_bd_line4 #(
     assign sp_rvalid[9] = M09_AXI_rvalid;
     assign M09_AXI_rready = sp_rready[9];
 
-    assign M10_AXI_awaddr = sp_awaddr[10*43 +: 43];
-    assign M10_AXI_awvalid = sp_awvalid[10];
-    assign sp_awready[10] = M10_AXI_awready;
-    assign M10_AXI_wdata = sp_wdata[10*512 +: 32];
-    assign M10_AXI_wstrb = sp_wstrb[10*64 +: 4];
-    assign M10_AXI_wvalid = sp_wvalid[10];
-    assign sp_wready[10] = M10_AXI_wready;
-    assign sp_bid[10*4 +: 4] = 4'd0;
-    assign sp_bresp[10*2 +: 2] = M10_AXI_bresp;
-    assign sp_bvalid[10] = M10_AXI_bvalid;
-    assign M10_AXI_bready = sp_bready[10];
-    assign M10_AXI_araddr = sp_araddr[10*43 +: 43];
-    assign M10_AXI_arvalid = sp_arvalid[10];
-    assign sp_arready[10] = M10_AXI_arready;
-    assign sp_rid[10*4 +: 4] = 4'd0;
-    assign sp_rdata[10*512 +: 32] = M10_AXI_rdata;
-    assign sp_rresp[10*2 +: 2] = M10_AXI_rresp;
-    assign sp_rlast[10] = 1'b1;
-    assign sp_rvalid[10] = M10_AXI_rvalid;
-    assign M10_AXI_rready = sp_rready[10];
+    sb_axi2lite #(.DW(32), .AW(43), .IDW(4)) u_a2l_10 (
+        .clk(clk_ddr2), .resetn(aresetn_ddr2),
+        .s_awid(sp_awid[10*4 +: 4]),
+        .s_awaddr(sp_awaddr[10*43 +: 43]),
+        .s_awlen(sp_awlen[10*8 +: 8]),
+        .s_awvalid(sp_awvalid[10]), .s_awready(sp_awready[10]),
+        .s_wdata(sp_wdata[10*512 +: 32]),
+        .s_wstrb(sp_wstrb[10*64 +: 4]),
+        .s_wlast(sp_wlast[10]),
+        .s_wvalid(sp_wvalid[10]), .s_wready(sp_wready[10]),
+        .s_bid(sp_bid[10*4 +: 4]),
+        .s_bresp(sp_bresp[10*2 +: 2]),
+        .s_bvalid(sp_bvalid[10]), .s_bready(sp_bready[10]),
+        .s_arid(sp_arid[10*4 +: 4]),
+        .s_araddr(sp_araddr[10*43 +: 43]),
+        .s_arlen(sp_arlen[10*8 +: 8]),
+        .s_arvalid(sp_arvalid[10]), .s_arready(sp_arready[10]),
+        .s_rid(sp_rid[10*4 +: 4]),
+        .s_rdata(sp_rdata[10*512 +: 32]),
+        .s_rresp(sp_rresp[10*2 +: 2]),
+        .s_rlast(sp_rlast[10]),
+        .s_rvalid(sp_rvalid[10]), .s_rready(sp_rready[10]),
+        .m_awaddr(M10_AXI_awaddr),
+        .m_awvalid(M10_AXI_awvalid), .m_awready(M10_AXI_awready),
+        .m_wdata(M10_AXI_wdata), .m_wstrb(M10_AXI_wstrb),
+        .m_wvalid(M10_AXI_wvalid), .m_wready(M10_AXI_wready),
+        .m_bresp(M10_AXI_bresp),
+        .m_bvalid(M10_AXI_bvalid), .m_bready(M10_AXI_bready),
+        .m_araddr(M10_AXI_araddr),
+        .m_arvalid(M10_AXI_arvalid), .m_arready(M10_AXI_arready),
+        .m_rdata(M10_AXI_rdata), .m_rresp(M10_AXI_rresp),
+        .m_rvalid(M10_AXI_rvalid), .m_rready(M10_AXI_rready)
+    );
 
-    assign M11_AXI_awaddr = sp_awaddr[11*43 +: 43];
-    assign M11_AXI_awvalid = sp_awvalid[11];
-    assign sp_awready[11] = M11_AXI_awready;
-    assign M11_AXI_wdata = sp_wdata[11*512 +: 32];
-    assign M11_AXI_wstrb = sp_wstrb[11*64 +: 4];
-    assign M11_AXI_wvalid = sp_wvalid[11];
-    assign sp_wready[11] = M11_AXI_wready;
-    assign sp_bid[11*4 +: 4] = 4'd0;
-    assign sp_bresp[11*2 +: 2] = M11_AXI_bresp;
-    assign sp_bvalid[11] = M11_AXI_bvalid;
-    assign M11_AXI_bready = sp_bready[11];
-    assign M11_AXI_araddr = sp_araddr[11*43 +: 43];
-    assign M11_AXI_arvalid = sp_arvalid[11];
-    assign sp_arready[11] = M11_AXI_arready;
-    assign sp_rid[11*4 +: 4] = 4'd0;
-    assign sp_rdata[11*512 +: 32] = M11_AXI_rdata;
-    assign sp_rresp[11*2 +: 2] = M11_AXI_rresp;
-    assign sp_rlast[11] = 1'b1;
-    assign sp_rvalid[11] = M11_AXI_rvalid;
-    assign M11_AXI_rready = sp_rready[11];
+    sb_axi2lite #(.DW(32), .AW(43), .IDW(4)) u_a2l_11 (
+        .clk(clk_ctrl), .resetn(aresetn_ctrl),
+        .s_awid(sp_awid[11*4 +: 4]),
+        .s_awaddr(sp_awaddr[11*43 +: 43]),
+        .s_awlen(sp_awlen[11*8 +: 8]),
+        .s_awvalid(sp_awvalid[11]), .s_awready(sp_awready[11]),
+        .s_wdata(sp_wdata[11*512 +: 32]),
+        .s_wstrb(sp_wstrb[11*64 +: 4]),
+        .s_wlast(sp_wlast[11]),
+        .s_wvalid(sp_wvalid[11]), .s_wready(sp_wready[11]),
+        .s_bid(sp_bid[11*4 +: 4]),
+        .s_bresp(sp_bresp[11*2 +: 2]),
+        .s_bvalid(sp_bvalid[11]), .s_bready(sp_bready[11]),
+        .s_arid(sp_arid[11*4 +: 4]),
+        .s_araddr(sp_araddr[11*43 +: 43]),
+        .s_arlen(sp_arlen[11*8 +: 8]),
+        .s_arvalid(sp_arvalid[11]), .s_arready(sp_arready[11]),
+        .s_rid(sp_rid[11*4 +: 4]),
+        .s_rdata(sp_rdata[11*512 +: 32]),
+        .s_rresp(sp_rresp[11*2 +: 2]),
+        .s_rlast(sp_rlast[11]),
+        .s_rvalid(sp_rvalid[11]), .s_rready(sp_rready[11]),
+        .m_awaddr(M11_AXI_awaddr),
+        .m_awvalid(M11_AXI_awvalid), .m_awready(M11_AXI_awready),
+        .m_wdata(M11_AXI_wdata), .m_wstrb(M11_AXI_wstrb),
+        .m_wvalid(M11_AXI_wvalid), .m_wready(M11_AXI_wready),
+        .m_bresp(M11_AXI_bresp),
+        .m_bvalid(M11_AXI_bvalid), .m_bready(M11_AXI_bready),
+        .m_araddr(M11_AXI_araddr),
+        .m_arvalid(M11_AXI_arvalid), .m_arready(M11_AXI_arready),
+        .m_rdata(M11_AXI_rdata), .m_rresp(M11_AXI_rresp),
+        .m_rvalid(M11_AXI_rvalid), .m_rready(M11_AXI_rready)
+    );
 
     assign M12_AXI_awid = sp_awid[12*4 +: 4];
     assign M12_AXI_awaddr = sp_awaddr[12*43 +: 43];
@@ -1073,47 +1151,73 @@ module sb_bd_line4 #(
     assign sp_rvalid[13] = M13_AXI_rvalid;
     assign M13_AXI_rready = sp_rready[13];
 
-    assign M14_AXI_awaddr = sp_awaddr[14*43 +: 43];
-    assign M14_AXI_awvalid = sp_awvalid[14];
-    assign sp_awready[14] = M14_AXI_awready;
-    assign M14_AXI_wdata = sp_wdata[14*512 +: 32];
-    assign M14_AXI_wstrb = sp_wstrb[14*64 +: 4];
-    assign M14_AXI_wvalid = sp_wvalid[14];
-    assign sp_wready[14] = M14_AXI_wready;
-    assign sp_bid[14*4 +: 4] = 4'd0;
-    assign sp_bresp[14*2 +: 2] = M14_AXI_bresp;
-    assign sp_bvalid[14] = M14_AXI_bvalid;
-    assign M14_AXI_bready = sp_bready[14];
-    assign M14_AXI_araddr = sp_araddr[14*43 +: 43];
-    assign M14_AXI_arvalid = sp_arvalid[14];
-    assign sp_arready[14] = M14_AXI_arready;
-    assign sp_rid[14*4 +: 4] = 4'd0;
-    assign sp_rdata[14*512 +: 32] = M14_AXI_rdata;
-    assign sp_rresp[14*2 +: 2] = M14_AXI_rresp;
-    assign sp_rlast[14] = 1'b1;
-    assign sp_rvalid[14] = M14_AXI_rvalid;
-    assign M14_AXI_rready = sp_rready[14];
+    sb_axi2lite #(.DW(32), .AW(43), .IDW(4)) u_a2l_14 (
+        .clk(clk_ddr3), .resetn(aresetn_ddr3),
+        .s_awid(sp_awid[14*4 +: 4]),
+        .s_awaddr(sp_awaddr[14*43 +: 43]),
+        .s_awlen(sp_awlen[14*8 +: 8]),
+        .s_awvalid(sp_awvalid[14]), .s_awready(sp_awready[14]),
+        .s_wdata(sp_wdata[14*512 +: 32]),
+        .s_wstrb(sp_wstrb[14*64 +: 4]),
+        .s_wlast(sp_wlast[14]),
+        .s_wvalid(sp_wvalid[14]), .s_wready(sp_wready[14]),
+        .s_bid(sp_bid[14*4 +: 4]),
+        .s_bresp(sp_bresp[14*2 +: 2]),
+        .s_bvalid(sp_bvalid[14]), .s_bready(sp_bready[14]),
+        .s_arid(sp_arid[14*4 +: 4]),
+        .s_araddr(sp_araddr[14*43 +: 43]),
+        .s_arlen(sp_arlen[14*8 +: 8]),
+        .s_arvalid(sp_arvalid[14]), .s_arready(sp_arready[14]),
+        .s_rid(sp_rid[14*4 +: 4]),
+        .s_rdata(sp_rdata[14*512 +: 32]),
+        .s_rresp(sp_rresp[14*2 +: 2]),
+        .s_rlast(sp_rlast[14]),
+        .s_rvalid(sp_rvalid[14]), .s_rready(sp_rready[14]),
+        .m_awaddr(M14_AXI_awaddr),
+        .m_awvalid(M14_AXI_awvalid), .m_awready(M14_AXI_awready),
+        .m_wdata(M14_AXI_wdata), .m_wstrb(M14_AXI_wstrb),
+        .m_wvalid(M14_AXI_wvalid), .m_wready(M14_AXI_wready),
+        .m_bresp(M14_AXI_bresp),
+        .m_bvalid(M14_AXI_bvalid), .m_bready(M14_AXI_bready),
+        .m_araddr(M14_AXI_araddr),
+        .m_arvalid(M14_AXI_arvalid), .m_arready(M14_AXI_arready),
+        .m_rdata(M14_AXI_rdata), .m_rresp(M14_AXI_rresp),
+        .m_rvalid(M14_AXI_rvalid), .m_rready(M14_AXI_rready)
+    );
 
-    assign M15_AXI_awaddr = sp_awaddr[15*43 +: 43];
-    assign M15_AXI_awvalid = sp_awvalid[15];
-    assign sp_awready[15] = M15_AXI_awready;
-    assign M15_AXI_wdata = sp_wdata[15*512 +: 32];
-    assign M15_AXI_wstrb = sp_wstrb[15*64 +: 4];
-    assign M15_AXI_wvalid = sp_wvalid[15];
-    assign sp_wready[15] = M15_AXI_wready;
-    assign sp_bid[15*4 +: 4] = 4'd0;
-    assign sp_bresp[15*2 +: 2] = M15_AXI_bresp;
-    assign sp_bvalid[15] = M15_AXI_bvalid;
-    assign M15_AXI_bready = sp_bready[15];
-    assign M15_AXI_araddr = sp_araddr[15*43 +: 43];
-    assign M15_AXI_arvalid = sp_arvalid[15];
-    assign sp_arready[15] = M15_AXI_arready;
-    assign sp_rid[15*4 +: 4] = 4'd0;
-    assign sp_rdata[15*512 +: 32] = M15_AXI_rdata;
-    assign sp_rresp[15*2 +: 2] = M15_AXI_rresp;
-    assign sp_rlast[15] = 1'b1;
-    assign sp_rvalid[15] = M15_AXI_rvalid;
-    assign M15_AXI_rready = sp_rready[15];
+    sb_axi2lite #(.DW(32), .AW(43), .IDW(4)) u_a2l_15 (
+        .clk(clk_ctrl), .resetn(aresetn_ctrl),
+        .s_awid(sp_awid[15*4 +: 4]),
+        .s_awaddr(sp_awaddr[15*43 +: 43]),
+        .s_awlen(sp_awlen[15*8 +: 8]),
+        .s_awvalid(sp_awvalid[15]), .s_awready(sp_awready[15]),
+        .s_wdata(sp_wdata[15*512 +: 32]),
+        .s_wstrb(sp_wstrb[15*64 +: 4]),
+        .s_wlast(sp_wlast[15]),
+        .s_wvalid(sp_wvalid[15]), .s_wready(sp_wready[15]),
+        .s_bid(sp_bid[15*4 +: 4]),
+        .s_bresp(sp_bresp[15*2 +: 2]),
+        .s_bvalid(sp_bvalid[15]), .s_bready(sp_bready[15]),
+        .s_arid(sp_arid[15*4 +: 4]),
+        .s_araddr(sp_araddr[15*43 +: 43]),
+        .s_arlen(sp_arlen[15*8 +: 8]),
+        .s_arvalid(sp_arvalid[15]), .s_arready(sp_arready[15]),
+        .s_rid(sp_rid[15*4 +: 4]),
+        .s_rdata(sp_rdata[15*512 +: 32]),
+        .s_rresp(sp_rresp[15*2 +: 2]),
+        .s_rlast(sp_rlast[15]),
+        .s_rvalid(sp_rvalid[15]), .s_rready(sp_rready[15]),
+        .m_awaddr(M15_AXI_awaddr),
+        .m_awvalid(M15_AXI_awvalid), .m_awready(M15_AXI_awready),
+        .m_wdata(M15_AXI_wdata), .m_wstrb(M15_AXI_wstrb),
+        .m_wvalid(M15_AXI_wvalid), .m_wready(M15_AXI_wready),
+        .m_bresp(M15_AXI_bresp),
+        .m_bvalid(M15_AXI_bvalid), .m_bready(M15_AXI_bready),
+        .m_araddr(M15_AXI_araddr),
+        .m_arvalid(M15_AXI_arvalid), .m_arready(M15_AXI_arready),
+        .m_rdata(M15_AXI_rdata), .m_rresp(M15_AXI_rresp),
+        .m_rvalid(M15_AXI_rvalid), .m_rready(M15_AXI_rready)
+    );
 
     sb_line4 #(.FW(FW), .AW(AW), .MAXW(MAXW), .MAXID(MAXID), .NM(NM),
                .NQ(4), .PORTW(2), .TAGW(4), .OST(OST),

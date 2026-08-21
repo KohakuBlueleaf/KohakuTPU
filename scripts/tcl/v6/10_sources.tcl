@@ -9,6 +9,7 @@ set V6_SOURCES {
     src/kohakuaccel/axi/station/sb_hub.v
     src/kohakuaccel/axi/station/sb_nmu.v
     src/kohakuaccel/axi/station/sb_nsu.v
+    src/kohakuaccel/axi/station/sb_axi2lite.v
     src/kohakuaccel/axi/link/sb_link.v
     src/kohakuaccel/axi/link/sb_link_cdc.v
     src/kohakuaccel/axi/topo/sb_stn_line.v
@@ -68,6 +69,7 @@ set V6_SOURCES {
     src/kohakuaccel/common/kh_rst_sync.v
     src/kohakutpu/top/generated/ktpu_ship_2x2_7c2v_1m_pump.v
     src/kohakutpu/top/generated/ktpu_ship_2x2_6c2v_1m_pump.v
+    src/kohakutpu/top/generated/ktpu_ship_2x2_8c2v_1m_pump.v
     src/kohakutpu/top/generated/ktpu_ship_1x1_2c2v_1m_pump.v
 }
 

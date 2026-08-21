@@ -139,6 +139,53 @@ def axi_glue(i, prefix, dw, bus, mirror, lite=False):
     return "\n".join(out)
 
 
+def axi_lite_conv_glue(k, prefix, dw, bus, nq):
+    """A Lite LOCAL port gets a real burst-to-Lite converter (sb_axi2lite)
+    instead of dropped burst signals; termination leaves orphan W beats at the
+    endpoint. Clock choice mirrors sb_line4's port_dom()."""
+    stn, qp = k // nq, k % nq
+    if qp < 2:
+        clk, rstn = f"clk_s{stn}", f"aresetn_s{stn}"
+    elif qp == 2:
+        clk, rstn = f"clk_ddr{stn}", f"aresetn_ddr{stn}"
+    else:
+        clk, rstn = "clk_ctrl", "aresetn_ctrl"
+    idw = MAXID
+    return f"""    sb_axi2lite #(.DW({dw}), .AW({AW}), .IDW({idw})) u_a2l_{k} (
+        .clk({clk}), .resetn({rstn}),
+        .s_awid({bus}_awid[{k}*{idw} +: {idw}]),
+        .s_awaddr({bus}_awaddr[{k}*{AW} +: {AW}]),
+        .s_awlen({bus}_awlen[{k}*8 +: 8]),
+        .s_awvalid({bus}_awvalid[{k}]), .s_awready({bus}_awready[{k}]),
+        .s_wdata({bus}_wdata[{k}*{MAXW} +: {dw}]),
+        .s_wstrb({bus}_wstrb[{k}*{MAXW // 8} +: {dw // 8}]),
+        .s_wlast({bus}_wlast[{k}]),
+        .s_wvalid({bus}_wvalid[{k}]), .s_wready({bus}_wready[{k}]),
+        .s_bid({bus}_bid[{k}*{idw} +: {idw}]),
+        .s_bresp({bus}_bresp[{k}*2 +: 2]),
+        .s_bvalid({bus}_bvalid[{k}]), .s_bready({bus}_bready[{k}]),
+        .s_arid({bus}_arid[{k}*{idw} +: {idw}]),
+        .s_araddr({bus}_araddr[{k}*{AW} +: {AW}]),
+        .s_arlen({bus}_arlen[{k}*8 +: 8]),
+        .s_arvalid({bus}_arvalid[{k}]), .s_arready({bus}_arready[{k}]),
+        .s_rid({bus}_rid[{k}*{idw} +: {idw}]),
+        .s_rdata({bus}_rdata[{k}*{MAXW} +: {dw}]),
+        .s_rresp({bus}_rresp[{k}*2 +: 2]),
+        .s_rlast({bus}_rlast[{k}]),
+        .s_rvalid({bus}_rvalid[{k}]), .s_rready({bus}_rready[{k}]),
+        .m_awaddr({prefix}_awaddr),
+        .m_awvalid({prefix}_awvalid), .m_awready({prefix}_awready),
+        .m_wdata({prefix}_wdata), .m_wstrb({prefix}_wstrb),
+        .m_wvalid({prefix}_wvalid), .m_wready({prefix}_wready),
+        .m_bresp({prefix}_bresp),
+        .m_bvalid({prefix}_bvalid), .m_bready({prefix}_bready),
+        .m_araddr({prefix}_araddr),
+        .m_arvalid({prefix}_arvalid), .m_arready({prefix}_arready),
+        .m_rdata({prefix}_rdata), .m_rresp({prefix}_rresp),
+        .m_rvalid({prefix}_rvalid), .m_rready({prefix}_rready)
+    );"""
+
+
 def axis_decls(prefix, w, master):
     d0, d1 = ("output wire", "input  wire") if master else ("input  wire", "output wire")
     return (f"    {d0} [{w}-1:0] {prefix}_tdata,\n"
@@ -622,8 +669,10 @@ def emit_line4(name, mgr_w, nq, fw, mgr_lite=(), loc_lite=()):
                           for k, (p, w) in enumerate(zip(m_names, loc_w)))
     s_glue = "\n\n".join(axi_glue(i, p, w, "mp", False, i in mgr_lite)
                          for i, (p, w) in enumerate(zip(s_names, mgr_w)))
-    m_glue = "\n\n".join(axi_glue(k, p, w, "sp", True, (k % nq) in loc_lite)
-                         for k, (p, w) in enumerate(zip(m_names, loc_w)))
+    m_glue = "\n\n".join(
+        axi_lite_conv_glue(k, p, w, "sp", nq) if (k % nq) in loc_lite
+        else axi_glue(k, p, w, "sp", True)
+        for k, (p, w) in enumerate(zip(m_names, loc_w)))
 
     # Each station's endpoints belong to its own local clock; port 2 is DDR and
     # ports 3+ are ctrl, matching sb_line4's port_dom().

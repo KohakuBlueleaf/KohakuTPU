@@ -7,6 +7,7 @@ kohakuaccel/axi/link/sb_link_cdc.v
 kohakuaccel/axi/link/sb_link_pair.v
 kohakuaccel/axi/simple/axi_n1.v
 kohakuaccel/axi/simple/axi_xbar2.v
+kohakuaccel/axi/station/sb_axi2lite.v
 kohakuaccel/axi/station/sb_hub.v
 kohakuaccel/axi/station/sb_nmu.v
 kohakuaccel/axi/station/sb_nmu_lite.v
