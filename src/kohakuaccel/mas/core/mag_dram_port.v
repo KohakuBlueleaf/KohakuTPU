@@ -1,5 +1,12 @@
 // N requesters onto ONE AXI4 master, packing SW->MW across a clock crossing.
-// docs/mas/dram-port.md. NOT instantiated by mag.v; tests use a COPY of it.
+// docs/mas/dram-port.md. Instantiated by mag.v as u_dram.
+//
+// THE q CONTRACT: a requester's {valid, write, addr, len} HOLDS unchanged
+// until q_ready. Both arbiters decide on a REGISTERED request vector and
+// sample the bus live, and the grant is one wire -- a presentation that
+// switches mid-wait gets the other transaction's address captured and the
+// wrong channel popped. The adapter in mag.v holds; the assert below is
+// the guard.
 
 `default_nettype none
 
@@ -445,6 +452,38 @@ module mag_dram_port #(
                                   ? {IDX_W{1'b0}} : wr_sel + 1'b1;
         end
     end
+
+`ifndef SYNTHESIS
+    // The header's hold-until-ready contract, enforced: rv_mc4 measured a
+    // switching presenter crossing a writeback of line 641 onto line 787.
+    reg [N-1:0]        cq_held;
+    reg [N-1:0]        cq_write_p;
+    reg [N*ADDR_W-1:0] cq_addr_p;
+    reg [N*16-1:0]     cq_len_p;
+    integer ca;
+    always @(posedge s_aclk) begin
+        if (srst) cq_held <= {N{1'b0}};
+        else begin
+            for (ca = 0; ca < N; ca = ca + 1) begin
+                if (cq_held[ca] && q_valid[ca] &&
+                    ((q_write[ca] != cq_write_p[ca]) ||
+                     (q_addr[ca*ADDR_W +: ADDR_W]
+                        != cq_addr_p[ca*ADDR_W +: ADDR_W]) ||
+                     (q_len[ca*16 +: 16] != cq_len_p[ca*16 +: 16])))
+                    $display("%0t ERROR mag_dram_port: requester %0d changed its presentation while waiting (write %b->%b addr %h->%h) -- the arbiter will cross transactions",
+                             $time, ca, cq_write_p[ca], q_write[ca],
+                             cq_addr_p[ca*ADDR_W +: ADDR_W],
+                             q_addr[ca*ADDR_W +: ADDR_W]);
+                cq_held[ca] <= q_valid[ca] && !q_ready[ca];
+                if (q_valid[ca] && !cq_held[ca]) begin
+                    cq_write_p[ca] <= q_write[ca];
+                    cq_addr_p[ca*ADDR_W +: ADDR_W] <= q_addr[ca*ADDR_W +: ADDR_W];
+                    cq_len_p[ca*16 +: 16] <= q_len[ca*16 +: 16];
+                end
+            end
+        end
+    end
+`endif
 endmodule
 
 // Lowest set bit at or after `base`, wrapping. Both arbiters need it and

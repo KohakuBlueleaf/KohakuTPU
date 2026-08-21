@@ -1074,10 +1074,23 @@ module mag #(
 
     genvar rq;
     generate for (rq = 0; rq < MP1; rq = rq + 1) begin : g_req
-        // WRITE WINS when both are offered: the W beats are already queued
-        // behind it, and a read can wait a burst.
-        wire aw_r = m_awvalid[rq];
-        wire ar_r = m_arvalid[rq] && !aw_r;
+        // WRITE WINS when both are offered -- but only at FIRST offer. The
+        // choice HOLDS until grant: the DRAM port arbitrates on a registered
+        // request vector and samples the bus live, so a presentation that
+        // switches mid-wait issues the read at the write's address, and the
+        // one-wire grant then pops the wrong channel (measured in rv_mc4:
+        // a writeback of line 641 landed at 787 and the fill returned 641).
+        reg sel_h, sel_w;
+        always @(posedge clk) begin
+            if (!resetn) sel_h <= 1'b0;
+            else if (q_valid[rq] && !q_ready[rq]) begin
+                if (!sel_h) sel_w <= m_awvalid[rq];
+                sel_h <= 1'b1;
+            end else sel_h <= 1'b0;
+        end
+        wire use_w = sel_h ? sel_w : m_awvalid[rq];
+        wire aw_r = m_awvalid[rq] && use_w;
+        wire ar_r = m_arvalid[rq] && !use_w;
         assign q_valid[rq] = aw_r || ar_r;
         assign q_write[rq] = aw_r;
         assign q_addr[rq*ADDR_W +: ADDR_W] = aw_r ? m_awaddr[rq*ADDR_W +: ADDR_W]
