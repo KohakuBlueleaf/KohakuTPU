@@ -22,7 +22,7 @@ const overview = {
       y: 7,
       w: 40,
       h: 4,
-      label: "MEM_PORTS memory ports",
+      label: "PORTS attachments",
       sub: "each: two intake queues · read engine · write slots · emitter",
       accent: true,
     },
@@ -51,7 +51,7 @@ const overview = {
       w: 16,
       h: 6,
       label: "control processor",
-      sub: "RV32 · its own coordinate · CTRL_PE = 0 generates none of it",
+      sub: "RV32 · at (0,0) · always present, no port of its own",
       accent: true,
     },
     {
@@ -239,13 +239,33 @@ const edgeDemux = {
       label: "flit arrives at port N",
       accent: true,
     },
-    { id: "t1", x: 0, y: 5, w: 15, h: 3, label: "memory type?" },
-    { id: "t2", x: 0, y: 10, w: 15, h: 3, label: "rsvd[2] set?" },
-    { id: "t3", x: 0, y: 15, w: 15, h: 3, label: "otherwise" },
+    { id: "t1", x: 0, y: 5, w: 15, h: 3, label: "rsvd[2] set?" },
+    { id: "t2", x: 0, y: 10, w: 15, h: 3, label: "dst == (0,0)?" },
+    { id: "t3", x: 0, y: 15, w: 15, h: 3, label: "memory type?" },
+    { id: "t4", x: 0, y: 20, w: 15, h: 3, label: "otherwise" },
+    {
+      id: "enc",
+      x: 19,
+      y: 5,
+      w: 20,
+      h: 3.4,
+      label: "the interlink encapsulator",
+      sub: "asked FIRST: a memory flit may also be remote",
+    },
+    {
+      id: "pe",
+      x: 19,
+      y: 10,
+      w: 20,
+      h: 3.4,
+      label: "the control processor",
+      sub: "round robin; HOLDS when full — a dropped CU_DATA beat is corruption",
+      accent: true,
+    },
     {
       id: "eng",
       x: 19,
-      y: 5,
+      y: 15,
       w: 20,
       h: 3.4,
       label: "that port's engine",
@@ -253,18 +273,9 @@ const edgeDemux = {
       accent: true,
     },
     {
-      id: "enc",
-      x: 19,
-      y: 10,
-      w: 20,
-      h: 3.4,
-      label: "the interlink encapsulator",
-      sub: "round robin; waiting its turn holds busy, bounded by MEM_PORTS",
-    },
-    {
       id: "ag",
       x: 19,
-      y: 15,
+      y: 20,
       w: 20,
       h: 3.4,
       label: "the control agent",
@@ -273,11 +284,13 @@ const edgeDemux = {
   ],
   edges: [
     { from: "flit:b", to: "t1:t" },
-    { from: "t1:r", to: "eng:l", label: "yes", dir: "h" },
+    { from: "t1:r", to: "enc:l", label: "yes", dir: "h" },
     { from: "t1:b", to: "t2:t", label: "no" },
-    { from: "t2:r", to: "enc:l", label: "yes", dir: "h" },
+    { from: "t2:r", to: "pe:l", label: "yes", dir: "h" },
     { from: "t2:b", to: "t3:t", label: "no" },
-    { from: "t3:r", to: "ag:l", dir: "h" },
+    { from: "t3:r", to: "eng:l", label: "yes", dir: "h" },
+    { from: "t3:b", to: "t4:t", label: "no" },
+    { from: "t4:r", to: "ag:l", dir: "h" },
   ],
 };
 
@@ -1244,7 +1257,7 @@ const divergeRows = [
     </p>
 
     <Fig
-      caption="One memory port is a whole server. MEM_PORTS of them are instantiated, and adding one adds all of it. Nothing is shared between ports except the address space on the far side of AXI."
+      caption="One memory port is a whole server. PORTS of them are instantiated, and adding one adds all of it. Nothing is shared between ports except the address space on the far side of AXI."
       zoom
     >
       <BlockDiagram :nodes="port.nodes" :edges="port.edges" />
@@ -1510,7 +1523,7 @@ const divergeRows = [
     <p class="doc-p">
       Why one is enough is <i>structural</i>, not a workload measurement. A
       per-port transform is fed from that port's AXI R channel;
-      <code>mag_1m</code> converges every port master onto <b>one</b> DRAM
+      <code>sysnode</code> converges every port master onto <b>one</b> DRAM
       master; and a staged read never transforms, because staging holds operand
       words verbatim. So every transformed byte comes from a single converged
       master, and N transforms could consume one beat per cycle between them —

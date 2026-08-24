@@ -935,7 +935,7 @@ const placeRows = [
   {
     w: "STAGE_AT_PORT = 0",
     who: "one store <b>inside each</b> <code>mag_mem_port</code>, upstream of where the requesters meet — so <b>the mover and the interlink can never be staged</b>",
-    cost: "<code>MEM_PORTS</code> × 64. At <code>MEM_PORTS = 4</code> that is <b>256 URAM</b>",
+    cost: "<code>PORTS</code> × 64. At <code>PORTS = 4</code> that is <b>256 URAM</b>",
     _tone: "bad",
   },
   {
@@ -1280,12 +1280,12 @@ const divRows = [
     _tone: "bad",
   },
   {
-    d: "<b>The mover reaches into a project package.</b>",
-    t: "<code>mm_mover.v</code> instantiates <code>mx_tdesc</code>, which lives with the matmul project. It is a general N-dimensional affine address generator with bound axes and nothing matmul-specific in it — the more reusable of the two, in the wrong place.",
+    d: "<b>Resolved: the mover no longer reaches into a project package.</b>",
+    t: "<code>mm_mover.v</code> instantiates <code>mx_tdesc</code>, a general N-dimensional affine address generator with bound axes and nothing matmul-specific in it. It used to live with the matmul project; it is <code>src/kohakuaccel/sysnode/mover/mx_tdesc.v</code> now, and the mover itself moved into the control processor.",
   },
   {
-    d: "<b><code>mag_1m.v</code>'s header describes a shim its body no longer has.</b>",
-    t: "The per-master AXI-to-request conversion moved inside <code>mag.v</code>, which now instantiates <code>mag_stage_port</code> and then <code>mag_dram_port</code> on the converged path. <code>mag_1m</code> is a pass-through, and the <code>x_*</code> wires it still declares for that shim are unread.",
+    d: "<b>Resolved: <code>sysnode.v</code> is no longer a pass-through.</b>",
+    t: "It was a wrapper around <code>mag</code> plus an optional processor, each with its own fabric port, and <code>mag_1m</code> renamed the master on top of that. It is now THE node: <code>sn_hub</code> owns every attachment, <code>mag</code> and the processor are clients with no port of their own, and <code>mag_1m</code> is deleted.",
   },
   {
     d: "<b>Descriptor field positions exist only as literals.</b>",

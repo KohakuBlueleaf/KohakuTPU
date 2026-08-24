@@ -215,7 +215,7 @@ const disagrees = {
     },
     {
       w: "A reusable composition sits inside a project, in a directory of device tops",
-      d: "The concentrated memory boundary is <code>src/kohakutpu/top/mag_1m.v</code>: it is assembly rather than a top, and nothing in it is specific to that project, so it belongs in the framework. As it stands a second project reuses it by reaching into the first one.",
+      d: "The concentrated memory boundary is <code>src/kohakuaccel/sysnode/sysnode.v</code>: it is assembly rather than a top, and nothing in it is specific to that project, so it belongs in the framework. As it stands a second project reuses it by reaching into the first one.",
     },
   ],
 };
@@ -700,9 +700,9 @@ const rungs = {
 
     <Callout kind="open" title="Where today's source disagrees">
       <p>
-        <code>src/kohakutpu/top/mag_1m.v</code> is a reusable composition in a
-        directory of device tops. It is the concentrated memory boundary above,
-        and it is assembly, not a top.
+        <code>src/kohakuaccel/sysnode/sysnode.v</code> is a reusable composition
+        in a directory of device tops. It is the concentrated memory boundary
+        above, and it is assembly, not a top.
       </p>
     </Callout>
 
