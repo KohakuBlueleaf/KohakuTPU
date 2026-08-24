@@ -55,6 +55,6 @@ effort on what a router costs per port.
 
 ## Where today's source disagrees
 
-**`src/synth_top/mag_1m.v` is a reusable composition in a directory of device
+**`src/kohakutpu/top/mag_1m.v` is a reusable composition in a directory of device
 tops.** It is the concentrated memory boundary described above, and it is
 assembly, not a top.

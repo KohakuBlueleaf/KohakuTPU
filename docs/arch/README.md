@@ -13,8 +13,8 @@ system owns each piece, and what a unit of work does from the moment a host
 asks for it to the moment the answer is back in DRAM.
 
 Read this page first. Then read the system that concerns you: [noc](noc/) if
-you are writing a compute unit, [mas](mas/) if you are deciding how it gets its
-operands, [axi](axi.md) if you are attaching something from outside,
+you are writing a compute unit, [sysnode](sysnode/) if you are deciding how it
+gets its operands, [axi](axi.md) if you are attaching something from outside,
 [ship](ship/) if you are assembling a device image, [physical](physical/) if
 you are deciding where it all goes on the die.
 
@@ -37,10 +37,12 @@ One thing on this page is yours to write. Everything else is the framework.
           memory window   control window        DRAM boundary
                 |                |                     |
              +--v----------------v--+            +-----v-----+
-             |     edge complex     |            |   DDR4    |
-             |       arch/mas       |<---------->|controller |
+             |     system node      |            |   DDR4    |
+             |     arch/sysnode     |<---------->|controller |
              |                      |   AXI      | (vendor)  |
              |  memory ports        |            +-----------+
+             |  mover + transform   |
+             |  control processor   |
              |  control agent       |
              |  interlink endpoint  |------------> other meshes
              +----------+-----------+
@@ -80,14 +82,15 @@ hold.
 | System | Owns | Stops at |
 |---|---|---|
 | [**noc**](noc/) | the flit, the link, the router, the mesh coordinate space, and the port every endpoint attaches through | the meaning of what a flit carries |
-| [**mas**](mas/) | the memory half of the instruction set, the ports that serve it, the transform stage on each memory path, and the multiplexing of every non-compute consumer onto the fabric's edge | the DRAM controller, what the transform computes, and what the bytes mean |
+| [**sysnode**](sysnode/) | the memory half of the instruction set, the ports that serve it, the transform slot, the memory mover, the control processor, and the multiplexing of every non-compute consumer onto the fabric's edge | the DRAM controller, what the transform computes, and what the bytes mean |
 | [**axi**](axi.md) | the boundary to everything that is not the framework: host, DRAM, debug. Arbitration, clock crossing, width conversion, burst legality | anything that speaks flits |
 | [**ship**](ship/) | assembly: turning a mesh picture into a module, and joining several meshes into one image | placement of what it assembled |
 | [**physical**](physical/) | die regions, pblocks, clock domains, what may and may not cross a boundary | logic. It constrains; it does not compute |
 
-Two of those names are historical. `noc` and `mas` are what the source calls
-them and what the specs call them; read them as **fabric** and **memory agent**
-if that helps.
+`noc` is what the source and the specs call the fabric; read it as **fabric** if
+that helps. `sysnode` is the **system node** — MAG, the mover and the control
+processor as one block. It is never a plain "node": a NoC endpoint is a node,
+and every compute unit sits on one.
 
 ## What the framework actually removes
 
@@ -116,14 +119,15 @@ with a table sorting its parts into these four.
 | | What it is | Can you change it |
 |---|---|---|
 | **Fixed protocol** | flit format, the port handshake, memory request and response encoding, credit and retry, cross-mesh encapsulation | **No.** Change it and you are off the framework |
-| **Customizable addon** | ships working and is *designed* to be swapped or extended: the transform stage inside the memory agent, memory-agent staging of fetched lines, the endpoint-side L2 adapter, DRAM-port beat packing | **Yes** — that is what the slot exists for |
+| **Customizable addon** | ships working and is *designed* to be swapped or extended: the transform slot on the mover's read return, system-node staging, the endpoint-side L2 adapter, DRAM-port beat packing | **Yes** — that is what the slot exists for |
 | **Convention** | how to design a thing well, backed by worked examples: L1 fill and response tagging, unit-to-unit messaging, how to spend your instruction bits | Follow or don't. Some are **forced by the memory agent's design**; the rest are genuinely free, and each page says which |
 | **Yours** | the datapath, the memory structure, instruction semantics, pipeline depth, mesh shape and unit population, the compiler back end, the driver's device model | **Entirely** |
 
-The normative form of row one is [spec/](../spec/README.md). Row two is where
-the reference project plugs in its own pieces — KohakuTPU's numeric-format
-quantiser sits in the memory agent's transform slot, and nothing about that slot
-is specific to it.
+The normative form of row one is [spec/](../spec/README.md). Row two is where a
+project plugs in its own pieces — the reference instance's numeric-format
+quantiser is one occupant of the transform slot, and nothing about that slot is
+specific to it. `src/templates/transform/` is an identity occupant with a bench,
+which is what the slot looks like with nothing in it.
 
 Row three is the row most easily mistaken for one of the others. A convention is
 not a specification and not a default implementation. It is *here is how we did
@@ -135,7 +139,7 @@ An instruction flit's bits have three owners, and only the last is yours:
 
 ```
     [ routing header ]  [ memory request encoding ]  [ your payload ]
-      arch/noc            arch/mas                     you
+      arch/noc            arch/sysnode                 you
 ```
 
 The machine already knows how to *say* fetch this region, in these entries,
@@ -178,10 +182,10 @@ primitives, in one project. **L1 shape is not a framework fixture and nothing in
 this tree documents it as one.** What is fully defined is how you receive and
 send.
 
-`src/kohakunoc/noc_cu_null.v` attaches to the fabric with no compute and no
-memory at all, so the cost of *being connected* can be measured separately from
-the cost of computing. It is a measurement instrument and not a starting
-template — [noc](noc/) says why.
+`src/kohakuaccel/noc/endpoint/noc_cu_null.v` attaches to the fabric with no
+compute and no memory at all, so the cost of *being connected* can be measured
+separately from the cost of computing. It is a measurement instrument and not a
+starting template — [noc](noc/) says why.
 
 What the framework does assume about your workload, and what it costs you when
 the assumption is wrong, is in
@@ -195,10 +199,10 @@ One step of work, end to end. Nothing here is specific to what the compute unit
 computes.
 
 **1. The host places operands in DRAM.** It writes through the AXI surface into
-the edge complex's memory window. The window is an AXI slave with its own
-master behind it, so a long upload is one burst on the host side and whatever
-the memory wants on the other. If the machine declares a transform on the
-inbound path, it runs here, once per byte written, rather than once per read.
+the system node's memory window. The window is an AXI slave with its own master
+behind it, so a long upload is one burst on the host side and whatever the
+memory wants on the other. **The upload transforms nothing**: an operand is
+written in its final format, or converted afterwards by a mover move.
 
 **2. The host stages a program and kicks it.** Instructions are written into a
 staging RAM inside the control agent, again as ordinary AXI writes. The host
@@ -224,14 +228,17 @@ controller is.
 byte address, a length, and — if it wants a run of consecutive entries — a
 count. The flit is routed to whichever memory port serves its row.
 
-**5. The memory port fetches and streams back.** It issues AXI reads, runs the
-fetch-path transform if the request asked for one — that stage is yours to
-supply, see [mas](mas/) — and emits response flits each of which says where it
-belongs: the requester's own transaction tag plus
-this entry's position in the run, plus the word index within the entry. The
-receiver needs no cursor, and arrival order stops being load-bearing. A request
-may name extra destinations, so one fetch and one transform can serve several
-consumers.
+**5. The memory port fetches and streams back.** It issues AXI reads and emits
+response flits each of which says where it belongs: the requester's own
+transaction tag, this entry's position in the run, and the word index within the
+entry. The receiver needs no cursor, and arrival order stops being load-bearing.
+A request may name extra destinations, so one fetch can serve several consumers.
+
+**A fetch is never transformed.** The transform slot sits on the memory mover's
+read-return path and is reached only by a converting move — see
+[sysnode](sysnode/). A unit reads operands that are already in their final
+format, which is why a conversion is paid once per tensor rather than once per
+read of it.
 
 **6. The compute unit computes, then writes results.** A write is a descriptor
 flit followed by data flits. The memory port matches data to descriptor by

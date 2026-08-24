@@ -9,8 +9,9 @@ tags:
 
 # Assembly
 
-`src/synth_top/`, and the generator behind it — how the systems become a thing
-you can build.
+`scripts/py/gen_mesh.py` and what it writes — how the systems become a thing
+you can build. A project keeps its assemblies under its own tree; the reference
+one is `src/kohakutpu/top/generated/`.
 
 ## What it owns
 
@@ -87,7 +88,7 @@ is where the framework asks you what machine you want.
 | Not owned | Who owns it |
 |---|---|
 | routing, links, the compute-unit port | [noc](../noc/) |
-| what a memory port does once traffic reaches it | [mas](../mas/) |
+| what a memory port does once traffic reaches it | [sysnode](../sysnode/) |
 | the AXI interfaces at the boundary, and their discipline | [axi](../axi.md) |
 | which die region a ship lands in, its pblock, its clocks | [physical](../physical/) |
 | the vendor block design that instantiates ships, memory controllers and the host bridge | the build flow — [workflow/build](../../workflow/build.md) |

@@ -9,7 +9,7 @@ tags:
 
 # AXI surface
 
-`src/kohakuaxi/` — the layer where the framework meets things it did not write.
+`src/kohakuaccel/axi/` — the layer where the framework meets things it did not write.
 
 ## What it owns
 
@@ -265,7 +265,7 @@ Two things leak through and are worth knowing:
 | Not owned | Who owns it |
 |---|---|
 | flits, routing, the compute-unit port | [noc](noc/) |
-| descriptors, and what a memory request means | [mas](mas/) |
+| descriptors, and what a memory request means | [sysnode](sysnode/) |
 | the DRAM controller itself | vendor IP. This layer terminates at its AXI interface |
 | the host DMA engine | vendor IP, likewise |
 | the address map's *values* — where each window lands | [ship](ship/) fixes them per device image; this layer only decodes |
@@ -275,7 +275,7 @@ Two things leak through and are worth knowing:
 
 ## Where today's source disagrees
 
-**`src/kohakuaxi/` is four unrelated things in one directory.** Fabric
+**`src/kohakuaccel/axi/` is four unrelated things in one directory.** Fabric
 (`axi_n1.v`, `axi_xbar2.v`), reference models (`axi4_ram.v`, `axi4_master.v`),
 a control sequencer (`main_orch.v`), and a superseded block
 (`instruction_receiver.v`). The first three are separate concerns with separate
@@ -287,21 +287,21 @@ splitting them across packages is why "where does control live" has no good
 answer today.
 
 **There are two implementations of N-to-1 concentration.** `axi_n1.v` in this
-package and `mag_dram_port.v` in `src/kohakumas/` solve the same problem with
+package and `mag_dram_port.v` in `src/kohakuaccel/sysnode/core/` solve the same problem with
 the same structure — round-robin, five queues, index-in-ID response routing,
 asynchronous crossing. `mag_dram_port` additionally packs the internal beat up
 to the memory beat and carries byte strobes. They should be one module with the
 packing ratio as a parameter, in this package. `mag.v` instantiates
 `mag_dram_port` directly — one AXI master per agent — while
-`src/synth_top/mag_1m.v` remains a reusable composition around it that should
+`src/kohakutpu/top/mag_1m.v` remains a reusable composition around it that should
 not be sitting in a directory of device tops.
 
-**There are two memory models in two packages.** `src/kohakuaxi/axi4_ram.v` and
-`src/kohakumas/axi_ram.v`. They serve different purposes — reference versus
+**There are two memory models in two packages.** `src/kohakuaccel/verif/axi4_ram.v` and
+`src/kohakuaccel/verif/axi_ram.v`. They serve different purposes — reference versus
 multi-channel stub — which is fine, but both are simulation support and neither
 belongs next to synthesisable framework RTL.
 
-**`src/synth_top/poc/` contains copies of framework modules**, including
+**`src/reference/poc/` contains copies of framework modules**, including
 `noc_cu_base.v` and `async_fifo.v`. A measurement harness that carries its own
 divergent copy of the module under test is the one arrangement guaranteed to
 produce numbers that describe nothing.

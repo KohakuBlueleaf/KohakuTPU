@@ -10,16 +10,21 @@ tags:
 # Cache and staging: the design space
 
 Status: **two of the four are built, benched, and in the ship tops** --
-`noc-staging` form 2 as `src/kohakunoc/noc_l2_adapter.v`, and `mag-staging` as
-`src/kohakumas/mag_stage.v` behind `src/kohakumas/mag_stage_port.v`. Each is
-optional and they are selected independently (`gen_mesh.py --l2-mag / --l2-cu /
---l2-vec`). The four-mesh design carries 8 URAM per CU adapter and 64 per agent
-in 4 banks. No software targets either yet.
+`noc-staging` form 2 as `noc/endpoint/noc_l2_adapter.v`, and `mag-staging` as
+`sysnode/core/mag_stage.v` behind `sysnode/core/mag_stage_port.v`, both under
+`src/kohakuaccel/`. Each is optional and they are selected independently
+(`gen_mesh.py --l2-mag / --l2-cu / --l2-vec`). The four-mesh design carries
+8 URAM per CU adapter and 64 per agent in 4 banks.
 
-Numbers marked MEASURED come from the
-placed multi-mesh run of 2026-08-12 or from out-of-context synthesis; everything
-else is arithmetic or assumption and is labelled. The canonical copies of the
-measured figures are in
+**The control plane is verified on silicon and the data path is not.** All ten
+NoC L2 adapters on v7 mesh 0 answer their capability, base, enable and counter
+registers and take a written base; the store is disabled at reset, so an adapter
+nobody configured claims no address. No compute unit has issued a staging
+address on the card.
+
+Numbers marked MEASURED come from the placed multi-mesh run of 2026-08-12 or
+from out-of-context synthesis; everything else is arithmetic or assumption and
+is labelled. The canonical copies of the measured figures are in
 [projects/kohakutpu/results.md](../../projects/kohakutpu/results.md).
 
 ## The question
@@ -36,6 +41,7 @@ should live in between. What, and where?
 | [mag-staging](mag-staging.md) | reserved address range backed by URAM | inside the memory agent | low |
 | [noc-staging](noc-staging.md) | URAM node on a spare mesh local port | a mesh endpoint | low, reuses everything |
 | [noc-auto](noc-auto.md) | routers snoop and cache in flight | inside the router | **high** |
+| [endpoint-tagged](endpoint-tagged.md) | a tag array behind the CU port | a mesh endpoint | low — routing untouched |
 
 ## Shape of the answer
 
@@ -71,6 +77,15 @@ knowledge and without arbitration or coherence.
 **Any caching proposal must say what it adds beyond shared fetch.** For
 [noc-auto](noc-auto.md) in particular that is the central question, not the tag
 array.
+
+**[endpoint-tagged](endpoint-tagged.md) answers it differently from the rest, and
+it is why the "prefer explicit staging" conclusion above is narrower than it
+reads.** That conclusion holds for units whose addresses the compiler computed —
+matmul and vector. It does not hold for a client whose addresses are discovered
+at run time, and an application core is exactly that. What a tag array buys there
+is not bandwidth but **integration reach**: a core nobody here wrote emits AXI
+reads and will never emit a `MEM_RD_REQ` flit, so a tagged layer is the only way
+it can join a mesh at all.
 
 > One caveat on that argument as of this writing: the shared-fetch mechanism is
 > decoded by the hardware and **the driver does not set it**, because a follower

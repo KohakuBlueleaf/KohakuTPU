@@ -138,3 +138,30 @@ between a design that closes and one that does not.
 
 Disabled, it costs nothing at all; see
 [generation](generation.md#generation-is-elaboration-not-runtime).
+
+## Its accept decision must not reach the NoC
+
+**Twice the mesh's worst path has been the interlink's accept decision landing in
+a NoC router's own backpressure**, and from there in the *next* router's block-RAM
+enable. Both times the fix was a skid buffer, whose `i_ready` is never a function
+of `o_ready`:
+
+| where | what reached back | endpoints | TNS | WNS |
+|---|---|---|---|---|
+| landing channel | the converged DRAM arbiter's decision *was* the AW/W accept | 421 | −82.587 | −0.413 |
+| encoder | `enc_busy` is combinational in `enc_data`, because the packet-match compares the flit's mesh, txn and source | 24 | −1.936 | −0.144 |
+| after both | — | **0** | — | **+0.057** |
+
+The shape is the same each time and it is worth recognising directly: a flit's
+fields are sliced straight off a router's output register, so **any accept term
+that inspects them puts that router's own `ready` inside the interlink's cone.**
+The chain then zig-zags router → agent → router → agent → router across three
+hierarchies, which is why the second one measured 11 logic levels at **76%
+route** — the cells are logically far apart, so they are placed far apart.
+
+The extra cycle a skid costs is free here: cross-mesh traffic is push-only and
+synchronises on the doorbell, never on a producer going idle.
+
+Figures are OOC synthesis of `ktpu_ship_2x2_6c2v_1m_pe`, `xcvu13p-fhgb2104-2L-e`,
+3.333 ns. Synthesis slack is optimistic — this vehicle has lost 0.740 ns synth to
+route before — so a positive number here is not yet a closed one.

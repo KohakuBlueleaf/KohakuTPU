@@ -12,9 +12,9 @@ tags:
 One centralised store inside the memory agent. See [README](README.md) for the
 alternatives.
 
-Status: **built and shipping** as `src/kohakumas/mag_stage.v`, arbitrated by
-`src/kohakumas/mag_stage_port.v` on the converged internal path, benched by
-`tests/mas/mag_stage_tb.v`, and selected with `gen_mesh.py --l2-mag`. Two claims
+Status: **built and shipping** as `src/kohakuaccel/sysnode/core/mag_stage.v`, arbitrated by
+`src/kohakuaccel/sysnode/core/mag_stage_port.v` on the converged internal path, benched by
+`tests/sysnode/mag_stage_tb.v`, and selected with `gen_mesh.py --l2-mag`. Two claims
 below are corrected by the RTL -- the line is 1,024 bits and not 936, and
 `xpm_memory_sdpram` is *simple* dual port, so §4's port split is arbitration.
 
@@ -23,9 +23,10 @@ below are corrected by the RTL -- the line is 1,024 bits and not 936, and
 L2 is a reserved range in the existing address map. That settles, with no further
 decisions:
 
-- **No new instruction.** `FILL` and `DRAIN` already carry a 34-bit byte address
-  ([projects/kohakutpu/isa.md](../../projects/kohakutpu/isa.md)). Point one at the
-  L2 range and it stages; point an operand fetch there and it reads back.
+- **No new instruction.** `FILL` and `DRAIN` already carry a full 40-bit byte
+  address ([projects/kohakutpu/isa.md](../../projects/kohakutpu/isa.md)), and
+  `addr[39]` is the aperture bit. Point one at the L2 range and it stages; point
+  an operand fetch there and it reads back.
 - **Host access is free.** It is in the address map, so the host DMA reaches it
   like any memory -- push weights straight in, read L2 back for debug.
 - **No write policy.** Staging is not write-back and never pretends to be. The
