@@ -18,13 +18,9 @@ module noc_l2_adapter_tb;
     localparam integer BITS  = 18;               // 5 + clog2(DEPTH)
     localparam [7:0]   CB    = 8'hE0;            // the addon control window
 
-    localparam [3:0] T_MEM_RD_REQ  = 4'h0,
-                     T_MEM_WR_REQ  = 4'h1,
-                     T_MEM_RD_RESP = 4'h2,
-                     T_MEM_WR_ACK  = 4'h3,
-                     T_MEM_WR_DATA = 4'h4,
-                     T_CU_INST     = 4'h5,
-                     T_CU_CTRL     = 4'h7;
+    localparam [3:0] T_MEM_RD_REQ = 4'h0, T_MEM_WR_REQ = 4'h1;
+    localparam [3:0] T_MEM_RD_RESP = 4'h2, T_MEM_WR_ACK = 4'h3;
+    localparam [3:0] T_MEM_WR_DATA = 4'h4, T_CU_INST = 4'h5, T_CU_CTRL = 4'h7;
 
     // The endpoint behind the adapter, the node its requests are addressed to,
     // and the controller that programs the window.
@@ -33,7 +29,9 @@ module noc_l2_adapter_tb;
     localparam [3:0] OX = 4'd0, OY = 4'd0;
 
     reg clk = 0, rst = 1;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     // ---------------------------------------------------------- the two DUTs
     reg  [FW-1:0] rt_data, eu_data;
@@ -72,7 +70,9 @@ module noc_l2_adapter_tb;
             checks = checks + 1;
             if (!cond) begin
                 errors = errors + 1;
-                if (errors < 25) $display("  FAIL %0s [%0d]", what, where);
+                if (errors < 25) begin
+                    $display("  FAIL %0s [%0d]", what, where);
+                end
             end
         end
     endtask
@@ -82,11 +82,19 @@ module noc_l2_adapter_tb;
     integer byp_bad = 0, byp_seen = 0;
 
     always @(posedge clk) if (!rst) begin
-        if ((b_ep_data  !== rt_data)  || (b_ep_valid !== rt_valid) ||
-            (b_rt_busy  !== ep_busy)  || (b_ru_data  !== eu_data)  ||
-            (b_ru_valid !== eu_valid) || (b_eu_busy  !== ru_busy))
+        if (
+            (b_ep_data !== rt_data)
+            || (b_ep_valid !== rt_valid)
+            || (b_rt_busy !== ep_busy)
+            || (b_ru_data !== eu_data)
+            || (b_ru_valid !== eu_valid)
+            || (b_eu_busy !== ru_busy)
+        ) begin
             byp_bad = byp_bad + 1;
-        if (b_ru_valid && !ru_busy) byp_seen = byp_seen + 1;
+        end
+        if (b_ru_valid && !ru_busy) begin
+            byp_seen = byp_seen + 1;
+        end
     end
 
     // ==================================================== link drivers
@@ -122,11 +130,15 @@ module noc_l2_adapter_tb;
 
     always @(posedge clk) if (!rst) begin
         if (ep_valid && !ep_busy) begin
-            if (ep_n < CAP) ep_f[ep_n] = ep_data;
+            if (ep_n < CAP) begin
+                ep_f[ep_n] = ep_data;
+            end
             ep_n = ep_n + 1;
         end
         if (ru_valid && !ru_busy) begin
-            if (ru_n < CAP) ru_f[ru_n] = ru_data;
+            if (ru_n < CAP) begin
+                ru_f[ru_n] = ru_data;
+            end
             ru_n = ru_n + 1;
         end
     end
@@ -143,7 +155,9 @@ module noc_l2_adapter_tb;
     always @(posedge clk) if (!rst) begin
         rt_hi = (rt_busy && !ep_busy) ? rt_hi + 1 : 0;
         eu_hi = (eu_busy && !ru_busy) ? eu_hi + 1 : 0;
-        if ((rt_hi > BUSY_MAX) || (eu_hi > BUSY_MAX)) stuck = stuck + 1;
+        if ((rt_hi > BUSY_MAX) || (eu_hi > BUSY_MAX)) begin
+            stuck = stuck + 1;
+        end
     end
 
     // Field accessors on a captured flit.
@@ -240,8 +254,9 @@ module noc_l2_adapter_tb;
         integer k;
         begin
             ep_send(wr_req(txn, line_addr(ln0), n[7:0] - 8'd1));
-            for (k = 0; k < n; k = k + 1)
+            for (k = 0; k < n; k = k + 1) begin
                 ep_send(wr_data(txn, line_pay(ln0 + k)));
+            end
         end
     endtask
 
@@ -341,13 +356,27 @@ module noc_l2_adapter_tb;
         for (i = 0; i < 16 && i < ep_n; i = i + 1) begin
             f = ep_f[i];
             e = i / 4;  w = i % 4;
-            if (f_ty(f)   !== T_MEM_RD_RESP)          bad = bad + 1;
-            if (f_tag(f)  !== (8'h10 + e[7:0]))       bad = bad + 1;
-            if (f_word(f) !== w[1:0])                 bad = bad + 1;
-            if (f_last(f) !== (w == 3))               bad = bad + 1;
-            if (f_pay(f)  !== line_pay(i))            bad = bad + 1;
-            if ((f_dx(f) !== EX) || (f_dy(f) !== EY)) bad = bad + 1;
-            if ((f_sx(f) !== MX) || (f_sy(f) !== MY)) bad = bad + 1;
+            if (f_ty(f)   !== T_MEM_RD_RESP) begin
+                bad = bad + 1;
+            end
+            if (f_tag(f)  !== (8'h10 + e[7:0])) begin
+                bad = bad + 1;
+            end
+            if (f_word(f) !== w[1:0]) begin
+                bad = bad + 1;
+            end
+            if (f_last(f) !== (w == 3)) begin
+                bad = bad + 1;
+            end
+            if (f_pay(f)  !== line_pay(i)) begin
+                bad = bad + 1;
+            end
+            if ((f_dx(f) !== EX) || (f_dy(f) !== EY)) begin
+                bad = bad + 1;
+            end
+            if ((f_sx(f) !== MX) || (f_sy(f) !== MY)) begin
+                bad = bad + 1;
+            end
         end
         chk(bad == 0, "every response word is tagged and placed correctly", bad);
 
@@ -361,11 +390,21 @@ module noc_l2_adapter_tb;
         bad = 0;
         for (i = 0; i < 4 && i < ep_n; i = i + 1) begin
             f = ep_f[i];
-            if (f_ty(f)   !== T_MEM_RD_RESP)  bad = bad + 1;
-            if (f_tag(f)  !== 8'h33)          bad = bad + 1;
-            if (f_word(f) !== 2'd0)           bad = bad + 1;
-            if (f_last(f) !== (i == 3))       bad = bad + 1;
-            if (f_pay(f)  !== line_pay(8+i))  bad = bad + 1;
+            if (f_ty(f)   !== T_MEM_RD_RESP) begin
+                bad = bad + 1;
+            end
+            if (f_tag(f)  !== 8'h33) begin
+                bad = bad + 1;
+            end
+            if (f_word(f) !== 2'd0) begin
+                bad = bad + 1;
+            end
+            if (f_last(f) !== (i == 3)) begin
+                bad = bad + 1;
+            end
+            if (f_pay(f)  !== line_pay(8+i)) begin
+                bad = bad + 1;
+            end
         end
         chk(bad == 0, "a plain read returns its beats verbatim", bad);
         chk(ru_n == 0, "a plain in-range read is not forwarded", ru_n);
@@ -420,8 +459,11 @@ module noc_l2_adapter_tb;
         chk(ep_n == 4, "the last entry that fits under the guard is served",
             ep_n);
         bad = 0;
-        for (i = 0; i < 4 && i < ep_n; i = i + 1)
-            if (f_pay(ep_f[i]) !== line_pay(DEPTH-5+i)) bad = bad + 1;
+        for (i = 0; i < 4 && i < ep_n; i = i + 1) begin
+            if (f_pay(ep_f[i]) !== line_pay(DEPTH-5+i)) begin
+                bad = bad + 1;
+            end
+        end
         chk(bad == 0, "with the right lines", bad);
 
         // One line further up ends on the guard line, so it is forwarded.
@@ -439,13 +481,18 @@ module noc_l2_adapter_tb;
         chk(ru_n == 1, "a run reaching UP into the window is forwarded", ru_n);
         chk(ep_n == 0, "and served from nothing local", ep_n);
 
-        // ============================================ 6. QUANT and multicast
-        $display("--- 6. QUANT and nd stay with MAG: 2 ERRORs expected ---");
+        // ================================ 6. a reserved flag, and multicast
+        // flags[4] IS IGNORED, not refused. It was QUANT; a fetch is never
+        // transformed now, so the bit is reserved and a requester that sets it
+        // gets an ordinary untransformed read (spec/flit-format s4.1.1). This
+        // asserted the opposite -- that such a read is forwarded to MAG -- which
+        // would answer the same request differently depending on a dead bit.
+        $display("--- 6. a reserved flag is ignored; nd stays with MAG ---");
         clear_capture;
-        ep_send(rd_stream(8'h60, line_addr(0), 8'd2, 8'd4, 8'h10));  // QUANT
+        ep_send(rd_stream(8'h60, line_addr(0), 8'd2, 8'd4, 8'h10));  // flags[4]
         settle(60);
-        chk(ru_n == 1, "an in-range QUANT read is forwarded", ru_n);
-        chk(ep_n == 0, "staging converts nothing", ep_n);
+        chk(ru_n == 0, "a read setting the reserved flag is NOT forwarded", ru_n);
+        chk(ep_n == 8, "2 entries of 4 words, served like any other", ep_n);
 
         clear_capture;
         f = rd_stream(8'h61, line_addr(0), 8'd2, 8'd4, 8'h00);
@@ -477,8 +524,11 @@ module noc_l2_adapter_tb;
         settle(200);
         chk(ep_n == 16, "and every response survives the stall", ep_n);
         bad = 0;
-        for (i = 0; i < 16 && i < ep_n; i = i + 1)
-            if (f_pay(ep_f[i]) !== line_pay(i)) bad = bad + 1;
+        for (i = 0; i < 16 && i < ep_n; i = i + 1) begin
+            if (f_pay(ep_f[i]) !== line_pay(i)) begin
+                bad = bad + 1;
+            end
+        end
         chk(bad == 0, "in order, with the right lines", bad);
 
         // A router that never accepts must not stop a hit: the response never
@@ -501,12 +551,22 @@ module noc_l2_adapter_tb;
         settle(300);
         chk(ep_n == 16, "both runs were served in full", ep_n);
         bad = 0;
-        for (i = 0; i < 8 && i < ep_n; i = i + 1)
-            if ((f_tag(ep_f[i]) !== (8'hA0 + i/4)) ||
-                (f_pay(ep_f[i]) !== line_pay(i))) bad = bad + 1;
-        for (i = 8; i < 16 && i < ep_n; i = i + 1)
-            if ((f_tag(ep_f[i]) !== (8'hB0 + (i-8)/4)) ||
-                (f_pay(ep_f[i]) !== line_pay(i))) bad = bad + 1;
+        for (i = 0; i < 8 && i < ep_n; i = i + 1) begin
+            if (
+                (f_tag(ep_f[i]) !== (8'hA0 + i/4))
+                || (f_pay(ep_f[i]) !== line_pay(i))
+            ) begin
+                bad = bad + 1;
+            end
+        end
+        for (i = 8; i < 16 && i < ep_n; i = i + 1) begin
+            if (
+                (f_tag(ep_f[i]) !== (8'hB0 + (i-8)/4))
+                || (f_pay(ep_f[i]) !== line_pay(i))
+            ) begin
+                bad = bad + 1;
+            end
+        end
         chk(bad == 0, "each run kept its own tags and lines", bad);
 
         // ============================================ 11. the counters, and off
@@ -542,8 +602,12 @@ module noc_l2_adapter_tb;
         chk(byp_seen > 0, "and really did carry the traffic", byp_seen);
 
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end

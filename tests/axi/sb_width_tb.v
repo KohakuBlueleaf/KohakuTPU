@@ -25,7 +25,9 @@ module sb_width_tb;
     localparam integer IDW  = 4;
     localparam integer TAGW = 4;
     localparam integer DSTW = 2;
-    localparam integer WORDS = 64;                  // subordinate RAM, in SDW
+    // 4 KB is the largest legal INCR burst at any width, so the RAM has to hold
+    // one at the NARROWEST subordinate or the sweep runs off the end of it.
+    localparam integer WORDS = (16384 / (SDW/8));    // subordinate RAM, in SDW
 
     localparam integer MB = MW / 8;                 // manager beat, bytes
     localparam integer SB = SDW / 8;                // subordinate beat, bytes
@@ -34,7 +36,9 @@ module sb_width_tb;
     integer errors = 0, checks = 0;
 
     reg clk = 0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
     reg rstn = 0;
 
     // ---------------------------------------------------------- the manager
@@ -67,8 +71,15 @@ module sb_width_tb;
     wire [FW-1:0]   rs_data;
 
     // Every address is this port's; one segment, identity translation.
+    //
+    // 256 DEEP, not 64. This bench drives the full legal INCR burst -- up to
+    // 256 beats -- and a request FIFO shallower than the longest packet wedges
+    // it: at 64 the write stalled at beat 69 and sb_nmu's own assertion said
+    // so. The SHIPPING topology already sizes it this way (sb_line4.v gives its
+    // bulk stations REQ_DEPTH/RSP_DEPTH 256 with that exact reason recorded), so
+    // 64 here was the bench contradicting both the ship and its own `maxlen`.
     sb_nmu #(.MW(MW), .MIDW(IDW), .AW(AW), .FW(FW), .TAGW(TAGW), .DSTW(DSTW),
-             .NSEG(1), .REQ_DEPTH(64), .RSP_DEPTH(64), .MAX_BURST(0),
+             .NSEG(1), .REQ_DEPTH(256), .RSP_DEPTH(256), .MAX_BURST(0),
              .SEG_BASE({AW{1'b0}}), .SEG_MASK({AW{1'b0}}),
              .SEG_XLT({AW{1'b0}}), .SEG_DST({DSTW{1'b0}}),
              .SEG_DPORT({DSTW{1'b0}}), .SEG_VLD(1'b1)) u_nmu (
@@ -157,6 +168,8 @@ module sb_width_tb;
     endfunction
 
     integer spin;
+    integer li, blen, maxlen, biggest, nerr0;
+    integer lens [0:15];
 
     task tick;
         begin @(negedge clk); #TS; end
@@ -245,9 +258,10 @@ module sb_width_tb;
                         exp = bpat(ba + k);
                         if (got !== exp) begin
                             errors = errors + 1;
-                            if (errors < 12)
+                            if (errors < 12) begin
                                 $display("  FAIL rd @%h beat %0d byte %0d: got %h exp %h",
                                          a, b, k, got, exp);
+                            end
                         end
                     end
                     if ((b == len) !== rlast) begin
@@ -309,8 +323,40 @@ module sb_width_tb;
         wr(40'h400 + MB, 8'd2, MSZ);
         rd(40'h400 + MB, 8'd2, MSZ);
 
-        if (errors) $display("FAIL  %0d errors in %0d checks", errors, checks);
-        else        $display("PASS  %0d checks", checks);
+        // 5. BURST LENGTH, swept to the AXI4 maximum. AWLEN is 8 bits and a
+        //    burst may not cross a 4 KB boundary, so the legal ceiling is
+        //    min(256, 4096/MB) and it is MANDATORY, not a sample: silicon
+        //    fails a 256-beat 64-bit burst that 8 beats survives.
+        lens[0]=1;   lens[1]=2;   lens[2]=3;   lens[3]=4;
+        lens[4]=7;   lens[5]=8;   lens[6]=15;  lens[7]=16;
+        lens[8]=31;  lens[9]=32;  lens[10]=63; lens[11]=64;
+        lens[12]=127; lens[13]=128; lens[14]=255; lens[15]=256;
+        maxlen = (4096/MB > 256) ? 256 : 4096/MB;
+        biggest = 0;
+        for (li = 0; li < 16; li = li + 1) begin
+            blen = lens[li];
+            if (blen <= maxlen) begin
+                nerr0 = errors;
+                wr(40'h2000, blen[7:0] - 8'd1, MSZ);
+                rd(40'h2000, blen[7:0] - 8'd1, MSZ);
+                if (errors == nerr0) begin
+                    biggest = blen;
+                    $display("    BURST %0d beats: ok", blen);
+                end else begin
+                    $display("    BURST %0d beats: FAIL (%0d new errors)",
+                             blen, errors - nerr0);
+                end
+            end
+        end
+        $display("    LARGEST PASSING BURST: %0d beats of %0d bits (legal max %0d)",
+                 biggest, MW, maxlen);
+
+        if (errors) begin
+            $display("FAIL  %0d errors in %0d checks", errors, checks);
+        end
+        else begin
+            $display("PASS  %0d checks", checks);
+        end
         $finish;
     end
 
