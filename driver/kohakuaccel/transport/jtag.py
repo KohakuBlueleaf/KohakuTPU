@@ -143,6 +143,12 @@ class JtagTransport(Transport):
         # rewrites data on its way to the card.
         self.write_shift = 0
         self.scratch = scratch
+        # Off until a bitstream is shown to return consecutive words for a
+        # multi-beat read; `burst_read_ok` is that proof and the board carries
+        # the answer. Measured on v7: 8 KB reads 1.0 KB/s single-beat against
+        # 41.1 KB/s burst, so this is the difference between a 2.7 s kernel and
+        # a 0.2 s one.
+        self.prefer_burst_read = False
         self._sock = None
         self._connect()
 
@@ -165,6 +171,22 @@ class JtagTransport(Transport):
                 if retry:
                     raise TransportUnavailable(f"lost the Tcl server ({exc})") from exc
         raise AssertionError("unreachable")
+
+    def tck_hz(self, hz: int | None = None) -> int:
+        """The cable's JTAG clock. Returns the rate in effect after any change.
+
+        THIS IS THE LINK SPEED AND NOTHING ELSE BOUNDS BULK TRANSFER once bursts
+        are used: at 8 KB per exchange the round trip is amortised and what is
+        left is bits on the wire. Measured 2026-08-23 at the inherited default:
+        8 KB in 0.885 s, about 74 kbit/s of payload.
+
+        Raising it is the cheapest bandwidth there is, and the ceiling is the
+        cable and the board's signal integrity, not the design.
+        """
+        tgt = "[current_hw_target]"
+        if hz is not None:
+            self._eval(f"set_property PARAM.FREQUENCY {int(hz)} {tgt}")
+        return int(self._eval(f"get_property PARAM.FREQUENCY {tgt}").strip())
 
     def program(self, bitstream: str, probes: str | None = None) -> None:
         """Reprogram the FPGA: the only recovery for a fabric-wedged port.
@@ -260,9 +282,7 @@ class JtagTransport(Transport):
         n = bpw + self.read_skew
         words = self._eval(f"jaxi::read {self.base + addr} {n}").split()
         sel = words[self.read_skew : self.read_skew + bpw]
-        raw = b"".join(
-            int(w, 16).to_bytes(self.beat_bytes, "little") for w in sel
-        )
+        raw = b"".join(int(w, 16).to_bytes(self.beat_bytes, "little") for w in sel)
         return int.from_bytes(raw, "little")
 
     def measure_read_skew(self, addr: int, accept, window: int = MAX_SHIFT_BEATS):
@@ -286,6 +306,33 @@ class JtagTransport(Transport):
         self._burst(addr, _beats(data, self.beat_bytes))
         return None
 
+    def read_burst(self, addr: int, nbytes: int) -> bytes:
+        """One multi-beat read, beats concatenated in address order.
+
+        8x fewer JTAG transactions than `read_block`: 8 KB is 4 exchanges rather
+        than 1,024 single-beat reads. Valid only where `burst_read_ok` says so.
+        """
+        require_words(nbytes)
+        out = bytearray()
+        step = max(1, self.max_block // self.beat_bytes)
+        for off in range(0, nbytes, step * self.beat_bytes):
+            n = min(step, (nbytes - off) // self.beat_bytes)
+            at = self.base + addr + off
+            for w in self._eval(f"jaxi::read {at} {n}").split():
+                out += int(w, 16).to_bytes(self.beat_bytes, "little")
+        return bytes(out)
+
+    def burst_read_ok(self, addr: int, nbytes: int = 256) -> bool:
+        """Whether a multi-beat read returns CONSECUTIVE words on this bitstream.
+
+        On the pre-v7 bus it did not — beat k returned one lane of word k — which
+        is why `read_block` is single-beat. That was a property of the fabric, not
+        of AXI, so it must be re-measured per bitstream rather than assumed.
+        """
+        want = bytes((i * 37 + 5) & 0xFF for i in range(nbytes))
+        self.write_block(addr, want)
+        return self.read_burst(addr, nbytes) == want
+
     def read_block(self, addr: int, nbytes: int) -> bytes:
         """Address-exact block read: single-beat accesses, batched per round trip.
 
@@ -293,8 +340,11 @@ class JtagTransport(Transport):
         beat (measured: beat k returns one lane of word k), so a burst cannot
         return consecutive bytes — every access is one beat. But the SESSION
         cost is per Tcl round trip, so one eval runs a whole loop of reads and
-        returns the values together.
+        returns the values together. `burst_read_ok` says whether this bitstream
+        still needs that; where it does not, `read_burst` is 8x fewer exchanges.
         """
+        if self.prefer_burst_read:
+            return self.read_burst(addr, nbytes)
         require_words(nbytes)
         out = bytearray()
         batch = 256 * self.beat_bytes
@@ -343,6 +393,36 @@ class JtagTransport(Transport):
                 f"{int.from_bytes(got, 'little'):016x}, written "
                 f"{int.from_bytes(data[:WORD_BYTES], 'little'):016x}"
             )
+
+    def calibrate_max_block(self, addr: int, top: int = 1 << 14) -> int:
+        """Raise `max_block` to the largest burst this port actually completes.
+
+        THE ROUND TRIP IS THE COST, NOT THE BYTES. One Vivado exchange is ~12 ms
+        whatever it carries, so a 12 KB upload at the inherited 64-byte cap is
+        192 exchanges and 2.3 s for work the silicon does in microseconds. Every
+        doubling here halves the wall time of every upload the driver ever does.
+
+        Walks up powers of two from the current setting, writing and verifying at
+        each, and leaves `max_block` at the largest that round-tripped exactly.
+        `addr` must be scribble-safe and granule-aligned.
+
+        A burst past what the port can hold does not fail — IT WEDGES THE LINK,
+        and only a reprogram clears it. So this prints each size BEFORE trying it:
+        if the session dies, the last line named the size that did it.
+        """
+        best = self.max_block
+        size = best
+        while size <= top:
+            print(f"calibrate_max_block: trying {size} B", flush=True)
+            want = bytes((i * 31 + size) & 0xFF for i in range(size))
+            self.max_block = size
+            self.write_block(addr, want)
+            if self.read_block(addr, size) != want:
+                break
+            best = size
+            size *= 2
+        self.max_block = best
+        return best
 
     def measure_write_shift(self, scratch: int | None = None) -> int:
         """Beats by which write DATA lags the write ADDRESS. 0 is a clean path.

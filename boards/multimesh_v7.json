@@ -1,0 +1,43 @@
+{
+  "name": "multimesh_v7",
+  "design": "multimesh_v7",
+  "transport": "jtag",
+  "meshes": 4,
+  "vco_mhz": 1200,
+  "wizard_outputs": {
+    "noc":   {"index": 0, "nominal_mhz": 300},
+    "mat2x": {"index": 1, "nominal_mhz": 600},
+    "vec":   {"index": 2, "nominal_mhz": 300},
+    "mag":   {"index": 3, "nominal_mhz": 300}
+  },
+  "profiles": {
+    "low":  {"noc": 100, "mat2x": 200, "vec": 100, "mag": 100},
+    "mid":  {"noc": 200, "mat2x": 400, "vec": 200, "mag": 200},
+    "safe": {"noc": 200, "mat2x": 300, "vec": 300, "mag": 200},
+    "ship": {"noc": 300, "mat2x": 600, "vec": 300, "mag": 300}
+  },
+  "fmax_measured": {
+    "mesh": 0,
+    "date": "2026-08-23",
+    "clean_to": {"mat2x": 400, "vec": 350, "noc": 300, "mag": 250},
+    "method": "one domain laddered while the other three are held at low, scored as rel error against fp32 on a workload that drives the unit the domain clocks -- matmul for mat2x, rmsnorm for vec"
+  },
+  "idle_profile": "low",
+  "ctrl_stride": "0x10000",
+  "ctrl_base": "0x800000",
+  "wizard_base": "0x900000",
+  "ddrctrl_base": "0x0",
+  "ddrctrl_stride": "0x100000",
+  "mem_window_shift": 40,
+  "mem_window_offset": 1,
+  "dram_mesh_shift": 36,
+  "mem_words": 134217728,
+  "agent_at_offset_zero": true,
+  "max_burst_beats": 64,
+  "bitstream": "C:/Users/apoll/Desktop/vivado/multimesh_v7/multimesh_v7.runs/impl_1/multimesh_v7_wrapper.bit",
+  "probes": "",
+  "host_write_granule": 32,
+  "host_write_replicates": false,
+  "burst_read": true,
+  "notes": "v7: the v6.7 width-converting station bus plus sb_axi2lite at every Lite port, lut-shrunk mat/vec/mag. HARDWARE-VERIFIED 2026-08-23: all four meshes enumerate at 8+2 / 6+2 (SLR1) / 8+2 / 8+2 = 38 units (30 clusters + 8 vector cores; the 36 recorded here until 2026-08-23 was an arithmetic slip), CU_VERSION 4, mesh_ready on all four, A_CAPS 0x01040120 identical on all four (v6.7's mesh1 decode discrepancy is gone). MEASURED FMAX, mesh 0: mat2x clean to 400 and dead at 700, vec 350, noc 300 (dies at 350 with no graceful degradation -- a routing fabric loses a packet rather than corrupting a number), mag 250. THE `ship` PROFILE ASKS FOR MORE THAN THREE OF THE FOUR CAN DO -- mat2x 600 against 400, mag 300 against 250, noc exactly at its cliff. Use `safe` on v7 silicon; `ship` is what v7.1 exists to earn. host_write_replicates FALSE is now MEASURED, not assumed -- Card.verify_write_path is byte-exact on all four meshes, so the rebuilt bus does not replicate host writes and the 32-bit-manager-era lore is retired. A full low-profile retune lands on all four wizards. Clock writes MUST use composed 64-bit words with the duty half = 0xC350 (see v7t_accept.tcl); the JTAG core forces every beat to 64 bits (CMD.SIZE -size is deprecated and ignored), so a read-merge would write duty=0, which the wizard SLVERRs. max_burst_beats 64 (512 bytes) is a WALKED ceiling, not an inherited constant: a transfer longer than the port's burst does not fail, it HANGS the manager, and only a reprogram clears it. Re-derive it per bitstream with JtagTransport.calibrate_max_block, which prints each size BEFORE trying it -- so if the session dies, the last line named the size that killed it. burst_read true says a multi-beat READ returns consecutive words on this bus; that was false pre-v7 (beat k returned one lane of word k), which is why read_block is single-beat by default. Check it with JtagTransport.burst_read_ok rather than assuming it, and never assume the pre-v7 answer either."
+}
