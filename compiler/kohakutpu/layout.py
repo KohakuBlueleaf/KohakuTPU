@@ -124,22 +124,35 @@ class ConvEntry:
 
     `gm` is the tile height the sweep will use, which decides only the tail --
     the last tile reads a tap past the plane's end.
+
+    `step` is the convolution's STRIDE, splitting the plane by residue into
+    `step*step` sub-planes, which is what keeps a strided tap a constant offset.
+    It is not called `stride`: `lang.backend._held` reads that name off a layout
+    as a BATCH BYTE STRIDE, and a 2 there sizes the whole operand at one element.
     """
 
     pad: int = 1
     gm: int = 8
+    step: int = 1
 
     @property
     def key(self) -> str:
-        return f"conv:{self.pad}:{self.gm}"
+        step = f":s{self.step}" if self.step != 1 else ""
+        return f"conv:{self.pad}:{self.gm}{step}"
 
     def geometry(self, shape: tuple) -> tuple:
-        """``(wp, plane, tail)`` for an ``[H][W][C]`` activation, in positions."""
+        """``(wp, plane, tail)`` for an ``[H][W][C]`` activation, in positions.
+
+        `wp` is one SUB-PLANE's; `plane` is all `stride*stride` of them.
+        """
         h, w, _ = shape
-        _, wp, plane = T.conv_geometry(h, w, self.pad)
-        useful = (h - 1) * wp + w
+        s = self.step
+        _, wp, plane = T.conv_geometry(h, w, self.pad, s)
+        hs, ws = -(-h // s), -(-w // s)
+        useful = (hs - 1) * wp + ws
         swept = -(-useful // (self.gm * LANES)) * self.gm * LANES
-        return wp, plane, max(0, -(-(swept + 2 * wp + 2 - plane) // LANES))
+        far = swept + T.stride_tap(2, 2, wp, plane // (s * s), s)
+        return wp, plane, max(0, -(-(far - plane) // LANES))
 
     def nbytes(self, shape: tuple) -> int:
         _, plane, tail = self.geometry(shape)
@@ -151,7 +164,7 @@ class ConvEntry:
         if arr.ndim != 3:
             raise LayoutError(f"a conv activation is [H][W][C]; got {arr.shape}")
         _, _, tail = self.geometry(arr.shape)
-        words = T.to_fp16_words_conv(arr, self.pad, tail)
+        words = T.to_fp16_words_conv(arr, self.pad, tail, stride=self.step)
         return b"".join(w.to_bytes(WORD_BYTES, "little") for w in words)
 
     def unpack(self, raw: bytes, shape: tuple):
@@ -160,7 +173,8 @@ class ConvEntry:
             for at in range(0, len(raw), WORD_BYTES)
         ]
         return np.asarray(
-            T.from_fp16_words_conv(words, tuple(shape), self.pad), np.float64
+            T.from_fp16_words_conv(words, tuple(shape), self.pad, stride=self.step),
+            np.float64,
         )
 
 

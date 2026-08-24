@@ -12,7 +12,16 @@ That is the "near full control" end -- `api.py` above this is "near none".
 """
 
 from kohakutpu.ops.activation import gelu, relu, sigmoid, silu
-from kohakutpu.ops.conv2d import PLANE, conv2d, positions, weights_for_k
+from kohakutpu.ops.conv2d import (
+    PLANE,
+    PLANE2,
+    conv2d,
+    conv2d_stride2,
+    conv2d_upsample2,
+    positions,
+    weights_for_k,
+    weights_for_upsample2,
+)
 from kohakutpu.ops.elementwise import (
     absolute,
     div,
@@ -38,8 +47,11 @@ LOG2E = 1.4426950408889634
 __all__ = [
     "LOG2E",
     "PLANE",
+    "PLANE2",
     "absolute",
     "conv2d",
+    "conv2d_stride2",
+    "conv2d_upsample2",
     "div",
     "exp2",
     "gelu",
@@ -63,5 +75,6 @@ __all__ = [
     "softmax",
     "sub",
     "weights_for_k",
+    "weights_for_upsample2",
     "where",
 ]

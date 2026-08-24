@@ -110,16 +110,22 @@ def to_fp16_words_tiled(x, groups_per_tile, blocks_per_chunk, word_bits=256):
     return [int.from_bytes(row.tobytes(), "little") for row in flat]
 
 
-def conv_geometry(h, w, pad=1):
+def conv_geometry(h, w, pad=1, stride=1):
     """The padded plane one 32-channel block occupies: ``(hp, wp, positions)``.
 
     `positions` is ``hp*wp`` rounded up to a whole entry, because a channel
     block that ended mid-entry would put pixels of two different blocks in one
     entry's four lanes -- and an entry's lanes must be four adjacent pixels of
     ONE block for the tap offset below to mean anything.
+
+    At `stride > 1` the block holds `stride*stride` SUB-PLANES of the residue
+    split, each padded and entry-aligned on its own, and `hp`/`wp` are one
+    sub-plane's. That is what makes a strided tap a constant again: see
+    :func:`stride_tap`.
     """
-    hp, wp = h + 2 * pad, w + 2 * pad
-    return hp, wp, -(-(hp * wp) // LANES) * LANES
+    hs, ws = -(-h // stride), -(-w // stride)
+    hp, wp = hs + 2 * pad, ws + 2 * pad
+    return hp, wp, -(-(hp * wp) // LANES) * LANES * stride * stride
 
 
 def tap_offset(dy, dx, wp):
@@ -133,7 +139,49 @@ def tap_offset(dy, dx, wp):
     return (dy * wp + dx) * KBLOCK * 2
 
 
-def to_fp16_words_conv(x, pad=1, tail=0, word_bits=256):
+def stride_tap(dy, dx, wp, sub, stride):
+    """Tap ``(dy, dx)``'s offset in POSITIONS, for a strided convolution.
+
+    Output `(oy, ox)` reads input `(s*oy + dy - pad, s*ox + dx - pad)`. Split
+    that coordinate by residue -- `s*oy + dy - 1 = s*(oy + qy) + ry` -- and the
+    row lands in sub-plane `ry` at sub-pixel `oy + qy`, with `qy` and `ry`
+    depending on the TAP alone. So the offset is a constant, as at stride 1, and
+    the whole difference is which sub-plane it lands in.
+
+    The `+1`s are the sub-plane's own padding, and they are what keep the offset
+    non-negative and the centre tap at `wp + 1` -- the same place stride 1 puts
+    it, so `positions` reads the same for both.
+    """
+    qy, ry = divmod(dy - 1, stride)
+    qx, rx = divmod(dx - 1, stride)
+    return (ry * stride + rx) * sub + (qy + 1) * wp + (qx + 1)
+
+
+def conv_planes(x, pad, stride):
+    """``[C/32][plane][32]`` for an ``[H][W][C]`` activation, as an array.
+
+    At `stride > 1` the block's plane is `stride*stride` sub-planes in residue
+    order `ry*stride + rx`, which is the order :func:`stride_tap` addresses.
+    """
+    h, w, c = x.shape
+    _, wp, plane = conv_geometry(h, w, pad, stride)
+    sub, blocks = plane // (stride * stride), c // KBLOCK
+
+    out = np.zeros((blocks, plane, KBLOCK), np.float16)
+    for ry in range(stride):
+        for rx in range(stride):
+            part = np.asarray(x[ry::stride, rx::stride, :], np.float16)
+            ph, pw, _ = part.shape
+            where = (
+                (np.arange(ph) + pad)[:, None] * wp + (np.arange(pw) + pad)
+            ).ravel()
+            at = (ry * stride + rx) * sub
+            body = part.reshape(ph * pw, blocks, KBLOCK).transpose(1, 0, 2)
+            out[:, at + where, :] = body
+    return out
+
+
+def to_fp16_words_conv(x, pad=1, tail=0, word_bits=256, stride=1):
     """Serialise an NHWC activation as the conv operand `[C/32][plane][32]`.
 
     `x` is ``[H][W][C]`` with ``C % 32 == 0``; the result is the same tensor
@@ -144,6 +192,7 @@ def to_fp16_words_conv(x, pad=1, tail=0, word_bits=256):
 
     `tail` is entries of zeros appended, which the last channel block needs
     because the last TILE of the sweep reads a tap past the end of the plane.
+    `stride` splits the plane by residue -- see :func:`conv_planes`.
 
     Raises :class:`ValueError` for a rank or a channel count the layout cannot
     hold.
@@ -151,19 +200,13 @@ def to_fp16_words_conv(x, pad=1, tail=0, word_bits=256):
     x = np.asarray(x)
     if x.ndim != 3:
         raise ValueError(f"a conv activation is [H][W][C]; got {x.shape}")
-    h, w, c = x.shape
+    c = x.shape[2]
     if c % KBLOCK:
         raise ValueError(
             f"{c} channels is not a whole number of {KBLOCK}-element blocks, and "
             f"the block is this layout's outer axis; pad the channels first"
         )
-    _, wp, plane = conv_geometry(h, w, pad)
-    blocks = c // KBLOCK
-
-    out = np.zeros((blocks, plane, KBLOCK), np.float16)
-    body = np.asarray(x, np.float16).reshape(h * w, blocks, KBLOCK)
-    where = ((np.arange(h) + pad)[:, None] * wp + (np.arange(w) + pad)).reshape(-1)
-    out[:, where, :] = body.transpose(1, 0, 2)
+    out = conv_planes(x, pad, stride)
     # The tail goes after the LAST block, not after each: the blocks are one
     # run, so an overrun in block b reads block b+1 and only the last runs off.
     flat = np.concatenate(
@@ -175,19 +218,28 @@ def to_fp16_words_conv(x, pad=1, tail=0, word_bits=256):
     return [int.from_bytes(row.tobytes(), "little") for row in rows]
 
 
-def from_fp16_words_conv(words, shape, pad=1, word_bits=256):
+def from_fp16_words_conv(words, shape, pad=1, word_bits=256, stride=1):
     """The activation :func:`to_fp16_words_conv` packed, back as ``[H][W][C]``.
 
     Bit-exact: the packer only reorders and zero-fills, so nothing here rounds.
     """
     h, w, c = shape
-    _, wp, plane = conv_geometry(h, w, pad)
-    blocks = c // KBLOCK
+    _, wp, plane = conv_geometry(h, w, pad, stride)
+    sub, blocks = plane // (stride * stride), c // KBLOCK
     raw = b"".join(int(word).to_bytes(word_bits // 8, "little") for word in words)
     flat = np.frombuffer(raw, np.float16)[: blocks * plane * KBLOCK]
     held = flat.reshape(blocks, plane, KBLOCK)
-    where = ((np.arange(h) + pad)[:, None] * wp + (np.arange(w) + pad)).reshape(-1)
-    return held[:, where, :].transpose(1, 0, 2).reshape(h, w, c)
+    out = np.zeros((h, w, c), np.float16)
+    for ry in range(stride):
+        for rx in range(stride):
+            ph, pw = len(range(ry, h, stride)), len(range(rx, w, stride))
+            where = (
+                (np.arange(ph) + pad)[:, None] * wp + (np.arange(pw) + pad)
+            ).ravel()
+            at = (ry * stride + rx) * sub
+            got = held[:, at + where, :].transpose(1, 0, 2).reshape(ph, pw, c)
+            out[ry::stride, rx::stride, :] = got
+    return out
 
 
 def to_mxfp7_words_tiled(x, groups_per_tile, blocks_per_chunk, blayout=0):
