@@ -33,6 +33,7 @@ param(
     [string[]]$Main = @(
         'C:\Users\apoll\Desktop\vivado\multimesh_v7t\multimesh_v7t.runs',
         'C:\Users\apoll\Desktop\vivado\multimesh_v7\multimesh_v7.runs',
+        'C:\Users\apoll\Desktop\vivado\multimesh_v71\multimesh_v71.runs',
         'C:\Users\apoll\Desktop\vivado\multimesh_v67\multimesh_v67.runs',
         'C:\Users\apoll\Desktop\vivado\multimesh_v65\multimesh_v65.runs'
     ),
@@ -228,27 +229,90 @@ function Get-ProbeStatus {
     [pscustomobject]$st
 }
 
+function Get-OocStatus {
+    <# The tier launch_runs walks BEFORE the top run: every module-reference
+       and IP out-of-context synth. Neither impl_1 nor synth_1 has a log while
+       it runs, so without this row a main project is invisible for the ~40 min
+       the mesh OOC runs take -- which reads as 'not started'.
+       Progress comes from Vivado's own per-run markers, so counting done/total
+       costs no file reads at all. #>
+    param([string]$RunsDir, [string]$Name)
+    $ooc = @(Get-ChildItem $RunsDir -Directory -ErrorAction SilentlyContinue |
+             Where-Object { $_.Name -ne 'synth_1' -and $_.Name -notlike 'impl*' })
+    # begin.rst is written at launch, so it -- not the directory -- is the
+    # denominator: stale dirs from an earlier build never got one this round.
+    $beg = @($ooc | Where-Object { Test-Path (Join-Path $_.FullName '.vivado.begin.rst') })
+    if (-not $beg.Count) { return $null }
+    $done = @($beg | Where-Object { Test-Path (Join-Path $_.FullName '.vivado.end.rst') })
+    $live = @($beg | Where-Object { -not (Test-Path (Join-Path $_.FullName '.vivado.end.rst')) })
+    $logs = @($beg | ForEach-Object { Join-Path $_.FullName 'runme.log' } |
+              Where-Object { Test-Path $_ } | ForEach-Object { Get-Item -LiteralPath $_ })
+    if (-not $logs.Count) { return $null }
+    $new = @($logs | Sort-Object LastWriteTime -Descending)[0]
+    $old = @($beg | ForEach-Object { Get-Item -LiteralPath (Join-Path $_.FullName '.vivado.begin.rst') } |
+             Sort-Object LastWriteTime)[0]
+    $idle = New-TimeSpan -Start $new.LastWriteTime -End (Get-Date)
+    $names = @($live | Select-Object -First 3 | ForEach-Object {
+                  $_.Name -replace ('^' + [regex]::Escape($Name) + '_'), '' -replace '_synth_1$', '' })
+    [pscustomobject][ordered]@{
+        probe = 'MAIN:' + $Name
+        stage = 'ooc'
+        step  = '{0}/{1} done  <- {2}' -f $done.Count, $beg.Count, ($names -join ' ')
+        elapsed = '{0:h\hmm\m}' -f (New-TimeSpan -Start $old.LastWriteTime -End (Get-Date))
+        idle = if ($idle.TotalMinutes -lt 60) { '{0:n0}m' -f $idle.TotalMinutes }
+               else { '{0:n0}h{1:n0}m' -f [math]::Floor($idle.TotalHours), $idle.Minutes }
+        idleMin = $idle.TotalMinutes
+        wns = ''; dwns = ' '; tns = ''; whs = ''; ths = ''; cong = ''
+        state = if ($idle.TotalMinutes -ge 30) { 'dead' } else { 'running' }
+        err = ''; memGB = ''
+    }
+}
+
 function Get-MainStatus {
-    <# One row per main project: impl_1 once it has a log, synth_1 before. #>
+    <# One row per main project: impl_1 once it has a log, synth_1 before that,
+       and the OOC tier before either exists. #>
     param([string]$RunsDir)
     if (-not $RunsDir -or -not (Test-Path $RunsDir)) { return $null }
+    $name = (Split-Path $RunsDir -Leaf) -replace '\.runs$', ''
     $implLog = Join-Path $RunsDir 'impl_1\runme.log'
     $synLog  = Join-Path $RunsDir 'synth_1\runme.log'
     $isImpl = Test-Path $implLog
     $log = if ($isImpl) { $implLog } else { $synLog }
-    if (-not (Test-Path $log)) { return $null }
+    if (-not (Test-Path $log)) { return Get-OocStatus -RunsDir $RunsDir -Name $name }
     $fi = Get-Item -LiteralPath $log
     $p = Parse-Impl (Get-Tail $log)
-    $idle = (New-TimeSpan -Start $fi.LastWriteTime -End (Get-Date))
-    $done = $isImpl -and ((Get-Tail $log 40).lines -match 'write_bitstream completed|route_design completed successfully')
+    # Route done still leaves ~10 min of reports + the bitstream, so 'routed'.
+    $tail40 = (Get-Tail $log 40).lines
+    $done   = $isImpl -and ($tail40 -match 'write_bitstream completed')
+    $routed = $isImpl -and -not $done -and ($tail40 -match 'route_design completed successfully')
     $synStep = ''
+    $synDone = $false
     if (-not $isImpl) {
-        $sl = (Get-Tail $log 200).lines | Where-Object { $_ -match '^Start\s+\w' } | Select-Object -Last 1
-        if ($sl) { $synStep = ($sl -replace '^Start\s+', '') }
+        $synDone = Test-Path (Join-Path $RunsDir 'synth_1\.vivado.end.rst')
+        if ($synDone) {
+            # synth_1's log freezes when synth ends but the driver runs on for
+            # an hour; heartbeat from there or the row reads STUCK when it isn't.
+            $drv = @('build.log', 'impl.log') |
+                   ForEach-Object { Join-Path (Split-Path $RunsDir -Parent) $_ } |
+                   Where-Object { Test-Path $_ } | ForEach-Object { Get-Item -LiteralPath $_ } |
+                   Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if ($drv -and $drv.LastWriteTime -gt $fi.LastWriteTime) {
+                $fi = $drv
+                $dl = (Get-Tail $drv.FullName 400).lines |
+                      Where-Object { $_ -match '^#{1,2}\s*\w' } | Select-Object -Last 1
+                $synStep = 'synth done; ' + $(if ($dl) { ($dl -replace '^#+\s*', '') } else { $drv.Name })
+            } else { $synStep = 'synth done, driver idle' }
+        } else {
+            $sl = (Get-Tail $log 200).lines | Where-Object { $_ -match '^Start\s+\w' } | Select-Object -Last 1
+            if ($sl) { $synStep = ($sl -replace '^Start\s+', '') }
+        }
     }
+    $idle = (New-TimeSpan -Start $fi.LastWriteTime -End (Get-Date))
     $st = [pscustomobject][ordered]@{
-        probe = 'MAIN:' + ((Split-Path $RunsDir -Leaf) -replace '\.runs$', '')
-        stage = if ($done) { 'done' } elseif (-not $isImpl) { 'synth' } else { switch ($p.cmd) {
+        probe = 'MAIN:' + $name
+        stage = if ($done) { 'done' } elseif ($routed) { 'routed' }
+                elseif (-not $isImpl) { if ($synDone) { 'synth-done' } else { 'synth' } }
+                else { switch ($p.cmd) {
             'opt_design' { 'opt' } 'place_design' { 'place' }
             'phys_opt_design' { 'physopt' } 'route_design' { 'route' }
             'write_bitstream' { 'bitstream' } default { 'impl' } } }
@@ -333,8 +397,11 @@ function Show-Status {
             # Same liveness rule as probe rows: a running Vivado holding the
             # project outranks a quiet log. Route Global Iterations go 45m+
             # without a log line while fully computing.
+            # Alnum-only boundary: multimesh_v7 must not swallow multimesh_v7t,
+            # but multimesh_v7t_wrapper.vdi IS v7t's own worker.
             $proj = (Split-Path $md -Leaf) -replace '\.runs$', ''
-            $mine = @($procs | Where-Object { $_.CommandLine -and $_.CommandLine -match [regex]::Escape($proj) })
+            $mine = @($procs | Where-Object { $_.CommandLine -and
+                      $_.CommandLine -match ([regex]::Escape($proj) + '(?![0-9a-zA-Z])') })
             if ($mine.Count) {
                 $m.state = if ($m.state -eq 'done') { 'done' } else { 'running' }
                 $m.memGB = '{0:n1}' -f (($mine | Measure-Object WorkingSetSize -Sum).Sum / 1GB)
