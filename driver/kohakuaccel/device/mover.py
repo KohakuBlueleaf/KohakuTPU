@@ -75,6 +75,9 @@ FAULTS = {
     4: "mode -- TRANSPOSE is a canned form that was never built; use COPY",
     5: "element width",
     6: "alignment: a destination that is not 32-byte aligned",
+    # F_XPAD: a padded element issues no read, so the occupant's fixed IN_BITS
+    # would be a beat short forever.
+    7: "a bound axis on a MODE_XFORM move; a transform descriptor tiles whole",
 }
 
 

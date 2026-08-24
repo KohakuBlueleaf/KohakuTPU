@@ -127,8 +127,12 @@ def control_write(
 ) -> int | None:
     """Set one node's control register over the mailbox; returns what it answers.
 
-    The reply carries the register, so a caller can confirm the write landed
-    rather than assume it. None means nothing answered at `coord`.
+    COMPARE THE RETURN AGAINST WHAT YOU WROTE. `op` is not universally honoured:
+    `noc_cu_base.v:241` reads the index and nothing above it, so a write to an
+    ordinary compute unit performs a READ and replies with the old value, which
+    is indistinguishable from a write that landed. `noc_l2_adapter.v:194` is the
+    only endpoint in the tree that decodes `op` today. None means nothing
+    answered at `coord`.
     """
     from kohakuaccel.device.flit import ctrl_write as _ctrl_write
 
