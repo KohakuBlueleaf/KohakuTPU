@@ -6,8 +6,10 @@
 //   NoC port 0 ──┬─►  mag_mem_port ──► AXI master 0 ─┐
 //   NoC port 1 ──┼─►  mag_mem_port ──► AXI master 1 ─┤
 //        ...     │                                   ├──► memory
-//   AXI slave, memory ──► upload ────► AXI master N ─┘
-//   (host, FP16 in)       (quantise on the way in)
+//   AXI slave, memory ──► upload ────► AXI master N ─┤
+//   (host, verbatim)                                 │
+//   mover ──(read return)──► mag_xform ──► master M ─┤
+//   control processor ─────────────────► master CP ──┘
 //                 │
 //   AXI slave, control ──► agent (noc_orchestrator)
 //
@@ -22,9 +24,10 @@
 // SEVERAL MEMORY PORTS, AND THAT IS THE ARCHITECTURE RATHER THAN AN OPTION. A
 // port serves ~2 clusters. A single read engine is what stopped the machine
 // scaling -- and it stopped while nothing was saturated, so the constraint was
-// the server, not the bandwidth. Each port now owns its intake queues, read
-// engine, quantiser, write slots and AXI channel; see mag_mem_port.v and
-// docs/mas/spec.md.
+// the server, not the bandwidth. Each port owns its intake queues, read engine,
+// write slots and AXI channel -- but NOT a transform: that is one shared bank
+// ON THE MOVER'S READ RETURN, reached only through descriptor mode 5. See
+// mag_mem_port.v, mag_xform.v and docs/arch/sysnode/.
 //
 // The ports are placed at DIFFERENT mesh nodes on purpose. Routing is X-then-Y
 // on clamped coordinates, so a port at (0,y) draws traffic to router (1,y) --
@@ -56,9 +59,23 @@ module mag #(
     parameter integer TUSER_W    = 96,
     parameter integer IL_RX_BEATS  = 64,
     parameter integer IL_MAX_BEATS = 32,
+    // The MAG control processor's memory channel (docs/arch/sysnode/control-processor.md
+    // s3.1). ZERO GENERATES NONE OF IT, like ILINK: the ports fold to constants
+    // and MP1 is unchanged, so the shipping bitstream stays identical.
+    parameter integer CTRL_PE    = 0,
+    // The transform slot. Selection is an ID, not a bit per transform, so the
+    // field is sized for a design with several occupants even though the
+    // reference project ships one -- widening it later is a protocol change.
+    parameter integer XFORM_SLOTS     = 1,
+    parameter integer XID_W           = 4,
+    parameter integer XMODE_W         = 4,
+    // Declared by the occupant, needed by the engine before it has run.
+    parameter integer XFORM_IN_BITS   = 2048,
+    parameter integer XFORM_OUT_WORDS = 4,
     // INTERNAL requesters, never leaving MAG: memory ports, host upload, mover,
     // and with the interlink the one inbound remote writes land through.
-    parameter integer MP1        = MEM_PORTS + 2 + ((ILINK != 0) ? 1 : 0),
+    parameter integer MP1        = MEM_PORTS + 2 + ((ILINK != 0) ? 1 : 0)
+                                                 + ((CTRL_PE != 0) ? 1 : 0),
     // mag_dram_port packs DATA_W -> MW, so at 512 an 8-beat 256-bit burst
     // becomes 4 beats. Defaults EQUAL, which is the R=1 no-sub-beat case.
     parameter integer MW         = DATA_W,
@@ -213,6 +230,45 @@ module mag #(
     input  wire                  link0_in_tvalid,
     output wire                  link0_in_tready,
 
+    // ---- the control processor's memory channel, CTRL_PE only -------------
+    // A slave on MAG; the processor is the master. Present at any CTRL_PE for
+    // the same reason the link ports are: Verilog has no conditional port.
+    // The control processor commanding the mover directly: inside the node this
+    // is a wire, which is the whole point of putting it here rather than at a
+    // mesh port. It wins over the host window when both pulse.
+    input  wire                  pe_cfg_en,
+    input  wire [7:0]            pe_cfg_addr,
+    input  wire [63:0]           pe_cfg_data,
+
+    // The transform slot's occupant registers, reached by the processor as
+    // ordinary loads and stores. The HOST has no path to them.
+    input  wire                  pe_xcfg_en,
+    input  wire [XID_W-1:0]      pe_xcfg_id,
+    input  wire [7:0]            pe_xcfg_addr,
+    input  wire [31:0]           pe_xcfg_data,
+    output wire [31:0]           pe_xcfg_rdata,
+    output wire [3:0]            xf_fault,
+
+    input  wire [ADDR_W-1:0]     cp_awaddr,
+    input  wire [7:0]            cp_awlen,
+    input  wire                  cp_awvalid,
+    output wire                  cp_awready,
+    input  wire [DATA_W-1:0]     cp_wdata,
+    input  wire [DATA_W/8-1:0]   cp_wstrb,
+    input  wire                  cp_wlast,
+    input  wire                  cp_wvalid,
+    output wire                  cp_wready,
+    output wire                  cp_bvalid,
+    input  wire                  cp_bready,
+    input  wire [ADDR_W-1:0]     cp_araddr,
+    input  wire [7:0]            cp_arlen,
+    input  wire                  cp_arvalid,
+    output wire                  cp_arready,
+    output wire [DATA_W-1:0]     cp_rdata,
+    output wire                  cp_rlast,
+    output wire                  cp_rvalid,
+    input  wire                  cp_rready,
+
     output wire [LINK_W-1:0]     link1_out_tdata,
     output wire [TUSER_W-1:0]    link1_out_tuser,
     output wire                  link1_out_tlast,
@@ -230,6 +286,9 @@ module mag #(
     // Only reachable when ILINK is set; at 0 it aliases MV and nothing drives
     // it, which is why every use of LK is inside the same generate.
     localparam integer LK = (ILINK != 0) ? MEM_PORTS + 2 : MEM_PORTS + 1;
+    // Same aliasing rule as LK: at CTRL_PE=0 this names MV and nothing drives
+    // it, so every use below sits inside the same generate.
+    localparam integer CP = (CTRL_PE != 0) ? (MEM_PORTS + 2 + ((ILINK != 0) ? 1 : 0)) : (MEM_PORTS + 1);
 
     localparam integer LSB = $clog2(DATA_W/8);
 
@@ -347,9 +406,8 @@ module mag #(
     // negligible; engine priority would let a busy port starve dispatch exactly
     // when the machine is busiest.
     // =====================================================================
-    localparam [3:0] T_MEM_RD_REQ  = 4'h0,
-                     T_MEM_WR_REQ  = 4'h1,
-                     T_MEM_WR_DATA = 4'h4;
+    localparam [3:0] T_MEM_RD_REQ = 4'h0, T_MEM_WR_REQ = 4'h1;
+    localparam [3:0] T_MEM_WR_DATA = 4'h4;
     localparam integer TY_LSB = FLIT_WIDTH - 4*POS_WIDTH - 4;
     localparam integer DY_LSB = FLIT_WIDTH - 2*POS_WIDTH;
     // NOC_RSVD. Bit 2 marks a flit for another mesh and is zero on every flit a
@@ -394,8 +452,12 @@ module mag #(
         assign in_to_enc[gd] = mem_in_valid[gd] && in_is_rem[gd];
         // An address naming another mesh on a flit NOT marked remote. That is
         // the one case still aliased onto local DRAM, and the compiler's bug.
-        assign rq_rem[gd] = mem_in_valid[gd] && in_is_req[gd] &&
-                            !in_is_rem[gd] && (rq != il_mesh);
+        assign rq_rem[gd] = (
+            mem_in_valid[gd]
+            && in_is_req[gd]
+            && !in_is_rem[gd]
+            && (rq != il_mesh)
+        );
     end
     endgenerate
 
@@ -439,23 +501,29 @@ module mag #(
     wire agt_drop  = agt_any &&  agt_in_busy;   // cannot be taken at all
 
 `ifndef SYNTHESIS
-    always @(posedge clk)
-        if (resetn && agt_drop)
+    always @(posedge clk) begin
+        if (resetn && agt_drop) begin
             $display("%0t ERROR mag: agent RX full -- control flit DROPPED at port %0d. The mailbox is not being drained; memory on this port was kept running instead.",
                      $time, agt_sel);
+        end
+    end
 `endif
 
     always @(posedge clk) begin
-        if (!resetn) agt_rr <= 0;
-        else if (agt_any && !agt_in_busy)
+        if (!resetn) begin
+            agt_rr <= 0;
+        end
+        else if (agt_any && !agt_in_busy) begin
             agt_rr <= (agt_sel + 1) % MEM_PORTS;
+        end
     end
 
     // ---- inbound arbitration into the interlink's encapsulator -----------
     // The same round-robin as the agent's, and separate from it: a flit bound
     // for another mesh and a control flit are different consumers, and sharing
     // the arbiter would make a stalled link hold up dispatch.
-    reg  [$clog2(MEM_PORTS > 1 ? MEM_PORTS : 2)-1:0] enc_rr;
+    localparam integer PSEL_W = $clog2(MEM_PORTS > 1 ? MEM_PORTS : 2);
+    reg  [PSEL_W-1:0] enc_rr;
     integer ei;
     reg  [31:0] enc_sel;
     reg         enc_any;
@@ -469,13 +537,48 @@ module mag #(
             end
         end
     end
-    assign enc_in_data  = mem_in_data[enc_sel*FLIT_WIDTH +: FLIT_WIDTH];
-    assign enc_in_valid = enc_any;
+    wire [31:0] enc_rr_nxt = (enc_sel + 32'd1) % MEM_PORTS;
+
+    // A SKID, and the reason is measured. mag_ilink's `enc_busy` is
+    // combinational in `enc_data` -- `acc_match` compares the flit's mesh, txn
+    // and source against the open packet's -- so the NoC router's OWN
+    // backpressure was a function of the encoder's field compare. All 24
+    // failing paths of the m62+processor build started at one router's
+    // `west_out_switch/out_valid` and ended at the NEXT router's block-RAM
+    // enable: 11 levels, 3.111 ns, 76% of it route because the chain zig-zags
+    // router -> MAG -> router -> MAG -> router across three hierarchies.
+    // sb_skid's `i_ready` is `!hold_valid`, so the ports' backpressure now
+    // comes off a flop and the compare starts inside the skid.
+    //
+    // The extra cycle costs nothing here: cross-mesh traffic is push-only and
+    // synchronised on the doorbell, never on a producer going idle.
+    wire                  enc_skid_rdy;
+    wire [FLIT_WIDTH-1:0] enc_skid_data;
+    wire                  enc_skid_valid;
+
+    sb_skid #(.W(FLIT_WIDTH)) u_enc_skid (
+        .clk(clk),
+        .rst(!resetn),
+        .i_valid(enc_any),
+        .i_ready(enc_skid_rdy),
+        .i_data(mem_in_data[enc_sel*FLIT_WIDTH +: FLIT_WIDTH]),
+        .o_valid(enc_skid_valid),
+        .o_ready(!enc_in_busy),
+        .o_data(enc_skid_data)
+    );
+
+    assign enc_in_data  = enc_skid_data;
+    assign enc_in_valid = enc_skid_valid;
 
     always @(posedge clk) begin
-        if (!resetn) enc_rr <= 0;
-        else if (enc_any && !enc_in_busy)
-            enc_rr <= (enc_sel + 1) % MEM_PORTS;
+        if (!resetn) begin
+            enc_rr <= 0;
+        end else if (enc_any && enc_skid_rdy) begin
+            // Sliced EXPLICITLY: `% MEM_PORTS` computes 32 bits, and assigning
+            // that straight to enc_rr reads as a latent overflow on a counter
+            // that provably cannot have one.
+            enc_rr <= enc_rr_nxt[PSEL_W-1:0];
+        end
     end
 
     // ---- outbound: which port does a flit leave from? --------------------
@@ -485,11 +588,17 @@ module mag #(
     reg [31:0] agt_port, inj_port;
     always @(*) begin
         agt_port = 32'd0;                       // port 0 unless a row matches
-        for (ao = 0; ao < MEM_PORTS; ao = ao + 1)
-            if (port_y[ao] == agt_dy) agt_port = ao;
+        for (ao = 0; ao < MEM_PORTS; ao = ao + 1) begin
+            if (port_y[ao] == agt_dy) begin
+                agt_port = ao;
+            end
+        end
         inj_port = 32'd0;
-        for (io = 0; io < MEM_PORTS; io = io + 1)
-            if (port_y[io] == inj_dy) inj_port = io;
+        for (io = 0; io < MEM_PORTS; io = io + 1) begin
+            if (port_y[io] == inj_dy) begin
+                inj_port = io;
+            end
+        end
     end
 
     // =====================================================================
@@ -501,10 +610,8 @@ module mag #(
     genvar gp;
     generate
     for (gp = 0; gp < MEM_PORTS; gp = gp + 1) begin : g_port
-        localparam integer PX = (gp == 0) ? MEM_X : (gp == 1) ? MEM_X1 :
-                                (gp == 2) ? MEM_X2 : MEM_X3;
-        localparam integer PY = (gp == 0) ? MEM_Y : (gp == 1) ? MEM_Y1 :
-                                (gp == 2) ? MEM_Y2 : MEM_Y3;
+        localparam integer PX = (gp == 0) ? MEM_X : (gp == 1) ? MEM_X1 : (gp == 2) ? MEM_X2 : MEM_X3;
+        localparam integer PY = (gp == 0) ? MEM_Y : (gp == 1) ? MEM_Y1 : (gp == 2) ? MEM_Y2 : MEM_Y3;
 
         mag_mem_port #(
             .FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH),
@@ -563,8 +670,15 @@ module mag #(
         // yet" holds, and that is bounded by the port count.
         // REMOTE FIRST, because a memory flit can now be both, and the engine
         // is not the consumer of one that is leaving this mesh.
+        // The remote arm reads the SKID's ready, not the encoder's busy -- that
+        // is the whole point of the skid above. `ILINK != 0` keeps the ILINK=0
+        // behaviour bit-exact: there `enc_in_busy` folds to 1, the skid can
+        // never drain, and without this term the first remote flit would be
+        // accepted into a buffer nothing empties and silently lost instead of
+        // holding the port as it does today.
         assign mem_in_busy[gp] = in_is_rem[gp]
-                               ? !((enc_sel == gp) && !enc_in_busy)
+                               ? !((enc_sel == gp) && enc_skid_rdy
+                                   && (ILINK != 0))
                                : in_is_mem[gp]
                                  ? eng_in_busy[gp]
                                  : !((agt_sel == gp) && (agt_grant || agt_drop));
@@ -573,18 +687,24 @@ module mag #(
         // agent's traffic is a handful of control flits; the interlink's is a
         // burst that a far mesh is already waiting on, and it is bounded by the
         // credit the far end granted. Neither can hold the engine indefinitely.
-        assign mem_out_data[gp*FLIT_WIDTH +: FLIT_WIDTH] =
-            (agt_out_valid && agt_port == gp) ? agt_out_data :
-            (inj_out_valid && inj_port == gp) ? inj_out_data : eng_out_data[gp];
-        assign mem_out_valid[gp] =
-            (agt_out_valid && agt_port == gp) ? 1'b1 :
-            (inj_out_valid && inj_port == gp) ? 1'b1 : eng_out_valid[gp];
+        assign mem_out_data[gp*FLIT_WIDTH +: FLIT_WIDTH] = (
+            (agt_out_valid && agt_port == gp) ? agt_out_data
+            : (inj_out_valid && inj_port == gp) ? inj_out_data
+            : eng_out_data[gp]
+        );
+        assign mem_out_valid[gp] = (
+            (agt_out_valid && agt_port == gp) ? 1'b1
+            : (inj_out_valid && inj_port == gp) ? 1'b1
+            : eng_out_valid[gp]
+        );
     end
     endgenerate
 
     assign agt_out_busy = mem_out_busy[agt_port];
-    assign inj_out_busy = mem_out_busy[inj_port] ||
-                          (agt_out_valid && (agt_port == inj_port));
+    assign inj_out_busy = (
+        mem_out_busy[inj_port]
+        || (agt_out_valid && (agt_port == inj_port))
+    );
 
     // Counters summed across ports, so the AXI-level totals stay one number
     // whatever the port count is.
@@ -604,7 +724,7 @@ module mag #(
     // against a steady state that is neither, and sharing an FSM with the NoC
     // write path stops a long upload and a cluster's write overlapping.
     // =====================================================================
-    localparam [2:0] HS_IDLE = 3'd0, HS_WR = 3'd1, HS_RD = 3'd2, HS_WQ = 3'd3;
+    localparam [1:0] HS_IDLE = 2'd0, HS_WR = 2'd1, HS_RD = 2'd2;
     reg [2:0] hst;
 
     reg  [ID_W-1:0]   h_awid, h_arid;
@@ -640,6 +760,11 @@ module mag #(
     // The memory mover, on its own AXI channel. It never touches a port's
     // state; the only thing it shares is the address space on the far side.
     // =====================================================================
+    // ONE ENGINE. The converting move used to be a second engine muxed onto this
+    // channel; the slot now sits on the mover's own read-return path, so the mux
+    // is gone and the converged arbiter sees one requester fewer -- which is the
+    // direction slack went at Gate 0 (+0.088 -> -0.372 for one EXTRA requester
+    // at two ports).
     wire [ID_W-1:0]   mv_awid, mv_arid;
     wire [ADDR_W-1:0] mv_awaddr, mv_araddr;
     wire [7:0]        mv_awlen, mv_arlen;
@@ -654,25 +779,62 @@ module mag #(
     // or above is the interlink's. At ILINK=0 the gate is a constant and the
     // mover sees every write, as it always has -- and the offsets above 0x50
     // it ignored then are the ones the interlink claims now.
-    wire mv_cfg_mine = mv_cfg_en && ((ILINK == 0) || !mv_cfg_addr[7]);
+    wire host_cfg_mine = mv_cfg_en && ((ILINK == 0) || !mv_cfg_addr[7]);
+    // Gated on the PARAMETER, not the port: every existing top leaves pe_cfg_en
+    // unconnected, and an unconnected input is Z -- which made the mux X and the
+    // mover silently take no descriptor at all.
+    wire pe_cfg_live   = (CTRL_PE != 0) && pe_cfg_en;
+    wire mv_cfg_mine   = pe_cfg_live || host_cfg_mine;
+    wire [7:0]  mv_cfg_a = pe_cfg_live ? pe_cfg_addr : mv_cfg_addr;
+    wire [63:0] mv_cfg_d = pe_cfg_live ? pe_cfg_data : mv_cfg_data;
 
-    mm_mover #(.DATA_W(DATA_W), .ADDR_W(ADDR_W), .ID_W(ID_W)) u_mover (
+    // ---- the transform slot, on the mover's read-return path -------------
+    wire                x_req, x_gnt, x_start, x_bv, x_done;
+    wire [XID_W-1:0]    x_id;
+    wire [XMODE_W-1:0]  x_mode;
+    wire [DATA_W-1:0]   x_beat, x_w0, x_w1, x_w2, x_w3;
+
+    mm_mover #(.DATA_W(DATA_W), .ADDR_W(ADDR_W), .ID_W(ID_W),
+               .XID_W(XID_W), .XMODE_W(XMODE_W),
+               .XF_IN_BITS(XFORM_IN_BITS),
+               .XF_OUT_WORDS(XFORM_OUT_WORDS)) u_mover (
         .clk(clk), .resetn(resetn),
-        .cfg_en(mv_cfg_mine), .cfg_addr(mv_cfg_addr), .cfg_data(mv_cfg_data),
+        .cfg_en(mv_cfg_mine), .cfg_addr(mv_cfg_a), .cfg_data(mv_cfg_d),
         .stat_busy(mv_busy), .stat_fault(mv_fault), .stat_done(mv_done),
         .m_awid(mv_awid), .m_awaddr(mv_awaddr), .m_awlen(mv_awlen),
-        .m_awsize(mv_awsize), .m_awburst(mv_awburst), .m_awvalid(mv_awvalid),
-        .m_awready(mvx_awready),
+        .m_awsize(mv_awsize), .m_awburst(mv_awburst),
+        .m_awvalid(mv_awvalid), .m_awready(mvx_awready),
         .m_wdata(mv_wdata), .m_wstrb(mv_wstrb), .m_wlast(mv_wlast),
         .m_wvalid(mv_wvalid), .m_wready(mvx_wready),
         .m_bid(m_bid[MV*ID_W +: ID_W]), .m_bresp(mvx_bresp),
         .m_bvalid(mvx_bvalid), .m_bready(mv_bready),
         .m_arid(mv_arid), .m_araddr(mv_araddr), .m_arlen(mv_arlen),
-        .m_arsize(mv_arsize), .m_arburst(mv_arburst), .m_arvalid(mv_arvalid),
-        .m_arready(m_arready[MV]),
+        .m_arsize(mv_arsize), .m_arburst(mv_arburst),
+        .m_arvalid(mv_arvalid), .m_arready(m_arready[MV]),
         .m_rid(m_rid[MV*ID_W +: ID_W]), .m_rdata(m_rdata[MV*DATA_W +: DATA_W]),
         .m_rresp(m_rresp[MV*2 +: 2]), .m_rlast(m_rlast[MV]),
-        .m_rvalid(m_rvalid[MV]), .m_rready(mv_rready)
+        .m_rvalid(m_rvalid[MV]), .m_rready(mv_rready),
+        .x_req(x_req), .x_gnt(x_gnt), .x_start(x_start),
+        .x_id(x_id), .x_mode(x_mode),
+        .x_beat(x_beat), .x_beat_valid(x_bv),
+        .x_done(x_done), .x_w0(x_w0), .x_w1(x_w1), .x_w2(x_w2), .x_w3(x_w3)
+    );
+
+    mag_xform #(.DATA_W(DATA_W), .NREQ(1), .SLOTS(XFORM_SLOTS),
+                .ID_W(XID_W), .MODE_W(XMODE_W),
+                .IN_BITS(XFORM_IN_BITS), .OUT_WORDS(XFORM_OUT_WORDS))
+    u_xform (
+        .clk(clk), .rst(!resetn),
+        .req(x_req), .gnt(x_gnt),
+        .start(x_start), .id(x_id), .mode(x_mode),
+        .beat(x_beat), .beat_valid(x_bv),
+        .done(x_done), .word0(x_w0), .word1(x_w1), .word2(x_w2), .word3(x_w3),
+        // Gated on the PARAMETER, not the port: every top that predates the
+        // processor leaves pe_xcfg_en unconnected, and an unconnected input is
+        // Z -- which would make the write strobe X and clear a fault at random.
+        .cfg_en((CTRL_PE != 0) && pe_xcfg_en), .cfg_id(pe_xcfg_id),
+        .cfg_addr(pe_xcfg_addr), .cfg_data(pe_xcfg_data),
+        .cfg_rdata(pe_xcfg_rdata), .fault(xf_fault)
     );
 
     assign m_awid[MV*ID_W +: ID_W]            = mv_awid;
@@ -693,95 +855,23 @@ module mag #(
     assign m_arvalid[MV]                      = mv_arvalid;
     assign m_rready[MV]                       = mv_rready;
 
-    // ---- quantise on the way IN: the upload path -------------------------
-    // The same conversion, moved to where the tensor is WRITTEN. A weight matrix
-    // is uploaded once and read once per output tile, so paying the quantiser
-    // per upload divides its cost by the number of passes and permanently halves
-    // what the fetch path moves.
-    //
-    // The marker is on the REQUEST (an address aperture, below), never a range
-    // MAG remembers: the driver decides which tensors are pre-quantised.
-    localparam [2:0] HQ_IDLE = 3'd0, HQ_FILL = 3'd1, HQ_PACK = 3'd2,
-                     HQ_AW   = 3'd3, HQ_W    = 3'd4, HQ_B    = 3'd5,
-                     HQ_DONE = 3'd6;
-    reg [2:0]  hs;
-    reg [ADDR_W-1:0] hq_dst; // destination of the entry being built
-    reg [15:0] hq_left;     // source beats not yet accepted
-    reg [3:0]  hq_bcnt;     // beats into the current entry, 0..7
-    reg [1:0]  hq_wsel;     // output word on the bus
-    reg        hq_blay, hq_b, q_start_h;
-
-    wire         hq_done;
-    wire [255:0] hq_w0, hq_w1, hq_w2, hq_w3;
-
-    // The upload's OWN quantiser, not shared with the read path under a mutex:
-    // the mutex was the only reason an upload had to wait for a fetch.
-    mx_quant u_hquant (
-        .clk(clk), .rst(!resetn),
-        .start(q_start_h),
-        .b_layout(hq_blay),
-        .beat(sm_wdata),
-        .beat_valid(sm_wvalid && sm_wready),
-        .need_beat(), .done(hq_done),
-        .word0(hq_w0), .word1(hq_w1), .word2(hq_w2), .word3(hq_w3)
-    );
-
-    wire [1:0]   hq_nxt = hq_wsel + 2'd1;
-    wire [255:0] hq_dw  = (hq_wsel == 2'd0) ? hq_w0 : (hq_wsel == 2'd1) ? hq_w1 :
-                          (hq_wsel == 2'd2) ? hq_w2 : hq_w3;
-    wire [255:0] hq_dn  = (hq_nxt  == 2'd0) ? hq_w0 : (hq_nxt  == 2'd1) ? hq_w1 :
-                          (hq_nxt  == 2'd2) ? hq_w2 : hq_w3;
-
-    // One L1 entry is 4 lanes x 32 elements, whatever the bus is wide: 2048
-    // bits as FP16 and 1024 bits as MXFP7. Derived, not written as 3 -- the
-    // burst length is a consequence of the entry size and DATA_W.
-    localparam integer P_ENTRY_BITS  = 1024;
-    localparam [ADDR_W-1:0] P_ENTRY_BYTES = P_ENTRY_BITS / 8;        // 128
-    localparam [7:0]   P_ARLEN       = P_ENTRY_BITS / DATA_W - 1;    // 3 at 256b
-
-    // An APERTURE, not the top bits: those are SPECIAL/rsvd now, so a host write
-    // to MAG L2 staging would otherwise be taken for an upload and quantised.
-    localparam integer HW_SPECIAL  = ADDR_W - 1;      // 39
-    localparam [2:0]   HW_APER_UP  = 3'b010;          // aperture 0x4 / 0x5
-    localparam integer HW_MESH_HI  = ADDR_W - 3;      // 37
-    localparam integer HW_MESH_LO  = ADDR_W - 4;      // 36
-    localparam integer HW_APER_HI  = ADDR_W - 5;      // 35
-    localparam integer HW_APER_LO  = ADDR_W - 7;      // 33
-    localparam integer HW_BLAY     = ADDR_W - 8;      // 32
-
-    // The destination a quantised upload names: its mesh, and 4 GB below it.
-    localparam [ADDR_W-1:0] HW_DST_MASK =
-        ({{(ADDR_W-2){1'b0}}, 2'b11} << HW_MESH_LO) |
-        {{(ADDR_W-32){1'b0}}, 32'hFFFF_FFFF};
-
-    // One expression, used by the decode, the reset path and the bench check --
-    // three places that must agree or an upload quantises in one and not another.
-    function automatic is_upload;
-        input [ADDR_W-1:0] a;
-        is_upload = a[HW_SPECIAL] && (a[HW_APER_HI:HW_APER_LO] == HW_APER_UP);
-    endfunction
-
+    // THE HOST UPLOAD NO LONGER TRANSFORMS. Aperture 0x4/0x5 and its packing
+    // address bit are retired with it. A tensor that needs converting is either
+    // converted by the host or uploaded raw and converted on card by the mover
+    // through the shared transform slot: mem/L2 -> slot -> mem/L2.
     reg host_b;   // write response seen, still waiting for the host to take it
 
     assign sm_awready = (hst == HS_IDLE);
     assign sm_arready = (hst == HS_IDLE) && !sm_awvalid;
 
-    // Host write data flows straight through to the master when granted, or
-    // into the quantiser when the request asked for it. `q_start_h` gates the
-    // second because mx_quant's start branch has priority over its store, so a
-    // beat accepted on that cycle would be consumed and dropped.
-    assign sm_wready  = ((hst == HS_WR) && (!h_wvalid || m_wready[UP])) ||
-                        ((hst == HS_WQ) && (hs == HQ_FILL) && !q_start_h);
+    assign sm_wready  = (hst == HS_WR) && (!h_wvalid || m_wready[UP]);
     assign sm_bid     = m_bid[UP*ID_W +: ID_W];
     assign sm_bresp   = m_bresp[UP*2 +: 2];
     // m_bready is tied high, so the slave's write response is consumed the cycle
     // it appears. Passed straight through it would be offered for exactly one
     // cycle, and a host that raises BREADY after BVALID -- legal AXI, and what a
-    // pipelined master does -- would never see it, hence `host_b`. A quantising
-    // upload answers once the LAST entry is in memory, not once the last source
-    // beat was taken.
-    assign sm_bvalid  = ((hst == HS_WR) && (h_bvalid || host_b)) ||
-                        ((hst == HS_WQ) && (hs == HQ_DONE));
+    // pipelined master does -- would never see it, hence `host_b`.
+    assign sm_bvalid  = (hst == HS_WR) && (h_bvalid || host_b);
     assign sm_rid     = m_rid[UP*ID_W +: ID_W];
     assign sm_rdata   = h_rdata;
     assign sm_rresp   = m_rresp[UP*2 +: 2];
@@ -790,15 +880,6 @@ module mag #(
     assign m_rready[UP] = (hst == HS_RD) && sm_rready;
 
 `ifndef SYNTHESIS
-    // A quantising upload converts whole entries, so a burst that is not a
-    // multiple of 8 source beats leaves the last entry short and the handshake
-    // waiting for beats that will never come. Silent otherwise: it presents as
-    // the host AXI hanging, several modules from the cause.
-    always @(posedge clk)
-        if (resetn && sm_awvalid && sm_awready && is_upload(sm_awaddr) &&
-            (({8'd0, sm_awlen} + 16'd1) % 16'd8 != 16'd0))
-            $display("%0t ERROR mag: quantising upload of %0d beats is not a whole number of entries",
-                     $time, {8'd0, sm_awlen} + 16'd1);
 `endif
 
     always @(posedge clk) begin
@@ -806,121 +887,60 @@ module mag #(
             hst <= HS_IDLE;
             h_awvalid <= 1'b0; h_arvalid <= 1'b0; h_wvalid <= 1'b0;
             h_wlast <= 1'b0; h_awlen <= 8'd0; h_arlen <= 8'd0;
-            // The AR/AW/W payloads are qualified by the three valids above, and
-            // h_wdata alone is DATA_W; hq_dst is loaded before the burst runs.
+            // The AR/AW/W payloads are qualified by the three valids above.
             host_b <= 1'b0;
-            hs <= HQ_IDLE; hq_left <= 16'd0;
-            hq_bcnt <= 4'd0; hq_wsel <= 2'd0; hq_blay <= 1'b0;
-            hq_b <= 1'b0; q_start_h <= 1'b0;
         end else begin
-            if (h_awvalid && m_awready[UP]) h_awvalid <= 1'b0;
-            if (h_arvalid && m_arready[UP]) h_arvalid <= 1'b0;
-            if (h_bvalid && (hst == HS_WQ)) hq_b <= 1'b1;
+            if (h_awvalid && m_awready[UP]) begin
+                h_awvalid <= 1'b0;
+            end
+            if (h_arvalid && m_arready[UP]) begin
+                h_arvalid <= 1'b0;
+            end
 
             case (hst)
-            HS_IDLE: begin
-                if (sm_awvalid && sm_awready && is_upload(sm_awaddr)) begin
-                    // Quantise as it lands. MAG issues its own write bursts, so
-                    // source and destination burst lengths are unrelated.
-                    hq_dst    <= sm_awaddr & HW_DST_MASK;
-                    hq_blay   <= sm_awaddr[HW_BLAY];
-                    hq_left   <= {8'd0, sm_awlen} + 16'd1;
-                    hq_bcnt   <= 4'd0;
-                    q_start_h <= 1'b1;
-                    hs  <= HQ_FILL;
-                    hst <= HS_WQ;
-                end else if (sm_awvalid && sm_awready) begin
-                    h_awaddr  <= sm_awaddr;
-                    h_awlen   <= sm_awlen;
-                    h_awid    <= sm_awid;
-                    h_awvalid <= 1'b1;
-                    hst <= HS_WR;
-                end else if (sm_arvalid && sm_arready) begin
-                    h_araddr  <= sm_araddr;
-                    h_arlen   <= sm_arlen;
-                    h_arid    <= sm_arid;
-                    h_arvalid <= 1'b1;
-                    hst <= HS_RD;
-                end
-            end
-
-            HS_WR: begin
-                // Sample the host beat only when the AXI side can take one.
-                // Re-registering every cycle regardless replays the beat that
-                // was not yet accepted, so every burst longer than one beat is
-                // written twice and one word late -- silent corruption on the
-                // operand-upload path, which is what XDMA will use.
-                if (!h_wvalid || m_wready[UP]) begin
-                    h_wdata  <= sm_wdata;
-                    h_wlast  <= sm_wlast;
-                    h_wvalid <= sm_wvalid;
-                end
-                if (h_bvalid) host_b <= 1'b1;
-                if ((h_bvalid || host_b) && sm_bready) begin
-                    host_b <= 1'b0;
-                    hst <= HS_IDLE;
-                end
-            end
-
-            HS_RD: if (h_rvalid && h_rlast && sm_rready) hst <= HS_IDLE;
-
-            // One host burst becomes N entry writes. Each entry is 8 source
-            // beats collected into the quantiser and 4 words written back as
-            // one P_ARLEN burst, so a destination burst is 128 bytes and can
-            // never cross a 4 KB boundary from a 128-byte-aligned base.
-            HS_WQ: begin
-                q_start_h <= 1'b0;
-                case (hs)
-                HQ_FILL: if (sm_wvalid && sm_wready) begin
-                    hq_left <= hq_left - 16'd1;
-                    if (hq_bcnt == 4'd7) begin
-                        hq_bcnt <= 4'd0;
-                        hs <= HQ_PACK;
-                    end else hq_bcnt <= hq_bcnt + 4'd1;
-                end
-                HQ_PACK: if (hq_done) hs <= HQ_AW;
-                HQ_AW: if (!h_awvalid) begin
-                    h_awaddr  <= hq_dst[ADDR_W-1:0];
-                    h_awlen   <= P_ARLEN;
-                    h_awid    <= {ID_W{1'b0}};
-                    h_awvalid <= 1'b1;
-                    hq_wsel   <= 2'd0;
-                    hs <= HQ_W;
-                end
-                HQ_W: begin
-                    if (!h_wvalid) begin
-                        h_wdata  <= hq_dw;
-                        h_wlast  <= (hq_wsel == 2'd3);
-                        h_wvalid <= 1'b1;
-                    end else if (m_wready[UP]) begin
-                        if (h_wlast) begin
-                            h_wvalid <= 1'b0; h_wlast <= 1'b0;
-                            hs <= HQ_B;
-                        end else begin
-                            hq_wsel <= hq_nxt;
-                            h_wdata <= hq_dn;
-                            h_wlast <= (hq_nxt == 2'd3);
-                        end
+                HS_IDLE: begin
+                    if (sm_awvalid && sm_awready) begin
+                        h_awaddr  <= sm_awaddr;
+                        h_awlen   <= sm_awlen;
+                        h_awid    <= sm_awid;
+                        h_awvalid <= 1'b1;
+                        hst <= HS_WR;
+                    end else if (sm_arvalid && sm_arready) begin
+                        h_araddr  <= sm_araddr;
+                        h_arlen   <= sm_arlen;
+                        h_arid    <= sm_arid;
+                        h_arvalid <= 1'b1;
+                        hst <= HS_RD;
                     end
                 end
-                HQ_B: if (h_bvalid || hq_b) begin
-                    hq_b   <= 1'b0;
-                    hq_dst <= hq_dst + P_ENTRY_BYTES;
-                    if (hq_left == 16'd0) hs <= HQ_DONE;
-                    else begin
-                        q_start_h <= 1'b1;
-                        hs <= HQ_FILL;
+
+                HS_WR: begin
+                    // Sample the host beat only when the AXI side can take one.
+                    // Re-registering every cycle regardless replays the beat that
+                    // was not yet accepted, so every burst longer than one beat is
+                    // written twice and one word late -- silent corruption on the
+                    // operand-upload path, which is what XDMA will use.
+                    if (!h_wvalid || m_wready[UP]) begin
+                        h_wdata  <= sm_wdata;
+                        h_wlast  <= sm_wlast;
+                        h_wvalid <= sm_wvalid;
+                    end
+                    if (h_bvalid) begin
+                        host_b <= 1'b1;
+                    end
+                    if ((h_bvalid || host_b) && sm_bready) begin
+                        host_b <= 1'b0;
+                        hst <= HS_IDLE;
                     end
                 end
-                HQ_DONE: if (sm_bready) begin
-                    hs  <= HQ_IDLE;
-                    hst <= HS_IDLE;
-                end
-                default: hs <= HQ_DONE;
-                endcase
-            end
 
-            default: hst <= HS_IDLE;
+                HS_RD: begin
+                    if (h_rvalid && h_rlast && sm_rready) begin
+                        hst <= HS_IDLE;
+                    end
+                end
+
+                default: hst <= HS_IDLE;
             endcase
         end
     end
@@ -962,12 +982,11 @@ module mag #(
             .m_wlast(), .m_wvalid(m_wvalid[MV]), .m_wready(m_wready[MV]),
             .m_bvalid(m_bvalid[MV]), .m_bresp(m_bresp[MV*2 +: 2]), .m_bready(),
 
-            .lk_awaddr(m_awaddr[LK*ADDR_W +: ADDR_W]), .lk_awvalid(m_awvalid[LK]),
-            .lk_awready(m_awready[LK]),
-            .lk_wdata(m_wdata[LK*DATA_W +: DATA_W]),
-            .lk_wstrb(m_wstrb[LK*(DATA_W/8) +: DATA_W/8]),
-            .lk_wlast(m_wlast[LK]), .lk_wvalid(m_wvalid[LK]),
-            .lk_wready(m_wready[LK]),
+            .lk_awaddr(lks_awaddr), .lk_awvalid(lks_awvalid),
+            .lk_awready(lks_awready),
+            .lk_wdata(lks_wdata), .lk_wstrb(lks_wstrb),
+            .lk_wlast(lks_wlast), .lk_wvalid(lks_wvalid),
+            .lk_wready(lks_wready),
             .lk_bvalid(m_bvalid[LK]), .lk_bresp(m_bresp[LK*2 +: 2]),
             .lk_bready(m_bready[LK]),
 
@@ -988,6 +1007,41 @@ module mag #(
             .sw_fwd(sw_fwd), .sw_lblock(sw_lblk),
             .sw_cred0(sw_c0), .sw_cred1(sw_c1), .sw_fault(sw_flt),
             .bad_remote_req(|rq_rem)
+        );
+
+        // THE INTERLINK'S LANDING CHANNEL IS SKIDDED, and this is a timing fix
+        // with a measured cause. Wired straight through, `mag_ilink`'s decision
+        // to accept an inbound remote packet depended on the converged path's
+        // readiness, so the m62 mesh's worst path ran
+        //
+        //   u_dram/rr_rd -> the round-robin scan -> u_l2's ready
+        //     -> u_il's m_awready/lk_awready -> lk_free -> busy
+        //     -> u_sw/u_lmux's ready -> a switch FIFO's read enable
+        //
+        // at 12 logic levels and -0.413 ns, 421 failing endpoints, 78% route.
+        // sb_skid's i_ready does not depend on o_ready, so the interlink now
+        // sees a local register and the span stops at the skid. Both channels
+        // get one, so AW and W keep the same latency and their order with it.
+        wire [ADDR_W-1:0]   lks_awaddr;
+        wire                lks_awvalid, lks_awready;
+        wire [DATA_W-1:0]   lks_wdata;
+        wire [DATA_W/8-1:0] lks_wstrb;
+        wire                lks_wlast, lks_wvalid, lks_wready;
+
+        sb_skid #(.W(ADDR_W)) u_lk_awskid (
+            .clk(clk), .rst(!resetn),
+            .i_valid(lks_awvalid), .i_ready(lks_awready), .i_data(lks_awaddr),
+            .o_valid(m_awvalid[LK]), .o_ready(m_awready[LK]),
+            .o_data(m_awaddr[LK*ADDR_W +: ADDR_W])
+        );
+
+        sb_skid #(.W(DATA_W + DATA_W/8 + 1)) u_lk_wskid (
+            .clk(clk), .rst(!resetn),
+            .i_valid(lks_wvalid), .i_ready(lks_wready),
+            .i_data({lks_wlast, lks_wstrb, lks_wdata}),
+            .o_valid(m_wvalid[LK]), .o_ready(m_wready[LK]),
+            .o_data({m_wlast[LK], m_wstrb[LK*(DATA_W/8) +: DATA_W/8],
+                     m_wdata[LK*DATA_W +: DATA_W]})
         );
 
         mag_switch #(
@@ -1060,6 +1114,45 @@ module mag #(
     end
     endgenerate
 
+    // ---- the control processor's channel ----------------------------------
+    generate
+    if (CTRL_PE != 0) begin : g_ctrl_pe
+        assign m_awid   [CP*ID_W   +: ID_W]   = {ID_W{1'b0}};
+        assign m_awaddr [CP*ADDR_W +: ADDR_W] = cp_awaddr;
+        assign m_awlen  [CP*8      +: 8]      = cp_awlen;
+        assign m_awsize [CP*3      +: 3]      = LSB[2:0];
+        assign m_awburst[CP*2      +: 2]      = 2'b01;
+        assign m_awvalid[CP]                  = cp_awvalid;
+        assign cp_awready                     = m_awready[CP];
+        assign m_wdata  [CP*DATA_W +: DATA_W]     = cp_wdata;
+        assign m_wstrb  [CP*(DATA_W/8) +: DATA_W/8] = cp_wstrb;
+        assign m_wlast  [CP]                  = cp_wlast;
+        assign m_wvalid [CP]                  = cp_wvalid;
+        assign cp_wready                      = m_wready[CP];
+        assign cp_bvalid                      = m_bvalid[CP];
+        assign m_bready [CP]                  = cp_bready;
+        assign m_arid   [CP*ID_W   +: ID_W]   = {ID_W{1'b0}};
+        assign m_araddr [CP*ADDR_W +: ADDR_W] = cp_araddr;
+        assign m_arlen  [CP*8      +: 8]      = cp_arlen;
+        assign m_arsize [CP*3      +: 3]      = LSB[2:0];
+        assign m_arburst[CP*2      +: 2]      = 2'b01;
+        assign m_arvalid[CP]                  = cp_arvalid;
+        assign cp_arready                     = m_arready[CP];
+        assign cp_rdata                       = m_rdata[CP*DATA_W +: DATA_W];
+        assign cp_rlast                       = m_rlast[CP];
+        assign cp_rvalid                      = m_rvalid[CP];
+        assign m_rready [CP]                  = cp_rready;
+    end else begin : g_no_ctrl_pe
+        assign cp_awready = 1'b0;
+        assign cp_wready  = 1'b0;
+        assign cp_bvalid  = 1'b0;
+        assign cp_arready = 1'b0;
+        assign cp_rdata   = {DATA_W{1'b0}};
+        assign cp_rlast   = 1'b0;
+        assign cp_rvalid  = 1'b0;
+    end
+    endgenerate
+
     // ---- the internal requesters onto ONE AXI master ----------------------
     // id/resp die here as they did in mag_1m.v:238's shim; nothing reads them.
     wire [MP1-1:0]        q_valid, q_ready, q_write;
@@ -1082,11 +1175,18 @@ module mag #(
         // a writeback of line 641 landed at 787 and the fill returned 641).
         reg sel_h, sel_w;
         always @(posedge clk) begin
-            if (!resetn) sel_h <= 1'b0;
+            if (!resetn) begin
+                sel_h <= 1'b0;
+            end
             else if (q_valid[rq] && !q_ready[rq]) begin
-                if (!sel_h) sel_w <= m_awvalid[rq];
+                if (!sel_h) begin
+                    sel_w <= m_awvalid[rq];
+                end
                 sel_h <= 1'b1;
-            end else sel_h <= 1'b0;
+            end
+            else begin
+                sel_h <= 1'b0;
+            end
         end
         wire use_w = sel_h ? sel_w : m_awvalid[rq];
         wire aw_r = m_awvalid[rq] && use_w;
@@ -1170,57 +1270,6 @@ module mag #(
         .m_rid(dram_rid), .m_rdata(dram_rdata), .m_rresp(dram_rresp),
         .m_rlast(dram_rlast), .m_rvalid(dram_rvalid), .m_rready(dram_rready)
     );
-
-`ifndef SYNTHESIS
-    // Sharing `u_hquant` with a port's `u_quant` -- 4,267 LUT, 32 DSP,
-    // quantiser-timing.md s4 -- is free iff they are never busy at once.
-    wire mq_up = (hst == HS_WQ) && (hs != HQ_DONE);
-
-    wire [MEM_PORTS-1:0] mq_rd;
-    genvar gq;
-    generate
-    for (gq = 0; gq < MEM_PORTS; gq = gq + 1) begin : g_qprobe
-        // Held from the first fill beat until the emit buffer takes the words,
-        // so RS_IDLE is the only state that leaves the quantiser free.
-        assign mq_rd[gq] = g_port[gq].u_eng.rd_quant &&
-                           (g_port[gq].u_eng.rs != g_port[gq].u_eng.RS_IDLE);
-    end
-    endgenerate
-
-    integer mq_up_cyc, mq_rd_cyc, mq_ovl_cyc;
-    reg     mq_said_up, mq_said_rd, mq_said_ovl;
-    initial begin
-        mq_up_cyc = 0; mq_rd_cyc = 0; mq_ovl_cyc = 0;
-        mq_said_up = 1'b0; mq_said_rd = 1'b0; mq_said_ovl = 1'b0;
-    end
-
-    // Both sides announce themselves, so a run with no OVERLAP line is evidence:
-    // one announcement alone means that workload never drove the other path.
-    always @(posedge clk) if (resetn) begin
-        if (mq_up) begin
-            mq_up_cyc <= mq_up_cyc + 1;
-            if (!mq_said_up) begin
-                mq_said_up <= 1'b1;
-                $display("  %0t QPROBE mag: upload quantiser active", $time);
-            end
-        end
-        if (|mq_rd) begin
-            mq_rd_cyc <= mq_rd_cyc + 1;
-            if (!mq_said_rd) begin
-                mq_said_rd <= 1'b1;
-                $display("  %0t QPROBE mag: fetch quantiser active", $time);
-            end
-        end
-        // Said once, not per cycle: the question is whether it happens at all,
-        // and the totals are readable from a bench if the answer is yes.
-        if (mq_up && |mq_rd && !mq_said_ovl) begin
-            mq_said_ovl <= 1'b1;
-            $display("  %0t QPROBE mag: OVERLAP -- upload and fetch quantisers busy together, so sharing one would stall a path",
-                     $time);
-        end
-        if (mq_up && |mq_rd) mq_ovl_cyc <= mq_ovl_cyc + 1;
-    end
-`endif
 
 endmodule
 

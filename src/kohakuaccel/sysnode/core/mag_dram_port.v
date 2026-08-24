@@ -193,11 +193,15 @@ module mag_dram_port #(
             if (rd_take) begin
                 s1_rv <= 1'b1; s1_rid <= rd_sel;
                 s1_rad <= sel_rad; s1_rln <= sel_rln;
-            end else if (rd_push) s1_rv <= 1'b0;
+            end else if (rd_push) begin
+                s1_rv <= 1'b0;
+            end
             if (wr_take) begin
                 s1_wv <= 1'b1; s1_wid <= wr_sel;
                 s1_wad <= sel_wad; s1_wln <= sel_wln;
-            end else if (wr_push) s1_wv <= 1'b0;
+            end else if (wr_push) begin
+                s1_wv <= 1'b0;
+            end
         end
     end
 
@@ -269,10 +273,14 @@ module mag_dram_port #(
 
     // Strobes start CLEARED and only written lanes set them, so a partial head
     // and a partial tail both fall out with no special case.
-    wire [MW-1:0]   wacc_next  = wacc |
-        ({{(MW-SW){1'b0}}, w_beat} << (wph * SW));
-    wire [MW/8-1:0] wstrb_next = wstrb_acc |
-        ({{(MW/8-SBYTES){1'b0}}, w_bstrb} << (wph * SBYTES));
+    wire [MW-1:0]   wacc_next = (
+        wacc
+        | ({{(MW-SW){1'b0}}, w_beat} << (wph * SW))
+    );
+    wire [MW/8-1:0] wstrb_next = (
+        wstrb_acc
+        | ({{(MW/8-SBYTES){1'b0}}, w_bstrb} << (wph * SBYTES))
+    );
 
     async_fifo #(.DATA_WIDTH(MW + MW/8 + 1), .FIFO_DEPTH(WQ),
                  .MEMORY_TYPE(WR_MEM)) u_wq (
@@ -305,8 +313,12 @@ module mag_dram_port #(
                 wacc <= wacc_next; wstrb_acc <= wstrb_next;
                 wph  <= wph + 1'b1;
             end
-            if (w_end) wactive <= 1'b0;
-            else       wleft   <= wleft - 16'd1;
+            if (w_end) begin
+                wactive <= 1'b0;
+            end
+            else begin
+                wleft   <= wleft - 16'd1;
+            end
         end
     end
 
@@ -327,10 +339,14 @@ module mag_dram_port #(
         .rd_empty(bq_empty));
 
     always @(posedge s_aclk) begin
-        if (srst) b_valid <= {N{1'b0}};
+        if (srst) begin
+            b_valid <= {N{1'b0}};
+        end
         else begin
             b_valid <= {N{1'b0}};
-            if (!bq_empty) b_valid[bq_id] <= 1'b1;
+            if (!bq_empty) begin
+                b_valid[bq_id] <= 1'b1;
+            end
         end
     end
 
@@ -354,8 +370,10 @@ module mag_dram_port #(
 
     // COMBINATIONAL, not registered: async_fifo is show-ahead, so a pop one
     // cycle late re-reads the same beat.
-    wire rq_pop = (!rq_empty && cur_left == 16'd0) ||
-                  (r_take && ((cur_ph == RTOP) || (cur_left == 16'd1)));
+    wire rq_pop = (
+        (!rq_empty && cur_left == 16'd0)
+        || (r_take && ((cur_ph == RTOP) || (cur_left == 16'd1)))
+    );
 
     generate for (g = 0; g < N; g = g + 1) begin : g_rd
         assign r_valid[g] = r_emit && (rq_id == g[IDX_W-1:0]);
@@ -404,9 +422,15 @@ module mag_dram_port #(
 
                 // Exact: loads write len+1 (len <= 256 by AXI), and mine_tk
                 // cannot hit 0 -- mine_fin takes cur_left==1, r_emit bars 0.
-                if (do_pop || do_direct) rleft_z[g] <= 1'b0;
-                else if (mine_fin)       rleft_z[g] <= 1'b1;
-                else if (mine_tk)        rleft_z[g] <= 1'b0;
+                if (do_pop || do_direct) begin
+                    rleft_z[g] <= 1'b0;
+                end
+                else if (mine_fin) begin
+                    rleft_z[g] <= 1'b1;
+                end
+                else if (mine_tk) begin
+                    rleft_z[g] <= 1'b0;
+                end
 
                 if (do_pop) begin
                     rleft[g] <= plen[g][phd[g]] + 16'd1;
@@ -427,9 +451,10 @@ module mag_dram_port #(
                     ptl[g] <= (ptl[g] == (PD[PPW-1:0] - 1'b1))
                               ? {PPW{1'b0}} : ptl[g] + 1'b1;
                 end
-                if (do_pop)
+                if (do_pop) begin
                     phd[g] <= (phd[g] == (PD[PPW-1:0] - 1'b1))
                               ? {PPW{1'b0}} : phd[g] + 1'b1;
+                end
                 pn[g] <= pn[g] + (do_push ? 1'b1 : 1'b0)
                                 - (do_pop  ? 1'b1 : 1'b0);
             end
@@ -446,10 +471,14 @@ module mag_dram_port #(
         if (srst) begin
             rr_rd <= {IDX_W{1'b0}}; rr_wr <= {IDX_W{1'b0}};
         end else begin
-            if (rd_take) rr_rd <= (rd_sel == N[IDX_W-1:0] - 1'b1)
-                                  ? {IDX_W{1'b0}} : rd_sel + 1'b1;
-            if (wr_take) rr_wr <= (wr_sel == N[IDX_W-1:0] - 1'b1)
-                                  ? {IDX_W{1'b0}} : wr_sel + 1'b1;
+            if (rd_take) begin
+                rr_rd <= (rd_sel == N[IDX_W-1:0] - 1'b1)
+                       ? {IDX_W{1'b0}} : rd_sel + 1'b1;
+            end
+            if (wr_take) begin
+                rr_wr <= (wr_sel == N[IDX_W-1:0] - 1'b1)
+                       ? {IDX_W{1'b0}} : wr_sel + 1'b1;
+            end
         end
     end
 
@@ -462,18 +491,26 @@ module mag_dram_port #(
     reg [N*16-1:0]     cq_len_p;
     integer ca;
     always @(posedge s_aclk) begin
-        if (srst) cq_held <= {N{1'b0}};
+        if (srst) begin
+            cq_held <= {N{1'b0}};
+        end
         else begin
             for (ca = 0; ca < N; ca = ca + 1) begin
-                if (cq_held[ca] && q_valid[ca] &&
-                    ((q_write[ca] != cq_write_p[ca]) ||
-                     (q_addr[ca*ADDR_W +: ADDR_W]
-                        != cq_addr_p[ca*ADDR_W +: ADDR_W]) ||
-                     (q_len[ca*16 +: 16] != cq_len_p[ca*16 +: 16])))
+                if (
+                    cq_held[ca]
+                    && q_valid[ca]
+                    && (
+                        (q_write[ca] != cq_write_p[ca])
+                        || (q_addr[ca*ADDR_W +: ADDR_W]
+                            != cq_addr_p[ca*ADDR_W +: ADDR_W])
+                        || (q_len[ca*16 +: 16] != cq_len_p[ca*16 +: 16])
+                    )
+                ) begin
                     $display("%0t ERROR mag_dram_port: requester %0d changed its presentation while waiting (write %b->%b addr %h->%h) -- the arbiter will cross transactions",
                              $time, ca, cq_write_p[ca], q_write[ca],
                              cq_addr_p[ca*ADDR_W +: ADDR_W],
                              q_addr[ca*ADDR_W +: ADDR_W]);
+                end
                 cq_held[ca] <= q_valid[ca] && !q_ready[ca];
                 if (q_valid[ca] && !cq_held[ca]) begin
                     cq_write_p[ca] <= q_write[ca];
@@ -509,8 +546,9 @@ module mag_dram_rr #(
     integer i;
     always @* begin
         sel = {IDX_W{1'b0}};
-        for (i = 0; i < N; i = i + 1)
+        for (i = 0; i < N; i = i + 1) begin
             sel = sel | (gnt[i] ? i[IDX_W-1:0] : {IDX_W{1'b0}});
+        end
     end
 endmodule
 

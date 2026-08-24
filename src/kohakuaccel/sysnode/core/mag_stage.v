@@ -176,8 +176,9 @@ module mag_stage #(
         // is this register to the return mux.
         if (PIPE != 0) begin : g_oreg
             reg [WORDS*DATA_W-1:0] out_q;
-            always @(posedge clk)
+            always @(posedge clk) begin
                 out_q <= bank_rd[g*WORDS*DATA_W +: WORDS*DATA_W];
+            end
             assign bank_out[g*WORDS*DATA_W +: WORDS*DATA_W] = out_q;
         end else begin : g_odir
             assign bank_out[g*WORDS*DATA_W +: WORDS*DATA_W] =
@@ -222,15 +223,18 @@ module mag_stage #(
     // An unaligned entry access reads a line the address does not name, and
     // there is no other symptom: the data is simply someone else's.
     always @(posedge clk) if (!rst) begin
-        if (a_go && (a_addr[EB-1:0] != {EB{1'b0}}))
+        if (a_go && (a_addr[EB-1:0] != {EB{1'b0}})) begin
             $display("%0t ERROR mag_stage: port A address %h is not entry-aligned -- an entry is %0d bytes",
                      $time, a_addr, (WORDS*DATA_W)/8);
-        if (a_fault)
+        end
+        if (a_fault) begin
             $display("%0t ERROR mag_stage: address %h names aperture %0d, which is reserved -- faulting rather than aliasing onto DRAM",
                      $time, a_addr, a_ap);
-        if (b_req && b_mine && !b_go)
+        end
+        if (b_req && b_mine && !b_go) begin
             $display("%0t ERROR mag_stage: host access at %h lost its cycle to the agent -- port B must retry, not assume",
                      $time, b_addr);
+        end
     end
 `endif
 

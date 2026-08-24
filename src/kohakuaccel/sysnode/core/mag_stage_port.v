@@ -111,8 +111,11 @@ module mag_stage_port #(
 
     // Round robin so one requester cannot hold the store.
     reg  [IDX_W-1:0] rr;
-    wire [N-1:0]     want = q_valid & mine &
-                            ((q_write & d_wr_idle) | (~q_write & d_rd_idle));
+    wire [N-1:0]     want = (
+        q_valid
+        & mine
+        & ((q_write & d_wr_idle) | (~q_write & d_rd_idle))
+    );
     reg  [IDX_W-1:0] pick;
     reg              pick_v;
     integer i;
@@ -132,8 +135,12 @@ module mag_stage_port #(
     reg             gnt_v;
     reg [IDX_W-1:0] gnt_id;
     always @(posedge clk) begin
-        if (rst) gnt_v <= 1'b0;
-        else if (gnt_v) gnt_v <= 1'b0;
+        if (rst) begin
+            gnt_v <= 1'b0;
+        end
+        else if (gnt_v) begin
+            gnt_v <= 1'b0;
+        end
         else if ((st == S_IDLE) && pick_v) begin
             gnt_v  <= 1'b1;
             gnt_id <= pick;
@@ -207,7 +214,9 @@ module mag_stage_port #(
                 S_WR: if (stg_gnt) begin
                     addr <= addr + ASTEP;
                     left <= left - 16'd1;
-                    if (left == 16'd1) st <= S_RESP;
+                    if (left == 16'd1) begin
+                        st <= S_RESP;
+                    end
                 end
                 S_RD: begin
                     // The request side steps on the GRANT, the return side on the
@@ -283,8 +292,10 @@ module mag_stage_port #(
                                             : dr_data[g*SW +: SW];
         assign r_last[g]  = rd_here ? (rd_hold && (left == 16'd1)) : dr_last[g];
 
-        assign b_valid[g] = db_valid[g] |
-                            ((st == S_RESP) && (id == g[IDX_W-1:0]));
+        assign b_valid[g] = (
+            db_valid[g]
+            | ((st == S_RESP) && (id == g[IDX_W-1:0]))
+        );
     end
 
 `ifndef SYNTHESIS

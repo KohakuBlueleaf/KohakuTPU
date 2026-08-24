@@ -129,8 +129,8 @@ module mx_quant #(
     // Six stages. PK_PACK is 32 elements wide and runs four times, one output
     // word per pass, against a fetch that cannot deliver an entry faster than
     // its eight AXI beats.
-    localparam [2:0] PK_IDLE  = 3'd0, PK_DRAIN = 3'd1, PK_NORM = 3'd2,
-                     PK_SCALE = 3'd3, PK_PACK  = 3'd4, PK_TAIL = 3'd5;
+    localparam [2:0] PK_IDLE = 3'd0, PK_DRAIN = 3'd1, PK_NORM = 3'd2;
+    localparam [2:0] PK_SCALE = 3'd3, PK_PACK = 3'd4, PK_TAIL = 3'd5;
     reg [2:0] pk;
 
     // Pack stage 1: the source select, the FP16 decode, the multiply by the
@@ -184,20 +184,22 @@ module mx_quant #(
             if (r4_valid) begin
                 c0_v = (r4[0] > r4[1]) ? r4[0] : r4[1];
                 c1_v = (r4[2] > r4[3]) ? r4[2] : r4[3];
-                for (lane = 0; lane < 4; lane = lane + 1)
+                for (lane = 0; lane < 4; lane = lane + 1) begin
                     if (r4_lane == lane) begin
                         acc[lane*2+0] <= (r4_first || (c0_v > acc[lane*2+0]))
                                        ? c0_v : acc[lane*2+0];
                         acc[lane*2+1] <= (r4_first || (c1_v > acc[lane*2+1]))
                                        ? c1_v : acc[lane*2+1];
                     end
+                end
             end
 
             if (start) begin
                 filling <= 1'b1; pk <= PK_IDLE; bcnt <= 4'd0;
             end else if (filling && beat_valid) begin
-                for (i = 0; i < 16; i = i + 1)
+                for (i = 0; i < 16; i = i + 1) begin
                     src[{bcnt, 4'd0} + i] <= beat[i*16 +: 16];
+                end
                 // 16 -> 4 in two compare levels. Beat b holds lane b/2, so
                 // which accumulator these belong to is the beat counter.
                 for (j = 0; j < 4; j = j + 1) begin
@@ -213,7 +215,10 @@ module mx_quant #(
                 if (bcnt == 4'd7) begin
                     filling <= 1'b0;
                     pk <= PK_DRAIN;
-                end else bcnt <= bcnt + 4'd1;
+                end
+                else begin
+                    bcnt <= bcnt + 4'd1;
+                end
             end else if (pk == PK_DRAIN) begin
                 // one cycle for the last beat's fold to land in `acc`
                 pk <= PK_NORM;
@@ -236,11 +241,12 @@ module mx_quant #(
                         // spends more. The rule earns its keep on WIDE searches.
                         ep_v  = $signed({3'b0, ef_v});
                         tmp_v = sig_v;
-                        for (norm = 0; norm < 11; norm = norm + 1)
+                        for (norm = 0; norm < 11; norm = norm + 1) begin
                             if (tmp_v != 11'd0 && tmp_v < 11'd1024) begin
                                 tmp_v = tmp_v << 1;
                                 ep_v  = ep_v - 8'sd1;
                             end
+                        end
                         cs_v[hh] = tmp_v;
                         ce_v[hh] = ep_v;
                     end
@@ -260,12 +266,15 @@ module mx_quant #(
                 for (lane = 0; lane < 4; lane = lane + 1) begin
                     tmp_v = n_sig[lane];
                     ep_v  = n_ep[lane];
-                    ceil_v = (tmp_v > 11'd1764) ? 4'd15 :
-                             (tmp_v > 11'd1638) ? 4'd14 :
-                             (tmp_v > 11'd1512) ? 4'd13 :
-                             (tmp_v > 11'd1386) ? 4'd12 :
-                             (tmp_v > 11'd1260) ? 4'd11 :
-                             (tmp_v > 11'd1134) ? 4'd10 : 4'd9;
+                    ceil_v = (
+                        (tmp_v > 11'd1764) ? 4'd15
+                        : (tmp_v > 11'd1638) ? 4'd14
+                        : (tmp_v > 11'd1512) ? 4'd13
+                        : (tmp_v > 11'd1386) ? 4'd12
+                        : (tmp_v > 11'd1260) ? 4'd11
+                        : (tmp_v > 11'd1134) ? 4'd10
+                        : 4'd9
+                    );
 
                     if (tmp_v == 11'd0) begin
                         sexp_v  = 8'sd0;            // empty block, unit scale
@@ -282,8 +291,12 @@ module mx_quant #(
                     // 5-bit field cannot hold. Clamping DEGRADES it (the peak
                     // lands below 63, so the block keeps fewer bits); letting
                     // the exponent wrap would corrupt it.
-                    if      (sexp_v < SEXP_MIN) sexp_v = SEXP_MIN;
-                    else if (sexp_v > SEXP_MAX) sexp_v = SEXP_MAX;
+                    if      (sexp_v < SEXP_MIN) begin
+                        sexp_v = SEXP_MIN;
+                    end
+                    else if (sexp_v > SEXP_MAX) begin
+                        sexp_v = SEXP_MAX;
+                    end
 
                     // {E[4:0], M[2:0]}: the exponent is stored BIASED, so the
                     // instruction's anchor of 2*SBIAS cancels both operands'
@@ -295,8 +308,12 @@ module mx_quant #(
                 pkw <= 2'd0;
                 pk  <= PK_PACK;
             end else if (pk == PK_PACK) begin
-                if (pkw == 2'd3) pk <= PK_TAIL;
-                else pkw <= pkw + 2'd1;
+                if (pkw == 2'd3) begin
+                    pk <= PK_TAIL;
+                end
+                else begin
+                    pkw <= pkw + 2'd1;
+                end
             end else if (pk == PK_TAIL) begin
                 pk   <= PK_IDLE;
                 done <= 1'b1;
@@ -348,9 +365,10 @@ module mx_quant #(
             // A: element (lane,k) at slot lane*8 + k of word (k/8)
             // B: element (k,lane) at slot (k%8)*4 + lane
             nw_v = 256'd0;
-            for (oi = 0; oi < 32; oi = oi + 1)
+            for (oi = 0; oi < 32; oi = oi + 1) begin
                 nw_v[255 - oi*7 -: 7] = b_layout ? q_v[(oi%4)*8 + (oi/4)]
                                                  : q_v[oi];
+            end
             // the scale fields ride in every word, at bit 31 - lane*8
             nw_v[31 -: 8] = sfield[0];
             nw_v[23 -: 8] = sfield[1];

@@ -87,33 +87,33 @@ module mm_prng #(
                 busy  <= 1'b1;
             end else if (busy) begin
                 case (phase)
-                2'd0: begin
-                    m_a0  <= c0;
-                    m_a2  <= c2;
-                    phase <= 2'd1;
-                end
-                2'd1: begin
-                    pl0 <= M0[15:0]  * m_a0;
-                    ph0 <= M0[31:16] * m_a0;
-                    pl1 <= M1[15:0]  * m_a2;
-                    ph1 <= M1[31:16] * m_a2;
-                    phase <= 2'd2;
-                end
-                2'd2: begin
-                    {r_hi0, r_lo0} <= {16'd0, pl0} + {ph0, 16'd0};
-                    {r_hi1, r_lo1} <= {16'd0, pl1} + {ph1, 16'd0};
-                    phase <= 2'd3;
-                end
-                default: begin
-                    c0 <= n0; c1 <= n1; c2 <= n2; c3 <= n3;
-                    k0 <= k0 + W0; k1 <= k1 + W1;
-                    phase <= 2'd0;
-                    if (round + 5'd1 == ROUNDS[4:0]) begin
-                        busy      <= 1'b0;
-                        out_valid <= 1'b1;
+                    2'd0: begin
+                        m_a0  <= c0;
+                        m_a2  <= c2;
+                        phase <= 2'd1;
                     end
-                    round <= round + 5'd1;
-                end
+                    2'd1: begin
+                        pl0 <= M0[15:0]  * m_a0;
+                        ph0 <= M0[31:16] * m_a0;
+                        pl1 <= M1[15:0]  * m_a2;
+                        ph1 <= M1[31:16] * m_a2;
+                        phase <= 2'd2;
+                    end
+                    2'd2: begin
+                        {r_hi0, r_lo0} <= {16'd0, pl0} + {ph0, 16'd0};
+                        {r_hi1, r_lo1} <= {16'd0, pl1} + {ph1, 16'd0};
+                        phase <= 2'd3;
+                    end
+                    default: begin
+                        c0 <= n0; c1 <= n1; c2 <= n2; c3 <= n3;
+                        k0 <= k0 + W0; k1 <= k1 + W1;
+                        phase <= 2'd0;
+                        if (round + 5'd1 == ROUNDS[4:0]) begin
+                            busy      <= 1'b0;
+                            out_valid <= 1'b1;
+                        end
+                        round <= round + 5'd1;
+                    end
                 endcase
             end
         end

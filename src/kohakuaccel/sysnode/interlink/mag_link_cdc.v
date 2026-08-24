@@ -67,10 +67,22 @@ module mag_link_cdc #(
     // `rst` combines two domains' resets, so its DEASSERTION is asynchronous to
     // at least one clock; a metastable tvalid injects a beat that never existed.
     reg [1:0] s_rst_q, m_rst_q;
-    always @(posedge s_axis_aclk or posedge rst)
-        if (rst) s_rst_q <= 2'b11; else s_rst_q <= {s_rst_q[0], 1'b0};
-    always @(posedge m_axis_aclk or posedge rst)
-        if (rst) m_rst_q <= 2'b11; else m_rst_q <= {m_rst_q[0], 1'b0};
+    always @(posedge s_axis_aclk or posedge rst) begin
+        if (rst) begin
+            s_rst_q <= 2'b11;
+        end
+        else begin
+            s_rst_q <= {s_rst_q[0], 1'b0};
+        end
+    end
+    always @(posedge m_axis_aclk or posedge rst) begin
+        if (rst) begin
+            m_rst_q <= 2'b11;
+        end
+        else begin
+            m_rst_q <= {m_rst_q[0], 1'b0};
+        end
+    end
 
     wire s_rst = s_rst_q[1];
     wire m_rst = m_rst_q[1];
@@ -92,15 +104,23 @@ module mag_link_cdc #(
     );
 
     always @(posedge s_axis_aclk) begin
-        if (s_rst)                           fault <= 1'b0;
-        else if (S_AXIS_tvalid && wr_full)   fault <= 1'b1;
+        if (s_rst) begin
+            fault <= 1'b0;
+        end
+        else if (S_AXIS_tvalid && wr_full) begin
+            fault <= 1'b1;
+        end
     end
 
     // Empty at reset exit, so `wr_full` IS wr_rst_busy until the first write.
     // Sticky, or it would read as "not ready" whenever the FIFO fills.
     always @(posedge s_axis_aclk) begin
-        if (s_rst)         ready <= 1'b0;
-        else if (!wr_full) ready <= 1'b1;
+        if (s_rst) begin
+            ready <= 1'b0;
+        end
+        else if (!wr_full) begin
+            ready <= 1'b1;
+        end
     end
 
     // Registered out, so the far end is still driven from a flop and the
@@ -113,8 +133,9 @@ module mag_link_cdc #(
             M_AXIS_tvalid <= 1'b0;
         end else begin
             M_AXIS_tvalid <= !rd_empty;
-            if (!rd_empty)
+            if (!rd_empty) begin
                 {M_AXIS_tuser, M_AXIS_tlast, M_AXIS_tdata} <= rd_data;
+            end
         end
     end
 
@@ -124,17 +145,21 @@ module mag_link_cdc #(
                  DEPTH, 2*RX_BEATS);
     reg said;
     always @(posedge s_axis_aclk) begin
-        if (rst) said <= 1'b0;
+        if (rst) begin
+            said <= 1'b0;
+        end
         else if (fault && !said) begin
             said <= 1'b1;
             $display("%0t ERROR mag_link_cdc: beat DISCARDED -- the FIFO is shallower than the sender's credit",
                      $time);
         end
     end
-    always @(posedge m_axis_aclk)
-        if (!rst && M_AXIS_tvalid && !M_AXIS_tready)
+    always @(posedge m_axis_aclk) begin
+        if (!rst && M_AXIS_tvalid && !M_AXIS_tready) begin
             $display("%0t ERROR mag_link_cdc: m_axis_tready low. The far end must be a mag_link with tready tied high.",
                      $time);
+        end
+    end
 `endif
 
 endmodule

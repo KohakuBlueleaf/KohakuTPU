@@ -104,8 +104,11 @@ module mag_switch #(
         integer p;
         begin
             ch_pos = 2'd0;
-            for (p = 0; p < 4; p = p + 1)
-                if (CH_SEQ[2*p +: 2] == m) ch_pos = p[1:0];
+            for (p = 0; p < 4; p = p + 1) begin
+                if (CH_SEQ[2*p +: 2] == m) begin
+                    ch_pos = p[1:0];
+                end
+            end
         end
     endfunction
 
@@ -303,11 +306,19 @@ module mag_switch #(
     wire no_fwd = (l0r1hv && !has1) || (l1r1hv && !has0);
 
     always @(posedge clk) begin
-        if (!resetn) fault_r <= 3'd0;
+        if (!resetn) begin
+            fault_r <= 3'd0;
+        end
         else begin
-            if (no_fwd)               fault_r[F_NOFWD]  <= 1'b1;
-            if (ltx_hvalid && l_self) fault_r[F_SELF]   <= 1'b1;
-            if (|flen)                fault_r[F_PKTLEN] <= 1'b1;
+            if (no_fwd) begin
+                fault_r[F_NOFWD]  <= 1'b1;
+            end
+            if (ltx_hvalid && l_self) begin
+                fault_r[F_SELF]   <= 1'b1;
+            end
+            if (|flen) begin
+                fault_r[F_PKTLEN] <= 1'b1;
+            end
         end
     end
     assign fault = {1'b0, fault_r};
@@ -320,9 +331,15 @@ module mag_switch #(
         if (!resetn) begin
             n_fwd <= 32'd0; n_fwd_blk <= 32'd0; n_lblk <= 32'd0;
         end else begin
-            if (fwd_go)                     n_fwd     <= n_fwd + 32'd1;
-            if (fwd_blk)                    n_fwd_blk <= n_fwd_blk + 32'd1;
-            if (ltx_hvalid && !ltx_hready)  n_lblk    <= n_lblk + 32'd1;
+            if (fwd_go) begin
+                n_fwd     <= n_fwd + 32'd1;
+            end
+            if (fwd_blk) begin
+                n_fwd_blk <= n_fwd_blk + 32'd1;
+            end
+            if (ltx_hvalid && !ltx_hready) begin
+                n_lblk    <= n_lblk + 32'd1;
+            end
         end
     end
     assign ctr_fwd    = {n_fwd_blk, n_fwd};
@@ -330,12 +347,14 @@ module mag_switch #(
 
 `ifndef SYNTHESIS
     always @(posedge clk) if (resetn) begin
-        if (no_fwd)
+        if (no_fwd) begin
             $display("%0t ERROR mag_switch: mesh %0d is at the end of the chain and a packet arrived needing to be forwarded past it. Either my_mesh is wrong or a sender routed by something other than chain order.",
                      $time, my_mesh);
-        if (ltx_hvalid && l_self)
+        end
+        if (ltx_hvalid && l_self) begin
             $display("%0t ERROR mag_switch: local egress addressed to mesh %0d, which is this mesh -- mag_ilink should have kept it local. Dropped.",
                      $time, my_mesh);
+        end
     end
 `endif
 

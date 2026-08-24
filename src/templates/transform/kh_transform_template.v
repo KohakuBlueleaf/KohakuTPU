@@ -27,9 +27,7 @@ module kh_transform_template #(
 );
     assign need_beat = 1'b1;
 
-    localparam integer CW = (IN_BEATS <= 2) ? 1
-                          : (IN_BEATS <= 4) ? 2
-                          : (IN_BEATS <= 8) ? 3 : 4;
+    localparam integer CW = (IN_BEATS <= 2) ? 1 : (IN_BEATS <= 4) ? 2 : (IN_BEATS <= 8) ? 3 : 4;
     reg [CW:0] cnt;
     reg        cfg_b;
     reg        run;

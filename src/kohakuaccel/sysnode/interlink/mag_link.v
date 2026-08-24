@@ -123,13 +123,11 @@ module mag_link #(
     // project has no header that anything includes, and the last silent
     // divergence put CU_DATA into MAG's write queue -- so interlink_pkt_tb.v
     // compares all three by hierarchical reference.
-    localparam [3:0] K_MEM_WR   = 4'h1,
-                     K_NOC_FLIT = 4'h2,
-                     K_DOORBELL = 4'h3,
-                     K_CREDIT   = 4'h4;
+    localparam [3:0] K_MEM_WR = 4'h1, K_NOC_FLIT = 4'h2, K_DOORBELL = 4'h3;
+    localparam [3:0] K_CREDIT = 4'h4;
 
-    localparam integer U_KIND = 0,  U_DMESH = 4,  U_SMESH = 6,
-                       U_TXN  = 8,  U_LEN   = 16, U_ADDR  = 32;
+    localparam integer U_KIND = 0, U_DMESH = 4, U_SMESH = 6, U_TXN = 8;
+    localparam integer U_LEN = 16, U_ADDR = 32;
 
     localparam integer CW = 16;
 
@@ -177,8 +175,12 @@ module mag_link #(
     // "First beat of a packet" is "the beat after a last", and it resets to 1
     // or the first packet of all time reads as a continuation.
     always @(posedge clk) begin
-        if (!resetn)      r_first <= 1'b1;
-        else if (r_valid) r_first <= r_last;
+        if (!resetn) begin
+            r_first <= 1'b1;
+        end
+        else if (r_valid) begin
+            r_first <= r_last;
+        end
     end
 
     wire [3:0] r_kind   = r_user[U_KIND  +: 4];
@@ -236,8 +238,11 @@ module mag_link #(
     // going quiet does not leave the peer short until it wakes up.
     wire cred_idle = (|ret0 || |ret1) && !q0_val && !q1_val;
     wire cred_go   = (tst == T_IDLE) && (cred_due || cred_idle);
-    wire cred_sel  = (ret0 >= CRED_BATCH[CW-1:0]) ? 1'b0 :
-                     (ret1 >= CRED_BATCH[CW-1:0]) ? 1'b1 : (|ret0 ? 1'b0 : 1'b1);
+    wire cred_sel  = (
+        (ret0 >= CRED_BATCH[CW-1:0]) ? 1'b0
+        : (ret1 >= CRED_BATCH[CW-1:0]) ? 1'b1
+        : (|ret0 ? 1'b0 : 1'b1)
+    );
 
     // The grant empties the holding slot; the slot's own readiness is what the
     // source sees, so a stalled credit never reaches back to the switch.
@@ -254,8 +259,12 @@ module mag_link #(
         if (!resetn) begin
             q0_val <= 1'b0; q1_val <= 1'b0;
         end else begin
-            if (grant0) q0_val <= 1'b0;
-            if (grant1) q1_val <= 1'b0;
+            if (grant0) begin
+                q0_val <= 1'b0;
+            end
+            if (grant1) begin
+                q1_val <= 1'b0;
+            end
             if (tx0_hvalid && tx0_hready) begin q0_hdr <= tx0_hdr; q0_val <= 1'b1; end
             if (tx1_hvalid && tx1_hready) begin q1_hdr <= tx1_hdr; q1_val <= 1'b1; end
         end
@@ -316,52 +325,57 @@ module mag_link #(
             m_axis_tvalid <= 1'b0;
 
             case (tst)
-            T_IDLE: begin
-                if (cred_go) begin
-                    csend  <= ret_cap;
-                    csel_r <= cred_sel;
-                    tst    <= T_CRED;
-                end else if (grant0) begin
-                    thdr <= q0_hdr; tsel <= 1'b0; tleft <= h0_need;
-                    thdr_first <= 1'b1; tst <= T_DATA;
-                end else if (grant1) begin
-                    thdr <= q1_hdr; tsel <= 1'b1; tleft <= h1_need;
-                    thdr_first <= 1'b1; tst <= T_DATA;
+                T_IDLE: begin
+                    if (cred_go) begin
+                        csend  <= ret_cap;
+                        csel_r <= cred_sel;
+                        tst    <= T_CRED;
+                    end else if (grant0) begin
+                        thdr <= q0_hdr; tsel <= 1'b0; tleft <= h0_need;
+                        thdr_first <= 1'b1; tst <= T_DATA;
+                    end else if (grant1) begin
+                        thdr <= q1_hdr; tsel <= 1'b1; tleft <= h1_need;
+                        thdr_first <= 1'b1; tst <= T_DATA;
+                    end
                 end
-            end
 
-            // A state of its own so `csend` is a register when the header is
-            // built: a count read and cleared in one expression returns a stale
-            // or a doubled batch.
-            T_CRED: begin
-                m_axis_tdata  <= {LINK_W{1'b0}};
-                m_axis_tuser  <= { {(TUSER_W-U_ADDR-1){1'b0}}, csel_r,
-                                   16'd0, csend[7:0], my_mesh,
-                                   peer_mesh, K_CREDIT };
-                m_axis_tlast  <= 1'b1;
-                m_axis_tvalid <= 1'b1;
-                tst <= T_IDLE;
-            end
+                // A state of its own so `csend` is a register when the header is
+                // built: a count read and cleared in one expression returns a stale
+                // or a doubled batch.
+                T_CRED: begin
+                    m_axis_tdata  <= {LINK_W{1'b0}};
+                    m_axis_tuser  <= { {(TUSER_W-U_ADDR-1){1'b0}}, csel_r,
+                                       16'd0, csend[7:0], my_mesh,
+                                       peer_mesh, K_CREDIT };
+                    m_axis_tlast  <= 1'b1;
+                    m_axis_tvalid <= 1'b1;
+                    tst <= T_IDLE;
+                end
 
-            T_DATA: if (tx_dv) begin
-                m_axis_tdata  <= tx_dd;
-                m_axis_tuser  <= thdr_first ? thdr : {TUSER_W{1'b0}};
-                m_axis_tlast  <= tx_dl;
-                m_axis_tvalid <= 1'b1;
-                thdr_first    <= 1'b0;
-                tleft         <= tleft - 17'd1;
-                if (tx_dl) tst <= T_IDLE;
-            end
+                T_DATA: if (tx_dv) begin
+                    m_axis_tdata  <= tx_dd;
+                    m_axis_tuser  <= thdr_first ? thdr : {TUSER_W{1'b0}};
+                    m_axis_tlast  <= tx_dl;
+                    m_axis_tvalid <= 1'b1;
+                    thdr_first    <= 1'b0;
+                    tleft         <= tleft - 17'd1;
+                    if (tx_dl) begin
+                        tst <= T_IDLE;
+                    end
+                end
 
-            default: tst <= T_IDLE;
+                default: tst <= T_IDLE;
             endcase
         end
     end
 
     always @(posedge clk) begin
-        if (!resetn) fault_len_r <= 1'b0;
-        else if ((q0_val && !h0_fits) || (q1_val && !h1_fits))
+        if (!resetn) begin
+            fault_len_r <= 1'b0;
+        end
+        else if ((q0_val && !h0_fits) || (q1_val && !h1_fits)) begin
             fault_len_r <= 1'b1;
+        end
     end
     assign fault_len = fault_len_r;
 
@@ -425,14 +439,22 @@ module mag_link #(
         end else begin
             if (tx_fire) begin
                 n_tx_beat <= n_tx_beat + 32'd1;
-                if (tx_dl) n_tx_pkt <= n_tx_pkt + 32'd1;
+                if (tx_dl) begin
+                    n_tx_pkt <= n_tx_pkt + 32'd1;
+                end
             end
             if (enq) begin
                 n_rx_beat <= n_rx_beat + 32'd1;
-                if (r_last) n_rx_pkt <= n_rx_pkt + 32'd1;
+                if (r_last) begin
+                    n_rx_pkt <= n_rx_pkt + 32'd1;
+                end
             end
-            if ((tst == T_IDLE) && want_send && !can_send) n_stall <= n_stall + 32'd1;
-            if ((tst == T_IDLE) && !want_send)             n_idle  <= n_idle  + 32'd1;
+            if ((tst == T_IDLE) && want_send && !can_send) begin
+                n_stall <= n_stall + 32'd1;
+            end
+            if ((tst == T_IDLE) && !want_send) begin
+                n_idle  <= n_idle  + 32'd1;
+            end
         end
     end
 
@@ -443,21 +465,26 @@ module mag_link #(
 
 `ifndef SYNTHESIS
     always @(posedge clk) begin
-        if (resetn && m_axis_tvalid && !m_axis_tready)
+        if (resetn && m_axis_tvalid && !m_axis_tready) begin
             $display("%0t ERROR mag_link: m_axis_tready low. The far end must be a mag_link with tready tied high -- a real slave here reintroduces a combinational SLR crossing.",
                      $time);
-        if (resetn && enq && ((!in_cls && d0_full) || (in_cls && d1_full)))
+        end
+        if (resetn && enq && ((!in_cls && d0_full) || (in_cls && d1_full))) begin
             $display("%0t ERROR mag_link: receive FIFO overflow on class %0d -- credit accounting is wrong, not the buffer size.",
                      $time, in_cls);
-        if (resetn && tx_fire && (tx_dl != (tleft == 17'd1)))
+        end
+        if (resetn && tx_fire && (tx_dl != (tleft == 17'd1))) begin
             $display("%0t ERROR mag_link: TLAST and `len` disagree -- %0d beats still credited when TLAST arrived. The source's header undercounts its own packet, and the extra beats are uncredited.",
                      $time, tleft);
+        end
         if (resetn && fault_len_r && !fl_said) begin
             fl_said <= 1'b1;
             $display("%0t ERROR mag_link: a packet longer than MAX_BEATS=%0d was offered; it can never be granted credit.",
                      $time, MAX_BEATS);
         end
-        if (!resetn) fl_said <= 1'b0;
+        if (!resetn) begin
+            fl_said <= 1'b0;
+        end
     end
 `endif
 

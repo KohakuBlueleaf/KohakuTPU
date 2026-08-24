@@ -36,7 +36,7 @@ set V6_SOURCES {
     src/kohakutpu/matmul/mx_cluster_node_pump.v
     src/kohakutpu/matmul/mx_cluster_cu.v
     src/kohakutpu/matmul/mx_cluster_cu_pump.v
-    src/kohakuaccel/mas/mover/mx_tdesc.v
+    src/kohakuaccel/sysnode/mover/mx_tdesc.v
 
     src/kohakutpu/vector/vec_dsp.v
     src/kohakutpu/vector/vec_delay.v
@@ -50,19 +50,19 @@ set V6_SOURCES {
     src/kohakutpu/vector/vec_cu.v
 
     src/kohakutpu/transform/mx_quant.v
-    src/kohakuaccel/mas/core/mag_mem_port.v
-    src/kohakuaccel/mas/core/mag_stage.v
-    src/kohakuaccel/mas/core/mag_stage_port.v
-    src/kohakuaccel/mas/mover/mm_prng.v
-    src/kohakuaccel/mas/mover/mm_mover.v
-    src/kohakuaccel/mas/interlink/il_pkt_arb.v
-    src/kohakuaccel/mas/interlink/mag_link.v
-    src/kohakuaccel/mas/interlink/mag_link_cdc.v
-    src/kohakuaccel/mas/interlink/mag_link_pipe.v
-    src/kohakuaccel/mas/interlink/mag_switch.v
-    src/kohakuaccel/mas/interlink/mag_ilink.v
-    src/kohakuaccel/mas/core/mag.v
-    src/kohakuaccel/mas/core/mag_dram_port.v
+    src/kohakuaccel/sysnode/core/mag_mem_port.v
+    src/kohakuaccel/sysnode/core/mag_stage.v
+    src/kohakuaccel/sysnode/core/mag_stage_port.v
+    src/kohakuaccel/sysnode/mover/mm_prng.v
+    src/kohakuaccel/sysnode/mover/mm_mover.v
+    src/kohakuaccel/sysnode/interlink/il_pkt_arb.v
+    src/kohakuaccel/sysnode/interlink/mag_link.v
+    src/kohakuaccel/sysnode/interlink/mag_link_cdc.v
+    src/kohakuaccel/sysnode/interlink/mag_link_pipe.v
+    src/kohakuaccel/sysnode/interlink/mag_switch.v
+    src/kohakuaccel/sysnode/interlink/mag_ilink.v
+    src/kohakuaccel/sysnode/core/mag.v
+    src/kohakuaccel/sysnode/core/mag_dram_port.v
 
     src/kohakutpu/top/mag_1m.v
     src/kohakuaccel/common/clk/ktpu_div2.v

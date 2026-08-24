@@ -9,7 +9,9 @@ module kh_transform_template_tb;
     localparam integer NB = 4;
 
     reg clk = 0, rst = 1;
-    always #2 clk = ~clk;
+    always #2 begin
+        clk = ~clk;
+    end
 
     reg           start = 0, blay = 0, beat_v = 0;
     reg  [DW-1:0] beat;
@@ -39,8 +41,12 @@ module kh_transform_template_tb;
     // so a wait-for-level would miss it; latch it per entry instead.
     reg done_seen;
     always @(posedge clk) begin
-        if (start) done_seen <= 1'b0;
-        else if (done) done_seen <= 1'b1;
+        if (start) begin
+            done_seen <= 1'b0;
+        end
+        else if (done) begin
+            done_seen <= 1'b1;
+        end
     end
 
     reg [DW-1:0] sent [0:NB-1];
@@ -61,7 +67,9 @@ module kh_transform_template_tb;
                 @(negedge clk);
                 beat_v = 0;
                 // Beats need not be back to back; the port stalls on AXI.
-                for (gap = 0; gap < spacing; gap = gap + 1) @(negedge clk);
+                for (gap = 0; gap < spacing; gap = gap + 1) begin
+                    @(negedge clk);
+                end
             end
             gap = 0;
             while (!done_seen && gap < 20) begin gap = gap + 1; @(negedge clk); end
@@ -86,11 +94,13 @@ module kh_transform_template_tb;
         entry(32'hA500, 3);
         entry(32'h0BE0, 1);
 
-        if (errors == 0)
+        if (errors == 0) begin
             $display("PASS kh_transform_template_tb: %0d checks", checks);
-        else
+        end
+        else begin
             $display("FAIL kh_transform_template_tb: %0d of %0d checks failed",
                      errors, checks);
+        end
         $finish;
     end
 endmodule

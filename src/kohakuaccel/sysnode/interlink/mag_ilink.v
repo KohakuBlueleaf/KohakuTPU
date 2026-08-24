@@ -144,15 +144,13 @@ module mag_ilink #(
     // ---- a NoC memory request whose address is not in this mesh -----------
     input  wire                  bad_remote_req
 );
-    localparam [3:0] K_MEM_WR   = 4'h1,
-                     K_NOC_FLIT = 4'h2,
-                     K_DOORBELL = 4'h3;
+    localparam [3:0] K_MEM_WR = 4'h1, K_NOC_FLIT = 4'h2, K_DOORBELL = 4'h3;
 
-    localparam integer U_KIND = 0,  U_DMESH = 4,  U_SMESH = 6,
-                       U_TXN  = 8,  U_LEN   = 16, U_ADDR  = 32;
+    localparam integer U_KIND = 0, U_DMESH = 4, U_SMESH = 6, U_TXN = 8;
+    localparam integer U_LEN = 16, U_ADDR = 32;
 
-    localparam integer F_RD_REMOTE = 0, F_ACK0 = 1, F_SWITCH = 2,
-                       F_AXI       = 3, F_INJ  = 4;
+    localparam integer F_RD_REMOTE = 0, F_ACK0 = 1, F_SWITCH = 2, F_AXI = 3;
+    localparam integer F_INJ = 4;
 
     localparam integer LSB = $clog2(DATA_W/8);
 
@@ -204,22 +202,22 @@ module mag_ilink #(
 
     always @(*) begin
         case (stat_sel)
-        4'd0:    stat_q = enable_r ? caps : 64'd0;
-        4'd1:    stat_q = {56'd0, fault_r};
-        4'd2:    stat_q = {16'd0, dbell_tx[0], dbell_n[0]};
-        4'd3:    stat_q = {16'd0, dbell_tx[1], dbell_n[1]};
-        4'd4:    stat_q = {16'd0, dbell_tx[2], dbell_n[2]};
-        4'd5:    stat_q = {16'd0, dbell_tx[3], dbell_n[3]};
-        4'd6:    stat_q = sw_tx0;
-        4'd7:    stat_q = sw_rx0;
-        4'd8:    stat_q = sw_tx1;
-        4'd9:    stat_q = sw_rx1;
-        4'd10:   stat_q = sw_stall0;
-        4'd11:   stat_q = sw_stall1;
-        4'd12:   stat_q = sw_fwd;
-        4'd13:   stat_q = {sw_cred1, sw_cred0};
-        4'd14:   stat_q = {32'd0, door_sent};
-        default: stat_q = sw_lblock;
+            4'd0:    stat_q = enable_r ? caps : 64'd0;
+            4'd1:    stat_q = {56'd0, fault_r};
+            4'd2:    stat_q = {16'd0, dbell_tx[0], dbell_n[0]};
+            4'd3:    stat_q = {16'd0, dbell_tx[1], dbell_n[1]};
+            4'd4:    stat_q = {16'd0, dbell_tx[2], dbell_n[2]};
+            4'd5:    stat_q = {16'd0, dbell_tx[3], dbell_n[3]};
+            4'd6:    stat_q = sw_tx0;
+            4'd7:    stat_q = sw_rx0;
+            4'd8:    stat_q = sw_tx1;
+            4'd9:    stat_q = sw_rx1;
+            4'd10:   stat_q = sw_stall0;
+            4'd11:   stat_q = sw_stall1;
+            4'd12:   stat_q = sw_fwd;
+            4'd13:   stat_q = {sw_cred1, sw_cred0};
+            4'd14:   stat_q = {32'd0, door_sent};
+            default: stat_q = sw_lblock;
         endcase
     end
 
@@ -278,41 +276,53 @@ module mag_ilink #(
             st_r <= {(DATA_W/8){1'b1}};
             loc_aw <= 1'b0; ob_wr_req <= 1'b0;
         end else begin
-            if (loc_aw && m_awready) loc_aw <= 1'b0;
+            if (loc_aw && m_awready) begin
+                loc_aw <= 1'b0;
+            end
 
             case (ws)
-            WS_IDLE: if (s_awvalid && s_awready) begin
-                a_r    <= s_awaddr;
-                w_left <= {1'b0, s_awlen} + 9'd1;
-                if (remote_now && enable_r) ws <= WS_REM;
-                else begin
-                    loc_aw <= 1'b1;
-                    ws     <= WS_LOC;
+                WS_IDLE: if (s_awvalid && s_awready) begin
+                    a_r    <= s_awaddr;
+                    w_left <= {1'b0, s_awlen} + 9'd1;
+                    if (remote_now && enable_r) begin
+                        ws <= WS_REM;
+                    end
+                    else begin
+                        loc_aw <= 1'b1;
+                        ws     <= WS_LOC;
+                    end
                 end
-            end
 
-            WS_LOC: if (w_beat) begin
-                if (w_last) ws <= WS_IDLE;
-                else        w_left <= w_left - 9'd1;
-            end
-
-            // One packet per word still. The beats are decomposed rather than
-            // gathered, so a remote burst is correct here and not yet fast.
-            WS_REM: begin
-                if (w_beat) begin
-                    d_r  <= s_wdata;
-                    st_r <= s_wstrb;
-                    ob_wr_req <= 1'b1;
+                WS_LOC: if (w_beat) begin
+                    if (w_last) begin
+                        ws <= WS_IDLE;
+                    end
+                    else begin
+                        w_left <= w_left - 9'd1;
+                    end
                 end
-                if (ob_wr_ack) begin
-                    ob_wr_req <= 1'b0;
-                    a_r <= a_r + {{(ADDR_W-6){1'b0}}, 6'd32};
-                    if (w_last) ws <= WS_IDLE;
-                    else        w_left <= w_left - 9'd1;
-                end
-            end
 
-            default: ws <= WS_IDLE;
+                // One packet per word still. The beats are decomposed rather than
+                // gathered, so a remote burst is correct here and not yet fast.
+                WS_REM: begin
+                    if (w_beat) begin
+                        d_r  <= s_wdata;
+                        st_r <= s_wstrb;
+                        ob_wr_req <= 1'b1;
+                    end
+                    if (ob_wr_ack) begin
+                        ob_wr_req <= 1'b0;
+                        a_r <= a_r + {{(ADDR_W-6){1'b0}}, 6'd32};
+                        if (w_last) begin
+                            ws <= WS_IDLE;
+                        end
+                        else begin
+                            w_left <= w_left - 9'd1;
+                        end
+                    end
+                end
+
+                default: ws <= WS_IDLE;
             endcase
 
             // m_bvalid only ever answers a LOCAL burst, so it is not gated on
@@ -346,8 +356,12 @@ module mag_ilink #(
     reg [15:0]             acc_nb;             // the closed packet's beats
     reg                    acc_nodd;
 
-    wire acc_match = acc_open && (acc_mesh == e_mesh) && (acc_fin == e_fin) &&
-                     (acc_src == e_src);
+    wire acc_match = (
+        acc_open
+        && (acc_mesh == e_mesh)
+        && (acc_fin == e_fin)
+        && (acc_src == e_src)
+    );
     wire ef_full, ef_empty;
     wire [SLOT_W-1:0] ef_q;
 
@@ -355,8 +369,14 @@ module mag_ilink #(
     // one waits rather than being merged into this. A remote flit arriving at a
     // disabled interlink is consumed and dropped -- holding the port would stop
     // this mesh's own memory traffic behind a link nobody turned on.
-    wire enc_take = enc_valid && enable_r && e_rem && !acc_ready && !ef_full &&
-                    (!acc_open || acc_match);
+    wire enc_take = (
+        enc_valid
+        && enable_r
+        && e_rem
+        && !acc_ready
+        && !ef_full
+        && (!acc_open || acc_match)
+    );
     wire enc_drop = enc_valid && (!enable_r || !e_rem);
     assign enc_busy = !(enc_take || enc_drop);
     assign flt_drop = enc_drop;
@@ -404,7 +424,9 @@ module mag_ilink #(
                     acc_fin  <= e_fin;
                     acc_src  <= e_src;
                 end
-                if (!e_completes) acc_lo <= enc_data;
+                if (!e_completes) begin
+                    acc_lo <= enc_data;
+                end
                 if (acc_close) begin
                     acc_ready <= 1'b1;
                     acc_nb    <= acc_beats + 16'd1;
@@ -414,10 +436,14 @@ module mag_ilink #(
                     acc_beats <= 16'd0;
                 end else begin
                     acc_half  <= !e_completes;
-                    if (e_completes) acc_beats <= acc_beats + 16'd1;
+                    if (e_completes) begin
+                        acc_beats <= acc_beats + 16'd1;
+                    end
                 end
             end
-            if (ob_fl_ack) acc_ready <= 1'b0;
+            if (ob_fl_ack) begin
+                acc_ready <= 1'b0;
+            end
         end
     end
 
@@ -438,20 +464,32 @@ module mag_ilink #(
     reg  [1:0] pick;
     always @(*) begin
         case (ob_rr)
-        2'd0:    pick = req_wr ? 2'd0 : req_fl ? 2'd1 : 2'd2;
-        2'd1:    pick = req_fl ? 2'd1 : req_db ? 2'd2 : 2'd0;
-        default: pick = req_db ? 2'd2 : req_wr ? 2'd0 : 2'd1;
+            2'd0:    pick = req_wr ? 2'd0 : req_fl ? 2'd1 : 2'd2;
+            2'd1:    pick = req_fl ? 2'd1 : req_db ? 2'd2 : 2'd0;
+            default: pick = req_db ? 2'd2 : req_wr ? 2'd0 : 2'd1;
         endcase
     end
 
     assign ob_wr_ack = (obst == OB_HDR) && ltx_hready && (ob_who == 2'd0);
-    assign ob_fl_ack = (obst == OB_DAT) && ltx_dready && ltx_dlast &&
-                       (ob_who == 2'd1);
-    assign ob_db_ack = (obst == OB_DAT) && ltx_dready && ltx_dlast &&
-                       (ob_who == 2'd2);
-    assign ef_pop = (ob_who == 2'd1) &&
-                    (((obst == OB_HDR) && ltx_hready) ||
-                     ((obst == OB_DAT) && ltx_dready && (ob_left != 16'd1)));
+    assign ob_fl_ack = (
+        (obst == OB_DAT)
+        && ltx_dready
+        && ltx_dlast
+        && (ob_who == 2'd1)
+    );
+    assign ob_db_ack = (
+        (obst == OB_DAT)
+        && ltx_dready
+        && ltx_dlast
+        && (ob_who == 2'd2)
+    );
+    assign ef_pop = (
+        (ob_who == 2'd1)
+        && (
+            ((obst == OB_HDR) && ltx_hready)
+            || ((obst == OB_DAT) && ltx_dready && (ob_left != 16'd1))
+        )
+    );
 
     // A memory packet is still one word today, so its beat is odd by
     // construction; the mover hands over one 32-byte write at a time and there
@@ -481,44 +519,46 @@ module mag_ilink #(
             door_sent <= 32'd0;
         end else begin
             case (obst)
-            OB_IDLE: if (|req && enable_r) begin
-                ob_who <= pick;
-                case (pick)
-                2'd0: begin ltx_hdr <= hdr_wr; ob_left <= 16'd1; end
-                2'd1: begin ltx_hdr <= hdr_fl; ob_left <= acc_nb; end
-                default: begin ltx_hdr <= hdr_db; ob_left <= 16'd1; end
-                endcase
-                ltx_hvalid <= 1'b1;
-                obst <= OB_HDR;
-            end
-
-            OB_HDR: if (ltx_hready) begin
-                ltx_hvalid <= 1'b0;
-                case (ob_who)
-                2'd0:    ltx_dat <= {{(LINK_W-DATA_W){1'b0}}, d_r};
-                2'd1:    ltx_dat <= ef_q;
-                default: ltx_dat <= {LINK_W{1'b0}};
-                endcase
-                ltx_dlast  <= (ob_left == 16'd1);
-                ltx_dvalid <= 1'b1;
-                obst <= OB_DAT;
-            end
-
-            OB_DAT: if (ltx_dready) begin
-                if (ob_left == 16'd1) begin
-                    ltx_dvalid <= 1'b0;
-                    ltx_dlast  <= 1'b0;
-                    ob_rr      <= ob_who;
-                    if (ob_who == 2'd2) door_sent <= door_sent + 32'd1;
-                    obst       <= OB_IDLE;
-                end else begin
-                    ob_left <= ob_left - 16'd1;
-                    ltx_dat <= ef_q;
-                    ltx_dlast <= (ob_left == 16'd2);
+                OB_IDLE: if (|req && enable_r) begin
+                    ob_who <= pick;
+                    case (pick)
+                        2'd0: begin ltx_hdr <= hdr_wr; ob_left <= 16'd1; end
+                        2'd1: begin ltx_hdr <= hdr_fl; ob_left <= acc_nb; end
+                        default: begin ltx_hdr <= hdr_db; ob_left <= 16'd1; end
+                    endcase
+                    ltx_hvalid <= 1'b1;
+                    obst <= OB_HDR;
                 end
-            end
 
-            default: obst <= OB_IDLE;
+                OB_HDR: if (ltx_hready) begin
+                    ltx_hvalid <= 1'b0;
+                    case (ob_who)
+                        2'd0:    ltx_dat <= {{(LINK_W-DATA_W){1'b0}}, d_r};
+                        2'd1:    ltx_dat <= ef_q;
+                        default: ltx_dat <= {LINK_W{1'b0}};
+                    endcase
+                    ltx_dlast  <= (ob_left == 16'd1);
+                    ltx_dvalid <= 1'b1;
+                    obst <= OB_DAT;
+                end
+
+                OB_DAT: if (ltx_dready) begin
+                    if (ob_left == 16'd1) begin
+                        ltx_dvalid <= 1'b0;
+                        ltx_dlast  <= 1'b0;
+                        ob_rr      <= ob_who;
+                        if (ob_who == 2'd2) begin
+                            door_sent <= door_sent + 32'd1;
+                        end
+                        obst       <= OB_IDLE;
+                    end else begin
+                        ob_left <= ob_left - 16'd1;
+                        ltx_dat <= ef_q;
+                        ltx_dlast <= (ob_left == 16'd2);
+                    end
+                end
+
+                default: obst <= OB_IDLE;
             endcase
         end
     end
@@ -527,8 +567,8 @@ module mag_ilink #(
     // Inbound. One stream, handled in order, because the order is what makes a
     // DOORBELL mean "the data ahead of me has landed".
     // =====================================================================
-    localparam [2:0] IN_HDR = 3'd0, IN_WR = 3'd1, IN_FLIT = 3'd2,
-                     IN_DOOR = 3'd3, IN_SKIP = 3'd4;
+    localparam [2:0] IN_HDR = 3'd0, IN_WR = 3'd1, IN_FLIT = 3'd2;
+    localparam [2:0] IN_DOOR = 3'd3, IN_SKIP = 3'd4;
     reg [2:0]  inst;
     reg [3:0]  in_kind;
     reg [1:0]  in_src;
@@ -544,8 +584,11 @@ module mag_ilink #(
     assign lk_wlast  = 1'b1;
     assign lk_bready = 1'b1;
 
-    wire lk_free  = (wr_out != 4'd8) && (!lk_awvalid || lk_awready) &&
-                    (!lk_wvalid || lk_wready);
+    wire lk_free  = (
+        (wr_out != 4'd8)
+        && (!lk_awvalid || lk_awready)
+        && (!lk_wvalid || lk_wready)
+    );
     wire inj_free = !inj_valid || !inj_busy;
 
     // The beat is popped on the cycle its LAST slot is consumed, so slot 0 is
@@ -589,87 +632,110 @@ module mag_ilink #(
         end else begin
             // A clear racing a doorbell loses to it, below: losing one count is
             // better than a clear that silently does not clear.
-            if (dbell_clr)
-                for (dj = 0; dj < 4; dj = dj + 1) dbell_n[dj] <= 32'd0;
-            if (lk_awvalid && lk_awready) lk_awvalid <= 1'b0;
-            if (lk_wvalid  && lk_wready)  lk_wvalid  <= 1'b0;
-            if (inj_valid && !inj_busy)   inj_valid  <= 1'b0;
+            if (dbell_clr) begin
+                for (dj = 0; dj < 4; dj = dj + 1) begin
+                    dbell_n[dj] <= 32'd0;
+                end
+            end
+            if (lk_awvalid && lk_awready) begin
+                lk_awvalid <= 1'b0;
+            end
+            if (lk_wvalid  && lk_wready) begin
+                lk_wvalid  <= 1'b0;
+            end
+            if (inj_valid && !inj_busy) begin
+                inj_valid  <= 1'b0;
+            end
 
             case ({lk_awvalid && lk_awready, lk_bvalid})
-            2'b10:   wr_out <= wr_out + 4'd1;
-            2'b01:   wr_out <= wr_out - 4'd1;
-            default: ;
+                2'b10:   wr_out <= wr_out + 4'd1;
+                2'b01:   wr_out <= wr_out - 4'd1;
+                default: ;
             endcase
 
             case (inst)
-            IN_HDR: begin
-                if (lrx_hvalid && lrx_hready) begin
-                    in_kind <= lrx_hdr[U_KIND  +: 4];
-                    in_src  <= lrx_hdr[U_SMESH +: 2];
-                    in_txn  <= lrx_hdr[U_TXN   +: 8];
-                    in_addr <= lrx_hdr[U_ADDR  +: ADDR_W];
-                    in_left <= lrx_hdr[U_LEN   +: 16] + 16'd1;
-                    in_odd  <= lrx_hdr[U_ODD];
-                    in_slot <= 1'b0;
-                    case (lrx_hdr[U_KIND +: 4])
-                    K_MEM_WR:   inst <= IN_WR;
-                    K_NOC_FLIT: inst <= IN_FLIT;
-                    K_DOORBELL: inst <= IN_DOOR;
-                    default:    inst <= IN_SKIP;
-                    endcase
+                IN_HDR: begin
+                    if (lrx_hvalid && lrx_hready) begin
+                        in_kind <= lrx_hdr[U_KIND  +: 4];
+                        in_src  <= lrx_hdr[U_SMESH +: 2];
+                        in_txn  <= lrx_hdr[U_TXN   +: 8];
+                        in_addr <= lrx_hdr[U_ADDR  +: ADDR_W];
+                        in_left <= lrx_hdr[U_LEN   +: 16] + 16'd1;
+                        in_odd  <= lrx_hdr[U_ODD];
+                        in_slot <= 1'b0;
+                        case (lrx_hdr[U_KIND +: 4])
+                            K_MEM_WR:   inst <= IN_WR;
+                            K_NOC_FLIT: inst <= IN_FLIT;
+                            K_DOORBELL: inst <= IN_DOOR;
+                            default:    inst <= IN_SKIP;
+                        endcase
+                    end
                 end
-            end
 
-            // LOW 32 ONLY: this lands in local DRAM. mag_stage_port's `mine`
-            // needs a[39], so carrying [37:36] would write 4 GB out of range.
-            IN_WR: if (in_act_wr) begin
-                lk_awaddr  <= {{(ADDR_W-32){1'b0}}, in_addr[31:0]};
-                lk_awvalid <= 1'b1;
-                lk_wdata   <= in_slotd[DATA_W-1:0];
-                lk_wvalid  <= 1'b1;
-                in_addr    <= in_addr + (1 << LSB);
-                if (in_beat_done) begin
-                    in_slot <= 1'b0;
-                    if (in_last_beat) inst <= IN_HDR;
-                    else              in_left <= in_left - 16'd1;
-                end else in_slot <= 1'b1;
-            end
-
-            // The flit's own txn carries {fin_y, fin_x}; the header carries the
-            // same, and using the flit's needs no lookahead. `src` is kept.
-            IN_FLIT: if (in_act_fl) begin
-                inj_data <= in_flit;
-                inj_data[NF_DX +: POS_WIDTH] <= in_flit[NF_TX +: POS_WIDTH];
-                inj_data[NF_DY +: POS_WIDTH] <=
-                    in_flit[NF_TX + POS_WIDTH +: POS_WIDTH];
-                inj_data[NF_TX +: 8] <= 8'd0;
-                inj_data[NF_RS +: 3] <= 3'd0;
-                inj_valid <= 1'b1;
-                if (in_beat_done) begin
-                    in_slot <= 1'b0;
-                    if (in_last_beat) inst <= IN_HDR;
-                    else              in_left <= in_left - 16'd1;
-                end else in_slot <= 1'b1;
-            end
-
-            // Held until every write ahead of it has its BRESP. Without this a
-            // doorbell overtakes data that is still in the AXI pipeline, and
-            // the consumer it releases reads the previous contents.
-            IN_DOOR: begin
-                if (lrx_dvalid && lrx_dready) begin
-                    dbell_n[in_src]  <= dbell_n[in_src] + 32'd1;
-                    dbell_tx[in_src] <= {8'd0, in_txn};
-                    inst <= IN_HDR;
+                // LOW 32 ONLY: this lands in local DRAM. mag_stage_port's `mine`
+                // needs a[39], so carrying [37:36] would write 4 GB out of range.
+                IN_WR: if (in_act_wr) begin
+                    lk_awaddr  <= {{(ADDR_W-32){1'b0}}, in_addr[31:0]};
+                    lk_awvalid <= 1'b1;
+                    lk_wdata   <= in_slotd[DATA_W-1:0];
+                    lk_wvalid  <= 1'b1;
+                    in_addr    <= in_addr + (1 << LSB);
+                    if (in_beat_done) begin
+                        in_slot <= 1'b0;
+                        if (in_last_beat) begin
+                            inst <= IN_HDR;
+                        end
+                        else begin
+                            in_left <= in_left - 16'd1;
+                        end
+                    end
+                    else begin
+                        in_slot <= 1'b1;
+                    end
                 end
-            end
 
-            IN_SKIP: begin
-                if (lrx_dvalid && lrx_dready && lrx_dlast) begin
-                    inst <= IN_HDR;
+                // The flit's own txn carries {fin_y, fin_x}; the header carries the
+                // same, and using the flit's needs no lookahead. `src` is kept.
+                IN_FLIT: if (in_act_fl) begin
+                    inj_data <= in_flit;
+                    inj_data[NF_DX +: POS_WIDTH] <= in_flit[NF_TX +: POS_WIDTH];
+                    inj_data[NF_DY +: POS_WIDTH]
+                        <= in_flit[NF_TX + POS_WIDTH +: POS_WIDTH];
+                    inj_data[NF_TX +: 8] <= 8'd0;
+                    inj_data[NF_RS +: 3] <= 3'd0;
+                    inj_valid <= 1'b1;
+                    if (in_beat_done) begin
+                        in_slot <= 1'b0;
+                        if (in_last_beat) begin
+                            inst <= IN_HDR;
+                        end
+                        else begin
+                            in_left <= in_left - 16'd1;
+                        end
+                    end
+                    else begin
+                        in_slot <= 1'b1;
+                    end
                 end
-            end
 
-            default: inst <= IN_HDR;
+                // Held until every write ahead of it has its BRESP. Without this a
+                // doorbell overtakes data that is still in the AXI pipeline, and
+                // the consumer it releases reads the previous contents.
+                IN_DOOR: begin
+                    if (lrx_dvalid && lrx_dready) begin
+                        dbell_n[in_src]  <= dbell_n[in_src] + 32'd1;
+                        dbell_tx[in_src] <= {8'd0, in_txn};
+                        inst <= IN_HDR;
+                    end
+                end
+
+                IN_SKIP: begin
+                    if (lrx_dvalid && lrx_dready && lrx_dlast) begin
+                        inst <= IN_HDR;
+                    end
+                end
+
+                default: inst <= IN_HDR;
             endcase
         end
     end
@@ -687,28 +753,42 @@ module mag_ilink #(
         end else begin
             dbell_clr <= 1'b0;
 
-            if (bad_remote_req)             fault_r[F_RD_REMOTE] <= 1'b1;
-            if (|sw_fault)                  fault_r[F_SWITCH]    <= 1'b1;
-            if (flt_ack0)                   fault_r[F_ACK0]      <= 1'b1;
-            if (flt_axi_wr || flt_axi_lk)   fault_r[F_AXI]       <= 1'b1;
-            if (flt_drop)                   fault_r[F_INJ]       <= 1'b1;
+            if (bad_remote_req) begin
+                fault_r[F_RD_REMOTE] <= 1'b1;
+            end
+            if (|sw_fault) begin
+                fault_r[F_SWITCH]    <= 1'b1;
+            end
+            if (flt_ack0) begin
+                fault_r[F_ACK0]      <= 1'b1;
+            end
+            if (flt_axi_wr || flt_axi_lk) begin
+                fault_r[F_AXI]       <= 1'b1;
+            end
+            if (flt_drop) begin
+                fault_r[F_INJ]       <= 1'b1;
+            end
 
-            if (ob_db_ack) door_req <= 1'b0;
+            if (ob_db_ack) begin
+                door_req <= 1'b0;
+            end
 
             if (cfg_mine) begin
                 case (cfg_sel)
-                8'h80: begin
-                    enable_r  <= cfg_data[0];
-                    dbell_clr <= cfg_data[1];
-                    if (cfg_data[2]) fault_r <= 8'd0;
-                end
-                8'h88: mesh_r <= cfg_data[1:0];
-                8'h90: begin
-                    door_dst <= cfg_data[1:0];
-                    door_txn <= cfg_data[15:8];
-                    door_req <= 1'b1;
-                end
-                default: ;
+                    8'h80: begin
+                        enable_r  <= cfg_data[0];
+                        dbell_clr <= cfg_data[1];
+                        if (cfg_data[2]) begin
+                            fault_r <= 8'd0;
+                        end
+                    end
+                    8'h88: mesh_r <= cfg_data[1:0];
+                    8'h90: begin
+                        door_dst <= cfg_data[1:0];
+                        door_txn <= cfg_data[15:8];
+                        door_req <= 1'b1;
+                    end
+                    default: ;
                 endcase
             end
         end

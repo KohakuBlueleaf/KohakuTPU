@@ -145,8 +145,11 @@ module mx_tdesc #(
     wire [NDIM-1:0] carry;
     generate
     for (g = 0; g < NDIM; g = g + 1) begin : g_carry
-        if (g == NDIM-1) assign carry[g] = 1'b1;                 // innermost
-        else             assign carry[g] = &at_max[NDIM-1:g+1];
+        if (g == NDIM-1) begin : g_inner
+            assign carry[g] = 1'b1;
+        end else begin : g_outer
+            assign carry[g] = &at_max[NDIM-1:g+1];
+        end
     end
     endgenerate
 
@@ -197,11 +200,17 @@ module mx_tdesc #(
     reg signed [SW-1:0] os_t [0:AN-1];
     reg signed [SW-1:0] off_sum;
     always @(*) begin
-        for (oi = 0; oi < AN;   oi = oi + 1) os_t[oi] = {SW{1'b0}};
-        for (oi = 0; oi < NDIM; oi = oi + 1) os_t[oi] = psum[oi];
-        for (on2 = AN >> 1; on2 > 0; on2 = on2 >> 1)
-            for (ok = 0; ok < on2; ok = ok + 1)
+        for (oi = 0; oi < AN;   oi = oi + 1) begin
+            os_t[oi] = {SW{1'b0}};
+        end
+        for (oi = 0; oi < NDIM; oi = oi + 1) begin
+            os_t[oi] = psum[oi];
+        end
+        for (on2 = AN >> 1; on2 > 0; on2 = on2 >> 1) begin
+            for (ok = 0; ok < on2; ok = ok + 1) begin
                 os_t[ok] = os_t[ok] + os_t[ok + on2];
+            end
+        end
         off_sum = os_t[0];
     end
     assign addr = d_base + {{(AW-SW){off_sum[SW-1]}}, off_sum};
@@ -222,21 +231,32 @@ module mx_tdesc #(
         a1_t[0] = d_abase[1];
         // Mask first, THEN reduce: the compare gated every link of the chain.
         for (xi = 0; xi < NDIM; xi = xi + 1) begin
-            if (d_axis[xi] == 2'd1) a0_t[xi+1] = apsum[xi];
-            if (d_axis[xi] == 2'd2) a1_t[xi+1] = apsum[xi];
+            if (d_axis[xi] == 2'd1) begin
+                a0_t[xi+1] = apsum[xi];
+            end
+            if (d_axis[xi] == 2'd2) begin
+                a1_t[xi+1] = apsum[xi];
+            end
         end
-        for (xn2 = AN >> 1; xn2 > 0; xn2 = xn2 >> 1)
+        for (xn2 = AN >> 1; xn2 > 0; xn2 = xn2 >> 1) begin
             for (xk = 0; xk < xn2; xk = xk + 1) begin
                 a0_t[xk] = a0_t[xk] + a0_t[xk + xn2];
                 a1_t[xk] = a1_t[xk] + a1_t[xk + xn2];
             end
+        end
         ax_val[0] = a0_t[0];
         ax_val[1] = a1_t[0];
-        for (xi = 0; xi < 2; xi = xi + 1)
+        for (xi = 0; xi < 2; xi = xi + 1) begin
             // extent 0 disables the axis, so a descriptor with no padding needs
             // no axis fields set at all
-            ax_ok[xi] = (d_aext[xi] == {XW{1'b0}}) ||
-                        ((ax_val[xi] >= 0) && (ax_val[xi] < $signed({1'b0, d_aext[xi]})));
+            ax_ok[xi] = (
+                (d_aext[xi] == {XW{1'b0}})
+                || (
+                    (ax_val[xi] >= 0)
+                    && (ax_val[xi] < $signed({1'b0, d_aext[xi]}))
+                )
+            );
+        end
     end
     assign valid = &ax_ok;
 

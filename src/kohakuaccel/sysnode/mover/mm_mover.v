@@ -7,6 +7,12 @@
 // An ISSUE engine folds consecutive addresses into bursts and keeps k reads in
 // flight; a WRITE engine drains the FIFO behind it and never waits for B.
 
+// MODE_XFORM puts the transform slot ON THE READ-RETURN PATH, between R and the
+// FIFO, so one pass is mem -> occupant -> mem with the walker feeding the
+// occupant directly. An entry is IN_BEATS source words in, OUT_WORDS out; the
+// SOURCE walker defines the iteration space and the destination steps once per
+// entry. The reservation is OUT_WORDS per entry, taken before the entry's ARs.
+
 // mag_dram_port's return path is shared, so a burst's FIFO space is reserved
 // before its AR and its AW waits until the data is resident.
 
@@ -39,7 +45,12 @@ module mm_mover #(
     // 6.8 cycles a word against a 50-cycle write-to-B; the slave throttles.
     parameter integer MAX_WOUT  = 32,
     // 4 KB / 32 B. The AXI4 boundary rule makes any longer burst illegal.
-    parameter integer BURST_MAX = 128
+    parameter integer BURST_MAX = 128,
+    // The transform slot. OUT_WORDS is at most 4: the bank presents word0..word3.
+    parameter integer XID_W     = 4,
+    parameter integer XMODE_W   = 4,
+    parameter integer XF_IN_BITS   = 2048,
+    parameter integer XF_OUT_WORDS = 4
 )(
     input  wire                clk,
     input  wire                resetn,
@@ -82,22 +93,37 @@ module mm_mover #(
     input  wire [1:0]          m_rresp,
     input  wire                m_rlast,
     input  wire                m_rvalid,
-    output wire                m_rready
-);
-    localparam [2:0] MODE_COPY = 3'd0, MODE_TRANSPOSE = 3'd1,
-                     MODE_GATHER = 3'd2, MODE_GENERATE = 3'd3, MODE_FILL = 3'd4;
+    output wire                m_rready,
 
-    localparam [3:0] F_NONE = 4'd0, F_IDXLEN = 4'd1, F_RANGE = 4'd2,
-                     F_AXI = 4'd3, F_MODE = 4'd4, F_EWIDTH = 4'd5,
-                     F_ALIGN = 4'd6;
+    // ---- the transform slot, on the read-return path ---------------------
+    output reg                 x_req,
+    input  wire                x_gnt,
+    output reg                 x_start,
+    output reg  [XID_W-1:0]    x_id,
+    output reg  [XMODE_W-1:0]  x_mode,
+    output reg  [DATA_W-1:0]   x_beat,
+    output reg                 x_beat_valid,
+    input  wire                x_done,
+    input  wire [DATA_W-1:0]   x_w0, x_w1, x_w2, x_w3
+);
+    localparam [2:0] MODE_COPY = 3'd0, MODE_TRANSPOSE = 3'd1;
+    localparam [2:0] MODE_GATHER = 3'd2, MODE_GENERATE = 3'd3, MODE_FILL = 3'd4;
+    localparam [2:0] MODE_XFORM = 3'd5;
+
+    localparam [3:0] F_NONE = 4'd0, F_IDXLEN = 4'd1, F_RANGE = 4'd2;
+    localparam [3:0] F_AXI = 4'd3, F_MODE = 4'd4, F_EWIDTH = 4'd5;
+    localparam [3:0] F_ALIGN = 4'd6, F_XPAD = 4'd7;
+
+    // One entry: IN_BEATS source words in, XF_OUT_WORDS destination words out.
+    localparam integer IN_BEATS = XF_IN_BITS / DATA_W;
+    localparam [8:0]   OUT_W9   = XF_OUT_WORDS[8:0];
 
     // The issue engine. I_GA1..3 are the gather address pipeline and I_LAT is
     // the element latch; everything else walks one element per cycle in I_RUN.
-    localparam [3:0] I_IDLE = 4'd0,  I_IXA  = 4'd1,  I_IXD  = 4'd2,
-                     I_IXW  = 4'd3,  I_GO   = 4'd4,  I_GA1  = 4'd5,
-                     I_GA2  = 4'd6,  I_GA3  = 4'd7,  I_LAT  = 4'd8,
-                     I_RUN  = 4'd9,  I_FLUSH = 4'd10, I_DRAIN = 4'd11,
-                     I_DONE = 4'd12, I_FAULT = 4'd13;
+    localparam [3:0] I_IDLE = 4'd0, I_IXA = 4'd1, I_IXD = 4'd2, I_IXW = 4'd3;
+    localparam [3:0] I_GO = 4'd4, I_GA1 = 4'd5, I_GA2 = 4'd6, I_GA3 = 4'd7;
+    localparam [3:0] I_LAT = 4'd8, I_RUN = 4'd9, I_FLUSH = 4'd10;
+    localparam [3:0] I_DRAIN = 4'd11, I_DONE = 4'd12, I_FAULT = 4'd13;
 
     localparam [1:0] W_IDLE = 2'd0, W_ARM = 2'd1, W_GEN = 2'd2, W_DATA = 2'd3;
 
@@ -125,6 +151,8 @@ module mm_mover #(
     reg [7:0]  flags;
     reg [63:0] seed;
     reg [31:0] imm;
+    reg [XID_W-1:0]   xf_id;
+    reg [XMODE_W-1:0] xf_mode;
     // Declared here, not beside its reader: a wire used before its declaration
     // elaborates cleanly in some tools and as a 1-bit net in others.
     reg [ADDR_W-1:0] idx_base, dst_base, d_src_base;
@@ -165,8 +193,23 @@ module mm_mover #(
 
     reg  elem_adv;                          // combinational, driven below
 
+    // A transform move iterates SOURCE words and its dst walker steps once per
+    // ENTRY, so a dst descriptor counts entries, not words.
+    wire xf = (mode == MODE_XFORM);
+    reg  [15:0] xb_cnt;                     // source word within the entry
+    wire ent_first = (xb_cnt == 16'd0);
+    wire ent_last  = (xb_cnt == (IN_BEATS[15:0] - 16'd1));
+    // The walkers run ONE ELEMENT AHEAD of the element latch, so the dst walker
+    // must reach entry e+1 while the last element of entry e is being latched --
+    // one step before `ent_last`, not on it. Advancing on `ent_last` puts every
+    // entry's words at the PREVIOUS entry's address.
+    wire ent_pen   = (IN_BEATS == 1) ? 1'b1
+                                     : (xb_cnt == (IN_BEATS[15:0] - 16'd2));
+
+    wire walk_last  = xf ? src_last : dst_last;
     wire desc_start = (ist == I_GO);
-    wire desc_next  = elem_adv && !dst_last;
+    wire desc_next  = elem_adv && !walk_last;
+    wire dst_next   = xf ? (desc_next && ent_pen) : desc_next;
 
     mx_tdesc #(.NDIM(6), .AW(ADDR_W), .CW(16), .SW(32), .XW(16)) u_src (
         .clk(clk), .rst(!resetn),
@@ -190,7 +233,7 @@ module mm_mover #(
         .ld_ndim(d_ndim),
         .ld_ax_en(d_ax_en && (ld_sel == 1'b1)), .ld_ax_sel(d_ax_sel),
         .ld_abase(d_abase), .ld_aext(d_aext),
-        .start(desc_start), .next(desc_next),
+        .start(desc_start), .next(dst_next),
         .active(dst_active), .last(dst_last), .valid(dst_valid), .addr(dst_addr)
     );
 
@@ -233,9 +276,17 @@ module mm_mover #(
         fill_word = {DATA_W{1'b0}};
         for (fi = 0; fi < 32; fi = fi + 1) begin
             case (ewidth)
-                2'd0: fill_word[fi*8 +: 8]   = imm[7:0];
-                2'd1: if (fi < 16) fill_word[fi*16 +: 16] = imm[15:0];
-                default: if (fi < 8) fill_word[fi*32 +: 32] = imm[31:0];
+                2'd0: fill_word[fi*8 +: 8] = imm[7:0];
+                2'd1: begin
+                    if (fi < 16) begin
+                        fill_word[fi*16 +: 16] = imm[15:0];
+                    end
+                end
+                default: begin
+                    if (fi < 8) begin
+                        fill_word[fi*32 +: 32] = imm[31:0];
+                    end
+                end
             endcase
         end
     end
@@ -263,21 +314,46 @@ module mm_mover #(
     // ================================================== element latch
     reg [ADDR_W-1:0] e_rd, e_wr;
     reg [1:0]        e_kind;
-    reg              e_last, e_flt;
+    reg              e_last, e_flt, e_xp;
 
     wire [ADDR_W-1:0] lt_rd = (mode == MODE_GATHER) ? gath_addr : src_addr;
     wire              lt_rv = (mode == MODE_GATHER) ? 1'b1      : src_valid;
     wire              lt_ma = |dst_addr[4:0];
+    // A padded element issues no read, and a transform counts IN_BEATS off the
+    // return -- a bound axis leaves the occupant a beat short, forever. Faulted.
+    wire              lt_xpad = xf && !lt_rv;
     wire [1:0]        lt_kind = (!dst_valid || lt_ma)  ? K_SKIP
                               : (mode == MODE_FILL)     ? K_FILL
                               : (mode == MODE_GENERATE) ? K_GEN
                               : lt_rv                   ? K_RD
                               :                           K_FILL;
 
+    // ================================================== the transform slot
+    // Between R and the FIFO: the FIFO holds CONVERTED words and the walker
+    // feeds the occupant directly, so a strided source needs no gather pass.
+    //
+    // `start` LEADS the first beat. mx_quant is `if (start) ... else if (filling
+    // && beat_valid)`, so a beat presented WITH start is silently dropped.
+    reg  [15:0]       xr_cnt;               // source word within the entry
+    reg               xb_v1;
+    reg  [DATA_W-1:0] xb_d1;
+    wire              xr_beat = xf && m_rvalid && !ix_active;
+
+    // ONE ENTRY IN THE SLOT: the occupant is not double-buffered, so `start`
+    // would reset the entry still packing. Entry k's WRITE still overlaps k+1's
+    // reads -- the command FIFO already decoupled those.
+    reg               ent_busy, xo_busy, xf_pend;
+    reg  [1:0]        xo_sel;
+    reg  [DATA_W-1:0] xo0, xo1, xo2, xo3;
+    wire [DATA_W-1:0] xo_word = (xo_sel == 2'd0) ? xo0
+                              : (xo_sel == 2'd1) ? xo1
+                              : (xo_sel == 2'd2) ? xo2 : xo3;
+
     // ================================================== staging FIFO
     reg  [CNT_W-1:0] occ;                   // reserved + present
     reg  [CNT_W-1:0] fcnt;                  // present
-    wire             f_wr = m_rvalid && !ix_active;
+    wire             f_wr = xf ? xo_busy : (m_rvalid && !ix_active);
+    wire [DATA_W-1:0] f_din = xf ? xo_word : m_rdata;
     wire             f_rd;                  // driven by the write engine
     wire [DATA_W-1:0] f_dout;
     wire             f_empty, f_full;
@@ -285,7 +361,7 @@ module mm_mover #(
     sync_fifo #(.DATA_WIDTH(DATA_W), .FIFO_DEPTH(FIFO_D),
                 .MEMORY_TYPE("block")) u_dfifo (
         .clk(clk), .rst(!resetn),
-        .wr_en(f_wr), .wr_data(m_rdata), .wr_busy(f_full), .wr_almost(),
+        .wr_en(f_wr), .wr_data(f_din), .wr_busy(f_full), .wr_almost(),
         .rd_en(f_rd), .rd_data(f_dout), .rd_busy(f_empty)
     );
 
@@ -363,12 +439,20 @@ module mm_mover #(
 
     wire ar_slot  = !ar_valid_i || ar_ready_i;
     wire ar_ok    = ar_slot && (ar_out < MAX_OUT[7:0]);
-    wire fifo_room = (occ < FIFO_D[CNT_W-1:0]);
+    // A transform entry reserves OUT_WORDS at once: still a static count, still
+    // known before the AR, which is what m_rready = 1 rests on.
+    wire [CNT_W-1:0] occ_need = xf ? {{(CNT_W-9){1'b0}}, OUT_W9}
+                                   : {{(CNT_W-1){1'b0}}, 1'b1};
+    wire fifo_room = xf ? ((occ + occ_need) <= FIFO_D[CNT_W-1:0])
+                        : (occ < FIFO_D[CNT_W-1:0]);
+    wire ent_gate  = !xf || ent_first;
+    wire xf_cmd    = xf && ent_first && (e_kind == K_RD);
 
     wire stall_ar   = close_ar && !ar_ok;
-    wire stall_cmd  = close_wc && c_full;
-    wire stall_fifo = (e_kind == K_RD) && !fifo_room;
-    wire stall      = stall_ar || stall_cmd || stall_fifo;
+    wire stall_cmd  = xf ? (xf_cmd && c_full) : (close_wc && c_full);
+    wire stall_fifo = (e_kind == K_RD) && ent_gate && !fifo_room;
+    wire stall_slot = xf_cmd && (ent_busy || !x_gnt);
+    wire stall      = stall_ar || stall_cmd || stall_fifo || stall_slot;
 
     wire proc = (ist == I_RUN) && !stall;
 
@@ -381,9 +465,14 @@ module mm_mover #(
 
     // A command loads from W_IDLE or straight off the last beat of the burst
     // before it, so back-to-back bursts cost n+1 cycles rather than n+2.
-    wire w_take = ((wst == W_IDLE) ||
-                   ((wst == W_DATA) && (w_left == 9'd1) && m_wvalid && m_wready))
-                  && !c_empty && (wr_out < MAX_WOUT[7:0]);
+    wire w_take = (
+        (
+            (wst == W_IDLE)
+            || ((wst == W_DATA) && (w_left == 9'd1) && m_wvalid && m_wready)
+        )
+        && !c_empty
+        && (wr_out < MAX_WOUT[7:0])
+    );
     wire w_endbst = (wst == W_DATA) && m_wvalid && m_wready
                     && (w_left == 9'd1);
 
@@ -451,21 +540,28 @@ module mm_mover #(
     wire rflush   = (ist == I_RUN) && stall_cmd && ra_open && ar_ok && w_starve;
     wire flush_ar = (ist == I_FLUSH) && ra_open && ar_ok;
     wire flush_wc = (ist == I_FLUSH) && !ra_open && wa_open && !c_full;
+    // A transform entry's run MUST close at the boundary: held open across the
+    // stall waiting for `x_done`, its AR never goes out and the wait is forever.
+    wire xflush   = xf_pend && ra_open && ar_ok;
 
-    wire ar_load = (proc && close_ar) || flush_ar || rflush;
+    wire ar_load = (proc && close_ar) || flush_ar || rflush || xflush;
 
-    assign c_wr  = (proc && close_wc) || flush_wc;
-    assign c_din = {wa_kind, wa_n[7:0] - 8'd1, wa_base};
+    // A transform writes ONE burst of OUT_WORDS per entry, named when the entry
+    // opens; the run accumulator is a copy-mode device and stays idle.
+    assign c_wr  = xf ? (proc && xf_cmd) : ((proc && close_wc) || flush_wc);
+    assign c_din = xf ? {K_RD, OUT_W9[7:0] - 8'd1, e_wr}
+                      : {wa_kind, wa_n[7:0] - 8'd1, wa_base};
 
     reg  ar_dec, occ_up, occ_dn;
     always @(*) begin
         ar_dec = m_rvalid && m_rlast && (ar_out != 8'd0);
-        occ_up = proc && (e_kind == K_RD);
+        occ_up = proc && (e_kind == K_RD) && ent_gate;
         occ_dn = f_rd;
         // The walkers step on every element the issue engine consumes, except
         // in GATHER where the address pipeline re-latches from I_LAT.
         elem_adv = (ist == I_LAT)
-                || (proc && !e_last && !e_flt && (mode != MODE_GATHER));
+                || (proc && !e_last && !e_flt && !e_xp
+                    && (mode != MODE_GATHER));
     end
 
     wire err_ax = (m_rvalid && (m_rresp != 2'b00))
@@ -496,7 +592,13 @@ module mm_mover #(
             pr_lo <= 128'd0;
             // RESET-RISK: e_rd/e_wr, ra_base/wa_base, ra_nxt/wa_nxt and w_addr
             // are run accumulators, qualified by e_kind/ra_open/wa_open/w_kind.
-            e_kind <= K_SKIP; e_last <= 1'b0; e_flt <= 1'b0;
+            e_kind <= K_SKIP; e_last <= 1'b0; e_flt <= 1'b0; e_xp <= 1'b0;
+            xf_id <= {XID_W{1'b0}}; xf_mode <= {XMODE_W{1'b0}};
+            x_req <= 1'b0; x_start <= 1'b0; x_beat_valid <= 1'b0;
+            x_id <= {XID_W{1'b0}}; x_mode <= {XMODE_W{1'b0}};
+            xb_cnt <= 16'd0; xr_cnt <= 16'd0; xb_v1 <= 1'b0;
+            ent_busy <= 1'b0; xo_busy <= 1'b0; xf_pend <= 1'b0;
+            xo_sel <= 2'd0;
             ra_room <= 8'd0; wa_room <= 8'd0;
             ra_n <= 9'd0; wa_n <= 9'd0;
             ra_open <= 1'b0; wa_open <= 1'b0; wa_kind <= K_SKIP;
@@ -510,55 +612,92 @@ module mm_mover #(
             prod_r   <= idx_r * gath_pitch;
             row_base <= d_src_base + {{(ADDR_W-32){1'b0}}, prod_r};
 
-            occ  <= occ  + (occ_up ? 16'd1 : 16'd0) - (occ_dn ? 16'd1 : 16'd0);
+            occ  <= occ  + (occ_up ? occ_need : {CNT_W{1'b0}})
+                         - (occ_dn ? {{(CNT_W-1){1'b0}}, 1'b1} : {CNT_W{1'b0}});
             fcnt <= fcnt + (f_wr   ? 16'd1 : 16'd0) - (f_rd   ? 16'd1 : 16'd0);
+
+            // ---- the slot's return side ----
+            // Beats two registers behind R, `start` one, so start never shares a
+            // cycle with a beat.
+            xb_d1        <= m_rdata;
+            xb_v1        <= xr_beat;
+            x_beat       <= xb_d1;
+            x_beat_valid <= xb_v1;
+            x_start      <= xr_beat && (xr_cnt == 16'd0);
+            if (xr_beat) begin
+                xr_cnt <= (xr_cnt == (IN_BEATS[15:0] - 16'd1))
+                        ? 16'd0 : xr_cnt + 16'd1;
+            end
+
+            // The occupant emits OUT_WORDS in parallel and the FIFO takes one a
+            // cycle, so `done` starts a serialiser rather than writing directly.
+            if (x_done) begin
+                xo0 <= x_w0; xo1 <= x_w1; xo2 <= x_w2; xo3 <= x_w3;
+                xo_sel   <= 2'd0;
+                xo_busy  <= 1'b1;
+                ent_busy <= 1'b0;
+            end
+            else if (xo_busy) begin
+                if (xo_sel == (OUT_W9[1:0] - 2'd1)) begin
+                    xo_busy <= 1'b0;
+                end
+                xo_sel <= xo_sel + 2'd1;
+            end
 
             // ---- register writes ----
             if (cfg_en) begin
                 case (reg_sel)
-                8'h00: begin
-                    mode   <= cfg_data[2:0];
-                    ewidth <= cfg_data[4:3];
-                    flags  <= cfg_data[15:8];
-                    go     <= cfg_data[16];
-                end
-                8'h10: begin
-                    ld_sel   <= cfg_data[0];
-                    d_base   <= cfg_data[4 +: ADDR_W];
-                    d_ndim   <= cfg_data[46:44];
-                    d_hdr_en <= 1'b1;
-                    if (cfg_data[0]) dst_base   <= cfg_data[4 +: ADDR_W];
-                    else             d_src_base <= cfg_data[4 +: ADDR_W];
-                end
-                8'h18: begin
-                    ld_sel    <= cfg_data[0];
-                    ld_dim    <= cfg_data[3:1];
-                    ld_count  <= cfg_data[19:4];
-                    ld_stride <= cfg_data[51:20];
-                end
-                8'h20: begin
-                    d_axis   <= cfg_data[1:0];
-                    d_astep  <= cfg_data[17:2];
-                    d_dim_en <= 1'b1;
-                end
-                8'h28: begin
-                    ld_sel   <= cfg_data[0];
-                    d_ax_sel <= cfg_data[1];
-                    d_abase  <= cfg_data[17:2];
-                    d_aext   <= cfg_data[33:18];
-                    d_ax_en  <= 1'b1;
-                end
-                8'h30: begin
-                    idx_base  <= cfg_data[ADDR_W-1:0];
-                    idx_count <= cfg_data[55:40];
-                end
-                8'h38: seed <= cfg_data;
-                8'h40: imm  <= cfg_data[31:0];
-                8'h50: begin
-                    gath_pitch <= cfg_data[31:0];
-                    gath_words <= cfg_data[47:32];
-                end
-                default: ;
+                    8'h00: begin
+                        mode   <= cfg_data[2:0];
+                        ewidth <= cfg_data[4:3];
+                        flags  <= cfg_data[15:8];
+                        go     <= cfg_data[16];
+                    end
+                    8'h10: begin
+                        ld_sel   <= cfg_data[0];
+                        d_base   <= cfg_data[4 +: ADDR_W];
+                        d_ndim   <= cfg_data[46:44];
+                        d_hdr_en <= 1'b1;
+                        if (cfg_data[0]) begin
+                            dst_base   <= cfg_data[4 +: ADDR_W];
+                        end
+                        else begin
+                            d_src_base <= cfg_data[4 +: ADDR_W];
+                            // The transform applies to the READ side, so its id
+                            // and mode ride the source header's free upper bits.
+                            xf_id      <= cfg_data[47 +: XID_W];
+                            xf_mode    <= cfg_data[55 +: XMODE_W];
+                        end
+                    end
+                    8'h18: begin
+                        ld_sel    <= cfg_data[0];
+                        ld_dim    <= cfg_data[3:1];
+                        ld_count  <= cfg_data[19:4];
+                        ld_stride <= cfg_data[51:20];
+                    end
+                    8'h20: begin
+                        d_axis   <= cfg_data[1:0];
+                        d_astep  <= cfg_data[17:2];
+                        d_dim_en <= 1'b1;
+                    end
+                    8'h28: begin
+                        ld_sel   <= cfg_data[0];
+                        d_ax_sel <= cfg_data[1];
+                        d_abase  <= cfg_data[17:2];
+                        d_aext   <= cfg_data[33:18];
+                        d_ax_en  <= 1'b1;
+                    end
+                    8'h30: begin
+                        idx_base  <= cfg_data[ADDR_W-1:0];
+                        idx_count <= cfg_data[55:40];
+                    end
+                    8'h38: seed <= cfg_data;
+                    8'h40: imm  <= cfg_data[31:0];
+                    8'h50: begin
+                        gath_pitch <= cfg_data[31:0];
+                        gath_words <= cfg_data[47:32];
+                    end
+                    default: ;
                 endcase
             end
 
@@ -567,163 +706,226 @@ module mm_mover #(
                 ar_addr_i  <= ra_base;
                 ar_len_i   <= ra_n[7:0] - 8'd1;
                 ar_valid_i <= 1'b1;
-            end else if (ar_valid_i && ar_ready_i) ar_valid_i <= 1'b0;
+            end else if (ar_valid_i && ar_ready_i) begin
+                ar_valid_i <= 1'b0;
+            end
 
             ar_out <= ar_out + (ar_load ? 8'd1 : 8'd0)
                              - (ar_dec  ? 8'd1 : 8'd0);
 
             // A memory error stops the walk but never the drain: outstanding
             // bursts still retire, so a fault reports rather than hangs.
-            if (err_ax && (ist != I_IDLE)) stat_fault <= F_AXI;
+            if (err_ax && (ist != I_IDLE)) begin
+                stat_fault <= F_AXI;
+            end
 
             case (ist)
-            // ------------------------------------------------------------
-            I_IDLE: if (go) begin
-                stat_fault <= F_NONE;
-                g_row <= 16'd0; g_word <= 16'd0;
-                ix_got <= 16'd0; ix_waddr <= 8'd0; ix_raddr <= 8'd0;
-                pr_half <= 1'b0;
-                ra_open <= 1'b0; wa_open <= 1'b0;
-                if (ewidth == 2'd3) begin
-                    stat_fault <= F_EWIDTH; ist <= I_FAULT;
-                end else if (mode == MODE_TRANSPOSE) begin
-                    stat_fault <= F_MODE; ist <= I_FAULT;
-                end else if (mode == MODE_GATHER) begin
-                    if (idx_count > {IDX_WORDS[12:0], 3'd0}) begin
-                        stat_fault <= F_IDXLEN; ist <= I_FAULT;
+                // ------------------------------------------------------------
+                I_IDLE: if (go) begin
+                    stat_fault <= F_NONE;
+                    g_row <= 16'd0; g_word <= 16'd0;
+                    ix_got <= 16'd0; ix_waddr <= 8'd0; ix_raddr <= 8'd0;
+                    pr_half <= 1'b0;
+                    ra_open <= 1'b0; wa_open <= 1'b0;
+                    xb_cnt <= 16'd0; xr_cnt <= 16'd0;
+                    xf_pend <= 1'b0; ent_busy <= 1'b0; xo_busy <= 1'b0;
+                    // The grant is held for the whole run, so it is taken once
+                    // here and the first entry waits on it.
+                    x_req  <= xf;
+                    x_id   <= xf_id;
+                    x_mode <= xf_mode;
+                    if (ewidth == 2'd3) begin
+                        stat_fault <= F_EWIDTH; ist <= I_FAULT;
+                    end else if (mode == MODE_TRANSPOSE) begin
+                        stat_fault <= F_MODE; ist <= I_FAULT;
+                    end else if (mode == MODE_GATHER) begin
+                        if (idx_count > {IDX_WORDS[12:0], 3'd0}) begin
+                            stat_fault <= F_IDXLEN; ist <= I_FAULT;
+                        end else begin
+                            ar_addr_i  <= idx_base;
+                            ar_len_i   <= 8'd0;
+                            ar_valid_i <= 1'b1;
+                            ix_active <= 1'b1;
+                            ist <= I_IXA;
+                        end
                     end else begin
-                        ar_addr_i  <= idx_base;
-                        ar_len_i   <= 8'd0;
+                        ist <= I_GO;
+                    end
+                end
+
+                // ---- gather: pull the whole index vector in first ----
+                I_IXA: if (ar_valid_i && ar_ready_i) begin
+                    ar_valid_i <= 1'b0;
+                    ist <= I_IXD;
+                end
+                I_IXD: if (m_rvalid) begin
+                    ix_we    <= 1'b1;
+                    ix_wr_a  <= ix_waddr;
+                    ix_data  <= m_rdata;
+                    ix_got   <= ix_got + 16'd8;
+                    ix_waddr <= ix_waddr + 8'd1;
+                    if (ix_got + 16'd8 >= idx_count) begin
+                        ix_active <= 1'b0;
+                        ist <= I_IXW;
+                    end else begin
+                        ar_addr_i  <= ar_addr_i + {{(ADDR_W-6){1'b0}}, 6'd32};
                         ar_valid_i <= 1'b1;
-                        ix_active <= 1'b1;
                         ist <= I_IXA;
                     end
-                end else begin
-                    ist <= I_GO;
                 end
-            end
 
-            // ---- gather: pull the whole index vector in first ----
-            I_IXA: if (ar_valid_i && ar_ready_i) begin
-                ar_valid_i <= 1'b0;
-                ist <= I_IXD;
-            end
-            I_IXD: if (m_rvalid) begin
-                ix_we    <= 1'b1;
-                ix_wr_a  <= ix_waddr;
-                ix_data  <= m_rdata;
-                ix_got   <= ix_got + 16'd8;
-                ix_waddr <= ix_waddr + 8'd1;
-                if (ix_got + 16'd8 >= idx_count) begin
-                    ix_active <= 1'b0;
-                    ist <= I_IXW;
-                end else begin
-                    ar_addr_i  <= ar_addr_i + {{(ADDR_W-6){1'b0}}, 6'd32};
-                    ar_valid_i <= 1'b1;
-                    ist <= I_IXA;
+                // The last index word is written during THIS cycle; reading it in
+                // the same cycle would return the old contents (read_first).
+                I_IXW: ist <= I_GO;
+
+                I_GO: begin
+                    ix_raddr <= 8'd0;
+                    ist <= (mode == MODE_GATHER) ? I_GA1 : I_LAT;
                 end
-            end
 
-            // The last index word is written during THIS cycle; reading it in
-            // the same cycle would return the old contents (read_first).
-            I_IXW: ist <= I_GO;
+                // One cycle for the index to leave the buffer into `idx_r`, one
+                // for the multiply, one for the base add.
+                I_GA1: ist <= I_GA2;
+                I_GA2: ist <= I_GA3;
+                I_GA3: ist <= I_LAT;
 
-            I_GO: begin
-                ix_raddr <= 8'd0;
-                ist <= (mode == MODE_GATHER) ? I_GA1 : I_LAT;
-            end
+                I_LAT: begin
+                    e_rd   <= lt_rd;
+                    e_wr   <= dst_addr;
+                    e_kind <= lt_kind;
+                    e_last <= walk_last;
+                    e_flt  <= dst_valid && lt_ma;
+                    e_xp   <= lt_xpad;
+                    ist    <= I_RUN;
+                end
 
-            // One cycle for the index to leave the buffer into `idx_r`, one
-            // for the multiply, one for the base add.
-            I_GA1: ist <= I_GA2;
-            I_GA2: ist <= I_GA3;
-            I_GA3: ist <= I_LAT;
-
-            I_LAT: begin
-                e_rd   <= lt_rd;
-                e_wr   <= dst_addr;
-                e_kind <= lt_kind;
-                e_last <= dst_last;
-                e_flt  <= dst_valid && lt_ma;
-                ist    <= I_RUN;
-            end
-
-            // ------------------------------------------------------------
-            I_RUN: begin
-                if (proc) begin
-                    if (e_kind == K_RD) begin
-                        if (ra_ext) begin
-                            ra_n    <= ra_n + 9'd1;
-                            ra_nxt  <= ra_nxt + w32;
-                            ra_room <= ra_room - 8'd1;
-                        end else begin
-                            ra_base <= e_rd; ra_n <= 9'd1; ra_open <= 1'b1;
-                            ra_nxt  <= e_rd + w32;
-                            ra_room <= ra_room0;
+                // ------------------------------------------------------------
+                I_RUN: begin
+                    if (proc) begin
+                        if (e_kind == K_RD) begin
+                            if (ra_ext) begin
+                                ra_n    <= ra_n + 9'd1;
+                                ra_nxt  <= ra_nxt + w32;
+                                ra_room <= ra_room - 8'd1;
+                            end else begin
+                                ra_base <= e_rd; ra_n <= 9'd1; ra_open <= 1'b1;
+                                ra_nxt  <= e_rd + w32;
+                                ra_room <= ra_room0;
+                            end
+                        end else if (close_ar) begin
+                            ra_open <= 1'b0;
                         end
-                    end else if (close_ar) ra_open <= 1'b0;
 
-                    if (e_kind != K_SKIP) begin
-                        if (wa_ext) begin
-                            wa_n    <= wa_n + 9'd1;
-                            wa_nxt  <= wa_nxt + w32;
-                            wa_room <= wa_room - 8'd1;
-                        end else begin
-                            wa_base <= e_wr; wa_n <= 9'd1;
-                            wa_kind <= e_kind; wa_open <= 1'b1;
-                            wa_nxt  <= e_wr + w32;
-                            wa_room <= wa_room0;
+                        // The write-run accumulator is a COPY-mode device: a
+                        // transform's burst is named once per entry above.
+                        if (!xf) begin
+                            if (e_kind != K_SKIP) begin
+                                if (wa_ext) begin
+                                    wa_n    <= wa_n + 9'd1;
+                                    wa_nxt  <= wa_nxt + w32;
+                                    wa_room <= wa_room - 8'd1;
+                                end else begin
+                                    wa_base <= e_wr; wa_n <= 9'd1;
+                                    wa_kind <= e_kind; wa_open <= 1'b1;
+                                    wa_nxt  <= e_wr + w32;
+                                    wa_room <= wa_room0;
+                                end
+                            end else if (close_wc) begin
+                                wa_open <= 1'b0;
+                            end
                         end
-                    end else if (close_wc) wa_open <= 1'b0;
 
-                    if (e_flt) begin
-                        stat_fault <= F_ALIGN;
-                        ist <= I_FLUSH;
-                    end else if (e_last || (stat_fault == F_AXI)) begin
-                        ist <= I_FLUSH;
-                    end else if (mode == MODE_GATHER) begin
-                        if (g_word + 16'd1 == gath_words) begin
-                            g_word   <= 16'd0;
-                            g_row    <= g_row + 16'd1;
-                            ix_raddr <= (g_row + 16'd1) >> 3;
-                        end else g_word <= g_word + 16'd1;
-                        ist <= I_GA1;
-                    end else begin
-                        e_rd   <= lt_rd;
-                        e_wr   <= dst_addr;
-                        e_kind <= lt_kind;
-                        e_last <= dst_last;
-                        e_flt  <= dst_valid && lt_ma;
+                        if (xf) begin
+                            if (ent_first) begin
+                                ent_busy <= 1'b1;
+                            end
+                            if (ent_last) begin
+                                xb_cnt  <= 16'd0;
+                                xf_pend <= 1'b1;
+                            end
+                            else begin
+                                xb_cnt <= xb_cnt + 16'd1;
+                            end
+                        end
+
+                        if (e_flt) begin
+                            stat_fault <= F_ALIGN;
+                            ist <= I_FLUSH;
+                        end else if (e_xp) begin
+                            stat_fault <= F_XPAD;
+                            ist <= I_FLUSH;
+                        end else if (e_last || (stat_fault == F_AXI)) begin
+                            ist <= I_FLUSH;
+                        end else if (mode == MODE_GATHER) begin
+                            if (g_word + 16'd1 == gath_words) begin
+                                g_word   <= 16'd0;
+                                g_row    <= g_row + 16'd1;
+                                ix_raddr <= (g_row + 16'd1) >> 3;
+                            end
+                            else begin
+                                g_word <= g_word + 16'd1;
+                            end
+                            ist <= I_GA1;
+                        end else begin
+                            e_rd   <= lt_rd;
+                            e_wr   <= dst_addr;
+                            e_kind <= lt_kind;
+                            e_last <= walk_last;
+                            e_flt  <= dst_valid && lt_ma;
+                            e_xp   <= lt_xpad;
+                        end
+                    end else if (rflush) begin
+                        ra_open <= 1'b0;
+                    end else if (xflush) begin
+                        ra_open <= 1'b0;
+                        xf_pend <= 1'b0;
                     end
-                end else if (rflush) ra_open <= 1'b0;
-            end
+                end
 
-            // Close whatever the last element left open, read side first so a
-            // command never reaches the write engine before its data is asked.
-            I_FLUSH: begin
-                if (ra_open) begin
-                    if (ar_ok) ra_open <= 1'b0;
-                end else if (wa_open) begin
-                    if (!c_full) wa_open <= 1'b0;
-                end else ist <= I_DRAIN;
-            end
+                // Close whatever the last element left open, read side first so a
+                // command never reaches the write engine before its data is asked.
+                I_FLUSH: begin
+                    if (ra_open) begin
+                        if (ar_ok) begin
+                            ra_open <= 1'b0;
+                        end
+                    end else if (wa_open) begin
+                        if (!c_full) begin
+                            wa_open <= 1'b0;
+                        end
+                    end
+                    else begin
+                        ist <= I_DRAIN;
+                    end
+                end
 
-            // arch.md s8: a move is not done until its writes have retired.
-            I_DRAIN: if ((wst == W_IDLE) && c_empty && (wr_out == 8'd0)
-                         && (ar_out == 8'd0) && (occ == {CNT_W{1'b0}}))
-                ist <= I_DONE;
+                // arch.md s8: a move is not done until its writes have retired.
+                // The slot counts too: an entry still packing owes the FIFO
+                // words the reservation has already promised.
+                I_DRAIN: if ((wst == W_IDLE) && c_empty && (wr_out == 8'd0)
+                             && (ar_out == 8'd0) && (occ == {CNT_W{1'b0}})
+                             && !ent_busy && !xo_busy)
+                    ist <= I_DONE;
 
-            I_DONE: begin
-                if (stat_fault == F_NONE) stat_done <= stat_done + 32'd1;
-                ist <= I_IDLE;
-            end
+                I_DONE: begin
+                    if (stat_fault == F_NONE) begin
+                        stat_done <= stat_done + 32'd1;
+                    end
+                    x_req <= 1'b0;
+                    ist   <= I_IDLE;
+                end
 
-            I_FAULT: ist <= I_IDLE;
-            default: ist <= I_IDLE;
+                I_FAULT: begin
+                    x_req <= 1'b0;
+                    ist   <= I_IDLE;
+                end
+                default: ist <= I_IDLE;
             endcase
 
             // ================================================ write engine
-            if (m_awvalid && m_awready) m_awvalid <= 1'b0;
+            if (m_awvalid && m_awready) begin
+                m_awvalid <= 1'b0;
+            end
 
             if ((wst == W_DATA) && m_wvalid && m_wready) begin
                 w_addr <= w_addr + {{(ADDR_W-6){1'b0}}, 6'd32};

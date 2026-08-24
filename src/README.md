@@ -30,7 +30,7 @@ only) host-style — upload, orchestrator dispatch, readback — 14 checks.
 
 | short | full | is |
 |---|---|---|
-| **MAS** | Memory Agent System | the library: agent + mover + interlink (`kohakuaccel/mas`) |
+| **system node** | — | the block: agent + mover + transform slot + control processor + interlink (`kohakuaccel/sysnode`). **Never a plain "node"** — a NoC endpoint is a node, and every compute unit sits on one. Was `MAS`, "Memory Agent System", which named only half of what is in it |
 | **MAG** | Memory AGent | the module (`mag.v`), one per mesh; prefix `mag_` is the agent proper |
 | **MM** | Memory Mover | the descriptor-driven DMA engine (`mm_*`) |
 | **IL** | InterLink | the mesh-to-mesh transport (`mag_link*`, `il_*`) |
