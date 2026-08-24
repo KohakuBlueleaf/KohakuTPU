@@ -75,7 +75,7 @@ stop the level above it from having to say the same thing 256 times.**
 ## 2. The cluster's three opcodes
 
 ```
-   FILL  addr, n, sel, preq      load n L1 entries from memory
+   FILL  addr, n, sel            load n L1 entries from memory
    GEMM  gm, gn, nk, anchor, acc sweep gm x gn output sub-tiles over nk K blocks
    DRAIN addr, n, fuse, last     get n resident sub-tiles out
 ```
@@ -147,12 +147,13 @@ forces; **the descriptor removed the requester rather than pipelining it.**
 
 Three fields on it are worth naming:
 
-- **`preq`** says the operand is already int7+E5M3 in memory, so the fetch is 4
-  words per entry rather than 8 FP16 beats and the quantiser is not involved. It
-  is a property of the *tensor*, carried by the instruction, because memory holds
-  no map of which addresses are which format and must not learn one
-  ([number-format.md](number-format.md) §5.1). Per `FILL`, so a `GEMM` can read
-  pre-quantised weights and online activations.
+- **`preq` is RESERVED** and the cluster no longer decodes it. It used to say the
+  operand was already int7+E5M3 so the quantiser would not be involved; now that
+  is the only case there is — a fetch is never transformed, so every `FILL` reads
+  4 words per entry and no request can ask for anything else
+  ([number-format.md](number-format.md) §5.1). Memory still holds no map of which
+  addresses are which format: the driver states the format by *scheduling the
+  conversion*, not by flagging the read.
 - **`eoff`** is which L1 entry the run starts at. It costs nothing to carry: it
   rides in the memory request's transaction field, which memory echoes back
   alongside each entry's position in the run, so the response names the exact

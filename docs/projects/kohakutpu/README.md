@@ -102,7 +102,7 @@ claiming.
 | [instruction payload](../../spec/instruction-encoding.md) | three cluster opcodes in a 256-bit payload; 32-bit vector words, eight per payload, inside a load-and-run envelope |
 | [flit format](../../spec/flit-format.md) | operand words sized so 32 int7 elements plus 4 scales fill the payload exactly |
 | [memory protocol](../../spec/memory-protocol.md) | streaming descriptors, out-of-order tagged responses, burst writes, and a per-request quantise flag |
-| [memory agent](../../arch/mas/README.md) | KohakuTPU's own quantiser sits in its read path and on its upload path |
+| [memory agent](../../arch/sysnode/README.md) | KohakuTPU's own quantiser occupies the framework's transform slot at id 1, reachable only by the memory mover |
 | [mesh](../../arch/noc/README.md) | unit-to-unit bulk transfer, used for peer accumulation at full accumulator width |
 | [ship assembly](../../arch/ship/README.md) | four independent meshes, one per SLR, joined by the interlink |
 | [measurement flow](../../workflow/measure.md) | every figure in [results.md](results.md) |
@@ -130,7 +130,7 @@ a project to prove anything.
 | matmul datapath | **built and verified** against both a behavioural model and a real DSP48E2 |
 | accumulator | **built**, FP22, resident tile, peer transfer reachable |
 | cluster as an endpoint | **built**, one mesh port, closes with margin |
-| quantiser | **built**, on the memory-agent side, both read and upload paths |
+| quantiser | **built**, as the transform slot's occupant at id 1; a fetch is never transformed |
 | vector ALU | **built and measured** — FMA within one ulp (correctly rounded outside one stated subtractive corner), faithful seeds |
 | vector core around it | **built**, and its instruction set partly so |
 | driver and hand-built encoders | **run on the card** |
@@ -181,6 +181,13 @@ Then the pages about writing against it, in no particular order:
   drained byte order is the fast one, and what a model-sized placement still needs.
 - **[conv2d.md](conv2d.md)** — 3x3 convolution as an implicit GEMM, the branch that
   runs on today's bitstream, and why the materialised fallback is not viable.
+- **[sdxl-requirements.md](sdxl-requirements.md)** — a modern network used as a
+  probe: every layer SDXL issues, whether the op exists, the kernels the gaps
+  need, and the measured relayout bill that is the actual blocker.
+- **[relayout.md](relayout.md)** — that bill, paid on the card: the 32-byte
+  granularity wall a `Tile` order runs into, the 4x4 granule transpose that
+  closes it, the MAG L2 as an allocatable tier, and the relayout counts before
+  and after.
 - **[tinygrad.md](tinygrad.md)** — the optional tensor frontend, what it switches
   off, and the ops where it is worse than calling the library.
 - **[hardware-wants.md](hardware-wants.md)** — ten asks the compiler and the

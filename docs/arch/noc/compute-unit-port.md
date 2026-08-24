@@ -10,7 +10,7 @@ tags:
 # The compute-unit port
 
 This is where the framework earns its keep. Everything else in this system is
-infrastructure that exists so `src/kohakunoc/noc_cu_base.v` can offer a small,
+infrastructure that exists so `src/kohakuaccel/noc/endpoint/noc_cu_base.v` can offer a small,
 stable handshake — and so that **you never have to work out how to connect to
 the fabric**. You still write the whole unit; you do not write the connection.
 
@@ -64,7 +64,7 @@ time the flit is presented — and a lost signal never returns its credit.
 
 ## The measurement instrument
 
-`src/kohakunoc/noc_cu_null.v` attaches to the fabric and computes nothing. Its
+`src/kohakuaccel/noc/endpoint/noc_cu_null.v` attaches to the fabric and computes nothing. Its
 job is to isolate what being *connected* costs before any arithmetic exists —
 the number that decides between many small units and few large ones. Subtract it
 from a real unit and the remainder is genuinely compute.

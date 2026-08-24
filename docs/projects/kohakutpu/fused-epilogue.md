@@ -193,7 +193,7 @@ second accumulator, which is [hardware-wants.md](hardware-wants.md) §2.
 
 **No bench joined a cluster to a vector core** before this. The RTL send side had
 existed in `mx_cluster_cu.v` since the destination fields were added and nothing
-had ever driven it at a real receiver. `tests/mas/mm_mesh_peer_tb.v` closes that
+had ever driven it at a real receiver. `tests/sysnode/mm_mesh_peer_tb.v` closes that
 on the `mm_mesh` machine: MAG at (0,1), cluster at (2,1), vector core at (1,0),
 agent at (1,1). It produces the same tile twice from the same L1 — once drained
 to the agent, once to the vector core, which writes L1 back to DRAM. Equality

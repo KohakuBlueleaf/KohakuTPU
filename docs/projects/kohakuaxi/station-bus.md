@@ -100,6 +100,35 @@ synthesis run, so no two rows disagree about which netlist they describe.
 unconverted; §2.15 prices the converting shims the current RTL carries,
 against that revision at the deployed configuration.
 
+**Which sweep produced which table.** Each suite writes one file under `build/`
+carrying a resource table, a per-clock Fmax table and a **Configuration table**.
+The configuration row is what makes a figure quotable — it carries the top
+module, every generic and the target period — so nothing below should be lifted
+without it.
+
+| suite | file | what it varies | top | § |
+|---|---|---|---|---|
+| `station-fw512` | `build/sweep_station-fw512.md` | preset × block RAM | `sb_root9` | 2.1 |
+| `station-width` | `build/sweep_station-width.md` | `FW` 128–1024, `AW` 32–64 | `sb_root9` | 2.2, 2.3 |
+| `station-ports` | `build/sweep_station-ports.md` | slave count, **all ports 512-bit** | `sb_p3xQf512` | 2.16 |
+| `line-ports` | `build/sweep_line-ports.md` | `NQ` 1–8, `NM` 1–6 | `sb_line4` | 2.4 |
+| `line-width` | `build/sweep_line-width.md` | `FW` 128–1024 × `AW` 32–64 | `sb_line4` | 2.5, 2.9 |
+| `line-preset` | `build/sweep_line-preset.md` | `OST`, `STORE_FWD`, `LUT_PER_BRAM` | `sb_line4` | 2.5 |
+| `line-freq` | `build/sweep_line-freq.md` | target period, 150–500 MHz | `sb_line4` | 2.5 |
+| `smc-base` | `build/sweep_smc-base.md` | SmartConnect shape × clocks | pseudo-top | 2.6 |
+| `xbar-anchor` | `build/sweep_xbar-anchor.md` | `axi_interconnect` shape × strategy × width | pseudo-top | 2.6 |
+
+```
+python scripts/py/ooc_sweep.py line-width      # -> build/sweep_line-width.md
+```
+
+**§2.9's eleven-clock timing table is `line-width`'s `lw-fw256` row**, not a
+separate run, which is what lets §2.8's per-die breakdown and §2.9's timing
+describe one netlist. Several rows in `station-fw512` and `line-preset` are
+blank — `PERF`/`SAFE` on the station and `LINK_CDC=0`, `FW=256`+BRAM on the line
+— so the corresponding figures in §2.1 and §2.5 come from earlier runs of the
+same script and are not reproducible from the current sweep files alone.
+
 **Measured or derived.** Resource counts and cycle counts are measured — from
 the netlist and from `sb_line4_tb` respectively. Two things are derived and
 labelled where they appear: peak bandwidth columns (`FW/8` bytes per fabric
@@ -184,7 +213,7 @@ sit on station 1; master 1 is 512-bit and the others are 32-bit.
 | `NQ` | slaves | CLB LUTs | FF | control sets |
 |---|---|---|---|---|
 | 1 | 4 | 21,030 | 62,940 | 440 |
-| 2 | 8 | 25,085 | 66,718 | 618 |
+| 2 | 8 | 25,085 | 66,718 | 620 |
 | 4 | 16 | 30,785 | 74,115 | 975 |
 | 6 | 24 | 37,885 | 81,599 | 1,330 |
 | 8 | 32 | 43,948 | 89,053 | 1,679 |
@@ -420,6 +449,90 @@ max-performance `axi_interconnect` 16,532, rebuilt SmartConnect 21,885, shipped
 transaction, a single serialised path, AXI3 internally. The station bus sits
 between the two `axi_interconnect` strategies while carrying four outstanding
 transactions and full AXI4.
+
+#### The vendor sweeps in their own frame
+
+The two tables above are **instance** figures, lifted from the hierarchical
+report. `scripts/py/ooc_sweep.py` also records the **whole harness** for the
+same runs, and those totals are the only rows that may be differenced against
+each other, because the harness is what varies with the shape. Sources:
+`build/sweep_xbar-anchor.md` and `build/sweep_smc-base.md`, via
+`ooc_sweep.py xbar-anchor` and `ooc_sweep.py smc-base`. Three masters
+throughout, `xcvu13p-fhgb2104-2L-e`, OOC synth.
+
+| IP | shape | width | clocks | strategy | CLB LUTs | FF | LUTRAM | SRL | BRAM |
+|---|---|---|---|---|---|---|---|---|---|
+| `axi_interconnect` | 3×9 | 512 | 4 | max-perf | 18,627 | 21,428 | 2,848 | 52 | 37.5 |
+| `axi_interconnect` | 3×9 | 512 | 4 | SASD | 12,068 | 13,729 | 2,560 | 10 | 6 |
+| `axi_interconnect` | 3×9 | 512 | 1 | max-perf | 7,934 | 6,103 | 448 | 37 | 1.5 |
+| `axi_interconnect` | 3×9 | 512 | 1 | SASD | 5,674 | 4,342 | 448 | 1 | 0 |
+| `axi_interconnect` | 3×5 | 512 | 4 | max-perf | 10,297 | 12,767 | 1,424 | 37 | 31.5 |
+| `axi_interconnect` | 3×5 | 512 | 4 | SASD | 7,656 | 10,213 | 2,048 | 7 | 3 |
+| `axi_interconnect` | 3×9 | 256 | 4 | max-perf | 14,898 | 16,930 | 1,776 | 54 | 25.5 |
+| `axi_interconnect` | 3×9 | 256 | 4 | SASD | 10,851 | 13,464 | 1,984 | 10 | 6 |
+| SmartConnect | 3×9 | 512 | 4 | — | 23,178 | 23,685 | 4,522 | 2,086 | 9 |
+| SmartConnect | 3×9 | 512 | 1 | — | 22,653 | 20,950 | 4,522 | 2,079 | 9 |
+| SmartConnect | 3×5 | 512 | 4 | — | 15,183 | 15,659 | 2,938 | 2,048 | 5 |
+| SmartConnect | 1×5 | 512 | 2 | — | 6,714 | 7,378 | 1,860 | 117 | 5 |
+
+Four of those rows are new here — `axi_interconnect` at 3×5 and at 256 bits, in
+both strategies — and they give the crossbar the two slopes §2.6 previously had
+only for SmartConnect.
+
+**Marginal slave port**, 5 → 9 at three masters and four clocks, 512-bit:
+
+| structure | LUTs per added slave port |
+|---|---|
+| `axi_interconnect`, max-performance | **2,083** |
+| SmartConnect (rebuild) | **1,999** |
+| `axi_interconnect`, SASD | **1,103** |
+| station, 512-bit ports (§2.16) | **1,621** |
+| station, 32-bit ports (§2.4) | **818** |
+
+The two full-AXI4 crossbars agree with each other to 4% and both cost about
+2,000 LUTs a port. That is the number to hold beside §2.16's, not §2.4's — a
+crossbar port at 512 bits against a station port at 512 bits is the comparison
+where the widths match.
+
+**Clock domains, same harness, same shape.** Going from one domain to four at
+3×9 512-bit:
+
+| structure | ΔLUT | ratio |
+|---|---|---|
+| `axi_interconnect`, max-performance | **+10,693** | 2.35× |
+| `axi_interconnect`, SASD | **+6,394** | 2.13× |
+| SmartConnect (rebuild) | **+525** | 1.02× |
+| station bus (§2.5, `LINK_CDC`) | **−328** | 0.99× |
+
+**SmartConnect's +525 is not a good result — it is the failure showing up as a
+number.** Its LUTRAM is **4,522 in both rows, to the digit**, and an added
+asynchronous domain cannot be free in a structure whose crossings are LUTRAM
+FIFOs. The three extra `clk_wiz` instances are common to both the SmartConnect
+and the `axi_interconnect` comparison, so the gap between +525 and +10,693 is
+the IP and not the harness: one built the domains and the other did not. This
+is the same defect §2.6 opens with, measured a second way and from a second
+sweep.
+
+**Flit width against crossbar width**, 3×9, four clocks, 512 → 256:
+
+| structure | 512 | 256 | change |
+|---|---|---|---|
+| station, one line (§2.5) | 30,785 | 22,106 | **−28.2%** |
+| `axi_interconnect`, max-performance | 18,627 | 14,898 | −20.0% |
+| SmartConnect (§2.6, instance) | 21,885 | 19,703 | −10.0% |
+| `axi_interconnect`, SASD | 12,068 | 10,851 | **−10.1%** |
+
+The ordering is the structural claim intact across four measurements: the more
+of a design is datapath, the more halving the width returns. The station bus is
+almost entirely datapath and returns the most; SASD serialises onto one path and
+returns the least. `axi_interconnect` at max-performance sits between them,
+which is what a per-port replicated crossbar should do.
+
+**One row is not usable and is left in deliberately.** SASD at 3×5 reports
+2,048 LUTRAM against 2,560 at 3×9 and 448 at one clock — more distributed RAM at
+five ports than the max-performance build of the same shape (1,424). Nothing in
+this document explains that, no claim here rests on it, and it is recorded
+rather than smoothed over.
 
 ### 2.7 Tree against line, at equal endpoints
 
@@ -774,6 +887,79 @@ traffic is.
 
 `{src_stn, src_port}` is packed as one opaque field that the slave shim
 echoes back, so `sb_nsu` needs no knowledge of the line at all.
+
+### 2.16 One station, port count, every port 512-bit
+
+§2.4 sweeps port count on the four-station line with **one** wide port per
+station and the rest 32-bit, which is the deployed mix. This sweeps a single
+station where **every** port is 512 bits — three 512-bit masters against Q
+512-bit slaves — so the marginal port cost comes out at one width instead of
+averaged over a mix. Source: `build/sweep_station-ports.md`, via
+`python scripts/py/ooc_sweep.py station-ports`. `FW=512`, `AW=43`, `OST=4`,
+`STORE_FWD=1`, `LUT_PER_BRAM=820` (no block RAM), `TIMEOUT=0`,
+`xcvu13p-fhgb2104-2L-e`, OOC synth.
+
+| Q | top | CLB LUTs | logic | LUTRAM | FF | control sets |
+|---|---|---|---|---|---|---|
+| 1 | `sb_p3x1f512` | 13,521 | 6,195 | 7,326 | 15,709 | 198 |
+| 2 | `sb_p3x2f512` | 15,167 | 6,761 | 8,406 | 19,742 | 240 |
+| 4 | `sb_p3x4f512` | 18,385 | 7,819 | 10,566 | 27,802 | 324 |
+
+**This is the flattest port-cost result in the document.** Fitting only the
+endpoints — Q=1 and Q=4 — and predicting the interior point:
+
+```
+   LUT  =  11,900  +  1,621 x Q        predicts Q=2 within 0.16%
+   FF   =  11,678  +  4,031 x Q
+   cs   =     156  +     42 x Q        EXACT at all three points
+```
+
+LUTRAM is **exactly 1,080 LUTs per port at both intervals** and control sets
+exactly 42, with no curvature at either. §2.4's 32-bit slave slope scatters ±20%
+around 818 and its worst interior prediction is 3.1% out; at a uniform width the
+same measurement has essentially no residual. That is the O(1)-per-port claim
+tested at a second width and on a second module, and it is the stronger of the
+two runs.
+
+**A 512-bit slave port costs 1,621 LUTs; a 32-bit one costs 818.** Sixteen times
+the width for 1.98× the port cost — which is what §2.4 concludes from the master
+side (4,212 for the 512-bit master against 822 and 1,217 for the 32-bit ones)
+arriving independently from the slave side. Cost tracks width and buffering, not
+port count, and most of it is buffer: 1,080 of the 1,621 is distributed RAM.
+
+Hold this row, not §2.4's, beside a vendor crossbar's per-port slope — the
+crossbars in §2.6 are measured with 512-bit ports throughout, and comparing them
+against an 818-LUT 32-bit port would flatter this design by a factor of two.
+
+**Only `bus_clk` moves with the port count**, and it moves a long way:
+
+| Q | `bus_clk` | `clk_ctrl` | `clk_xdma` |
+|---|---|---|---|
+| 1 | **413.2 MHz** | 415.6 | 398.7 |
+| 2 | **346.1 MHz** | 415.6 | 398.7 |
+| 4 | **328.3 MHz** | 415.6 | 398.7 |
+
+The two port clocks are identical to the tenth of a megahertz at every Q, so the
+sweep is varying what it claims to vary. `bus_clk` loses 67 MHz for the first
+added port and 18 more for the next two — the shape of a widening fan-in that is
+punished most by its first doubling. At three 512-bit injectors this station is
+still 1.6× the deployed 200 MHz bus at Q=4, so nothing here binds the deployment;
+it bounds how far a single station can be grown at full width before the fabric
+clock, rather than the area, becomes the reason to stop.
+
+**What this sweep cannot reach.** `sb_stn_root`, which `gen_station_wrap.py`
+wraps, fixes `DSTW=3` and `SRCW=2`, so **Q>8 and K>4 cannot be expressed at
+all** — beyond those the generator emits RTL whose part-selects are out of
+range, and `build_ports()` raises by name rather than producing it. The shapes
+recorded with no data in `build/sweep_station-ports.md` are of two kinds: `p-6x4`,
+`p-6x9`, `p-3x16` and `p-3x9` are the inexpressible ones, and `p-1x4`, `p-2x4`
+and `p-3x8` are expressible shapes that simply have not been run. Q>8 is §2.4's
+job, on the line.
+
+The wrappers themselves are **build artifacts** — `ooc_sweep.py` generates
+`src/synth_top/sb_p<K>x<Q>f<FW>.v` per shape at the start of the run — so
+reproducing this table means re-running the suite, not synthesising a file that
+is sitting in the tree.
 
 ### Link and die crossing
 

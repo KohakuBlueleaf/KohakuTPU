@@ -46,9 +46,11 @@ the shapes where fusion is refused — see [fused-epilogue.md](fused-epilogue.md
 
 **What is NOT modelled: DRAM row locality.** Nothing here knows a page size or a
 bank, so two buffers read together may land in the same bank and serialise. The
-measured link figure is 98 MB/s at 3% of the interlink, and `mag_dram_port`
-crosses through `xpm_fifo_async` — so DRAM is not currently the bottleneck and
-this is correctly unbuilt, not forgotten. Revisit when a kernel is DRAM-bound.
+one link figure ever measured is 98 MB/s at 3% of the interlink — superseded,
+since it predates the mover rebuild (`multi-mesh.md` §8) — and `mag_dram_port`
+crosses through `xpm_fifo_async`. DRAM was not the bottleneck at that rate and
+nothing since has made it one, so this is correctly unbuilt rather than
+forgotten. Revisit when a kernel is DRAM-bound, and re-measure first.
 
 ## 2. What exists now
 

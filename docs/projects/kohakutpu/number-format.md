@@ -238,29 +238,32 @@ operand, which is where the transpose happens: `lane*8 + (k % 8)` for A,
 `(k % 8)*4 + lane` for B. One circuit serves both, so the driver stores both
 operands in the same shape.
 
-### 5.1 Or on the way in, once per tensor
+### 5.1 Once per tensor, and there is no longer another option
 
-The same circuit can be claimed by the upload path instead of the read path.
+The conversion runs **before any fetch reads the result**, never during one.
 
 | | where | source in memory | cost |
 |---|---|---|---|
-| online | on the read path, per fetch | FP16, 256 B/entry | once **per read** |
-| pre-quantised | on the upload path, as it lands | int7+E5M3, 128 B/entry | once **per tensor** |
+| ~~online~~ | ~~on the read path, per fetch~~ | — | **retired** |
+| pre-converted | a mover pass: mem/L2 → slot → mem/L2 | int7+E5M3, 128 B/entry | once **per tensor** |
 
-An operand is read once per output tile it participates in, so pre-quantising is
+An operand is read once per output tile it participates in, so converting once is
 the online cost divided by the number of passes, and it halves the bytes the
-fetch path moves for good.
+fetch path moves for good. That is the whole argument, and it is why the online
+arrangement was removed rather than kept as an option: a transform on the fetch
+path is paid once per read, and there is no shape at which that is the cheaper
+of the two.
 
-**Which one applies is a property of the tensor, stated on every request that
-touches it** (`preq` on a `FILL`). The memory system holds no map of which
-addresses are which format and must not learn one: the driver is the only party
-that knows which tensors are reused enough to be worth converting once. Because
-the flag is per request, a `GEMM` can read pre-quantised weights and online
-activations with no extra mechanism — which is the ordinary inference case.
+**Nothing on a request selects it any more.** `flags[4]`/`[5]` — the old `QUANT`
+and `BLAYOUT` — are reserved and ignored, and `preq` on a `FILL` is reserved
+with them. The memory system holds no map of which addresses are which format
+and still must not learn one; what changed is that the driver states the format
+by *scheduling the conversion*, not by flagging the read. A `GEMM` therefore
+reads operands that are already in their final format, always.
 
-**The driver never constructs int7+E5M3 itself.** It marks the upload and the
-hardware converts, so the format stays entirely inside the machine and the
-software model in `ktpu.hw.mxfp7` exists only as a golden reference for the
+**The driver never constructs int7+E5M3 itself.** It schedules the mover pass
+and the hardware converts, so the format stays entirely inside the machine and
+the software model in `ktpu.hw.mxfp7` exists only as a golden reference for the
 bench.
 
 ---

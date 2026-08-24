@@ -5,7 +5,7 @@ tags:
   - kohakutpu
   - compiler
   - kernels
-  - mas
+  - sysnode
 ---
 
 # Fast 3x3 conv on this machine
@@ -75,8 +75,8 @@ entries are contiguous by construction, deliberately.
 ## 4. Branch C — conv on the current bitstream
 
 **Built and verified**, and what ships: `compiler/kohakutpu/kernels/conv2d.py`.
-What blocked it was never the hardware — the FILL `addr` field is a 34-bit byte
-address and MAG reads at byte granularity — but the compiler, whose fill address
+What blocked it was never the hardware — the FILL `addr` field is a full 40-bit
+byte address and MAG reads at byte granularity — but the compiler, whose fill address
 was an integer times the fill's own span. `Slice` now carries an offset in lanes,
 and `LO.ConvEntry` describes the layout, which `LO.Entry` cannot: nine taps are
 nine OVERLAPPING windows, not a tiling.
@@ -163,8 +163,9 @@ The architecture already decided how conv works, and the mechanism exists:
 > **Convolution is a memory request.** The compute instruction for a convolution
 > is *byte-identical* to the one for a matmul. Only the descriptor changes.
 
-`src/kohakutpu/matmul/mx_tdesc.v` is a 6-dimensional affine walker, **built and
-conv2d im2col validated** — but **not wired into the fill engine**. The
+`src/kohakuaccel/sysnode/mover/mx_tdesc.v` is a 6-dimensional affine walker,
+**built and conv2d im2col validated** — but **not wired into the fill engine**.
+The
 descriptor for a 3x3 conv is six lines:
 
 ```
@@ -222,16 +223,22 @@ expected — `COPY` with both descriptors is an arbitrary N-D affine strided cop
 and a source element whose `valid` is low injects an immediate, "which is how
 `pad` works", so bounded axes give zero padding natively.
 
-**And it must not, because the mover is far too slow.** Measured: ~98 MB/s, one
-32-byte word per packet, ~33 cycles each. Building a 31.5 MB `A'` at that rate is
-**~320 ms against 12.3 ms of convolution** — 26x more expensive than the work it
-exists to enable. The same arithmetic kills full im2col and kills a host-side
+**And on the engine this was measured against, it must not.** ~98 MB/s, one
+32-byte word per packet, ~33 cycles each: building a 31.5 MB `A'` at that rate
+is **~320 ms against 12.3 ms of convolution**, 26x more expensive than the work
+it exists to enable. The same arithmetic kills full im2col and kills a host-side
 build over any transport this machine has.
 
-**That is the real conclusion.** Branch B is not a slower branch A; at today's
-mover rate it is not viable at all. Wiring the descriptor into the fill path is
-not an optimisation — **it is the enabling change for conv at full speed**, and
-branch C is what runs meanwhile.
+**THAT RATE IS SUPERSEDED and the conclusion is therefore open.** It predates
+the mover rebuild — `multi-mesh.md` §8 has the measurement and says so — and one
+word per packet is exactly what the rebuild coalesces. Nobody has re-measured
+the mover, so branch B is **unpriced**, not refuted. What is unchanged is the
+ratio it has to beat: a build pass that costs more than the convolution it feeds
+is not worth wiring in, whatever the rate.
+
+Branch C is what runs meanwhile, and the enabling change for branch B is the
+same one it always was — the descriptor in the fill path, so `A'` is never
+materialised at all.
 
 > **"Fill engine" is a misnomer.** There is none in `mx_cluster_mgr.v` — the
 > manager only exposes a backdoor L1 write port. The FILL address walk lives in

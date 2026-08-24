@@ -9,7 +9,7 @@ tags:
 
 # Fabric
 
-`src/kohakunoc/` — the on-chip network, and the socket a compute unit plugs
+`src/kohakuaccel/noc/` — the on-chip network, and the socket a compute unit plugs
 into.
 
 ## What it owns
@@ -83,7 +83,7 @@ will catch you out. If you are choosing a mesh shape, read
 | Not owned | Who owns it |
 |---|---|
 | what an instruction means | you, the compute-unit author |
-| descriptors, addresses, memory semantics | [mas](../mas/) |
+| descriptors, addresses, memory semantics | [sysnode](../sysnode/) |
 | DRAM, host DMA, anything AXI | [axi](../axi.md) |
 | how many credits an endpoint holds, and its reassembly buffer | the endpoint. The fabric defines that credits are required, not how many |
 | clock domain crossing | [axi](../axi.md). The fabric is one clock domain by construction |
@@ -98,12 +98,12 @@ tried and rejected on measurement — see [physical](../physical/).
 
 ## Where today's source disagrees
 
-**`noc_orchestrator.v` is in `src/kohakunoc/` and is not part of this system.**
+**`noc_orchestrator.v` is in `src/kohakuaccel/noc/` and is not part of this system.**
 It is the control agent: an AXI slave, a staging RAM, an instruction
 dispatcher, a credit counter and a status mirror. It owns a fabric local port,
 which is presumably how it ended up here, but so does every compute unit. It is
 instantiated by exactly one module — `mag.v` — and it belongs with the control
-plane described in [mas](../mas/).
+plane described in [sysnode](../sysnode/).
 
 The other divergence in this system is larger and belongs with the thing it is
 about: the flit layout is fixed protocol enforced only by convention, and the

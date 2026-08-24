@@ -23,7 +23,7 @@ access, unit-to-unit data. The exact codes and field layouts are normative and
 live in [spec/flit-format](../../spec/flit-format.md). What matters
 architecturally is the split:
 
-- **Memory classes** are the contract with [mas](../mas/), written out in
+- **Memory classes** are the contract with [sysnode](../sysnode/), written out in
   [spec/memory-protocol](../../spec/memory-protocol.md).
 - **`CU_INST` / `CU_SIGNAL` / `CU_CTRL`** are the contract with the compute
   unit, and they are the three that `noc_cu_base` handles for you. See
@@ -62,7 +62,7 @@ to the older one.
 This is why `sync_fifo`'s `wr_almost` output being no margin at all is
 survivable: `USE_ADV_FEATURES` is zero, so it reduces to plain `full`. What
 makes plain full safe is the retry, not a margin. Anything that needs a real
-margin counts for itself — [mas](../mas/) does, with `Q_MARGIN`.
+margin counts for itself — [sysnode](../sysnode/) does, with `Q_MARGIN`.
 
 ## Two kinds of flow control, for two different failures
 
@@ -111,7 +111,7 @@ you attach to the event is free.
 sharpest illustration in this system of why the four categories are worth
 keeping apart, so it is worth stating in full.
 
-`src/kohakunoc/noc_pkt.vh` exists and is correct. It defines every header field
+`src/kohakuaccel/noc/noc_pkt.vh` exists and is correct. It defines every header field
 position, every message class and the descriptor payload layouts. It is also
 **included by nothing** — `` `include `` appears zero times anywhere in `src/`.
 Every module restates the same constants as local parameters or local macros:
@@ -140,7 +140,7 @@ and `POS_WIDTH=4`, while every module computes its positions from parameters.
 Including it as it stands would silently constrain the mesh to one flit width.
 It has to be parameterised before it can become the thing it claims to be.
 
-Two stale claims travel with it. `src/kohakunoc/README.md` describes it as the
+Two stale claims travel with it. `src/kohakuaccel/noc/README.md` describes it as the
 "single source of truth", which nothing reads; and its own first line points at
 a specification path this rewrite replaced.
 

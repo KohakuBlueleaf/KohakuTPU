@@ -469,7 +469,7 @@ DSP and a real DSP48E2:
 shrinks without bound; at large `|x|` the result spans decades and an absolute
 bound falls far below one ulp.
 
-**A later bench moved the FMA's known bound to one ulp.** The DSP-PE float-lane
+**A later bench moved the FMA's known bound to one ulp.** The SIMD-PE float-lane
 bench, built to oversample exponent-distant addends, reached an
 effective-subtraction corner this suite's four mantissa patterns per shifter
 position never land on: discarded alignment residue carried as a plain sticky
@@ -577,7 +577,17 @@ cases with neither run correct, which points at the per-block E8M0 scale rather
 than the multiply-accumulate. Next test is `preq`: host-packed MXFP7 bypasses
 MAG's on-the-fly quantiser entirely.
 
-`scripts/py/nondeterminism.py` reproduces it in ~30 seconds.
+> **Overtaken by the transform-slot redesign.** There is no on-the-fly quantiser
+> to bypass any more — a fetch is never transformed, so what `preq` proposed as
+> an experiment is now the only path there is. The experiment therefore cannot
+> be run as a comparison; if the scale is still suspect, the place to look is the
+> converting move's output, not the fetch's.
+
+**The reproducer was not kept**: `scripts/py/nondeterminism.py` is deleted and
+survives only in git history. It ran the same kernel twice on byte-identical
+operands and diffed the results, in about thirty seconds. Anyone picking this up
+writes it again — which is cheap, and is also the reason the finding above is a
+claim about a measurement nobody can currently repeat.
 
 The rates recorded in §6.4 above — "4 of 65,536 over 10%", maxima of 1.00 and
 2.43 — are very likely the same phenomenon seen earlier and recorded as a rate
@@ -860,6 +870,80 @@ The simulation library also holds global set/reset asserted for the first 100 ns
 so unisim registers ignore everything before that regardless of the design's own
 reset. Without waiting past it, the first tile silently produces nothing.
 
+### 9.4 Three driver defects, found bringing up `multimesh_v7`
+
+None of these is an RTL fault and none raises an error on the card. All three
+present as a unit that never signals, with the bus healthy throughout.
+
+| defect | symptom | fix |
+|---|---|---|
+| `Program.kick` wrote `DST, BASE, LEN` and seeded credit **before** the kick | `PROG_STAT` shows `run=1`, `flits_left>0`, `credit=0` | the order the spec already specified — [control-registers.md](../../spec/control-registers.md) §2.7 |
+| the write-shadow elided `PROG_LEN` on kick 2, which shares kick 1's length | node 1 takes **every** completion, node 2 signals nothing | drop the `LEN`/`DST` shadow whenever `PROG_BASE` is written |
+| DRAM writes shorter than 32 bytes zero the rest of the line | a paint loop of consecutive `write64` leaves only its **last** word | `Window` enforces `host_write_granule` |
+
+The third is the sharpest, because the preflight hides it: `verify_write_path`
+uses `write_block` and is byte-exact, so the write path certifies clean while
+every hand-written `write64` silently destroys its neighbours. Writing a full
+32-byte line then poking one word into it gives
+`['0x0', '0xdeadbeefdeadbeef', '0x0', '0x0']`. Deterministic, and it supersedes
+the earlier account that single JTAG writes "vanish about half the time".
+
+**The bring-up ladder that found them**, `multimesh_v7`, 2026-08-23, at
+100/200/100/100:
+
+| rung | result |
+|---|---|
+| master width | 64-bit |
+| write path, byte-exact | clean on all 4 meshes |
+| `A_CAPS` | `0x01040120` on all 4 |
+| enumeration | 38 units — 8+2 / 6+2 / 8+2 / 8+2, `CU_VERSION 4` |
+| one flit to one unit | **10 of 10** on mesh 0 |
+| `32x64x64` against fp32 | p50 **1.72e-03**, p99 **6.60e-03**, peak 0.59 |
+| two runs, same operands | **identical, 2,048 of 2,048** |
+
+The one-flit rung is the load-bearing one and is now
+`Mesh.probe_dispatch()`. A matmul engages MAG, DRAM, L2 and every cluster at
+once and cannot say which is broken; each of the three defects above was found by
+a rung that added exactly one thing.
+
+### 9.5 `multimesh_v7` clocks: three of four ship rates are unreachable
+
+Measured on mesh 0, 2026-08-23, `scripts/py/fmax_ladder.py`. **Each domain is
+laddered while the other three are held at low**, and each is driven by a
+workload that actually reaches the unit it clocks — a matmul for `mat2x` (MG), an
+`rmsnorm` for `vec` (VC). Scored as relative error against fp32, never as
+pass/fail.
+
+| domain | clean to | first degradation | dies | `ship` asks |
+|---|---|---|---|---|
+| `mat2x` | **400** | 450 | 700 | **600** |
+| `vec` | **350** | 400 | 450 | 300 |
+| `noc` | **300** | — | 350 | 300 |
+| `mag` | **250** | 300 | 350 | **300** |
+
+`mat2x` is bit-identical from 200 to 400 — p50 `1.561e-02`, p99 `1.064`, max
+`9.425` at every step — so that floor is the number format, not the clock. It
+degrades to p50 `1.574` (157 %) at the 600 the profile asks for.
+
+**`noc` has no graceful degradation**: clean at 300, hung at 350, no intermediate
+error. A routing fabric loses a packet rather than corrupting a number, so a
+timing failure there is a timeout, not a wrong answer.
+
+Two traps this ladder walked into, both worth keeping:
+
+- **The workload must drive the unit the domain clocks.** Laddering `vec`
+  against a matmul returns bit-identical error at all eleven steps, because MG
+  runs the matmul and VC sits idle. That reads as "clean to 600" and is *no
+  measurement at all*.
+- **A pass/fail verdict hides the answer.** The first version of this ladder
+  reported `ok` per rung, which meant only "the unit signalled" — a FILL has no
+  numeric output to be wrong. Every rung passed at every frequency and the table
+  said nothing.
+
+`boards/multimesh_v7.json` now carries `fmax_measured` and a `safe` profile
+(200/300/300/200) that sits inside all four. `ship` (300/600/300/300) is what
+v7.1 exists to earn.
+
 ---
 
 ## 10. Verification
@@ -948,6 +1032,8 @@ real memory agent rather than a stub, which is the stronger test.
   figure was 302.3 MHz from a 300 MHz-target run several steps earlier. "Costs
   less and carries more slack" is sound on the evidence that chose the operating
   point and is *not* a claim about what FP24 would measure on today's block.
-- **The online quantisation path has not been re-run** since per-row memory ports.
-  Its last measurement was 408.6 GFLOP/s at 66.5%, and the read-engine split is
-  exactly what it was short of.
+- **The online quantisation path no longer exists** and will not be re-run. Its
+  last measurement was 408.6 GFLOP/s at 66.5% on per-row memory ports. The
+  transform slot moved off the fetch path entirely, so a fetch is never
+  transformed; the figure stands as history and is not a number this machine can
+  produce again.

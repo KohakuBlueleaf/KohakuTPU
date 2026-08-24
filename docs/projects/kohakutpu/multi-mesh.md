@@ -96,23 +96,29 @@ only because flow control is credit-based, with no ready travelling back.
 
 ## 3. An address is a mesh and an offset
 
-`MachineSpec.global_addr(base, mesh)` builds `{mesh[1:0], local[31:0]}` — 34
-bits, 4 GB per mesh, an exact split (`compiler/kohakuaccel/machinespec.py`). It
-raises for a mesh this machine does not have and for a `base` that does not fit
-one mesh's 4 GB; `MachineSpec.addr_mesh` reads the id back out.
+`MachineSpec.global_addr(base, mesh)` builds `mesh << 36 | base` — a 40-bit
+address with the mesh id in **`[37:36]`**, 64 GB per mesh
+(`compiler/kohakuaccel/machinespec.py`). It raises for a mesh this machine does
+not have and for a `base` that does not fit one mesh's 64 GB;
+`MachineSpec.addr_mesh` reads the id back out. Above it, `[39]` selects a
+command aperture instead of DRAM and `[38]` is reserved for a third mesh bit —
+`stage_addr` is the one accessor that sets them. See
+[address-map.md](../../address-map.md).
 
 > **On a single-mesh bitstream a remote address does not fault — it ALIASES.**
-> Bits 33:32 are undecoded there, so a transfer meant for another mesh silently
-> reads and writes local DRAM at the same offset. `global_addr` refuses it in
-> software because the hardware cannot. Never build one by hand with a shift.
+> Bits `[37:36]` are undecoded there, so a transfer meant for another mesh
+> silently reads and writes local DRAM at the same offset. `global_addr`
+> refuses it in software because the hardware cannot. Never build one by hand
+> with a shift.
 
 Every mesh master — `M_AXI_MEM*`, `UPLOAD`, `MOVER`, `ILINK` — sees only its own
-4 GB, at offset 0. The mesh id rides the interlink header, not the local AXI
+range, at offset 0. The mesh id rides the interlink header, not the local AXI
 address, which is why a mesh needs no address-decode change to become one of
 four.
 
 > **This is not hypothetical, and it is happening now.** The compiler emits bare
-> 32-bit arena addresses, and the interlink reads `[33:32]` as a mesh id — so
+> arena addresses with `[37:36]` at zero, and the interlink reads that field as
+> a mesh id — so
 > **every ordinary matmul on mesh_1, mesh_2 or mesh_3 raises `IL_F_RD_REMOTE`**
 > ("a NoC memory request carried an address outside this mesh"). Verified by
 > clearing the fault, running one clean matmul, and finding it back.
@@ -210,8 +216,9 @@ the row-parallel stage stays within a mesh:
 | MLP up | output columns | no |
 | MLP down | the contraction | one reduction |
 
-Two reductions per block, and at **98 MB/s** each one is worth pricing before it
-is designed in: a reduction moves accumulator tiles at 352 bits per sub-tile,
+Two reductions per block, and each is worth pricing before it is designed in
+whatever the mover's current rate turns out to be: a reduction moves accumulator
+tiles at 352 bits per sub-tile,
 which is 2.75x what the same tile costs in FP16. Keeping the reduction inside one
 mesh remains the cheaper arrangement wherever the layer allows it.
 
@@ -257,9 +264,16 @@ clock measured at 100.09 MHz off `mag_link`'s free-running idle counter:
 | link1 tx | 4,109,824 packets / 4,109,824 beats |
 | mesh_3 rx | identical, `IL_FAULT` empty, stall count 0 |
 
-**That is the MOVER's figure, not the link's. Label it as such wherever it
-appears.** The same fabric, driven by the drain path instead, runs **12.8x
-faster**:
+**That is the MOVER's figure, not the link's, and it is SUPERSEDED. Do not
+quote it as the mover's rate.** It was taken before the mover was rebuilt — one
+32-byte word per packet is what the table's `beats per packet` column reports,
+and the current engine coalesces — so it measures an engine that no longer
+exists. It is kept because the CONTRAST below is what the section is for, and
+that contrast is between two paths on one bitstream. The mover's rate on today's
+RTL has not been measured.
+
+The same fabric, driven by the drain path instead, ran **12.8x faster on that
+bitstream**:
 
 | path | rate | beats per packet |
 |---|---|---|

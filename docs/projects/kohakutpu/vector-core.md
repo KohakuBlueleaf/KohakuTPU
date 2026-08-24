@@ -464,6 +464,55 @@ pipeline slot, then one final tree pass to combine them. Cost is 16 registers pe
 core — nothing — and it also *improves* accuracy, since 16 partial sums of length
 V/16 accumulate rounding like `sqrt(V/16)` rather than `sqrt(V)`.
 
+### 5.3 Predication, and the one non-ALU instruction that honours it
+
+Every ALU op carries `pr` (which of four 128-bit predicate registers) and `pm`
+(0 unconditional, 1 where the bit is set, 2 where it is clear) in `ir[4:1]`, and
+they gate the per-slice write enable. **`VSHUF` now carries them too.**
+
+It is the only load/store-port instruction that does. `VLD`, `VST`, `VCVT` and
+`VBCAST` share the opcode branch, but for those four `ir[4:1]` is the low end of
+the 14-bit descriptor offset — reading `pm` there would predicate a load by
+accident, so the hardware forces `pm = 0` unless the opcode is `VSHUF`.
+
+Two rules that differ from the ALU path, and both matter:
+
+- **The predicate indexes the DESTINATION lane**, not the source lane the rotate
+  reads. `VSHUF vd, va, k` under `pm=1` writes `vd[l] = va[(l+k) % 16]` only
+  where `P[pr][l]` is set, `l` being the destination.
+- **The VL tail mask is NOT applied.** An ALU write enable is
+  `predicate & tail`; this one is the predicate alone, because a whole-chunk
+  write is whole-chunk whatever `VL` says. Adding the tail here would corrupt
+  silently at any `VL` that is not a multiple of 16.
+
+**Why it exists.** The granule transpose — a 4x4 sub-tile of FP16 is exactly one
+32-byte word, but its sixteen elements come from four different rows — is 52% /
+62% / 81% of total cycles for `mlp` / `flash 4x128` / `flash 4x256`. The merge
+was four rotates and three selects per output register; predicated, the selects
+go away and the block drops from **36 instructions per 32 words to 24, a 1.5x**
+on the dominant term. See [relayout.md](relayout.md) §12.
+
+**What it cost**, `vec_core` out of context on `xcvu13p-fhgb2104-2L-e` at
+3.333 ns, `MODEL=0`, `-flatten_hierarchy rebuilt`, two frozen source snapshots
+differing only in these two files:
+
+| | before | after | delta |
+|---|---|---|---|
+| CLB LUTs | 29,067 | 29,463 | **+396, +1.4%** |
+| LUT as logic | 27,016 | 27,156 | +140 |
+| LUT as distributed RAM | 1,504 | 1,760 | +256 |
+| CLB registers | 24,704 | 24,702 | −2 |
+| BRAM / DSP | 44.5 / 51 | 44.5 / 51 | 0 / 0 |
+| control sets | 425 | 425 | 0 |
+| WNS at 3.333 ns | +0.953 | +0.964 | +0.011 |
+
+The 256 LUTRAM is the whole price: a **third read port** on the 4x128-bit
+predicate file, because the load/store path shares neither the ALU pipeline's
+`pr` nor its chunk index. The 140 logic LUTs are the 3:1 that replaced a
+constant `16'hFFFF`. Timing did not move — both arms bind on the same 8-level
+path — so the predicate lookup did not land on the write-enable decode, which
+was the risk worth measuring.
+
 ---
 
 ## 6. The register file, L1, and how little of this resembles the cluster
@@ -634,7 +683,9 @@ quadratic segments; one unidirectional align shifter with one bypass.
 with 3 DSPs and no BRAM; the FMA is correctly rounded and the four seeds are
 faithful at ~0.55 ulp; the core is fabric-bound rather than DSP-bound, which
 retires the worry that three DSPs per ALU was extravagant and redirects it at the
-pipeline's delay lines; more table segments would buy almost nothing.
+pipeline's delay lines; more table segments would buy almost nothing; a
+predicated `VSHUF` is 1.5x on the granule transpose for **+396 LUT, +1.4%, no
+flops, no DSP, no BRAM and no timing** (§5.3).
 
 **Open, and needing measurement rather than argument:**
 
