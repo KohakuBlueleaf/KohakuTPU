@@ -1,4 +1,4 @@
-// khd_ffold -- combine an accumulator's NPART partials into one value per slot.
+// khs_ffold -- combine an accumulator's NPART partials into one value per slot.
 //
 // SERIAL THROUGH THE LANE, AND DELIBERATELY SO. Each step depends on the last,
 // so the steps are ALAT apart: NPART*ALAT cycles, 240 at NPART 16. That runs
@@ -16,7 +16,7 @@
 
 `default_nettype none
 
-module khd_ffold #(
+module khs_ffold #(
     parameter integer NPART = 16,
     parameter integer ALAT  = 15
 )(

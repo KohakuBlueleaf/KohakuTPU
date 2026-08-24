@@ -1,4 +1,4 @@
-// khd_facc -- the float tier's accumulator: NPART rotating partials per slot,
+// khs_facc -- the float tier's accumulator: NPART rotating partials per slot,
 // and the counter that makes II = 1 possible over a 15-deep lane.
 //
 // A LANE IS 15 CYCLES DEEP, so `acc = a*b + acc` on ONE partial issues at
@@ -21,11 +21,19 @@
 
 `default_nettype none
 
-module khd_facc #(
-    parameter integer SLOTS = 16,       // 2*SIMD: one per FP16 element
-    parameter integer NACC  = 2,
-    parameter integer NPART = 16,       // must exceed the lane's latency
-    parameter integer ALAT  = 15
+// PASSES > 1 IS THE DECOUPLED-LANE CASE and it needs no new storage. `turn`
+// advances once per accepted operation, so an instruction that issues PASSES
+// operations puts element e's chain on the turns congruent to its pass modulo
+// PASSES -- disjoint sets, provided PASSES divides NPART. The ONE thing that
+// does not follow is the seed: it lands at turn 0, which belongs to pass 0, so
+// every other pass would silently seed to zero. Hence `sweep_idx` and the
+// widened seed window below.
+module khs_facc #(
+    parameter integer SLOTS  = 16,      // lanes built; one partial word per lane
+    parameter integer NACC   = 2,
+    parameter integer NPART  = 16,      // must exceed the lane's latency
+    parameter integer ALAT   = 15,
+    parameter integer PASSES = 1        // NARROW_SLOTS/SLOTS; must divide NPART
 )(
     input  wire                        clk,
     input  wire                        resetn,
@@ -55,7 +63,10 @@ module khd_facc #(
 
     // High while a zero or a seed is sweeping the partials; the unit holds the
     // instruction until it falls.
-    output wire                        busy_sweep
+    output wire                        busy_sweep,
+    // Which partial the sweep is writing. The caller presents the seed slice
+    // for that pass; at PASSES = 1 it is only ever 0 and nothing changes.
+    output wire [((NPART>1)?$clog2(NPART):1)-1:0] sweep_idx
 );
     localparam integer AW = (NACC  > 1) ? $clog2(NACC)  : 1;
     localparam integer PW = (NPART > 1) ? $clog2(NPART) : 1;
@@ -67,7 +78,7 @@ module khd_facc #(
     // is 28k LUT at SIMD 8. As flops, each of the 12,288 bits carries a D-input
     // mux between an accumulate result, a seed and zero, and two variable-index
     // 32:1 read muxes sit on top: 29,409 LUT measured, 56% of the whole unit.
-    // As two mirrored distributed RAMs -- the construction khd_vregfile already
+    // As two mirrored distributed RAMs -- the construction khs_vregfile already
     // uses for the same reason -- it is the depth of one LUTRAM primitive.
     reg  [PW-1:0] turn [0:NACC-1];
     reg  [PW-1:0] wr_pipe [0:ALAT-1];
@@ -91,7 +102,9 @@ module khd_facc #(
     wire [XW-1:0] fd_a_addr = fold_sel * NPART + fold_idx;
     wire [XW-1:0] wr_addr = sweep ? (sweep_acc * NPART + sweep_k)
                                   : (wa_pipe[ALAT-1] * NPART + wr_pipe[ALAT-1]);
-    wire [DW-1:0] wr_data = sweep ? ((sweep_seed && (sweep_k == {PW{1'b0}}))
+    // THE FIRST `PASSES` PARTIALS ARE SEEDS, not just partial 0: each pass owns
+    // the turns congruent to it, so each needs its own seed or it starts at zero.
+    wire [DW-1:0] wr_data = sweep ? ((sweep_seed && (sweep_k < PASSES))
                                      ? seed_data : {DW{1'b0}})
                                   : wb_data;
     wire          wr_en   = sweep || wb_valid;
@@ -107,11 +120,14 @@ module khd_facc #(
         .rd_en(1'b1), .rd_addr(fd_a_addr), .rd_data(fold_part));
 
     assign busy_sweep = sweep;
+    assign sweep_idx  = sweep_k;
 
     integer i, j;
     always @(posedge clk) begin
         if (!resetn) begin
-            for (i = 0; i < NACC; i = i + 1) turn[i] <= {PW{1'b0}};
+            for (i = 0; i < NACC; i = i + 1) begin
+                turn[i] <= {PW{1'b0}};
+            end
             sweep <= 1'b0;
         end else begin
             // The write index is the read index delayed by the lane's depth,
@@ -131,7 +147,9 @@ module khd_facc #(
                 sweep_acc  <= ctl_sel;
                 turn[ctl_sel] <= {PW{1'b0}};
             end else if (sweep) begin
-                if (sweep_k == (NPART-1)) sweep <= 1'b0;
+                if (sweep_k == (NPART-1)) begin
+                    sweep <= 1'b0;
+                end
                 sweep_k <= sweep_k + 1'b1;
             end else if (acc_valid) begin
                 turn[acc_sel] <= (rd_now == (NPART-1)) ? {PW{1'b0}}

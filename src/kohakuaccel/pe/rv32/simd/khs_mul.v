@@ -1,8 +1,8 @@
-// khd_mul -- one registered signed multiplier, with the primitive NAMED.
+// khs_mul -- one registered signed multiplier, with the primitive NAMED.
 //
 // It exists as its own module for one reason: `use_dsp` takes a string LITERAL,
 // not a parameter, so choosing between a DSP48 and fabric has to be a generate
-// somewhere. Doing it once here keeps the choice out of khd_lane's datapath and
+// somewhere. Doing it once here keeps the choice out of khs_lane's datapath and
 // makes `MUL_PRIM` a real configuration-matrix row rather than a synthesis
 // guess -- which matters because the two answers are far apart: a DSP column is
 // the cheap resource on this device (the vector core uses 12.5% of them against
@@ -14,7 +14,7 @@
 
 `default_nettype none
 
-module khd_mul #(
+module khs_mul #(
     parameter integer AW      = 17,
     parameter integer BW      = 17,
     parameter integer PW      = 34,
@@ -29,11 +29,19 @@ module khd_mul #(
     generate
     if (USE_DSP == "yes") begin : g_dsp
         (* use_dsp = "yes" *) reg signed [PW-1:0] r;
-        always @(posedge clk) if (en) r <= a * b;
+        always @(posedge clk) begin
+            if (en) begin
+                r <= a * b;
+            end
+        end
         assign p = r;
     end else begin : g_lut
         (* use_dsp = "no" *) reg signed [PW-1:0] r;
-        always @(posedge clk) if (en) r <= a * b;
+        always @(posedge clk) begin
+            if (en) begin
+                r <= a * b;
+            end
+        end
         assign p = r;
     end
     endgenerate

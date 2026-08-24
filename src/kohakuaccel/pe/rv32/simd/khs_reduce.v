@@ -1,4 +1,4 @@
-// khd_reduce -- horizontal sum and signed maximum over the 32-bit lanes.
+// khs_reduce -- horizontal sum and signed maximum over the 32-bit lanes.
 //
 // A TREE, NOT A LOOP. A reduction written as a loop carrying a value between
 // iterations synthesises as exactly that serial chain -- SIMD adders deep in
@@ -18,7 +18,7 @@
 
 `default_nettype none
 
-module khd_reduce #(
+module khs_reduce #(
     parameter integer SIMD = 8,
     parameter integer PIPE = 1
 )(

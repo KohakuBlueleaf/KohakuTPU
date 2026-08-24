@@ -1,4 +1,4 @@
-// khd_vregfile -- the vector register file: VREGS x VW bits, two read ports,
+// khs_vregfile -- the vector register file: VREGS x VW bits, two read ports,
 // one write port, read latency 1.
 //
 // The same 2R1W construction as rv_regfile -- two mirrored 1W1R arrays written
@@ -20,23 +20,31 @@
 // the same edge that captures a read four instructions behind it; here the
 // hazard is handled a stage earlier by a scoreboard stall, because a bypass mux
 // at VW bits is 256 LUT on the widest path in the unit against 32 for the
-// scalar one. `khd_unit` owns that stall and asserts on the case this file
+// scalar one. `khs_unit` owns that stall and asserts on the case this file
 // cannot answer.
 
 `default_nettype none
 
-module khd_vregfile #(
+module khs_vregfile #(
     parameter integer VREGS = 8,
     parameter integer VW    = 256,
-    parameter         PRIM  = "distributed"
+    parameter         PRIM  = "distributed",
+    // A THIRD READ PORT COSTS A THIRD MIRROR, so it is a parameter and not a
+    // fixture: only `vfma` needs it -- vd = vs1*vs2 + vd is three reads against
+    // two ports -- and a build without the elementwise group must not pay for
+    // an instruction it does not have. khs_vregfile's counterpart on the SIMT
+    // side carries the same parameter for the same instruction.
+    parameter integer RD3   = 0
 )(
     input  wire                      clk,
 
     input  wire                      ra_en,
     input  wire [$clog2(VREGS)-1:0]  ra1,
     input  wire [$clog2(VREGS)-1:0]  ra2,
+    input  wire [$clog2(VREGS)-1:0]  ra3,
     output wire [VW-1:0]             rd1,
     output wire [VW-1:0]             rd2,
+    output wire [VW-1:0]             rd3,
 
     input  wire                      we,
     input  wire [$clog2(VREGS)-1:0]  wa,
@@ -57,6 +65,17 @@ module khd_vregfile #(
     kohaku_sdpram #(.WIDTH(VW), .DEPTH(VREGS), .MEM_PRIM(PRIM), .READ_LAT(1))
     u_p2 (.clk(clk), .wr_en(we), .wr_addr(wa), .wr_data(wd),
           .rd_en(ra_en), .rd_addr(ra2), .rd_data(rd2));
+
+    generate
+    if (RD3 != 0) begin : g_p3
+        kohaku_sdpram #(.WIDTH(VW), .DEPTH(VREGS), .MEM_PRIM(PRIM),
+                        .READ_LAT(1))
+        u_p3 (.clk(clk), .wr_en(we), .wr_addr(wa), .wr_data(wd),
+              .rd_en(ra_en), .rd_addr(ra3), .rd_data(rd3));
+    end else begin : g_nop3
+        assign rd3 = {VW{1'b0}};
+    end
+    endgenerate
 
 endmodule
 

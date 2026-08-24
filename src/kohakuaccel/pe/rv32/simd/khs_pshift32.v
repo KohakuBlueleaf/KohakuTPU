@@ -1,4 +1,4 @@
-// khd_pshift32 -- one 32-bit lane's packed shifter.
+// khs_pshift32 -- one 32-bit lane's packed shifter.
 //
 // ONE ROTATE, NOT TWO SHIFTERS, and no bit reversal either.
 //
@@ -33,7 +33,7 @@
 
 `default_nettype none
 
-module khd_pshift32 (
+module khs_pshift32 (
     input  wire [31:0] x,
     input  wire [1:0]  et,           // 0 = s8, 1 = s16, 2 = s32
     input  wire [4:0]  rot,          // s for a right shift, 32-s for a left one

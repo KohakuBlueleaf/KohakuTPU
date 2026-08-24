@@ -1,6 +1,7 @@
-// khd_f16_prod -- one FP16 x FP16 product, in the accumulator's float format.
+// khs_float_prod -- one product in the accumulator's float format. NARROW
+// OPERANDS ONLY: the ports are 16 bits and the E7 argument below rests on that.
 //
-// The ONLY new float arithmetic the DSP PE's float tier needs: everything
+// The ONLY new float arithmetic the SIMD PE's float tier needs: everything
 // around it is shipped RTL (vec_cvt for the conversions, mx_fpacc_align and
 // mx_fpacc_round for the accumulate loop). It exists because a product must be
 // finished BEFORE the accumulate loop begins -- a fused multiply-add puts the
@@ -23,7 +24,7 @@
 
 `default_nettype none
 
-module khd_f16_prod #(
+module khs_float_prod #(
     parameter integer MW = 16
 )(
     input  wire [15:0]     a,          // FP16

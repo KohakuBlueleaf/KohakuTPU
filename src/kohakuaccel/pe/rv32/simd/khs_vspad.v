@@ -1,4 +1,4 @@
-// khd_vspad -- the vector scratchpad: the DSP PE's wide external L1.
+// khs_vspad -- the vector scratchpad: the SIMD PE's wide external L1.
 //
 // The machine's word is 256 bits -- one flit, one MAG entry, one cache line --
 // and this array is the only place in the PE that is that wide on its own face.
@@ -32,7 +32,7 @@
 
 `default_nettype none
 
-module khd_vspad #(
+module khs_vspad #(
     parameter integer SIMD     = 8,             // 32-bit lanes; VW = 32*SIMD
     parameter integer ENTRIES  = 1024,          // rows, one per tile depth
     parameter         MEM_PRIM = "block"

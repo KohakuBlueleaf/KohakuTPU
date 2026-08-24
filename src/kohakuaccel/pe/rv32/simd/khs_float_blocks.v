@@ -1,4 +1,4 @@
-// khd_f16_blocks -- the E8M15 FMA lane taken apart, block by block, so the
+// khs_float_blocks -- the E8M15 FMA lane taken apart, block by block, so the
 // float tier's LUT can be attributed rather than estimated.
 //
 // MEASUREMENT PROBES, NOT A DATAPATH. Nothing instantiates these. `vec_alu` is
@@ -11,7 +11,7 @@
 // ---------------------------------------------------------------- aligner
 // vec_alu cycle 5: {sig_c, 32'b0} >> s, one direction, 48 bits, plus the
 // sticky for the bits that leave the window.
-module khd_blk_align (
+module khs_blk_align (
     input  wire        clk,
     input  wire [15:0] gc,
     input  wire [6:0]  s,
@@ -41,7 +41,7 @@ endmodule
 //
 // The bits that leave the window are exactly the ones the placement drops, so
 // the sticky is an OR of w rather than a masked compare on the shift amount.
-module khd_blk_align_dsp #(
+module khs_blk_align_dsp #(
     parameter integer MODEL = 0
 )(
     input  wire        clk,
@@ -88,7 +88,7 @@ endmodule
 // ------------------------------------------------------------- normaliser
 // vec_alu cycles 11-12: the leading-one search, the normalising left shift,
 // and the significand/guard/sticky split that follows it.
-module khd_blk_norm (
+module khs_blk_norm (
     input  wire        clk,
     input  wire [47:0] mag,
     input  wire        stk_in,
@@ -132,7 +132,7 @@ endmodule
 //   Z = mag[8q+7 : 8q-19]  (27 bits)        P = Z * 2^(7-r)
 //   the window is P[26:10], for every (q, r), because Z spans from 16 below
 //   the lowest needed bit to the highest.
-module khd_blk_norm_dsp #(
+module khs_blk_norm_dsp #(
     parameter integer MODEL = 0
 )(
     input  wire        clk,
@@ -196,7 +196,7 @@ endmodule
 
 // ------------------------------------------------------- the other blocks
 // vec_alu cycle 13: round to nearest even, the exponent bounds, assemble.
-module khd_blk_round (
+module khs_blk_round (
     input  wire               clk,
     input  wire [15:0]        sig,
     input  wire               gbit,
@@ -234,19 +234,33 @@ module khd_blk_round (
                              + (rcarry ? 12'sd1 : 12'sd0);
 
     always @(posedge clk) begin
-        if (d12_nan)                 out <= E8_NAN;
-        else if (d12_inf)            out <= {d12_ssign, 8'hFF, 15'd0};
-        else if (d12_zero)           out <= {d12_ssign, 23'd0};
-        else if (~s12_nz)            out <= {s12_sign & ~d12_canc, 23'd0};
-        else if (e_fin >= 12'sd255)  out <= {s12_sign, 8'hFF, 15'd0};
-        else if (e_fin <= 12'sd0)    out <= {s12_sign, 23'd0};
-        else                         out <= {s12_sign, e_fin[7:0], frac};
+        if (d12_nan) begin
+            out <= E8_NAN;
+        end
+        else if (d12_inf) begin
+            out <= {d12_ssign, 8'hFF, 15'd0};
+        end
+        else if (d12_zero) begin
+            out <= {d12_ssign, 23'd0};
+        end
+        else if (~s12_nz) begin
+            out <= {s12_sign & ~d12_canc, 23'd0};
+        end
+        else if (e_fin >= 12'sd255) begin
+            out <= {s12_sign, 8'hFF, 15'd0};
+        end
+        else if (e_fin <= 12'sd0) begin
+            out <= {s12_sign, 23'd0};
+        end
+        else begin
+            out <= {s12_sign, e_fin[7:0], frac};
+        end
     end
 endmodule
 
 
 // vec_alu cycle 10: recover the magnitude and the sign out of DSP-M.
-module khd_blk_mag (
+module khs_blk_mag (
     input  wire        clk,
     input  wire signed [47:0] dspm_p,
     input  wire        neg,
@@ -274,7 +288,7 @@ endmodule
 
 
 // vec_alu cycle 4: the shift amount and the exponent base, out of DSP-E.
-module khd_blk_expo (
+module khs_blk_expo (
     input  wire        clk,
     input  wire [23:0] dspe_p,
     input  wire [7:0]  ec,
@@ -303,7 +317,7 @@ endmodule
 
 
 // vec_alu cycle 1: the specials for the FMA family.
-module khd_blk_spec (
+module khs_blk_spec (
     input  wire        clk,
     input  wire [23:0] va,
     input  wire [23:0] vb,
@@ -349,29 +363,37 @@ endmodule
 
 
 // ------------------------------------------------------- the conversions
-module khd_blk_cvt_in (
+module khs_blk_cvt_in (
     input  wire        clk,
     input  wire [15:0] f16,
     output reg  [23:0] e8
 );
     reg [15:0] q;
     wire [23:0] c;
-    always @(posedge clk) q <= f16;
+    always @(posedge clk) begin
+        q <= f16;
+    end
     vec_cvt_f16_to_e8 u_c (.f16(q), .e8(c));
-    always @(posedge clk) e8 <= c;
+    always @(posedge clk) begin
+        e8 <= c;
+    end
 endmodule
 
 
-module khd_blk_cvt_out (
+module khs_blk_cvt_out (
     input  wire        clk,
     input  wire [23:0] e8,
     output reg  [15:0] f16
 );
     reg [23:0] q;
     wire [15:0] c;
-    always @(posedge clk) q <= e8;
+    always @(posedge clk) begin
+        q <= e8;
+    end
     vec_cvt_e8_to_f16 u_c (.e8(q), .f16(c));
-    always @(posedge clk) f16 <= c;
+    always @(posedge clk) begin
+        f16 <= c;
+    end
 endmodule
 
 `default_nettype wire

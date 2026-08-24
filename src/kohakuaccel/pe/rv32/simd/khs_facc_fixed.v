@@ -1,4 +1,4 @@
-// khd_facc_fixed -- the OTHER float accumulator: align into a wide fixed-point
+// khs_facc_fixed -- the OTHER float accumulator: align into a wide fixed-point
 // field and add there, so the loop is an integer add.
 //
 // The float accumulate loop measures 25 logic levels and 152.3 MHz standalone
@@ -18,7 +18,7 @@
 
 `default_nettype none
 
-module khd_facc_fixed #(
+module khs_facc_fixed #(
     parameter integer MW = 16,          // the product's mantissa, S1 E7 M<MW>
     parameter integer AW = 96,          // the fixed-point accumulator
     parameter integer EMIN = 15         // e7 of the smallest product worth keeping
@@ -51,8 +51,12 @@ module khd_facc_fixed #(
 
     reg [AW-1:0] acc;
     always @(posedge clk) begin
-        if (rst)      acc <= {AW{1'b0}};
-        else if (en_q) acc <= sgn_q ? (acc - add_q) : (acc + add_q);
+        if (rst) begin
+            acc <= {AW{1'b0}};
+        end
+        else if (en_q) begin
+            acc <= sgn_q ? (acc - add_q) : (acc + add_q);
+        end
     end
 
     assign acc_o = acc;

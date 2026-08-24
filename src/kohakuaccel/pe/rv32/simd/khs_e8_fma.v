@@ -1,4 +1,4 @@
-// khd_e8_fma -- one E8M15 fused multiply-add: the shipped vector-core lane with
+// khs_e8_fma -- one E8M15 fused multiply-add: the shipped vector-core lane with
 // everything except the FMA made unreachable.
 //
 // `op` is tied to OP_FMA, so constant propagation removes the four
@@ -12,7 +12,7 @@
 
 `default_nettype none
 
-module khd_e8_fma (
+module khs_e8_fma (
     input  wire        clk,
     input  wire        rst,
 

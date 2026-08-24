@@ -1,4 +1,4 @@
-// khd_facc_loop -- the question tier 2 turns on, as a synthesisable loop.
+// khs_facc_loop -- the question tier 2 turns on, as a synthesisable loop.
 //
 // A float accumulate is `acc <= acc + x`, and whether that closes in ONE cycle
 // decides the whole float tier: at one cycle it is tier 1's structure with a
@@ -13,7 +13,7 @@
 
 `default_nettype none
 
-module khd_facc_loop #(
+module khs_facc_loop #(
     parameter integer MW = 14                 // S1 E7 M14, the cluster's default
 )(
     input  wire              clk,
@@ -29,8 +29,12 @@ module khd_facc_loop #(
 
     always @(posedge clk) begin
         x_q <= x;
-        if (rst) acc <= {(MW+8){1'b0}};
-        else if (en) acc <= sum;
+        if (rst) begin
+            acc <= {(MW+8){1'b0}};
+        end
+        else if (en) begin
+            acc <= sum;
+        end
     end
 
     assign acc_o = acc;

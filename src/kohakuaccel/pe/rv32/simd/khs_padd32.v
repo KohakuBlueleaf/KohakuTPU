@@ -1,4 +1,4 @@
-// khd_padd32 -- one 32-bit lane's packed adder: add, subtract, saturate, and
+// khs_padd32 -- one 32-bit lane's packed adder: add, subtract, saturate, and
 // the signed compare that min/max and the reductions are built from.
 //
 // ONE NATIVE CARRY CHAIN, and that is the whole design. The obvious packed
@@ -27,13 +27,13 @@
 // each rather than a comparator array of their own.
 //
 // `mask` IS AN INPUT, not derived here: it depends only on the element width,
-// which is the same in every lane, so khd_unit builds it once in EX and
+// which is the same in every lane, so khs_unit builds it once in EX and
 // registers it. Deriving it per lane would put a mux in front of the adder in
 // the one cycle this module exists to keep short.
 
 `default_nettype none
 
-module khd_padd32 (
+module khs_padd32 (
     input  wire [31:0] a,
     input  wire [31:0] b,
     input  wire        sub,          // 1 = a - b
