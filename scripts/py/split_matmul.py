@@ -21,8 +21,8 @@ import numpy as np
 from kohakuaccel.device import control_read
 from kohakuaccel.device.registers import CU_COUNTERS
 from kohakutpu.host import Card
-from kohakutpu.kernels import matmul
 from kohakutpu.meshes import MeshGroup, Sharded
+from kohakutpu.ops import matmul
 
 MHZ = 100.09
 WATCH = ("rounds", "sent", "fetched")
@@ -60,6 +60,8 @@ def timed(dev, label: str, work) -> tuple:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--board", help="boards/<name>.json; omit for the legacy scan")
+    ap.add_argument("--port", type=int, help="reach the card through this daemon")
     ap.add_argument("--meshes", default="0123", help="which meshes, e.g. 02")
     ap.add_argument("--m", type=int, default=128)
     ap.add_argument("--k", type=int, default=256)
@@ -77,7 +79,15 @@ def main() -> int:
     want = a.astype(np.float32) @ b.astype(np.float32).T
     peak = np.abs(want).max()
 
-    card = Card(which=meshes)
+    if args.board:
+        transport = None
+        if args.port is not None:
+            from kohakuaccel.daemon.client import DaemonTransport
+
+            transport = DaemonTransport(port=args.port)
+        card = Card.from_board(args.board, transport=transport, which=meshes)
+    else:
+        card = Card(which=meshes)
     group = MeshGroup.open(card, meshes)
     print(f"{card}\n{group}\n{args.m}x{args.k}x{args.n}, tiling {tiling}\n")
 
