@@ -102,8 +102,8 @@ module mx_cluster_mgr #(
     output wire            acu_single,
     output wire [7:0]      acu_anchor
 );
-    localparam [2:0] OP_NOP = 3'd0, OP_LOAD = 3'd1, OP_ADD = 3'd2,
-                     OP_ADD_EMIT = 3'd7;
+    localparam [2:0] OP_NOP = 3'd0, OP_LOAD = 3'd1, OP_ADD = 3'd2;
+    localparam [2:0] OP_ADD_EMIT = 3'd7;
 
     localparam integer AAW = (GA <= 1) ? 1 : $clog2(GA);
     localparam integer BAW = (GB <= 1) ? 1 : $clog2(GB);
@@ -120,8 +120,12 @@ module mx_cluster_mgr #(
     // its own delayed copy for exactly the FIRST 2x cycle of each 1x cycle.
     reg tog, tog_q, tog_qq;
     always @(posedge clk) begin
-        if (rst) tog <= 1'b0;
-        else     tog <= ~tog;
+        if (rst) begin
+            tog <= 1'b0;
+        end
+        else begin
+            tog <= ~tog;
+        end
     end
     always @(posedge clk2x) begin
         if (rst) begin tog_q <= 1'b0; tog_qq <= 1'b0; end
@@ -229,10 +233,17 @@ module mx_cluster_mgr #(
 
     // An odd NK pumped reads one block past the operand: the pair's second half
     // is entry kb+1, which for the last odd block is the NEXT sweep's data.
-    initial if (PUMP) $display("NOTE mx_cluster_mgr: PUMP requires an EVEN gemm_nk");
-    always @(posedge clk) if (!rst && gemm_start && PUMP && gemm_nk[0])
-        $display("%0t ERROR mx_cluster_mgr: PUMP with odd nk=%0d reads past the operand",
-                 $time, gemm_nk);
+    initial begin
+        if (PUMP) begin
+            $display("NOTE mx_cluster_mgr: PUMP requires an EVEN gemm_nk");
+        end
+    end
+    always @(posedge clk) begin
+        if (!rst && gemm_start && PUMP && gemm_nk[0]) begin
+            $display("%0t ERROR mx_cluster_mgr: PUMP with odd nk=%0d reads past the operand",
+                     $time, gemm_nk);
+        end
+    end
 
     // One bank bit is two banks. A deeper L1 needs a second, and the truncation
     // below would silently drop the top address bit rather than fail.
@@ -262,9 +273,16 @@ module mx_cluster_mgr #(
     // timing or to any latency constant.
     reg [7:0] pending;
     always @(posedge clk) begin
-        if (rst) pending <= 8'd0;
-        else     pending <= pending + (s2_valid  ? 8'd1 : 8'd0)
-                                    - (part_valid ? 8'd1 : 8'd0);
+        if (rst) begin
+            pending <= 8'd0;
+        end
+        else begin
+            pending <= (
+                pending
+                + (s2_valid ? 8'd1 : 8'd0)
+                - (part_valid ? 8'd1 : 8'd0)
+            );
+        end
     end
 
     assign gemm_busy = run || s1_valid || s1b_valid || s2_valid || (pending != 8'd0);
@@ -311,7 +329,9 @@ module mx_cluster_mgr #(
                 // is the cycle.
                 if (emit_stall) begin
                     // nothing -- wait for the collector to catch up
-                end else if (pace != 3'd0) pace <= pace - 3'd1;
+                end else if (pace != 3'd0) begin
+                    pace <= pace - 3'd1;
+                end
                 else begin
                     // present addresses for (g,h,kb); the data lands next cycle
                     a_rd <= a_lin[AAW-1:0];
@@ -330,12 +350,19 @@ module mx_cluster_mgr #(
                     s1_addr  <= (g * gn_r + h);
                     pace     <= pace_n;
 
-                    if (last_kb)     run <= 1'b0;
+                    if (last_kb) begin
+                        run <= 1'b0;
+                    end
                     if (last_h) begin
                         h <= 8'd0;
                         if (last_g) begin g <= 8'd0; kb <= kb + KSTEP; end
-                        else        g <= g + 8'd1;
-                    end else h <= h + 8'd1;
+                        else begin
+                            g <= g + 8'd1;
+                        end
+                    end
+                    else begin
+                        h <= h + 8'd1;
+                    end
                 end
             end
         end
@@ -387,9 +414,10 @@ module mx_cluster_mgr #(
             sa_p1 <= a_ent[927:896]; sb_p1 <= b_ent[927:896];
         end
 `ifndef SYNTHESIS
-        if (PUMP != 0 && !rst && $time < 260000 && core_valid)
+        if (PUMP != 0 && !rst && $time < 260000 && core_valid) begin
             $display("%0t SCAP ph1=%0b ph1_d=%0b a_rd2=%0d aent_s=%h p0=%h p1=%h",
                      $time, ph1, ph1_d, a_rd2, a_ent[927:896], sa_p0, sa_p1);
+        end
 `endif
     end
 
@@ -421,9 +449,13 @@ module mx_cluster_mgr #(
     // OP_LOAD_EMIT does not exist and does not need to: an emitting sweep is the
     // LAST chunk of an output tile, so `s2_first` and `s2_emit` cannot both be
     // set. kernel.plan guarantees it and falls back to a DRAIN when it cannot.
-    wire [CW-1:0] cmd_in = { s2_first ? OP_LOAD :
-                             s2_emit  ? OP_ADD_EMIT : OP_ADD, s2_addr,
-                             s2_sa, s2_sb, s2_sa2, s2_sb2, s2_single, anc_r };
+    wire [2:0] cmd_op = (
+        s2_first ? OP_LOAD
+        : s2_emit ? OP_ADD_EMIT
+        : OP_ADD
+    );
+    wire [CW-1:0] cmd_in = {cmd_op, s2_addr,
+                            s2_sa, s2_sb, s2_sa2, s2_sb2, s2_single, anc_r};
     assign emit_issue = s2_valid && s2_emit;
     wire [CW-1:0] cmd_out;
     wire          cmd_full;
@@ -456,16 +488,24 @@ module mx_cluster_mgr #(
     wire       fill_bank = (AAW > 8) ? l1_addr[8] : 1'b0;
     wire       fill_bnkb = (BAW > 8) ? l1_addr[8] : 1'b0;
     always @(posedge clk) if (!rst && gemm_busy && l1_we) begin
-        if (!l1_sel && (fill_bank == abank_r) &&
-                       ({8'd0, fill_off} >= {8'd0, aoff_r}) &&
-                       ({8'd0, fill_off} <  {8'd0, aoff_r} + gm_r * nk_r))
+        if (
+            !l1_sel
+            && (fill_bank == abank_r)
+            && ({8'd0, fill_off} >= {8'd0, aoff_r})
+            && ({8'd0, fill_off} < {8'd0, aoff_r} + gm_r * nk_r)
+        ) begin
             $display("%0t ERROR mx_cluster_mgr: FILL A entry %0d of bank %0d lands inside the running sweep [%0d,%0d)",
                      $time, fill_off, fill_bank, aoff_r, aoff_r + gm_r * nk_r);
-        if (l1_sel && (fill_bnkb == bbank_r) &&
-                      ({8'd0, fill_off} >= {8'd0, boff_r}) &&
-                      ({8'd0, fill_off} <  {8'd0, boff_r} + gn_r * nk_r))
+        end
+        if (
+            l1_sel
+            && (fill_bnkb == bbank_r)
+            && ({8'd0, fill_off} >= {8'd0, boff_r})
+            && ({8'd0, fill_off} < {8'd0, boff_r} + gn_r * nk_r)
+        ) begin
             $display("%0t ERROR mx_cluster_mgr: FILL B entry %0d of bank %0d lands inside the running sweep [%0d,%0d)",
                      $time, fill_off, fill_bnkb, boff_r, boff_r + gn_r * nk_r);
+        end
     end
     always @(posedge clk) if (!rst && s2_valid && cmd_full)
         $display("%0t ERROR mx_cluster_mgr: ACU command FIFO overflow", $time);

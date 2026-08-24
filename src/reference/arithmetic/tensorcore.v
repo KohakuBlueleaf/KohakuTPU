@@ -53,8 +53,8 @@ module tensorcore (
 
     genvar acc_j;
     generate
-        for (i = 0; i < 4; i = i + 1) begin
-            for (j = 0; j < 8; j = j + 1) begin
+        for (i = 0; i < 4; i = i + 1) begin : g_row
+            for (j = 0; j < 8; j = j + 1) begin : g_mul
                 wire [11:0] qa, qb, qc, qd;
                 wire out_valid_temp;
                 FP8VectorMul fp8mul(
@@ -83,7 +83,7 @@ module tensorcore (
                     mul_outvalid[j][i] <= out_valid_temp;
                 end
             end
-            for (acc_j = 0; acc_j < 4; acc_j = acc_j + 1) begin
+            for (acc_j = 0; acc_j < 4; acc_j = acc_j + 1) begin : g_acc0
                 wire [11:0] aa, bb, cc, dd;
                 wire out_valid_temp;
                 FPVectorAdd #(
@@ -119,7 +119,7 @@ module tensorcore (
                     end
                 end
             end
-            for (acc_j = 4; acc_j < 7; acc_j = acc_j + 1) begin
+            for (acc_j = 4; acc_j < 7; acc_j = acc_j + 1) begin : g_acc1
                 wire [11:0] aa, bb, cc, dd;
                 wire out_valid_temp;
                 FPVectorAdd #(

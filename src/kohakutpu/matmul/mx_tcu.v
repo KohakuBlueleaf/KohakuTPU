@@ -75,7 +75,9 @@ module mx_tcu #(
             always @(posedge clk) begin
                 if (en) begin
                     sr[0] <= raw;
-                    for (d = 1; d < k; d = d + 1) sr[d] <= sr[d-1];
+                    for (d = 1; d < k; d = d + 1) begin
+                        sr[d] <= sr[d-1];
+                    end
                 end
             end
             assign stage_op[k] = sr[k-1];
@@ -115,7 +117,9 @@ module mx_tcu #(
                 );
 
                 assign casc[k+1] = pc_out;
-                if (k == NK-1) assign part_out[C_IDX*48 +: 48] = p_out;
+                if (k == NK-1) begin : g_tail
+                    assign part_out[C_IDX*48 +: 48] = p_out;
+                end
             end
         end
     end

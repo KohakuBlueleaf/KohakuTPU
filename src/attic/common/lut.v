@@ -8,8 +8,8 @@ module MultiBitLut #(
 );
     genvar i;
     generate
-        for(i=0; i<output_bits/(7-input_bits); i=i+1) begin
-            if(input_bits == 5) begin
+        for(i=0; i<output_bits/(7-input_bits); i=i+1) begin : g_lut
+            if(input_bits == 5) begin : g_i5
                 LUT6_2 #(
                     .INIT(INIT[i*64+63:i*64])
                 ) lut (
@@ -23,7 +23,7 @@ module MultiBitLut #(
                     .O6(out[i*2+1])
                 );
             end
-            else if(input_bits == 6) begin
+            else if(input_bits == 6) begin : g_i6
                 LUT6 #(
                     .INIT(INIT[i*64+63:i*64])
                 ) lut (
