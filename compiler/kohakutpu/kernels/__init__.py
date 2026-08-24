@@ -30,7 +30,13 @@ from kohakutpu.kernels.activation import (
     linear_silu,
     sigmoid,
 )
-from kohakutpu.kernels.attention import NEG, flash_attention
+from kohakutpu.kernels.attention import (
+    NEG,
+    attn_out,
+    flash_attention,
+    heads_of,
+    project_heads,
+)
 from kohakutpu.kernels.conv2d import conv2d_bias
 from kohakutpu.kernels.fused import group_norm_fused as group_norm
 from kohakutpu.kernels.fused import layernorm_fused as layernorm
@@ -48,6 +54,7 @@ from kohakutpu.kernels.wide import (
 __all__ = [
     "LOG2E",
     "NEG",
+    "attn_out",
     "conv2d_bias",
     "flash_attention",
     "geglu",
@@ -55,6 +62,7 @@ __all__ = [
     "group_norm",
     "group_norm_silu",
     "group_stats",
+    "heads_of",
     "layernorm",
     "layernorm_wide",
     "linear_add",
@@ -68,6 +76,7 @@ __all__ = [
     "linear_scale",
     "linear_silu",
     "mlp",
+    "project_heads",
     "rmsnorm",
     "rmsnorm_wide",
     "sigmoid",

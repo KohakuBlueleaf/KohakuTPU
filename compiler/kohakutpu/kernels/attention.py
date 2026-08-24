@@ -21,10 +21,115 @@ from kohakutpu.lang import kernel
 from kohakutpu import lang as L
 
 Lq, Lkv, Dqk, Dv = dims("Lq, Lkv, Dqk, Dv")
+HM, HD, Dim = dims("HM, HD, Dim")
 
 #: Low enough that `exp2` of any real score minus it is zero in fp16, and high
 #: enough not to become an inf once multiplied by a correction.
 NEG = -60000.0
+
+
+def heads_of(w, heads: int):
+    """A projection weight `[heads*dh][ctx]` as the `[heads][dh][ctx]` batch.
+
+    THE HEAD SPLIT IS AN N-PARTITION OF THE PROJECTION, so it is a RESHAPE of
+    the checkpoint's own array and moves no bytes: output column `n` of
+    `x @ w.T` belongs to head `n // dh`, and `w` is stored `[out][in]` with the
+    head axis already outermost. Nothing is permuted at run time.
+    """
+    if w.shape[0] % heads:
+        raise ValueError(
+            f"a {w.shape[0]}-wide projection does not split into {heads} heads; "
+            f"the head axis is the OUTER half of the output axis and must divide"
+        )
+    return w.reshape(heads, w.shape[0] // heads, *w.shape[1:])
+
+
+class _HeadTile:
+    """Row tile `(s // chunks) * tiles + i`: head `s // chunks`, grid row `i`.
+
+    ONE loop over `(head, K-chunk)`, because a GEMM chains on the innermost
+    counter and 0 clears the tile, so two loops would keep only the last head.
+    `//` and `%` are not index arithmetic, so this rebinds itself -- the hook
+    `record._value` provides, as :class:`kohakutpu.lang.Tap` does.
+    """
+
+    def __init__(self, step, chunks, tiles, index) -> None:
+        self.step, self.chunks, self.tiles, self.index = step, chunks, tiles, index
+
+    def rebind(self, value):
+        head = int(value(self.step)) // int(value(self.chunks))
+        return head * int(value(self.tiles)) + int(value(self.index))
+
+
+class _HeadChunk:
+    """K-chunk `s % chunks` within one head's `Dv`. See :class:`_HeadTile`."""
+
+    def __init__(self, step, chunks) -> None:
+        self.step, self.chunks = step, chunks
+
+    def rebind(self, value):
+        return int(value(self.step)) % int(value(self.chunks))
+
+
+@kernel
+def attn_out(
+    o=L.In(HM, Dv),
+    w=L.In(Dim, HD),
+    r=L.In(Lq, Dim),
+    y=L.Out(Lq, Dim),
+    *,
+    heads=1,
+    gm=8,
+    gn=8,
+    nk=2,
+):
+    """``r + concat_h(o[h]) @ w.T``: the concat as a K SWEEP, not a permute.
+
+    `o` is what :func:`flash_attention` wrote for a batch of heads, read as the
+    `[heads*Lq][Dv]` it already is; `w` is `to_out.0` in torch order, whose K
+    axis is ALREADY head-major, so `w`'s chunk index is the sweep step itself
+    and neither operand is sliced or permuted. ONE accumulator over every head.
+
+    `r` is the residual, and it is NOT optional: `Lq` is `o`'s rows over
+    `heads`, which the extent solver cannot divide, so the result's length has
+    to be read off an operand. SDXL adds one here every time.
+    """
+    tiles, chunks = r.tiles(gm), o.chunks32(nk)
+    h = L.temp(Lq, Dim)
+    with units(tiles, w.tiles(gn)) as (i, j):
+        acc = L.tile(gm, gn, nk)
+        for s in loop(heads * chunks):
+            acc += o[_HeadTile(s, chunks, tiles, i), _HeadChunk(s, chunks)] @ w[j, s]
+        h[i, j] <<= acc
+
+    y <<= h + r
+
+
+@kernel
+def project_heads(
+    x=L.In(Lq, Dqk),
+    w=L.In(..., Dv, Dqk),
+    y=L.Out(..., Lq, Dv),
+    *,
+    gm=8,
+    gn=8,
+    nk=2,
+):
+    """``x @ w[h].T`` for every head: the BATCH ON THE WEIGHT, `x` shared.
+
+    `w` is :func:`heads_of` of a `to_q` or `to_k`, so the result is
+    `[heads][Lq][dh]` -- the shape :func:`flash_attention` takes -- with no
+    permute anywhere. MEASURED bit-identical to one wide projection followed by
+    a host permute, at 0 relayouts against that path's 1 per operand.
+
+    `x` is re-filled once per head, which is the whole cost: the N axis of one
+    head is `dh` wide, so `gn` is what to sweep before believing it is free.
+    """
+    with units(x.tiles(gm), w.tiles(gn)) as (i, j):
+        acc = L.tile(gm, gn, nk)
+        for k in loop(x.chunks32(nk)):
+            acc += x[i, k] @ w[j, k]
+        y[i, j] <<= acc
 
 
 @kernel
