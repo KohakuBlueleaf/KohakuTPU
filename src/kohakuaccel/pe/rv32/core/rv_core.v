@@ -38,20 +38,43 @@ module rv_core #(
     parameter         REGFILE_PRIM = "distributed",
     parameter integer FWD_X        = 1,
     parameter integer POS_WIDTH    = 4,
-    // ---- the KohakuMPE DSP extension. At 0 none of it is elaborated. ----
-    parameter integer DSP_EN        = 0,
-    parameter integer DSP_SIMD      = 8,
-    parameter integer DSP_VREGS     = 8,
-    parameter integer DSP_NACC      = 2,
-    parameter integer DSP_VSPAD     = 1024,
-    parameter integer DSP_MULS      = 4,
-    parameter integer DSP_SHIFT     = 1,
-    parameter integer DSP_PERM      = 1,
-    parameter integer DSP_WB        = 0,
-    parameter integer DSP_F16       = 0,
-    parameter integer DSP_NPART     = 16,
-    parameter         DSP_USE_DSP   = "yes",
-    parameter         DSP_VREG_PRIM = "distributed",
+    // ---- the KohakuMPE SIMD extension. At 0 none of it is elaborated. ----
+    parameter integer SIMD_EN        = 0,
+    parameter integer SIMD_LANES      = 8,
+    parameter integer SIMD_VREGS     = 8,
+    parameter integer SIMD_NACC      = 2,
+    parameter integer SIMD_VSPAD     = 1024,
+    parameter integer SIMD_MULS      = 4,
+    parameter integer SIMD_SHIFT     = 1,
+    parameter integer SIMD_PERM      = 1,
+    // Cross-lane permute OUTPUT words per pass; 0 = one per word.
+    parameter integer SIMD_PERM_UNITS = 0,
+    parameter integer SIMD_SHIFT_UNITS = 0,
+    parameter integer SIMD_DOTDSP    = 0,
+    parameter integer SIMD_WB        = 0,
+    parameter integer SIMD_FLOAT       = 0,
+    // Float UNITS against 2*SIMD float ELEMENTS. **0 = NOT BUILT**, the same
+    // spelling `FLANES` uses on the SIMT PE; it used to mean "one per element",
+    // so the same 0 described opposite machines on the two cores. A build that
+    // wants one per element says 2*SIMD, and a float GROUP asked for with no
+    // units is refused at elaboration.
+    parameter integer SIMD_FLOAT_LANES = 0,
+    // The float groups. FALU -- mul/add/sub/fma/min/max/compare -- is what a
+    // SIMD extension IS, so it follows SIMD_FLOAT. The seeds and the accumulator
+    // are additions, priced separately, and the eight SIMD PEs of a mesh may
+    // carry different combinations.
+    parameter integer SIMD_FALU      = 1,
+    // A UNIT COUNT, not a boolean: 0 builds no seeds, N builds N seed units out
+    // of SIMD_FLOAT_LANES. A row measured when this was a boolean is NOT
+    // comparable -- 1 meant "every lane", which is N = SIMD_FLOAT_LANES here.
+    parameter integer SIMD_FSFU      = 0,
+    parameter integer SIMD_FACC      = 0,
+    parameter integer SIMD_FCVT      = 0,
+    parameter integer SIMD_F16       = 1,
+    parameter integer SIMD_F32       = 1,
+    parameter integer SIMD_NPART     = 16,
+    parameter         SIMD_USE_DSP   = "yes",
+    parameter         SIMD_VREG_PRIM = "distributed",
     parameter         MEM_PRIM      = "block"
 )(
     input  wire        clk,
@@ -104,6 +127,24 @@ module rv_core #(
     output wire [3:0]            push_be,
     output wire [31:0]           push_data,
 
+    output wire                  disp_wr,
+    output wire                  disp_fire,
+    input  wire                  disp_ready,
+    output wire [2:0]            disp_sel,
+    output wire [POS_WIDTH-1:0]  disp_dx,
+    output wire [POS_WIDTH-1:0]  disp_dy,
+    output wire [7:0]            disp_txn,
+    output wire                  disp_last,
+    output wire [2:0]            disp_rsvd,
+    output wire [31:0]           disp_data,
+
+    output wire                  sig_pop,
+    input  wire [7:0]            ctl_sig_cnt,
+    input  wire                  ctl_sig_ovf,
+    input  wire [7:0]            ctl_sig_code,
+    input  wire [7:0]            ctl_sig_id,
+    input  wire [31:0]           ctl_sig_arg,
+
     // ---- retirement, for co-simulation ----
     output wire        retire_valid,
     output wire [31:0] retire_pc,
@@ -112,10 +153,10 @@ module rv_core #(
     output wire [31:0] cycle_ctr,
     output wire [31:0] instret_ctr,
 
-    // ---- the vector scratchpad's NoC window, at DSP_EN only ----
+    // ---- the vector scratchpad's NoC window, at SIMD_EN only ----
     input  wire        vspad_en,
     input  wire [3:0]  vspad_we,
-    input  wire [$clog2(DSP_VSPAD*DSP_SIMD)-1:0] vspad_word,
+    input  wire [$clog2(SIMD_VSPAD*SIMD_LANES)-1:0] vspad_word,
     input  wire [31:0] vspad_wdata
 );
     // ---- fetch ----
@@ -149,7 +190,7 @@ module rv_core #(
     wire [2:0]  m_f3;
     wire [3:0]  m_be;
 
-    // ---- the DSP extension's wires ----
+    // ---- the SIMD extension's wires ----
     wire        x_vec, d_vec_ld;
     wire [31:0] x_instr;
     wire        vec_stall, vec_fault, vec_illegal, vec_misalign, vec_w_valid;
@@ -193,10 +234,18 @@ module rv_core #(
     // vector window" on purpose: the region needs the EX adder's output, and
     // that would put the ALU on the fetch address's path to save a cycle in a
     // sequence nothing runs.
-    wire dsp_bubble = (DSP_EN != 0) && d_vec_ld && x_store;
+    wire dsp_bubble = (SIMD_EN != 0) && d_vec_ld && x_store;
 
-    wire stall_d = dsp_bubble || (d_valid &&
-                   (((FWD_X != 0) ? (hz1 && x_load) : hz1) || (hz2 && m_load)));
+    wire stall_d = (
+        dsp_bubble
+        || (
+            d_valid
+            && (
+                ((FWD_X != 0) ? (hz1 && x_load) : hz1)
+                || (hz2 && m_load)
+            )
+        )
+    );
 
     // Nearest producer wins. A select that names a value which is not ready is
     // harmless because the same condition raised the stall.
@@ -214,7 +263,11 @@ module rv_core #(
     // A COMMITTED COPY OF a0, what ECALL and EBREAK report. Exact with no
     // forwarding: the halt redirects, so nothing younger than it ever commits.
     reg [31:0] a0_q;
-    always @(posedge clk) if (rf_we && (rf_wa == 5'd10)) a0_q <= rf_wd;
+    always @(posedge clk) begin
+        if (rf_we && (rf_wa == 5'd10)) begin
+            a0_q <= rf_wd;
+        end
+    end
 
     assign run       = run_q;
     assign halted    = halted_q;
@@ -245,8 +298,12 @@ module rv_core #(
                 cause_q  <= ex_cause;
                 halt_q   <= ex_halt_word;
             end
-            if (run_q) cyc_q <= cyc_q + 32'd1;
-            if (retire_valid) ret_q <= ret_q + 32'd1;
+            if (run_q) begin
+                cyc_q <= cyc_q + 32'd1;
+            end
+            if (retire_valid) begin
+                ret_q <= ret_q + 32'd1;
+            end
         end
     end
 
@@ -270,7 +327,7 @@ module rv_core #(
         .we(rf_we), .wa(rf_wa), .wd(rf_wd)
     );
 
-    rv_id #(.FWD_X(FWD_X), .DSP_EN(DSP_EN), .DSP_F16(DSP_F16)) u_id (
+    rv_id #(.FWD_X(FWD_X), .SIMD_EN(SIMD_EN), .SIMD_FLOAT(SIMD_FLOAT)) u_id (
         .clk(clk), .resetn(resetn),
         .d_hold(hold_front), .x_hold(stall_m), .bubble(stall_d), .kill(ex_redir),
         .f2_instr(f2_instr), .f2_pc(f2_pc), .f2_valid(f2_valid),
@@ -309,7 +366,7 @@ module rv_core #(
     );
 
     rv_mem #(.SPAD_WORDS(SPAD_WORDS), .POS_WIDTH(POS_WIDTH),
-             .DSP_EN(DSP_EN)) u_mem (
+             .SIMD_EN(SIMD_EN)) u_mem (
         .clk(clk), .resetn(resetn),
         .ex_addr(ex_addr), .x_load(x_load), .x_store(x_store),
         .ex_bad_region(ex_bad_region),
@@ -326,6 +383,13 @@ module rv_core #(
         .push_dx(push_dx), .push_dy(push_dy), .push_win(push_win),
         .push_gran(push_gran), .push_sel(push_sel), .push_be(push_be),
         .push_data(push_data),
+        .disp_wr(disp_wr), .disp_fire(disp_fire), .disp_ready(disp_ready),
+        .disp_sel(disp_sel), .disp_dx(disp_dx), .disp_dy(disp_dy),
+        .disp_txn(disp_txn), .disp_last(disp_last), .disp_rsvd(disp_rsvd),
+        .disp_data(disp_data),
+        .sig_pop(sig_pop), .ctl_sig_cnt(ctl_sig_cnt),
+        .ctl_sig_ovf(ctl_sig_ovf), .ctl_sig_code(ctl_sig_code),
+        .ctl_sig_id(ctl_sig_id), .ctl_sig_arg(ctl_sig_arg),
         .ctl_coreid(coreid), .ctl_arg(arg), .ctl_cycle(cyc_q),
         .ctl_instret(ret_q), .ctl_cause(cause_q), .ctl_wr_out(wr_out),
         .vec_stall(vec_stall), .vec_fault(vec_fault),
@@ -338,20 +402,30 @@ module rv_core #(
         .w_pc(w_pc)
     );
 
-    // ---- the DSP extension --------------------------------------------------
+    // ---- the SIMD extension --------------------------------------------------
     // It sees the EX stage exactly as the data arrays do: the instruction word,
     // the ALU's own sum as an address, and rs1's value for a broadcast. Its
     // `x_hold` is the MEM stage's OWN stall, not the combined one -- feeding it
     // the combined signal would make its stall an input to itself.
     generate
-    if (DSP_EN != 0) begin : g_dsp
-        khd_unit #(.SIMD(DSP_SIMD), .VREGS(DSP_VREGS), .NACC(DSP_NACC),
-                   .VSPAD_ENTRIES(DSP_VSPAD), .MULS(DSP_MULS),
-                   .HAS_SHIFT(DSP_SHIFT), .HAS_PERM(DSP_PERM),
-                   .HAS_F16(DSP_F16), .NPART(DSP_NPART),
-                   .WB_STAGE(DSP_WB),
-                   .USE_DSP(DSP_USE_DSP), .MEM_PRIM(MEM_PRIM),
-                   .VREG_PRIM(DSP_VREG_PRIM)) u_khd (
+    // `g_simd.u_khs`, not `g_dsp.u_khd`. This PE is a CPU with SIMD
+    // instructions; naming its extension after a DSP is what the class rename
+    // exists to stop. The OOC census path moved with it.
+    if (SIMD_EN != 0) begin : g_simd
+        khs_unit #(.SIMD(SIMD_LANES), .VREGS(SIMD_VREGS), .NACC(SIMD_NACC),
+                   .VSPAD_ENTRIES(SIMD_VSPAD), .MULS(SIMD_MULS),
+                   .HAS_SHIFT(SIMD_SHIFT), .HAS_PERM(SIMD_PERM),
+                   .PERM_UNITS(SIMD_PERM_UNITS),
+                   .SHIFT_UNITS(SIMD_SHIFT_UNITS),
+                   .DOT_DSP(SIMD_DOTDSP),
+                   .HAS_FLOAT(SIMD_FLOAT), .FLOAT_LANES(SIMD_FLOAT_LANES),
+                   .HAS_FALU(SIMD_FALU), .FSFU_UNITS(SIMD_FSFU),
+                   .HAS_FACC(SIMD_FACC), .HAS_FCVT(SIMD_FCVT),
+                   .HAS_F16(SIMD_F16), .HAS_F32(SIMD_F32),
+                   .NPART(SIMD_NPART),
+                   .WB_STAGE(SIMD_WB),
+                   .USE_DSP(SIMD_USE_DSP), .MEM_PRIM(MEM_PRIM),
+                   .VREG_PRIM(SIMD_VREG_PRIM)) u_khs (
             .clk(clk), .resetn(resetn),
             .x_valid(x_vec && x_valid), .x_instr(x_instr),
             .x_addr(ex_addr), .x_xdata(x_op1), .x_hold(base_stall),

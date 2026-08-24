@@ -31,7 +31,7 @@
 module rv_mem #(
     parameter integer SPAD_WORDS = 2048,
     parameter integer POS_WIDTH  = 4,
-    parameter integer DSP_EN     = 0
+    parameter integer SIMD_EN     = 0
 )(
     input  wire        clk,
     input  wire        resetn,
@@ -85,6 +85,26 @@ module rv_mem #(
     output wire [3:0]            push_be,
     output wire [31:0]           push_data,
 
+    // ---- dispatch, into the NoC requestor ----
+    output wire                  disp_wr,
+    output wire                  disp_fire,
+    input  wire                  disp_ready,
+    output wire [2:0]            disp_sel,
+    output wire [POS_WIDTH-1:0]  disp_dx,
+    output wire [POS_WIDTH-1:0]  disp_dy,
+    output wire [7:0]            disp_txn,
+    output wire                  disp_last,
+    output wire [2:0]            disp_rsvd,
+    output wire [31:0]           disp_data,
+
+    // ---- completions, read back through the control window ----
+    output wire                  sig_pop,
+    input  wire [7:0]            ctl_sig_cnt,
+    input  wire                  ctl_sig_ovf,
+    input  wire [7:0]            ctl_sig_code,
+    input  wire [7:0]            ctl_sig_id,
+    input  wire [31:0]           ctl_sig_arg,
+
     // ---- control-region sources ----
     input  wire [7:0]  ctl_coreid,
     input  wire [31:0] ctl_arg,
@@ -93,7 +113,7 @@ module rv_mem #(
     input  wire [1:0]  ctl_cause,
     input  wire [15:0] ctl_wr_out,
 
-    // ---- the vector unit, at DSP_EN only ----
+    // ---- the vector unit, at SIMD_EN only ----
     // `base_stall` is this stage's OWN stall. The vector unit needs it
     // separately from `stall_m`: fed the combined signal it would see its own
     // stall as a reason to hold, which is a loop.
@@ -124,20 +144,25 @@ module rv_mem #(
 );
     localparam integer SAW = $clog2(SPAD_WORDS);
 
-    localparam [2:0] R_SPAD = 3'd1, R_CTL = 3'd2, R_PEER = 3'd3,
-                     R_DRAM = 3'd4, R_VSPAD = 3'd5, R_BAD = 3'd7;
+    localparam [2:0] R_SPAD = 3'd1, R_CTL = 3'd2, R_PEER = 3'd3, R_DRAM = 3'd4;
+    localparam [2:0] R_VSPAD = 3'd5, R_DISP = 3'd6, R_BAD = 3'd7;
 
     function [2:0] region_of;
         input [31:0] a;
         begin
-            if (a[31])                    region_of = R_DRAM;
-            else case (a[30:28])
-                3'd1:    region_of = R_SPAD;
-                3'd2:    region_of = R_CTL;
-                3'd3:    region_of = R_PEER;
-                3'd4:    region_of = R_VSPAD;
-                default: region_of = R_BAD;
-            endcase
+            if (a[31]) begin
+                region_of = R_DRAM;
+            end
+            else begin
+                case (a[30:28])
+                    3'd1:    region_of = R_SPAD;
+                    3'd2:    region_of = R_CTL;
+                    3'd3:    region_of = R_PEER;
+                    3'd4:    region_of = R_VSPAD;
+                    3'd6:    region_of = R_DISP;
+                    default: region_of = R_BAD;
+                endcase
+            end
         end
     endfunction
 
@@ -150,14 +175,24 @@ module rv_mem #(
     // and a load faults rather than paying for a read port on the scalar load
     // path -- which is the base core's critical path and the one place it can
     // least afford another mux. Without the extension the region is unmapped.
-    wire x_bad_vspad = (x_region == R_VSPAD) && ((DSP_EN == 0) || x_load);
+    wire x_bad_vspad = (x_region == R_VSPAD) && ((SIMD_EN == 0) || x_load);
     // The vector unit's own refusals -- an encoding this build does not carry,
     // or a misaligned vector address -- join here, so every fault the core has
     // is still raised in one stage and takes one path.
-    assign ex_bad_region = ((x_load || x_store) &&
-                            ((x_region == R_BAD) || x_bad_vspad
-                             || (x_load && (x_region == R_PEER))))
-                         || vec_fault;
+    // Dispatch is STORE ONLY, exactly as the peer window is: a load there has no
+    // meaning and must fault rather than return a stale register.
+    assign ex_bad_region = (
+        (
+            (x_load || x_store)
+            && (
+                (x_region == R_BAD)
+                || x_bad_vspad
+                || (x_load && (x_region == R_PEER))
+                || (x_load && (x_region == R_DISP))
+            )
+        )
+        || vec_fault
+    );
 
     wire [2:0] region = region_of(m_addr);
     wire acc   = m_valid && (m_load || m_store);
@@ -165,7 +200,8 @@ module rv_mem #(
     wire is_ct = acc && (region == R_CTL);
     wire is_pe = acc && (region == R_PEER);
     wire is_dr = acc && (region == R_DRAM);
-    wire is_vs = acc && (region == R_VSPAD) && (DSP_EN != 0);
+    wire is_vs = acc && (region == R_VSPAD) && (SIMD_EN != 0);
+    wire is_di = acc && (region == R_DISP);
 
     // ---- scratchpad -------------------------------------------------------
     assign spad_addr  = m_addr[SAW+1:2];
@@ -180,6 +216,21 @@ module rv_mem #(
     assign l1_addr  = m_addr;
     assign l1_wdata = m_sdata;
 
+    // ---- dispatch: three stores, doorbell last ----------------------------
+    // 0x6xxx_xxxx, {dx,dy} placed as the peer window places them so the decodes
+    // share wiring: [19:12] txn, [11] last, [10:8] rsvd, [4:2] field.
+    // ARG and PC only write requestor registers and always accept; OP is the
+    // doorbell and the only one that can stall.
+    assign disp_sel   = m_addr[4:2];
+    assign disp_wr    = is_di && m_store;
+    assign disp_fire  = disp_wr && (m_addr[4:2] == 3'd2);
+    assign disp_dx    = m_addr[24 +: POS_WIDTH];
+    assign disp_dy    = m_addr[20 +: POS_WIDTH];
+    assign disp_txn   = m_addr[19:12];
+    assign disp_last  = m_addr[11];
+    assign disp_rsvd  = m_addr[10:8];
+    assign disp_data  = m_sdata;
+
     // ---- peer push --------------------------------------------------------
     assign push_valid = is_pe && m_store;
     assign push_dx    = m_addr[24 +: POS_WIDTH];
@@ -191,11 +242,17 @@ module rv_mem #(
     assign push_data  = m_sdata;
 
     // ---- local control ----------------------------------------------------
-    localparam [5:0] C_STATUS = 6'd0, C_FLUSH = 6'd1, C_INVAL = 6'd2,
-                     C_CAUSE  = 6'd3, C_COREID= 6'd4, C_ARG   = 6'd5,
-                     C_CYCLE  = 6'd6, C_INSTR = 6'd7, C_WROUT = 6'd8;
+    localparam [5:0] C_STATUS = 6'd0, C_FLUSH = 6'd1, C_INVAL = 6'd2;
+    localparam [5:0] C_CAUSE = 6'd3, C_COREID = 6'd4, C_ARG = 6'd5;
+    localparam [5:0] C_CYCLE = 6'd6, C_INSTR = 6'd7, C_WROUT = 6'd8;
+    localparam [5:0] C_SIGST = 6'd9, C_SIGHD = 6'd10, C_SIGARG = 6'd11;
+    localparam [5:0] C_SIGPOP = 6'd12;
 
     wire [5:0] c_idx = m_addr[7:2];
+
+    // A store to C_SIGPOP retires the head. Software reads C_SIGST first, so a
+    // pop on an empty queue is its own bug, and the requestor ignores it.
+    assign sig_pop = is_ct && m_store && (c_idx == C_SIGPOP);
 
     // A blocking store is what makes flush-then-doorbell a two-instruction
     // idiom: it does not complete until every dirty line has been written back
@@ -211,8 +268,11 @@ module rv_mem #(
     wire flush_store = is_ct && m_store && (c_idx == C_FLUSH);
     wire inval_store = is_ct && m_store && (c_idx == C_INVAL);
 
-    wire ct_stall = (cst == CT_WAIT) || (cst == CT_RUN) ||
-                    ((cst == CT_IDLE) && (flush_store || inval_store));
+    wire ct_stall = (
+        (cst == CT_WAIT)
+        || (cst == CT_RUN)
+        || ((cst == CT_IDLE) && (flush_store || inval_store))
+    );
 
     always @(posedge clk) begin
         if (!resetn) begin
@@ -223,14 +283,18 @@ module rv_mem #(
             l1_flush <= 1'b0;
             l1_inval <= 1'b0;
             case (cst)
-            CT_IDLE: if (flush_store) begin
-                         l1_flush <= 1'b1; cst <= CT_WAIT;
-                     end else if (inval_store) begin
-                         l1_inval <= 1'b1; cst <= CT_WAIT;
-                     end
-            CT_WAIT: if (l1_flush_busy) cst <= CT_RUN;
-            CT_RUN:  if (!l1_flush_busy) cst <= CT_DONE;
-            default: cst <= CT_IDLE;
+                CT_IDLE: if (flush_store) begin
+                             l1_flush <= 1'b1; cst <= CT_WAIT;
+                         end else if (inval_store) begin
+                             l1_inval <= 1'b1; cst <= CT_WAIT;
+                         end
+                CT_WAIT: if (l1_flush_busy) begin
+                    cst <= CT_RUN;
+                end
+                CT_RUN:  if (!l1_flush_busy) begin
+                    cst <= CT_DONE;
+                end
+                default: cst <= CT_IDLE;
             endcase
         end
     end
@@ -238,14 +302,17 @@ module rv_mem #(
     reg [31:0] ctl_rdata;
     always @(*) begin
         case (c_idx)
-        C_STATUS: ctl_rdata = {30'd0, (ctl_wr_out != 16'd0), l1_flush_busy};
-        C_CAUSE:  ctl_rdata = {30'd0, ctl_cause};
-        C_COREID: ctl_rdata = {24'd0, ctl_coreid};
-        C_ARG:    ctl_rdata = ctl_arg;
-        C_CYCLE:  ctl_rdata = ctl_cycle;
-        C_INSTR:  ctl_rdata = ctl_instret;
-        C_WROUT:  ctl_rdata = {16'd0, ctl_wr_out};
-        default:  ctl_rdata = 32'd0;
+            C_STATUS: ctl_rdata = {30'd0, (ctl_wr_out != 16'd0), l1_flush_busy};
+            C_CAUSE:  ctl_rdata = {30'd0, ctl_cause};
+            C_COREID: ctl_rdata = {24'd0, ctl_coreid};
+            C_ARG:    ctl_rdata = ctl_arg;
+            C_CYCLE:  ctl_rdata = ctl_cycle;
+            C_INSTR:  ctl_rdata = ctl_instret;
+            C_WROUT:  ctl_rdata = {16'd0, ctl_wr_out};
+            C_SIGST:  ctl_rdata = {23'd0, ctl_sig_ovf, ctl_sig_cnt};
+            C_SIGHD:  ctl_rdata = {16'd0, ctl_sig_code, ctl_sig_id};
+            C_SIGARG: ctl_rdata = ctl_sig_arg;
+            default:  ctl_rdata = 32'd0;
         endcase
     end
 
@@ -254,9 +321,12 @@ module rv_mem #(
     assign vsp_st_be    = m_be;
     assign vsp_st_data  = m_sdata;
 
-    assign base_stall = (is_dr && l1_stall) ||
-                        (is_pe && m_store && !push_ready) ||
-                        ct_stall;
+    assign base_stall = (
+        (is_dr && l1_stall)
+        || (is_pe && m_store && !push_ready)
+        || (disp_fire && !disp_ready)
+        || ct_stall
+    );
     assign stall_m    = base_stall || vec_stall;
 
     // ---- the writeback register -------------------------------------------
@@ -288,9 +358,9 @@ module rv_mem #(
     reg [31:0] rword;
     always @(*) begin
         case (w_region)
-        R_SPAD:  rword = spad_rdata;
-        R_DRAM:  rword = l1_rdata;
-        default: rword = w_ctl;
+            R_SPAD:  rword = spad_rdata;
+            R_DRAM:  rword = l1_rdata;
+            default: rword = w_ctl;
         endcase
     end
 
@@ -298,21 +368,21 @@ module rv_mem #(
     reg  [7:0]  byt;
     always @(*) begin
         case (w_off)
-        2'd0:    byt = rword[7:0];
-        2'd1:    byt = rword[15:8];
-        2'd2:    byt = rword[23:16];
-        default: byt = rword[31:24];
+            2'd0:    byt = rword[7:0];
+            2'd1:    byt = rword[15:8];
+            2'd2:    byt = rword[23:16];
+            default: byt = rword[31:24];
         endcase
     end
 
     reg [31:0] load_val;
     always @(*) begin
         case (w_f3)
-        3'b000:  load_val = {{24{byt[7]}},   byt};
-        3'b001:  load_val = {{16{half[15]}}, half};
-        3'b100:  load_val = {24'd0, byt};
-        3'b101:  load_val = {16'd0, half};
-        default: load_val = rword;
+            3'b000:  load_val = {{24{byt[7]}},   byt};
+            3'b001:  load_val = {{16{half[15]}}, half};
+            3'b100:  load_val = {24'd0, byt};
+            3'b101:  load_val = {16'd0, half};
+            default: load_val = rword;
         endcase
     end
 

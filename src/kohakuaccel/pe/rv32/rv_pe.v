@@ -56,21 +56,44 @@ module rv_pe #(
     // that produces no output at all rather than as an error.
     parameter integer INST_DEPTH   = 16,
     parameter integer RECV_DEPTH   = 32,
-    // ---- the KohakuMPE DSP extension. At 0 none of it is elaborated and this
+    // `block` measured -152 LUT for +4 BRAM on the assembled SIMD PE, Fmax
+    // unmoved; LUT binds this device and BRAM does not.
+    parameter         RECV_MEM     = "block",
+    // ---- the KohakuMPE SIMD extension. At 0 none of it is elaborated and this
     // unit is bit-identical to the shipped controller PE. ----
-    parameter integer DSP_EN        = 0,
-    parameter integer DSP_SIMD      = 8,
-    parameter integer DSP_VREGS     = 8,
-    parameter integer DSP_NACC      = 2,
-    parameter integer DSP_VSPAD     = 1024,
-    parameter integer DSP_MULS      = 4,
-    parameter integer DSP_SHIFT     = 1,
-    parameter integer DSP_PERM      = 1,
-    parameter integer DSP_WB        = 0,
-    parameter integer DSP_F16       = 0,
-    parameter integer DSP_NPART     = 16,
-    parameter         DSP_USE_DSP   = "yes",
-    parameter         DSP_VREG_PRIM = "distributed"
+    parameter integer SIMD_EN        = 0,
+    parameter integer SIMD_LANES      = 8,
+    parameter integer SIMD_VREGS     = 8,
+    parameter integer SIMD_NACC      = 2,
+    parameter integer SIMD_VSPAD     = 1024,
+    parameter integer SIMD_MULS      = 4,
+    parameter integer SIMD_SHIFT     = 1,
+    parameter integer SIMD_PERM      = 1,
+    // Permute OUTPUT words per pass; 0 = one per word. See rv_core.
+    parameter integer SIMD_PERM_UNITS = 0,
+    parameter integer SIMD_SHIFT_UNITS = 0,
+    // The dot sum lives in the DSP48 column and the writeback is pipelined.
+    // Both measured at 2.857 ns, SIMD 8 + 4 float lanes: 14,982 LUT / 322.0 MHz
+    // with neither, 13,772 / 353.4 with both. WB_STAGE is worth having ONLY at
+    // a binding constraint -- at 3.333 ns, where the PE closes with positive
+    // slack, the same stage measured +89 LUT and -28 MHz.
+    parameter integer SIMD_DOTDSP    = 1,
+    parameter integer SIMD_WB        = 1,
+    parameter integer SIMD_FLOAT       = 0,
+    // 0 = NOT BUILT, not "one per element" -- see rv_core.
+    parameter integer SIMD_FLOAT_LANES = 0,
+    parameter integer SIMD_FALU      = 1,
+    // A UNIT COUNT, not a boolean -- see rv_core.
+    parameter integer SIMD_FSFU      = 0,
+    parameter integer SIMD_FACC      = 0,
+    // NOT BUILT: khs_unit refuses a nonzero value at elaboration -- the group
+    // decodes, sets `wr_vreg`, and has no converter behind it.
+    parameter integer SIMD_FCVT      = 0,
+    parameter integer SIMD_F16       = 1,
+    parameter integer SIMD_F32       = 1,
+    parameter integer SIMD_NPART     = 16,
+    parameter         SIMD_USE_DSP   = "yes",
+    parameter         SIMD_VREG_PRIM = "distributed"
 )(
     input  wire                   clk,
     input  wire                   resetn,
@@ -95,17 +118,16 @@ module rv_pe #(
     localparam integer IAW = $clog2(IMEM_WORDS);
     localparam integer SAW = $clog2(SPAD_WORDS);
 
-    localparam [3:0] T_MEM_RD_RESP = 4'h2,
-                     T_MEM_WR_ACK  = 4'h3,
-                     T_CU_DATA     = 4'h8;
+    localparam [3:0] T_MEM_RD_RESP = 4'h2, T_MEM_WR_ACK = 4'h3;
+    localparam [3:0] T_CU_SIGNAL = 4'h6, T_CU_DATA = 4'h8;
 
     // buf_id 3 is reserved to the framework, so the vector scratchpad takes 2
     // for granules and 6 for a byte-enabled word -- the same pairing the other
     // two windows have.
-    localparam [7:0] BUF_SPAD = 8'd0, BUF_IMEM = 8'd1, BUF_VSPAD = 8'd2,
-                     BUF_SPAD_W = 8'd4, BUF_IMEM_W = 8'd5, BUF_VSPAD_W = 8'd6;
+    localparam [7:0] BUF_SPAD = 8'd0, BUF_IMEM = 8'd1, BUF_VSPAD = 8'd2;
+    localparam [7:0] BUF_SPAD_W = 8'd4, BUF_IMEM_W = 8'd5, BUF_VSPAD_W = 8'd6;
 
-    localparam integer VWORDS = DSP_VSPAD * DSP_SIMD;
+    localparam integer VWORDS = SIMD_VSPAD * SIMD_LANES;
     localparam integer VWA    = $clog2(VWORDS);
 
     localparam integer PAY = FLIT_WIDTH - 4*POS_WIDTH - 16;
@@ -131,7 +153,8 @@ module rv_pe #(
         .FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH),
         .POS_X(POS_X), .POS_Y(POS_Y),
         .CU_TYPE(16'h5256), .CU_VERSION(8'h01), .N_BUFFERS(4),
-        .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH)
+        .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
+        .RECV_MEM(RECV_MEM)
     ) u_base (
         .clk(clk), .resetn(resetn),
         .noc_in_data(noc_in_data), .noc_in_valid(noc_in_valid),
@@ -161,6 +184,11 @@ module rv_pe #(
     wire rx_is_resp = (rx_ty == T_MEM_RD_RESP);
     wire rx_is_ack  = (rx_ty == T_MEM_WR_ACK);
     wire rx_is_cud  = (rx_ty == T_CU_DATA);
+    // A dispatcher that cannot hear a CU retire can start work and never learn
+    // it finished; this is the completion edge of graph execution.
+    wire rx_is_sig  = (rx_ty == T_CU_SIGNAL);
+    wire [7:0]  rx_sig_code = rx_pl[PAY-1 -: 8];
+    wire [31:0] rx_sig_arg  = rx_pl[PAY-9 -: 32];
 
     // ---- CU_DATA window writer ---------------------------------------------
     localparam [1:0] CD_IDLE = 2'd0, CD_DATA = 2'd1;
@@ -183,24 +211,28 @@ module rv_pe #(
     assign recv_ready = !gw_busy;
     wire   rx_take    = recv_valid && recv_ready;
 
-    wire cd_to_vspad = (DSP_EN != 0) &&
-                       ((cd_buf == BUF_VSPAD) || (cd_buf == BUF_VSPAD_W));
+    wire cd_to_vspad = (
+        (SIMD_EN != 0)
+        && ((cd_buf == BUF_VSPAD) || (cd_buf == BUF_VSPAD_W))
+    );
     wire cd_is_gran = (cd_buf == BUF_SPAD) || (cd_buf == BUF_IMEM)
-                    || ((DSP_EN != 0) && (cd_buf == BUF_VSPAD));
+                    || ((SIMD_EN != 0) && (cd_buf == BUF_VSPAD));
     wire cd_is_word = (cd_buf == BUF_SPAD_W) || (cd_buf == BUF_IMEM_W)
-                    || ((DSP_EN != 0) && (cd_buf == BUF_VSPAD_W));
+                    || ((SIMD_EN != 0) && (cd_buf == BUF_VSPAD_W));
     wire cd_to_imem = (cd_buf == BUF_IMEM) || (cd_buf == BUF_IMEM_W);
 
     wire [7:0]  nd_buf = rx_pl[PAY-1 -: 8];
     wire [15:0] nd_off = rx_pl[PAY-9 -: 16];
     wire [7:0]  nd_len = rx_pl[PAY-25 -: 8];
 
-    wire nd_vspad = (DSP_EN != 0) &&
-                    ((nd_buf == BUF_VSPAD) || (nd_buf == BUF_VSPAD_W));
+    wire nd_vspad = (
+        (SIMD_EN != 0)
+        && ((nd_buf == BUF_VSPAD) || (nd_buf == BUF_VSPAD_W))
+    );
     wire nd_gran = (nd_buf == BUF_SPAD) || (nd_buf == BUF_IMEM)
-                 || ((DSP_EN != 0) && (nd_buf == BUF_VSPAD));
+                 || ((SIMD_EN != 0) && (nd_buf == BUF_VSPAD));
     wire nd_word = (nd_buf == BUF_SPAD_W) || (nd_buf == BUF_IMEM_W)
-                 || ((DSP_EN != 0) && (nd_buf == BUF_VSPAD_W));
+                 || ((SIMD_EN != 0) && (nd_buf == BUF_VSPAD_W));
     wire nd_imem = (nd_buf == BUF_IMEM) || (nd_buf == BUF_IMEM_W);
     // offset + len must fit the named window, and the check MUST reject rather
     // than wrap (flit-format.md s4.7.1).
@@ -215,8 +247,13 @@ module rv_pe #(
     wire [3:0]  wp_be   = rx_pl[35:32];
     wire [31:0] wp_data = rx_pl[31:0];
 
-    wire cd_data_beat = rx_take && rx_is_cud && (cst == CD_DATA) &&
-                        (rx_sx == cd_sx) && (rx_sy == cd_sy);
+    wire cd_data_beat = (
+        rx_take
+        && rx_is_cud
+        && (cst == CD_DATA)
+        && (rx_sx == cd_sx)
+        && (rx_sy == cd_sy)
+    );
     wire cd_word_wr   = cd_data_beat && cd_is_word && !cd_drop;
     wire cd_gran_wr   = cd_data_beat && cd_is_gran && !cd_drop;
 
@@ -239,7 +276,7 @@ module rv_pe #(
                                        : {cd_off[IAW-4:0], wp_sel};
     wire [31:0] imem_wr_d    = gw_busy ? gw_buf[{gw_cnt, 5'd0} +: 32] : wp_data;
 
-    // The vector scratchpad is a FLAT word address here; khd_vspad splits it
+    // The vector scratchpad is a FLAT word address here; khs_vspad splits it
     // into a bank and a row, so this path is the same shape as the other two.
     wire        vsp_wr_en    = (cd_word_wr && cd_to_vspad)
                              || (gw_busy && gw_vspad);
@@ -257,34 +294,40 @@ module rv_pe #(
             cd_drop <= 1'b0;
         end else begin
             if (gw_busy) begin
-                if (gw_cnt == 3'd7) gw_busy <= 1'b0;
+                if (gw_cnt == 3'd7) begin
+                    gw_busy <= 1'b0;
+                end
                 gw_cnt <= gw_cnt + 3'd1;
             end
 
             case (cst)
-            CD_IDLE: if (rx_take && rx_is_cud) begin
-                cd_buf  <= nd_buf;
-                cd_off  <= nd_off;
-                cd_left <= nd_len + 8'd1;
-                cd_sx   <= rx_sx;
-                cd_sy   <= rx_sy;
-                cd_drop <= !nd_ok;
-                cst     <= CD_DATA;
-            end
-            CD_DATA: if (cd_data_beat) begin
-                cd_off <= cd_off + 16'd1;
-                if (cd_gran_wr) begin
-                    gw_buf   <= rx_pl[255:0];
-                    gw_base  <= {cd_off[12:0], 3'd0};
-                    gw_cnt   <= 3'd0;
-                    gw_busy  <= 1'b1;
-                    gw_imem  <= cd_to_imem;
-                    gw_vspad <= cd_to_vspad;
+                CD_IDLE: if (rx_take && rx_is_cud) begin
+                    cd_buf  <= nd_buf;
+                    cd_off  <= nd_off;
+                    cd_left <= nd_len + 8'd1;
+                    cd_sx   <= rx_sx;
+                    cd_sy   <= rx_sy;
+                    cd_drop <= !nd_ok;
+                    cst     <= CD_DATA;
                 end
-                if (cd_left == 8'd1) cst <= CD_IDLE;
-                else cd_left <= cd_left - 8'd1;
-            end
-            default: cst <= CD_IDLE;
+                CD_DATA: if (cd_data_beat) begin
+                    cd_off <= cd_off + 16'd1;
+                    if (cd_gran_wr) begin
+                        gw_buf   <= rx_pl[255:0];
+                        gw_base  <= {cd_off[12:0], 3'd0};
+                        gw_cnt   <= 3'd0;
+                        gw_busy  <= 1'b1;
+                        gw_imem  <= cd_to_imem;
+                        gw_vspad <= cd_to_vspad;
+                    end
+                    if (cd_left == 8'd1) begin
+                        cst <= CD_IDLE;
+                    end
+                    else begin
+                        cd_left <= cd_left - 8'd1;
+                    end
+                end
+                default: cst <= CD_IDLE;
             endcase
         end
     end
@@ -316,43 +359,54 @@ module rv_pe #(
             exec_done    <= 1'b0;
 
             case (kst)
-            // A KICK MUST NOT OVERTAKE THE DATA IT IS THE DOORBELL FOR.
-            // noc_cu_base sorts CU_INST into the instruction FIFO and CU_DATA
-            // into the receive FIFO, so the framework preserves order between
-            // one sender and this unit ON THE WIRE but not across those two
-            // queues: the kick reaches the head while the last granule of the
-            // program image is still being walked into the window, and the core
-            // starts on memory that is not there yet. The unit has to enforce
-            // it, and this is where. `rx_quiet` is cleared by this unit's own
-            // progress, so waiting on it cannot deadlock.
-            K_IDLE: if (inst_valid && !inst_ready_r && rx_quiet) begin
-                k_op         <= i_op;
-                k_pc         <= i_pc;
-                k_arg        <= i_arg;
-                inst_ready_r <= 1'b1;
-                kst          <= K_START;
-            end
-            // One cycle between accept and anything else: noc_cu_base clears
-            // in_flight on exec_done, so a completion in the accept cycle is
-            // never queued and the dispatch credit is lost for good.
-            K_START: if (k_op == 8'd1) begin
-                boot_v <= 1'b1;
-                kst    <= K_RUN;
-            end else kst <= K_DONE;
+                // A KICK MUST NOT OVERTAKE THE DATA IT IS THE DOORBELL FOR.
+                // noc_cu_base sorts CU_INST into the instruction FIFO and CU_DATA
+                // into the receive FIFO, so the framework preserves order between
+                // one sender and this unit ON THE WIRE but not across those two
+                // queues: the kick reaches the head while the last granule of the
+                // program image is still being walked into the window, and the core
+                // starts on memory that is not there yet. The unit has to enforce
+                // it, and this is where. `rx_quiet` is cleared by this unit's own
+                // progress, so waiting on it cannot deadlock.
+                K_IDLE: if (inst_valid && !inst_ready_r && rx_quiet) begin
+                    k_op         <= i_op;
+                    k_pc         <= i_pc;
+                    k_arg        <= i_arg;
+                    inst_ready_r <= 1'b1;
+                    kst          <= K_START;
+                end
+                // One cycle between accept and anything else: noc_cu_base clears
+                // in_flight on exec_done, so a completion in the accept cycle is
+                // never queued and the dispatch credit is lost for good.
+                K_START: if (k_op == 8'd1) begin
+                    boot_v <= 1'b1;
+                    kst    <= K_RUN;
+                end
+                else begin
+                    kst <= K_DONE;
+                end
 
-            // "Halted" is not enough. The completion is the host's only
-            // sequencing point, so it must also mean every write this program
-            // issued has reached memory -- which is the write acknowledgement,
-            // not the last beat leaving.
-            K_RUN: if (core_halted && pipe_empty && req_idle &&
-                       (wr_out == 16'd0)) kst <= K_DONE;
+                // "Halted" is not enough. The completion is the host's only
+                // sequencing point, so it must also mean every write this program
+                // issued has reached memory -- which is the write acknowledgement,
+                // not the last beat leaving.
+                K_RUN: begin
+                    if (
+                        core_halted
+                        && pipe_empty
+                        && req_idle
+                        && (wr_out == 16'd0)
+                    ) begin
+                        kst <= K_DONE;
+                    end
+                end
 
-            default: begin
-                exec_done   <= 1'b1;
-                exec_result <= core_halt_word;
-                exec_fault  <= (core_cause == 2'd2) || (core_cause == 2'd3);
-                kst         <= K_IDLE;
-            end
+                default: begin
+                    exec_done   <= 1'b1;
+                    exec_result <= core_halt_word;
+                    exec_fault  <= (core_cause == 2'd2) || (core_cause == 2'd3);
+                    kst         <= K_IDLE;
+                end
             endcase
         end
     end
@@ -368,6 +422,32 @@ module rv_pe #(
     wire        l1_req, l1_we, l1_stall, l1_flush, l1_inval, l1_flush_busy;
     wire [3:0]  l1_be;
 
+    // The dispatch staging: ARG and PC land in registers, the OP store fires.
+    wire        disp_wr, disp_fire, disp_ready;
+    wire [2:0]  disp_sel, disp_rsvd;
+    wire [POS_WIDTH-1:0] disp_dx, disp_dy;
+    wire [7:0]  disp_txn;
+    wire        disp_last;
+    wire [31:0] disp_data;
+    wire        sig_pop;
+    wire [7:0]  sig_cnt, sig_code, sig_id;
+    wire        sig_ovf;
+    wire [31:0] sig_arg;
+
+    reg  [31:0] ds_pc, ds_arg;
+    always @(posedge clk) if (disp_wr) begin
+        if (disp_sel == 3'd0) begin
+            ds_arg <= disp_data;
+        end
+        if (disp_sel == 3'd1) begin
+            ds_pc  <= disp_data;
+        end
+    end
+    wire        disp_valid = disp_fire;
+    wire [7:0]  disp_op    = disp_data[7:0];
+    wire [31:0] disp_pc    = ds_pc;
+    wire [31:0] disp_arg   = ds_arg;
+
     wire                  push_valid, push_ready, push_win;
     wire [POS_WIDTH-1:0]  push_dx, push_dy;
     wire [13:0]           push_gran;
@@ -379,11 +459,18 @@ module rv_pe #(
         .IMEM_WORDS(IMEM_WORDS), .SPAD_WORDS(SPAD_WORDS),
         .BTB_ENTRIES(BTB_ENTRIES), .BTB_TAG_W(BTB_TAG_W),
         .REGFILE_PRIM(REGFILE_PRIM), .FWD_X(FWD_X), .POS_WIDTH(POS_WIDTH),
-        .DSP_EN(DSP_EN), .DSP_SIMD(DSP_SIMD), .DSP_VREGS(DSP_VREGS),
-        .DSP_NACC(DSP_NACC), .DSP_VSPAD(DSP_VSPAD), .DSP_MULS(DSP_MULS),
-        .DSP_SHIFT(DSP_SHIFT), .DSP_PERM(DSP_PERM), .DSP_WB(DSP_WB),
-        .DSP_F16(DSP_F16), .DSP_NPART(DSP_NPART),
-        .DSP_USE_DSP(DSP_USE_DSP), .DSP_VREG_PRIM(DSP_VREG_PRIM),
+        .SIMD_EN(SIMD_EN), .SIMD_LANES(SIMD_LANES), .SIMD_VREGS(SIMD_VREGS),
+        .SIMD_NACC(SIMD_NACC), .SIMD_VSPAD(SIMD_VSPAD), .SIMD_MULS(SIMD_MULS),
+        .SIMD_SHIFT(SIMD_SHIFT), .SIMD_PERM(SIMD_PERM),
+        .SIMD_PERM_UNITS(SIMD_PERM_UNITS),
+        .SIMD_SHIFT_UNITS(SIMD_SHIFT_UNITS), .SIMD_WB(SIMD_WB),
+        .SIMD_DOTDSP(SIMD_DOTDSP),
+        .SIMD_FLOAT(SIMD_FLOAT), .SIMD_FLOAT_LANES(SIMD_FLOAT_LANES),
+        .SIMD_FALU(SIMD_FALU), .SIMD_FSFU(SIMD_FSFU),
+        .SIMD_FACC(SIMD_FACC), .SIMD_FCVT(SIMD_FCVT),
+        .SIMD_F16(SIMD_F16), .SIMD_F32(SIMD_F32),
+        .SIMD_NPART(SIMD_NPART),
+        .SIMD_USE_DSP(SIMD_USE_DSP), .SIMD_VREG_PRIM(SIMD_VREG_PRIM),
         .MEM_PRIM(MEM_PRIM)
     ) u_core (
         .clk(clk), .resetn(resetn),
@@ -402,6 +489,12 @@ module rv_pe #(
         .push_dx(push_dx), .push_dy(push_dy), .push_win(push_win),
         .push_gran(push_gran), .push_sel(push_sel), .push_be(push_be),
         .push_data(push_data),
+        .disp_wr(disp_wr), .disp_fire(disp_fire), .disp_ready(disp_ready),
+        .disp_sel(disp_sel), .disp_dx(disp_dx), .disp_dy(disp_dy),
+        .disp_txn(disp_txn), .disp_last(disp_last), .disp_rsvd(disp_rsvd),
+        .disp_data(disp_data),
+        .sig_pop(sig_pop), .ctl_sig_cnt(sig_cnt), .ctl_sig_ovf(sig_ovf),
+        .ctl_sig_code(sig_code), .ctl_sig_id(sig_id), .ctl_sig_arg(sig_arg),
         .retire_valid(dbg_retire_valid), .retire_pc(dbg_retire_pc),
         .retire_rd(dbg_retire_rd), .retire_val(dbg_retire_val),
         .cycle_ctr(cyc_ctr), .instret_ctr(ret_ctr),
@@ -461,9 +554,17 @@ module rv_pe #(
         .push_dx(push_dx), .push_dy(push_dy), .push_win(push_win),
         .push_gran(push_gran), .push_sel(push_sel), .push_be(push_be),
         .push_data(push_data),
+        .disp_valid(disp_valid), .disp_ready(disp_ready),
+        .disp_dx(disp_dx), .disp_dy(disp_dy), .disp_txn(disp_txn),
+        .disp_last(disp_last), .disp_rsvd(disp_rsvd),
+        .disp_op(disp_op), .disp_pc(disp_pc), .disp_arg(disp_arg),
         .send_flit(send_flit), .send_valid(send_valid), .send_ready(send_ready),
         .rx_rd_resp(rx_take && rx_is_resp), .rx_txn(rx_id),
         .rx_data(rx_pl[255:0]), .rx_wr_ack(rx_take && rx_is_ack),
+        .rx_sig(rx_take && rx_is_sig), .rx_sig_id(rx_id),
+        .rx_sig_code(rx_sig_code), .rx_sig_arg(rx_sig_arg),
+        .sig_pop(sig_pop), .sig_cnt(sig_cnt), .sig_ovf(sig_ovf),
+        .sig_code(sig_code), .sig_id(sig_id), .sig_arg(sig_arg),
         .wr_out(wr_out), .idle(req_idle)
     );
 
@@ -472,22 +573,31 @@ module rv_pe #(
         // Held, an unknown type sits at the head of the receive FIFO, raises
         // noc_in_busy for good, and wedges the instruction stream behind it.
         // Dropped silently, it is invisible. So: dropped, and named.
-        if (rx_take && !rx_is_resp && !rx_is_ack && !rx_is_cud)
+        if (rx_take && !rx_is_resp && !rx_is_ack && !rx_is_cud && !rx_is_sig) begin
             $display("%0t rv_pe(%0d,%0d): flit type %0h dropped -- this unit does not consume it",
                      $time, POS_X, POS_Y, rx_ty);
-        if (rx_take && rx_is_cud && (cst == CD_IDLE) && !nd_ok)
+        end
+        if (rx_take && rx_is_cud && (cst == CD_IDLE) && !nd_ok) begin
             $display("%0t ERROR rv_pe(%0d,%0d): CU_DATA buf_id %0d offset %0d len %0d does not fit a window -- burst counted out and discarded",
                      $time, POS_X, POS_Y, nd_buf, nd_off, nd_len);
-        if (cd_data_beat && cd_is_word && cd_to_imem && (wp_be != 4'hF))
+        end
+        if (cd_data_beat && cd_is_word && cd_to_imem && (wp_be != 4'hF)) begin
             $display("%0t ERROR rv_pe(%0d,%0d): a byte-enabled word push into the instruction window; that array has no byte enables and the whole word was written",
                      $time, POS_X, POS_Y);
-        if (rx_take && rx_is_cud && (cst == CD_DATA) &&
-            ((rx_sx != cd_sx) || (rx_sy != cd_sy)))
+        end
+        if (
+            rx_take
+            && rx_is_cud
+            && (cst == CD_DATA)
+            && ((rx_sx != cd_sx) || (rx_sy != cd_sy))
+        ) begin
             $display("%0t ERROR rv_pe(%0d,%0d): a second sender interleaved into an open CU_DATA burst -- this unit reassembles one at a time",
                      $time, POS_X, POS_Y);
-        if (cd_data_beat && (cd_left == 8'd1) && !rx_ls)
+        end
+        if (cd_data_beat && (cd_left == 8'd1) && !rx_ls) begin
             $display("%0t ERROR rv_pe(%0d,%0d): CU_DATA burst ended by count with `last` clear -- two senders have interleaved",
                      $time, POS_X, POS_Y);
+        end
     end
 `endif
 
