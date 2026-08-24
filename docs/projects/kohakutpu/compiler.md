@@ -125,8 +125,11 @@ a range question first and a precision question second — and level 2, which kn
 the engine, knows what is actually computed in.
 
 **And there is no cast instruction**, because every conversion is already
-somewhere: FP32→FP16 on host upload, FP16→MXFP7 in the quantiser on the read
-path, and E8M15→FP16/FP32 as a *field on the vector store*. A standalone cast
+somewhere: FP32→FP16 on host upload, FP16→MXFP7 in a mover pass through the
+transform slot, and E8M15→FP16/FP32 as a *field on the vector store*. The middle
+one used to be on the fetch and is not — which changes when it is paid, once per
+tensor rather than once per read, and makes it a pass the compiler schedules
+rather than a flag it sets. A standalone cast
 survives at graph level because a user may want one and the folding pass needs
 something to fold; if it reaches level 3 unfolded it is a real pass over the data
 and the cost model says so.

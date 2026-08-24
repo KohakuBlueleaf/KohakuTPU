@@ -1,6 +1,6 @@
 ---
 title: Fast 3x3 convolution
-summary: The SDXL UNet convolutions as an implicit GEMM with the taps inside the K sweep — the layout fork, the branch that runs on today's bitstream, and why the materialised fallback is not viable.
+summary: The SDXL UNet convolutions as an implicit GEMM with the taps inside the K sweep — the layout fork, the branch that runs on today's bitstream, and what materialising the operand instead would cost.
 tags:
   - kohakutpu
   - compiler
@@ -180,37 +180,34 @@ needs no halo buffer, no zero rows, and no handling anywhere else in the machine
 to be six-dimensional.
 
 What is missing is the wiring, not the walker — roughly 2–3 weeks, all in
-`mag_mem_port.v`. The entry decomposes cleanly at SDXL shapes and the quantiser
-already consumes exactly that shape: a beat is 16 elements of ONE lane, and
-`mx_quant` **has no `last` port at all**, so it cannot observe whether its 8 beats
-came as one burst or four. In-order return is free, since every read uses
-`m_arid = 0` and AXI requires same-ID responses in order. So **4 x 2-beat bursts
-feed the quantiser byte-identically to 1 x 8-beat burst**, and a zeroed lane gets
-a zero scale for free. Zero injection is at the input, not the emit path: for an
-invalid lane, do not issue the AR and drive `beat = 0`, `beat_valid = 1` for two
-cycles — two wires the read engine already drives.
+`mag_mem_port.v`. In-order return is free, since every read uses `m_arid = 0`
+and AXI requires same-ID responses in order, so a lane's beats arrive where the
+entry assembler expects them however the bursts were split. Zero injection is at
+the input, not the emit path: for an invalid lane, do not issue the AR and drive
+`beat = 0`, `beat_valid = 1` — two wires the read engine already drives.
 
-Untouched: the whole cluster CU and manager, `mx_quant`, the emit buffer,
-response tagging, peer multicast, credit accounting, L1 write addressing. Two
-open risks, both ordinary engineering: widening the 8-bit count, and whether
-MAG's read engine can hold per-cluster descriptor state without serialising the
-eight clusters that share it. **The second is not determined.**
+Untouched: the whole cluster CU and manager, the emit buffer, response tagging,
+peer multicast, credit accounting, L1 write addressing. Two open risks, both
+ordinary engineering: widening the 8-bit count, and whether MAG's read engine
+can hold per-cluster descriptor state without serialising the eight clusters
+that share it. **The second is not determined.**
 
-> **Pre-quantised weights are unaffected — use them.** The weight is
-> `[OUT_DIM][IN_DIM*KH*KW]` and the 32-element blocks run along that flattened
-> contraction. Every `IN_DIM` here is a multiple of 32, so no block straddles a
-> tap. At 13.4 MB in the deepest layer this is the operand where halving the
-> fetch matters.
+> **THE ARGUMENT THIS SECTION USED TO MAKE IS GONE, AND SO IS THE PROBLEM IT
+> WORKED AROUND.** It reasoned about feeding the quantiser: that `mx_quant` has
+> no `last` port so four 2-beat bursts feed it byte-identically to one 8-beat
+> burst, and that pre-quantised *activations* were what conv gave up, because a
+> converted entry's word interleaves all four lanes at 7-bit granularity and conv
+> needs each lane from a different address.
 >
-> **Pre-quantised *activations* are what conv gives up, and only under the
-> descriptor approach.** A pre-quantised entry's four beats ARE the four operand
-> words, and a word holds `k` for ALL FOUR LANES interleaved at 7-bit
-> granularity. Conv needs each lane fetched from a different address, which is
-> impossible when lane 0's bits are sliced into the same 256-bit word as lane 3's.
-> The FP16 path has no such problem. A trade, not a limit — and at 719–812
-> MAC/byte the 2x on activations is free.
+> **A fetch is never transformed now.** What is at an operand's address is
+> already in its final format, so there is no quantiser in this path to feed and
+> no per-operand choice to give up. The interleaving observation survives as a
+> LAYOUT fact and it still decides the same thing: a converted entry cannot be
+> assembled from four independently-addressed lanes, so a conv activation is
+> either held in FP16 or converted by a mover pass that walks the conv order.
+> The trade moved from the instruction to the schedule.
 
-## 6. Branch B — the materialised fallback, and why it is not viable
+## 6. Branch B — materialising the operand, and what it would cost
 
 Fold the x-tap into K. Build `A'[y][x][3][C]` with `A'[y][x][t][c] =
 A[y][x+t-1][c]`, zeros outside: the x tap is then inside the contraction so lanes

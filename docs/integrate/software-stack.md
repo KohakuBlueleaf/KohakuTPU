@@ -197,7 +197,7 @@ is "is the machine wrong, or did I stage what I think I staged".
 Three levels, and they answer different questions. Keeping them separate is the
 point.
 
-**A software model of the arithmetic.** Whatever your read-path transform and
+**A software model of the arithmetic.** Whatever your transform occupant and
 datapath compute, in Python, exactly — including precision, not idealised. This
 is the golden reference the hardware bench checks against, and it is what lets a
 kernel be checked before any RTL exists. If a third-party implementation of your
@@ -290,9 +290,19 @@ three of those are RTL or tooling rather than driver Python:
    framework without the project. **Cut:** `import kohakuaccel` does, and
    `driver/tests/test_isolation.py` fails the moment it stops doing so.
 
-7. **The read-path transform's software model lives in the project half but its
-   RTL lives in a framework package** — the mirror image of the same problem
-   ([README.md](README.md) §2). **Still open.**
+7. **The transform's software model lived in the project half while its RTL sat
+   in a framework package** — the mirror image of the same problem
+   ([README.md](README.md) §2). **Cut:** the occupant is
+   `src/kohakutpu/transform/xform_bank.v`, the framework fixes only the module
+   NAME `xform_bank`, and `src/templates/transform/` supplies an identity bank
+   so a framework-only build elaborates. `tests/sysnode/xform_identity_tb.v`
+   builds exactly that and would fail to compile if the rule were broken.
+
+8. **The SIMD PE's arithmetic runs the other way and is still open.**
+   `src/kohakuaccel/pe/rv32/simd/` instantiates `vec_alu`, `vec_dsp`,
+   `vec_delay`, the four `vec_cvt_*` converters and two helpers from
+   `mx_fpacc.v`, all under `src/kohakutpu/`. The RTL framework does not build
+   alone until that arithmetic moves down. **Still open.**
 
 ### What the separation looks like
 

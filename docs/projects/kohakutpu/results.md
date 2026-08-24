@@ -691,7 +691,9 @@ fundamental roofline.
 
 ### 8.2 Current
 
-Both operands pre-quantised, one memory port per mesh row:
+Both operands in MXFP7 in DRAM, one memory port per mesh row. *At the time these
+were taken that was a per-request choice against converting on the fetch; a
+fetch is never transformed now, so it is simply the format the operands are in.*
 
 | clusters | shape M x K x N | run cycles | GFLOP/s | % peak |
 |---|---|---|---|---|
@@ -707,7 +709,7 @@ measured on its own:
 
 | change | GFLOP/s |
 |---|---|
-| operands pre-quantised in DRAM | 217.4 → 303.9 |
+| operands already MXFP7 in DRAM, against converting on the fetch | 217.4 → 303.9 |
 | banked L1 with a non-blocking fill | 303.9 → 362.0 |
 | the drain fused into the sweep's last K block | 362.0 → 391.1 |
 | resident tile 64 → 512 sub-tiles | 85.1 → 173.4 |

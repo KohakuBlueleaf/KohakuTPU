@@ -272,8 +272,12 @@ one 8-bit E5M3 scale per 32, so `(32*7 + 8)/32 = 7.25` bits = 0.906 B/element.
   ample (§2.4).
 - The whole pipeline in MXFP7 is 3.10 GB and fits one mesh; in fp16 it needs two.
 
-That makes pre-quantised weights a **capacity** requirement here, not only the
-throughput win `results.md` §8.2 measured.
+That makes **weights held in MXFP7** a capacity requirement here, not only the
+throughput win `results.md` §8.2 measured. "Pre-quantised" is no longer a
+distinction: a fetch is never transformed, so whatever format a weight is in
+memory is the format the cluster reads. The choice is which format to WRITE it
+in — the host converts, or a mover pass through the transform slot does — and at
+these sizes there is no choice at all.
 
 ### 2.4 The activation working set
 

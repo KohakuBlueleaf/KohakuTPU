@@ -57,10 +57,15 @@ Three constraints on filling it:
 - **The memory agent occupies at least one slot and at most four.** It declares
   a fixed number of NoC port coordinate pairs; a map with none has nothing to
   serve memory. **Port count is a bandwidth decision, and it is the main one you
-  make here**: each port has its own read path, and therefore its own instance of
-  the read-path transform ([README.md](README.md) §2). Every unit bound to a port
-  contends for that one transform. If your transform is the expensive part of a
-  fetch, ports are how you buy more of it.
+  make here**: each port has its own read path and its own intake, so units
+  bound to one port contend for it and units on different ports do not.
+
+  **Ports do not buy transform throughput, and it is worth knowing why the
+  question is closed.** The transform slot is one instance per agent, on the
+  memory mover's read return, and there is one converged DRAM master behind
+  every port — so N transforms could consume one beat per cycle between them,
+  and N−1 would be idle by construction. That is structural, not a property of
+  any workload. Buy ports for fetch bandwidth and intake, never for conversion.
 - **The control plane occupies none.** The dispatch orchestrator has no node of
   its own — it lives behind the memory agent's ports, and each port's inbound
   flits are demultiplexed by type, memory traffic to the memory engine and

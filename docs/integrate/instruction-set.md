@@ -28,22 +28,27 @@ is yours:
 | owner | what it defines | you |
 |---|---|---|
 | `kohakuaccel/noc` | the flit header: routing, message class, transaction id, batch marker | obey it |
-| the system node | the memory instruction set: read and write descriptors, streaming fetches, layout and transform flags, the memory mover's commands | **use it** |
+| the system node | the memory instruction set: read and write descriptors, streaming fetches, entry geometry, multicast, and the memory mover's commands | **use it** |
 | you | the `CU_INST` payload: what your unit computes | define it |
 
 The middle row is the one that changes how you should think about this page. The
 memory agent already has an instruction set, and it is a good one — it expresses
-"fetch this run of entries, transformed this way, and deliver each response
-tagged with where it goes". **Those are instructions you will issue, not
-instructions you have to invent.** Your ISA sits on top of a memory ISA that
-already works.
+"fetch this run of entries and deliver each response tagged with where it goes".
+**Those are instructions you will issue, not instructions you have to invent.**
+Your ISA sits on top of a memory ISA that already works.
 
 Practically, that means: before designing an opcode, find out what the memory
-protocol already does for you. Streaming fetches, per-request selection of the
-read-path transform, multi-destination delivery of one fetch, burst writes with
-one descriptor — all of these exist, and an opcode that reimplements one is an
-opcode you will regret. Read
-[spec/memory-protocol.md](../spec/memory-protocol.md) before this page's §5.
+protocol already does for you. Streaming fetches, per-request entry geometry,
+multi-destination delivery of one fetch, burst writes with one descriptor — all
+of these exist, and an opcode that reimplements one is an opcode you will
+regret. Read [spec/memory-protocol.md](../spec/memory-protocol.md) before this
+page's §5.
+
+**Format conversion is not on that list, and a unit cannot ask for it.** A fetch
+is never transformed: operands reach a unit in their final format, converted
+beforehand by a mover move through the transform slot. So an opcode does not
+carry a conversion flag, and a unit that finds itself wanting one is describing a
+mover pass its compiler should have scheduled.
 
 There is a fourth instruction set above all of them, and it is worth knowing
 about even though you will not extend it: the host's **control program** — three
@@ -251,7 +256,7 @@ It is here because it exercises every rule above.
 
 | op | means | principal fields |
 |---|---|---|
-| `FILL` | fetch operand entries into local memory | base address, count, which operand, destination offset, bank, peer set, pre-quantised flag |
+| `FILL` | fetch operand entries into local memory | base address (split across two fields), count, which operand, destination offset, bank, peer set |
 | `GEMM` | sweep the loaded operands into the resident output tile | group counts, K blocks, accumulate flag, per-side offsets and banks, emit flag |
 | `DRAIN` | write the resident tile out | destination base, sub-tile count, fused flag, node-or-memory, destination node, buffer id, flags, acknowledgement node, remote mesh |
 
@@ -260,13 +265,19 @@ The instructive parts:
 - **`FILL` is a descriptor, not a loop.** One instruction becomes one request
   flit, and the memory agent returns the whole run. The unit places words as they
   arrive and counts entries completed; it has no address cursor.
-- **`FILL` selects the read-path transform, per operand.** One bit says whether
-  the operand in DRAM is already in the datapath's format or needs converting on
-  the way out, so the two operands of one multiply may differ. This is §1's point
-  made concrete: the transform is a project's module, and the *instruction bit
-  that selects it* is a project's bit, but the mechanism carrying both is the
-  framework's memory protocol. Keeping it a property of the operand carried by
-  the instruction is what keeps the memory agent free of an address map.
+- **`FILL` used to select a read-path transform, and the bit is now reserved.**
+  It said whether the operand in DRAM was already in the datapath's format or
+  needed converting on the way out. A fetch is never transformed now — the slot
+  moved onto the memory mover's read return, where a conversion is paid once per
+  tensor rather than once per read — so the cluster drives the bit to zero and
+  decodes nothing. **The instructive part survives the change**: the bit was a
+  project's, the module behind it was a project's, and the mechanism carrying
+  both was the framework's. That is still how the mover's `XFORM_ID` works, one
+  layer down.
+- **`FILL`'s address is SPLIT across two fields**, `[251:218]` and `[68:63]`.
+  Widening from 34 bits to 40 that way moved no other field and left every older
+  encoding meaning what it meant — and it means a reader must rejoin them, or a
+  staging or remote address decodes as local DRAM at the same offset.
 - **`GEMM` retires on issue.** The sweep runs behind the sequencer, so holding
   the instruction would only stop the unit filling the other half of its operand
   memory — which is why the operand memory is addressable rather than
