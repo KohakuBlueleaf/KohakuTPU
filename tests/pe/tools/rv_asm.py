@@ -34,6 +34,11 @@ R_OPS = {
     "sltu": (0b011, 0b0000000), "xor": (0b100, 0b0000000),
     "srl": (0b101, 0b0000000), "sra": (0b101, 0b0100000),
     "or": (0b110, 0b0000000), "and": (0b111, 0b0000000),
+    # RV32M, funct7 = 0000001, in the EXISTING register-register group -- no new
+    # major and none of the custom opcode space, which is already fully spoken
+    # for. div/rem (funct3 100..111) are deliberately absent: they stay illegal.
+    "mul": (0b000, 0b0000001), "mulh": (0b001, 0b0000001),
+    "mulhsu": (0b010, 0b0000001), "mulhu": (0b011, 0b0000001),
 }
 I_OPS = {"addi": 0b000, "slti": 0b010, "sltiu": 0b011,
          "xori": 0b100, "ori": 0b110, "andi": 0b111}

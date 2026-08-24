@@ -41,15 +41,15 @@ module rv_mesh #(
     parameter integer RAM_DEPTH    = 4096,      // 256-bit words
     // The DSP extension, off by default so every existing bench builds the
     // shipped controller PE and nothing about them moves.
-    parameter integer DSP_EN       = 0,
-    parameter integer DSP_SIMD     = 8,
-    parameter integer DSP_VREGS    = 8,
-    parameter integer DSP_NACC     = 2,
-    parameter integer DSP_VSPAD    = 1024,
-    parameter integer DSP_MULS     = 4,
-    parameter integer DSP_SHIFT    = 1,
-    parameter integer DSP_PERM     = 1,
-    parameter integer DSP_WB       = 0
+    parameter integer SIMD_EN       = 0,
+    parameter integer SIMD_LANES     = 8,
+    parameter integer SIMD_VREGS    = 8,
+    parameter integer SIMD_NACC     = 2,
+    parameter integer SIMD_VSPAD    = 1024,
+    parameter integer SIMD_MULS     = 4,
+    parameter integer SIMD_SHIFT    = 1,
+    parameter integer SIMD_PERM     = 1,
+    parameter integer SIMD_WB       = 0
 )(
     input  wire clk,
     input  wire rstn,
@@ -165,11 +165,11 @@ module rv_mesh #(
                     .REGFILE_PRIM(REGFILE_PRIM),
                     .FWD_X(FWD_X), .MEM_PRIM("block"),
                     .INST_DEPTH(16), .RECV_DEPTH(32),
-                    .DSP_EN(DSP_EN), .DSP_SIMD(DSP_SIMD),
-                    .DSP_VREGS(DSP_VREGS), .DSP_NACC(DSP_NACC),
-                    .DSP_VSPAD(DSP_VSPAD), .DSP_MULS(DSP_MULS),
-                    .DSP_SHIFT(DSP_SHIFT), .DSP_PERM(DSP_PERM),
-                    .DSP_WB(DSP_WB)) u_pe (
+                    .SIMD_EN(SIMD_EN), .SIMD_LANES(SIMD_LANES),
+                    .SIMD_VREGS(SIMD_VREGS), .SIMD_NACC(SIMD_NACC),
+                    .SIMD_VSPAD(SIMD_VSPAD), .SIMD_MULS(SIMD_MULS),
+                    .SIMD_SHIFT(SIMD_SHIFT), .SIMD_PERM(SIMD_PERM),
+                    .SIMD_WB(SIMD_WB)) u_pe (
                 .clk(clk), .resetn(rstn),
                 .noc_in_data(lo_i[g]), .noc_in_valid(lo_iv[g]),
                 .noc_in_busy(lo_ib[g]),
