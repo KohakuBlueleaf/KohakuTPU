@@ -126,8 +126,8 @@ MESH_1M = (
         "src/kohakuaccel/pe/rv32/noc/rv_mag_req.v",
         "src/kohakuaccel/sysnode/mover/mv_exec.v",
         "src/kohakuaccel/sysnode/cpu/rv_mag_pe.v",
+        "src/kohakuaccel/sysnode/core/sn_hub.v",
         "src/kohakuaccel/sysnode/sysnode.v",
-        "src/kohakutpu/top/mag_1m.v",
         "src/kohakutpu/top/generated/ktpu_min_1m.v",
     ]
 )
@@ -324,8 +324,8 @@ BENCHES = {
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/sysnode/core/mag_stage_port.v",
             "src/kohakuaccel/sysnode/core/mag_dram_port.v",
+            "src/kohakuaccel/sysnode/core/sn_hub.v",
             "src/kohakuaccel/sysnode/sysnode.v",
-            "src/kohakutpu/top/mag_1m.v",
             "src/kohakutpu/top/generated/ktpu_min_1m.v",
             "src/kohakuaccel/common/sb_skid.v",
             "src/kohakuaccel/axi/station/sb_hub.v",
@@ -371,8 +371,8 @@ BENCHES = {
             "src/kohakuaccel/sysnode/core/mag_stage_port.v",
             "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "src/kohakuaccel/noc/endpoint/noc_l2_adapter.v",
+            "src/kohakuaccel/sysnode/core/sn_hub.v",
             "src/kohakuaccel/sysnode/sysnode.v",
-            "src/kohakutpu/top/mag_1m.v",
             "src/kohakutpu/top/generated/ktpu_ship_1x1_2c2v_1m.v",
             "src/kohakuaccel/common/sb_skid.v",
             "src/kohakuaccel/axi/station/sb_hub.v",
@@ -449,8 +449,8 @@ BENCHES = {
             "src/kohakuaccel/sysnode/core/mag.v",
             "src/kohakuaccel/sysnode/core/mag_stage_port.v",
             "src/kohakuaccel/sysnode/core/mag_dram_port.v",
+            "src/kohakuaccel/sysnode/core/sn_hub.v",
             "src/kohakuaccel/sysnode/sysnode.v",
-            "src/kohakutpu/top/mag_1m.v",
             "src/examples/saxpy/saxpy_cu.v",
             "src/examples/saxpy/generated/saxpy_mesh.v",
             "src/examples/saxpy/saxpy_mesh_tb.v",
@@ -878,8 +878,8 @@ BENCHES = {
             "src/kohakuaccel/sysnode/core/mag_stage_port.v",
             "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "src/kohakuaccel/verif/axi_ram.v",
+            "src/kohakuaccel/sysnode/core/sn_hub.v",
             "src/kohakuaccel/sysnode/sysnode.v",
-            "src/kohakutpu/top/mag_1m.v",
             "tests/sysnode/mag_1m_upload_tb.v",
         ],
     ),
@@ -916,8 +916,8 @@ BENCHES = {
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/sysnode/core/mag_stage_port.v",
             "src/kohakuaccel/sysnode/core/mag_dram_port.v",
+            "src/kohakuaccel/sysnode/core/sn_hub.v",
             "src/kohakuaccel/sysnode/sysnode.v",
-            "src/kohakutpu/top/mag_1m.v",
             "src/kohakutpu/top/generated/ktpu_min_1m.v",
             "tests/sysnode/interlink_2mesh_1m_tb.v",
         ],
@@ -946,8 +946,8 @@ BENCHES = {
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/sysnode/core/mag_stage_port.v",
             "src/kohakuaccel/sysnode/core/mag_dram_port.v",
+            "src/kohakuaccel/sysnode/core/sn_hub.v",
             "src/kohakuaccel/sysnode/sysnode.v",
-            "src/kohakutpu/top/mag_1m.v",
             "tests/sysnode/interlink_stage_tb.v",
         ],
     ),
@@ -1259,8 +1259,8 @@ BENCHES["ctrlpe_mesh"] = (
         "src/kohakuaccel/sysnode/interlink/mag_ilink.v",
         "src/kohakuaccel/sysnode/core/mag.v",
         "src/kohakuaccel/noc/endpoint/noc_l2_adapter.v",
+        "src/kohakuaccel/sysnode/core/sn_hub.v",
         "src/kohakuaccel/sysnode/sysnode.v",
-        "src/kohakutpu/top/mag_1m.v",
         "src/kohakutpu/top/generated/ktpu_ctrlpe_1x1.v",
         "src/kohakuaccel/common/sb_skid.v",
         "src/kohakuaccel/axi/station/sb_hub.v",
@@ -1292,7 +1292,7 @@ BENCHES["ctrlpe_pair"] = (
     [
         f
         for f in BENCHES["ctrlpe_mesh"][1]
-        if not f.endswith(("ctrlpe_mesh_tb.v", "ktpu_ctrlpe_1x1.v", "mag_1m.v"))
+        if not f.endswith(("ctrlpe_mesh_tb.v", "ktpu_ctrlpe_1x1.v"))
     ]
     + ["tests/mesh/ctrlpe_pair_tb.v"],
 )
@@ -1325,6 +1325,7 @@ BENCHES["sysnode_ctrlpe"] = (
         "src/kohakuaccel/sysnode/interlink/mag_link_pipe.v",
         "src/kohakuaccel/sysnode/interlink/mag_switch.v",
         "src/kohakuaccel/sysnode/interlink/mag_ilink.v",
+        "src/kohakuaccel/sysnode/core/sn_hub.v",
         "src/kohakuaccel/sysnode/core/mag.v",
         "src/kohakuaccel/sysnode/cpu/rv_mag_pe.v",
         "src/kohakuaccel/sysnode/sysnode.v",
@@ -1342,6 +1343,15 @@ BENCHES["rv_mag_pe"] = (
         "src/kohakuaccel/noc/endpoint/noc_cu_base.v",
         "src/kohakuaccel/pe/rv32/noc/rv_mag_req.v",
         "src/kohakuaccel/sysnode/mover/mv_exec.v",
+        # The mover and the slot are INSIDE the processor now, so its own bench
+        # carries them: mx_tdesc walks the descriptor, xform_bank is the
+        # occupant, and mag_xform is the slot that selects one.
+        "src/kohakuaccel/sysnode/mover/mx_tdesc.v",
+        "src/kohakuaccel/sysnode/mover/mm_prng.v",
+        "src/kohakuaccel/sysnode/mover/mm_mover.v",
+        "src/kohakutpu/transform/mx_quant.v",
+        "src/kohakutpu/transform/xform_bank.v",
+        "src/kohakuaccel/sysnode/core/mag_xform.v",
         "src/kohakuaccel/sysnode/cpu/rv_mag_pe.v",
         "tests/sysnode/rv_mag_pe_tb.v",
     ],
@@ -1507,6 +1517,55 @@ BENCHES["khs_facc"] = ("khs_facc_tb", PE_FLOAT + ["tests/pe/tb/khs_facc_tb.v"])
 BENCHES["khs_ffold"] = ("khs_ffold_tb", PE_FLOAT + ["tests/pe/tb/khs_ffold_tb.v"])
 # The partials are an XPM array; the benches already wait 200 ns for GSR.
 NEEDS_GLBL.update({"khs_facc", "khs_ffold"})
+
+# CLOSURE TO A FIXPOINT, so a hierarchy change cannot silently orphan twenty
+# lists. THE SYSTEM NODE IS ONE COMPONENT: naming any part of it drags all of
+# it, because none of the parts elaborates alone any more.
+_IMPLIES = [
+    (
+        "sysnode/core/mag.v",
+        [
+            "src/kohakuaccel/sysnode/core/sn_hub.v",
+            "src/kohakuaccel/sysnode/cpu/rv_mag_pe.v",
+            "src/kohakuaccel/sysnode/sysnode.v",
+        ],
+    ),
+    ("sysnode/sysnode.v", ["src/kohakuaccel/sysnode/core/sn_hub.v"]),
+    (
+        "sysnode/cpu/rv_mag_pe.v",
+        PE_RV32
+        + [
+            "src/kohakuaccel/noc/endpoint/noc_cu_base.v",
+            "src/kohakuaccel/pe/rv32/noc/rv_mag_req.v",
+            "src/kohakuaccel/sysnode/mover/mv_exec.v",
+            "src/kohakuaccel/sysnode/mover/mx_tdesc.v",
+            "src/kohakuaccel/sysnode/mover/mm_prng.v",
+            "src/kohakuaccel/sysnode/mover/mm_mover.v",
+            "src/kohakutpu/transform/mx_quant.v",
+            "src/kohakutpu/transform/xform_bank.v",
+            "src/kohakuaccel/sysnode/core/mag_xform.v",
+            "src/kohakuaccel/common/sb_skid.v",
+            "src/kohakuaccel/verif/axi_ram.v",
+        ],
+    ),
+]
+
+for _b, (_top, _files) in list(BENCHES.items()):
+    _out = list(_files)
+    _grew = True
+    while _grew:
+        _grew = False
+        for _needle, _deps in _IMPLIES:
+            if not any(f.endswith(_needle) for f in _out):
+                continue
+            _at = next(i for i, f in enumerate(_out) if f.endswith(_needle))
+            for _d in _deps:
+                if _d not in _out:
+                    _out.insert(_at, _d)
+                    _at += 1
+                    _grew = True
+    if _out != list(_files):
+        BENCHES[_b] = (_top, _out)
 
 #: Directories added to xvlog's include path, for the generated headers.
 INCDIRS = ["src/kohakumpe/simd/generated", "src/kohakumpe/simt/generated"]

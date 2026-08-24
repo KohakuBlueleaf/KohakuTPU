@@ -61,10 +61,30 @@ set V6_SOURCES {
     src/kohakuaccel/sysnode/interlink/mag_link_pipe.v
     src/kohakuaccel/sysnode/interlink/mag_switch.v
     src/kohakuaccel/sysnode/interlink/mag_ilink.v
+    src/kohakuaccel/sysnode/core/mag_xform.v
+    src/kohakutpu/transform/xform_bank.v
     src/kohakuaccel/sysnode/core/mag.v
     src/kohakuaccel/sysnode/core/mag_dram_port.v
 
-    src/kohakutpu/top/mag_1m.v
+    src/kohakuaccel/pe/rv32/mem/rv_ram_be.v
+    src/kohakuaccel/pe/rv32/mem/rv_imem.v
+    src/kohakuaccel/pe/rv32/mem/rv_spad.v
+    src/kohakuaccel/pe/rv32/mem/rv_l1.v
+    src/kohakuaccel/pe/rv32/core/rv_regfile.v
+    src/kohakuaccel/pe/rv32/core/rv_bpred.v
+    src/kohakuaccel/pe/rv32/core/rv_if.v
+    src/kohakuaccel/pe/rv32/core/rv_id.v
+    src/kohakuaccel/pe/rv32/core/rv_ex.v
+    src/kohakuaccel/pe/rv32/core/rv_mem.v
+    src/kohakuaccel/pe/rv32/core/rv_wb.v
+    src/kohakuaccel/pe/rv32/core/rv_core.v
+    src/kohakuaccel/pe/rv32/noc/rv_noc_req.v
+    src/kohakuaccel/pe/rv32/noc/rv_mag_req.v
+    src/kohakuaccel/sysnode/mover/mv_exec.v
+    src/kohakuaccel/sysnode/cpu/rv_mag_pe.v
+
+    src/kohakuaccel/sysnode/core/sn_hub.v
+    src/kohakuaccel/sysnode/sysnode.v
     src/kohakuaccel/common/clk/ktpu_div2.v
     src/kohakuaccel/common/kh_rst_sync.v
     src/kohakutpu/top/generated/ktpu_ship_2x2_7c2v_1m_pump.v
