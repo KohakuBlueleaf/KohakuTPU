@@ -184,7 +184,8 @@ it, and a framework doc that quotes them as if they were is wrong.
                          orchestrator, CU base, L2 adapter
       sysnode/           system node: MAG, mover, transform slot, control
                          processor, interlink
-      pe/rv32/           the CPU PE, and the SIMD PE behind SIMD_EN
+      pe/rv32/           the CPU PE; SIMD_EN names an extension it does
+                         not own
       axi/               station bus, links, AXI plumbing
       common/            shared primitives: FIFOs, named memory wrappers
       verif/             bench-only models: axi_ram, port checkers
@@ -193,7 +194,8 @@ it, and a framework doc that quotes them as if they were is wrong.
     src/examples/saxpy/  the example project, RTL half
     src/kohakutpu/       a project: matmul, vector, transform occupants, and
                          the tops generated for it
-    src/kohakumpe/       a project: the SIMT PE
+    src/kohakumpe/       a project: the SIMT PE, and the SIMD extension
+                         that fills the framework's SIMD_EN slot
     src/reference/       reference and proof-of-concept copies; nothing ships
     src/attic/           dead
 
@@ -204,9 +206,17 @@ it, and a framework doc that quotes them as if they were is wrong.
     docs-web/          the same material as a site
     ref/               cloned reference frameworks, git-ignored
 
-**One coupling breaks the split above** and is not a documentation problem:
-`src/kohakuaccel/pe/rv32/simd/` instantiates arithmetic that exists only under
-`src/kohakutpu/`, so the framework does not build without that project.
+**The split above is measured, not asserted.** `scripts/py/deps.py` reads every
+instantiation under `src/kohakuaccel/` and fails the run on one whose module is
+defined only under a project; it is in the standard check suite. The framework
+tree builds with no project source on the path.
+
+What it permits is a **slot**: a module the framework *names* behind a parameter
+that is 0 by default, so a framework-only build never elaborates one and the
+name need not resolve. There are three — `xform_bank` at MAG's transform stage,
+and `khs_unit`/`khs_scalar_decode` at the CPU PE's `SIMD_EN`. Each is listed in
+`deps.py` with its reason. A slot is the only shape in which the framework may
+mention something it does not own.
 
 ## House rule
 

@@ -91,7 +91,7 @@ lane's edge; nothing below it changes.
 The accumulator is off by default because it is the SIMD PE's *extra*, not its
 floor: a vertex transform accumulating into E8M15 partials, a float dot, or a
 long reduction justify it, and a shader doing elementwise colour work does not.
-The [SIMT PE](../../../projects/kohakumpe/simt/README.md) has no equivalent and does not want one.
+The [SIMT PE](../simt/README.md) has no equivalent and does not want one.
 
 ### FALU packs; the accumulator does not
 
@@ -421,7 +421,7 @@ table the assembler, the golden model and the RTL decode are all generated from.
 | Not built | What happens | Why it is refused |
 |---|---|---|
 | `vfredsum.f16` | faults | crosses the slots; a second pass that does not exist. The **golden model does implement it**, so the model is ahead of the RTL here and a kernel that used it would pass in simulation and fault on the machine |
-| any `.f32` form | faults | **not for want of an operand edge** — the lane has one, unconditionally, and the SIMT PE drives it. Here the operand width changes the element count, the partial count and the fold order — [above](#what-this-tier-reaches-of-that-contract) |
+| any `.f32` form | faults | **not for want of an operand edge** — the lane has one, unconditionally, and the SIMT PE drives it. Here the operand width changes the element count, the partial count and the fold order — [above](#elements-lanes-and-passes) |
 | the whole `FCVT` group | faults | the group number is allocated in the ISA table and nothing decodes it |
 | **elementwise float** — `vfadd`, `vfmul`, `vfmax`, float compare | not encoded at all | they write a **vector register** from a fifteen-cycle datapath, which needs a scoreboard; an accumulating instruction needs only the accumulator's own busy shadow. That is the whole of why phase 1 is the accumulator and nothing else |
 | **transcendentals** — `exp2`, `log2`, `inv`, `rsqrt` | not encoded | they are *in the lane's source* at full rate and synthesised away — below |

@@ -117,7 +117,7 @@ measured at the same ask, which is what makes the sum meaningful:
 | **used** | | | **58 %** | **25 %** | **35 %** | | | |
 
 Sources: `build/sweep/g-350-pad/run.log` and `build/sweep/d-350/run.log`; the
-controller row is [dsp/performance](../../../arch/pe/simd/performance.md); the ~350,000 usable
+controller row is [dsp/performance](../simd/performance.md); the ~350,000 usable
 LUT is that page's mesh capacity and the DSP48/BRAM denominators are **per SLR**
 on this part ([ship](../../../projects/kohakutpu/ship.md)), which is the right
 denominator because a mesh is placed in one.
@@ -615,7 +615,7 @@ What the table still says that no submodule figure could:
   whole decode. See [the frequency campaign](#the-frequency-campaign).
 - **16 lanes is 29,961 LUT** — nearly double 8 lanes, on the integer tier alone.
   It reinforces what
-  [G4's quadratic resolver](#g4---kht_lds-the-first-gate-that-is-not-free)
+  [G4's quadratic resolver](#g4-is-built-and-works)
   already said: 8 is the shape this design is for.
 
 ## Read this before quoting a LUT figure

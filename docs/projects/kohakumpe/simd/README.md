@@ -11,7 +11,7 @@ tags:
 
 # SIMD PE
 
-`src/kohakuaccel/pe/rv32/simd/` — the [controller PE](../README.md) with a vector
+`src/kohakumpe/simd/` — the [controller PE](../../../arch/pe/README.md) with a vector
 unit attached at its EX stage. Everything the base core is stays true: RV32I, one
 port on the fabric, the same kick and the same completion. What is added is a
 second register file, a second scratchpad, and an array of lanes that all execute
@@ -72,7 +72,7 @@ rasterisation and depth are integer *because float gets them wrong* — a
 watertight edge test on a subpixel grid and a non-z-fighting 24-bit depth buffer
 are exactness requirements, not performance ones — while shading, filter weights
 and vertex transform are the float half. The stage-by-stage table is on the
-[SIMT PE](../../../projects/kohakumpe/simt/README.md) page and applies to both classes.
+[SIMT PE](../simt/README.md) page and applies to both classes.
 
 ## There is one float format, and it is not a setting
 
@@ -101,7 +101,7 @@ That is a half-finished transition, not a capability and not a planned one — a
 the reason it is not one wire away is a correctness constraint rather than an
 unfinished chore, because the operand width changes the accumulator's fold order
 and **float addition does not associate**.
-[float](float.md#what-this-tier-reaches-of-that-contract) states it in full,
+[float](float.md#what-is-not-built) states it in full,
 including the two decisions anyone finishing it has to make.
 
 **E8M15 is not a compromise.** It carries 1.5e-5 relative error — 32× better
@@ -114,7 +114,7 @@ format whose range covers FP32's verbatim.
 
 | Thing | Category |
 |---|---|
-| everything the base PE fixes — regions, ordering, halting, kick and completion | **fixed protocol** of the base unit: [architecture](../architecture.md) |
+| everything the base PE fixes — regions, ordering, halting, kick and completion | **fixed protocol** of the base unit: [architecture](../../../arch/pe/architecture.md) |
 | the vector scratchpad region and its store-only rule from the scalar side | **fixed protocol** of this unit — [memory](memory.md) |
 | the instruction encoding: custom-0 integer, custom-1 float | **fixed protocol** — [programming](programming.md) |
 | **the compute format** | **not a parameter at all.** E8M15, always, in every build |
@@ -172,7 +172,7 @@ loop is a scalar loop whose body happens to move 32 bytes at a time.
 **The scalar half has no arithmetic beyond RV32I** — no multiply, no divide, no
 float — so every product in a kernel, integer or floating, is a vector
 instruction. That is a deliberate split and it is costed in
-[the base PE's microarchitecture](../microarchitecture.md#the-arithmetic-the-ex-stage-does-not-have).
+[the base PE's microarchitecture](../../../arch/pe/microarchitecture.md#the-arithmetic-the-ex-stage-does-not-have).
 
 ## The problem it solves
 
@@ -239,5 +239,5 @@ If you have never read a SIMD datapath before, read [lanes](lanes.md) and then
 | per-lane branching, per-lane addresses, masks and predication | a SIMT core's. Nothing here anticipates them, and adding them would cost every uniform kernel |
 | elementwise float, float compare and min/max | not encoded at all — they write a vector register from a fifteen-cycle datapath, which needs a scoreboard. An accumulating instruction needs only the accumulator's own busy shadow ([float](float.md#what-is-not-built)) |
 | transcendentals | **they do not exist here**, and the cause is the same one that makes the tier cheap: `vec_alu` computes `exp2`, `log2`, `inv` and `rsqrt` at full rate, and the float lane ties its operation to FMA, so constant propagation removes them before anything is placed |
-| where operands come from before the scratchpad | [sysnode](../../sysnode/) — the memory agent fills the vector scratchpad the way it fills any window |
-| the flit, the router, the port | [noc](../../noc/) |
+| where operands come from before the scratchpad | [sysnode](../../../arch/sysnode/) — the memory agent fills the vector scratchpad the way it fills any window |
+| the flit, the router, the port | [noc](../../../arch/noc/) |

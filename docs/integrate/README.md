@@ -108,9 +108,9 @@ below.
 > one module name the framework fixes — and `src/templates/transform/` supplies
 > an identity bank so a framework-only build elaborates with no project source.
 >
-> **One coupling is still on the wrong side**, and it runs the other way: the
-> SIMD PE under `src/kohakuaccel/pe/rv32/simd/` instantiates arithmetic that
-> exists only under `src/kohakutpu/`. See below.
+> **The SIMD unit moved out the same way**, for the same reason: it reached
+> into `src/kohakutpu/` for E8M15 float arithmetic. It is `src/kohakumpe/simd/`
+> now, reached through the `SIMD_EN` slot. See below.
 
 ### Where the boundaries fall
 
@@ -156,7 +156,8 @@ The directory shape that follows from that, as the tree has it today:
       noc/               mesh, router, flit protocol, compute-unit port
       sysnode/           memory agent, mover, control processor, interlink
       axi/               station bus, links, AXI plumbing
-      pe/rv32/           the CPU PE, and the SIMD PE behind SIMD_EN
+      pe/rv32/           the CPU PE; SIMD_EN names an extension it does
+                         not own
       common/            FIFOs, named memory primitives
       verif/             bench-only models
     src/templates/       a conforming CU, a transform occupant, an endpoint
@@ -165,7 +166,8 @@ The directory shape that follows from that, as the tree has it today:
 
     src/kohakutpu/       a project: matmul, vector, transform occupants, and
                          the tops generated for it under top/generated/
-    src/kohakumpe/       a project: the SIMT PE
+    src/kohakumpe/       a project: the SIMT PE, and the SIMD unit that
+                         fills the framework's SIMD_EN slot
 
     compiler/kohakuaccel/  the compiler framework   compiler/kohakutpu/  project
     driver/kohakuaccel/    the driver framework     driver/kohakutpu/    project
@@ -176,17 +178,21 @@ assemblies under its own tree. [software-stack.md](software-stack.md) §6 is
 explicit about which couplings are cut and which are still open.
 
 > **The separation is by directory, not by repository.** Framework and projects
-> share one tree, one test suite and one build flow, so nothing enforces the
-> split except the rule and the one check that measures it
-> (`driver/tests/test_isolation.py`, for the software half). A second project
-> would sit beside `kohakutpu/` rather than forking anything.
+> share one tree, one test suite and one build flow, and two checks measure the
+> split rather than assuming it: `driver/tests/test_isolation.py` for the
+> software half, and `scripts/py/deps.py` for the RTL, which reads
+> instantiations rather than build lists — so adding a file to a list cannot
+> hide an edge. A second project would sit beside `kohakutpu/` rather than
+> forking anything.
 >
-> **One coupling is not cut**, and it runs from the framework INTO a project:
-> the SIMD PE under `src/kohakuaccel/pe/rv32/simd/` instantiates `vec_alu`,
-> `vec_dsp`, `vec_delay`, the four `vec_cvt_*` converters and two helpers from
-> `mx_fpacc.v` — all under `src/kohakutpu/`. Every build list that carries the
-> SIMD PE carries the reference accelerator's arithmetic with it, so the
-> framework does not build alone until that arithmetic moves down.
+> `src/kohakumpe/simd/` is what the rule produced. The SIMD unit needed E8M15
+> float arithmetic and reached into `src/kohakutpu/vector/` for it, so every
+> build list carrying the SIMD unit carried the reference accelerator with it.
+> Moving the *arithmetic* into the framework would have been worse — it would
+> put one project's number format in the framework — and the float tier does
+> not separate from the int tier at any seam that already exists. So the whole
+> unit went to a project, where project→project is the allowed direction, and
+> `SIMD_EN` became a slot. The framework's rv32 is the base core bit for bit.
 
 **KohakuTPU is one project built on this framework** — an MXFP7 tensor
 accelerator. It appears throughout these pages as a worked example and is always

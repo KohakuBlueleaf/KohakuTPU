@@ -349,7 +349,7 @@ rather than a rounding:
 At `SIMD_DOTDSP = 0` the integer half is 32 and the total is 40. The second set of
 multipliers exists because `p0..p3` must still surface for `vmul` and an operand
 with two consumers cannot be cascaded
-([accumulator](accumulator.md#dsp_dotdsp-builds-a-second-set-of-multipliers-deliberately)).
+([accumulator](accumulator.md#simd_dotdsp-builds-a-second-set-of-multipliers-deliberately)).
 On this device LUT is the binding resource and DSP is not.
 
 ### The two knobs the tighter ask turned on
@@ -656,5 +656,5 @@ with the result so it does not go stale the same way:
   walks one pass's strided subset — so the curve is comparable to the unit in
   **lane count and area shape**, and not in arithmetic. Its own header says so.
 
-Until that run exists, the assembled figures in [the reference](#the-reference)
+Until that run exists, the assembled figures in [the reference](#the-reference-superseded)
 are the only float numbers this page will quote.

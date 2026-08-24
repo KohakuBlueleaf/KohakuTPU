@@ -22,6 +22,12 @@ way: a project doc cites the framework, never the reverse.
 | | |
 |---|---|
 | [kohakutpu/](kohakutpu/README.md) | An MXFP7 tensor accelerator on `xcvu13p-fhgb2104-2L-e`. The reference instance. |
+| [kohakumpe/](kohakumpe/README.md) | The same framework with **processors** on the port instead of a fixed datapath — a SIMD PE and a SIMT PE. It also supplies the SIMD unit that fills the framework's `SIMD_EN` slot. |
+| [kohakuaxi/](kohakuaxi/station-bus.md) | The station bus: a line of AXI stations replacing a large crossbar, at O(1) per port. |
+
+Two projects rather than one is the point of the numbers rule below: the same
+framework measures differently under each, and neither set of figures is a
+property of the framework.
 
 ## The rule about numbers
 

@@ -10,7 +10,7 @@ tags:
 
 # DSP programming guide
 
-The programmer's view is the base PE's ([programming](../programming.md)) plus
+The programmer's view is the base PE's ([programming](../../../arch/pe/programming.md)) plus
 one register file, two accumulator files, one memory region, and **69
 instructions — 63 integer on custom-0 and 6 float on custom-1**. Everything
 else — the memory map, the control words, boot, the push-and-doorbell idiom,
@@ -160,7 +160,7 @@ presence switch — float tier or no float tier — and never a format selector.
 | 2 | `FCVT` | allocated in the ISA table and decoded by nothing. Faults |
 
 **Of the two widths, this tier currently issues only `f16`** — `.f32` faults, and
-[float](float.md#what-this-tier-reaches-of-that-contract) says exactly why and
+[float](float.md#what-is-not-built) says exactly why and
 what it would take.
 
 A vector register holds **two FP16 elements per 32-bit lane**, so at eight integer
@@ -222,7 +222,7 @@ What custom-1 does **not** carry is as much of the contract as what it does: no
 elementwise `vfadd`/`vfmul`/`vfmax`, no float compare, **no `.f32` on any DSP
 build today** — the lane carries the FP32 operand edge unconditionally and the GPU
 PE drives it, but this unit ties the width bit low and refuses the encoding
-([float](float.md#what-this-tier-reaches-of-that-contract)) — and **no
+([float](float.md#what-is-not-built)) — and **no
 transcendentals**: `exp2`, `log2`, `inv` and `rsqrt` exist in the lane's source
 module at full rate and are synthesised away, because the tier ties the operation
 to FMA. [float](float.md#what-is-not-built) is the list, with what each refusal is
@@ -337,4 +337,4 @@ form's 8,025** — [performance](performance.md).
 - **Scalar arithmetic is RV32I only.** No `mul`, no `div`, no float in
   `x0..x31`; a C expression that multiplies calls libgcc. Move the work into a
   vector instruction, or accept about 54 cycles per software multiply —
-  [the base core's microarchitecture](../microarchitecture.md#the-arithmetic-the-ex-stage-does-not-have).
+  [the base core's microarchitecture](../../../arch/pe/microarchitecture.md#the-arithmetic-the-ex-stage-does-not-have).

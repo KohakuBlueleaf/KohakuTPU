@@ -249,8 +249,8 @@ once, is retired and survives only in git history.
 
 ### The couplings, and which are cut
 
-These were the specific couplings. Four are cut; three are still open, and all
-three of those are RTL or tooling rather than driver Python:
+These were the specific couplings. Six are cut; two are still open, and both of
+those are tooling rather than driver Python or RTL:
 
 1. **`device.py` knows KohakuTPU's unit types.** It defines constants for the
    matmul and vector unit type codes, and `decode_dbg(word, cu_type)` switches on
@@ -298,11 +298,13 @@ three of those are RTL or tooling rather than driver Python:
    so a framework-only build elaborates. `tests/sysnode/xform_identity_tb.v`
    builds exactly that and would fail to compile if the rule were broken.
 
-8. **The SIMD PE's arithmetic runs the other way and is still open.**
-   `src/kohakuaccel/pe/rv32/simd/` instantiates `vec_alu`, `vec_dsp`,
-   `vec_delay`, the four `vec_cvt_*` converters and two helpers from
-   `mx_fpacc.v`, all under `src/kohakutpu/`. The RTL framework does not build
-   alone until that arithmetic moves down. **Still open.**
+8. **The SIMD unit ran the other way; it moved.** It instantiated `vec_alu`,
+   `vec_dsp`, `vec_delay`, the four `vec_cvt_*` converters and two helpers from
+   `mx_fpacc.v`, all under `src/kohakutpu/`, so the RTL framework did not build
+   alone. The unit is `src/kohakumpe/simd/` now — project→project, the allowed
+   direction — and `SIMD_EN` is a slot like `xform_bank`. **Fixed.**
+   `scripts/py/deps.py` holds it: 0 project dependencies over 252 framework
+   files, and the 82 `src/kohakuaccel/**/*.v` parse with no project source.
 
 ### What the separation looks like
 

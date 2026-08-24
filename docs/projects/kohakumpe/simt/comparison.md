@@ -90,7 +90,7 @@ sensible point.
 | **used** | | | **58 %** | **25 %** | **35 %** | |
 
 The LUT budget is the ~350,000 a mesh has once the fabric and the memory agent
-are paid for ([dsp/performance](../../../arch/pe/simd/performance.md#how-many-fit-in-one-mesh));
+are paid for ([dsp/performance](../simd/performance.md#what-a-mesh-holds));
 the DSP48 and BRAM columns are **per SLR** on this part
 ([ship](../../../projects/kohakutpu/ship.md)), which is the right denominator
 because a mesh is placed in one.

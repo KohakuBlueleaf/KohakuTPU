@@ -66,7 +66,7 @@ RV32M's `0000001` raises an illegal-instruction halt at the offending PC. There
 is no float register file to name, no `fcsr`, and no CSR file to hold one.
 
 Nor is the arithmetic somewhere else on the same core. The SIMD PE's multiply and
-its measured [float tier](simd/float.md) live in the *vector* register file behind
+its measured [float tier](../../projects/kohakumpe/simd/float.md) live in the *vector* register file behind
 custom-0 and custom-1.
 
 **A scalar register-register multiply exists nowhere in this machine — but a
@@ -85,7 +85,7 @@ int8 dot product is **8,221 cycles**, and the same kernel with its multiply
 costed at one instruction is **1,297** — so 128 software multiplies account for
 6,924 cycles, **about 54 cycles each**, and that is the *easy* case: int8
 operands unroll to eight shift-add steps, where a general 32×32 `__mulsi3`
-unrolls to far more ([dsp/performance](simd/performance.md#what-the-instructions-buy)).
+unrolls to far more ([dsp/performance](../../projects/kohakumpe/simd/performance.md#what-the-instructions-buy)).
 
 ### What a minimal multiplier would cost
 
@@ -106,7 +106,7 @@ network and the operand registers, not the multiply.
 
 **Take the pipelined form, not the multi-cycle one.** The multi-cycle form saves
 three DSP columns, and on this device a DSP column is worth about **230 LUT**
-([dsp/performance](simd/performance.md#what-the-rows-say)) — so it trades ~690
+([dsp/performance](../../projects/kohakumpe/simd/performance.md#what-the-rows-say)) — so it trades ~690
 LUT of nominal value for real sequencing logic on a resource the design is
 explicitly *not* short of. LUT is the binding resource here and DSP is not.
 
@@ -223,13 +223,10 @@ this project publishes, which today has to carry a twin whose multiply is costed
 by hand to stay honest. Four DSP columns on a device where DSP is not the
 binding resource is the cheapest thing this core could spend.
 
-The other two belong where the arithmetic already is. Float on this machine is
-built, measured and accurate to **1.5e-5** — 32x better than the fp16 mobile
-fragment shaders run at — and it now exists in both wide classes: **4 E8M15 FMA
-lanes on the SIMD PE and 8 on the SIMT PE**, both measured, float not optional in
-either because rendering needs it
-([the PE classes](README.md#8-int--4-float-is-the-dsp-reference-8-int--8-float-is-the-gpu-reference)).
-That is where a kernel needing float should be.
+The other two belong where the arithmetic already is. Both wide classes carry a
+float tier that is built and measured — the format, the lane counts and the
+accuracy are [KohakuMPE's](../../projects/kohakumpe/README.md) to state. That is
+where a kernel needing float should be, not in this core's EX stage.
 
 **What would change this answer:**
 
@@ -238,7 +235,7 @@ That is where a kernel needing float should be.
 | a controller kernel profile shows >5 % of cycles in `__divsi3` — not `__mulsi3` | `div`/`rem` earns its ~250 LUT; measure before building |
 | the EX result mux measures worse than −15 MHz with the multiply input | keep `mul` but retire it through MEM on its own writeback port, not through `ex_alu` |
 | **this** core gains a way to park an instruction — a per-thread pending flag, a scoreboard, anything | every multi-cycle unit reprices at once, `mul` first. This is what happened on the SIMT PE and it is why the multiply is there and not here — [above](#why-the-gpu-was-the-cheap-place-for-a-multiplier-and-this-core-is-not) |
-| something needs a scalar **transcendental** (rendering will) | the answer is still not scalar float. Untie `op` in the float lane: ESTIMATE +640 LUT, +1 DSP and +1 BRAM **per lane** for `exp2`, `log2`, `inv` and `rsqrt` at II = 1 — and the lane count is a build parameter, so that cost scales with it — [dsp/float](simd/float.md#the-transcendentals-are-in-the-source-and-not-in-the-machine) |
+| something needs a scalar **transcendental** (rendering will) | the answer is still not scalar float. Untie `op` in the float lane: ESTIMATE +640 LUT, +1 DSP and +1 BRAM **per lane** for `exp2`, `log2`, `inv` and `rsqrt` at II = 1 — and the lane count is a build parameter, so that cost scales with it — [dsp/float](../../projects/kohakumpe/simd/float.md#the-transcendentals-are-in-the-source-and-not-in-the-machine) |
 
 ## Hazards
 

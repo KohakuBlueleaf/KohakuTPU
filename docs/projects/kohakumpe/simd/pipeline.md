@@ -23,7 +23,7 @@ vector instructions at all.
 ## The overlay
 
 The base core has five architectural stages and
-[six register boundaries](../microarchitecture.md#the-pipeline). The vector unit
+[six register boundaries](../../../arch/pe/microarchitecture.md#the-pipeline). The vector unit
 occupies the last three:
 
 ```
@@ -62,7 +62,7 @@ element width, the shift masks and the destination.
 > 172.7 MHz against a 339.7 MHz design that is otherwise identical.**
 
 This is the same structure the base core's own decode has, for the same measured
-reason: [microarchitecture](../microarchitecture.md#the-pipeline).
+reason: [microarchitecture](../../../arch/pe/microarchitecture.md#the-pipeline).
 
 **The masks are built once, in EX, for every lane.** The shift amount and the
 element width are identical in every lane, so the three small shifters that build
@@ -152,7 +152,7 @@ base core's existing fault path rather than opening a second one:
 - **a misaligned vector address.**
 
 Both surface as the base core's ordinary illegal-instruction halt, with the
-offending PC in the halt word ([architecture](../architecture.md#halting)).
+offending PC in the halt word ([architecture](../../../arch/pe/architecture.md#halting)).
 
 ## Why the scalar path is unchanged
 

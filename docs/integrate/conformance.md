@@ -144,7 +144,7 @@ No unit in the tree does it, and the probe exists to keep it that way.
 > **Using this bench for your unit means editing it.** It instantiates one
 > specific unit by name and its probes use that unit's internal hierarchy —
 > including the name of the `noc_cu_base` instance, which the tree spells two
-> different ways. Making it generic is an open item ([§8](#8-open-questions)).
+> different ways. Making it generic is an open item ([§8](#10-open-questions)).
 > Until then: copy it, retarget it, keep the three phases and both probes.
 
 ---

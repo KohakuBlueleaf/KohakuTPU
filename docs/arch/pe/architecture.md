@@ -55,10 +55,10 @@ class:
 So: a **scalar** register-register multiply exists nowhere. `div` and `rem`
 fault on every class, per-thread included.
 
-**Float exists in this machine, is measured, and is in both wide classes** —
-one E8M15 fused multiply-add per element, 4 float lanes on the SIMD PE and 8 on
-the SIMT PE, both built and both measured
-([the PE classes](README.md#8-int--4-float-is-the-dsp-reference-8-int--8-float-is-the-gpu-reference)).
+**This core has no float, and neither does the scalar side of any class built on
+it.** The wide classes do carry a float tier, built and measured — its format,
+its lane counts and its accuracy are
+[KohakuMPE's](../../projects/kohakumpe/README.md) to state, not this page's.
 None of it is reachable from a scalar register on any class.
 
 Whether *this core* should change, and what each option would cost here, is

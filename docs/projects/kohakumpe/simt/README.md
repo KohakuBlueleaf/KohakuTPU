@@ -14,7 +14,7 @@ tags:
 `src/kohakumpe/simt/` — the [controller PE](../../../arch/pe/README.md) rebuilt so
 that an ordinary RV32I opcode addresses a **per-thread** register file. It is
 KohakuMPE's third PE class, alongside the scalar controller and the
-[SIMD tier](../../../arch/pe/simd/). Everything the base unit is stays true: one port on the
+[SIMD tier](../simd/). Everything the base unit is stays true: one port on the
 fabric, the same kick, the same completion.
 
 **Current state is on one page: [status](status.md).** It lists what exists,
@@ -167,7 +167,7 @@ float number, and what keeps `cost(SIMT) = G8 − G0` meaning anything at all.
 
 ## The problem it solves
 
-The [SIMD PE](../../../arch/pe/simd/) goes wide on work that is *uniform*: every lane does the
+The [SIMD PE](../simd/) goes wide on work that is *uniform*: every lane does the
 same thing to a different element at a stride the scalar side computed. That
 covers dense linear algebra and it covers it well. It does not cover the case
 where lanes need to **disagree** — where lane 3 takes the `if` and lane 4 takes
@@ -266,9 +266,9 @@ avoid a specific failure that has already happened once.
 
 | Concern | Whose |
 |---|---|
-| uniform wide arithmetic, packed int8 `vdot`, the float **accumulator** | the [SIMD PE](../../../arch/pe/simd/)'s. This one does not anticipate them. The float *lane* is a different matter — it is inherited from that tier verbatim and never forked |
-| the arithmetic inside a float lane, and both of its operand edges | the [SIMD PE](../../../arch/pe/simd/)'s `khs_float_lane`. This PE selects operands and converts formats; it does not compute |
-| the lane/interval walk sequencer that `FLANES < LANES` would need | the [SIMD PE](../../../arch/pe/simd/)'s, by ruling. Instantiated here if it is ever built, never written here |
+| uniform wide arithmetic, packed int8 `vdot`, the float **accumulator** | the [SIMD PE](../simd/)'s. This one does not anticipate them. The float *lane* is a different matter — it is inherited from that tier verbatim and never forked |
+| the arithmetic inside a float lane, and both of its operand edges | the [SIMD PE](../simd/)'s `khs_float_lane`. This PE selects operands and converts formats; it does not compute |
+| the lane/interval walk sequencer that `FLANES < LANES` would need | the [SIMD PE](../simd/)'s, by ruling. Instantiated here if it is ever built, never written here |
 | where operands come from before the scratchpad | [sysnode](../../../arch/sysnode/) |
 | the flit, the router, the port | [noc](../../../arch/noc/) |
 | which custom opcode major belongs to which PE class | [opcode-map](../../../arch/pe/opcode-map.md) — a table one tier owns is not something another can check itself against |
