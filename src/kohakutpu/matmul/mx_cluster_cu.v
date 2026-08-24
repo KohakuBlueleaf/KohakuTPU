@@ -33,8 +33,8 @@
 //   [175:168] anchor  GEMM/DRAIN: common output exponent
 //   [167:144] peers   FILL: other clusters receiving this fetch, {y,x} each
 //   [143:142] npeer   FILL: how many of them are present
-//   [141]     preq    FILL: the operand is ALREADY MXFP7 in memory, so memory
-//                     must not quantise it again
+//   [141]     --      RESERVED. Was `preq`. Every operand is already in its
+//                     final format before any fetch reads it.
 //   [140:133] eoff    FILL: first L1 entry to write
 //   [132:125] aoff    GEMM: base L1 entry on the A side
 //   [124:117] boff    GEMM: base L1 entry on the B side
@@ -199,9 +199,14 @@ module mx_cluster_cu #(
         // `resetn` is released on the NoC clock, so its edge means nothing
         // here. Async-assert, sync-deassert, as mag_link_cdc does.
         reg [1:0] ur_q;
-        always @(posedge unit_clk or negedge resetn)
-            if (!resetn) ur_q <= 2'b00;
-            else         ur_q <= {ur_q[0], 1'b1};
+        always @(posedge unit_clk or negedge resetn) begin
+            if (!resetn) begin
+                ur_q <= 2'b00;
+            end
+            else begin
+                ur_q <= {ur_q[0], 1'b1};
+            end
+        end
         assign u_resetn = ur_q[1];
 
         // An ACK is dropped at the NoC face, so it never costs a FIFO slot.
@@ -282,11 +287,6 @@ module mx_cluster_cu #(
     // row and B by the 4 in a column, so the emitter stays a fixed mux.
     wire [23:0] i_peer  = inst_flit[167 -: 24];
     wire [1:0]  i_npeer = inst_flit[143 -: 2];
-    // PRE-QUANTISED OPERAND: already converted on the way into memory, so the
-    // fetch is 4 words instead of 8 FP16 beats and no quantiser pass. A property
-    // of the OPERAND carried by the instruction, which keeps memory free of an
-    // address map -- see docs/isa/memory.md s3.
-    wire        i_preq  = inst_flit[141];
     // L1 IS ADDRESSABLE, not one buffer per side. `eoff` says where a FILL
     // lands, `aoff`/`boff` where a sweep reads, so the driver can fill one half
     // while the other is swept and leave an unchanged operand in place.
@@ -457,9 +457,9 @@ module mx_cluster_cu #(
     end endgenerate
 
     // ================================================ fill / sequencer
-    localparam [3:0] S_IDLE = 4'd0, S_FILL = 4'd1,
-                     S_GEMM = 4'd3, S_GWAIT = 4'd4,
-                     S_DRAIN = 4'd5, S_DWAIT = 4'd6, S_DONE = 4'd7;
+    localparam [3:0] S_IDLE = 4'd0, S_FILL = 4'd1, S_GEMM = 4'd3;
+    localparam [3:0] S_GWAIT = 4'd4, S_DRAIN = 4'd5, S_DWAIT = 4'd6;
+    localparam [3:0] S_DONE = 4'd7;
 
     // No PREFETCH parameter: a descriptor removes the requester rather than
     // pipelining it. One flit names the whole run and MAG streams it, so there
@@ -486,7 +486,6 @@ module mx_cluster_cu #(
     // ---- shared fetch: who asks, and who just listens --------------------
     reg [23:0] peer_r;
     reg [1:0]  npeer_r;
-    reg        preq_r;
     reg [7:0]  eoff_r;
     localparam [7:0] MY_NODE = {CU_Y[3:0], CU_X[3:0]};
 
@@ -504,22 +503,22 @@ module mx_cluster_cu #(
     assign gemms_done  = ngemm;
     assign drains_done = ndrain;
 
-    // Software never sees MXFP7: an operand is FP16 in memory and memory
-    // quantises it on the way out, or it was quantised on the way IN and memory
-    // streams it. `preq` says which, per FILL, so both operands of one GEMM may
-    // differ. Either way an entry returns as 4 operand flits, and the entry size
-    // lives ONLY in MAG, the module that walks the addresses.
-    //   flags[4] QUANT, flags[5] BLAYOUT, flags[6] STREAM
+    // PRE-QUANTISED ONLY. A cluster can no longer ask memory to convert: the
+    // transform slot belongs to the memory mover, so an operand reaches DRAM or
+    // staging already in its final format and a fill just streams it. `quant`
+    // and `blay` are driven 0 and the flag bits are reserved.
+    //   flags[4] reserved, flags[5] reserved, flags[6] STREAM
 
     // ONE FLIT FOR THE WHOLE RUN. The txn field carries the index of the FIRST
     // entry -- `eoff` -- and MAG adds each entry's position in the run, so every
     // response names its exact L1 slot and the receiver needs no cursor of its
     // own. flags[6] STREAM marks this a descriptor rather than a single fetch,
     // and `cnt` is how many consecutive entries it covers.
+    // NO TRANSFORM ARGUMENTS. A flit cannot select a transform slot at all --
+    // the slot belongs to the memory mover -- so `blay` and `quant` are gone
+    // rather than passed and ignored. flags[4]/[5] go out 0.
     function [FLIT_WIDTH-1:0] rd_req;
         input [39:0] adr;
-        input        blay;
-        input        quant;     // 0 = the operand is already MXFP7
         input [7:0]  ent;
         input [7:0]  cnt;
         input [23:0] peers;     // extra destinations, {y,x} each
@@ -528,7 +527,7 @@ module mx_cluster_cu #(
             rd_req = { MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
                        CU_X[POS_WIDTH-1:0], CU_Y[POS_WIDTH-1:0],
                        T_MEM_RD_REQ, ent, 1'b1, 3'b000,
-                       adr, 8'd3, {1'b0, 1'b1, blay, quant, 4'b0000},
+                       adr, 8'd3, {1'b0, 1'b1, 1'b0, 1'b0, 4'b0000},
                        cnt, peers, nd, 166'd0 };
         end
     endfunction
@@ -540,8 +539,12 @@ module mx_cluster_cu #(
         if (!u_resetn) begin
             ctr_fill <= 32'd0; ctr_comp <= 32'd0;
         end else begin
-            if (st == S_FILL)            ctr_fill <= ctr_fill + 32'd1;
-            if (gemm_busy || sweep_busy) ctr_comp <= ctr_comp + 32'd1;
+            if (st == S_FILL) begin
+                ctr_fill <= ctr_fill + 32'd1;
+            end
+            if (gemm_busy || sweep_busy) begin
+                ctr_comp <= ctr_comp + 32'd1;
+            end
         end
     end
 
@@ -625,8 +628,12 @@ module mx_cluster_cu #(
     reg peer_open_r;
     assign peer_open = peer_open_r;
     always @(posedge u_clk) begin
-        if (!u_resetn) peer_open_r <= 1'b0;
-        else         peer_open_r <= (cd_run && (cd_buf == BUF_PEER)) || pk_pend;
+        if (!u_resetn) begin
+            peer_open_r <= 1'b0;
+        end
+        else begin
+            peer_open_r <= (cd_run && (cd_buf == BUF_PEER)) || pk_pend;
+        end
     end
 
     always @(posedge u_clk) begin
@@ -640,11 +647,17 @@ module mx_cluster_cu #(
             // the qualifiers, and resetting the data as well is dead silicon.
             sg_valid <= 1'b0;
         end else begin
-            if (pk_pend && peer_ready) pk_pend <= 1'b0;
-            if (sg_valid && sg_take)   sg_valid <= 1'b0;
+            if (pk_pend && peer_ready) begin
+                pk_pend <= 1'b0;
+            end
+            if (sg_valid && sg_take) begin
+                sg_valid <= 1'b0;
+            end
             // Reported once, at the next instruction boundary, and then cleared:
             // a malformed burst is one fault, not a CU that faults for ever.
-            if (exec_done) fault_r <= 1'b0;
+            if (exec_done) begin
+                fault_r <= 1'b0;
+            end
 
             if (cd_pop && !cd_run) begin
                 cd_run  <= 1'b1;
@@ -663,7 +676,9 @@ module mx_cluster_cu #(
                 cd_txn  <= recv_flit[FLIT_WIDTH-4*POS_WIDTH-5 -: 8];
                 cd_flg  <= cd_dflg;
                 cd_bad  <= !cd_fits;
-                if (!cd_fits) fault_r <= 1'b1;
+                if (!cd_fits) begin
+                    fault_r <= 1'b1;
+                end
             end else if (cd_pop) begin
                 cd_off  <= cd_off + 16'd1;
                 cd_left <= cd_left - 9'd1;
@@ -685,7 +700,9 @@ module mx_cluster_cu #(
                 // carries its low half and 2t+1 the rest in the payload's low
                 // bits. The pair completes on the odd granule.
                 if ((cd_buf == BUF_PEER) && !cd_bad) begin
-                    if (!cd_off[0]) pk_lo <= recv_flit[255:0];
+                    if (!cd_off[0]) begin
+                        pk_lo <= recv_flit[255:0];
+                    end
                     else begin
                         pk_hi   <= recv_flit[PW-257:0];
                         pk_idx  <= {1'b0, cd_off[15:1]};
@@ -730,25 +747,42 @@ module mx_cluster_cu #(
             for (bk = 0; bk < 8; bk = bk + 1) begin
                 if (!pl_sel) begin
                     for (bi = 0; bi < 4; bi = bi + 1) begin
-                        if (pl_word == 2'd0) l1_data[(bi*32 + 0 + bk)*7 +: 7] <= recv_flit[255 - (bi*8+bk)*7 -: 7];
-                        if (pl_word == 2'd1) l1_data[(bi*32 + 8 + bk)*7 +: 7] <= recv_flit[255 - (bi*8+bk)*7 -: 7];
-                        if (pl_word == 2'd2) l1_data[(bi*32 +16 + bk)*7 +: 7] <= recv_flit[255 - (bi*8+bk)*7 -: 7];
-                        if (pl_word == 2'd3) l1_data[(bi*32 +24 + bk)*7 +: 7] <= recv_flit[255 - (bi*8+bk)*7 -: 7];
+                        if (pl_word == 2'd0) begin
+                            l1_data[(bi*32 + 0 + bk)*7 +: 7] <= recv_flit[255 - (bi*8+bk)*7 -: 7];
+                        end
+                        if (pl_word == 2'd1) begin
+                            l1_data[(bi*32 + 8 + bk)*7 +: 7] <= recv_flit[255 - (bi*8+bk)*7 -: 7];
+                        end
+                        if (pl_word == 2'd2) begin
+                            l1_data[(bi*32 +16 + bk)*7 +: 7] <= recv_flit[255 - (bi*8+bk)*7 -: 7];
+                        end
+                        if (pl_word == 2'd3) begin
+                            l1_data[(bi*32 +24 + bk)*7 +: 7] <= recv_flit[255 - (bi*8+bk)*7 -: 7];
+                        end
                     end
                 end else begin
                     for (bj = 0; bj < 4; bj = bj + 1) begin
-                        if (pl_word == 2'd0) l1_data[(( 0+bk)*4 + bj)*7 +: 7] <= recv_flit[255 - (bk*4+bj)*7 -: 7];
-                        if (pl_word == 2'd1) l1_data[(( 8+bk)*4 + bj)*7 +: 7] <= recv_flit[255 - (bk*4+bj)*7 -: 7];
-                        if (pl_word == 2'd2) l1_data[((16+bk)*4 + bj)*7 +: 7] <= recv_flit[255 - (bk*4+bj)*7 -: 7];
-                        if (pl_word == 2'd3) l1_data[((24+bk)*4 + bj)*7 +: 7] <= recv_flit[255 - (bk*4+bj)*7 -: 7];
+                        if (pl_word == 2'd0) begin
+                            l1_data[(( 0+bk)*4 + bj)*7 +: 7] <= recv_flit[255 - (bk*4+bj)*7 -: 7];
+                        end
+                        if (pl_word == 2'd1) begin
+                            l1_data[(( 8+bk)*4 + bj)*7 +: 7] <= recv_flit[255 - (bk*4+bj)*7 -: 7];
+                        end
+                        if (pl_word == 2'd2) begin
+                            l1_data[((16+bk)*4 + bj)*7 +: 7] <= recv_flit[255 - (bk*4+bj)*7 -: 7];
+                        end
+                        if (pl_word == 2'd3) begin
+                            l1_data[((24+bk)*4 + bj)*7 +: 7] <= recv_flit[255 - (bk*4+bj)*7 -: 7];
+                        end
                     end
                 end
             end
             // scales ride in every word; take them from the first
             if (pl_word == 2'd0) begin
                 asm_ent <= pl_ent;
-                for (bi = 0; bi < 4; bi = bi + 1)
+                for (bi = 0; bi < 4; bi = bi + 1) begin
                     l1_data[896 + bi*8 +: 8] <= recv_flit[31 - bi*8 -: 8];
+                end
             end
             // Last word of this entry: commit it to the slot the flit named.
             // `l1_sel` is registered HERE, with the address, because `l1_we`
@@ -781,7 +815,7 @@ module mx_cluster_cu #(
             aoff_r <= 8'd0; boff_r <= 8'd0; eoff_r <= 8'd0;
             acc_r <= 1'b0; emit_r <= 1'b0; fuse_r <= 1'b0;
             base_r <= 40'd0; n_r <= 16'd1;
-            peer_r <= 24'd0; npeer_r <= 2'd0; preq_r <= 1'b0;
+            peer_r <= 24'd0; npeer_r <= 2'd0;
             nfill <= 16'd0; ngemm <= 16'd0; ndrain <= 16'd0;
         end else begin
             inst_ready  <= 1'b0;
@@ -789,124 +823,131 @@ module mx_cluster_cu #(
             gemm_start  <= 1'b0;
             drain_start <= 1'b0;
 
-            if (send_valid && send_ready) send_valid <= 1'b0;
-
-            case (st)
-            S_IDLE: if (inst_valid && !inst_ready) begin
-                base_r <= i_addr;
-                n_r    <= (i_n == 16'd0) ? 16'd1 : i_n;
-                sel_r  <= i_sel;
-                gm_r   <= i_gm; gn_r <= i_gn; nk_r <= i_nk; anch_r <= i_anch;
-                wide_r <= i_wide;
-                acc_r  <= i_acc;
-                aoff_r <= i_aoff; boff_r <= i_boff; eoff_r <= i_eoff;
-                abank_r <= i_abank; bbank_r <= i_bbank; fbank_r <= i_fbank;
-                dnode_r <= i_dnode; dstx_r <= i_dstx; dsty_r <= i_dsty;
-                dbuf_r  <= i_dbuf;  dflag_r <= i_dflag;
-                dackx_r <= i_dackx; dacky_r <= i_dacky;
-                dmesh_r <= i_dmesh; dfin_r  <= i_dfin;
-                emit_r <= i_emit; fuse_r <= i_fuse;
-                peer_r <= i_peer; npeer_r <= i_npeer; preq_r <= i_preq;
-                inst_ready <= 1'b1;
-                req_ent <= 8'd0; rcv_ent <= 8'd0;
-                case (i_op)
-                    OP_FILL:  st <= S_FILL;
-                    OP_GEMM:  st <= S_GEMM;
-                    OP_DRAIN: st <= S_DRAIN;
-                    default:  st <= S_DONE;
-                endcase
+            if (send_valid && send_ready) begin
+                send_valid <= 1'b0;
             end
 
-            // ---- FILL: one descriptor, then pure reception ---------------
-            // The CU states the run once and then only places the words that
-            // come back. No requester on the critical loop, so the round trip is
-            // paid once per FILL rather than once per entry and everything after
-            // the first entry arrives at MAG's service rate -- a throughput, not
-            // a latency.
-            S_FILL: begin
-                // The descriptor goes out ONCE, only from the leader of the
-                // sharing set. A follower sends nothing: its operands are
-                // already on the way. `req_ent` marks the decision either way.
-                if (!send_valid && (req_ent == 8'd0)) begin
-                    if (lead) begin
-                        send_flit  <= rd_req(base_r, sel_r, !preq_r, eoff_r,
-                                             n_r[7:0], peer_r, npeer_r);
-                        send_valid <= 1'b1;
-                    end
-                    req_ent <= 8'd1;
+            case (st)
+                S_IDLE: if (inst_valid && !inst_ready) begin
+                    base_r <= i_addr;
+                    n_r    <= (i_n == 16'd0) ? 16'd1 : i_n;
+                    sel_r  <= i_sel;
+                    gm_r   <= i_gm; gn_r <= i_gn; nk_r <= i_nk; anch_r <= i_anch;
+                    wide_r <= i_wide;
+                    acc_r  <= i_acc;
+                    aoff_r <= i_aoff; boff_r <= i_boff; eoff_r <= i_eoff;
+                    abank_r <= i_abank; bbank_r <= i_bbank; fbank_r <= i_fbank;
+                    dnode_r <= i_dnode; dstx_r <= i_dstx; dsty_r <= i_dsty;
+                    dbuf_r  <= i_dbuf;  dflag_r <= i_dflag;
+                    dackx_r <= i_dackx; dacky_r <= i_dacky;
+                    dmesh_r <= i_dmesh; dfin_r  <= i_dfin;
+                    emit_r <= i_emit; fuse_r <= i_fuse;
+                    peer_r <= i_peer; npeer_r <= i_npeer;
+                    inst_ready <= 1'b1;
+                    req_ent <= 8'd0; rcv_ent <= 8'd0;
+                    case (i_op)
+                        OP_FILL:  st <= S_FILL;
+                        OP_GEMM:  st <= S_GEMM;
+                        OP_DRAIN: st <= S_DRAIN;
+                        default:  st <= S_DONE;
+                    endcase
                 end
-                if ({8'd0, rcv_ent} == n_r) begin
-                    nfill <= nfill + 16'd1;
+
+                // ---- FILL: one descriptor, then pure reception ---------------
+                // The CU states the run once and then only places the words that
+                // come back. No requester on the critical loop, so the round trip is
+                // paid once per FILL rather than once per entry and everything after
+                // the first entry arrives at MAG's service rate -- a throughput, not
+                // a latency.
+                S_FILL: begin
+                    // The descriptor goes out ONCE, only from the leader of the
+                    // sharing set. A follower sends nothing: its operands are
+                    // already on the way. `req_ent` marks the decision either way.
+                    if (!send_valid && (req_ent == 8'd0)) begin
+                        if (lead) begin
+                            send_flit  <= rd_req(base_r, eoff_r,
+                                                 n_r[7:0], peer_r, npeer_r);
+                            send_valid <= 1'b1;
+                        end
+                        req_ent <= 8'd1;
+                    end
+                    if ({8'd0, rcv_ent} == n_r) begin
+                        nfill <= nfill + 16'd1;
+                        st <= S_DONE;
+                    end
+
+                    // The words themselves are placed by the L1 block below, which
+                    // a CU_DATA stream shares. `rcv_ent` is a COUNT of entries
+                    // completed -- it bounds the requester and ends the FILL; it is
+                    // not an L1 address, the flit carries that.
+                    if (pl_fill && (rword == 2'd3)) begin
+                        rcv_ent <= rcv_ent + 8'd1;
+                    end
+                end
+
+                // ---- GEMM -------------------------------------------------
+                // RETIRED ON ISSUE, not on completion. The sweep runs in the manager
+                // and needs nothing from this sequencer once started, so holding the
+                // instruction here only stops the CU from filling the other half of
+                // L1 -- which is why L1 has to be addressable, or the fill would
+                // land on what the sweep is reading.
+                //
+                // BACK TO BACK SWEEPS wait for the MANAGER, not for the cascade
+                // behind it: sweep i+1's first command addresses tile 0, and sweep i
+                // last touched tile 0 `gm*gn` cycles before it stopped issuing, so
+                // REUSE_MIN is cleared by a wide margin. Guarded on
+                // `gm*gn >= REUSE_MIN` -- below that an address DOES recur inside
+                // the window and the conservative `gemm_busy` wait is correct.
+                //
+                // An EMITTING sweep also waits for the previous tile's results to
+                // have left, because it sets `w_base`: starting early would redirect
+                // writes still sitting in the buffer.
+                //
+                // `peer_open` holds a sweep out of a peer stream. The stream waits
+                // for `gemm_busy` at its head and then keeps the accumulator's
+                // control mux for its whole length, so the two cannot interleave.
+                S_GEMM: if (
+                    !(gemm_wide ? sweep_busy : gemm_busy)
+                    && (!emit_r || !drain_busy)
+                    && !peer_open
+                ) begin
+                    gemm_start <= 1'b1;
+                    st <= S_GWAIT;
+                end
+                S_GWAIT: if (!gemm_start) begin
+                    ngemm <= ngemm + 16'd1;
                     st <= S_DONE;
                 end
 
-                // The words themselves are placed by the L1 block below, which
-                // a CU_DATA stream shares. `rcv_ent` is a COUNT of entries
-                // completed -- it bounds the requester and ends the FILL; it is
-                // not an L1 address, the flit carries that.
-                if (pl_fill && (rword == 2'd3)) rcv_ent <= rcv_ent + 8'd1;
-            end
+                // ---- DRAIN -------------------------------------------------
+                // `drain_busy` seizes the accumulator's control mux the cycle it
+                // rises, so a sweep still in flight would have its results
+                // discarded. A FUSED drain issues nothing -- the sub-tiles came out
+                // of the sweep -- and does NOT wait for `gemm_busy`, so one tile's
+                // results can drain while the next tile's sweep runs.
+                S_DRAIN: if ((fuse_r || !gemm_busy) && !peer_open) begin
+                    drain_n     <= n_r;
+                    drain_start <= 1'b1;
+                    st <= S_DWAIT;
+                end
+                // A DRAIN is finished when the last sub-tile's write has LEFT the
+                // CU, not when the accumulator stops producing: `drain_busy` falls
+                // as soon as the final value reaches the write-back port, which
+                // still has a REQ/DATA pair to send. Retiring there runs the round's
+                // DONE ahead of the memory traffic it stands for -- benign only
+                // while no later round reads what an earlier one wrote, which a
+                // K-split reduction (task #12) does.
+                S_DWAIT: if (!drain_start && !drain_busy && w_idle) begin
+                    ndrain <= ndrain + 16'd1;
+                    st <= S_DONE;
+                end
 
-            // ---- GEMM -------------------------------------------------
-            // RETIRED ON ISSUE, not on completion. The sweep runs in the manager
-            // and needs nothing from this sequencer once started, so holding the
-            // instruction here only stops the CU from filling the other half of
-            // L1 -- which is why L1 has to be addressable, or the fill would
-            // land on what the sweep is reading.
-            //
-            // BACK TO BACK SWEEPS wait for the MANAGER, not for the cascade
-            // behind it: sweep i+1's first command addresses tile 0, and sweep i
-            // last touched tile 0 `gm*gn` cycles before it stopped issuing, so
-            // REUSE_MIN is cleared by a wide margin. Guarded on
-            // `gm*gn >= REUSE_MIN` -- below that an address DOES recur inside
-            // the window and the conservative `gemm_busy` wait is correct.
-            //
-            // An EMITTING sweep also waits for the previous tile's results to
-            // have left, because it sets `w_base`: starting early would redirect
-            // writes still sitting in the buffer.
-            //
-            // `peer_open` holds a sweep out of a peer stream. The stream waits
-            // for `gemm_busy` at its head and then keeps the accumulator's
-            // control mux for its whole length, so the two cannot interleave.
-            S_GEMM: if (!(gemm_wide ? sweep_busy : gemm_busy) &&
-                        (!emit_r || !drain_busy) && !peer_open) begin
-                gemm_start <= 1'b1;
-                st <= S_GWAIT;
-            end
-            S_GWAIT: if (!gemm_start) begin
-                ngemm <= ngemm + 16'd1;
-                st <= S_DONE;
-            end
-
-            // ---- DRAIN -------------------------------------------------
-            // `drain_busy` seizes the accumulator's control mux the cycle it
-            // rises, so a sweep still in flight would have its results
-            // discarded. A FUSED drain issues nothing -- the sub-tiles came out
-            // of the sweep -- and does NOT wait for `gemm_busy`, so one tile's
-            // results can drain while the next tile's sweep runs.
-            S_DRAIN: if ((fuse_r || !gemm_busy) && !peer_open) begin
-                drain_n     <= n_r;
-                drain_start <= 1'b1;
-                st <= S_DWAIT;
-            end
-            // A DRAIN is finished when the last sub-tile's write has LEFT the
-            // CU, not when the accumulator stops producing: `drain_busy` falls
-            // as soon as the final value reaches the write-back port, which
-            // still has a REQ/DATA pair to send. Retiring there runs the round's
-            // DONE ahead of the memory traffic it stands for -- benign only
-            // while no later round reads what an earlier one wrote, which a
-            // K-split reduction (task #12) does.
-            S_DWAIT: if (!drain_start && !drain_busy && w_idle) begin
-                ndrain <= ndrain + 16'd1;
-                st <= S_DONE;
-            end
-
-            S_DONE: begin
-                exec_done   <= 1'b1;
-                exec_result <= {16'd0, nfill + ngemm + ndrain};
-                st <= S_IDLE;
-            end
-            default: st <= S_IDLE;
+                S_DONE: begin
+                    exec_done   <= 1'b1;
+                    exec_result <= {16'd0, nfill + ngemm + ndrain};
+                    st <= S_IDLE;
+                end
+                default: st <= S_IDLE;
             endcase
         end
     end
@@ -958,8 +999,10 @@ module mx_cluster_cu #(
     // The burst must be CLOSED when the drain runs dry, not only when it is
     // full, or a tile whose count is not a multiple of WBURST leaves its tail
     // sitting in the buffer forever.
-    wire w_flush = (w_fill != 0) &&
-                   ((w_fill == WBURST[WBW:0]) || !drain_busy);
+    wire w_flush = (
+        (w_fill != 0)
+        && ((w_fill == WBURST[WBW:0]) || !drain_busy)
+    );
     // Hand the collected bank to the sender. On this cycle the collector is
     // necessarily idle -- either the bank is full, or `!drain_busy` says there
     // is nothing left in the queue to take -- so the two never contend for
@@ -1030,7 +1073,9 @@ module mx_cluster_cu #(
             // `w_buf` is NOT reset -- 2*WBURST x 256 flops whose valid extent is
             // `w_fill`/`w_send`, both of which are.
         end else begin
-            if (w_take) w_valid <= 1'b0;
+            if (w_take) begin
+                w_valid <= 1'b0;
+            end
             // The destination comes from whichever instruction produces the
             // sub-tiles. A fused sweep starts emitting long before its DRAIN
             // is decoded, so it carries the address itself.
@@ -1047,7 +1092,9 @@ module mx_cluster_cu #(
             // is room, against whichever bank the sender does not hold.
             if (drain_valid && !w_full) begin
                 w_buf[{w_cb, w_fill[WBW-1:0]}] <= drain_data;
-                if (w_fill == 0) w_cfirst <= drain_idx;
+                if (w_fill == 0) begin
+                    w_cfirst <= drain_idx;
+                end
                 w_fill <= w_fill + 1'b1;
             end else if (w_hand) begin
                 w_cb   <= ~w_cb;
@@ -1055,36 +1102,40 @@ module mx_cluster_cu #(
             end
 
             case (w_st)
-            W_IDLE: if (w_hand) begin
-                w_sb     <= w_cb;
-                w_len    <= w_fill;
-                w_sfirst <= w_cfirst;
-                w_send   <= 0;
-                w_st     <= W_REQ;
-            end
-            // One descriptor for the whole run. `len` is beats-minus-one, the
-            // field docs/isa/memory.md s2 records as decoded and ignored --
-            // it is honoured now, on both sides.
-            W_REQ: if (w_free) begin
-                w_flit <= { w_ddx, w_ddy,
-                            CU_X[POS_WIDTH-1:0], CU_Y[POS_WIDTH-1:0],
-                            w_dty, w_dtxn, 1'b0, w_drsv, w_desc };
-                w_valid <= 1'b1;
-                w_isdesc <= 1'b1;
-                w_st    <= W_DATA;
-            end
-            W_DATA: if (w_free) begin
-                w_flit <= { w_ddx, w_ddy,
-                            CU_X[POS_WIDTH-1:0], CU_Y[POS_WIDTH-1:0],
-                            w_dtd, w_dtxn,
-                            (w_send + 1'b1 == w_len), w_drsv,
-                            w_buf[{w_sb, w_send[WBW-1:0]}] };
-                w_valid <= 1'b1;
-                w_isdesc <= 1'b0;
-                if (w_send + 1'b1 == w_len) w_st <= W_IDLE;
-                else                        w_send <= w_send + 1'b1;
-            end
-            default: w_st <= W_IDLE;
+                W_IDLE: if (w_hand) begin
+                    w_sb     <= w_cb;
+                    w_len    <= w_fill;
+                    w_sfirst <= w_cfirst;
+                    w_send   <= 0;
+                    w_st     <= W_REQ;
+                end
+                // One descriptor for the whole run. `len` is beats-minus-one, the
+                // field docs/isa/memory.md s2 records as decoded and ignored --
+                // it is honoured now, on both sides.
+                W_REQ: if (w_free) begin
+                    w_flit <= { w_ddx, w_ddy,
+                                CU_X[POS_WIDTH-1:0], CU_Y[POS_WIDTH-1:0],
+                                w_dty, w_dtxn, 1'b0, w_drsv, w_desc };
+                    w_valid <= 1'b1;
+                    w_isdesc <= 1'b1;
+                    w_st    <= W_DATA;
+                end
+                W_DATA: if (w_free) begin
+                    w_flit <= { w_ddx, w_ddy,
+                                CU_X[POS_WIDTH-1:0], CU_Y[POS_WIDTH-1:0],
+                                w_dtd, w_dtxn,
+                                (w_send + 1'b1 == w_len), w_drsv,
+                                w_buf[{w_sb, w_send[WBW-1:0]}] };
+                    w_valid <= 1'b1;
+                    w_isdesc <= 1'b0;
+                    if (w_send + 1'b1 == w_len) begin
+                        w_st <= W_IDLE;
+                    end
+                    else begin
+                        w_send <= w_send + 1'b1;
+                    end
+                end
+                default: w_st <= W_IDLE;
             endcase
         end
     end
@@ -1097,54 +1148,73 @@ module mx_cluster_cu #(
     // constant widened past 32 bits), both of which elaborate cleanly. Checked
     // at the producer so the message names the module that built it.
     always @(posedge u_clk) begin
-        if (u_resetn && send_valid && (^send_flit[255 -: 40] === 1'bx))
+        if (u_resetn && send_valid && (^send_flit[255 -: 40] === 1'bx)) begin
             $display("%0t ERROR mx_cluster_cu: read request address is x", $time);
-        if (u_resetn && w_valid && w_isdesc && (^w_flit[255 -: 40] === 1'bx))
+        end
+        if (u_resetn && w_valid && w_isdesc && (^w_flit[255 -: 40] === 1'bx)) begin
             $display("%0t ERROR mx_cluster_cu: write request address is x", $time);
+        end
         // Gated on w_st alone this read as an address x, which sent the search
         // to the addressing arithmetic for a defect that was in the tile.
-        if (u_resetn && w_valid && !w_isdesc && (^w_flit[255:0] === 1'bx))
+        if (u_resetn && w_valid && !w_isdesc && (^w_flit[255:0] === 1'bx)) begin
             $display("%0t ERROR mx_cluster_cu: drained sub-tile %0d carries x",
                      $time, w_sfirst + w_send);
+        end
         // ONE assembly register, sufficient only because a single MAG delivers
         // an entry's four words consecutively and a CU_DATA stream is a run. A
         // second server -- multicast, a second MAG, a reordering fetch engine,
         // two senders into one CU -- would interleave two entries into one and
         // produce a plausible wrong tile.
-        if (u_resetn && pl_valid && (pl_word != 2'd0) && (pl_ent !== asm_ent))
+        if (u_resetn && pl_valid && (pl_word != 2'd0) && (pl_ent !== asm_ent)) begin
             $display("%0t ERROR mx_cluster_cu: word %0d of entry %0d arrived while assembling entry %0d",
                      $time, pl_word, pl_ent, asm_ent);
+        end
         // A data flit whose SOURCE is not the open stream's. Every flit carries
         // one, so interleaving is detectable directly rather than inferred --
         // and this is why the ack destination gets its own registers: compare
         // against `cd_ax` instead and a redirected burst faults on every flit,
         // which is the one case the redirect exists for.
-        if (u_resetn && cd_pop && cd_run &&
-            ((recv_flit[FLIT_WIDTH-2*POS_WIDTH-1 -: POS_WIDTH] !== cd_sx) ||
-             (recv_flit[FLIT_WIDTH-3*POS_WIDTH-1 -: POS_WIDTH] !== cd_sy)))
+        if (
+            u_resetn
+            && cd_pop
+            && cd_run
+            && (
+                (recv_flit[FLIT_WIDTH-2*POS_WIDTH-1 -: POS_WIDTH] !== cd_sx)
+                || (recv_flit[FLIT_WIDTH-3*POS_WIDTH-1 -: POS_WIDTH] !== cd_sy)
+            )
+        ) begin
             $display("%0t ERROR mx_cluster_cu: CU_DATA from (%0d,%0d) spliced into the stream open from (%0d,%0d)",
                      $time, recv_flit[FLIT_WIDTH-2*POS_WIDTH-1 -: POS_WIDTH],
                      recv_flit[FLIT_WIDTH-3*POS_WIDTH-1 -: POS_WIDTH],
                      cd_sx, cd_sy);
+        end
         // `last` against the descriptor's own count. They disagree when two
         // senders interleave into this CU: the second one's descriptor is
         // consumed as the first one's data and both buffers fill with nonsense,
         // which reads as a wrong tile and nothing else.
-        if (u_resetn && cd_pop && cd_run &&
-            (recv_flit[FLIT_WIDTH-4*POS_WIDTH-13] !== (cd_left == 9'd1)))
+        if (
+            u_resetn
+            && cd_pop
+            && cd_run
+            && (recv_flit[FLIT_WIDTH-4*POS_WIDTH-13] !== (cd_left == 9'd1))
+        ) begin
             $display("%0t ERROR mx_cluster_cu: CU_DATA last disagrees with the descriptor's len, %0d flits left",
                      $time, cd_left);
-        if (u_resetn && cd_pop && !cd_run && (cd_dbuf == BUF_PEER) && cd_doff[0])
+        end
+        if (u_resetn && cd_pop && !cd_run && (cd_dbuf == BUF_PEER) && cd_doff[0]) begin
             $display("%0t ERROR mx_cluster_cu: peer stream starts at odd granule %0d -- a sub-tile is two flits",
                      $time, cd_doff);
-        if (u_resetn && cd_pop && !cd_run && !cd_fits)
+        end
+        if (u_resetn && cd_pop && !cd_run && !cd_fits) begin
             $display("%0t ERROR mx_cluster_cu: CU_DATA burst rejected -- buf %0d, off %0d, len %0d does not fit",
                      $time, cd_dbuf, cd_doff, cd_dlen);
+        end
         // Dropped rather than held, so it costs a flit instead of the CU. Say
         // which type: silent loss is the whole hazard of dropping.
-        if (u_resetn && recv_valid && recv_ready && !rx_resp && !rx_data)
+        if (u_resetn && recv_valid && recv_ready && !rx_resp && !rx_data) begin
             $display("%0t ERROR mx_cluster_cu: inbound flit of type %0h discarded",
                      $time, rtype);
+        end
     end
 
     initial if ((PW <= 256) || (PW > 512))

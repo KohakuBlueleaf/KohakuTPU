@@ -58,12 +58,9 @@ module noc_l2_adapter #(
     input  wire                   eu_valid,
     output wire                   eu_busy
 );
-    localparam [3:0] T_MEM_RD_REQ  = 4'h0,
-                     T_MEM_WR_REQ  = 4'h1,
-                     T_MEM_RD_RESP = 4'h2,
-                     T_MEM_WR_ACK  = 4'h3,
-                     T_MEM_WR_DATA = 4'h4,
-                     T_CU_CTRL     = 4'h7;
+    localparam [3:0] T_MEM_RD_REQ = 4'h0, T_MEM_WR_REQ = 4'h1;
+    localparam [3:0] T_MEM_RD_RESP = 4'h2, T_MEM_WR_ACK = 4'h3;
+    localparam [3:0] T_MEM_WR_DATA = 4'h4, T_CU_CTRL = 4'h7;
 
     // DEPTH must be a power of two and at least 512: the window decode is a
     // carry out of AW, and the run-length adders are AW+1 wide.
@@ -95,7 +92,6 @@ module noc_l2_adapter #(
     wire [1:0]  i_nd  = eu_data[167 -: 2];    // extra multicast destinations
     wire [7:0]  i_ewr = eu_data[165 -: 8];    // words per entry, 0 means 4
 
-    wire i_quant  = i_flg[4];
     wire i_stream = i_flg[6];
     wire [2:0] i_ew = (i_ewr == 8'd0 || i_ewr > 8'd4) ? 3'd4 : i_ewr[2:0];
     wire [7:0] i_cnt0 = (i_cnt == 8'd0) ? 8'd1 : i_cnt;
@@ -135,9 +131,8 @@ module noc_l2_adapter #(
     // where `end <= DEPTH` needs an OR-reduce after it. `cnt == 0` likewise.
     wire i_fits = i_inrange && !ov && !(i_isrd && i_stream && (i_cnt == 8'd0));
 
-    // QUANT and multicast stay with MAG: staging holds bytes verbatim and
-    // converts nothing, and the adapter can only answer the node behind it.
-    wire i_mine = i_fits && !i_quant && (i_nd == 2'd0);
+    // Multicast stays with MAG: the adapter can only answer the node behind it.
+    wire i_mine = i_fits && (i_nd == 2'd0);
 
     // ---- the skid: one flit, plus what the decode concluded about it -------
     reg  [FLIT_WIDTH-1:0] s_flit;
@@ -205,9 +200,12 @@ module noc_l2_adapter #(
     reg  [7:0]  c_txn, c_idx;
     reg  [63:0] c_val;
 
-    wire ctrl_claim = rt_valid && (r_ty == T_CU_CTRL) &&
-                      (r_idx[7:3] == CTRL_BASE[7:3]);
-    wire ctrl_take  = ctrl_claim && !c_pend;
+    wire ctrl_claim = (
+        rt_valid
+        && (r_ty == T_CU_CTRL)
+        && (r_idx[7:3] == CTRL_BASE[7:3])
+    );
+    wire ctrl_take = ctrl_claim && !c_pend;
 
     wire [63:0] caps_w = {16'h0002, 8'd1, L2_BITS[7:0], DEPTH[31:0]};
 
@@ -277,9 +275,12 @@ module noc_l2_adapter #(
             end
             q_used <= q_used + ((launch || ack_go) ? 8'd1 : 8'd0)
                              - (q_pop ? 8'd1 : 8'd0);
-            if (push) n_serv <= n_serv + 32'd1;
-            if (s_go && (s_isrd || s_iswr) && s_inrange && !s_mine)
+            if (push) begin
+                n_serv <= n_serv + 32'd1;
+            end
+            if (s_go && (s_isrd || s_iswr) && s_inrange && !s_mine) begin
                 n_fwd <= n_fwd + 32'd1;
+            end
 
             // ------------------------------------------------ the skid
             if (s_take) begin
@@ -289,7 +290,9 @@ module noc_l2_adapter #(
                 s_inrange <= i_inrange;
                 s_fits    <= i_fits;
                 s_lines   <= i_lines;
-            end else if (s_go) s_val <= 1'b0;
+            end else if (s_go) begin
+                s_val <= 1'b0;
+            end
 
             // ------------------------------------------------ control plane
             if (ctrl_take) begin
@@ -304,10 +307,16 @@ module noc_l2_adapter #(
                     default: c_val <= 64'd0;
                 endcase
                 if (r_op == 8'd1) begin
-                    if (r_idx[2:0] == 3'd1) l2_base <= r_val[39:0];
-                    if (r_idx[2:0] == 3'd2) l2_en   <= r_val[0];
+                    if (r_idx[2:0] == 3'd1) begin
+                        l2_base <= r_val[39:0];
+                    end
+                    if (r_idx[2:0] == 3'd2) begin
+                        l2_en   <= r_val[0];
+                    end
                 end
-            end else if (c_pend && !ru_busy) c_pend <= 1'b0;
+            end else if (c_pend && !ru_busy) begin
+                c_pend <= 1'b0;
+            end
 
             // ------------------------------------------------ write intake
             if (s_go && take_wr) begin
@@ -361,8 +370,13 @@ module noc_l2_adapter #(
                 if (str_r && (word_r == (ew_r - 3'd1))) begin
                     word_r <= 3'd0;
                     ent_r  <= ent_r + 8'd1;
-                end else word_r <= word_r + 3'd1;
-                if (left == 16'd1) run <= 1'b0;
+                end
+                else begin
+                    word_r <= word_r + 3'd1;
+                end
+                if (left == 16'd1) begin
+                    run <= 1'b0;
+                end
             end
 
             // The ack rides the same pipeline, so the two can never both write
@@ -419,24 +433,32 @@ module noc_l2_adapter #(
     wire [39:0] s_last = s_adr + {19'd0, s_lines, 5'd0} - 40'd32;
 
     always @(posedge clk) if (!rst && s_go && l2_en) begin
-        if ((s_isrd || s_iswr) && !s_inrange &&
-            (s_last[39:L2_BITS] == l2_base[39:L2_BITS]))
+        if (
+            (s_isrd || s_iswr)
+            && !s_inrange
+            && (s_last[39:L2_BITS] == l2_base[39:L2_BITS])
+        ) begin
             $display("%0t ERROR noc_l2_adapter: request at %h covers %0d lines and runs UP into the L2 window -- forwarded whole, so it will read DRAM where the staged copy lives",
                      $time, s_adr, s_lines);
-        if ((s_isrd || s_iswr) && s_inrange && !s_fits)
+        end
+        if ((s_isrd || s_iswr) && s_inrange && !s_fits) begin
             $display("%0t ERROR noc_l2_adapter: request at %h covers %0d lines and straddles the top of the L2 window -- forwarded whole, so it will read DRAM",
                      $time, s_adr, s_lines);
-        if (s_isrd && s_fits && !s_mine)
-            $display("%0t ERROR noc_l2_adapter: read at %h is in the L2 window but sets QUANT/nd -- forwarded, because staging neither converts nor multicasts",
+        end
+        if (s_isrd && s_fits && !s_mine) begin
+            $display("%0t ERROR noc_l2_adapter: read at %h is in the L2 window but asks for extra destinations -- forwarded, because this adapter can only answer the node behind it",
                      $time, s_adr);
+        end
     end
     always @(posedge clk) if (!rst) begin
-        if (s_val && s_iswr && w_run)
+        if (s_val && s_iswr && w_run) begin
             $display("%0t ERROR noc_l2_adapter: a second write descriptor arrived with %0d beats of the first still owing -- held, and only a single-producer link makes that safe",
                      $time, w_left);
-        if (push && q_full)
+        end
+        if (push && q_full) begin
             $display("%0t ERROR noc_l2_adapter: response queue overrun -- the launch credit is wrong",
                      $time);
+        end
     end
 `endif
 
