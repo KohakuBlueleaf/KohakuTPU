@@ -593,18 +593,28 @@ class TpuBackend:
 def _at(compiled, leaf, stride: int) -> int:
     """Elements into its buffer where this leaf's instance starts.
 
+    The INSTANCE start is what has to land on a group boundary; a spread's own
+    `off` is WITHIN the group -- it names which sub-row of each group is read --
+    and rides the descriptor's base without moving the walk. Testing their sum
+    would refuse exactly the read that folds an odd sub-row in.
+
     Raises :class:`LangError` when a spread's instance does not start on a group
     boundary: the walk resumes at group starts, so an instance beginning part way
     through one would read every group after it at the wrong offset.
     """
-    off = leaf.part * stride + leaf.off
-    if leaf.period and off % leaf.period:
+    if _broadcast(compiled, leaf):
+        # A BROADCAST is the whole buffer read again for every group, so its
+        # base does not move with the instance. Advancing it reads past the end
+        # of a buffer that is exactly one period long.
+        return leaf.off
+    at = leaf.part * stride
+    if leaf.period and at % leaf.period:
         raise LangError(
             f"{compiled.name}: {leaf.name!r} is spread over {leaf.period}-element "
-            f"groups but this instance starts {off} elements in, which is not a "
+            f"groups but this instance starts {at} elements in, which is not a "
             f"group boundary. Raise `part=` to a multiple of the group"
         )
-    return off
+    return at + leaf.off
 
 
 def _bandable(stmt) -> bool:
@@ -696,7 +706,7 @@ def _build(compiled, stmts: list, stride: int | None = None) -> tuple:
     """
     chains, keys, span, consts = _spec(compiled, stmts, stride)
     nin = len(keys)
-    walks = [_walk(leaf) for leaf in keys]
+    walks = [_walk(compiled, leaf) for leaf in keys]
     groups = _regions(stmts)
     if not any(_folds(s) for s in stmts):
         if any(walks):
@@ -755,11 +765,18 @@ def _folded(stmts: list, span: int) -> int:
     return min(span, rows * cols)
 
 
-def _walk(leaf):
-    """A leaf's periodic read as the emitter's own spec, or None if contiguous."""
+def _walk(compiled, leaf):
+    """A leaf's periodic read as the emitter's own spec, or None if contiguous.
+
+    The buffer's LENGTH goes with it: a spread over a buffer that is exactly one
+    period is re-read from the start for every group, and one over a full-length
+    buffer advances. Only the length tells them apart.
+    """
     if isinstance(leaf, Const) or not leaf.period:
         return None
-    return Spread(int(leaf.period), int(leaf.take))
+    return Spread(
+        int(leaf.period), int(leaf.take), _held(compiled, leaf.name) - leaf.off
+    )
 
 
 def _width(stmts: list, span: int) -> int:
@@ -1253,7 +1270,7 @@ def _span(compiled, stmt, stride: int) -> int:
     room += [
         _reach(compiled, leaf) - leaf.part * stride
         for leaf in stmt.args["leaves"]
-        if isinstance(leaf, Ref)
+        if isinstance(leaf, Ref) and not _broadcast(compiled, leaf)
     ]
     return max(0, min(stride, *room))
 

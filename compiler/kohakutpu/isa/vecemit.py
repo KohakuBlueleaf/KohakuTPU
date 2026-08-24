@@ -713,11 +713,24 @@ class Spread:
 
     period: int
     take: int
+    #: Elements the buffer really holds. 0 means "at least as long as the
+    #: region", which is what a `per_group` read of a full-length buffer is.
+    held: int = 0
 
     @property
     def repeat(self) -> int:
         """Sub-rows one group's own sub-row is read for."""
         return self.period // self.take
+
+    @property
+    def wraps(self) -> bool:
+        """Whether the buffer is ONE period, so every group re-reads the same bytes.
+
+        A `repeated()` broadcast is this; a `per_group` read of a full-length
+        buffer is not. Stepping a broadcast's base per group walks off the end
+        of it -- MEASURED as 1,152 of 2,048 elements wrong, reported as success.
+        """
+        return bool(self.held) and self.held <= self.period
 
     def dims(self, batch: int) -> list:
         """``(stride, bound)`` in bytes, innermost first, for one RUN's fill.
@@ -749,15 +762,21 @@ class Spread:
         return [
             (V.WORD_BYTES, take_w),
             (0, self.repeat),
-            (take_w * self.repeat * V.WORD_BYTES, batch // self.period),
+            (
+                0 if self.wraps else take_w * self.repeat * V.WORD_BYTES,
+                batch // self.period,
+            ),
         ]
 
     def at(self, batch: int, run: int) -> int:
         """Elements into the operand that RUN `run` reads from.
 
         The GROUP START of the group that RUN holds, which is `run * batch` only
-        when a RUN covers whole groups; inside a group it stands still.
+        when a RUN covers whole groups; inside a group it stands still. A buffer
+        that IS one period stands still always -- see :attr:`wraps`.
         """
+        if self.wraps:
+            return 0
         return (run * batch // self.period) * self.period
 
 
