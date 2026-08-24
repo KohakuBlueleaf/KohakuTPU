@@ -46,6 +46,11 @@ module vec_agu #(
     reg [15:0] idx0, idx1, idx2, idx3;
     reg [2:0]  cur;
 
+    // 2 bits, because the array is [0:3] and the write is guarded on
+    // `wr_fld <= 4`. A 3-bit `wr_fld - 1` indexes it correctly and verilator
+    // still reports the width, which buries the reports that matter.
+    wire [1:0] fld_sel = wr_fld[1:0] - 2'd1;
+
     integer d, k;
     always @(posedge clk) begin
         if (rst) begin
@@ -57,10 +62,11 @@ module vec_agu #(
                 end
             end
         end else if (wr_en) begin
-            if (wr_fld == 3'd0) base[wr_ad] <= wr_val;
-            else if (wr_fld <= 3'd4) begin
-                strd[wr_ad][wr_fld - 3'd1] <= wr_val[33:16];
-                bnd[wr_ad][wr_fld - 3'd1]  <= wr_val[15:0];
+            if (wr_fld == 3'd0) begin
+                base[wr_ad] <= wr_val;
+            end else if (wr_fld <= 3'd4) begin
+                strd[wr_ad][fld_sel] <= wr_val[33:16];
+                bnd[wr_ad][fld_sel]  <= wr_val[15:0];
             end
         end
     end
@@ -146,7 +152,9 @@ module vec_agu #(
             ps2 <= {AW{1'b0}}; ps3 <= {AW{1'b0}};
             cur  <= sel;   busy <= 1'b1;
         end else if (step && busy) begin
-            if (last) busy <= 1'b0;
+            if (last) begin
+                busy <= 1'b0;
+            end
             else if (idx0 + 16'd1 < b0) begin
                 idx0 <= idx0 + 16'd1;
                 ps0  <= ps0 + {{(AW-18){cs0[17]}}, cs0};

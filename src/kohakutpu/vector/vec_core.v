@@ -86,11 +86,11 @@ module vec_core #(
     output reg  [1:0]   nd_mesh,
     output reg  [7:0]   nd_fin
 );
-    localparam [4:0] O_VCVT = 5'h12, O_VRED = 5'h13, O_VLD = 5'h14,
-                     O_VST = 5'h15, O_VBCAST = 5'h16, O_VSHUF = 5'h17,
-                     O_VSETVL = 5'h18, O_VSETMD = 5'h19, O_VSETI = 5'h1A,
-                     O_VLOOP = 5'h1B, O_VBAR = 5'h1C, O_VFILL = 5'h1D,
-                     O_VDRAIN = 5'h1E, O_VHALT = 5'h1F;
+    localparam [4:0] O_VCVT = 5'h12, O_VRED = 5'h13, O_VLD = 5'h14;
+    localparam [4:0] O_VST = 5'h15, O_VBCAST = 5'h16, O_VSHUF = 5'h17;
+    localparam [4:0] O_VSETVL = 5'h18, O_VSETMD = 5'h19, O_VSETI = 5'h1A;
+    localparam [4:0] O_VLOOP = 5'h1B, O_VBAR = 5'h1C, O_VFILL = 5'h1D;
+    localparam [4:0] O_VDRAIN = 5'h1E, O_VHALT = 5'h1F;
 
     localparam [1:0] SRC_V = 2'd0, SRC_S = 2'd1, SRC_C = 2'd2, SRC_K = 2'd3;
     localparam [1:0] M_FLAT = 2'd0, M_D2 = 2'd1, M_TREE = 2'd3;
@@ -104,27 +104,25 @@ module vec_core #(
     endfunction
     localparam [23:0] E8_ONE = 24'h3F8000;
 
-    localparam [7:0] F_DTYPE = 8'd1, F_VSRC = 8'd2, F_CHAIN = 8'd3,
-                     F_OPCODE = 8'd4, F_LEN = 8'd5, F_LOOP = 8'd6,
-                     F_VL = 8'd7, F_REDVL = 8'd8, F_CUDATA = 8'd9;
+    localparam [7:0] F_DTYPE = 8'd1, F_VSRC = 8'd2, F_CHAIN = 8'd3;
+    localparam [7:0] F_OPCODE = 8'd4, F_LEN = 8'd5, F_LOOP = 8'd6, F_VL = 8'd7;
+    localparam [7:0] F_REDVL = 8'd8, F_CUDATA = 8'd9;
 
     // URAM CANNOT DO READ_LAT=1 -- xpm_memory rejects it, so the latency is a
     // property of the primitive and the load/drain walks wait a state longer.
     localparam integer L1_LAT = (L1_PRIM == "ultra") ? 2 : 1;
     localparam integer LAW    = (L1_DEPTH <= 1) ? 1 : $clog2(L1_DEPTH);
 
-    localparam [4:0] S_IDLE = 5'd0,  S_F1 = 5'd1,   S_F2 = 5'd2,
-                     S_DEC = 5'd3,   S_EXEC = 5'd4,
-                     S_GA = 5'd5,    S_GB = 5'd6,   S_GC = 5'd7, S_GD = 5'd8,
-                     S_ALU = 5'd9,   S_RED = 5'd10, S_RDRAIN = 5'd11,
-                     S_RTAIL = 5'd12, S_RWAIT = 5'd13,
-                     S_LDA = 5'd14,  S_LDW = 5'd15, S_LDD = 5'd16,
-                     S_STR = 5'd17,  S_STW = 5'd18, S_STD = 5'd19,
-                     S_FILL = 5'd20, S_DRA = 5'd21, S_DRW = 5'd22,
-                     S_DRD = 5'd23,  S_BAR = 5'd24, S_WAITP = 5'd25,
-                     S_SETI = 5'd26, S_SETI2 = 5'd27,
-                     S_HALT = 5'd28, S_FAULT = 5'd29, S_MEM0 = 5'd30,
-                     S_AGW = 5'd31;
+    localparam [4:0] S_IDLE = 5'd0, S_F1 = 5'd1, S_F2 = 5'd2, S_DEC = 5'd3;
+    localparam [4:0] S_EXEC = 5'd4, S_GA = 5'd5, S_GB = 5'd6, S_GC = 5'd7;
+    localparam [4:0] S_GD = 5'd8, S_ALU = 5'd9, S_RED = 5'd10, S_RDRAIN = 5'd11;
+    localparam [4:0] S_RTAIL = 5'd12, S_RWAIT = 5'd13, S_LDA = 5'd14;
+    localparam [4:0] S_LDW = 5'd15, S_LDD = 5'd16, S_STR = 5'd17, S_STW = 5'd18;
+    localparam [4:0] S_STD = 5'd19, S_FILL = 5'd20, S_DRA = 5'd21;
+    localparam [4:0] S_DRW = 5'd22, S_DRD = 5'd23, S_BAR = 5'd24;
+    localparam [4:0] S_WAITP = 5'd25, S_SETI = 5'd26, S_SETI2 = 5'd27;
+    localparam [4:0] S_HALT = 5'd28, S_FAULT = 5'd29, S_MEM0 = 5'd30;
+    localparam [4:0] S_AGW = 5'd31;
     // `ag_total` is pipelined three deep in vec_agu, so a walk waits for it.
     localparam [5:0] S_MEMW1 = 6'd32, S_MEMW2 = 6'd33, S_MEMW3 = 6'd35;
     // L1's output is registered before the load converters, so a VLD chunk
@@ -269,7 +267,12 @@ module vec_core #(
     wire dt_ok = (d_dt == DT_FP16) || (d_dt == DT_FP32);
 
     wire [2:0] dep = (vmode == M_FLAT) ? 3'd1 : (vmode == M_D2) ? 3'd2 : 3'd4;
-    wire [3:0] nchunk = {1'b0, vl[7:4]} + (|vl[3:0] ? 4'd1 : 4'd0);
+    // 4 bits and it CANNOT overflow: O_VSETVL faults with F_VL unless vl is
+    // 1..128, so vl[7:4] is at most 8 and the round-up at most 8. Written as a
+    // 4-bit add rather than {1'b0,...} + 4 bits, which computed 5 bits and
+    // truncated -- harmless under the guard, but it reads as a latent overflow
+    // and verilator reported it as one.
+    wire [3:0] nchunk = vl[7:4] + {3'd0, |vl[3:0]};
 
     wire [15:0] tail_full = 16'hFFFF;
     wire [15:0] tail_part = (16'd1 << vl[3:0]) - 16'd1;
@@ -359,8 +362,9 @@ module vec_core #(
     integer bi;
     always @(*) begin
         bcast_out = 384'd0;
-        for (bi = 0; bi < 16; bi = bi + 1)
+        for (bi = 0; bi < 16; bi = bi + 1) begin
             bcast_out[bi*24 +: 24] = sreg[g_ra];
+        end
     end
 
     // ANY/ALL reduce the PREDICATE file, not the vector file: they never
@@ -372,9 +376,16 @@ module vec_core #(
     // 304.2 MHz. `vl` only moves on VSETVL, three states before any consumer.
     reg [127:0] vlmask;
     always @(posedge clk) begin
-        if (rst) vlmask <= {128{1'b1}};            // vl resets to 128
-        else     vlmask <= (vl >= 8'd128) ? {128{1'b1}}
-                                          : ((128'd1 << vl[6:0]) - 128'd1);
+        // vl resets to 128
+        if (rst) begin
+            vlmask <= {128{1'b1}};
+        end
+        else begin
+            vlmask <= (
+                (vl >= 8'd128) ? {128{1'b1}}
+                : ((128'd1 << vl[6:0]) - 128'd1)
+            );
+        end
     end
     wire p_any = |(p_bits & vlmask);
     wire p_all = ((p_bits & vlmask) == vlmask);
@@ -401,7 +412,9 @@ module vec_core #(
             cd_err <= 1'b0;
             // RESET-RISK: sreg unreset like vec_regfile. pend stays -- it is a
             // hazard counter and a stale one stalls issue for good.
-            for (ii = 0; ii < 16; ii = ii + 1) pend[ii] <= 5'd0;
+            for (ii = 0; ii < 16; ii = ii + 1) begin
+                pend[ii] <= 5'd0;
+            end
             kreg[0] <= 24'h000000; kreg[1] <= E8_ONE;
             kreg[2] <= 24'hBF8000; kreg[3] <= 24'h000000;
         end else begin
@@ -412,9 +425,15 @@ module vec_core #(
             ag_start  <= 1'b0;
             ag_step   <= 1'b0;
             l1_we     <= 1'b0;
-            if (rd_req_valid && rd_req_ready) rd_req_valid <= 1'b0;
-            if (wr_req_valid && wr_req_ready) wr_req_valid <= 1'b0;
-            if (busy) cycles <= cycles + 32'd1;
+            if (rd_req_valid && rd_req_ready) begin
+                rd_req_valid <= 1'b0;
+            end
+            if (wr_req_valid && wr_req_ready) begin
+                wr_req_valid <= 1'b0;
+            end
+            if (busy) begin
+                cycles <= cycles + 32'd1;
+            end
             cv_src <= (ls_kind == O_VCVT) ? o_f16 : l1_q;
 
             // A fill response lands where its tag says, whatever the order.
@@ -434,447 +453,482 @@ module vec_core #(
 
             // One update per register per cycle: an issue and a retire can
             // land together, and two assignments would drop one of them.
-            for (ii = 0; ii < 16; ii = ii + 1)
+            for (ii = 0; ii < 16; ii = ii + 1) begin
                 pend[ii] <= pend[ii]
                           + ((pend_inc && (g_wd == ii[3:0])) ? 5'd1 : 5'd0)
                           - ((wb_fire && (wb_vreg == ii[3:0])
                               && (pend[ii] != 5'd0)) ? 5'd1 : 5'd0);
+            end
 
             case (st)
-            // ---------------------------------------------------- fetch
-            // A CU_DATA burst this core could not place is reported at the next
-            // instruction boundary -- here if nothing was running when it
-            // arrived, in S_F1 if a kernel was. Dropping it silently is the one
-            // outcome not allowed: the data went nowhere and the kernel would
-            // read stale L1 and be plausibly wrong.
-            S_IDLE: if (start) begin
-                pc <= start_pc; im_addr <= start_pc;
-                busy <= 1'b1; halted <= 1'b0; fault <= 1'b0;
-                cycles <= 32'd0; g_have <= 3'd0; lp_act <= 1'b0;
-                if (cd_err) begin
-                    cd_err <= 1'b0; fault_code <= F_CUDATA; st <= S_FAULT;
-                end else st <= S_F2;
-            end
+                // ---------------------------------------------------- fetch
+                // A CU_DATA burst this core could not place is reported at the next
+                // instruction boundary -- here if nothing was running when it
+                // arrived, in S_F1 if a kernel was. Dropping it silently is the one
+                // outcome not allowed: the data went nowhere and the kernel would
+                // read stale L1 and be plausibly wrong.
+                S_IDLE: if (start) begin
+                    pc <= start_pc; im_addr <= start_pc;
+                    busy <= 1'b1; halted <= 1'b0; fault <= 1'b0;
+                    cycles <= 32'd0; g_have <= 3'd0; lp_act <= 1'b0;
+                    if (cd_err) begin
+                        cd_err <= 1'b0; fault_code <= F_CUDATA; st <= S_FAULT;
+                    end
+                    else begin
+                        st <= S_F2;
+                    end
+                end
 
-            // The hardware loop closes HERE, not after the case: inside the
-            // block `st` still reads its old value, so testing it there would
-            // never fire.
-            S_F1: if (cd_err) begin
-                cd_err <= 1'b0; fault_code <= F_CUDATA; st <= S_FAULT;
-            end else begin
-                if (lp_act && (pc == lp_end)) begin
-                    if (lp_cnt > 24'd1) begin
-                        lp_cnt  <= lp_cnt - 24'd1;
-                        pc      <= lp_top;
-                        im_addr <= lp_top;
-                    end else begin
-                        lp_act  <= 1'b0;
+                // The hardware loop closes HERE, not after the case: inside the
+                // block `st` still reads its old value, so testing it there would
+                // never fire.
+                S_F1: if (cd_err) begin
+                    cd_err <= 1'b0; fault_code <= F_CUDATA; st <= S_FAULT;
+                end else begin
+                    if (lp_act && (pc == lp_end)) begin
+                        if (lp_cnt > 24'd1) begin
+                            lp_cnt  <= lp_cnt - 24'd1;
+                            pc      <= lp_top;
+                            im_addr <= lp_top;
+                        end else begin
+                            lp_act  <= 1'b0;
+                            im_addr <= pc;
+                        end
+                    end
+                    else begin
                         im_addr <= pc;
                     end
-                end else im_addr <= pc;
-                st <= S_F2;
-            end
-            S_F2: st <= S_DEC;
-            S_DEC: begin ir <= im_q; st <= S_EXEC; end
+                    st <= S_F2;
+                end
+                S_F2: st <= S_DEC;
+                S_DEC: begin ir <= im_q; st <= S_EXEC; end
 
-            // ---------------------------------------------------- issue
-            S_EXEC: begin
-                pc <= pc + 9'd1;
-                ls_kind <= d_op;
-                ls_reg  <= d_vd;
-                ls_dt   <= d_dt;
-                cchunk  <= 3'd0;
-                cphase  <= 2'd0;
-                bcnt    <= 6'd0;
-                ls_hi   <= 1'b0;
-                l1_base <= d_off[LAW-1:0];
-                l1_cur  <= d_off[LAW-1:0];
-                ag_sel  <= d_ad;
-                ag_off  <= 18'd0;
+                // ---------------------------------------------------- issue
+                S_EXEC: begin
+                    pc <= pc + 9'd1;
+                    ls_kind <= d_op;
+                    ls_reg  <= d_vd;
+                    ls_dt   <= d_dt;
+                    cchunk  <= 3'd0;
+                    cphase  <= 2'd0;
+                    bcnt    <= 6'd0;
+                    ls_hi   <= 1'b0;
+                    l1_base <= d_off[LAW-1:0];
+                    l1_cur  <= d_off[LAW-1:0];
+                    ag_sel  <= d_ad;
+                    ag_off  <= 18'd0;
 
-                if (is_alu) begin
-                    g_ra <= d_va; g_rb <= d_vb; g_rc <= d_vc; g_wd <= d_vd;
-                    g_pm <= d_pm; g_pr <= d_pr; g_cmp <= is_cmp;
-                    g_op[0 +: 5] <= alu_op;
-                    g_sa[0 +: 2] <= d_sa; g_sb[0 +: 2] <= d_sb;
-                    g_sc[0 +: 2] <= d_sc;
-                    g_ka[0 +: 24] <= pick(d_sa, d_va);
-                    g_kb[0 +: 24] <= pick(d_sb, d_vb);
-                    g_kc[0 +: 24] <= pick(d_sc, d_vc);
-                    if ((d_sa == SRC_C) || (d_sb == SRC_C) || (d_sc == SRC_C)) begin
-                        fault_code <= F_CHAIN; st <= S_FAULT;
-                    end else if (dep == 3'd1) begin
-                        nbeat <= {2'd0, nchunk};
+                    if (is_alu) begin
+                        g_ra <= d_va; g_rb <= d_vb; g_rc <= d_vc; g_wd <= d_vd;
+                        g_pm <= d_pm; g_pr <= d_pr; g_cmp <= is_cmp;
+                        g_op[0 +: 5] <= alu_op;
+                        g_sa[0 +: 2] <= d_sa; g_sb[0 +: 2] <= d_sb;
+                        g_sc[0 +: 2] <= d_sc;
+                        g_ka[0 +: 24] <= pick(d_sa, d_va);
+                        g_kb[0 +: 24] <= pick(d_sb, d_vb);
+                        g_kc[0 +: 24] <= pick(d_sc, d_vc);
+                        if ((d_sa == SRC_C) || (d_sb == SRC_C) || (d_sc == SRC_C)) begin
+                            fault_code <= F_CHAIN; st <= S_FAULT;
+                        end else if (dep == 3'd1) begin
+                            nbeat <= {2'd0, nchunk};
+                            st <= S_ALU;
+                        end else begin
+                            g_have <= 3'd1;
+                            st <= S_GA;
+                        end
+                    end else begin
+                        case (d_op)
+                            O_VSETVL: begin
+                                if ((sreg[d_va] == 24'd0) || (sreg[d_va] > 24'd128)) begin
+                                    fault_code <= F_VL; st <= S_FAULT;
+                                end else begin
+                                    vl <= sreg[d_va][7:0];
+                                    st <= S_F1;
+                                end
+                            end
+                            O_VSETMD: if (pipe_empty) begin
+                                vmode <= d_va[1:0];
+                                st <= S_F1;
+                            end else begin
+                                pc <= pc;            // hold; re-enter next cycle
+                            end
+                            O_VSETI: begin im_addr <= pc + 9'd1; st <= S_SETI; end
+                            O_VLOOP: begin
+                                if (lp_act) begin
+                                    fault_code <= F_LOOP; st <= S_FAULT;
+                                end else begin
+                                    lp_act <= 1'b1;
+                                    lp_cnt <= sreg[d_va];
+                                    lp_top <= pc + 9'd1;
+                                    lp_end <= pc + 9'd1 + {5'd0, d_vb};
+                                    st <= S_F1;
+                                end
+                            end
+                            O_VRED: begin
+                                g_ra <= d_va; g_rb <= d_vb; g_rc <= d_va;
+                                // EXPSUM keeps its elementwise result, and its vector
+                                // destination rides in vb -- a unary leaf leaves the
+                                // second source free. Every other kind writes vd only.
+                                g_wd <= (d_vc[2:0] == R_EXPSUM) ? d_vb : 4'd0;
+                                g_pr <= d_pr;
+                                red_kind <= d_vc[2:0];
+                                if (d_vc[2:0] >= 3'd6) begin
+                                    sreg[d_vd] <= (d_vc[2:0] == 3'd6)
+                                                ? (p_any ? E8_ONE : 24'd0)
+                                                : (p_all ? E8_ONE : 24'd0);
+                                    st <= S_F1;
+                                end else if (|vl[3:0]) begin
+                                    // a partial chunk would feed stale slots into the
+                                    // tree, and the tree has no per-slot mask
+                                    fault_code <= F_REDVL; st <= S_FAULT;
+                                end else if (vmode != M_TREE) begin
+                                    fault_code <= F_OPCODE; st <= S_FAULT;
+                                end else begin
+                                    ls_reg <= d_vd;
+                                    nbeat  <= red_half(d_vc[2:0])
+                                            ? {1'd0, nchunk, 1'b0} : {2'd0, nchunk};
+                                    red_init <= 1'b1;
+                                    st <= S_RED;
+                                end
+                            end
+                            O_VLD, O_VST, O_VCVT, O_VSHUF, O_VBCAST: begin
+                                // VST's register field is a SOURCE, and in the
+                                // load/store encoding it sits at vd.
+                                g_ra <= (d_op == O_VST) ? d_vd : d_va;
+                                shuf_k <= sreg[d_vb][3:0];
+                                bc_to_s <= (d_op == O_VBCAST) && (d_sa != SRC_S);
+                                if ((d_op == O_VLD || d_op == O_VST || d_op == O_VCVT)
+                                    && !dt_ok) begin
+                                    fault_code <= F_DTYPE; st <= S_FAULT;
+                                end else if (!pipe_empty) begin
+                                    pc <= pc;
+                                end else begin
+                                    ag_start <= 1'b1;
+                                    ag_off   <= {{4{d_off[13]}}, d_off};
+                                    st <= S_AGW;
+                                end
+                            end
+                            O_VFILL, O_VDRAIN: begin
+                                nd_valid <= (d_op == O_VDRAIN) && d_nd;
+                                nd_x     <= d_ndx;
+                                nd_y     <= d_ndy;
+                                nd_buf   <= d_ndbuf;
+                                nd_sig   <= d_ndsig;
+                                // A response names its L1 slot through the NoC's 8-bit
+                                // txn field, so only one fill may be in flight; a
+                                // second waits rather than aliasing the first's tags.
+                                if ((d_op == O_VFILL) && (fill_out != 16'd0)) begin
+                                    pc <= pc;
+                                end else begin
+                                    ag_start <= 1'b1;
+                                    st <= S_AGW;
+                                end
+                            end
+                            O_VBAR:  st <= S_BAR;
+                            O_VHALT: st <= S_WAITP;
+                            default: begin fault_code <= F_OPCODE; st <= S_FAULT; end
+                        endcase
+                    end
+                end
+
+                // ---- gather the rest of a chain, one instruction per 4 cycles --
+                S_GA: begin im_addr <= pc; st <= S_GB; end
+                S_GB: st <= S_GC;
+                S_GC: begin ir <= im_q; st <= S_GD; end
+                S_GD: begin
+                    pc <= pc + 9'd1;
+                    g_op[g_have*5 +: 5] <= alu_op;
+                    g_sa[g_have*2 +: 2] <= d_sa;
+                    g_sb[g_have*2 +: 2] <= d_sb;
+                    g_sc[g_have*2 +: 2] <= d_sc;
+                    g_ka[g_have*24 +: 24] <= pick(d_sa, d_va);
+                    g_kb[g_have*24 +: 24] <= pick(d_sb, d_vb);
+                    g_kc[g_have*24 +: 24] <= pick(d_sc, d_vc);
+                    g_wd  <= d_vd;
+                    g_pm  <= d_pm;
+                    g_pr  <= d_pr;
+                    g_cmp <= is_cmp;
+                    if ((d_sa == SRC_V) || (d_sb == SRC_V) || (d_sc == SRC_V)) begin
+                        fault_code <= F_VSRC; st <= S_FAULT;
+                    end else if (g_have + 3'd1 == dep) begin
+                        nbeat <= {2'd0, nchunk} * {3'd0, dep};
                         st <= S_ALU;
                     end else begin
-                        g_have <= 3'd1;
+                        g_have <= g_have + 3'd1;
                         st <= S_GA;
                     end
-                end else begin
-                    case (d_op)
-                    O_VSETVL: begin
-                        if ((sreg[d_va] == 24'd0) || (sreg[d_va] > 24'd128)) begin
-                            fault_code <= F_VL; st <= S_FAULT;
-                        end else begin
-                            vl <= sreg[d_va][7:0];
-                            st <= S_F1;
-                        end
-                    end
-                    O_VSETMD: if (pipe_empty) begin
-                        vmode <= d_va[1:0];
+                end
+
+                // ---------------------------------------------------- ALU beats
+                S_ALU: begin
+                    if ((bcnt == 6'd0) && haz) begin
+                        st <= S_ALU;
+                    end else if (bcnt == nbeat) begin
+                        g_have <= 3'd0;
                         st <= S_F1;
                     end else begin
-                        pc <= pc;            // hold; re-enter next cycle
-                    end
-                    O_VSETI: begin im_addr <= pc + 9'd1; st <= S_SETI; end
-                    O_VLOOP: begin
-                        if (lp_act) begin
-                            fault_code <= F_LOOP; st <= S_FAULT;
+                        iss_valid  <= 1'b1;
+                        iss_is_cmp <= g_cmp;
+                        iss_chunk  <= cchunk;
+                        iss_phase  <= cphase;
+                        iss_tmask  <= tmask_now;
+                        iss_ra <= {g_ra, cchunk};
+                        iss_rb <= {g_rb, cchunk};
+                        iss_rc <= {g_rc, cchunk};
+                        iss_wa <= {g_wd, cchunk};
+                        bcnt <= bcnt + 6'd1;
+                        if (cphase + 2'd1 == dep[1:0] || dep == 3'd1) begin
+                            cphase <= 2'd0;
+                            cchunk <= cchunk + 3'd1;
                         end else begin
-                            lp_act <= 1'b1;
-                            lp_cnt <= sreg[d_va];
-                            lp_top <= pc + 9'd1;
-                            lp_end <= pc + 9'd1 + {5'd0, d_vb};
-                            st <= S_F1;
+                            cphase <= cphase + 2'd1;
                         end
                     end
-                    O_VRED: begin
-                        g_ra <= d_va; g_rb <= d_vb; g_rc <= d_va;
-                        // EXPSUM keeps its elementwise result, and its vector
-                        // destination rides in vb -- a unary leaf leaves the
-                        // second source free. Every other kind writes vd only.
-                        g_wd <= (d_vc[2:0] == R_EXPSUM) ? d_vb : 4'd0;
-                        g_pr <= d_pr;
-                        red_kind <= d_vc[2:0];
-                        if (d_vc[2:0] >= 3'd6) begin
-                            sreg[d_vd] <= (d_vc[2:0] == 3'd6)
-                                        ? (p_any ? E8_ONE : 24'd0)
-                                        : (p_all ? E8_ONE : 24'd0);
-                            st <= S_F1;
-                        end else if (|vl[3:0]) begin
-                            // a partial chunk would feed stale slots into the
-                            // tree, and the tree has no per-slot mask
-                            fault_code <= F_REDVL; st <= S_FAULT;
-                        end else if (vmode != M_TREE) begin
-                            fault_code <= F_OPCODE; st <= S_FAULT;
-                        end else begin
-                            ls_reg <= d_vd;
-                            nbeat  <= red_half(d_vc[2:0])
-                                    ? {1'd0, nchunk, 1'b0} : {2'd0, nchunk};
-                            red_init <= 1'b1;
-                            st <= S_RED;
-                        end
-                    end
-                    O_VLD, O_VST, O_VCVT, O_VSHUF, O_VBCAST: begin
-                        // VST's register field is a SOURCE, and in the
-                        // load/store encoding it sits at vd.
-                        g_ra <= (d_op == O_VST) ? d_vd : d_va;
-                        shuf_k <= sreg[d_vb][3:0];
-                        bc_to_s <= (d_op == O_VBCAST) && (d_sa != SRC_S);
-                        if ((d_op == O_VLD || d_op == O_VST || d_op == O_VCVT)
-                            && !dt_ok) begin
-                            fault_code <= F_DTYPE; st <= S_FAULT;
-                        end else if (!pipe_empty) begin
-                            pc <= pc;
-                        end else begin
-                            ag_start <= 1'b1;
-                            ag_off   <= {{4{d_off[13]}}, d_off};
-                            st <= S_AGW;
-                        end
-                    end
-                    O_VFILL, O_VDRAIN: begin
-                        nd_valid <= (d_op == O_VDRAIN) && d_nd;
-                        nd_x     <= d_ndx;
-                        nd_y     <= d_ndy;
-                        nd_buf   <= d_ndbuf;
-                        nd_sig   <= d_ndsig;
-                        // A response names its L1 slot through the NoC's 8-bit
-                        // txn field, so only one fill may be in flight; a
-                        // second waits rather than aliasing the first's tags.
-                        if ((d_op == O_VFILL) && (fill_out != 16'd0)) begin
-                            pc <= pc;
-                        end else begin
-                            ag_start <= 1'b1;
-                            st <= S_AGW;
-                        end
-                    end
-                    O_VBAR:  st <= S_BAR;
-                    O_VHALT: st <= S_WAITP;
-                    default: begin fault_code <= F_OPCODE; st <= S_FAULT; end
-                    endcase
                 end
-            end
 
-            // ---- gather the rest of a chain, one instruction per 4 cycles --
-            S_GA: begin im_addr <= pc; st <= S_GB; end
-            S_GB: st <= S_GC;
-            S_GC: begin ir <= im_q; st <= S_GD; end
-            S_GD: begin
-                pc <= pc + 9'd1;
-                g_op[g_have*5 +: 5] <= alu_op;
-                g_sa[g_have*2 +: 2] <= d_sa;
-                g_sb[g_have*2 +: 2] <= d_sb;
-                g_sc[g_have*2 +: 2] <= d_sc;
-                g_ka[g_have*24 +: 24] <= pick(d_sa, d_va);
-                g_kb[g_have*24 +: 24] <= pick(d_sb, d_vb);
-                g_kc[g_have*24 +: 24] <= pick(d_sc, d_vc);
-                g_wd  <= d_vd;
-                g_pm  <= d_pm;
-                g_pr  <= d_pr;
-                g_cmp <= is_cmp;
-                if ((d_sa == SRC_V) || (d_sb == SRC_V) || (d_sc == SRC_V)) begin
-                    fault_code <= F_VSRC; st <= S_FAULT;
-                end else if (g_have + 3'd1 == dep) begin
-                    nbeat <= {2'd0, nchunk} * {3'd0, dep};
-                    st <= S_ALU;
-                end else begin
-                    g_have <= g_have + 3'd1;
-                    st <= S_GA;
-                end
-            end
-
-            // ---------------------------------------------------- ALU beats
-            S_ALU: begin
-                if ((bcnt == 6'd0) && haz) begin
-                    st <= S_ALU;
-                end else if (bcnt == nbeat) begin
-                    g_have <= 3'd0;
-                    st <= S_F1;
-                end else begin
-                    iss_valid  <= 1'b1;
-                    iss_is_cmp <= g_cmp;
-                    iss_chunk  <= cchunk;
-                    iss_phase  <= cphase;
-                    iss_tmask  <= tmask_now;
-                    iss_ra <= {g_ra, cchunk};
-                    iss_rb <= {g_rb, cchunk};
-                    iss_rc <= {g_rc, cchunk};
-                    iss_wa <= {g_wd, cchunk};
-                    bcnt <= bcnt + 6'd1;
-                    if (cphase + 2'd1 == dep[1:0] || dep == 3'd1) begin
-                        cphase <= 2'd0;
-                        cchunk <= cchunk + 3'd1;
-                    end else begin
-                        cphase <= cphase + 2'd1;
+                // ---------------------------------------------------- reduction
+                S_RED: begin
+                    if (bcnt == nbeat) begin
+                        st <= S_RDRAIN;
                     end
-                end
-            end
-
-            // ---------------------------------------------------- reduction
-            S_RED: begin
-                if (bcnt == nbeat) st <= S_RDRAIN;
-                else begin
-                    iss_valid  <= 1'b1;
-                    iss_is_cmp <= 1'b0;
-                    iss_chunk  <= cchunk;
-                    iss_phase  <= cphase;
-                    iss_tmask  <= 16'hFFFF;
-                    iss_ra <= {g_ra, cchunk};
-                    iss_rb <= {g_rb, cchunk};
-                    iss_rc <= {g_ra, cchunk};
-                    iss_wa <= {g_wd, cchunk};
-                    bcnt <= bcnt + 6'd1;
-                    if (red_half(red_kind)) begin
-                        if (cphase == 2'd1) begin
-                            cphase <= 2'd0; cchunk <= cchunk + 3'd1;
-                        end else cphase <= 2'd1;
-                    end else cchunk <= cchunk + 3'd1;
-                end
-            end
-            S_RDRAIN: if (pipe_empty) begin
-                iss_valid <= 1'b1;
-                iss_tail  <= 1'b1;
-                iss_phase <= 2'd0;
-                iss_chunk <= 3'd0;
-                iss_tmask <= 16'hFFFF;
-                iss_ra <= {g_ra, 3'd0};
-                iss_rb <= {g_rb, 3'd0};
-                iss_rc <= {g_ra, 3'd0};
-                st <= S_RWAIT;
-            end
-            S_RTAIL: st <= S_RWAIT;
-            S_RWAIT: if (red_valid) begin
-                sreg[ls_reg] <= red_result;
-                st <= S_F1;
-            end
-
-            // ---------------------------------------------------- VLD
-            S_LDA: begin
-                l1_raddr <= ag_addr[LAW-1:0];
-                ag_step  <= 1'b1;
-                st <= S_LDW;
-            end
-            S_LDW: st <= S_LDQ;
-            S_LDQ: st <= (L1_LAT == 2) ? S_LDX : S_LDD;
-            S_LDX: st <= S_LDD;
-            S_LDD: begin
-                if (ls_dt == DT_FP16) begin
-                    lw_wdata <= i_f16;
-                    lw_waddr <= {ls_reg, cchunk};
-                    lw_we    <= 1'b1;
-                    if (cchunk + 3'd1 == nchunk[2:0]) st <= S_F1;
-                    else begin cchunk <= cchunk + 3'd1; st <= S_LDA; end
-                end else begin
-                    if (!ls_hi) begin
-                        ls_hold <= i_f32;
-                        ls_hi   <= 1'b1;
-                        st <= S_LDA;
-                    end else begin
-                        lw_wdata <= {i_f32, ls_hold};
-                        lw_waddr <= {ls_reg, cchunk};
-                        lw_we    <= 1'b1;
-                        ls_hi    <= 1'b0;
-                        if (cchunk + 3'd1 == nchunk[2:0]) st <= S_F1;
-                        else begin cchunk <= cchunk + 3'd1; st <= S_LDA; end
-                    end
-                end
-            end
-
-            // ------------------------------- VST / VCVT / VSHUF / VBCAST
-            S_STR: begin
-                lw_ract  <= 1'b1;
-                lw_raddr <= {g_ra, cchunk};
-                st <= S_STW;
-            end
-            S_STW: st <= S_STD;
-            // A fill response or a peer's CU_DATA owns L1's single write port,
-            // so a VST that would land on the same cycle holds instead of being
-            // silently dropped -- the case below assigns `l1_we` last and would
-            // otherwise win.
-            S_STD: if ((rr_valid || cd_valid) && (ls_kind == O_VST)) begin
-                st <= S_STD;
-            end else begin
-                case (ls_kind)
-                O_VST: begin
-                    l1_waddr <= ag_addr[LAW-1:0];
-                    ag_step  <= 1'b1;
-                    l1_we    <= 1'b1;
-                    l1_wdata <= (ls_dt == DT_FP16) ? o_f16
-                              : (ls_hi ? o_f32hi : o_f32lo);
-                end
-                O_VCVT: begin
-                    lw_wdata <= (ls_dt == DT_FP16) ? i_f16 : lw_rdata;
-                    lw_waddr <= {ls_reg, cchunk};
-                    lw_we    <= 1'b1;
-                end
-                O_VSHUF: begin
-                    lw_wdata <= shuf_out;
-                    lw_waddr <= {ls_reg, cchunk};
-                    lw_we    <= 1'b1;
-                end
-                default: begin                      // VBCAST
-                    if (bc_to_s) sreg[ls_reg] <= lw_rdata[23:0];
                     else begin
-                        lw_wdata <= bcast_out;
-                        lw_waddr <= {ls_reg, cchunk};
-                        lw_we    <= 1'b1;
+                        iss_valid  <= 1'b1;
+                        iss_is_cmp <= 1'b0;
+                        iss_chunk  <= cchunk;
+                        iss_phase  <= cphase;
+                        iss_tmask  <= 16'hFFFF;
+                        iss_ra <= {g_ra, cchunk};
+                        iss_rb <= {g_rb, cchunk};
+                        iss_rc <= {g_ra, cchunk};
+                        iss_wa <= {g_wd, cchunk};
+                        bcnt <= bcnt + 6'd1;
+                        if (red_half(red_kind)) begin
+                            if (cphase == 2'd1) begin
+                                cphase <= 2'd0; cchunk <= cchunk + 3'd1;
+                            end
+                            else begin
+                                cphase <= 2'd1;
+                            end
+                        end
+                        else begin
+                            cchunk <= cchunk + 3'd1;
+                        end
                     end
                 end
-                endcase
+                S_RDRAIN: if (pipe_empty) begin
+                    iss_valid <= 1'b1;
+                    iss_tail  <= 1'b1;
+                    iss_phase <= 2'd0;
+                    iss_chunk <= 3'd0;
+                    iss_tmask <= 16'hFFFF;
+                    iss_ra <= {g_ra, 3'd0};
+                    iss_rb <= {g_rb, 3'd0};
+                    iss_rc <= {g_ra, 3'd0};
+                    st <= S_RWAIT;
+                end
+                S_RTAIL: st <= S_RWAIT;
+                S_RWAIT: if (red_valid) begin
+                    sreg[ls_reg] <= red_result;
+                    st <= S_F1;
+                end
 
-                if ((ls_kind == O_VST) && (ls_dt == DT_FP32) && !ls_hi) begin
-                    ls_hi <= 1'b1;
+                // ---------------------------------------------------- VLD
+                S_LDA: begin
+                    l1_raddr <= ag_addr[LAW-1:0];
+                    ag_step  <= 1'b1;
+                    st <= S_LDW;
+                end
+                S_LDW: st <= S_LDQ;
+                S_LDQ: st <= (L1_LAT == 2) ? S_LDX : S_LDD;
+                S_LDX: st <= S_LDD;
+                S_LDD: begin
+                    if (ls_dt == DT_FP16) begin
+                        lw_wdata <= i_f16;
+                        lw_waddr <= {ls_reg, cchunk};
+                        lw_we    <= 1'b1;
+                        if (cchunk + 3'd1 == nchunk[2:0]) begin
+                            st <= S_F1;
+                        end
+                        else begin cchunk <= cchunk + 3'd1; st <= S_LDA; end
+                    end else begin
+                        if (!ls_hi) begin
+                            ls_hold <= i_f32;
+                            ls_hi   <= 1'b1;
+                            st <= S_LDA;
+                        end else begin
+                            lw_wdata <= {i_f32, ls_hold};
+                            lw_waddr <= {ls_reg, cchunk};
+                            lw_we    <= 1'b1;
+                            ls_hi    <= 1'b0;
+                            if (cchunk + 3'd1 == nchunk[2:0]) begin
+                                st <= S_F1;
+                            end
+                            else begin cchunk <= cchunk + 3'd1; st <= S_LDA; end
+                        end
+                    end
+                end
+
+                // ------------------------------- VST / VCVT / VSHUF / VBCAST
+                S_STR: begin
+                    lw_ract  <= 1'b1;
+                    lw_raddr <= {g_ra, cchunk};
+                    st <= S_STW;
+                end
+                S_STW: st <= S_STD;
+                // A fill response or a peer's CU_DATA owns L1's single write port,
+                // so a VST that would land on the same cycle holds instead of being
+                // silently dropped -- the case below assigns `l1_we` last and would
+                // otherwise win.
+                S_STD: if ((rr_valid || cd_valid) && (ls_kind == O_VST)) begin
                     st <= S_STD;
                 end else begin
-                    ls_hi <= 1'b0;
-                    if (bc_to_s || (cchunk + 3'd1 == nchunk[2:0])) begin
-                        lw_ract <= 1'b0;
-                        st <= S_F1;
+                    case (ls_kind)
+                        O_VST: begin
+                            l1_waddr <= ag_addr[LAW-1:0];
+                            ag_step  <= 1'b1;
+                            l1_we    <= 1'b1;
+                            l1_wdata <= (ls_dt == DT_FP16) ? o_f16
+                                      : (ls_hi ? o_f32hi : o_f32lo);
+                        end
+                        O_VCVT: begin
+                            lw_wdata <= (ls_dt == DT_FP16) ? i_f16 : lw_rdata;
+                            lw_waddr <= {ls_reg, cchunk};
+                            lw_we    <= 1'b1;
+                        end
+                        O_VSHUF: begin
+                            lw_wdata <= shuf_out;
+                            lw_waddr <= {ls_reg, cchunk};
+                            lw_we    <= 1'b1;
+                        end
+                        default: begin                      // VBCAST
+                            if (bc_to_s) begin
+                                sreg[ls_reg] <= lw_rdata[23:0];
+                            end
+                            else begin
+                                lw_wdata <= bcast_out;
+                                lw_waddr <= {ls_reg, cchunk};
+                                lw_we    <= 1'b1;
+                            end
+                        end
+                    endcase
+
+                    if ((ls_kind == O_VST) && (ls_dt == DT_FP32) && !ls_hi) begin
+                        ls_hi <= 1'b1;
+                        st <= S_STD;
                     end else begin
-                        cchunk <= cchunk + 3'd1;
-                        st <= S_STR;
+                        ls_hi <= 1'b0;
+                        if (bc_to_s || (cchunk + 3'd1 == nchunk[2:0])) begin
+                            lw_ract <= 1'b0;
+                            st <= S_F1;
+                        end else begin
+                            cchunk <= cchunk + 3'd1;
+                            st <= S_STR;
+                        end
                     end
                 end
-            end
 
-            // ---------------------------------------------------- VFILL
-            S_FILL: begin
-                if (mem_left == 32'd0) st <= S_F1;
-                else if (fill_issue) begin
-                    rd_req_valid <= 1'b1;
-                    rd_req_addr  <= ag_addr;
-                    rd_req_tag   <= l1_cur;
+                // ---------------------------------------------------- VFILL
+                S_FILL: begin
+                    if (mem_left == 32'd0) begin
+                        st <= S_F1;
+                    end
+                    else if (fill_issue) begin
+                        rd_req_valid <= 1'b1;
+                        rd_req_addr  <= ag_addr;
+                        rd_req_tag   <= l1_cur;
+                        ag_step      <= 1'b1;
+                        l1_cur       <= l1_cur + 1'b1;
+                        mem_left     <= mem_left - 32'd1;
+                    end
+                end
+
+                // ---------------------------------------------------- VDRAIN
+                S_DRA: if (mem_left == 32'd0) begin
+                    st <= S_F1;
+                end
+                       else begin
+                           l1_raddr <= l1_cur;
+                           st <= S_DRW;
+                       end
+                S_DRW: st <= (L1_LAT == 2) ? S_DRX : S_DRD;
+                S_DRX: st <= S_DRD;
+                S_DRD: if (!wr_req_valid) begin
+                    wr_req_valid <= 1'b1;
+                    wr_req_addr  <= ag_addr;
+                    wr_req_data  <= l1_q;
                     ag_step      <= 1'b1;
                     l1_cur       <= l1_cur + 1'b1;
                     mem_left     <= mem_left - 32'd1;
+                    st <= S_DRA;
                 end
-            end
 
-            // ---------------------------------------------------- VDRAIN
-            S_DRA: if (mem_left == 32'd0) st <= S_F1;
-                   else begin
-                       l1_raddr <= l1_cur;
-                       st <= S_DRW;
-                   end
-            S_DRW: st <= (L1_LAT == 2) ? S_DRX : S_DRD;
-            S_DRX: st <= S_DRD;
-            S_DRD: if (!wr_req_valid) begin
-                wr_req_valid <= 1'b1;
-                wr_req_addr  <= ag_addr;
-                wr_req_data  <= l1_q;
-                ag_step      <= 1'b1;
-                l1_cur       <= l1_cur + 1'b1;
-                mem_left     <= mem_left - 32'd1;
-                st <= S_DRA;
-            end
+                // ---------------------------------------------------- misc
+                // ag_start is still high in THIS state and the AGU latches its
+                // descriptor at the end of it, so neither ag_addr nor ag_total is
+                // trustworthy until the state after. Every walk waits here first.
+                S_AGW: st <= (ls_kind == O_VLD) ? S_LDA
+                           : ((ls_kind == O_VFILL) || (ls_kind == O_VDRAIN))
+                             ? S_MEMW1 : S_STR;
 
-            // ---------------------------------------------------- misc
-            // ag_start is still high in THIS state and the AGU latches its
-            // descriptor at the end of it, so neither ag_addr nor ag_total is
-            // trustworthy until the state after. Every walk waits here first.
-            S_AGW: st <= (ls_kind == O_VLD) ? S_LDA
-                       : ((ls_kind == O_VFILL) || (ls_kind == O_VDRAIN))
-                         ? S_MEMW1 : S_STR;
+                S_MEMW1: st <= S_MEMW2;
+                S_MEMW2: st <= S_MEMW3;
+                S_MEMW3: st <= S_MEM0;
 
-            S_MEMW1: st <= S_MEMW2;
-            S_MEMW2: st <= S_MEMW3;
-            S_MEMW3: st <= S_MEM0;
+                S_MEM0: if (ag_total > 32'd256) begin
+                    fault_code <= F_LEN; st <= S_FAULT;
+                end else begin
+                    mem_left <= ag_total;
+                    // For a peer drain the descriptor's BASE is the destination L1
+                    // offset and its bounds are the count. One CU_DATA descriptor
+                    // covers a contiguous run, so a STRIDED walk is not a peer
+                    // drain -- the sink would read it as consecutive words.
+                    //
+                    // Base [23:16] is {ack_y, ack_x}: the instruction word has one
+                    // spare bit, not eight, so the room is here and nowhere else.
 
-            S_MEM0: if (ag_total > 32'd256) begin
-                fault_code <= F_LEN; st <= S_FAULT;
-            end else begin
-                mem_left <= ag_total;
-                // For a peer drain the descriptor's BASE is the destination L1
-                // offset and its bounds are the count. One CU_DATA descriptor
-                // covers a contiguous run, so a STRIDED walk is not a peer
-                // drain -- the sink would read it as consecutive words.
-                //
-                // Base [23:16] is {ack_y, ack_x}: the instruction word has one
-                // spare bit, not eight, so the room is here and nowhere else.
+                    // PINNED, NOT ADDRESS BITS. A peer drain reinterprets the base
+                    // as this packed record, so widening AW must not move them.
+                    nd_off  <= ag_addr[15:0];
+                    nd_ack  <= ag_addr[23:16];
+                    nd_mesh <= ag_addr[25:24];
+                    nd_fin  <= ag_addr[33:26];
+                    nd_len  <= ag_total[7:0] - 8'd1;
+                    st <= (ls_kind == O_VFILL) ? S_FILL : S_DRA;
+                end
 
-                // PINNED, NOT ADDRESS BITS. A peer drain reinterprets the base
-                // as this packed record, so widening AW must not move them.
-                nd_off  <= ag_addr[15:0];
-                nd_ack  <= ag_addr[23:16];
-                nd_mesh <= ag_addr[25:24];
-                nd_fin  <= ag_addr[33:26];
-                nd_len  <= ag_total[7:0] - 8'd1;
-                st <= (ls_kind == O_VFILL) ? S_FILL : S_DRA;
-            end
-
-            S_BAR:  if (fill_out == 16'd0) st <= S_F1;
-            S_SETI: st <= S_SETI2;
-            S_SETI2: begin
-                if (d_sa == SRC_K) kreg[3] <= im_q[23:0];
-                else               sreg[d_vd] <= im_q[23:0];
-                pc <= pc + 9'd1;
-                st <= S_F1;
-            end
-            S_WAITP: if (pipe_empty && (fill_out == 16'd0)) st <= S_HALT;
-            S_HALT: begin
-                busy <= 1'b0; halted <= 1'b1;
-                st <= S_IDLE;
-            end
-            S_FAULT: begin
-                busy <= 1'b0; fault <= 1'b1;
-                st <= S_IDLE;
-            end
-            default: st <= S_FAULT;
+                S_BAR:  if (fill_out == 16'd0) begin
+                    st <= S_F1;
+                end
+                S_SETI: st <= S_SETI2;
+                S_SETI2: begin
+                    if (d_sa == SRC_K) begin
+                        kreg[3] <= im_q[23:0];
+                    end
+                    else begin
+                        sreg[d_vd] <= im_q[23:0];
+                    end
+                    pc <= pc + 9'd1;
+                    st <= S_F1;
+                end
+                S_WAITP: if (pipe_empty && (fill_out == 16'd0)) begin
+                    st <= S_HALT;
+                end
+                S_HALT: begin
+                    busy <= 1'b0; halted <= 1'b1;
+                    st <= S_IDLE;
+                end
+                S_FAULT: begin
+                    busy <= 1'b0; fault <= 1'b1;
+                    st <= S_IDLE;
+                end
+                default: st <= S_FAULT;
             endcase
 
             // LAST, so a fault arriving in the same cycle one is cleared above
             // is not the one that gets dropped.
-            if (cd_fault) cd_err <= 1'b1;
+            if (cd_fault) begin
+                cd_err <= 1'b1;
+            end
         end
     end
 

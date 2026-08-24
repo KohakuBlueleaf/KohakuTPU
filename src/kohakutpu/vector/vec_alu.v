@@ -53,9 +53,25 @@
   `define PM_INIT 1
 `endif
 
+// WHICH OPCODES A CALLER CAN ISSUE. All of them by default, so an existing
+// instantiation is unchanged; a caller whose decode cannot produce an opcode
+// sets its group to 0 and the operand network loses the sources only that
+// opcode named. REFUSING THE ENCODING STAYS THE CALLER'S JOB -- with a group
+// off, its opcode computes something arbitrary here rather than faulting.
 module vec_alu #(
     parameter integer MODEL = 0,
-    parameter integer PIPE_MUX = `PM_INIT
+    parameter integer PIPE_MUX = `PM_INIT,
+    parameter integer HAS_UNARY = 1,        // MOV, NEG, ABS
+    parameter integer HAS_FNMA  = 1,
+    parameter integer HAS_SEL   = 1,
+    // THE FOUR SEEDS, AS STRUCTURE. At 0 the range reduction, the coefficient
+    // ROM, DSP-P and their delay lines are NOT ELABORATED: a lane loses one
+    // DSP48E2 and 1.5 BRAM, measured, rather than relying on the tool tracking
+    // an opcode value set. This is what makes a quarter-rate SFU buildable --
+    // seed hardware absent from a lane that still does FMAs.
+    parameter integer HAS_POLY  = 1,
+    // vec_delay's MAX_FF: raise it where LUT binds and the flops do not.
+    parameter integer DLY_FF    = 6
 )(
     input  wire        clk,
     input  wire        rst,
@@ -97,8 +113,12 @@ module vec_alu #(
     reg [13:0] vpipe;
 
     always @(posedge clk) begin
-        if (rst) vpipe <= 14'd0;
-        else     vpipe <= {vpipe[12:0], in_valid};
+        if (rst) begin
+            vpipe <= 14'd0;
+        end
+        else begin
+            vpipe <= {vpipe[12:0], in_valid};
+        end
         s1_op <= op;
         s1_a  <= a;
         s1_b  <= b;
@@ -129,9 +149,13 @@ module vec_alu #(
     wire        cmp_nan = ra_n | rb_n;
     wire        both_z  = (cmp_a == 23'd0) && (cmp_b == 23'd0);
     wire        cmp_eq  = both_z || ((cmp_a == cmp_b) && (ra_s == s1_b[23]));
+    // ONE 23-bit chain, not two: past the equal and the NaN cases `a > b` is
+    // the complement of `a < b`, so the second comparator was the first one
+    // inverted and the negative branch is an XOR with the sign.
+    wire        cmp_ltm = (cmp_a < cmp_b);
     wire        cmp_lt  = (cmp_nan | cmp_eq) ? 1'b0
                         : (ra_s ^ s1_b[23])  ? ra_s
-                        : (ra_s ? (cmp_a > cmp_b) : (cmp_a < cmp_b));
+                        : (cmp_ltm ^ ra_s);
     wire        cmp_gt  = ~cmp_nan & ~cmp_eq & ~cmp_lt;
 
     wire pred = (s1_op == OP_CMPLT) ? cmp_lt
@@ -160,40 +184,76 @@ module vec_alu #(
     wire raD_n = raD_x &  (|raD_m);
     wire raD_i = raD_x & ~(|raD_m);
 
-    wire is_poly = (opD == OP_EXP2) | (opD == OP_LOG2)
-                 | (opD == OP_INV)  | (opD == OP_RSQRT);
+    wire is_poly = (HAS_POLY != 0)
+                 & ((opD == OP_EXP2) | (opD == OP_LOG2)
+                  | (opD == OP_INV)  | (opD == OP_RSQRT));
     wire is_cmp  = (opD == OP_CMPLT) | (opD == OP_CMPGT) | (opD == OP_CMPEQ);
+
+    // The forward declarations of the polynomial path's cross-block signals
+    // were HERE and there is no `g_poly` generate to drive them, so all ten were
+    // declared twice and xvlog refused the module -- every bench and every OOC
+    // run that touches vec_alu died on it. Each one is still declared where it
+    // is driven, below. Restore this block WITH the generate, not before it.
 
     // ---- operand selection ----------------------------------------------
     // va feeds the multiplier and the exponent path, vb is 1.0 unless this is a
     // real product, vc is the addend. Negation is a sign flip on an operand, so
     // sub and fnma need no datapath mode.
+    // The GROUPED opcodes first, then the optional ones as overrides: an arm
+    // written inside the case is built whether or not its opcode can arrive,
+    // and an override guarded by a constant is not.
+    wire sel_nz = (HAS_SEL != 0) && (|s1_c[22:0]);
+
     reg [23:0] va, vb, vc;
     always @(*) begin
         case (s1_op)
-            OP_NEG:   va = {~ra_s, s1_a[22:0]};
-            OP_ABS:   va = { 1'b0, s1_a[22:0]};
-            OP_FNMA:  va = {~ra_s, s1_a[22:0]};
             OP_MAX:   va = cmp_lt ? s1_b : s1_a;
             OP_MIN:   va = cmp_gt ? s1_b : s1_a;
-            OP_SEL:   va = (|s1_c[22:0]) ? s1_a : s1_b;
             OP_CMPLT,
             OP_CMPGT,
             OP_CMPEQ: va = pred ? E8_ONE : E8_ZERO;
             default:  va = s1_a;
         endcase
+        if (HAS_UNARY != 0) begin
+            if (s1_op == OP_NEG) begin
+                va = {~ra_s, s1_a[22:0]};
+            end
+            if (s1_op == OP_ABS) begin
+                va = { 1'b0, s1_a[22:0]};
+            end
+        end
+        if (HAS_FNMA != 0) begin
+            if (s1_op == OP_FNMA) begin
+                va = {~ra_s, s1_a[22:0]};
+            end
+        end
+        if (HAS_SEL != 0) begin
+            if (s1_op == OP_SEL) begin
+                va = sel_nz ? s1_a : s1_b;
+            end
+        end
 
         case (s1_op)
-            OP_MUL, OP_FMA, OP_FNMA: vb = s1_b;
-            default:                 vb = E8_ONE;
+            OP_MUL, OP_FMA: vb = s1_b;
+            default:        vb = E8_ONE;
         endcase
+        if (HAS_FNMA != 0) begin
+            if (s1_op == OP_FNMA) begin
+                vb = s1_b;
+            end
+        end
 
         case (s1_op)
-            OP_ADD:          vc = s1_c;
-            OP_SUB:          vc = {~s1_c[23], s1_c[22:0]};
-            OP_FMA, OP_FNMA: vc = s1_c;
-            default:         vc = E8_ZERO;
+            OP_ADD:  vc = s1_c;
+            OP_SUB:  vc = {~s1_c[23], s1_c[22:0]};
+            OP_FMA:  vc = s1_c;
+            default: vc = E8_ZERO;
         endcase
+        if (HAS_FNMA != 0) begin
+            if (s1_op == OP_FNMA) begin
+                vc = s1_c;
+            end
+        end
     end
 
     // PIPE_MUX=1 is a TIMING PROBE ONLY, one cycle off against the delay lines:
@@ -222,16 +282,26 @@ module vec_alu #(
         case (s1_op)
             OP_MAX:   va_z = cmp_lt ? s1_bz : s1_az;
             OP_MIN:   va_z = cmp_gt ? s1_bz : s1_az;
-            OP_SEL:   va_z = (|s1_c[22:0]) ? s1_az : s1_bz;
             OP_CMPLT,
             OP_CMPGT,
             OP_CMPEQ: va_z = ~pred;
             default:  va_z = s1_az;
         endcase
+        if (HAS_SEL != 0) begin
+            if (s1_op == OP_SEL) begin
+                va_z = sel_nz ? s1_az : s1_bz;
+            end
+        end
+
         case (s1_op)
-            OP_MUL, OP_FMA, OP_FNMA: vb_z = s1_bz;
-            default:                 vb_z = 1'b0;
+            OP_MUL, OP_FMA: vb_z = s1_bz;
+            default:        vb_z = 1'b0;
         endcase
+        if (HAS_FNMA != 0) begin
+            if (s1_op == OP_FNMA) begin
+                vb_z = s1_bz;
+            end
+        end
     end
 
     // A zero factor must not let a large exponent drag the addend out of range,
@@ -276,40 +346,53 @@ module vec_alu #(
     end
 
     always @(*) begin
-        case (opD)
-            OP_EXP2: begin
-                // e_a > 134 is |x| >= 128, which leaves E8's exponent range in
-                // one direction or the other; which one is the sign of x.
-                spec_nan_c  = raD_n;
-                spec_inf_c  = ~raD_n & ~raD_s & (raD_i | (raD_e > 8'd134));
-                spec_zero_c = ~raD_n &  raD_s & (raD_i | (raD_e > 8'd134));
-                spec_sign_c = 1'b0;
-            end
-            OP_LOG2: begin
-                spec_nan_c  = raD_n | (raD_s & ~raD_z);
-                spec_inf_c  = ~raD_n & ~(raD_s & ~raD_z) & (raD_i | raD_z);
-                spec_zero_c = 1'b0;
-                spec_sign_c = raD_z;                    // log2(0) = -inf
-            end
-            OP_INV: begin
-                spec_nan_c  = raD_n;
-                spec_inf_c  = ~raD_n & raD_z;
-                spec_zero_c = ~raD_n & raD_i;
-                spec_sign_c = raD_s;
-            end
-            OP_RSQRT: begin
-                spec_nan_c  = raD_n | (raD_s & ~raD_z);
-                spec_inf_c  = ~raD_n & ~(raD_s & ~raD_z) & raD_z;
-                spec_zero_c = ~raD_n & ~(raD_s & ~raD_z) & raD_i;
-                spec_sign_c = 1'b0;
-            end
-            default: begin                            // the FMA family
-                spec_nan_c  = f_nan;
-                spec_inf_c  = f_inf;
-                spec_zero_c = 1'b0;
-                spec_sign_c = p_inf ? sign_ab : vcU[23];
-            end
-        endcase
+        if (HAS_POLY == 0) begin                      // the FMA family, alone
+            spec_nan_c  = f_nan;
+            spec_inf_c  = f_inf;
+            spec_zero_c = 1'b0;
+            spec_sign_c = p_inf ? sign_ab : vcU[23];
+        end else begin
+            case (opD)
+                OP_EXP2: begin
+                    // e_a > 134 is |x| >= 128, which leaves E8's exponent range
+                    // in one direction or the other; which one is the sign of x.
+                    spec_nan_c  = raD_n;
+                    spec_inf_c  = ~raD_n & ~raD_s & (raD_i | (raD_e > 8'd134));
+                    spec_zero_c = ~raD_n &  raD_s & (raD_i | (raD_e > 8'd134));
+                    spec_sign_c = 1'b0;
+                end
+                OP_LOG2: begin
+                    spec_nan_c  = raD_n | (raD_s & ~raD_z);
+                    spec_inf_c  = ~raD_n & ~(raD_s & ~raD_z) & (raD_i | raD_z);
+                    spec_zero_c = 1'b0;
+                    spec_sign_c = raD_z;                // log2(0) = -inf
+                end
+                OP_INV: begin
+                    spec_nan_c  = raD_n;
+                    spec_inf_c  = ~raD_n & raD_z;
+                    spec_zero_c = ~raD_n & raD_i;
+                    spec_sign_c = raD_s;
+                end
+                OP_RSQRT: begin
+                    spec_nan_c  = raD_n | (raD_s & ~raD_z);
+                    spec_inf_c  = ~raD_n & ~(raD_s & ~raD_z) & raD_z;
+                    spec_zero_c = ~raD_n & ~(raD_s & ~raD_z) & raD_i;
+                    // rsqrt(-0) IS -inf: IEEE gives sqrt(+-0) = +-0, so
+                    // 1/sqrt(-0) is 1/-0. This was 1'b0 and returned +inf, while
+                    // OP_INV above takes the same sign from `raD_s` and got
+                    // inv(-0) right -- the two seeds contradicting each other is
+                    // what gave it away. Only -0 reaches this, and it always
+                    // lands on `spec_inf`.
+                    spec_sign_c = raD_s & raD_z;
+                end
+                default: begin                          // the FMA family
+                    spec_nan_c  = f_nan;
+                    spec_inf_c  = f_inf;
+                    spec_zero_c = 1'b0;
+                    spec_sign_c = p_inf ? sign_ab : vcU[23];
+                end
+            endcase
+        end
     end
 
     // ---- exp2 range reduction, part 1 : the shift ------------------------
@@ -338,12 +421,12 @@ module vec_alu #(
     wire [14:0] r2_m;
     wire [7:0]  r2_e;
     wire        r2_s, r2_exp2, r2_rsq;
-    vec_delay #(.W(26), .D(1)) u_d_rr (.clk(clk), .d(rr_out), .q(r2_out));
-    vec_delay #(.W(15), .D(1)) u_d_rm (.clk(clk), .d(raD_m),  .q(r2_m));
-    vec_delay #(.W(8),  .D(1)) u_d_re (.clk(clk), .d(raD_e),  .q(r2_e));
-    vec_delay #(.W(1),  .D(1)) u_d_rs (.clk(clk), .d(raD_s),  .q(r2_s));
-    vec_delay #(.W(1),  .D(1)) u_d_x2 (.clk(clk), .d(opD == OP_EXP2),  .q(r2_exp2));
-    vec_delay #(.W(1),  .D(1)) u_d_rq (.clk(clk), .d(opD == OP_RSQRT), .q(r2_rsq));
+    vec_delay #(.MAX_FF(DLY_FF), .W(26), .D(1)) u_d_rr (.clk(clk), .d(rr_out), .q(r2_out));
+    vec_delay #(.MAX_FF(DLY_FF), .W(15), .D(1)) u_d_rm (.clk(clk), .d(raD_m),  .q(r2_m));
+    vec_delay #(.MAX_FF(DLY_FF), .W(8),  .D(1)) u_d_re (.clk(clk), .d(raD_e),  .q(r2_e));
+    vec_delay #(.MAX_FF(DLY_FF), .W(1),  .D(1)) u_d_rs (.clk(clk), .d(raD_s),  .q(r2_s));
+    vec_delay #(.MAX_FF(DLY_FF), .W(1),  .D(1)) u_d_x2 (.clk(clk), .d(opD == OP_EXP2),  .q(r2_exp2));
+    vec_delay #(.MAX_FF(DLY_FF), .W(1),  .D(1)) u_d_rq (.clk(clk), .d(opD == OP_RSQRT), .q(r2_rsq));
 
     // Round and negate in PARALLEL, not in series: -(R+g) is ~R + ~g for a
     // one-bit g. Negating the whole s8.17 word IS the floor/frac split for a
@@ -379,7 +462,7 @@ module vec_alu #(
     // The two fields cannot collide: the low one spans [133, 892], so it never
     // carries into bit 12 and never borrows out of bit 0.
     wire [7:0] d2_ec;
-    vec_delay #(.W(8), .D(1)) u_d_ec (.clk(clk), .d(vc_e), .q(d2_ec));
+    vec_delay #(.MAX_FF(DLY_FF), .W(8), .D(1)) u_d_ec (.clk(clk), .d(vc_e), .q(d2_ec));
 
     wire signed [47:0] dspe_p;
     vec_dsp #(.PREADD(1), .MODEL(MODEL)) u_dsp_e (
@@ -395,11 +478,11 @@ module vec_alu #(
     wire [11:0] d3_u;
     wire        d3_ident;
     wire [7:0]  d3_ea;
-    vec_delay #(.W(2),  .D(1)) u_d_fs (.clk(clk), .d(fsel),     .q(d2_fsel));
-    vec_delay #(.W(2),  .D(1)) u_d_fs3(.clk(clk), .d(d2_fsel),  .q(d3_fsel));
-    vec_delay #(.W(12), .D(1)) u_d_u3 (.clk(clk), .d(tab_u),    .q(d3_u));
-    vec_delay #(.W(1),  .D(1)) u_d_id (.clk(clk), .d(tab_ident), .q(d3_ident));
-    vec_delay #(.W(8),  .D(2)) u_d_ea (.clk(clk), .d(raD_e),    .q(d3_ea));
+    vec_delay #(.MAX_FF(DLY_FF), .W(2),  .D(1)) u_d_fs (.clk(clk), .d(fsel),     .q(d2_fsel));
+    vec_delay #(.MAX_FF(DLY_FF), .W(2),  .D(1)) u_d_fs3(.clk(clk), .d(d2_fsel),  .q(d3_fsel));
+    vec_delay #(.MAX_FF(DLY_FF), .W(12), .D(1)) u_d_u3 (.clk(clk), .d(tab_u),    .q(d3_u));
+    vec_delay #(.MAX_FF(DLY_FF), .W(1),  .D(1)) u_d_id (.clk(clk), .d(tab_ident), .q(d3_ident));
+    vec_delay #(.MAX_FF(DLY_FF), .W(8),  .D(2)) u_d_ea (.clk(clk), .d(raD_e),    .q(d3_ea));
 
     // u_d_ix is GONE: the ROM is synchronous, so its own address register is
     // that stage. tab_idx goes in raw and c0/c1/c2 still land on cycle 3.
@@ -419,7 +502,7 @@ module vec_alu #(
 
     wire signed [47:0] dspp_p;
     wire signed [21:0] d4_c1;
-    vec_delay #(.W(22), .D(1)) u_d_c1 (.clk(clk), .d(tc1), .q(d4_c1));
+    vec_delay #(.MAX_FF(DLY_FF), .W(22), .D(1)) u_d_c1 (.clk(clk), .d(tc1), .q(d4_c1));
 
     // (c1 << 16) + 2^15 is a CONCATENATION, not an add: the low sixteen bits of
     // the shifted coefficient are zero, so the rounding constant is simply bit
@@ -442,13 +525,13 @@ module vec_alu #(
     wire        d4_poly, d4_cz;
     wire [8:0]  d4_k;
     wire [9:0]  d4_rsk;
-    vec_delay #(.W(8),  .D(3)) u_d_ec4 (.clk(clk), .d(vc_e),   .q(d4_ec));
-    vec_delay #(.W(8),  .D(3)) u_d_ea4 (.clk(clk), .d(raD_e),  .q(d4_ea));
-    vec_delay #(.W(2),  .D(3)) u_d_fs4 (.clk(clk), .d(fsel),   .q(d4_fsel));
-    vec_delay #(.W(1),  .D(3)) u_d_pl4 (.clk(clk), .d(is_poly), .q(d4_poly));
-    vec_delay #(.W(1),  .D(3)) u_d_cz4 (.clk(clk), .d(vc_z),   .q(d4_cz));
-    vec_delay #(.W(9),  .D(2)) u_d_k4  (.clk(clk), .d(exp2_k), .q(d4_k));
-    vec_delay #(.W(10), .D(3)) u_d_rk4 (.clk(clk), .d(rs_k),   .q(d4_rsk));
+    vec_delay #(.MAX_FF(DLY_FF), .W(8),  .D(3)) u_d_ec4 (.clk(clk), .d(vc_e),   .q(d4_ec));
+    vec_delay #(.MAX_FF(DLY_FF), .W(8),  .D(3)) u_d_ea4 (.clk(clk), .d(raD_e),  .q(d4_ea));
+    vec_delay #(.MAX_FF(DLY_FF), .W(2),  .D(3)) u_d_fs4 (.clk(clk), .d(fsel),   .q(d4_fsel));
+    vec_delay #(.MAX_FF(DLY_FF), .W(1),  .D(3)) u_d_pl4 (.clk(clk), .d(is_poly), .q(d4_poly));
+    vec_delay #(.MAX_FF(DLY_FF), .W(1),  .D(3)) u_d_cz4 (.clk(clk), .d(vc_z),   .q(d4_cz));
+    vec_delay #(.MAX_FF(DLY_FF), .W(9),  .D(2)) u_d_k4  (.clk(clk), .d(exp2_k), .q(d4_k));
+    vec_delay #(.MAX_FF(DLY_FF), .W(10), .D(3)) u_d_rk4 (.clk(clk), .d(rs_k),   .q(d4_rsk));
 
     wire signed [12:0] s_raw = $signed({1'b0, dspe_p[11:0]}) - 13'sd495;
     wire        byp   = s_raw[12] & ~d4_cz;                 // s_raw < 0
@@ -479,8 +562,8 @@ module vec_alu #(
     // product is exactly the 48 bits the C port has.
     wire [15:0] d5_gc;
     wire [6:0]  d5_s;
-    vec_delay #(.W(16), .D(4)) u_d_gc (.clk(clk), .d(vc_g),  .q(d5_gc));
-    vec_delay #(.W(7),  .D(1)) u_d_s  (.clk(clk), .d(s_amt), .q(d5_s));
+    vec_delay #(.MAX_FF(DLY_FF), .W(16), .D(4)) u_d_gc (.clk(clk), .d(vc_g),  .q(d5_gc));
+    vec_delay #(.MAX_FF(DLY_FF), .W(7),  .D(1)) u_d_s  (.clk(clk), .d(s_amt), .q(d5_s));
 
     wire [47:0] algn_in  = {d5_gc, 32'b0};
     wire [47:0] algn_out = algn_in >> d5_s;
@@ -500,12 +583,12 @@ module vec_alu #(
     wire [15:0] d7_ga, d7_gb;
     wire [11:0] d7_u;
     wire        d7_poly, d7_byp;
-    vec_delay #(.W(22), .D(1)) u_d_h  (.clk(clk), .d(poly_h),  .q(d7_h));
-    vec_delay #(.W(16), .D(6)) u_d_ga (.clk(clk), .d(pz ? 16'd0 : va_g), .q(d7_ga));
-    vec_delay #(.W(16), .D(6)) u_d_gb (.clk(clk), .d(vb_g),    .q(d7_gb));
-    vec_delay #(.W(12), .D(5)) u_d_u7 (.clk(clk), .d(tab_u),   .q(d7_u));
-    vec_delay #(.W(1),  .D(6)) u_d_pl7(.clk(clk), .d(is_poly), .q(d7_poly));
-    vec_delay #(.W(1),  .D(3)) u_d_by7(.clk(clk), .d(byp),     .q(d7_byp));
+    vec_delay #(.MAX_FF(DLY_FF), .W(22), .D(1)) u_d_h  (.clk(clk), .d(poly_h),  .q(d7_h));
+    vec_delay #(.MAX_FF(DLY_FF), .W(16), .D(6)) u_d_ga (.clk(clk), .d(pz ? 16'd0 : va_g), .q(d7_ga));
+    vec_delay #(.MAX_FF(DLY_FF), .W(16), .D(6)) u_d_gb (.clk(clk), .d(vb_g),    .q(d7_gb));
+    vec_delay #(.MAX_FF(DLY_FF), .W(12), .D(5)) u_d_u7 (.clk(clk), .d(tab_u),   .q(d7_u));
+    vec_delay #(.MAX_FF(DLY_FF), .W(1),  .D(6)) u_d_pl7(.clk(clk), .d(is_poly), .q(d7_poly));
+    vec_delay #(.MAX_FF(DLY_FF), .W(1),  .D(3)) u_d_by7(.clk(clk), .d(byp),     .q(d7_byp));
 
     wire signed [29:0] dspm_a = d7_poly ? {{8{d7_h[21]}}, d7_h} : {14'b0, d7_gb};
     wire signed [17:0] dspm_b = d7_poly ? {6'b0, d7_u}
@@ -519,10 +602,10 @@ module vec_alu #(
     wire [47:0] d8_algn;
     wire signed [29:0] d8_c0;
     wire        d8_poly, d8_neg;
-    vec_delay #(.W(48), .D(3)) u_d_al (.clk(clk), .d(algn_out), .q(d8_algn));
-    vec_delay #(.W(30), .D(5)) u_d_c0 (.clk(clk), .d(c0_full),  .q(d8_c0));
-    vec_delay #(.W(1),  .D(7)) u_d_pl8(.clk(clk), .d(is_poly),  .q(d8_poly));
-    vec_delay #(.W(1),  .D(7)) u_d_ng8(.clk(clk), .d(fma_neg),  .q(d8_neg));
+    vec_delay #(.MAX_FF(DLY_FF), .W(48), .D(3)) u_d_al (.clk(clk), .d(algn_out), .q(d8_algn));
+    vec_delay #(.MAX_FF(DLY_FF), .W(30), .D(5)) u_d_c0 (.clk(clk), .d(c0_full),  .q(d8_c0));
+    vec_delay #(.MAX_FF(DLY_FF), .W(1),  .D(7)) u_d_pl8(.clk(clk), .d(is_poly),  .q(d8_poly));
+    vec_delay #(.MAX_FF(DLY_FF), .W(1),  .D(7)) u_d_ng8(.clk(clk), .d(fma_neg),  .q(d8_neg));
 
     wire signed [47:0] dspm_p;
     vec_dsp #(.PREADD(0), .MODEL(MODEL)) u_dsp_m (
@@ -544,16 +627,16 @@ module vec_alu #(
     wire [1:0]  dA_fsel;
     wire        dA_ssign;
     wire signed [11:0] dA_eb;
-    vec_delay #(.W(1),  .D(9)) u_d_plA(.clk(clk), .d(is_poly), .q(dA_poly));
-    vec_delay #(.W(1),  .D(9)) u_d_ngA(.clk(clk), .d(fma_neg), .q(dA_neg));
-    vec_delay #(.W(1),  .D(9)) u_d_sbA(.clk(clk), .d(sign_ab), .q(dA_sab));
-    vec_delay #(.W(1),  .D(9)) u_d_scA(.clk(clk), .d(vcU[23]),  .q(dA_scc));
+    vec_delay #(.MAX_FF(DLY_FF), .W(1),  .D(9)) u_d_plA(.clk(clk), .d(is_poly), .q(dA_poly));
+    vec_delay #(.MAX_FF(DLY_FF), .W(1),  .D(9)) u_d_ngA(.clk(clk), .d(fma_neg), .q(dA_neg));
+    vec_delay #(.MAX_FF(DLY_FF), .W(1),  .D(9)) u_d_sbA(.clk(clk), .d(sign_ab), .q(dA_sab));
+    vec_delay #(.MAX_FF(DLY_FF), .W(1),  .D(9)) u_d_scA(.clk(clk), .d(vcU[23]),  .q(dA_scc));
     // D one shorter: spec_* is now registered, so this line gives back the flop.
-    vec_delay #(.W(1),  .D(8)) u_d_ssA(.clk(clk), .d(spec_sign), .q(dA_ssign));
-    vec_delay #(.W(2),  .D(9)) u_d_fsA(.clk(clk), .d(fsel),    .q(dA_fsel));
-    vec_delay #(.W(1),  .D(6)) u_d_snA(.clk(clk), .d(|s_amt),  .q(dA_snz));
-    vec_delay #(.W(1),  .D(5)) u_d_stA(.clk(clk), .d(algn_stk), .q(dA_stk));
-    vec_delay #(.W(12), .D(6)) u_d_ebA(.clk(clk), .d(ebase),   .q(dA_eb));
+    vec_delay #(.MAX_FF(DLY_FF), .W(1),  .D(8)) u_d_ssA(.clk(clk), .d(spec_sign), .q(dA_ssign));
+    vec_delay #(.MAX_FF(DLY_FF), .W(2),  .D(9)) u_d_fsA(.clk(clk), .d(fsel),    .q(dA_fsel));
+    vec_delay #(.MAX_FF(DLY_FF), .W(1),  .D(6)) u_d_snA(.clk(clk), .d(|s_amt),  .q(dA_snz));
+    vec_delay #(.MAX_FF(DLY_FF), .W(1),  .D(5)) u_d_stA(.clk(clk), .d(algn_stk), .q(dA_stk));
+    vec_delay #(.MAX_FF(DLY_FF), .W(12), .D(6)) u_d_ebA(.clk(clk), .d(ebase),   .q(dA_eb));
 
     wire        res_neg  = ~dA_poly & dA_neg & dA_snz & dspm_p[47];
     wire [47:0] fma_mag  = res_neg ? {15'b0, (~dspm_p[32:0] + 33'd1)} : dspm_p;
@@ -617,14 +700,14 @@ module vec_alu #(
                              + (rcarry ? 12'sd1 : 12'sd0);
 
     wire d12_nan, d12_inf, d12_zero, d12_ssign, d12_pred, d12_canc;
-    vec_delay #(.W(1), .D(12)) u_d_can (.clk(clk), .d(cancels),   .q(d12_canc));
-    vec_delay #(.W(1), .D(11)) u_d_nan (.clk(clk), .d(spec_nan),  .q(d12_nan));
-    vec_delay #(.W(1), .D(11)) u_d_inf (.clk(clk), .d(spec_inf),  .q(d12_inf));
-    vec_delay #(.W(1), .D(11)) u_d_zro (.clk(clk), .d(spec_zero), .q(d12_zero));
+    vec_delay #(.MAX_FF(DLY_FF), .W(1), .D(12)) u_d_can (.clk(clk), .d(cancels),   .q(d12_canc));
+    vec_delay #(.MAX_FF(DLY_FF), .W(1), .D(11)) u_d_nan (.clk(clk), .d(spec_nan),  .q(d12_nan));
+    vec_delay #(.MAX_FF(DLY_FF), .W(1), .D(11)) u_d_inf (.clk(clk), .d(spec_inf),  .q(d12_inf));
+    vec_delay #(.MAX_FF(DLY_FF), .W(1), .D(11)) u_d_zro (.clk(clk), .d(spec_zero), .q(d12_zero));
     // 11 like nan/inf/zero: spec_sign is registered too, and at 12 it arrived a
     // cycle late -- infinity and zero came out with the wrong sign.
-    vec_delay #(.W(1), .D(11)) u_d_ssg (.clk(clk), .d(spec_sign), .q(d12_ssign));
-    vec_delay #(.W(1), .D(12)) u_d_prd (.clk(clk), .d(predD & is_cmp), .q(d12_pred));
+    vec_delay #(.MAX_FF(DLY_FF), .W(1), .D(11)) u_d_ssg (.clk(clk), .d(spec_sign), .q(d12_ssign));
+    vec_delay #(.MAX_FF(DLY_FF), .W(1), .D(12)) u_d_prd (.clk(clk), .d(predD & is_cmp), .q(d12_pred));
 
     always @(posedge clk) begin
         // `out`/`out_pred` are not reset: `out_valid` qualifies them, and the
@@ -634,13 +717,27 @@ module vec_alu #(
         end else begin
             out_valid <= (PIPE_MUX != 0) ? vpipe[13] : vpipe[12];
             out_pred  <= d12_pred;
-            if (d12_nan)                 out <= E8_NAN;
-            else if (d12_inf)            out <= {d12_ssign, 8'hFF, 15'd0};
-            else if (d12_zero)           out <= {d12_ssign, 23'd0};
-            else if (~s12_nz)            out <= {s12_sign & ~d12_canc, 23'd0};
-            else if (e_fin >= 12'sd255)  out <= {s12_sign, 8'hFF, 15'd0};
-            else if (e_fin <= 12'sd0)    out <= {s12_sign, 23'd0};
-            else                         out <= {s12_sign, e_fin[7:0], frac};
+            if (d12_nan) begin
+                out <= E8_NAN;
+            end
+            else if (d12_inf) begin
+                out <= {d12_ssign, 8'hFF, 15'd0};
+            end
+            else if (d12_zero) begin
+                out <= {d12_ssign, 23'd0};
+            end
+            else if (~s12_nz) begin
+                out <= {s12_sign & ~d12_canc, 23'd0};
+            end
+            else if (e_fin >= 12'sd255) begin
+                out <= {s12_sign, 8'hFF, 15'd0};
+            end
+            else if (e_fin <= 12'sd0) begin
+                out <= {s12_sign, 23'd0};
+            end
+            else begin
+                out <= {s12_sign, e_fin[7:0], frac};
+            end
         end
     end
 
