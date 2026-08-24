@@ -139,6 +139,14 @@ MAG round trip neither counter sees.
 stage barrier and every fill that misses. Without it, two of the three ways to
 measure this machine say fusing is worse.
 
+**The machinery for that ask now exists, and is pointed the other way.**
+`kohakutpu.cost` prices data movement in `data-movement-problem.md` §5 credits —
+`move(nbytes, tier, walk, hops)` is the primitive, and `credits()` walks a
+compilation's byte-order CONVERSIONS with it. A stage barrier is the same
+question with a different set of bytes: result out, result back, at `M`
+sequential. What is missing is the accounting of which bytes a barrier moves,
+not the model that would price them.
+
 ## 9. A symbolic loop index has no modulo
 
 `causal` with GQA needs key block `0..(i mod blocks_per_group)` for query block

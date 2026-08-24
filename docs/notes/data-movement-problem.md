@@ -100,6 +100,14 @@ with counts `c_k ≥ 0` and **signed** strides `s_k`. Rules:
 - **A source stride of `0` broadcasts** that axis.
 - Movement is word-granular; a misaligned destination is an error.
 
+*One exception, in the instance this note is written against: a move that also
+converts format inverts the first rule, because the entry size is the
+converter's rather than the mover's — the SOURCE defines the iteration space and
+the destination steps once per entry. That also costs it the bound axes, since a
+padded element issues no read and the converter would wait for a beat that never
+comes. It does not change anything below: a converting move is still one affine
+map, and the analysis in §4 onward is about the map.*
+
 Therefore: **the set of one-pass transformations is exactly the set expressible
 as a single affine map between index spaces of rank ≤ `d_max`.**
 
@@ -276,6 +284,13 @@ cheap local passes may beat one expensive global one.
 3. **Shard-axis invariants.** Formalise "the shard axis survives the layout
    change". This predicts *zero* link credits and is the single highest-value
    compile-time test.
+
+   *Partly answered in the instance, and the answer is a computation rather than
+   a theorem: `kohakutpu.cost.link_credits` walks every conversion a compilation
+   implies and returns the cross-unit credits at a given shard count, and
+   `isa.relayout.crossing` decides per conversion whether a shard's words stay
+   within it. Zero is the survival case. What is still open is the
+   CHARACTERISATION — a test on `(L, π)` rather than a walk over the words.*
 4. **Intermediate layouts.** When is a deliberately non-final intermediate
    strictly cheaper? Both the `d_max` bound and the `30:1` penalty on
    non-sequential slow memory suggest it often is, but there is no theory for
