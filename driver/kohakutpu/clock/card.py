@@ -44,6 +44,7 @@ def _is_duty(off: int) -> bool:
         and (off - 0x210) // OUT_STRIDE <= OUT_MAX
     )
 
+
 BOARDS = Path(__file__).resolve().parents[3] / "boards"
 
 
@@ -122,7 +123,11 @@ class MeshClocks:
     def set(self, name: str, mhz: float, timeout: float = 2.0) -> float:
         """Retune ONE component to at most `mhz`. Returns the exact rate."""
         k = self._div_for(name, mhz)
-        write32(self.t, self.base + reg_clkout(self.outputs[name]), k)
+        # Through `_write_cfg` like every other divider write in this class: a
+        # CLKOUT divider shares its 64-bit word with a duty register, and a bare
+        # 32-bit write drops the other half. This line called an unimported
+        # `write32` and raised NameError, so `set()` had never once run.
+        self._write_cfg(self.base + reg_clkout(self.outputs[name]), k)
         self.load(timeout)
         got = self.read(name)
         if abs(got - self.vco / k) > 1e-6:
@@ -160,8 +165,9 @@ class MeshClocks:
             )
         return best[1], best[2]
 
-    def set_isolated(self, name: str, mhz: float, others: dict,
-                     timeout: float = 2.0) -> dict:
+    def set_isolated(
+        self, name: str, mhz: float, others: dict, timeout: float = 2.0
+    ) -> dict:
         """One output at exactly `mhz`, the rest as near `others` as the VCO
         allows, in one LOAD. Returns every output's exact rate."""
         m, ks = self.plan_isolated(name, mhz, others)
