@@ -103,6 +103,9 @@ ignore = ["B008", "C408"]
 # alternative is a suite that stops at the first one and names only it.
 "compiler/tests/*" = ["BLE001"]
 "driver/tests/*" = ["BLE001"]
+# RUF059: `B, C, H, W = x.shape` names the layout. Writing `_, _, H, W` to
+# satisfy the rule deletes the one thing that line is there to say.
+"demos/*" = ["RUF059"]
 
 [tool.pytest.ini_options]
 # Both test roots are packages named `tests`, so the default prepend mode
