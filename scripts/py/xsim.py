@@ -1190,17 +1190,17 @@ PE_RV32 = [
     # The DSP extension. Parsed everywhere, instantiated only at SIMD_EN=1 --
     # the same shape as the matmul pump hierarchy, and the reason the base
     # configuration stays bit-identical while the sources are always present.
-    "src/kohakuaccel/pe/rv32/simd/khs_scalar_decode.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_mul.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_padd32.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_pshift32.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_lane.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_perm.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_reduce.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_vregfile.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_vspad.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_falu.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_unit.v",
+    "src/kohakumpe/simd/khs_scalar_decode.v",
+    "src/kohakumpe/simd/khs_mul.v",
+    "src/kohakumpe/simd/khs_padd32.v",
+    "src/kohakumpe/simd/khs_pshift32.v",
+    "src/kohakumpe/simd/khs_lane.v",
+    "src/kohakumpe/simd/khs_perm.v",
+    "src/kohakumpe/simd/khs_reduce.v",
+    "src/kohakumpe/simd/khs_vregfile.v",
+    "src/kohakumpe/simd/khs_vspad.v",
+    "src/kohakumpe/simd/khs_falu.v",
+    "src/kohakumpe/simd/khs_unit.v",
     "src/kohakuaccel/pe/rv32/rv_pe.v",
 ]
 
@@ -1416,7 +1416,7 @@ PE_KHG = PE_SYS + [
     "src/kohakutpu/vector/vec_tables.v",
     "src/kohakutpu/vector/vec_cvt.v",
     "src/kohakutpu/vector/vec_alu.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_float_lane.v",
+    "src/kohakumpe/simd/khs_float_lane.v",
     "src/kohakumpe/simt/kht_fpu.v",
     "src/kohakumpe/simt/kht_imul.v",
     "src/kohakumpe/simt/kht_valu.v",
@@ -1436,24 +1436,24 @@ BENCHES["kht_sys"] = ("kht_sys_tb", PE_KHG + ["tests/pe/tb/kht_sys_tb.v"])
 # host is an AXI master on MAG's slaves, which is the only way in on the card.
 # The DSP files that PE_KHG does not already carry are appended, not repeated.
 PE_HET = [f for f in PE_KHG if f not in ("tests/pe/tb/kht_mesh.v",)] + [
-    "src/kohakuaccel/pe/rv32/simd/khs_facc.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_ffold.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_mul.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_padd32.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_pshift32.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_lane.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_perm.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_reduce.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_vregfile.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_vspad.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_falu.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_unit.v",
+    "src/kohakumpe/simd/khs_facc.v",
+    "src/kohakumpe/simd/khs_ffold.v",
+    "src/kohakumpe/simd/khs_mul.v",
+    "src/kohakumpe/simd/khs_padd32.v",
+    "src/kohakumpe/simd/khs_pshift32.v",
+    "src/kohakumpe/simd/khs_lane.v",
+    "src/kohakumpe/simd/khs_perm.v",
+    "src/kohakumpe/simd/khs_reduce.v",
+    "src/kohakumpe/simd/khs_vregfile.v",
+    "src/kohakumpe/simd/khs_vspad.v",
+    "src/kohakumpe/simd/khs_falu.v",
+    "src/kohakumpe/simd/khs_unit.v",
     "tests/pe/tb/het_mesh.v",
 ]
 
 BENCHES["het_sys"] = ("het_sys_tb", PE_HET + ["tests/pe/tb/het_sys_tb.v"])
 
-# The KohakuSIMD vector extension (src/kohakuaccel/pe/rv32/simd). khs_isa.vh is
+# The KohakuSIMD vector extension (src/kohakumpe/simd). khs_isa.vh is
 # GENERATED from the field table by tests/pe/tools/rv_simd_emit.py, so the RTL
 # decode and the assembler cannot drift apart; -i puts it on the include path.
 PE_KHD = [
@@ -1466,19 +1466,19 @@ PE_KHD = [
     "src/kohakutpu/vector/vec_tables.v",
     "src/kohakutpu/vector/vec_cvt.v",
     "src/kohakutpu/vector/vec_alu.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_float_lane.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_facc.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_ffold.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_mul.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_padd32.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_pshift32.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_lane.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_perm.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_reduce.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_vregfile.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_vspad.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_falu.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_unit.v",
+    "src/kohakumpe/simd/khs_float_lane.v",
+    "src/kohakumpe/simd/khs_facc.v",
+    "src/kohakumpe/simd/khs_ffold.v",
+    "src/kohakumpe/simd/khs_mul.v",
+    "src/kohakumpe/simd/khs_padd32.v",
+    "src/kohakumpe/simd/khs_pshift32.v",
+    "src/kohakumpe/simd/khs_lane.v",
+    "src/kohakumpe/simd/khs_perm.v",
+    "src/kohakumpe/simd/khs_reduce.v",
+    "src/kohakumpe/simd/khs_vregfile.v",
+    "src/kohakumpe/simd/khs_vspad.v",
+    "src/kohakumpe/simd/khs_falu.v",
+    "src/kohakumpe/simd/khs_unit.v",
 ]
 
 BENCHES["khs_unit"] = ("khs_unit_tb", PE_KHD + ["tests/pe/tb/khs_unit_tb.v"])
@@ -1494,9 +1494,9 @@ PE_FLOAT = [
     "src/kohakutpu/vector/vec_tables.v",
     "src/kohakutpu/vector/vec_cvt.v",
     "src/kohakutpu/vector/vec_alu.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_float_lane.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_facc.v",
-    "src/kohakuaccel/pe/rv32/simd/khs_ffold.v",
+    "src/kohakumpe/simd/khs_float_lane.v",
+    "src/kohakumpe/simd/khs_facc.v",
+    "src/kohakumpe/simd/khs_ffold.v",
 ]
 
 BENCHES["khs_float_lane"] = (
@@ -1509,7 +1509,7 @@ BENCHES["khs_ffold"] = ("khs_ffold_tb", PE_FLOAT + ["tests/pe/tb/khs_ffold_tb.v"
 NEEDS_GLBL.update({"khs_facc", "khs_ffold"})
 
 #: Directories added to xvlog's include path, for the generated headers.
-INCDIRS = ["src/kohakuaccel/pe/rv32/simd/generated", "src/kohakumpe/simt/generated"]
+INCDIRS = ["src/kohakumpe/simd/generated", "src/kohakumpe/simt/generated"]
 
 NEEDS_GLBL.update(
     {"rv_core", "rv_front", "rv_sys", "rv_mc1", "rv_mc2", "rv_mc4", "rv_dsp", "kht_sys"}

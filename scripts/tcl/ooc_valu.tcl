@@ -10,6 +10,7 @@
 # so a LUT here is 96 LUT of mesh and the question is worth asking precisely.
 
 set root [file normalize [file join [file dirname [info script]] .. ..]]
+source [file join [file dirname [info script]] ooc_class.tcl]
 
 set top [lindex $argv 0]
 set per [lindex $argv 1]
@@ -25,7 +26,7 @@ read_verilog [list \
     [file join $root src kohakutpu matmul mx_fpacc.v] \
     [file join $root src kohakutpu vector vec_tables.v] \
     [file join $root src kohakutpu vector vec_alu.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_float_lane.v] \
+    [file join $root src kohakumpe simd khs_float_lane.v] \
 ]
 
 synth_design -top $top -part xcvu13p-fhgb2104-2L-e -mode out_of_context \
@@ -38,7 +39,11 @@ foreach line [split $rpt "\n"] {
     if {[string match "*|*" $line]} { puts "@@@HIER $top | $line" }
 }
 
-set lut [llength [get_cells -hier -filter {PRIMITIVE_GROUP == LUT}]]
-set dsp [llength [get_cells -hier -filter {PRIMITIVE_GROUP == ARITHMETIC}]]
-set ff  [llength [get_cells -hier -filter {PRIMITIVE_GROUP == FLOP_LATCH}]]
+ooc_count $top
+
+# `PRIMITIVE_GROUP` is not a cell property in this flow: it matched nothing and
+# returned zero SILENTLY, printing lut=0 ff=0 next to a real DSP count.
+set lut [llength [get_cells -quiet -hier -filter {REF_NAME =~ LUT?}]]
+set dsp [llength [get_cells -quiet -hier -filter {REF_NAME =~ DSP*}]]
+set ff  [llength [get_cells -quiet -hier -filter {REF_NAME =~ FD*}]]
 puts "@@@VALU top=$top period=$per lut=$lut ff=$ff dsp=$dsp"

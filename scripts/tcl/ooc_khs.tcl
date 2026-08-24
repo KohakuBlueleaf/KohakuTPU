@@ -73,19 +73,19 @@ read_verilog [list \
     [file join $root src kohakutpu vector vec_tables.v] \
     [file join $root src kohakutpu vector vec_cvt.v] \
     [file join $root src kohakutpu vector vec_alu.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_float_lane.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_falu.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_facc.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_ffold.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_mul.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_padd32.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_pshift32.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_lane.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_perm.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_reduce.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_vregfile.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_vspad.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_unit.v]]
+    [file join $root src kohakumpe simd khs_float_lane.v] \
+    [file join $root src kohakumpe simd khs_falu.v] \
+    [file join $root src kohakumpe simd khs_facc.v] \
+    [file join $root src kohakumpe simd khs_ffold.v] \
+    [file join $root src kohakumpe simd khs_mul.v] \
+    [file join $root src kohakumpe simd khs_padd32.v] \
+    [file join $root src kohakumpe simd khs_pshift32.v] \
+    [file join $root src kohakumpe simd khs_lane.v] \
+    [file join $root src kohakumpe simd khs_perm.v] \
+    [file join $root src kohakumpe simd khs_reduce.v] \
+    [file join $root src kohakumpe simd khs_vregfile.v] \
+    [file join $root src kohakumpe simd khs_vspad.v] \
+    [file join $root src kohakumpe simd khs_unit.v]]
 
 read_xdc [file join $root scripts xdc ooc_khs.xdc]
 
@@ -98,7 +98,7 @@ puts "@@@ top khs_unit simd $simd flanes $fln vregs $vreg nacc $nacc vspad $vspe
 # constants are undefined and elaboration fails rather than guessing.
 synth_design -top khs_unit -part $part -mode out_of_context \
              -flatten_hierarchy none -directive default \
-             -include_dirs [file join $root src kohakuaccel pe rv32 simd generated] \
+             -include_dirs [file join $root src kohakumpe simd generated] \
              -generic SIMD=$simd -generic VREGS=$vreg -generic NACC=$nacc \
              -generic VSPAD_ENTRIES=$vspe -generic MULS=$muls \
              -generic HAS_SHIFT=$hsh -generic HAS_PERM=$hpm \

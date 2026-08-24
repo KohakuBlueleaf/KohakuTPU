@@ -23,7 +23,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import rv_simt_isa as I
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
-GEN = ROOT / "src" / "kohakuaccel" / "pe" / "rv32" / "simt" / "generated"
+GEN = ROOT / "src" / "kohakumpe" / "simt" / "generated"
 VH = GEN / "kht_isa.vh"
 
 BANNER = (

@@ -25,7 +25,7 @@ read_verilog [list \
     [file join $root src kohakutpu matmul mx_fpacc.v] \
     [file join $root src kohakutpu vector vec_tables.v] \
     [file join $root src kohakutpu vector vec_alu.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_float_lane.v] \
+    [file join $root src kohakumpe simd khs_float_lane.v] \
     [file join $root tests pe probe khg_opcost.v]]
 
 read_xdc [file join $root scripts xdc ooc_khg.xdc]

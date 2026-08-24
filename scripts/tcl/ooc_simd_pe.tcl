@@ -119,20 +119,20 @@ read_verilog [list \
     [file join $root src kohakutpu vector vec_tables.v] \
     [file join $root src kohakutpu vector vec_cvt.v] \
     [file join $root src kohakutpu vector vec_alu.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_float_lane.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_falu.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_facc.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_ffold.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_scalar_decode.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_mul.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_padd32.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_pshift32.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_lane.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_perm.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_reduce.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_vregfile.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_vspad.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_unit.v] \
+    [file join $root src kohakumpe simd khs_float_lane.v] \
+    [file join $root src kohakumpe simd khs_falu.v] \
+    [file join $root src kohakumpe simd khs_facc.v] \
+    [file join $root src kohakumpe simd khs_ffold.v] \
+    [file join $root src kohakumpe simd khs_scalar_decode.v] \
+    [file join $root src kohakumpe simd khs_mul.v] \
+    [file join $root src kohakumpe simd khs_padd32.v] \
+    [file join $root src kohakumpe simd khs_pshift32.v] \
+    [file join $root src kohakumpe simd khs_lane.v] \
+    [file join $root src kohakumpe simd khs_perm.v] \
+    [file join $root src kohakumpe simd khs_reduce.v] \
+    [file join $root src kohakumpe simd khs_vregfile.v] \
+    [file join $root src kohakumpe simd khs_vspad.v] \
+    [file join $root src kohakumpe simd khs_unit.v] \
     [file join $root src kohakuaccel pe rv32 rv_pe.v]]
 
 read_xdc [file join $root scripts xdc ooc_rv_pe.xdc]
@@ -143,7 +143,7 @@ puts "@@@ top rv_pe dsp_en $den simd $simd muls $muls shift $hsh perm $hpm wb $w
 
 synth_design -top rv_pe -part $part -mode out_of_context \
              -flatten_hierarchy $flat -directive $sdir \
-             -include_dirs [file join $root src kohakuaccel pe rv32 simd generated] \
+             -include_dirs [file join $root src kohakumpe simd generated] \
              -generic SIMD_EN=$den -generic SIMD_LANES=$simd \
              -generic SIMD_NACC=$nacc -generic SIMD_VREGS=$vregs \
              -generic SIMD_F16=$hf16 -generic SIMD_F32=$hf32 \

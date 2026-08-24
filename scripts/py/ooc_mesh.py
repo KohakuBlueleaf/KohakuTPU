@@ -75,8 +75,8 @@ def run(top, build):
         f"{{{(ROOT / d).as_posix()}}}"
         for d in (
             "src/kohakuaccel/noc",
-            "src/kohakuaccel/pe/rv32/simd",
-            "src/kohakuaccel/pe/rv32/simd/generated",
+            "src/kohakumpe/simd",
+            "src/kohakumpe/simd/generated",
             "src/kohakumpe/simt",
             "src/kohakumpe/simt/generated",
         )

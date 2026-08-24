@@ -127,7 +127,7 @@ if {$fln ne "0" || $mun ne "0"} {
         [file join $root src kohakutpu vector vec_tables.v] \
         [file join $root src kohakutpu vector vec_cvt.v] \
         [file join $root src kohakutpu vector vec_alu.v] \
-        [file join $root src kohakuaccel pe rv32 simd khs_float_lane.v] \
+        [file join $root src kohakumpe simd khs_float_lane.v] \
         [file join $root src kohakumpe simt kht_fpu.v] \
         [file join $root src kohakumpe simt kht_imul.v]]
 }

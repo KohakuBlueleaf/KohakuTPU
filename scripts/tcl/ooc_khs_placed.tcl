@@ -46,15 +46,15 @@ source [file join $root scripts tcl ooc_class.tcl]
 read_verilog [list \
     [file join $root src kohakuaccel common kohaku_sdpram.v] \
     [file join $root src kohakuaccel pe rv32 mem rv_ram_be.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_mul.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_padd32.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_pshift32.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_lane.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_perm.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_reduce.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_vregfile.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_vspad.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_unit.v]]
+    [file join $root src kohakumpe simd khs_mul.v] \
+    [file join $root src kohakumpe simd khs_padd32.v] \
+    [file join $root src kohakumpe simd khs_pshift32.v] \
+    [file join $root src kohakumpe simd khs_lane.v] \
+    [file join $root src kohakumpe simd khs_perm.v] \
+    [file join $root src kohakumpe simd khs_reduce.v] \
+    [file join $root src kohakumpe simd khs_vregfile.v] \
+    [file join $root src kohakumpe simd khs_vspad.v] \
+    [file join $root src kohakumpe simd khs_unit.v]]
 
 read_xdc [file join $root scripts xdc ooc_khs.xdc]
 
@@ -63,7 +63,7 @@ puts "@@@ top khs_unit PLACED simd $simd muls $muls shift $hsh perm $hpm wb $wbs
 
 synth_design -top khs_unit -part $part -mode out_of_context \
              -flatten_hierarchy none -directive default \
-             -include_dirs [file join $root src kohakuaccel pe rv32 simd generated] \
+             -include_dirs [file join $root src kohakumpe simd generated] \
              -generic SIMD=$simd -generic VREGS=$vreg -generic NACC=$nacc \
              -generic VSPAD_ENTRIES=$vspe -generic MULS=$muls \
              -generic HAS_SHIFT=$hsh -generic HAS_PERM=$hpm \

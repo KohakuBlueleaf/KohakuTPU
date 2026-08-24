@@ -24,7 +24,7 @@ import rv_simd_isa as I
 import rv_simd_isa_f as IF
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
-GEN = ROOT / "src" / "kohakuaccel" / "pe" / "rv32" / "simd" / "generated"
+GEN = ROOT / "src" / "kohakumpe" / "simd" / "generated"
 VH = GEN / "khs_isa.vh"
 CH = GEN / "khs_intrin.h"
 

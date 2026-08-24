@@ -24,7 +24,7 @@ read_verilog [list \
     [file join $root src kohakutpu vector vec_delay.v] \
     [file join $root src kohakutpu vector vec_tables.v] \
     [file join $root src kohakutpu vector vec_alu.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_e8_fma.v]]
+    [file join $root src kohakumpe simd khs_e8_fma.v]]
 
 read_xdc [file join $root scripts xdc ooc_khs.xdc]
 

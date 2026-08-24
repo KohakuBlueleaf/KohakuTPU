@@ -20,7 +20,7 @@ set_param general.maxThreads 4
 source [file join $root scripts tcl ooc_class.tcl]
 
 read_verilog [list \
-    [file join $root src kohakuaccel pe rv32 simd khs_facc_fixed.v]]
+    [file join $root src kohakumpe simd khs_facc_fixed.v]]
 
 read_xdc [file join $root scripts xdc ooc_khs.xdc]
 

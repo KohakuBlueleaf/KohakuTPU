@@ -21,7 +21,7 @@ source [file join $root scripts tcl ooc_class.tcl]
 
 read_verilog [list \
     [file join $root src kohakutpu matmul mx_fpacc.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_facc_loop.v]]
+    [file join $root src kohakumpe simd khs_facc_loop.v]]
 
 read_xdc [file join $root scripts xdc ooc_khs.xdc]
 

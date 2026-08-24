@@ -21,7 +21,7 @@ set srcs [list \
     [file join $root src kohakutpu vector vec_dsp.v] \
     [file join $root src kohakutpu vector vec_delay.v] \
     [file join $root src kohakutpu vector vec_cvt.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_float_blocks.v]]
+    [file join $root src kohakumpe simd khs_float_blocks.v]]
 
 foreach top {khs_blk_align khs_blk_align_dsp khs_blk_norm khs_blk_norm_dsp \
              khs_blk_round khs_blk_mag khs_blk_expo khs_blk_spec \

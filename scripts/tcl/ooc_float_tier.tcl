@@ -23,10 +23,10 @@ set srcs [list \
     [file join $root src kohakutpu vector vec_tables.v] \
     [file join $root src kohakutpu vector vec_cvt.v] \
     [file join $root src kohakutpu vector vec_alu.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_float_lane.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_facc.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_ffold.v] \
-    [file join $root src kohakuaccel pe rv32 simd khs_float_tier.v]]
+    [file join $root src kohakumpe simd khs_float_lane.v] \
+    [file join $root src kohakumpe simd khs_facc.v] \
+    [file join $root src kohakumpe simd khs_ffold.v] \
+    [file join $root src kohakumpe simd khs_float_tier.v]]
 
 foreach n {16 8 4 2} {
     puts "@@@ ============================ float_tier lanes $n"
