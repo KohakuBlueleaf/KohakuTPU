@@ -28,11 +28,45 @@ full-featured hart are themselves architectural:
 | `FENCE.I` | not needed: the instruction window is not writable from the data side |
 | misaligned load/store | **faults** (RV32I permits either fixup or fault) |
 | `ECALL`, `EBREAK` | halt the unit — see [Halting](#halting) |
-| RV32M, atomics, floating point | absent; extensions enter only with a measurement attached |
+| **`RV32M` — `mul`, `mulh`, `div`, `rem`** | **absent on this core, and the encodings fault.** `rv_id.v` accepts `funct7` of `0000000` and `0100000` on the register-register group and nothing else, so RV32M's `0000001` raises an illegal-instruction halt at the offending PC. The SIMT PE decodes the same `funct7` and *does* build `mul`/`mulh`/`mulhsu`/`mulhu` per thread — [below](#no-scalar-datapath-in-this-machine-has-a-multiplier) |
+| **floating point — `F`, `D`, `Zfh`** | **absent in the scalar core.** No `f0..f31`, no `fcsr`, no rounding mode. Not "not yet": there is no float register file to name |
+| atomics, `A` | absent; exclusive access between cores is ownership and push, not locks |
 
 Counters that would be CSRs elsewhere — cycle, instructions retired, core id
 — are words in the local control region
 ([programming](programming.md#local-control)).
+
+### No *scalar* datapath in this machine has a multiplier
+
+Worth stating once, plainly, because the two easy readings — "the machine has
+float" and "the machine cannot multiply" — are each wrong about a different
+class:
+
+- the **controller PE** has no multiply, no divide and no float. `mul` faults;
+- the **SIMD PE** is this core plus a vector unit. Its scalar half is unchanged —
+  the multiply and the float live behind custom-0 and custom-1, in the *vector*
+  register file, and reaching them means putting operands in `v0..v7`;
+- the **SIMT PE** has **`RV32M` per thread**. `mul`, `mulh`, `mulhsu` and `mulhu`
+  execute on the *per-thread* register file, addressed by the standard `OP`
+  encoding, one product per lane — so a shader that writes `a * b` gets one
+  instruction, not a libgcc call. Its *uniform* ALU, on custom-2, is still the
+  same ten register-register operations RV32I has, and has no multiply.
+
+So: a **scalar** register-register multiply exists nowhere. `div` and `rem`
+fault on every class, per-thread included.
+
+**Float exists in this machine, is measured, and is in both wide classes** —
+one E8M15 fused multiply-add per element, 4 float lanes on the SIMD PE and 8 on
+the SIMT PE, both built and both measured
+([the PE classes](README.md#8-int--4-float-is-the-dsp-reference-8-int--8-float-is-the-gpu-reference)).
+None of it is reachable from a scalar register on any class.
+
+Whether *this core* should change, and what each option would cost here, is
+[The arithmetic the EX stage does not have](microarchitecture.md#the-arithmetic-the-ex-stage-does-not-have)
+— which now also records where the multiplier that did get built went, and why
+that was the cheap place for it. Nothing enters this baseline because it is
+normally found in a CPU: each addition is a separate experiment with a
+measurement attached.
 
 ## The memory model
 

@@ -1,3 +1,12 @@
+---
+title: XDMA channel count
+summary: Four h2c and four c2h are built, one of each is used, and what narrowing to 1/1 would recover.
+tags:
+  - kohakutpu
+  - host
+  - measurements
+---
+
 # XDMA channel count
 
 **We BUILD 4 h2c / 4 c2h and USE one of each.** `multimesh_v5_bd.tcl:239-240`

@@ -14,9 +14,10 @@ The measured characteristics of the PE, in its one shipped configuration:
 128-line L1, 2048-word windows, 32-entry BTB, `FWD_X` 1, LUTRAM register
 file, `WR_MAX` 1.
 
-| | LUT | FF | BRAM | Fmax |
-|---|---|---|---|---|
-| the PE | **2,491** | ~4,140 | **5** | **410.8 MHz** |
+| | LUT | FF | BRAM | DSP48 | Fmax | ask | flow |
+|---|---|---|---|---|---|---|---|
+| the PE, flattened | **2,491** | ~4,140 | **5** | 0 | **410.8 MHz** | 3.333 ns | flattened |
+| the PE, hierarchy preserved | 2,477 | 4,140 | 5 | 0 | 377.9 MHz | 3.333 ns | `-flatten_hierarchy none` |
 
 Resource and frequency figures are out-of-context synthesis on
 `xcvu13p-fhgb2104-2L-e` (Vivado 2024.2, synth only — pre-placement, so a
@@ -24,6 +25,9 @@ routed result will be somewhat worse). Resource figures are CLB LUT
 **sites**. Cycle figures are read from the PE's own `CTL_CYCLE` /
 `CTL_INSTRET` counters, on the full system — real routers, the real memory
 agent, RAM behind it. Every number on this page is this configuration.
+**Both rows above are the same RTL** — the spread is the synthesis flow, and
+the hierarchy-preserved row is the one to hold beside the SIMD PE, which is
+measured the same way ([below](#where-this-pe-sits-among-the-classes)).
 
 ## Frequency
 
@@ -103,6 +107,84 @@ Width is 88.9 % everywhere — a 36-bit face carrying 32 data bits — which is
 the primitive, not a choice. The tag array is far too shallow to earn a tile
 and stays LUTRAM, carrying `valid`/`dirty` beside the tag; that is what
 makes the 128-line capacity nearly free on the same single tile.
+
+## Where this PE sits among the classes
+
+Every compute class on this fabric is measured out-of-context on the same part,
+`xcvu13p-fhgb2104-2L-e`, Vivado 2024.2, synth only. Collected here so the
+controller PE has something to be a fraction of.
+
+**Every row is an assembled PE**, and the first column is the arithmetic it
+ships with, because that is the thing that makes two LUT figures comparable or
+not:
+
+| class | the arithmetic it ships with | LUT | FF | BRAM | DSP48 | Fmax | **ask** |
+|---|---|---:|---:|---:|---:|---:|---|
+| **controller PE** `rv_pe` | RV32I only — no multiply, no divide, no float | **2,477** | 4,140 | 5 | 0 | 377.9 MHz | 3.333 ns |
+| **SIMD PE**, 8 int + 4 float | SWAR packed int8/16/32, `vmul`, `vdot`; a float tier of **4 lanes** | **13,772** | 10,126 | 13 | 72 | 353.4 MHz | **2.857 ns** |
+| **SIMT PE** `kht_pe`, 8 int + 8 float, 16 waves | per-thread RV32I **+ `RV32M`**; a float tier of **8 lanes** | **21,586** | 17,268 | 30.5 | 48 | 365.6 MHz | **2.857 ns** |
+
+The float column of that table is a **width**, and only a width. There is one
+dtype configuration in this machine — FP32 or FP16 operands in, **E8M15**
+compute, FP32 or FP16 out — operand width is a per-instruction property rather
+than a build option, and the internal format is never anything else. So the
+three rows differ in whether a float tier is present and how many lanes it has;
+they do not differ in format
+([the PE classes](README.md#there-is-one-dtype-configuration-and-it-is-the-whole-design)).
+
+Four more things about that table are load-bearing:
+
+- **The ask column is not decoration.** The controller row is at the older
+  3.333 ns request; the two wide rows at 2.857 ns. A tighter ask on this core
+  buys LUT and no megahertz at all — 90 sites at 2.5 ns, 350–400 at 2.0 ns
+  ([above](#frequency)) — so a controller figure lifted from a 2.857 ns run
+  would be larger and no faster, and subtracting rows taken at different asks
+  measures the constraint as much as the design.
+- **The DSP48 counts are not comparable to the LUT counts.** The SIMD PE's 72
+  includes `SIMD_DOTDSP = 1`, which keeps the `vdot` sum inside the DSP48 column
+  and *buys LUT back* — 32 more DSP for a measured 256 LUT and 32 CARRY8 per
+  eight lanes. DSP is the cheap resource on this device and LUT is the binding
+  one, so the two classes are spending on the same axis in opposite directions
+  and the totals still compare.
+- **`div` and `rem` fault on every class**, per-thread included. `mul` faults on
+  the controller and the SIMD PE and is built, per thread, on the SIMT PE.
+- **Two flows are in that table.** The controller and DSP rows are
+  `-flatten_hierarchy none`; the GPU row is `rebuilt`. Run both ways on the same
+  GPU design at a 2.500 ns ask, the two flows differ by **+720 LUT and
+  −4.1 MHz** for `none` — real, but small enough that the rows above stay
+  comparable if the difference is named. **Compare within a flow where you
+  can.** The controller
+  PE also has a second, larger figure from a fully flattened run: **2,491 LUT at
+  410.8 MHz**, 33 MHz of which is the flow rather than the design.
+
+The one comparison the table supports without any qualification is the
+**framework attach**, because every row carries the same one: `u_base` is 657
+LUT and 1,381 FF of port logic that any compute unit on this fabric pays,
+processor or not. On the controller PE that is a quarter of the unit; on the
+SIMT PE it is 3.0 %.
+
+### What a mesh of these costs
+
+The mesh population is **8 SIMD PEs, 4 SIMT PEs and 2 controller PEs**, and its
+float width is chosen rather than fallen into:
+
+```
+   8 x 4 float lanes  +  4 x 8 float lanes  =  64 FP FMA / clock
+```
+
+— one Mali-G610 shader core's width, exactly. On the figures above:
+
+| | LUT | DSP48 | BRAM tiles | FF |
+|---|---:|---:|---:|---:|
+| 8 x SIMD PE | 110,176 | 576 | 104 | 81,008 |
+| 4 x SIMT PE | 86,344 | 192 | 122 | 69,072 |
+| 2 x controller PE | 4,954 | 0 | 10 | 8,280 |
+| **total** | **201,474** | **768** | **236** | **158,360** |
+| available | ~350,000 | 3,072 | — | — |
+
+LUT is the binding resource and DSP is not — 768 of 3,072 — which is what makes
+`SIMD_DOTDSP` and the DSP48-backed float lanes the right trade rather than a
+convenience.
 
 ## Instruction timing
 

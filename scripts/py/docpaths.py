@@ -110,8 +110,23 @@ def main():
 
     for rel, line, cite in bad:
         print(f"{rel}:{line}: {cite}")
-    print(f"\n{n_cites} citation(s) in {len(files)} file(s), {len(bad)} dangling")
-    return 1 if bad else 0
+
+    # The site indexes `docs/` on its frontmatter; the root files are not pages.
+    missing = [
+        rel
+        for f in files
+        if f.suffix == ".md"
+        and (rel := f.relative_to(ROOT).as_posix()).startswith("docs/")
+        and not f.read_text(encoding="utf-8", errors="replace").startswith("---\n")
+    ]
+    for rel in missing:
+        print(f"{rel}:1: no frontmatter")
+
+    print(
+        f"\n{n_cites} citation(s) in {len(files)} file(s), {len(bad)} dangling, "
+        f"{len(missing)} without frontmatter"
+    )
+    return 1 if (bad or missing) else 0
 
 
 if __name__ == "__main__":
