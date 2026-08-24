@@ -32,20 +32,20 @@ module rv_mag_pe_tb;
     wire [DW/8-1:0] cp_wstrb;
     wire            cp_bready, cp_rready;
 
-    wire        mv_cfg_en;
-    wire [7:0]  mv_cfg_addr;
-    wire [63:0] mv_cfg_data;
-    reg         mv_busy = 0;
-    reg  [3:0]  mv_fault = 0;
+    // THE MOVER AND THE SLOT ARE INSIDE THE PROCESSOR, so what used to be a
+    // boundary port is a hierarchical probe. `mv_cfg_en` is the processor's own
+    // cfg write -- `mv_exec`'s output, before the host window is muxed in --
+    // which is exactly what `mv.go` is supposed to produce.
+    wire        mv_cfg_en   = dut.pe_cfg_en;
+    wire [7:0]  mv_cfg_addr = dut.pe_cfg_addr;
+    wire [63:0] mv_cfg_data = dut.pe_cfg_data;
+    wire        mv_busy;
+    wire [3:0]  mv_fault;
 
-    // The bench plays the transform bank's register file: a fixed read value,
-    // so a store of what a load returned proves the read path end to end.
-    wire        xcfg_en;
-    wire [3:0]  xcfg_id;
-    wire [7:0]  xcfg_addr;
-    wire [31:0] xcfg_data;
-    reg  [31:0] xcfg_rdata = 32'hABCD_1234;
-    reg  [3:0]  xf_fault = 4'd0;
+    wire        xcfg_en   = dut.xcfg_en;
+    wire [3:0]  xcfg_id   = dut.xcfg_id;
+    wire [7:0]  xcfg_addr = dut.xcfg_addr;
+    wire [31:0] xcfg_data = dut.xcfg_data;
     reg         halt_req = 0;
     wire [63:0] pe_status;
     wire        busy;
@@ -82,7 +82,7 @@ module rv_mag_pe_tb;
     end
 
     rv_mag_pe #(
-        .FLIT_WIDTH(FW), .POS_WIDTH(PW), .POS_X(0), .POS_Y(0),
+        .FLIT_WIDTH(FW), .POS_WIDTH(PW),
         .ADDR_W(AW), .DATA_W(DW), .MEM_PRIM("block")
     ) dut (
         .clk(clk), .resetn(resetn),
@@ -99,11 +99,53 @@ module rv_mag_pe_tb;
         .cp_arready(cp_arready),
         .cp_rdata(cp_rdata), .cp_rlast(cp_rlast), .cp_rvalid(cp_rvalid),
         .cp_rready(cp_rready),
-        .mv_cfg_en(mv_cfg_en), .mv_cfg_addr(mv_cfg_addr),
-        .mv_cfg_data(mv_cfg_data), .mv_busy(mv_busy), .mv_fault(mv_fault),
-        .xcfg_en(xcfg_en), .xcfg_id(xcfg_id), .xcfg_addr(xcfg_addr),
-        .xcfg_data(xcfg_data), .xcfg_rdata(xcfg_rdata), .xf_fault(xf_fault),
+        // The mover's own AXI master, onto a model memory so a real move can
+        // retire rather than hanging the unit busy forever.
+        .mv_awid(mv_awid), .mv_awaddr(mv_awaddr), .mv_awlen(mv_awlen),
+        .mv_awsize(mv_awsize), .mv_awburst(mv_awburst),
+        .mv_awvalid(mv_awvalid), .mv_awready(mv_awready),
+        .mv_wdata(mv_wdata), .mv_wstrb(mv_wstrb), .mv_wlast(mv_wlast),
+        .mv_wvalid(mv_wvalid), .mv_wready(mv_wready),
+        .mv_bid(mv_bid), .mv_bresp(mv_bresp), .mv_bvalid(mv_bvalid),
+        .mv_bready(mv_bready),
+        .mv_arid(mv_arid), .mv_araddr(mv_araddr), .mv_arlen(mv_arlen),
+        .mv_arsize(mv_arsize), .mv_arburst(mv_arburst),
+        .mv_arvalid(mv_arvalid), .mv_arready(mv_arready),
+        .mv_rid(mv_rid), .mv_rdata(mv_rdata), .mv_rresp(mv_rresp),
+        .mv_rlast(mv_rlast), .mv_rvalid(mv_rvalid), .mv_rready(mv_rready),
+        .aux_cfg_en(1'b0), .aux_cfg_addr(8'd0), .aux_cfg_data(64'd0),
+        .ilink_on(1'b0),
+        .mv_busy(mv_busy), .mv_fault(mv_fault), .mv_done(),
         .halt_req(halt_req), .pe_status(pe_status), .busy(busy)
+    );
+
+    wire [3:0]      mv_awid, mv_arid, mv_bid, mv_rid;
+    wire [AW-1:0]   mv_awaddr, mv_araddr;
+    wire [7:0]      mv_awlen, mv_arlen;
+    wire [2:0]      mv_awsize, mv_arsize;
+    wire [1:0]      mv_awburst, mv_arburst, mv_bresp, mv_rresp;
+    wire            mv_awvalid, mv_awready, mv_arvalid, mv_arready;
+    wire [DW-1:0]   mv_wdata, mv_rdata;
+    wire [DW/8-1:0] mv_wstrb;
+    wire            mv_wlast, mv_wvalid, mv_wready;
+    wire            mv_bvalid, mv_bready, mv_rlast, mv_rvalid, mv_rready;
+
+    axi_ram #(.DATA_W(DW), .ADDR_W(AW), .ID_W(4), .WORDS(4096), .PORTS(1))
+    u_mvram (
+        .clk(clk), .resetn(resetn),
+        .s_awid(mv_awid), .s_awaddr(mv_awaddr), .s_awlen(mv_awlen),
+        .s_awsize(mv_awsize), .s_awburst(mv_awburst),
+        .s_awvalid(mv_awvalid), .s_awready(mv_awready),
+        .s_wdata(mv_wdata), .s_wstrb(mv_wstrb), .s_wlast(mv_wlast),
+        .s_wvalid(mv_wvalid), .s_wready(mv_wready),
+        .s_bid(mv_bid), .s_bresp(mv_bresp), .s_bvalid(mv_bvalid),
+        .s_bready(mv_bready),
+        .s_arid(mv_arid), .s_araddr(mv_araddr), .s_arlen(mv_arlen),
+        .s_arsize(mv_arsize), .s_arburst(mv_arburst),
+        .s_arvalid(mv_arvalid), .s_arready(mv_arready),
+        .s_rid(mv_rid), .s_rdata(mv_rdata), .s_rresp(mv_rresp),
+        .s_rlast(mv_rlast), .s_rvalid(mv_rvalid), .s_rready(mv_rready),
+        .bd_we(1'b0), .bd_addr(16'd0), .bd_wdata({DW{1'b0}}), .bd_rdata()
     );
 
     integer    n_xcfg = 0;
@@ -256,8 +298,13 @@ module rv_mag_pe_tb;
 
         // Distinct non-zero codes, so a STATUS read that returns the L1 array's
         // word instead of the node's is not mistakable for a correct zero.
-        mv_fault = 4'd5;
-        xf_fault = 4'd3;
+        // FORCED, because the mover and the slot are inside the unit now and
+        // these are their real outputs rather than the bench's inputs.
+        force dut.mv_fault = 4'd5;
+        force dut.xf_fault = 4'd3;
+        // The slot's read-back, likewise: a store of what a load returned is
+        // still what proves the read path, so the value has to be known.
+        force dut.xcfg_rdata = 32'hABCD_1234;
 
         $display("--- boot and run ---");
         kick(32'd0);
@@ -273,8 +320,8 @@ module rv_mag_pe_tb;
         chk(cfg_d[0] === 64'h0000_1000_0100_0000, "cfg data", cfg_d[0],
             64'h0000_1000_0100_0000);
 
-        @(negedge clk); mv_busy = 1;
-        repeat (6) @(negedge clk); mv_busy = 0;
+        @(negedge clk); force dut.mv_busy = 1'b1;
+        repeat (6) @(negedge clk); release dut.mv_busy;
 
         spin = 0;
         while (busy && spin < 4000) begin @(negedge clk); spin = spin + 1; end

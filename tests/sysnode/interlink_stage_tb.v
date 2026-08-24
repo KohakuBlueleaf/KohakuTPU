@@ -60,8 +60,8 @@ module interlink_stage_tb;
 
     genvar g;
     generate for (g = 0; g < 2; g = g + 1) begin : mesh
-        mag_1m #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(AW),
-                 .ID_W(IDW), .MEM_PORTS(1), .MEM_X(MX), .MEM_Y(MY),
+        sysnode #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(AW),
+                 .ID_W(IDW), .PORTS(1), .MEM_X(MX), .MEM_Y(MY),
                  .GRID_LO(1), .GRID_HI(1), .STAGE_FLITS(128),
                  .ILINK(1), .MESH_ID(g), .LINK_W(LW), .TUSER_W(UW), .MW(MW),
                  // Shortened so the simulator is not asked to model 2 MB.
@@ -101,21 +101,22 @@ module interlink_stage_tb;
             .mem_out_data(mo_data[g]), .mem_out_valid(mo_valid[g]),
             .mem_out_busy(1'b0),
             .mem_rd_count(), .mem_wr_count(),
+        .pe_halt_req(1'b0), .pe_status(), .pe_busy(),
             .mv_busy(), .mv_fault(), .mv_done(),
 
-            .m_awid(m_awid[g]), .m_awaddr(m_awaddr[g]), .m_awlen(m_awlen[g]),
-            .m_awsize(m_awsize[g]), .m_awburst(m_awburst[g]),
-            .m_awvalid(m_awvalid[g]), .m_awready(m_awready[g]),
-            .m_wdata(m_wdata[g]), .m_wstrb(m_wstrb[g]), .m_wlast(m_wlast[g]),
-            .m_wvalid(m_wvalid[g]), .m_wready(m_wready[g]),
-            .m_bid(m_bid[g]), .m_bresp(m_bresp[g]), .m_bvalid(m_bvalid[g]),
-            .m_bready(m_bready[g]),
-            .m_arid(m_arid[g]), .m_araddr(m_araddr[g]), .m_arlen(m_arlen[g]),
-            .m_arsize(m_arsize[g]), .m_arburst(m_arburst[g]),
-            .m_arvalid(m_arvalid[g]), .m_arready(m_arready[g]),
-            .m_rid(m_rid[g]), .m_rdata(m_rdata[g]), .m_rresp(m_rresp[g]),
-            .m_rlast(m_rlast[g]), .m_rvalid(m_rvalid[g]),
-            .m_rready(m_rready[g]),
+            .dram_awid(m_awid[g]), .dram_awaddr(m_awaddr[g]), .dram_awlen(m_awlen[g]),
+            .dram_awsize(m_awsize[g]), .dram_awburst(m_awburst[g]),
+            .dram_awvalid(m_awvalid[g]), .dram_awready(m_awready[g]),
+            .dram_wdata(m_wdata[g]), .dram_wstrb(m_wstrb[g]), .dram_wlast(m_wlast[g]),
+            .dram_wvalid(m_wvalid[g]), .dram_wready(m_wready[g]),
+            .dram_bid(m_bid[g]), .dram_bresp(m_bresp[g]), .dram_bvalid(m_bvalid[g]),
+            .dram_bready(m_bready[g]),
+            .dram_arid(m_arid[g]), .dram_araddr(m_araddr[g]), .dram_arlen(m_arlen[g]),
+            .dram_arsize(m_arsize[g]), .dram_arburst(m_arburst[g]),
+            .dram_arvalid(m_arvalid[g]), .dram_arready(m_arready[g]),
+            .dram_rid(m_rid[g]), .dram_rdata(m_rdata[g]), .dram_rresp(m_rresp[g]),
+            .dram_rlast(m_rlast[g]), .dram_rvalid(m_rvalid[g]),
+            .dram_rready(m_rready[g]),
 
             // mesh0 reaches mesh1 by its UP link, as on the SLR chain.
             .link0_out_tdata(o0_d[g]), .link0_out_tuser(o0_u[g]),

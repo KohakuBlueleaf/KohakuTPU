@@ -578,7 +578,7 @@ module ctrlpe_mesh2_tb;
                        {8'd1, 32'd0, 32'd0, 184'd0}));
             nslot = nslot + 1;
 
-            dispatch(msh, 8'h01, 16'd0, nslot[15:0]);
+            dispatch(msh, 8'h00, 16'd0, nslot[15:0]);
         end
     endtask
 
@@ -625,7 +625,7 @@ module ctrlpe_mesh2_tb;
                        {8'd1, 32'd64, 32'd0, 184'd0}));
             nslot = nslot + 1;
 
-            dispatch(msh, 8'h01, 16'd0, nslot[15:0]);
+            dispatch(msh, 8'h00, 16'd0, nslot[15:0]);
         end
     endtask
 
@@ -702,8 +702,8 @@ module ctrlpe_mesh2_tb;
 
     wire pe0 = mesh[0].u.pe_busy;
     wire pe1 = mesh[1].u.pe_busy;
-    wire mv0 = mesh[0].u.u_mag.u_mag.u_mag.mv_busy;
-    wire mv1 = mesh[1].u.u_mag.u_mag.u_mag.mv_busy;
+    wire mv0 = mesh[0].u.u_mag.u_mag.mv_busy;
+    wire mv1 = mesh[1].u.u_mag.u_mag.mv_busy;
 
     task wait_idle(input integer msh);
         begin
@@ -827,7 +827,7 @@ module ctrlpe_mesh2_tb;
         wait_idle(0);
         repeat (12000) @(negedge clk_ctrl);
 
-        chk(mesh[0].u.u_mag.u_mag.u_mag.mv_fault === 4'd0,
+        chk(mesh[0].u.u_mag.u_mag.mv_fault === 4'd0,
             "no fault on the cross-mesh converting move", 0);
         nbad = 0;
         for (i = 0; i < NENT*4; i = i + 1) begin

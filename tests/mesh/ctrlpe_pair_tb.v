@@ -274,12 +274,22 @@ module ctrlpe_pair_tb;
 
         // The node's memory-port NoC face looped to its own processor: with no
         // router between them the orchestrator's dispatched flits still arrive.
-        wire [MFW-1:0] m2p_d, p2m_d;
-        wire           m2p_v, m2p_b, p2m_v, p2m_b;
+        // The node has ONE port and the processor is behind its hub, so the
+        // loopback is now the port onto itself. sb_skid's `i_ready` does not
+        // depend on `o_ready`, which is what keeps that from being a
+        // combinational loop -- a wire here would be one.
+        wire [MFW-1:0] lo_d, li_d;
+        wire           lo_v, lo_rdy, li_v, li_b;
+
+        sb_skid #(.W(MFW)) u_lp (
+            .clk(nclk), .rst(!rstn),
+            .i_valid(lo_v), .i_ready(lo_rdy), .i_data(lo_d),
+            .o_valid(li_v), .o_ready(!li_b), .o_data(li_d)
+        );
 
         sysnode #(.FLIT_WIDTH(MFW), .POS_WIDTH(4), .DATA_W(DW), .ADDR_W(NAW),
-               .ID_W(IDW), .MEM_PORTS(1), .ILINK(1), .MESH_ID(g), .MW(DW),
-               .CTRL_PE(1), .PE_X(1), .PE_Y(0), .PE_MEM_PRIM("block")) u (
+               .ID_W(IDW), .PORTS(1), .ILINK(1), .MESH_ID(g), .MW(DW),
+               .PE_MEM_PRIM("block")) u (
             .clk(nclk), .resetn(rstn),
             .sm_awid   (sp_awid  [QM*MAXID +: IDW]),
             .sm_awaddr (sp_awaddr[QM*AW    +: NAW]),
@@ -335,10 +345,8 @@ module ctrlpe_pair_tb;
             .dram_rresp(dm_rresp[g]), .dram_rlast(dm_rlast[g]),
             .dram_rvalid(dm_rvalid[g]), .dram_rready(dm_rready[g]),
 
-            .mem_in_data(p2m_d), .mem_in_valid(p2m_v), .mem_in_busy(p2m_b),
-            .mem_out_data(m2p_d), .mem_out_valid(m2p_v), .mem_out_busy(m2p_b),
-            .pe_in_data(m2p_d), .pe_in_valid(m2p_v), .pe_in_busy(m2p_b),
-            .pe_out_data(p2m_d), .pe_out_valid(p2m_v), .pe_out_busy(p2m_b),
+            .mem_in_data(li_d), .mem_in_valid(li_v), .mem_in_busy(li_b),
+            .mem_out_data(lo_d), .mem_out_valid(lo_v), .mem_out_busy(!lo_rdy),
 
             .mem_rd_count(), .mem_wr_count(),
             .mv_busy(nbusy[g]), .mv_fault(), .mv_done(),
@@ -606,9 +614,9 @@ module ctrlpe_pair_tb;
     // What the mover's staging FIFO is actually fed, and by which beat: the
     // wire address and length are correct, so the X arrives between DRAM and
     // here -- with the processor's own read outstanding on the same path.
-    always @(posedge nb) if (rstn && nd[1].u.u_mag.u_mover.f_wr)
+    always @(posedge nb) if (rstn && nd[1].u.u_pe.u_mover.f_wr)
         $display("  %0t B-MV-FIFO wr=%h", $time,
-                 nd[1].u.u_mag.u_mover.m_rdata[63:0]);
+                 nd[1].u.u_pe.u_mover.m_rdata[63:0]);
 `endif
 
     // What B's mover saw when it started, and what A had actually delivered by
@@ -669,7 +677,7 @@ module ctrlpe_pair_tb;
         stage_flit(1, nslot, mkflit(4'h5, 8'd7, 1'b1,
                    {8'd1, 32'd0, 32'd0, 184'd0}));
         nslot = nslot + 1;
-        dispatch(1, 8'h01, 16'd0, nslot[15:0]);
+        dispatch(1, 8'h00, 16'd0, nslot[15:0]);
 
         spin = 0;
         while (!peB && spin < 60000) begin @(negedge clk_ctrl); spin = spin + 1; end
@@ -694,7 +702,7 @@ module ctrlpe_pair_tb;
         stage_flit(0, nslot, mkflit(4'h5, 8'd7, 1'b1,
                    {8'd1, 32'd0, 32'd0, 184'd0}));
         nslot = nslot + 1;
-        dispatch(0, 8'h01, 16'd0, nslot[15:0]);
+        dispatch(0, 8'h00, 16'd0, nslot[15:0]);
 
         spin = 0;
         while (!peA && spin < 60000) begin @(negedge clk_ctrl); spin = spin + 1; end

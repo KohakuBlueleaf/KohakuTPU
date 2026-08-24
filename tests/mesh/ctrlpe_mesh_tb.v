@@ -557,7 +557,7 @@ module ctrlpe_mesh_tb;
     endtask
 
     wire pe_busy_w = u.pe_busy;
-    wire mv_busy_w = u.u_mag.u_mag.u_mag.mv_busy;
+    wire mv_busy_w = u.u_mag.u_mag.mv_busy;
 
     reg [63:0] st;
     // SIZED: an integer inside a replication contributes 32 bits, so {16{...}}
@@ -634,11 +634,11 @@ module ctrlpe_mesh_tb;
                    {8'd1, 32'd0, 32'd0, 184'd0}));
         nslot = nslot + 1;
 
-        $display("--- dispatch %0d flits to the processor at (1,0) ---", nslot);
-        dispatch(8'h01, 16'd0, nslot[15:0]);
+        $display("--- dispatch %0d flits to the processor at (0,0) ---", nslot);
+        dispatch(8'h00, 16'd0, nslot[15:0]);
 
         spin = 0;
-        while (u.u_mag.u_mag.u_mag.u_agent.prog_run && spin < 40000) begin
+        while (u.u_mag.u_mag.u_agent.prog_run && spin < 40000) begin
             @(negedge clk_ctrl); spin = spin + 1;
         end
         chk(spin < 40000, "the dispatcher drained its program", spin);
@@ -734,10 +734,10 @@ module ctrlpe_mesh_tb;
                    {8'd1, 32'd64, 32'd0, 184'd0}));
         nslot = nslot + 1;
 
-        dispatch(8'h01, 16'd0, nslot[15:0]);
+        dispatch(8'h00, 16'd0, nslot[15:0]);
 
         spin = 0;
-        while (u.u_mag.u_mag.u_mag.u_agent.prog_run && spin < 40000) begin
+        while (u.u_mag.u_mag.u_agent.prog_run && spin < 40000) begin
             @(negedge clk_ctrl); spin = spin + 1;
         end
         spin = 0;
@@ -751,7 +751,7 @@ module ctrlpe_mesh_tb;
             @(negedge clk_ctrl); spin = spin + 1;
         end
         chk(spin < 200000, "the converting move went idle", spin);
-        chk(u.u_mag.u_mag.u_mag.mv_fault === 4'd0, "no mover fault", 0);
+        chk(u.u_mag.u_mag.mv_fault === 4'd0, "no mover fault", 0);
 
         spin = 0;
         while (dram_word((XDST_OFF >> 5) + NENT*4 - 1) === {8{32'hA5A5_A5A5}}

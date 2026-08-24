@@ -168,11 +168,11 @@ module mover_cfg32_core #(
     // ---- what the mover's own cfg port actually received -------------------
     // The question the silicon symptom could not answer: how many pulses, at
     // which register, carrying what.
-    wire        mv_cfg_en   = u.u_mag.u_mag.u_mag.mv_cfg_mine;
-    wire [7:0]  mv_cfg_addr = u.u_mag.u_mag.u_mag.mv_cfg_addr;
-    wire [63:0] mv_cfg_data = u.u_mag.u_mag.u_mag.mv_cfg_data;
-    wire        mv_busy     = u.u_mag.u_mag.u_mag.u_mover.stat_busy;
-    wire [3:0]  mv_fault    = u.u_mag.u_mag.u_mag.u_mover.stat_fault;
+    wire        mv_cfg_en   = u.u_mag.u_pe.cfg_en_i;
+    wire [7:0]  mv_cfg_addr = u.u_mag.u_pe.cfg_addr_i;
+    wire [63:0] mv_cfg_data = u.u_mag.u_pe.cfg_data_i;
+    wire        mv_busy     = u.u_mag.u_pe.u_mover.stat_busy;
+    wire [3:0]  mv_fault    = u.u_mag.u_pe.u_mover.stat_fault;
 
     integer n_pulse = 0, trace = 0;
     always @(posedge clk) if (resetn && mv_cfg_en) begin
@@ -187,13 +187,13 @@ module mover_cfg32_core #(
     // `wsel` is noc_orchestrator.v:366 off the register :448 increments, so the
     // aux window is not special. PROG_KICK is the one that acts on ARRIVAL
     // rather than on data: `A_PROG_KICK: kick_req <= 1'b1` regardless of wdata.
-    wire [7:0]  ag_dst  = u.u_mag.u_mag.u_mag.u_agent.prog_dst;
-    wire [15:0] ag_len  = u.u_mag.u_mag.u_mag.u_agent.prog_len;
-    wire [15:0] ag_base = u.u_mag.u_mag.u_mag.u_agent.prog_base;
-    wire [15:0] ag_cred = u.u_mag.u_mag.u_mag.u_agent.prog_credit;
-    wire [15:0] ag_sig  = u.u_mag.u_mag.u_mag.u_agent.sig_done_count;
-    wire        ag_kick = u.u_mag.u_mag.u_mag.u_agent.kick_req;
-    wire        ag_run  = u.u_mag.u_mag.u_mag.u_agent.prog_run;
+    wire [7:0]  ag_dst  = u.u_mag.u_mag.u_agent.prog_dst;
+    wire [15:0] ag_len  = u.u_mag.u_mag.u_agent.prog_len;
+    wire [15:0] ag_base = u.u_mag.u_mag.u_agent.prog_base;
+    wire [15:0] ag_cred = u.u_mag.u_mag.u_agent.prog_credit;
+    wire [15:0] ag_sig  = u.u_mag.u_mag.u_agent.sig_done_count;
+    wire        ag_kick = u.u_mag.u_mag.u_agent.kick_req;
+    wire        ag_run  = u.u_mag.u_mag.u_agent.prog_run;
 
     // WHERE the first flit was addressed, which is the difference between "the
     // dispatch ran" and "the dispatch ran to node {0,0} and was dropped".
@@ -204,7 +204,7 @@ module mover_cfg32_core #(
         if (!arm) begin
             seen <= 1'b0;
         end
-        else if (u.u_mag.u_mag.u_mag.u_agent.disp_push && !seen) begin
+        else if (u.u_mag.u_mag.u_agent.disp_push && !seen) begin
             dst_at_disp <= ag_dst;
             seen        <= 1'b1;
         end
@@ -217,18 +217,18 @@ module mover_cfg32_core #(
         end
     end
     always @(posedge clk) begin
-        if (resetn && u.u_mag.u_mag.u_mag.u_agent.disp_push) begin
+        if (resetn && u.u_mag.u_mag.u_agent.disp_push) begin
             n_disp = n_disp + 1;
         end
     end
 
     // ---- the descriptor the mover ended up holding -------------------------
-    wire [AW-1:0] src_base = u.u_mag.u_mag.u_mag.u_mover.u_src.d_base;
-    wire [2:0]    src_ndim = u.u_mag.u_mag.u_mag.u_mover.u_src.d_ndim;
-    wire [15:0]   src_cnt0 = u.u_mag.u_mag.u_mag.u_mover.u_src.d_count[0];
-    wire [AW-1:0] dst_base = u.u_mag.u_mag.u_mag.u_mover.u_dst.d_base;
-    wire [2:0]    dst_ndim = u.u_mag.u_mag.u_mag.u_mover.u_dst.d_ndim;
-    wire [15:0]   dst_cnt0 = u.u_mag.u_mag.u_mag.u_mover.u_dst.d_count[0];
+    wire [AW-1:0] src_base = u.u_mag.u_pe.u_mover.u_src.d_base;
+    wire [2:0]    src_ndim = u.u_mag.u_pe.u_mover.u_src.d_ndim;
+    wire [15:0]   src_cnt0 = u.u_mag.u_pe.u_mover.u_src.d_count[0];
+    wire [AW-1:0] dst_base = u.u_mag.u_pe.u_mover.u_dst.d_base;
+    wire [2:0]    dst_ndim = u.u_mag.u_pe.u_mover.u_dst.d_ndim;
+    wire [15:0]   dst_cnt0 = u.u_mag.u_pe.u_mover.u_dst.d_count[0];
 
     integer errors = 0, checks = 0, i, spin;
     reg [255:0] rd;

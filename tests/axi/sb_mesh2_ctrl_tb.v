@@ -540,12 +540,12 @@ module sb_mesh2_ctrl_tb;
     initial begin n_ctrl_aw[0]=0; n_ctrl_aw[1]=0; n_ctrl_w[0]=0; n_ctrl_w[1]=0;
                   n_pulse[0]=0; n_pulse[1]=0; end
 
-    wire mv0_en = mesh[0].u.u_mag.u_mag.u_mag.mv_cfg_mine;
-    wire mv1_en = mesh[1].u.u_mag.u_mag.u_mag.mv_cfg_mine;
-    wire [7:0]  mv0_a = mesh[0].u.u_mag.u_mag.u_mag.mv_cfg_addr;
-    wire [7:0]  mv1_a = mesh[1].u.u_mag.u_mag.u_mag.mv_cfg_addr;
-    wire [63:0] mv0_d = mesh[0].u.u_mag.u_mag.u_mag.mv_cfg_data;
-    wire [63:0] mv1_d = mesh[1].u.u_mag.u_mag.u_mag.mv_cfg_data;
+    wire mv0_en = mesh[0].u.u_mag.u_pe.cfg_en_i;
+    wire mv1_en = mesh[1].u.u_mag.u_pe.cfg_en_i;
+    wire [7:0]  mv0_a = mesh[0].u.u_mag.u_pe.cfg_addr_i;
+    wire [7:0]  mv1_a = mesh[1].u.u_mag.u_pe.cfg_addr_i;
+    wire [63:0] mv0_d = mesh[0].u.u_mag.u_pe.cfg_data_i;
+    wire [63:0] mv1_d = mesh[1].u.u_mag.u_pe.cfg_data_i;
     reg trace = 0;
 
     always @(posedge mag0) if (rstn) begin
@@ -587,10 +587,10 @@ module sb_mesh2_ctrl_tb;
         end
     end
 
-    wire mv0_busy = mesh[0].u.u_mag.u_mag.u_mag.u_mover.stat_busy;
-    wire mv1_busy = mesh[1].u.u_mag.u_mag.u_mag.u_mover.stat_busy;
-    wire [3:0] mv0_flt = mesh[0].u.u_mag.u_mag.u_mag.u_mover.stat_fault;
-    wire [3:0] mv1_flt = mesh[1].u.u_mag.u_mag.u_mag.u_mover.stat_fault;
+    wire mv0_busy = mesh[0].u.u_mag.u_pe.u_mover.stat_busy;
+    wire mv1_busy = mesh[1].u.u_mag.u_pe.u_mover.stat_busy;
+    wire [3:0] mv0_flt = mesh[0].u.u_mag.u_pe.u_mover.stat_fault;
+    wire [3:0] mv1_flt = mesh[1].u.u_mag.u_pe.u_mover.stat_fault;
 
     // Waiting on `busy` instead of a fixed delay: a move that never STARTED and
     // one still running look identical from a timer.

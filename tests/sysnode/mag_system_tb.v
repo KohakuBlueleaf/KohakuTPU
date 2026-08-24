@@ -377,8 +377,8 @@ module mag_system_tb;
         end
     endtask
 
-    mag #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(40), .ID_W(4),
-          .MEM_PORTS(MEMP),
+    sysnode #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(40), .ID_W(4),
+          .PORTS(MEMP),
           .MEM_X(0), .MEM_Y(1),
           .GRID_LO(1), .GRID_HI(2), .STAGE_FLITS(128)) u_mag (
         .clk(clk), .resetn(rstn),
@@ -420,6 +420,7 @@ module mag_system_tb;
         // shares the memory ports now and answers at (MEM_X, MEM_Y), so that
         // edge is tied off below.
         .mem_rd_count(mag_rd), .mem_wr_count(mag_wr),
+        .pe_halt_req(1'b0), .pe_status(), .pe_busy(),
         .mv_busy(mv_busy), .mv_fault(mv_fault), .mv_done(mv_done)
     );
 

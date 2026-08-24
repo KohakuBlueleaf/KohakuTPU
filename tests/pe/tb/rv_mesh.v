@@ -203,8 +203,8 @@ module rv_mesh #(
     wire             d_wlast, d_wvalid, d_wready;
     wire             d_bvalid, d_bready, d_rlast, d_rvalid, d_rready;
 
-    mag #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(AW),
-          .ID_W(IDW), .MW(DW), .MEM_PORTS(1), .MEM_X(0), .MEM_Y(1),
+    sysnode #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(AW),
+          .ID_W(IDW), .MW(DW), .PORTS(1), .MEM_X(0), .MEM_Y(1),
           .GRID_LO(GLO), .GRID_HI(GHI), .STAGE_FLITS(128),
           .MESH_ID(0), .STAGE(0)) u_mag (
         .clk(clk), .resetn(rstn),
@@ -242,6 +242,7 @@ module rv_mesh #(
         .mem_in_data(mag_i), .mem_in_valid(mag_iv), .mem_in_busy(mag_ib),
         .mem_out_data(mag_o), .mem_out_valid(mag_ov), .mem_out_busy(mag_ob),
         .mem_rd_count(), .mem_wr_count(),
+        .pe_halt_req(1'b0), .pe_status(), .pe_busy(),
         .mv_busy(), .mv_fault(), .mv_done(),
         .link0_out_tdata(), .link0_out_tuser(), .link0_out_tlast(),
         .link0_out_tvalid(), .link0_out_tready(1'b1),

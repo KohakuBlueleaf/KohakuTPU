@@ -65,7 +65,7 @@ module mag_wslot_tb;
     wire [NCH*2-1:0]    m_bresp, m_rresp;
     wire [NCH-1:0]      m_bvalid, m_bready, m_rlast, m_rvalid, m_rready;
 
-    mag #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(AW), .ID_W(4),
+    sysnode #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(AW), .ID_W(4),
           .MEM_X(0), .MEM_Y(1),
           .GRID_LO(1), .GRID_HI(2), .STAGE_FLITS(128)) dut (
         .clk(clk), .resetn(rstn),
@@ -102,6 +102,7 @@ module mag_wslot_tb;
         // NoC control port: tie off, nothing dispatches here
         // No agent port to tie off: it shares the memory ports now.
         .mem_rd_count(), .mem_wr_count(),
+        .pe_halt_req(1'b0), .pe_status(), .pe_busy(),
         .mv_busy(), .mv_fault(), .mv_done()
     );
 

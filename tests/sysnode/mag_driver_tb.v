@@ -350,8 +350,8 @@ module mag_driver_tb;
     // agent node: the agent shares these ports, so MAG attaches to ONE edge.
     // It works because routing clamps the destination into the grid -- a flit
     // for (0,y) walks to router (1,y) and only then takes the outward hop.
-    mag #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(40), .ID_W(4),
-          .MEM_PORTS(MEMP),
+    sysnode #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(40), .ID_W(4),
+          .PORTS(MEMP),
           .MEM_X(0), .MEM_Y(1),
           .MEM_X1(0), .MEM_Y1(2),
           .MEM_X2(0), .MEM_Y2(3),
@@ -396,6 +396,7 @@ module mag_driver_tb;
         .mem_rd_count(mag_rd), .mem_wr_count(mag_wr),
         // The mover's command path is behind S_AXI_CTRL now, not a sideband --
         // the driver bench does not command it, so only the status is read.
+        .pe_halt_req(1'b0), .pe_status(), .pe_busy(),
         .mv_busy(), .mv_fault(), .mv_done()
     );
 

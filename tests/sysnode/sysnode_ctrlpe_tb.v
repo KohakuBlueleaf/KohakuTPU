@@ -44,8 +44,8 @@ module sysnode_ctrlpe_tb;
 
     sysnode #(
         .FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(AW),
-        .ID_W(IDW), .MEM_PORTS(1), .ILINK(0), .MW(DW),
-        .CTRL_PE(1), .PE_X(1), .PE_Y(0), .PE_MEM_PRIM("block")
+        .ID_W(IDW), .PORTS(1), .ILINK(0), .MW(DW),
+        .PE_MEM_PRIM("block")
     ) dut (
         .clk(clk), .resetn(resetn),
         .sm_awid({IDW{1'b0}}), .sm_awaddr({AW{1'b0}}), .sm_awlen(8'd0),
@@ -79,12 +79,12 @@ module sysnode_ctrlpe_tb;
         .dram_arvalid(dm_arvalid), .dram_arready(dm_arready),
         .dram_rid(dm_rid), .dram_rdata(dm_rdata), .dram_rresp(dm_rresp),
         .dram_rlast(dm_rlast), .dram_rvalid(dm_rvalid), .dram_rready(dm_rready),
-        .mem_in_data({FW{1'b0}}), .mem_in_valid(1'b0), .mem_in_busy(),
-        .mem_out_data(), .mem_out_valid(), .mem_out_busy(1'b0),
-        .pe_in_data(pe_in_data), .pe_in_valid(pe_in_valid),
-        .pe_in_busy(pe_in_busy),
-        .pe_out_data(pe_out_data), .pe_out_valid(pe_out_valid),
-        .pe_out_busy(1'b0),
+        // THE NODE'S ONE PORT. The processor has none: the hub peels flits
+        // addressed to (0,0) off this port and hands them over.
+        .mem_in_data(pe_in_data), .mem_in_valid(pe_in_valid),
+        .mem_in_busy(pe_in_busy),
+        .mem_out_data(pe_out_data), .mem_out_valid(pe_out_valid),
+        .mem_out_busy(1'b0),
         .mem_rd_count(), .mem_wr_count(),
         .mv_busy(mv_busy), .mv_fault(mv_fault), .mv_done(),
         .pe_halt_req(1'b0), .pe_status(pe_status), .pe_busy(pe_busy),
@@ -131,12 +131,12 @@ module sysnode_ctrlpe_tb;
                      input [255:0] payload);
         begin
             @(negedge clk);
-            pe_in_data = {4'd1, 4'd0, 4'd2, 4'd2, 4'h8, 8'd0, 1'b0, 3'd0,
+            pe_in_data = {4'd0, 4'd0, 4'd2, 4'd2,4'h8, 8'd0, 1'b0, 3'd0,
                           buf_id, off, 8'd0, 8'd0, 4'd0, 4'd0, 208'd0};
             pe_in_valid = 1'b1;
             @(posedge clk); @(negedge clk); pe_in_valid = 1'b0;
             repeat (2) @(negedge clk);
-            pe_in_data = {4'd1, 4'd0, 4'd2, 4'd2, 4'h8, 8'd0, 1'b1, 3'd0,
+            pe_in_data = {4'd0, 4'd0, 4'd2, 4'd2,4'h8, 8'd0, 1'b1, 3'd0,
                           payload};
             pe_in_valid = 1'b1;
             @(posedge clk); @(negedge clk); pe_in_valid = 1'b0;
@@ -147,7 +147,7 @@ module sysnode_ctrlpe_tb;
     task kick(input [31:0] pc);
         begin
             @(negedge clk);
-            pe_in_data = {4'd1, 4'd0, 4'd2, 4'd2, 4'h5, 8'd7, 1'b1, 3'd0,
+            pe_in_data = {4'd0, 4'd0, 4'd2, 4'd2,4'h5, 8'd7, 1'b1, 3'd0,
                           8'd1, pc, 32'd0, 184'd0};
             pe_in_valid = 1'b1;
             @(posedge clk); @(negedge clk); pe_in_valid = 1'b0;
