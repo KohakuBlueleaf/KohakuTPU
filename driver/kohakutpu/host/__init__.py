@@ -11,14 +11,19 @@ written when there was only one keeps working.
 """
 
 import numpy as np
-from kohakuaccel import device as _device_mod
 from kohakuaccel.device import (
     discovery as _discovery_mod,
+)
+from kohakuaccel.device import (
     enumerate_mesh,
     find_control_window,
     find_control_windows,
-    program as _program_mod,
     read_agent_caps,
+)
+from kohakuaccel.device import (
+    program as _program_mod,
+)
+from kohakuaccel.device import (
     registers as _registers_mod,
 )
 from kohakuaccel.device.registers import A_CAPS
@@ -27,6 +32,8 @@ from kohakuaccel.transport.jtag import JtagTransport
 from kohakuaccel.transport.rebase import Rebased, UnitGlobal, Window
 from kohakutpu.clock.card import load_board
 from kohakutpu.hw import tensor as T
+
+from kohakuaccel import device as _device_mod
 
 WORD_BYTES = 32
 
@@ -98,6 +105,7 @@ def board_map(board: dict) -> dict:
         "mem": [(i + woff) << wshift for i in range(n)],
         "dram": [i << dshift for i in range(n)],
         "size": board.get("mem_words", MEMORY_SIZE // 32) * 32,
+        "granule": board.get("host_write_granule", 0),
     }
 
 
@@ -121,6 +129,7 @@ class Mesh:
         mem_base: int,
         mem_size: int = MEMORY_SIZE,
         dram_base: int | None = None,
+        granule: int = 0,
     ) -> None:
         self.raw = raw
         self.index = index
@@ -136,7 +145,7 @@ class Mesh:
                 f"that is real, or the same address means two different bytes"
             )
         self.ctrl = Rebased(raw, ctrl_base)
-        self.mem = Window(raw, mem_base, mem_size)
+        self.mem = Window(raw, mem_base, mem_size, granule)
         self.caps = read_agent_caps(self.ctrl)
         self.endpoints = enumerate_mesh(self.ctrl, self.caps)
 
@@ -202,6 +211,188 @@ class Mesh:
                 f"(card {self.mem_base + addr:#x}): wrote {want.hex()}, "
                 f"read {got.hex()}"
             )
+
+    def probe_dispatch(self, coord=None, addr: int = 0x4000, timeout: float = 5.0):
+        """Send ONE instruction to ONE cluster and confirm it retires.
+
+        The BOTTOM RUNG of the ladder in `docs/workflow/bringup.md`: staging
+        write, kick, credit, one NoC hop, one one-word memory read, one signal
+        back. No L2, no matmul array, no result readback. A matmul lights all of
+        those at once and cannot say which is broken; run this first, always.
+
+        Returns the decoded NODE_STATUS. Raises :class:`TimeoutError` if the unit
+        never signals -- which is the DISPATCH path, not the arithmetic.
+        """
+        from kohakuaccel.device import (
+            T_CU_INST,
+            decode_node_status,
+            header,
+            node_status_addr,
+        )
+        from kohakuaccel.device.program import Program
+
+        x, y = coord or self.coords("MG")[0]
+        # ECC turns never-written DRAM into an uncorrectable error rather than
+        # zeros, so the line this FILL reads has to be painted first.
+        self.mem.write_block(addr, bytes((0xA5 ^ i) for i in range(32)))
+
+        # op 1 = OP_FILL. Shifted up 192 this hits mx_cluster_cu.v:265/268/269;
+        # the address's top 6 bits live at flit[68:63], so `addr` must fit 34.
+        payload = (1 << 60) | (addr << 26) | (1 << 10)
+        was = decode_node_status(self.raw.read64(self.base + node_status_addr(x, y)))
+
+        prog = Program()
+        prog.stage_flit(0, header(T_CU_INST, 2, True) | (payload << 192))
+        prog.seed_credits(16)
+        prog.kick(x, y, 0, 1)
+        prog.await_node_at(x, y, (was["count"] + 1) & 0xFFFF)
+        prog.done(0).execute(self.ctrl, timeout=timeout)
+
+        return decode_node_status(self.raw.read64(self.base + node_status_addr(x, y)))
+
+    def probe_type(
+        self, unit_type: str, addr: int = 0x4000, timeout: float = 5.0
+    ) -> dict:
+        """Dispatch to EVERY idle unit of one type at once, then wait once.
+
+        The per-type sibling of :meth:`probe_dispatch`, and the unit of work a
+        CLOCK LADDER should step. Units of one type share a clock domain and are
+        the same netlist -- only placement differs -- so laddering them one at a
+        time re-measures the same module N times to learn a `min()`. This kicks
+        all of them before waiting on any, which is the difference between units
+        that overlap and units that take turns (see `Program.kick`).
+
+        Waits per node rather than on `A_SIG_DONE`: the global counter is
+        satisfied by ANY node's traffic, so a wait sized for this dispatch can be
+        released early by somebody else's. The polls run after every kick, so
+        they cost N reads and not N executions.
+
+        Returns ``{"coords": ..., "status": {...}, "seconds": float}``. Raises
+        :class:`TimeoutError` naming the units that never signalled -- which is
+        the DISPATCH path, not the arithmetic.
+        """
+        import time
+
+        from kohakuaccel.device import (
+            T_CU_INST,
+            decode_node_status,
+            header,
+            node_status_addr,
+        )
+        from kohakuaccel.device.program import Program
+
+        coords = self.idle(unit_type)
+        if not coords:
+            raise RuntimeError(
+                f"mesh_{self.index}: no idle {unit_type}; a unit left running by "
+                f"an earlier program never retires, so this would wait forever"
+            )
+
+        # ECC turns never-written DRAM into an uncorrectable error rather than
+        # zeros, so every line a FILL reads has to be painted first. One line
+        # per unit, so a unit cannot pass on its neighbour's data.
+        for n, _ in enumerate(coords):
+            self.mem.write_block(
+                addr + n * 32, bytes((0xA5 ^ (i + n)) for i in range(32))
+            )
+
+        was = {
+            c: decode_node_status(self.raw.read64(self.base + node_status_addr(*c)))[
+                "count"
+            ]
+            for c in coords
+        }
+
+        prog = Program()
+        prog.seed_credits(16)
+        for n, c in enumerate(coords):
+            payload = (1 << 60) | ((addr + n * 32) << 26) | (1 << 10)
+            prog.stage_flit(n, header(T_CU_INST, 2, True) | (payload << 192))
+        for n, c in enumerate(coords):
+            prog.kick(c[0], c[1], n, 1)
+        for c in coords:
+            prog.await_node_at(c[0], c[1], (was[c] + 1) & 0xFFFF)
+
+        t0 = time.monotonic()
+        prog.done(0).execute(self.ctrl, timeout=timeout)
+        elapsed = time.monotonic() - t0
+
+        return {
+            "coords": coords,
+            "status": {
+                c: decode_node_status(self.raw.read64(self.base + node_status_addr(*c)))
+                for c in coords
+            },
+            "seconds": elapsed,
+        }
+
+    def stage_addr(self, offset: int, aperture: int = 0) -> int:
+        """`offset` in this mesh's MAG staging store, as a unit issues it.
+
+        The L2 is reached BY ADDRESS, never an instruction (`mag_stage.v`):
+        bit 39 set, bit 38 clear, mesh in [37:36], aperture in [35:32]. A
+        foreign mesh's staging address passes through untouched, which is what
+        lets one mesh reach another's store.
+
+        FOR AN INSTRUCTION'S OPERAND, NEVER FOR `self.mem`. The host window is
+        DRAM; there is no path from it to the aperture, and a raw read at this
+        address DECERRs and takes the JTAG session down with it.
+        """
+        from kohakuaccel.machinespec import (
+            AP_IMPL,
+            AP_SHIFT,
+            MESH_SHIFT,
+            SPECIAL_BIT,
+            STAGE_BYTES,
+        )
+
+        if not (AP_IMPL >> aperture) & 1:
+            raise ValueError(
+                f"aperture {aperture} is not in AP_IMPL {AP_IMPL:#06x}; the "
+                f"hardware faults on it rather than aliasing onto DRAM"
+            )
+        if not 0 <= offset < STAGE_BYTES:
+            raise ValueError(
+                f"{offset:#x} is past the {STAGE_BYTES:,} bytes behind aperture "
+                f"{aperture}; a larger offset WRAPS rather than faulting"
+            )
+        return (
+            SPECIAL_BIT | (self.index << MESH_SHIFT) | (aperture << AP_SHIFT) | offset
+        )
+
+    def l2_config(
+        self, unit_type: str = "MG", base: int | None = None, enable: bool | None = None
+    ) -> dict:
+        """Read or set every NoC L2 adapter on units of `unit_type`.
+
+        The adapters are DISABLED AT RESET so that one nobody configured claims
+        no address; nothing stages until this is called. Returns per-unit
+        ``{"base", "enabled", "served", "forwarded"}``.
+        """
+        from kohakuaccel.device import control_read
+        from kohakuaccel.device.discovery import control_write
+        from kohakuaccel.device.registers import (
+            L2_BASE_REG,
+            L2_COUNTERS,
+            L2_EN,
+        )
+
+        out = {}
+        for coord in self.coords(unit_type):
+            if base is not None:
+                control_write(self.ctrl, coord, L2_BASE_REG, base & ((1 << 40) - 1))
+            if enable is not None:
+                control_write(self.ctrl, coord, L2_EN, 1 if enable else 0)
+            b = control_read(self.ctrl, coord, L2_BASE_REG)
+            e = control_read(self.ctrl, coord, L2_EN)
+            c = control_read(self.ctrl, coord, L2_COUNTERS)
+            out[coord] = {
+                "base": None if b is None else b & ((1 << 40) - 1),
+                "enabled": None if e is None else bool(e & 1),
+                "served": None if c is None else (c >> 32) & 0xFFFFFFFF,
+                "forwarded": None if c is None else c & 0xFFFFFFFF,
+            }
+        return out
 
     def upload(self, byte_addr: int, x: np.ndarray) -> int:
         """Pad, pack and write one ``[lanes][K]`` FP16 operand; returns bytes."""
@@ -269,8 +460,13 @@ class Card:
         if board:
             beats = board.get("max_burst_beats")
             width = getattr(self.raw, "beat_bytes", None)
-            if beats and width:
-                self.raw.max_block = min(self.raw.max_block, beats * width)
+            # A client transport has no cap to lower: the burst limit belongs to
+            # whoever owns the cable, not to each client that connects.
+            cap = getattr(self.raw, "max_block", None)
+            if beats and width and cap:
+                self.raw.max_block = min(cap, beats * width)
+            if board.get("burst_read") and hasattr(self.raw, "read_burst"):
+                self.raw.prefer_burst_read = True
         # Reads first, and from a known register: a write lag measured as a read
         # skew cancels itself on a round trip and hides in every check there is.
         self._calibrate_reads()
@@ -332,6 +528,7 @@ class Card:
                         self._map["mem"][i],
                         self._map["size"],
                         dram_base=self._map["dram"][i],
+                        granule=self._map["granule"],
                     )
                 )
             return out
