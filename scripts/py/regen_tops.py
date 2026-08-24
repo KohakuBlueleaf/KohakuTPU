@@ -31,8 +31,7 @@ MAPS = pathlib.Path("src/kohakutpu/top/maps")
 MANIFEST = [
     ("ktpu_min_1m", "mesh_1x1_min.txt", True, True),
     # v6.5-small: per-domain reset entry (kh_rst_sync per MAG/mat/vec domain).
-    ("ktpu_ship_1x1_2c2v_1m", "mesh_1x1_2+2.txt", True, True,
-     (True, True, True), True),
+    ("ktpu_ship_1x1_2c2v_1m", "mesh_1x1_2+2.txt", True, True, (True, True, True), True),
     # The same minimal mesh WITH staging, so a bench can prove the memory mover
     # reaches L2 by address -- nothing else instantiates a store in a real top.
     ("ktpu_min_1m_l2", "mesh_1x1_min.txt", True, True, (True, False, False)),
@@ -46,11 +45,24 @@ MANIFEST = [
     # The probes' 8+2 point. Absent from this list, it never regenerated and
     # silently held whatever the generator emitted when it was first written.
     ("ktpu_ship_2x2_8c2v_1m", "mesh_2x2_8+2.txt", True, True, (True, True, True)),
+    # The control-processor mesh: one system node, one router, one cluster, one
+    # vector core, and the node's CPU on the north edge (the `cpu` token).
+    ("ktpu_ctrlpe_1x1", "mesh_1x1_ctrlpe.txt", True, True, (False, False, False), True),
     ("ktpu_ship_2x1_6c0v_il", "mesh_2x1_6+0.txt", True, False),
     ("ktpu_ship_2x2", "mesh_2x2_4cu4vec.txt", False, False),
     ("ktpu_ship_2x2_il", "mesh_2x2_4+4.txt", True, False),
     ("ktpu_ship_2x2_6c0v_il", "mesh_2x2_6+0.txt", True, False),
     ("ktpu_ship_2x2_6c2v_1m", "mesh_2x2_6+2.txt", True, True, (True, True, True), True),
+    # The same vehicle with the control processor, so its cost on the SHIP is a
+    # difference between two adjacent tops rather than an OOC node extrapolated.
+    (
+        "ktpu_ship_2x2_6c2v_1m_pe",
+        "mesh_2x2_6+2_pe.txt",
+        True,
+        True,
+        (True, True, True),
+        True,
+    ),
     ("ktpu_ship_2x2_6c2v_il", "mesh_2x2_6+2.txt", True, False),
     ("ktpu_ship_2x2_6c4v_il", "mesh_2x2_6+4.txt", True, False),
     ("ktpu_ship_2x3", "mesh_2x3_6cu3vec.txt", False, False),

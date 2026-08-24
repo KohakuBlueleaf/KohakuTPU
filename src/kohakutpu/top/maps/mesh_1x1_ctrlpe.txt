@@ -1,0 +1,8 @@
+# Simulation target 2: one system node, one router, one matmul cluster, one
+# vector core -- and the node's control processor on the north edge.
+#
+# Five attach points on a 1x1 grid (four edges plus the router local); the
+# south edge is `nul` because only four are wanted.
+xxx cpu xxx
+mag mat vec
+xxx nul xxx

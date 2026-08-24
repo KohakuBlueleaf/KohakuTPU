@@ -2,8 +2,11 @@
 # and south edges of column 1, two vector cores on column 2's. Two routers and
 # one SmartConnect port cheaper than the 3x2 shapes.
 #
-# ~260,200 LUT = ~60.3% of an SLR, DERIVED from per-unit costs rather than
-# measured -- synth it before trusting the number.
+# MEASURED 2026-08-24, OOC on xcvu13p at 3.333 ns: 178,792 LUT, 254,077 FF,
+# 447 BRAM, 158 URAM, 1,961 DSP, WNS +0.078. The derived estimate this comment
+# used to carry was ~260,200 -- 45% HIGH, which is why it said to synth it
+# first. Adding the control processor (mesh_2x2_6+2_pe.txt) costs +3,844 LUT
+# and +9 BRAM, and takes WNS to -0.413.
 xxx mat vec xxx
 mag mat mat xxx
 mag mat mat xxx

@@ -27,6 +27,11 @@ module mag_1m #(
     parameter integer STAGE_ENTRIES = 16384,
     parameter integer STAGE_PIPE    = 1,
     parameter integer STAGE_AT_PORT = 0,
+    // The system node's control processor. 0 generates none of it and this
+    // module is what it always was.
+    parameter integer CTRL_PE    = 0,
+    parameter integer PE_X       = 1,
+    parameter integer PE_Y       = 0,
     parameter integer NREQ       = MEM_PORTS + 2 + ((ILINK != 0) ? 1 : 0)
 )(
     input  wire clk,
@@ -88,6 +93,17 @@ module mag_1m #(
     input  wire              sc_rready,
 
     // NoC
+    // The processor's own mesh port -- it is a compute unit from outside.
+    input  wire [FLIT_WIDTH-1:0]  pe_in_data,
+    input  wire                   pe_in_valid,
+    output wire                   pe_in_busy,
+    output wire [FLIT_WIDTH-1:0]  pe_out_data,
+    output wire                   pe_out_valid,
+    input  wire                   pe_out_busy,
+    input  wire                   pe_halt_req,
+    output wire [63:0]            pe_status,
+    output wire                   pe_busy,
+
     input  wire [MEM_PORTS*FLIT_WIDTH-1:0] mem_in_data,
     input  wire [MEM_PORTS-1:0]            mem_in_valid,
     output wire [MEM_PORTS-1:0]            mem_in_busy,
@@ -165,8 +181,8 @@ module mag_1m #(
     wire [NREQ-1:0]          x_wlast, x_wvalid, x_wready;
     wire [NREQ-1:0]          x_bvalid, x_bready, x_rlast, x_rvalid, x_rready;
 
-    mag #(.FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH), .DATA_W(DATA_W),
-          .MW(MW),
+    sysnode #(.FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH), .DATA_W(DATA_W),
+          .MW(MW), .CTRL_PE(CTRL_PE), .PE_X(PE_X), .PE_Y(PE_Y),
           .ADDR_W(ADDR_W), .ID_W(ID_W), .MEM_PORTS(MEM_PORTS),
           .MEM_X(MEM_X), .MEM_Y(MEM_Y), .MEM_X1(MEM_X1), .MEM_Y1(MEM_Y1),
           .GRID_LO(GRID_LO), .GRID_HI(GRID_HI), .STAGE_FLITS(STAGE_FLITS),
@@ -208,6 +224,11 @@ module mag_1m #(
         .dram_arvalid(m_arvalid), .dram_arready(m_arready),
         .dram_rid(m_rid), .dram_rdata(m_rdata), .dram_rresp(m_rresp),
         .dram_rlast(m_rlast), .dram_rvalid(m_rvalid), .dram_rready(m_rready),
+        .pe_in_data(pe_in_data), .pe_in_valid(pe_in_valid),
+        .pe_in_busy(pe_in_busy),
+        .pe_out_data(pe_out_data), .pe_out_valid(pe_out_valid),
+        .pe_out_busy(pe_out_busy),
+        .pe_halt_req(pe_halt_req), .pe_status(pe_status), .pe_busy(pe_busy),
         .mem_in_data(mem_in_data), .mem_in_valid(mem_in_valid),
         .mem_in_busy(mem_in_busy),
         .mem_out_data(mem_out_data), .mem_out_valid(mem_out_valid),

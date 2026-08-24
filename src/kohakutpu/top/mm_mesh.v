@@ -19,7 +19,7 @@
 //
 // Coordinates outside GRID_LO..GRID_HI are reached by the router's clamp, which
 // is how a border endpoint like MAG at (0,1) is addressed -- the same scheme
-// tests/mas/mag_system_tb.v uses.
+// tests/sysnode/mag_system_tb.v uses.
 //
 // Every AXI master leaves the module and every status counter is observable, so
 // nothing here is eligible for pruning.

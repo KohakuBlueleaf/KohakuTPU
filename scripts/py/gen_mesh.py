@@ -24,6 +24,9 @@ edges, the first and last column the west and east edges. Routers sit at
        four port coordinate pairs.
   vec  a vector core.
   mat  a matmul cluster, one mx_cluster_cu on one router local.
+  cpu  the system node's control processor. At most ONE: it lives inside the
+       node, so its coordinate only says which router port it hangs off. Its
+       presence is what sets CTRL_PE=1 on the node.
 
 `mgr` and `acu` are RETIRED, not deprecated. They named the two locals of a
 two-port cluster, and mx_cluster_cu presents one; a pair form would have no
@@ -49,7 +52,7 @@ from pathlib import Path
 
 EMPTY = {"xxx", "   ", "..."}
 TIED = EMPTY | {"nul"}
-KNOWN = TIED | {"mag", "vec", "mat"}
+KNOWN = TIED | {"mag", "vec", "mat", "cpu"}
 # Named so the error says what to write instead. Falling through to "unknown
 # token" would read as a typo rather than as a shape the hardware dropped.
 RETIRED = {"mgr", "acu"}
@@ -111,6 +114,7 @@ class Mesh:
         self.mags = []  # [(x, y)] in map coordinates
         self.vecs = []  # [(x, y)]
         self.cus = []  # [(x, y)] -- one router local each
+        self.cpus = []  # [(x, y)] -- at most one, the node's control processor
         self.extra = set(extra)
         self.units = {}  # project token -> [(x, y)]
         self._classify()
@@ -142,6 +146,8 @@ class Mesh:
                     self.mags.append((x, y))
                 elif t == "vec":
                     self.vecs.append((x, y))
+                elif t == "cpu":
+                    self.cpus.append((x, y))
                 elif t == "mat":
                     # An edge cluster costs a link, not a router, which is how
                     # 6 clusters fit a 2x2 grid instead of needing 3x2.
@@ -153,6 +159,11 @@ class Mesh:
             raise MeshError(f"{len(self.mags)} mag tiles; mag.v declares only 4 ports")
         if not self.mags:
             raise MeshError("no mag tile: nothing would serve memory")
+        if len(self.cpus) > 1:
+            raise MeshError(
+                f"{len(self.cpus)} cpu tiles; the control processor lives inside "
+                "the one system node and has a single NoC port"
+            )
 
     def _interior(self, x, y):
         return 1 <= x <= self.nx and 1 <= y <= self.ny
@@ -359,6 +370,37 @@ def emit(
         assign mag_i_d[{i}*FW +: FW] = {stem}_{b}d;
         assign mag_i_v[{i}] = {stem}_{b}v;
         assign {stem}_{b}b = mag_i_b[{i}];""")
+    # The control processor sits INSIDE the node, on the node's clock, so its
+    # NoC port takes the same crossing as a memory port -- not the fabric's.
+    if m.cpus:
+        px, py = m.cpus[0]
+        stem, fwd = (
+            e.edge_link(px, py)
+            if not m._interior(px, py)
+            else (e.link(f"L{px}_{py}"), True)
+        )
+        a, b = ("f", "r") if fwd else ("r", "f")
+        cdc_body.append(
+            f"""        noc_local_cdc #(.FLIT_WIDTH(FW), .DEPTH(CDC_DEPTH)) u_peo (
+            .wr_clk(axi_aclk), .wr_resetn({rs_mag}),
+            .i_data(pe_o_d), .i_valid(pe_o_v), .i_busy(pe_o_b),
+            .rd_clk(clk), .rd_resetn(resetn),
+            .o_data({stem}_{a}d), .o_valid({stem}_{a}v), .o_busy({stem}_{a}b)
+        );
+        noc_local_cdc #(.FLIT_WIDTH(FW), .DEPTH(CDC_DEPTH)) u_pei (
+            .wr_clk(clk), .wr_resetn(resetn),
+            .i_data({stem}_{b}d), .i_valid({stem}_{b}v), .i_busy({stem}_{b}b),
+            .rd_clk(axi_aclk), .rd_resetn({rs_mag}),
+            .o_data(pe_i_d), .o_valid(pe_i_v), .o_busy(pe_i_b)
+        );"""
+        )
+        direct_body.append(f"""        assign {stem}_{a}d = pe_o_d;
+        assign {stem}_{a}v = pe_o_v;
+        assign pe_o_b = {stem}_{a}b;
+        assign pe_i_d = {stem}_{b}d;
+        assign pe_i_v = {stem}_{b}v;
+        assign {stem}_{b}b = pe_i_b;""")
+
     e.body.append(
         "    generate if (MAG_CDC) begin : g_magcdc\n"
         + "\n".join(cdc_body)
@@ -393,13 +435,27 @@ def emit(
         if single
         else ""
     )
+    # An unconnected input is Z, not 0, and mag.v muxes the mover's config off
+    # pe_cfg_en -- so the no-processor case must TIE these, never omit them.
+    if m.cpus:
+        px, py = m.cpus[0]
+        extra += f",\n          .CTRL_PE(1), .PE_X({px}), .PE_Y({py})"
+        cp = """
+        .pe_in_data(pe_i_d), .pe_in_valid(pe_i_v), .pe_in_busy(pe_i_b),
+        .pe_out_data(pe_o_d), .pe_out_valid(pe_o_v), .pe_out_busy(pe_o_b),
+        .pe_halt_req(1'b0), .pe_status(pe_status), .pe_busy(pe_busy),"""
+    else:
+        cp = """
+        .pe_in_data({FW{1'b0}}), .pe_in_valid(1'b0), .pe_in_busy(),
+        .pe_out_data(), .pe_out_valid(), .pe_out_busy(1'b0),
+        .pe_halt_req(1'b0), .pe_status(), .pe_busy(),"""
     e.body.append(
         f"""    {mod} #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(AW),
           .ID_W(IDW), .MEM_PORTS({len(m.mags)}){coords},
           .GRID_LO(1), .GRID_HI({max(m.nx, m.ny)}), .STAGE_FLITS(128){il}{extra}) u_mag (
         .clk(mag_clk_i), .resetn({rs_mag}){clks},
 {MAG_AXI}
-{mag_master_axi(single)}{chr(10) + link_conn(ilink) if ilink else ""}
+{mag_master_axi(single)}{chr(10) + link_conn(ilink) if ilink else ""}{cp}
         .mem_in_data({mag_in_cat}), .mem_in_valid(mag_i_v), .mem_in_busy(mag_i_b),
         .mem_out_data(mag_o_d), .mem_out_valid(mag_o_v), .mem_out_busy(mag_o_b),
         .mem_rd_count(mag_rd), .mem_wr_count(mag_wr),
@@ -524,7 +580,7 @@ def emit(
     # ---- tie off every link nothing claimed ----------------------------
     # Which direction is undriven depends on the link's side of the router.
     used = set()
-    for x, y in m.mags + m.vecs + m.cus + unit_sites:
+    for x, y in m.mags + m.vecs + m.cus + m.cpus + unit_sites:
         used.add(e.link(f"L{x}_{y}") if m._interior(x, y) else e.edge_link(x, y)[0])
 
     for key, stem in sorted(e.links.items(), key=lambda kv: kv[1]):
@@ -539,7 +595,17 @@ def emit(
         )
 
     return render(
-        m, e, name, nm, ilink, mesh_id, single, mat_pump, l2_mag, l2_cu, l2_vec,
+        m,
+        e,
+        name,
+        nm,
+        ilink,
+        mesh_id,
+        single,
+        mat_pump,
+        l2_mag,
+        l2_cu,
+        l2_vec,
         split_reset,
     )
 
@@ -801,6 +867,14 @@ def render(
         if split_reset
         else ""
     )
+    PE_WIRES = (
+        "\n    wire [FW-1:0] pe_o_d, pe_i_d;\n"
+        "    wire pe_o_v, pe_o_b, pe_i_v, pe_i_b;\n"
+        "    wire [63:0] pe_status;\n"
+        "    wire pe_busy;"
+        if m.cpus
+        else ""
+    )
     picture = "\n".join("//   " + " ".join(r) for r in m.rows)
     ncu, nvec = len(m.cus), len(m.vecs)
     mnames = master_names(len(m.mags), ilink, single)
@@ -1047,7 +1121,7 @@ module {name} #(
     wire [NMAG*FW-1:0] mag_o_d, mag_i_d;
     wire [NMAG-1:0]    mag_i_v, mag_i_b, mag_o_v, mag_o_b;
     wire [15:0]        mag_rd, mag_wr;
-    wire mag_clk_i = MAG_CDC ? axi_aclk : clk;{RST_SYNC}
+    wire mag_clk_i = MAG_CDC ? axi_aclk : clk;{PE_WIRES}{RST_SYNC}
 
     wire [15:0] cu_f [0:NCU-1];
     wire [15:0] cu_g [0:NCU-1];
@@ -1151,7 +1225,10 @@ def main():
     tokens = {}
     if args.tokens:
         ns = {}
-        exec(
+        # `--tokens` names a Python file the OPERATOR chose, on the same command
+        # line as everything else this generator trusts. It is a plugin point
+        # for a project's own PE tokens, not untrusted input.
+        exec(  # noqa: S102
             compile(Path(args.tokens).read_text(encoding="utf-8"), args.tokens, "exec"),
             ns,
         )
