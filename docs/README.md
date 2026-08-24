@@ -88,12 +88,14 @@ closure practice and bringup path that get it onto real silicon.
     DDR4 x N        control              instruction dispatch
       |                                     |
     +--------------------------------------------------------+
-    |  system node       MAG + mover + CPU, one per mesh      |
+    |  system node       ONE component, one per mesh          |
+    |    MAG          memory access, cross-mesh, the agent    |
+    |    ctrl PE      dispatch, small compute, the mover      |
+    |                 and its transform slot                  |
+    |    hub          N attachments; nothing inside owns one  |
     |    descriptors in -> DRAM traffic -> streamed responses |
-    |    the CPU is a compute unit on the mesh with two       |
-    |    private wires inward: the mover's config port and    |
-    |    a requester slot on MAG's converged path             |
-    |    plus two addon slots: transform, staging             |
+    |    the PE answers at (0,0) -- a corner, so it costs no  |
+    |    attach point. Neither half ships without the other.  |
     +--------------------------------------------------------+
       |
     +--------------------------------------------------------+
@@ -182,8 +184,9 @@ it, and a framework doc that quotes them as if they were is wrong.
     src/kohakuaccel/     THE FRAMEWORK
       noc/               mesh: router, links, flit protocol, unit port,
                          orchestrator, CU base, L2 adapter
-      sysnode/           system node: MAG, mover, transform slot, control
-                         processor, interlink
+      sysnode/           THE system node, one component: MAG, the control
+                         processor with the mover and its transform slot,
+                         the interlink, and the hub that owns every port
       pe/rv32/           the CPU PE; SIMD_EN names an extension it does
                          not own
       axi/               station bus, links, AXI plumbing

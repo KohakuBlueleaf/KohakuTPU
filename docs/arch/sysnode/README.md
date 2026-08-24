@@ -56,9 +56,11 @@ Neither is a claim about a workload. The framework does not know what the
 compute units compute, and this page describes the mechanism that makes either
 shape expressible.
 
-The processor is a compute unit on the mesh at its own coordinate, so load, fire
-and observe are the ordinary sequence — a driver enumerates it without knowing
-it is a processor. See [control-processor](control-processor.md).
+From outside, the processor is a compute unit at `(0,0)`, so load, fire and
+observe are the ordinary sequence — a driver enumerates it without knowing it is
+a processor. It costs no attach point: `(0,0)` is a corner, which touches no
+router, so the coordinate is free in every mesh by construction. See
+[control-processor](control-processor.md).
 
 ## 2. A CPU for memory management makes the mover worth having
 
@@ -98,12 +100,14 @@ project have operand memories of 928 and 256 bits; both are ordinary clients.
 responses back as flits that say where they belong, and reassembling write
 bursts the mesh delivered out of order.
 
-**The edge complex.** A mesh has few attachments to give away. Memory traffic,
-the control plane and the inter-mesh link all need one, and giving each its own
-would cost three times the ports for two consumers that are nearly idle. Instead
-they share: inbound flits demultiplexed by type, outbound steered by row.
+**The hub, and every attachment the node has.** A mesh has few attachments to
+give away. Memory traffic, the control plane, the inter-mesh link and the
+processor all need one, and giving each its own would cost four times the ports
+for three consumers that are nearly idle. So **nothing inside the node owns a
+port**: they are clients of `sn_hub`, which demultiplexes inbound by destination
+and type and steers outbound by row — [edge-and-control](edge-and-control.md#the-hub).
 
-**The control processor and the mover**, per §1 and §2.
+**The control processor and its mover**, per §1 and §2.
 
 ## The problem the memory half solves
 
@@ -125,7 +129,7 @@ here.
 | [instruction-space](instruction-space.md) | the instruction set you inherit: who owns which bits of a flit, what a read, a write and a mover command can express |
 | [memory-port](memory-port.md) | the port as the unit the machine grows by — intake, the read engine, write slots matched by source, and what a port costs |
 | [transform-stage](transform-stage.md) | the transform slot: one bank **on the mover's read return**, reached only through descriptor mode 5, occupant selected by an id |
-| [edge-and-control](edge-and-control.md) | staging, the share layer, the control agent, the host memory window |
+| [edge-and-control](edge-and-control.md) | staging, **the hub** and why nothing inside the node owns a port, the control agent, the host memory window |
 
 If you are writing a compute unit, read [instruction-space](instruction-space.md)
 first — most of what you were about to design is already there — then the
@@ -142,8 +146,8 @@ conventions in [memory-port](memory-port.md#conventions).
 | **what plugs into the transform slot** | **customizable addon** — a project supplies the occupant and the framework never names it. The reference instance's quantiser takes id 1; `src/templates/transform/` is an identity occupant with a bench, to build against |
 | **staging inside the node** | **customizable addon** — whether, how much, with what behaviour |
 | **DRAM-port beat packing** at the memory boundary | **customizable addon** — [axi](../axi.md) |
-| whether the control processor is generated | **customizable** — `CTRL_PE`; 3,220 LUT and zero slack at two ports |
-| port count, coordinates, slot count, queue depths, primitives | **customizable** — [spec/parameters](../../spec/parameters.md) |
+| **whether the control processor exists** | **not a parameter.** It is part of the node, at `(0,0)`, and there is no build without it |
+| port count, coordinates, slot count, queue depths, primitives | **customizable** — `PORTS` and the rest, [spec/parameters](../../spec/parameters.md) |
 | what the bytes mean: layout, tiling, tensor semantics | **yours** |
 | your unit's own memories and how it stores what arrives | **yours**, entirely |
 
@@ -179,10 +183,12 @@ conventions in [memory-port](memory-port.md#conventions).
 | which die region the ports and their AXI masters land in | [physical](../physical/) |
 | carrying traffic between meshes | the interlink, in [ship](../ship/) |
 
-One boundary is drawn more finely than the module is, and it is a claim rather
-than a description: **the control agent is a separate system the node hosts.**
-It shares the memory ports because attachments are scarce, not because dispatch
-is a memory concern.
+**The divisions on this page are of DESIGN, not of component.** MAG, the control
+agent, the interlink and the processor are separate concerns and are described
+separately, but the node is one module and none of them is separable from it:
+MAG alone cannot start work without a host round trip, and the processor alone
+cannot reach memory or another mesh. They are clients of one hub because
+attachments are scarce, not because dispatch is a memory concern.
 
 ## What the node still cannot do
 

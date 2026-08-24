@@ -169,7 +169,7 @@ so entry N's write never overlapped entry N+1's read either.
 all**, against 3 folded bursts for the contiguous case — 27 ARs across both. The
 gather the old engine needed is gone, not cheaper.
 
-**Measured, OOC on `xcvu13p` at 3.333 ns, `CTRL_PE=1 MEM_PORTS=2`** — hierarchical,
+**Measured, OOC on `xcvu13p` at 3.333 ns, `PORTS=2`** — hierarchical,
 `-flatten_hierarchy none`, so a leaf is charged where it lives:
 
 | instance | | LUT | DSP |

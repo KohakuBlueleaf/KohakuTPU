@@ -91,24 +91,31 @@ inbound flit.
 
 ## 2. Placement
 
-The processor lives **inside MAG**, not at a mesh node.
+The processor is **part of the system node**, beside MAG and behind the same
+hub. It is not optional and there is no parameter that removes it: `sysnode.v`
+instantiates it unconditionally, and MAG has no fabric port of its own either.
+The two are a division of **design**, not of component — MAG is memory access
+and cross-mesh communication, the processor is dispatch, small compute and the
+memory mover, and neither ships alone.
 
-Three reasons, in order of weight:
+Three reasons the processor belongs here rather than at a mesh node:
 
-1. **The mover's `cfg_*` port is inside MAG.** A processor there writes it with a
-   wire: no flit, no NoC hop, no arbitration, no credit, and no change to the
-   agent's inbound path.
-2. **Remote flits are encapsulated at MAG.** `mag.v:394` picks a flit for the
-   interlink at MAG's own memory port, so a processor inside MAG hands a
-   cross-mesh flit straight to `enc_in_data` and skips the NoC round trip
-   entirely.
-3. **The doorbell is a MAG register.** `mag_ilink.v:706-710` raises `door_req`
-   only from config offset `0x90`. Inside MAG that is a wire, so software can ring
-   cross-mesh doorbells, which today only the host can do.
+1. **The mover is its own.** The mover is the processor's SIMD memory unit, so
+   `mv.go` is a store into a unit it contains: no flit, no NoC hop, no
+   arbitration, no credit.
+2. **Remote flits are encapsulated at the node.** The hub picks a flit for the
+   interlink off its own port, so cross-mesh traffic never leaves the node twice.
+   The processor's own remote flit still takes one router hop out and back —
+   the encapsulator is fed from the INBOUND demux, and there is no short-circuit
+   from the processor's outbound side to it. `ctrlpe_mesh2` proves the path
+   works; it does not prove it is short.
+3. **The doorbell is a node register.** `mag_ilink.v:706-710` raises `door_req`
+   only from config offset `0x90`. Inside the node that is a wire, so software
+   can ring cross-mesh doorbells, which otherwise only the host can do.
 
-Physically inside MAG; logically a compute unit at its own mesh coordinate
-(§5.1). `rv_pe` as it exists is a NoC-attached compute unit — the MAG-resident
-variant is a different integration of the same core, and §3 is that difference.
+Inside the node; addressable from outside as a compute unit at `(0,0)` (§5.1).
+`rv_pe` as it exists is a NoC-attached compute unit — the node-resident variant
+is a different integration of the same core, and §3 is that difference.
 
 ---
 
@@ -117,7 +124,7 @@ variant is a different integration of the same core, and §3 is that difference.
 ### 3.1 A new internal requester channel
 
 `mag.v` converges `MP1` internal requesters onto one path. `g_req`
-(`mag.v:1076-1118`) flattens each AXI-shaped requester into
+(`mag.v:852-902`) flattens each AXI-shaped requester into
 `q_valid/q_ready/q_addr/q_len/q_write` plus `w_*`, `r_*`, `b_*`, and that feeds
 `mag_stage_port` (L2) and then `mag_dram_port`.
 
@@ -267,9 +274,11 @@ scratchpad. Consequences:
 
 ### 4.3 The mover becomes private
 
-Nothing outside MAG talks to the mover. No compute unit needs to, because the
-processor owns orchestration and compute units are orchestrated. The host does
-not, because it talks to the processor.
+Nothing outside the node talks to the mover, and it is now literally inside the
+processor: `rv_mag_pe.v` instantiates `mm_mover` and the transform slot, and
+what leaves is the AXI master, channel `MV`. No compute unit needs to reach it,
+because the processor owns orchestration and compute units are orchestrated. The
+host does not, because it talks to the processor.
 
 **One carve-out.** The mover's fault code must remain visible from outside, or a
 faulted mover is indistinguishable from a hung processor. The processor reads it
@@ -288,53 +297,60 @@ private — nothing else addresses it — but it stays diagnosable.
 
 ## 5. Dispatch and graph execution
 
-### 5.1 The processor is a compute unit, at its own coordinate
+### 5.1 The processor is a compute unit, at (0,0)
 
 From outside, it is a compute unit on the mesh: it is enumerated, addressed,
 loaded, kicked and polled exactly like a vector core. That is the whole external
 contract, and §6 is its detail.
 
-**It gets its own coordinate.** Not MAG's port-0 coordinate, which is where the
-agent already answers (`mag.v:291-295`, `ORC_X(MEM_X), ORC_Y(MEM_Y)` — (0,1) at
-the defaults). Sharing would put two responders at one address for CU_CTRL, which
-`noc_cu_base` answers automatically for indices 0-3 (`:270-276`).
+**Its coordinate is `(0,0)`, and that is DERIVED — not a design choice.**
 
-So inbound demux keys on **destination coordinate**, not on flit type. That is
-simpler than a type split and it is what makes "looks exactly like a CU" true
-rather than approximately true.
+Routers occupy `(1..NX, 1..NY)`, with edge endpoints just outside them on the
+four sides. A **corner touches no router**, so nothing can attach there and
+`gen_mesh._check_corners` rejects a non-empty corner outright. `(0,0)` is
+therefore free by construction in every mesh of every shape, forever, and no map
+can collide with it. An earlier revision of this page called the coordinate "a
+design choice, pick it from the generator"; that produced a `cpu` token which
+spent a real attach point on a processor that needs none, and it is retired.
 
-Which coordinate is a **design choice, not a derivation**. It must be free in the
-mesh map and reachable by XY routing; MAG's own physical position is not an
-argument for any particular pair, so pick it from the generator rather than
-assuming one.
+It is also not MAG's port-0 coordinate, where the agent answers (`ORC_X(MEM_X),
+ORC_Y(MEM_Y)` — (0,1) at the defaults). Sharing would put two responders at one
+address for CU_CTRL, which `noc_cu_base` answers automatically for indices 0-3.
 
-Physically it still shares the memory ports, as the agent does — `mag.v:14-17`
-states that pattern: *the agent has no port of its own*. Outbound joins the
-port-by-destination-row mux at `mag.v:482-493`. Priority:
+So the hub's inbound demux keys on **destination coordinate**, not flit type,
+which is what makes "looks exactly like a CU" true rather than approximately
+true. X-then-Y routing delivers it with no special case: a flit for `(0,0)`
+leaves its router westward onto that row's port, and the demux peels it off.
+
+**It has no port of its own** — it is a client of `sn_hub`, as the agent and the
+interlink are. Outbound joins the port-by-destination-row mux there. Priority:
 
     agent > processor > interlink > engine
 
-The agent's rationale (`mag.v:344-348`) is that control flits are a handful
-against a stream of operand words. Processor dispatch flits are the same shape
-and equally few, and a stalled dispatch stalls the graph. The interlink sits
-below because its burst is bounded by credit the far end already granted.
+Control flits are a handful against a stream of operand words, so the agent
+wins; a stalled dispatch stalls the graph, so the processor is next; the
+interlink sits below both because its burst is bounded by credit the far end
+already granted.
 
-### 5.2 What `rv_noc_req` is missing
+### 5.2 What `rv_noc_req` needed, and has
 
-It emits exactly four types (`rv_noc_req.v:91-94`): `MEM_RD_REQ`, `MEM_WR_REQ`,
-`MEM_WR_DATA`, `CU_DATA`. Three additions:
+This section once listed three missing pieces. **All three landed**; it is kept
+because what they are for has not changed.
 
-1. **A `CU_INST` emitter** (type `0x5`, with `last` and a program id). One more
-   case in the `S_IDLE` mux plus a store encoding. The unit can write a peer's
-   memory today but cannot start anything.
-2. **A `CU_SIGNAL` consumer.** `rv_pe.v:506` currently *drops* any flit that is
-   not RD_RESP / WR_ACK / CU_DATA and prints "this unit does not consume it". A
-   dispatcher that cannot hear a CU retire can start work and never learn it
-   finished. This is the completion edge of graph execution and the largest of
-   the three.
-3. **A drivable `rsvd` field.** `rv_noc_req.v:159-160`'s `hdr()` hard-codes
-   `3'b000`, and bit 258 is "this flit leaves the mesh". As written, no processor
-   flit can ever be marked remote. Three bits.
+1. **A `CU_INST` emitter** — type `0x5`, with `last` and a program id.
+   `rv_noc_req.v:326` builds it. Without this the unit could write a peer's
+   memory but not start anything.
+2. **A `CU_SIGNAL` consumer** — `rv_mag_pe.v` wires `rx_sig`/`sig_pop` into the
+   core's signal queue. A dispatcher that cannot hear a CU retire can start work
+   and never learn it finished; this is the completion edge of graph execution.
+3. **A drivable `rsvd` field** — `disp_rsvd` is a port. Bit 258 is "this flit
+   leaves the mesh", and without it no processor flit could ever be marked
+   remote.
+
+So the processor can dispatch to its own mesh's units and hear them retire. What
+that does **not** yet have is a bench: `ctrlpe_mesh` proves the processor runs a
+program and drives the mover, not that it orchestrates the compute units around
+it. That is the gap worth closing next.
 
 ### 5.3 The orchestrator is not deleted
 
@@ -409,7 +425,7 @@ A full producer/consumer handshake with no host in the loop:
 1. producer's processor issues `mv.go` with a foreign destination address; the
    mover's write channel splits at `mag_ilink` and pushes
 2. producer's processor rings the doorbell (`cfg` offset `0x90`, a wire from
-   inside MAG)
+   inside the node)
 3. consumer's processor polls `dbell_n[src]`, readable at `stat_sel` 2-5, also a
    wire
 
@@ -525,38 +541,70 @@ Host talks to the processor for *work*. It still talks to MAG directly for:
 
 ## 7. Cost — measured
 
-Out-of-context on `node`, adjacent rows of one sweep, so the processor's cost is
-a difference and not a tier divided by a count:
+Out-of-context on the node, at two ports throughout, which is the production
+width. Every row but the last is **history** — `CTRL_PE` no longer exists and
+the processor cannot be left out — but the differences are the only honest way
+to price anything here.
 
-| `CTRL_PE` | ports | LUT | FF | BRAM | DSP | WNS |
-|---|---|---|---|---|---|---|
-| 0 | 1 | 21,459 | 35,188 | 36.5 | 35 | +0.096 |
-| 0 | 2 | 28,016 | 48,104 | 36.5 | 35 | +0.096 |
-| 1 | 2 | 31,236 | 52,438 | 41.5 | 35 | +0.096 |
+| shape | LUT | FF | BRAM | DSP | WNS |
+|---|---|---|---|---|---|
+| **before the transform fold**, no processor | 36,733 | — | — | — | — |
+| **before the transform fold**, with processor | **39,886** | — | — | — | — |
+| after the fold, two modules, no processor | 28,016 | 48,104 | 36.5 | 35 | +0.096 |
+| after the fold, two modules, with processor | 31,236 | 52,438 | 41.5 | 35 | +0.096 |
+| **one component, hub** | **31,334** | 52,409 | 41.5 | 35 | +0.096 |
 
-All three re-measured 2026-08-24, after the transform slot folded onto the
-mover's read-return path and the occupant registers landed. Nothing here is
-carried from an earlier shape.
+Rows 1–2 are 2026-08-24 morning, before the transform slot folded onto the
+mover's read-return path; rows 3–4 the same evening, after it; row 5 on
+2026-08-25 after the node became one component.
+
+**The fold is where the area went**: 39,886 → 31,236 is **−8,650 LUT**, and it
+is the largest single change this node has had. Against that genuinely
+historical figure the node today is **−8,552 LUT, −21%**.
+
+**The restructure itself costs +98 LUT (0.3%) and returns 29 FF**, at identical
+BRAM, DSP and slack.
+
+Where the 98 goes: the processor needs its own inbound arbiter, because a flit
+for `(0,0)` may arrive at *any* port, so the hub carries a second 288-bit
+port-select mux beside the agent's. Sharing one arbiter between them would
+remove it — and would let a hung processor hold the port the host needs to
+*recover* it, which is the one path that must never block. The mux is the price
+of that, paid deliberately.
+
+**Three things were tried to get it back, and only one worked.** Encoding the
+outbound priority chain into a 2-bit select cost **+138**; narrowing the port
+indices from 32 bits to `PSEL_W` cost **+18** — Vivado's own inference beat
+both, and both were reverted. What did work: each port's mesh row is a
+build-time constant, and passing it into the hub as a *wire* stopped it folding
+against the flit compare on every port. As parameters it is **−155**.
+
+> **There is no whole-mesh figure from before the fold.** Every mesh report in
+> this tree is 2026-08-24 or later, so the mesh table below can only be read
+> against the two-module shape, never against the 39,886-era node.
+
+Hierarchically the hub is **631 LUT**: 320 of its own logic — the demux, three
+arbiters and the outbound steer for four kinds of client — plus a 311-LUT
+`sb_skid` on the encapsulator path that was inside `mag` before and folds away
+entirely at `ILINK = 0`.
 
 **The processor costs 3,220 LUT, 4,334 FF and 5 BRAM at two ports, and zero
-DSP.** At four meshes that is ~12,900 LUT.
+DSP** (rows 3→4). At four meshes that is ~12,900 LUT. Hierarchically
+`rv_mag_pe` was 2,818 LUT before it absorbed the mover; the difference is the
+converged-path arbiters widening by one requester.
 
-Hierarchically `rv_mag_pe` is **2,818 LUT** on its own. The difference is the
-other half of what `CTRL_PE` does: it widens the agent's converged-path arbiters
-by one requester. Quote 2,818 for the processor as a block and 3,220 for what
-turning it on costs the node.
+**The second memory port costs 6,557 LUT, 12,916 FF and no DSP** (21,459 at one
+port → 28,016 at two), which is what makes a node with more than two ports
+affordable.
 
-**The second memory port costs 6,557 LUT, 12,916 FF and no DSP** (21,459 →
-28,016), which is what makes a node with more than two ports affordable.
+**DSP is 35 at one port and at two.** That is the check that matters for the
+fold: 32 for one transform bank plus 3 for the mover, and a figure that does not
+move with the port count is the strongest form of "one bank per node".
+`ooc_sysnode.tcl` errors above 48 precisely to catch a bank being generated per
+port.
 
-**DSP is 35 in all three rows — including the ONE-port row.** That is the check
-that matters for the fold: 32 for one transform bank plus 3 for the mover, and a
-figure that does not move with the port count is the strongest form of "one bank
-per node". `ooc_sysnode.tcl` errors above 48 precisely to catch a bank being
-generated per port.
-
-**WNS is identical in both rows.** The worst path is the same one with and
-without the processor, so neither it nor the folded mover sets it.
+**WNS is +0.096 in every row.** The worst path is the same one with the
+processor, without it, and behind the hub — so none of them sets it.
 
 > **Synthesis, not implementation.** This tree has a recorded 0.740 ns synth →
 > route loss on `m62_c1`, so +0.096 at synthesis is not a claim that 300 MHz
@@ -570,12 +618,25 @@ m62 shape, 6 matmul clusters, 2 vector cores, 2 memory ports — OOC at 3.333 ns
 
 | | LUT | FF | BRAM | URAM | DSP | WNS |
 |---|---|---|---|---|---|---|
-| m62 | 178,792 | 254,077 | 447 | 158 | 1,961 | **+0.078** |
-| m62 + processor | 182,636 | 258,971 | 456 | 158 | 1,961 | **−0.413** |
-| delta | **+3,844** | +4,894 | +9 | 0 | **0** | **−0.491** |
+| m62, no processor | 178,792 | 254,077 | 447 | 158 | 1,961 | **+0.078** |
+| m62 + processor, two modules | 182,636 | 258,971 | 456 | 158 | 1,961 | **−0.413** |
+| **m62, one component** | **182,014** | 259,205 | 452 | 158 | 1,961 | **+0.078** |
 
-**Area is cheap and slack is not.** +3,844 LUT is 2.1% of the mesh. The 0.491 ns
-is the number that decides whether this ships.
+The third row was taken before the port-row parameter fix above, so it carries
+155 LUT the node no longer has.
+
+**The two-module shape cost +3,844 LUT and 0.491 ns. The one-component shape
+costs +3,222 LUT and NOTHING.** Slack is back to the no-processor figure exactly.
+
+Why: the processor used to hang off a router local port, so its flits crossed
+router → node → router, the same zig-zag `sn_hub`'s skid comment describes at
+one level down. Behind the hub there is no extra hop, and the path that set the
+−0.413 does not exist. Against the two-module shape the restructure is
+**−622 LUT and +0.491 ns**; the node's own +253 is repaid several times over by
+the router link it no longer needs.
+
+**Area is cheap and slack is not** — which is why the second row is the one that
+mattered, and why the third is the one that ships.
 
 ### The slack story, and why one measurement was not enough
 
@@ -641,7 +702,6 @@ Scheduled work, not surprises:
 
 ## 10. Open questions
 
-- The processor's mesh coordinate. A design choice; pick it from the generator.
 - Whether one core suffices. As a *dispatcher* it does: descriptors are rare and
   a graph edge is a handful of instructions. Asserted, not measured.
 - Whether `rv_l1` should gain multiple outstanding fills, given the MAG path

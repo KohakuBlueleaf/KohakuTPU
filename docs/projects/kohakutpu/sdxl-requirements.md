@@ -1196,7 +1196,7 @@ blocker.
 | # | thing | consequence for SDXL |
 |---|---|---|
 | H7 | **mover `TRANSPOSE` faults if requested** | the one engine with 6 affine dimensions cannot permute |
-| H8 | a compute unit **cannot command the mover** — and the one that can, the control processor, is not on the shipping top | any rearrangement is a host-orchestrated event between programs. `CTRL_PE` defaults to 0 and the v7 meshes are `ktpu_ship_2x2_*_1m_pump`, without the `_pe` suffix that carries it |
+| H8 | a compute unit **cannot command the mover** — only the control processor can, and a unit has no address that reaches it | any rearrangement is orchestrated by the node's processor or by the host between programs. The processor is now part of every node, so the `_pe` top variant is gone: every mesh carries one |
 | H9 | a vector core cannot emit MXFP7, so VC -> cluster L1 is shut | costs flash attention half its stages, and blocks `linear -> act -> linear` with the activation never reaching DRAM |
 | H10 | no sin/cos | §5.9 — do not fix this for SDXL |
 | H11 | no element-dynamic behaviour (gather/scatter with computed indices) | SDXL needs none. Recorded because it is the machine's largest single gap and the next model may |
@@ -1205,7 +1205,7 @@ blocker.
 
 1. ~~**Whether a remote *staging* address forwards over the interlink.**~~
    **SETTLED, and the answer is no.** `mag_ilink`'s AXI slave side is wired to
-   the mover's write channel alone (`mag.v:973-977`); a compute unit's request
+   the mover's write channel alone (`mag.v:667-671`); a compute unit's request
    and a host access both reach `M_AXI_DRAM` with the full 40-bit address and
    land in local DRAM above 64 GB, where nothing answers. Only the mover
    crosses. §5.3's cross-mesh half therefore needs a mover pass on the

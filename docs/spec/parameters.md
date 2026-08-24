@@ -205,31 +205,82 @@ captures.
 
 ### `sysnode` — `src/kohakuaccel/sysnode/sysnode.v`
 
-The enclosure: `mag` plus the control processor, wired together. At
-`CTRL_PE = 0` nothing extra is generated and this module is `mag` passed through.
-It takes every `mag` parameter **except the seven below** and adds:
+**THE node, and one component.** `sn_hub` owns every attachment; `mag` and the
+control processor are its clients and neither has a fabric port. Neither is
+separable and neither is optional — there is no `CTRL_PE`, and `PE_X`/`PE_Y` are
+gone because the processor answers at `(0,0)`, a corner no mesh map can fill.
+
+**Instantiate this. `mag` is not a module a top may use** — it has no NoC ports
+and does not elaborate alone.
 
 | Name | Type | Default | Controls | Legal range |
 |---|---|---|---|---|
-| `CTRL_PE` | integer | `0` | Generate the control processor. **Measured 2026-08-24: 3,220 LUT, 4,334 FF, 5 BRAM, 0 DSP and zero slack at two memory ports, OOC.** | 0 or non-zero. |
-| `PE_X`, `PE_Y` | integer | `1`, `0` | The processor's own mesh coordinate. It is a compute unit and needs a router port like any other; `gen_mesh.py` places it from the `cpu` map token. | Reachable by the clamp, and not shared with another endpoint. |
+| `PORTS` | integer | `1` | The node's NoC attachment count, and **the only shape knob**. Every client inside shares these. | 1–4. Four coordinate pairs are declared. |
+| `FLIT_WIDTH` | integer | `288` | Flit width. | See §1. |
+| `POS_WIDTH` | integer | `4` | Coordinate width. | See §1. |
+| `DATA_W` | integer | `256` | AXI memory width. Equals the flit payload by design. | See §1. |
+| `ADDR_W` | integer | `40` | Physical address width. | See §1. |
+| `ID_W` | integer | `4` | AXI ID width. | Any. |
+| `MW` | integer | `DATA_W` | Memory beat width at the DRAM master. `mag_dram_port` packs `DATA_W` up to this. | `DATA_W` times a power of two. |
+| `ILINK` | integer | `0` | Build the interlink. **Zero generates none of it.** | 0 or non-zero. |
+| `MESH_ID` | integer | `0` | This mesh's id when the interlink is absent. | 0–3. |
+| `LINK_W` | integer | `288` | Interlink AXIS payload width. | Both ends must agree. |
+| `TUSER_W` | integer | `96` | Interlink AXIS sideband width. | Both ends must agree. |
+| `MEM_X`, `MEM_Y` | integer | `0`, `1` | Mesh coordinates of port 0. **The control agent answers here too.** | Reachable by the clamp. |
+| `MEM_X1`, `MEM_Y1` | integer | `0`, `3` | Coordinates of port 1. | As above, and on a different router. |
+| `MEM_X2`, `MEM_Y2` | integer | `0`, `4` | Coordinates of port 2. | As above. |
+| `MEM_X3`, `MEM_Y3` | integer | `0`, `5` | Coordinates of port 3. | As above. |
+| `GRID_LO` | integer | `1` | Clamp lower bound. | See §1. |
+| `GRID_HI` | integer | `2` | Clamp upper bound. | See §1. |
+| `STAGE_FLITS` | integer | `128` | Orchestrator staging RAM depth, in flits. | Power of two. |
+| `WR_SLOTS` | integer | `16` | Write-reassembly slots per memory engine. | `>= 1`. |
+| `STAGE` | integer | `0` | Build the staging store. **Zero generates none of it.** | 0 or non-zero. |
+| `STAGE_BANKS` | integer | `4` | Banks in the staging store. | `>= 1`. |
+| `STAGE_ENTRIES` | integer | `16384` | Entries per bank. 4 × 16384 is 64 URAM, 2 MB. | Power of two. |
+| `STAGE_PIPE` | integer | `1` | Extra register stage on the staging read. | 0 or 1. |
+| `STAGE_AT_PORT` | integer | `0` | 0 puts one store on the converged path; 1 puts one inside each engine, unreachable by mover and interlink. | 0 or 1. |
 | `PE_IMEM` | integer | `2048` | Words of instruction memory. | Power of two. |
 | `PE_SPAD` | integer | `2048` | Words of scratchpad. | Power of two. |
 | `PE_L1_LINES` | integer | `128` | Lines in the processor's own L1. | Power of two. |
 | `PE_MEM_PRIM` | string | `"block"` | Storage primitive for the processor's imem and scratchpad. | `"block"`, `"distributed"`, `"ultra"`. |
+| `XFORM_SLOTS` | integer | `1` | Transform occupants the slot selects between. | `>= 1`. |
+| `XID_W` | integer | `4` | Width of the occupant id. | `>= clog2(XFORM_SLOTS)`. |
+| `XMODE_W` | integer | `4` | Width of the mode field handed to an occupant. | Any. |
+| `XFORM_IN_BITS` | integer | `2048` | **Declared by the occupant.** Bits consumed per entry. | Must match the bank. |
+| `XFORM_OUT_WORDS` | integer | `4` | **Declared by the occupant.** Words produced per entry. | Must match the bank. |
 
-**Seven of `mag`'s parameters are NOT forwarded** and take `mag`'s defaults
-whatever a top asks for: `XFORM_SLOTS`, `XID_W`, `XMODE_W`, `XFORM_IN_BITS`,
-`XFORM_OUT_WORDS`, `IL_RX_BEATS` and `IL_MAX_BEATS`. `sysnode.v` does not
-declare them and does not pass them to its `mag` instance.
-
-> **A project whose transform occupant is not 2048 bits in / 4 words out cannot
-> express that through `sysnode`.** Nor can a ship change the interlink's credit
-> depth. Both are reachable only by instantiating `mag` directly or by editing
-> `sysnode.v`. With one occupant at the default geometry this does not bite,
-> which is exactly why it is easy to miss.
+**Two of `mag`'s parameters are still not forwarded** and take `mag`'s defaults
+whatever a top asks for: `IL_RX_BEATS` and `IL_MAX_BEATS`. A ship cannot change
+the interlink's credit depth without editing `sysnode.v`. The transform geometry
+**is** forwarded now, so a project whose occupant is not 2048-in / 4-out can
+express that.
 
 **Never call this a "node".** A NoC endpoint is a node; this is the system node.
+
+### `sn_hub` — `src/kohakuaccel/sysnode/core/sn_hub.v`
+
+The node's attachments, and the demux and arbitration that let four kinds of
+client share them. Nothing else in the node has a NoC port.
+
+| Name | Type | Default | Controls | Legal range |
+|---|---|---|---|---|
+| `FLIT_WIDTH` | integer | `288` | Flit width. | See §1. |
+| `POS_WIDTH` | integer | `4` | Coordinate width. | See §1. |
+| `PORTS` | integer | `1` | Attachments presented. | 1–4, matching `sysnode`. |
+| `ILINK` | integer | `0` | Whether the interlink client exists. At 0 its arm folds to a constant false. | 0 or non-zero. |
+| `MEM_Y` | integer | `1` | Mesh row of port 0, for the outbound steer. | Must match `sysnode`'s. |
+| `MEM_Y1` | integer | `3` | Mesh row of port 1. | As above. |
+| `MEM_Y2` | integer | `4` | Mesh row of port 2. | As above. |
+| `MEM_Y3` | integer | `5` | Mesh row of port 3. | As above. |
+
+**The rows are parameters, not a port**, and that is a measured decision: a
+port's row is a build-time constant compared against a flit field on every port
+every cycle. Carried in as a wire it cannot fold across the module boundary,
+and that cost **155 LUT**.
+
+The control processor's coordinate is a **localparam of `(0,0)`, not a
+parameter**. A corner touches no router, so it is free in every mesh by
+construction and there is nothing to choose.
 
 ### `mag` — `src/kohakuaccel/sysnode/core/mag.v`
 
@@ -243,14 +294,14 @@ The single point where a partition touches everything outside it. Protocol:
 | `DATA_W` | integer | `256` | AXI memory width. Equals the flit payload by design. | See §1. |
 | `ADDR_W` | integer | `40` | Physical address width. | See §1. |
 | `ID_W` | integer | `4` | AXI ID width. | Any. |
-| `MEM_PORTS` | integer | `1` | How many mesh memory endpoints this agent presents. **This is the unit the machine grows by**, not a tuning knob: a port owns its intake, read engine, write slots and AXI channel. **Measured: a second port is 6,152 LUT and no DSP.** | 1–4. Four coordinate pairs are declared. |
+| `PORTS` | integer | `1` | How many memory engines, one per hub attachment. **This is the unit the machine grows by**, not a tuning knob: an engine owns its intake, read logic, write slots and AXI channel. **Measured: a second port is 6,557 LUT and no DSP.** | 1–4. Four coordinate pairs are declared. |
 | `ILINK` | integer | `0` | Build the interlink. **Zero generates none of it** — no switch, no links, no extra AXI master, and the remote decode folds to a constant false. | 0 or non-zero. |
 | `MESH_ID` | integer | `0` | This mesh's id when the interlink is absent. With the interlink present the id is a runtime register instead. | 0–3. |
 | `LINK_W` | integer | `288` | Interlink beat width. One beat is one flit. | Must match at both ends and in every pipe stage. |
 | `TUSER_W` | integer | `96` | Interlink packet-header width. | Must match at both ends. |
 | `IL_RX_BEATS` | integer | `64` | Interlink receive buffer per class, in beats, and therefore the initial credit. | `>= IL_MAX_BEATS`. Both ends must agree. |
 | `IL_MAX_BEATS` | integer | `32` | Longest interlink packet this end may emit. | `<= IL_RX_BEATS`. Above it, a packet exists that can never be granted credit — a dead link. |
-| `MP1` | integer | `MEM_PORTS + 2 + (ILINK ? 1 : 0) + (CTRL_PE ? 1 : 0)` | **Derived.** Internal requester count, and therefore the width of the converged path into `mag_dram_port`: one per memory port, one for the host upload, one for the mover, one for inbound remote writes when the interlink is present, and one for the control processor when it is. | Do not override. |
+| `MP1` | integer | `PORTS + 3 + (ILINK ? 1 : 0)` | **Derived.** Internal requester count, and therefore the width of the converged path into `mag_dram_port`: one per memory engine, one for the host upload, one for the processor's mover, one for the processor's L1, and one for inbound remote writes when the interlink is present. The processor is not optional, so neither is its pair. | Do not override. |
 | `MEM_X` | integer | `0` | Mesh X coordinate of memory port 0. | Reachable by the clamp. |
 | `MEM_Y` | integer | `1` | Mesh Y coordinate of port 0. **The control agent answers at this coordinate too.** | As above. |
 | `MEM_X1` | integer | `0` | Port 1 X. | As above. |
@@ -263,13 +314,7 @@ The single point where a partition touches everything outside it. Protocol:
 | `GRID_HI` | integer | `2` | Passed to the control agent. **Note this default differs from the router's 14.** | See §1. |
 | `STAGE_FLITS` | integer | `128` | Passed to the control agent's staging RAM. | See §4. |
 | `WR_SLOTS` | integer | `16` | Write reassembly slots per memory port. | **At least two per node that can have a write in flight.** Under-sizing deadlocks; it does not corrupt. |
-| `XFORM_SLOTS` | integer | `1` | Transform occupants the bank instantiates. Occupants are all resident — fabric does not reconfigure per request — so more slots cost more area and buy a **choice**, not concurrency. | `>= 1`. |
-| `XID_W` | integer | `4` | Width of the transform-select id. 0 is bypass. Sized generously because widening it later is a protocol change. | Enough for `XFORM_SLOTS`. |
-| `XMODE_W` | integer | `4` | Width of the opaque per-occupant config field. The agent carries it and never reads it. | Whatever the occupant needs. |
-| `XFORM_IN_BITS` | integer | `2048` | **Declared by the occupant.** Source bits consumed per entry. | Must match the bank. |
-| `XFORM_OUT_WORDS` | integer | `4` | **Declared by the occupant.** Words produced per entry. | Must match the bank. |
 | `MW` | integer | `DATA_W` | Memory beat width at `M_AXI_DRAM`. `mag_dram_port` packs `DATA_W` up to this, so at 512 an 8-beat 256-bit burst becomes 4 beats. | `DATA_W` times a power of two. |
-| `CTRL_PE` | integer | `0` | Build the control processor's requester channel — its AXI slave port on MAG and its slot in the converged path. **Zero generates none of it** and `MP1` shrinks by one, so the shipping bitstream is unchanged. The processor itself is instantiated by `sysnode`, not here. | 0 or non-zero. |
 | `STAGE` | integer | `0` | Build the staging store. **Zero generates none of it.** | 0 or non-zero. |
 | `STAGE_BANKS` | integer | `4` | Banks in the staging store. | `>= 1`. |
 | `STAGE_ENTRIES` | integer | `16384` | Entries per bank. At the defaults that is 4 banks × 16,384 × 256 bits = 16 Mib of URAM. | `>= 1`. |
@@ -372,7 +417,7 @@ No master in the framework drives them.
 
 N requesters onto one AXI4 master, packing a narrow internal beat up to a wider
 memory beat across a clock crossing. This is where every internal requester
-converges and where AXI exists exactly once; `mag.v:1250` instantiates it with
+converges and where AXI exists exactly once; `mag.v:934` instantiates it with
 `N = MP1`.
 
 | Name | Type | Default | Controls | Legal range |

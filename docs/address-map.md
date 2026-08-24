@@ -86,7 +86,7 @@ independent. A write into mesh 2's window carrying `[37:36] = 3` is decoded by
 mesh 2 as remote (`mag_ilink.v:6`, `awaddr[37:36] != my_mesh`) and forwarded over
 the ilink.
 
-**It does not reach the forwarder, though.** `mag.v:973-977` wires
+**It does not reach the forwarder, though.** `mag.v:667-671` wires
 `mag_ilink`'s AXI slave side to `mv_*` — the **mover's** write channel, and only
 that. `S_AXI_MEM` becomes its own requester on MAG's converged path
 (`mag.v:742`, `:753`, slot `UP`) and nothing on that path decodes `[37:36]` for

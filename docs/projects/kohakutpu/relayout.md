@@ -349,7 +349,7 @@ arena bounds it at 2 MB — an offset past that WRAPS onto another entry rather
 than faulting. **No compute unit has issued a staging address on the card.**
 
 A REMOTE staging address is now traced, and the answer is no: `mag_ilink`'s AXI
-slave side is wired to the **mover's** write channel alone (`mag.v:973-977`), so
+slave side is wired to the **mover's** write channel alone (`mag.v:667-671`), so
 nothing a compute unit or the host issues reaches the forwarder. Only the mover
 crosses. `docs/address-map.md` has the path.
 

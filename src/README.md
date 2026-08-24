@@ -64,7 +64,10 @@ kohakuaccel/
   common/        fifos, sdpram, skid, clk/ (div2, pumpclk)
   axi/           station/ link/ topo/ bd/ simple/
   noc/           router/ endpoint/ ctrl/  noc_pkt.vh
-  sysnode/       core/ mover/ interlink/ cpu/  + sysnode.v
+  sysnode/       core/ (incl. sn_hub) mover/ interlink/ cpu/ + sysnode.v
+                 ONE component: `mag` and the control processor are a
+                 division of design, not of module, and the hub owns
+                 every NoC attachment
   pe/rv32/       core/ mem/ noc/  + rv_pe.v
   verif/         AXI RAM models, NoC fixtures, probes
 kohakutpu/

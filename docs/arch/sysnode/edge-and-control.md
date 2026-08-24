@@ -1,6 +1,6 @@
 ---
 title: The edge complex and the control agent
-summary: Staging as the second addon slot, the share layer that puts three consumers on one set of attachments, the control agent, the host window and the mover.
+summary: Staging as the second addon slot, the hub that puts every client of the node on one set of attachments, the control agent, the host window and the mover.
 tags:
   - architecture
   - mas
@@ -40,42 +40,82 @@ otherwise never see it.
 
 ## The mover
 
-The engine behind the mover command set: two descriptor walkers, source and
-destination, stepped in lockstep, with the destination defining the iteration
-space. That is what makes a source stride of zero a broadcast with no extra
-mode. It has its own AXI master and **no fabric endpoint** — it reads memory and
-writes memory, and never talks to a compute unit.
+**The mover is the control processor's, not the memory agent's** — its SIMD
+memory unit, with the transform slot as that unit's extension. It is documented
+with the processor in [control-processor](control-processor.md#4-the-mover-as-an-execution-unit)
+and [simd-model](simd-model.md); what appears at this level is one more
+requester on the converged path, channel `MV`, which is all the agent ever knew
+about it.
 
-Its command path is a **slice of the control window**, not a set of boundary
-ports. That is a design rule with a scar behind it: loose sideband ports never
-get wired up in a block design, and a shipped engine that nothing could command
-is worse than no engine. The window forwards writes verbatim with the offset
-preserved, so the client keeps its own register offsets.
+Two descriptor walkers, source and destination, stepped in lockstep with the
+destination defining the iteration space — which is what makes a source stride
+of zero a broadcast with no extra mode. It has **no fabric endpoint**: it reads
+memory and writes memory, and never talks to a compute unit.
+
+The host's `AUX_CFG` window still reaches it, forwarded verbatim with the offset
+preserved so a driver keeps its own register offsets. That path is a **slice of
+the control window**, not a set of boundary ports, and the rule has a scar
+behind it: loose sideband ports never get wired up in a block design, and a
+shipped engine that nothing could command is worse than no engine. The
+processor's own store wins when both pulse.
 
 What its command set can express is in
 [instruction-space](instruction-space.md#what-the-memory-instruction-set-covers).
 
-## The edge complex
+## The hub
+
+`sn_hub.v`. **The system node has attachments; nothing inside it does.** The
+memory engines, the control agent, the interlink and the control processor are
+all clients of one hub, and the node presents exactly `PORTS` of them.
 
 ```
-  in:   flit arrives at port N
-          memory type?      -> that port's engine
-          remote marker?    -> the interlink encapsulator
-          otherwise         -> the control agent
+  in:   flit arrives at port N, first arm to claim it owns it
+          remote marker?      -> the interlink encapsulator
+          dst == (0,0)?       -> the control processor
+          memory type?        -> that port's engine
+          otherwise           -> the control agent
 
-  out:  agent flit for row y  -> leaves by the port on row y
-        interlink injection   -> same rule
+  out:  a flit for row y      -> leaves by the port on row y
         engine response       -> its own port
-        priority: agent, then interlink, then engine
+        priority: agent, then ctrl PE, then interlink, then engine
 ```
 
-The agent wins outbound arbitration because its traffic is a handful of control
-flits against a stream of operand words. Engine priority would let a busy port
-starve dispatch exactly when the machine is busiest.
+**Order matters inbound because one flit can satisfy two tests.** A memory flit
+may also be marked remote, and the engine is not the consumer of one that is
+leaving this mesh — so remote is asked first.
 
-Inbound, the ports round-robin into the agent's single input, and the pointer
+The agent wins outbound because its traffic is a handful of control flits
+against a stream of operand words, and engine priority would starve dispatch
+exactly when the machine is busiest. The processor sits next: a stalled dispatch
+stalls the whole graph. The interlink is below both because its burst is already
+bounded by credit the far end granted.
+
+Inbound, the ports round-robin into each single-input client, and a pointer
 moves only on an accepted flit — moving it every cycle would let a port lose its
-turn to one that had nothing to send.
+turn to one that had nothing to send. The three arbiters are **separate**:
+sharing one would let a stalled interlink hold up dispatch, or a busy processor
+hold up the agent.
+
+### Why (0,0), and why it is not a choice
+
+Routers occupy `(1..NX, 1..NY)` with edge endpoints just outside them on the
+four sides. A **corner touches no router**, and `gen_mesh` rejects a non-empty
+corner outright — so `(0,0)` is free by construction in every mesh of every
+shape, and no map can ever collide with it.
+
+X-then-Y routing delivers it with no special case: a flit addressed `(0,0)`
+leaves its router westward and lands on the port on that row, whose demux peels
+it off. An on-mesh compute unit cannot reach the processor this way, because a
+unit names memory by descriptor and never by node; the host can, and so can
+another mesh's processor over the interlink. That is exactly the intended set.
+
+**The cost is one router hop out and back.** A flit the host dispatches to
+`(0,0)` leaves the node's port, reaches the router, and comes straight back to
+the port it left from. The same is true of the processor's own remote flits: the
+encapsulator is fed from the inbound demux, so an outbound remote flit takes the
+round trip before it is claimed. Nothing short-circuits either, and nothing
+needs to — both are control paths measured in single flits, and a short-circuit
+would be a fifth outbound source on every port's mux.
 
 One rule here is a deliberate loss of data, and it is the most important line in
 the module. **The control agent must never block memory.** It raises busy when
@@ -141,6 +181,10 @@ checking.
 **`noc_orchestrator.v` — the control agent — lives in `src/kohakuaccel/noc/`.** It is
 instantiated by exactly one module, `mag.v`, and belongs with the control plane,
 not with the router.
+
+**`sn_hub.v` sits under `sysnode/core/`, beside `mag.v`.** It is neither the
+agent's nor the engines' — it is the node's — so `core/` is where it landed
+rather than a directory of its own.
 
 **The interlink is packaged inside the memory agent.** `mag_link.v`,
 `mag_link_pipe.v`, `mag_switch.v`, `mag_ilink.v` and `il_pkt_arb.v` implement a
