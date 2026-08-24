@@ -1,41 +1,44 @@
 <script setup>
-import { SECTIONS, pageFor } from "@/site"
-import { gemVars } from "@/utils/colors"
+import { SECTIONS, pageFor } from "@/site";
+import { gemVars } from "@/utils/colors";
 
-const route = useRoute()
-const dark = ref(document.documentElement.classList.contains("dark"))
-const navOpen = ref(false)
+const route = useRoute();
+const dark = ref(document.documentElement.classList.contains("dark"));
+const navOpen = ref(false);
 
-const current = computed(() => pageFor(route.path))
+const current = computed(() => pageFor(route.path));
 const section = computed(
   () => SECTIONS.find((s) => s.key === current.value?.section) ?? null,
-)
-const scope = computed(() => gemVars(current.value?.domain ?? "framework"))
+);
+const scope = computed(() => gemVars(current.value?.domain ?? "framework"));
 
 function toggleTheme() {
-  dark.value = !dark.value
-  document.documentElement.classList.toggle("dark", dark.value)
-  localStorage.setItem("kt-theme", dark.value ? "dark" : "light")
+  dark.value = !dark.value;
+  document.documentElement.classList.toggle("dark", dark.value);
+  localStorage.setItem("kt-theme", dark.value ? "dark" : "light");
 }
 
 // The window never scrolls, so the router's scrollBehavior cannot help here.
-const pane = ref(null)
+const pane = ref(null);
 watch(
   () => route.fullPath,
   async () => {
-    navOpen.value = false
-    await nextTick()
+    navOpen.value = false;
+    await nextTick();
     if (route.hash) {
-      pane.value?.querySelector(route.hash)?.scrollIntoView({ block: "start" })
+      pane.value?.querySelector(route.hash)?.scrollIntoView({ block: "start" });
     } else {
-      pane.value?.scrollTo({ top: 0 })
+      pane.value?.scrollTo({ top: 0 });
     }
   },
-)
+);
 </script>
 
 <template>
-  <div :style="scope" class="h-full flex flex-col overflow-hidden bg-warm-50 dark:bg-warm-950">
+  <div
+    :style="scope"
+    class="h-full flex flex-col overflow-hidden bg-warm-50 dark:bg-warm-950"
+  >
     <header
       class="shrink-0 z-30 flex items-center gap-3 px-4 h-14 border-b border-warm-200 dark:border-warm-700 bg-warm-100 dark:bg-warm-950"
     >
@@ -49,7 +52,9 @@ watch(
 
       <RouterLink to="/" class="flex items-center gap-2.5 no-underline">
         <div class="w-3 h-3 rounded-full bg-gem" />
-        <span class="kt-text-emphasis font-semibold text-warm-800 dark:text-warm-200">
+        <span
+          class="kt-text-emphasis font-semibold text-warm-800 dark:text-warm-200"
+        >
           KohakuAccel
         </span>
       </RouterLink>
@@ -80,7 +85,11 @@ watch(
     <div class="flex-1 flex min-h-0">
       <aside
         class="w-64 shrink-0 border-r border-warm-200 dark:border-warm-700 bg-warm-100/50 dark:bg-warm-950/50 overflow-y-auto scrollbar-none"
-        :class="navOpen ? 'block fixed top-14 bottom-0 left-0 z-20 bg-warm-100 dark:bg-warm-950' : 'hidden md:block'"
+        :class="
+          navOpen
+            ? 'block fixed top-14 bottom-0 left-0 z-20 bg-warm-100 dark:bg-warm-950'
+            : 'hidden md:block'
+        "
       >
         <div v-for="s in SECTIONS" :key="s.key" class="px-3 py-4">
           <div
@@ -106,7 +115,10 @@ watch(
         </div>
       </aside>
 
-      <main ref="pane" class="doc-pane flex-1 min-w-0 overflow-y-auto overflow-x-hidden">
+      <main
+        ref="pane"
+        class="doc-pane flex-1 min-w-0 overflow-y-auto overflow-x-hidden"
+      >
         <RouterView v-slot="{ Component }">
           <Transition name="fade" mode="out-in">
             <component :is="Component" />

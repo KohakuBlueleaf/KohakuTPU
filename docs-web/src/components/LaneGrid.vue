@@ -9,9 +9,9 @@ const props = defineProps({
   mask: { type: Array, default: null },
   rows: { type: Array, default: () => [] },
   caption: { type: String, default: "" },
-})
-const idx = computed(() => Array.from({ length: props.lanes }, (_, i) => i))
-const on = (i) => (props.mask ? !!props.mask[i] : true)
+});
+const idx = computed(() => Array.from({ length: props.lanes }, (_, i) => i));
+const on = (i) => (props.mask ? !!props.mask[i] : true);
 </script>
 
 <template>
@@ -20,14 +20,20 @@ const on = (i) => (props.mask ? !!props.mask[i] : true)
       <table class="border-collapse font-mono text-[13px] min-w-full">
         <thead>
           <tr>
-            <th class="text-left px-2 py-1 kt-text-micro font-medium text-warm-400 dark:text-warm-600">
+            <th
+              class="text-left px-2 py-1 kt-text-micro font-medium text-warm-400 dark:text-warm-600"
+            >
               lane
             </th>
             <th
               v-for="i in idx"
               :key="i"
               class="px-1 py-1 text-center kt-text-micro font-medium min-w-[3.2rem]"
-              :class="on(i) ? 'text-warm-500 dark:text-warm-400' : 'text-warm-300 dark:text-warm-700'"
+              :class="
+                on(i)
+                  ? 'text-warm-500 dark:text-warm-400'
+                  : 'text-warm-300 dark:text-warm-700'
+              "
             >
               {{ i }}
             </th>
@@ -35,7 +41,11 @@ const on = (i) => (props.mask ? !!props.mask[i] : true)
         </thead>
         <tbody>
           <tr v-if="props.mask">
-            <td class="px-2 py-1 text-warm-600 dark:text-warm-400 whitespace-nowrap">mask</td>
+            <td
+              class="px-2 py-1 text-warm-600 dark:text-warm-400 whitespace-nowrap"
+            >
+              mask
+            </td>
             <td v-for="i in idx" :key="i" class="px-1 py-1">
               <div
                 class="h-6 rounded flex items-center justify-center font-semibold transition-colors"
@@ -54,7 +64,9 @@ const on = (i) => (props.mask ? !!props.mask[i] : true)
             :key="row.name"
             class="border-t border-warm-200/50 dark:border-warm-700/40"
           >
-            <td class="px-2 py-1 text-warm-600 dark:text-warm-400 whitespace-nowrap">
+            <td
+              class="px-2 py-1 text-warm-600 dark:text-warm-400 whitespace-nowrap"
+            >
               {{ row.name }}
             </td>
             <td v-for="i in idx" :key="i" class="px-1 py-1">
@@ -73,7 +85,10 @@ const on = (i) => (props.mask ? !!props.mask[i] : true)
         </tbody>
       </table>
     </div>
-    <p v-if="props.caption" class="kt-text-caption text-warm-500 dark:text-warm-400 mt-2">
+    <p
+      v-if="props.caption"
+      class="kt-text-caption text-warm-500 dark:text-warm-400 mt-2"
+    >
       {{ props.caption }}
     </p>
   </div>

@@ -1,4 +1,4 @@
-import { routes } from "vue-router/auto-routes"
+import { routes } from "vue-router/auto-routes";
 
 /**
  * The nav is DERIVED from the file routes, never hand-listed. A page file is
@@ -12,15 +12,27 @@ import { routes } from "vue-router/auto-routes"
 const META = {
   "/framework": { title: "What is on the die", short: "Overview", order: 0 },
   "/framework/noc": { title: "Mesh and routers", short: "NoC", order: 1 },
-  "/framework/sysnode": { title: "The system node", short: "Sysnode", order: 2 },
+  "/framework/sysnode": {
+    title: "The system node",
+    short: "Sysnode",
+    order: 2,
+  },
   "/framework/cpu": {
     title: "The RV32 core, and what the framework gives it",
     short: "CPU",
     order: 3,
   },
   "/framework/ship": { title: "Ship assembly", short: "Ship", order: 4 },
-  "/framework/physical": { title: "Floorplan and clocks", short: "Physical", order: 5 },
-  "/framework/axi": { title: "AXI and the station bus", short: "AXI", order: 6 },
+  "/framework/physical": {
+    title: "Floorplan and clocks",
+    short: "Physical",
+    order: 5,
+  },
+  "/framework/axi": {
+    title: "AXI and the station bus",
+    short: "AXI",
+    order: 6,
+  },
   "/framework/measurements": {
     title: "Out-of-context measurements",
     short: "Measurements",
@@ -40,8 +52,16 @@ const META = {
     short: "Vector micro",
     order: 4,
   },
-  "/tpu/memory": { title: "Residency and accumulators", short: "Memory", order: 5 },
-  "/tpu/numbers": { title: "MXFP7 and the dtype ladder", short: "Numbers", order: 6 },
+  "/tpu/memory": {
+    title: "Residency and accumulators",
+    short: "Memory",
+    order: 5,
+  },
+  "/tpu/numbers": {
+    title: "MXFP7 and the dtype ladder",
+    short: "Numbers",
+    order: 6,
+  },
   "/tpu/results": { title: "What was measured", short: "Results", order: 7 },
 
   "/component": {
@@ -62,47 +82,52 @@ const META = {
     order: 2,
     domain: "cpu",
   },
-  "/component/simd": { title: "SIMD PE", short: "SIMD PE", order: 3, domain: "simd" },
-  "/component/simd/microarchitecture": {
-    title: "SIMD PE — microarchitecture",
-    short: "SIMD PE micro",
-    order: 4,
-    domain: "simd",
-  },
   "/component/caching": {
     title: "Staging, the transform slot and the tagged L2",
     short: "Caching",
-    order: 5,
-    domain: "simd",
+    order: 3,
+    domain: "cpu",
   },
 
-  "/mpe": { title: "A mesh of processors", short: "Overview", order: 0, domain: "simt" },
+  "/mpe": {
+    title: "A mesh of processors",
+    short: "Overview",
+    order: 0,
+    domain: "simt",
+  },
   "/mpe/hetero": {
     title: "SIMD, SIMT and the two KohakuTPU units",
     short: "Heterogeneity",
     order: 1,
     domain: "simt",
   },
-  "/mpe/simt": { title: "SIMT PE", short: "SIMT PE", order: 2, domain: "simt" },
+  "/mpe/simd": { title: "SIMD PE", short: "SIMD PE", order: 2, domain: "simd" },
+  "/mpe/simd/microarchitecture": {
+    title: "SIMD PE — microarchitecture",
+    short: "SIMD PE micro",
+    order: 3,
+    domain: "simd",
+  },
+  "/mpe/simt": { title: "SIMT PE", short: "SIMT PE", order: 4, domain: "simt" },
   "/mpe/simt/microarchitecture": {
     title: "SIMT PE — microarchitecture",
     short: "SIMT micro",
-    order: 3,
+    order: 5,
     domain: "simt",
   },
   "/mpe/simt/comparison": {
     title: "Where this lands against shipped GPUs",
     short: "SIMT vs industry",
-    order: 4,
+    order: 6,
     domain: "simt",
   },
   "/mpe/measurements": {
     title: "SIMT PE measurements",
     short: "Measurements",
-    order: 5,
+    order: 7,
     domain: "simt",
   },
-}
+};
 
 const SECTION_DEF = {
   framework: {
@@ -129,49 +154,51 @@ const SECTION_DEF = {
     icon: "i-carbon-cpu",
     blurb: "A mesh whose compute units are processors.",
   },
-}
-const SECTION_ORDER = ["framework", "component", "tpu", "mpe"]
+};
+const SECTION_ORDER = ["framework", "component", "tpu", "mpe"];
 
 /** Every routable path with a component, parent paths joined. */
 function walk(list, base = "") {
-  const out = []
+  const out = [];
   for (const r of list) {
-    const p = r.path.startsWith("/") ? r.path : `${base}/${r.path}`.replace(/\/+/g, "/")
-    const clean = p.length > 1 ? p.replace(/\/$/, "") : p
-    if (r.components || r.component) out.push(clean)
-    if (r.children?.length) out.push(...walk(r.children, clean))
+    const p = r.path.startsWith("/")
+      ? r.path
+      : `${base}/${r.path}`.replace(/\/+/g, "/");
+    const clean = p.length > 1 ? p.replace(/\/$/, "") : p;
+    if (r.components || r.component) out.push(clean);
+    if (r.children?.length) out.push(...walk(r.children, clean));
   }
-  return [...new Set(out)]
+  return [...new Set(out)];
 }
 
 const titleFrom = (path) => {
-  const leaf = path.split("/").filter(Boolean).pop() ?? "Home"
-  return leaf.replace(/-/g, " ").replace(/^\w/, (c) => c.toUpperCase())
-}
+  const leaf = path.split("/").filter(Boolean).pop() ?? "Home";
+  return leaf.replace(/-/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+};
 
-const ALL = walk(routes).filter((p) => p !== "/" && !p.includes(":"))
+const ALL = walk(routes).filter((p) => p !== "/" && !p.includes(":"));
 
 export const SECTIONS = SECTION_ORDER.map((key) => {
-  const def = SECTION_DEF[key]
+  const def = SECTION_DEF[key];
   const pages = ALL.filter((p) => p === `/${key}` || p.startsWith(`/${key}/`))
     .map((path) => {
-      const m = META[path] ?? {}
+      const m = META[path] ?? {};
       return {
         path,
         title: m.title ?? titleFrom(path),
         short: m.short ?? titleFrom(path),
         domain: m.domain ?? def.domain,
         order: m.order ?? 99,
-      }
+      };
     })
-    .sort((a, b) => a.order - b.order || a.path.localeCompare(b.path))
-  return { key, ...def, pages }
-}).filter((s) => s.pages.length)
+    .sort((a, b) => a.order - b.order || a.path.localeCompare(b.path));
+  return { key, ...def, pages };
+}).filter((s) => s.pages.length);
 
 export const ALL_PAGES = SECTIONS.flatMap((s) =>
   s.pages.map((p) => ({ ...p, section: s.key })),
-)
+);
 
 export function pageFor(path) {
-  return ALL_PAGES.find((p) => p.path === path)
+  return ALL_PAGES.find((p) => p.path === path);
 }

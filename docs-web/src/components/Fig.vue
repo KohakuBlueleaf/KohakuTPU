@@ -1,15 +1,15 @@
 <script setup>
-import panzoom from "panzoom"
+import panzoom from "panzoom";
 
 const props = defineProps({
   caption: { type: String, default: "" },
   zoom: { type: Boolean, default: false },
   pad: { type: Boolean, default: true },
   wide: { type: Boolean, default: false },
-})
+});
 
-const stage = ref(null)
-let pz = null
+const stage = ref(null);
+let pz = null;
 
 onMounted(() => {
   if (props.zoom && stage.value) {
@@ -20,14 +20,14 @@ onMounted(() => {
       boundsPadding: 0.2,
       zoomDoubleClickSpeed: 1,
       beforeMouseDown: (e) => !e.altKey && !e.ctrlKey && !e.metaKey,
-    })
+    });
   }
-})
-onBeforeUnmount(() => pz?.dispose())
+});
+onBeforeUnmount(() => pz?.dispose());
 
 function reset() {
-  pz?.moveTo(0, 0)
-  pz?.zoomAbs(0, 0, 1)
+  pz?.moveTo(0, 0);
+  pz?.zoomAbs(0, 0, 1);
 }
 </script>
 

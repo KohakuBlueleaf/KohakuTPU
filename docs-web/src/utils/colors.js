@@ -11,7 +11,7 @@ export const GEM = {
   amber: { light: "#F5E6C8", main: "#D4920A", shadow: "#8B5E00" },
   coral: { light: "#F5D5D5", main: "#D46B6B", shadow: "#8B3A3A" },
   sage: { light: "#D5E8DA", main: "#5A9E6F", shadow: "#3A6B48" },
-}
+};
 
 /** One gem per documentation domain. A page declares its domain once. */
 export const DOMAIN_GEM = {
@@ -20,16 +20,20 @@ export const DOMAIN_GEM = {
   cpu: "aquamarine",
   dsp: "taaffeite",
   gpu: "iolite",
-}
+};
 
 export function gemFor(domain) {
-  return GEM[DOMAIN_GEM[domain] ?? domain] ?? GEM.iolite
+  return GEM[DOMAIN_GEM[domain] ?? domain] ?? GEM.iolite;
 }
 
 /** Inline style that rebinds --gem-* for a subtree. */
 export function gemVars(domain) {
-  const g = gemFor(domain)
-  return { "--gem-light": g.light, "--gem-main": g.main, "--gem-shadow": g.shadow }
+  const g = gemFor(domain);
+  return {
+    "--gem-light": g.light,
+    "--gem-main": g.main,
+    "--gem-shadow": g.shadow,
+  };
 }
 
 /** Maturity of a documented thing, mapped to the functional gems. */
@@ -37,14 +41,14 @@ export function statusColor(status) {
   switch (status) {
     case "shipped":
     case "measured":
-      return GEM.sage
+      return GEM.sage;
     case "building":
     case "planned":
-      return GEM.amber
+      return GEM.amber;
     case "broken":
     case "retired":
-      return GEM.coral
+      return GEM.coral;
     default:
-      return GEM.amber
+      return GEM.amber;
   }
 }

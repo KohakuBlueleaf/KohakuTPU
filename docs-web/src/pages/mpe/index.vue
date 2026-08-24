@@ -12,8 +12,20 @@ const population = {
     { key: "fma", label: "FP FMA / clk", align: "right", mono: true },
   ],
   rows: [
-    { what: "8 × SIMD PE — 4 float lanes each", lut: "110,176", dsp: "576", bram: "104", fma: "32" },
-    { what: "4 × SIMT PE — 8 float lanes each", lut: "86,344", dsp: "192", bram: "122", fma: "32" },
+    {
+      what: "8 × SIMD PE — 4 float lanes each",
+      lut: "110,176",
+      dsp: "576",
+      bram: "104",
+      fma: "32",
+    },
+    {
+      what: "4 × SIMT PE — 8 float lanes each",
+      lut: "86,344",
+      dsp: "192",
+      bram: "122",
+      fma: "32",
+    },
     { what: "2 × CPU PE", lut: "4,954", dsp: "0", bram: "10", fma: "0" },
     {
       what: "<b>one mesh of processors</b>",
@@ -25,7 +37,7 @@ const population = {
     },
     { what: "available", lut: "~350,000", dsp: "3,072", bram: "—", fma: "—" },
   ],
-}
+};
 
 const shape = {
   cols: [
@@ -55,7 +67,7 @@ const shape = {
       _tone: "good",
     },
   ],
-}
+};
 </script>
 
 <template>
@@ -67,20 +79,27 @@ const shape = {
     source="src/kohakumpe/ · src/kohakuaccel/pe/rv32/ · docs/arch/pe/"
   >
     <p class="doc-p">
-      <b>KohakuAccel can build a working machine with no project on top of it.</b> Take the mesh, the
-      system node and the CPU PE the framework already ships, populate the router locals with
-      processors instead of an accelerator, and what comes out is a multi-processor mesh that a
-      driver enumerates, dispatches to and collects completions from without knowing the units are
+      <b
+        >KohakuAccel can build a working machine with no project on top of
+        it.</b
+      >
+      Take the mesh, the system node and the CPU PE the framework already ships,
+      populate the router locals with processors instead of an accelerator, and
+      what comes out is a multi-processor mesh that a driver enumerates,
+      dispatches to and collects completions from without knowing the units are
       processors.
     </p>
 
     <p class="doc-p">
       That is why this section exists next to
-      <RouterLink to="/tpu" class="doc-link">KohakuTPU</RouterLink> rather than inside it. That is
-      one project's answer, aimed at one workload. This is another, aimed at graphics and
-      general-purpose compute and built from
-      <RouterLink to="/component" class="doc-link">the same components</RouterLink> — and the fact
-      that both are first-class citizens of one mesh is the framework's actual claim.
+      <RouterLink to="/tpu" class="doc-link">KohakuTPU</RouterLink> rather than
+      inside it. That is one project's answer, aimed at one workload. This is
+      another, aimed at graphics and general-purpose compute and built from
+      <RouterLink to="/component" class="doc-link"
+        >the same components</RouterLink
+      >
+      — and the fact that both are first-class citizens of one mesh is the
+      framework's actual claim.
     </p>
 
     <SpecTable
@@ -89,35 +108,40 @@ const shape = {
       caption="Multiples of the measured per-PE figures — the wide classes at a 2.857 ns ask, the CPU PE at 3.333 ns. The float width is chosen rather than fallen into: 8 × 4 + 4 × 8 = 64 FP FMA per clock, one Mali-G610 shader core's width exactly. LUT is the binding resource here and DSP is not, at 768 of 3,072"
     />
 
-    <Callout kind="note" title="PE count is bounded by the memory agent, not by LUT">
+    <Callout
+      kind="note"
+      title="PE count is bounded by the memory agent, not by LUT"
+    >
       <p>
-        At 2,477 LUT each, a mesh's ~350,000 usable LUT would hold over a hundred CPU PEs. That is
-        not the limit. Every unit lives on <code>noc_clk</code> and reaches memory over the fabric,
-        so the bound is the agent's capacity: <b>four PEs per NoC/system-node pair</b> is the
-        measured ceiling, and sharing one agent between four costs <b>+13.7 %</b> on a fixed
-        compute-bound program.
+        At 2,477 LUT each, a mesh's ~350,000 usable LUT would hold over a
+        hundred CPU PEs. That is not the limit. Every unit lives on
+        <code>noc_clk</code> and reaches memory over the fabric, so the bound is
+        the agent's capacity: <b>four PEs per NoC/system-node pair</b> is the
+        measured ceiling, and sharing one agent between four costs
+        <b>+13.7 %</b> on a fixed compute-bound program.
       </p>
     </Callout>
 
     <h2 class="doc-h2">What selects which unit</h2>
 
     <p class="doc-p">
-      The question is never “which is faster”. It is <b>what shape the work has</b> — whether lanes
-      agree, whether addresses are contiguous, whether operands stay resident.
+      The question is never “which is faster”. It is
+      <b>what shape the work has</b> — whether lanes agree, whether addresses
+      are contiguous, whether operands stay resident.
     </p>
 
     <SpecTable :cols="shape.cols" :rows="shape.rows" />
 
     <Callout kind="rule" title="Going wide is for work that is uniform">
       <p>
-        The SIMD tier draws its own boundary: “per-lane branching, per-lane addresses, masks and
-        predication — a SIMT core's. Nothing here anticipates them, and adding them here would cost
-        every uniform kernel.”
+        The SIMD tier draws its own boundary: “per-lane branching, per-lane
+        addresses, masks and predication — a SIMT core's. Nothing here
+        anticipates them, and adding them here would cost every uniform kernel.”
       </p>
       <p>
         When lanes need different paths or different addresses, the answer is a
-        <b>different machine, not a wider one</b>. That is the whole reason there are two wide
-        classes rather than one configurable one.
+        <b>different machine, not a wider one</b>. That is the whole reason
+        there are two wide classes rather than one configurable one.
       </p>
     </Callout>
 
@@ -125,27 +149,39 @@ const shape = {
 
     <div class="grid gap-4 sm:grid-cols-3 mt-6">
       <RouterLink to="/mpe/hetero" class="card-hover p-5 no-underline block">
-        <div class="kt-text-title font-semibold text-warm-800 dark:text-warm-200 mb-1">
+        <div
+          class="kt-text-title font-semibold text-warm-800 dark:text-warm-200 mb-1"
+        >
           Heterogeneity
         </div>
         <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
-          All four unit kinds side by side: arithmetic, cost, what routes where, and the opcode map
-          they share.
+          All four unit kinds side by side: arithmetic, cost, what routes where,
+          and the opcode map they share.
         </p>
       </RouterLink>
       <RouterLink to="/mpe/simt" class="card-hover p-5 no-underline block">
-        <div class="kt-text-title font-semibold text-warm-800 dark:text-warm-200 mb-1">SIMT PE</div>
+        <div
+          class="kt-text-title font-semibold text-warm-800 dark:text-warm-200 mb-1"
+        >
+          SIMT PE
+        </div>
         <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
-          A mask that is a write enable, an IPDOM stack that is a memory, per-thread RV32M, and eight
-          float lanes.
+          A mask that is a write enable, an IPDOM stack that is a memory,
+          per-thread RV32M, and eight float lanes.
         </p>
       </RouterLink>
-      <RouterLink to="/mpe/simt/comparison" class="card-hover p-5 no-underline block">
-        <div class="kt-text-title font-semibold text-warm-800 dark:text-warm-200 mb-1">
+      <RouterLink
+        to="/mpe/simt/comparison"
+        class="card-hover p-5 no-underline block"
+      >
+        <div
+          class="kt-text-title font-semibold text-warm-800 dark:text-warm-200 mb-1"
+        >
           SIMT vs industry
         </div>
         <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
-          Where one mesh lands against shipped mobile GPUs, and which comparisons are fair.
+          Where one mesh lands against shipped mobile GPUs, and which
+          comparisons are fair.
         </p>
       </RouterLink>
     </div>

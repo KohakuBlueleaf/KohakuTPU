@@ -4,33 +4,33 @@ const props = defineProps({
   steps: { type: Array, required: true },
   label: { type: String, default: "" },
   interval: { type: Number, default: 1100 },
-})
+});
 
-const i = ref(0)
-const playing = ref(false)
-let timer = null
+const i = ref(0);
+const playing = ref(false);
+let timer = null;
 
-const n = computed(() => props.steps.length)
-const state = computed(() => props.steps[i.value])
+const n = computed(() => props.steps.length);
+const state = computed(() => props.steps[i.value]);
 
 function stop() {
-  playing.value = false
-  clearInterval(timer)
-  timer = null
+  playing.value = false;
+  clearInterval(timer);
+  timer = null;
 }
 function play() {
-  if (playing.value) return stop()
-  playing.value = true
+  if (playing.value) return stop();
+  playing.value = true;
   timer = setInterval(() => {
-    if (i.value >= n.value - 1) return stop()
-    i.value++
-  }, props.interval)
+    if (i.value >= n.value - 1) return stop();
+    i.value++;
+  }, props.interval);
 }
 function go(k) {
-  stop()
-  i.value = Math.min(Math.max(k, 0), n.value - 1)
+  stop();
+  i.value = Math.min(Math.max(k, 0), n.value - 1);
 }
-onBeforeUnmount(stop)
+onBeforeUnmount(stop);
 </script>
 
 <template>
@@ -41,8 +41,15 @@ onBeforeUnmount(stop)
       <button class="nav-item w-7 h-7" title="Previous" @click="go(i - 1)">
         <div class="i-carbon-chevron-left text-xs" />
       </button>
-      <button class="nav-item w-7 h-7" :title="playing ? 'Pause' : 'Play'" @click="play">
-        <div :class="playing ? 'i-carbon-pause' : 'i-carbon-play'" class="text-xs" />
+      <button
+        class="nav-item w-7 h-7"
+        :title="playing ? 'Pause' : 'Play'"
+        @click="play"
+      >
+        <div
+          :class="playing ? 'i-carbon-pause' : 'i-carbon-play'"
+          class="text-xs"
+        />
       </button>
       <button class="nav-item w-7 h-7" title="Next" @click="go(i + 1)">
         <div class="i-carbon-chevron-right text-xs" />
@@ -57,13 +64,17 @@ onBeforeUnmount(stop)
         @input="go(Number($event.target.value))"
       />
 
-      <span class="kt-text-micro font-mono text-warm-500 dark:text-warm-400 tabular-nums">
+      <span
+        class="kt-text-micro font-mono text-warm-500 dark:text-warm-400 tabular-nums"
+      >
         {{ i + 1 }}/{{ n }}
       </span>
     </div>
 
     <div v-if="state?.title || props.label" class="px-4 pt-3">
-      <div class="kt-text-caption font-semibold text-warm-700 dark:text-warm-300">
+      <div
+        class="kt-text-caption font-semibold text-warm-700 dark:text-warm-300"
+      >
         {{ state?.title || props.label }}
       </div>
     </div>

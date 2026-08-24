@@ -4,12 +4,12 @@ const props = defineProps({
   cols: { type: Array, required: true },
   rows: { type: Array, required: true },
   caption: { type: String, default: "" },
-})
+});
 const TONE = {
   good: "text-sage-shadow dark:text-sage-light",
   bad: "text-coral-shadow dark:text-coral-light",
   warn: "text-amber-shadow dark:text-amber-light",
-}
+};
 </script>
 
 <template>

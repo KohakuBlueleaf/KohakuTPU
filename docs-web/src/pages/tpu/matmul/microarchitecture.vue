@@ -13,20 +13,110 @@
 // mx_mac.v. Ports on the left, the DSP48E2's own register stages across.
 const mac = {
   nodes: [
-    { id: "a", x: 0, y: 0, w: 14, label: "A (30) = w_hi << 19", sub: "pure wiring" },
-    { id: "d", x: 0, y: 4.2, w: 14, label: "D (27) = w_lo", sub: "pure wiring" },
-    { id: "b", x: 0, y: 8.6, w: 14, label: "B (18) = act", sub: "one activation, shared" },
-    { id: "c", x: 0, y: 13.4, w: 14, label: "C (48)", sub: "the previous TCU's partial" },
-    { id: "pc", x: 0, y: 17.8, w: 14, label: "PCIN (48)", sub: "the DSP above, in the same column" },
+    {
+      id: "a",
+      x: 0,
+      y: 0,
+      w: 14,
+      label: "A (30) = w_hi << 19",
+      sub: "pure wiring",
+    },
+    {
+      id: "d",
+      x: 0,
+      y: 4.2,
+      w: 14,
+      label: "D (27) = w_lo",
+      sub: "pure wiring",
+    },
+    {
+      id: "b",
+      x: 0,
+      y: 8.6,
+      w: 14,
+      label: "B (18) = act",
+      sub: "one activation, shared",
+    },
+    {
+      id: "c",
+      x: 0,
+      y: 13.4,
+      w: 14,
+      label: "C (48)",
+      sub: "the previous TCU's partial",
+    },
+    {
+      id: "pc",
+      x: 0,
+      y: 17.8,
+      w: 14,
+      label: "PCIN (48)",
+      sub: "the DSP above, in the same column",
+    },
 
-    { id: "areg", x: 16.5, y: 2.1, w: 12, label: "AREG = 1 · DREG = 1", sub: "ACASCREG = 1" },
-    { id: "breg", x: 16.5, y: 8.6, w: 12, label: "BREG = 2", sub: "BCASCREG = 2 — not 1" },
-    { id: "creg", x: 16.5, y: 13.4, w: 12, label: "CREG = 1", sub: "one stage" },
+    {
+      id: "areg",
+      x: 16.5,
+      y: 2.1,
+      w: 12,
+      label: "AREG = 1 · DREG = 1",
+      sub: "ACASCREG = 1",
+    },
+    {
+      id: "breg",
+      x: 16.5,
+      y: 8.6,
+      w: 12,
+      label: "BREG = 2",
+      sub: "BCASCREG = 2 — not 1",
+    },
+    {
+      id: "creg",
+      x: 16.5,
+      y: 13.4,
+      w: 12,
+      label: "CREG = 1",
+      sub: "one stage",
+    },
 
-    { id: "ad", x: 31, y: 2.1, w: 13, label: "ADREG — pre-adder", sub: "AMULTSEL = AD", accent: true },
-    { id: "m", x: 46.5, y: 5.4, w: 13, label: "MREG — 27 x 18", sub: "the packed product", accent: true },
-    { id: "alu", x: 62, y: 9.5, w: 13, h: 4.4, label: "ALU  Z + W + X + Y", sub: "ALUMODE = 0000", accent: true },
-    { id: "p", x: 77.5, y: 9.5, w: 13, h: 4.4, label: "PREG", sub: "P (48) and PCOUT (48)", accent: true },
+    {
+      id: "ad",
+      x: 31,
+      y: 2.1,
+      w: 13,
+      label: "ADREG — pre-adder",
+      sub: "AMULTSEL = AD",
+      accent: true,
+    },
+    {
+      id: "m",
+      x: 46.5,
+      y: 5.4,
+      w: 13,
+      label: "MREG — 27 x 18",
+      sub: "the packed product",
+      accent: true,
+    },
+    {
+      id: "alu",
+      x: 62,
+      y: 9.5,
+      w: 13,
+      h: 4.4,
+      label: "ALU  Z + W + X + Y",
+      sub: "ALUMODE = 0000",
+      accent: true,
+    },
+    {
+      id: "p",
+      x: 77.5,
+      y: 9.5,
+      w: 13,
+      h: 4.4,
+      label: "PREG",
+      sub: "P (48) and PCOUT (48)",
+      accent: true,
+    },
   ],
   edges: [
     { from: "a:r", to: "areg:l", dir: "h" },
@@ -41,14 +131,14 @@ const mac = {
     { from: "pc:r", to: "alu:l", dir: "h", label: "Z" },
     { from: "alu:r", to: "p:l", dir: "h", accent: true },
   ],
-}
+};
 
 const opmode = [
   { name: "W", bits: 2, value: "11 = C, 00 = zero", accent: true },
   { name: "Z", bits: 3, value: "001 = PCIN, 000 = zero", accent: true },
   { name: "Y", bits: 2, value: "01 = M" },
   { name: "X", bits: 2, value: "01 = M" },
-]
+];
 
 const macLatency = {
   cols: [
@@ -61,7 +151,7 @@ const macLatency = {
     { p: "PCIN → P", s: "<b>1</b>", w: "PCIN enters at the ALU, then P reg" },
     { p: "C → P", s: "<b>2</b>", w: "C reg, then the ALU, then P reg" },
   ],
-}
+};
 
 // The DSP register-configuration bug, from results.md §9.3 and mx_mac.v's own
 // comment. Streaming is the only thing that exposes it.
@@ -69,10 +159,28 @@ const bregBroken = {
   rows: [
     { name: "A / D presented", kind: "bus", values: ["T0", "T1", "T2", "T3"] },
     { name: "B presented", kind: "bus", values: ["T0", "T1", "T2", "T3"] },
-    { name: "AD at the multiplier", kind: "bus", values: [null, null, "T0", "T1"] },
-    { name: "B at the multiplier (BREG=1)", kind: "bus", values: [null, "T0", "T1", "T2"], mark: [2, 3] },
-    { name: "M", kind: "bus", values: [null, null, "T0 x T1", "T1 x T2"], mark: [2, 3] },
-    { name: "", kind: "text", values: ["", "", "wrong operand", "wrong operand"] },
+    {
+      name: "AD at the multiplier",
+      kind: "bus",
+      values: [null, null, "T0", "T1"],
+    },
+    {
+      name: "B at the multiplier (BREG=1)",
+      kind: "bus",
+      values: [null, "T0", "T1", "T2"],
+      mark: [2, 3],
+    },
+    {
+      name: "M",
+      kind: "bus",
+      values: [null, null, "T0 x T1", "T1 x T2"],
+      mark: [2, 3],
+    },
+    {
+      name: "",
+      kind: "text",
+      values: ["", "", "wrong operand", "wrong operand"],
+    },
   ],
   notes: [
     {
@@ -85,23 +193,40 @@ const bregBroken = {
       tone: "bad",
     },
   ],
-}
+};
 
 const bregFixed = {
   rows: [
     { name: "A / D presented", kind: "bus", values: ["T0", "T1", "T2", "T3"] },
     { name: "B presented", kind: "bus", values: ["T0", "T1", "T2", "T3"] },
-    { name: "AD at the multiplier", kind: "bus", values: [null, null, "T0", "T1"] },
-    { name: "B at the multiplier (BREG=2)", kind: "bus", values: [null, null, "T0", "T1"], mark: [2, 3] },
-    { name: "M", kind: "bus", values: [null, null, "T0 x T0", "T1 x T1"], mark: [2, 3] },
+    {
+      name: "AD at the multiplier",
+      kind: "bus",
+      values: [null, null, "T0", "T1"],
+    },
+    {
+      name: "B at the multiplier (BREG=2)",
+      kind: "bus",
+      values: [null, null, "T0", "T1"],
+      mark: [2, 3],
+    },
+    {
+      name: "M",
+      kind: "bus",
+      values: [null, null, "T0 x T0", "T1 x T1"],
+      mark: [2, 3],
+    },
   ],
   notes: [
-    { text: "BREG = 2, BCASCREG = 2. The B path is given the same depth the pre-adder path has.", tone: "good" },
+    {
+      text: "BREG = 2, BCASCREG = 2. The B path is given the same depth the pre-adder path has.",
+      tone: "good",
+    },
     {
       text: "The simulation library also holds global set/reset asserted for the first 100 ns, so unisim registers ignore everything before that whatever the design's own reset does. Without waiting past it the first tile silently produces nothing.",
     },
   ],
-}
+};
 
 // ------------------------------------------------ 2. the chain, and the W path
 // mx_tcu.v / mx_cluster_core.v. One column of one chain, four TCUs across.
@@ -110,7 +235,7 @@ const K = [
   ["8", "9 .. 14", "15"],
   ["16", "17 .. 22", "23"],
   ["24", "25 .. 30", "31"],
-]
+];
 const chain = {
   nodes: [
     ...K.flatMap((ks, c) => [
@@ -123,8 +248,24 @@ const chain = {
         label: "operands",
         sub: c === 0 ? "delay 0" : `delay ${2 * c}`,
       },
-      { id: `s0${c}`, x: c * 17, y: 5.4, w: 15, h: 2.7, label: `k = ${ks[0]}`, sub: "Z = 0" },
-      { id: `sm${c}`, x: c * 17, y: 9.2, w: 15, h: 2.7, label: `k = ${ks[1]}`, sub: "Z = PCIN" },
+      {
+        id: `s0${c}`,
+        x: c * 17,
+        y: 5.4,
+        w: 15,
+        h: 2.7,
+        label: `k = ${ks[0]}`,
+        sub: "Z = 0",
+      },
+      {
+        id: `sm${c}`,
+        x: c * 17,
+        y: 9.2,
+        w: 15,
+        h: 2.7,
+        label: `k = ${ks[1]}`,
+        sub: "Z = PCIN",
+      },
       {
         id: `s7${c}`,
         x: c * 17,
@@ -136,7 +277,16 @@ const chain = {
         accent: c > 0,
       },
     ]),
-    { id: "out", x: 69, y: 13, w: 14, h: 2.7, label: "part_out", sub: "8 chains x 48 b", accent: true },
+    {
+      id: "out",
+      x: 69,
+      y: 13,
+      w: 14,
+      h: 2.7,
+      label: "part_out",
+      sub: "8 chains x 48 b",
+      accent: true,
+    },
   ],
   edges: [
     ...K.flatMap((_, c) => [
@@ -149,16 +299,53 @@ const chain = {
     { from: "s72:r", to: "s73:l", dir: "h", accent: true, label: "C" },
     { from: "s73:r", to: "out:l", dir: "h", accent: true },
   ],
-  groups: [{ x: -1.2, y: 4.2, w: 68.4, h: 12.7, label: "PCOUT -> PCIN inside a column: dedicated silicon, no fabric, no LUTs" }],
-}
+  groups: [
+    {
+      x: -1.2,
+      y: 4.2,
+      w: 68.4,
+      h: 12.7,
+      label:
+        "PCOUT -> PCIN inside a column: dedicated silicon, no fabric, no LUTs",
+    },
+  ],
+};
 
 const wBroken = {
   rows: [
-    { name: "TCU 0 part_out", kind: "bus", values: ["zero", "zero", "T0", "T1", "T2"] },
-    { name: "TCU 1 K 8..15 products (delay 1)", kind: "bus", values: [null, null, "T0", "T1", "T2"] },
-    { name: "TCU 1 stage-7 W input", kind: "bus", values: [null, null, "zero", "T0", "T1"], mark: [2, 3] },
-    { name: "TCU 1 part_out", kind: "bus", values: [null, null, "T0: K8..15 only", "T1 + T0's K0..7", "T2 + T1's K0..7"], mark: [2, 3, 4] },
-    { name: "", kind: "text", values: ["", "", "T0's K 0..7 LOST", "wrong tile", "wrong tile"] },
+    {
+      name: "TCU 0 part_out",
+      kind: "bus",
+      values: ["zero", "zero", "T0", "T1", "T2"],
+    },
+    {
+      name: "TCU 1 K 8..15 products (delay 1)",
+      kind: "bus",
+      values: [null, null, "T0", "T1", "T2"],
+    },
+    {
+      name: "TCU 1 stage-7 W input",
+      kind: "bus",
+      values: [null, null, "zero", "T0", "T1"],
+      mark: [2, 3],
+    },
+    {
+      name: "TCU 1 part_out",
+      kind: "bus",
+      values: [
+        null,
+        null,
+        "T0: K8..15 only",
+        "T1 + T0's K0..7",
+        "T2 + T1's K0..7",
+      ],
+      mark: [2, 3, 4],
+    },
+    {
+      name: "",
+      kind: "text",
+      values: ["", "", "T0's K 0..7 LOST", "wrong tile", "wrong tile"],
+    },
   ],
   notes: [
     {
@@ -166,16 +353,37 @@ const wBroken = {
       text: "C is registered once (CREG = 1), so the ALU consumes c_r two cycles after the value was presented. At one cycle of operand delay per TCU the downstream stage-7 samples its neighbour's partial a cycle early — when it still holds the previous tile's value, or zero on the first tile.",
       tone: "bad",
     },
-    { text: "Half the products are silently dropped and the other half are summed against the wrong tile. Nothing errors.", tone: "bad" },
+    {
+      text: "Half the products are silently dropped and the other half are summed against the wrong tile. Nothing errors.",
+      tone: "bad",
+    },
   ],
-}
+};
 
 const wFixed = {
   rows: [
-    { name: "TCU 0 part_out", kind: "bus", values: ["zero", "zero", "T0", "T1", "T2"] },
-    { name: "TCU 1 K 8..15 products (delay 2)", kind: "bus", values: [null, null, null, "T0", "T1"] },
-    { name: "TCU 1 stage-7 W input", kind: "bus", values: [null, null, null, "T0", "T1"], mark: [3, 4] },
-    { name: "TCU 1 part_out", kind: "bus", values: [null, null, null, "T0: K 0..15", "T1: K 0..15"], mark: [3, 4] },
+    {
+      name: "TCU 0 part_out",
+      kind: "bus",
+      values: ["zero", "zero", "T0", "T1", "T2"],
+    },
+    {
+      name: "TCU 1 K 8..15 products (delay 2)",
+      kind: "bus",
+      values: [null, null, null, "T0", "T1"],
+    },
+    {
+      name: "TCU 1 stage-7 W input",
+      kind: "bus",
+      values: [null, null, null, "T0", "T1"],
+      mark: [3, 4],
+    },
+    {
+      name: "TCU 1 part_out",
+      kind: "bus",
+      values: [null, null, null, "T0: K 0..15", "T1: K 0..15"],
+      mark: [3, 4],
+    },
   ],
   notes: [
     {
@@ -183,7 +391,7 @@ const wFixed = {
       tone: "good",
     },
   ],
-}
+};
 
 const zVsW = {
   cols: [
@@ -205,7 +413,7 @@ const zVsW = {
       _tone: "warn",
     },
   ],
-}
+};
 
 // -------------------------------------------------------- 3. the operand skew
 const bundle = [
@@ -217,7 +425,7 @@ const bundle = [
   { name: "B[k][1]", bits: 7 },
   { name: "B[k][2]", bits: 7 },
   { name: "B[k][3]", bits: 7 },
-]
+];
 
 const skewCost = {
   cols: [
@@ -242,12 +450,12 @@ const skewCost = {
       _tone: "good",
     },
   ],
-}
+};
 
 // ------------------------------------------------------ 4. the K sweep player
 // GEMM gm=4 gn=8 nk=4 — C[16,32] = A[16,128] @ B.T[32,128]. The addresses are
 // mx_cluster_mgr's own expression: aoff + g*nk + kb, boff + h*nk + kb.
-const NK = 4
+const NK = 4;
 const sweepSteps = [
   {
     title: "K block 0 — LOAD opens the tile",
@@ -283,7 +491,8 @@ const sweepSteps = [
     note: "Output traffic so far is zero bytes. The tile is working storage, not a staging pipe — and because K cancels out of the arithmetic intensity M·N·K / (M·K + K·N), sweeping more K buys reuse for free while chaining more compute units buys none.",
   },
   {
-    title: "K block 3 — ADD_EMIT, and the value leaves on the command that made it",
+    title:
+      "K block 3 — ADD_EMIT, and the value leaves on the command that made it",
     kb: 3,
     cmd: "OP_ADD_EMIT",
     val: "tile[0] = Σ over K 0..127 — and out",
@@ -304,22 +513,97 @@ const sweepSteps = [
     out: "1,024",
     note: "48 distinct L1 entries — 12 KB of operand — produced 65,536 MACs and 1 KB of result. The L1 RAMs were read 256 times to touch those 48 entries: the reuse is in the sweep order, not in a cache. And the resident tile was addressed 128 times without its base ever moving.",
   },
-]
-const entA = (kb) => (kb === null ? [] : [0, 1, 2, 3].map((g) => g * NK + kb))
-const entB = (kb) => (kb === null ? [] : [0, 1, 2, 3, 4, 5, 6, 7].map((h) => h * NK + kb))
+];
+const entA = (kb) => (kb === null ? [] : [0, 1, 2, 3].map((g) => g * NK + kb));
+const entB = (kb) =>
+  kb === null ? [] : [0, 1, 2, 3, 4, 5, 6, 7].map((h) => h * NK + kb);
 
 // ---------------------------------------------------- 5. the accumulator path
 const acu = {
   nodes: [
-    { id: "s1", x: 0, y: 0, w: 11.5, h: 4.6, label: "stage 1", sub: "|v| x block scale — 16 DSP" },
-    { id: "s2a", x: 12.5, y: 0, w: 11.5, h: 4.6, label: "stage 2a", sub: "leading one -> one-hot" },
-    { id: "s2a2", x: 25, y: 0, w: 11.5, h: 4.6, label: "stage 2a2", sub: "the shift — 32 DSP" },
-    { id: "s2b", x: 37.5, y: 0, w: 11.5, h: 4.6, label: "stage 2b", sub: "round, assemble -> FP22" },
-    { id: "s3", x: 50, y: 0, w: 11.5, h: 4.6, label: "stage 3", sub: "READ the tile, align", accent: true },
-    { id: "s4", x: 62.5, y: 0, w: 11.5, h: 4.6, label: "stage 4", sub: "add, leading one, shift" },
-    { id: "s5", x: 75, y: 0, w: 11.5, h: 4.6, label: "stage 5", sub: "round, WRITE the tile", accent: true },
-    { id: "s6", x: 87.5, y: 0, w: 11.5, h: 4.6, label: "stage 6", sub: "EMIT only: -> FP16" },
-    { id: "addr", x: 25, y: 9.5, w: 11.5, h: 3.4, label: "tile_addr", sub: "presented at stage 2a" },
+    {
+      id: "s1",
+      x: 0,
+      y: 0,
+      w: 11.5,
+      h: 4.6,
+      label: "stage 1",
+      sub: "|v| x block scale — 16 DSP",
+    },
+    {
+      id: "s2a",
+      x: 12.5,
+      y: 0,
+      w: 11.5,
+      h: 4.6,
+      label: "stage 2a",
+      sub: "leading one -> one-hot",
+    },
+    {
+      id: "s2a2",
+      x: 25,
+      y: 0,
+      w: 11.5,
+      h: 4.6,
+      label: "stage 2a2",
+      sub: "the shift — 32 DSP",
+    },
+    {
+      id: "s2b",
+      x: 37.5,
+      y: 0,
+      w: 11.5,
+      h: 4.6,
+      label: "stage 2b",
+      sub: "round, assemble -> FP22",
+    },
+    {
+      id: "s3",
+      x: 50,
+      y: 0,
+      w: 11.5,
+      h: 4.6,
+      label: "stage 3",
+      sub: "READ the tile, align",
+      accent: true,
+    },
+    {
+      id: "s4",
+      x: 62.5,
+      y: 0,
+      w: 11.5,
+      h: 4.6,
+      label: "stage 4",
+      sub: "add, leading one, shift",
+    },
+    {
+      id: "s5",
+      x: 75,
+      y: 0,
+      w: 11.5,
+      h: 4.6,
+      label: "stage 5",
+      sub: "round, WRITE the tile",
+      accent: true,
+    },
+    {
+      id: "s6",
+      x: 87.5,
+      y: 0,
+      w: 11.5,
+      h: 4.6,
+      label: "stage 6",
+      sub: "EMIT only: -> FP16",
+    },
+    {
+      id: "addr",
+      x: 25,
+      y: 9.5,
+      w: 11.5,
+      h: 3.4,
+      label: "tile_addr",
+      sub: "presented at stage 2a",
+    },
     {
       id: "tile",
       x: 50,
@@ -344,21 +628,43 @@ const acu = {
     { from: "s5:b", to: "tile:t", dir: "v", accent: true },
   ],
   groups: [
-    { x: 49, y: -1.4, w: 38.5, h: 15.6, label: "the accumulate loop — read to write is 3 cycles, and REUSE_MIN = 5 covers it" },
+    {
+      x: 49,
+      y: -1.4,
+      w: 38.5,
+      h: 15.6,
+      label:
+        "the accumulate loop — read to write is 3 cycles, and REUSE_MIN = 5 covers it",
+    },
   ],
-}
+};
 
 const pWord = [
   { name: "sign extension", bits: 7, value: "P[47:41], unread" },
-  { name: "upper — sum of w_hi·a", bits: 22, value: "P[40:19], sign at 40", accent: true },
-  { name: "lower — sum of w_lo·a", bits: 19, value: "P[18:0], sign at 18", accent: true },
-]
+  {
+    name: "upper — sum of w_hi·a",
+    bits: 22,
+    value: "P[40:19], sign at 40",
+    accent: true,
+  },
+  {
+    name: "lower — sum of w_lo·a",
+    bits: 19,
+    value: "P[18:0], sign at 18",
+    accent: true,
+  },
+];
 
 const accFloat = [
   { name: "S", bits: 1, value: "sign" },
-  { name: "E", bits: 7, value: "bias 63 — fixed, not the tunable", accent: true },
+  {
+    name: "E",
+    bits: 7,
+    value: "bias 63 — fixed, not the tunable",
+    accent: true,
+  },
   { name: "M", bits: 14, value: "ACC_MW, implicit leading 1", accent: true },
-]
+];
 
 const widths = {
   cols: [
@@ -378,11 +684,19 @@ const widths = {
       v: "30",
       w: "<code>VW + 8</code>. The block-scale mantissa product <code>m8a·m8b</code> is in [64, 225], so the partial sum comes out 8 bits wider",
     },
-    { n: "NS", v: "15", w: "<code>VWM − ACC_MW − 1</code>. Derived, never passed in: everything at or below the guard bit has to come from the low half or the slices above it are not constant" },
+    {
+      n: "NS",
+      v: "15",
+      w: "<code>VWM − ACC_MW − 1</code>. Derived, never passed in: everything at or below the guard bit has to come from the low half or the slices above it are not constant",
+    },
     { n: "AW", v: "22", w: "<code>ACC_MW + 8</code> — one accumulator float" },
-    { n: "TW", v: "352", w: "<code>16 · AW</code>, one 4x4 sub-tile. <b>Not padded to a multiple of 72</b>: padding to 360 measured −23 LUT, −8 control sets, the same 5 URAM and the same 308.8 MHz on the cluster" },
+    {
+      n: "TW",
+      v: "352",
+      w: "<code>16 · AW</code>, one 4x4 sub-tile. <b>Not padded to a multiple of 72</b>: padding to 360 measured −23 LUT, −8 control sets, the same 5 URAM and the same 308.8 MHz on the cluster",
+    },
   ],
-}
+};
 
 const shiftFit = {
   cols: [
@@ -403,12 +717,22 @@ const shiftFit = {
       s: "split at <code>NS</code> and multiplied by the SAME one-hot, the two halves land in disjoint bit ranges — so they reassemble with an <b>OR, not an adder</b>. Two DSPs per lane",
     },
   ],
-}
+};
 
 const shiftTrade = [
-  { label: "fabric barrel shifter, 16 copies", value: 1200, note: "· 704 FF · 0 DSP", tone: "warn" },
-  { label: "multiply by a one-hot, 16 copies", value: 288, note: "· 496 FF · 16 DSP", tone: "good" },
-]
+  {
+    label: "fabric barrel shifter, 16 copies",
+    value: 1200,
+    note: "· 704 FF · 0 DSP",
+    tone: "warn",
+  },
+  {
+    label: "multiply by a one-hot, 16 copies",
+    value: 288,
+    note: "· 496 FF · 16 DSP",
+    tone: "good",
+  },
+];
 
 const precision = {
   cols: [
@@ -431,13 +755,25 @@ const precision = {
       _tone: "bad",
     },
   ],
-}
+};
 
 const dspCensus = [
-  { label: "mx_mac cascade — 4 TCU x 64", value: 256, note: "the multiply AND all of K=32" },
-  { label: "block-scale multiply — one per lane", value: 16, note: "mx_acu_fp stage 1" },
-  { label: "normalising shift — two per lane", value: 32, note: "mx_acu_fp stage 2a2" },
-]
+  {
+    label: "mx_mac cascade — 4 TCU x 64",
+    value: 256,
+    note: "the multiply AND all of K=32",
+  },
+  {
+    label: "block-scale multiply — one per lane",
+    value: 16,
+    note: "mx_acu_fp stage 1",
+  },
+  {
+    label: "normalising shift — two per lane",
+    value: 32,
+    note: "mx_acu_fp stage 2a2",
+  },
+];
 
 // ------------------------------------------------------- 6. REUSE_MIN and pace
 const reuse = {
@@ -447,43 +783,136 @@ const reuse = {
     { key: "s", label: "can it see the localparam?" },
   ],
   rows: [
-    { w: "mx_acu_fp / mx_acu_fp_pump", a: "<code>localparam REUSE_MIN = 5</code>", s: "<b>the source of truth</b>", _tone: "good" },
+    {
+      w: "mx_acu_fp / mx_acu_fp_pump",
+      a: "<code>localparam REUSE_MIN = 5</code>",
+      s: "<b>the source of truth</b>",
+      _tone: "good",
+    },
     {
       w: "mx_cluster_mgr",
       a: "pacing buckets — <code>t_is1 / t_is2 / t_small</code>",
       s: "<b>no.</b> Elaboration check only",
       _tone: "bad",
     },
-    { w: "mx_cluster_cu", a: "<code>i_wide</code>", s: "<b>no.</b> Elaboration check only", _tone: "bad" },
+    {
+      w: "mx_cluster_cu",
+      a: "<code>i_wide</code>",
+      s: "<b>no.</b> Elaboration check only",
+      _tone: "bad",
+    },
   ],
-}
+};
 
 const pace = {
   cols: [
     { key: "t", label: "Gm x Gn", mono: true },
-    { key: "p", label: "gap between two commands to one address", mono: true, align: "right" },
+    {
+      key: "p",
+      label: "gap between two commands to one address",
+      mono: true,
+      align: "right",
+    },
     { key: "i", label: "idle cycles inserted", mono: true, align: "right" },
   ],
   rows: [
     { t: "1 x 1", p: "1 cycle", i: "<b>4</b>", _tone: "warn" },
     { t: "1 x 2, 2 x 1", p: "2 cycles", i: "<b>2</b>", _tone: "warn" },
-    { t: "1 x 3, 1 x 4, 3 x 1, 4 x 1, 2 x 2", p: "3 or 4 cycles", i: "<b>1</b>", _tone: "warn" },
-    { t: "everything else", p: "Gm·Gn ≥ 5 cycles", i: "<b>0</b>", _tone: "good" },
+    {
+      t: "1 x 3, 1 x 4, 3 x 1, 4 x 1, 2 x 2",
+      p: "3 or 4 cycles",
+      i: "<b>1</b>",
+      _tone: "warn",
+    },
+    {
+      t: "everything else",
+      p: "Gm·Gn ≥ 5 cycles",
+      i: "<b>0</b>",
+      _tone: "good",
+    },
   ],
-}
+};
 
 // -------------------------------------------------------------- 7. the manager
 const mgr = {
   nodes: [
-    { id: "cnt", x: 0, y: 0, w: 14, h: 4, label: "counters", sub: "for kb: for g: for h" },
-    { id: "adr", x: 16, y: 0, w: 14, h: 4, label: "a_rd / b_rd", sub: "aoff + g·nk + kb" },
-    { id: "l1", x: 32, y: 0, w: 14, h: 4, label: "u_l1a / u_l1b", sub: "928 b, READ_LAT = 1", accent: true },
+    {
+      id: "cnt",
+      x: 0,
+      y: 0,
+      w: 14,
+      h: 4,
+      label: "counters",
+      sub: "for kb: for g: for h",
+    },
+    {
+      id: "adr",
+      x: 16,
+      y: 0,
+      w: 14,
+      h: 4,
+      label: "a_rd / b_rd",
+      sub: "aoff + g·nk + kb",
+    },
+    {
+      id: "l1",
+      x: 32,
+      y: 0,
+      w: 14,
+      h: 4,
+      label: "u_l1a / u_l1b",
+      sub: "928 b, READ_LAT = 1",
+      accent: true,
+    },
     { id: "s1", x: 48, y: 0, w: 11, h: 4, label: "s1", sub: "address issued" },
-    { id: "s1b", x: 61, y: 0, w: 11, h: 4, label: "s1b", sub: "data valid here", accent: true },
-    { id: "s2", x: 74, y: 0, w: 11, h: 4, label: "s2", sub: "scales split off" },
-    { id: "core", x: 61, y: 7.5, w: 24, h: 3.6, label: "a_out / b_out -> the cascade", sub: "896 b each, elements only" },
-    { id: "fifo", x: 61, y: 13, w: 24, h: 3.6, label: "ACU command FIFO", sub: "depth 64, popped by part_valid", accent: true },
-    { id: "acu", x: 89, y: 13, w: 14, h: 3.6, label: "mx_acu_fp", sub: "op, addr, sa, sb, anchor", accent: true },
+    {
+      id: "s1b",
+      x: 61,
+      y: 0,
+      w: 11,
+      h: 4,
+      label: "s1b",
+      sub: "data valid here",
+      accent: true,
+    },
+    {
+      id: "s2",
+      x: 74,
+      y: 0,
+      w: 11,
+      h: 4,
+      label: "s2",
+      sub: "scales split off",
+    },
+    {
+      id: "core",
+      x: 61,
+      y: 7.5,
+      w: 24,
+      h: 3.6,
+      label: "a_out / b_out -> the cascade",
+      sub: "896 b each, elements only",
+    },
+    {
+      id: "fifo",
+      x: 61,
+      y: 13,
+      w: 24,
+      h: 3.6,
+      label: "ACU command FIFO",
+      sub: "depth 64, popped by part_valid",
+      accent: true,
+    },
+    {
+      id: "acu",
+      x: 89,
+      y: 13,
+      w: 14,
+      h: 3.6,
+      label: "mx_acu_fp",
+      sub: "op, addr, sa, sb, anchor",
+      accent: true,
+    },
   ],
   edges: [
     { from: "cnt:r", to: "adr:l", dir: "h" },
@@ -495,15 +924,32 @@ const mgr = {
     { from: "s2:b", to: "fifo:t", dir: "v", accent: true },
     { from: "fifo:r", to: "acu:l", dir: "h", accent: true },
   ],
-}
+};
 
 const dlyBroken = {
   rows: [
-    { name: "a_rd assigned by the counters", kind: "bus", values: ["A0", "A1", "A2", "A3"] },
-    { name: "address the RAM sees", kind: "bus", values: [null, "A0", "A1", "A2"] },
-    { name: "a_ent valid (READ_LAT = 1)", kind: "bus", values: [null, null, "A0", "A1"] },
+    {
+      name: "a_rd assigned by the counters",
+      kind: "bus",
+      values: ["A0", "A1", "A2", "A3"],
+    },
+    {
+      name: "address the RAM sees",
+      kind: "bus",
+      values: [null, "A0", "A1", "A2"],
+    },
+    {
+      name: "a_ent valid (READ_LAT = 1)",
+      kind: "bus",
+      values: [null, null, "A0", "A1"],
+    },
     { name: "s1_valid", kind: "bit", values: [0, 1, 1, 1] },
-    { name: "consumed alongside s1_*", kind: "bus", values: [null, "prev", "A0", "A1"], mark: [1, 2, 3] },
+    {
+      name: "consumed alongside s1_*",
+      kind: "bus",
+      values: [null, "prev", "A0", "A1"],
+      mark: [1, 2, 3],
+    },
     { name: "", kind: "text", values: ["", "one entry early", "", ""] },
   ],
   notes: [
@@ -517,15 +963,32 @@ const dlyBroken = {
       tone: "bad",
     },
   ],
-}
+};
 
 const dlyFixed = {
   rows: [
-    { name: "a_rd assigned by the counters", kind: "bus", values: ["A0", "A1", "A2", "A3"] },
-    { name: "address the RAM sees", kind: "bus", values: [null, "A0", "A1", "A2"] },
-    { name: "a_ent valid (READ_LAT = 1)", kind: "bus", values: [null, null, "A0", "A1"] },
+    {
+      name: "a_rd assigned by the counters",
+      kind: "bus",
+      values: ["A0", "A1", "A2", "A3"],
+    },
+    {
+      name: "address the RAM sees",
+      kind: "bus",
+      values: [null, "A0", "A1", "A2"],
+    },
+    {
+      name: "a_ent valid (READ_LAT = 1)",
+      kind: "bus",
+      values: [null, null, "A0", "A1"],
+    },
     { name: "s1b_valid", kind: "bit", values: [0, 0, 1, 1] },
-    { name: "consumed alongside s1b_*", kind: "bus", values: [null, null, "A0", "A1"], mark: [2, 3] },
+    {
+      name: "consumed alongside s1b_*",
+      kind: "bus",
+      values: [null, null, "A0", "A1"],
+      mark: [2, 3],
+    },
   ],
   notes: [
     {
@@ -533,23 +996,87 @@ const dlyFixed = {
       tone: "good",
     },
   ],
-}
+};
 
 const l1Entry = [
-  { name: "32 x int7 elements", bits: 896, value: "4 lanes x 32 K", accent: true },
+  {
+    name: "32 x int7 elements",
+    bits: 896,
+    value: "4 lanes x 32 K",
+    accent: true,
+  },
   { name: "4 x E5M3", bits: 32, value: "one block scale per lane" },
-]
+];
 
 // ------------------------------------------------------------ 8. the pump
 const pump = {
   nodes: [
-    { id: "div", x: 0, y: 0, w: 17, h: 4, label: "BUFGCE_DIV /2", sub: "div_clr shared, CLR NOT tied off", accent: true },
-    { id: "l1", x: 0, y: 7, w: 17, h: 4, label: "u_l1a / u_l1b", sub: "read on clk2x" },
-    { id: "casc", x: 19, y: 7, w: 17, h: 4, label: "mx_cluster_core", sub: "256 DSP on clk2x — RTL unchanged" },
-    { id: "pair", x: 38, y: 7, w: 17, h: 4, label: "the pair latch", sub: "p_lo / p_hi, pp follows VALID" },
-    { id: "mrg", x: 57, y: 7, w: 17, h: 4, label: "the merge — a float add", sub: "16 lanes, _pump ONLY", accent: true },
-    { id: "acu", x: 76, y: 7, w: 17, h: 4, label: "stages 1 .. 6", sub: "one tile RMW, REUSE_MIN 5", accent: true },
-    { id: "pv", x: 38, y: 13.5, w: 17, h: 3.4, label: "part_valid, 2 cycles wide", sub: "so the clk1x edge cannot miss it" },
+    {
+      id: "div",
+      x: 0,
+      y: 0,
+      w: 17,
+      h: 4,
+      label: "BUFGCE_DIV /2",
+      sub: "div_clr shared, CLR NOT tied off",
+      accent: true,
+    },
+    {
+      id: "l1",
+      x: 0,
+      y: 7,
+      w: 17,
+      h: 4,
+      label: "u_l1a / u_l1b",
+      sub: "read on clk2x",
+    },
+    {
+      id: "casc",
+      x: 19,
+      y: 7,
+      w: 17,
+      h: 4,
+      label: "mx_cluster_core",
+      sub: "256 DSP on clk2x — RTL unchanged",
+    },
+    {
+      id: "pair",
+      x: 38,
+      y: 7,
+      w: 17,
+      h: 4,
+      label: "the pair latch",
+      sub: "p_lo / p_hi, pp follows VALID",
+    },
+    {
+      id: "mrg",
+      x: 57,
+      y: 7,
+      w: 17,
+      h: 4,
+      label: "the merge — a float add",
+      sub: "16 lanes, _pump ONLY",
+      accent: true,
+    },
+    {
+      id: "acu",
+      x: 76,
+      y: 7,
+      w: 17,
+      h: 4,
+      label: "stages 1 .. 6",
+      sub: "one tile RMW, REUSE_MIN 5",
+      accent: true,
+    },
+    {
+      id: "pv",
+      x: 38,
+      y: 13.5,
+      w: 17,
+      h: 3.4,
+      label: "part_valid, 2 cycles wide",
+      sub: "so the clk1x edge cannot miss it",
+    },
   ],
   edges: [
     { from: "l1:r", to: "casc:l", dir: "h" },
@@ -563,7 +1090,7 @@ const pump = {
     { x: -1.2, y: 5.8, w: 57.4, h: 12.3, label: "clk2x" },
     { x: 56, y: 5.8, w: 38.2, h: 6.6, label: "clk1x" },
   ],
-}
+};
 
 const pumpFiles = {
   cols: [
@@ -572,14 +1099,41 @@ const pumpFiles = {
     { key: "w", label: "what it adds" },
   ],
   rows: [
-    { m: "mx_mac, mx_tcu, mx_cluster_core", e: "<b>no</b>", w: "the same RTL, instantiated on <code>clk2x</code>. Nothing in the cascade knows", _tone: "good" },
-    { m: "mx_fpacc.*", e: "<b>no</b>", w: "every float primitive is shared with the unpumped accumulator", _tone: "good" },
-    { m: "<b>mx_cluster_cu_pump</b>", e: "yes", w: "one clock in, a <code>BUFGCE_DIV</code>, and <code>clk1x</code> back out so the router on this CU's port runs off the same net rather than a second divider" },
-    { m: "<b>mx_cluster_mgr_pump</b>", e: "yes", w: "L1 on <code>clk2x</code>, a phase bit, the <code>+1</code> address for the odd half, a second scale pair per command and the <code>single</code> flag" },
-    { m: "<b>mx_cluster_node_pump</b>", e: "yes", w: "the pair latch, the two-cycle-wide <code>part_valid</code>, and registered <code>gemm_busy</code>/<code>sweep_busy</code>" },
-    { m: "<b>mx_acu_fp_pump</b>", e: "yes", w: "a stage-0 register-in, and <b>a whole float add per lane</b> in front of stage 1", _tone: "warn" },
+    {
+      m: "mx_mac, mx_tcu, mx_cluster_core",
+      e: "<b>no</b>",
+      w: "the same RTL, instantiated on <code>clk2x</code>. Nothing in the cascade knows",
+      _tone: "good",
+    },
+    {
+      m: "mx_fpacc.*",
+      e: "<b>no</b>",
+      w: "every float primitive is shared with the unpumped accumulator",
+      _tone: "good",
+    },
+    {
+      m: "<b>mx_cluster_cu_pump</b>",
+      e: "yes",
+      w: "one clock in, a <code>BUFGCE_DIV</code>, and <code>clk1x</code> back out so the router on this CU's port runs off the same net rather than a second divider",
+    },
+    {
+      m: "<b>mx_cluster_mgr_pump</b>",
+      e: "yes",
+      w: "L1 on <code>clk2x</code>, a phase bit, the <code>+1</code> address for the odd half, a second scale pair per command and the <code>single</code> flag",
+    },
+    {
+      m: "<b>mx_cluster_node_pump</b>",
+      e: "yes",
+      w: "the pair latch, the two-cycle-wide <code>part_valid</code>, and registered <code>gemm_busy</code>/<code>sweep_busy</code>",
+    },
+    {
+      m: "<b>mx_acu_fp_pump</b>",
+      e: "yes",
+      w: "a stage-0 register-in, and <b>a whole float add per lane</b> in front of stage 1",
+      _tone: "warn",
+    },
   ],
-}
+};
 
 const mergeSteps = {
   cols: [
@@ -588,13 +1142,35 @@ const mergeSteps = {
     { key: "r", label: "registered off the next?" },
   ],
   rows: [
-    { s: "products", d: "both phases' <code>|v| x mm</code>, held in <code>lm_a</code> / <code>lm_b</code>", r: "<b>yes</b> — fused with the align it was 17 levels / 4.516 ns", _tone: "good" },
-    { s: "compare and swap", d: "exponent difference <code>e1 − e2</code>, bigger and smaller selected", r: "<b>yes</b> — fused with the shift-and-add it was 15 levels and held clk1x to 271 MHz", _tone: "good" },
-    { s: "shift", d: "the smaller magnitude right by the difference, <b>capped at VWM</b>", r: "beyond VWM the smaller term is under the larger's LSB" },
-    { s: "add / subtract", d: "by sign agreement, with the borrow re-checked", r: "see the trap below" },
-    { s: "renormalise", d: "one bit: carry out means <code>mag[VWM:1]</code> and exponent +1", r: "then into <code>val_r</code>, and it is ordinary stage 1 from there" },
+    {
+      s: "products",
+      d: "both phases' <code>|v| x mm</code>, held in <code>lm_a</code> / <code>lm_b</code>",
+      r: "<b>yes</b> — fused with the align it was 17 levels / 4.516 ns",
+      _tone: "good",
+    },
+    {
+      s: "compare and swap",
+      d: "exponent difference <code>e1 − e2</code>, bigger and smaller selected",
+      r: "<b>yes</b> — fused with the shift-and-add it was 15 levels and held clk1x to 271 MHz",
+      _tone: "good",
+    },
+    {
+      s: "shift",
+      d: "the smaller magnitude right by the difference, <b>capped at VWM</b>",
+      r: "beyond VWM the smaller term is under the larger's LSB",
+    },
+    {
+      s: "add / subtract",
+      d: "by sign agreement, with the borrow re-checked",
+      r: "see the trap below",
+    },
+    {
+      s: "renormalise",
+      d: "one bit: carry out means <code>mag[VWM:1]</code> and exponent +1",
+      r: "then into <code>val_r</code>, and it is ordinary stage 1 from there",
+    },
   ],
-}
+};
 
 // -------------------------------------------------------------- 9. the quantiser
 const quantSm = {
@@ -615,7 +1191,7 @@ const quantSm = {
     { from: "PACK", to: "TAIL", label: "word 3" },
     { from: "TAIL", to: "IDLE", label: "done", curve: -110 },
   ],
-}
+};
 
 const quantSteps = [
   {
@@ -666,12 +1242,12 @@ const quantSteps = [
     have: "1,024 bits out against 2,048 in",
     note: "2.2x denser on the mesh, which is the entire reason the encoding exists between memory and the MAC array. mx_quant measures 4,267 LUT, 0 BRAM, 32 DSP at 400.6 MHz — xcvu13p-fhgb2104-2L-e, out-of-context, 310 MHz-target run. It is on the memory-agent side of the mesh by design, so it is in NO cluster figure on this page.",
   },
-]
+];
 
 const quantWord = [
   { name: "32 x int7", bits: 224, value: "the elements", accent: true },
   { name: "4 x E5M3", bits: 32, value: "repeated in every word" },
-]
+];
 
 // ---------------------------------------------------------------- resources
 const measured = {
@@ -684,13 +1260,49 @@ const measured = {
     { key: "n", label: "bound" },
   ],
   rows: [
-    { b: "mx_mac (one DSP48E2)", l: "<b>0</b>", f: "<b>0</b>", d: "1", m: "—", n: "—", _tone: "good" },
-    { b: "mx_tcu (4x8x4) ‡", l: "336", f: "790", d: "64", m: "1072.6", n: "lower" },
-    { b: "mx_acu_fp (MW=14, DEPTH=16, block)", l: "9,901", f: "5,585", d: "48", m: "<b>343.4</b>", n: "lower" },
-    { b: "mx_cluster_cu (current)", l: "15,306", f: "17,754", d: "<b>304</b>", m: "<b>346.6</b>", n: "lower" },
-    { b: "mx_quant (memory-agent side)", l: "4,267", f: "—", d: "32", m: "<b>400.6</b>", n: "lower" },
+    {
+      b: "mx_mac (one DSP48E2)",
+      l: "<b>0</b>",
+      f: "<b>0</b>",
+      d: "1",
+      m: "—",
+      n: "—",
+      _tone: "good",
+    },
+    {
+      b: "mx_tcu (4x8x4) ‡",
+      l: "336",
+      f: "790",
+      d: "64",
+      m: "1072.6",
+      n: "lower",
+    },
+    {
+      b: "mx_acu_fp (MW=14, DEPTH=16, block)",
+      l: "9,901",
+      f: "5,585",
+      d: "48",
+      m: "<b>343.4</b>",
+      n: "lower",
+    },
+    {
+      b: "mx_cluster_cu (current)",
+      l: "15,306",
+      f: "17,754",
+      d: "<b>304</b>",
+      m: "<b>346.6</b>",
+      n: "lower",
+    },
+    {
+      b: "mx_quant (memory-agent side)",
+      l: "4,267",
+      f: "—",
+      d: "32",
+      m: "<b>400.6</b>",
+      n: "lower",
+    },
   ],
-}
+};
 
 // ------------------------------------------------------------------- traps
 const traps = {
@@ -752,7 +1364,7 @@ const traps = {
       c: "packing a whole entry in one cycle — 128 parallel barrel shifters, measured at <b>32.5 MHz</b>. An 8-bit window is all the range that can occur",
     },
   ],
-}
+};
 </script>
 
 <template>
@@ -764,21 +1376,25 @@ const traps = {
     source="src/kohakutpu/matmul/ · src/kohakutpu/transform/mx_quant.v · xcvu13p-fhgb2104-2L-e"
   >
     <p class="doc-p">
-      <RouterLink to="/tpu/matmul" class="doc-link">The matmul cluster</RouterLink> page is the
-      argument: why two int7 MACs per DSP, why the packing offset is 19, why the
-      systolic/mesh boundary sits at K = 32. This page is the <b>construction</b> — the
-      ports, the register stages, the delays that make the arithmetic line up, and the
-      places where the built RTL and the prose disagree. Where they do, both are shown.
+      <RouterLink to="/tpu/matmul" class="doc-link"
+        >The matmul cluster</RouterLink
+      >
+      page is the argument: why two int7 MACs per DSP, why the packing offset is
+      19, why the systolic/mesh boundary sits at K = 32. This page is the
+      <b>construction</b> — the ports, the register stages, the delays that make
+      the arithmetic line up, and the places where the built RTL and the prose
+      disagree. Where they do, both are shown.
     </p>
 
     <h2 class="doc-h2">The cell: one DSP48E2 with all four ALU slots in use</h2>
 
     <p class="doc-p">
-      A DSP48E2's ALU computes <code>Z + W + X + Y</code>. Most designs use two of those
-      four. <code>mx_mac</code> uses all four, and that is what removes the fabric from the
-      reduction: <code>X</code> and <code>Y</code> take the multiplier's partial products,
-      <code>Z</code> takes the cascade from the DSP above, and <code>W</code> takes the
-      partial arriving from the previous tensor CU.
+      A DSP48E2's ALU computes <code>Z + W + X + Y</code>. Most designs use two
+      of those four. <code>mx_mac</code> uses all four, and that is what removes
+      the fabric from the reduction: <code>X</code> and <code>Y</code> take the
+      multiplier's partial products, <code>Z</code> takes the cascade from the
+      DSP above, and <code>W</code> takes the partial arriving from the previous
+      tensor CU.
     </p>
 
     <Fig
@@ -789,7 +1405,9 @@ const traps = {
       <BlockDiagram :nodes="mac.nodes" :edges="mac.edges" />
     </Fig>
 
-    <Fig caption="OPMODE = { W[1:0], Z[2:0], Y[1:0], X[1:0] }, a compile-time constant per instance. Two localparams pick it: Z_SEL is 0 for a cascade stage and 1 for the head of a chain; W_SEL is 1 only on the last stage of a non-first TCU. INMODE = 00100 tells the pre-adder to compute A + D with A from A2 and B from B2.">
+    <Fig
+      caption="OPMODE = { W[1:0], Z[2:0], Y[1:0], X[1:0] }, a compile-time constant per instance. Two localparams pick it: Z_SEL is 0 for a cascade stage and 1 for the head of a chain; W_SEL is 1 only on the last stage of a non-first TCU. INMODE = 00100 tells the pre-adder to compute A + D with A from A2 and B from B2."
+    >
       <BitField :fields="opmode" />
     </Fig>
 
@@ -801,36 +1419,52 @@ const traps = {
 
     <Callout kind="rule" title="No reset on the datapath, deliberately">
       <p>
-        <code>RSTA</code>, <code>RSTB</code>, <code>RSTC</code>, <code>RSTD</code>,
-        <code>RSTM</code>, <code>RSTP</code> and the four control resets are all tied low.
-        A, B, C, D, M and P are pipeline registers, and <code>Z</code> is
-        <code>PCIN</code> or zero — <b>never <code>P</code></b> — so nothing accumulates
-        across a reset and there is nothing to clear. The behavioural model matches this
-        exactly, so the two build the same pipeline rather than two pipelines that agree
+        <code>RSTA</code>, <code>RSTB</code>, <code>RSTC</code>,
+        <code>RSTD</code>, <code>RSTM</code>, <code>RSTP</code> and the four
+        control resets are all tied low. A, B, C, D, M and P are pipeline
+        registers, and <code>Z</code> is <code>PCIN</code> or zero —
+        <b>never <code>P</code></b> — so nothing accumulates across a reset and
+        there is nothing to clear. The behavioural model matches this exactly,
+        so the two build the same pipeline rather than two pipelines that agree
         on values.
       </p>
     </Callout>
 
-    <Callout kind="trap" title="BREG = 2, not 1 — and it is invisible unless operands stream">
+    <Callout
+      kind="trap"
+      title="BREG = 2, not 1 — and it is invisible unless operands stream"
+    >
       <p>
-        With <code>AMULTSEL = &quot;AD&quot;</code> the A and D operands reach the
-        multiplier through <b>AREG and ADREG</b>. Give B a single register and it arrives
-        a cycle early and multiplies against the wrong operand.
+        With <code>AMULTSEL = &quot;AD&quot;</code> the A and D operands reach
+        the multiplier through <b>AREG and ADREG</b>. Give B a single register
+        and it arrives a cycle early and multiplies against the wrong operand.
       </p>
     </Callout>
 
-    <WaveTrace variant="broken" label="broken — BREG = 1, a new tile every cycle" :rows="bregBroken.rows" :notes="bregBroken.notes" />
-    <WaveTrace variant="fixed" label="fixed — BREG = 2, BCASCREG = 2" :rows="bregFixed.rows" :notes="bregFixed.notes" />
+    <WaveTrace
+      variant="broken"
+      label="broken — BREG = 1, a new tile every cycle"
+      :rows="bregBroken.rows"
+      :notes="bregBroken.notes"
+    />
+    <WaveTrace
+      variant="fixed"
+      label="fixed — BREG = 2, BCASCREG = 2"
+      :rows="bregFixed.rows"
+      :notes="bregFixed.notes"
+    />
 
-    <h2 class="doc-h2">The chain, and where the cross-CU partial really enters</h2>
+    <h2 class="doc-h2">
+      The chain, and where the cross-CU partial really enters
+    </h2>
 
     <p class="doc-p">
-      Eight DSPs make a chain, eight chains make a tensor CU, four tensor CUs make a
-      cluster. Inside a CU the reduction is <code>PCOUT → PCIN</code>: dedicated silicon
-      between physically adjacent DSPs in one column, no fabric and no LUTs. Between CUs
-      it is the <code>C</code> port — which is free because integer elements have no
-      implied leading one, so none of the <code>(1+Ma)(1+Mb)</code> correction an FP8
-      design needs exists here.
+      Eight DSPs make a chain, eight chains make a tensor CU, four tensor CUs
+      make a cluster. Inside a CU the reduction is <code>PCOUT → PCIN</code>:
+      dedicated silicon between physically adjacent DSPs in one column, no
+      fabric and no LUTs. Between CUs it is the <code>C</code> port — which is
+      free because integer elements have no implied leading one, so none of the
+      <code>(1+Ma)(1+Mb)</code> correction an FP8 design needs exists here.
     </p>
 
     <Fig
@@ -838,59 +1472,84 @@ const traps = {
       zoom
       wide
     >
-      <BlockDiagram :nodes="chain.nodes" :edges="chain.edges" :groups="chain.groups" />
+      <BlockDiagram
+        :nodes="chain.nodes"
+        :edges="chain.edges"
+        :groups="chain.groups"
+      />
     </Fig>
 
-    <Callout kind="note" title="The prose doc puts this partial in a different place">
+    <Callout
+      kind="note"
+      title="The prose doc puts this partial in a different place"
+    >
       <p>
         <code>matmul.md</code> §3.1 describes the upstream partial entering
-        <b>at CU entry</b>, as <code>Z = C</code> on stage 0. The RTL puts it on the
-        <b>last</b> stage, as <code>W = C</code>. The port is the same and the claim it
-        supports — zero fabric adders across the whole K = 32 — is unchanged; what differs
-        is the stage, and the stage is what sets the operand delay.
+        <b>at CU entry</b>, as <code>Z = C</code> on stage 0. The RTL puts it on
+        the <b>last</b> stage, as <code>W = C</code>. The port is the same and
+        the claim it supports — zero fabric adders across the whole K = 32 — is
+        unchanged; what differs is the stage, and the stage is what sets the
+        operand delay.
       </p>
     </Callout>
 
     <SpecTable :cols="zVsW.cols" :rows="zVsW.rows" />
 
     <p class="doc-p">
-      Because <code>C</code> is registered once, the W path costs <b>two</b> cycles, not
-      one. Getting that wrong does not error.
+      Because <code>C</code> is registered once, the W path costs
+      <b>two</b> cycles, not one. Getting that wrong does not error.
     </p>
 
-    <WaveTrace variant="broken" label="broken — one cycle of operand delay per TCU" :rows="wBroken.rows" :notes="wBroken.notes" />
-    <WaveTrace variant="fixed" label="fixed — d_c = d_(c-1) + 2" :rows="wFixed.rows" :notes="wFixed.notes" />
+    <WaveTrace
+      variant="broken"
+      label="broken — one cycle of operand delay per TCU"
+      :rows="wBroken.rows"
+      :notes="wBroken.notes"
+    />
+    <WaveTrace
+      variant="fixed"
+      label="fixed — d_c = d_(c-1) + 2"
+      :rows="wFixed.rows"
+      :notes="wFixed.notes"
+    />
 
     <h3 class="doc-h3">Operand skew, and what it is built from today</h3>
 
     <p class="doc-p">
-      A cascade adds one pipeline stage per DSP, so stage <code>k</code>'s operands must
-      arrive <code>k</code> cycles after stage 0's. The RTL bundles a whole stage's
-      operands into one shift register rather than delaying 32 lanes separately.
+      A cascade adds one pipeline stage per DSP, so stage <code>k</code>'s
+      operands must arrive <code>k</code> cycles after stage 0's. The RTL
+      bundles a whole stage's operands into one shift register rather than
+      delaying 32 lanes separately.
     </p>
 
-    <Fig caption="stage_op[k] — four rows of A at K index k, and four columns of B at the same k. One shift register per stage serves the entire stage, which is why the delay lines count 8 of these and not 32 narrow ones. There is no reset on any of them: operands are meaningless until vld_sr says otherwise, and a reset here would add a control set per stage.">
+    <Fig
+      caption="stage_op[k] — four rows of A at K index k, and four columns of B at the same k. One shift register per stage serves the entire stage, which is why the delay lines count 8 of these and not 32 narrow ones. There is no reset on any of them: operands are meaningless until vld_sr says otherwise, and a reset here would add a control set per stage."
+    >
       <BitField :fields="bundle" />
     </Fig>
 
     <p class="doc-p">
-      The timing of that skew — four tiles streaming down one 8-deep chain, with the DSP's
-      own A1/A2 and B1/B2 registers absorbing the first two stages — is drawn on
-      <RouterLink to="/tpu/matmul" class="doc-link">the matmul cluster page</RouterLink>.
-      What the RTL settles is what those delays are <i>made of</i>, and it is not what that
-      trace says.
+      The timing of that skew — four tiles streaming down one 8-deep chain, with
+      the DSP's own A1/A2 and B1/B2 registers absorbing the first two stages —
+      is drawn on
+      <RouterLink to="/tpu/matmul" class="doc-link"
+        >the matmul cluster page</RouterLink
+      >. What the RTL settles is what those delays are <i>made of</i>, and it is
+      not what that trace says.
     </p>
 
     <Callout kind="trap" title="An SRL costs a LUT per bit at ANY depth">
       <p>
-        These chains are 2 to 7 deep inside a TCU and 2, 4 and 6 deep between them. An
-        <code>SRL16E</code> pays a full LUT to use at most 7 of its 16 stages, and the
-        device is LUT-bound at 66% with FF at 34% — so the skew belongs in the half of the
-        CLB that is idle. Both <code>mx_tcu.v</code> and <code>mx_cluster_core.v</code>
-        now carry <code>(* shreg_extract = &quot;no&quot; *)</code>, and
-        <code>mx_acu_fp*.v</code> carries it at module scope <i>and</i> again on every
-        wide payload register, because the module-level attribute does not reach
-        declarations inside generate blocks.
+        These chains are 2 to 7 deep inside a TCU and 2, 4 and 6 deep between
+        them. An
+        <code>SRL16E</code> pays a full LUT to use at most 7 of its 16 stages,
+        and the device is LUT-bound at 66% with FF at 34% — so the skew belongs
+        in the half of the CLB that is idle. Both <code>mx_tcu.v</code> and
+        <code>mx_cluster_core.v</code> now carry
+        <code>(* shreg_extract = &quot;no&quot; *)</code>, and
+        <code>mx_acu_fp*.v</code> carries it at module scope <i>and</i> again on
+        every wide payload register, because the module-level attribute does not
+        reach declarations inside generate blocks.
       </p>
     </Callout>
 
@@ -905,21 +1564,32 @@ const traps = {
     <p class="doc-p">
       This is the design's central idea and it is visible in three lines of
       <code>mx_cluster_mgr</code>: <code>for kb: for g: for h</code>. K is the
-      <b>outermost</b> loop of the sweep, so between two commands to one accumulator
-      address the manager visits every other address first. Scrub through one
-      <code>GEMM</code> and watch which row changes.
+      <b>outermost</b> loop of the sweep, so between two commands to one
+      accumulator address the manager visits every other address first. Scrub
+      through one <code>GEMM</code> and watch which row changes.
     </p>
 
-    <StepPlayer :steps="sweepSteps" label="GEMM gm=4 gn=8 nk=4 — C[16,32] = A[16,128] @ B.T[32,128]">
+    <StepPlayer
+      :steps="sweepSteps"
+      label="GEMM gm=4 gn=8 nk=4 — C[16,32] = A[16,128] @ B.T[32,128]"
+    >
       <template #default="{ state }">
-        <div class="kt-text-micro uppercase tracking-wider text-warm-400 dark:text-warm-600 mb-2">
+        <div
+          class="kt-text-micro uppercase tracking-wider text-warm-400 dark:text-warm-600 mb-2"
+        >
           operands — every one of these moves
         </div>
         <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1.5 mb-2">
-          <span class="kt-text-micro font-mono text-warm-500 dark:text-warm-400 w-44 shrink-0">
+          <span
+            class="kt-text-micro font-mono text-warm-500 dark:text-warm-400 w-44 shrink-0"
+          >
             L1 A · aoff + g·nk + kb
           </span>
-          <span v-for="e in entA(state.kb)" :key="`a${e}`" class="gem-badge font-mono bg-gem text-white">
+          <span
+            v-for="e in entA(state.kb)"
+            :key="`a${e}`"
+            class="gem-badge font-mono bg-gem text-white"
+          >
             A[{{ e }}]
           </span>
           <span
@@ -930,10 +1600,16 @@ const traps = {
           </span>
         </div>
         <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1.5">
-          <span class="kt-text-micro font-mono text-warm-500 dark:text-warm-400 w-44 shrink-0">
+          <span
+            class="kt-text-micro font-mono text-warm-500 dark:text-warm-400 w-44 shrink-0"
+          >
             L1 B · boff + h·nk + kb
           </span>
-          <span v-for="e in entB(state.kb)" :key="`b${e}`" class="gem-badge font-mono bg-gem text-white">
+          <span
+            v-for="e in entB(state.kb)"
+            :key="`b${e}`"
+            class="gem-badge font-mono bg-gem text-white"
+          >
             B[{{ e }}]
           </span>
           <span
@@ -944,14 +1620,18 @@ const traps = {
           </span>
         </div>
 
-        <div class="kt-text-micro uppercase tracking-wider text-warm-400 dark:text-warm-600 mt-5 mb-2">
+        <div
+          class="kt-text-micro uppercase tracking-wider text-warm-400 dark:text-warm-600 mt-5 mb-2"
+        >
           the resident tile — this does not
         </div>
         <div
           class="rounded-lg border border-warm-200 dark:border-warm-700 bg-warm-50 dark:bg-warm-900 px-4 py-3 font-mono"
         >
           <div class="flex flex-wrap items-baseline gap-x-3">
-            <span class="kt-text-caption font-semibold text-warm-800 dark:text-warm-200">
+            <span
+              class="kt-text-caption font-semibold text-warm-800 dark:text-warm-200"
+            >
               tile_addr = g·gn + h
             </span>
             <span class="kt-text-micro text-warm-400 dark:text-warm-600">
@@ -964,29 +1644,49 @@ const traps = {
           </div>
         </div>
 
-        <dl class="grid grid-cols-[auto_1fr] gap-x-5 gap-y-1.5 kt-text-caption mt-4">
+        <dl
+          class="grid grid-cols-[auto_1fr] gap-x-5 gap-y-1.5 kt-text-caption mt-4"
+        >
           <dt class="text-warm-500 dark:text-warm-400">accumulator command</dt>
-          <dd class="font-mono text-warm-800 dark:text-warm-200">{{ state.cmd }}</dd>
+          <dd class="font-mono text-warm-800 dark:text-warm-200">
+            {{ state.cmd }}
+          </dd>
           <dt class="text-warm-500 dark:text-warm-400">issues, cumulative</dt>
-          <dd class="font-mono text-warm-800 dark:text-warm-200">{{ state.issues }} of 128</dd>
+          <dd class="font-mono text-warm-800 dark:text-warm-200">
+            {{ state.issues }} of 128
+          </dd>
           <dt class="text-warm-500 dark:text-warm-400">MACs, cumulative</dt>
-          <dd class="font-mono text-warm-800 dark:text-warm-200">{{ state.macs }}</dd>
-          <dt class="text-warm-500 dark:text-warm-400">distinct L1 entries touched</dt>
-          <dd class="font-mono text-warm-800 dark:text-warm-200">{{ state.entries }} of 48</dd>
-          <dt class="text-warm-500 dark:text-warm-400">bytes out of the cluster</dt>
-          <dd class="font-mono text-warm-800 dark:text-warm-200">{{ state.out }}</dd>
+          <dd class="font-mono text-warm-800 dark:text-warm-200">
+            {{ state.macs }}
+          </dd>
+          <dt class="text-warm-500 dark:text-warm-400">
+            distinct L1 entries touched
+          </dt>
+          <dd class="font-mono text-warm-800 dark:text-warm-200">
+            {{ state.entries }} of 48
+          </dd>
+          <dt class="text-warm-500 dark:text-warm-400">
+            bytes out of the cluster
+          </dt>
+          <dd class="font-mono text-warm-800 dark:text-warm-200">
+            {{ state.out }}
+          </dd>
         </dl>
       </template>
     </StepPlayer>
 
-    <Callout kind="rule" title="The recurrence interval is what buys the single bank">
+    <Callout
+      kind="rule"
+      title="The recurrence interval is what buys the single bank"
+    >
       <p>
-        A pipelined adder cannot close a single-cycle accumulate loop, and when K was the
-        inner loop that was the common case — which forced three rotating banks, a
-        two-step fold on <code>EMIT</code> and a per-address zero mask. Sweeping K
-        outermost makes an address recur every <code>Gm·Gn</code> cycles, so read latency
-        is free and one bank suffices. What replaces the banks is a <b>contract</b>, and
-        the contract is checked rather than assumed.
+        A pipelined adder cannot close a single-cycle accumulate loop, and when
+        K was the inner loop that was the common case — which forced three
+        rotating banks, a two-step fold on <code>EMIT</code> and a per-address
+        zero mask. Sweeping K outermost makes an address recur every
+        <code>Gm·Gn</code> cycles, so read latency is free and one bank
+        suffices. What replaces the banks is a <b>contract</b>, and the contract
+        is checked rather than assumed.
       </p>
     </Callout>
 
@@ -997,35 +1697,48 @@ const traps = {
       zoom
       wide
     >
-      <BlockDiagram :nodes="acu.nodes" :edges="acu.edges" :groups="acu.groups" />
+      <BlockDiagram
+        :nodes="acu.nodes"
+        :edges="acu.edges"
+        :groups="acu.groups"
+      />
     </Fig>
 
-    <h3 class="doc-h3">Stage 1: what the accumulator actually reads out of the 48-bit word</h3>
+    <h3 class="doc-h3">
+      Stage 1: what the accumulator actually reads out of the 48-bit word
+    </h3>
 
-    <Fig caption="The chain hands over 8 x 48 bits, two packed fixed-point fields per chain. The upper field is read as 22 bits with its sign at bit 40, and the lower field's sign bit at 18 is the borrow the upper needs — the whole 48-bit word is one two's complement accumulation, so a negative lower sum borrows from its neighbour.">
+    <Fig
+      caption="The chain hands over 8 x 48 bits, two packed fixed-point fields per chain. The upper field is read as 22 bits with its sign at bit 40, and the lower field's sign bit at 18 is the borrow the upper needs — the whole 48-bit word is one two's complement accumulation, so a negative lower sum borrows from its neighbour."
+    >
       <BitField :fields="pWord" />
     </Fig>
 
-    <Callout kind="rule" title="The borrow correction is one XOR, not a 29-bit increment">
+    <Callout
+      kind="rule"
+      title="The borrow correction is one XOR, not a 29-bit increment"
+    >
       <p>
-        The extraction, the two's complement negation and the borrow fix are the same
-        expression. <code>mm = m8a·m8b</code> is unsigned, so the product's sign is the
-        chain value's, and
+        The extraction, the two's complement negation and the borrow fix are the
+        same expression. <code>mm = m8a·m8b</code> is unsigned, so the product's
+        sign is the chain value's, and
       </p>
       <p class="font-mono kt-text-caption">
-        |v + r| · mm  ==  ((v ^ {W{s}}) + (s ^ r)) · mm,   s = v[W−1]
+        |v + r| · mm == ((v ^ {W{s}}) + (s ^ r)) · mm, s = v[W−1]
       </p>
       <p>
         which is one XOR level on a register output, and maps onto the DSP's
-        <code>(D+A)·B</code> mode. Taken <i>after</i> the multiply instead it put a 30-bit
-        two's complement carry chain between the DSP's output register and the
-        leading-one search — <b>0.952 ns of a 3.401 ns path, and four of its twelve logic
-        levels</b>. Moving it took twelve levels to nine.
+        <code>(D+A)·B</code> mode. Taken <i>after</i> the multiply instead it
+        put a 30-bit two's complement carry chain between the DSP's output
+        register and the leading-one search —
+        <b>0.952 ns of a 3.401 ns path, and four of its twelve logic levels</b>.
+        Moving it took twelve levels to nine.
       </p>
       <p>
-        <code>r</code> is a rounding bit, so <code>v + r</code> can only reach zero from
-        <code>v = −1</code>: the one case where <code>s</code> disagrees with the true
-        sign. The magnitude is zero there and <code>is_zero</code> discards the sign.
+        <code>r</code> is a rounding bit, so <code>v + r</code> can only reach
+        zero from <code>v = −1</code>: the one case where
+        <code>s</code> disagrees with the true sign. The magnitude is zero there
+        and <code>is_zero</code> discards the sign.
       </p>
     </Callout>
 
@@ -1033,17 +1746,22 @@ const traps = {
 
     <SpecTable :cols="widths.cols" :rows="widths.rows" />
 
-    <Fig caption="The accumulator float, S1 E7 M(ACC_MW), all-zero being the zero encoding. E7 is required rather than chosen: the accumulator holds int x scaleA x scaleB, and for FP16 sources that exponent sum spans roughly −48 to +30, so an E5 field would overflow on ordinary data. MW = 14 is the shipped default and measures identically to MW = 16 — results.md §6.2, xcvu13p-fhgb2104-2L-e.">
+    <Fig
+      caption="The accumulator float, S1 E7 M(ACC_MW), all-zero being the zero encoding. E7 is required rather than chosen: the accumulator holds int x scaleA x scaleB, and for FP16 sources that exponent sum spans roughly −48 to +30, so an E5 field would overflow on ordinary data. MW = 14 is the shipped default and measures identically to MW = 16 — results.md §6.2, xcvu13p-fhgb2104-2L-e."
+    >
       <BitField :fields="accFloat" />
     </Fig>
 
-    <h3 class="doc-h3">The variable shift is a multiply, and three things had to line up</h3>
+    <h3 class="doc-h3">
+      The variable shift is a multiply, and three things had to line up
+    </h3>
 
     <p class="doc-p">
-      Left-justifying the magnitude so its leading one sits at bit <code>VW−1</code> makes
-      the significand, the guard bit and the dropped bits <b>fixed slices</b>, and
-      <code>mag &lt;&lt; k</code> is <code>mag · 2^k</code>. The accumulator had 16 DSPs
-      beside a 256-DSP MAC array, so the multiplier was there for the taking.
+      Left-justifying the magnitude so its leading one sits at bit
+      <code>VW−1</code> makes the significand, the guard bit and the dropped
+      bits <b>fixed slices</b>, and <code>mag &lt;&lt; k</code> is
+      <code>mag · 2^k</code>. The accumulator had 16 DSPs beside a 256-DSP MAC
+      array, so the multiplier was there for the taking.
     </p>
 
     <SpecTable
@@ -1060,40 +1778,49 @@ const traps = {
 
     <Callout kind="rule" title="Everything in mx_fpacc must stay tree-shaped">
       <p>
-        These blocks sit in the cluster's critical path, and a search or reduction written
-        as a loop that carries a value between iterations —
+        These blocks sit in the cluster's critical path, and a search or
+        reduction written as a loop that carries a value between iterations —
         <code>if (!found &amp;&amp; x[i]) found = 1</code>,
-        <code>lost = lost | x[i]</code> — synthesises as exactly that serial chain:
-        <b>25 LUT levels inside a single pipeline stage</b>, most of a 3.33 ns period,
-        where no seam elsewhere can reach it. It cost this design about 68 MHz. Use
-        smear-isolate-encode for searches and mask-then-reduce for sticky bits.
+        <code>lost = lost | x[i]</code> — synthesises as exactly that serial
+        chain: <b>25 LUT levels inside a single pipeline stage</b>, most of a
+        3.33 ns period, where no seam elsewhere can reach it. It cost this
+        design about 68 MHz. Use smear-isolate-encode for searches and
+        mask-then-reduce for sticky bits.
       </p>
       <p>
-        <code>mx_lead1</code> is the shape: <code>log2(W)</code> levels of OR to smear the
-        leading one rightwards, one AND to isolate it, six OR reductions to encode it.
+        <code>mx_lead1</code> is the shape: <code>log2(W)</code> levels of OR to
+        smear the leading one rightwards, one AND to isolate it, six OR
+        reductions to encode it.
       </p>
     </Callout>
 
-    <Callout kind="trap" title="mx_fpacc's two REFERENCE modules are not instantiated by anything">
+    <Callout
+      kind="trap"
+      title="mx_fpacc's two REFERENCE modules are not instantiated by anything"
+    >
       <p>
         <code>mx_fpacc_norm</code> and <code>mx_fpacc_add</code> are the unsplit
-        reference implementations, and <code>mx_fpacc_tb</code> checks <b>them</b> against
-        a real-number model. Nothing cross-checks them against the split versions that
-        ship. <b>Changing a split module and running only <code>mx_fpacc_tb</code> proves
-        nothing</b> — the split path is covered end to end by
-        <code>mx_acu_fp_tb</code> and nowhere else.
+        reference implementations, and <code>mx_fpacc_tb</code> checks
+        <b>them</b> against a real-number model. Nothing cross-checks them
+        against the split versions that ship.
+        <b
+          >Changing a split module and running only
+          <code>mx_fpacc_tb</code> proves nothing</b
+        >
+        — the split path is covered end to end by <code>mx_acu_fp_tb</code> and
+        nowhere else.
       </p>
     </Callout>
 
     <h3 class="doc-h3">Where precision actually dies in a long K sweep</h3>
 
     <p class="doc-p">
-      Not in the reduction. L0 and L1 are exact integer, so a K = 32 block carries no
-      rounding at all, and the block-scale application at stage 1 is exact too — the
-      exponent halves add and the mantissas multiply, with the <code>/64</code> the
-      mantissa product carries coming off the exponent as a <code>−6</code>. Rounding
-      first appears at stage 2b, once per 32 MACs, and then once more per K block in the
-      stage 4/5 add.
+      Not in the reduction. L0 and L1 are exact integer, so a K = 32 block
+      carries no rounding at all, and the block-scale application at stage 1 is
+      exact too — the exponent halves add and the mantissas multiply, with the
+      <code>/64</code> the mantissa product carries coming off the exponent as a
+      <code>−6</code>. Rounding first appears at stage 2b, once per 32 MACs, and
+      then once more per K block in the stage 4/5 add.
     </p>
 
     <p class="doc-p">
@@ -1106,31 +1833,37 @@ const traps = {
       caption="results.md §6.2 and accumulator.md §7. A K sweep does not gradually erode headroom; a biased operand distribution destroys it outright, and splitting K does not fix it because the final sum is the same number however K is partitioned"
     />
 
-    <Callout kind="trap" title="Two ways the rounding carry has been wrong, in the same file">
+    <Callout
+      kind="trap"
+      title="Two ways the rounding carry has been wrong, in the same file"
+    >
       <p>
-        In <code>mx_fpacc_norm</code>, on a rounding carry the leading one moves to bit
-        <code>MW</code>, so the fraction is <code>sig_r[MW:1]</code>.
+        In <code>mx_fpacc_norm</code>, on a rounding carry the leading one moves
+        to bit <code>MW</code>, so the fraction is <code>sig_r[MW:1]</code>.
         <code>sig_r[SW:1]</code> is <code>MW+1</code> bits, overflows the output
-        concatenation and pushes the <b>sign bit</b> out. <b>MW = 16 never reaches that
-        path</b>, so it only appeared once MW was narrowed — sweeping a parameter is a
-        test in its own right.
+        concatenation and pushes the <b>sign bit</b> out.
+        <b>MW = 16 never reaches that path</b>, so it only appeared once MW was
+        narrowed — sweeping a parameter is a test in its own right.
       </p>
       <p>
-        In <code>mx_fpacc_to_fp16</code>, <code>m11</code> is the <b>stored fraction</b>,
-        not the significand, so a carry out of it means 1.111…1 rounded to 10.000…0:
-        fraction to zero, exponent up. Shifting <code>m11</code> right instead leaves the
-        carry bit in the fraction and gives 1.5·2^(e+1) where 1.0·2^(e+1) was meant — a
-        <b>50% error</b>.
+        In <code>mx_fpacc_to_fp16</code>, <code>m11</code> is the
+        <b>stored fraction</b>, not the significand, so a carry out of it means
+        1.111…1 rounded to 10.000…0: fraction to zero, exponent up. Shifting
+        <code>m11</code> right instead leaves the carry bit in the fraction and
+        gives 1.5·2^(e+1) where 1.0·2^(e+1) was meant — a <b>50% error</b>.
       </p>
     </Callout>
 
-    <h2 class="doc-h2">REUSE_MIN = 5, encoded in three places that cannot see each other</h2>
+    <h2 class="doc-h2">
+      REUSE_MIN = 5, encoded in three places that cannot see each other
+    </h2>
 
     <p class="doc-p">
-      The single bank is bought with a caller contract: consecutive commands to the same
-      tile address must be at least <code>REUSE_MIN</code> cycles apart. It counts the
-      tile <b>read</b> to the tile <b>write</b>, which is why stage 2a2 lengthened the
-      block without touching the number — the new stage sits ahead of the read.
+      The single bank is bought with a caller contract: consecutive commands to
+      the same tile address must be at least <code>REUSE_MIN</code> cycles
+      apart. It counts the tile <b>read</b> to the tile <b>write</b>, which is
+      why stage 2a2 lengthened the block without touching the number — the new
+      stage sits ahead of the read.
     </p>
 
     <SpecTable
@@ -1145,44 +1878,55 @@ const traps = {
       caption="mx_cluster_mgr's pacing. Gm·Gn < 5 with both operands at least 1 is exactly three shapes: (1, ≤4), (≤4, 1) and (2, 2). The cost is nothing at any tiling worth running — and a sweep of nk = 1 never paces at all, because one K block never revisits an address"
     />
 
-    <Callout kind="rule" title="The contract is checked in simulation, and the check needed its own valid bit">
+    <Callout
+      kind="rule"
+      title="The contract is checked in simulation, and the check needed its own valid bit"
+    >
       <p>
-        <code>mx_acu_fp</code> keeps the last <code>REUSE_MIN</code> tile addresses and
-        reports any repeat, so a caller that sweeps K on the inside <b>fails loudly</b>
-        instead of quietly accumulating into stale data. It caught a real violation the
-        moment it existed — the older single-port CU emitted a tile 2 to 3 cycles after
-        the last accumulate into it.
+        <code>mx_acu_fp</code> keeps the last <code>REUSE_MIN</code> tile
+        addresses and reports any repeat, so a caller that sweeps K on the
+        inside <b>fails loudly</b>
+        instead of quietly accumulating into stale data. It caught a real
+        violation the moment it existed — the older single-port CU emitted a
+        tile 2 to 3 cycles after the last accumulate into it.
       </p>
       <p>
         A separate valid bit per slot, not a sentinel address:
-        <code>{TAW{1'b1}}</code> meaning &quot;no command&quot; collides with the real top
-        address, which at <code>TAW = 4</code> is 15.
+        <code>{TAW{1'b1}}</code> meaning &quot;no command&quot; collides with
+        the real top address, which at <code>TAW = 4</code> is 15.
       </p>
     </Callout>
 
-    <Callout kind="trap" title="busy has to cover the REUSE_MIN gap, not just the pipeline">
+    <Callout
+      kind="trap"
+      title="busy has to cover the REUSE_MIN gap, not just the pipeline"
+    >
       <p>
-        <code>busy</code> means &quot;not safe to take the control mux yet&quot;, and
-        taking the mux means issuing an <code>EMIT</code> that reads an address an
-        in-flight command may be about to write. So <code>busy</code> is
-        <code>in_flight || |busy_tail</code>, with <code>busy_tail</code> reloaded to
-        <code>REUSE_MIN</code> on every in-flight cycle. A pipeline-only version reads
-        correct and fails only when the whole <code>GEMM</code> is short enough that its
-        tail has not cleared — and then <b>every sub-tile drains as zero</b>, which looks
-        exactly like a compute bug. When the sweep itself finishes is a separate question,
-        answered on
-        <RouterLink to="/tpu/matmul" class="doc-link">the matmul cluster page</RouterLink>.
+        <code>busy</code> means &quot;not safe to take the control mux
+        yet&quot;, and taking the mux means issuing an <code>EMIT</code> that
+        reads an address an in-flight command may be about to write. So
+        <code>busy</code> is <code>in_flight || |busy_tail</code>, with
+        <code>busy_tail</code> reloaded to <code>REUSE_MIN</code> on every
+        in-flight cycle. A pipeline-only version reads correct and fails only
+        when the whole <code>GEMM</code> is short enough that its tail has not
+        cleared — and then <b>every sub-tile drains as zero</b>, which looks
+        exactly like a compute bug. When the sweep itself finishes is a separate
+        question, answered on
+        <RouterLink to="/tpu/matmul" class="doc-link"
+          >the matmul cluster page</RouterLink
+        >.
       </p>
     </Callout>
 
     <h2 class="doc-h2">How work reaches the array: mx_cluster_mgr</h2>
 
     <p class="doc-p">
-      The chain eats <code>A[4][32] + B[32][4]</code> every cycle — eight 256-bit operand
-      words — and a NoC port delivers one. No port count closes an 8x deficit; reuse does,
-      which is why L1 exists and why the manager owns it explicitly. One <code>GEMM</code>
-      flit expands here into hundreds of three-bit accumulator commands, and none of them
-      ever appears on the mesh.
+      The chain eats <code>A[4][32] + B[32][4]</code> every cycle — eight
+      256-bit operand words — and a NoC port delivers one. No port count closes
+      an 8x deficit; reuse does, which is why L1 exists and why the manager owns
+      it explicitly. One <code>GEMM</code>
+      flit expands here into hundreds of three-bit accumulator commands, and
+      none of them ever appears on the mesh.
     </p>
 
     <Fig
@@ -1193,54 +1937,82 @@ const traps = {
       <BlockDiagram :nodes="mgr.nodes" :edges="mgr.edges" />
     </Fig>
 
-    <Fig caption="One L1 entry — what a FILL assembles from four consecutive 256-bit operand words, and what one address of u_l1a or u_l1b holds. The four scales are identical across the four K-slices of a block; repeating them costs 12.5% of the payload and makes every flit self-contained, which is what lets memory responses arrive out of order.">
+    <Fig
+      caption="One L1 entry — what a FILL assembles from four consecutive 256-bit operand words, and what one address of u_l1a or u_l1b holds. The four scales are identical across the four K-slices of a block; repeating them costs 12.5% of the payload and makes every flit self-contained, which is what lets memory responses arrive out of order."
+    >
       <BitField :fields="l1Entry" />
     </Fig>
 
-    <Callout kind="rule" title="The accumulator command rides a FIFO, not a matched delay">
+    <Callout
+      kind="rule"
+      title="The accumulator command rides a FIFO, not a matched delay"
+    >
       <p>
-        The cascade is about 19 cycles deep from where the manager sits, and that depth is
-        a function of the CU count and the skew registers. Rather than duplicate the
-        constant, each issue pushes <code>{op, addr, sa, sb, anchor}</code> and every
-        <code>part_valid</code> pops one. <b>Order is preserved by construction</b>, so
-        alignment survives any change to the chain.
+        The cascade is about 19 cycles deep from where the manager sits, and
+        that depth is a function of the CU count and the skew registers. Rather
+        than duplicate the constant, each issue pushes
+        <code>{op, addr, sa, sb, anchor}</code> and every
+        <code>part_valid</code> pops one.
+        <b>Order is preserved by construction</b>, so alignment survives any
+        change to the chain.
       </p>
       <p>
-        Depth 64 against a ~19-deep chain, and it must never fill: a dropped command
-        corrupts exactly one output element. Both overflow and underflow —
-        <code>part_valid</code> with no pending command — have simulation checks.
+        Depth 64 against a ~19-deep chain, and it must never fill: a dropped
+        command corrupts exactly one output element. Both overflow and underflow
+        —
+        <code>part_valid</code> with no pending command — have simulation
+        checks.
       </p>
     </Callout>
 
-    <WaveTrace variant="broken" label="broken — the entry consumed one stage too early" :rows="dlyBroken.rows" :notes="dlyBroken.notes" />
-    <WaveTrace variant="fixed" label="fixed — two cycles of control delay" :rows="dlyFixed.rows" :notes="dlyFixed.notes" />
+    <WaveTrace
+      variant="broken"
+      label="broken — the entry consumed one stage too early"
+      :rows="dlyBroken.rows"
+      :notes="dlyBroken.notes"
+    />
+    <WaveTrace
+      variant="fixed"
+      label="fixed — two cycles of control delay"
+      :rows="dlyFixed.rows"
+      :notes="dlyFixed.notes"
+    />
 
-    <Callout kind="rule" title="A check that cries wolf is deleted, which is how the real one gets lost">
+    <Callout
+      kind="rule"
+      title="A check that cries wolf is deleted, which is how the real one gets lost"
+    >
       <p>
         A <code>FILL</code> may run while a sweep does — that is the point of
-        <code>aoff</code> and <code>boff</code> — which makes L1 a shared resource with no
-        interlock, and a fill landing on entries the sweep is reading corrupts a few
-        sub-tiles and nothing else: the median barely moves and the answer is wrong. The
-        collision check therefore compares <b>within a bank</b>. <code>l1_addr</code> is
-        <code>{bank, offset}</code>, and a fill into the other half is the whole point of
-        banking, so comparing the flat address would report every double-buffered fill as
-        a collision.
+        <code>aoff</code> and <code>boff</code> — which makes L1 a shared
+        resource with no interlock, and a fill landing on entries the sweep is
+        reading corrupts a few sub-tiles and nothing else: the median barely
+        moves and the answer is wrong. The collision check therefore compares
+        <b>within a bank</b>. <code>l1_addr</code> is
+        <code>{bank, offset}</code>, and a fill into the other half is the whole
+        point of banking, so comparing the flat address would report every
+        double-buffered fill as a collision.
       </p>
       <p>
-        For the same reason the sweep's own <code>aoff + g·nk + kb</code> stays 8 bits and
-        <b>cannot carry into the bank</b>: beyond 256 it wraps inside its own half, where
-        widening the sum would walk a sweep into the other bank's operands.
+        For the same reason the sweep's own <code>aoff + g·nk + kb</code> stays
+        8 bits and <b>cannot carry into the bank</b>: beyond 256 it wraps inside
+        its own half, where widening the sum would walk a sweep into the other
+        bank's operands.
       </p>
     </Callout>
 
-    <h2 class="doc-h2">The _pump variants: what a 2x matmul clock changes structurally</h2>
+    <h2 class="doc-h2">
+      The _pump variants: what a 2x matmul clock changes structurally
+    </h2>
 
     <p class="doc-p">
-      Running L1 and the cascade at twice the accumulator's clock does not change the
-      cascade. It changes what arrives at the accumulator: <b>two partials per
-      <code>clk1x</code> cycle, from two consecutive K blocks, carrying two different E5M3
-      scale pairs</b>. They cannot be summed packed, so they have to be added as floats
-      before stage 1 — and that add is the whole structural cost of the pump.
+      Running L1 and the cascade at twice the accumulator's clock does not
+      change the cascade. It changes what arrives at the accumulator:
+      <b
+        >two partials per <code>clk1x</code> cycle, from two consecutive K
+        blocks, carrying two different E5M3 scale pairs</b
+      >. They cannot be summed packed, so they have to be added as floats before
+      stage 1 — and that add is the whole structural cost of the pump.
     </p>
 
     <Fig
@@ -1248,7 +2020,11 @@ const traps = {
       zoom
       wide
     >
-      <BlockDiagram :nodes="pump.nodes" :edges="pump.edges" :groups="pump.groups" />
+      <BlockDiagram
+        :nodes="pump.nodes"
+        :edges="pump.edges"
+        :groups="pump.groups"
+      />
     </Fig>
 
     <SpecTable
@@ -1263,81 +2039,106 @@ const traps = {
       caption="The merge, in mx_acu_fp_pump. It is a float add — compare, align, add, renormalise — done sixteen times, and it is why the pumped accumulator carries two more register stages than the plain one before it reaches the stage the plain one starts at"
     />
 
-    <Callout kind="trap" title="Three ways the pair phase has already gone wrong">
+    <Callout
+      kind="trap"
+      title="Three ways the pair phase has already gone wrong"
+    >
       <p>
-        <b>The lone final block is phase 0.</b> An odd <code>nk</code> ends on a single K
-        block, and <code>single</code> keeps <code>m1</code> / <code>part_in2</code> —
-        phase 1 read one entry past the operand. The address side matches it:
-        <code>kb</code> first and then <code>kb+1</code>, because the reverse order put
-        the out-of-range entry of an odd <code>nk</code> into the half
-        <code>single</code> keeps.
+        <b>The lone final block is phase 0.</b> An odd <code>nk</code> ends on a
+        single K block, and <code>single</code> keeps <code>m1</code> /
+        <code>part_in2</code> — phase 1 read one entry past the operand. The
+        address side matches it: <code>kb</code> first and then
+        <code>kb+1</code>, because the reverse order put the out-of-range entry
+        of an odd <code>nk</code> into the half <code>single</code> keeps.
       </p>
       <p>
-        <b><code>single</code> needs TWO delays, matching the data.</b> The merge adds two
-        register stages, so at one delay <code>single</code> led the data by a cycle —
-        and that only showed up when it changed between issues, which is odd
-        <code>nk</code> greater than 1.
+        <b><code>single</code> needs TWO delays, matching the data.</b> The
+        merge adds two register stages, so at one delay <code>single</code> led
+        the data by a cycle — and that only showed up when it changed between
+        issues, which is odd <code>nk</code> greater than 1.
       </p>
       <p>
-        <b>Larger-by-exponent is not larger-by-magnitude at equal exponents.</b> The
-        unsigned borrow wrapped to a huge value with the wrong sign, so the merge computes
-        both differences and picks by the borrow bit.
+        <b>Larger-by-exponent is not larger-by-magnitude at equal exponents.</b>
+        The unsigned borrow wrapped to a huge value with the wrong sign, so the
+        merge computes both differences and picks by the borrow bit.
       </p>
     </Callout>
 
-    <Callout kind="trap" title="Two counters that wrap, and one that must not be combinational">
+    <Callout
+      kind="trap"
+      title="Two counters that wrap, and one that must not be combinational"
+    >
       <p>
-        <code>KSTEP = 2</code>, so the last-block test has to match the step or the sweep
-        re-reads what it just summed. Written as <code>kb + KSTEP == nk_r</code> on an
-        8-bit counter it wraps 256 → 0 at <code>nk = 255</code>, never fires, and the
-        sweep runs forever; it is a 9-bit <code>&gt;=</code>. The unpumped
-        <code>kb + 1 == nk_r</code> steps by one and cannot wrap, which is why the bug is
-        only in the pumped file.
+        <code>KSTEP = 2</code>, so the last-block test has to match the step or
+        the sweep re-reads what it just summed. Written as
+        <code>kb + KSTEP == nk_r</code> on an 8-bit counter it wraps 256 → 0 at
+        <code>nk = 255</code>, never fires, and the sweep runs forever; it is a
+        9-bit <code>&gt;=</code>. The unpumped <code>kb + 1 == nk_r</code> steps
+        by one and cannot wrap, which is why the bug is only in the pumped file.
       </p>
       <p>
         And <code>cmd_valid</code> is <b>deliberately absent</b> from the pumped
         accumulator's <code>in_flight</code>: combinational from the 2x
-        <code>pair_v</code>, it held <code>clk2x</code> to 533 MHz against the cascade's
-        556. The three stage-0 command valids cover the same window without crossing the
-        domain.
+        <code>pair_v</code>, it held <code>clk2x</code> to 533 MHz against the
+        cascade's 556. The three stage-0 command valids cover the same window
+        without crossing the domain.
       </p>
     </Callout>
 
-    <Callout kind="note" title="part_valid is two cycles wide and that is not a handshake">
+    <Callout
+      kind="note"
+      title="part_valid is two cycles wide and that is not a handshake"
+    >
       <p>
-        The pair latch raises <code>pair_v</code> for one <code>clk2x</code> cycle and a
-        second register widens it, so the <code>clk1x</code> edge cannot miss it. It is
-        <b>not</b> replaceable by a toggle handshake: <code>part_bus</code> is read
-        <i>with</i> <code>part_valid</code>, so synchroniser latency would break the
-        alignment the whole chain is built on. And <code>pp</code>, the pair phase,
-        follows <b>VALID</b> rather than the clock phase.
+        The pair latch raises <code>pair_v</code> for one
+        <code>clk2x</code> cycle and a second register widens it, so the
+        <code>clk1x</code> edge cannot miss it. It is <b>not</b> replaceable by
+        a toggle handshake: <code>part_bus</code> is read <i>with</i>
+        <code>part_valid</code>, so synchroniser latency would break the
+        alignment the whole chain is built on. And <code>pp</code>, the pair
+        phase, follows <b>VALID</b> rather than the clock phase.
       </p>
     </Callout>
 
-    <Callout kind="measured" title="Stage 0 exists because an inferred DSP has no input registers">
+    <Callout
+      kind="measured"
+      title="Stage 0 exists because an inferred DSP has no input registers"
+    >
       <p>
-        Without registering every input at the pump's stage 0 the inferred DSP48E2 has no
-        <code>AREG</code>, <code>DREG</code> or <code>BREG</code>, and the stage measured
-        <b>2.111 ns</b>. Every input is registered together — data and command — so
-        nothing else moves relative to anything.
+        Without registering every input at the pump's stage 0 the inferred
+        DSP48E2 has no
+        <code>AREG</code>, <code>DREG</code> or <code>BREG</code>, and the stage
+        measured <b>2.111 ns</b>. Every input is registered together — data and
+        command — so nothing else moves relative to anything.
       </p>
     </Callout>
 
-    <h2 class="doc-h2">mx_quant: one quantised read converts exactly one L1 entry</h2>
+    <h2 class="doc-h2">
+      mx_quant: one quantised read converts exactly one L1 entry
+    </h2>
 
     <p class="doc-p">
-      The quantiser is not in the compute unit. It sits on the memory-agent side of the
-      mesh, in the agent's transform slot, and it converts <b>one L1 entry</b> per
-      invocation: 8 beats of 256 bits in, 4 words of 256 bits out. Because the block scale
-      is shared along K, the block's peak is not known until the last beat has arrived —
-      so <b>nothing can be emitted until the whole entry is in</b>, and that is why this
-      buffers an entry rather than streaming it, and why the read is a fixed 8-beat burst
-      rather than a <code>len</code>-beat one.
+      The quantiser is not in the compute unit. It sits on the memory-agent side
+      of the mesh, in the agent's transform slot, and it converts
+      <b>one L1 entry</b> per invocation: 8 beats of 256 bits in, 4 words of 256
+      bits out. Because the block scale is shared along K, the block's peak is
+      not known until the last beat has arrived — so
+      <b>nothing can be emitted until the whole entry is in</b>, and that is why
+      this buffers an entry rather than streaming it, and why the read is a
+      fixed 8-beat burst rather than a <code>len</code>-beat one.
     </p>
 
-    <StepPlayer :steps="quantSteps" label="mx_quant — one entry, 4 lanes x 32 K">
+    <StepPlayer
+      :steps="quantSteps"
+      label="mx_quant — one entry, 4 lanes x 32 K"
+    >
       <template #default="{ state }">
-        <StateMachine :states="quantSm.states" :edges="quantSm.edges" :active="state.st" :r="30" />
+        <StateMachine
+          :states="quantSm.states"
+          :edges="quantSm.edges"
+          :active="state.st"
+          :r="30"
+        />
         <div class="flex flex-wrap gap-2 mt-3">
           <span class="chip">beats in = {{ state.beats }}/8</span>
           <span class="chip">words out = {{ state.words }}/4</span>
@@ -1346,36 +2147,47 @@ const traps = {
       </template>
     </StepPlayer>
 
-    <Fig caption="One output word. int7 is the width that fills the payload exactly: 32 x 7 = 224 and 4 x 8 = 32 against a 256-bit flit payload — which is the second, independent reason the element is seven bits rather than eight, the first being the guard-bit budget in the DSP packing.">
+    <Fig
+      caption="One output word. int7 is the width that fills the payload exactly: 32 x 7 = 224 and 4 x 8 = 32 against a 256-bit flit payload — which is the second, independent reason the element is seven bits rather than eight, the first being the guard-bit budget in the DSP packing."
+    >
       <BitField :fields="quantWord" />
     </Fig>
 
     <Callout kind="trap" title="An 8-bit window, not a 24-bit barrel shift">
       <p>
-        The product is under 2^23 and the scale comes from the block peak, so the shift
-        amount <code>t</code> is in <b>[0, 7] for every element that produces a nonzero
-        result</b>: above that the window clears the product and gives zero, below it the
-        element exceeds the peak and saturates. Packing a whole entry in one cycle instead
-        — 128 parallel barrel shifters — measured <b>32.5 MHz</b>, nine times over budget.
+        The product is under 2^23 and the scale comes from the block peak, so
+        the shift amount <code>t</code> is in
+        <b>[0, 7] for every element that produces a nonzero result</b>: above
+        that the window clears the product and gives zero, below it the element
+        exceeds the peak and saturates. Packing a whole entry in one cycle
+        instead — 128 parallel barrel shifters — measured <b>32.5 MHz</b>, nine
+        times over budget.
       </p>
       <p>
-        The divide is a table for the same reason. The quantiser divides by the scale
-        mantissa, which has exactly eight possible values, so
-        <code>round(4096·8/m8)</code> is eight constants and a divider was never needed.
+        The divide is a table for the same reason. The quantiser divides by the
+        scale mantissa, which has exactly eight possible values, so
+        <code>round(4096·8/m8)</code> is eight constants and a divider was never
+        needed.
       </p>
     </Callout>
 
-    <Callout kind="note" title="…and one place the tree-shape rule does NOT pay">
+    <Callout
+      kind="note"
+      title="…and one place the tree-shape rule does NOT pay"
+    >
       <p>
-        The subnormal renormalisation in <code>PK_NORM</code> is left as an explicit loop.
-        Rewritten as smear / isolate / one-hot select — the shape the rest of this codebase
-        prescribes — it measured <b>3,745 LUT against 3,657 and the same 343.4 MHz</b>. At
-        11 bits and 11 iterations synthesis already finds it, and the explicit form only
-        spends more. The rule earns its keep on <i>wide</i> searches.
+        The subnormal renormalisation in <code>PK_NORM</code> is left as an
+        explicit loop. Rewritten as smear / isolate / one-hot select — the shape
+        the rest of this codebase prescribes — it measured
+        <b>3,745 LUT against 3,657 and the same 343.4 MHz</b>. At 11 bits and 11
+        iterations synthesis already finds it, and the explicit form only spends
+        more. The rule earns its keep on <i>wide</i> searches.
       </p>
     </Callout>
 
-    <h2 class="doc-h2">Where the DSPs go, and what that costs at device scale</h2>
+    <h2 class="doc-h2">
+      Where the DSPs go, and what that costs at device scale
+    </h2>
 
     <ResourceBars
       :items="dspCensus"
@@ -1384,19 +2196,24 @@ const traps = {
       caption="304 total. The MAC array is 84% of it; the other 48 are the accumulator's two DSP trades — the block-scale multiply at stage 1 and the normalising shift at stage 2a2 — both of which BOUGHT LUTs and MHz with DSPs the cluster had spare"
     />
 
-    <Callout kind="measured" title="Counting them changed the device-level answer twice">
+    <Callout
+      kind="measured"
+      title="Counting them changed the device-level answer twice"
+    >
       <p>
-        A DSP-bound part divides by this number. At the cascade's 256 alone the arithmetic
-        gave <b>48 clusters</b>; at 272, before the normalising shift moved into DSPs, it
-        gave <b>45</b>; at the measured 304 it gives <code>12,288 / 304 =</code>
-        <b>40</b>. All three have been quoted somewhere and 40 is the one the current
-        cluster supports. The conclusion — DSP-bound, which is the right place to be bound
-        on this part — moves <i>further</i> in the same direction with each correction,
-        which is exactly why it was never caught by the answer looking wrong.
+        A DSP-bound part divides by this number. At the cascade's 256 alone the
+        arithmetic gave <b>48 clusters</b>; at 272, before the normalising shift
+        moved into DSPs, it gave <b>45</b>; at the measured 304 it gives
+        <code>12,288 / 304 =</code> <b>40</b>. All three have been quoted
+        somewhere and 40 is the one the current cluster supports. The conclusion
+        — DSP-bound, which is the right place to be bound on this part — moves
+        <i>further</i> in the same direction with each correction, which is
+        exactly why it was never caught by the answer looking wrong.
       </p>
       <p>
-        <b>Nothing at 32, 40 or 45 clusters has been placed and routed.</b> Every column
-        but the first in that arithmetic is multiplication on one synthesised cluster.
+        <b>Nothing at 32, 40 or 45 clusters has been placed and routed.</b>
+        Every column but the first in that arithmetic is multiplication on one
+        synthesised cluster.
       </p>
     </Callout>
 
@@ -1409,27 +2226,33 @@ const traps = {
     <h2 class="doc-h2">Traps, collected</h2>
 
     <p class="doc-p">
-      Every row is a failure the source records as having happened. Most of them produce a
-      plausible wrong answer rather than an error, which is why they are worth naming.
+      Every row is a failure the source records as having happened. Most of them
+      produce a plausible wrong answer rather than an error, which is why they
+      are worth naming.
     </p>
 
     <SpecTable :cols="traps.cols" :rows="traps.rows" />
 
-    <Callout kind="rule" title="Two models, because a failure has to be attributable">
+    <Callout
+      kind="rule"
+      title="Two models, because a failure has to be attributable"
+    >
       <p>
-        Every matmul bench runs against both a behavioural DSP and a real DSP48E2, and the
-        whole matmul datapath is exact integer arithmetic checked bit-for-bit against a
-        model computed in the bench — <b>no tolerances</b>. That is what turned the
-        <code>BREG</code> bug from &quot;the arithmetic is wrong somewhere&quot; into
-        &quot;the DSP configuration is wrong&quot;: the model passed, the primitive failed,
+        Every matmul bench runs against both a behavioural DSP and a real
+        DSP48E2, and the whole matmul datapath is exact integer arithmetic
+        checked bit-for-bit against a model computed in the bench —
+        <b>no tolerances</b>. That is what turned the <code>BREG</code> bug from
+        &quot;the arithmetic is wrong somewhere&quot; into &quot;the DSP
+        configuration is wrong&quot;: the model passed, the primitive failed,
         and only in the streaming section.
       </p>
       <p>
-        The coverage that matters is the cases random operands never reach — the packing
-        worst case with all three operands at −64, full-scale sums that use all five guard
-        bits, the borrow correction with the lower field forced negative on all eight
-        chains, and streaming a new tile every cycle, which is the only way the per-stage
-        skew and the cross-CU path are exercised at all.
+        The coverage that matters is the cases random operands never reach — the
+        packing worst case with all three operands at −64, full-scale sums that
+        use all five guard bits, the borrow correction with the lower field
+        forced negative on all eight chains, and streaming a new tile every
+        cycle, which is the only way the per-stage skew and the cross-CU path
+        are exercised at all.
       </p>
     </Callout>
   </DocPage>

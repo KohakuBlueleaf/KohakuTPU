@@ -15,20 +15,20 @@ const props = defineProps({
   notes: { type: Array, default: () => [] },
   variant: { type: String, default: "" },
   label: { type: String, default: "" },
-})
+});
 
 const n = computed(
   () => props.cycles || Math.max(...props.rows.map((r) => r.values.length)),
-)
-const cols = computed(() => Array.from({ length: n.value }, (_, i) => i))
+);
+const cols = computed(() => Array.from({ length: n.value }, (_, i) => i));
 const tone = computed(() =>
   props.variant === "broken"
     ? "border-coral/40"
     : props.variant === "fixed"
       ? "border-sage/40"
       : "border-warm-200/60 dark:border-warm-700/60",
-)
-const isMarked = (row, i) => row.mark?.includes(i)
+);
+const isMarked = (row, i) => row.mark?.includes(i);
 </script>
 
 <template>
@@ -47,7 +47,11 @@ const isMarked = (row, i) => row.mark?.includes(i)
     >
       <div
         v-if="props.variant"
-        :class="props.variant === 'broken' ? 'i-carbon-close-outline' : 'i-carbon-checkmark-outline'"
+        :class="
+          props.variant === 'broken'
+            ? 'i-carbon-close-outline'
+            : 'i-carbon-checkmark-outline'
+        "
       />
       {{ props.label || props.variant }}
     </div>
@@ -56,7 +60,9 @@ const isMarked = (row, i) => row.mark?.includes(i)
       <table class="font-mono text-[13px] border-collapse min-w-full">
         <thead>
           <tr class="text-warm-400 dark:text-warm-600">
-            <th class="text-left font-medium px-3 py-1.5 sticky left-0 bg-warm-50 dark:bg-warm-900 z-1">
+            <th
+              class="text-left font-medium px-3 py-1.5 sticky left-0 bg-warm-50 dark:bg-warm-900 z-1"
+            >
               cycle
             </th>
             <th
@@ -85,7 +91,9 @@ const isMarked = (row, i) => row.mark?.includes(i)
                 <svg viewBox="0 0 40 20" class="w-full h-5 overflow-visible">
                   <path
                     :d="`M0,${row.values[i] ? 4 : 16} H40`"
-                    :stroke="isMarked(row, i) ? 'var(--gem-main)' : 'currentColor'"
+                    :stroke="
+                      isMarked(row, i) ? 'var(--gem-main)' : 'currentColor'
+                    "
                     :stroke-width="isMarked(row, i) ? 2.2 : 1.6"
                     fill="none"
                     class="text-warm-500 dark:text-warm-400"
@@ -125,7 +133,12 @@ const isMarked = (row, i) => row.mark?.includes(i)
                 >
                   {{ row.values[i] }}
                 </div>
-                <div v-else class="text-center text-warm-300 dark:text-warm-700">·</div>
+                <div
+                  v-else
+                  class="text-center text-warm-300 dark:text-warm-700"
+                >
+                  ·
+                </div>
               </td>
             </template>
           </tr>

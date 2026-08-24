@@ -16,26 +16,114 @@
 // output register at the right where the two meet.
 const port = {
   nodes: [
-    { id: "in", x: 0, y: 5, w: 11, label: "flits in", sub: "mem_in_valid · busy" },
+    {
+      id: "in",
+      x: 0,
+      y: 5,
+      w: 11,
+      label: "flits in",
+      sub: "mem_in_valid · busy",
+    },
 
     { id: "rdq", x: 13, y: 0, w: 11, label: "u_rdq", sub: "MEM_RD_REQ" },
     { id: "wrq", x: 13, y: 10, w: 11, label: "u_wrq", sub: "WR_REQ + WR_DATA" },
 
-    { id: "rs", x: 26, y: 0, w: 11, label: "rs — read engine", sub: "IDLE FILL WAIT STG", accent: true },
-    { id: "slots", x: 26, y: 10, w: 11, label: "ws_* slot table", sub: "matched by src_x, src_y" },
-    { id: "rdyq", x: 26, y: 15, w: 11, label: "u_rdyq", sub: "ready order, depth WR_SLOTS" },
+    {
+      id: "rs",
+      x: 26,
+      y: 0,
+      w: 11,
+      label: "rs — read engine",
+      sub: "IDLE FILL WAIT STG",
+      accent: true,
+    },
+    {
+      id: "slots",
+      x: 26,
+      y: 10,
+      w: 11,
+      label: "ws_* slot table",
+      sub: "matched by src_x, src_y",
+    },
+    {
+      id: "rdyq",
+      x: 26,
+      y: 15,
+      w: 11,
+      label: "u_rdyq",
+      sub: "ready order, depth WR_SLOTS",
+    },
 
-    { id: "axir", x: 39, y: 0, w: 11, label: "AXI read channel", sub: "AR out · R back" },
-    { id: "st", x: 39, y: 10, w: 11, label: "st — write + plain read", sub: "IDLE RD_DATA WR_DATA WR_ACK", accent: true },
+    {
+      id: "axir",
+      x: 39,
+      y: 0,
+      w: 11,
+      label: "AXI read channel",
+      sub: "AR out · R back",
+    },
+    {
+      id: "st",
+      x: 39,
+      y: 10,
+      w: 11,
+      label: "st — write + plain read",
+      sub: "IDLE RD_DATA WR_DATA WR_ACK",
+      accent: true,
+    },
 
-    { id: "skid", x: 52, y: 0, w: 11, label: "u_rskid", sub: "R crossed uncut, then registered" },
-    { id: "stg", x: 39, y: 5, w: 11, label: "mag_stage", sub: "aperture 0 · STAGE != 0" },
-    { id: "axiw", x: 52, y: 10, w: 11, label: "AXI write channel", sub: "AW · W · B" },
+    {
+      id: "skid",
+      x: 52,
+      y: 0,
+      w: 11,
+      label: "u_rskid",
+      sub: "R crossed uncut, then registered",
+    },
+    {
+      id: "stg",
+      x: 39,
+      y: 5,
+      w: 11,
+      label: "mag_stage",
+      sub: "aperture 0 · STAGE != 0",
+    },
+    {
+      id: "axiw",
+      x: 52,
+      y: 10,
+      w: 11,
+      label: "AXI write channel",
+      sub: "AW · W · B",
+    },
 
-    { id: "pw", x: 65, y: 0, w: 11, label: "p_w0..3", sub: "beats that ARE words" },
-    { id: "ew", x: 52, y: 5, w: 11, label: "e_w0..3", sub: "emit buffer · e_tag · e_dst", accent: true },
+    {
+      id: "pw",
+      x: 65,
+      y: 0,
+      w: 11,
+      label: "p_w0..3",
+      sub: "beats that ARE words",
+    },
+    {
+      id: "ew",
+      x: 52,
+      y: 5,
+      w: 11,
+      label: "e_w0..3",
+      sub: "emit buffer · e_tag · e_dst",
+      accent: true,
+    },
 
-    { id: "out", x: 65, y: 5, w: 11, label: "mem_out_data", sub: "one register · emitter wins", accent: true },
+    {
+      id: "out",
+      x: 65,
+      y: 5,
+      w: 11,
+      label: "mem_out_data",
+      sub: "one register · emitter wins",
+      accent: true,
+    },
   ],
   edges: [
     { from: "in:r", to: "rdq:l", dir: "h" },
@@ -43,7 +131,13 @@ const port = {
     { from: "rdq:r", to: "rs:l", dir: "h", accent: true },
     { from: "rs:r", to: "axir:l", dir: "h", accent: true, label: "AR" },
     { from: "axir:r", to: "skid:l", dir: "h", label: "R" },
-    { from: "skid:r", to: "pw:l", dir: "h", accent: true, label: "a beat IS a word" },
+    {
+      from: "skid:r",
+      to: "pw:l",
+      dir: "h",
+      accent: true,
+      label: "a beat IS a word",
+    },
     { from: "stg:r", to: "ew:l", dir: "h", dash: true, label: "staged fill" },
     { from: "pw:b", to: "ew:t", dir: "v" },
     { from: "ew:r", to: "out:l", dir: "h", accent: true },
@@ -53,7 +147,7 @@ const port = {
     { from: "st:r", to: "axiw:l", dir: "h" },
     { from: "st:t", to: "out:b", dir: "v", dash: true, label: "WR_ACK" },
   ],
-}
+};
 
 // --------------------------------------------------------- the two machines
 const stSm = {
@@ -71,14 +165,14 @@ const stSm = {
     { from: "S_WR_DATA", to: "S_WR_ACK", label: "m_wlast" },
     { from: "S_WR_ACK", to: "S_IDLE", label: "B, and st_out", curve: 100 },
   ],
-}
+};
 
 const rsStates = [
   { id: "RS_IDLE", x: 0, y: 0, label: "IDLE" },
   { id: "RS_FILL", x: 7, y: 0, label: "FILL", sub: "R beats" },
   { id: "RS_WAIT", x: 14, y: 0, label: "WAIT", sub: "emit" },
   { id: "RS_STG", x: 7, y: 5, label: "STG", sub: "staged" },
-]
+];
 const rsEdges = [
   { from: "RS_IDLE", to: "RS_FILL", label: "take_rd_e" },
   { from: "RS_FILL", to: "RS_FILL", label: "beat", self: true },
@@ -87,14 +181,14 @@ const rsEdges = [
   { from: "RS_WAIT", to: "RS_IDLE", label: "run done", curve: 145 },
   { from: "RS_IDLE", to: "RS_STG", label: "staged" },
   { from: "RS_STG", to: "RS_WAIT", label: "stg_rvalid" },
-]
+];
 
 const machineCols = [
   { key: "m", label: "Machine", mono: true },
   { key: "runs", label: "Runs" },
   { key: "own", label: "Owns" },
   { key: "shares", label: "Shares" },
-]
+];
 const machineRows = [
   {
     m: "st",
@@ -109,14 +203,14 @@ const machineRows = [
     shares: "the output register",
     _tone: "good",
   },
-]
+];
 
 // ------------------------------------------------ take_rd_p versus take_rd_e
 const takeCols = [
   { key: "t", label: "Term", mono: true },
   { key: "when", label: "Taken when", mono: true },
   { key: "cost", label: "What it costs the write path" },
-]
+];
 const takeRows = [
   {
     t: "take_rd_p",
@@ -130,19 +224,34 @@ const takeRows = [
     cost: "<b>nothing.</b> It runs in <code>rs</code>, never enters <code>st</code>, and writes keep being issued underneath it",
     _tone: "good",
   },
-]
+];
 
 const plainRead = {
   rows: [
     { name: "take_rd_p", kind: "bit", values: [1, 0, 0, 0, 0, 0], mark: [0] },
-    { name: "st", kind: "bus", values: ["IDLE", "RD_DATA", "RD_DATA", "RD_DATA", "RD_DATA", "IDLE"] },
+    {
+      name: "st",
+      kind: "bus",
+      values: ["IDLE", "RD_DATA", "RD_DATA", "RD_DATA", "RD_DATA", "IDLE"],
+    },
     { name: "ws_has_pick", kind: "bit", values: [1, 1, 1, 1, 1, 1] },
     { name: "ws_issue", kind: "bit", values: [0, 0, 0, 0, 0, 1], mark: [5] },
-    { name: "mem_out_data", kind: "bus", values: [null, "beat 0", "beat 1", "beat 2", "beat 3", null] },
+    {
+      name: "mem_out_data",
+      kind: "bus",
+      values: [null, "beat 0", "beat 1", "beat 2", "beat 3", null],
+    },
     {
       name: "",
       kind: "text",
-      values: ["AR out", "beat → flit", "", "", "r_last", "the write finally issues"],
+      values: [
+        "AR out",
+        "beat → flit",
+        "",
+        "",
+        "r_last",
+        "the write finally issues",
+      ],
     },
   ],
   notes: [
@@ -155,15 +264,27 @@ const plainRead = {
       text: "This is not a defect. memory-protocol.md §3.1 says the plain path exists for benches and bring-up, and it turns each AXI beat straight into a response flit — which is why it may take a beat only when the output register is free.",
     },
   ],
-}
+};
 
 const entryRead = {
   rows: [
     { name: "take_rd_e", kind: "bit", values: [1, 0, 0, 0, 0, 0], mark: [0] },
-    { name: "rs", kind: "bus", values: ["IDLE", "FILL", "FILL", "FILL", "WAIT", "WAIT"] },
-    { name: "st", kind: "bus", values: ["IDLE", "WR_DATA", "WR_DATA", "WR_ACK", "IDLE", "WR_DATA"] },
+    {
+      name: "rs",
+      kind: "bus",
+      values: ["IDLE", "FILL", "FILL", "FILL", "WAIT", "WAIT"],
+    },
+    {
+      name: "st",
+      kind: "bus",
+      values: ["IDLE", "WR_DATA", "WR_DATA", "WR_ACK", "IDLE", "WR_DATA"],
+    },
     { name: "ws_issue", kind: "bit", values: [0, 1, 0, 0, 0, 1], mark: [1, 5] },
-    { name: "", kind: "text", values: ["AR out", "a write starts", "", "B", "acked", "the next write"] },
+    {
+      name: "",
+      kind: "text",
+      values: ["AR out", "a write starts", "", "B", "acked", "the next write"],
+    },
   ],
   notes: [
     {
@@ -176,7 +297,7 @@ const entryRead = {
       tone: "good",
     },
   ],
-}
+};
 
 // ----------------------------------------------------- the descriptor walk
 const chip = (rs, ent, ar, anext, q, e) => [
@@ -186,7 +307,7 @@ const chip = (rs, ent, ar, anext, q, e) => [
   { k: "rd_anext", v: anext },
   { k: "q_start", v: q },
   { k: "e_act", v: e },
-]
+];
 
 const walk = [
   {
@@ -243,7 +364,7 @@ const walk = [
     chips: chip("IDLE", "—", "—", "—", "0", "0"),
     note: "Two entries, eight response flits, one request flit, sixteen AXI beats, and no cursor anywhere.",
   },
-]
+];
 
 // ---------------------------------------------------------- the response tag
 const respHdr = [
@@ -257,15 +378,38 @@ const respHdr = [
   { name: "rsvd[2]", bits: 1, value: "0" },
   { name: "rsvd[1:0]", bits: 2, value: "q_emit", accent: true },
   { name: "payload", bits: 256, value: "e_w0 / e_w1 / e_w2 / e_w3" },
-]
+];
 
 const outOfOrder = {
   rows: [
-    { name: "flit arriving", kind: "bus", values: ["T+1 w2", "other traffic", "T+0 w3", "T+1 w0", "T+0 w1", "T+1 w3"] },
+    {
+      name: "flit arriving",
+      kind: "bus",
+      values: [
+        "T+1 w2",
+        "other traffic",
+        "T+0 w3",
+        "T+1 w0",
+        "T+0 w1",
+        "T+1 w3",
+      ],
+    },
     { name: "txn − T", kind: "bus", values: ["1", "—", "0", "1", "0", "1"] },
     { name: "rsvd[1:0]", kind: "bus", values: ["2", "—", "3", "0", "1", "3"] },
     { name: "last", kind: "bit", values: [0, 0, 1, 0, 0, 1] },
-    { name: "write address", kind: "bus", values: ["slot 1, w2", "—", "slot 0, w3", "slot 1, w0", "slot 0, w1", "slot 1, w3"], mark: [0, 2, 3, 4, 5] },
+    {
+      name: "write address",
+      kind: "bus",
+      values: [
+        "slot 1, w2",
+        "—",
+        "slot 0, w3",
+        "slot 1, w0",
+        "slot 0, w1",
+        "slot 1, w3",
+      ],
+      mark: [0, 2, 3, 4, 5],
+    },
   ],
   notes: [
     {
@@ -276,31 +420,56 @@ const outOfOrder = {
       text: "This arrival order is NOT what one agent produces today — one server finishes an entry's words before starting the next. That is a property of the SERVER, and memory-protocol.md §3.2.1 says a requester relying on it MUST assert it rather than assume it. Drawn here as what the tagging makes legal.",
     },
   ],
-}
+};
 
 // -------------------------------------------------------- the write slots
 const slotCols = [
   { key: "f", label: "Field", mono: true },
   { key: "w", label: "Per", mono: true, align: "center" },
   { key: "m", label: "Meaning" },
-]
+];
 const slotRows = [
   { f: "ws_val", w: "slot", m: "a descriptor has been seen" },
   { f: "ws_rdy", w: "slot", m: "all <code>len + 1</code> beats have landed" },
-  { f: "ws_iss", w: "slot", m: "the burst is <b>on the AXI bus</b>. Without this bit a slot on the bus reads as {val, !rdy}, indistinguishable from one still waiting for data, and the next <code>MEM_WR_DATA</code> from that source binds to the in-flight slot", _tone: "warn" },
-  { f: "ws_x, ws_y", w: "slot", m: "the source coordinate — <b>the only binding</b> between a descriptor and its data" },
+  {
+    f: "ws_iss",
+    w: "slot",
+    m: "the burst is <b>on the AXI bus</b>. Without this bit a slot on the bus reads as {val, !rdy}, indistinguishable from one still waiting for data, and the next <code>MEM_WR_DATA</code> from that source binds to the in-flight slot",
+    _tone: "warn",
+  },
+  {
+    f: "ws_x, ws_y",
+    w: "slot",
+    m: "the source coordinate — <b>the only binding</b> between a descriptor and its data",
+  },
   { f: "ws_addr, ws_txn", w: "slot", m: "captured from the descriptor" },
-  { f: "ws_stg, ws_bad", w: "slot", m: "lands in staging rather than DRAM; or names a reserved aperture and goes nowhere at all" },
-  { f: "ws_len, ws_cnt", w: "slot", m: "beats expected and beats received, both <code>$clog2(WBURST) + 1</code> bits — which is where a <code>len &gt; 7</code> wraps" },
-  { f: "ws_data", w: "slot × beat", m: "<code>WR_SLOTS × WBURST</code> beats of <code>DATA_W</code>. The part that grows fastest, and both factors are sized for correctness rather than tuned" },
-  { f: "ws_fill_now", w: "slot", m: "“this slot's next beat is its last”, precomputed from <b>registered state only</b>, so the ready decision is a 1-bit select instead of mux → add → compare" },
-]
+  {
+    f: "ws_stg, ws_bad",
+    w: "slot",
+    m: "lands in staging rather than DRAM; or names a reserved aperture and goes nowhere at all",
+  },
+  {
+    f: "ws_len, ws_cnt",
+    w: "slot",
+    m: "beats expected and beats received, both <code>$clog2(WBURST) + 1</code> bits — which is where a <code>len &gt; 7</code> wraps",
+  },
+  {
+    f: "ws_data",
+    w: "slot × beat",
+    m: "<code>WR_SLOTS × WBURST</code> beats of <code>DATA_W</code>. The part that grows fastest, and both factors are sized for correctness rather than tuned",
+  },
+  {
+    f: "ws_fill_now",
+    w: "slot",
+    m: "“this slot's next beat is its last”, precomputed from <b>registered state only</b>, so the ready decision is a 1-bit select instead of mux → add → compare",
+  },
+];
 
 const scanCols = [
   { key: "s", label: "Scan", mono: true },
   { key: "picks", label: "Picks" },
   { key: "note", label: "Note" },
-]
+];
 const scanRows = [
   {
     s: "ws_free",
@@ -309,24 +478,48 @@ const scanRows = [
   },
   {
     s: "ws_match",
-    picks: "the lowest slot with <code>val &amp;&amp; !rdy &amp;&amp; !iss</code> whose <code>{x, y}</code> equals the arriving data flit's source",
+    picks:
+      "the lowest slot with <code>val &amp;&amp; !rdy &amp;&amp; !iss</code> whose <code>{x, y}</code> equals the arriving data flit's source",
     note: "<code>!ws_iss</code> is the whole reason the third bit exists",
   },
   {
     s: "ws_pick",
-    picks: "the <b>head of <code>u_rdyq</code></b> — ready order, never lowest-ready",
+    picks:
+      "the <b>head of <code>u_rdyq</code></b> — ready order, never lowest-ready",
     note: "a FIFO of slot indices, <code>WR_SLOTS</code> deep so it cannot overflow, pushed on the cycle a slot's last beat lands",
     _tone: "good",
   },
-]
+];
 
 const starveBroken = {
   rows: [
-    { name: "ws_free (lowest free)", kind: "bus", values: ["15", "0", "1", "0", "1", "0"] },
-    { name: "ready set", kind: "bus", values: ["{0,15}", "{1,15}", "{0,15}", "{1,15}", "{0,15}", "{1,15}"] },
-    { name: "lowest ready → issued", kind: "bus", values: ["0", "1", "0", "1", "0", "1"], mark: [0, 1, 2, 3, 4, 5] },
-    { name: "slot 15", kind: "bus", values: ["ready", "ready", "ready", "ready", "ready", "ready"], mark: [5] },
-    { name: "", kind: "text", values: ["", "", "", "", "", "slot 15 still holds it"] },
+    {
+      name: "ws_free (lowest free)",
+      kind: "bus",
+      values: ["15", "0", "1", "0", "1", "0"],
+    },
+    {
+      name: "ready set",
+      kind: "bus",
+      values: ["{0,15}", "{1,15}", "{0,15}", "{1,15}", "{0,15}", "{1,15}"],
+    },
+    {
+      name: "lowest ready → issued",
+      kind: "bus",
+      values: ["0", "1", "0", "1", "0", "1"],
+      mark: [0, 1, 2, 3, 4, 5],
+    },
+    {
+      name: "slot 15",
+      kind: "bus",
+      values: ["ready", "ready", "ready", "ready", "ready", "ready"],
+      mark: [5],
+    },
+    {
+      name: "",
+      kind: "text",
+      values: ["", "", "", "", "", "slot 15 still holds it"],
+    },
   ],
   notes: [
     {
@@ -338,15 +531,37 @@ const starveBroken = {
       tone: "bad",
     },
   ],
-}
+};
 
 const reorderBroken = {
   rows: [
-    { name: "one source sends", kind: "bus", values: ["W1 desc", "W1 data", "W2 desc", "W2 data", "—", "—"] },
-    { name: "allocated slot", kind: "bus", values: ["15", "15", "3", "3", "—", "—"] },
-    { name: "goes ready", kind: "bus", values: [null, "15", null, "3", null, null] },
-    { name: "lowest ready issues", kind: "bus", values: [null, null, null, null, "3", "15"], mark: [4, 5] },
-    { name: "memory holds", kind: "bus", values: [null, null, null, null, "W2", "W1"], mark: [5] },
+    {
+      name: "one source sends",
+      kind: "bus",
+      values: ["W1 desc", "W1 data", "W2 desc", "W2 data", "—", "—"],
+    },
+    {
+      name: "allocated slot",
+      kind: "bus",
+      values: ["15", "15", "3", "3", "—", "—"],
+    },
+    {
+      name: "goes ready",
+      kind: "bus",
+      values: [null, "15", null, "3", null, null],
+    },
+    {
+      name: "lowest ready issues",
+      kind: "bus",
+      values: [null, null, null, null, "3", "15"],
+      mark: [4, 5],
+    },
+    {
+      name: "memory holds",
+      kind: "bus",
+      values: [null, null, null, null, "W2", "W1"],
+      mark: [5],
+    },
   ],
   notes: [
     {
@@ -359,15 +574,33 @@ const reorderBroken = {
       tone: "bad",
     },
   ],
-}
+};
 
 const starveFixed = {
   rows: [
-    { name: "ws_free (lowest free)", kind: "bus", values: ["15", "0", "1", "0", "1", "0"] },
+    {
+      name: "ws_free (lowest free)",
+      kind: "bus",
+      values: ["15", "0", "1", "0", "1", "0"],
+    },
     { name: "rdyq_push", kind: "bus", values: ["15", "0", "1", "0", "1", "0"] },
-    { name: "u_rdyq head", kind: "bus", values: ["15", "0", "1", "0", "1", "0"], mark: [0] },
-    { name: "issued", kind: "bus", values: ["15", "0", "1", "0", "1", "0"], mark: [0] },
-    { name: "", kind: "text", values: ["the dirty line goes out", "", "", "", "", ""] },
+    {
+      name: "u_rdyq head",
+      kind: "bus",
+      values: ["15", "0", "1", "0", "1", "0"],
+      mark: [0],
+    },
+    {
+      name: "issued",
+      kind: "bus",
+      values: ["15", "0", "1", "0", "1", "0"],
+      mark: [0],
+    },
+    {
+      name: "",
+      kind: "text",
+      values: ["the dirty line goes out", "", "", "", "", ""],
+    },
   ],
   notes: [
     {
@@ -380,7 +613,7 @@ const starveFixed = {
       tone: "good",
     },
   ],
-}
+};
 
 // ------------------------------------------------------------ intake accept
 const takeBroken = {
@@ -388,8 +621,17 @@ const takeBroken = {
     { name: "mem_in_valid", kind: "bit", values: [1, 1, 1, 0] },
     { name: "mem_in_busy", kind: "bit", values: [1, 1, 0, 0] },
     { name: "rq_full / wq_full", kind: "bit", values: [0, 0, 0, 0] },
-    { name: "enqueued", kind: "bus", values: ["WR_DATA", "WR_DATA", "WR_DATA", null], mark: [0, 1, 2] },
-    { name: "", kind: "text", values: ["the sender is held off", "still held off", "accepted", ""] },
+    {
+      name: "enqueued",
+      kind: "bus",
+      values: ["WR_DATA", "WR_DATA", "WR_DATA", null],
+      mark: [0, 1, 2],
+    },
+    {
+      name: "",
+      kind: "text",
+      values: ["the sender is held off", "still held off", "accepted", ""],
+    },
   ],
   notes: [
     {
@@ -402,14 +644,19 @@ const takeBroken = {
       tone: "bad",
     },
   ],
-}
+};
 
 const takeFixed = {
   rows: [
     { name: "mem_in_valid", kind: "bit", values: [1, 1, 1, 0] },
     { name: "mem_in_busy", kind: "bit", values: [1, 1, 0, 0] },
     { name: "mi_take", kind: "bit", values: [0, 0, 1, 0], mark: [2] },
-    { name: "enqueued", kind: "bus", values: [null, null, "WR_DATA", null], mark: [2] },
+    {
+      name: "enqueued",
+      kind: "bus",
+      values: [null, null, "WR_DATA", null],
+      mark: [2],
+    },
   ],
   notes: [
     {
@@ -421,14 +668,14 @@ const takeFixed = {
       tone: "good",
     },
   ],
-}
+};
 
 // ---------------------------------------------------------- what is sliced
 const sliceCols = [
   { key: "f", label: "Field", mono: true },
   { key: "s", label: "The slice in mag_mem_port.v", mono: true },
   { key: "n", label: "Normalised on capture to" },
-]
+];
 const sliceRows = [
   {
     f: "addr",
@@ -436,20 +683,40 @@ const sliceRows = [
     n: "<b>40 bits whatever <code>ADDR_W</code> is</b> — a flit contract, not a width. Slicing it by <code>ADDR_W</code> read <code>addr &gt;&gt; 6</code> on a 34-bit build, silently",
     _tone: "warn",
   },
-  { f: "len", s: "rq_flit[215 -: 8]", n: "on a write, <code>wi_len[WBW:0] + 1</code> — truncated to 4 bits, so a descriptor with <code>len &gt; 7</code> wraps and the data buffer aliases" },
-  { f: "flags", s: "rq_flit[207 -: 8]", n: "<code>[6]</code> STREAM. <code>[4]</code> and <code>[5]</code> are <b>reserved and ignored</b> — they were QUANT and BLAYOUT, and a fetch is never transformed. Bits 0–3 and 7 are read by nothing" },
-  { f: "count", s: "rq_flit[199 -: 8]", n: "1 unless STREAM is set; 0 becomes 1. The run is 1–255 entries" },
-  { f: "peer", s: "rq_flit[191 -: 24]", n: "three <code>{y, x}</code> bytes, selected by <code>e_dst</code> at emit time" },
+  {
+    f: "len",
+    s: "rq_flit[215 -: 8]",
+    n: "on a write, <code>wi_len[WBW:0] + 1</code> — truncated to 4 bits, so a descriptor with <code>len &gt; 7</code> wraps and the data buffer aliases",
+  },
+  {
+    f: "flags",
+    s: "rq_flit[207 -: 8]",
+    n: "<code>[6]</code> STREAM. <code>[4]</code> and <code>[5]</code> are <b>reserved and ignored</b> — they were QUANT and BLAYOUT, and a fetch is never transformed. Bits 0–3 and 7 are read by nothing",
+  },
+  {
+    f: "count",
+    s: "rq_flit[199 -: 8]",
+    n: "1 unless STREAM is set; 0 becomes 1. The run is 1–255 entries",
+  },
+  {
+    f: "peer",
+    s: "rq_flit[191 -: 24]",
+    n: "three <code>{y, x}</code> bytes, selected by <code>e_dst</code> at emit time",
+  },
   { f: "n_peer", s: "rq_flit[167 -: 2]", n: "0–3 extra destinations" },
-  { f: "entry_words", s: "rq_flit[165 -: 8]", n: "<b>4</b> if it is 0 or above 4. <code>rd_elast</code> is then <code>in_ew[1:0] − 1</code>, a deliberate two-bit wrap that turns 4 words into a last index of 3" },
-]
+  {
+    f: "entry_words",
+    s: "rq_flit[165 -: 8]",
+    n: "<b>4</b> if it is 0 or above 4. <code>rd_elast</code> is then <code>in_ew[1:0] − 1</code>, a deliberate two-bit wrap that turns 4 words into a last index of 3",
+  },
+];
 
 // ------------------------------------------------------------- no strobe
 const strobeCols = [
   { key: "p", label: "Path" },
   { key: "s", label: "Byte enable" },
   { key: "c", label: "Consequence" },
-]
+];
 const strobeRows = [
   {
     p: "<code>MEM_WR_DATA</code> → <code>mag_mem_port</code> → AXI",
@@ -473,22 +740,40 @@ const strobeRows = [
     c: "<b>byte granularity exists here and nowhere else.</b> It never reaches DRAM",
     _tone: "good",
   },
-]
+];
 
 // ---------------------------------------------------------- transform slot
 const xfCols = [
   { key: "c", label: "Constant", mono: true },
   { key: "v", label: "At DATA_W = 256", mono: true, align: "right" },
   { key: "w", label: "Written as" },
-]
+];
 const xfRows = [
-  { c: "Q_ENTRY_BITS", v: "2048", w: "a literal — one entry is 4 lanes × 32 elements as FP16" },
-  { c: "P_ENTRY_BITS", v: "1024", w: "a literal — the same entry as operand words" },
+  {
+    c: "Q_ENTRY_BITS",
+    v: "2048",
+    w: "a literal — one entry is 4 lanes × 32 elements as FP16",
+  },
+  {
+    c: "P_ENTRY_BITS",
+    v: "1024",
+    w: "a literal — the same entry as operand words",
+  },
   { c: "Q_ENTRY_BYTES", v: "256", w: "<code>Q_ENTRY_BITS / 8</code>" },
   { c: "P_ENTRY_BYTES", v: "128", w: "<code>P_ENTRY_BITS / 8</code>" },
-  { c: "Q_ARLEN", v: "7", w: "<code>Q_ENTRY_BITS / DATA_W − 1</code>", _tone: "good" },
-  { c: "P_ARLEN", v: "3", w: "<code>P_ENTRY_BITS / DATA_W − 1</code>", _tone: "good" },
-]
+  {
+    c: "Q_ARLEN",
+    v: "7",
+    w: "<code>Q_ENTRY_BITS / DATA_W − 1</code>",
+    _tone: "good",
+  },
+  {
+    c: "P_ARLEN",
+    v: "3",
+    w: "<code>P_ENTRY_BITS / DATA_W − 1</code>",
+    _tone: "good",
+  },
+];
 
 // --------------------------------------------------------------- staging
 const apAddr = [
@@ -497,21 +782,93 @@ const apAddr = [
   { name: "mesh", bits: 2, value: "== MESH_ID", accent: true },
   { name: "aperture id", bits: 4, value: "== AP_STAGE", accent: true },
   { name: "offset", bits: 32, value: "inside the store" },
-]
+];
 
 const stage = {
   nodes: [
-    { id: "apo", x: 0, y: 0, w: 14, label: "port A", sub: "a_req · one whole entry" },
+    {
+      id: "apo",
+      x: 0,
+      y: 0,
+      w: 14,
+      label: "port A",
+      sub: "a_req · one whole entry",
+    },
     { id: "bpo", x: 16, y: 0, w: 14, label: "port B", sub: "b_req · one word" },
-    { id: "dec", x: 0, y: 5, w: 30, h: 3.4, label: "decode: mesh FIRST, then aperture", sub: "a_mine · b_mine · a_fault", accent: true },
-    { id: "arb", x: 0, y: 10, w: 30, h: 3.4, label: "arbitrate — A wins", sub: "b_go only when it wants the OTHER port" },
-    { id: "bk", x: 0, y: 15, w: 14, label: "bank", sub: "the LOW address bits" },
+    {
+      id: "dec",
+      x: 0,
+      y: 5,
+      w: 30,
+      h: 3.4,
+      label: "decode: mesh FIRST, then aperture",
+      sub: "a_mine · b_mine · a_fault",
+      accent: true,
+    },
+    {
+      id: "arb",
+      x: 0,
+      y: 10,
+      w: 30,
+      h: 3.4,
+      label: "arbitrate — A wins",
+      sub: "b_go only when it wants the OTHER port",
+    },
+    {
+      id: "bk",
+      x: 0,
+      y: 15,
+      w: 14,
+      label: "bank",
+      sub: "the LOW address bits",
+    },
     { id: "rw", x: 16, y: 15, w: 14, label: "row", sub: "the bits above them" },
-    { id: "disp", x: 0, y: 20, w: 30, h: 3.4, label: "dispatch registers · PIPE", sub: "ONE COPY PER BANK, DONT_TOUCH", accent: true },
-    { id: "banks", x: 0, y: 25, w: 30, h: 3.4, label: "BANKS × WORDS kohaku_sdpram", sub: "MEM_PRIM ultra · READ_LAT 2", accent: true },
-    { id: "oreg", x: 0, y: 30, w: 30, h: 3.4, label: "per-bank output register", sub: "the only long wire left is this to the mux" },
-    { id: "sr", x: 0, y: 35, w: 14, label: "bk_sr · wd_sr", sub: "RTOT deep, cannot stall" },
-    { id: "mux", x: 16, y: 35, w: 14, label: "return mux", sub: "a_rdata / b_rdata", accent: true },
+    {
+      id: "disp",
+      x: 0,
+      y: 20,
+      w: 30,
+      h: 3.4,
+      label: "dispatch registers · PIPE",
+      sub: "ONE COPY PER BANK, DONT_TOUCH",
+      accent: true,
+    },
+    {
+      id: "banks",
+      x: 0,
+      y: 25,
+      w: 30,
+      h: 3.4,
+      label: "BANKS × WORDS kohaku_sdpram",
+      sub: "MEM_PRIM ultra · READ_LAT 2",
+      accent: true,
+    },
+    {
+      id: "oreg",
+      x: 0,
+      y: 30,
+      w: 30,
+      h: 3.4,
+      label: "per-bank output register",
+      sub: "the only long wire left is this to the mux",
+    },
+    {
+      id: "sr",
+      x: 0,
+      y: 35,
+      w: 14,
+      label: "bk_sr · wd_sr",
+      sub: "RTOT deep, cannot stall",
+    },
+    {
+      id: "mux",
+      x: 16,
+      y: 35,
+      w: 14,
+      label: "return mux",
+      sub: "a_rdata / b_rdata",
+      accent: true,
+    },
   ],
   edges: [
     { from: "apo:b", to: "dec:t", dir: "v" },
@@ -526,28 +883,54 @@ const stage = {
     { from: "oreg:b", to: "sr:t", dir: "v" },
     { from: "sr:r", to: "mux:l", dir: "h", accent: true },
   ],
-}
+};
 
 const stgCols = [
   { key: "q", label: "Question" },
   { key: "a", label: "The RTL's answer" },
-]
+];
 const stgRows = [
-  { q: "How is it reached?", a: "<b>By address, never by an instruction.</b> Point a fetch at the aperture and it reads back; point a drain there and it stages" },
-  { q: "What happens to a foreign mesh's address?", a: "It fails the mesh test <b>first</b>, so it is neither ours nor a fault and <b>passes on untouched</b> — which is what lets mesh 0 reach mesh 3's store" },
-  { q: "What happens to a reserved aperture?", a: "<code>a_fault</code>, and the port <b>drops the request rather than aliasing it onto DRAM</b>. The requester then hangs loudly instead of being told a lie" },
-  { q: "Does it convert anything?", a: "<b>No.</b> Staging holds operand words verbatim. Nothing on a fetch path converts — the transform slot is the mover's, and it runs before any fetch reads the result", _tone: "warn" },
-  { q: "Replacement? Coherence? Write policy?", a: "<b>None of them exist.</b> It is a reserved range in the address map, so there are no tags, no associativity, no replacement, no coherence and no write policy", _tone: "good" },
-  { q: "What does software owe?", a: "One thing: <b>results destined for DRAM must use DRAM addresses.</b> Nothing writes back" },
-  { q: "How does the host reach it?", a: "It is in the address map, so the host DMA reaches it like any memory — through port B, one word per access" },
-  { q: "How many reads outstanding?", a: "<b>One.</b> <code>mag_stage_port</code> holds a single returned word, so a second request would drop the first" },
-]
+  {
+    q: "How is it reached?",
+    a: "<b>By address, never by an instruction.</b> Point a fetch at the aperture and it reads back; point a drain there and it stages",
+  },
+  {
+    q: "What happens to a foreign mesh's address?",
+    a: "It fails the mesh test <b>first</b>, so it is neither ours nor a fault and <b>passes on untouched</b> — which is what lets mesh 0 reach mesh 3's store",
+  },
+  {
+    q: "What happens to a reserved aperture?",
+    a: "<code>a_fault</code>, and the port <b>drops the request rather than aliasing it onto DRAM</b>. The requester then hangs loudly instead of being told a lie",
+  },
+  {
+    q: "Does it convert anything?",
+    a: "<b>No.</b> Staging holds operand words verbatim. Nothing on a fetch path converts — the transform slot is the mover's, and it runs before any fetch reads the result",
+    _tone: "warn",
+  },
+  {
+    q: "Replacement? Coherence? Write policy?",
+    a: "<b>None of them exist.</b> It is a reserved range in the address map, so there are no tags, no associativity, no replacement, no coherence and no write policy",
+    _tone: "good",
+  },
+  {
+    q: "What does software owe?",
+    a: "One thing: <b>results destined for DRAM must use DRAM addresses.</b> Nothing writes back",
+  },
+  {
+    q: "How does the host reach it?",
+    a: "It is in the address map, so the host DMA reaches it like any memory — through port B, one word per access",
+  },
+  {
+    q: "How many reads outstanding?",
+    a: "<b>One.</b> <code>mag_stage_port</code> holds a single returned word, so a second request would drop the first",
+  },
+];
 
 const placeCols = [
   { key: "w", label: "Where the store sits", mono: true },
   { key: "who", label: "Who can be staged" },
   { key: "cost", label: "URAM" },
-]
+];
 const placeRows = [
   {
     w: "STAGE_AT_PORT = 0",
@@ -561,7 +944,7 @@ const placeRows = [
     cost: "<b>64 URAM</b> per agent: 4 banks × 16,384 entries, 2 MB",
     _tone: "good",
   },
-]
+];
 
 // ------------------------------------------------------------- the q contract
 const qBroken = {
@@ -569,10 +952,28 @@ const qBroken = {
     { name: "q_valid", kind: "bit", values: [1, 1, 1, 1] },
     { name: "q_write", kind: "bit", values: [1, 1, 0, 0], mark: [2] },
     { name: "q_addr", kind: "bus", values: ["W", "W", "R", "R"], mark: [2] },
-    { name: "arbiter's snapshot", kind: "bus", values: ["—", "write", "write", "write"] },
-    { name: "captured address", kind: "bus", values: [null, null, null, "R"], mark: [3] },
+    {
+      name: "arbiter's snapshot",
+      kind: "bus",
+      values: ["—", "write", "write", "write"],
+    },
+    {
+      name: "captured address",
+      kind: "bus",
+      values: [null, null, null, "R"],
+      mark: [3],
+    },
     { name: "q_ready (one wire)", kind: "bit", values: [0, 0, 0, 1] },
-    { name: "", kind: "text", values: ["offered as a write", "", "switched to a read", "the WRONG channel pops"] },
+    {
+      name: "",
+      kind: "text",
+      values: [
+        "offered as a write",
+        "",
+        "switched to a read",
+        "the WRONG channel pops",
+      ],
+    },
   ],
   notes: [
     {
@@ -585,7 +986,7 @@ const qBroken = {
       tone: "bad",
     },
   ],
-}
+};
 
 const qFixed = {
   rows: [
@@ -594,7 +995,16 @@ const qFixed = {
     { name: "q_write", kind: "bit", values: [1, 1, 1, 1] },
     { name: "q_addr", kind: "bus", values: ["W", "W", "W", "W"] },
     { name: "q_ready", kind: "bit", values: [0, 0, 0, 1] },
-    { name: "", kind: "text", values: ["write wins at FIRST offer", "choice held", "held", "granted — as offered"] },
+    {
+      name: "",
+      kind: "text",
+      values: [
+        "write wins at FIRST offer",
+        "choice held",
+        "held",
+        "granted — as offered",
+      ],
+    },
   ],
   notes: [
     {
@@ -606,21 +1016,93 @@ const qFixed = {
       tone: "good",
     },
   ],
-}
+};
 
 // ----------------------------------------------------------------- the mover
 const mover = {
   nodes: [
-    { id: "cfg", x: 0, y: 0, w: 30, h: 3.4, label: "cfg_en · cfg_addr · cfg_data", sub: "a slice of the control window, offsets preserved" },
-    { id: "src", x: 0, y: 5, w: 14, label: "u_src — mx_tdesc", sub: "6 dims, bound axes" },
-    { id: "dst", x: 16, y: 5, w: 14, label: "u_dst — mx_tdesc", sub: "DEFINES the iteration space", accent: true },
-    { id: "lat", x: 0, y: 10, w: 30, h: 3.4, label: "the element latch", sub: "e_rd · e_wr · e_kind · e_last · e_flt", accent: true },
-    { id: "issue", x: 0, y: 15, w: 30, h: 3.4, label: "the ISSUE engine", sub: "folds consecutive addresses into bursts", accent: true },
-    { id: "ar", x: 0, y: 20, w: 14, label: "u_arskid → AR", sub: "MAX_OUT in flight" },
+    {
+      id: "cfg",
+      x: 0,
+      y: 0,
+      w: 30,
+      h: 3.4,
+      label: "cfg_en · cfg_addr · cfg_data",
+      sub: "a slice of the control window, offsets preserved",
+    },
+    {
+      id: "src",
+      x: 0,
+      y: 5,
+      w: 14,
+      label: "u_src — mx_tdesc",
+      sub: "6 dims, bound axes",
+    },
+    {
+      id: "dst",
+      x: 16,
+      y: 5,
+      w: 14,
+      label: "u_dst — mx_tdesc",
+      sub: "DEFINES the iteration space",
+      accent: true,
+    },
+    {
+      id: "lat",
+      x: 0,
+      y: 10,
+      w: 30,
+      h: 3.4,
+      label: "the element latch",
+      sub: "e_rd · e_wr · e_kind · e_last · e_flt",
+      accent: true,
+    },
+    {
+      id: "issue",
+      x: 0,
+      y: 15,
+      w: 30,
+      h: 3.4,
+      label: "the ISSUE engine",
+      sub: "folds consecutive addresses into bursts",
+      accent: true,
+    },
+    {
+      id: "ar",
+      x: 0,
+      y: 20,
+      w: 14,
+      label: "u_arskid → AR",
+      sub: "MAX_OUT in flight",
+    },
     { id: "cq", x: 16, y: 20, w: 14, label: "u_cfifo", sub: "write commands" },
-    { id: "df", x: 0, y: 25, w: 14, label: "u_dfifo", sub: "512 × 256b, block" },
-    { id: "wr", x: 0, y: 30, w: 30, h: 3.4, label: "the WRITE engine", sub: "IDLE · ARM · GEN · DATA", accent: true },
-    { id: "axi", x: 0, y: 35, w: 30, h: 3.4, label: "its own AXI master", sub: "AW · W · B — and NO fabric endpoint" },
+    {
+      id: "df",
+      x: 0,
+      y: 25,
+      w: 14,
+      label: "u_dfifo",
+      sub: "512 × 256b, block",
+    },
+    {
+      id: "wr",
+      x: 0,
+      y: 30,
+      w: 30,
+      h: 3.4,
+      label: "the WRITE engine",
+      sub: "IDLE · ARM · GEN · DATA",
+      accent: true,
+    },
+    {
+      id: "axi",
+      x: 0,
+      y: 35,
+      w: 30,
+      h: 3.4,
+      label: "its own AXI master",
+      sub: "AW · W · B — and NO fabric endpoint",
+    },
   ],
   edges: [
     { from: "cfg:b", to: "src:t", dir: "v" },
@@ -635,7 +1117,7 @@ const mover = {
     { from: "cq:b", to: "wr:t", dir: "v" },
     { from: "wr:b", to: "axi:t", dir: "v", accent: true },
   ],
-}
+};
 
 const wSm = {
   states: [
@@ -650,27 +1132,45 @@ const wSm = {
     { from: "W_IDLE", to: "W_DATA", label: "w_now", curve: -78 },
     { from: "W_IDLE", to: "W_GEN", label: "K_GEN" },
     { from: "W_GEN", to: "W_ARM", label: "pr_valid ×2" },
-    { from: "W_DATA", to: "W_DATA", label: "a beat, or the next burst", self: true },
+    {
+      from: "W_DATA",
+      to: "W_DATA",
+      label: "a beat, or the next burst",
+      self: true,
+    },
     { from: "W_DATA", to: "W_IDLE", label: "w_endbst", curve: 100 },
   ],
-}
+};
 
 const modeCols = [
   { key: "m", label: "Mode", mono: true },
   { key: "d", label: "What the engine does" },
-]
+];
 const modeRows = [
-  { m: "COPY", d: "both walkers step in lockstep. A source stride of <b>zero is a broadcast</b>, with no extra mode" },
-  { m: "TRANSPOSE", d: "allocated and <b>faults</b> (<code>F_MODE</code>). Not implemented", _tone: "bad" },
-  { m: "GATHER", d: "the whole index vector is pulled into <code>u_ixbuf</code> first, then three pipeline stages per element — index out of the buffer, multiply, base add" },
-  { m: "GENERATE", d: "a counter-based PRNG keyed on the destination's <b>absolute word address</b>, so one fill and four fills of its quarters produce identical bytes" },
+  {
+    m: "COPY",
+    d: "both walkers step in lockstep. A source stride of <b>zero is a broadcast</b>, with no extra mode",
+  },
+  {
+    m: "TRANSPOSE",
+    d: "allocated and <b>faults</b> (<code>F_MODE</code>). Not implemented",
+    _tone: "bad",
+  },
+  {
+    m: "GATHER",
+    d: "the whole index vector is pulled into <code>u_ixbuf</code> first, then three pipeline stages per element — index out of the buffer, multiply, base add",
+  },
+  {
+    m: "GENERATE",
+    d: "a counter-based PRNG keyed on the destination's <b>absolute word address</b>, so one fill and four fills of its quarters produce identical bytes",
+  },
   { m: "FILL", d: "an immediate, splatted at the configured element width" },
-]
+];
 
 const moverTrapCols = [
   { key: "s", label: "Symptom" },
   { key: "c", label: "Cause, and the fix that is in the source" },
-]
+];
 const moverTrapRows = [
   {
     s: "one word of a burst is X, and only sometimes",
@@ -701,14 +1201,14 @@ const moverTrapRows = [
     c: "<code>ADDR_W</code> other than 40. The map is <b>absolute</b>, so a narrower build is a different map rather than the bottom corner of this one — the module now instantiates a nonexistent module named <code>mm_mover_ADDR_W_must_be_40_the_address_map_is_absolute</code> and fails at elaboration",
     _tone: "good",
   },
-]
+];
 
 // -------------------------------------------------------- measured decisions
 const timingCols = [
   { key: "d", label: "Decision in the RTL" },
   { key: "m", label: "What it was measured against", mono: false },
   { key: "w", label: "Where" },
-]
+];
 const timingRows = [
   {
     d: "take the transform out of the port entirely",
@@ -766,13 +1266,13 @@ const timingRows = [
     m: "as expressions, two adders in series on the command FIFO's write enable — <b>14 levels, −0.155 ns at 3.333 ns</b>. Registering both is worth <b>40 MHz</b>",
     w: "<code>mm_mover.v</code>",
   },
-]
+];
 
 // ---------------------------------------------------------------- divergence
 const divCols = [
   { key: "d", label: "Divergence" },
   { key: "t", label: "Detail" },
-]
+];
 const divRows = [
   {
     d: "<b><code>RD_OUT</code> is a 3.25× throughput knob that ships OFF.</b>",
@@ -791,7 +1291,7 @@ const divRows = [
     d: "<b>Descriptor field positions exist only as literals.</b>",
     t: "<code>count</code>, <code>peer</code>, <code>n_peer</code> and <code>entry_words</code> have no macro anywhere; they are literal part-selects in <code>mag_mem_port.v</code> and in each compute unit. <code>noc_pkt.vh</code> is included by no module, so a divergence between two of them is silent — and one has already happened.",
   },
-]
+];
 </script>
 
 <template>
@@ -803,13 +1303,18 @@ const divRows = [
     source="src/kohakuaccel/sysnode/core/ · src/kohakuaccel/sysnode/mover/ · docs/arch/sysnode/ · docs/spec/memory-protocol.md"
   >
     <p class="doc-p">
-      <RouterLink to="/framework/sysnode" class="doc-link">The memory agent page</RouterLink>
-      is what the agent promises. This one is how it is built, and it starts from the
-      thing that is easiest to miss: <b>the memory agent has an instruction space, so
-      it is a machine that executes rather than a pipe that moves bytes.</b> One flit
-      is one instruction. It names an address, an entry geometry, a run length, a
-      transform and up to three extra destinations, and a single memory port is
-      running <b>two</b> of those instruction streams at once.
+      <RouterLink to="/framework/sysnode" class="doc-link"
+        >The memory agent page</RouterLink
+      >
+      is what the agent promises. This one is how it is built, and it starts
+      from the thing that is easiest to miss:
+      <b
+        >the memory agent has an instruction space, so it is a machine that
+        executes rather than a pipe that moves bytes.</b
+      >
+      One flit is one instruction. It names an address, an entry geometry, a run
+      length, a transform and up to three extra destinations, and a single
+      memory port is running <b>two</b> of those instruction streams at once.
     </p>
 
     <h2 class="doc-h2">One module, two machines</h2>
@@ -824,27 +1329,38 @@ const divRows = [
 
     <SpecTable :cols="machineCols" :rows="machineRows" />
 
-    <Fig caption="st — the write machine, plus the single-shot read that only benches use. A slot is released on ws_done at the ack, not at the issue, so a source cannot reuse it before its data is safe." zoom>
+    <Fig
+      caption="st — the write machine, plus the single-shot read that only benches use. A slot is released on ws_done at the ack, not at the issue, so a source cannot reuse it before its data is safe."
+      zoom
+    >
       <StateMachine :states="stSm.states" :edges="stSm.edges" />
     </Fig>
 
-    <Callout kind="rule" title="The state encodings have gaps, and the gaps are load-bearing">
+    <Callout
+      kind="rule"
+      title="The state encodings have gaps, and the gaps are load-bearing"
+    >
       <p>
-        <code>S_IDLE</code> is 0, <code>S_RD_DATA</code> is 2, <code>S_WR_DATA</code> is
-        5, <code>S_WR_ACK</code> is 6 — the numbers under each state above. They are not
-        contiguous because <b>benches watch <code>st</code> by number</b>, so a state is
-        retired by leaving a hole rather than by renumbering the ones after it.
+        <code>S_IDLE</code> is 0, <code>S_RD_DATA</code> is 2,
+        <code>S_WR_DATA</code> is 5, <code>S_WR_ACK</code> is 6 — the numbers
+        under each state above. They are not contiguous because
+        <b>benches watch <code>st</code> by number</b>, so a state is retired by
+        leaving a hole rather than by renumbering the ones after it.
       </p>
     </Callout>
 
-    <Fig caption="rs — the read engine, with its own state and its own return context. RS_STG is the staged path: one entry per port-A read, no AR, no beats, no transform." zoom>
+    <Fig
+      caption="rs — the read engine, with its own state and its own return context. RS_STG is the staged path: one entry per port-A read, no AR, no beats, no transform."
+      zoom
+    >
       <StateMachine :states="rsStates" :edges="rsEdges" />
     </Fig>
 
     <h3 class="doc-h3">take_rd_p versus take_rd_e</h3>
     <p class="doc-p">
-      The two read forms are taken by <b>different terms with different conditions</b>,
-      and the difference is the whole reason a streaming fetch and a write can overlap.
+      The two read forms are taken by
+      <b>different terms with different conditions</b>, and the difference is
+      the whole reason a streaming fetch and a write can overlap.
     </p>
 
     <SpecTable :cols="takeCols" :rows="takeRows" />
@@ -863,29 +1379,36 @@ const divRows = [
     <h2 class="doc-h2">The descriptor engine, one entry at a time</h2>
     <p class="doc-p">
       Scrub through a streaming fetch of two entries. The two things to watch
-      are <b>when the next address goes out</b> and <b>when the emit buffer is handed
-      over</b> — both happen a cycle earlier than the obvious ordering would put them,
-      and that is the entire throughput argument for the engine.
+      are <b>when the next address goes out</b> and
+      <b>when the emit buffer is handed over</b> — both happen a cycle earlier
+      than the obvious ordering would put them, and that is the entire
+      throughput argument for the engine.
     </p>
 
     <StepPlayer :steps="walk" label="STREAM = 1, count = 2">
       <template #default="{ state }">
         <div class="flex flex-wrap gap-1.5 mb-4">
           <span v-for="ch in state.chips" :key="ch.k" class="chip">
-            <span class="opacity-60 mr-1">{{ ch.k }}</span>{{ ch.v }}
+            <span class="opacity-60 mr-1">{{ ch.k }}</span
+            >{{ ch.v }}
           </span>
         </div>
-        <StateMachine :states="rsStates" :edges="rsEdges" :active="state.active" />
+        <StateMachine
+          :states="rsStates"
+          :edges="rsEdges"
+          :active="state.active"
+        />
       </template>
     </StepPlayer>
 
     <Callout kind="measured" title="Why the transform left this port">
       <p>
-        The port used to hold one, and the register in front of it existed for a single
-        measurement: the read FIFO's block-RAM output reached the transform's DSP control
-        through <b>9 LUT levels, 4.399 ns</b>, and set the WNS on <b>every</b> SLR1 probe.
-        Moving the transform out removes that path from the port entirely. The shared slot
-        it moved to registers the beat before the bank for exactly the same reason.
+        The port used to hold one, and the register in front of it existed for a
+        single measurement: the read FIFO's block-RAM output reached the
+        transform's DSP control through <b>9 LUT levels, 4.399 ns</b>, and set
+        the WNS on <b>every</b> SLR1 probe. Moving the transform out removes
+        that path from the port entirely. The shared slot it moved to registers
+        the beat before the bank for exactly the same reason.
       </p>
       <p class="kt-text-caption">
         Measured on the SLR1 probe vehicle, <code>xcvu13p-fhgb2104-2L-e</code>.
@@ -894,17 +1417,18 @@ const divRows = [
 
     <Callout kind="trap" title="q_done is a pulse, so q_rdy has to remember it">
       <p>
-        The transform raises <code>done</code> for one cycle. If the emit buffer is
-        still handing out the previous entry when it fires, the engine would wait
-        forever for an edge that <b>already happened</b> — so <code>q_rdy</code> latches
-        it and <code>RS_WAIT</code> tests <code>q_rdy &amp;&amp; !e_act</code>.
+        The transform raises <code>done</code> for one cycle. If the emit buffer
+        is still handing out the previous entry when it fires, the engine would
+        wait forever for an edge that <b>already happened</b> — so
+        <code>q_rdy</code> latches it and <code>RS_WAIT</code> tests
+        <code>q_rdy &amp;&amp; !e_act</code>.
       </p>
     </Callout>
 
     <h2 class="doc-h2">Every response names its own slot</h2>
     <p class="doc-p">
-      This is the mechanism the whole read path exists to deliver, and it is three
-      header fields.
+      This is the mechanism the whole read path exists to deliver, and it is
+      three header fields.
     </p>
 
     <BitField
@@ -913,30 +1437,33 @@ const divRows = [
     />
 
     <p class="doc-p">
-      Because the destination slot is in the header, <b>arrival order stops being load
-      bearing</b> and the receiver needs no per-entry state. That is what makes a
-      streaming fetch possible at all: one request, hundreds of cycles of traffic, and a
-      receiver that can bin every flit it gets without tracking where it is.
+      Because the destination slot is in the header,
+      <b>arrival order stops being load bearing</b> and the receiver needs no
+      per-entry state. That is what makes a streaming fetch possible at all: one
+      request, hundreds of cycles of traffic, and a receiver that can bin every
+      flit it gets without tracking where it is.
     </p>
 
     <WaveTrace v-bind="outOfOrder" label="what the tag makes legal" />
 
     <Callout kind="rule" title="The tag arithmetic is 8-bit and wraps silently">
       <p>
-        <code>e_tag &lt;= rd_txn + rd_ent</code>. A requester <b>MUST</b> size its own
-        tag space so that <code>txn + count − 1</code> does not exceed 255; a run that
-        wraps aliases two entries onto one slot, and nothing reports it.
+        <code>e_tag &lt;= rd_txn + rd_ent</code>. A requester <b>MUST</b> size
+        its own tag space so that <code>txn + count − 1</code> does not exceed
+        255; a run that wraps aliases two entries onto one slot, and nothing
+        reports it.
       </p>
     </Callout>
 
     <h3 class="doc-h3">Extra destinations cost one register, not one fetch</h3>
     <p class="doc-p">
-      <code>e_dst</code> walks 0 to <code>rd_nd</code>. Destination 0 is the requester;
-      the rest are bytes of <code>rd_peer</code>, unpacked as <code>{y, x}</code> with
-      <code>y</code> in the high nibble. When the last word of an entry has gone out and
-      a peer remains, <code>q_emit</code> returns to 0 and the <b>same latched
-      <code>e_w0..3</code></b> are re-sent with a different header. No second AXI read,
-      no second pass of the transform.
+      <code>e_dst</code> walks 0 to <code>rd_nd</code>. Destination 0 is the
+      requester; the rest are bytes of <code>rd_peer</code>, unpacked as
+      <code>{y, x}</code> with <code>y</code> in the high nibble. When the last
+      word of an entry has gone out and a peer remains,
+      <code>q_emit</code> returns to 0 and the
+      <b>same latched <code>e_w0..3</code></b> are re-sent with a different
+      header. No second AXI read, no second pass of the transform.
     </p>
 
     <h3 class="doc-h3">What the RTL actually slices</h3>
@@ -946,27 +1473,40 @@ const divRows = [
       caption="Descriptor fields as literal part-selects. noc_pkt.vh has no macro for count, peer, n_peer or entry_words, and is included by no module, so these positions exist here and in each compute unit independently"
     />
 
-    <h2 class="doc-h2">Intake: accept exactly when the sender believes you did</h2>
+    <h2 class="doc-h2">
+      Intake: accept exactly when the sender believes you did
+    </h2>
     <p class="doc-p">
-      <code>mem_in_busy</code> and the accept term have to be <b>the same
-      predicate</b>. Deriving one from queue occupancy and the other from “is there
-      room” is a one-line difference with two permanent, silent failure modes.
+      <code>mem_in_busy</code> and the accept term have to be
+      <b>the same predicate</b>. Deriving one from queue occupancy and the other
+      from “is there room” is a one-line difference with two permanent, silent
+      failure modes.
     </p>
 
-    <WaveTrace v-bind="takeBroken" variant="broken" label="enqueue on “is there room”" />
-    <WaveTrace v-bind="takeFixed" variant="fixed" label="mi_take = mem_in_valid &amp;&amp; !mem_in_busy" />
+    <WaveTrace
+      v-bind="takeBroken"
+      variant="broken"
+      label="enqueue on “is there room”"
+    />
+    <WaveTrace
+      v-bind="takeFixed"
+      variant="fixed"
+      label="mi_take = mem_in_valid &amp;&amp; !mem_in_busy"
+    />
 
     <Callout kind="note" title="The drop is named at the moment it happens">
       <p>
         The port carries a simulation <code>$display</code> on
-        <code>(mi_rd &amp;&amp; rq_full) || (mi_wr &amp;&amp; wq_full)</code> — an input
-        flit dropped because backpressure was too late. Without it the first symptom is
-        <i>“write data with no open write”</i>, hundreds of cycles later and several
-        modules away.
+        <code>(mi_rd &amp;&amp; rq_full) || (mi_wr &amp;&amp; wq_full)</code> —
+        an input flit dropped because backpressure was too late. Without it the
+        first symptom is <i>“write data with no open write”</i>, hundreds of
+        cycles later and several modules away.
       </p>
     </Callout>
 
-    <h2 class="doc-h2">The write path: allocation and issue are different rules</h2>
+    <h2 class="doc-h2">
+      The write path: allocation and issue are different rules
+    </h2>
 
     <SpecTable
       :cols="slotCols"
@@ -980,66 +1520,92 @@ const divRows = [
       caption="Three separate priority scans over the slot array rather than one scan with conditions, so none of them lands in the other's path"
     />
 
-    <Callout kind="trap" title="Lowest-free allocation and lowest-ready issue do not compose">
+    <Callout
+      kind="trap"
+      title="Lowest-free allocation and lowest-ready issue do not compose"
+    >
       <p>
-        Neither rule is wrong on its own. Together they are: <b>a requester that outruns
-        AXI is handed a high slot that is then never the lowest ready again.</b> The
-        freed low slots recycle faster than the engine drains, and with reads winning
-        <code>S_IDLE</code> the refill goes ready before the next pick.
+        Neither rule is wrong on its own. Together they are:
+        <b
+          >a requester that outruns AXI is handed a high slot that is then never
+          the lowest ready again.</b
+        >
+        The freed low slots recycle faster than the engine drains, and with
+        reads winning <code>S_IDLE</code> the refill goes ready before the next
+        pick.
       </p>
       <p>
-        It has two faces, and both are silent. One starves a slot; the other lands one
-        source's same-address writes out of program order.
+        It has two faces, and both are silent. One starves a slot; the other
+        lands one source's same-address writes out of program order.
       </p>
     </Callout>
 
-    <WaveTrace v-bind="starveBroken" variant="broken" label="broken — starvation" />
-    <WaveTrace v-bind="reorderBroken" variant="broken" label="broken — reorder" />
-    <WaveTrace v-bind="starveFixed" variant="fixed" label="fixed — u_rdyq, a FIFO of slot indices" />
+    <WaveTrace
+      v-bind="starveBroken"
+      variant="broken"
+      label="broken — starvation"
+    />
+    <WaveTrace
+      v-bind="reorderBroken"
+      variant="broken"
+      label="broken — reorder"
+    />
+    <WaveTrace
+      v-bind="starveFixed"
+      variant="fixed"
+      label="fixed — u_rdyq, a FIFO of slot indices"
+    />
 
     <Callout kind="rule" title="The requester's half of the same fix is WR_MAX">
       <p>
-        Bounding what a requester leaves outstanding keeps the agent's in-use set in the
-        region where the two rules <i>do</i> compose. That is why the reference PE ships
-        with <code>WR_MAX = 1</code> — one un-acknowledged write — and the comment beside
-        it names <code>mag_mem_port.v</code> as the reason. The requester side of this
-        story is on
-        <RouterLink to="/mpe/cpu/microarchitecture" class="doc-link">the CPU
-        microarchitecture page</RouterLink>.
+        Bounding what a requester leaves outstanding keeps the agent's in-use
+        set in the region where the two rules <i>do</i> compose. That is why the
+        reference PE ships with <code>WR_MAX = 1</code> — one un-acknowledged
+        write — and the comment beside it names <code>mag_mem_port.v</code> as
+        the reason. The requester side of this story is on
+        <RouterLink to="/mpe/cpu/microarchitecture" class="doc-link"
+          >the CPU microarchitecture page</RouterLink
+        >.
       </p>
     </Callout>
 
-    <Callout kind="trap" title="A picked slot must stop being pickable immediately">
+    <Callout
+      kind="trap"
+      title="A picked slot must stop being pickable immediately"
+    >
       <p>
-        Not at its write ack. Releasing at the ack leaves the slot ready for the cycle
-        the machine spends re-entering <code>S_IDLE</code>, so <b>the same write is
-        issued twice</b> and the next write's turn never comes.
+        Not at its write ack. Releasing at the ack leaves the slot ready for the
+        cycle the machine spends re-entering <code>S_IDLE</code>, so
+        <b>the same write is issued twice</b> and the next write's turn never
+        comes.
       </p>
       <p>
-        <code>ws_issue</code> clears <code>ws_rdy</code> and sets <code>ws_iss</code> on
-        the spot; <code>ws_done</code> at the ack clears <code>ws_val</code> and
-        <code>ws_iss</code> together, so the source cannot reuse the slot before its data
-        is safe.
+        <code>ws_issue</code> clears <code>ws_rdy</code> and sets
+        <code>ws_iss</code> on the spot; <code>ws_done</code> at the ack clears
+        <code>ws_val</code> and <code>ws_iss</code> together, so the source
+        cannot reuse the slot before its data is safe.
       </p>
     </Callout>
 
     <Callout kind="trap" title="A missed B never comes again">
       <p>
-        <code>m_bready</code> is tied high, so the slave's write response is consumed the
-        cycle it appears — whether or not <code>S_WR_ACK</code> can act on it. Often it
-        cannot, because the read emitter owns the output register. <code>wr_b</code> is a
-        one-bit latch that catches the response the cycle it arrives; the state that
-        clears it runs later in the same always block, so an arrive-and-consume in one
-        cycle ends correctly at zero.
+        <code>m_bready</code> is tied high, so the slave's write response is
+        consumed the cycle it appears — whether or not <code>S_WR_ACK</code> can
+        act on it. Often it cannot, because the read emitter owns the output
+        register. <code>wr_b</code> is a one-bit latch that catches the response
+        the cycle it arrives; the state that clears it runs later in the same
+        always block, so an arrive-and-consume in one cycle ends correctly at
+        zero.
       </p>
     </Callout>
 
     <h2 class="doc-h2">There is no partial-line DRAM write</h2>
     <p class="doc-p">
-      <code>MEM_WR_DATA</code>'s payload is 256 bits of data and <b>nothing else</b> —
-      no fields, no strobe — and the port drives <code>m_wstrb</code> to all ones
-      unconditionally. Both halves of that are deliberate, and together they set a rule
-      a compute unit has to design around.
+      <code>MEM_WR_DATA</code>'s payload is 256 bits of data and
+      <b>nothing else</b> — no fields, no strobe — and the port drives
+      <code>m_wstrb</code> to all ones unconditionally. Both halves of that are
+      deliberate, and together they set a rule a compute unit has to design
+      around.
     </p>
 
     <SpecTable
@@ -1051,24 +1617,25 @@ const divRows = [
     <Callout kind="rule" title="If your line is dirty in part, you merge it">
       <p>
         The agent will not. A store narrower than <code>DATA_W</code> is a
-        <b>read-modify-write in the requester</b>, and the fetch, the merge and the
-        write-back are all the unit's own instructions.
+        <b>read-modify-write in the requester</b>, and the fetch, the merge and
+        the write-back are all the unit's own instructions.
       </p>
       <p>
         This costs the reference PE nothing, because its L1 is write-back with a
-        <b>256-bit line</b> — exactly one beat — so every writeback is a whole line and
-        the missing strobe is never reached for. A unit whose natural store is narrower
-        pays for the difference itself.
+        <b>256-bit line</b> — exactly one beat — so every writeback is a whole
+        line and the missing strobe is never reached for. A unit whose natural
+        store is narrower pays for the difference itself.
       </p>
     </Callout>
 
     <h2 class="doc-h2">The transform slot, as the port drives it</h2>
     <p class="doc-p">
-      The slot is fixed protocol and the occupant is an addon; the framework side of
-      that split is on
-      <RouterLink to="/framework/sysnode" class="doc-link">the memory agent page</RouterLink>.
-      What is worth reading in the RTL is how little of the geometry is written down as
-      a number.
+      The slot is fixed protocol and the occupant is an addon; the framework
+      side of that split is on
+      <RouterLink to="/framework/sysnode" class="doc-link"
+        >the memory agent page</RouterLink
+      >. What is worth reading in the RTL is how little of the geometry is
+      written down as a number.
     </p>
 
     <SpecTable
@@ -1079,34 +1646,40 @@ const divRows = [
 
     <Callout kind="rule" title="The three hard rules a replacement must hold">
       <p>
-        <b>1. Fixed output shape.</b> A transformed fetch yields exactly four operand
-        words per entry, whatever the source length. Only a NON-transforming fetch may
-        choose its own words-per-entry.
+        <b>1. Fixed output shape.</b> A transformed fetch yields exactly four
+        operand words per entry, whatever the source length. Only a
+        NON-transforming fetch may choose its own words-per-entry.
       </p>
       <p>
-        <b>2. The whole entry may be needed before anything can be emitted.</b> The port
-        is built for that: <code>done</code> may come any number of cycles after the last
-        beat.
+        <b>2. The whole entry may be needed before anything can be emitted.</b>
+        The port is built for that: <code>done</code> may come any number of
+        cycles after the last beat.
       </p>
       <p>
-        <b>3. Input is push-only.</b> The port drives <code>beat_valid</code> from its
-        own read state machine; a transform that needs backpressure must buffer
-        internally. <code>need_beat</code> is reserved and <b>the port ignores it
-        today</b>, so a compliant module ties it high or drives it truthfully.
+        <b>3. Input is push-only.</b> The port drives
+        <code>beat_valid</code> from its own read state machine; a transform
+        that needs backpressure must buffer internally.
+        <code>need_beat</code> is reserved and <b>the port ignores it today</b>,
+        so a compliant module ties it high or drives it truthfully.
       </p>
     </Callout>
 
-    <Callout kind="note" title="A beat IS an operand word, and it still goes through the buffer">
+    <Callout
+      kind="note"
+      title="A beat IS an operand word, and it still goes through the buffer"
+    >
       <p>
-        Nothing on this path converts, so the beats <i>are</i> the operand words, and they
-        land in <code>p_w0..3</code> rather than going to the emit buffer directly —
-        because the emitter may still be handing out the previous entry. The same
-        double-buffer serves both paths, which is why the port's control does not change
-        when the transform does.
+        Nothing on this path converts, so the beats <i>are</i> the operand
+        words, and they land in <code>p_w0..3</code> rather than going to the
+        emit buffer directly — because the emitter may still be handing out the
+        previous entry. The same double-buffer serves both paths, which is why
+        the port's control does not change when the transform does.
       </p>
     </Callout>
 
-    <h2 class="doc-h2">Addon slot 2: staging is an address range, not a cache</h2>
+    <h2 class="doc-h2">
+      Addon slot 2: staging is an address range, not a cache
+    </h2>
 
     <BitField
       :fields="apAddr"
@@ -1115,13 +1688,14 @@ const divRows = [
 
     <Callout kind="rule" title="Mesh first, then aperture">
       <p>
-        The order is the whole reason a packet <i>transiting</i> this mesh is safe. It
-        fails the mesh test, so it is <b>neither ours nor a fault</b> and passes on
-        untouched — which is what lets mesh 0 reach mesh 3's store.
+        The order is the whole reason a packet <i>transiting</i> this mesh is
+        safe. It fails the mesh test, so it is
+        <b>neither ours nor a fault</b> and passes on untouched — which is what
+        lets mesh 0 reach mesh 3's store.
       </p>
       <p>
-        Get the order the other way round and a foreign address either faults or, worse,
-        is claimed.
+        Get the order the other way round and a foreign address either faults
+        or, worse, is claimed.
       </p>
     </Callout>
 
@@ -1132,21 +1706,28 @@ const divRows = [
       <BlockDiagram :nodes="stage.nodes" :edges="stage.edges" />
     </Fig>
 
-    <Callout kind="measured" title="One dispatch register per bank, and it carries DONT_TOUCH">
+    <Callout
+      kind="measured"
+      title="One dispatch register per bank, and it carries DONT_TOUCH"
+    >
       <p>
-        As a single shared register the dispatch was <b>the worst data path in the
-        design: 4.860 ns at 98.4% route, with ZERO logic levels.</b> It is pure wire —
-        one register reaching URAM columns spread across the die. Replicating it per bank
-        fixes that, and the replicas are only stable because the attribute stops the tool
-        merging them back.
+        As a single shared register the dispatch was
+        <b
+          >the worst data path in the design: 4.860 ns at 98.4% route, with ZERO
+          logic levels.</b
+        >
+        It is pure wire — one register reaching URAM columns spread across the
+        die. Replicating it per bank fixes that, and the replicas are only
+        stable because the attribute stops the tool merging them back.
       </p>
       <p>
-        The <code>PIPE</code> registers are <b>generated, not muxed</b>: a ternary on a
-        parameter still infers them, and 1,024 dead flip-flops is not a nothing.
+        The <code>PIPE</code> registers are <b>generated, not muxed</b>: a
+        ternary on a parameter still infers them, and 1,024 dead flip-flops is
+        not a nothing.
       </p>
       <p class="kt-text-caption">
-        <code>xcvu13p-fhgb2104-2L-e</code>. The shipped store is 4 banks × 16,384 entries
-        = 64 URAM, 2 MB per agent.
+        <code>xcvu13p-fhgb2104-2L-e</code>. The shipped store is 4 banks ×
+        16,384 entries = 64 URAM, 2 MB per agent.
       </p>
     </Callout>
 
@@ -1158,77 +1739,101 @@ const divRows = [
 
     <Callout kind="rule" title="Where explicit staging stops">
       <p>
-        A GEMM sweep walks <code>for kb: for g: for h</code> over addresses the compiler
-        already computed, so <b>a cache would spend tags and comparators rediscovering
-        what was written down.</b> That argument is exactly as strong as its premise.
+        A GEMM sweep walks <code>for kb: for g: for h</code> over addresses the
+        compiler already computed, so
+        <b
+          >a cache would spend tags and comparators rediscovering what was
+          written down.</b
+        >
+        That argument is exactly as strong as its premise.
       </p>
       <p>
-        It stops the moment an address is <i>not</i> knowable ahead of time. Nothing here
-        discovers, evicts, or writes back: a fetch that misses the aperture simply goes
-        to DRAM, and a result left in the aperture stays there. Staging converts nothing
-        either: it holds operand words verbatim, which is also why a staged read never
-        needed a transform in front of it.
+        It stops the moment an address is <i>not</i> knowable ahead of time.
+        Nothing here discovers, evicts, or writes back: a fetch that misses the
+        aperture simply goes to DRAM, and a result left in the aperture stays
+        there. Staging converts nothing either: it holds operand words verbatim,
+        which is also why a staged read never needed a transform in front of it.
       </p>
     </Callout>
 
     <h3 class="doc-h3">Where the store sits changes who can use it</h3>
     <SpecTable :cols="placeCols" :rows="placeRows" />
 
-    <Callout kind="note" title="The module default and the shipped setting differ">
+    <Callout
+      kind="note"
+      title="The module default and the shipped setting differ"
+    >
       <p>
-        <code>mag.v</code> defaults <code>STAGE_AT_PORT</code> to <b>0</b>, the per-port
-        form. Every generated ship top that enables staging passes
-        <code>STAGE(1)</code> and <code>STAGE_AT_PORT(1)</code> — the converged-path form
-        — so the default is the older shape kept for comparison, not the shipping one.
-        Selection is <code>gen_mesh.py --l2-mag</code>, independent of the mesh-side
-        adapter. <b>No software targets either yet.</b>
+        <code>mag.v</code> defaults <code>STAGE_AT_PORT</code> to <b>0</b>, the
+        per-port form. Every generated ship top that enables staging passes
+        <code>STAGE(1)</code> and <code>STAGE_AT_PORT(1)</code> — the
+        converged-path form — so the default is the older shape kept for
+        comparison, not the shipping one. Selection is
+        <code>gen_mesh.py --l2-mag</code>, independent of the mesh-side adapter.
+        <b>No software targets either yet.</b>
       </p>
     </Callout>
 
     <h2 class="doc-h2">One AXI master, and the contract in front of it</h2>
     <p class="doc-p">
-      Every requester inside the agent — the memory ports, the host window, the mover,
-      and the interlink's inbound writes — speaks one internal protocol:
+      Every requester inside the agent — the memory ports, the host window, the
+      mover, and the interlink's inbound writes — speaks one internal protocol:
       <code>q_valid / q_ready / q_addr / q_len / q_write</code>, plus the
-      <code>w_*</code> and <code>r_*</code> streams. <code>mag_stage_port</code> claims
-      staged traffic off that converged path, and <code>mag_dram_port</code> is the
-      single converter behind it: two round-robin arbiters, a width pack from
-      <code>DATA_W</code> to the memory's beat, and five asynchronous FIFOs that carry
-      the whole thing into the DRAM clock domain. <b>AXI is heavy, so it appears once.</b>
+      <code>w_*</code> and <code>r_*</code> streams.
+      <code>mag_stage_port</code> claims staged traffic off that converged path,
+      and <code>mag_dram_port</code> is the single converter behind it: two
+      round-robin arbiters, a width pack from <code>DATA_W</code> to the
+      memory's beat, and five asynchronous FIFOs that carry the whole thing into
+      the DRAM clock domain. <b>AXI is heavy, so it appears once.</b>
     </p>
 
     <Callout kind="rule" title="A requester's presentation HOLDS until q_ready">
       <p>
-        <code>{valid, write, addr, len}</code> may not change while a request waits.
-        Both arbiters decide on a <b>registered</b> request vector and sample the bus
-        <b>live</b>, and the grant is a single wire.
+        <code>{valid, write, addr, len}</code> may not change while a request
+        waits. Both arbiters decide on a <b>registered</b> request vector and
+        sample the bus <b>live</b>, and the grant is a single wire.
       </p>
     </Callout>
 
-    <WaveTrace v-bind="qBroken" variant="broken" label="a presentation that switches mid-wait" />
-    <WaveTrace v-bind="qFixed" variant="fixed" label="the choice latched at first offer" />
+    <WaveTrace
+      v-bind="qBroken"
+      variant="broken"
+      label="a presentation that switches mid-wait"
+    />
+    <WaveTrace
+      v-bind="qFixed"
+      variant="fixed"
+      label="the choice latched at first offer"
+    />
 
-    <Callout kind="note" title="The head and tail of a packed burst are over-fetched, then discarded">
+    <Callout
+      kind="note"
+      title="The head and tail of a packed burst are over-fetched, then discarded"
+    >
       <p>
-        A burst's start sub-beat is its <code>phase</code>, and the memory address is
-        that address aligned down to a memory beat. Each memory beat becomes up to
-        <code>MW/SW</code> internal ones and the extra head and tail are <b>discarded
-        rather than avoided</b> — the alternative is a narrower burst and a special case
-        at both ends.
+        A burst's start sub-beat is its <code>phase</code>, and the memory
+        address is that address aligned down to a memory beat. Each memory beat
+        becomes up to <code>MW/SW</code> internal ones and the extra head and
+        tail are <b>discarded rather than avoided</b> — the alternative is a
+        narrower burst and a special case at both ends.
       </p>
       <p>
-        On the write side the strobes start <b>cleared</b> and only written lanes set
-        them, so a partial head and a partial tail fall out with no special case at all.
+        On the write side the strobes start <b>cleared</b> and only written
+        lanes set them, so a partial head and a partial tail fall out with no
+        special case at all.
       </p>
     </Callout>
 
     <h2 class="doc-h2">The mover is a second machine, not a third read path</h2>
     <p class="doc-p">
-      It reads memory and writes memory and <b>never talks to a compute unit</b>. It has
-      its own AXI master, no fabric endpoint, and its command path is a slice of the
-      control window rather than a set of boundary ports — a design rule with a scar
-      behind it: <i>loose sideband ports never get wired up in a block design, and a
-      shipped engine that nothing could command is worse than no engine.</i>
+      It reads memory and writes memory and
+      <b>never talks to a compute unit</b>. It has its own AXI master, no fabric
+      endpoint, and its command path is a slice of the control window rather
+      than a set of boundary ports — a design rule with a scar behind it:
+      <i
+        >loose sideband ports never get wired up in a block design, and a
+        shipped engine that nothing could command is worse than no engine.</i
+      >
     </p>
 
     <Fig
@@ -1240,20 +1845,24 @@ const divRows = [
 
     <SpecTable :cols="modeCols" :rows="modeRows" />
 
-    <Fig caption="The write engine. W_ARM exists only for the case where the data has not arrived: when it has, w_now goes straight to W_DATA, because stopping in W_ARM would cost a third cycle on every single-beat write. A command also loads straight off the last beat of the burst before it, so back-to-back bursts cost n+1 cycles rather than n+2." zoom>
+    <Fig
+      caption="The write engine. W_ARM exists only for the case where the data has not arrived: when it has, w_now goes straight to W_DATA, because stopping in W_ARM would cost a third cycle on every single-beat write. A command also loads straight off the last beat of the burst before it, so back-to-back bursts cost n+1 cycles rather than n+2."
+      zoom
+    >
       <StateMachine :states="wSm.states" :edges="wSm.edges" />
     </Fig>
 
     <Callout kind="rule" title="The whole burst is resident before AW">
       <p>
-        A granted write then streams at one beat per cycle and <b>never parks the DRAM
-        port's write mux</b> — which matters because AXI4 forbids W interleaving, so W
-        follows AW order and a stalled writer blocks everyone behind it.
+        A granted write then streams at one beat per cycle and
+        <b>never parks the DRAM port's write mux</b> — which matters because
+        AXI4 forbids W interleaving, so W follows AW order and a stalled writer
+        blocks everyone behind it.
       </p>
       <p>
-        The read side reserves symmetrically: FIFO space for a whole burst is taken
-        before its AR is issued, so the return can never be refused and never backs up
-        into the shared path.
+        The read side reserves symmetrically: FIFO space for a whole burst is
+        taken before its AR is issued, so the return can never be refused and
+        never backs up into the shared path.
       </p>
     </Callout>
 
@@ -1263,25 +1872,29 @@ const divRows = [
       caption="Every row is a failure that happened, and every one of them is a residency or a width question rather than an algorithm question"
     />
 
-    <Callout kind="open" title="This section is the compressed version of a page">
+    <Callout
+      kind="open"
+      title="This section is the compressed version of a page"
+    >
       <p>
-        The mover is not a variant of the read engine. It has its own instruction set —
-        five modes, six-dimensional descriptors with bound axes, a PRNG whose output is a
-        pure function of the destination address — its own two-engine pipeline, its own
-        burst-coalescing rules, and its own fault register. It is the only engine here
-        that is <b>commanded rather than requested</b>.
+        The mover is not a variant of the read engine. It has its own
+        instruction set — five modes, six-dimensional descriptors with bound
+        axes, a PRNG whose output is a pure function of the destination address
+        — its own two-engine pipeline, its own burst-coalescing rules, and its
+        own fault register. It is the only engine here that is
+        <b>commanded rather than requested</b>.
       </p>
       <p>
-        It should have its own page. What is above is the shape and the traps; the mode
-        semantics, the descriptor form and the register map deserve the same treatment
-        the read engine gets here.
+        It should have its own page. What is above is the shape and the traps;
+        the mode semantics, the descriptor form and the register map deserve the
+        same treatment the read engine gets here.
       </p>
     </Callout>
 
     <h2 class="doc-h2">Where the timing actually went</h2>
     <p class="doc-p">
-      Almost none of the structure above is there for elegance. These are the decisions
-      that have a measurement attached, in the order the data flows.
+      Almost none of the structure above is there for elegance. These are the
+      decisions that have a measurement attached, in the order the data flows.
     </p>
 
     <SpecTable
@@ -1295,11 +1908,12 @@ const divRows = [
 
     <Callout kind="note" title="The other divergences are on the parent page">
       <p>
-        The 34-bit-versus-40-bit address field, the control agent's packaging, the
-        interlink living inside the memory agent and the moved source directory are all
-        recorded on
-        <RouterLink to="/framework/sysnode" class="doc-link">the memory agent page</RouterLink>,
-        together with the protocol contracts they belong to.
+        The 34-bit-versus-40-bit address field, the control agent's packaging,
+        the interlink living inside the memory agent and the moved source
+        directory are all recorded on
+        <RouterLink to="/framework/sysnode" class="doc-link"
+          >the memory agent page</RouterLink
+        >, together with the protocol contracts they belong to.
       </p>
     </Callout>
   </DocPage>

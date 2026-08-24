@@ -22,9 +22,10 @@ const parts = {
       _tone: "good",
     },
     {
-      part: "<b>SIMD PE</b> — <code>rv_pe</code>, <code>SIMD_EN&nbsp;=&nbsp;1</code>",
-      what: "the same core widened: eight packed integer lanes and a float tier, one instruction driving all of them",
-      swap: "a build parameter. A machine with no use for it sets <code>SIMD_EN&nbsp;=&nbsp;0</code> and pays nothing",
+      part: "<b>SIMD slot</b> — <code>khs_unit</code>, at <code>SIMD_EN</code>",
+      what: "a wide datapath behind the CPU PE's EX stage. The framework names the module and nothing inside it; the parameter is 0 by default, so a framework-only build never elaborates one",
+      swap: "writing one unit, or taking KohakuMPE's. Same shape as the transform slot",
+      _tone: "good",
     },
     {
       part: "<b>Transform slot</b> — <code>xform_bank</code>",
@@ -43,7 +44,7 @@ const parts = {
       swap: "dropping yours in. <code>PASS&nbsp;=&nbsp;1</code> makes it a wire",
     },
   ],
-}
+};
 
 const obligations = {
   cols: [
@@ -74,7 +75,7 @@ const obligations = {
       ex: "id 0 copies beats through and raises <code>done</code> after the last",
     },
   ],
-}
+};
 </script>
 
 <template>
@@ -86,17 +87,19 @@ const obligations = {
     source="src/kohakuaccel/ · docs/integrate/what-you-own.md"
   >
     <p class="doc-p">
-      The framework is the connection problem — how to be a node, how to ask for memory, how to be
-      dispatched to, how to report completion. <b>A component is something it ships on top of that
-      anyway</b>, because a mesh with nothing in it is not testable and a convention with no worked
+      The framework is the connection problem — how to be a node, how to ask for
+      memory, how to be dispatched to, how to report completion.
+      <b>A component is something it ships on top of that anyway</b>, because a
+      mesh with nothing in it is not testable and a convention with no worked
       example is prose.
     </p>
 
     <p class="doc-p">
       That is the whole reason this section exists separately from
-      <RouterLink to="/framework" class="doc-link">Framework</RouterLink>: those pages are contracts
-      you cannot change and remain on the framework. These are parts you are expected to change, and
-      KohakuAccel builds a working multi-processor mesh out of them without any project on top —
+      <RouterLink to="/framework" class="doc-link">Framework</RouterLink>: those
+      pages are contracts you cannot change and remain on the framework. These
+      are parts you are expected to change, and KohakuAccel builds a working
+      multi-processor mesh out of them without any project on top —
       <b>the framework is its own first example</b>.
     </p>
 
@@ -109,53 +112,77 @@ const obligations = {
     <h2 class="doc-h2">What makes a slot a slot</h2>
 
     <p class="doc-p">
-      Four obligations. Miss any one and what you have is a hook — a place where a module happens to
-      be instantiated — rather than something a second project can fill.
+      Four obligations. Miss any one and what you have is a hook — a place where
+      a module happens to be instantiated — rather than something a second
+      project can fill.
     </p>
 
     <SpecTable :cols="obligations.cols" :rows="obligations.rows" />
 
-    <Callout kind="trap" title="A slot that advertises replaceability and requires bug-compatibility is worse than no slot">
+    <Callout
+      kind="trap"
+      title="A slot that advertises replaceability and requires bug-compatibility is worse than no slot"
+    >
       <p>
-        The transform stage used to name its occupant directly in two framework modules, hardcode its
-        2:1 compression ratio in the memory agent's address arithmetic, name its selection bits after
-        one project's number format, and — the one that mattered — <b>depend on an undocumented
-        internal priority of the plug-in</b>, worked around identically at two call sites with
-        nothing telling a replacement's author so.
+        The transform stage used to name its occupant directly in two framework
+        modules, hardcode its 2:1 compression ratio in the memory agent's
+        address arithmetic, name its selection bits after one project's number
+        format, and — the one that mattered —
+        <b>depend on an undocumented internal priority of the plug-in</b>,
+        worked around identically at two call sites with nothing telling a
+        replacement's author so.
       </p>
       <p>
-        It meets all four obligations now, and the framework names exactly one module:
-        <code>xform_bank</code>. Renaming the reference quantiser breaks one project file and nothing
-        in the framework.
+        It meets all four obligations now, and the framework names exactly one
+        module:
+        <code>xform_bank</code>. Renaming the reference quantiser breaks one
+        project file and nothing in the framework.
       </p>
     </Callout>
 
     <h2 class="doc-h2">Where to go next</h2>
 
     <div class="grid gap-4 sm:grid-cols-3 mt-6">
-      <RouterLink to="/component/sysnode/microarchitecture" class="card-hover p-5 no-underline block">
-        <div class="kt-text-title font-semibold text-warm-800 dark:text-warm-200 mb-1">
+      <RouterLink
+        to="/component/sysnode/microarchitecture"
+        class="card-hover p-5 no-underline block"
+      >
+        <div
+          class="kt-text-title font-semibold text-warm-800 dark:text-warm-200 mb-1"
+        >
           Sysnode micro
         </div>
         <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
-          The memory ports, the converged requester path, the write slots and what the mover actually
-          walks.
+          The memory ports, the converged requester path, the write slots and
+          what the mover actually walks.
         </p>
       </RouterLink>
-      <RouterLink to="/component/cpu/microarchitecture" class="card-hover p-5 no-underline block">
-        <div class="kt-text-title font-semibold text-warm-800 dark:text-warm-200 mb-1">
+      <RouterLink
+        to="/component/cpu/microarchitecture"
+        class="card-hover p-5 no-underline block"
+      >
+        <div
+          class="kt-text-title font-semibold text-warm-800 dark:text-warm-200 mb-1"
+        >
           CPU PE micro
         </div>
         <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
-          Six register boundaries, one stall rule, two L1s split by who writes, and the 38 LUT that
-          make a doorbell correct.
+          Six register boundaries, one stall rule, two L1s split by who writes,
+          and the 38 LUT that make a doorbell correct.
         </p>
       </RouterLink>
-      <RouterLink to="/component/caching" class="card-hover p-5 no-underline block">
-        <div class="kt-text-title font-semibold text-warm-800 dark:text-warm-200 mb-1">Caching</div>
+      <RouterLink
+        to="/component/caching"
+        class="card-hover p-5 no-underline block"
+      >
+        <div
+          class="kt-text-title font-semibold text-warm-800 dark:text-warm-200 mb-1"
+        >
+          Caching
+        </div>
         <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
-          Staging, the transform slot and the tagged L2 that is designed and not built — three
-          answers to reuse, only one of which is a cache.
+          Staging, the transform slot and the tagged L2 that is designed and not
+          built — three answers to reuse, only one of which is a cache.
         </p>
       </RouterLink>
     </div>
