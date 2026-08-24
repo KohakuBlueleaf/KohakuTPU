@@ -5,8 +5,11 @@ xsim.dir/
 *.pb
 clockinfo.txt
 ref/
+.ref/
+khs_float_vec.txt
 .vscode/
 *.jou
+build-*/
 
 # xsim leaves work libraries, snapshots and waveforms beside the benches.
 tests/**/w_*/
