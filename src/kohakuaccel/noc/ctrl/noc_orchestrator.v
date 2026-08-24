@@ -102,18 +102,16 @@ module noc_orchestrator #(
     localparam [1:0] RESP_OKAY = 2'b00;
 
     // register map, byte offsets (spec s10.2)
-    localparam [15:0] A_CTRL      = 16'h0000, A_STATUS    = 16'h0008,
-                      A_CAPS      = 16'h0010, A_IRQ_STAT  = 16'h0018,
-                      A_IRQ_EN    = 16'h0020,
-                      A_PROG_DST  = 16'h0040, A_PROG_LEN  = 16'h0048,
-                      A_PROG_KICK = 16'h0050, A_PROG_STAT = 16'h0058,
-                      A_PROG_CRED = 16'h0060, A_PROG_BASE = 16'h0068,
-                      A_SIG_DONE  = 16'h0070, A_AUX_STAT  = 16'h0078,
-                      A_AUX_STATW = 16'h0080,
-                      A_TX_FLIT0  = 16'h0100, A_TX_KICK   = 16'h0140,
-                      A_TX_STATUS = 16'h0148,
-                      A_RX_FLIT0  = 16'h0180, A_RX_POP    = 16'h01C0,
-                      A_RX_STATUS = 16'h01C8;
+    localparam [15:0] A_CTRL = 16'h0000, A_STATUS = 16'h0008, A_CAPS = 16'h0010;
+    localparam [15:0] A_IRQ_STAT = 16'h0018, A_IRQ_EN = 16'h0020;
+    localparam [15:0] A_PROG_DST = 16'h0040, A_PROG_LEN = 16'h0048;
+    localparam [15:0] A_PROG_KICK = 16'h0050, A_PROG_STAT = 16'h0058;
+    localparam [15:0] A_PROG_CRED = 16'h0060, A_PROG_BASE = 16'h0068;
+    localparam [15:0] A_SIG_DONE = 16'h0070, A_AUX_STAT = 16'h0078;
+    localparam [15:0] A_AUX_STATW = 16'h0080, A_TX_FLIT0 = 16'h0100;
+    localparam [15:0] A_TX_KICK = 16'h0140, A_TX_STATUS = 16'h0148;
+    localparam [15:0] A_RX_FLIT0 = 16'h0180, A_RX_POP = 16'h01C0;
+    localparam [15:0] A_RX_STATUS = 16'h01C8;
 
     // ------------------------------------------------------------ registers
     reg [DATA_WIDTH-1:0] ctrl_reg, irq_en_reg, irq_stat_reg;
@@ -196,7 +194,9 @@ module noc_orchestrator #(
             noc_out_valid <= 1'b0;
         end else begin
             noc_out_valid <= tx_pop | (noc_out_valid && noc_out_busy);
-            if (tx_pop) noc_out_data <= tx_head;
+            if (tx_pop) begin
+                noc_out_data <= tx_head;
+            end
         end
     end
 
@@ -226,8 +226,12 @@ module noc_orchestrator #(
 
     reg rx_overflow;
     always @(posedge clk) begin
-        if (!resetn)                        rx_overflow <= 1'b0;
-        else if (noc_in_valid && rx_full)   rx_overflow <= 1'b1;
+        if (!resetn) begin
+            rx_overflow <= 1'b0;
+        end
+        else if (noc_in_valid && rx_full) begin
+            rx_overflow <= 1'b1;
+        end
     end
 
     // --------------------------------------------------------- status mirror
@@ -250,7 +254,11 @@ module noc_orchestrator #(
     reg  [15:0] status_count_next;
 
     integer si;
-    initial for (si = 0; si < N_STATUS; si = si + 1) node_status[si] = 64'd0;
+    initial begin
+        for (si = 0; si < N_STATUS; si = si + 1) begin
+            node_status[si] = 64'd0;
+        end
+    end
 
     always @(posedge clk) begin
         if (in_is_signal) begin
@@ -266,8 +274,12 @@ module noc_orchestrator #(
     // destination to prog_dst, and pushes. Stalls on credit rather than on the
     // network: backpressuring CU_INST into the mesh is the protocol deadlock
     // spec s7 exists to prevent.
-    wire in_inst_done = noc_in_valid && in_is_sig &&
-                        (noc_in_data[255 -: 8] == 8'h00);   // SIG_INST_COMPLETE
+    // SIG_INST_COMPLETE
+    wire in_inst_done = (
+        noc_in_valid
+        && in_is_sig
+        && (noc_in_data[255 -: 8] == 8'h00)
+    );
 
     // Completions from EVERY node, in one register: NODE_STATUS is per node, so
     // "is everyone finished" would otherwise cost N polls and grow the program
@@ -280,9 +292,15 @@ module noc_orchestrator #(
     reg [15:0] sig_done_count;
 
     always @(posedge clk) begin
-        if (!resetn)            sig_done_count <= 16'd0;
-        else if (sig_done_clr)  sig_done_count <= 16'd0;
-        else if (in_is_signal)  sig_done_count <= sig_done_count + 16'd1;
+        if (!resetn) begin
+            sig_done_count <= 16'd0;
+        end
+        else if (sig_done_clr) begin
+            sig_done_count <= 16'd0;
+        end
+        else if (in_is_signal) begin
+            sig_done_count <= sig_done_count + 16'd1;
+        end
     end
 
     wire disp_can = prog_run && !tx_full && (prog_credit != 16'd0);
@@ -306,12 +324,15 @@ module noc_orchestrator #(
         end else begin
             // credit: one per CU_INST flit sent, refilled by SIG_INST_COMPLETE.
             // A host write wins, so re-seeding between programs is predictable.
-            if (cred_wr)
+            if (cred_wr) begin
                 prog_credit <= cred_val;
-            else if (disp_push && !in_inst_done && prog_credit != 16'd0)
+            end
+            else if (disp_push && !in_inst_done && prog_credit != 16'd0) begin
                 prog_credit <= prog_credit - 16'd1;
-            else if (in_inst_done && !disp_push)
+            end
+            else if (in_inst_done && !disp_push) begin
                 prog_credit <= prog_credit + 16'd1;
+            end
 
             // kick_req only asserts while !prog_run and disp_can requires
             // prog_run, so these two arms are mutually exclusive
@@ -326,8 +347,12 @@ module noc_orchestrator #(
                 if (prog_word == FLIT_WORDS-1) begin
                     prog_word <= 3'd0;
                     disp_push <= 1'b1;
-                    if (prog_left == 16'd1) prog_run <= 1'b0;
-                    else                    prog_left <= prog_left - 16'd1;
+                    if (prog_left == 16'd1) begin
+                        prog_run <= 1'b0;
+                    end
+                    else begin
+                        prog_left <= prog_left - 16'd1;
+                    end
                 end else begin
                     prog_word <= prog_word + 3'd1;
                 end
@@ -379,6 +404,37 @@ module noc_orchestrator #(
     wire [SW_BITS-1:0] stage_widx = (waddr[15:0] - A_STAGE) >> 3;
     wire        is_aux = (waddr[15:0] >= A_AUX_CFG) && (waddr[15:0] < A_AUX_END);
 
+    // A station-bus manager flit-aligns, so one host write64 arrives as four
+    // beats, one strobed: ignoring WSTRB made that eight register writes.
+    wire w_live = |s_axi_wstrb;
+    wire w_lo16 = |s_axi_wstrb[1:0];      // a 16-bit register lives in bytes 0-1
+
+    // dat/stb are ARGUMENTS: in a continuous assign xsim sensitises only the
+    // argument list, so reading them from module scope pulsed stale data.
+    function [DATA_WIDTH-1:0] wmerge;
+        input [DATA_WIDTH-1:0]   cur;
+        input [DATA_WIDTH-1:0]   dat;
+        input [DATA_WIDTH/8-1:0] stb;
+        integer b;
+        begin
+            wmerge = cur;
+            for (b = 0; b < DATA_WIDTH/8; b = b + 1) begin
+                if (stb[b]) begin
+                    wmerge[b*8 +: 8] = dat[b*8 +: 8];
+                end
+            end
+        end
+    endfunction
+
+    // The client has no byte enables, so a half-strobed pair (+0 then +4) can
+    // only be delivered whole -- accumulate, then pulse the merged value.
+    reg [7:0]            aux_sh_addr;
+    reg [DATA_WIDTH-1:0] aux_sh_data;
+    wire [7:0]           aux_addr_a = {waddr[7:3], 3'b000};
+    wire [DATA_WIDTH-1:0] aux_next =
+        wmerge((aux_sh_addr == aux_addr_a) ? aux_sh_data : {DATA_WIDTH{1'b0}},
+               s_axi_wdata, s_axi_wstrb);
+
     integer wb;
     always @(posedge clk) begin
         tx_push  <= 1'b0;
@@ -400,6 +456,9 @@ module noc_orchestrator #(
             prog_len     <= 16'd0;
             prog_base    <= 16'd0;
             cred_val     <= 16'd0;
+            // Never 8-aligned, so it cannot match a real aux offset and the
+            // first write to any register accumulates from zero.
+            aux_sh_addr  <= 8'hFF;
             // tx_stage is 320 bits pushed only once the host has written all
             // five words; aux_cfg_addr/data are qualified by aux_cfg_en above.
         end else begin
@@ -411,33 +470,62 @@ module noc_orchestrator #(
                     wstate <= W_DATA;
                 end
                 W_DATA: if (s_axi_wvalid) begin
-                    if (is_stage) begin
-                        stage_ram[stage_widx] <= s_axi_wdata;
+                    // A beat with no strobes carries nothing: it must not write
+                    // a register and must not act as an arrival.
+                    if (!w_live) begin
+                        ;
+                    end else if (is_stage) begin
+                        stage_ram[stage_widx]
+                            <= wmerge(stage_ram[stage_widx], s_axi_wdata,
+                                      s_axi_wstrb);
                     end else if (is_tx_fl) begin
-                        for (wb = 0; wb < DATA_WIDTH/8; wb = wb + 1)
-                            if (s_axi_wstrb[wb])
-                                tx_stage[tx_word*DATA_WIDTH + wb*8 +: 8] <=
-                                    s_axi_wdata[wb*8 +: 8];
+                        for (wb = 0; wb < DATA_WIDTH/8; wb = wb + 1) begin
+                            if (s_axi_wstrb[wb]) begin
+                                tx_stage[tx_word*DATA_WIDTH + wb*8 +: 8]
+                                    <= s_axi_wdata[wb*8 +: 8];
+                            end
+                        end
                     // ONE PULSE PER BEAT, because a client may use consecutive
                     // writes as a load-then-commit pair; a burst walks `waddr`
                     // and so writes its registers in order.
                     end else if (is_aux) begin
                         aux_cfg_en   <= 1'b1;
-                        aux_cfg_addr <= waddr[7:0];
-                        aux_cfg_data <= s_axi_wdata;
+                        aux_cfg_addr <= aux_addr_a;
+                        aux_cfg_data <= aux_next;
+                        aux_sh_addr  <= aux_addr_a;
+                        aux_sh_data  <= aux_next;
                     end else begin
                         case (wsel)
-                            A_CTRL:      ctrl_reg     <= s_axi_wdata;
-                            A_IRQ_EN:    irq_en_reg   <= s_axi_wdata;
-                            A_IRQ_STAT:  irq_stat_reg <= irq_stat_reg & ~s_axi_wdata; // W1C
-                            A_PROG_DST:  prog_dst     <= s_axi_wdata[2*POS_WIDTH-1:0];
-                            A_PROG_LEN:  prog_len     <= s_axi_wdata[15:0];
-                            A_PROG_BASE: prog_base    <= s_axi_wdata[15:0];
+                            A_CTRL:      ctrl_reg   <= wmerge(ctrl_reg,
+                                                        s_axi_wdata, s_axi_wstrb);
+                            A_IRQ_EN:    irq_en_reg <= wmerge(irq_en_reg,
+                                                        s_axi_wdata, s_axi_wstrb);
+                            // W1C, and only where this beat carries a byte.
+                            A_IRQ_STAT:  irq_stat_reg <= irq_stat_reg
+                                                       & ~wmerge({DATA_WIDTH{1'b0}},
+                                                           s_axi_wdata, s_axi_wstrb);
+                            A_PROG_DST:  begin
+                                if (w_lo16) begin
+                                    prog_dst <= s_axi_wdata[2*POS_WIDTH-1:0];
+                                end
+                            end
+                            A_PROG_LEN:  begin
+                                if (w_lo16) begin
+                                    prog_len <= s_axi_wdata[15:0];
+                                end
+                            end
+                            A_PROG_BASE: begin
+                                if (w_lo16) begin
+                                    prog_base <= s_axi_wdata[15:0];
+                                end
+                            end
                             A_SIG_DONE:  sig_done_clr <= 1'b1;
                             A_PROG_CRED: begin
-                                             cred_wr  <= 1'b1;
-                                             cred_val <= s_axi_wdata[15:0];
-                                         end
+                                if (w_lo16) begin
+                                    cred_wr  <= 1'b1;
+                                    cred_val <= s_axi_wdata[15:0];
+                                end
+                            end
                             A_PROG_KICK: kick_req <= 1'b1;
                             // mailbox is ignored mid-dispatch; they share the TX FIFO
                             A_TX_KICK:   tx_push      <= !tx_full && !prog_run;
@@ -446,10 +534,18 @@ module noc_orchestrator #(
                         endcase
                     end
                     waddr <= waddr + (DATA_WIDTH/8);
-                    if (wlen == 8'd0) wstate <= W_RESP;
-                    else              wlen   <= wlen - 8'd1;
+                    if (wlen == 8'd0) begin
+                        wstate <= W_RESP;
+                    end
+                    else begin
+                        wlen   <= wlen - 8'd1;
+                    end
                 end
-                W_RESP: if (s_axi_bready) wstate <= W_IDLE;
+                W_RESP: begin
+                    if (s_axi_bready) begin
+                        wstate <= W_IDLE;
+                    end
+                end
                 default: wstate <= W_IDLE;
             endcase
         end
@@ -484,30 +580,37 @@ module noc_orchestrator #(
     reg [DATA_WIDTH-1:0] reg_rd;
     always @(*) begin
         reg_rd = {DATA_WIDTH{1'b0}};
-        if (is_rx_fl)
+        if (is_rx_fl) begin
             reg_rd = rx_padded[rx_word*DATA_WIDTH +: DATA_WIDTH];
-        else if (is_auxst)
+        end
+        else if (is_auxst) begin
             reg_rd = aux_stat_q;
-        else case (rsel)
-            A_CTRL:      reg_rd = ctrl_reg;
-            A_CAPS:      reg_rd = caps_word;
-            A_IRQ_EN:    reg_rd = irq_en_reg;
-            A_IRQ_STAT:  reg_rd = irq_stat_reg;
-            A_PROG_DST:  reg_rd = { {(DATA_WIDTH-2*POS_WIDTH){1'b0}}, prog_dst };
-            A_PROG_LEN:  reg_rd = { {(DATA_WIDTH-16){1'b0}}, prog_len };
-            A_PROG_BASE: reg_rd = { {(DATA_WIDTH-16){1'b0}}, prog_base };
-            A_SIG_DONE:  reg_rd = { {(DATA_WIDTH-16){1'b0}}, sig_done_count };
-            A_AUX_STAT:  reg_rd = aux_stat;
-            A_PROG_CRED: reg_rd = { {(DATA_WIDTH-16){1'b0}}, prog_credit };
-            A_STATUS:    reg_rd = { {(DATA_WIDTH-3){1'b0}}, 1'b1 /*mesh_ready*/,
-                                    1'b0 /*error*/, (!tx_empty | prog_run) };
-            A_PROG_STAT: reg_rd = { {(DATA_WIDTH-33){1'b0}}, prog_credit,
-                                    prog_left, prog_run };
-            A_TX_STATUS: reg_rd = { {(DATA_WIDTH-17){1'b0}}, tx_full, 16'd0 };
-            A_RX_STATUS: reg_rd = { {(DATA_WIDTH-18){1'b0}}, rx_overflow, rx_empty,
-                                    16'd0 };
-            default:     reg_rd = {DATA_WIDTH{1'b0}};
-        endcase
+        end
+        else begin
+            case (rsel)
+                A_CTRL:      reg_rd = ctrl_reg;
+                A_CAPS:      reg_rd = caps_word;
+                A_IRQ_EN:    reg_rd = irq_en_reg;
+                A_IRQ_STAT:  reg_rd = irq_stat_reg;
+                A_PROG_DST:  reg_rd = { {(DATA_WIDTH-2*POS_WIDTH){1'b0}},
+                                        prog_dst };
+                A_PROG_LEN:  reg_rd = { {(DATA_WIDTH-16){1'b0}}, prog_len };
+                A_PROG_BASE: reg_rd = { {(DATA_WIDTH-16){1'b0}}, prog_base };
+                A_SIG_DONE:  reg_rd = { {(DATA_WIDTH-16){1'b0}}, sig_done_count };
+                A_AUX_STAT:  reg_rd = aux_stat;
+                A_PROG_CRED: reg_rd = { {(DATA_WIDTH-16){1'b0}}, prog_credit };
+                A_STATUS:    reg_rd = { {(DATA_WIDTH-3){1'b0}},
+                                        1'b1 /*mesh_ready*/,
+                                        1'b0 /*error*/,
+                                        (!tx_empty | prog_run) };
+                A_PROG_STAT: reg_rd = { {(DATA_WIDTH-33){1'b0}}, prog_credit,
+                                        prog_left, prog_run };
+                A_TX_STATUS: reg_rd = { {(DATA_WIDTH-17){1'b0}}, tx_full, 16'd0 };
+                A_RX_STATUS: reg_rd = { {(DATA_WIDTH-18){1'b0}}, rx_overflow,
+                                        rx_empty, 16'd0 };
+                default:     reg_rd = {DATA_WIDTH{1'b0}};
+            endcase
+        end
     end
 
     always @(posedge clk) begin
@@ -521,7 +624,9 @@ module noc_orchestrator #(
         end else begin
             case (rstate)
                 R_IDLE: begin
-                    if (rvalid_r && s_axi_rready) rvalid_r <= 1'b0;
+                    if (rvalid_r && s_axi_rready) begin
+                        rvalid_r <= 1'b0;
+                    end
                     if (s_axi_arvalid) begin
                         rid    <= s_axi_arid;
                         raddr  <= s_axi_araddr;
