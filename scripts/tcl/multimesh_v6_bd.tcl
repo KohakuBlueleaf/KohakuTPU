@@ -1,5 +1,7 @@
 # multimesh v6: station-bus line, four meshes, per-module reconfigurable clocks.
-#   vivado -mode batch -source scripts/tcl/multimesh_v6_bd.tcl ?-tclargs impl?
+#   vivado -mode batch -source scripts/tcl/multimesh_v6_bd.tcl \
+#     ?-tclargs rebuild|synth|impl ?route? ?jobs N??
+#   impl runs to write_bitstream and is dispatched before the reports, not after.
 # Every knob is in scripts/tcl/v6/00_config.tcl and nowhere else.
 
 set here [file dirname [file normalize [info script]]]
@@ -8,6 +10,8 @@ set do_synth [expr {$do_impl || [lsearch $argv synth] >= 0}]
 set do_build [expr {[lsearch $argv rebuild] >= 0 || !$do_synth}]
 set njobs 8
 if {[set i [lsearch $argv jobs]] >= 0} { set njobs [lindex $argv [expr {$i + 1}]] }
+# A card needs a bitstream, so impl means impl; `route` stops short.
+set impl_step [expr {[lsearch $argv route] >= 0 ? "route_design" : "write_bitstream"}]
 
 source $here/v6/00_config.tcl
 set_param general.maxThreads 16
@@ -123,13 +127,19 @@ wait_on_run synth_1
 if {[get_property PROGRESS [get_runs synth_1]] != "100%"} {
     error "synthesis failed: $proj_dir/${design_name}.runs/synth_1/runme.log"
 }
+# Impl goes out FIRST: 70_analyze's open_run held v7's impl 20 min on a 1-2 day
+# run. launch_runs forks a child, so the analysis below runs alongside it.
+if {$do_impl} {
+    puts "@@@ v6: dispatching impl_1 -to_step $impl_step, -jobs $njobs"
+    launch_runs impl_1 -to_step $impl_step -jobs $njobs
+}
+
 source $here/v6/70_analyze.tcl
 
 if {!$do_impl} {
-    puts "@@@ v6: synthesis and analysis done. Run implementation in the GUI."
+    puts "@@@ v6: synthesis and analysis done. -tclargs impl to implement."
     return
 }
-launch_runs impl_1 -to_step route_design -jobs $njobs
 wait_on_run impl_1
 if {[get_property PROGRESS [get_runs impl_1]] != "100%"} {
     error "implementation failed: $proj_dir/${design_name}.runs/impl_1/runme.log"

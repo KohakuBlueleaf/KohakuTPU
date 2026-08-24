@@ -141,6 +141,20 @@ if {[info exists ::env(V7)] && $PROBE_SLR < 0} {
     }
 }
 
+# v7.1: v7 with m72 x3. One cluster less per mesh is ~18.7k LUT, ~56k over three.
+#   $env:V71=1; vivado -mode batch -source multimesh_v6_bd.tcl
+if {[info exists ::env(V71)] && $PROBE_SLR < 0} {
+    set design_name multimesh_v71
+    set proj_dir    C:/Users/apoll/Desktop/vivado/multimesh_v71
+    set ::env(V6_STANDALONE) 1
+    set MESHES {
+        0 ktpu_ship_2x2_7c2v_1m_pump
+        1 ktpu_ship_2x2_6c2v_1m_pump
+        2 ktpu_ship_2x2_7c2v_1m_pump
+        3 ktpu_ship_2x2_7c2v_1m_pump
+    }
+}
+
 # 4 banks x 16384 entries IS 64 URAM; the ship top names these, not L2_MAG_URAM.
 # 32 URAM measured WORSE: m72_u32 -0.617 against m72_n5 -0.561 on the same RTL.
 set L2_MAG_BANKS    4
