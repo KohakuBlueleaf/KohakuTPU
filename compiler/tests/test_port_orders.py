@@ -176,6 +176,18 @@ class Fake(Runtime):
         span = max(int(nbytes), layout.nbytes(shape))
         return Value(self, shape).claim(Buffer(self.alloc(span), tuple(shape), layout))
 
+    def convert(self, addr: int, shape: tuple, before, after) -> None:
+        """The rewrite, in this machine's own bytes.
+
+        `Runtime.convert` refuses -- there is no host round trip -- so a double
+        that wants to exercise a conversion has to say how its own memory
+        performs one. This is not a host path: `Fake` IS the machine, and the
+        four tests below are about the SPAN and the LABEL, not about where the
+        permutation runs.
+        """
+        held = before.unpack(self.read_block(addr, before.nbytes(shape)), shape)
+        self.write_block(addr, after.pack(held))
+
     def load(self, where: tuple):
         addr, shape, order = where
         return order.unpack(self.read_block(addr, order.nbytes(shape)), shape)

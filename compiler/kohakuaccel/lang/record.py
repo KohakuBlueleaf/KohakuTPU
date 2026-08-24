@@ -153,12 +153,17 @@ class Trace:
         #: Internal buffers with FIXED contents, name -> value. A mask is built
         #: at trace time, so the compiler uploads it; no caller passes one.
         self.tables: dict = {}
+        #: Where a buffer should live, name -> the project's tier name. Only the
+        #: ones that asked; a machine with no such tier places them anyway.
+        self.tiers: dict = {}
         self._ids = 0
 
-    def declare(self, prefix: str, shape: tuple) -> str:
+    def declare(self, prefix: str, shape: tuple, tier: str | None = None) -> str:
         """Register an internal buffer and return the name it is known by."""
         name = self.fresh(prefix)
         self.buffers[name] = tuple(shape)
+        if tier:
+            self.tiers[name] = tier
         return name
 
     def declare_table(self, prefix: str, shape: tuple, value) -> str:

@@ -20,7 +20,7 @@ from kohakutpu import lang as L
 M, K, N = dims("M, K, N")
 
 #: Four of each, so a two-instance grid pairs injectively and leaves cores free.
-#: `agent` is (1,1) to match `tests/mas/mm_mesh_peer_tb.v`, which simulates it.
+#: `agent` is (1,1) to match `tests/sysnode/mm_mesh_peer_tb.v`, which simulates it.
 MACHINE = MachineSpec(
     name="test",
     units={

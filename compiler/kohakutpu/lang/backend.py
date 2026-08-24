@@ -269,9 +269,27 @@ class TpuBackend:
                 f"{compiled.name}: port {missing} is declared but never touched; "
                 f"every operand must be read and every result written"
             )
-        compiled.conversions = _conversions(compiled, wanted)
+        # The layouts FIRST: `_dead` measures what a stage writes, and an
+        # extent is a layout fact.
         compiled.layouts = {name: needs[0][1] for name, needs in wanted.items()}
+        compiled.conversions = _conversions(compiled, wanted)
+        compiled.dead = _dead(compiled)
         return compiled.layouts
+
+    def tiers(self, compiled) -> dict:
+        """Temps this compilation wants in the mesh's staging store, by name.
+
+        THE CONVERTED ONES. A buffer whose byte order changes pays a ragged
+        access on whichever side carries the walk, and `S` is where irregular
+        access is free -- `docs/notes/data-movement-problem.md` §5 prices that
+        at 30 credits a byte against 1. Every later conversion of the same temp
+        is then `S -> S`, and so is every fill and drain the stages make of it.
+
+        A PROPOSAL, not a placement: the author's own `L.temp(tier=)` wins, and
+        a runtime whose store is full or absent puts it in DRAM and says so.
+        """
+        held = {name for _, name, _, _ in compiled.conversions}
+        return {name: "l2" for name in compiled.temps if name in held}
 
     def validate(self, compiled) -> None:
         """Refuse what only the finished layouts reveal.
@@ -281,6 +299,7 @@ class TpuBackend:
         """
         _agree(compiled)
         _reachable(compiled)
+        _walkable(compiled)
 
     def _requirements(self, compiled) -> dict:
         """Buffer -> the order each stage needs it in, in stage order.
@@ -1235,6 +1254,111 @@ def _conversions(compiled, wanted: dict) -> list:
         for (_, before), (at, after) in itertools.pairwise(needs):
             out.append((at, name, before, after))
     return out
+
+
+def _walkable(compiled) -> None:
+    """Refuse a kernel whose byte-order change this machine cannot perform.
+
+    AT COMPILE TIME, because the alternative at run time is a host round trip
+    and that path does not exist -- a granule transpose of a 64 KB temp is
+    26,534 vector cycles against about 2.5 s through JTAG, four orders of
+    magnitude, so there is no shape of the problem where falling back is right.
+
+    Raises :class:`LangError` naming the conversion, the two orders and the
+    bound it missed.
+    """
+    from kohakutpu.isa import relayout as RL
+
+    for n, (at, name, before, after) in enumerate(compiled.conversions):
+        if n in compiled.dead:
+            continue
+        if RL.plan(before, after, compiled.block(name)) is not None:
+            continue
+        raise LangError(
+            f"{compiled.name}: {name!r} is written as {before.key} and read as "
+            f"{after.key} before stage {at}, and this machine has no walk "
+            f"between them -- `vec_agu` has four dimensions and 256 words, and "
+            f"moves whole 32-byte words except where a `Tile` order puts the "
+            f"disagreement at the 8-byte granule. There is no host fallback: "
+            f"give the two stages a layout they share, or add the walk to "
+            f"`isa/relayout.py`"
+        )
+
+
+def _dead(compiled) -> set:
+    """Conversions the stage after them makes irrelevant, by index.
+
+    A conversion is derived from the sequence of USES, and nothing asks whether
+    the OLD order is still live. `flash_attention` reuses its temps across key
+    blocks, so after a block reads `scores` as flat the next block's DRAIN
+    rewrites the whole buffer as tile -- and the conversion between them moved
+    bytes nobody ever read. MEASURED: `3*blocks - 3` of the `6*blocks - 3`, which
+    is 42.9% of the conversion cycles at four key blocks and 46.7% at eight.
+
+    WHOLE-BUFFER, not merely written. A partial write leaves the rest in the old
+    order for something later to read, so the coverage is proved rather than
+    assumed -- `_covers` returns False for any write it cannot place.
+    """
+    out: set = set()
+    for n, (at, name, _, _) in enumerate(compiled.conversions):
+        if not 0 <= at < len(compiled.stages):
+            continue
+        stage = compiled.stages[at]
+        if any(name in _touched(s) for s in _stmts(stage)):
+            continue
+        if _covers(compiled, stage, name):
+            out.add(n)
+    return out
+
+
+def _touched(stmt) -> set:
+    """Every buffer this statement READS, by whichever route it names one."""
+    out = set(stmt.reads or ())
+    out |= {leaf.name for leaf in stmt.args.get("leaves", ()) if isinstance(leaf, Ref)}
+    for key in ("operand", "source"):
+        if stmt.args.get(key):
+            out.add(stmt.args[key])
+    return out
+
+
+def _covers(compiled, stage, name: str) -> bool:
+    """Whether `stage` writes EVERY element of `name`, so what was there is gone.
+
+    False for any write whose extent this cannot place -- a fused drain lands in
+    a peer's L1 rather than in memory, and a reduction's is not an interval this
+    knows how to bound.
+    """
+    held, per = _held(compiled, name), _per(compiled)
+    spans: list = []
+    for s in _stmts(stage):
+        if s.args.get("result") != name:
+            continue
+        tiled = s.kind == "drain" or s.args.get("resident")
+        if s.kind == "drain" and s.args.get("node"):
+            return False
+        if tiled:
+            span = s.args["gm"] * s.args["gn"] * LO.LANES * LO.LANES
+            at = (s.args["i"] * stage.body_grid[1] + s.args["j"]) * span
+            spans.append((at, at + span))
+        elif s.kind == "apply":
+            stride = _stride(compiled, stage, s, per)
+            at = s.args["part"] * stride + s.args["off"]
+            spans.append((at, at + _span(compiled, s, stride)))
+        else:
+            return False
+    return _whole(spans, held)
+
+
+def _whole(spans: list, held: int) -> bool:
+    """Whether these intervals cover ``[0, held)`` with no gap."""
+    if not spans or held <= 0:
+        return False
+    reach = 0
+    for lo, hi in sorted(spans):
+        if lo > reach:
+            return False
+        reach = max(reach, hi)
+    return reach >= held
 
 
 def _stmts(stage):

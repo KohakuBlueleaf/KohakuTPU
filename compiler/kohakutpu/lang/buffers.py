@@ -241,6 +241,18 @@ class View:
     def parts(self, per: int):
         return self.buffer.parts(per)
 
+    def per_group(self, rows):
+        """This view's row, read once per `rows`-row group and repeated over it.
+
+        `Buffer.per_group` reads the group's FIRST row; this reads the one the
+        view is offset to, which is what folds an odd sub-row into the level
+        below it without a pass to lift it out. At `rows == 1` there is no group
+        to spread over and the view is its own answer.
+        """
+        if rows == 1:
+            return self
+        return Spread(self.buffer, rows * self.buffer.cols, self.buffer.cols, self.off)
+
     def __getitem__(self, idx) -> Any:
         if isinstance(idx, tuple):
             raise LangError(
@@ -260,10 +272,17 @@ class Spread:
     An ADDRESS-DEPENDENT operand, and the only one this DSL has. `vec_agu`
     calls it a broadcast and spells it stride 0, so it costs a descriptor
     dimension and no pass at all.
+
+    `off` is WITHIN the group, not into the buffer: it names which sub-row of
+    each group is the one read. It rides the descriptor's BASE, so the walk is
+    unchanged and only the address it starts from moves -- which is why a
+    non-zero `off` costs nothing and why :func:`kohakutpu.kernels.wide.fold_flat`
+    can fold an odd sub-row in without a pass to lift it out first.
     """
 
-    def __init__(self, buffer: Buffer, period, take) -> None:
+    def __init__(self, buffer: Buffer, period, take, off=0) -> None:
         self.buffer, self.period, self.take = buffer, period, take
+        self.off = off
 
     @property
     def name(self) -> str:
@@ -283,7 +302,7 @@ class Spread:
                 f"{self.name!r} is a periodic view, which a cluster cannot "
                 f"address; a fill reaches a tile by index, not by period"
             )
-        return Part(self.buffer, idx, 0, period=self.period, take=self.take)
+        return Part(self.buffer, idx, self.off, period=self.period, take=self.take)
 
     def __setitem__(self, idx, value) -> None:
         """Always raises :class:`LangError`: a spread is read, never written.
@@ -401,14 +420,19 @@ class Out(PortSpec, Buffer):
     port_role = "out"
 
 
-def temp(*shape) -> Buffer:
+def temp(*shape, tier: str | None = None) -> Buffer:
     """A buffer handed from one stage to the next, placed by the compiler.
 
     One way across a unit boundary; a fused epilogue is the other. Nothing
     outside the kernel sees it.
+
+    `tier="l2"` asks for the mesh's 2 MB MAG staging store instead of DRAM --
+    for the operand that is RE-READ, never the one that is streamed. A runtime
+    with no staging arena places it in DRAM and says nothing, so a kernel that
+    asks still runs on a machine that cannot.
     """
     made = Buffer(*shape)
-    made.name = active().declare("t", shape)
+    made.name = active().declare("t", shape, tier)
     return made
 
 

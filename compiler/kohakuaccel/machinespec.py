@@ -24,6 +24,20 @@ MESH_MASK = 0x3
 SPECIAL_BIT = 1 << 39
 RESERVED_BIT = 1 << 38
 
+#: Which aperture, in bits [35:32]. `mag_stage.v` decodes
+#: `addr[39] && !addr[38] && addr[37:36]==MESH && addr[35:32]==AP_STAGE`, and
+#: AP_IMPL names what the architecture defines -- an aperture outside it FAULTS
+#: rather than aliasing onto DRAM, so a typo here is loud.
+AP_SHIFT = 32
+AP_MASK = 0xF
+AP_STAGE = 0x0
+AP_IMPL = 0x0037
+
+#: The MAG store behind aperture 0: 16,384 entries of 4x256 b = 2 MB per mesh.
+#: The row/bank fields stop at bit 20, so a larger offset silently wraps.
+STAGE_BYTES = 1 << 21
+STAGE_ENTRY = 128
+
 
 @dataclass(frozen=True)
 class MeshSpec:
@@ -280,10 +294,44 @@ class MachineSpec:
             )
         return (where << MESH_SHIFT) | base
 
+    def stage_addr(
+        self, offset: int, mesh: int | None = None, aperture: int = AP_STAGE
+    ) -> int:
+        """`offset` in that mesh's MAG staging store, as a unit issues it.
+
+        The L2 is reached by ADDRESS, never an instruction, so this is the whole
+        mechanism: bit 39 set, bit 38 clear, mesh in [37:36], aperture in
+        [35:32]. A foreign mesh's staging address passes through that mesh
+        untouched, which is what lets mesh 0 reach mesh 3's store.
+
+        Raises :class:`ValueError` for an aperture the architecture does not
+        define (the hardware faults on those) or an offset past the 2 MB backed.
+        """
+        where = self.mesh(mesh).index
+        if not (AP_IMPL >> aperture) & 1:
+            raise ValueError(
+                f"aperture {aperture} is not in AP_IMPL {AP_IMPL:#06x}; "
+                f"mag_stage faults on it rather than aliasing onto DRAM"
+            )
+        if not 0 <= offset < STAGE_BYTES:
+            raise ValueError(
+                f"{offset:#x} is past the {STAGE_BYTES:,} bytes behind aperture "
+                f"{aperture}; the row and bank fields stop at bit 20, so a "
+                f"larger offset WRAPS onto another entry rather than faulting"
+            )
+        return SPECIAL_BIT | (where << MESH_SHIFT) | (aperture << AP_SHIFT) | offset
+
     @staticmethod
     def addr_mesh(addr: int) -> int:
         """Which mesh's memory `addr` names."""
         return (addr >> MESH_SHIFT) & MESH_MASK
+
+    @staticmethod
+    def addr_aperture(addr: int) -> int | None:
+        """Which aperture `addr` names, or None if it is an ordinary DRAM address."""
+        if not addr & SPECIAL_BIT:
+            return None
+        return (addr >> AP_SHIFT) & AP_MASK
 
     @staticmethod
     def hops(a: Coord, b: Coord) -> int:

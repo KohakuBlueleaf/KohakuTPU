@@ -47,7 +47,10 @@ class Runtime:
         #: rebased onto wherever the control agent landed.
         self.ctrl = ctrl if ctrl is not None else transport
         self._constants: dict[str, Buffer] = {}
-        #: What has actually crossed the link, per counter name.
+        #: What has actually crossed the link, per counter name. `relayouts` is
+        #: a TRIPWIRE and not a measurement: it counts buffers rewritten through
+        #: the host, nothing increments it any more, and a non-zero reading
+        #: means that path came back.
         self.counters = dict.fromkeys(
             ("dispatches", "rounds", "flits", "sent", "fetched", "relayouts"), 0
         )
@@ -102,11 +105,20 @@ class Runtime:
     def convert(self, addr: int, shape: tuple, before: Layout, after: Layout) -> None:
         """Rewrite a buffer from one byte order into another, in place.
 
-        Through the host: this machine has no instruction that reorders memory.
+        THE FRAMEWORK HAS NO DEFAULT FOR THIS, deliberately. Reading a buffer
+        back, repacking it and uploading it again is the one implementation that
+        needs no hardware, and it is between two and four orders of magnitude
+        more expensive than any on-device walk -- so offering it as a base-class
+        courtesy is offering a cliff. A project that reorders memory says how.
+
+        Raises :class:`NotImplementedError`.
         """
-        self.counters["relayouts"] += 1
-        raw = self.read(addr, before.nbytes(shape))
-        self.write(addr, after.pack(before.unpack(raw, shape)))
+        raise NotImplementedError(
+            f"{type(self).__name__} was asked to rewrite {before.key} as "
+            f"{after.key} and states no way to do it. There is no host round "
+            f"trip here: implement `convert` on the runtime, or refuse the "
+            f"conversion where the layouts are chosen"
+        )
 
     def constant(self, key: str, array, layout: Layout) -> int:
         """A compiler-materialised buffer, uploaded once and kept under `key`."""
@@ -116,12 +128,16 @@ class Runtime:
             self._constants[key] = got
         return got.addr
 
-    def empty(self, shape: tuple, layout: Layout, nbytes: int = 0):
+    def empty(self, shape: tuple, layout: Layout, nbytes: int = 0, tier=None):
         """A freshly allocated device value of `shape` in `layout`.
 
         `nbytes` is a FLOOR on the span, for a buffer something rewrites in a
         WIDER order than the one it ends up in -- a conversion rewrites where it
         lies, so the span outlasts the order it is labelled with.
+
+        `tier` is the memory the buffer asked for. A runtime that has no such
+        tier places it wherever it places everything else, so a kernel naming
+        one still runs on a machine that does not carry it.
 
         Raises :class:`NotImplementedError` unless a project overrides it.
         """

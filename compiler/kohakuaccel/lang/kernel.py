@@ -118,8 +118,14 @@ class Compiled:
     temps: dict = field(default_factory=dict)
     #: Relayouts the stages imply, as ``(before stage, name, from, to)``.
     conversions: list = field(default_factory=list)
+    #: Indices into :attr:`conversions` that need not RUN, because the stage
+    #: after them overwrites the whole buffer without reading it. They stay in
+    #: the list: the buffer is still HELD in that order, so it still sizes it.
+    dead: set = field(default_factory=set)
     #: Internal buffers whose contents the compiler already knows.
     tables: dict = field(default_factory=dict)
+    #: Temps that asked for a memory tier, name -> the project's tier name.
+    tiers: dict = field(default_factory=dict)
     #: The project's backend, so a compilation can price its own folded
     #: constants without a caller passing one back in.
     backend: object = field(default=None, compare=False, repr=False)
@@ -128,8 +134,17 @@ class Compiled:
     _placed: dict = field(default_factory=dict, init=False, compare=False, repr=False)
 
     def before(self, stage: int) -> list:
-        """The conversions due before `stage` runs."""
-        return [c for c in self.conversions if c[0] == stage]
+        """The conversions that must RUN before `stage` does.
+
+        A DEAD one is not among them: the stage overwrites the buffer whole and
+        never reads what was there, so rewriting it first moves bytes nobody
+        looks at.
+        """
+        return [
+            c
+            for n, c in enumerate(self.conversions)
+            if c[0] == stage and n not in self.dead
+        ]
 
     def orders(self, name: str) -> list:
         """Every byte order `name` is held in over this kernel's life."""
@@ -284,10 +299,14 @@ class Compiled:
         if self._touch is None:
             known = set(self.layouts)
             out = [(set(), set()) for _ in self.stages]
-            for at, name, _, _ in self.conversions:
+            for n, (at, name, _, _) in enumerate(self.conversions):
                 if name in known and 0 <= at < len(out):
-                    out[at][0].add(name)
                     out[at][1].add(name)
+                    # A DEAD conversion never runs, so it reads nothing -- and
+                    # counting it as a read starts the buffer's life a stage
+                    # early, which is what a lifetime planner would pay for.
+                    if n not in self.dead:
+                        out[at][0].add(name)
             for at, stage in enumerate(self.stages):
                 reads, writes = out[at]
                 for inst in stage.instances:
@@ -336,7 +355,7 @@ class Compiled:
         """
         got = self._placed.get(align)
         if got is None:
-            temps = [n for n in self.temps if n not in self.tables]
+            temps = [n for n in self.temps if n not in self.tables | self.tiers.keys()]
             if not temps:
                 got = ({}, 0)
             else:
@@ -392,9 +411,13 @@ class Compiled:
             else:
                 runs.append([s.unit, 1])
         chain = " ".join(f"{u}x{n}" if n > 1 else u for u, n in runs)
+        # What RUNS, not what is listed: `conversions` still names the ones a
+        # whole overwrite made unnecessary, because that is what sizes a span.
+        # Reporting the list over-counts by every dropped one.
         return (
             f"{self.name}[{shape}] {len(self.stages)} stages ({chain}), "
-            f"{self.statements} statements, {len(self.conversions)} relayouts"
+            f"{self.statements} statements, "
+            f"{len(self.conversions) - len(self.dead)} relayouts"
         )
 
     def pretty(self) -> str:
@@ -519,6 +542,7 @@ class Kernel:
             for name, shape in t.buffers.items()
         }
         out.tables = dict(t.tables)
+        out.tiers = dict(t.tiers)
         for n, (stage, outer) in enumerate(_sequence(t.top, extents, self._backend)):
             missing: set = set()
             for axis in stage.axes:
@@ -547,6 +571,11 @@ class Kernel:
             made.index = at
 
         out.layouts = self._backend.layouts(out)
+        # AFTER the layouts, since what a project wants staged depends on the
+        # conversions they imply. The AUTHOR's `tier=` wins over the proposal.
+        propose = getattr(self._backend, "tiers", None)
+        if propose is not None:
+            out.tiers = {**(propose(out) or {}), **out.tiers}
         # AFTER the layouts: a region is an offset AND an extent, and an extent
         # is a layout fact. Before them the guard can only compare NAMES.
         for made in out.stages:
@@ -678,7 +707,11 @@ class Kernel:
                 addrs[name] = block + offsets[name]
                 continue
             order = compiled.final(name)
-            held = rt.empty(compiled.shape(name), order, sizes[name])
+            # The tier is passed ONLY when one was asked for: a runtime written
+            # before tiers existed takes three arguments and is still valid.
+            want = compiled.tiers.get(name)
+            args = (compiled.shape(name), order, sizes[name])
+            held = rt.empty(*args, want) if want else rt.empty(*args)
             scratch.append(held)
             addrs[name] = held.address(order)
         consts = compiled.constants()
@@ -857,12 +890,15 @@ def _sequence(top: list, extents: dict, backend=None):
     def flush():
         nonlocal free, shape
         if free:
-            yield Grid(
-                shape,
-                tuple(Index(n) for n in free[0].names),
-                list(free),
-                formed=True,
-            ), extents
+            yield (
+                Grid(
+                    shape,
+                    tuple(Index(n) for n in free[0].names),
+                    list(free),
+                    formed=True,
+                ),
+                extents,
+            )
         free, shape = [], None
 
     for item in top:
