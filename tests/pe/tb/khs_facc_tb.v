@@ -1,4 +1,4 @@
-// khd_facc_tb -- the rotating accumulator, checked partial by partial.
+// khs_facc_tb -- the rotating accumulator, checked partial by partial.
 //
 // One slot, because the rotation is per accumulator and not per slot: SLOTS > 1
 // is replication and would only make a failure harder to read.
@@ -15,14 +15,16 @@
  `define PE_DIR "../../tests/pe/build"
 `endif
 
-module khd_facc_tb;
+module khs_facc_tb;
     localparam integer NPART = 16;
     localparam integer ALAT  = 15;
     localparam integer NOPS  = 200;
     localparam integer MAXV  = 4096;
 
     reg clk = 0, resetn = 0;
-    always #1 clk = ~clk;
+    always begin
+        #1 clk = ~clk;
+    end
 
     reg  [15:0] va [0:MAXV-1];
     reg  [15:0] vb [0:MAXV-1];
@@ -44,13 +46,20 @@ module khd_facc_tb;
  `define MX_MODEL 1
 `endif
 
-    // raw_e8/a_e8 DRIVEN, not left off: an unconnected input is `z`, `a_sel`
-    // muxes on it, and every result comes back X -- which reads as a dead RAM.
-    khd_f16_lane #(.PIPE_MUX(1), .MODEL(`MX_MODEL)) u_lane (
+    // EVERY INPUT DRIVEN, and the outputs named even when unused. An
+    // unconnected input is `z`, the op decode muxes on it, and every result
+    // comes back X -- which reads as a dead RAM rather than a missing pin. That
+    // was true of `raw_e8`/`a_e8` once and was true of `op` again here: the
+    // accumulate is an FMA and this bench never said so, so all 200 write-backs
+    // were X and all 16 partials read X.
+    localparam [4:0] FOP_FMA = 5'd6;
+
+    khs_float_lane #(.PIPE_MUX(1), .MODEL(`MX_MODEL)) u_lane (
         .clk(clk), .rst(!resetn),
-        .in_valid(in_valid), .a(a), .b(b), .c(rd_part),
+        .in_valid(in_valid), .op(FOP_FMA), .wide(1'b0),
+        .a({16'd0, a}), .b({16'd0, b}), .c(rd_part),
         .raw_e8(1'b0), .a_e8(24'd0),
-        .out_valid(lane_ovld), .out(lane_out)
+        .out_valid(lane_ovld), .out(lane_out), .out_pred()
     );
 
     reg  [3:0] fold_idx = 0;
@@ -58,14 +67,14 @@ module khd_facc_tb;
     wire [23:0] fold_part;
     wire        busy_sweep;
 
-    khd_facc #(.SLOTS(1), .NACC(1), .NPART(NPART), .ALAT(ALAT)) u_facc (
+    khs_facc #(.SLOTS(1), .NACC(1), .NPART(NPART), .ALAT(ALAT)) u_facc (
         .clk(clk), .resetn(resetn),
         .acc_valid(acc_valid), .acc_sel(1'b0),
         .rd_part(rd_part), .rd_idx(rd_idx),
         .wb_valid(lane_ovld), .wb_data(lane_out),
         .do_zero(do_zero), .do_seed(1'b0), .ctl_sel(1'b0), .seed_data(24'd0),
         .fold_sel(1'b0), .fold_idx(fold_idx), .fold_part(fold_part),
-        .busy_sweep(busy_sweep)
+        .busy_sweep(busy_sweep), .sweep_idx()
     );
 
     integer f, code, i, errors;
@@ -77,7 +86,7 @@ module khd_facc_tb;
         // end and the expectations read back as X. One record shape per file.
         f = $fopen({`PE_DIR, "/khd/f16/facc_ops.txt"}, "r");
         if (f == 0) begin
-            $display("FAIL: no vectors at %s/khd/f16 -- run python tests/pe/tools/khd_facc_vec.py",
+            $display("FAIL: no vectors at %s/khd/f16 -- run python tests/pe/tools/khs_facc_vec.py",
                      `PE_DIR);
             $finish;
         end
@@ -110,6 +119,12 @@ module khd_facc_tb;
         // read whatever the RAM powered up holding.
         @(negedge clk); do_zero = 1;
         @(negedge clk); do_zero = 0;
+        // RISE, THEN FALL. `busy_sweep` is `sweep`, which does not rise until
+        // the posedge after `do_zero` is sampled -- so a bare `wait
+        // (!busy_sweep)` is ALREADY TRUE and returns before the sweep starts.
+        // The 200 accumulates then ran on top of it, reading a RAM that had
+        // never been written, and all 16 partials came back X.
+        wait (busy_sweep);
         wait (!busy_sweep);
         repeat (2) @(posedge clk);
 
@@ -135,8 +150,12 @@ module khd_facc_tb;
             end
         end
 
-        if (errors == 0) $display("PASS -- %0d partials all correct", NPART);
-        else             $display("FAIL -- %0d of %0d partials wrong", errors, NPART);
+        if (errors == 0) begin
+            $display("PASS -- %0d partials all correct", NPART);
+        end
+        else begin
+            $display("FAIL -- %0d of %0d partials wrong", errors, NPART);
+        end
         $finish;
     end
 

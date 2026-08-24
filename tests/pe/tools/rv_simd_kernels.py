@@ -19,7 +19,7 @@ Three structural properties:
 ## The multiply problem, which is a finding
 
 The base core has no multiplier, so `a*b` for two runtime values is eight
-unrolled shift-add steps -- 48 instructions. A naive "DSP PE vs scalar" speedup
+unrolled shift-add steps -- 48 instructions. A naive "SIMD PE vs scalar" speedup
 would therefore mostly measure *owning a multiplier* rather than SIMD width.
 
 Every multiplying kernel has a `_nomul` twin: same loop, same loads, same
@@ -44,7 +44,7 @@ CK_DRAM = 0x1000        # where the result checksum lands, byte offset in DRAM
 XORSHIFT_SEED = 0x1234_5678
 
 # ---------------------------------------------------------- the vector side
-#: Lanes in the build being generated for. Set by rv_dsp_gen; the vector
+#: Lanes in the build being generated for. Set by rv_simd_gen; the vector
 #: kernels are written against it because a vector's byte count and its element
 #: count are both consequences of it, and a kernel generated for the wrong width
 #: is a program that faults rather than a program that is slow.
@@ -398,7 +398,7 @@ EPI_SHIFT = 7
 def k_epilogue():
     """Requantise epilogue: bias, ReLU, arithmetic shift, saturate, pack to int8.
 
-    The kernel 09B S4.4 asks about -- DSP PE or ship it to a vector core. Every
+    The kernel 09B S4.4 asks about -- SIMD PE or ship it to a vector core. Every
     step has a packed instruction (`padd`, `pmax`, `psra`, saturating `pack`)
     and nothing multiplies, so the scalar baseline is already tight.
 

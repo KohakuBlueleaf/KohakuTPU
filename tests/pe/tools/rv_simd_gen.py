@@ -1,9 +1,9 @@
 """Build the DSP workload suite: images, golden DRAM, and the kernel's own size.
 
-    python tests/pe/tools/rv_dsp_gen.py
+    python tests/pe/tools/rv_simd_gen.py
 
-Each case becomes tests/pe/build/dsp/dspNN/{prog,dram,dfin,meta}.hex, which
-tests/pe/tb/rv_dsp_tb.v walks in one simulation.
+Each case becomes tests/pe/build/simd/simdNN/{prog,dram,dfin,meta}.hex, which
+tests/pe/tb/rv_simd_tb.v walks in one simulation.
 
 The one thing this does that the other generators do not: **it counts the
 kernel's dynamic instructions**, by running the golden model and counting
@@ -22,9 +22,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from rv_asm import assemble, to_hex                             # noqa: E402
 from rv_model import Machine, DRAM_BASE                         # noqa: E402
 from rv_gen import SYMS, zero_regs, MASK32, _sum                # noqa: E402
-import rv_dsp_asm                                               # noqa: E402,F401
-from rv_dsp_model import DspMachine, VSPAD_BASE                 # noqa: E402
-import rv_dsp_kernels as K                                      # noqa: E402
+import rv_simd_asm                                               # noqa: E402,F401
+from rv_simd_model import DspMachine, VSPAD_BASE                 # noqa: E402
+import rv_simd_kernels as K                                      # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 
@@ -81,7 +81,9 @@ def build(outdir, simd):
         if cause != 1:
             raise SystemExit("case %s halted with cause %d, not ECALL" % (name, cause))
 
-        d = outdir / ("dsp%02d" % n)
+        # `simd%02d` is what rv_simd_tb.v opens; the dsp -> simd rename missed
+        # this prefix, so the bench read an empty imem and said NORETIRE.
+        d = outdir / ("simd%02d" % n)
         d.mkdir(exist_ok=True)
         (d / "prog.hex").write_text(to_hex(words))
         (d / "dram.hex").write_text(to_hex([0] * DRAM_WORDS))
@@ -90,7 +92,7 @@ def build(outdir, simd):
         (d / "meta.hex").write_text(to_hex(meta))
         (d / "name.txt").write_text(name + "\n")
         index.append((n, name, len(words), retired, kern_instr, ck, note))
-        print("  dsp%02d %-14s %5d words %8d retired %8d kernel instr  ck %08x"
+        print("  simd%02d %-14s %5d words %8d retired %8d kernel instr  ck %08x"
               % (n, name, len(words), retired, kern_instr, ck))
 
     # Bench-driven cases: only the image, because what they read arrives from
@@ -115,7 +117,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--simd", type=int, default=8, choices=(2, 4, 8))
     ap.add_argument("--out",
-                    default=str(ROOT / "tests" / "pe" / "build" / "dsp"))
+                    default=str(ROOT / "tests" / "pe" / "build" / "simd"))
     a = ap.parse_args()
     build(a.out, a.simd)
 

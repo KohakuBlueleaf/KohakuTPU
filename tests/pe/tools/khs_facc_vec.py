@@ -1,6 +1,6 @@
-"""Vectors for `khd_facc_tb` and `khd_ffold_tb`.
+"""Vectors for `khs_facc_tb` and `khs_ffold_tb`.
 
-    python tests/pe/tools/khd_facc_vec.py <ops.txt> <exp.txt> [nops] [npart]
+    python tests/pe/tools/khs_facc_vec.py <ops.txt> <exp.txt> [nops] [npart]
 
 TWO FILES, ONE RECORD SHAPE EACH. `$fscanf("%h %h")` treats a newline as
 ordinary whitespace, so a single-value expectation line following the operand
@@ -14,7 +14,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-import rv_dsp_f16 as F                                           # noqa: E402
+import rv_simd_f16 as F                                           # noqa: E402
 
 #: E8M15 1.0 -- the fold multiplies a partial by it, so the fold and the
 #: accumulate share one lane and one rounding.
@@ -76,7 +76,7 @@ def fold(part):
     """Partial 0 first, then 1, and so on -- the order is the ISA's.
 
     Float addition does not associate, so the loop direction is contract and
-    `khd_ffold` walks it the same way.
+    `khs_ffold` walks it the same way.
     """
     total = 0
     for p in part:
@@ -85,8 +85,8 @@ def fold(part):
 
 
 def main():
-    op_path = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "khd_facc_ops.txt")
-    ex_path = pathlib.Path(sys.argv[2] if len(sys.argv) > 2 else "khd_facc_exp.txt")
+    op_path = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "khs_facc_ops.txt")
+    ex_path = pathlib.Path(sys.argv[2] if len(sys.argv) > 2 else "khs_facc_exp.txt")
     nops = int(sys.argv[3]) if len(sys.argv) > 3 else 200
     npart = int(sys.argv[4]) if len(sys.argv) > 4 else 16
 

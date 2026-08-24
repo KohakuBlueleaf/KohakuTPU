@@ -1,8 +1,8 @@
-"""Vectors for `khd_f16_lane_tb`: a, b, c and what the model says a*b+c is.
+"""Vectors for `khs_float_lane_tb`: a, b, c and what the model says a*b+c is.
 
-    python tests/pe/tools/khd_f16_vec.py <out.txt> [count]
+    python tests/pe/tools/khs_float_vec.py <out.txt> [count]
 
-The expected column comes from `rv_dsp_f16.e8_fma`, which is written from the
+The expected column comes from `rv_simd_f16.e8_fma`, which is written from the
 definition -- multiply exactly, add exactly, round once -- and never from a
 pipeline. So the bench is not checking that the RTL matches a transcription of
 itself; it is checking that a fourteen-stage float lane computes the correctly
@@ -21,7 +21,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-import rv_dsp_f16 as F                                           # noqa: E402
+import rv_simd_f16 as F                                           # noqa: E402
 
 EDGE_F16 = [0x0000, 0x8000, 0x3C00, 0xBC00, 0x7BFF, 0xFBFF,
             0x0400, 0x8400, 0x0001, 0x8001, 0x03FF, 0x3555]
@@ -58,7 +58,7 @@ def gen(n, seed=0x5F16):
 
 
 def main():
-    path = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "khd_f16_vec.txt")
+    path = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "khs_float_vec.txt")
     n = int(sys.argv[2]) if len(sys.argv) > 2 else 4000
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = gen(n)

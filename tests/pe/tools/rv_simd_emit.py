@@ -1,7 +1,7 @@
 """Render the field table into the RTL decode header and the C intrinsics.
 
-    python tests/pe/tools/rv_dsp_emit.py           # write them
-    python tests/pe/tools/rv_dsp_emit.py --check   # fail if they have drifted
+    python tests/pe/tools/rv_simd_emit.py           # write them
+    python tests/pe/tools/rv_simd_emit.py --check   # fail if they have drifted
 
 Two of the field table's four consumers are generated files, which is what makes
 "one source of truth" enforceable rather than aspirational: `--check` is a
@@ -20,16 +20,16 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-import rv_dsp_isa as I                                          # noqa: E402
-import rv_dsp_isa_f as IF                                       # noqa: E402
+import rv_simd_isa as I                                          # noqa: E402
+import rv_simd_isa_f as IF                                       # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
-GEN = ROOT / "src" / "kohakuaccel" / "pe" / "rv32" / "dsp" / "generated"
-VH = GEN / "khd_isa.vh"
-CH = GEN / "khd_intrin.h"
+GEN = ROOT / "src" / "kohakuaccel" / "pe" / "rv32" / "simd" / "generated"
+VH = GEN / "khs_isa.vh"
+CH = GEN / "khs_intrin.h"
 
-BANNER = ("GENERATED from tests/pe/tools/rv_dsp_isa.py -- DO NOT EDIT.\n"
-          "Regenerate with `python tests/pe/tools/rv_dsp_emit.py`; the ISA test\n"
+BANNER = ("GENERATED from tests/pe/tools/rv_simd_isa.py -- DO NOT EDIT.\n"
+          "Regenerate with `python tests/pe/tools/rv_simd_emit.py`; the ISA test\n"
           "regenerates and compares, so a hand edit here fails rather than\n"
           "quietly disagreeing with the assembler and the golden model.")
 
@@ -38,17 +38,21 @@ BANNER = ("GENERATED from tests/pe/tools/rv_dsp_isa.py -- DO NOT EDIT.\n"
 GROUP = {(I.OPC_KHD, I.F3_VINT): "INT", (I.OPC_KHD, I.F3_VBIT): "BIT",
          (I.OPC_KHD, I.F3_VSHI): "SH",  (I.OPC_KHD, I.F3_VMAC): "MAC",
          (I.OPC_KHD, I.F3_VMOV): "MOV", (I.OPC_KHD, I.F3_VPRM): "PRM",
-         (I.OPC_KHF, IF.F3_FMAC): "FMAC", (I.OPC_KHF, IF.F3_FRED): "FRED"}
+         (I.OPC_KHF, IF.F3_FMAC): "FMAC", (I.OPC_KHF, IF.F3_FRED): "FRED",
+         (I.OPC_KHF, IF.F3_FCVT): "FCVT", (I.OPC_KHF, IF.F3_FALU): "FALU",
+         (I.OPC_KHF, IF.F3_FSFU): "FSFU"}
 
 #: How each group packs its funct7. The permute group spends three bits on a
 #: lane index because `vsldw` needs one and an R-type has no field left.
 SHIFT = {(I.OPC_KHD, I.F3_VINT): 2, (I.OPC_KHD, I.F3_VSHI): 2,
          (I.OPC_KHD, I.F3_VMAC): 2, (I.OPC_KHD, I.F3_VPRM): 3,
          (I.OPC_KHD, I.F3_VBIT): 0, (I.OPC_KHD, I.F3_VMOV): 0,
-         (I.OPC_KHF, IF.F3_FMAC): 2, (I.OPC_KHF, IF.F3_FRED): 2}
+         (I.OPC_KHF, IF.F3_FMAC): 2, (I.OPC_KHF, IF.F3_FRED): 2,
+         (I.OPC_KHF, IF.F3_FCVT): 2, (I.OPC_KHF, IF.F3_FALU): 2,
+         (I.OPC_KHF, IF.F3_FSFU): 2}
 
 #: The identifier prefix each opcode major's constants carry.
-PREFIX = {I.OPC_KHD: "KHD", I.OPC_KHF: "KHF"}
+PREFIX = {I.OPC_KHD: "KHS", I.OPC_KHF: "KHF"}
 
 
 def _ident(name):
@@ -58,6 +62,10 @@ def _ident(name):
         base = "sldw"
     if base.split(".")[0] in ("pack", "unpkl", "unpkh"):
         return base.replace(".", "_").upper()
+    # `fcvt` names its direction in the SECOND field -- f2i, i2f, f2f -- so the
+    # stem alone would collide all three onto one identifier.
+    if base.startswith("fcvt.") and base.count(".") >= 2:
+        return "FCVT_" + base.split(".")[1].upper()
     return base.split(".")[0].upper()
 
 
@@ -83,26 +91,33 @@ def verilog():
         "// 10-bit case would put the element width behind a decoder on the",
         "// operand path, which is where this core can least afford one.",
         "",
-        "localparam [6:0] KHD_OPCODE = 7'h%02x;   // RISC-V custom-0" % I.OPC_KHD,
+        "localparam [6:0] KHS_OPCODE = 7'h%02x;   // RISC-V custom-0" % I.OPC_KHD,
         "localparam [6:0] KHF_OPCODE = 7'h%02x;   // custom-1, reserved to the float tiers"
         % I.OPC_KHF,
         "",
         "// funct3: the group",
     ]
     for i, g in enumerate(I.groups()):
-        L.append("localparam [2:0] KHD_F3_%-5s = 3'd%d;" % (g, i))
+        L.append("localparam [2:0] KHS_F3_%-5s = 3'd%d;" % (g, i))
     L += ["", "// funct7[1:0]: the element type of a typed group"]
     for v, n in ((I.ET_S8, "S8"), (I.ET_S16, "S16"), (I.ET_S32, "S32")):
-        L.append("localparam [1:0] KHD_ET_%-3s = 2'd%d;   // %d-bit elements"
+        L.append("localparam [1:0] KHS_ET_%-3s = 2'd%d;   // %d-bit elements"
                  % (n, v, I.ET_BITS[v]))
 
     L += ["", "// funct3: the float tier's groups, on custom-1"]
     for nm, v in (("FMAC", IF.F3_FMAC), ("FRED", IF.F3_FRED),
-                  ("FCVT", IF.F3_FCVT)):
+                  ("FCVT", IF.F3_FCVT), ("FALU", IF.F3_FALU),
+                  ("FSFU", IF.F3_FSFU)):
         L.append("localparam [2:0] KHF_F3_%-5s = 3'd%d;" % (nm, v))
     L += ["", "// funct7[1:0]: the float element type"]
     for v, n in ((IF.FT_F16, "F16"), (IF.FT_F32, "F32")):
         L.append("localparam [1:0] KHF_FT_%-3s = 2'd%d;" % (n, v))
+
+    L += ["",
+          "// vec_alu's own opcodes, forwarded by khs_float_lane. A FALU or FSFU",
+          "// instruction maps onto exactly one of these."]
+    for n, v in sorted(IF.VEC_OP.items(), key=lambda kv: kv[1]):
+        L.append("localparam [4:0] KHS_FOP_%-6s = 5'd%d;" % (n, v))
 
     for key, ops in sorted(ops_by_group().items()):
         opc, g = key
@@ -169,7 +184,7 @@ def _asm_line(op):
             parts.append(("lit", ", "))
         parts += slots.get(field, [("lit", "x0")])
     return (_cat(parts),
-            ['"=r"(_khd_r)' for _ in outs],
+            ['"=r"(_khs_r)' for _ in outs],
             ['"r"(%s)' % o.name for o in ins],
             False)
 
@@ -207,17 +222,17 @@ def c_header():
         " * core whose multi-cycle ops stall in the existing hazard unit that",
         " * costs little; it is the honest price of the no-fork path.",
         " */",
-        "#ifndef KHD_INTRIN_H",
-        "#define KHD_INTRIN_H",
+        "#ifndef KHS_INTRIN_H",
+        "#define KHS_INTRIN_H",
         "",
         "#include <stdint.h>",
         "",
-        "#define KHD_VSPAD_BASE 0x40000000u",
+        "#define KHS_VSPAD_BASE 0x40000000u",
         "",
     ]
     for name, op in I.ISA.items():
         tmpl, outs, ins, is_mem = _asm_line(op)
-        cname = "khd_" + name.replace(".", "_")
+        cname = "khs_" + name.replace(".", "_")
         if is_mem:
             args = [op.operands[0].name, "p", "imm"]
         else:
@@ -228,9 +243,9 @@ def c_header():
         if outs:
             L += [
                 "#define %s(%s) ({ \\" % (cname, ", ".join(args)),
-                "    int32_t _khd_r; \\",
+                "    int32_t _khs_r; \\",
                 _asm_stmt(tmpl, outs, ins, clob, "    ") + "; \\",
-                "    _khd_r; })",
+                "    _khs_r; })",
             ]
         else:
             L += [
@@ -238,7 +253,7 @@ def c_header():
                 _asm_stmt(tmpl, outs, ins, clob, "    "),
             ]
         L.append("")
-    L += ["#endif /* KHD_INTRIN_H */", ""]
+    L += ["#endif /* KHS_INTRIN_H */", ""]
     return "\n".join(L)
 
 

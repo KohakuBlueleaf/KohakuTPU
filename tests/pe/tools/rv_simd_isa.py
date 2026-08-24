@@ -1,8 +1,8 @@
-"""The KohakuDSP instruction set: ONE field table, four consumers.
+"""The KohakuSIMD instruction set: ONE field table, four consumers.
 
 The four are the Python assembler (`rv_asm.py`), the golden model
-(`rv_dsp_model.py`), the RTL decode (`khd_isa.vh`, generated from here) and the
-C intrinsic header (`khd_intrin.h`, likewise). `rv_dsp_isa_test.py` proves they
+(`rv_simd_model.py`), the RTL decode (`khs_isa.vh`, generated from here) and the
+C intrinsic header (`khs_intrin.h`, likewise). `rv_simd_isa_test.py` proves they
 agree bit for bit, which is what makes "one source of truth" true rather than
 intended.
 
@@ -85,6 +85,12 @@ ET_BITS = {ET_S8: 8, ET_S16: 16, ET_S32: 32}
 #: file is a parameter change and never an encoding change.
 VREGS = 8
 NACC = 2
+#: 32-bit slots per vector register. `vextr`'s `sh` is a LANE INDEX and khs_unit
+#: faults on one at or above this, so the assembler refuses it here rather than
+#: letting a program assemble and then fault. It used to be defined as
+#: `sh % SIMD`, which made one encoding name different elements on different
+#: builds -- the ISA knowing the width.
+SIMD = 8
 
 
 @dataclass(frozen=True)
@@ -237,9 +243,9 @@ _add("vunpkh.s16", F3_VPRM, (6 << 3), (VD, VS1), "vd <- vs1's high int16s, widen
 
 # ------------------------------------------------------------- the float tier
 # Custom-1, and held in its own module so the integer table stays readable.
-import rv_dsp_isa_f                                                  # noqa: E402
+import rv_simd_isa_f                                                  # noqa: E402
 
-rv_dsp_isa_f.register(_add, {"AD": AD, "VS1": VS1, "VS2": VS2,
+rv_simd_isa_f.register(_add, {"AD": AD, "VS1": VS1, "VS2": VS2,
                              "VD": VD, "AS1": AS1, "XD": XD})
 
 
@@ -261,6 +267,9 @@ def encode(name, **operands) -> int:
         if o.kind == "areg" and not 0 <= v < NACC:
             raise ISAError("%s: %s is a%d, but this build has %d accumulators"
                            % (name, o.name, v, NACC))
+        if name == "vextr" and o.name == "sh" and not 0 <= v < SIMD:
+            raise ISAError("%s: lane %d, but this build has %d lanes"
+                           % (name, v, SIMD))
         fields[o.field] = v
     for f in op.fmt.settable():
         fields.setdefault(f, 0)
@@ -268,7 +277,7 @@ def encode(name, **operands) -> int:
 
 
 def decode(word: int):
-    """``(name, {operand: value})``, or None if no KohakuDSP format claims it."""
+    """``(name, {operand: value})``, or None if no KohakuSIMD format claims it."""
     opc = word & 0x7F
     if opc not in (OPC_KHD, OPC_KHF):
         return None
@@ -288,7 +297,7 @@ def decode(word: int):
 
 
 def is_khd(word: int) -> bool:
-    """Any KohakuDSP instruction, integer tier or float."""
+    """Any KohakuSIMD instruction, integer tier or float."""
     return (word & 0x7F) in (OPC_KHD, OPC_KHF)
 
 

@@ -1,6 +1,6 @@
 """E8M15 and its conversions, bit-exact, as the float tier's reference.
 
-The DSP PE's float tier keeps FP16 in the register file and computes in E8M15,
+The SIMD PE's float tier keeps FP16 in the register file and computes in E8M15,
 exactly as the vector core does at its own load and store edges. A golden model
 for that tier therefore has to reproduce `vec_cvt.v` bit for bit -- not
 approximately, and never as float64 with a tolerance, because a tolerance hides
@@ -300,7 +300,7 @@ def e8_fma_hw(a: int, b: int, c: int) -> int:
 # ------------------------------------- the product, in accumulator format
 
 def f16_prod_acc(a_f16: int, b_f16: int, mw: int = 16) -> int:
-    """FP16 x FP16 -> S1 E7 M<mw>, following khd_f16_prod.v step for step.
+    """FP16 x FP16 -> S1 E7 M<mw>, following khs_float_prod.v step for step.
 
     This mirrors the RTL rather than the definition ON PURPOSE: `prod_acc_exact`
     below is the definition, and the two are compared. A single model would
@@ -543,7 +543,7 @@ def selftest() -> int:
             if bad < 20:
                 print("  fma: %04x %04x %04x -> %r want %r" % (fa, fb, fc, gotv, want))
 
-    # 4. khd_f16_prod's algorithm against the exact product, at both mantissa
+    # 4. khs_float_prod's algorithm against the exact product, at both mantissa
     #    widths. The RTL normalises with a one-bit shift because a product of
     #    two normalised significands can only be [1,4); if that reasoning is
     #    wrong anywhere, these disagree.

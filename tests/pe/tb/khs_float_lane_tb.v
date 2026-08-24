@@ -1,4 +1,4 @@
-// khd_f16_lane_tb -- the float tier's arithmetic against the golden model,
+// khs_float_lane_tb -- the float tier's arithmetic against the golden model,
 // bit for bit.
 //
 // It answers the one question the model cannot answer about itself: the model's
@@ -7,7 +7,11 @@
 // window and its own specials. Those two agreeing is a claim, and this is the
 // test of it.
 //
-// Vectors come from tests/pe/tools/khd_f16_vec.py: a, b, c and the expected
+// THIS RUNS THE FP16 EDGE. `wide` is tied 0 here because the vectors are FP16
+// triples; the FP32 edge is exercised end to end by the SIMT PE's gpu_f32
+// shader, which carries the range and truncation witnesses.
+//
+// Vectors come from tests/pe/tools/khs_float_vec.py: a, b, c and the expected
 // result, one per line, hex. A mismatch prints all four so the failing triple
 // can be reproduced in Python directly.
 
@@ -18,12 +22,14 @@
  `define PE_DIR "../../tests/pe/build"
 `endif
 
-module khd_f16_lane_tb;
+module khs_float_lane_tb;
     localparam integer MAXV = 20000;
     localparam integer ALAT = 15;       // vec_alu at PIPE_MUX=1, plus nothing
 
     reg clk = 0, rst = 1;
-    always #1 clk = ~clk;
+    always begin
+        #1 clk = ~clk;
+    end
 
     reg  [15:0] va [0:MAXV-1];
     reg  [15:0] vb [0:MAXV-1];
@@ -46,11 +52,17 @@ module khd_f16_lane_tb;
 
     // raw_e8/a_e8 DRIVEN: this bench was green until the fold's raw operand
     // path landed on the lane, and an unconnected input is `z`, so a_sel went X.
-    khd_f16_lane #(.PIPE_MUX(1), .MODEL(MODEL)) u_dut (
+    // FMA, because these vectors are FMA triples. The elementwise group's other
+    // operations are the SAME lane with a different `op`, and khs_falu is where
+    // that selection lives; this bench is about the arithmetic under it.
+    localparam [4:0] FOP_FMA = 5'd6;
+
+    khs_float_lane #(.PIPE_MUX(1), .MODEL(MODEL)) u_dut (
         .clk(clk), .rst(rst),
-        .in_valid(in_valid), .a(a), .b(b), .c(c),
+        .in_valid(in_valid), .op(FOP_FMA), .wide(1'b0),
+        .a({16'd0, a}), .b({16'd0, b}), .c(c),
         .raw_e8(1'b0), .a_e8(24'd0),
-        .out_valid(out_valid), .out(out)
+        .out_valid(out_valid), .out(out), .out_pred()
     );
 
     // Results correlate by ORDER, not by a delay line. The lane is in-order at
@@ -64,7 +76,7 @@ module khd_f16_lane_tb;
     initial begin
         f = $fopen({`PE_DIR, "/khd/f16/lane.txt"}, "r");
         if (f == 0) begin
-            $display("FAIL: no vectors at %s/khd/f16 -- run python tests/pe/tools/khd_f16_vec.py",
+            $display("FAIL: no vectors at %s/khd/f16 -- run python tests/pe/tools/khs_float_vec.py",
                      `PE_DIR);
             $finish;
         end
@@ -107,12 +119,15 @@ module khd_f16_lane_tb;
 
         repeat (ALAT + 8) @(posedge clk);
 
-        if (retired != nvec)
+        if (retired != nvec) begin
             $display("FAIL: %0d of %0d results came back", retired, nvec);
-        if (errors == 0 && retired == nvec)
+        end
+        if (errors == 0 && retired == nvec) begin
             $display("PASS -- %0d vectors, 0 mismatches", nvec);
-        else
+        end
+        else begin
             $display("FAIL -- %0d mismatches of %0d", errors, retired);
+        end
         $finish;
     end
 
@@ -122,9 +137,10 @@ module khd_f16_lane_tb;
         if (k < nvec) begin
             if (out !== vy[k]) begin
                 errors = errors + 1;
-                if (errors <= 20)
+                if (errors <= 20) begin
                     $display("  MISMATCH %0d: a=%04h b=%04h c=%06h -> %06h want %06h",
                              k, va[k], vb[k], vc[k], out, vy[k]);
+                end
             end
         end
         retired = retired + 1;

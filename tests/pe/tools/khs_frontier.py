@@ -1,6 +1,6 @@
-"""Measure one KohakuDSP configuration at several clock targets; append the rows.
+"""Measure one KohakuSIMD configuration at several clock targets; append the rows.
 
-    python tests/pe/tools/khd_frontier.py --csv <dir>/matrix.csv \
+    python tests/pe/tools/khs_frontier.py --csv <dir>/matrix.csv \
         --work build/ooc/khd --config s8 --targets 5.0,3.333,2.5
 
 A row is (configuration x clock target), not a configuration, because **LUT is
@@ -33,11 +33,11 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 VIVADO = pathlib.Path(r"D:\Xilinx\Vivado\2024.2\bin\vivado.bat")
-TCL = ROOT / "scripts" / "tcl" / "ooc_khd.tcl"
-RUN = ROOT / "tests" / "pe" / "tools" / "khd_run.py"
+TCL = ROOT / "scripts" / "tcl" / "ooc_khs.tcl"
+RUN = ROOT / "tests" / "pe" / "tools" / "khs_run.py"
 
 #: name -> simd, vregs, nacc, vspad, muls, shift, perm, wb, use_dsp, vreg_prim,
-#: f16, npart. NPART is ARCHITECTURAL -- float addition does not associate, so
+#: float, npart. NPART is ARCHITECTURAL -- float addition does not associate, so
 #: two builds with different counts compute different answers on one program.
 CONFIGS = {
     # the width sweep: 09 S27's Stage 2 question, at equal everything else
@@ -64,13 +64,13 @@ CONFIGS = {
 for _n, _c in list(CONFIGS.items()):
     CONFIGS[_n] = _c + (0, 0)
 
-#: The float tier. `s8-f16only` answers whether a float-only DSP PE is a thing;
-#: `s8-f16-a4` prices the rotation contract in accumulators.
+#: The float tier. `s8-floatonly` answers whether a float-only SIMD PE is a thing;
+#: `s8-float-a4` prices the rotation contract in accumulators.
 CONFIGS.update({
-    "s8-f16":     (8, 8, 2, 1024, 4, 1, 1, 0, "yes", "distributed", 1, 16),
-    "s8-f16-a4":  (8, 8, 4, 1024, 4, 1, 1, 0, "yes", "distributed", 1, 16),
-    "s8-f16only": (8, 8, 2, 1024, 2, 0, 0, 0, "yes", "distributed", 1, 16),
-    "s4-f16":     (4, 8, 2, 1024, 4, 1, 1, 0, "yes", "distributed", 1, 16),
+    "s8-float":     (8, 8, 2, 1024, 4, 1, 1, 0, "yes", "distributed", 1, 16),
+    "s8-float-a4":  (8, 8, 4, 1024, 4, 1, 1, 0, "yes", "distributed", 1, 16),
+    "s8-floatonly": (8, 8, 2, 1024, 2, 0, 0, 0, "yes", "distributed", 1, 16),
+    "s4-float":     (4, 8, 2, 1024, 4, 1, 1, 0, "yes", "distributed", 1, 16),
 })
 
 #: Declared RTL revisions. A row carries the one it was measured on, and a name
@@ -79,7 +79,7 @@ CONFIGS.update({
 #: after it, and an unlabelled row is not a measurement.
 REVISIONS = {
     "r1": "first datapath: decode in MEM, HAS_SHIFT refused the encoding only",
-    "r2": "decode registered at EX->MEM; HAS_SHIFT removes khd_pshift32",
+    "r2": "decode registered at EX->MEM; HAS_SHIFT removes khs_pshift32",
     "r3": "WB_STAGE parameter: the vector file may be written a cycle later",
     "r4": "SWAR adder (one native carry chain); the rounding shift gets its own",
     "r5": "vdot at II=1 back to back; the scalar store moves off the NoC's "
@@ -101,7 +101,7 @@ FIELDS = [
     "rtl", "config", "target_ns", "fmax_mhz", "slack_ns", "levels",
     "lut", "lut_logic", "lutram", "ff", "bram", "dsp", "ctrlsets",
     "simd", "vregs", "nacc", "vspad", "muls", "shift", "perm", "wb",
-    "f16", "npart",
+    "float", "npart",
     "use_dsp", "vreg_prim", "gates", "binding_path",
 ]
 
@@ -128,10 +128,10 @@ def take_lock(work_root):
 
 def run_ooc(cfg, target, work):
     (simd, vregs, nacc, vspad, muls, sh, pm, wb, udsp, vprm,
-     f16, npart) = CONFIGS[cfg]
+     flt, npart) = CONFIGS[cfg]
     work.mkdir(parents=True, exist_ok=True)
     args = [simd, vregs, nacc, vspad, muls, sh, pm, udsp, vprm, target, wb,
-            f16, npart]
+            flt, npart]
     cmd = [str(VIVADO), "-mode", "batch", "-notrace", "-source", str(TCL),
            "-tclargs"] + [str(x) for x in args]
     log = work / "vivado.log"
@@ -165,7 +165,7 @@ def run_ooc(cfg, target, work):
 
 def run_gate(cfg, wall):
     (simd, vregs, nacc, _vspad, muls, sh, pm, wb, _udsp, vprm,
-     f16, _npart) = CONFIGS[cfg]
+     flt, _npart) = CONFIGS[cfg]
     cmd = [sys.executable, str(RUN), "--simd", str(simd), "--muls", str(muls),
            "--vregs", str(vregs), "--nacc", str(nacc), "--wall", str(wall),
            "--vreg-prim", vprm, "--wb-stage", str(wb)]
@@ -173,8 +173,8 @@ def run_gate(cfg, wall):
         cmd.append("--no-shift")
     if not pm:
         cmd.append("--no-perm")
-    if f16:
-        cmd.append("--f16")
+    if flt:
+        cmd.append("--float")
     r = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True,
                        check=False)
     return "PASS" if r.returncode == 0 else "FAIL", r.stdout
@@ -200,7 +200,7 @@ def main():
     atexit.register(lambda: lock.unlink(missing_ok=True))
 
     (simd, vregs, nacc, vspad, muls, sh, pm, wb, udsp, vprm,
-     f16, npart) = CONFIGS[a.config]
+     flt, npart) = CONFIGS[a.config]
 
     if a.no_gates:
         gates = "not run"
@@ -229,7 +229,7 @@ def main():
                    "gates": gates,
                    "simd": simd, "vregs": vregs, "nacc": nacc, "vspad": vspad,
                    "muls": muls, "shift": sh, "perm": pm, "wb": wb,
-                   "f16": f16, "npart": npart,
+                   "float": flt, "npart": npart,
                    "use_dsp": udsp, "vreg_prim": vprm}
             row.update(got)
             w.writerow(row)

@@ -1,9 +1,9 @@
-"""Assembler support for the KohakuDSP instructions.
+"""Assembler support for the KohakuSIMD instructions.
 
 Importing this module registers a handler with `rv_asm`, so any program the
 existing tooling assembles can use vector instructions with no other change:
 
-    import rv_dsp_asm            # noqa: F401  -- registers the handler
+    import rv_simd_asm            # noqa: F401  -- registers the handler
     words, syms = assemble(src, base=0, symbols=SYMS)
 
 Syntax follows the base assembler's, with two register namespaces added:
@@ -31,7 +31,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import rv_asm                                                   # noqa: E402
 from rv_asm import AsmError, _reg, _memop, _imm                 # noqa: E402
-import rv_dsp_isa as I                                          # noqa: E402
+import rv_simd_isa as I                                          # noqa: E402
 
 
 def _vreg(tok):

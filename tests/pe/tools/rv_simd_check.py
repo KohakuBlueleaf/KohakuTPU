@@ -1,6 +1,6 @@
 """Check each workload against an INDEPENDENT Python implementation.
 
-    python tests/pe/tools/rv_dsp_check.py
+    python tests/pe/tools/rv_simd_check.py
 
 The golden model executing the suite's assembly proves the assembly is
 self-consistent. It does not prove the assembly computes a dot product. This
@@ -18,9 +18,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from rv_asm import assemble                                     # noqa: E402
 from rv_gen import SYMS, zero_regs, MASK32                      # noqa: E402
-import rv_dsp_asm                                               # noqa: E402,F401
-from rv_dsp_model import DspMachine, VSPAD_BASE                 # noqa: E402
-import rv_dsp_kernels as K                                      # noqa: E402
+import rv_simd_asm                                               # noqa: E402,F401
+from rv_simd_model import DspMachine, VSPAD_BASE                 # noqa: E402
+import rv_simd_kernels as K                                      # noqa: E402
 
 SPAD_WORDS = 2048
 SIMD = 8
@@ -243,11 +243,11 @@ def check_f16_dot():
     What this checks is the KERNEL and the path through it -- the loop, the
     ordering, the instruction semantics, the model's execution. The primitive
     itself is checked twice elsewhere and neither is against itself: bit for bit
-    against the RTL in `khd_f16_lane_tb`, and against exact arithmetic in
-    `rv_dsp_f16.selftest`, which is what quantifies the lane's one-ulp
+    against the RTL in `khs_float_lane_tb`, and against exact arithmetic in
+    `rv_simd_f16.selftest`, which is what quantifies the lane's one-ulp
     subtractive deviation rather than hiding it.
     """
-    import rv_dsp_f16 as F
+    import rv_simd_f16 as F
     n_vec, npart = 8, 16
     slots = 2 * SIMD
 

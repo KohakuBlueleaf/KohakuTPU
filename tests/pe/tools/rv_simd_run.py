@@ -1,7 +1,7 @@
 """Generate, simulate and report the DSP workload suite in one command.
 
-    python tests/pe/tools/rv_dsp_run.py
-    python tests/pe/tools/rv_dsp_run.py --csv <dir>/phase0.csv
+    python tests/pe/tools/rv_simd_run.py
+    python tests/pe/tools/rv_simd_run.py --csv <dir>/phase0.csv
 
 Prints a table of kernel cycles, kernel instructions and CPI, with the timing
 bracket's own cost (`nullkern`) subtracted from every row -- so a number here is
@@ -22,7 +22,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 TOOLS = ROOT / "tests" / "pe" / "tools"
 XSIM = ROOT / "scripts" / "py" / "xsim.py"
-INDEX = ROOT / "tests" / "pe" / "build" / "dsp" / "index.txt"
+INDEX = ROOT / "tests" / "pe" / "build" / "simd" / "index.txt"
 
 ROW = re.compile(r"@@@ DSP (\d+) cycles (\d+) kinstr (\d+) retired (\d+) "
                  r"total (\d+) (\S+)")
@@ -40,7 +40,7 @@ def main():
     a = ap.parse_args()
 
     if not a.no_gen:
-        if subprocess.run([sys.executable, str(TOOLS / "rv_dsp_gen.py"),
+        if subprocess.run([sys.executable, str(TOOLS / "rv_simd_gen.py"),
                            "--simd", str(a.simd)],
                           cwd=str(ROOT), check=False).returncode:
             return 1
@@ -56,7 +56,7 @@ def main():
     # kernel generated for eight lanes faults on a four-lane build rather than
     # running slowly.
     cmd = [sys.executable, str(XSIM), "rv_dsp", "--wall", str(a.wall),
-           "-d", "RV_DSP_SIMD=%d" % a.simd]
+           "-d", "RV_SIMD_LANES=%d" % a.simd]
     for d in a.define:
         cmd += ["-d", d]
     r = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True,

@@ -1,6 +1,6 @@
 """Prove the field table's four consumers agree, bit for bit.
 
-    python tests/pe/tools/rv_dsp_isa_test.py
+    python tests/pe/tools/rv_simd_isa_test.py
 
 The four are the Python assembler, the golden model, the generated RTL decode
 header and the generated C intrinsic header. "One source of truth" means
@@ -28,11 +28,11 @@ import sys
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import rv_dsp_asm                                               # noqa: E402,F401
-import rv_dsp_isa as I                                          # noqa: E402
-import rv_dsp_emit as E                                         # noqa: E402
+import rv_simd_asm                                               # noqa: E402,F401
+import rv_simd_isa as I                                          # noqa: E402
+import rv_simd_emit as E                                         # noqa: E402
 from rv_asm import assemble                                     # noqa: E402
-from rv_dsp_model import DspMachine                             # noqa: E402
+from rv_simd_model import DspMachine                             # noqa: E402
 from rv_model import Halt                                       # noqa: E402
 
 FAIL = []
@@ -106,7 +106,7 @@ def main():
           % (len(m.vcount), len(I.ISA)))
 
     # 4. the generated files still match the table
-    rc = subprocess.run([sys.executable, str(HERE / "rv_dsp_emit.py"), "--check"],
+    rc = subprocess.run([sys.executable, str(HERE / "rv_simd_emit.py"), "--check"],
                         capture_output=True, text=True, check=False)
     check(rc.returncode == 0, "generated files: %s" % rc.stdout.strip())
 
@@ -118,19 +118,19 @@ def main():
             pat = r"%s_%s_%s\s*=\s*\d+'d(\d+)\s*;" % (pfx, E.GROUP[key], ident)
             m2 = re.search(pat, vh)
             check(m2 is not None and int(m2.group(1)) == val,
-                  "khd_isa.vh: %s_%s_%s should be %d"
+                  "khs_isa.vh: %s_%s_%s should be %d"
                   % (pfx, E.GROUP[key], ident, val))
 
     # 6. every C macro names the same opcode, group, funct7 and operand order
     ch = E.CH.read_text()
-    RT = re.compile(r'^#define khd_(\S+?)\((.*?)\)', re.M)
+    RT = re.compile(r'^#define khs_(\S+?)\((.*?)\)', re.M)
     INSN_R = re.compile(r'\.insn r 0x([0-9a-f]+), (\d+), 0x([0-9a-f]+), (.*?)"?\s*(?::|\)|$)')
     INSN_I = re.compile(r'\.insn i 0x([0-9a-f]+), (\d+), x')
     seen = set()
     for m3 in RT.finditer(ch):
         cname = m3.group(1)
         name = next((n for n in I.ISA if n.replace(".", "_") == cname), None)
-        check(name is not None, "khd_intrin.h: khd_%s is not in the table" % cname)
+        check(name is not None, "khs_intrin.h: khs_%s is not in the table" % cname)
         if name is None:
             continue
         seen.add(name)
@@ -140,15 +140,15 @@ def main():
             mi = INSN_I.search(body)
             check(mi is not None and int(mi.group(1), 16) == op.opcode
                   and int(mi.group(2)) == op.group,
-                  "khd_intrin.h: %s has the wrong opcode or group" % name)
+                  "khs_intrin.h: %s has the wrong opcode or group" % name)
             continue
         mr = INSN_R.search(body)
-        check(mr is not None, "khd_intrin.h: %s has no `.insn r`" % name)
+        check(mr is not None, "khs_intrin.h: %s has no `.insn r`" % name)
         if mr is None:
             continue
         check(int(mr.group(1), 16) == op.opcode and int(mr.group(2)) == op.group
               and int(mr.group(3), 16) == op.funct7,
-              "khd_intrin.h: %s encodes 0x%s/%s/0x%s, table says 0x%02x/%d/0x%02x"
+              "khs_intrin.h: %s encodes 0x%s/%s/0x%s, table says 0x%02x/%d/0x%02x"
               % (name, mr.group(1), mr.group(2), mr.group(3),
                  op.opcode, op.group, op.funct7))
         # operand order: the rd / rs1 / rs2 slots in the template, in order
@@ -162,10 +162,10 @@ def main():
                 ("x0" if s == "x0" else re.sub(r'^x"\s*#|\s*"$', "", s)))
                for s in slots]
         check(got == want,
-              "khd_intrin.h: %s operand order is %s, table says %s"
+              "khs_intrin.h: %s operand order is %s, table says %s"
               % (name, got, want))
     check(seen == set(I.ISA),
-          "khd_intrin.h: missing %s" % sorted(set(I.ISA) - seen))
+          "khs_intrin.h: missing %s" % sorted(set(I.ISA) - seen))
 
     print("=" * 40)
     print("  %s -- %d instructions, %d disagreements"

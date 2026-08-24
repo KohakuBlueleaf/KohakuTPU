@@ -1,4 +1,4 @@
-// rv_dsp_tb -- the DSP workload suite on the real memory substrate.
+// rv_simd_tb -- the DSP workload suite on the real memory substrate.
 //
 // The same vehicle as rv_sys_tb (one PE, real routers, the real MAG, an AXI
 // RAM), asking a different question. rv_sys_tb asks whether the PE is correct;
@@ -17,13 +17,13 @@
 // and whose answers are wrong is worse than no suite.
 //
 // And each row carries the KERNEL'S DYNAMIC INSTRUCTION COUNT, which
-// tests/pe/tools/rv_dsp_gen.py takes from the model by counting retirements
+// tests/pe/tools/rv_simd_gen.py takes from the model by counting retirements
 // between the kern_start and kern_end labels. Cycles alone cannot say whether a
 // kernel is slow because it executes many instructions or because it stalls,
 // and the frontier is an argument about instructions removed.
 //
 // Run it with:
-//     python tests/pe/tools/rv_dsp_run.py
+//     python tests/pe/tools/rv_simd_run.py
 
 `default_nettype none
 `timescale 1ns/1ps
@@ -44,26 +44,26 @@
 // The DSP extension is ON here: the scalar baselines and the vector kernels
 // must be measured on ONE configuration, or the ratio between them is not a
 // speedup. A scalar program runs unchanged on the extended core.
-`ifndef RV_DSP_EN
- `define RV_DSP_EN 1
+`ifndef RV_SIMD_EN
+ `define RV_SIMD_EN 1
 `endif
-`ifndef RV_DSP_SIMD
- `define RV_DSP_SIMD 8
+`ifndef RV_SIMD_LANES
+ `define RV_SIMD_LANES 8
 `endif
-`ifndef RV_DSP_MULS
- `define RV_DSP_MULS 4
+`ifndef RV_SIMD_MULS
+ `define RV_SIMD_MULS 4
 `endif
-`ifndef RV_DSP_SHIFT
- `define RV_DSP_SHIFT 1
+`ifndef RV_SIMD_SHIFT
+ `define RV_SIMD_SHIFT 1
 `endif
-`ifndef RV_DSP_PERM
- `define RV_DSP_PERM 1
+`ifndef RV_SIMD_PERM
+ `define RV_SIMD_PERM 1
 `endif
-`ifndef RV_DSP_WB
- `define RV_DSP_WB 0
+`ifndef RV_SIMD_WB
+ `define RV_SIMD_WB 0
 `endif
 
-module rv_dsp_tb;
+module rv_simd_tb;
     localparam integer FW  = 288;
     localparam integer PW  = 4;
     localparam integer DW  = 256;
@@ -79,7 +79,9 @@ module rv_dsp_tb;
     localparam [7:0] BUF_IMEM = 8'd1;
 
     reg clk = 1'b0, rstn = 1'b0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     integer errors = 0, checks = 0;
     task chk(input [63:0] got, input [63:0] want, input [255:0] what);
@@ -107,9 +109,9 @@ module rv_dsp_tb;
               .L1_LINES(`RV_L1_LINES), .BTB_ENTRIES(`RV_BTB),
               .FWD_X(`RV_FWD_X), .REGFILE_PRIM(RF_PRIM),
               .RAM_DEPTH(RAM_DEPTH),
-              .DSP_EN(`RV_DSP_EN), .DSP_SIMD(`RV_DSP_SIMD),
-              .DSP_MULS(`RV_DSP_MULS), .DSP_SHIFT(`RV_DSP_SHIFT),
-              .DSP_PERM(`RV_DSP_PERM), .DSP_WB(`RV_DSP_WB)) dut (
+              .SIMD_EN(`RV_SIMD_EN), .SIMD_LANES(`RV_SIMD_LANES),
+              .SIMD_MULS(`RV_SIMD_MULS), .SIMD_SHIFT(`RV_SIMD_SHIFT),
+              .SIMD_PERM(`RV_SIMD_PERM), .SIMD_WB(`RV_SIMD_WB)) dut (
         .clk(clk), .rstn(rstn),
         .ext_in_data(ag_out), .ext_in_valid(ag_out_valid),
         .ext_in_busy(ag_out_busy),
@@ -144,18 +146,22 @@ module rv_dsp_tb;
 
     task dram_write_init;
         begin
-            for (i = 0; i < RAM_DEPTH; i = i + 1)
-                for (k = 0; k < 8; k = k + 1)
+            for (i = 0; i < RAM_DEPTH; i = i + 1) begin
+                for (k = 0; k < 8; k = k + 1) begin
                     dut.u_ram.mem[i][k*32 +: 32] = dinit[i * 8 + k];
+                end
+            end
         end
     endtask
 
     task dram_checksum(output reg [31:0] s);
         begin
             s = 32'd0;
-            for (i = 0; i < RAM_DEPTH; i = i + 1)
-                for (k = 0; k < 8; k = k + 1)
+            for (i = 0; i < RAM_DEPTH; i = i + 1) begin
+                for (k = 0; k < 8; k = k + 1) begin
                     s = s + dut.u_ram.mem[i][k*32 +: 32] * (i * 8 + k + 1);
+                end
+            end
         end
     endtask
 
@@ -175,16 +181,24 @@ module rv_dsp_tb;
 
     task run_case(input integer n);
         begin
-            for (i = 0; i < DWORDS; i = i + 1) dinit[i] = 32'd0;
-            for (i = 0; i < DWORDS; i = i + 1) dfin[i]  = 32'd0;
-            for (i = 0; i < META_N; i = i + 1) meta[i]  = 32'd0;
-            for (i = 0; i < IW; i = i + 1) u_ag.img[i]  = 32'd0;
+            for (i = 0; i < DWORDS; i = i + 1) begin
+                dinit[i] = 32'd0;
+            end
+            for (i = 0; i < DWORDS; i = i + 1) begin
+                dfin[i]  = 32'd0;
+            end
+            for (i = 0; i < META_N; i = i + 1) begin
+                meta[i]  = 32'd0;
+            end
+            for (i = 0; i < IW; i = i + 1) begin
+                u_ag.img[i]  = 32'd0;
+            end
 
-            fn = $sformatf("%s/dsp/dsp%02d/prog.hex", `PE_DIR, n);
+            fn = $sformatf("%s/simd/simd%02d/prog.hex", `PE_DIR, n);
             $readmemh(fn, u_ag.img);
-            fn = $sformatf("%s/dsp/dsp%02d/dfin.hex", `PE_DIR, n);
+            fn = $sformatf("%s/simd/simd%02d/dfin.hex", `PE_DIR, n);
             $readmemh(fn, dfin);
-            fn = $sformatf("%s/dsp/dsp%02d/meta.hex", `PE_DIR, n);
+            fn = $sformatf("%s/simd/simd%02d/meta.hex", `PE_DIR, n);
             $readmemh(fn, meta);
             nprog = meta[4];
 
@@ -206,12 +220,13 @@ module rv_dsp_tb;
                 chk(dsum, meta[2], "DRAM after the program");
                 if (dsum !== meta[2]) begin
                     k = 0;
-                    for (i = 0; i < DWORDS; i = i + 1)
+                    for (i = 0; i < DWORDS; i = i + 1) begin
                         if ((dram_word(i) !== dfin[i]) && (k < 8)) begin
                             $display("      dram word %0d: rtl %08x model %08x",
                                      i, dram_word(i), dfin[i]);
                             k = k + 1;
                         end
+                    end
                 end
                 // sig_arg IS the kernel cycle count -- see the header.
                 $display("  @@@ DSP %0d cycles %0d kinstr %0d retired %0d total %0d %0s",
@@ -228,7 +243,7 @@ module rv_dsp_tb;
     // the data arrives while the program is stopped.
     localparam [7:0] BUF_VSPAD = 8'd2;
     localparam integer VN_VEC  = 16;
-    localparam integer VN_SIMD = `RV_DSP_SIMD;
+    localparam integer VN_SIMD = `RV_SIMD_LANES;
 
     integer vn_i, vn_k;
     reg [31:0] vn_lane [0:7];
@@ -236,32 +251,47 @@ module rv_dsp_tb;
 
     task run_vspad_noc;
         begin
-            for (i = 0; i < DWORDS; i = i + 1) dinit[i] = 32'd0;
-            for (i = 0; i < IW; i = i + 1) u_ag.img[i] = 32'd0;
-            fn = $sformatf("%s/dsp/ix00/prog.hex", `PE_DIR);
+            for (i = 0; i < DWORDS; i = i + 1) begin
+                dinit[i] = 32'd0;
+            end
+            for (i = 0; i < IW; i = i + 1) begin
+                u_ag.img[i] = 32'd0;
+            end
+            fn = $sformatf("%s/simd/ix00/prog.hex", `PE_DIR);
             $readmemh(fn, u_ag.img);
             nprog = 0;
-            for (i = 0; i < IW; i = i + 1)
-                if (u_ag.img[i] !== 32'd0) nprog = i + 1;
+            for (i = 0; i < IW; i = i + 1) begin
+                if (u_ag.img[i] !== 32'd0) begin
+                    nprog = i + 1;
+                end
+            end
 
             reset_mesh;
             dram_write_init;
             u_ag.load_image(PE_X, PE_Y, BUF_IMEM, nprog + 8, 0);
 
-            for (i = 0; i < IW; i = i + 1) u_ag.img[i] = 32'd0;
-            for (i = 0; i < VN_VEC * VN_SIMD; i = i + 1)
+            for (i = 0; i < IW; i = i + 1) begin
+                u_ag.img[i] = 32'd0;
+            end
+            for (i = 0; i < VN_VEC * VN_SIMD; i = i + 1) begin
                 u_ag.img[i] = (32'h1000_0001 * (i + 1)) ^ (i << 7);
+            end
             u_ag.load_image(PE_X, PE_Y, BUF_VSPAD, VN_VEC * VN_SIMD, 0);
 
             // What the program will compute: xor down each lane, then sum them.
-            for (vn_k = 0; vn_k < VN_SIMD; vn_k = vn_k + 1) vn_lane[vn_k] = 32'd0;
-            for (vn_i = 0; vn_i < VN_VEC; vn_i = vn_i + 1)
-                for (vn_k = 0; vn_k < VN_SIMD; vn_k = vn_k + 1)
+            for (vn_k = 0; vn_k < VN_SIMD; vn_k = vn_k + 1) begin
+                vn_lane[vn_k] = 32'd0;
+            end
+            for (vn_i = 0; vn_i < VN_VEC; vn_i = vn_i + 1) begin
+                for (vn_k = 0; vn_k < VN_SIMD; vn_k = vn_k + 1) begin
                     vn_lane[vn_k] = vn_lane[vn_k]
                                   ^ u_ag.img[vn_i * VN_SIMD + vn_k];
+                end
+            end
             vn_want = 32'd0;
-            for (vn_k = 0; vn_k < VN_SIMD; vn_k = vn_k + 1)
+            for (vn_k = 0; vn_k < VN_SIMD; vn_k = vn_k + 1) begin
                 vn_want = vn_want + vn_lane[vn_k];
+            end
 
             sig_before = u_ag.sig_n;
             u_ag.kick(PE_X, PE_Y, 8'hE0, 1'b0, 8'd1, 32'd0, 32'd0);
@@ -277,10 +307,10 @@ module rv_dsp_tb;
 
     initial begin
         nc[0] = 32'hxxxx_xxxx;
-        $readmemh({`PE_DIR, "/dsp/ndsp.hex"}, nc);
+        $readmemh({`PE_DIR, "/simd/ndsp.hex"}, nc);
         ncase = nc[0];
         if ((^nc[0] === 1'bx) || (ncase < 1) || (ncase > MAXCASE)) begin
-            $display("  FAIL no DSP cases at %s/dsp -- run python tests/pe/tools/rv_dsp_gen.py",
+            $display("  FAIL no DSP cases at %s/simd -- run python tests/pe/tools/rv_simd_gen.py",
                      `PE_DIR);
             $display("========================================");
             $display("  FAIL -- 0 checks, 1 errors");
@@ -290,16 +320,24 @@ module rv_dsp_tb;
 
         $display("--- %0d DSP workload cases, L1 %0d, BTB %0d, FWD_X %0d ---",
                  ncase, `RV_L1_LINES, `RV_BTB, `RV_FWD_X);
-        for (c = 0; c < ncase; c = c + 1) run_case(c);
+        for (c = 0; c < ncase; c = c + 1) begin
+            run_case(c);
+        end
 
         $display("--- bench-driven: a tile the NoC wrote into the vector window ---");
         run_vspad_noc;
 
         $display("========================================");
-        if (checks == 0)      $display("  FAIL -- the bench made no checks");
-        else if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else                  $display("  FAIL -- %0d checks, %0d errors",
-                                       checks, errors);
+        if (checks == 0) begin
+            $display("  FAIL -- the bench made no checks");
+        end
+        else if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors",
+                     checks, errors);
+        end
         $display("========================================");
         $finish;
     end

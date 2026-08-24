@@ -1,7 +1,7 @@
 """Print the configuration matrix as a plain table, one revision at a time.
 
-    python tests/pe/tools/khd_matrix.py --csv <dir>/matrix.csv
-    python tests/pe/tools/khd_matrix.py --csv <dir>/matrix.csv --rtl r3
+    python tests/pe/tools/khs_matrix.py --csv <dir>/matrix.csv
+    python tests/pe/tools/khs_matrix.py --csv <dir>/matrix.csv --rtl r3
 
 Rows from different RTL revisions are NOT comparable, so they are printed in
 separate blocks and never mixed into one ranking. Deltas are against the row
