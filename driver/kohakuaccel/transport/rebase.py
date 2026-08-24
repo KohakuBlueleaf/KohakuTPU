@@ -105,12 +105,40 @@ class Window(Transport):
     one its own DRAM at its own base, and an address a program computed is an
     offset into ITS memory. Raises :class:`ValueError` on an access that runs off
     the end, which would otherwise land silently in the next mesh's memory.
+
+    `granule` is the endpoint's write width. THIS ENDPOINT DOES NOT HONOUR BYTE
+    STROBES: a write shorter than one granule paints the whole granule and
+    ZERO-FILLS every byte the beat did not carry, so a partial write destroys its
+    neighbours and reports success. Measured on v7 2026-08-23 -- four consecutive
+    `write64` into one 32-byte line leave only the last, and one `write64` into a
+    fully-written line zeroes the other three words. Non-zero refuses those
+    writes rather than letting them corrupt.
     """
 
-    def __init__(self, inner: Transport, base: int, size: int | None = None) -> None:
+    def __init__(
+        self,
+        inner: Transport,
+        base: int,
+        size: int | None = None,
+        granule: int = 0,
+    ) -> None:
         self.inner = inner
         self.base, self.size = base, size
+        self.granule = granule
         self.bulk = inner.bulk
+
+    def _check_granule(self, addr: int, nbytes: int) -> None:
+        """Refuse a write this endpoint cannot perform without collateral."""
+        g = self.granule
+        if not g or (addr % g == 0 and nbytes % g == 0):
+            return
+        raise ValueError(
+            f"[{addr:#x}, {addr + nbytes:#x}) is not a whole {g}-byte write. This "
+            f"endpoint ignores byte strobes, so the rest of each touched granule "
+            f"would be ZEROED and the write would still report success. "
+            f"Read-modify-write the whole granule, or use write_block on an "
+            f"aligned multiple of {g}."
+        )
 
     def _map(self, addr: int, nbytes: int = WORD_BYTES) -> int:
         if addr < 0 or (self.size is not None and addr + nbytes > self.size):
@@ -121,12 +149,14 @@ class Window(Transport):
         return self.base + addr
 
     def write64(self, addr: int, data: int) -> None:
+        self._check_granule(addr, WORD_BYTES)
         self.inner.write64(self._map(addr), data)
 
     def read64(self, addr: int) -> int:
         return self.inner.read64(self._map(addr))
 
     def write_block(self, addr: int, data: bytes) -> None:
+        self._check_granule(addr, len(data))
         self.inner.write_block(self._map(addr, len(data)), data)
 
     def read_block(self, addr: int, nbytes: int) -> bytes:
@@ -134,4 +164,5 @@ class Window(Transport):
 
     def __repr__(self) -> str:
         size = "unbounded" if self.size is None else f"{self.size:#x}"
-        return f"Window({self.inner!r}, base={self.base:#x}, size={size})"
+        gran = "" if not self.granule else f", granule={self.granule}"
+        return f"Window({self.inner!r}, base={self.base:#x}, size={size}{gran})"
