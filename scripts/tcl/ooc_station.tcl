@@ -32,33 +32,39 @@ set_param general.maxThreads 4
 
 source [file join $root scripts tcl ooc_class.tcl]
 
+set common [file join $root src kohakuaccel common]
+set stn    [file join $root src kohakuaccel axi station]
+set link   [file join $root src kohakuaccel axi link]
+set topo   [file join $root src kohakuaccel axi topo]
+set bd     [file join $root src kohakuaccel axi bd]
+
 read_verilog [list \
-    [file join $root src common sync_fifo.v] \
-    [file join $root src common async_fifo.v] \
-    [file join $root src kohakuaxi station sb_skid.v] \
-    [file join $root src kohakuaxi station sb_hub.v] \
-    [file join $root src kohakuaxi station sb_station.v] \
-    [file join $root src kohakuaxi station sb_nmu.v] \
-    [file join $root src kohakuaxi station sb_nsu.v] \
-    [file join $root src kohakuaxi station sb_root9.v] \
-    [file join $root src kohakuaxi station sb_link.v] \
-    [file join $root src kohakuaxi station sb_link_pair.v] \
-    [file join $root src kohakuaxi station sb_slr1.v] \
-    [file join $root src kohakuaxi station sb_leaf.v] \
-    [file join $root src kohakuaxi station sb_stn_root.v] \
-    [file join $root src kohakuaxi station sb_stn_leaf.v] \
-    [file join $root src kohakuaxi station sb_quad.v] \
-    [file join $root src kohakuaxi station sb_link_cdc.v] \
-    [file join $root src kohakuaxi station sb_stn_line.v] \
-    [file join $root src kohakuaxi station sb_line4.v] \
-    [file join $root src synth_top sb_bd_root.v] \
-    [file join $root src synth_top sb_bd_leaf.v] \
-    [file join $root src synth_top sb_bd_link.v] \
-    [file join $root src kohakuaxi station sb_chain2.v]]
+    [file join $common sync_fifo.v] \
+    [file join $common async_fifo.v] \
+    [file join $common sb_skid.v] \
+    [file join $stn sb_hub.v] \
+    [file join $stn sb_station.v] \
+    [file join $stn sb_nmu.v] \
+    [file join $stn sb_nsu.v] \
+    [file join $topo sb_root9.v] \
+    [file join $link sb_link.v] \
+    [file join $link sb_link_pair.v] \
+    [file join $topo sb_slr1.v] \
+    [file join $topo sb_leaf.v] \
+    [file join $topo sb_stn_root.v] \
+    [file join $topo sb_stn_leaf.v] \
+    [file join $topo sb_quad.v] \
+    [file join $link sb_link_cdc.v] \
+    [file join $topo sb_stn_line.v] \
+    [file join $topo sb_line4.v] \
+    [file join $bd sb_bd_root.v] \
+    [file join $bd sb_bd_leaf.v] \
+    [file join $bd sb_bd_link.v] \
+    [file join $topo sb_chain2.v]]
 
 # ooc_sweep.py build_ports() emits one wrapper per K x Q shape; read whichever
 # exist so a port sweep does not need this list edited per shape.
-foreach f [glob -nocomplain [file join $root src synth_top sb_p*x*.v]] {
+foreach f [glob -nocomplain [file join $root src attic sweeps sb_p*x*.v]] {
     read_verilog $f
 }
 
@@ -133,7 +139,8 @@ puts "@@@ ============================ control sets"
 ooc_ctrlsets
 
 # Opt-in: the per-cell pin walk takes ~10 minutes on a 26k-FF netlist.
-if {[lindex $argv 9] eq "1"} {
+# argv 10, not 9 -- 9 is `aw`, so this was never selectable on its own.
+if {[lindex $argv 10] eq "1"} {
     puts "@@@ ============================ reset endpoints"
     ooc_resets
 }

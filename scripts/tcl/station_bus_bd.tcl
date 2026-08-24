@@ -26,20 +26,23 @@ set_param general.maxThreads 8
 # ---- project -------------------------------------------------------------
 create_project -force $design_name $proj_dir -part $part
 
+set common [file join $root src kohakuaccel common]
+set stn    [file join $root src kohakuaccel axi station]
+
 add_files -norecurse [list \
-    [file join $root src common sync_fifo.v] \
-    [file join $root src common async_fifo.v] \
-    [file join $root src kohakuaxi station sb_skid.v] \
-    [file join $root src kohakuaxi station sb_hub.v] \
-    [file join $root src kohakuaxi station sb_station.v] \
-    [file join $root src kohakuaxi station sb_nmu.v] \
-    [file join $root src kohakuaxi station sb_nsu.v] \
-    [file join $root src kohakuaxi station sb_link.v] \
-    [file join $root src kohakuaxi station sb_stn_root.v] \
-    [file join $root src kohakuaxi station sb_stn_leaf.v] \
-    [file join $root src synth_top sb_bd_root.v] \
-    [file join $root src synth_top sb_bd_leaf.v] \
-    [file join $root src synth_top sb_bd_link.v]]
+    [file join $common sync_fifo.v] \
+    [file join $common async_fifo.v] \
+    [file join $common sb_skid.v] \
+    [file join $stn sb_hub.v] \
+    [file join $stn sb_station.v] \
+    [file join $stn sb_nmu.v] \
+    [file join $stn sb_nsu.v] \
+    [file join $root src kohakuaccel axi link sb_link.v] \
+    [file join $root src kohakuaccel axi topo sb_stn_root.v] \
+    [file join $root src kohakuaccel axi topo sb_stn_leaf.v] \
+    [file join $root src kohakuaccel axi bd sb_bd_root.v] \
+    [file join $root src kohakuaccel axi bd sb_bd_leaf.v] \
+    [file join $root src kohakuaccel axi bd sb_bd_link.v]]
 
 update_compile_order -fileset sources_1
 

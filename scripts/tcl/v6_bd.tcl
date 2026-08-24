@@ -28,18 +28,23 @@ set SLR_ROWS {0 {Y0 Y3} 1 {Y4 Y7} 2 {Y8 Y11} 3 {Y12 Y15}}
 set_param general.maxThreads 8
 create_project -force $design_name $proj_dir -part $part
 
+set common [file join $root src kohakuaccel common]
+set stn    [file join $root src kohakuaccel axi station]
+set link   [file join $root src kohakuaccel axi link]
+set topo   [file join $root src kohakuaccel axi topo]
+
 add_files -norecurse [list \
-    [file join $root src common sync_fifo.v] \
-    [file join $root src common async_fifo.v] \
-    [file join $root src kohakuaxi station sb_skid.v] \
-    [file join $root src kohakuaxi station sb_hub.v] \
-    [file join $root src kohakuaxi station sb_nmu.v] \
-    [file join $root src kohakuaxi station sb_nsu.v] \
-    [file join $root src kohakuaxi station sb_link.v] \
-    [file join $root src kohakuaxi station sb_link_cdc.v] \
-    [file join $root src kohakuaxi station sb_stn_line.v] \
-    [file join $root src kohakuaxi station sb_line4.v] \
-    [file join $root src synth_top sb_v6_bus.v]]
+    [file join $common sync_fifo.v] \
+    [file join $common async_fifo.v] \
+    [file join $common sb_skid.v] \
+    [file join $stn sb_hub.v] \
+    [file join $stn sb_nmu.v] \
+    [file join $stn sb_nsu.v] \
+    [file join $link sb_link.v] \
+    [file join $link sb_link_cdc.v] \
+    [file join $topo sb_stn_line.v] \
+    [file join $topo sb_line4.v] \
+    [file join $root src kohakuaccel axi bd sb_v6_bus.v]]
 update_compile_order -fileset sources_1
 
 create_bd_design $design_name

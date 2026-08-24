@@ -95,11 +95,8 @@ set SOURCES {
 
 # v5 additions. Each is added only if it exists, so this script runs before the
 # RTL lands and says what is still missing rather than failing to open.
-# The adapter still sits under poc/. If it ships it belongs in kohakunoc, so
-# both paths are tried and whichever exists is taken.
 set V5_SOURCES {
     src/kohakuaccel/noc/endpoint/noc_l2_adapter.v
-    src/synth_top/poc/l2_adapter.v
     src/kohakuaccel/sysnode/core/mag_stage.v
     src/kohakuaccel/sysnode/core/mag_stage_port.v
 }

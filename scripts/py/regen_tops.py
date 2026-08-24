@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate every reproducible top in src/synth_top from its map.
+"""Regenerate every reproducible top in src/kohakutpu/top/generated from its map.
 
     python scripts/py/regen_tops.py            # rewrite
     python scripts/py/regen_tops.py --check    # fail if any is stale

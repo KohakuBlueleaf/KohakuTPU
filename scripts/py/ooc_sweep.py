@@ -345,7 +345,7 @@ def build_ports(shapes=None, fw=512, aw=43):
                 "--aw",
                 str(aw),
                 "-o",
-                str(ROOT / "src" / "synth_top" / f"{mod}.v"),
+                str(ROOT / "src" / "attic" / "sweeps" / f"{mod}.v"),
                 "-m",
                 mod,
             ],
