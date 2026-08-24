@@ -18,36 +18,83 @@ whether they become a $readmemh file or a NoC burst.
 import re
 
 ABI = {
-    "zero": 0, "ra": 1, "sp": 2, "gp": 3, "tp": 4,
-    "t0": 5, "t1": 6, "t2": 7,
-    "s0": 8, "fp": 8, "s1": 9,
-    "a0": 10, "a1": 11, "a2": 12, "a3": 13,
-    "a4": 14, "a5": 15, "a6": 16, "a7": 17,
-    "s2": 18, "s3": 19, "s4": 20, "s5": 21, "s6": 22, "s7": 23,
-    "s8": 24, "s9": 25, "s10": 26, "s11": 27,
-    "t3": 28, "t4": 29, "t5": 30, "t6": 31,
+    "zero": 0,
+    "ra": 1,
+    "sp": 2,
+    "gp": 3,
+    "tp": 4,
+    "t0": 5,
+    "t1": 6,
+    "t2": 7,
+    "s0": 8,
+    "fp": 8,
+    "s1": 9,
+    "a0": 10,
+    "a1": 11,
+    "a2": 12,
+    "a3": 13,
+    "a4": 14,
+    "a5": 15,
+    "a6": 16,
+    "a7": 17,
+    "s2": 18,
+    "s3": 19,
+    "s4": 20,
+    "s5": 21,
+    "s6": 22,
+    "s7": 23,
+    "s8": 24,
+    "s9": 25,
+    "s10": 26,
+    "s11": 27,
+    "t3": 28,
+    "t4": 29,
+    "t5": 30,
+    "t6": 31,
 }
 
 R_OPS = {
-    "add": (0b000, 0b0000000), "sub": (0b000, 0b0100000),
-    "sll": (0b001, 0b0000000), "slt": (0b010, 0b0000000),
-    "sltu": (0b011, 0b0000000), "xor": (0b100, 0b0000000),
-    "srl": (0b101, 0b0000000), "sra": (0b101, 0b0100000),
-    "or": (0b110, 0b0000000), "and": (0b111, 0b0000000),
+    "add": (0b000, 0b0000000),
+    "sub": (0b000, 0b0100000),
+    "sll": (0b001, 0b0000000),
+    "slt": (0b010, 0b0000000),
+    "sltu": (0b011, 0b0000000),
+    "xor": (0b100, 0b0000000),
+    "srl": (0b101, 0b0000000),
+    "sra": (0b101, 0b0100000),
+    "or": (0b110, 0b0000000),
+    "and": (0b111, 0b0000000),
     # RV32M, funct7 = 0000001, in the EXISTING register-register group -- no new
     # major and none of the custom opcode space, which is already fully spoken
     # for. div/rem (funct3 100..111) are deliberately absent: they stay illegal.
-    "mul": (0b000, 0b0000001), "mulh": (0b001, 0b0000001),
-    "mulhsu": (0b010, 0b0000001), "mulhu": (0b011, 0b0000001),
+    "mul": (0b000, 0b0000001),
+    "mulh": (0b001, 0b0000001),
+    "mulhsu": (0b010, 0b0000001),
+    "mulhu": (0b011, 0b0000001),
 }
-I_OPS = {"addi": 0b000, "slti": 0b010, "sltiu": 0b011,
-         "xori": 0b100, "ori": 0b110, "andi": 0b111}
-SH_OPS = {"slli": (0b001, 0b0000000), "srli": (0b101, 0b0000000),
-          "srai": (0b101, 0b0100000)}
+I_OPS = {
+    "addi": 0b000,
+    "slti": 0b010,
+    "sltiu": 0b011,
+    "xori": 0b100,
+    "ori": 0b110,
+    "andi": 0b111,
+}
+SH_OPS = {
+    "slli": (0b001, 0b0000000),
+    "srli": (0b101, 0b0000000),
+    "srai": (0b101, 0b0100000),
+}
 L_OPS = {"lb": 0b000, "lh": 0b001, "lw": 0b010, "lbu": 0b100, "lhu": 0b101}
 S_OPS = {"sb": 0b000, "sh": 0b001, "sw": 0b010}
-B_OPS = {"beq": 0b000, "bne": 0b001, "blt": 0b100,
-         "bge": 0b101, "bltu": 0b110, "bgeu": 0b111}
+B_OPS = {
+    "beq": 0b000,
+    "bne": 0b001,
+    "blt": 0b100,
+    "bge": 0b101,
+    "bltu": 0b110,
+    "bgeu": 0b111,
+}
 
 
 class AsmError(Exception):
@@ -100,17 +147,30 @@ def _i(op, f3, rd, rs1, imm):
 
 def _s(op, f3, rs1, rs2, imm):
     v = _fits(imm, 12)
-    return (((v >> 5) & 0x7F) << 25) | (rs2 << 20) | (rs1 << 15) | \
-           (f3 << 12) | ((v & 0x1F) << 7) | op
+    return (
+        (((v >> 5) & 0x7F) << 25)
+        | (rs2 << 20)
+        | (rs1 << 15)
+        | (f3 << 12)
+        | ((v & 0x1F) << 7)
+        | op
+    )
 
 
 def _b(op, f3, rs1, rs2, imm):
     if imm & 1:
         raise AsmError("branch offset %d is odd" % imm)
     v = _fits(imm, 13)
-    return ((((v >> 12) & 1) << 31) | (((v >> 5) & 0x3F) << 25) |
-            (rs2 << 20) | (rs1 << 15) | (f3 << 12) |
-            (((v >> 1) & 0xF) << 8) | (((v >> 11) & 1) << 7) | op)
+    return (
+        (((v >> 12) & 1) << 31)
+        | (((v >> 5) & 0x3F) << 25)
+        | (rs2 << 20)
+        | (rs1 << 15)
+        | (f3 << 12)
+        | (((v >> 1) & 0xF) << 8)
+        | (((v >> 11) & 1) << 7)
+        | op
+    )
 
 
 def _u(op, rd, imm):
@@ -121,9 +181,14 @@ def _j(op, rd, imm):
     if imm & 1:
         raise AsmError("jump offset %d is odd" % imm)
     v = _fits(imm, 21)
-    return ((((v >> 20) & 1) << 31) | (((v >> 1) & 0x3FF) << 21) |
-            (((v >> 11) & 1) << 20) | (((v >> 12) & 0xFF) << 12) |
-            (rd << 7) | op)
+    return (
+        (((v >> 20) & 1) << 31)
+        | (((v >> 1) & 0x3FF) << 21)
+        | (((v >> 11) & 1) << 20)
+        | (((v >> 12) & 0xFF) << 12)
+        | (rd << 7)
+        | op
+    )
 
 
 # Split an operand list, keeping `off(reg)` together.
@@ -162,7 +227,7 @@ def _imm(tok, syms, pc=None):
         i = t.rfind(sep)
         if i > 0:
             a = _imm(t[:i], syms)
-            b = _imm(t[i + 1:], syms)
+            b = _imm(t[i + 1 :], syms)
             return a + b if sep == "+" else a - b
     raise AsmError("unresolved symbol or bad immediate: %r" % tok)
 
@@ -177,7 +242,7 @@ def _size(mn, ops):
     if mn == ".word":
         return len(ops)
     if mn == ".space":
-        return 0          # resolved in pass 1, where the count is known
+        return 0  # resolved in pass 1, where the count is known
     return 1
 
 
@@ -199,8 +264,7 @@ def assemble(src, base=0, symbols=None):
                 text = m.group(2).strip()
                 continue
             parts = text.split(None, 1)
-            lines.append(("op", parts[0].lower(),
-                          parts[1] if len(parts) > 1 else ""))
+            lines.append(("op", parts[0].lower(), parts[1] if len(parts) > 1 else ""))
             text = ""
 
     # pass 1: addresses
@@ -279,9 +343,14 @@ def _encode(mn, rest, pc, syms, n):
     if mn in ("beqz", "bnez", "bltz", "bgez", "bgtz", "blez"):
         rs = _reg(ops[0])
         off = _imm(ops[1], syms) - pc
-        tbl = {"beqz": ("beq", rs, 0), "bnez": ("bne", rs, 0),
-               "bltz": ("blt", rs, 0), "bgez": ("bge", rs, 0),
-               "bgtz": ("blt", 0, rs), "blez": ("bge", 0, rs)}
+        tbl = {
+            "beqz": ("beq", rs, 0),
+            "bnez": ("bne", rs, 0),
+            "bltz": ("blt", rs, 0),
+            "bgez": ("bge", rs, 0),
+            "bgtz": ("blt", 0, rs),
+            "blez": ("bge", 0, rs),
+        }
         op, a, b = tbl[mn]
         return [_b(0b1100011, B_OPS[op], a, b, off)]
     if mn in ("bgt", "ble", "bgtu", "bleu"):
@@ -295,8 +364,9 @@ def _encode(mn, rest, pc, syms, n):
         f3, f7 = R_OPS[mn]
         return [_r(0b0110011, f3, f7, _reg(ops[0]), _reg(ops[1]), _reg(ops[2]))]
     if mn in I_OPS:
-        return [_i(0b0010011, I_OPS[mn], _reg(ops[0]), _reg(ops[1]),
-                   _imm(ops[2], syms))]
+        return [
+            _i(0b0010011, I_OPS[mn], _reg(ops[0]), _reg(ops[1]), _imm(ops[2], syms))
+        ]
     if mn in SH_OPS:
         f3, f7 = SH_OPS[mn]
         sh = _imm(ops[2], syms)
@@ -310,8 +380,15 @@ def _encode(mn, rest, pc, syms, n):
         off, rs1 = _memop(ops[1], syms)
         return [_s(0b0100011, S_OPS[mn], rs1, _reg(ops[0]), off)]
     if mn in B_OPS:
-        return [_b(0b1100011, B_OPS[mn], _reg(ops[0]), _reg(ops[1]),
-                   _imm(ops[2], syms) - pc)]
+        return [
+            _b(
+                0b1100011,
+                B_OPS[mn],
+                _reg(ops[0]),
+                _reg(ops[1]),
+                _imm(ops[2], syms) - pc,
+            )
+        ]
     if mn == "lui":
         return [_u(0b0110111, _reg(ops[0]), _imm(ops[1], syms))]
     if mn == "auipc":
@@ -322,8 +399,7 @@ def _encode(mn, rest, pc, syms, n):
         if len(ops) == 2:
             off, rs1 = _memop(ops[1], syms)
             return [_i(0b1100111, 0b000, _reg(ops[0]), rs1, off)]
-        return [_i(0b1100111, 0b000, _reg(ops[0]), _reg(ops[1]),
-                   _imm(ops[2], syms))]
+        return [_i(0b1100111, 0b000, _reg(ops[0]), _reg(ops[1]), _imm(ops[2], syms))]
     if mn == "fence":
         return [0b0000000000000000000000000001111 | (0xFF << 20)]
     if mn == "ecall":

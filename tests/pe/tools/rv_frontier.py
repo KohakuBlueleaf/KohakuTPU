@@ -35,36 +35,57 @@ TCL = ROOT / "scripts" / "tcl" / "ooc_rv_pe.tcl"
 RUN = ROOT / "tests" / "pe" / "tools" / "rv_run.py"
 
 FIELDS = [
-    "config", "arm", "target_ns", "fmax_mhz", "slack_ns", "levels",
-    "lut", "lut_logic", "lutram", "ff", "bram", "ctrlsets",
-    "mc1_c0", "mc4_c0", "mc4_c1", "mc4_c2", "mc4_c3", "rt_cycles",
-    "gates", "binding_path", "params",
+    "config",
+    "arm",
+    "target_ns",
+    "fmax_mhz",
+    "slack_ns",
+    "levels",
+    "lut",
+    "lut_logic",
+    "lutram",
+    "ff",
+    "bram",
+    "ctrlsets",
+    "mc1_c0",
+    "mc4_c0",
+    "mc4_c1",
+    "mc4_c2",
+    "mc4_c3",
+    "rt_cycles",
+    "gates",
+    "binding_path",
+    "params",
 ]
 
 #: name -> the seven RTL knobs ooc_rv_pe.tcl takes, and which arm it belongs to.
 #: Every point is a CONFIGURATION of one design; nothing here forks a file.
 CONFIGS = {
     # regfile, l1_lines, fwd_x, btb, imem, spad
-    "balanced":   ("-", "distributed", 128, 1, 32, 2048, 2048),
-    "bal-bram":   ("-", "block",       128, 1, 32, 2048, 2048),
+    "balanced": ("-", "distributed", 128, 1, 32, 2048, 2048),
+    "bal-bram": ("-", "block", 128, 1, 32, 2048, 2048),
     # Arm A -- strip for area, spend cycles.
-    "a-nofwd":    ("A", "distributed", 128, 0, 32, 2048, 2048),
-    "a-btb0":     ("A", "distributed", 128, 1,  0, 2048, 2048),
-    "a-nofwd0":   ("A", "distributed", 128, 0,  0, 2048, 2048),
-    "a-l164":     ("A", "distributed",  64, 1, 32, 2048, 2048),
-    "a-min":      ("A", "distributed",  64, 0,  0, 2048, 2048),
+    "a-nofwd": ("A", "distributed", 128, 0, 32, 2048, 2048),
+    "a-btb0": ("A", "distributed", 128, 1, 0, 2048, 2048),
+    "a-nofwd0": ("A", "distributed", 128, 0, 0, 2048, 2048),
+    "a-l164": ("A", "distributed", 64, 1, 32, 2048, 2048),
+    "a-min": ("A", "distributed", 64, 0, 0, 2048, 2048),
     # a-min without the one knob measured to be a pure loss: FWD_X=0 buys 2 LUT
     # and costs 5.4 MHz, so a-min's low corner is carrying dead weight.
-    "a-l164b0":   ("A", "distributed",  64, 1,  0, 2048, 2048),
+    "a-l164b0": ("A", "distributed", 64, 1, 0, 2048, 2048),
     # Arm B -- spend area for frequency.
-    "b-bram-rf":  ("B", "block",       128, 1, 32, 2048, 2048),
-    "b-btb64":    ("B", "distributed", 128, 1, 64, 2048, 2048),
+    "b-bram-rf": ("B", "block", 128, 1, 32, 2048, 2048),
+    "b-btb64": ("B", "distributed", 128, 1, 64, 2048, 2048),
 }
 
-REC = re.compile(r"^@@@REC .*?\blut=(\d+).*?\blut_log=(\d+).*?\blut_dram=(\d+)"
-                 r".*?\bff=(\d+).*?\bbram=([\d.]+).*?\bctrlsets=(\d+)")
-CLK = re.compile(r"^@@@ noc_clk\s+([\d.]+) MHz\s+slack ([-+\d.]+)\s+req [\d.]+"
-                 r"\s+lvl (\S+)\s+(.*)$")
+REC = re.compile(
+    r"^@@@REC .*?\blut=(\d+).*?\blut_log=(\d+).*?\blut_dram=(\d+)"
+    r".*?\bff=(\d+).*?\bbram=([\d.]+).*?\bctrlsets=(\d+)"
+)
+CLK = re.compile(
+    r"^@@@ noc_clk\s+([\d.]+) MHz\s+slack ([-+\d.]+)\s+req [\d.]+"
+    r"\s+lvl (\S+)\s+(.*)$"
+)
 
 
 def take_lock(work_root):
@@ -75,8 +96,10 @@ def take_lock(work_root):
     try:
         fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
-        print("  ANOTHER SWEEP HOLDS %s (pid %s). Wait for it, or delete the "
-              "lock if it is stale." % (lock, lock.read_text().strip()))
+        print(
+            "  ANOTHER SWEEP HOLDS %s (pid %s). Wait for it, or delete the "
+            "lock if it is stale." % (lock, lock.read_text().strip())
+        )
         return None
     os.write(fd, str(os.getpid()).encode())
     os.close(fd)
@@ -88,12 +111,24 @@ def run_ooc(cfg, target, work):
     _, rfp, lin, fwx, btb, imw, spw = CONFIGS[cfg]
     work.mkdir(parents=True, exist_ok=True)
     args = ["rv_pe", rfp, lin, fwx, btb, imw, spw, "default", target]
-    cmd = [str(VIVADO), "-mode", "batch", "-notrace", "-source", str(TCL),
-           "-tclargs"] + [str(a) for a in args]
+    cmd = [
+        str(VIVADO),
+        "-mode",
+        "batch",
+        "-notrace",
+        "-source",
+        str(TCL),
+        "-tclargs",
+    ] + [str(a) for a in args]
     log = work / "vivado.log"
     for attempt in range(3):
-        subprocess.run(cmd, cwd=str(work), stdout=subprocess.DEVNULL,
-                       stderr=subprocess.DEVNULL, check=False)
+        subprocess.run(
+            cmd,
+            cwd=str(work),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
         if not log.exists():
             return None
         text = log.read_text(errors="ignore")
@@ -121,7 +156,7 @@ def run_ooc(cfg, target, work):
 
 CYC = re.compile(r"core(\d) \(\d,\d\)\s+halt \w+\s+code \w+\s+cycles\s+(\d+)")
 RT = re.compile(r"round trip\s+(\d+) cycles")
-ISO = re.compile(r"--- independent programs: (\d) PEs.*?(?=\n--- |\Z)", re.S)
+ISO = re.compile(r"--- independent programs: (\d) PEs.*?(?=\n--- |\Z)", re.DOTALL)
 
 
 def sim_defines(cfg):
@@ -129,8 +164,14 @@ def sim_defines(cfg):
     this the benches measure the default design and the row reports cycle
     counts belonging to something nobody built."""
     _, rfp, lin, fwx, btb, _, _ = CONFIGS[cfg]
-    d = ["-d", "RV_L1_LINES=%d" % lin, "-d", "RV_BTB=%d" % btb,
-         "-d", "RV_FWD_X=%d" % fwx]
+    d = [
+        "-d",
+        "RV_L1_LINES=%d" % lin,
+        "-d",
+        "RV_BTB=%d" % btb,
+        "-d",
+        "RV_FWD_X=%d" % fwx,
+    ]
     if rfp == "block":
         d += ["-d", "RV_RF_BRAM"]
     return d
@@ -139,17 +180,28 @@ def sim_defines(cfg):
 def run_gates(cfg, wall):
     """Every bench, and the cycle counts the frontier carries. A point that
     fails a gate is not a point, so this returns the verdict too."""
-    cyc = {"mc1_c0": "", "mc4_c0": "", "mc4_c1": "", "mc4_c2": "", "mc4_c3": "",
-           "rt_cycles": ""}
+    cyc = {
+        "mc1_c0": "",
+        "mc4_c0": "",
+        "mc4_c1": "",
+        "mc4_c2": "",
+        "mc4_c3": "",
+        "rt_cycles": "",
+    }
     verdicts = []
     for gate in (1, 2, 3, 4):
-        r = subprocess.run([sys.executable, str(RUN), "--gate", str(gate),
-                            "--wall", str(wall)] + sim_defines(cfg),
-                           cwd=str(ROOT), capture_output=True, text=True,
-                           check=False)
+        r = subprocess.run(
+            [sys.executable, str(RUN), "--gate", str(gate), "--wall", str(wall)]
+            + sim_defines(cfg),
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         text = r.stdout
-        verdicts.append("PASS" if ("PASS --" in text and "FAIL" not in text)
-                        else "FAIL")
+        verdicts.append(
+            "PASS" if ("PASS --" in text and "FAIL" not in text) else "FAIL"
+        )
         if gate != 4:
             continue
         # KEYED ON THE PE COUNT IN THE HEADER, never on block position: the
@@ -167,8 +219,7 @@ def run_gates(cfg, wall):
         rt = RT.findall(text)
         if rt:
             cyc["rt_cycles"] = rt[0]
-    return cyc, ("PASS" if all(v == "PASS" for v in verdicts)
-                 else "/".join(verdicts))
+    return cyc, ("PASS" if all(v == "PASS" for v in verdicts) else "/".join(verdicts))
 
 
 def main():
@@ -178,8 +229,11 @@ def main():
     ap.add_argument("--config", required=True, choices=sorted(CONFIGS))
     ap.add_argument("--targets", default="5.0,3.333,2.5,2.2,2.0")
     ap.add_argument("--wall", type=float, default=400.0)
-    ap.add_argument("--no-gates", action="store_true",
-                    help="synthesis only; the cycle columns stay empty")
+    ap.add_argument(
+        "--no-gates",
+        action="store_true",
+        help="synthesis only; the cycle columns stay empty",
+    )
     a = ap.parse_args()
 
     csv_path = pathlib.Path(a.csv)
@@ -192,11 +246,16 @@ def main():
     atexit.register(lambda: lock.unlink(missing_ok=True))
     arm, rfp, lin, fwx, btb, imw, spw = CONFIGS[a.config]
     params = "rf=%s l1=%s fwd_x=%s btb=%s imem=%s spad=%s" % (
-        rfp, lin, fwx, btb, imw, spw)
+        rfp,
+        lin,
+        fwx,
+        btb,
+        imw,
+        spw,
+    )
 
     if a.no_gates:
-        cyc, gates = ({k: "" for k in FIELDS if k.startswith(("mc", "rt"))},
-                      "not run")
+        cyc, gates = ({k: "" for k in FIELDS if k.startswith(("mc", "rt"))}, "not run")
     else:
         print("  gates for %s ..." % a.config, flush=True)
         cyc, gates = run_gates(a.config, a.wall)
@@ -208,8 +267,10 @@ def main():
         # is indistinguishable from a zero once it is in the CSV.
         missing = [k for k, v in cyc.items() if not v]
         if missing:
-            print("  NOT A POINT: gates passed but %s did not parse; the bench "
-                  "output shape changed" % ", ".join(sorted(missing)))
+            print(
+                "  NOT A POINT: gates passed but %s did not parse; the bench "
+                "output shape changed" % ", ".join(sorted(missing))
+            )
             return 1
 
     new = not csv_path.exists()
@@ -224,15 +285,27 @@ def main():
             if got is None:
                 print("    FAILED, no row")
                 continue
-            row = {"config": a.config, "arm": arm, "target_ns": t,
-                   "gates": gates, "params": params}
+            row = {
+                "config": a.config,
+                "arm": arm,
+                "target_ns": t,
+                "gates": gates,
+                "params": params,
+            }
             row.update(cyc)
             row.update(got)
             w.writerow(row)
             fh.flush()
-            print("    %s MHz  lut %s  ff %s  slack %s"
-                  % (got.get("fmax_mhz"), got.get("lut"), got.get("ff"),
-                     got.get("slack_ns")), flush=True)
+            print(
+                "    %s MHz  lut %s  ff %s  slack %s"
+                % (
+                    got.get("fmax_mhz"),
+                    got.get("lut"),
+                    got.get("ff"),
+                    got.get("slack_ns"),
+                ),
+                flush=True,
+            )
     return 0
 
 

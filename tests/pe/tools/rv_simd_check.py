@@ -16,11 +16,11 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from rv_asm import assemble                                     # noqa: E402
-from rv_gen import SYMS, zero_regs, MASK32                      # noqa: E402
-import rv_simd_asm                                               # noqa: E402,F401
-from rv_simd_model import DspMachine, VSPAD_BASE                 # noqa: E402
-import rv_simd_kernels as K                                      # noqa: E402
+import rv_simd_asm  # noqa: F401
+import rv_simd_kernels as K
+from rv_asm import assemble
+from rv_gen import MASK32, SYMS, zero_regs
+from rv_simd_model import VSPAD_BASE, DspMachine
 
 SPAD_WORDS = 2048
 SIMD = 8
@@ -75,9 +75,15 @@ def run(name):
     K.SIMD = SIMD
     src = zero_regs() + K.build_case(name)
     words, _ = assemble(src, base=0, symbols=ALL_SYMS)
-    m = DspMachine(simd=SIMD, vspad_entries=VSPAD_ENTRIES,
-                   imem_words=2048, spad_words=SPAD_WORDS, arg=0, coreid=0x11)
-    m.imem[:len(words)] = words
+    m = DspMachine(
+        simd=SIMD,
+        vspad_entries=VSPAD_ENTRIES,
+        imem_words=2048,
+        spad_words=SPAD_WORDS,
+        arg=0,
+        coreid=0x11,
+    )
+    m.imem[: len(words)] = words
     m.run(limit=4_000_000)
     return m
 
@@ -88,7 +94,7 @@ def spad_words(m, off, n):
 
 def vspad_words(m, off, n):
     all_words = m.vspad_words()
-    return all_words[off // 4: off // 4 + n]
+    return all_words[off // 4 : off // 4 + n]
 
 
 def check_dot_i8():
@@ -104,8 +110,10 @@ def check_fir_i16():
     m = run("fir_i16")
     nw = (K.FIR_OUT + len(K.FIR_TAPS)) // 2 + 4
     x = halves_of(xorshift_stream(K.XORSHIFT_SEED, nw))
-    want = [sum(K.FIR_TAPS[t] * s16(x[i + t]) for t in range(len(K.FIR_TAPS))) & MASK32
-            for i in range(K.FIR_OUT)]
+    want = [
+        sum(K.FIR_TAPS[t] * s16(x[i + t]) for t in range(len(K.FIR_TAPS))) & MASK32
+        for i in range(K.FIR_OUT)
+    ]
     got = spad_words(m, K.O_OFF, K.FIR_OUT)
     return want, got
 
@@ -119,8 +127,11 @@ def check_stencil_i16():
     want = []
     for r in range(1, H - 1):
         for c in range(1, W - 1):
-            acc = sum(ker[dr + 1][dc + 1] * s16(px[(r + dr) * W + (c + dc)])
-                      for dr in (-1, 0, 1) for dc in (-1, 0, 1))
+            acc = sum(
+                ker[dr + 1][dc + 1] * s16(px[(r + dr) * W + (c + dc)])
+                for dr in (-1, 0, 1)
+                for dc in (-1, 0, 1)
+            )
             want.append((acc >> 4) & 0xFFFF)
     # The kernel stores halfwords packed two per word, in raster order.
     nout = (W - 2) * (H - 2)
@@ -147,8 +158,10 @@ def check_epilogue():
         y = (y + (1 << (K.EPI_SHIFT - 1))) >> K.EPI_SHIFT
         y = min(max(y, -128), 127)
         out.append(y & 0xFF)
-    want = [sum(out[i * 4 + k] << (8 * k) for k in range(4)) & MASK32
-            for i in range(K.EPI_N // 4)]
+    want = [
+        sum(out[i * 4 + k] << (8 * k) for k in range(4)) & MASK32
+        for i in range(K.EPI_N // 4)
+    ]
     got = spad_words(m, K.O_OFF, K.EPI_N // 4)
     return want, got
 
@@ -165,6 +178,7 @@ def check_memcpy32():
 # self-consistent, but that it computes the identical answer from the identical
 # data, checked against an implementation that shares no code with either.
 
+
 def check_dot_i8_v():
     m = run("dot_i8_v")
     a = bytes_of(xorshift_stream(K.XORSHIFT_SEED, K.DOT_N // 4))
@@ -178,8 +192,7 @@ def check_dot2_i8_v():
     a = bytes_of(xorshift_stream(K.XORSHIFT_SEED, K.DOT_N // 4))
     b = bytes_of(xorshift_stream(0x0BAD_F00D, K.DOT_N // 4))
     c = bytes_of(xorshift_stream(0x5EED_1234, K.DOT_N // 4))
-    want = [sum(s8(a[i]) * s8(w[i]) for i in range(K.DOT_N)) & MASK32
-            for w in (b, c)]
+    want = [sum(s8(a[i]) * s8(w[i]) for i in range(K.DOT_N)) & MASK32 for w in (b, c)]
     return want, spad_words(m, K.O_OFF, 2)
 
 
@@ -216,8 +229,10 @@ def check_epilogue_v():
         y = (y + (1 << (K.EPI_SHIFT - 1))) >> K.EPI_SHIFT
         y = min(max(y, -128), 127)
         out.append(y & 0xFF)
-    want = [sum(out[i * 4 + k] << (8 * k) for k in range(4)) & MASK32
-            for i in range(K.EPI_N // 4)]
+    want = [
+        sum(out[i * 4 + k] << (8 * k) for k in range(4)) & MASK32
+        for i in range(K.EPI_N // 4)
+    ]
     return want, vspad_words(m, K.VO_OFF, K.EPI_N // 4)
 
 
@@ -225,8 +240,10 @@ def check_fir_i16_v():
     m = run("fir_i16_v")
     nw = (K.FIR_OUT + len(K.FIR_TAPS) + 1) // 2 + 4
     x = halves_of(xorshift_stream(K.XORSHIFT_SEED, nw))
-    want = [sum(K.FIR_TAPS[t] * s16(x[i + t]) for t in range(len(K.FIR_TAPS)))
-            & MASK32 for i in range(K.FIR_OUT)]
+    want = [
+        sum(K.FIR_TAPS[t] * s16(x[i + t]) for t in range(len(K.FIR_TAPS))) & MASK32
+        for i in range(K.FIR_OUT)
+    ]
     return want, vspad_words(m, K.VO_OFF, K.FIR_OUT)
 
 
@@ -248,23 +265,30 @@ def check_f16_dot():
     subtractive deviation rather than hiding it.
     """
     import rv_simd_f16 as F
+
     n_vec, npart = 8, 16
     slots = 2 * SIMD
 
     xs = xorshift_stream(0xF16D_07, n_vec * SIMD * 2)
-    a16 = [w & 0xFFFF for w in xs[:n_vec * SIMD]] + \
-          [(w >> 16) & 0xFFFF for w in xs[:n_vec * SIMD]]
-    b16 = [w & 0xFFFF for w in xs[n_vec * SIMD:]] + \
-          [(w >> 16) & 0xFFFF for w in xs[n_vec * SIMD:]]
+    a16 = [w & 0xFFFF for w in xs[: n_vec * SIMD]] + [
+        (w >> 16) & 0xFFFF for w in xs[: n_vec * SIMD]
+    ]
+    b16 = [w & 0xFFFF for w in xs[n_vec * SIMD :]] + [
+        (w >> 16) & 0xFFFF for w in xs[n_vec * SIMD :]
+    ]
     # Keep the operands finite and ordinary: a NaN or an infinity in the stream
     # would test the specials, which is a different kernel.
-    fix = lambda v: (v & 0x83FF) | 0x3800                        # noqa: E731
-    a16 = [fix(v) for v in a16][:n_vec * slots]
-    b16 = [fix(v) for v in b16][:n_vec * slots]
+    fix = lambda v: (v & 0x83FF) | 0x3800
+    a16 = [fix(v) for v in a16][: n_vec * slots]
+    b16 = [fix(v) for v in b16][: n_vec * slots]
 
     # Two FP16 elements per store: the packing is done here, not in assembly.
-    src = ["    li   s0, VSPAD+0", "    li   s1, VSPAD+0x400",
-           "    li   s2, %d" % n_vec, "    vfaccz acc0"]
+    src = [
+        "    li   s0, VSPAD+0",
+        "    li   s1, VSPAD+0x400",
+        "    li   s2, %d" % n_vec,
+        "    vfaccz acc0",
+    ]
     for i in range(n_vec * SIMD):
         wa = (a16[2 * i + 1] << 16) | a16[2 * i]
         wb = (b16[2 * i + 1] << 16) | b16[2 * i]
@@ -272,24 +296,33 @@ def check_f16_dot():
         src.append("    sw   t1, %d(s0)" % (4 * i))
         src.append("    li   t1, 0x%08x" % wb)
         src.append("    sw   t1, %d(s1)" % (4 * i))
-    src += ["f16_loop:",
-            "    vld  v0, 0(s0)",
-            "    vld  v1, 0(s1)",
-            "    vfmacc.f16 acc0, v0, v1",
-            "    addi s0, s0, %d" % (4 * SIMD),
-            "    addi s1, s1, %d" % (4 * SIMD),
-            "    addi s2, s2, -1",
-            "    bnez s2, f16_loop",
-            "    vfredsum.f16 a2, acc0",
-            "    li   t0, SPAD+%d" % K.O_OFF,
-            "    sw   a2, 0(t0)",
-            "    li   a0, 0", "    ecall"]
+    src += [
+        "f16_loop:",
+        "    vld  v0, 0(s0)",
+        "    vld  v1, 0(s1)",
+        "    vfmacc.f16 acc0, v0, v1",
+        "    addi s0, s0, %d" % (4 * SIMD),
+        "    addi s1, s1, %d" % (4 * SIMD),
+        "    addi s2, s2, -1",
+        "    bnez s2, f16_loop",
+        "    vfredsum.f16 a2, acc0",
+        "    li   t0, SPAD+%d" % K.O_OFF,
+        "    sw   a2, 0(t0)",
+        "    li   a0, 0",
+        "    ecall",
+    ]
 
-    words, _ = assemble(zero_regs() + "\n".join(src) + "\n", base=0,
-                        symbols=ALL_SYMS)
-    m = DspMachine(simd=SIMD, vspad_entries=VSPAD_ENTRIES, imem_words=2048,
-                   spad_words=SPAD_WORDS, arg=0, coreid=0x11, npart=npart)
-    m.imem[:len(words)] = words
+    words, _ = assemble(zero_regs() + "\n".join(src) + "\n", base=0, symbols=ALL_SYMS)
+    m = DspMachine(
+        simd=SIMD,
+        vspad_entries=VSPAD_ENTRIES,
+        imem_words=2048,
+        spad_words=SPAD_WORDS,
+        arg=0,
+        coreid=0x11,
+        npart=npart,
+    )
+    m.imem[: len(words)] = words
     m.run(limit=4_000_000)
 
     one = F.f16_to_e8(0x3C00)
@@ -297,9 +330,9 @@ def check_f16_dot():
     for v in range(n_vec):
         for s in range(slots):
             i = v * slots + s
-            part[s][v % npart] = F.e8_fma_hw(F.f16_to_e8(a16[i]),
-                                          F.f16_to_e8(b16[i]),
-                                          part[s][v % npart])
+            part[s][v % npart] = F.e8_fma_hw(
+                F.f16_to_e8(a16[i]), F.f16_to_e8(b16[i]), part[s][v % npart]
+            )
     tot = 0
     for parts in part:
         slot = 0
@@ -340,8 +373,7 @@ def main():
     ran = 0
     for name, fn in CHECKS:
         if name in K.MIN_SIMD and SIMD < K.MIN_SIMD[name]:
-            print("  --   %-14s skipped: needs SIMD >= %d"
-                  % (name, K.MIN_SIMD[name]))
+            print("  --   %-14s skipped: needs SIMD >= %d" % (name, K.MIN_SIMD[name]))
             continue
         ran += 1
         want, got = fn()
@@ -350,14 +382,18 @@ def main():
         diff = [(i, w, g) for i, (w, g) in enumerate(zip(want, got)) if w != g]
         if diff:
             bad += 1
-            print("  FAIL %-14s %d of %d elements differ" % (name, len(diff), len(want)))
+            print(
+                "  FAIL %-14s %d of %d elements differ" % (name, len(diff), len(want))
+            )
             for i, w, g in diff[:6]:
                 print("        [%3d] want %08x got %08x" % (i, w, g))
         else:
             print("  ok   %-14s %d elements" % (name, len(want)))
     print("=" * 40)
-    print("  %s -- %d kernels at SIMD %d, %d wrong"
-          % ("FAIL" if bad else "PASS", ran, SIMD, bad))
+    print(
+        "  %s -- %d kernels at SIMD %d, %d wrong"
+        % ("FAIL" if bad else "PASS", ran, SIMD, bad)
+    )
     return 1 if bad else 0
 
 

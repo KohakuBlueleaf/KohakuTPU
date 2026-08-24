@@ -34,12 +34,12 @@ to shifts and adds, so no software multiply appears in it at all.
 # ---------------------------------------------------------------- memory map
 # Byte offsets from SPAD base. Every array is 32-byte aligned: a granule is the
 # machine's word and a vector load is line-aligned by contract.
-A_OFF = 0x0000          # input 1        1024 B
-B_OFF = 0x0400          # input 2        1024 B
-O_OFF = 0x0800          # output         1024 B
-S_OFF = 0x0C00          # scratch        1024 B
+A_OFF = 0x0000  # input 1        1024 B
+B_OFF = 0x0400  # input 2        1024 B
+O_OFF = 0x0800  # output         1024 B
+S_OFF = 0x0C00  # scratch        1024 B
 
-CK_DRAM = 0x1000        # where the result checksum lands, byte offset in DRAM
+CK_DRAM = 0x1000  # where the result checksum lands, byte offset in DRAM
 
 XORSHIFT_SEED = 0x1234_5678
 
@@ -53,11 +53,11 @@ SIMD = 8
 #: Byte offsets in the vector scratchpad. Held apart from the scalar map on
 #: purpose: the two are different address regions, and a kernel that confuses
 #: them faults on the region decode rather than reading the wrong data.
-VA_OFF = 0x0000         # input 1
-VB_OFF = 0x0400         # input 2
-VC_OFF = 0x0600         # input 3, for the two-accumulator dot
-VO_OFF = 0x0800         # output
-VH_OFF = 0x0C00         # two rows, for the store-then-load hazard case
+VA_OFF = 0x0000  # input 1
+VB_OFF = 0x0400  # input 2
+VC_OFF = 0x0600  # input 3, for the two-accumulator dot
+VO_OFF = 0x0800  # output
+VH_OFF = 0x0C00  # two rows, for the store-then-load hazard case
 
 
 def vbytes():
@@ -187,6 +187,7 @@ def report(ck_words, ck_off):
 
 # ------------------------------------------------------------------ multiply
 
+
 def mul8(dst, a, b, t0, t1, t2):
     """dst = a * b for a sign-extended int8 `a` and an int8 `b`.
 
@@ -229,7 +230,7 @@ def mul8_fake(dst, a, b, t0, t1, t2):
 # ------------------------------------------------------------------- kernels
 # Each returns (init, kernel, checksum words).
 
-DOT_N = 128             # int8 elements per input vector
+DOT_N = 128  # int8 elements per input vector
 
 
 def k_dot_i8(mul=mul8):
@@ -238,7 +239,8 @@ def k_dot_i8(mul=mul8):
     Data times data: neither operand is known at compile time, so nothing can be
     strength-reduced and the whole software multiply is paid per element.
     """
-    body = f"""
+    body = (
+        f"""
     li   s0, SPAD+{A_OFF}
     li   s1, SPAD+{B_OFF}
     li   s2, {DOT_N}
@@ -246,7 +248,9 @@ def k_dot_i8(mul=mul8):
 dot_loop:
     lb   a3, 0(s0)
     lb   a4, 0(s1)
-""" + mul("a5", "a3", "a4", "t0", "t1", "t2") + f"""
+"""
+        + mul("a5", "a3", "a4", "t0", "t1", "t2")
+        + f"""
     add  s4, s4, a5
     addi s0, s0, 1
     addi s1, s1, 1
@@ -255,12 +259,14 @@ dot_loop:
     li   t0, SPAD+{O_OFF}
     sw   s4, 0(t0)
 """
-    pre = fill(A_OFF, DOT_N // 4, tag="fa") + \
-        fill(B_OFF, DOT_N // 4, seed=0x0BAD_F00D, tag="fb")
+    )
+    pre = fill(A_OFF, DOT_N // 4, tag="fa") + fill(
+        B_OFF, DOT_N // 4, seed=0x0BAD_F00D, tag="fb"
+    )
     return pre, body, 1
 
 
-FIR_TAPS = [1, 3, 7, 5, 5, 7, 3, 1]     # strength-reducible, symmetric
+FIR_TAPS = [1, 3, 7, 5, 5, 7, 3, 1]  # strength-reducible, symmetric
 FIR_OUT = 64
 
 
@@ -305,7 +311,7 @@ fir_loop:
     return pre, "".join(body), FIR_OUT
 
 
-IMG_W = 16              # int16 samples per row
+IMG_W = 16  # int16 samples per row
 IMG_H = 16
 
 
@@ -315,8 +321,9 @@ def k_stencil_i16():
     Every coefficient is a power of two, so this is the pure address-and-add
     kernel and it is where a lane-crossing shift earns or loses its place.
     """
-    rs = IMG_W * 2       # row stride, bytes
-    body = ["""
+    rs = IMG_W * 2  # row stride, bytes
+    body = [
+        """
     li   s0, SPAD+%d
     li   s1, SPAD+%d
     li   s3, %d
@@ -351,8 +358,20 @@ st_col:
     addi s0, s0, 4
     addi s3, s3, -1
     bnez s3, st_row
-""" % (A_OFF + rs + 2, O_OFF, IMG_H - 2, IMG_W - 2,
-       -rs - 2, -rs + 2, rs - 2, rs + 2, -rs, rs)]
+"""
+        % (
+            A_OFF + rs + 2,
+            O_OFF,
+            IMG_H - 2,
+            IMG_W - 2,
+            -rs - 2,
+            -rs + 2,
+            rs - 2,
+            rs + 2,
+            -rs,
+            rs,
+        )
+    ]
     pre = fill(A_OFF, IMG_W * IMG_H // 2, tag="fa")
     # 196 halfwords is exactly 98 words; a 99th would read past the kernel.
     return pre, "".join(body), (IMG_W - 2) * (IMG_H - 2) // 2
@@ -494,6 +513,7 @@ def k_null():
 # the scalar scratchpad, because that is what the checksum and the DRAM
 # comparison already reach.
 
+
 def k_dot_i8_vec():
     """The same int8 dot, as one `vdot.s8` per 4*SIMD elements.
 
@@ -501,7 +521,7 @@ def k_dot_i8_vec():
     lane, so at SIMD 8 one instruction does 32 int8 multiply-accumulates that
     the scalar twin pays 48 instructions each for.
     """
-    per = 4 * SIMD                      # int8 elements per vector
+    per = 4 * SIMD  # int8 elements per vector
     body = """
     li   s0, VSPAD+%d
     li   s1, VSPAD+%d
@@ -520,8 +540,9 @@ dotv_loop:
     li   t0, SPAD+%d
     sw   a2, 0(t0)
 """ % (VA_OFF, VB_OFF, DOT_N // per, vbytes(), vbytes(), O_OFF)
-    pre = (fill_at("VSPAD", VA_OFF, DOT_N // 4, tag="va") +
-           fill_at("VSPAD", VB_OFF, DOT_N // 4, seed=0x0BAD_F00D, tag="vb"))
+    pre = fill_at("VSPAD", VA_OFF, DOT_N // 4, tag="va") + fill_at(
+        "VSPAD", VB_OFF, DOT_N // 4, seed=0x0BAD_F00D, tag="vb"
+    )
     return pre, body, 1
 
 
@@ -532,7 +553,7 @@ def k_dot2_i8_vec():
     the accumulator's issue interval -- `dot_i8_v` spaces its dots six
     instructions apart and would run the same at any II.
     """
-    per = 4 * SIMD                      # int8 elements per vector
+    per = 4 * SIMD  # int8 elements per vector
     body = """
     li   s0, VSPAD+%d
     li   s1, VSPAD+%d
@@ -558,11 +579,12 @@ dot2v_loop:
     li   t0, SPAD+%d
     sw   a2, 0(t0)
     sw   a3, 4(t0)
-""" % (VA_OFF, VB_OFF, VC_OFF, DOT_N // per,
-       vbytes(), vbytes(), vbytes(), O_OFF)
-    pre = (fill_at("VSPAD", VA_OFF, DOT_N // 4, tag="v2a") +
-           fill_at("VSPAD", VB_OFF, DOT_N // 4, seed=0x0BAD_F00D, tag="v2b") +
-           fill_at("VSPAD", VC_OFF, DOT_N // 4, seed=0x5EED_1234, tag="v2c"))
+""" % (VA_OFF, VB_OFF, VC_OFF, DOT_N // per, vbytes(), vbytes(), vbytes(), O_OFF)
+    pre = (
+        fill_at("VSPAD", VA_OFF, DOT_N // 4, tag="v2a")
+        + fill_at("VSPAD", VB_OFF, DOT_N // 4, seed=0x0BAD_F00D, tag="v2b")
+        + fill_at("VSPAD", VC_OFF, DOT_N // 4, seed=0x5EED_1234, tag="v2c")
+    )
     return pre, body, 2
 
 
@@ -700,7 +722,8 @@ def k_fir_i16_vec():
         raise ValueError(
             "fir_i16_v needs SIMD >= %d taps; at SIMD %d vsldw would wrap and "
             "the model would agree with the hardware about the wrong answer"
-            % (len(FIR_TAPS), SIMD))
+            % (len(FIR_TAPS), SIMD)
+        )
     vb = vbytes()
     nsamp = FIR_OUT + len(FIR_TAPS)
     # ---- pass 1: widen int16 -> int32, in place from A into scratch ----
@@ -718,8 +741,7 @@ firw_loop:
     addi s1, s1, %d
     addi s2, s2, -1
     bnez s2, firw_loop
-""" % (VA_OFF, VB_OFF, (nsamp + 2 * SIMD - 1) // (2 * SIMD),
-       vb, vb, 2 * vb)
+""" % (VA_OFF, VB_OFF, (nsamp + 2 * SIMD - 1) // (2 * SIMD), vb, vb, 2 * vb)
 
     # ---- pass 2: the filter itself ----
     body = ["""
@@ -813,9 +835,20 @@ epiv_loop:
     addi s1, s1, %d
     addi s2, s2, -1
     bnez s2, epiv_loop
-""" % (VA_OFF, VO_OFF, EPI_N // (4 * SIMD),
-       vbytes(), EPI_SHIFT, EPI_SHIFT, 2 * vbytes(), 3 * vbytes(),
-       EPI_SHIFT, EPI_SHIFT, 4 * vbytes(), vbytes())
+""" % (
+        VA_OFF,
+        VO_OFF,
+        EPI_N // (4 * SIMD),
+        vbytes(),
+        EPI_SHIFT,
+        EPI_SHIFT,
+        2 * vbytes(),
+        3 * vbytes(),
+        EPI_SHIFT,
+        EPI_SHIFT,
+        4 * vbytes(),
+        vbytes(),
+    )
     tail = """
     li   s0, VSPAD+%d
     li   s2, %d
@@ -835,21 +868,21 @@ epick_loop:
 
 
 SUITE = [
-    ("nullkern",     k_null,                          "the timing bracket alone"),
-    ("memcpy32",     k_memcpy32,                      "pure width, no arithmetic"),
-    ("dot_i8",       k_dot_i8,                        "int8 dot, software multiply"),
-    ("dot_i8_nomul", lambda: k_dot_i8(mul8_fake),     "int8 dot, multiply costed at 1"),
-    ("fir_i16",      k_fir_i16,                       "8-tap FIR, constant taps"),
-    ("stencil_i16",  k_stencil_i16,                   "3x3 Gaussian, 16x16 int16"),
-    ("reduce_i32",   k_reduce_i32,                    "sum and signed max"),
-    ("epilogue",     k_epilogue,                      "bias, ReLU, shift, saturate, pack"),
-    ("memcpy32_v",   k_memcpy32_vec,                  "VECTOR: pure width"),
-    ("dot_i8_v",     k_dot_i8_vec,                    "VECTOR: int8 dot"),
-    ("dot2_i8_v",    k_dot2_i8_vec,                   "VECTOR: int8 dot, two accumulators"),
-    ("vsw_hazard",   k_vsw_hazard,                    "VECTOR: scalar store, then a load of another row"),
-    ("reduce_i32_v", k_reduce_i32_vec,                "VECTOR: sum and signed max"),
-    ("epilogue_v",   k_epilogue_vec,                  "VECTOR: requantise epilogue"),
-    ("fir_i16_v",    k_fir_i16_vec,                   "VECTOR: 8-tap FIR, constant taps"),
+    ("nullkern", k_null, "the timing bracket alone"),
+    ("memcpy32", k_memcpy32, "pure width, no arithmetic"),
+    ("dot_i8", k_dot_i8, "int8 dot, software multiply"),
+    ("dot_i8_nomul", lambda: k_dot_i8(mul8_fake), "int8 dot, multiply costed at 1"),
+    ("fir_i16", k_fir_i16, "8-tap FIR, constant taps"),
+    ("stencil_i16", k_stencil_i16, "3x3 Gaussian, 16x16 int16"),
+    ("reduce_i32", k_reduce_i32, "sum and signed max"),
+    ("epilogue", k_epilogue, "bias, ReLU, shift, saturate, pack"),
+    ("memcpy32_v", k_memcpy32_vec, "VECTOR: pure width"),
+    ("dot_i8_v", k_dot_i8_vec, "VECTOR: int8 dot"),
+    ("dot2_i8_v", k_dot2_i8_vec, "VECTOR: int8 dot, two accumulators"),
+    ("vsw_hazard", k_vsw_hazard, "VECTOR: scalar store, then a load of another row"),
+    ("reduce_i32_v", k_reduce_i32_vec, "VECTOR: sum and signed max"),
+    ("epilogue_v", k_epilogue_vec, "VECTOR: requantise epilogue"),
+    ("fir_i16_v", k_fir_i16_vec, "VECTOR: 8-tap FIR, constant taps"),
 ]
 
 #: A case that needs more lanes than the build has. `fir_i16_v` is the only one:
@@ -861,6 +894,7 @@ MIN_SIMD = {"fir_i16_v": len(FIR_TAPS)}
 def cases_for(simd):
     """The suite this build can actually run, in order."""
     return [(n, b, d) for n, b, d in SUITE if simd >= MIN_SIMD.get(n, 2)]
+
 
 #: Which cases need the extension. A build without it faults on them, so the
 #: runner refuses to report them rather than reporting a fault as a cycle count.
@@ -899,8 +933,8 @@ vn_loop:
 
 IX_CASES = [("vspad_noc", ix_vspad_noc)]
 
-BUILDERS = dict((n, b) for n, b, _ in SUITE)
-NOTES = dict((n, d) for n, _, d in SUITE)
+BUILDERS = {n: b for n, b, _ in SUITE}
+NOTES = {n: d for n, _, d in SUITE}
 
 
 def build_case(name):
@@ -917,5 +951,14 @@ def build_case(name):
     else:
         pre, kernel, ckw = got
         post = ""
-    return (zero(O_OFF, ckw) + pre + CYC_START + "\nkern_start:\n" + kernel +
-            "\nkern_end:\n" + CYC_END + post + report(ckw, O_OFF))
+    return (
+        zero(O_OFF, ckw)
+        + pre
+        + CYC_START
+        + "\nkern_start:\n"
+        + kernel
+        + "\nkern_end:\n"
+        + CYC_END
+        + post
+        + report(ckw, O_OFF)
+    )

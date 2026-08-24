@@ -19,13 +19,13 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from rv_asm import assemble, to_hex                             # noqa: E402
-from rv_model import Machine, DRAM_BASE, SPAD_BASE              # noqa: E402
-from rv_gen import SYMS, zero_regs, MASK32, _sum                # noqa: E402
+from rv_asm import assemble, to_hex
+from rv_gen import MASK32, SYMS, _sum, zero_regs
+from rv_model import DRAM_BASE, Machine
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 
-DRAM_WORDS = 4096          # what the bench's AXI RAM covers, in 32-bit words
+DRAM_WORDS = 4096  # what the bench's AXI RAM covers, in 32-bit words
 SPAD_WORDS = 2048
 
 
@@ -41,7 +41,8 @@ FLUSH = """
 
 # ------------------------------------------------------------------ programs
 
-ARRAY_SUM = wrap("""
+ARRAY_SUM = wrap(
+    """
     li  t0, DRAM
     li  t1, 64
     li  t2, 0
@@ -53,12 +54,16 @@ sum_loop:
     bnez t1, sum_loop
     li  t4, DRAM+1024
     sw  t2, 0(t4)
-""" + FLUSH + """
+"""
+    + FLUSH
+    + """
     mv  a0, t2
     ecall
-""")
+"""
+)
 
-MEMCPY = wrap("""
+MEMCPY = wrap(
+    """
     li  t0, DRAM
     li  t1, DRAM+2048
     li  t2, 300
@@ -69,14 +74,18 @@ cp_loop:
     addi t1, t1, 1
     addi t2, t2, -1
     bnez t2, cp_loop
-""" + FLUSH + """
+"""
+    + FLUSH
+    + """
     li  a0, 0xC0DE
     ecall
-""")
+"""
+)
 
 # The pointer chase is the case a cache cannot help with: every node is on its
 # own line, so every step is a miss, an eviction and a refill.
-PTR_CHASE = wrap("""
+PTR_CHASE = wrap(
+    """
     li  t0, DRAM
     li  t1, 0
     li  t4, 0
@@ -89,12 +98,16 @@ chase:
     li  t5, DRAM+2048
     sw  t1, 0(t5)
     sw  t4, 4(t5)
-""" + FLUSH + """
+"""
+    + FLUSH
+    + """
     mv  a0, t1
     ecall
-""")
+"""
+)
 
-CRC32 = wrap("""
+CRC32 = wrap(
+    """
     li  t0, DRAM
     li  t1, 128
     li  t2, -1
@@ -117,10 +130,13 @@ crc_no:
     not t2, t2
     li  t6, DRAM+3072
     sw  t2, 0(t6)
-""" + FLUSH + """
+"""
+    + FLUSH
+    + """
     mv  a0, t2
     ecall
-""")
+"""
+)
 
 # Arguments arrive two ways at once: the kick's own word through the control
 # region, and a granule pushed into the scratchpad before the kick.
@@ -145,7 +161,8 @@ arg_loop:
 
 # Stride the whole cache several times over, so eviction and refill of dirty
 # lines is the steady state rather than a corner.
-THRASH = wrap("""
+THRASH = wrap(
+    """
     li  t0, DRAM
     li  t1, 0
     li  t2, 4
@@ -162,22 +179,28 @@ inner:
     bnez t4, inner
     addi t2, t2, -1
     bnez t2, outer
-""" + FLUSH + """
+"""
+    + FLUSH
+    + """
     mv  a0, t1
     ecall
-""")
+"""
+)
 
 # invalidate-all must actually drop lines: read, invalidate, read again. The
 # bench rewrites DRAM under the PE between the two reads, so a stale line gives
 # a different answer rather than the same one.
-INVAL_RECHECK = wrap("""
+INVAL_RECHECK = wrap(
+    """
     li  s0, DRAM
     lw  s1, 0(s0)
     li  t0, DRAM+4096
     sw  s1, 0(t0)
     li  t1, 1
     sw  t1, 4(t0)
-""" + FLUSH + """
+"""
+    + FLUSH
+    + """
     li  s3, SPAD
 iv_wait:
     lw  t2, 0(s3)
@@ -187,7 +210,8 @@ iv_wait:
     lw  s2, 0(s0)
     sub a0, s2, s1
     ecall
-""")
+"""
+)
 
 
 # A command processor: poll a doorbell in the local scratchpad, act, clear it.
@@ -241,8 +265,13 @@ CASES = [
     ("memcpy", MEMCPY, dram_ramp, None, 0),
     ("ptr_chase", PTR_CHASE, dram_chase, None, 0),
     ("crc32", CRC32, dram_ramp, None, 0),
-    ("spad_args", SPAD_ARGS, None,
-     lambda: [(0x2000_0000 + i * 3) & MASK32 for i in range(8)], 0x0BAD_1234),
+    (
+        "spad_args",
+        SPAD_ARGS,
+        None,
+        lambda: [(0x2000_0000 + i * 3) & MASK32 for i in range(8)],
+        0x0BAD_1234,
+    ),
     ("thrash", THRASH, dram_ramp, None, 0),
 ]
 
@@ -254,7 +283,7 @@ def build(outdir):
     for n, (name, src, dgen, sgen, arg) in enumerate(CASES):
         words, _ = assemble(src, base=0, symbols=SYMS)
         m = Machine(imem_words=4096, spad_words=SPAD_WORDS, arg=arg, coreid=0x11)
-        m.imem[:len(words)] = words
+        m.imem[: len(words)] = words
         dinit = dgen() if dgen else [0] * DRAM_WORDS
         for i, v in enumerate(dinit):
             if v:
@@ -273,13 +302,23 @@ def build(outdir):
         # says something moved and nothing about what.
         (d / "dfin.hex").write_text(to_hex(dfin))
         (d / "spad.hex").write_text(to_hex(sgen() if sgen else [0] * 64))
-        meta = [cause, hword, len(trace), _sum(dfin), _sum(m.spad), arg,
-                len(words), len(sgen()) if sgen else 0]
+        meta = [
+            cause,
+            hword,
+            len(trace),
+            _sum(dfin),
+            _sum(m.spad),
+            arg,
+            len(words),
+            len(sgen()) if sgen else 0,
+        ]
         (d / "meta.hex").write_text(to_hex(meta))
         (d / "name.txt").write_text(name + "\n")
         index.append((n, name, len(words), len(trace)))
-        print("  sys%02d %-12s %5d words %7d retired  a0 %08x  cause %d"
-              % (n, name, len(words), len(trace), hword, cause))
+        print(
+            "  sys%02d %-12s %5d words %7d retired  a0 %08x  cause %d"
+            % (n, name, len(words), len(trace), hword, cause)
+        )
 
     # Programs the model cannot run on its own: they wait on the bench, so only
     # the image is emitted and the bench owns the expected answer.
@@ -292,8 +331,7 @@ def build(outdir):
         print("  ix%02d  %-12s %5d words  (bench-driven)" % (n, name, len(words)))
 
     (outdir / "nsys.hex").write_text("%08x\n" % len(CASES))
-    (outdir / "index.txt").write_text(
-        "".join("%2d %-12s %5d %8d\n" % r for r in index))
+    (outdir / "index.txt").write_text("".join("%2d %-12s %5d %8d\n" % r for r in index))
     print("  %d system cases into %s" % (len(CASES), outdir))
 
 

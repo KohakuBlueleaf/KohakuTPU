@@ -35,9 +35,9 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from rv_model import Machine, Halt, CAUSE_FAULT, MASK, sx           # noqa: E402
-import rv_simd_isa as I                                              # noqa: E402
-import rv_simd_f16 as F                                              # noqa: E402
+import rv_simd_f16 as F
+import rv_simd_isa as I
+from rv_model import CAUSE_FAULT, MASK, Halt, Machine, sx
 
 
 def fsfu_e8(base, e8):
@@ -62,9 +62,13 @@ def fsfu_e8(base, e8):
     import struct
 
     e, m = (e8 >> 15) & 0xFF, e8 & 0x7FFF
-    s, zero, inf, nan = (e8 >> 23) & 1, e == 0, e == 0xFF and m == 0, \
-        e == 0xFF and m != 0
-    neg = s and not zero                          # -0 is NOT negative here
+    s, zero, inf, nan = (
+        (e8 >> 23) & 1,
+        e == 0,
+        e == 0xFF and m == 0,
+        e == 0xFF and m != 0,
+    )
+    neg = s and not zero  # -0 is NOT negative here
     f = struct.unpack("<f", struct.pack("<I", F.e8_to_f32(e8)))[0]
     inf_p, inf_n, nan_v = float("inf"), float("-inf"), float("nan")
 
@@ -76,7 +80,7 @@ def fsfu_e8(base, e8):
             y = inf_p if not s else 0.0
         else:
             try:
-                y = 2.0 ** f
+                y = 2.0**f
             except OverflowError:
                 # float64 STOPS AT 2^1024 and the exponent field does not: any
                 # x above it is +inf, which is what the RTL already returns for
@@ -89,40 +93,55 @@ def fsfu_e8(base, e8):
         # THE SIGN SURVIVES AT BOTH ENDS: vec_alu's OP_INV takes spec_sign_c
         # from the input's sign, so 1/-inf is -0 and not +0. vec_alu_tb section 9
         # tests inv(+inf) and not inv(-inf), so nothing else pins this.
-        y = (inf_n if s else inf_p) if zero else \
-            (-0.0 if s else 0.0) if inf else 1.0 / f
+        y = (
+            (inf_n if s else inf_p)
+            if zero
+            else (-0.0 if s else 0.0) if inf else 1.0 / f
+        )
     elif base == "vfrsqrt":
         # THE SIGN SURVIVES THROUGH ZERO: 5.4.1 gives squareRoot(-0) = -0 and
         # 1/-0 is -inf, so rsqrt(-0) is -inf, as OpenCL and CUDA also specify.
         # This read `inf_p if zero` -- transcribed from vec_alu's OP_RSQRT, which
         # hardcodes spec_sign_c = 1'b0 and is wrong on that one input.
-        y = (nan_v if neg else (inf_n if s else inf_p) if zero
-             else 0.0 if inf else 1.0 / math.sqrt(f))
+        y = (
+            nan_v
+            if neg
+            else (inf_n if s else inf_p) if zero else 0.0 if inf else 1.0 / math.sqrt(f)
+        )
     else:
         raise ValueError("not a seed: %s" % base)
 
-    if y != y:
+    if math.isnan(y):
         return F.E8_NAN
     try:
         bits = struct.unpack("<I", struct.pack("<f", y))[0]
-    except OverflowError:                         # IEEE overflows to INFINITY
+    except OverflowError:  # IEEE overflows to INFINITY
         bits = 0xFF800000 if y < 0 else 0x7F800000
     return F.f32_to_e8(bits)
 
+
 VSPAD_BASE = 0x4000_0000
-R_VSPAD = 5                     # beside rv_model's R_SPAD..R_DRAM
+R_VSPAD = 5  # beside rv_model's R_SPAD..R_DRAM
 
 
 def _sat(v, bits):
     lo, hi = -(1 << (bits - 1)), (1 << (bits - 1)) - 1
-    return lo if v < lo else hi if v > hi else v
+    return lo if v < lo else min(v, hi)
 
 
 class DspMachine(Machine):
     """One SIMD PE's architectural state: the base core's, plus the vector file."""
 
-    def __init__(self, simd=8, vregs=I.VREGS, nacc=I.NACC,
-                 vspad_entries=1024, npart=16, flanes=None, **kw):
+    def __init__(
+        self,
+        simd=8,
+        vregs=I.VREGS,
+        nacc=I.NACC,
+        vspad_entries=1024,
+        npart=16,
+        flanes=None,
+        **kw,
+    ):
         super().__init__(**kw)
         self.simd = simd
         self.vw = 32 * simd
@@ -150,7 +169,7 @@ class DspMachine(Machine):
         self.facc = [[[0] * npart for _ in range(2 * simd)] for _ in range(nacc)]
         self.fturn = [0] * nacc
         self.vspad = [0] * vspad_entries
-        self.vcount = {}            # name -> dynamic count, for the frontier
+        self.vcount = {}  # name -> dynamic count, for the frontier
 
     # ---- the vector scratchpad in the scalar map -------------------------
     # STORE ONLY, exactly like a peer window: a scalar store stages data for
@@ -173,8 +192,9 @@ class DspMachine(Machine):
         for b in range(4):
             src = val if (be >> b) & 1 else old
             new |= ((src >> (8 * b)) & 0xFF) << (8 * b)
-        self.vspad[e] = ((self.vspad[e] & ~(MASK << (32 * k)))
-                         | ((new & MASK) << (32 * k)))
+        self.vspad[e] = (self.vspad[e] & ~(MASK << (32 * k))) | (
+            (new & MASK) << (32 * k)
+        )
 
     # ---- element access -------------------------------------------------
     def _elems(self, val, bits):
@@ -317,15 +337,15 @@ class DspMachine(Machine):
                     hit = False
                 else:
                     ka, kb = self._e8_key(x), self._e8_key(y)
-                    hit = {"vfcmplt": ka < kb, "vfcmpgt": ka > kb,
-                           "vfcmpeq": ka == kb}[base]
+                    hit = {"vfcmplt": ka < kb, "vfcmpgt": ka > kb, "vfcmpeq": ka == kb}[
+                        base
+                    ]
                 mask_out |= (allset if hit else 0) << (w * i)
 
         if base.startswith("vfcmp"):
             self.v[o["vd"]] = mask_out & self.vmask
         else:
             self.v[o["vd"]] = self._fpack_out(r, w)
-        return None
 
     def _exec_fcvt(self, kind, w, o, pc):
         n = self.vw // w
@@ -340,7 +360,7 @@ class DspMachine(Machine):
                 e8 = (F.f16_to_e8 if w == 16 else F.f32_to_e8)((src >> (w * i)) & m)
                 out |= (self._e8_trunc_i32(e8) & MASK) << (32 * i)
             self.v[o["vd"]] = out & self.vmask
-            return None
+            return
 
         if kind == "i2f":
             out = 0
@@ -350,21 +370,23 @@ class DspMachine(Machine):
                 cv = F.e8_to_f16 if w == 16 else F.e8_to_f32
                 out |= (cv(e8) & m) << (w * i)
             self.v[o["vd"]] = out & self.vmask
-            return None
+            return
 
         # f2f: the element type names the DESTINATION, and the count halves or
         # doubles, so this is the float vunpkl / vpack.
         out = 0
-        if w == 32:                                   # widen f16 -> f32
+        if w == 32:  # widen f16 -> f32
             for j in range(self.simd):
-                out |= (F.e8_to_f32(F.f16_to_e8((src >> (16 * j)) & 0xFFFF))
-                        & 0xFFFF_FFFF) << (32 * j)
-        else:                                         # narrow f32 -> f16
+                out |= (
+                    F.e8_to_f32(F.f16_to_e8((src >> (16 * j)) & 0xFFFF)) & 0xFFFF_FFFF
+                ) << (32 * j)
+        else:  # narrow f32 -> f16
             for j in range(self.simd):
-                out |= (F.e8_to_f16(F.f32_to_e8((src >> (32 * j)) & 0xFFFF_FFFF))
-                        & 0xFFFF) << (16 * j)
+                out |= (
+                    F.e8_to_f16(F.f32_to_e8((src >> (32 * j)) & 0xFFFF_FFFF)) & 0xFFFF
+                ) << (16 * j)
         self.v[o["vd"]] = out & self.vmask
-        return None
+        return
 
     @staticmethod
     def _e8_trunc_i32(e8):
@@ -378,7 +400,7 @@ class DspMachine(Machine):
         v = (sig << sh) if sh >= 0 else (sig >> -sh)
         v = -v if s else v
         lo, hi = -(1 << 31), (1 << 31) - 1
-        return lo if v < lo else hi if v > hi else v
+        return lo if v < lo else min(v, hi)
 
     @staticmethod
     def _i32_to_e8(v):
@@ -404,7 +426,6 @@ class DspMachine(Machine):
     def _exec_fsfu(self, base, w, o, pc):
         a = self._fpack_in(self.v[o["vs1"]], w)
         self.v[o["vd"]] = self._fpack_out([fsfu_e8(base, x) for x in a], w)
-        return None
 
     def _exec_float(self, base, suf, o, pc):
         # `vfcvt` spells its direction before its type: vfcvt.f2i.f16.
@@ -417,8 +438,17 @@ class DspMachine(Machine):
         if kind is not None:
             return self._exec_fcvt(kind, 32 if suf == "f32" else 16, o, pc)
         w = 32 if suf == "f32" else 16
-        if base in ("vfmul", "vfadd", "vfsub", "vfma", "vfmin", "vfmax",
-                    "vfcmplt", "vfcmpgt", "vfcmpeq"):
+        if base in (
+            "vfmul",
+            "vfadd",
+            "vfsub",
+            "vfma",
+            "vfmin",
+            "vfmax",
+            "vfcmplt",
+            "vfcmpgt",
+            "vfcmpeq",
+        ):
             return self._exec_falu(base, w, o, pc)
         if base in ("vfexp2", "vflog2", "vfrcp", "vfrsqrt"):
             return self._exec_fsfu(base, w, o, pc)
@@ -437,8 +467,11 @@ class DspMachine(Machine):
             # The subtract flips each element's SIGN BIT, which moves with the
             # format: bit 31 of an FP32 element, bit 15 of an FP16 one.
             w = 32 if wide else 16
-            neg = (sum(1 << (w * n + w - 1) for n in range(self.vw // w))
-                   if base == "vfmsac" else 0)
+            neg = (
+                sum(1 << (w * n + w - 1) for n in range(self.vw // w))
+                if base == "vfmsac"
+                else 0
+            )
             a = self._fin(self.v[o["vs1"]], wide)
             b = self._fin(self.v[o["vs2"]] ^ neg, wide)
             k = self.fturn[ad]
@@ -447,8 +480,7 @@ class DspMachine(Machine):
                 # advances once per PASS -- so each pass owns the partials
                 # congruent to it, and the passes never collide.
                 idx = (k + i // self.flanes) % self.npart
-                self.facc[ad][i][idx] = F.e8_fma_hw(ae, be,
-                                                    self.facc[ad][i][idx])
+                self.facc[ad][i][idx] = F.e8_fma_hw(ae, be, self.facc[ad][i][idx])
             self.fturn[ad] = (k + self.fpasses) % self.npart
             return None
         if base == "vfaccwr":
@@ -468,18 +500,20 @@ class DspMachine(Machine):
                 # pass, in the order the fold walks them.
                 parts = self.facc[ad][i]
                 p = i // self.flanes
-                mine = [parts[k * self.fpasses + p]
-                        for k in range(self.npart // self.fpasses)]
+                mine = [
+                    parts[k * self.fpasses + p]
+                    for k in range(self.npart // self.fpasses)
+                ]
                 tot = self._fold(mine)
-                out |= (F.e8_to_f32(tot) if wide
-                        else F.e8_to_f16(tot)) << (16 * i)
+                out |= (F.e8_to_f32(tot) if wide else F.e8_to_f16(tot)) << (16 * i)
             self.v[o["vd"]] = out
             return None
         if base == "vfredsum":
             tot = 0
             for i in range(0, 2 * self.simd, 2 if wide else 1):
-                tot = F.e8_fma_hw(self._fold(self.facc[ad][i]),
-                                  F.f16_to_e8(0x3C00), tot)
+                tot = F.e8_fma_hw(
+                    self._fold(self.facc[ad][i]), F.f16_to_e8(0x3C00), tot
+                )
             return (F.e8_to_f32(tot) if wide else F.e8_to_f16(tot)) & MASK
         raise Halt(CAUSE_FAULT, pc)
 
@@ -527,7 +561,9 @@ class DspMachine(Machine):
         if base in ("vand", "vor", "vxor", "vandn"):
             a, b = self.v[o["vs1"]], self.v[o["vs2"]]
             self.v[o["vd"]] = {
-                "vand": a & b, "vor": a | b, "vxor": a ^ b,
+                "vand": a & b,
+                "vor": a | b,
+                "vxor": a ^ b,
                 "vandn": a & ~b,
             }[base] & self.vmask
             return None
@@ -599,7 +635,8 @@ class DspMachine(Machine):
             # clamped or wrapping-to-zero form leaves a hole the RTL and the
             # model would each have to guess the same way.
             self.v[o["vd"]] = self._from_lanes(
-                [cat[(k + i) % n] for i in range(self.simd)])
+                [cat[(k + i) % n] for i in range(self.simd)]
+            )
             return None
         if base == "vpack":
             src = 16 if suf == "s16" else 32
@@ -650,5 +687,6 @@ class DspMachine(Machine):
         for i, w in enumerate(words):
             e, k = divmod(i, self.simd)
             if e < len(self.vspad):
-                self.vspad[e] = ((self.vspad[e] & ~(MASK << (32 * k)))
-                                 | ((w & MASK) << (32 * k)))
+                self.vspad[e] = (self.vspad[e] & ~(MASK << (32 * k))) | (
+                    (w & MASK) << (32 * k)
+                )

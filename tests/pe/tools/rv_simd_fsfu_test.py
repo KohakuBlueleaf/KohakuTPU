@@ -27,8 +27,8 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-import rv_simd_f16 as F                                          # noqa: E402
-from rv_simd_model import fsfu_e8                                # noqa: E402
+import rv_simd_f16 as F
+from rv_simd_model import fsfu_e8
 
 E8_ONE = F.f32_to_e8(0x3F800000)
 E8_INF = F.f32_to_e8(0x7F800000)
@@ -48,48 +48,50 @@ def is_nan(e8):
 #: `NAN` is a marker: any quiet NaN passes, since the payload is not architecture.
 NAN = "NAN"
 SECTION_9 = [
-    ("vfexp2",  E8_INF,        E8_INF,  "exp2(+inf) = +inf"),
-    ("vfexp2",  E8_NINF,       E8_ZERO, "exp2(-inf) = 0"),
-    ("vfexp2",  e8_of(500.0),  E8_INF,  "exp2(500) overflows to +inf"),
-    ("vfexp2",  e8_of(-500.0), E8_ZERO, "exp2(-500) underflows to 0"),
-    ("vfexp2",  E8_ZERO,       E8_ONE,  "exp2(0) = 1"),
-    ("vflog2",  E8_ZERO,       E8_NINF, "log2(0) = -inf"),
-    ("vflog2",  e8_of(-2.0),   NAN,     "log2 of a negative is NaN"),
-    ("vflog2",  E8_INF,        E8_INF,  "log2(+inf) = +inf"),
-    ("vfrcp",   E8_ZERO,       E8_INF,  "1/+0 = +inf"),
-    ("vfrcp",   E8_NZERO,      E8_NINF, "1/-0 = -inf, the sign survives"),
-    ("vfrcp",   E8_INF,        E8_ZERO, "1/inf = 0"),
-    ("vfrsqrt", E8_ZERO,       E8_INF,  "rsqrt(0) = +inf"),
-    ("vfrsqrt", e8_of(-4.0),   NAN,     "rsqrt of a negative is NaN"),
-    ("vfrsqrt", E8_INF,        E8_ZERO, "rsqrt(inf) = 0"),
+    ("vfexp2", E8_INF, E8_INF, "exp2(+inf) = +inf"),
+    ("vfexp2", E8_NINF, E8_ZERO, "exp2(-inf) = 0"),
+    ("vfexp2", e8_of(500.0), E8_INF, "exp2(500) overflows to +inf"),
+    ("vfexp2", e8_of(-500.0), E8_ZERO, "exp2(-500) underflows to 0"),
+    ("vfexp2", E8_ZERO, E8_ONE, "exp2(0) = 1"),
+    ("vflog2", E8_ZERO, E8_NINF, "log2(0) = -inf"),
+    ("vflog2", e8_of(-2.0), NAN, "log2 of a negative is NaN"),
+    ("vflog2", E8_INF, E8_INF, "log2(+inf) = +inf"),
+    ("vfrcp", E8_ZERO, E8_INF, "1/+0 = +inf"),
+    ("vfrcp", E8_NZERO, E8_NINF, "1/-0 = -inf, the sign survives"),
+    ("vfrcp", E8_INF, E8_ZERO, "1/inf = 0"),
+    ("vfrsqrt", E8_ZERO, E8_INF, "rsqrt(0) = +inf"),
+    ("vfrsqrt", e8_of(-4.0), NAN, "rsqrt of a negative is NaN"),
+    ("vfrsqrt", E8_INF, E8_ZERO, "rsqrt(inf) = 0"),
 ]
 
 #: Not in section 9, but they follow from the same specials and are exactly the
 #: shape the old clamp got wrong -- a NaN in must not become a finite.
 EXTRA = [
-    ("vfexp2",  F.E8_NAN, NAN,     "exp2(NaN) = NaN, not a large finite"),
-    ("vflog2",  F.E8_NAN, NAN,     "log2(NaN) = NaN"),
-    ("vfrcp",   F.E8_NAN, NAN,     "rcp(NaN) = NaN"),
-    ("vfrsqrt", F.E8_NAN, NAN,     "rsqrt(NaN) = NaN"),
-    ("vflog2",  E8_NZERO, E8_NINF, "log2(-0) = -inf, not NaN"),
+    ("vfexp2", F.E8_NAN, NAN, "exp2(NaN) = NaN, not a large finite"),
+    ("vflog2", F.E8_NAN, NAN, "log2(NaN) = NaN"),
+    ("vfrcp", F.E8_NAN, NAN, "rcp(NaN) = NaN"),
+    ("vfrsqrt", F.E8_NAN, NAN, "rsqrt(NaN) = NaN"),
+    ("vflog2", E8_NZERO, E8_NINF, "log2(-0) = -inf, not NaN"),
     # DERIVED, not transcribed. This said `E8_INF, "rsqrt(-0) = +inf, not NaN"`
     # -- checked carefully along the inf-versus-NaN axis and never asked about
     # the SIGN, so it pinned vec_alu's defect as the specification.
     ("vfrsqrt", E8_NZERO, E8_NINF, "rsqrt(-0) = -inf, the sign survives"),
-    ("vflog2",  E8_NINF,  NAN,     "log2(-inf) is NaN"),
-    ("vfrsqrt", E8_NINF,  NAN,     "rsqrt(-inf) is NaN"),
+    ("vflog2", E8_NINF, NAN, "log2(-inf) is NaN"),
+    ("vfrsqrt", E8_NINF, NAN, "rsqrt(-inf) is NaN"),
     # NOT in section 9, which tests inv(+inf) only -- and the fix for the clamp
     # got it wrong on the first pass by returning a bare +0 for either infinity.
-    ("vfrcp",   E8_NINF,  E8_NZERO, "1/-inf = -0, the sign survives"),
-    ("vfrcp",   E8_INF,   E8_ZERO,  "1/+inf = +0"),
-    ("vfexp2",  E8_NZERO, E8_ONE,   "exp2(-0) = 1"),
+    ("vfrcp", E8_NINF, E8_NZERO, "1/-inf = -0, the sign survives"),
+    ("vfrcp", E8_INF, E8_ZERO, "1/+inf = +0"),
+    ("vfexp2", E8_NZERO, E8_ONE, "exp2(-0) = 1"),
 ]
 
 
 def main():
     checks = errors = 0
-    for label, table in (("vec_alu_tb section 9", SECTION_9),
-                         ("the same specials, extended", EXTRA)):
+    for label, table in (
+        ("vec_alu_tb section 9", SECTION_9),
+        ("the same specials, extended", EXTRA),
+    ):
         print("--- %s ---" % label)
         for op, a, want, what in table:
             got = fsfu_e8(op, a)
@@ -104,25 +106,37 @@ def main():
     # a CONSTANT, not an answer, so no input may ever produce it.
     print("--- no input produces the old clamp constant ---")
     clamp = F.f32_to_e8(struct.unpack("<I", struct.pack("<f", 3.4e38))[0])
-    probes = [E8_ZERO, E8_NZERO, E8_INF, E8_NINF, F.E8_NAN, E8_ONE,
-              e8_of(-1.0), e8_of(-4.0), e8_of(500.0), e8_of(-500.0),
-              F.f32_to_e8(0x7F7FFFFF), F.f32_to_e8(0xFF7FFFFF)]
+    probes = [
+        E8_ZERO,
+        E8_NZERO,
+        E8_INF,
+        E8_NINF,
+        F.E8_NAN,
+        E8_ONE,
+        e8_of(-1.0),
+        e8_of(-4.0),
+        e8_of(500.0),
+        e8_of(-500.0),
+        F.f32_to_e8(0x7F7FFFFF),
+        F.f32_to_e8(0xFF7FFFFF),
+    ]
     for op in ("vfexp2", "vflog2", "vfrcp", "vfrsqrt"):
         for a in probes:
             got = fsfu_e8(op, a)
             checks += 1
             if got in (clamp, clamp | 0x800000):
                 errors += 1
-                print("  FAIL %s(%06x) returned the clamp constant %06x"
-                      % (op, a, got))
+                print("  FAIL %s(%06x) returned the clamp constant %06x" % (op, a, got))
 
     # A sanity floor on the finite path: it is toleranced, but it must at least
     # be the right VALUE to a few ulp, or the specials passing means nothing.
     print("--- the finite path is still approximately right ---")
-    for op, ref in (("vfexp2", lambda t: 2.0 ** t),
-                    ("vflog2", math.log2),
-                    ("vfrcp", lambda t: 1.0 / t),
-                    ("vfrsqrt", lambda t: 1.0 / math.sqrt(t))):
+    for op, ref in (
+        ("vfexp2", lambda t: 2.0**t),
+        ("vflog2", math.log2),
+        ("vfrcp", lambda t: 1.0 / t),
+        ("vfrsqrt", lambda t: 1.0 / math.sqrt(t)),
+    ):
         for x in (0.5, 1.0, 1.5, 2.0, 3.0, 7.0, 100.0):
             got = fsfu_e8(op, e8_of(x))
             gv = struct.unpack("<f", struct.pack("<I", F.e8_to_f32(got)))[0]
@@ -130,8 +144,7 @@ def main():
             checks += 1
             # log2(1) is exactly zero, so a RELATIVE bound has nothing to divide
             # by: an exact answer is the only acceptable one there.
-            bad = (gv != 0.0) if want == 0.0 else \
-                (abs(gv - want) / abs(want) > 1e-4)
+            bad = (gv != 0.0) if want == 0.0 else (abs(gv - want) / abs(want) > 1e-4)
             if bad:
                 errors += 1
                 print("  FAIL %s(%g) got %g want %g" % (op, x, gv, want))

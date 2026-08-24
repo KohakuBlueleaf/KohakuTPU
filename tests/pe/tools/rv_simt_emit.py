@@ -20,19 +20,27 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-import rv_simt_isa as I                                          # noqa: E402
+import rv_simt_isa as I
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 GEN = ROOT / "src" / "kohakuaccel" / "pe" / "rv32" / "simt" / "generated"
 VH = GEN / "kht_isa.vh"
 
-BANNER = ("GENERATED from tests/pe/tools/rv_simt_isa.py -- DO NOT EDIT.\n"
-          "Regenerate with `python tests/pe/tools/rv_simt_emit.py`; the ISA test\n"
-          "regenerates and compares, so a hand edit here fails rather than\n"
-          "quietly disagreeing with the assembler and the golden model.")
+BANNER = (
+    "GENERATED from tests/pe/tools/rv_simt_isa.py -- DO NOT EDIT.\n"
+    "Regenerate with `python tests/pe/tools/rv_simt_emit.py`; the ISA test\n"
+    "regenerates and compares, so a hand edit here fails rather than\n"
+    "quietly disagreeing with the assembler and the golden model."
+)
 
-GROUP = {I.F3_SALU: "SALU", I.F3_SMOV: "SMOV", I.F3_DIV: "DIV",
-         I.F3_SUB: "SUB", I.F3_VMEM: "VMEM", I.F3_FLT: "FLT"}
+GROUP = {
+    I.F3_SALU: "SALU",
+    I.F3_SMOV: "SMOV",
+    I.F3_DIV: "DIV",
+    I.F3_SUB: "SUB",
+    I.F3_VMEM: "VMEM",
+    I.F3_FLT: "FLT",
+}
 
 
 def _ident(name):
@@ -85,11 +93,9 @@ def verilog():
         L.append("localparam [2:0] KHGI_F3_%-5s = 3'd%d;" % (g, i))
 
     for g, ops in sorted(ops_by_group().items()):
-        L += ["", "// custom-2 funct3 = KHT_F3_%s: funct7 is the operation"
-              % GROUP[g]]
+        L += ["", "// custom-2 funct3 = KHT_F3_%s: funct7 is the operation" % GROUP[g]]
         for val, ident in sorted(ops.items()):
-            L.append("localparam [6:0] KHT_%s_%-9s = 7'd%d;"
-                     % (GROUP[g], ident, val))
+            L.append("localparam [6:0] KHT_%s_%-9s = 7'd%d;" % (GROUP[g], ident, val))
 
     L += [
         "",
@@ -122,15 +128,21 @@ def verilog():
     ]
 
     nkhg = sum(1 for o in I.ISA.values() if o.opcode == I.OPC_KHG)
-    L += ["// %d instructions: %d on custom-2, %d on custom-3."
-          % (len(I.ISA), nkhg, len(I.ISA) - nkhg), ""]
+    L += [
+        "// %d instructions: %d on custom-2, %d on custom-3."
+        % (len(I.ISA), nkhg, len(I.ISA) - nkhg),
+        "",
+    ]
     return "\n".join(L) + "\n"
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--check", action="store_true",
-                    help="fail if the file on disk differs from the table")
+    ap.add_argument(
+        "--check",
+        action="store_true",
+        help="fail if the file on disk differs from the table",
+    )
     a = ap.parse_args()
 
     want = {VH: verilog()}
@@ -140,11 +152,17 @@ def main():
             got = p.read_text() if p.exists() else None
             if got != text:
                 bad += 1
-                print("  DRIFT %s %s" % (p.relative_to(ROOT),
-                                         "is missing" if got is None
-                                         else "differs from the field table"))
-        print("  %s -- %d of %d generated files agree with the table"
-              % ("FAIL" if bad else "PASS", len(want) - bad, len(want)))
+                print(
+                    "  DRIFT %s %s"
+                    % (
+                        p.relative_to(ROOT),
+                        "is missing" if got is None else "differs from the field table",
+                    )
+                )
+        print(
+            "  %s -- %d of %d generated files agree with the table"
+            % ("FAIL" if bad else "PASS", len(want) - bad, len(want))
+        )
         return 1 if bad else 0
 
     GEN.mkdir(parents=True, exist_ok=True)

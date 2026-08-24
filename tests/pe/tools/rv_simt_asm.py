@@ -20,8 +20,8 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-import rv_simt_isa as G                                          # noqa: E402
-from rv_asm import AsmError, register_extension, _reg, _imm     # noqa: E402
+import rv_simt_isa as G
+from rv_asm import AsmError, _imm, _reg, register_extension
 
 
 def _sreg(tok):
@@ -30,10 +30,8 @@ def _sreg(tok):
         n = int(t[1:])
         if 0 <= n < G.SREGS:
             return n
-        raise AsmError("scalar register %r is outside s0..s%d"
-                       % (tok, G.SREGS - 1))
-    raise AsmError("not a scalar register: %r -- write sN, never an ABI name"
-                   % tok)
+        raise AsmError("scalar register %r is outside s0..s%d" % (tok, G.SREGS - 1))
+    raise AsmError("not a scalar register: %r -- write sN, never an ABI name" % tok)
 
 
 def _operand(op, tok, pc, syms):
@@ -61,16 +59,20 @@ def _gpu(mn, ops, pc, syms):
             raise AsmError("sli takes sd, imm")
         v = _imm(ops[1], syms, pc)
         if not -2048 <= v <= 2047:
-            raise AsmError("sli %d does not fit 12 bits; build it with "
-                           "saddi/sslli/sori, or read it with rdctl" % v)
+            raise AsmError(
+                "sli %d does not fit 12 bits; build it with "
+                "saddi/sslli/sori, or read it with rdctl" % v
+            )
         return [G.encode("saddi", sd=_sreg(ops[0]), ss1=0, imm=v)]
 
     if mn not in G.ISA:
         return None
     op = G.ISA[mn]
     if len(ops) != len(op.operands):
-        raise AsmError("%s takes %s, got %d operand(s)"
-                       % (mn, ", ".join(o.name for o in op.operands), len(ops)))
+        raise AsmError(
+            "%s takes %s, got %d operand(s)"
+            % (mn, ", ".join(o.name for o in op.operands), len(ops))
+        )
     args = {}
     for o, tok in zip(op.operands, ops):
         v = _operand(o, tok, pc, syms)

@@ -21,8 +21,8 @@ exponent field verbatim**, so E8M15 -> FP32 is exact and free.
 asserting it.
 """
 
-
 # --------------------------------------------------------------- helpers
+
 
 def _lead1(x: int, width: int):
     """Position of the most significant set bit, and whether there is one."""
@@ -34,6 +34,7 @@ def _lead1(x: int, width: int):
 
 # ----------------------------------------------------------- conversions
 
+
 def f16_to_e8(f16: int) -> int:
     """FP16 -> E8M15. Exact for every input, subnormals included."""
     s = (f16 >> 15) & 1
@@ -42,7 +43,7 @@ def f16_to_e8(f16: int) -> int:
 
     if e5 == 0 and m10 == 0:
         return s << 23
-    if e5 == 0x1F:                              # inf or NaN
+    if e5 == 0x1F:  # inf or NaN
         return (s << 23) | (0xFF << 15) | (m10 << 5)
     if e5 == 0:
         # value = m10 * 2^-24 = 2^(p-24) * 1.f, so the exponent is p + 103 and
@@ -68,7 +69,7 @@ def e8_to_f16(e8: int) -> int:
     if e == 0:
         return s << 15
     if e == 0xFF:
-        if m != 0:                              # NaN, quietened
+        if m != 0:  # NaN, quietened
             return (s << 15) | (0x1F << 10) | (1 << 9) | ((m >> 5) & 0x1FF)
         return (s << 15) | (0x1F << 10)
 
@@ -81,7 +82,7 @@ def e8_to_f16(e8: int) -> int:
     e5_adj = (e - 112) + carry
     n_man = 0 if carry else (rnd & 0x3FF)
 
-    if e5_adj >= 31:                            # saturate to the largest finite
+    if e5_adj >= 31:  # saturate to the largest finite
         return (s << 15) | (0x1E << 10) | 0x3FF
     if e5_adj <= 0:
         sh = min(118 - e, 31)
@@ -102,7 +103,7 @@ def f32_to_e8(f32: int) -> int:
     e = (f32 >> 23) & 0xFF
     m = f32 & 0x7FFFFF
 
-    if e == 0:                                  # E8M15 has no subnormals
+    if e == 0:  # E8M15 has no subnormals
         return s << 23
     if e == 0xFF:
         if m != 0:
@@ -117,7 +118,7 @@ def f32_to_e8(f32: int) -> int:
     e_adj = e + carry
     n_man = 0 if carry else (rnd & 0x7FFF)
 
-    if e_adj >= 255:                            # the one overflow E8 cannot hold
+    if e_adj >= 255:  # the one overflow E8 cannot hold
         return (s << 23) | (0xFF << 15)
     return (s << 23) | (e_adj << 15) | n_man
 
@@ -167,9 +168,9 @@ def e8_fma(a: int, b: int, c: int, negate: bool = False) -> int:
         return E8_NAN
     sp = sa ^ sb
     if ka == "inf" or kb == "inf":
-        if (ka == "zero") or (kb == "zero"):        # inf * 0
+        if (ka == "zero") or (kb == "zero"):  # inf * 0
             return E8_NAN
-        if kc == "inf" and sc != sp:                # inf - inf
+        if kc == "inf" and sc != sp:  # inf - inf
             return E8_NAN
         return (sp << 23) | (0xFF << 15)
     if kc == "inf":
@@ -184,15 +185,16 @@ def e8_fma(a: int, b: int, c: int, negate: bool = False) -> int:
         add, ce = 0, pe
 
     lo = min(pe, ce)
-    total = (prod << (pe - lo)) * (1 if sp == 0 else -1) \
-          + (add << (ce - lo)) * (1 if sc == 0 else -1)
+    total = (prod << (pe - lo)) * (1 if sp == 0 else -1) + (add << (ce - lo)) * (
+        1 if sc == 0 else -1
+    )
 
     if total == 0:
-        return 0                                    # an exact cancellation is +0
+        return 0  # an exact cancellation is +0
     sign = 1 if total < 0 else 0
     mag = abs(total)
 
-    k = mag.bit_length() - 1                        # value = 1.f * 2^(k+lo)
+    k = mag.bit_length() - 1  # value = 1.f * 2^(k+lo)
     if k >= 15:
         sig = mag >> (k - 15)
         guard = (mag >> (k - 16)) & 1 if k >= 16 else 0
@@ -203,7 +205,7 @@ def e8_fma(a: int, b: int, c: int, negate: bool = False) -> int:
 
     if guard & (stick | (sig & 1)):
         sig += 1
-        if sig >> 16:                               # rounded up to 2.0
+        if sig >> 16:  # rounded up to 2.0
             sig >>= 1
             k += 1
 
@@ -256,7 +258,7 @@ def e8_fma_hw(a: int, b: int, c: int) -> int:
         # The product is below half an ulp of the addend: the addend already IS
         # the correctly rounded answer, and the lane emits it.
         return c
-    prod = siga * sigb                       # 32 bits, at field bits 31:0
+    prod = siga * sigb  # 32 bits, at field bits 31:0
     if s > 48:
         shifted, lost = 0, 1
     else:
@@ -298,6 +300,7 @@ def e8_fma_hw(a: int, b: int, c: int) -> int:
 
 
 # ------------------------------------- the product, in accumulator format
+
 
 def f16_prod_acc(a_f16: int, b_f16: int, mw: int = 16) -> int:
     """FP16 x FP16 -> S1 E7 M<mw>, following khs_float_prod.v step for step.
@@ -357,8 +360,8 @@ def prod_acc_exact(a_f16: int, b_f16: int, mw: int = 16) -> int:
     if ka != "num" or kb != "num":
         return (sgn << (mw + 7)) | (127 << mw) | ((1 << mw) - 1)
 
-    mag = siga * sigb                       # exact, 32 bits
-    lo = (ea - 127) + (eb - 127) - 30       # value = mag * 2^lo
+    mag = siga * sigb  # exact, 32 bits
+    lo = (ea - 127) + (eb - 127) - 30  # value = mag * 2^lo
     k = mag.bit_length() - 1
 
     sig = mag >> (k - mw) if k >= mw else mag << (mw - k)
@@ -379,6 +382,7 @@ def prod_acc_exact(a_f16: int, b_f16: int, mw: int = 16) -> int:
 
 
 # ------------------------------------------------- the accumulator's add
+
 
 def acc_parts(x: int, mw: int):
     """(sign, exponent, mantissa) of an S1 E7 M<mw> word. Exponent 0 is zero."""
@@ -481,6 +485,7 @@ def acc_value(x: int, mw: int):
 
 # ---------------------------------------------------------------- checks
 
+
 def selftest() -> int:
     """Every claim above, over the whole FP16 space. Returns the error count."""
     bad = 0
@@ -503,13 +508,17 @@ def selftest() -> int:
     #    wider format agree. Checked through Python's own float, which is exact
     #    for both directions here.
     import struct
+
     for f in range(1 << 16):
         e5, m10 = (f >> 10) & 0x1F, f & 0x3FF
         if e5 == 0x1F:
             continue
         s = -1.0 if (f >> 15) else 1.0
-        want = (s * m10 * 2.0 ** -24) if e5 == 0 else \
-               (s * (1.0 + m10 / 1024.0) * 2.0 ** (e5 - 15))
+        want = (
+            (s * m10 * 2.0**-24)
+            if e5 == 0
+            else (s * (1.0 + m10 / 1024.0) * 2.0 ** (e5 - 15))
+        )
         got = struct.unpack("<f", struct.pack("<I", e8_to_f32(f16_to_e8(f))))[0]
         if got != want:
             bad += 1
@@ -520,13 +529,15 @@ def selftest() -> int:
     #    exact for the whole product-sum: FP16 significands are 11 bits, so a
     #    product is 22 and the sum stays well inside float64's 53.
     import random
+
     rng = random.Random(20260821)
     for _ in range(20000):
         fa, fb, fc = (rng.randrange(1 << 16) for _ in range(3))
         if any(((f >> 10) & 0x1F) == 0x1F for f in (fa, fb, fc)):
             continue
-        va, vb, vc = (struct.unpack("<e", struct.pack("<H", f))[0]
-                      for f in (fa, fb, fc))
+        va, vb, vc = (
+            struct.unpack("<e", struct.pack("<H", f))[0] for f in (fa, fb, fc)
+        )
         got = e8_fma(f16_to_e8(fa), f16_to_e8(fb), f16_to_e8(fc))
         want = va * vb + vc
         gotv = struct.unpack("<f", struct.pack("<I", e8_to_f32(got)))[0]
@@ -537,7 +548,7 @@ def selftest() -> int:
         if want == 0.0:
             ok = (got & 0x7FFFFF) == 0
         else:
-            ok = abs(gotv - want) <= abs(want) * 2.0 ** -16
+            ok = abs(gotv - want) <= abs(want) * 2.0**-16
         if not ok:
             bad += 1
             if bad < 20:
@@ -555,9 +566,16 @@ def selftest() -> int:
                 bad += 1
                 n += 1
                 if n < 5:
-                    print("  prod mw=%d: %04x * %04x -> %06x want %06x"
-                          % (mw, fa, fb, f16_prod_acc(fa, fb, mw),
-                             prod_acc_exact(fa, fb, mw)))
+                    print(
+                        "  prod mw=%d: %04x * %04x -> %06x want %06x"
+                        % (
+                            mw,
+                            fa,
+                            fb,
+                            f16_prod_acc(fa, fb, mw),
+                            prod_acc_exact(fa, fb, mw),
+                        )
+                    )
         # Edges as well as randoms: 1.0, the largest and smallest normals, the
         # smallest subnormal, and zero, against each other.
         edges = [0x3C00, 0x7BFF, 0x0400, 0x0001, 0x0000, 0xBC00, 0xFBFF]
@@ -565,9 +583,16 @@ def selftest() -> int:
             for fb in edges:
                 if f16_prod_acc(fa, fb, mw) != prod_acc_exact(fa, fb, mw):
                     bad += 1
-                    print("  prod edge mw=%d: %04x * %04x -> %06x want %06x"
-                          % (mw, fa, fb, f16_prod_acc(fa, fb, mw),
-                             prod_acc_exact(fa, fb, mw)))
+                    print(
+                        "  prod edge mw=%d: %04x * %04x -> %06x want %06x"
+                        % (
+                            mw,
+                            fa,
+                            fb,
+                            f16_prod_acc(fa, fb, mw),
+                            prod_acc_exact(fa, fb, mw),
+                        )
+                    )
 
     # 5. Algebraic identities the FMA must satisfy whatever it is made of.
     #    These need no reference implementation at all, which is what makes them
@@ -588,8 +613,7 @@ def selftest() -> int:
             ("a*1+0 == a", e8_fma(a, one, zero), a if nz_a else 0),
             ("0*b+c == c", e8_fma(zero, b, c), c if nz_c else 0),
             ("commutative", e8_fma(a, b, c), e8_fma(b, a, c)),
-            ("sign symmetry", e8_fma(a, b, c),
-             e8_fma(a ^ (1 << 23), b ^ (1 << 23), c)),
+            ("sign symmetry", e8_fma(a, b, c), e8_fma(a ^ (1 << 23), b ^ (1 << 23), c)),
             # a*1 is EXACT, so subtracting a cancels completely -- and the
             # answer is +0. The sign of an exact cancellation is a decision, not
             # a don't-care: the lane forces it positive and so does this.
@@ -599,8 +623,10 @@ def selftest() -> int:
             if got != want:
                 bad += 1
                 if bad < 25:
-                    print("  identity %s: %04x %04x %04x -> %06x want %06x"
-                          % (name, fa, fb, fc, got, want))
+                    print(
+                        "  identity %s: %04x %04x %04x -> %06x want %06x"
+                        % (name, fa, fb, fc, got, want)
+                    )
 
     # 6. The accumulator add against exact integer arithmetic. Independent by
     #    construction: this path never shifts, never rounds early, and never
@@ -610,7 +636,7 @@ def selftest() -> int:
     for mw in (14, 16):
         for _ in range(20000):
             fa, fb = rng.randrange(1 << 16), rng.randrange(1 << 16)
-            a = f16_prod_acc(fa, 0x3C00, mw)        # an ordinary accumulator word
+            a = f16_prod_acc(fa, 0x3C00, mw)  # an ordinary accumulator word
             b = f16_prod_acc(fb, 0x3C00, mw)
             got = acc_add(a, b, mw)
 
@@ -634,10 +660,15 @@ def selftest() -> int:
                             sig >>= 1
                             k += 1
                     e = k + lo + 63
-                    want = 0 if e <= 0 else (
-                        ((sgn << (mw + 7)) | (0x7F << mw) | ((1 << mw) - 1))
-                        if e >= 127 else
-                        (sgn << (mw + 7)) | (e << mw) | (sig & ((1 << mw) - 1)))
+                    want = (
+                        0
+                        if e <= 0
+                        else (
+                            ((sgn << (mw + 7)) | (0x7F << mw) | ((1 << mw) - 1))
+                            if e >= 127
+                            else (sgn << (mw + 7)) | (e << mw) | (sig & ((1 << mw) - 1))
+                        )
+                    )
             if got != want:
                 # The one KNOWN deviation, and it is the accumulator's, not
                 # this model's: `lost` is OR-ed into the sticky, which is right
@@ -654,8 +685,10 @@ def selftest() -> int:
                 else:
                     bad += 1
                     if bad < 25:
-                        print("  acc_add mw=%d: %06x + %06x -> %06x want %06x"
-                              % (mw, a, b, got, want))
+                        print(
+                            "  acc_add mw=%d: %06x + %06x -> %06x want %06x"
+                            % (mw, a, b, got, want)
+                        )
 
     # 7. A finite overflow SATURATES rather than becoming an infinity.
     big = f32_to_e8(struct.unpack("<I", struct.pack("<f", 1.0e30))[0])
@@ -664,9 +697,11 @@ def selftest() -> int:
         print("  1e30 -> f16 gave %04x, want 7bff (largest finite)" % e8_to_f16(big))
 
     if ulp_off:
-        print("  note: %d of 40000 accumulator adds are 1 ulp off "
-              "correct rounding -- subtractive alignment with lost bits, "
-              "which mx_fpacc rounds as if the residue were positive" % ulp_off)
+        print(
+            "  note: %d of 40000 accumulator adds are 1 ulp off "
+            "correct rounding -- subtractive alignment with lost bits, "
+            "which mx_fpacc rounds as if the residue were positive" % ulp_off
+        )
     print("%s -- %d wrong" % ("PASS" if bad == 0 else "FAIL", bad))
     return bad
 

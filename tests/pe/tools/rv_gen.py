@@ -16,23 +16,28 @@ reproducible by name rather than by luck.
 """
 
 import argparse
-import os
 import pathlib
 import random
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from rv_asm import assemble, to_hex                      # noqa: E402
-from rv_model import Machine, trace_hex, SPAD_BASE, DRAM_BASE, CTL_BASE  # noqa: E402
+from rv_asm import assemble, to_hex
+from rv_model import CTL_BASE, DRAM_BASE, SPAD_BASE, Machine, trace_hex
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 SYMS = {
-    "SPAD": SPAD_BASE, "DRAM": DRAM_BASE, "CTL": CTL_BASE,
-    "CTL_STATUS": CTL_BASE + 0x00, "CTL_FLUSH": CTL_BASE + 0x04,
-    "CTL_INVAL": CTL_BASE + 0x08, "CTL_CAUSE": CTL_BASE + 0x0C,
-    "CTL_COREID": CTL_BASE + 0x10, "CTL_ARG": CTL_BASE + 0x14,
-    "CTL_CYCLE": CTL_BASE + 0x18, "CTL_INSTRET": CTL_BASE + 0x1C,
+    "SPAD": SPAD_BASE,
+    "DRAM": DRAM_BASE,
+    "CTL": CTL_BASE,
+    "CTL_STATUS": CTL_BASE + 0x00,
+    "CTL_FLUSH": CTL_BASE + 0x04,
+    "CTL_INVAL": CTL_BASE + 0x08,
+    "CTL_CAUSE": CTL_BASE + 0x0C,
+    "CTL_COREID": CTL_BASE + 0x10,
+    "CTL_ARG": CTL_BASE + 0x14,
+    "CTL_CYCLE": CTL_BASE + 0x18,
+    "CTL_INSTRET": CTL_BASE + 0x1C,
 }
 
 # x31 and x30 are pinned by the prologue and never written again, so a random
@@ -60,6 +65,7 @@ def prog(body, a0="0"):
 
 
 # ---------------------------------------------------------------- directed
+
 
 def case_alu_imm():
     vals = [0, 1, -1, 5, -5, 0x7FF, -0x800, 0x55, -0x556]
@@ -96,8 +102,7 @@ def case_alu_reg():
     b = []
     for i, v in enumerate(vals):
         b.append("    li x%d, 0x%08X" % (5 + i, v))
-    for op in ("add", "sub", "sll", "slt", "sltu", "xor", "srl", "sra",
-               "or", "and"):
+    for op in ("add", "sub", "sll", "slt", "sltu", "xor", "srl", "sra", "or", "and"):
         for i in range(len(vals)):
             for j in range(len(vals)):
                 b.append("    %s x20, x%d, x%d" % (op, 5 + i, 5 + j))
@@ -172,7 +177,7 @@ def case_loads_stores():
         for off in range(0, 32, 4):
             b.append("    li x5, 0x%08X" % (0x11223344 + off))
             b.append("    sw x5, %d(%s)" % (off, base))
-        for off in range(0, 32):
+        for off in range(32):
             b.append("    lb  x6, %d(%s)" % (off, base))
             b.append("    add x20, x20, x6")
             b.append("    lbu x6, %d(%s)" % (off, base))
@@ -182,7 +187,7 @@ def case_loads_stores():
             b.append("    add x20, x20, x6")
             b.append("    lhu x6, %d(%s)" % (off, base))
             b.append("    add x20, x20, x6")
-        for off in range(0, 32):
+        for off in range(32):
             b.append("    li x7, %d" % (0xA0 + off))
             b.append("    sb x7, %d(%s)" % (off, base))
             b.append("    lbu x8, %d(%s)" % (off, base))
@@ -224,8 +229,12 @@ def case_hazards():
 
 
 def case_load_use():
-    b = ["    li x5, 0x55667788", "    sw x5, 0(%s)" % SP_REG,
-         "    li x5, 0x99AABBCC", "    sw x5, 4(%s)" % SP_REG]
+    b = [
+        "    li x5, 0x55667788",
+        "    sw x5, 0(%s)" % SP_REG,
+        "    li x5, 0x99AABBCC",
+        "    sw x5, 4(%s)" % SP_REG,
+    ]
     for dist in range(1, 6):
         for which in (1, 2):
             b.append("    lw x10, 0(%s)" % SP_REG)
@@ -310,7 +319,7 @@ def case_fence_nop():
 def case_peer_push():
     """Stores into a peer window: the address decode, not the protocol."""
     b = []
-    b.append("    li x5, 0x30112000")            # core (1,1), scratchpad window
+    b.append("    li x5, 0x30112000")  # core (1,1), scratchpad window
     for i in range(8):
         b.append("    li x6, 0x%08X" % (0xC0DE0000 + i))
         b.append("    sw x6, %d(x5)" % (i * 4))
@@ -340,8 +349,7 @@ DIRECTED = [
 
 # ------------------------------------------------------------------ random
 
-RAND_ALU_R = ["add", "sub", "sll", "slt", "sltu", "xor", "srl", "sra",
-              "or", "and"]
+RAND_ALU_R = ["add", "sub", "sll", "slt", "sltu", "xor", "srl", "sra", "or", "and"]
 RAND_ALU_I = ["addi", "slti", "sltiu", "xori", "ori", "andi"]
 RAND_SH_I = ["slli", "srli", "srai"]
 RAND_BR = ["beq", "bne", "blt", "bge", "bltu", "bgeu"]
@@ -359,7 +367,7 @@ def case_random(seed, n=400):
     body = []
     # x1..x29 are free; x30 and x31 are the pinned bases.
     free = ["x%d" % i for i in range(1, 30)]
-    pending = {}          # label -> emitted?
+    pending = {}  # label -> emitted?
     for i in range(n):
         for lbl in [k for k, v in pending.items() if v == i]:
             body.append("%s:" % lbl)
@@ -371,11 +379,14 @@ def case_random(seed, n=400):
         if k < 0.30:
             body.append("    %s %s, %s, %s" % (rng.choice(RAND_ALU_R), rd, a, b))
         elif k < 0.52:
-            body.append("    %s %s, %s, %d" %
-                        (rng.choice(RAND_ALU_I), rd, a, rng.randint(-2048, 2047)))
+            body.append(
+                "    %s %s, %s, %d"
+                % (rng.choice(RAND_ALU_I), rd, a, rng.randint(-2048, 2047))
+            )
         elif k < 0.60:
-            body.append("    %s %s, %s, %d" %
-                        (rng.choice(RAND_SH_I), rd, a, rng.randint(0, 31)))
+            body.append(
+                "    %s %s, %s, %d" % (rng.choice(RAND_SH_I), rd, a, rng.randint(0, 31))
+            )
         elif k < 0.64:
             body.append("    lui %s, 0x%X" % (rd, rng.randint(0, 0xFFFFF)))
         elif k < 0.66:
@@ -387,8 +398,7 @@ def case_random(seed, n=400):
             body.append("    %s %s, %d(%s)" % (sz[0], a, off, base))
         elif k < 0.90:
             base = rng.choice([SP_REG, DR_REG])
-            ld = rng.choice([("lw", 4), ("lh", 2), ("lhu", 2),
-                             ("lb", 1), ("lbu", 1)])
+            ld = rng.choice([("lw", 4), ("lh", 2), ("lhu", 2), ("lb", 1), ("lbu", 1)])
             off = rng.randrange(0, 256, ld[1])
             body.append("    %s %s, %d(%s)" % (ld[0], rd, off, base))
         else:
@@ -407,7 +417,7 @@ def case_random(seed, n=400):
 # -------------------------------------------------------------------- build
 
 MASK32 = 0xFFFFFFFF
-DRAM_WORDS = 1024          # the window the bench's flat DRAM model covers
+DRAM_WORDS = 1024  # the window the bench's flat DRAM model covers
 
 
 def _sum(words):
@@ -423,8 +433,9 @@ def _peer_sum(log):
 
 
 def build(outdir, imem_words, spad_words, seeds):
-    cases = list(DIRECTED) + [("random%d" % s, (lambda s=s: case_random(s)))
-                              for s in seeds]
+    cases = list(DIRECTED) + [
+        ("random%d" % s, (lambda s=s: case_random(s))) for s in seeds
+    ]
     outdir = pathlib.Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     index = []
@@ -432,10 +443,11 @@ def build(outdir, imem_words, spad_words, seeds):
         src = fn()
         words, _ = assemble(src, base=0, symbols=SYMS)
         if len(words) > imem_words:
-            raise SystemExit("case %s is %d words, window is %d"
-                             % (name, len(words), imem_words))
+            raise SystemExit(
+                "case %s is %d words, window is %d" % (name, len(words), imem_words)
+            )
         m = Machine(imem_words=imem_words, spad_words=spad_words)
-        m.imem[:len(words)] = words
+        m.imem[: len(words)] = words
         trace, cause, hword = m.run()
 
         d = outdir / ("case%02d" % n)
@@ -443,18 +455,21 @@ def build(outdir, imem_words, spad_words, seeds):
         (d / "prog.hex").write_text(to_hex(words))
         (d / "trace.hex").write_text(trace_hex(trace))
         dram = [m.dram.get(DRAM_BASE + 4 * i, 0) for i in range(DRAM_WORDS)]
-        meta = ([len(trace), cause, hword] + [v & MASK32 for v in m.x] +
-                [_sum(m.spad), _sum(dram), len(m.peer_log),
-                 _peer_sum(m.peer_log)])
+        meta = (
+            [len(trace), cause, hword]
+            + [v & MASK32 for v in m.x]
+            + [_sum(m.spad), _sum(dram), len(m.peer_log), _peer_sum(m.peer_log)]
+        )
         (d / "meta.hex").write_text(to_hex(meta))
         (d / "name.txt").write_text(name + "\n")
         index.append((n, name, len(words), len(trace)))
-        print("  case%02d %-14s %5d words %6d retired  cause %d"
-              % (n, name, len(words), len(trace), cause))
+        print(
+            "  case%02d %-14s %5d words %6d retired  cause %d"
+            % (n, name, len(words), len(trace), cause)
+        )
 
     (outdir / "ncase.hex").write_text("%08x\n" % len(cases))
-    (outdir / "index.txt").write_text(
-        "".join("%2d %-14s %5d %7d\n" % r for r in index))
+    (outdir / "index.txt").write_text("".join("%2d %-14s %5d %7d\n" % r for r in index))
     print("  %d cases into %s" % (len(cases), outdir))
 
 
@@ -465,8 +480,7 @@ def main():
     ap.add_argument("--spad-words", type=int, default=2048)
     ap.add_argument("--seeds", default="1,2,3,4,5,6,7,8")
     a = ap.parse_args()
-    build(a.out, a.imem_words, a.spad_words,
-          [int(s) for s in a.seeds.split(",") if s])
+    build(a.out, a.imem_words, a.spad_words, [int(s) for s in a.seeds.split(",") if s])
 
 
 if __name__ == "__main__":

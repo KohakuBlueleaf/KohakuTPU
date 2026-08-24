@@ -14,11 +14,11 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-import rv_simd_f16 as F                                           # noqa: E402
+import rv_simd_f16 as F
 
 #: E8M15 1.0 -- the fold multiplies a partial by it, so the fold and the
 #: accumulate share one lane and one rounding.
-E8_ONE = (127 << 15)
+E8_ONE = 127 << 15
 
 
 def ops(n, seed=0xFACC):
@@ -28,10 +28,16 @@ def ops(n, seed=0xFACC):
     for _ in range(n):
         # e5 in [9, 20] is 2^-6 .. 2^5, so 200 products of them stay far inside
         # E8M15's range and the accumulation never saturates.
-        a = (rng.getrandbits(1) << 15) | (rng.randrange(9, 21) << 10) \
+        a = (
+            (rng.getrandbits(1) << 15)
+            | (rng.randrange(9, 21) << 10)
             | rng.getrandbits(10)
-        b = (rng.getrandbits(1) << 15) | (rng.randrange(9, 21) << 10) \
+        )
+        b = (
+            (rng.getrandbits(1) << 15)
+            | (rng.randrange(9, 21) << 10)
             | rng.getrandbits(10)
+        )
         out.append((a, b))
     return out
 
@@ -106,8 +112,10 @@ def main():
     print("  wrote %d ops to %s" % (len(pairs), op_path))
     print("  wrote %d partials + the fold to %s" % (npart, ex_path))
     off = deviation(pairs, npart)
-    print("  %d of %d accumulate steps (%.2f%%) differ from correct rounding"
-          % (off, len(pairs), 100.0 * off / max(1, len(pairs))))
+    print(
+        "  %d of %d accumulate steps (%.2f%%) differ from correct rounding"
+        % (off, len(pairs), 100.0 * off / max(1, len(pairs)))
+    )
 
 
 if __name__ == "__main__":

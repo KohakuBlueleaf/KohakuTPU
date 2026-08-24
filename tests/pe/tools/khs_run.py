@@ -36,19 +36,28 @@ def main():
     ap.add_argument("--nacc", type=int, default=2)
     ap.add_argument("--no-shift", action="store_true")
     ap.add_argument("--no-perm", action="store_true")
-    ap.add_argument("--float", action="store_true", dest="flt",
-                    help="build the float tier")
+    ap.add_argument(
+        "--float", action="store_true", dest="flt", help="build the float tier"
+    )
     # ARCHITECTURAL, so the generator and the bench must be told the SAME
     # number: fewer lanes is a shorter partial chain per element and therefore a
     # different answer. The bench refuses vectors built for another count.
     # DEFAULTS TO 2*SIMD, NOT TO 0: 0 now means the float tier is not built.
-    ap.add_argument("--flanes", type=int, default=None,
-                    help="float units built; 0 = none, default 2*SIMD")
+    ap.add_argument(
+        "--flanes",
+        type=int,
+        default=None,
+        help="float units built; 0 = none, default 2*SIMD",
+    )
     # NOT architectural, unlike --flanes: an elementwise seed's result depends on
     # its own element and nothing else, so the SAME vectors must pass at every
     # count. That is what makes this the walk's test rather than a rebuild.
-    ap.add_argument("--fsfu", type=int, default=1,
-                    help="seed units built; 0 = none, and a seed then faults")
+    ap.add_argument(
+        "--fsfu",
+        type=int,
+        default=1,
+        help="seed units built; 0 = none, and a seed then faults",
+    )
     # The GROUPS, forwarded to the generator as well as to the bench: khs_gen
     # already had these three and nothing here passed them, so a run could not
     # isolate the elementwise tier from the accumulator.
@@ -60,13 +69,22 @@ def main():
     ap.add_argument("--no-f32", action="store_true")
     # NOT architectural: the permute's answer is the same at every count, only
     # the cycles change, so the same stream grades every width.
-    ap.add_argument("--perm-units", type=int, default=0,
-                    help="permute output words per pass; 0 = one per word")
+    ap.add_argument(
+        "--perm-units",
+        type=int,
+        default=0,
+        help="permute output words per pass; 0 = one per word",
+    )
     # NOT architectural either: the shift's answer is the same at every count.
-    ap.add_argument("--shift-units", type=int, default=0,
-                    help="packed-shift units per pass; 0 = one per lane")
-    ap.add_argument("--vreg-prim", default="distributed",
-                    choices=("distributed", "block"))
+    ap.add_argument(
+        "--shift-units",
+        type=int,
+        default=0,
+        help="packed-shift units per pass; 0 = one per lane",
+    )
+    ap.add_argument(
+        "--vreg-prim", default="distributed", choices=("distributed", "block")
+    )
     ap.add_argument("--wb-stage", type=int, default=0, choices=(0, 1))
     ap.add_argument("--wall", type=float, default=600.0)
     ap.add_argument("--keep", action="store_true")
@@ -74,17 +92,33 @@ def main():
     if a.flanes is None:
         a.flanes = 2 * a.simd
     if a.flt and a.flanes == 0:
-        ap.error("--float with --flanes 0: 0 means the tier is NOT built. "
-                 "Use --flanes %d for one unit per element." % (2 * a.simd))
+        ap.error(
+            "--float with --flanes 0: 0 means the tier is NOT built. "
+            "Use --flanes %d for one unit per element." % (2 * a.simd)
+        )
 
-    tag = "s%d_m%d_v%d_a%d%s%s%s" % (a.simd, a.muls, a.vregs, a.nacc,
-                                     "" if not a.no_shift else "_nosh",
-                                     "" if not a.no_perm else "_nopm",
-                                     "_float" if a.flt else "")
+    tag = "s%d_m%d_v%d_a%d%s%s%s" % (
+        a.simd,
+        a.muls,
+        a.vregs,
+        a.nacc,
+        "" if not a.no_shift else "_nosh",
+        "" if not a.no_perm else "_nopm",
+        "_float" if a.flt else "",
+    )
 
-    gen = [sys.executable, str(TOOLS / "khs_gen.py"),
-           "--simd", str(a.simd), "--muls", str(a.muls),
-           "--vregs", str(a.vregs), "--nacc", str(a.nacc)]
+    gen = [
+        sys.executable,
+        str(TOOLS / "khs_gen.py"),
+        "--simd",
+        str(a.simd),
+        "--muls",
+        str(a.muls),
+        "--vregs",
+        str(a.vregs),
+        "--nacc",
+        str(a.nacc),
+    ]
     if a.no_shift:
         gen.append("--no-shift")
     if a.no_perm:
@@ -105,29 +139,50 @@ def main():
     if subprocess.run(gen, cwd=str(ROOT), check=False).returncode:
         return 1
 
-    cmd = [sys.executable, str(XSIM), "khs_unit", "--wall", str(a.wall),
-           "-d", "KHS_SIMD=%d" % a.simd,
-           "-d", "KHS_MULS=%d" % a.muls,
-           "-d", "KHS_VREGS=%d" % a.vregs,
-           "-d", "KHS_NACC=%d" % a.nacc,
-           "-d", "KHS_SHIFT=%d" % (0 if a.no_shift else 1),
-           "-d", "KHS_PERM=%d" % (0 if a.no_perm else 1),
-           "-d", "KHS_PERMU=%d" % a.perm_units,
-           "-d", "KHS_SHIFTU=%d" % a.shift_units,
-           "-d", "KHS_FLOAT=%d" % (1 if a.flt else 0),
-           "-d", "KHS_FLANES=%d" % a.flanes,
-           "-d", "KHS_FSFU=%d" % a.fsfu,
-           "-d", "KHS_FALU=%d" % (0 if a.no_falu else 1),
-           "-d", "KHS_FACC=%d" % (0 if a.no_facc else 1),
-           "-d", "KHS_F16=%d" % (0 if a.no_f16 else 1),
-           "-d", "KHS_F32=%d" % (0 if a.no_f32 else 1),
-           "-d", "KHS_WB=%d" % a.wb_stage]
+    cmd = [
+        sys.executable,
+        str(XSIM),
+        "khs_unit",
+        "--wall",
+        str(a.wall),
+        "-d",
+        "KHS_SIMD=%d" % a.simd,
+        "-d",
+        "KHS_MULS=%d" % a.muls,
+        "-d",
+        "KHS_VREGS=%d" % a.vregs,
+        "-d",
+        "KHS_NACC=%d" % a.nacc,
+        "-d",
+        "KHS_SHIFT=%d" % (0 if a.no_shift else 1),
+        "-d",
+        "KHS_PERM=%d" % (0 if a.no_perm else 1),
+        "-d",
+        "KHS_PERMU=%d" % a.perm_units,
+        "-d",
+        "KHS_SHIFTU=%d" % a.shift_units,
+        "-d",
+        "KHS_FLOAT=%d" % (1 if a.flt else 0),
+        "-d",
+        "KHS_FLANES=%d" % a.flanes,
+        "-d",
+        "KHS_FSFU=%d" % a.fsfu,
+        "-d",
+        "KHS_FALU=%d" % (0 if a.no_falu else 1),
+        "-d",
+        "KHS_FACC=%d" % (0 if a.no_facc else 1),
+        "-d",
+        "KHS_F16=%d" % (0 if a.no_f16 else 1),
+        "-d",
+        "KHS_F32=%d" % (0 if a.no_f32 else 1),
+        "-d",
+        "KHS_WB=%d" % a.wb_stage,
+    ]
     if a.vreg_prim == "block":
         cmd += ["-d", "KHS_RF_BRAM"]
     if a.keep:
         cmd.append("--keep")
-    r = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True,
-                       check=False)
+    r = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True, check=False)
     out = r.stdout
     print(out, end="")
 
@@ -137,8 +192,10 @@ def main():
         for ln in wn.read_text().splitlines():
             c, i, n = ln.split("\t")
             names[(int(c), int(i))] = n
-    named = [(m.group(1), m.group(3), names.get((int(m.group(1)), int(m.group(2))), "?"))
-             for m in WFAIL.finditer(out)]
+    named = [
+        (m.group(1), m.group(3), names.get((int(m.group(1)), int(m.group(2))), "?"))
+        for m in WFAIL.finditer(out)
+    ]
     if named:
         print("\n  the failing writes, by mnemonic:")
         for c, ins, nm in named:

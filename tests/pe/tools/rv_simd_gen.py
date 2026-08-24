@@ -19,18 +19,18 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from rv_asm import assemble, to_hex                             # noqa: E402
-from rv_model import Machine, DRAM_BASE                         # noqa: E402
-from rv_gen import SYMS, zero_regs, MASK32, _sum                # noqa: E402
-import rv_simd_asm                                               # noqa: E402,F401
-from rv_simd_model import DspMachine, VSPAD_BASE                 # noqa: E402
-import rv_simd_kernels as K                                      # noqa: E402
+import rv_simd_asm  # noqa: F401
+import rv_simd_kernels as K
+from rv_asm import assemble, to_hex
+from rv_gen import SYMS, _sum, zero_regs
+from rv_model import DRAM_BASE
+from rv_simd_model import VSPAD_BASE, DspMachine
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 
-DRAM_WORDS = 4096          # what the bench's AXI RAM covers, in 32-bit words
+DRAM_WORDS = 4096  # what the bench's AXI RAM covers, in 32-bit words
 SPAD_WORDS = 2048
-IMEM_WORDS = 2048          # the bench's window; a program past it must FAIL here
+IMEM_WORDS = 2048  # the bench's window; a program past it must FAIL here
 VSPAD_ENTRIES = 1024
 
 #: The vector scratchpad's base, so a kernel writes `VSPAD+off` rather than the
@@ -44,16 +44,22 @@ def build_one(name, simd):
     src = zero_regs() + K.build_case(name)
     words, syms = assemble(src, base=0, symbols=ALL_SYMS)
     if len(words) > IMEM_WORDS:
-        raise SystemExit("case %s is %d words, window is %d"
-                         % (name, len(words), IMEM_WORDS))
+        raise SystemExit(
+            "case %s is %d words, window is %d" % (name, len(words), IMEM_WORDS)
+        )
 
     # Every case runs on the DSP-enabled machine, scalar ones included: the
     # baselines and the vector kernels must be measured on ONE configuration or
     # the ratio between them is not a speedup.
-    m = DspMachine(simd=simd, vspad_entries=VSPAD_ENTRIES,
-                   imem_words=IMEM_WORDS, spad_words=SPAD_WORDS,
-                   arg=0, coreid=0x11)
-    m.imem[:len(words)] = words
+    m = DspMachine(
+        simd=simd,
+        vspad_entries=VSPAD_ENTRIES,
+        imem_words=IMEM_WORDS,
+        spad_words=SPAD_WORDS,
+        arg=0,
+        coreid=0x11,
+    )
+    m.imem[: len(words)] = words
     trace, cause, hword = m.run(limit=4_000_000)
 
     lo, hi = syms["kern_start"], syms["kern_end"]
@@ -76,8 +82,10 @@ def build(outdir, simd):
         # construction. It is recorded rather than checked -- see the suite's
         # docstring; correctness is the DRAM comparison below.
         if hword != 0:
-            raise SystemExit("case %s halted with a0 = %d; the model reads "
-                             "CTL_CYCLE as 0, so a0 must be 0 there" % (name, hword))
+            raise SystemExit(
+                "case %s halted with a0 = %d; the model reads "
+                "CTL_CYCLE as 0, so a0 must be 0 there" % (name, hword)
+            )
         if cause != 1:
             raise SystemExit("case %s halted with cause %d, not ECALL" % (name, cause))
 
@@ -92,8 +100,10 @@ def build(outdir, simd):
         (d / "meta.hex").write_text(to_hex(meta))
         (d / "name.txt").write_text(name + "\n")
         index.append((n, name, len(words), retired, kern_instr, ck, note))
-        print("  simd%02d %-14s %5d words %8d retired %8d kernel instr  ck %08x"
-              % (n, name, len(words), retired, kern_instr, ck))
+        print(
+            "  simd%02d %-14s %5d words %8d retired %8d kernel instr  ck %08x"
+            % (n, name, len(words), retired, kern_instr, ck)
+        )
 
     # Bench-driven cases: only the image, because what they read arrives from
     # outside while the program is stopped and the model cannot predict it.
@@ -109,15 +119,15 @@ def build(outdir, simd):
 
     (outdir / "ndsp.hex").write_text("%08x\n" % len(index))
     (outdir / "index.txt").write_text(
-        "".join("%2d\t%s\t%d\t%d\t%d\t%08x\t%s\n" % r for r in index))
+        "".join("%2d\t%s\t%d\t%d\t%d\t%08x\t%s\n" % r for r in index)
+    )
     print("  %d DSP workload cases into %s" % (len(index), outdir))
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--simd", type=int, default=8, choices=(2, 4, 8))
-    ap.add_argument("--out",
-                    default=str(ROOT / "tests" / "pe" / "build" / "simd"))
+    ap.add_argument("--out", default=str(ROOT / "tests" / "pe" / "build" / "simd"))
     a = ap.parse_args()
     build(a.out, a.simd)
 

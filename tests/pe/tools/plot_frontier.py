@@ -28,9 +28,10 @@ import pathlib
 import sys
 
 import matplotlib
+
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt                                  # noqa: E402
-from matplotlib.lines import Line2D                              # noqa: E402
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 
 SURFACE = "#fcfcfb"
 INK = "#0b0b0b"
@@ -66,17 +67,20 @@ def series_color(arm, name, extras):
     i = known.index(name) if name in known else len(known) + extras.index(name)
     return SERIES[i] if i < len(SERIES) else MUTED
 
-plt.rcParams.update({
-    "font.family": "sans-serif",
-    "font.sans-serif": ["Segoe UI", "DejaVu Sans"],
-    "figure.facecolor": SURFACE,
-    "axes.facecolor": SURFACE,
-    "savefig.facecolor": SURFACE,
-    "text.color": INK,
-    "axes.labelcolor": INK2,
-    "xtick.color": MUTED,
-    "ytick.color": MUTED,
-})
+
+plt.rcParams.update(
+    {
+        "font.family": "sans-serif",
+        "font.sans-serif": ["Segoe UI", "DejaVu Sans"],
+        "figure.facecolor": SURFACE,
+        "axes.facecolor": SURFACE,
+        "savefig.facecolor": SURFACE,
+        "text.color": INK,
+        "axes.labelcolor": INK2,
+        "xtick.color": MUTED,
+        "ytick.color": MUTED,
+    }
+)
 
 
 def load(path):
@@ -118,9 +122,14 @@ def pareto(rows):
     is at least as fast AND no larger."""
     keep = []
     for r in rows:
-        if not any((o["fmax"] >= r["fmax"] and o["lutn"] <= r["lutn"] and
-                    (o["fmax"] > r["fmax"] or o["lutn"] < r["lutn"]))
-                   for o in rows):
+        if not any(
+            (
+                o["fmax"] >= r["fmax"]
+                and o["lutn"] <= r["lutn"]
+                and (o["fmax"] > r["fmax"] or o["lutn"] < r["lutn"])
+            )
+            for o in rows
+        ):
             keep.append(r)
     return sorted(keep, key=lambda r: r["fmax"])
 
@@ -155,13 +164,27 @@ def fig_frontier(rows, out):
             ax.plot(sx, sy, color=MUTED, linewidth=2, zorder=2)
             ax.fill_between(sx, sy, top, color=MUTED, alpha=0.07, zorder=1)
         else:
-            ax.plot(sx, sy, color=MUTED, linewidth=1.2, linestyle=(0, (5, 3)),
-                    alpha=0.65, zorder=2)
+            ax.plot(
+                sx,
+                sy,
+                color=MUTED,
+                linewidth=1.2,
+                linestyle=(0, (5, 3)),
+                alpha=0.65,
+                zorder=2,
+            )
         if len(revs) > 1:
-            ax.annotate(rev, (sx[0], sy[0]), textcoords="offset points",
-                        xytext=(-6, -4), fontsize=9, color=MUTED,
-                        ha="right", va="top",
-                        weight="bold" if rev == revs[-1] else "normal")
+            ax.annotate(
+                rev,
+                (sx[0], sy[0]),
+                textcoords="offset points",
+                xytext=(-6, -4),
+                fontsize=9,
+                color=MUTED,
+                ha="right",
+                va="top",
+                weight="bold" if rev == revs[-1] else "normal",
+            )
     front = pareto([r for r in rows if r["rtl"] == revs[-1]])
 
     # A variant is a CURVE here as much as in the target view: its five targets
@@ -176,63 +199,129 @@ def fig_frontier(rows, out):
     for rev in revs:
         cur = rev == revs[-1]
         for arm in ("-", "A", "B"):
-            for name in sorted({r["config"] for r in rows
-                                if r["arm"] == arm and r["rtl"] == rev}):
-                pts = sorted((r for r in rows if r["config"] == name and
-                              r["rtl"] == rev),
-                             key=lambda r: r["tgt"], reverse=True)
-                ax.plot([p["fmax"] for p in pts], [p["lutn"] for p in pts],
-                        color=ARM_COLOR[arm], linewidth=1.2,
-                        alpha=0.55 if cur else 0.25, zorder=3)
-                ax.scatter([p["fmax"] for p in pts], [p["lutn"] for p in pts],
-                           s=90 if cur else 40, zorder=4 if cur else 3,
-                           color=ARM_COLOR[arm] if cur else "none",
-                           edgecolors=SURFACE if cur else ARM_COLOR[arm],
-                           linewidths=2 if cur else 1.2,
-                           alpha=1.0 if cur else 0.55)
+            for name in sorted(
+                {r["config"] for r in rows if r["arm"] == arm and r["rtl"] == rev}
+            ):
+                pts = sorted(
+                    (r for r in rows if r["config"] == name and r["rtl"] == rev),
+                    key=lambda r: r["tgt"],
+                    reverse=True,
+                )
+                ax.plot(
+                    [p["fmax"] for p in pts],
+                    [p["lutn"] for p in pts],
+                    color=ARM_COLOR[arm],
+                    linewidth=1.2,
+                    alpha=0.55 if cur else 0.25,
+                    zorder=3,
+                )
+                ax.scatter(
+                    [p["fmax"] for p in pts],
+                    [p["lutn"] for p in pts],
+                    s=90 if cur else 40,
+                    zorder=4 if cur else 3,
+                    color=ARM_COLOR[arm] if cur else "none",
+                    edgecolors=SURFACE if cur else ARM_COLOR[arm],
+                    linewidths=2 if cur else 1.2,
+                    alpha=1.0 if cur else 0.55,
+                )
                 if not cur:
                     continue
                 if (pts[0]["config"], pts[0]["target_ns"]) in labelled:
                     continue
                 # At the relaxed end, which is the bottom-left of the run.
-                ax.annotate(name, (pts[0]["fmax"], pts[0]["lutn"]),
-                            textcoords="offset points", xytext=(-9, -6),
-                            fontsize=9, color=INK2, ha="right", va="top")
+                ax.annotate(
+                    name,
+                    (pts[0]["fmax"], pts[0]["lutn"]),
+                    textcoords="offset points",
+                    xytext=(-9, -6),
+                    fontsize=9,
+                    color=INK2,
+                    ha="right",
+                    va="top",
+                )
 
-    base = [r for r in rows if r["config"] == BASE_CONFIG and r["tgt"] == 2.5
-            and r["rtl"] == revs[-1]]
+    base = [
+        r
+        for r in rows
+        if r["config"] == BASE_CONFIG and r["tgt"] == 2.5 and r["rtl"] == revs[-1]
+    ]
     if base:
-        ax.scatter([base[0]["fmax"]], [base[0]["lutn"]], s=320,
-                   facecolors="none", edgecolors=INK, linewidths=2, zorder=5)
-        ax.annotate("accepted baseline",
-                    (base[0]["fmax"], base[0]["lutn"]),
-                    textcoords="offset points", xytext=(0, 26),
-                    ha="center", fontsize=10, color=INK, weight="bold")
+        ax.scatter(
+            [base[0]["fmax"]],
+            [base[0]["lutn"]],
+            s=320,
+            facecolors="none",
+            edgecolors=INK,
+            linewidths=2,
+            zorder=5,
+        )
+        ax.annotate(
+            "accepted baseline",
+            (base[0]["fmax"], base[0]["lutn"]),
+            textcoords="offset points",
+            xytext=(0, 26),
+            ha="center",
+            fontsize=10,
+            color=INK,
+            weight="bold",
+        )
 
     # Only the Pareto points carry their target: those are the ones anybody has
     # to be able to reproduce from the figure alone.
     for r in pareto(rows):
-        ax.annotate("%s @ %s ns" % (r["config"], r["target_ns"]),
-                    (r["fmax"], r["lutn"]), textcoords="offset points",
-                    xytext=(8, -12), fontsize=9, color=INK, weight="bold")
+        ax.annotate(
+            "%s @ %s ns" % (r["config"], r["target_ns"]),
+            (r["fmax"], r["lutn"]),
+            textcoords="offset points",
+            xytext=(8, -12),
+            fontsize=9,
+            color=INK,
+            weight="bold",
+        )
 
     # Labels sit to the right of their point, so the data needs room past the
     # last one or the longest name runs off the axis.
     ax.margins(x=0.16, y=0.10)
     ax.set_xlabel("achieved Fmax (MHz, OOC synth-only)")
     ax.set_ylabel("LUT (CLB LUT sites)")
-    ax.set_title("Controller PE — LUT against achieved frequency",
-                 fontsize=15, weight="bold", color=INK, loc="left", pad=16)
-    ax.text(0, 1.015, "each point is one configuration at one clock target; "
-                      "the staircase is the Pareto set, shaded region is dominated",
-            transform=ax.transAxes, fontsize=10, color=INK2)
+    ax.set_title(
+        "Controller PE — LUT against achieved frequency",
+        fontsize=15,
+        weight="bold",
+        color=INK,
+        loc="left",
+        pad=16,
+    )
+    ax.text(
+        0,
+        1.015,
+        "each point is one configuration at one clock target; "
+        "the staircase is the Pareto set, shaded region is dominated",
+        transform=ax.transAxes,
+        fontsize=10,
+        color=INK2,
+    )
 
-    ax.legend(handles=[Line2D([], [], marker="o", linestyle="none",
-                              markersize=9, markerfacecolor=ARM_COLOR[a],
-                              markeredgecolor=SURFACE, label=ARM_NAME[a])
-                       for a in ("-", "A", "B")
-                       if any(r["arm"] == a for r in rows)],
-              frameon=False, loc="upper left", fontsize=10)
+    ax.legend(
+        handles=[
+            Line2D(
+                [],
+                [],
+                marker="o",
+                linestyle="none",
+                markersize=9,
+                markerfacecolor=ARM_COLOR[a],
+                markeredgecolor=SURFACE,
+                label=ARM_NAME[a],
+            )
+            for a in ("-", "A", "B")
+            if any(r["arm"] == a for r in rows)
+        ],
+        frameon=False,
+        loc="upper left",
+        fontsize=10,
+    )
 
     fig.tight_layout()
     fig.savefig(out / "frontier.png", dpi=160)
@@ -245,16 +334,22 @@ def fig_targets(rows, out):
     # things that were never alternatives to each other.
     rows = [r for r in rows if r["rtl"] == revisions(rows)[-1]]
     arms = [a for a in ("A", "B") if any(r["arm"] == a for r in rows)] or ["-"]
-    fig, axes = plt.subplots(2, len(arms), figsize=(6.2 * len(arms), 8.4),
-                             squeeze=False)
+    fig, axes = plt.subplots(
+        2, len(arms), figsize=(6.2 * len(arms), 8.4), squeeze=False
+    )
 
     for col, arm in enumerate(arms):
-        names = sorted({r["config"] for r in rows
-                        if r["arm"] == arm and r["config"] != BASE_CONFIG})
+        names = sorted(
+            {
+                r["config"]
+                for r in rows
+                if r["arm"] == arm and r["config"] != BASE_CONFIG
+            }
+        )
         extras = [n for n in names if n not in ARM_CONFIGS.get(arm, ())]
         for row, (key, label) in enumerate(
-                [("lutn", "LUT (CLB LUT sites)"),
-                 ("fmax", "achieved Fmax (MHz)")]):
+            [("lutn", "LUT (CLB LUT sites)"), ("fmax", "achieved Fmax (MHz)")]
+        ):
             ax = axes[row][col]
             dress(ax)
             # Labels are collected and placed together below: every series is
@@ -263,20 +358,36 @@ def fig_targets(rows, out):
             tags = []
             # The baseline is the thing to beat, not a peer series: it rides in
             # every panel as a dashed reference and spends no categorical slot.
-            base = sorted((r for r in rows if r["config"] == BASE_CONFIG),
-                          key=lambda r: r["tgt"])
+            base = sorted(
+                (r for r in rows if r["config"] == BASE_CONFIG), key=lambda r: r["tgt"]
+            )
             if base:
-                ax.plot([p["tgt"] for p in base], [p[key] for p in base],
-                        linestyle="--", linewidth=2, color=INK2, zorder=2)
+                ax.plot(
+                    [p["tgt"] for p in base],
+                    [p[key] for p in base],
+                    linestyle="--",
+                    linewidth=2,
+                    color=INK2,
+                    zorder=2,
+                )
                 tags.append((base[-1][key], BASE_CONFIG, INK2, "bold"))
             anchor = base[-1]["tgt"] if base else None
             for name in names:
-                pts = sorted((r for r in rows if r["config"] == name),
-                             key=lambda r: r["tgt"])
+                pts = sorted(
+                    (r for r in rows if r["config"] == name), key=lambda r: r["tgt"]
+                )
                 colour = series_color(arm, name, extras)
-                ax.plot([p["tgt"] for p in pts], [p[key] for p in pts],
-                        marker="o", markersize=8, linewidth=2, color=colour,
-                        markeredgecolor=SURFACE, markeredgewidth=1.5, zorder=3)
+                ax.plot(
+                    [p["tgt"] for p in pts],
+                    [p[key] for p in pts],
+                    marker="o",
+                    markersize=8,
+                    linewidth=2,
+                    color=colour,
+                    markeredgecolor=SURFACE,
+                    markeredgewidth=1.5,
+                    zorder=3,
+                )
                 anchor = pts[-1]["tgt"]
                 tags.append((pts[-1][key], name, colour, "normal"))
 
@@ -284,19 +395,38 @@ def fig_targets(rows, out):
             # column reads in the same order as the curves it names and no two
             # can land on each other however close their values are.
             for rank, (yv, name, colour, wt) in enumerate(sorted(tags)):
-                ax.annotate(name, (anchor, yv), textcoords="offset points",
-                            xytext=(4, 6 + 14 * rank), fontsize=9,
-                            color=colour, weight=wt, ha="left")
+                ax.annotate(
+                    name,
+                    (anchor, yv),
+                    textcoords="offset points",
+                    xytext=(4, 6 + 14 * rank),
+                    fontsize=9,
+                    color=colour,
+                    weight=wt,
+                    ha="left",
+                )
             ax.margins(0.14)
             ax.invert_xaxis()
             ax.set_xlabel("clock target (ns, tighter to the right)")
             ax.set_ylabel(label)
             if row == 0:
-                ax.set_title(ARM_NAME[arm], fontsize=13, weight="bold",
-                             color=INK, loc="left", pad=10)
+                ax.set_title(
+                    ARM_NAME[arm],
+                    fontsize=13,
+                    weight="bold",
+                    color=INK,
+                    loc="left",
+                    pad=10,
+                )
 
-    fig.suptitle("Controller PE — what the clock constraint costs",
-                 fontsize=15, weight="bold", color=INK, x=0.01, ha="left")
+    fig.suptitle(
+        "Controller PE — what the clock constraint costs",
+        fontsize=15,
+        weight="bold",
+        color=INK,
+        x=0.01,
+        ha="left",
+    )
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     fig.savefig(out / "targets.png", dpi=160)
     plt.close(fig)
@@ -321,8 +451,10 @@ def main():
         sub = [r for r in rows if r["rtl"] == rev]
         print("  rtl %s (%d points)" % (rev, len(sub)))
         for r in pareto(sub):
-            print("    pareto: %-10s @ %-6s %6.1f MHz  %5d LUT"
-                  % (r["config"], r["target_ns"], r["fmax"], r["lutn"]))
+            print(
+                "    pareto: %-10s @ %-6s %6.1f MHz  %5d LUT"
+                % (r["config"], r["target_ns"], r["fmax"], r["lutn"])
+            )
     return 0
 
 

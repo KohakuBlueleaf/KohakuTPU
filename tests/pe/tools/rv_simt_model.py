@@ -44,8 +44,13 @@ MASK = 0xFFFFFFFF
 # G9's arithmetic is the SIMD tier's, so its MODEL is too: `e8_fma_hw` reproduces
 # the built lane rather than the correctly-rounded definition, which is the only
 # way a golden model can be bit-exact against `vec_alu`.
-from rv_simd_f16 import (f16_to_e8, e8_to_f16, f32_to_e8,   # noqa: E402
-                        e8_to_f32, e8_fma_hw)
+from rv_simd_f16 import (
+    e8_fma_hw,
+    e8_to_f16,
+    e8_to_f32,
+    f16_to_e8,
+    f32_to_e8,
+)
 
 F16_ONE, F16_ZERO = 0x3C00, 0x0000
 F32_ONE = 0x3F80_0000
@@ -139,8 +144,16 @@ def coalesce(addrs):
 class GpuMachine:
     """The PE's architectural state, and the memory its shaders can see."""
 
-    def __init__(self, lanes=8, waves=16, imem_words=2048, lds_words=8192,
-                 depth=8, ctl=None, nlive=1):
+    def __init__(
+        self,
+        lanes=8,
+        waves=16,
+        imem_words=2048,
+        lds_words=8192,
+        depth=8,
+        ctl=None,
+        nlive=1,
+    ):
         self.lanes = lanes
         self.imem = [0] * imem_words
         self.lds = [0] * lds_words
@@ -152,7 +165,7 @@ class GpuMachine:
         # how "16 waves" ends up meaning storage in one place and issue in
         # another.
         self.waves = [Wave(i, lanes, depth=depth) for i in range(waves)]
-        for w in self.waves[max(1, min(nlive, waves)):]:
+        for w in self.waves[max(1, min(nlive, waves)) :]:
             w.done = True
         self.reqs = []
         self.instret = 0
@@ -212,8 +225,9 @@ class GpuMachine:
         if width == 1:
             self._store(a, (val & 0xFF) * 0x0101_0101, 1 << (a & 3), pc)
         elif width == 2:
-            self._store(a, (val & 0xFFFF) * 0x0001_0001,
-                        0b1100 if (a & 2) else 0b0011, pc)
+            self._store(
+                a, (val & 0xFFFF) * 0x0001_0001, 0b1100 if (a & 2) else 0b0011, pc
+            )
         else:
             self._store(a, val, 0xF, pc)
 
@@ -243,8 +257,13 @@ class GpuMachine:
         imm_i = sx(ins >> 20, 12)
         imm_s = sx(((ins >> 25) << 5) | ((ins >> 7) & 0x1F), 12)
         imm_u = ins & 0xFFFF_F000
-        imm_j = sx((((ins >> 31) & 1) << 20) | (((ins >> 12) & 0xFF) << 12) |
-                   (((ins >> 20) & 1) << 11) | (((ins >> 21) & 0x3FF) << 1), 21)
+        imm_j = sx(
+            (((ins >> 31) & 1) << 20)
+            | (((ins >> 12) & 0xFF) << 12)
+            | (((ins >> 20) & 1) << 11)
+            | (((ins >> 21) & 0x3FF) << 1),
+            21,
+        )
 
         # A per-thread condition reaching one PC is undefined, so the encoding
         # refuses it rather than promising the compiler proved uniformity.
@@ -282,8 +301,7 @@ class GpuMachine:
                     raise Halt(CAUSE_FAULT, pc)
                 ad = (a + imm_i) & MASK
                 self._note(ad, w, ln)
-                v = self.load(ad, {0: 1, 1: 2, 2: 4, 4: 1, 5: 2}[f3],
-                              f3 in (0, 1), pc)
+                v = self.load(ad, {0: 1, 1: 2, 2: 4, 4: 1, 5: 2}[f3], f3 in (0, 1), pc)
             elif opc == 0x23:
                 if f3 > 2:
                     raise Halt(CAUSE_FAULT, pc)
@@ -297,16 +315,16 @@ class GpuMachine:
                 # them at all. Getting the sign extension wrong here is the easy
                 # mistake, so the three high forms are spelled out separately.
                 if f3 > 3:
-                    raise Halt(CAUSE_FAULT, pc)        # div/rem stay illegal
+                    raise Halt(CAUSE_FAULT, pc)  # div/rem stay illegal
                 sa, sb = sx(a, 32), sx(b, 32)
                 if f3 == 0:
-                    v = (sa * sb) & MASK               # mul: low half
+                    v = (sa * sb) & MASK  # mul: low half
                 elif f3 == 1:
-                    v = ((sa * sb) >> 32) & MASK       # mulh: signed x signed
+                    v = ((sa * sb) >> 32) & MASK  # mulh: signed x signed
                 elif f3 == 2:
-                    v = ((sa * b) >> 32) & MASK        # mulhsu: signed x unsigned
+                    v = ((sa * b) >> 32) & MASK  # mulhsu: signed x unsigned
                 else:
-                    v = ((a * b) >> 32) & MASK         # mulhu: unsigned
+                    v = ((a * b) >> 32) & MASK  # mulhu: unsigned
             elif opc in (0x13, 0x33):
                 second = imm_i & MASK if opc == 0x13 else b
                 sh = (imm_i & 0x1F) if opc == 0x13 else (b & 0x1F)
@@ -353,22 +371,27 @@ class GpuMachine:
         rs2 = (ins >> 20) & 0x1F
         f7 = (ins >> 25) & 0x7F
 
-        if f3 == 0:                                        # SALU
+        if f3 == 0:  # SALU
             a, b = w.s[rs1], w.s[rs2]
-            v = {0: (a + b) & MASK, 1: (a - b) & MASK,
-                 2: (a << (b & 31)) & MASK,
-                 3: 1 if sx(a, 32) < sx(b, 32) else 0,
-                 4: 1 if a < b else 0, 5: a ^ b,
-                 6: a >> (b & 31),
-                 7: (sx(a, 32) >> (b & 31)) & MASK,
-                 8: a | b, 9: a & b}.get(f7)
+            v = {
+                0: (a + b) & MASK,
+                1: (a - b) & MASK,
+                2: (a << (b & 31)) & MASK,
+                3: 1 if sx(a, 32) < sx(b, 32) else 0,
+                4: 1 if a < b else 0,
+                5: a ^ b,
+                6: a >> (b & 31),
+                7: (sx(a, 32) >> (b & 31)) & MASK,
+                8: a | b,
+                9: a & b,
+            }.get(f7)
             if v is None:
                 raise Halt(CAUSE_FAULT, pc)
             if rd:
                 w.s[rd] = v & MASK
             return (pc, -rd, w.s[rd] if rd else 0)
 
-        if f3 == 1:                                        # SMOV
+        if f3 == 1:  # SMOV
             if f7 == 0:
                 for ln in w.active():
                     w.x[rd][ln] = w.s[rs1]
@@ -382,7 +405,7 @@ class GpuMachine:
                 return (pc, -rd, w.s[rd] if rd else 0)
             raise Halt(CAUSE_FAULT, pc)
 
-        if f3 == 2:                                        # DIV
+        if f3 == 2:  # DIV
             if f7 == 0:
                 t = sum(1 << ln for ln in w.active() if w.x[rs1][ln] != 0)
                 f = w.mask & ~t
@@ -402,12 +425,14 @@ class GpuMachine:
                 return (pc, 0, {})
             raise Halt(CAUSE_FAULT, pc)
 
-        if f3 == 3:                                        # SUB
+        if f3 == 3:  # SUB
             act = w.active()
             if f7 == 0:
                 src = {ln: w.x[rs1][ln] for ln in act}
-                out = {ln: src.get(ln ^ (w.s[rs2] & (self.lanes - 1)),
-                                   w.x[rs1][ln]) for ln in act}
+                out = {
+                    ln: src.get(ln ^ (w.s[rs2] & (self.lanes - 1)), w.x[rs1][ln])
+                    for ln in act
+                }
                 for ln, v in out.items():
                     w.x[rd][ln] = v
                 return (pc, rd, out)
@@ -454,7 +479,7 @@ class GpuMachine:
                 w.s[rd] = v & MASK
             return (pc, -rd, v & MASK)
 
-        if f3 == 4:                                        # VMEM
+        if f3 == 4:  # VMEM
             op, scale, width = (f7 >> 4) & 7, (f7 >> 2) & 3, f7 & 3
             if width > 2 or op > 5:
                 raise Halt(CAUSE_FAULT, pc)
@@ -463,22 +488,22 @@ class GpuMachine:
             store = op in (2, 5)
             signed = op in (0, 3)
             # Offsets are SIGNED and the sum wraps at 32 bits, both pinned.
-            addrs = {ln: (w.s[rs1] +
-                          ((ln if lin else sx(w.x[rs2][ln], 32)) << scale)) & MASK
-                     for ln in w.active()}
+            addrs = {
+                ln: (w.s[rs1] + ((ln if lin else sx(w.x[rs2][ln], 32)) << scale)) & MASK
+                for ln in w.active()
+            }
             if addrs:
                 self.reqs.append(((w.wid, pc), list(addrs.values())))
             if store:
                 for ln, ad in addrs.items():
                     self.store(ad, w.x[rd][ln], nby, pc)
                 return (pc, 0, {})
-            out = {ln: self.load(ad, nby, signed, pc)
-                   for ln, ad in addrs.items()}
+            out = {ln: self.load(ad, nby, signed, pc) for ln, ad in addrs.items()}
             for ln, v in out.items():
                 w.x[rd][ln] = v
             return (pc, rd, out)
 
-        if f3 == 5:                                        # FLT (G9)
+        if f3 == 5:  # FLT (G9)
             # THE MODEL IS THE DSP TIER'S, NOT A SECOND ONE. `e8_fma_hw` is the
             # lane as built -- alignment window, clamped shift, uncomplemented
             # sticky and all -- so this is bit-exact against the hardware for
@@ -507,13 +532,13 @@ class GpuMachine:
                 bv = w.x[rs2][ln] & mask
                 dv = w.x[rd][ln] & mask
                 op = f7 & 3
-                if op == 1:                                # vfmul
+                if op == 1:  # vfmul
                     sa, sb, sc = av, bv, 0
-                elif op == 2:                              # vfadd
+                elif op == 2:  # vfadd
                     sa, sb, sc = av, one, bv
-                elif op == 3:                              # vfsub
+                elif op == 3:  # vfsub
                     sa, sb, sc = av, one, bv ^ sign
-                else:                                      # vfma
+                else:  # vfma
                     sa, sb, sc = av, bv, dv
                 y = cvt_out(e8_fma_hw(cvt_in(sa), cvt_in(sb), cvt_in(sc)))
                 # On the FP16 path element 1 is RESERVED and reads back zero, so
@@ -541,9 +566,14 @@ class GpuMachine:
             if a != 0:
                 w.pc = (pc + imm) & MASK
             return (pc, 0, 0)
-        v = {0: (a + imm) & MASK, 1: a & (imm & MASK), 2: a | (imm & MASK),
-             3: (a << (imm & 31)) & MASK, 4: a >> (imm & 31),
-             5: (sx(a, 32) >> (imm & 31)) & MASK}[f3]
+        v = {
+            0: (a + imm) & MASK,
+            1: a & (imm & MASK),
+            2: a | (imm & MASK),
+            3: (a << (imm & 31)) & MASK,
+            4: a >> (imm & 31),
+            5: (sx(a, 32) >> (imm & 31)) & MASK,
+        }[f3]
         if rd:
             w.s[rd] = v & MASK
         return (pc, -rd, v & MASK)

@@ -20,36 +20,52 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-import rv_simd_isa as I                                          # noqa: E402
-import rv_simd_isa_f as IF                                       # noqa: E402
+import rv_simd_isa as I
+import rv_simd_isa_f as IF
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 GEN = ROOT / "src" / "kohakuaccel" / "pe" / "rv32" / "simd" / "generated"
 VH = GEN / "khs_isa.vh"
 CH = GEN / "khs_intrin.h"
 
-BANNER = ("GENERATED from tests/pe/tools/rv_simd_isa.py -- DO NOT EDIT.\n"
-          "Regenerate with `python tests/pe/tools/rv_simd_emit.py`; the ISA test\n"
-          "regenerates and compares, so a hand edit here fails rather than\n"
-          "quietly disagreeing with the assembler and the golden model.")
+BANNER = (
+    "GENERATED from tests/pe/tools/rv_simd_isa.py -- DO NOT EDIT.\n"
+    "Regenerate with `python tests/pe/tools/rv_simd_emit.py`; the ISA test\n"
+    "regenerates and compares, so a hand edit here fails rather than\n"
+    "quietly disagreeing with the assembler and the golden model."
+)
 
 #: Keyed by (opcode, funct3), because custom-0 and custom-1 both number their
 #: groups from zero and a bare funct3 would collide between the two tiers.
-GROUP = {(I.OPC_KHD, I.F3_VINT): "INT", (I.OPC_KHD, I.F3_VBIT): "BIT",
-         (I.OPC_KHD, I.F3_VSHI): "SH",  (I.OPC_KHD, I.F3_VMAC): "MAC",
-         (I.OPC_KHD, I.F3_VMOV): "MOV", (I.OPC_KHD, I.F3_VPRM): "PRM",
-         (I.OPC_KHF, IF.F3_FMAC): "FMAC", (I.OPC_KHF, IF.F3_FRED): "FRED",
-         (I.OPC_KHF, IF.F3_FCVT): "FCVT", (I.OPC_KHF, IF.F3_FALU): "FALU",
-         (I.OPC_KHF, IF.F3_FSFU): "FSFU"}
+GROUP = {
+    (I.OPC_KHD, I.F3_VINT): "INT",
+    (I.OPC_KHD, I.F3_VBIT): "BIT",
+    (I.OPC_KHD, I.F3_VSHI): "SH",
+    (I.OPC_KHD, I.F3_VMAC): "MAC",
+    (I.OPC_KHD, I.F3_VMOV): "MOV",
+    (I.OPC_KHD, I.F3_VPRM): "PRM",
+    (I.OPC_KHF, IF.F3_FMAC): "FMAC",
+    (I.OPC_KHF, IF.F3_FRED): "FRED",
+    (I.OPC_KHF, IF.F3_FCVT): "FCVT",
+    (I.OPC_KHF, IF.F3_FALU): "FALU",
+    (I.OPC_KHF, IF.F3_FSFU): "FSFU",
+}
 
 #: How each group packs its funct7. The permute group spends three bits on a
 #: lane index because `vsldw` needs one and an R-type has no field left.
-SHIFT = {(I.OPC_KHD, I.F3_VINT): 2, (I.OPC_KHD, I.F3_VSHI): 2,
-         (I.OPC_KHD, I.F3_VMAC): 2, (I.OPC_KHD, I.F3_VPRM): 3,
-         (I.OPC_KHD, I.F3_VBIT): 0, (I.OPC_KHD, I.F3_VMOV): 0,
-         (I.OPC_KHF, IF.F3_FMAC): 2, (I.OPC_KHF, IF.F3_FRED): 2,
-         (I.OPC_KHF, IF.F3_FCVT): 2, (I.OPC_KHF, IF.F3_FALU): 2,
-         (I.OPC_KHF, IF.F3_FSFU): 2}
+SHIFT = {
+    (I.OPC_KHD, I.F3_VINT): 2,
+    (I.OPC_KHD, I.F3_VSHI): 2,
+    (I.OPC_KHD, I.F3_VMAC): 2,
+    (I.OPC_KHD, I.F3_VPRM): 3,
+    (I.OPC_KHD, I.F3_VBIT): 0,
+    (I.OPC_KHD, I.F3_VMOV): 0,
+    (I.OPC_KHF, IF.F3_FMAC): 2,
+    (I.OPC_KHF, IF.F3_FRED): 2,
+    (I.OPC_KHF, IF.F3_FCVT): 2,
+    (I.OPC_KHF, IF.F3_FALU): 2,
+    (I.OPC_KHF, IF.F3_FSFU): 2,
+}
 
 #: The identifier prefix each opcode major's constants carry.
 PREFIX = {I.OPC_KHD: "KHS", I.OPC_KHF: "KHF"}
@@ -57,7 +73,7 @@ PREFIX = {I.OPC_KHD: "KHS", I.OPC_KHF: "KHF"}
 
 def _ident(name):
     """A stable Verilog/C identifier fragment for an instruction's operation."""
-    base = name[1:] if name.startswith("v") else name
+    base = name.removeprefix("v")
     if base.startswith("sldw"):
         base = "sldw"
     if base.split(".")[0] in ("pack", "unpkl", "unpkh"):
@@ -101,21 +117,29 @@ def verilog():
         L.append("localparam [2:0] KHS_F3_%-5s = 3'd%d;" % (g, i))
     L += ["", "// funct7[1:0]: the element type of a typed group"]
     for v, n in ((I.ET_S8, "S8"), (I.ET_S16, "S16"), (I.ET_S32, "S32")):
-        L.append("localparam [1:0] KHS_ET_%-3s = 2'd%d;   // %d-bit elements"
-                 % (n, v, I.ET_BITS[v]))
+        L.append(
+            "localparam [1:0] KHS_ET_%-3s = 2'd%d;   // %d-bit elements"
+            % (n, v, I.ET_BITS[v])
+        )
 
     L += ["", "// funct3: the float tier's groups, on custom-1"]
-    for nm, v in (("FMAC", IF.F3_FMAC), ("FRED", IF.F3_FRED),
-                  ("FCVT", IF.F3_FCVT), ("FALU", IF.F3_FALU),
-                  ("FSFU", IF.F3_FSFU)):
+    for nm, v in (
+        ("FMAC", IF.F3_FMAC),
+        ("FRED", IF.F3_FRED),
+        ("FCVT", IF.F3_FCVT),
+        ("FALU", IF.F3_FALU),
+        ("FSFU", IF.F3_FSFU),
+    ):
         L.append("localparam [2:0] KHF_F3_%-5s = 3'd%d;" % (nm, v))
     L += ["", "// funct7[1:0]: the float element type"]
     for v, n in ((IF.FT_F16, "F16"), (IF.FT_F32, "F32")):
         L.append("localparam [1:0] KHF_FT_%-3s = 2'd%d;" % (n, v))
 
-    L += ["",
-          "// vec_alu's own opcodes, forwarded by khs_float_lane. A FALU or FSFU",
-          "// instruction maps onto exactly one of these."]
+    L += [
+        "",
+        "// vec_alu's own opcodes, forwarded by khs_float_lane. A FALU or FSFU",
+        "// instruction maps onto exactly one of these.",
+    ]
     for n, v in sorted(IF.VEC_OP.items(), key=lambda kv: kv[1]):
         L.append("localparam [4:0] KHS_FOP_%-6s = 5'd%d;" % (n, v))
 
@@ -125,17 +149,34 @@ def verilog():
         w = 7 - sh
         pfx = PREFIX[opc]
         gname = I.groups()[g] if opc == I.OPC_KHD else GROUP[key]
-        L += ["", "// %s funct3 = %s_F3_%s: funct7[6:%d] is the operation%s"
-              % ("custom-0" if opc == I.OPC_KHD else "custom-1", pfx, gname, sh,
-                 ", funct7[%d:0] the lane index" % (sh - 1)
-                 if key == (I.OPC_KHD, I.F3_VPRM) else "")]
+        L += [
+            "",
+            "// %s funct3 = %s_F3_%s: funct7[6:%d] is the operation%s"
+            % (
+                "custom-0" if opc == I.OPC_KHD else "custom-1",
+                pfx,
+                gname,
+                sh,
+                (
+                    ", funct7[%d:0] the lane index" % (sh - 1)
+                    if key == (I.OPC_KHD, I.F3_VPRM)
+                    else ""
+                ),
+            ),
+        ]
         for val, ident in sorted(ops.items()):
-            L.append("localparam [%d:0] %s_%s_%-9s = %d'd%d;"
-                     % (w - 1, pfx, GROUP[key], ident, w, val))
+            L.append(
+                "localparam [%d:0] %s_%s_%-9s = %d'd%d;"
+                % (w - 1, pfx, GROUP[key], ident, w, val)
+            )
 
     nkhd = sum(1 for o in I.ISA.values() if o.opcode == I.OPC_KHD)
-    L += ["", "// %d instructions: %d integer on custom-0, %d float on custom-1."
-          % (len(I.ISA), nkhd, len(I.ISA) - nkhd), ""]
+    L += [
+        "",
+        "// %d instructions: %d integer on custom-0, %d float on custom-1."
+        % (len(I.ISA), nkhd, len(I.ISA) - nkhd),
+        "",
+    ]
     return "\n".join(L) + "\n"
 
 
@@ -165,8 +206,12 @@ def _asm_line(op):
     """(template, output list, input list, is_memory) for one instruction."""
     if op.funct7 is None:
         vec = op.operands[0]
-        parts = [("lit", ".insn i 0x%02x, %d, x" % (op.opcode, op.group)),
-                 ("arg", vec.name), ("lit", ", %0, "), ("arg", "imm")]
+        parts = [
+            ("lit", ".insn i 0x%02x, %d, x" % (op.opcode, op.group)),
+            ("arg", vec.name),
+            ("lit", ", %0, "),
+            ("arg", "imm"),
+        ]
         return _cat(parts), [], ['"r"(p)'], True
 
     slots, outs, ins = {}, [], []
@@ -177,16 +222,17 @@ def _asm_line(op):
         else:
             slots[o.field] = [("lit", "x"), ("arg", o.name)]
 
-    parts = [("lit", ".insn r 0x%02x, %d, 0x%02x, "
-              % (op.opcode, op.group, op.funct7))]
+    parts = [("lit", ".insn r 0x%02x, %d, 0x%02x, " % (op.opcode, op.group, op.funct7))]
     for i, field in enumerate(("rd", "rs1", "rs2")):
         if i:
             parts.append(("lit", ", "))
         parts += slots.get(field, [("lit", "x0")])
-    return (_cat(parts),
-            ['"=r"(_khs_r)' for _ in outs],
-            ['"r"(%s)' % o.name for o in ins],
-            False)
+    return (
+        _cat(parts),
+        ['"=r"(_khs_r)' for _ in outs],
+        ['"r"(%s)' % o.name for o in ins],
+        False,
+    )
 
 
 def _asm_stmt(tmpl, outs, ins, clob, indent):
@@ -259,8 +305,11 @@ def c_header():
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--check", action="store_true",
-                    help="fail if the files on disk differ from the table")
+    ap.add_argument(
+        "--check",
+        action="store_true",
+        help="fail if the files on disk differ from the table",
+    )
     a = ap.parse_args()
 
     want = {VH: verilog(), CH: c_header()}
@@ -270,18 +319,23 @@ def main():
             got = p.read_text() if p.exists() else None
             if got != text:
                 bad += 1
-                print("  DRIFT %s %s" % (p.relative_to(ROOT),
-                                         "is missing" if got is None
-                                         else "differs from the field table"))
-        print("  %s -- %d of %d generated files agree with the table"
-              % ("FAIL" if bad else "PASS", len(want) - bad, len(want)))
+                print(
+                    "  DRIFT %s %s"
+                    % (
+                        p.relative_to(ROOT),
+                        "is missing" if got is None else "differs from the field table",
+                    )
+                )
+        print(
+            "  %s -- %d of %d generated files agree with the table"
+            % ("FAIL" if bad else "PASS", len(want) - bad, len(want))
+        )
         return 1 if bad else 0
 
     GEN.mkdir(parents=True, exist_ok=True)
     for p, text in want.items():
         p.write_text(text)
-        print("  wrote %s (%d lines)" % (p.relative_to(ROOT),
-                                         text.count("\n")))
+        print("  wrote %s (%d lines)" % (p.relative_to(ROOT), text.count("\n")))
     return 0
 
 

@@ -69,10 +69,10 @@ from dataclasses import dataclass
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compiler"))
 
-from kohakuaccel.backend.isa import Field, InstFormat, InstSet, ISAError  # noqa: E402
+from kohakuaccel.backend.isa import Field, InstFormat, InstSet, ISAError
 
-OPC_KHD = 0x0B          # custom-0: tier 1
-OPC_KHF = 0x2B          # custom-1: reserved to the float tiers
+OPC_KHD = 0x0B  # custom-0: tier 1
+OPC_KHF = 0x2B  # custom-1: reserved to the float tiers
 
 F3_VLD, F3_VST, F3_VINT, F3_VBIT, F3_VSHI, F3_VMAC, F3_VMOV, F3_VPRM = range(8)
 
@@ -105,7 +105,7 @@ class Operand:
 
     name: str
     field: str
-    kind: str           # xreg | vreg | areg | imm
+    kind: str  # xreg | vreg | areg | imm
     doc: str = ""
 
 
@@ -127,7 +127,7 @@ SH = Operand("sh", "rs2", "imm", "shift amount")
 class Op:
     name: str
     group: int
-    funct7: int | None      # None for the I-type groups
+    funct7: int | None  # None for the I-type groups
     operands: tuple
     fmt: InstFormat
     et: int | None
@@ -136,24 +136,32 @@ class Op:
 
 
 def _r_format(name, funct3, funct7, opcode=OPC_KHD):
-    return InstFormat(name, (
-        Field("funct7", 7, const=funct7),
-        Field("rs2", 5),
-        Field("rs1", 5),
-        Field("funct3", 3, const=funct3),
-        Field("rd", 5),
-        Field("opcode", 7, const=opcode),
-    ), width=32)
+    return InstFormat(
+        name,
+        (
+            Field("funct7", 7, const=funct7),
+            Field("rs2", 5),
+            Field("rs1", 5),
+            Field("funct3", 3, const=funct3),
+            Field("rd", 5),
+            Field("opcode", 7, const=opcode),
+        ),
+        width=32,
+    )
 
 
 def _i_format(name, funct3, opcode=OPC_KHD):
-    return InstFormat(name, (
-        Field("imm", 12, signed=True),
-        Field("rs1", 5),
-        Field("funct3", 3, const=funct3),
-        Field("rd", 5),
-        Field("opcode", 7, const=opcode),
-    ), width=32)
+    return InstFormat(
+        name,
+        (
+            Field("imm", 12, signed=True),
+            Field("rs1", 5),
+            Field("funct3", 3, const=funct3),
+            Field("rd", 5),
+            Field("opcode", 7, const=opcode),
+        ),
+        width=32,
+    )
 
 
 ISA: dict[str, Op] = {}
@@ -163,8 +171,11 @@ SET = InstSet("khd")
 def _add(name, group, funct7, operands, doc, et=None, opcode=OPC_KHD):
     if name in ISA:
         raise ISAError("khd: %r is already defined" % name)
-    fmt = (_i_format(name, group, opcode) if funct7 is None
-           else _r_format(name, group, funct7, opcode))
+    fmt = (
+        _i_format(name, group, opcode)
+        if funct7 is None
+        else _r_format(name, group, funct7, opcode)
+    )
     SET.add(fmt)
     ISA[name] = Op(name, group, funct7, tuple(operands), fmt, et, doc, opcode)
 
@@ -172,16 +183,32 @@ def _add(name, group, funct7, operands, doc, et=None, opcode=OPC_KHD):
 def _typed(base, group, op, ets, operands, doc, shift=2):
     """Register one instruction per element type, `.s8` / `.s16` / `.s32`."""
     for et in ets:
-        _add("%s.%s" % (base, ET_NAME[et]), group, (op << shift) | et,
-             operands, doc + " (%s elements)" % ET_NAME[et], et=et)
+        _add(
+            "%s.%s" % (base, ET_NAME[et]),
+            group,
+            (op << shift) | et,
+            operands,
+            doc + " (%s elements)" % ET_NAME[et],
+            et=et,
+        )
 
 
 # ---------------------------------------------------------------- memory
-_add("vld", F3_VLD, None, (VD, IMM, XS1),
-     "vd <- the vector at rs1+imm. Line-aligned by contract: an address that is "
-     "not a multiple of the vector width faults.")
-_add("vst", F3_VST, None, (VS, IMM, XS1),
-     "the vector at rs1+imm <- vs. Line-aligned; a misaligned address faults.")
+_add(
+    "vld",
+    F3_VLD,
+    None,
+    (VD, IMM, XS1),
+    "vd <- the vector at rs1+imm. Line-aligned by contract: an address that is "
+    "not a multiple of the vector width faults.",
+)
+_add(
+    "vst",
+    F3_VST,
+    None,
+    (VS, IMM, XS1),
+    "the vector at rs1+imm <- vs. Line-aligned; a misaligned address faults.",
+)
 
 # ------------------------------------------------------- packed integer ALU
 _ALL = (ET_S8, ET_S16, ET_S32)
@@ -191,8 +218,14 @@ _typed("vsadd", F3_VINT, 2, _ALL, (VD, VS1, VS2), "signed saturating add")
 _typed("vssub", F3_VINT, 3, _ALL, (VD, VS1, VS2), "signed saturating subtract")
 _typed("vmin", F3_VINT, 4, _ALL, (VD, VS1, VS2), "signed minimum")
 _typed("vmax", F3_VINT, 5, _ALL, (VD, VS1, VS2), "signed maximum")
-_typed("vmul", F3_VINT, 6, (ET_S8, ET_S16), (VD, VS1, VS2),
-       "element-wise product, low half kept")
+_typed(
+    "vmul",
+    F3_VINT,
+    6,
+    (ET_S8, ET_S16),
+    (VD, VS1, VS2),
+    "element-wise product, low half kept",
+)
 
 # ------------------------------------------------------------------ bitwise
 _add("vand", F3_VBIT, 0, (VD, VS1, VS2), "bitwise and")
@@ -204,19 +237,42 @@ _add("vandn", F3_VBIT, 3, (VD, VS1, VS2), "vs1 & ~vs2")
 _typed("vslli", F3_VSHI, 0, _ALL, (VD, VS1, SH), "shift left logical")
 _typed("vsrli", F3_VSHI, 1, _ALL, (VD, VS1, SH), "shift right logical")
 _typed("vsrai", F3_VSHI, 2, _ALL, (VD, VS1, SH), "shift right arithmetic")
-_typed("vsrari", F3_VSHI, 3, _ALL, (VD, VS1, SH),
-       "shift right arithmetic, ROUNDING (add half an ulp first) -- the "
-       "requantise primitive, and the one a plain vsrai gets subtly wrong")
+_typed(
+    "vsrari",
+    F3_VSHI,
+    3,
+    _ALL,
+    (VD, VS1, SH),
+    "shift right arithmetic, ROUNDING (add half an ulp first) -- the "
+    "requantise primitive, and the one a plain vsrai gets subtly wrong",
+)
 
 # ------------------------------------------------------- dot and accumulators
-_typed("vdot", F3_VMAC, 0, (ET_S8, ET_S16), (AD, VS1, VS2),
-       "acc[ad] += the dot product of the elements within each 32-bit lane")
-_typed("vdotn", F3_VMAC, 1, (ET_S8, ET_S16), (AD, VS1, VS2),
-       "acc[ad] -= the dot product of the elements within each 32-bit lane")
+_typed(
+    "vdot",
+    F3_VMAC,
+    0,
+    (ET_S8, ET_S16),
+    (AD, VS1, VS2),
+    "acc[ad] += the dot product of the elements within each 32-bit lane",
+)
+_typed(
+    "vdotn",
+    F3_VMAC,
+    1,
+    (ET_S8, ET_S16),
+    (AD, VS1, VS2),
+    "acc[ad] -= the dot product of the elements within each 32-bit lane",
+)
 _add("vaccz", F3_VMAC, (2 << 2) | 0, (AD,), "acc[ad] <- 0")
 _add("vaccrd", F3_VMAC, (3 << 2) | 0, (VD, AS1), "vd <- acc[as1], as int32 lanes")
-_add("vaccwr", F3_VMAC, (4 << 2) | 0, (AD, VS1),
-     "acc[ad] <- vs1, as int32 lanes -- how a bias vector seeds an accumulation")
+_add(
+    "vaccwr",
+    F3_VMAC,
+    (4 << 2) | 0,
+    (AD, VS1),
+    "acc[ad] <- vs1, as int32 lanes -- how a bias vector seeds an accumulation",
+)
 
 # ------------------------------------------------ scalar moves and reductions
 _add("vsplat", F3_VMOV, 0, (VD, XS1), "every 32-bit lane of vd <- xs1")
@@ -229,27 +285,64 @@ _add("vredmax", F3_VMOV, 3, (XD, VS1), "xd <- the signed max of vs1's 32-bit lan
 # R-type has no field left for one, so the permute group spends three funct7
 # bits on it and folds the element type into the opcode instead.
 for _i in range(8):
-    _add("vsldw%d" % _i, F3_VPRM, (0 << 3) | _i, (VD, VS1, VS2),
-         "vd <- 32-bit lanes %d.. of the concatenation {vs2, vs1} -- the "
-         "misaligned-neighbour primitive a stencil needs" % _i)
-_add("vpack.s16", F3_VPRM, (1 << 3), (VD, VS1, VS2),
-     "vd <- {vs2, vs1} narrowed int16 -> int8 with signed saturation")
-_add("vpack.s32", F3_VPRM, (2 << 3), (VD, VS1, VS2),
-     "vd <- {vs2, vs1} narrowed int32 -> int16 with signed saturation")
-_add("vunpkl.s8", F3_VPRM, (3 << 3), (VD, VS1), "vd <- vs1's low int8s, widened to int16")
-_add("vunpkh.s8", F3_VPRM, (4 << 3), (VD, VS1), "vd <- vs1's high int8s, widened to int16")
-_add("vunpkl.s16", F3_VPRM, (5 << 3), (VD, VS1), "vd <- vs1's low int16s, widened to int32")
-_add("vunpkh.s16", F3_VPRM, (6 << 3), (VD, VS1), "vd <- vs1's high int16s, widened to int32")
+    _add(
+        "vsldw%d" % _i,
+        F3_VPRM,
+        (0 << 3) | _i,
+        (VD, VS1, VS2),
+        "vd <- 32-bit lanes %d.. of the concatenation {vs2, vs1} -- the "
+        "misaligned-neighbour primitive a stencil needs" % _i,
+    )
+_add(
+    "vpack.s16",
+    F3_VPRM,
+    (1 << 3),
+    (VD, VS1, VS2),
+    "vd <- {vs2, vs1} narrowed int16 -> int8 with signed saturation",
+)
+_add(
+    "vpack.s32",
+    F3_VPRM,
+    (2 << 3),
+    (VD, VS1, VS2),
+    "vd <- {vs2, vs1} narrowed int32 -> int16 with signed saturation",
+)
+_add(
+    "vunpkl.s8", F3_VPRM, (3 << 3), (VD, VS1), "vd <- vs1's low int8s, widened to int16"
+)
+_add(
+    "vunpkh.s8",
+    F3_VPRM,
+    (4 << 3),
+    (VD, VS1),
+    "vd <- vs1's high int8s, widened to int16",
+)
+_add(
+    "vunpkl.s16",
+    F3_VPRM,
+    (5 << 3),
+    (VD, VS1),
+    "vd <- vs1's low int16s, widened to int32",
+)
+_add(
+    "vunpkh.s16",
+    F3_VPRM,
+    (6 << 3),
+    (VD, VS1),
+    "vd <- vs1's high int16s, widened to int32",
+)
 
 # ------------------------------------------------------------- the float tier
 # Custom-1, and held in its own module so the integer table stays readable.
-import rv_simd_isa_f                                                  # noqa: E402
+import rv_simd_isa_f
 
-rv_simd_isa_f.register(_add, {"AD": AD, "VS1": VS1, "VS2": VS2,
-                             "VD": VD, "AS1": AS1, "XD": XD})
+rv_simd_isa_f.register(
+    _add, {"AD": AD, "VS1": VS1, "VS2": VS2, "VD": VD, "AS1": AS1, "XD": XD}
+)
 
 
 # ------------------------------------------------------------------- encoding
+
 
 def encode(name, **operands) -> int:
     """One instruction word. Unnamed fields are zero; every value is range-checked."""
@@ -262,14 +355,17 @@ def encode(name, **operands) -> int:
     for o in op.operands:
         v = operands[o.name]
         if o.kind == "vreg" and not 0 <= v < VREGS:
-            raise ISAError("%s: %s is v%d, but this build has %d vector "
-                           "registers" % (name, o.name, v, VREGS))
+            raise ISAError(
+                "%s: %s is v%d, but this build has %d vector "
+                "registers" % (name, o.name, v, VREGS)
+            )
         if o.kind == "areg" and not 0 <= v < NACC:
-            raise ISAError("%s: %s is a%d, but this build has %d accumulators"
-                           % (name, o.name, v, NACC))
+            raise ISAError(
+                "%s: %s is a%d, but this build has %d accumulators"
+                % (name, o.name, v, NACC)
+            )
         if name == "vextr" and o.name == "sh" and not 0 <= v < SIMD:
-            raise ISAError("%s: lane %d, but this build has %d lanes"
-                           % (name, v, SIMD))
+            raise ISAError("%s: lane %d, but this build has %d lanes" % (name, v, SIMD))
         fields[o.field] = v
     for f in op.fmt.settable():
         fields.setdefault(f, 0)

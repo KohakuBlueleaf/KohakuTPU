@@ -18,9 +18,9 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-import rv_simt_asm                                               # noqa: F401,E402
-from rv_asm import assemble, AsmError, to_hex                   # noqa: E402
-from rv_simt_model import GpuMachine, DRAM_BASE, MASK            # noqa: E402
+import rv_simt_asm  # noqa: F401
+from rv_asm import AsmError, assemble, to_hex
+from rv_simt_model import DRAM_BASE, MASK, GpuMachine
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 BUILD = ROOT / "tests" / "pe" / "build"
@@ -45,8 +45,7 @@ def checksum(words):
 def write_user(src, arg, dram_init, lanes, waves, ctl, launch=1):
     words, _ = assemble(src, base=0)
 
-    m = GpuMachine(lanes=lanes, waves=waves, imem_words=4096, ctl=ctl,
-                   nlive=launch)
+    m = GpuMachine(lanes=lanes, waves=waves, imem_words=4096, ctl=ctl, nlive=launch)
     m.imem[: len(words)] = words
     for i, v in enumerate(dram_init):
         if v:
@@ -61,14 +60,17 @@ def write_user(src, arg, dram_init, lanes, waves, ctl, launch=1):
     (d / "dfin.hex").write_text(to_hex(dfin))
     (d / "spad.hex").write_text(to_hex([0] * 64))
     # meta[4] is the wave count the bench kicks with -- the kick's `op` field.
-    meta = [cause, hword, len(trace), checksum(dfin), launch, arg,
-            len(words), 0]
+    meta = [cause, hword, len(trace), checksum(dfin), launch, arg, len(words), 0]
     (d / "meta.hex").write_text(to_hex(meta))
 
-    print("  assembled %d words; the model retires %d step(s) and halts with "
-          "cause %d, a0 = 0x%08x" % (len(words), len(trace), cause, hword))
-    print("  model memory: %d request(s) over %d gather(s), %d line fill(s)"
-          % (sum(len(a) for _, a in m.reqs), len(m.reqs), m.fills_issued()))
+    print(
+        "  assembled %d words; the model retires %d step(s) and halts with "
+        "cause %d, a0 = 0x%08x" % (len(words), len(trace), cause, hword)
+    )
+    print(
+        "  model memory: %d request(s) over %d gather(s), %d line fill(s)"
+        % (sum(len(a) for _, a in m.reqs), len(m.reqs), m.fills_issued())
+    )
     return m
 
 
@@ -77,10 +79,15 @@ def main():
     ap.add_argument("source", help="a shader .s file")
     ap.add_argument("--arg", type=lambda s: int(s, 0), default=0)
     ap.add_argument("--lanes", type=int, default=8)
-    ap.add_argument("--waves", type=int, default=16,
-                    help="wave contexts the build carries")
-    ap.add_argument("--launch", type=int, default=1,
-                    help="wave contexts this kick starts (the kick's op field)")
+    ap.add_argument(
+        "--waves", type=int, default=16, help="wave contexts the build carries"
+    )
+    ap.add_argument(
+        "--launch",
+        type=int,
+        default=1,
+        help="wave contexts this kick starts (the kick's op field)",
+    )
     ap.add_argument("--dram", choices=("zero", "ramp"), default="ramp")
     ap.add_argument("--wall", type=float, default=600.0)
     ap.add_argument("--keep", action="store_true")
@@ -96,9 +103,15 @@ def main():
     # its base pointers from here rather than building them from immediates.
     ctl = [a.arg] + [0] * 31
     try:
-        write_user(src.read_text(), a.arg,
-                   dram_ramp() if a.dram == "ramp" else [0] * DRAM_WORDS,
-                   a.lanes, a.waves, ctl, a.launch)
+        write_user(
+            src.read_text(),
+            a.arg,
+            dram_ramp() if a.dram == "ramp" else [0] * DRAM_WORDS,
+            a.lanes,
+            a.waves,
+            ctl,
+            a.launch,
+        )
     except AsmError as e:
         print("  assembly failed: %s" % e)
         return 1

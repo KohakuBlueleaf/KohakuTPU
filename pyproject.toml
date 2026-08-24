@@ -103,6 +103,11 @@ ignore = ["B008", "C408"]
 # alternative is a suite that stops at the first one and names only it.
 "compiler/tests/*" = ["BLE001"]
 "driver/tests/*" = ["BLE001"]
+# UP031: 442 `%` format strings across 34 generators and golden models, most of
+# them aligned table rows. Ruff's own fix rewrites them as `.format()`, which
+# UP032 then flags -- two mechanical passes over code the PE suites are graded
+# by, to arrive at a style this tree never asked for. `%` is not a defect.
+"tests/pe/tools/*" = ["BLE001", "UP031"]
 # RUF059: `B, C, H, W = x.shape` names the layout. Writing `_, _, H, W` to
 # satisfy the rule deletes the one thing that line is there to say.
 "demos/*" = ["RUF059"]

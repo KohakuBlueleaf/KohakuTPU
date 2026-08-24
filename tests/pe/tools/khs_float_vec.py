@@ -21,10 +21,22 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-import rv_simd_f16 as F                                           # noqa: E402
+import rv_simd_f16 as F
 
-EDGE_F16 = [0x0000, 0x8000, 0x3C00, 0xBC00, 0x7BFF, 0xFBFF,
-            0x0400, 0x8400, 0x0001, 0x8001, 0x03FF, 0x3555]
+EDGE_F16 = [
+    0x0000,
+    0x8000,
+    0x3C00,
+    0xBC00,
+    0x7BFF,
+    0xFBFF,
+    0x0400,
+    0x8400,
+    0x0001,
+    0x8001,
+    0x03FF,
+    0x3555,
+]
 
 
 def gen(n, seed=0x5F16):
@@ -71,8 +83,10 @@ def main():
                 off += 1
             fh.write("%04x %04x %06x %06x\n" % (a, b, c, y))
     print("  wrote %d vectors to %s" % (len(rows), path))
-    print("  %d of them (%.2f%%) are one ulp off correct rounding -- the lane's "
-          "subtractive sticky" % (off, 100.0 * off / max(1, len(rows))))
+    print(
+        "  %d of them (%.2f%%) are one ulp off correct rounding -- the lane's "
+        "subtractive sticky" % (off, 100.0 * off / max(1, len(rows)))
+    )
 
 
 if __name__ == "__main__":

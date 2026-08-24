@@ -105,10 +105,13 @@ FAST = [
         [PY, "-m", "pytest", "tests", "-q"],
         cwd=ROOT / "driver",
     ),
-    # `scripts` is in scope because it is not scratch: check.py, xsim.py and
-    # gen_mesh.py are all load-bearing and were unlinted.
-    py("ruff", "-m", "ruff", "check", "compiler", "driver", "scripts"),
-    py("black", "-m", "black", "--check", "-q", "compiler", "driver", "scripts"),
+    # A demo nobody runs is a claim nobody checks, and this one is 28 DiT blocks
+    # end to end. Not in `testpaths`, so it is named here.
+    py("pytest anima", "-m", "pytest", "demos/kohakutpu/anima/tests", "-q"),
+    # EVERY directory, for the reason `vstyle` covers every .v file: a gate over
+    # a subset reads as done, and tests/pe/tools is 34 files the suites grade by.
+    py("ruff", "-m", "ruff", "check", "."),
+    py("black", "-m", "black", "--check", "-q", "."),
     # A doc naming a moved file is drift a rename produces by the dozen and
     # nothing else measures: 103 of these had accumulated behind two renames.
     py("doc paths", "scripts/py/docpaths.py"),
@@ -221,6 +224,8 @@ SNAP_DIRS = (
     "boards",
     "compiler",
     "driver",
+    # Linted like everything else, so it has to be in the copy the gate reads.
+    "demos",
     "docs",
     "docs-web/src",
     # README.md links to both; without them the doc check reports two dangling

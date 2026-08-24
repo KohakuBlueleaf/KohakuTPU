@@ -35,9 +35,9 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from rv_asm import assemble, to_hex                             # noqa: E402
-from rv_model import Machine, DRAM_BASE, SPAD_BASE              # noqa: E402
-from rv_gen import SYMS, zero_regs, MASK32, _sum                # noqa: E402
+from rv_asm import assemble, to_hex
+from rv_gen import MASK32, SYMS, _sum, zero_regs
+from rv_model import DRAM_BASE, SPAD_BASE, Machine
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 
@@ -54,16 +54,16 @@ PE_XY = [(1, 1), (2, 1), (1, 2), (2, 2)]
 # and far short of the bench's own 400k-cycle wait.
 SPIN_CAP = 20000
 
-SUM_N = 512            # words summed by iso core 0 and core 1  (64 lines)
-COPY_N = 256           # words copied by iso core 2
+SUM_N = 512  # words summed by iso core 0 and core 1  (64 lines)
+COPY_N = 256  # words copied by iso core 2
 # EXACTLY the 4 KB cache: source and destination share every set, so all 512
 # accesses miss -- 41,881 cycles for 1,579 instructions, the heaviest case here.
 COPY_OFF = 4096
-THRASH_LINES = 160     # 5 KB against a 4 KB cache: every pass evicts
+THRASH_LINES = 160  # 5 KB against a 4 KB cache: every pass evicts
 THRASH_PASSES = 2
-ROUNDS = 16            # ping-pong rounds
-AGG_N = 256            # words each core sums for the aggregation
-HO_N = 64              # words handed off through DRAM
+ROUNDS = 16  # ping-pong rounds
+AGG_N = 256  # words each core sums for the aggregation
+HO_N = 64  # words handed off through DRAM
 HO_SEED = 0x0BAD_0000
 HO_STEP = 0x0000_0011
 
@@ -97,9 +97,12 @@ def ramp(n=DRAM_WORDS):
 
 # ------------------------------------------------------------------ programs
 
+
 def iso_sum(core):
     b = slice_base(core)
-    return zero_regs() + f"""
+    return (
+        zero_regs()
+        + f"""
     li  t0, {hex(b)}
     li  t1, {SUM_N}
     li  t2, 0
@@ -111,15 +114,20 @@ s0_loop:
     bnez t1, s0_loop
     li  t4, {hex(b + 4 * SUM_N)}
     sw  t2, 0(t4)
-""" + FLUSH + """
+"""
+        + FLUSH
+        + """
     mv  a0, t2
     ecall
 """
+    )
 
 
 def iso_xor(core):
     b = slice_base(core)
-    return zero_regs() + f"""
+    return (
+        zero_regs()
+        + f"""
     li  t0, {hex(b)}
     li  t1, {SUM_N}
     li  t2, 0
@@ -133,15 +141,20 @@ s1_loop:
     bnez t1, s1_loop
     li  t5, {hex(b + 4 * SUM_N)}
     sw  t2, 0(t5)
-""" + FLUSH + """
+"""
+        + FLUSH
+        + """
     mv  a0, t2
     ecall
 """
+    )
 
 
 def iso_copy(core):
     b = slice_base(core)
-    return zero_regs() + f"""
+    return (
+        zero_regs()
+        + f"""
     li  t0, {hex(b)}
     li  t1, {hex(b + COPY_OFF)}
     li  t2, {COPY_N}
@@ -152,15 +165,20 @@ s2_loop:
     addi t1, t1, 4
     addi t2, t2, -1
     bnez t2, s2_loop
-""" + FLUSH + """
+"""
+        + FLUSH
+        + """
     li  a0, 0xC0DE
     ecall
 """
+    )
 
 
 def iso_thrash(core):
     b = slice_base(core)
-    return zero_regs() + f"""
+    return (
+        zero_regs()
+        + f"""
     li  t2, {THRASH_PASSES}
     li  t1, 0
 s3_outer:
@@ -176,10 +194,13 @@ s3_inner:
     bnez t4, s3_inner
     addi t2, t2, -1
     bnez t2, s3_outer
-""" + FLUSH + """
+"""
+        + FLUSH
+        + """
     mv  a0, t1
     ecall
 """
+    )
 
 
 def pp_initiator(partner):
@@ -304,7 +325,9 @@ aw_sum:
 
 def ho_writer(core, reader):
     b = slice_base(core)
-    return zero_regs() + f"""
+    return (
+        zero_regs()
+        + f"""
     li  s0, {hex(spad_word(0))}
     li  s1, {SPIN_CAP}
 hw_poll:
@@ -321,7 +344,9 @@ hw_store:
     addi t0, t0, 4
     addi t1, t1, -1
     bnez t1, hw_store
-""" + FLUSH + f"""
+"""
+        + FLUSH
+        + f"""
     li  s3, {hex(peer_word(reader, 3))}
     li  s4, 1
     sw  s4, 0(s3)
@@ -331,6 +356,7 @@ hw_stuck:
     li  a0, 0xDEAD0004
     ecall
 """
+    )
 
 
 def ho_reader(core, writer):
@@ -376,6 +402,7 @@ hr_stuck:
 
 # ------------------------------------------------------------------- cases
 
+
 def case_iso(npe):
     """Four unrelated programs on disjoint slices.  Modelled, so the halt word,
     the retired count AND the final DRAM are all checked."""
@@ -386,9 +413,8 @@ def case_iso(npe):
     for core, src in enumerate(srcs):
         words, _ = assemble(src, base=0, symbols=SYMS)
         x, y = PE_XY[core]
-        m = Machine(imem_words=4096, spad_words=SPAD_WORDS, arg=0,
-                    coreid=(y << 4) | x)
-        m.imem[:len(words)] = words
+        m = Machine(imem_words=4096, spad_words=SPAD_WORDS, arg=0, coreid=(y << 4) | x)
+        m.imem[: len(words)] = words
         for i, v in enumerate(dinit):
             if v:
                 m.dram[DRAM_BASE + 4 * i] = v
@@ -403,8 +429,17 @@ def case_iso(npe):
         halt.append(hw)
         cause.append(c)
         instret.append(len(trace))
-    return dict(srcs=srcs, dinit=dinit, dfin=dfin, halt=halt, cause=cause,
-                instret=instret, mask=(1 << npe) - 1, check_dram=1, aux=0)
+    return dict(
+        srcs=srcs,
+        dinit=dinit,
+        dfin=dfin,
+        halt=halt,
+        cause=cause,
+        instret=instret,
+        mask=(1 << npe) - 1,
+        check_dram=1,
+        aux=0,
+    )
 
 
 def case_pp(npe):
@@ -413,14 +448,22 @@ def case_pp(npe):
         partner = core ^ 1
         if core % 2 == 0:
             srcs.append(pp_initiator(partner))
-            halt.append(0)                       # a measured latency, not a constant
+            halt.append(0)  # a measured latency, not a constant
         else:
             srcs.append(pp_responder(partner))
             halt.append(ROUNDS)
             mask |= 1 << core
-    return dict(srcs=srcs, dinit=ramp(), dfin=ramp(), halt=halt,
-                cause=[1] * npe, instret=[0] * npe, mask=mask,
-                check_dram=1, aux=ROUNDS)
+    return dict(
+        srcs=srcs,
+        dinit=ramp(),
+        dfin=ramp(),
+        halt=halt,
+        cause=[1] * npe,
+        instret=[0] * npe,
+        mask=mask,
+        check_dram=1,
+        aux=ROUNDS,
+    )
 
 
 def case_agg(npe):
@@ -428,7 +471,7 @@ def case_agg(npe):
 
     def slice_sum(core):
         b = (slice_base(core) - DRAM_BASE) // 4
-        return sum(dinit[b:b + AGG_N]) & MASK32
+        return sum(dinit[b : b + AGG_N]) & MASK32
 
     srcs = [agg_leader(npe - 1)]
     halt = [0]
@@ -436,9 +479,17 @@ def case_agg(npe):
         srcs.append(agg_worker(core))
         halt.append(slice_sum(core))
     halt[0] = sum(slice_sum(c) for c in range(npe)) & MASK32
-    return dict(srcs=srcs, dinit=dinit, dfin=dinit, halt=halt,
-                cause=[1] * npe, instret=[0] * npe, mask=(1 << npe) - 1,
-                check_dram=1, aux=npe - 1)
+    return dict(
+        srcs=srcs,
+        dinit=dinit,
+        dfin=dinit,
+        halt=halt,
+        cause=[1] * npe,
+        instret=[0] * npe,
+        mask=(1 << npe) - 1,
+        check_dram=1,
+        aux=npe - 1,
+    )
 
 
 def case_ho(npe):
@@ -454,23 +505,32 @@ def case_ho(npe):
             srcs.append(ho_writer(core, core + 1))
             halt.append(0xD09E)
             b = (slice_base(core) - DRAM_BASE) // 4
-            stale = sum(dinit[b:b + HO_N]) & MASK32
+            stale = sum(dinit[b : b + HO_N]) & MASK32
             if stale == sum(new) & MASK32:
-                raise SystemExit("the hand-off values sum to the stale ones: "
-                                 "a failed invalidate would pass")
-            dfin[b:b + HO_N] = new
+                raise SystemExit(
+                    "the hand-off values sum to the stale ones: "
+                    "a failed invalidate would pass"
+                )
+            dfin[b : b + HO_N] = new
         else:
             srcs.append(ho_reader(core, core - 1))
             halt.append(sum(new) & MASK32)
-    return dict(srcs=srcs, dinit=dinit, dfin=dfin, halt=halt,
-                cause=[1] * npe, instret=[0] * npe, mask=(1 << npe) - 1,
-                check_dram=1, aux=HO_N)
+    return dict(
+        srcs=srcs,
+        dinit=dinit,
+        dfin=dfin,
+        halt=halt,
+        cause=[1] * npe,
+        instret=[0] * npe,
+        mask=(1 << npe) - 1,
+        check_dram=1,
+        aux=HO_N,
+    )
 
 
 # `iso` is also generated for ONE core, as the uncontended floor every
 # multi-core cycle count is read against. The other three need a peer to talk to.
-CASES = [("iso", case_iso), ("pp", case_pp), ("agg", case_agg),
-         ("ho", case_ho)]
+CASES = [("iso", case_iso), ("pp", case_pp), ("agg", case_agg), ("ho", case_ho)]
 
 META_N = 24
 
@@ -497,9 +557,15 @@ def write_case(outdir, npe, name, case):
     meta[20] = case["aux"]
     (d / "meta.hex").write_text(to_hex(meta))
     (d / "dfin.hex").write_text(to_hex(case["dfin"]))
-    print("  n%d %-4s %s  halt %s" %
-          (npe, name, " ".join("%4dw" % n for n in nprog),
-           " ".join("%08x" % h for h in case["halt"][:npe])))
+    print(
+        "  n%d %-4s %s  halt %s"
+        % (
+            npe,
+            name,
+            " ".join("%4dw" % n for n in nprog),
+            " ".join("%08x" % h for h in case["halt"][:npe]),
+        )
+    )
 
 
 def build(outdir):

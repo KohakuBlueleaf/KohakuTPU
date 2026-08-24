@@ -14,9 +14,9 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-import rv_simt_asm                                               # noqa: F401,E402
-from rv_asm import assemble                                     # noqa: E402
-from rv_simt_model import GpuMachine, LINE_BYTES, MASK, coalesce  # noqa: E402
+import rv_simt_asm  # noqa: F401
+from rv_asm import assemble
+from rv_simt_model import LINE_BYTES, MASK, GpuMachine, coalesce
 
 fails = []
 checks = 0
@@ -37,7 +37,7 @@ def sx(v):
 def build(src, lanes=8, waves=1, ctl=None):
     words, _ = assemble(src, base=0)
     m = GpuMachine(lanes=lanes, waves=waves, ctl=ctl)
-    m.imem[:len(words)] = words
+    m.imem[: len(words)] = words
     return m, m.waves[0]
 
 
@@ -58,10 +58,13 @@ m, w = build(SRC_DIV)
 for ln, v in enumerate(OPERANDS):
     w.x[10][ln] = v & MASK
 m.run()
-chk([sx(v) for v in w.x[11]] == [abs(v) for v in OPERANDS],
-    "x11 is |x10| in every lane")
-chk([sx(v) for v in w.x[12]] == [abs(v) + 1 for v in OPERANDS],
-    "x12 is |x10|+1 in every lane")
+chk(
+    [sx(v) for v in w.x[11]] == [abs(v) for v in OPERANDS], "x11 is |x10| in every lane"
+)
+chk(
+    [sx(v) for v in w.x[12]] == [abs(v) + 1 for v in OPERANDS],
+    "x12 is |x10|+1 in every lane",
+)
 chk(w.stack == [], "the IPDOM stack is empty at the halt")
 chk(w.hi_water == 2, "one nesting level costs two entries, not one")
 
@@ -72,9 +75,11 @@ print("--- GENUINELY nested divergence, three levels deep, per-lane exact ---")
 NEST = 3
 body = []
 for b in range(NEST):
-    body += ["        andi   x1, x10, %d" % (1 << b),
-             "        split  x1",
-             "        addi   x11, x11, %d" % (1 << b)]
+    body += [
+        "        andi   x1, x10, %d" % (1 << b),
+        "        split  x1",
+        "        addi   x11, x11, %d" % (1 << b),
+    ]
 body += ["        join", "        join"] * NEST
 SRC_NEST = "        addi x11, x0, 0\n" + "\n".join(body) + "\n        ecall\n"
 m, w = build(SRC_NEST)
@@ -93,11 +98,15 @@ def nested_expect(ln):
     return total
 
 
-chk([sx(v) for v in w.x[11]] == [nested_expect(ln) for ln in range(8)],
-    "three nested levels reproduce the lane-by-lane reference")
-chk(w.hi_water == 2 * NEST,
+chk(
+    [sx(v) for v in w.x[11]] == [nested_expect(ln) for ln in range(8)],
+    "three nested levels reproduce the lane-by-lane reference",
+)
+chk(
+    w.hi_water == 2 * NEST,
     "%d nested levels reach %d entries, two per split (got %d)"
-    % (NEST, 2 * NEST, w.hi_water))
+    % (NEST, 2 * NEST, w.hi_water),
+)
 
 print("--- IPDOM overflow FAULTS rather than wrapping ---")
 deep = ["        addi x1, x0, 1"] + ["        split  x1"] * 6 + ["        ecall"]
@@ -117,11 +126,10 @@ SRC_RF = """
 """
 m, w = build(SRC_RF)
 for ln in range(8):
-    w.x[10][ln] = (0 if ln < 3 else -1) & MASK      # lanes 3..7 take the THEN
+    w.x[10][ln] = (0 if ln < 3 else -1) & MASK  # lanes 3..7 take the THEN
     w.x[11][ln] = 0x100 + ln
 m.run()
-chk(w.s[2] == 0x103, "vreadfirst read lane 3, the lowest active (got %#x)"
-    % w.s[2])
+chk(w.s[2] == 0x103, "vreadfirst read lane 3, the lowest active (got %#x)" % w.s[2])
 
 print("--- ballot and redux still reduce ACROSS lanes ---")
 SRC_BAL = """
@@ -136,8 +144,10 @@ for ln, v in enumerate(vals):
     w.x[10][ln] = v
     w.x[11][ln] = v
 m.run()
-chk(w.s[3] == sum(1 << i for i, v in enumerate(vals) if v),
-    "ballot is one bit per non-zero lane")
+chk(
+    w.s[3] == sum(1 << i for i, v in enumerate(vals) if v),
+    "ballot is one bit per non-zero lane",
+)
 chk(w.s[4] == sum(vals), "reduxadd sums every active lane")
 chk(w.s[5] == max(vals), "reduxmax takes the maximum")
 
@@ -168,30 +178,34 @@ PATTERNS = {
     "negative": [-(i + 1) for i in range(8)],
 }
 for name, offs in PATTERNS.items():
-    m = run_tier("        rdctl s1, 0\n        vlw2  x5, s1, x6\n        ecall\n",
-                 offs)
+    m = run_tier("        rdctl s1, 0\n        vlw2  x5, s1, x6\n        ecall\n", offs)
     want = lines_for([(BASE + (o << 2)) & MASK for o in offs])
     got = m.fills_issued()
-    chk(got == want,
-        "uniform base, %-16s -> %d line(s), want %d" % (name, got, want))
+    chk(got == want, "uniform base, %-16s -> %d line(s), want %d" % (name, got, want))
 
 print("--- the lane-linear tier is ONE request, by construction ---")
 for scale, mn in ((2, "vlinw2"), (1, "vlinh1"), (0, "vlinb0")):
-    m, w = build("        rdctl s1, 0\n        %s x5, s1\n        ecall\n" % mn,
-                 ctl=[BASE] + [0] * 31)
+    m, w = build(
+        "        rdctl s1, 0\n        %s x5, s1\n        ecall\n" % mn,
+        ctl=[BASE] + [0] * 31,
+    )
     m.run()
-    span = (8 << scale)
+    span = 8 << scale
     want = 1 if span <= LINE_BYTES else span // LINE_BYTES
-    chk(m.fills_issued() == want,
+    chk(
+        m.fills_issued() == want,
         "%s spans %d bytes -> %d request(s), got %d"
-        % (mn, span, want, m.fills_issued()))
+        % (mn, span, want, m.fills_issued()),
+    )
 
 print("--- the coalescer serves its own leader on every pass ---")
 for name, offs in PATTERNS.items():
     addrs = [(BASE + (o << 2)) & MASK for o in offs]
     passes = coalesce(addrs)
-    chk(sum(len(s) for _, s in passes) == len(addrs),
-        "%s: every lane is served exactly once" % name)
+    chk(
+        sum(len(s) for _, s in passes) == len(addrs),
+        "%s: every lane is served exactly once" % name,
+    )
     chk(len(passes) <= len(addrs), "%s: at most one pass per lane" % name)
 
 print("=" * 40)

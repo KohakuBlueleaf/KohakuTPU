@@ -159,14 +159,15 @@ class Machine:
         if f3 == 0:
             self._store_word(a, (val & 0xFF) * 0x0101_0101, 1 << (a & 3))
         elif f3 == 1:
-            self._store_word(a, (val & 0xFFFF) * 0x0001_0001,
-                             0b1100 if (a & 2) else 0b0011)
+            self._store_word(
+                a, (val & 0xFFFF) * 0x0001_0001, 0b1100 if (a & 2) else 0b0011
+            )
         else:
             self._store_word(a, val, 0xF)
 
     # ---- execution ------------------------------------------------------
     def fetch(self):
-        i = (self.pc >> 2)
+        i = self.pc >> 2
         if i >= len(self.imem):
             raise Halt(CAUSE_FAULT, self.pc)
         return self.imem[i]
@@ -186,44 +187,60 @@ class Machine:
 
         imm_i = sx(ins >> 20, 12)
         imm_s = sx(((ins >> 25) << 5) | ((ins >> 7) & 0x1F), 12)
-        imm_b = sx((((ins >> 31) & 1) << 12) | (((ins >> 7) & 1) << 11) |
-                   (((ins >> 25) & 0x3F) << 5) | (((ins >> 8) & 0xF) << 1), 13)
+        imm_b = sx(
+            (((ins >> 31) & 1) << 12)
+            | (((ins >> 7) & 1) << 11)
+            | (((ins >> 25) & 0x3F) << 5)
+            | (((ins >> 8) & 0xF) << 1),
+            13,
+        )
         imm_u = ins & 0xFFFF_F000
-        imm_j = sx((((ins >> 31) & 1) << 20) | (((ins >> 12) & 0xFF) << 12) |
-                   (((ins >> 20) & 1) << 11) | (((ins >> 21) & 0x3FF) << 1), 21)
+        imm_j = sx(
+            (((ins >> 31) & 1) << 20)
+            | (((ins >> 12) & 0xFF) << 12)
+            | (((ins >> 20) & 1) << 11)
+            | (((ins >> 21) & 0x3FF) << 1),
+            21,
+        )
 
         nxt = (pc + 4) & MASK
         val = None
 
-        if opc == 0x37:                                   # LUI
+        if opc == 0x37:  # LUI
             val = imm_u
-        elif opc == 0x17:                                 # AUIPC
+        elif opc == 0x17:  # AUIPC
             val = (pc + imm_u) & MASK
-        elif opc == 0x6F:                                 # JAL
+        elif opc == 0x6F:  # JAL
             val = nxt
             nxt = (pc + imm_j) & MASK
-        elif opc == 0x67:                                 # JALR
+        elif opc == 0x67:  # JALR
             if f3 != 0:
                 raise Halt(CAUSE_FAULT, pc)
             val = nxt
             nxt = (a + imm_i) & MASK & ~1
-        elif opc == 0x63:                                 # BRANCH
+        elif opc == 0x63:  # BRANCH
             if f3 in (2, 3):
                 raise Halt(CAUSE_FAULT, pc)
             sa, sb = sx(a, 32), sx(b, 32)
-            take = {0: sa == sb, 1: sa != sb, 4: sa < sb,
-                    5: sa >= sb, 6: a < b, 7: a >= b}[f3]
+            take = {
+                0: sa == sb,
+                1: sa != sb,
+                4: sa < sb,
+                5: sa >= sb,
+                6: a < b,
+                7: a >= b,
+            }[f3]
             if take:
                 nxt = (pc + imm_b) & MASK
-        elif opc == 0x03:                                 # LOAD
+        elif opc == 0x03:  # LOAD
             if f3 in (3, 6, 7):
                 raise Halt(CAUSE_FAULT, pc)
             val = self.load((a + imm_i) & MASK, f3)
-        elif opc == 0x23:                                 # STORE
+        elif opc == 0x23:  # STORE
             if f3 > 2:
                 raise Halt(CAUSE_FAULT, pc)
             self.store((a + imm_s) & MASK, b, f3)
-        elif opc in (0x13, 0x33):                         # OP-IMM / OP
+        elif opc in (0x13, 0x33):  # OP-IMM / OP
             second = imm_i & MASK if opc == 0x13 else b
             sh = (imm_i & 0x1F) if opc == 0x13 else (b & 0x1F)
             if opc == 0x13 and f3 == 1 and f7 != 0x00:
@@ -235,8 +252,11 @@ class Machine:
             if opc == 0x33 and f7 == 0x20 and f3 not in (0, 5):
                 raise Halt(CAUSE_FAULT, pc)
             if f3 == 0:
-                val = (a - b) & MASK if (opc == 0x33 and f7 == 0x20) \
+                val = (
+                    (a - b) & MASK
+                    if (opc == 0x33 and f7 == 0x20)
                     else (a + second) & MASK
+                )
             elif f3 == 1:
                 val = (a << sh) & MASK
             elif f3 == 2:
@@ -251,13 +271,12 @@ class Machine:
                 val = a | second
             else:
                 val = a & second
-        elif opc == 0x0F:                                 # FENCE, a NOP here
+        elif opc == 0x0F:  # FENCE, a NOP here
             pass
-        elif opc == 0x73:                                 # SYSTEM
+        elif opc == 0x73:  # SYSTEM
             if (ins >> 21) or ((ins >> 7) & 0x1FFF):
                 raise Halt(CAUSE_FAULT, pc)
-            raise Halt(CAUSE_EBREAK if (ins >> 20) & 1 else CAUSE_ECALL,
-                       self.x[10])
+            raise Halt(CAUSE_EBREAK if (ins >> 20) & 1 else CAUSE_ECALL, self.x[10])
         else:
             val = self.custom(opc, ins, pc)
 

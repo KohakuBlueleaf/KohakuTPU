@@ -29,9 +29,9 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-import rv_asm                                                   # noqa: E402
-from rv_asm import AsmError, _reg, _memop, _imm                 # noqa: E402
-import rv_simd_isa as I                                          # noqa: E402
+import rv_asm
+import rv_simd_isa as I
+from rv_asm import AsmError, _imm, _memop, _reg
 
 
 def _vreg(tok):
@@ -89,8 +89,7 @@ def _handle(mn, ops, pc, syms):
         vals["xs1"] = base
     else:
         for o, tok in zip(op.operands, ops):
-            vals[o.name] = (_imm(tok, syms) if o.kind == "imm"
-                            else _PARSE[o.kind](tok))
+            vals[o.name] = _imm(tok, syms) if o.kind == "imm" else _PARSE[o.kind](tok)
     return [I.encode(name, **vals)]
 
 
@@ -107,7 +106,10 @@ def disasm(word):
     op = I.ISA[name]
     if op.funct7 is None:
         first = op.operands[0]
-        return "%s %s, %d(x%d)" % (name, sig[first.kind] % o[first.name],
-                                   o["imm"], o["xs1"])
-    return "%s %s" % (name, ", ".join(sig[x.kind] % o[x.name]
-                                      for x in op.operands))
+        return "%s %s, %d(x%d)" % (
+            name,
+            sig[first.kind] % o[first.name],
+            o["imm"],
+            o["xs1"],
+        )
+    return "%s %s" % (name, ", ".join(sig[x.kind] % o[x.name] for x in op.operands))
