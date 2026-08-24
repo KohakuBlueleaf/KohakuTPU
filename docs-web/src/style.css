@@ -1,0 +1,241 @@
+/* KohakuAccel docs - Gemstone Terrarium Theme */
+
+:root {
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+
+  /* Semantic size scale - SINGLE SOURCE OF TRUTH. Chrome derives its
+   * font-size from a tier, never from a one-off text-[Npx].
+   * Terrarium's values are app-shell density; a reading surface needs
+   * body at 16px, so the tiers are retuned around that. */
+  --kt-fs-micro: 0.75rem;
+  --kt-fs-caption: 0.875rem;
+  --kt-fs-body: 1rem;
+  --kt-fs-emphasis: 1.125rem;
+  --kt-fs-title: 1.375rem;
+  --kt-fs-h2: 1.75rem;
+  --kt-fs-h1: 2.5rem;
+
+  /* Light mode surfaces */
+  --color-bg: #f7f5f2;
+  --color-surface: #ffffff;
+  --color-surface-alt: #efece7;
+  --color-border: #e0dbd4;
+  --color-text: #3a3632;
+  --color-text-muted: #8a8480;
+  --color-text-faint: #b5b0aa;
+
+  /* One measure for prose AND figures. A diagram wider than the column it
+   * explains reads as a separate artefact. `wide` opts out deliberately. */
+  --doc-measure: min(78ch, 100%);
+
+  /* Section gem, overridden per-domain by GemScope. */
+  --gem-light: #ddd0f0;
+  --gem-main: #5a4fcf;
+  --gem-shadow: #312a7a;
+}
+
+@media (pointer: coarse) {
+  :root {
+    --kt-fs-micro: 0.8rem;
+    --kt-fs-caption: 0.9rem;
+    --kt-fs-body: 1.0625rem;
+    --kt-fs-emphasis: 1.1875rem;
+    --kt-fs-title: 1.375rem;
+    --kt-fs-h2: 1.625rem;
+    --kt-fs-h1: 2rem;
+  }
+}
+
+html.dark {
+  --color-bg: #1a1816;
+  --color-surface: #252220;
+  --color-surface-alt: #1e1c1a;
+  --color-border: #3d3835;
+  --color-text: #e8e0d8;
+  --color-text-muted: #8a8078;
+  --color-text-faint: #5a5550;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+button {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+html {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.65;
+  color: var(--color-text);
+  background: var(--color-bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  overflow-x: hidden;
+  touch-action: manipulation;
+  height: 100%;
+}
+
+body {
+  overflow-x: hidden;
+  height: 100%;
+}
+
+/* Only the content pane scrolls; header and sidebar are pinned. */
+#app {
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Semantic size utilities - use these on chrome instead of text-sm/text-xs. */
+.kt-text-micro {
+  font-size: var(--kt-fs-micro);
+}
+.kt-text-caption {
+  font-size: var(--kt-fs-caption);
+}
+.kt-text-body {
+  font-size: var(--kt-fs-body);
+}
+.kt-text-emphasis {
+  font-size: var(--kt-fs-emphasis);
+}
+.kt-text-title {
+  font-size: var(--kt-fs-title);
+}
+.kt-text-h2 {
+  font-size: var(--kt-fs-h2);
+}
+.kt-text-h1 {
+  font-size: var(--kt-fs-h1);
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-none {
+  scrollbar-width: none;
+}
+
+code,
+pre,
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
+/* A `wide` figure breaks out of the reading column symmetrically, rather than
+ * overflowing to the right the way a plain wider child would.
+ * Sized in cqw, not vw: vw ignores the sidebar, so a 1200px window spilled the
+ * figure 96px off BOTH edges of the content pane. */
+.doc-pane {
+  container-type: inline-size;
+}
+.doc-break {
+  width: min(72rem, calc(100cqw - 4rem));
+  max-width: none;
+  margin-left: 50%;
+  transform: translateX(-50%);
+}
+@media (max-width: 767px) {
+  .doc-break {
+    width: 100%;
+    margin-left: 0;
+    transform: none;
+  }
+}
+
+/* Diagram surface. SVG inherits the theme through currentColor and the
+ * --gem-* vars, so one class flip retints every figure on the site. */
+.dgm {
+  display: block;
+  width: 100%;
+  height: auto;
+  color: var(--color-text);
+  overflow: visible;
+}
+.dgm text {
+  fill: currentColor;
+  font-family: var(--font-mono);
+}
+.dgm .dgm-box {
+  fill: var(--color-surface);
+  stroke: var(--color-border);
+  stroke-width: 1.25;
+}
+.dgm .dgm-box-accent {
+  fill: var(--gem-light);
+  stroke: var(--gem-main);
+  stroke-width: 1.5;
+}
+.dgm .dgm-edge {
+  stroke: var(--color-text-muted);
+  stroke-width: 1.25;
+  fill: none;
+}
+.dgm .dgm-edge-accent {
+  stroke: var(--gem-main);
+  stroke-width: 1.75;
+  fill: none;
+}
+.dgm .dgm-label {
+  font-size: 11px;
+  fill: var(--color-text);
+}
+.dgm .dgm-sub {
+  font-size: 9.5px;
+  fill: var(--color-text-muted);
+}
+html.dark .dgm .dgm-box-accent {
+  fill: color-mix(in srgb, var(--gem-main) 22%, transparent);
+  stroke: var(--gem-main);
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+@keyframes amber-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.kohaku-pulse {
+  animation: amber-pulse 1.5s ease-in-out infinite;
+}
