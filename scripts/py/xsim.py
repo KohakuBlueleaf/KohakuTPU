@@ -58,12 +58,18 @@ NOC = [
 # than reimplement, and MAG now instantiates all three.
 MOVER = [
     "src/kohakuaccel/common/sb_skid.v",
-    "src/kohakuaccel/mas/mover/mx_tdesc.v",
-    "src/kohakuaccel/mas/mover/mm_prng.v",
-    "src/kohakuaccel/mas/mover/mm_mover.v",
+    "src/kohakuaccel/sysnode/mover/mx_tdesc.v",
+    "src/kohakuaccel/sysnode/mover/mm_prng.v",
+    "src/kohakuaccel/sysnode/mover/mm_mover.v",
+    # mag.v instantiates the transform slot unconditionally, and the slot names
+    # the project's bank, which names the occupant -- so all three are a hard
+    # dependency of anything that builds mag.v.
+    "src/kohakutpu/transform/mx_quant.v",
+    "src/kohakutpu/transform/xform_bank.v",
+    "src/kohakuaccel/sysnode/core/mag_xform.v",
     # mag.v instantiates the staging store unconditionally; at STAGE=0 the
     # generate is empty, but it still has to elaborate.
-    "src/kohakuaccel/mas/core/mag_stage.v",
+    "src/kohakuaccel/sysnode/core/mag_stage.v",
 ]
 
 VECTOR = [
@@ -92,16 +98,35 @@ MESH_1M = (
         "src/kohakutpu/transform/mx_quant.v",
         "src/kohakuaccel/verif/axi_ram.v",
         "src/kohakuaccel/common/sb_skid.v",
-        "src/kohakuaccel/mas/core/mag_mem_port.v",
-        "src/kohakuaccel/mas/interlink/il_pkt_arb.v",
-        "src/kohakuaccel/mas/interlink/mag_link.v",
-        "src/kohakuaccel/mas/interlink/mag_link_pipe.v",
-        "src/kohakuaccel/mas/interlink/mag_switch.v",
-        "src/kohakuaccel/mas/interlink/mag_ilink.v",
-        "src/kohakuaccel/mas/core/mag.v",
+        "src/kohakuaccel/sysnode/core/mag_mem_port.v",
+        "src/kohakuaccel/sysnode/interlink/il_pkt_arb.v",
+        "src/kohakuaccel/sysnode/interlink/mag_link.v",
+        "src/kohakuaccel/sysnode/interlink/mag_link_pipe.v",
+        "src/kohakuaccel/sysnode/interlink/mag_switch.v",
+        "src/kohakuaccel/sysnode/interlink/mag_ilink.v",
+        "src/kohakuaccel/sysnode/core/mag.v",
         "src/kohakuaccel/common/async_fifo.v",
-        "src/kohakuaccel/mas/core/mag_stage_port.v",
-        "src/kohakuaccel/mas/core/mag_dram_port.v",
+        "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+        "src/kohakuaccel/sysnode/core/mag_dram_port.v",
+        # mag_1m wraps `node` now, and node's CTRL_PE branch names rv_mag_pe
+        # even when it is not generated, so the whole chain has to parse.
+        "src/kohakuaccel/pe/rv32/mem/rv_ram_be.v",
+        "src/kohakuaccel/pe/rv32/mem/rv_imem.v",
+        "src/kohakuaccel/pe/rv32/mem/rv_spad.v",
+        "src/kohakuaccel/pe/rv32/mem/rv_l1.v",
+        "src/kohakuaccel/pe/rv32/core/rv_regfile.v",
+        "src/kohakuaccel/pe/rv32/core/rv_bpred.v",
+        "src/kohakuaccel/pe/rv32/core/rv_if.v",
+        "src/kohakuaccel/pe/rv32/core/rv_id.v",
+        "src/kohakuaccel/pe/rv32/core/rv_ex.v",
+        "src/kohakuaccel/pe/rv32/core/rv_mem.v",
+        "src/kohakuaccel/pe/rv32/core/rv_wb.v",
+        "src/kohakuaccel/pe/rv32/core/rv_core.v",
+        "src/kohakuaccel/pe/rv32/noc/rv_noc_req.v",
+        "src/kohakuaccel/pe/rv32/noc/rv_mag_req.v",
+        "src/kohakuaccel/sysnode/mover/mv_exec.v",
+        "src/kohakuaccel/sysnode/cpu/rv_mag_pe.v",
+        "src/kohakuaccel/sysnode/sysnode.v",
         "src/kohakutpu/top/mag_1m.v",
         "src/kohakutpu/top/generated/ktpu_min_1m.v",
     ]
@@ -124,15 +149,15 @@ MESH_CDC = (
         "src/kohakutpu/transform/mx_quant.v",
         "src/kohakuaccel/verif/axi_ram.v",
         "src/kohakuaccel/common/sb_skid.v",
-        "src/kohakuaccel/mas/core/mag_mem_port.v",
-        "src/kohakuaccel/mas/core/mag.v",
+        "src/kohakuaccel/sysnode/core/mag_mem_port.v",
+        "src/kohakuaccel/sysnode/core/mag.v",
         "src/kohakuaccel/common/async_fifo.v",
-        "src/kohakuaccel/mas/core/mag_stage_port.v",
-        "src/kohakuaccel/mas/core/mag_dram_port.v",
+        "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+        "src/kohakuaccel/sysnode/core/mag_dram_port.v",
         "src/kohakuaccel/noc/endpoint/noc_local_cdc.v",
         "src/kohakutpu/top/mm_mesh.v",
-        "tests/mas/mm_mesh_tb.v",
-        "tests/mas/mm_mesh_cdc_tb.v",
+        "tests/sysnode/mm_mesh_tb.v",
+        "tests/sysnode/mm_mesh_cdc_tb.v",
     ]
 )
 
@@ -206,6 +231,37 @@ BENCHES = {
             "tests/axi/sb_chain2_tb.v",
         ],
     ),
+    # THE CONVERSION MATRIX: {full,lite} manager x {full,lite} subordinate x
+    # every width against the 256-bit backbone, one cell per run. Written
+    # 2026-08-22 and never registered, so it had not run since; the station bus
+    # shipped, and three days of impl were built on it, with no suite carrying
+    # this. -d MW64/MW128/MW256/MW512/MW1024, -d SW64/SW128/SW256/SW512,
+    # -d MGR_IS_LITE, -d SUB_IS_LITE, -d SUB_HONORS_WSTRB.
+    "sb_conv12": (
+        "sb_conv12_tb",
+        [
+            "src/kohakuaccel/common/sync_fifo.v",
+            "src/kohakuaccel/common/async_fifo.v",
+            "src/kohakuaccel/common/sb_skid.v",
+            "src/kohakuaccel/axi/station/sb_nmu.v",
+            "src/kohakuaccel/axi/station/sb_nsu.v",
+            "src/kohakuaccel/axi/station/sb_nmu_lite.v",
+            "src/kohakuaccel/axi/station/sb_nsu_lite.v",
+            "src/kohakuaccel/axi/station/sb_axi2lite.v",
+            "src/kohakuaccel/verif/axi4_ram.v",
+            "tests/axi/build-jtagdbg/sb_conv12_tb.v",
+        ],
+    ),
+    # The ship's control hop, alone: 40_bus.tcl's axi_dwidth_converter SI=32
+    # MI=64 in front of every S_AXI_CTRL. Nothing modelled it, so the shape a
+    # host write reaches the orchestrator in had only ever been inferred.
+    "axi_up32to64": (
+        "axi_up32to64_tb",
+        [
+            "src/kohakuaccel/verif/axi_up32to64.v",
+            "tests/axi/axi_up32to64_tb.v",
+        ],
+    ),
     # Width conversion alone: one NMU, one NSU, one clock. -d W_MW/-d W_SDW
     # pick the ratio, so a failure names the width pair not a system symptom.
     "sb_width": (
@@ -258,16 +314,17 @@ BENCHES = {
             "src/kohakutpu/vector/vec_cu.v",
             "src/kohakutpu/transform/mx_quant.v",
             "src/kohakuaccel/verif/axi_ram.v",
-            "src/kohakuaccel/mas/core/mag_mem_port.v",
-            "src/kohakuaccel/mas/interlink/il_pkt_arb.v",
-            "src/kohakuaccel/mas/interlink/mag_link.v",
-            "src/kohakuaccel/mas/interlink/mag_link_pipe.v",
-            "src/kohakuaccel/mas/interlink/mag_switch.v",
-            "src/kohakuaccel/mas/interlink/mag_ilink.v",
-            "src/kohakuaccel/mas/core/mag.v",
+            "src/kohakuaccel/sysnode/core/mag_mem_port.v",
+            "src/kohakuaccel/sysnode/interlink/il_pkt_arb.v",
+            "src/kohakuaccel/sysnode/interlink/mag_link.v",
+            "src/kohakuaccel/sysnode/interlink/mag_link_pipe.v",
+            "src/kohakuaccel/sysnode/interlink/mag_switch.v",
+            "src/kohakuaccel/sysnode/interlink/mag_ilink.v",
+            "src/kohakuaccel/sysnode/core/mag.v",
             "src/kohakuaccel/common/async_fifo.v",
-            "src/kohakuaccel/mas/core/mag_stage_port.v",
-            "src/kohakuaccel/mas/core/mag_dram_port.v",
+            "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+            "src/kohakuaccel/sysnode/core/mag_dram_port.v",
+            "src/kohakuaccel/sysnode/sysnode.v",
             "src/kohakutpu/top/mag_1m.v",
             "src/kohakutpu/top/generated/ktpu_min_1m.v",
             "src/kohakuaccel/common/sb_skid.v",
@@ -279,6 +336,53 @@ BENCHES = {
             "src/kohakuaccel/axi/topo/sb_stn_line.v",
             "src/kohakuaccel/axi/topo/sb_line4.v",
             "tests/axi/sb_mesh_e2e_tb.v",
+        ],
+    ),
+    # THE TOP-LEVEL BENCH: two 2mat/2vec meshes on two stations, ILINK crossed,
+    # BOTH AXI windows live -- control through the ship's real chain (NMU -> flit
+    # -> NSU -> axi_up32to64 -> S_AXI_CTRL). sb_mesh_e2e ties both off.
+    "sb_mesh2_ctrl": (
+        "sb_mesh2_ctrl_tb",
+        COMMON
+        + NOC
+        + MATMUL
+        + MOVER
+        + VECTOR
+        + [
+            "src/kohakutpu/matmul/mx_cluster_cu.v",
+            "src/kohakutpu/vector/vec_cvt.v",
+            "src/kohakutpu/vector/vec_regfile.v",
+            "src/kohakutpu/vector/vec_lanes.v",
+            "src/kohakutpu/vector/vec_agu.v",
+            "src/kohakutpu/vector/vec_core.v",
+            "src/kohakutpu/vector/vec_cu.v",
+            "src/kohakutpu/transform/mx_quant.v",
+            "src/kohakuaccel/verif/axi_ram.v",
+            "src/kohakuaccel/verif/axi_up32to64.v",
+            "src/kohakuaccel/common/kh_rst_sync.v",
+            "src/kohakuaccel/sysnode/core/mag_mem_port.v",
+            "src/kohakuaccel/sysnode/interlink/il_pkt_arb.v",
+            "src/kohakuaccel/sysnode/interlink/mag_link.v",
+            "src/kohakuaccel/sysnode/interlink/mag_link_pipe.v",
+            "src/kohakuaccel/sysnode/interlink/mag_switch.v",
+            "src/kohakuaccel/sysnode/interlink/mag_ilink.v",
+            "src/kohakuaccel/sysnode/core/mag.v",
+            "src/kohakuaccel/common/async_fifo.v",
+            "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+            "src/kohakuaccel/sysnode/core/mag_dram_port.v",
+            "src/kohakuaccel/noc/endpoint/noc_l2_adapter.v",
+            "src/kohakuaccel/sysnode/sysnode.v",
+            "src/kohakutpu/top/mag_1m.v",
+            "src/kohakutpu/top/generated/ktpu_ship_1x1_2c2v_1m.v",
+            "src/kohakuaccel/common/sb_skid.v",
+            "src/kohakuaccel/axi/station/sb_hub.v",
+            "src/kohakuaccel/axi/station/sb_nmu.v",
+            "src/kohakuaccel/axi/station/sb_nsu.v",
+            "src/kohakuaccel/axi/link/sb_link.v",
+            "src/kohakuaccel/axi/link/sb_link_cdc.v",
+            "src/kohakuaccel/axi/topo/sb_stn_line.v",
+            "src/kohakuaccel/axi/topo/sb_line4.v",
+            "tests/axi/sb_mesh2_ctrl_tb.v",
         ],
     ),
     # Four stations, one per SLR: the validation topology. Two links deep in
@@ -336,15 +440,16 @@ BENCHES = {
         + [
             "src/kohakutpu/transform/mx_quant.v",
             "src/kohakuaccel/verif/axi_ram.v",
-            "src/kohakuaccel/mas/core/mag_mem_port.v",
-            "src/kohakuaccel/mas/interlink/il_pkt_arb.v",
-            "src/kohakuaccel/mas/interlink/mag_link.v",
-            "src/kohakuaccel/mas/interlink/mag_link_pipe.v",
-            "src/kohakuaccel/mas/interlink/mag_switch.v",
-            "src/kohakuaccel/mas/interlink/mag_ilink.v",
-            "src/kohakuaccel/mas/core/mag.v",
-            "src/kohakuaccel/mas/core/mag_stage_port.v",
-            "src/kohakuaccel/mas/core/mag_dram_port.v",
+            "src/kohakuaccel/sysnode/core/mag_mem_port.v",
+            "src/kohakuaccel/sysnode/interlink/il_pkt_arb.v",
+            "src/kohakuaccel/sysnode/interlink/mag_link.v",
+            "src/kohakuaccel/sysnode/interlink/mag_link_pipe.v",
+            "src/kohakuaccel/sysnode/interlink/mag_switch.v",
+            "src/kohakuaccel/sysnode/interlink/mag_ilink.v",
+            "src/kohakuaccel/sysnode/core/mag.v",
+            "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+            "src/kohakuaccel/sysnode/core/mag_dram_port.v",
+            "src/kohakuaccel/sysnode/sysnode.v",
             "src/kohakutpu/top/mag_1m.v",
             "src/examples/saxpy/saxpy_cu.v",
             "src/examples/saxpy/generated/saxpy_mesh.v",
@@ -384,7 +489,10 @@ BENCHES = {
     "vec_cu": (
         "vec_cu_tb",
         COMMON
-        + ["src/kohakuaccel/noc/endpoint/noc_cu_base.v", "src/kohakutpu/matmul/mx_fpacc.v"]
+        + [
+            "src/kohakuaccel/noc/endpoint/noc_cu_base.v",
+            "src/kohakutpu/matmul/mx_fpacc.v",
+        ]
         + VECTOR
         + [
             "src/kohakutpu/vector/vec_cvt.v",
@@ -451,8 +559,8 @@ BENCHES = {
         "mag_stage_tb",
         COMMON
         + [
-            "src/kohakuaccel/mas/core/mag_stage.v",
-            "tests/mas/mag_stage_tb.v",
+            "src/kohakuaccel/sysnode/core/mag_stage.v",
+            "tests/sysnode/mag_stage_tb.v",
         ],
     ),
     "cluster_node": (
@@ -542,12 +650,12 @@ BENCHES = {
             "src/kohakutpu/transform/mx_quant.v",
             "src/kohakuaccel/verif/axi_ram.v",
             "src/kohakuaccel/common/sb_skid.v",
-            "src/kohakuaccel/mas/core/mag_mem_port.v",
-            "src/kohakuaccel/mas/core/mag.v",
+            "src/kohakuaccel/sysnode/core/mag_mem_port.v",
+            "src/kohakuaccel/sysnode/core/mag.v",
             "src/kohakuaccel/common/async_fifo.v",
-            "src/kohakuaccel/mas/core/mag_stage_port.v",
-            "src/kohakuaccel/mas/core/mag_dram_port.v",
-            "tests/mas/mag_system_tb.v",
+            "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+            "src/kohakuaccel/sysnode/core/mag_dram_port.v",
+            "tests/sysnode/mag_system_tb.v",
         ],
     ),
     # The minimal machine end to end: MAG, one cluster, one vector core, two
@@ -570,13 +678,13 @@ BENCHES = {
             "src/kohakutpu/transform/mx_quant.v",
             "src/kohakuaccel/verif/axi_ram.v",
             "src/kohakuaccel/common/sb_skid.v",
-            "src/kohakuaccel/mas/core/mag_mem_port.v",
-            "src/kohakuaccel/mas/core/mag.v",
+            "src/kohakuaccel/sysnode/core/mag_mem_port.v",
+            "src/kohakuaccel/sysnode/core/mag.v",
             "src/kohakuaccel/common/async_fifo.v",
-            "src/kohakuaccel/mas/core/mag_stage_port.v",
-            "src/kohakuaccel/mas/core/mag_dram_port.v",
+            "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+            "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "src/kohakutpu/top/mm_mesh.v",
-            "tests/mas/mm_mesh_tb.v",
+            "tests/sysnode/mm_mesh_tb.v",
         ],
     ),
     # The same machine with both CUs on an asynchronous unit clock, one arm
@@ -610,13 +718,13 @@ BENCHES = {
             "src/kohakutpu/transform/mx_quant.v",
             "src/kohakuaccel/verif/axi_ram.v",
             "src/kohakuaccel/common/sb_skid.v",
-            "src/kohakuaccel/mas/core/mag_mem_port.v",
-            "src/kohakuaccel/mas/core/mag.v",
+            "src/kohakuaccel/sysnode/core/mag_mem_port.v",
+            "src/kohakuaccel/sysnode/core/mag.v",
             "src/kohakuaccel/common/async_fifo.v",
-            "src/kohakuaccel/mas/core/mag_stage_port.v",
-            "src/kohakuaccel/mas/core/mag_dram_port.v",
+            "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+            "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "src/kohakutpu/top/mm_mesh.v",
-            "tests/mas/mm_mesh_l2_tb.v",
+            "tests/sysnode/mm_mesh_l2_tb.v",
         ],
     ),
     # MAG staging proved rather than observed: DRAM is poisoned under the staged
@@ -639,13 +747,13 @@ BENCHES = {
             "src/kohakutpu/transform/mx_quant.v",
             "src/kohakuaccel/verif/axi_ram.v",
             "src/kohakuaccel/common/sb_skid.v",
-            "src/kohakuaccel/mas/core/mag_mem_port.v",
-            "src/kohakuaccel/mas/core/mag.v",
+            "src/kohakuaccel/sysnode/core/mag_mem_port.v",
+            "src/kohakuaccel/sysnode/core/mag.v",
             "src/kohakuaccel/common/async_fifo.v",
-            "src/kohakuaccel/mas/core/mag_stage_port.v",
-            "src/kohakuaccel/mas/core/mag_dram_port.v",
+            "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+            "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "src/kohakutpu/top/mm_mesh.v",
-            "tests/mas/mm_mesh_stage_tb.v",
+            "tests/sysnode/mm_mesh_stage_tb.v",
         ],
     ),
     # The same machine, with the cluster draining INTO the vector core rather
@@ -668,13 +776,13 @@ BENCHES = {
             "src/kohakutpu/transform/mx_quant.v",
             "src/kohakuaccel/verif/axi_ram.v",
             "src/kohakuaccel/common/sb_skid.v",
-            "src/kohakuaccel/mas/core/mag_mem_port.v",
-            "src/kohakuaccel/mas/core/mag.v",
+            "src/kohakuaccel/sysnode/core/mag_mem_port.v",
+            "src/kohakuaccel/sysnode/core/mag.v",
             "src/kohakuaccel/common/async_fifo.v",
-            "src/kohakuaccel/mas/core/mag_stage_port.v",
-            "src/kohakuaccel/mas/core/mag_dram_port.v",
+            "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+            "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "src/kohakutpu/top/mm_mesh.v",
-            "tests/mas/mm_mesh_peer_tb.v",
+            "tests/sysnode/mm_mesh_peer_tb.v",
         ],
     ),
     # The peer drain with both CUs on an asynchronous unit clock: a burst OUT of
@@ -683,8 +791,8 @@ BENCHES = {
         "mm_mesh_peer_cdc_tb",
         MESH_CDC
         + [
-            "tests/mas/mm_mesh_peer_tb.v",
-            "tests/mas/mm_mesh_peer_cdc_tb.v",
+            "tests/sysnode/mm_mesh_peer_tb.v",
+            "tests/sysnode/mm_mesh_peer_cdc_tb.v",
         ],
     ),
     # The same machine behind ONE 512-bit master. Proves mag_dram_port carries
@@ -707,17 +815,17 @@ BENCHES = {
             "src/kohakutpu/transform/mx_quant.v",
             "src/kohakuaccel/verif/axi_ram.v",
             "src/kohakuaccel/common/sb_skid.v",
-            "src/kohakuaccel/mas/core/mag_mem_port.v",
-            "src/kohakuaccel/mas/core/mag.v",
+            "src/kohakuaccel/sysnode/core/mag_mem_port.v",
+            "src/kohakuaccel/sysnode/core/mag.v",
             "src/kohakuaccel/common/async_fifo.v",
-            "src/kohakuaccel/mas/core/mag_stage_port.v",
-            "src/kohakuaccel/mas/core/mag_dram_port.v",
+            "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+            "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "src/kohakuaccel/common/async_fifo.v",
-            "src/kohakuaccel/mas/core/mag_stage_port.v",
-            "src/kohakuaccel/mas/core/mag_dram_port.v",
+            "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+            "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "src/kohakutpu/top/mm_mesh.v",
             "src/kohakutpu/top/mm_mesh_1m.v",
-            "tests/mas/mm_mesh_1m_tb.v",
+            "tests/sysnode/mm_mesh_1m_tb.v",
         ],
     ),
     # mag_dram_port alone against an AXI RAM: the partial-beat matrix.
@@ -727,9 +835,9 @@ BENCHES = {
         + [
             "src/kohakuaccel/verif/axi_ram.v",
             "src/kohakuaccel/common/async_fifo.v",
-            "src/kohakuaccel/mas/core/mag_stage_port.v",
-            "src/kohakuaccel/mas/core/mag_dram_port.v",
-            "tests/mas/mag_dram_port_tb.v",
+            "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+            "src/kohakuaccel/sysnode/core/mag_dram_port.v",
+            "tests/sysnode/mag_dram_port_tb.v",
         ],
     ),
     # The same bench at R=1, where packing is an identity and RLOG=1 has to be
@@ -740,10 +848,10 @@ BENCHES = {
         + [
             "src/kohakuaccel/verif/axi_ram.v",
             "src/kohakuaccel/common/async_fifo.v",
-            "src/kohakuaccel/mas/core/mag_stage_port.v",
-            "src/kohakuaccel/mas/core/mag_dram_port.v",
-            "tests/mas/mag_dram_port_tb.v",
-            "tests/mas/mag_dram_port_r1_tb.v",
+            "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+            "src/kohakuaccel/sysnode/core/mag_dram_port.v",
+            "tests/sysnode/mag_dram_port_tb.v",
+            "tests/sysnode/mag_dram_port_r1_tb.v",
         ],
     ),
     # The upload path only: host AXI slave -> MAG -> packed master -> DRAM.
@@ -756,22 +864,23 @@ BENCHES = {
             "src/kohakuaccel/noc/ctrl/noc_orchestrator.v",
             "src/kohakutpu/transform/mx_quant.v",
             "src/kohakuaccel/common/sb_skid.v",
-            "src/kohakuaccel/mas/core/mag_mem_port.v",
-            "src/kohakuaccel/mas/interlink/il_pkt_arb.v",
-            "src/kohakuaccel/mas/interlink/mag_link.v",
-            "src/kohakuaccel/mas/interlink/mag_link_pipe.v",
-            "src/kohakuaccel/mas/interlink/mag_switch.v",
-            "src/kohakuaccel/mas/interlink/mag_ilink.v",
-            "src/kohakuaccel/mas/core/mag.v",
+            "src/kohakuaccel/sysnode/core/mag_mem_port.v",
+            "src/kohakuaccel/sysnode/interlink/il_pkt_arb.v",
+            "src/kohakuaccel/sysnode/interlink/mag_link.v",
+            "src/kohakuaccel/sysnode/interlink/mag_link_pipe.v",
+            "src/kohakuaccel/sysnode/interlink/mag_switch.v",
+            "src/kohakuaccel/sysnode/interlink/mag_ilink.v",
+            "src/kohakuaccel/sysnode/core/mag.v",
             "src/kohakuaccel/common/async_fifo.v",
-            "src/kohakuaccel/mas/core/mag_stage_port.v",
-            "src/kohakuaccel/mas/core/mag_dram_port.v",
+            "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+            "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "src/kohakuaccel/common/async_fifo.v",
-            "src/kohakuaccel/mas/core/mag_stage_port.v",
-            "src/kohakuaccel/mas/core/mag_dram_port.v",
+            "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+            "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "src/kohakuaccel/verif/axi_ram.v",
+            "src/kohakuaccel/sysnode/sysnode.v",
             "src/kohakutpu/top/mag_1m.v",
-            "tests/mas/mag_1m_upload_tb.v",
+            "tests/sysnode/mag_1m_upload_tb.v",
         ],
     ),
     # TWO WHOLE MESHES over the interlink, each behind one packed master. A
@@ -794,22 +903,23 @@ BENCHES = {
             "src/kohakutpu/transform/mx_quant.v",
             "src/kohakuaccel/verif/axi_ram.v",
             "src/kohakuaccel/common/sb_skid.v",
-            "src/kohakuaccel/mas/core/mag_mem_port.v",
-            "src/kohakuaccel/mas/interlink/il_pkt_arb.v",
-            "src/kohakuaccel/mas/interlink/mag_link.v",
-            "src/kohakuaccel/mas/interlink/mag_link_pipe.v",
-            "src/kohakuaccel/mas/interlink/mag_switch.v",
-            "src/kohakuaccel/mas/interlink/mag_ilink.v",
-            "src/kohakuaccel/mas/core/mag.v",
+            "src/kohakuaccel/sysnode/core/mag_mem_port.v",
+            "src/kohakuaccel/sysnode/interlink/il_pkt_arb.v",
+            "src/kohakuaccel/sysnode/interlink/mag_link.v",
+            "src/kohakuaccel/sysnode/interlink/mag_link_pipe.v",
+            "src/kohakuaccel/sysnode/interlink/mag_switch.v",
+            "src/kohakuaccel/sysnode/interlink/mag_ilink.v",
+            "src/kohakuaccel/sysnode/core/mag.v",
             "src/kohakuaccel/common/async_fifo.v",
-            "src/kohakuaccel/mas/core/mag_stage_port.v",
-            "src/kohakuaccel/mas/core/mag_dram_port.v",
+            "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+            "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "src/kohakuaccel/common/async_fifo.v",
-            "src/kohakuaccel/mas/core/mag_stage_port.v",
-            "src/kohakuaccel/mas/core/mag_dram_port.v",
+            "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+            "src/kohakuaccel/sysnode/core/mag_dram_port.v",
+            "src/kohakuaccel/sysnode/sysnode.v",
             "src/kohakutpu/top/mag_1m.v",
             "src/kohakutpu/top/generated/ktpu_min_1m.v",
-            "tests/mas/interlink_2mesh_1m_tb.v",
+            "tests/sysnode/interlink_2mesh_1m_tb.v",
         ],
     ),
     # Cross-mesh STAGING: mesh 0 drains into mesh 1's aperture 0 over the link,
@@ -823,39 +933,57 @@ BENCHES = {
             "src/kohakutpu/transform/mx_quant.v",
             "src/kohakuaccel/verif/axi_ram.v",
             "src/kohakuaccel/common/sb_skid.v",
-            "src/kohakuaccel/mas/core/mag_mem_port.v",
-            "src/kohakuaccel/mas/interlink/il_pkt_arb.v",
-            "src/kohakuaccel/mas/interlink/mag_link.v",
-            "src/kohakuaccel/mas/interlink/mag_link_pipe.v",
-            "src/kohakuaccel/mas/interlink/mag_switch.v",
-            "src/kohakuaccel/mas/interlink/mag_ilink.v",
-            "src/kohakuaccel/mas/core/mag.v",
+            "src/kohakuaccel/sysnode/core/mag_mem_port.v",
+            "src/kohakuaccel/sysnode/interlink/il_pkt_arb.v",
+            "src/kohakuaccel/sysnode/interlink/mag_link.v",
+            "src/kohakuaccel/sysnode/interlink/mag_link_pipe.v",
+            "src/kohakuaccel/sysnode/interlink/mag_switch.v",
+            "src/kohakuaccel/sysnode/interlink/mag_ilink.v",
+            "src/kohakuaccel/sysnode/core/mag.v",
             "src/kohakuaccel/common/async_fifo.v",
-            "src/kohakuaccel/mas/core/mag_stage_port.v",
-            "src/kohakuaccel/mas/core/mag_dram_port.v",
+            "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+            "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "src/kohakuaccel/common/async_fifo.v",
-            "src/kohakuaccel/mas/core/mag_stage_port.v",
-            "src/kohakuaccel/mas/core/mag_dram_port.v",
+            "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+            "src/kohakuaccel/sysnode/core/mag_dram_port.v",
+            "src/kohakuaccel/sysnode/sysnode.v",
             "src/kohakutpu/top/mag_1m.v",
-            "tests/mas/interlink_stage_tb.v",
+            "tests/sysnode/interlink_stage_tb.v",
         ],
     ),
     # The mover across the SLR chain at 1, 2 and 4 MAGs, descriptors written to
     # S_AXI_CTRL the way software writes them. 4 MAGs is mesh0->mesh2, 3 hops.
-    "mover_chain1": ("mover_chain1_tb", MESH_1M + ["tests/mas/mover_chain_tb.v"]),
-    "mover_chain2": ("mover_chain2_tb", MESH_1M + ["tests/mas/mover_chain_tb.v"]),
-    "mover_chain4": ("mover_chain4_tb", MESH_1M + ["tests/mas/mover_chain_tb.v"]),
+    # The SHIP's control hop: 40_bus.tcl:141 puts an axi_dwidth_converter
+    # SI=32 MI=64 in front of every S_AXI_CTRL, so a host write64 arrives as a
+    # 64-bit beat only if the upsizer packed. The three shapes, one checked
+    # 64-word COPY each.
+    "mover_cfg32": ("mover_cfg32_tb", MESH_1M + ["tests/sysnode/mover_cfg32_tb.v"]),
+    "mover_cfg32_cdc": (
+        "mover_cfg32_cdc_tb",
+        MESH_1M + ["tests/sysnode/mover_cfg32_tb.v"],
+    ),
+    "mover_chain1": ("mover_chain1_tb", MESH_1M + ["tests/sysnode/mover_chain_tb.v"]),
+    "mover_chain2": ("mover_chain2_tb", MESH_1M + ["tests/sysnode/mover_chain_tb.v"]),
+    "mover_chain4": ("mover_chain4_tb", MESH_1M + ["tests/sysnode/mover_chain_tb.v"]),
     # Run with -d MV_L2: the mover moves DRAM -> aperture 0 -> DRAM, the only
     # path that makes it a requester of the MAG store.
     "mover_l2": (
         "mover_chain1_tb",
-        MESH_1M + ["src/kohakutpu/top/generated/ktpu_min_1m_l2.v", "tests/mas/mover_chain_tb.v"],
+        MESH_1M
+        + [
+            "src/kohakutpu/top/generated/ktpu_min_1m_l2.v",
+            "tests/sysnode/mover_chain_tb.v",
+        ],
     ),
     # FOUR meshes, a store in each: mesh0 -> mesh3 is three hops through two
     # transit MAGs, so interlink FORWARDING and staging are exercised together.
     "mover_l2_chain": (
         "mover_chain4_tb",
-        MESH_1M + ["src/kohakutpu/top/generated/ktpu_min_1m_l2.v", "tests/mas/mover_chain_tb.v"],
+        MESH_1M
+        + [
+            "src/kohakutpu/top/generated/ktpu_min_1m_l2.v",
+            "tests/sysnode/mover_chain_tb.v",
+        ],
     ),
     # Forwarding across two hops, and the ordering that makes a DOORBELL mean
     # "the data ahead of me has landed". Was unregistered, so it never ran.
@@ -864,11 +992,11 @@ BENCHES = {
         COMMON
         + [
             "src/kohakuaccel/common/async_fifo.v",
-            "src/kohakuaccel/mas/interlink/il_pkt_arb.v",
-            "src/kohakuaccel/mas/interlink/mag_link.v",
-            "src/kohakuaccel/mas/interlink/mag_link_pipe.v",
-            "src/kohakuaccel/mas/interlink/mag_switch.v",
-            "tests/mas/interlink_4mesh_tb.v",
+            "src/kohakuaccel/sysnode/interlink/il_pkt_arb.v",
+            "src/kohakuaccel/sysnode/interlink/mag_link.v",
+            "src/kohakuaccel/sysnode/interlink/mag_link_pipe.v",
+            "src/kohakuaccel/sysnode/interlink/mag_switch.v",
+            "tests/sysnode/interlink_4mesh_tb.v",
         ],
     ),
     # interlink_2mesh_tb.v is NOT here: it fails its own checks, superseded by
@@ -879,22 +1007,26 @@ BENCHES = {
         COMMON
         + [
             "src/kohakuaccel/common/async_fifo.v",
-            "src/kohakuaccel/mas/interlink/il_pkt_arb.v",
-            "src/kohakuaccel/mas/interlink/mag_link.v",
-            "src/kohakuaccel/mas/interlink/mag_link_pipe.v",
-            "tests/mas/mag_link_tb.v",
+            "src/kohakuaccel/sysnode/interlink/il_pkt_arb.v",
+            "src/kohakuaccel/sysnode/interlink/mag_link.v",
+            "src/kohakuaccel/sysnode/interlink/mag_link_pipe.v",
+            "tests/sysnode/mag_link_tb.v",
         ],
     ),
     # The mover alone against an AXI RAM: no MAG, no NoC, no mesh.
     "mm_mover": (
         "mm_mover_tb",
-        COMMON + MOVER + ["src/kohakuaccel/verif/axi_ram.v", "tests/mas/mm_mover_tb.v"],
+        COMMON
+        + MOVER
+        + ["src/kohakuaccel/verif/axi_ram.v", "tests/sysnode/mm_mover_tb.v"],
     ),
     # Workflow bandwidth: conv A', a large copy, a short-run relayout, a fill.
     # mm_mover_v1.v is the pre-burst engine, so before and after are measured.
     "mm_mover_bw": (
         "mm_mover_bw_tb",
-        COMMON + MOVER + ["tests/mas/mm_mover_v1.v", "tests/mas/mm_mover_bw_tb.v"],
+        COMMON
+        + MOVER
+        + ["tests/sysnode/mm_mover_v1.v", "tests/sysnode/mm_mover_bw_tb.v"],
     ),
     # What the stock mag_dram_port gives one requester against burst length,
     # reads in flight and mesh clock: the ceiling mm_mover_bw is measured against.
@@ -903,9 +1035,9 @@ BENCHES = {
         COMMON
         + [
             "src/kohakuaccel/common/async_fifo.v",
-            "src/kohakuaccel/mas/core/mag_stage_port.v",
-            "src/kohakuaccel/mas/core/mag_dram_port.v",
-            "tests/mas/mag_dram_port_bw_tb.v",
+            "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+            "src/kohakuaccel/sysnode/core/mag_dram_port.v",
+            "tests/sysnode/mag_dram_port_bw_tb.v",
         ],
     ),
     # The 0-1-3-2 chain at four clocks, swept 1/2/4 deep. Only this bench has
@@ -915,11 +1047,11 @@ BENCHES = {
         [
             "src/kohakuaccel/common/sync_fifo.v",
             "src/kohakuaccel/common/async_fifo.v",
-            "src/kohakuaccel/mas/interlink/il_pkt_arb.v",
-            "src/kohakuaccel/mas/interlink/mag_link.v",
-            "src/kohakuaccel/mas/interlink/mag_switch.v",
-            "src/kohakuaccel/mas/interlink/mag_link_cdc.v",
-            "tests/mas/interlink_cdc_chain_tb.v",
+            "src/kohakuaccel/sysnode/interlink/il_pkt_arb.v",
+            "src/kohakuaccel/sysnode/interlink/mag_link.v",
+            "src/kohakuaccel/sysnode/interlink/mag_switch.v",
+            "src/kohakuaccel/sysnode/interlink/mag_link_cdc.v",
+            "tests/sysnode/interlink_cdc_chain_tb.v",
         ],
     ),
     # One interlink across two mesh clocks. Three ratios, one non-harmonic,
@@ -929,15 +1061,54 @@ BENCHES = {
         [
             "src/kohakuaccel/common/sync_fifo.v",
             "src/kohakuaccel/common/async_fifo.v",
-            "src/kohakuaccel/mas/interlink/mag_link.v",
-            "src/kohakuaccel/mas/interlink/mag_link_cdc.v",
-            "tests/mas/mag_link_cdc_tb.v",
+            "src/kohakuaccel/sysnode/interlink/mag_link.v",
+            "src/kohakuaccel/sysnode/interlink/mag_link_cdc.v",
+            "tests/sysnode/mag_link_cdc_tb.v",
+        ],
+    ),
+    # The mover as a CPU execution unit: `mv.go ptr` fetches mover.py's own
+    # seven-write program from the scratchpad and drives the cfg port with it.
+    "mv_exec": (
+        "mv_exec_tb",
+        [
+            "src/kohakuaccel/sysnode/mover/mv_exec.v",
+            "tests/sysnode/mv_exec_tb.v",
+        ],
+    ),
+    # The slot FOLDED onto the mover's read-return path: mem -> occupant -> mem
+    # in one pass. Case 2 is a source strided WITHIN an entry, which the separate
+    # engine could not walk at all.
+    "mm_xform": (
+        "mm_xform_tb",
+        COMMON
+        + MOVER
+        + [
+            "src/kohakuaccel/verif/axi_ram.v",
+            "tests/sysnode/mm_xform_tb.v",
+        ],
+    ),
+    # THE FRAMEWORK ALONE: kohakuaccel + templates + verif, no project source at
+    # all. `mag_xform` names `xform_bank`, so this cannot build if the only bank
+    # in the tree is a project's -- which is the dependency rule it holds.
+    "xform_identity": (
+        "xform_identity_tb",
+        [
+            "src/kohakuaccel/common/sync_fifo.v",
+            "src/kohakuaccel/common/kohaku_sdpram.v",
+            "src/kohakuaccel/common/sb_skid.v",
+            "src/kohakuaccel/sysnode/mover/mx_tdesc.v",
+            "src/kohakuaccel/sysnode/mover/mm_prng.v",
+            "src/kohakuaccel/sysnode/mover/mm_mover.v",
+            "src/templates/transform/xform_bank.v",
+            "src/kohakuaccel/sysnode/core/mag_xform.v",
+            "src/kohakuaccel/verif/axi_ram.v",
+            "tests/sysnode/xform_identity_tb.v",
         ],
     ),
     # Philox-4x32-10 against the published Random123 vectors.
     "mm_prng": (
         "mm_prng_tb",
-        ["src/kohakuaccel/mas/mover/mm_prng.v", "tests/mas/mm_prng_tb.v"],
+        ["src/kohakuaccel/sysnode/mover/mm_prng.v", "tests/sysnode/mm_prng_tb.v"],
     ),
     # MAG alone, two sources writing concurrently. Cheap, and it covers the
     # write-slot table directly rather than through a whole GEMM.
@@ -950,12 +1121,12 @@ BENCHES = {
             "src/kohakutpu/transform/mx_quant.v",
             "src/kohakuaccel/verif/axi_ram.v",
             "src/kohakuaccel/common/sb_skid.v",
-            "src/kohakuaccel/mas/core/mag_mem_port.v",
-            "src/kohakuaccel/mas/core/mag.v",
+            "src/kohakuaccel/sysnode/core/mag_mem_port.v",
+            "src/kohakuaccel/sysnode/core/mag.v",
             "src/kohakuaccel/common/async_fifo.v",
-            "src/kohakuaccel/mas/core/mag_stage_port.v",
-            "src/kohakuaccel/mas/core/mag_dram_port.v",
-            "tests/mas/mag_wslot_tb.v",
+            "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+            "src/kohakuaccel/sysnode/core/mag_dram_port.v",
+            "tests/sysnode/mag_wslot_tb.v",
         ],
     ),
     # mesh2x2 was DELETED, not disabled. It drove mx_cluster_cu against
@@ -985,11 +1156,11 @@ BENCHES["mag_mem_port"] = (
         "src/kohakuaccel/common/sync_fifo.v",
         "src/kohakuaccel/common/sb_skid.v",
         "src/kohakuaccel/common/kohaku_sdpram.v",
-        "src/kohakuaccel/mas/core/mag_stage.v",
+        "src/kohakuaccel/sysnode/core/mag_stage.v",
         "src/kohakutpu/transform/mx_quant.v",
-        "src/kohakuaccel/mas/core/mag_mem_port.v",
+        "src/kohakuaccel/sysnode/core/mag_mem_port.v",
         "src/kohakuaccel/verif/axi_ram.v",
-        "tests/mas/mag_mem_port_tb.v",
+        "tests/sysnode/mag_mem_port_tb.v",
     ],
 )
 NEEDS_GLBL.add("mag_mem_port")
@@ -1016,57 +1187,197 @@ PE_RV32 = [
     "src/kohakuaccel/pe/rv32/core/rv_core.v",
     "src/kohakuaccel/pe/rv32/mem/rv_l1.v",
     "src/kohakuaccel/pe/rv32/noc/rv_noc_req.v",
-    # The DSP extension. Parsed everywhere, instantiated only at DSP_EN=1 --
+    # The DSP extension. Parsed everywhere, instantiated only at SIMD_EN=1 --
     # the same shape as the matmul pump hierarchy, and the reason the base
     # configuration stays bit-identical while the sources are always present.
-    "src/kohakuaccel/pe/rv32/dsp/khd_scalar_decode.v",
-    "src/kohakuaccel/pe/rv32/dsp/khd_mul.v",
-    "src/kohakuaccel/pe/rv32/dsp/khd_padd32.v",
-    "src/kohakuaccel/pe/rv32/dsp/khd_pshift32.v",
-    "src/kohakuaccel/pe/rv32/dsp/khd_lane.v",
-    "src/kohakuaccel/pe/rv32/dsp/khd_perm.v",
-    "src/kohakuaccel/pe/rv32/dsp/khd_reduce.v",
-    "src/kohakuaccel/pe/rv32/dsp/khd_vregfile.v",
-    "src/kohakuaccel/pe/rv32/dsp/khd_vspad.v",
-    "src/kohakuaccel/pe/rv32/dsp/khd_unit.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_scalar_decode.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_mul.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_padd32.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_pshift32.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_lane.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_perm.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_reduce.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_vregfile.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_vspad.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_falu.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_unit.v",
     "src/kohakuaccel/pe/rv32/rv_pe.v",
 ]
 
 # Level 1: the pipeline against the Python model, one instruction at a time.
 BENCHES["rv_core"] = ("rv_core_tb", PE_RV32 + ["tests/pe/tb/rv_core_tb.v"])
 
+# Level 0: the NoC requestor alone, every emitted header field compared on the
+# wire. It is the PE's whole memory protocol and had no module bench.
+BENCHES["rv_noc_req"] = (
+    "rv_noc_req_tb",
+    ["src/kohakuaccel/pe/rv32/noc/rv_noc_req.v", "tests/pe/tb/rv_noc_req_tb.v"],
+)
+
+# The MAG-resident requestor: rv_l1 onto MAG's converged path, and the segment
+# file that lets a 32-bit core name a 40-bit address.
+BENCHES["rv_mag_req"] = (
+    "rv_mag_req_tb",
+    ["src/kohakuaccel/pe/rv32/noc/rv_mag_req.v", "tests/pe/tb/rv_mag_req_tb.v"],
+)
+
+# THE SYSTEM NODE with CTRL_PE=1: the processor inside the real MAG, driving the
+# real mover out to DRAM. Everything below `node` is shipping RTL.
+# TARGET 2: one mesh with its control processor, reached ONLY through the
+# station bus. The program is staged as CU_DATA and dispatched, the same path a
+# compute unit's program takes -- nothing is poked hierarchically to start it.
+BENCHES["ctrlpe_mesh"] = (
+    "ctrlpe_mesh_tb",
+    COMMON
+    + NOC
+    + MATMUL
+    + MOVER
+    + VECTOR
+    + PE_RV32
+    + [
+        "src/kohakutpu/matmul/mx_cluster_cu.v",
+        "src/kohakutpu/vector/vec_cvt.v",
+        "src/kohakutpu/vector/vec_regfile.v",
+        "src/kohakutpu/vector/vec_lanes.v",
+        "src/kohakutpu/vector/vec_agu.v",
+        "src/kohakutpu/vector/vec_core.v",
+        "src/kohakutpu/vector/vec_cu.v",
+        "src/kohakuaccel/pe/rv32/noc/rv_mag_req.v",
+        "src/kohakuaccel/sysnode/cpu/rv_mag_pe.v",
+        "src/kohakuaccel/sysnode/mover/mv_exec.v",
+        "src/kohakuaccel/verif/axi_ram.v",
+        "src/kohakuaccel/verif/axi_up32to64.v",
+        "src/kohakuaccel/common/kh_rst_sync.v",
+        "src/kohakuaccel/common/async_fifo.v",
+        "src/kohakuaccel/sysnode/core/mag_mem_port.v",
+        "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+        "src/kohakuaccel/sysnode/core/mag_dram_port.v",
+        "src/kohakuaccel/sysnode/interlink/il_pkt_arb.v",
+        "src/kohakuaccel/sysnode/interlink/mag_link.v",
+        "src/kohakuaccel/sysnode/interlink/mag_link_pipe.v",
+        "src/kohakuaccel/sysnode/interlink/mag_switch.v",
+        "src/kohakuaccel/sysnode/interlink/mag_ilink.v",
+        "src/kohakuaccel/sysnode/core/mag.v",
+        "src/kohakuaccel/noc/endpoint/noc_l2_adapter.v",
+        "src/kohakuaccel/sysnode/sysnode.v",
+        "src/kohakutpu/top/mag_1m.v",
+        "src/kohakutpu/top/generated/ktpu_ctrlpe_1x1.v",
+        "src/kohakuaccel/common/sb_skid.v",
+        "src/kohakuaccel/axi/station/sb_hub.v",
+        "src/kohakuaccel/axi/station/sb_nmu.v",
+        "src/kohakuaccel/axi/station/sb_nsu.v",
+        "src/kohakuaccel/axi/link/sb_link.v",
+        "src/kohakuaccel/axi/link/sb_link_cdc.v",
+        "src/kohakuaccel/axi/topo/sb_stn_line.v",
+        "src/kohakuaccel/axi/topo/sb_line4.v",
+        "tests/mesh/ctrlpe_mesh_tb.v",
+    ],
+)
+NEEDS_GLBL.add("ctrlpe_mesh")
+
+# TARGET 3: the same, twice, with the interlink crossed -- and the cross-mesh
+# push is issued by mesh0's PROCESSOR, not by the host.
+BENCHES["ctrlpe_mesh2"] = (
+    BENCHES["ctrlpe_mesh"][0].replace("ctrlpe_mesh_tb", "ctrlpe_mesh2_tb"),
+    [f for f in BENCHES["ctrlpe_mesh"][1] if not f.endswith("ctrlpe_mesh_tb.v")]
+    + ["tests/mesh/ctrlpe_mesh2_tb.v"],
+)
+NEEDS_GLBL.add("ctrlpe_mesh2")
+
+# TARGET 1: two system nodes, no mesh between them, and a two-core algorithm --
+# A moves its result into B over the interlink, B polls the last word with L1
+# invalidated and then runs its own move on what arrived.
+BENCHES["ctrlpe_pair"] = (
+    "ctrlpe_pair_tb",
+    [
+        f
+        for f in BENCHES["ctrlpe_mesh"][1]
+        if not f.endswith(("ctrlpe_mesh_tb.v", "ktpu_ctrlpe_1x1.v", "mag_1m.v"))
+    ]
+    + ["tests/mesh/ctrlpe_pair_tb.v"],
+)
+NEEDS_GLBL.add("ctrlpe_pair")
+
+BENCHES["sysnode_ctrlpe"] = (
+    "sysnode_ctrlpe_tb",
+    PE_RV32
+    + COMMON
+    + [
+        "src/kohakuaccel/noc/ctrl/noc_orchestrator.v",
+        "src/kohakuaccel/noc/endpoint/noc_cu_base.v",
+        "src/kohakuaccel/pe/rv32/noc/rv_mag_req.v",
+        "src/kohakutpu/transform/mx_quant.v",
+        "src/kohakuaccel/verif/axi_ram.v",
+        "src/kohakuaccel/common/sb_skid.v",
+        "src/kohakuaccel/common/async_fifo.v",
+        "src/kohakuaccel/sysnode/mover/mx_tdesc.v",
+        "src/kohakuaccel/sysnode/mover/mm_prng.v",
+        "src/kohakuaccel/sysnode/mover/mm_mover.v",
+        "src/kohakutpu/transform/xform_bank.v",
+        "src/kohakuaccel/sysnode/core/mag_xform.v",
+        "src/kohakuaccel/sysnode/mover/mv_exec.v",
+        "src/kohakuaccel/sysnode/core/mag_stage.v",
+        "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+        "src/kohakuaccel/sysnode/core/mag_mem_port.v",
+        "src/kohakuaccel/sysnode/core/mag_dram_port.v",
+        "src/kohakuaccel/sysnode/interlink/il_pkt_arb.v",
+        "src/kohakuaccel/sysnode/interlink/mag_link.v",
+        "src/kohakuaccel/sysnode/interlink/mag_link_pipe.v",
+        "src/kohakuaccel/sysnode/interlink/mag_switch.v",
+        "src/kohakuaccel/sysnode/interlink/mag_ilink.v",
+        "src/kohakuaccel/sysnode/core/mag.v",
+        "src/kohakuaccel/sysnode/cpu/rv_mag_pe.v",
+        "src/kohakuaccel/sysnode/sysnode.v",
+        "tests/sysnode/sysnode_ctrlpe_tb.v",
+    ],
+)
+NEEDS_GLBL.add("sysnode_ctrlpe")
+
+# THE SYSTEM NODE'S CONTROL PROCESSOR, assembled: core + windows + L1 onto MAG's
+# converged path + flits-only requestor + the mover as an execution unit.
+BENCHES["rv_mag_pe"] = (
+    "rv_mag_pe_tb",
+    PE_RV32
+    + [
+        "src/kohakuaccel/noc/endpoint/noc_cu_base.v",
+        "src/kohakuaccel/pe/rv32/noc/rv_mag_req.v",
+        "src/kohakuaccel/sysnode/mover/mv_exec.v",
+        "src/kohakuaccel/sysnode/cpu/rv_mag_pe.v",
+        "tests/sysnode/rv_mag_pe_tb.v",
+    ],
+)
+
 # Level 2: the memory frontend -- internal L1, external windows and the NoC
 # requestor -- against a scripted stub that plays the memory agent.
 BENCHES["rv_front"] = (
     "rv_front_tb",
-    PE_RV32 + ["src/kohakuaccel/noc/endpoint/noc_cu_base.v",
-               "tests/pe/tb/rv_front_tb.v"],
+    PE_RV32
+    + ["src/kohakuaccel/noc/endpoint/noc_cu_base.v", "tests/pe/tb/rv_front_tb.v"],
 )
 
 # Level 3: ONE PE, one real router, the real MAG, an AXI RAM. Boot is a NoC
 # write into the instruction window and the standard kick.
-PE_SYS = (
-    PE_RV32
-    + [
-        "src/kohakuaccel/noc/router/noc_inport.v",
-        "src/kohakuaccel/noc/router/noc_outport.v",
-        "src/kohakuaccel/noc/router/noc_router.v",
-        "src/kohakuaccel/noc/ctrl/noc_orchestrator.v",
-        "src/kohakuaccel/noc/endpoint/noc_cu_base.v",
-        "src/kohakuaccel/common/async_fifo.v",
-        "src/kohakuaccel/common/sb_skid.v",
-        "src/kohakuaccel/mas/mover/mx_tdesc.v",
-        "src/kohakuaccel/mas/mover/mm_prng.v",
-        "src/kohakuaccel/mas/mover/mm_mover.v",
-        "src/kohakuaccel/mas/core/mag_stage.v",
-        "src/kohakutpu/transform/mx_quant.v",
-        "src/kohakuaccel/mas/core/mag_mem_port.v",
-        "src/kohakuaccel/mas/core/mag.v",
-        "src/kohakuaccel/mas/core/mag_stage_port.v",
-        "src/kohakuaccel/mas/core/mag_dram_port.v",
-        "src/kohakuaccel/verif/axi4_ram.v",
-    ]
-)
+PE_SYS = PE_RV32 + [
+    "src/kohakuaccel/noc/router/noc_inport.v",
+    "src/kohakuaccel/noc/router/noc_outport.v",
+    "src/kohakuaccel/noc/router/noc_router.v",
+    "src/kohakuaccel/noc/ctrl/noc_orchestrator.v",
+    "src/kohakuaccel/noc/endpoint/noc_cu_base.v",
+    "src/kohakuaccel/common/async_fifo.v",
+    "src/kohakuaccel/common/sb_skid.v",
+    "src/kohakuaccel/sysnode/mover/mx_tdesc.v",
+    "src/kohakuaccel/sysnode/mover/mm_prng.v",
+    "src/kohakuaccel/sysnode/mover/mm_mover.v",
+    "src/kohakutpu/transform/xform_bank.v",
+    "src/kohakuaccel/sysnode/core/mag_xform.v",
+    "src/kohakuaccel/sysnode/core/mag_stage.v",
+    "src/kohakutpu/transform/mx_quant.v",
+    "src/kohakuaccel/sysnode/core/mag_mem_port.v",
+    "src/kohakuaccel/sysnode/core/mag.v",
+    "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+    "src/kohakuaccel/sysnode/core/mag_dram_port.v",
+    "src/kohakuaccel/verif/axi4_ram.v",
+]
 
 PE_MESH = PE_SYS + ["tests/pe/tb/rv_mesh.v", "tests/pe/tb/rv_agent.v"]
 
@@ -1074,79 +1385,151 @@ BENCHES["rv_sys"] = ("rv_sys_tb", PE_MESH + ["tests/pe/tb/rv_sys_tb.v"])
 
 # Level 4: isolation, ping-pong, aggregation and the DRAM hand-off, on ONE NoC
 # and ONE MAG. rv_mc1 runs isolation alone, as the other two's floor.
-BENCHES["rv_mc1"] = ("rv_mc1_tb", PE_MESH + ["tests/pe/tb/rv_mc_tb.v",
-                                             "tests/pe/tb/rv_mc1_tb.v"])
-BENCHES["rv_mc2"] = ("rv_mc2_tb", PE_MESH + ["tests/pe/tb/rv_mc_tb.v",
-                                             "tests/pe/tb/rv_mc2_tb.v"])
-BENCHES["rv_mc4"] = ("rv_mc4_tb", PE_MESH + ["tests/pe/tb/rv_mc_tb.v",
-                                             "tests/pe/tb/rv_mc4_tb.v"])
+BENCHES["rv_mc1"] = (
+    "rv_mc1_tb",
+    PE_MESH + ["tests/pe/tb/rv_mc_tb.v", "tests/pe/tb/rv_mc1_tb.v"],
+)
+BENCHES["rv_mc2"] = (
+    "rv_mc2_tb",
+    PE_MESH + ["tests/pe/tb/rv_mc_tb.v", "tests/pe/tb/rv_mc2_tb.v"],
+)
+BENCHES["rv_mc4"] = (
+    "rv_mc4_tb",
+    PE_MESH + ["tests/pe/tb/rv_mc_tb.v", "tests/pe/tb/rv_mc4_tb.v"],
+)
 
 # The DSP-class workload suite on the same vehicle as rv_sys: what a kernel
 # COSTS rather than whether the PE is correct. Its cases come from
-# `python tests/pe/tools/rv_dsp_gen.py`.
-BENCHES["rv_dsp"] = ("rv_dsp_tb", PE_MESH + ["tests/pe/tb/rv_dsp_tb.v"])
+# `python tests/pe/tools/rv_simd_gen.py`.
+BENCHES["rv_dsp"] = ("rv_simd_tb", PE_MESH + ["tests/pe/tb/rv_simd_tb.v"])
 
-# The KohakuDSP vector extension (src/kohakuaccel/pe/rv32/dsp). khd_isa.vh is
-# GENERATED from the field table by tests/pe/tools/rv_dsp_emit.py, so the RTL
+# The KohakuSIMT SIMT PE (src/kohakumpe/simt), on its own vehicle:
+# kht_mesh carries kht_pe where rv_mesh carries rv_pe. kht_isa.vh is GENERATED
+# from the field table by tests/pe/tools/rv_simt_emit.py, so the RTL decode, the
+# assembler and the golden model cannot drift apart.
+PE_KHG = PE_SYS + [
+    # G9's arithmetic is the SIMD tier's, so the GPU bench drags in the same
+    # float files the DSP one does. Parsed always, elaborated only at KHT_FLT=1.
+    "src/kohakutpu/matmul/mx_fpacc.v",  # mx_lead1, shared not copied
+    "src/kohakutpu/vector/vec_dsp.v",
+    "src/kohakutpu/vector/vec_delay.v",
+    "src/kohakutpu/vector/vec_tables.v",
+    "src/kohakutpu/vector/vec_cvt.v",
+    "src/kohakutpu/vector/vec_alu.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_float_lane.v",
+    "src/kohakumpe/simt/kht_fpu.v",
+    "src/kohakumpe/simt/kht_imul.v",
+    "src/kohakumpe/simt/kht_valu.v",
+    "src/kohakumpe/simt/kht_vregfile.v",
+    "src/kohakumpe/simt/kht_unit.v",
+    "src/kohakumpe/simt/kht_lds.v",
+    "src/kohakumpe/simt/kht_predec.v",
+    "src/kohakumpe/simt/kht_core.v",
+    "src/kohakumpe/simt/kht_pe.v",
+    "tests/pe/tb/kht_mesh.v",
+    "tests/pe/tb/rv_agent.v",
+]
+
+BENCHES["kht_sys"] = ("kht_sys_tb", PE_KHG + ["tests/pe/tb/kht_sys_tb.v"])
+
+# Three PE CLASSES on one router and one MAG, with no agent on the NoC: the
+# host is an AXI master on MAG's slaves, which is the only way in on the card.
+# The DSP files that PE_KHG does not already carry are appended, not repeated.
+PE_HET = [f for f in PE_KHG if f not in ("tests/pe/tb/kht_mesh.v",)] + [
+    "src/kohakuaccel/pe/rv32/simd/khs_facc.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_ffold.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_mul.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_padd32.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_pshift32.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_lane.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_perm.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_reduce.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_vregfile.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_vspad.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_falu.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_unit.v",
+    "tests/pe/tb/het_mesh.v",
+]
+
+BENCHES["het_sys"] = ("het_sys_tb", PE_HET + ["tests/pe/tb/het_sys_tb.v"])
+
+# The KohakuSIMD vector extension (src/kohakuaccel/pe/rv32/simd). khs_isa.vh is
+# GENERATED from the field table by tests/pe/tools/rv_simd_emit.py, so the RTL
 # decode and the assembler cannot drift apart; -i puts it on the include path.
 PE_KHD = [
     "src/kohakuaccel/common/kohaku_sdpram.v",
     "src/kohakuaccel/pe/rv32/mem/rv_ram_be.v",
-    # The float tier. Parsed always, elaborated only at HAS_F16=1.
+    # The float tier. Parsed always, elaborated only at HAS_FLOAT=1.
     "src/kohakutpu/matmul/mx_fpacc.v",
     "src/kohakutpu/vector/vec_dsp.v",
     "src/kohakutpu/vector/vec_delay.v",
     "src/kohakutpu/vector/vec_tables.v",
     "src/kohakutpu/vector/vec_cvt.v",
     "src/kohakutpu/vector/vec_alu.v",
-    "src/kohakuaccel/pe/rv32/dsp/khd_f16_lane.v",
-    "src/kohakuaccel/pe/rv32/dsp/khd_facc.v",
-    "src/kohakuaccel/pe/rv32/dsp/khd_ffold.v",
-    "src/kohakuaccel/pe/rv32/dsp/khd_mul.v",
-    "src/kohakuaccel/pe/rv32/dsp/khd_padd32.v",
-    "src/kohakuaccel/pe/rv32/dsp/khd_pshift32.v",
-    "src/kohakuaccel/pe/rv32/dsp/khd_lane.v",
-    "src/kohakuaccel/pe/rv32/dsp/khd_perm.v",
-    "src/kohakuaccel/pe/rv32/dsp/khd_reduce.v",
-    "src/kohakuaccel/pe/rv32/dsp/khd_vregfile.v",
-    "src/kohakuaccel/pe/rv32/dsp/khd_vspad.v",
-    "src/kohakuaccel/pe/rv32/dsp/khd_unit.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_float_lane.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_facc.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_ffold.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_mul.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_padd32.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_pshift32.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_lane.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_perm.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_reduce.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_vregfile.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_vspad.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_falu.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_unit.v",
 ]
 
-BENCHES["khd_unit"] = ("khd_unit_tb", PE_KHD + ["tests/pe/tb/khd_unit_tb.v"])
-NEEDS_GLBL.add("khd_unit")
+BENCHES["khs_unit"] = ("khs_unit_tb", PE_KHD + ["tests/pe/tb/khs_unit_tb.v"])
+NEEDS_GLBL.add("khs_unit")
 
-# The float tier. Vectors come from tests/pe/tools/khd_f16_vec.py and
-# khd_facc_vec.py; run those first or the benches report no vectors.
-PE_F16 = [
+# The float tier. Vectors come from tests/pe/tools/khs_float_vec.py and
+# khs_facc_vec.py; run those first or the benches report no vectors.
+PE_FLOAT = [
     "src/kohakuaccel/common/kohaku_sdpram.v",
-    "src/kohakutpu/matmul/mx_fpacc.v",          # mx_lead1, shared not copied
+    "src/kohakutpu/matmul/mx_fpacc.v",  # mx_lead1, shared not copied
     "src/kohakutpu/vector/vec_dsp.v",
     "src/kohakutpu/vector/vec_delay.v",
     "src/kohakutpu/vector/vec_tables.v",
     "src/kohakutpu/vector/vec_cvt.v",
     "src/kohakutpu/vector/vec_alu.v",
-    "src/kohakuaccel/pe/rv32/dsp/khd_f16_lane.v",
-    "src/kohakuaccel/pe/rv32/dsp/khd_facc.v",
-    "src/kohakuaccel/pe/rv32/dsp/khd_ffold.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_float_lane.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_facc.v",
+    "src/kohakuaccel/pe/rv32/simd/khs_ffold.v",
 ]
 
-BENCHES["khd_f16_lane"] = ("khd_f16_lane_tb", PE_F16 + ["tests/pe/tb/khd_f16_lane_tb.v"])
-BENCHES["khd_facc"] = ("khd_facc_tb", PE_F16 + ["tests/pe/tb/khd_facc_tb.v"])
-BENCHES["khd_ffold"] = ("khd_ffold_tb", PE_F16 + ["tests/pe/tb/khd_ffold_tb.v"])
+BENCHES["khs_float_lane"] = (
+    "khs_float_lane_tb",
+    PE_FLOAT + ["tests/pe/tb/khs_float_lane_tb.v"],
+)
+BENCHES["khs_facc"] = ("khs_facc_tb", PE_FLOAT + ["tests/pe/tb/khs_facc_tb.v"])
+BENCHES["khs_ffold"] = ("khs_ffold_tb", PE_FLOAT + ["tests/pe/tb/khs_ffold_tb.v"])
 # The partials are an XPM array; the benches already wait 200 ns for GSR.
-NEEDS_GLBL.update({"khd_facc", "khd_ffold"})
+NEEDS_GLBL.update({"khs_facc", "khs_ffold"})
 
 #: Directories added to xvlog's include path, for the generated headers.
-INCDIRS = ["src/kohakuaccel/pe/rv32/dsp/generated"]
+INCDIRS = ["src/kohakuaccel/pe/rv32/simd/generated", "src/kohakumpe/simt/generated"]
 
-NEEDS_GLBL.update({"rv_core", "rv_front", "rv_sys",
-                   "rv_mc1", "rv_mc2", "rv_mc4", "rv_dsp"})
+NEEDS_GLBL.update(
+    {"rv_core", "rv_front", "rv_sys", "rv_mc1", "rv_mc2", "rv_mc4", "rv_dsp", "kht_sys"}
+)
 
+# IN THE TRACKED TREE, not build/. Generated into build/ it was outside
+# check.py's snapshot, so this bench failed on every snapshotted run with a
+# missing file -- a harness gap that read as a real failure for months.
+# Regenerate with:
+#   python scripts/py/gen_mesh.py src/kohakutpu/top/maps/mesh_1x1_min.txt \
+#     -m ktpu_min_1m --ilink --single-master --split-reset \
+#     -o src/kohakutpu/top/generated/ktpu_min_1m_split.v
 BENCHES["sb_mesh_e2e_sr"] = (
     "sb_mesh_e2e_tb",
     [
-        ("build/gen/ktpu_min_1m_split.v" if s.endswith("/ktpu_min_1m.v") else s)
+        (
+            "src/kohakutpu/top/generated/ktpu_min_1m_split.v"
+            if s.endswith("/ktpu_min_1m.v")
+            else s
+        )
         for s in BENCHES["sb_mesh_e2e"][1]
     ]
     + ["src/kohakuaccel/common/kh_rst_sync.v"],
@@ -1181,7 +1564,12 @@ def main():
     args = ap.parse_args()
 
     top, srcs = BENCHES[args.bench]
-    work = pathlib.Path(args.build_root or ROOT / "build") / f"xsim_{args.bench}"
+    # Resolved against ROOT: xvlog's cwd IS `work`, so a relative --build-root
+    # made kohaku_predef.vh unfindable and reported it as a missing header.
+    root = pathlib.Path(args.build_root) if args.build_root else ROOT / "build"
+    if not root.is_absolute():
+        root = ROOT / root
+    work = root / f"xsim_{args.bench}"
     if work.exists():
         shutil.rmtree(work)
     work.mkdir(parents=True)
@@ -1266,11 +1654,41 @@ def main():
     if args.model == 0:
         files.insert(0, str(ROOT / "tests/matmul/mx_model_dsp.v"))
 
+    # REFUSED, NOT OVERRIDDEN. MX_MODEL is appended below from `--model`, which
+    # also decides whether unisims_ver and glbl are linked, so a `-d MX_MODEL=0`
+    # that won would select DSP48E2 without the library behind it. It used to
+    # lose silently instead: the run reported MODEL=1 while looking like it had
+    # obeyed, which costs a whole run to notice.
+    appended = {"MX_MODEL": f"--model {args.model}"}
+    for d in args.define:
+        name = d.split("=", 1)[0].strip()
+        if name in appended:
+            sys.exit(f"-d {name} is set by this script; use {appended[name]}")
+
     # Options go through a command file, not the command line: xvlog.bat is a
     # batch script and it splits `-d NAME=VALUE` at the `=`, so the value
     # arrives as a stray filename.
     opts = ["-d " + d for d in args.define + [f"MX_MODEL={args.model}"]]
     opts += ["-i " + str(ROOT / p) for p in INCDIRS]
+
+    # PE_DIR ABSOLUTE, always, and through a FILE rather than `-d`. The nine PE
+    # benches default it to "../../tests/pe/build", which resolves from the xsim
+    # run directory -- so it is only correct at the DEFAULT build root. Under
+    # check.py's per-pid root it pointed one level short and eleven benches
+    # reported "no cases -- run the generator" while the images were there.
+    #
+    # A file, because a string macro cannot survive `-d`: xvlog's command file
+    # strips the quotes, PE_DIR expands to a bare C:/... path, and every
+    # $readmemh becomes "syntax error near '/'". Macros persist across files in
+    # one xvlog invocation, so defining it in the first file reaches every
+    # later one, and the benches' own `ifndef` then leaves it alone.
+    predef = work / "kohaku_predef.vh"
+    predef.write_text(
+        f'`define PE_DIR "{(ROOT / "tests/pe/build").as_posix()}"\n',
+        encoding="utf-8",
+    )
+    files.insert(0, str(predef))
+
     (work / "xvlog.f").write_text("\n".join(opts + files) + "\n")
 
     run(["xvlog.bat", "-sv", "-work", "w", "-f", "xvlog.f"])
