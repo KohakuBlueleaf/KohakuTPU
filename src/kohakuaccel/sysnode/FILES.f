@@ -3,6 +3,8 @@ kohakuaccel/sysnode/core/mag_dram_port.v
 kohakuaccel/sysnode/core/mag_mem_port.v
 kohakuaccel/sysnode/core/mag_stage.v
 kohakuaccel/sysnode/core/mag_stage_port.v
+kohakuaccel/sysnode/core/mag_xform.v
+kohakuaccel/sysnode/cpu/rv_mag_pe.v
 kohakuaccel/sysnode/interlink/il_pkt_arb.v
 kohakuaccel/sysnode/interlink/mag_ilink.v
 kohakuaccel/sysnode/interlink/mag_link.v
@@ -13,3 +15,4 @@ kohakuaccel/sysnode/mover/mm_mover.v
 kohakuaccel/sysnode/mover/mm_prng.v
 kohakuaccel/sysnode/mover/mv_exec.v
 kohakuaccel/sysnode/mover/mx_tdesc.v
+kohakuaccel/sysnode/sysnode.v

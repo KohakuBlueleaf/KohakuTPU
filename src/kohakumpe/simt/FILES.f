@@ -1,0 +1,11 @@
+kohakumpe/simt/generated/kht_isa.vh
+kohakumpe/simt/kht_core.v
+kohakumpe/simt/kht_ctrl.vh
+kohakumpe/simt/kht_fpu.v
+kohakumpe/simt/kht_imul.v
+kohakumpe/simt/kht_lds.v
+kohakumpe/simt/kht_pe.v
+kohakumpe/simt/kht_predec.v
+kohakumpe/simt/kht_unit.v
+kohakumpe/simt/kht_valu.v
+kohakumpe/simt/kht_vregfile.v
