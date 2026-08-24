@@ -48,9 +48,9 @@ weeks obeying advice.
 **Your compute unit is yours, its memory system included.** Nothing in this tree
 fixes the width, count, primitive or read latency of a unit's local storage, and
 nothing ever will. The two units in the reference project share none of it — one
-holds operands in 928-bit-wide RAMs across five separate memories with two
-different read latencies, the other in a single 256-bit RAM plus a separate
-instruction memory in LUTs.
+holds operands in two 928-bit RAMs beside an accumulator tile at a different
+read latency, the other in a 256-bit RAM plus a block-RAM instruction memory and
+three mirrored register-file RAMs.
 
 What is fully defined is **how you receive and how you send**: the port, the flit,
 and the request/response encoding. Everything on your side of that boundary is a
@@ -72,6 +72,7 @@ cannot forward a shape it does not know. See
 | [instruction-encoding.md](instruction-encoding.md) | The three owners of instruction bits, and the split inside `CU_INST`. | Fixed for the header and the memory descriptors; Convention for how a unit spends its own payload. |
 | [memory-protocol.md](memory-protocol.md) | Request, response, descriptor and streaming traffic against the memory agent, plus the ordering guarantees and their absences. | Fixed for the encoding and ordering; one Addon (§10); several Conventions the agent forces (§3.2.3). |
 | [control-registers.md](control-registers.md) | The `CU_CTRL` block every unit answers, and the orchestrator's AXI register map. | Fixed. |
+| [transform-slot.md](transform-slot.md) | The shared transform bank on the mover's read-return path: where it sits, how an occupant is selected, and what the port and geometry contracts are. | Fixed interface, Addon occupant. |
 | [parameters.md](parameters.md) | Every parameter of every framework module: type, default, effect, legal range. | Reference. |
 
 ## What to read, in what order
@@ -95,6 +96,9 @@ cannot forward a shape it does not know. See
   driver or the bring-up script, not when you write the datapath. The framework
   answers the `CU_CTRL` block on your behalf; §1.4 is the one part that reaches
   your logic.
+- [transform-slot.md](transform-slot.md) — needed when memory holds your
+  operands in a format your datapath does not want, and only then. A unit that
+  reads what it was given never meets the slot.
 - [parameters.md](parameters.md) — needed when you instantiate or floorplan.
 
 ## Conventions
@@ -105,7 +109,7 @@ marks a requirement with known, stated exceptions. MAY marks a genuine choice
 that the framework will not take away later.
 
 **Bit numbering.** Verilog convention throughout: `[hi:lo]`, MSB first, bit 0 the
-least significant. `f[255 -: 34]` is the 34 bits from 255 down to 222, which is
+least significant. `f[255 -: 40]` is the 40 bits from 255 down to 216, which is
 how the RTL writes it. Flit fields are given twice where they differ: once as an
 expression in `FLIT_WIDTH` and `POS_WIDTH`, and once as the concrete positions at
 the default `FLIT_WIDTH = 288`, `POS_WIDTH = 4`.

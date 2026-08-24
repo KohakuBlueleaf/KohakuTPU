@@ -5,7 +5,7 @@ tags:
   - spec
   - normative
   - memory
-  - mas
+  - sysnode
 ---
 
 # Memory protocol
@@ -27,9 +27,10 @@ comes back, and what may be assumed about the order in which it arrives.
 Flit field positions are in [flit-format.md](flit-format.md) §4. The link
 handshake is in [compute-unit-port.md](compute-unit-port.md) §2. The
 architectural argument for why the agent is shaped this way is in
-[arch/mas/](../arch/mas/).
+[arch/sysnode/](../arch/sysnode/).
 
-Source of truth: `src/kohakumas/mag.v` and `src/kohakumas/mag_mem_port.v`.
+Source of truth: `src/kohakuaccel/sysnode/core/mag.v` and
+`src/kohakuaccel/sysnode/core/mag_mem_port.v`.
 
 ## 1. What the agent presents to the mesh
 
@@ -121,13 +122,13 @@ dropped.
 
 ## 3. Reads
 
-There are two request forms, distinguished by `flags[6]` (`STREAM`) and
-`flags[4]` (`QUANT`). They run in **separate state machines** and can be in
-flight at the same time, over the one AXI read channel.
+There are two request forms, distinguished by `flags[6]` (`STREAM`). They run in
+**separate state machines** and can be in flight at the same time, over the one
+AXI read channel.
 
 ### 3.1 Plain read
 
-`STREAM = 0` and `QUANT = 0`.
+`STREAM = 0`.
 
 - One AXI burst of `len + 1` beats from `addr`.
 - Each AXI beat becomes one `MEM_RD_RESP` flit, verbatim.
@@ -140,19 +141,18 @@ it excludes a write from being issued while it runs.
 
 ### 3.2 Entry read and streaming fetch
 
-`STREAM = 1`, or `QUANT = 1`, or both. Served by the port's own read engine.
+`STREAM = 1`. Served by the port's own read engine.
 
-An **entry** is the unit this path works in. Its size is stated by the request:
-
-| `QUANT` | Entry size | AXI beats per entry | Response flits per entry |
-|---|---|---|---|
-| 1 | 2048 bits (256 bytes) | 8 at `DATA_W = 256` | 4 |
-| 0 | `entry_words × DATA_W/8` bytes | `entry_words` | `entry_words` |
+An **entry** is the unit this path works in, and its size is stated by the
+request: `entry_words × DATA_W/8` bytes, giving `entry_words` AXI beats and
+`entry_words` response flits.
 
 `entry_words` is `[165:158]` of the descriptor. **0, or any value above 4, means
 4** — which is what every existing requester sends, so the field is backward
-compatible by construction. When `QUANT` is set `entry_words` is ignored: the
-converter yields four words whatever the source length.
+compatible by construction.
+
+There is no second geometry. A fetch is never transformed, so no request can
+imply a source entry of a different size from the one it names — see §10.
 
 A **streaming** request covers `count` consecutive entries:
 
@@ -192,15 +192,14 @@ A read request MAY name up to three **extra destinations** in `peer[23:0]`, one
 `{y, x}` byte each, with `n_peer` saying how many are present.
 
 - The requester is always destination 0. The listed peers follow.
-- The entry is read **once** and converted **once**; the same latched words are
-  re-sent with a different header per destination.
+- The entry is read **once**; the same latched words are re-sent with a different
+  header per destination.
 - Every destination receives the same `txn` and the same word indices.
 - Destinations are served one entry at a time: all of entry *i*'s words to
   destination 0, then all of entry *i*'s words to destination 1, and so on.
 
 This exists because a set of units frequently sweeps the same operand: served
-separately, that is one DRAM read and one conversion pass **per consumer** for a
-bit-identical result.
+separately, that is one DRAM read **per consumer** for a bit-identical result.
 
 The decision of *who issues the request* is not made by the framework. A sharing
 set must arrive at one issuer by some rule its own driver enforces; the framework
@@ -224,7 +223,7 @@ a shape of its own, and these five properties of it reach across the boundary:
 | deliver one entry as **`entry_words` consecutive flits**, `last` on the final word | assemble by word index rather than by counting arrivals |
 | put the **destination slot in the header** — `txn` plus the entry index, and `rsvd[1:0]` for the word | derive the write address from the flit, not from a cursor. A cursor is correct only for as long as there is exactly one server |
 | **interleave** other traffic between an entry's words | frame by type and tolerate gaps |
-| deliver **the same words to every peer destination** of a multicast | not assume it is the only recipient, and not assume a per-destination transform |
+| deliver **the same words to every peer destination** of a multicast | not assume it is the only recipient, and not assume its copy differs from anyone else's |
 
 Two idioms follow, both used by the reference units and neither required:
 
@@ -238,8 +237,8 @@ Two idioms follow, both used by the reference units and neither required:
   no arithmetic at all.
 
 A unit whose buffer geometry does not match the agent's entry can still request
-plain reads (§3.1) and place beats itself. It gives up streaming, multicast and
-the transform to do so.
+plain reads (§3.1) and place beats itself. It gives up streaming and multicast to
+do so.
 
 ## 4. Writes
 
@@ -425,8 +424,7 @@ that does not exist.
 | Input flit dropped because backpressure was late | The flit is lost. | Simulation `$display` only. |
 | `MEM_WR_DATA` with no matching open write | Dropped. | Simulation `$display` only. |
 | Write descriptor arrives with no free slot | Not popped. Blocks the write queue. | Nothing. Presents as a hang. |
-| Read or write naming a mesh other than the agent's own, in `addr[33:32]` | **Not forwarded.** The access aliases to local memory with the top two address bits ignored. | An interlink fault bit, when the interlink is built. |
-| Quantising host upload whose burst is not a whole number of entries | The handshake waits for beats that never come. | Simulation `$display` only. Presents as the host AXI hanging. |
+| Read or write naming a mesh other than the agent's own, in `addr[37:36]`, on a flit **not** marked remote | **Not forwarded.** The access aliases to local memory with the mesh field ignored. | `mag.v:455` raises `bad_remote_req` into the interlink's status when `ILINK != 0`. A build without an interlink reports nothing. |
 | AXI slave error response (`BRESP`/`RRESP` non-OKAY) | Ignored. | Nothing. `MEM_WR_ACK` carries no status. |
 
 **A memory request MUST address the local mesh.** There is no remote read and no
@@ -437,24 +435,20 @@ remote compute-unit write in v1; only the mover's writes and encapsulated
 
 These are framework services rather than mesh protocol, and are specified here
 only far enough to state their contracts. The mechanism is in
-[arch/mas/](../arch/mas/) and [arch/axi.md](../arch/axi.md).
+[arch/sysnode/](../arch/sysnode/) and [arch/axi.md](../arch/axi.md).
 
 ### 9.1 The memory window
 
 The agent is an AXI4 slave `DATA_W` bits wide, through which the host uploads and
-reads back memory. Two address bits carry a marker AXI has no field for:
+reads back memory. **An upload is written verbatim** — the whole address space is
+addressable and no address bit carries a marker.
 
-| Bit | Name | Meaning |
-|---|---|---|
-| `addr[ADDR_W-1]` (33) | `QUANT` | Convert this upload on the way in. The destination address is the low `ADDR_W-2` bits. |
-| `addr[ADDR_W-2]` (32) | `BLAYOUT` | Pack the converted result for a B operand. |
-
-This is why the host window is 32 of the 34 address bits rather than all of them.
-A quantising upload's burst **MUST** be a whole number of source entries (8 beats
-at `DATA_W = 256`); a partial one hangs the AXI handshake.
-
-The marker is on the **request**, never a range the agent remembers. The driver
-decides which tensors are pre-converted; the agent holds no address map.
+**Retired:** `addr[ADDR_W-1]` and `addr[ADDR_W-2]` used to mean `QUANT` and
+`BLAYOUT`, converting an upload on the way in, and the window was 32 of 34
+address bits for that reason. That path is gone with the rest of the per-request
+transform selection (§10). A host that wants converted bytes in memory either
+converts them itself or uploads raw and has the mover convert on card, which is
+one descriptor and no host round trip.
 
 ### 9.2 The control window
 
@@ -509,35 +503,35 @@ encapsulated `CU_DATA` cross.
 > **Kind: Addon.** A slot that ships working and exists to be swapped. The
 > interface around it is Fixed; the transform inside it is yours.
 
-`flags[4]` (`QUANT`) and `flags[5]` (`BLAYOUT`) select a **preprocess** applied
-to an operand between DRAM and the mesh. The framework fixes the slot's shape and
-an accelerator supplies the transform. KohakuTPU plugs an MXFP7 quantiser into
-it; that is one occupant of the slot, not the slot itself.
+**A read request no longer selects a transform.** `flags[4]` (`QUANT`) and
+`flags[5]` (`BLAYOUT`) are **reserved and ignored**; a requester that sets them
+gets an untransformed fetch. The host upload window's `QUANT`/`BLAYOUT` address
+markers (§9.1) are retired with them.
 
-**Fixed by the framework — a replacement transform MUST hold all of it:**
+The transform slot moved off the fetch path and belongs to the **memory mover**:
 
-| Property | Why it is fixed |
-|---|---|
-| Selected **on the request**, never by an address range the agent remembers. | The driver decides per tensor; the agent holds no address map, so a tensor's format is a property of the operand rather than of where it was put. |
-| `flags[4]` is "apply it", `flags[5]` is a binary packing selector. | Two bits, and no more, are allocated. |
-| One invocation converts **one entry**, and the entry is the tagging unit. | Per-entry tagging is what makes a streaming fetch possible at all (§3.2.1). |
-| Nothing may be emitted until the whole entry has arrived, if the transform needs the whole entry. | The read engine's emit buffer exists for exactly this, so the next entry's AXI read overlaps the previous entry's emission. |
-| A converted entry and an unconverted one are indistinguishable on the wire. | The flit format does not change with the transform. |
-| One instance per memory port. | The transform is what units behind a port contend for. That contention is the reason ports exist. |
+```
+   mem / L2 --> [ slot ] --> mem / L2      the mover, once per tensor
+   mem / L2 -----------------> port --> unit
+```
 
-**Supplied by the accelerator:**
+A compute unit reads operands already in their final format. Conversion happens
+before the fetch, not during it — so it is paid once per tensor rather than once
+per read, which is what hidden state re-read across passes needs.
 
-- The transform itself, and therefore the input entry size (AXI beats in) and the
-  output entry size (response flits out). The `entry_words` default of 4 falls out
-  of KohakuTPU's choice, not out of the framework.
-- What `flags[5]` selects between.
-- Whether an operand can be pre-transformed on the way *in* instead, and if so
-  what the upload path's address marker means (§9.1).
+Two consequences for a requester:
 
-KohakuTPU's instance is a FP16-to-block-format quantiser with a shared E5M3
-scale, packing row-wise or column-wise, 2048 bits in and 1024 bits out. Nothing
-in the protocol names that format, and software never sees it: it is an encoding
-between the memory agent and the datapath.
+- **An entry is `entry_words × DATA_W/8` bytes, always.** The old table where
+  `QUANT = 1` implied a 2048-bit source entry is gone; §3.2's `entry_words`
+  rule is now the only one.
+- **A single-use operand costs an explicit mover pass.** DRAM traffic is
+  unchanged — the same bytes are read once either way — but the conversion is a
+  separate move the compiler or the control processor has to schedule.
+
+The slot's own contract — the id-based selection, the port and geometry
+contracts, arbitration and the default occupant — is
+[spec/transform-slot](transform-slot.md). Nothing in this protocol names a
+number format, and software never sees one.
 
 There is **no postprocess hook on the write path**. A drain is written to memory
 verbatim. An accelerator that needs one is adding a framework feature, not

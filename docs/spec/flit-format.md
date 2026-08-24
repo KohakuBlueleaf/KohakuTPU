@@ -15,8 +15,8 @@ tags:
 > holds* is Convention; the namespace itself and the reservation of index 3 are
 > Fixed.
 
-Source of truth: `src/kohakunoc/noc_pkt.vh` for the declared layout, and the
-`HDR_*` macros in `src/kohakunoc/noc_cu_base.v` for the parameterised form the
+Source of truth: `src/kohakuaccel/noc/noc_pkt.vh` for the declared layout, and the
+`HDR_*` macros in `src/kohakuaccel/noc/endpoint/noc_cu_base.v` for the parameterised form the
 RTL actually uses. Where the two differ, §7 records it.
 
 The link handshake that carries a flit is specified in
@@ -179,21 +179,38 @@ carry over unchanged — see §7.
 
 | Bits | Field | Width | Owner | Meaning |
 |---|---|---|---|---|
-| `[255:222]` | `addr` | 34 | framework | Byte address. Exactly the 16 GB physical map, not widened. |
-| `[221:216]` | `addr_spare` | 6 | reserved | MUST be 0. |
+| `[255:216]` | `addr` | **40** | framework | Byte address, and the whole of it. See [address-map.md](../address-map.md) for what the top four bits mean. |
 | `[215:208]` | `len` | 8 | framework | Beats minus one. |
 | `[207:200]` | `flags` | 8 | framework | See §4.1.1. |
 | `[199:192]` | `count` | 8 | framework | Entries in a streaming fetch. Read only when `flags[6]`. 0 is treated as 1. |
 | `[191:168]` | `peer` | 24 | framework | Up to three extra destinations for a read response, `{y,x}` per byte, lowest byte first. |
 | `[167:166]` | `n_peer` | 2 | framework | How many of `peer` are present, 0–3. |
-| `[165:158]` | `entry_words` | 8 | framework | Words per entry on a streaming fetch. 0, or any value above 4, means 4. Ignored when `flags[4]` is set. |
+| `[165:158]` | `entry_words` | 8 | framework | Words per entry on a streaming fetch. 0, or any value above 4, means 4. |
 | `[157:0]` | reserved | 158 | reserved | MUST be 0. |
 
 On a `MEM_WR_REQ` only `addr` and `len` are read. `flags`, `count`, `peer`,
 `n_peer` and `entry_words` are read on `MEM_RD_REQ` only.
 
-`addr[33:32]` additionally names the **mesh** a request is aimed at, which the
-memory agent compares against its own id; see [memory-protocol.md](memory-protocol.md) §8.
+`addr[37:36]` names the **mesh** a request is aimed at, which the memory agent
+compares against its own id; `addr[39]` selects the special aperture rather than
+DRAM, and `addr[38]` is reserved and must be 0. See
+[address-map.md](../address-map.md) and
+[memory-protocol.md](memory-protocol.md) §8.
+
+> **This field was documented as 34 bits with a 6-bit `addr_spare` below it, and
+> it is 40.** The framework's own header has said so for some time —
+> `noc_pkt.vh` defines `NOC_MEM_ADDR` as `255:216` and notes *"The old 34-bit
+> map is this one's bottom corner — the spare was always zero"* — and
+> `mag_mem_port.v` reads `rq_flit[255 -: 40]` through a localparam whose comment
+> says why: *"NOC_MEM_ADDR is 40 bits WHATEVER `ADDR_W` is — a flit contract,
+> not a width. Slicing it by `ADDR_W` read `addr >> 6` on a 34-bit build,
+> silently."*
+>
+> A sender that wrote a 34-bit address into `[255:222]` and zeroed the "spare"
+> would place every request **64× too high**, and nothing on the path would
+> report it. The mesh field was documented at `[33:32]` for the same reason and
+> is at `[37:36]` — which `NOC_MEM_MESH = 253:252` already stated, since
+> flit bit 253 *is* address bit 37.
 
 #### 4.1.1 `flags`
 
@@ -203,15 +220,19 @@ memory agent compares against its own id; see [memory-protocol.md](memory-protoc
 | 1 | `invalidate` | Declared. No RTL reads it. |
 | 2 | `flush` | Declared. No RTL reads it. |
 | 3 | — | Unallocated. MUST be 0. |
-| 4 | `QUANT` | The source in memory is FP16 and MUST be converted on the way out. |
-| 5 | `BLAYOUT` | Pack the converted result for a B operand rather than an A operand. |
+| 4 | — | **Reserved.** Was `QUANT`. A fetch is never transformed; a requester that sets this gets an untransformed read. |
+| 5 | — | **Reserved.** Was `BLAYOUT`, the packing select for that transform. |
 | 6 | `STREAM` | This descriptor covers `count` consecutive entries, not one fetch. |
 | 7 | — | Unallocated. MUST be 0. |
 
-Bits 4 and 5 name a **format conversion in the memory agent**. The conversion
-itself (FP16 to MXFP7 with an E5M3 block scale) is a KohakuTPU choice that
-currently lives in a framework module; see
-[memory-protocol.md](memory-protocol.md) §9.
+Bits 4 and 5 named a format conversion applied to a **fetch**. A fetch is never
+transformed now: conversion happens on the memory mover's read-return path,
+before any fetch reads the result, and it is selected by the mover's descriptor
+rather than by a request flag. Both bits are reserved, and a requester that sets
+one gets an untransformed read — which is the right answer, because what is at
+that address is already in its final format. See
+[transform-slot.md](transform-slot.md) and
+[memory-protocol.md](memory-protocol.md) §10.
 
 ### 4.2 `MEM_WR_DATA` (`0x4`)
 
@@ -347,9 +368,22 @@ Request:
 
 | Bits | Field | Width | Owner | Meaning |
 |---|---|---|---|---|
-| `[255:248]` | `op` | 8 | reserved | Present in the driver's encoder as 0. **`noc_cu_base` does not read it** — it answers the index regardless. MUST be 0. |
+| `[255:248]` | `op` | 8 | framework | `0` read, `1` write. See the warning below. |
 | `[247:240]` | `index` | 8 | framework | Which control register. |
-| `[239:0]` | reserved | 240 | reserved | MUST be 0. |
+| `[239:176]` | `value` | 64 | framework | The value to write. Read only when `op` is 1. |
+| `[175:0]` | reserved | 176 | reserved | MUST be 0. |
+
+> **`op` IS NOT UNIVERSALLY HONOURED, and the failure is silent.**
+> `noc_cu_base.v:241` reads `ctrl_req[247 -: 8]` and nothing above it, so a
+> compute unit answers the index whatever `op` says: a write to a plain unit
+> **performs a read and replies with the old value**, and looks exactly like a
+> write that landed. `noc_l2_adapter.v:194` is the only endpoint in the tree that
+> decodes `op` today, which is why the L2 adapter's base and enable registers are
+> writable and a unit's `CU_CTRL` block is not.
+>
+> A controller that writes a register **MUST** compare the reply's `value`
+> against what it wrote. `kohakuaccel.device.control_write` returns it for
+> exactly that reason.
 
 Reply:
 
@@ -414,3 +448,4 @@ can only reassemble one burst at a time if that is the case.
 | `rsvd` semantics undeclared | The remote-mesh marker, the mesh id and the read-response word index all live in `rsvd` and none is declared in `noc_pkt.vh`. |
 | `NOC_MEM_LEN` comment | `noc_pkt.vh` describes `len` as "payload flits minus 1". On a `MEM_RD_REQ` served by the entry read engine it is not read at all. |
 | `MEM_WR_ACK` status byte | Documented in the snapshot, absent from the RTL. |
+| `CU_CTRL` `op` is honoured by one endpoint | `noc_l2_adapter.v:194` decodes `op` as 0 read / 1 write; `noc_cu_base.v:241` reads the index and nothing above it, so every compute unit treats a write as a read and replies with the old value. A controller cannot tell the two apart except by comparing the reply against what it wrote. Making `noc_cu_base` honour `op` would give units writable control registers, which is a framework decision nobody has taken. |

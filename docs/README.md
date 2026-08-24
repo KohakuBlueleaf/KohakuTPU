@@ -56,14 +56,15 @@ instance share the port and nothing else:
 
 | | matrix cluster | vector core |
 |---|---|---|
-| L1 width | 928 bit, split A operand / B operand | 256 bit |
-| L1 count | 4 core + 1 accumulator tile | 1, plus a separate instruction memory |
-| read latency | 1 for L1, 2 for the accumulator | parameterised |
-| register file | none | three mirrored RAMs for three read ports |
+| L1 width | 928 bit, one memory per operand | 256 bit |
+| L1 count | 2, each two banks by address arithmetic | 1, plus a 32-bit instruction memory |
+| read latency | 1 for L1, 2 for the accumulator tile | 1, or 2 if L1 is built in URAM |
+| register file | none — the accumulator tile is the only other state | three mirrored RAMs, one per read port |
+| memories in total | 3 | 5 |
 
-Same project, same mesh, same port. 928 bits against 256; five memories
-against two. There is no framework-mandated L1, because there could not be
-one.
+Same project, same mesh, same port. 928 bits against 256, and the machine with
+the wider L1 is the one with fewer memories. There is no framework-mandated L1,
+because there could not be one.
 
 What *is* fully defined is **how you receive and send**. That is the trade:
 you design the whole unit, and you never have to work out how to connect it.
@@ -87,13 +88,16 @@ closure practice and bringup path that get it onto real silicon.
     DDR4 x N        control              instruction dispatch
       |                                     |
     +--------------------------------------------------------+
-    |  MAG (kohakumas)   memory agent, one per mesh           |
+    |  system node       MAG + mover + CPU, one per mesh      |
     |    descriptors in -> DRAM traffic -> streamed responses |
-    |    plus two addon slots: transform, staging            |
+    |    the CPU is a compute unit on the mesh with two       |
+    |    private wires inward: the mover's config port and    |
+    |    a requester slot on MAG's converged path             |
+    |    plus two addon slots: transform, staging             |
     +--------------------------------------------------------+
       |
     +--------------------------------------------------------+
-    |  mesh (kohakunoc)                                       |
+    |  mesh (kohakuaccel/noc)                                 |
     |                                                         |
     |    router --- router        each router carries local   |
     |      |          |           ports; endpoints hang off   |
@@ -135,7 +139,7 @@ Saying no here is cheaper than finding out after floorplanning.
 
 **[arch/](arch/)** — what exists and how it maps to real circuit. Start with
 [arch/README](arch/README.md) for the macro view, then the system that concerns
-you: [noc](arch/noc/), [mas](arch/mas/), [ship](arch/ship/) for assembly,
+you: [noc](arch/noc/), [sysnode](arch/sysnode/), [ship](arch/ship/) for assembly,
 [physical](arch/physical/) for floorplan and clocking, and
 [axi](arch/axi.md) for the boundary to everything outside.
 
@@ -175,18 +179,34 @@ it, and a framework doc that quotes them as if they were is wrong.
 
 ## Source layout
 
-    src/
-      kohakuaxi/   AXI utilities: fabric, bridges, address decode
-      kohakumas/   Memory agent: descriptors, DRAM ports, dispatch
-      kohakunoc/   Mesh: router, links, flit protocol, compute-unit port
-      common/      Shared primitives: FIFOs, named memory wrappers
-      kohakutpu/   KohakuTPU's compute units — a project, not the framework
-      synth_top/   Ship assemblies, per device
+    src/kohakuaccel/     THE FRAMEWORK
+      noc/               mesh: router, links, flit protocol, unit port,
+                         orchestrator, CU base, L2 adapter
+      sysnode/           system node: MAG, mover, transform slot, control
+                         processor, interlink
+      pe/rv32/           the CPU PE, and the SIMD PE behind SIMD_EN
+      axi/               station bus, links, AXI plumbing
+      common/            shared primitives: FIFOs, named memory wrappers
+      verif/             bench-only models: axi_ram, port checkers
+    src/templates/       worked examples with benches: CU, transform occupant,
+                         endpoint adapter
+    src/examples/saxpy/  the example project, RTL half
+    src/kohakutpu/       a project: matmul, vector, transform occupants, and
+                         the tops generated for it
+    src/kohakumpe/       a project: the SIMT PE
+    src/reference/       reference and proof-of-concept copies; nothing ships
+    src/attic/           dead
 
     compiler/          tensors, kernels, schedules, machine code
-    driver/            transports, dispatch, completion
+    driver/            kohakuaccel (framework) and kohakutpu (project)
+    scripts/py/        check.py, xsim.py, gen_mesh.py, the linters
     docs/              this tree
+    docs-web/          the same material as a site
     ref/               cloned reference frameworks, git-ignored
+
+**One coupling breaks the split above** and is not a documentation problem:
+`src/kohakuaccel/pe/rv32/simd/` instantiates arithmetic that exists only under
+`src/kohakutpu/`, so the framework does not build without that project.
 
 ## House rule
 

@@ -16,7 +16,7 @@ tags:
 > |---|---|
 > | §3 — what the mesh reads of a `CU_INST` header | **Fixed** |
 > | §4 — the memory agent's request encoding and mover commands | **Fixed** |
-> | §4.3 — which transform the preprocess flags select | **Addon** |
+> | §4.3 — which occupant the mover's transform id selects | **Addon** |
 > | §5 — the ownership split inside the payload | **Fixed** |
 > | §6 — retirement | **Fixed** |
 > | §8 — how a unit spends its own 256 bits | **Convention, free.** The agent forces none of it. |
@@ -40,8 +40,8 @@ reconciles them. §5 is the reconciliation, and it is normative.
 
 | # | Owner | Where the bits live | What they encode |
 |---|---|---|---|
-| 1 | **The mesh** — `kohakunoc` | The 32-bit flit header of every message | Routing, message class, tag, framing. §3. |
-| 2 | **The memory agent** — `kohakumas` | The payload of `MEM_RD_REQ` / `MEM_WR_REQ`, and the memory mover's command registers | Memory movement: addresses, extents, entry geometry, multicast, and the selection of the read path's preprocess/postprocess. §4. |
+| 1 | **The mesh** — `kohakuaccel/noc` | The 32-bit flit header of every message | Routing, message class, tag, framing. §3. |
+| 2 | **The system node** | The payload of `MEM_RD_REQ` / `MEM_WR_REQ`, and the memory mover's command registers | Memory movement: addresses, extents, entry geometry, multicast, and the mover's transform selection. §4. |
 | 3 | **The compute unit** — yours | The payload of `CU_INST` | Compute semantics. Everything the framework refuses to define, because defining it would decide what the unit computes. §5. |
 
 Owners 1 and 2 are **fixed contract**. Owner 3 is **served**: the framework will
@@ -113,14 +113,13 @@ One `MEM_RD_REQ` flit states an entire fetch. Field positions are in
 
 | Field | What it expresses |
 |---|---|
-| `addr` | Byte address, 34 bits — the whole physical map. |
+| `addr` | Byte address, **40 bits** — the whole physical map, including the aperture bit and the mesh id. [address-map.md](../address-map.md). |
 | `len` | Beats minus one, on the plain-read path. |
 | `flags[6]` `STREAM` | This descriptor covers `count` consecutive **entries**, not one fetch. |
 | `count` | How many, up to 255. |
 | `entry_words` | Words per entry. The entry geometry is stated per request, so a client whose line is not the default size streams without changing anything in the agent. |
-| `flags[4]` `QUANT` | Run the read path's **preprocess** on this operand. §4.3. |
-| `flags[5]` `BLAYOUT` | Which packing the preprocess should produce. §4.3. |
-| `peer`, `n_peer` | Up to three **extra destinations** for the response. The entry is read once and preprocessed once. |
+| `flags[4]`, `flags[5]` | **Reserved and ignored.** Were `QUANT` and `BLAYOUT`; a fetch is never transformed. §4.3. |
+| `peer`, `n_peer` | Up to three **extra destinations** for the response. The entry is read once. |
 | `txn` | The requester's tag. Responses carry it plus the entry index, so nothing needs a cursor. |
 
 What this buys a unit author, stated plainly: **there is no fetch loop to write.**
@@ -137,51 +136,55 @@ One `MEM_WR_REQ` flit followed by its data flits.
 | `addr` | Byte address of the burst. |
 | `len` | Beats minus one, **at most 7**. |
 
-Writes have no flags, no streaming form and no postprocess selection today. A
-unit that needs a format conversion on the way *in* uses the host upload path
-(see [memory-protocol.md](memory-protocol.md) §9.1), which has one.
+Writes have no flags and no streaming form. Neither reads nor writes select a
+transform — see §4.3.
 
-### 4.3 Preprocess and postprocess selection
+### 4.3 Transform selection
 
-> **Kind: Addon.** The two flag bits and the delivery shape are Fixed. What the
-> transform *does* is yours.
+> **Kind: Addon.** The selection encoding and the delivery shape are Fixed. What
+> the transform *does* is yours.
 
-`flags[4]` and `flags[5]` select a transform the memory agent applies to an
-operand on the way out of DRAM.
+**A memory request does not select a transform.** `flags[4]` and `flags[5]` used
+to be `QUANT` and `BLAYOUT` and are now reserved and ignored; a requester that
+sets them gets an untransformed read.
 
-The framework fixes the *shape*:
+The transform slot belongs to the **memory mover**, and selection rides in its
+descriptor:
 
-- the transform is named **on the request**, never by an address range the agent
-  remembers, so the driver decides per tensor and the agent holds no address map;
-- the result is delivered as whole **entries**, with per-entry tagging;
-- a converted entry and an unconverted one are the same thing on the wire, so the
-  flit format does not change with the transform.
+| field | width | who reads it |
+|---|---|---|
+| `XFORM_ID` | `ID_W` | the agent — 0 is bypass, *k* routes to occupant *k* |
+| `XFORM_MODE` | `MODE_W` | **the occupant only**; the agent carries it and never interprets it |
 
-The framework does **not** fix which transform. `flags[4]` means "apply the
-preprocess"; `flags[5]` selects between its two output packings. An accelerator
-supplies the module behind them.
+Selection is an **id, not a bit per transform**, so a design with several
+occupants picks one rather than encoding a mask. The framework fixes that the
+occupant declares its own geometry — `IN_BITS` and `OUT_WORDS` — because the
+mover has to size both walks before the transform has run.
 
-KohakuTPU's instance of it is a FP16-to-block-format quantiser with a shared
-E5M3 scale and row-wise or column-wise packing; that is one transform, and it
-sets that project's entry size of 2048 bits in, 1024 bits out.
+KohakuTPU's occupant at id 1 is a FP16-to-block-format quantiser with a shared
+E5M3 scale, 2048 bits in and 1024 out. Nothing in this encoding names that
+format.
 
-There is no postprocess hook on the write path today. The read-path hook is the
-extension point that exists.
+There is no postprocess hook on the write path. A move converts on its read
+side; a drain is written verbatim.
 
 ### 4.4 The memory mover
 
-A second instruction set in `kohakumas`, reached through the control window
-rather than the mesh: a layout, gather and fill engine with its own AXI master
-and no NoC endpoint. Its command registers are in
+A second instruction set in the system node, reached by **register writes rather
+than by a flit**: a layout, gather, fill and transform engine with its own AXI
+master and no NoC endpoint. Two things write those registers — the host through
+the control window, and the control processor through a private port of its own
+— and the register map is the same either way.
 [control-registers.md](control-registers.md) §3.
 
-| Mode | What it does |
-|---|---|
-| `COPY` | Move a region, source walker stepped in lockstep with the destination walker. |
-| `TRANSPOSE` | Allocated, **faults if requested**. Not implemented. |
-| `GATHER` | Indexed read, indices loaded from memory into an on-chip buffer. |
-| `GENERATE` | Fill from a counter-based PRNG, so the bytes are a pure function of `(seed, destination address)`. |
-| `FILL` | Fill with an immediate. |
+| Mode | | What it does |
+|---|---|---|
+| `COPY` | 0 | Move a region, source walker stepped in lockstep with the destination walker. |
+| `TRANSPOSE` | 1 | Allocated, **faults if requested**. Not implemented, and not needed: every index permutation is affine, so a transpose is `COPY` with the two walkers in different orders. |
+| `GATHER` | 2 | Indexed read, indices loaded from memory into an on-chip buffer. |
+| `GENERATE` | 3 | Fill from a counter-based PRNG, so the bytes are a pure function of `(seed, destination address)`. |
+| `FILL` | 4 | Fill with an immediate. |
+| `XFORM` | 5 | A `COPY` whose read return passes through the transform slot. §4.3. |
 
 Both source and destination are 6-dimensional descriptors with per-axis counts
 and strides. The **destination** defines the iteration space and the source is
@@ -189,12 +192,26 @@ stepped alongside it, which is what makes a source stride of zero a broadcast
 with no extra mode; a source element whose bounds check fails injects the
 immediate, which is how padding works.
 
+**`XFORM` inverts that**, and it has to: the entry size is the occupant's, so
+the SOURCE walker defines the iteration space and the destination steps once per
+entry. A bound axis is therefore unavailable on a transform move — a padded
+element issues no read, and the occupant would wait for a beat that never comes
+— so the mover raises fault 7 rather than converting the wrong bytes.
+
 The mover is word granular: every transfer is one `DATA_W`-bit beat, so strides
 must be multiples of `DATA_W/8` and a misaligned descriptor faults rather than
 moving the wrong bytes.
 
-A compute unit **cannot** command the mover. It is a host-side facility, and a
-unit that needs data rearranged asks for it between programs, not inside one.
+**An ordinary compute unit cannot command the mover**, and that is deliberate:
+the mover has one walker and no arbitration for it, so a unit that needs data
+rearranged asks for it between programs rather than inside one.
+
+The exception is the **control processor**, and it is an exception by wiring
+rather than by protocol. It sits on the mesh as a compute unit like any other,
+and it also has two private wires inward that no other unit has: the mover's
+config port, and a requester slot on the agent's converged path. Nothing it does
+travels as a flit, so no `CU_INST` encoding covers it and nothing in this section
+changes. See [arch/sysnode/control-processor](../arch/sysnode/control-processor.md).
 
 ## 5. Owner 3 — the split inside `CU_INST`
 
@@ -242,7 +259,7 @@ know will hold its dispatch credit forever.
 
 ## 7. Known divergence: the declared split nobody implements
 
-`src/kohakunoc/noc_pkt.vh` declares:
+`src/kohakuaccel/noc/noc_pkt.vh` declares:
 
 ```
 `define NOC_INST_LEN   255:248
@@ -286,7 +303,7 @@ Opcodes: 1 `FILL`, 2 `GEMM`, 3 `DRAIN`.
 | Bits | Field | Used by | Meaning |
 |---|---|---|---|
 | `[255:252]` | `op` | all | The opcode. |
-| `[251:218]` | `addr` | FILL, DRAIN | Operand base, or destination base. |
+| `[251:218]` | `addr` | FILL, DRAIN | Operand base, or destination base — the **low 34 bits**. The other six are at `[68:63]`. |
 | `[217:202]` | `n` | FILL, DRAIN | Entries, or sub-tiles. 16 bits because a resident tile holds 512. |
 | `[201]` | `sel` | FILL | 0 = A operand, 1 = B. |
 | `[200]` | `acc` | GEMM | Accumulate into the resident tile instead of reloading it. |
@@ -296,7 +313,7 @@ Opcodes: 1 `FILL`, 2 `GEMM`, 3 `DRAIN`.
 | `[175:168]` | `anchor` | GEMM, DRAIN | Common output exponent. |
 | `[167:144]` | `peers` | FILL | Other clusters receiving this fetch, `{y,x}` each. Copied straight into the read descriptor's `peer` field. |
 | `[143:142]` | `npeer` | FILL | How many are present. |
-| `[141]` | `preq` | FILL | The operand is already converted in memory, so the read is issued with `QUANT` clear. |
+| `[141]` | `preq` | FILL | **Reserved.** Every operand is already converted in memory — the cluster drives the retired `QUANT` bit to 0 unconditionally. |
 | `[140:133]` | `eoff` | FILL | First local entry to write. Becomes the request's `txn`. |
 | `[132:125]` | `aoff` | GEMM | Base entry on the A side. |
 | `[124:117]` | `boff` | GEMM | Base entry on the B side. |
@@ -314,7 +331,8 @@ Opcodes: 1 `FILL`, 2 `GEMM`, 3 `DRAIN`.
 | `[82:79]` | `dack_x` | DRAIN | |
 | `[78:77]` | `dmesh` | DRAIN | Destination mesh, meaningful only when `dfin` is nonzero. |
 | `[76:69]` | `dfin` | DRAIN | `{fin_y, fin_x}` in that mesh. Nonzero is what makes the drain remote. |
-| `[68:0]` | — | | Unused. |
+| `[68:63]` | `addr_hi` | FILL, DRAIN | `addr[39:34]`. See below. |
+| `[62:0]` | — | | Unused. |
 
 Two encoding decisions worth copying, both of which are about **not breaking old
 programs**:
@@ -324,6 +342,18 @@ programs**:
   written before any of these bits existed still means what it did.
 - New fields are appended downward into unused space rather than overlapped onto
   an existing field's spare bits.
+
+**THE ADDRESS IS SPLIT, AND THAT IS THE SECOND RULE APPLIED TO A WIDENING.**
+Going from 34 bits to 40 could have moved every field below `addr`; instead the
+six new bits went to the tail, at `[68:63]`, and `addr` stayed exactly where it
+was. All-zero `addr_hi` is mesh 0, DRAM — which is what every pre-40-bit
+encoding carries, so old programs still mean what they meant.
+
+The cost is that **a reader must rejoin them**. Taking `[251:218]` alone drops
+the aperture bit and the mesh id, so a staging or a remote address decodes as
+local DRAM at the same offset: a legal read of the wrong window, not a fault.
+`isa/cluster.py`'s `_addr` splits, `model.py`'s `full_addr` rejoins, and
+`mx_cluster_cu.v:268` is `{inst_flit[68 -: 6], inst_flit[251 -: 34]}`.
 
 ### 8.2 `vec_cu` — vector core
 
@@ -335,8 +365,15 @@ Opcodes: 1 `IMEM`, 2 `DESC`, 3 `RUN`.
 | `[251:243]` | `addr` | IMEM, RUN | Instruction-memory address, or the start PC. |
 | `[251:249]` | `ad` | DESC | Descriptor index. Overlaps `addr` — the opcode disambiguates. |
 | `[248:246]` | `fld` | DESC | Field within the descriptor. |
-| `[245:212]` | `value` | DESC | The value, 34 bits. |
+| `[245:212]` | `value` | DESC | The value, 34 bits. On `fld = 0` this is the **low 34** of a base address. |
+| `[68:63]` | `value_hi` | DESC | `addr[39:34]`, on `fld = 0` only. A dimension never uses it. |
 | `[31:0]` | `word` | IMEM | The instruction word to store. |
+
+A base address is split here for the same reason and in the same place as the
+cluster's — `isa/vector.py`'s `desc_value_hi_lsb` is 63, matching `cluster.py`'s
+`addr_hi` — and it has the same trap: read `[245:212]` alone and a staging or a
+remote base decodes as local DRAM at the same offset. `model.py`'s `_descriptor`
+rejoins them.
 
 This unit spends most of its 256 bits on nothing, because its real instruction
 set is a kernel in its own instruction memory. `CU_INST` here is a loader plus a

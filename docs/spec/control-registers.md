@@ -27,7 +27,7 @@ are the mechanism that keeps dispatch from deadlocking the mesh.
 
 ## 1. `CU_CTRL` — the per-unit block
 
-Source of truth: `src/kohakunoc/noc_cu_base.v`.
+Source of truth: `src/kohakuaccel/noc/endpoint/noc_cu_base.v`.
 
 ### 1.1 How it is accessed
 
@@ -173,7 +173,7 @@ obligation to publish the meaning is a MUST.
 
 ## 2. The orchestrator register map
 
-Source of truth: `src/kohakunoc/noc_orchestrator.v`.
+Source of truth: `src/kohakuaccel/noc/ctrl/noc_orchestrator.v`.
 
 ### 2.1 Access
 
@@ -237,6 +237,23 @@ The sequence:
 2. `PROG_BASE = B`, `PROG_LEN = n`, `PROG_DST = {y, x}`.
 3. `PROG_CRED = c`, seeding the credit counter.
 4. Write `PROG_KICK`.
+
+**That order is NOT a hardware requirement. It is a workaround for the striding
+defect in §2.7**, and on a bitstream carrying that defect it is mandatory. Read
+§2.7 before changing anything in this sequence: on such a bitstream `PROG_LEN` is
+what actually launches the dispatch, `PROG_KICK` launches nothing, and each
+position of the order is forced for a different reason.
+
+**A driver that elides unchanged writes must not elide these.** Kick 2 of a round
+normally carries a new `PROG_BASE` and the SAME `PROG_LEN`, so a write-shadow
+skips the length — which the sequence has just cleared — and the kick launches
+zero flits. Nothing reports an error: the bus is healthy, `STATUS` shows
+`mesh_ready`, and the symptom is one node taking every completion while the other
+signals nothing.
+
+Neither failure raises `error`. `PROG_STAT` is the only witness — `run = 1` with
+`flits_left > 0` and `credit = 0` is a starved stream; a node whose
+`NODE_STATUS.count` never moves was never addressed.
 
 `PROG_BASE` exists so a second target's flits can be staged while the first
 program is still being consumed. Without it every kick restarts at slot 0, which
@@ -338,6 +355,144 @@ does not: a full program's last 26 flits land in register space, the program
 stops early, and the staging RAM still holds whatever was there before. Size the
 mapping from `STAGE_FLITS`, never from a page.
 
+**Staging MUST be written as contiguous blocks, ascending. §2.7.** Word by word
+it loses three quarters of every flit on current silicon, with no symptom.
+
+### 2.7 The 32-byte write window — a defect, and the workaround built on it
+
+**On a bitstream built before 2026-08-23, one 64-bit host write to this window
+writes FOUR registers.** Everything §2.3 calls a hardware requirement is a
+workaround for this, discovered empirically and mis-attributed.
+
+**How.** `noc_orchestrator.v:366` decodes `wsel` from `waddr`, the same register
+`:448` advances by 8 on every write beat; the aux path at `:424` did the same and
+neither read `s_axi_wstrb`. Every station-bus manager flit-aligns
+(`sb_nmu.v:134` `PACK=1` whenever `MW <= FW`, `:355` `hdr_size = FSZ`, `:381`
+address rounded **down** to the 32-byte flit), the mesh control port is 32-bit
+(`gen_station_wrap.py:664`), and `scripts/tcl/v6/40_bus.tcl:144` upsizes 32→64 in
+front of it. So a `write64` arrives as four 64-bit beats covering the whole flit,
+and the three the host did not write carry **zeros** — `sb_nmu.v:578` clears the
+packer at each flit's first beat and merges in only strobed lanes. That is why
+the symptom is a neighbour *zeroed* rather than corrupted.
+
+The window in 32-byte flits, in write-decode terms:
+
+| Flit | Registers | Exposure |
+|---|---|---|
+| `0x000` | `CTRL`, –, –, `IRQ_STAT` | Writing `IRQ_STAT` zeroes `CTRL`. Nothing reads `CTRL`. |
+| `0x020` | `IRQ_EN`, –, –, – | Safe. |
+| `0x040` | `PROG_DST`, `PROG_LEN`, **`PROG_KICK`**, – | **Any write here fires a dispatch.** |
+| `0x060` | `PROG_CRED`, `PROG_BASE`, **`SIG_DONE`**, – | **Any write here zeroes the other two and clears `SIG_DONE`.** |
+| `0x100` | `TX_FLIT[0..3]` | **Safe even before the fix** — `:416` is the one path that honoured byte strobes. |
+| `0x140` | `TX_KICK`, –, –, – | Safe: one decoded register in the flit. |
+| `0x1C0` | `RX_POP`, –, –, – | Safe: one decoded register in the flit. |
+| `0x800` | `AUX_CFG` +0x00/+0x08/+0x10/+0x18 | Mover `CTRL` shares a flit with its descriptor. §3. |
+| `0x2000`+ | `STAGE` | Safe as a **contiguous block write** — every beat is then strobed. A lone `write64` zeroes its three neighbours. |
+
+**The fix is the pattern this file already contained.** `TX_FLIT` was never
+exposed because `noc_orchestrator.v:416-420` loops over `s_axi_wstrb` per byte —
+one path in the whole FSM got it right and the rest wrote `s_axi_wdata`
+wholesale. The change generalises that loop; it invents nothing.
+`TX_KICK` and `RX_POP` are safe for a different and structural reason: each is
+the only **write-decoded** register in its flit, so no spurious kick or pop is
+reachable however the beats land.
+
+### 2.7.1 Fixed in RTL 2026-08-24 — but §2.3's order stays, because no bitstream carries it
+
+The 2026-08-23 change was reverted the same day by a blanket RTL revert, which is
+why the defect above outlived its own fix. It was re-applied on 2026-08-24 in
+three parts: a beat with no strobes does nothing at all (no register write and no
+*arrival*, which is what `PROG_KICK` and `SIG_DONE` react to); register writes
+byte-merge, with the 16-bit `PROG_*` ones gated on `|s_axi_wstrb[1:0]`; and
+`AUX_CFG` accumulates at the 8-aligned offset into a one-entry shadow, because
+the client has no byte enables.
+
+**Measured, `tests/sysnode/mover_cfg32_tb.v`:**
+
+| shape | before | after |
+|---|---|---|
+| one 64-bit beat, strobes `FF` | 7 pulses, exact | 7 pulses, exact |
+| two halves, `0F` then `F0` | 64 of 64 words wrong | **0 wrong** |
+| 2-beat burst | 63 wrong | 63 — correct: it addresses two registers by construction, and no strobe rule can make it mean one |
+| **flit-aligned, the ship's shape** | **28 pulses, 64 of 64 wrong** | **7 pulses, 0 wrong** |
+
+`PASS mover_cfg32: 503 checks`, and again at the ship's clocking.
+
+**In simulation the kick order stops mattering.** Phases `F`, `I` and `J` of that
+bench show zero spurious kicks and both the documented *and* the natural `PROG_*`
+order reaching node `0x21`. The five writes still work — now because `PROG_KICK`
+genuinely kicks, which it never did before.
+
+**On silicon it still matters, and that is the operative fact.** The fix is in
+RTL and verified in simulation only; v7 and v7.1 are the bitstreams in hand and
+neither carries it. `Program.kick` keeps the order deliberately. See the
+retirement condition at the end of this section — it has not been met.
+
+**Staging is safe only as contiguous block writes, and only upwards.** Written
+word by word, each write zeroes the three staging words sharing its flit; the
+addresses ascend, so **only the last word of every four survives** — three
+quarters of every instruction, silently. `Program.upload` refuses a transport
+with no bulk write path for exactly this reason, and `Transport.bulk` defaults
+to false, so a backend that forgets to set it gets the refusal rather than the
+corruption.
+
+Flit-aligned staging **cannot be guaranteed**: a slot is `5 * 8 = 40` bytes and
+the window is 32, so a run of `n` slots closes a window only when `n % 4 == 0`,
+and `STAGE` is write-only so there is no read-modify-write to pad with. The
+trailing partial window zeroes up to three words *above* the run, which fall in
+the next slot. That is harmless while slots ascend. **It is not harmless to
+stage a lower slot range while a higher one is live** — which is precisely the
+multi-program case `PROG_BASE` exists to serve. Stage upwards, or stage in
+multiples of four slots.
+
+**The trace.** `BASE, LEN, DST, CRED, KICK`, measured in `tests/sysnode/mover_cfg32_tb.v`
+phase E:
+
+| after | run | len | dst | cred | flits out |
+|---|---|---|---|---|---|
+| `BASE` | 0 | 4 | 21 | **0** | 0 |
+| `LEN` | **1** | 4 | **00** | 0 | 0 |
+| `DST` | 1 | **0** | 21 | 0 | 0 |
+| `CRED` | 0 | 0 | 21 | 12 | **4** |
+| `KICK` | 0 | 0 | 00 | 12 | 4 |
+
+**`PROG_LEN` is the kick** — `0x50` is in its flit. **`PROG_KICK` has never
+launched anything on this silicon.** Each position is forced: `BASE`'s
+credit-zeroing is what *holds* the dispatch `LEN` fires; `DST` repairs the
+destination `LEN` destroyed before any flit moves; `CRED` releases the held
+dispatcher. Any other order and the dispatch leaves with `PROG_DST = 0` — node
+`{0,0}`, "answer the sender", dropped. Measured: the documented order puts the
+first flit at `0x21`, the natural order at `0x00`. **That** is why the recorded
+symptom is "launches nothing, silently": the flits go out and nothing retires.
+
+**The attribution in §2.3 is wrong three ways.** `PROG_BASE` zeroes the **credit
+only**; **`PROG_LEN`** zeroes `PROG_DST`; **`PROG_DST`** zeroes `PROG_LEN`. And a
+fourth effect was never recorded: **`PROG_BASE` also clears `SIG_DONE`**, so a
+completion baseline read before kicking is destroyed. `Program.await_node_at`
+survives only because it polls `NODE_STATUS`, which is per node and not in this
+window.
+
+**The ordering may be retired ONLY once a post-fix bitstream ships, and not
+before.** `Program.kick` keeps it deliberately: v7 is on the card and v7.1 is
+being implemented without the fix, so dropping it would break every board that
+can be run today. Note what breaks in the other direction too — code that
+*relies* on `PROG_BASE` clearing the credit stops working on a post-fix
+bitstream, so the dependency runs both ways and the switch is a deliberate act,
+not a cleanup. When a post-fix bitstream ships, retire it on purpose: delete the
+ordering, delete this paragraph, and say which bitstream made it safe.
+
+**`SIG_DONE` is collateral, and it is worse than one lost baseline.** Every
+`PROG_CRED` and every `PROG_BASE` write clears it (0x70 shares their flit), so a
+kick clears it **twice**, and in a multi-kick round each kick destroys the
+completions the previous ones already counted. Any wait on an absolute
+`SIG_DONE` total — `Program.await_all` — would therefore poll for a number that
+keeps being reset, and hang. **It is latent, not live: `await_all` and
+`clear_done` have no callers.** Every path that actually waits uses
+`await_node_at` / `await_signal`, which poll `NODE_STATUS` at `0x1000+` — a
+per-node mirror written only by arriving `CU_SIGNAL`s, never by a host write, and
+outside these flits entirely. That immunity is an accident of address, not a
+design choice, so **do not start using `await_all` on a pre-fix bitstream.**
+
 ## 3. The memory mover's command registers
 
 The `AUX_CFG` window at `0x0800`–`0x08FF` is forwarded out of the orchestrator
@@ -361,7 +516,7 @@ Mover registers, at client offsets. Writes only; status is read back through
 | Offset | Fields |
 |---|---|
 | `0x00` | `[2:0]` mode, `[4:3]` element width, `[15:8]` flags, `[16]` **GO** |
-| `0x10` | `[0]` which walker (0 source, 1 destination), `[4+:ADDR_W]` base address, `[46:44]` number of dimensions |
+| `0x10` | `[0]` which walker (0 source, 1 destination), `[4+:ADDR_W]` base address, `[46:44]` number of dimensions, and on the SOURCE walker `[50:47]` `XFORM_ID`, `[58:55]` `XFORM_MODE` — §3.2 |
 | `0x18` | `[0]` walker, `[3:1]` dimension, `[19:4]` count, `[51:20]` signed stride |
 | `0x20` | `[1:0]` axis, `[17:2]` signed axis step |
 | `0x28` | `[0]` walker, `[1]` axis select, `[17:2]` signed axis base, `[33:18]` axis extent |
@@ -371,7 +526,89 @@ Mover registers, at client offsets. Writes only; status is read back through
 | `0x50` | `[31:0]` gather pitch, `[47:32]` gather words |
 
 Modes: `0` copy, `1` transpose (**faults — not implemented**), `2` gather,
-`3` generate, `4` fill.
+`3` generate, `4` fill, `5` transform. §3.2.
+
+Fault codes: `0` none, `1` index length, `2` range, `3` AXI, `4` mode,
+`5` element width, `6` alignment, `7` a bound axis in a transform move.
+
+### 3.1 The control processor does not use this window
+
+**The mover is an executor of the control processor, not a peer.** To *issue a
+move* the processor does not touch these offsets one at a time. It builds a
+descriptor in its scratchpad —
+
+```
+word 0        : n, the number of register writes
+then n times  : {24'b0, offset[7:0]}, value[31:0], value[63:32]
+```
+
+— and stores the pointer to `MVGO` (`0xF000_0000`). `mv_exec.v` fetches it and
+drives the same `cfg` port this section describes, offset for offset. Program
+order is the queue; there is no ring buffer and no doorbell.
+
+So **`AUX_CFG` is host-facing only, and it disappears** rather than being
+mirrored into the processor's address space: issuing a move register-by-register
+is the transport cost the executor design exists to delete.
+
+**That is about the window, not about registers.** The processor reaches the
+mover's **status**, and each occupant's registers, through its own **node range**
+by ordinary load and store — a range already carved out ahead of the L1
+(`l1_req = l1_req_core && !is_node`), which is what such a window needs: uncached
+and not reorderable against `MVGO`. The mover's *control* registers are not
+there: the descriptor already is a stream of register writes, so a move costs one
+store rather than one per field.
+
+| address | | |
+|---|---|---|
+| `0xF000_0000` | W | `MVGO` — the descriptor pointer, and the go |
+| `0xF000_0000` | R | `[0]` busy, `[7:4]` mover fault, `[11:8]` occupant fault |
+| `0xF001_0000 \| (id << 8) \| reg` | RW | occupant `id`'s register `reg`, 4 bytes wide |
+
+Bit 16 splits the range. Nothing here is special; it is what a load and a store
+already are. The host keeps the `AUX_STAT` mirror and gets nothing new.
+
+**A node read is answered in WB**, one cycle after the request, exactly as an L1
+hit is — the value is registered rather than returned combinationally, because
+the core samples `l1_rdata` with `l1_req` already low.
+
+### 3.2 The converting move
+
+**Mode 5, an ordinary descriptor.** The transform slot is on the mover's own
+read-return path, so `mem/L2 → occupant → mem/L2` is one pass of one engine.
+There is no second command set and no second engine.
+
+The occupant is named on the **source walker's header**, register `0x10` with
+`sel = 0`, in bits the header already left free:
+
+| bits | field |
+|---|---|
+| `[50:47]` | `XFORM_ID` — `0` bypass, `1` slot 1, `n` slot n |
+| `[58:55]` | `XFORM_MODE` — **opaque**, carried to the occupant and never interpreted |
+
+KohakuTPU's occupant reads `mode[0]` as its A/B packing select.
+
+The two walkers count different things, and this is the one place a transform
+descriptor differs from a copy:
+
+| walker | counts | typical stride |
+|---|---|---|
+| source (`sel = 0`) | **source words**, `IN_BITS / DATA_W` per entry | 32, or whatever the layout is |
+| destination (`sel = 1`) | **entries** | `OUT_WORDS × 32` |
+
+The source defines the iteration space. A strided source needs no gather pass:
+the walker issues the entry's reads wherever they live and the in-order returns
+stream into the occupant.
+
+An entry is `IN_BITS` of source and `OUT_WORDS` of destination, both declared by
+the occupant, because the mover sizes both walks before the transform has run.
+KohakuTPU's declares 2048 and 4 — eight source beats in, four words out.
+`OUT_WORDS` is at most 4, because the bank presents four word outputs.
+
+**A bound axis faults (code 7).** A padded element issues no read and the
+occupant is fed a fixed beat count off the read return, so a bound axis would
+leave an entry a beat short forever.
+
+Progress and faults are reported through `AUX_STAT` as for any other mode.
 
 `AUX_STAT` at `0x0078` reports:
 
@@ -430,7 +667,7 @@ All five are **sticky** and cleared only by writing `0x80` bit 2.
 
 ## 5. The host control-program engine
 
-Source of truth: `src/kohakuaxi/main_orch.v`. A separate AXI slave — not a mesh
+Source of truth: `src/kohakuaccel/verif/main_orch.v`. A separate AXI slave — not a mesh
 node — whose reach into the machine is an AXI write into a memory agent's control
 window. Dispatch, configuration and debug injection therefore share one
 mechanism.
@@ -475,4 +712,4 @@ memory-mapped. Branches or arithmetic here would duplicate the host.
 | `CTRL`, `IRQ_EN`, `IRQ_STAT` | Storage with no consumer. No interrupt output exists on the orchestrator. |
 | Staging window versus 4 KB | The decode is derived from `STAGE_WORDS` and at the default `STAGE_FLITS = 128` extends past `0x2FFF`. Correct in RTL; a hazard for a host that assumes one page. §2.6. |
 | `CU_VERSION` default | The parameter defaults to `8'h01`; every instantiation in the tree overrides it to the current build number. A unit that forgets to override it reports a version it does not have. |
-| Orchestrator location | `noc_orchestrator.v` lives under `src/kohakunoc/` but is the memory agent's control plane and is instantiated only by `mag.v`. |
+| Orchestrator location | `noc_orchestrator.v` lives under `src/kohakuaccel/noc/` but is the memory agent's control plane and is instantiated only by `mag.v`. |

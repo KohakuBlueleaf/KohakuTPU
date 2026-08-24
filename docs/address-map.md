@@ -1,3 +1,12 @@
+---
+title: Address map
+summary: The 40-bit address every unit issues, the 43-bit AXI window a host drives, and why the mesh id appears in both.
+tags:
+  - architecture
+  - memory
+  - addressing
+---
+
 # Address map: outside vs inside
 
 The machine is a **40-bit** machine. Every address a unit issues, every address in
@@ -10,9 +19,10 @@ an instruction, and every address a decoder tests is 40 bits:
 [35:0]   local      64 GB
 ```
 
-`mm_mover.v:16` states it, and `mag_stage.v:69-75`, `mag_stage_port.v:87-88` and
-`mag_mem_port.v:262-263` all test it **absolutely** -- an address carries which
-mesh it belongs to, no matter who issued it or where it arrives.
+`mm_mover.v`'s header states it, and `mag_stage.v:69-75`,
+`mag_stage_port.v:87-88` and `mag_mem_port.v:290-292` all test it
+**absolutely** -- an address carries which mesh it belongs to, no matter who
+issued it or where it arrives.
 
 `kohakuaccel/machinespec.py:global_addr` builds this form for the compiler, and
 raises for a `base` that does not fit one mesh's 64 GB.
@@ -76,16 +86,25 @@ independent. A write into mesh 2's window carrying `[37:36] = 3` is decoded by
 mesh 2 as remote (`mag_ilink.v:6`, `awaddr[37:36] != my_mesh`) and forwarded over
 the ilink.
 
-NOT YET TRACED: that the `S_AXI_MEM` path reaches the ilink forwarder the way the
-mover's path does. The decoders are absolute, so the address is *classified*
-remote; whether the forwarding is wired for host traffic is unverified. Do not
-plan around it until someone follows the path.
+**It does not reach the forwarder, though.** `mag.v:973-977` wires
+`mag_ilink`'s AXI slave side to `mv_*` — the **mover's** write channel, and only
+that. `S_AXI_MEM` becomes its own requester on MAG's converged path
+(`mag.v:742`, `:753`, slot `UP`) and nothing on that path decodes `[37:36]` for
+forwarding, so a host write carrying another mesh's id reaches `M_AXI_DRAM` with
+its full 40-bit address and lands in **local DRAM above 64 GB**, where nothing
+answers.
+
+The same asymmetry covers the aperture: `[39]` set on a host access does not
+reach the staging store either. Both are the mover's to issue. A host that wants
+bytes in another mesh writes them into that mesh's own window; a host that wants
+bytes in staging asks the control processor to move them.
 
 ## If the window and the address disagree
 
 Nothing faults. `mine` simply stays low in `mag_stage_port.v:87` and no requester
 claims the beat, so the access is never answered -- it presents as a hang, not as
-an error. A driver that sets the window but forgets `[37:36]` sees exactly this.
+an error. A driver that sets the window but forgets `[37:36]` sees exactly this,
+and on JTAG a hung access takes the session with it.
 
 ## Capacity
 
