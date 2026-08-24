@@ -206,13 +206,13 @@ module sb_line4 #(
     function integer port_dom;
         input integer p;
         begin
-            if (p < 2) begin// mesh
+            if (p < 2) begin  // mesh
                 port_dom = 0;
             end
-            else if (p == 2) begin// ddr
+            else if (p == 2) begin  // ddr
                 port_dom = 1;
             end
-            else begin// ctrl
+            else begin  // ctrl
                 port_dom = 2;
             end
         end

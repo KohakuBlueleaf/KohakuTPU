@@ -43,38 +43,38 @@ module sb_line4_tb;
     // FOUR, deliberately unequal: each SLR's MIG has its own ui_clk, so one
     // shared clock here would leave three of the four crossings untested.
     reg clk_ddr0 = 0, clk_ddr1 = 0, clk_ddr2 = 0, clk_ddr3 = 0;
-    always begin// 299.9 MHz
+    always begin  // 299.9 MHz
         #1.667 clk_ddr0 = ~clk_ddr0;
     end
-    always begin// 292.1 MHz
+    always begin  // 292.1 MHz
         #1.712 clk_ddr1 = ~clk_ddr1;
     end
-    always begin// 308.1 MHz
+    always begin  // 308.1 MHz
         #1.623 clk_ddr2 = ~clk_ddr2;
     end
-    always begin// 285.9 MHz
+    always begin  // 285.9 MHz
         #1.749 clk_ddr3 = ~clk_ddr3;
     end
     wire [3:0] tb_dclk = {clk_ddr3, clk_ddr2, clk_ddr1, clk_ddr0};
-    always begin// 400.0 MHz
+    always begin  // 400.0 MHz
         #1.250 bus_clk  = ~bus_clk;
     end
-    always begin// 100.0 MHz
+    always begin  // 100.0 MHz
         #5.000 clk_ctrl = ~clk_ctrl;
     end
-    always begin// 250.0 MHz
+    always begin  // 250.0 MHz
         #2.000 clk_xdma = ~clk_xdma;
     end
-    always begin// 237.1 MHz
+    always begin  // 237.1 MHz
         #2.109 clk_s0   = ~clk_s0;
     end
-    always begin// 299.9 MHz
+    always begin  // 299.9 MHz
         #1.667 clk_s1   = ~clk_s1;
     end
-    always begin// 180.3 MHz
+    always begin  // 180.3 MHz
         #2.773 clk_s2   = ~clk_s2;
     end
-    always begin// 210.7 MHz
+    always begin  // 210.7 MHz
         #2.373 clk_s3   = ~clk_s3;
     end
 
@@ -86,13 +86,13 @@ module sb_line4_tb;
 `ifdef SB_LINKCDC
     localparam integer P_CDC = 1;
     reg bclk1 = 0, bclk2 = 0, bclk3 = 0;
-    always begin// 364.2 MHz
+    always begin  // 364.2 MHz
         #1.373 bclk1 = ~bclk1;
     end
-    always begin// 310.4 MHz
+    always begin  // 310.4 MHz
         #1.611 bclk2 = ~bclk2;
     end
-    always begin// 421.2 MHz
+    always begin  // 421.2 MHz
         #1.187 bclk3 = ~bclk3;
     end
     wire [3:0] bclk = {bclk3, bclk2, bclk1, bus_clk};

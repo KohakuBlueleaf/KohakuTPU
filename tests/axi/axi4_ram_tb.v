@@ -116,7 +116,7 @@ module axi4_ram_tb;
             awid <= id; awaddr <= addr; awlen <= len; awsize <= 3'd3;
             awburst <= 2'b01; awvalid <= 1'b1;
             @(posedge clk);
-            while (!awready) begin// wait for the slave to take AW
+            while (!awready) begin  // wait for the slave to take AW
                 @(posedge clk);
             end
             awvalid <= 1'b0;

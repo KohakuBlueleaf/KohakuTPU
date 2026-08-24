@@ -28,25 +28,25 @@ module sb_quad_tb;
 
     reg bus_clk = 0, clk_ctrl = 0, clk_xdma = 0;
     reg clk_s0 = 0, clk_s1 = 0, clk_s2 = 0, clk_s3 = 0;
-    always begin// 400.0 MHz
+    always begin  // 400.0 MHz
         #1.250 bus_clk  = ~bus_clk;
     end
-    always begin// 100.0 MHz
+    always begin  // 100.0 MHz
         #5.000 clk_ctrl = ~clk_ctrl;
     end
-    always begin// 250.0 MHz
+    always begin  // 250.0 MHz
         #2.000 clk_xdma = ~clk_xdma;
     end
-    always begin// 237.1 MHz, deliberately odd
+    always begin  // 237.1 MHz, deliberately odd
         #2.109 clk_s0   = ~clk_s0;
     end
-    always begin// 299.9 MHz
+    always begin  // 299.9 MHz
         #1.667 clk_s1   = ~clk_s1;
     end
-    always begin// 180.3 MHz
+    always begin  // 180.3 MHz
         #2.773 clk_s2   = ~clk_s2;
     end
-    always begin// 210.7 MHz
+    always begin  // 210.7 MHz
         #2.373 clk_s3   = ~clk_s3;
     end
 

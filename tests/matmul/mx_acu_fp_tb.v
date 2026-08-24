@@ -325,7 +325,7 @@ module mx_acu_fp_tb;
         end
         pack_parts;
         do_op(OP_LOAD, 6);
-        for (b = 0; b < 8; b = b + 1) begin// ~1.05e6, way past FP16
+        for (b = 0; b < 8; b = b + 1) begin  // ~1.05e6, way past FP16
             do_op(OP_ADD, 6);
         end
         do_op(OP_EMIT, 6);

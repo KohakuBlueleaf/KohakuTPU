@@ -107,7 +107,7 @@ module sb_v67_jtag_tb;
     // BUS_MHZ 200, CTRL 100, XDMA 250, mesh clk_out4 300, DDR ui_clk 300.
     // LINK_CDC=1: four independent MMCMs, so four unrelated 200 MHz clocks.
     reg bclk0 = 0, bclk1 = 0, bclk2 = 0, bclk3 = 0;
-    always begin// 200.0 MHz
+    always begin  // 200.0 MHz
         #2.500 bclk0 = ~bclk0;
     end
     always begin
@@ -121,15 +121,15 @@ module sb_v67_jtag_tb;
     end
 
     reg clk_ctrl = 0, clk_xdma = 0;
-    always begin// 100.0 MHz
+    always begin  // 100.0 MHz
         #5.000 clk_ctrl = ~clk_ctrl;
     end
-    always begin// 250.0 MHz
+    always begin  // 250.0 MHz
         #2.000 clk_xdma = ~clk_xdma;
     end
 
     reg clk_s0 = 0, clk_s1 = 0, clk_s2 = 0, clk_s3 = 0;
-    always begin// MAG clk_out4, 300 MHz
+    always begin  // MAG clk_out4, 300 MHz
         #1.667 clk_s0 = ~clk_s0;
     end
     always begin
@@ -143,7 +143,7 @@ module sb_v67_jtag_tb;
     end
 
     reg clk_ddr0 = 0, clk_ddr1 = 0, clk_ddr2 = 0, clk_ddr3 = 0;
-    always begin// MIG ui_clk, 300 MHz
+    always begin  // MIG ui_clk, 300 MHz
         #1.667 clk_ddr0 = ~clk_ddr0;
     end
     always begin

@@ -24,19 +24,19 @@ module sb_root9_tb;
 
     // ------------------------------------------------------------- clocks
     reg bus_clk = 0, clk_ctrl = 0, clk_xdma = 0, clk_mesh = 0, clk_ddr = 0;
-    always begin// 400.0 MHz
+    always begin  // 400.0 MHz
         #1.250 bus_clk  = ~bus_clk;
     end
-    always begin// 100.0 MHz
+    always begin  // 100.0 MHz
         #5.000 clk_ctrl = ~clk_ctrl;
     end
-    always begin// 250.0 MHz
+    always begin  // 250.0 MHz
         #2.000 clk_xdma = ~clk_xdma;
     end
-    always begin// 237.1 MHz, deliberately odd
+    always begin  // 237.1 MHz, deliberately odd
         #2.109 clk_mesh = ~clk_mesh;
     end
-    always begin// 299.9 MHz
+    always begin  // 299.9 MHz
         #1.667 clk_ddr  = ~clk_ddr;
     end
 

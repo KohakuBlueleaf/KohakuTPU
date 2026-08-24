@@ -106,6 +106,14 @@ def strip_block_comments(text):
     )
 
 
+def _tail(sep, cmt):
+    """A line's trailing comment, re-attached with a space in front of it.
+
+    `f"... begin{sep}{cmt}"` produced `begin// mesh`: legal, and unreadable.
+    """
+    return f"  {sep}{cmt}" if sep else ""
+
+
 def _rel(f):
     """`f` relative to the repo, or its own path when it is outside one."""
     try:
@@ -647,7 +655,7 @@ def rewrite_blocks(text):
             out.append(raw)
             continue
         ind = m.group("ind")
-        out.append(f"{head.rstrip()} begin{sep}{cmt}{nl}")
+        out.append(f"{head.rstrip()} begin{_tail(sep, cmt)}{nl}")
         out.append(f"{ind}    {rest.strip()}{nl}")
         out.append(f"{ind}end{nl}")
         n += 1
@@ -689,7 +697,7 @@ def rewrite_tails(text):
                 head, rest = code[:close], code[close:]
                 if _one_statement(rest):
                     ind = m.group("ind")
-                    out.append(f"{head.rstrip()} begin{sep}{cmt}{nl}")
+                    out.append(f"{head.rstrip()} begin{_tail(sep, cmt)}{nl}")
                     out.append(f"{ind}    {rest.strip()}{nl}")
                     out.append(f"{ind}end{nl}")
                     n += 1
@@ -711,7 +719,7 @@ def rewrite_tails(text):
             if _one_statement(joined):
                 if m.group("lead"):
                     out.append(f"{ind}end{nl}")
-                out.append(f"{ind}else begin{sep}{cmt}{nl}")
+                out.append(f"{ind}else begin{_tail(sep, cmt)}{nl}")
                 out.append(f"{ind}    {st}{nl}")
                 # Shifted by as much as the first line moved, so a wrapped
                 # argument list stays lined up under its opening parenthesis.
@@ -833,7 +841,7 @@ def rewrite_if_else_line(text):
             out.append(raw)
             continue
         ind = m.group("ind")
-        out.append(f"{head.rstrip()} begin{sep}{cmt}{nl}")
+        out.append(f"{head.rstrip()} begin{_tail(sep, cmt)}{nl}")
         out.append(f"{ind}    {a}{nl}")
         out.append(f"{ind}end{nl}")
         out.append(f"{ind}else begin{nl}")

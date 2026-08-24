@@ -76,7 +76,7 @@ module vec_alu_tb;
             if (f[22:15] == 8'd0) begin
                 e8_real = 0.0;
             end
-            else if (f[22:15] == 8'hFF) begin// inf stand-in
+            else if (f[22:15] == 8'hFF) begin  // inf stand-in
                 e8_real = 1.0e300;
             end
             else begin
@@ -128,7 +128,7 @@ module vec_alu_tb;
     // ulp of a result, from its own exponent
     function real ulp_of(input [23:0] f);
         begin
-            if (f[22:15] == 8'd0) begin// smallest normal ulp
+            if (f[22:15] == 8'd0) begin  // smallest normal ulp
                 ulp_of = 2.0 ** (-141);
             end
             else begin
