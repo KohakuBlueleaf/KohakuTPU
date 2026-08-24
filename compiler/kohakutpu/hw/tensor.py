@@ -26,23 +26,18 @@ import numpy as np
 
 LANES = 4
 KBLOCK = 32
-FP16_ENTRY_BYTES = 256  # one L1 entry of source: 4 lanes x 32 FP16
-# The same entry once quantised: 4 lanes x 32 int7 + 4 E5M3 scales, packed as
-# four 256-bit operand words. Half the bytes, and the form the mesh already
-# carries -- which is why a pre-quantised operand costs half the fetch and none
-# of the quantiser.
+FP16_ENTRY_BYTES = 256  # one L1 entry of SOURCE: 4 lanes x 32 FP16
+# The same entry once converted: 4 lanes x 32 int7 + 4 E5M3 scales, packed as
+# four 256-bit operand words. Half the bytes, and the form the mesh carries.
+# These two are the transform slot's IN_BITS/OUT_WORDS in bytes -- the ratio the
+# mover needs to size a converting move before the transform has run.
 MXFP7_ENTRY_BYTES = 128
 
-
-def entry_words(prequantised, word_bits=256):
-    """Memory words one L1 entry occupies, in whichever format it is stored.
-
-    The driver never builds MXFP7; it only needs the SIZE, because the tensor
-    was converted by the hardware on its way into memory and the addresses of
-    the entries after it move accordingly.
-    """
-    n = MXFP7_ENTRY_BYTES if prequantised else FP16_ENTRY_BYTES
-    return n * 8 // word_bits
+# An `entry_words(prequantised)` helper used to live here and pick between the
+# two. It is gone: a fetch is never transformed, so what memory holds at a FILL's
+# address is always the converted form and the choice does not exist. It had no
+# callers, and its `False` branch would have sized a fetch for a format that is
+# no longer in memory.
 
 
 def pad_operand(x):

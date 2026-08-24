@@ -27,7 +27,6 @@ def _flit(
     acc=False,
     last=False,
     peers=(),
-    preq=False,
     eoff=0,
     aoff=0,
     boff=0,
@@ -71,7 +70,7 @@ def _flit(
     #
     #   [255:252] op   [251:218] addr(34)  [217:202] n(16)  [201] sel  [200] acc
     #   [199:192] gm   [191:184] gn        [183:176] nk     [175:168] anchor
-    #   [167:144] peers(24)                [143:142] npeer  [141] preq
+    #   [167:144] peers(24)                [143:142] npeer  [141] reserved
     #   [140:133] eoff  [132:125] aoff     [124:117] boff   [68:63] addr_hi(6)
     p = 0  # 256-bit payload
     p |= (op & 0xF) << 252
@@ -107,12 +106,9 @@ def _flit(
     for i, node in enumerate(peers):
         p |= (node & 0xFF) << (144 + i * 8)
     p |= (len(peers) & 0x3) << 142
-    # PRE-QUANTISED. The operand was converted on the way INTO memory, so the
-    # fetch reads 4 words per entry instead of 8 FP16 beats and skips the
-    # quantiser. The driver still never constructs MXFP7: it says which tensors
-    # were uploaded through the quantising window, and the hardware does the
-    # rest. Per FILL, so weights can be pre-quantised while activations are not.
-    p |= (1 if preq else 0) << 141
+    # [141] is RESERVED and left 0. It was `preq`; every operand is already in
+    # its final format before any fetch reads it, so a FILL has nothing to
+    # select and the cluster no longer decodes the bit.
     # L1 IS ADDRESSABLE. `eoff` is where a FILL lands, `aoff`/`boff` where a
     # sweep reads. The driver owns the banking, and there is no interlock: a
     # fill that lands inside the running sweep corrupts a few sub-tiles and

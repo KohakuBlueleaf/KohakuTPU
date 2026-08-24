@@ -65,7 +65,11 @@ def _tail(cfg: IsaConfig) -> list[Field]:
         Field("anchor", g, default=cfg.anchor),
         Field("peers", cfg.peer_bits, default=0, doc="{y,x} sharers, peer 0 low"),
         Field("npeer", 2, default=0),
-        Field("preq", 1, default=0, doc="operand was quantised on the way in"),
+        # RESERVED, and the placeholder stays because this table is positional:
+        # dropping it shifts `eoff` and everything below it by a bit. Was `preq`
+        # -- every operand is already in its final format before any fetch, so
+        # there is nothing left to select.
+        Field("rsvd141", 1, default=0, doc="reserved; MUST be 0"),
         Field("eoff", g, default=0, doc="where a FILL lands in L1"),
         Field("aoff", g, default=0, doc="where a sweep reads A"),
         Field("boff", g, default=0, doc="where a sweep reads B"),
