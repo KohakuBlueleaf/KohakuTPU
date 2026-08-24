@@ -24,13 +24,12 @@ edges, the first and last column the west and east edges. Routers sit at
        four port coordinate pairs.
   vec  a vector core.
   mat  a matmul cluster, one mx_cluster_cu on one router local.
-  cpu  the system node's control processor. At most ONE: it lives inside the
-       node, so its coordinate only says which router port it hangs off. Its
-       presence is what sets CTRL_PE=1 on the node.
-
-`mgr` and `acu` are RETIRED, not deprecated. They named the two locals of a
-two-port cluster, and mx_cluster_cu presents one; a pair form would have no
-module to emit. A map using them is rejected by name.
+`mgr`, `acu` and `cpu` are RETIRED, not deprecated, and a map using one is
+rejected by name. `mgr`/`acu` named the two locals of a two-port cluster and
+mx_cluster_cu presents one. `cpu` placed the system node's control processor at
+a mesh coordinate; the processor is part of the node, answers at (0,0) -- a
+corner, which touches no router and which no map may fill -- and costs no
+attach point at all.
 
 A PROJECT can register its own unit tokens without touching this file:
 
@@ -52,10 +51,10 @@ from pathlib import Path
 
 EMPTY = {"xxx", "   ", "..."}
 TIED = EMPTY | {"nul"}
-KNOWN = TIED | {"mag", "vec", "mat", "cpu"}
+KNOWN = TIED | {"mag", "vec", "mat"}
 # Named so the error says what to write instead. Falling through to "unknown
 # token" would read as a typo rather than as a shape the hardware dropped.
-RETIRED = {"mgr", "acu"}
+RETIRED = {"mgr", "acu", "cpu"}
 
 
 class MeshError(Exception):
@@ -78,6 +77,12 @@ def parse_map(text, extra=frozenset()):
         for t in toks:
             if len(t) != 3:
                 raise MeshError(f"line {lineno}: token {t!r} is {len(t)} chars, want 3")
+            if t == "cpu":
+                raise MeshError(
+                    f"line {lineno}: 'cpu' is retired. The control processor is "
+                    "part of the system node, answers at (0,0), and costs no "
+                    "attach point -- delete the token, keep the grid"
+                )
             if t in RETIRED:
                 raise MeshError(
                     f"line {lineno}: {t!r} named one local of the two-port cluster, "
@@ -114,7 +119,6 @@ class Mesh:
         self.mags = []  # [(x, y)] in map coordinates
         self.vecs = []  # [(x, y)]
         self.cus = []  # [(x, y)] -- one router local each
-        self.cpus = []  # [(x, y)] -- at most one, the node's control processor
         self.extra = set(extra)
         self.units = {}  # project token -> [(x, y)]
         self._classify()
@@ -146,8 +150,6 @@ class Mesh:
                     self.mags.append((x, y))
                 elif t == "vec":
                     self.vecs.append((x, y))
-                elif t == "cpu":
-                    self.cpus.append((x, y))
                 elif t == "mat":
                     # An edge cluster costs a link, not a router, which is how
                     # 6 clusters fit a 2x2 grid instead of needing 3x2.
@@ -159,11 +161,6 @@ class Mesh:
             raise MeshError(f"{len(self.mags)} mag tiles; mag.v declares only 4 ports")
         if not self.mags:
             raise MeshError("no mag tile: nothing would serve memory")
-        if len(self.cpus) > 1:
-            raise MeshError(
-                f"{len(self.cpus)} cpu tiles; the control processor lives inside "
-                "the one system node and has a single NoC port"
-            )
 
     def _interior(self, x, y):
         return 1 <= x <= self.nx and 1 <= y <= self.ny
@@ -370,37 +367,6 @@ def emit(
         assign mag_i_d[{i}*FW +: FW] = {stem}_{b}d;
         assign mag_i_v[{i}] = {stem}_{b}v;
         assign {stem}_{b}b = mag_i_b[{i}];""")
-    # The control processor sits INSIDE the node, on the node's clock, so its
-    # NoC port takes the same crossing as a memory port -- not the fabric's.
-    if m.cpus:
-        px, py = m.cpus[0]
-        stem, fwd = (
-            e.edge_link(px, py)
-            if not m._interior(px, py)
-            else (e.link(f"L{px}_{py}"), True)
-        )
-        a, b = ("f", "r") if fwd else ("r", "f")
-        cdc_body.append(
-            f"""        noc_local_cdc #(.FLIT_WIDTH(FW), .DEPTH(CDC_DEPTH)) u_peo (
-            .wr_clk(axi_aclk), .wr_resetn({rs_mag}),
-            .i_data(pe_o_d), .i_valid(pe_o_v), .i_busy(pe_o_b),
-            .rd_clk(clk), .rd_resetn(resetn),
-            .o_data({stem}_{a}d), .o_valid({stem}_{a}v), .o_busy({stem}_{a}b)
-        );
-        noc_local_cdc #(.FLIT_WIDTH(FW), .DEPTH(CDC_DEPTH)) u_pei (
-            .wr_clk(clk), .wr_resetn(resetn),
-            .i_data({stem}_{b}d), .i_valid({stem}_{b}v), .i_busy({stem}_{b}b),
-            .rd_clk(axi_aclk), .rd_resetn({rs_mag}),
-            .o_data(pe_i_d), .o_valid(pe_i_v), .o_busy(pe_i_b)
-        );"""
-        )
-        direct_body.append(f"""        assign {stem}_{a}d = pe_o_d;
-        assign {stem}_{a}v = pe_o_v;
-        assign pe_o_b = {stem}_{a}b;
-        assign pe_i_d = {stem}_{b}d;
-        assign pe_i_v = {stem}_{b}v;
-        assign {stem}_{b}b = pe_i_b;""")
-
     e.body.append(
         "    generate if (MAG_CDC) begin : g_magcdc\n"
         + "\n".join(cdc_body)
@@ -419,9 +385,7 @@ def emit(
         if ilink
         else ""
     )
-    # mag_1m wraps `mag` and arbitrates its masters internally, so the only
-    # difference here is the module name, the width and the memory clock.
-    mod = "mag_1m" if single else "mag"
+    mod = "sysnode"
     extra = ",\n          .MW(MW)" if single else ""
     # STAGE_AT_PORT=1: one store on the converged path, reachable by the mover
     # and the interlink. 64 URAM against 256 per-port, measured.
@@ -435,23 +399,13 @@ def emit(
         if single
         else ""
     )
-    # An unconnected input is Z, not 0, and mag.v muxes the mover's config off
-    # pe_cfg_en -- so the no-processor case must TIE these, never omit them.
-    if m.cpus:
-        px, py = m.cpus[0]
-        extra += f",\n          .CTRL_PE(1), .PE_X({px}), .PE_Y({py})"
-        cp = """
-        .pe_in_data(pe_i_d), .pe_in_valid(pe_i_v), .pe_in_busy(pe_i_b),
-        .pe_out_data(pe_o_d), .pe_out_valid(pe_o_v), .pe_out_busy(pe_o_b),
+    # The processor is part of the node and answers at (0,0); it costs no
+    # attach point and there is nothing here to select.
+    cp = """
         .pe_halt_req(1'b0), .pe_status(pe_status), .pe_busy(pe_busy),"""
-    else:
-        cp = """
-        .pe_in_data({FW{1'b0}}), .pe_in_valid(1'b0), .pe_in_busy(),
-        .pe_out_data(), .pe_out_valid(), .pe_out_busy(1'b0),
-        .pe_halt_req(1'b0), .pe_status(), .pe_busy(),"""
     e.body.append(
         f"""    {mod} #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(AW),
-          .ID_W(IDW), .MEM_PORTS({len(m.mags)}){coords},
+          .ID_W(IDW), .PORTS({len(m.mags)}){coords},
           .GRID_LO(1), .GRID_HI({max(m.nx, m.ny)}), .STAGE_FLITS(128){il}{extra}) u_mag (
         .clk(mag_clk_i), .resetn({rs_mag}){clks},
 {MAG_AXI}
@@ -580,7 +534,7 @@ def emit(
     # ---- tie off every link nothing claimed ----------------------------
     # Which direction is undriven depends on the link's side of the router.
     used = set()
-    for x, y in m.mags + m.vecs + m.cus + m.cpus + unit_sites:
+    for x, y in m.mags + m.vecs + m.cus + unit_sites:
         used.add(e.link(f"L{x}_{y}") if m._interior(x, y) else e.edge_link(x, y)[0])
 
     for key, stem in sorted(e.links.items(), key=lambda kv: kv[1]):
@@ -635,7 +589,7 @@ def _internal(key, m):
 def master_names(nmag, ilink=False, single=False):
     """Interface names for the AXI masters this mesh presents.
 
-    With `single`, MAG's masters never leave it: mag_1m arbitrates and packs
+    With `single`, MAG's masters never leave it: the system node arbitrates and packs
     them internally, so the mesh exposes ONE wide master and one memory clock.
     """
     if single:
@@ -647,8 +601,8 @@ def _mag_master_names(nmag, ilink=False):
     """Interface names for MAG's masters, in the order mag.v packs them.
 
     Ports 0..nmag-1 are the memory engines, then the host upload path, then the
-    memory mover -- mag.v's MV is MEM_PORTS+1. With `ilink` the interlink's
-    landing channel follows at LK = MEM_PORTS+2, which is what makes MAG's MP1
+    memory mover -- mag.v's MV is PORTS+1. With `ilink` the interlink's
+    landing channel follows at LK = PORTS+2, which is what makes MAG's MP1
     one wider; the count and the order must match mag.v or every master shifts.
     """
     names = [f"M_AXI_MEM{i}" for i in range(nmag)] + ["M_AXI_UPLOAD", "M_AXI_MOVER"]
@@ -748,7 +702,7 @@ def master_decls(names, dw="DW"):
     """Port declarations for every master interface.
 
     `dw` names the data width: the single-master mesh presents the MEMORY's
-    width, not the internal beat, because mag_1m packs before the boundary.
+    width, not the internal beat, because the system node packs before the boundary.
     """
     out = []
     for n in names:
@@ -823,21 +777,26 @@ MAG_AXI = """        .sm_awid(S_AXI_MEM_awid), .sm_awaddr(S_AXI_MEM_awaddr),
 # With one master the ports connect straight through; with MP1 they are sliced
 # out of the packed bus the fan-out below drives.
 def mag_master_axi(single):
+    # `dram_*`, not `m_*`: the node presents ONE AXI master under that name,
+    # and the wrapper that renamed it is gone.
     if single:
         return "\n".join(
-            f"        .m_{f}(M_AXI_DRAM_{f})," for f, _w, _d in MASTER_FIELDS
+            f"        .dram_{f}(M_AXI_DRAM_{f})," for f, _w, _d in MASTER_FIELDS
         )
-    return """        .m_awid(mm_awid), .m_awaddr(mm_awaddr), .m_awlen(mm_awlen),
-        .m_awsize(mm_awsize), .m_awburst(mm_awburst),
-        .m_awvalid(mm_awvalid), .m_awready(mm_awready),
-        .m_wdata(mm_wdata), .m_wstrb(mm_wstrb), .m_wlast(mm_wlast),
-        .m_wvalid(mm_wvalid), .m_wready(mm_wready),
-        .m_bid(mm_bid), .m_bresp(mm_bresp), .m_bvalid(mm_bvalid), .m_bready(mm_bready),
-        .m_arid(mm_arid), .m_araddr(mm_araddr), .m_arlen(mm_arlen),
-        .m_arsize(mm_arsize), .m_arburst(mm_arburst),
-        .m_arvalid(mm_arvalid), .m_arready(mm_arready),
-        .m_rid(mm_rid), .m_rdata(mm_rdata), .m_rresp(mm_rresp),
-        .m_rlast(mm_rlast), .m_rvalid(mm_rvalid), .m_rready(mm_rready),"""
+    return """        .dram_awid(mm_awid), .dram_awaddr(mm_awaddr),
+        .dram_awlen(mm_awlen), .dram_awsize(mm_awsize),
+        .dram_awburst(mm_awburst),
+        .dram_awvalid(mm_awvalid), .dram_awready(mm_awready),
+        .dram_wdata(mm_wdata), .dram_wstrb(mm_wstrb), .dram_wlast(mm_wlast),
+        .dram_wvalid(mm_wvalid), .dram_wready(mm_wready),
+        .dram_bid(mm_bid), .dram_bresp(mm_bresp), .dram_bvalid(mm_bvalid),
+        .dram_bready(mm_bready),
+        .dram_arid(mm_arid), .dram_araddr(mm_araddr), .dram_arlen(mm_arlen),
+        .dram_arsize(mm_arsize), .dram_arburst(mm_arburst),
+        .dram_arvalid(mm_arvalid), .dram_arready(mm_arready),
+        .dram_rid(mm_rid), .dram_rdata(mm_rdata), .dram_rresp(mm_rresp),
+        .dram_rlast(mm_rlast), .dram_rvalid(mm_rvalid),
+        .dram_rready(mm_rready),"""
 
 
 def render(
@@ -872,8 +831,6 @@ def render(
         "    wire pe_o_v, pe_o_b, pe_i_v, pe_i_b;\n"
         "    wire [63:0] pe_status;\n"
         "    wire pe_busy;"
-        if m.cpus
-        else ""
     )
     picture = "\n".join("//   " + " ".join(r) for r in m.rows)
     ncu, nvec = len(m.cus), len(m.vecs)
@@ -888,7 +845,7 @@ def render(
     MASTER_DECLS = (
         master_decls(mnames, "MW" if single else "DW") + link_decls(ilink)
     ).rstrip(",")
-    MASTER_SUM = "1" if single else ("MEM_PORTS+3" if ilink else "MEM_PORTS+2")
+    MASTER_SUM = "1" if single else ("PORTS+3" if ilink else "PORTS+2")
     LINK_MASTER_NOTE = ", plus the interlink's landing channel" if ilink else ""
     LINK_PARAMS = (
         f"""    // One flit per beat at 288, so a packet's framing is its own length; 96
@@ -914,12 +871,12 @@ def render(
         if ilink
         else ""
     )
-    # With one master there is no packed bus to fan out -- mag_1m's ports go
+    # With one master there is no packed bus to fan out -- the system node's ports go
     # straight to the boundary.
     MASTER_WIRES = "" if single else master_wires()
     MASTER_GLUE = "" if single else master_glue(mnames)
     SINGLE_PARAMS = (
-        "    // The MEMORY's beat. mag_1m packs DW up to this before the\n"
+        "    // The MEMORY's beat. the system node packs DW up to this before the\n"
         "    // boundary, so the mesh never exposes the internal width.\n"
         "    parameter integer MW       = 512,\n"
         if single
@@ -1033,7 +990,7 @@ module {name} #(
     parameter integer CDC_DEPTH = 16
 )(
     // axi_aclk IS the clock the AXI and AXIS ports run on, which is MAG's: they
-    // all live in mag_1m. noc_clk is the fabric and carries no interface.
+    // all live in the system node. noc_clk is the fabric and carries no interface.
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 axi_aclk CLK" *)
     (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF {ASSOC}, ASSOCIATED_RESET axi_aresetn" *)
     input  wire axi_aclk,
@@ -1173,9 +1130,9 @@ def main():
     ap.add_argument(
         "--single-master",
         action="store_true",
-        help="use mag_1m: MAG's masters are arbitrated and packed inside it, so "
+        help="use the system node: MAG's masters are arbitrated and packed inside it, so "
         "the mesh exposes ONE wide AXI master and one dram_aclk instead of "
-        "MEM_PORTS+2. Deletes the per-mesh SmartConnect",
+        "PORTS+2. Deletes the per-mesh SmartConnect",
     )
     ap.add_argument(
         "--mat-pump",

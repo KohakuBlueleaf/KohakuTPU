@@ -28,7 +28,7 @@ module ktpu_min_1m_pump #(
     parameter integer AW       = 40,
     parameter integer IDW      = 4,
     parameter integer NM       = 1,
-    // The MEMORY's beat. mag_1m packs DW up to this before the
+    // The MEMORY's beat. the system node packs DW up to this before the
     // boundary, so the mesh never exposes the internal width.
     parameter integer MW       = 512,
     // One flit per beat at 288, so a packet's framing is its own length; 96
@@ -82,7 +82,7 @@ module ktpu_min_1m_pump #(
     parameter integer CDC_DEPTH = 16
 )(
     // axi_aclk IS the clock the AXI and AXIS ports run on, which is MAG's: they
-    // all live in mag_1m. noc_clk is the fabric and carries no interface.
+    // all live in the system node. noc_clk is the fabric and carries no interface.
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 axi_aclk CLK" *)
     (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF S_AXI_MEM:S_AXI_CTRL:M_AXIS_LINK0:S_AXIS_LINK0:M_AXIS_LINK1:S_AXIS_LINK1, ASSOCIATED_RESET axi_aresetn" *)
     input  wire axi_aclk,
@@ -230,6 +230,10 @@ module ktpu_min_1m_pump #(
     wire [NMAG-1:0]    mag_i_v, mag_i_b, mag_o_v, mag_o_b;
     wire [15:0]        mag_rd, mag_wr;
     wire mag_clk_i = MAG_CDC ? axi_aclk : clk;
+    wire [FW-1:0] pe_o_d, pe_i_d;
+    wire pe_o_v, pe_o_b, pe_i_v, pe_i_b;
+    wire [63:0] pe_status;
+    wire pe_busy;
 
     wire [15:0] cu_f [0:NCU-1];
     wire [15:0] cu_g [0:NCU-1];
@@ -294,8 +298,8 @@ module ktpu_min_1m_pump #(
         assign mag_i_v[0] = l000_h0_1_rv;
         assign l000_h0_1_rb = mag_i_b[0];
     end endgenerate
-    mag_1m #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(AW),
-          .ID_W(IDW), .MEM_PORTS(1), .MEM_X(0), .MEM_Y(1),
+    sysnode #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(AW),
+          .ID_W(IDW), .PORTS(1), .MEM_X(0), .MEM_Y(1),
           .GRID_LO(1), .GRID_HI(1), .STAGE_FLITS(128),
           .ILINK(1), .MESH_ID(MESH_ID), .LINK_W(LKW), .TUSER_W(LKU),
           .MW(MW)) u_mag (
@@ -329,35 +333,35 @@ module ktpu_min_1m_pump #(
         .sc_rid(S_AXI_CTRL_rid), .sc_rdata(S_AXI_CTRL_rdata),
         .sc_rresp(S_AXI_CTRL_rresp), .sc_rlast(S_AXI_CTRL_rlast),
         .sc_rvalid(S_AXI_CTRL_rvalid), .sc_rready(S_AXI_CTRL_rready),
-        .m_awid(M_AXI_DRAM_awid),
-        .m_awaddr(M_AXI_DRAM_awaddr),
-        .m_awlen(M_AXI_DRAM_awlen),
-        .m_awsize(M_AXI_DRAM_awsize),
-        .m_awburst(M_AXI_DRAM_awburst),
-        .m_awvalid(M_AXI_DRAM_awvalid),
-        .m_awready(M_AXI_DRAM_awready),
-        .m_wdata(M_AXI_DRAM_wdata),
-        .m_wstrb(M_AXI_DRAM_wstrb),
-        .m_wlast(M_AXI_DRAM_wlast),
-        .m_wvalid(M_AXI_DRAM_wvalid),
-        .m_wready(M_AXI_DRAM_wready),
-        .m_bid(M_AXI_DRAM_bid),
-        .m_bresp(M_AXI_DRAM_bresp),
-        .m_bvalid(M_AXI_DRAM_bvalid),
-        .m_bready(M_AXI_DRAM_bready),
-        .m_arid(M_AXI_DRAM_arid),
-        .m_araddr(M_AXI_DRAM_araddr),
-        .m_arlen(M_AXI_DRAM_arlen),
-        .m_arsize(M_AXI_DRAM_arsize),
-        .m_arburst(M_AXI_DRAM_arburst),
-        .m_arvalid(M_AXI_DRAM_arvalid),
-        .m_arready(M_AXI_DRAM_arready),
-        .m_rid(M_AXI_DRAM_rid),
-        .m_rdata(M_AXI_DRAM_rdata),
-        .m_rresp(M_AXI_DRAM_rresp),
-        .m_rlast(M_AXI_DRAM_rlast),
-        .m_rvalid(M_AXI_DRAM_rvalid),
-        .m_rready(M_AXI_DRAM_rready),
+        .dram_awid(M_AXI_DRAM_awid),
+        .dram_awaddr(M_AXI_DRAM_awaddr),
+        .dram_awlen(M_AXI_DRAM_awlen),
+        .dram_awsize(M_AXI_DRAM_awsize),
+        .dram_awburst(M_AXI_DRAM_awburst),
+        .dram_awvalid(M_AXI_DRAM_awvalid),
+        .dram_awready(M_AXI_DRAM_awready),
+        .dram_wdata(M_AXI_DRAM_wdata),
+        .dram_wstrb(M_AXI_DRAM_wstrb),
+        .dram_wlast(M_AXI_DRAM_wlast),
+        .dram_wvalid(M_AXI_DRAM_wvalid),
+        .dram_wready(M_AXI_DRAM_wready),
+        .dram_bid(M_AXI_DRAM_bid),
+        .dram_bresp(M_AXI_DRAM_bresp),
+        .dram_bvalid(M_AXI_DRAM_bvalid),
+        .dram_bready(M_AXI_DRAM_bready),
+        .dram_arid(M_AXI_DRAM_arid),
+        .dram_araddr(M_AXI_DRAM_araddr),
+        .dram_arlen(M_AXI_DRAM_arlen),
+        .dram_arsize(M_AXI_DRAM_arsize),
+        .dram_arburst(M_AXI_DRAM_arburst),
+        .dram_arvalid(M_AXI_DRAM_arvalid),
+        .dram_arready(M_AXI_DRAM_arready),
+        .dram_rid(M_AXI_DRAM_rid),
+        .dram_rdata(M_AXI_DRAM_rdata),
+        .dram_rresp(M_AXI_DRAM_rresp),
+        .dram_rlast(M_AXI_DRAM_rlast),
+        .dram_rvalid(M_AXI_DRAM_rvalid),
+        .dram_rready(M_AXI_DRAM_rready),
         .link0_out_tdata(M_AXIS_LINK0_tdata), .link0_out_tuser(M_AXIS_LINK0_tuser),
         .link0_out_tlast(M_AXIS_LINK0_tlast), .link0_out_tvalid(M_AXIS_LINK0_tvalid),
         .link0_out_tready(M_AXIS_LINK0_tready),
@@ -370,9 +374,7 @@ module ktpu_min_1m_pump #(
         .link1_in_tdata(S_AXIS_LINK1_tdata), .link1_in_tuser(S_AXIS_LINK1_tuser),
         .link1_in_tlast(S_AXIS_LINK1_tlast), .link1_in_tvalid(S_AXIS_LINK1_tvalid),
         .link1_in_tready(S_AXIS_LINK1_tready),
-        .pe_in_data({FW{1'b0}}), .pe_in_valid(1'b0), .pe_in_busy(),
-        .pe_out_data(), .pe_out_valid(), .pe_out_busy(1'b0),
-        .pe_halt_req(1'b0), .pe_status(), .pe_busy(),
+        .pe_halt_req(1'b0), .pe_status(pe_status), .pe_busy(pe_busy),
         .mem_in_data(mag_i_d), .mem_in_valid(mag_i_v), .mem_in_busy(mag_i_b),
         .mem_out_data(mag_o_d), .mem_out_valid(mag_o_v), .mem_out_busy(mag_o_b),
         .mem_rd_count(mag_rd), .mem_wr_count(mag_wr),

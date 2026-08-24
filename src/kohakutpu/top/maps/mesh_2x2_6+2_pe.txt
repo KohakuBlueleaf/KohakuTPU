@@ -1,7 +1,0 @@
-# m62 WITH the system node's control processor: the 6+2 shape, plus `cpu` on
-# the free east edge of row 1. Two mag tiles, so MEM_PORTS=2 -- the shipping
-# width, and the one the processor's slack cost has to be judged at.
-xxx mat vec xxx
-mag mat mat cpu
-mag mat mat xxx
-xxx mat vec xxx
