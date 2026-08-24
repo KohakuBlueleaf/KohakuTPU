@@ -11,11 +11,18 @@
 Times are measured at -j4. Every check is bounded: one that produces no result
 inside its budget is killed and reported as STALLED, which is a different event
 from a FAIL and is printed as one. Exits non-zero if any check failed.
+
+`--counts LEDGER` records the numbers every check printed on its PASS/FAIL
+lines, and `--counts-baseline LEDGER` fails the run when any of them moved. A
+reformat is supposed to change no behaviour, and a green suite does not say
+that -- 503 checks becoming 501 is still a PASS.
 """
 
 import argparse
+import json
 import os
 import pathlib
+import re
 import shutil
 import signal
 import subprocess
@@ -102,6 +109,17 @@ FAST = [
     # gen_mesh.py are all load-bearing and were unlinted.
     py("ruff", "-m", "ruff", "check", "compiler", "driver", "scripts"),
     py("black", "-m", "black", "--check", "-q", "compiler", "driver", "scripts"),
+    # A doc naming a moved file is drift a rename produces by the dozen and
+    # nothing else measures: 103 of these had accumulated behind two renames.
+    py("doc paths", "scripts/py/docpaths.py"),
+    # The normative parameter tables against the RTL they describe. 42
+    # mismatches had accumulated, including `ADDR_W` documented as 34 in five
+    # tables when every module on the memory path declares 40.
+    py("spec params", "scripts/py/specparams.py"),
+    # The style rules, over EVERY .v file. The count was reported for the live
+    # source alone for months while tests/ held more findings than the whole
+    # tree it claimed to describe.
+    py("vstyle", "scripts/py/vstyle.py", "src", "tests"),
 ]
 
 # The cheap benches that have historically caught the most.
@@ -131,6 +149,11 @@ def all_benches():
 
 
 BLOCKS = [bench(b) for b in all_benches()] + [
+    # NOT covered by any bench above. mm_xform and mag_system both compare the
+    # occupant against ANOTHER INSTANCE of itself, so an arithmetic change
+    # cancels out and reads as a pass; this is the only cross-check against the
+    # software model.
+    py("mx_quant vs model", "scripts/py/run_quant_check.py"),
     # `all_benches()` runs every name with NO defines, so the pumped path -- the
     # one that ships -- had no cover here at all until these three.
     bench_var("cluster_data", "-d", "MX_CU_PUMP"),
@@ -186,8 +209,34 @@ def kill_tree(proc):
 
 # Sources, benches, scripts and the config ruff and black read. Build
 # directories are regenerated and are the bulk of the tree, so they are left.
-SNAP_DIRS = ("src", "tests", "scripts", "examples", "boards", "compiler", "driver")
-SNAP_FILES = ("pyproject.toml", "setup.cfg", "ruff.toml", ".ruff.toml")
+#
+# THE DOCS ARE IN IT because a check that reads them resolves its paths from
+# its own location, so under --snapshot it looked in a tree with no docs/ at
+# all and passed on zero files. A gate that cannot fail is not a gate.
+SNAP_DIRS = (
+    "src",
+    "tests",
+    "scripts",
+    "examples",
+    "boards",
+    "compiler",
+    "driver",
+    "docs",
+    "docs-web/src",
+    # README.md links to both; without them the doc check reports two dangling
+    # references that exist in the tree it is supposed to be a copy of.
+    "image",
+)
+SNAP_FILES = (
+    "pyproject.toml",
+    "setup.cfg",
+    "ruff.toml",
+    ".ruff.toml",
+    "README.md",
+    "CLAUDE.md",
+    "CONTRIBUTING.md",
+    "LICENSE",
+)
 
 
 def make_snapshot(dest):
@@ -207,6 +256,45 @@ def make_snapshot(dest):
         if (ROOT / f).is_file():
             shutil.copy2(ROOT / f, dest / f)
     return dest
+
+
+# ------------------------------------------------------------------- counts
+# CONTRIBUTING's bar for a reformat is the numbers, not the PASS. This collects
+# them for a whole tier so a tree-wide pass can be compared rather than trusted.
+VERDICT = re.compile(r"\b(?:PASS|FAIL)\b")
+INTS = re.compile(r"\d+")
+
+
+def verdict_numbers(out):
+    """Every integer on the check's own PASS/FAIL lines, in order.
+
+    Deliberately shape-blind: the tree writes `PASS -- 503 checks, 0 errors`,
+    `PASS mm_mover_tb: 16 checks` and `PASS -- 4000 vectors, 0 mismatches`, and
+    a parser per shape would go stale the first time a bench is reworded. A
+    label whose output has no verdict line (ruff, black, pytest) yields [].
+    """
+    return [
+        int(v)
+        for ln in out.splitlines()
+        if VERDICT.search(ln)
+        for v in INTS.findall(ln)
+    ]
+
+
+def report_counts(results, baseline):
+    """Compare this run's numbers against `baseline`. Returns the drifted rows.
+
+    A label missing from either side is NOT drift: the bench list changes, and
+    calling that a regression would make the ledger something people delete.
+    """
+    drift = []
+    for r in results:
+        was = baseline.get(r["label"])
+        now = r["counts"]
+        if was is None or was == now:
+            continue
+        drift.append((r["label"], was, now))
+    return drift
 
 
 def run_check(argv, cwd, timeout, env=None):
@@ -262,7 +350,21 @@ def main():
         help="copy the sources first and check THAT, so a concurrent edit "
         "cannot turn a run into a false regression",
     )
+    ap.add_argument(
+        "--counts",
+        help="write each check's PASS/FAIL numbers to this JSON ledger",
+    )
+    ap.add_argument(
+        "--counts-baseline",
+        help="compare against a ledger written earlier; drift fails the run",
+    )
     args = ap.parse_args()
+
+    baseline = {}
+    if args.counts_baseline:
+        baseline = json.loads(
+            pathlib.Path(args.counts_baseline).read_text(encoding="utf-8")
+        )
 
     checks = TIERS[args.tier]
     root = ROOT
@@ -305,6 +407,7 @@ def main():
             "ok": ok,
             "stalled": stalled,
             "out": out,
+            "counts": verdict_numbers(out),
             "dt": time.time() - t0,
             "limit": limit,
         }
@@ -332,18 +435,36 @@ def main():
         for ln in [ln for ln in r["out"].splitlines() if ln.strip()][-15:]:
             print(f"       {ln}")
 
+    drift = report_counts(results, baseline) if baseline else []
+    for label, was, now in drift:
+        print(
+            f"\n  --- {label}: COUNTS CHANGED ---\n       was {was}\n       now {now}"
+        )
+
+    if args.counts:
+        led = pathlib.Path(args.counts)
+        led.parent.mkdir(parents=True, exist_ok=True)
+        led.write_text(
+            json.dumps({r["label"]: r["counts"] for r in results}, indent=1) + "\n",
+            encoding="utf-8",
+        )
+        print(f"  counts -> {led}")
+
     ran, skipped = len(results), len(checks) - len(results)
     names = ", ".join(
         r["label"] + (" (STALLED)" if r["stalled"] else "") for r in failures
     )
+    if drift:
+        names = ", ".join(filter(None, [names, f"{len(drift)} count(s) changed"]))
     print(
         f"  {'-' * 40}\n  {args.tier}: "
-        f"{'PASS' if not failures else 'FAIL ' + names}"
+        f"{'PASS' if not (failures or drift) else 'FAIL ' + names}"
         f"   {ran}/{len(checks)} ran"
         + (f", {skipped} skipped after failure" if skipped else "")
+        + (f", {len(baseline)} compared" if baseline else "")
         + f", -j{jobs}   {time.time() - total:.1f}s"
     )
-    sys.exit(1 if failures else 0)
+    sys.exit(1 if (failures or drift) else 0)
 
 
 if __name__ == "__main__":
