@@ -24,6 +24,37 @@ proc ooc_count {label {prefix {}}} {
     puts "@@@ $out"
 }
 
+# A flat module's LUT total is a LUMP -- `report_utilization -hierarchical`
+# cannot look inside one, so a 3,672-LUT control block names no signal to aim
+# at. Synthesis derives a LUT's name from the signal it drives, so bucketing by
+# that name turns the lump back into a list. Strips `_i_N`, `[k]`, `_reg` and
+# `__N` so every LUT of one signal lands in one bucket.
+proc ooc_lut_census {label prefix {top 24}} {
+    set pfx [string map [list "\[" "\\\[" "\]" "\\\]"] $prefix]
+    set cells [get_cells -quiet -hier -filter "REF_NAME =~ LUT? && NAME =~ $pfx/*"]
+    array set bucket {}
+    foreach c $cells {
+        set n [get_property NAME $c]
+        # Drop the scoping prefix, then everything is one flat name.
+        set n [string range $n [expr {[string length $prefix] + 1}] end]
+        regsub {_i_[0-9]+$} $n "" n
+        regsub {__[0-9]+$} $n "" n
+        regsub -all {\[[0-9]+\]} $n "" n
+        regsub {_reg$} $n "" n
+        if {$n eq ""} { set n "(unnamed)" }
+        incr bucket($n)
+    }
+    set rows {}
+    foreach {k v} [array get bucket] { lappend rows [list $v $k] }
+    set rows [lsort -integer -decreasing -index 0 $rows]
+    puts "@@@CENSUS $label total [llength $cells] LUT in [llength $rows] signal(s)"
+    set i 0
+    foreach r $rows {
+        if {[incr i] > $top} break
+        puts [format "@@@CENSUS %s %6d  %s" $label [lindex $r 0] [lindex $r 1]]
+    }
+}
+
 # Which FFs actually carry a reset, grouped by parent. Reading the RTL does not
 # settle it: a reset-free source still routes as one if synthesis folds one in.
 proc ooc_resets {} {
@@ -147,6 +178,74 @@ proc ooc_record {tag cfg {npaths 2000} {depth 2}} {
         if {[string match "|*" [string trim $l]]} {
             puts "@@@HIER $tag [string trim $l]"
         }
+    }
+}
+
+# EVERY failing endpoint, grouped into cones, then one representative path per
+# cone cell by cell. Listing the worst N is useless on a real design: they come
+# back as N bits of the same register, one problem wearing many names. Strip the
+# bit indices and the tool's _iNN suffixes and count -- THAT is the number of
+# distinct things wrong. The SIMT PE read 1,633 failing endpoints and five
+# problems; fixing one of the five took it to 70.
+proc ooc_cones {{ndetail 6} {maxp 200000}} {
+    puts "@@@ ============================ ALL failing endpoints, by cone"
+    set fp [get_timing_paths -max_paths $maxp -nworst 1 -setup -slack_lesser_than 0]
+    puts "@@@G total failing endpoints: [llength $fp]"
+    array unset CONE
+    foreach p $fp {
+        set ep [get_property ENDPOINT_PIN $p]
+        set sp [get_property STARTPOINT_PIN $p]
+        foreach v {ep sp} {
+            upvar 0 $v s
+            regsub -all {\[[0-9]+\]} $s {[]} s
+            regsub -all {_[0-9]+(_[0-9]+)+} $s {_N} s
+            regsub -all {_i_[0-9]+} $s {_iN} s
+        }
+        set k "$sp -> $ep"
+        if {![info exists CONE($k)]} { set CONE($k) [list 0 99.0 0 {}] }
+        lassign $CONE($k) n w l b
+        incr n
+        set s [get_property SLACK $p]
+        set v [get_property LOGIC_LEVELS $p]
+        if {$s < $w} { set w $s ; set b $p }
+        if {$v > $l} { set l $v }
+        set CONE($k) [list $n $w $l $b]
+    }
+    set rows {}
+    foreach k [array names CONE] { lappend rows [concat $CONE($k) [list $k]] }
+    set rows [lsort -real -index 1 $rows]
+    foreach r $rows {
+        puts [format "@@@G n=%-5d worst=%7.3f lvl=%-3d %s" \
+                  [lindex $r 0] [lindex $r 1] [lindex $r 2] [lindex $r 4]]
+    }
+
+    puts "@@@ ============================ top cones, cell by cell"
+    foreach r [lrange $rows 0 [expr {$ndetail - 1}]] {
+        puts "@@@D === [lindex $r 4]"
+        set on 0
+        # `-of_objects` REFUSES -input_pins and silently drops it, and Vivado
+        # prints "Delay type" in lower case -- matching "Delay Type" emitted six
+        # empty dumps that read exactly like six clean cones.
+        foreach l [split [report_timing -of_objects [lindex $r 3] \
+                              -return_string] "\n"] {
+            if {[string match "*Delay type*" $l]} { set on 1 }
+            if {$on && [string trim $l] ne ""} { puts "@@@D $l" }
+            if {$on && [string match "*required time*" $l]} { break }
+        }
+    }
+
+    # Route is the majority of these paths and fanout is why: a driver feeding
+    # hundreds of loads cannot be placed near all of them.
+    puts "@@@ ============================ high-fanout nets"
+    # NOT lmap with a bracketed body: `[list $x ...]` is substituted BEFORE lmap
+    # runs, so the loop variable is unset and the block errors out.
+    set fan {}
+    foreach x [get_nets -hierarchical -filter \
+                   {FLAT_PIN_COUNT > 60 && TYPE == SIGNAL}] {
+        lappend fan [list $x [get_property FLAT_PIN_COUNT $x]]
+    }
+    foreach n [lrange [lsort -decreasing -integer -index 1 $fan] 0 24] {
+        puts [format "@@@F %6d  %s" [lindex $n 1] [lindex $n 0]]
     }
 }
 
