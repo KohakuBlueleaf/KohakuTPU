@@ -4,6 +4,7 @@ The weight and bias are a separate FMA at this level. Folded in, or fused to
 the linear beside them, they are `kernels.rmsnorm` and friends.
 """
 
+import numpy as np
 from kohakuaccel.lang import dims, units
 from kohakutpu.lang import kernel
 
@@ -25,6 +26,29 @@ def softmax(x=L.In(..., M, N), y=L.Out(..., M, N), *, part=8192):
     """
     with units(x.parts(part)) as e:
         ex = L.exp2((x[e] - L.row_max(x[e])) * LOG2E)
+        y[e] <<= ex / L.row_sum(ex)
+
+
+@kernel
+def softmax_keys(
+    x=L.In(..., M, N), y=L.Out(..., M, N), *, keys=64, width=L.VLMAX, part=8192
+):
+    """Softmax over the first `keys` columns of a `width`-wide row.
+
+    SDXL's context is 77 and `VRED` folds a multiple of 16 at most 128, so the
+    caller pads the key axis to a legal `width` and names `keys`.
+
+    PAD WITH ZEROS. The mask lands after the exponential, which is exact; the
+    MAXIMUM is still taken over the padded row, and a pad above the real maximum
+    drives every real term toward underflow.
+
+    ONE ROW of mask, read at stride 0. The pattern is periodic in the row, so
+    `Buffer.repeated` covers any number of rows for `width` elements of table --
+    `part` must be whole rows, which :func:`kohakutpu.kernels.part_for` gives.
+    """
+    edge = L.table(np.asarray(np.arange(width) < keys, np.float16)).repeated()
+    with units(x.parts(part)) as e:
+        ex = L.exp2((x[e] - L.row_max(x[e])) * LOG2E) * edge[e]
         y[e] <<= ex / L.row_sum(ex)
 
 

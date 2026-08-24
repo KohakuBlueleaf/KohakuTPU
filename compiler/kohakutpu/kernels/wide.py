@@ -14,6 +14,7 @@ adds, which are translation-invariant; the SPREAD is not, and is a periodic READ
 from kohakuaccel.lang import dims, units
 from kohakutpu.lang import kernel
 from kohakutpu.ops import LOG2E
+from kohakutpu.ops.activation import sigmoid
 
 from kohakutpu import lang as L
 
@@ -28,13 +29,30 @@ VLMAX = L.VLMAX
 PART = 8192
 
 
+def part_for(group: int, want: int = PART) -> int:
+    """The largest whole number of `group`-element groups at most `want`.
+
+    The `part=` a caller must pass alongside `rows=`: a group of 1280 does not
+    divide :data:`PART`, and `_legal` refuses a part that cuts one. Returns
+    `want` exactly where `group` divides it, so a shape that already ran keeps
+    the program it ran; one whole group where the group is wider than `want`.
+
+    A kernel cannot do this itself -- an extent is a symbol while tracing, and
+    the knob is read off `Compiled.knobs` rather than off the trace.
+    """
+    return max(1, want // group) * group
+
+
 def split(cols: int, width: int = VLMAX) -> int:
     """Sub-rows a `cols`-wide row splits into. The `rows=` every kernel here takes.
 
-    Raises :class:`ValueError` when `width` is not VLMAX, when it does not divide
-    `cols` -- a sub-row is one whole reduction pass and a partial one would be
-    written over by the sub-row behind it -- or when the split is not a power of
-    two, which the fold's halving needs.
+    Raises :class:`ValueError` when `width` is not VLMAX, or when it does not
+    divide `cols` -- a sub-row is one whole reduction pass and a partial one
+    would be written over by the sub-row behind it.
+
+    The count NEED NOT be a power of two: :func:`fold_flat` splits an odd count
+    and joins the halves, for passes rather than reach. SDXL's widths are 640
+    and 1280, which are 5 and 10 sub-rows, and neither is a power of two.
     """
     _legal(1, width)
     if cols % width:
@@ -49,9 +67,12 @@ def _legal(rows: int, width: int, part: int | None = None) -> None:
     """Raise :class:`ValueError` unless the split is one this fold can walk.
 
     `width` must be VLMAX, or a pass writes one whole sub-row block over a
-    narrower row; `rows` must be a power of two, since every fold level halves
-    what is left; and `part` must be whole groups, or an instance starts part
+    narrower row; and `part` must be whole groups, or an instance starts part
     way through one and the spread reads every later group misaligned.
+
+    `rows` is NOT required to be a power of two. It was, while every fold level
+    halved what was left and an odd count had no partner; :func:`fold_flat` now
+    splits an odd count instead of dropping the sub-row that has none.
     """
     if width != VLMAX:
         raise ValueError(
@@ -59,12 +80,8 @@ def _legal(rows: int, width: int, part: int | None = None) -> None:
             f"writes one sub-row block, so a narrower one would be written over "
             f"by the block after it. Got width={width}"
         )
-    if rows < 1 or rows & (rows - 1):
-        raise ValueError(
-            f"a group is a power of two sub-rows: every fold level pairs the "
-            f"halves of what is left, and an odd count has no partner. Got "
-            f"rows={rows}"
-        )
+    if rows < 1:
+        raise ValueError(f"a group is at least one sub-row. Got rows={rows}")
     if part is not None and part % (rows * width):
         raise ValueError(
             f"part={part} is not whole {rows * width}-element groups, so an "
@@ -86,20 +103,48 @@ def fold_flat(held, rows: int, width: int, part: int, join=None):
     `join` combines two sub-rows and defaults to addition; `L.maximum` gives the
     cross-row maximum, the same tree over a different monoid.
 
-    EVERY LEVEL'S TEMP IS EXACTLY WHAT ITS PASS WRITES. The pass is clamped to
-    the shorter of the two shifted operands, so a full-length temp would keep a
-    tail nothing wrote -- zero on the model and arbitrary on the card, and one
-    Inf there reaches a lane. Sized this way there is no such tail to read.
+    EVERY LEVEL'S TEMP IS EXACTLY WHAT ITS PASS WRITES: a full-length one keeps
+    a tail nothing wrote, arbitrary on the card, and one Inf there reaches a lane.
+
+    The result is `held.rows - (rows - 1)` sub-rows however `rows` factorises,
+    which is forced from both sides: one shorter and the last group's start falls
+    off the end, one longer and some level read past its own operand. So a
+    non-power-of-two split costs PASSES, never reach -- see :func:`_fold_span`.
     """
-    join = join or _add
-    n = rows
-    while n > 1:
-        half = n // 2
-        nxt = L.temp(held.rows - half, width)
+    out = held.rows - (rows - 1)
+    return _fold_span(held, 0, rows, out, held.rows, width, part, join or _add)
+
+
+def _fold_span(src, off, count, out, rows, width: int, part: int, join):
+    """`count` sub-rows of `src` from `off`, joined into sub-row 0 of `out` rows.
+
+    An EVEN count halves, the shifted add this fold has always been. An ODD one
+    splits at the power of two below it and joins two partial buffers, both of
+    exactly `out` rows -- a pass reads ONE length, so nothing else is available.
+
+    `count == 1` is a VIEW and no pass; the invariant
+    `rows - off - count + 1 == out` makes its reach exactly `out` rows, so the
+    join above it agrees. A spread cannot serve here at all: it reaches whole
+    groups, `m * rows`, and `out` never is one.
+    """
+    if count == 1:
+        return src.rows_from(off) if off else src
+    if not count % 2:
+        half = count // 2
+        left = rows - off - half
+        nxt = L.temp(out if count == 2 else left, width)
         with units(nxt.parts(part)) as e:
-            nxt[e] <<= join(held.rows_from(0)[e], held.rows_from(half)[e])
-        held, n = nxt, half
-    return held
+            nxt[e] <<= join(src.rows_from(off)[e], src.rows_from(off + half)[e])
+        if count == 2:
+            return nxt
+        return _fold_span(nxt, 0, half, out, left, width, part, join)
+    top = 1 << (count.bit_length() - 1)
+    big = _fold_span(src, off, top, out, rows, width, part, join)
+    rest = _fold_span(src, off + top, count - top, out, rows, width, part, join)
+    joined = L.temp(out, width)
+    with units(joined.parts(part)) as e:
+        joined[e] <<= join(big[e], rest[e])
+    return joined
 
 
 def group_mean(v, rows: int, width: int, part: int):
@@ -173,8 +218,17 @@ def layernorm_wide(
     """
     _legal(rows, width, part)
     v, wv, bv, out = [t.as_rows(width) for t in (x, w, b, y)]
-    mu = group_mean(v, rows, width, part)
+    out <<= _normed(v, rows, width, part, eps) * wv + bv
 
+
+def _normed(v, rows: int, width: int, part: int, eps: float):
+    """``(x - mean) * rsqrt(var + eps)`` over groups of `rows * width`.
+
+    The arithmetic :func:`layernorm_wide` and :func:`group_norm_wide` share, and
+    the reason they are one implementation: a GroupNorm is a LayerNorm whose
+    `rows` span the group rather than the channel axis.
+    """
+    mu = group_mean(v, rows, width, part)
     dev = L.temp(v.rows, width)
     dev <<= v - mu.per_group(rows)
 
@@ -184,7 +238,62 @@ def layernorm_wide(
 
     scaled = L.temp(v.rows, width)
     scaled <<= dev * inv.per_group(rows)
-    out <<= scaled * wv + bv
+    return scaled
+
+
+@kernel
+def group_norm_wide(
+    x=L.In(..., R, W),
+    w=L.In(..., R, W),
+    b=L.In(..., R, W),
+    y=L.Out(..., R, W),
+    *,
+    eps=1e-5,
+    rows=320,
+    width=VLMAX,
+    part=PART,
+):
+    """``(x - mu) * rstd * w + b`` over groups of `rows * width`, EVERY GROUP AT ONCE.
+
+    `(N, C, H, W)` arrives reshaped to `(N*G, C/G * H * W)`, so a group is a row
+    and `rows` is that row's sub-rows. SDXL's three group sizes are 163,840,
+    81,920 and 40,960 elements, which are 1280, 640 and 320 sub-rows.
+
+    `w` and `b` arrive at FULL shape, not per channel: a per-channel gain over a
+    plane would be a spread taking ONE element of every `H*W`, and a spread's
+    sub-row is whole 16-element words.
+
+    Raises :class:`ValueError` for a split this fold cannot walk.
+    """
+    _legal(rows, width, part)
+    v, wv, bv, out = [t.as_rows(width) for t in (x, w, b, y)]
+    out <<= _normed(v, rows, width, part, eps) * wv + bv
+
+
+@kernel
+def group_norm_silu_wide(
+    x=L.In(..., R, W),
+    w=L.In(..., R, W),
+    b=L.In(..., R, W),
+    y=L.Out(..., R, W),
+    *,
+    eps=1e-5,
+    rows=320,
+    width=VLMAX,
+    part=PART,
+):
+    """``silu(group_norm(x, w, b))`` as ONE kernel, at SDXL's group sizes.
+
+    THE pair every UNet and VAE resnet issues -- `norm -> act -> conv`, so it is
+    the norm and the activation that touch, not the conv and the activation.
+    Two passes rather than one because `h * sigmoid(h)` reads `h` twice and a
+    vector chain carries one running result.
+    """
+    _legal(rows, width, part)
+    v, wv, bv, out = [t.as_rows(width) for t in (x, w, b, y)]
+    h = L.temp(v.rows, width)
+    h <<= _normed(v, rows, width, part, eps) * wv + bv
+    out <<= h * sigmoid(h)
 
 
 @kernel

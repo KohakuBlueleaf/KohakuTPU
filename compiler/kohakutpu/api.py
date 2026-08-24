@@ -10,6 +10,7 @@ import os
 
 import numpy as np
 from kohakuaccel.lang import dims as _dims
+from kohakutpu.hw.vector import LANES as _LANES
 from kohakutpu.lang import VLMAX as _VLMAX
 from kohakutpu.rt import Device, Tensor
 
@@ -241,43 +242,107 @@ def relu(x: Tensor, **tiling) -> Tensor:
     return _o.relu(x, **tiling)
 
 
-def _fold(x: Tensor, width: int = _VLMAX):
-    """Sub-rows this row folds into, or None when it fits ONE reduction pass.
+def _fold(x: Tensor, width: int = _VLMAX, **tiling):
+    """`{}` when this row fits ONE reduction pass, else the `rows`/`part` for it.
 
     The dispatch a kernel cannot make: while tracing, an extent is a symbol and
     `x.cols > width` raises `TypeError`. Here the shape is a concrete tuple.
+
+    `part` rides along because it is the same dispatch -- a group must divide
+    it, and 1280 does not divide the kernel's own 8192. A caller who names one
+    keeps it.
     """
     cols = int(x.shape[-1])
-    return None if cols <= width else _k.split(cols, width)
+    if cols <= width:
+        return {}
+    rows = _k.split(cols, width)
+    part = tiling.get("part") or _k.part_for(rows * width)
+    return {"rows": rows, "part": part}
 
 
-def softmax(x: Tensor, **tiling) -> Tensor:
-    """Row-wise softmax, at ANY row width.
+def softmax(x: Tensor, keys: int | None = None, **tiling) -> Tensor:
+    """Row-wise softmax, at ANY row width; over the first `keys` columns of it.
 
     `VRED` folds at most VLMAX lanes, so a wider row goes to the hierarchical
     kernel. Which one is not the caller's problem -- a DiT's 1024-wide row and
     a 64-wide one are the same call.
+
+    `keys` is for a row whose real length `VRED` has no fold for -- SDXL's
+    77-token context -- padded with ZEROS to a width it does have. Raises
+    :class:`ValueError` for a row that needs it and did not say so, and for
+    `keys` on a row past one pass, where the mask would be a whole tensor.
     """
-    rows = _fold(x)
-    if rows is None:
+    cols = int(x.shape[-1])
+    if keys is not None:
+        if cols > _VLMAX:
+            raise ValueError(
+                f"keys={keys} on a {cols}-wide row: the mask is one row read at "
+                f"stride 0, and a row past {_VLMAX} is not one VRED pass. Fold "
+                f"the row first, or pass the key block to flash_attention"
+            )
+        part = tiling.pop("part", None) or _k.part_for(cols)
+        return _o.softmax_keys(x, keys=keys, width=cols, part=part, **tiling)
+    wide = _fold(x, **tiling)
+    if not wide:
+        _reducible(cols)
         return _o.softmax(x, **tiling)
-    return _k.softmax_wide(x, rows=rows, **tiling)
+    return _k.softmax_wide(x, **{**tiling, **wide})
+
+
+def _reducible(cols: int) -> None:
+    """Raise unless `VRED` folds a `cols`-wide row, naming the way round.
+
+    The emitter refuses this too, three levels down and in its own terms. Here
+    the caller's own number is in the message and so is `keys=`, which is what
+    a 77-wide row actually needs.
+    """
+    if cols % _LANES:
+        raise ValueError(
+            f"a {cols}-wide row: VRED folds a multiple of {_LANES} at most "
+            f"{_VLMAX}. Pad the row with ZEROS to a width it folds and pass "
+            f"keys={cols}, which masks the padding after the exponential"
+        )
 
 
 def rmsnorm(x: Tensor, w: Tensor, **tiling) -> Tensor:
     """``x * rsqrt(mean(x^2) + eps) * w``, per row, at any row width."""
-    rows = _fold(x)
-    if rows is None:
+    wide = _fold(x, **tiling)
+    if not wide:
         return _k.rmsnorm(x, w, **tiling)
-    return _k.rmsnorm_wide(x, w, rows=rows, **tiling)
+    return _k.rmsnorm_wide(x, w, **{**tiling, **wide})
 
 
 def layernorm(x: Tensor, w: Tensor, b: Tensor, **tiling) -> Tensor:
     """``(x - mean) * rsqrt(var + eps) * w + b``, per row, at any row width."""
-    rows = _fold(x)
-    if rows is None:
+    wide = _fold(x, **tiling)
+    if not wide:
         return _k.layernorm(x, w, b, **tiling)
-    return _k.layernorm_wide(x, w, b, rows=rows, **tiling)
+    return _k.layernorm_wide(x, w, b, **{**tiling, **wide})
+
+
+def group_norm(x: Tensor, w: Tensor, b: Tensor, **tiling) -> Tensor:
+    """GroupNorm, at any group size. A GROUP IS A ROW.
+
+    `(N, C, H, W)` arrives reshaped to `(N*G, C/G * H * W)`, so this is
+    :func:`layernorm` with the row spanning the group -- and SDXL's groups are
+    40,960 to 163,840 elements, which is where the same fold decides it.
+    """
+    wide = _fold(x, **tiling)
+    if not wide:
+        return _k.group_norm(x, w, b, **tiling)
+    return _k.group_norm_wide(x, w, b, **{**tiling, **wide})
+
+
+def group_norm_silu(x: Tensor, w: Tensor, b: Tensor, **tiling) -> Tensor:
+    """``silu(group_norm(x, w, b))``: the pair every UNet and VAE resnet issues.
+
+    `norm -> act -> conv`, so the activation touches the NORM and not the
+    convolution -- a fused `conv -> act` is fitting the wrong shape here.
+    """
+    wide = _fold(x, **tiling)
+    if not wide:
+        return _k.group_norm_silu(x, w, b, **tiling)
+    return _k.group_norm_silu_wide(x, w, b, **{**tiling, **wide})
 
 
 def neg(x: Tensor) -> Tensor:

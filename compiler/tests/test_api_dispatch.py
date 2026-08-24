@@ -64,11 +64,18 @@ def test_layernorm_is_one_call_at_either_width(cols):
 
 
 def test_the_branch_is_the_reduction_width_and_nothing_else():
-    """Exactly at VLMAX is still ONE pass; one element past it is not."""
+    """Exactly at VLMAX is still ONE pass; one element past it is not.
+
+    `part` rides with `rows` because it is the SAME dispatch: `_legal` refuses a
+    part that cuts a group, and SDXL's 1280 does not divide the kernel's 8192.
+    """
     (fits,) = put(arr((2, VLMAX)))
     (over,) = put(arr((2, VLMAX * 2)))
-    assert api._fold(fits) is None
-    assert api._fold(over) == 2
+    (odd,) = put(arr((2, VLMAX * 5)))
+    assert api._fold(fits) == {}
+    assert api._fold(over) == {"rows": 2, "part": 8192}
+    assert api._fold(odd) == {"rows": 5, "part": 7680}
+    assert api._fold(odd, part=1280) == {"rows": 5, "part": 1280}
 
 
 def test_a_row_that_does_not_split_is_REFUSED_not_silently_padded():

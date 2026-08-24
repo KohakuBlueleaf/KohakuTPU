@@ -45,7 +45,10 @@ from kohakutpu.kernels.fused import softmax_fused as softmax
 from kohakutpu.kernels.groupnorm import group_norm_silu, group_stats
 from kohakutpu.kernels.mlp import geglu, mlp, swiglu
 from kohakutpu.kernels.wide import (
+    group_norm_silu_wide,
+    group_norm_wide,
     layernorm_wide,
+    part_for,
     rmsnorm_wide,
     softmax_wide,
     split,
@@ -61,6 +64,8 @@ __all__ = [
     "gelu_tanh",
     "group_norm",
     "group_norm_silu",
+    "group_norm_silu_wide",
+    "group_norm_wide",
     "group_stats",
     "heads_of",
     "layernorm",
@@ -76,6 +81,7 @@ __all__ = [
     "linear_scale",
     "linear_silu",
     "mlp",
+    "part_for",
     "project_heads",
     "rmsnorm",
     "rmsnorm_wide",

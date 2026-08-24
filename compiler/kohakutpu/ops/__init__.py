@@ -38,7 +38,7 @@ from kohakutpu.ops.elementwise import (
     where,
 )
 from kohakutpu.ops.matmul import matmul
-from kohakutpu.ops.norm import layernorm, rmsnorm, softmax
+from kohakutpu.ops.norm import layernorm, rmsnorm, softmax, softmax_keys
 from kohakutpu.ops.reduce import row_max, row_sum
 
 #: log2(e). Every exponential here is `exp2`, which is the op the core has.
@@ -73,6 +73,7 @@ __all__ = [
     "sigmoid",
     "silu",
     "softmax",
+    "softmax_keys",
     "sub",
     "weights_for_k",
     "weights_for_upsample2",
