@@ -1,7 +1,8 @@
 # Conversion matrix: 12 permutations {full,lite}x{full,lite}x{M>S,M=S,M<S}
 # plus 5 backbone-relative cases. Sanity-gates on ff_eq, then runs all cases
 # in parallel (per-case dirs; xelab writes logs to CWD so sharing one dir
-# corrupts concurrent builds). Sources: frozen snapshot in .\rtl.
+# corrupts concurrent builds). Sources: the frozen PRE-FIX snapshot in .\rtl,
+# not the tree -- see run_matrix.ps1's header for what differs and why.
 param(
     [string]$VivadoBin = "D:\Xilinx\Vivado\2024.2\bin",
     [int]$MaxJobs = 8

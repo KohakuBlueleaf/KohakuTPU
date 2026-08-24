@@ -16,10 +16,14 @@ module sb_conv12_tb;
 
     localparam integer AW   = 43;
     localparam integer FW   = 256;
-`ifdef MW512
+`ifdef MW1024
+    localparam integer MW   = 1024;
+`elsif MW512
     localparam integer MW   = 512;
 `elsif MW256
     localparam integer MW   = 256;
+`elsif MW128
+    localparam integer MW   = 128;
 `elsif MW64
     localparam integer MW   = 64;
 `else
@@ -29,6 +33,8 @@ module sb_conv12_tb;
     localparam integer SDW  = 512;
 `elsif SW256
     localparam integer SDW  = 256;
+`elsif SW128
+    localparam integer SDW  = 128;
 `elsif SW64
     localparam integer SDW  = 64;
 `else
@@ -58,9 +64,15 @@ module sb_conv12_tb;
     integer checks   = 0;
 
     reg s_aclk = 0, bus_clk = 0, m_aclk = 0;
-    always #5.000 s_aclk  = ~s_aclk;
-    always #2.500 bus_clk = ~bus_clk;
-    always #1.667 m_aclk  = ~m_aclk;
+    always begin
+        #5.000 s_aclk  = ~s_aclk;
+    end
+    always begin
+        #2.500 bus_clk = ~bus_clk;
+    end
+    always begin
+        #1.667 m_aclk  = ~m_aclk;
+    end
 
     reg rstn = 0;
     wire bus_rst = !rstn;
@@ -82,6 +94,10 @@ module sb_conv12_tb;
     reg  [2:0]      m_arsize = 0;
     reg             m_arvld  = 0;
     reg             m_rrdy   = 1;
+    // Driven, not tied: WRAP and FIXED are AXI4 and were untestable while the
+    // instantiation hardwired INCR.
+    reg  [1:0]      m_awburst = 2'b01;
+    reg  [1:0]      m_arburst = 2'b01;
 
     wire            m_awrdy, m_wrdy, m_bvld, m_arrdy, m_rvld, m_rlast;
     wire [1:0]      m_bresp, m_rresp;
@@ -135,13 +151,13 @@ module sb_conv12_tb;
              .SEG_DST(2'd0), .SEG_DPORT(2'd0), .SEG_VLD(1'b1)) u_nmu (
         .s_aclk(s_aclk), .s_aresetn(rstn),
         .s_awid(m_awid), .s_awaddr(m_awaddr), .s_awlen(m_awlen),
-        .s_awsize(m_awsize), .s_awburst(2'b01),
+        .s_awsize(m_awsize), .s_awburst(m_awburst),
         .s_awvalid(m_awvld), .s_awready(m_awrdy),
         .s_wdata(m_wdata), .s_wstrb(m_wstrb), .s_wlast(m_wlast),
         .s_wvalid(m_wvld), .s_wready(m_wrdy),
         .s_bid(), .s_bresp(m_bresp), .s_bvalid(m_bvld), .s_bready(m_brdy),
         .s_arid(m_arid), .s_araddr(m_araddr), .s_arlen(m_arlen),
-        .s_arsize(m_arsize), .s_arburst(2'b01),
+        .s_arsize(m_arsize), .s_arburst(m_arburst),
         .s_arvalid(m_arvld), .s_arready(m_arrdy),
         .s_rid(), .s_rdata(m_rdata), .s_rresp(m_rresp), .s_rlast(m_rlast),
         .s_rvalid(m_rvld), .s_rready(m_rrdy),
@@ -253,9 +269,11 @@ module sb_conv12_tb;
 
     integer pk, pl;
     initial begin
-        for (pk = 0; pk < 512; pk = pk + 1)
-            for (pl = 0; pl < SDW/32; pl = pl + 1)
+        for (pk = 0; pk < 512; pk = pk + 1) begin
+            for (pl = 0; pl < SDW/32; pl = pl + 1) begin
                 u_ram.mem[pk][pl*32 +: 32] = 32'hC0DE0000 | (pk*(SDW/32) + pl);
+            end
+        end
     end
 `endif
 
@@ -282,8 +300,12 @@ module sb_conv12_tb;
     function [63:0] exp_rd;
         input integer byteaddr;
         begin
-            if (MW >= 64) exp_rd = {pre32(byteaddr/4 + 1), pre32(byteaddr/4)};
-            else          exp_rd = {32'd0, pre32(byteaddr/4)};
+            if (MW >= 64) begin
+                exp_rd = {pre32(byteaddr/4 + 1), pre32(byteaddr/4)};
+            end
+            else begin
+                exp_rd = {32'd0, pre32(byteaddr/4)};
+            end
         end
     endfunction
 
@@ -469,7 +491,10 @@ module sb_conv12_tb;
             end else if (got !== want) begin
                 data_err = data_err + 1;
                 $display("    CHECK %0s: got %h want %h  DATA-ERROR", name, got, want);
-            end else $display("    CHECK %0s: ok", name);
+            end
+            else begin
+                $display("    CHECK %0s: ok", name);
+            end
         end
     endtask
 
@@ -483,7 +508,10 @@ module sb_conv12_tb;
                 data_err = data_err + 1;
                 $display("    CHECK %0s: word[%0d]=%h want %h  DATA-ERROR",
                          name, j, bd32(j), want);
-            end else $display("    CHECK %0s: ok", name);
+            end
+            else begin
+                $display("    CHECK %0s: ok", name);
+            end
         end
     endtask
 
@@ -500,7 +528,9 @@ module sb_conv12_tb;
 
     initial begin
         #1800000;
-        $display("WATCHDOG");
+        // Counted, so the verdict says FAIL: checks never run are not passes.
+        $display("WATCHDOG sb_conv12_tb: bench did not finish");
+        hangs = hangs + 1;
         report;
         $finish;
     end
@@ -522,6 +552,16 @@ module sb_conv12_tb;
                      (data_err == 0 && hangs == 0 && orphans == 0)
                        ? "CASE-PASS" : "CASE-FAIL",
                      checks, data_err, hangs, orphans);
+            // xsim.py both filters and matches on a leading PASS/FAIL, so
+            // "CASE-PASS" made every cell of this matrix exit 1 however it ran.
+            if (data_err == 0 && hangs == 0 && orphans == 0) begin
+                $display("PASS sb_conv12_tb: MW=%0d SDW=%0d, %0d checks",
+                         MW, SDW, checks);
+            end
+            else begin
+                $display("FAIL sb_conv12_tb: MW=%0d SDW=%0d, %0d checks, %0d data_err, %0d hangs, %0d orphans",
+                         MW, SDW, checks, data_err, hangs, orphans);
+            end
         end
     endtask
 
@@ -545,9 +585,15 @@ module sb_conv12_tb;
             // On a WSTRB-ignoring Lite endpoint wider than the write, the
             // co-resident word is clobbered BY THE ENDPOINT, not the fabric:
             // the converter has no narrower write to issue.
-            if (MW == 64) ckr("wr word3", 3, 32'hB1B1B1B1);
-            else if (LITE_CLOBBER) ckr("wr word3 clob", 3, 32'h0);
-            else          ckr("wr word3 intact", 3, pre32(3));
+            if (MW == 64) begin
+                ckr("wr word3", 3, 32'hB1B1B1B1);
+            end
+            else if (LITE_CLOBBER) begin
+                ckr("wr word3 clob", 3, 32'h0);
+            end
+            else begin
+                ckr("wr word3 intact", 3, pre32(3));
+            end
             ckr("word0 intact", 0, pre32(0));
             ckr("word1 intact", 1, pre32(1));
             ckr("word4 intact", 4, pre32(4));
@@ -560,7 +606,9 @@ module sb_conv12_tb;
             dwr(BASE + 43'h18, 64'hD3D3D3D3_C2C2C2C2, 8'hFF);
             settle;
             ckr("wr2 word6", 6, 32'hC2C2C2C2);
-            if (MW == 64) ckr("wr2 word7", 7, 32'hD3D3D3D3);
+            if (MW == 64) begin
+                ckr("wr2 word7", 7, 32'hD3D3D3D3);
+            end
             ckr("word5 intact", 5, pre32(5));
             orphan_chk;
         end
@@ -580,7 +628,14 @@ module sb_conv12_tb;
             dwr(BASE + 43'h10, 64'hFFFF_FFFF_1234_5678, 8'h0F);
             settle;
             ckr("half word4", 4, 32'h12345678);
-            ckr("half word5 INTACT", 5, pre32(5));
+            // MEASURED: an unstrobed lane arrives as ZERO, so a WSTRB-blind
+            // subordinate destroys the co-resident word. The fabric cannot stop it.
+            if (LITE_CLOBBER) begin
+                ckr("half word5 CLOBBERED", 5, 32'h0);
+            end
+            else begin
+                ckr("half word5 INTACT", 5, pre32(5));
+            end
             orphan_chk;
         end
 `endif
@@ -625,8 +680,9 @@ module alite_ep #(
     reg [DW-1:0] regs [0:N-1];
     integer k, l;
     initial for (k = 0; k < N; k = k + 1)
-        for (l = 0; l < DW/32; l = l + 1)
+        for (l = 0; l < DW/32; l = l + 1) begin
             regs[k][l*32 +: 32] = 32'hC0DE0000 | (k*(DW/32) + l);
+        end
 
     wire [7:0] wi = awaddr[LSB +: 8];
     wire [7:0] ri = araddr[LSB +: 8];
@@ -646,18 +702,27 @@ module alite_ep #(
             bvalid <= 1'b0;
             rvalid <= 1'b0;
         end else begin
-            if (bvalid && bready) bvalid <= 1'b0;
+            if (bvalid && bready) begin
+                bvalid <= 1'b0;
+            end
             if (wgo) begin
                 $display("%0t     ep WRITE commit addr=%h data=%h strb=%h%s",
                          $time, awaddr[15:0], wdata, wstrb,
                          (IGNORE_WSTRB != 0) ? " (wstrb IGNORED)" : "");
-                if (IGNORE_WSTRB != 0) regs[wi] <= wdata;
+                if (IGNORE_WSTRB != 0) begin
+                    regs[wi] <= wdata;
+                end
                 else
-                    for (b = 0; b < DW/8; b = b + 1)
-                        if (wstrb[b]) regs[wi][b*8 +: 8] <= wdata[b*8 +: 8];
+                    for (b = 0; b < DW/8; b = b + 1) begin
+                        if (wstrb[b]) begin
+                            regs[wi][b*8 +: 8] <= wdata[b*8 +: 8];
+                        end
+                    end
                 bvalid <= 1'b1;
             end
-            if (rvalid && rready) rvalid <= 1'b0;
+            if (rvalid && rready) begin
+                rvalid <= 1'b0;
+            end
             if (rgo) begin
                 rdata  <= regs[ri];
                 rvalid <= 1'b1;

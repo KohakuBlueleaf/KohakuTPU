@@ -1,5 +1,12 @@
-# Lite/width correctness matrix. Sources are the frozen snapshot in .\rtl
-# (hash-verified identical to src/kohakuaccel 2026-08-22), never the tree.
+# Lite/width correctness matrix. Sources are the frozen snapshot in .\rtl.
+#
+# THE SNAPSHOT IS THE PRE-FIX RTL AND THAT IS THE POINT: this bench reproduces
+# the silicon defects, so it keeps the sources that have them. Two files differ
+# from src/kohakuaccel and neither is drift -- sb_v6_bus.v wires Lite ports 2/3
+# straight through (the tree has sb_axi2lite at every Lite port), and sb_line4.v
+# uses REQ/RSP_DEPTH 64 (the tree uses 256; 64 wedges a 256-beat burst). The
+# rest is byte-identical and must stay so. Nothing here is in xsim.py, so
+# check.py never runs it: re-verify that list before trusting a result.
 param(
     [string[]]$Defs = @(),
     [string]$Tag = "matrix",
