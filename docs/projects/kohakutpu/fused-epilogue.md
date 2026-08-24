@@ -40,7 +40,7 @@ def linear_silu_fused(x=L.In(..., M, K), w=L.In(N, K), y=L.Out(..., M, N),
                       *, gm=2, gn=1, nk=2):
     with units(x.tiles(gm), w.tiles(gn)) as (i, j):
         acc = L.tile(gm, gn, nk)
-        for k in loop(x.chunks(nk)):
+        for k in loop(x.chunks32(nk)):
             acc += x[i, k] @ w[j, k]
         y[i, j] <<= acc * sigmoid(acc)
 ```

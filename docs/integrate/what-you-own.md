@@ -243,7 +243,9 @@ The framework never knows what a layout *means*. It knows a layout can answer
 contract, and it is why the same L2 serves a machine whose native order is 4x4
 sub-tiles and one whose native order is Morton-ordered tiles.
 
-**The generality test.** A ray tracer changes only the right-hand column:
+**The generality test.** A ray tracer changes only the right-hand column. Nothing
+below is a real API — `L.slab`, `L.trace` and `L.shade` are the statement kinds
+*that project* would define, and they are the point:
 
 ```python
 @kernel

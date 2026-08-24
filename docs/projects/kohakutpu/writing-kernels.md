@@ -63,7 +63,7 @@ M, K, N = dims("M, K, N")
 def matmul(a=L.In(M, K), b=L.In(N, K), c=L.Out(M, N), *, gm=2, gn=1, nk=2):
     for i, j in grid(a.tiles(gm), b.tiles(gn)):
         acc = L.tile(gm, gn, nk)
-        for k in sweep(a.chunks(nk)):
+        for k in sweep(a.chunks32(nk)):
             acc += a[i, k] @ b[j, k]
         c[i, j] <<= acc
 
@@ -126,7 +126,7 @@ kernel.
 # tiling -- the minimal form, and where examples live
 for i, j in grid(a.tiles(gm), b.tiles(gn)):
     acc = L.tile(gm, gn, nk)
-    for k in sweep(a.chunks(nk)):
+    for k in sweep(a.chunks32(nk)):
         acc += a[i, k] @ b[j, k]
     c[i, j] <<= acc
 
@@ -134,16 +134,22 @@ for i, j in grid(a.tiles(gm), b.tiles(gn)):
 for i, j in grid(a.tiles(gm), b.tiles(gn)):
     ra, rb = L.region(gm, nk), L.region(gn, nk)
     acc = L.tile(gm, gn)
-    for k in sweep(a.chunks(nk)):
+    for k in sweep(a.chunks32(nk)):
         ra <<= a[i, k]
         rb <<= b[j, k]
         acc += ra @ rb
     c[i, j] <<= acc
 
-# schedule -- `stage` is `grid` plus a barrier
-with L.stage(a.tiles(gm), b.tiles(gn)) as (i, j):
+# schedule -- `stage` is `grid` plus a barrier, and `units` is its other name
+with stage(a.tiles(gm), b.tiles(gn)) as (i, j):
     ...
 ```
+
+`grid`, `stage`, `units`, `loop` and `sweep` come from `kohakuaccel.lang` and are
+the FRAMEWORK's — `stage` and `units` are one class under two names, and so are
+`loop` and `sweep`. `L` is `kohakutpu.lang`, this project's half: `L.tile`,
+`L.region`, `L.temp`, `L.table` and the elementwise functions. Reaching for
+`L.stage` is the one import mistake this page has actually caused.
 
 All three emit the **same instructions**. `compiler/tests/test_spectrum.py`
 asserts that, so saying less can never cost anything.
@@ -168,9 +174,9 @@ error, measured, not a hang. The compiler refuses it and names both statements.
 Put them in separate stages:
 
 ```python
-with L.stage(x.parts(part)) as e:
+with stage(x.parts(part)) as e:
     corr[e] <<= top[e]                       # keep the old value
-with L.stage(x.parts(part)) as e:
+with stage(x.parts(part)) as e:
     top[e] <<= L.maximum(top[e], block[e])   # before overwriting it
 ```
 
@@ -181,9 +187,9 @@ drain lands in the receiving vector core's L1
 Write the elementwise work on the accumulator and the tile never reaches DRAM:
 
 ```python
-with L.stage(x.tiles(gm), w.tiles(gn)) as (i, j):
+with stage(x.tiles(gm), w.tiles(gn)) as (i, j):
     acc = L.tile(gm, gn, nk)
-    for k in L.sweep(x.chunks(nk)):
+    for k in sweep(x.chunks32(nk)):
         acc += x[i, k] @ w[j, k]
     y[i, j] <<= acc * sigmoid(acc)     # elementwise ON the accumulator
 ```
