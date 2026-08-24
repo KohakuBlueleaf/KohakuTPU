@@ -109,19 +109,24 @@ It compiles with `xvlog -sv`, elaborates with `xelab -L xpm` (plus
 Work lands in `build/xsim_<bench>/`, wiped at the start of each run. Two
 invocations of the *same* bench collide; override the root
 (`--build-root`, or `KOHAKU_XSIM_BUILD`) when running a comparison in parallel.
+A relative root is resolved against the repo, not the shell's directory —
+`xvlog` runs with its cwd inside the build directory, and a relative path
+reached it as "Can not find file: …/kohaku_predef.vh", which reads as a missing
+generated header rather than as a bad option.
 
-There is also a set of PowerShell runners under `tests/` — `run_matmul_sim.ps1`,
-`run_noc_sim.ps1`, `run_mag_sim.ps1`, `run_interlink_sim.ps1`,
-`run_axi_sim.ps1`, `run_system_sim.ps1` — which predate the Python runner and do
-the same thing per subsystem. They each keep their **own copy** of the source
-list, and that duplication is exactly how they break: a module gains a
-dependency, the shared table learns about it, one runner's private copy does not,
-and that runner fails elaboration on an unresolved module while everything else
-keeps working.
+A set of PowerShell runners under `tests/` used to do the same job per
+subsystem. They each kept their **own copy** of the source list, and that
+duplication is what killed them: a module gains a dependency, the shared table
+learns about it, a runner's private copy does not, and that runner fails
+elaboration on an unresolved module while everything else keeps working.
+
+They are now in `tests/attic/` and **nothing should call them** — every one
+names source directories under the pre-rename layout (`src/kohakumas`,
+`src/synth_top`) that no longer exist, so they fail before reaching a
+simulator.
 
 **One source list per bench, in one place.** A runner that hand-maintains a
-duplicate is a runner that will drift. Where the two disagree today, the shared
-table is the one that is right.
+duplicate is a runner that will drift.
 
 ## Watchdogs and verdicts
 
@@ -135,6 +140,12 @@ one, it is a `WATCHDOG TIMEOUT` line naming the last thing that happened.
 a failure distinct from `FAIL`. A bench that neither passed nor failed did not
 run; that is a different bug from one that ran and got the wrong answer, and
 collapsing the two loses the distinction exactly when it matters.
+
+**And the verdict line carries a count, which is the part a refactor has to
+hold.** `check.py --counts LEDGER` records every integer a check printed on its
+`PASS`/`FAIL` lines; `--counts-baseline LEDGER` fails a later run when one
+moves. A reformat that keeps every bench green can still have silenced a check,
+and PASS cannot tell you. Take the ledger *before* the change.
 
 **Do not filter the output by shape.** Benches print results indented, so it is
 tempting to keep only indented lines. Assertion monitors do not match that shape:

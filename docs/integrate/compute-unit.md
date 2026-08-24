@@ -47,7 +47,7 @@ generator connects by name:
 
 Both production units present exactly this
 (`src/kohakutpu/matmul/mx_cluster_cu.v`, `src/kohakutpu/vector/vec_cu.v`), as
-does `src/kohakunoc/noc_cu_null.v` (§1.2). Anything else
+does `src/kohakuaccel/noc/endpoint/noc_cu_null.v` (§1.2). Anything else
 in your port list is yours — debug counters, status bits — and the generated top
 wires them out.
 
@@ -70,7 +70,7 @@ answered to the wrong place.
 
 ### 1.1 Instantiate the port module
 
-`src/kohakunoc/noc_cu_base.v` holds the mesh-facing side so your unit conforms by
+`src/kohakuaccel/noc/endpoint/noc_cu_base.v` holds the mesh-facing side so your unit conforms by
 construction:
 
 ```verilog
@@ -120,11 +120,11 @@ ask "is this the bitstream my compiler targets" and get a truthful answer.
 
 It comes up as soon as anyone looks for a starting point, so be clear about it.
 
-**It is a measurement instrument.** `src/kohakunoc/noc_cu_null.v` is the smallest
+**It is a measurement instrument.** `src/kohakuaccel/noc/endpoint/noc_cu_null.v` is the smallest
 thing that is a legal node — every framework obligation, no arithmetic — and it
 exists so that "what does attaching an endpoint to the mesh cost, before any
 compute" is a real number. It is instantiated only by
-`src/synth_top/noc_tile_1r.v` and `src/synth_top/noc_cluster_2x2.v`, both
+`src/kohakuaccel/verif/noc_tile_1r.v` and `src/kohakuaccel/verif/noc_cluster_2x2.v`, both
 measurement-only harnesses.
 
 **It is not a template**, and copying it will teach you the wrong things:
@@ -308,7 +308,7 @@ exist.
 What it does give you is a set of hard-won conventions:
 
 **Name the primitive; never infer it.** Instantiate through
-`src/common/kohaku_sdpram.v` with an explicit `MEM_PRIM` and `READ_LAT`, never a
+`src/kohakuaccel/common/kohaku_sdpram.v` with an explicit `MEM_PRIM` and `READ_LAT`, never a
 `reg` array left to synthesis. Inference makes both the resource cost *and the
 read latency* depend on a tool heuristic, and read latency sets pipeline depth,
 which is a design decision. Both units carry comments explaining what their
@@ -550,8 +550,8 @@ and retires only once the network has taken the packet, so "complete" means
       clear, and unknown flit types are dropped rather than held
 - [ ] every flit you build is exactly `FLIT_WIDTH` bits, with the pad derived
       from `FLIT_WIDTH`
-- [ ] memories are named through `src/common/kohaku_sdpram.v` or
-      `src/common/sync_fifo.v`, with explicit read latency
+- [ ] memories are named through `src/kohakuaccel/common/kohaku_sdpram.v` or
+      `src/kohakuaccel/common/sync_fifo.v`, with explicit read latency
 - [ ] `CU_TYPE` is unique, and `POS_X`/`POS_Y` match the router you hang off
 - [ ] `dbg_ctr` reports something you would want during a disappointing
       measurement

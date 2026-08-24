@@ -216,10 +216,10 @@ measured yet — and every cost model on an unmeasured link is fiction.
   on topology and bandwidth would have been wrong by a factor of 33.
 - **Capacity is not checked.** Nothing refuses an allocation that does not fit a
   mesh's memory; it becomes a runtime failure with no diagnosis.
-- **Whether a project's parallel splits should be a solver or a rule.** For a
-  transformer the pairing that avoids a collective is well known and could simply
-  be spelled out. Whether that generalises is not established, and a rule that is
-  wrong for the next model is worse than no rule.
+- **Whether a project's parallel splits should be a solver or a rule.** Within
+  one workload family the pairing that avoids a collective is usually known and
+  could simply be spelled out. Whether that generalises is not established, and
+  a rule that is wrong for the next workload is worse than no rule.
 - **Nothing checks that a machine description matches the device.** A mesh map
   generates hardware and a machine description tells software the same thing
   twice, with nothing comparing them ([software-stack.md](software-stack.md) §7).

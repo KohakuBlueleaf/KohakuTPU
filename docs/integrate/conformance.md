@@ -252,7 +252,7 @@ Two things to measure, and the second is the one people skip:
   your unit's real cost is the difference between them, and without that
   subtraction you are attributing the network's cost to your arithmetic.
 
-That second measurement is what `src/kohakunoc/noc_cu_null.v` exists for, and why
+That second measurement is what `src/kohakuaccel/noc/endpoint/noc_cu_null.v` exists for, and why
 it is built to defeat synthesis pruning: every bit of both inbound flits reaches
 an output, and its traffic originates externally so the mesh cannot be proven
 idle and constant-folded. Without those properties the subtraction would be

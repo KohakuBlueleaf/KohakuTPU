@@ -73,14 +73,19 @@ Script paths are where these live today, not a stable interface; see
 
 ### The synth-check flow
 
-`scripts/synth_check.tcl`, invoked through `tests/run_synth_check.ps1`, is an
-older argument-driven variant of the same idea, and it is the one wired into the
-test suite:
+`scripts/synth_check.tcl`, invoked through `scripts/tcl/ooc_check.tcl`, is an
+older argument-driven variant of the same idea:
 
-    .\tests\run_synth_check.ps1                    # every registered target
-    .\tests\run_synth_check.ps1 -Only <top>        # one of them
-    .\tests\run_synth_check.ps1 -Freq 400          # a different target frequency
-    .\tests\run_synth_check.ps1 -Generics "DEPTH:512+ACC_MW:14"
+    vivado -mode batch -source scripts/tcl/ooc_check.tcl -tclargs <top> ...
+
+> **Nothing runs synthesis automatically.** `check.py` is simulation, linting
+> and the doc gates; no tier of it synthesises anything, because the cheapest
+> synthesis is ninety seconds and the suite's contract is seconds. The
+> PowerShell wrapper this section used to show — `tests/run_synth_check.ps1` —
+> is in `tests/attic/` with the rest of them and names source directories that
+> no longer exist. Out-of-context measurement is something you run deliberately
+> before an implementation run, which is exactly what
+> [README.md](README.md#when-to-skip-a-stage-and-when-not-to) says not to skip.
 
 It takes `<top> <period_ns> <part> <generics> <file>...` and prints a `RESULT`
 line, a `VERDICT` line, the ten worst paths and a utilisation extract per target,

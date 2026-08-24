@@ -84,14 +84,15 @@ The files that are **never** yours, in the sense that editing them is a signal
 you have taken a wrong turn:
 
 ```
-    src/kohakunoc/       noc_cu_base.v, noc_router.v, noc_inport.v,
-                         noc_outport.v, noc_orchestrator.v, noc_pkt.vh
-    src/kohakumas/       mag.v, mag_mem_port.v, mag_dram_port.v, the interlink
-    src/kohakuaxi/       axi_n1.v, axi4_master.v, axi4_ram.v, main_orch.v
-    src/common/          sync_fifo.v, kohaku_sdpram.v
+    src/kohakuaccel/
+      noc/       noc_cu_base.v, noc_router.v, noc_inport.v, noc_outport.v,
+                 noc_orchestrator.v, noc_pkt.vh
+      sysnode/   mag.v, the memory mover, the control processor, the interlink
+      axi/       the station bus, links, axi_n1.v and the AXI plumbing
+      common/    sync_fifo.v, async_fifo.v, kohaku_sdpram.v, sb_skid.v
 ```
 
-`src/common/` is the exception that proves the rule: you do not *edit* it, you
+`common/` is the exception that proves the rule: you do not *edit* it, you
 *instantiate* it. Naming a memory primitive through `kohaku_sdpram.v` rather than
 inferring one from a `reg` array is a convention with real consequences — see
 [what-you-own.md](what-you-own.md) §3.
@@ -101,10 +102,15 @@ adding a case to a router, or teaching the orchestrator about your opcodes, stop
 — the framework already has a way to do that, described in one of the pages
 below.
 
-> One file above is currently on the wrong side of the line:
-> `src/kohakumas/mx_quant.v` is KohakuTPU's number format plugged into a
-> framework slot, and it lives in the framework's package. It is a project's
-> module and should move. Noted here rather than quietly.
+> **The quantiser has moved out.** It was `mx_quant.v` inside the framework's
+> package, one project's number format wired into a framework slot. It is
+> `src/kohakutpu/transform/mx_quant.v` now, reached through `xform_bank` — the
+> one module name the framework fixes — and `src/templates/transform/` supplies
+> an identity bank so a framework-only build elaborates with no project source.
+>
+> **One coupling is still on the wrong side**, and it runs the other way: the
+> SIMD PE under `src/kohakuaccel/pe/rv32/simd/` instantiates arithmetic that
+> exists only under `src/kohakutpu/`. See below.
 
 ### Where the boundaries fall
 
@@ -143,38 +149,44 @@ transform. It is *not* a fork of the framework. Nothing in a project should have
 merged back, and nothing in the framework should have to know the project's
 name.
 
-The directory shape that follows from that:
+The directory shape that follows from that, as the tree has it today:
 
 ```
-    src/                 the framework. Shared by every project.
-      kohakunoc/         mesh, router, flit protocol, compute-unit port
-      kohakumas/         memory agent, DRAM ports, interlink
-      kohakuaxi/         AXI fabric and bridges
+    src/kohakuaccel/     the RTL framework. Shared by every project.
+      noc/               mesh, router, flit protocol, compute-unit port
+      sysnode/           memory agent, mover, control processor, interlink
+      axi/               station bus, links, AXI plumbing
+      pe/rv32/           the CPU PE, and the SIMD PE behind SIMD_EN
       common/            FIFOs, named memory primitives
-      kohakuship/        ship assembly and the mesh generator
-      kohakuaccel/       the driver framework: transport, register map,
-                         dispatch, completion tracking, flit codec, sim session
-                         (this half is REAL today, at driver/kohakuaccel/ -- §6)
+      verif/             bench-only models
+    src/templates/       a conforming CU, a transform occupant, an endpoint
+                         adapter — each with a bench
+    src/examples/saxpy/  the example project's RTL half
 
-    projects/
-      <name>/
-        rtl/             your compute unit, its memories and its datapath,
-                         plus any addon you plug into a framework slot
-        sw/              your ISA encoder, scheduler and device model
-        maps/            mesh pictures
-        boards/          machine descriptions
-        tests/           your benches
+    src/kohakutpu/       a project: matmul, vector, transform occupants, and
+                         the tops generated for it under top/generated/
+    src/kohakumpe/       a project: the SIMT PE
+
+    compiler/kohakuaccel/  the compiler framework   compiler/kohakutpu/  project
+    driver/kohakuaccel/    the driver framework     driver/kohakutpu/    project
 ```
 
-> **This is the shape the tree is moving to, not the shape it has today.**
-> The software half has since separated — `driver/kohakuaccel` is the framework
-> and `driver/kohakutpu` this project — but KohakuTPU's RTL (`src/kohakutpu/`)
-> still sits inside `src/` beside the framework's (`src/kohakunoc/`), the mesh
-> generator is `scripts/py/gen_mesh.py`, and ship assemblies are generated into
-> `src/synth_top/`. Where a page below names a file, it names the real one. Where
-> it describes a boundary, it describes the one that should exist.
-> [software-stack.md](software-stack.md) §6 is explicit about which couplings are
-> cut and which are still open.
+The mesh generator is `scripts/py/gen_mesh.py` and a project keeps its ship
+assemblies under its own tree. [software-stack.md](software-stack.md) §6 is
+explicit about which couplings are cut and which are still open.
+
+> **The separation is by directory, not by repository.** Framework and projects
+> share one tree, one test suite and one build flow, so nothing enforces the
+> split except the rule and the one check that measures it
+> (`driver/tests/test_isolation.py`, for the software half). A second project
+> would sit beside `kohakutpu/` rather than forking anything.
+>
+> **One coupling is not cut**, and it runs from the framework INTO a project:
+> the SIMD PE under `src/kohakuaccel/pe/rv32/simd/` instantiates `vec_alu`,
+> `vec_dsp`, `vec_delay`, the four `vec_cvt_*` converters and two helpers from
+> `mx_fpacc.v` — all under `src/kohakutpu/`. Every build list that carries the
+> SIMD PE carries the reference accelerator's arithmetic with it, so the
+> framework does not build alone until that arithmetic moves down.
 
 **KohakuTPU is one project built on this framework** — an MXFP7 tensor
 accelerator. It appears throughout these pages as a worked example and is always

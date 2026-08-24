@@ -59,33 +59,33 @@ An addon is a slot the framework already fills with something working, built so
 that replacing it is a supported operation rather than a fork. There are three,
 and they are not equally mature.
 
-### The transform stage in the memory port
+### The transform slot in the memory agent
 
-The read path between DRAM beats and response flits has a stage in it, selected
-per request by a descriptor flag. KohakuTPU plugs a quantiser in: FP16 in DRAM
-becomes its narrow block-scaled format on the way out, so software never sees the
-internal format and no operand is converted twice. A project with a different
-number format writes a different module.
+A stage between memory and memory, driven by the memory mover, selected by an
+**id** in its descriptor. KohakuTPU plugs a quantiser in: FP16 becomes its narrow
+block-scaled format, so software never sees the internal format and no operand is
+converted twice. A project with different arithmetic writes a different module
+and changes nothing else.
 
 Three properties make this a real slot rather than a feature:
 
-- **It is per request.** The same memory port serves transformed and
-  untransformed fetches in the same program, because the flag rides on the
-  descriptor.
-- **There is one instance per memory port**, so a mesh buys more transform
-  throughput by having more ports — which makes it a topology decision
-  ([mesh-topology.md](mesh-topology.md) §1).
-- **The host upload path has its own instance**, so uploading and fetching do not
-  contend. That was not free: they shared one under a mutex, and the mutex was
-  the only reason an upload had to wait for a fetch.
+- **Selection is an id, not a bit.** `0` is bypass, `k` is occupant `k`, and the
+  mode bits beside it are opaque — the framework carries them and never reads
+  them. Nothing in framework code is named after a number format.
+- **There is one instance per memory agent**, not one per port and not one per
+  compute unit. A per-port instance could never be busy in parallel with another
+  anyway: every port master converges onto one DRAM master.
+- **It is off the fetch path.** A compute unit reads operands already in their
+  final format. Conversion is paid once per tensor rather than once per read,
+  which is what a hidden state re-read across passes needs.
 
-The one thing the slot fixes is its output shape: whatever the source length, a
-transformed fetch yields a fixed number of operand words per entry. A
-non-transforming fetch may name its own words-per-entry instead.
+The one thing the slot fixes is its output shape: a transformed entry yields a
+fixed number of words whatever the source length, and the bypass occupant obeys
+that too.
 
-> `src/kohakumas/mx_quant.v` is KohakuTPU's plug-in sitting in a framework
-> package. It is a project's module in the framework's directory, and it should
-> move.
+The cost of this arrangement is that a single-use operand needs an explicit
+mover pass, which the compiler or the control processor has to schedule. DRAM
+traffic is unchanged; latency is two passes rather than one.
 
 ### Staging inside the memory agent
 
@@ -109,8 +109,12 @@ configuration is a straight wire. Anything that wants to observe or intercept an
 endpoint's traffic — staging, tracing, an address remap — goes here without
 touching the router or the unit.
 
-**Proof of concept, not production**: it exists under `src/synth_top/poc/`. The
-interface shape is the durable part.
+It ships as a template with a bench of its own:
+`src/templates/adapter/kh_endpoint_adapter_template.v`, checked by the
+`adapter_template` bench — `STAGE=0` must be a straight wire, `STAGE=1` must
+hold the flit until it is taken, and the observe taps must count exactly the
+transfers. Nothing in the reference instance instantiates it, so the interface
+shape is the load-bearing part, not the implementation.
 
 ---
 
@@ -134,7 +138,7 @@ on several.
 | **Dispose of write acknowledgements.** Nothing consumes them. | Held, they sit at the head of your receive queue, raise your busy line permanently, and wedge the instruction stream behind them. |
 | **Accept and drop flit types you do not understand**, ideally with a simulation-only message naming the type. | Same wedge. Silent loss is the hazard, which is why the message matters. |
 | **One descriptor per run, and per write burst.** The agent walks the address sequence itself. | A requester that issues one request per entry pays a memory round trip per entry — a latency where the protocol offers a throughput. On the write side, one transaction per word saturates the agent's transaction rate long before its bandwidth. |
-| **A transformed fetch returns a fixed number of words per entry.** | Your entry assembly has to match, or you are re-packing what the transform already packed. |
+| **An entry is `entry_words × DATA_W/8` bytes, and a fetch is never transformed.** | Requesting a conversion is not a thing a unit can do; operands reach it in final form. Assuming otherwise means re-packing what was already packed. |
 
 ### Free — and the two real units differ
 
@@ -265,15 +269,17 @@ pulls in any project module — see [software-stack.md](software-stack.md) §6.
 
 ## 5. Open questions
 
-- **Two of the three addon slots are not production.** The memory-agent staging
-  is a design, and the endpoint adapter is a proof of concept under
-  `src/synth_top/poc/`. Only the transform stage is load-bearing today.
-- **The transform slot has no declared interface.** It is a module instantiated in
-  the read path with a particular port list; nothing states what a replacement
-  must present. Until it does, "swappable" means "swappable by someone who reads
-  the memory port".
-- **`src/kohakumas/mx_quant.v` is on the wrong side of the framework boundary**
-  (§2).
+- **Two of the three addon slots are not in the shipping image.** The
+  memory-agent staging has RTL and a bench (`mag_stage`, `mag_stage_port`) but
+  no ship instantiates it; the endpoint adapter is a template with a bench and
+  no instantiation at all. Only the transform slot is load-bearing today.
+- **The transform slot's geometry is declared per agent, not per occupant.**
+  `IN_BITS`/`OUT_WORDS` are parameters on `mag_xform`, so a bank holding two
+  occupants of different shapes cannot describe itself. With one real occupant
+  this is correct; more than one needs the geometry indexed by id. The occupant
+  registers already carry the shape per id — `0x04` reads back
+  `{OUT_WORDS, IN_BITS}` for the selected occupant — so the reader can discover
+  what the parameters cannot express.
 - **Conventions are not checkable.** Everything in §3 is prose and worked example.
   The forced ones could plausibly be assertions shipped with the framework — a
   bindable checker module a unit instantiates in simulation — and none exists.

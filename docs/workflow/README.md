@@ -132,6 +132,11 @@ finishes in about a minute, and something to run before calling a thing done. If
 the fast tier drifts up to a minute, fix it; a ten-second question that becomes a
 five-minute question teaches people to stop asking it.
 
+`scripts/py/check.py` is that structure: `fast` is the linters, the two pytest
+suites and the doc and style gates; `unit` adds the RTL benches that have caught
+the most; `blocks` runs every bench; `full` is all of it — 107 checks in about
+ten minutes at `-j4`.
+
 The corollary: **a check that takes much longer than usual is a stall, not
 slowness.** Investigate it rather than waiting it out.
 
@@ -163,6 +168,13 @@ divergence presents as a hardware fault.
 and whether the run met or failed. A number that exists only in a terminal
 scrollback is lost, and it will be re-measured — or worse, remembered
 approximately.
+
+That applies to simulation too, and there it is mechanical:
+`check.py full --counts LEDGER` writes what every check printed on its
+`PASS`/`FAIL` lines, and `--counts-baseline LEDGER` fails a later run when any
+of them moved. **A green suite is not evidence that a refactor changed nothing**
+— 503 checks becoming 501 is still a PASS. Take the ledger before the change;
+afterwards there is nothing left to compare against.
 
 **Numbers belong to the project that measured them.** Framework pages describe
 practice. Any frequency, resource count or utilisation figure describes one

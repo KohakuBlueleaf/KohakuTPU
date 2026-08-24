@@ -957,7 +957,7 @@ and `p-3x8` are expressible shapes that simply have not been run. Q>8 is §2.4's
 job, on the line.
 
 The wrappers themselves are **build artifacts** — `ooc_sweep.py` generates
-`src/synth_top/sb_p<K>x<Q>f<FW>.v` per shape at the start of the run — so
+`src/attic/sweeps/sb_p<K>x<Q>f<FW>.v` per shape at the start of the run — so
 reproducing this table means re-running the suite, not synthesising a file that
 is sitting in the tree.
 

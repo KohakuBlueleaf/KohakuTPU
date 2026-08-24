@@ -27,8 +27,8 @@ is yours:
 
 | owner | what it defines | you |
 |---|---|---|
-| `kohakunoc` | the flit header: routing, message class, transaction id, batch marker | obey it |
-| `kohakumas` | the memory instruction set: read and write descriptors, streaming fetches, layout and transform flags, the memory mover's commands | **use it** |
+| `kohakuaccel/noc` | the flit header: routing, message class, transaction id, batch marker | obey it |
+| the system node | the memory instruction set: read and write descriptors, streaming fetches, layout and transform flags, the memory mover's commands | **use it** |
 | you | the `CU_INST` payload: what your unit computes | define it |
 
 The middle row is the one that changes how you should think about this page. The
@@ -301,7 +301,7 @@ only to stage it and kick it. If your unit is programmable, this is the shape:
 
 ## 7. Open questions
 
-- **`src/kohakunoc/noc_pkt.vh` declares a `CU_INST` payload substructure**
+- **`src/kohakuaccel/noc/noc_pkt.vh` declares a `CU_INST` payload substructure**
   (`NOC_INST_LEN`, `NOC_INST_CLASS`, `NOC_INST_BODY`) that neither production
   unit uses — both spend the payload from bit 255 downward as they choose. The
   header file itself notes that it is included by nothing. Whether that

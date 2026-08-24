@@ -198,6 +198,28 @@ A ladder of increasingly complete operations, each adding exactly one thing:
 Whichever rung first fails names the broken layer. Running only the last one is
 the mistake this ladder exists to prevent.
 
+**THE BOTTOM RUNG SHOULD BE A DRIVER METHOD, not a script somebody rewrites.**
+It is the rung that gets run most and the one whose result is least ambiguous,
+so it is worth having as a call: stage one instruction, kick, wait for that
+node's completion counter to move, return what the node reported. No arithmetic,
+no result readback, nothing that could fail for a second reason.
+
+Two details decide whether it is honest:
+
+- **Wait on the node's own counter, at `baseline + 1`.** A global completion
+  count is satisfied by anybody's traffic, so a wait sized for this dispatch can
+  be released early by another unit's — and the per-node count is cumulative and
+  cleared by nothing, so waiting for a NUMBER of completions passes instantly on
+  the second run.
+- **Paint the line it reads first.** ECC turns never-written memory into an
+  uncorrectable error rather than into zeros, so a probe that skips this fails on
+  memory it did not write and reads as a dispatch fault.
+
+*In this tree, that is `kohakutpu.host.Mesh.probe_dispatch`, with
+`probe_type` as the per-type sibling that kicks every idle unit of a type before
+waiting on any — which is also the unit of work a clock ladder should step,
+since units of one type are the same netlist and differ only in placement.*
+
 ### Stage 5 — one real operation
 
 The smallest complete operation the machine exists to do, at the smallest size
@@ -289,6 +311,27 @@ Reprogramming the fabric under a host driver that has the device mapped can take
 the host down, and afterwards the device's registers read as all-ones. Close the
 host side first.
 
+### A write narrower than the endpoint's granule destroys its neighbours
+
+An endpoint that does not honour byte strobes paints its whole granule and
+zero-fills every byte the beat did not carry. So a write shorter than one
+granule takes the rest of that granule with it, and **reports success**: four
+consecutive word writes into one line leave only the last, and one word write
+into a full line clears the other three.
+
+Two things follow, and both belong in the driver rather than in a comment:
+
+- **Refuse the write.** A transport that knows its endpoint's granule should
+  reject a partial one by name, rather than performing it. The alternative is a
+  correct-looking program that loses three quarters of what it wrote.
+- **Never verify by reading back what you did not write whole.** A readback of
+  the surviving quarter matches, because the surviving quarter is what is there.
+
+The same shape appears one level up, in a fabric that flit-aligns: a host write
+narrower than the flit arrives as several beats, and an endpoint that pulses its
+write enable per beat without reading the strobes turns one write into several.
+That one is worse, because the extra writes land on *neighbouring registers*.
+
 ### The measurement that is not one
 
 When one debug-transport access costs orders of magnitude more than the work
@@ -347,9 +390,20 @@ rather than a measurement.
 
 ## Open questions
 
-- Clock retuning is arithmetic in the driver with no path to the device: there is
-  no probe that checks the register offsets against the IP, and a wrong offset
-  writes a divider into a status register and the clock simply never changes.
-- The status register field layout is documented differently in the driver
-  comment and the RTL. Only one field is ever polled, so nothing depends on it —
-  but someone diagnosing a stall from that register will read the wrong field.
+- **The status register field layout is documented differently in the driver
+  comment and the RTL.** Only one field is ever polled, so nothing depends on it
+  — but someone diagnosing a stall from that register will read the wrong field.
+
+**Closed since this page was written**, and both worth keeping because the shape
+of the fix is the general lesson:
+
+- *Clock retuning had no path to the device.* It was arithmetic in the driver
+  with nothing checking the register offsets against the IP, so a wrong offset
+  wrote a divider into a status register and the clock simply never changed. The
+  retune reads the rate back and raises when it does not match what was asked
+  for — which is the general form: **a write to a device register that can be
+  read back should be read back**, and one that cannot should say so.
+- *And it had never run.* The one-output retune called a function the module
+  never imported, so every call raised `NameError`. Nothing caught it because
+  the profile paths use a different helper, which is the argument for a probe
+  that exercises each entry point once rather than each code path once.
