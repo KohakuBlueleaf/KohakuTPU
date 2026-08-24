@@ -70,13 +70,19 @@ under a project tree — a framework that does is not reusable, it is one
 accelerator with its parts in two directories. The same rule governs the docs:
 framework-level pages describe the mechanism, never a project's workload.
 
-*This is currently violated in one place.* Eight files under
-`src/kohakuaccel/pe/rv32/simd/` instantiate `vec_alu`, `vec_dsp`, `vec_delay`
-and the four `vec_cvt_*` converters from `src/kohakutpu/vector/`, plus
-`mx_lead1` and `mx_fpacc_add` from `src/kohakutpu/matmul/mx_fpacc.v` — five
-project sources, so every build list that carries the SIMD PE carries the
-reference accelerator's arithmetic with it. Fixing it means moving that
-arithmetic down into the framework: an RTL and build-flow change, not a rename.
+**It holds for the RTL, and `scripts/py/deps.py` measures it** — in the standard
+check suite, reading instantiations rather than build lists, so adding a file to
+a list cannot hide an edge. The last violation was the SIMD unit reaching into
+`src/kohakutpu/` for its float arithmetic. It is `src/kohakumpe/simd/` now: the
+whole unit moved to the project, because project→project is fine and the float
+tier was not separable from the int tier without inventing a seam.
+
+What survives is the **slot** — a module the framework names behind a parameter
+that is 0 by default, so a framework-only build never elaborates one and the
+name need not resolve. There are three: `xform_bank` at MAG's transform stage,
+and `khs_unit`/`khs_scalar_decode` at the CPU PE's `SIMD_EN`. A slot is the only
+shape in which `kohakuaccel/` may mention what it does not own. Do not add one
+without saying so; `deps.py` will refuse it otherwise, which is the point.
 
 **Simulate with Vivado `xsim`**, through `scripts/py/xsim.py`. The iverilog
 wrapper in the sibling `JTAG-DMA-test` repo is not for this project.
@@ -127,7 +133,7 @@ Benches run against both `MODEL=1` (behavioural) and `MODEL=0` (real
 - **Serial loops synthesise serially.** `if (!found && x[i]) found = 1` over 25
   bits is a 25-level LUT chain inside one pipeline stage, and no amount of
   pipelining around it helps. Searches use smear-isolate-encode; sticky bits use
-  mask-then-reduce. See `docs/arch/pe/simd/accumulator.md` §4.1.
+  mask-then-reduce. See `docs/projects/kohakumpe/simd/accumulator.md` §4.1.
 - **Variable part-select writes** build a barrel mux across the whole register.
   `buf[(i*32 + {ctr,3'd0} + k)*7 +: 7] <=` cost 32,292 LUTs until the loop was
   unrolled over the counter. See `docs/projects/kohakutpu/matmul.md` §3.1.
@@ -147,7 +153,8 @@ Benches run against both `MODEL=1` (behavioural) and `MODEL=0` (real
      sysnode/                system node: MAG, mover, control processor,
                              interlink. NEVER call it "node" -- a NoC
                              endpoint is a node too
-     pe/rv32/                the CPU PE, and the SIMD PE behind SIMD_EN
+     pe/rv32/                the CPU PE. `SIMD_EN` names an extension it
+                             does not own -- a slot, filled by kohakumpe
      axi/                    station bus, links, AXI plumbing
      common/                 sync_fifo, kohaku_sdpram, sb_skid
      verif/                  axi_ram and other bench-only models
@@ -156,7 +163,8 @@ Benches run against both `MODEL=1` (behavioural) and `MODEL=0` (real
    src/examples/saxpy/       the example project, RTL half
    src/kohakutpu/            the reference accelerator: matmul, vector,
                              transform occupants, generated tops
-   src/kohakumpe/            the SIMT PE
+   src/kohakumpe/            the SIMT PE, and simd/ -- the SIMD unit that
+                             fills the framework's SIMD_EN slot
    src/reference/            reference and proof-of-concept copies. Only
                              intcluster/ and legacy-cu/ are still compiled by
                              a bench; nothing ships from any of it

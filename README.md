@@ -68,7 +68,14 @@ Ownership has four categories, not two ([full table](docs/integrate/what-you-own
 - `common/` and `verif/` hold fifos, CDC primitives, reset entry, AXI RAM
   models, and `kh_port_check`. The checker makes the port conventions
   executable instead of prose.
-- Each library has a `FILES.f` manifest. Every build script consumes it.
+- `pe/rv32/` is the RV32I controller PE, a compute unit that happens to be a
+  processor. `SIMD_EN` names a wide datapath it does not own — a slot, 0 by
+  default, filled by [KohakuMPE](docs/projects/kohakumpe/README.md).
+
+**The build list is `scripts/py/xsim.py`**, and only that. Each library also
+carries a `FILES.f` inventory, generated from the tree by
+`scripts/py/filesf.py` and checked in the standard suite — but **nothing builds
+from one**, so adding a file to a manifest by hand has no effect on any build.
 
 **Contracts, [`docs/spec/`](docs/spec/README.md).** Normative pages, one per
 surface: flit format, compute-unit port, memory protocol, control registers,
