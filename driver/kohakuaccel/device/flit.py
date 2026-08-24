@@ -74,6 +74,29 @@ def ctrl_request(dst, src, idx: int, txn: int = 1) -> int:
     )
 
 
+def ctrl_write(dst, src, idx: int, value: int, txn: int = 1) -> int:
+    """A CU_CTRL write flit: set node `dst`'s control register `idx`.
+
+    Opcode 1 is the write; the unit answers with the register either way, so the
+    reply is read back exactly like :func:`ctrl_request`'s.
+    """
+    return _pack(
+        [
+            (dst[0], POS_BITS),
+            (dst[1], POS_BITS),
+            (src[0], POS_BITS),
+            (src[1], POS_BITS),
+            (T_CU_CTRL, 4),
+            (txn, 8),
+            (1, 1),  # LAST
+            (0, 3),
+            (1, 8),  # opcode 1 = write
+            (idx, 8),
+            (value, 64),
+        ]
+    )
+
+
 def ctrl_reply(flit: int) -> dict:
     """Decode a CU_CTRL read response: who answered, which register, what value."""
     return {
@@ -192,6 +215,35 @@ def decode_status(word: int) -> dict:
         "busy": (word >> 63) & 1,
         "cu_error": (word >> 62) & 1,
         "inst_space": (word >> 32) & 0xFFFF,
+    }
+
+
+def decode_prog_stat(word: int) -> dict:
+    """A_PROG_STAT: ``{credit[16], flits_left[16], run}``.
+
+    `credit` is what the dispatcher may still send; at zero with `run` set and
+    `flits_left` non-zero the stream is CREDIT-STARVED, which looks identical in
+    wall clock to a unit that is simply slow. Seed A_PROG_CRED before the kick.
+    """
+    return {
+        "run": word & 1,
+        "flits_left": (word >> 1) & 0xFFFF,
+        "credit": (word >> 17) & 0xFFFF,
+    }
+
+
+def decode_node_status(word: int) -> dict:
+    """NODE_STATUS: ``{code[8], arg[32], count[16], 7'd0, valid}``.
+
+    `count` is CUMULATIVE and 16-bit, cleared by nothing, so a wait targets
+    ``baseline + expected`` rather than a number of events. `valid` low means the
+    node has signalled nothing at all since reset.
+    """
+    return {
+        "code": (word >> 56) & 0xFF,
+        "arg": (word >> 24) & MASK32,
+        "count": (word >> 8) & 0xFFFF,
+        "valid": word & 1,
     }
 
 

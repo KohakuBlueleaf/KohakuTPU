@@ -122,6 +122,32 @@ def control_exchange(
     return ctrl_reply(reply)
 
 
+def control_write(
+    t: Transport, coord: Coord, index: int, value: int, txn: int = 1
+) -> int | None:
+    """Set one node's control register over the mailbox; returns what it answers.
+
+    The reply carries the register, so a caller can confirm the write landed
+    rather than assume it. None means nothing answered at `coord`.
+    """
+    from kohakuaccel.device.flit import ctrl_write as _ctrl_write
+
+    drain_mailbox(t)
+    flit = _ctrl_write(dst=coord, src=(0, 0), idx=index, value=value, txn=txn)
+    for w in range(FLIT_WORDS):
+        t.write64(MAG_BASE + A_TX_FLIT0 + w * WORD_BYTES, (flit >> (w * 64)) & MASK64)
+    t.write64(MAG_BASE + A_TX_KICK, 1)
+
+    if t.read64(MAG_BASE + A_RX_STATUS) & (1 << 16):
+        return None
+    reply = 0
+    for w in range(FLIT_WORDS):
+        reply |= t.read64(MAG_BASE + A_RX_FLIT0 + w * WORD_BYTES) << (w * 64)
+    t.write64(MAG_BASE + A_RX_POP, 1)
+    got = ctrl_reply(reply)
+    return got["value"] if got["src"] == coord and got["idx"] == index else None
+
+
 def control_read(t: Transport, coord: Coord, index: int = CU_CAPS, txn: int = 1):
     """Ask one node for a control register over the mailbox.
 

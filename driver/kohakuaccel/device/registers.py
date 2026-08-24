@@ -55,6 +55,14 @@ T_MEM_WR_DATA = 0x4
 T_CU_INST = 0x5
 T_CU_SIGNAL = 0x6
 T_CU_CTRL = 0x7
+
+# noc_l2_adapter's addon control window (CTRL_BASE=0xE0, 8-aligned). The store is
+# DISABLED AT RESET -- an adapter nobody configured claims no address -- so
+# nothing stages until L2_EN is written. Index 3 reads {n_serv, n_fwd}.
+L2_CAPS = 0xE0
+L2_BASE_REG = 0xE1
+L2_EN = 0xE2
+L2_COUNTERS = 0xE3
 # 0x8, not 0x4: 0x4 is MEM_WR_DATA, and a CU_DATA flit carrying it entered the
 # agent's write queue as data. noc_cu_null.v:49 still has this wrong.
 T_CU_DATA = 0x8
