@@ -121,6 +121,19 @@ FAST = [
     py("spec params", "scripts/py/specparams.py"),
     # A cited LINE rots faster than a path: four had drifted off, one by 28.
     py("doc lines", "scripts/py/doclines.py"),
+    # `docpaths.py` strips the fragment, so a link into a RENAMED heading
+    # resolves and lands the reader at the top of the page. 9 had.
+    py("doc anchors", "scripts/py/docanchors.py"),
+    # The framework may not instantiate a project's module. Every build list
+    # carries both trees, so nothing else notices when one does.
+    py("deps", "scripts/py/deps.py"),
+    # Nothing BUILDS from FILES.f, so nothing noticed 7 of 12 drifting -- one
+    # had dropped its own library top.
+    py("files.f", "scripts/py/filesf.py", "--check"),
+    # Unwired, the SIMT one pointed at a directory deleted when the PE moved
+    # and had been reporting DRIFT to nobody.
+    py("simd isa", "tests/pe/tools/rv_simd_emit.py", "--check"),
+    py("simt isa", "tests/pe/tools/rv_simt_emit.py", "--check"),
     # The style rules, over EVERY .v file. The count was reported for the live
     # source alone for months while tests/ held more findings than the whole
     # tree it claimed to describe.
