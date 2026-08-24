@@ -22,12 +22,14 @@ module mag_switch_tb;
     localparam integer RXB  = 64;
     localparam integer MAXB = 32;
 
-    localparam integer U_KIND = 0,  U_DMESH = 4,  U_SMESH = 6,
-                       U_TXN  = 8,  U_LEN   = 16, U_ADDR  = 32;
+    localparam integer U_KIND = 0, U_DMESH = 4, U_SMESH = 6, U_TXN = 8;
+    localparam integer U_LEN = 16, U_ADDR = 32;
     localparam [3:0] K_MEM_WR = 4'h1;
 
     reg clk = 0, resetn = 0;
-    always #1.666 clk = ~clk;
+    always begin
+        #1.666 clk = ~clk;
+    end
 
     integer errors = 0, checks = 0;
 
@@ -121,8 +123,9 @@ module mag_switch_tb;
     function [LW-1:0] patt(input [31:0] s, input [15:0] i);
         integer k;
         begin
-            for (k = 0; k < LW/32; k = k + 1)
+            for (k = 0; k < LW/32; k = k + 1) begin
                 patt[k*32 +: 32] = s * 32'h9E37 + {16'd0, i} * 32'd7 + k[31:0];
+            end
         end
     endfunction
 
@@ -147,14 +150,18 @@ module mag_switch_tb;
             ltx_hdr[src] <= hdr(dm, src[1:0], txn, len);
             ltx_hv[src]  <= 1'b1;
             @(posedge clk);
-            while (!ltx_hr[src]) @(posedge clk);
+            while (!ltx_hr[src]) begin
+                @(posedge clk);
+            end
             ltx_hv[src] <= 1'b0;
             for (i = 0; i <= len; i = i + 1) begin
                 ltx_dat[src] <= patt({24'd0, txn}, i[15:0]);
                 ltx_dl[src]  <= (i == len);
                 ltx_dv[src]  <= 1'b1;
                 @(posedge clk);
-                while (!ltx_dr[src]) @(posedge clk);
+                while (!ltx_dr[src]) begin
+                    @(posedge clk);
+                end
             end
             ltx_dv[src] <= 1'b0;
             ltx_dl[src] <= 1'b0;
@@ -190,14 +197,21 @@ module mag_switch_tb;
                 ln  = lrx_hdr[r][U_LEN +: 16];
                 lrx_hr[r] <= 1'b0;
                 land_at[txn] = r;
-                if (ln != want_len[txn]) land_bad[txn] = 1;
+                if (ln != want_len[txn]) begin
+                    land_bad[txn] = 1;
+                end
                 lrx_dr[r] <= 1'b1;
                 for (i = 0; i <= ln; i = i + 1) begin
                     @(posedge clk);
-                    while (!lrx_dv[r]) @(posedge clk);
-                    if (lrx_dat[r] !== patt({24'd0, txn}, i[15:0]))
+                    while (!lrx_dv[r]) begin
+                        @(posedge clk);
+                    end
+                    if (lrx_dat[r] !== patt({24'd0, txn}, i[15:0])) begin
                         land_bad[txn] = 1;
-                    if (lrx_dl[r] !== (i == ln)) land_bad[txn] = 1;
+                    end
+                    if (lrx_dl[r] !== (i == ln)) begin
+                        land_bad[txn] = 1;
+                    end
                 end
                 lrx_dr[r] <= 1'b0;
             end
@@ -232,12 +246,14 @@ module mag_switch_tb;
 
         // ---- 1. all twelve routes, sequentially so a stall is unambiguous
         txn_n = 1;
-        for (s = 0; s < 4; s = s + 1)
-            for (d = 0; d < 4; d = d + 1)
+        for (s = 0; s < 4; s = s + 1) begin
+            for (d = 0; d < 4; d = d + 1) begin
                 if (s != d) begin
                     send(s, d[1:0], txn_n[7:0], 16'd3);
                     txn_n = txn_n + 1;
                 end
+            end
+        end
 
         repeat (600) @(posedge clk);
 
@@ -259,11 +275,13 @@ module mag_switch_tb;
         // Only mesh1 and mesh3 are interior, so they are the only two that can
         // forward at all -- and both must have, or a multi-hop route did not run.
         checks = checks + 1;
-        if (c_fwd[1][31:0] == 32'd0)
+        if (c_fwd[1][31:0] == 32'd0) begin
             fail("mesh1 never forwarded, so nothing crossed it");
+        end
         checks = checks + 1;
-        if (c_fwd[3][31:0] == 32'd0)
+        if (c_fwd[3][31:0] == 32'd0) begin
             fail("mesh3 never forwarded, so nothing crossed it");
+        end
 
         $display("  forwarded: mesh1 %0d, mesh3 %0d packets",
                  c_fwd[1][31:0], c_fwd[3][31:0]);
@@ -274,27 +292,38 @@ module mag_switch_tb;
         fork
             begin : s0
                 integer k;
-                for (k = 1; k <= 3; k = k + 1) send(0, k[1:0], k[7:0], 16'd7);
+                for (k = 1; k <= 3; k = k + 1) begin
+                    send(0, k[1:0], k[7:0], 16'd7);
+                end
             end
             begin : s1
                 integer k;
-                for (k = 0; k <= 3; k = k + 1)
-                    if (k != 1) send(1, k[1:0], 8'd16 + k[7:0], 16'd7);
+                for (k = 0; k <= 3; k = k + 1) begin
+                    if (k != 1) begin
+                        send(1, k[1:0], 8'd16 + k[7:0], 16'd7);
+                    end
+                end
             end
             begin : s2
                 integer k;
-                for (k = 0; k <= 3; k = k + 1)
-                    if (k != 2) send(2, k[1:0], 8'd32 + k[7:0], 16'd7);
+                for (k = 0; k <= 3; k = k + 1) begin
+                    if (k != 2) begin
+                        send(2, k[1:0], 8'd32 + k[7:0], 16'd7);
+                    end
+                end
             end
             begin : s3
                 integer k;
-                for (k = 0; k <= 3; k = k + 1)
-                    if (k != 3) send(3, k[1:0], 8'd48 + k[7:0], 16'd7);
+                for (k = 0; k <= 3; k = k + 1) begin
+                    if (k != 3) begin
+                        send(3, k[1:0], 8'd48 + k[7:0], 16'd7);
+                    end
+                end
             end
         join
 
         repeat (3000) @(posedge clk);
-        for (n = 0; n < NTXN; n = n + 1)
+        for (n = 0; n < NTXN; n = n + 1) begin
             if (want_at[n] != -1) begin
                 checks = checks + 1;
                 if (land_at[n] != want_at[n] || land_bad[n]) begin
@@ -303,6 +332,7 @@ module mag_switch_tb;
                              n, want_at[n], land_at[n], land_bad[n]);
                 end
             end
+        end
 
         // ---- 3. a jammed forward path must not stop the rest of the chain.
         // mesh2 stops consuming, so mesh0's three-hop traffic backs up through
@@ -323,8 +353,9 @@ module mag_switch_tb;
         fork
             begin : jam
                 integer k;
-                for (k = 0; k < 16; k = k + 1)
+                for (k = 0; k < 16; k = k + 1) begin
                     send(0, 2'd2, 8'd40 + k[7:0], MAXB[15:0] - 16'd1);
+                end
             end
             begin : others
                 repeat (200) @(posedge clk);
@@ -344,15 +375,17 @@ module mag_switch_tb;
         end
 
         checks = checks + 1;
-        if (c_fwd[1][63:32] == 32'd0)
+        if (c_fwd[1][63:32] == 32'd0) begin
             fail("the forward path never reported being blocked, so the jam did not happen and the test proved nothing");
+        end
 
         // Backpressure crossing three hops back to the injector. It shows up as
         // mesh0's link running out of credit, not as `lblock` -- a starved link
         // stalls the data channel, where ltx_hvalid is already low.
         checks = checks + 1;
-        if (c_st1[0][31:0] == 32'd0)
+        if (c_st1[0][31:0] == 32'd0) begin
             fail("mesh0's link never ran out of credit, so the jam stayed inside the chain's buffers and no source ever felt it");
+        end
 
         $display("  mesh0 link1 credit-stalled %0d cycles; local egress blocked %0d by head-of-line",
                  c_st1[0][31:0], c_lblk[0][31:0]);
@@ -371,8 +404,12 @@ module mag_switch_tb;
         end
 
         $display("--- %0d checks, %0d errors", checks, errors);
-        if (errors == 0) $display("PASS mag_switch");
-        else             $display("FAIL mag_switch");
+        if (errors == 0) begin
+            $display("PASS mag_switch");
+        end
+        else begin
+            $display("FAIL mag_switch");
+        end
         $finish;
     end
 

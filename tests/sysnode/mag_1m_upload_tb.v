@@ -9,8 +9,12 @@ module mag_1m_upload_tb;
     localparam MEMP = 2;
 
     reg clk = 0, resetn = 0, dclk = 0;
-    always #2   clk  = ~clk;
-    always #1.7 dclk = ~dclk;
+    always begin
+        #2   clk  = ~clk;
+    end
+    always begin
+        #1.7 dclk = ~dclk;
+    end
 
     reg  [AW-1:0]   sm_awaddr = 0;
     reg  [7:0]      sm_awlen  = 0;
@@ -102,8 +106,12 @@ module mag_1m_upload_tb;
     integer aw_seen = 0, w_seen = 0;
 
     always @(posedge dclk) begin
-        if (m_awvalid && m_awready) aw_seen = aw_seen + 1;
-        if (m_wvalid  && m_wready)  w_seen  = w_seen  + 1;
+        if (m_awvalid && m_awready) begin
+            aw_seen = aw_seen + 1;
+        end
+        if (m_wvalid  && m_wready) begin
+            w_seen  = w_seen  + 1;
+        end
     end
     reg [DW-1:0] golden [0:63];
 
@@ -124,10 +132,16 @@ module mag_1m_upload_tb;
             spin = 0;
             while (spin < 2000) begin
                 @(posedge clk);
-                if (sm_awready) spin = 3000;
-                else spin = spin + 1;
+                if (sm_awready) begin
+                    spin = 3000;
+                end
+                else begin
+                    spin = spin + 1;
+                end
             end
-            if (spin == 2000) $display("  STUCK: sm_awready never asserted");
+            if (spin == 2000) begin
+                $display("  STUCK: sm_awready never asserted");
+            end
             @(negedge clk);
             sm_awvalid = 1'b0;
             for (k = 0; k < n; k = k + 1) begin
@@ -138,11 +152,16 @@ module mag_1m_upload_tb;
                 spin = 0;
                 while (spin < 2000) begin
                     @(posedge clk);
-                    if (sm_wready) spin = 3000;
-                    else spin = spin + 1;
+                    if (sm_wready) begin
+                        spin = 3000;
+                    end
+                    else begin
+                        spin = spin + 1;
+                    end
                 end
-                if (spin == 2000)
+                if (spin == 2000) begin
                     $display("  STUCK: sm_wready never asserted, beat %0d", k);
+                end
                 @(negedge clk);
             end
             sm_wvalid = 1'b0; sm_wlast = 1'b0;
@@ -154,7 +173,9 @@ module mag_1m_upload_tb;
             checks = checks + 1;
             if (!cond) begin
                 errors = errors + 1;
-                if (errors < 10) $display("  FAIL upload word %0d", where);
+                if (errors < 10) begin
+                    $display("  FAIL upload word %0d", where);
+                end
             end
         end
     endtask
@@ -168,15 +189,23 @@ module mag_1m_upload_tb;
         // packer's head and tail phases both run on the upload path too.
         upload(64, 8);
         repeat (400) @(negedge clk);
-        for (i = 0; i < 8; i = i + 1) chk(wget(64 + i) === golden[i], 64 + i);
+        for (i = 0; i < 8; i = i + 1) begin
+            chk(wget(64 + i) === golden[i], 64 + i);
+        end
 
         upload(129, 5);
         repeat (400) @(negedge clk);
-        for (i = 0; i < 5; i = i + 1) chk(wget(129 + i) === golden[i], 129 + i);
+        for (i = 0; i < 5; i = i + 1) begin
+            chk(wget(129 + i) === golden[i], 129 + i);
+        end
 
-        if (errors == 0) $display("PASS mag_1m_upload_tb: %0d checks", checks);
-        else $display("FAIL mag_1m_upload_tb: %0d errors, %0d checks",
-                      errors, checks);
+        if (errors == 0) begin
+            $display("PASS mag_1m_upload_tb: %0d checks", checks);
+        end
+        else begin
+            $display("FAIL mag_1m_upload_tb: %0d errors, %0d checks",
+                     errors, checks);
+        end
         $finish;
     end
 

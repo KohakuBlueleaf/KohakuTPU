@@ -28,8 +28,8 @@ module interlink_cdc_chain_tb;
     // ZERO measures the block design's real sequence: the AND of six `ready`.
     localparam integer RST_MARGIN = 0;
 
-    localparam integer U_KIND = 0, U_DMESH = 4, U_SMESH = 6,
-                       U_TXN = 8,  U_LEN = 16;
+    localparam integer U_KIND = 0, U_DMESH = 4, U_SMESH = 6, U_TXN = 8;
+    localparam integer U_LEN = 16;
     localparam [3:0] K_NOC_FLIT = 4'h2;
 
     // INITIALISED AT DECLARATION, not in an initial block: a `real` is 0.0 at
@@ -39,10 +39,18 @@ module interlink_cdc_chain_tb;
     // share a rate with neither end. 4.068 is non-harmonic with all three.
     real hp0 = 1.666, hp1 = 3.333, hp2 = 4.068, hp3 = 2.000;
     reg  [3:0] clkm = 4'b0000;
-    always #hp0 clkm[0] = ~clkm[0];
-    always #hp1 clkm[1] = ~clkm[1];
-    always #hp2 clkm[2] = ~clkm[2];
-    always #hp3 clkm[3] = ~clkm[3];
+    always begin
+        #hp0 clkm[0] = ~clkm[0];
+    end
+    always begin
+        #hp1 clkm[1] = ~clkm[1];
+    end
+    always begin
+        #hp2 clkm[2] = ~clkm[2];
+    end
+    always begin
+        #hp3 clkm[3] = ~clkm[3];
+    end
 
     // TWO RESETS: xpm DISCARDS writes while wr_rst_busy and a switch emits
     // credit the cycle it is released. Crossings out first, switches on `ready`.
@@ -58,8 +66,9 @@ module interlink_cdc_chain_tb;
             checks = checks + 1;
             if (!cond) begin
                 errors = errors + 1;
-                if (errors < 16)
+                if (errors < 16) begin
                     $display("  FAIL depth %0d: %0s [%0d]", depth, what, where);
+                end
             end
         end
     endtask
@@ -219,35 +228,37 @@ module interlink_cdc_chain_tb;
                 sst[gs] = T_HDR;
             end else if (active(gs) && (sd[gs] != gs) && (sst[gs] != T_DONE)) begin
                 case (sst[gs])
-                T_HDR:
-                    if (ltx_hv[gs] && hr_q[gs]) begin
-                        ltx_hv[gs] = 1'b0;
-                        sb[gs]     = 0;
-                        sst[gs]    = T_DAT;
-                    end else begin
-                        ltx_hdr[gs] = header(gs, sd[gs]);
-                        ltx_hv[gs]  = 1'b1;
-                    end
-                T_DAT:
-                    if (ltx_dv[gs] && dr_q[gs]) begin
-                        if (sb[gs] == PKTB - 1) begin
-                            ltx_dv[gs] = 1'b0;
-                            ltx_dl[gs] = 1'b0;
-                            sent_pkt[gs] = sent_pkt[gs] + 1;
-                            sd[gs] = next_dst(gs, sd[gs]);
-                            if (sd[gs] == first_dst(gs)) si[gs] = si[gs] + 1;
-                            sst[gs] = (si[gs] >= NPKT) ? T_DONE : T_HDR;
+                    T_HDR:
+                        if (ltx_hv[gs] && hr_q[gs]) begin
+                            ltx_hv[gs] = 1'b0;
+                            sb[gs]     = 0;
+                            sst[gs]    = T_DAT;
                         end else begin
-                            sb[gs] = sb[gs] + 1;
+                            ltx_hdr[gs] = header(gs, sd[gs]);
+                            ltx_hv[gs]  = 1'b1;
+                        end
+                    T_DAT:
+                        if (ltx_dv[gs] && dr_q[gs]) begin
+                            if (sb[gs] == PKTB - 1) begin
+                                ltx_dv[gs] = 1'b0;
+                                ltx_dl[gs] = 1'b0;
+                                sent_pkt[gs] = sent_pkt[gs] + 1;
+                                sd[gs] = next_dst(gs, sd[gs]);
+                                if (sd[gs] == first_dst(gs)) begin
+                                    si[gs] = si[gs] + 1;
+                                end
+                                sst[gs] = (si[gs] >= NPKT) ? T_DONE : T_HDR;
+                            end else begin
+                                sb[gs] = sb[gs] + 1;
+                                ltx_dat[gs] = payload(gs, sd[gs], si[gs], sb[gs]);
+                                ltx_dl[gs]  = (sb[gs] == PKTB - 1);
+                            end
+                        end else begin
                             ltx_dat[gs] = payload(gs, sd[gs], si[gs], sb[gs]);
                             ltx_dl[gs]  = (sb[gs] == PKTB - 1);
+                            ltx_dv[gs]  = 1'b1;
                         end
-                    end else begin
-                        ltx_dat[gs] = payload(gs, sd[gs], si[gs], sb[gs]);
-                        ltx_dl[gs]  = (sb[gs] == PKTB - 1);
-                        ltx_dv[gs]  = 1'b1;
-                    end
-                default: ;
+                    default: ;
                 endcase
             end
         end
@@ -263,8 +274,9 @@ module interlink_cdc_chain_tb;
             d = from;
             for (n = 0; n < 4; n = n + 1) begin
                 d = (d + 1) % 4;
-                if ((d != me) && (active(d) != 0) && (next_dst == me))
+                if ((d != me) && (active(d) != 0) && (next_dst == me)) begin
                     next_dst = d;
+                end
             end
         end
     endfunction
@@ -300,19 +312,27 @@ module interlink_cdc_chain_tb;
             dst  = d[61:60];
             seq  = d[47:32];
             beat = d[31:16];
-            if (dst !== me) chk(1'b0, "a packet landed on the wrong mesh", me);
-            else if (d[15:0] !== 16'hA5A5)
+            if (dst !== me) begin
+                chk(1'b0, "a packet landed on the wrong mesh", me);
+            end
+            else if (d[15:0] !== 16'hA5A5) begin
                 chk(1'b0, "payload sentinel is corrupt", me);
-            else if (beat !== beat_in[me])
+            end
+            else if (beat !== beat_in[me]) begin
                 chk(1'b0, "beats arrived out of order within a packet", beat);
+            end
             else begin
                 if (beat == PKTB - 1) begin
                     beat_in[me] = 0;
-                    if (seq !== exp_seq[me][s])
+                    if (seq !== exp_seq[me][s]) begin
                         chk(1'b0, "a packet from this source was lost or reordered",
                             seq);
+                    end
                     exp_seq[me][s] = seq + 1;
-                end else beat_in[me] = beat_in[me] + 1;
+                end
+                else begin
+                    beat_in[me] = beat_in[me] + 1;
+                end
             end
         end
     endtask
@@ -324,7 +344,9 @@ module interlink_cdc_chain_tb;
         if (!resetn) begin last_seen <= 0; stall_ct <= 0; end
         else if (delivered != last_seen) begin
             last_seen <= delivered; stall_ct <= 0;
-        end else if (delivered < owed) stall_ct <= stall_ct + 1;
+        end else if (delivered < owed) begin
+            stall_ct <= stall_ct + 1;
+        end
     end
 
     // ---- the phases --------------------------------------------------------
@@ -339,12 +361,22 @@ module interlink_cdc_chain_tb;
             for (i = 0; i < 4; i = i + 1) begin
                 sent_pkt[i] = 0; got_beat[i] = 0; beat_in[i] = 0;
                 si[i] = 0; sb[i] = 0;
-                for (j = 0; j < 4; j = j + 1) exp_seq[i][j] = 0;
+                for (j = 0; j < 4; j = j + 1) begin
+                    exp_seq[i][j] = 0;
+                end
             end
             delivered = 0;
             nact = 0;
-            for (i = 0; i < 4; i = i + 1) if (active(i)) nact = nact + 1;
-            for (i = 0; i < 4; i = i + 1) if (active(i)) sd[i] = first_dst(i);
+            for (i = 0; i < 4; i = i + 1) begin
+                if (active(i)) begin
+                    nact = nact + 1;
+                end
+            end
+            for (i = 0; i < 4; i = i + 1) begin
+                if (active(i)) begin
+                    sd[i] = first_dst(i);
+                end
+            end
             npair = (nact > 1) ? nact * (nact - 1) : 0;
             owed  = npair * NPKT * PKTB;
 
@@ -373,14 +405,18 @@ module interlink_cdc_chain_tb;
                 "delivery never stalled while packets were owed", delivered);
             chk(delivered == owed, "every beat arrived", delivered);
             chk(cdc_fault === 6'd0, "no crossing discarded a beat", cdc_fault);
-            for (i = 0; i < 4; i = i + 1)
-                if (active(i)) chk(flt[i] === 4'd0, "the switch reported no fault", i);
+            for (i = 0; i < 4; i = i + 1) begin
+                if (active(i)) begin
+                    chk(flt[i] === 4'd0, "the switch reported no fault", i);
+                end
+            end
 
             // `timescale is 1ns, so t1-t0 IS ns. Dividing it by 1000 and calling
             // the result ns reported both figures 1000x out.
-            if (owed > 0)
+            if (owed > 0) begin
                 $display("    %0d beats in %0d ns -- %0.1f beats/us aggregate",
                          delivered, t1 - t0, delivered * 1000.0 / (t1 - t0));
+            end
             $display("    transit forwarded: mesh1 %0d, mesh3 %0d",
                      c_fwd[1][31:0], c_fwd[3][31:0]);
             phase = phase + 1;
@@ -393,8 +429,12 @@ module interlink_cdc_chain_tb;
         run_depth(4, "depth 4: three hops, four rates");
 
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end

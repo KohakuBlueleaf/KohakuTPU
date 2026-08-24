@@ -28,7 +28,9 @@ module interlink_2mesh_tb;
     localparam [3:0] T_CU_DATA = 4'h8;
 
     reg clk = 0, resetn = 0;
-    always #1.666 clk = ~clk;
+    always begin
+        #1.666 clk = ~clk;
+    end
 
     integer errors = 0, checks = 0;
 
@@ -97,9 +99,15 @@ module interlink_2mesh_tb;
             end
             if ((bq != 4'd0) && !mem1_stall) begin
                 lk1_bvalid <= 1'b1;
-                bq <= bq - 4'd1 +
-                      ((lk1_awvalid && lk1_awready && lk1_wvalid && lk1_wready)
-                       ? 4'd1 : 4'd0);
+                bq <= (
+                    bq
+                    - 4'd1
+                    + (
+                        (lk1_awvalid && lk1_awready && lk1_wvalid && lk1_wready)
+                        ? 4'd1
+                        : 4'd0
+                    )
+                );
             end
         end
     end
@@ -109,7 +117,9 @@ module interlink_2mesh_tb;
     wire [DW-1:0] loc_wdata;
     wire          loc_awvalid, loc_wvalid;
     reg           loc_bvalid;
-    always @(posedge clk) loc_bvalid <= loc_awvalid;
+    always @(posedge clk) begin
+        loc_bvalid <= loc_awvalid;
+    end
 
     wire [LW-1:0] m0_td, m1_td, p0_td, p1_td;
     wire [UW-1:0] m0_tu, m1_tu, p0_tu, p1_tu;
@@ -251,7 +261,9 @@ module interlink_2mesh_tb;
     reg [FW-1:0] got_flit [0:63];
     integer      n_inj = 0;
     always @(posedge clk) begin
-        if (!resetn) n_inj <= 0;
+        if (!resetn) begin
+            n_inj <= 0;
+        end
         else if (inj1_valid && !inj1_busy) begin
             got_flit[n_inj[5:0]] <= inj1_data;
             n_inj <= n_inj + 1;
@@ -262,7 +274,9 @@ module interlink_2mesh_tb;
     function [DW-1:0] patt(input [31:0] s);
         integer k;
         begin
-            for (k = 0; k < DW/32; k = k + 1) patt[k*32 +: 32] = s + k[31:0];
+            for (k = 0; k < DW/32; k = k + 1) begin
+                patt[k*32 +: 32] = s + k[31:0];
+            end
         end
     endfunction
 
@@ -270,15 +284,21 @@ module interlink_2mesh_tb;
         begin
             s0_awaddr <= a; s0_awvalid <= 1'b1;
             @(posedge clk);
-            while (!s0_awready) @(posedge clk);
+            while (!s0_awready) begin
+                @(posedge clk);
+            end
             s0_awvalid <= 1'b0;
             s0_wdata <= d; s0_wvalid <= 1'b1;
             @(posedge clk);
-            while (!s0_wready) @(posedge clk);
+            while (!s0_wready) begin
+                @(posedge clk);
+            end
             s0_wvalid <= 1'b0;
             s0_bready <= 1'b1;
             @(posedge clk);
-            while (!s0_bvalid) @(posedge clk);
+            while (!s0_bvalid) begin
+                @(posedge clk);
+            end
             s0_bready <= 1'b0;
         end
     endtask
@@ -287,7 +307,9 @@ module interlink_2mesh_tb;
         begin
             enc0_data <= f; enc0_valid <= 1'b1;
             @(posedge clk);
-            while (enc0_busy) @(posedge clk);
+            while (enc0_busy) begin
+                @(posedge clk);
+            end
             enc0_valid <= 1'b0;
         end
     endtask
@@ -310,7 +332,9 @@ module interlink_2mesh_tb;
         cfg0_en = 0; cfg0_addr = 0; cfg0_data = 0;
         stat0_sel = 0; stat1_sel = 0;
         inj1_busy = 0; mem1_stall = 0; bad0 = 0;
-        for (i = 0; i < 1024; i = i + 1) mem1[i] = {DW{1'b0}};
+        for (i = 0; i < 1024; i = i + 1) begin
+            mem1[i] = {DW{1'b0}};
+        end
         repeat (8) @(posedge clk);
         resetn <= 1'b1;
         repeat (8) @(posedge clk);
@@ -334,12 +358,14 @@ module interlink_2mesh_tb;
         chk(wr_seen == 0, "a local write reached the far mesh");
 
         // ---- 3. remote writes land byte-exact ---------------------------
-        for (i = 0; i < 8; i = i + 1)
+        for (i = 0; i < 8; i = i + 1) begin
             wr(34'h1_0000_0000 + i * 32, patt(32'h1000 + i));
+        end
         repeat (200) @(posedge clk);
         chk(wr_seen == 8, "all eight remote writes arrived");
-        for (i = 0; i < 8; i = i + 1)
+        for (i = 0; i < 8; i = i + 1) begin
             chk(mem1[i] === patt(32'h1000 + i), "remote write payload");
+        end
 
         // ---- 4. the doorbell waits for the data ------------------------
         // mesh1's memory is stalled, so the writes are accepted into the link
@@ -347,8 +373,9 @@ module interlink_2mesh_tb;
         // count until their BRESPs are back.
         mem1_stall <= 1'b1;
         repeat (4) @(posedge clk);
-        for (i = 0; i < 4; i = i + 1)
+        for (i = 0; i < 4; i = i + 1) begin
             wr(34'h1_0000_1000 + i * 32, patt(32'h2000 + i));
+        end
         cfg0_en <= 1'b1; cfg0_addr <= 8'h90; cfg0_data <= {48'd0, 8'h5A, 6'd0, 2'd1};
         @(posedge clk);
         cfg0_en <= 1'b0;
@@ -363,17 +390,19 @@ module interlink_2mesh_tb;
         stat1_sel <= 4'd2; @(posedge clk); @(posedge clk);
         chk(stat1_q[31:0] == 32'd1, "the doorbell arrived once the data had landed");
         chk(stat1_q[47:32] == 16'h5A, "the doorbell carried its txn");
-        for (i = 0; i < 4; i = i + 1)
+        for (i = 0; i < 4; i = i + 1) begin
             chk(mem1[16'h80 + i] === patt(32'h2000 + i),
                 "stalled remote write payload");
+        end
 
         // ---- 5. a CU_DATA burst crosses and is re-addressed --------------
         // Descriptor plus three data flits, from (5,6) to node (3,3) of mesh 1.
         push_flit(cud(4'd0, 4'd1, 4'd5, 4'd6, 8'h33, 2'd1, 1'b0,
                       {8'd0, 16'd0, 8'd2, 8'h01, 8'h22, 208'd0}));
-        for (i = 0; i < 3; i = i + 1)
+        for (i = 0; i < 3; i = i + 1) begin
             push_flit(cud(4'd0, 4'd1, 4'd5, 4'd6, 8'h33, 2'd1, (i == 2),
                           {224'd0, 32'hC0DE_0000 + i}));
+        end
         repeat (300) @(posedge clk);
 
         chk(n_inj == 4, "every flit of the burst was injected");
@@ -410,8 +439,12 @@ module interlink_2mesh_tb;
                  stat0_q[31:0], stat0_q[63:32]);
 
         $display("--- %0d checks, %0d errors", checks, errors);
-        if (errors == 0) $display("PASS interlink_2mesh");
-        else             $display("FAIL interlink_2mesh");
+        if (errors == 0) begin
+            $display("PASS interlink_2mesh");
+        end
+        else begin
+            $display("FAIL interlink_2mesh");
+        end
         $finish;
     end
 

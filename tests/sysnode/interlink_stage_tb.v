@@ -17,8 +17,8 @@ module interlink_stage_tb;
     localparam FW = 288, PW = 4, DW = 256, AW = 40, IDW = 4, MW = 512;
     localparam LW = 288, UW = 96;
 
-    localparam [3:0] T_MEM_RD_REQ  = 4'h0, T_MEM_WR_REQ  = 4'h1,
-                     T_MEM_RD_RESP = 4'h2, T_MEM_WR_DATA = 4'h4;
+    localparam [3:0] T_MEM_RD_REQ = 4'h0, T_MEM_WR_REQ = 4'h1;
+    localparam [3:0] T_MEM_RD_RESP = 4'h2, T_MEM_WR_DATA = 4'h4;
 
     // MAG's memory node, and the coordinate the bench answers to.
     localparam [3:0] MX = 4'd0, MY = 4'd1;
@@ -30,8 +30,12 @@ module interlink_stage_tb;
     localparam [255:0] POISON  = {8{32'hDEAD_BEEF}};
 
     reg clk = 0, resetn = 0, dclk = 0;
-    always #2   clk  = ~clk;
-    always #1.7 dclk = ~dclk;
+    always begin
+        #2   clk  = ~clk;
+    end
+    always begin
+        #1.7 dclk = ~dclk;
+    end
 
     wire [LW-1:0] o0_d [0:1], o1_d [0:1];
     wire [UW-1:0] o0_u [0:1], o1_u [0:1];
@@ -159,7 +163,9 @@ module interlink_stage_tb;
             checks = checks + 1;
             if (!cond) begin
                 errors = errors + 1;
-                if (errors < 12) $display("  FAIL %0s [%0d]", what, where);
+                if (errors < 12) begin
+                    $display("  FAIL %0s [%0d]", what, where);
+                end
             end
         end
     endtask
@@ -172,12 +178,15 @@ module interlink_stage_tb;
     integer ax;
     always @(posedge clk) if (resetn) begin
         for (ax = 0; ax < 2; ax = ax + 1) begin
-            if ((m_awvalid[ax] && m_awaddr[ax][39]) ||
-                (m_arvalid[ax] && m_araddr[ax][39])) begin
+            if (
+                (m_awvalid[ax] && m_awaddr[ax][39])
+                || (m_arvalid[ax] && m_araddr[ax][39])
+            ) begin
                 ax_special = ax_special + 1;
-                if (ax_special < 5)
+                if (ax_special < 5) begin
                     $display("%0t ERROR bench: mesh %0d put a special aperture on AXI",
                              $time, ax);
+                end
             end
         end
     end
@@ -218,17 +227,22 @@ module interlink_stage_tb;
     always @(posedge clk) begin
         if (!resetn) begin
             mi_valid <= 2'd0;
-        end else for (k = 0; k < 2; k = k + 1) begin
-            if (!mi_valid[k] || !mi_busy[k]) begin
-                if (lq_r[k] != lq_w[k]) begin
-                    mi_data[k]  <= lq[k][lq_r[k] % 64];
-                    mi_valid[k] <= 1'b1;
-                    lq_r[k]     <= lq_r[k] + 1;
-                end else if (bq_r[k] != bq_w[k]) begin
-                    mi_data[k]  <= bq[k][bq_r[k] % 64];
-                    mi_valid[k] <= 1'b1;
-                    bq_r[k]     <= bq_r[k] + 1;
-                end else mi_valid[k] <= 1'b0;
+        end else begin
+            for (k = 0; k < 2; k = k + 1) begin
+                if (!mi_valid[k] || !mi_busy[k]) begin
+                    if (lq_r[k] != lq_w[k]) begin
+                        mi_data[k]  <= lq[k][lq_r[k] % 64];
+                        mi_valid[k] <= 1'b1;
+                        lq_r[k]     <= lq_r[k] + 1;
+                    end else if (bq_r[k] != bq_w[k]) begin
+                        mi_data[k]  <= bq[k][bq_r[k] % 64];
+                        mi_valid[k] <= 1'b1;
+                        bq_r[k]     <= bq_r[k] + 1;
+                    end
+                    else begin
+                        mi_valid[k] <= 1'b0;
+                    end
+                end
             end
         end
     end
@@ -266,8 +280,9 @@ module interlink_stage_tb;
             // whatever address it truncates to.
             mesh[1].ram.mem[i] = {2{POISON}};
         end
-        for (i = 0; i < 4; i = i + 1)
+        for (i = 0; i < 4; i = i + 1) begin
             payload[i] = {8{32'hC0DE_0000 | i[31:0]}};
+        end
 
         repeat (20) @(negedge clk);
         resetn = 1'b1;
@@ -277,17 +292,19 @@ module interlink_stage_tb;
         // is {remote, mesh}. Both are on the descriptor AND every data flit.
         $display("--- 1. a remote DRAIN to mesh 1's staging ---");
         push(0, T_MEM_WR_REQ, {MY, MX}, 1'b0, 3'b101, wr_desc(A_STG_M1, 8'd4));
-        for (i = 0; i < 4; i = i + 1)
+        for (i = 0; i < 4; i = i + 1) begin
             push(0, T_MEM_WR_DATA, {MY, MX}, (i == 3), 3'b101, payload[i]);
+        end
 
         repeat (4000) @(negedge clk);
         chk(ax_special == 0, "no special aperture reached either DRAM",
             ax_special);
-        for (i = 0; i < 2048; i = i + 1)
+        for (i = 0; i < 2048; i = i + 1) begin
             if (mesh[0].ram.mem[i] !== {MW{1'b0}}) begin
                 chk(1'b0, "the remote write did NOT land in mesh 0's DRAM", i);
                 i = 2048;
             end
+        end
         chk(mesh[1].ram.mem[0] === {2{POISON}},
             "and mesh 1's DRAM is still poison", 0);
 
@@ -315,9 +332,13 @@ module interlink_stage_tb;
         end
         chk(ax_special == 0, "the fill put nothing special on AXI", ax_special);
 
-        if (errors == 0) $display("  PASS interlink_stage_tb: %0d checks", checks);
-        else $display("  FAIL interlink_stage_tb: %0d errors, %0d checks",
-                      errors, checks);
+        if (errors == 0) begin
+            $display("  PASS interlink_stage_tb: %0d checks", checks);
+        end
+        else begin
+            $display("  FAIL interlink_stage_tb: %0d errors, %0d checks",
+                     errors, checks);
+        end
         $finish;
     end
 

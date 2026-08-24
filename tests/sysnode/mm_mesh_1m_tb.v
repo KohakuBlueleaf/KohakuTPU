@@ -12,8 +12,12 @@ module mm_mesh_1m_tb;
     localparam CX = 1, CY = 1;
 
     reg clk = 0, rst = 1, dclk = 0;
-    always #2   clk  = ~clk;
-    always #1.7 dclk = ~dclk;
+    always begin
+        #2   clk  = ~clk;
+    end
+    always begin
+        #1.7 dclk = ~dclk;
+    end
 
     reg  [FW-1:0] ext_i;
     reg           ext_iv;
@@ -99,7 +103,9 @@ module mm_mesh_1m_tb;
             checks = checks + 1;
             if (!cond) begin
                 errors = errors + 1;
-                if (errors < 20) $display("  FAIL %0s [%0d]", what, where);
+                if (errors < 20) begin
+                    $display("  FAIL %0s [%0d]", what, where);
+                end
             end
         end
     endtask
@@ -115,7 +121,9 @@ module mm_mesh_1m_tb;
     task send_inst(input [3:0] dx, input [3:0] dy, input [255:0] payload);
         begin
             @(negedge clk);
-            while (ext_ib) @(negedge clk);
+            while (ext_ib) begin
+                @(negedge clk);
+            end
             ext_i  <= {dx, dy, CX[3:0], CY[3:0], T_CU_INST, 8'h40, 1'b0, 3'b000,
                        payload};
             ext_iv <= 1'b1;
@@ -129,14 +137,20 @@ module mm_mesh_1m_tb;
         begin
             @(negedge clk);
             sc_awaddr = A_MV_CFG + {24'd0, a}; sc_awvalid = 1'b1;
-            while (!sc_awready) @(negedge clk);
+            while (!sc_awready) begin
+                @(negedge clk);
+            end
             @(negedge clk);
             sc_awvalid = 1'b0;
             sc_wdata = d; sc_wvalid = 1'b1;
-            while (!sc_wready) @(negedge clk);
+            while (!sc_wready) begin
+                @(negedge clk);
+            end
             @(negedge clk);
             sc_wvalid = 1'b0;
-            while (!sc_bvalid) @(negedge clk);
+            while (!sc_bvalid) begin
+                @(negedge clk);
+            end
             @(negedge clk);
         end
     endtask
@@ -174,9 +188,12 @@ module mm_mesh_1m_tb;
     integer i, sig_count;
 
     always @(posedge clk) begin
-        if (rst) sig_count <= 0;
-        else if (ext_ov && ext_o[FW-4*PW-1 -: 4] == 4'h6)
+        if (rst) begin
+            sig_count <= 0;
+        end
+        else if (ext_ov && ext_o[FW-4*PW-1 -: 4] == 4'h6) begin
             sig_count <= sig_count + 1;
+        end
     end
 
     localparam [33:0] A_MSRC = 34'h1000;   // logical word 128
@@ -186,9 +203,12 @@ module mm_mesh_1m_tb;
 
     initial begin
         ext_i = 0; ext_iv = 0;
-        for (i = 0; i < 2048; i = i + 1) u_ram.mem[i] = {MW{1'b0}};
-        for (i = 0; i < 16; i = i + 1)
+        for (i = 0; i < 2048; i = i + 1) begin
+            u_ram.mem[i] = {MW{1'b0}};
+        end
+        for (i = 0; i < 16; i = i + 1) begin
             wput((A_MSRC >> 5) + i, {8{32'h7E00_0000 | i[31:0]}});
+        end
         wput(A_VSRC >> 5, {16{16'h4000}});   // 2.0 in sixteen FP16 lanes
 
         repeat (10) @(negedge clk);
@@ -210,9 +230,10 @@ module mm_mesh_1m_tb;
         chk(spin < 200000, "mover went idle", 0);
         chk(mv_fault === 4'd0, "mover did not fault", 0);
         repeat (200) @(negedge clk);
-        for (i = 0; i < 16; i = i + 1)
+        for (i = 0; i < 16; i = i + 1) begin
             chk(wget((A_MDST >> 5) + i) === {8{32'h7E00_0000 | ((i%4)*4 + (i/4))}},
                 "transposed word", i);
+        end
 
         // The vector core: VFILL reads DRAM through MAG, VDRAIN writes it back,
         // so reads and writes are outstanding together on the one master.
@@ -252,9 +273,13 @@ module mm_mesh_1m_tb;
         end
         chk(spin < 200000, "cluster FILL completed", 0);
 
-        if (errors == 0) $display("PASS mm_mesh_1m_tb: %0d checks", checks);
-        else             $display("FAIL mm_mesh_1m_tb: %0d errors, %0d checks",
-                                  errors, checks);
+        if (errors == 0) begin
+            $display("PASS mm_mesh_1m_tb: %0d checks", checks);
+        end
+        else begin
+            $display("FAIL mm_mesh_1m_tb: %0d errors, %0d checks",
+                     errors, checks);
+        end
         $finish;
     end
 

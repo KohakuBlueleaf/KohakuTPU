@@ -25,7 +25,9 @@ module mm_mover_tb;
     localparam [AW-1:0] OUT  = 40'h07000;
 
     reg clk = 0, resetn = 0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     reg         cfg_en;
     reg  [7:0]  cfg_addr;
@@ -113,9 +115,10 @@ module mm_mover_tb;
             checks = checks + 1;
             if (got !== want) begin
                 errors = errors + 1;
-                if (errors < 40)
+                if (errors < 40) begin
                     $display("  FAIL %0s [%0d]: got %h want %h",
                              what, where, got[63:0], want[63:0]);
+                end
             end
         end
     endtask
@@ -172,13 +175,17 @@ module mm_mover_tb;
 
     initial begin
         cfg_en = 0; cfg_addr = 0; cfg_data = 0;
-        for (i = 0; i < 4096; i = i + 1) u_ram.mem[i] = {8{32'hDEAD_0000}} | i;
+        for (i = 0; i < 4096; i = i + 1) begin
+            u_ram.mem[i] = {8{32'hDEAD_0000}} | i;
+        end
 
         // a recognisable source: word n holds n in every lane
-        for (i = 0; i < 32; i = i + 1)
+        for (i = 0; i < 32; i = i + 1) begin
             u_ram.mem[(SRC >> 5) + i] = {8{i[31:0]}};
-        for (i = 0; i < 16; i = i + 1)
+        end
+        for (i = 0; i < 16; i = i + 1) begin
             u_ram.mem[(TBL >> 5) + i] = {8{32'hAA00_0000 | i}};
+        end
         // five indices, packed eight to a word
         // lane 0 is the low 32 bits, so index r is word[r*32 +: 32]
         u_ram.mem[IDXB >> 5] = {32'd0, 32'd0, 32'd0,
@@ -199,10 +206,12 @@ module mm_mover_tb;
         dim(1'b1, 3'd1, 16'd8, 32'sd128, 2'd0, 16'sd0);
         go(3'd0, 2'd1);
 
-        for (i = 0; i < 4; i = i + 1)
-            for (j = 0; j < 8; j = j + 1)
+        for (i = 0; i < 4; i = i + 1) begin
+            for (j = 0; j < 8; j = j + 1) begin
                 chk(u_ram.mem[(DST >> 5) + j*4 + i],
                     u_ram.mem[(SRC >> 5) + i*8 + j], "transposed word", i*8+j);
+            end
+        end
 
         // ============ 2. padding: a bound axis clips the source ============
         $display("--- 2. padding via a bound axis ---");
@@ -215,8 +224,12 @@ module mm_mover_tb;
         go(3'd0, 2'd1);
 
         for (i = 0; i < 6; i = i + 1) begin
-            if (i < 4) b = u_ram.mem[(SRC >> 5) + i];
-            else       b = {16{16'hBEEF}};
+            if (i < 4) begin
+                b = u_ram.mem[(SRC >> 5) + i];
+            end
+            else begin
+                b = {16{16'hBEEF}};
+            end
             chk(u_ram.mem[(PADD >> 5) + i], b, "padded element", i);
         end
 
@@ -226,8 +239,9 @@ module mm_mover_tb;
         hdr(1'b1, PADD, 3'd1);
         dim(1'b1, 3'd0, 16'd4, 32'sd32, 2'd0, 16'sd0);
         go(3'd4, 2'd1);
-        for (i = 0; i < 4; i = i + 1)
+        for (i = 0; i < 4; i = i + 1) begin
             chk(u_ram.mem[(PADD >> 5) + i], {16{16'h1234}}, "filled word", i);
+        end
 
         // ============ 4. GENERATE, and split determinism ============
         $display("--- 4. GENERATE ---");
@@ -235,19 +249,24 @@ module mm_mover_tb;
         hdr(1'b1, GEN1, 3'd1);
         dim(1'b1, 3'd0, 16'd8, 32'sd32, 2'd0, 16'sd0);
         go(3'd3, 2'd1);
-        for (i = 0; i < 8; i = i + 1) gen_ref[i] = u_ram.mem[(GEN1 >> 5) + i];
+        for (i = 0; i < 8; i = i + 1) begin
+            gen_ref[i] = u_ram.mem[(GEN1 >> 5) + i];
+        end
 
         // same eight words, as two moves of four -- the counter is absolute,
         // so the bytes must be identical
-        for (i = 0; i < 8; i = i + 1) u_ram.mem[(GEN1 >> 5) + i] = 256'd0;
+        for (i = 0; i < 8; i = i + 1) begin
+            u_ram.mem[(GEN1 >> 5) + i] = 256'd0;
+        end
         hdr(1'b1, GEN1, 3'd1);
         dim(1'b1, 3'd0, 16'd4, 32'sd32, 2'd0, 16'sd0);
         go(3'd3, 2'd1);
         hdr(1'b1, GEN1 + 40'd128, 3'd1);
         dim(1'b1, 3'd0, 16'd4, 32'sd32, 2'd0, 16'sd0);
         go(3'd3, 2'd1);
-        for (i = 0; i < 8; i = i + 1)
+        for (i = 0; i < 8; i = i + 1) begin
             chk(u_ram.mem[(GEN1 >> 5) + i], gen_ref[i], "split determinism", i);
+        end
 
         // a different address must give different bytes
         hdr(1'b1, GEN2, 3'd1);
@@ -269,11 +288,13 @@ module mm_mover_tb;
         dim(1'b1, 3'd1, 16'd2, 32'sd32, 2'd0, 16'sd0);
         go(3'd2, 2'd1);
 
-        for (r = 0; r < 5; r = r + 1)
-            for (w = 0; w < 2; w = w + 1)
+        for (r = 0; r < 5; r = r + 1) begin
+            for (w = 0; w < 2; w = w + 1) begin
                 chk(u_ram.mem[(OUT >> 5) + r*2 + w],
                     u_ram.mem[(TBL >> 5) + idxv[r]*2 + w], "gathered word",
                     r*2 + w);
+            end
+        end
 
         // ============ 6. faults ============
         $display("--- 6. faults ---");
@@ -334,8 +355,12 @@ module mm_mover_tb;
                  n_ar, n_aw);
 
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end

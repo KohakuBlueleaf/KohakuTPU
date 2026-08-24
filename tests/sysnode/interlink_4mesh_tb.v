@@ -28,12 +28,14 @@ module interlink_4mesh_tb;
     localparam integer MAXB = 32;
     localparam integer STALL_LIMIT = 4000;
 
-    localparam integer U_KIND = 0, U_DMESH = 4, U_SMESH = 6,
-                       U_TXN = 8,  U_LEN = 16;
+    localparam integer U_KIND = 0, U_DMESH = 4, U_SMESH = 6, U_TXN = 8;
+    localparam integer U_LEN = 16;
     localparam [3:0] K_MEM_WR = 4'h1, K_NOC_FLIT = 4'h2, K_DOORBELL = 4'h3;
 
     reg clk = 0, resetn = 0;
-    always #1.666 clk = ~clk;
+    always begin
+        #1.666 clk = ~clk;
+    end
 
     integer errors = 0, checks = 0;
 
@@ -128,8 +130,9 @@ module interlink_4mesh_tb;
     function [LW-1:0] patt(input [31:0] s, input [15:0] i);
         integer k;
         begin
-            for (k = 0; k < LW/32; k = k + 1)
+            for (k = 0; k < LW/32; k = k + 1) begin
                 patt[k*32 +: 32] = s * 32'h9E37 + {16'd0, i} * 32'd7 + k[31:0];
+            end
         end
     endfunction
 
@@ -152,14 +155,18 @@ module interlink_4mesh_tb;
             ltx_hdr[src] <= hdr(knd, dm, src[1:0], txn, len);
             ltx_hv[src]  <= 1'b1;
             @(posedge clk);
-            while (!ltx_hr[src]) @(posedge clk);
+            while (!ltx_hr[src]) begin
+                @(posedge clk);
+            end
             ltx_hv[src] <= 1'b0;
             for (i = 0; i <= len; i = i + 1) begin
                 ltx_dat[src] <= patt({22'd0, src[1:0], txn}, i[15:0]);
                 ltx_dl[src]  <= (i == len);
                 ltx_dv[src]  <= 1'b1;
                 @(posedge clk);
-                while (!ltx_dr[src]) @(posedge clk);
+                while (!ltx_dr[src]) begin
+                    @(posedge clk);
+                end
             end
             ltx_dv[src] <= 1'b0;
             ltx_dl[src] <= 1'b0;
@@ -206,16 +213,21 @@ module interlink_4mesh_tb;
                 ln  = lrx_hdr[r][U_LEN +: 16];
                 kn  = lrx_hdr[r][U_KIND +: 4];
                 lrx_hr[r] <= 1'b0;
-                if (lrx_hdr[r][U_DMESH +: 2] != r[1:0]) bad[r] = bad[r] + 1;
+                if (lrx_hdr[r][U_DMESH +: 2] != r[1:0]) begin
+                    bad[r] = bad[r] + 1;
+                end
                 land_ord[txn]  = ord_n[r];
                 land_kind[txn] = kn;
                 ord_n[r] = ord_n[r] + 1;
                 lrx_dr[r] <= 1'b1;
                 for (i = 0; i <= ln; i = i + 1) begin
                     @(posedge clk);
-                    while (!lrx_dv[r]) @(posedge clk);
-                    if (lrx_dat[r] !== patt({22'd0, sm, txn}, i[15:0]))
+                    while (!lrx_dv[r]) begin
+                        @(posedge clk);
+                    end
+                    if (lrx_dat[r] !== patt({22'd0, sm, txn}, i[15:0])) begin
                         bad[r] = bad[r] + 1;
+                    end
                 end
                 lrx_dr[r] <= 1'b0;
                 got[r] = got[r] + 1;
@@ -236,7 +248,9 @@ module interlink_4mesh_tb;
         integer k;
         begin
             total_got = 0;
-            for (k = 0; k < 4; k = k + 1) total_got = total_got + got[k];
+            for (k = 0; k < 4; k = k + 1) begin
+                total_got = total_got + got[k];
+            end
         end
     endfunction
 
@@ -244,7 +258,9 @@ module interlink_4mesh_tb;
         integer k;
         begin
             total_sent = 0;
-            for (k = 0; k < 4; k = k + 1) total_sent = total_sent + sent[k];
+            for (k = 0; k < 4; k = k + 1) begin
+                total_sent = total_sent + sent[k];
+            end
         end
     endfunction
 
@@ -328,7 +344,9 @@ module interlink_4mesh_tb;
         rx_hold = 4'd0;
         forever begin
             repeat (60) @(posedge clk);
-            for (hb = 0; hb < 4; hb = hb + 1) rx_hold[hb] = ($random & 3) == 0;
+            for (hb = 0; hb < 4; hb = hb + 1) begin
+                rx_hold[hb] = ($random & 3) == 0;
+            end
             repeat (40) @(posedge clk);
             rx_hold = 4'd0;
         end
@@ -378,7 +396,9 @@ module interlink_4mesh_tb;
                 integer i, t;
                 for (i = 0; i < 24; i = i + 1) begin
                     t = (i % 3);
-                    if (t >= 1) t = t + 1;
+                    if (t >= 1) begin
+                        t = t + 1;
+                    end
                     send(1, t[1:0], 8'd64 + i[7:0], (i % 4) * 8);
                 end
             end
@@ -386,14 +406,17 @@ module interlink_4mesh_tb;
                 integer i, t;
                 for (i = 0; i < 24; i = i + 1) begin
                     t = (i % 3);
-                    if (t >= 2) t = t + 1;
+                    if (t >= 2) begin
+                        t = t + 1;
+                    end
                     send(2, t[1:0], 8'd128 + i[7:0], (i % 4) * 8);
                 end
             end
             begin : q3
                 integer i;
-                for (i = 0; i < 24; i = i + 1)
+                for (i = 0; i < 24; i = i + 1) begin
                     send(3, (i % 3), 8'd192 + i[7:0], (i % 4) * 8);
+                end
             end
         join
 
@@ -412,23 +435,27 @@ module interlink_4mesh_tb;
         fork
             begin : up02
                 integer i;
-                for (i = 0; i < 48; i = i + 1)
+                for (i = 0; i < 48; i = i + 1) begin
                     send(0, 2'd2, i[7:0], (i % 3) * 15);
+                end
             end
             begin : dn20
                 integer i;
-                for (i = 0; i < 48; i = i + 1)
+                for (i = 0; i < 48; i = i + 1) begin
                     send(2, 2'd0, 8'd128 + i[7:0], (i % 3) * 15);
+                end
             end
             begin : mid1
                 integer i;
-                for (i = 0; i < 32; i = i + 1)
+                for (i = 0; i < 32; i = i + 1) begin
                     send(1, (i[0] ? 2'd2 : 2'd0), 8'd64 + i[7:0], 16'd7);
+                end
             end
             begin : mid3
                 integer i;
-                for (i = 0; i < 32; i = i + 1)
+                for (i = 0; i < 32; i = i + 1) begin
                     send(3, (i[0] ? 2'd0 : 2'd2), 8'd192 + i[7:0], 16'd7);
+                end
             end
         join
 
@@ -443,15 +470,17 @@ module interlink_4mesh_tb;
         // Both interior meshes must have forwarded in both directions, or the
         // two streams never actually crossed and the case did not happen.
         checks = checks + 1;
-        if (c_fwd[1][31:0] == 32'd0 || c_fwd[3][31:0] == 32'd0)
+        if (c_fwd[1][31:0] == 32'd0 || c_fwd[3][31:0] == 32'd0) begin
             fail("an interior mesh never forwarded, so the chain was not crossed");
+        end
 
         // Without contention this proves only that four idle switches do not
         // deadlock. The forward path having been blocked is the evidence that
         // the buffers were actually loaded.
         checks = checks + 1;
-        if (c_fwd[1][63:32] == 32'd0 || c_fwd[3][63:32] == 32'd0)
+        if (c_fwd[1][63:32] == 32'd0 || c_fwd[3][63:32] == 32'd0) begin
             fail("a forward path was never once blocked, so nothing here was under load and the absence of a deadlock means nothing");
+        end
 
         $display("  delivered %0d packets; forwarded mesh1 %0d (blocked %0d), mesh3 %0d (blocked %0d)",
                  total_got, c_fwd[1][31:0], c_fwd[1][63:32],
@@ -464,7 +493,9 @@ module interlink_4mesh_tb;
         for (k = 0; k < NTXN; k = k + 1) begin
             land_ord[k] = -1; land_kind[k] = -1;
         end
-        for (k = 0; k < 4; k = k + 1) ord_n[k] = 0;
+        for (k = 0; k < 4; k = k + 1) begin
+            ord_n[k] = 0;
+        end
 
         sendk(0, K_MEM_WR,   2'd2, 8'd20, 16'd7);
         sendk(0, K_NOC_FLIT, 2'd2, 8'd21, 16'd7);
@@ -479,14 +510,22 @@ module interlink_4mesh_tb;
         drain(200);
 
         checks = checks + 1;
-        if (total_got != total_sent) fail("a packet was lost on the three-hop route");
+        if (total_got != total_sent) begin
+            fail("a packet was lost on the three-hop route");
+        end
 
         // The switch routes on dst alone, so a kind that changed in flight
         // means the header was rebuilt somewhere it should have been carried.
-        if (land_kind[20] != K_MEM_WR   || land_kind[21] != K_NOC_FLIT ||
-            land_kind[22] != K_MEM_WR   || land_kind[23] != K_DOORBELL ||
-            land_kind[30] != K_MEM_WR   || land_kind[31] != K_NOC_FLIT ||
-            land_kind[32] != K_MEM_WR   || land_kind[33] != K_DOORBELL) begin
+        if (
+            land_kind[20] != K_MEM_WR
+            || land_kind[21] != K_NOC_FLIT
+            || land_kind[22] != K_MEM_WR
+            || land_kind[23] != K_DOORBELL
+            || land_kind[30] != K_MEM_WR
+            || land_kind[31] != K_NOC_FLIT
+            || land_kind[32] != K_MEM_WR
+            || land_kind[33] != K_DOORBELL
+        ) begin
             fail("a packet kind did not survive two forwarding hops");
             $display("        0->2 %0d %0d %0d %0d, 2->0 %0d %0d %0d %0d",
                      land_kind[20], land_kind[21], land_kind[22], land_kind[23],
@@ -496,8 +535,11 @@ module interlink_4mesh_tb;
 
         checks = checks + 1;
         ord_db = land_ord[23];
-        if (ord_db < land_ord[20] || ord_db < land_ord[21] ||
-            ord_db < land_ord[22]) begin
+        if (
+            ord_db < land_ord[20]
+            || ord_db < land_ord[21]
+            || ord_db < land_ord[22]
+        ) begin
             fail("a forwarded doorbell overtook the data it was released by, 0->2");
             $display("        arrival order: data %0d %0d %0d, doorbell %0d",
                      land_ord[20], land_ord[21], land_ord[22], ord_db);
@@ -505,8 +547,11 @@ module interlink_4mesh_tb;
 
         checks = checks + 1;
         ord_db = land_ord[33];
-        if (ord_db < land_ord[30] || ord_db < land_ord[31] ||
-            ord_db < land_ord[32]) begin
+        if (
+            ord_db < land_ord[30]
+            || ord_db < land_ord[31]
+            || ord_db < land_ord[32]
+        ) begin
             fail("a forwarded doorbell overtook the data it was released by, 2->0");
             $display("        arrival order: data %0d %0d %0d, doorbell %0d",
                      land_ord[30], land_ord[31], land_ord[32], ord_db);
@@ -531,8 +576,12 @@ module interlink_4mesh_tb;
                  c_st0[0][31:0], c_st0[1][31:0], c_st0[2][31:0], c_st0[3][31:0]);
 
         $display("--- %0d checks, %0d errors", checks, errors);
-        if (errors == 0) $display("PASS interlink_4mesh");
-        else             $display("FAIL interlink_4mesh");
+        if (errors == 0) begin
+            $display("PASS interlink_4mesh");
+        end
+        else begin
+            $display("FAIL interlink_4mesh");
+        end
         $finish;
     end
 

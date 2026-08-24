@@ -21,16 +21,26 @@
 //   C[16,16] = A[16,64] x B[64,16],  split by output column across 2 clusters
 //   cluster 0 -> C[:, 0:8]     cluster 1 -> C[:, 8:16]
 //
-// The two clusters compute the SAME numbers by DIFFERENT routes, and the
-// expected result is an exact integer, so both halves must match it:
+// The two clusters compute the SAME numbers by DIFFERENT routes to their
+// operands, and the expected result is an exact integer, so both halves must
+// match it. A CLUSTER NEVER QUANTISES ANY MORE -- the transform slot belongs to
+// the memory mover, so an operand is in its final format before any fill reads
+// it, and the two routes are the two ways it gets there:
 //
-//   cluster 0   FP16 in memory, quantised on every read; explicit DRAIN
-//   cluster 1   int7 in memory, quantised once on upload; FUSED drain, where
-//               each sub-tile leaves on the command that completes it
+//   cluster 0   int7 placed in memory directly, the way a host that quantises
+//               in software would leave it; explicit DRAIN
+//   cluster 1   FP16 placed in memory, then converted ON CARD by the mover's
+//               converting move -- mem -> transform slot (id 1) -> mem -- and
+//               the fill reads the result; FUSED drain, where each sub-tile
+//               leaves on the command that completes it
 //
-// That is what makes this a test of those paths rather than a demonstration
-// that they run. K is two blocks because a fused drain needs a sweep whose
-// last K block is not also its first.
+// Route 1 is what the redesign bought and nothing else tests at system level:
+// mm_xform's own bench proves the mover drives the slot, and this proves it
+// reaching real memory through MAG's master while two clusters and the NoC are
+// live.
+//
+// K is two blocks because a fused drain needs a sweep whose last K block is not
+// also its first.
 
 `default_nettype none
 `timescale 1ns/1ps
@@ -52,36 +62,48 @@ module mag_system_tb;
     localparam integer NKB = KK/32;          // 2 K blocks
     localparam integer NT = GM*GNC;          // 8 sub-tiles per cluster
 
-    // memory word map
+    // memory word map, in 32-byte words. An FP16 entry is 8 words, an int7
+    // entry 4, so the two live at separate bases rather than in place.
     localparam integer SBIAS    = 20;        // E5M3 scale bias, see mx_quant.v
     localparam integer HEADROOM = 8;         // keeps the drained tile in FP16
     localparam integer WPE      = 8;         // FP16 source words per L1 entry
     localparam integer WPQ      = 4;         // int7 words per L1 entry
-    localparam integer WA_BASE  = 0;         // 8 entries x 8 = 64 words
-    localparam integer WB0_BASE = 64;        // 4 entries x 8 = 32 words
-    localparam integer WB1_BASE = 96;
-    localparam integer WC0_BASE = 128;
-    localparam integer WC1_BASE = 160;
-    // Cluster 1's operands, written by the host through the quantising window.
-    localparam integer WQA_BASE = 192;       // 8 entries x 4 = 32 words
-    localparam integer WQB_BASE = 256;       // 4 entries x 4 = 16 words
+
+    // FP16, as software would hand it over: A shared, B split per cluster.
+    localparam integer FA_BASE  = 0;         // 8 entries x 8 = 64 words
+    localparam integer FB0_BASE = 64;        // 4 entries x 8 = 32 words
+    localparam integer FB1_BASE = 96;
+    // int7 for cluster 0, placed directly.
+    localparam integer Q0A_BASE = 128;       // 8 entries x 4 = 32 words
+    localparam integer Q0B_BASE = 160;       // 4 entries x 4 = 16 words
+    // int7 for cluster 1, produced ON CARD by the converting move.
+    localparam integer Q1A_BASE = 176;
+    localparam integer Q1B_BASE = 208;
+    localparam integer WC0_BASE = 224;       // NT words each
+    localparam integer WC1_BASE = 232;
 
     // control address map: bit 28 selects MAG over the main orchestrator
     localparam [31:0] ORC_BASE = 32'h0000_0000;
     localparam [31:0] MAG_BASE = 32'h1000_0000;
 
     // main orchestrator registers
-    localparam [31:0] MO_CTRL = 32'h0000, MO_PC = 32'h0008,
-                      MO_CODE = 32'h0010, MO_CMD = 32'h1000;
+    localparam [31:0] MO_CTRL = 32'h0000, MO_PC = 32'h0008, MO_CODE = 32'h0010;
+    localparam [31:0] MO_CMD = 32'h1000;
     localparam [3:0]  OP_WR = 4'd1, OP_POLL = 4'd2, OP_DONE = 4'd3;
 
     // agent (inside MAG) registers -- the existing orchestrator map
-    localparam [31:0] A_PROG_DST = 32'h0040, A_PROG_LEN = 32'h0048,
-                      A_PROG_KICK= 32'h0050, A_PROG_CRED= 32'h0060,
-                      A_NODE     = 32'h1000, A_STAGE    = 32'h2000;
+    localparam [31:0] A_PROG_DST = 32'h0040, A_PROG_LEN = 32'h0048;
+    localparam [31:0] A_PROG_KICK = 32'h0050, A_PROG_CRED = 32'h0060;
+    localparam [31:0] A_NODE = 32'h1000, A_STAGE = 32'h2000;
 
     reg clk = 0, rstn = 0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
+
+    // Declared here, not beside the problem below: the config tasks count their
+    // own checks and Vivado rejects a use-before-declaration.
+    integer errors = 0, checks = 0;
 
     // ============================================================ driver AXI
     reg  [3:0]  d_awid=0, d_arid=0;
@@ -311,6 +333,50 @@ module mag_system_tb;
         end
     endtask
 
+    // ---- the CONVERTING move: mem -> transform slot -> mem ----------------
+    // An ORDINARY descriptor in mode 5, because the slot sits on the mover's own
+    // read-return path: the source walks the entry's words, the destination
+    // walks entries, and the occupant id and mode ride the source header's free
+    // upper bits. There is no second engine and no second command set.
+    task xfer_run(input [39:0] src, input [39:0] dst,
+                  input [15:0] nent, input [7:0] slot, input mode);
+        begin
+            mvwr(8'h10, {5'd0, 3'd0, mode, 4'd0, slot[3:0],
+                         3'd1, src, 3'd0, 1'b0});
+            mvdim(1'b0, 3'd0, nent * 16'd8, 32'sd32);
+            mvhdr(1'b1, dst, 3'd1);
+            mvdim(1'b1, 3'd0, nent, 32'sd128);
+            mvwr(8'h00, {47'd0, 1'b1, 8'd0, 3'd0, 2'd1, 3'd5});
+            // Rise then fall: the command path is several cycles of AXI, so
+            // watching only for the fall reads as "already finished".
+            mvspin = 0;
+            while (!mv_busy && mvspin < 4000) begin
+                mvspin = mvspin + 1;
+                @(negedge clk);
+            end
+            checks = checks + 1;
+            if (mvspin >= 4000) begin
+                errors = errors + 1;
+                $display("  FAIL converting move never started");
+            end
+            mvspin = 0;
+            while (mv_busy && mvspin < 200000) begin
+                mvspin = mvspin + 1;
+                @(negedge clk);
+            end
+            checks = checks + 1;
+            if (mvspin >= 200000) begin
+                errors = errors + 1;
+                $display("  FAIL converting move never went idle");
+            end
+            checks = checks + 1;
+            if (mv_fault !== 4'd0) begin
+                errors = errors + 1;
+                $display("  FAIL converting move faulted, code %0d", mv_fault);
+            end
+        end
+    endtask
+
     mag #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(40), .ID_W(4),
           .MEM_PORTS(MEMP),
           .MEM_X(0), .MEM_Y(1),
@@ -466,19 +532,22 @@ module mag_system_tb;
     integer SA [0:M-1], SB [0:N-1], ANCHOR;
     real  fp64_c [0:M-1][0:N-1];
     real  hw_c   [0:M-1][0:N-1];
-    integer errors = 0, checks = 0;
     real worst_rel = 0.0, sum_rel = 0.0;
     integer nz = 0;
 
     function real fp16_to_real(input [15:0] f);
         real m; integer e;
         begin
-            if (f[14:10] == 5'd0) fp16_to_real = 0.0;
+            if (f[14:10] == 5'd0) begin
+                fp16_to_real = 0.0;
+            end
             else begin
                 m = 1.0 + $itor(f[9:0]) / 1024.0;
                 e = f[14:10] - 15;
                 fp16_to_real = m * (2.0 ** e);
-                if (f[15]) fp16_to_real = -fp16_to_real;
+                if (f[15]) begin
+                    fp16_to_real = -fp16_to_real;
+                end
             end
         end
     endfunction
@@ -491,7 +560,9 @@ module mag_system_tb;
         begin
             sgn = (x < 0.0);
             a   = sgn ? -x : x;
-            if (a == 0.0) real_to_fp16 = 16'd0;
+            if (a == 0.0) begin
+                real_to_fp16 = 16'd0;
+            end
             else begin
                 e = 0;
                 while (a >= 2.0) begin a = a / 2.0; e = e + 1; end
@@ -512,18 +583,18 @@ module mag_system_tb;
     endtask
 
     // ---- the upload path -------------------------------------------------
-    // One burst of FP16 into MAG's memory window. Bit 33 asks for quantise as
-    // it lands, bit 32 selects B packing; the rest is the DESTINATION, in the
-    // int7 layout. Every handshake is spun on the edge that carries it.
+    // A PLAIN burst into MAG's memory window: the address is the destination
+    // and nothing else. The quantise-on-upload aperture is gone -- a host
+    // either quantises in software or asks the mover to convert on card, which
+    // is what `xfer_run` above does. Every handshake is spun on the edge that
+    // carries it.
     reg [DW-1:0] hsrc [0:127];
     integer      hb, hn;
 
-    task host_push(input [39:0] dst, input quant, input blay, input integer nb);
+    task host_push(input [39:0] dst, input integer nb);
         begin
             hn        = nb;
-            // {special, rsvd, mesh, aperture 0b010, blay} then 4 GB of target.
-            h_awaddr  <= quant ? {4'b1000, 3'b010, blay, dst[31:0]}
-                               : {8'd0, dst[31:0]};
+            h_awaddr  <= {8'd0, dst[31:0]};
             h_awlen   <= hn[7:0] - 8'd1;
             h_awvalid <= 1'b1;
             h_bready  <= 1'b1;
@@ -538,6 +609,55 @@ module mag_system_tb;
             h_wvalid <= 1'b0; h_wlast <= 1'b0;
             @(posedge clk); while (!h_bvalid) @(posedge clk);
             h_bready <= 1'b0;
+        end
+    endtask
+
+    // ---- the reference occupant, for cluster 0's operands -----------------
+    // The SAME module the slot holds at id 1, fed the same beats. Cluster 0's
+    // route is "already int7 in memory", and this is what produces those bytes
+    // without a software model of mx_quant to drift against it.
+    reg           g_start = 0, g_bv = 0, g_blay = 0;
+    reg  [DW-1:0] g_beat = 0;
+    wire          g_done;
+    wire [DW-1:0] g_w0, g_w1, g_w2, g_w3;
+    integer       gb, gspin;
+
+    mx_quant u_ref (
+        .clk(clk), .rst(!rstn),
+        .start(g_start), .b_layout(g_blay),
+        .beat(g_beat), .beat_valid(g_bv),
+        .need_beat(), .done(g_done),
+        .word0(g_w0), .word1(g_w1), .word2(g_w2), .word3(g_w3)
+    );
+
+    // One entry: 8 FP16 words in at `sw`, 4 int7 words out at `dw`, both
+    // backdoor. Reads the source back out of the RAM rather than from a local
+    // copy, so what is quantised is exactly what memory holds.
+    task quant_entry(input integer sw, input integer dw, input blay);
+        begin
+            g_blay = blay;
+            @(negedge clk); g_start = 1'b1;
+            @(negedge clk); g_start = 1'b0;
+            for (gb = 0; gb < WPE; gb = gb + 1) begin
+                g_beat = u_ram.mem[sw + gb];
+                g_bv   = 1'b1;
+                @(negedge clk);
+                g_bv   = 1'b0;
+            end
+            gspin = 0;
+            while (!g_done && gspin < 200) begin
+                @(negedge clk);
+                gspin = gspin + 1;
+            end
+            checks = checks + 1;
+            if (gspin >= 200) begin
+                errors = errors + 1;
+                $display("  FAIL reference occupant stalled on entry at %0d", sw);
+            end
+            bd_write(dw + 0, g_w0);
+            bd_write(dw + 1, g_w1);
+            bd_write(dw + 2, g_w2);
+            bd_write(dw + 3, g_w3);
         end
     endtask
 
@@ -577,8 +697,9 @@ module mag_system_tb;
     // stage one CU instruction flit at program slot `slot` for the agent
     task stage_flit(input integer slot, input [FW-1:0] fl);
         begin
-            for (t = 0; t < 5; t = t + 1)
+            for (t = 0; t < 5; t = t + 1) begin
                 cmd_wr(MAG_BASE + A_STAGE + (slot*5 + t)*8, fl[t*64 +: 64]);
+            end
         end
     endtask
 
@@ -589,12 +710,22 @@ module mag_system_tb;
         #200; repeat (10) @(posedge clk); rstn = 1; repeat (10) @(posedge clk);
 
         $display("--- 1. problem: C[%0d,%0d] = A[%0d,%0d] x B[%0d,%0d] ---", M, N, M, KK, KK, N);
-        for (i = 0; i < M; i = i + 1)
-            for (k = 0; k < KK; k = k + 1) A[i][k] = ($random(seed) & 63) - 32;
-        for (k = 0; k < KK; k = k + 1)
-            for (j = 0; j < N; j = j + 1) B[k][j] = ($random(seed) & 63) - 32;
-        for (i = 0; i < M; i = i + 1) SA[i] = ($random(seed) & 3);
-        for (j = 0; j < N; j = j + 1) SB[j] = ($random(seed) & 3);
+        for (i = 0; i < M; i = i + 1) begin
+            for (k = 0; k < KK; k = k + 1) begin
+                A[i][k] = ($random(seed) & 63) - 32;
+            end
+        end
+        for (k = 0; k < KK; k = k + 1) begin
+            for (j = 0; j < N; j = j + 1) begin
+                B[k][j] = ($random(seed) & 63) - 32;
+            end
+        end
+        for (i = 0; i < M; i = i + 1) begin
+            SA[i] = ($random(seed) & 3);
+        end
+        for (j = 0; j < N; j = j + 1) begin
+            SB[j] = ($random(seed) & 3);
+        end
 
         // Pin each lane's peak into [60,63]. MAG derives the block scale from
         // the peak, and for the integer model below to hold the quantiser must
@@ -604,30 +735,36 @@ module mag_system_tb;
         // ONE PEAK PER BLOCK, not per lane: the scale is shared along K within
         // a 32-element block, so every block of every lane needs its own.
         for (k = 0; k < NKB; k = k + 1) begin
-            for (i = 0; i < M; i = i + 1) A[i][k*32] = 60 + ($random(seed) & 3);
-            for (j = 0; j < N; j = j + 1) B[k*32][j] = 60 + ($random(seed) & 3);
+            for (i = 0; i < M; i = i + 1) begin
+                A[i][k*32] = 60 + ($random(seed) & 3);
+            end
+            for (j = 0; j < N; j = j + 1) begin
+                B[k*32][j] = 60 + ($random(seed) & 3);
+            end
         end
 
-        for (i = 0; i < M; i = i + 1)
+        for (i = 0; i < M; i = i + 1) begin
             for (j = 0; j < N; j = j + 1) begin
                 bsum = 0;
-                for (k = 0; k < KK; k = k + 1) bsum = bsum + A[i][k]*B[k][j];
+                for (k = 0; k < KK; k = k + 1) begin
+                    bsum = bsum + A[i][k]*B[k][j];
+                end
                 fp64_c[i][j] = $itor(bsum) * (2.0 ** (SA[i]+SB[j]-HEADROOM));
             end
+        end
 
-        // Software never stores MXFP7, so what goes into memory is FP16: one
+        // Software never stores MXFP7, so what software hands over is FP16: one
         // L1 entry is 4 lanes x 32 FP16 = 8 words. The values are v * 2^s, the
         // exact fixed point of the quantiser, so the integer model above stays
         // valid with the real circuit in path.
         //
-        // Cluster 0's copy goes in by backdoor. Cluster 1's goes in through
-        // MAG's memory window with the quantise marker set, so it lands as
-        // int7 and its FILLs read half as many bytes with no quantiser pass.
-        $display("--- 2. operands: backdoor FP16, and an upload that quantises ---");
+        // A stays in one FP16 copy that BOTH routes read; B is split, because
+        // each cluster owns a different half of the output columns.
+        $display("--- 2. operands: FP16 into memory, A shared ---");
         // Entry (group, K block) is at `group*NKB + block` -- group-major,
         // block-minor, which is the order the sweep reads them in.
-        for (g = 0; g < GM; g = g + 1)
-            for (kb = 0; kb < NKB; kb = kb + 1)
+        for (g = 0; g < GM; g = g + 1) begin
+            for (kb = 0; kb < NKB; kb = kb + 1) begin
                 for (c = 0; c < WPE; c = c + 1) begin
                     wtmp = {DW{1'b0}};
                     for (t = 0; t < 16; t = t + 1) begin
@@ -636,13 +773,16 @@ module mag_system_tb;
                         wtmp[t*16 +: 16] =
                             real_to_fp16($itor(A[g*4+i][k]) * (2.0 ** SA[g*4+i]));
                     end
-                    bd_write(WA_BASE + (g*NKB + kb)*WPE + c, wtmp);
                     hsrc[(g*NKB + kb)*WPE + c] = wtmp;
                 end
-        host_push(WQA_BASE * 32, 1'b1, 1'b0, GM*NKB*WPE);
+            end
+        end
+        // Through the HOST WINDOW, plain: this is the only thing left that
+        // proves that path still reaches memory now the aperture is gone.
+        host_push(FA_BASE * 32, GM*NKB*WPE);
 
-        for (h = 0; h < GNC*2; h = h + 1)
-            for (kb = 0; kb < NKB; kb = kb + 1)
+        for (h = 0; h < GNC*2; h = h + 1) begin
+            for (kb = 0; kb < NKB; kb = kb + 1) begin
                 for (c = 0; c < WPE; c = c + 1) begin
                     wtmp = {DW{1'b0}};
                     for (t = 0; t < 16; t = t + 1) begin
@@ -651,30 +791,64 @@ module mag_system_tb;
                         wtmp[t*16 +: 16] =
                             real_to_fp16($itor(B[k][h*4+j]) * (2.0 ** SB[h*4+j]));
                     end
-                    if (h < GNC) bd_write(WB0_BASE + (h*NKB + kb)*WPE + c, wtmp);
+                    if (h < GNC) begin
+                        bd_write(FB0_BASE + (h*NKB + kb)*WPE + c, wtmp);
+                    end
                     else begin
-                        bd_write(WB1_BASE + ((h-GNC)*NKB + kb)*WPE + c, wtmp);
-                        hsrc[((h-GNC)*NKB + kb)*WPE + c] = wtmp;
+                        bd_write(FB1_BASE + ((h-GNC)*NKB + kb)*WPE + c, wtmp);
                     end
                 end
-        host_push(WQB_BASE * 32, 1'b1, 1'b1, GNC*NKB*WPE);
+            end
+        end
+
+        // ---- route 0: int7 placed directly, as software would leave it -----
+        $display("--- 2a. cluster 0: int7 placed in memory directly ---");
+        for (t = 0; t < GM*NKB; t = t + 1) begin
+            quant_entry(FA_BASE + t*WPE, Q0A_BASE + t*WPQ, 1'b0);
+        end
+        for (t = 0; t < GNC*NKB; t = t + 1) begin
+            quant_entry(FB0_BASE + t*WPE, Q0B_BASE + t*WPQ, 1'b1);
+        end
+
+        // ---- route 1: the same conversion done ON CARD ---------------------
+        // One converting move per operand, through the slot at id 1. `mode`
+        // carries the A/B packing select the protocol used to call BLAYOUT.
+        $display("--- 2b. cluster 1: mem -> transform slot -> mem, on card ---");
+        xfer_run(FA_BASE * 32, Q1A_BASE * 32, GM[15:0]*NKB[15:0], 8'd1, 1'b0);
+        xfer_run(FB1_BASE * 32, Q1B_BASE * 32, GNC[15:0]*NKB[15:0], 8'd1, 1'b1);
+
+        // The two routes must have produced the SAME bytes for A, which is the
+        // one place the on-card converter is checked against the reference
+        // rather than through the GEMM's own tolerance.
+        for (t = 0; t < GM*NKB*WPQ; t = t + 1) begin
+            checks = checks + 1;
+            if (u_ram.mem[Q1A_BASE + t] !== u_ram.mem[Q0A_BASE + t]) begin
+                errors = errors + 1;
+                if (errors <= 8) begin
+                    $display("  FAIL on-card A word %0d: got %h want %h", t,
+                             u_ram.mem[Q1A_BASE + t], u_ram.mem[Q0A_BASE + t]);
+                end
+            end
+        end
 
         // ---------------------------------------------------------------
         $display("--- 3. build the control program (driver ISA) ---");
         for (cu = 0; cu < 2; cu = cu + 1) begin
             // four CU instructions: FILL A, FILL B, GEMM, DRAIN.
-            // Cluster 1 reads the pre-quantised copy of the same numbers.
-            // Cluster 1 takes the pre-quantised operands AND the fused drain;
-            // cluster 0 stays on the online-quantised, explicitly-drained
-            // path. Both must produce the same exact integers.
-            preq = (cu == 1);
+            //
+            // `preq` is 1 on BOTH clusters and is no longer a route: a cluster
+            // cannot ask memory to convert any more, so every fill is of an
+            // operand already in its final format. What still differs is where
+            // those bytes came from -- placed, or converted on card -- and the
+            // drain style.
+            preq = 1'b1;
             fuse = (cu == 1);
-            ad34 = (preq ? WQA_BASE : WA_BASE) * 32;
+            ad34 = ((cu == 0) ? Q0A_BASE : Q1A_BASE) * 32;
             stage_flit(0, cu_inst(4'd1, ad34, GM[15:0]*NKB[15:0], 1'b0, 1'b0,
                                   8'd0, 8'd0, 8'd0, 8'd0,
                                   preq, 1'b0, 1'b0, 1'b0));
 
-            ad34 = (preq ? WQB_BASE : ((cu == 0) ? WB0_BASE : WB1_BASE)) * 32;
+            ad34 = ((cu == 0) ? Q0B_BASE : Q1B_BASE) * 32;
             stage_flit(1, cu_inst(4'd1, ad34, GNC[15:0]*NKB[15:0], 1'b1, 1'b0,
                                   8'd0, 8'd0, 8'd0, 8'd0,
                                   preq, 1'b0, 1'b0, 1'b0));
@@ -730,37 +904,48 @@ module mag_system_tb;
 
         // ---------------------------------------------------------------
         $display("--- 5. read results back and check ---");
-        for (cu = 0; cu < 2; cu = cu + 1)
+        for (cu = 0; cu < 2; cu = cu + 1) begin
             for (t = 0; t < NT; t = t + 1) begin
                 @(negedge clk);
                 bd_addr <= ((cu == 0) ? WC0_BASE : WC1_BASE) + t;
                 @(negedge clk); @(negedge clk);
                 res_word = bd_rdata;
-                for (i = 0; i < 4; i = i + 1)
-                    for (j = 0; j < 4; j = j + 1)
+                for (i = 0; i < 4; i = i + 1) begin
+                    for (j = 0; j < 4; j = j + 1) begin
                         hw_c[(t / GNC)*4 + i][cu*(N/2) + (t % GNC)*4 + j]
                             = fp16_to_real(res_word[(i*4+j)*16 +: 16]);
+                    end
+                end
             end
+        end
 
-        for (i = 0; i < M; i = i + 1)
+        for (i = 0; i < M; i = i + 1) begin
             for (j = 0; j < N; j = j + 1) begin
                 got_r = hw_c[i][j]; want_r = fp64_c[i][j];
                 checks = checks + 1;
                 if (want_r == 0.0) begin
-                    if (got_r != 0.0) errors = errors + 1;
+                    if (got_r != 0.0) begin
+                        errors = errors + 1;
+                    end
                 end else begin
                     err = (got_r - want_r) / want_r;
-                    if (err < 0.0) err = -err;
+                    if (err < 0.0) begin
+                        err = -err;
+                    end
                     nz = nz + 1; sum_rel = sum_rel + err;
-                    if (err > worst_rel) worst_rel = err;
+                    if (err > worst_rel) begin
+                        worst_rel = err;
+                    end
                     if (err > 4.0/1024.0) begin
                         errors = errors + 1;
-                        if (errors <= 8)
+                        if (errors <= 8) begin
                             $display("  FAIL C[%0d][%0d] got %0f want %0f rel %0e",
                                      i, j, got_r, want_r, err);
+                        end
                     end
                 end
             end
+        end
 
         // ---- the mover, on MAG's own AXI master, after the GEMM is graded ---
         // A word transpose, which is the tile-order to entry-order shape. It
@@ -807,19 +992,21 @@ module mag_system_tb;
             $display("  FAIL mover faulted, code %0d", mv_fault);
         end
 
-        for (i = 0; i < 4; i = i + 1)
+        for (i = 0; i < 4; i = i + 1) begin
             for (j = 0; j < 8; j = j + 1) begin
                 @(negedge clk); bd_addr = 16'd544 + j*4 + i;
                 @(negedge clk); @(negedge clk);
                 checks = checks + 1;
                 if (bd_rdata !== {8{32'h5A00_0000 | (i*8+j)}}) begin
                     errors = errors + 1;
-                    if (errors <= 12)
+                    if (errors <= 12) begin
                         $display("  FAIL moved word [%0d][%0d] got %h want %h",
                                  i, j, bd_rdata[63:0],
                                  {2{32'h5A00_0000 | (i*8+j)}});
+                    end
                 end
             end
+        end
 
         $display("");
         $display("    C[0][0] hw %0f  fp64 %0f", hw_c[0][0], fp64_c[0][0]);
@@ -827,8 +1014,12 @@ module mag_system_tb;
         $display("    worst rel err %0e  mean %0e  (FP16 ULP %0e)",
                  worst_rel, sum_rel/$itor(nz), 1.0/1024.0);
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors  (MODEL=%0d)", checks, MODEL);
-        else             $display("  FAIL -- %0d checks, %0d errors  (MODEL=%0d)", checks, errors, MODEL);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors  (MODEL=%0d)", checks, MODEL);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors  (MODEL=%0d)", checks, errors, MODEL);
+        end
         $display("========================================");
         $finish;
     end

@@ -45,18 +45,30 @@ module mm_mesh_tb #(
     localparam CX = 1, CY = 1;
 
     reg clk = 0, rst = 1;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     reg mat_free = 0, vec_clk = 0, mag_clk = 0;
-    always #MHP mat_free = ~mat_free;
-    always #VHP vec_clk  = ~vec_clk;
-    always #GHP mag_clk  = ~mag_clk;
+    always begin
+        #MHP mat_free = ~mat_free;
+    end
+    always begin
+        #VHP vec_clk  = ~vec_clk;
+    end
+    always begin
+        #GHP mag_clk  = ~mag_clk;
+    end
 
     // ktpu_div2's own model of the primitive: O rises WITH an I edge, never a
     // delta after, or every 1x register samples what 2x has already updated.
     reg mat_clk2x = 0, mph = 0;
-    always #M2HP mat_clk2x = ~mat_clk2x;
-    always @(negedge mat_clk2x) mph <= ~mph;
+    always begin
+        #M2HP mat_clk2x = ~mat_clk2x;
+    end
+    always @(negedge mat_clk2x) begin
+        mph <= ~mph;
+    end
     wire mat_clk = PUMP ? (mat_clk2x & mph) : mat_free;
 
     reg  [FW-1:0] ext_i;
@@ -155,7 +167,9 @@ module mm_mesh_tb #(
             checks = checks + 1;
             if (!cond) begin
                 errors = errors + 1;
-                if (errors < 20) $display("  FAIL %0s [%0d]", what, where);
+                if (errors < 20) begin
+                    $display("  FAIL %0s [%0d]", what, where);
+                end
             end
         end
     endtask
@@ -164,7 +178,9 @@ module mm_mesh_tb #(
     task send_inst(input [3:0] dx, input [3:0] dy, input [255:0] payload);
         begin
             @(negedge clk);
-            while (ext_ib) @(negedge clk);
+            while (ext_ib) begin
+                @(negedge clk);
+            end
             ext_i  <= {dx, dy, CX[3:0], CY[3:0], T_CU_INST, 8'h40, 1'b0, 3'b000,
                        payload};
             ext_iv <= 1'b1;
@@ -197,14 +213,20 @@ module mm_mesh_tb #(
         begin
             @(negedge host_clk);
             sc_awaddr = A_MV_CFG + {24'd0, a}; sc_awvalid = 1'b1;
-            while (!sc_awready) @(negedge host_clk);
+            while (!sc_awready) begin
+                @(negedge host_clk);
+            end
             @(negedge host_clk);
             sc_awvalid = 1'b0;
             sc_wdata = d; sc_wvalid = 1'b1;
-            while (!sc_wready) @(negedge host_clk);
+            while (!sc_wready) begin
+                @(negedge host_clk);
+            end
             @(negedge host_clk);
             sc_wvalid = 1'b0;
-            while (!sc_bvalid) @(negedge host_clk);
+            while (!sc_bvalid) begin
+                @(negedge host_clk);
+            end
             @(negedge host_clk);
         end
     endtask
@@ -223,9 +245,12 @@ module mm_mesh_tb #(
 
     // count CU_SIGNALs coming back so completion is observable
     always @(posedge clk) begin
-        if (rst) sig_count <= 0;
-        else if (ext_ov && ext_o[FW-4*PW-1 -: 4] == 4'h6)
+        if (rst) begin
+            sig_count <= 0;
+        end
+        else if (ext_ov && ext_o[FW-4*PW-1 -: 4] == 4'h6) begin
             sig_count <= sig_count + 1;
+        end
     end
 
     // The full round trip: VFILL pulls a word out of DRAM through MAG, VLD
@@ -249,9 +274,12 @@ module mm_mesh_tb #(
 
     initial begin
         ext_i = 0; ext_iv = 0;
-        for (i = 0; i < 2048; i = i + 1) u_ram.mem[i] = 256'd0;
-        for (i = 0; i < 16; i = i + 1)
+        for (i = 0; i < 2048; i = i + 1) begin
+            u_ram.mem[i] = 256'd0;
+        end
+        for (i = 0; i < 16; i = i + 1) begin
             u_ram.mem[(A_MSRC >> 5) + i] = {8{32'h7E00_0000 | i[31:0]}};
+        end
         u_ram.mem[A_VSRC >> 5] = {16{16'h4000}};      // 2.0, sixteen FP16 lanes
 
         repeat (10) @(negedge clk);
@@ -347,8 +375,12 @@ module mm_mesh_tb #(
         chk(spin < 200000, "cluster FILL completed", 0);
 
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end

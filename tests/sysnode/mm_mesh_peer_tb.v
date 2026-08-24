@@ -45,11 +45,17 @@ module mm_mesh_peer_tb #(
     localparam integer OUT_W = 64;
 
     reg clk = 0, rst = 1;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     reg mat_clk = 0, vec_clk = 0;
-    always #MHP mat_clk = ~mat_clk;
-    always #VHP vec_clk = ~vec_clk;
+    always begin
+        #MHP mat_clk = ~mat_clk;
+    end
+    always begin
+        #VHP vec_clk = ~vec_clk;
+    end
 
     reg  [FW-1:0] ext_i;
     reg           ext_iv;
@@ -133,7 +139,9 @@ module mm_mesh_peer_tb #(
             checks = checks + 1;
             if (!cond) begin
                 errors = errors + 1;
-                if (errors < 20) $display("  FAIL %0s [%0d]", what, where);
+                if (errors < 20) begin
+                    $display("  FAIL %0s [%0d]", what, where);
+                end
             end
         end
     endtask
@@ -143,7 +151,9 @@ module mm_mesh_peer_tb #(
                    input [7:0] txn, input lst, input [255:0] payload);
         begin
             @(negedge clk);
-            while (ext_ib) @(negedge clk);
+            while (ext_ib) begin
+                @(negedge clk);
+            end
             ext_i  <= {dx, dy, CX[3:0], CY[3:0], ty, txn, lst, 3'b000, payload};
             ext_iv <= 1'b1;
             @(negedge clk);
@@ -207,7 +217,10 @@ module mm_mesh_peer_tb #(
                     ack_vec = ack_vec + 1;
                     ack_arg = ext_o[247 -: 32];
                 end
-            end else sig_cl = sig_cl + 1;
+            end
+            else begin
+                sig_cl = sig_cl + 1;
+            end
         end else if (o_type == T_CU_DATA) begin
             if (!cd_open) begin
                 cd_off  <= ext_o[247 -: 16];
@@ -218,8 +231,12 @@ module mm_mesh_peer_tb #(
                 gold[cd_off[5:0]] = ext_o[255:0];
                 gold_n  = gold_n + 1;
                 cd_off  <= cd_off + 16'd1;
-                if (cd_left == 8'd0) cd_open <= 1'b0;
-                else                 cd_left <= cd_left - 8'd1;
+                if (cd_left == 8'd0) begin
+                    cd_open <= 1'b0;
+                end
+                else begin
+                    cd_left <= cd_left - 8'd1;
+                end
             end
         end
     end
@@ -240,9 +257,11 @@ module mm_mesh_peer_tb #(
         integer ii, kk;
         begin
             word_a = 256'd0;
-            for (ii = 0; ii < 4; ii = ii + 1)
-                for (kk = 0; kk < 8; kk = kk + 1)
+            for (ii = 0; ii < 4; ii = ii + 1) begin
+                for (kk = 0; kk < 8; kk = kk + 1) begin
                     word_a[255 - (ii*8+kk)*7 -: 7] = A[row0+ii][kb*32 + w*8 + kk][6:0];
+                end
+            end
         end
     endfunction
 
@@ -250,9 +269,11 @@ module mm_mesh_peer_tb #(
         integer jj, kk;
         begin
             word_b = 256'd0;
-            for (kk = 0; kk < 8; kk = kk + 1)
-                for (jj = 0; jj < 4; jj = jj + 1)
+            for (kk = 0; kk < 8; kk = kk + 1) begin
+                for (jj = 0; jj < 4; jj = jj + 1) begin
                     word_b[255 - (kk*4+jj)*7 -: 7] = B[kb*32 + w*8 + kk][col0+jj][6:0];
+                end
+            end
         end
     endfunction
 
@@ -261,9 +282,10 @@ module mm_mesh_peer_tb #(
         integer ii;
         begin
             with_scales = w;
-            for (ii = 0; ii < 4; ii = ii + 1)
+            for (ii = 0; ii < 4; ii = ii + 1) begin
                 with_scales[31 - ii*8 -: 8] =
                     ((side == 0 ? SA[lane0+ii][kb] : SB[lane0+ii][kb]) + SBIAS) << 3;
+            end
         end
     endfunction
 
@@ -277,14 +299,17 @@ module mm_mesh_peer_tb #(
             p[247 -: 16] = 16'd0;
             p[231 -: 8]  = (ne*4 - 1);
             send_flit(LX[3:0], LY[3:0], T_CU_DATA, 8'h00, 1'b0, p);
-            for (e = 0; e < ne; e = e + 1)
+            for (e = 0; e < ne; e = e + 1) begin
                 for (w = 0; w < 4; w = w + 1) begin
                     p = (side == 0) ? word_a((e/nk)*4, e % nk, w)
                                     : word_b((e/nk)*4, e % nk, w);
-                    if (w == 0) p = with_scales(p, (e/nk)*4, e % nk, side);
+                    if (w == 0) begin
+                        p = with_scales(p, (e/nk)*4, e % nk, side);
+                    end
                     send_flit(LX[3:0], LY[3:0], T_CU_DATA, 8'h00,
                               (e == ne-1) && (w == 3), p);
                 end
+            end
         end
     endtask
 
@@ -343,8 +368,12 @@ module mm_mesh_peer_tb #(
 
     initial begin
         ext_i = 0; ext_iv = 0;
-        for (i = 0; i < 2048; i = i + 1) u_ram.mem[i] = 256'd0;
-        for (i = 0; i < 64; i = i + 1) gold[i] = 256'd0;
+        for (i = 0; i < 2048; i = i + 1) begin
+            u_ram.mem[i] = 256'd0;
+        end
+        for (i = 0; i < 64; i = i + 1) begin
+            gold[i] = 256'd0;
+        end
 
         repeat (10) @(negedge clk);
         rst = 0;
@@ -354,14 +383,26 @@ module mm_mesh_peer_tb #(
 
         // Small, at scale zero: section 5 DOUBLES the tile, and at the full int7
         // range the drained value saturates FP16 rather than reaching infinity.
-        for (i = 0; i < gm*4; i = i + 1)
-            for (t = 0; t < nk*32; t = t + 1) A[i][t] = ($random(seed) & 7) - 4;
-        for (t = 0; t < nk*32; t = t + 1)
-            for (i = 0; i < gn*4; i = i + 1) B[t][i] = ($random(seed) & 7) - 4;
-        for (i = 0; i < gm*4; i = i + 1)
-            for (t = 0; t < nk; t = t + 1) SA[i][t] = 0;
-        for (i = 0; i < gn*4; i = i + 1)
-            for (t = 0; t < nk; t = t + 1) SB[i][t] = 0;
+        for (i = 0; i < gm*4; i = i + 1) begin
+            for (t = 0; t < nk*32; t = t + 1) begin
+                A[i][t] = ($random(seed) & 7) - 4;
+            end
+        end
+        for (t = 0; t < nk*32; t = t + 1) begin
+            for (i = 0; i < gn*4; i = i + 1) begin
+                B[t][i] = ($random(seed) & 7) - 4;
+            end
+        end
+        for (i = 0; i < gm*4; i = i + 1) begin
+            for (t = 0; t < nk; t = t + 1) begin
+                SA[i][t] = 0;
+            end
+        end
+        for (i = 0; i < gn*4; i = i + 1) begin
+            for (t = 0; t < nk; t = t + 1) begin
+                SB[i][t] = 0;
+            end
+        end
 
         $display("--- 1. operands into the cluster's L1 as CU_DATA ---");
         fill_side(0, gm, nk);
@@ -448,16 +489,21 @@ module mm_mesh_peer_tb #(
                 want16 = gold[t][i*16 +: 16];
                 // x + x in FP16 is the exponent plus one and nothing else, so
                 // this is an equality rather than a tolerance.
-                if (want16[14:10] != 5'd0)
+                if (want16[14:10] != 5'd0) begin
                     want16 = {want16[15], 5'(want16[14:10] + 5'd1), want16[9:0]};
+                end
                 chk(got16 === want16, "the epilogue doubled the delivered tile",
                     t*16 + i);
             end
         end
 
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end

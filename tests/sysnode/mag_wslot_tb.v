@@ -30,11 +30,9 @@ module mag_wslot_tb;
     localparam integer DW  = 256;
     localparam integer AW  = 40;
 
-    localparam [3:0] T_MEM_RD_REQ  = 4'h0,
-                     T_MEM_WR_REQ  = 4'h1,
-                     T_MEM_RD_RESP = 4'h2,
-                     T_MEM_WR_ACK  = 4'h3,
-                     T_MEM_WR_DATA = 4'h4;
+    localparam [3:0] T_MEM_RD_REQ = 4'h0, T_MEM_WR_REQ = 4'h1;
+    localparam [3:0] T_MEM_RD_RESP = 4'h2, T_MEM_WR_ACK = 4'h3;
+    localparam [3:0] T_MEM_WR_DATA = 4'h4;
 
     // The two sources. These are the coordinates of the two cluster managers
     // in the driver bench, so the traffic pattern matches the real one.
@@ -42,7 +40,9 @@ module mag_wslot_tb;
     localparam integer BX = 2, BY = 1;
 
     reg clk = 0, rstn = 0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     // ------------------------------------------------------------ the DUT
     reg  [FW-1:0] in_data;
@@ -132,8 +132,9 @@ module mag_wslot_tb;
             end else begin
                 bpipe <= {bpipe[B_DELAY-1:0], ram_bvalid[gb]};
                 bid_pipe[0] <= ram_bid[gb*4 +: 4];
-                for (bp = 1; bp <= B_DELAY; bp = bp + 1)
+                for (bp = 1; bp <= B_DELAY; bp = bp + 1) begin
                     bid_pipe[bp] <= bid_pipe[bp-1];
+                end
             end
         end
         assign m_bvalid[gb]       = bpipe[B_DELAY];
@@ -206,7 +207,9 @@ module mag_wslot_tb;
         input [FW-1:0] f;
         begin
             @(posedge clk);
-            while (in_busy) @(posedge clk);
+            while (in_busy) begin
+                @(posedge clk);
+            end
             in_data  <= f;
             in_valid <= 1'b1;
             @(posedge clk);
@@ -301,10 +304,12 @@ module mag_wslot_tb;
         end
         errs = errs + ack_bad;
 
-        if (errs == 0)
+        if (errs == 0) begin
             $display("  PASS  mag write slots: %0d writes, 2 sources", 2*N);
-        else
+        end
+        else begin
             $display("  FAIL  mag write slots: %0d errors", errs);
+        end
         $finish;
     end
 

@@ -7,8 +7,7 @@
 // MW is a parameter so xelab -generic_top can also run R=1, where the packing
 // is an identity and the burst-length divide must be bypassed.
 module mag_dram_port_tb #(
-    parameter integer MW = 512
-);
+    parameter integer MW = 512 );
     localparam integer N      = 5;
     localparam integer ADDR_W = 40;
     localparam integer SW     = 256;
@@ -17,8 +16,12 @@ module mag_dram_port_tb #(
 
     reg s_aclk = 1'b0, m_aclk = 1'b0, resetn = 1'b0;
     // Deliberately different periods: the crossing is the thing under test.
-    always #2.0 s_aclk = ~s_aclk;
-    always #1.7 m_aclk = ~m_aclk;
+    always begin
+        #2.0 s_aclk = ~s_aclk;
+    end
+    always begin
+        #1.7 m_aclk = ~m_aclk;
+    end
 
     reg  [N-1:0]        q_valid, q_write;
     wire [N-1:0]        q_ready;
@@ -103,7 +106,9 @@ module mag_dram_port_tb #(
             q_write[p] = 1'b1;
             q_valid[p] = 1'b1;
             @(posedge s_aclk);
-            while (!q_ready[p]) @(posedge s_aclk);
+            while (!q_ready[p]) begin
+                @(posedge s_aclk);
+            end
             q_valid[p] = 1'b0;
 
             for (i = 0; i < beats; i = i + 1) begin
@@ -113,10 +118,14 @@ module mag_dram_port_tb #(
                 w_data[p*SW +: SW] = d;
                 w_valid[p] = 1'b1;
                 @(posedge s_aclk);
-                while (!w_ready[p]) @(posedge s_aclk);
+                while (!w_ready[p]) begin
+                    @(posedge s_aclk);
+                end
             end
             w_valid[p] = 1'b0;
-            while (!b_valid[p]) @(posedge s_aclk);
+            while (!b_valid[p]) begin
+                @(posedge s_aclk);
+            end
         end
     endtask
 
@@ -130,18 +139,27 @@ module mag_dram_port_tb #(
             q_write[p] = 1'b0;
             q_valid[p] = 1'b1;
             @(posedge s_aclk);
-            while (!q_ready[p]) @(posedge s_aclk);
+            while (!q_ready[p]) begin
+                @(posedge s_aclk);
+            end
             q_valid[p] = 1'b0;
 
             for (i = 0; i < beats; i = i + 1) begin
                 r_ready[p] = 1'b1;
                 @(posedge s_aclk);
-                while (!r_valid[p]) @(posedge s_aclk);
+                while (!r_valid[p]) begin
+                    @(posedge s_aclk);
+                end
                 checks = checks + 1;
-                if (r_data[p*SW +: SW] !== golden[word + i])
+                if (r_data[p*SW +: SW] !== golden[word + i]) begin
                     fail("read data mismatch");
-                if ((i == beats - 1) && !r_last[p]) fail("rlast not on last beat");
-                if ((i != beats - 1) && r_last[p])  fail("rlast early");
+                end
+                if ((i == beats - 1) && !r_last[p]) begin
+                    fail("rlast not on last beat");
+                end
+                if ((i != beats - 1) && r_last[p]) begin
+                    fail("rlast early");
+                end
             end
             r_ready[p] = 1'b0;
         end
@@ -182,11 +200,13 @@ module mag_dram_port_tb #(
         do_read (4, 800, 6);
 
         repeat (50) @(posedge s_aclk);
-        if (errors == 0)
+        if (errors == 0) begin
             $display("PASS mag_dram_port_tb: %0d checks", checks);
-        else
+        end
+        else begin
             $display("FAIL mag_dram_port_tb: %0d errors over %0d checks",
                      errors, checks);
+        end
         $finish;
     end
 

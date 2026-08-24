@@ -16,8 +16,12 @@ module mag_dram_port_bw_tb;
     real mesh_mhz = 100.09, dram_ns = 106.7;
 
     reg s_clk = 0, m_clk = 0, rstn = 0;
-    always #(s_half) s_clk = ~s_clk;
-    always #(m_half) m_clk = ~m_clk;
+    always begin
+        #(s_half) s_clk = ~s_clk;
+    end
+    always begin
+        #(m_half) m_clk = ~m_clk;
+    end
 
     reg  [N-1:0]        q_valid, q_write, r_ready;
     reg  [N*AWID-1:0]   q_addr;
@@ -131,7 +135,9 @@ module mag_dram_port_bw_tb;
         end else begin
             scyc <= scyc + 1;
             if (measuring) begin
-                if (|(q_valid & q_ready & rmask) && (ar_cyc < 0)) ar_cyc <= scyc;
+                if (|(q_valid & q_ready & rmask) && (ar_cyc < 0)) begin
+                    ar_cyc <= scyc;
+                end
                 if (|(r_valid & r_ready & rmask)) begin
                     got <= got + 1;
                     if (!seen_first) begin
@@ -199,20 +205,25 @@ module mag_dram_port_bw_tb;
             words = n * bursts;
             while (got < words) begin
                 @(negedge s_clk);
-                for (sk = 0; sk < kk; sk = sk + 1)
+                for (sk = 0; sk < kk; sk = sk + 1) begin
                     if (q_valid[sk] && q_ready[sk]) begin
                         issued[sk] = issued[sk] + 8'd1;
-                        if (issued[sk] >= bursts / kk) q_valid[sk] = 1'b0;
-                        else q_addr[sk*AWID +: AWID] =
-                                 q_addr[sk*AWID +: AWID] + n * 32;
+                        if (issued[sk] >= bursts / kk) begin
+                            q_valid[sk] = 1'b0;
+                        end
+                        else begin
+                            q_addr[sk*AWID +: AWID] =
+                                q_addr[sk*AWID +: AWID] + n * 32;
+                        end
                     end
+                end
             end
             measuring = 1'b0;
             q_valid = 0;
             case (kk)
-            1:       report(n, bursts, lat, "k=1");
-            2:       report(n, bursts, lat, "k=2");
-            default: report(n, bursts, lat, "k=4");
+                1:       report(n, bursts, lat, "k=1");
+                2:       report(n, bursts, lat, "k=2");
+                default: report(n, bursts, lat, "k=4");
             endcase
         end
     endtask
@@ -241,15 +252,23 @@ module mag_dram_port_bw_tb;
                 @(negedge s_clk);
                 if (q_valid[REQ] && q_ready[REQ]) begin
                     nb = nb + 1;
-                    if (nb >= bursts) q_valid[REQ] = 1'b0;
-                    else q_addr[REQ*AWID +: AWID] =
-                             q_addr[REQ*AWID +: AWID] + n * 32;
+                    if (nb >= bursts) begin
+                        q_valid[REQ] = 1'b0;
+                    end
+                    else begin
+                        q_addr[REQ*AWID +: AWID] =
+                            q_addr[REQ*AWID +: AWID] + n * 32;
+                    end
                 end
                 if (q_valid[REQ2] && q_ready[REQ2]) begin
                     nb2 = nb2 + 1;
-                    if (nb2 >= bursts) q_valid[REQ2] = 1'b0;
-                    else q_addr[REQ2*AWID +: AWID] =
-                             q_addr[REQ2*AWID +: AWID] + n * 32;
+                    if (nb2 >= bursts) begin
+                        q_valid[REQ2] = 1'b0;
+                    end
+                    else begin
+                        q_addr[REQ2*AWID +: AWID] =
+                            q_addr[REQ2*AWID +: AWID] + n * 32;
+                    end
                 end
             end
             measuring = 1'b0;
@@ -277,9 +296,9 @@ module mag_dram_port_bw_tb;
         // hardware ceiling, 300 what the BD asks clk_wiz_mesh for at power-on.
         for (i = 0; i < 3; i = i + 1) begin
             case (i)
-            0: setclk(100.09);
-            1: setclk(150.0);
-            2: setclk(300.0);
+                0: setclk(100.09);
+                1: setclk(150.0);
+                2: setclk(300.0);
             endcase
             sweepk(1,   64, LAT, 1);
             mbs_1 = $rtoi(mbs);
@@ -317,8 +336,12 @@ module mag_dram_port_bw_tb;
             end
         end
         $display("========================================");
-        if (errors == 0) $display("  PASS -- burst gain over 5x at every clock");
-        else             $display("  FAIL -- %0d errors", errors);
+        if (errors == 0) begin
+            $display("  PASS -- burst gain over 5x at every clock");
+        end
+        else begin
+            $display("  FAIL -- %0d errors", errors);
+        end
         $display("========================================");
         $finish;
     end

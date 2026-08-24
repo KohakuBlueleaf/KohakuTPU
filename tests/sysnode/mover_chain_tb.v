@@ -27,11 +27,17 @@ module mover_chain_core #(
     localparam integer SPIN_MAX = 40000;
 
     reg clk = 0, resetn = 0, dclk = 0;
-    always #2   clk  = ~clk;
-    always #1.7 dclk = ~dclk;
+    always begin
+        #2   clk  = ~clk;
+    end
+    always begin
+        #1.7 dclk = ~dclk;
+    end
 
     integer cyc = 0;
-    always @(posedge clk) cyc <= cyc + 1;
+    always @(posedge clk) begin
+        cyc <= cyc + 1;
+    end
 
     // Chain position -> mesh id. The SLR order, and nothing else knows it.
     function integer cat(input integer p);
@@ -78,6 +84,9 @@ module mover_chain_core #(
         ktpu_min_1m #(.MESH_ID(MID), .MODEL(1), .MW(MW)) u (
 `endif
             .axi_aclk(clk), .axi_aresetn(resetn),
+            // MAG runs on noc_clk at MAG_CDC=0, so leaving these unconnected
+            // left the mover unclocked -- it reported stat_fault === X.
+            .noc_clk(clk), .mat_clk(clk), .vec_clk(clk),
             .dram_aclk(dclk), .dram_aresetn(resetn),
             .S_AXI_MEM_awid({IDW{1'b0}}), .S_AXI_MEM_awaddr({AW{1'b0}}),
             .S_AXI_MEM_awlen(8'd0), .S_AXI_MEM_awvalid(1'b0),
@@ -172,17 +181,17 @@ module mover_chain_core #(
 
     // ---- the source mover's AXI, for the burst monitor -------------------
     // Hierarchical because the generated top exposes neither status nor bus.
-    wire        mv_busy   = mesh[SRCP].u.u_mag.u_mag.u_mover.stat_busy;
-    wire [3:0]  mv_fault  = mesh[SRCP].u.u_mag.u_mag.u_mover.stat_fault;
-    wire [31:0] mv_done   = mesh[SRCP].u.u_mag.u_mag.u_mover.stat_done;
-    wire [AW-1:0] mv_araddr = mesh[SRCP].u.u_mag.u_mag.u_mover.m_araddr;
-    wire [7:0]  mv_arlen   = mesh[SRCP].u.u_mag.u_mag.u_mover.m_arlen;
-    wire        mv_arv     = mesh[SRCP].u.u_mag.u_mag.u_mover.m_arvalid;
-    wire        mv_arr     = mesh[SRCP].u.u_mag.u_mag.u_mover.m_arready;
-    wire [AW-1:0] mv_awaddr = mesh[SRCP].u.u_mag.u_mag.u_mover.m_awaddr;
-    wire [7:0]  mv_awlen   = mesh[SRCP].u.u_mag.u_mag.u_mover.m_awlen;
-    wire        mv_awv     = mesh[SRCP].u.u_mag.u_mag.u_mover.m_awvalid;
-    wire        mv_awr     = mesh[SRCP].u.u_mag.u_mag.u_mover.m_awready;
+    wire        mv_busy   = mesh[SRCP].u.u_mag.u_mag.u_mag.u_mover.stat_busy;
+    wire [3:0]  mv_fault  = mesh[SRCP].u.u_mag.u_mag.u_mag.u_mover.stat_fault;
+    wire [31:0] mv_done   = mesh[SRCP].u.u_mag.u_mag.u_mag.u_mover.stat_done;
+    wire [AW-1:0] mv_araddr = mesh[SRCP].u.u_mag.u_mag.u_mag.u_mover.m_araddr;
+    wire [7:0]  mv_arlen   = mesh[SRCP].u.u_mag.u_mag.u_mag.u_mover.m_arlen;
+    wire        mv_arv     = mesh[SRCP].u.u_mag.u_mag.u_mag.u_mover.m_arvalid;
+    wire        mv_arr     = mesh[SRCP].u.u_mag.u_mag.u_mag.u_mover.m_arready;
+    wire [AW-1:0] mv_awaddr = mesh[SRCP].u.u_mag.u_mag.u_mag.u_mover.m_awaddr;
+    wire [7:0]  mv_awlen   = mesh[SRCP].u.u_mag.u_mag.u_mag.u_mover.m_awlen;
+    wire        mv_awv     = mesh[SRCP].u.u_mag.u_mag.u_mag.u_mover.m_awvalid;
+    wire        mv_awr     = mesh[SRCP].u.u_mag.u_mag.u_mag.u_mover.m_awready;
 
     integer merr = 0, n_ar = 0, n_aw = 0;
     reg [3:0] aw_mesh_seen;
@@ -190,22 +199,24 @@ module mover_chain_core #(
     always @(posedge clk) if (resetn) begin
         if (mv_arv && mv_arr) begin
             n_ar = n_ar + 1;
-            if (|mv_araddr[4:0] ||
-                (({1'b0, mv_araddr[11:5]} + {1'b0, mv_arlen} + 9'd1) > 9'd128))
-                begin
-                    merr = merr + 1;
-                    $display("  ERROR AR %h len %0d", mv_araddr, mv_arlen);
-                end
+            if (
+                |mv_araddr[4:0]
+                || (({1'b0, mv_araddr[11:5]} + {1'b0, mv_arlen} + 9'd1) > 9'd128)
+            ) begin
+                merr = merr + 1;
+                $display("  ERROR AR %h len %0d", mv_araddr, mv_arlen);
+            end
         end
         if (mv_awv && mv_awr) begin
             n_aw = n_aw + 1;
             aw_mesh_seen = mv_awaddr[AW-1 -: 4];
-            if (|mv_awaddr[4:0] ||
-                (({1'b0, mv_awaddr[11:5]} + {1'b0, mv_awlen} + 9'd1) > 9'd128))
-                begin
-                    merr = merr + 1;
-                    $display("  ERROR AW %h len %0d", mv_awaddr, mv_awlen);
-                end
+            if (
+                |mv_awaddr[4:0]
+                || (({1'b0, mv_awaddr[11:5]} + {1'b0, mv_awlen} + 9'd1) > 9'd128)
+            ) begin
+                merr = merr + 1;
+                $display("  ERROR AW %h len %0d", mv_awaddr, mv_awlen);
+            end
         end
     end
 
@@ -222,9 +233,11 @@ module mover_chain_core #(
     // on every dclk edge, so every expected value was built from the wrong one.
     integer mi;
     always @(posedge dclk) if (resetn) begin
-        for (mi = 0; mi < 4; mi = mi + 1)
-            if (m_awvalid[mi] === 1'b1 && m_awready[mi] === 1'b1)
+        for (mi = 0; mi < 4; mi = mi + 1) begin
+            if (m_awvalid[mi] === 1'b1 && m_awready[mi] === 1'b1) begin
                 nwr[mi] = nwr[mi] + 1;
+            end
+        end
     end
 
     task wget(input integer pp, input integer w, output [255:0] d);
@@ -245,14 +258,24 @@ module mover_chain_core #(
             spin = 0;
             while (spin < 3000) begin
                 @(posedge clk);
-                if (sc_awready[pp]) spin = 9000; else spin = spin + 1;
+                if (sc_awready[pp]) begin
+                    spin = 9000;
+                end
+                else begin
+                    spin = spin + 1;
+                end
             end
             @(negedge clk); sc_awvalid[pp] = 1'b0;
             sc_wdata[pp] = d; sc_wvalid[pp] = 1'b1;
             spin = 0;
             while (spin < 3000) begin
                 @(posedge clk);
-                if (sc_wready[pp]) spin = 9000; else spin = spin + 1;
+                if (sc_wready[pp]) begin
+                    spin = 9000;
+                end
+                else begin
+                    spin = spin + 1;
+                end
             end
             @(negedge clk); sc_wvalid[pp] = 1'b0;
             spin = 0;
@@ -275,7 +298,9 @@ module mover_chain_core #(
             checks = checks + 1;
             if (!cond) begin
                 errors = errors + 1;
-                if (errors < 12) $display("  FAIL %0s [%0d]", what, where);
+                if (errors < 12) begin
+                    $display("  FAIL %0s [%0d]", what, where);
+                end
             end
         end
     endtask
@@ -293,7 +318,9 @@ module mover_chain_core #(
     task do_move(input [7:0] flg, input [255:0] tag);
         begin
             n_ar = 0; n_aw = 0; merr = 0;
-            for (pj = 0; pj < 4; pj = pj + 1) nwr[pj] = 0;
+            for (pj = 0; pj < 4; pj = pj + 1) begin
+                nwr[pj] = 0;
+            end
 
             mvhdr(SRCP, 1'b0, SRC_OFF, 3'd1);
             mvdim(SRCP, 1'b0, 3'd0, NW[15:0], 32'sd32);
@@ -331,18 +358,21 @@ module mover_chain_core #(
             end
 
             // A MAG the packet only passes through must not write its own DRAM.
-            for (p = 0; p < NMESH; p = p + 1)
-                if ((p != SRCP) && (p != DSTP))
+            for (p = 0; p < NMESH; p = p + 1) begin
+                if ((p != SRCP) && (p != DSTP)) begin
                     chk(nwr[p] == 0, "transit MAG issued no DRAM write", nwr[p]);
+                end
+            end
 
             for (i = 0; i < NW; i = i + 1) begin
                 wget(SRCP, (SRC_OFF >> 5) + i, rd);
                 chk(rd === {8{32'hAC00_0000 | i[31:0]}}, "source unmodified", i);
             end
 
-            if (NMESH > 1)
+            if (NMESH > 1) begin
                 chk(aw_mesh_seen === {2'b00, dst_mesh},
                     "AW carried the destination mesh", {28'd0, aw_mesh_seen});
+            end
 
             errors = errors + merr;
             checks = checks + n_ar + n_aw;
@@ -355,9 +385,10 @@ module mover_chain_core #(
                      NMESH, tag, t_busy, t_land, $rtoi(cpw),
                      $rtoi((cpw - $rtoi(cpw)) * 100.0), $rtoi(mbs), n_ar, n_aw,
                      aw_mesh_seen, {2'b00, dst_mesh});
-            if (t_land > t_busy)
+            if (t_land > t_busy) begin
                 $display("  stat_busy fell %0d cycles BEFORE the last byte landed",
                          t_land - t_busy);
+            end
         end
     endtask
 
@@ -369,10 +400,11 @@ module mover_chain_core #(
     integer li;
     task l2_round_trip;
         begin
-            for (li = 0; li < NW; li = li + 1)
+            for (li = 0; li < NW; li = li + 1) begin
                 mesh[SRCP].ram.mem[((BACK_OFF >> 5) + li) >> 1]
                                   [((((BACK_OFF >> 5) + li) & 1)) * 256 +: 256]
                     = {8{32'hDEAD_DEAD}};
+            end
 
             // DRAM -> L2
             mvhdr(SRCP, 1'b0, SRC_OFF, 3'd1);
@@ -427,10 +459,11 @@ module mover_chain_core #(
         bd_a = 0;
 
         // The source is always chain position 0, so this path always exists.
-        for (i = 0; i < NW; i = i + 1)
+        for (i = 0; i < NW; i = i + 1) begin
             mesh[0].ram.mem[((SRC_OFF >> 5) + i) >> 1]
                            [((((SRC_OFF >> 5) + i) & 1)) * 256 +: 256]
                 = {8{32'hAC00_0000 | i[31:0]}};
+        end
 
         repeat (20) @(negedge clk);
         resetn = 1'b1;
@@ -450,11 +483,13 @@ module mover_chain_core #(
         l2_round_trip;
 `endif
 
-        if (errors == 0)
+        if (errors == 0) begin
             $display("  PASS mover_chain %0d MAG: %0d checks", NMESH, checks);
-        else
+        end
+        else begin
             $display("  FAIL mover_chain %0d MAG: %0d errors, %0d checks",
                      NMESH, errors, checks);
+        end
         $finish;
     end
 

@@ -19,14 +19,18 @@ module mag_link_cdc_tb;
     localparam integer MAXB = 32;
     localparam integer NPKT = 60;
 
-    localparam integer U_KIND = 0,  U_DMESH = 4,  U_SMESH = 6,
-                       U_TXN  = 8,  U_LEN   = 16, U_ADDR  = 32;
+    localparam integer U_KIND = 0, U_DMESH = 4, U_SMESH = 6, U_TXN = 8;
+    localparam integer U_LEN = 16, U_ADDR = 32;
     localparam [3:0] K_NOC_FLIT = 4'h2;
 
     reg clk_a = 0, clk_b = 0, resetn = 0;
     real ha = 4.0, hb = 3.0;
-    always #ha clk_a = ~clk_a;
-    always #hb clk_b = ~clk_b;
+    always begin
+        #ha clk_a = ~clk_a;
+    end
+    always begin
+        #hb clk_b = ~clk_b;
+    end
 
     integer errors = 0, checks = 0, phase = 0;
 
@@ -35,8 +39,9 @@ module mag_link_cdc_tb;
             checks = checks + 1;
             if (!cond) begin
                 errors = errors + 1;
-                if (errors < 20)
+                if (errors < 20) begin
                     $display("  FAIL phase %0d: %0s [%0d]", phase, what, where);
+                end
             end
         end
     endtask
@@ -158,17 +163,23 @@ module mag_link_cdc_tb;
 
     always @(negedge clk_b) if (resetn) begin
         if (b_rdv0 && b_rdr0) begin
-            if (b_rd0 !== payload(0, got_beat[0]))
+            if (b_rd0 !== payload(0, got_beat[0])) begin
                 chk(1'b0, "class 0 beat is out of order or lost", got_beat[0]);
+            end
             got_beat[0] = got_beat[0] + 1;
         end
         if (b_rdv1 && b_rdr1) begin
-            if (b_rd1 !== payload(1, got_beat[1]))
+            if (b_rd1 !== payload(1, got_beat[1])) begin
                 chk(1'b0, "class 1 beat is out of order or lost", got_beat[1]);
+            end
             got_beat[1] = got_beat[1] + 1;
         end
-        if (b_rhv0 && b_rhr0) got_hdr[0] = got_hdr[0] + 1;
-        if (b_rhv1 && b_rhr1) got_hdr[1] = got_hdr[1] + 1;
+        if (b_rhv0 && b_rhr0) begin
+            got_hdr[0] = got_hdr[0] + 1;
+        end
+        if (b_rhv1 && b_rhr1) begin
+            got_hdr[1] = got_hdr[1] + 1;
+        end
     end
 
     // ---- A sends -----------------------------------------------------------
@@ -180,7 +191,9 @@ module mag_link_cdc_tb;
             if (cls == 0) begin a_h0 = header(0, len_m1); a_hv0 = 1'b1; end
             else          begin a_h1 = header(1, len_m1); a_hv1 = 1'b1; end
             @(negedge clk_a);
-            while (!(cls ? a_hr1_q : a_hr0_q)) @(negedge clk_a);
+            while (!(cls ? a_hr1_q : a_hr0_q)) begin
+                @(negedge clk_a);
+            end
             a_hv0 = 1'b0; a_hv1 = 1'b0;
 
             for (k = 0; k <= len_m1; k = k + 1) begin
@@ -193,7 +206,9 @@ module mag_link_cdc_tb;
                     a_dv1 = 1'b1;
                 end
                 @(negedge clk_a);
-                while (!(cls ? a_dr1_q : a_dr0_q)) @(negedge clk_a);
+                while (!(cls ? a_dr1_q : a_dr0_q)) begin
+                    @(negedge clk_a);
+                end
                 a_dv0 = 1'b0; a_dv1 = 1'b0;
                 sent_beat[cls] = sent_beat[cls] + 1;
             end
@@ -263,8 +278,12 @@ module mag_link_cdc_tb;
         run_phase(4.07, "B beside A, unrelated");
 
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end

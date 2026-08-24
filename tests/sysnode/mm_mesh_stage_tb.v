@@ -46,7 +46,9 @@ module mm_mesh_stage_tb;
     localparam integer W_REF = 1024, W_POI = 1025, W_STG = 1026;
 
     reg clk = 0, rst = 1;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     reg  [FW-1:0] ext_i;
     reg           ext_iv;
@@ -143,7 +145,9 @@ module mm_mesh_stage_tb;
             checks = checks + 1;
             if (!cond) begin
                 errors = errors + 1;
-                if (errors < 20) $display("  FAIL %0s [%0d]", what, where);
+                if (errors < 20) begin
+                    $display("  FAIL %0s [%0d]", what, where);
+                end
             end
         end
     endtask
@@ -153,19 +157,23 @@ module mm_mesh_stage_tb;
     integer ax_aw_special = 0, ax_ar_special = 0, ax_ar_any = 0;
     integer ci;
     always @(posedge clk) if (!rst) begin
-        if (r_arvalid[0] && r_arready[0]) ax_ar_any = ax_ar_any + 1;
+        if (r_arvalid[0] && r_arready[0]) begin
+            ax_ar_any = ax_ar_any + 1;
+        end
         for (ci = 0; ci < NCH; ci = ci + 1) begin
             if (r_awvalid[ci] && r_awaddr[ci*AW + 39]) begin
                 ax_aw_special = ax_aw_special + 1;
-                if (ax_aw_special < 5)
+                if (ax_aw_special < 5) begin
                     $display("%0t ERROR bench: AW on channel %0d carries %h -- a special aperture reached AXI",
                              $time, ci, r_awaddr[ci*AW +: AW]);
+                end
             end
             if (r_arvalid[ci] && r_araddr[ci*AW + 39]) begin
                 ax_ar_special = ax_ar_special + 1;
-                if (ax_ar_special < 5)
+                if (ax_ar_special < 5) begin
                     $display("%0t ERROR bench: AR on channel %0d carries %h -- a special aperture reached AXI",
                              $time, ci, r_araddr[ci*AW +: AW]);
+                end
             end
         end
     end
@@ -175,18 +183,33 @@ module mm_mesh_stage_tb;
     localparam [3:0] T_MEM_RD_REQ = 4'h0, T_MEM_WR_REQ = 4'h1;
     wire [3:0]  magi_ty   = dut.mag_i[FW-4*PW-1 -: 4];
     wire [39:0] magi_addr = dut.mag_i[255 -: 40];
-    wire        magi_rsvd = magi_addr[39] && !magi_addr[38] &&
-                            (magi_addr[37:36] == 2'd0) && (magi_addr[35:32] != 4'h0);
+    wire magi_rsvd = (
+        magi_addr[39]
+        && !magi_addr[38]
+        && (magi_addr[37:36] == 2'd0)
+        && (magi_addr[35:32] != 4'h0)
+    );
 
-    wire magi_rem = magi_addr[39] && !magi_addr[38] &&
-                    (magi_addr[37:36] != 2'd0);
+    wire magi_rem = (
+        magi_addr[39]
+        && !magi_addr[38]
+        && (magi_addr[37:36] != 2'd0)
+    );
 
     integer mag_rsvd_rd = 0, mag_rsvd_wr = 0, mag_rem_rd = 0, mag_rem_wr = 0;
     always @(posedge clk) if (!rst && dut.mag_iv && !dut.mag_ib) begin
-        if (magi_rsvd && magi_ty == T_MEM_RD_REQ) mag_rsvd_rd = mag_rsvd_rd + 1;
-        if (magi_rsvd && magi_ty == T_MEM_WR_REQ) mag_rsvd_wr = mag_rsvd_wr + 1;
-        if (magi_rem  && magi_ty == T_MEM_RD_REQ) mag_rem_rd  = mag_rem_rd + 1;
-        if (magi_rem  && magi_ty == T_MEM_WR_REQ) mag_rem_wr  = mag_rem_wr + 1;
+        if (magi_rsvd && magi_ty == T_MEM_RD_REQ) begin
+            mag_rsvd_rd = mag_rsvd_rd + 1;
+        end
+        if (magi_rsvd && magi_ty == T_MEM_WR_REQ) begin
+            mag_rsvd_wr = mag_rsvd_wr + 1;
+        end
+        if (magi_rem  && magi_ty == T_MEM_RD_REQ) begin
+            mag_rem_rd  = mag_rem_rd + 1;
+        end
+        if (magi_rem  && magi_ty == T_MEM_WR_REQ) begin
+            mag_rem_wr  = mag_rem_wr + 1;
+        end
     end
 
     // ================================================ the bench as the agent
@@ -194,7 +217,9 @@ module mm_mesh_stage_tb;
                    input [7:0] txn, input lst, input [255:0] payload);
         begin
             @(negedge clk);
-            while (ext_ib) @(negedge clk);
+            while (ext_ib) begin
+                @(negedge clk);
+            end
             ext_i  <= {dx, dy, CX[3:0], CY[3:0], ty, txn, lst, 3'b000, payload};
             ext_iv <= 1'b1;
             @(negedge clk);
@@ -209,7 +234,9 @@ module mm_mesh_stage_tb;
     integer sig_cl = 0;
     wire [3:0] o_type = ext_o[FW-4*PW-1 -: 4];
     always @(posedge clk) if (!rst && ext_ov)
-        if (o_type == T_CU_SIGNAL) sig_cl = sig_cl + 1;
+        if (o_type == T_CU_SIGNAL) begin
+            sig_cl = sig_cl + 1;
+        end
 
     // ================================================ operands, over CU_DATA
     localparam integer MAXG = 4, MAXNK = 2;
@@ -225,9 +252,11 @@ module mm_mesh_stage_tb;
         integer ii, kk;
         begin
             word_a = 256'd0;
-            for (ii = 0; ii < 4; ii = ii + 1)
-                for (kk = 0; kk < 8; kk = kk + 1)
+            for (ii = 0; ii < 4; ii = ii + 1) begin
+                for (kk = 0; kk < 8; kk = kk + 1) begin
                     word_a[255 - (ii*8+kk)*7 -: 7] = A[row0+ii][kb*32 + w*8 + kk][6:0];
+                end
+            end
         end
     endfunction
 
@@ -235,9 +264,11 @@ module mm_mesh_stage_tb;
         integer jj, kk;
         begin
             word_b = 256'd0;
-            for (kk = 0; kk < 8; kk = kk + 1)
-                for (jj = 0; jj < 4; jj = jj + 1)
+            for (kk = 0; kk < 8; kk = kk + 1) begin
+                for (jj = 0; jj < 4; jj = jj + 1) begin
                     word_b[255 - (kk*4+jj)*7 -: 7] = B[kb*32 + w*8 + kk][col0+jj][6:0];
+                end
+            end
         end
     endfunction
 
@@ -246,9 +277,10 @@ module mm_mesh_stage_tb;
         integer ii;
         begin
             with_scales = w;
-            for (ii = 0; ii < 4; ii = ii + 1)
+            for (ii = 0; ii < 4; ii = ii + 1) begin
                 with_scales[31 - ii*8 -: 8] =
                     ((side == 0 ? SA[lane0+ii][kb] : SB[lane0+ii][kb]) + SBIAS) << 3;
+            end
         end
     endfunction
 
@@ -262,14 +294,17 @@ module mm_mesh_stage_tb;
             p[247 -: 16] = 16'd0;
             p[231 -: 8]  = (ne*4 - 1);
             send_flit(LX[3:0], LY[3:0], T_CU_DATA, 8'h00, 1'b0, p);
-            for (e = 0; e < ne; e = e + 1)
+            for (e = 0; e < ne; e = e + 1) begin
                 for (w = 0; w < 4; w = w + 1) begin
                     p = (side == 0) ? word_a((e/nk)*4, e % nk, w)
                                     : word_b((e/nk)*4, e % nk, w);
-                    if (w == 0) p = with_scales(p, (e/nk)*4, e % nk, side);
+                    if (w == 0) begin
+                        p = with_scales(p, (e/nk)*4, e % nk, side);
+                    end
                     send_flit(LX[3:0], LY[3:0], T_CU_DATA, 8'h00,
                               (e == ne-1) && (w == 3), p);
                 end
+            end
         end
     endtask
 
@@ -358,7 +393,9 @@ module mm_mesh_stage_tb;
 
     initial begin
         ext_i = 0; ext_iv = 0;
-        for (i = 0; i < 4096; i = i + 1) u_ram.mem[i] = 256'd0;
+        for (i = 0; i < 4096; i = i + 1) begin
+            u_ram.mem[i] = 256'd0;
+        end
 
         repeat (10) @(negedge clk);
         rst = 0;
@@ -368,14 +405,26 @@ module mm_mesh_stage_tb;
         $display("--- 1. GEMM, then DRAIN to DRAM: the reference ---");
         gm = 2; gn = 2; nk = 2; nt = gm*gn;
 
-        for (i = 0; i < gm*4; i = i + 1)
-            for (t = 0; t < nk*32; t = t + 1) A[i][t] = ($random(seed) & 7) - 4;
-        for (t = 0; t < nk*32; t = t + 1)
-            for (i = 0; i < gn*4; i = i + 1) B[t][i] = ($random(seed) & 7) - 4;
-        for (i = 0; i < gm*4; i = i + 1)
-            for (t = 0; t < nk; t = t + 1) SA[i][t] = 0;
-        for (i = 0; i < gn*4; i = i + 1)
-            for (t = 0; t < nk; t = t + 1) SB[i][t] = 0;
+        for (i = 0; i < gm*4; i = i + 1) begin
+            for (t = 0; t < nk*32; t = t + 1) begin
+                A[i][t] = ($random(seed) & 7) - 4;
+            end
+        end
+        for (t = 0; t < nk*32; t = t + 1) begin
+            for (i = 0; i < gn*4; i = i + 1) begin
+                B[t][i] = ($random(seed) & 7) - 4;
+            end
+        end
+        for (i = 0; i < gm*4; i = i + 1) begin
+            for (t = 0; t < nk; t = t + 1) begin
+                SA[i][t] = 0;
+            end
+        end
+        for (i = 0; i < gn*4; i = i + 1) begin
+            for (t = 0; t < nk; t = t + 1) begin
+                SB[i][t] = 0;
+            end
+        end
 
         fill_side(0, gm, nk);
         fill_side(1, gn, nk);
@@ -417,8 +466,9 @@ module mm_mesh_stage_tb;
         // Scale bytes live in [31:0] and are left alone, so the poisoned words
         // are still well-formed operands -- only their lane values change.
         $display("--- 3b. poison DRAM under the staged copy ---");
-        for (t = 0; t < nt; t = t + 1)
+        for (t = 0; t < nt; t = t + 1) begin
             bd_write(t, gold[t] ^ {{7{32'h0F0F_0F0F}}, 32'h0});
+        end
         for (t = 0; t < nt; t = t + 1) begin
             bd_read(t);
             chk(bd_rdata !== gold[t], "DRAM now differs from the staged copy", t);
@@ -451,7 +501,9 @@ module mm_mesh_stage_tb;
             "no fill ever put a special address on AXI", ax_ar_special);
 
         // Put the golden tile back: section 5 checks DRAM was not written.
-        for (t = 0; t < nt; t = t + 1) bd_write(t, gold[t]);
+        for (t = 0; t < nt; t = t + 1) begin
+            bd_write(t, gold[t]);
+        end
 
         // ==== 3e. A DRAIN, not a FILL: a dropped fill wedges the cluster, so
         // the remote FILL is section 6, after everything it would take with it.
@@ -522,8 +574,12 @@ module mm_mesh_stage_tb;
         end
 
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end

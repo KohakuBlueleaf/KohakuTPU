@@ -9,8 +9,12 @@ module interlink_2mesh_1m_tb;
     localparam LW = 288, UW = 96;
 
     reg clk = 0, resetn = 0, dclk = 0;
-    always #2   clk  = ~clk;
-    always #1.7 dclk = ~dclk;
+    always begin
+        #2   clk  = ~clk;
+    end
+    always begin
+        #1.7 dclk = ~dclk;
+    end
 
     // On the SLR chain mesh0 is the bottom end, so it reaches mesh1 by its UP
     // link: link1 of mesh0 faces link0 of mesh1, and the other two are dead.
@@ -137,8 +141,12 @@ module interlink_2mesh_1m_tb;
 
     task wput(input integer m, input integer w, input [255:0] d);
         begin
-            if (m == 0) mesh[0].ram.mem[w >> 1][(w & 1) * 256 +: 256] = d;
-            else        mesh[1].ram.mem[w >> 1][(w & 1) * 256 +: 256] = d;
+            if (m == 0) begin
+                mesh[0].ram.mem[w >> 1][(w & 1) * 256 +: 256] = d;
+            end
+            else begin
+                mesh[1].ram.mem[w >> 1][(w & 1) * 256 +: 256] = d;
+            end
         end
     endtask
     function [255:0] wget(input integer m, input integer w);
@@ -156,14 +164,24 @@ module interlink_2mesh_1m_tb;
             spin = 0;
             while (spin < 3000) begin
                 @(posedge clk);
-                if (sc_awready[m]) spin = 9000; else spin = spin + 1;
+                if (sc_awready[m]) begin
+                    spin = 9000;
+                end
+                else begin
+                    spin = spin + 1;
+                end
             end
             @(negedge clk); sc_awvalid[m] = 1'b0;
             sc_wdata[m] = d; sc_wvalid[m] = 1'b1;
             spin = 0;
             while (spin < 3000) begin
                 @(posedge clk);
-                if (sc_wready[m]) spin = 9000; else spin = spin + 1;
+                if (sc_wready[m]) begin
+                    spin = 9000;
+                end
+                else begin
+                    spin = spin + 1;
+                end
             end
             @(negedge clk); sc_wvalid[m] = 1'b0;
             spin = 0;
@@ -185,7 +203,9 @@ module interlink_2mesh_1m_tb;
             checks = checks + 1;
             if (!cond) begin
                 errors = errors + 1;
-                if (errors < 12) $display("  FAIL %0s [%0d]", what, where);
+                if (errors < 12) begin
+                    $display("  FAIL %0s [%0d]", what, where);
+                end
             end
         end
     endtask
@@ -203,8 +223,9 @@ module interlink_2mesh_1m_tb;
             mesh[0].ram.mem[i] = {MW{1'b0}};
             mesh[1].ram.mem[i] = {MW{1'b0}};
         end
-        for (i = 0; i < 8; i = i + 1)
+        for (i = 0; i < 8; i = i + 1) begin
             wput(0, (SRC >> 5) + i, {8{32'hAC00_0000 | i[31:0]}});
+        end
 
         repeat (20) @(negedge clk);
         resetn = 1'b1;
@@ -227,15 +248,20 @@ module interlink_2mesh_1m_tb;
         chk(spin < 300000, "first remote word arrived", 0);
         repeat (5000) @(negedge clk);
 
-        for (i = 0; i < 8; i = i + 1)
+        for (i = 0; i < 8; i = i + 1) begin
             chk(wget(1, (32'h2000 >> 5) + i) === {8{32'hAC00_0000 | i[31:0]}},
                 "remote word landed in mesh1 DRAM", i);
+        end
 
         // Indented, because xsim.py's verdict is `"  PASS" in out` and its
         // output filter keeps only indented lines. Flush left, it never reports.
-        if (errors == 0) $display("  PASS interlink_2mesh_1m_tb: %0d checks", checks);
-        else $display("  FAIL interlink_2mesh_1m_tb: %0d errors, %0d checks",
-                      errors, checks);
+        if (errors == 0) begin
+            $display("  PASS interlink_2mesh_1m_tb: %0d checks", checks);
+        end
+        else begin
+            $display("  FAIL interlink_2mesh_1m_tb: %0d errors, %0d checks",
+                     errors, checks);
+        end
         $finish;
     end
 

@@ -35,10 +35,14 @@ module mm_mover_bw_tb;
     integer lat_rd_i = 49, lat_wr_i = 49;
 
     reg clk = 0, resetn = 0;
-    always #(half) clk = ~clk;
+    always begin
+        #(half) clk = ~clk;
+    end
 
     integer cyc = 0;
-    always @(posedge clk) cyc <= cyc + 1;
+    always @(posedge clk) begin
+        cyc <= cyc + 1;
+    end
 
     // ---- configuration bus, routed to whichever mover is selected ---------
     reg        sel;                       // 0 = mm_mover_v1, 1 = mm_mover
@@ -158,23 +162,29 @@ module mm_mover_bw_tb;
     always @(posedge clk) if (resetn) begin
         if (m_arvalid && m_arready) begin
             n_ar = n_ar + 1; mchk = mchk + 2;
-            if (m_arlen + 1 > max_ar) max_ar = m_arlen + 1;
-            if (|m_araddr[4:0] ||
-                (({1'b0, m_araddr[11:5]} + {1'b0, m_arlen} + 9'd1) > 9'd128))
-                begin
-                    merr = merr + 1;
-                    $display("  ERROR AR %h len %0d", m_araddr, m_arlen);
-                end
+            if (m_arlen + 1 > max_ar) begin
+                max_ar = m_arlen + 1;
+            end
+            if (
+                |m_araddr[4:0]
+                || (({1'b0, m_araddr[11:5]} + {1'b0, m_arlen} + 9'd1) > 9'd128)
+            ) begin
+                merr = merr + 1;
+                $display("  ERROR AR %h len %0d", m_araddr, m_arlen);
+            end
         end
         if (m_awvalid && m_awready) begin
             n_aw = n_aw + 1; mchk = mchk + 2;
-            if (m_awlen + 1 > max_aw) max_aw = m_awlen + 1;
-            if (|m_awaddr[4:0] ||
-                (({1'b0, m_awaddr[11:5]} + {1'b0, m_awlen} + 9'd1) > 9'd128))
-                begin
-                    merr = merr + 1;
-                    $display("  ERROR AW %h len %0d", m_awaddr, m_awlen);
-                end
+            if (m_awlen + 1 > max_aw) begin
+                max_aw = m_awlen + 1;
+            end
+            if (
+                |m_awaddr[4:0]
+                || (({1'b0, m_awaddr[11:5]} + {1'b0, m_awlen} + 9'd1) > 9'd128)
+            ) begin
+                merr = merr + 1;
+                $display("  ERROR AW %h len %0d", m_awaddr, m_awlen);
+            end
         end
     end
 
@@ -189,9 +199,10 @@ module mm_mover_bw_tb;
             checks = checks + 1;
             if (got !== want) begin
                 errors = errors + 1;
-                if (errors < 20)
+                if (errors < 20) begin
                     $display("  ERROR %0s [%0d]: got %h want %h",
                              what, where, got[63:0], want[63:0]);
+                end
             end
         end
     endtask
@@ -267,8 +278,9 @@ module mm_mover_bw_tb;
 
     task clear_dst(input integer nw);
         begin
-            for (k = 0; k < nw; k = k + 1)
+            for (k = 0; k < nw; k = k + 1) begin
                 u_mem.mem[(DST >> 5) + k] = 256'd0;
+            end
         end
     endtask
 
@@ -286,8 +298,9 @@ module mm_mover_bw_tb;
 
     task check_copy(input integer nw);
         begin
-            for (k = 0; k < nw; k = k + 1)
+            for (k = 0; k < nw; k = k + 1) begin
                 chk(u_mem.mem[(DST >> 5) + k], {8{k[31:0]}}, "copy", k);
+            end
         end
     endtask
 
@@ -305,10 +318,12 @@ module mm_mover_bw_tb;
 
     task check_conv;
         begin
-            for (i = 0; i < CRUNS; i = i + 1)
-                for (j = 0; j < CRUN; j = j + 1)
+            for (i = 0; i < CRUNS; i = i + 1) begin
+                for (j = 0; j < CRUN; j = j + 1) begin
                     chk(u_mem.mem[(DST >> 5) + i*CRUN + j],
                         {8{(i*CROW + j)}}, "conv", i*CRUN + j);
+                end
+            end
         end
     endtask
 
@@ -327,10 +342,44 @@ module mm_mover_bw_tb;
 
     task check_relayout;
         begin
-            for (i = 0; i < RT; i = i + 1)
-                for (j = 0; j < RT; j = j + 1)
+            for (i = 0; i < RT; i = i + 1) begin
+                for (j = 0; j < RT; j = j + 1) begin
                     chk(u_mem.mem[(DST >> 5) + i*RT + j],
                         {8{(j*RT + i)}}, "relayout", i*RT + j);
+                end
+            end
+        end
+    endtask
+
+    // The 4x4 granule transpose (relayout.md s3) done ENTIRELY IN WORD MOVES by
+    // padding each 8-byte granule to its own 32-byte word: a group of 4 words
+    // becomes 16, and the granule transpose becomes a 4x4 WORD transpose. 4x the
+    // traffic; the question is what run length it leaves, which decides whether
+    // the trade pays at all.
+    localparam integer PG = 1024;         // groups; 16 words each = 16,384 words
+    task setup_pad4;
+        begin
+            hdr(1'b0, SRC, 3'd3);
+            dim(1'b0, 3'd0, PG[15:0], 32'sd512);   // group
+            dim(1'b0, 3'd1, 16'd4,    32'sd32);    // source: granule slot
+            dim(1'b0, 3'd2, 16'd4,    32'sd128);   // source: word in group
+            hdr(1'b1, DST, 3'd3);
+            dim(1'b1, 3'd0, PG[15:0], 32'sd512);
+            dim(1'b1, 3'd1, 16'd4,    32'sd128);   // destination: transposed
+            dim(1'b1, 3'd2, 16'd4,    32'sd32);
+        end
+    endtask
+
+    task check_pad4;
+        begin
+            for (i = 0; i < PG; i = i + 1) begin
+                for (j = 0; j < 4; j = j + 1) begin
+                    for (k = 0; k < 4; k = k + 1) begin
+                        chk(u_mem.mem[(DST >> 5) + i*16 + k*4 + j],
+                            {8{(i*16 + j*4 + k)}}, "pad4", i*16 + j*4 + k);
+                    end
+                end
+            end
         end
     endtask
 
@@ -344,8 +393,9 @@ module mm_mover_bw_tb;
 
     task check_fill(input integer nw);
         begin
-            for (k = 0; k < nw; k = k + 1)
+            for (k = 0; k < nw; k = k + 1) begin
                 chk(u_mem.mem[(DST >> 5) + k], {16{16'h1234}}, "fill", k);
+            end
         end
     endtask
 
@@ -356,17 +406,19 @@ module mm_mover_bw_tb;
             sel = which[0];
             clear_dst(nw);
             case (kind)
-            0: setup_copy(nw);
-            1: setup_conv;
-            2: setup_relayout;
-            default: setup_fill(nw);
+                0: setup_copy(nw);
+                1: setup_conv;
+                2: setup_relayout;
+                4: setup_pad4;
+                default: setup_fill(nw);
             endcase
             launch((kind == 3) ? 3'd4 : 3'd0, fl);
             case (kind)
-            0: check_copy(nw);
-            1: check_conv;
-            2: check_relayout;
-            default: check_fill(nw);
+                0: check_copy(nw);
+                1: check_conv;
+                2: check_relayout;
+                4: check_pad4;
+                default: check_fill(nw);
             endcase
             report(tag, nw);
         end
@@ -376,8 +428,12 @@ module mm_mover_bw_tb;
         cfg_en_o = 0; cfg_en_n = 0; cfg_addr = 0; cfg_data = 0; sel = 1;
         lat_rd = 49; lat_wr = 49; maxout = 8'd4;
 
-        for (i = 0; i < WORDS; i = i + 1) u_mem.mem[i] = 256'd0;
-        for (i = 0; i < 32768; i = i + 1) u_mem.mem[i] = {8{i[31:0]}};
+        for (i = 0; i < WORDS; i = i + 1) begin
+            u_mem.mem[i] = 256'd0;
+        end
+        for (i = 0; i < 32768; i = i + 1) begin
+            u_mem.mem[i] = {8{i[31:0]}};
+        end
 
         repeat (12) @(negedge clk);
         resetn = 1;
@@ -420,6 +476,16 @@ module mm_mover_bw_tb;
         maxout = 8'd16;
         move(1, 1, 8'h08, "conv A'   k=16     ", CRUNS * CRUN);
         move(1, 2, 8'h08, "relayout  k=16     ", RT * RT);
+        // The padded 4x4 granule transpose at tensor scale: 16,384 words, which
+        // is 4,096 real words at 4x. Priced against the granule engine's count.
+        $display("--- the granule transpose as WORD moves, granules padded 4x ---");
+        maxout = 8'd4;
+        move(1, 4, 8'h08, "pad4      k=4      ", PG * 16);
+        maxout = 8'd16;
+        move(1, 4, 8'h08, "pad4      k=16     ", PG * 16);
+        maxout = 8'd32;
+        move(1, 4, 8'h08, "pad4      k=32     ", PG * 16);
+        move(1, 2, 8'h08, "relayout  k=32     ", RT * RT);
         maxout = 8'd4;
 
         // A posted 4-cycle write acknowledgement is the interlink's, and it is
@@ -449,8 +515,12 @@ module mm_mover_bw_tb;
                  n_ar, max_ar, n_aw, max_aw);
 
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end
@@ -626,7 +696,9 @@ module mm_bw_mem #(
                 mem[cw_addr[MW+LSB-1:LSB]] <= s_wdata;
                 cw_addr <= cw_addr + {{(AW-6){1'b0}}, 6'd32};
                 cw_left <= cw_left - 9'd1;
-                if (cw_left == 9'd1) cw_act <= 1'b0;
+                if (cw_left == 9'd1) begin
+                    cw_act <= 1'b0;
+                end
             end
 
             if (w_end) begin
@@ -636,7 +708,9 @@ module mm_bw_mem #(
             end
             bn <= bn + (w_end ? 8'd1 : 8'd0) - (b_go ? 8'd1 : 8'd0);
 
-            if (s_bvalid && s_bready) s_bvalid <= 1'b0;
+            if (s_bvalid && s_bready) begin
+                s_bvalid <= 1'b0;
+            end
             if (b_go) begin
                 s_bvalid <= 1'b1;
                 s_bid    <= bq_id[bh];

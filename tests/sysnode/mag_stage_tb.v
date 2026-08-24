@@ -29,7 +29,9 @@ module mag_stage_tb;
     localparam [39:0] DRAM   = 40'h00_1000_0000;
 
     reg clk = 0, rst = 1;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     reg             a_req = 0, a_we = 0;
     reg  [AW-1:0]   a_addr = 0;
@@ -70,7 +72,9 @@ module mag_stage_tb;
             checks = checks + 1;
             if (!cond) begin
                 errors = errors + 1;
-                if (errors < 25) $display("  FAIL %0s [%0d]", what, where);
+                if (errors < 25) begin
+                    $display("  FAIL %0s [%0d]", what, where);
+                end
             end
         end
     endtask
@@ -82,10 +86,30 @@ module mag_stage_tb;
     integer na_b = 0, na_m = 0, nb_b = 0, nb_m = 0;
 
     always @(posedge clk) if (!rst) begin
-        if (arv_b) begin if (na_b < CAP) ac_b[na_b] = ard_b; na_b = na_b + 1; end
-        if (arv_m) begin if (na_m < CAP) ac_m[na_m] = ard_m; na_m = na_m + 1; end
-        if (brv_b) begin if (nb_b < CAP) bc_b[nb_b] = brd_b; nb_b = nb_b + 1; end
-        if (brv_m) begin if (nb_m < CAP) bc_m[nb_m] = brd_m; nb_m = nb_m + 1; end
+        if (arv_b) begin
+            if (na_b < CAP) begin
+                ac_b[na_b] = ard_b;
+            end
+            na_b = na_b + 1;
+        end
+        if (arv_m) begin
+            if (na_m < CAP) begin
+                ac_m[na_m] = ard_m;
+            end
+            na_m = na_m + 1;
+        end
+        if (brv_b) begin
+            if (nb_b < CAP) begin
+                bc_b[nb_b] = brd_b;
+            end
+            nb_b = nb_b + 1;
+        end
+        if (brv_m) begin
+            if (nb_m < CAP) begin
+                bc_m[nb_m] = brd_m;
+            end
+            nb_m = nb_m + 1;
+        end
     end
 
     task clear_caps;
@@ -102,8 +126,9 @@ module mag_stage_tb;
         integer w;
         begin
             entry_of = {LINE{1'b0}};
-            for (w = 0; w < WORDS; w = w + 1)
+            for (w = 0; w < WORDS; w = w + 1) begin
                 entry_of[w*DW +: DW] = word_of(e, w);
+            end
         end
     endfunction
 
@@ -215,16 +240,24 @@ module mag_stage_tb;
 
         // ============================================ 2. entry in, entry out
         $display("--- 2. write entries on port A and read them back ---");
-        for (i = 0; i < 8; i = i + 1) a_write(i);
-        for (i = ENT-4; i < ENT; i = i + 1) a_write(i);
+        for (i = 0; i < 8; i = i + 1) begin
+            a_write(i);
+        end
+        for (i = ENT-4; i < ENT; i = i + 1) begin
+            a_write(i);
+        end
 
         bad_b = 0; bad_m = 0;
         for (i = 0; i < 8; i = i + 1) begin
             clear_caps;
             a_read(i);
             settle(8);
-            if ((na_b != 1) || (ac_b[0] !== entry_of(i))) bad_b = bad_b + 1;
-            if ((na_m != 1) || (ac_m[0] !== entry_of(i))) bad_m = bad_m + 1;
+            if ((na_b != 1) || (ac_b[0] !== entry_of(i))) begin
+                bad_b = bad_b + 1;
+            end
+            if ((na_m != 1) || (ac_m[0] !== entry_of(i))) begin
+                bad_m = bad_m + 1;
+            end
         end
         chk(bad_b == 0, "banked: every entry comes back whole", bad_b);
         chk(bad_m == 0, "monolithic: every entry comes back whole", bad_m);
@@ -234,8 +267,12 @@ module mag_stage_tb;
             clear_caps;
             a_read(i);
             settle(8);
-            if ((na_b != 1) || (ac_b[0] !== entry_of(i))) bad_b = bad_b + 1;
-            if ((na_m != 1) || (ac_m[0] !== entry_of(i))) bad_m = bad_m + 1;
+            if ((na_b != 1) || (ac_b[0] !== entry_of(i))) begin
+                bad_b = bad_b + 1;
+            end
+            if ((na_m != 1) || (ac_m[0] !== entry_of(i))) begin
+                bad_m = bad_m + 1;
+            end
         end
         chk(bad_b == 0, "including the last entries in the store", bad_b);
         chk(bad_m == 0, "on both shapes", bad_m);
@@ -243,19 +280,26 @@ module mag_stage_tb;
         // ============================================ 3. the two granularities
         $display("--- 3. the host reads the agent's entry, word by word ---");
         bad_b = 0; bad_m = 0;
-        for (i = 0; i < 4; i = i + 1)
+        for (i = 0; i < 4; i = i + 1) begin
             for (w = 0; w < WORDS; w = w + 1) begin
                 clear_caps;
                 b_read(i, w);
                 settle(8);
-                if ((nb_b != 1) || (bc_b[0] !== word_of(i, w))) bad_b = bad_b + 1;
-                if ((nb_m != 1) || (bc_m[0] !== word_of(i, w))) bad_m = bad_m + 1;
+                if ((nb_b != 1) || (bc_b[0] !== word_of(i, w))) begin
+                    bad_b = bad_b + 1;
+                end
+                if ((nb_m != 1) || (bc_m[0] !== word_of(i, w))) begin
+                    bad_m = bad_m + 1;
+                end
             end
+        end
         chk(bad_b == 0, "word w of entry e is at byte offset w*32", bad_b);
         chk(bad_m == 0, "on both shapes", bad_m);
 
         $display("--- 4. the host writes words, the agent reads the entry ---");
-        for (w = 0; w < WORDS; w = w + 1) b_write(100, w, word_of(100, w));
+        for (w = 0; w < WORDS; w = w + 1) begin
+            b_write(100, w, word_of(100, w));
+        end
         clear_caps;
         a_read(100);
         settle(8);
@@ -267,10 +311,11 @@ module mag_stage_tb;
         a_read(100);
         settle(8);
         bad_b = 0;
-        for (w = 0; w < WORDS; w = w + 1)
+        for (w = 0; w < WORDS; w = w + 1) begin
             if (ac_b[0][w*DW +: DW] !== ((w == 2) ? word_of(777, 2)
                                                  : word_of(100, w)))
                 bad_b = bad_b + 1;
+        end
         chk(bad_b == 0, "a host word write touches its bank and no other", bad_b);
 
         // A read and a host write want different ports, so both go on either
@@ -339,7 +384,9 @@ module mag_stage_tb;
         // Back to back with no gap: both pipelines are fixed, so the answers
         // come out in order at one per cycle or not at all.
         $display("--- 7. eight reads back to back ---");
-        for (i = 0; i < 8; i = i + 1) a_write(i);
+        for (i = 0; i < 8; i = i + 1) begin
+            a_write(i);
+        end
         clear_caps;
         for (i = 0; i < 8; i = i + 1) begin
             @(negedge clk);
@@ -353,15 +400,23 @@ module mag_stage_tb;
         chk(na_m == 8, "monolithic: eight requests, eight answers", na_m);
         bad_b = 0; bad_m = 0;
         for (i = 0; i < 8; i = i + 1) begin
-            if ((i < na_b) && (ac_b[i] !== entry_of(i))) bad_b = bad_b + 1;
-            if ((i < na_m) && (ac_m[i] !== entry_of(i))) bad_m = bad_m + 1;
+            if ((i < na_b) && (ac_b[i] !== entry_of(i))) begin
+                bad_b = bad_b + 1;
+            end
+            if ((i < na_m) && (ac_m[i] !== entry_of(i))) begin
+                bad_m = bad_m + 1;
+            end
         end
         chk(bad_b == 0, "banked: in order, across both banks", bad_b);
         chk(bad_m == 0, "monolithic: in order", bad_m);
 
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end

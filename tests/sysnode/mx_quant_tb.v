@@ -19,7 +19,9 @@ module mx_quant_tb;
     localparam integer ENTRIES = 256;
 
     reg clk = 0, rst = 1;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     reg          start = 0, b_layout = 0, beat_valid = 0;
     reg  [255:0] beat = 0;
@@ -39,8 +41,12 @@ module mx_quant_tb;
     integer e, b, t;
 
     initial begin
-        for (e = 0; e < ENTRIES*8; e = e + 1) src[e] = 256'd0;
-        for (e = 0; e < ENTRIES*5; e = e + 1) outw[e] = 256'd0;
+        for (e = 0; e < ENTRIES*8; e = e + 1) begin
+            src[e] = 256'd0;
+        end
+        for (e = 0; e < ENTRIES*5; e = e + 1) begin
+            outw[e] = 256'd0;
+        end
         $readmemh("quant_in.hex", src);
 
         repeat (4) @(negedge clk);

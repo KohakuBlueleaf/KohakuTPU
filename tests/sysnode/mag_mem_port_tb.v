@@ -35,11 +35,13 @@ module mag_mem_port_tb;
     // 300 rounds.
     localparam integer ACK_BOUND = 1200;
 
-    localparam [3:0] T_RD_REQ = 4'h0, T_WR_REQ = 4'h1, T_WR_DATA = 4'h4,
-                     T_WR_ACK = 4'h3;
+    localparam [3:0] T_RD_REQ = 4'h0, T_WR_REQ = 4'h1, T_WR_DATA = 4'h4;
+    localparam [3:0] T_WR_ACK = 4'h3;
 
     reg clk = 1'b0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
     reg rstn = 1'b0;
 
     integer checks = 0, errors = 0;
@@ -66,7 +68,9 @@ module mag_mem_port_tb;
     reg           out_busy_m;
     reg           p1bp = 1'b0;
     reg [31:0]    cyc = 32'd0;
-    always @(posedge clk) cyc <= cyc + 32'd1;
+    always @(posedge clk) begin
+        cyc <= cyc + 32'd1;
+    end
     wire out_busy = out_busy_m || (p1bp && (cyc[1:0] != 2'd0));
 
     wire [3:0]  m_awid, m_arid, m_bid, m_rid;
@@ -170,8 +174,12 @@ module mag_mem_port_tb;
         end else begin
             if (in_valid && !in_busy) begin
                 txr <= txr + 1;
-                if (txr + 1 < txw) in_data <= txq[txr + 1];
-                else               in_valid <= 1'b0;
+                if (txr + 1 < txw) begin
+                    in_data <= txq[txr + 1];
+                end
+                else begin
+                    in_valid <= 1'b0;
+                end
             end else if (!in_valid && (txr < txw)) begin
                 in_data  <= txq[txr];
                 in_valid <= 1'b1;
@@ -192,8 +200,9 @@ module mag_mem_port_tb;
         integer b;
         begin
             nq(f_wreq(sx, sy, txn, addr, beats[7:0] - 8'd1));
-            for (b = 0; b < beats; b = b + 1)
+            for (b = 0; b < beats; b = b + 1) begin
                 nq(f_wdat(sx, sy, {8{seed + b[31:0]}}));
+            end
         end
     endtask
 
@@ -220,8 +229,9 @@ module mag_mem_port_tb;
     wire [3:0]    o_ty = out_data[FW-4*PW-1 -: 4];
     wire [3:0]    o_ix = {o_dy[0], o_dx[2:0]};
     always @(posedge clk) begin
-        if (rstn && out_valid && !out_busy && (o_ty == T_WR_ACK))
+        if (rstn && out_valid && !out_busy && (o_ty == T_WR_ACK)) begin
             acks[o_ix] = acks[o_ix] + 1;
+        end
     end
 
     // ---- ready-to-issue latency, per slot -------------------------------
@@ -235,7 +245,9 @@ module mag_mem_port_tb;
         if (rstn) begin
             for (s = 0; s < 16; s = s + 1) begin
                 rdy_q[s] <= dut.ws_rdy[s];
-                if (dut.ws_rdy[s] && !rdy_q[s]) t_rdy[s] <= $time;
+                if (dut.ws_rdy[s] && !rdy_q[s]) begin
+                    t_rdy[s] <= $time;
+                end
             end
             if (dut.ws_issue) begin
                 lat = ($time - t_rdy[dut.ws_pick]) / 4;
@@ -249,9 +261,10 @@ module mag_mem_port_tb;
 
     reg p2mon = 1'b0;
     always @(posedge clk) begin
-        if (p2mon && dut.ws_issue)
+        if (p2mon && dut.ws_issue) begin
             $display("  P2 %0t ISSUE slot %0d addr %h",
                      $time, dut.ws_pick, dut.ws_addr[dut.ws_pick]);
+        end
     end
 
     integer maxslot = -1, curslot;
@@ -305,8 +318,10 @@ module mag_mem_port_tb;
         end
         drain_tx;
         spin = 0;
-        while (((acks[src_ix(4'd1, 4'd0)] < 300) ||
-                (acks[src_ix(4'd2, 4'd0)] < 1)) && (spin < 50000)) begin
+        while ((
+            (acks[src_ix(4'd1, 4'd0)] < 300)
+            || (acks[src_ix(4'd2, 4'd0)] < 1)
+        ) && (spin < 50000)) begin
             @(posedge clk); spin = spin + 1;
         end
         p1bp = 1'b0;
@@ -350,22 +365,28 @@ module mag_mem_port_tb;
 
         // ---- phase 3: mixed integrity -----------------------------------
         $display("--- phase 3: mixed traffic integrity");
-        for (i = 0; i < 6; i = i + 1)
+        for (i = 0; i < 6; i = i + 1) begin
             nq_burst(4'd6, 4'd1, i[7:0], 40'h0000_C000 + i * 256, 8,
                      32'h0000_C000 + i * 17);
+        end
         drain_tx;
         spin = 0;
         while ((acks[src_ix(4'd6, 4'd1)] < 6) && (spin < 30000)) begin
             @(posedge clk); spin = spin + 1;
         end
         chk(acks[src_ix(4'd6, 4'd1)] == 6, "phase-3 writes acked");
-        for (i = 0; i < 6; i = i + 1)
+        for (i = 0; i < 6; i = i + 1) begin
             chk(peek(40'h0000_C000 + i * 256 + 7 * 32)
                     == {8{32'h0000_C000 + i * 17 + 32'd7}},
                 "phase-3 last beat exact");
+        end
 
-        if (errors == 0) $display("PASS  %0d checks", checks);
-        else             $display("FAIL  %0d errors in %0d checks", errors, checks);
+        if (errors == 0) begin
+            $display("PASS  %0d checks", checks);
+        end
+        else begin
+            $display("FAIL  %0d errors in %0d checks", errors, checks);
+        end
         $finish;
     end
 

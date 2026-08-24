@@ -28,12 +28,14 @@ module mag_link_tb;
     localparam integer RXB  = 64;
     localparam integer MAXB = 32;
 
-    localparam integer U_KIND = 0,  U_DMESH = 4,  U_SMESH = 6,
-                       U_TXN  = 8,  U_LEN   = 16, U_ADDR  = 32;
+    localparam integer U_KIND = 0, U_DMESH = 4, U_SMESH = 6, U_TXN = 8;
+    localparam integer U_LEN = 16, U_ADDR = 32;
     localparam [3:0] K_MEM_WR = 4'h1, K_NOC_FLIT = 4'h2, K_DOORBELL = 4'h3;
 
     reg clk = 0, resetn = 0;
-    always #1.666 clk = ~clk;
+    always begin
+        #1.666 clk = ~clk;
+    end
 
     integer errors = 0;
     integer checks = 0;
@@ -125,8 +127,9 @@ module mag_link_tb;
     function [LW-1:0] patt(input [31:0] s, input [15:0] i);
         integer k;
         begin
-            for (k = 0; k < LW/32; k = k + 1)
+            for (k = 0; k < LW/32; k = k + 1) begin
                 patt[k*32 +: 32] = s + {16'd0, i} * 32'd7 + k[31:0];
+            end
         end
     endfunction
 
@@ -156,14 +159,18 @@ module mag_link_tb;
             a_h0 <= hdr(kind, dm, txn, len, addr);
             a_hv0 <= 1'b1;
             @(posedge clk);
-            while (!a_hr0) @(posedge clk);
+            while (!a_hr0) begin
+                @(posedge clk);
+            end
             a_hv0 <= 1'b0;
             for (i = 0; i <= len; i = i + 1) begin
                 a_d0 <= patt(seed, i[15:0]);
                 a_dl0 <= (i == len);
                 a_dv0 <= 1'b1;
                 @(posedge clk);
-                while (!a_dr0) @(posedge clk);
+                while (!a_dr0) begin
+                    @(posedge clk);
+                end
             end
             a_dv0 <= 1'b0;
             a_dl0 <= 1'b0;
@@ -182,14 +189,18 @@ module mag_link_tb;
             a_h1 <= hdr(kind, dm, txn, len, addr);
             a_hv1 <= 1'b1;
             @(posedge clk);
-            while (!a_hr1) @(posedge clk);
+            while (!a_hr1) begin
+                @(posedge clk);
+            end
             a_hv1 <= 1'b0;
             for (i = 0; i <= len; i = i + 1) begin
                 a_d1 <= patt(seed, i[15:0]);
                 a_dl1 <= (i == len);
                 a_dv1 <= 1'b1;
                 @(posedge clk);
-                while (!a_dr1) @(posedge clk);
+                while (!a_dr1) begin
+                    @(posedge clk);
+                end
             end
             a_dv1 <= 1'b0;
             a_dl1 <= 1'b0;
@@ -204,12 +215,16 @@ module mag_link_tb;
         begin
             b_rhr0 <= 1'b1;
             @(posedge clk);
-            while (!b_rhv0) @(posedge clk);
+            while (!b_rhv0) begin
+                @(posedge clk);
+            end
             got_h = b_rh0;
             b_rhr0 <= 1'b0;
 
             checks = checks + 1;
-            if (rd0 >= wr0) fail("a packet arrived on class 0 that was never sent");
+            if (rd0 >= wr0) begin
+                fail("a packet arrived on class 0 that was never sent");
+            end
             else begin
                 if (got_h !== exp_h0[rd0]) begin
                     fail("class 0 header mismatch");
@@ -223,12 +238,16 @@ module mag_link_tb;
                 b_rdr0 <= 1'b1;
                 for (i = 0; i <= want_len; i = i + 1) begin
                     @(posedge clk);
-                    while (!b_rdv0) @(posedge clk);
+                    while (!b_rdv0) begin
+                        @(posedge clk);
+                    end
                     checks = checks + 1;
-                    if (b_rd0 !== patt(want_seed, i[15:0]))
+                    if (b_rd0 !== patt(want_seed, i[15:0])) begin
                         fail("class 0 payload mismatch");
-                    if (b_rdl0 !== (i == want_len))
+                    end
+                    if (b_rdl0 !== (i == want_len)) begin
                         fail("class 0 TLAST is on the wrong beat");
+                    end
                 end
                 b_rdr0 <= 1'b0;
             end
@@ -243,14 +262,20 @@ module mag_link_tb;
         begin
             b_rhr1 <= 1'b1;
             @(posedge clk);
-            while (!b_rhv1) @(posedge clk);
+            while (!b_rhv1) begin
+                @(posedge clk);
+            end
             got_h = b_rh1;
             b_rhr1 <= 1'b0;
 
             checks = checks + 1;
-            if (rd1 >= wr1) fail("a packet arrived on class 1 that was never sent");
+            if (rd1 >= wr1) begin
+                fail("a packet arrived on class 1 that was never sent");
+            end
             else begin
-                if (got_h !== exp_h1[rd1]) fail("class 1 header mismatch");
+                if (got_h !== exp_h1[rd1]) begin
+                    fail("class 1 header mismatch");
+                end
                 want_seed = exp_s1[rd1];
                 want_len  = exp_l1[rd1];
                 rd1 = rd1 + 1;
@@ -258,10 +283,13 @@ module mag_link_tb;
                 b_rdr1 <= 1'b1;
                 for (i = 0; i <= want_len; i = i + 1) begin
                     @(posedge clk);
-                    while (!b_rdv1) @(posedge clk);
+                    while (!b_rdv1) begin
+                        @(posedge clk);
+                    end
                     checks = checks + 1;
-                    if (b_rd1 !== patt(want_seed, i[15:0]))
+                    if (b_rd1 !== patt(want_seed, i[15:0])) begin
                         fail("class 1 payload mismatch");
+                    end
                 end
                 b_rdr1 <= 1'b0;
             end
@@ -326,20 +354,25 @@ module mag_link_tb;
             stall_before = a_ctr_stall[31:0];
             fork
                 begin
-                    for (n = 0; n < 4; n = n + 1)
+                    for (n = 0; n < 4; n = n + 1) begin
                         send0(K_MEM_WR, 2'd1, n[7:0], MAXB[15:0] - 16'd1,
                               34'h1_0000_0000 + n * 64 * MAXB, 32'h1000 + n);
+                    end
                 end
                 begin
                     repeat (300) @(posedge clk);
-                    if (a_ctr_stall[31:0] == stall_before)
+                    if (a_ctr_stall[31:0] == stall_before) begin
                         fail("the link never stalled -- credit is bounding nothing");
-                    if (b_ctr_rx[63:32] > RXB)
+                    end
+                    if (b_ctr_rx[63:32] > RXB) begin
                         fail("more beats arrived than the receiver has room for");
+                    end
                     recv0; recv0; recv0; recv0;
                 end
             join
-            if (rd0 != 4) fail("packets were lost across the credit stall");
+            if (rd0 != 4) begin
+                fail("packets were lost across the credit stall");
+            end
 
             // ---- 4. class isolation, protocol.md s4(b)
             // The forward class is filled and never drained. The terminating
@@ -349,9 +382,10 @@ module mag_link_tb;
             reset_all;
             fork
                 begin
-                    for (n = 0; n < 4; n = n + 1)
+                    for (n = 0; n < 4; n = n + 1) begin
                         send1(K_MEM_WR, 2'd2, n[7:0], MAXB[15:0] - 16'd1,
                               34'h2_0000_0000 + n * 64 * MAXB, 32'h2000 + n);
+                    end
                 end
                 begin
                     repeat (300) @(posedge clk);
@@ -361,19 +395,25 @@ module mag_link_tb;
                 begin
                     repeat (320) @(posedge clk);
                     recv0; recv0;
-                    if (rd0 != 2)
+                    if (rd0 != 2) begin
                         fail("a full forward class stopped terminating traffic -- the credit classes share something");
+                    end
                     recv1; recv1; recv1; recv1;
                 end
             join
 
-            if (a_flen || b_flen)
+            if (a_flen || b_flen) begin
                 fail("a length fault was raised by a packet within MAX_BEATS");
+            end
         end
 
         $display("--- %0d checks, %0d errors", checks, errors);
-        if (errors == 0) $display("PASS mag_link");
-        else             $display("FAIL mag_link");
+        if (errors == 0) begin
+            $display("PASS mag_link");
+        end
+        else begin
+            $display("FAIL mag_link");
+        end
         $finish;
     end
 
@@ -386,9 +426,11 @@ module mag_link_tb;
 
     // Structural, and checked every cycle rather than once: a TREADY that is not
     // a constant is a real combinational path across the SLR.
-    always @(posedge clk)
-        if (resetn && (A.s_axis_tready !== 1'b1 || B.s_axis_tready !== 1'b1))
+    always @(posedge clk) begin
+        if (resetn && (A.s_axis_tready !== 1'b1 || B.s_axis_tready !== 1'b1)) begin
             fail("TREADY moved");
+        end
+    end
 endmodule
 
 `default_nettype wire

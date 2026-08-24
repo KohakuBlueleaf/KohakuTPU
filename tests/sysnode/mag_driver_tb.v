@@ -73,12 +73,16 @@ module mag_driver_tb;
     localparam [31:0] A_PROG_STAT = 32'h0058, A_SIG_DONE = 32'h0070;
 
     reg clk = 0, rstn = 0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     // Free-running cycle count. Declared here because the instrumentation
     // below is written in terms of it.
     reg [63:0] cycles = 0, cyc0 = 0;
-    always @(posedge clk) cycles <= rstn ? cycles + 64'd1 : 64'd0;
+    always @(posedge clk) begin
+        cycles <= rstn ? cycles + 64'd1 : 64'd0;
+    end
 
     // EVERY profile counter is gated on this, which goes high only once the
     // operands are in memory. The upload is real traffic through the same AXI
@@ -429,14 +433,20 @@ module mag_driver_tb;
     always @(*) begin
         n_rdbeat = 8'd0; n_wrbeat = 8'd0; n_nocin = 8'd0; n_nocout = 8'd0;
         for (nb = 0; nb < NCH; nb = nb + 1) begin
-            if (r_rvalid[nb] && r_rready[nb]) n_rdbeat = n_rdbeat + 8'd1;
-            if (r_wvalid[nb] && r_wready[nb]) n_wrbeat = n_wrbeat + 8'd1;
+            if (r_rvalid[nb] && r_rready[nb]) begin
+                n_rdbeat = n_rdbeat + 8'd1;
+            end
+            if (r_wvalid[nb] && r_wready[nb]) begin
+                n_wrbeat = n_wrbeat + 8'd1;
+            end
         end
         for (nb = 0; nb < MEMP; nb = nb + 1) begin
-            if (u_mag.mem_in_valid[nb]  && !u_mag.mem_in_busy[nb])
+            if (u_mag.mem_in_valid[nb]  && !u_mag.mem_in_busy[nb]) begin
                 n_nocin = n_nocin + 8'd1;
-            if (u_mag.mem_out_valid[nb] && !u_mag.mem_out_busy[nb])
+            end
+            if (u_mag.mem_out_valid[nb] && !u_mag.mem_out_busy[nb]) begin
                 n_nocout = n_nocout + 8'd1;
+            end
         end
     end
 
@@ -505,25 +515,31 @@ module mag_driver_tb;
     // the component benches for anything reproducible there.
 `ifdef DBG
     always @(posedge clk) if (rstn) begin
-        if (u_mag.g_port[0].u_eng.q_start)
+        if (u_mag.g_port[0].u_eng.q_start) begin
             $display("[%0t] QSTART  ar=%h len=%0d", $time,
                      u_mag.g_port[0].u_eng.m_araddr,
                      u_mag.g_port[0].u_eng.m_arlen);
-        if (g_cu[0].cu.l1_we)
+        end
+        if (g_cu[0].cu.l1_we) begin
             $display("[%0t] L1WE    sel=%0d ent=%0d", $time,
                      g_cu[0].cu.l1_sel, g_cu[0].cu.l1_addr);
-        if (g_cu[0].cu.u_node.u_mgr.s1_valid)
+        end
+        if (g_cu[0].cu.u_node.u_mgr.s1_valid) begin
             $display("[%0t] ISSUE   tile=%0d first=%b a=%0d b=%0d", $time,
                      g_cu[0].cu.u_node.u_mgr.s1_addr,
                      g_cu[0].cu.u_node.u_mgr.s1_first,
                      g_cu[0].cu.u_node.u_mgr.a_rd, g_cu[0].cu.u_node.u_mgr.b_rd);
-        if (g_cu[0].cu.u_node.u_acu.wr_bank_en)
+        end
+        if (g_cu[0].cu.u_node.u_acu.wr_bank_en) begin
             $display("[%0t] TILEWR  tile=%0d", $time,
                      g_cu[0].cu.u_node.u_acu.wr_addr);
-        if (g_cu[0].cu.drain_start)
+        end
+        if (g_cu[0].cu.drain_start) begin
             $display("[%0t] DRAIN   gemm_busy=%b", $time, g_cu[0].cu.gemm_busy);
-        if (u_mag.g_port[0].u_eng.take_wr_data)
+        end
+        if (u_mag.g_port[0].u_eng.take_wr_data) begin
             $display("[%0t] WRDATA  %h", $time, u_mag.mem_in_data[63:0]);
+        end
     end
 `endif
 
@@ -569,9 +585,13 @@ module mag_driver_tb;
     reg [63:0] t_req0 = 0, t_l1_0 = 0, l1_writes = 0;
 
     always @(posedge clk) if (rstn && measure) begin
-        if (csend_v[0] && csend_r[0] && t_req0 == 0) t_req0 <= cycles;
+        if (csend_v[0] && csend_r[0] && t_req0 == 0) begin
+            t_req0 <= cycles;
+        end
         if (cl1_we[0]) begin
-            if (l1_writes == 0) t_l1_0 <= cycles;
+            if (l1_writes == 0) begin
+                t_l1_0 <= cycles;
+            end
             l1_writes <= l1_writes + 64'd1;
         end
     end
@@ -607,16 +627,30 @@ module mag_driver_tb;
         nm_qfill = 8'd0; nm_qwait = 8'd0; nm_qemit = 8'd0;
         nm_inbp = 8'd0; nm_outbp = 8'd0;
         for (mq = 0; mq < MEMP; mq = mq + 1) begin
-            if (mp_st[mq] == 4'd0)                  nm_idle  = nm_idle  + 8'd1;
-            if (mp_st[mq] == 4'd2)                  nm_rd    = nm_rd    + 8'd1;
-            if (mp_st[mq] == 4'd5 || mp_st[mq] == 4'd6)
-                                                    nm_wr    = nm_wr    + 8'd1;
-            if (mp_rs[mq] == 2'd1)                  nm_qfill = nm_qfill + 8'd1;
-            if (mp_rs[mq] == 2'd2)                  nm_qwait = nm_qwait + 8'd1;
-            if (mp_eact[mq])                        nm_qemit = nm_qemit + 8'd1;
-            if (u_mag.mem_in_busy[mq])              nm_inbp  = nm_inbp  + 8'd1;
-            if (u_mag.mem_out_valid[mq] && u_mag.mem_out_busy[mq])
-                                                    nm_outbp = nm_outbp + 8'd1;
+            if (mp_st[mq] == 4'd0) begin
+                nm_idle  = nm_idle  + 8'd1;
+            end
+            if (mp_st[mq] == 4'd2) begin
+                nm_rd    = nm_rd    + 8'd1;
+            end
+            if (mp_st[mq] == 4'd5 || mp_st[mq] == 4'd6) begin
+                nm_wr    = nm_wr    + 8'd1;
+            end
+            if (mp_rs[mq] == 2'd1) begin
+                nm_qfill = nm_qfill + 8'd1;
+            end
+            if (mp_rs[mq] == 2'd2) begin
+                nm_qwait = nm_qwait + 8'd1;
+            end
+            if (mp_eact[mq]) begin
+                nm_qemit = nm_qemit + 8'd1;
+            end
+            if (u_mag.mem_in_busy[mq]) begin
+                nm_inbp  = nm_inbp  + 8'd1;
+            end
+            if (u_mag.mem_out_valid[mq] && u_mag.mem_out_busy[mq]) begin
+                nm_outbp = nm_outbp + 8'd1;
+            end
         end
     end
 
@@ -629,7 +663,9 @@ module mag_driver_tb;
         m_qemit <= m_qemit + {56'd0, nm_qemit};
         // The host upload is its own machine on its own AXI channel now, so it
         // is counted where it happens rather than as a state of the NoC path.
-        if (u_mag.hst != 3'd0) m_host <= m_host + 1;
+        if (u_mag.hst != 3'd0) begin
+            m_host <= m_host + 1;
+        end
         // MAG refusing NoC traffic, and MAG unable to hand a response over
         s_in_bp  <= s_in_bp  + {56'd0, nm_inbp};
         s_out_bp <= s_out_bp + {56'd0, nm_outbp};
@@ -637,8 +673,12 @@ module mag_driver_tb;
         noc_in   <= noc_in   + {56'd0, n_nocin};
         noc_out  <= noc_out  + {56'd0, n_nocout};
         // CU with a request it cannot send, and CU filling with nothing to take
-        if (csend_v[0] && !csend_r[0])                  s_cu_send <= s_cu_send + 1;
-        if ((cst[0] == 4'd1) && !crecv_v[0])            s_cu_dry  <= s_cu_dry  + 1;
+        if (csend_v[0] && !csend_r[0]) begin
+            s_cu_send <= s_cu_send + 1;
+        end
+        if ((cst[0] == 4'd1) && !crecv_v[0]) begin
+            s_cu_dry  <= s_cu_dry  + 1;
+        end
     end
 
     // ---------------------------------------- WHY, not merely WHERE
@@ -660,20 +700,30 @@ module mag_driver_tb;
         n_rdry = 8'd0; n_rwemit = 8'd0; n_ebp = 8'd0;
         for (wq = 0; wq < MEMP; wq = wq + 1) begin
             if (mp_st[wq] == 4'd6) begin
-                if (!(mp_bv[wq] || mp_wrb[wq])) n_wnob = n_wnob + 8'd1;
-                else if (!mp_stout[wq])         n_wblk = n_wblk + 8'd1;
+                if (!(mp_bv[wq] || mp_wrb[wq])) begin
+                    n_wnob = n_wnob + 8'd1;
+                end
+                else if (!mp_stout[wq]) begin
+                    n_wblk = n_wblk + 8'd1;
+                end
             end
             // No free write slot: intake cannot accept another descriptor,
             // which is how a stalled write path becomes a jammed input queue.
-            if (!mp_wsfree[wq])                 n_wsfull = n_wsfull + 8'd1;
+            if (!mp_wsfree[wq]) begin
+                n_wsfull = n_wsfull + 8'd1;
+            end
             // Read engine: starved by memory, or held up by the emit buffer.
             // The second says fetch/emit overlap has stopped being the win.
-            if ((mp_rs[wq] == 2'd1) && !mp_rv[wq])
-                                                n_rdry = n_rdry + 8'd1;
-            if ((mp_rs[wq] == 2'd2) && mp_qrdy[wq] && mp_eact[wq])
-                                                n_rwemit = n_rwemit + 8'd1;
+            if ((mp_rs[wq] == 2'd1) && !mp_rv[wq]) begin
+                n_rdry = n_rdry + 8'd1;
+            end
+            if ((mp_rs[wq] == 2'd2) && mp_qrdy[wq] && mp_eact[wq]) begin
+                n_rwemit = n_rwemit + 8'd1;
+            end
             // Emitter holding a flit the mesh will not take.
-            if (mp_eact[wq] && !mp_free[wq])    n_ebp = n_ebp + 8'd1;
+            if (mp_eact[wq] && !mp_free[wq]) begin
+                n_ebp = n_ebp + 8'd1;
+            end
         end
     end
 
@@ -687,8 +737,12 @@ module mag_driver_tb;
         // CU tails: DRAIN waiting for its last write to leave, GEMM waiting
         // for the cascade to settle. Both are per-instruction overhead that no
         // end-to-end number attributes.
-        if (cst[0] == 4'd6) cu0_dwait <= cu0_dwait + 1;
-        if (cst[0] == 4'd4) cu0_gwait <= cu0_gwait + 1;
+        if (cst[0] == 4'd6) begin
+            cu0_dwait <= cu0_dwait + 1;
+        end
+        if (cst[0] == 4'd4) begin
+            cu0_gwait <= cu0_gwait + 1;
+        end
     end
 
     // Progress watchdog: everything the machine retires is counted here, so if
@@ -699,9 +753,10 @@ module mag_driver_tb;
     reg [63:0] progress;
     always @(*) begin
         progress = {48'd0, mag_rd} + {48'd0, mag_wr};
-        for (pw = 0; pw < NCL; pw = pw + 1)
+        for (pw = 0; pw < NCL; pw = pw + 1) begin
             progress = progress + {48'd0, cf[pw]} + {48'd0, cg[pw]}
                                 + {48'd0, cd[pw]};
+        end
     end
     reg  [63:0] prog_prev = 0;
     reg  [31:0]  stall = 0;
@@ -740,10 +795,18 @@ module mag_driver_tb;
     always @(*) begin
         n_fill = 8'd0; n_gemm = 8'd0; n_drain = 8'd0; n_idle = 8'd0;
         for (pc = 0; pc < NCL; pc = pc + 1) begin
-            if (is_fill(cst[pc]))                     n_fill  = n_fill  + 8'd1;
-            if (is_gemm(cst[pc])  || cgemm[pc])       n_gemm  = n_gemm  + 8'd1;
-            if (is_drain(cst[pc]) || cdrain[pc])      n_drain = n_drain + 8'd1;
-            if (!cbusy[pc])                           n_idle  = n_idle  + 8'd1;
+            if (is_fill(cst[pc])) begin
+                n_fill  = n_fill  + 8'd1;
+            end
+            if (is_gemm(cst[pc])  || cgemm[pc]) begin
+                n_gemm  = n_gemm  + 8'd1;
+            end
+            if (is_drain(cst[pc]) || cdrain[pc]) begin
+                n_drain = n_drain + 8'd1;
+            end
+            if (!cbusy[pc]) begin
+                n_idle  = n_idle  + 8'd1;
+            end
         end
     end
 
@@ -764,16 +827,19 @@ module mag_driver_tb;
     integer ti;
 
     initial begin
-        for (ti = 0; ti < NCL; ti = ti + 1) tr_acc[ti] = 4'd0;
+        for (ti = 0; ti < NCL; ti = ti + 1) begin
+            tr_acc[ti] = 4'd0;
+        end
     end
 
     always @(posedge clk) if (rstn && measure) begin
-        for (ti = 0; ti < NCL; ti = ti + 1)
+        for (ti = 0; ti < NCL; ti = ti + 1) begin
             tr_acc[ti] <= tr_acc[ti]
                         | {!cbusy[ti],
                            is_drain(cst[ti]) || cdrain[ti],
                            is_gemm(cst[ti])  || cgemm[ti],
                            is_fill(cst[ti])};
+        end
         if (tr_c == TRACE_GAP - 1) begin
             tr_c <= 0;
             if (tr_n < TRACE_MAX) begin
@@ -787,7 +853,10 @@ module mag_driver_tb;
                 end
                 tr_n <= tr_n + 32'd1;
             end
-        end else tr_c <= tr_c + 32'd1;
+        end
+        else begin
+            tr_c <= tr_c + 32'd1;
+        end
     end
 
     always @(posedge clk) if (rstn && measure) begin
@@ -813,14 +882,20 @@ module mag_driver_tb;
 
     always @(posedge clk) if (rstn && measure) begin
         if (cu0_busy) begin
-            if (busy0_first == 0) busy0_first <= $time;
+            if (busy0_first == 0) begin
+                busy0_first <= $time;
+            end
             busy0_last <= $time;
         end
         if (cu1_busy) begin
-            if (busy1_first == 0) busy1_first <= $time;
+            if (busy1_first == 0) begin
+                busy1_first <= $time;
+            end
             busy1_last <= $time;
         end
-        if (cu0_busy && cu1_busy) both_cycles <= both_cycles + 1;
+        if (cu0_busy && cu1_busy) begin
+            both_cycles <= both_cycles + 1;
+        end
     end
 
     // ============================================================ AXI tasks
@@ -918,7 +993,9 @@ module mag_driver_tb;
                 nb = (left > UP_BEATS) ? UP_BEATS : left;
                 if (!quant) begin
                     room = (4096 - ((d * (DW/8)) % 4096)) / (DW/8);
-                    if (nb > room) nb = room;
+                    if (nb > room) begin
+                        nb = room;
+                    end
                 end
                 host_burst(s, d * (DW/8), nb, quant, blay);
                 s    = s + nb;
@@ -967,15 +1044,25 @@ module mag_driver_tb;
     endtask
 
     initial begin
-        for (i = 0; i < MAX_CMDS;    i = i + 1) prog[i]   = 256'd0;
-        for (i = 0; i < MAX_SETUP;   i = i + 1) setup[i]  = 128'd0;
-        for (i = 0; i < MAX_ROUNDS;  i = i + 1) rounds[i] = 128'd0;
-        for (i = 0; i < MAX_UPLOADS; i = i + 1) ups[i]    = 128'd0;
+        for (i = 0; i < MAX_CMDS;    i = i + 1) begin
+            prog[i]   = 256'd0;
+        end
+        for (i = 0; i < MAX_SETUP;   i = i + 1) begin
+            setup[i]  = 128'd0;
+        end
+        for (i = 0; i < MAX_ROUNDS;  i = i + 1) begin
+            rounds[i] = 128'd0;
+        end
+        for (i = 0; i < MAX_UPLOADS; i = i + 1) begin
+            ups[i]    = 128'd0;
+        end
         // Device memory starts EMPTY. It used to be initialised by the same
         // $readmemh that loaded the operands, so a restart in server mode also
         // wiped the previous run's results; now that operands arrive over AXI,
         // clearing it is what stops a stale C from looking like a fresh one.
-        for (i = 0; i < RAM_WORDS;   i = i + 1) u_ram.mem[i] = {DW{1'b0}};
+        for (i = 0; i < RAM_WORDS;   i = i + 1) begin
+            u_ram.mem[i] = {DW{1'b0}};
+        end
         $readmemh("operands.hex", hostimg);
         $readmemh("uploads.hex", ups);
         $readmemh("setup.hex", setup);
@@ -985,8 +1072,11 @@ module mag_driver_tb;
         #200; repeat (10) @(posedge clk); rstn = 1; repeat (10) @(posedge clk);
 
         nrounds = 0;
-        for (i = 0; i < MAX_ROUNDS; i = i + 1)
-            if (rounds[i][63:0] != 64'd0) nrounds = i + 1;
+        for (i = 0; i < MAX_ROUNDS; i = i + 1) begin
+            if (rounds[i][63:0] != 64'd0) begin
+                nrounds = i + 1;
+            end
+        end
 
         // ---- upload the operands, exactly as a host would ----------------
         // Before any round: FP16 over the memory window, with the quantise
@@ -994,12 +1084,16 @@ module mag_driver_tb;
         // separately from `host`, because this is paid once per TENSOR while
         // the setup writes are paid once per round.
         nup = 0;
-        for (i = 0; i < MAX_UPLOADS; i = i + 1)
-            if (ups[i][63:32] != 32'd0) nup = i + 1;
+        for (i = 0; i < MAX_UPLOADS; i = i + 1) begin
+            if (ups[i][63:32] != 32'd0) begin
+                nup = i + 1;
+            end
+        end
         cyc0 = cycles;
-        for (i = 0; i < nup; i = i + 1)
+        for (i = 0; i < nup; i = i + 1) begin
             host_region(ups[i][127:96], ups[i][95:64], ups[i][63:32],
                         ups[i][0], ups[i][1]);
+        end
         up_cyc = cycles - cyc0;
         measure = 1'b1;
         $display("--- upload %0d regions, %0d beats, %0d cycles ---",
@@ -1020,12 +1114,15 @@ module mag_driver_tb;
             // command RAM they would be copied twice and the program would
             // grow with the problem instead of with its control flow.
             cyc0 = cycles;
-            for (i = 0; i < ns; i = i + 1)
+            for (i = 0; i < ns; i = i + 1) begin
                 drv_write(setup[soff + i][127:64], setup[soff + i][63:0]);
-            for (i = 0; i < nc; i = i + 1)
-                for (f = 0; f < 4; f = f + 1)
+            end
+            for (i = 0; i < nc; i = i + 1) begin
+                for (f = 0; f < 4; f = f + 1) begin
                     drv_write(ORC_BASE + MO_CMD + i*32 + f*8,
                               prog[coff + i][f*64 +: 64]);
+                end
+            end
             host_cyc = host_cyc + (cycles - cyc0);
 
             drv_write(ORC_BASE + MO_CTRL, 64'd1);
@@ -1106,11 +1203,17 @@ module mag_driver_tb;
         // first TRACE line without scanning past the counters.
         for (i = 0; i < NCL; i = i + 1) begin
             $write("    TRACE cu%0d gap=%0d ", i, TRACE_GAP);
-            for (f = 0; f < tr_n; f = f + 1) $write("%h", tr[i][f]);
+            for (f = 0; f < tr_n; f = f + 1) begin
+                $write("%h", tr[i][f]);
+            end
             $write("\n");
         end
-        if (ok) $display("  ORCH-OK");
-        else    $display("  ORCH-FAIL");
+        if (ok) begin
+            $display("  ORCH-OK");
+        end
+        else begin
+            $display("  ORCH-FAIL");
+        end
         sim_end;
     end
 
