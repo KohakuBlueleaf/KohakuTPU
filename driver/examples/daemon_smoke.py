@@ -46,9 +46,14 @@ def main() -> None:
 
     def show(tag):
         clocks = c.clocks()
-        print(f"| {tag} | " + " | ".join(
-            str({k: round(v, 1) for k, v in clocks[m].items()})
-            for m in sorted(clocks)) + " |")
+        print(
+            f"| {tag} | "
+            + " | ".join(
+                str({k: round(v, 1) for k, v in clocks[m].items()})
+                for m in sorted(clocks)
+            )
+            + " |"
+        )
 
     print("| state | mesh0 | mesh1 | mesh2 | mesh3 |")
     print("|---|---|---|---|---|")

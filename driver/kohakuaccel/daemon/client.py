@@ -23,8 +23,9 @@ class DaemonClient:
     """One connection. Thread-safe: calls serialize on a lock, which is
     honest -- they serialize again in the daemon's queue anyway."""
 
-    def __init__(self, host: str = "127.0.0.1", port: int = DEFAULT_PORT,
-                 timeout: float = 60.0) -> None:
+    def __init__(
+        self, host: str = "127.0.0.1", port: int = DEFAULT_PORT, timeout: float = 60.0
+    ) -> None:
         try:
             self.sock = socket.create_connection((host, port), timeout=timeout)
         except OSError as exc:
@@ -104,8 +105,7 @@ class DaemonTransport(Transport):
         self.client.call("write_block", addr=addr, data=data.hex())
 
     def read_block(self, addr: int, nbytes: int) -> bytes:
-        return bytes.fromhex(self.client.call("read_block", addr=addr,
-                                              nbytes=nbytes))
+        return bytes.fromhex(self.client.call("read_block", addr=addr, nbytes=nbytes))
 
     def close(self) -> None:
         self.client.close()

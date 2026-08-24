@@ -41,7 +41,7 @@ def _client(port):
 
 
 def test_word_and_block_ops_roundtrip(daemon):
-    d, port, transport = daemon
+    _, port, transport = daemon
     t = DaemonTransport(client=_client(port))
     t.write64(0x100, 0x1122334455667788)
     assert t.read64(0x100) == 0x1122334455667788
@@ -53,7 +53,7 @@ def test_word_and_block_ops_roundtrip(daemon):
 
 
 def test_write32_read32_leave_the_neighbour_alone(daemon):
-    d, port, _ = daemon
+    _, port, _ = daemon
     t = DaemonTransport(client=_client(port))
     t.write64(0x200, 0xAAAAAAAA_BBBBBBBB)
     t.write32(0x200, 0x11111111)
@@ -66,7 +66,7 @@ def test_write32_read32_leave_the_neighbour_alone(daemon):
 def test_two_clients_one_card(daemon):
     """Interleaved clients, disjoint regions, correct bytes at the end:
     the single-worker queue is the mechanism, this is its observable."""
-    d, port, _ = daemon
+    _, port, _ = daemon
     a = DaemonTransport(client=_client(port))
     b = DaemonTransport(client=_client(port))
     pa = bytes([i & 0xFF for i in range(512)])
@@ -79,7 +79,7 @@ def test_two_clients_one_card(daemon):
                 t.write_block(base, pat)
                 if t.read_block(base, len(pat)) != pat:
                     errs.append(f"corrupt at {base:#x} rep {rep}")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             errs.append(repr(exc))
 
     ta = threading.Thread(target=hammer, args=(a, 0x10000, pa))
@@ -90,7 +90,7 @@ def test_two_clients_one_card(daemon):
 
 
 def test_lease_overlap_refused_and_freed_on_disconnect(daemon):
-    d, port, _ = daemon
+    _, port, _ = daemon
     a, b = _client(port), _client(port)
     lease = a.claim(mesh=0, base=0x1800_0000, size=1 << 24)
     with pytest.raises(DaemonError):
@@ -99,9 +99,7 @@ def test_lease_overlap_refused_and_freed_on_disconnect(daemon):
     a.close()
     deadline = time.time() + 5
     while time.time() < deadline:
-        if not any(
-            v["mesh"] == 0 for v in b.status()["leases"].values()
-        ):
+        if not any(v["mesh"] == 0 for v in b.status()["leases"].values()):
             break
         time.sleep(0.05)
     b.claim(mesh=0, base=0x1800_0000, size=1 << 24)
@@ -109,7 +107,7 @@ def test_lease_overlap_refused_and_freed_on_disconnect(daemon):
 
 
 def test_governor_startup_is_idle(daemon):
-    d, port, _ = daemon
+    _, port, _ = daemon
     c = _client(port)
     clocks = c.clocks()
     for mesh, rates in clocks.items():
@@ -118,7 +116,7 @@ def test_governor_startup_is_idle(daemon):
 
 
 def test_governor_scoped_boost_then_idle_drop(daemon):
-    d, port, _ = daemon
+    _, port, _ = daemon
     c = _client(port)
     token = c.run_begin([1], "mid")
     clocks = c.clocks()
@@ -141,7 +139,7 @@ def test_governor_scoped_boost_then_idle_drop(daemon):
 
 
 def test_governor_client_death_ends_its_runs(daemon):
-    d, port, _ = daemon
+    _, port, _ = daemon
     a, b = _client(port), _client(port)
     a.run_begin([2], "mid")
     a.close()

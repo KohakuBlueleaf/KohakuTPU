@@ -62,9 +62,7 @@ class Daemon:
     ) -> None:
         self.transport = transport
         self.board = board or {}
-        self.governor = (
-            ClockGovernor(clock_ctl, idle_seconds) if clock_ctl else None
-        )
+        self.governor = ClockGovernor(clock_ctl, idle_seconds) if clock_ctl else None
         self.allow_program = allow_program
         self.host, self.port = host, port
         self._conns: dict[int, _Conn] = {}
@@ -153,8 +151,11 @@ class Daemon:
                     value = await self._hw_call(self._dispatch, conn, msg)
                     reply = {"id": msg.get("id"), "ok": True, "value": value}
                 except Exception as exc:  # noqa: BLE001 -- op errors reply
-                    reply = {"id": msg.get("id"), "ok": False,
-                             "error": f"{type(exc).__name__}: {exc}"}
+                    reply = {
+                        "id": msg.get("id"),
+                        "ok": False,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
                 try:
                     await async_send_msg(writer, reply)
                 except (ConnectionError, OSError):

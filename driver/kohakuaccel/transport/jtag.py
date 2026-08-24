@@ -195,8 +195,7 @@ class JtagTransport(Transport):
         immediately after, before touching anything else.
         """
         script = (
-            f"set d [current_hw_device]; "
-            f"set_property PROGRAM.FILE {{{bitstream}}} $d; "
+            f"set d [current_hw_device]; set_property PROGRAM.FILE {{{bitstream}}} $d; "
         )
         if probes:
             script += f"set_property PROBES.FILE {{{probes}}} $d; "
