@@ -1,4 +1,4 @@
-# OOC synthesis of the SHIPPED E8M15 vector lane, unmodified, at the DSP PE's
+# OOC synthesis of the SHIPPED E8M15 vector lane, unmodified, at the SIMD PE's
 # own clock ask. SYNTH ONLY. Results are the @@@ lines.
 #   vivado -mode batch -source scripts/tcl/ooc_veclane.tcl -tclargs <period_ns>
 #
@@ -31,7 +31,7 @@ read_verilog [list \
     [file join $root src kohakutpu vector vec_tables.v] \
     [file join $root src kohakutpu vector vec_alu.v]]
 
-read_xdc [file join $root scripts xdc ooc_khd.xdc]
+read_xdc [file join $root scripts xdc ooc_khs.xdc]
 
 puts "@@@ top vec_alu period $per"
 

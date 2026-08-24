@@ -24,19 +24,19 @@ read_verilog [list \
     [file join $root src kohakutpu vector vec_delay.v] \
     [file join $root src kohakutpu vector vec_tables.v] \
     [file join $root src kohakutpu vector vec_alu.v] \
-    [file join $root src kohakuaccel pe rv32 dsp khd_e8_fma.v]]
+    [file join $root src kohakuaccel pe rv32 simd khs_e8_fma.v]]
 
-read_xdc [file join $root scripts xdc ooc_khd.xdc]
+read_xdc [file join $root scripts xdc ooc_khs.xdc]
 
-puts "@@@ top khd_e8_fma period $per"
+puts "@@@ top khs_e8_fma period $per"
 
-synth_design -top khd_e8_fma -part $part -mode out_of_context \
+synth_design -top khs_e8_fma -part $part -mode out_of_context \
              -flatten_hierarchy none -directive default
 
 # Depth 5, not 2: the point of this run is WHERE the LUTs are inside the lane --
 # aligner, leading-one search, normaliser, rounder -- because each of those is a
 # candidate to move onto a DSP48, and a flat total cannot say which.
-ooc_record "e8fma-t$per" "top=khd_e8_fma period=$per" 2000 5
+ooc_record "e8fma-t$per" "top=khs_e8_fma period=$per" 2000 5
 
 puts "@@@ ============================ device totals"
 ooc_count TOTAL

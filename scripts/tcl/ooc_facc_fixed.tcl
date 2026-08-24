@@ -20,17 +20,17 @@ set_param general.maxThreads 4
 source [file join $root scripts tcl ooc_class.tcl]
 
 read_verilog [list \
-    [file join $root src kohakuaccel pe rv32 dsp khd_facc_fixed.v]]
+    [file join $root src kohakuaccel pe rv32 simd khs_facc_fixed.v]]
 
-read_xdc [file join $root scripts xdc ooc_khd.xdc]
+read_xdc [file join $root scripts xdc ooc_khs.xdc]
 
-puts "@@@ top khd_facc_fixed aw $aw period $per"
+puts "@@@ top khs_facc_fixed aw $aw period $per"
 
-synth_design -top khd_facc_fixed -part $part -mode out_of_context \
+synth_design -top khs_facc_fixed -part $part -mode out_of_context \
              -flatten_hierarchy none -directive default \
              -generic AW=$aw
 
-ooc_record "faccfx-aw$aw-t$per" "top=khd_facc_fixed aw=$aw period=$per" 2000 2
+ooc_record "faccfx-aw$aw-t$per" "top=khs_facc_fixed aw=$aw period=$per" 2000 2
 
 puts "@@@ ============================ device totals"
 ooc_count TOTAL

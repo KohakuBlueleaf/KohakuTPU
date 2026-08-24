@@ -3,7 +3,7 @@
 #   vivado -mode batch -source scripts/tcl/ooc_facc.tcl -tclargs <period_ns> <mw>
 #
 # It answers one question: can `acc <= acc + x` in the cluster's accumulator
-# float close at the DSP PE's clock in ONE cycle? At yes, the float tier keeps
+# float close at the SIMD PE's clock in ONE cycle? At yes, the float tier keeps
 # tier 1's shape. At no, `vfmacc` needs rotating accumulators and that becomes a
 # rule in the programming model.
 
@@ -21,17 +21,17 @@ source [file join $root scripts tcl ooc_class.tcl]
 
 read_verilog [list \
     [file join $root src kohakutpu matmul mx_fpacc.v] \
-    [file join $root src kohakuaccel pe rv32 dsp khd_facc_loop.v]]
+    [file join $root src kohakuaccel pe rv32 simd khs_facc_loop.v]]
 
-read_xdc [file join $root scripts xdc ooc_khd.xdc]
+read_xdc [file join $root scripts xdc ooc_khs.xdc]
 
-puts "@@@ top khd_facc_loop mw $mw period $per"
+puts "@@@ top khs_facc_loop mw $mw period $per"
 
-synth_design -top khd_facc_loop -part $part -mode out_of_context \
+synth_design -top khs_facc_loop -part $part -mode out_of_context \
              -flatten_hierarchy none -directive default \
              -generic MW=$mw
 
-ooc_record "facc-mw$mw-t$per" "top=khd_facc_loop mw=$mw period=$per" 2000 2
+ooc_record "facc-mw$mw-t$per" "top=khs_facc_loop mw=$mw period=$per" 2000 2
 
 puts "@@@ ============================ device totals"
 ooc_count TOTAL
