@@ -119,6 +119,8 @@ FAST = [
     # mismatches had accumulated, including `ADDR_W` documented as 34 in five
     # tables when every module on the memory path declares 40.
     py("spec params", "scripts/py/specparams.py"),
+    # A cited LINE rots faster than a path: four had drifted off, one by 28.
+    py("doc lines", "scripts/py/doclines.py"),
     # The style rules, over EVERY .v file. The count was reported for the live
     # source alone for months while tests/ held more findings than the whole
     # tree it claimed to describe.

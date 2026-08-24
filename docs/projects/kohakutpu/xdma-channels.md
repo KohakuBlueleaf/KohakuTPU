@@ -1,15 +1,15 @@
 # XDMA channel count
 
-**We use 1 h2c / 1 c2h. This was researched, not guessed.**
+**We BUILD 4 h2c / 4 c2h and USE one of each.** `multimesh_v5_bd.tcl:239-240`
+sets `CONFIG.xdma_rnum_chnl {4}` and `CONFIG.xdma_wnum_chnl {4}`; the driver
+opens `h2c_0` and `c2h_0` and nothing else
+(`driver/kohakuaccel/transport/xdma.py:165`).
 
-`scripts/tcl/multimesh_v5_bd.tcl:242-243` — `CONFIG.xdma_rnum_chnl`,
-`CONFIG.xdma_wnum_chnl`.
+**So the recommendation below is a change that has not been made.** An earlier
+version of this page stated 1/1 as the configuration, which it is not, and the
+measurement in the next section says 4/4 in its own caption.
 
-## Why one
-
-The driver opens `h2c_0` and `c2h_0` only
-(`driver/kohakuaccel/transport/xdma.py:165`). Nothing in the stack uses a
-second channel.
+## Why one would be enough
 
 ## What the extra channels cost
 
@@ -36,11 +36,14 @@ AMD's published sweep, 512-bit datapath, all else equal:
 4/4 → 1/1 is **−17,165 LUT, −15,314 FF, −48 RAMB36**; ~5,722 LUT per extra
 h2c+c2h pair, linear.
 
-## Cost of the choice
+## What narrowing would cost
 
 One H2C engine peaks near 10.8 GB/s against ~12.6 GB/s usable on Gen3 x16, so
-1/1 gives up roughly 15% of peak DMA bandwidth. Go to 2/2 if that is ever
-needed; it is a two-token edit.
+1/1 gives up roughly 15% of peak DMA bandwidth — which is what the driver
+already gives up, since it opens one channel whatever the fabric carries.
+Narrowing to 1/1 recovers the LUTs without changing what the driver can do; 2/2
+is the compromise if a second engine is ever wanted, and either is a two-token
+edit in the BD script.
 
 ## Alternatives considered
 

@@ -126,8 +126,10 @@ is no SLL argument for replacing it, and at FW=256 the station link is merely
 comparable, not decisively better.
 
 One free win independent of all this: `mag_ilink`'s `TUSER_W` is 96 but only 73
-bits are defined (`mag_ilink.v:151-178`), so 23 bits per direction cross the die
-carrying zeros — **138 nets across v5**, recoverable by narrowing the parameter.
+bits are defined — `mag_ilink.v:149-150` lays the fields out and `:176` puts the
+last one at `U_ADDR + ADDR_W`, which is 72 — so 23 bits per direction cross the
+die carrying zeros, **138 nets across v5**, recoverable by narrowing the
+parameter.
 
 ## 4. XDMA at 1/1
 
