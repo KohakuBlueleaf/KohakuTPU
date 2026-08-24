@@ -17,9 +17,10 @@ is lost.
 ## Hard rules
 
 **Memory primitives are named, never inferred.** BRAM and URAM are explicitly
-instantiated through `src/common/kohaku_sdpram.v` (`xpm_memory_sdpram` with
-`MEMORY_PRIMITIVE` set), the same way `src/common/sync_fifo.v` names
-`FIFO_MEMORY_TYPE`. Never write a `reg` array and rely on synthesis to map it.
+instantiated through `src/kohakuaccel/common/kohaku_sdpram.v`
+(`xpm_memory_sdpram` with `MEMORY_PRIMITIVE` set), the same way
+`src/kohakuaccel/common/sync_fifo.v` names `FIFO_MEMORY_TYPE`. Never write a
+`reg` array and rely on synthesis to map it.
 Inference makes both the resource cost *and the read latency* depend on a reset
 clause or a tool heuristic — and read latency sets pipeline depth, which is a
 design decision, not a synthesis outcome.
@@ -62,7 +63,22 @@ line, and the instinct to revert a whole change costs more than the diagnosis.
 Announce renames of exported names; that one reached a file its author did
 not own.
 
-**Simulate with Vivado `xsim`**, through the runners in `tests/`. The iverilog
+**The framework never names a project.** `src/kohakuaccel/` is the framework;
+`src/kohakutpu/` and `src/kohakumpe/` are projects built on it. Nothing under
+`kohakuaccel/` may instantiate, include or document a module that only exists
+under a project tree — a framework that does is not reusable, it is one
+accelerator with its parts in two directories. The same rule governs the docs:
+framework-level pages describe the mechanism, never a project's workload.
+
+*This is currently violated in one place.* Eight files under
+`src/kohakuaccel/pe/rv32/simd/` instantiate `vec_alu`, `vec_dsp`, `vec_delay`
+and the four `vec_cvt_*` converters from `src/kohakutpu/vector/`, plus
+`mx_lead1` and `mx_fpacc_add` from `src/kohakutpu/matmul/mx_fpacc.v` — five
+project sources, so every build list that carries the SIMD PE carries the
+reference accelerator's arithmetic with it. Fixing it means moving that
+arithmetic down into the framework: an RTL and build-flow change, not a rename.
+
+**Simulate with Vivado `xsim`**, through `scripts/py/xsim.py`. The iverilog
 wrapper in the sibling `JTAG-DMA-test` repo is not for this project.
 
 **Do not commit** unless explicitly asked.
@@ -72,16 +88,32 @@ wrapper in the sibling `JTAG-DMA-test` repo is not for this project.
 ## Running things
 
 ```
-   .\tests\run_matmul_sim.ps1                  matmul datapath + accumulator
-   .\tests\run_noc_sim.ps1                     mesh, orchestrator, CU framework
-   .\tests\run_system_sim.ps1                  end-to-end through the NoC
-   .\tests\run_axi_sim.ps1                     AXI slave/master
-   .\tests\run_synth_check.ps1 -Only <top>     out-of-context Fmax + utilisation
+   python scripts/py/check.py [fast|unit|blocks|e2e|full] [-j N]
+   python scripts/py/check.py full --counts build/counts.json
+   python scripts/py/xsim.py <bench> [--model 0|1] [-d DEFINE]
+   python scripts/py/vlint.py <bench> [--tb]
+   python scripts/py/vstyle.py [--lines] [--show] [paths...]
+   python scripts/py/docpaths.py            # doc citations against the tree
+   python scripts/py/specparams.py          # spec/parameters.md against the RTL
 ```
 
-Synth generics are `+`-separated `NAME:VALUE`, e.g.
-`-Generics "ACC_MW:14+DEPTH:512"`. Benches run against both `MODEL=1`
-(behavioural) and `MODEL=0` (real `DSP48E2`) so a failure is attributable.
+`check.py full` is the gate: every bench in `xsim.py`, plus ruff and black over
+every directory, the two pytest suites, the Verilog style rules over all 391
+`.v` files, and the two doc checks. `--counts` records the numbers each bench
+printed and
+`--counts-baseline` fails the run when any of them moved, which is what a
+refactor or a reformat has to clear — a green suite does not say a count held.
+
+**A doc is checkable where it names something.** `docpaths.py` compares every
+repo path a doc cites against the tree; `specparams.py` compares
+`docs/spec/parameters.md` against the `parameter` declarations of the modules it
+claims to describe. They found 103 and 42 defects respectively on first run,
+including `ADDR_W` documented as 34 across five tables when the RTL is 40.
+
+Benches run against both `MODEL=1` (behavioural) and `MODEL=0` (real
+`DSP48E2`) so a failure is attributable. Out-of-context synthesis is
+`scripts/tcl/ooc_*.tcl`; synth generics are `+`-separated `NAME:VALUE`, e.g.
+`-Generics "ACC_MW:14+DEPTH:512"`.
 
 ---
 
@@ -95,10 +127,10 @@ Synth generics are `+`-separated `NAME:VALUE`, e.g.
 - **Serial loops synthesise serially.** `if (!found && x[i]) found = 1` over 25
   bits is a 25-level LUT chain inside one pipeline stage, and no amount of
   pipelining around it helps. Searches use smear-isolate-encode; sticky bits use
-  mask-then-reduce. See `docs/compute/accumulator.md` §4.1.
+  mask-then-reduce. See `docs/arch/pe/simd/accumulator.md` §4.1.
 - **Variable part-select writes** build a barrel mux across the whole register.
   `buf[(i*32 + {ctr,3'd0} + k)*7 +: 7] <=` cost 32,292 LUTs until the loop was
-  unrolled over the counter. See `docs/compute/matmul-impl.md` §3.1.
+  unrolled over the counter. See `docs/projects/kohakutpu/matmul.md` §3.1.
 - **Paired parameters that must agree** and nothing checks them — `DEPTH` and
   `TAW` in `mx_acu_fp` silently gave a 16-entry tile at `DEPTH=512`. Derive one
   from the other.
@@ -110,12 +142,30 @@ Synth generics are `+`-separated `NAME:VALUE`, e.g.
 ## Orientation
 
 ```
-   src/kohakunoc/    mesh, routers, orchestrator, CU framework
-   src/kohakutpu/    compute: matmul datapath, accumulator, cluster
-   src/kohakuaxi/    AXI4 slave/master
-   src/common/       sync_fifo, kohaku_sdpram
-   src/synth_top/    synthesis-only wrappers for measurement/goal
+   src/kohakuaccel/          THE FRAMEWORK
+     noc/                    mesh, routers, orchestrator, CU base
+     sysnode/                system node: MAG, mover, control processor,
+                             interlink. NEVER call it "node" -- a NoC
+                             endpoint is a node too
+     pe/rv32/                the CPU PE, and the SIMD PE behind SIMD_EN
+     axi/                    station bus, links, AXI plumbing
+     common/                 sync_fifo, kohaku_sdpram, sb_skid
+     verif/                  axi_ram and other bench-only models
+   src/templates/            the framework's worked examples: CU, transform
+                             occupant, endpoint adapter, each with a bench
+   src/examples/saxpy/       the example project, RTL half
+   src/kohakutpu/            the reference accelerator: matmul, vector,
+                             transform occupants, generated tops
+   src/kohakumpe/            the SIMT PE
+   src/reference/            reference and proof-of-concept copies. Only
+                             intcluster/ and legacy-cu/ are still compiled by
+                             a bench; nothing ships from any of it
+   src/attic/                dead
 ```
 
-Start at `docs/README.md`. The active compute design is
-`docs/compute/tensor-isa.md` and `docs/compute/matmul.md`.
+Start at `docs/README.md`. Benches run through `scripts/py/xsim.py` — one
+source list per bench, in one place. The PowerShell runners in `tests/attic/`
+are dead, and so are the ones in `tests/axi/build-jtagdbg/`: that directory is
+a frozen copy of the station-bus RTL with three benches of its own, and only
+`sb_conv12_tb.v` is reached from `xsim.py` (against the LIVE sources, not the
+copies). House style is `CONTRIBUTING.md`.
