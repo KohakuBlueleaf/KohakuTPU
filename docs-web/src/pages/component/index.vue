@@ -17,8 +17,8 @@ const parts = {
     },
     {
       part: "<b>System node</b> — <code>sysnode</code>",
-      what: "the memory agent, the mover and the control processor as one block. Every mesh has exactly one",
-      swap: "not a thing you replace — you configure it. Port count, staging, interlink and the processor are parameters",
+      what: "MAG and the control processor as ONE component, behind one hub. Neither is separable and neither owns a fabric port. Every mesh has exactly one",
+      swap: "not a thing you replace — you configure it. <code>PORTS</code>, staging and the interlink are parameters; <b>the processor is not</b>, and there is no build without it",
       _tone: "good",
     },
     {

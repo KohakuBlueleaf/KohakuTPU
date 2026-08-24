@@ -36,19 +36,29 @@ One thing on this page is yours to write. Everything else is the framework.
                 |                |                     |
           memory window   control window        DRAM boundary
                 |                |                     |
-             +--v----------------v--+            +-----v-----+
-             |     system node      |            |   DDR4    |
-             |     arch/sysnode     |<---------->|controller |
-             |                      |   AXI      | (vendor)  |
-             |  memory ports        |            +-----------+
-             |  mover + transform   |
-             |  control processor   |
-             |  control agent       |
-             |  interlink endpoint  |------------> other meshes
-             +----------+-----------+
-                        |
-             N attachments to the fabric
-                        |
+             +--v----------------v-------------+  +-----v-----+
+             |         system node             |  |   DDR4    |
+             |         arch/sysnode            |<>|controller |
+             |         ONE component           |AX| (vendor)  |
+             |                                 |I +-----------+
+             |  +-----------+  +------------+  |
+             |  |    MAG    |  |  ctrl PE   |  |
+             |  |           |  |   at (0,0) |  |
+             |  | mem ports |  | RV32 core  |  |
+             |  | agent     |  | imem+spad  |  |
+             |  | interlink |--|-------------- |----> other meshes
+             |  +-----+-----+  | mover      |  |
+             |        |        | xform slot |  |
+             |        |        +-----+------+  |
+             |        +-------+-------+        |
+             |                |                |
+             |          +-----v-----+          |
+             |          |  sn_hub   |          |
+             |          +-----+-----+          |
+             +----------------+----------------+
+                              |
+             PORTS attachments -- NOTHING INSIDE OWNS ONE
+                              |
              +----------v----------------------------------+
              |             fabric        arch/noc          |
              |                                             |
@@ -82,15 +92,25 @@ hold.
 | System | Owns | Stops at |
 |---|---|---|
 | [**noc**](noc/) | the flit, the link, the router, the mesh coordinate space, and the port every endpoint attaches through | the meaning of what a flit carries |
-| [**sysnode**](sysnode/) | the memory half of the instruction set, the ports that serve it, the transform slot, the memory mover, the control processor, and the multiplexing of every non-compute consumer onto the fabric's edge | the DRAM controller, what the transform computes, and what the bytes mean |
+| [**sysnode**](sysnode/) | the memory half of the instruction set, the ports that serve it, the control processor with its mover and transform slot, and the hub that puts every one of the node's clients on `PORTS` attachments | the DRAM controller, what the transform computes, and what the bytes mean |
 | [**axi**](axi.md) | the boundary to everything that is not the framework: host, DRAM, debug. Arbitration, clock crossing, width conversion, burst legality | anything that speaks flits |
 | [**ship**](ship/) | assembly: turning a mesh picture into a module, and joining several meshes into one image | placement of what it assembled |
 | [**physical**](physical/) | die regions, pblocks, clock domains, what may and may not cross a boundary | logic. It constrains; it does not compute |
 
 `noc` is what the source and the specs call the fabric; read it as **fabric** if
-that helps. `sysnode` is the **system node** — MAG, the mover and the control
-processor as one block. It is never a plain "node": a NoC endpoint is a node,
-and every compute unit sits on one.
+that helps.
+
+`sysnode` is the **system node**, and it is **one component, not an assembly**.
+MAG and the control processor inside it are a division of *design*, not of
+module: MAG is memory access and cross-mesh communication, the processor is
+dispatch, small compute and the memory mover with its transform slot. Neither
+works alone — MAG cannot start work without a host round trip, and the processor
+cannot reach memory or another mesh — so **neither has a fabric port**. Both are
+clients of `sn_hub`, which owns every attachment the node presents. There is no
+parameter that removes the processor.
+
+It is never a plain "node": a NoC endpoint is a node, and every compute unit
+sits on one.
 
 ## What the framework actually removes
 

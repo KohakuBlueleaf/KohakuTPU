@@ -26,9 +26,15 @@ nothing was saturated, which is the diagnostic: the limit was the *server*, not
 the bandwidth.
 
 So a **memory port** is a whole server: its own intake queues, read engine,
-write slots, response emitter, and its own AXI master channel. `MEM_PORTS` of
-them are instantiated, and adding one adds all of it. Nothing is shared between
-ports except the address space on the far side of AXI.
+write slots, response emitter, and its own AXI master channel. `PORTS` of them
+are instantiated, and adding one adds all of it. Nothing is shared between ports
+except the address space on the far side of AXI.
+
+What a port is *attached to* is not the engine's, though. The node's `PORTS`
+fabric attachments belong to `sn_hub`, and the engines are one of four kinds of
+client on them — the control agent, the interlink and the control processor are
+the others. An engine sees the flits the hub's demux already qualified as its
+own, and never learns the others exist.
 
 The ports sit at **different mesh nodes**, and that is not a placement
 preference. Routing is X-then-Y on clamped coordinates, so a port at `(0, y)`

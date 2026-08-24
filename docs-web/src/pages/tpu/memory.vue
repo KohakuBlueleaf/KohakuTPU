@@ -19,8 +19,8 @@ const tiers = {
       y: 6,
       w: 26,
       h: 3.6,
-      label: "memory agent (MAG)",
-      sub: "descriptor walk · burst engine · tagged responses · the MXFP7 quantiser slot",
+      label: "system node — MAG half",
+      sub: "burst engine · tagged responses. The descriptor walk and the MXFP7 quantiser slot are the node's control PE, not MAG",
       accent: true,
     },
     {

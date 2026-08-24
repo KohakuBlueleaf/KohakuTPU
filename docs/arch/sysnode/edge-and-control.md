@@ -193,7 +193,7 @@ own credit protocol. They live here because MAG hosts the endpoint. Their
 description is in [ship](../ship/), and that is where the package boundary
 should be too.
 
-**A MAG presents exactly one AXI master.** Requesters speak an internal
+**The node presents exactly one AXI master.** Requesters speak an internal
 protocol — `q_valid/q_ready/q_addr/q_len/q_write` plus `w_*` and `r_*` streams —
 and `mag_dram_port.v`, instantiated inside `mag.v`, is the single converter that
 arbitrates them, packs slave width to master width, and carries byte strobes.

@@ -2,8 +2,21 @@
 // ---------------------------------------------------------------- overview
 const overview = {
   groups: [
-    { x: -3, y: 5.6, w: 66, h: 29.4, label: "the system node — one per mesh" },
-    { x: -1.5, y: 6.6, w: 43, h: 28, label: "MAG — the memory gateway" },
+    {
+      x: -3,
+      y: 4.4,
+      w: 66,
+      h: 31,
+      label: "the system node — ONE component, one per mesh",
+    },
+    { x: -1.5, y: 11.4, w: 43, h: 23.2, label: "MAG — the memory gateway" },
+    {
+      x: 43,
+      y: 11.4,
+      w: 18,
+      h: 12,
+      label: "control processor — at (0,0)",
+    },
   ],
   nodes: [
     {
@@ -17,42 +30,61 @@ const overview = {
       accent: true,
     },
     {
-      id: "ports",
+      id: "hub",
       x: 0,
-      y: 7,
-      w: 40,
+      y: 5.5,
+      w: 60,
       h: 4,
-      label: "PORTS attachments",
+      label: "sn_hub — PORTS attachments",
+      sub: "THE ONLY THING THAT OWNS ONE. demux inbound · steer outbound by row",
+      accent: true,
+    },
+    {
+      id: "eng",
+      x: 0,
+      y: 12.4,
+      w: 19,
+      h: 4,
+      label: "memory engines × PORTS",
       sub: "each: two intake queues · read engine · write slots · emitter",
       accent: true,
     },
     {
       id: "edge",
-      x: 0,
-      y: 13,
-      w: 19,
-      h: 4,
-      label: "the edge complex",
-      sub: "control agent · interlink endpoint — they share the ports' attachments",
-    },
-    {
-      id: "hostm",
       x: 21,
-      y: 13,
+      y: 12.4,
       w: 19,
       h: 4,
-      label: "host window · mover · transform slot",
-      sub: "two walkers · the transform rides the mover's read return · no fabric endpoint",
+      label: "control agent · interlink",
+      sub: "host reach and cross-mesh — hub clients, like everything here",
     },
     {
       id: "cpu",
       x: 44,
-      y: 13,
+      y: 12.4,
       w: 16,
-      h: 6,
-      label: "control processor",
-      sub: "RV32 · at (0,0) · always present, no port of its own",
+      h: 4,
+      label: "RV32 core",
+      sub: "imem · scratchpad · L1 — always present",
       accent: true,
+    },
+    {
+      id: "hostm",
+      x: 44,
+      y: 18,
+      w: 16,
+      h: 4.4,
+      label: "mover · transform slot",
+      sub: "the processor's SIMD memory unit; the slot rides its read return",
+    },
+    {
+      id: "hostw",
+      x: 21,
+      y: 18,
+      w: 19,
+      h: 3,
+      label: "host memory window",
+      sub: "bursty and rare, so its own channel",
     },
     {
       id: "q",
@@ -102,14 +134,16 @@ const overview = {
     },
   ],
   edges: [
-    { from: "mesh:b", to: "ports:t", accent: true },
-    { from: "mesh:b", to: "cpu:t", label: "a fabric port of its own" },
-    { from: "ports:b", to: "edge:t", label: "by type" },
-    { from: "ports:b", to: "q:t", accent: true },
+    { from: "mesh:b", to: "hub:t", accent: true },
+    { from: "hub:b", to: "eng:t", label: "memory type", accent: true },
+    { from: "hub:b", to: "edge:t", label: "remote · otherwise" },
+    { from: "hub:b", to: "cpu:t", label: "dst == (0,0)", accent: true },
+    { from: "eng:b", to: "q:t", accent: true },
     { from: "edge:b", to: "q:t", label: "interlink landing", dash: true },
-    { from: "hostm:b", to: "q:t" },
-    { from: "cpu:l", to: "hostm:r", label: "mv_cfg · xcfg", dir: "h" },
-    { from: "cpu:b", to: "q:r", label: "cp_* — a requester slot", dir: "h" },
+    { from: "hostw:b", to: "q:t" },
+    { from: "cpu:b", to: "hostm:t", label: "mv.go is a STORE" },
+    { from: "hostm:l", to: "q:r", label: "MV — a requester", dir: "h" },
+    { from: "cpu:l", to: "q:r", label: "cp_* — a requester", dir: "h" },
     { from: "q:b", to: "stagep:t" },
     { from: "stagep:r", to: "dramp:l", label: "not staged", dir: "h" },
     { from: "stagep:b", to: "stage:t", label: "aperture hit" },
@@ -1139,7 +1173,7 @@ const divergeRows = [
     </p>
 
     <Fig
-      caption="Every requester inside the agent speaks one internal protocol; AXI appears once, at the boundary. The control agent has no arrow into that path — it never fetches from memory, so it needs no AXI master at all. The control processor is drawn outside MAG because that is where it is: a compute unit on the fabric, with two private wires inward that a unit at a mesh port cannot have."
+      caption="ONE component. sn_hub owns every attachment and nothing below it owns one — the engines, the agent, the interlink and the processor are all its clients, told apart by what the flit is and where it is addressed. MAG and the processor are drawn as separate boxes because they are separate CONCERNS, not separate modules: neither ships without the other, and there is no parameter that removes the processor. Inside, every requester speaks one internal protocol and AXI appears once, at the boundary. The control agent has no arrow into that path — it never fetches from memory, so it needs no AXI master at all."
       zoom
     >
       <BlockDiagram

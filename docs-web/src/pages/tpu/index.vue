@@ -45,8 +45,8 @@ const meshShape = {
       x: 0,
       y: 5,
       w: 13,
-      label: "memory agent",
-      sub: "descriptors, tagged responses, transform slot",
+      label: "system node",
+      sub: "MAG + ctrl PE: tagged responses, descriptors, transform slot",
       accent: true,
     },
     {

@@ -93,6 +93,14 @@ edges, the first and last columns the west and east edges. `xxx` is nothing,
 `nul` is a port that exists but is tied off — which is how you leave a side empty
 without changing the grid's shape.
 
+**A `mag` token places one of the system node's attachments, not "MAG".** The
+node is one component and every client inside it — the memory engines, the
+control agent, the interlink, the control processor — shares those attachments
+through `sn_hub`. There is no token for the processor: it answers at **(0,0)**, a
+corner, which touches no router and which the generator forbids any map from
+filling, so the coordinate is free by construction and costs no attach point. A
+map that still carries the retired `cpu` token is rejected by name.
+
 The generator does four things you would otherwise do by hand, and the fourth is
 the one that catches fire when done manually: it instantiates the routers with
 the right per-axis clamps, wires every link with exactly one driver per
@@ -101,7 +109,7 @@ link nothing claimed**. An unclaimed link has an undriven direction — data,
 valid, and the busy coming back at it all float — and which direction that is
 depends on which side of the router it sits on.
 
-It also assigns each endpoint its memory agent port: a unit is elaborated with
+It also assigns each endpoint its memory port: a unit is elaborated with
 `MEM_X`/`MEM_Y` naming the nearest port by clamped Manhattan distance. A unit is
 therefore **bound to one memory port at elaboration**, not at runtime.
 

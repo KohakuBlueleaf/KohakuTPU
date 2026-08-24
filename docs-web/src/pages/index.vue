@@ -22,7 +22,7 @@ const die = {
       y: 15,
       w: 11,
       label: "system node",
-      sub: "MAG + mover + CPU",
+      sub: "MAG + ctrl PE, one component",
       accent: true,
     },
     {

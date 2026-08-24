@@ -40,7 +40,7 @@ KohakuAccel is one of four kinds, and every page in this tree says which:
 |---|---|---|
 | **fixed protocol** | flit format, compute-unit port handshake, memory request and response encoding, credit and retry, cross-mesh encapsulation | **No.** Change it and you are not on the framework any more. |
 | **customizable addon** | ships working, *built* to be swapped: the in-MAG transform stage, in-MAG staging, the NoC-endpoint L2 adapter, DRAM-port packing | **Yes** — that is what the slot is for. The default is a starting point, not a decision. |
-| **convention** | how to design a thing well, with worked examples: L1 fill and response tagging, unit-to-unit messaging, how to spend your instruction bits | **Your call.** Some are forced in practice because MAG hands you data in a shape; the rest are advice. Each one says which. |
+| **convention** | how to design a thing well, with worked examples: L1 fill and response tagging, unit-to-unit messaging, how to spend your instruction bits | **Your call.** Some are forced in practice because the system node hands you data in a shape; the rest are advice. Each one says which. |
 | **yours** | the datapath, the memory structure, what the instructions mean, pipeline depth | **Entirely.** |
 
 A convention is not a specification and not a default implementation. It is

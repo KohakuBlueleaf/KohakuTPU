@@ -30,10 +30,17 @@ Three token kinds are structural rather than project-specific:
 |---|---|
 | `xxx` | nothing here. Required at the four corners, which touch no router |
 | `nul` | the port exists but is tied off — how a side is left empty without changing the grid's shape |
-| `mag` | one of the edge complex's fabric attachments |
+| `mag` | one of the **system node's** fabric attachments |
 
 The rest name endpoint types, and those are supplied by the accelerator being
 built.
+
+**There is no token for the node's control processor.** The node is one
+component, its clients share the `mag` attachments through `sn_hub`, and the
+processor answers at `(0,0)` — a corner, which touches no router and which the
+table above requires to be `xxx`. The coordinate is free by construction in
+every mesh of every shape, so the processor costs no attach point and nothing
+places it. A map carrying the retired `cpu` token is rejected by name.
 
 The generator emits the router instances with their per-axis grid bounds, the
 link nets between them, the endpoint instances, the edge complex with its port

@@ -115,15 +115,26 @@ below.
 ### Where the boundaries fall
 
 ```
-    host ── XDMA / JTAG-AXI ── AXI fabric ── orchestrator ── mesh
-                                    │                          │
-                                   DDR4 ──── MAG ──────────────┤
-                                              │                │
-                                    ┌─────────┴──────────┐     │
-                                    │ transform slot     │     │
-                                    │ ADDON: yours       │     │
-                                    └────────────────────┘     │
-                                                               │
+    host ── XDMA / JTAG-AXI ── AXI fabric ────────────── mesh
+                                    │                      │
+                        ┌───────────┴────────────┐         │
+                        │  SYSTEM NODE           │         │
+                        │  one component         │         │
+                        │                        │         │
+             DDR4 ──────┤  MAG                   │         │
+                        │   memory · agent       │         │
+                        │   interlink            │         │
+                        │                        │         │
+                        │  ctrl PE  at (0,0)     │         │
+                        │   RV32 · mover         │         │
+                        │   ┌──────────────────┐ │         │
+                        │   │ transform slot   │ │         │
+                        │   │ ADDON: yours     │ │         │
+                        │   └──────────────────┘ │         │
+                        │                        │         │
+                        │  sn_hub ── PORTS ──────┼─────────┤
+                        └────────────────────────┘         │
+                                                           │
                                             ┌──────────────────┴───────┐
                                             │  router local port       │
                                             ├──────────────────────────┤
@@ -211,7 +222,7 @@ load-bearing in the memory agent, the dispatch path and the mesh alike.
 **Work decomposes into units that stream operands in, compute, and stream
 results out.** A unit is handed a description of where its operands are, fetches
 them, computes for a while, and writes results somewhere. This is the shape
-`noc_cu_base` presents and the shape MAG serves.
+`noc_cu_base` presents and the shape the system node serves.
 
 **A unit's working set fits on-chip for the duration of one step.** There is no
 cache between your unit and DRAM. What you fetch, you hold, in memory you
@@ -219,7 +230,7 @@ declared inside your unit. If a step needs more than that, the step is too big
 and must be split by the compiler.
 
 **Addresses are known ahead of time.** An operand fetch is a *descriptor*: base,
-count, layout. MAG walks the address sequence itself. This is what makes one
+count, layout. The node walks the address sequence itself. This is what makes one
 flit produce a whole burst instead of one request per word — and it only works
 if the sequence is known when the instruction is issued.
 
