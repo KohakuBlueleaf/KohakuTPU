@@ -55,10 +55,12 @@ Ownership has four categories, not two ([full table](docs/integrate/what-you-own
 - `axi/` is the station bus. A line of stations carries host traffic (XDMA and
   JTAG) to every die of a multi-SLR part, with per-station clocks and link
   CDCs.
-- `mas/` is the Memory Agent System. The agent (`mag`) turns mesh traffic into
-  DRAM traffic, with streaming fetches, multicast, and a swappable read-path
-  transform. The library also holds the memory mover and the mesh-to-mesh
-  interlink.
+- `sysnode/` is the system node, one per mesh. The agent (`mag`) turns mesh
+  traffic into DRAM traffic, with streaming fetches and multicast; the memory
+  mover walks six-dimensional strided descriptors and carries a swappable
+  transform slot on its read return; an optional RV32 control processor drives
+  the mover as an execution unit rather than through a command window; and the
+  interlink joins one mesh to the next.
 - `noc/` is the mesh: XY routers, the orchestrator, the L2 endpoint adapter,
   and `noc_cu_base`. Every compute unit wraps `noc_cu_base`. It handles
   framing, discovery, completion, and credits, so a unit conforms by
@@ -81,7 +83,7 @@ trap:
 | template | the slot |
 |---|---|
 | `cu/` | a compute unit on `noc_cu_base`: accept and retire, discovery, disposal, backpressure, all demonstrated |
-| `transform/` | the per-request read-path transform in the memory agent |
+| `transform/` | the transform slot on the memory mover's read return, as an identity occupant |
 | `adapter/` | the endpoint-link adapter, which observes or intercepts between a router and its endpoint |
 
 **The generator, `scripts/py/gen_mesh.py`.** It emits a mesh top from a text
@@ -123,18 +125,24 @@ ISA" is demonstrated rather than claimed.
 
 ### Building your own
 
-For a project called `myaccel`, these files are yours:
+For a project named `NAME`, these five files are yours and nothing else is:
 
 ```
-src/examples/myaccel/myaccel_cu.v      your unit: datapath + noc_cu_base wrap
-                     tokens_myaccel.py token -> instance text, for gen_mesh
-                     myaccel.map       the mesh picture
-driver/examples/myaccel/isa.py         how a shape becomes instruction words
-                        unit.py        type registration + simulation model
+src/examples/NAME/NAME_cu.v         your unit: datapath + noc_cu_base wrap
+                  tokens_NAME.py    token -> instance text, for gen_mesh
+                  NAME.map          the mesh picture
+driver/examples/NAME/isa.py         how a shape becomes instruction words
+                     unit.py        type registration + simulation model
 ```
 
-Start from `docs/integrate/README.md`. Copy `src/templates/cu/`. Keep
-`kh_port_check` mounted in your bench from day one.
+`saxpy` is that shape filled in, and it is the only example in the tree that
+runs end to end: `src/examples/saxpy/` and `driver/examples/saxpy/`, checked by
+the `saxpy_cu` and `saxpy_mesh` benches.
+
+Start from `docs/integrate/README.md`. Copy `src/templates/cu/`, which is a
+conforming unit with a bench of its own. Keep `kh_port_check` mounted in your
+bench from day one — it is what catches a protocol violation at the port
+instead of six modules downstream.
 
 ---
 
@@ -182,7 +190,9 @@ print(y.numpy())  # the only line that crosses the link
 
 **Hardware, implemented.** Synthesised, implemented, and running on a real
 FPGA: the matrix clusters, the vector cores, the NoC mesh and its routers, the
-memory agent and quantiser, and the interlink that joins four meshes.
+system node with its mover and transform slot, the interlink that joins four
+meshes, and **40-bit addressing** with one global space across all four
+([`address-map.md`](docs/address-map.md)).
 
 **Hardware, synthesised but not yet on silicon.** These are verified in
 simulation against real instruction streams, and carried through synthesis in
@@ -199,11 +209,11 @@ the four-mesh design, but they have not run on hardware yet:
 - **Double-pumped matrix core.** The DSPs take a 2x clock. A `BUFGCE_DIV`
   derives the fabric's 1x from it, so the two are edge-aligned by
   construction.
-- **40-bit addressing** throughout, with one global space across all four
-  meshes. See [`address-map.md`](docs/address-map.md).
 - **Per-domain reset architecture.** Every clock domain releases its reset
   locally through a domain-entry synchronizer. Only the raw reset crosses
   domains.
+- **The control processor.** `CTRL_PE` defaults to 0 and the shipping meshes do
+  not carry it; the probes and the `_pe` ship top do.
 
 **Software: a working driver and compiler stack.** Kernels compile to cluster
 *and* vector programs. Flash attention runs. Tinygrad works as an optional
@@ -250,7 +260,7 @@ Python 3.13+, and numpy is the only hard dependency.
 ```bash
 pip install -e .               # the whole tree: compiler, driver, kernels
 pip install -e ".[tinygrad]"   # optional, adds the tinygrad frontend
-pytest                         # 1152 tests, no hardware needed
+pytest                         # 1315 tests, no hardware needed
 ```
 
 Nothing reaches the card unless you ask for it. Everything runs against unit
@@ -267,10 +277,14 @@ will not do). Benches run against both a behavioural DSP and the real
 `DSP48E2`, so a failure is attributable to one or the other:
 
 ```bash
-python scripts/py/check.py fast        # ~5 s, pure Python
-python scripts/py/check.py full        # ~6 min, everything
+python scripts/py/check.py fast        # ~2.5 min: no Vivado, but every test
+python scripts/py/check.py full -j 6   # ~7 min: 107 checks, every bench
 python scripts/py/xsim.py saxpy_mesh   # the platform acceptance test
 ```
+
+`full --counts <file>` records the numbers each check printed and
+`--counts-baseline <file>` fails the run when any of them moved. That is what a
+refactor or a reformat has to clear: a green suite does not say a count held.
 
 ## Documentation
 
@@ -288,8 +302,10 @@ does, what it costs, and where it stops.
 ## Repository
 
 ```
-   src/kohakuaccel/   the hardware framework: station bus, memory agent, NoC
+   src/kohakuaccel/   the hardware framework: station bus, system node, NoC,
+                      and the CPU and SIMD processing elements
    src/kohakutpu/     this machine: matmul, vector, transform, generated tops
+   src/kohakumpe/     a second project: the SIMT processing element
    src/templates/     the extension points, each with its bench
    src/examples/      saxpy, the platform acceptance test (RTL half)
    src/reference/     retained knowledge: arithmetic cores, PoCs. attic/ holds
