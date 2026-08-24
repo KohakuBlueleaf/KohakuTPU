@@ -57,6 +57,16 @@ If a constraint genuinely needs control flow, it is not a constraint file. Put i
 in a Tcl hook that runs at a build step, where full Tcl is available, and have
 that hook `puts` what it applied.
 
+**A skipped `if` that was supplying a DEFAULT is worse than a skipped
+constraint**, because the failure moves to the next line. `if {![info exists
+::ooc_period]} { set ::ooc_period 2.500 }` at the top of an OOC constraint file
+threw its critical warning on every run and never set anything; the
+`create_clock -period $::ooc_period` below it then either used a value the
+caller happened to set or failed on an unset variable. Every resource figure
+that file produced was constrained at whatever the caller last used. Delete the
+guard and require the caller to set it: an unset variable failing loudly on the
+next line is the behaviour the guard was pretending to provide.
+
 **Always check that a constraint applied**, rather than that the file was read.
 `get_clocks`, `get_pins` and `get_cells` return empty lists for patterns that
 match nothing, and every constraint command accepts an empty list without
@@ -241,6 +251,34 @@ A `` `timescale `` in synthesisable RTL is meaningless to synthesis and
 constrains every consumer of that file. Supply it at elaboration instead:
 `xelab -timescale 1ns/1ps`.
 
+### A function in a continuous assign is sensitised by its ARGUMENTS only
+
+`assign y = f(a, b);` re-evaluates when `a` or `b` changes. If `f` also reads a
+signal from module scope, **that read does not create sensitivity** — the value
+sampled is whatever it was the last time an argument moved, and the assign is
+stale for as long as nothing else changes.
+
+It presents as a datapath that is right on the first transaction of a burst and
+wrong on the rest, or as a register that takes the previous beat's value. The
+fix is to pass everything the function reads: a byte-merge helper that read
+`wdata` and `wstrb` from module scope pulsed the previous beat's data into a
+control register, and moving both into the argument list changed nothing else
+about it.
+
+A function that reads module scope is not wrong in an `always` block, where the
+sensitivity list is inferred from every read. It is wrong in a continuous
+assign, and the two look identical on the page.
+
+### Delays are 64-bit; a watchdog that did not fire is a logic bug
+
+`#N` in `xsim` is a 64-bit quantity, so a watchdog at `#500_000_000` is 500 ms
+and not a wrapped-to-zero no-op. **A watchdog that never fired means the
+condition it was waiting on was already true**, or the bench exited another way
+— never that the delay overflowed 32 bits.
+
+Worth stating because the wrap explanation is plausible, cheap to believe, and
+sends the next hour into the wrong file.
+
 ### A permissive simulator passing is not evidence
 
 `iverilog` accepts things Vivado rejects — most notably use-before-declaration,
@@ -407,6 +445,19 @@ asked for.
 **Derive one from the other** (`localparam AW = $clog2(DEPTH)`), or add an
 elaboration-time assertion. Never document the constraint and rely on it being
 read.
+
+### A parameter sliced to its own index width is zero
+
+`W[$clog2(W)-1:0]` is not `W`. It is `W` truncated to the number of bits an
+INDEX into `W` needs, and for any power of two that is exactly zero: 256 in
+8 bits is 0, 512 in 9 bits is 0.
+
+It elaborates clean, because both sides are legal, and it presents as a
+structure of size zero or a counter that never advances. The shape appears
+wherever a width and an index width sit next to each other in the same
+expression, which is the same neighbourhood as the paired-parameter trap above —
+and the same fix applies: give the index width its own name and use it only for
+indexing.
 
 ### Memory primitives are named, never inferred
 

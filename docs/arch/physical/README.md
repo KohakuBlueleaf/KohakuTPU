@@ -114,6 +114,12 @@ unwind.
   before routing becomes critical.** Vendor documentation says only to check that
   usage matches the design's expectations. Treat the site count as a hard
   ceiling and do not plan to approach it.
+
+  *In practice this has not been the binding constraint on the reference
+  instance, which uses a small fraction of one boundary's sites — see
+  [projects/kohakutpu/ship](../../projects/kohakutpu/ship.md) for that device's
+  budget and what did bind instead. Do not generalise one design's headroom into
+  a guideline; the point of the open question is that nobody has published one.*
 - **No published figure exists for how much logic headroom to reserve for
   crossing routing.** The nearest available guidance is a general "keep any one
   resource well below saturation in a single region".
