@@ -228,9 +228,9 @@ module mm_mesh #(
 
     wire mag_clk_i = MAG_CDC ? mag_clk : clk;
 
-    mag #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(AW), .ID_W(IDW),
+    sysnode #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(AW), .ID_W(IDW),
           .MW(MW),
-          .MEM_PORTS(MEMP), .MEM_X(0), .MEM_Y(1),
+          .PORTS(MEMP), .MEM_X(0), .MEM_Y(1),
           .GRID_LO(GRID_LO), .GRID_HI(GRID_HI), .STAGE_FLITS(128),
           .MESH_ID(L2_MAG_MESH),
           .STAGE(L2_MAG), .STAGE_BANKS(L2_MAG_BANKS),
@@ -274,6 +274,7 @@ module mm_mesh #(
         .mem_in_data(mg_i), .mem_in_valid(mg_iv), .mem_in_busy(mg_ib),
         .mem_out_data(mg_o), .mem_out_valid(mg_ov), .mem_out_busy(mg_ob),
         .mem_rd_count(mag_rd), .mem_wr_count(mag_wr),
+        .pe_halt_req(1'b0), .pe_status(), .pe_busy(),
         .mv_busy(mv_busy), .mv_fault(mv_fault), .mv_done(mv_done)
     );
 

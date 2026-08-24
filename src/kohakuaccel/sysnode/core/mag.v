@@ -1,22 +1,19 @@
-// MAG -- Memory Access Gateway.
+// MAG -- Memory Access Gateway. The memory and cross-mesh HALF of the system
+// node, and half is meant literally: MAG has no fabric port and does not ship
+// alone. `sysnode.v` composes it with the control processor behind `sn_hub`,
+// and the hub owns every attachment. What MAG presents here are CLIENT streams
+// into that hub, never a mesh port.
 //
-// The single point where a partition touches everything outside it: the host's
-// AXI, its own memory, and its NoC mesh.
+//   hub ──►  mag_mem_port x PORTS ──► AXI master 0..N ─┐
+//   hub ◄──  agent (noc_orchestrator)                  ├──► memory
+//   AXI slave, memory ──► upload ─────► AXI master N+1 ┤
+//   ctrl PE's L1  ────────────────────► master CP      ┤
+//   ctrl PE's mover ─────────────────► master MV       ┘
 //
-//   NoC port 0 ──┬─►  mag_mem_port ──► AXI master 0 ─┐
-//   NoC port 1 ──┼─►  mag_mem_port ──► AXI master 1 ─┤
-//        ...     │                                   ├──► memory
-//   AXI slave, memory ──► upload ────► AXI master N ─┤
-//   (host, verbatim)                                 │
-//   mover ──(read return)──► mag_xform ──► master M ─┤
-//   control processor ─────────────────► master CP ──┘
-//                 │
-//   AXI slave, control ──► agent (noc_orchestrator)
-//
-// THE AGENT HAS NO PORT OF ITS OWN. It shares the NoC ports above, which is
-// what the fork on the left means: each port's inbound flits are demuxed BY
-// TYPE -- memory requests to that port's engine, everything else to the agent
-// -- and outbound the agent leaves by the port on its destination's row.
+// THE MOVER AND THE TRANSFORM SLOT ARE NOT MAG'S. They belong to the control
+// processor -- the mover is its SIMD memory unit and the slot is that unit's
+// extension. MV arrives here as an ordinary external requester, which is all
+// MAG ever knew about it.
 //
 // MAG is a SLAVE on the main interconnect, not a master; the memory moved one
 // level down, behind an adapter. See docs/arch-design.md s6.4.
@@ -25,9 +22,7 @@
 // port serves ~2 clusters. A single read engine is what stopped the machine
 // scaling -- and it stopped while nothing was saturated, so the constraint was
 // the server, not the bandwidth. Each port owns its intake queues, read engine,
-// write slots and AXI channel -- but NOT a transform: that is one shared bank
-// ON THE MOVER'S READ RETURN, reached only through descriptor mode 5. See
-// mag_mem_port.v, mag_xform.v and docs/arch/sysnode/.
+// write slots and AXI channel.
 //
 // The ports are placed at DIFFERENT mesh nodes on purpose. Routing is X-then-Y
 // on clamped coordinates, so a port at (0,y) draws traffic to router (1,y) --
@@ -45,10 +40,10 @@ module mag #(
     parameter integer DATA_W     = 256,     // AXI memory width == flit payload
     parameter integer ADDR_W     = 40,
     parameter integer ID_W       = 4,
-    // How many NoC memory endpoints this MAG presents, and where each sits.
-    // Named per port rather than packed: a packed field is one shift away from
-    // pointing a whole port at the wrong node, and it would elaborate cleanly.
-    parameter integer MEM_PORTS  = 1,
+    // How many memory engines, one per hub port. Coordinates are named per
+    // port rather than packed: a packed field is one shift away from pointing a
+    // whole port at the wrong node, and it would elaborate cleanly.
+    parameter integer PORTS      = 1,
     // The interlink, docs/interlink/. ZERO GENERATES NONE OF IT: no switch, no
     // links, no extra AXI master, and the remote address decode is a constant
     // false. The shipping bitstream is ILINK=0 and has to stay identical, so
@@ -59,23 +54,11 @@ module mag #(
     parameter integer TUSER_W    = 96,
     parameter integer IL_RX_BEATS  = 64,
     parameter integer IL_MAX_BEATS = 32,
-    // The MAG control processor's memory channel (docs/arch/sysnode/control-processor.md
-    // s3.1). ZERO GENERATES NONE OF IT, like ILINK: the ports fold to constants
-    // and MP1 is unchanged, so the shipping bitstream stays identical.
-    parameter integer CTRL_PE    = 0,
-    // The transform slot. Selection is an ID, not a bit per transform, so the
-    // field is sized for a design with several occupants even though the
-    // reference project ships one -- widening it later is a protocol change.
-    parameter integer XFORM_SLOTS     = 1,
-    parameter integer XID_W           = 4,
-    parameter integer XMODE_W         = 4,
-    // Declared by the occupant, needed by the engine before it has run.
-    parameter integer XFORM_IN_BITS   = 2048,
-    parameter integer XFORM_OUT_WORDS = 4,
-    // INTERNAL requesters, never leaving MAG: memory ports, host upload, mover,
-    // and with the interlink the one inbound remote writes land through.
-    parameter integer MP1        = MEM_PORTS + 2 + ((ILINK != 0) ? 1 : 0)
-                                                 + ((CTRL_PE != 0) ? 1 : 0),
+    // Requesters onto the one AXI master: the engines, the host upload, the
+    // processor's mover, the processor's L1, and with the interlink the channel
+    // inbound remote writes land through. The processor is not optional, so
+    // neither is its pair -- there is no configuration in which this is smaller.
+    parameter integer MP1        = PORTS + 3 + ((ILINK != 0) ? 1 : 0),
     // mag_dram_port packs DATA_W -> MW, so at 512 an 8-beat 256-bit burst
     // becomes 4 beats. Defaults EQUAL, which is the R=1 no-sub-beat case.
     parameter integer MW         = DATA_W,
@@ -99,7 +82,7 @@ module mag #(
     parameter integer STAGE_ENTRIES = 16384,
     parameter integer STAGE_PIPE    = 1,
     // 0 = a store inside each mag_mem_port, unreachable by mover and interlink
-    // and costing MEM_PORTS x 64 URAM. 1 = one store on the converged path.
+    // and costing PORTS x 64 URAM. 1 = one store on the converged path.
     parameter integer STAGE_AT_PORT = 0
 )(
     input  wire                clk,
@@ -193,26 +176,38 @@ module mag #(
     input  wire                    dram_rvalid,
     output wire                    dram_rready,
 
-    // ---- NoC: memory ports, flattened ------------------------------------
-    input  wire [MEM_PORTS*FLIT_WIDTH-1:0] mem_in_data,
-    input  wire [MEM_PORTS-1:0]            mem_in_valid,
-    output wire [MEM_PORTS-1:0]            mem_in_busy,
-    output wire [MEM_PORTS*FLIT_WIDTH-1:0] mem_out_data,
-    output wire [MEM_PORTS-1:0]            mem_out_valid,
-    input  wire [MEM_PORTS-1:0]            mem_out_busy,
+    // ---- hub client: the per-port memory engines --------------------------
+    // The flit itself is broadcast from the hub; `eng_rx_valid` is the arm the
+    // hub's demux already qualified, so an engine never learns the other
+    // clients exist.
+    input  wire [PORTS*FLIT_WIDTH-1:0] hub_data,
+    input  wire [PORTS-1:0]            eng_rx_valid,
+    output wire [PORTS-1:0]            eng_rx_busy,
+    output wire [PORTS*FLIT_WIDTH-1:0] eng_tx_data,
+    output wire [PORTS-1:0]            eng_tx_valid,
+    input  wire [PORTS-1:0]            eng_tx_busy,
+    output wire [PORTS*POS_WIDTH-1:0]  port_y,
 
-    // The agent has no port of its own; it shares these -- see the share layer.
+    // ---- hub client: the control agent ------------------------------------
+    input  wire [FLIT_WIDTH-1:0]       agt_rx_data,
+    input  wire                        agt_rx_valid,
+    output wire                        agt_rx_busy,
+    output wire [FLIT_WIDTH-1:0]       agt_tx_data,
+    output wire                        agt_tx_valid,
+    input  wire                        agt_tx_busy,
+
+    // ---- hub client: the interlink ----------------------------------------
+    input  wire [FLIT_WIDTH-1:0]       enc_data,
+    input  wire                        enc_valid,
+    output wire                        enc_busy,
+    output wire [FLIT_WIDTH-1:0]       inj_data,
+    output wire                        inj_valid,
+    input  wire                        inj_busy,
+    input  wire                        bad_remote_req,
+    output wire [1:0]                  my_mesh,
 
     output wire [15:0]           mem_rd_count,
     output wire [15:0]           mem_wr_count,
-
-    // ---- the memory mover: status ----------------------------------------
-    // Its COMMAND path is arch.md s2's next step, now taken: a slice of the
-    // control window, not a boundary port. Loose sideband ports never get wired
-    // in a block design, which left the shipped mover commandable by nothing.
-    output wire                  mv_busy,
-    output wire [3:0]            mv_fault,
-    output wire [31:0]           mv_done,
 
     // ---- the interlink, docs/interlink/topology.md s1 ---------------------
     // Present on the module at any ILINK because Verilog has no conditional
@@ -230,24 +225,50 @@ module mag #(
     input  wire                  link0_in_tvalid,
     output wire                  link0_in_tready,
 
-    // ---- the control processor's memory channel, CTRL_PE only -------------
-    // A slave on MAG; the processor is the master. Present at any CTRL_PE for
-    // the same reason the link ports are: Verilog has no conditional port.
-    // The control processor commanding the mover directly: inside the node this
-    // is a wire, which is the whole point of putting it here rather than at a
-    // mesh port. It wins over the host window when both pulse.
-    input  wire                  pe_cfg_en,
-    input  wire [7:0]            pe_cfg_addr,
-    input  wire [63:0]           pe_cfg_data,
+    // ---- the control processor's mover, as requester MV -------------------
+    // The mover lives in the processor now. MAG sees what it always saw: one
+    // more AXI-shaped requester on the converged path. The interlink's address
+    // splitter still sits on this channel's write side, which is why it arrives
+    // here rather than going straight to the arbiter.
+    input  wire [ID_W-1:0]       mv_awid,
+    input  wire [ADDR_W-1:0]     mv_awaddr,
+    input  wire [7:0]            mv_awlen,
+    input  wire [2:0]            mv_awsize,
+    input  wire [1:0]            mv_awburst,
+    input  wire                  mv_awvalid,
+    output wire                  mv_awready,
+    input  wire [DATA_W-1:0]     mv_wdata,
+    input  wire [DATA_W/8-1:0]   mv_wstrb,
+    input  wire                  mv_wlast,
+    input  wire                  mv_wvalid,
+    output wire                  mv_wready,
+    output wire [ID_W-1:0]       mv_bid,
+    output wire [1:0]            mv_bresp,
+    output wire                  mv_bvalid,
+    input  wire                  mv_bready,
+    input  wire [ID_W-1:0]       mv_arid,
+    input  wire [ADDR_W-1:0]     mv_araddr,
+    input  wire [7:0]            mv_arlen,
+    input  wire [2:0]            mv_arsize,
+    input  wire [1:0]            mv_arburst,
+    input  wire                  mv_arvalid,
+    output wire                  mv_arready,
+    output wire [ID_W-1:0]       mv_rid,
+    output wire [DATA_W-1:0]     mv_rdata,
+    output wire [1:0]            mv_rresp,
+    output wire                  mv_rlast,
+    output wire                  mv_rvalid,
+    input  wire                  mv_rready,
 
-    // The transform slot's occupant registers, reached by the processor as
-    // ordinary loads and stores. The HOST has no path to them.
-    input  wire                  pe_xcfg_en,
-    input  wire [XID_W-1:0]      pe_xcfg_id,
-    input  wire [7:0]            pe_xcfg_addr,
-    input  wire [31:0]           pe_xcfg_data,
-    output wire [31:0]           pe_xcfg_rdata,
-    output wire [3:0]            xf_fault,
+    // The host's AUX_CFG window, forwarded to whoever owns the register. The
+    // mover's half leaves the node; the interlink's half stays here.
+    output wire                  aux_cfg_en,
+    output wire [7:0]            aux_cfg_addr,
+    output wire [63:0]           aux_cfg_data,
+    // Mirrored into AUX_STAT so the host reads liveness in one 64-bit load.
+    input  wire                  mv_busy,
+    input  wire [3:0]            mv_fault,
+    input  wire [31:0]           mv_done,
 
     input  wire [ADDR_W-1:0]     cp_awaddr,
     input  wire [7:0]            cp_awlen,
@@ -281,14 +302,12 @@ module mag #(
     output wire                  link1_in_tready
 );
     // The upload rides one channel past the engines, the mover one past that.
-    localparam integer UP = MEM_PORTS;           // its channel index
-    localparam integer MV = MEM_PORTS + 1;
+    localparam integer UP = PORTS;           // its channel index
+    localparam integer MV = PORTS + 1;
     // Only reachable when ILINK is set; at 0 it aliases MV and nothing drives
     // it, which is why every use of LK is inside the same generate.
-    localparam integer LK = (ILINK != 0) ? MEM_PORTS + 2 : MEM_PORTS + 1;
-    // Same aliasing rule as LK: at CTRL_PE=0 this names MV and nothing drives
-    // it, so every use below sits inside the same generate.
-    localparam integer CP = (CTRL_PE != 0) ? (MEM_PORTS + 2 + ((ILINK != 0) ? 1 : 0)) : (MEM_PORTS + 1);
+    localparam integer LK = (ILINK != 0) ? PORTS + 2 : PORTS + 1;
+    localparam integer CP = PORTS + 2 + ((ILINK != 0) ? 1 : 0);
 
     localparam integer LSB = $clog2(DATA_W/8);
 
@@ -323,14 +342,9 @@ module mag #(
     wire [MP1-1:0]          m_rvalid;
     wire [MP1-1:0]          m_rready;
 
-    // ---- interlink nets, declared here because the demux above reads them --
     // At ILINK=0 the generate at the bottom ties every one of these to a
     // constant, so each use folds and nothing survives synthesis.
     wire [1:0]            il_mesh;
-    wire [FLIT_WIDTH-1:0] enc_in_data;
-    wire                  enc_in_valid, enc_in_busy;
-    wire [FLIT_WIDTH-1:0] inj_out_data;
-    wire                  inj_out_valid, inj_out_busy;
     wire [63:0]           il_stat_q;
     wire [3:0]            il_stat_sel;
     // The mover's write channel, between the mover and whatever owns it.
@@ -366,20 +380,15 @@ module mag #(
         .s_axi_arready(sc_arready),
         .s_axi_rid(sc_rid), .s_axi_rdata(sc_rdata), .s_axi_rresp(sc_rresp),
         .s_axi_rlast(sc_rlast), .s_axi_rvalid(sc_rvalid), .s_axi_rready(sc_rready),
-        .aux_cfg_en(mv_cfg_en), .aux_cfg_addr(mv_cfg_addr),
-        .aux_cfg_data(mv_cfg_data), .aux_stat(mv_stat),
+        .aux_cfg_en(aux_cfg_en), .aux_cfg_addr(aux_cfg_addr),
+        .aux_cfg_data(aux_cfg_data), .aux_stat(mv_stat),
         .aux_stat_sel(il_stat_sel), .aux_stat_q(il_stat_q),
-        .noc_out_data(agt_out_data), .noc_out_valid(agt_out_valid),
-        .noc_out_busy(agt_out_busy),
-        .noc_in_data(agt_in_data), .noc_in_valid(agt_in_valid),
-        .noc_in_busy(agt_in_busy)
+        .noc_out_data(agt_tx_data), .noc_out_valid(agt_tx_valid),
+        .noc_out_busy(agt_tx_busy),
+        .noc_in_data(agt_rx_data), .noc_in_valid(agt_rx_valid),
+        .noc_in_busy(agt_rx_busy)
     );
 
-    // The mover's own offsets pass through unchanged, so a driver writes its
-    // 0x38 seed at A_AUX_CFG + 0x38. Readable in one 64-bit load.
-    wire        mv_cfg_en;
-    wire [7:0]  mv_cfg_addr;
-    wire [63:0] mv_cfg_data;
     // Declared here rather than beside their always block: xvlog rejects a
     // variable used before declaration, and mv_stat below reads them.
     reg [15:0] rd_sum, wr_sum;
@@ -390,226 +399,18 @@ module mag #(
     wire [63:0] mv_stat = {mv_done[23:0], rd_sum, wr_sum,
                            mv_fault, 3'd0, mv_busy};
 
-    // =====================================================================
-    // THE SHARE LAYER: the agent rides the memory ports. MAG presents
-    // MEM_PORTS NoC attachments and no more.
-    //
-    // INBOUND is a demux by TYPE, per port: a memory request is the engine's,
-    // anything else the agent's. The agent has one input, so the ports
-    // round-robin into it, and a port that is not granted holds `busy`.
-    //
-    // OUTBOUND is steered by DESTINATION ROW -- a flit for row y leaves from the
-    // port on row y -- so dispatch spreads across all of them.
-    //
-    // The agent WINS outbound arbitration. Its traffic is a handful of control
-    // flits against a stream of operand words, so the cost to memory is
-    // negligible; engine priority would let a busy port starve dispatch exactly
-    // when the machine is busiest.
-    // =====================================================================
-    localparam [3:0] T_MEM_RD_REQ = 4'h0, T_MEM_WR_REQ = 4'h1;
-    localparam [3:0] T_MEM_WR_DATA = 4'h4;
-    localparam integer TY_LSB = FLIT_WIDTH - 4*POS_WIDTH - 4;
-    localparam integer DY_LSB = FLIT_WIDTH - 2*POS_WIDTH;
-    // NOC_RSVD. Bit 2 marks a flit for another mesh and is zero on every flit a
-    // single-mesh build ever produces, which is what makes one compiler serve
-    // both -- docs/interlink/boundary.md s5.
-    localparam integer RS_LSB = FLIT_WIDTH - 4*POS_WIDTH - 16;
-    // NOC_MEM_ADDR is [255:216], so addr[37:36] -- the mesh -- is at [253:252].
-    // At 254 this read {special, rsvd} and faulted every LOCAL aperture access.
-    localparam integer RQ_MESH_LSB = 252;
-
-    wire [FLIT_WIDTH-1:0] agt_out_data;
-    wire                  agt_out_valid;
-    wire [FLIT_WIDTH-1:0] agt_in_data;
-    wire                  agt_in_valid;
-    wire                  agt_in_busy;
-    wire                  agt_out_busy;
-
-    wire [FLIT_WIDTH-1:0] eng_out_data  [0:MEM_PORTS-1];
-    wire                  eng_out_valid [0:MEM_PORTS-1];
-    wire                  eng_in_busy   [0:MEM_PORTS-1];
-    wire [POS_WIDTH-1:0]  port_y        [0:MEM_PORTS-1];
-
-    // ---- inbound: the engine's, the interlink's, or the agent's? ----------
-    // Three consumers now, told apart by the same flit: a memory type is the
-    // engine's, a remote marker is the interlink's, and what is left is the
-    // agent's. At ILINK=0 the middle case is a constant false and this is the
-    // two-way demux it was before.
-    wire [MEM_PORTS-1:0] in_is_mem, in_is_req, in_is_rem, in_to_agt, in_to_enc;
-    wire [MEM_PORTS-1:0] rq_rem;
-    genvar gd;
-    generate
-    for (gd = 0; gd < MEM_PORTS; gd = gd + 1) begin : g_demux
-        wire [3:0] ty = mem_in_data[gd*FLIT_WIDTH + TY_LSB +: 4];
-        wire       rm = mem_in_data[gd*FLIT_WIDTH + RS_LSB + 2];
-        wire [1:0] rq = mem_in_data[gd*FLIT_WIDTH + RQ_MESH_LSB +: 2];
-        assign in_is_req[gd] = (ty == T_MEM_RD_REQ) || (ty == T_MEM_WR_REQ);
-        assign in_is_mem[gd] = in_is_req[gd] || (ty == T_MEM_WR_DATA);
-        // A MEMORY flit may be remote too. The sender marks every flit of the
-        // burst, so the encapsulator stays stateless -- mx_cluster_cu.v:996.
-        assign in_is_rem[gd] = (ILINK != 0) && rm;
-        assign in_to_agt[gd] = mem_in_valid[gd] && !in_is_mem[gd] && !in_is_rem[gd];
-        assign in_to_enc[gd] = mem_in_valid[gd] && in_is_rem[gd];
-        // An address naming another mesh on a flit NOT marked remote. That is
-        // the one case still aliased onto local DRAM, and the compiler's bug.
-        assign rq_rem[gd] = (
-            mem_in_valid[gd]
-            && in_is_req[gd]
-            && !in_is_rem[gd]
-            && (rq != il_mesh)
-        );
-    end
-    endgenerate
-
-    // ---- inbound arbitration into the agent's single input ---------------
-    // Round-robin, so no port can hold the agent against the others. The
-    // pointer only moves on an accepted flit; moving it every cycle would let
-    // a port lose its turn to one that had nothing to send.
-    reg  [$clog2(MEM_PORTS > 1 ? MEM_PORTS : 2)-1:0] agt_rr;
-    integer ai;
-    reg  [31:0] agt_sel;
-    reg         agt_any;
-    always @(*) begin
-        agt_sel = 32'd0;
-        agt_any = 1'b0;
-        for (ai = MEM_PORTS - 1; ai >= 0; ai = ai - 1) begin
-            // scan downward from the pointer so the lowest-priority match is
-            // overwritten by a higher-priority one
-            if (in_to_agt[(ai + agt_rr) % MEM_PORTS]) begin
-                agt_sel = (ai + agt_rr) % MEM_PORTS;
-                agt_any = 1'b1;
-            end
-        end
-    end
-    assign agt_in_data  = mem_in_data[agt_sel*FLIT_WIDTH +: FLIT_WIDTH];
-    assign agt_in_valid = agt_any;
-
-    // THE AGENT MUST NEVER BLOCK MEMORY. It raises `noc_in_busy` when its RX
-    // FIFO is full (noc_orchestrator: `rx_full && !in_is_sig`), and a host that
-    // does not drain the mailbox leaves it full indefinitely -- holding the port
-    // busy for that would stop the MEMORY flits behind it on the same link, for
-    // good, because nothing clears the condition.
-    //
-    // So a control flit that CANNOT be delivered is accepted, dropped, and
-    // reported. That trades a loss on a path nothing uses (CU_SIGNAL bypasses RX
-    // and the driver does not use the mailbox) for removing an unbounded stall
-    // on the path everything uses.
-    //
-    // Waiting one's TURN is different and still holds the port: bounded by
-    // MEM_PORTS cycles, and the round-robin working as intended.
-    wire agt_grant = agt_any && !agt_in_busy;   // taken this cycle
-    wire agt_drop  = agt_any &&  agt_in_busy;   // cannot be taken at all
-
-`ifndef SYNTHESIS
-    always @(posedge clk) begin
-        if (resetn && agt_drop) begin
-            $display("%0t ERROR mag: agent RX full -- control flit DROPPED at port %0d. The mailbox is not being drained; memory on this port was kept running instead.",
-                     $time, agt_sel);
-        end
-    end
-`endif
-
-    always @(posedge clk) begin
-        if (!resetn) begin
-            agt_rr <= 0;
-        end
-        else if (agt_any && !agt_in_busy) begin
-            agt_rr <= (agt_sel + 1) % MEM_PORTS;
-        end
-    end
-
-    // ---- inbound arbitration into the interlink's encapsulator -----------
-    // The same round-robin as the agent's, and separate from it: a flit bound
-    // for another mesh and a control flit are different consumers, and sharing
-    // the arbiter would make a stalled link hold up dispatch.
-    localparam integer PSEL_W = $clog2(MEM_PORTS > 1 ? MEM_PORTS : 2);
-    reg  [PSEL_W-1:0] enc_rr;
-    integer ei;
-    reg  [31:0] enc_sel;
-    reg         enc_any;
-    always @(*) begin
-        enc_sel = 32'd0;
-        enc_any = 1'b0;
-        for (ei = MEM_PORTS - 1; ei >= 0; ei = ei - 1) begin
-            if (in_to_enc[(ei + enc_rr) % MEM_PORTS]) begin
-                enc_sel = (ei + enc_rr) % MEM_PORTS;
-                enc_any = 1'b1;
-            end
-        end
-    end
-    wire [31:0] enc_rr_nxt = (enc_sel + 32'd1) % MEM_PORTS;
-
-    // A SKID, and the reason is measured. mag_ilink's `enc_busy` is
-    // combinational in `enc_data` -- `acc_match` compares the flit's mesh, txn
-    // and source against the open packet's -- so the NoC router's OWN
-    // backpressure was a function of the encoder's field compare. All 24
-    // failing paths of the m62+processor build started at one router's
-    // `west_out_switch/out_valid` and ended at the NEXT router's block-RAM
-    // enable: 11 levels, 3.111 ns, 76% of it route because the chain zig-zags
-    // router -> MAG -> router -> MAG -> router across three hierarchies.
-    // sb_skid's `i_ready` is `!hold_valid`, so the ports' backpressure now
-    // comes off a flop and the compare starts inside the skid.
-    //
-    // The extra cycle costs nothing here: cross-mesh traffic is push-only and
-    // synchronised on the doorbell, never on a producer going idle.
-    wire                  enc_skid_rdy;
-    wire [FLIT_WIDTH-1:0] enc_skid_data;
-    wire                  enc_skid_valid;
-
-    sb_skid #(.W(FLIT_WIDTH)) u_enc_skid (
-        .clk(clk),
-        .rst(!resetn),
-        .i_valid(enc_any),
-        .i_ready(enc_skid_rdy),
-        .i_data(mem_in_data[enc_sel*FLIT_WIDTH +: FLIT_WIDTH]),
-        .o_valid(enc_skid_valid),
-        .o_ready(!enc_in_busy),
-        .o_data(enc_skid_data)
-    );
-
-    assign enc_in_data  = enc_skid_data;
-    assign enc_in_valid = enc_skid_valid;
-
-    always @(posedge clk) begin
-        if (!resetn) begin
-            enc_rr <= 0;
-        end else if (enc_any && enc_skid_rdy) begin
-            // Sliced EXPLICITLY: `% MEM_PORTS` computes 32 bits, and assigning
-            // that straight to enc_rr reads as a latent overflow on a counter
-            // that provably cannot have one.
-            enc_rr <= enc_rr_nxt[PSEL_W-1:0];
-        end
-    end
-
-    // ---- outbound: which port does a flit leave from? --------------------
-    wire [POS_WIDTH-1:0] agt_dy = agt_out_data[DY_LSB +: POS_WIDTH];
-    wire [POS_WIDTH-1:0] inj_dy = inj_out_data[DY_LSB +: POS_WIDTH];
-    integer ao, io;
-    reg [31:0] agt_port, inj_port;
-    always @(*) begin
-        agt_port = 32'd0;                       // port 0 unless a row matches
-        for (ao = 0; ao < MEM_PORTS; ao = ao + 1) begin
-            if (port_y[ao] == agt_dy) begin
-                agt_port = ao;
-            end
-        end
-        inj_port = 32'd0;
-        for (io = 0; io < MEM_PORTS; io = io + 1) begin
-            if (port_y[io] == inj_dy) begin
-                inj_port = io;
-            end
-        end
-    end
+    // The demux, the three arbiters and the outbound steer are `sn_hub`'s.
+    // MAG is one of its clients and sees only its own two streams.
 
     // =====================================================================
     // The memory ports.
     // =====================================================================
-    wire [15:0] p_rd [0:MEM_PORTS-1];
-    wire [15:0] p_wr [0:MEM_PORTS-1];
+    wire [15:0] p_rd [0:PORTS-1];
+    wire [15:0] p_wr [0:PORTS-1];
 
     genvar gp;
     generate
-    for (gp = 0; gp < MEM_PORTS; gp = gp + 1) begin : g_port
+    for (gp = 0; gp < PORTS; gp = gp + 1) begin : g_port
         localparam integer PX = (gp == 0) ? MEM_X : (gp == 1) ? MEM_X1 : (gp == 2) ? MEM_X2 : MEM_X3;
         localparam integer PY = (gp == 0) ? MEM_Y : (gp == 1) ? MEM_Y1 : (gp == 2) ? MEM_Y2 : MEM_Y3;
 
@@ -645,73 +446,27 @@ module mag #(
             .m_rdata(m_rdata[gp*DATA_W +: DATA_W]),
             .m_rresp(m_rresp[gp*2 +: 2]), .m_rlast(m_rlast[gp]),
             .m_rvalid(m_rvalid[gp]), .m_rready(m_rready[gp]),
-            // The engine sees only what the demux gave it. A control flit
-            // offered to this port is NOT valid here, so the engine never has
-            // to know the agent exists.
-            .mem_in_data(mem_in_data[gp*FLIT_WIDTH +: FLIT_WIDTH]),
-            .mem_in_valid(mem_in_valid[gp] && in_is_mem[gp] && !in_is_rem[gp]),
-            .mem_in_busy(eng_in_busy[gp]),
-            .mem_out_data(eng_out_data[gp]),
-            .mem_out_valid(eng_out_valid[gp]),
-            // Held off while the agent or the interlink has the link, which the
-            // engine already handles: it holds valid and data until a cycle
-            // with busy low.
-            .mem_out_busy(mem_out_busy[gp] || (agt_out_valid && agt_port == gp)
-                                           || (inj_out_valid && inj_port == gp)),
+            // The engine sees the port's flit and a valid the hub's demux has
+            // already qualified, so it never learns the other clients exist.
+            .mem_in_data(hub_data[gp*FLIT_WIDTH +: FLIT_WIDTH]),
+            .mem_in_valid(eng_rx_valid[gp]),
+            .mem_in_busy(eng_rx_busy[gp]),
+            .mem_out_data(eng_tx_data[gp*FLIT_WIDTH +: FLIT_WIDTH]),
+            .mem_out_valid(eng_tx_valid[gp]),
+            .mem_out_busy(eng_tx_busy[gp]),
             .mem_rd_count(p_rd[gp]), .mem_wr_count(p_wr[gp])
         );
 
-        assign port_y[gp] = PY[POS_WIDTH-1:0];
-
-        // Inbound busy: whichever consumer this flit belongs to. A port with a
-        // control flit the agent has not taken stays busy, and the sender holds.
-        // Taken, or dropped because it can never be taken -- either way the
-        // port is freed, so memory behind it keeps moving. Only "not your turn
-        // yet" holds, and that is bounded by the port count.
-        // REMOTE FIRST, because a memory flit can now be both, and the engine
-        // is not the consumer of one that is leaving this mesh.
-        // The remote arm reads the SKID's ready, not the encoder's busy -- that
-        // is the whole point of the skid above. `ILINK != 0` keeps the ILINK=0
-        // behaviour bit-exact: there `enc_in_busy` folds to 1, the skid can
-        // never drain, and without this term the first remote flit would be
-        // accepted into a buffer nothing empties and silently lost instead of
-        // holding the port as it does today.
-        assign mem_in_busy[gp] = in_is_rem[gp]
-                               ? !((enc_sel == gp) && enc_skid_rdy
-                                   && (ILINK != 0))
-                               : in_is_mem[gp]
-                                 ? eng_in_busy[gp]
-                                 : !((agt_sel == gp) && (agt_grant || agt_drop));
-
-        // Outbound: the agent wins, then the interlink, then the engine. The
-        // agent's traffic is a handful of control flits; the interlink's is a
-        // burst that a far mesh is already waiting on, and it is bounded by the
-        // credit the far end granted. Neither can hold the engine indefinitely.
-        assign mem_out_data[gp*FLIT_WIDTH +: FLIT_WIDTH] = (
-            (agt_out_valid && agt_port == gp) ? agt_out_data
-            : (inj_out_valid && inj_port == gp) ? inj_out_data
-            : eng_out_data[gp]
-        );
-        assign mem_out_valid[gp] = (
-            (agt_out_valid && agt_port == gp) ? 1'b1
-            : (inj_out_valid && inj_port == gp) ? 1'b1
-            : eng_out_valid[gp]
-        );
+        assign port_y[gp*POS_WIDTH +: POS_WIDTH] = PY[POS_WIDTH-1:0];
     end
     endgenerate
-
-    assign agt_out_busy = mem_out_busy[agt_port];
-    assign inj_out_busy = (
-        mem_out_busy[inj_port]
-        || (agt_out_valid && (agt_port == inj_port))
-    );
 
     // Counters summed across ports, so the AXI-level totals stay one number
     // whatever the port count is.
     integer pc;
     always @(*) begin
         rd_sum = 16'd0; wr_sum = 16'd0;
-        for (pc = 0; pc < MEM_PORTS; pc = pc + 1) begin
+        for (pc = 0; pc < PORTS; pc = pc + 1) begin
             rd_sum = rd_sum + p_rd[pc];
             wr_sum = wr_sum + p_wr[pc];
         end
@@ -760,82 +515,20 @@ module mag #(
     // The memory mover, on its own AXI channel. It never touches a port's
     // state; the only thing it shares is the address space on the far side.
     // =====================================================================
-    // ONE ENGINE. The converting move used to be a second engine muxed onto this
-    // channel; the slot now sits on the mover's own read-return path, so the mux
-    // is gone and the converged arbiter sees one requester fewer -- which is the
-    // direction slack went at Gate 0 (+0.088 -> -0.372 for one EXTRA requester
-    // at two ports).
-    wire [ID_W-1:0]   mv_awid, mv_arid;
-    wire [ADDR_W-1:0] mv_awaddr, mv_araddr;
-    wire [7:0]        mv_awlen, mv_arlen;
-    wire [2:0]        mv_awsize, mv_arsize;
-    wire [1:0]        mv_awburst, mv_arburst;
-    wire              mv_awvalid, mv_wvalid, mv_wlast, mv_arvalid;
-    wire [DATA_W-1:0] mv_wdata;
-    wire [DATA_W/8-1:0] mv_wstrb;
-    wire              mv_bready, mv_rready;
-
-    // The aux config window is split at offset 0x80: below is the mover's, at
-    // or above is the interlink's. At ILINK=0 the gate is a constant and the
-    // mover sees every write, as it always has -- and the offsets above 0x50
-    // it ignored then are the ones the interlink claims now.
-    wire host_cfg_mine = mv_cfg_en && ((ILINK == 0) || !mv_cfg_addr[7]);
-    // Gated on the PARAMETER, not the port: every existing top leaves pe_cfg_en
-    // unconnected, and an unconnected input is Z -- which made the mux X and the
-    // mover silently take no descriptor at all.
-    wire pe_cfg_live   = (CTRL_PE != 0) && pe_cfg_en;
-    wire mv_cfg_mine   = pe_cfg_live || host_cfg_mine;
-    wire [7:0]  mv_cfg_a = pe_cfg_live ? pe_cfg_addr : mv_cfg_addr;
-    wire [63:0] mv_cfg_d = pe_cfg_live ? pe_cfg_data : mv_cfg_data;
-
-    // ---- the transform slot, on the mover's read-return path -------------
-    wire                x_req, x_gnt, x_start, x_bv, x_done;
-    wire [XID_W-1:0]    x_id;
-    wire [XMODE_W-1:0]  x_mode;
-    wire [DATA_W-1:0]   x_beat, x_w0, x_w1, x_w2, x_w3;
-
-    mm_mover #(.DATA_W(DATA_W), .ADDR_W(ADDR_W), .ID_W(ID_W),
-               .XID_W(XID_W), .XMODE_W(XMODE_W),
-               .XF_IN_BITS(XFORM_IN_BITS),
-               .XF_OUT_WORDS(XFORM_OUT_WORDS)) u_mover (
-        .clk(clk), .resetn(resetn),
-        .cfg_en(mv_cfg_mine), .cfg_addr(mv_cfg_a), .cfg_data(mv_cfg_d),
-        .stat_busy(mv_busy), .stat_fault(mv_fault), .stat_done(mv_done),
-        .m_awid(mv_awid), .m_awaddr(mv_awaddr), .m_awlen(mv_awlen),
-        .m_awsize(mv_awsize), .m_awburst(mv_awburst),
-        .m_awvalid(mv_awvalid), .m_awready(mvx_awready),
-        .m_wdata(mv_wdata), .m_wstrb(mv_wstrb), .m_wlast(mv_wlast),
-        .m_wvalid(mv_wvalid), .m_wready(mvx_wready),
-        .m_bid(m_bid[MV*ID_W +: ID_W]), .m_bresp(mvx_bresp),
-        .m_bvalid(mvx_bvalid), .m_bready(mv_bready),
-        .m_arid(mv_arid), .m_araddr(mv_araddr), .m_arlen(mv_arlen),
-        .m_arsize(mv_arsize), .m_arburst(mv_arburst),
-        .m_arvalid(mv_arvalid), .m_arready(m_arready[MV]),
-        .m_rid(m_rid[MV*ID_W +: ID_W]), .m_rdata(m_rdata[MV*DATA_W +: DATA_W]),
-        .m_rresp(m_rresp[MV*2 +: 2]), .m_rlast(m_rlast[MV]),
-        .m_rvalid(m_rvalid[MV]), .m_rready(mv_rready),
-        .x_req(x_req), .x_gnt(x_gnt), .x_start(x_start),
-        .x_id(x_id), .x_mode(x_mode),
-        .x_beat(x_beat), .x_beat_valid(x_bv),
-        .x_done(x_done), .x_w0(x_w0), .x_w1(x_w1), .x_w2(x_w2), .x_w3(x_w3)
-    );
-
-    mag_xform #(.DATA_W(DATA_W), .NREQ(1), .SLOTS(XFORM_SLOTS),
-                .ID_W(XID_W), .MODE_W(XMODE_W),
-                .IN_BITS(XFORM_IN_BITS), .OUT_WORDS(XFORM_OUT_WORDS))
-    u_xform (
-        .clk(clk), .rst(!resetn),
-        .req(x_req), .gnt(x_gnt),
-        .start(x_start), .id(x_id), .mode(x_mode),
-        .beat(x_beat), .beat_valid(x_bv),
-        .done(x_done), .word0(x_w0), .word1(x_w1), .word2(x_w2), .word3(x_w3),
-        // Gated on the PARAMETER, not the port: every top that predates the
-        // processor leaves pe_xcfg_en unconnected, and an unconnected input is
-        // Z -- which would make the write strobe X and clear a fault at random.
-        .cfg_en((CTRL_PE != 0) && pe_xcfg_en), .cfg_id(pe_xcfg_id),
-        .cfg_addr(pe_xcfg_addr), .cfg_data(pe_xcfg_data),
-        .cfg_rdata(pe_xcfg_rdata), .fault(xf_fault)
-    );
+    // The mover and its transform slot are the CONTROL PROCESSOR'S, not MAG's.
+    // What arrives here is channel MV, an ordinary requester, which is all MAG
+    // ever knew about it.
+    assign mv_arready = m_arready[MV];
+    assign mv_rid     = m_rid[MV*ID_W +: ID_W];
+    assign mv_rdata   = m_rdata[MV*DATA_W +: DATA_W];
+    assign mv_rresp   = m_rresp[MV*2 +: 2];
+    assign mv_rlast   = m_rlast[MV];
+    assign mv_rvalid  = m_rvalid[MV];
+    assign mv_bid     = m_bid[MV*ID_W +: ID_W];
+    assign mv_awready = mvx_awready;
+    assign mv_wready  = mvx_wready;
+    assign mv_bvalid  = mvx_bvalid;
+    assign mv_bresp   = mvx_bresp;
 
     assign m_awid[MV*ID_W +: ID_W]            = mv_awid;
     assign m_awlen[MV*8 +: 8]                 = mv_awlen;
@@ -967,7 +660,8 @@ module mag #(
             .MEM_X(MEM_X), .MEM_Y(MEM_Y)
         ) u_il (
             .clk(clk), .resetn(resetn),
-            .cfg_en(mv_cfg_en), .cfg_addr(mv_cfg_addr), .cfg_data(mv_cfg_data),
+            .cfg_en(aux_cfg_en), .cfg_addr(aux_cfg_addr),
+            .cfg_data(aux_cfg_data),
             .stat_sel(il_stat_sel), .stat_q(il_stat_q), .my_mesh(il_mesh),
 
             .s_awaddr(mv_awaddr), .s_awlen(mv_awlen), .s_awvalid(mv_awvalid),
@@ -990,10 +684,10 @@ module mag #(
             .lk_bvalid(m_bvalid[LK]), .lk_bresp(m_bresp[LK*2 +: 2]),
             .lk_bready(m_bready[LK]),
 
-            .enc_data(enc_in_data), .enc_valid(enc_in_valid),
-            .enc_busy(enc_in_busy),
-            .inj_data(inj_out_data), .inj_valid(inj_out_valid),
-            .inj_busy(inj_out_busy),
+            .enc_data(enc_data), .enc_valid(enc_valid),
+            .enc_busy(enc_busy),
+            .inj_data(inj_data), .inj_valid(inj_valid),
+            .inj_busy(inj_busy),
 
             .ltx_hdr(ltx_hdr), .ltx_hvalid(ltx_hvalid), .ltx_hready(ltx_hready),
             .ltx_dat(ltx_dat), .ltx_dlast(ltx_dlast), .ltx_dvalid(ltx_dvalid),
@@ -1006,7 +700,7 @@ module mag #(
             .sw_tx1(sw_tx1), .sw_rx1(sw_rx1), .sw_stall1(sw_st1),
             .sw_fwd(sw_fwd), .sw_lblock(sw_lblk),
             .sw_cred0(sw_c0), .sw_cred1(sw_c1), .sw_fault(sw_flt),
-            .bad_remote_req(|rq_rem)
+            .bad_remote_req(bad_remote_req)
         );
 
         // THE INTERLINK'S LANDING CHANNEL IS SKIDDED, and this is a timing fix
@@ -1072,6 +766,7 @@ module mag #(
             .ctr_fwd(sw_fwd), .ctr_lblock(sw_lblk),
             .cred0_state(sw_c0), .cred1_state(sw_c1), .fault(sw_flt)
         );
+        assign my_mesh = il_mesh;
 
         assign m_arid[LK*ID_W +: ID_W]   = {ID_W{1'b0}};
         assign m_araddr[LK*ADDR_W +: ADDR_W] = {ADDR_W{1'b0}};
@@ -1095,11 +790,12 @@ module mag #(
         assign mvx_bvalid  = m_bvalid[MV];
         assign mvx_bresp   = m_bresp[MV*2 +: 2];
 
-        assign il_mesh       = MESH_ID[1:0];
-        assign il_stat_q     = 64'd0;
-        assign enc_in_busy   = 1'b1;
-        assign inj_out_data  = {FLIT_WIDTH{1'b0}};
-        assign inj_out_valid = 1'b0;
+        assign il_mesh    = MESH_ID[1:0];
+        assign my_mesh    = MESH_ID[1:0];
+        assign il_stat_q  = 64'd0;
+        assign enc_busy   = 1'b1;
+        assign inj_data   = {FLIT_WIDTH{1'b0}};
+        assign inj_valid  = 1'b0;
 
         assign link0_out_tdata  = {LINK_W{1'b0}};
         assign link0_out_tuser  = {TUSER_W{1'b0}};
@@ -1114,10 +810,8 @@ module mag #(
     end
     endgenerate
 
-    // ---- the control processor's channel ----------------------------------
-    generate
-    if (CTRL_PE != 0) begin : g_ctrl_pe
-        assign m_awid   [CP*ID_W   +: ID_W]   = {ID_W{1'b0}};
+    // ---- the control processor's L1 channel, always present ---------------
+    assign m_awid   [CP*ID_W   +: ID_W]   = {ID_W{1'b0}};
         assign m_awaddr [CP*ADDR_W +: ADDR_W] = cp_awaddr;
         assign m_awlen  [CP*8      +: 8]      = cp_awlen;
         assign m_awsize [CP*3      +: 3]      = LSB[2:0];
@@ -1142,16 +836,6 @@ module mag #(
         assign cp_rlast                       = m_rlast[CP];
         assign cp_rvalid                      = m_rvalid[CP];
         assign m_rready [CP]                  = cp_rready;
-    end else begin : g_no_ctrl_pe
-        assign cp_awready = 1'b0;
-        assign cp_wready  = 1'b0;
-        assign cp_bvalid  = 1'b0;
-        assign cp_arready = 1'b0;
-        assign cp_rdata   = {DATA_W{1'b0}};
-        assign cp_rlast   = 1'b0;
-        assign cp_rvalid  = 1'b0;
-    end
-    endgenerate
 
     // ---- the internal requesters onto ONE AXI master ----------------------
     // id/resp die here as they did in mag_1m.v:238's shim; nothing reads them.

@@ -1,15 +1,27 @@
-// node -- the SYSTEM NODE: the memory gateway, the mover, and the control
-// processor that owns both.
+// sysnode -- THE system node, and one component rather than an assembly.
 //
-// `mag` stays what its name says -- the memory gateway. This is the enclosure
-// the owner named: MAG + CPU + mover. At CTRL_PE=0 the processor is not
-// generated and this module is `mag` with its ports passed through, so the
-// shipping bitstream is unchanged.
+// MAG and the control processor are a division of DESIGN, not of component.
+// MAG is memory access and cross-mesh communication; the processor is command
+// dispatch, small compute, and the memory mover with its transform slot.
+// NEITHER SHIPS ALONE and neither is separable: MAG on its own cannot start
+// work without a host round trip, and the processor on its own cannot reach
+// memory or another mesh. There is no parameter that removes either.
 //
-// The processor is a COMPUTE UNIT from outside: its own NoC port, its own
-// coordinate, loaded and kicked like any other. What it gains by living here is
-// a WIRE to the mover's config port and a requester channel straight onto the
-// converged path, neither of which a unit at a mesh port can have.
+//        MAG      ─┐
+//        ctrl PE  ─┴─ sn_hub ─── PORTS attachments
+//
+// The hub owns every fabric port; nothing inside owns one. `PORTS` is the only
+// thing that varies, and the node presents exactly that many.
+//
+// The processor answers at (0,0) -- a corner, which touches no router and which
+// gen_mesh forbids any map from filling, so the coordinate is free by
+// construction in every mesh of every shape. The host reaches it and another
+// mesh's processor reaches it over the interlink; an on-mesh unit cannot
+// address it, because a unit names memory by descriptor and never by node.
+//
+// STANDALONE-WORKABLE. A system node with no compute units on its mesh is
+// still a machine: it has a processor, instruction memory, a scratchpad, an L1
+// onto DRAM, and the mover. `tests/sysnode/` runs programs on exactly that.
 
 `default_nettype none
 
@@ -19,7 +31,8 @@ module sysnode #(
     parameter integer DATA_W     = 256,
     parameter integer ADDR_W     = 40,
     parameter integer ID_W       = 4,
-    parameter integer MEM_PORTS  = 1,
+    // The node's attachment count. The one shape knob.
+    parameter integer PORTS      = 1,
     parameter integer ILINK      = 0,
     parameter integer MESH_ID    = 0,
     parameter integer LINK_W     = 288,
@@ -42,19 +55,22 @@ module sysnode #(
     parameter integer STAGE_ENTRIES = 16384,
     parameter integer STAGE_PIPE  = 1,
     parameter integer STAGE_AT_PORT = 0,
-    // ---- the control processor. 0 generates none of it. ----
-    parameter integer CTRL_PE    = 0,
-    parameter integer PE_X       = 1,
-    parameter integer PE_Y       = 0,
+    // ---- the control processor. NOT OPTIONAL: there is no CTRL_PE. ----
     parameter integer PE_IMEM    = 2048,
     parameter integer PE_SPAD    = 2048,
     parameter integer PE_L1_LINES = 128,
-    parameter         PE_MEM_PRIM = "block"
+    parameter         PE_MEM_PRIM = "block",
+    // ---- the transform slot, the mover's extension ----
+    parameter integer XFORM_SLOTS     = 1,
+    parameter integer XID_W           = 4,
+    parameter integer XMODE_W         = 4,
+    parameter integer XFORM_IN_BITS   = 2048,
+    parameter integer XFORM_OUT_WORDS = 4
 )(
     input  wire                clk,
     input  wire                resetn,
 
-    // ---- the host's two windows, unchanged ----
+    // ---- the host's two windows ----
     input  wire [ID_W-1:0]     sm_awid,
     input  wire [ADDR_W-1:0]   sm_awaddr,
     input  wire [7:0]          sm_awlen,
@@ -139,29 +155,19 @@ module sysnode #(
     input  wire                    dram_rvalid,
     output wire                    dram_rready,
 
-    // ---- MAG's mesh attachments ----
-    input  wire [MEM_PORTS*FLIT_WIDTH-1:0] mem_in_data,
-    input  wire [MEM_PORTS-1:0]            mem_in_valid,
-    output wire [MEM_PORTS-1:0]            mem_in_busy,
-    output wire [MEM_PORTS*FLIT_WIDTH-1:0] mem_out_data,
-    output wire [MEM_PORTS-1:0]            mem_out_valid,
-    input  wire [MEM_PORTS-1:0]            mem_out_busy,
-
-    // ---- the processor's OWN mesh port. Tied off at CTRL_PE=0. ----
-    input  wire [FLIT_WIDTH-1:0]  pe_in_data,
-    input  wire                   pe_in_valid,
-    output wire                   pe_in_busy,
-    output wire [FLIT_WIDTH-1:0]  pe_out_data,
-    output wire                   pe_out_valid,
-    input  wire                   pe_out_busy,
+    // ---- THE NODE'S ATTACHMENTS. The only ones it has. ----
+    input  wire [PORTS*FLIT_WIDTH-1:0] mem_in_data,
+    input  wire [PORTS-1:0]            mem_in_valid,
+    output wire [PORTS-1:0]            mem_in_busy,
+    output wire [PORTS*FLIT_WIDTH-1:0] mem_out_data,
+    output wire [PORTS-1:0]            mem_out_valid,
+    input  wire [PORTS-1:0]            mem_out_busy,
 
     output wire [15:0]           mem_rd_count,
     output wire [15:0]           mem_wr_count,
     output wire                  mv_busy,
     output wire [3:0]            mv_fault,
     output wire [31:0]           mv_done,
-    // One 64-bit read tells the host what the processor is doing, so polling
-    // costs no flit. Zero when the processor is not generated.
     input  wire                  pe_halt_req,
     output wire [63:0]           pe_status,
     output wire                  pe_busy,
@@ -188,6 +194,29 @@ module sysnode #(
     input  wire                  link1_in_tvalid,
     output wire                  link1_in_tready
 );
+    // ---- hub <-> MAG's engines ----
+    wire [PORTS-1:0]            eng_rx_valid, eng_rx_busy;
+    wire [PORTS*FLIT_WIDTH-1:0] eng_tx_data;
+    wire [PORTS-1:0]            eng_tx_valid, eng_tx_busy;
+    wire [PORTS*POS_WIDTH-1:0]  port_y;
+
+    // ---- hub <-> MAG's agent ----
+    wire [FLIT_WIDTH-1:0] agt_rx_data, agt_tx_data;
+    wire                  agt_rx_valid, agt_rx_busy;
+    wire                  agt_tx_valid, agt_tx_busy;
+
+    // ---- hub <-> MAG's interlink ----
+    wire [FLIT_WIDTH-1:0] enc_data, inj_data;
+    wire                  enc_valid, enc_busy, inj_valid, inj_busy;
+    wire                  bad_remote_req;
+    wire [1:0]            my_mesh;
+
+    // ---- hub <-> the control processor ----
+    wire [FLIT_WIDTH-1:0] pe_rx_data, pe_tx_data;
+    wire                  pe_rx_valid, pe_rx_busy;
+    wire                  pe_tx_valid, pe_tx_busy;
+
+    // ---- the processor's two channels into MAG ----
     wire [ADDR_W-1:0]   cp_awaddr, cp_araddr;
     wire [7:0]          cp_awlen, cp_arlen;
     wire                cp_awvalid, cp_awready, cp_wvalid, cp_wready, cp_wlast;
@@ -195,25 +224,59 @@ module sysnode #(
     wire [DATA_W/8-1:0] cp_wstrb;
     wire                cp_bvalid, cp_bready, cp_arvalid, cp_arready;
     wire                cp_rvalid, cp_rlast, cp_rready;
-    wire                pe_cfg_en;
-    wire [7:0]          pe_cfg_addr;
-    wire [63:0]         pe_cfg_data;
-    wire                pe_xcfg_en;
-    wire [3:0]          pe_xcfg_id;
-    wire [7:0]          pe_xcfg_addr;
-    wire [31:0]         pe_xcfg_data, pe_xcfg_rdata;
-    wire [3:0]          xf_fault;
+
+    wire [ID_W-1:0]     mv_awid, mv_arid, mv_bid, mv_rid;
+    wire [ADDR_W-1:0]   mv_awaddr, mv_araddr;
+    wire [7:0]          mv_awlen, mv_arlen;
+    wire [2:0]          mv_awsize, mv_arsize;
+    wire [1:0]          mv_awburst, mv_arburst, mv_bresp, mv_rresp;
+    wire                mv_awvalid, mv_awready, mv_arvalid, mv_arready;
+    wire [DATA_W-1:0]   mv_wdata, mv_rdata;
+    wire [DATA_W/8-1:0] mv_wstrb;
+    wire                mv_wlast, mv_wvalid, mv_wready;
+    wire                mv_bvalid, mv_bready, mv_rlast, mv_rvalid, mv_rready;
+
+    wire        aux_cfg_en;
+    wire [7:0]  aux_cfg_addr;
+    wire [63:0] aux_cfg_data;
+
+    sn_hub #(
+        .FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH),
+        .PORTS(PORTS), .ILINK(ILINK),
+        .MEM_Y(MEM_Y), .MEM_Y1(MEM_Y1), .MEM_Y2(MEM_Y2), .MEM_Y3(MEM_Y3)
+    ) u_hub (
+        .clk(clk), .resetn(resetn),
+        .mem_in_data(mem_in_data), .mem_in_valid(mem_in_valid),
+        .mem_in_busy(mem_in_busy),
+        .mem_out_data(mem_out_data), .mem_out_valid(mem_out_valid),
+        .mem_out_busy(mem_out_busy),
+        .my_mesh(my_mesh),
+        .eng_rx_valid(eng_rx_valid), .eng_rx_busy(eng_rx_busy),
+        .eng_tx_data(eng_tx_data), .eng_tx_valid(eng_tx_valid),
+        .eng_tx_busy(eng_tx_busy),
+        .agt_rx_data(agt_rx_data), .agt_rx_valid(agt_rx_valid),
+        .agt_rx_busy(agt_rx_busy),
+        .agt_tx_data(agt_tx_data), .agt_tx_valid(agt_tx_valid),
+        .agt_tx_busy(agt_tx_busy),
+        .pe_rx_data(pe_rx_data), .pe_rx_valid(pe_rx_valid),
+        .pe_rx_busy(pe_rx_busy),
+        .pe_tx_data(pe_tx_data), .pe_tx_valid(pe_tx_valid),
+        .pe_tx_busy(pe_tx_busy),
+        .enc_data(enc_data), .enc_valid(enc_valid), .enc_busy(enc_busy),
+        .inj_data(inj_data), .inj_valid(inj_valid), .inj_busy(inj_busy),
+        .bad_remote_req(bad_remote_req)
+    );
 
     mag #(
         .FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH), .DATA_W(DATA_W),
-        .ADDR_W(ADDR_W), .ID_W(ID_W), .MEM_PORTS(MEM_PORTS), .ILINK(ILINK),
+        .ADDR_W(ADDR_W), .ID_W(ID_W), .PORTS(PORTS), .ILINK(ILINK),
         .MESH_ID(MESH_ID), .LINK_W(LINK_W), .TUSER_W(TUSER_W), .MW(MW),
         .MEM_X(MEM_X), .MEM_Y(MEM_Y), .MEM_X1(MEM_X1), .MEM_Y1(MEM_Y1),
         .MEM_X2(MEM_X2), .MEM_Y2(MEM_Y2), .MEM_X3(MEM_X3), .MEM_Y3(MEM_Y3),
         .GRID_LO(GRID_LO), .GRID_HI(GRID_HI), .STAGE_FLITS(STAGE_FLITS),
         .WR_SLOTS(WR_SLOTS), .STAGE(STAGE), .STAGE_BANKS(STAGE_BANKS),
         .STAGE_ENTRIES(STAGE_ENTRIES), .STAGE_PIPE(STAGE_PIPE),
-        .STAGE_AT_PORT(STAGE_AT_PORT), .CTRL_PE(CTRL_PE)
+        .STAGE_AT_PORT(STAGE_AT_PORT)
     ) u_mag (
         .clk(clk), .resetn(resetn),
         .sm_awid(sm_awid), .sm_awaddr(sm_awaddr), .sm_awlen(sm_awlen),
@@ -253,17 +316,33 @@ module sysnode #(
         .dram_rid(dram_rid), .dram_rdata(dram_rdata), .dram_rresp(dram_rresp),
         .dram_rlast(dram_rlast), .dram_rvalid(dram_rvalid),
         .dram_rready(dram_rready),
-        .mem_in_data(mem_in_data), .mem_in_valid(mem_in_valid),
-        .mem_in_busy(mem_in_busy),
-        .mem_out_data(mem_out_data), .mem_out_valid(mem_out_valid),
-        .mem_out_busy(mem_out_busy),
+        .hub_data(mem_in_data),
+        .eng_rx_valid(eng_rx_valid), .eng_rx_busy(eng_rx_busy),
+        .eng_tx_data(eng_tx_data), .eng_tx_valid(eng_tx_valid),
+        .eng_tx_busy(eng_tx_busy), .port_y(port_y),
+        .agt_rx_data(agt_rx_data), .agt_rx_valid(agt_rx_valid),
+        .agt_rx_busy(agt_rx_busy),
+        .agt_tx_data(agt_tx_data), .agt_tx_valid(agt_tx_valid),
+        .agt_tx_busy(agt_tx_busy),
+        .enc_data(enc_data), .enc_valid(enc_valid), .enc_busy(enc_busy),
+        .inj_data(inj_data), .inj_valid(inj_valid), .inj_busy(inj_busy),
+        .bad_remote_req(bad_remote_req), .my_mesh(my_mesh),
         .mem_rd_count(mem_rd_count), .mem_wr_count(mem_wr_count),
+        .mv_awid(mv_awid), .mv_awaddr(mv_awaddr), .mv_awlen(mv_awlen),
+        .mv_awsize(mv_awsize), .mv_awburst(mv_awburst),
+        .mv_awvalid(mv_awvalid), .mv_awready(mv_awready),
+        .mv_wdata(mv_wdata), .mv_wstrb(mv_wstrb), .mv_wlast(mv_wlast),
+        .mv_wvalid(mv_wvalid), .mv_wready(mv_wready),
+        .mv_bid(mv_bid), .mv_bresp(mv_bresp), .mv_bvalid(mv_bvalid),
+        .mv_bready(mv_bready),
+        .mv_arid(mv_arid), .mv_araddr(mv_araddr), .mv_arlen(mv_arlen),
+        .mv_arsize(mv_arsize), .mv_arburst(mv_arburst),
+        .mv_arvalid(mv_arvalid), .mv_arready(mv_arready),
+        .mv_rid(mv_rid), .mv_rdata(mv_rdata), .mv_rresp(mv_rresp),
+        .mv_rlast(mv_rlast), .mv_rvalid(mv_rvalid), .mv_rready(mv_rready),
+        .aux_cfg_en(aux_cfg_en), .aux_cfg_addr(aux_cfg_addr),
+        .aux_cfg_data(aux_cfg_data),
         .mv_busy(mv_busy), .mv_fault(mv_fault), .mv_done(mv_done),
-        .pe_cfg_en(pe_cfg_en), .pe_cfg_addr(pe_cfg_addr),
-        .pe_cfg_data(pe_cfg_data),
-        .pe_xcfg_en(pe_xcfg_en), .pe_xcfg_id(pe_xcfg_id),
-        .pe_xcfg_addr(pe_xcfg_addr), .pe_xcfg_data(pe_xcfg_data),
-        .pe_xcfg_rdata(pe_xcfg_rdata), .xf_fault(xf_fault),
         .cp_awaddr(cp_awaddr), .cp_awlen(cp_awlen), .cp_awvalid(cp_awvalid),
         .cp_awready(cp_awready),
         .cp_wdata(cp_wdata), .cp_wstrb(cp_wstrb), .cp_wlast(cp_wlast),
@@ -287,64 +366,45 @@ module sysnode #(
         .link1_in_tready(link1_in_tready)
     );
 
-    generate
-    if (CTRL_PE != 0) begin : g_pe
-        rv_mag_pe #(
-            .FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH),
-            .POS_X(PE_X), .POS_Y(PE_Y),
-            .ADDR_W(ADDR_W), .DATA_W(DATA_W),
-            .IMEM_WORDS(PE_IMEM), .SPAD_WORDS(PE_SPAD),
-            .L1_LINES(PE_L1_LINES), .MEM_PRIM(PE_MEM_PRIM)
-        ) u_pe (
-            .clk(clk), .resetn(resetn),
-            .noc_in_data(pe_in_data), .noc_in_valid(pe_in_valid),
-            .noc_in_busy(pe_in_busy),
-            .noc_out_data(pe_out_data), .noc_out_valid(pe_out_valid),
-            .noc_out_busy(pe_out_busy),
-            .cp_awaddr(cp_awaddr), .cp_awlen(cp_awlen),
-            .cp_awvalid(cp_awvalid), .cp_awready(cp_awready),
-            .cp_wdata(cp_wdata), .cp_wstrb(cp_wstrb), .cp_wlast(cp_wlast),
-            .cp_wvalid(cp_wvalid), .cp_wready(cp_wready),
-            .cp_bvalid(cp_bvalid), .cp_bready(cp_bready),
-            .cp_araddr(cp_araddr), .cp_arlen(cp_arlen),
-            .cp_arvalid(cp_arvalid), .cp_arready(cp_arready),
-            .cp_rdata(cp_rdata), .cp_rlast(cp_rlast), .cp_rvalid(cp_rvalid),
-            .cp_rready(cp_rready),
-            .mv_cfg_en(pe_cfg_en), .mv_cfg_addr(pe_cfg_addr),
-            .mv_cfg_data(pe_cfg_data),
-            .mv_busy(mv_busy), .mv_fault(mv_fault),
-            .xcfg_en(pe_xcfg_en), .xcfg_id(pe_xcfg_id),
-            .xcfg_addr(pe_xcfg_addr), .xcfg_data(pe_xcfg_data),
-            .xcfg_rdata(pe_xcfg_rdata), .xf_fault(xf_fault),
-            .halt_req(pe_halt_req), .pe_status(pe_status), .busy(pe_busy)
-        );
-    end else begin : g_no_pe
-        assign cp_awaddr  = {ADDR_W{1'b0}};
-        assign cp_awlen   = 8'd0;
-        assign cp_awvalid = 1'b0;
-        assign cp_wdata   = {DATA_W{1'b0}};
-        assign cp_wstrb   = {(DATA_W/8){1'b0}};
-        assign cp_wlast   = 1'b0;
-        assign cp_wvalid  = 1'b0;
-        assign cp_bready  = 1'b1;
-        assign cp_araddr  = {ADDR_W{1'b0}};
-        assign cp_arlen   = 8'd0;
-        assign cp_arvalid = 1'b0;
-        assign cp_rready  = 1'b1;
-        assign pe_cfg_en   = 1'b0;
-        assign pe_cfg_addr = 8'd0;
-        assign pe_cfg_data = 64'd0;
-        assign pe_xcfg_en   = 1'b0;
-        assign pe_xcfg_id   = 4'd0;
-        assign pe_xcfg_addr = 8'd0;
-        assign pe_xcfg_data = 32'd0;
-        assign pe_in_busy  = 1'b0;
-        assign pe_out_data  = {FLIT_WIDTH{1'b0}};
-        assign pe_out_valid = 1'b0;
-        assign pe_status    = 64'd0;
-        assign pe_busy      = 1'b0;
-    end
-    endgenerate
+    rv_mag_pe #(
+        .FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH),
+        .ADDR_W(ADDR_W), .DATA_W(DATA_W), .ID_W(ID_W),
+        .IMEM_WORDS(PE_IMEM), .SPAD_WORDS(PE_SPAD),
+        .L1_LINES(PE_L1_LINES), .MEM_PRIM(PE_MEM_PRIM),
+        .XFORM_SLOTS(XFORM_SLOTS), .XID_W(XID_W), .XMODE_W(XMODE_W),
+        .XFORM_IN_BITS(XFORM_IN_BITS), .XFORM_OUT_WORDS(XFORM_OUT_WORDS)
+    ) u_pe (
+        .clk(clk), .resetn(resetn),
+        .noc_in_data(pe_rx_data), .noc_in_valid(pe_rx_valid),
+        .noc_in_busy(pe_rx_busy),
+        .noc_out_data(pe_tx_data), .noc_out_valid(pe_tx_valid),
+        .noc_out_busy(pe_tx_busy),
+        .cp_awaddr(cp_awaddr), .cp_awlen(cp_awlen),
+        .cp_awvalid(cp_awvalid), .cp_awready(cp_awready),
+        .cp_wdata(cp_wdata), .cp_wstrb(cp_wstrb), .cp_wlast(cp_wlast),
+        .cp_wvalid(cp_wvalid), .cp_wready(cp_wready),
+        .cp_bvalid(cp_bvalid), .cp_bready(cp_bready),
+        .cp_araddr(cp_araddr), .cp_arlen(cp_arlen),
+        .cp_arvalid(cp_arvalid), .cp_arready(cp_arready),
+        .cp_rdata(cp_rdata), .cp_rlast(cp_rlast), .cp_rvalid(cp_rvalid),
+        .cp_rready(cp_rready),
+        .mv_awid(mv_awid), .mv_awaddr(mv_awaddr), .mv_awlen(mv_awlen),
+        .mv_awsize(mv_awsize), .mv_awburst(mv_awburst),
+        .mv_awvalid(mv_awvalid), .mv_awready(mv_awready),
+        .mv_wdata(mv_wdata), .mv_wstrb(mv_wstrb), .mv_wlast(mv_wlast),
+        .mv_wvalid(mv_wvalid), .mv_wready(mv_wready),
+        .mv_bid(mv_bid), .mv_bresp(mv_bresp), .mv_bvalid(mv_bvalid),
+        .mv_bready(mv_bready),
+        .mv_arid(mv_arid), .mv_araddr(mv_araddr), .mv_arlen(mv_arlen),
+        .mv_arsize(mv_arsize), .mv_arburst(mv_arburst),
+        .mv_arvalid(mv_arvalid), .mv_arready(mv_arready),
+        .mv_rid(mv_rid), .mv_rdata(mv_rdata), .mv_rresp(mv_rresp),
+        .mv_rlast(mv_rlast), .mv_rvalid(mv_rvalid), .mv_rready(mv_rready),
+        .aux_cfg_en(aux_cfg_en), .aux_cfg_addr(aux_cfg_addr),
+        .aux_cfg_data(aux_cfg_data), .ilink_on(ILINK != 0),
+        .mv_busy(mv_busy), .mv_fault(mv_fault), .mv_done(mv_done),
+        .halt_req(pe_halt_req), .pe_status(pe_status), .busy(pe_busy)
+    );
 endmodule
 
 `default_nettype wire

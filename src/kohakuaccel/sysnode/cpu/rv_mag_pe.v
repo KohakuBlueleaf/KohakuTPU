@@ -1,4 +1,7 @@
-// rv_mag_pe -- the system node's control processor, assembled.
+// rv_mag_pe -- the system node's control processor, assembled. Scalar core,
+// the memory mover as its SIMD memory unit, and the transform slot as that
+// unit's extension. All three are ONE thing: the mover has no command window
+// of its own and the slot is reached only through the mover's read return.
 //
 //   memory   rv_l1 -> rv_mag_req -> MAG's converged path      (not flits)
 //   flits    rv_noc_req at MEM_PATH=0 -- dispatch and completions only
@@ -6,28 +9,38 @@
 //
 // Decoding mv.go from an address rather than an opcode keeps the ISA unchanged
 // and matches the framework rule that control is a range, not a side channel.
+//
+// (0,0) IS NOT A CHOICE -- a corner touches no router, so no mesh map can put
+// anything there and the coordinate is free by construction. sn_hub.v has why.
 
 `default_nettype none
 
 module rv_mag_pe #(
     parameter integer FLIT_WIDTH = 288,
     parameter integer POS_WIDTH  = 4,
-    parameter integer POS_X      = 0,
-    parameter integer POS_Y      = 0,
     parameter integer ADDR_W     = 40,
     parameter integer DATA_W     = 256,
+    parameter integer ID_W       = 4,
     parameter integer IMEM_WORDS = 2048,
     parameter integer SPAD_WORDS = 2048,
     parameter integer L1_LINES   = 128,
     parameter integer INST_DEPTH = 16,
     parameter integer RECV_DEPTH = 32,
-    parameter integer XID_W      = 4,
+    // The transform slot. Selection is an ID, not a bit per transform, so the
+    // field is sized for several occupants even though the reference project
+    // ships one -- widening it later is a protocol change.
+    parameter integer XFORM_SLOTS     = 1,
+    parameter integer XID_W           = 4,
+    parameter integer XMODE_W         = 4,
+    // Declared by the occupant, needed by the engine before it has run.
+    parameter integer XFORM_IN_BITS   = 2048,
+    parameter integer XFORM_OUT_WORDS = 4,
     parameter         MEM_PRIM   = "block"
 )(
     input  wire                   clk,
     input  wire                   resetn,
 
-    // ---- flits: shares MAG's memory ports, as the agent does ----
+    // ---- flits: a client of sn_hub, with no port of its own ----
     input  wire [FLIT_WIDTH-1:0]  noc_in_data,
     input  wire                   noc_in_valid,
     output wire                   noc_in_busy,
@@ -56,20 +69,48 @@ module rv_mag_pe #(
     input  wire                   cp_rvalid,
     output wire                   cp_rready,
 
-    // ---- the mover, as an execution unit ----
-    output wire                   mv_cfg_en,
-    output wire [7:0]             mv_cfg_addr,
-    output wire [63:0]            mv_cfg_data,
-    input  wire                   mv_busy,
-    input  wire [3:0]             mv_fault,
+    // ---- the mover's AXI master: channel MV on MAG's converged path ----
+    // The DATAPATH stays separate so a 32 B/cycle walk never contends with L1
+    // fills in the same channel. Only the CONTROL collapsed into the pipeline.
+    output wire [ID_W-1:0]        mv_awid,
+    output wire [ADDR_W-1:0]      mv_awaddr,
+    output wire [7:0]             mv_awlen,
+    output wire [2:0]             mv_awsize,
+    output wire [1:0]             mv_awburst,
+    output wire                   mv_awvalid,
+    input  wire                   mv_awready,
+    output wire [DATA_W-1:0]      mv_wdata,
+    output wire [DATA_W/8-1:0]    mv_wstrb,
+    output wire                   mv_wlast,
+    output wire                   mv_wvalid,
+    input  wire                   mv_wready,
+    input  wire [ID_W-1:0]        mv_bid,
+    input  wire [1:0]             mv_bresp,
+    input  wire                   mv_bvalid,
+    output wire                   mv_bready,
+    output wire [ID_W-1:0]        mv_arid,
+    output wire [ADDR_W-1:0]      mv_araddr,
+    output wire [7:0]             mv_arlen,
+    output wire [2:0]             mv_arsize,
+    output wire [1:0]             mv_arburst,
+    output wire                   mv_arvalid,
+    input  wire                   mv_arready,
+    input  wire [ID_W-1:0]        mv_rid,
+    input  wire [DATA_W-1:0]      mv_rdata,
+    input  wire [1:0]             mv_rresp,
+    input  wire                   mv_rlast,
+    input  wire                   mv_rvalid,
+    output wire                   mv_rready,
 
-    // ---- the transform slot's occupant registers, as loads and stores ----
-    output wire                   xcfg_en,
-    output wire [XID_W-1:0]       xcfg_id,
-    output wire [7:0]             xcfg_addr,
-    output wire [31:0]            xcfg_data,
-    input  wire [31:0]            xcfg_rdata,
-    input  wire [3:0]             xf_fault,
+    // The host's AUX_CFG window, forwarded by MAG. Below offset 0x80 is the
+    // mover's; the processor's own store WINS when both pulse.
+    input  wire                   aux_cfg_en,
+    input  wire [7:0]             aux_cfg_addr,
+    input  wire [63:0]            aux_cfg_data,
+    input  wire                   ilink_on,
+    output wire                   mv_busy,
+    output wire [3:0]             mv_fault,
+    output wire [31:0]            mv_done,
 
     // ---- host-visible, mirrored into AUX_STAT ----
     input  wire                   halt_req,
@@ -78,6 +119,9 @@ module rv_mag_pe #(
 );
     localparam integer IAW = $clog2(IMEM_WORDS);
     localparam integer SAW = $clog2(SPAD_WORDS);
+
+    localparam integer POS_X = 0;
+    localparam integer POS_Y = 0;
 
     localparam [3:0] T_MEM_RD_RESP = 4'h2, T_MEM_WR_ACK = 4'h3;
     localparam [3:0] T_CU_SIGNAL = 4'h6, T_CU_DATA = 4'h8;
@@ -348,10 +392,12 @@ module rv_mag_pe #(
     wire is_slot = is_node && l1_addr[16];
     wire mv_go   = is_node && !is_slot && l1_we && (l1_addr[15:0] == 16'd0);
 
-    assign xcfg_en   = is_slot && l1_we;
-    assign xcfg_id   = l1_addr[8 +: XID_W];
-    assign xcfg_addr = l1_addr[7:0];
-    assign xcfg_data = l1_wdata;
+    wire                xcfg_en   = is_slot && l1_we;
+    wire [XID_W-1:0]    xcfg_id   = l1_addr[8 +: XID_W];
+    wire [7:0]          xcfg_addr = l1_addr[7:0];
+    wire [31:0]         xcfg_data = l1_wdata;
+    wire [31:0]         xcfg_rdata;
+    wire [3:0]          xf_fault;
 
     // DISJOINT FIELDS. These were OR-ed into one word, so bit 0 read
     // `fault[0] | busy` -- a poll loop on bit 0 spins forever on fault code 1
@@ -511,12 +557,69 @@ module rv_mag_pe #(
     );
 
     // ------------------------------------------- the mover, as an executor
+    wire        pe_cfg_en;
+    wire [7:0]  pe_cfg_addr;
+    wire [63:0] pe_cfg_data;
+
     mv_exec #(.SAW(SAW)) u_mv (
         .clk(clk), .resetn(resetn),
         .go(mv_go), .ptr(l1_wdata[SAW-1:0]), .busy(mv_exec_busy),
         .sp_req(mv_sp_req), .sp_addr(mv_sp_addr), .sp_data(mv_sp_rdata),
-        .cfg_en(mv_cfg_en), .cfg_addr(mv_cfg_addr), .cfg_data(mv_cfg_data),
+        .cfg_en(pe_cfg_en), .cfg_addr(pe_cfg_addr), .cfg_data(pe_cfg_data),
         .mv_busy(mv_busy)
+    );
+
+    // The aux window splits at offset 0x80: below is the mover's, at or above
+    // the interlink's. Without the interlink the gate is a constant and the
+    // mover sees every write, as it always has.
+    wire        host_cfg_mine = aux_cfg_en && (!ilink_on || !aux_cfg_addr[7]);
+    wire        cfg_en_i      = pe_cfg_en || host_cfg_mine;
+    wire [7:0]  cfg_addr_i    = pe_cfg_en ? pe_cfg_addr : aux_cfg_addr;
+    wire [63:0] cfg_data_i    = pe_cfg_en ? pe_cfg_data : aux_cfg_data;
+
+    // ---- the transform slot, on the mover's read-return path -------------
+    wire                x_req, x_gnt, x_start, x_bv, x_done;
+    wire [XID_W-1:0]    x_id;
+    wire [XMODE_W-1:0]  x_mode;
+    wire [DATA_W-1:0]   x_beat, x_w0, x_w1, x_w2, x_w3;
+
+    mm_mover #(.DATA_W(DATA_W), .ADDR_W(ADDR_W), .ID_W(ID_W),
+               .XID_W(XID_W), .XMODE_W(XMODE_W),
+               .XF_IN_BITS(XFORM_IN_BITS),
+               .XF_OUT_WORDS(XFORM_OUT_WORDS)) u_mover (
+        .clk(clk), .resetn(resetn),
+        .cfg_en(cfg_en_i), .cfg_addr(cfg_addr_i), .cfg_data(cfg_data_i),
+        .stat_busy(mv_busy), .stat_fault(mv_fault), .stat_done(mv_done),
+        .m_awid(mv_awid), .m_awaddr(mv_awaddr), .m_awlen(mv_awlen),
+        .m_awsize(mv_awsize), .m_awburst(mv_awburst),
+        .m_awvalid(mv_awvalid), .m_awready(mv_awready),
+        .m_wdata(mv_wdata), .m_wstrb(mv_wstrb), .m_wlast(mv_wlast),
+        .m_wvalid(mv_wvalid), .m_wready(mv_wready),
+        .m_bid(mv_bid), .m_bresp(mv_bresp),
+        .m_bvalid(mv_bvalid), .m_bready(mv_bready),
+        .m_arid(mv_arid), .m_araddr(mv_araddr), .m_arlen(mv_arlen),
+        .m_arsize(mv_arsize), .m_arburst(mv_arburst),
+        .m_arvalid(mv_arvalid), .m_arready(mv_arready),
+        .m_rid(mv_rid), .m_rdata(mv_rdata), .m_rresp(mv_rresp),
+        .m_rlast(mv_rlast), .m_rvalid(mv_rvalid), .m_rready(mv_rready),
+        .x_req(x_req), .x_gnt(x_gnt), .x_start(x_start),
+        .x_id(x_id), .x_mode(x_mode),
+        .x_beat(x_beat), .x_beat_valid(x_bv),
+        .x_done(x_done), .x_w0(x_w0), .x_w1(x_w1), .x_w2(x_w2), .x_w3(x_w3)
+    );
+
+    mag_xform #(.DATA_W(DATA_W), .NREQ(1), .SLOTS(XFORM_SLOTS),
+                .ID_W(XID_W), .MODE_W(XMODE_W),
+                .IN_BITS(XFORM_IN_BITS), .OUT_WORDS(XFORM_OUT_WORDS))
+    u_xform (
+        .clk(clk), .rst(!resetn),
+        .req(x_req), .gnt(x_gnt),
+        .start(x_start), .id(x_id), .mode(x_mode),
+        .beat(x_beat), .beat_valid(x_bv),
+        .done(x_done), .word0(x_w0), .word1(x_w1), .word2(x_w2), .word3(x_w3),
+        .cfg_en(xcfg_en), .cfg_id(xcfg_id),
+        .cfg_addr(xcfg_addr), .cfg_data(xcfg_data),
+        .cfg_rdata(xcfg_rdata), .fault(xf_fault)
     );
 
     // One 64-bit read tells the host everything, so polling costs no flit.
