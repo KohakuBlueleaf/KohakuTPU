@@ -73,10 +73,13 @@ with no multipliers: each dimension carries its own partial sum, incremented on
 step and zeroed on wrap, so the address is an adder tree rather than a product.
 That is what makes a strided N-dimensional walk cost one element per cycle.
 
-## Where today's source disagrees
+## Resolved
 
-**`mm_mover.v` depends on `mx_tdesc.v`, which lives in
-`src/kohakutpu/matmul/`.** A framework module reaching into a project package is
-backwards, and in this case both files are misplaced: `mx_tdesc` is a general
-N-dimensional affine address generator with bound axes, with nothing
-matmul-specific in it, and it is the more reusable of the two.
+**`mm_mover.v` used to depend on `mx_tdesc.v` in `src/kohakutpu/matmul/`** — a
+framework module reaching into a project package, which is backwards. Both files
+were misplaced: `mx_tdesc` is a general N-dimensional affine address generator
+with bound axes and nothing matmul-specific in it. It now lives beside the mover
+that uses it, at `src/kohakuaccel/sysnode/mover/mx_tdesc.v`.
+
+Its name still carries the project's `mx_` prefix. That is cosmetic and is the
+only trace left.

@@ -138,7 +138,7 @@ checking.
 
 ## Where today's source disagrees
 
-**`noc_orchestrator.v` — the control agent — lives in `src/kohakunoc/`.** It is
+**`noc_orchestrator.v` — the control agent — lives in `src/kohakuaccel/noc/`.** It is
 instantiated by exactly one module, `mag.v`, and belongs with the control plane,
 not with the router.
 

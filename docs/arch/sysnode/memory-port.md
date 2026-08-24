@@ -3,7 +3,7 @@ title: The memory port
 summary: The unit the machine grows by — intake, the read engine and its self-describing responses, write slots matched by source, and what a port costs.
 tags:
   - architecture
-  - mas
+  - sysnode
   - memory
 ---
 
@@ -11,6 +11,11 @@ tags:
 
 The server behind the instruction set, and the thing you add more of when the
 machine stops scaling.
+
+**A port carries no transform.** It used to carry one each; the slot now sits on
+the mover's read-return path and belongs to the mover —
+[transform-stage](transform-stage.md).
+What a port serves is operands already in their final format.
 
 ## A port is the unit the machine grows by
 
@@ -21,9 +26,9 @@ nothing was saturated, which is the diagnostic: the limit was the *server*, not
 the bandwidth.
 
 So a **memory port** is a whole server: its own intake queues, read engine,
-transform, write slots, response emitter, and its own AXI master channel.
-`MEM_PORTS` of them are instantiated, and adding one adds all of it. Nothing is
-shared between ports except the address space on the far side of AXI.
+write slots, response emitter, and its own AXI master channel. `MEM_PORTS` of
+them are instantiated, and adding one adds all of it. Nothing is shared between
+ports except the address space on the far side of AXI.
 
 The ports sit at **different mesh nodes**, and that is not a placement
 preference. Routing is X-then-Y on clamped coordinates, so a port at `(0, y)`
@@ -52,14 +57,14 @@ both", which is still local state, so the hazard above does not come back.
 
 The engine turns a request into consecutive AXI reads. When a **run** is
 requested, the next entry's address is issued the moment the current entry's
-last beat lands, not after the transform has finished with it — that overlaps
-the address-to-first-beat latency, which would otherwise be paid once per entry.
-The address is accumulated rather than computed as `base + n * size`, because a
+last beat lands, not after that entry has finished leaving — that overlaps the
+address-to-first-beat latency, which would otherwise be paid once per entry. The
+address is accumulated rather than computed as `base + n * size`, because a
 runtime multiply lands directly in the address path.
 
 A finished entry is latched into an **emit buffer** before it is sent, so the
-next entry's AXI read can start immediately. Without the buffer, the transform's
-output registers *are* the emit source, so fetch and emit exclude each other and
+next entry's AXI read can start immediately. Without the buffer, the fetch's own
+capture registers *are* the emit source, so fetch and emit exclude each other and
 two independent interfaces run at the sum of their times instead of the larger.
 
 Every response flit is self-describing. Its transaction tag is the requester's
@@ -70,9 +75,9 @@ fetch possible at all** — one request, hundreds of cycles of traffic, and a
 receiver that can bin every flit it gets without tracking where it is.
 
 **Extra destinations** exist because many compute units frequently want the same
-bytes. Without them the transform runs once per consumer for a bit-identical
-result. With them, the same latched words are re-sent with a different header:
-no second AXI read, no second pass of the transform.
+bytes. Without them the same entry is fetched from DRAM once per consumer for a
+bit-identical result. With them, the same latched words are re-sent with a
+different header: no second AXI read at all.
 
 ## Writes: slots matched by source, not by arrival order
 
@@ -139,16 +144,26 @@ exactly this reason. Scattered entries turn one streaming request into many
 single-entry ones, and the per-request overhead is then paid per entry.
 
 **Name extra destinations rather than issuing identical requests.** *(Free.)* If
-several units want the same bytes, the fetch and the transform happen once
-instead of once per consumer. Ignoring this is correct and wasteful, and the
-waste scales with unit count.
+several units want the same bytes, the fetch happens once instead of once per
+consumer. Ignoring this is correct and wasteful, and the waste scales with unit
+count.
 
 ## What a port costs
 
 **Per memory port.** Two flit-wide intake FIFOs. The write slot array — a small
 register file of per-slot state indexed by source, plus a data array of
 `WR_SLOTS x WBURST` beats. The read engine's emit buffer, a few beat-wide
-registers. One AXI master channel. Whatever the transform costs, once.
+registers. One AXI master channel.
+
+**Measured, out of context on `xcvu13p` at 3.333 ns, 2026-08-24:** a second port
+is **6,557 LUT, 12,916 FF and no DSP** (21,459 → 28,016 for the whole node). It
+used to be 10,960 LUT and 32 DSP, and the difference is entirely the transform
+leaving the port — which is also what makes a node with more than two ports
+affordable.
+
+**DSP is 35 at one port and 35 at two.** A per-port transform would have shown
+up there and does not, which is what "one bank per node" means as a measurement
+rather than a claim.
 
 The slot data array is the part that grows fastest, since it is
 `WR_SLOTS * WBURST * DATA_W` bits and both factors are sized for correctness
