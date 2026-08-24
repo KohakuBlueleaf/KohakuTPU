@@ -69,11 +69,13 @@ def _one_projection(
         h[i, j] <<= a
 
 
-def test_the_second_projection_costs_no_second_fill_of_x():
-    """THE claim. Two projections apart fetch `x` twice; together, once.
+def test_the_shared_fill_of_x_is_GIVEN_UP_and_why():
+    """It bought a WRONG ANSWER past two K-chunks, so `geglu` pays for `x` twice.
 
-    Six fills rather than eight at this shape: `x` for each of two K chunks,
-    plus `wg` and `wu` for each. Apart it would be four and four.
+    Both halves in one grid is two accumulator tiles alive at once, and a
+    cluster has one. It survives a one- or two-chunk sweep -- which is where the
+    kernel was measured clean -- and returns partial sums from three on. SDXL's
+    feed-forward is ten to twenty chunks, so it was wrong at every real width.
     """
     d = dev()
     x, wg, wu = operands()
@@ -81,26 +83,31 @@ def test_the_second_projection_costs_no_second_fill_of_x():
     one = fills_of(_one_projection, [args[0], args[1]])
     both = fills_of(geglu, args)
     assert one == 4, one
-    assert both == 6, both
-    assert both < 2 * one, "the shared operand was fetched twice after all"
+    assert both == 2 * one, both
 
 
-def test_a_shared_operand_is_filled_once_per_BANK_not_once_per_kernel():
-    """The dedup is per L1 slot, so each K chunk still fills `x` for its bank.
+@pytest.mark.parametrize("k", [128, 192, 256, 640])
+def test_geglu_is_RIGHT_at_every_K_not_just_a_two_chunk_one(k):
+    """The regression this exists for: it was clean at K=128 and nowhere else.
 
-    Collapsing further would hand the second sweep the wrong K block.
+    Graded on the SHARE past 1%, not the max: the fused form's max at K=256 was
+    8.8e-1 with 8.8% of elements past 10%, against 1.6e-2 and nothing past 10%
+    here, and its p50 was 34x worse even where the max still looked passable.
     """
+    m, n = 64, 256
+    rng = np.random.default_rng(4)
+    x = np.asarray(rng.standard_normal((m, k)), np.float16)
+    wg = np.asarray(rng.standard_normal((n, k)) * 0.06, np.float16)
+    wu = np.asarray(rng.standard_normal((n, k)) * 0.06, np.float16)
     d = dev()
-    x, wg, wu = operands()
-    got = geglu.plan(*[d.tensor(a) for a in (x, wg, wu)])
-    xs = [
-        s
-        for st in got.stages
-        for s in st.instances[0].stmts
-        if s.kind == "fill" and s.args["operand"] == "x"
-    ]
-    assert len(xs) == 2, [s.args["chunk"] for s in xs]
-    assert {s.args["chunk"] for s in xs} == {0, 1}
+    got = np.float64(geglu(*[d.tensor(a) for a in (x, wg, wu)]).numpy())
+    g = np.float64(x) @ np.float64(wg).T
+    u = np.float64(x) @ np.float64(wu).T
+    want = g / (1.0 + np.exp(-1.702 * g)) * u
+    err = np.abs(got - want) / np.abs(want).max()
+    assert float((err > 0.10).mean()) == 0.0
+    assert float((err > 0.01).mean()) < 0.02
+    assert float(np.percentile(err, 50)) < 1e-3
 
 
 @kernel

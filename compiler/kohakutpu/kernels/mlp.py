@@ -85,11 +85,19 @@ def geglu(
     nk=2,
     part=8192,
 ):
-    """``gelu(x @ wg.T) * (x @ wu.T)``, sharing the `x` fill between the halves.
+    """``gelu(x @ wg.T) * (x @ wu.T)``. The GELU rides the gate's resident tile.
 
     `wg` is the gate projection and `wu` the up projection, both ``[N][K]`` as
-    a torch Linear keeps them. The GELU rides the gate's resident tile, so it
-    costs no pass of its own.
+    a torch Linear keeps them. GATED ON `wg`: a caller whose checkpoint chunks
+    the projection has to know which half gates -- SDXL's `chunk(2)` gates on the
+    SECOND, so its halves go in swapped.
+
+    TWO GRIDS, and they may NOT be merged to share the `x` fill. Two accumulator
+    tiles in ONE grid return partial sums once the sweep is three K-chunks or
+    more: MEASURED at `64x256x256`, p50 3.6e-4 and max 1.6e-2 as written against
+    p50 1.2e-2 and max 8.8e-1 merged, with 8.8% of elements past 10% -- and SDXL
+    is 10 to 20 chunks. Correct at one and two chunks, which is the only reason
+    it was ever measured clean.
     """
     gate, up = L.temp(M, N), L.temp(M, N)
     with units(x.tiles(gm), wg.tiles(gn)) as (i, j):
@@ -98,6 +106,7 @@ def geglu(
             g += x[i, k] @ wg[j, k]
         gate[i, j] <<= g * L.recip(L.exp2(g * (-1.702 * LOG2E)) + 1.0)
 
+    with units(x.tiles(gm), wu.tiles(gn)) as (i, j):
         u = L.tile(gm, gn, nk)
         for k in loop(x.chunks32(nk)):
             u += x[i, k] @ wu[j, k]
@@ -119,7 +128,11 @@ def swiglu(
     nk=2,
     part=8192,
 ):
-    """``silu(x @ wg.T) * (x @ wu.T)``. :func:`geglu` with the other gate."""
+    """``silu(x @ wg.T) * (x @ wu.T)``. :func:`geglu` with the other gate.
+
+    TWO GRIDS for the reason :func:`geglu` gives: two accumulators in one grid
+    return partial sums past two K-chunks.
+    """
     gate, up = L.temp(M, N), L.temp(M, N)
     with units(x.tiles(gm), wg.tiles(gn)) as (i, j):
         g = L.tile(gm, gn, nk)
@@ -127,6 +140,7 @@ def swiglu(
             g += x[i, k] @ wg[j, k]
         gate[i, j] <<= g * L.recip(L.exp2(g * -LOG2E) + 1.0)
 
+    with units(x.tiles(gm), wu.tiles(gn)) as (i, j):
         u = L.tile(gm, gn, nk)
         for k in loop(x.chunks32(nk)):
             u += x[i, k] @ wu[j, k]
