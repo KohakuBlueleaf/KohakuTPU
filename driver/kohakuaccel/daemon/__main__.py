@@ -15,14 +15,20 @@ import argparse
 from kohakuaccel.daemon.server import DEFAULT_PORT, Daemon
 from kohakuaccel.transport.jtag import JtagTransport
 from kohakuaccel.transport.memory import MemoryTransport
-from kohakutpu.clock.card import CardClocks, load_board
-from kohakutpu.clock.mmcm import REG_STATUS, STATUS_LOCKED
+
+# The project imports are DELIBERATELY INSIDE the functions. This module is the
+# seam, but the framework's claim is about IMPORT time -- `tests/test_isolation`
+# imports every `kohakuaccel` module and fails if a project comes with it, and it
+# is right to. Running the CLI is what may reach for a project; importing it is
+# not.
 
 
 class WizardClockCtl:
     """CardClocks as the governor's injected adapter."""
 
     def __init__(self, transport, board: dict) -> None:
+        from kohakutpu.clock.card import CardClocks
+
         self.card = CardClocks(transport, board)
         self.nmesh = board["meshes"]
         self.profiles = board["profiles"]
@@ -39,6 +45,8 @@ class WizardClockCtl:
 def model_transport(board: dict) -> MemoryTransport:
     """An in-memory card whose wizards are always locked: the status
     word intercepts as LOCKED so `load()` returns on its first poll."""
+    from kohakutpu.clock.mmcm import REG_STATUS, STATUS_LOCKED
+
     stride = int(board["ctrl_stride"], 16)
     wbase = int(board["wizard_base"], 16)
     hooks = {}
@@ -58,6 +66,8 @@ def main() -> None:
     ap.add_argument("--no-governor", action="store_true")
     ap.add_argument("--allow-program", action="store_true")
     args = ap.parse_args()
+
+    from kohakutpu.clock.card import load_board
 
     board = load_board(args.board)
     if args.backend == "model":

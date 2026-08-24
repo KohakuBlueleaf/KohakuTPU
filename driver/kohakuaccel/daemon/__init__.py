@@ -18,12 +18,12 @@ XDMA access is daemon-only by design, never direct.
 
 from kohakuaccel.daemon.client import DaemonClient, DaemonTransport
 from kohakuaccel.daemon.governor import ClockGovernor
-from kohakuaccel.daemon.server import Daemon, DEFAULT_PORT
+from kohakuaccel.daemon.server import DEFAULT_PORT, Daemon
 
 __all__ = [
+    "DEFAULT_PORT",
     "ClockGovernor",
     "Daemon",
     "DaemonClient",
     "DaemonTransport",
-    "DEFAULT_PORT",
 ]
