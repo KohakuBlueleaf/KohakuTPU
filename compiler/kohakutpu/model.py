@@ -69,6 +69,21 @@ class ModelError(RuntimeError):
     """An instruction this model cannot execute, and why."""
 
 
+#: Where a cluster instruction's address splits, from `isa/cluster.py`.
+CU_ADDR_BITS = ISA.cfg.addr_bits
+
+
+def full_addr(f: dict) -> int:
+    """A decoded instruction's 40-bit address, rejoined from its two fields.
+
+    Both encodings SPLIT an address so that widening to 40 bits moved no other
+    field. Reading the low part alone drops the aperture bit and the mesh id, so
+    a staging or a remote address decodes as local DRAM at the same offset --
+    which is a legal read of the wrong window, not a fault.
+    """
+    return int(f["addr"]) | (int(f.get("addr_hi", 0)) << CU_ADDR_BITS)
+
+
 @dataclass
 class Ack(Signal):
     """A completion owed by the RECEIVER of a transfer, not by its sender."""
@@ -207,9 +222,10 @@ class ClusterUnit(UnitModel):
                 f"{BANKS * BANK_ENTRIES}-entry L1 side {f['sel']}"
             )
         self._hazard(f["sel"], at, n)
-        raw = mem.read(f["addr"] - self.mem_base, n * ENTRY_BYTES)
+        where = full_addr(f)
+        raw = mem.read(where - self.mem_base, n * ENTRY_BYTES)
         if len(raw) < n * ENTRY_BYTES:
-            raise ModelError(f"FILL at {f['addr']:#x} reads past the memory window")
+            raise ModelError(f"FILL at {where:#x} reads past the memory window")
         # An entry is `lanes` rows by `kblock` of K, lane-major (isa/cluster.md
         # §3). That order is the machine's, not the packer's.
         got = np.frombuffer(raw, FP16).reshape(n, LANES, KBLOCK)
@@ -269,8 +285,9 @@ class ClusterUnit(UnitModel):
         out = self._subtiles(f)
         # A DRAIN ends the sweep in front of it, so nothing is being read now.
         self.reading = [None, None]
+        where = full_addr(f)
         if not f["dnode"]:
-            mem.write(f["addr"] - self.mem_base, out.tobytes())
+            mem.write(where - self.mem_base, out.tobytes())
             return []
         dst = (f["dst_x"], f["dst_y"])
         core = self.peers.get(dst)
@@ -279,7 +296,7 @@ class ClusterUnit(UnitModel):
                 f"a node-addressed DRAIN names ({dst[0]},{dst[1]}), where this "
                 f"machine has no vector core to receive the tile"
             )
-        core.receive(f["addr"] // WORD_BYTES, out.tobytes())
+        core.receive(where // WORD_BYTES, out.tobytes())
         if not f["dflags"] & DFLAG_SIGNAL:
             return []
         bursts = -(-f["n"] // WBURST)
@@ -324,6 +341,9 @@ IMEM_DEPTH = 512
 #: halted by `MAX_STEPS` is looping, which on the card is a hang.
 MAX_WALK = 256
 MAX_STEPS = 1 << 20
+
+#: Where a descriptor base's high field starts, from `isa/vector.py`.
+DESC_VALUE_BITS = VEC_ISA.cfg.desc_value_bits
 
 #: `vec_core.v` seeds 0.0, 1.0 and -1.0, and leaves K3 for VSETI.
 KREG_SEED = (0x000000, 0x3F8000, 0xBF8000, 0x000000)
@@ -496,10 +516,17 @@ class VectorUnit(UnitModel):
 
     # -------------------------------------------------------------- addressing
     def _descriptor(self, f: dict) -> None:
-        """One descriptor field: 0 is the base, 1..4 a `(stride, bound)` pair."""
+        """One descriptor field: 0 is the base, 1..4 a `(stride, bound)` pair.
+
+        A base is a 40-bit address SPLIT across two encoded fields
+        (`isa/vector.py:VecConfig`), and it has to be rejoined here: taking the
+        low 34 alone drops the aperture bit and the mesh id, so a staging or a
+        remote address decodes as local DRAM at the same offset and the model
+        reads a window that is not the one the instruction named.
+        """
         ad, fld, value = f["ad"], f["fld"], f["value"]
         if fld == 0:
-            self.dbase[ad] = value
+            self.dbase[ad] = value | (int(f.get("value_hi", 0)) << DESC_VALUE_BITS)
         elif fld <= NDIM:
             stride = value >> 16
             self.dstride[ad][fld - 1] = stride - (1 << 18) if stride >> 17 else stride
@@ -541,19 +568,8 @@ class VectorUnit(UnitModel):
         return self.spent if name == "RUN" else 1
 
     def _cycles(self, op: int) -> int:
-        """One vector instruction's cycles, by opcode.
-
-        The lanes retire `vector_lanes` elements a cycle whatever the mode, so
-        an ALU word is `ceil(vl / LANES)`; a load or store moves the same
-        elements and is bounded by the same width. Setup is one.
-        """
-        if op in (V.OPS["VLD"], V.OPS["VST"], V.OPS["VRED"]):
-            return -(-self.vl // V.LANES)
-        if op in (V.OPS["VFILL"], V.OPS["VDRAIN"], V.OPS["VBAR"], V.OPS["VLOOP"]):
-            return 1
-        if op in (V.OPS["VSETVL"], V.OPS["VSETMODE"], V.OPS["VSETI"]):
-            return 1
-        return -(-self.vl // V.LANES)
+        """One vector instruction's cycles, by opcode. See `hw.vector.cycles`."""
+        return V.cycles(op, self.vl)
 
     def _kernel(self, start: int, mem: Memory) -> None:
         """Execute the loaded image from `start` until VHALT.
@@ -612,7 +628,11 @@ class VectorUnit(UnitModel):
             case "VCVT":
                 self._convert(dt, va, vd)
             case "VSHUF":
-                self._shuffle(va, vb, vd)
+                # ONLY here: VLD/VST/VCVT/VBCAST share this decode branch, but
+                # for them ir[4:1] is the low end of the descriptor offset, and
+                # the core forces pm=0 rather than predicating a load by
+                # accident (`vec_core.v`, `ls_pm <= (d_op == O_VSHUF) ? ...`).
+                self._shuffle(va, vb, vd, (word >> 3) & 3, (word >> 1) & 3)
             case "VBCAST":
                 self._broadcast((word >> 25) & 3, va, vd)
             case "VRED":
@@ -759,11 +779,26 @@ class VectorUnit(UnitModel):
             held = out.astype(np.float64)
         self.vreg[vd][: held.size] = held
 
-    def _shuffle(self, va: int, vb: int, vd: int) -> None:
-        """``vd[i] = va[(i + S[vb]) % 16]``, within each chunk."""
+    def _shuffle(self, va: int, vb: int, vd: int, pr: int = 0, pm: int = 0) -> None:
+        """``vd[i] = va[(i + S[vb]) % 16]`` within each chunk, PREDICATED.
+
+        `pm` 0 writes every lane, 1 writes where ``P[pr]`` is set and 2 or 3
+        where it is clear; a lane not written KEEPS what `vd` held. The
+        predicate is indexed by the DESTINATION lane, not by the source lane the
+        rotate reads.
+
+        NO VL TAIL MASK, unlike an ALU op: a VSHUF writes whole chunks whatever
+        VL is, because it takes the load/store write port. Masking it here would
+        disagree with silicon at any VL that is not a multiple of 16.
+        """
         k = int(self.sreg[vb]) & 0xF
-        got = self.vreg[va][: self.nchunk * SLICES].reshape(-1, SLICES)
-        self.vreg[vd][: got.size] = np.roll(got, -k, axis=1).reshape(-1)
+        span = self.nchunk * SLICES
+        got = np.roll(self.vreg[va][:span].reshape(-1, SLICES), -k, axis=1)
+        keep = np.ones(span, bool)
+        if pm:
+            held = self.preg[pr][:span]
+            keep = held if pm == 1 else ~held
+        np.copyto(self.vreg[vd][:span], got.reshape(-1), where=keep)
 
     def _broadcast(self, sa: int, va: int, vd: int) -> None:
         """``vd = S[va]`` in every lane, or ``S[vd] = va[0]`` the other way."""

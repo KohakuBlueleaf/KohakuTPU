@@ -290,6 +290,25 @@ def vbcast(vd, sreg):
     )
 
 
+def cycles(op: int, vl: int) -> int:
+    """Cycles one instruction of `op` holds the core at this vector length.
+
+    The lanes retire `LANES` elements a cycle whatever the mode, so an ALU word
+    is `ceil(vl / LANES)` and a load or store moves the same elements over the
+    same width. Setup and the two bulk transfers are one: a VFILL or VDRAIN is
+    ISSUED in a cycle and the transfer itself is the memory system's, which this
+    core does not wait on.
+
+    The one figure `model.VectorUnit` and `kohakutpu.cost` both read, so a
+    simulated run and the analytic model are two routes to one number.
+    """
+    if op in (OPS["VFILL"], OPS["VDRAIN"], OPS["VBAR"], OPS["VLOOP"]):
+        return 1
+    if op in (OPS["VSETVL"], OPS["VSETMODE"], OPS["VSETI"]):
+        return 1
+    return -(-vl // LANES)
+
+
 def e8m15(x: float) -> int:
     """A Python float as the lane's own 24-bit format: FP32 with 15 mantissa bits.
 
