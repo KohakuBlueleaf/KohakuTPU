@@ -26,16 +26,18 @@ module vec_cu_tb;
     localparam HX = 0, HY = 0;      // us, the agent
     localparam MX = 1, MY = 1;      // us again, as memory
 
-    localparam [3:0] T_MEM_RD_REQ  = 4'h0, T_MEM_WR_REQ  = 4'h1,
-                     T_MEM_RD_RESP = 4'h2, T_MEM_WR_DATA = 4'h4,
-                     T_CU_INST = 4'h5, T_CU_SIGNAL = 4'h6, T_CU_DATA = 4'h8;
+    localparam [3:0] T_MEM_RD_REQ = 4'h0, T_MEM_WR_REQ = 4'h1;
+    localparam [3:0] T_MEM_RD_RESP = 4'h2, T_MEM_WR_DATA = 4'h4;
+    localparam [3:0] T_CU_INST = 4'h5, T_CU_SIGNAL = 4'h6, T_CU_DATA = 4'h8;
     localparam [7:0] SIG_DATA_RECEIVED = 8'h03, SIG_FAULT = 8'h04;
 
-    localparam A_SRC = 34'h1000, A_DST = 34'h2000, A_DST2 = 34'h3000,
-               A_DST3 = 34'h4000;
+    localparam A_SRC = 34'h1000, A_DST = 34'h2000, A_DST2 = 34'h3000;
+    localparam A_DST3 = 34'h4000;
 
     reg clk = 0, resetn = 0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     reg  [FW-1:0] in_data;
     reg           in_valid;
@@ -63,8 +65,9 @@ module vec_cu_tb;
             checks = checks + 1;
             if (got !== want) begin
                 errors = errors + 1;
-                if (errors < 20)
+                if (errors < 20) begin
                     $display("  FAIL %0s: got %0h want %0h", what, got, want);
+                end
             end
         end
     endtask
@@ -74,12 +77,18 @@ module vec_cu_tb;
         integer t, ex;
         reg [31:0] sh;
         begin
-            if (v == 0) f16i = 16'd0;
+            if (v == 0) begin
+                f16i = 16'd0;
+            end
             else begin
                 t = v; ex = 0;
                 while (t > 1) begin t = t >> 1; ex = ex + 1; end
-                if (ex <= 10) sh = v << (10 - ex);
-                else          sh = v >> (ex - 10);
+                if (ex <= 10) begin
+                    sh = v << (10 - ex);
+                end
+                else begin
+                    sh = v >> (ex - 10);
+                end
                 f16i = {1'b0, (5'd15 + ex[4:0]), sh[9:0]};
             end
         end
@@ -138,40 +147,43 @@ module vec_cu_tb;
 
             if (out_valid) begin
                 case (o_type)
-                T_MEM_RD_REQ: begin
-                    rq_addr[rq_tail[5:0]] <= o_addr;
-                    rq_tag[rq_tail[5:0]]  <= o_txn;
-                    rq_tail <= rq_tail + 1;
-                end
-                T_MEM_WR_REQ: begin
-                    wr_addr_l <= o_addr;
-                    wr_open   <= 1'b1;
-                end
-                T_MEM_WR_DATA: if (wr_open) begin
-                    dram[wr_addr_l[14:5]] <= out_data[255:0];
-                    wr_open <= 1'b0;
-                end
-                T_CU_SIGNAL: begin
-                    sig_count      <= sig_count + 1;
-                    last_sig_arg   <= out_data[247 -: 32];
-                    last_sig_fault <= (o_sig == SIG_FAULT);
-                    last_sig_dx    <= out_data[287 -: 4];
-                    last_sig_dy    <= out_data[283 -: 4];
-                    if (o_sig == SIG_DATA_RECEIVED) begin
-                        dr_count    <= dr_count + 1;
-                        last_dr_arg <= out_data[247 -: 32];
+                    T_MEM_RD_REQ: begin
+                        rq_addr[rq_tail[5:0]] <= o_addr;
+                        rq_tag[rq_tail[5:0]]  <= o_txn;
+                        rq_tail <= rq_tail + 1;
                     end
-                end
-                T_CU_DATA: begin
-                    lb_q[lb_tail[5:0]] <= out_data;
-                    lb_tail <= lb_tail + 1;
-                    cud_out <= cud_out + 1;
-                    if (cud_left == 9'd0) begin
-                        last_cud_desc <= out_data[255:0];
-                        cud_left <= {1'b0, out_data[231 -: 8]} + 9'd1;
-                    end else cud_left <= cud_left - 9'd1;
-                end
-                default: ;
+                    T_MEM_WR_REQ: begin
+                        wr_addr_l <= o_addr;
+                        wr_open   <= 1'b1;
+                    end
+                    T_MEM_WR_DATA: if (wr_open) begin
+                        dram[wr_addr_l[14:5]] <= out_data[255:0];
+                        wr_open <= 1'b0;
+                    end
+                    T_CU_SIGNAL: begin
+                        sig_count      <= sig_count + 1;
+                        last_sig_arg   <= out_data[247 -: 32];
+                        last_sig_fault <= (o_sig == SIG_FAULT);
+                        last_sig_dx    <= out_data[287 -: 4];
+                        last_sig_dy    <= out_data[283 -: 4];
+                        if (o_sig == SIG_DATA_RECEIVED) begin
+                            dr_count    <= dr_count + 1;
+                            last_dr_arg <= out_data[247 -: 32];
+                        end
+                    end
+                    T_CU_DATA: begin
+                        lb_q[lb_tail[5:0]] <= out_data;
+                        lb_tail <= lb_tail + 1;
+                        cud_out <= cud_out + 1;
+                        if (cud_left == 9'd0) begin
+                            last_cud_desc <= out_data[255:0];
+                            cud_left <= {1'b0, out_data[231 -: 8]} + 9'd1;
+                        end
+                        else begin
+                            cud_left <= cud_left - 9'd1;
+                        end
+                    end
+                    default: ;
                 endcase
             end
 
@@ -185,7 +197,9 @@ module vec_cu_tb;
 
             // answer one queued read every few cycles
             if (rq_head != rq_tail) begin
-                if (rq_wait < 3) rq_wait <= rq_wait + 1;
+                if (rq_wait < 3) begin
+                    rq_wait <= rq_wait + 1;
+                end
                 else begin
                     rq_wait  <= 0;
                     mem_flit <= { CX[3:0], CY[3:0], MX[3:0], MY[3:0],
@@ -223,7 +237,9 @@ module vec_cu_tb;
     task send_cu(input [255:0] payload);
         begin
             @(negedge clk);
-            while (in_busy || mem_valid || lb_valid) @(negedge clk);
+            while (in_busy || mem_valid || lb_valid) begin
+                @(negedge clk);
+            end
             agent_flit  = { CX[3:0], CY[3:0], HX[3:0], HY[3:0], T_CU_INST,
                             8'h20, 1'b0, 3'b000, payload };
             agent_valid = 1'b1;
@@ -250,7 +266,9 @@ module vec_cu_tb;
                         input [255:0] payload, input lst);
         begin
             @(negedge clk);
-            while (in_busy || mem_valid || lb_valid) @(negedge clk);
+            while (in_busy || mem_valid || lb_valid) begin
+                @(negedge clk);
+            end
             agent_flit  = { CX[3:0], CY[3:0], sx, sy, T_CU_DATA,
                             8'h00, lst, 3'b000, payload };
             agent_valid = 1'b1;
@@ -336,17 +354,21 @@ module vec_cu_tb;
 
     initial begin
         agent_valid = 0; agent_flit = 0; out_busy = 0;
-        for (i = 0; i < 1024; i = i + 1) dram[i] = 256'd0;
+        for (i = 0; i < 1024; i = i + 1) begin
+            dram[i] = 256'd0;
+        end
 
         // a[i] = i+1 at 0x1000, b[i] = 2(i+1) at 0x1000 + 8 lines
         for (w = 0; w < 8; w = w + 1) begin
             line = 256'd0;
-            for (i = 0; i < 16; i = i + 1)
+            for (i = 0; i < 16; i = i + 1) begin
                 line[i*16 +: 16] = f16i(w*16 + i + 1);
+            end
             dram[(A_SRC >> 5) + w] = line;
             line = 256'd0;
-            for (i = 0; i < 16; i = i + 1)
+            for (i = 0; i < 16; i = i + 1) begin
                 line[i*16 +: 16] = f16i(2*(w*16 + i + 1));
+            end
             dram[(A_SRC >> 5) + 8 + w] = line;
         end
 
@@ -414,7 +436,9 @@ module vec_cu_tb;
         chk(sig_count, 43, "one signal per CU instruction");
         chk({31'd0, dbg_fault}, 64'd0, "kernel must not fault");
         chk({31'd0, last_sig_fault}, 64'd0, "RUN must not report SIG_FAULT");
-        if (spin >= 60000) $display("  FAIL kernel never retired");
+        if (spin >= 60000) begin
+            $display("  FAIL kernel never retired");
+        end
         $display("    kernel retired in %0d cycles", last_sig_arg);
 
         $display("--- 3. what landed in memory ---");
@@ -422,12 +446,19 @@ module vec_cu_tb;
             line = dram[(A_DST >> 5) + w];
             for (i = 0; i < 16; i = i + 1) begin
                 got16 = line[i*16 +: 16];
-                if (w < 8)       want16 = f16i(w*16 + i + 1);
-                else if (w < 16) want16 = f16i(2*((w-8)*16 + i + 1));
-                else             want16 = f16i(3*((w-16)*16 + i + 1));
-                if (got16 !== want16)
+                if (w < 8) begin
+                    want16 = f16i(w*16 + i + 1);
+                end
+                else if (w < 16) begin
+                    want16 = f16i(2*((w-8)*16 + i + 1));
+                end
+                else begin
+                    want16 = f16i(3*((w-16)*16 + i + 1));
+                end
+                if (got16 !== want16) begin
                     $display("    word %0d elem %0d: got %04h want %04h",
                              w, i, got16, want16);
+                end
                 chk({48'd0, got16}, {48'd0, want16}, "drained word");
             end
         end
@@ -441,7 +472,9 @@ module vec_cu_tb;
         end
         chk(sig_count, 44, "second kernel retired");
         chk({31'd0, dbg_fault}, 64'd0, "second kernel must not fault");
-        if (spin >= 60000) $display("  FAIL second kernel never retired");
+        if (spin >= 60000) begin
+            $display("  FAIL second kernel never retired");
+        end
         $display("    second kernel retired in %0d cycles", last_sig_arg);
 
         for (w = 0; w < 16; w = w + 1) begin
@@ -450,9 +483,10 @@ module vec_cu_tb;
                 got16 = line[i*16 +: 16];
                 // words 0..7 are the D4 chain, 8..15 the broadcast sum
                 want16 = (w < 8) ? f16i(w*16 + i + 3) : f16i(128*129/2);
-                if (got16 !== want16)
+                if (got16 !== want16) begin
                     $display("    k2 word %0d elem %0d: got %04h want %04h",
                              w, i, got16, want16);
+                end
                 chk({48'd0, got16}, {48'd0, want16}, "kernel 2 word");
             end
         end
@@ -495,19 +529,23 @@ module vec_cu_tb;
         end
         chk(sig_count, 74, "third kernel retired");
         chk({31'd0, dbg_fault}, 64'd0, "third kernel must not fault");
-        if (spin >= 60000) $display("  FAIL third kernel never retired");
+        if (spin >= 60000) begin
+            $display("  FAIL third kernel never retired");
+        end
 
         // vl=64 writes 4 chunks, so only the first four words of each store
         // are the result; the rest is the barrier's scratch.
         for (w = 0; w < 4; w = w + 1) begin
             line = dram[(A_DST2 >> 5) + w];
-            for (i = 0; i < 16; i = i + 1)
+            for (i = 0; i < 16; i = i + 1) begin
                 chk({48'd0, line[i*16 +: 16]}, {48'd0, f16i(0)},
                     "ANY(v0>64) over vl=64 must be false");
+            end
             line = dram[(A_DST2 >> 5) + 8 + w];
-            for (i = 0; i < 16; i = i + 1)
+            for (i = 0; i < 16; i = i + 1) begin
                 chk({48'd0, line[i*16 +: 16]}, {48'd0, f16i(1)},
                     "ALL(v0<65) over vl=64 must be true");
+            end
         end
 
         $display("--- 6. a peer writes L1 directly: CU_DATA in ---");
@@ -523,8 +561,9 @@ module vec_cu_tb;
 
         for (w = 0; w < 2; w = w + 1) begin
             cud_line[w] = 256'd0;
-            for (i = 0; i < 16; i = i + 1)
+            for (i = 0; i < 16; i = i + 1) begin
                 cud_line[w][i*16 +: 16] = f16i(100 + w*16 + i);
+            end
         end
 
         cud_desc(8'd0, 16'd64, 8'd1, 1'b1);     // L1 word 64, two flits, signal
@@ -548,11 +587,13 @@ module vec_cu_tb;
         chk(sig_count, 81, "fourth kernel retired");
         chk({31'd0, dbg_fault}, 64'd0, "fourth kernel must not fault");
         chk({31'd0, last_sig_fault}, 64'd0, "a peer write is not a fault");
-        for (w = 0; w < 2; w = w + 1)
-            for (i = 0; i < 16; i = i + 1)
+        for (w = 0; w < 2; w = w + 1) begin
+            for (i = 0; i < 16; i = i + 1) begin
                 chk({48'd0, dram[(A_DST3 >> 5) + w][i*16 +: 16]},
                     {48'd0, cud_line[w][i*16 +: 16]},
                     "what the peer wrote is what L1 held");
+            end
+        end
 
         $display("--- 7. CU_DATA naming a buffer this core does not have ---");
         // One flat L1, so buf_id 3 addresses nothing. It aims at the words
@@ -572,7 +613,9 @@ module vec_cu_tb;
         chk({31'd0, last_sig_fault}, 64'd1, "a rejected burst must fault");
         chk({32'd0, last_sig_arg}, 64'd9, "fault code is F_CUDATA");
 
-        for (w = 0; w < 2; w = w + 1) dram[(A_DST3 >> 5) + w] = 256'd0;
+        for (w = 0; w < 2; w = w + 1) begin
+            dram[(A_DST3 >> 5) + w] = 256'd0;
+        end
         do_run(9'd80);
         spin = 0;
         while ((sig_count < 83) && (spin < 60000)) begin
@@ -581,11 +624,13 @@ module vec_cu_tb;
         end
         chk(sig_count, 83, "the core recovers and runs again");
         chk({31'd0, last_sig_fault}, 64'd0, "the fault must not be sticky");
-        for (w = 0; w < 2; w = w + 1)
-            for (i = 0; i < 16; i = i + 1)
+        for (w = 0; w < 2; w = w + 1) begin
+            for (i = 0; i < 16; i = i + 1) begin
                 chk({48'd0, dram[(A_DST3 >> 5) + w][i*16 +: 16]},
                     {48'd0, cud_line[w][i*16 +: 16]},
                     "a rejected burst must not have touched L1");
+            end
+        end
 
         $display("--- 8. vec -> vec: a peer drain, looped back ---");
         put_imem(9'd90, I_VDRAIN_ND);
@@ -608,7 +653,9 @@ module vec_cu_tb;
         chk(sig_count, 91, "fifth kernel retired");
         chk({31'd0, dbg_fault}, 64'd0, "fifth kernel must not fault");
 
-        for (w = 0; w < 2; w = w + 1) dram[(A_DST3 >> 5) + w] = 256'd0;
+        for (w = 0; w < 2; w = w + 1) begin
+            dram[(A_DST3 >> 5) + w] = 256'd0;
+        end
         do_run(9'd92);
         spin = 0;
         while ((sig_count < 92) && (spin < 60000)) begin
@@ -616,11 +663,13 @@ module vec_cu_tb;
             @(negedge clk);
         end
         chk(sig_count, 92, "sixth kernel retired");
-        for (w = 0; w < 2; w = w + 1)
-            for (i = 0; i < 16; i = i + 1)
+        for (w = 0; w < 2; w = w + 1) begin
+            for (i = 0; i < 16; i = i + 1) begin
                 chk({48'd0, dram[(A_DST3 >> 5) + w][i*16 +: 16]},
                     {48'd0, cud_line[w][i*16 +: 16]},
                     "L1 -> NoC -> L1 must be the identity");
+            end
+        end
 
         $display("--- 9. two senders' bursts interleaved ---");
         // One descriptor and one pointer, so a second sender's flits cannot be
@@ -690,8 +739,12 @@ module vec_cu_tb;
             "and the offset is still the base's low half");
 
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end

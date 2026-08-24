@@ -106,8 +106,7 @@ module sb_chain2 #(
     // Remote targets route to A's link (NLA) but carry the far port in DPORT.
     localparam integer NSEG_ALL = 5;
     localparam [NSEG_ALL*AW-1:0]   ALL_BASE = {B_B2, B_B1, B_B0, B_A1, B_A0};
-    localparam [NSEG_ALL*AW-1:0]   ALL_MASK = {MSK_64K, MSK_64K, MSK_MESH,
-                                               MSK_64K, MSK_MESH};
+    localparam [NSEG_ALL*AW-1:0] ALL_MASK = {MSK_64K, MSK_64K, MSK_MESH, MSK_64K, MSK_MESH};
     localparam [NSEG_ALL*DSTW-1:0] ALL_DST  = {3'd2, 3'd2, 3'd2, 3'd1, 3'd0};
     localparam [NSEG_ALL*DSTW-1:0] ALL_DPT  = {3'd2, 3'd1, 3'd0, 3'd1, 3'd0};
 

@@ -123,13 +123,22 @@ module axi4_ram #(
                 // Burst end comes from wlen, not WLAST, so a master that
                 // miscounts WLAST cannot desynchronise the B response.
                 W_DATA: if (s_axi_wvalid) begin
-                    for (b = 0; b < STRB_WIDTH; b = b + 1)
-                        if (s_axi_wstrb[b]) mem[widx][b*8 +: 8] <= s_axi_wdata[b*8 +: 8];
+                    for (b = 0; b < STRB_WIDTH; b = b + 1) begin
+                        if (s_axi_wstrb[b]) begin
+                            mem[widx][b*8 +: 8] <= s_axi_wdata[b*8 +: 8];
+                        end
+                    end
                     waddr <= next_addr(waddr, wsize, wburst, wlen);
-                    if (wlen == 8'd0) wstate <= W_RESP;
-                    else              wlen   <= wlen - 8'd1;
+                    if (wlen == 8'd0) begin
+                        wstate <= W_RESP;
+                    end
+                    else begin
+                        wlen   <= wlen - 8'd1;
+                    end
                 end
-                W_RESP: if (s_axi_bready) wstate <= W_IDLE;
+                W_RESP: if (s_axi_bready) begin
+                    wstate <= W_IDLE;
+                end
                 default: wstate <= W_IDLE;
             endcase
         end
@@ -172,7 +181,9 @@ module axi4_ram #(
         end else begin
             case (rstate)
                 R_IDLE: begin
-                    if (rvalid_r && s_axi_rready) rvalid_r <= 1'b0;
+                    if (rvalid_r && s_axi_rready) begin
+                        rvalid_r <= 1'b0;
+                    end
                     if (s_axi_arvalid) begin
                         rid    <= s_axi_arid;
                         raddr  <= s_axi_araddr;

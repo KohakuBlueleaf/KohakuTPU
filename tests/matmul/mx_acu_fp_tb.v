@@ -26,11 +26,13 @@ module mx_acu_fp_tb;
     localparam integer MW = `ACC_MW;      // accumulator mantissa bits
     localparam integer AW = MW + 8;
 
-    localparam [2:0] OP_NOP=0, OP_LOAD=1, OP_ADD=2, OP_ADD_PEER=3,
-                     OP_SEND=4, OP_EMIT=5, OP_FWD=6;
+    localparam [2:0] OP_NOP = 0, OP_LOAD = 1, OP_ADD = 2, OP_ADD_PEER = 3;
+    localparam [2:0] OP_SEND = 4, OP_EMIT = 5, OP_FWD = 6;
 
     reg clk = 0, rst = 1, en = 1;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     reg  [383:0] part_in;
     reg  [31:0]  sa, sb;
@@ -77,12 +79,16 @@ module mx_acu_fp_tb;
     function real fp16_to_real(input [15:0] f);
         real m; integer e;
         begin
-            if (f[14:10] == 5'd0) fp16_to_real = 0.0;
+            if (f[14:10] == 5'd0) begin
+                fp16_to_real = 0.0;
+            end
             else begin
                 m = 1.0 + $itor(f[9:0]) / 1024.0;
                 e = f[14:10] - 15;
                 fp16_to_real = m * (2.0 ** e);
-                if (f[15]) fp16_to_real = -fp16_to_real;
+                if (f[15]) begin
+                    fp16_to_real = -fp16_to_real;
+                end
             end
         end
     endfunction
@@ -90,12 +96,16 @@ module mx_acu_fp_tb;
     function real fp24_to_real(input [63:0] f);
         real m; integer e;
         begin
-            if (f[AW-2 -: 7] == 7'd0) fp24_to_real = 0.0;
+            if (f[AW-2 -: 7] == 7'd0) begin
+                fp24_to_real = 0.0;
+            end
             else begin
                 m = 1.0 + $itor(f[MW-1:0]) / (2.0 ** MW);
                 e = f[AW-2 -: 7] - 63;
                 fp24_to_real = m * (2.0 ** e);
-                if (f[AW-1]) fp24_to_real = -fp24_to_real;
+                if (f[AW-1]) begin
+                    fp24_to_real = -fp24_to_real;
+                end
             end
         end
     endfunction
@@ -107,11 +117,12 @@ module mx_acu_fp_tb;
         integer p, j;
         reg signed [47:0] w;
         begin
-            for (p = 0; p < 2; p = p + 1)
+            for (p = 0; p < 2; p = p + 1) begin
                 for (j = 0; j < 4; j = j + 1) begin
                     w = ($signed(iv[(2*p+1)*4+j]) <<< 19) + $signed(iv[(2*p)*4+j]);
                     part_in[(p*4+j)*48 +: 48] = w;
                 end
+            end
         end
     endtask
 
@@ -132,15 +143,22 @@ module mx_acu_fp_tb;
         begin
             checks = checks + 1;
             den = (want < 0.0) ? -want : want;
-            if (den < 1.0e-30) den = 1.0;
+            if (den < 1.0e-30) begin
+                den = 1.0;
+            end
             err = (got - want) / den;
-            if (err < 0.0) err = -err;
-            if (err > worst_rel) worst_rel = err;
+            if (err < 0.0) begin
+                err = -err;
+            end
+            if (err > worst_rel) begin
+                worst_rel = err;
+            end
             if (err > tol) begin
                 errors = errors + 1;
-                if (errors <= 10)
+                if (errors <= 10) begin
                     $display("  FAIL %0s: got %0e want %0e relerr %0e",
                              what, got, want, err);
+                end
             end
         end
     endtask
@@ -153,9 +171,11 @@ module mx_acu_fp_tb;
     task rand_block;
         integer ii, jj;
         begin
-            for (ii = 0; ii < 4; ii = ii + 1)
-                for (jj = 0; jj < 4; jj = jj + 1)
+            for (ii = 0; ii < 4; ii = ii + 1) begin
+                for (jj = 0; jj < 4; jj = jj + 1) begin
                     iv[ii*4+jj] = ($random(seed) % 131072);   // a K=32 block, 18 bits
+                end
+            end
             pack_parts;
         end
     endtask
@@ -172,14 +192,17 @@ module mx_acu_fp_tb;
 
         // -----------------------------------------------------------------
         $display("--- 1. LOAD then EMIT, flat scales ---");
-        for (i = 0; i < 16; i = i + 1) iv[i] = (i + 1) * 100;
+        for (i = 0; i < 16; i = i + 1) begin
+            iv[i] = (i + 1) * 100;
+        end
         pack_parts;
         sa = {4{SF0}}; sb = {4{SF0}}; anchor = 2*SBIAS;
         do_op(OP_LOAD, 0);
         do_op(OP_EMIT, 0);
-        for (i = 0; i < 16; i = i + 1)
+        for (i = 0; i < 16; i = i + 1) begin
             chk_rel(fp16_to_real(emit_out[i*16 +: 16]), $itor((i+1)*100),
                     fp16_eps, "load/emit");
+        end
 
         // -----------------------------------------------------------------
         $display("--- 2. per-row / per-column scales applied ---");
@@ -191,11 +214,13 @@ module mx_acu_fp_tb;
             sb[i*8 +: 8] = sf(eb_i[i]);
         end
         anchor = 2*SBIAS + 1;
-        for (i = 0; i < 16; i = i + 1) iv[i] = (i % 7) + 1;
+        for (i = 0; i < 16; i = i + 1) begin
+            iv[i] = (i % 7) + 1;
+        end
         pack_parts;
         do_op(OP_LOAD, 1);
         do_op(OP_EMIT, 1);
-        for (i = 0; i < 4; i = i + 1)
+        for (i = 0; i < 4; i = i + 1) begin
             for (j = 0; j < 4; j = j + 1) begin
                 // the INTENDED exponents, not the encoded field: reading the
                 // field back as a bare number was only meaningful when the
@@ -205,6 +230,7 @@ module mx_acu_fp_tb;
                 chk_rel(fp16_to_real(emit_out[(i*4+j)*16 +: 16]), want_r,
                         fp16_eps, "scaled");
             end
+        end
 
         // -----------------------------------------------------------------
         // Sweep K as 32 blocks into one resident sub-tile, exactly as a real
@@ -246,15 +272,18 @@ module mx_acu_fp_tb;
         $display("--- 4. resident tile: 16 sub-tiles kept independently ---");
         sa = {4{SF0}}; sb = {4{SF0}}; anchor = 2*SBIAS;
         for (t = 0; t < DEPTH; t = t + 1) begin
-            for (i = 0; i < 16; i = i + 1) iv[i] = (t + 1) * (i + 1);
+            for (i = 0; i < 16; i = i + 1) begin
+                iv[i] = (t + 1) * (i + 1);
+            end
             pack_parts;
             do_op(OP_LOAD, t[TAW-1:0]);
         end
         for (t = 0; t < DEPTH; t = t + 1) begin
             do_op(OP_EMIT, t[TAW-1:0]);
-            for (i = 0; i < 16; i = i + 1)
+            for (i = 0; i < 16; i = i + 1) begin
                 chk_rel(fp16_to_real(emit_out[i*16 +: 16]),
                         $itor((t+1)*(i+1)), fp16_eps, "resident tile");
+            end
         end
 
         // -----------------------------------------------------------------
@@ -262,58 +291,76 @@ module mx_acu_fp_tb;
         // matmul split across clusters reduces.
         $display("--- 5. peer transfer: SEND then ADD_PEER ---");
         sa = {4{SF0}}; sb = {4{SF0}}; anchor = 2*SBIAS;
-        for (i = 0; i < 16; i = i + 1) iv[i] = (i + 1) * 7;
+        for (i = 0; i < 16; i = i + 1) begin
+            iv[i] = (i + 1) * 7;
+        end
         pack_parts;
         do_op(OP_LOAD, 3);
         do_op(OP_SEND, 3);
-        for (i = 0; i < 16; i = i + 1)
+        for (i = 0; i < 16; i = i + 1) begin
             chk_rel(fp24_to_real({{(64-AW){1'b0}}, peer_out[i*AW +: AW]}), $itor((i+1)*7),
                     4.0/(2.0**MW), "peer send");
+        end
 
         peer_in = peer_out;               // loop it straight back in
-        for (i = 0; i < 16; i = i + 1) iv[i] = (i + 1) * 3;
+        for (i = 0; i < 16; i = i + 1) begin
+            iv[i] = (i + 1) * 3;
+        end
         pack_parts;
         do_op(OP_LOAD, 4);
         do_op(OP_ADD_PEER, 4);
         do_op(OP_EMIT, 4);
-        for (i = 0; i < 16; i = i + 1)
+        for (i = 0; i < 16; i = i + 1) begin
             chk_rel(fp16_to_real(emit_out[i*16 +: 16]), $itor((i+1)*10),
                     fp16_eps, "peer add");
+        end
 
         // -----------------------------------------------------------------
         // The converter must clamp, not wrap. A wrapped exponent would turn a
         // large positive result into a small one silently.
         $display("--- 6. FP16 emission saturates rather than wrapping ---");
         sa = {4{SF0}}; sb = {4{SF0}}; anchor = 2*SBIAS;
-        for (i = 0; i < 16; i = i + 1) iv[i] = 131071;
+        for (i = 0; i < 16; i = i + 1) begin
+            iv[i] = 131071;
+        end
         pack_parts;
         do_op(OP_LOAD, 6);
-        for (b = 0; b < 8; b = b + 1) do_op(OP_ADD, 6);   // ~1.05e6, way past FP16
+        for (b = 0; b < 8; b = b + 1) begin// ~1.05e6, way past FP16
+            do_op(OP_ADD, 6);
+        end
         do_op(OP_EMIT, 6);
         for (i = 0; i < 16; i = i + 1) begin
             got_r = fp16_to_real(emit_out[i*16 +: 16]);
             checks = checks + 1;
             if (got_r != 65504.0) begin
                 errors = errors + 1;
-                if (errors <= 10)
+                if (errors <= 10) begin
                     $display("  FAIL saturate: got %0f want 65504", got_r);
+                end
             end
         end
 
         $display("--- 7. FWD passes the chain straight out ---");
         sa = {4{SF0}}; sb = {4{SF0}}; anchor = 2*SBIAS;
-        for (i = 0; i < 16; i = i + 1) iv[i] = (i + 1) * 11;
+        for (i = 0; i < 16; i = i + 1) begin
+            iv[i] = (i + 1) * 11;
+        end
         pack_parts;
         do_op(OP_FWD, 5);
-        for (i = 0; i < 16; i = i + 1)
+        for (i = 0; i < 16; i = i + 1) begin
             chk_rel(fp24_to_real({{(64-AW){1'b0}}, peer_out[i*AW +: AW]}), $itor((i+1)*11),
                     4.0/(2.0**MW), "fwd");
+        end
 
         $display("========================================");
         $display("  ACC_MW=%0d (%0d-bit accumulator)  worst rel err %0e  (FP16 ULP %0e)",
                  MW, AW, worst_rel, fp16_eps);
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end

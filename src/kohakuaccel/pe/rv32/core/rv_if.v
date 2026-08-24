@@ -94,7 +94,9 @@ module rv_if #(
             end
             // After the enables above, so a redirect registered this edge wins
             // over the wrong-path fetch it is replacing.
-            if (kill) f2_valid <= 1'b0;
+            if (kill) begin
+                f2_valid <= 1'b0;
+            end
 
             if (ex_redir) begin
                 redir_q    <= 1'b1;
@@ -132,10 +134,12 @@ module rv_if #(
 `ifndef SYNTHESIS
     // A PC outside the window aliases instead of faulting, and the symptom is a
     // program that executes something plausible from the wrong address.
-    always @(posedge clk)
-        if (resetn && run && f2_valid && (f2_pc[31:IAW+2] != 0))
+    always @(posedge clk) begin
+        if (resetn && run && f2_valid && (f2_pc[31:IAW+2] != 0)) begin
             $display("%0t ERROR rv_if: PC %h is outside the %0d-word instruction window -- the fetch aliased",
                      $time, f2_pc, IMEM_WORDS);
+        end
+    end
 `endif
 
 endmodule

@@ -72,11 +72,8 @@ module InstReceiver #(
     parameter WORD_WIDTH = STRB_WIDTH;
     parameter WORD_SIZE = DATA_WIDTH/WORD_WIDTH;
 
-    localparam [1:0]
-        WRITE_WAIT = 2'b00,
-        WRITE_BURSTING = 2'b01,
-        WRITE_LAST = 2'b10,
-        WRITE_DONE = 2'b11;
+    localparam [1:0] WRITE_WAIT = 2'b00, WRITE_BURSTING = 2'b01;
+    localparam [1:0] WRITE_LAST = 2'b10, WRITE_DONE = 2'b11;
     reg write_state_reg=WRITE_WAIT, write_state_next;
 
     reg [ID_WIDTH-1:0] write_id_reg={ID_WIDTH{1'b0}}, write_id_next;
@@ -209,11 +206,8 @@ module InstReceiver #(
         end
     end
 
-    localparam [1:0]
-        READ_WAIT = 2'b00,
-        READ_BURSTING = 2'b01,
-        READ_LAST = 2'b10,
-        READ_DONE = 2'b11;
+    localparam [1:0] READ_WAIT = 2'b00, READ_BURSTING = 2'b01;
+    localparam [1:0] READ_LAST = 2'b10, READ_DONE = 2'b11;
     reg [1:0] read_state_reg=READ_WAIT, read_state_next;
 
     reg [ID_WIDTH-1:0] read_id_reg={ID_WIDTH{1'b0}}, read_id_next;

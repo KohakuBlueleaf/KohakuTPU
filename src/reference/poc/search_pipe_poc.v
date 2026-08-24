@@ -23,22 +23,34 @@ module search_pipe_poc #(
     for (g = 0; g < LANES; g = g + 1) begin : g_lane
         // Models val_r, which synthesis maps into the stage-1 DSP's MREG.
         reg [VW-1:0] val_r;
-        always @(posedge clk) if (rst) val_r <= {VW{1'b0}};
-                              else     val_r <= val_in[g*VW +: VW];
+        always @(posedge clk) begin
+            if (rst) begin
+                val_r <= {VW{1'b0}};
+            end
+            else begin
+                val_r <= val_in[g*VW +: VW];
+            end
+        end
 
         // smear: log2(VW) levels of OR
         reg [VW-1:0] y;
         always @(*) begin
             y = val_r;
-            for (s = 1; s < VW; s = s * 2) y = y | (y >> s);
+            for (s = 1; s < VW; s = s * 2) begin
+                y = y | (y >> s);
+            end
         end
 
         if (DEPTH == 0) begin : g_flat
             wire [VW-1:0]    oh   = y & ~(y >> 1);
             wire [VW+15:0]   prod = val_r * oh[15:0];
             always @(posedge clk) begin
-                if (rst) p_out[g*(VW+16) +: VW+16] <= {(VW+16){1'b0}};
-                else     p_out[g*(VW+16) +: VW+16] <= prod;
+                if (rst) begin
+                    p_out[g*(VW+16) +: VW+16] <= {(VW+16){1'b0}};
+                end
+                else begin
+                    p_out[g*(VW+16) +: VW+16] <= prod;
+                end
             end
         end else begin : g_piped
             reg [VW-1:0]   y_r, v_r2;

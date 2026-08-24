@@ -10,14 +10,16 @@ module saxpy_mesh_tb;
     localparam FW = 288, PW = 4, DW = 256, AW = 40, IDW = 4, MW = 512;
 
     // the orchestrator map, control-registers.md s2.2
-    localparam [31:0] A_STATUS = 32'h08, A_CAPS = 32'h10,
-                      A_PROG_DST = 32'h40, A_PROG_LEN = 32'h48,
-                      A_PROG_KICK = 32'h50, A_PROG_CRED = 32'h60,
-                      A_PROG_BASE = 32'h68, A_SIG_DONE = 32'h70,
-                      A_NODE = 32'h1000, A_STAGE = 32'h2000;
+    localparam [31:0] A_STATUS = 32'h08, A_CAPS = 32'h10, A_PROG_DST = 32'h40;
+    localparam [31:0] A_PROG_LEN = 32'h48, A_PROG_KICK = 32'h50;
+    localparam [31:0] A_PROG_CRED = 32'h60, A_PROG_BASE = 32'h68;
+    localparam [31:0] A_SIG_DONE = 32'h70, A_NODE = 32'h1000;
+    localparam [31:0] A_STAGE = 32'h2000;
 
     reg clk = 0, rstn = 0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     // ---- S_AXI_MEM master (256-bit) ----
     reg  [IDW-1:0] sm_awid = 0, sm_arid = 0;
@@ -131,7 +133,11 @@ module saxpy_mesh_tb;
         begin
             mag = v[31] ? -v : v;
             p = 0;
-            for (i = 0; i < 24; i = i + 1) if (mag[i]) p = i;
+            for (i = 0; i < 24; i = i + 1) begin
+                if (mag[i]) begin
+                    p = i;
+                end
+            end
             e  = 8'd127 + p;
             sh = mag << (23 - p);
             i2f = (mag == 32'd0) ? 32'd0 : {v[31], e, sh[22:0]};
@@ -154,12 +160,18 @@ module saxpy_mesh_tb;
         begin
             @(negedge clk);
             sc_awaddr = a; sc_awvalid = 1;
-            while (!sc_awready) @(negedge clk);
+            while (!sc_awready) begin
+                @(negedge clk);
+            end
             @(negedge clk); sc_awvalid = 0;
             sc_wdata = d; sc_wvalid = 1;
-            while (!sc_wready) @(negedge clk);
+            while (!sc_wready) begin
+                @(negedge clk);
+            end
             @(negedge clk); sc_wvalid = 0;
-            while (!sc_bvalid) @(negedge clk);
+            while (!sc_bvalid) begin
+                @(negedge clk);
+            end
             @(negedge clk);
         end
     endtask
@@ -169,9 +181,13 @@ module saxpy_mesh_tb;
         begin
             @(negedge clk);
             sc_araddr = a; sc_arvalid = 1;
-            while (!sc_arready) @(negedge clk);
+            while (!sc_arready) begin
+                @(negedge clk);
+            end
             @(negedge clk); sc_arvalid = 0;
-            while (!sc_rvalid) @(negedge clk);
+            while (!sc_rvalid) begin
+                @(negedge clk);
+            end
             cr_data = sc_rdata;
             @(negedge clk);
         end
@@ -181,12 +197,18 @@ module saxpy_mesh_tb;
         begin
             @(negedge clk);
             sm_awaddr = a; sm_awvalid = 1;
-            while (!sm_awready) @(negedge clk);
+            while (!sm_awready) begin
+                @(negedge clk);
+            end
             @(negedge clk); sm_awvalid = 0;
             sm_wdata = d; sm_wstrb = {DW/8{1'b1}}; sm_wlast = 1; sm_wvalid = 1;
-            while (!sm_wready) @(negedge clk);
+            while (!sm_wready) begin
+                @(negedge clk);
+            end
             @(negedge clk); sm_wvalid = 0; sm_wlast = 0;
-            while (!sm_bvalid) @(negedge clk);
+            while (!sm_bvalid) begin
+                @(negedge clk);
+            end
             @(negedge clk);
         end
     endtask
@@ -196,9 +218,13 @@ module saxpy_mesh_tb;
         begin
             @(negedge clk);
             sm_araddr = a; sm_arvalid = 1;
-            while (!sm_arready) @(negedge clk);
+            while (!sm_arready) begin
+                @(negedge clk);
+            end
             @(negedge clk); sm_arvalid = 0;
-            while (!sm_rvalid) @(negedge clk);
+            while (!sm_rvalid) begin
+                @(negedge clk);
+            end
             mr_data = sm_rdata;
             @(negedge clk);
         end
@@ -269,7 +295,9 @@ module saxpy_mesh_tb;
     integer i, s;
     reg [255:0] line, exp;
     initial begin
-        for (i = 0; i < 2048; i = i + 1) u_ram.mem[i] = {MW{1'b0}};
+        for (i = 0; i < 2048; i = i + 1) begin
+            u_ram.mem[i] = {MW{1'b0}};
+        end
         repeat (20) @(negedge clk);
         rstn = 1;
         repeat (20) @(negedge clk);
@@ -281,17 +309,27 @@ module saxpy_mesh_tb;
         chk(cr_data[2], 1'b1, "STATUS mesh_ready");
 
         // 2. host upload: x at 0x400, y at 0x800, n=16 whole-valued floats
-        for (s = 0; s < 8; s = s + 1) line[s*32 +: 32] = i2f(s - 5);
+        for (s = 0; s < 8; s = s + 1) begin
+            line[s*32 +: 32] = i2f(s - 5);
+        end
         mwr(40'h400, line);
-        for (s = 0; s < 8; s = s + 1) line[s*32 +: 32] = i2f(8 + s - 5);
+        for (s = 0; s < 8; s = s + 1) begin
+            line[s*32 +: 32] = i2f(8 + s - 5);
+        end
         mwr(40'h420, line);
-        for (s = 0; s < 8; s = s + 1) line[s*32 +: 32] = i2f(200 - 3*s);
+        for (s = 0; s < 8; s = s + 1) begin
+            line[s*32 +: 32] = i2f(200 - 3*s);
+        end
         mwr(40'h800, line);
-        for (s = 0; s < 8; s = s + 1) line[s*32 +: 32] = i2f(200 - 3*(8 + s));
+        for (s = 0; s < 8; s = s + 1) begin
+            line[s*32 +: 32] = i2f(200 - 3*(8 + s));
+        end
         mwr(40'h820, line);
 
         // 2b. upload round-trip before any compute touches it
-        for (s = 0; s < 8; s = s + 1) exp[s*32 +: 32] = i2f(200 - 3*(8 + s));
+        for (s = 0; s < 8; s = s + 1) begin
+            exp[s*32 +: 32] = i2f(200 - 3*(8 + s));
+        end
         mrd(40'h820);
         chk(mr_data, exp, "upload round-trip, y line 1");
 
@@ -304,8 +342,9 @@ module saxpy_mesh_tb;
 
         // 4. the result, read back the way the host reads it
         for (i = 0; i < 2; i = i + 1) begin
-            for (s = 0; s < 8; s = s + 1)
+            for (s = 0; s < 8; s = s + 1) begin
                 exp[s*32 +: 32] = i2f(2*(i*8 + s - 5) + 200 - 3*(i*8 + s));
+            end
             mrd_expect(40'h800 + i*32, exp, "unit0 y line");
         end
 
@@ -316,28 +355,36 @@ module saxpy_mesh_tb;
         chk(cr_data[0], 1'b1, "node (1,0) valid");
 
         // 6. the second unit at (1,2), staged at PROG_BASE 1: y2 = 3*x + y2
-        for (s = 0; s < 8; s = s + 1) line[s*32 +: 32] = i2f(100 + s);
+        for (s = 0; s < 8; s = s + 1) begin
+            line[s*32 +: 32] = i2f(100 + s);
+        end
         mwr(40'hC00, line);
         cwr(A_SIG_DONE, 64'd0);
         stage_flit(8'd1, inst_flit(8'h77, 1'b1,
                    saxpy_inst(24'd8, i2f(3), 64'h400, 64'hC00)));
         dispatch(8'h21 /*{y2,x1}*/, 16'd1, 16'd1, 16'd4);
         wait_done(1);
-        for (s = 0; s < 8; s = s + 1) exp[s*32 +: 32] = i2f(4*s + 85);
+        for (s = 0; s < 8; s = s + 1) begin
+            exp[s*32 +: 32] = i2f(4*s + 85);
+        end
         mrd_expect(40'hC00, exp, "unit1 y line");
         crd(A_NODE + 32'h8 * 8'h21);  // NODE_STATUS[{2,1}]
         chk(cr_data[63:56], 8'h01, "node (1,2) reported SIG_BATCH");
         chk(cr_data[55:24], 32'h77, "batch arg is the program id");
 
         // 7. x untouched by either run
-        for (s = 0; s < 8; s = s + 1) exp[s*32 +: 32] = i2f(s - 5);
+        for (s = 0; s < 8; s = s + 1) begin
+            exp[s*32 +: 32] = i2f(s - 5);
+        end
         mrd(40'h400);
         chk(mr_data, exp, "x operand untouched");
 
-        if (errors == 0)
+        if (errors == 0) begin
             $display("PASS saxpy_mesh_tb: %0d checks", checks);
-        else
+        end
+        else begin
             $display("FAIL saxpy_mesh_tb: %0d errors", errors);
+        end
         $finish;
     end
 

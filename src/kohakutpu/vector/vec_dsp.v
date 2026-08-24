@@ -102,7 +102,9 @@ module vec_dsp #(
 
         // Matches g_prim: only `am_r` is reset, the datapath is not.
         always @(posedge clk) begin
-            if (rst) am_r <= 0;
+            if (rst) begin
+                am_r <= 0;
+            end
             else if (en) begin
                 a_r  <= a;
                 b_r  <= b;

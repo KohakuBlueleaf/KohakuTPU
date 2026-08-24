@@ -32,44 +32,92 @@ module sb_mesh_e2e_tb;
 
     // ---------------------------------------------------------------- clocks
     reg bclk0 = 0, bclk1 = 0, bclk2 = 0, bclk3 = 0;
-    always #1.250 bclk0 = ~bclk0;
-    always #1.373 bclk1 = ~bclk1;
-    always #1.611 bclk2 = ~bclk2;
-    always #1.187 bclk3 = ~bclk3;
+    always begin
+        #1.250 bclk0 = ~bclk0;
+    end
+    always begin
+        #1.373 bclk1 = ~bclk1;
+    end
+    always begin
+        #1.611 bclk2 = ~bclk2;
+    end
+    always begin
+        #1.187 bclk3 = ~bclk3;
+    end
 
     reg clk_ctrl = 0, clk_xdma = 0;
-    always #5.000 clk_ctrl = ~clk_ctrl;
-    always #2.000 clk_xdma = ~clk_xdma;
+    always begin
+        #5.000 clk_ctrl = ~clk_ctrl;
+    end
+    always begin
+        #2.000 clk_xdma = ~clk_xdma;
+    end
 
     // Station port clocks. Ports 0 and 1 of station s both sit here at NQ=2,
     // so a mesh on port 0 must take clk_s<s> as its axi_aclk.
     reg clk_s0 = 0, clk_s1 = 0, clk_s2 = 0, clk_s3 = 0;
-    always #2.109 clk_s0 = ~clk_s0;
-    always #1.667 clk_s1 = ~clk_s1;
-    always #2.773 clk_s2 = ~clk_s2;
-    always #2.373 clk_s3 = ~clk_s3;
+    always begin
+        #2.109 clk_s0 = ~clk_s0;
+    end
+    always begin
+        #1.667 clk_s1 = ~clk_s1;
+    end
+    always begin
+        #2.773 clk_s2 = ~clk_s2;
+    end
+    always begin
+        #2.373 clk_s3 = ~clk_s3;
+    end
 
     reg clk_ddr0 = 0, clk_ddr1 = 0, clk_ddr2 = 0, clk_ddr3 = 0;
-    always #1.667 clk_ddr0 = ~clk_ddr0;
-    always #1.712 clk_ddr1 = ~clk_ddr1;
-    always #1.623 clk_ddr2 = ~clk_ddr2;
-    always #1.749 clk_ddr3 = ~clk_ddr3;
+    always begin
+        #1.667 clk_ddr0 = ~clk_ddr0;
+    end
+    always begin
+        #1.712 clk_ddr1 = ~clk_ddr1;
+    end
+    always begin
+        #1.623 clk_ddr2 = ~clk_ddr2;
+    end
+    always begin
+        #1.749 clk_ddr3 = ~clk_ddr3;
+    end
 
     // axi_aclk IS the MAG clock and noc_clk the fabric, so the station port
     // serving S_AXI_MEM takes axi_aclk. See B11.
     reg noc0 = 0, noc1 = 0;
-    always #2.109 noc0 = ~noc0;
-    always #1.667 noc1 = ~noc1;
+    always begin
+        #2.109 noc0 = ~noc0;
+    end
+    always begin
+        #1.667 noc1 = ~noc1;
+    end
     reg mat0 = 0, vec0 = 0, mag0 = 0, dram0 = 0;
     reg mat1 = 0, vec1 = 0, mag1 = 0, dram1 = 0;
-    always #1.451 mat0  = ~mat0;
-    always #1.889 vec0  = ~vec0;
-    always #2.237 mag0  = ~mag0;
-    always #1.913 dram0 = ~dram0;
-    always #1.559 mat1  = ~mat1;
-    always #2.017 vec1  = ~vec1;
-    always #1.783 mag1  = ~mag1;
-    always #2.111 dram1 = ~dram1;
+    always begin
+        #1.451 mat0  = ~mat0;
+    end
+    always begin
+        #1.889 vec0  = ~vec0;
+    end
+    always begin
+        #2.237 mag0  = ~mag0;
+    end
+    always begin
+        #1.913 dram0 = ~dram0;
+    end
+    always begin
+        #1.559 mat1  = ~mat1;
+    end
+    always begin
+        #2.017 vec1  = ~vec1;
+    end
+    always begin
+        #1.783 mag1  = ~mag1;
+    end
+    always begin
+        #2.111 dram1 = ~dram1;
+    end
 
     reg rstn = 0;
     wire bus_rst = !rstn;
@@ -94,19 +142,13 @@ module sb_mesh_e2e_tb;
 
     // Segment k = station*NQ + port. Port 0 has XLT 0, so the top three bits are
     // consumed and the mesh sees 40; port 1 is a 64K window passing its base on.
-    localparam [NS*AW-1:0] SEG_BASE =
-        { ram_win(3), mesh_win(3), ram_win(2), mesh_win(2),
-          ram_win(1), mesh_win(1), ram_win(0), mesh_win(0) };
-    localparam [NS*AW-1:0] SEG_MASK =
-        { RAM_MASK, MESH_MASK, RAM_MASK, MESH_MASK,
-          RAM_MASK, MESH_MASK, RAM_MASK, MESH_MASK };
+    localparam [NS*AW-1:0] SEG_BASE = { ram_win(3), mesh_win(3), ram_win(2), mesh_win(2), ram_win(1), mesh_win(1), ram_win(0), mesh_win(0) };
+    localparam [NS*AW-1:0] SEG_MASK = { RAM_MASK, MESH_MASK, RAM_MASK, MESH_MASK, RAM_MASK, MESH_MASK, RAM_MASK, MESH_MASK };
     // XLT 0 everywhere: the window is consumed and each endpoint sees an offset
     // from its own base, so a 512-word RAM is not handed word 16,400.
     localparam [NS*AW-1:0] SEG_XLT = {NS*AW{1'b0}};
-    localparam [NS*DSTW-1:0] SEG_DST =
-        { 2'd3, 2'd3, 2'd2, 2'd2, 2'd1, 2'd1, 2'd0, 2'd0 };
-    localparam [NS*DSTW-1:0] SEG_DPORT =
-        { 2'd1, 2'd0, 2'd1, 2'd0, 2'd1, 2'd0, 2'd1, 2'd0 };
+    localparam [NS*DSTW-1:0] SEG_DST = { 2'd3, 2'd3, 2'd2, 2'd2, 2'd1, 2'd1, 2'd0, 2'd0 };
+    localparam [NS*DSTW-1:0] SEG_DPORT = { 2'd1, 2'd0, 2'd1, 2'd0, 2'd1, 2'd0, 2'd1, 2'd0 };
 
     // ------------------------------------------------------- manager plumbing
     reg  [NM*MAXID-1:0] mp_awid = 0, mp_arid = 0;
@@ -350,10 +392,24 @@ module sb_mesh_e2e_tb;
     // Manager 0 is the 100 MHz jtag port and 1/2 are the 250 MHz XDMA pair, so a
     // task that assumed one clock handshook against the wrong edge for manager 0.
     task ntick(input integer mg);
-        begin if (mg == 0) @(negedge clk_ctrl); else @(negedge clk_xdma); end
+        begin
+            if (mg == 0) begin
+                @(negedge clk_ctrl);
+            end
+            else begin
+                @(negedge clk_xdma);
+            end
+        end
     endtask
     task ptick(input integer mg);
-        begin if (mg == 0) @(posedge clk_ctrl); else @(posedge clk_xdma); end
+        begin
+            if (mg == 0) begin
+                @(posedge clk_ctrl);
+            end
+            else begin
+                @(posedge clk_xdma);
+            end
+        end
     endtask
 
     task mwrite(input integer mg, input [AW-1:0] a, input [7:0] len,
@@ -368,7 +424,12 @@ module sb_mesh_e2e_tb;
             spin = 0;
             while (spin < 20000) begin
                 ptick(mg);
-                if (mp_awready[mg]) spin = 30000; else spin = spin + 1;
+                if (mp_awready[mg]) begin
+                    spin = 30000;
+                end
+                else begin
+                    spin = spin + 1;
+                end
             end
             ntick(mg); mp_awvalid[mg] = 1'b0;
 
@@ -381,7 +442,12 @@ module sb_mesh_e2e_tb;
                 spin = 0;
                 while (spin < 20000) begin
                     ptick(mg);
-                    if (mp_wready[mg]) spin = 30000; else spin = spin + 1;
+                    if (mp_wready[mg]) begin
+                        spin = 30000;
+                    end
+                    else begin
+                        spin = spin + 1;
+                    end
                 end
                 ntick(mg); mp_wvalid[mg] = 1'b0;
             end
@@ -407,7 +473,12 @@ module sb_mesh_e2e_tb;
             spin = 0;
             while (spin < 20000) begin
                 ptick(mg);
-                if (mp_arready[mg]) spin = 30000; else spin = spin + 1;
+                if (mp_arready[mg]) begin
+                    spin = 30000;
+                end
+                else begin
+                    spin = spin + 1;
+                end
             end
             ntick(mg); mp_arvalid[mg] = 1'b0;
             spin = 0;
@@ -426,9 +497,15 @@ module sb_mesh_e2e_tb;
     // data did not arrive: manager -> station port -> mesh DRAM master.
     integer n_m1_aw = 0, n_m1_w = 0, n_m1_b = 0;
     always @(posedge clk_xdma) if (rstn) begin
-        if (mp_awvalid[1] && mp_awready[1]) n_m1_aw = n_m1_aw + 1;
-        if (mp_wvalid[1]  && mp_wready[1])  n_m1_w  = n_m1_w  + 1;
-        if (mp_bvalid[1])                   n_m1_b  = n_m1_b  + 1;
+        if (mp_awvalid[1] && mp_awready[1]) begin
+            n_m1_aw = n_m1_aw + 1;
+        end
+        if (mp_wvalid[1]  && mp_wready[1]) begin
+            n_m1_w  = n_m1_w  + 1;
+        end
+        if (mp_bvalid[1]) begin
+            n_m1_b  = n_m1_b  + 1;
+        end
     end
     integer n_s0_aw = 0, n_s0_w = 0, v_s0_aw = 0, r_s0_aw = 0;
     reg [MESH_AW-1:0] seen_awaddr = 0;
@@ -439,14 +516,24 @@ module sb_mesh_e2e_tb;
             seen_awaddr = sp_awaddr[0*AW +: MESH_AW];
             seen_awlen  = sp_awlen[0*8 +: 8];
         end
-        if (sp_awready[0]) r_s0_aw = r_s0_aw + 1;
-        if (sp_awvalid[0] && sp_awready[0]) n_s0_aw = n_s0_aw + 1;
-        if (sp_wvalid[0]  && sp_wready[0])  n_s0_w  = n_s0_w  + 1;
+        if (sp_awready[0]) begin
+            r_s0_aw = r_s0_aw + 1;
+        end
+        if (sp_awvalid[0] && sp_awready[0]) begin
+            n_s0_aw = n_s0_aw + 1;
+        end
+        if (sp_wvalid[0]  && sp_wready[0]) begin
+            n_s0_w  = n_s0_w  + 1;
+        end
     end
     integer n_d0_aw = 0, n_d0_w = 0;
     always @(posedge dram0) if (rstn) begin
-        if (dm_awvalid[0] && dm_awready[0]) n_d0_aw = n_d0_aw + 1;
-        if (dm_wvalid[0]  && dm_wready[0])  n_d0_w  = n_d0_w  + 1;
+        if (dm_awvalid[0] && dm_awready[0]) begin
+            n_d0_aw = n_d0_aw + 1;
+        end
+        if (dm_wvalid[0]  && dm_wready[0]) begin
+            n_d0_w  = n_d0_w  + 1;
+        end
     end
 
     task hops;
@@ -463,7 +550,9 @@ module sb_mesh_e2e_tb;
             checks = checks + 1;
             if (!cond) begin
                 errors = errors + 1;
-                if (errors < 12) $display("  FAIL %0s [%0d]", what, where);
+                if (errors < 12) begin
+                    $display("  FAIL %0s [%0d]", what, where);
+                end
             end
         end
     endtask
@@ -501,7 +590,9 @@ module sb_mesh_e2e_tb;
         $display("--- 3. read mesh0 back through the bus ---");
         mread(1, mesh_win(0) | {3'd0, OFF}, 8'd0, 3'd6);
         chk(rd_n > 0, "mesh0 read returned a beat", 0);
-        if (rd_n > 0) chk(rd_beat[0] === PAT0, "mesh0 read data matches", 0);
+        if (rd_n > 0) begin
+            chk(rd_beat[0] === PAT0, "mesh0 read data matches", 0);
+        end
 
         $display("--- 4. the narrow endpoints, 32-bit manager 0 ---");
         mwrite(0, ram_win(0) | 43'h40, 8'd0, 3'd2,
@@ -517,11 +608,13 @@ module sb_mesh_e2e_tb;
 
         chk(stat_decerr == 32'd0, "no decode errors anywhere", 0);
 
-        if (errors == 0)
+        if (errors == 0) begin
             $display("  PASS sb_mesh_e2e_tb: %0d checks", checks);
-        else
+        end
+        else begin
             $display("  FAIL sb_mesh_e2e_tb: %0d errors, %0d checks",
                      errors, checks);
+        end
         $finish;
     end
 

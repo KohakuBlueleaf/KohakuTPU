@@ -50,8 +50,7 @@
 `endif
 
 module rv_mc_body #(
-    parameter integer NPE = 2
-);
+    parameter integer NPE = 2 );
     localparam integer FW  = 288;
     localparam integer PW  = 4;
     localparam integer DW  = 256;
@@ -70,7 +69,9 @@ module rv_mc_body #(
     localparam [7:0] BUF_SPAD = 8'd0, BUF_IMEM = 8'd1;
 
     reg clk = 1'b0, rstn = 1'b0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     integer errors = 0, checks = 0;
     task chk(input [63:0] got, input [63:0] want, input [255:0] what);
@@ -147,25 +148,35 @@ module rv_mc_body #(
             wire [30:0] t_fa = dut.g_pe[g].g_have.u_pe.u_l1.fill_addr;
             wire [30:0] t_wa = dut.g_pe[g].g_have.u_pe.u_l1.wb_addr;
             always @(posedge clk) if (rstn) begin
-                if (dut.g_pe[g].g_have.u_pe.u_l1.fill_valid &&
-                    dut.g_pe[g].g_have.u_pe.u_l1.fill_ready)
+                if (
+                    dut.g_pe[g].g_have.u_pe.u_l1.fill_valid
+                    && dut.g_pe[g].g_have.u_pe.u_l1.fill_ready
+                ) begin
                     $display("  TRMEM %0t pe%0d FILLREQ line %0d", $time, g,
                              t_fa[30:5]);
-                if (dut.g_pe[g].g_have.u_pe.u_req.send_valid &&
-                    dut.g_pe[g].g_have.u_pe.u_req.send_ready)
+                end
+                if (
+                    dut.g_pe[g].g_have.u_pe.u_req.send_valid
+                    && dut.g_pe[g].g_have.u_pe.u_req.send_ready
+                ) begin
                     $display("  TRMEM %0t pe%0d SEND ty %h addr %h", $time, g,
                              dut.g_pe[g].g_have.u_pe.u_req.send_flit[271:268],
                              dut.g_pe[g].g_have.u_pe.u_req.send_flit[255:216]);
-                if (dut.g_pe[g].g_have.u_pe.u_l1.resp_valid)
+                end
+                if (dut.g_pe[g].g_have.u_pe.u_l1.resp_valid) begin
                     $display("  TRMEM %0t pe%0d FILLRSP w0 %08x w1 %08x", $time,
                              g, dut.g_pe[g].g_have.u_pe.u_l1.resp_data[31:0],
                              dut.g_pe[g].g_have.u_pe.u_l1.resp_data[63:32]);
-                if (dut.g_pe[g].g_have.u_pe.u_l1.wb_valid &&
-                    dut.g_pe[g].g_have.u_pe.u_l1.wb_ready)
+                end
+                if (
+                    dut.g_pe[g].g_have.u_pe.u_l1.wb_valid
+                    && dut.g_pe[g].g_have.u_pe.u_l1.wb_ready
+                ) begin
                     $display("  TRMEM %0t pe%0d WB line %0d w0 %08x w1 %08x",
                              $time, g, t_wa[30:5],
                              dut.g_pe[g].g_have.u_pe.u_l1.wb_data[31:0],
                              dut.g_pe[g].g_have.u_pe.u_l1.wb_data[63:32]);
+                end
             end
         end
     end
@@ -176,58 +187,78 @@ module rv_mc_body #(
     // to another core's address, which reads back as a stale line at one end
     // and a corrupted line at the other.
     always @(posedge clk) if (rstn) begin
-        if (dut.u_mag.g_port[0].u_eng.take_wr_req)
+        if (dut.u_mag.g_port[0].u_eng.take_wr_req) begin
             $display("  TRMAG %0t open  slot %0d addr %h", $time,
                      dut.u_mag.g_port[0].u_eng.ws_free,
                      dut.u_mag.g_port[0].u_eng.wi_addr);
-        if (dut.u_mag.g_port[0].u_eng.take_wr_data)
+        end
+        if (dut.u_mag.g_port[0].u_eng.take_wr_data) begin
             $display("  TRMAG %0t data  slot %0d w0 %08x w1 %08x", $time,
                      dut.u_mag.g_port[0].u_eng.ws_match,
                      dut.u_mag.g_port[0].u_eng.wq_flit[31:0],
                      dut.u_mag.g_port[0].u_eng.wq_flit[63:32]);
-        if (dut.u_mag.g_port[0].u_eng.ws_issue)
+        end
+        if (dut.u_mag.g_port[0].u_eng.ws_issue) begin
             $display("  TRMAG %0t issue slot %0d addr %h", $time,
                      dut.u_mag.g_port[0].u_eng.ws_pick,
                      dut.u_mag.g_port[0].u_eng.ws_addr[
                          dut.u_mag.g_port[0].u_eng.ws_pick]);
-        if (dut.u_mag.g_port[0].u_eng.m_arvalid &&
-            dut.u_mag.g_port[0].u_eng.m_arready)
+        end
+        if (
+            dut.u_mag.g_port[0].u_eng.m_arvalid
+            && dut.u_mag.g_port[0].u_eng.m_arready
+        ) begin
             $display("  TRAXI %0t AR addr %h len %0d", $time,
                      dut.u_mag.g_port[0].u_eng.m_araddr,
                      dut.u_mag.g_port[0].u_eng.m_arlen);
-        if (dut.u_mag.g_port[0].u_eng.m_awvalid &&
-            dut.u_mag.g_port[0].u_eng.m_awready)
+        end
+        if (
+            dut.u_mag.g_port[0].u_eng.m_awvalid
+            && dut.u_mag.g_port[0].u_eng.m_awready
+        ) begin
             $display("  TRAXI %0t AW addr %h", $time,
                      dut.u_mag.g_port[0].u_eng.m_awaddr);
-        if (dut.u_mag.u_dram.rd_take)
+        end
+        if (dut.u_mag.u_dram.rd_take) begin
             $display("  TRARB %0t RDtake sel %0d cap %h  (qv %b qw %b)", $time,
                      dut.u_mag.u_dram.rd_sel, dut.u_mag.u_dram.sel_rad,
                      dut.u_mag.u_dram.q_valid, dut.u_mag.u_dram.q_write);
-        if (dut.u_mag.u_dram.wr_take)
+        end
+        if (dut.u_mag.u_dram.wr_take) begin
             $display("  TRARB %0t WRtake sel %0d cap %h  (qv %b qw %b)", $time,
                      dut.u_mag.u_dram.wr_sel, dut.u_mag.u_dram.sel_wad,
                      dut.u_mag.u_dram.q_valid, dut.u_mag.u_dram.q_write);
-        if (dut.u_ram.s_axi_arvalid && dut.u_ram.s_axi_arready)
+        end
+        if (dut.u_ram.s_axi_arvalid && dut.u_ram.s_axi_arready) begin
             $display("  TRRAM %0t ARcap addr %h", $time, dut.u_ram.s_axi_araddr);
-        if (dut.u_ram.s_axi_awvalid && dut.u_ram.s_axi_awready)
+        end
+        if (dut.u_ram.s_axi_awvalid && dut.u_ram.s_axi_awready) begin
             $display("  TRRAM %0t AWcap addr %h", $time, dut.u_ram.s_axi_awaddr);
-        if (dut.u_ram.s_axi_wvalid && dut.u_ram.s_axi_wready)
+        end
+        if (dut.u_ram.s_axi_wvalid && dut.u_ram.s_axi_wready) begin
             $display("  TRRAM %0t WRITE idx %0d w0 %08x strb %h", $time,
                      dut.u_ram.widx, dut.u_ram.s_axi_wdata[31:0],
                      dut.u_ram.s_axi_wstrb);
-        if ((dut.u_ram.rstate == 1'b1) &&
-            (!dut.u_ram.rvalid_r || dut.u_ram.s_axi_rready) &&
-            (dut.u_ram.rbeats != 9'd0))
+        end
+        if (
+            (dut.u_ram.rstate == 1'b1)
+            && (!dut.u_ram.rvalid_r || dut.u_ram.s_axi_rready)
+            && (dut.u_ram.rbeats != 9'd0)
+        ) begin
             $display("  TRRAM %0t READ  idx %0d w0 %08x", $time,
                      dut.u_ram.ridx, dut.u_ram.mem[dut.u_ram.ridx][31:0]);
-        if (dut.u_mag.g_port[0].u_eng.r_valid &&
-            dut.u_mag.g_port[0].u_eng.r_ready)
+        end
+        if (
+            dut.u_mag.g_port[0].u_eng.r_valid
+            && dut.u_mag.g_port[0].u_eng.r_ready
+        ) begin
             $display("  TRAXI %0t R  w0 %08x last %b -> pe at %0d,%0d txn %h",
                      $time, dut.u_mag.g_port[0].u_eng.r_data[31:0],
                      dut.u_mag.g_port[0].u_eng.r_last,
                      dut.u_mag.g_port[0].u_eng.rq_x,
                      dut.u_mag.g_port[0].u_eng.rq_y,
                      dut.u_mag.g_port[0].u_eng.rq_txn);
+        end
     end
 `endif
 
@@ -244,18 +275,22 @@ module rv_mc_body #(
     // converts, so the two can never disagree about which word is which.
     task dram_write_init;
         begin
-            for (i = 0; i < RAM_DEPTH; i = i + 1)
-                for (k = 0; k < 8; k = k + 1)
+            for (i = 0; i < RAM_DEPTH; i = i + 1) begin
+                for (k = 0; k < 8; k = k + 1) begin
                     dut.u_ram.mem[i][k*32 +: 32] = dinit[i * 8 + k];
+                end
+            end
         end
     endtask
 
     task dram_checksum(output reg [31:0] s);
         begin
             s = 32'd0;
-            for (i = 0; i < RAM_DEPTH; i = i + 1)
-                for (k = 0; k < 8; k = k + 1)
+            for (i = 0; i < RAM_DEPTH; i = i + 1) begin
+                for (k = 0; k < 8; k = k + 1) begin
                     s = s + dut.u_ram.mem[i][k*32 +: 32] * (i * 8 + k + 1);
+                end
+            end
         end
     endtask
 
@@ -291,7 +326,9 @@ module rv_mc_body #(
             for (c = 0; c < NPE; c = c + 1) begin
                 // Zeroed BEFORE any kick: a program clearing its own mailbox
                 // could erase a peer's push, which no doorbell survives.
-                for (i = 0; i < IW; i = i + 1) u_ag.img[i] = 32'd0;
+                for (i = 0; i < IW; i = i + 1) begin
+                    u_ag.img[i] = 32'd0;
+                end
                 u_ag.load_image(px(c), py(c), BUF_SPAD, SPADZ, 0);
                 fn = $sformatf("%s/mc/%s/core%0d.hex", `PE_DIR, dir, c);
                 $readmemh(fn, u_ag.img);
@@ -300,8 +337,9 @@ module rv_mc_body #(
             end
 
             sig_before = u_ag.sig_n;
-            for (c = 0; c < NPE; c = c + 1)
+            for (c = 0; c < NPE; c = c + 1) begin
                 u_ag.kick(px(c), py(c), 8'h50 + c[7:0], 1'b0, 8'd1, 32'd0, 32'd0);
+            end
             u_ag.wait_signal(sig_before + NPE, LIMIT, ok);
             chk(ok, 1, "every core retired");
 
@@ -309,16 +347,19 @@ module rv_mc_body #(
                 $display("    core%0d (%0d,%0d)  halt %08x  code %02h  cycles %8d  retired %7d",
                          c, px(c), py(c), u_ag.sig_arg_at[sidx(c)],
                          u_ag.sig_code_at[sidx(c)], pcyc[c], pret[c]);
-                if (u_ag.sig_arg_at[sidx(c)][31:16] == 16'hDEAD)
+                if (u_ag.sig_arg_at[sidx(c)][31:16] == 16'hDEAD) begin
                     $display("      ^ a poll loop hit its spin cap: the peer never answered");
+                end
                 if (ok) begin
                     chk(u_ag.sig_n_at[sidx(c)], 1, "one completion from this core");
                     chk(u_ag.sig_code_at[sidx(c)],
                         (meta[8 + c] == 32'd1) ? 8'h00 : 8'h04, "completion code");
-                    if (meta[3][c])
+                    if (meta[3][c]) begin
                         chk(u_ag.sig_arg_at[sidx(c)], meta[4 + c], "halt word");
-                    if (meta[12 + c] != 32'd0)
+                    end
+                    if (meta[12 + c] != 32'd0) begin
                         chk(pret[c], meta[12 + c], "instructions retired");
+                    end
                 end
             end
 
@@ -339,12 +380,13 @@ module rv_mc_body #(
                 chk(dsum, meta[2], "DRAM after every core retired");
                 if (dsum !== meta[2]) begin
                     k = 0;
-                    for (i = 0; i < DWORDS; i = i + 1)
+                    for (i = 0; i < DWORDS; i = i + 1) begin
                         if ((dram_word(i) !== dfin[i]) && (k < 8)) begin
                             $display("      dram word %0d (byte %0d): rtl %08x model %08x",
                                      i, i * 4, dram_word(i), dfin[i]);
                             k = k + 1;
                         end
+                    end
                 end
             end
         end
@@ -373,10 +415,16 @@ module rv_mc_body #(
         end
 
         $display("========================================");
-        if (checks == 0)      $display("  FAIL -- the bench made no checks");
-        else if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else                  $display("  FAIL -- %0d checks, %0d errors",
-                                       checks, errors);
+        if (checks == 0) begin
+            $display("  FAIL -- the bench made no checks");
+        end
+        else if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors",
+                     checks, errors);
+        end
         $display("========================================");
         $finish;
     end
@@ -406,8 +454,11 @@ module rv_mc_body #(
     // not: nothing is held, the core simply stops meaning anything. Name the
     // first cycle it happens and what the predictor said that cycle.
     reg saw_x = 1'b0;
-    always @(posedge clk) if (rstn && !saw_x &&
-        (^dut.g_pe[0].g_have.u_pe.u_core.u_if.pc_fetch === 1'bx)) begin
+    always @(posedge clk) if (
+        rstn
+        && !saw_x
+        && (^dut.g_pe[0].g_have.u_pe.u_core.u_if.pc_fetch === 1'bx)
+    ) begin
         saw_x <= 1'b1;
         $display("    STUCK core0 first X in pc_fetch at %0t: f2_pc %08x f2_v %0d redir_q %0d pred_taken %0d pred_target %08x | bp init_q %0d q_v %0d q_c %0d q_t %02x",
                  $time,

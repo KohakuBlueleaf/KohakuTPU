@@ -22,7 +22,9 @@ module vec_lanes_tb;
     localparam [1:0] SRC_V = 2'd0, SRC_S = 2'd1, SRC_C = 2'd2, SRC_K = 2'd3;
 
     reg clk = 0, rst = 1;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     reg  [1:0]   mode;
     reg          ls_we, ls_ractive;
@@ -68,7 +70,9 @@ module vec_lanes_tb;
         reg        sgn;
         reg [31:0] sh;
         begin
-            if (v == 0) e8i = 24'd0;
+            if (v == 0) begin
+                e8i = 24'd0;
+            end
             else begin
                 sgn = (v < 0); av = sgn ? -v : v;
                 t = av; ex = 0;
@@ -79,8 +83,12 @@ module vec_lanes_tb;
                 // Past 2^16 the significand no longer fits and the shift
                 // REVERSES; `15 - ex` would go negative, which Verilog does
                 // not define, and the reference would silently return zero.
-                if (ex <= 15) sh = av << (15 - ex);
-                else          sh = av >> (ex - 15);
+                if (ex <= 15) begin
+                    sh = av << (15 - ex);
+                end
+                else begin
+                    sh = av >> (ex - 15);
+                end
                 e8i = {sgn, (8'd127 + ex[7:0]), sh[14:0]};
             end
         end
@@ -92,9 +100,10 @@ module vec_lanes_tb;
             checks = checks + 1;
             if (got !== want) begin
                 errors = errors + 1;
-                if (errors < 20)
+                if (errors < 20) begin
                     $display("  FAIL %0s [%0d]: got %06h want %06h",
                              what, where, got, want);
+                end
             end
         end
     endtask
@@ -215,8 +224,9 @@ module vec_lanes_tb;
         $display("--- 1. FLAT: add, mul, fma ---");
         mode = M_FLAT;
         set_stage(0, OP_ADD, SRC_V, SRC_K, SRC_V, 0, 0, 0);
-        for (c = 0; c < 8; c = c + 1)
+        for (c = 0; c < 8; c = c + 1) begin
             beat(c[2:0], 2'd0, 4'd0, 4'd1, 4'd1, 4'd2, 2'd0, 2'd0, 1'b0, 1'b0);
+        end
         drain;
         for (c = 0; c < 8; c = c + 1) begin
             rd_chunk(4'd2, c[2:0]);
@@ -229,8 +239,9 @@ module vec_lanes_tb;
         ls_ractive = 0;
 
         set_stage(0, OP_MUL, SRC_V, SRC_V, SRC_K, 0, 0, 0);
-        for (c = 0; c < 8; c = c + 1)
+        for (c = 0; c < 8; c = c + 1) begin
             beat(c[2:0], 2'd0, 4'd0, 4'd1, 4'd1, 4'd2, 2'd0, 2'd0, 1'b0, 1'b0);
+        end
         drain;
         for (c = 0; c < 8; c = c + 1) begin
             rd_chunk(4'd2, c[2:0]);
@@ -245,8 +256,9 @@ module vec_lanes_tb;
         // a*b + c with c from a K constant, which is the shape every chained
         // stage past 0 uses
         set_stage(0, OP_FMA, SRC_V, SRC_V, SRC_K, 0, 0, e8i(5));
-        for (c = 0; c < 8; c = c + 1)
+        for (c = 0; c < 8; c = c + 1) begin
             beat(c[2:0], 2'd0, 4'd0, 4'd1, 4'd1, 4'd2, 2'd0, 2'd0, 1'b0, 1'b0);
+        end
         drain;
         for (c = 0; c < 8; c = c + 1) begin
             rd_chunk(4'd2, c[2:0]);
@@ -261,8 +273,9 @@ module vec_lanes_tb;
         // ================================================= 2. predication
         $display("--- 2. FLAT: compare then predicated write ---");
         set_stage(0, OP_CMPLT, SRC_V, SRC_K, SRC_K, 0, e8i(64), 0);
-        for (c = 0; c < 8; c = c + 1)
+        for (c = 0; c < 8; c = c + 1) begin
             beat(c[2:0], 2'd0, 4'd0, 4'd0, 4'd0, 4'd0, 2'd0, 2'd1, 1'b1, 1'b0);
+        end
         drain;
         p_rd_sel = 2'd1;
         #1;
@@ -275,12 +288,15 @@ module vec_lanes_tb;
         // v4 = 7 everywhere, then overwrite with v0 only where P1 is set
         for (c = 0; c < 8; c = c + 1) begin
             buf0 = 0;
-            for (i = 0; i < 16; i = i + 1) buf0[i*24 +: 24] = e8i(7);
+            for (i = 0; i < 16; i = i + 1) begin
+                buf0[i*24 +: 24] = e8i(7);
+            end
             wr_chunk(4'd4, c[2:0], buf0);
         end
         set_stage(0, OP_MOV, SRC_V, SRC_K, SRC_K, 0, 0, 0);
-        for (c = 0; c < 8; c = c + 1)
+        for (c = 0; c < 8; c = c + 1) begin
             beat(c[2:0], 2'd0, 4'd0, 4'd0, 4'd0, 4'd4, 2'd1, 2'd1, 1'b0, 1'b0);
+        end
         drain;
         for (c = 0; c < 8; c = c + 1) begin
             rd_chunk(4'd4, c[2:0]);
@@ -297,10 +313,12 @@ module vec_lanes_tb;
         mode = M_D2;
         set_stage(0, OP_MUL, SRC_V, SRC_K, SRC_K, 0, e8i(2), 0);
         set_stage(1, OP_ADD, SRC_C, SRC_K, SRC_K, 0, 0, e8i(1));
-        for (c = 0; c < 8; c = c + 1)
-            for (ph = 0; ph < 2; ph = ph + 1)
+        for (c = 0; c < 8; c = c + 1) begin
+            for (ph = 0; ph < 2; ph = ph + 1) begin
                 beat(c[2:0], ph[1:0], 4'd0, 4'd0, 4'd0, 4'd5, 2'd0, 2'd0,
                      1'b0, 1'b0);
+            end
+        end
         drain;
         for (c = 0; c < 8; c = c + 1) begin
             rd_chunk(4'd5, c[2:0]);
@@ -318,10 +336,12 @@ module vec_lanes_tb;
         set_stage(1, OP_ADD, SRC_C, SRC_K, SRC_K, 0, 0, e8i(1));
         set_stage(2, OP_MUL, SRC_C, SRC_K, SRC_K, 0, e8i(3), 0);
         set_stage(3, OP_SUB, SRC_C, SRC_K, SRC_K, 0, 0, e8i(4));
-        for (c = 0; c < 8; c = c + 1)
-            for (ph = 0; ph < 4; ph = ph + 1)
+        for (c = 0; c < 8; c = c + 1) begin
+            for (ph = 0; ph < 4; ph = ph + 1) begin
                 beat(c[2:0], ph[1:0], 4'd0, 4'd0, 4'd0, 4'd6, 2'd0, 2'd0,
                      1'b0, 1'b0);
+            end
+        end
         drain;
         for (c = 0; c < 8; c = c + 1) begin
             rd_chunk(4'd6, c[2:0]);
@@ -352,22 +372,28 @@ module vec_lanes_tb;
         // exp2 is EXACT at integer arguments, so 0 and 1 give 1.0 and 2.0 and
         // the whole reference is exact: per chunk 8 of each, 24; over 8, 192.
         for (c = 0; c < 8; c = c + 1) begin
-            for (el = 0; el < 16; el = el + 1)
+            for (el = 0; el < 16; el = el + 1) begin
                 buf0[el*24 +: 24] = e8i(el & 1);
+            end
             wr_chunk(4'd6, c[2:0], buf0);
         end
         run_expsum(4'd6, 4'd7);
         chk(red_result, e8i(192), "EXPSUM sum", 0);
         for (c = 0; c < 8; c = c + 1) begin
             rd_chunk(4'd7, c[2:0]);
-            for (el = 0; el < 16; el = el + 1)
+            for (el = 0; el < 16; el = el + 1) begin
                 chk(ls_rdata[el*24 +: 24], e8i((el & 1) ? 2 : 1),
                     "EXPSUM elementwise", c*16 + el);
+            end
         end
 
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end
@@ -395,10 +421,12 @@ module vec_lanes_tb;
             red_kind = R_EXPSUM;
             @(negedge clk); red_init = 1'b1;
             @(negedge clk); red_init = 1'b0;
-            for (tc = 0; tc < 8; tc = tc + 1)
-                for (tp = 0; tp < 2; tp = tp + 1)
+            for (tc = 0; tc < 8; tc = tc + 1) begin
+                for (tp = 0; tp < 2; tp = tp + 1) begin
                     beat(tc[2:0], tp[1:0], ra, ra, ra, wd, 2'd0, 2'd0,
                          1'b0, 1'b0);
+                end
+            end
             drain;
             beat(3'd0, 2'd0, ra, ra, ra, wd, 2'd0, 2'd0, 1'b0, 1'b1);
             @(negedge clk);
@@ -422,13 +450,16 @@ module vec_lanes_tb;
             @(negedge clk); red_init = 1'b1;
             @(negedge clk); red_init = 1'b0;
             for (tc = 0; tc < 8; tc = tc + 1) begin
-                if (half)
-                    for (tp = 0; tp < 2; tp = tp + 1)
+                if (half) begin
+                    for (tp = 0; tp < 2; tp = tp + 1) begin
                         beat(tc[2:0], tp[1:0], ra, rb, ra, 4'd0, 2'd0, 2'd0,
                              1'b0, 1'b0);
-                else
+                    end
+                end
+                else begin
                     beat(tc[2:0], 2'd0, ra, rb, ra, 4'd0, 2'd0, 2'd0,
                          1'b0, 1'b0);
+                end
             end
             drain;
             beat(3'd0, 2'd0, ra, rb, ra, 4'd0, 2'd0, 2'd0, 1'b0, 1'b1);

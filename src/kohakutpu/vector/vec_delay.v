@@ -25,7 +25,9 @@ module vec_delay #(
         assign q = d;
     end else if (D == 1) begin : g_one
         reg [W-1:0] r;
-        always @(posedge clk) r <= d;
+        always @(posedge clk) begin
+            r <= d;
+        end
         assign q = r;
     end else if (D <= MAX_FF) begin : g_ff
         // FLOPS BELOW MAX_FF. An SRL16E is one LUT per bit at ANY depth, so a
@@ -33,11 +35,15 @@ module vec_delay #(
         // LUT-bound at 66% with FF at 34%, so a shallow line belongs in the half
         // of the CLB that is idle; past MAX_FF the flops outrun the LUT saved.
         (* shreg_extract = "no" *) reg [W*D-1:0] sr;
-        always @(posedge clk) sr <= {sr[W*(D-1)-1:0], d};
+        always @(posedge clk) begin
+            sr <= {sr[W*(D-1)-1:0], d};
+        end
         assign q = sr[W*D-1 -: W];
     end else begin : g_sr
         reg [W*D-1:0] sr;
-        always @(posedge clk) sr <= {sr[W*(D-1)-1:0], d};
+        always @(posedge clk) begin
+            sr <= {sr[W*(D-1)-1:0], d};
+        end
         assign q = sr[W*D-1 -: W];
     end
     endgenerate

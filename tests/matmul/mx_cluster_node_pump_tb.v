@@ -57,8 +57,12 @@ module mx_cluster_node_pump_tb;
     // the NBA region, so 1x flops read 2x flops a delta late -- zero hold.
     reg clk2x = 0, rst = 1;
     reg ph2 = 0;
-    always #1 clk2x = ~clk2x;
-    always @(negedge clk2x) ph2 <= ~ph2;
+    always begin
+        #1 clk2x = ~clk2x;
+    end
+    always @(negedge clk2x) begin
+        ph2 <= ~ph2;
+    end
     wire clk = clk2x & ph2;
 
     // -d MX_L1OFF sweeps at a NONZERO offset in the upper bank. At offset 0 the
@@ -157,12 +161,16 @@ module mx_cluster_node_pump_tb;
     function real fp16_to_real(input [15:0] f);
         real m; integer e;
         begin
-            if (f[14:10] == 5'd0) fp16_to_real = 0.0;
+            if (f[14:10] == 5'd0) begin
+                fp16_to_real = 0.0;
+            end
             else begin
                 m = 1.0 + $itor(f[9:0]) / 1024.0;
                 e = f[14:10] - 15;
                 fp16_to_real = m * (2.0 ** e);
-                if (f[15]) fp16_to_real = -fp16_to_real;
+                if (f[15]) begin
+                    fp16_to_real = -fp16_to_real;
+                end
             end
         end
     endfunction
@@ -176,10 +184,12 @@ module mx_cluster_node_pump_tb;
     always @(posedge clk) begin
         if (drain_valid) begin
             got[drain_idx] = 1'b1;
-            for (i = 0; i < 4; i = i + 1)
-                for (j = 0; j < 4; j = j + 1)
+            for (i = 0; i < 4; i = i + 1) begin
+                for (j = 0; j < 4; j = j + 1) begin
                     hw_c[(drain_idx / cur_gn)*4 + i][(drain_idx % cur_gn)*4 + j]
                         = fp16_to_real(drain_data[(i*4+j)*16 +: 16]);
+                end
+            end
         end
     end
 
@@ -198,32 +208,45 @@ module mx_cluster_node_pump_tb;
         begin
             m = gm*4; n = gn*4; kk = nk*32; nt = gm*gn;
             cur_gn = gn;
-            for (tt = 0; tt < nt; tt = tt + 1) got[tt] = 1'b0;
+            for (tt = 0; tt < nt; tt = tt + 1) begin
+                got[tt] = 1'b0;
+            end
 
             // ---- operands. int7 values and a per-block power-of-two scale,
             // which is exactly what an MXFP7 L1 entry holds.
-            for (ii = 0; ii < m; ii = ii + 1)
-                for (kkk = 0; kkk < kk; kkk = kkk + 1)
+            for (ii = 0; ii < m; ii = ii + 1) begin
+                for (kkk = 0; kkk < kk; kkk = kkk + 1) begin
                     A[ii][kkk] = ($random(seed) & 127) - 64;
-            for (kkk = 0; kkk < kk; kkk = kkk + 1)
-                for (jj = 0; jj < n; jj = jj + 1)
+                end
+            end
+            for (kkk = 0; kkk < kk; kkk = kkk + 1) begin
+                for (jj = 0; jj < n; jj = jj + 1) begin
                     B[kkk][jj] = ($random(seed) & 127) - 64;
-            for (ii = 0; ii < m; ii = ii + 1)
-                for (bb = 0; bb < nk; bb = bb + 1) SA[ii][bb] = ($random(seed) & 3);
-            for (jj = 0; jj < n; jj = jj + 1)
-                for (bb = 0; bb < nk; bb = bb + 1) SB[jj][bb] = ($random(seed) & 3);
+                end
+            end
+            for (ii = 0; ii < m; ii = ii + 1) begin
+                for (bb = 0; bb < nk; bb = bb + 1) begin
+                    SA[ii][bb] = ($random(seed) & 3);
+                end
+            end
+            for (jj = 0; jj < n; jj = jj + 1) begin
+                for (bb = 0; bb < nk; bb = bb + 1) begin
+                    SB[jj][bb] = ($random(seed) & 3);
+                end
+            end
 
             // ---- two ground truths: an exact scaled-integer sum per K block,
             // and the same thing in FP64. They must agree before either is
             // allowed to judge the hardware.
-            for (ii = 0; ii < m; ii = ii + 1)
+            for (ii = 0; ii < m; ii = ii + 1) begin
                 for (jj = 0; jj < n; jj = jj + 1) begin
                     exact_c[ii][jj] = 0.0;
                     fp64_c[ii][jj]  = 0.0;
                     for (bb = 0; bb < nk; bb = bb + 1) begin
                         acc = 0;
-                        for (kkk = 0; kkk < 32; kkk = kkk + 1)
+                        for (kkk = 0; kkk < 32; kkk = kkk + 1) begin
                             acc = acc + A[ii][bb*32+kkk]*B[bb*32+kkk][jj];
+                        end
                         exact_c[ii][jj] = exact_c[ii][jj]
                             + $itor(acc <<< (SA[ii][bb] + SB[jj][bb]));
                         fp64_c[ii][jj] = fp64_c[ii][jj]
@@ -237,10 +260,12 @@ module mx_cluster_node_pump_tb;
                     checks = checks + 1;
                     if (exact_c[ii][jj] != fp64_c[ii][jj]) begin
                         errors = errors + 1;
-                        if (errors <= 4)
+                        if (errors <= 4) begin
                             $display("  FAIL models disagree at [%0d][%0d]", ii, jj);
+                        end
                     end
                 end
+            end
 
             // ---- one chunk at a time: refill L1 with that chunk's K blocks,
             // then GEMM into the SAME resident tile. L1 addressing stays
@@ -249,16 +274,19 @@ module mx_cluster_node_pump_tb;
             nkc = nk / chunks;
             for (ch = 0; ch < chunks; ch = ch + 1) begin
                 // A entries for K blocks [ch*nkc, (ch+1)*nkc)
-                for (gg = 0; gg < gm; gg = gg + 1)
+                for (gg = 0; gg < gm; gg = gg + 1) begin
                     for (bb = 0; bb < nkc; bb = bb + 1) begin
                         kb0 = ch*nkc + bb;
                         ent = 928'd0;
-                        for (ii = 0; ii < 4; ii = ii + 1)
-                            for (kkk = 0; kkk < 32; kkk = kkk + 1)
+                        for (ii = 0; ii < 4; ii = ii + 1) begin
+                            for (kkk = 0; kkk < 32; kkk = kkk + 1) begin
                                 ent[(ii*32 + kkk)*7 +: 7] =
                                     A[gg*4+ii][kb0*32+kkk][6:0];
-                        for (ii = 0; ii < 4; ii = ii + 1)
+                            end
+                        end
+                        for (ii = 0; ii < 4; ii = ii + 1) begin
                             ent[896 + ii*8 +: 8] = (SA[gg*4+ii][kb0] + SBIAS) << 3;
+                        end
                         @(negedge clk);
                         l1_we <= 1'b1; l1_sel <= 1'b0;
                         loff = AOFF + gg*nkc + bb;
@@ -266,16 +294,20 @@ module mx_cluster_node_pump_tb;
                         l1_data <= ent;
                         @(negedge clk); l1_we <= 1'b0;
                     end
-                for (hh = 0; hh < gn; hh = hh + 1)
+                end
+                for (hh = 0; hh < gn; hh = hh + 1) begin
                     for (bb = 0; bb < nkc; bb = bb + 1) begin
                         kb0 = ch*nkc + bb;
                         ent = 928'd0;
-                        for (kkk = 0; kkk < 32; kkk = kkk + 1)
-                            for (jj = 0; jj < 4; jj = jj + 1)
+                        for (kkk = 0; kkk < 32; kkk = kkk + 1) begin
+                            for (jj = 0; jj < 4; jj = jj + 1) begin
                                 ent[(kkk*4 + jj)*7 +: 7] =
                                     B[kb0*32+kkk][hh*4+jj][6:0];
-                        for (jj = 0; jj < 4; jj = jj + 1)
+                            end
+                        end
+                        for (jj = 0; jj < 4; jj = jj + 1) begin
                             ent[896 + jj*8 +: 8] = (SB[hh*4+jj][kb0] + SBIAS) << 3;
+                        end
                         @(negedge clk);
                         l1_we <= 1'b1; l1_sel <= 1'b1;
                         loff = BOFF + hh*nkc + bb;
@@ -283,6 +315,7 @@ module mx_cluster_node_pump_tb;
                         l1_data <= ent;
                         @(negedge clk); l1_we <= 1'b0;
                     end
+                end
 
                 @(negedge clk);
                 gemm_gm <= gm[7:0]; gemm_gn <= gn[7:0];
@@ -315,9 +348,10 @@ module mx_cluster_node_pump_tb;
                 checks = checks + 1;
                 if (!got[tt]) begin
                     errors = errors + 1;
-                    if (errors <= 8)
+                    if (errors <= 8) begin
                         $display("  FAIL gm=%0d gn=%0d nk=%0d sub-tile %0d never emitted",
                                  gm, gn, nk, tt);
+                    end
                 end
             end
 
@@ -327,31 +361,44 @@ module mx_cluster_node_pump_tb;
             // error is then meaningless while the datapath is behaving. Peak
             // relative is what the end-to-end test reports, for the same reason.
             peak = 0.0;
-            for (ii = 0; ii < m; ii = ii + 1)
+            for (ii = 0; ii < m; ii = ii + 1) begin
                 for (jj = 0; jj < n; jj = jj + 1) begin
                     want = fp64_c[ii][jj];
-                    if (want < 0.0) want = -want;
-                    if (want > peak) peak = want;
+                    if (want < 0.0) begin
+                        want = -want;
+                    end
+                    if (want > peak) begin
+                        peak = want;
+                    end
                 end
-            if (peak == 0.0) peak = 1.0;
+            end
+            if (peak == 0.0) begin
+                peak = 1.0;
+            end
 
             // Each K block contributes its own rounding, so the bound grows
             // with NK rather than being a single constant.
             tol = 4.0/1024.0 * $itor(nk);
-            for (ii = 0; ii < m; ii = ii + 1)
+            for (ii = 0; ii < m; ii = ii + 1) begin
                 for (jj = 0; jj < n; jj = jj + 1) begin
                     got_r = hw_c[ii][jj]; want = fp64_c[ii][jj];
                     checks = checks + 1;
                     err = (got_r - want) / peak;
-                    if (err < 0.0) err = -err;
-                    if (err > worst_rel) worst_rel = err;
+                    if (err < 0.0) begin
+                        err = -err;
+                    end
+                    if (err > worst_rel) begin
+                        worst_rel = err;
+                    end
                     if (err > tol) begin
                         errors = errors + 1;
-                        if (errors <= 8)
+                        if (errors <= 8) begin
                             $display("  FAIL gm=%0d gn=%0d nk=%0d C[%0d][%0d] got %0f want %0f err/peak %0e",
                                      gm, gn, nk, ii, jj, got_r, want, err);
+                        end
                     end
                 end
+            end
 
             $display("    gm=%0d gn=%0d nk=%0d  C[%0d,%0d] over K=%0d  %0d sub-tiles  C[0][0] hw %0f fp64 %0f",
                      gm, gn, nk, m, n, kk, nt, hw_c[0][0], fp64_c[0][0]);
@@ -378,8 +425,12 @@ module mx_cluster_node_pump_tb;
         run_case(4, 4, 8, 1);
         $display("  SPEED -- %0d sweeps, %0.1f ns total, %0.2f ns/sweep",
                  n_sweep, gemm_ns, gemm_ns / n_sweep);
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $finish;
 `elsif MX_FAST
   `ifdef MX_FAST4
@@ -394,8 +445,12 @@ module mx_cluster_node_pump_tb;
   `endif
         $display("  SPEED -- %0d sweeps, %0.1f ns total, %0.2f ns/sweep",
                  n_sweep, gemm_ns, gemm_ns / n_sweep);
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $finish;
 `endif
 
@@ -409,7 +464,9 @@ module mx_cluster_node_pump_tb;
         // because nk<=1. mx_cluster_data_tb's only failing case, absent here.
         run_case(2, 2, 1, 1);
         run_case(2, 2, 2, 1);       // the even-NK control for it
-        if (errors == err_before) $display("    short sweeps drain intact");
+        if (errors == err_before) begin
+            $display("    short sweeps drain intact");
+        end
 
         $display("--- tilings that revisit an address inside REUSE_MIN ---");
         err_before = errors;
@@ -417,7 +474,9 @@ module mx_cluster_node_pump_tb;
         run_case(2, 1, 2, 1);
         run_case(1, 4, 4, 1);
         run_case(2, 2, 3, 1);
-        if (errors == err_before) $display("    paced K sweeps accumulate correctly");
+        if (errors == err_before) begin
+            $display("    paced K sweeps accumulate correctly");
+        end
 
         // The SAME K, split across several GEMM instructions chained with
         // gemm_acc. The answer must not depend on the division -- that is the
@@ -430,8 +489,9 @@ module mx_cluster_node_pump_tb;
         run_case(4, 4, 4, 4);       // 4 chunks of 1
         run_case(8, 8, 4, 2);       // full tile, 2 chunks
         run_case(2, 2, 6, 3);       // 3 chunks of 2
-        if (errors == err_before)
+        if (errors == err_before) begin
             $display("    chained K chunks match a single sweep");
+        end
 
         $display("--- ordinary tilings ---");
         run_case(4, 4, 2, 1);
@@ -443,8 +503,12 @@ module mx_cluster_node_pump_tb;
         $display("========================================");
         $display("  SPEED -- %0d sweeps, %0.1f ns total, %0.2f ns/sweep",
                  n_sweep, gemm_ns, gemm_ns / n_sweep);
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors  (MODEL=%0d)", checks, MODEL);
-        else             $display("  FAIL -- %0d checks, %0d errors  (MODEL=%0d)", checks, errors, MODEL);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors  (MODEL=%0d)", checks, MODEL);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors  (MODEL=%0d)", checks, errors, MODEL);
+        end
         $display("========================================");
         $finish;
     end

@@ -66,9 +66,9 @@ module vec_cu #(
     // MEM_WR_DATA here and in mag_mem_port.v, so a CU_DATA flit carrying it
     // would have entered MAG's write queue as data. noc_pkt.vh records the
     // resolution and is included by nothing, so the value is re-declared here.
-    localparam [3:0] T_MEM_RD_REQ  = 4'h0, T_MEM_WR_REQ  = 4'h1,
-                     T_MEM_RD_RESP = 4'h2, T_MEM_WR_DATA = 4'h4,
-                     T_CU_SIGNAL   = 4'h6, T_CU_DATA     = 4'h8;
+    localparam [3:0] T_MEM_RD_REQ = 4'h0, T_MEM_WR_REQ = 4'h1;
+    localparam [3:0] T_MEM_RD_RESP = 4'h2, T_MEM_WR_DATA = 4'h4;
+    localparam [3:0] T_CU_SIGNAL = 4'h6, T_CU_DATA = 4'h8;
     localparam [7:0] SIG_DATA_RECEIVED = 8'h03;
 
     localparam [3:0] C_IMEM = 4'd1, C_DESC = 4'd2, C_RUN = 4'd3;
@@ -96,9 +96,14 @@ module vec_cu #(
         // `resetn` is released on the NoC clock, so its edge means nothing
         // here. Async-assert, sync-deassert, as mag_link_cdc does.
         reg [1:0] ur_q;
-        always @(posedge unit_clk or negedge resetn)
-            if (!resetn) ur_q <= 2'b00;
-            else         ur_q <= {ur_q[0], 1'b1};
+        always @(posedge unit_clk or negedge resetn) begin
+            if (!resetn) begin
+                ur_q <= 2'b00;
+            end
+            else begin
+                ur_q <= {ur_q[0], 1'b1};
+            end
+        end
         assign u_resetn = ur_q[1];
 
         noc_local_cdc #(.FLIT_WIDTH(FLIT_WIDTH), .DEPTH(CDC_DEPTH)) u_cdc_in (
@@ -300,7 +305,9 @@ module vec_cu #(
             rr_valid <= 1'b0;
             cd_valid <= 1'b0;
             cd_fault <= 1'b0;
-            if (sg_go) sg_pend <= 1'b0;
+            if (sg_go) begin
+                sg_pend <= 1'b0;
+            end
 
             // Take nothing while a DATA_RECEIVED is waiting for the link: a
             // second burst could finish before this one is reported, and one
@@ -342,8 +349,13 @@ module vec_cu #(
                         end
                         if (cd_left == 8'd0) begin
                             cd_st <= 1'b0;
-                            if (cd_sig && !cd_alien) sg_pend <= 1'b1;
-                        end else cd_left <= cd_left - 8'd1;
+                            if (cd_sig && !cd_alien) begin
+                                sg_pend <= 1'b1;
+                            end
+                        end
+                        else begin
+                            cd_left <= cd_left - 8'd1;
+                        end
                     end
                 end
             end
@@ -368,70 +380,74 @@ module vec_cu #(
         end else begin
             rd_req_ready <= 1'b0;
             wr_req_ready <= 1'b0;
-            if (send_valid && send_ready) send_valid <= 1'b0;
+            if (send_valid && send_ready) begin
+                send_valid <= 1'b0;
+            end
 
             if (!send_valid || send_ready) begin
                 case (wst)
-                W_IDLE: begin
-                    // First: the peer that sent us a burst is blocked on this.
-                    if (sg_pend) begin
-                        send_flit <= { sg_x, sg_y,
-                                       POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
-                                       T_CU_SIGNAL, 8'h00, 1'b1, 3'b000,
-                                       SIG_DATA_RECEIVED, {24'd0, sg_buf},
-                                       216'd0 };
-                        send_valid <= 1'b1;
-                    end else if (rd_req_valid && !rd_req_ready) begin
-                        send_flit <= { MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
-                                       POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
-                                       T_MEM_RD_REQ, rd_req_tag[7:0], 1'b1, 3'b000,
-                                       rd_req_addr, 8'd0, 8'd0, 200'd0 };
-                        send_valid   <= 1'b1;
-                        rd_req_ready <= 1'b1;
-                        fill_bank_tbl[rd_req_tag[7:0]] <= rd_req_tag[8];
-                    // A peer drain: ONE descriptor for the whole walk, then the
-                    // words. The first word waits a beat for the descriptor;
-                    // the walk itself is the memory drain's, unchanged.
-                    end else if (wr_req_valid && !wr_req_ready && nd_valid) begin
-                        if (!nd_hdr) begin
-                            send_flit <= { nd_dx, nd_dy,
-                                POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
-                                T_CU_DATA, nd_txn, 1'b0, nd_rsvd,
-                                {4'd0, nd_buf}, nd_off, nd_len,
-                                7'd0, nd_sig, nd_ack, 208'd0 };
+                    W_IDLE: begin
+                        // First: the peer that sent us a burst is blocked on this.
+                        if (sg_pend) begin
+                            send_flit <= { sg_x, sg_y,
+                                           POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
+                                           T_CU_SIGNAL, 8'h00, 1'b1, 3'b000,
+                                           SIG_DATA_RECEIVED, {24'd0, sg_buf},
+                                           216'd0 };
                             send_valid <= 1'b1;
-                            nd_hdr     <= 1'b1;
-                            nd_cnt     <= 8'd0;
-                        end else begin
-                            send_flit <= { nd_dx, nd_dy,
-                                POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
-                                T_CU_DATA, nd_txn, (nd_cnt == nd_len), nd_rsvd,
-                                wr_req_data };
+                        end else if (rd_req_valid && !rd_req_ready) begin
+                            send_flit <= { MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
+                                           POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
+                                           T_MEM_RD_REQ, rd_req_tag[7:0], 1'b1, 3'b000,
+                                           rd_req_addr, 8'd0, 8'd0, 200'd0 };
+                            send_valid   <= 1'b1;
+                            rd_req_ready <= 1'b1;
+                            fill_bank_tbl[rd_req_tag[7:0]] <= rd_req_tag[8];
+                        // A peer drain: ONE descriptor for the whole walk, then the
+                        // words. The first word waits a beat for the descriptor;
+                        // the walk itself is the memory drain's, unchanged.
+                        end else if (wr_req_valid && !wr_req_ready && nd_valid) begin
+                            if (!nd_hdr) begin
+                                send_flit <= { nd_dx, nd_dy,
+                                    POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
+                                    T_CU_DATA, nd_txn, 1'b0, nd_rsvd,
+                                    {4'd0, nd_buf}, nd_off, nd_len,
+                                    7'd0, nd_sig, nd_ack, 208'd0 };
+                                send_valid <= 1'b1;
+                                nd_hdr     <= 1'b1;
+                                nd_cnt     <= 8'd0;
+                            end else begin
+                                send_flit <= { nd_dx, nd_dy,
+                                    POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
+                                    T_CU_DATA, nd_txn, (nd_cnt == nd_len), nd_rsvd,
+                                    wr_req_data };
+                                send_valid   <= 1'b1;
+                                wr_req_ready <= 1'b1;
+                                nd_cnt <= nd_cnt + 8'd1;
+                                if (nd_cnt == nd_len) begin
+                                    nd_hdr <= 1'b0;
+                                end
+                            end
+                        end else if (wr_req_valid && !wr_req_ready) begin
+                            w_addr <= wr_req_addr;
+                            w_data <= wr_req_data;
+                            send_flit <= { MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
+                                           POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
+                                           T_MEM_WR_REQ, 8'h01, 1'b0, 3'b000,
+                                           wr_req_addr, 8'd0, 8'd0, 200'd0 };
                             send_valid   <= 1'b1;
                             wr_req_ready <= 1'b1;
-                            nd_cnt <= nd_cnt + 8'd1;
-                            if (nd_cnt == nd_len) nd_hdr <= 1'b0;
+                            wst <= W_DATA;
                         end
-                    end else if (wr_req_valid && !wr_req_ready) begin
-                        w_addr <= wr_req_addr;
-                        w_data <= wr_req_data;
+                    end
+                    W_DATA: begin
                         send_flit <= { MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
                                        POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
-                                       T_MEM_WR_REQ, 8'h01, 1'b0, 3'b000,
-                                       wr_req_addr, 8'd0, 8'd0, 200'd0 };
-                        send_valid   <= 1'b1;
-                        wr_req_ready <= 1'b1;
-                        wst <= W_DATA;
+                                       T_MEM_WR_DATA, 8'h01, 1'b1, 3'b000, w_data };
+                        send_valid <= 1'b1;
+                        wst <= W_IDLE;
                     end
-                end
-                W_DATA: begin
-                    send_flit <= { MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
-                                   POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
-                                   T_MEM_WR_DATA, 8'h01, 1'b1, 3'b000, w_data };
-                    send_valid <= 1'b1;
-                    wst <= W_IDLE;
-                end
-                default: wst <= W_IDLE;
+                    default: wst <= W_IDLE;
                 endcase
             end
         end
@@ -457,44 +473,44 @@ module vec_cu #(
             start      <= 1'b0;
 
             case (cst)
-            C_IDLE: if (inst_valid && !inst_ready) begin
-                inst_ready <= 1'b1;
-                case (c_op)
-                C_IMEM: begin
-                    ld_en <= 1'b1; ld_kind <= 1'b0;
-                    ld_addr <= c_addr; ld_data <= {8'd0, c_word};
-                    cst <= C_RET;
+                C_IDLE: if (inst_valid && !inst_ready) begin
+                    inst_ready <= 1'b1;
+                    case (c_op)
+                        C_IMEM: begin
+                            ld_en <= 1'b1; ld_kind <= 1'b0;
+                            ld_addr <= c_addr; ld_data <= {8'd0, c_word};
+                            cst <= C_RET;
+                        end
+                        C_DESC: begin
+                            ld_en <= 1'b1; ld_kind <= 1'b1;
+                            ld_addr <= {3'd0, c_ad, c_fld};
+                            ld_data <= c_val;
+                            cst <= C_RET;
+                        end
+                        C_RUN: begin
+                            start <= 1'b1; start_pc <= c_addr;
+                            cst <= C_ACT;
+                        end
+                        default: cst <= C_RET;
+                    endcase
                 end
-                C_DESC: begin
-                    ld_en <= 1'b1; ld_kind <= 1'b1;
-                    ld_addr <= {3'd0, c_ad, c_fld};
-                    ld_data <= c_val;
-                    cst <= C_RET;
+
+                // one cycle for `start` to be seen before `busy` is trusted
+                C_ACT: cst <= C_RUNW;
+
+                C_RUNW: if (halted || fault) begin
+                    exec_done   <= 1'b1;
+                    exec_fault  <= fault;
+                    exec_result <= fault ? {24'd0, fault_code} : cycles;
+                    cst <= C_IDLE;
                 end
-                C_RUN: begin
-                    start <= 1'b1; start_pc <= c_addr;
-                    cst <= C_ACT;
+
+                C_RET: begin
+                    exec_done   <= 1'b1;
+                    exec_result <= 32'd0;
+                    cst <= C_IDLE;
                 end
-                default: cst <= C_RET;
-                endcase
-            end
-
-            // one cycle for `start` to be seen before `busy` is trusted
-            C_ACT: cst <= C_RUNW;
-
-            C_RUNW: if (halted || fault) begin
-                exec_done   <= 1'b1;
-                exec_fault  <= fault;
-                exec_result <= fault ? {24'd0, fault_code} : cycles;
-                cst <= C_IDLE;
-            end
-
-            C_RET: begin
-                exec_done   <= 1'b1;
-                exec_result <= 32'd0;
-                cst <= C_IDLE;
-            end
-            default: cst <= C_IDLE;
+                default: cst <= C_IDLE;
             endcase
         end
     end

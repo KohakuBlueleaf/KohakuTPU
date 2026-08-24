@@ -12,14 +12,16 @@ module saxpy_cu_tb;
     localparam MX = 0, MY = 1;   // the memory agent port
     localparam HX = 0, HY = 0;   // us
 
-    localparam [3:0] T_MEM_RD_REQ = 4'h0, T_MEM_WR_REQ = 4'h1,
-                     T_MEM_RD_RESP = 4'h2, T_MEM_WR_ACK = 4'h3,
-                     T_MEM_WR_DATA = 4'h4, T_CU_INST = 4'h5,
-                     T_CU_SIGNAL = 4'h6, T_CU_CTRL = 4'h7;
+    localparam [3:0] T_MEM_RD_REQ = 4'h0, T_MEM_WR_REQ = 4'h1;
+    localparam [3:0] T_MEM_RD_RESP = 4'h2, T_MEM_WR_ACK = 4'h3;
+    localparam [3:0] T_MEM_WR_DATA = 4'h4, T_CU_INST = 4'h5, T_CU_SIGNAL = 4'h6;
+    localparam [3:0] T_CU_CTRL = 4'h7;
     localparam [7:0] SIG_INST = 8'h00, SIG_BATCH = 8'h01, SIG_FAULT = 8'h04;
 
     reg clk = 0, resetn = 0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     reg  [FW-1:0] in_data;
     reg           in_valid = 0;
@@ -51,7 +53,11 @@ module saxpy_cu_tb;
         begin
             mag = v[31] ? -v : v;
             p = 0;
-            for (i = 0; i < 24; i = i + 1) if (mag[i]) p = i;
+            for (i = 0; i < 24; i = i + 1) begin
+                if (mag[i]) begin
+                    p = i;
+                end
+            end
             e  = 8'd127 + p;
             sh = mag << (23 - p);
             i2f = (mag == 32'd0) ? 32'd0 : {v[31], e, sh[22:0]};
@@ -70,7 +76,9 @@ module saxpy_cu_tb;
     endtask
 
     // random outbound backpressure the whole run, updated at posedge
-    always @(posedge clk) out_busy <= ($random % 4 == 0);
+    always @(posedge clk) begin
+        out_busy <= ($random % 4 == 0);
+    end
 
     // =============================================== the memory + DRAM model
     reg [255:0] dram [0:1023];
@@ -105,32 +113,32 @@ module saxpy_cu_tb;
         end else begin
             if (out_valid && !out_busy) begin
                 case (o_ty)
-                T_MEM_RD_REQ: begin
-                    mq_addr[mq_t[3:0]] <= o_addr;
-                    mq_len[mq_t[3:0]]  <= o_len;
-                    mq_tag[mq_t[3:0]]  <= o_txn;
-                    mq_t <= mq_t + 5'd1;
-                end
-                T_MEM_WR_REQ: begin
-                    wr_addr <= o_addr;
-                    wr_left <= o_len + 8'd1;
-                    wr_open <= 1'b1;
-                end
-                T_MEM_WR_DATA: if (wr_open) begin
-                    dram[wr_addr[14:5]] <= out_data[255:0];
-                    wr_addr <= wr_addr + 40'd32;
-                    wr_left <= wr_left - 8'd1;
-                    if (wr_left == 8'd1) begin
-                        wr_open <= 1'b0;
-                        // the ack the CU must drop (memory-protocol.md s5)
-                        rq_q[rq_t[4:0]] <= {CX[PW-1:0], CY[PW-1:0],
-                                            MX[PW-1:0], MY[PW-1:0],
-                                            T_MEM_WR_ACK, o_txn, 1'b1, 3'b000,
-                                            256'd0};
-                        rq_t <= rq_t + 6'd1;
+                    T_MEM_RD_REQ: begin
+                        mq_addr[mq_t[3:0]] <= o_addr;
+                        mq_len[mq_t[3:0]]  <= o_len;
+                        mq_tag[mq_t[3:0]]  <= o_txn;
+                        mq_t <= mq_t + 5'd1;
                     end
-                end
-                default: ;
+                    T_MEM_WR_REQ: begin
+                        wr_addr <= o_addr;
+                        wr_left <= o_len + 8'd1;
+                        wr_open <= 1'b1;
+                    end
+                    T_MEM_WR_DATA: if (wr_open) begin
+                        dram[wr_addr[14:5]] <= out_data[255:0];
+                        wr_addr <= wr_addr + 40'd32;
+                        wr_left <= wr_left - 8'd1;
+                        if (wr_left == 8'd1) begin
+                            wr_open <= 1'b0;
+                            // the ack the CU must drop (memory-protocol.md s5)
+                            rq_q[rq_t[4:0]] <= {CX[PW-1:0], CY[PW-1:0],
+                                                MX[PW-1:0], MY[PW-1:0],
+                                                T_MEM_WR_ACK, o_txn, 1'b1, 3'b000,
+                                                256'd0};
+                            rq_t <= rq_t + 6'd1;
+                        end
+                    end
+                    default: ;
                 endcase
             end
 
@@ -145,14 +153,18 @@ module saxpy_cu_tb;
                     gap    <= 2'd2;
                     rserv  <= 1'b1;
                 end
-            end else if (gap != 2'd0) gap <= gap - 2'd1;
+            end else if (gap != 2'd0) begin
+                gap <= gap - 2'd1;
+            end
             else begin
                 rq_q[rq_t[4:0]] <= {CX[PW-1:0], CY[PW-1:0],
                                     MX[PW-1:0], MY[PW-1:0],
                                     T_MEM_RD_RESP, r_tag, (r_beat == r_len),
                                     3'b000, dram[r_addr[14:5] + r_beat[3:0]]};
                 rq_t <= rq_t + 6'd1;
-                if (r_beat == r_len) rserv <= 1'b0;
+                if (r_beat == r_len) begin
+                    rserv <= 1'b0;
+                end
                 else begin r_beat <= r_beat + 8'd1; gap <= 2'd1; end
             end
         end
@@ -264,15 +276,23 @@ module saxpy_cu_tb;
         // 2. n=23, a=3.0: a partial tail line, x at 0x400, y at 0x800
         for (l = 0; l < 3; l = l + 1) begin
             line = 256'd0;
-            for (s = 0; s < 8; s = s + 1)
-                if (l*8 + s < 23) line[s*32 +: 32] = i2f(l*8 + s - 13);
+            for (s = 0; s < 8; s = s + 1) begin
+                if (l*8 + s < 23) begin
+                    line[s*32 +: 32] = i2f(l*8 + s - 13);
+                end
+            end
             dram[32 + l] = line;
         end
         for (l = 0; l < 3; l = l + 1) begin
             line = 256'd0;
-            for (s = 0; s < 8; s = s + 1)
-                if (l*8 + s < 23) line[s*32 +: 32] = i2f(100 - 7*(l*8 + s));
-                else              line[s*32 +: 32] = 32'hDEAD_BEEF;
+            for (s = 0; s < 8; s = s + 1) begin
+                if (l*8 + s < 23) begin
+                    line[s*32 +: 32] = i2f(100 - 7*(l*8 + s));
+                end
+                else begin
+                    line[s*32 +: 32] = 32'hDEAD_BEEF;
+                end
+            end
             dram[64 + l] = line;
         end
         put(hdr(T_CU_INST, 8'h31, 1'b0,
@@ -282,8 +302,9 @@ module saxpy_cu_tb;
         chk(sig_arg[0], 32'd23, "run1 reports n elements");
         for (i = 0; i < 23; i = i + 1) begin
             line = dram[64 + i/8];
-            if (line[(i%8)*32 +: 32] !== i2f(3*(i-13) + (100 - 7*i)))
+            if (line[(i%8)*32 +: 32] !== i2f(3*(i-13) + (100 - 7*i))) begin
                 chk(line[(i%8)*32 +: 32], i2f(3*(i-13) + (100 - 7*i)), "run1 y");
+            end
         end
         line = dram[66];
         chk(line[7*32 +: 32], 32'hDEAD_BEEF, "tail of a partial line preserved");
@@ -303,12 +324,16 @@ module saxpy_cu_tb;
         // 5. n=64: the full 8-beat write burst, last-marked -> batch report
         for (l = 0; l < 8; l = l + 1) begin
             line = 256'd0;
-            for (s = 0; s < 8; s = s + 1) line[s*32 +: 32] = i2f(l*8 + s);
+            for (s = 0; s < 8; s = s + 1) begin
+                line[s*32 +: 32] = i2f(l*8 + s);
+            end
             dram[128 + l] = line;
         end
         for (l = 0; l < 8; l = l + 1) begin
             line = 256'd0;
-            for (s = 0; s < 8; s = s + 1) line[s*32 +: 32] = i2f(1000 + l*8 + s);
+            for (s = 0; s < 8; s = s + 1) begin
+                line[s*32 +: 32] = i2f(1000 + l*8 + s);
+            end
             dram[256 + l] = line;
         end
         put(hdr(T_CU_INST, 8'h5A, 1'b1,
@@ -318,8 +343,9 @@ module saxpy_cu_tb;
         chk(sig_arg[3], 32'h5A, "batch report carries the program id");
         for (i = 0; i < 64; i = i + 1) begin
             line = dram[256 + i/8];
-            if (line[(i%8)*32 +: 32] !== i2f(1000 - i))
+            if (line[(i%8)*32 +: 32] !== i2f(1000 - i)) begin
                 chk(line[(i%8)*32 +: 32], i2f(1000 - i), "run2 y");
+            end
         end
 
         // 6. CU_DBG: cumulative elements in the low half (sw decode_dbg)
@@ -332,10 +358,12 @@ module saxpy_cu_tb;
         chk(cu_busy, 1'b0, "unit drains to idle");
 
         u_check.report;
-        if (errors == 0 && u_check.violations == 0)
+        if (errors == 0 && u_check.violations == 0) begin
             $display("PASS saxpy_cu_tb: %0d checks", checks);
-        else
+        end
+        else begin
             $display("FAIL saxpy_cu_tb: %0d errors", errors);
+        end
         $finish;
     end
 endmodule

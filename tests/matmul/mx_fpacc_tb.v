@@ -39,12 +39,16 @@ module mx_fpacc_tb;
         real m;
         integer e;
         begin
-            if (f[22:16] == 7'd0) fp2real = 0.0;
+            if (f[22:16] == 7'd0) begin
+                fp2real = 0.0;
+            end
             else begin
                 m = 1.0 + $itor(f[15:0]) / 65536.0;
                 e = f[22:16] - BIAS;
                 fp2real = m * (2.0 ** e);
-                if (f[23]) fp2real = -fp2real;
+                if (f[23]) begin
+                    fp2real = -fp2real;
+                end
             end
         end
     endfunction
@@ -54,13 +58,18 @@ module mx_fpacc_tb;
         begin
             checks = checks + 1;
             denom = (want < 0.0) ? -want : want;
-            if (denom < 1.0e-30) denom = 1.0;
+            if (denom < 1.0e-30) begin
+                denom = 1.0;
+            end
             err = (got - want) / denom;
-            if (err < 0.0) err = -err;
+            if (err < 0.0) begin
+                err = -err;
+            end
             if (err > tol) begin
                 errors = errors + 1;
-                if (errors <= 12)
+                if (errors <= 12) begin
                     $display("  FAIL %0s: got %0e want %0e relerr %0e", what, got, want, err);
+                end
             end
         end
     endtask
@@ -70,8 +79,9 @@ module mx_fpacc_tb;
             checks = checks + 1;
             if (got != want) begin
                 errors = errors + 1;
-                if (errors <= 12)
+                if (errors <= 12) begin
                     $display("  FAIL %0s: got %0f want %0f", what, got, want);
+                end
             end
         end
     endtask
@@ -80,12 +90,16 @@ module mx_fpacc_tb;
         real m;
         integer e;
         begin
-            if (f[14:10] == 5'd0) fp16_real = 0.0;
+            if (f[14:10] == 5'd0) begin
+                fp16_real = 0.0;
+            end
             else begin
                 m = 1.0 + $itor(f[9:0]) / 1024.0;
                 e = f[14:10] - 15;
                 fp16_real = m * (2.0 ** e);
-                if (f[15]) fp16_real = -fp16_real;
+                if (f[15]) begin
+                    fp16_real = -fp16_real;
+                end
             end
         end
     endfunction
@@ -140,7 +154,9 @@ module mx_fpacc_tb;
             ne = ($random(seed) % 20) - 10;
             #1;
             want = $itor(nv) * (2.0 ** ne);
-            if (nv != 0) chk_real(fp2real(nf), want, halfulp, "norm round");
+            if (nv != 0) begin
+                chk_real(fp2real(nf), want, halfulp, "norm round");
+            end
         end
 
         // -----------------------------------------------------------------
@@ -163,7 +179,9 @@ module mx_fpacc_tb;
             #1; bb = nf;
             #1;
             want = fp2real(aa) + fp2real(bb);
-            if (want != 0.0) chk_real(fp2real(ss), want, halfulp, "add");
+            if (want != 0.0) begin
+                chk_real(fp2real(ss), want, halfulp, "add");
+            end
         end
 
         // -----------------------------------------------------------------
@@ -200,18 +218,26 @@ module mx_fpacc_tb;
                 ne = 0;
                 #1; bb = nf;
                 want = want + fp2real(bb);
-                if (want > peak)  peak = want;
-                if (-want > peak) peak = -want;
+                if (want > peak) begin
+                    peak = want;
+                end
+                if (-want > peak) begin
+                    peak = -want;
+                end
                 #1; aa = ss;
             end
             got_r = fp2real(aa);
-            err_a = got_r - want; if (err_a < 0.0) err_a = -err_a;
+            err_a = got_r - want;
+            if (err_a < 0.0) begin
+                err_a = -err_a;
+            end
             checks = checks + 1;
             if (err_a > 64.0 * halfulp * peak) begin
                 errors = errors + 1;
-                if (errors <= 12)
+                if (errors <= 12) begin
                     $display("  FAIL accumulate: got %0f want %0f abserr %0e bound %0e",
                              got_r, want, err_a, 64.0*halfulp*peak);
+                end
             end
         end
 
@@ -255,8 +281,9 @@ module mx_fpacc_tb;
             want = fp2real(nf);
             got_r = want < 0.0 ? -want : want;
             // half an FP16 ULP, and no more: the converter rounds to nearest.
-            if (got_r >= (2.0 ** -14) && got_r < 65504.0)
+            if (got_r >= (2.0 ** -14) && got_r < 65504.0) begin
                 chk_cvt_tol(nf, want, 1.0/2048.0, "to_fp16");
+            end
         end
 
         $display("--- 11. to_fp16: saturation and flush ---");
@@ -265,8 +292,12 @@ module mx_fpacc_tb;
         nv = 1; ne = -30;     #1; chk_cvt(nf,  0.0,     "flush to zero");
 
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end

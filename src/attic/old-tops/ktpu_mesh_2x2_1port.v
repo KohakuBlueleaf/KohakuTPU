@@ -531,10 +531,12 @@ module ktpu_mesh_2x2_1port #(
     integer i;
     always @(*) begin
         fold = {mag_rd, mag_wr} ^ mv_done ^ {28'd0, mv_fault};
-        for (i = 0; i < NCU; i = i + 1)
+        for (i = 0; i < NCU; i = i + 1) begin
             fold = fold ^ {cu_f[i], cu_g[i]} ^ {16'd0, cu_d[i]};
-        for (i = 0; i < NVEC; i = i + 1)
+        end
+        for (i = 0; i < NVEC; i = i + 1) begin
             fold = fold ^ vc_cyc[i] ^ {31'd0, vc_flt[i]};
+        end
     end
     assign obs = fold ^ {31'd0, mv_busy};
 

@@ -46,8 +46,12 @@ module kh_port_check #(
             end
             // Wedge watch: inbound busy that never releases is the undrained
             // ack / full signal-queue signature, and it stalls silently.
-            if (in_busy) busy_run = busy_run + 1;
-            else         busy_run = 0;
+            if (in_busy) begin
+                busy_run = busy_run + 1;
+            end
+            else begin
+                busy_run = 0;
+            end
             if (busy_run == MAX_BUSY) begin
                 violations = violations + 1;
                 $display("%0t ERROR %0s: in_busy held for %0d cycles -- wedged?",
@@ -58,11 +62,13 @@ module kh_port_check #(
 
     task report;
         begin
-            if (violations == 0)
+            if (violations == 0) begin
                 $display("  kh_port_check(%0s): clean", NAME);
-            else
+            end
+            else begin
                 $display("  FAIL kh_port_check(%0s): %0d violation(s)", NAME,
                          violations);
+            end
         end
     endtask
 

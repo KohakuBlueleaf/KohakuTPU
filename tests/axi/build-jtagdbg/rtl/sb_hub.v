@@ -48,11 +48,12 @@ module sb_hub #(
     always @(*) begin
         scan_sel = {SW{1'b0}};
         scan_any = 1'b0;
-        for (k = NSRC-1; k >= 0; k = k - 1)
+        for (k = NSRC-1; k >= 0; k = k - 1) begin
             if (i_valid[(k + rr) % NSRC]) begin
                 scan_sel = (k + rr) % NSRC;
                 scan_any = 1'b1;
             end
+        end
     end
 
     wire [SW-1:0] sel   = locked ? lock_sel : scan_sel;
@@ -67,7 +68,9 @@ module sb_hub #(
         end else if (grant) begin
             locked   <= !i_last[sel];
             lock_sel <= sel;
-            if (i_last[sel]) rr <= (sel + 1'b1) % NSRC;
+            if (i_last[sel]) begin
+                rr <= (sel + 1'b1) % NSRC;
+            end
         end
     end
 
@@ -90,11 +93,12 @@ module sb_hub #(
     always @(*) begin
         dst_sel = {DW{1'b0}};
         pay_sel = {PW{1'b0}};
-        for (j = 0; j < NSRC; j = j + 1)
+        for (j = 0; j < NSRC; j = j + 1) begin
             if (sel == j) begin
                 dst_sel = i_dst[j*DW +: DW];
                 pay_sel = i_pay[j*PW +: PW];
             end
+        end
     end
 
     sb_skid #(.W(DW + PW)) u_skid (
@@ -115,14 +119,19 @@ module sb_hub #(
     generate
     if (STATS) begin : g_stats
         reg [31:0] n_flit, n_wait;
-        always @(posedge clk)
+        always @(posedge clk) begin
             if (rst) begin
                 n_flit <= 32'd0;
                 n_wait <= 32'd0;
             end else begin
-                if (grant)                  n_flit <= n_flit + 32'd1;
-                if (|(i_valid & ~i_ready))  n_wait <= n_wait + 32'd1;
+                if (grant) begin
+                    n_flit <= n_flit + 32'd1;
+                end
+                if (|(i_valid & ~i_ready)) begin
+                    n_wait <= n_wait + 32'd1;
+                end
             end
+        end
         assign stat_flits = n_flit;
         assign stat_wait  = n_wait;
     end else begin : g_nostats
@@ -132,10 +141,12 @@ module sb_hub #(
     endgenerate
 
 `ifndef SYNTHESIS
-    always @(posedge clk)
-        if (!rst && skid_val && (o_dst >= NDST))
+    always @(posedge clk) begin
+        if (!rst && skid_val && (o_dst >= NDST)) begin
             $display("%0t ERROR sb_hub: dst %0d of %0d -- NMU decode is wrong",
                      $time, o_dst, NDST);
+        end
+    end
 `endif
 endmodule
 

@@ -66,12 +66,20 @@ module noc_pseudo_cu #(
     wire [POS_WIDTH-1:0] in_dy = noc_in_data[FLIT_WIDTH-POS_WIDTH-1    -: POS_WIDTH];
     wire [3:0]           in_ty = noc_in_data[FLIT_WIDTH-4*POS_WIDTH-1  -: 4];
     always @(posedge clk) begin
-        if (!resetn) bad_count <= 32'd0;
-        else if (noc_in_valid && !fifo_full &&
-                 ((in_dx !== POS_X[POS_WIDTH-1:0]) ||
-                  (in_dy !== POS_Y[POS_WIDTH-1:0]) ||
-                  (in_ty !== T_CU_INST)))
+        if (!resetn) begin
+            bad_count <= 32'd0;
+        end
+        else if (
+            noc_in_valid
+            && !fifo_full
+            && (
+                (in_dx !== POS_X[POS_WIDTH-1:0])
+                || (in_dy !== POS_Y[POS_WIDTH-1:0])
+                || (in_ty !== T_CU_INST)
+            )
+        ) begin
             bad_count <= bad_count + 32'd1;
+        end
     end
 
     // ------------------------------------------------------------- execution
@@ -102,15 +110,21 @@ module noc_pseudo_cu #(
             sig_pending <= 1'b0;
             sig_dx <= 0; sig_dy <= 0; sig_txn <= 0; sig_code <= 0; sig_arg <= 0;
         end else begin
-            if (exec_done)   sig_pending <= 1'b1;
-            else if (sig_go) sig_pending <= 1'b0;
+            if (exec_done) begin
+                sig_pending <= 1'b1;
+            end
+            else if (sig_go) begin
+                sig_pending <= 1'b0;
+            end
 
             case (estate)
                 E_IDLE: if (!fifo_empty && !sig_pending) begin
                     etimer <= EXEC_CYCLES[15:0];
                     estate <= E_WORK;
                 end
-                E_WORK: if (etimer > 16'd1) etimer <= etimer - 16'd1;
+                E_WORK: if (etimer > 16'd1) begin
+                    etimer <= etimer - 16'd1;
+                end
                         else begin
                             // "execute": account for it, then report
                             inst_count <= inst_count + 32'd1;
@@ -124,7 +138,9 @@ module noc_pseudo_cu #(
                             fifo_pop   <= 1'b1;
                             estate     <= E_SIG;
                         end
-                E_SIG: if (sig_go) estate <= E_IDLE;
+                E_SIG: if (sig_go) begin
+                    estate <= E_IDLE;
+                end
                 default: estate <= E_IDLE;
             endcase
         end
@@ -138,12 +154,13 @@ module noc_pseudo_cu #(
             noc_out_data  <= {FLIT_WIDTH{1'b0}};
         end else begin
             noc_out_valid <= sig_go;
-            if (sig_go)
+            if (sig_go) begin
                 noc_out_data <= { sig_dx, sig_dy,                   // back to sender
                                   POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
                                   T_CU_SIGNAL, sig_txn, 1'b1, 3'b000,
                                   sig_code, sig_arg,
                                   {(FLIT_WIDTH-4*POS_WIDTH-16-40){1'b0}} };
+            end
         end
     end
 

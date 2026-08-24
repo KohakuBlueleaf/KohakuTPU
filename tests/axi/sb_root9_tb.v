@@ -24,11 +24,21 @@ module sb_root9_tb;
 
     // ------------------------------------------------------------- clocks
     reg bus_clk = 0, clk_ctrl = 0, clk_xdma = 0, clk_mesh = 0, clk_ddr = 0;
-    always #1.250 bus_clk  = ~bus_clk;      // 400.0 MHz
-    always #5.000 clk_ctrl = ~clk_ctrl;     // 100.0 MHz
-    always #2.000 clk_xdma = ~clk_xdma;     // 250.0 MHz
-    always #2.109 clk_mesh = ~clk_mesh;     // 237.1 MHz, deliberately odd
-    always #1.667 clk_ddr  = ~clk_ddr;      // 299.9 MHz
+    always begin// 400.0 MHz
+        #1.250 bus_clk  = ~bus_clk;
+    end
+    always begin// 100.0 MHz
+        #5.000 clk_ctrl = ~clk_ctrl;
+    end
+    always begin// 250.0 MHz
+        #2.000 clk_xdma = ~clk_xdma;
+    end
+    always begin// 237.1 MHz, deliberately odd
+        #2.109 clk_mesh = ~clk_mesh;
+    end
+    always begin// 299.9 MHz
+        #1.667 clk_ddr  = ~clk_ddr;
+    end
 
     reg rstn = 0;
     wire bus_rst = !rstn;
@@ -238,9 +248,10 @@ module sb_root9_tb;
         input integer  b;
         integer k;
         begin
-            for (k = 0; k < 16; k = k + 1)
+            for (k = 0; k < 16; k = k + 1) begin
                 pat512[k*32 +: 32] = pat32(a) ^ (b * 32'h0001_0001)
                                               ^ (k * 32'h1000_0100);
+            end
         end
     endfunction
 
@@ -296,8 +307,9 @@ module sb_root9_tb;
                 errors = errors + 1;
                 $display("%0t FAIL jtag read @%h rresp %b exp %b", $time, a,
                          rresp_v[1:0], exp_resp);
-            end else if (exp_resp == 2'b00)
+            end else if (exp_resp == 2'b00) begin
                 chk({480'd0, rdata_v[31:0]}, {480'd0, pat32(a)}, a);
+            end
             @(negedge clk_ctrl); #TS; rrdy[0] = 1'b1;
         end
     endtask
@@ -421,7 +433,7 @@ module sb_root9_tb;
                 end
                 begin : collector
                     rrdy[1] = 1'b1;
-                    for (pc_i = 0; pc_i < count; pc_i = pc_i + 1)
+                    for (pc_i = 0; pc_i < count; pc_i = pc_i + 1) begin
                         for (pc_b = 0; pc_b <= len; pc_b = pc_b + 1) begin
                             while (!rvld[1]) begin
                                 @(negedge clk_xdma); #TS;
@@ -431,6 +443,7 @@ module sb_root9_tb;
                                 base + pc_i*40'd1024);
                             @(negedge clk_xdma); #TS;
                         end
+                    end
                 end
             join
         end
@@ -446,12 +459,19 @@ module sb_root9_tb;
     // Flits actually injected, counted at the station boundary. A DECERR that
     // returns correctly but still injects is the bug worth catching.
     integer flits = 0;
-    always @(posedge bus_clk)
+    always @(posedge bus_clk) begin
         if (!bus_rst) begin
-            if (u_dut.q_valid[0] && u_dut.q_ready[0]) flits <= flits + 1;
-            if (u_dut.q_valid[1] && u_dut.q_ready[1]) flits <= flits + 1;
-            if (u_dut.q_valid[2] && u_dut.q_ready[2]) flits <= flits + 1;
+            if (u_dut.q_valid[0] && u_dut.q_ready[0]) begin
+                flits <= flits + 1;
+            end
+            if (u_dut.q_valid[1] && u_dut.q_ready[1]) begin
+                flits <= flits + 1;
+            end
+            if (u_dut.q_valid[2] && u_dut.q_ready[2]) begin
+                flits <= flits + 1;
+            end
         end
+    end
 
     integer n, nj, nx, nl, base_de, base_fl, rm, rk;
     integer seed;
@@ -525,13 +545,15 @@ module sb_root9_tb;
         join
 
         $display("--- phase 7: multi-outstanding and same-id ordering");
-        for (n = 0; n < 6; n = n + 1)
+        for (n = 0; n < 6; n = n + 1) begin
             x_write(A_M1 + 40'h8000 + n*40'd1024, 8'd3);
+        end
         x_read_pipe(A_M1 + 40'h8000, 6, 8'd3);
 
         $display("--- phase 8: deadlock stress, two managers on one target");
-        for (n = 0; n < 4; n = n + 1)
+        for (n = 0; n < 4; n = n + 1) begin
             x_write(A_M0 + 40'hC000 + n*40'd1024, 8'd7);
+        end
         fork
             begin : s_x
                 x_read_pipe(A_M0 + 40'hC000, 4, 8'd7);
@@ -552,8 +574,9 @@ module sb_root9_tb;
         $display("--- phase 9: reset mid-traffic, then recover");
         fork
             begin : r_traffic
-                for (nx = 0; nx < 4; nx = nx + 1)
+                for (nx = 0; nx < 4; nx = nx + 1) begin
                     x_write(A_M2 + 40'h3000 + nx*40'd1024, 8'd7);
+                end
             end
             begin : r_pulse
                 repeat (300) @(posedge bus_clk);
@@ -621,25 +644,35 @@ module sb_root9_tb;
         repeat (200) @(posedge bus_clk);
 
         // Protocol violations are counted inside the monitors, not here.
-        for (n = 0; n < NM; n = n + 1) errors = errors + mchk_err[n*32 +: 32];
-        for (n = 0; n < NS; n = n + 1) errors = errors + schk_err[n*32 +: 32];
+        for (n = 0; n < NM; n = n + 1) begin
+            errors = errors + mchk_err[n*32 +: 32];
+        end
+        for (n = 0; n < NS; n = n + 1) begin
+            errors = errors + schk_err[n*32 +: 32];
+        end
 
         // A monitor that saw nothing proves nothing.
-        for (n = 0; n < NM; n = n + 1)
+        for (n = 0; n < NM; n = n + 1) begin
             if (mchk_txn[n*32 +: 32] == 0) begin
                 errors = errors + 1;
                 $display("FAIL manager monitor %0d observed no transactions", n);
             end
-        for (n = 0; n < NS; n = n + 1)
+        end
+        for (n = 0; n < NS; n = n + 1) begin
             if (schk_txn[n*32 +: 32] == 0) begin
                 errors = errors + 1;
                 $display("FAIL subordinate monitor %0d observed no transactions", n);
             end
+        end
         $display("    monitors saw %0d/%0d/%0d manager transactions",
                  mchk_txn[0 +: 32], mchk_txn[32 +: 32], mchk_txn[64 +: 32]);
 
-        if (errors == 0) $display("PASS  %0d checks", checks);
-        else $display("FAIL  %0d errors in %0d checks", errors, checks);
+        if (errors == 0) begin
+            $display("PASS  %0d checks", checks);
+        end
+        else begin
+            $display("FAIL  %0d errors in %0d checks", errors, checks);
+        end
         $finish;
     end
 

@@ -42,11 +42,15 @@ module vec_cvt_acc_tb;
             s = bits[mw+7];
             e = bits[mw+6 -: 7];
             m = bits & ((1 << mw) - 1);
-            if (e == 0) acc_val = 0.0;
+            if (e == 0) begin
+                acc_val = 0.0;
+            end
             else begin
                 frac = 1.0 + (m * 1.0) / (1.0 * (1 << mw));
                 acc_val = frac * (2.0 ** ($signed({1'b0, e}) - 63));
-                if (s) acc_val = -acc_val;
+                if (s) begin
+                    acc_val = -acc_val;
+                end
             end
         end
     endfunction
@@ -61,11 +65,15 @@ module vec_cvt_acc_tb;
             s = bits[23];
             e = bits[22:15];
             m = bits[14:0];
-            if (e == 0) e8_val = 0.0;
+            if (e == 0) begin
+                e8_val = 0.0;
+            end
             else begin
                 frac = 1.0 + (m * 1.0) / 32768.0;
                 e8_val = frac * (2.0 ** ($signed({1'b0, e}) - 127));
-                if (s) e8_val = -e8_val;
+                if (s) begin
+                    e8_val = -e8_val;
+                end
             end
         end
     endfunction
@@ -79,8 +87,9 @@ module vec_cvt_acc_tb;
             checks = checks + 1;
             if (want != got) begin
                 errors = errors + 1;
-                if (errors < 12)
+                if (errors < 12) begin
                     $display("  MW14 src=%h  want %0.10e  got %0.10e", src, want, got);
+                end
             end
         end
     endtask
@@ -96,9 +105,10 @@ module vec_cvt_acc_tb;
             err = fabs(want - got);
             if (err > ulp * 0.5000001) begin
                 errors = errors + 1;
-                if (errors < 12)
+                if (errors < 12) begin
                     $display("  MW16 src=%h  err %0.4e  half-ulp %0.4e",
                              src, err, ulp * 0.5);
+                end
             end
         end
     endtask
@@ -185,8 +195,12 @@ module vec_cvt_acc_tb;
         end
 
         // Two spaces: xsim.py keeps indented lines and grades on "  PASS".
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $finish;
     end
 

@@ -10,7 +10,9 @@
 
 module vec_regfile_tb;
     reg clk = 0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     integer errors = 0, checks = 0;
 
@@ -20,9 +22,10 @@ module vec_regfile_tb;
             checks = checks + 1;
             if (got !== want) begin
                 errors = errors + 1;
-                if (errors < 20)
+                if (errors < 20) begin
                     $display("  FAIL %0s [%0d]: got %06h want %06h",
                              what, where, got, want);
+                end
             end
         end
     endtask
@@ -121,7 +124,9 @@ module vec_regfile_tb;
 
         $display("--- 3. per-slice write enables must be independent ---");
         m_wd = 384'd0;
-        for (i = 0; i < 16; i = i + 1) m_wd[i*24 +: 24] = 24'h0AAAAA;
+        for (i = 0; i < 16; i = i + 1) begin
+            m_wd[i*24 +: 24] = 24'h0AAAAA;
+        end
         @(negedge clk);
         m_we = 16'h00FF; m_wa = 7'd0;
         @(negedge clk); m_we = 16'd0;
@@ -135,8 +140,12 @@ module vec_regfile_tb;
         end
 
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end

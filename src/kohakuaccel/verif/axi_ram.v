@@ -86,8 +86,11 @@ module axi_ram #(
 
     assign bd_rdata = mem[bd_addr[AW-1:0]];
 
-    always @(posedge clk)
-        if (resetn && bd_we) mem[bd_addr[AW-1:0]] <= bd_wdata;
+    always @(posedge clk) begin
+        if (resetn && bd_we) begin
+            mem[bd_addr[AW-1:0]] <= bd_wdata;
+        end
+    end
 
     genvar gp;
     generate
@@ -116,33 +119,39 @@ module axi_ram #(
                 wptr <= {AW{1'b0}}; wcnt <= 8'd0;
             end else begin
                 case (wst)
-                W_IDLE: if (s_awvalid[gp] && awready_r) begin
-                    wptr      <= s_awaddr[gp*ADDR_W +: ADDR_W] >> LSB;
-                    wcnt      <= s_awlen[gp*8 +: 8];
-                    bid_r     <= s_awid[gp*ID_W +: ID_W];
-                    awready_r <= 1'b0;
-                    wready_r  <= 1'b1;
-                    wst       <= W_DATA;
-                end
-                W_DATA: if (s_wvalid[gp] && wready_r) begin
-                    for (bi = 0; bi < DATA_W/8; bi = bi + 1)
-                        if (s_wstrb[gp*(DATA_W/8) + bi])
-                            mem[wptr][bi*8 +: 8] <=
-                                s_wdata[gp*DATA_W + bi*8 +: 8];
-                    wptr <= wptr + 1'b1;
-                    if (s_wlast[gp] || wcnt == 8'd0) begin
-                        wready_r <= 1'b0;
-                        bresp_r  <= 2'b00;
-                        bvalid_r <= 1'b1;
-                        wst      <= W_RESP;
-                    end else wcnt <= wcnt - 8'd1;
-                end
-                W_RESP: if (s_bready[gp]) begin
-                    bvalid_r  <= 1'b0;
-                    awready_r <= 1'b1;
-                    wst       <= W_IDLE;
-                end
-                default: wst <= W_IDLE;
+                    W_IDLE: if (s_awvalid[gp] && awready_r) begin
+                        wptr      <= s_awaddr[gp*ADDR_W +: ADDR_W] >> LSB;
+                        wcnt      <= s_awlen[gp*8 +: 8];
+                        bid_r     <= s_awid[gp*ID_W +: ID_W];
+                        awready_r <= 1'b0;
+                        wready_r  <= 1'b1;
+                        wst       <= W_DATA;
+                    end
+                    W_DATA: if (s_wvalid[gp] && wready_r) begin
+                        for (bi = 0; bi < DATA_W/8; bi = bi + 1) begin
+                            if (s_wstrb[gp*(DATA_W/8) + bi]) begin
+                                mem[wptr][bi*8 +: 8] <= (
+                                    s_wdata[gp*DATA_W + bi*8 +: 8]
+                                );
+                            end
+                        end
+                        wptr <= wptr + 1'b1;
+                        if (s_wlast[gp] || wcnt == 8'd0) begin
+                            wready_r <= 1'b0;
+                            bresp_r  <= 2'b00;
+                            bvalid_r <= 1'b1;
+                            wst      <= W_RESP;
+                        end
+                        else begin
+                            wcnt <= wcnt - 8'd1;
+                        end
+                    end
+                    W_RESP: if (s_bready[gp]) begin
+                        bvalid_r  <= 1'b0;
+                        awready_r <= 1'b1;
+                        wst       <= W_IDLE;
+                    end
+                    default: wst <= W_IDLE;
                 endcase
             end
         end

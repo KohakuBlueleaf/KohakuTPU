@@ -13,8 +13,12 @@ module mx_merge_tb;
     localparam [7:0]  ANCHOR = 8'd40;
 
     reg clk = 0, clk2x = 0, rst = 1;
-    always #2 clk   = ~clk;
-    always #1 clk2x = ~clk2x;
+    always begin
+        #2 clk   = ~clk;
+    end
+    always begin
+        #1 clk2x = ~clk2x;
+    end
 
     reg  [383:0] part_in, part_in2;
     reg  [2:0]   op;
@@ -48,8 +52,12 @@ module mx_merge_tb;
             gs = L / 4; gt = L % 4;
             F  = ((gs/2)*4 + gt) * 48;
             pack_lane = 384'd0;
-            if (gs % 2 == 0) pack_lane[F +: 19]    = v[18:0];
-            else             pack_lane[F+19 +: 22] = v[21:0];
+            if (gs % 2 == 0) begin
+                pack_lane[F +: 19]    = v[18:0];
+            end
+            else begin
+                pack_lane[F+19 +: 22] = v[21:0];
+            end
         end
     endfunction
 
@@ -58,9 +66,15 @@ module mx_merge_tb;
         begin
             e = h[14:10]; m = h[9:0];
             s = h[15] ? -1.0 : 1.0;
-            if (e == 0)       fp16_to_real = s * (m / 1024.0) * (2.0 ** -14);
-            else if (e == 31) fp16_to_real = s * 1.0e30;
-            else              fp16_to_real = s * (1.0 + m / 1024.0) * (2.0 ** (e - 15));
+            if (e == 0) begin
+                fp16_to_real = s * (m / 1024.0) * (2.0 ** -14);
+            end
+            else if (e == 31) begin
+                fp16_to_real = s * 1.0e30;
+            end
+            else begin
+                fp16_to_real = s * (1.0 + m / 1024.0) * (2.0 ** (e - 15));
+            end
         end
     endfunction
 
@@ -230,8 +244,12 @@ module mx_merge_tb;
         do_exp( 100, 20, -100, 21);      // opposite signs, shifted
         do_exp(-100, 23,  100, 20);
 
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $finish;
     end
 

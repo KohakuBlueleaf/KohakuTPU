@@ -19,16 +19,17 @@ module noc_orchestrator_tb;
     localparam WORDS = 5;                 // 288 bits over 64-bit AXI
 
     // register offsets, from docs/noc/spec.md s10.2
-    localparam A_CAPS = 16'h0010, A_TX_FLIT0 = 16'h0100, A_TX_KICK = 16'h0140,
-               A_TX_STATUS = 16'h0148, A_RX_FLIT0 = 16'h0180,
-               A_RX_POP = 16'h01C0, A_RX_STATUS = 16'h01C8,
-               A_NODE = 16'h1000,
-               A_PROG_DST = 16'h0040, A_PROG_LEN = 16'h0048,
-               A_PROG_KICK = 16'h0050, A_PROG_STAT = 16'h0058,
-               A_PROG_CRED = 16'h0060;
+    localparam A_CAPS = 16'h0010, A_TX_FLIT0 = 16'h0100, A_TX_KICK = 16'h0140;
+    localparam A_TX_STATUS = 16'h0148, A_RX_FLIT0 = 16'h0180;
+    localparam A_RX_POP = 16'h01C0, A_RX_STATUS = 16'h01C8, A_NODE = 16'h1000;
+    localparam A_PROG_DST = 16'h0040, A_PROG_LEN = 16'h0048;
+    localparam A_PROG_KICK = 16'h0050, A_PROG_STAT = 16'h0058;
+    localparam A_PROG_CRED = 16'h0060;
 
     reg clk = 0, resetn = 0;
-    always #5 clk = ~clk;
+    always begin
+        #5 clk = ~clk;
+    end
 
     integer errors = 0, checks = 0;
 
@@ -161,7 +162,10 @@ module noc_orchestrator_tb;
                          l_o_d[HI][HI][FW-1        -: 2*POSW],   // old dst -> src
                          l_o_d[HI][HI][FW-4*POSW-1 : 0] };
             lb_valid <= 1'b1;
-        end else lb_valid <= 1'b0;
+        end
+        else begin
+            lb_valid <= 1'b0;
+        end
     end
 
     // unused local ports
@@ -236,8 +240,9 @@ module noc_orchestrator_tb;
         // traffic that has no other home.
         flit = {HI[3:0], HI[3:0], LO[3:0], LO[3:0], 4'h4, 8'h5A, 1'b1, 3'b000,
                 8'h03, 32'hCAFE_1234, 216'd0};
-        for (i = 0; i < WORDS; i = i + 1)
+        for (i = 0; i < WORDS; i = i + 1) begin
             axi_write1(A_TX_FLIT0 + i*8, flit[i*DW +: DW]);
+        end
         axi_write1(A_TX_KICK, 64'd1);
 
         guard = 0;
@@ -273,8 +278,9 @@ module noc_orchestrator_tb;
         // mirror files it under.
         flit = {HI[3:0], HI[3:0], LO[3:0], LO[3:0], 4'h6, 8'h5A, 1'b1, 3'b000,
                 8'h03, 32'hCAFE_1234, 216'd0};
-        for (i = 0; i < WORDS; i = i + 1)
+        for (i = 0; i < WORDS; i = i + 1) begin
             axi_write1(A_TX_FLIT0 + i*8, flit[i*DW +: DW]);
+        end
         axi_write1(A_TX_KICK, 64'd1);
 
         guard = 0;
@@ -299,8 +305,9 @@ module noc_orchestrator_tb;
         for (i = 0; i < 3; i = i + 1) begin
             flit = {8'h00, LO[3:0], LO[3:0], 4'h5, 8'h00 + i[7:0], 1'b1, 3'b000,
                     8'h00, 8'h00, 240'hAA00 + i};
-            for (j = 0; j < WORDS; j = j + 1)
+            for (j = 0; j < WORDS; j = j + 1) begin
                 axi_write1(32'h2000 + (i*WORDS + j)*8, flit[j*DW +: DW]);
+            end
         end
         axi_write1(A_PROG_DST,  {HI[3:0], HI[3:0]});   // {dst_y, dst_x} = (HI,HI)
         axi_write1(A_PROG_LEN,  64'd3);
@@ -335,8 +342,12 @@ module noc_orchestrator_tb;
         repeat (20) @(posedge clk);
         $display("");
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end

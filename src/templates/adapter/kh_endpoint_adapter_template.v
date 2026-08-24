@@ -38,8 +38,12 @@ module kh_endpoint_adapter_template #(
             n_down <= 32'd0;
             n_up   <= 32'd0;
         end else begin
-            if (ep_valid && !ep_busy) n_down <= n_down + 32'd1;
-            if (ru_valid && !ru_busy) n_up   <= n_up   + 32'd1;
+            if (ep_valid && !ep_busy) begin
+                n_down <= n_down + 32'd1;
+            end
+            if (ru_valid && !ru_busy) begin
+                n_up <= n_up + 32'd1;
+            end
         end
     end
 
@@ -70,9 +74,13 @@ module kh_endpoint_adapter_template #(
                 u_v <= 1'b0;
             end else begin
                 d_v <= d_take | (d_v && ep_busy);
-                if (d_take) d_q <= rt_data;
+                if (d_take) begin
+                    d_q <= rt_data;
+                end
                 u_v <= u_take | (u_v && ru_busy);
-                if (u_take) u_q <= eu_data;
+                if (u_take) begin
+                    u_q <= eu_data;
+                end
             end
         end
         assign ep_data  = d_q;

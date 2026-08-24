@@ -31,8 +31,12 @@ module dsp_pipe_poc #(
         if (DEPTH == 0) begin : g_flat
             wire [XW+MW-1:0] p = (x + {{(XW-1){1'b0}}, s}) * m;
             always @(posedge clk) begin
-                if (rst) p_out[g*(XW+MW) +: XW+MW] <= {(XW+MW){1'b0}};
-                else     p_out[g*(XW+MW) +: XW+MW] <= p;
+                if (rst) begin
+                    p_out[g*(XW+MW) +: XW+MW] <= {(XW+MW){1'b0}};
+                end
+                else begin
+                    p_out[g*(XW+MW) +: XW+MW] <= p;
+                end
             end
         end else begin : g_piped
             reg [XW-1:0]     a_r;

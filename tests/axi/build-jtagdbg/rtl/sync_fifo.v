@@ -48,8 +48,12 @@ module sync_fifo #(
     // OR-ing it into wr_busy made it the top driver of failing control paths.
     reg rst_busy_q = 1'b1;
     always @(posedge clk) begin
-        if (rst) rst_busy_q <= 1'b1;
-        else     rst_busy_q <= wr_rst_busy | rd_rst_busy;
+        if (rst) begin
+            rst_busy_q <= 1'b1;
+        end
+        else begin
+            rst_busy_q <= wr_rst_busy | rd_rst_busy;
+        end
     end
 
     assign wr_busy   = full | rst_busy_q;

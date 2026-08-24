@@ -138,12 +138,9 @@ module sb_nsu #(
         begin bram_tiles = ((w + 71) / 72) * ((d + 511) / 512); end
     endfunction
 
-    localparam A_REQ = (lram_lut(RQW, RQD) > LUT_PER_BRAM * bram_tiles(RQW, RQD))
-                       ? "block" : "distributed";
-    localparam A_RSP = (lram_lut(RSW, RSD) > LUT_PER_BRAM * bram_tiles(RSW, RSD))
-                       ? "block" : "distributed";
-    localparam A_CHN = (lram_lut(WQW, CHD) > LUT_PER_BRAM * bram_tiles(WQW, CHD))
-                       ? "block" : "distributed";
+    localparam A_REQ = (lram_lut(RQW, RQD) > LUT_PER_BRAM * bram_tiles(RQW, RQD)) ? "block" : "distributed";
+    localparam A_RSP = (lram_lut(RSW, RSD) > LUT_PER_BRAM * bram_tiles(RSW, RSD)) ? "block" : "distributed";
+    localparam A_CHN = (lram_lut(WQW, CHD) > LUT_PER_BRAM * bram_tiles(WQW, CHD)) ? "block" : "distributed";
 
     localparam REQ_STY = (LUT_PER_BRAM > 0) ? A_REQ : REQ_MEM;
     localparam RSP_STY = (LUT_PER_BRAM > 0) ? A_RSP : RSP_MEM;
@@ -163,7 +160,9 @@ module sb_nsu #(
     // dont_touch: these copies are identical FFs, so Vivado merges them back
     // into the one high-fanout net they exist to break.
     (* dont_touch = "yes" *) reg bus_rst_q;
-    always @(posedge bus_clk) bus_rst_q <= bus_rst;
+    always @(posedge bus_clk) begin
+        bus_rst_q <= bus_rst;
+    end
 
     wire [RQW-1:0] rq;
     wire           rq_empty, rqf_full, rq_pop;
@@ -205,7 +204,9 @@ module sb_nsu #(
                     w_body <= !req_last;
                 end else begin
                     w_off <= w_off + (1 << w_sz);
-                    if (req_last) w_body <= 1'b0;
+                    if (req_last) begin
+                        w_body <= 1'b0;
+                    end
                 end
             end
         end
@@ -252,11 +253,13 @@ module sb_nsu #(
     integer wi, ri;
     always @(*) begin
         w_new = {WIDW{1'b0}}; w_avail = 1'b0;
-        for (wi = WOST-1; wi >= 0; wi = wi - 1)
+        for (wi = WOST-1; wi >= 0; wi = wi - 1) begin
             if (!w_busy[wi]) begin w_new = wi[WIDW-1:0]; w_avail = 1'b1; end
+        end
         r_new = {RIDW{1'b0}}; r_avail = 1'b0;
-        for (ri = ROST-1; ri >= 0; ri = ri - 1)
+        for (ri = ROST-1; ri >= 0; ri = ri - 1) begin
             if (!r_busy[ri]) begin r_new = ri[RIDW-1:0]; r_avail = 1'b1; end
+        end
     end
 
     // ================================================================= unpack
@@ -287,11 +290,17 @@ module sb_nsu #(
                 rt_src[r_new] <= rq_src;
                 rt_tag[r_new] <= rq_tag;
             end
-            if (body_wr && rq_last) in_body <= 1'b0;
+            if (body_wr && rq_last) begin
+                in_body <= 1'b0;
+            end
             // Free on the zombie path too, or the slot re-arms its timer and
             // fires a SECOND SLVERR for a transaction already answered.
-            if (b_go || b_zom)              w_busy[bw_id] <= 1'b0;
-            if ((r_go || r_zom) && m_rlast) r_busy[rd_id] <= 1'b0;
+            if (b_go || b_zom) begin
+                w_busy[bw_id] <= 1'b0;
+            end
+            if ((r_go || r_zom) && m_rlast) begin
+                r_busy[rd_id] <= 1'b0;
+            end
         end
     end
 
@@ -388,7 +397,7 @@ module sb_nsu #(
             to_pend <= 1'b0;
         end else begin
             if (TIMEOUT > 0) begin
-                for (ti = 0; ti < WOST; ti = ti + 1)
+                for (ti = 0; ti < WOST; ti = ti + 1) begin
                     if (w_busy[ti] && !w_zomb[ti]) begin
                         if (wt_age[ti] == TIMEOUT[TOW-1:0]) begin
                             w_zomb[ti] <= 1'b1;
@@ -396,10 +405,16 @@ module sb_nsu #(
                                 to_pend <= 1'b1; to_wr <= 1'b1;
                                 to_src  <= wt_src[ti]; to_tag <= wt_tag[ti];
                             end
-                        end else wt_age[ti] <= wt_age[ti] + 1'b1;
-                    end else if (!w_busy[ti]) wt_age[ti] <= {TOW{1'b0}};
+                        end
+                        else begin
+                            wt_age[ti] <= wt_age[ti] + 1'b1;
+                        end
+                    end else if (!w_busy[ti]) begin
+                        wt_age[ti] <= {TOW{1'b0}};
+                    end
+                end
 
-                for (ti = 0; ti < ROST; ti = ti + 1)
+                for (ti = 0; ti < ROST; ti = ti + 1) begin
                     if (r_busy[ti] && !r_zomb[ti]) begin
                         if (rt_age[ti] == TIMEOUT[TOW-1:0]) begin
                             r_zomb[ti] <= 1'b1;
@@ -407,29 +422,49 @@ module sb_nsu #(
                                 to_pend <= 1'b1; to_wr <= 1'b0;
                                 to_src  <= rt_src[ti]; to_tag <= rt_tag[ti];
                             end
-                        end else rt_age[ti] <= rt_age[ti] + 1'b1;
-                    end else if (!r_busy[ti]) rt_age[ti] <= {TOW{1'b0}};
+                        end
+                        else begin
+                            rt_age[ti] <= rt_age[ti] + 1'b1;
+                        end
+                    end else if (!r_busy[ti]) begin
+                        rt_age[ti] <= {TOW{1'b0}};
+                    end
+                end
             end
 
-            if (to_go)                    to_pend <= 1'b0;
-            if (b_zom)                    w_zomb[bw_id] <= 1'b0;
-            if (r_zom && m_rlast)         r_zomb[rd_id] <= 1'b0;
+            if (to_go) begin
+                to_pend <= 1'b0;
+            end
+            if (b_zom) begin
+                w_zomb[bw_id] <= 1'b0;
+            end
+            if (r_zom && m_rlast) begin
+                r_zomb[rd_id] <= 1'b0;
+            end
         end
     end
 
-    always @(posedge m_aclk)
-        if (mrst)      r_active <= 1'b0;
-        else if (r_go) r_active <= !m_rlast;
+    always @(posedge m_aclk) begin
+        if (mrst) begin
+            r_active <= 1'b0;
+        end
+        else if (r_go) begin
+            r_active <= !m_rlast;
+        end
+    end
 
     // Which lane of the flit the NEXT word of this id belongs in. Loaded from
     // the request's own offset, then free-running: AXI4 forbids read-data
     // interleaving, so one counter per id is exact.
     reg [SLW-1:0] rd_sl [0:ROST-1];
     always @(posedge m_aclk) begin
-        if (start_rd)
+        if (start_rd) begin
             rd_sl[r_new] <= (NSLICE <= 1) ? {SLW{1'b0}}
                                           : rq_addr[FBW-1 -: SLW];
-        if (r_go) rd_sl[rd_id] <= rd_sl[rd_id] + 1'b1;
+        end
+        if (r_go) begin
+            rd_sl[rd_id] <= rd_sl[rd_id] + 1'b1;
+        end
     end
 
     wire [RSW-1:0] rs_in =
@@ -479,9 +514,15 @@ module sb_nsu #(
         assign rsf_pop = take;
 
         always @(posedge bus_clk) begin
-            if (bus_rst_q) fl_v <= 1'b0;
-            else if (take)      fl_v <= ends;
-            else if (rsp_ready) fl_v <= 1'b0;
+            if (bus_rst_q) begin
+                fl_v <= 1'b0;
+            end
+            else if (take) begin
+                fl_v <= ends;
+            end
+            else if (rsp_ready) begin
+                fl_v <= 1'b0;
+            end
 
             if (take) begin
                 acc[o_sl*SDW +: SDW] <= o_rdata;
@@ -499,10 +540,12 @@ module sb_nsu #(
 `ifndef SYNTHESIS
     // Sub-width requests are legal: the issue stage re-expresses them at port
     // width. A size wider than the flit itself is a malformed header.
-    always @(posedge m_aclk)
-        if (!mrst && (start_wr || start_rd) && ((1 << rq_size) > (FW/8)))
+    always @(posedge m_aclk) begin
+        if (!mrst && (start_wr || start_rd) && ((1 << rq_size) > (FW/8))) begin
             $display("%0t ERROR sb_nsu: size %0d exceeds flit width %0d",
                      $time, rq_size, FW);
+        end
+    end
 `endif
 endmodule
 

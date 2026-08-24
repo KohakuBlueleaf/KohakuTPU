@@ -61,10 +61,10 @@ module mx_system_tb;
     localparam integer MEM_X = 2, MEM_Y = 1;
 
     // orchestrator register map
-    localparam [31:0] A_PROG_DST = 32'h0040, A_PROG_LEN  = 32'h0048,
-                      A_PROG_KICK= 32'h0050, A_PROG_STAT = 32'h0058,
-                      A_PROG_CRED= 32'h0060, A_NODE      = 32'h1000,
-                      A_STAGE    = 32'h2000;
+    localparam [31:0] A_PROG_DST = 32'h0040, A_PROG_LEN = 32'h0048;
+    localparam [31:0] A_PROG_KICK = 32'h0050, A_PROG_STAT = 32'h0058;
+    localparam [31:0] A_PROG_CRED = 32'h0060, A_NODE = 32'h1000;
+    localparam [31:0] A_STAGE = 32'h2000;
 
     // memory word layout (256-bit words)
     localparam integer WA_BASE = 0;            // A: 4 words per block
@@ -72,7 +72,9 @@ module mx_system_tb;
     localparam integer WC_BASE = 200;          // result
 
     reg clk = 0, rstn = 0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     // ------------------------------------------------------------ AXI wires
     reg  [3:0]  awid, arid;
@@ -217,12 +219,16 @@ module mx_system_tb;
     function real fp16_to_real(input [15:0] f);
         real m; integer e;
         begin
-            if (f[14:10] == 5'd0) fp16_to_real = 0.0;
+            if (f[14:10] == 5'd0) begin
+                fp16_to_real = 0.0;
+            end
             else begin
                 m = 1.0 + $itor(f[9:0]) / 1024.0;
                 e = f[14:10] - 15;
                 fp16_to_real = m * (2.0 ** e);
-                if (f[15]) fp16_to_real = -fp16_to_real;
+                if (f[15]) begin
+                    fp16_to_real = -fp16_to_real;
+                end
             end
         end
     endfunction
@@ -259,27 +265,36 @@ module mx_system_tb;
 
         // ---------------------------------------------------------------
         $display("--- 1. build the problem and both ground truths ---");
-        for (i = 0; i < 4; i = i + 1)
-            for (k = 0; k < 256; k = k + 1) A[i][k] = ($random(seed) & 127) - 64;
-        for (k = 0; k < 256; k = k + 1)
-            for (j = 0; j < 4; j = j + 1) B[k][j] = ($random(seed) & 127) - 64;
-        for (b = 0; b < NBLK; b = b + 1)
+        for (i = 0; i < 4; i = i + 1) begin
+            for (k = 0; k < 256; k = k + 1) begin
+                A[i][k] = ($random(seed) & 127) - 64;
+            end
+        end
+        for (k = 0; k < 256; k = k + 1) begin
+            for (j = 0; j < 4; j = j + 1) begin
+                B[k][j] = ($random(seed) & 127) - 64;
+            end
+        end
+        for (b = 0; b < NBLK; b = b + 1) begin
             for (i = 0; i < 4; i = i + 1) begin
                 SA[b][i] = ($random(seed) & 3);
                 SB[b][i] = ($random(seed) & 3);
             end
+        end
 
-        for (i = 0; i < 4; i = i + 1)
+        for (i = 0; i < 4; i = i + 1) begin
             for (j = 0; j < 4; j = j + 1) begin
                 exact_c[i][j] = 0;
                 fp64_c[i][j]  = 0.0;
             end
-        for (b = 0; b < NBLK; b = b + 1)
-            for (i = 0; i < 4; i = i + 1)
+        end
+        for (b = 0; b < NBLK; b = b + 1) begin
+            for (i = 0; i < 4; i = i + 1) begin
                 for (j = 0; j < 4; j = j + 1) begin
                     blocksum = 0;
-                    for (k = 0; k < 32; k = k + 1)
+                    for (k = 0; k < 32; k = k + 1) begin
                         blocksum = blocksum + A[i][b*32+k] * B[b*32+k][j];
+                    end
                     // only the headroom reaches the result: the other 2*SBIAS
                     // of ANCHOR cancels the bias stored in each scale field
                     sh = SA[b][i] + SB[b][j] - (ANCHOR - 2*SBIAS);
@@ -289,8 +304,10 @@ module mx_system_tb;
                                   + (blocksum <<< (SA[b][i] + SB[b][j]));
                     fp64_c[i][j]  = fp64_c[i][j] + $itor(blocksum) * (2.0 ** sh);
                 end
+            end
+        end
         // the two models must agree, or the bench is measuring itself
-        for (i = 0; i < 4; i = i + 1)
+        for (i = 0; i < 4; i = i + 1) begin
             for (j = 0; j < 4; j = j + 1) begin
                 checks = checks + 1;
                 if ($itor(exact_c[i][j]) * (2.0 ** -(ANCHOR - 2*SBIAS))
@@ -299,26 +316,33 @@ module mx_system_tb;
                     $display("  FAIL ground-truth models disagree at [%0d][%0d]", i, j);
                 end
             end
+        end
 
         // ---------------------------------------------------------------
         $display("--- 2. preload operands into memory ---");
         for (b = 0; b < NBLK; b = b + 1) begin
             for (c = 0; c < 4; c = c + 1) begin
                 wtmp = 256'd0;
-                for (i = 0; i < 4; i = i + 1)
-                    for (k = 0; k < 8; k = k + 1)
+                for (i = 0; i < 4; i = i + 1) begin
+                    for (k = 0; k < 8; k = k + 1) begin
                         wtmp[255 - (i*8+k)*7 -: 7] = A[i][b*32 + c*8 + k][6:0];
-                for (i = 0; i < 4; i = i + 1)
+                    end
+                end
+                for (i = 0; i < 4; i = i + 1) begin
                     wtmp[31 - i*8 -: 8] = sf(SA[b][i]);
+                end
                 bd_write(WA_BASE + b*4 + c, wtmp);
             end
             for (c = 0; c < 4; c = c + 1) begin
                 wtmp = 256'd0;
-                for (k = 0; k < 8; k = k + 1)
-                    for (j = 0; j < 4; j = j + 1)
+                for (k = 0; k < 8; k = k + 1) begin
+                    for (j = 0; j < 4; j = j + 1) begin
                         wtmp[255 - (k*4+j)*7 -: 7] = B[b*32 + c*8 + k][j][6:0];
-                for (j = 0; j < 4; j = j + 1)
+                    end
+                end
+                for (j = 0; j < 4; j = j + 1) begin
                     wtmp[31 - j*8 -: 8] = sf(SB[b][j]);
+                end
                 bd_write(WB_BASE + b*4 + c, wtmp);
             end
         end
@@ -343,8 +367,9 @@ module mx_system_tb;
                       (b == 0),                              // first
                       ANCHOR[7:0],
                       171'd0 };
-            for (t = 0; t < WORDS; t = t + 1)
+            for (t = 0; t < WORDS; t = t + 1) begin
                 axi_w(A_STAGE + (b*WORDS + t)*8, instr[t*DW +: DW]);
+            end
         end
         adr_a34 = WC_BASE * 32;
         adr_b34 = 34'd0;
@@ -352,8 +377,9 @@ module mx_system_tb;
                   4'd2,                                      // opcode EMIT
                   adr_a34,                                   // destination
                   adr_b34, 4'd0, 1'b0, ANCHOR[7:0], 171'd0 };
-        for (t = 0; t < WORDS; t = t + 1)
+        for (t = 0; t < WORDS; t = t + 1) begin
             axi_w(A_STAGE + (NBLK*WORDS + t)*8, instr[t*DW +: DW]);
+        end
 
         // ---------------------------------------------------------------
         $display("--- 4. dispatch and wait ---");
@@ -399,27 +425,35 @@ module mx_system_tb;
         @(negedge clk); @(negedge clk);
         res_word = bd_rdata;
 
-        for (i = 0; i < 4; i = i + 1)
+        for (i = 0; i < 4; i = i + 1) begin
             for (j = 0; j < 4; j = j + 1) begin
                 got_r  = fp16_to_real(res_word[(i*4+j)*16 +: 16]);
                 want_r = fp64_c[i][j];
                 checks = checks + 1;
                 if (want_r == 0.0) begin
-                    if (got_r != 0.0) errors = errors + 1;
+                    if (got_r != 0.0) begin
+                        errors = errors + 1;
+                    end
                 end else begin
                     err = (got_r - want_r) / want_r;
-                    if (err < 0.0) err = -err;
-                    if (err > worst_rel) worst_rel = err;
+                    if (err < 0.0) begin
+                        err = -err;
+                    end
+                    if (err > worst_rel) begin
+                        worst_rel = err;
+                    end
                     // FP16 output carries 11 significand bits; allow a few ULP
                     // for the FP22 accumulation across 8 blocks on top
                     if (err > 4.0 / 1024.0) begin
                         errors = errors + 1;
-                        if (errors <= 8)
+                        if (errors <= 8) begin
                             $display("  FAIL C[%0d][%0d] got %0f want %0f relerr %0e",
                                      i, j, got_r, want_r, err);
+                        end
                     end
                 end
             end
+        end
 
         $display("");
         $display("    C[0][0]  hardware %0f   fp64 %0f   exact int %0d / 2^%0d",
@@ -428,8 +462,12 @@ module mx_system_tb;
                  worst_rel, 1.0/1024.0);
 
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors  (MODEL=%0d)", checks, MODEL);
-        else             $display("  FAIL -- %0d checks, %0d errors  (MODEL=%0d)", checks, errors, MODEL);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors  (MODEL=%0d)", checks, MODEL);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors  (MODEL=%0d)", checks, errors, MODEL);
+        end
         $display("========================================");
         $finish;
     end

@@ -85,10 +85,10 @@ module vec_lanes #(
     output wire [3:0]   wb_vreg
 );
     localparam [1:0] M_FLAT = 2'd0, M_D2 = 2'd1, M_D4 = 2'd2, M_TREE = 2'd3;
-    localparam [2:0] R_MAX = 3'd1, R_MIN = 3'd2, R_SUMSQ = 3'd3, R_DOT = 3'd4,
-                     R_EXPSUM = 3'd5;
-    localparam [4:0] OP_ADD = 5'd3, OP_MUL = 5'd5, OP_MAX = 5'd8, OP_MIN = 5'd9,
-                     OP_EXP2 = 5'd16;
+    localparam [2:0] R_MAX = 3'd1, R_MIN = 3'd2, R_SUMSQ = 3'd3, R_DOT = 3'd4;
+    localparam [2:0] R_EXPSUM = 3'd5;
+    localparam [4:0] OP_ADD = 5'd3, OP_MUL = 5'd5, OP_MAX = 5'd8, OP_MIN = 5'd9;
+    localparam [4:0] OP_EXP2 = 5'd16;
     localparam [1:0] SRC_V = 2'd0, SRC_C = 2'd2;
 
     localparam [23:0] E8_ZERO = 24'h000000;
@@ -370,9 +370,13 @@ module vec_lanes #(
     // resets would cost MW*MDEP flops, because an SRL has no reset pin.
     always @(posedge clk) begin
         meta[1] <= meta_in;
-        for (mi = 2; mi <= MDEP; mi = mi + 1) meta[mi] <= meta[mi-1];
+        for (mi = 2; mi <= MDEP; mi = mi + 1) begin
+            meta[mi] <= meta[mi-1];
+        end
         if (rst) begin
-            for (mi = 1; mi <= MDEP; mi = mi + 1) meta[mi][MW-1] <= 1'b0;
+            for (mi = 1; mi <= MDEP; mi = mi + 1) begin
+                meta[mi][MW-1] <= 1'b0;
+            end
             tailv <= 16'd0;
         end else begin
             tailv <= {tailv[14:0], meta[MDEP][MW-1]};
@@ -493,9 +497,11 @@ module vec_lanes #(
         // RESET-RISK: 512 flops, unreset like vec_regfile -- a program writes a
         // predicate before reading it, so reading an unwritten one sees stale.
         if (wb_valid && (mode != M_TREE) && wb_cmp) begin
-            for (pg = 0; pg < 16; pg = pg + 1)
-                if (pred_inph[pg] && wb_tmask[pg])
+            for (pg = 0; pg < 16; pg = pg + 1) begin
+                if (pred_inph[pg] && wb_tmask[pg]) begin
                     preg[wb_pr][wb_chunk*16 + pg] <= pred_sl[pg];
+                end
+            end
         end
     end
 
@@ -507,14 +513,22 @@ module vec_lanes #(
 
     always @(posedge clk) begin
         if (rst) begin
-            for (ai = 0; ai < 16; ai = ai + 1) acc[ai] <= E8_ZERO;
+            for (ai = 0; ai < 16; ai = ai + 1) begin
+                acc[ai] <= E8_ZERO;
+            end
             acc_rd <= 4'd0;
         end else if (red_init) begin
-            for (ai = 0; ai < 16; ai = ai + 1) acc[ai] <= ident;
+            for (ai = 0; ai < 16; ai = ai + 1) begin
+                acc[ai] <= ident;
+            end
             acc_rd <= 4'd0;
         end else begin
-            if (alu_ovld[14] && !d_tail_q) acc_rd <= acc_rd + 4'd1;
-            if (alu_ovld[15]) acc[acc_wr] <= alu_out[15*24 +: 24];
+            if (alu_ovld[14] && !d_tail_q) begin
+                acc_rd <= acc_rd + 4'd1;
+            end
+            if (alu_ovld[15]) begin
+                acc[acc_wr] <= alu_out[15*24 +: 24];
+            end
         end
     end
 
@@ -530,7 +544,9 @@ module vec_lanes #(
     reg meta_any;
     always @(*) begin
         meta_any = |tailv;
-        for (mj = 1; mj <= MDEP; mj = mj + 1) meta_any = meta_any | meta[mj][MW-1];
+        for (mj = 1; mj <= MDEP; mj = mj + 1) begin
+            meta_any = meta_any | meta[mj][MW-1];
+        end
     end
     assign pipe_empty = !meta_any && !d_valid && !iss_valid;
 

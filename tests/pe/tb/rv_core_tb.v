@@ -48,7 +48,9 @@ module rv_core_tb;
     localparam integer SAW = $clog2(SW);
 
     reg clk = 1'b0, resetn = 1'b0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     integer errors = 0, checks = 0;
 
@@ -96,10 +98,13 @@ module rv_core_tb;
     reg [31:0] dmem_q;
     integer bi;
     always @(posedge clk) begin
-        if (l1_req && l1_we)
-            for (bi = 0; bi < 4; bi = bi + 1)
-                if (l1_be[bi])
+        if (l1_req && l1_we) begin
+            for (bi = 0; bi < 4; bi = bi + 1) begin
+                if (l1_be[bi]) begin
                     dmem[l1_addr[$clog2(DW)+1:2]][bi*8 +: 8] <= l1_wdata[bi*8 +: 8];
+                end
+            end
+        end
         dmem_q <= dmem[l1_addr[$clog2(DW)+1:2]];
     end
 
@@ -194,17 +199,24 @@ module rv_core_tb;
             end
             case_fail <= 1'b1;
         end
-        if (retire_rd != 5'd0) xshadow[retire_rd] <= retire_val;
+        if (retire_rd != 5'd0) begin
+            xshadow[retire_rd] <= retire_val;
+        end
         ridx <= ridx + 1;
     end
 
     // Every uncached store, reassembled into the address software wrote so the
     // model's log and this one are the same object.
     always @(posedge clk) if (resetn && armed && push_valid) begin
-        push_sum <= push_sum +
-                    (({4'h3, push_dx, push_dy, push_win, push_gran, push_sel,
-                       2'b00} * 3) + (push_data * 5) + ({28'd0, push_be} * 7))
-                    * (push_n + 1);
+        push_sum <= (
+            push_sum
+            + (
+                ({4'h3, push_dx, push_dy, push_win, push_gran, push_sel,
+                  2'b00} * 3)
+                + (push_data * 5)
+                + ({28'd0, push_be} * 7)
+            ) * (push_n + 1)
+        );
         push_n <= push_n + 1;
     end
 
@@ -212,8 +224,12 @@ module rv_core_tb;
     task load_case(input integer n);
         string fn;
         begin
-            for (i = 0; i < IW; i = i + 1) prog[i] = 32'd0;
-            for (i = 0; i < META_N; i = i + 1) meta[i] = 32'd0;
+            for (i = 0; i < IW; i = i + 1) begin
+                prog[i] = 32'd0;
+            end
+            for (i = 0; i < META_N; i = i + 1) begin
+                meta[i] = 32'd0;
+            end
             fn = $sformatf("%s/case%02d/prog.hex", `PE_DIR, n);
             $readmemh(fn, prog);
             fn = $sformatf("%s/case%02d/trace.hex", `PE_DIR, n);
@@ -231,7 +247,9 @@ module rv_core_tb;
                 @(posedge clk);
             end
             sp_en <= 1'b0; sp_we <= 4'd0;
-            for (i = 0; i < DW; i = i + 1) dmem[i] = 32'd0;
+            for (i = 0; i < DW; i = i + 1) begin
+                dmem[i] = 32'd0;
+            end
             for (i = 0; i < IW; i = i + 1) begin
                 im_we <= 1'b1; im_wa <= i[IAW-1:0]; im_wd <= prog[i];
                 @(posedge clk);
@@ -248,14 +266,17 @@ module rv_core_tb;
                 sp_en <= 1'b1; sp_we <= 4'd0; sp_a <= i[SAW-1:0];
                 @(posedge clk);
                 // one cycle of read latency, so index i-1 is what is out now
-                if (i > 0) spad_sum = spad_sum + sp_rd * i;
+                if (i > 0) begin
+                    spad_sum = spad_sum + sp_rd * i;
+                end
             end
             @(posedge clk);
             spad_sum = spad_sum + sp_rd * SW;
             sp_en <= 1'b0;
             dmem_sum = 32'd0;
-            for (i = 0; i < DW; i = i + 1)
+            for (i = 0; i < DW; i = i + 1) begin
                 dmem_sum = dmem_sum + dmem[i] * (i + 1);
+            end
         end
     endtask
 
@@ -289,7 +310,9 @@ module rv_core_tb;
             repeat (4) @(posedge clk);
 
             ridx = 0; push_n = 0; push_sum = 32'd0; case_fail = 1'b0;
-            for (i = 0; i < 32; i = i + 1) xshadow[i] = 32'd0;
+            for (i = 0; i < 32; i = i + 1) begin
+                xshadow[i] = 32'd0;
+            end
             armed = 1'b1;
 
             boot_pc <= 32'd0;
@@ -316,14 +339,20 @@ module rv_core_tb;
             chk(core_cause,     meta[1], "halt cause");
             chk(core_halt_word, meta[2], "halt word");
             ncmp = 0;
-            for (i = 1; i < 32; i = i + 1)
-                if (xshadow[i] !== meta[3 + i]) ncmp = ncmp + 1;
+            for (i = 1; i < 32; i = i + 1) begin
+                if (xshadow[i] !== meta[3 + i]) begin
+                    ncmp = ncmp + 1;
+                end
+            end
             chk(ncmp, 0, "regs differing");
-            if (ncmp != 0)
-                for (i = 1; i < 32; i = i + 1)
-                    if (xshadow[i] !== meta[3 + i])
+            if (ncmp != 0) begin
+                for (i = 1; i < 32; i = i + 1) begin
+                    if (xshadow[i] !== meta[3 + i]) begin
                         $display("      x%0d: rtl %h model %h",
                                  i, xshadow[i], meta[3 + i]);
+                    end
+                end
+            end
 
             checksums;
             chk(spad_sum, meta[35], "scratchpad checksum");
@@ -333,7 +362,9 @@ module rv_core_tb;
 
             total_retire = total_retire + ridx;
             total_case = total_case + 1;
-            if (case_fail) failed_case = failed_case + 1;
+            if (case_fail) begin
+                failed_case = failed_case + 1;
+            end
             $display("    case%02d  %6d retired  %7d cycles  %s",
                      c, ridx, cyc, case_fail ? "FAILED" : "ok");
         end
@@ -341,9 +372,15 @@ module rv_core_tb;
         $display("--- %0d cases, %0d instructions retired, %0d cases failed ---",
                  total_case, total_retire, failed_case);
         $display("========================================");
-        if (checks == 0)  $display("  FAIL -- the bench made no checks at all");
-        else if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (checks == 0) begin
+            $display("  FAIL -- the bench made no checks at all");
+        end
+        else if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end

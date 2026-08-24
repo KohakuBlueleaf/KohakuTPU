@@ -10,7 +10,9 @@ module InstReceiver_tb();
     
     // Clock generation
     reg clk = 0;
-    always #5 clk = ~clk;
+    always begin
+        #5 clk = ~clk;
+    end
     
     // Reset generation
     reg rst;

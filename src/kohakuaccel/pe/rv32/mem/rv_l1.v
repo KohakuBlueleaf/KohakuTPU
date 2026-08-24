@@ -80,11 +80,11 @@ module rv_l1 #(
 
     // Declared before anything reads them: xvlog rejects a use-before-declare
     // that synthesis had accepted silently.
-    localparam [3:0] L_IDLE = 4'd0, L_EV_RD = 4'd1, L_EV_SEND = 4'd2,
-                     L_F_REQ = 4'd3, L_F_WAIT = 4'd4, L_F_WR  = 4'd5,
-                     L_S_SCAN = 4'd6, L_S_RD  = 4'd7, L_S_SEND = 4'd8,
-                     L_S_DRAIN = 4'd9, L_S_TEST = 4'd10, L_I_SCAN = 4'd11,
-                     L_REPROBE = 4'd12;
+    localparam [3:0] L_IDLE = 4'd0, L_EV_RD = 4'd1, L_EV_SEND = 4'd2;
+    localparam [3:0] L_F_REQ = 4'd3, L_F_WAIT = 4'd4, L_F_WR = 4'd5;
+    localparam [3:0] L_S_SCAN = 4'd6, L_S_RD = 4'd7, L_S_SEND = 4'd8;
+    localparam [3:0] L_S_DRAIN = 4'd9, L_S_TEST = 4'd10, L_I_SCAN = 4'd11;
+    localparam [3:0] L_REPROBE = 4'd12;
     reg [3:0] st;
 
     reg [2:0]        wcnt;      // word being addressed within a line
@@ -109,8 +109,14 @@ module rv_l1 #(
     assign stall      = (st != L_IDLE) || miss;
     // Every state that owns the tag port's address. L_I_SCAN is in it so the
     // MEM stage holds for invalidate-all the way it already does for flush.
-    assign flush_busy = (st == L_S_SCAN) || (st == L_S_TEST) || (st == L_S_RD) ||
-                        (st == L_S_SEND) || (st == L_S_DRAIN) || (st == L_I_SCAN);
+    assign flush_busy = (
+        (st == L_S_SCAN)
+        || (st == L_S_TEST)
+        || (st == L_S_RD)
+        || (st == L_S_SEND)
+        || (st == L_S_DRAIN)
+        || (st == L_I_SCAN)
+    );
     assign wb_data    = linebuf;
 
     // A store hit dirties its line by WRITING this array, whose read port is
@@ -187,7 +193,9 @@ module rv_l1 #(
             // Eight of these leave word 0 in the bottom. `a_walk` too, because
             // `wvalid_d` is a cycle late by construction and is still set after
             // the walk ends -- a ninth rotation shifts the writeback by a word.
-            if (wvalid_d && a_walk) linebuf <= {a_rd, linebuf[255:32]};
+            if (wvalid_d && a_walk) begin
+                linebuf <= {a_rd, linebuf[255:32]};
+            end
 
             // Exclusive with every write the case below makes: those all need
             // st != L_IDLE, and a store that commits needs !stall.
@@ -198,120 +206,146 @@ module rv_l1 #(
             end
 
             case (st)
-            L_IDLE: begin
-                wcnt <= 3'd0;
-                scan <= {(IDX_W+1){1'b0}};
-                if (flush)      st <= L_S_SCAN;
-                else if (inval) st <= L_I_SCAN;
-                else if (miss) begin
-                    vic     <= idx;
-                    vic_tag <= tag_q;
-                    if (v_q && d_eff) st <= L_EV_RD;
-                    else begin
-                        fill_addr  <= {tag, idx, 5'd0};
-                        fill_valid <= 1'b1;
-                        st <= L_F_REQ;
+                L_IDLE: begin
+                    wcnt <= 3'd0;
+                    scan <= {(IDX_W+1){1'b0}};
+                    if (flush) begin
+                        st <= L_S_SCAN;
+                    end
+                    else if (inval) begin
+                        st <= L_I_SCAN;
+                    end
+                    else if (miss) begin
+                        vic     <= idx;
+                        vic_tag <= tag_q;
+                        if (v_q && d_eff) begin
+                            st <= L_EV_RD;
+                        end
+                        else begin
+                            fill_addr  <= {tag, idx, 5'd0};
+                            fill_valid <= 1'b1;
+                            st <= L_F_REQ;
+                        end
                     end
                 end
-            end
 
-            // Eight addresses out, eight words in one cycle behind; the last
-            // word is in `linebuf` one cycle after the last address.
-            L_EV_RD: if (wcnt == 3'd7) begin
-                if (wvalid_d && (wcnt_d == 3'd7)) begin
-                    wb_addr  <= {vic_tag, vic, 5'd0};
-                    wb_valid <= 1'b1;
-                    st <= L_EV_SEND;
+                // Eight addresses out, eight words in one cycle behind; the last
+                // word is in `linebuf` one cycle after the last address.
+                L_EV_RD: if (wcnt == 3'd7) begin
+                    if (wvalid_d && (wcnt_d == 3'd7)) begin
+                        wb_addr  <= {vic_tag, vic, 5'd0};
+                        wb_valid <= 1'b1;
+                        st <= L_EV_SEND;
+                    end
                 end
-            end else wcnt <= wcnt + 3'd1;
-
-            // No dirty clear: `vic` is `idx`, so the fill below rewrites this
-            // line's whole word anyway.
-            L_EV_SEND: if (wb_ready) begin
-                wb_valid   <= 1'b0;
-                fill_addr  <= {tag, idx, 5'd0};
-                fill_valid <= 1'b1;
-                wcnt       <= 3'd0;
-                st <= L_F_REQ;
-            end
-
-            L_F_REQ: if (fill_ready) begin
-                fill_valid <= 1'b0;
-                st <= L_F_WAIT;
-            end
-
-            L_F_WAIT: if (resp_valid) begin
-                linebuf    <= resp_data;
-                tag_we     <= 1'b1;
-                tag_wa     <= vic;
-                tag_wd     <= {2'b10, tag};      // valid, clean
-                wcnt       <= 3'd0;
-                st <= L_F_WR;
-            end
-
-            // The last word commits at the edge that leaves this state, so the
-            // access sees it on its next read -- one cycle later, never the
-            // same edge, which is the port A / port B collision.
-            L_F_WR: begin
-                // Eight rotations return the line to the order it arrived in.
-                linebuf <= {linebuf[31:0], linebuf[255:32]};
-                if (wcnt == 3'd7) st <= L_IDLE;
-                else wcnt <= wcnt + 3'd1;
-            end
-
-            // ---- flush-all ----
-            // Two states per line, not one: this state presents `scan` on the
-            // tag port and the word is only out in the next.
-            L_S_SCAN: begin
-                wcnt <= 3'd0;
-                if (scan[IDX_W]) st <= L_S_DRAIN;
-                else st <= L_S_TEST;
-            end
-
-            // `dirty` alone: a fill leaves a line valid and clean and only a
-            // store hit sets dirty, so dirty implies valid by construction.
-            L_S_TEST: if (d_q) st <= L_S_RD;
-                      else begin
-                          scan <= scan + 1'b1;
-                          st   <= L_S_SCAN;
-                      end
-
-            L_S_RD: if (wcnt == 3'd7) begin
-                if (wvalid_d && (wcnt_d == 3'd7)) begin
-                    wb_addr  <= {tag_q, scan[IDX_W-1:0], 5'd0};
-                    wb_valid <= 1'b1;
-                    st <= L_S_SEND;
+                else begin
+                    wcnt <= wcnt + 3'd1;
                 end
-            end else wcnt <= wcnt + 3'd1;
 
-            L_S_SEND: if (wb_ready) begin
-                wb_valid <= 1'b0;
-                // Still valid, no longer dirty. The tag has to be carried back
-                // in: this array holds one word per line, not three fields.
-                tag_we   <= 1'b1;
-                tag_wa   <= scan[IDX_W-1:0];
-                tag_wd   <= {2'b10, tag_q};
-                scan     <= scan + 1'b1;
-                st <= L_S_SCAN;
-            end
+                // No dirty clear: `vic` is `idx`, so the fill below rewrites this
+                // line's whole word anyway.
+                L_EV_SEND: if (wb_ready) begin
+                    wb_valid   <= 1'b0;
+                    fill_addr  <= {tag, idx, 5'd0};
+                    fill_valid <= 1'b1;
+                    wcnt       <= 3'd0;
+                    st <= L_F_REQ;
+                end
 
-            L_S_DRAIN: if (wr_idle) st <= L_REPROBE;
+                L_F_REQ: if (fill_ready) begin
+                    fill_valid <= 1'b0;
+                    st <= L_F_WAIT;
+                end
 
-            // Invalidate-all, and the power-on sweep the array's missing reset
-            // needs. One line a cycle, and `stall` holds MEM for all of it.
-            L_I_SCAN: if (scan[IDX_W]) st <= L_REPROBE;
-                      else begin
-                          tag_we <= 1'b1;
-                          tag_wa <= scan[IDX_W-1:0];
-                          tag_wd <= {TW{1'b0}};
-                          scan   <= scan + 1'b1;
-                      end
+                L_F_WAIT: if (resp_valid) begin
+                    linebuf    <= resp_data;
+                    tag_we     <= 1'b1;
+                    tag_wa     <= vic;
+                    tag_wd     <= {2'b10, tag};      // valid, clean
+                    wcnt       <= 3'd0;
+                    st <= L_F_WR;
+                end
 
-            // A SWEEP LEAVES THE TAG PORT ON ITS OWN CURSOR, so deciding hit or
-            // miss the cycle it ends would evict to the sweep's address.
-            L_REPROBE: st <= L_IDLE;
+                // The last word commits at the edge that leaves this state, so the
+                // access sees it on its next read -- one cycle later, never the
+                // same edge, which is the port A / port B collision.
+                L_F_WR: begin
+                    // Eight rotations return the line to the order it arrived in.
+                    linebuf <= {linebuf[31:0], linebuf[255:32]};
+                    if (wcnt == 3'd7) begin
+                        st <= L_IDLE;
+                    end
+                    else begin
+                        wcnt <= wcnt + 3'd1;
+                    end
+                end
 
-            default: st <= L_IDLE;
+                // ---- flush-all ----
+                // Two states per line, not one: this state presents `scan` on the
+                // tag port and the word is only out in the next.
+                L_S_SCAN: begin
+                    wcnt <= 3'd0;
+                    if (scan[IDX_W]) begin
+                        st <= L_S_DRAIN;
+                    end
+                    else begin
+                        st <= L_S_TEST;
+                    end
+                end
+
+                // `dirty` alone: a fill leaves a line valid and clean and only a
+                // store hit sets dirty, so dirty implies valid by construction.
+                L_S_TEST: if (d_q) begin
+                    st <= L_S_RD;
+                end
+                          else begin
+                              scan <= scan + 1'b1;
+                              st   <= L_S_SCAN;
+                          end
+
+                L_S_RD: if (wcnt == 3'd7) begin
+                    if (wvalid_d && (wcnt_d == 3'd7)) begin
+                        wb_addr  <= {tag_q, scan[IDX_W-1:0], 5'd0};
+                        wb_valid <= 1'b1;
+                        st <= L_S_SEND;
+                    end
+                end
+                else begin
+                    wcnt <= wcnt + 3'd1;
+                end
+
+                L_S_SEND: if (wb_ready) begin
+                    wb_valid <= 1'b0;
+                    // Still valid, no longer dirty. The tag has to be carried back
+                    // in: this array holds one word per line, not three fields.
+                    tag_we   <= 1'b1;
+                    tag_wa   <= scan[IDX_W-1:0];
+                    tag_wd   <= {2'b10, tag_q};
+                    scan     <= scan + 1'b1;
+                    st <= L_S_SCAN;
+                end
+
+                L_S_DRAIN: if (wr_idle) begin
+                    st <= L_REPROBE;
+                end
+
+                // Invalidate-all, and the power-on sweep the array's missing reset
+                // needs. One line a cycle, and `stall` holds MEM for all of it.
+                L_I_SCAN: if (scan[IDX_W]) begin
+                    st <= L_REPROBE;
+                end
+                          else begin
+                              tag_we <= 1'b1;
+                              tag_wa <= scan[IDX_W-1:0];
+                              tag_wd <= {TW{1'b0}};
+                              scan   <= scan + 1'b1;
+                          end
+
+                // A SWEEP LEAVES THE TAG PORT ON ITS OWN CURSOR, so deciding hit or
+                // miss the cycle it ends would evict to the sweep's address.
+                L_REPROBE: st <= L_IDLE;
+
+                default: st <= L_IDLE;
             endcase
         end
     end
@@ -321,22 +355,27 @@ module rv_l1 #(
     // DECIDED on a word the sweep's cursor read. Deleting L_REPROBE fails here
     // rather than corrupting a writeback address.
     reg sweep_q;
-    always @(posedge clk) sweep_q <= flush_busy;
+    always @(posedge clk) begin
+        sweep_q <= flush_busy;
+    end
 
     always @(posedge clk) begin
-        if (resetn && sweep_q && req && !stall)
+        if (resetn && sweep_q && req && !stall) begin
             $display("%0t ERROR rv_l1: an access completed on the sweep's tag read -- hit, miss and the victim tag are all wrong",
                      $time);
+        end
         // Acted on in L_IDLE only, which the MEM stage guarantees by not
         // committing the store that raises one while an access is outstanding.
-        if (resetn && (flush || inval) && (st != L_IDLE))
+        if (resetn && (flush || inval) && (st != L_IDLE)) begin
             $display("%0t ERROR rv_l1: flush/inval raised in state %0d -- the sweep is dropped",
                      $time, st);
+        end
         // What u_data's XPORT_OK(1) promises: a fill word may collide with the
         // access's read, but never on a cycle that access completes on.
-        if (resetn && a_wr && ({vic, wcnt} == addr[IDX_W+4:2]) && req && !stall)
+        if (resetn && a_wr && ({vic, wcnt} == addr[IDX_W+4:2]) && req && !stall) begin
             $display("%0t ERROR rv_l1: word %0d completed an access on the cycle the fill wrote it -- the load data is undefined",
                      $time, addr[IDX_W+4:2]);
+        end
     end
 `endif
 

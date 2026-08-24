@@ -24,37 +24,52 @@ module float_display #(
         // Convert mantissa to real value
         mantissa_val = 0.0;
         for (i = 0; i < MANT_BITS; i = i + 1) begin
-            if (mantissa[i])
+            if (mantissa[i]) begin
                 mantissa_val = mantissa_val + (2.0 ** (-1 * (MANT_BITS - i)));
+            end
         end
 
         if (exponent == 0) begin
             // Denormalized number or zero
             if (mantissa == 0) begin
-                if(prefix!="")$display("%s: 0.0 (%b)", prefix, float_num);
+                if(prefix!="") begin
+                    $display("%s: 0.0 (%b)", prefix, float_num);
+                end
             end else begin
                 true_exp = 1 - BIAS;
                 decoded_num = mantissa_val * (2.0 ** true_exp);
-                if (sign) decoded_num = -decoded_num;
-                if(prefix!="")$display("%s (denorm): %g (%b)", prefix, decoded_num, float_num);
+                if (sign) begin
+                    decoded_num = -decoded_num;
+                end
+                if(prefix!="") begin
+                    $display("%s (denorm): %g (%b)", prefix, decoded_num, float_num);
+                end
             end
         end
         else if (exponent == {EXP_BITS{1'b1}}) begin
             // Infinity or NaN
             if (mantissa == 0) begin
                 decoded_num = $bitstoreal({sign, 11'b11111111111, 52'b0});
-                if(prefix!="")$display("%s: %sInfinity (%b)", prefix, sign ? "-" : "+", float_num);
+                if(prefix!="") begin
+                    $display("%s: %sInfinity (%b)", prefix, sign ? "-" : "+", float_num);
+                end
             end else begin
                 decoded_num = $bitstoreal(-64'b1);
-                if(prefix!="")$display("%s: NaN (%b)", prefix, float_num);
+                if(prefix!="") begin
+                    $display("%s: NaN (%b)", prefix, float_num);
+                end
             end
         end
         else begin
             // Normal number
             true_exp = exponent - BIAS;
             decoded_num = (1.0 + mantissa_val) * (2.0 ** true_exp);
-            if (sign) decoded_num = -decoded_num;
-            if(prefix!="")$display("%s: %g (%b)", prefix, decoded_num, float_num);
+            if (sign) begin
+                decoded_num = -decoded_num;
+            end
+            if(prefix!="") begin
+                $display("%s: %g (%b)", prefix, decoded_num, float_num);
+            end
         end
         decoded = $realtobits(decoded_num);
     end

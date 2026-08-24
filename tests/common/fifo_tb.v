@@ -152,10 +152,12 @@ module sync_fifo_tb();
         
         // Final report
         repeat(5) @(posedge clk);
-        if (error_count == 0)
+        if (error_count == 0) begin
             $display("All tests passed successfully!");
-        else
+        end
+        else begin
             $display("Tests completed with %d errors", error_count);
+        end
             
         $finish;
     end

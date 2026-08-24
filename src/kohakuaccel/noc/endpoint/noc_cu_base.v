@@ -132,7 +132,9 @@ module noc_cu_base #(
     // instruction-FIFO occupancy, so a sender can hold credits against it
     reg [15:0] inst_used;
     always @(posedge clk) begin
-        if (!resetn) inst_used <= 16'd0;
+        if (!resetn) begin
+            inst_used <= 16'd0;
+        end
         else begin
             case ({(noc_in_valid && !noc_in_busy && in_inst), inst_pop})
                 2'b10: inst_used <= inst_used + 16'd1;
@@ -225,7 +227,9 @@ module noc_cu_base #(
             // mx_cluster_cu all leave a cycle between -- and cu_base_tb's
             // probe counts accepted, exec_done and FIFO writes to keep it
             // that way.
-            if (exec_done && in_flight) in_flight <= 1'b0;
+            if (exec_done && in_flight) begin
+                in_flight <= 1'b0;
+            end
         end
     end
 
@@ -251,8 +255,12 @@ module noc_cu_base #(
         if (!resetn) begin
             ctr_busy <= 32'd0; ctr_inst <= 32'd0;
         end else begin
-            if (busy)      ctr_busy <= ctr_busy + 32'd1;
-            if (exec_done) ctr_inst <= ctr_inst + 32'd1;
+            if (busy) begin
+                ctr_busy <= ctr_busy + 32'd1;
+            end
+            if (exec_done) begin
+                ctr_inst <= ctr_inst + 32'd1;
+            end
         end
     end
 
@@ -274,7 +282,9 @@ module noc_cu_base #(
                     8'd3:    ctrl_val <= dbg_ctr;
                     default: ctrl_val <= 64'd0;
                 endcase
-            end else if (ctrl_sent) ctrl_pend <= 1'b0;
+            end else if (ctrl_sent) begin
+                ctrl_pend <= 1'b0;
+            end
         end
     end
 
@@ -315,7 +325,9 @@ module noc_cu_base #(
             // Hold the flit until the receiver takes it, rather than letting it
             // expire after one cycle.
             noc_out_valid <= out_take | (noc_out_valid && noc_out_busy);
-            if (out_take) noc_out_data <= out_next;
+            if (out_take) begin
+                noc_out_data <= out_next;
+            end
         end
     end
 

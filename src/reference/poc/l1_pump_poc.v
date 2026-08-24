@@ -31,8 +31,14 @@ module l1_pump_poc #(
     // The L1 entry: one BRAM-shaped memory, unchanged width in both modes.
     (* ram_style = "block" *) reg [EW-1:0] mem [0:DEPTH-1];
     reg [EW-1:0] rd_r;
-    always @(posedge clk1x) if (we) mem[waddr] <= wdata;
-    always @(posedge rclk)  rd_r <= mem[raddr];
+    always @(posedge clk1x) begin
+        if (we) begin
+            mem[waddr] <= wdata;
+        end
+    end
+    always @(posedge rclk) begin
+        rd_r <= mem[raddr];
+    end
 
     genvar g;
     generate
@@ -50,8 +56,12 @@ module l1_pump_poc #(
             end
         end
         always @(posedge rclk) begin
-            if (rst) p_out[g*PW +: PW] <= {PW{1'b0}};
-            else     p_out[g*PW +: PW] <= m_r;
+            if (rst) begin
+                p_out[g*PW +: PW] <= {PW{1'b0}};
+            end
+            else begin
+                p_out[g*PW +: PW] <= m_r;
+            end
         end
     end
     endgenerate

@@ -19,11 +19,21 @@ module sb_chain2_tb;
     integer checks = 0;
 
     reg bus_clk = 0, clk_ctrl = 0, clk_xdma = 0, clk_mesh = 0, clk_ddr = 0;
-    always #1.250 bus_clk  = ~bus_clk;
-    always #5.000 clk_ctrl = ~clk_ctrl;
-    always #2.000 clk_xdma = ~clk_xdma;
-    always #2.109 clk_mesh = ~clk_mesh;
-    always #1.667 clk_ddr  = ~clk_ddr;
+    always begin
+        #1.250 bus_clk  = ~bus_clk;
+    end
+    always begin
+        #5.000 clk_ctrl = ~clk_ctrl;
+    end
+    always begin
+        #2.000 clk_xdma = ~clk_xdma;
+    end
+    always begin
+        #2.109 clk_mesh = ~clk_mesh;
+    end
+    always begin
+        #1.667 clk_ddr  = ~clk_ddr;
+    end
 
     reg rstn = 0;
     wire bus_rst = !rstn;
@@ -172,9 +182,10 @@ module sb_chain2_tb;
         input integer  b;
         integer k;
         begin
-            for (k = 0; k < 16; k = k + 1)
+            for (k = 0; k < 16; k = k + 1) begin
                 pat512[k*32 +: 32] = pat32(a) ^ (b * 32'h0001_0001)
                                               ^ (k * 32'h1000_0100);
+            end
         end
     endfunction
 
@@ -229,8 +240,9 @@ module sb_chain2_tb;
                 errors = errors + 1;
                 $display("%0t FAIL jtag read @%h rresp %b exp %b", $time, a,
                          rresp_v[1:0], exp_resp);
-            end else if (exp_resp == 2'b00)
+            end else if (exp_resp == 2'b00) begin
                 chk({480'd0, rdata_v[31:0]}, {480'd0, pat32(a)}, a);
+            end
             @(negedge clk_ctrl); #TS; rrdy[0] = 1'b0;
         end
     endtask
@@ -328,7 +340,9 @@ module sb_chain2_tb;
     // Free-running bus_clk counter: latency and throughput are only meaningful
     // in fabric cycles, since the ports run at four unrelated rates.
     integer cyc = 0;
-    always @(posedge bus_clk) cyc <= cyc + 1;
+    always @(posedge bus_clk) begin
+        cyc <= cyc + 1;
+    end
 
     integer t0, t1;
 
@@ -432,8 +446,12 @@ module sb_chain2_tb;
         $display("    BW  remote 16-beat %0d bus cycles", n);
 
         repeat (400) @(posedge bus_clk);
-        if (errors == 0) $display("PASS  %0d checks", checks);
-        else $display("FAIL  %0d errors in %0d checks", errors, checks);
+        if (errors == 0) begin
+            $display("PASS  %0d checks", checks);
+        end
+        else begin
+            $display("FAIL  %0d errors in %0d checks", errors, checks);
+        end
         $finish;
     end
 

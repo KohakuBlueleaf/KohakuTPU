@@ -65,16 +65,20 @@ module sb_lite_matrix_tb;
 
     function [NS*2-1:0] mk_seg_dst; input integer u; integer m, p; begin
         mk_seg_dst = {(NS*2){1'b0}};
-        for (m = 0; m < 4; m = m + 1)
-            for (p = 0; p < 4; p = p + 1)
+        for (m = 0; m < 4; m = m + 1) begin
+            for (p = 0; p < 4; p = p + 1) begin
                 mk_seg_dst[(m*4+p)*2 +: 2] = m[1:0];
+            end
+        end
     end endfunction
 
     function [NS*2-1:0] mk_seg_dprt; input integer u; integer m, p; begin
         mk_seg_dprt = {(NS*2){1'b0}};
-        for (m = 0; m < 4; m = m + 1)
-            for (p = 0; p < 4; p = p + 1)
+        for (m = 0; m < 4; m = m + 1) begin
+            for (p = 0; p < 4; p = p + 1) begin
                 mk_seg_dprt[(m*4+p)*2 +: 2] = p[1:0];
+            end
+        end
     end endfunction
 
     localparam [NS*AW-1:0] SEG_BASE = mk_seg_base(0);
@@ -84,26 +88,54 @@ module sb_lite_matrix_tb;
     localparam [NS*2-1:0]  SEG_DPRT = mk_seg_dprt(0);
 
     reg bclk0 = 0, bclk1 = 0, bclk2 = 0, bclk3 = 0;
-    always #2.500 bclk0 = ~bclk0;
-    always #2.497 bclk1 = ~bclk1;
-    always #2.503 bclk2 = ~bclk2;
-    always #2.499 bclk3 = ~bclk3;
+    always begin
+        #2.500 bclk0 = ~bclk0;
+    end
+    always begin
+        #2.497 bclk1 = ~bclk1;
+    end
+    always begin
+        #2.503 bclk2 = ~bclk2;
+    end
+    always begin
+        #2.499 bclk3 = ~bclk3;
+    end
 
     reg clk_ctrl = 0, clk_xdma = 0;
-    always #5.000 clk_ctrl = ~clk_ctrl;
-    always #2.000 clk_xdma = ~clk_xdma;
+    always begin
+        #5.000 clk_ctrl = ~clk_ctrl;
+    end
+    always begin
+        #2.000 clk_xdma = ~clk_xdma;
+    end
 
     reg clk_s0 = 0, clk_s1 = 0, clk_s2 = 0, clk_s3 = 0;
-    always #1.667 clk_s0 = ~clk_s0;
-    always #1.667 clk_s1 = ~clk_s1;
-    always #1.667 clk_s2 = ~clk_s2;
-    always #1.667 clk_s3 = ~clk_s3;
+    always begin
+        #1.667 clk_s0 = ~clk_s0;
+    end
+    always begin
+        #1.667 clk_s1 = ~clk_s1;
+    end
+    always begin
+        #1.667 clk_s2 = ~clk_s2;
+    end
+    always begin
+        #1.667 clk_s3 = ~clk_s3;
+    end
 
     reg clk_ddr0 = 0, clk_ddr1 = 0, clk_ddr2 = 0, clk_ddr3 = 0;
-    always #1.667 clk_ddr0 = ~clk_ddr0;
-    always #1.671 clk_ddr1 = ~clk_ddr1;
-    always #1.663 clk_ddr2 = ~clk_ddr2;
-    always #1.669 clk_ddr3 = ~clk_ddr3;
+    always begin
+        #1.667 clk_ddr0 = ~clk_ddr0;
+    end
+    always begin
+        #1.671 clk_ddr1 = ~clk_ddr1;
+    end
+    always begin
+        #1.663 clk_ddr2 = ~clk_ddr2;
+    end
+    always begin
+        #1.669 clk_ddr3 = ~clk_ddr3;
+    end
 
     reg rstn = 0;
     wire bus_rst = !rstn;
@@ -361,16 +393,24 @@ module sb_lite_matrix_tb;
     task tickp;
         input integer m;
         begin
-            if (m == 0) @(posedge clk_ctrl);
-            else        @(posedge clk_xdma);
+            if (m == 0) begin
+                @(posedge clk_ctrl);
+            end
+            else begin
+                @(posedge clk_xdma);
+            end
         end
     endtask
 
     task tickn;
         input integer m;
         begin
-            if (m == 0) @(negedge clk_ctrl);
-            else        @(negedge clk_xdma);
+            if (m == 0) begin
+                @(negedge clk_ctrl);
+            end
+            else begin
+                @(negedge clk_xdma);
+            end
         end
     endtask
 
@@ -624,8 +664,9 @@ module sb_lite_matrix_tb;
         if (data_err == 0 && hangs == 0 && lite_awlen_viol == 0
             && lite_awsize_viol == 0 && proto_err == 0)
             $display("MATRIX-CLEAN the station is Lite-correct");
-        else
+        else begin
             $display("MATRIX-REPRODUCED defects are live in this RTL");
+        end
         $display("==============================================================");
         $finish;
     end
@@ -676,7 +717,11 @@ module axi_lite_slave2 #(
     localparam integer N = 256;
     reg [DW-1:0] regs [0:N-1];
     integer k;
-    initial for (k = 0; k < N; k = k + 1) regs[k] = {16'hC0DE, k[15:0]};
+    initial begin
+        for (k = 0; k < N; k = k + 1) begin
+            regs[k] = {16'hC0DE, k[15:0]};
+        end
+    end
 
     wire [7:0] wi = awaddr[2 +: 8];
     wire [7:0] ri = araddr[2 +: 8];
@@ -696,18 +741,27 @@ module axi_lite_slave2 #(
             bvalid <= 1'b0;
             rvalid <= 1'b0;
         end else begin
-            if (bvalid && bready) bvalid <= 1'b0;
+            if (bvalid && bready) begin
+                bvalid <= 1'b0;
+            end
             if (wgo) begin
                 $display("%0t     lite[%0d] WRITE commit addr=%h data=%h strb=%h%s",
                          $time, NAME_HI, awaddr[15:0], wdata, wstrb,
                          (IGNORE_WSTRB != 0) ? " (wstrb IGNORED)" : "");
-                if (IGNORE_WSTRB != 0) regs[wi] <= wdata;
+                if (IGNORE_WSTRB != 0) begin
+                    regs[wi] <= wdata;
+                end
                 else
-                    for (b = 0; b < DW/8; b = b + 1)
-                        if (wstrb[b]) regs[wi][b*8 +: 8] <= wdata[b*8 +: 8];
+                    for (b = 0; b < DW/8; b = b + 1) begin
+                        if (wstrb[b]) begin
+                            regs[wi][b*8 +: 8] <= wdata[b*8 +: 8];
+                        end
+                    end
                 bvalid <= 1'b1;
             end
-            if (rvalid && rready) rvalid <= 1'b0;
+            if (rvalid && rready) begin
+                rvalid <= 1'b0;
+            end
             if (rgo) begin
                 rdata  <= regs[ri];
                 rvalid <= 1'b1;

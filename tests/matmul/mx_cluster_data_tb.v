@@ -35,11 +35,8 @@ module mx_cluster_data_tb;
     localparam integer SRC_X  = 3, SRC_Y = 3;
     localparam integer ACK_X  = 2, ACK_Y = 3;   // a third party, for redirects
 
-    localparam [3:0] T_MEM_WR_REQ  = 4'h1,
-                     T_MEM_WR_DATA = 4'h4,
-                     T_CU_INST     = 4'h5,
-                     T_CU_SIGNAL   = 4'h6,
-                     T_CU_DATA     = 4'h8;
+    localparam [3:0] T_MEM_WR_REQ = 4'h1, T_MEM_WR_DATA = 4'h4;
+    localparam [3:0] T_CU_INST = 4'h5, T_CU_SIGNAL = 4'h6, T_CU_DATA = 4'h8;
     localparam [7:0] SIG_DATA_RECEIVED = 8'h03;
     localparam integer WBURST = 8;
 
@@ -61,10 +58,14 @@ module mx_cluster_data_tb;
     // only way to test that the divider and the 1x/2x boundary agree.
     reg  clk2x = 0;
     wire clk;
-    always #1 clk2x = ~clk2x;
+    always begin
+        #1 clk2x = ~clk2x;
+    end
 `else
     reg clk = 0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 `endif
 
     reg  [FLIT-1:0] noc_in_data = 0;
@@ -116,12 +117,16 @@ module mx_cluster_data_tb;
     function real fp16_to_real(input [15:0] f);
         real m; integer e;
         begin
-            if (f[14:10] == 5'd0) fp16_to_real = 0.0;
+            if (f[14:10] == 5'd0) begin
+                fp16_to_real = 0.0;
+            end
             else begin
                 m = 1.0 + $itor(f[9:0]) / 1024.0;
                 e = f[14:10] - 15;
                 fp16_to_real = m * (2.0 ** e);
-                if (f[15]) fp16_to_real = -fp16_to_real;
+                if (f[15]) begin
+                    fp16_to_real = -fp16_to_real;
+                end
             end
         end
     endfunction
@@ -133,7 +138,9 @@ module mx_cluster_data_tb;
     task noc_send(input [FLIT-1:0] f);
         begin
             @(negedge clk);
-            while (noc_in_busy) @(negedge clk);
+            while (noc_in_busy) begin
+                @(negedge clk);
+            end
             noc_in_data  = f;
             noc_in_valid = 1'b1;
             @(negedge clk);
@@ -174,33 +181,35 @@ module mx_cluster_data_tb;
 
     always @(posedge clk) if (resetn && noc_out_valid) begin
         case (noc_out_data[FLIT-4*PWID-1 -: 4])
-        T_MEM_WR_REQ: begin
-            // 40, not 34: NOC_MEM_ADDR is [255:216]. Read narrow it comes back
-            // shifted, and the sub-tiles land at indices nobody checks.
-            w_first <= noc_out_data[255 -: 40] >> 5;
-            w_seen  <= 16'd0;
-        end
-        T_MEM_WR_DATA: begin
-            ct = w_first + w_seen;
-            got[ct] = 1'b1;
-            for (ci = 0; ci < 4; ci = ci + 1)
-                for (cj = 0; cj < 4; cj = cj + 1)
-                    hw_c[(ct / cur_gn)*4 + ci][(ct % cur_gn)*4 + cj]
-                        = fp16_to_real(noc_out_data[(ci*4+cj)*16 +: 16]);
-            w_seen <= w_seen + 16'd1;
-            w_tot = w_tot + 1;
-        end
-        T_CU_DATA: begin
-            lb_buf[lb_n] = noc_out_data;
-            lb_n = lb_n + 1;
-        end
-        T_CU_SIGNAL: if (noc_out_data[255 -: 8] == SIG_DATA_RECEIVED) begin
-            sig_n   = sig_n + 1;
-            sig_arg = noc_out_data[247 -: 32];
-            sig_dx  = noc_out_data[FLIT-1 -: PWID];
-            sig_dy  = noc_out_data[FLIT-PWID-1 -: PWID];
-        end
-        default: ;
+            T_MEM_WR_REQ: begin
+                // 40, not 34: NOC_MEM_ADDR is [255:216]. Read narrow it comes back
+                // shifted, and the sub-tiles land at indices nobody checks.
+                w_first <= noc_out_data[255 -: 40] >> 5;
+                w_seen  <= 16'd0;
+            end
+            T_MEM_WR_DATA: begin
+                ct = w_first + w_seen;
+                got[ct] = 1'b1;
+                for (ci = 0; ci < 4; ci = ci + 1) begin
+                    for (cj = 0; cj < 4; cj = cj + 1) begin
+                        hw_c[(ct / cur_gn)*4 + ci][(ct % cur_gn)*4 + cj]
+                            = fp16_to_real(noc_out_data[(ci*4+cj)*16 +: 16]);
+                    end
+                end
+                w_seen <= w_seen + 16'd1;
+                w_tot = w_tot + 1;
+            end
+            T_CU_DATA: begin
+                lb_buf[lb_n] = noc_out_data;
+                lb_n = lb_n + 1;
+            end
+            T_CU_SIGNAL: if (noc_out_data[255 -: 8] == SIG_DATA_RECEIVED) begin
+                sig_n   = sig_n + 1;
+                sig_arg = noc_out_data[247 -: 32];
+                sig_dx  = noc_out_data[FLIT-1 -: PWID];
+                sig_dy  = noc_out_data[FLIT-PWID-1 -: PWID];
+            end
+            default: ;
         endcase
     end
 
@@ -295,9 +304,11 @@ module mx_cluster_data_tb;
         integer ii, kk;
         begin
             word_a = 256'd0;
-            for (ii = 0; ii < 4; ii = ii + 1)
-                for (kk = 0; kk < 8; kk = kk + 1)
+            for (ii = 0; ii < 4; ii = ii + 1) begin
+                for (kk = 0; kk < 8; kk = kk + 1) begin
                     word_a[255 - (ii*8+kk)*7 -: 7] = A[row0+ii][kb*32 + w*8 + kk][6:0];
+                end
+            end
         end
     endfunction
 
@@ -305,9 +316,11 @@ module mx_cluster_data_tb;
         integer jj, kk;
         begin
             word_b = 256'd0;
-            for (kk = 0; kk < 8; kk = kk + 1)
-                for (jj = 0; jj < 4; jj = jj + 1)
+            for (kk = 0; kk < 8; kk = kk + 1) begin
+                for (jj = 0; jj < 4; jj = jj + 1) begin
                     word_b[255 - (kk*4+jj)*7 -: 7] = B[kb*32 + w*8 + kk][col0+jj][6:0];
+                end
+            end
         end
     endfunction
 
@@ -317,9 +330,10 @@ module mx_cluster_data_tb;
         integer ii;
         begin
             with_scales = w;
-            for (ii = 0; ii < 4; ii = ii + 1)
+            for (ii = 0; ii < 4; ii = ii + 1) begin
                 with_scales[31 - ii*8 -: 8] =
                     ((side == 0 ? SA[lane0+ii][kb] : SB[lane0+ii][kb]) + SBIAS) << 3;
+            end
         end
     endfunction
 
@@ -335,15 +349,18 @@ module mx_cluster_data_tb;
         begin
             ne = ng*nk;
             send_desc(side[7:0], bank*1024, (ne*4 - 1));
-            for (e = 0; e < ne; e = e + 1)
+            for (e = 0; e < ne; e = e + 1) begin
                 for (w = 0; w < 4; w = w + 1) begin
                     // entry e is lane group e/nk at K block e%nk -- the same
                     // `g*nk + kb` the sweep reads with aoff/boff at zero
                     p = (side == 0) ? word_a((e/nk)*4, e % nk, w)
                                     : word_b((e/nk)*4, e % nk, w);
-                    if (w == 0) p = with_scales(p, (e/nk)*4, e % nk, side);
+                    if (w == 0) begin
+                        p = with_scales(p, (e/nk)*4, e % nk, side);
+                    end
                     send_data(p, (e == ne-1) && (w == 3));
                 end
+            end
         end
     endtask
 
@@ -355,32 +372,46 @@ module mx_cluster_data_tb;
         begin
             m = gm*4; n = gn*4; kk = nk*32; nt = gm*gn;
             cur_gn = gn;
-            for (tt = 0; tt < nt; tt = tt + 1) got[tt] = 1'b0;
+            for (tt = 0; tt < nt; tt = tt + 1) begin
+                got[tt] = 1'b0;
+            end
             w_tot = 0;
 
-            for (ii = 0; ii < m; ii = ii + 1)
-                for (kkk = 0; kkk < kk; kkk = kkk + 1)
+            for (ii = 0; ii < m; ii = ii + 1) begin
+                for (kkk = 0; kkk < kk; kkk = kkk + 1) begin
                     A[ii][kkk] = ($random(seed) & 127) - 64;
-            for (kkk = 0; kkk < kk; kkk = kkk + 1)
-                for (jj = 0; jj < n; jj = jj + 1)
+                end
+            end
+            for (kkk = 0; kkk < kk; kkk = kkk + 1) begin
+                for (jj = 0; jj < n; jj = jj + 1) begin
                     B[kkk][jj] = ($random(seed) & 127) - 64;
-            for (ii = 0; ii < m; ii = ii + 1)
-                for (bb = 0; bb < nk; bb = bb + 1) SA[ii][bb] = ($random(seed) & 3);
-            for (jj = 0; jj < n; jj = jj + 1)
-                for (bb = 0; bb < nk; bb = bb + 1) SB[jj][bb] = ($random(seed) & 3);
+                end
+            end
+            for (ii = 0; ii < m; ii = ii + 1) begin
+                for (bb = 0; bb < nk; bb = bb + 1) begin
+                    SA[ii][bb] = ($random(seed) & 3);
+                end
+            end
+            for (jj = 0; jj < n; jj = jj + 1) begin
+                for (bb = 0; bb < nk; bb = bb + 1) begin
+                    SB[jj][bb] = ($random(seed) & 3);
+                end
+            end
 
-            for (ii = 0; ii < m; ii = ii + 1)
+            for (ii = 0; ii < m; ii = ii + 1) begin
                 for (jj = 0; jj < n; jj = jj + 1) begin
                     fp64_c[ii][jj] = 0.0;
                     for (bb = 0; bb < nk; bb = bb + 1) begin
                         acc = 0;
-                        for (kkk = 0; kkk < 32; kkk = kkk + 1)
+                        for (kkk = 0; kkk < 32; kkk = kkk + 1) begin
                             acc = acc + A[ii][bb*32+kkk]*B[bb*32+kkk][jj];
+                        end
                         fp64_c[ii][jj] = fp64_c[ii][jj]
                             + $itor(acc) * (2.0 ** (SA[ii][bb] + SB[jj][bb]));
                     end
                     fp64_c[ii][jj] = fp64_c[ii][jj] * (2.0 ** -HEADROOM);
                 end
+            end
 
             fill_side(0, gm, nk, 0);
             fill_side(1, gn, nk, 0);
@@ -397,35 +428,47 @@ module mx_cluster_data_tb;
                 checks = checks + 1;
                 if (!got[tt]) begin
                     errors = errors + 1;
-                    if (errors <= 8)
+                    if (errors <= 8) begin
                         $display("  FAIL gm=%0d gn=%0d nk=%0d sub-tile %0d never written",
                                  gm, gn, nk, tt);
+                    end
                 end
             end
 
             peak = 0.0;
-            for (ii = 0; ii < m; ii = ii + 1)
+            for (ii = 0; ii < m; ii = ii + 1) begin
                 for (jj = 0; jj < n; jj = jj + 1) begin
                     want = fp64_c[ii][jj];
-                    if (want < 0.0) want = -want;
-                    if (want > peak) peak = want;
+                    if (want < 0.0) begin
+                        want = -want;
+                    end
+                    if (want > peak) begin
+                        peak = want;
+                    end
                 end
-            if (peak == 0.0) peak = 1.0;
+            end
+            if (peak == 0.0) begin
+                peak = 1.0;
+            end
 
             tol = 4.0/1024.0 * $itor(nk);
-            for (ii = 0; ii < m; ii = ii + 1)
+            for (ii = 0; ii < m; ii = ii + 1) begin
                 for (jj = 0; jj < n; jj = jj + 1) begin
                     want = fp64_c[ii][jj];
                     checks = checks + 1;
                     err = (hw_c[ii][jj] - want) / peak;
-                    if (err < 0.0) err = -err;
+                    if (err < 0.0) begin
+                        err = -err;
+                    end
                     if (err > tol) begin
                         errors = errors + 1;
-                        if (errors <= 8)
+                        if (errors <= 8) begin
                             $display("  FAIL gm=%0d gn=%0d nk=%0d C[%0d][%0d] got %0f want %0f err/peak %0e",
                                      gm, gn, nk, ii, jj, hw_c[ii][jj], want, err);
+                        end
                     end
                 end
+            end
 
             $display("    gm=%0d gn=%0d nk=%0d  %0d sub-tiles over K=%0d  C[0][0] hw %0f fp64 %0f",
                      gm, gn, nk, nt, kk, hw_c[0][0], fp64_c[0][0]);
@@ -447,45 +490,71 @@ module mx_cluster_data_tb;
             m = gm*4; n = gn*4; kk = nk*32; nt = gm*gn;
             cur_gn = gn;
 
-            for (ii = 0; ii < m; ii = ii + 1)
-                for (kkk = 0; kkk < kk; kkk = kkk + 1) A[ii][kkk] = 0;
-            for (kkk = 0; kkk < kk; kkk = kkk + 1)
-                for (jj = 0; jj < n; jj = jj + 1) B[kkk][jj] = 0;
-            for (ii = 0; ii < m; ii = ii + 1)
-                for (bb = 0; bb < nk; bb = bb + 1) SA[ii][bb] = 0;
-            for (jj = 0; jj < n; jj = jj + 1)
-                for (bb = 0; bb < nk; bb = bb + 1) SB[jj][bb] = 0;
+            for (ii = 0; ii < m; ii = ii + 1) begin
+                for (kkk = 0; kkk < kk; kkk = kkk + 1) begin
+                    A[ii][kkk] = 0;
+                end
+            end
+            for (kkk = 0; kkk < kk; kkk = kkk + 1) begin
+                for (jj = 0; jj < n; jj = jj + 1) begin
+                    B[kkk][jj] = 0;
+                end
+            end
+            for (ii = 0; ii < m; ii = ii + 1) begin
+                for (bb = 0; bb < nk; bb = bb + 1) begin
+                    SA[ii][bb] = 0;
+                end
+            end
+            for (jj = 0; jj < n; jj = jj + 1) begin
+                for (bb = 0; bb < nk; bb = bb + 1) begin
+                    SB[jj][bb] = 0;
+                end
+            end
             fill_side(0, gm, nk, 0);
             fill_side(1, gn, nk, 0);
 
-            for (ii = 0; ii < m; ii = ii + 1)
-                for (kkk = 0; kkk < kk; kkk = kkk + 1)
+            for (ii = 0; ii < m; ii = ii + 1) begin
+                for (kkk = 0; kkk < kk; kkk = kkk + 1) begin
                     A[ii][kkk] = ($random(seed) & 127) - 64;
-            for (kkk = 0; kkk < kk; kkk = kkk + 1)
-                for (jj = 0; jj < n; jj = jj + 1)
+                end
+            end
+            for (kkk = 0; kkk < kk; kkk = kkk + 1) begin
+                for (jj = 0; jj < n; jj = jj + 1) begin
                     B[kkk][jj] = ($random(seed) & 127) - 64;
-            for (ii = 0; ii < m; ii = ii + 1)
-                for (bb = 0; bb < nk; bb = bb + 1) SA[ii][bb] = ($random(seed) & 3);
-            for (jj = 0; jj < n; jj = jj + 1)
-                for (bb = 0; bb < nk; bb = bb + 1) SB[jj][bb] = ($random(seed) & 3);
+                end
+            end
+            for (ii = 0; ii < m; ii = ii + 1) begin
+                for (bb = 0; bb < nk; bb = bb + 1) begin
+                    SA[ii][bb] = ($random(seed) & 3);
+                end
+            end
+            for (jj = 0; jj < n; jj = jj + 1) begin
+                for (bb = 0; bb < nk; bb = bb + 1) begin
+                    SB[jj][bb] = ($random(seed) & 3);
+                end
+            end
             fill_side(0, gm, nk, 1);
             fill_side(1, gn, nk, 1);
 
-            for (ii = 0; ii < m; ii = ii + 1)
+            for (ii = 0; ii < m; ii = ii + 1) begin
                 for (jj = 0; jj < n; jj = jj + 1) begin
                     fp64_c[ii][jj] = 0.0;
                     for (bb = 0; bb < nk; bb = bb + 1) begin
                         acc = 0;
-                        for (kkk = 0; kkk < 32; kkk = kkk + 1)
+                        for (kkk = 0; kkk < 32; kkk = kkk + 1) begin
                             acc = acc + A[ii][bb*32+kkk]*B[bb*32+kkk][jj];
+                        end
                         fp64_c[ii][jj] = fp64_c[ii][jj]
                             + $itor(acc) * (2.0 ** (SA[ii][bb] + SB[jj][bb]));
                     end
                     fp64_c[ii][jj] = fp64_c[ii][jj] * (2.0 ** -HEADROOM);
                 end
+            end
 
             // ---- sweep the UPPER bank: must be the operands, not the zeros
-            for (tt = 0; tt < nt; tt = tt + 1) got[tt] = 1'b0;
+            for (tt = 0; tt < nt; tt = tt + 1) begin
+                got[tt] = 1'b0;
+            end
             w_tot = 0;
             send_gemm(gm, gn, nk, 0, 1);
             send_drain(nt);
@@ -496,29 +565,42 @@ module mx_cluster_data_tb;
             repeat (20) @(posedge clk);
 
             peak = 0.0;
-            for (ii = 0; ii < m; ii = ii + 1)
+            for (ii = 0; ii < m; ii = ii + 1) begin
                 for (jj = 0; jj < n; jj = jj + 1) begin
                     want = fp64_c[ii][jj];
-                    if (want < 0.0) want = -want;
-                    if (want > peak) peak = want;
+                    if (want < 0.0) begin
+                        want = -want;
+                    end
+                    if (want > peak) begin
+                        peak = want;
+                    end
                 end
-            if (peak == 0.0) peak = 1.0;
+            end
+            if (peak == 0.0) begin
+                peak = 1.0;
+            end
             tol = 4.0/1024.0 * $itor(nk);
-            for (ii = 0; ii < m; ii = ii + 1)
+            for (ii = 0; ii < m; ii = ii + 1) begin
                 for (jj = 0; jj < n; jj = jj + 1) begin
                     checks = checks + 1;
                     err = (hw_c[ii][jj] - fp64_c[ii][jj]) / peak;
-                    if (err < 0.0) err = -err;
+                    if (err < 0.0) begin
+                        err = -err;
+                    end
                     if (err > tol) begin
                         errors = errors + 1;
-                        if (errors <= 8)
+                        if (errors <= 8) begin
                             $display("  FAIL bank 1 C[%0d][%0d] got %0f want %0f",
                                      ii, jj, hw_c[ii][jj], fp64_c[ii][jj]);
+                        end
                     end
                 end
+            end
 
             // ---- sweep the LOWER bank: must still be the zeros
-            for (tt = 0; tt < nt; tt = tt + 1) got[tt] = 1'b0;
+            for (tt = 0; tt < nt; tt = tt + 1) begin
+                got[tt] = 1'b0;
+            end
             w_tot = 0;
             send_gemm(gm, gn, nk, 0, 0);
             send_drain(nt);
@@ -528,16 +610,18 @@ module mx_cluster_data_tb;
             end
             repeat (20) @(posedge clk);
 
-            for (ii = 0; ii < m; ii = ii + 1)
+            for (ii = 0; ii < m; ii = ii + 1) begin
                 for (jj = 0; jj < n; jj = jj + 1) begin
                     checks = checks + 1;
                     if (hw_c[ii][jj] != 0.0) begin
                         errors = errors + 1;
-                        if (errors <= 8)
+                        if (errors <= 8) begin
                             $display("  FAIL bank 0 C[%0d][%0d] got %0f want 0.0 -- a fill reached the wrong bank",
                                      ii, jj, hw_c[ii][jj]);
+                        end
                     end
                 end
+            end
 
             $display("    banks %0dx%0d nk=%0d: upper C[0][0] %0f, lower stayed zero",
                      gm, gn, nk, fp64_c[0][0]);
@@ -554,21 +638,35 @@ module mx_cluster_data_tb;
         begin
             nt = gm*gn;
             cur_gn = gn;
-            for (tt = 0; tt < nt; tt = tt + 1) got[tt] = 1'b0;
+            for (tt = 0; tt < nt; tt = tt + 1) begin
+                got[tt] = 1'b0;
+            end
             w_tot = 0;
 
-            for (ii = 0; ii < gm*4; ii = ii + 1)
-                for (kkk = 0; kkk < 32; kkk = kkk + 1) A[ii][kkk] = 0;
-            for (kkk = 0; kkk < 32; kkk = kkk + 1)
-                for (jj = 0; jj < gn*4; jj = jj + 1) B[kkk][jj] = 0;
-            for (ii = 0; ii < gm*4; ii = ii + 1) SA[ii][0] = 0;
-            for (jj = 0; jj < gn*4; jj = jj + 1) SB[jj][0] = 0;
+            for (ii = 0; ii < gm*4; ii = ii + 1) begin
+                for (kkk = 0; kkk < 32; kkk = kkk + 1) begin
+                    A[ii][kkk] = 0;
+                end
+            end
+            for (kkk = 0; kkk < 32; kkk = kkk + 1) begin
+                for (jj = 0; jj < gn*4; jj = jj + 1) begin
+                    B[kkk][jj] = 0;
+                end
+            end
+            for (ii = 0; ii < gm*4; ii = ii + 1) begin
+                SA[ii][0] = 0;
+            end
+            for (jj = 0; jj < gn*4; jj = jj + 1) begin
+                SB[jj][0] = 0;
+            end
 
             fill_side(0, gm, 1, 0);
             fill_side(1, gn, 1, 0);
             send_gemm(gm, gn, 1, 0, 0);
 
-            for (ii = 0; ii < 16; ii = ii + 1) sub[ii*(PW/16) +: (PW/16)] = ACC_ONE;
+            for (ii = 0; ii < 16; ii = ii + 1) begin
+                sub[ii*(PW/16) +: (PW/16)] = ACC_ONE;
+            end
             send_desc(BUF_PEER, 16'd0, (nt*2 - 1));
             for (e = 0; e < nt; e = e + 1) begin
                 send_data(sub[255:0], 1'b0);
@@ -589,16 +687,18 @@ module mx_cluster_data_tb;
                     $display("  FAIL peer sub-tile %0d never written", tt);
                 end
             end
-            for (ii = 0; ii < gm*4; ii = ii + 1)
+            for (ii = 0; ii < gm*4; ii = ii + 1) begin
                 for (jj = 0; jj < gn*4; jj = jj + 1) begin
                     checks = checks + 1;
                     if (hw_c[ii][jj] != 1.0) begin
                         errors = errors + 1;
-                        if (errors <= 8)
+                        if (errors <= 8) begin
                             $display("  FAIL peer C[%0d][%0d] got %0f want 1.0",
                                      ii, jj, hw_c[ii][jj]);
+                        end
                     end
                 end
+            end
             $display("    peer %0dx%0d: zero tile + 1.0 -> %0f", gm, gn, hw_c[0][0]);
         end
     endtask
@@ -621,23 +721,33 @@ module mx_cluster_data_tb;
             cur_gn = gn;
             lb_n = 0; sig_n = 0; sig_arg = -1;
 
-            for (ii = 0; ii < m; ii = ii + 1)
-                for (kkk = 0; kkk < 32; kkk = kkk + 1)
+            for (ii = 0; ii < m; ii = ii + 1) begin
+                for (kkk = 0; kkk < 32; kkk = kkk + 1) begin
                     A[ii][kkk] = ($random(seed) & 127) - 64;
-            for (kkk = 0; kkk < 32; kkk = kkk + 1)
-                for (jj = 0; jj < n; jj = jj + 1)
+                end
+            end
+            for (kkk = 0; kkk < 32; kkk = kkk + 1) begin
+                for (jj = 0; jj < n; jj = jj + 1) begin
                     B[kkk][jj] = ($random(seed) & 127) - 64;
-            for (ii = 0; ii < m; ii = ii + 1) SA[ii][0] = ($random(seed) & 3);
-            for (jj = 0; jj < n; jj = jj + 1) SB[jj][0] = ($random(seed) & 3);
+                end
+            end
+            for (ii = 0; ii < m; ii = ii + 1) begin
+                SA[ii][0] = ($random(seed) & 3);
+            end
+            for (jj = 0; jj < n; jj = jj + 1) begin
+                SB[jj][0] = ($random(seed) & 3);
+            end
 
-            for (ii = 0; ii < m; ii = ii + 1)
+            for (ii = 0; ii < m; ii = ii + 1) begin
                 for (jj = 0; jj < n; jj = jj + 1) begin
                     acc = 0;
-                    for (kkk = 0; kkk < 32; kkk = kkk + 1)
+                    for (kkk = 0; kkk < 32; kkk = kkk + 1) begin
                         acc = acc + A[ii][kkk]*B[kkk][jj];
+                    end
                     fp64_c[ii][jj] = $itor(acc)
                         * (2.0 ** (SA[ii][0] + SB[jj][0] - HEADROOM));
                 end
+            end
 
             fill_side(0, gm, 1, 0);
             fill_side(1, gn, 1, 0);
@@ -663,7 +773,9 @@ module mx_cluster_data_tb;
             end
 
             // ---- and back in
-            for (li = 0; li < lb_n; li = li + 1) noc_send(lb_buf[li]);
+            for (li = 0; li < lb_n; li = li + 1) begin
+                noc_send(lb_buf[li]);
+            end
             tt = 0;
             while ((sig_n < nb) && tt < 200000) begin
                 @(posedge clk); tt = tt + 1;
@@ -687,7 +799,9 @@ module mx_cluster_data_tb;
             end
 
             // ---- the tile must now be exactly twice what it was
-            for (tt = 0; tt < nt; tt = tt + 1) got[tt] = 1'b0;
+            for (tt = 0; tt < nt; tt = tt + 1) begin
+                got[tt] = 1'b0;
+            end
             w_tot = 0;
             send_drain(nt);
             tt = 0;
@@ -697,27 +811,38 @@ module mx_cluster_data_tb;
             repeat (20) @(posedge clk);
 
             peak = 0.0;
-            for (ii = 0; ii < m; ii = ii + 1)
+            for (ii = 0; ii < m; ii = ii + 1) begin
                 for (jj = 0; jj < n; jj = jj + 1) begin
                     want = 2.0*fp64_c[ii][jj];
-                    if (want < 0.0) want = -want;
-                    if (want > peak) peak = want;
+                    if (want < 0.0) begin
+                        want = -want;
+                    end
+                    if (want > peak) begin
+                        peak = want;
+                    end
                 end
-            if (peak == 0.0) peak = 1.0;
+            end
+            if (peak == 0.0) begin
+                peak = 1.0;
+            end
             tol = 4.0/1024.0;
-            for (ii = 0; ii < m; ii = ii + 1)
+            for (ii = 0; ii < m; ii = ii + 1) begin
                 for (jj = 0; jj < n; jj = jj + 1) begin
                     checks = checks + 1;
                     err = (hw_c[ii][jj] - 2.0*fp64_c[ii][jj]) / peak;
-                    if (err < 0.0) err = -err;
+                    if (err < 0.0) begin
+                        err = -err;
+                    end
                     if (err > tol) begin
                         errors = errors + 1;
-                        if (errors <= 8)
+                        if (errors <= 8) begin
                             $display("  FAIL peer loop C[%0d][%0d] got %0f want %0f (2x %0f)",
                                      ii, jj, hw_c[ii][jj], 2.0*fp64_c[ii][jj],
                                      fp64_c[ii][jj]);
+                        end
                     end
                 end
+            end
             $display("    cu->cu %0dx%0d: %0d flits round trip, %0d signals, C[0][0] %0f = 2 x %0f",
                      gm, gn, lb_n, sig_n, hw_c[0][0], fp64_c[0][0]);
         end
@@ -732,7 +857,9 @@ module mx_cluster_data_tb;
         begin
             sig_n = 0; sig_arg = -1; sig_dx = -1; sig_dy = -1;
             send_desc_ack(bufid[7:0], 16'd0, 8'd3, 8'd1, acky[3:0], ackx[3:0]);
-            for (f = 0; f < 4; f = f + 1) send_data(256'd0, (f == 3));
+            for (f = 0; f < 4; f = f + 1) begin
+                send_data(256'd0, (f == 3));
+            end
             tt = 0;
             while ((sig_n < 1) && tt < 20000) begin @(posedge clk); tt = tt + 1; end
 
@@ -760,8 +887,9 @@ module mx_cluster_data_tb;
     initial begin
         seed = 32'h5EEDF00D;
         ANCHOR = 2*SBIAS + HEADROOM;
-        for (err_before = 0; err_before < MAXGM*MAXGN; err_before = err_before + 1)
+        for (err_before = 0; err_before < MAXGM*MAXGN; err_before = err_before + 1) begin
             got[err_before] = 1'b0;
+        end
 
         #20; @(negedge clk); resetn = 1; @(negedge clk);
 
@@ -771,35 +899,49 @@ module mx_cluster_data_tb;
         run_case(2, 2, 1);
         run_case(3, 3, 2);      // wide enough to overlap sweeps; two K blocks
         run_case(4, 2, 2);      // a drain longer than one WBURST
-        if (errors == err_before) $display("    L1 over CU_DATA matches the model");
+        if (errors == err_before) begin
+            $display("    L1 over CU_DATA matches the model");
+        end
 
         $display("--- L1 as two banks of 256 ---");
         err_before = errors;
         run_banks(2, 2, 1);
         run_banks(3, 3, 2);
-        if (errors == err_before) $display("    the banks are independent");
+        if (errors == err_before) begin
+            $display("    the banks are independent");
+        end
 
         $display("--- a peer sub-tile added into the resident tile ---");
         err_before = errors;
         run_peer(2, 2);
         run_peer(3, 3);
-        if (errors == err_before) $display("    OP_ADD_PEER reaches every sub-tile");
+        if (errors == err_before) begin
+            $display("    OP_ADD_PEER reaches every sub-tile");
+        end
 
         $display("--- signal_on_complete: where the ack is addressed ---");
         err_before = errors;
         run_ack(BUF_L1A, 0, 0, SRC_Y, SRC_X);            // 0 = the sender
         run_ack(BUF_L1B, ACK_Y, ACK_X, ACK_Y, ACK_X);    // redirected
-        if (errors == err_before) $display("    0 answers the sender, non-zero redirects");
+        if (errors == err_before) begin
+            $display("    0 answers the sender, non-zero redirects");
+        end
 
         $display("--- cu -> cu: the cluster's own tile, out and back ---");
         err_before = errors;
         run_peer_loop(2, 2);        // one burst
         run_peer_loop(3, 3);        // 18 granules: three, and a short tail
-        if (errors == err_before) $display("    OP_SEND round trips to OP_ADD_PEER");
+        if (errors == err_before) begin
+            $display("    OP_SEND round trips to OP_ADD_PEER");
+        end
 
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors  (MODEL=%0d)", checks, MODEL);
-        else             $display("  FAIL -- %0d checks, %0d errors  (MODEL=%0d)", checks, errors, MODEL);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors  (MODEL=%0d)", checks, MODEL);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors  (MODEL=%0d)", checks, errors, MODEL);
+        end
         $finish;
     end
 

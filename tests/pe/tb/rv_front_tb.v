@@ -35,11 +35,13 @@ module rv_front_tb;
     localparam integer SW    = 512;
     localparam [39:0] DBASE  = 40'h00_8000_0000;
 
-    localparam [3:0] T_MEM_RD_REQ  = 4'h0, T_MEM_WR_REQ = 4'h1,
-                     T_MEM_WR_DATA = 4'h4, T_CU_DATA    = 4'h8;
+    localparam [3:0] T_MEM_RD_REQ = 4'h0, T_MEM_WR_REQ = 4'h1;
+    localparam [3:0] T_MEM_WR_DATA = 4'h4, T_CU_DATA = 4'h8;
 
     reg clk = 1'b0, resetn = 1'b0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     integer errors = 0, checks = 0;
     task chk(input [255:0] got, input [255:0] want, input [255:0] what);
@@ -181,38 +183,38 @@ module rv_front_tb;
 
             if (take) begin
                 case (s_ty)
-                T_MEM_RD_REQ: begin
-                    n_rdreq      <= n_rdreq + 1;
-                    last_rd_addr <= s_addr;
-                    s_ew_seen    <= s_ew;
-                    s_flags_seen <= s_flags;
-                    s_count_seen <= s_count;
-                    pend_txn     <= s_id;
-                    pend_data    <= dram[s_addr[14:5]];
-                    pend_rd      <= 1'b1;
-                    rd_delay     <= 7;
-                end
-                T_MEM_WR_REQ: begin
-                    n_wrreq      <= n_wrreq + 1;
-                    open_wr_addr <= s_addr;
-                    last_wr_addr <= s_addr;
-                end
-                T_MEM_WR_DATA: begin
-                    n_wrdata <= n_wrdata + 1;
-                    dram[open_wr_addr[14:5]] <= send_flit[255:0];
-                    wr_addr_log[n_wrreq - 1] <= open_wr_addr;
-                    wr_data_log[n_wrreq - 1] <= send_flit[255:0];
-                end
-                T_CU_DATA: if (!s_ls) begin
-                    n_cudesc <= n_cudesc + 1;
-                    push_off_log[n_push] <= s_off;
-                    push_buf_log[n_push] <= s_buf;
-                end else begin
-                    n_cudata <= n_cudata + 1;
-                    push_log[n_push] <= send_flit[255:0];
-                    n_push <= n_push + 1;
-                end
-                default: ;
+                    T_MEM_RD_REQ: begin
+                        n_rdreq      <= n_rdreq + 1;
+                        last_rd_addr <= s_addr;
+                        s_ew_seen    <= s_ew;
+                        s_flags_seen <= s_flags;
+                        s_count_seen <= s_count;
+                        pend_txn     <= s_id;
+                        pend_data    <= dram[s_addr[14:5]];
+                        pend_rd      <= 1'b1;
+                        rd_delay     <= 7;
+                    end
+                    T_MEM_WR_REQ: begin
+                        n_wrreq      <= n_wrreq + 1;
+                        open_wr_addr <= s_addr;
+                        last_wr_addr <= s_addr;
+                    end
+                    T_MEM_WR_DATA: begin
+                        n_wrdata <= n_wrdata + 1;
+                        dram[open_wr_addr[14:5]] <= send_flit[255:0];
+                        wr_addr_log[n_wrreq - 1] <= open_wr_addr;
+                        wr_data_log[n_wrreq - 1] <= send_flit[255:0];
+                    end
+                    T_CU_DATA: if (!s_ls) begin
+                        n_cudesc <= n_cudesc + 1;
+                        push_off_log[n_push] <= s_off;
+                        push_buf_log[n_push] <= s_buf;
+                    end else begin
+                        n_cudata <= n_cudata + 1;
+                        push_log[n_push] <= send_flit[255:0];
+                        n_push <= n_push + 1;
+                    end
+                    default: ;
                 endcase
             end
 
@@ -223,7 +225,9 @@ module rv_front_tb;
             if (ack_fire) begin
                 rx_wr_ack <= 1'b1;
                 ack_timer <= 3 + ack_hold;
-            end else if (ack_timer > 0) ack_timer <= ack_timer - 1;
+            end else if (ack_timer > 0) begin
+                ack_timer <= ack_timer - 1;
+            end
 
             if (pend_rd) begin
                 if (rd_delay > 0) begin
@@ -463,16 +467,18 @@ module rv_front_tb;
 
         $display("--- 8. flush-all waits for acknowledgements ---");
         @(posedge clk); inval <= 1; @(posedge clk); inval <= 0; settle(2);
-        for (i = 0; i < 4; i = i + 1)
+        for (i = 0; i < 4; i = i + 1) begin
             st(base_a + i * 32, 4'b1111, 32'h7700_0000 + i);
+        end
         n0 = n_wrreq;
         ack_hold = 40;
         run_flush;
         chk(n_wrreq - n0, 4, "one writeback per dirty line");
         chk(wr_out, 16'd0, "no writes outstanding when the flush ended");
-        for (i = 0; i < 4; i = i + 1)
+        for (i = 0; i < 4; i = i + 1) begin
             chk(wr_data_log[n0 + i][31:0], 32'h7700_0000 + i,
                 "the flushed line carries what was stored into it");
+        end
         ack_hold = 0;
         settle(20);
 
@@ -496,8 +502,9 @@ module rv_front_tb;
         settle(20);
         n_push = 0;
         rand_bp = 40;
-        for (i = 0; i < 8; i = i + 1)
+        for (i = 0; i < 8; i = i + 1) begin
             do_push(4'd3, 4'd1, 1'b0, 14'd7, i[2:0], 4'hF, 32'h1000_0000 + i);
+        end
         do_push(4'd3, 4'd1, 1'b0, 14'd9, 3'd0, 4'hF, 32'hD00D_BE11);
         settle(120);
         rand_bp = 0;
@@ -528,18 +535,20 @@ module rv_front_tb;
         // Every access evicts and refills: the steady state WR_MAX prices. Flush
         // does not, since it waits for every ack by definition.
         rmw_t0 = $time;
-        for (k = 0; k < 4; k = k + 1)
+        for (k = 0; k < 4; k = k + 1) begin
             for (i = 0; i < 24; i = i + 1) begin
                 ld(base_a + i * 32);
                 st(base_a + i * 32, 4'b1111, rd_last + 32'd1);
             end
+        end
         $display("    WR_MAX %0d: 96 evict+refill pairs in %0d cycles, %0d each",
                  `RV_WR_MAX, ($time - rmw_t0) / 4, ($time - rmw_t0) / 4 / 96);
         run_flush;
-        for (i = 0; i < 24; i = i + 1)
+        for (i = 0; i < 24; i = i + 1) begin
             chk(dram[dl(base_a + i * 32)][31:0],
                 (32'hA000_0000 + dl(base_a + i * 32)) + 32'd4,
                 "four increments reached memory");
+        end
 
         $display("--- 11. the external window: two ports, byte enables ---");
         @(posedge clk);
@@ -563,8 +572,9 @@ module rv_front_tb;
             ack_hold = (k == 0) ? 0 : 40;
             @(posedge clk); inval <= 1; @(posedge clk); inval <= 0; settle(2);
             base_a = 32'h8000_2000;
-            for (i = 0; i < LINES; i = i + 1)
+            for (i = 0; i < LINES; i = i + 1) begin
                 st(base_a + i * 32, 4'b1111, 32'h9900_0000 + i);
+            end
             n0 = n_wrreq;
             run_flush;
             chk(n_wrreq - n0, LINES, "one writeback per dirty line");
@@ -576,10 +586,16 @@ module rv_front_tb;
 
         settle(20);
         $display("========================================");
-        if (checks == 0)      $display("  FAIL -- the bench made no checks");
-        else if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else                  $display("  FAIL -- %0d checks, %0d errors",
-                                       checks, errors);
+        if (checks == 0) begin
+            $display("  FAIL -- the bench made no checks");
+        end
+        else if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors",
+                     checks, errors);
+        end
         $display("========================================");
         $finish;
     end

@@ -76,11 +76,13 @@ module mx_acu #(
                 for (j = 0; j < 4; j = j + 1) begin
                     // chain index for row i, column j: the row pair is i>>1
                     // even rows are the lower field, odd rows the upper
-                    if (i[0] == 1'b0)
+                    if (i[0] == 1'b0) begin
                         val_r[i*4+j] <= $signed(part_in[((i>>1)*4+j)*48 +: 19]);
-                    else
+                    end
+                    else begin
                         val_r[i*4+j] <= $signed(part_in[((i>>1)*4+j)*48 + 19 +: 29])
                                       + $signed({1'b0, part_in[((i>>1)*4+j)*48 + 18]});
+                    end
                 end
             end
         end
@@ -119,11 +121,13 @@ module mx_acu #(
             if (v1) begin
                 for (i = 0; i < 4; i = i + 1) begin
                     for (j = 0; j < 4; j = j + 1) begin
-                        if (clear_r)
+                        if (clear_r) begin
                             acc[i*4+j] <= $signed(val_r[i*4+j]) <<< shamt(i, j);
-                        else
+                        end
+                        else begin
                             acc[i*4+j] <= acc[i*4+j]
                                         + ($signed(val_r[i*4+j]) <<< shamt(i, j));
+                        end
                     end
                 end
             end

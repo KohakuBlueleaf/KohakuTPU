@@ -137,8 +137,7 @@ module sb_line4 #(
 
     output wire [31:0]            stat_decerr
 );
-    localparam integer RQW  = STNW + PORTW + STNW + SRCW + TAGW + 3
-                              + AW + 8 + 3 + FW + FW/8;
+    localparam integer RQW = STNW + PORTW + STNW + SRCW + TAGW + 3 + AW + 8 + 3 + FW + FW/8;
     localparam integer RSW  = STNW + SRCW + TAGW + 2 + 2 + FW;
     localparam integer NSUS = STNW + SRCW;      // the NSU's opaque src field
 
@@ -159,9 +158,10 @@ module sb_line4 #(
         integer k;
         begin
             mk_base = {(NSEG*AW){1'b0}};
-            for (k = 0; k < NSEG; k = k + 1)
+            for (k = 0; k < NSEG; k = k + 1) begin
                 mk_base[k*AW +: AW] = ((k / NQ) << (AW - 4))
                                     | ((k % NQ) << 16);
+            end
         end
     endfunction
     function [NSEG*DPW-1:0] mk_stn;
@@ -169,8 +169,9 @@ module sb_line4 #(
         integer k;
         begin
             mk_stn = {(NSEG*DPW){1'b0}};
-            for (k = 0; k < NSEG; k = k + 1)
+            for (k = 0; k < NSEG; k = k + 1) begin
                 mk_stn[k*DPW +: DPW] = (k / NQ);
+            end
         end
     endfunction
     function [NSEG*DPW-1:0] mk_prt;
@@ -178,8 +179,9 @@ module sb_line4 #(
         integer k;
         begin
             mk_prt = {(NSEG*DPW){1'b0}};
-            for (k = 0; k < NSEG; k = k + 1)
+            for (k = 0; k < NSEG; k = k + 1) begin
                 mk_prt[k*DPW +: DPW] = (k % NQ);
+            end
         end
     endfunction
 
@@ -204,9 +206,15 @@ module sb_line4 #(
     function integer port_dom;
         input integer p;
         begin
-            if (p < 2)       port_dom = 0;      // mesh
-            else if (p == 2) port_dom = 1;      // ddr
-            else             port_dom = 2;      // ctrl
+            if (p < 2) begin// mesh
+                port_dom = 0;
+            end
+            else if (p == 2) begin// ddr
+                port_dom = 1;
+            end
+            else begin// ctrl
+                port_dom = 2;
+            end
         end
     endfunction
 
@@ -246,14 +254,10 @@ module sb_line4 #(
     generate
     for (s = 0; s < 4; s = s + 1) begin : g_stn
         localparam integer SNM = (s == 1) ? NM : 1;
-        localparam integer S_OST = (s == 0) ? OST0 : (s == 1) ? OST1 :
-                                  (s == 2) ? OST2 : OST3;
-        localparam integer S_SFW = (s == 0) ? SFW0 : (s == 1) ? SFW1 :
-                                  (s == 2) ? SFW2 : SFW3;
-        localparam integer S_LPB = (s == 0) ? LPB0 : (s == 1) ? LPB1 :
-                                  (s == 2) ? LPB2 : LPB3;
-        localparam integer S_TMO = (s == 0) ? TMO0 : (s == 1) ? TMO1 :
-                                  (s == 2) ? TMO2 : TMO3;
+        localparam integer S_OST = (s == 0) ? OST0 : (s == 1) ? OST1 : (s == 2) ? OST2 : OST3;
+        localparam integer S_SFW = (s == 0) ? SFW0 : (s == 1) ? SFW1 : (s == 2) ? SFW2 : SFW3;
+        localparam integer S_LPB = (s == 0) ? LPB0 : (s == 1) ? LPB1 : (s == 2) ? LPB2 : LPB3;
+        localparam integer S_TMO = (s == 0) ? TMO0 : (s == 1) ? TMO1 : (s == 2) ? TMO2 : TMO3;
 
         wire [SNM-1:0]         sq_valid, sq_ready, sq_wr, sq_head, sq_last;
         wire [SNM*STNW-1:0]    sq_dstn;

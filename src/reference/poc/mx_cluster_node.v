@@ -95,8 +95,8 @@ module mx_cluster_node #(
     wire clk = clk1x;
 
     localparam integer TAW = (TILES <= 1) ? 1 : $clog2(TILES);
-    localparam [2:0] OP_NOP = 3'd0, OP_ADD_PEER = 3'd3, OP_SEND = 3'd4,
-                     OP_EMIT = 3'd5;
+    localparam [2:0] OP_NOP = 3'd0, OP_ADD_PEER = 3'd3, OP_SEND = 3'd4;
+    localparam [2:0] OP_EMIT = 3'd5;
     localparam integer PW = 16*(ACC_MW+8);
 
     // ---- manager --------------------------------------------------------
@@ -197,7 +197,9 @@ module mx_cluster_node #(
     // Two clk2x cycles wide so the clk edge cannot miss it. The pair is latched
     // at completion, never read live: p_lo advances one clk2x cycle later.
     reg pair_v2;
-    always @(posedge clk2x) pair_v2 <= (rst ? 1'b0 : pair_v);
+    always @(posedge clk2x) begin
+        pair_v2 <= (rst ? 1'b0 : pair_v);
+    end
 
     assign part_bus   = (PUMP == 1) ? pair_d : (PUMP >= 2) ? p_hi : core_part;
     assign part_valid = (PUMP != 0) ? (pair_v | pair_v2) : core_pv;
@@ -306,7 +308,9 @@ module mx_cluster_node #(
             pq_pend <= 1'b0; pq_hi <= {(PW-256){1'b0}};
         end else begin
             pq_pend <= acu_peer_v;
-            if (acu_peer_v) pq_hi <= acu_peer[PW-1:256];
+            if (acu_peer_v) begin
+                pq_hi <= acu_peer[PW-1:256];
+            end
         end
     end
 
@@ -339,8 +343,12 @@ module mx_cluster_node #(
     wire   peer_iss   = peer_cmd && peer_ready;
 
     always @(posedge clk) begin
-        if (rst) p_open <= 1'b0;
-        else     p_open <= peer_open && (p_open || !gemm_busy);
+        if (rst) begin
+            p_open <= 1'b0;
+        end
+        else begin
+            p_open <= peer_open && (p_open || !gemm_busy);
+        end
     end
 
     always @(posedge clk) begin
@@ -353,11 +361,17 @@ module mx_cluster_node #(
         end else begin
             d_cmd <= 1'b0;
 
-            if (dq_wr)                     d_got <= d_got + 16'd1;
-            if (drain_valid && drain_take) d_pop <= d_pop + 16'd1;
+            if (dq_wr) begin
+                d_got <= d_got + 16'd1;
+            end
+            if (drain_valid && drain_take) begin
+                d_pop <= d_pop + 16'd1;
+            end
             // A fused sweep is its own issuer: every ADD_EMIT it puts into the
             // accumulator is a sub-tile that will come back.
-            if (emit_issue && d_fused)     d_iss <= d_iss + 16'd1;
+            if (emit_issue && d_fused) begin
+                d_iss <= d_iss + 16'd1;
+            end
 
             // Same two events, mirrored. The branches below override this
             // wherever they reset d_iss and d_pop, so the two stay equal.
@@ -413,13 +427,19 @@ module mx_cluster_node #(
                     // contributed nothing but the pop.
                     d_out  <= d_out + (d_send ? 16'd2 : 16'd1)
                             - ((drain_valid && drain_take) ? 16'd1 : 16'd0);
-                    if (d_iss + 16'd1 == d_n) d_run <= 1'b0;
-                end else if (d_gap) d_gap <= 1'b0;
+                    if (d_iss + 16'd1 == d_n) begin
+                        d_run <= 1'b0;
+                    end
+                end else if (d_gap) begin
+                    d_gap <= 1'b0;
+                end
             end
 
             // Last, so a barrier armed and satisfied in the same cycle ends
             // correctly rather than hanging for a transition that has passed.
-            if (d_wait && (d_pop >= d_n)) d_wait <= 1'b0;
+            if (d_wait && (d_pop >= d_n)) begin
+                d_wait <= 1'b0;
+            end
 
             // After the chain above, which `peer_ready` has already excluded:
             // it requires the sequencer idle, so the two never write these
@@ -439,15 +459,17 @@ module mx_cluster_node #(
     // Losing one sub-tile here reads as an accumulator fault several modules
     // away. Say so instead.
     always @(posedge clk) begin
-        if (!rst && dq_wr && dq_full)
+        if (!rst && dq_wr && dq_full) begin
             $display("%0t ERROR mx_cluster_node: drain queue overflow, sub-tile lost",
                      $time);
+        end
         // The gap between sends is what keeps these apart. If a send ever
         // issued back to back, the second result would overwrite a high half
         // that had not been queued yet and one sub-tile would come out spliced.
-        if (!rst && acu_peer_v && pq_pend)
+        if (!rst && acu_peer_v && pq_pend) begin
             $display("%0t ERROR mx_cluster_node: peer results collided, high half lost",
                      $time);
+        end
     end
 `endif
 

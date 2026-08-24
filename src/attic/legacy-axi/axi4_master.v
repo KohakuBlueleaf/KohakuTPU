@@ -87,9 +87,8 @@ module axi4_master #(
     localparam [2:0]  SIZE = LSB[2:0];
     localparam [1:0]  INCR = 2'b01;
 
-    localparam [2:0] S_IDLE  = 3'd0,
-                     S_WADDR = 3'd1, S_WDATA = 3'd2, S_WRESP = 3'd3,
-                     S_RADDR = 3'd4, S_RDATA = 3'd5;
+    localparam [2:0] S_IDLE = 3'd0, S_WADDR = 3'd1, S_WDATA = 3'd2;
+    localparam [2:0] S_WRESP = 3'd3, S_RADDR = 3'd4, S_RDATA = 3'd5;
     reg [2:0] state;
 
     reg [ADDR_WIDTH-1:0] addr;
@@ -114,8 +113,12 @@ module axi4_master #(
         reg   [31:0]           lim;
         begin
             lim  = beats_to_4k(a);
-            if (lim > 32'd256) lim = 32'd256;
-            if (left < lim)    lim = left;
+            if (lim > 32'd256) begin
+                lim = 32'd256;
+            end
+            if (left < lim) begin
+                lim = left;
+            end
             plan = lim[8:0];
         end
     endfunction
@@ -186,11 +189,15 @@ module axi4_master #(
                     addr        <= addr + BYTES;
                     beats_left  <= beats_left - 32'd1;
                     burst_beats <= burst_beats - 9'd1;
-                    if (burst_beats == 9'd1) state <= S_WRESP;
+                    if (burst_beats == 9'd1) begin
+                        state <= S_WRESP;
+                    end
                 end
 
                 S_WRESP: if (m_axi_bvalid) begin
-                    if (m_axi_bresp != 2'b00) cmd_resp <= m_axi_bresp;
+                    if (m_axi_bresp != 2'b00) begin
+                        cmd_resp <= m_axi_bresp;
+                    end
                     if (beats_left == 32'd0) begin
                         cmd_done <= 1'b1;
                         state    <= S_IDLE;
@@ -208,7 +215,9 @@ module axi4_master #(
                 end
 
                 S_RDATA: if (m_axi_rvalid && m_axi_rready) begin
-                    if (m_axi_rresp != 2'b00) cmd_resp <= m_axi_rresp;
+                    if (m_axi_rresp != 2'b00) begin
+                        cmd_resp <= m_axi_rresp;
+                    end
                     addr        <= addr + BYTES;
                     beats_left  <= beats_left - 32'd1;
                     burst_beats <= burst_beats - 9'd1;

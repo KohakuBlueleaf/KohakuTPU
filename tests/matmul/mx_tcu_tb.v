@@ -24,7 +24,9 @@ module mx_tcu_tb;
     localparam integer LAT   = 11;      // operands -> part_out
 
     reg clk = 0, rst = 1, en = 1;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     reg  [223:0] a_in, b_in;
     wire [383:0] part_out;
@@ -46,8 +48,9 @@ module mx_tcu_tb;
             checks = checks + 1;
             if (got !== want) begin
                 errors = errors + 1;
-                if (errors <= 16)
+                if (errors <= 16) begin
                     $display("  FAIL %0s: got %0d want %0d", what, got, want);
+                end
             end
         end
     endtask
@@ -55,12 +58,16 @@ module mx_tcu_tb;
     task pack;
         integer i, j, k;
         begin
-            for (i = 0; i < 4; i = i + 1)
-                for (k = 0; k < 8; k = k + 1)
+            for (i = 0; i < 4; i = i + 1) begin
+                for (k = 0; k < 8; k = k + 1) begin
                     a_in[(i*8+k)*7 +: 7] = A[i][k][6:0];
-            for (k = 0; k < 8; k = k + 1)
-                for (j = 0; j < 4; j = j + 1)
+                end
+            end
+            for (k = 0; k < 8; k = k + 1) begin
+                for (j = 0; j < 4; j = j + 1) begin
                     b_in[(k*4+j)*7 +: 7] = B[k][j][6:0];
+                end
+            end
         end
     endtask
 
@@ -74,9 +81,11 @@ module mx_tcu_tb;
             @(negedge clk);
             // hold the operands stable for the whole fill so the skew chain
             // sees a clean tile rather than a one-cycle pulse
-            for (n = 0; n < LAT + 2; n = n + 1) @(negedge clk);
+            for (n = 0; n < LAT + 2; n = n + 1) begin
+                @(negedge clk);
+            end
 
-            for (p = 0; p < 2; p = p + 1)
+            for (p = 0; p < 2; p = p + 1) begin
                 for (j = 0; j < 4; j = j + 1) begin
                     c = p*4 + j;
                     w = part_out[c*48 +: 48];
@@ -90,16 +99,23 @@ module mx_tcu_tb;
                     chk(got_lo, dot_lo, what);
                     chk(got_hi, dot_hi, what);
                 end
+            end
         end
     endtask
 
     task fill(input integer av, input integer bv);
         integer i, j, k;
         begin
-            for (i = 0; i < 4; i = i + 1)
-                for (k = 0; k < 8; k = k + 1) A[i][k] = av;
-            for (k = 0; k < 8; k = k + 1)
-                for (j = 0; j < 4; j = j + 1) B[k][j] = bv;
+            for (i = 0; i < 4; i = i + 1) begin
+                for (k = 0; k < 8; k = k + 1) begin
+                    A[i][k] = av;
+                end
+            end
+            for (k = 0; k < 8; k = k + 1) begin
+                for (j = 0; j < 4; j = j + 1) begin
+                    B[k][j] = bv;
+                end
+            end
         end
     endtask
 
@@ -119,29 +135,37 @@ module mx_tcu_tb;
         reg [47:0] w;
         begin
             for (n = 0; n < NST; n = n + 1) begin
-                for (i2 = 0; i2 < 4; i2 = i2 + 1)
-                    for (k2 = 0; k2 < 8; k2 = k2 + 1)
+                for (i2 = 0; i2 < 4; i2 = i2 + 1) begin
+                    for (k2 = 0; k2 < 8; k2 = k2 + 1) begin
                         sA[n][i2][k2] = ($random(seed) & 127) - 64;
-                for (k2 = 0; k2 < 8; k2 = k2 + 1)
-                    for (j2 = 0; j2 < 4; j2 = j2 + 1)
+                    end
+                end
+                for (k2 = 0; k2 < 8; k2 = k2 + 1) begin
+                    for (j2 = 0; j2 < 4; j2 = j2 + 1) begin
                         sB[n][k2][j2] = ($random(seed) & 127) - 64;
+                    end
+                end
             end
 
             for (n = 0; n < NST + LAT + 2; n = n + 1) begin
                 @(negedge clk);
                 // drive tile n
                 if (n < NST) begin
-                    for (i2 = 0; i2 < 4; i2 = i2 + 1)
-                        for (k2 = 0; k2 < 8; k2 = k2 + 1)
+                    for (i2 = 0; i2 < 4; i2 = i2 + 1) begin
+                        for (k2 = 0; k2 < 8; k2 = k2 + 1) begin
                             a_in[(i2*8+k2)*7 +: 7] = sA[n][i2][k2][6:0];
-                    for (k2 = 0; k2 < 8; k2 = k2 + 1)
-                        for (j2 = 0; j2 < 4; j2 = j2 + 1)
+                        end
+                    end
+                    for (k2 = 0; k2 < 8; k2 = k2 + 1) begin
+                        for (j2 = 0; j2 < 4; j2 = j2 + 1) begin
                             b_in[(k2*4+j2)*7 +: 7] = sB[n][k2][j2][6:0];
+                        end
+                    end
                 end
                 // check the tile that entered LAT cycles ago
                 idx = n - LAT;
                 if (idx >= 0 && idx < NST) begin
-                    for (p2 = 0; p2 < 2; p2 = p2 + 1)
+                    for (p2 = 0; p2 < 2; p2 = p2 + 1) begin
                         for (j2 = 0; j2 < 4; j2 = j2 + 1) begin
                             c2 = p2*4 + j2;
                             w = part_out[c2*48 +: 48];
@@ -155,6 +179,7 @@ module mx_tcu_tb;
                             chk(got_lo, dot_lo, "stream lo");
                             chk(got_hi, dot_hi, "stream hi");
                         end
+                    end
                 end
             end
         end
@@ -187,10 +212,16 @@ module mx_tcu_tb;
 
         $display("--- 4. random ---");
         for (t = 0; t < 50; t = t + 1) begin
-            for (i = 0; i < 4; i = i + 1)
-                for (k = 0; k < 8; k = k + 1) A[i][k] = ($random(seed) & 127) - 64;
-            for (k = 0; k < 8; k = k + 1)
-                for (j = 0; j < 4; j = j + 1) B[k][j] = ($random(seed) & 127) - 64;
+            for (i = 0; i < 4; i = i + 1) begin
+                for (k = 0; k < 8; k = k + 1) begin
+                    A[i][k] = ($random(seed) & 127) - 64;
+                end
+            end
+            for (k = 0; k < 8; k = k + 1) begin
+                for (j = 0; j < 4; j = j + 1) begin
+                    B[k][j] = ($random(seed) & 127) - 64;
+                end
+            end
             run_tile("random");
         end
 
@@ -202,8 +233,12 @@ module mx_tcu_tb;
         stream_test;
 
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors  (MODEL=%0d)", checks, MODEL);
-        else             $display("  FAIL -- %0d checks, %0d errors  (MODEL=%0d)", checks, errors, MODEL);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors  (MODEL=%0d)", checks, MODEL);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors  (MODEL=%0d)", checks, errors, MODEL);
+        end
         $display("========================================");
         $finish;
     end

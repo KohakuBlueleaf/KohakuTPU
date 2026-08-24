@@ -294,9 +294,16 @@ module NoCRouter #(
     // unbounded flood on top of the hang.
     reg said = 1'b0;
     always @(posedge clk) begin
-        if (!rst && !said &&
-            (|(n_req & N_KILL) || |(e_req & E_KILL) ||
-             |(s_req & S_KILL) || |(w_req & W_KILL))) begin
+        if (
+            !rst
+            && !said
+            && (
+                |(n_req & N_KILL)
+                || |(e_req & E_KILL)
+                || |(s_req & S_KILL)
+                || |(w_req & W_KILL)
+            )
+        ) begin
             said <= 1'b1;
             $display("%0t ERROR NoCRouter(%0d,%0d): a turn XY routing was assumed never to ask for -- n%b/%b e%b/%b s%b/%b w%b/%b as {L,W,S,E,N}. This flit will never be granted.",
                      $time, POS_X, POS_Y, n_req, N_KILL, e_req, E_KILL,

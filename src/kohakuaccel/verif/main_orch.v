@@ -138,35 +138,39 @@ module main_orch #(
             wst <= W_IDLE; s_awready <= 1'b1; s_wready <= 1'b0;
             s_bvalid <= 1'b0; s_bid <= {ID_W{1'b0}}; s_bresp <= 2'b00;
             waddr <= {ADDR_W{1'b0}}; go <= 1'b0;
-            for (ci = 0; ci < NCMD; ci = ci + 1) c_op[ci] <= 4'd0;
+            for (ci = 0; ci < NCMD; ci = ci + 1) begin
+                c_op[ci] <= 4'd0;
+            end
         end else begin
             go <= 1'b0;
             case (wst)
-            W_IDLE: if (s_awvalid && s_awready) begin
-                waddr <= s_awaddr; s_bid <= s_awid;
-                s_awready <= 1'b0; s_wready <= 1'b1; wst <= W_DATA;
-            end
-            W_DATA: if (s_wvalid) begin
-                if (w_is_cmd) begin
-                    case (w_cmd_fld)
-                        2'd0: c_op[w_cmd_idx]   <= s_wdata[3:0];
-                        2'd1: c_addr[w_cmd_idx] <= s_wdata[ADDR_W-1:0];
-                        2'd2: c_data[w_cmd_idx] <= s_wdata;
-                        2'd3: c_mask[w_cmd_idx] <= s_wdata;
-                    endcase
-                end else begin
-                    case (waddr[15:0])
-                        A_CTRL: if (s_wdata[0]) go <= 1'b1;
-                        default: ;
-                    endcase
+                W_IDLE: if (s_awvalid && s_awready) begin
+                    waddr <= s_awaddr; s_bid <= s_awid;
+                    s_awready <= 1'b0; s_wready <= 1'b1; wst <= W_DATA;
                 end
-                s_wready <= 1'b0; s_bresp <= 2'b00; s_bvalid <= 1'b1;
-                wst <= W_RESP;
-            end
-            W_RESP: if (s_bready) begin
-                s_bvalid <= 1'b0; s_awready <= 1'b1; wst <= W_IDLE;
-            end
-            default: wst <= W_IDLE;
+                W_DATA: if (s_wvalid) begin
+                    if (w_is_cmd) begin
+                        case (w_cmd_fld)
+                            2'd0: c_op[w_cmd_idx]   <= s_wdata[3:0];
+                            2'd1: c_addr[w_cmd_idx] <= s_wdata[ADDR_W-1:0];
+                            2'd2: c_data[w_cmd_idx] <= s_wdata;
+                            2'd3: c_mask[w_cmd_idx] <= s_wdata;
+                        endcase
+                    end else begin
+                        case (waddr[15:0])
+                            A_CTRL: if (s_wdata[0]) begin
+                                go <= 1'b1;
+                            end
+                            default: ;
+                        endcase
+                    end
+                    s_wready <= 1'b0; s_bresp <= 2'b00; s_bvalid <= 1'b1;
+                    wst <= W_RESP;
+                end
+                W_RESP: if (s_bready) begin
+                    s_bvalid <= 1'b0; s_awready <= 1'b1; wst <= W_IDLE;
+                end
+                default: wst <= W_IDLE;
             endcase
         end
     end
@@ -197,10 +201,9 @@ module main_orch #(
     // Master: execute the program
     // =====================================================================
     reg [2:0] est;
-    localparam [2:0] E_IDLE = 3'd0, E_FETCH = 3'd1,
-                     E_WR_AW = 3'd2, E_WR_B = 3'd3,
-                     E_POLL_AR = 3'd4, E_POLL_R = 3'd5,
-                     E_POLL_W = 3'd6;
+    localparam [2:0] E_IDLE = 3'd0, E_FETCH = 3'd1, E_WR_AW = 3'd2;
+    localparam [2:0] E_WR_B = 3'd3, E_POLL_AR = 3'd4, E_POLL_R = 3'd5;
+    localparam [2:0] E_POLL_W = 3'd6;
 
     // Cycles to wait before re-reading a POLL address that did not match.
     // A poll is a spin on a memory-mapped register, and the register does not
@@ -224,71 +227,81 @@ module main_orch #(
             // cur_* is the decoded command `est` only reads once it has one.
             m_awvalid <= 1'b0; m_wvalid <= 1'b0; m_arvalid <= 1'b0;
         end else begin
-            if (m_awvalid && m_awready) m_awvalid <= 1'b0;
-            if (m_wvalid  && m_wready)  m_wvalid  <= 1'b0;
-            if (m_arvalid && m_arready) m_arvalid <= 1'b0;
+            if (m_awvalid && m_awready) begin
+                m_awvalid <= 1'b0;
+            end
+            if (m_wvalid  && m_wready) begin
+                m_wvalid  <= 1'b0;
+            end
+            if (m_arvalid && m_arready) begin
+                m_arvalid <= 1'b0;
+            end
 
             case (est)
-            E_IDLE: if (go) begin
-                pc <= {PCW{1'b0}}; busy <= 1'b1; done <= 1'b0; err <= 1'b0;
-                npolls <= 32'd0;
-                est <= E_FETCH;
-            end
+                E_IDLE: if (go) begin
+                    pc <= {PCW{1'b0}}; busy <= 1'b1; done <= 1'b0; err <= 1'b0;
+                    npolls <= 32'd0;
+                    est <= E_FETCH;
+                end
 
-            E_FETCH: begin
-                cur_op   <= c_op[pc];
-                cur_addr <= c_addr[pc];
-                cur_data <= c_data[pc];
-                cur_mask <= c_mask[pc];
-                case (c_op[pc])
-                    OP_WR:   est <= E_WR_AW;
-                    OP_POLL: est <= E_POLL_AR;
-                    OP_DONE: begin
-                        code <= c_data[pc];
-                        busy <= 1'b0; done <= 1'b1;
-                        est  <= E_IDLE;
-                    end
-                    default: begin          // unknown opcode: stop, flag it
-                        err  <= 1'b1; busy <= 1'b0; done <= 1'b1;
-                        est  <= E_IDLE;
-                    end
-                endcase
-            end
+                E_FETCH: begin
+                    cur_op   <= c_op[pc];
+                    cur_addr <= c_addr[pc];
+                    cur_data <= c_data[pc];
+                    cur_mask <= c_mask[pc];
+                    case (c_op[pc])
+                        OP_WR:   est <= E_WR_AW;
+                        OP_POLL: est <= E_POLL_AR;
+                        OP_DONE: begin
+                            code <= c_data[pc];
+                            busy <= 1'b0; done <= 1'b1;
+                            est  <= E_IDLE;
+                        end
+                        default: begin          // unknown opcode: stop, flag it
+                            err  <= 1'b1; busy <= 1'b0; done <= 1'b1;
+                            est  <= E_IDLE;
+                        end
+                    endcase
+                end
 
-            E_WR_AW: begin
-                m_awaddr  <= cur_addr;
-                m_awid    <= {ID_W{1'b0}};
-                m_awvalid <= 1'b1;
-                m_wdata   <= cur_data;
-                m_wvalid  <= 1'b1;
-                est <= E_WR_B;
-            end
-            E_WR_B: if (m_bvalid) begin
-                pc  <= pc + 1'b1;
-                est <= E_FETCH;
-            end
-
-            E_POLL_AR: begin
-                m_araddr  <= cur_addr;
-                m_arid    <= {ID_W{1'b0}};
-                m_arvalid <= 1'b1;
-                est <= E_POLL_R;
-            end
-            E_POLL_R: if (m_rvalid) begin
-                npolls <= npolls + 32'd1;
-                if ((m_rdata & cur_mask) == cur_data) begin
+                E_WR_AW: begin
+                    m_awaddr  <= cur_addr;
+                    m_awid    <= {ID_W{1'b0}};
+                    m_awvalid <= 1'b1;
+                    m_wdata   <= cur_data;
+                    m_wvalid  <= 1'b1;
+                    est <= E_WR_B;
+                end
+                E_WR_B: if (m_bvalid) begin
                     pc  <= pc + 1'b1;
                     est <= E_FETCH;
-                end else begin
-                    poll_wait <= POLL_IVL;  // back off, then retry
-                    est <= E_POLL_W;
                 end
-            end
 
-            E_POLL_W: if (poll_wait == 16'd0) est <= E_POLL_AR;
-                      else poll_wait <= poll_wait - 16'd1;
+                E_POLL_AR: begin
+                    m_araddr  <= cur_addr;
+                    m_arid    <= {ID_W{1'b0}};
+                    m_arvalid <= 1'b1;
+                    est <= E_POLL_R;
+                end
+                E_POLL_R: if (m_rvalid) begin
+                    npolls <= npolls + 32'd1;
+                    if ((m_rdata & cur_mask) == cur_data) begin
+                        pc  <= pc + 1'b1;
+                        est <= E_FETCH;
+                    end else begin
+                        poll_wait <= POLL_IVL;  // back off, then retry
+                        est <= E_POLL_W;
+                    end
+                end
 
-            default: est <= E_IDLE;
+                E_POLL_W: if (poll_wait == 16'd0) begin
+                    est <= E_POLL_AR;
+                end
+                          else begin
+                              poll_wait <= poll_wait - 16'd1;
+                          end
+
+                default: est <= E_IDLE;
             endcase
         end
     end

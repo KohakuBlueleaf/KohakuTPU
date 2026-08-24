@@ -33,10 +33,20 @@ module noc_local_cdc #(
     // Deassertion is asynchronous to at least one clock. Async-assert,
     // sync-deassert, per domain.
     reg [1:0] w_rst_q, r_rst_q;
-    always @(posedge wr_clk or posedge rst)
-        if (rst) w_rst_q <= 2'b11; else w_rst_q <= {w_rst_q[0], 1'b0};
-    always @(posedge rd_clk or posedge rst)
-        if (rst) r_rst_q <= 2'b11; else r_rst_q <= {r_rst_q[0], 1'b0};
+    always @(posedge wr_clk or posedge rst) begin
+        if (rst) begin
+            w_rst_q <= 2'b11;
+        end else begin
+            w_rst_q <= {w_rst_q[0], 1'b0};
+        end
+    end
+    always @(posedge rd_clk or posedge rst) begin
+        if (rst) begin
+            r_rst_q <= 2'b11;
+        end else begin
+            r_rst_q <= {r_rst_q[0], 1'b0};
+        end
+    end
 
     wire w_rst = w_rst_q[1];
     wire wr_full, rd_empty;

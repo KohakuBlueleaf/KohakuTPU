@@ -135,7 +135,9 @@ module rv_bpred #(
             r_pc     <= u_pc;
             r_target <= u_target;
 
-            if (init_busy) init_a <= init_a + 1'b1;
+            if (init_busy) begin
+                init_a <= init_a + 1'b1;
+            end
             init_q <= init_busy;
         end
     end
@@ -167,10 +169,12 @@ module rv_bpred #(
     // counter from the first's pre-update value: the mirror is read_first. It
     // needs two branches an entry-span apart resolving back to back, which the
     // redirect penalty between them makes unreachable -- say so if it happens.
-    always @(posedge clk)
-        if (resetn && r_valid && u_valid && (u_idx == r_idx))
+    always @(posedge clk) begin
+        if (resetn && r_valid && u_valid && (u_idx == r_idx)) begin
             $display("%0t rv_bpred: back-to-back resolve at index %0d -- one counter update is computed from a stale value",
                      $time, r_idx);
+        end
+    end
 `endif
 
 endmodule

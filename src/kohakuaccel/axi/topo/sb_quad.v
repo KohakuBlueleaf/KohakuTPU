@@ -113,15 +113,11 @@ module sb_quad #(
     localparam [AW-1:0] OFF1 = {{(AW-17){1'b0}}, 1'b1, 16'd0};
 
     localparam integer NSEG = 8;
-    localparam [NSEG*AW-1:0] Q_BASE = {
-        A_S3 + OFF1, A_S3, A_S2 + OFF1, A_S2,
-        A_S1 + OFF1, A_S1, A_S0 + OFF1, A_S0 };
+    localparam [NSEG*AW-1:0] Q_BASE = { A_S3 + OFF1, A_S3, A_S2 + OFF1, A_S2, A_S1 + OFF1, A_S1, A_S0 + OFF1, A_S0 };
     localparam [NSEG*AW-1:0]   Q_MASK = {NSEG{MSK}};
     // Root ports: 0,1 local; 2 link SLR0; 3 link SLR2; 4 link SLR3.
-    localparam [NSEG*DSTW-1:0] Q_DST  = {3'd4, 3'd4, 3'd3, 3'd3,
-                                         3'd1, 3'd0, 3'd2, 3'd2};
-    localparam [NSEG*DSTW-1:0] Q_DPT  = {3'd1, 3'd0, 3'd1, 3'd0,
-                                         3'd1, 3'd0, 3'd1, 3'd0};
+    localparam [NSEG*DSTW-1:0] Q_DST = {3'd4, 3'd4, 3'd3, 3'd3, 3'd1, 3'd0, 3'd2, 3'd2};
+    localparam [NSEG*DSTW-1:0] Q_DPT = {3'd1, 3'd0, 3'd1, 3'd0, 3'd1, 3'd0, 3'd1, 3'd0};
 
     wire [NK-1:0]      rq_valid, rq_ready;
     wire [DSTW-1:0]    rq_dport;

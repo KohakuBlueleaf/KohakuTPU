@@ -43,18 +43,40 @@ module sb_line4_tb;
     // FOUR, deliberately unequal: each SLR's MIG has its own ui_clk, so one
     // shared clock here would leave three of the four crossings untested.
     reg clk_ddr0 = 0, clk_ddr1 = 0, clk_ddr2 = 0, clk_ddr3 = 0;
-    always #1.667 clk_ddr0 = ~clk_ddr0;     // 299.9 MHz
-    always #1.712 clk_ddr1 = ~clk_ddr1;     // 292.1 MHz
-    always #1.623 clk_ddr2 = ~clk_ddr2;     // 308.1 MHz
-    always #1.749 clk_ddr3 = ~clk_ddr3;     // 285.9 MHz
+    always begin// 299.9 MHz
+        #1.667 clk_ddr0 = ~clk_ddr0;
+    end
+    always begin// 292.1 MHz
+        #1.712 clk_ddr1 = ~clk_ddr1;
+    end
+    always begin// 308.1 MHz
+        #1.623 clk_ddr2 = ~clk_ddr2;
+    end
+    always begin// 285.9 MHz
+        #1.749 clk_ddr3 = ~clk_ddr3;
+    end
     wire [3:0] tb_dclk = {clk_ddr3, clk_ddr2, clk_ddr1, clk_ddr0};
-    always #1.250 bus_clk  = ~bus_clk;      // 400.0 MHz
-    always #5.000 clk_ctrl = ~clk_ctrl;     // 100.0 MHz
-    always #2.000 clk_xdma = ~clk_xdma;     // 250.0 MHz
-    always #2.109 clk_s0   = ~clk_s0;       // 237.1 MHz
-    always #1.667 clk_s1   = ~clk_s1;       // 299.9 MHz
-    always #2.773 clk_s2   = ~clk_s2;       // 180.3 MHz
-    always #2.373 clk_s3   = ~clk_s3;       // 210.7 MHz
+    always begin// 400.0 MHz
+        #1.250 bus_clk  = ~bus_clk;
+    end
+    always begin// 100.0 MHz
+        #5.000 clk_ctrl = ~clk_ctrl;
+    end
+    always begin// 250.0 MHz
+        #2.000 clk_xdma = ~clk_xdma;
+    end
+    always begin// 237.1 MHz
+        #2.109 clk_s0   = ~clk_s0;
+    end
+    always begin// 299.9 MHz
+        #1.667 clk_s1   = ~clk_s1;
+    end
+    always begin// 180.3 MHz
+        #2.773 clk_s2   = ~clk_s2;
+    end
+    always begin// 210.7 MHz
+        #2.373 clk_s3   = ~clk_s3;
+    end
 
     reg rstn = 0;
     wire bus_rst = !rstn;
@@ -64,9 +86,15 @@ module sb_line4_tb;
 `ifdef SB_LINKCDC
     localparam integer P_CDC = 1;
     reg bclk1 = 0, bclk2 = 0, bclk3 = 0;
-    always #1.373 bclk1 = ~bclk1;           // 364.2 MHz
-    always #1.611 bclk2 = ~bclk2;           // 310.4 MHz
-    always #1.187 bclk3 = ~bclk3;           // 421.2 MHz
+    always begin// 364.2 MHz
+        #1.373 bclk1 = ~bclk1;
+    end
+    always begin// 310.4 MHz
+        #1.611 bclk2 = ~bclk2;
+    end
+    always begin// 421.2 MHz
+        #1.187 bclk3 = ~bclk3;
+    end
     wire [3:0] bclk = {bclk3, bclk2, bclk1, bus_clk};
 `else
     localparam integer P_CDC = 0;
@@ -309,7 +337,9 @@ module sb_line4_tb;
     assign sp_arready = ram_arready & ~stall;
 
     // A free-running LFSR so the stall pattern is not aligned to any clock.
-    always @(posedge clk_xdma) xcyc <= xcyc + 32'd1;
+    always @(posedge clk_xdma) begin
+        xcyc <= xcyc + 32'd1;
+    end
 
     reg [15:0] lfsr = 16'hACE1;
     reg        stall_en = 1'b0;
@@ -365,9 +395,10 @@ module sb_line4_tb;
         input integer  b;
         integer k;
         begin
-            for (k = 0; k < 16; k = k + 1)
+            for (k = 0; k < 16; k = k + 1) begin
                 pat512[k*32 +: 32] = pat32(a) ^ (b * 32'h0001_0001)
                                               ^ (k * 32'h1000_0100);
+            end
         end
     endfunction
 
@@ -424,9 +455,10 @@ module sb_line4_tb;
                 errors = errors + 1;
                 $display("%0t FAIL jtag read @%h rresp %b exp %b", $time, a,
                          j_rresp, exp_resp);
-            end else if (exp_resp == 2'b00)
+            end else if (exp_resp == 2'b00) begin
                 chk({480'd0, a[2] ? j_rdata[63:32] : j_rdata[31:0]},
                     {480'd0, pat32(a)}, a);
+            end
             @(negedge clk_ctrl); #TS; rrdy[0] = 1'b1;
         end
     endtask
@@ -653,7 +685,7 @@ module sb_line4_tb;
         repeat (20) @(posedge bus_clk);
 
         $display("--- phase 1: every endpoint on every station");
-        for (s = 0; s < 4; s = s + 1)
+        for (s = 0; s < 4; s = s + 1) begin
             for (e = 0; e < NQ; e = e + 1) begin
 `ifdef SB_PROBE
                 $display("    try stn %0d ep %0d @%h", s, e, adr(s, e) + 40'h40);
@@ -661,6 +693,7 @@ module sb_line4_tb;
                 j_write(adr(s, e) + 40'h40);
                 j_read (adr(s, e) + 40'h40, 2'b00);
             end
+        end
 
         $display("--- phase 2: wide bursts to each station");
         for (s = 0; s < 4; s = s + 1) begin
@@ -799,8 +832,9 @@ module sb_line4_tb;
         $display("--- phase 13: sustained write bandwidth by hop count");
         for (s = 0; s < 4; s = s + 1) begin
             bw_t0 = xcyc;
-            for (bw_i = 0; bw_i < 8; bw_i = bw_i + 1)
+            for (bw_i = 0; bw_i < 8; bw_i = bw_i + 1) begin
                 x_write(adr(s, 0) + 40'h4000, 8'd63);
+            end
             bw_t1 = xcyc;
             $display("    BW stn%0d %0d cycles for %0d bytes", s,
                      bw_t1 - bw_t0, 8 * 64 * (P_MW / 8));
@@ -819,11 +853,13 @@ module sb_line4_tb;
         j_read (adr(0, 1) | 40'h80, 2'b00);
         j_read ((adr(0, 1) | 40'h80) + 40'd4, 2'b00);
         checks = checks + 1;
-        if (errors != ph14_err)
+        if (errors != ph14_err) begin
             $display("    CTRL-PATH: 64-bit op to a 32-bit endpoint LOST %0d check(s)",
                      errors - ph14_err);
-        else
+        end
+        else begin
             $display("    CTRL-PATH: 64-bit op to a 32-bit endpoint intact");
+        end
 
         repeat (200) @(posedge bus_clk);
 
@@ -838,8 +874,12 @@ module sb_line4_tb;
         $display("    monitors saw %0d/%0d/%0d manager transactions",
                  mchk_txn[0 +: 32], mchk_txn[32 +: 32], mchk_txn[64 +: 32]);
 
-        if (errors) $display("FAIL  %0d errors in %0d checks", errors, checks);
-        else        $display("PASS  %0d checks", checks);
+        if (errors) begin
+            $display("FAIL  %0d errors in %0d checks", errors, checks);
+        end
+        else begin
+            $display("PASS  %0d checks", checks);
+        end
         $finish;
     end
 
@@ -853,7 +893,9 @@ module sb_line4_tb;
 
     // Wall-clock beacon: a livelock freezes $time between beats, an event
     // storm crawls it; either way the last line says WHERE.
-    always #1_000_000 $display("  HB t=%0t", $time);
+    always begin
+        #1_000_000 $display("  HB t=%0t", $time);
+    end
 endmodule
 
 `default_nettype wire

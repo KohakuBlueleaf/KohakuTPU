@@ -20,7 +20,9 @@ module axi4_master_tb;
     localparam DEPTH = 8192;          // words in the slave
 
     reg clk = 0, resetn = 0;
-    always #5 clk = ~clk;
+    always begin
+        #5 clk = ~clk;
+    end
 
     integer errors = 0, checks = 0;
 
@@ -133,10 +135,14 @@ module axi4_master_tb;
                 wr_data  <= base + i;
                 wr_valid <= 1'b1;
                 @(posedge clk);
-                while (!wr_ready) @(posedge clk);
+                while (!wr_ready) begin
+                    @(posedge clk);
+                end
             end
             wr_valid <= 1'b0;
-            while (!cmd_done) @(posedge clk);
+            while (!cmd_done) begin
+                @(posedge clk);
+            end
             chk(cmd_resp == 2'b00, "write response not OKAY");
         end
     endtask
@@ -151,7 +157,9 @@ module axi4_master_tb;
             for (i = 0; i < n; i = i + 1) begin
                 rd_ready <= 1'b1;
                 @(posedge clk);
-                while (!rd_valid) @(posedge clk);
+                while (!rd_valid) begin
+                    @(posedge clk);
+                end
                 checks = checks + 1;
                 if (rd_data !== (base + i)) begin
                     $display("[%0t] DATA FAIL @0x%0h beat %0d: got %h want %h",
@@ -160,7 +168,9 @@ module axi4_master_tb;
                 end
             end
             rd_ready <= 1'b0;
-            while (!cmd_done) @(posedge clk);
+            while (!cmd_done) begin
+                @(posedge clk);
+            end
             chk(cmd_resp == 2'b00, "read response not OKAY");
         end
     endtask
@@ -196,8 +206,12 @@ module axi4_master_tb;
         $display("");
         $display("========================================");
         $display("  %0d bursts issued, %0d checks", bursts, checks);
-        if (errors == 0) $display("  PASS -- 0 errors");
-        else             $display("  FAIL -- %0d errors", errors);
+        if (errors == 0) begin
+            $display("  PASS -- 0 errors");
+        end
+        else begin
+            $display("  FAIL -- %0d errors", errors);
+        end
         $display("========================================");
         $finish;
     end

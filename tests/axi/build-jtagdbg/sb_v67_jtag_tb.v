@@ -81,16 +81,20 @@ module sb_v67_jtag_tb;
 
     function [NS*2-1:0] mk_seg_dst; input integer u; integer m, p; begin
         mk_seg_dst = {(NS*2){1'b0}};
-        for (m = 0; m < 4; m = m + 1)
-            for (p = 0; p < 4; p = p + 1)
+        for (m = 0; m < 4; m = m + 1) begin
+            for (p = 0; p < 4; p = p + 1) begin
                 mk_seg_dst[(m*4+p)*2 +: 2] = m[1:0];
+            end
+        end
     end endfunction
 
     function [NS*2-1:0] mk_seg_dprt; input integer u; integer m, p; begin
         mk_seg_dprt = {(NS*2){1'b0}};
-        for (m = 0; m < 4; m = m + 1)
-            for (p = 0; p < 4; p = p + 1)
+        for (m = 0; m < 4; m = m + 1) begin
+            for (p = 0; p < 4; p = p + 1) begin
                 mk_seg_dprt[(m*4+p)*2 +: 2] = p[1:0];
+            end
+        end
     end endfunction
 
     localparam [NS*AW-1:0] SEG_BASE = mk_seg_base(0);
@@ -103,26 +107,54 @@ module sb_v67_jtag_tb;
     // BUS_MHZ 200, CTRL 100, XDMA 250, mesh clk_out4 300, DDR ui_clk 300.
     // LINK_CDC=1: four independent MMCMs, so four unrelated 200 MHz clocks.
     reg bclk0 = 0, bclk1 = 0, bclk2 = 0, bclk3 = 0;
-    always #2.500 bclk0 = ~bclk0;           // 200.0 MHz
-    always #2.497 bclk1 = ~bclk1;
-    always #2.503 bclk2 = ~bclk2;
-    always #2.499 bclk3 = ~bclk3;
+    always begin// 200.0 MHz
+        #2.500 bclk0 = ~bclk0;
+    end
+    always begin
+        #2.497 bclk1 = ~bclk1;
+    end
+    always begin
+        #2.503 bclk2 = ~bclk2;
+    end
+    always begin
+        #2.499 bclk3 = ~bclk3;
+    end
 
     reg clk_ctrl = 0, clk_xdma = 0;
-    always #5.000 clk_ctrl = ~clk_ctrl;     // 100.0 MHz
-    always #2.000 clk_xdma = ~clk_xdma;     // 250.0 MHz
+    always begin// 100.0 MHz
+        #5.000 clk_ctrl = ~clk_ctrl;
+    end
+    always begin// 250.0 MHz
+        #2.000 clk_xdma = ~clk_xdma;
+    end
 
     reg clk_s0 = 0, clk_s1 = 0, clk_s2 = 0, clk_s3 = 0;
-    always #1.667 clk_s0 = ~clk_s0;         // MAG clk_out4, 300 MHz
-    always #1.667 clk_s1 = ~clk_s1;
-    always #1.667 clk_s2 = ~clk_s2;
-    always #1.667 clk_s3 = ~clk_s3;
+    always begin// MAG clk_out4, 300 MHz
+        #1.667 clk_s0 = ~clk_s0;
+    end
+    always begin
+        #1.667 clk_s1 = ~clk_s1;
+    end
+    always begin
+        #1.667 clk_s2 = ~clk_s2;
+    end
+    always begin
+        #1.667 clk_s3 = ~clk_s3;
+    end
 
     reg clk_ddr0 = 0, clk_ddr1 = 0, clk_ddr2 = 0, clk_ddr3 = 0;
-    always #1.667 clk_ddr0 = ~clk_ddr0;     // MIG ui_clk, 300 MHz
-    always #1.671 clk_ddr1 = ~clk_ddr1;
-    always #1.663 clk_ddr2 = ~clk_ddr2;
-    always #1.669 clk_ddr3 = ~clk_ddr3;
+    always begin// MIG ui_clk, 300 MHz
+        #1.667 clk_ddr0 = ~clk_ddr0;
+    end
+    always begin
+        #1.671 clk_ddr1 = ~clk_ddr1;
+    end
+    always begin
+        #1.663 clk_ddr2 = ~clk_ddr2;
+    end
+    always begin
+        #1.669 clk_ddr3 = ~clk_ddr3;
+    end
 
     reg rstn = 0;
     wire bus_rst = !rstn;
@@ -372,19 +404,19 @@ module sb_v67_jtag_tb;
         input integer s;
         begin
             case (s)
-            0: $display("  STN0 inj v/r=%b/%b  eject v/r=%b/%b  rspcol v/r=%b/%b  rf_req v/r=%b/%b  rt_rsp v/r=%b/%b",
-                    u_dut.g_stn[0].u_stn.ij_valid, u_dut.g_stn[0].u_stn.ij_ready,
-                    u_dut.g_stn[0].u_stn.ns_req_valid, u_dut.g_stn[0].u_stn.ns_req_ready,
-                    u_dut.g_stn[0].u_stn.cl_valid, u_dut.g_stn[0].u_stn.cl_ready,
-                    u_dut.g_stn[0].u_stn.rf_req_valid, u_dut.g_stn[0].u_stn.rf_req_ready,
-                    u_dut.g_stn[0].u_stn.rt_rsp_valid, u_dut.g_stn[0].u_stn.rt_rsp_ready);
-            1: $display("  STN1 inj v/r=%b/%b  eject v/r=%b/%b  rspcol v/r=%b/%b  lt_req v/r=%b/%b  lf_rsp v/r=%b/%b  nm_rsp v/r=%b/%b",
-                    u_dut.g_stn[1].u_stn.ij_valid, u_dut.g_stn[1].u_stn.ij_ready,
-                    u_dut.g_stn[1].u_stn.ns_req_valid, u_dut.g_stn[1].u_stn.ns_req_ready,
-                    u_dut.g_stn[1].u_stn.cl_valid, u_dut.g_stn[1].u_stn.cl_ready,
-                    u_dut.g_stn[1].u_stn.lt_req_valid, u_dut.g_stn[1].u_stn.lt_req_ready,
-                    u_dut.g_stn[1].u_stn.lf_rsp_valid, u_dut.g_stn[1].u_stn.lf_rsp_ready,
-                    u_dut.g_stn[1].u_stn.nm_rsp_valid, u_dut.g_stn[1].u_stn.nm_rsp_ready);
+                0: $display("  STN0 inj v/r=%b/%b  eject v/r=%b/%b  rspcol v/r=%b/%b  rf_req v/r=%b/%b  rt_rsp v/r=%b/%b",
+                        u_dut.g_stn[0].u_stn.ij_valid, u_dut.g_stn[0].u_stn.ij_ready,
+                        u_dut.g_stn[0].u_stn.ns_req_valid, u_dut.g_stn[0].u_stn.ns_req_ready,
+                        u_dut.g_stn[0].u_stn.cl_valid, u_dut.g_stn[0].u_stn.cl_ready,
+                        u_dut.g_stn[0].u_stn.rf_req_valid, u_dut.g_stn[0].u_stn.rf_req_ready,
+                        u_dut.g_stn[0].u_stn.rt_rsp_valid, u_dut.g_stn[0].u_stn.rt_rsp_ready);
+                1: $display("  STN1 inj v/r=%b/%b  eject v/r=%b/%b  rspcol v/r=%b/%b  lt_req v/r=%b/%b  lf_rsp v/r=%b/%b  nm_rsp v/r=%b/%b",
+                        u_dut.g_stn[1].u_stn.ij_valid, u_dut.g_stn[1].u_stn.ij_ready,
+                        u_dut.g_stn[1].u_stn.ns_req_valid, u_dut.g_stn[1].u_stn.ns_req_ready,
+                        u_dut.g_stn[1].u_stn.cl_valid, u_dut.g_stn[1].u_stn.cl_ready,
+                        u_dut.g_stn[1].u_stn.lt_req_valid, u_dut.g_stn[1].u_stn.lt_req_ready,
+                        u_dut.g_stn[1].u_stn.lf_rsp_valid, u_dut.g_stn[1].u_stn.lf_rsp_ready,
+                        u_dut.g_stn[1].u_stn.nm_rsp_valid, u_dut.g_stn[1].u_stn.nm_rsp_ready);
             endcase
         end
     endtask
@@ -415,105 +447,105 @@ module sb_v67_jtag_tb;
         begin
             $display("  NSU stn0 port %0d", p);
             case (p)
-            0: begin
-               $display("    fabric : req_v=%b req_r=%b rq_empty=%b rqf_full=%b in_body=%b start_rd=%b start_wr=%b body_wr=%b",
-                    `NSU0(0).req_valid, `NSU0(0).req_ready, `NSU0(0).rq_empty,
-                    `NSU0(0).rqf_full, `NSU0(0).in_body, `NSU0(0).start_rd,
-                    `NSU0(0).start_wr, `NSU0(0).body_wr);
-               $display("    unpack : w_multi=%b wsub=%0d w_subl=%b w_body=%b w_nsub=%0d",
-                    `NSU0(0).w_multi, `NSU0(0).wsub, `NSU0(0).w_subl,
-                    `NSU0(0).w_body, `NSU0(0).w_nsub);
-               $display("    issue  : rq_size=%0d rq_len=%0d -> wlen=%0d wal=%h  awq_e=%b arq_e=%b wq_e=%b (full aw=%b ar=%b w=%b)",
-                    `NSU0(0).rq_size, `NSU0(0).rq_len, `NSU0(0).rq_wlen,
-                    `NSU0(0).rq_wal, `NSU0(0).awq_empty, `NSU0(0).arq_empty,
-                    `NSU0(0).wq_empty, `NSU0(0).awq_full, `NSU0(0).arq_full,
-                    `NSU0(0).wq_full);
-               $display("    axi    : arv=%b arr=%b arlen=%0d arsize=%0d | awv=%b awr=%b awlen=%0d | wv=%b wr=%b wlast=%b | rv=%b rr=%b rlast=%b | bv=%b br=%b",
-                    `NSU0(0).m_arvalid, `NSU0(0).m_arready, `NSU0(0).m_arlen,
-                    `NSU0(0).m_arsize, `NSU0(0).m_awvalid, `NSU0(0).m_awready,
-                    `NSU0(0).m_awlen, `NSU0(0).m_wvalid, `NSU0(0).m_wready,
-                    `NSU0(0).m_wlast, `NSU0(0).m_rvalid, `NSU0(0).m_rready,
-                    `NSU0(0).m_rlast, `NSU0(0).m_bvalid, `NSU0(0).m_bready);
-               $display("    rsp    : w_busy=%b r_busy=%b r_active=%b rsf_e=%b rsf_f=%b rsp_v=%b rsp_r=%b",
-                    `NSU0(0).w_busy, `NSU0(0).r_busy, `NSU0(0).r_active,
-                    `NSU0(0).rsf_empty, `NSU0(0).rsf_full,
-                    `NSU0(0).rsp_valid, `NSU0(0).rsp_ready);
-               end
-            1: begin
-               $display("    fabric : req_v=%b req_r=%b rq_empty=%b rqf_full=%b in_body=%b start_rd=%b start_wr=%b body_wr=%b",
-                    `NSU0(1).req_valid, `NSU0(1).req_ready, `NSU0(1).rq_empty,
-                    `NSU0(1).rqf_full, `NSU0(1).in_body, `NSU0(1).start_rd,
-                    `NSU0(1).start_wr, `NSU0(1).body_wr);
-               $display("    unpack : w_multi=%b wsub=%0d w_subl=%b w_body=%b w_nsub=%0d",
-                    `NSU0(1).w_multi, `NSU0(1).wsub, `NSU0(1).w_subl,
-                    `NSU0(1).w_body, `NSU0(1).w_nsub);
-               $display("    issue  : rq_size=%0d rq_len=%0d -> wlen=%0d wal=%h  awq_e=%b arq_e=%b wq_e=%b (full aw=%b ar=%b w=%b)",
-                    `NSU0(1).rq_size, `NSU0(1).rq_len, `NSU0(1).rq_wlen,
-                    `NSU0(1).rq_wal, `NSU0(1).awq_empty, `NSU0(1).arq_empty,
-                    `NSU0(1).wq_empty, `NSU0(1).awq_full, `NSU0(1).arq_full,
-                    `NSU0(1).wq_full);
-               $display("    axi    : arv=%b arr=%b arlen=%0d arsize=%0d | awv=%b awr=%b awlen=%0d | wv=%b wr=%b wlast=%b | rv=%b rr=%b rlast=%b | bv=%b br=%b",
-                    `NSU0(1).m_arvalid, `NSU0(1).m_arready, `NSU0(1).m_arlen,
-                    `NSU0(1).m_arsize, `NSU0(1).m_awvalid, `NSU0(1).m_awready,
-                    `NSU0(1).m_awlen, `NSU0(1).m_wvalid, `NSU0(1).m_wready,
-                    `NSU0(1).m_wlast, `NSU0(1).m_rvalid, `NSU0(1).m_rready,
-                    `NSU0(1).m_rlast, `NSU0(1).m_bvalid, `NSU0(1).m_bready);
-               $display("    rsp    : w_busy=%b r_busy=%b r_active=%b rsf_e=%b rsf_f=%b rsp_v=%b rsp_r=%b fl_v=%b",
-                    `NSU0(1).w_busy, `NSU0(1).r_busy, `NSU0(1).r_active,
-                    `NSU0(1).rsf_empty, `NSU0(1).rsf_full,
-                    `NSU0(1).rsp_valid, `NSU0(1).rsp_ready,
-                    `NSU0(1).g_pack.fl_v);
-               end
-            2: begin
-               $display("    fabric : req_v=%b req_r=%b rq_empty=%b rqf_full=%b in_body=%b start_rd=%b start_wr=%b body_wr=%b",
-                    `NSU0(2).req_valid, `NSU0(2).req_ready, `NSU0(2).rq_empty,
-                    `NSU0(2).rqf_full, `NSU0(2).in_body, `NSU0(2).start_rd,
-                    `NSU0(2).start_wr, `NSU0(2).body_wr);
-               $display("    unpack : w_multi=%b wsub=%0d w_subl=%b w_body=%b w_nsub=%0d",
-                    `NSU0(2).w_multi, `NSU0(2).wsub, `NSU0(2).w_subl,
-                    `NSU0(2).w_body, `NSU0(2).w_nsub);
-               $display("    issue  : rq_size=%0d rq_len=%0d -> wlen=%0d wal=%h  awq_e=%b arq_e=%b wq_e=%b (full aw=%b ar=%b w=%b)",
-                    `NSU0(2).rq_size, `NSU0(2).rq_len, `NSU0(2).rq_wlen,
-                    `NSU0(2).rq_wal, `NSU0(2).awq_empty, `NSU0(2).arq_empty,
-                    `NSU0(2).wq_empty, `NSU0(2).awq_full, `NSU0(2).arq_full,
-                    `NSU0(2).wq_full);
-               $display("    axi    : arv=%b arr=%b arlen=%0d arsize=%0d | awv=%b awr=%b awlen=%0d | wv=%b wr=%b wlast=%b | rv=%b rr=%b rlast=%b | bv=%b br=%b",
-                    `NSU0(2).m_arvalid, `NSU0(2).m_arready, `NSU0(2).m_arlen,
-                    `NSU0(2).m_arsize, `NSU0(2).m_awvalid, `NSU0(2).m_awready,
-                    `NSU0(2).m_awlen, `NSU0(2).m_wvalid, `NSU0(2).m_wready,
-                    `NSU0(2).m_wlast, `NSU0(2).m_rvalid, `NSU0(2).m_rready,
-                    `NSU0(2).m_rlast, `NSU0(2).m_bvalid, `NSU0(2).m_bready);
-               $display("    rsp    : w_busy=%b r_busy=%b r_active=%b rsf_e=%b rsf_f=%b rsp_v=%b rsp_r=%b fl_v=%b",
-                    `NSU0(2).w_busy, `NSU0(2).r_busy, `NSU0(2).r_active,
-                    `NSU0(2).rsf_empty, `NSU0(2).rsf_full,
-                    `NSU0(2).rsp_valid, `NSU0(2).rsp_ready,
-                    `NSU0(2).g_pack.fl_v);
-               end
-            3: begin
-               $display("    fabric : req_v=%b req_r=%b rq_empty=%b rqf_full=%b in_body=%b start_rd=%b start_wr=%b body_wr=%b",
-                    `NSU0(3).req_valid, `NSU0(3).req_ready, `NSU0(3).rq_empty,
-                    `NSU0(3).rqf_full, `NSU0(3).in_body, `NSU0(3).start_rd,
-                    `NSU0(3).start_wr, `NSU0(3).body_wr);
-               $display("    unpack : w_multi=%b wsub=%0d w_subl=%b w_body=%b w_nsub=%0d",
-                    `NSU0(3).w_multi, `NSU0(3).wsub, `NSU0(3).w_subl,
-                    `NSU0(3).w_body, `NSU0(3).w_nsub);
-               $display("    issue  : rq_size=%0d rq_len=%0d -> wlen=%0d wal=%h  awq_e=%b arq_e=%b wq_e=%b (full aw=%b ar=%b w=%b)",
-                    `NSU0(3).rq_size, `NSU0(3).rq_len, `NSU0(3).rq_wlen,
-                    `NSU0(3).rq_wal, `NSU0(3).awq_empty, `NSU0(3).arq_empty,
-                    `NSU0(3).wq_empty, `NSU0(3).awq_full, `NSU0(3).arq_full,
-                    `NSU0(3).wq_full);
-               $display("    axi    : arv=%b arr=%b arlen=%0d arsize=%0d | awv=%b awr=%b awlen=%0d | wv=%b wr=%b wlast=%b | rv=%b rr=%b rlast=%b | bv=%b br=%b",
-                    `NSU0(3).m_arvalid, `NSU0(3).m_arready, `NSU0(3).m_arlen,
-                    `NSU0(3).m_arsize, `NSU0(3).m_awvalid, `NSU0(3).m_awready,
-                    `NSU0(3).m_awlen, `NSU0(3).m_wvalid, `NSU0(3).m_wready,
-                    `NSU0(3).m_wlast, `NSU0(3).m_rvalid, `NSU0(3).m_rready,
-                    `NSU0(3).m_rlast, `NSU0(3).m_bvalid, `NSU0(3).m_bready);
-               $display("    rsp    : w_busy=%b r_busy=%b r_active=%b rsf_e=%b rsf_f=%b rsp_v=%b rsp_r=%b fl_v=%b",
-                    `NSU0(3).w_busy, `NSU0(3).r_busy, `NSU0(3).r_active,
-                    `NSU0(3).rsf_empty, `NSU0(3).rsf_full,
-                    `NSU0(3).rsp_valid, `NSU0(3).rsp_ready,
-                    `NSU0(3).g_pack.fl_v);
-               end
+                0: begin
+                   $display("    fabric : req_v=%b req_r=%b rq_empty=%b rqf_full=%b in_body=%b start_rd=%b start_wr=%b body_wr=%b",
+                        `NSU0(0).req_valid, `NSU0(0).req_ready, `NSU0(0).rq_empty,
+                        `NSU0(0).rqf_full, `NSU0(0).in_body, `NSU0(0).start_rd,
+                        `NSU0(0).start_wr, `NSU0(0).body_wr);
+                   $display("    unpack : w_multi=%b wsub=%0d w_subl=%b w_body=%b w_nsub=%0d",
+                        `NSU0(0).w_multi, `NSU0(0).wsub, `NSU0(0).w_subl,
+                        `NSU0(0).w_body, `NSU0(0).w_nsub);
+                   $display("    issue  : rq_size=%0d rq_len=%0d -> wlen=%0d wal=%h  awq_e=%b arq_e=%b wq_e=%b (full aw=%b ar=%b w=%b)",
+                        `NSU0(0).rq_size, `NSU0(0).rq_len, `NSU0(0).rq_wlen,
+                        `NSU0(0).rq_wal, `NSU0(0).awq_empty, `NSU0(0).arq_empty,
+                        `NSU0(0).wq_empty, `NSU0(0).awq_full, `NSU0(0).arq_full,
+                        `NSU0(0).wq_full);
+                   $display("    axi    : arv=%b arr=%b arlen=%0d arsize=%0d | awv=%b awr=%b awlen=%0d | wv=%b wr=%b wlast=%b | rv=%b rr=%b rlast=%b | bv=%b br=%b",
+                        `NSU0(0).m_arvalid, `NSU0(0).m_arready, `NSU0(0).m_arlen,
+                        `NSU0(0).m_arsize, `NSU0(0).m_awvalid, `NSU0(0).m_awready,
+                        `NSU0(0).m_awlen, `NSU0(0).m_wvalid, `NSU0(0).m_wready,
+                        `NSU0(0).m_wlast, `NSU0(0).m_rvalid, `NSU0(0).m_rready,
+                        `NSU0(0).m_rlast, `NSU0(0).m_bvalid, `NSU0(0).m_bready);
+                   $display("    rsp    : w_busy=%b r_busy=%b r_active=%b rsf_e=%b rsf_f=%b rsp_v=%b rsp_r=%b",
+                        `NSU0(0).w_busy, `NSU0(0).r_busy, `NSU0(0).r_active,
+                        `NSU0(0).rsf_empty, `NSU0(0).rsf_full,
+                        `NSU0(0).rsp_valid, `NSU0(0).rsp_ready);
+                   end
+                1: begin
+                   $display("    fabric : req_v=%b req_r=%b rq_empty=%b rqf_full=%b in_body=%b start_rd=%b start_wr=%b body_wr=%b",
+                        `NSU0(1).req_valid, `NSU0(1).req_ready, `NSU0(1).rq_empty,
+                        `NSU0(1).rqf_full, `NSU0(1).in_body, `NSU0(1).start_rd,
+                        `NSU0(1).start_wr, `NSU0(1).body_wr);
+                   $display("    unpack : w_multi=%b wsub=%0d w_subl=%b w_body=%b w_nsub=%0d",
+                        `NSU0(1).w_multi, `NSU0(1).wsub, `NSU0(1).w_subl,
+                        `NSU0(1).w_body, `NSU0(1).w_nsub);
+                   $display("    issue  : rq_size=%0d rq_len=%0d -> wlen=%0d wal=%h  awq_e=%b arq_e=%b wq_e=%b (full aw=%b ar=%b w=%b)",
+                        `NSU0(1).rq_size, `NSU0(1).rq_len, `NSU0(1).rq_wlen,
+                        `NSU0(1).rq_wal, `NSU0(1).awq_empty, `NSU0(1).arq_empty,
+                        `NSU0(1).wq_empty, `NSU0(1).awq_full, `NSU0(1).arq_full,
+                        `NSU0(1).wq_full);
+                   $display("    axi    : arv=%b arr=%b arlen=%0d arsize=%0d | awv=%b awr=%b awlen=%0d | wv=%b wr=%b wlast=%b | rv=%b rr=%b rlast=%b | bv=%b br=%b",
+                        `NSU0(1).m_arvalid, `NSU0(1).m_arready, `NSU0(1).m_arlen,
+                        `NSU0(1).m_arsize, `NSU0(1).m_awvalid, `NSU0(1).m_awready,
+                        `NSU0(1).m_awlen, `NSU0(1).m_wvalid, `NSU0(1).m_wready,
+                        `NSU0(1).m_wlast, `NSU0(1).m_rvalid, `NSU0(1).m_rready,
+                        `NSU0(1).m_rlast, `NSU0(1).m_bvalid, `NSU0(1).m_bready);
+                   $display("    rsp    : w_busy=%b r_busy=%b r_active=%b rsf_e=%b rsf_f=%b rsp_v=%b rsp_r=%b fl_v=%b",
+                        `NSU0(1).w_busy, `NSU0(1).r_busy, `NSU0(1).r_active,
+                        `NSU0(1).rsf_empty, `NSU0(1).rsf_full,
+                        `NSU0(1).rsp_valid, `NSU0(1).rsp_ready,
+                        `NSU0(1).g_pack.fl_v);
+                   end
+                2: begin
+                   $display("    fabric : req_v=%b req_r=%b rq_empty=%b rqf_full=%b in_body=%b start_rd=%b start_wr=%b body_wr=%b",
+                        `NSU0(2).req_valid, `NSU0(2).req_ready, `NSU0(2).rq_empty,
+                        `NSU0(2).rqf_full, `NSU0(2).in_body, `NSU0(2).start_rd,
+                        `NSU0(2).start_wr, `NSU0(2).body_wr);
+                   $display("    unpack : w_multi=%b wsub=%0d w_subl=%b w_body=%b w_nsub=%0d",
+                        `NSU0(2).w_multi, `NSU0(2).wsub, `NSU0(2).w_subl,
+                        `NSU0(2).w_body, `NSU0(2).w_nsub);
+                   $display("    issue  : rq_size=%0d rq_len=%0d -> wlen=%0d wal=%h  awq_e=%b arq_e=%b wq_e=%b (full aw=%b ar=%b w=%b)",
+                        `NSU0(2).rq_size, `NSU0(2).rq_len, `NSU0(2).rq_wlen,
+                        `NSU0(2).rq_wal, `NSU0(2).awq_empty, `NSU0(2).arq_empty,
+                        `NSU0(2).wq_empty, `NSU0(2).awq_full, `NSU0(2).arq_full,
+                        `NSU0(2).wq_full);
+                   $display("    axi    : arv=%b arr=%b arlen=%0d arsize=%0d | awv=%b awr=%b awlen=%0d | wv=%b wr=%b wlast=%b | rv=%b rr=%b rlast=%b | bv=%b br=%b",
+                        `NSU0(2).m_arvalid, `NSU0(2).m_arready, `NSU0(2).m_arlen,
+                        `NSU0(2).m_arsize, `NSU0(2).m_awvalid, `NSU0(2).m_awready,
+                        `NSU0(2).m_awlen, `NSU0(2).m_wvalid, `NSU0(2).m_wready,
+                        `NSU0(2).m_wlast, `NSU0(2).m_rvalid, `NSU0(2).m_rready,
+                        `NSU0(2).m_rlast, `NSU0(2).m_bvalid, `NSU0(2).m_bready);
+                   $display("    rsp    : w_busy=%b r_busy=%b r_active=%b rsf_e=%b rsf_f=%b rsp_v=%b rsp_r=%b fl_v=%b",
+                        `NSU0(2).w_busy, `NSU0(2).r_busy, `NSU0(2).r_active,
+                        `NSU0(2).rsf_empty, `NSU0(2).rsf_full,
+                        `NSU0(2).rsp_valid, `NSU0(2).rsp_ready,
+                        `NSU0(2).g_pack.fl_v);
+                   end
+                3: begin
+                   $display("    fabric : req_v=%b req_r=%b rq_empty=%b rqf_full=%b in_body=%b start_rd=%b start_wr=%b body_wr=%b",
+                        `NSU0(3).req_valid, `NSU0(3).req_ready, `NSU0(3).rq_empty,
+                        `NSU0(3).rqf_full, `NSU0(3).in_body, `NSU0(3).start_rd,
+                        `NSU0(3).start_wr, `NSU0(3).body_wr);
+                   $display("    unpack : w_multi=%b wsub=%0d w_subl=%b w_body=%b w_nsub=%0d",
+                        `NSU0(3).w_multi, `NSU0(3).wsub, `NSU0(3).w_subl,
+                        `NSU0(3).w_body, `NSU0(3).w_nsub);
+                   $display("    issue  : rq_size=%0d rq_len=%0d -> wlen=%0d wal=%h  awq_e=%b arq_e=%b wq_e=%b (full aw=%b ar=%b w=%b)",
+                        `NSU0(3).rq_size, `NSU0(3).rq_len, `NSU0(3).rq_wlen,
+                        `NSU0(3).rq_wal, `NSU0(3).awq_empty, `NSU0(3).arq_empty,
+                        `NSU0(3).wq_empty, `NSU0(3).awq_full, `NSU0(3).arq_full,
+                        `NSU0(3).wq_full);
+                   $display("    axi    : arv=%b arr=%b arlen=%0d arsize=%0d | awv=%b awr=%b awlen=%0d | wv=%b wr=%b wlast=%b | rv=%b rr=%b rlast=%b | bv=%b br=%b",
+                        `NSU0(3).m_arvalid, `NSU0(3).m_arready, `NSU0(3).m_arlen,
+                        `NSU0(3).m_arsize, `NSU0(3).m_awvalid, `NSU0(3).m_awready,
+                        `NSU0(3).m_awlen, `NSU0(3).m_wvalid, `NSU0(3).m_wready,
+                        `NSU0(3).m_wlast, `NSU0(3).m_rvalid, `NSU0(3).m_rready,
+                        `NSU0(3).m_rlast, `NSU0(3).m_bvalid, `NSU0(3).m_bready);
+                   $display("    rsp    : w_busy=%b r_busy=%b r_active=%b rsf_e=%b rsf_f=%b rsp_v=%b rsp_r=%b fl_v=%b",
+                        `NSU0(3).w_busy, `NSU0(3).r_busy, `NSU0(3).r_active,
+                        `NSU0(3).rsf_empty, `NSU0(3).rsf_full,
+                        `NSU0(3).rsp_valid, `NSU0(3).rsp_ready,
+                        `NSU0(3).g_pack.fl_v);
+                   end
             endcase
         end
     endtask
@@ -747,8 +779,12 @@ module sb_v67_jtag_tb;
         $display("");
         $display("=========================================================");
         $display(" accesses=%0d  timeouts=%0d", checks, hangs);
-        if (errors == 0) $display("PASS -- no access hung");
-        else             $display("FAIL -- %0d of %0d accesses hung", errors, checks);
+        if (errors == 0) begin
+            $display("PASS -- no access hung");
+        end
+        else begin
+            $display("FAIL -- %0d of %0d accesses hung", errors, checks);
+        end
         $display("=========================================================");
         $finish;
     end
@@ -785,7 +821,11 @@ module axi_lite_slave #(
     localparam integer N = 256;
     reg [DW-1:0] regs [0:N-1];
     integer k;
-    initial for (k = 0; k < N; k = k + 1) regs[k] = {16'hC0DE, k[15:0]};
+    initial begin
+        for (k = 0; k < N; k = k + 1) begin
+            regs[k] = {16'hC0DE, k[15:0]};
+        end
+    end
 
     wire [7:0] wi = awaddr[2 +: 8];
     wire [7:0] ri = araddr[2 +: 8];
@@ -807,13 +847,20 @@ module axi_lite_slave #(
             bvalid <= 1'b0;
             rvalid <= 1'b0;
         end else begin
-            if (bvalid && bready) bvalid <= 1'b0;
+            if (bvalid && bready) begin
+                bvalid <= 1'b0;
+            end
             if (wgo) begin
-                for (b = 0; b < DW/8; b = b + 1)
-                    if (wstrb[b]) regs[wi][b*8 +: 8] <= wdata[b*8 +: 8];
+                for (b = 0; b < DW/8; b = b + 1) begin
+                    if (wstrb[b]) begin
+                        regs[wi][b*8 +: 8] <= wdata[b*8 +: 8];
+                    end
+                end
                 bvalid <= 1'b1;
             end
-            if (rvalid && rready) rvalid <= 1'b0;
+            if (rvalid && rready) begin
+                rvalid <= 1'b0;
+            end
             if (rgo) begin
                 rdata  <= regs[ri];
                 rvalid <= 1'b1;

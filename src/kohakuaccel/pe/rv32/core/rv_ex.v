@@ -80,9 +80,9 @@ module rv_ex (
     output reg  [3:0]  m_be,
     output reg  [31:0] m_sdata
 );
-    localparam [3:0] A_ADD = 4'd0, A_SUB = 4'd1, A_SLL = 4'd2, A_SLT  = 4'd3,
-                     A_SLTU= 4'd4, A_XOR = 4'd5, A_SRL = 4'd6, A_SRA  = 4'd7,
-                     A_OR  = 4'd8, A_AND = 4'd9;
+    localparam [3:0] A_ADD = 4'd0, A_SUB = 4'd1, A_SLL = 4'd2, A_SLT = 4'd3;
+    localparam [3:0] A_SLTU = 4'd4, A_XOR = 4'd5, A_SRL = 4'd6, A_SRA = 4'd7;
+    localparam [3:0] A_OR = 4'd8, A_AND = 4'd9;
 
     wire [31:0] sum  = x_op1 + x_op2;
     wire [31:0] diff = x_op1 - x_op2;
@@ -99,7 +99,9 @@ module rv_ex (
         input [31:0] v;
         integer k;
         begin
-            for (k = 0; k < 32; k = k + 1) rev32[k] = v[31-k];
+            for (k = 0; k < 32; k = k + 1) begin
+                rev32[k] = v[31-k];
+            end
         end
     endfunction
 
@@ -112,16 +114,16 @@ module rv_ex (
     reg [31:0] alu_r;
     always @(*) begin
         case (x_alu)
-        A_SUB:   alu_r = diff;
-        A_SLT:   alu_r = {31'd0, lt};
-        A_SLTU:  alu_r = {31'd0, ltu};
-        A_XOR:   alu_r = x_op1 ^ x_op2;
-        A_OR:    alu_r = x_op1 | x_op2;
-        A_AND:   alu_r = x_op1 & x_op2;
-        A_SLL,
-        A_SRL,
-        A_SRA:   alu_r = shift_r;
-        default: alu_r = sum;
+            A_SUB:   alu_r = diff;
+            A_SLT:   alu_r = {31'd0, lt};
+            A_SLTU:  alu_r = {31'd0, ltu};
+            A_XOR:   alu_r = x_op1 ^ x_op2;
+            A_OR:    alu_r = x_op1 | x_op2;
+            A_AND:   alu_r = x_op1 & x_op2;
+            A_SLL,
+            A_SRL,
+            A_SRA:   alu_r = shift_r;
+            default: alu_r = sum;
         endcase
     end
 
@@ -131,9 +133,9 @@ module rv_ex (
     reg br_cond;
     always @(*) begin
         case (x_f3[2:1])
-        2'b00:   br_cond = x_f3[0] ^ eq;
-        2'b10:   br_cond = x_f3[0] ^ lt;
-        default: br_cond = x_f3[0] ^ ltu;
+            2'b00:   br_cond = x_f3[0] ^ eq;
+            2'b10:   br_cond = x_f3[0] ^ lt;
+            default: br_cond = x_f3[0] ^ ltu;
         endcase
     end
 
@@ -142,14 +144,20 @@ module rv_ex (
     wire [31:0] seq_pc     = x_pc + 32'd4;
     wire [31:0] next_pc    = act_taken ? act_target : seq_pc;
 
-    wire mispredict = (x_pred_taken != act_taken) ||
-                      (act_taken && (x_pred_target != act_target));
+    wire mispredict = (
+        (x_pred_taken != act_taken)
+        || (act_taken && (x_pred_target != act_target))
+    );
 
     // Misaligned is a fault, not a fixup: RV32I allows either, and the fixup
     // needs two accesses and a merge that this MEM stage does not have.
-    wire misalign = (x_load || x_store) &&
-                    (((x_f3[1:0] == 2'b01) && sum[0]) ||
-                     ((x_f3[1:0] == 2'b10) && (sum[1:0] != 2'b00)));
+    wire misalign = (
+        (x_load || x_store)
+        && (
+            ((x_f3[1:0] == 2'b01) && sum[0])
+            || ((x_f3[1:0] == 2'b10) && (sum[1:0] != 2'b00))
+        )
+    );
 
     wire fault = x_illegal || misalign || x_addr_fault;
     wire live  = x_valid && !x_hold;
@@ -173,9 +181,9 @@ module rv_ex (
     reg [31:0] sd_n;
     always @(*) begin
         case (x_f3[1:0])
-        2'b00: begin be_n = 4'b0001 << sum[1:0];         sd_n = {4{x_rs2v[7:0]}};  end
-        2'b01: begin be_n = sum[1] ? 4'b1100 : 4'b0011;  sd_n = {2{x_rs2v[15:0]}}; end
-        default: begin be_n = 4'b1111;                   sd_n = x_rs2v;            end
+            2'b00: begin be_n = 4'b0001 << sum[1:0];         sd_n = {4{x_rs2v[7:0]}};  end
+            2'b01: begin be_n = sum[1] ? 4'b1100 : 4'b0011;  sd_n = {2{x_rs2v[15:0]}}; end
+            default: begin be_n = 4'b1111;                   sd_n = x_rs2v;            end
         endcase
     end
 

@@ -62,10 +62,8 @@ module mx_matmul_cu #(
     output wire [15:0]            blocks_done,
     output wire [15:0]            emits_done
 );
-    localparam [3:0] T_MEM_RD_REQ  = 4'h0,
-                     T_MEM_WR_REQ  = 4'h1,
-                     T_MEM_RD_RESP = 4'h2,
-                     T_MEM_WR_ACK  = 4'h3;
+    localparam [3:0] T_MEM_RD_REQ = 4'h0, T_MEM_WR_REQ = 4'h1;
+    localparam [3:0] T_MEM_RD_RESP = 4'h2, T_MEM_WR_ACK = 4'h3;
 
     localparam [3:0] OP_BLOCK = 4'd1, OP_EMIT = 4'd2;
 
@@ -146,10 +144,10 @@ module mx_matmul_cu #(
     );
 
     // ------------------------------------------------------------- sequencer
-    localparam [3:0] S_IDLE  = 4'd0,  S_REQA  = 4'd1,  S_RCVA = 4'd2,
-                     S_REQB  = 4'd3,  S_RCVB  = 4'd4,  S_RUN  = 4'd5,
-                     S_WAIT  = 4'd6,  S_ACC   = 4'd7,  S_EMIT = 4'd8,
-                     S_WREQ  = 4'd9,  S_WDAT  = 4'd10, S_EGAP = 4'd12;
+    localparam [3:0] S_IDLE = 4'd0, S_REQA = 4'd1, S_RCVA = 4'd2, S_REQB = 4'd3;
+    localparam [3:0] S_RCVB = 4'd4, S_RUN = 4'd5, S_WAIT = 4'd6, S_ACC = 4'd7;
+    localparam [3:0] S_EMIT = 4'd8, S_WREQ = 4'd9, S_WDAT = 4'd10;
+    localparam [3:0] S_EGAP = 4'd12;
 
     // The accumulator is single-bank: consecutive commands to the SAME tile
     // address must be at least its reuse distance apart. This CU sweeps K on the
@@ -200,130 +198,152 @@ module mx_matmul_cu #(
             acu_cmd    <= 1'b0;
             recv_ready <= 1'b1;
 
-            if (send_valid && send_ready) send_valid <= 1'b0;
+            if (send_valid && send_ready) begin
+                send_valid <= 1'b0;
+            end
 
             case (st)
-            S_IDLE: begin
-                if (inst_valid && !inst_ready) begin
-                    op_r    <= i_op;
-                    adr_a_r <= i_adr_a;
-                    adr_b_r <= i_adr_b;
-                    tile_r  <= i_tile;
-                    first_r <= i_first;
-                    anch_r  <= i_anch;
-                    inst_ready <= 1'b1;
-                    fl  <= 3'd0;
-                    egap <= EMIT_GAP;
-                    st  <= (i_op == OP_BLOCK) ? S_REQA : S_EGAP;
+                S_IDLE: begin
+                    if (inst_valid && !inst_ready) begin
+                        op_r    <= i_op;
+                        adr_a_r <= i_adr_a;
+                        adr_b_r <= i_adr_b;
+                        tile_r  <= i_tile;
+                        first_r <= i_first;
+                        anch_r  <= i_anch;
+                        inst_ready <= 1'b1;
+                        fl  <= 3'd0;
+                        egap <= EMIT_GAP;
+                        st  <= (i_op == OP_BLOCK) ? S_REQA : S_EGAP;
+                    end
                 end
-            end
 
-            // ---- fetch A ----
-            S_REQA: if (!send_valid) begin
-                send_flit  <= rd_req(adr_a_r);
-                send_valid <= 1'b1;
-                st <= S_RCVA;
-            end
-            S_RCVA: if (recv_valid && recv_ready && rtype == T_MEM_RD_RESP) begin
-                // Unrolled over the flit index, not indexed by it: a variable
-                // part-select write tells synthesis any of the 896 bits might
-                // come from any position, so it builds a barrel mux across the
-                // whole buffer. Each bit is written by exactly one value of fl,
-                // so unrolling leaves one fixed source and a plain enable.
-                for (f = 0; f < 4; f = f + 1)
-                    if (fl == f[2:0])
-                        for (i = 0; i < 4; i = i + 1)
-                            for (k = 0; k < 8; k = k + 1)
-                                a_buf[(i*32 + f*8 + k)*7 +: 7]
-                                    <= recv_flit[255 - (i*8+k)*7 -: 7];
-                if (fl == 3'd0)
-                    for (i = 0; i < 4; i = i + 1)
-                        sa_r[i*8 +: 8] <= recv_flit[31 - i*8 -: 8];
-                if (fl == 3'd3) begin fl <= 3'd0; st <= S_REQB; end
-                else                 fl <= fl + 3'd1;
-            end
-
-            // ---- fetch B ----
-            S_REQB: if (!send_valid) begin
-                send_flit  <= rd_req(adr_b_r);
-                send_valid <= 1'b1;
-                st <= S_RCVB;
-            end
-            S_RCVB: if (recv_valid && recv_ready && rtype == T_MEM_RD_RESP) begin
-                for (f = 0; f < 4; f = f + 1)
-                    if (fl == f[2:0])
-                        for (k = 0; k < 8; k = k + 1)
-                            for (j = 0; j < 4; j = j + 1)
-                                b_buf[((f*8 + k)*4 + j)*7 +: 7]
-                                    <= recv_flit[255 - (k*4+j)*7 -: 7];
-                if (fl == 3'd0)
-                    for (j = 0; j < 4; j = j + 1)
-                        sb_r[j*8 +: 8] <= recv_flit[31 - j*8 -: 8];
-                if (fl == 3'd3) begin fl <= 3'd0; st <= S_RUN; end
-                else                 fl <= fl + 3'd1;
-            end
-
-            // ---- one pass through the cluster ----
-            S_RUN: begin
-                cl_valid <= 1'b1;
-                cl_first <= first_r;
-                st  <= S_WAIT;
-            end
-            S_WAIT: if (part_valid) begin
-                acu_op   <= first_r ? A_LOAD : A_ADD;
-                acu_addr <= tile_r[TAW-1:0];
-                acu_cmd  <= 1'b1;
-                st <= S_ACC;
-            end
-            S_ACC: begin
-                nblk <= nblk + 16'd1;
-                exec_result <= {16'd0, nblk + 16'd1};
-                exec_done <= 1'b1;
-                st <= S_IDLE;
-            end
-
-            // ---- let the accumulator's reuse distance elapse ----
-            S_EGAP: if (egap == 4'd0) st <= S_EMIT;
-                    else              egap <= egap - 4'd1;
-
-            // ---- emit a tile to memory ----
-            S_EMIT: begin
-                acu_op   <= A_EMIT;
-                acu_addr <= tile_r[TAW-1:0];
-                acu_cmd  <= 1'b1;
-                emit_got <= 1'b0;
-                st  <= S_WREQ;
-            end
-            S_WREQ: begin
-                if (emit_valid) begin
-                    emit_hold <= emit_out;
-                    emit_got  <= 1'b1;
+                // ---- fetch A ----
+                S_REQA: if (!send_valid) begin
+                    send_flit  <= rd_req(adr_a_r);
+                    send_valid <= 1'b1;
+                    st <= S_RCVA;
                 end
-                // wait on emit_got, not on emit_valid: emit_hold is a
-                // non-blocking assignment, so it is only readable the cycle
-                // after the ACU raised valid
-                if (emit_got && !send_valid) begin
-                    // descriptor: one 256-bit word follows
+                S_RCVA: if (recv_valid && recv_ready && rtype == T_MEM_RD_RESP) begin
+                    // Unrolled over the flit index, not indexed by it: a variable
+                    // part-select write tells synthesis any of the 896 bits might
+                    // come from any position, so it builds a barrel mux across the
+                    // whole buffer. Each bit is written by exactly one value of fl,
+                    // so unrolling leaves one fixed source and a plain enable.
+                    for (f = 0; f < 4; f = f + 1) begin
+                        if (fl == f[2:0]) begin
+                            for (i = 0; i < 4; i = i + 1) begin
+                                for (k = 0; k < 8; k = k + 1) begin
+                                    a_buf[(i*32 + f*8 + k)*7 +: 7]
+                                        <= recv_flit[255 - (i*8+k)*7 -: 7];
+                                end
+                            end
+                        end
+                    end
+                    if (fl == 3'd0) begin
+                        for (i = 0; i < 4; i = i + 1) begin
+                            sa_r[i*8 +: 8] <= recv_flit[31 - i*8 -: 8];
+                        end
+                    end
+                    if (fl == 3'd3) begin fl <= 3'd0; st <= S_REQB; end
+                    else begin
+                        fl <= fl + 3'd1;
+                    end
+                end
+
+                // ---- fetch B ----
+                S_REQB: if (!send_valid) begin
+                    send_flit  <= rd_req(adr_b_r);
+                    send_valid <= 1'b1;
+                    st <= S_RCVB;
+                end
+                S_RCVB: if (recv_valid && recv_ready && rtype == T_MEM_RD_RESP) begin
+                    for (f = 0; f < 4; f = f + 1) begin
+                        if (fl == f[2:0]) begin
+                            for (k = 0; k < 8; k = k + 1) begin
+                                for (j = 0; j < 4; j = j + 1) begin
+                                    b_buf[((f*8 + k)*4 + j)*7 +: 7]
+                                        <= recv_flit[255 - (k*4+j)*7 -: 7];
+                                end
+                            end
+                        end
+                    end
+                    if (fl == 3'd0) begin
+                        for (j = 0; j < 4; j = j + 1) begin
+                            sb_r[j*8 +: 8] <= recv_flit[31 - j*8 -: 8];
+                        end
+                    end
+                    if (fl == 3'd3) begin fl <= 3'd0; st <= S_RUN; end
+                    else begin
+                        fl <= fl + 3'd1;
+                    end
+                end
+
+                // ---- one pass through the cluster ----
+                S_RUN: begin
+                    cl_valid <= 1'b1;
+                    cl_first <= first_r;
+                    st  <= S_WAIT;
+                end
+                S_WAIT: if (part_valid) begin
+                    acu_op   <= first_r ? A_LOAD : A_ADD;
+                    acu_addr <= tile_r[TAW-1:0];
+                    acu_cmd  <= 1'b1;
+                    st <= S_ACC;
+                end
+                S_ACC: begin
+                    nblk <= nblk + 16'd1;
+                    exec_result <= {16'd0, nblk + 16'd1};
+                    exec_done <= 1'b1;
+                    st <= S_IDLE;
+                end
+
+                // ---- let the accumulator's reuse distance elapse ----
+                S_EGAP: if (egap == 4'd0) begin
+                    st <= S_EMIT;
+                end
+                        else begin
+                            egap <= egap - 4'd1;
+                        end
+
+                // ---- emit a tile to memory ----
+                S_EMIT: begin
+                    acu_op   <= A_EMIT;
+                    acu_addr <= tile_r[TAW-1:0];
+                    acu_cmd  <= 1'b1;
+                    emit_got <= 1'b0;
+                    st  <= S_WREQ;
+                end
+                S_WREQ: begin
+                    if (emit_valid) begin
+                        emit_hold <= emit_out;
+                        emit_got  <= 1'b1;
+                    end
+                    // wait on emit_got, not on emit_valid: emit_hold is a
+                    // non-blocking assignment, so it is only readable the cycle
+                    // after the ACU raised valid
+                    if (emit_got && !send_valid) begin
+                        // descriptor: one 256-bit word follows
+                        send_flit <= { MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
+                                       POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
+                                       T_MEM_WR_REQ, 8'h02, 1'b0, 3'b000,
+                                       adr_a_r, 6'd0, 8'd0, 8'd0, 200'd0 };
+                        send_valid <= 1'b1;
+                        st <= S_WDAT;
+                    end
+                end
+                S_WDAT: if (!send_valid) begin
                     send_flit <= { MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
                                    POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
-                                   T_MEM_WR_REQ, 8'h02, 1'b0, 3'b000,
-                                   adr_a_r, 6'd0, 8'd0, 8'd0, 200'd0 };
+                                   T_MEM_WR_REQ, 8'h02, 1'b1, 3'b000, emit_hold };
                     send_valid <= 1'b1;
-                    st <= S_WDAT;
+                    nemit <= nemit + 16'd1;
+                    exec_result <= {16'd1, nemit + 16'd1};
+                    exec_done <= 1'b1;
+                    st <= S_IDLE;
                 end
-            end
-            S_WDAT: if (!send_valid) begin
-                send_flit <= { MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
-                               POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
-                               T_MEM_WR_REQ, 8'h02, 1'b1, 3'b000, emit_hold };
-                send_valid <= 1'b1;
-                nemit <= nemit + 16'd1;
-                exec_result <= {16'd1, nemit + 16'd1};
-                exec_done <= 1'b1;
-                st <= S_IDLE;
-            end
 
-            default: st <= S_IDLE;
+                default: st <= S_IDLE;
             endcase
         end
     end

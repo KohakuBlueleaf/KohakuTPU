@@ -31,15 +31,15 @@ module saxpy_cu #(
     input  wire                   noc_out_busy,
     output wire                   busy
 );
-    localparam [3:0] T_MEM_RD_REQ = 4'h0, T_MEM_WR_REQ  = 4'h1,
-                     T_MEM_RD_RESP = 4'h2, T_MEM_WR_ACK = 4'h3,
-                     T_MEM_WR_DATA = 4'h4;
+    localparam [3:0] T_MEM_RD_REQ = 4'h0, T_MEM_WR_REQ = 4'h1;
+    localparam [3:0] T_MEM_RD_RESP = 4'h2, T_MEM_WR_ACK = 4'h3;
+    localparam [3:0] T_MEM_WR_DATA = 4'h4;
 
     localparam [7:0] OP_SAXPY = 8'h01;
     // 64 float32 = 8 beats, the agent's write-burst ceiling (WBURST).
     localparam N_MAX = 64;
-    localparam [31:0] FAULT_BAD_OP = 32'hBAD0_0001,
-                      FAULT_TOO_BIG = 32'hBAD0_0002;
+    localparam [31:0] FAULT_BAD_OP = 32'hBAD0_0001;
+    localparam [31:0] FAULT_TOO_BIG = 32'hBAD0_0002;
 
     wire [FLIT_WIDTH-1:0] inst_flit, recv_flit;
     wire                  inst_valid, recv_valid, send_ready;
@@ -55,9 +55,15 @@ module saxpy_cu #(
         reg [31:0] mag;
         begin
             e = b[30:23];
-            if (e == 8'd0)        mag = 32'd0;
-            else if (e >= 8'd150) mag = {8'd0, 1'b1, b[22:0]} << (e - 8'd150);
-            else                  mag = {8'd0, 1'b1, b[22:0]} >> (8'd150 - e);
+            if (e == 8'd0) begin
+                mag = 32'd0;
+            end
+            else if (e >= 8'd150) begin
+                mag = {8'd0, 1'b1, b[22:0]} << (e - 8'd150);
+            end
+            else begin
+                mag = {8'd0, 1'b1, b[22:0]} >> (8'd150 - e);
+            end
             f2i = b[31] ? -$signed(mag) : $signed(mag);
         end
     endfunction
@@ -69,15 +75,20 @@ module saxpy_cu #(
         begin
             mag = v[31] ? -v : v;
             p = 0;
-            for (i = 0; i < 24; i = i + 1) if (mag[i]) p = i;
+            for (i = 0; i < 24; i = i + 1) begin
+                if (mag[i]) begin
+                    p = i;
+                end
+            end
             e  = 8'd127 + p;
             sh = mag << (23 - p);
             i2f = (mag == 32'd0) ? 32'd0 : {v[31], e, sh[22:0]};
         end
     endfunction
 
-    localparam [2:0] S_IDLE = 3'd0, S_RQX = 3'd1, S_RQY = 3'd2, S_WAIT = 3'd3,
-                     S_COMP = 3'd4, S_WREQ = 3'd5, S_WDATA = 3'd6, S_DONE = 3'd7;
+    localparam [2:0] S_IDLE = 3'd0, S_RQX = 3'd1, S_RQY = 3'd2, S_WAIT = 3'd3;
+    localparam [2:0] S_COMP = 3'd4, S_WREQ = 3'd5, S_WDATA = 3'd6;
+    localparam [2:0] S_DONE = 3'd7;
     localparam [7:0] TAG_X = 8'h10, TAG_Y = 8'h20, TAG_W = 8'h30;
 
     reg [2:0]   st;
@@ -108,7 +119,9 @@ module saxpy_cu #(
             send_valid <= 1'b0;
             elements <= 32'd0;
         end else begin
-            if (send_valid && send_ready) send_valid <= 1'b0;
+            if (send_valid && send_ready) begin
+                send_valid <= 1'b0;
+            end
 
             // responses: demuxed by type and tag, consumed whatever the state
             if (recv_valid) begin
@@ -126,80 +139,94 @@ module saxpy_cu #(
             end
 
             case (st)
-            S_IDLE: begin
-                // Accept, THEN retire on a later cycle (noc_cu_base:221).
-                if (inst_valid && !inst_ready) begin
-                    inst_ready <= 1'b1;
-                    n_q     <= i_n;
-                    a_q     <= inst_flit[223 -: 32];
-                    x_addr  <= inst_flit[191 -: 64];   // truncates to 40 bits
-                    y_addr  <= inst_flit[127 -: 64];
-                    beats   <= i_n[6:3] + {3'd0, |i_n[2:0]};
-                    xw <= 4'd0; yw <= 4'd0; wb <= 4'd0; ei <= 7'd0;
-                    fault_q <= 1'b0;
-                    if (i_op != OP_SAXPY) begin
-                        fault_q <= 1'b1; fault_code <= FAULT_BAD_OP;
-                        st <= S_DONE;
-                    end else if (i_n > N_MAX) begin
-                        fault_q <= 1'b1; fault_code <= FAULT_TOO_BIG;
-                        st <= S_DONE;
-                    end else if (i_n == 24'd0) st <= S_DONE;
-                    else st <= S_RQX;
+                S_IDLE: begin
+                    // Accept, THEN retire on a later cycle (noc_cu_base:221).
+                    if (inst_valid && !inst_ready) begin
+                        inst_ready <= 1'b1;
+                        n_q     <= i_n;
+                        a_q     <= inst_flit[223 -: 32];
+                        x_addr  <= inst_flit[191 -: 64];   // truncates to 40 bits
+                        y_addr  <= inst_flit[127 -: 64];
+                        beats   <= i_n[6:3] + {3'd0, |i_n[2:0]};
+                        xw <= 4'd0; yw <= 4'd0; wb <= 4'd0; ei <= 7'd0;
+                        fault_q <= 1'b0;
+                        if (i_op != OP_SAXPY) begin
+                            fault_q <= 1'b1; fault_code <= FAULT_BAD_OP;
+                            st <= S_DONE;
+                        end else if (i_n > N_MAX) begin
+                            fault_q <= 1'b1; fault_code <= FAULT_TOO_BIG;
+                            st <= S_DONE;
+                        end else if (i_n == 24'd0) begin
+                            st <= S_DONE;
+                        end
+                        else begin
+                            st <= S_RQX;
+                        end
+                    end
                 end
-            end
-            // Plain read (STREAM=0): one RD_RESP per beat, txn echoed on each.
-            S_RQX: if (!send_valid || send_ready) begin
-                send_flit <= { MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
-                               POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
-                               T_MEM_RD_REQ, TAG_X, 1'b1, 3'b000,
-                               x_addr, {4'd0, beats} - 8'd1, 8'd0, 200'd0 };
-                send_valid <= 1'b1;
-                st <= S_RQY;
-            end
-            S_RQY: if (!send_valid || send_ready) begin
-                send_flit <= { MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
-                               POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
-                               T_MEM_RD_REQ, TAG_Y, 1'b1, 3'b000,
-                               y_addr, {4'd0, beats} - 8'd1, 8'd0, 200'd0 };
-                send_valid <= 1'b1;
-                st <= S_WAIT;
-            end
-            S_WAIT: if (xw == beats && yw == beats) st <= S_COMP;
-            // One element per cycle. The tail of a partial last line is left
-            // as read, so the write-back is a read-modify-write of that line.
-            S_COMP: begin
-                ybuf[ei*32 +: 32] <= i2f(f2i(a_q) * f2i(xbuf[ei*32 +: 32])
-                                         + f2i(ybuf[ei*32 +: 32]));
-                elements <= elements + 32'd1;
-                if ({17'd0, ei} == n_q - 24'd1) st <= S_WREQ;
-                else ei <= ei + 7'd1;
-            end
-            // One descriptor, len+1 data flits, last on the final one. The
-            // ack is dropped above: nobody sequences on it (s5).
-            S_WREQ: if (!send_valid || send_ready) begin
-                send_flit <= { MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
-                               POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
-                               T_MEM_WR_REQ, TAG_W, 1'b0, 3'b000,
-                               y_addr, {4'd0, beats} - 8'd1, 8'd0, 200'd0 };
-                send_valid <= 1'b1;
-                st <= S_WDATA;
-            end
-            S_WDATA: if (!send_valid || send_ready) begin
-                send_flit <= { MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
-                               POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
-                               T_MEM_WR_DATA, TAG_W, (wb == beats - 4'd1),
-                               3'b000, ybuf[wb*256 +: 256] };
-                send_valid <= 1'b1;
-                if (wb == beats - 4'd1) st <= S_DONE;
-                else wb <= wb + 4'd1;
-            end
-            S_DONE: begin
-                exec_done   <= 1'b1;
-                exec_fault  <= fault_q;
-                exec_result <= fault_q ? fault_code : {8'd0, n_q};
-                st <= S_IDLE;
-            end
-            default: st <= S_IDLE;
+                // Plain read (STREAM=0): one RD_RESP per beat, txn echoed on each.
+                S_RQX: if (!send_valid || send_ready) begin
+                    send_flit <= { MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
+                                   POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
+                                   T_MEM_RD_REQ, TAG_X, 1'b1, 3'b000,
+                                   x_addr, {4'd0, beats} - 8'd1, 8'd0, 200'd0 };
+                    send_valid <= 1'b1;
+                    st <= S_RQY;
+                end
+                S_RQY: if (!send_valid || send_ready) begin
+                    send_flit <= { MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
+                                   POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
+                                   T_MEM_RD_REQ, TAG_Y, 1'b1, 3'b000,
+                                   y_addr, {4'd0, beats} - 8'd1, 8'd0, 200'd0 };
+                    send_valid <= 1'b1;
+                    st <= S_WAIT;
+                end
+                S_WAIT: if (xw == beats && yw == beats) begin
+                    st <= S_COMP;
+                end
+                // One element per cycle. The tail of a partial last line is left
+                // as read, so the write-back is a read-modify-write of that line.
+                S_COMP: begin
+                    ybuf[ei*32 +: 32] <= i2f(f2i(a_q) * f2i(xbuf[ei*32 +: 32])
+                                             + f2i(ybuf[ei*32 +: 32]));
+                    elements <= elements + 32'd1;
+                    if ({17'd0, ei} == n_q - 24'd1) begin
+                        st <= S_WREQ;
+                    end
+                    else begin
+                        ei <= ei + 7'd1;
+                    end
+                end
+                // One descriptor, len+1 data flits, last on the final one. The
+                // ack is dropped above: nobody sequences on it (s5).
+                S_WREQ: if (!send_valid || send_ready) begin
+                    send_flit <= { MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
+                                   POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
+                                   T_MEM_WR_REQ, TAG_W, 1'b0, 3'b000,
+                                   y_addr, {4'd0, beats} - 8'd1, 8'd0, 200'd0 };
+                    send_valid <= 1'b1;
+                    st <= S_WDATA;
+                end
+                S_WDATA: if (!send_valid || send_ready) begin
+                    send_flit <= { MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
+                                   POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
+                                   T_MEM_WR_DATA, TAG_W, (wb == beats - 4'd1),
+                                   3'b000, ybuf[wb*256 +: 256] };
+                    send_valid <= 1'b1;
+                    if (wb == beats - 4'd1) begin
+                        st <= S_DONE;
+                    end
+                    else begin
+                        wb <= wb + 4'd1;
+                    end
+                end
+                S_DONE: begin
+                    exec_done   <= 1'b1;
+                    exec_fault  <= fault_q;
+                    exec_result <= fault_q ? fault_code : {8'd0, n_q};
+                    st <= S_IDLE;
+                end
+                default: st <= S_IDLE;
             endcase
         end
     end

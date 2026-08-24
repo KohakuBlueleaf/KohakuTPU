@@ -49,10 +49,18 @@ module vec_cvt_tb;
         reg [4:0] e; reg [9:0] m;
         begin
             e = b[14:10]; m = b[9:0];
-            if (e == 0)          f16_val = (m * 1.0) * (2.0 ** -24);
-            else if (e == 31)    f16_val = 0.0;
-            else f16_val = (1.0 + (m * 1.0) / 1024.0) * (2.0 ** ($signed({1'b0, e}) - 15));
-            if (b[15] && e != 31) f16_val = -f16_val;
+            if (e == 0) begin
+                f16_val = (m * 1.0) * (2.0 ** -24);
+            end
+            else if (e == 31) begin
+                f16_val = 0.0;
+            end
+            else begin
+                f16_val = (1.0 + (m * 1.0) / 1024.0) * (2.0 ** ($signed({1'b0, e}) - 15));
+            end
+            if (b[15] && e != 31) begin
+                f16_val = -f16_val;
+            end
         end
     endfunction
 
@@ -60,10 +68,18 @@ module vec_cvt_tb;
         reg [7:0] e; reg [14:0] m;
         begin
             e = b[22:15]; m = b[14:0];
-            if (e == 0)        e8_val = 0.0;
-            else if (e == 255) e8_val = 0.0;
-            else e8_val = (1.0 + (m * 1.0) / 32768.0) * (2.0 ** ($signed({1'b0, e}) - 127));
-            if (b[23] && e != 255) e8_val = -e8_val;
+            if (e == 0) begin
+                e8_val = 0.0;
+            end
+            else if (e == 255) begin
+                e8_val = 0.0;
+            end
+            else begin
+                e8_val = (1.0 + (m * 1.0) / 32768.0) * (2.0 ** ($signed({1'b0, e}) - 127));
+            end
+            if (b[23] && e != 255) begin
+                e8_val = -e8_val;
+            end
         end
     endfunction
 
@@ -71,10 +87,18 @@ module vec_cvt_tb;
         reg [7:0] e; reg [22:0] m;
         begin
             e = b[30:23]; m = b[22:0];
-            if (e == 0)        f32_val = (m * 1.0) * (2.0 ** -149);
-            else if (e == 255) f32_val = 0.0;
-            else f32_val = (1.0 + (m * 1.0) / 8388608.0) * (2.0 ** ($signed({1'b0, e}) - 127));
-            if (b[31] && e != 255) f32_val = -f32_val;
+            if (e == 0) begin
+                f32_val = (m * 1.0) * (2.0 ** -149);
+            end
+            else if (e == 255) begin
+                f32_val = 0.0;
+            end
+            else begin
+                f32_val = (1.0 + (m * 1.0) / 8388608.0) * (2.0 ** ($signed({1'b0, e}) - 127));
+            end
+            if (b[31] && e != 255) begin
+                f32_val = -f32_val;
+            end
         end
     endfunction
 
@@ -82,8 +106,12 @@ module vec_cvt_tb;
         reg [4:0] e;
         begin
             e = b[14:10];
-            if (e == 0) f16_ulp = 2.0 ** -24;
-            else        f16_ulp = 2.0 ** ($signed({1'b0, e}) - 25);
+            if (e == 0) begin
+                f16_ulp = 2.0 ** -24;
+            end
+            else begin
+                f16_ulp = 2.0 ** ($signed({1'b0, e}) - 25);
+            end
         end
     endfunction
 
@@ -91,8 +119,12 @@ module vec_cvt_tb;
         reg [7:0] e;
         begin
             e = b[22:15];
-            if (e == 0) e8_ulp = 2.0 ** -142;
-            else        e8_ulp = 2.0 ** ($signed({1'b0, e}) - 142);
+            if (e == 0) begin
+                e8_ulp = 2.0 ** -142;
+            end
+            else begin
+                e8_ulp = 2.0 ** ($signed({1'b0, e}) - 142);
+            end
         end
     endfunction
 
@@ -105,7 +137,9 @@ module vec_cvt_tb;
             checks = checks + 1;
             if (!cond) begin
                 errors = errors + 1;
-                if (errors < 15) $display("  FAIL %0s  ctx=%h", what, ctx);
+                if (errors < 15) begin
+                    $display("  FAIL %0s  ctx=%h", what, ctx);
+                end
             end
         end
     endtask
@@ -143,11 +177,13 @@ module vec_cvt_tb;
             e8_i = f16_o;
             #1;
             rt = e8_f16;
-            if (f16_i[14:10] == 5'h1F)
+            if (f16_i[14:10] == 5'h1F) begin
                 chk(rt[14:10] == 5'h1F && ((|rt[9:0]) == (|f16_i[9:0])),
                     "round trip special", {16'd0, f16_i});
-            else
+            end
+            else begin
                 chk(rt === f16_i, "round trip not identity", {16'd0, f16_i});
+            end
         end
 
         // ============ 3. E8M15 -> FP16, half ulp and the saturation edge ======
@@ -155,7 +191,9 @@ module vec_cvt_tb;
         for (i = 0; i < 40000; i = i + 1) begin
             e8_i = {$random(seed)} & 24'h7FFFFF;
             e8_i[23] = i[0];
-            if (e8_i[22:15] == 8'hFF) e8_i[22:15] = 8'hFE;
+            if (e8_i[22:15] == 8'hFF) begin
+                e8_i[22:15] = 8'hFE;
+            end
             #1;
             want = e8_val(e8_i);
             if (fabs(want) >= 65520.0) begin
@@ -189,8 +227,12 @@ module vec_cvt_tb;
         // says, so a non-canonical zero is not a distinct value to return to.
         for (i = 0; i < 20000; i = i + 1) begin
             e8_i = {$random(seed)} & 24'hFFFFFF;
-            if (e8_i[22:15] == 8'hFF) e8_i[22:15] = 8'hFE;
-            if (e8_i[22:15] == 8'h00) e8_i[14:0]  = 15'd0;
+            if (e8_i[22:15] == 8'hFF) begin
+                e8_i[22:15] = 8'hFE;
+            end
+            if (e8_i[22:15] == 8'h00) begin
+                e8_i[14:0]  = 15'd0;
+            end
             #1;
             chk(f32_val(e8_f32) == e8_val(e8_i), "e8->f32 not exact", e8_i[23:0]);
             f32_i = e8_f32;
@@ -211,8 +253,12 @@ module vec_cvt_tb;
         $display("--- 5. FP32 -> E8M15 ---");
         for (i = 0; i < 40000; i = i + 1) begin
             f32_i = {$random(seed)};
-            if (f32_i[30:23] == 8'hFF) f32_i[30:23] = 8'hFE;
-            if (f32_i[30:23] == 8'h00) f32_i[30:23] = 8'h01;
+            if (f32_i[30:23] == 8'hFF) begin
+                f32_i[30:23] = 8'hFE;
+            end
+            if (f32_i[30:23] == 8'h00) begin
+                f32_i[30:23] = 8'h01;
+            end
             #1;
             want = f32_val(f32_i);
             got  = e8_val(f32_o);
@@ -258,8 +304,12 @@ module vec_cvt_tb;
         #1 chk(out_raw === 32'h4040_0000, "store 3.0 as fp32", 0);
 
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end

@@ -91,52 +91,64 @@ module sb_axi2lite #(
             wst      <= WI;
             s_bvalid <= 1'b0;
         end else begin
-            if (s_bvalid && s_bready) s_bvalid <= 1'b0;
+            if (s_bvalid && s_bready) begin
+                s_bvalid <= 1'b0;
+            end
             case (wst)
-            WI: if (s_awvalid) begin
-                    waddr <= s_awaddr;
-                    wlen  <= s_awlen;
-                    wcnt  <= 8'd0;
-                    wacc  <= 2'b00;
-                    s_bid <= s_awid;
-                    wst   <= WB;
-                end
-            WB: if (s_wvalid) begin
-                    wdat <= s_wdata;
-                    wstb <= s_wstrb;
-                    if (|s_wstrb) begin
-                        aw_done <= 1'b0;
-                        w_done  <= 1'b0;
-                        wst     <= WA;
-                    end else begin
-                        waddr <= waddr + STEP;
-                        wcnt  <= wcnt + 8'd1;
-                        if (w_is_last) begin
-                            s_bresp  <= wacc;
-                            s_bvalid <= 1'b1;
-                            wst      <= WD;
+                WI: if (s_awvalid) begin
+                        waddr <= s_awaddr;
+                        wlen  <= s_awlen;
+                        wcnt  <= 8'd0;
+                        wacc  <= 2'b00;
+                        s_bid <= s_awid;
+                        wst   <= WB;
+                    end
+                WB: if (s_wvalid) begin
+                        wdat <= s_wdata;
+                        wstb <= s_wstrb;
+                        if (|s_wstrb) begin
+                            aw_done <= 1'b0;
+                            w_done  <= 1'b0;
+                            wst     <= WA;
+                        end else begin
+                            waddr <= waddr + STEP;
+                            wcnt  <= wcnt + 8'd1;
+                            if (w_is_last) begin
+                                s_bresp  <= wacc;
+                                s_bvalid <= 1'b1;
+                                wst      <= WD;
+                            end
                         end
                     end
-                end
-            WA: begin
-                    if (aw_hs) aw_done <= 1'b1;
-                    if (w_hs)  w_done  <= 1'b1;
-                    if ((aw_done || aw_hs) && (w_done || w_hs)) wst <= WR;
-                end
-            WR: if (m_bvalid) begin
-                    waddr <= waddr + STEP;
-                    wcnt  <= wcnt + 8'd1;
-                    if (m_bresp > wacc) wacc <= m_bresp;
-                    if (w_is_last) begin
-                        s_bresp  <= (m_bresp > wacc) ? m_bresp : wacc;
-                        s_bvalid <= 1'b1;
-                        wst      <= WD;
-                    end else begin
-                        wst <= WB;
+                WA: begin
+                        if (aw_hs) begin
+                            aw_done <= 1'b1;
+                        end
+                        if (w_hs) begin
+                            w_done  <= 1'b1;
+                        end
+                        if ((aw_done || aw_hs) && (w_done || w_hs)) begin
+                            wst <= WR;
+                        end
                     end
+                WR: if (m_bvalid) begin
+                        waddr <= waddr + STEP;
+                        wcnt  <= wcnt + 8'd1;
+                        if (m_bresp > wacc) begin
+                            wacc <= m_bresp;
+                        end
+                        if (w_is_last) begin
+                            s_bresp  <= (m_bresp > wacc) ? m_bresp : wacc;
+                            s_bvalid <= 1'b1;
+                            wst      <= WD;
+                        end else begin
+                            wst <= WB;
+                        end
+                    end
+                WD: if (!s_bvalid) begin
+                    wst <= WI;
                 end
-            WD: if (!s_bvalid) wst <= WI;
-            default: wst <= WI;
+                default: wst <= WI;
             endcase
         end
     end
@@ -158,27 +170,29 @@ module sb_axi2lite #(
             s_rvalid <= 1'b0;
         end else begin
             case (rst_q)
-            RI: if (s_arvalid) begin
-                    raddr <= s_araddr;
-                    rlen  <= s_arlen;
-                    rcnt  <= 8'd0;
-                    s_rid <= s_arid;
-                    rst_q <= RA;
+                RI: if (s_arvalid) begin
+                        raddr <= s_araddr;
+                        rlen  <= s_arlen;
+                        rcnt  <= 8'd0;
+                        s_rid <= s_arid;
+                        rst_q <= RA;
+                    end
+                RA: if (m_arready) begin
+                    rst_q <= RW;
                 end
-            RA: if (m_arready) rst_q <= RW;
-            RW: if (m_rvalid) begin
-                    s_rdata  <= m_rdata;
-                    s_rresp  <= m_rresp;
-                    s_rlast  <= (rcnt == rlen);
-                    s_rvalid <= 1'b1;
-                    rst_q    <= RF;
-                end
-            RF: if (s_rready) begin
-                    s_rvalid <= 1'b0;
-                    raddr    <= raddr + STEP;
-                    rcnt     <= rcnt + 8'd1;
-                    rst_q    <= (rcnt == rlen) ? RI : RA;
-                end
+                RW: if (m_rvalid) begin
+                        s_rdata  <= m_rdata;
+                        s_rresp  <= m_rresp;
+                        s_rlast  <= (rcnt == rlen);
+                        s_rvalid <= 1'b1;
+                        rst_q    <= RF;
+                    end
+                RF: if (s_rready) begin
+                        s_rvalid <= 1'b0;
+                        raddr    <= raddr + STEP;
+                        rcnt     <= rcnt + 8'd1;
+                        rst_q    <= (rcnt == rlen) ? RI : RA;
+                    end
             endcase
         end
     end

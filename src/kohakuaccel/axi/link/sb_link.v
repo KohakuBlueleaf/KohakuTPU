@@ -36,7 +36,9 @@ module sb_link #(
     // A link spans the die, so its reset must not be the same net the stations
     // use. dont_touch, or Vivado merges this copy back into that one net.
     (* dont_touch = "yes" *) reg rst_q;
-    always @(posedge clk) rst_q <= rst;
+    always @(posedge clk) begin
+        rst_q <= rst;
+    end
 
     // ------------------------------------------------------------ send side
     reg [CW-1:0] credit;
@@ -45,10 +47,17 @@ module sb_link #(
 
     assign i_ready = |credit;
 
-    always @(posedge clk)
-        if (rst_q)               credit <= CRED[CW-1:0];
-        else if (send && !ret)   credit <= credit - 1'b1;
-        else if (!send && ret)   credit <= credit + 1'b1;
+    always @(posedge clk) begin
+        if (rst_q) begin
+            credit <= CRED[CW-1:0];
+        end
+        else if (send && !ret) begin
+            credit <= credit - 1'b1;
+        end
+        else if (!send && ret) begin
+            credit <= credit + 1'b1;
+        end
+    end
 
     // ------------------------------------------------------- die crossing
     // No ready here: a flit only leaves against a credit, so nothing can
@@ -59,13 +68,19 @@ module sb_link #(
     (* srl_style = "register" *) reg [PIPE-1:0] pipe_v;
     integer k;
     always @(posedge clk) begin
-        if (rst_q) pipe_v <= {PIPE{1'b0}};
+        if (rst_q) begin
+            pipe_v <= {PIPE{1'b0}};
+        end
         else begin
             pipe_v[0] <= send;
-            for (k = 1; k < PIPE; k = k + 1) pipe_v[k] <= pipe_v[k-1];
+            for (k = 1; k < PIPE; k = k + 1) begin
+                pipe_v[k] <= pipe_v[k-1];
+            end
         end
         pipe_d[0] <= i_data;
-        for (k = 1; k < PIPE; k = k + 1) pipe_d[k] <= pipe_d[k-1];
+        for (k = 1; k < PIPE; k = k + 1) begin
+            pipe_d[k] <= pipe_d[k-1];
+        end
     end
 
     // --------------------------------------------------------- receive side
@@ -83,12 +98,17 @@ module sb_link #(
     // Credits go home down their own pipeline, so the return path is as deep
     // as the forward one and never a combinational route across the die.
     (* srl_style = "register" *) reg [PIPE-1:0] ret_p;
-    always @(posedge clk)
-        if (rst_q) ret_p <= {PIPE{1'b0}};
+    always @(posedge clk) begin
+        if (rst_q) begin
+            ret_p <= {PIPE{1'b0}};
+        end
         else begin
             ret_p[0] <= o_valid && o_ready;
-            for (k = 1; k < PIPE; k = k + 1) ret_p[k] <= ret_p[k-1];
+            for (k = 1; k < PIPE; k = k + 1) begin
+                ret_p[k] <= ret_p[k-1];
+            end
         end
+    end
     assign ret = ret_p[PIPE-1];
 
     // `nocred` is the whole reason CRED is a knob: it says whether the credit
@@ -96,14 +116,19 @@ module sb_link #(
     generate
     if (STATS) begin : g_stats
         reg [31:0] n_sent, n_nocred;
-        always @(posedge clk)
+        always @(posedge clk) begin
             if (rst_q) begin
                 n_sent   <= 32'd0;
                 n_nocred <= 32'd0;
             end else begin
-                if (send)                  n_sent   <= n_sent + 32'd1;
-                if (i_valid && !i_ready)   n_nocred <= n_nocred + 32'd1;
+                if (send) begin
+                    n_sent   <= n_sent + 32'd1;
+                end
+                if (i_valid && !i_ready) begin
+                    n_nocred <= n_nocred + 32'd1;
+                end
             end
+        end
         assign stat_sent   = n_sent;
         assign stat_nocred = n_nocred;
     end else begin : g_nostats
@@ -113,10 +138,12 @@ module sb_link #(
     endgenerate
 
 `ifndef SYNTHESIS
-    always @(posedge clk)
-        if (!rst_q && pipe_v[PIPE-1] && rxf_full)
+    always @(posedge clk) begin
+        if (!rst_q && pipe_v[PIPE-1] && rxf_full) begin
             $display("%0t ERROR sb_link: RX full with a flit arriving -- CRED %0d is below 2*PIPE %0d",
                      $time, CRED, 2*PIPE);
+        end
+    end
 `endif
 endmodule
 

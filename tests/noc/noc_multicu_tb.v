@@ -27,16 +27,18 @@ module noc_multicu_tb;
     localparam RA_X  = 1, RA_Y  = 3;
     localparam RB_X  = 3, RB_Y  = 1;
 
-    localparam A_CAPS=16'h0010, A_PROG_DST=16'h0040, A_PROG_LEN=16'h0048,
-               A_PROG_KICK=16'h0050, A_PROG_STAT=16'h0058, A_PROG_CRED=16'h0060,
-               A_TX_FLIT0=16'h0100, A_TX_KICK=16'h0140,
-               A_RX_FLIT0=16'h0180, A_RX_POP=16'h01C0, A_RX_STATUS=16'h01C8,
-               A_NODE=16'h1000, A_STAGE=16'h2000;
+    localparam A_CAPS = 16'h0010, A_PROG_DST = 16'h0040, A_PROG_LEN = 16'h0048;
+    localparam A_PROG_KICK = 16'h0050, A_PROG_STAT = 16'h0058;
+    localparam A_PROG_CRED = 16'h0060, A_TX_FLIT0 = 16'h0100;
+    localparam A_TX_KICK = 16'h0140, A_RX_FLIT0 = 16'h0180, A_RX_POP = 16'h01C0;
+    localparam A_RX_STATUS = 16'h01C8, A_NODE = 16'h1000, A_STAGE = 16'h2000;
     localparam SIG_BATCH = 8'h01, SIG_FAULT = 8'h04;
     localparam T_CU_CTRL = 4'h7;
 
     reg clk = 0, resetn = 0;
-    always #5 clk = ~clk;
+    always begin
+        #5 clk = ~clk;
+    end
     integer errors = 0, checks = 0;
 
     reg  [3:0]  awid=0, arid=0;
@@ -180,8 +182,12 @@ module noc_multicu_tb;
     generate
       for (ix = LO; ix <= HI; ix = ix + 1) begin : ip_
         for (iy = LO; iy <= HI; iy = iy + 1) begin : iq_
-          if (!((ix==ORC_X&&iy==ORC_Y)||(ix==ALU_X&&iy==ALU_Y)||
-                (ix==RA_X&&iy==RA_Y)||(ix==RB_X&&iy==RB_Y))) begin : idle
+          if (!(
+              (ix==ORC_X&&iy==ORC_Y)
+              || (ix==ALU_X&&iy==ALU_Y)
+              || (ix==RA_X&&iy==RA_Y)
+              || (ix==RB_X&&iy==RB_Y)
+          )) begin : idle
             assign l_i_d[ix][iy]={FW{1'b0}}; assign l_i_v[ix][iy]=1'b0;
             assign l_o_b[ix][iy]=1'b0;
           end
@@ -243,7 +249,9 @@ module noc_multicu_tb;
             chk(rv[63:56], code, "signal code");
             // only BATCH_COMPLETE carries the program id; a FAULT carries the
             // datapath's exec_result instead
-            if (code == SIG_BATCH) chk(rv[31:24], pid, "program id");
+            if (code == SIG_BATCH) begin
+                chk(rv[31:24], pid, "program id");
+            end
         end
     endtask
 
@@ -257,9 +265,10 @@ module noc_multicu_tb;
             model_acc = 32'd0;
             for (i = 0; i < n; i = i + 1) begin
                 op8 = i % 7; a32 = 100 + i; b24 = 1 + i;
-                if (i == fault_at)
+                if (i == fault_at) begin
                     f = {16'h0000, 4'h5, pid, (i==n-1), 3'b000, 192'd0,
                          8'hFF, 32'd0, 24'd0};
+                end
                 else begin
                     f = {16'h0000, 4'h5, pid, (i==n-1), 3'b000, 192'd0,
                          op8, a32, b24};
@@ -271,8 +280,9 @@ module noc_multicu_tb;
                     endcase
                     model_acc = model_acc + mi;
                 end
-                for (j = 0; j < WORDS; j = j + 1)
+                for (j = 0; j < WORDS; j = j + 1) begin
                     axi_w(A_STAGE + (i*WORDS + j)*8, f[j*DW +: DW]);
+                end
             end
         end
     endtask
@@ -287,7 +297,9 @@ module noc_multicu_tb;
         // read CAPS (reg 0) from the ALU via the raw mailbox
         f = {ALU_X[3:0], ALU_Y[3:0], ORC_X[3:0], ORC_Y[3:0], T_CU_CTRL, 8'h77,
              1'b1, 3'b000, 8'd0 /*read*/, 8'd0 /*CAPS*/, 240'd0};
-        for (j=0;j<WORDS;j=j+1) axi_w(A_TX_FLIT0 + j*8, f[j*DW +: DW]);
+        for (j=0;j<WORDS;j=j+1) begin
+            axi_w(A_TX_FLIT0 + j*8, f[j*DW +: DW]);
+        end
         axi_w(A_TX_KICK, 64'd1);
         guard=0; axi_r(A_RX_STATUS, rv);
         while (rv[16] && guard<200) begin repeat(10) @(posedge clk); axi_r(A_RX_STATUS,rv); guard=guard+1; end
@@ -298,7 +310,9 @@ module noc_multicu_tb;
 
         f = {RA_X[3:0], RA_Y[3:0], ORC_X[3:0], ORC_Y[3:0], T_CU_CTRL, 8'h78,
              1'b1, 3'b000, 8'd0, 8'd0, 240'd0};
-        for (j=0;j<WORDS;j=j+1) axi_w(A_TX_FLIT0 + j*8, f[j*DW +: DW]);
+        for (j=0;j<WORDS;j=j+1) begin
+            axi_w(A_TX_FLIT0 + j*8, f[j*DW +: DW]);
+        end
         axi_w(A_TX_KICK, 64'd1);
         guard=0; axi_r(A_RX_STATUS, rv);
         while (rv[16] && guard<200) begin repeat(10) @(posedge clk); axi_r(A_RX_STATUS,rv); guard=guard+1; end
@@ -328,7 +342,9 @@ module noc_multicu_tb;
         for (i = 0; i < 5; i = i + 1) begin
             f = {16'h0000, 4'h5, 8'h41, (i==4), 3'b000, 192'd0,
                  RB_X[7:0], RB_Y[7:0], (32'hBEEF0000 + i), 16'h0102};
-            for (j=0;j<WORDS;j=j+1) axi_w(A_STAGE + (i*WORDS+j)*8, f[j*DW +: DW]);
+            for (j=0;j<WORDS;j=j+1) begin
+                axi_w(A_STAGE + (i*WORDS+j)*8, f[j*DW +: DW]);
+            end
         end
         dispatch(8'h41, RA_X, RA_Y, 5);
         wait_batch(8'h41, RA_X, RA_Y, SIG_BATCH);
@@ -351,7 +367,9 @@ module noc_multicu_tb;
         for (i = 0; i < 4; i = i + 1) begin
             f = {16'h0000, 4'h5, 8'h52, (i==3), 3'b000, 192'd0,
                  RA_X[7:0], RA_Y[7:0], (32'hFEED0000 + i), 16'h0304};
-            for (j=0;j<WORDS;j=j+1) axi_w(A_STAGE + (i*WORDS+j)*8, f[j*DW +: DW]);
+            for (j=0;j<WORDS;j=j+1) begin
+                axi_w(A_STAGE + (i*WORDS+j)*8, f[j*DW +: DW]);
+            end
         end
         dispatch(8'h52, RB_X, RB_Y, 4);
         wait_batch(8'h51, ALU_X, ALU_Y, SIG_BATCH);
@@ -372,8 +390,12 @@ module noc_multicu_tb;
         repeat (50) @(posedge clk);
         $display("");
         $display("========================================");
-        if (errors==0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else           $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors==0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end

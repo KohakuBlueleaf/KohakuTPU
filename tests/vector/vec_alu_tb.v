@@ -56,7 +56,9 @@ module vec_alu_tb;
     wire        out_valid, out_pred;
     wire [23:0] out;
 
-    always #1 clk = ~clk;
+    always begin
+        #1 clk = ~clk;
+    end
 
     vec_alu #(.MODEL(MODEL)) dut (
         .clk(clk), .rst(rst), .in_valid(in_valid), .op(op),
@@ -71,13 +73,19 @@ module vec_alu_tb;
         real m;
         integer e;
         begin
-            if (f[22:15] == 8'd0) e8_real = 0.0;
-            else if (f[22:15] == 8'hFF) e8_real = 1.0e300;   // inf stand-in
+            if (f[22:15] == 8'd0) begin
+                e8_real = 0.0;
+            end
+            else if (f[22:15] == 8'hFF) begin// inf stand-in
+                e8_real = 1.0e300;
+            end
             else begin
                 m = 1.0 + $itor({1'b0, f[14:0]}) / 32768.0;
                 e = f[22:15] - 127;
                 e8_real = m * (2.0 ** e);
-                if (f[23]) e8_real = -e8_real;
+                if (f[23]) begin
+                    e8_real = -e8_real;
+                end
             end
         end
     endfunction
@@ -91,7 +99,9 @@ module vec_alu_tb;
         reg [7:0]  eb;
         reg [14:0] fb;
         begin
-            if (v == 0.0) e8_of = 24'd0;
+            if (v == 0.0) begin
+                e8_of = 24'd0;
+            end
             else begin
                 s = (v < 0.0);
                 m = s ? -v : v;
@@ -102,9 +112,15 @@ module vec_alu_tb;
                 if (fr >= 32768) begin fr = 0; e = e + 1; end
                 eb = e + 127;
                 fb = fr;
-                if (e > 127)       e8_of = {s, 8'hFF, 15'd0};
-                else if (e < -126) e8_of = {s, 23'd0};
-                else               e8_of = {s, eb, fb};
+                if (e > 127) begin
+                    e8_of = {s, 8'hFF, 15'd0};
+                end
+                else if (e < -126) begin
+                    e8_of = {s, 23'd0};
+                end
+                else begin
+                    e8_of = {s, eb, fb};
+                end
             end
         end
     endfunction
@@ -112,8 +128,12 @@ module vec_alu_tb;
     // ulp of a result, from its own exponent
     function real ulp_of(input [23:0] f);
         begin
-            if (f[22:15] == 8'd0) ulp_of = 2.0 ** (-141);   // smallest normal ulp
-            else ulp_of = 2.0 ** ($itor(f[22:15]) - 142.0);
+            if (f[22:15] == 8'd0) begin// smallest normal ulp
+                ulp_of = 2.0 ** (-141);
+            end
+            else begin
+                ulp_of = 2.0 ** ($itor(f[22:15]) - 142.0);
+            end
         end
     endfunction
 
@@ -198,7 +218,9 @@ module vec_alu_tb;
     always @(posedge clk) begin
         if (meas_go) begin
             meas_lat <= meas_lat + 1;
-            if (out_valid) meas_vld <= 1'b1;
+            if (out_valid) begin
+                meas_vld <= 1'b1;
+            end
         end
     end
 
@@ -212,39 +234,52 @@ module vec_alu_tb;
             if (q_kind[nret] == K_BITS) begin
                 if (out !== q_bits[nret]) begin
                     errors = errors + 1;
-                    if (errors <= 15)
+                    if (errors <= 15) begin
                         $display("  FAIL %0s #%0d: got %06h want %06h (exact)",
                                  grp_nm[g], nret, out, q_bits[nret]);
+                    end
                 end
             end else if (q_kind[nret] == K_ABS) begin
                 got_r = e8_real(out);
                 err_u = got_r - q_val[nret];
-                if (err_u < 0.0) err_u = -err_u;
+                if (err_u < 0.0) begin
+                    err_u = -err_u;
+                end
                 // The more permissive of the two limits, per the note above.
                 // 0.99 and not 0.51: log2 is a SEED, and the seeds are
                 // specified faithful, exactly as inv, rsqrt and exp2 are
                 // checked. 0.51 is the FMA's bound, and the FMA meets it.
                 ulpv = 0.99 * ulp_of(out);
-                if (q_tol[nret] > ulpv) ulpv = q_tol[nret];
+                if (q_tol[nret] > ulpv) begin
+                    ulpv = q_tol[nret];
+                end
                 err_u = err_u / ulpv;
-                if (err_u > grp_max[g]) grp_max[g] = err_u;
+                if (err_u > grp_max[g]) begin
+                    grp_max[g] = err_u;
+                end
                 if (err_u > 1.0) begin
                     errors = errors + 1;
-                    if (errors <= 15)
+                    if (errors <= 15) begin
                         $display("  FAIL %0s #%0d: got %0.9g want %0.9g  %0.3fx limit",
                                  grp_nm[g], nret, got_r, q_val[nret], err_u);
+                    end
                 end
             end else begin
                 got_r = e8_real(out);
                 ulpv  = ulp_of(out);
                 err_u = (got_r - q_val[nret]) / ulpv;
-                if (err_u < 0.0) err_u = -err_u;
-                if (err_u > grp_max[g]) grp_max[g] = err_u;
+                if (err_u < 0.0) begin
+                    err_u = -err_u;
+                end
+                if (err_u > grp_max[g]) begin
+                    grp_max[g] = err_u;
+                end
                 if (err_u > q_tol[nret]) begin
                     errors = errors + 1;
-                    if (errors <= 15)
+                    if (errors <= 15) begin
                         $display("  FAIL %0s #%0d: got %0.9g want %0.9g  %0.3f ulp (limit %0.2f)",
                                  grp_nm[g], nret, got_r, q_val[nret], err_u, q_tol[nret]);
+                    end
                 end
             end
             nret = nret + 1;
@@ -289,7 +324,9 @@ module vec_alu_tb;
         meas_lat = -1; meas_vld = 1'b0; meas_go = 1'b1;
         drv(OP_MOV, MEAS_VAL, E8_ZERO, E8_ZERO);
         @(negedge clk); in_valid = 1'b0;
-        while (out !== MEAS_VAL && meas_lat < 60) @(negedge clk);
+        while (out !== MEAS_VAL && meas_lat < 60) begin
+            @(negedge clk);
+        end
         meas_go = 1'b0;
         $display("    out settles %0d cycles after the input register", meas_lat);
         if (meas_lat >= 60) begin
@@ -310,9 +347,10 @@ module vec_alu_tb;
             if (xa[22:15] != 8'd0 && xa[22:15] != 8'hFF) begin
                 if (e8_of(e8_real(xa)) !== xa) begin
                     errors = errors + 1;
-                    if (errors <= 15)
+                    if (errors <= 15) begin
                         $display("  FAIL fmt: %06h -> %0.9g -> %06h",
                                  xa, e8_real(xa), e8_of(e8_real(xa)));
+                    end
                 end
             end
         end
@@ -325,10 +363,18 @@ module vec_alu_tb;
         for (i = 0; i < 400; i = i + 1) begin
             xa = {$random(seed)} & 24'hFFFFFF;
             xb = {$random(seed)} & 24'hFFFFFF;
-            if (xa[22:15] == 8'hFF) xa[22:15] = 8'd130;
-            if (xb[22:15] == 8'hFF) xb[22:15] = 8'd130;
-            if (xa[22:15] == 8'd0)  xa[22:15] = 8'd120;
-            if (xb[22:15] == 8'd0)  xb[22:15] = 8'd120;
+            if (xa[22:15] == 8'hFF) begin
+                xa[22:15] = 8'd130;
+            end
+            if (xb[22:15] == 8'hFF) begin
+                xb[22:15] = 8'd130;
+            end
+            if (xa[22:15] == 8'd0) begin
+                xa[22:15] = 8'd120;
+            end
+            if (xb[22:15] == 8'd0) begin
+                xb[22:15] = 8'd120;
+            end
 
             push_bits(xa, 1);                       drv(OP_MOV, xa, xb, E8_ZERO);
             push_bits({~xa[23], xa[22:0]}, 1);      drv(OP_NEG, xa, xb, E8_ZERO);
@@ -519,18 +565,22 @@ module vec_alu_tb;
         // -----------------------------------------------------------------
         $display("");
         $display("    group           n     worst");
-        for (i = 0; i < 13; i = i + 1)
+        for (i = 0; i < 13; i = i + 1) begin
             if (grp_n[i] > 0) begin
-                if (i == 7)
+                if (i == 7) begin
                     $display("    %0s %6d   %0.3fx limit  (0.99 ulp or 2^-18 abs)",
                              {grp_nm[i], "         "}, grp_n[i], grp_max[i]);
-                else if (grp_max[i] > 0.0)
+                end
+                else if (grp_max[i] > 0.0) begin
                     $display("    %0s %6d   %0.3f ulp",
                              {grp_nm[i], "         "}, grp_n[i], grp_max[i]);
-                else
+                end
+                else begin
                     $display("    %0s %6d   exact",
                              {grp_nm[i], "         "}, grp_n[i]);
+                end
             end
+        end
         $display("");
         if (nret != nsub) begin
             errors = errors + 1;
@@ -538,8 +588,12 @@ module vec_alu_tb;
                      nret, nsub);
         end
         $display("    MODEL=%0d  %0d checks  %0d errors", MODEL, nret, errors);
-        if (errors == 0) $display("  PASS");
-        else             $display("  FAIL");
+        if (errors == 0) begin
+            $display("  PASS");
+        end
+        else begin
+            $display("  FAIL");
+        end
         $finish;
     end
 

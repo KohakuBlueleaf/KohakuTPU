@@ -28,13 +28,27 @@ module sb_quad_tb;
 
     reg bus_clk = 0, clk_ctrl = 0, clk_xdma = 0;
     reg clk_s0 = 0, clk_s1 = 0, clk_s2 = 0, clk_s3 = 0;
-    always #1.250 bus_clk  = ~bus_clk;      // 400.0 MHz
-    always #5.000 clk_ctrl = ~clk_ctrl;     // 100.0 MHz
-    always #2.000 clk_xdma = ~clk_xdma;     // 250.0 MHz
-    always #2.109 clk_s0   = ~clk_s0;       // 237.1 MHz, deliberately odd
-    always #1.667 clk_s1   = ~clk_s1;       // 299.9 MHz
-    always #2.773 clk_s2   = ~clk_s2;       // 180.3 MHz
-    always #2.373 clk_s3   = ~clk_s3;       // 210.7 MHz
+    always begin// 400.0 MHz
+        #1.250 bus_clk  = ~bus_clk;
+    end
+    always begin// 100.0 MHz
+        #5.000 clk_ctrl = ~clk_ctrl;
+    end
+    always begin// 250.0 MHz
+        #2.000 clk_xdma = ~clk_xdma;
+    end
+    always begin// 237.1 MHz, deliberately odd
+        #2.109 clk_s0   = ~clk_s0;
+    end
+    always begin// 299.9 MHz
+        #1.667 clk_s1   = ~clk_s1;
+    end
+    always begin// 180.3 MHz
+        #2.773 clk_s2   = ~clk_s2;
+    end
+    always begin// 210.7 MHz
+        #2.373 clk_s3   = ~clk_s3;
+    end
 
     reg rstn = 0;
     wire bus_rst = !rstn;
@@ -228,9 +242,10 @@ module sb_quad_tb;
         input integer  b;
         integer k;
         begin
-            for (k = 0; k < 16; k = k + 1)
+            for (k = 0; k < 16; k = k + 1) begin
                 pat512[k*32 +: 32] = pat32(a) ^ (b * 32'h0001_0001)
                                               ^ (k * 32'h1000_0100);
+            end
         end
     endfunction
 
@@ -286,8 +301,9 @@ module sb_quad_tb;
                 errors = errors + 1;
                 $display("%0t FAIL jtag read @%h rresp %b exp %b", $time, a,
                          rresp_v[1:0], exp_resp);
-            end else if (exp_resp == 2'b00)
+            end else if (exp_resp == 2'b00) begin
                 chk({480'd0, rdata_v[31:0]}, {480'd0, pat32(a)}, a);
+            end
             @(negedge clk_ctrl); #TS; rrdy[0] = 1'b1;
         end
     endtask
@@ -409,11 +425,12 @@ module sb_quad_tb;
         repeat (20) @(posedge bus_clk);
 
         $display("--- phase 1: jtag reaches every endpoint in every SLR");
-        for (s = 0; s < 4; s = s + 1)
+        for (s = 0; s < 4; s = s + 1) begin
             for (e = 0; e < NPS; e = e + 1) begin
                 j_write(adr(s, e) + 40'h40);
                 j_read (adr(s, e) + 40'h40, 2'b00);
             end
+        end
 
         $display("--- phase 2: xdma bursts to each SLR's wide endpoint");
         for (s = 0; s < 4; s = s + 1) begin
@@ -503,16 +520,18 @@ module sb_quad_tb;
         hol_busy = 0;
         fork
             begin : hol_w
-                for (hw_i = 0; hw_i < 4; hw_i = hw_i + 1)
+                for (hw_i = 0; hw_i < 4; hw_i = hw_i + 1) begin
                     x_write(adr(3, 0) + 40'h4000 + hw_i*4096, 8'd63);
+                end
             end
             begin : hol_r
                 repeat (20) @(posedge clk_ctrl);
                 for (hr_i = 0; hr_i < 5; hr_i = hr_i + 1) begin
                     t2 = $time;
                     j_read(adr(3, 1) + 40'h600, 2'b00);
-                    if ((($time - t2) / 10) > hol_busy)
+                    if ((($time - t2) / 10) > hol_busy) begin
                         hol_busy = ($time - t2) / 10;
+                    end
                 end
             end
         join
@@ -528,16 +547,18 @@ module sb_quad_tb;
         b_busy = 0;
         fork
             begin : br_r
-                for (bw_i = 0; bw_i < 4; bw_i = bw_i + 1)
+                for (bw_i = 0; bw_i < 4; bw_i = bw_i + 1) begin
                     x_read(adr(3, 0) + 40'h4000 + bw_i*4096, 8'd63);
+                end
             end
             begin : br_b
                 repeat (20) @(posedge clk_ctrl);
                 for (br_i = 0; br_i < 5; br_i = br_i + 1) begin
                     t1 = $time;
                     j_write(adr(3, 1) + 40'h700);
-                    if ((($time - t1) / 10) > b_busy)
+                    if ((($time - t1) / 10) > b_busy) begin
                         b_busy = ($time - t1) / 10;
+                    end
                 end
             end
         join
@@ -576,8 +597,12 @@ module sb_quad_tb;
         $display("    monitors saw %0d/%0d/%0d manager transactions",
                  mchk_txn[0 +: 32], mchk_txn[32 +: 32], mchk_txn[64 +: 32]);
 
-        if (errors) $display("FAIL  %0d errors in %0d checks", errors, checks);
-        else        $display("PASS  %0d checks", checks);
+        if (errors) begin
+            $display("FAIL  %0d errors in %0d checks", errors, checks);
+        end
+        else begin
+            $display("PASS  %0d checks", checks);
+        end
         $finish;
     end
 endmodule

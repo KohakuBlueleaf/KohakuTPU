@@ -334,12 +334,14 @@ module mx_acu_fp #(
     endgenerate
 
     integer tq, tr;
-    always @(posedge clk2x)
-        for (tq = 0; tq < 4; tq = tq + 1)
+    always @(posedge clk2x) begin
+        for (tq = 0; tq < 4; tq = tq + 1) begin
             for (tr = 0; tr < 4; tr = tr + 1) begin
                 tmm_q[tq][tr]  <= tmm[tq][tr];
                 tmm_qq[tq][tr] <= tmm_q[tq][tr];
             end
+        end
+    end
 
     integer t;
     always @(posedge clk2x) begin
@@ -483,7 +485,7 @@ module mx_acu_fp #(
             op_r   <= (DUAL != 0) ? op_d2   : op_q;
             addr_r <= (DUAL != 0) ? addr_d2 : addr_q;
             peer_r <= (DUAL != 0) ? peer_d2 : peer_q;
-            for (i = 0; i < 4; i = i + 1)
+            for (i = 0; i < 4; i = i + 1) begin
                 for (j = 0; j < 4; j = j + 1) begin
                     val_r[i*4+j] <= (DUAL != 0) ? mrg_val[i*4+j]
                                                 : lane_mag[i*4+j];
@@ -494,6 +496,7 @@ module mx_acu_fp #(
                                   : ea[i] + eb[j]
                                   - $signed({2'b0, anchor_q}) - 10'sd6;
                 end
+            end
         end
     end
 
@@ -522,7 +525,9 @@ module mx_acu_fp #(
         integer sh;
         always @(*) begin
             sm = val_r[g];
-            for (sh = 1; sh < VWM; sh = sh * 2) sm = sm | (sm >> sh);
+            for (sh = 1; sh < VWM; sh = sh * 2) begin
+                sm = sm | (sm >> sh);
+            end
         end
         assign smear[g] = sm;
     end
@@ -707,7 +712,9 @@ module mx_acu_fp #(
 
             // only updated on a valid command; everything downstream of it is
             // gated by v2, so it holds rather than clears
-            if (v1b) addr_r2 <= addr_b;
+            if (v1b) begin
+                addr_r2 <= addr_b;
+            end
 
             // Operand sources, resolved one stage ahead of the align cycle so
             // nothing combinational sits in front of the tile read.
@@ -715,8 +722,9 @@ module mx_acu_fp #(
                 a_zero_r <= 1'b1; b_peer_r <= 1'b0; b_zero_r <= 1'b0;  // zero+chain
             end else if (v1b && (op_1b == OP_ADD_PEER)) begin
                 a_zero_r <= 1'b0; b_peer_r <= 1'b1; b_zero_r <= 1'b0;  // tile+peer
-            end else if (v1b && ((op_1b == OP_ADD) ||
-                                 (op_1b == OP_ADD_EMIT))) begin
+            end else if (
+                v1b && ((op_1b == OP_ADD) || (op_1b == OP_ADD_EMIT))
+            ) begin
                 a_zero_r <= 1'b0; b_peer_r <= 1'b0; b_zero_r <= 1'b0;  // tile+chain
             end else if (v1b && ((op_1b == OP_EMIT) || (op_1b == OP_SEND))) begin
                 a_zero_r <= 1'b0; b_peer_r <= 1'b0; b_zero_r <= 1'b1;  // pass out
@@ -757,8 +765,12 @@ module mx_acu_fp #(
     u_tile (.clk(clk), .wr_en(wr_bank_en), .wr_addr(wr_addr), .wr_data(wr_data),
             .rd_en(en), .rd_addr(addr_a), .rd_data(t0));
 
-    wire norm_iss = v2 && ((op_r2 == OP_LOAD) || (op_r2 == OP_ADD) ||
-                           (op_r2 == OP_ADD_PEER) || (op_r2 == OP_ADD_EMIT));
+    wire norm_iss = v2 && (
+        (op_r2 == OP_LOAD)
+        || (op_r2 == OP_ADD)
+        || (op_r2 == OP_ADD_PEER)
+        || (op_r2 == OP_ADD_EMIT)
+    );
     wire fwd_iss  = v2 && (op_r2 == OP_FWD);
     wire sum_iss  = v2 && ((op_r2 == OP_EMIT) || (op_r2 == OP_SEND));
     // ADD_EMIT both writes the tile back and hands the value out, so it is in
@@ -790,13 +802,17 @@ module mx_acu_fp #(
     integer rq;
     always @(posedge clk) begin
         if (rst) begin
-            for (rq = 0; rq < REUSE_MIN; rq = rq + 1) last_vld[rq] <= 1'b0;
+            for (rq = 0; rq < REUSE_MIN; rq = rq + 1) begin
+                last_vld[rq] <= 1'b0;
+            end
         end else if (en) begin
             if (v2 && (norm_iss || sum_iss)) begin
-                for (rq = 0; rq < REUSE_MIN-1; rq = rq + 1)
-                    if (last_vld[rq] && last_addr[rq] == addr_r2)
+                for (rq = 0; rq < REUSE_MIN-1; rq = rq + 1) begin
+                    if (last_vld[rq] && last_addr[rq] == addr_r2) begin
                         $display("%0t ERROR mx_acu_fp: address %0d reused within %0d cycles -- sweep K outermost",
                                  $time, addr_r2, REUSE_MIN);
+                    end
+                end
             end
             for (rq = REUSE_MIN-1; rq > 0; rq = rq - 1) begin
                 last_addr[rq] <= last_addr[rq-1];
@@ -948,14 +964,31 @@ module mx_acu_fp #(
     // DRAIN takes the mux while the new command is still one stage from v1.
     // cmdv_d1/d2 too under DUAL, or busy drops mid-command and the DRAIN reads
     // a half-written tile: some lanes right, others off by a power of two.
-    wire      in_flight = cmd_valid || cmdv_q ||
-                          ((DUAL != 0) && (cmdv_d1 || cmdv_d2)) ||
-                          v1 || v1_s || v1a || v1b || v2 || v3 || v4;
+    wire in_flight = (
+        cmd_valid
+        || cmdv_q
+        || ((DUAL != 0) && (cmdv_d1 || cmdv_d2))
+        || v1
+        || v1_s
+        || v1a
+        || v1b
+        || v2
+        || v3
+        || v4
+    );
     always @(posedge clk) begin
-        if (rst)            busy_tail <= 4'd0;
-        else if (!en)       busy_tail <= busy_tail;
-        else if (in_flight) busy_tail <= REUSE_MIN[3:0];
-        else if (|busy_tail) busy_tail <= busy_tail - 4'd1;
+        if (rst) begin
+            busy_tail <= 4'd0;
+        end
+        else if (!en) begin
+            busy_tail <= busy_tail;
+        end
+        else if (in_flight) begin
+            busy_tail <= REUSE_MIN[3:0];
+        end
+        else if (|busy_tail) begin
+            busy_tail <= busy_tail - 4'd1;
+        end
     end
     assign busy = in_flight || (|busy_tail);
 

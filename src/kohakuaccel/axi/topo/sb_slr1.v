@@ -116,8 +116,7 @@ module sb_slr1 #(
 
     localparam integer NSEG0 = 5;
     localparam [NSEG0*AW-1:0]   S0_BASE = {B_WC, B_W1, B_DDR, B_MC, B_M1};
-    localparam [NSEG0*AW-1:0]   S0_MASK = {MSK_64K, MSK_64K, MSK_1M, MSK_64K,
-                                           MSK_MESH};
+    localparam [NSEG0*AW-1:0] S0_MASK = {MSK_64K, MSK_64K, MSK_1M, MSK_64K, MSK_MESH};
     localparam [NSEG0*DSTW-1:0] S0_DST  = {3'd4, 3'd3, 3'd2, 3'd1, 3'd0};
 
     localparam integer NSEG1 = 1;

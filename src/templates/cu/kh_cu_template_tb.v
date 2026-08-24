@@ -12,12 +12,14 @@ module kh_cu_template_tb;
     localparam CX = 2, CY = 2;   // the CU
     localparam HX = 0, HY = 0;   // us
 
-    localparam [3:0] T_MEM_RD_RESP = 4'h2, T_CU_INST = 4'h5,
-                     T_CU_SIGNAL = 4'h6, T_CU_CTRL = 4'h7;
+    localparam [3:0] T_MEM_RD_RESP = 4'h2, T_CU_INST = 4'h5;
+    localparam [3:0] T_CU_SIGNAL = 4'h6, T_CU_CTRL = 4'h7;
     localparam [7:0] SIG_INST = 8'h00, SIG_BATCH = 8'h01, SIG_FAULT = 8'h04;
 
     reg clk = 0, resetn = 0;
-    always #2 clk = ~clk;
+    always #2 begin
+        clk = ~clk;
+    end
 
     reg  [FW-1:0] in_data;
     reg           in_valid = 0;
@@ -158,10 +160,12 @@ module kh_cu_template_tb;
         chk(cu_busy, 1'b0, "unit drains to idle");
 
         u_check.report;
-        if (errors == 0 && u_check.violations == 0)
+        if (errors == 0 && u_check.violations == 0) begin
             $display("PASS kh_cu_template_tb: %0d checks", checks);
-        else
+        end
+        else begin
             $display("FAIL kh_cu_template_tb: %0d errors", errors);
+        end
         $finish;
     end
 endmodule

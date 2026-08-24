@@ -21,7 +21,9 @@ module mx_tdesc_tb;
     localparam integer XW   = 16;
 
     reg clk = 0, rst = 1;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     reg               ld_dim_en = 0, ld_hdr_en = 0, ld_ax_en = 0;
     reg  [2:0]        ld_dim = 0, ld_ndim = 1;
@@ -87,12 +89,14 @@ module mx_tdesc_tb;
             checks = checks + 1;
             if (got_v !== want_v) begin
                 errors = errors + 1;
-                if (errors <= 10)
+                if (errors <= 10) begin
                     $display("  FAIL %0s valid got %0d want %0d", what, got_v, want_v);
+                end
             end else if (want_v && (got_a !== want_a)) begin
                 errors = errors + 1;
-                if (errors <= 10)
+                if (errors <= 10) begin
                     $display("  FAIL %0s addr got %0d want %0d", what, got_a, want_a);
+                end
             end
         end
     endtask
@@ -120,7 +124,9 @@ module mx_tdesc_tb;
         $display("--- 1. 2D operand tile: 8 row groups x 4 K words ---");
         set_hdr(40'd0, 3'd2);
         // dims are outermost-first; NDIM-1 is innermost
-        for (i = 0; i < 4; i = i + 1) set_dim(i[2:0], 16'd1, 32'sd0, 2'd0, 16'sd0);
+        for (i = 0; i < 4; i = i + 1) begin
+            set_dim(i[2:0], 16'd1, 32'sd0, 2'd0, 16'sd0);
+        end
         set_dim(3'd4, 16'd8, 32'sd128, 2'd0, 16'sd0);   // row group
         set_dim(3'd5, 16'd4, 32'sd32,  2'd0, 16'sd0);   // K word
         set_hdr(40'd0, 3'd6);
@@ -128,11 +134,12 @@ module mx_tdesc_tb;
         set_axis(1'b1, 16'sd0, 16'd0);
 
         @(negedge clk); start <= 1'b1; @(negedge clk); start <= 1'b0;
-        for (g = 0; g < 8; g = g + 1)
+        for (g = 0; g < 8; g = g + 1) begin
             for (kw2 = 0; kw2 < 4; kw2 = kw2 + 1) begin
                 chk(addr, valid, g*128 + kw2*32, 1'b1, "2d");
                 @(negedge clk); next <= 1'b1; @(negedge clk); next <= 1'b0;
             end
+        end
         checks = checks + 1;
         if (active !== 1'b0) begin
             errors = errors + 1;
@@ -156,19 +163,29 @@ module mx_tdesc_tb;
         @(negedge clk); start <= 1'b1; @(negedge clk); start <= 1'b0;
 
         nvalid = 0; npad = 0;
-        for (n = 0; n < CN; n = n + 1)
-        for (oy = 0; oy < OH; oy = oy + 1)
-        for (ox = 0; ox < OW; ox = ox + 1)
-        for (ky = 0; ky < KH; ky = ky + 1)
-        for (kx = 0; kx < KW; kx = kx + 1)
-        for (c = 0; c < CC; c = c + 1) begin
-            hpos = oy*ST + ky - PD;
-            wpos = ox*ST + kx - PD;
-            want_valid = (hpos >= 0) && (hpos < CH) && (wpos >= 0) && (wpos < CW_);
-            want_addr  = TBASE + n*sN + hpos*sH + wpos*sW + c*sC;
-            if (want_valid) nvalid = nvalid + 1; else npad = npad + 1;
-            chk(addr, valid, want_addr, want_valid, "conv");
-            @(negedge clk); next <= 1'b1; @(negedge clk); next <= 1'b0;
+        for (n = 0; n < CN; n = n + 1) begin
+            for (oy = 0; oy < OH; oy = oy + 1) begin
+                for (ox = 0; ox < OW; ox = ox + 1) begin
+                    for (ky = 0; ky < KH; ky = ky + 1) begin
+                        for (kx = 0; kx < KW; kx = kx + 1) begin
+                            for (c = 0; c < CC; c = c + 1) begin
+                                hpos = oy*ST + ky - PD;
+                                wpos = ox*ST + kx - PD;
+                                want_valid = (hpos >= 0) && (hpos < CH) && (wpos >= 0) && (wpos < CW_);
+                                want_addr  = TBASE + n*sN + hpos*sH + wpos*sW + c*sC;
+                                if (want_valid) begin
+                                    nvalid = nvalid + 1;
+                                end
+                                else begin
+                                    npad = npad + 1;
+                                end
+                                chk(addr, valid, want_addr, want_valid, "conv");
+                                @(negedge clk); next <= 1'b1; @(negedge clk); next <= 1'b0;
+                            end
+                        end
+                    end
+                end
+            end
         end
 
         $display("    %0d elements: %0d in bounds, %0d padded",
@@ -180,8 +197,12 @@ module mx_tdesc_tb;
         end
 
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end

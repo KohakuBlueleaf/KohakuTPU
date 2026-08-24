@@ -44,6 +44,17 @@ module vec_cvt_f16_to_e8 (
 endmodule
 
 
+// THERE IS NO DUAL-FORMAT `to_e8` HERE, AND THAT IS A MEASUREMENT. A caller
+// taking FP32 or FP16 on one port -- every float lane does -- instantiates both
+// converters above and muxes their 24-bit RESULTS. Folding the choice inside one
+// module, so the exponent, the significand and the specials meet in one mux
+// each, was built and proved bit-exact against these two (all 65,536 FP16
+// patterns and every FP32 exponent) and cost 168 LUT a lane against 46 + 46 and
+// the mux -- the SIMT PE +429 LUT at `none` and +578 at `rebuilt`. The two
+// conversions share no datapath, so choosing between their results is ONE mux
+// and choosing inside them is three. Do not rebuild it.
+
+
 // E8M15 -> FP16, the only direction that is both lossy and range-limited.
 //
 // A FINITE OVERFLOW SATURATES to the largest finite FP16, matching
@@ -80,6 +91,11 @@ module vec_cvt_e8_to_f16 (
     // ---- subnormal path: m10 = sig * 2^(e-118), rounded ----
     // A rounding carry lands on bit 10, which IS the exponent field's LSB, so
     // the concatenation becomes the smallest normal with no fixup.
+    // LEAVE THE 48-BIT FORM. Saturating `sh` at 17 instead of 31 is exactly
+    // equivalent -- checked over all 2^24 inputs -- and turns this into a
+    // 17-bit shift plus a prefix OR, but measured 17,792 -> 17,814 LUT on the
+    // SIMD PE and 22,142 -> 22,173 on the GPU. Synthesis has already folded the
+    // 32 constant zeros; the "narrower" form only adds the prefix chain.
     wire [7:0]  sh_raw = 8'd118 - e;
     wire [5:0]  sh     = (sh_raw > 8'd31) ? 6'd31 : sh_raw[5:0];
     wire [47:0] wide   = {sig, 32'b0} >> sh;

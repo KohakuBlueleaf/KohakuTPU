@@ -113,7 +113,9 @@ module axi_n1_tbm #(
         seed  = 0;
     end
 
-    always @(*) wr_done = aw_done && w_done && b_done;
+    always @(*) begin
+        wr_done = aw_done && w_done && b_done;
+    end
 
     // ---- AW ----
     integer a_off, a_len, a_gap, gk;
@@ -130,12 +132,16 @@ module axi_n1_tbm #(
             q_len[q_wr % 256] = a_len;
             q_wr = q_wr + 1;
             a_gap = {$random(aseed)} % 4;
-            for (gk = 0; gk < a_gap; gk = gk + 1) @(posedge aclk);
+            for (gk = 0; gk < a_gap; gk = gk + 1) begin
+                @(posedge aclk);
+            end
             awaddr  <= (BASE + a_off) << LSB;
             awlen   <= a_len[7:0];
             awvalid <= 1'b1;
             @(posedge aclk);
-            while (!awready) @(posedge aclk);
+            while (!awready) begin
+                @(posedge aclk);
+            end
             awvalid <= 1'b0;
         end
         aw_done = 1'b1;
@@ -147,7 +153,9 @@ module axi_n1_tbm #(
         @(posedge go_wr);
         w_done = 1'b0;
         for (w_i = 0; w_i < NTXN; w_i = w_i + 1) begin
-            while (q_rd == q_wr) @(posedge aclk);
+            while (q_rd == q_wr) begin
+                @(posedge aclk);
+            end
             w_off = q_off[q_rd % 256];
             w_len = q_len[q_rd % 256];
             q_rd = q_rd + 1;
@@ -156,7 +164,9 @@ module axi_n1_tbm #(
                 wlast  <= (wk == w_len);
                 wvalid <= 1'b1;
                 @(posedge aclk);
-                while (!wready) @(posedge aclk);
+                while (!wready) begin
+                    @(posedge aclk);
+                end
                 wvalid <= 1'b0;
                 wlast  <= 1'b0;
             end
@@ -197,7 +207,9 @@ module axi_n1_tbm #(
             arlen   <= r_len[7:0];
             arvalid <= 1'b1;
             @(posedge aclk);
-            while (!arready) @(posedge aclk);
+            while (!arready) begin
+                @(posedge aclk);
+            end
             arvalid <= 1'b0;
             for (rk = 0; rk <= r_len; rk = rk + 1) begin
                 rready <= (({$random(rseed)} % 4) != 0);
@@ -241,8 +253,12 @@ module axi_n1_tb;
     // Periods are variables so one run covers both clock ratios.
     real s_hp = 2.0, m_hp = 3.0;
     reg  s_aclk = 0, m_aclk = 0;
-    always #(s_hp) s_aclk = ~s_aclk;
-    always #(m_hp) m_aclk = ~m_aclk;
+    always begin
+        #(s_hp) s_aclk = ~s_aclk;
+    end
+    always begin
+        #(m_hp) m_aclk = ~m_aclk;
+    end
 
     reg s_aresetn = 0, m_aresetn = 0;
     reg go_wr = 0, go_rd = 0;
@@ -370,7 +386,9 @@ module axi_n1_tb;
                     sl_bvalid <= 1'b1;
                 end
             end
-            if (sl_bvalid && m_bready) sl_bvalid <= 1'b0;
+            if (sl_bvalid && m_bready) begin
+                sl_bvalid <= 1'b0;
+            end
 
             if (m_arvalid && m_arready) begin
                 rq_id <= m_arid; rq_addr <= m_araddr;
@@ -384,7 +402,9 @@ module axi_n1_tb;
                 sl_rvalid <= 1'b1;
                 rq_addr  <= rq_addr + 34'd32;
                 rq_left  <= rq_left - 9'd1;
-                if (rq_left == 9'd1) rq_act <= 1'b0;
+                if (rq_left == 9'd1) begin
+                    rq_act <= 1'b0;
+                end
             end else if (sl_rvalid && m_rready) begin
                 sl_rvalid <= 1'b0;
             end
@@ -412,7 +432,9 @@ module axi_n1_tb;
     end
 
     initial begin
-        for (i = 0; i < MEMW; i = i + 1) mem[i] = {DATA_W{1'b0}};
+        for (i = 0; i < MEMW; i = i + 1) begin
+            mem[i] = {DATA_W{1'b0}};
+        end
 
         for (p = 0; p < 2; p = p + 1) begin
             if (p == 0) begin
@@ -449,10 +471,12 @@ module axi_n1_tb;
         end
 
         $display("========================================");
-        if (tot_errors == 0)
+        if (tot_errors == 0) begin
             $display("  PASS -- %0d checks, 0 errors", tot_checks);
-        else
+        end
+        else begin
             $display("  FAIL -- %0d checks, %0d errors", tot_checks, tot_errors);
+        end
         $display("========================================");
         $finish;
     end

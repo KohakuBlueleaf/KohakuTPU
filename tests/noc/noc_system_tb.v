@@ -24,14 +24,16 @@ module noc_system_tb;
     localparam ORC_X = LO, ORC_Y = LO;      // orchestrator at (1,1)
     localparam CU_X  = HI, CU_Y  = HI;      // pseudo CU at (2,2)
 
-    localparam A_CAPS = 16'h0010, A_PROG_DST = 16'h0040, A_PROG_LEN = 16'h0048,
-               A_PROG_KICK = 16'h0050, A_PROG_STAT = 16'h0058,
-               A_PROG_CRED = 16'h0060, A_RX_STATUS = 16'h01C8, A_RX_POP = 16'h01C0,
-               A_NODE = 16'h1000, A_STAGE = 16'h2000;
+    localparam A_CAPS = 16'h0010, A_PROG_DST = 16'h0040, A_PROG_LEN = 16'h0048;
+    localparam A_PROG_KICK = 16'h0050, A_PROG_STAT = 16'h0058;
+    localparam A_PROG_CRED = 16'h0060, A_RX_STATUS = 16'h01C8;
+    localparam A_RX_POP = 16'h01C0, A_NODE = 16'h1000, A_STAGE = 16'h2000;
     localparam SIG_BATCH_COMPLETE = 8'h01;
 
     reg clk = 0, resetn = 0;
-    always #5 clk = ~clk;
+    always begin
+        #5 clk = ~clk;
+    end
     integer errors = 0, checks = 0;
 
     // ---------------------------------------------------------------- AXI
@@ -214,8 +216,9 @@ module noc_system_tb;
                 f = {8'h00, 8'h00, 4'h5, pid, (i == n-1), 3'b000,
                      192'd0, 64'hA5A5_0000_0000_0000 + (pid << 16) + i};
                 want_xor = want_xor ^ (64'hA5A5_0000_0000_0000 + (pid << 16) + i);
-                for (j = 0; j < WORDS; j = j + 1)
+                for (j = 0; j < WORDS; j = j + 1) begin
                     axi_w(32'h2000 + (i*WORDS + j)*8, f[j*DW +: DW]);
+                end
             end
             axi_w(A_PROG_DST,  {CU_Y[3:0], CU_X[3:0]});
             axi_w(A_PROG_LEN,  n);
@@ -272,8 +275,12 @@ module noc_system_tb;
         repeat (40) @(posedge clk);
         $display("");
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end

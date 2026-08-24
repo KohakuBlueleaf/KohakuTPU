@@ -139,19 +139,24 @@ module axi_n1 #(
     always @(*) begin
         aw_sel = {IDX_W{1'b0}};
         aw_any = 1'b0;
-        for (ai = N-1; ai >= 0; ai = ai - 1)
+        for (ai = N-1; ai >= 0; ai = ai - 1) begin
             if (s_awvalid[(ai + aw_rr) % N]) begin
                 aw_sel = (ai + aw_rr) % N;
                 aw_any = 1'b1;
             end
+        end
     end
 
     wire            awq_full, wsel_full;
     wire            aw_go = aw_any && !awq_full && !wsel_full;
 
     always @(posedge s_aclk) begin
-        if (s_rst) aw_rr <= {IDX_W{1'b0}};
-        else if (aw_go) aw_rr <= (aw_sel + 1'b1) % N;
+        if (s_rst) begin
+            aw_rr <= {IDX_W{1'b0}};
+        end
+        else if (aw_go) begin
+            aw_rr <= (aw_sel + 1'b1) % N;
+        end
     end
 
     genvar g;
@@ -228,19 +233,24 @@ module axi_n1 #(
     always @(*) begin
         ar_sel = {IDX_W{1'b0}};
         ar_any = 1'b0;
-        for (ri = N-1; ri >= 0; ri = ri - 1)
+        for (ri = N-1; ri >= 0; ri = ri - 1) begin
             if (s_arvalid[(ri + ar_rr) % N]) begin
                 ar_sel = (ri + ar_rr) % N;
                 ar_any = 1'b1;
             end
+        end
     end
 
     wire arq_full;
     wire ar_go = ar_any && !arq_full;
 
     always @(posedge s_aclk) begin
-        if (s_rst) ar_rr <= {IDX_W{1'b0}};
-        else if (ar_go) ar_rr <= (ar_sel + 1'b1) % N;
+        if (s_rst) begin
+            ar_rr <= {IDX_W{1'b0}};
+        end
+        else if (ar_go) begin
+            ar_rr <= (ar_sel + 1'b1) % N;
+        end
     end
 
     generate
@@ -325,12 +335,14 @@ module axi_n1 #(
     // A response whose index names no master is a slave that did not echo the
     // ID. Silent otherwise: the beat is offered to nobody and the queue wedges.
     always @(posedge s_aclk) begin
-        if (s_aresetn && !bq_empty && (b_idx >= N))
+        if (s_aresetn && !bq_empty && (b_idx >= N)) begin
             $display("%0t ERROR axi_n1: B id %h routes to master %0d of %0d -- the slave did not echo the ID",
                      $time, b_id, b_idx, N);
-        if (s_aresetn && !rq_empty && (r_idx >= N))
+        end
+        if (s_aresetn && !rq_empty && (r_idx >= N)) begin
             $display("%0t ERROR axi_n1: R id %h routes to master %0d of %0d -- the slave did not echo the ID",
                      $time, r_id, r_idx, N);
+        end
     end
 `endif
 

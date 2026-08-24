@@ -23,7 +23,9 @@ module cu_base_tb;
     localparam [3:0] T_CU_SIGNAL = 4'h6;
 
     reg clk = 0, resetn = 0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     reg  [FW-1:0] in_data;
     reg           in_valid;
@@ -63,8 +65,12 @@ module cu_base_tb;
     integer sig_count = 0;
     reg [63:0] sig_arg_sum = 0;
     always @(posedge clk) begin
-        if (resetn && out_valid && !out_busy &&
-            out_data[FW-4*PW-1 -: 4] == T_CU_SIGNAL) begin
+        if (
+            resetn
+            && out_valid
+            && !out_busy
+            && out_data[FW-4*PW-1 -: 4] == T_CU_SIGNAL
+        ) begin
             sig_count   <= sig_count + 1;
             sig_arg_sum <= sig_arg_sum + out_data[247 -: 32];
         end
@@ -75,7 +81,9 @@ module cu_base_tb;
     task push_inst(input [7:0] txn, input last, input [7:0] op,
                    input [31:0] a, input [23:0] b);
         begin
-            while (in_busy) @(posedge clk);
+            while (in_busy) begin
+                @(posedge clk);
+            end
             in_data  <= {CX[3:0], CY[3:0], HX[3:0], HY[3:0], T_CU_INST, txn,
                          last, 3'b000, 192'd0, op, a, b};
             in_valid <= 1'b1;
@@ -91,11 +99,18 @@ module cu_base_tb;
     // count depended on process order within one timestep.
     integer n_wr = 0, n_done = 0, n_acc = 0;
     always @(posedge clk) if (resetn) begin
-        if (dut.base.u_sig.wr_en)             n_wr   <= n_wr + 1;
-        if (dut.exec_done)                    n_done <= n_done + 1;
-        if (dut.inst_valid && dut.inst_ready) n_acc  <= n_acc + 1;
-        if (dut.exec_done && dut.inst_ready)
+        if (dut.base.u_sig.wr_en) begin
+            n_wr   <= n_wr + 1;
+        end
+        if (dut.exec_done) begin
+            n_done <= n_done + 1;
+        end
+        if (dut.inst_valid && dut.inst_ready) begin
+            n_acc  <= n_acc + 1;
+        end
+        if (dut.exec_done && dut.inst_ready) begin
             $display("  FAIL the datapath raised exec_done and inst_ready together; noc_cu_base drops in_flight and the new instruction's completion is never queued");
+        end
     end
 
     integer i, expect_sum;
@@ -132,8 +147,9 @@ module cu_base_tb;
         // ---------------------------------------------------------------
         $display("--- 2. link stuttering during a longer program ---");
         sig_count = 0;
-        for (i = 0; i < 24; i = i + 1)
+        for (i = 0; i < 24; i = i + 1) begin
             push_inst(8'h20 + i[7:0], (i == 23), i[7:0] % 8'd7, 32'd7 + i, 24'd3);
+        end
         // hold busy in bursts while the program runs
         repeat (12) begin
             out_busy <= 1'b1;  repeat (7) @(posedge clk);
@@ -165,8 +181,12 @@ module cu_base_tb;
         chk(sig_count, retired - 32'd32, "one signal per accepted instruction");
 
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end

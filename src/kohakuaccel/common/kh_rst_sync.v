@@ -16,8 +16,12 @@ module kh_rst_sync #(
     (* ASYNC_REG = "true" *) reg [STAGES-1:0] q;
 
     always @(posedge clk or negedge arstn) begin
-        if (!arstn) q <= {STAGES{1'b0}};
-        else        q <= {q[STAGES-2:0], 1'b1};
+        if (!arstn) begin
+            q <= {STAGES{1'b0}};
+        end
+        else begin
+            q <= {q[STAGES-2:0], 1'b1};
+        end
     end
 
     assign rstn = q[STAGES-1];

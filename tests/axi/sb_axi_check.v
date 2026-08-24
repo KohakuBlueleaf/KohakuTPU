@@ -43,9 +43,11 @@ module sb_axi_check #(
 );
     initial begin nerr = 32'd0; ntxn = 32'd0; end
 
-    always @(posedge clk)
-        if (resetn && ((awvalid && awready) || (arvalid && arready)))
+    always @(posedge clk) begin
+        if (resetn && ((awvalid && awready) || (arvalid && arready))) begin
             ntxn <= ntxn + 32'd1;
+        end
+    end
 
     task err;
         input [1023:0] msg;
@@ -72,22 +74,44 @@ module sb_axi_check #(
 
         if (resetn) begin
             if (aw_v_d && !aw_r_d) begin
-                if (!awvalid)             err("AWVALID withdrawn before AWREADY");
-                if (awaddr !== aw_a_d)    err("AWADDR moved while stalled");
-                if (awlen  !== aw_l_d)    err("AWLEN moved while stalled");
+                if (!awvalid) begin
+                    err("AWVALID withdrawn before AWREADY");
+                end
+                if (awaddr !== aw_a_d) begin
+                    err("AWADDR moved while stalled");
+                end
+                if (awlen  !== aw_l_d) begin
+                    err("AWLEN moved while stalled");
+                end
             end
             if (ar_v_d && !ar_r_d) begin
-                if (!arvalid)             err("ARVALID withdrawn before ARREADY");
-                if (araddr !== ar_a_d)    err("ARADDR moved while stalled");
-                if (arlen  !== ar_l_d)    err("ARLEN moved while stalled");
+                if (!arvalid) begin
+                    err("ARVALID withdrawn before ARREADY");
+                end
+                if (araddr !== ar_a_d) begin
+                    err("ARADDR moved while stalled");
+                end
+                if (arlen  !== ar_l_d) begin
+                    err("ARLEN moved while stalled");
+                end
             end
             if (w_v_d && !w_r_d) begin
-                if (!wvalid)              err("WVALID withdrawn before WREADY");
-                if (wdata !== w_d_d)      err("WDATA moved while stalled");
-                if (wlast !== w_l_d)      err("WLAST moved while stalled");
+                if (!wvalid) begin
+                    err("WVALID withdrawn before WREADY");
+                end
+                if (wdata !== w_d_d) begin
+                    err("WDATA moved while stalled");
+                end
+                if (wlast !== w_l_d) begin
+                    err("WLAST moved while stalled");
+                end
             end
-            if (b_v_d && !b_r_d && !bvalid) err("BVALID withdrawn before BREADY");
-            if (r_v_d && !r_r_d && !rvalid) err("RVALID withdrawn before RREADY");
+            if (b_v_d && !b_r_d && !bvalid) begin
+                err("BVALID withdrawn before BREADY");
+            end
+            if (r_v_d && !r_r_d && !rvalid) begin
+                err("RVALID withdrawn before RREADY");
+            end
         end
     end
 
@@ -115,31 +139,47 @@ module sb_axi_check #(
 
             if (wvalid && wready) begin
                 if (wlast) begin
-                    if (awq_w == awq_r) err("WLAST with no outstanding AW");
+                    if (awq_w == awq_r) begin
+                        err("WLAST with no outstanding AW");
+                    end
                     else begin
-                        if (w_beats != awq[awq_r % QD])
+                        if (w_beats != awq[awq_r % QD]) begin
                             err("W beat count disagrees with AWLEN");
+                        end
                         awq_r = awq_r + 1;
                     end
                     w_beats = 0;
-                end else w_beats = w_beats + 1;
+                end
+                else begin
+                    w_beats = w_beats + 1;
+                end
             end
 
             if (rvalid && rready) begin
                 if (rlast) begin
-                    if (arq_w == arq_r) err("RLAST with no outstanding AR");
+                    if (arq_w == arq_r) begin
+                        err("RLAST with no outstanding AR");
+                    end
                     else begin
-                        if (r_beats != arq[arq_r % QD])
+                        if (r_beats != arq[arq_r % QD]) begin
                             err("R beat count disagrees with ARLEN");
+                        end
                         arq_r = arq_r + 1;
                     end
                     r_beats = 0;
-                end else r_beats = r_beats + 1;
+                end
+                else begin
+                    r_beats = r_beats + 1;
+                end
             end
 
             if (bvalid && bready) begin
-                if (b_out == 0) err("B response with no outstanding write");
-                else b_out = b_out - 1;
+                if (b_out == 0) begin
+                    err("B response with no outstanding write");
+                end
+                else begin
+                    b_out = b_out - 1;
+                end
             end
         end
     end

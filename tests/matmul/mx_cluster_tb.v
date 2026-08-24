@@ -46,7 +46,9 @@ module mx_cluster_tb;
     localparam integer LAT   = 19;           // operands -> acc_valid
 
     reg clk = 0, rst = 1, en = 1;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     reg  [895:0] a_in, b_in;
     reg  [31:0]  sa, sb;
@@ -91,8 +93,9 @@ module mx_cluster_tb;
             checks = checks + 1;
             if (got !== want) begin
                 errors = errors + 1;
-                if (errors <= 12)
+                if (errors <= 12) begin
                     $display("  FAIL %0s: got %0d want %0d", what, got, want);
+                end
             end
         end
     endtask
@@ -101,12 +104,16 @@ module mx_cluster_tb;
     task pack;
         integer i, j, k;
         begin
-            for (i = 0; i < 4; i = i + 1)
-                for (k = 0; k < 32; k = k + 1)
+            for (i = 0; i < 4; i = i + 1) begin
+                for (k = 0; k < 32; k = k + 1) begin
                     a_in[(i*32+k)*7 +: 7] = A[i][k][6:0];
-            for (k = 0; k < 32; k = k + 1)
-                for (j = 0; j < 4; j = j + 1)
+                end
+            end
+            for (k = 0; k < 32; k = k + 1) begin
+                for (j = 0; j < 4; j = j + 1) begin
                     b_in[(k*4+j)*7 +: 7] = B[k][j][6:0];
+                end
+            end
         end
     endtask
 
@@ -114,14 +121,21 @@ module mx_cluster_tb;
     task model_step(input integer clear);
         integer i, j, k, dot, sh;
         begin
-            for (i = 0; i < 4; i = i + 1)
+            for (i = 0; i < 4; i = i + 1) begin
                 for (j = 0; j < 4; j = j + 1) begin
                     dot = 0;
-                    for (k = 0; k < 32; k = k + 1) dot = dot + A[i][k]*B[k][j];
+                    for (k = 0; k < 32; k = k + 1) begin
+                        dot = dot + A[i][k]*B[k][j];
+                    end
                     sh = sa[i*8 +: 8] + sb[j*8 +: 8] - anchor;
-                    if (clear) model_acc[i*4+j] = dot <<< sh;
-                    else       model_acc[i*4+j] = model_acc[i*4+j] + (dot <<< sh);
+                    if (clear) begin
+                        model_acc[i*4+j] = dot <<< sh;
+                    end
+                    else begin
+                        model_acc[i*4+j] = model_acc[i*4+j] + (dot <<< sh);
+                    end
                 end
+            end
         end
     endtask
 
@@ -140,7 +154,9 @@ module mx_cluster_tb;
             @(negedge clk);
             acc_clear = clear[0];
             in_valid  = 1'b1;
-            for (m = 0; m < 16; m = m + 1) expect_q[q_wr][m] = model_acc[m];
+            for (m = 0; m < 16; m = m + 1) begin
+                expect_q[q_wr][m] = model_acc[m];
+            end
             q_wr = q_wr + 1;
             @(negedge clk);
             in_valid  = 1'b0;
@@ -155,7 +171,9 @@ module mx_cluster_tb;
         integer m;
         integer signed got;
         begin
-            while (cap_wr <= q_rd) @(negedge clk);
+            while (cap_wr <= q_rd) begin
+                @(negedge clk);
+            end
             for (m = 0; m < 16; m = m + 1) begin
                 got = $signed(cap_q[q_rd][m*ACCW +: ACCW]);
                 chk(got, expect_q[q_rd][m], what);
@@ -167,10 +185,16 @@ module mx_cluster_tb;
     task fill(input integer av, input integer bv);
         integer i, j, k;
         begin
-            for (i = 0; i < 4; i = i + 1)
-                for (k = 0; k < 32; k = k + 1) A[i][k] = av;
-            for (k = 0; k < 32; k = k + 1)
-                for (j = 0; j < 4; j = j + 1) B[k][j] = bv;
+            for (i = 0; i < 4; i = i + 1) begin
+                for (k = 0; k < 32; k = k + 1) begin
+                    A[i][k] = av;
+                end
+            end
+            for (k = 0; k < 32; k = k + 1) begin
+                for (j = 0; j < 4; j = j + 1) begin
+                    B[k][j] = bv;
+                end
+            end
         end
     endtask
 
@@ -200,8 +224,11 @@ module mx_cluster_tb;
         // ---------------------------------------------------------------
         $display("--- 1. smoke: one non-zero in A selects a row of B ---");
         fill(0, 0);
-        for (k = 0; k < 32; k = k + 1)
-            for (j = 0; j < 4; j = j + 1) B[k][j] = (k + j) % 17 - 8;
+        for (k = 0; k < 32; k = k + 1) begin
+            for (j = 0; j < 4; j = j + 1) begin
+                B[k][j] = (k + j) % 17 - 8;
+            end
+        end
         A[2][5] = 3;
         issue(1);
         retire("smoke");
@@ -221,12 +248,16 @@ module mx_cluster_tb;
         // ---------------------------------------------------------------
         $display("--- 4. random tiles vs model ---");
         for (t = 0; t < 200; t = t + 1) begin
-            for (i = 0; i < 4; i = i + 1)
-                for (k = 0; k < 32; k = k + 1)
+            for (i = 0; i < 4; i = i + 1) begin
+                for (k = 0; k < 32; k = k + 1) begin
                     A[i][k] = ($random(seed) & 127) - 64;
-            for (k = 0; k < 32; k = k + 1)
-                for (j = 0; j < 4; j = j + 1)
+                end
+            end
+            for (k = 0; k < 32; k = k + 1) begin
+                for (j = 0; j < 4; j = j + 1) begin
                     B[k][j] = ($random(seed) & 127) - 64;
+                end
+            end
             issue(1);
             retire("random");
         end
@@ -237,13 +268,17 @@ module mx_cluster_tb;
         // negative (lower field), odd rows positive (upper field).
         $display("--- 5. borrow correction: lower field negative everywhere ---");
         for (t = 0; t < 20; t = t + 1) begin
-            for (i = 0; i < 4; i = i + 1)
-                for (k = 0; k < 32; k = k + 1)
+            for (i = 0; i < 4; i = i + 1) begin
+                for (k = 0; k < 32; k = k + 1) begin
                     A[i][k] = (i[0] == 0) ? -(($random(seed) & 31) + 1)
                                           :  (($random(seed) & 31) + 1);
-            for (k = 0; k < 32; k = k + 1)
-                for (j = 0; j < 4; j = j + 1)
+                end
+            end
+            for (k = 0; k < 32; k = k + 1) begin
+                for (j = 0; j < 4; j = j + 1) begin
                     B[k][j] = ($random(seed) & 31) + 1;
+                end
+            end
             issue(1);
             retire("borrow");
         end
@@ -254,12 +289,16 @@ module mx_cluster_tb;
         // isolated tile.
         $display("--- 6. streaming, one tile per cycle ---");
         for (t = 0; t < 32; t = t + 1) begin
-            for (i = 0; i < 4; i = i + 1)
-                for (k = 0; k < 32; k = k + 1)
+            for (i = 0; i < 4; i = i + 1) begin
+                for (k = 0; k < 32; k = k + 1) begin
                     A[i][k] = ($random(seed) & 127) - 64;
-            for (k = 0; k < 32; k = k + 1)
-                for (j = 0; j < 4; j = j + 1)
+                end
+            end
+            for (k = 0; k < 32; k = k + 1) begin
+                for (j = 0; j < 4; j = j + 1) begin
                     B[k][j] = ($random(seed) & 127) - 64;
+                end
+            end
             // pack AFTER the edge, so the operands and in_valid change in the
             // same instant. Packing first lets the next iteration overwrite
             // a_in/b_in while in_valid is still high for this tile, which pairs
@@ -269,12 +308,16 @@ module mx_cluster_tb;
             pack;
             acc_clear = (t == 0);
             in_valid  = 1'b1;
-            for (i = 0; i < 16; i = i + 1) expect_q[q_wr][i] = model_acc[i];
+            for (i = 0; i < 16; i = i + 1) begin
+                expect_q[q_wr][i] = model_acc[i];
+            end
             q_wr = q_wr + 1;
         end
         @(negedge clk);
         in_valid = 1'b0; acc_clear = 1'b0;
-        while (q_rd < q_wr) retire("streamed");
+        while (q_rd < q_wr) begin
+            retire("streamed");
+        end
 
         // ---------------------------------------------------------------
         // Non-uniform power-of-two scale per row and column, accumulated across
@@ -284,19 +327,27 @@ module mx_cluster_tb;
         sb = {8'd6, 8'd5, 8'd4, 8'd3};
         anchor = 8'd5;                       // min(sa)+min(sb) = 2+3
         for (t = 0; t < 4; t = t + 1) begin
-            for (i = 0; i < 4; i = i + 1)
-                for (k = 0; k < 32; k = k + 1)
+            for (i = 0; i < 4; i = i + 1) begin
+                for (k = 0; k < 32; k = k + 1) begin
                     A[i][k] = ($random(seed) & 31) - 16;
-            for (k = 0; k < 32; k = k + 1)
-                for (j = 0; j < 4; j = j + 1)
+                end
+            end
+            for (k = 0; k < 32; k = k + 1) begin
+                for (j = 0; j < 4; j = j + 1) begin
                     B[k][j] = ($random(seed) & 31) - 16;
+                end
+            end
             issue(t == 0);
             retire("scaled accum");
         end
 
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors  (MODEL=%0d)", checks, MODEL);
-        else             $display("  FAIL -- %0d checks, %0d errors  (MODEL=%0d)", checks, errors, MODEL);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors  (MODEL=%0d)", checks, MODEL);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors  (MODEL=%0d)", checks, errors, MODEL);
+        end
         $display("========================================");
         $finish;
     end

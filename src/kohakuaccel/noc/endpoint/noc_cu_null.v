@@ -108,8 +108,9 @@ module noc_cu_null #(
                 exec_done  <= 1'b1;
                 sig_out    <= sig_out ^ fold_inst;
             end
-            if (recv_valid && recv_ready)
+            if (recv_valid && recv_ready) begin
                 sig_out <= sig_out ^ fold_recv;
+            end
 
             // externally triggered CU_DATA, so traffic has an origin outside the
             // module and the mesh cannot be constant-folded to idle

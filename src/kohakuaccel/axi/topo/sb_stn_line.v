@@ -122,9 +122,15 @@ module sb_stn_line #(
     function [1:0] route;
         input [STNW-1:0] ds;
         begin
-            if (ds == STN[STNW-1:0])     route = D_LOC;
-            else if (ds <  STN[STNW-1:0]) route = D_LEFT;
-            else                          route = D_RIGHT;
+            if (ds == STN[STNW-1:0]) begin
+                route = D_LOC;
+            end
+            else if (ds <  STN[STNW-1:0]) begin
+                route = D_LEFT;
+            end
+            else begin
+                route = D_RIGHT;
+            end
         end
     endfunction
 

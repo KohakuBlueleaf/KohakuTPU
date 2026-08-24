@@ -139,8 +139,7 @@ module sb_nmu #(
     localparam integer AXI_MAXB = (4096/(MW/8) > 256) ? 256 : 4096/(MW/8);
     // The 4 KB bound is 256 beats on a 32-bit port. An AXI4-Lite master is
     // single-beat BY PROTOCOL, so MAX_BURST=1 there is a fact, not a hope.
-    localparam integer MAXB = (MAX_BURST > 0 && MAX_BURST < AXI_MAXB)
-                              ? MAX_BURST : AXI_MAXB;
+    localparam integer MAXB = (MAX_BURST > 0 && MAX_BURST < AXI_MAXB) ? MAX_BURST : AXI_MAXB;
     // Reserving the whole response before inject means a SHORT rsp FIFO hangs
     // the port, never overflows: MW=512 over FW=256 needs 128, and 64 looks fine.
     // Both floors apply: the burst reservation, and XPM's own depth-16 minimum
@@ -154,8 +153,7 @@ module sb_nmu #(
     // Store the PORT's beat, not the flit's: a 32-bit port queuing 638-bit
     // flits burns 9 RAMB36 on width at 3% depth use. The entry carries the
     // beat's BYTE offset in the flit plus a flit-end mark for the packer.
-    localparam integer REQ_W = 2*DSTW + TAGW + 3 + AW + 8 + 3 + FBW + 1
-                               + MW + MW/8;
+    localparam integer REQ_W = 2*DSTW + TAGW + 3 + AW + 8 + 3 + FBW + 1 + MW + MW/8;
     localparam integer RSP_W = TAGW + 2 + 2 + FW;
 
     wire srst = !s_aresetn;
@@ -174,12 +172,8 @@ module sb_nmu #(
         begin bram_tiles = ((w + 71) / 72) * ((d + 511) / 512); end
     endfunction
 
-    localparam AUTO_REQ = (lram_lut(REQ_W, RQD)
-                           > LUT_PER_BRAM * bram_tiles(REQ_W, RQD))
-                          ? "block" : "distributed";
-    localparam AUTO_RSP = (lram_lut(RSP_W, RSD)
-                           > LUT_PER_BRAM * bram_tiles(RSP_W, RSD))
-                          ? "block" : "distributed";
+    localparam AUTO_REQ = (lram_lut(REQ_W, RQD) > LUT_PER_BRAM * bram_tiles(REQ_W, RQD)) ? "block" : "distributed";
+    localparam AUTO_RSP = (lram_lut(RSP_W, RSD) > LUT_PER_BRAM * bram_tiles(RSP_W, RSD)) ? "block" : "distributed";
 
     localparam REQ_STY = (LUT_PER_BRAM > 0) ? AUTO_REQ : REQ_MEM;
     localparam RSP_STY = (LUT_PER_BRAM > 0) ? AUTO_RSP : RSP_MEM;
@@ -196,15 +190,21 @@ module sb_nmu #(
         reg [DECW-1:0] r;
         begin
             r = {DECW{1'b0}};
-            for (i = 0; i < NSEG; i = i + 1)
-                if (SEG_VLD[i] &&
-                    (((a ^ SEG_BASE[i*AW +: AW]) & SEG_MASK[i*AW +: AW])
-                     == {AW{1'b0}}))
+            for (i = 0; i < NSEG; i = i + 1) begin
+                if (
+                    SEG_VLD[i]
+                    && (
+                        ((a ^ SEG_BASE[i*AW +: AW]) & SEG_MASK[i*AW +: AW])
+                        == {AW{1'b0}}
+                    )
+                ) begin
                     r = { 1'b1, SEG_DST[i*DSTW +: DSTW],
                           SEG_DPORT[i*DSTW +: DSTW],
                           XLT_ID ? a
                                  : ((a & ~SEG_MASK[i*AW +: AW])
                                     | SEG_XLT[i*AW +: AW]) };
+                end
+            end
             decode = r;
         end
     endfunction
@@ -237,11 +237,12 @@ module sb_nmu #(
     always @(*) begin
         tag_new   = {TAGW{1'b0}};
         tag_avail = 1'b0;
-        for (t = NTAG-1; t >= 0; t = t - 1)
+        for (t = NTAG-1; t >= 0; t = t - 1) begin
             if (!tag_busy[t]) begin
                 tag_new   = t[TAGW-1:0];
                 tag_avail = 1'b1;
             end
+        end
     end
 
     // ====================================================== request assembly
@@ -372,7 +373,9 @@ module sb_nmu #(
             pri      <= 1'b0;
             tag_busy <= {NTAG{1'b0}};
         end else begin
-            if (aw_go || ar_go) pri <= !pri;
+            if (aw_go || ar_go) begin
+                pri <= !pri;
+            end
 
             if (aw_go) begin
                 w_tag  <= tag_new;
@@ -407,21 +410,33 @@ module sb_nmu #(
 
             // rf_tag is busy and tag_new is free, so this never races the two
             // writes above for the same entry.
-            if (rsp_pop) tg_rsv[rf_tag] <= tg_rsv[rf_tag] - 9'd1;
+            if (rsp_pop) begin
+                tg_rsv[rf_tag] <= tg_rsv[rf_tag] - 9'd1;
+            end
 
             if (w_beat) begin
                 w_head <= 1'b0;
                 w_boff <= w_bnext[FBW-1:0];
-                if (s_wlast) wst <= W_IDLE;
+                if (s_wlast) begin
+                    wst <= W_IDLE;
+                end
             end
-            if (e_beat && s_wlast)                          wst <= W_ERESP;
-            if ((wst == W_ERESP) && s_bvalid && s_bready)   wst <= W_IDLE;
+            if (e_beat && s_wlast) begin
+                wst <= W_ERESP;
+            end
+            if ((wst == W_ERESP) && s_bvalid && s_bready) begin
+                wst <= W_IDLE;
+            end
 
             // Free on the MANAGER-visible last beat: with SUB>1 the flits eaten
             // to fill the gather are not beats and must not retire the tag,
             // and with PACK one flit carries NLANE of them.
-            if ((b_nrm && s_bready) ||
-                (r_nrm && s_rready && rd_fin)) tag_busy[rf_tag] <= 1'b0;
+            if (
+                (b_nrm && s_bready)
+                || (r_nrm && s_rready && rd_fin)
+            ) begin
+                tag_busy[rf_tag] <= 1'b0;
+            end
             if (r_nrm && s_rready && !rd_fin) begin
                 tg_lane[rf_tag] <= rd_next[FBW-1:0];
                 tg_left[rf_tag] <= tg_left[rf_tag] - 9'd1;
@@ -430,39 +445,61 @@ module sb_nmu #(
     end
 
     always @(posedge s_aclk) begin
-        if (srst) rsp_credit <= RSD[CW-1:0];
+        if (srst) begin
+            rsp_credit <= RSD[CW-1:0];
+        end
         // The last term reclaims what a SHORT answer never returned; tg_rsv is
         // read pre-decrement, so a full-length burst reclaims exactly zero.
-        else rsp_credit <= rsp_credit
-             - (ar_go              ? {{(CW-9){1'b0}}, ar_beats} : {CW{1'b0}})
-             - ((aw_go && aw_hit)  ? {{(CW-1){1'b0}}, 1'b1}     : {CW{1'b0}})
-             + (rsp_pop            ? {{(CW-1){1'b0}}, 1'b1}     : {CW{1'b0}})
-             + ((rsp_pop && rsp_last_o)
-                ? {{(CW-9){1'b0}}, (tg_rsv[rf_tag] - 9'd1)}     : {CW{1'b0}});
+        else begin
+            rsp_credit <= (
+                rsp_credit
+                - (ar_go ? {{(CW-9){1'b0}}, ar_beats} : {CW{1'b0}})
+                - ((aw_go && aw_hit) ? {{(CW-1){1'b0}}, 1'b1} : {CW{1'b0}})
+                + (rsp_pop ? {{(CW-1){1'b0}}, 1'b1} : {CW{1'b0}})
+                + (
+                    (rsp_pop && rsp_last_o)
+                    ? {{(CW-9){1'b0}}, (tg_rsv[rf_tag] - 9'd1)}
+                    : {CW{1'b0}}
+                )
+            );
+        end
     end
 
     always @(posedge s_aclk) begin
-        if (srst) er_busy <= 1'b0;
+        if (srst) begin
+            er_busy <= 1'b0;
+        end
         else if (ar_miss) begin
             er_busy <= 1'b1;
             er_left <= s_arlen;
             er_id   <= s_arid;
         end else if (er_busy && s_rvalid && s_rready) begin
-            if (er_left == 8'd0) er_busy <= 1'b0;
-            else                 er_left <= er_left - 1'b1;
+            if (er_left == 8'd0) begin
+                er_busy <= 1'b0;
+            end
+            else begin
+                er_left <= er_left - 1'b1;
+            end
         end
     end
 
-    always @(posedge s_aclk)
-        if (srst) decerr_cnt <= 32'd0;
-        else if (ar_miss || (aw_go && !aw_hit)) decerr_cnt <= decerr_cnt + 1'b1;
+    always @(posedge s_aclk) begin
+        if (srst) begin
+            decerr_cnt <= 32'd0;
+        end
+        else if (ar_miss || (aw_go && !aw_hit)) begin
+            decerr_cnt <= decerr_cnt + 1'b1;
+        end
+    end
     assign stat_decerr = decerr_cnt;
 
     // ========================================================= clock crossing
     // Local copy of the bus reset: undivided its fanout reaches every shim and
     // caps bus_clk at 284 MHz against 360-510 on the port clocks.
     (* dont_touch = "yes" *) reg bus_rst_q;
-    always @(posedge bus_clk) bus_rst_q <= bus_rst;
+    always @(posedge bus_clk) begin
+        bus_rst_q <= bus_rst;
+    end
 
     wire [REQ_W-1:0] reqf_out;
     wire             reqf_pop, flit_hav;
@@ -477,9 +514,14 @@ module sb_nmu #(
 
     // STORE AND FORWARD: the station holds its grant for a whole packet, so a
     // FIFO underrun mid-packet stalls everyone. Token is 2 cycles late by CDC.
-    always @(posedge s_aclk)
-        if (srst) tok_dly <= 3'd0;
-        else      tok_dly <= {tok_dly[1:0], tok_push};
+    always @(posedge s_aclk) begin
+        if (srst) begin
+            tok_dly <= 3'd0;
+        end
+        else begin
+            tok_dly <= {tok_dly[1:0], tok_push};
+        end
+    end
 
     generate
     if (STORE_FWD) begin : g_sf
@@ -495,9 +537,14 @@ module sb_nmu #(
 
         assign req_valid = (sending || !tokf_empty) && flit_hav;
 
-        always @(posedge bus_clk)
-            if (bus_rst_q) sending <= 1'b0;
-            else if (req_valid && req_ready) sending <= !req_last;
+        always @(posedge bus_clk) begin
+            if (bus_rst_q) begin
+                sending <= 1'b0;
+            end
+            else if (req_valid && req_ready) begin
+                sending <= !req_last;
+            end
+        end
     end else begin : g_nosf
         assign tokf_full  = 1'b0;
         assign tokf_empty = 1'b1;
@@ -532,9 +579,14 @@ module sb_nmu #(
                              : (!o_wr || (subc == SUB[SUBW-1:0]-1'b1));
     wire            flit_go  = req_valid && req_ready;
 
-    always @(posedge bus_clk)
-        if (bus_rst_q)    subc <= {SUBW{1'b0}};
-        else if (flit_go) subc <= sub_last ? {SUBW{1'b0}} : subc + 1'b1;
+    always @(posedge bus_clk) begin
+        if (bus_rst_q) begin
+            subc <= {SUBW{1'b0}};
+        end
+        else if (flit_go) begin
+            subc <= sub_last ? {SUBW{1'b0}} : subc + 1'b1;
+        end
+    end
 
     generate
     if (PACK != 0) begin : g_pack
@@ -568,8 +620,12 @@ module sb_nmu #(
             if (bus_rst_q) begin
                 pk_v <= 1'b0; mid <= 1'b0;
             end else begin
-                if (eat)         pk_v <= ends;
-                else if (flit_go) pk_v <= 1'b0;
+                if (eat) begin
+                    pk_v <= ends;
+                end
+                else if (flit_go) begin
+                    pk_v <= 1'b0;
+                end
 
                 if (eat) begin
                     // The flit's identity comes from its FIRST beat only --
@@ -659,20 +715,29 @@ module sb_nmu #(
     assign r_eat = r_raw && !g_last;
 
     always @(posedge s_aclk) begin
-        if (srst) gsub <= {SUBW{1'b0}};
-        else if (r_eat || (r_nrm && s_rready))
+        if (srst) begin
+            gsub <= {SUBW{1'b0}};
+        end
+        else if (r_eat || (r_nrm && s_rready)) begin
             gsub <= g_last ? {SUBW{1'b0}} : gsub + 1'b1;
+        end
     end
 
     // SUB==2 holds one flit, so there is nothing to shift. A generate, not an
     // if: at SUB==2 the shift's part-select reverses and fails elaboration.
     generate
     if (SUB == 2) begin : g_gather2
-        always @(posedge s_aclk) if (r_eat) gath <= rf_data;
+        always @(posedge s_aclk) begin
+            if (r_eat) begin
+                gath <= rf_data;
+            end
+        end
     end else if (SUB > 2) begin : g_gatherN
-        always @(posedge s_aclk)
-            if (r_eat || (r_nrm && s_rready))
+        always @(posedge s_aclk) begin
+            if (r_eat || (r_nrm && s_rready)) begin
                 gath <= {rf_data, gath[MW-FW-1:FW]};
+            end
+        end
     end
     endgenerate
 
@@ -701,40 +766,49 @@ module sb_nmu #(
 `ifndef SYNTHESIS
     // Only a write INTO a full FIFO is the bug. `wr_full` also carries XPM's
     // reset-busy for tens of cycles after release, which is not one.
-    always @(posedge bus_clk)
-        if (!bus_rst && rsp_valid && rspf_full)
+    always @(posedge bus_clk) begin
+        if (!bus_rst && rsp_valid && rspf_full) begin
             $display("%0t ERROR sb_nmu: RSP overflow -- credit accounting broke",
                      $time);
+        end
+    end
 
     always @(posedge s_aclk) begin
-        if (!srst && aw_go && aw_hit && ({1'b0, s_awlen} + 9'd1 > RQD))
+        if (!srst && aw_go && aw_hit && ({1'b0, s_awlen} + 9'd1 > RQD)) begin
             $display("%0t ERROR sb_nmu: AWLEN %0d exceeds REQ depth %0d",
                      $time, s_awlen, RQD);
+        end
         // AXI4 forbids crossing a 4 KB boundary, so a port can never legally
         // burst past min(256, 4096/(MW/8)) beats -- 64 on a 512-bit port.
         // MAXB is in BEATS; ar_beats is in flits. Comparing them directly
         // fires on every legal max-length burst as soon as SUB > 1.
-        if (!srst && ar_go && (({1'b0, s_arlen} + 9'd1) > MAXB))
+        if (!srst && ar_go && (({1'b0, s_arlen} + 9'd1) > MAXB)) begin
             $display("%0t ERROR sb_nmu: ARLEN %0d exceeds MAX_BURST %0d",
                      $time, s_arlen, MAXB);
-        if (!srst && aw_go && (({1'b0, s_awlen} + 9'd1) > MAXB))
+        end
+        if (!srst && aw_go && (({1'b0, s_awlen} + 9'd1) > MAXB)) begin
             $display("%0t ERROR sb_nmu: AWLEN %0d exceeds MAX_BURST %0d",
                      $time, s_awlen, MAXB);
+        end
         // A read needs arlen+1 response credits. Ask for more than the FIFO
         // holds and `ar_ok` never asserts -- a silent hang, not an error.
-        if (!srst && s_arvalid && ar_hit && (ar_beats > RSD))
+        if (!srst && s_arvalid && ar_hit && (ar_beats > RSD)) begin
             $display("%0t ERROR sb_nmu: ARLEN %0d needs %0d credits, RSP depth %0d -- stalls forever",
                      $time, s_arlen, ar_beats, RSD);
-        if (!srst && aw_go && (s_awburst != 2'b01))
+        end
+        if (!srst && aw_go && (s_awburst != 2'b01)) begin
             $display("%0t ERROR sb_nmu: AWBURST %b, INCR only", $time, s_awburst);
+        end
         // Sub-width beats are legal now (byte-offset walk + lane strobes); a
         // beat WIDER than the port is not a thing AXI can spell.
-        if (!srst && aw_go && (s_awsize > SZ[2:0]))
+        if (!srst && aw_go && (s_awsize > SZ[2:0])) begin
             $display("%0t ERROR sb_nmu: AWSIZE %0d exceeds the port width",
                      $time, s_awsize);
-        if (!srst && ar_go && (s_arsize > SZ[2:0]))
+        end
+        if (!srst && ar_go && (s_arsize > SZ[2:0])) begin
             $display("%0t ERROR sb_nmu: ARSIZE %0d exceeds the port width",
                      $time, s_arsize);
+        end
     end
 `endif
 endmodule

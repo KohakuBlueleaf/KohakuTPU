@@ -66,10 +66,11 @@ module mx_fpacc_norm #(
         mag = val[VW-1] ? (~val + 1'b1) : val;
 
         msb = 6'd0; found = 1'b0;
-        for (b = VW-1; b >= 0; b = b - 1)
+        for (b = VW-1; b >= 0; b = b - 1) begin
             if (!found && mag[b]) begin
                 msb = b[5:0]; found = 1'b1;
             end
+        end
 
         if (!found) begin
             fp = {(MW+8){1'b0}};
@@ -78,15 +79,21 @@ module mx_fpacc_norm #(
             // the count to a huge unsigned value whenever msb > MW, discarding
             // the mantissa and leaving a clean power of two -- plausible and
             // wrong by up to 2x.
-            if (msb <= MW[5:0]) shifted = {{SW{1'b0}}, mag} << (MW[5:0] - msb);
-            else                shifted = {{SW{1'b0}}, mag} >> (msb - MW[5:0]);
+            if (msb <= MW[5:0]) begin
+                shifted = {{SW{1'b0}}, mag} << (MW[5:0] - msb);
+            end
+            else begin
+                shifted = {{SW{1'b0}}, mag} >> (msb - MW[5:0]);
+            end
             sig = shifted[SW-1:0];
 
             guard  = (msb > MW[5:0]) ? mag[msb - MW[5:0] - 6'd1] : 1'b0;
             sticky = 1'b0;
-            for (b = 0; b < VW; b = b + 1)
-                if (msb > (MW[5:0] + 6'd1) && b < (msb - MW[5:0] - 6'd1))
+            for (b = 0; b < VW; b = b + 1) begin
+                if (msb > (MW[5:0] + 6'd1) && b < (msb - MW[5:0] - 6'd1)) begin
                     sticky = sticky | mag[b];
+                end
+            end
 
             round_up = guard & (sticky | sig[0]);
             sig_r    = {1'b0, sig} + {{SW{1'b0}}, round_up};
@@ -97,8 +104,12 @@ module mx_fpacc_norm #(
             // fraction is sig_r[MW:1] -- MW bits. sig_r[SW:1] is MW+1 bits and
             // overflows the concatenation, pushing the sign out. MW=16 never
             // reaches this path, so it only appears once MW is narrowed.
-            if (sig_r[SW]) fp = {val[VW-1], (e + 11'sd1) & 11'h7F, sig_r[MW:1]};
-            else           fp = {val[VW-1], e[6:0], sig_r[MW-1:0]};
+            if (sig_r[SW]) begin
+                fp = {val[VW-1], (e + 11'sd1) & 11'h7F, sig_r[MW:1]};
+            end
+            else begin
+                fp = {val[VW-1], e[6:0], sig_r[MW-1:0]};
+            end
         end
     end
 endmodule
@@ -128,7 +139,9 @@ module mx_lead1 #(
 
     always @(*) begin
         y = x;
-        for (s = 1; s < W; s = s * 2) y = y | (y >> s);
+        for (s = 1; s < W; s = s * 2) begin
+            y = y | (y >> s);
+        end
     end
 
     assign oh = y & ~(y >> 1);          // exactly one bit: the leading one
@@ -139,7 +152,9 @@ module mx_lead1 #(
             pos[k] = 1'b0;
             for (b = 0; b < W; b = b + 1) begin
                 bb = b;
-                if (bb[k]) pos[k] = pos[k] | oh[b];
+                if (bb[k]) begin
+                    pos[k] = pos[k] | oh[b];
+                end
             end
         end
     end
@@ -405,16 +420,24 @@ module mx_fpacc_round_b #(
     integer          i;
 
     always @(*) begin
-        if (zero_i)          s = {W{1'b0}};
-        else if (pass_i)     s = pass_val;
-        else if (sum_zero_i) s = {W{1'b0}};
+        if (zero_i) begin
+            s = {W{1'b0}};
+        end
+        else if (pass_i) begin
+            s = pass_val;
+        end
+        else if (sum_zero_i) begin
+            s = {W{1'b0}};
+        end
         else begin
             e_out = $signed({3'b0, e_big}) + 10'sd1 - $signed({4'b0, lz_i});
 
             sig = norm_i[SW -: (MW+1)];
             g   = norm_i[SW-MW-1];
             st  = lost;
-            for (i = 0; i < SW-MW-1; i = i + 1) st = st | norm_i[i];
+            for (i = 0; i < SW-MW-1; i = i + 1) begin
+                st = st | norm_i[i];
+            end
             up  = g & (st | sig[0]);
 
             // As in mx_fpacc_norm_b: all-ones plus one wraps the stored fraction
@@ -422,9 +445,15 @@ module mx_fpacc_round_b #(
             e_out = e_out + $signed({9'b0, up & (sig == {(MW+1){1'b1}})});
             sig   = sig + {{MW{1'b0}}, up};
 
-            if (e_out <= 0)        s = {W{1'b0}};
-            else if (e_out >= 127) s = {s_big, 7'h7F, {MW{1'b1}}};
-            else                   s = {s_big, e_out[6:0], sig[MW-1:0]};
+            if (e_out <= 0) begin
+                s = {W{1'b0}};
+            end
+            else if (e_out >= 127) begin
+                s = {s_big, 7'h7F, {MW{1'b1}}};
+            end
+            else begin
+                s = {s_big, e_out[6:0], sig[MW-1:0]};
+            end
         end
     end
 endmodule
@@ -469,9 +498,15 @@ module mx_fpacc_add #(
     integer          i;
 
     always @(*) begin
-        if (za && zb)      s = {W{1'b0}};
-        else if (za)       s = b;
-        else if (zb)       s = a;
+        if (za && zb) begin
+            s = {W{1'b0}};
+        end
+        else if (za) begin
+            s = b;
+        end
+        else if (zb) begin
+            s = a;
+        end
         else begin
             if (diff >= SW) begin
                 shifted = {SW{1'b0}};
@@ -479,8 +514,11 @@ module mx_fpacc_add #(
             end else begin
                 shifted = sml >> diff;
                 lost    = 1'b0;
-                for (i = 0; i < SW; i = i + 1)
-                    if (i < diff) lost = lost | sml[i];
+                for (i = 0; i < SW; i = i + 1) begin
+                    if (i < diff) begin
+                        lost = lost | sml[i];
+                    end
+                end
             end
 
             sum = (s_big == s_small) ? ({1'b0, bg} + {1'b0, shifted})
@@ -490,17 +528,20 @@ module mx_fpacc_add #(
                 s = {W{1'b0}};
             end else begin
                 lz = 6'd0; found = 1'b0;
-                for (i = SW; i >= 0; i = i - 1)
+                for (i = SW; i >= 0; i = i - 1) begin
                     if (!found && sum[i]) begin
                         lz = SW[5:0] - i[5:0]; found = 1'b1;
                     end
+                end
                 norm  = sum << lz;
                 e_out = $signed({3'b0, e_big}) + 10'sd1 - $signed({4'b0, lz});
 
                 sig = norm[SW -: (MW+1)];
                 g   = norm[SW-MW-1];
                 st  = lost;
-                for (i = 0; i < SW-MW-1; i = i + 1) st = st | norm[i];
+                for (i = 0; i < SW-MW-1; i = i + 1) begin
+                    st = st | norm[i];
+                end
                 up  = g & (st | sig[0]);
 
                 if (up && (sig == {(MW+1){1'b1}})) begin
@@ -510,9 +551,15 @@ module mx_fpacc_add #(
                     sig = sig + {{MW{1'b0}}, up};
                 end
 
-                if (e_out <= 0)        s = {W{1'b0}};
-                else if (e_out >= 127) s = {s_big, 7'h7F, {MW{1'b1}}};
-                else                   s = {s_big, e_out[6:0], sig[MW-1:0]};
+                if (e_out <= 0) begin
+                    s = {W{1'b0}};
+                end
+                else if (e_out >= 127) begin
+                    s = {s_big, 7'h7F, {MW{1'b1}}};
+                end
+                else begin
+                    s = {s_big, e_out[6:0], sig[MW-1:0]};
+                end
             end
         end
     end
@@ -572,9 +619,15 @@ module mx_fpacc_to_fp16 #(
                 m11 = 11'd0;
             end
 
-            if (e16 <= 0)       fp16 = {s, 15'd0};
-            else if (e16 >= 31) fp16 = {s, 5'h1E, 10'h3FF};
-            else                fp16 = {s, e16[4:0], m11[9:0]};
+            if (e16 <= 0) begin
+                fp16 = {s, 15'd0};
+            end
+            else if (e16 >= 31) begin
+                fp16 = {s, 5'h1E, 10'h3FF};
+            end
+            else begin
+                fp16 = {s, e16[4:0], m11[9:0]};
+            end
         end
     end
 endmodule

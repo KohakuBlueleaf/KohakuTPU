@@ -37,11 +37,17 @@ module async_fifo #(
     // and OR-ing it in drove failing control paths mesh-wide.
     reg wr_busy_q = 1'b1;
     always @(posedge wr_clk) begin
-        if (wr_rst) wr_busy_q <= 1'b1;
-        else        wr_busy_q <= wr_rst_busy;
+        if (wr_rst) begin
+            wr_busy_q <= 1'b1;
+        end
+        else begin
+            wr_busy_q <= wr_rst_busy;
+        end
     end
     reg rd_busy_q = 1'b1;
-    always @(posedge rd_clk) rd_busy_q <= rd_rst_busy;
+    always @(posedge rd_clk) begin
+        rd_busy_q <= rd_rst_busy;
+    end
 
     assign wr_full  = full  | wr_busy_q;
     assign rd_empty = empty | rd_busy_q;

@@ -95,8 +95,12 @@ module vec_alu #(
     reg [13:0] vpipe;
 
     always @(posedge clk) begin
-        if (rst) vpipe <= 14'd0;
-        else     vpipe <= {vpipe[12:0], in_valid};
+        if (rst) begin
+            vpipe <= 14'd0;
+        end
+        else begin
+            vpipe <= {vpipe[12:0], in_valid};
+        end
         s1_op <= op;
         s1_a  <= a;
         s1_b  <= b;
@@ -632,13 +636,27 @@ module vec_alu #(
         end else begin
             out_valid <= (PIPE_MUX != 0) ? vpipe[13] : vpipe[12];
             out_pred  <= d12_pred;
-            if (d12_nan)                 out <= E8_NAN;
-            else if (d12_inf)            out <= {d12_ssign, 8'hFF, 15'd0};
-            else if (d12_zero)           out <= {d12_ssign, 23'd0};
-            else if (~s12_nz)            out <= {s12_sign & ~d12_canc, 23'd0};
-            else if (e_fin >= 12'sd255)  out <= {s12_sign, 8'hFF, 15'd0};
-            else if (e_fin <= 12'sd0)    out <= {s12_sign, 23'd0};
-            else                         out <= {s12_sign, e_fin[7:0], frac};
+            if (d12_nan) begin
+                out <= E8_NAN;
+            end
+            else if (d12_inf) begin
+                out <= {d12_ssign, 8'hFF, 15'd0};
+            end
+            else if (d12_zero) begin
+                out <= {d12_ssign, 23'd0};
+            end
+            else if (~s12_nz) begin
+                out <= {s12_sign & ~d12_canc, 23'd0};
+            end
+            else if (e_fin >= 12'sd255) begin
+                out <= {s12_sign, 8'hFF, 15'd0};
+            end
+            else if (e_fin <= 12'sd0) begin
+                out <= {s12_sign, 23'd0};
+            end
+            else begin
+                out <= {s12_sign, e_fin[7:0], frac};
+            end
         end
     end
 

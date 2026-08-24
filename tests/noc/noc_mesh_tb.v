@@ -34,7 +34,9 @@ module noc_mesh_tb;
     localparam SRC_LSB = 16;       // payload[23:16] flat source index
 
     reg clk = 0, rst = 1;
-    always #5 clk = ~clk;
+    always begin
+        #5 clk = ~clk;
+    end
 
     integer errors = 0;
     integer sent_total = 0, recv_total = 0;
@@ -233,7 +235,9 @@ module noc_mesh_tb;
             sf = flat(sx, sy);
             df = flat(dx, dy);
             @(negedge clk);
-            while (l_i_busy[sx][sy]) @(negedge clk);
+            while (l_i_busy[sx][sy]) begin
+                @(negedge clk);
+            end
             inj_data[sx][sy]  = {DW{1'b0}};
             inj_data[sx][sy][DW-1        -: POSW] = dx[POSW-1:0];
             inj_data[sx][sy][DW-POSW-1   -: POSW] = dy[POSW-1:0];
@@ -255,26 +259,32 @@ module noc_mesh_tb;
         $dumpfile("noc_mesh_tb.vcd");
         $dumpvars(0, noc_mesh_tb);
 
-        for (i = 0; i < NODES; i = i + 1)
-          for (j = 0; j < NODES; j = j + 1) begin
-            exp_seq[i][j] = 0;
-            nxt_seq[i][j] = 0;
-          end
-        for (x = LO; x <= HI; x = x + 1)
-          for (y = LO; y <= HI; y = y + 1) begin
-            inj_data[x][y]  = {DW{1'b0}};
-            inj_valid[x][y] = 1'b0;
-          end
+        for (i = 0; i < NODES; i = i + 1) begin
+            for (j = 0; j < NODES; j = j + 1) begin
+              exp_seq[i][j] = 0;
+              nxt_seq[i][j] = 0;
+            end
+        end
+        for (x = LO; x <= HI; x = x + 1) begin
+            for (y = LO; y <= HI; y = y + 1) begin
+              inj_data[x][y]  = {DW{1'b0}};
+              inj_valid[x][y] = 1'b0;
+            end
+        end
 
         rst = 1; repeat (16) @(posedge clk);
         rst = 0; repeat (8)  @(posedge clk);
 
         $display("--- phase 1: all-to-all, one flit per pair ---");
-        for (x = LO; x <= HI; x = x + 1)
-          for (y = LO; y <= HI; y = y + 1)
-            for (dx = LO; dx <= HI; dx = dx + 1)
-              for (dy = LO; dy <= HI; dy = dy + 1)
-                send(x, y, dx, dy);
+        for (x = LO; x <= HI; x = x + 1) begin
+            for (y = LO; y <= HI; y = y + 1) begin
+                for (dx = LO; dx <= HI; dx = dx + 1) begin
+                    for (dy = LO; dy <= HI; dy = dy + 1) begin
+                        send(x, y, dx, dy);
+                    end
+                end
+            end
+        end
         repeat (400) @(posedge clk);
         $display("    sent %0d, received %0d", sent_total, recv_total);
 

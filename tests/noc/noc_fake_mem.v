@@ -46,11 +46,9 @@ module noc_fake_mem #(
     output reg  [15:0]            rd_count,
     output reg  [15:0]            wr_count
 );
-    localparam [3:0] T_MEM_RD_REQ  = 4'h0,
-                     T_MEM_WR_REQ  = 4'h1,
-                     T_MEM_RD_RESP = 4'h2,
-                     T_MEM_WR_ACK  = 4'h3,
-                     T_MEM_WR_DATA = 4'h4;
+    localparam [3:0] T_MEM_RD_REQ = 4'h0, T_MEM_WR_REQ = 4'h1;
+    localparam [3:0] T_MEM_RD_RESP = 4'h2, T_MEM_WR_ACK = 4'h3;
+    localparam [3:0] T_MEM_WR_DATA = 4'h4;
 
     localparam integer HP = FLIT_WIDTH - 4*POS_WIDTH;   // payload starts below here
 
@@ -58,8 +56,11 @@ module noc_fake_mem #(
 
     assign bd_rdata = mem[bd_addr[$clog2(WORDS)-1:0]];
 
-    always @(posedge clk)
-        if (bd_we) mem[bd_addr[$clog2(WORDS)-1:0]] <= bd_wdata;
+    always @(posedge clk) begin
+        if (bd_we) begin
+            mem[bd_addr[$clog2(WORDS)-1:0]] <= bd_wdata;
+        end
+    end
 
     // ---- inbound decode ----
     wire [3:0]           in_type = noc_in_data[HP-1 -: 4];
@@ -74,8 +75,8 @@ module noc_fake_mem #(
     wire                 in_quant = in_flags[4];
     wire                 in_blay  = in_flags[5];
 
-    localparam [2:0] S_IDLE  = 3'd0, S_READ  = 3'd1, S_WRITE = 3'd2, S_ACK = 3'd3,
-                     S_QFILL = 3'd4, S_QWAIT = 3'd5, S_QEMIT = 3'd6;
+    localparam [2:0] S_IDLE = 3'd0, S_READ = 3'd1, S_WRITE = 3'd2, S_ACK = 3'd3;
+    localparam [2:0] S_QFILL = 3'd4, S_QWAIT = 3'd5, S_QEMIT = 3'd6;
     reg [2:0]  state;
     reg [7:0]  left;
     reg [15:0] word;
@@ -127,88 +128,109 @@ module noc_fake_mem #(
             // the flit stays asserted and is offered again next cycle. The
             // reloads below run after this in the same block, so an
             // accept-and-reload in one cycle still ends with valid high.
-            if (noc_out_valid && !noc_out_busy) noc_out_valid <= 1'b0;
+            if (noc_out_valid && !noc_out_busy) begin
+                noc_out_valid <= 1'b0;
+            end
             q_start <= 1'b0;
             q_bv    <= 1'b0;
 
             case (state)
-            S_IDLE: begin
-                if (noc_in_valid) begin
-                    rx   <= in_sx;  ry <= in_sy;  rtxn <= in_txn;
-                    word <= in_addr[33:5];              // 256-bit words
-                    left <= in_len;
-                    if (in_type == T_MEM_RD_REQ && in_quant) begin
-                        q_blay   <= in_blay;
-                        q_start  <= 1'b1;
-                        left     <= 8'd7;               // 8 source words
-                        state    <= S_QFILL;
-                        rd_count <= rd_count + 16'd1;
-                    end else if (in_type == T_MEM_RD_REQ) begin
-                        state    <= S_READ;
-                        rd_count <= rd_count + 16'd1;
-                    end else if (in_type == T_MEM_WR_REQ) begin
-                        state    <= S_WRITE;
-                        wr_count <= wr_count + 16'd1;
+                S_IDLE: begin
+                    if (noc_in_valid) begin
+                        rx   <= in_sx;  ry <= in_sy;  rtxn <= in_txn;
+                        word <= in_addr[33:5];              // 256-bit words
+                        left <= in_len;
+                        if (in_type == T_MEM_RD_REQ && in_quant) begin
+                            q_blay   <= in_blay;
+                            q_start  <= 1'b1;
+                            left     <= 8'd7;               // 8 source words
+                            state    <= S_QFILL;
+                            rd_count <= rd_count + 16'd1;
+                        end else if (in_type == T_MEM_RD_REQ) begin
+                            state    <= S_READ;
+                            rd_count <= rd_count + 16'd1;
+                        end else if (in_type == T_MEM_WR_REQ) begin
+                            state    <= S_WRITE;
+                            wr_count <= wr_count + 16'd1;
+                        end
                     end
                 end
-            end
 
-            S_READ: begin
-                // one response flit per cycle the link will take
-                if (out_free) begin
+                S_READ: begin
+                    // one response flit per cycle the link will take
+                    if (out_free) begin
+                        noc_out_data <= { rx, ry, POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
+                                          T_MEM_RD_RESP, rtxn, (left == 8'd0), 3'b000,
+                                          mem[word[$clog2(WORDS)-1:0]] };
+                        noc_out_valid <= 1'b1;
+                        word <= word + 16'd1;
+                        if (left == 8'd0) begin
+                            state <= S_IDLE;
+                        end
+                        else begin
+                            left  <= left - 8'd1;
+                        end
+                    end
+                end
+
+                // ---- quantised read: 8 FP16 source words in, 4 MXFP7 flits out.
+                // `start` is a pulse from S_IDLE, so the first beat can only be
+                // presented here -- feeding one in the same cycle as start would
+                // be swallowed by the quantiser's else-if chain.
+                S_QFILL: begin
+                    q_beat <= mem[word[$clog2(WORDS)-1:0]];
+                    q_bv   <= 1'b1;
+                    word   <= word + 16'd1;
+                    if (left == 8'd0) begin
+                        state <= S_QWAIT;
+                    end
+                    else begin
+                        left  <= left - 8'd1;
+                    end
+                end
+                S_QWAIT: if (q_done) begin
+                    qemit <= 2'd0;
+                    state <= S_QEMIT;
+                end
+                S_QEMIT: if (out_free) begin
                     noc_out_data <= { rx, ry, POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
-                                      T_MEM_RD_RESP, rtxn, (left == 8'd0), 3'b000,
-                                      mem[word[$clog2(WORDS)-1:0]] };
+                                      T_MEM_RD_RESP, rtxn, (qemit == 2'd3), 3'b000,
+                                      (
+                                          (qemit == 2'd0) ? q_w0
+                                          : (qemit == 2'd1) ? q_w1
+                                          : (qemit == 2'd2) ? q_w2
+                                          : q_w3
+                                      ) };
                     noc_out_valid <= 1'b1;
-                    word <= word + 16'd1;
-                    if (left == 8'd0) state <= S_IDLE;
-                    else              left  <= left - 8'd1;
+                    if (qemit == 2'd3) begin
+                        state <= S_IDLE;
+                    end
+                    else begin
+                        qemit <= qemit + 2'd1;
+                    end
                 end
-            end
 
-            // ---- quantised read: 8 FP16 source words in, 4 MXFP7 flits out.
-            // `start` is a pulse from S_IDLE, so the first beat can only be
-            // presented here -- feeding one in the same cycle as start would
-            // be swallowed by the quantiser's else-if chain.
-            S_QFILL: begin
-                q_beat <= mem[word[$clog2(WORDS)-1:0]];
-                q_bv   <= 1'b1;
-                word   <= word + 16'd1;
-                if (left == 8'd0) state <= S_QWAIT;
-                else              left  <= left - 8'd1;
-            end
-            S_QWAIT: if (q_done) begin
-                qemit <= 2'd0;
-                state <= S_QEMIT;
-            end
-            S_QEMIT: if (out_free) begin
-                noc_out_data <= { rx, ry, POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
-                                  T_MEM_RD_RESP, rtxn, (qemit == 2'd3), 3'b000,
-                                  (qemit == 2'd0) ? q_w0 :
-                                  (qemit == 2'd1) ? q_w1 :
-                                  (qemit == 2'd2) ? q_w2 : q_w3 };
-                noc_out_valid <= 1'b1;
-                if (qemit == 2'd3) state <= S_IDLE;
-                else               qemit <= qemit + 2'd1;
-            end
-
-            S_WRITE: begin
-                if (noc_in_valid) begin
-                    mem[word[$clog2(WORDS)-1:0]] <= noc_in_data[255:0];
-                    word <= word + 16'd1;
-                    if (left == 8'd0) state <= S_ACK;
-                    else              left  <= left - 8'd1;
+                S_WRITE: begin
+                    if (noc_in_valid) begin
+                        mem[word[$clog2(WORDS)-1:0]] <= noc_in_data[255:0];
+                        word <= word + 16'd1;
+                        if (left == 8'd0) begin
+                            state <= S_ACK;
+                        end
+                        else begin
+                            left  <= left - 8'd1;
+                        end
+                    end
                 end
-            end
 
-            S_ACK: begin
-                if (out_free) begin
-                    noc_out_data <= { rx, ry, POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
-                                      T_MEM_WR_ACK, rtxn, 1'b1, 3'b000, 256'd0 };
-                    noc_out_valid <= 1'b1;
-                    state <= S_IDLE;
+                S_ACK: begin
+                    if (out_free) begin
+                        noc_out_data <= { rx, ry, POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
+                                          T_MEM_WR_ACK, rtxn, 1'b1, 3'b000, 256'd0 };
+                        noc_out_valid <= 1'b1;
+                        state <= S_IDLE;
+                    end
                 end
-            end
             endcase
         end
     end

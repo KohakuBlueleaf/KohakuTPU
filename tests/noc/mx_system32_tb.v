@@ -63,10 +63,10 @@ module mx_system32_tb;
     localparam integer CU_X  = 1, CU_Y  = 0;
     localparam integer MEM_X = 2, MEM_Y = 1;
 
-    localparam [31:0] A_PROG_DST = 32'h0040, A_PROG_LEN  = 32'h0048,
-                      A_PROG_KICK= 32'h0050, A_PROG_STAT = 32'h0058,
-                      A_PROG_CRED= 32'h0060, A_NODE      = 32'h1000,
-                      A_STAGE    = 32'h2000;
+    localparam [31:0] A_PROG_DST = 32'h0040, A_PROG_LEN = 32'h0048;
+    localparam [31:0] A_PROG_KICK = 32'h0050, A_PROG_STAT = 32'h0058;
+    localparam [31:0] A_PROG_CRED = 32'h0060, A_NODE = 32'h1000;
+    localparam [31:0] A_STAGE = 32'h2000;
 
     // memory word layout (256-bit words)
     localparam integer WA_BASE = 0;            // A: 4 words per row group -> 32
@@ -74,7 +74,9 @@ module mx_system32_tb;
     localparam integer WC_BASE = 200;          // C: 1 word per sub-tile  -> 64
 
     reg clk = 0, rstn = 0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     // ------------------------------------------------------------ AXI wires
     reg  [3:0]  awid, arid;
@@ -220,12 +222,16 @@ module mx_system32_tb;
     function real fp16_to_real(input [15:0] f);
         real m; integer e;
         begin
-            if (f[14:10] == 5'd0) fp16_to_real = 0.0;
+            if (f[14:10] == 5'd0) begin
+                fp16_to_real = 0.0;
+            end
             else begin
                 m = 1.0 + $itor(f[9:0]) / 1024.0;
                 e = f[14:10] - 15;
                 fp16_to_real = m * (2.0 ** e);
-                if (f[15]) fp16_to_real = -fp16_to_real;
+                if (f[15]) begin
+                    fp16_to_real = -fp16_to_real;
+                end
             end
         end
     endfunction
@@ -266,61 +272,83 @@ module mx_system32_tb;
 
         // ---------------------------------------------------------------
         $display("--- 1. build C[32,32] = A[32,32] x B[32,32] and both ground truths ---");
-        for (i = 0; i < M; i = i + 1)
-            for (k = 0; k < KK; k = k + 1) A[i][k] = ($random(seed) & 127) - 64;
-        for (k = 0; k < KK; k = k + 1)
-            for (j = 0; j < N; j = j + 1) B[k][j] = ($random(seed) & 127) - 64;
-        for (i = 0; i < M; i = i + 1) SA[i] = ($random(seed) & 3);
-        for (j = 0; j < N; j = j + 1) SB[j] = ($random(seed) & 3);
+        for (i = 0; i < M; i = i + 1) begin
+            for (k = 0; k < KK; k = k + 1) begin
+                A[i][k] = ($random(seed) & 127) - 64;
+            end
+        end
+        for (k = 0; k < KK; k = k + 1) begin
+            for (j = 0; j < N; j = j + 1) begin
+                B[k][j] = ($random(seed) & 127) - 64;
+            end
+        end
+        for (i = 0; i < M; i = i + 1) begin
+            SA[i] = ($random(seed) & 3);
+        end
+        for (j = 0; j < N; j = j + 1) begin
+            SB[j] = ($random(seed) & 3);
+        end
 
-        for (i = 0; i < M; i = i + 1)
+        for (i = 0; i < M; i = i + 1) begin
             for (j = 0; j < N; j = j + 1) begin
                 blocksum = 0;
-                for (k = 0; k < KK; k = k + 1)
+                for (k = 0; k < KK; k = k + 1) begin
                     blocksum = blocksum + A[i][k] * B[k][j];
+                end
                 // only the headroom reaches the result: the other 2*SBIAS of
                 // ANCHOR cancels the bias stored in each scale field
                 sh = SA[i] + SB[j] - (ANCHOR - 2*SBIAS);
                 exact_c[i][j] = blocksum <<< (SA[i] + SB[j]);
                 fp64_c[i][j]  = $itor(blocksum) * (2.0 ** sh);
             end
+        end
         // the two models must agree, or the bench is measuring itself
-        for (i = 0; i < M; i = i + 1)
+        for (i = 0; i < M; i = i + 1) begin
             for (j = 0; j < N; j = j + 1) begin
                 checks = checks + 1;
                 if ($itor(exact_c[i][j]) * (2.0 ** -(ANCHOR - 2*SBIAS))
                     != fp64_c[i][j]) begin
                     errors = errors + 1;
-                    if (errors <= 4)
+                    if (errors <= 4) begin
                         $display("  FAIL ground-truth models disagree at [%0d][%0d]", i, j);
+                    end
                 end
             end
+        end
         $display("    %0d elements, two ground truths agree", M*N);
 
         // ---------------------------------------------------------------
         // A row group g holds rows 4g..4g+3; four words carry K slices 0-7,
         // 8-15, 16-23, 24-31.  B column group h is the transpose arrangement.
         $display("--- 2. preload operands into memory ---");
-        for (g = 0; g < GM; g = g + 1)
+        for (g = 0; g < GM; g = g + 1) begin
             for (c = 0; c < 4; c = c + 1) begin
                 wtmp = 256'd0;
-                for (i = 0; i < 4; i = i + 1)
-                    for (k = 0; k < 8; k = k + 1)
+                for (i = 0; i < 4; i = i + 1) begin
+                    for (k = 0; k < 8; k = k + 1) begin
                         wtmp[255 - (i*8+k)*7 -: 7] = A[g*4+i][c*8+k][6:0];
-                for (i = 0; i < 4; i = i + 1)
+                    end
+                end
+                for (i = 0; i < 4; i = i + 1) begin
                     wtmp[31 - i*8 -: 8] = sf(SA[g*4+i]);
+                end
                 bd_write(WA_BASE + g*4 + c, wtmp);
             end
-        for (h = 0; h < GN; h = h + 1)
+        end
+        for (h = 0; h < GN; h = h + 1) begin
             for (c = 0; c < 4; c = c + 1) begin
                 wtmp = 256'd0;
-                for (k = 0; k < 8; k = k + 1)
-                    for (j = 0; j < 4; j = j + 1)
+                for (k = 0; k < 8; k = k + 1) begin
+                    for (j = 0; j < 4; j = j + 1) begin
                         wtmp[255 - (k*4+j)*7 -: 7] = B[c*8+k][h*4+j][6:0];
-                for (j = 0; j < 4; j = j + 1)
+                    end
+                end
+                for (j = 0; j < 4; j = j + 1) begin
                     wtmp[31 - j*8 -: 8] = sf(SB[h*4+j]);
+                end
                 bd_write(WB_BASE + h*4 + c, wtmp);
             end
+        end
         $display("    A: %0d words, B: %0d words", GM*4, GN*4);
 
         // ---------------------------------------------------------------
@@ -333,7 +361,7 @@ module mx_system32_tb;
         // docs/simulation.md s3.
         $display("--- 3. stage the program (%0d instructions) ---", NINST);
         idx = 0;
-        for (g = 0; g < GM; g = g + 1)
+        for (g = 0; g < GM; g = g + 1) begin
             for (h = 0; h < GN; h = h + 1) begin
                 tile4   = (g*GN + h) % 16;
                 adr_a34 = (WA_BASE + g*4) * 32;
@@ -345,8 +373,9 @@ module mx_system32_tb;
                           1'b1,                              // first: K=32 is
                                                              // one whole block
                           ANCHOR[7:0], 171'd0 };
-                for (t = 0; t < WORDS; t = t + 1)
+                for (t = 0; t < WORDS; t = t + 1) begin
                     axi_w(A_STAGE + (idx*WORDS + t)*8, instr[t*DW +: DW]);
+                end
                 idx = idx + 1;
 
                 adr_a34 = (WC_BASE + g*GN + h) * 32;
@@ -357,10 +386,12 @@ module mx_system32_tb;
                           adr_a34, adr_b34,
                           tile4, 1'b0,
                           ANCHOR[7:0], 171'd0 };
-                for (t = 0; t < WORDS; t = t + 1)
+                for (t = 0; t < WORDS; t = t + 1) begin
                     axi_w(A_STAGE + (idx*WORDS + t)*8, instr[t*DW +: DW]);
+                end
                 idx = idx + 1;
             end
+        end
 
         // ---------------------------------------------------------------
         $display("--- 4. dispatch and wait ---");
@@ -373,8 +404,9 @@ module mx_system32_tb;
         while (emits_done < NTILE16 && t < 20000) begin
             repeat (20) @(posedge clk);
             t = t + 1;
-            if (t % 4000 == 0)
+            if (t % 4000 == 0) begin
                 $display("    ... t=%0d blocks=%0d emits=%0d", t, blocks_done, emits_done);
+            end
         end
         repeat (400) @(posedge clk);
 
@@ -406,20 +438,23 @@ module mx_system32_tb;
 
         // ---------------------------------------------------------------
         $display("--- 6. read back all %0d sub-tiles ---", NTILE);
-        for (g = 0; g < GM; g = g + 1)
+        for (g = 0; g < GM; g = g + 1) begin
             for (h = 0; h < GN; h = h + 1) begin
                 @(negedge clk);
                 bd_addr <= (WC_BASE + g*GN + h);
                 @(negedge clk); @(negedge clk);
                 res_word = bd_rdata;
-                for (i = 0; i < 4; i = i + 1)
-                    for (j = 0; j < 4; j = j + 1)
+                for (i = 0; i < 4; i = i + 1) begin
+                    for (j = 0; j < 4; j = j + 1) begin
                         hw_c[g*4+i][h*4+j] = fp16_to_real(res_word[(i*4+j)*16 +: 16]);
+                    end
+                end
             end
+        end
 
         // ---------------------------------------------------------------
         $display("--- 7. precision: %0d elements vs FP64 and exact MXFP7 ---", M*N);
-        for (i = 0; i < M; i = i + 1)
+        for (i = 0; i < M; i = i + 1) begin
             for (j = 0; j < N; j = j + 1) begin
                 got_r  = hw_c[i][j];
                 want_r = fp64_c[i][j];
@@ -427,12 +462,15 @@ module mx_system32_tb;
                 if (want_r == 0.0) begin
                     if (got_r != 0.0) begin
                         errors = errors + 1;
-                        if (errors <= 8)
+                        if (errors <= 8) begin
                             $display("  FAIL C[%0d][%0d] got %0f want 0", i, j, got_r);
+                        end
                     end
                 end else begin
                     err = (got_r - want_r) / want_r;
-                    if (err < 0.0) err = -err;
+                    if (err < 0.0) begin
+                        err = -err;
+                    end
                     nz = nz + 1;
                     sum_abs_rel = sum_abs_rel + err;
                     if (err > worst_rel) begin
@@ -442,12 +480,14 @@ module mx_system32_tb;
                     // is a single accumulator rounding on top of that
                     if (err > 4.0 / 1024.0) begin
                         errors = errors + 1;
-                        if (errors <= 8)
+                        if (errors <= 8) begin
                             $display("  FAIL C[%0d][%0d] got %0f want %0f relerr %0e",
                                      i, j, got_r, want_r, err);
+                        end
                     end
                 end
             end
+        end
 
         // ---------------------------------------------------------------
         $display("");
@@ -455,13 +495,17 @@ module mx_system32_tb;
         $display("        hardware (FP16 out of the NoC)");
         for (i = 0; i < 8; i = i + 1) begin
             $write("   ");
-            for (j = 0; j < 8; j = j + 1) $write("%10.2f", hw_c[i][j]);
+            for (j = 0; j < 8; j = j + 1) begin
+                $write("%10.2f", hw_c[i][j]);
+            end
             $write("\n");
         end
         $display("        FP64 ground truth");
         for (i = 0; i < 8; i = i + 1) begin
             $write("   ");
-            for (j = 0; j < 8; j = j + 1) $write("%10.2f", fp64_c[i][j]);
+            for (j = 0; j < 8; j = j + 1) begin
+                $write("%10.2f", fp64_c[i][j]);
+            end
             $write("\n");
         end
 
@@ -474,8 +518,12 @@ module mx_system32_tb;
                  sum_abs_rel / $itor(nz), nz);
 
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors  (MODEL=%0d)", checks, MODEL);
-        else             $display("  FAIL -- %0d checks, %0d errors  (MODEL=%0d)", checks, errors, MODEL);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors  (MODEL=%0d)", checks, MODEL);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors  (MODEL=%0d)", checks, errors, MODEL);
+        end
         $display("========================================");
         $finish;
     end

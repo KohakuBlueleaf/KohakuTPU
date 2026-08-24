@@ -151,8 +151,12 @@ module axi_xbar2 #(
                 else if (w_req1) begin wbusy <= 1'b1; wm <= 1'b1; ws <= m1_awaddr[SEL_BIT]; end
             end else begin
                 // the grant is released when the response is taken
-                if ((ws ? s1_bvalid : s0_bvalid) &&
-                    (wm ? m1_bready : m0_bready)) wbusy <= 1'b0;
+                if (
+                    (ws ? s1_bvalid : s0_bvalid)
+                    && (wm ? m1_bready : m0_bready)
+                ) begin
+                    wbusy <= 1'b0;
+                end
             end
         end
     end
@@ -204,8 +208,13 @@ module axi_xbar2 #(
                 if (r_req0) begin rbusy <= 1'b1; rm <= 1'b0; rs <= m0_araddr[SEL_BIT]; end
                 else if (r_req1) begin rbusy <= 1'b1; rm <= 1'b1; rs <= m1_araddr[SEL_BIT]; end
             end else begin
-                if ((rs ? s1_rvalid : s0_rvalid) && (rs ? s1_rlast : s0_rlast) &&
-                    (rm ? m1_rready : m0_rready)) rbusy <= 1'b0;
+                if (
+                    (rs ? s1_rvalid : s0_rvalid)
+                    && (rs ? s1_rlast : s0_rlast)
+                    && (rm ? m1_rready : m0_rready)
+                ) begin
+                    rbusy <= 1'b0;
+                end
             end
         end
     end

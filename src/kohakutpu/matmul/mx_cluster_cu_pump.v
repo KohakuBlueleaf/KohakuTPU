@@ -58,7 +58,9 @@ module mx_cluster_cu_pump #(
     // after it, or every clk1x register samples what clk2x has already updated.
     reg  ph;
     initial ph = 1'b0;
-    always @(negedge clk2x) ph <= div_clr ? 1'b0 : ~ph;
+    always @(negedge clk2x) begin
+        ph <= div_clr ? 1'b0 : ~ph;
+    end
     assign clk1x = clk2x & ph;
 `endif
 

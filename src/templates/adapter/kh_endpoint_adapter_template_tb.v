@@ -9,7 +9,9 @@ module kh_endpoint_adapter_template_tb;
     localparam N  = 32;
 
     reg clk = 0, rst = 1;
-    always #2 clk = ~clk;
+    always #2 begin
+        clk = ~clk;
+    end
 
     // stimulus into the router face, consumption at the endpoint face
     reg  [FW-1:0] rt_data;
@@ -67,8 +69,9 @@ module kh_endpoint_adapter_template_tb;
 
     always @(posedge clk) begin
         if (!rst) begin
-            if (p_ep_valid !== rt_valid || (rt_valid && p_ep_data !== rt_data))
+            if (p_ep_valid !== rt_valid || (rt_valid && p_ep_data !== rt_data)) begin
                 chk(0, 1, "STAGE=0 is a straight wire");
+            end
         end
     end
 
@@ -128,8 +131,12 @@ module kh_endpoint_adapter_template_tb;
         rst = 0;
         repeat (2) @(negedge clk);
 
-        for (i = 0; i < N; i = i + 1) put_rt(32'h1000 + i);
-        for (i = 0; i < N; i = i + 1) put_eu(32'h8000 + i);
+        for (i = 0; i < N; i = i + 1) begin
+            put_rt(32'h1000 + i);
+        end
+        for (i = 0; i < N; i = i + 1) begin
+            put_eu(32'h8000 + i);
+        end
 
         spin = 0;
         while ((got_d < N || got_u < N) && spin < 2000) begin
@@ -139,17 +146,23 @@ module kh_endpoint_adapter_template_tb;
         chk(got_d, N, "all downstream flits delivered");
         chk(got_u, N, "all upstream flits delivered");
         for (i = 0; i < N; i = i + 1) begin
-            if (seq_d[i] !== 32'h1000 + i) chk(seq_d[i], 32'h1000 + i, "down order");
-            if (seq_u[i] !== 32'h8000 + i) chk(seq_u[i], 32'h8000 + i, "up order");
+            if (seq_d[i] !== 32'h1000 + i) begin
+                chk(seq_d[i], 32'h1000 + i, "down order");
+            end
+            if (seq_u[i] !== 32'h8000 + i) begin
+                chk(seq_u[i], 32'h8000 + i, "up order");
+            end
         end
         chk(n_down, N, "down tap counts transfers");
         chk(n_up, N, "up tap counts transfers");
 
         u_chk.report;
-        if (errors == 0 && u_chk.violations == 0)
+        if (errors == 0 && u_chk.violations == 0) begin
             $display("PASS kh_endpoint_adapter_template_tb: %0d checks", checks);
-        else
+        end
+        else begin
             $display("FAIL kh_endpoint_adapter_template_tb: %0d errors", errors);
+        end
         $finish;
     end
 endmodule

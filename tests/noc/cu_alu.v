@@ -96,7 +96,9 @@ module cu_alu #(
                 running    <= 1'b1;
                 inst_ready <= 1'b1;
             end else if (running) begin
-                if (timer > 4'd1) timer <= timer - 4'd1;
+                if (timer > 4'd1) begin
+                    timer <= timer - 4'd1;
+                end
                 else begin
                     running   <= 1'b0;
                     exec_done <= 1'b1;

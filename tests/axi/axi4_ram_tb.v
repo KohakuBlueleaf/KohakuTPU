@@ -25,7 +25,9 @@ module axi4_ram_tb;
     localparam DEPTH = 1024;
 
     reg clk = 0, resetn = 0;
-    always #5 clk = ~clk;
+    always begin
+        #5 clk = ~clk;
+    end
 
     reg  [IW-1:0]   awid=0;   reg [AW-1:0] awaddr=0; reg [7:0] awlen=0;
     reg  [2:0]      awsize=3; reg [1:0]    awburst=1; reg awvalid=0; wire awready;
@@ -95,7 +97,9 @@ module axi4_ram_tb;
         integer n; integer k;
         begin
             n = {$random(seed)} % 4;
-            for (k = 0; k < n; k = k + 1) @(posedge clk);
+            for (k = 0; k < n; k = k + 1) begin
+                @(posedge clk);
+            end
         end
     endtask
 
@@ -112,7 +116,9 @@ module axi4_ram_tb;
             awid <= id; awaddr <= addr; awlen <= len; awsize <= 3'd3;
             awburst <= 2'b01; awvalid <= 1'b1;
             @(posedge clk);
-            while (!awready) @(posedge clk);   // wait for the slave to take AW
+            while (!awready) begin// wait for the slave to take AW
+                @(posedge clk);
+            end
             awvalid <= 1'b0;
 
             for (i = 0; i <= len; i = i + 1) begin
@@ -122,16 +128,22 @@ module axi4_ram_tb;
                 wlast  <= (i == len);
                 wvalid <= 1'b1;
                 @(posedge clk);
-                while (!wready) @(posedge clk);
+                while (!wready) begin
+                    @(posedge clk);
+                end
                 wvalid <= 1'b0;
                 wlast  <= 1'b0;
             end
 
             // Hold BREADY low first -- the slave must keep BVALID asserted.
-            for (d = 0; d < bready_delay; d = d + 1) @(posedge clk);
+            for (d = 0; d < bready_delay; d = d + 1) begin
+                @(posedge clk);
+            end
             bready <= 1'b1;
             @(posedge clk);
-            while (!bvalid) @(posedge clk);
+            while (!bvalid) begin
+                @(posedge clk);
+            end
             if (bid !== id) begin
                 $display("[%0t] ERROR: BID %0h != AWID %0h", $time, bid, id);
                 errors = errors + 1;
@@ -157,19 +169,25 @@ module axi4_ram_tb;
             arid <= id; araddr <= addr; arlen <= len; arsize <= 3'd3;
             arburst <= 2'b01; arvalid <= 1'b1;
             @(posedge clk);
-            while (!arready) @(posedge clk);
+            while (!arready) begin
+                @(posedge clk);
+            end
             arvalid <= 1'b0;
 
             // THE CRITICAL BIT: do not touch RREADY yet. Wait for the slave to
             // present data on its own. A slave with RVALID=f(RREADY) hangs here.
             @(posedge clk);
-            while (!rvalid) @(posedge clk);
+            while (!rvalid) begin
+                @(posedge clk);
+            end
             repeat (3) @(posedge clk);   // and make it hold for a while
 
             for (i = 0; i <= len; i = i + 1) begin
                 rready <= 1'b1;
                 @(posedge clk);
-                while (!rvalid) @(posedge clk);
+                while (!rvalid) begin
+                    @(posedge clk);
+                end
                 if (rdata !== (base + i)) begin
                     $display("[%0t] ERROR: beat %0d @0x%0h read %0h expected %0h",
                              $time, i, addr, rdata, base + i);
@@ -236,26 +254,34 @@ module axi4_ram_tb;
             awid <= 4'h9; awaddr <= 64'h0400; awlen <= 0; awsize <= 3'd3;
             awburst <= 2'b01; awvalid <= 1'b1;
             @(posedge clk);
-            while (!awready) @(posedge clk);
+            while (!awready) begin
+                @(posedge clk);
+            end
             awvalid <= 1'b0;
             wdata <= 64'h0000_0000_0000_1234; wstrb <= 8'b0000_0011;
             wlast <= 1'b1; wvalid <= 1'b1;
             @(posedge clk);
-            while (!wready) @(posedge clk);
+            while (!wready) begin
+                @(posedge clk);
+            end
             wvalid <= 1'b0; wlast <= 1'b0; wstrb <= {(DW/8){1'b1}};
             bready <= 1'b1;
             @(posedge clk);
-            while (!bvalid) @(posedge clk);
+            while (!bvalid) begin
+                @(posedge clk);
+            end
             bready <= 1'b0;
             axi_read_check(64'h0400, 8'd0, 4'h9, 64'hFFFF_FFFF_FFFF_1234);
         end
 
         repeat (20) @(posedge clk);
         $display("========================================");
-        if (errors == 0)
+        if (errors == 0) begin
             $display("  PASS -- %0d checks, 0 errors", checks);
-        else
+        end
+        else begin
             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end

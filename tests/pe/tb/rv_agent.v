@@ -68,7 +68,9 @@ module rv_agent #(
         out_valid = 1'b0;
         sig_n = 0;
         other_n = 0;
-        for (ai = 0; ai < 16; ai = ai + 1) sig_n_at[ai] = 0;
+        for (ai = 0; ai < 16; ai = ai + 1) begin
+            sig_n_at[ai] = 0;
+        end
     end
 
     always @(posedge clk) if (resetn && in_valid) begin
@@ -81,8 +83,9 @@ module rv_agent #(
             sig_n    <= sig_n + 1;
             sig_code_at[{i_sy[1:0], i_sx[1:0]}] <= in_data[PAY-1 -: 8];
             sig_arg_at [{i_sy[1:0], i_sx[1:0]}] <= in_data[PAY-9 -: 32];
-            sig_n_at   [{i_sy[1:0], i_sx[1:0]}] <=
-                sig_n_at[{i_sy[1:0], i_sx[1:0]}] + 1;
+            sig_n_at   [{i_sy[1:0], i_sx[1:0]}] <= (
+                sig_n_at[{i_sy[1:0], i_sx[1:0]}] + 1
+            );
         end else begin
             other_n <= other_n + 1;
             $display("%0t rv_agent: inbound flit type %h from (%0d,%0d) accepted and dropped",
@@ -107,9 +110,10 @@ module rv_agent #(
             end
             @(posedge clk);
             out_valid <= 1'b0;
-            if (guard >= 100000)
+            if (guard >= 100000) begin
                 $display("%0t ERROR rv_agent: the link never accepted a flit",
                          $time);
+            end
         end
     endtask
 
@@ -142,8 +146,9 @@ module rv_agent #(
                      {buf_id, li_off, li_len, 8'd0, 4'd0, 4'd0, 208'd0}));
             for (li_g = 0; li_g < li_ng; li_g = li_g + 1) begin
                 li_pl = {PAY{1'b0}};
-                for (li_w = 0; li_w < 8; li_w = li_w + 1)
+                for (li_w = 0; li_w < 8; li_w = li_w + 1) begin
                     li_pl[li_w*32 +: 32] = img[li_g * 8 + li_w];
+                end
                 send(hdr(dx, dy, T_CU_DATA, 8'd0, (li_g == li_ng - 1), li_pl));
             end
         end

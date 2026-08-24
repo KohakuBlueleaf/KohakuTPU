@@ -128,13 +128,9 @@ module sb_root9 #(
 
     // NMU0 -- JTAG debug bridge, 32-bit, control clock, reaches everything.
     localparam integer NSEG0 = 10;
-    localparam [NSEG0*AW-1:0] S0_BASE =
-        {B_W3, B_W2, B_W1, B_W0, B_MC, B_DDR, B_M3, B_M2, B_M1, B_M0};
-    localparam [NSEG0*AW-1:0] S0_MASK =
-        {MSK_64K, MSK_64K, MSK_64K, MSK_64K, MSK_64K, MSK_1M,
-         MSK_MESH, MSK_MESH, MSK_MESH, MSK_MESH};
-    localparam [NSEG0*DSTW-1:0] S0_DST =
-        {4'd8, 4'd7, 4'd6, 4'd5, 4'd3, 4'd4, 4'd2, 4'd2, 4'd1, 4'd0};
+    localparam [NSEG0*AW-1:0] S0_BASE = {B_W3, B_W2, B_W1, B_W0, B_MC, B_DDR, B_M3, B_M2, B_M1, B_M0};
+    localparam [NSEG0*AW-1:0] S0_MASK = {MSK_64K, MSK_64K, MSK_64K, MSK_64K, MSK_64K, MSK_1M, MSK_MESH, MSK_MESH, MSK_MESH, MSK_MESH};
+    localparam [NSEG0*DSTW-1:0] S0_DST = {4'd8, 4'd7, 4'd6, 4'd5, 4'd3, 4'd4, 4'd2, 4'd2, 4'd1, 4'd0};
 
     // NMU1 -- XDMA bulk, 512-bit, PCIe clock, mesh memory only.
     localparam integer NSEG1 = 4;
@@ -146,8 +142,7 @@ module sb_root9 #(
     // windows are absent from this table, which is v5's exclude_bd_addr_seg.
     localparam integer NSEG2 = 6;
     localparam [NSEG2*AW-1:0] S2_BASE = {B_W3, B_W2, B_W1, B_W0, B_MC, B_DDR};
-    localparam [NSEG2*AW-1:0] S2_MASK =
-        {MSK_64K, MSK_64K, MSK_64K, MSK_64K, MSK_64K, MSK_1M};
+    localparam [NSEG2*AW-1:0] S2_MASK = {MSK_64K, MSK_64K, MSK_64K, MSK_64K, MSK_64K, MSK_1M};
     localparam [NSEG2*DSTW-1:0] S2_DST = {4'd8, 4'd7, 4'd6, 4'd5, 4'd3, 4'd4};
 
     // -------------------------------------------------------- per-port config

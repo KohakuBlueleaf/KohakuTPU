@@ -84,10 +84,12 @@ module rv_ram_be #(
     // one port writing the address the other reads gives invalid read data. The
     // scratchpad hit this on every doorbell and nothing noticed for a long time,
     // so the invariant is guarded here for good.
-    always @(posedge clk)
-        if ((XPORT_OK == 0) && a_en && (|a_we) && b_en && (a_addr == b_addr))
+    always @(posedge clk) begin
+        if ((XPORT_OK == 0) && a_en && (|a_we) && b_en && (a_addr == b_addr)) begin
             $display("%0t ERROR rv_ram_be: port A writes word %0d while port B reads it -- the read data is undefined",
                      $time, a_addr);
+        end
+    end
 `endif
 
 endmodule

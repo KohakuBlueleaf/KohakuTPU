@@ -129,13 +129,34 @@ module InPortSwitch #(
     // one is true anyway, but the four invalid corner coordinates would otherwise
     // assert two directions at once and break the one-hot assumption.
     wire want_west  = (!x_done && (r_pos_x < MX)) || (at_router && (pos_x < MX));
-    wire want_east  = !want_west &&
-                      ((!x_done && (r_pos_x > MX)) || (at_router && (pos_x > MX)));
-    wire want_north = !want_west && !want_east &&
-                      ((x_done && !y_done && (r_pos_y < MY)) || (at_router && (pos_y < MY)));
-    wire want_south = !want_west && !want_east && !want_north &&
-                      ((x_done && !y_done && (r_pos_y > MY)) || (at_router && (pos_y > MY)));
-    wire want_local = !want_west && !want_east && !want_north && !want_south && at_router;
+    wire want_east = (
+        !want_west
+        && ((!x_done && (r_pos_x > MX)) || (at_router && (pos_x > MX)))
+    );
+    wire want_north = (
+        !want_west
+        && !want_east
+        && (
+            (x_done && !y_done && (r_pos_y < MY))
+            || (at_router && (pos_y < MY))
+        )
+    );
+    wire want_south = (
+        !want_west
+        && !want_east
+        && !want_north
+        && (
+            (x_done && !y_done && (r_pos_y > MY))
+            || (at_router && (pos_y > MY))
+        )
+    );
+    wire want_local = (
+        !want_west
+        && !want_east
+        && !want_north
+        && !want_south
+        && at_router
+    );
 
     wire [4:0] port_choice = {want_local, want_west, want_south, want_east, want_north};
 
@@ -163,13 +184,16 @@ module InPortSwitch #(
     reg                  offered;
     reg [DATA_WIDTH-1:0] offered_d;
     always @(posedge clk) begin
-        if (rst) offered <= 1'b0;
+        if (rst) begin
+            offered <= 1'b0;
+        end
         else begin
             offered   <= data_valid && port_busy;
             offered_d <= data_in;
-            if (offered && !(data_valid && (data_in == offered_d)))
+            if (offered && !(data_valid && (data_in == offered_d))) begin
                 $display("%0t ERROR noc_inport (%0d,%0d): flit LOST -- sender did not hold",
                          $time, POS_X, POS_Y);
+            end
         end
     end
 `endif

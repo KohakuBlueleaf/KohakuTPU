@@ -29,7 +29,14 @@ module dsp_pump_poc #(
     // 1x data is stable across both 2x halves, so no CDC: that is why the two
     // clocks must come from ONE MMCM at an integer ratio, phase aligned.
     reg phase;
-    always @(posedge clk2x) if (rst) phase <= 1'b0; else phase <= ~phase;
+    always @(posedge clk2x) begin
+        if (rst) begin
+            phase <= 1'b0;
+        end
+        else begin
+            phase <= ~phase;
+        end
+    end
 
     genvar g;
     generate
@@ -70,17 +77,27 @@ module dsp_pump_poc #(
                     a_r <= phase ? x1 : x0;
                     b_r <= phase ? m1 : m0;
                     m_r <= a_r * b_r;
-                    if (phase) p0_r <= m_r;
-                    else       p1_r <= m_r;
+                    if (phase) begin
+                        p0_r <= m_r;
+                    end
+                    else begin
+                        p1_r <= m_r;
+                    end
                 end
             end
             if (MODE == 1) begin : g_recap
                 always @(posedge clk1x) begin
-                    if (rst) p_out[g*2*PW +: 2*PW] <= {(2*PW){1'b0}};
-                    else     p_out[g*2*PW +: 2*PW] <= {p1_r, p0_r};
+                    if (rst) begin
+                        p_out[g*2*PW +: 2*PW] <= {(2*PW){1'b0}};
+                    end
+                    else begin
+                        p_out[g*2*PW +: 2*PW] <= {p1_r, p0_r};
+                    end
                 end
             end else begin : g_direct
-                always @(*) p_out[g*2*PW +: 2*PW] = {p1_r, p0_r};
+                always @(*) begin
+                    p_out[g*2*PW +: 2*PW] = {p1_r, p0_r};
+                end
             end
         end
     end
