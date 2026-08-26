@@ -32,6 +32,214 @@ import {
 const n = (v) => (v == null ? "—" : v.toLocaleString());
 const mhz = (v) => (v == null ? "—" : v.toFixed(1));
 
+/* ---- how one row is actually produced ----------------------------------- */
+const pipeline = {
+  nodes: [
+    {
+      id: "suite",
+      x: 0,
+      y: 6,
+      w: 9,
+      h: 6,
+      label: "suite",
+      sub: "the axis, and everything held fixed",
+      accent: true,
+    },
+    {
+      id: "wrap",
+      x: 12,
+      y: 6,
+      w: 9,
+      h: 6,
+      label: "wrappers",
+      sub: "regenerated first, where a config needs one",
+    },
+    {
+      id: "dir",
+      x: 24,
+      y: 0,
+      w: 9,
+      h: 6,
+      label: "own dir",
+      sub: "one per config",
+    },
+    {
+      id: "viv",
+      x: 24,
+      y: 12,
+      w: 9,
+      h: 6,
+      label: "own Vivado",
+      sub: "3–5 at a time · ~10 GiB each",
+    },
+    {
+      id: "synth",
+      x: 36,
+      y: 6,
+      w: 10,
+      h: 6,
+      label: "ONE synth_design",
+      sub: "no opt · no place · no route",
+      accent: true,
+    },
+    {
+      id: "rec",
+      x: 49,
+      y: 0,
+      w: 9,
+      h: 5,
+      label: "@@@REC",
+      sub: "resources",
+    },
+    {
+      id: "fmax",
+      x: 49,
+      y: 6.5,
+      w: 9,
+      h: 5,
+      label: "@@@FMAX",
+      sub: "per clock",
+    },
+    {
+      id: "hier",
+      x: 49,
+      y: 13,
+      w: 9,
+      h: 5,
+      label: "@@@HIER",
+      sub: "per instance",
+    },
+    {
+      id: "md",
+      x: 61,
+      y: 6,
+      w: 10,
+      h: 6,
+      label: "sweep_<suite>.md",
+      sub: "one netlist, three tables",
+      accent: true,
+    },
+  ],
+  edges: [
+    { from: "suite:r", to: "wrap:l", dir: "h" },
+    { from: "wrap:r", to: "dir:l", dir: "h" },
+    { from: "wrap:r", to: "viv:l", dir: "h" },
+    { from: "dir:r", to: "synth:l", dir: "h" },
+    { from: "viv:r", to: "synth:l", dir: "h" },
+    { from: "synth:r", to: "rec:l", dir: "h", accent: true },
+    { from: "synth:r", to: "fmax:l", dir: "h", accent: true },
+    { from: "synth:r", to: "hier:l", dir: "h", accent: true },
+    { from: "rec:r", to: "md:l", dir: "h" },
+    { from: "fmax:r", to: "md:l", dir: "h", accent: true },
+    { from: "hier:r", to: "md:l", dir: "h" },
+  ],
+};
+
+/* ---- what a row does NOT tell you --------------------------------------- */
+const notTold = {
+  cols: [
+    { key: "q", label: "A question this page cannot answer" },
+    { key: "w", label: "Why not, and who can" },
+  ],
+  rows: [
+    {
+      q: "<b>Will it close timing?</b>",
+      w: "Nothing here is placed or routed. An Fmax is an upper bound on what the logic depth permits, and this project has measured a module lose <b>0.740&nbsp;ns</b> between the two. The placed results live on <span class='chip'>physical</span> and on the projects' own pages.",
+      _tone: "bad",
+    },
+    {
+      q: "<b>How many sites will the placer actually pack this into?</b>",
+      w: "Occupancy is a placement result and out-of-context synthesis has none. The placed image sits at 88–95% CLB while using 61–69% of its LUTs, so a LUT saving converts into placeable sites only as well as the placer packs.",
+      _tone: "bad",
+    },
+    {
+      q: "<b>Is it faster?</b>",
+      w: "Nothing here runs. Cycle counts come from the component benches, and the two frontier tools carry them alongside each row for exactly that reason — a low-LUT point that costs twice the cycles is a different animal at the same area.",
+    },
+    {
+      q: "<b>What does the whole accelerator cost?</b>",
+      w: "These are the framework's own modules. A compute unit somebody built is that project's measurement and belongs on that project's pages.",
+    },
+    {
+      q: "<b>Are two rows from different suites comparable?</b>",
+      w: "Only as far as someone has checked. Within a suite they are comparable by construction — one script, one module, one generic moving.",
+      _tone: "warn",
+    },
+  ],
+};
+
+/* ---- running one yourself ------------------------------------------------ */
+const procedure = {
+  cols: [
+    { key: "n", label: "#", mono: true, align: "center" },
+    { key: "s", label: "Step" },
+  ],
+  rows: [
+    {
+      n: "1",
+      s: "<b>Name the axis, and write down what is held.</b> A suite is one generic moving; everything else fixed is what makes its rows differenceable.",
+    },
+    {
+      n: "2",
+      s: "<b>Give every configuration a constraint it can be judged against.</b> A resource figure only means something beside the period it was asked for — synthesis spends area chasing timing it cannot reach.",
+    },
+    {
+      n: "3",
+      s: "<b>Emit the record, the per-clock Fmax and the hierarchy from ONE synthesis.</b> Three tables from one netlist cannot disagree about which design they describe; three runs can.",
+    },
+    {
+      n: "4",
+      s: "<b>Make an empty timing query an error.</b> Vivado returns nothing rather than failing, so a run whose XDC did not apply reports every figure unconstrained and looks fine.",
+      _tone: "warn",
+    },
+    {
+      n: "5",
+      s: "<b>Check that the axis moved something and that the others did not.</b> Two clocks identical to the tenth of a megahertz across every point is the evidence the sweep varied what it claims to.",
+    },
+    {
+      n: "6",
+      s: "<b>Cap concurrency on memory, not on cores.</b> A line job costs ~10 GiB resident, not the ~3 GiB its own report calls a peak.",
+    },
+    {
+      n: "7",
+      s: "<b>Record the row that does not fit your story.</b> There is one on this page and no claim rests on it; smoothing it over is how a sweep becomes an argument instead of a measurement.",
+    },
+  ],
+};
+
+/* ---- the framework's shipped PE, measured on its own --------------------
+ * Not one of the nine sweeps: a single OOC synthesis of the whole unit via
+ * scripts/tcl/ooc_rv_pe.tcl at the SHIPPED configuration. It is here because
+ * src/kohakuaccel/pe/rv32/ is framework RTL, and it is the one row on this
+ * page whose result MISSES the period it was asked for. */
+const rvPe = {
+  cols: [
+    { key: "k", label: "rv_pe · shipped configuration", mono: true },
+    { key: "v", label: "", mono: true, align: "right" },
+  ],
+  rows: [
+    { k: "request", v: "<b>2.500 ns</b> — 400.0 MHz" },
+    {
+      k: "achieved",
+      v: "<b>363.5 MHz</b> — 2.751 ns",
+      _tone: "warn",
+    },
+    {
+      k: "slack",
+      v: "<b>−0.251 ns</b> — it did NOT meet the request",
+      _tone: "bad",
+    },
+    { k: "LUT", v: "2,672" },
+    { k: "FF", v: "3,844" },
+    { k: "BRAM", v: "9" },
+    {
+      k: "DSP48",
+      v: "<b>4</b> <span class='opacity-60'>— the RV32M multiplier</span>",
+      _tone: "good",
+    },
+  ],
+};
+
 /* ---- the index of suites ------------------------------------------------ */
 const ORDER = [
   "station-fw512",
@@ -468,15 +676,17 @@ const disagree = {
     </Callout>
 
     <h2 class="doc-h2">How a row is produced</h2>
+    <Fig
+      caption="One configuration, end to end. The single thing worth copying is the narrow waist: three report lines out of ONE synth_design. The resource table, the per-clock Fmax table and the hierarchical breakdown then all describe one netlist, so no two of them can disagree about which design they measure — which is not true of three runs that merely used the same parameters."
+      zoom
+      wide
+    >
+      <BlockDiagram :nodes="pipeline.nodes" :edges="pipeline.edges" />
+    </Fig>
     <p class="doc-p">
-      <code>ooc_sweep.py</code> runs each configuration of a suite in its own
-      working directory under its own Vivado, three to five at a time. The Tcl
-      emits <code>@@@REC</code>, <code>@@@FMAX</code> and
-      <code>@@@HIER</code> lines from a <b>single</b> synthesis, and the script
-      collects them into <code>build/sweep_&lt;suite&gt;.md</code>. That is what
-      makes a sweep file internally consistent: the resource table, the
-      per-clock Fmax table and the hierarchical breakdown all describe one
-      netlist, so no two of them can disagree about which design they measure.
+      Configurations run three to five at a time, each in its own working
+      directory under its own Vivado, and the script collects the lines into
+      <code>build/sweep_&lt;suite&gt;.md</code>.
     </p>
 
     <Callout
@@ -514,11 +724,68 @@ const disagree = {
         Eight more suites — <code>gpu-ladder</code> through
         <code>gpu-pe</code> — measure the SIMT PE under
         <code>src/kohakumpe/simt/</code>, and they live at
-        <a class="text-gem hover:underline" href="#/mpe/measurements"
-          >SIMT PE measurements</a
+        <RouterLink to="/mpe/measurements" class="doc-link"
+          >SIMT PE measurements</RouterLink
         >. They were on this page and should not have been: everything above is
         the method, which is shared, and everything below is the framework's own
         RTL, which is not.
+      </p>
+    </Callout>
+
+    <h2 class="doc-h2">The shipped PE, on its own</h2>
+    <p class="doc-p">
+      Not one of the nine suites — a single synthesis of the whole
+      <code>rv_pe</code> unit rather than a swept axis — but it belongs here
+      because <code>src/kohakuaccel/pe/rv32/</code> is the framework's RTL and
+      not any project's.
+    </p>
+
+    <SpecTable
+      :cols="rvPe.cols"
+      :rows="rvPe.rows"
+      :caption="`scripts/tcl/ooc_rv_pe.tcl · L1_LINES=128 · REGFILE_PRIM=distributed · BTB_ENTRIES=32 · imem and spad 2048 · ${PART} · ${TOOL} · out-of-context SYNTHESIS, not routed`"
+    />
+
+    <Callout
+      kind="trap"
+      title="The request and the result are different figures, and this one MISSED"
+    >
+      <p>
+        A bare “363 MHz” is not a result. The run asked for
+        <b>2.500 ns</b> and the logic came back at <b>2.751 ns</b>: the slack is
+        <b>−0.251 ns</b> and the design <b>did not meet what it was asked for</b>.
+        Quoting the achieved figure without the request beside it turns a miss
+        into a headline. <b>Every Fmax on this site carries its request for that
+        reason</b>, and where a page prints one without it, that is the defect.
+      </p>
+      <p>
+        It also means the usual caveat bites harder rather than softer. This is
+        synthesis, not routing, and this project has measured a module lose
+        <b>0.740&nbsp;ns</b> between the two — so a negative synthesis slack is
+        not something placement absorbs, it is a floor on how much worse the
+        placed number will be.
+      </p>
+    </Callout>
+
+    <Callout
+      kind="measured"
+      title="4 DSP48 — the RV32 PE has an integer multiplier, and older tables saying 0 predate it"
+    >
+      <p>
+        <code>mul</code>, <code>mulh</code>, <code>mulhsu</code> and
+        <code>mulhu</code> are <b>always built</b>: there is no
+        <code>HAS_M</code> and no RV32I build of this core. One 33×33 signed
+        multiply serves all four, and it occupies four DSP48 columns rather than
+        fabric — which is the right axis on this part, where DSP is the cheap
+        resource and LUT is the binding one.
+      </p>
+      <p>
+        <code>div</code>, <code>divu</code>, <code>rem</code> and
+        <code>remu</code> are <b>not built and fault</b>, by name in the
+        assembler and by encoding in the decoder, so a divide can be neither
+        assembled nor executed by accident.
+        <b>Any table reporting this PE at 0 DSP is measuring a core that no
+        longer exists.</b>
       </p>
     </Callout>
 
@@ -740,6 +1007,16 @@ const disagree = {
       they are comparable only as far as they have been checked to be.
     </Callout>
 
+    <h2 class="doc-h2">What a row does not tell you</h2>
+    <SpecTable
+      :cols="notTold.cols"
+      :rows="notTold.rows"
+      caption="Everything above sizes designs and ranks options. It closes nothing."
+    />
+
+    <h2 class="doc-h2">Running one of your own</h2>
+    <SpecTable :cols="procedure.cols" :rows="procedure.rows" />
+
     <h2 class="doc-h2">Reproducing any of it</h2>
     <p class="doc-p">
       One command per suite. Each writes the file named in the table above,
@@ -782,12 +1059,12 @@ vivado -mode batch -source scripts/tcl/ooc_station.tcl -tclargs 512 3 4 1</code>
         <code>khs_frontier.py</code> additionally stamps each row with a
         declared <b>RTL revision</b>, because a configuration measured before an
         RTL change is not comparable to one measured after it, and an unlabelled
-        row is not a measurement. Their results are written up in
-        <a class="text-gem hover:underline" href="#/mpe/cpu"
-          >the controller PE</a
+        row is not a measurement. Their results are written up on
+        <RouterLink to="/component/rv32pe" class="doc-link"
+          >the RV32 PE</RouterLink
         >
         and
-        <a class="text-gem hover:underline" href="#/mpe/simd">the SIMD PE</a>
+        <RouterLink to="/mpe/simd" class="doc-link">the SIMD PE</RouterLink>
         pages.
       </p>
     </Callout>

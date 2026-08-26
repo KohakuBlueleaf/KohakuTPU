@@ -1,15 +1,166 @@
 <script setup>
 // ===========================================================================
-// Memory agent — microarchitecture.
+// System node — microarchitecture.
 //
-// The companion page (/framework/sysnode) is the WHAT: the instruction set, the
-// contracts, the two addon slots. This one is the HOW, read out of the RTL:
-// two instruction streams inside one module, the tag that makes out-of-order
-// responses legal, the slot table and the fairness rule that lost a dirty
-// line, and the staging store that is deliberately not a cache.
+// /component/sysnode is what the block IS and what it costs; /framework/sysnode
+// is the contract a compute unit builds against. This one is the HOW, read out
+// of the RTL: two instruction streams inside one memory port, the tag that
+// makes out-of-order responses legal, the slot table and the fairness rule that
+// governs it, the staging store that is deliberately not a cache, the mover,
+// and the control complex in front of both.
 //
-// Every trap here is a failure that HAPPENED. Each one names the file.
+// Every trap here is a failure mode the RTL is written to avoid, named with the
+// file that states it. Every figure is out-of-context SYNTHESIS on
+// xcvu13p-fhgb2104-2L-e unless a row says otherwise.
 // ===========================================================================
+
+// ------------------------------------------------- the control complex
+// The processor's memory path, left to right. Sv39 sits in the WRAPPER, not in
+// the core, so the mesh compute-unit build of the same core carries no MMU.
+const cpath = {
+  nodes: [
+    {
+      id: "core",
+      x: 0,
+      y: 2,
+      w: 10,
+      h: 10,
+      label: "rv64_core",
+      sub: "physical addresses only",
+      accent: true,
+    },
+    {
+      id: "mmu",
+      x: 17,
+      y: 2,
+      w: 10,
+      h: 10,
+      label: "rv64_mmu",
+      sub: "Sv39 TLB and its walker",
+    },
+    {
+      id: "dec",
+      x: 34,
+      y: 2,
+      w: 10,
+      h: 10,
+      label: "address decode",
+      sub: "bit tests, registered on the first cycle",
+      accent: true,
+    },
+    { id: "spad", x: 51, y: -4, w: 11, h: 4, label: "scratchpad", sub: "1 cycle" },
+    {
+      id: "ctrl",
+      x: 51,
+      y: 1,
+      w: 11,
+      h: 4,
+      label: "control region",
+      sub: "mover · doorbell · exit",
+    },
+    {
+      id: "l1",
+      x: 51,
+      y: 6,
+      w: 11,
+      h: 4,
+      label: "rv64_l1",
+      sub: "DRAM and nothing else",
+    },
+    {
+      id: "unc",
+      x: 51,
+      y: 11,
+      w: 11,
+      h: 4,
+      label: "uncached",
+      sub: "staging, node registers",
+    },
+    {
+      id: "np",
+      x: 69,
+      y: 4,
+      w: 11,
+      h: 6,
+      label: "rv64_nport",
+      sub: "one client at a time, so a priority mux",
+    },
+    {
+      id: "mag",
+      x: 87,
+      y: 4,
+      w: 10,
+      h: 6,
+      label: "cp_* → MAG",
+      sub: "one outstanding",
+      accent: true,
+    },
+  ],
+  edges: [
+    { from: "core:r", to: "mmu:l", label: "VA", accent: true },
+    { from: "mmu:r", to: "dec:l", label: "PA", accent: true },
+    { from: "dec:r", to: "spad:l", label: "local" },
+    { from: "dec:r", to: "ctrl:l" },
+    { from: "dec:r", to: "l1:l", label: "cached" },
+    { from: "dec:r", to: "unc:l", label: "uncached" },
+    { from: "l1:r", to: "np:l", label: "miss" },
+    { from: "unc:r", to: "np:l" },
+    { from: "np:r", to: "mag:l", accent: true },
+  ],
+};
+
+const cxCols = [
+  { key: "r", label: "Region", mono: true },
+  { key: "t", label: "Test in the RTL", mono: true },
+  { key: "w", label: "What is there" },
+];
+const cxRows = [
+  {
+    r: "scratchpad",
+    t: "pa[39:15] == 2 at 32 KB",
+    w: "local 64-bit words, answered by the array in the cycle after the address. The slice moves with the size, which is what keeps the test one equality",
+  },
+  {
+    r: "control region",
+    t: "pa[39:8] == 0x200",
+    w: "256 bytes: program exit, the console byte, <code>satp</code>, the mover's registers and the interlink doorbell's",
+  },
+  {
+    r: "node, cached",
+    t: "|pa[39:28] &amp;&amp; pa[31]",
+    w: "the L1's business — <b>DRAM and nothing else</b>",
+    _tone: "good",
+  },
+  {
+    r: "node, uncached",
+    t: "|pa[39:28] &amp;&amp; !pa[31]",
+    w: "staging and the node's own registers, straight out on <code>cp_*</code>",
+  },
+];
+
+const swapCols = [
+  { key: "w", label: "What the RV32 shell did" },
+  { key: "y", label: "Why that is wrong for this unit" },
+];
+const swapRows = [
+  {
+    w: "<b>kick, run to completion, report a 32-bit word</b>",
+    y: "that is a batch compute unit's lifecycle. A runtime boots once and runs — there is no completion to report and no result word to carry",
+  },
+  {
+    w: "<b>inbound gated by the fabric's own busy signal</b>",
+    y: "<b>the unit that arbitrates the fabric must not be flow-controlled by the fabric.</b> Blocked sending a dispatch, it stops draining its receive queue; the queue fills; busy rises; and the completions it needs cannot land. A compute unit can afford to block, the scheduler cannot",
+    _tone: "bad",
+  },
+  {
+    w: "<b>the image arrives as CU_DATA flits</b>",
+    y: "a second memory-write protocol. AXI write plus a doorbell needs no loader FSM, no <code>buf_id</code> map, no bounds check and no receive-quiet interlock",
+  },
+  {
+    w: "<b>32-bit addresses into a 40-bit map</b>",
+    y: "the top eight structural bits cannot be formed. The RV32 complex worked around it with a segment file; a 64-bit core holds the address",
+  },
+];
 
 // ------------------------------------------------------------- the port
 // Landscape. Read path on rows 0 and 5, write path on rows 10 and 15, one
@@ -454,9 +605,10 @@ const slotRows = [
     m: "beats expected and beats received, both <code>$clog2(WBURST) + 1</code> bits — which is where a <code>len &gt; 7</code> wraps",
   },
   {
-    f: "ws_data",
+    f: "the slot data array",
     w: "slot × beat",
-    m: "<code>WR_SLOTS × WBURST</code> beats of <code>DATA_W</code>. The part that grows fastest, and both factors are sized for correctness rather than tuned",
+    m: "<code>WR_SLOTS × WBURST</code> beats of <code>DATA_W</code> — <b>32 Kbit, and it is block RAM</b>, read one beat ahead. As a register array it was distributed RAM read at three indices: <b>1,218 LUT per port</b>. See the read-ahead below",
+    _tone: "good",
   },
   {
     f: "ws_fill_now",
@@ -490,6 +642,159 @@ const scanRows = [
     _tone: "good",
   },
 ];
+
+// ------------------------------------------------ the write-slot read-ahead
+const readAhead = {
+  nodes: [
+    {
+      id: "arr",
+      x: 0,
+      y: 0,
+      w: 13,
+      h: 7,
+      label: "the slot data array",
+      sub: "WR_SLOTS × WBURST beats · 32 Kbit · 4 RAMB36 per port",
+      accent: true,
+    },
+    {
+      id: "next",
+      x: 19,
+      y: 0,
+      w: 11,
+      h: 7,
+      label: "wd_next",
+      sub: "the array's output · HOLDS while the read enable is low",
+      accent: true,
+    },
+    {
+      id: "cur",
+      x: 36,
+      y: 0,
+      w: 11,
+      h: 7,
+      label: "wd_cur",
+      sub: "the beat on the bus this cycle",
+      accent: true,
+    },
+    {
+      id: "axi",
+      x: 53,
+      y: 0,
+      w: 12,
+      h: 7,
+      label: "AXI W",
+      sub: "or staging port B, one word per beat",
+    },
+    {
+      id: "raddr",
+      x: 19,
+      y: 11,
+      w: 11,
+      h: 6,
+      label: "wd_raddr",
+      sub: "the beat AFTER wd_next",
+    },
+    {
+      id: "adv",
+      x: 36,
+      y: 11,
+      w: 11,
+      h: 6,
+      label: "wd_adv",
+      sub: "a beat left, or wd_cur is not primed yet",
+    },
+  ],
+  edges: [
+    { from: "arr:r", to: "next:l", label: "rd_data" },
+    { from: "next:r", to: "cur:l", label: "on wd_adv", accent: true },
+    { from: "cur:r", to: "axi:l", accent: true },
+    { from: "raddr:l", to: "arr:b", label: "rd_addr" },
+    { from: "adv:l", to: "raddr:r", label: "+1" },
+    { from: "adv:t", to: "cur:b", label: "load" },
+  ],
+};
+
+const raBroken = {
+  rows: [
+    {
+      name: "state",
+      kind: "text",
+      values: ["IDLE", "WR_DATA", "WR_DATA", "WR_DATA", "WR_DATA", "WR_DATA", "WR_DATA"],
+    },
+    { name: "m_wready", kind: "bit", values: [0, 0, 0, 1, 0, 1, 1] },
+    { name: "wd_adv", kind: "bit", values: [0, 1, 1, 1, 0, 1, 1] },
+    { name: "rd_en (free)", kind: "bit", values: [1, 1, 1, 1, 1, 1, 1], mark: [4] },
+    { name: "wd_raddr", kind: "bus", values: ["1", "1", "2", "3", "4", "4", "5"] },
+    {
+      name: "wd_next",
+      kind: "bus",
+      values: [null, "b0", "b1", "b2", "b3", "b4", "b5"],
+      mark: [5],
+    },
+    { name: "wd_cur", kind: "bus", values: [null, null, "b0", "b1", "b2", "b2", "b4"], mark: [6] },
+    { name: "on the bus", kind: "text", values: ["", "", "", "b0", "—", "b1", "b2"] },
+  ],
+  notes: [
+    {
+      cycle: 4,
+      text: "The bus stalls, so wd_adv is low and nothing advances — except the array, whose read enable is free-running. It re-presents wd_raddr, which is already the beat after next.",
+      tone: "bad",
+    },
+    {
+      cycle: 5,
+      text: "wd_next has moved on to b4 while wd_cur was still holding b2. b3 existed for exactly one cycle, in a register nothing read.",
+      tone: "bad",
+    },
+    {
+      cycle: 6,
+      text: "wd_cur takes b4. The burst will put b0, b1, b2, b4 on the bus with the right beat count and the right length — a well-formed AXI write of the wrong bytes, in the middle. Nothing reports it.",
+      tone: "bad",
+    },
+  ],
+};
+
+const raFixed = {
+  rows: [
+    {
+      name: "state",
+      kind: "text",
+      values: ["IDLE", "WR_DATA", "WR_DATA", "WR_DATA", "WR_DATA", "WR_DATA", "WR_DATA"],
+    },
+    { name: "m_wready", kind: "bit", values: [0, 0, 0, 1, 0, 1, 1] },
+    { name: "wd_ok", kind: "bit", values: [0, 0, 1, 1, 1, 1, 1] },
+    { name: "wd_adv = rd_en", kind: "bit", values: [1, 1, 1, 1, 0, 1, 1], mark: [4] },
+    { name: "wd_raddr", kind: "bus", values: ["1", "1", "2", "3", "4", "4", "5"] },
+    {
+      name: "wd_next",
+      kind: "bus",
+      values: [null, "b0", "b1", "b2", "b3", "b3", "b4"],
+      mark: [5],
+    },
+    { name: "wd_cur", kind: "bus", values: [null, null, "b0", "b1", "b2", "b2", "b3"] },
+    { name: "on the bus", kind: "text", values: ["", "", "", "b0", "—", "b1", "b2"] },
+  ],
+  notes: [
+    {
+      cycle: 0,
+      text: "Beat 0 is addressed while the machine is still in S_IDLE, so the first WR_DATA cycle already has it on wd_next. One priming cycle per burst, not two.",
+      tone: "good",
+    },
+    {
+      cycle: 1,
+      text: "wd_ok is low, so wd_adv fires on that alone and pulls b0 into wd_cur. From here the read enable IS the advance.",
+      tone: "good",
+    },
+    {
+      cycle: 4,
+      text: "The bus stalls. The read enable goes low with the advance, so the array's output register holds b3 rather than sampling the next address. Nothing moves and nothing is lost.",
+      tone: "good",
+    },
+    {
+      text: "A beat leaves every cycle the bus can take one, from a block RAM with a one-cycle read latency, because the register in front of it is always one beat ahead. That is what buys 1,218 LUT per port back without costing a cycle of throughput.",
+      tone: "good",
+    },
+  ],
+};
 
 const starveBroken = {
   rows: [
@@ -737,7 +1042,13 @@ const strobeRows = [
   {
     p: "unit-to-unit <code>CU_DATA</code>",
     s: "a <code>buf_id</code> whose contract is one 32-bit word with byte enables — <code>BUF_SPAD_W</code> in the reference PE",
-    c: "<b>byte granularity exists here and nowhere else.</b> It never reaches DRAM",
+    c: "byte granularity exists here, and it never reaches DRAM",
+    _tone: "good",
+  },
+  {
+    p: "<b>the processor into <code>mag_stage</code></b> — port B",
+    s: "<b><code>b_wstrb</code>, the AXI strobes, straight through</b>. The banks are the byte-enable RAM variant",
+    c: "<b>an 8-byte store into staging writes eight bytes.</b> Without it a 64-bit store wrote the same value into all four lanes of the 32-byte word — three of every four page-table entries, and every mailbox word sharing a line",
     _tone: "good",
   },
 ];
@@ -784,104 +1095,64 @@ const apAddr = [
   { name: "offset", bits: 32, value: "inside the store" },
 ];
 
+// Horizontal flow, so the stages are TALL and NARROW. As a vertical stack of
+// full-width bars this ran past 1,000 px and off the screen.
 const stage = {
   nodes: [
     {
-      id: "apo",
+      id: "ports",
       x: 0,
       y: 0,
-      w: 14,
-      label: "port A",
-      sub: "a_req · one whole entry",
+      w: 11,
+      h: 11,
+      label: "port A · port B",
+      sub: "A one whole entry, B one word",
+      accent: true,
     },
-    { id: "bpo", x: 16, y: 0, w: 14, label: "port B", sub: "b_req · one word" },
     {
       id: "dec",
-      x: 0,
-      y: 5,
-      w: 30,
-      h: 3.4,
-      label: "decode: mesh FIRST, then aperture",
-      sub: "a_mine · b_mine · a_fault",
+      x: 17,
+      y: 0,
+      w: 11,
+      h: 11,
+      label: "decode, then arbitrate",
+      sub: "mesh FIRST, then aperture · A wins, B goes only for the other port",
       accent: true,
     },
     {
-      id: "arb",
-      x: 0,
-      y: 10,
-      w: 30,
-      h: 3.4,
-      label: "arbitrate — A wins",
-      sub: "b_go only when it wants the OTHER port",
-    },
-    {
-      id: "bk",
-      x: 0,
-      y: 15,
-      w: 14,
-      label: "bank",
-      sub: "the LOW address bits",
-    },
-    { id: "rw", x: 16, y: 15, w: 14, label: "row", sub: "the bits above them" },
-    {
-      id: "disp",
-      x: 0,
-      y: 20,
-      w: 30,
-      h: 3.4,
-      label: "dispatch registers · PIPE",
-      sub: "ONE COPY PER BANK, DONT_TOUCH",
-      accent: true,
+      id: "addr",
+      x: 34,
+      y: 0,
+      w: 11,
+      h: 11,
+      label: "bank | row split",
+      sub: "bank from the LOW bits, row from those above · dispatch register PER BANK, DONT_TOUCH",
     },
     {
       id: "banks",
-      x: 0,
-      y: 25,
-      w: 30,
-      h: 3.4,
-      label: "BANKS × WORDS kohaku_sdpram",
-      sub: "MEM_PRIM ultra · READ_LAT 2",
+      x: 51,
+      y: 0,
+      w: 11,
+      h: 11,
+      label: "BANKS × WORDS",
+      sub: "kohaku_sdpram · ultra · READ_LAT 2",
       accent: true,
     },
     {
-      id: "oreg",
-      x: 0,
-      y: 30,
-      w: 30,
-      h: 3.4,
-      label: "per-bank output register",
-      sub: "the only long wire left is this to the mux",
-    },
-    {
-      id: "sr",
-      x: 0,
-      y: 35,
-      w: 14,
-      label: "bk_sr · wd_sr",
-      sub: "RTOT deep, cannot stall",
-    },
-    {
-      id: "mux",
-      x: 16,
-      y: 35,
-      w: 14,
-      label: "return mux",
-      sub: "a_rdata / b_rdata",
-      accent: true,
+      id: "ret",
+      x: 68,
+      y: 0,
+      w: 11,
+      h: 11,
+      label: "output reg → mux",
+      sub: "per-bank register, then a fixed-latency shift register that cannot stall",
     },
   ],
   edges: [
-    { from: "apo:b", to: "dec:t", dir: "v" },
-    { from: "bpo:b", to: "dec:t", dir: "v" },
-    { from: "dec:b", to: "arb:t", dir: "v", accent: true },
-    { from: "arb:b", to: "bk:t", dir: "v" },
-    { from: "arb:b", to: "rw:t", dir: "v" },
-    { from: "bk:b", to: "disp:t", dir: "v" },
-    { from: "rw:b", to: "disp:t", dir: "v" },
-    { from: "disp:b", to: "banks:t", dir: "v", accent: true },
-    { from: "banks:b", to: "oreg:t", dir: "v" },
-    { from: "oreg:b", to: "sr:t", dir: "v" },
-    { from: "sr:r", to: "mux:l", dir: "h", accent: true },
+    { from: "ports:r", to: "dec:l", label: "req", accent: true },
+    { from: "dec:r", to: "addr:l", label: "grant" },
+    { from: "addr:r", to: "banks:l", label: "addr", accent: true },
+    { from: "banks:r", to: "ret:l", label: "data", accent: true },
   ],
 };
 
@@ -935,7 +1206,7 @@ const placeRows = [
   {
     w: "STAGE_AT_PORT = 0",
     who: "one store <b>inside each</b> <code>mag_mem_port</code>, upstream of where the requesters meet — so <b>the mover and the interlink can never be staged</b>",
-    cost: "<code>PORTS</code> × 64. At <code>PORTS = 4</code> that is <b>256 URAM</b>",
+    cost: "<code>PORTS</code> × 64. At two ports that is <b>4 MB of URAM to obtain 2 MB of reachable store</b>; at four, <b>256 URAM</b>",
     _tone: "bad",
   },
   {
@@ -946,176 +1217,92 @@ const placeRows = [
   },
 ];
 
-// ------------------------------------------------------------- the q contract
-const qBroken = {
-  rows: [
-    { name: "q_valid", kind: "bit", values: [1, 1, 1, 1] },
-    { name: "q_write", kind: "bit", values: [1, 1, 0, 0], mark: [2] },
-    { name: "q_addr", kind: "bus", values: ["W", "W", "R", "R"], mark: [2] },
-    {
-      name: "arbiter's snapshot",
-      kind: "bus",
-      values: ["—", "write", "write", "write"],
-    },
-    {
-      name: "captured address",
-      kind: "bus",
-      values: [null, null, null, "R"],
-      mark: [3],
-    },
-    { name: "q_ready (one wire)", kind: "bit", values: [0, 0, 0, 1] },
-    {
-      name: "",
-      kind: "text",
-      values: [
-        "offered as a write",
-        "",
-        "switched to a read",
-        "the WRONG channel pops",
-      ],
-    },
-  ],
-  notes: [
-    {
-      cycle: 3,
-      text: "Both arbiters decide on a REGISTERED request vector and sample the bus LIVE. A presentation that switches mid-wait gets the other transaction's address captured, and the single grant wire then pops whichever channel the requester is offering now.",
-      tone: "bad",
-    },
-    {
-      text: "Measured in rv_mc4: a writeback of line 641 landed at 787 and the fill returned 641. Nothing on the AXI side is wrong — the burst is well formed, it is simply someone else's.",
-      tone: "bad",
-    },
-  ],
-};
-
-const qFixed = {
-  rows: [
-    { name: "q_valid", kind: "bit", values: [1, 1, 1, 1] },
-    { name: "sel_h (holding)", kind: "bit", values: [0, 1, 1, 1], mark: [1] },
-    { name: "q_write", kind: "bit", values: [1, 1, 1, 1] },
-    { name: "q_addr", kind: "bus", values: ["W", "W", "W", "W"] },
-    { name: "q_ready", kind: "bit", values: [0, 0, 0, 1] },
-    {
-      name: "",
-      kind: "text",
-      values: [
-        "write wins at FIRST offer",
-        "choice held",
-        "held",
-        "granted — as offered",
-      ],
-    },
-  ],
-  notes: [
-    {
-      text: "The adapter in mag.v latches which channel it offered on the first cycle the request was not granted, and holds it until q_ready. Write wins when both are offered, but only at the first offer.",
-      tone: "good",
-    },
-    {
-      text: "mag_dram_port carries the matching guard as a simulation assertion: a requester that changes {write, addr, len} while waiting is reported by name, with the old and new values, rather than silently crossing two transactions.",
-      tone: "good",
-    },
-  ],
-};
+// -------------------------------------------- the staging store's two ports
+const stgPortCols = [
+  { key: "p", label: "Port", mono: true },
+  { key: "d", label: "Driven by" },
+  { key: "w", label: "Per access" },
+];
+const stgPortRows = [
+  {
+    p: "A",
+    d: "<code>mag_mem_port</code>, at <code>STAGE_AT_PORT = 0</code> — <code>a_req(stg_go)</code>, <code>WORDS(4)</code>",
+    w: "a whole <b>1,024-bit entry</b>, entry-granular fill",
+  },
+  {
+    p: "A",
+    d: "<b>nothing</b>, at <code>STAGE_AT_PORT = 1</code>. <code>mag_stage_port</code> ties <code>a_req</code>, <code>a_we</code>, <code>a_addr</code> and <code>a_wdata</code> to zero and leaves every A output unconnected",
+    w: "—",
+    _tone: "bad",
+  },
+  {
+    p: "B",
+    d: "the memory port's write path, or the converged path's read and write",
+    w: "<b>one <code>DATA_W</code> word</b>, 1:1 with the beat, <b>one read outstanding</b>",
+    _tone: "warn",
+  },
+];
 
 // ----------------------------------------------------------------- the mover
+// Horizontal flow, tall narrow stages. The vertical stack this replaced ran to
+// 1,093 px — taller than the viewport it is read in.
 const mover = {
   nodes: [
     {
       id: "cfg",
       x: 0,
       y: 0,
-      w: 30,
-      h: 3.4,
-      label: "cfg_en · cfg_addr · cfg_data",
-      sub: "a slice of the control window, offsets preserved",
+      w: 11,
+      h: 13,
+      label: "cfg port",
+      sub: "a slice of the processor's control range, offsets preserved · nine registers",
     },
     {
-      id: "src",
-      x: 0,
-      y: 5,
-      w: 14,
-      label: "u_src — mx_tdesc",
-      sub: "6 dims, bound axes",
-    },
-    {
-      id: "dst",
-      x: 16,
-      y: 5,
-      w: 14,
-      label: "u_dst — mx_tdesc",
-      sub: "DEFINES the iteration space",
+      id: "walk",
+      x: 17,
+      y: 0,
+      w: 11,
+      h: 13,
+      label: "u_src · u_dst",
+      sub: "two mx_tdesc walkers, six dims with bound axes · the DESTINATION defines the iteration space",
       accent: true,
     },
     {
       id: "lat",
-      x: 0,
-      y: 10,
-      w: 30,
-      h: 3.4,
-      label: "the element latch",
-      sub: "e_rd · e_wr · e_kind · e_last · e_flt",
+      x: 34,
+      y: 0,
+      w: 11,
+      h: 13,
+      label: "element latch",
+      sub: "e_rd · e_wr · e_kind · e_last · e_flt — K_RD, K_FILL, K_GEN or K_SKIP",
       accent: true,
     },
     {
-      id: "issue",
-      x: 0,
-      y: 15,
-      w: 30,
-      h: 3.4,
-      label: "the ISSUE engine",
-      sub: "folds consecutive addresses into bursts",
+      id: "iss",
+      x: 51,
+      y: 0,
+      w: 11,
+      h: 13,
+      label: "issue engine",
+      sub: "folds consecutive addresses into bursts · u_arskid → AR · u_cfifo commands · u_dfifo 512 × 256b",
       accent: true,
-    },
-    {
-      id: "ar",
-      x: 0,
-      y: 20,
-      w: 14,
-      label: "u_arskid → AR",
-      sub: "MAX_OUT in flight",
-    },
-    { id: "cq", x: 16, y: 20, w: 14, label: "u_cfifo", sub: "write commands" },
-    {
-      id: "df",
-      x: 0,
-      y: 25,
-      w: 14,
-      label: "u_dfifo",
-      sub: "512 × 256b, block",
     },
     {
       id: "wr",
-      x: 0,
-      y: 30,
-      w: 30,
-      h: 3.4,
-      label: "the WRITE engine",
-      sub: "IDLE · ARM · GEN · DATA",
+      x: 68,
+      y: 0,
+      w: 11,
+      h: 13,
+      label: "write engine",
+      sub: "IDLE · ARM · GEN · DATA → its own AXI master, and NO fabric endpoint",
       accent: true,
-    },
-    {
-      id: "axi",
-      x: 0,
-      y: 35,
-      w: 30,
-      h: 3.4,
-      label: "its own AXI master",
-      sub: "AW · W · B — and NO fabric endpoint",
     },
   ],
   edges: [
-    { from: "cfg:b", to: "src:t", dir: "v" },
-    { from: "cfg:b", to: "dst:t", dir: "v" },
-    { from: "src:b", to: "lat:t", dir: "v" },
-    { from: "dst:b", to: "lat:t", dir: "v", accent: true },
-    { from: "lat:b", to: "issue:t", dir: "v", accent: true },
-    { from: "issue:b", to: "ar:t", dir: "v" },
-    { from: "issue:b", to: "cq:t", dir: "v" },
-    { from: "ar:b", to: "df:t", dir: "v", label: "R" },
-    { from: "df:b", to: "wr:t", dir: "v" },
-    { from: "cq:b", to: "wr:t", dir: "v" },
-    { from: "wr:b", to: "axi:t", dir: "v", accent: true },
+    { from: "cfg:r", to: "walk:l", label: "go" },
+    { from: "walk:r", to: "lat:l", label: "element", accent: true },
+    { from: "lat:r", to: "iss:l", label: "kind", accent: true },
+    { from: "iss:r", to: "wr:l", label: "R · cmd", accent: true },
   ],
 };
 
@@ -1268,56 +1455,226 @@ const timingRows = [
   },
 ];
 
-// ---------------------------------------------------------------- divergence
-const divCols = [
-  { key: "d", label: "Divergence" },
-  { key: "t", label: "Detail" },
-];
-const divRows = [
-  {
-    d: "<b><code>RD_OUT</code> is a 3.25× throughput knob that ships OFF.</b>",
-    t: "<code>mag_dram_port.v</code> states it plainly: 4 outstanding reads per requester measures <b>2,744 → 8,917 MB/s</b> on 20-word bursts, and <b>it corrupts memory in <code>mover_chain1</code></b>. The default is 1, which keeps the pending arrays legal and never uses them. The performance is real and so is the corruption; nothing on this site attributes the first without the second.",
-    _tone: "bad",
-  },
-  {
-    d: "<b>Resolved: the mover no longer reaches into a project package.</b>",
-    t: "<code>mm_mover.v</code> instantiates <code>mx_tdesc</code>, a general N-dimensional affine address generator with bound axes and nothing matmul-specific in it. It used to live with the matmul project; it is <code>src/kohakuaccel/sysnode/mover/mx_tdesc.v</code> now, and the mover itself moved into the control processor.",
-  },
-  {
-    d: "<b>Resolved: <code>sysnode.v</code> is no longer a pass-through.</b>",
-    t: "It was a wrapper around <code>mag</code> plus an optional processor, each with its own fabric port, and <code>mag_1m</code> renamed the master on top of that. It is now THE node: <code>sn_hub</code> owns every attachment, <code>mag</code> and the processor are clients with no port of their own, and <code>mag_1m</code> is deleted.",
-  },
-  {
-    d: "<b>Descriptor field positions exist only as literals.</b>",
-    t: "<code>count</code>, <code>peer</code>, <code>n_peer</code> and <code>entry_words</code> have no macro anywhere; they are literal part-selects in <code>mag_mem_port.v</code> and in each compute unit. <code>noc_pkt.vh</code> is included by no module, so a divergence between two of them is silent — and one has already happened.",
-  },
-];
 </script>
 
 <template>
   <DocPage
-    title="Memory agent — microarchitecture"
-    summary="The RTL, drawn. Two instruction streams inside one module, the {entry, word} tag that makes out-of-order responses legal, the slot table and the fairness rule that lost a dirty line, the staging store that is deliberately not a cache, and the mover's own engine."
-    domain="framework"
+    title="System node — microarchitecture"
+    summary="The RTL, drawn. The control complex and the address space its processor sees, two instruction streams inside one memory port, the {entry, word} tag that makes out-of-order responses legal, the slot table and the fairness rule that governs it, the staging store that is deliberately not a cache, and the mover's own engine."
+    domain="cpu"
     status="shipped"
-    source="src/kohakuaccel/sysnode/core/ · src/kohakuaccel/sysnode/mover/ · docs/arch/sysnode/ · docs/spec/memory-protocol.md"
+    source="src/kohakuaccel/sysnode/ · src/kohakuaccel/pe/rv64-sys/ · docs/arch/sysnode/ · docs/spec/memory-protocol.md"
   >
     <p class="doc-p">
-      <RouterLink to="/framework/sysnode" class="doc-link"
-        >The memory agent page</RouterLink
+      <RouterLink to="/component/sysnode" class="doc-link"
+        >The overview page</RouterLink
       >
-      is what the agent promises. This one is how it is built, and it starts
-      from the thing that is easiest to miss:
+      is what the node is and what it costs;
+      <RouterLink to="/framework/sysnode" class="doc-link"
+        >the framework page</RouterLink
+      >
+      is what it promises a compute unit. This one is how it is built, and it
+      starts from the thing that is easiest to miss:
       <b
-        >the memory agent has an instruction space, so it is a machine that
-        executes rather than a pipe that moves bytes.</b
+        >the node's memory half has an instruction space, so it is a machine
+        that executes rather than a pipe that moves bytes.</b
       >
       One flit is one instruction. It names an address, an entry geometry, a run
       length, a transform and up to three extra destinations, and a single
       memory port is running <b>two</b> of those instruction streams at once.
     </p>
 
+    <h2 class="doc-h2">The control complex, in front of all of it</h2>
+    <p class="doc-p">
+      Before any of that, the node contains a processor. <b>It is not
+      optional</b> — <code>sysnode.v</code> instantiates one unconditionally and
+      there is no slot to leave empty. <b>Which processor it is, is a
+      parameter</b>: <code>CPU_RV64</code>, whose default is <code>0</code> and
+      selects an RV32 complex; at <code>1</code> it selects an RV64 one, with
+      supervisor privilege, Sv39 translation, a write-back L1 and one AXI master
+      onto the same converged path everything else uses.
+    </p>
+    <p class="doc-p">
+      What follows is the RV64 memory path, because it is the one with a
+      translation stage and a range decode worth drawing. The RV32 complex's own
+      pipeline is on
+      <RouterLink to="/component/rv32pe/microarchitecture" class="doc-link"
+        >the RV32 PE microarchitecture page</RouterLink
+      >. <b>Neither complex is described here as shipping</b> — the RV32 one is
+      the default, and what the RV64 one does not connect is
+      <RouterLink to="/component/sysnode" class="doc-link"
+        >stated on the overview page</RouterLink
+      >.
+    </p>
+
+    <Fig
+      caption="Sv39 sits in the WRAPPER, so the core stays a physical-address machine and the mesh compute-unit build of the same core carries no MMU at all. Not drawn: the page-table walker is a FIFTH arrow into rv64_nport, straight from the MMU."
+      zoom
+      wide
+    >
+      <BlockDiagram :nodes="cpath.nodes" :edges="cpath.edges" />
+    </Fig>
+
+    <Callout kind="rule" title="At most one node-port client is ever active">
+      <p>
+        Four things leave the processor — the page-table walker, the L1's fill,
+        its writeback, and an uncached 64-bit access — and
+        <b>never two at once</b>, which is what lets
+        <code>rv64_nport</code> be a priority mux rather than a queue: the MMU
+        holds the core while it walks, the L1 sequences its own eviction ahead
+        of its own fill, and the core stalls on any node access so it cannot
+        issue a second.
+      </p>
+      <p>
+        <b>That invariant is the thing that breaks first if the L1 ever becomes
+        non-blocking</b>, because then a fill and an uncached access can
+        overlap and the module needs real arbitration and per-client response
+        routing. A line is one 256-bit beat, so there are no bursts on this port
+        at all.
+      </p>
+    </Callout>
+
+    <SpecTable
+      :cols="cxCols"
+      :rows="cxRows"
+      caption="Four regions, decided by bit tests. Every range is power-of-two aligned and power-of-two sized so that each test is one equality or one bit"
+    />
+
+    <Callout kind="measured" title="Bit tests, because the decode is in the stall path">
+      <p>
+        Forward mux, address adder, decode, stall — and stall gates
+        <b>every</b> pipeline register, including the predictor's return-address
+        stack. Written as <code>&gt;=</code>/<code>&lt;</code> on 40 bits this
+        decode measured <b>200 failing paths at −0.552 ns</b>. Size and align a
+        range so its test is one bit.
+      </p>
+      <p class="kt-text-caption">
+        Out-of-context synthesis, <code>xcvu13p-fhgb2104-2L-e</code>, Vivado
+        2024.2, at 3.333 ns, <code>rv64_syscore</code> alone.
+      </p>
+    </Callout>
+
+    <Callout kind="rule" title="Register every consumer of the effective address, except a read address">
+      <p>
+        A read has to be issued in the first cycle to be answered in the second.
+        <b>Nothing else does.</b> Writes, write enables, control decodes and
+        stalls all have a spare cycle and must use it — the L1 array's
+        byte-write enable, the scratchpad's, and the control region's write path
+        were each a separate 13-to-15-level chain rooted in the same 64-bit
+        adder until they were registered.
+      </p>
+      <p>
+        The price is <b>one cycle on every memory access</b>, the local
+        scratchpad included, and it is paid deliberately. The structural
+        alternative is an address-generation stage between execute and memory,
+        which this core does not have.
+      </p>
+    </Callout>
+
+    <Callout kind="trap" title="A TLB entry is 57 bits because the card is 40-bit physical">
+      <p>
+        Sv39's PPN field is architecturally <b>44</b> bits. No address on this
+        card exceeds 40, so the stored PPN is 28 and an entry is
+        <code>{valid, tag[21:0], ppn[27:0], perms[5:0]}</code>. At the
+        architectural width the entry is <b>73 bits</b> — and
+        <b>a block-RAM port is 72 at its widest</b>, so the array silently
+        becomes LUTs and the tool issues no warning.
+      </p>
+      <p>
+        The same trap sets the branch predictor's target width: entries store a
+        <b>39-bit</b> target, not 64, which keeps them at 51 bits and inside a
+        port.
+      </p>
+    </Callout>
+
+    <h3 class="doc-h3">mv.go is a store, not an opcode</h3>
+    <p class="doc-p">
+      The mover's registers are a sub-range of the control region, and the
+      doorbell's are the sub-range above it — both take their register index
+      from the address rather than from a decode. Decoding a command from an
+      address leaves the ISA unmodified, so a stock RV64 toolchain compiles a
+      move. <b>When the host's config window and the processor's store pulse in
+      the same cycle, the processor wins.</b>
+    </p>
+
+    <Callout
+      kind="trap"
+      title="Two of the mover's nine registers fall outside that sub-range"
+    >
+      <p>
+        <code>mm_mover</code> decodes
+        <code>reg_sel = {cfg_addr[7:3], 3'b000}</code> and answers at
+        <code>0x00, 0x10, 0x18, 0x20, 0x28, 0x30, 0x38, 0x40, 0x50</code>. The
+        control region maps <code>0x80</code>–<code>0xBF</code> onto mover
+        offsets <code>0x00</code>–<code>0x3F</code>, so <code>0x40</code> — the
+        fill immediate — and <code>0x50</code> — the gather pitch and word count
+        — land in the <b>doorbell</b> sub-range instead.
+      </p>
+      <p>
+        <b>The symptom is a FILL or GATHER move that runs with a stale immediate
+        or stale geometry and reports success.</b> Both registers stay reachable
+        from the host's config window, which passes every offset below
+        <code>0x80</code> through, and from the RV32 complex, whose
+        <code>mv_exec</code> replays an arbitrary
+        <code>{offset, value}</code> list from the scratchpad and can name any
+        of the nine. The two windows were sized independently.
+      </p>
+    </Callout>
+
+    <Callout
+      kind="trap"
+      title="The ship generator cannot select the RV64 complex at all"
+    >
+      <p>
+        <code>sysnode.v</code> takes <code>CPU_RV64</code>, but
+        <code>gen_mesh.py</code> emits no value for it — so every generated ship
+        top elaborates the default RV32 branch, and
+        <b>there is no way to build a ship with the RV64 complex without editing
+        the generator</b>. Every RV64 figure on this site comes from
+        <code>scripts/tcl/ooc_sysnode_rv64.tcl</code>, a standalone
+        <code>sysnode</code> synthesis that sets the parameter directly.
+      </p>
+      <p>
+        <b>The symptom is a silent substitution:</b> a build asked for the RV64
+        node produces the RV32 one, elaborates cleanly, and differs only in a
+        LUT count nobody compares.
+      </p>
+    </Callout>
+
+    <h3 class="doc-h3">Why the RV64 complex has no compute-unit shell</h3>
+    <SpecTable
+      :cols="swapCols"
+      :rows="swapRows"
+      caption="The RV32 complex wears a NoC compute-unit shell, so the node's processor looks from outside exactly like any other unit. Every property that makes that right for a kernel makes it wrong for a runtime"
+    />
+
+    <Callout kind="rule" title="Leaving the shell out is not free">
+      <p>
+        The shell guarantees <b>every write is visible when the completion
+        arrives</b>. That is the host's and a dispatcher's only sequencing
+        point, and a complex without it has to publish its own ordering
+        guarantee to whoever waits on it. <b>The RV64 complex has not done so
+        for its cached range</b>, where a store reaches DRAM only when its line
+        is evicted and there is no software-reachable flush.
+      </p>
+      <p>
+        The other consequence is structural, and it is answered rather than
+        outstanding: with no shell the processor is <b>not enumerated and not
+        kicked</b>, but it does dispatch. A mailbox in its control region builds
+        <code>CU_INST</code> flits and queues the <code>CU_SIGNAL</code>s that
+        come back, as a client of the hub at the <code>(0,0)</code> corner the
+        hub already decodes the processor at.
+        <b>Its inbound busy line is tied low</b> — the unit that arbitrates the
+        fabric must not be flow-controlled by it — so a completion the queue
+        cannot take is dropped and recorded in a sticky bit rather than held.
+      </p>
+    </Callout>
+
     <h2 class="doc-h2">One module, two machines</h2>
+    <p class="doc-p">
+      That is the control half. The rest of this page is the memory half, one
+      port at a time.
+    </p>
 
     <Fig
       caption="mag_mem_port, at signal level. The read path runs across the top: u_rdq, the rs engine, the AR/R channels, the skid and its beat register, the transform, the emit buffer. The write path runs across the bottom: u_wrq, the slot table, the ready-order queue, the st machine, the AW/W/B channels. They meet at exactly one place — mem_out_data, one register, where the emitter outranks the write-ack path. Everything here is per-port state; nothing is shared with another port except the address space on the far side of AXI."
@@ -1470,8 +1827,30 @@ const divRows = [
     <SpecTable
       :cols="sliceCols"
       :rows="sliceRows"
-      caption="Descriptor fields as literal part-selects. noc_pkt.vh has no macro for count, peer, n_peer or entry_words, and is included by no module, so these positions exist here and in each compute unit independently"
+      caption="Descriptor fields as literal part-selects, with what each is normalised to on capture"
     />
+
+    <Callout
+      kind="trap"
+      title="These positions have no single definition anywhere"
+    >
+      <p>
+        <code>count</code>, <code>peer</code>, <code>n_peer</code> and
+        <code>entry_words</code> have <b>no macro</b>.
+        <code>noc_pkt.vh</code> is included by no module, so every position
+        above exists here and independently in each compute unit that builds a
+        descriptor.
+      </p>
+      <p>
+        <b>The symptom of a divergence is a plausible wrong result, not an
+        error</b> — a run length or an entry width read from the wrong bits
+        produces a well-formed request for the wrong bytes.
+        <b>One divergence has already happened</b> in this tree, on the address
+        field: sliced by <code>ADDR_W</code> instead of the flit's fixed 40, it
+        read <code>addr &gt;&gt; 6</code> on a narrower build and placed every
+        request 64× too high, silently.
+      </p>
+    </Callout>
 
     <h2 class="doc-h2">
       Intake: accept exactly when the sender believes you did
@@ -1563,8 +1942,8 @@ const divRows = [
         reference PE ships with <code>WR_MAX = 1</code> — one un-acknowledged
         write — and the comment beside it names <code>mag_mem_port.v</code> as
         the reason. The requester side of this story is on
-        <RouterLink to="/mpe/cpu/microarchitecture" class="doc-link"
-          >the CPU microarchitecture page</RouterLink
+        <RouterLink to="/component/rv32pe/microarchitecture" class="doc-link"
+          >the RV32 PE microarchitecture page</RouterLink
         >.
       </p>
     </Callout>
@@ -1584,6 +1963,78 @@ const divRows = [
         <code>ws_iss</code> on the spot; <code>ws_done</code> at the ack clears
         <code>ws_val</code> and <code>ws_iss</code> together, so the source
         cannot reuse the slot before its data is safe.
+      </p>
+    </Callout>
+
+    <h3 class="doc-h3">The slot data array is block RAM, read one beat ahead</h3>
+
+    <p class="doc-p">
+      The slot table's flags are per slot and cheap. <b>Its data is
+      <code>WR_SLOTS × WBURST</code> beats of <code>DATA_W</code></b> — 32 Kbit
+      at the defaults — and as a register array that is distributed RAM read at
+      three indices, <b>1,218 LUT per port</b> in a node using 46 of the part's
+      2,688 block RAM tiles. Moving it into block RAM is the largest single
+      economy in the node: <b>−2,918 LUT for +8 tiles</b>, four per port.
+    </p>
+
+    <p class="doc-p">
+      What it costs is a one-cycle read latency in front of a bus that wants a
+      beat every cycle. The answer is one register ahead of the array's output
+      and one rule about the read enable.
+    </p>
+
+    <Fig
+      caption="Two registers deep, so a beat can leave every cycle. wd_next is the array's own output register and wd_cur is the beat presented to the bus; wd_raddr already points past both. The read enable is not free-running and is not the state — it IS wd_adv, the same term that moves wd_cur."
+      zoom
+      wide
+    >
+      <BlockDiagram :nodes="readAhead.nodes" :edges="readAhead.edges" />
+    </Fig>
+
+    <Callout kind="rule" title="The read enable MUST be the advance itself">
+      <p>
+        A synchronous array samples its address at the edge <i>after</i> it is
+        presented. If the enable is free-running while the advance is not, the
+        two are one apart: the array fetches the beat after next while the
+        register in front of it is still holding the current one, and
+        <b>the beat between them is destroyed</b>.
+      </p>
+      <p>
+        With the enable tied to the advance, a stall stops both together:
+        <code>wd_next</code> holds, <code>wd_raddr</code> holds, and nothing is
+        re-read or skipped. <b>Beat 0 is addressed while the machine is still in
+        <code>S_IDLE</code></b>, so the first data cycle already has it — one
+        priming cycle per burst rather than two.
+      </p>
+    </Callout>
+
+    <WaveTrace
+      :rows="raBroken.rows"
+      :notes="raBroken.notes"
+      variant="broken"
+      label="A free-running read enable — one beat of the burst is skipped"
+    />
+
+    <WaveTrace
+      :rows="raFixed.rows"
+      :notes="raFixed.notes"
+      variant="fixed"
+      label="The read enable is the advance — the stall holds everything together"
+    />
+
+    <Callout kind="trap" title="The symptom is a well-formed write of the wrong bytes">
+      <p>
+        The burst has the right address, the right length and the right beat
+        count. One beat in the middle carries the beat after it, and the last
+        beat carries a repeat. <b>Nothing on the AXI side is malformed</b>, no
+        assertion fires, and the damage appears as a wrong tile some thousands
+        of accesses later.
+      </p>
+      <p>
+        It also only shows up <b>under backpressure</b>: with a bus that never
+        stalls, the advance is true every cycle and a free-running enable is
+        indistinguishable from a correct one. A bench that does not stall the
+        write channel proves nothing about this.
       </p>
     </Callout>
 
@@ -1611,8 +2062,25 @@ const divRows = [
     <SpecTable
       :cols="strobeCols"
       :rows="strobeRows"
-      caption="Byte enables exist on three of the agent's four write paths. The one they do not exist on is the one every compute unit uses"
+      caption="Byte enables exist on four of the agent's five write paths. The one they do not exist on is the one every compute unit uses — and the one they were most recently added to is the one a runtime's page tables live behind"
     />
+
+    <Callout kind="trap" title="A store that writes four times as much as it was asked to">
+      <p>
+        Staging's write port takes AXI beats, and a processor's 64-bit store is
+        <b>one lane of a 32-byte word</b>. Without strobes the bank wrote the
+        whole word, so every lane took the same value — the store succeeded,
+        the value it wrote was correct, and the three words beside it were
+        destroyed.
+      </p>
+      <p>
+        Everything a runtime keeps in staging has exactly that shape: 8-byte
+        page-table entries, mailbox words, allocator bitmap words.
+        <b>The symptom is a translation that walks to the wrong page</b>, on a
+        table the program can read back and prove it wrote correctly — because
+        reading it back reads the lane it wrote.
+      </p>
+    </Callout>
 
     <Callout kind="rule" title="If your line is dirty in part, you merge it">
       <p>
@@ -1633,7 +2101,7 @@ const divRows = [
       The slot is fixed protocol and the occupant is an addon; the framework
       side of that split is on
       <RouterLink to="/framework/sysnode" class="doc-link"
-        >the memory agent page</RouterLink
+        >the framework page</RouterLink
       >. What is worth reading in the RTL is how little of the geometry is
       written down as a number.
     </p>
@@ -1661,6 +2129,28 @@ const divRows = [
         that needs backpressure must buffer internally.
         <code>need_beat</code> is reserved and <b>the port ignores it today</b>,
         so a compliant module ties it high or drives it truthfully.
+      </p>
+    </Callout>
+
+    <Callout
+      kind="trap"
+      title="The bank's register port is tied off in the RV64 complex"
+    >
+      <p>
+        <code>rv64_mag_pe</code> drives the bank's <code>cfg_en</code> to zero
+        and leaves <code>cfg_rdata</code> and its fault output unread, so
+        <b>no occupant register is readable or writable and the bank's own fault
+        code is not observable</b> in that configuration. The RV32 complex
+        reaches both through its node range, so this is a connection the swap
+        dropped rather than a design position.
+      </p>
+      <p>
+        <b>The symptom is invisible today and would be a wrong-format operand
+        tomorrow.</b> The reference occupant needs no registers — its mode picks
+        its packing and its scale is derived per entry — so nothing has hit it.
+        An occupant fed by a palette or a coefficient table would be fed
+        whatever the array powered up holding, and the bank's one self-detected
+        fault, an id naming no occupant, would go unread.
       </p>
     </Callout>
 
@@ -1699,9 +2189,49 @@ const divRows = [
       </p>
     </Callout>
 
+    <Callout kind="rule" title="A remote write keeps all 40 bits only if it is special">
+      <p>
+        When a write arrives over the interlink, the inbound handler decides
+        what address to present to this mesh from <b>one bit</b>. A
+        <b>special address — bit 39 set</b> — is presented whole, all 40 bits,
+        and <span class="chip">mag_stage_port</span> claims it by that bit and
+        the mesh field. <b>A DRAM address is presented by its low 32 bits
+        only</b>, because local DRAM starts at zero and the mesh field would
+        otherwise put the write 4 GB out of range.
+      </p>
+      <p>
+        <b>Reads never cross</b>, in either form. A mover source must be in this
+        mesh, so the far side of a link is write-only — which is what makes a
+        doorbell the only way to learn that a remote write landed.
+      </p>
+    </Callout>
+
+    <Callout
+      kind="trap"
+      title="Truncating a staging address puts the copy in DRAM at the aperture offset"
+    >
+      <p>
+        The truncation is right for DRAM and wrong for everything else. Applied
+        to every inbound write, a mover copy aimed at the far mesh's
+        <b>staging</b> arrived with its aperture bits gone and landed in that
+        mesh's <b>DRAM</b>, at whatever offset the aperture address happened to
+        name.
+      </p>
+      <p>
+        <b>Every party reports success.</b> The mover completes, the write
+        response is returned, the doorbell that follows says the data has
+        landed — and the far mesh's processor reads its staging and finds
+        whatever was there before. The reader and the writer disagree about one
+        address and neither can see the other's memory, so there is nothing to
+        compare against. <b>Only a two-node bench catches this</b>, which is why
+        <span class="chip">rv64_node_pair</span> exists.
+      </p>
+    </Callout>
+
     <Fig
-      caption="mag_stage. Banks are interleaved on the LOW address bits, so a sequential fill spreads across them instead of loading one. The wide path has ONE driver and only the narrow address and control fan out per bank. The return is a fixed-latency shift register that cannot stall: the caller leads and takes rvalid when it comes."
+      caption="mag_stage, left to right. Banks are interleaved on the LOW address bits, so a sequential fill spreads across them instead of loading one. The wide path has ONE driver and only the narrow address and control fan out per bank. The return is a fixed-latency shift register that cannot stall: the caller leads and takes rvalid when it comes."
       zoom
+      wide
     >
       <BlockDiagram :nodes="stage.nodes" :edges="stage.edges" />
     </Fig>
@@ -1759,18 +2289,78 @@ const divRows = [
     <h3 class="doc-h3">Where the store sits changes who can use it</h3>
     <SpecTable :cols="placeCols" :rows="placeRows" />
 
+    <SpecTable
+      :cols="stgPortCols"
+      :rows="stgPortRows"
+      caption="The store has two ports and the placement decides which one is used. WORDS = 4 at DATA_W = 256 makes port A a 1,024-bit interface; port B is one word, 1:1 with the beat"
+    />
+
     <Callout
-      kind="note"
-      title="The module default and the shipped setting differ"
+      kind="trap"
+      title="The converged form runs on port B alone — a quarter of the width"
     >
       <p>
-        <code>mag.v</code> defaults <code>STAGE_AT_PORT</code> to <b>0</b>, the
-        per-port form. Every generated ship top that enables staging passes
-        <code>STAGE(1)</code> and <code>STAGE_AT_PORT(1)</code> — the
-        converged-path form — so the default is the older shape kept for
-        comparison, not the shipping one. Selection is
-        <code>gen_mesh.py --l2-mag</code>, independent of the mesh-side adapter.
+        <code>mag_stage_port</code> ties <code>a_req</code>,
+        <code>a_we</code>, <code>a_addr</code> and <code>a_wdata</code> to zero
+        and leaves every A output unconnected, with the comment
+        <i>“Port A is mag_mem_port's entry-granular fill read and is not
+        ours.”</i> So the shared store is reached
+        <b>one <code>DATA_W</code> word per access, with one read
+        outstanding</b> — the port holds a single returned word, so a second
+        request would drop the first.
+      </p>
+      <p>
+        <b>The entry-granular argument belongs to
+        <code>STAGE_AT_PORT = 0</code> and does not describe what ships.</b>
+        Reachability is still the right trade — a store the mover and the
+        interlink cannot address cannot hold a runtime's working set at all —
+        but the width has to be quoted with it: staging is
+        <b>L2 latency at one word per access</b>, not a wide fill path.
+      </p>
+      <p>
+        <b>The symptom is a throughput ceiling with nothing to point at:</b> a
+        staged read stream that runs at a quarter of the rate the URAM could
+        supply, with no fault, no stall counter, and no capacity figure anywhere
+        in the flow that models it.
+      </p>
+    </Callout>
+
+    <Callout kind="rule" title="STAGE_AT_PORT is not a tuning knob">
+      <p>
+        <b
+          >A store half the machine cannot address is not a shared store, and
+          duplicating it per port does not make it one.</b
+        >
+        The per-port form places the store upstream of where the requesters
+        meet, so the mover and the interlink can never reach it — and the
+        runtime's page tables, its cross-node mailbox and its allocator bitmap
+        all live in staging and are reached over the converged path. It is not
+        merely twice the URAM; it is the wrong store.
+      </p>
+      <p>
+        The reason the arrangement survived is the durable part:
+        <b>URAM is plentiful on this device</b>, so a doubled megabyte-scale
+        array does not announce itself in a LUT count.
+        <b>Read the memory columns of every synthesis report, not only the logic
+        ones.</b>
+      </p>
+      <p class="kt-text-caption">
+        <code>mag.v</code> still defaults <code>STAGE_AT_PORT</code> to
+        <b>0</b>. Every generated ship top that enables staging passes
+        <code>STAGE(1)</code> and <code>STAGE_AT_PORT(1)</code>, selected with
+        <code>gen_mesh.py --l2-mag</code> and independent of the mesh-side
+        adapter, and so does the whole-node synthesis run.
         <b>No software targets either yet.</b>
+      </p>
+    </Callout>
+
+    <Callout kind="trap" title="Staging serves one burst at a time, across everyone">
+      <p>
+        Round-robin on a single id, so a processor's page-table walks and its
+        mailbox polling interleave with whatever the mover is driving into
+        staging, at <b>burst granularity</b>. Fine for a dispatcher — and a
+        reason a hot processor loop should not keep its working set in staging
+        while the mover is driving staging hard.
       </p>
     </Callout>
 
@@ -1791,20 +2381,34 @@ const divRows = [
       <p>
         <code>{valid, write, addr, len}</code> may not change while a request
         waits. Both arbiters decide on a <b>registered</b> request vector and
-        sample the bus <b>live</b>, and the grant is a single wire.
+        sample the bus <b>live</b>, and the grant is a single wire, so the two
+        halves can disagree about which transaction is being granted. The
+        adapter latches the channel it offered on the first ungranted cycle and
+        holds it; <code>mag_dram_port</code> carries the matching simulation
+        assertion, naming a requester that changes its presentation.
+        <RouterLink to="/component/sysnode" class="doc-link"
+          >The overview page</RouterLink
+        >
+        walks the violation and the fix as traces.
       </p>
     </Callout>
 
-    <WaveTrace
-      v-bind="qBroken"
-      variant="broken"
-      label="a presentation that switches mid-wait"
-    />
-    <WaveTrace
-      v-bind="qFixed"
-      variant="fixed"
-      label="the choice latched at first offer"
-    />
+    <Callout
+      kind="trap"
+      title="RD_OUT is a 3.25× throughput knob that ships OFF, and it corrupts memory"
+    >
+      <p>
+        <code>mag_dram_port.v</code> states both halves. Four outstanding reads
+        per requester measures <b>2,744 → 8,917 MB/s</b> on 20-word bursts —
+        and <b>it corrupts memory</b> in the mover's chained-burst bench. The
+        default is 1, which keeps the pending arrays legal and never uses them.
+      </p>
+      <p>
+        <b>The performance is real and so is the corruption.</b> Nothing on this
+        site quotes the first without the second, and a reader who raises the
+        parameter should expect a wrong-bytes result rather than a hang.
+      </p>
+    </Callout>
 
     <Callout
       kind="note"
@@ -1837,8 +2441,9 @@ const divRows = [
     </p>
 
     <Fig
-      caption="mm_mover. Two mx_tdesc walkers stepped in lockstep, with the DESTINATION defining the iteration space — which is what makes a source stride of zero a broadcast with no extra mode. src_valid low injects the immediate, which is how padding works; dst_valid low suppresses the write. The element latch classifies each destination element as K_RD, K_FILL, K_GEN or K_SKIP, and the issue engine sends a read for the first and a command for the first three; K_SKIP is a suppressed write that breaks both runs. A burst's FIFO space is reserved before its AR goes out."
+      caption="mm_mover, left to right. Two mx_tdesc walkers stepped in lockstep, with the DESTINATION defining the iteration space — which is what makes a source stride of zero a broadcast with no extra mode. src_valid low injects the immediate, which is how padding works; dst_valid low suppresses the write. The element latch classifies each destination element, and the issue engine sends a read for K_RD and a command for the first three kinds; K_SKIP is a suppressed write that breaks both runs. A burst's FIFO space is reserved before its AR goes out."
       zoom
+      wide
     >
       <BlockDiagram :nodes="mover.nodes" :edges="mover.edges" />
     </Fig>
@@ -1903,18 +2508,5 @@ const divRows = [
       caption="Every figure is out-of-context synthesis or a placed run on xcvu13p-fhgb2104-2L-e, at the clock the source states beside it. Where a source names a vehicle — the SLR1 probe, a 6+2 mesh, ktpu_ship_2x2_6c2v_il_pump, mm_mesh — that vehicle is what was measured, and the number does not transfer to another one"
     />
 
-    <h2 class="doc-h2">Where today's source disagrees</h2>
-    <SpecTable :cols="divCols" :rows="divRows" />
-
-    <Callout kind="note" title="The other divergences are on the parent page">
-      <p>
-        The 34-bit-versus-40-bit address field, the control agent's packaging,
-        the interlink living inside the memory agent and the moved source
-        directory are all recorded on
-        <RouterLink to="/framework/sysnode" class="doc-link"
-          >the memory agent page</RouterLink
-        >, together with the protocol contracts they belong to.
-      </p>
-    </Callout>
   </DocPage>
 </template>
