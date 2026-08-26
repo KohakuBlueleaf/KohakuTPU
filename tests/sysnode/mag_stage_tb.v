@@ -52,6 +52,7 @@ module mag_stage_tb;
         .a_mine(mine_b), .a_gnt(gnt_b), .a_fault(flt_b),
         .a_rvalid(arv_b), .a_rdata(ard_b),
         .b_req(b_req), .b_we(b_we), .b_addr(b_addr), .b_wdata(b_wdata),
+        .b_wstrb({(DW/8){1'b1}}),
         .b_mine(bmine_b), .b_gnt(bgnt_b), .b_rvalid(brv_b), .b_rdata(brd_b)
     );
 
@@ -62,6 +63,7 @@ module mag_stage_tb;
         .a_mine(mine_m), .a_gnt(gnt_m), .a_fault(flt_m),
         .a_rvalid(arv_m), .a_rdata(ard_m),
         .b_req(b_req), .b_we(b_we), .b_addr(b_addr), .b_wdata(b_wdata),
+        .b_wstrb({(DW/8){1'b1}}),
         .b_mine(bmine_m), .b_gnt(bgnt_m), .b_rvalid(brv_m), .b_rdata(brd_m)
     );
 

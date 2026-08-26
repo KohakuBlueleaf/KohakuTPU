@@ -23,6 +23,7 @@ VIVADO = pathlib.Path(r"D:\Xilinx\Vivado\2024.2\bin")
 COMMON = [
     "src/kohakuaccel/common/sync_fifo.v",
     "src/kohakuaccel/common/kohaku_sdpram.v",
+    "src/kohakuaccel/common/kohaku_sdpram_be.v",
 ]
 
 MATMUL = [
@@ -1095,6 +1096,7 @@ BENCHES = {
         [
             "src/kohakuaccel/common/sync_fifo.v",
             "src/kohakuaccel/common/kohaku_sdpram.v",
+            "src/kohakuaccel/common/kohaku_sdpram_be.v",
             "src/kohakuaccel/common/sb_skid.v",
             "src/kohakuaccel/sysnode/mover/mx_tdesc.v",
             "src/kohakuaccel/sysnode/mover/mm_prng.v",
@@ -1156,6 +1158,7 @@ BENCHES["mag_mem_port"] = (
         "src/kohakuaccel/common/sync_fifo.v",
         "src/kohakuaccel/common/sb_skid.v",
         "src/kohakuaccel/common/kohaku_sdpram.v",
+        "src/kohakuaccel/common/kohaku_sdpram_be.v",
         "src/kohakuaccel/sysnode/core/mag_stage.v",
         "src/kohakutpu/transform/mx_quant.v",
         "src/kohakuaccel/sysnode/core/mag_mem_port.v",
@@ -1171,41 +1174,197 @@ NEEDS_GLBL.add("mag_mem_port")
 # tests/pe/tools/rv_gen.py` writes -- run that first or the bench reports no
 # cases. RTL layout: core/ is the pipeline, mem/ the two L1s, noc/ the
 # fabric attach, rv_pe.v the assembly.
-PE_RV32 = [
-    "src/kohakuaccel/common/sync_fifo.v",
-    "src/kohakuaccel/common/kohaku_sdpram.v",
-    "src/kohakuaccel/pe/rv32/mem/rv_ram_be.v",
-    "src/kohakuaccel/pe/rv32/mem/rv_imem.v",
-    "src/kohakuaccel/pe/rv32/mem/rv_spad.v",
-    "src/kohakuaccel/pe/rv32/core/rv_regfile.v",
-    "src/kohakuaccel/pe/rv32/core/rv_bpred.v",
-    "src/kohakuaccel/pe/rv32/core/rv_if.v",
-    "src/kohakuaccel/pe/rv32/core/rv_id.v",
-    "src/kohakuaccel/pe/rv32/core/rv_ex.v",
-    "src/kohakuaccel/pe/rv32/core/rv_mem.v",
-    "src/kohakuaccel/pe/rv32/core/rv_wb.v",
-    "src/kohakuaccel/pe/rv32/core/rv_core.v",
-    "src/kohakuaccel/pe/rv32/mem/rv_l1.v",
-    "src/kohakuaccel/pe/rv32/noc/rv_noc_req.v",
-    # The DSP extension. Parsed everywhere, instantiated only at SIMD_EN=1 --
-    # the same shape as the matmul pump hierarchy, and the reason the base
-    # configuration stays bit-identical while the sources are always present.
-    "src/kohakumpe/simd/khs_scalar_decode.v",
-    "src/kohakumpe/simd/khs_mul.v",
-    "src/kohakumpe/simd/khs_padd32.v",
-    "src/kohakumpe/simd/khs_pshift32.v",
-    "src/kohakumpe/simd/khs_lane.v",
-    "src/kohakumpe/simd/khs_perm.v",
-    "src/kohakumpe/simd/khs_reduce.v",
-    "src/kohakumpe/simd/khs_vregfile.v",
-    "src/kohakumpe/simd/khs_vspad.v",
-    "src/kohakumpe/simd/khs_falu.v",
-    "src/kohakumpe/simd/khs_unit.v",
-    "src/kohakuaccel/pe/rv32/rv_pe.v",
+# KohakuMPE's float tier, shared by both PE classes. NOTHING FROM KohakuTPU IS
+# ON IT: the E8M15 lane, its DSP model, its tables and its converters are gone
+# from the MPE build lists, because FP32 is the only compute type here.
+MPE_FP32 = [
+    "src/kohakuaccel/pe/rv32/core/rv_fpu.v",
+    "src/kohakumpe/simd/khs_lead1.v",
+    "src/kohakumpe/simd/generated/khs_seed_tab.v",
+    "src/kohakumpe/simd/khs_fp32_sfu.v",
+    "src/kohakumpe/simd/khs_fp32_alu.v",
 ]
+
+PE_RV32 = (
+    [
+        "src/kohakuaccel/common/sync_fifo.v",
+        "src/kohakuaccel/common/kohaku_sdpram.v",
+        "src/kohakuaccel/common/kohaku_sdpram_be.v",
+        "src/kohakuaccel/pe/rv32/mem/rv_ram_be.v",
+        "src/kohakuaccel/pe/rv32/mem/rv_imem.v",
+        "src/kohakuaccel/pe/rv32/mem/rv_spad.v",
+        "src/kohakuaccel/pe/rv32/core/rv_regfile.v",
+        "src/kohakuaccel/pe/rv32/core/rv_bpred.v",
+        "src/kohakuaccel/pe/rv32/core/rv_if.v",
+        "src/kohakuaccel/pe/rv32/core/rv_id.v",
+        "src/kohakuaccel/pe/rv32/core/rv_ex.v",
+        "src/kohakuaccel/pe/rv32/core/rv_mem.v",
+        "src/kohakuaccel/pe/rv32/core/rv_wb.v",
+        "src/kohakuaccel/pe/rv32/core/rv_core.v",
+        "src/kohakuaccel/pe/rv32/mem/rv_l1.v",
+        "src/kohakuaccel/pe/rv32/noc/rv_noc_req.v",
+        # The DSP extension. Parsed everywhere, instantiated only at SIMD_EN=1 --
+        # the same shape as the matmul pump hierarchy, and the reason the base
+        # configuration stays bit-identical while the sources are always present.
+        "src/kohakumpe/simd/khs_scalar_decode.v",
+        "src/kohakumpe/simd/khs_mul.v",
+        "src/kohakumpe/simd/khs_padd32.v",
+        "src/kohakumpe/simd/khs_pshift32.v",
+        "src/kohakumpe/simd/khs_lane.v",
+        "src/kohakumpe/simd/khs_fcvt.v",
+        "src/kohakumpe/simd/khs_perm.v",
+        "src/kohakumpe/simd/khs_reduce.v",
+        "src/kohakumpe/simd/khs_vregfile.v",
+        "src/kohakumpe/simd/khs_vspad.v",
+        "src/kohakumpe/simd/khs_facc.v",
+        "src/kohakumpe/simd/khs_ffold.v",
+    ]
+    + MPE_FP32
+    + [
+        "src/kohakumpe/simd/khs_unit.v",
+        "src/kohakuaccel/pe/rv32/rv_pe.v",
+    ]
+)
 
 # Level 1: the pipeline against the Python model, one instruction at a time.
 BENCHES["rv_core"] = ("rv_core_tb", PE_RV32 + ["tests/pe/tb/rv_core_tb.v"])
+
+# SysCore, the RV64 control PE. These entries name a DESIGN top rather than a
+# testbench, because their bench is a C++ harness under Verilator --cc: xsim
+# can lint and elaborate them, and `vlt.py --cc` builds the model the harness
+# drives. src/kohakuaccel/pe/rv32/ is not touched by any of it.
+RV64_COMMON = ["src/kohakuaccel/common/kohaku_sdpram.v"]
+
+BENCHES["rv64_regfile"] = (
+    "rv64_regfile",
+    RV64_COMMON + ["src/kohakuaccel/pe/rv64-sys/core/rv64_regfile.v"],
+)
+
+BENCHES["rv64_alu"] = (
+    "rv64_alu",
+    ["src/kohakuaccel/pe/rv64-sys/core/rv64_alu.v"],
+)
+
+BENCHES["rv64_decode"] = (
+    "rv64_decode",
+    ["src/kohakuaccel/pe/rv64-sys/core/rv64_decode.v"],
+)
+
+RV64_CORE = RV64_COMMON + [
+    "src/kohakuaccel/pe/rv64-sys/core/rv64_alu.v",
+    "src/kohakuaccel/pe/rv64-sys/core/rv64_decode.v",
+    "src/kohakuaccel/pe/rv64-sys/core/rv64_regfile.v",
+    "src/kohakuaccel/pe/rv64-sys/core/rv64_muldiv.v",
+    "src/kohakuaccel/pe/rv64-sys/core/rv64_bpred.v",
+    "src/kohakuaccel/pe/rv64-sys/core/rv64_csr.v",
+    "src/kohakuaccel/pe/rv64-sys/core/rv64_core.v",
+]
+
+BENCHES["rv64_muldiv"] = (
+    "rv64_muldiv",
+    ["src/kohakuaccel/pe/rv64-sys/core/rv64_muldiv.v"],
+)
+
+BENCHES["rv64_core"] = ("rv64_core", RV64_CORE)
+
+RV64_PE = RV64_CORE + [
+    "src/kohakuaccel/common/sync_fifo.v",
+    "src/kohakuaccel/noc/endpoint/noc_cu_base.v",
+    "src/kohakuaccel/pe/rv64-sys/rv64_sys_pe.v",
+]
+
+BENCHES["rv64_sys_pe"] = ("rv64_sys_pe", RV64_PE)
+
+BENCHES["rv64_l1"] = (
+    "rv64_l1",
+    RV64_COMMON
+    + [
+        "src/kohakuaccel/pe/rv64-sys/core/rv64_ram_be.v",
+        "src/kohakuaccel/pe/rv64-sys/core/rv64_l1.v",
+    ],
+)
+
+BENCHES["rv64_mmu"] = (
+    "rv64_mmu",
+    RV64_COMMON + ["src/kohakuaccel/pe/rv64-sys/core/rv64_mmu.v"],
+)
+
+BENCHES["rv64_nport"] = (
+    "rv64_nport",
+    RV64_COMMON + ["src/kohakuaccel/pe/rv64-sys/core/rv64_nport.v"],
+)
+
+RV64_SYSCORE = RV64_CORE + [
+    "src/kohakuaccel/pe/rv64-sys/core/rv64_ram_be.v",
+    "src/kohakuaccel/pe/rv64-sys/core/rv64_l1.v",
+    "src/kohakuaccel/pe/rv64-sys/core/rv64_mmu.v",
+    "src/kohakuaccel/pe/rv64-sys/core/rv64_nport.v",
+    "src/kohakuaccel/pe/rv64-sys/rv64_noc_mbox.v",
+    "src/kohakuaccel/pe/rv64-sys/rv64_syscore.v",
+]
+
+BENCHES["rv64_syscore"] = ("rv64_syscore", RV64_SYSCORE)
+
+# The node-level complex: the RV64 CPU plus the mover and transform bank that
+# `rv_mag_pe` carries. Those two are parts of the NODE, not of the processor.
+BENCHES["rv64_mag_pe"] = (
+    "rv64_mag_pe",
+    RV64_SYSCORE
+    + [
+        "src/kohakuaccel/common/sync_fifo.v",
+        "src/kohakuaccel/common/sb_skid.v",
+        "src/kohakutpu/transform/mx_quant.v",
+        "src/kohakutpu/transform/xform_bank.v",
+        "src/kohakuaccel/sysnode/core/mag_xform.v",
+        "src/kohakuaccel/sysnode/mover/mx_tdesc.v",
+        "src/kohakuaccel/sysnode/mover/mm_prng.v",
+        "src/kohakuaccel/sysnode/mover/mm_mover.v",
+        "src/kohakuaccel/sysnode/cpu/rv64_mag_pe.v",
+    ],
+)
+
+BENCHES["rv64_syscore_pair"] = (
+    "rv64_syscore_pair",
+    RV64_SYSCORE + ["src/kohakuaccel/verif/rv64_syscore_pair.v"],
+)
+
+# Two whole system nodes with the RV64 complex on one interlink: the mover's
+# cross-mesh copy, the doorbell each way, and the doorbell as an interrupt --
+# all driven by the PROCESSORS, which no host-driven bench reaches.
+BENCHES["rv64_node_pair"] = (
+    "rv64_node_pair",
+    COMMON
+    + MOVER
+    + PE_RV32
+    + RV64_SYSCORE
+    + [
+        "src/kohakuaccel/noc/ctrl/noc_orchestrator.v",
+        "src/kohakutpu/transform/mx_quant.v",
+        "src/kohakutpu/transform/xform_bank.v",
+        "src/kohakuaccel/sysnode/core/mag_xform.v",
+        "src/kohakuaccel/verif/axi_ram.v",
+        "src/kohakuaccel/common/sb_skid.v",
+        "src/kohakuaccel/sysnode/core/mag_mem_port.v",
+        "src/kohakuaccel/sysnode/interlink/il_pkt_arb.v",
+        "src/kohakuaccel/sysnode/interlink/mag_link.v",
+        "src/kohakuaccel/sysnode/interlink/mag_link_pipe.v",
+        "src/kohakuaccel/sysnode/interlink/mag_switch.v",
+        "src/kohakuaccel/sysnode/interlink/mag_ilink.v",
+        "src/kohakuaccel/sysnode/core/mag.v",
+        "src/kohakuaccel/common/async_fifo.v",
+        "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+        "src/kohakuaccel/sysnode/core/mag_dram_port.v",
+        "src/kohakuaccel/sysnode/core/sn_hub.v",
+        "src/kohakuaccel/sysnode/cpu/rv64_mag_pe.v",
+        "src/kohakuaccel/sysnode/sysnode.v",
+        "src/kohakuaccel/verif/rv64_node_pair.v",
+    ],
+)
+
+BENCHES["rv64_pe_pair"] = (
+    "rv64_pe_pair",
+    RV64_PE + ["src/kohakuaccel/verif/rv64_pe_pair.v"],
+)
 
 # Level 0: the NoC requestor alone, every emitted header field compared on the
 # wire. It is the PE's whole memory protocol and had no module bench.
@@ -1411,34 +1570,53 @@ BENCHES["rv_mc4"] = (
 # The DSP-class workload suite on the same vehicle as rv_sys: what a kernel
 # COSTS rather than whether the PE is correct. Its cases come from
 # `python tests/pe/tools/rv_simd_gen.py`.
+# The scalar FP32 ALU alone: one unit, graded on the BITS against a double
+# reference, so FALU area is optimised on something that demonstrably works.
+BENCHES["rv_fpu"] = (
+    "rv_fpu_tb",
+    [
+        "src/kohakuaccel/pe/rv32/core/rv_fpu.v",
+        "tests/pe/tb/rv_fpu_tb.v",
+    ],
+)
+
+# The four seeds alone, graded on the bits against the same integer table the
+# RTL reads. Vectors from tests/pe/tools/khs_sfu_vec.py.
+BENCHES["khs_sfu"] = (
+    "khs_fp32_sfu_tb",
+    [
+        "src/kohakumpe/simd/khs_lead1.v",
+        "src/kohakumpe/simd/generated/khs_seed_tab.v",
+        "src/kohakumpe/simd/khs_fp32_sfu.v",
+        "tests/pe/tb/khs_fp32_sfu_tb.v",
+    ],
+)
+
 BENCHES["rv_dsp"] = ("rv_simd_tb", PE_MESH + ["tests/pe/tb/rv_simd_tb.v"])
 
 # The KohakuSIMT SIMT PE (src/kohakumpe/simt), on its own vehicle:
 # kht_mesh carries kht_pe where rv_mesh carries rv_pe. kht_isa.vh is GENERATED
 # from the field table by tests/pe/tools/rv_simt_emit.py, so the RTL decode, the
 # assembler and the golden model cannot drift apart.
-PE_KHG = PE_SYS + [
-    # G9's arithmetic is the SIMD tier's, so the GPU bench drags in the same
-    # float files the DSP one does. Parsed always, elaborated only at KHT_FLT=1.
-    "src/kohakutpu/matmul/mx_fpacc.v",  # mx_lead1, shared not copied
-    "src/kohakutpu/vector/vec_dsp.v",
-    "src/kohakutpu/vector/vec_delay.v",
-    "src/kohakutpu/vector/vec_tables.v",
-    "src/kohakutpu/vector/vec_cvt.v",
-    "src/kohakutpu/vector/vec_alu.v",
-    "src/kohakumpe/simd/khs_float_lane.v",
-    "src/kohakumpe/simt/kht_fpu.v",
-    "src/kohakumpe/simt/kht_imul.v",
-    "src/kohakumpe/simt/kht_valu.v",
-    "src/kohakumpe/simt/kht_vregfile.v",
-    "src/kohakumpe/simt/kht_unit.v",
-    "src/kohakumpe/simt/kht_lds.v",
-    "src/kohakumpe/simt/kht_predec.v",
-    "src/kohakumpe/simt/kht_core.v",
-    "src/kohakumpe/simt/kht_pe.v",
-    "tests/pe/tb/kht_mesh.v",
-    "tests/pe/tb/rv_agent.v",
-]
+PE_KHG = (
+    PE_SYS
+    + MPE_FP32
+    + [
+        # G9's arithmetic is the SIMD tier's, so the GPU bench drags in the same
+        # float files the DSP one does. Parsed always, elaborated only at KHT_FLT=1.
+        "src/kohakumpe/simt/kht_fpu.v",
+        "src/kohakumpe/simt/kht_imul.v",
+        "src/kohakumpe/simt/kht_valu.v",
+        "src/kohakumpe/simt/kht_vregfile.v",
+        "src/kohakumpe/simt/kht_unit.v",
+        "src/kohakumpe/simt/kht_lds.v",
+        "src/kohakumpe/simt/kht_predec.v",
+        "src/kohakumpe/simt/kht_core.v",
+        "src/kohakumpe/simt/kht_pe.v",
+        "tests/pe/tb/kht_mesh.v",
+        "tests/pe/tb/rv_agent.v",
+    ]
+)
 
 BENCHES["kht_sys"] = ("kht_sys_tb", PE_KHG + ["tests/pe/tb/kht_sys_tb.v"])
 
@@ -1452,11 +1630,11 @@ PE_HET = [f for f in PE_KHG if f not in ("tests/pe/tb/kht_mesh.v",)] + [
     "src/kohakumpe/simd/khs_padd32.v",
     "src/kohakumpe/simd/khs_pshift32.v",
     "src/kohakumpe/simd/khs_lane.v",
+    "src/kohakumpe/simd/khs_fcvt.v",
     "src/kohakumpe/simd/khs_perm.v",
     "src/kohakumpe/simd/khs_reduce.v",
     "src/kohakumpe/simd/khs_vregfile.v",
     "src/kohakumpe/simd/khs_vspad.v",
-    "src/kohakumpe/simd/khs_falu.v",
     "src/kohakumpe/simd/khs_unit.v",
     "tests/pe/tb/het_mesh.v",
 ]
@@ -1466,53 +1644,43 @@ BENCHES["het_sys"] = ("het_sys_tb", PE_HET + ["tests/pe/tb/het_sys_tb.v"])
 # The KohakuSIMD vector extension (src/kohakumpe/simd). khs_isa.vh is
 # GENERATED from the field table by tests/pe/tools/rv_simd_emit.py, so the RTL
 # decode and the assembler cannot drift apart; -i puts it on the include path.
-PE_KHD = [
-    "src/kohakuaccel/common/kohaku_sdpram.v",
-    "src/kohakuaccel/pe/rv32/mem/rv_ram_be.v",
-    # The float tier. Parsed always, elaborated only at HAS_FLOAT=1.
-    "src/kohakutpu/matmul/mx_fpacc.v",
-    "src/kohakutpu/vector/vec_dsp.v",
-    "src/kohakutpu/vector/vec_delay.v",
-    "src/kohakutpu/vector/vec_tables.v",
-    "src/kohakutpu/vector/vec_cvt.v",
-    "src/kohakutpu/vector/vec_alu.v",
-    "src/kohakumpe/simd/khs_float_lane.v",
-    "src/kohakumpe/simd/khs_facc.v",
-    "src/kohakumpe/simd/khs_ffold.v",
-    "src/kohakumpe/simd/khs_mul.v",
-    "src/kohakumpe/simd/khs_padd32.v",
-    "src/kohakumpe/simd/khs_pshift32.v",
-    "src/kohakumpe/simd/khs_lane.v",
-    "src/kohakumpe/simd/khs_perm.v",
-    "src/kohakumpe/simd/khs_reduce.v",
-    "src/kohakumpe/simd/khs_vregfile.v",
-    "src/kohakumpe/simd/khs_vspad.v",
-    "src/kohakumpe/simd/khs_falu.v",
-    "src/kohakumpe/simd/khs_unit.v",
-]
+PE_KHD = (
+    [
+        "src/kohakuaccel/common/kohaku_sdpram.v",
+        "src/kohakuaccel/common/kohaku_sdpram_be.v",
+        "src/kohakuaccel/pe/rv32/mem/rv_ram_be.v",
+        # The float tier. Parsed always, elaborated only at FLOAT_LANES != 0.
+        "src/kohakumpe/simd/khs_facc.v",
+        "src/kohakumpe/simd/khs_ffold.v",
+        "src/kohakumpe/simd/khs_mul.v",
+        "src/kohakumpe/simd/khs_padd32.v",
+        "src/kohakumpe/simd/khs_pshift32.v",
+        "src/kohakumpe/simd/khs_lane.v",
+        "src/kohakumpe/simd/khs_fcvt.v",
+        "src/kohakumpe/simd/khs_perm.v",
+        "src/kohakumpe/simd/khs_reduce.v",
+        "src/kohakumpe/simd/khs_vregfile.v",
+        "src/kohakumpe/simd/khs_vspad.v",
+    ]
+    + MPE_FP32
+    + [
+        "src/kohakumpe/simd/khs_unit.v",
+    ]
+)
 
 BENCHES["khs_unit"] = ("khs_unit_tb", PE_KHD + ["tests/pe/tb/khs_unit_tb.v"])
 NEEDS_GLBL.add("khs_unit")
 
-# The float tier. Vectors come from tests/pe/tools/khs_float_vec.py and
-# khs_facc_vec.py; run those first or the benches report no vectors.
+# The accumulator. Vectors come from tests/pe/tools/khs_facc_vec.py; run it
+# first or the benches report no vectors.
 PE_FLOAT = [
     "src/kohakuaccel/common/kohaku_sdpram.v",
-    "src/kohakutpu/matmul/mx_fpacc.v",  # mx_lead1, shared not copied
-    "src/kohakutpu/vector/vec_dsp.v",
-    "src/kohakutpu/vector/vec_delay.v",
-    "src/kohakutpu/vector/vec_tables.v",
-    "src/kohakutpu/vector/vec_cvt.v",
-    "src/kohakutpu/vector/vec_alu.v",
-    "src/kohakumpe/simd/khs_float_lane.v",
+    "src/kohakuaccel/common/kohaku_sdpram_be.v",
+    "src/kohakuaccel/pe/rv32/core/rv_fpu.v",
     "src/kohakumpe/simd/khs_facc.v",
     "src/kohakumpe/simd/khs_ffold.v",
 ]
 
-BENCHES["khs_float_lane"] = (
-    "khs_float_lane_tb",
-    PE_FLOAT + ["tests/pe/tb/khs_float_lane_tb.v"],
-)
 BENCHES["khs_facc"] = ("khs_facc_tb", PE_FLOAT + ["tests/pe/tb/khs_facc_tb.v"])
 BENCHES["khs_ffold"] = ("khs_ffold_tb", PE_FLOAT + ["tests/pe/tb/khs_ffold_tb.v"])
 # The partials are an XPM array; the benches already wait 200 ns for GSR.
@@ -1568,7 +1736,11 @@ for _b, (_top, _files) in list(BENCHES.items()):
         BENCHES[_b] = (_top, _out)
 
 #: Directories added to xvlog's include path, for the generated headers.
-INCDIRS = ["src/kohakumpe/simd/generated", "src/kohakumpe/simt/generated"]
+INCDIRS = [
+    "src/kohakumpe/simd/generated",
+    "src/kohakumpe/simt/generated",
+    "src/kohakuaccel/pe/rv64-sys/core",
+]
 
 NEEDS_GLBL.update(
     {"rv_core", "rv_front", "rv_sys", "rv_mc1", "rv_mc2", "rv_mc4", "rv_dsp", "kht_sys"}
