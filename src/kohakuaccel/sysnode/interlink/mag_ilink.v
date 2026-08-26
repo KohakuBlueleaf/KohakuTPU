@@ -67,6 +67,10 @@ module mag_ilink #(
     input  wire [63:0]           cfg_data,
     input  wire [3:0]            stat_sel,
     output reg  [63:0]           stat_q,
+    // The four inbound doorbell counts in one word, for a consumer that polls
+    // them every wakeup. A second `stat_sel` port would duplicate a 16-way
+    // 64-bit mux to deliver four registers this reads directly.
+    output wire [63:0]           dbell_counts,
     output wire [1:0]            my_mesh,
 
     // ---- the mover's write channel: slave in, master out ------------------
@@ -197,6 +201,9 @@ module mag_ilink #(
     wire       flt_axi_wr, flt_axi_lk, flt_drop, flt_ack0;
 
     assign my_mesh = mesh_r;
+
+    assign dbell_counts = {dbell_n[3][15:0], dbell_n[2][15:0],
+                           dbell_n[1][15:0], dbell_n[0][15:0]};
 
     wire [63:0] caps = {32'd0, 4'd1, 4'd4, {2'd0, mesh_r}, 4'd2, 16'h494C};
 
@@ -672,10 +679,16 @@ module mag_ilink #(
                     end
                 end
 
-                // LOW 32 ONLY: this lands in local DRAM. mag_stage_port's `mine`
-                // needs a[39], so carrying [37:36] would write 4 GB out of range.
+                // A DRAM address lands by its LOW 32 bits (local DRAM starts
+                // at zero; the mesh field would put it 4 GB out). A SPECIAL
+                // address keeps all 40: mag_stage_port claims by bit 39 and the
+                // mesh field. Truncated, a mover's copy into the far mesh's
+                // staging landed in its DRAM at the aperture offset, silently.
                 IN_WR: if (in_act_wr) begin
-                    lk_awaddr  <= {{(ADDR_W-32){1'b0}}, in_addr[31:0]};
+                    lk_awaddr  <= (
+                        in_addr[ADDR_W-1] ? in_addr
+                        : {{(ADDR_W-32){1'b0}}, in_addr[31:0]}
+                    );
                     lk_awvalid <= 1'b1;
                     lk_wdata   <= in_slotd[DATA_W-1:0];
                     lk_wvalid  <= 1'b1;
