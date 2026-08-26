@@ -1,6 +1,7 @@
 kohakuaccel/pe/rv32/core/rv_bpred.v
 kohakuaccel/pe/rv32/core/rv_core.v
 kohakuaccel/pe/rv32/core/rv_ex.v
+kohakuaccel/pe/rv32/core/rv_fpu.v
 kohakuaccel/pe/rv32/core/rv_id.v
 kohakuaccel/pe/rv32/core/rv_if.v
 kohakuaccel/pe/rv32/core/rv_mem.v
@@ -13,3 +14,17 @@ kohakuaccel/pe/rv32/mem/rv_spad.v
 kohakuaccel/pe/rv32/noc/rv_mag_req.v
 kohakuaccel/pe/rv32/noc/rv_noc_req.v
 kohakuaccel/pe/rv32/rv_pe.v
+kohakuaccel/pe/rv64-sys/core/rv64_alu.v
+kohakuaccel/pe/rv64-sys/core/rv64_bpred.v
+kohakuaccel/pe/rv64-sys/core/rv64_core.v
+kohakuaccel/pe/rv64-sys/core/rv64_csr.v
+kohakuaccel/pe/rv64-sys/core/rv64_decode.v
+kohakuaccel/pe/rv64-sys/core/rv64_defs.vh
+kohakuaccel/pe/rv64-sys/core/rv64_l1.v
+kohakuaccel/pe/rv64-sys/core/rv64_mmu.v
+kohakuaccel/pe/rv64-sys/core/rv64_muldiv.v
+kohakuaccel/pe/rv64-sys/core/rv64_nport.v
+kohakuaccel/pe/rv64-sys/core/rv64_ram_be.v
+kohakuaccel/pe/rv64-sys/core/rv64_regfile.v
+kohakuaccel/pe/rv64-sys/rv64_sys_pe.v
+kohakuaccel/pe/rv64-sys/rv64_syscore.v

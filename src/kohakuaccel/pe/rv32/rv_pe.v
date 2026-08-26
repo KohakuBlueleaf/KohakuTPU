@@ -1,4 +1,4 @@
-// rv_pe -- the assembled processing element: an RV32I core, its two external
+// rv_pe -- the assembled processing element: an RV32IM core, its two external
 // windows, its internal L1, its NoC requestor, and noc_cu_base.
 //
 // This is the controller PE of the KohakuAccel framework. It attaches exactly
@@ -66,31 +66,23 @@ module rv_pe #(
     parameter integer SIMD_VREGS     = 8,
     parameter integer SIMD_NACC      = 2,
     parameter integer SIMD_VSPAD     = 1024,
-    parameter integer SIMD_MULS      = 4,
-    parameter integer SIMD_SHIFT     = 1,
-    parameter integer SIMD_PERM      = 1,
-    // Permute OUTPUT words per pass; 0 = one per word. See rv_core.
-    parameter integer SIMD_PERM_UNITS = 0,
-    parameter integer SIMD_SHIFT_UNITS = 0,
-    // The dot sum lives in the DSP48 column and the writeback is pipelined.
-    // Both measured at 2.857 ns, SIMD 8 + 4 float lanes: 14,982 LUT / 322.0 MHz
-    // with neither, 13,772 / 353.4 with both. WB_STAGE is worth having ONLY at
-    // a binding constraint -- at 3.333 ns, where the PE closes with positive
-    // slack, the same stage measured +89 LUT and -28 MHz.
-    parameter integer SIMD_DOTDSP    = 1,
+    // EVERY COMPUTE WIDTH: 0 IS NOT BUILT. See rv_core.
+    parameter integer SIMD_PERM_UNITS = 8,
+    parameter integer SIMD_SHIFT_UNITS = 8,
+    parameter integer SIMD_ILANES    = 8,
+    parameter integer SIMD_RED       = 1,
+    parameter integer SIMD_SHROUND   = 1,
+    // WB_STAGE is worth having ONLY at a binding constraint -- at 3.333 ns,
+    // where the PE closes with positive slack, it measured +89 LUT and -28 MHz.
     parameter integer SIMD_WB        = 1,
-    parameter integer SIMD_FLOAT       = 0,
     // 0 = NOT BUILT, not "one per element" -- see rv_core.
     parameter integer SIMD_FLOAT_LANES = 0,
     parameter integer SIMD_FALU      = 1,
     // A UNIT COUNT, not a boolean -- see rv_core.
     parameter integer SIMD_FSFU      = 0,
     parameter integer SIMD_FACC      = 0,
-    // NOT BUILT: khs_unit refuses a nonzero value at elaboration -- the group
-    // decodes, sets `wr_vreg`, and has no converter behind it.
+    // int32 <-> binary32 converters per pass; 0 faults the whole FCVT group.
     parameter integer SIMD_FCVT      = 0,
-    parameter integer SIMD_F16       = 1,
-    parameter integer SIMD_F32       = 1,
     parameter integer SIMD_NPART     = 16,
     parameter         SIMD_USE_DSP   = "yes",
     parameter         SIMD_VREG_PRIM = "distributed"
@@ -460,15 +452,14 @@ module rv_pe #(
         .BTB_ENTRIES(BTB_ENTRIES), .BTB_TAG_W(BTB_TAG_W),
         .REGFILE_PRIM(REGFILE_PRIM), .FWD_X(FWD_X), .POS_WIDTH(POS_WIDTH),
         .SIMD_EN(SIMD_EN), .SIMD_LANES(SIMD_LANES), .SIMD_VREGS(SIMD_VREGS),
-        .SIMD_NACC(SIMD_NACC), .SIMD_VSPAD(SIMD_VSPAD), .SIMD_MULS(SIMD_MULS),
-        .SIMD_SHIFT(SIMD_SHIFT), .SIMD_PERM(SIMD_PERM),
+        .SIMD_NACC(SIMD_NACC), .SIMD_VSPAD(SIMD_VSPAD),
         .SIMD_PERM_UNITS(SIMD_PERM_UNITS),
         .SIMD_SHIFT_UNITS(SIMD_SHIFT_UNITS), .SIMD_WB(SIMD_WB),
-        .SIMD_DOTDSP(SIMD_DOTDSP),
-        .SIMD_FLOAT(SIMD_FLOAT), .SIMD_FLOAT_LANES(SIMD_FLOAT_LANES),
+        .SIMD_ILANES(SIMD_ILANES),
+        .SIMD_RED(SIMD_RED), .SIMD_SHROUND(SIMD_SHROUND),
+        .SIMD_FLOAT_LANES(SIMD_FLOAT_LANES),
         .SIMD_FALU(SIMD_FALU), .SIMD_FSFU(SIMD_FSFU),
         .SIMD_FACC(SIMD_FACC), .SIMD_FCVT(SIMD_FCVT),
-        .SIMD_F16(SIMD_F16), .SIMD_F32(SIMD_F32),
         .SIMD_NPART(SIMD_NPART),
         .SIMD_USE_DSP(SIMD_USE_DSP), .SIMD_VREG_PRIM(SIMD_VREG_PRIM),
         .MEM_PRIM(MEM_PRIM)

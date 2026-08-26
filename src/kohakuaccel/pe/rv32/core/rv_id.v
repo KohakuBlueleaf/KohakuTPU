@@ -89,6 +89,7 @@ module rv_id #(
     output reg         x_sys,
     output reg         x_ebreak,
     output reg         x_illegal,
+    output reg         x_mul,
     output reg         x_pred_taken,
     output reg  [31:0] x_pred_target,
 
@@ -127,7 +128,7 @@ module rv_id #(
     reg  [3:0]  n_alu;
     reg         n_wen, n_branch, n_jal, n_jalr, n_link, n_load, n_store;
     reg         n_sys, n_ebreak, n_illegal, n_op1_pc, n_op1_zero, n_op2_imm;
-    reg         n_use1, n_use2;
+    reg         n_use1, n_use2, n_mul;
 
     // ---- the extension seam -------------------------------------------------
     // Declared BEFORE the decode that reads it: xvlog rejects a use-before-
@@ -171,6 +172,7 @@ module rv_id #(
         n_op2_imm  = 1'b1;
         n_use1     = 1'b0;
         n_use2     = 1'b0;
+        n_mul      = 1'b0;
 
         case (opc)
             OP_LUI: begin
@@ -228,6 +230,14 @@ module rv_id #(
                     3'b110: n_alu = A_OR;
                     default: n_alu = A_AND;
                 endcase
+                // M, after the case so it overrides the refusal `arith_ok`
+                // raised -- f7 0000001 is neither of the two it allows.
+                if (f7 == 7'b0000001) begin
+                    // f3[2] is div/divu/rem/remu and there is no divider, so it
+                    // keeps faulting instead of taking the multiplier's result.
+                    n_mul     = !f3[2];
+                    n_illegal = f3[2];
+                end
             end
             // FENCE is a NOP: one core, one memory port, already ordered.
             OP_MISC: ;
@@ -305,7 +315,7 @@ module rv_id #(
     reg [2:0]  d_f3;
     reg        d_v, d_wen, d_branch, d_jal, d_jalr, d_link, d_load, d_store;
     reg        d_sys, d_ebreak, d_illegal, d_op1_pc, d_op1_zero, d_op2_imm;
-    reg        d_u1, d_u2, d_pred_taken;
+    reg        d_u1, d_u2, d_pred_taken, d_mul;
 
     always @(posedge clk) begin
         if (!resetn) begin
@@ -329,6 +339,7 @@ module rv_id #(
             d_sys         <= n_sys;
             d_ebreak      <= n_ebreak;
             d_illegal     <= n_illegal;
+            d_mul         <= n_mul;
             d_op1_pc      <= n_op1_pc;
             d_op1_zero    <= n_op1_zero;
             d_op2_imm     <= n_op2_imm;
@@ -391,6 +402,7 @@ module rv_id #(
             x_sys         <= d_sys;
             x_ebreak      <= d_ebreak;
             x_illegal     <= d_illegal;
+            x_mul         <= d_mul;
             x_pred_taken  <= d_pred_taken;
             x_pred_target <= d_pred_target;
         end

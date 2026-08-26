@@ -1,4 +1,11 @@
-// rv_ex -- execute: the ALU, the branch comparator, and the effective address.
+// rv_ex -- execute: the ALU, the multiplier, the branch comparator, and the
+// effective address.
+//
+// THE MULTIPLIER HOLDS EX AND BUBBLES MEM, which is not what `x_hold` does.
+// `x_hold` stops EX and MEM together, so freezing `m_valid` under it is safe;
+// this hold stops EX alone, and freezing `m_valid` under it retired the
+// instruction sitting in MEM once per held cycle -- 1,424 retirements for a
+// 602-instruction case. div and rem are not built and keep faulting; see rv_id.
 //
 // EVERY BRANCH AND JUMP IS RESOLVED HERE against the architectural answer, so
 // the predictor is an optimisation with no correctness role. A misprediction
@@ -46,6 +53,7 @@ module rv_ex (
     input  wire        x_sys,
     input  wire        x_ebreak,
     input  wire        x_illegal,
+    input  wire        x_mul,        // mul/mulh/mulhsu/mulhu; the op is x_f3
     // The address decoder in rv_mem reports an unmapped region or a load from
     // a push-only window here, so every fault this core has is raised in one
     // stage and takes one path.
@@ -56,6 +64,9 @@ module rv_ex (
     // ---- combinational, consumed in this cycle ----
     output wire [31:0] ex_alu,       // the distance-1 forwarding source
     output wire [31:0] ex_addr,      // to the data arrays' address pins
+    // EX is holding for its OWN reason. rv_core feeds it to the front and to
+    // rv_id's EX register; this module applies it to itself internally.
+    output wire        ex_mul_hold,
     output wire        ex_redir,
     output wire [31:0] ex_redir_pc,
     output wire        ex_halt,
@@ -127,7 +138,45 @@ module rv_ex (
         endcase
     end
 
-    assign ex_alu  = x_link ? (x_pc + 32'd4) : alu_r;
+    // ---- the multiplier ----------------------------------------------------
+    // ONE 33x33 SIGNED MULTIPLY SERVES ALL FOUR, as kht_imul's does; only the
+    // extension differs. Three stages, the form measured at 365.6 MHz here.
+    wire a_sgn  = (x_f3[1:0] != 2'd3);      // everything but mulhu
+    wire b_sgn  = (x_f3[1:0] == 2'd1);      // only mulh
+    wire hi_sel = (x_f3[1:0] != 2'd0);      // everything but mul
+
+    // FREE-RUNNING. The operands are frozen for the whole hold, so every
+    // capture takes the same value; gating would buy nothing but a mux.
+    reg signed [32:0] ae, be;
+    reg signed [65:0] prod;
+    reg        [31:0] mul_res;
+    reg               s1_hi, s2_hi;
+    always @(posedge clk) begin
+        ae      <= {a_sgn & x_op1[31], x_op1};
+        be      <= {b_sgn & x_op2[31], x_op2};
+        prod    <= ae * be;
+        s1_hi   <= hi_sel;
+        s2_hi   <= s1_hi;
+        mul_res <= s2_hi ? prod[63:32] : prod[31:0];
+    end
+
+    // RESET ON ADVANCE: back-to-back multiplies hold `mul_in` across the
+    // boundary, so the second would retire with the first one's product.
+    wire mul_in = x_valid && x_mul;
+    reg  [1:0] mc;
+    assign ex_mul_hold = mul_in && (mc != 2'd3);
+    always @(posedge clk) begin
+        if (!resetn || !mul_in || ((mc == 2'd3) && !x_hold)) begin
+            mc <= 2'd0;
+        end
+        else if (mc != 2'd3) begin
+            mc <= mc + 2'd1;
+        end
+    end
+
+    // The multiply displaces the ALU, never the link value: `jal` is not an
+    // OP_REG encoding, so the two can never both be asserted.
+    assign ex_alu  = x_link ? (x_pc + 32'd4) : x_mul ? mul_res : alu_r;
     assign ex_addr = sum;
 
     reg br_cond;
@@ -160,7 +209,10 @@ module rv_ex (
     );
 
     wire fault = x_illegal || misalign || x_addr_fault;
-    wire live  = x_valid && !x_hold;
+    // IN `live` TOO, not only the register enable: a held stage that keeps
+    // resolving walks its predictor counter -- what `x_hold` is here for.
+    wire adv   = !x_hold && !ex_mul_hold;
+    wire live  = x_valid && adv;
 
     assign ex_halt      = live && (x_sys || fault);
     assign ex_cause     = fault ? 2'd3 : x_ebreak ? 2'd2 : 2'd1;
@@ -191,9 +243,10 @@ module rv_ex (
         if (!resetn) begin
             m_valid <= 1'b0;
         end else if (!x_hold) begin
+            // BUBBLE, NOT FREEZE, on a multiply hold -- see the header.
             // NOT gated by the redirect: the instruction that caused it is the
             // one in this stage, and it must retire.
-            m_valid <= x_valid;
+            m_valid <= x_valid && !ex_mul_hold;
             m_rd    <= x_rd;
             // A faulting instruction still retires -- the halt is raised by it,
             // so squashing it would leave nothing to report -- but it must not

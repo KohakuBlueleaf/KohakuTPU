@@ -1,4 +1,4 @@
-// rv_core -- the RV32I pipeline: the five stage modules, the register file,
+// rv_core -- the RV32IM pipeline: the five stage modules, the register file,
 // the hazard unit, and the run/halt state.
 //
 // SIX REGISTER BOUNDARIES for five architectural stages, and the two extra
@@ -42,18 +42,18 @@ module rv_core #(
     parameter integer SIMD_EN        = 0,
     parameter integer SIMD_LANES      = 8,
     parameter integer SIMD_VREGS     = 8,
+    // Banks in the FLOAT accumulator; the integer one does not exist.
     parameter integer SIMD_NACC      = 2,
     parameter integer SIMD_VSPAD     = 1024,
-    parameter integer SIMD_MULS      = 4,
-    parameter integer SIMD_SHIFT     = 1,
-    parameter integer SIMD_PERM      = 1,
-    // Cross-lane permute OUTPUT words per pass; 0 = one per word.
-    parameter integer SIMD_PERM_UNITS = 0,
-    parameter integer SIMD_SHIFT_UNITS = 0,
-    parameter integer SIMD_DOTDSP    = 0,
+    // EVERY COMPUTE WIDTH: 0 IS NOT BUILT and the encodings fault. Legal values
+    // are 0,1,2,4,8 and each must divide SIMD_LANES.
+    parameter integer SIMD_ILANES    = 8,
+    parameter integer SIMD_PERM_UNITS = 8,
+    parameter integer SIMD_SHIFT_UNITS = 8,
+    parameter integer SIMD_RED       = 1,
+    parameter integer SIMD_SHROUND   = 1,
     parameter integer SIMD_WB        = 0,
-    parameter integer SIMD_FLOAT       = 0,
-    // Float UNITS against 2*SIMD float ELEMENTS. **0 = NOT BUILT**, the same
+    // Float UNITS against SIMD float ELEMENTS. **0 = NOT BUILT**, the same
     // spelling `FLANES` uses on the SIMT PE; it used to mean "one per element",
     // so the same 0 described opposite machines on the two cores. A build that
     // wants one per element says 2*SIMD, and a float GROUP asked for with no
@@ -70,8 +70,6 @@ module rv_core #(
     parameter integer SIMD_FSFU      = 0,
     parameter integer SIMD_FACC      = 0,
     parameter integer SIMD_FCVT      = 0,
-    parameter integer SIMD_F16       = 1,
-    parameter integer SIMD_F32       = 1,
     parameter integer SIMD_NPART     = 16,
     parameter         SIMD_USE_DSP   = "yes",
     parameter         SIMD_VREG_PRIM = "distributed",
@@ -172,13 +170,14 @@ module rv_core #(
     wire [31:0] x_op1, x_op2, x_rs2v, x_pc, x_target, x_pred_target;
     wire        x_valid, x_wen, x_branch, x_jal, x_jalr, x_link;
     wire        x_load, x_store, x_sys, x_ebreak, x_illegal, x_pred_taken;
+    wire        x_mul;
     wire [4:0]  x_rd;
     wire [3:0]  x_alu;
     wire [2:0]  x_f3;
 
     // ---- execute ----
     wire [31:0] ex_alu, ex_addr, ex_redir_pc, ex_halt_word;
-    wire        ex_redir, ex_halt;
+    wire        ex_redir, ex_halt, ex_mul_hold;
     wire [1:0]  ex_cause;
     wire        bp_valid, bp_taken, bp_is_jump;
     wire [31:0] bp_pc, bp_target;
@@ -252,7 +251,10 @@ module rv_core #(
     wire [1:0] fwd1_sel = h1_1 ? 2'd1 : h2_1 ? 2'd2 : h3_1 ? 2'd3 : 2'd0;
     wire [1:0] fwd2_sel = h1_2 ? 2'd1 : h2_2 ? 2'd2 : h3_2 ? 2'd3 : 2'd0;
 
-    wire hold_front = stall_d || stall_m;
+    // rv_ex gets only `stall_m`: it applies its own multiply hold internally,
+    // and handing it back would make a signal an input to itself.
+    wire stall_x    = stall_m || ex_mul_hold;
+    wire hold_front = stall_d || stall_x;
 
     // ---- run / halt ---------------------------------------------------------
     reg        run_q, halted_q;
@@ -327,9 +329,11 @@ module rv_core #(
         .we(rf_we), .wa(rf_wa), .wd(rf_wd)
     );
 
-    rv_id #(.FWD_X(FWD_X), .SIMD_EN(SIMD_EN), .SIMD_FLOAT(SIMD_FLOAT)) u_id (
+    // Custom-1 is mapped exactly when float units exist; the width says it.
+    rv_id #(.FWD_X(FWD_X), .SIMD_EN(SIMD_EN),
+            .SIMD_FLOAT((SIMD_FLOAT_LANES != 0) ? 1 : 0)) u_id (
         .clk(clk), .resetn(resetn),
-        .d_hold(hold_front), .x_hold(stall_m), .bubble(stall_d), .kill(ex_redir),
+        .d_hold(hold_front), .x_hold(stall_x), .bubble(stall_d), .kill(ex_redir),
         .f2_instr(f2_instr), .f2_pc(f2_pc), .f2_valid(f2_valid),
         .f2_pred_taken(f2_pred_taken), .f2_pred_target(f2_pred_target),
         .ra1(ra1), .ra2(ra2), .rd1(rd1), .rd2(rd2),
@@ -342,6 +346,7 @@ module rv_core #(
         .x_alu(x_alu), .x_branch(x_branch), .x_jal(x_jal), .x_jalr(x_jalr),
         .x_link(x_link), .x_load(x_load), .x_store(x_store), .x_f3(x_f3),
         .x_sys(x_sys), .x_ebreak(x_ebreak), .x_illegal(x_illegal),
+        .x_mul(x_mul),
         .x_pred_taken(x_pred_taken), .x_pred_target(x_pred_target),
         .x_vec(x_vec), .x_instr(x_instr), .d_vec_ld(d_vec_ld)
     );
@@ -353,9 +358,9 @@ module rv_core #(
         .x_alu(x_alu), .x_branch(x_branch), .x_jal(x_jal), .x_jalr(x_jalr),
         .x_link(x_link), .x_load(x_load), .x_store(x_store), .x_f3(x_f3),
         .x_sys(x_sys), .x_ebreak(x_ebreak), .x_illegal(x_illegal),
-        .x_addr_fault(ex_bad_region),
+        .x_mul(x_mul), .x_addr_fault(ex_bad_region),
         .x_pred_taken(x_pred_taken), .x_pred_target(x_pred_target),
-        .ex_alu(ex_alu), .ex_addr(ex_addr),
+        .ex_alu(ex_alu), .ex_addr(ex_addr), .ex_mul_hold(ex_mul_hold),
         .ex_redir(ex_redir), .ex_redir_pc(ex_redir_pc),
         .ex_halt(ex_halt), .ex_cause(ex_cause), .ex_halt_word(ex_halt_word),
         .bp_valid(bp_valid), .bp_pc(bp_pc), .bp_taken(bp_taken),
@@ -413,15 +418,14 @@ module rv_core #(
     // exists to stop. The OOC census path moved with it.
     if (SIMD_EN != 0) begin : g_simd
         khs_unit #(.SIMD(SIMD_LANES), .VREGS(SIMD_VREGS), .NACC(SIMD_NACC),
-                   .VSPAD_ENTRIES(SIMD_VSPAD), .MULS(SIMD_MULS),
-                   .HAS_SHIFT(SIMD_SHIFT), .HAS_PERM(SIMD_PERM),
+                   .VSPAD_ENTRIES(SIMD_VSPAD),
                    .PERM_UNITS(SIMD_PERM_UNITS),
                    .SHIFT_UNITS(SIMD_SHIFT_UNITS),
-                   .DOT_DSP(SIMD_DOTDSP),
-                   .HAS_FLOAT(SIMD_FLOAT), .FLOAT_LANES(SIMD_FLOAT_LANES),
+                   .ILANES(SIMD_ILANES),
+                   .RED_UNITS(SIMD_RED), .HAS_SHROUND(SIMD_SHROUND),
+                   .FLOAT_LANES(SIMD_FLOAT_LANES),
                    .HAS_FALU(SIMD_FALU), .FSFU_UNITS(SIMD_FSFU),
-                   .HAS_FACC(SIMD_FACC), .HAS_FCVT(SIMD_FCVT),
-                   .HAS_F16(SIMD_F16), .HAS_F32(SIMD_F32),
+                   .HAS_FACC(SIMD_FACC), .FCVT_UNITS(SIMD_FCVT),
                    .NPART(SIMD_NPART),
                    .WB_STAGE(SIMD_WB),
                    .USE_DSP(SIMD_USE_DSP), .MEM_PRIM(MEM_PRIM),

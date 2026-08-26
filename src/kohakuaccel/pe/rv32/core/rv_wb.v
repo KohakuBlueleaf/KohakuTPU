@@ -6,7 +6,7 @@
 // the commit decision and the retirement probe.
 //
 // THE RETIREMENT PROBE IS NOT DEBUG. tests/pe co-simulates this core against a
-// Python RV32I model one instruction at a time, and the probe is the interface
+// Python RV32IM model one instruction at a time, and the probe is the interface
 // it compares on: PC, destination and value for every instruction that commits,
 // in order. A core that is wrong for one spacing of one hazard shows up here on
 // the instruction it happens to, not five thousand cycles later as a wrong
