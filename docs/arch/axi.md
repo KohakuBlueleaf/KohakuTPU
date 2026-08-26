@@ -503,6 +503,14 @@ memory models have moved to `src/kohakuaccel/verif/` alongside the other
 bench-only modules. The superseded `instruction_receiver.v` is gone, and
 `axi4_master.v` has been retired to `src/attic/legacy-axi/`.
 
+**`main_orch.v`'s place is settled.** It is a host-side driver — a driver-side
+sequencer the host loads and runs over JTAG or PCIe, for bring-up and for
+scripting the host side of a simulation — and `verif/` is the right home for it.
+On-card orchestration (dispatch, completions, the memory choreography) lives in
+the RV64 runtime host inside the system node; `main_orch` is only the host's
+scripted reach into the same MAG control window the debug bridge and DMA engine
+use. "Where does control live" now has a single answer: the runtime host.
+
 **Still true.**
 
 **There are two implementations of N-to-1 concentration.**
@@ -512,11 +520,6 @@ same structure — round robin, five queues, index-in-ID response routing,
 asynchronous crossing. `mag_dram_port` additionally packs the internal beat up
 to the memory beat and carries byte strobes. They should be one module with the
 packing ratio as a parameter, in this package.
-
-**`main_orch.v` is the control plane, not simulation support.** It has moved
-out of this package into `verif/`, which is where it is *used* but not what it
-*is*. The host-facing control story is split across it and the control agent,
-and "where does control live" still has no single answer.
 
 **`src/reference/poc/` contains copies of framework modules**, including
 `noc_cu_base.v` and `async_fifo.v`. A measurement harness that carries its own

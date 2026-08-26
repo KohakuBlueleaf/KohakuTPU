@@ -69,17 +69,17 @@ const surface = {
     },
     {
       id: "orch",
-      x: 0,
-      y: 12,
+      x: 34,
+      y: 0,
       w: 14,
-      h: 3.4,
+      h: 3,
       label: "main_orch",
-      sub: "WR · POLL · DONE",
+      sub: "host driver · WR · POLL · DONE",
     },
     {
       id: "fab",
       x: 0,
-      y: 18,
+      y: 12,
       w: 48,
       h: 3.4,
       label: "the framework — flits, routers, the memory agent",
@@ -90,8 +90,8 @@ const surface = {
   edges: [
     { from: "host:b", to: "slave:t" },
     { from: "dbg:b", to: "slave:t" },
-    { from: "slave:b", to: "orch:t" },
-    { from: "orch:b", to: "fab:t" },
+    { from: "orch:b", to: "slave:t", label: "host-side master" },
+    { from: "slave:b", to: "fab:t", label: "control writes become flits" },
     { from: "slave:r", to: "n1:l", label: "host memory window", dir: "h" },
     { from: "fab:r", to: "n1:b", label: "one master per port", accent: true },
     { from: "n1:t", to: "ddr:b" },
@@ -1193,17 +1193,29 @@ const notOwnedRows = [
       </p>
     </Callout>
 
-    <h2 class="doc-h2">The control-program engine</h2>
+    <h2 class="doc-h2">The host-side control-program engine</h2>
     <p class="doc-p">
       <code>main_orch.v</code> is an AXI slave so the host can load a program,
-      and an AXI master so it can execute one. It is synthesisable RTL that
-      drives real hardware, and it currently lives in
-      <code>src/kohakuaccel/verif/</code> beside the simulation memory models —
-      <b>a control-plane engine filed under verification</b>. Read the directory
-      as a mislabel rather than as a statement that this is a testbench part;
-      the misfiling is the live remnant of the same defect the package
-      reorganisation otherwise closed, and it is why "where does control live"
-      still has no good answer.
+      and an AXI master so it can execute one. The host writes a list of
+      <code>WR</code> / <code>POLL</code> / <code>DONE</code> commands and then
+      writes <code>GO</code>, so a whole run becomes <b>one host transaction</b> —
+      the host is not in the loop per poll, and the same program drives real
+      hardware over JTAG and over PCIe. It is synthesisable RTL, not a testbench
+      part; it lives in <code>src/kohakuaccel/verif/</code> because that is where
+      it is <i>used</i> — for bring-up and for scripting the host side of a
+      simulation — not because it is simulation-only.
+    </p>
+    <p class="doc-p">
+      What it is <b>not</b> is the machine's control plane. On-card orchestration
+      — dispatch, completion handling, the memory choreography — lives in the
+      <RouterLink to="/component/rv64sys" class="doc-link">RV64 runtime host</RouterLink>
+      inside the system node, which outlives the work it launches and needs no
+      host in the loop at all. <code>main_orch</code> is the <i>host's</i> reach
+      into the same control surface: it issues AXI writes into a MAG control
+      window, exactly as the debug bridge or the DMA engine would, and MAG turns
+      those into flits. So "where does control live" now has an answer — the
+      runtime host on the card — with <code>main_orch</code> as the scripted path
+      the host drives it through.
     </p>
     <SpecTable
       :cols="opCols"
