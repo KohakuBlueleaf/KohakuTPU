@@ -1,7 +1,13 @@
 # OOC synthesis of the ASSEMBLED SIMD PE -- the whole rv_pe with the extension
 # enabled. SYNTH ONLY. Results are the @@@ lines.
 #   vivado -mode batch -source scripts/tcl/ooc_simd_pe.tcl -tclargs \
-#     <dsp_en> <simd> <muls> <has_shift> <has_perm> <wb> <period_ns>
+#     <dsp_en> <simd> <ilanes> <red> <reserved> <wb> <period_ns> ...
+#     ... <permu at 19> ... <shiftu at 24> <generics at 25>
+#
+# POSITIONS 2 AND 3 CHANGED MEANING when every compute feature became a width:
+# they were <muls> and <has_shift>, and are now the integer-lane COUNT and the
+# reduce COUNT. 0 means NOT BUILT. Positions 4 and 11 are reserved -- they held
+# <has_perm> and <dot_dsp>, both of which are gone.
 #
 # The unit measured alone says what the extension costs; THIS says what the PE
 # runs at, which is the number that decides whether a SIMD PE can sit on the
@@ -17,16 +23,16 @@ set part xcvu13p-fhgb2104-2L-e
 
 set den  [lindex $argv 0]
 set simd [lindex $argv 1]
-set muls [lindex $argv 2]
-set hsh  [lindex $argv 3]
-set hpm  [lindex $argv 4]
+set ilan [lindex $argv 2]
+set red  [lindex $argv 3]
+set rsv4 [lindex $argv 4]
 set wbs  [lindex $argv 5]
 set per  [lindex $argv 6]
 set flt  [lindex $argv 7]
 set npt  [lindex $argv 8]
 if {$flt eq ""} { set flt 0 }
 if {$npt eq ""} { set npt 16 }
-# Float LANES against 2*simd float ELEMENTS. 0 = one per element.
+# Float LANES. 0 = NOT BUILT, -1 = one per element.
 set fln  [lindex $argv 9]
 # The receive queue's storage, so its 248 LUTRAM is a priced trade against BRAM
 # rather than a default nobody chose.
@@ -64,31 +70,49 @@ if {$vprim eq ""} { set vprim distributed }
 # measurement artefact, so it is an argument rather than an edit.
 set sdir [lindex $argv 18]
 if {$sdir eq ""} { set sdir default }
-# Cross-lane permute OUTPUT words per pass. 0 = one per word, which is every
-# row measured before the width existed.
+# Cross-lane permute OUTPUT words per pass. 0 = NOT BUILT, -1 = one per word.
 set permu [lindex $argv 19]
-if {$permu eq ""} { set permu 0 }
+if {$permu eq ""} { set permu 8 }
 # APPENDED, NEVER INSERTED: adding these at the END leaves every existing
 # caller's positional arguments where they were.
 set nacc [lindex $argv 20]
 if {$nacc eq ""} { set nacc 2 }
 set vregs [lindex $argv 21]
 if {$vregs eq ""} { set vregs 8 }
-set hf16 [lindex $argv 22]
-if {$hf16 eq ""} { set hf16 1 }
-set hf32 [lindex $argv 23]
-if {$hf32 eq ""} { set hf32 1 }
-set shiftu [lindex $argv 24]
-if {$shiftu eq ""} { set shiftu 0 }
+# THE TWO FORMAT KNOBS ARE GONE from positions 22 and 23: FP32 is the only
+# compute type, so a row from before this shifts by two here.
+set shiftu [lindex $argv 22]
+if {$shiftu eq ""} { set shiftu 8 }
+# EVERY FURTHER KNOB GOES HERE, not in a 24th positional. `+`-separated
+# NAME:VALUE, the same spelling the rest of this tree uses -- Vivado's .bat
+# wrapper splits arguments on `=`, which is why it is `:` and not `=`.
+#   -tclargs 1 8 4 1 1 0 3.333 1 16 4 distributed 0 1 1 0 0 rebuilt \
+#            distributed default 0 2 8 8 SIMD_RED:0+SIMD_SHROUND:0
+set xgen [lindex $argv 23]
+set xlist {}
+set named_shround 0
+if {$xgen ne ""} {
+    foreach kv [split $xgen "+"] {
+        set p [split $kv ":"]
+        if {[llength $p] != 2} { error "bad generic '$kv': want NAME:VALUE" }
+        if {[lindex $p 0] eq "SIMD_SHROUND"} { set named_shround 1 }
+        lappend xlist -generic [lindex $p 0]=[lindex $p 1]
+    }
+}
+
+# The round adder lives INSIDE the shifter and rv_pe defaults it to 1, so a
+# shiftu=0 row was refused at elaboration -- including the all-zero base.
+if {!$named_shround} {
+    lappend xlist -generic SIMD_SHROUND=[expr {$shiftu != 0}]
+}
 
 if {$den  eq ""} { set den  1 }
 if {$simd eq ""} { set simd 8 }
 # AFTER $simd's default, which it reads. 0 IS "NOT BUILT" now, so an omitted
 # count on a float row must not mean "widest" -- it would refuse to elaborate.
 if {$fln eq ""} { set fln [expr {$flt eq "0" ? 0 : 2 * $simd}] }
-if {$muls eq ""} { set muls 4 }
-if {$hsh  eq ""} { set hsh  1 }
-if {$hpm  eq ""} { set hpm  1 }
+if {$ilan eq ""} { set ilan 8 }
+if {$red  eq ""} { set red  1 }
 if {$wbs  eq ""} { set wbs  0 }
 if {$per  eq ""} { set per  3.333 }
 set ::ooc_period $per
@@ -113,14 +137,11 @@ read_verilog [list \
     [file join $root src kohakuaccel pe rv32 core rv_wb.v] \
     [file join $root src kohakuaccel pe rv32 core rv_core.v] \
     [file join $root src kohakuaccel pe rv32 noc rv_noc_req.v] \
-    [file join $root src kohakutpu matmul mx_fpacc.v] \
-    [file join $root src kohakutpu vector vec_dsp.v] \
-    [file join $root src kohakutpu vector vec_delay.v] \
-    [file join $root src kohakutpu vector vec_tables.v] \
-    [file join $root src kohakutpu vector vec_cvt.v] \
-    [file join $root src kohakutpu vector vec_alu.v] \
-    [file join $root src kohakumpe simd khs_float_lane.v] \
-    [file join $root src kohakumpe simd khs_falu.v] \
+    [file join $root src kohakuaccel pe rv32 core rv_fpu.v] \
+    [file join $root src kohakumpe simd khs_lead1.v] \
+    [file join $root src kohakumpe simd generated khs_seed_tab.v] \
+    [file join $root src kohakumpe simd khs_fp32_sfu.v] \
+    [file join $root src kohakumpe simd khs_fp32_alu.v] \
     [file join $root src kohakumpe simd khs_facc.v] \
     [file join $root src kohakumpe simd khs_ffold.v] \
     [file join $root src kohakumpe simd khs_scalar_decode.v] \
@@ -128,6 +149,7 @@ read_verilog [list \
     [file join $root src kohakumpe simd khs_padd32.v] \
     [file join $root src kohakumpe simd khs_pshift32.v] \
     [file join $root src kohakumpe simd khs_lane.v] \
+    [file join $root src kohakumpe simd khs_fcvt.v] \
     [file join $root src kohakumpe simd khs_perm.v] \
     [file join $root src kohakumpe simd khs_reduce.v] \
     [file join $root src kohakumpe simd khs_vregfile.v] \
@@ -138,32 +160,47 @@ read_verilog [list \
 read_xdc [file join $root scripts xdc ooc_rv_pe.xdc]
 
 # `sfuN u`, so a tag from before FSFU became a unit count cannot read as this.
-set tag "simdpe-en$den-s$simd-m$muls-sh$hsh-pm$hpm.${permu}u-wb$wbs-f$flt.$fln-sfu${fsfu}u-r$rmem-d$dotd-t$per-h$flat-v$vprim-D$sdir-a${nacc}-vr${vregs}-fmt${hf16}${hf32}-shu${shiftu}"
-puts "@@@ top rv_pe dsp_en $den simd $simd muls $muls shift $hsh perm $hpm wb $wbs float $flt npart $npt period $per"
+set xtag ""
+if {$xgen ne ""} { set xtag "-[string map {: {} + -} $xgen]" }
+set tag "simdpe-en$den-s$simd-il${ilan}-shu${shiftu}-pmu${permu}-r${red}-wb$wbs-f$flt.$fln-sfu${fsfu}u-r$rmem-t$per-h$flat-v$vprim-D$sdir-a${nacc}-vr${vregs}$xtag"
+puts "@@@ top rv_pe dsp_en $den simd $simd ilanes $ilan shiftu $shiftu permu $permu red $red wb $wbs float $flt flanes $fln npart $npt period $per"
 
 synth_design -top rv_pe -part $part -mode out_of_context \
              -flatten_hierarchy $flat -directive $sdir \
              -include_dirs [file join $root src kohakumpe simd generated] \
              -generic SIMD_EN=$den -generic SIMD_LANES=$simd \
              -generic SIMD_NACC=$nacc -generic SIMD_VREGS=$vregs \
-             -generic SIMD_F16=$hf16 -generic SIMD_F32=$hf32 \
              -generic SIMD_SHIFT_UNITS=$shiftu \
-             -generic SIMD_MULS=$muls -generic SIMD_SHIFT=$hsh \
-             -generic SIMD_PERM=$hpm -generic SIMD_PERM_UNITS=$permu \
+             -generic SIMD_ILANES=$ilan -generic SIMD_RED=$red \
+             -generic SIMD_PERM_UNITS=$permu \
              -generic SIMD_WB=$wbs \
-             -generic SIMD_FLOAT=$flt -generic SIMD_NPART=$npt \
-             -generic SIMD_FLOAT_LANES=$fln \
+             -generic SIMD_NPART=$npt \
+             -generic SIMD_FLOAT_LANES=[expr {$flt ? $fln : 0}] \
              -generic SIMD_FALU=$falu -generic SIMD_FSFU=$fsfu \
              -generic SIMD_FACC=$facc -generic SIMD_FCVT=$fcvt \
              -generic RECV_MEM=$rmem \
-             -generic SIMD_VREG_PRIM=$vprim \
-             -generic SIMD_DOTDSP=$dotd
+             -generic SIMD_VREG_PRIM=$vprim {*}$xlist
 
 # DEPTH 4, not 2: khs_unit is 75% of this PE, so a two-level report names the
 # one block that matters and then stops exactly where the question starts.
+# EVERY knob: the collector's columns come from here, and what was missing it
+# read from tclargs POSITIONS -- which still named 2 and 3 `muls` and `hsh`.
+# LEAN = AREA ONLY. The forensics below materialise up to 200,000 timing-path
+# OBJECTS (ooc_cones) plus 2000 per clock twice; twelve concurrent jobs of that
+# on a 3.8M-LUT part stalled the machine. Unset, nothing here changes.
+set lean 0
+if {[info exists ::env(KOHAKU_OOC_LEAN)]} {
+    if {$::env(KOHAKU_OOC_LEAN) ne "0"} { set lean 1 }
+}
+
+# ooc_record's Fmax loop keeps only the MINIMUM-slack path, so one path per clock
+# is the same number 2000 were. Depth 4 -> 2 for the same reason.
 ooc_record $tag \
-    "dsp_en=$den simd=$simd muls=$muls shift=$hsh perm=$hpm wb=$wbs float=$flt period=$per" \
-    2000 4
+    "dsp_en=$den simd=$simd ilanes=$ilan shiftu=$shiftu permu=$permu red=$red\
+ wb=$wbs float=$flt flanes=$fln npart=$npt falu=$falu fsfu=$fsfu facc=$facc\
+ fcvt=$fcvt nacc=$nacc vregs=$vregs rmem=$rmem\
+ vprim=$vprim flat=$flat sdir=$sdir period=$per xgen=[expr {$xgen eq "" ? "-" : $xgen}]" \
+    [expr {$lean ? 1 : 2000}] [expr {$lean ? 2 : 4}]
 
 puts "@@@ ============================ device totals"
 ooc_count TOTAL
@@ -171,33 +208,35 @@ ooc_count TOTAL
 puts "@@@ ============================ vivado utilization"
 ooc_util
 
-puts "@@@ ============================ per unit"
-foreach inst {u_core u_core/u_if u_core/u_id u_core/u_ex u_core/u_mem \
-              u_core/u_rf u_core/g_simd.u_khs u_imem u_spad u_l1 u_req u_base} {
-    if {[llength [get_cells -quiet $inst]] == 0} {
-        puts "@@@ $inst MISSING"
-        continue
+if {!$lean} {
+    puts "@@@ ============================ per unit"
+    foreach inst {u_core u_core/u_if u_core/u_id u_core/u_ex u_core/u_mem \
+                  u_core/u_rf u_core/g_simd.u_khs u_imem u_spad u_l1 u_req u_base} {
+        if {[llength [get_cells -quiet $inst]] == 0} {
+            puts "@@@ $inst MISSING"
+            continue
+        }
+        ooc_count $inst $inst
     }
-    ooc_count $inst $inst
+
+    puts "@@@ ============================ khs_unit LUT census"
+    ooc_lut_census khs_unit u_core/g_simd.u_khs 30
+
+    puts "@@@ ============================ control sets"
+    ooc_ctrlsets
+
+    puts "@@@ ============================ Fmax per clock"
+    ooc_classify 2000
+
+    puts "@@@ ============================ the binding path"
+    foreach l [split [report_timing -max_paths 1 -nworst 1 -setup -input_pins \
+                          -return_string] "\n"] {
+        puts "@@@P $l"
+    }
+
+    # The SAME instrument the SIMT PE's campaign was driven by, so "does this fix
+    # transfer to the DSP" is a measurement rather than an argument.
+    ooc_cones 6
 }
-
-puts "@@@ ============================ khs_unit LUT census"
-ooc_lut_census khs_unit u_core/g_simd.u_khs 30
-
-puts "@@@ ============================ control sets"
-ooc_ctrlsets
-
-puts "@@@ ============================ Fmax per clock"
-ooc_classify 2000
-
-puts "@@@ ============================ the binding path"
-foreach l [split [report_timing -max_paths 1 -nworst 1 -setup -input_pins \
-                      -return_string] "\n"] {
-    puts "@@@P $l"
-}
-
-# The SAME instrument the SIMT PE's campaign was driven by, so "does this fix
-# transfer to the DSP" is a measurement rather than an argument.
-ooc_cones 6
 
 puts "@@@ ooc_simd_pe done $tag"

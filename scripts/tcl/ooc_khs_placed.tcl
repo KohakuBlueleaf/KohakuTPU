@@ -50,6 +50,8 @@ read_verilog [list \
     [file join $root src kohakumpe simd khs_padd32.v] \
     [file join $root src kohakumpe simd khs_pshift32.v] \
     [file join $root src kohakumpe simd khs_lane.v] \
+    [file join $root src kohakumpe simd khs_lead1.v] \
+    [file join $root src kohakumpe simd khs_fcvt.v] \
     [file join $root src kohakumpe simd khs_perm.v] \
     [file join $root src kohakumpe simd khs_reduce.v] \
     [file join $root src kohakumpe simd khs_vregfile.v] \

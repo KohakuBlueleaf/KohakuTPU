@@ -35,12 +35,12 @@ set shf  [lindex $argv 7]
 # rather than the answer.
 set flt  [lindex $argv 8]
 # G9. The float tier is the SIMD tier's arithmetic instantiated here, so turning
-# it on drags vec_alu and its DSP48E2 into the read list.
+# it on drags rv_fpu and its DSP48E2 into the read list.
 set fpu  [lindex $argv 9]
 set fln  [lindex $argv 10]
 # THE SEED UNIT COUNT, not a boolean. 0 builds none; 1..FLANES builds that many
-# seed-capable float units and every other unit loses vec_alu's HAS_POLY --
-# a DSP48E2 and 1.5 BRAM apiece. Quarter rate is FSFU_UNITS = FLANES/4.
+# seed-capable float units, each `khs_fp32_sfu`'s table and two DSPs on top of
+# its FMA. Quarter rate is FSFU_UNITS = FLANES/4.
 set sfu  [lindex $argv 11]
 set lds  [lindex $argv 12]
 set ipdd [lindex $argv 13]
@@ -50,19 +50,19 @@ set rdep [lindex $argv 16]
 set iwds [lindex $argv 17]
 set swds [lindex $argv 18]
 set l1ln [lindex $argv 19]
-set fmdl [lindex $argv 20]
+# Position 20 was the float MODEL switch, which had no meaning once the tier
+# became rv_fpu: it is kept unread so no caller's positions move.
 # The RV32M multiply unit count. An add-on to the integer lane, so its width is
 # its own purchase and not the thread count.
 set mun  [lindex $argv 21]
-# APPENDED, NEVER INSERTED: existing callers' positions do not move.
-set hf16 [lindex $argv 22]
-set hf32 [lindex $argv 23]
-if {$hf16 eq ""} { set hf16 1 }
-if {$hf32 eq ""} { set hf32 1 }
-set shflu [lindex $argv 24]
-if {$shflu eq ""} { set shflu 0 }
-set ldsb [lindex $argv 25]
-if {$ldsb eq ""} { set ldsb 0 }
+# THE TWO FORMAT KNOBS ARE GONE from positions 22 and 23: FP32 is the only
+# compute type, so a row from before this shifts by two here.
+set shflu [lindex $argv 22]
+# 0 IS NOT BUILT and -1 is full rate, the house rule. These read `0 = full`
+# until kht_unit's `SU = (SHFL_UNITS == 0) ? LANES` was corrected.
+if {$shflu eq ""} { set shflu -1 }
+set ldsb [lindex $argv 23]
+if {$ldsb eq ""} { set ldsb -1 }
 
 if {$top eq ""} { set top kht_unit }
 if {$lns eq ""} { set lns 8 }
@@ -91,8 +91,10 @@ if {$rdep eq ""} { set rdep 512 }
 if {$iwds eq ""} { set iwds 2048 }
 if {$swds eq ""} { set swds 2048 }
 if {$l1ln eq ""} { set l1ln 128 }
-if {$fmdl eq ""} { set fmdl 0 }
-if {$mun  eq ""} { set mun [expr {$fpu eq "0" ? 0 : $lns}] }
+# THE MULTIPLY COUNT IS THE THREAD COUNT and is no longer a generic: a thread's
+# ALU is an IM unit. Position 21 is kept so no caller's positions move, and it
+# survives only in the tag and in the kht_imul read-list condition below.
+set mun $lns
 set ::ooc_period $per
 
 set_param general.maxThreads 4
@@ -121,13 +123,10 @@ read_verilog [list \
 # multiplier still needs kht_imul -- reading only on $fpu left it out.
 if {$fln ne "0" || $mun ne "0"} {
     read_verilog [list \
-        [file join $root src kohakutpu matmul mx_fpacc.v] \
-        [file join $root src kohakutpu vector vec_dsp.v] \
-        [file join $root src kohakutpu vector vec_delay.v] \
-        [file join $root src kohakutpu vector vec_tables.v] \
-        [file join $root src kohakutpu vector vec_cvt.v] \
-        [file join $root src kohakutpu vector vec_alu.v] \
-        [file join $root src kohakumpe simd khs_float_lane.v] \
+        [file join $root src kohakuaccel pe rv32 core rv_fpu.v] \
+        [file join $root src kohakumpe simd khs_lead1.v] \
+        [file join $root src kohakumpe simd generated khs_seed_tab.v] \
+        [file join $root src kohakumpe simd khs_fp32_sfu.v] \
         [file join $root src kohakumpe simt kht_fpu.v] \
         [file join $root src kohakumpe simt kht_imul.v]]
 }
@@ -138,22 +137,22 @@ read_xdc [file join $root scripts xdc ooc_khg.xdc]
 # tag with whitespace in it splits when anything downstream parses the @@@ line.
 set tag "gpu-$top-l$lns-w$wvs-m$msk-i$ipd-s$shf-$prm-f$flt-fp$fpu.$fln-sf$sfu"
 append tag "-lb$lds-id$ipdd-mp$mprm-idep$idep-rd$rdep"
-append tag "-iw$iwds-sw$swds-l1$l1ln-fm$fmdl-mu$mun-fmt${hf16}${hf32}"
+append tag "-iw$iwds-sw$swds-l1$l1ln-mu$mun"
 append tag "-su${shflu}-lb${ldsb}-t$per"
 puts "@@@ top $top lanes $lns waves $wvs has_mask $msk has_ipdom $ipd has_shfl $shf vreg $prm period $per"
 
 # Only kht_unit carries the ladder generics; a leaf takes what it has.
-# FLANES/MUL_UNITS reach the ladder tops too; both default to 0, so G0-G3 are
-# unchanged and a float-tier saving becomes attributable rather than a total.
+# FLANES reaches the ladder tops too, and defaults to 0, so a float-tier saving
+# is attributable rather than a total.
 if {$top eq "kht_unit"} {
     synth_design -top $top -part $part -mode out_of_context \
                  -flatten_hierarchy $flt -directive default \
                  -include_dirs [file join $root src kohakumpe simt generated] \
                  -generic LANES=$lns -generic WAVES=$wvs \
                  -generic HAS_MASK=$msk -generic HAS_IPDOM=$ipd \
-                 -generic HAS_SHFL=$shf -generic VREG_PRIM=$prm \
+                 -generic SHFL_UNITS=$shflu -generic VREG_PRIM=$prm \
                  -generic FLANES=$fln \
-                 -generic FSFU_UNITS=$sfu -generic MUL_UNITS=$mun
+                 -generic FSFU_UNITS=$sfu
 } elseif {$top eq "kht_pe"} {
     # THE WHOLE UNIT: core, windows, L1, requestor, fabric port. The gate ladder
     # answers "what does this cost"; only this answers "does the machine close",
@@ -163,17 +162,15 @@ if {$top eq "kht_unit"} {
                  -include_dirs [file join $root src kohakumpe simt generated] \
                  -generic LANES=$lns -generic WAVES=$wvs \
                  -generic HAS_MASK=$msk -generic HAS_IPDOM=$ipd \
-                 -generic HAS_SHFL=$shf -generic VREG_PRIM=$prm \
+                 -generic VREG_PRIM=$prm \
                  -generic FLANES=$fln \
-                 -generic FSFU_UNITS=$sfu -generic MUL_UNITS=$mun \
-                 -generic HAS_F16=$hf16 -generic HAS_F32=$hf32 \
+                 -generic FSFU_UNITS=$sfu \
                  -generic SHFL_UNITS=$shflu \
-                 -generic HAS_LDSBANK=$lds -generic LDS_BANKS=$ldsb \
+                 -generic LDS_BANKS=$ldsb \
                  -generic IPDOM_D=$ipdd \
                  -generic MEM_PRIM=$mprm -generic INST_DEPTH=$idep \
                  -generic RECV_DEPTH=$rdep -generic IMEM_WORDS=$iwds \
-                 -generic SPAD_WORDS=$swds -generic L1_LINES=$l1ln \
-                 -generic FMODEL=$fmdl
+                 -generic SPAD_WORDS=$swds -generic L1_LINES=$l1ln
 } elseif {$top eq "kht_core"} {
     # G7 lives in the FRONT END, which kht_unit's top cannot see. Sweeping WAVES
     # here against the same sweep on kht_unit separates scheduling from storage:
@@ -183,9 +180,9 @@ if {$top eq "kht_unit"} {
                  -include_dirs [file join $root src kohakumpe simt generated] \
                  -generic LANES=$lns -generic WAVES=$wvs \
                  -generic HAS_MASK=$msk -generic HAS_IPDOM=$ipd \
-                 -generic HAS_SHFL=$shf -generic VREG_PRIM=$prm \
+                 -generic SHFL_UNITS=$shflu -generic VREG_PRIM=$prm \
                  -generic FLANES=$fln \
-                 -generic FSFU_UNITS=$sfu -generic MUL_UNITS=$mun
+                 -generic FSFU_UNITS=$sfu
 } elseif {$top eq "kht_lds"} {
     # G4 lives here, not in kht_unit: the resolver is LANES x LANES and the
     # return crossbar is per lane, so this is the block the gate is measured on.
@@ -218,8 +215,19 @@ if {[llength [get_clocks -quiet]] == 0} {
 
 # DEPTH 4: kht_unit is 72% of this PE, so a two-level report names the one block
 # that matters and stops exactly where the question starts.
-ooc_record $tag "top=$top lanes=$lns waves=$wvs mask=$msk ipdom=$ipd period=$per" \
-    2000 4
+# LEAN = AREA ONLY, same contract as ooc_simd_pe.tcl: ooc_cones materialises up
+# to 200,000 timing-path objects, which is what made concurrent jobs unrunnable.
+set lean 0
+if {[info exists ::env(KOHAKU_OOC_LEAN)]} {
+    if {$::env(KOHAKU_OOC_LEAN) ne "0"} { set lean 1 }
+}
+
+ooc_record $tag "top=$top lanes=$lns waves=$wvs mask=$msk ipdom=$ipd\
+ shfl=$shf fpu=$fpu flanes=$fln fsfu=$sfu ldsbank=$lds ldsb=$ldsb shflu=$shflu\
+ vregprim=$prm memprim=$mprm instdepth=$idep\
+ recvdepth=$rdep imemwords=$iwds spadwords=$swds l1lines=$l1ln ipdomd=$ipdd\
+ flat=$flt period=$per" \
+    [expr {$lean ? 1 : 2000}] [expr {$lean ? 2 : 4}]
 
 puts "@@@ ============================ device totals"
 ooc_count TOTAL
@@ -227,19 +235,21 @@ ooc_count TOTAL
 puts "@@@ ============================ vivado utilization"
 ooc_util
 
-puts "@@@ ============================ Fmax per clock"
-ooc_classify 2000
+if {!$lean} {
+    puts "@@@ ============================ Fmax per clock"
+    ooc_classify 2000
 
-puts "@@@ ============================ the binding path"
-foreach l [split [report_timing -max_paths 1 -nworst 1 -setup -input_pins \
-                      -return_string] "\n"] {
-    puts "@@@P $l"
-}
+    puts "@@@ ============================ the binding path"
+    foreach l [split [report_timing -max_paths 1 -nworst 1 -setup -input_pins \
+                          -return_string] "\n"] {
+        puts "@@@P $l"
+    }
 
-ooc_cones 6
+    ooc_cones 6
 
-if {$top eq "kht_pe"} {
-    ooc_lut_census kht_core u_core 30
+    if {$top eq "kht_pe"} {
+        ooc_lut_census kht_core u_core 30
+    }
 }
 
 puts "@@@ ooc_simt_pe done $tag"
