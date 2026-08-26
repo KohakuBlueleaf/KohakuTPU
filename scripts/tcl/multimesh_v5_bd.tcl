@@ -62,7 +62,7 @@ proc have {path} { expr {[llength [get_files -quiet $path]] > 0} }
 # v3's sources, plus the v5 additions at the end. A file the project already
 # has would otherwise land as a duplicate definition.
 set SOURCES {
-    src/kohakuaccel/common/sync_fifo.v src/kohakuaccel/common/kohaku_sdpram.v src/kohakuaccel/common/async_fifo.v
+    src/kohakuaccel/common/sync_fifo.v src/kohakuaccel/common/kohaku_sdpram.v src/kohakuaccel/common/kohaku_sdpram_be.v src/kohakuaccel/common/async_fifo.v
     src/kohakuaccel/noc/router/noc_inport.v src/kohakuaccel/noc/router/noc_outport.v
     src/kohakuaccel/noc/router/noc_router.v src/kohakuaccel/noc/endpoint/noc_cu_base.v
     src/kohakuaccel/noc/ctrl/noc_orchestrator.v

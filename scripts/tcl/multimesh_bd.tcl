@@ -37,7 +37,7 @@ set_property target_language Verilog [current_project]
 set root C:/Users/apoll/Desktop/code/Project/KohakuTPU
 proc have {path} { expr {[llength [get_files -quiet $path]] > 0} }
 foreach f {
-    src/kohakuaccel/common/sync_fifo.v src/kohakuaccel/common/kohaku_sdpram.v src/kohakuaccel/common/async_fifo.v
+    src/kohakuaccel/common/sync_fifo.v src/kohakuaccel/common/kohaku_sdpram.v src/kohakuaccel/common/kohaku_sdpram_be.v src/kohakuaccel/common/async_fifo.v
     src/kohakuaccel/noc/router/noc_inport.v src/kohakuaccel/noc/router/noc_outport.v
     src/kohakuaccel/noc/router/noc_router.v src/kohakuaccel/noc/endpoint/noc_cu_base.v
     src/kohakuaccel/noc/ctrl/noc_orchestrator.v

@@ -55,7 +55,7 @@ create_project -force $design_name $proj_dir -part $part
 set_property target_language Verilog [current_project]
 
 set SRC {
-    src/kohakuaccel/common/sync_fifo.v src/kohakuaccel/common/kohaku_sdpram.v src/kohakuaccel/common/async_fifo.v
+    src/kohakuaccel/common/sync_fifo.v src/kohakuaccel/common/kohaku_sdpram.v src/kohakuaccel/common/kohaku_sdpram_be.v src/kohakuaccel/common/async_fifo.v
     src/kohakuaccel/noc/router/noc_inport.v src/kohakuaccel/noc/router/noc_outport.v
     src/kohakuaccel/noc/router/noc_router.v src/kohakuaccel/noc/endpoint/noc_cu_base.v
     src/kohakuaccel/noc/ctrl/noc_orchestrator.v src/kohakuaccel/noc/endpoint/noc_l2_adapter.v

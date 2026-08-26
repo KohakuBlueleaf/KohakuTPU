@@ -1,19 +1,18 @@
-# What the system node costs, whole. There is no CTRL_PE to sweep: the
-# processor, the mover and the transform slot are parts of the node, not
-# options on it.
+# What the system node costs whole, with the RV64 control complex in place of
+# the RV32 one. The mover and the transform slot are the SAME in both -- they
+# are parts of the node, not of the processor -- so the difference this reports
+# is the processor's and nothing else.
 #
-#   vivado -mode batch -source scripts/tcl/ooc_sysnode.tcl -tclargs <ports> <period_ns>
+#   vivado -mode batch -source scripts/tcl/ooc_sysnode_rv64.tcl -tclargs <ports>
 #
-# CEILING: 31,236 LUT at 2 ports -- the two-module shape with the processor on.
-# The genuinely historical figure is 39,886, before the transform slot folded
-# onto the mover's read-return path; that fold is worth -8,650 on its own.
+# THE GATE IS THIS RUN, not an arithmetic projection off the RV32 figure.
+# Subtracting `rv_mag_pe` from the node removes the mover with it, and the mover
+# does not disappear -- it stays whatever processor sits in the node.
 
 set root [file normalize [file join [file dirname [info script]] .. ..]]
 set ports [lindex $argv 0]
-# PRODUCTION SHIPS AT LEAST TWO. A one-port figure understates the node, and the
-# per-port cost has to come from adjacent rows, never a tier divided by a count.
 if {$ports eq ""} { set ports 2 }
-set tag "sn_p${ports}"
+set tag "sn64_p${ports}"
 
 set part xcvu13p-fhgb2104-2L-e
 create_project -in_memory -part $part
@@ -46,7 +45,8 @@ read_verilog [list \
     [file join $root src kohakuaccel sysnode core mag.v] \
     [file join $root src kohakuaccel sysnode sysnode.v]]
 
-# The processor is part of the node, so its sources always come.
+# The RV32 processor's sources still come: `sysnode` names `rv_mag_pe` in the
+# branch that is not generated, and the whole chain has to parse.
 read_verilog [list \
         [file join $root src kohakuaccel pe rv32 mem rv_ram_be.v] \
         [file join $root src kohakuaccel pe rv32 mem rv_imem.v] \
@@ -64,40 +64,79 @@ read_verilog [list \
         [file join $root src kohakuaccel pe rv32 noc rv_mag_req.v] \
         [file join $root src kohakuaccel sysnode cpu rv_mag_pe.v]]
 
+read_verilog [glob \
+        [file join $root src kohakuaccel pe rv64-sys *.v] \
+        [file join $root src kohakuaccel pe rv64-sys core *.v]]
+read_verilog [list [file join $root src kohakuaccel sysnode cpu rv64_mag_pe.v]]
+
 read_xdc [file join $root scripts xdc ooc_sysnode.xdc]
 
+# STAGE_AT_PORT=1 IS NOT A TUNING KNOB HERE. At 0 the RTL puts a whole staging
+# store inside EVERY memory port -- PORTS x 64 URAM, 4 MB to obtain 2 MB -- and
+# its own comment says those copies are "unreachable by mover and interlink".
+# SysCore's page tables, the cross-node mailbox and the allocator bitmap all
+# live in staging and are reached over the converged path, so the per-port
+# store is both twice the URAM and the wrong store.
 synth_design -top sysnode -mode out_of_context -part $part -directive default \
-    -generic STAGE=1 -generic ILINK=1 -generic PORTS=$ports
+    -generic STAGE=1 -generic ILINK=1 -generic PORTS=$ports \
+    -generic STAGE_AT_PORT=1 \
+    -generic CPU_RV64=1 -generic PE_IMEM=8192 -generic PE_SPAD=4096 \
+    -generic PE_L1_LINES=64
 
 if {[llength [get_clocks -quiet]] == 0} {
     error "no clock: ooc_sysnode.xdc did not apply, so every figure would be unconstrained"
 }
 report_utilization -quiet -file [file join $root build "node_${tag}_util.rpt"]
-# -flatten_hierarchy none, or a leaf row is charged to whoever it re-parented to
-# and the attribution is wrong in exactly the direction that hides the cost.
 report_utilization -hierarchical -hierarchical_depth 4 -quiet \
     -file [file join $root build "node_${tag}_hier.rpt"]
-write_checkpoint -force [file join $root build "node_${tag}.dcp"]
 report_timing_summary -quiet -file [file join $root build "node_${tag}_time.rpt"]
 
-# Defaults, because an unmatched regexp leaves the variable UNSET and the puts
-# below then errors out AFTER a clean synthesis -- which reads as a failed run.
-set nlut ?; set nff ?; set nbram ?; set ndsp ?
+set nlut ?; set nff ?; set nbram ?; set ndsp ?; set nuram ?
 set u [report_utilization -return_string]
-regexp {CLB LUTs\D+(\d+)}        $u -> nlut
-regexp {CLB Registers\D+(\d+)}   $u -> nff
+regexp {CLB LUTs\D+(\d+)}          $u -> nlut
+regexp {CLB Registers\D+(\d+)}     $u -> nff
 regexp {Block RAM Tile\D+([\d.]+)} $u -> nbram
-regexp {DSPs\D+(\d+)}            $u -> ndsp
+regexp {URAM\D+(\d+)}              $u -> nuram
+regexp {DSPs\D+(\d+)}              $u -> ndsp
 set slk [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -setup]]
 
-# ONE transform bank (32 DSP) plus the mover's 3, whatever the port count. A
-# figure that scales with $ports means an occupant is back inside a port.
-if {$ndsp ne "?" && $ndsp > 48} {
-    error "$ndsp DSP: a transform instance is being generated per port again"
+puts "@@@ NODE64 PORTS=$ports LUT=$nlut FF=$nff BRAM=$nbram URAM=$nuram DSP=$ndsp WNS=$slk"
+if {$nlut ne "?" && $nlut > 35000} {
+    puts "@@@ OVER BUDGET: $nlut LUT against the 35,000 target"
+} else {
+    puts "@@@ WITHIN BUDGET: $nlut LUT against the 35,000 target"
 }
-puts "@@@ NODE PORTS=$ports LUT=$nlut FF=$nff BRAM=$nbram DSP=$ndsp WNS=$slk"
-# The two-module shape measured 31,236 LUT at 2 ports with the processor on.
-# The hub replaced the share layer; it must not have cost anything.
-if {$ports == 2 && $nlut ne "?" && $nlut > 31236} {
-    puts "@@@ REGRESSION: $nlut LUT against the 31,236 ceiling"
+
+# EVERY failing path, with its logic level: a level count above 11 is the thing
+# to fix, not the slack.
+set bad [get_timing_paths -max_paths 2000 -nworst 1 -setup -slack_lesser_than 0]
+puts "@@@FAILN [llength $bad]"
+
+proc base {pin} {
+    set c [file dirname $pin]
+    regsub {\[[0-9]+\]$} $c "" c
+    return $c
+}
+
+array set grp {}
+foreach p $bad {
+    set k "[base [get_property STARTPOINT_PIN $p]] -> [base [get_property ENDPOINT_PIN $p]]"
+    set s [get_property SLACK $p]
+    set l [get_property LOGIC_LEVELS $p]
+    if {[info exists grp($k)]} {
+        lassign $grp($k) cnt worst lvl
+        set grp($k) [list [expr {$cnt + 1}] [expr {$s < $worst ? $s : $worst}] \
+                          [expr {$l > $lvl ? $l : $lvl}]]
+    } else {
+        set grp($k) [list 1 $s $l]
+    }
+}
+set rows {}
+foreach k [array names grp] {
+    lassign $grp($k) cnt worst lvl
+    lappend rows [list $worst $cnt $lvl $k]
+}
+foreach r [lsort -real -index 0 $rows] {
+    lassign $r worst cnt lvl k
+    puts [format "@@@GROUP %4d paths  worst %+7.3f  lvl %3s  %s" $cnt $worst $lvl $k]
 }
