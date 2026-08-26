@@ -352,6 +352,17 @@ module mm_mover #(
     // ================================================== staging FIFO
     reg  [CNT_W-1:0] occ;                   // reserved + present
     reg  [CNT_W-1:0] fcnt;                  // present
+
+    // THE ROOM LIMIT IS A CONSTANT PER RUN, computed at config so the hot path
+    // is one compare against a register, not an add-then-compare with `mode` in
+    // it. `occ + occ_need <= FIFO_D` is `occ <= FIFO_D - occ_need`, and occ_need
+    // is one of two compile-time constants, so the subtraction folds. This was
+    // the node's last cone: mode_reg -> the adder -> stall -> the command FIFO
+    // write enable, 12 levels, WNS -0.081.
+    localparam [CNT_W-1:0] XF_OCC = {{(CNT_W-9){1'b0}}, OUT_W9};
+    localparam [CNT_W-1:0] XF_ROOM_LIM = FIFO_D[CNT_W-1:0] - XF_OCC;
+    localparam [CNT_W-1:0] CP_ROOM_LIM = FIFO_D[CNT_W-1:0] - 16'd1;
+    reg  [CNT_W-1:0] room_lim;
     wire             f_wr = xf ? xo_busy : (m_rvalid && !ix_active);
     wire [DATA_W-1:0] f_din = xf ? xo_word : m_rdata;
     wire             f_rd;                  // driven by the write engine
@@ -443,8 +454,7 @@ module mm_mover #(
     // known before the AR, which is what m_rready = 1 rests on.
     wire [CNT_W-1:0] occ_need = xf ? {{(CNT_W-9){1'b0}}, OUT_W9}
                                    : {{(CNT_W-1){1'b0}}, 1'b1};
-    wire fifo_room = xf ? ((occ + occ_need) <= FIFO_D[CNT_W-1:0])
-                        : (occ < FIFO_D[CNT_W-1:0]);
+    wire fifo_room = (occ <= room_lim);
     wire ent_gate  = !xf || ent_first;
     wire xf_cmd    = xf && ent_first && (e_kind == K_RD);
 
@@ -604,6 +614,7 @@ module mm_mover #(
             ra_open <= 1'b0; wa_open <= 1'b0; wa_kind <= K_SKIP;
             ar_out <= 8'd0; wr_out <= 8'd0; w_starve <= 1'b0;
             occ <= {CNT_W{1'b0}}; fcnt <= {CNT_W{1'b0}};
+            room_lim <= CP_ROOM_LIM;        // mode resets to COPY
             w_left <= 9'd0; w_kind <= K_SKIP;
         end else begin
             d_hdr_en <= 1'b0; d_dim_en <= 1'b0; d_ax_en <= 1'b0;
@@ -652,6 +663,8 @@ module mm_mover #(
                         ewidth <= cfg_data[4:3];
                         flags  <= cfg_data[15:8];
                         go     <= cfg_data[16];
+                        room_lim <= (cfg_data[2:0] == MODE_XFORM)
+                                  ? XF_ROOM_LIM : CP_ROOM_LIM;
                     end
                     8'h10: begin
                         ld_sel   <= cfg_data[0];

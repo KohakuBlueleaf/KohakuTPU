@@ -57,7 +57,10 @@ module mm_prng #(
     reg [1:0]  phase;
     reg [31:0] m_a0, m_a2;
     reg [31:0] r_hi0, r_lo0, r_hi1, r_lo1;
-    reg [47:0] pl0, ph0, pl1, ph1;
+    // A MULTIPLY BY A CONSTANT IS NOT A MULTIPLY TO SYNTHESIS: left alone it
+    // becomes shift-and-add, and these four cost 1,026 LUT and zero DSP at the
+    // node. The attribute keeps them in the DSP48 the design planned on.
+    (* use_dsp = "yes" *) reg [47:0] pl0, ph0, pl1, ph1;
 
     // The key is bumped AFTER each round rather than before, which is the same
     // schedule -- round 0 uses the loaded key, round n uses key + n*W -- but
