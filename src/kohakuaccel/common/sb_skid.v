@@ -26,23 +26,35 @@ module sb_skid #(
     assign o_valid = out_valid;
     assign o_data  = out_data;
 
+    // THE DATA REGISTERS CARRY CLOCK ENABLES, NOT FEEDBACK MUXES. Written in
+    // the control `else if` chain, each bit's D input becomes a mux back onto
+    // itself: a LUT per bit per register, at W = 256, twice per memory port.
+    // Split out, `hold_data` has one source under an enable and costs no logic,
+    // and `out_data` keeps the one 2:1 select it needs. Same behaviour.
+    wire out_en  = !out_valid || o_ready;
+    wire hold_en = !out_en && i_valid && i_ready;
+
     always @(posedge clk) begin
         if (rst) begin
             out_valid  <= 1'b0;
             hold_valid <= 1'b0;
-        end else if (!out_valid || o_ready) begin
+        end
+        else if (out_en) begin
             // Drain the hold slot first, so beats leave in arrival order.
-            if (hold_valid) begin
-                out_data   <= hold_data;
-                out_valid  <= 1'b1;
-                hold_valid <= 1'b0;
-            end else begin
-                out_data  <= i_data;
-                out_valid <= i_valid;
-            end
-        end else if (i_valid && i_ready) begin
-            hold_data  <= i_data;
+            out_valid  <= hold_valid || i_valid;
+            hold_valid <= 1'b0;
+        end
+        else if (hold_en) begin
             hold_valid <= 1'b1;
+        end
+    end
+
+    always @(posedge clk) begin
+        if (out_en) begin
+            out_data <= hold_valid ? hold_data : i_data;
+        end
+        if (hold_en) begin
+            hold_data <= i_data;
         end
     end
 endmodule
