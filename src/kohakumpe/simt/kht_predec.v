@@ -36,16 +36,10 @@ module kht_predec (
     wire is_div  = is_khg && (f3 == KHT_F3_DIV);
     wire is_sub  = is_khg && (f3 == KHT_F3_SUB);
     wire is_vmem = is_khg && (f3 == KHT_F3_VMEM);
-    // f7[3] is the operand format and f7[2:0] the operation: 0-3 the arithmetic
-    // four, 4-7 the FSFU seeds, +8 for the FP16 form of each.
-    //
-    // THE BOUND IS VFRSQRT_H AND NOT VFSUB_H. Stopping at VFSUB_H admitted the
-    // FP32 seeds and refused the FP16 ones, so an optional feature the ISA table
-    // defines at both widths decoded ILLEGAL at one of them -- against the rule
-    // that both input formats are supported. It is behaviour-neutral at
-    // HAS_FSFU = 0, which is what ships: a seed still faults, through `unbuilt`
-    // instead of through `illegal`.
-    wire is_flt  = is_khg && (f3 == KHT_F3_FLT) && (f7 <= KHT_FLT_VFRSQRT_H);
+    // f7[2:0] is the operation: 0-3 the arithmetic four, 4-7 the FSFU seeds.
+    // FP32 is the only compute type, so there is no format bit and no `_H` half
+    // of the table; anything above VFRSQRT is an unmapped encoding.
+    wire is_flt  = is_khg && (f3 == KHT_F3_FLT) && (f7 <= KHT_FLT_VFRSQRT);
 
     wire [2:0] mem_op = f7[6:4];
     wire mem_lin   = is_vmem && (mem_op >= KHT_MEM_OP_LIN);
@@ -154,8 +148,7 @@ module kht_predec (
     assign ctrl[C_ILLEGAL] = illegal;
 
     // `is_op && !is_imul`: a multiply writes the vector file through the
-    // multiplier's own retire slot fifteen cycles later, so the ordinary
-    // writeback must not also claim it.
+    // multiplier's own retire slot, so the ordinary writeback must not claim it.
     assign ctrl[C_VTWEN]   = is_lui || is_auipc || is_jal || is_jalr || is_load
                           || is_opimm || (is_op && !is_imul)
                           || (is_smov && (f7 == KHT_SMOV_S2V))
@@ -207,7 +200,7 @@ module kht_predec (
     assign ctrl[C_RDS2] = is_salu || is_shfl;
 
     // The float class writes the vector file like any other lane operation --
-    // it just does it fifteen cycles later, through its own port arbitration.
+    // it just does it FLAT cycles later, through its own retire slot.
     assign ctrl[C_FLT]  = is_flt;
     assign ctrl[C_FOP0+3:C_FOP0] = f7[3:0];
 

@@ -36,13 +36,10 @@ module kht_unit #(
     parameter integer WID       = (WAVES > 1) ? $clog2(WAVES) : 1,
     parameter integer HAS_MASK  = 1,
     parameter integer HAS_IPDOM = 1,
-    // G8. One butterfly serves shflxor AND bcast, so the gate is one parameter
-    // and the network is measured once.
-    parameter integer HAS_SHFL  = 1,
-    // Cross-lane permute OUTPUT lanes per pass; 0 = one per lane, the full
-    // butterfly. SIMD's PERM_UNITS on this core, same rule: the ISA never learns
-    // the count.
-    parameter integer SHFL_UNITS = 0,
+    // G8. One butterfly serves shflxor AND bcast. 0 IS NOT BUILT, -1 is full.
+    // Read `(SHFL_UNITS == 0) ? LANES`, so 0 and LANES were the SAME build and
+    // the sweep measured +0 LUT across what it thought was the whole ladder.
+    parameter integer SHFL_UNITS = -1,
     // G9. THREE INDEPENDENT COUNTS, EACH LEGAL AT 0, 1, 2, 4, 8. There is no
     // separate boolean: 0 units IS "not built", and the decode faults on the
     // group. A HAS_FLT gate beside a count would be two ways to say one thing,
@@ -53,17 +50,9 @@ module kht_unit #(
     // them. Real GPUs provision transcendentals at 1/4 rate, which is what
     // FSFU_UNITS < FLANES is for.
     parameter integer FLANES    = 0,
-    // Seed units, a subset of the FMA units.
+    // Seed units, a subset of the FMA units. A nonzero count deepens the whole
+    // tier: khs_fp32_sfu is 10 cycles and rv_fpu is 6.
     parameter integer FSFU_UNITS = 0,
-    parameter integer HAS_F16    = 1,
-    parameter integer HAS_F32    = 1,
-    // RV32M `mul` units. An ADD-ON to the integer lane, so its width is a
-    // separate purchase from the thread count AND from the float tier.
-    parameter integer MUL_UNITS = 0,
-    // 1 swaps DSP48E2 for vec_dsp's behavioural model. Defaults to the
-    // SYNTHESIS value, so a bench that forgets it fails to elaborate rather
-    // than quietly measuring a different multiplier -- khs_unit's rule.
-    parameter integer FMODEL    = 0,
     parameter integer IPDOM_D   = 8,
     parameter         VREG_PRIM = "block"
 )(
@@ -91,7 +80,7 @@ module kht_unit #(
     // A WAVE WITH A FLOAT IN FLIGHT MUST NOT ISSUE. This is not a scoreboard:
     // the design deletes forwarding and interlocks on the argument that with
     // W >= pipeline depth no two in-flight instructions share a wave, and a
-    // 15-cycle float unit breaks that precondition. One bit per wave restores
+    // multi-cycle float unit breaks that precondition. One bit per wave restores
     // it. The scheduler reads this and skips those waves.
     output wire [WAVES-1:0]    fpend,
     // The float result lands in TWO cycles and needs the write port. The core
@@ -174,11 +163,19 @@ module kht_unit #(
     // then not elaborated. A zero-width wire is an elaboration error, not a
     // trimmed one.
     localparam integer HAS_FLT  = (FLANES != 0)     ? 1 : 0;
-    localparam integer HAS_MUL  = (MUL_UNITS != 0)  ? 1 : 0;
+    // THE MULTIPLY COUNT IS THE THREAD COUNT. A thread's ALU is an IM unit --
+    // RV32IM is the instruction set, not an option -- so there is no separate
+    // multiply width to buy, and no operand mux between the two.
+    localparam integer MUL_UNITS = LANES;
+    localparam integer HAS_MUL  = 1;
     localparam integer FLANES_W = (FLANES != 0)     ? FLANES : 1;
-    localparam integer MUL_W    = (MUL_UNITS != 0)  ? MUL_UNITS : 1;
+    localparam integer MUL_W    = LANES;
 
-    localparam integer SEED_U = (FSFU_UNITS != 0) ? FSFU_UNITS : FLANES_W;
+    // -1 IS FULL RATE and is resolved HERE, once: passed down unresolved it is
+    // a negative unit count, so no seed unit is built while the decode still
+    // accepts the opcode.
+    localparam integer SEED_N = (FSFU_UNITS < 0) ? FLANES_W : FSFU_UNITS;
+    localparam integer SEED_U = (SEED_N != 0) ? SEED_N : FLANES_W;
     localparam integer FMINU  = (SEED_U < FLANES_W) ? SEED_U : FLANES_W;
     localparam integer PSW_F  = ((LANES / FMINU) > 1) ? $clog2(LANES / FMINU) : 1;
     localparam integer PSW_M = ((LANES / MUL_W) > 1) ? $clog2(LANES / MUL_W) : 1;
@@ -188,7 +185,9 @@ module kht_unit #(
     localparam integer PSW_A = ((LANES / FLANES_W) > 1) ? $clog2(LANES / FLANES_W) : 1;
 
     // The shuffle's own width and walk. SU == LANES keeps the butterfly.
-    localparam integer SU    = (SHFL_UNITS == 0) ? LANES : SHFL_UNITS;
+    localparam integer SHFL_ON = (SHFL_UNITS != 0) ? 1 : 0;
+    localparam integer HAS_SHFL = SHFL_ON;
+    localparam integer SU    = (SHFL_UNITS > 0) ? SHFL_UNITS : LANES;
     localparam integer SPASS = LANES / SU;
     localparam integer SPSW  = (SPASS > 1) ? $clog2(SPASS) : 1;
 
@@ -500,9 +499,8 @@ module kht_unit #(
     generate
     for (I = 0; I < LANES; I = I + 1) begin : g_wsel
         // THE FLOAT RETIRE STAYS BEHIND THIS MUX, not inside it. Folded in as a
-        // sixth arm it cost 22 MHz: the float's own cone already spends 172 LUT
-        // a lane on the E8M15 -> FP16 conversion, so it needs the SHORT side of
-        // the writeback, and a priority chain in front of it is the binding path.
+        // sixth arm it cost 22 MHz: the float needs the SHORT side of the
+        // writeback, and a priority chain in front of it is the binding path.
         assign vwdata[32*I +: 32] = w_ld_sel ? w_ld_data[32*I +: 32]
                                   : w_laneid ? I[31:0]
                                   : w_smov   ? w_imm
@@ -539,10 +537,15 @@ module kht_unit #(
     // A count that does not divide LANES leaves lanes unwritten by a walk that
     // still elaborates and reports an Fmax -- khs_unit records that costing a
     // bench 10 of 66.
-    if ((SHFL_UNITS != 0)
+    if ((SHFL_UNITS > 0)
         && (((LANES / SHFL_UNITS) * SHFL_UNITS != LANES)
             || (SHFL_UNITS > LANES))) begin : g_bad_su
         kht_unit_requires_SHFL_UNITS_to_divide_LANES u_bad ();
+    end
+    // -1 is the ONLY legal negative: it means full rate. Anything below it is a
+    // caller that meant a count and got the sign wrong.
+    if (SHFL_UNITS < -1) begin : g_bad_sun
+        kht_unit_SHFL_UNITS_below_minus_one_is_not_a_width u_bad ();
     end
     for (WI = 0; WI < LANES; WI = WI + 1) begin : g_wrsel
         localparam integer UF = WI % FLANES_W;
@@ -662,11 +665,11 @@ module kht_unit #(
         assign f_soon    = 1'b0;
         assign f_pass_hold_i = 1'b0;
     end else begin : g_flt
-        // `vec_alu`'s own depth, which khs_float_lane derives the same way. The
-        // shadow pipe below MUST match it: it carries the destination and the
-        // mask that the lane array does not, and if the two disagree a result
-        // lands on the wrong register with no witness.
-        localparam integer FLAT = 15;
+        // kht_fpu's own depth, which it checks against this. The shadow pipe
+        // below MUST match it: it carries the destination and the mask that the
+        // lane array does not, and if the two disagree a result lands on the
+        // wrong register with no witness.
+        localparam integer FLAT = (FSFU_UNITS != 0) ? 10 : 6;
 
         // THE WALK. A feature narrower than the thread array issues one launch
         // per pass on consecutive cycles -- the lane is II = 1, so the results
@@ -715,9 +718,8 @@ module kht_unit #(
         // float-free build and floats on a multiply-free build are both real
         // configurations rather than one gate carrying both.
         if (HAS_FLT != 0) begin : g_fpu
-            kht_fpu #(.LANES(LANES), .FLANES(FLANES), .FSFU_UNITS(FSFU_UNITS),
-                      .HAS_F16(HAS_F16), .HAS_F32(HAS_F32),
-                      .PSW(PSW_F), .MODEL(FMODEL)) u_fpu (
+            kht_fpu #(.LANES(LANES), .FLANES(FLANES), .FSFU_UNITS(SEED_N),
+                      .PSW(PSW_F), .ALAT(FLAT)) u_fpu (
                 .clk(clk), .rst(!resetn),
                 .in_valid(f_launch), .op(w_fop), .pass(fp_q[PSW_F-1:0]),
                 .va(w1_q), .vb(w2_q), .vc(w3_q),
@@ -731,7 +733,7 @@ module kht_unit #(
         // port on one cycle if they were issued on one cycle, and exactly one
         // instruction issues per cycle.
         if (HAS_MUL != 0) begin : g_imul
-            kht_imul #(.LANES(LANES), .MUNITS(MUL_UNITS), .PSW(PSW_M),
+            kht_imul #(.LANES(LANES), .MUNITS(LANES), .PSW(PSW_M),
                        .MLAT(FLAT)) u_imul (
                 .clk(clk), .rst(!resetn),
                 .in_valid(m_launch), .op(w_mop), .pass(fp_q[PSW_M-1:0]),
@@ -757,7 +759,7 @@ module kht_unit #(
                 fsh_v   <= {FLAT{1'b0}};
                 fpend_q <= {WAVES{1'b0}};
             end else begin
-                // FREE-RUNNING, like the lane array it shadows: vec_alu has no
+                // FREE-RUNNING, like the lane array it shadows: `kht_fpu` has no
                 // clock enable, so gating this would desynchronise the two.
                 fsh_v[1]    <= f_launch | m_launch;
                 fsh_mul[1]  <= m_launch;

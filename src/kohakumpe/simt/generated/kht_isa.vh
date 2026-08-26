@@ -75,14 +75,6 @@ localparam [6:0] KHT_FLT_VFEXP2    = 7'd4;
 localparam [6:0] KHT_FLT_VFLOG2    = 7'd5;
 localparam [6:0] KHT_FLT_VFRCP     = 7'd6;
 localparam [6:0] KHT_FLT_VFRSQRT   = 7'd7;
-localparam [6:0] KHT_FLT_VFMA_H    = 7'd8;
-localparam [6:0] KHT_FLT_VFMUL_H   = 7'd9;
-localparam [6:0] KHT_FLT_VFADD_H   = 7'd10;
-localparam [6:0] KHT_FLT_VFSUB_H   = 7'd11;
-localparam [6:0] KHT_FLT_VFEXP2_H  = 7'd12;
-localparam [6:0] KHT_FLT_VFLOG2_H  = 7'd13;
-localparam [6:0] KHT_FLT_VFRCP_H   = 7'd14;
-localparam [6:0] KHT_FLT_VFRSQRT_H = 7'd15;
 
 // The vmem group packs three things into funct7, so the datapath slices
 // it rather than comparing against one constant per encoding:
@@ -110,5 +102,5 @@ localparam integer KHT_SREGS = 32;
 // permits D/2 nested divergent levels. Overflow is a fault.
 localparam integer KHT_IPDOM_DEPTH = 8;
 
-// 114 instructions: 106 on custom-2, 8 on custom-3.
+// 106 instructions: 98 on custom-2, 8 on custom-3.
 

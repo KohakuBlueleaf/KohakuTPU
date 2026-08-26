@@ -46,12 +46,10 @@ module kht_pe #(
     parameter integer WAVES      = 16,
     parameter integer HAS_MASK   = 1,
     parameter integer HAS_IPDOM  = 1,
-    parameter integer HAS_LDSBANK = 1,
-    // LDS banks; 0 = one per lane. HAS_LDSBANK still chooses whether there is a
-    // banked LDS at all, and this is its width when there is.
-    parameter integer LDS_BANKS  = 0,
-    parameter integer HAS_SHFL   = 1,
-    parameter integer SHFL_UNITS = 0,
+    // ONE COUNT EACH: 0 is not built, -1 is full rate (one bank or unit per
+    // lane). The booleans that used to sit beside these are derived below.
+    parameter integer LDS_BANKS  = -1,
+    parameter integer SHFL_UNITS = -1,
     // G9. Eight float lanes is the rendering target's configuration, not a
     // stepping stone: a mesh is 8 DSP + 4 SIMT PEs and 8*4 + 4*8 = 64 FP FMA per
     // clock, which is one Mali-G610 shader core.
@@ -61,10 +59,6 @@ module kht_pe #(
     // seed in every real machine.
     parameter integer FLANES     = 0,
     parameter integer FSFU_UNITS = 0,
-    parameter integer MUL_UNITS  = 0,
-    parameter integer HAS_F16    = 1,
-    parameter integer HAS_F32    = 1,
-    parameter integer FMODEL     = 0,
     parameter integer IPDOM_D    = 8,
     parameter         MEM_PRIM   = "block",
     parameter         VREG_PRIM  = "block",
@@ -93,6 +87,10 @@ module kht_pe #(
     output wire [31:0]            dbg_reqs,
     output wire [31:0]            dbg_gathers
 );
+    // Derived, not passed: a count already says whether the unit exists.
+    localparam integer HAS_SHFL    = (SHFL_UNITS != 0) ? 1 : 0;
+    localparam integer HAS_LDSBANK = (LDS_BANKS != 0) ? 1 : 0;
+
     localparam integer IAW = $clog2(IMEM_WORDS);
     localparam integer SAW = $clog2(SPAD_WORDS);
 
@@ -392,11 +390,9 @@ module kht_pe #(
 
     kht_core #(
         .LANES(LANES), .WAVES(WAVES), .HAS_MASK(HAS_MASK),
-        .HAS_IPDOM(HAS_IPDOM), .HAS_LDSBANK(HAS_LDSBANK), .HAS_SHFL(HAS_SHFL),
+        .HAS_IPDOM(HAS_IPDOM), .LDS_BANKS(LDS_BANKS),
         .SHFL_UNITS(SHFL_UNITS),
         .FLANES(FLANES), .FSFU_UNITS(FSFU_UNITS),
-        .MUL_UNITS(MUL_UNITS), .FMODEL(FMODEL),
-        .HAS_F16(HAS_F16), .HAS_F32(HAS_F32),
         .IPDOM_D(IPDOM_D),
         .IMEM_WORDS(IMEM_WORDS), .SPAD_WORDS(SPAD_WORDS),
         .VREG_PRIM(VREG_PRIM)

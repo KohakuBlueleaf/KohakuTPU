@@ -28,10 +28,10 @@ module kht_core #(
     parameter integer HAS_MASK  = 1,
     parameter integer HAS_IPDOM = 1,
     // G4. At 0 the banked path elaborates nothing and LDS goes down the serial
-    // walk exactly as every other region does.
-    parameter integer HAS_LDSBANK = 1,
-    parameter integer HAS_SHFL  = 1,
-    parameter integer SHFL_UNITS = 0,
+    // walk exactly as every other region does. COUNTS, not booleans beside
+    // counts: 0 is not built and -1 is full rate, everywhere.
+    parameter integer LDS_BANKS  = -1,
+    parameter integer SHFL_UNITS = -1,
     // THREE INDEPENDENT COUNTS, each legal at 0, 1, 2, 4, 8, and none derived
     // from LANES. `FLANES = LANES` was a binding, not a default: it made the
     // float width track the thread width and there was no way to say "eight
@@ -40,10 +40,6 @@ module kht_core #(
     // A nonzero count that does not divide LANES is refused at elaboration.
     parameter integer FLANES     = 0,
     parameter integer FSFU_UNITS = 0,
-    parameter integer MUL_UNITS  = 0,
-    parameter integer HAS_F16    = 1,
-    parameter integer HAS_F32    = 1,
-    parameter integer FMODEL    = 0,
     parameter integer IPDOM_D   = 8,
     parameter integer IMEM_WORDS = 2048,
     parameter integer SPAD_WORDS = 2048,
@@ -112,6 +108,11 @@ module kht_core #(
 `include "kht_isa.vh"
 `include "kht_ctrl.vh"
 
+    // The old booleans, derived. A count says both things: whether the unit is
+    // built and how wide it is, and two parameters saying one thing drift.
+    localparam integer HAS_SHFL    = (SHFL_UNITS != 0) ? 1 : 0;
+    localparam integer HAS_LDSBANK = (LDS_BANKS != 0) ? 1 : 0;
+
     localparam integer IAW = $clog2(IMEM_WORDS);
     localparam integer SAW = $clog2(SPAD_WORDS);
     localparam integer VW  = 32 * LANES;
@@ -160,7 +161,7 @@ module kht_core #(
     // G9. A wave with a float in flight is not runnable. NOT a scoreboard: the
     // machine deletes forwarding and interlocks on the argument that with
     // WAVES >= pipeline depth no two in-flight instructions share a wave, and a
-    // 15-cycle float unit breaks that precondition -- this restores it.
+    // multi-cycle float unit breaks that precondition -- this restores it.
     wire [WAVES-1:0] fpend;
     wire [WAVES-1:0] rdy = live & ~fpend;
     wire             f_soon;
@@ -418,7 +419,8 @@ module kht_core #(
     wire is_load  = ictl[C_LOAD];
     wire is_store = ictl[C_STORE];
     wire is_flt   = ictl[C_FLT];
-    wire is_imul  = ictl[C_IMUL] && (MUL_UNITS != 0);
+    // The thread ALU is an IM unit, so a multiply is always built.
+    wire is_imul  = ictl[C_IMUL];
 
     // THE VECTOR READ IS REGISTERED, so `vt_rd1` in EX belongs to the MEM-stage
     // instruction. Anything that consumes it IN EX -- the split predicate and
@@ -499,16 +501,9 @@ module kht_core #(
     // `shflxor` is not on the list: its operand is an xor MASK, and folding is
     // its definition rather than an aliasing accident.
     wire bad_lane = is_bcast && (rs2 >= LANES);
-    // THE FORMAT BIT IS funct7[3] inside the float group. A format the build does
-    // not carry is an absent encoding, exactly as an absent group is -- not the
-    // other format's conversion applied to the wrong bits.
-    wire is_half_op = is_flt && ictl[C_FOP0+3];
     wire unbuilt = bad_lane
                 || ((HAS_SHFL == 0) && (is_shfl || is_bcast))
                 || ((FLANES == 0) && is_flt)
-                || ((HAS_F16 == 0) && is_half_op)
-                || ((HAS_F32 == 0) && is_flt && !is_half_op)
-                || ((MUL_UNITS == 0) && ictl[C_IMUL])
                 || ((FSFU_UNITS == 0) && is_seed_op)
                 || ((HAS_MASK == 0) && is_tmc)
                 || (((HAS_MASK == 0) || (HAS_IPDOM == 0))
@@ -674,12 +669,10 @@ module kht_core #(
                                   : imm_i;
 
     kht_unit #(.LANES(LANES), .WAVES(WAVES), .WID(WID), .HAS_MASK(HAS_MASK),
-               .HAS_IPDOM(HAS_IPDOM), .HAS_SHFL(HAS_SHFL),
+               .HAS_IPDOM(HAS_IPDOM),
                .SHFL_UNITS(SHFL_UNITS),
                .FLANES(FLANES),
-               .FSFU_UNITS(FSFU_UNITS), .MUL_UNITS(MUL_UNITS),
-               .HAS_F16(HAS_F16), .HAS_F32(HAS_F32),
-               .FMODEL(FMODEL),
+               .FSFU_UNITS(FSFU_UNITS),
                .IPDOM_D(IPDOM_D),
                .VREG_PRIM(VREG_PRIM)) u_vt (
         .clk(clk), .resetn(resetn),
@@ -1219,7 +1212,7 @@ module kht_core #(
     // `f_soon` reserves the vector file's write port for a float result landing
     // in two cycles: dropping `go` now empties writeback exactly then, so the
     // float takes the port by mux rather than by arbitration. One cycle per
-    // float instruction against fifteen of latency.
+    // float instruction against the tier's whole latency.
     assign hold      = base_hold || vt_stall || warm_stall || lsu_want || s_hz
                     || f_soon || fpass_hold;
 

@@ -58,7 +58,10 @@ module kht_lds #(
     // pass per access whatever LANES is; all-one-bank is LANES.
     output reg  [31:0]         pass_ctr
 );
-    localparam integer NB  = (BANKS == 0) ? LANES : BANKS;
+    // -1 IS FULL RATE, one bank per lane. 0 is not built, and the caller does
+    // not instantiate this at all there, so 0 folding to 1 is only a guard
+    // against a width of zero reaching $clog2.
+    localparam integer NB  = (BANKS < 0) ? LANES : ((BANKS == 0) ? 1 : BANKS);
     // NBS IS THE BANK BITS ACTUALLY USED AND NBW IS ONLY THE STORAGE WIDTH. At
     // ONE bank there is no bank field: taking a bit anyway made `lbank` reach
     // selv[1] on a one-entry array, the resolver served nobody, and the sequencer
@@ -197,10 +200,13 @@ module kht_lds #(
     // A bank count that does not divide the word count leaves a bank short, and
     // one above LANES has banks no lane can ever address.
     generate
-    if ((BANKS != 0)
+    if ((BANKS > 0)
         && (((WORDS / BANKS) * BANKS != WORDS) || (BANKS > LANES)))
     begin : g_bad_nb
         kht_lds_requires_BANKS_to_divide_WORDS_and_not_exceed_LANES u_bad ();
+    end
+    if (BANKS < -1) begin : g_bad_nbn
+        kht_lds_BANKS_below_minus_one_is_not_a_width u_bad ();
     end
     endgenerate
 

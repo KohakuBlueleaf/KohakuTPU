@@ -27,13 +27,13 @@
 
 `default_nettype none
 
-// ITS OWN UNIT COUNT, NOT THE THREAD COUNT. `mul` is an ADD-ON to the integer
-// lane and its width is a separate purchase: MUNITS units serve LANES threads in
-// LANES/MUNITS passes, sequenced by kht_unit and counted here only through
-// `pass`. The ISA carries no unit count, so a kernel is unchanged by the choice.
+// THE UNIT COUNT IS THE THREAD COUNT. A thread's ALU is an IM unit -- RV32IM is
+// the instruction set, not an option -- so `MUNITS` is `LANES`, `pass` is a
+// constant zero and the placement mux folds away. The parameter remains only
+// because the port widths are written in terms of it.
 module kht_imul #(
     parameter integer LANES  = 8,
-    parameter integer MUNITS = 8,
+    parameter integer MUNITS = LANES,
     // Derived, and in the parameter list because the port list needs it: a
     // localparam in the body is declared too late to size a port.
     parameter integer PSW = ((LANES / MUNITS) > 1) ? $clog2(LANES / MUNITS) : 1,
