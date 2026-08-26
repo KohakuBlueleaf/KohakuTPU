@@ -70,22 +70,58 @@ const META = {
     order: 0,
     domain: "cpu",
   },
-  "/component/cpu/microarchitecture": {
-    title: "CPU PE — microarchitecture",
-    short: "CPU PE micro",
+  "/component/rv32pe": {
+    title: "The RV32 PE — the compute unit's processor",
+    short: "RV32 PE",
     order: 1,
+    domain: "cpu",
+  },
+  "/component/rv32pe/microarchitecture": {
+    title: "RV32 PE — microarchitecture",
+    short: "RV32 PE micro",
+    order: 2,
+    domain: "cpu",
+  },
+  "/component/rv64sys": {
+    title: "RV64-sys — the runtime host",
+    short: "RV64-sys",
+    order: 3,
+    domain: "cpu",
+  },
+  "/component/rv64sys/microarchitecture": {
+    title: "RV64-sys — microarchitecture",
+    short: "RV64-sys micro",
+    order: 4,
+    domain: "cpu",
+  },
+  "/component/rv64sys/memory-system": {
+    title: "RV64-sys — the memory system",
+    short: "RV64-sys memory",
+    order: 5,
+    domain: "cpu",
+  },
+  "/component/rv64sys/integration": {
+    title: "RV64-sys — integrating one",
+    short: "RV64-sys integration",
+    order: 6,
+    domain: "cpu",
+  },
+  "/component/sysnode": {
+    title: "The system node — one block per mesh",
+    short: "Sysnode",
+    order: 7,
     domain: "cpu",
   },
   "/component/sysnode/microarchitecture": {
     title: "System node — microarchitecture",
     short: "Sysnode micro",
-    order: 2,
+    order: 8,
     domain: "cpu",
   },
   "/component/caching": {
     title: "Staging, the transform slot and the tagged L2",
     short: "Caching",
-    order: 3,
+    order: 9,
     domain: "cpu",
   },
 

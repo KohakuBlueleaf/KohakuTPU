@@ -1254,71 +1254,14 @@ const notOwned = {
       w: "the endpoint. The fabric defines that credits are required, not how many",
     },
     {
-      n: "clock domain crossing",
-      w: "axi. The fabric is one clock domain by construction",
+      n: "clock domain crossing on a <b>local</b> link",
+      w: "the endpoint. <b>Router-to-router is one clock</b> — which is what the acyclic argument rests on — but a local link may cross domains through <span class='chip'>noc_local_cdc</span>, one async FIFO per direction. The generator uses it to run compute units at their own rate",
     },
     { n: "which coordinate a given endpoint occupies", w: "ship" },
     { n: "where a router is placed, and what a link may cross", w: "physical" },
     {
       n: "carrying flits between meshes",
       w: "ship, through the interlink. The fabric ends at the mesh edge",
-    },
-  ],
-};
-
-const divergences = {
-  cols: [
-    { key: "d", label: "Divergence" },
-    { key: "detail", label: "Detail" },
-  ],
-  rows: [
-    {
-      d: "<b>noc_pkt.vh is included by nothing</b>",
-      detail:
-        "Every module re-declares the type codes as local parameters: noc_cu_base.v, mag_mem_port.v, mag.v, noc_orchestrator.v, mag_ilink.v, vec_cu.v and synth_top/poc/l2_adapter.v. The driver restates them again in driver/kohakuaccel/device/flit.py. A divergence between two of them is silent.",
-      _tone: "bad",
-    },
-    {
-      d: "Absolute versus parameterised positions",
-      detail:
-        "noc_pkt.vh writes header positions as literals (287:284, …) and payload positions as literals (255:222, …), so the file is only correct at FLIT_WIDTH = 288, POS_WIDTH = 4. The RTL computes header positions from the parameters. <b>Including the header as it stands would silently constrain the mesh to one flit width.</b>",
-      _tone: "warn",
-    },
-    {
-      d: "Descriptor fields declared outside noc_pkt.vh",
-      detail:
-        "count, peer, n_peer and entry_words on MEM_RD_REQ, and ack_y/ack_x on CU_DATA, are framework fields with no macro in noc_pkt.vh. They exist only as literal part-selects in mag_mem_port.v and in the compute units.",
-      _tone: "warn",
-    },
-    {
-      d: "buf_id allocation lives in an instance",
-      detail:
-        "The namespace exists as BUF_L1A / BUF_L1B / BUF_PEER localparams inside src/kohakutpu/matmul/mx_cluster_cu.v, and as a bare != 0 rejection inside src/kohakutpu/vector/vec_cu.v. Neither the allocation nor the reservation of index 3 is stated anywhere a second accelerator would look.",
-      _tone: "warn",
-    },
-    {
-      d: "rsvd semantics undeclared",
-      detail:
-        "The remote-mesh marker, the mesh id and the read-response word index all live in rsvd and none is declared in noc_pkt.vh.",
-      _tone: "warn",
-    },
-    {
-      d: "MEM_WR_ACK status byte",
-      detail:
-        "The pre-reframing snapshot documents payload[7:0] as a status byte; no RTL writes or reads it. A write's success or failure is not reported on the mesh.",
-      _tone: "warn",
-    },
-    {
-      d: "Reset convention",
-      detail:
-        "noc_cu_base, mag and noc_orchestrator take resetn (active low, synchronous). NoCRouter, InPortSwitch and OutPortSwitch take rst (active high) and the two switches use it <b>asynchronously</b>. One mesh, two conventions. A mesh top MUST supply both polarities from one release.",
-      _tone: "bad",
-    },
-    {
-      d: "noc_orchestrator.v sits under the fabric and is not part of it",
-      detail:
-        "It lives at src/kohakuaccel/noc/ctrl/. It is the control agent: an AXI slave, a staging RAM, an instruction dispatcher, a credit counter and a status mirror. It owns a fabric local port, which is presumably how it ended up here — but so does every compute unit. It belongs with the control plane, beside the system node.",
-      _tone: "warn",
     },
   ],
 };
@@ -1599,7 +1542,7 @@ const capacity = {
     <SpecTable
       :cols="headerSpec.cols"
       :rows="headerSpec.rows"
-      caption="The general expression is what the RTL computes. POS_WIDTH = 4 caps a mesh at 16×16 coordinates, edge endpoints included — so the usable router grid is at most 14×14."
+      caption="The general expression is what the RTL computes, and it is the one to build against. noc_pkt.vh writes these as literals (287:284, …), correct only at FLIT_WIDTH = 288 and POS_WIDTH = 4 — so including it as it stands would silently pin a mesh to one flit width. POS_WIDTH = 4 caps a mesh at 16×16 coordinates, edge endpoints included, so the usable router grid is at most 14×14."
     />
 
     <Callout kind="trap" title="src_* MUST be the sender's own coordinates">
@@ -1652,13 +1595,26 @@ const capacity = {
         <span class="chip">CU_DATA</span> with a unit-defined
         <span class="chip">buf_id</span>, not an unallocated type code.
       </p>
+      <p>
+        <b>Take the codes from the header, never from a neighbouring module.</b>
+        <span class="chip">noc_pkt.vh</span> is the protocol and it is correct,
+        but <span class="chip">`include</span> appears nowhere in
+        <span class="chip">src/</span> for it — every module restates the codes
+        as local parameters, so a divergence between any two is silent. It has
+        already happened twice. Once in shipping RTL, which is the collision
+        above. And once still present:
+        <span class="chip">noc_cu_null.v:49</span> declares
+        <span class="chip">T_CU_DATA = 4'h4</span> and builds flits with it,
+        which <span class="chip">NOC_T_IS_MEM</span> would classify as memory
+        traffic.
+      </p>
     </Callout>
 
     <h3 class="doc-h3">rsvd</h3>
     <SpecTable
       :cols="rsvd.cols"
       :rows="rsvd.rows"
-      caption="Three bits, all framework-owned. A unit MUST transmit 3'b000 unless a rule above says otherwise. The two uses of rsvd[1:0] never collide: a MEM_RD_RESP never sets rsvd[2], and a remote flit is CU_DATA or MEM_WR_*."
+      caption="Three bits, all framework-owned. A unit MUST transmit 3'b000 unless a rule above says otherwise. The two uses of rsvd[1:0] never collide: a MEM_RD_RESP never sets rsvd[2], and a remote flit is CU_DATA or MEM_WR_*. None of these three meanings is declared in noc_pkt.vh — they exist only as part-selects in the modules that use them, so this table is the declaration."
     />
 
     <h3 class="doc-h3">Payload layouts</h3>
@@ -1667,7 +1623,14 @@ const capacity = {
       with a different
       <span class="chip">FLIT_WIDTH</span> or
       <span class="chip">POS_WIDTH</span> changes the payload width, and these
-      do not carry over unchanged.
+      do not carry over unchanged. Several of these fields —
+      <span class="chip">count</span>, <span class="chip">peer</span>,
+      <span class="chip">n_peer</span> and
+      <span class="chip">entry_words</span> on a read descriptor,
+      <span class="chip">ack_y</span>/<span class="chip">ack_x</span> on
+      <span class="chip">CU_DATA</span> — have no macro anywhere and exist only
+      as literal part-selects in the modules that read them. These layouts are
+      their specification.
     </p>
 
     <BitField
@@ -1734,7 +1697,11 @@ const capacity = {
       Not a free field: a unit does not pick its own numbering. The routers
       never interpret it, but a sender naming a destination buffer has to mean
       the same thing the receiver does, and framework services need indices they
-      can rely on across unit types.
+      can rely on across unit types. This table is the allocation — in the
+      source it survives only as
+      <span class="chip">localparam</span>s inside one accelerator's cluster and
+      as a bare rejection inside another's, neither of which a second
+      accelerator's author would think to read.
     </p>
     <SpecTable :cols="bufIds.cols" :rows="bufIds.rows" />
     <Callout kind="rule" title="Two absolute rules follow">
@@ -1760,68 +1727,6 @@ const capacity = {
       :rows="signals.rows"
       caption="Codes below 0x40 are centrally allocated so a controller can act on any unit's signals without knowing what that unit is. A unit MUST NOT emit 0x00, 0x01 or 0x04 — the framework emits those, and a duplicate returns a dispatch credit that was never spent."
     />
-
-    <h2 class="doc-h2">Where today's source disagrees</h2>
-    <Callout
-      kind="trap"
-      title="The flit layout is fixed protocol enforced only by convention"
-    >
-      <p>
-        <span class="chip">src/kohakuaccel/noc/noc_pkt.vh</span> exists and is
-        correct. It defines every header field position, every message class and
-        the descriptor payload layouts. It is also <b>included by nothing</b> —
-        <span class="chip">`include</span> appears zero times anywhere in
-        <span class="chip">src/</span>. The header documents its own failure:
-      </p>
-    </Callout>
-
-    <pre
-      class="card p-4 overflow-x-auto font-mono kt-text-caption leading-6 text-warm-700 dark:text-warm-300"
-    >
-// INCLUDED BY NOTHING -- every module re-declares these, so a divergence is
-// silent, and one happened: CU_DATA was 0x4 here while mag_mem_port.v and
-// vec_cu.v used 0x4 for MEM_WR_DATA, so a CU_DATA flit reaching MAG would
-// have entered the write queue as data. Resolved in favour of the silicon.</pre>
-
-    <p class="doc-p">
-      <span class="chip">mag_ilink.v</span> says the same thing at the point of
-      restatement:
-      <span class="chip"
-        >// Flit header positions, restated from noc_pkt.vh -- nothing includes
-        it.</span
-      >
-      That is the concrete form of "routes plausibly and means something else":
-      a flit of one class silently consumed as another, in a queue that had no
-      way to know.
-    </p>
-
-    <Callout
-      kind="trap"
-      title="And the convention has already failed a second time, inside the framework's own module"
-    >
-      <p>
-        <span class="chip">noc_cu_null.v:49</span> declares
-        <span class="chip">T_CU_DATA = 4'h4</span>, while
-        <span class="chip">noc_pkt.vh:42</span> says
-        <span class="chip">CU_DATA</span> is <span class="chip">4'h8</span> and
-        <span class="chip">4'h4</span> is <span class="chip">MEM_WR_DATA</span>.
-        Line 121 builds real flits with that code, and
-        <span class="chip">NOC_T_IS_MEM(t)</span> classifies them as memory
-        traffic. It is the <i>same</i> divergence the header records as having
-        happened once already: fixed in the shipping units, left unfixed here.
-      </p>
-      <p>
-        It is harmless in practice — the module is instantiated only by two
-        measurement tops with no memory agent present, so no flit it emits is
-        ever classified by anything and no measurement is invalidated. It is
-        also why the module is an instrument and <b>not a template</b>. A new
-        author who copied it as a skeleton would ship a mistyped flit on day
-        one, and would find out when their unit's first unit-to-unit message
-        arrived at a memory port's write queue as data.
-      </p>
-    </Callout>
-
-    <SpecTable :cols="divergences.cols" :rows="divergences.rows" />
 
     <h2 class="doc-h2">Routing and the coordinate space</h2>
     <p class="doc-p">
@@ -1949,6 +1854,20 @@ wire [POS_WIDTH-1:0] r_pos_y = (pos_y &lt; LO) ? LO : (pos_y &gt; YHI) ? YHI : p
         It also assigns each endpoint its memory agent port, by nearest clamped
         Manhattan distance. A unit is therefore
         <b>bound to one memory port at elaboration</b>, not at runtime.
+      </p>
+      <p>
+        <b>It supplies both reset polarities, which a hand-written top must do
+        for itself.</b> One mesh carries two conventions:
+        <span class="chip">noc_cu_base</span>,
+        <span class="chip">mag</span> and
+        <span class="chip">noc_orchestrator</span> take
+        <span class="chip">resetn</span>, active low and synchronous, while
+        <span class="chip">noc_router</span>,
+        <span class="chip">noc_inport</span> and
+        <span class="chip">noc_outport</span> take
+        <span class="chip">rst</span>, active high — and the two port modules use
+        it <b>asynchronously</b>. A mesh top MUST derive both from one release,
+        or half the fabric leaves reset on a different cycle from the other half.
       </p>
     </Callout>
 
@@ -2123,8 +2042,27 @@ wire [POS_WIDTH-1:0] r_pos_y = (pos_y &lt; LO) ? LO : (pos_y &gt; YHI) ? YHI : p
       pruning, which is the whole reason it can be trusted: every bit of both
       flits folds into an output, and traffic originates from external inputs so
       the mesh cannot be proven idle and constant-folded.
-      <b>It is an instrument, not a template.</b>
     </p>
+    <Callout kind="trap" title="It is an instrument, and MUST NOT be copied as a skeleton">
+      <p>
+        Two independent reasons, and the second is not cosmetic.
+        <span class="chip">noc_cu_null.v:49</span> carries the mistyped
+        <span class="chip">T_CU_DATA = 4'h4</span> described above, so an author
+        who copied it would ship a flit that a memory port classifies as write
+        data — discovered on their first unit-to-unit message. And it raises
+        <span class="chip">inst_ready</span> and
+        <span class="chip">exec_done</span> in the same cycle, which is exactly
+        what the retire rule below forbids: the base clears
+        <span class="chip">in_flight</span> on that arm, so it accepts one
+        instruction and then never accepts another.
+      </p>
+      <p>
+        Neither invalidates any measurement. The module is instantiated only by
+        measurement tops with no memory agent present, so nothing ever
+        classifies a flit it emits and nothing ever dispatches a second
+        instruction to it. Start from a shipping unit's port wiring instead.
+      </p>
+    </Callout>
 
     <h2 class="doc-h2">
       Two kinds of flow control, for two different failures

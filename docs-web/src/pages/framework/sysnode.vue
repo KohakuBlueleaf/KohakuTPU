@@ -1,153 +1,158 @@
 <script setup>
 // ---------------------------------------------------------------- overview
 const overview = {
+  /* Horizontal flow, so the components are VERTICAL: the eye follows mesh ->
+   * hub -> clients -> the internal protocol -> the ports -> the memories, and
+   * each column is read top to bottom. As a stack of full-width bars this was
+   * six levels tall and taller than a screen. */
   groups: [
     {
-      x: -3,
-      y: 4.4,
-      w: 66,
-      h: 31,
+      x: -2.5,
+      y: -3.2,
+      w: 100,
+      h: 33,
       label: "the system node — ONE component, one per mesh",
     },
-    { x: -1.5, y: 11.4, w: 43, h: 23.2, label: "MAG — the memory gateway" },
+    { x: 22.5, y: 7.4, w: 70, h: 21.5, label: "MAG — the memory gateway" },
     {
-      x: 43,
-      y: 11.4,
-      w: 18,
-      h: 12,
-      label: "control processor — at (0,0)",
+      x: 28.5,
+      y: -2.2,
+      w: 32,
+      h: 8.6,
+      label: "the control complex",
     },
   ],
   nodes: [
     {
       id: "mesh",
       x: 0,
-      y: 0,
-      w: 60,
-      h: 3,
+      y: 8,
+      w: 8.5,
+      h: 11,
       label: "the mesh",
-      sub: "compute units and routers",
+      sub: "compute units · routers",
       accent: true,
     },
     {
       id: "hub",
-      x: 0,
-      y: 5.5,
-      w: 60,
-      h: 4,
-      label: "sn_hub — PORTS attachments",
-      sub: "THE ONLY THING THAT OWNS ONE. demux inbound · steer outbound by row",
+      x: 15.5,
+      y: -1,
+      w: 8.5,
+      h: 29,
+      label: "sn_hub",
+      sub: "the ONLY thing that owns an attachment · demux in · steer out by row",
       accent: true,
-    },
-    {
-      id: "eng",
-      x: 0,
-      y: 12.4,
-      w: 19,
-      h: 4,
-      label: "memory engines × PORTS",
-      sub: "each: two intake queues · read engine · write slots · emitter",
-      accent: true,
-    },
-    {
-      id: "edge",
-      x: 21,
-      y: 12.4,
-      w: 19,
-      h: 4,
-      label: "control agent · interlink",
-      sub: "host reach and cross-mesh — hub clients, like everything here",
     },
     {
       id: "cpu",
-      x: 44,
-      y: 12.4,
-      w: 16,
-      h: 4,
-      label: "RV32 core",
-      sub: "imem · scratchpad · L1 — always present",
+      x: 30,
+      y: -1,
+      w: 11,
+      h: 6.4,
+      label: "the processor",
+      sub: "RV32 or RV64 · imem · spad · L1",
       accent: true,
     },
     {
       id: "hostm",
-      x: 44,
-      y: 18,
-      w: 16,
-      h: 4.4,
-      label: "mover · transform slot",
-      sub: "the processor's SIMD memory unit; the slot rides its read return",
+      x: 48,
+      y: -1,
+      w: 11,
+      h: 6.4,
+      label: "mover · transform",
+      sub: "the processor's SIMD memory unit",
+    },
+    {
+      id: "eng",
+      x: 30,
+      y: 9,
+      w: 11,
+      h: 8.4,
+      label: "memory engines × PORTS",
+      sub: "intake · read engine · write slots",
+      accent: true,
+    },
+    {
+      id: "edge",
+      x: 30,
+      y: 19.4,
+      w: 11,
+      h: 8.4,
+      label: "control agent · interlink",
+      sub: "host reach and cross-mesh",
     },
     {
       id: "hostw",
-      x: 21,
-      y: 18,
-      w: 19,
-      h: 3,
+      x: 48,
+      y: 9,
+      w: 11,
+      h: 8.4,
       label: "host memory window",
-      sub: "bursty and rare, so its own channel",
+      sub: "bursty and rare, its own channel",
     },
     {
       id: "q",
-      x: 0,
-      y: 20.5,
-      w: 40,
-      h: 3,
+      x: 48,
+      y: 19.4,
+      w: 11,
+      h: 8.4,
       label: "internal request protocol",
-      sub: "q_valid / q_ready / q_addr / q_len / q_write, plus w_* and r_*",
+      sub: "q_valid / q_ready / q_addr / q_len",
     },
     {
       id: "stagep",
-      x: 0,
-      y: 25.5,
-      w: 19,
-      h: 3.4,
+      x: 66,
+      y: 9,
+      w: 11,
+      h: 8.4,
       label: "mag_stage_port",
-      sub: "ADDON · claims the staging aperture",
+      sub: "ADDON · claims the aperture",
     },
     {
       id: "dramp",
-      x: 21,
-      y: 25.5,
-      w: 19,
-      h: 3.4,
+      x: 66,
+      y: 19.4,
+      w: 11,
+      h: 8.4,
       label: "mag_dram_port",
       sub: "arbitrate · pack width · cross clock",
       accent: true,
     },
     {
       id: "stage",
-      x: 0,
-      y: 31,
-      w: 19,
-      h: 3,
+      x: 84,
+      y: 9,
+      w: 11,
+      h: 8.4,
       label: "mag_stage",
-      sub: "URAM · 4 banks × 16,384 entries",
+      sub: "URAM · 4 banks × 16,384",
     },
     {
       id: "dram",
-      x: 21,
-      y: 31,
-      w: 19,
-      h: 3,
+      x: 84,
+      y: 19.4,
+      w: 11,
+      h: 8.4,
       label: "M_AXI_DRAM",
       sub: "the agent's ONE AXI master",
     },
   ],
   edges: [
-    { from: "mesh:b", to: "hub:t", accent: true },
-    { from: "hub:b", to: "eng:t", label: "memory type", accent: true },
-    { from: "hub:b", to: "edge:t", label: "remote · otherwise" },
-    { from: "hub:b", to: "cpu:t", label: "dst == (0,0)", accent: true },
-    { from: "eng:b", to: "q:t", accent: true },
-    { from: "edge:b", to: "q:t", label: "interlink landing", dash: true },
-    { from: "hostw:b", to: "q:t" },
-    { from: "cpu:b", to: "hostm:t", label: "mv.go is a STORE" },
-    { from: "hostm:l", to: "q:r", label: "MV — a requester", dir: "h" },
-    { from: "cpu:l", to: "q:r", label: "cp_* — a requester", dir: "h" },
-    { from: "q:b", to: "stagep:t" },
-    { from: "stagep:r", to: "dramp:l", label: "not staged", dir: "h" },
-    { from: "stagep:b", to: "stage:t", label: "aperture hit" },
-    { from: "dramp:b", to: "dram:t", accent: true },
+    { from: "mesh:r", to: "hub:l", accent: true },
+    { from: "hub:r", to: "cpu:l", label: "dst (0,0)", accent: true },
+    { from: "hub:r", to: "eng:l", label: "memory", accent: true },
+    { from: "hub:r", to: "edge:l", label: "remote" },
+    { from: "cpu:r", to: "hostm:l", label: "mv.go" },
+    { from: "eng:r", to: "q:l", accent: true },
+    { from: "edge:r", to: "q:l", label: "interlink", dash: true },
+    { from: "hostw:r", to: "q:t" },
+    { from: "hostm:b", to: "q:t", label: "MV" },
+    { from: "cpu:b", to: "q:l", label: "cp_*" },
+    { from: "q:r", to: "dramp:l", accent: true },
+    { from: "q:t", to: "stagep:l", label: "aperture" },
+    { from: "stagep:b", to: "dramp:t", label: "not staged" },
+    { from: "stagep:r", to: "stage:l" },
+    { from: "dramp:r", to: "dram:l", accent: true },
   ],
 };
 
@@ -423,6 +428,81 @@ const flagBits = [
   { name: "invalidate", bits: 1, value: "no RTL reads it" },
   { name: "cacheable", bits: 1, value: "no RTL reads it" },
 ];
+
+// field · width · position · owner — the columns that tell a reader which bits
+// are theirs. Positions are the general expression the RTL computes.
+const descSpec = {
+  cols: [
+    { key: "f", label: "Field", mono: true },
+    { key: "w", label: "Width", align: "right" },
+    { key: "p", label: "Position in the payload", mono: true },
+    { key: "o", label: "Owner" },
+  ],
+  rows: [
+    {
+      f: "addr",
+      w: "40",
+      p: "flit[255 -: 40]",
+      o: "<b>framework</b> — and it is 40 bits <i>whatever</i> <code>ADDR_W</code> is",
+      _tone: "warn",
+    },
+    { f: "len", w: "8", p: "flit[215 -: 8]", o: "framework — beats − 1, and MUST be ≤ 7" },
+    { f: "flags", w: "8", p: "flit[207 -: 8]", o: "framework; bits 4–5 reserved to the addon" },
+    { f: "count", w: "8", p: "flit[199 -: 8]", o: "framework — entries in the run, 0 means 1" },
+    { f: "peer", w: "24", p: "flit[191 -: 24]", o: "framework — three {y,x} bytes" },
+    { f: "n_peer", w: "2", p: "flit[167 -: 2]", o: "framework — 0–3 extra destinations" },
+    {
+      f: "entry_words",
+      w: "8",
+      p: "flit[165 -: 8]",
+      o: "framework — 0 or above 4 means 4",
+    },
+    {
+      f: "reserved",
+      w: "158",
+      p: "the rest",
+      o: "<b>framework.</b> MUST be zero — a future allocation will take it",
+    },
+  ],
+};
+
+const modes = {
+  cols: [
+    { key: "m", label: "Mode", mono: true },
+    { key: "d", label: "What the engine does" },
+    { key: "s", label: "Status" },
+  ],
+  rows: [
+    {
+      m: "COPY",
+      d: "both walkers step in lockstep; a source stride of <b>zero is a broadcast</b>, with no extra mode",
+      s: "built",
+    },
+    {
+      m: "TRANSPOSE",
+      d: "—",
+      s: "<b>allocated and unimplemented.</b> The mover raises <code>F_MODE</code> rather than moving the wrong bytes",
+      _tone: "bad",
+    },
+    {
+      m: "GATHER",
+      d: "the index vector is pulled into a buffer first, then three pipeline stages per element",
+      s: "built",
+    },
+    {
+      m: "GENERATE",
+      d: "a counter-based PRNG keyed on the destination's <b>absolute word address</b>, so one fill and four fills of its quarters produce identical bytes",
+      s: "built",
+    },
+    { m: "FILL", d: "an immediate, splatted at the configured element width", s: "built" },
+    {
+      m: "TRANSFORM",
+      d: "mode 5 — the source walk feeds the transform slot and the destination counts <b>entries</b>",
+      s: "built",
+      _tone: "good",
+    },
+  ],
+};
 
 const insideAddr = [
   { name: "aperture", bits: 1, value: "1 = staging L2", accent: true },
@@ -1132,22 +1212,6 @@ const catRows = [
   },
 ];
 
-const divergeCols = [
-  { key: "d", label: "Divergence" },
-  { key: "detail", label: "Detail" },
-];
-const divergeRows = [
-  {
-    d: "<b>The control agent is packaged with the router.</b>",
-    detail:
-      "<code>noc_orchestrator.v</code> is instantiated by exactly one module, <code>mag.v</code>, and belongs with the control plane, not with the router.",
-  },
-  {
-    d: "<b>The interlink is packaged inside the memory agent.</b>",
-    detail:
-      "<code>mag_link.v</code>, <code>mag_link_pipe.v</code>, <code>mag_switch.v</code>, <code>mag_ilink.v</code> and <code>il_pkt_arb.v</code> implement a second routing layer with its own topology, its own deadlock argument and its own credit protocol. They live here because MAG hosts the endpoint; the package boundary should be with the ship.",
-  },
-];
 </script>
 
 <template>
@@ -1164,17 +1228,27 @@ const divergeRows = [
       the memory gateway — the memory instruction set, the service behind those
       instructions, and the edge complex that lets three consumers share one set
       of attachments; the <b>mover</b>, with the transform slot on its read
-      return; and the <b>control processor</b>, which owns both.
+      return; and the <b>control processor</b>, which commands the mover.
     </p>
     <p class="doc-p">
       Call it the system node, never a "node" — a fabric endpoint is a node, and
       every compute unit sits on one. MAG is the gateway inside it, and keeps
-      that narrower name.
+      that narrower name. This page is the <b>contract</b> a compute unit builds
+      against;
+      <RouterLink to="/component/sysnode" class="doc-link"
+        >the component page</RouterLink
+      >
+      is what the block is and what it costs, and
+      <RouterLink to="/component/sysnode/microarchitecture" class="doc-link"
+        >the microarchitecture page</RouterLink
+      >
+      is the RTL.
     </p>
 
     <Fig
       caption="ONE component. sn_hub owns every attachment and nothing below it owns one — the engines, the agent, the interlink and the processor are all its clients, told apart by what the flit is and where it is addressed. MAG and the processor are drawn as separate boxes because they are separate CONCERNS, not separate modules: neither ships without the other, and there is no parameter that removes the processor. Inside, every requester speaks one internal protocol and AXI appears once, at the boundary. The control agent has no arrow into that path — it never fetches from memory, so it needs no AXI master at all."
       zoom
+      wide
     >
       <BlockDiagram
         :nodes="overview.nodes"
@@ -1182,6 +1256,62 @@ const divergeRows = [
         :groups="overview.groups"
       />
     </Fig>
+
+    <h2 class="doc-h2">What it owns</h2>
+    <p class="doc-p">Four things, and nothing else.</p>
+    <div class="grid gap-3 sm:grid-cols-2 my-5">
+      <div class="card p-4">
+        <div class="kt-text-caption font-semibold text-warm-800 dark:text-warm-200 mb-1">
+          The memory instruction set
+        </div>
+        <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
+          What a read, a write and a mover command can <i>express</i>. Your
+          compiler emits these; it does not define them.
+        </p>
+      </div>
+      <div class="card p-4">
+        <div class="kt-text-caption font-semibold text-warm-800 dark:text-warm-200 mb-1">
+          The service behind it
+        </div>
+        <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
+          One memory port per attachment: intake queues, a read engine, write
+          slots matched by source, and one AXI channel.
+        </p>
+      </div>
+      <div class="card p-4">
+        <div class="kt-text-caption font-semibold text-warm-800 dark:text-warm-200 mb-1">
+          Two addon slots
+        </div>
+        <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
+          The <span class="chip">transform slot</span> on the mover's read
+          return, and <span class="chip">staging</span> in the address map.
+          Both ship working and both are built to be replaced.
+        </p>
+      </div>
+      <div class="card p-4">
+        <div class="kt-text-caption font-semibold text-warm-800 dark:text-warm-200 mb-1">
+          The edge
+        </div>
+        <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
+          The host's reach into the mesh, the link to other meshes, and the hub
+          that puts four clients on one set of attachments.
+        </p>
+      </div>
+    </div>
+
+    <p class="doc-p">
+      The rejected alternative is the one most accelerators take:
+      <b>let every compute unit carry its own memory system.</b> Then burst
+      generation, 4 KB boundary handling, out-of-order write reassembly and a
+      request encoding are copied into every unit — each copy a place to get it
+      wrong, and each unit's author solving a problem that has nothing to do
+      with their datapath. The other rejected alternative is subtler:
+      <b>give the memory service, the control plane, the inter-mesh link and the
+      processor an attachment each.</b> A mesh has very few attachments to give
+      away, three of those four are nearly idle, and paying four times over for
+      three idle consumers is how a fabric runs out of ports before it runs out
+      of bandwidth.
+    </p>
 
     <Callout kind="rule" title="The split this system draws">
       <p>
@@ -1230,7 +1360,7 @@ const divergeRows = [
       title="The address field is 40 bits whatever ADDR_W is"
     >
       <p>
-        <code>mag_mem_port.v:187</code> states it as a rule with the failure
+        <code>mag_mem_port.v</code> states it as a rule with the failure
         attached: “<code>NOC_MEM_ADDR</code> is 40 bits WHATEVER
         <code>ADDR_W</code> is — a flit contract, not a width. Slicing it by
         <code>ADDR_W</code> read <code>addr &gt;&gt; 6</code> on a 34-bit build,
@@ -1262,9 +1392,21 @@ const divergeRows = [
     />
 
     <SpecTable
+      :cols="descSpec.cols"
+      :rows="descSpec.rows"
+      caption="The descriptor, field by field. The owner column is the one that matters: every field here is the framework's, so a compute unit's own instruction bits are entirely in the CU_INST payload and nowhere in a memory descriptor"
+    />
+
+    <SpecTable
       :cols="expressCols"
       :rows="expressRows"
       caption="The shape of what is expressible, because that shape is what constrains your compiler. Field positions are in docs/spec/memory-protocol.md"
+    />
+
+    <SpecTable
+      :cols="modes.cols"
+      :rows="modes.rows"
+      caption="The mover's six modes, including the one that is allocated and unimplemented. A mode code the engine cannot execute raises a fault rather than doing something plausible — which is the only safe behaviour when the alternative is moving the wrong bytes and reporting success"
     />
 
     <Callout kind="note" title="Padding is not a special case">
@@ -1561,8 +1703,15 @@ const divergeRows = [
       master; and a staged read never transforms, because staging holds operand
       words verbatim. So every transformed byte comes from a single converged
       master, and N transforms could consume one beat per cycle between them —
-      N−1 idle by construction. Each instance measured
-      <b>4,490 LUT and 32 DSP</b>.
+      N−1 idle by construction.
+    </p>
+    <p class="doc-p kt-text-caption">
+      One instance measured <b>4,499 LUT and 32 DSP</b> — out-of-context
+      synthesis on <code>xcvu13p-fhgb2104-2L-e</code>, Vivado 2024.2, at
+      3.333 ns, <code>sysnode</code> whole at <code>PORTS = 2</code>, by
+      <code>scripts/tcl/ooc_sysnode_rv64.tcl</code>. That is the framework's
+      arbiter plus <i>this project's</i> bank and occupant, so it is what one
+      accelerator's transform costs rather than what a slot costs.
     </p>
     <p class="doc-p">
       And why the mover rather than the requester: a transform on the fetch path
@@ -1783,6 +1932,11 @@ const divergeRows = [
         DDR4. A centralised L2 reading many URAMs in parallel inside the agent
         is not limited this way.
       </p>
+      <p class="kt-text-caption">
+        300 MHz here is <b>an assumed rate for the arithmetic, not a measured
+        one</b>. No Fmax in this tree is a closed-timing figure; every clock
+        result is out-of-context synthesis, and synthesis slack is optimistic.
+      </p>
       <p>
         <b
           >That is the real trade: mesh staging buys placement freedom and pays
@@ -1812,10 +1966,11 @@ const divergeRows = [
     <h2 class="doc-h2">The edge complex</h2>
     <p class="doc-p">
       A mesh has a small number of attachments to give away. Memory traffic, the
-      control plane and the inter-mesh link all need one, and giving each its
-      own would cost three times the ports for two consumers that are nearly
-      idle. One coordinate, three consumers, told apart by what the flit is
-      rather than by where it went.
+      control plane, the inter-mesh link and the processor all need one, and
+      giving each its own would cost four times the ports for three consumers
+      that are nearly idle. So <b>nothing inside the node owns a port</b>: four
+      kinds of client on one set of attachments, told apart by what the flit is
+      and where it is addressed rather than by which port it arrived on.
     </p>
 
     <Fig
@@ -1851,24 +2006,34 @@ const divergeRows = [
 
     <Callout
       kind="rule"
-      title="Outbound priority: agent, then interlink, then engine"
+      title="Outbound priority: agent, processor, interlink, engine"
     >
       <p>
         The agent wins because its traffic is a handful of control flits against
         a stream of operand words; engine priority would let a busy port starve
-        dispatch exactly when the machine is busiest. Within the engine the
-        read-response emitter outranks the plain-read and write-ack path, so a
-        <code>MEM_WR_ACK</code> can be delayed for the whole duration of a
-        streaming fetch.
+        dispatch exactly when the machine is busiest. The processor is next,
+        because a stalled dispatch stalls the whole graph, and the interlink
+        sits below both because its burst is already bounded by credit the far
+        end granted. Within the engine the read-response emitter outranks the
+        plain-read and write-ack path, so a <code>MEM_WR_ACK</code> can be
+        delayed for the whole duration of a streaming fetch.
         <b
           >It cannot be starved indefinitely — but no latency bound is
           offered.</b
         >
       </p>
       <p>
-        Inbound, the ports round-robin into the agent's single input, and the
+        Inbound, the ports round-robin into each single-input client, and the
         pointer moves only on an accepted flit; moving it every cycle would let
-        a port lose its turn to one that had nothing to send.
+        a port lose its turn to one that had nothing to send. <b>The three
+        arbiters are separate</b> — sharing one would let a stalled interlink
+        hold up dispatch, or a busy processor hold up the agent.
+      </p>
+      <p>
+        <b>Inbound order matters too, because one flit can satisfy two tests.</b>
+        A memory flit may also be marked remote, and the engine is not the
+        consumer of one that is leaving this mesh — so remote is asked first,
+        then the processor's coordinate, then the type.
       </p>
     </Callout>
 
@@ -1963,6 +2128,142 @@ const divergeRows = [
       </p>
     </Callout>
 
+    <h2 class="doc-h2">Two properties that hold by construction</h2>
+    <p class="doc-p">
+      Both are arguments rather than test results, which means you can check
+      them rather than trust them — and both are load-bearing for code you will
+      write.
+    </p>
+
+    <Callout kind="rule" title="Arrival order is not load-bearing, and that is a proof">
+      <p>
+        Every response flit carries its own destination: <code>txn</code> is the
+        requester's tag <b>plus this entry's index in the run</b>, and
+        <code>rsvd[1:0]</code> is the word's index <b>within the entry</b>. A
+        receiver therefore computes its write address from the header alone.
+      </p>
+      <p>
+        So for any interleaving of any number of flits from any number of runs,
+        each flit's landing place is a function of that flit and nothing else —
+        <b>there is no receiver state for an interleaving to corrupt</b>. That
+        is what makes a streaming fetch possible at all: one request, hundreds
+        of cycles of traffic, and a receiver that needs no cursor.
+      </p>
+      <p>
+        <b>The proof has one precondition and it is yours to hold:</b> the
+        addition is 8-bit and wraps silently, so a requester MUST size its tag
+        space such that <code>txn + count − 1 ≤ 255</code>. A run that wraps
+        aliases two entries onto one slot, and the property fails with nothing
+        reported.
+      </p>
+    </Callout>
+
+    <Callout kind="rule" title="Content-independent backpressure is self-clearing, and that is a proof">
+      <p>
+        <code>mem_in_busy</code> is a function of this port's own queue
+        occupancy and nothing else. It never depends on what the arriving flit
+        is.
+      </p>
+      <p>
+        The argument: the mesh is in-order behind a busy signal. If a port
+        raised busy because it could not accept <i>this particular</i> flit,
+        then everything behind that flit stops too — including, in the general
+        case, the flit that would have freed the resource the port is waiting
+        for. That is a cycle, and no buffer depth removes it. Deciding from
+        <b>local state only</b> breaks the cycle by construction: the condition
+        that raised busy is cleared by the port's own draining, which does not
+        depend on any inbound flit.
+      </p>
+      <p>
+        <b>The same argument forces the two intake queues.</b> One queue would
+        put a read request at the head in front of the write data behind it —
+        and that data is exactly what lets a drain finish. Busy is still “is
+        there room in both”, which is still local state, so splitting the queue
+        does not reintroduce the hazard it removes.
+      </p>
+    </Callout>
+
+    <h2 class="doc-h2">Building a unit against it</h2>
+    <h3 class="doc-h3">Sizing what you have to hold</h3>
+    <p class="doc-p">
+      Three numbers fall out of the protocol and you need all three before
+      writing a fill path. A response is
+      <code>entry_words</code> flits per entry and
+      <code>count</code> entries per run, so
+      <b>one request produces <code>entry_words × count</code> response
+      flits</b> — up to <code>4 × 255</code> = 1,020 at the defaults, arriving
+      over as many cycles as the fabric takes. Your unit must be able to absorb
+      every one of them: <b>credits are your obligation, not the fabric's</b>,
+      and issuing a request whose response you cannot absorb is how a fabric
+      deadlocks. On the write side a burst is <code>len + 1</code> beats with
+      <code>len ≤ 7</code>, so a store larger than 8 beats is several
+      descriptors, and <b>a source MUST NOT have two writes open at once</b>
+      because slots are matched by source coordinate alone.
+    </p>
+
+    <h3 class="doc-h3">A procedure</h3>
+    <ol class="doc-p list-decimal pl-5 space-y-1">
+      <li>
+        <b>Decide the shape your unit wants operands in</b>, then set
+        <code>entry_words</code> to match it — or accept 4 and rearrange the
+        region with the mover instead. Do not expect the agent to slice
+        differently per request.
+      </li>
+      <li>
+        <b>Write the fill path against the header, never a counter.</b> Derive
+        the write address from <code>txn</code> and
+        <code>rsvd[1:0]</code>. A cursor is correct only for as long as there is
+        exactly one server, and nothing tells you when that stops being true.
+      </li>
+      <li>
+        <b>Size your tag space</b> so a run cannot wrap the 8-bit sum.
+      </li>
+      <li>
+        <b>Drop your write acks.</b> Slot sizing assumes you do not wait on
+        them, and a unit that waits <i>and</i> a slot count sized for a unit
+        that does not is a deadlock.
+      </li>
+      <li>
+        <b>Lay operands out so a pass is one contiguous run.</b> Scattered
+        entries turn one streaming request into many single-entry ones and the
+        per-request overhead is then paid per entry.
+      </li>
+      <li>
+        <b>Name extra destinations</b> when several units sweep the same
+        operand, rather than issuing identical requests.
+      </li>
+      <li>
+        <b>Put format conversion in the transform slot</b>, scheduled as a
+        mover pass — not in your unit, and not on the fetch. A fetch is never
+        transformed.
+      </li>
+    </ol>
+
+    <Callout kind="open" title="Open questions the flow does not answer">
+      <p>
+        <b>Nothing elects an issuer for a shared fetch.</b> A read may name up
+        to three extra destinations, but a sharing set has to arrive at one
+        issuer by a rule its own driver enforces — the framework
+        <b>neither elects one nor detects two</b>. The mechanism is decoded by
+        the hardware and the reference driver does not set it, because a
+        follower cannot yet tell which fill an arriving entry belongs to. The
+        traffic reduction is one rendezvous away from being usable.
+      </p>
+      <p>
+        <b>Nothing checks a slot count against a mesh.</b>
+        <code>WR_SLOTS</code> must be at least two per node that can have a
+        write in flight, and that is arithmetic nobody performs — an
+        under-sized array does not corrupt anything, it deadlocks, and the
+        symptom appears at a node that did nothing wrong.
+      </p>
+      <p>
+        <b>No latency bound is offered on a write ack.</b> The read-response
+        emitter outranks the ack path, so an ack can be delayed for the whole
+        duration of a streaming fetch. It cannot be starved indefinitely — but
+        if you need a bound, there is not one.
+      </p>
+    </Callout>
+
     <h2 class="doc-h2">Conventions</h2>
     <p class="doc-p">
       This is the system that forces the most on a compute unit, because
@@ -1983,11 +2284,20 @@ const divergeRows = [
         the memory ports because attachments are scarce, not because dispatch is
         a memory concern. Everything about it — staging, credits, the status
         mirror, the mailbox — would be unchanged if the memory ports were
-        replaced wholesale.
+        replaced wholesale. In the source that shows as packaging rather than
+        design: <code>noc_orchestrator.v</code> sits with the router and is
+        instantiated by exactly one module, the memory gateway.
+      </p>
+      <p>
+        The same is true of the interlink. Five modules —
+        <code>mag_link</code>, <code>mag_link_pipe</code>,
+        <code>mag_switch</code>, <code>mag_ilink</code> and
+        <code>il_pkt_arb</code> — implement a second routing layer with its own
+        topology, its own deadlock argument and its own credit protocol, and
+        they live inside the gateway because the gateway hosts the endpoint.
+        The package boundary belongs with the ship.
       </p>
     </Callout>
 
-    <h2 class="doc-h2">Where today's source disagrees</h2>
-    <SpecTable :cols="divergeCols" :rows="divergeRows" />
   </DocPage>
 </template>

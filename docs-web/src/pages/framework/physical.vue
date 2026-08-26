@@ -113,57 +113,6 @@ const populations = {
   ],
 };
 
-/* §2.8 of docs/projects/kohakuaxi/station-bus.md. The SmartConnect column is
- * the superseded baseline and is NOT uniformly v5 — see `replacedProvenance`. */
-const replaced = {
-  cols: [
-    { key: "d", label: "" },
-    { key: "s", label: "SmartConnect tree", mono: true, align: "right" },
-    { key: "l", label: "station line", mono: true, align: "right" },
-    { key: "r", label: "ratio", mono: true, align: "right" },
-  ],
-  rows: [
-    { d: "SLR0", s: "8,516", l: "3,718", r: "2.29x" },
-    {
-      d: "SLR1",
-      s: "41,788",
-      l: "8,756",
-      r: "<strong>4.77x</strong>",
-      _tone: "good",
-    },
-    { d: "SLR2", s: "13,266", l: "4,239", r: "3.13x" },
-    { d: "SLR3", s: "8,516", l: "3,720", r: "2.29x" },
-    { d: "between dies", s: "9,795", l: "1,641", r: "5.97x" },
-    {
-      d: "<strong>total</strong>",
-      s: "<strong>81,881</strong>",
-      l: "<strong>22,106</strong>",
-      r: "<strong>3.70x</strong>",
-    },
-  ],
-};
-
-const replacedProvenance = {
-  cols: [
-    { key: "r", label: "row" },
-    { key: "s", label: "where the SmartConnect figure comes from", mono: true },
-  ],
-  rows: [
-    { r: "SLR1", s: "multimesh_v5_root_smc_0" },
-    { r: "SLR2", s: "multimesh_v5_leaf_smc_2_0" },
-    {
-      r: "SLR0, SLR3",
-      s: "multimesh_<strong>v4</strong>_leaf_smc_0_0 — no v5 run exists for either",
-      _tone: "warn",
-    },
-    {
-      r: "between dies",
-      s: "3 x multimesh_<strong>v2</strong>_slr_cross_2_0",
-      _tone: "warn",
-    },
-  ],
-};
-
 const whyArchitecture = {
   cols: [
     { key: "r", label: "Reason" },
@@ -314,7 +263,10 @@ const crossing = {
       v: "0.755 ns &nbsp;=&nbsp; 0.096 clock-to-Q &nbsp;+&nbsp; 0.659 SLL route, speed grade -2L",
     },
     { k: "latency", v: "1 cycle, transmit register to receive register" },
-    { k: "at 300 MHz", v: "the crossing alone is about 23% of the period" },
+    {
+      k: "against a 3.333 ns period",
+      v: "the crossing alone is about 23% of it",
+    },
   ],
 };
 
@@ -363,11 +315,6 @@ const occupancy = {
       m: "URAM288, device",
       v: "120 of 1,280 — 9.38%",
       n: "no hard block is close to binding",
-    },
-    {
-      m: "XDMA alone",
-      v: "76,319 LUT · 72,059 FF",
-      n: "17.7% of one SLR, from the single-mesh design on the card",
     },
   ],
 };
@@ -532,6 +479,165 @@ const seqSteps = [
   },
 ];
 
+/* ---- the knobs, and a procedure ---------------------------------------- */
+const knobs = {
+  cols: [
+    { key: "k", label: "Knob" },
+    { key: "w", label: "What it moves" },
+  ],
+  rows: [
+    {
+      k: "<strong>How you decompose a compute unit</strong>",
+      w: "Everything, and it is decided at design time rather than at build time. A cascade cannot cross a boundary, so a datapath built on one <em>is</em> a unit of placement. This is a correctness rule, not a tuning knob you turn later.",
+      _tone: "bad",
+    },
+    {
+      k: "<strong>Which region carries the host bridge</strong>",
+      w: "Not yours — transceiver placement fixes it. What follows is: that region gives up real compute, so it carries the smallest mesh, and identical silicon stops meaning interchangeable regions.",
+    },
+    {
+      k: "<strong>Which traffic class a boundary lands on</strong>",
+      w: "The whole floorplan. The classes are very unequal and only the bottom two may cross at all, so the boundary is placed on the cheapest one rather than wherever the modules happen to end.",
+    },
+    {
+      k: "<strong>Crossing pipeline depth</strong>",
+      w: "Latency, and nothing else that matters. Every stage is a flop by construction; assume more stages than the 0.755 ns crossing delay suggests, because vendor guidance asks for several at these frequencies.",
+    },
+    {
+      k: "<strong>Per-region clocks</strong>",
+      w: "Measurably nothing. Collapsing four fabric clocks onto one <em>costs</em> 328 LUTs here, against 9,833 on a vendor crossbar — this is the one place a crossbar cannot follow.",
+      _tone: "good",
+    },
+    {
+      k: "<strong>The mesh clock, at runtime</strong>",
+      w: "The unit of iteration. Baked in, “it did not close” costs a full rebuild to try a lower number; retunable, it costs a register write and a reset.",
+    },
+    {
+      k: "<strong>Crossing register count</strong>",
+      w: "Nothing observed. Every crossing structure on this device together uses well under a tenth of one boundary's budget — <strong>SLL was never the binding term</strong>.",
+    },
+  ],
+};
+
+const procedure = {
+  cols: [
+    { key: "n", label: "#", mono: true, align: "center" },
+    { key: "s", label: "Step" },
+  ],
+  rows: [
+    {
+      n: "1",
+      s: "<strong>Establish the device facts before drawing anything.</strong> Region count, crossing faces, crossing budget per boundary, which region holds configuration, and which memory channel is wired to which region.",
+    },
+    {
+      n: "2",
+      s: "<strong>Verify the channel-to-region map from three independent witnesses</strong> — an I/O bank query, a placed clock buffer's coordinate in an implemented design, and the board's pinout document. The numbering is not the mapping, and a design built on the guess crosses a boundary for its own memory with nothing announcing it.",
+      _tone: "warn",
+    },
+    {
+      n: "3",
+      s: "<strong>Place the anchored blocks first.</strong> The host bridge and each memory interface cannot move, and they consume their region's budget unevenly.",
+    },
+    {
+      n: "4",
+      s: "<strong>Give each region one mesh and its own memory channel</strong>, so classes 1 and 2 never reach a boundary at all.",
+    },
+    {
+      n: "5",
+      s: "<strong>Write a pblock per region, and add the assembly's cell to it.</strong> Pin placement, not routing — a constraint that contained routing would pin the paths that are meant to leave.",
+    },
+    {
+      n: "6",
+      s: "<strong>Leave the crossing pipelines unpinned</strong>, give them a stage count, and mark them <code>srl_style = \"register\"</code> or the shift chain infers an SRL and every stage lands in one site.",
+      _tone: "warn",
+    },
+    {
+      n: "7",
+      s: "<strong>Declare the asynchronous domains, flat.</strong> Constraint parsing rejects control flow as a <em>warning</em>, so a guarded block is silently skipped and every crossing gets timed anyway.",
+      _tone: "warn",
+    },
+    {
+      n: "8",
+      s: "<strong>Report where each block's cells actually landed.</strong> Region spread per top-level block turns “the floorplan is what I asked for” from an assumption into a report line.",
+    },
+    {
+      n: "9",
+      s: "<strong>List every clock with its period after the run.</strong> An empty timing query reads exactly like a clean design.",
+    },
+  ],
+};
+
+const categories = {
+  cols: [
+    { key: "t", label: "Thing" },
+    { key: "c", label: "Category" },
+  ],
+  rows: [
+    {
+      t: "a cascade may not cross a region boundary; a memory channel may not either",
+      c: "<strong>fixed — by the silicon.</strong> Not a preference, not a tuning choice, and not something a constraint can relax",
+    },
+    {
+      t: "every crossing signal is flop to flop, one cycle plus pipelining",
+      c: "<strong>fixed — by the silicon.</strong> A Laguna site <em>is</em> a flip-flop",
+    },
+    {
+      t: "which region holds configuration and the host bridge",
+      c: "<strong>fixed — by the part</strong>",
+    },
+    {
+      t: "the pblock set: one per region, assemblies assigned, crossings unpinned",
+      c: "<strong>customizable</strong>, and it is an <em>input</em> to the build rather than an output of it",
+    },
+    {
+      t: "the mesh frequency, changed at runtime through a second generator",
+      c: "<strong>customizable addon</strong> — the fixed generator carries the control plane, including the variable one's reconfiguration port",
+    },
+    {
+      t: "how many pipeline stages a crossing gets",
+      c: "<strong>customizable</strong> — sized to the frequency, left for the tool to place",
+    },
+    {
+      t: "which unit populations each mesh carries",
+      c: "<strong>yours</strong>, and a property of one named build rather than of “the ship”",
+    },
+    {
+      t: "what runs above the verified ceiling",
+      c: "<strong>yours, and unmeasured.</strong> At or below the built-in frequency the design is analysed; above it is a deliberately unverified sweep, and conflating the two is wrong",
+      _tone: "warn",
+    },
+  ],
+};
+
+const notOwned = {
+  cols: [
+    { key: "n", label: "Not owned" },
+    { key: "w", label: "Who owns it" },
+  ],
+  rows: [
+    {
+      n: "logic. This layer constrains; it does not compute",
+      w: "everyone else",
+    },
+    {
+      n: "what crosses a boundary, and the protocol it crosses with",
+      w: "ship, through the interlink and the station bus. Geometry decides that a crossing is expensive, not what rides on it",
+    },
+    {
+      n: "the resource cost of any compute unit in the image",
+      w: "that project. The occupancy figures here are what the floorplan produced, not what any block costs",
+    },
+    {
+      n: "the deadlock argument behind the fabric",
+      w: "noc. It rests on router-to-router being one clock, which is a fabric property rather than a floorplan one",
+    },
+    {
+      n: "whether a placed design is fast",
+      w: "nobody, yet. No part of the software stack models locality, so two compute units are treated as interchangeable the moment one is across a boundary from its operand",
+    },
+  ],
+};
+
 const asBuiltClocks = {
   cols: [
     { key: "c", label: "clock", mono: true },
@@ -588,6 +694,12 @@ const asBuiltClocks = {
         tuning guide.
       </p>
     </Callout>
+
+    <SpecTable
+      :cols="knobs.cols"
+      :rows="knobs.rows"
+      caption="What moves a floorplan, in the order it matters. The first three are decided before any RTL is written; only the last four are turned during a build."
+    />
 
     <h2 class="doc-h2">The die</h2>
     <p class="doc-p">
@@ -773,36 +885,33 @@ const asBuiltClocks = {
       neither station's port count. For four dies that is six full-width AXI
       shims the line never instantiates.
     </p>
-    <SpecTable
-      :cols="replaced.cols"
-      :rows="replaced.rows"
-      caption="CLB LUTs, both sides at the same endpoint set, on xcvu13p-fhgb2104-2L-e. The SmartConnect column is the SUPERSEDED baseline — it is not what is on the die. The station column is the per-instance breakdown of one synthesis of the deployed configuration, FW=256, AW=43, BALANCED, no block RAM."
-    />
-
-    <SpecTable
-      :cols="replacedProvenance.cols"
-      :rows="replacedProvenance.rows"
-      caption="Provenance of the SmartConnect column, which is not uniformly v5: those IPs were never re-synthesised for it. Quote the total as an order-of-magnitude replacement, not as a v5 measurement."
-    />
+    <p class="doc-p">
+      The per-die cost of both structures — the line as built and the tree it
+      replaced, with the provenance of every row, because that baseline is
+      <b>not uniformly from one build</b> — is on
+      <RouterLink to="/framework/axi" class="doc-link"
+        >AXI and the station bus</RouterLink
+      >, which is the page that owns the structure. Two things follow from it
+      that belong here rather than there.
+    </p>
 
     <Callout
       kind="trap"
       title="The saving is real and lands in the wrong place"
     >
       <p>
-        The biggest ratio is SLR1's, at 4.77x, because that die carried the
-        root. The instinct is that this is where the device needed it — and it
-        is not. SLR1 is the
-        <strong>emptiest</strong> die, so the largest saving lands where there
-        was already the most room. The binding die is SLR0, which the change
-        barely touches.
+        The largest ratio is on the die that carried the tree's root — and the
+        instinct that this is where the device needed it is wrong. That die is
+        the <strong>emptiest</strong> of the four, so the biggest saving lands
+        where there was already the most room. The binding die is the one the
+        change barely touches.
       </p>
     </Callout>
 
     <SpecTable
       :cols="populations.cols"
       :rows="populations.rows"
-      caption="SLR1 carries the smallest mesh because it also carries XDMA, the station every manager attaches to, jtag_axi, the control clock and one DDR4 controller. xcvu13p-fhgb2104-2L-e."
+      caption="Unit populations of the reference accelerator's four-mesh image on xcvu13p-fhgb2104-2L-e, read off the placed hierarchy — they are here because they are what the floorplan produced, and the resource cost of each unit belongs with that project. SLR1 carries the smallest mesh because it also carries the host bridge, the station every manager attaches to, the debug bridge, the control clock and one DDR4 controller."
     />
 
     <Callout kind="trap" title="A population is a property of a named build">
@@ -975,8 +1084,19 @@ const asBuiltClocks = {
     <SpecTable
       :cols="occupancy.cols"
       :rows="occupancy.rows"
-      caption="The placed v5 design on xcvu13p-fhgb2104-2L-e, except the XDMA row, which is the single-mesh design on the card. No hard block is close to binding; the machine is bound by fabric and by packing."
+      caption="From ONE PLACED four-mesh image of the reference accelerator on xcvu13p-fhgb2104-2L-e, Vivado 2024.2 — the only kind of run these figures can come from, since occupancy is a placement result and out-of-context synthesis has none. No hard block is close to binding; the machine is bound by fabric and by packing. What each block in that image costs on its own is a project figure and lives with the project."
     />
+
+    <p class="doc-p">
+      What individual IP costs in that image — the host bridge, the memory
+      controller, the debug bridge — is a measurement of one accelerator's
+      build, so it is on
+      <RouterLink to="/tpu/results" class="doc-link">that project's results</RouterLink>
+      rather than here. The one figure this page needs from it is the shape:
+      <b>the host bridge alone is roughly a sixth of the region that hosts
+      it</b>, which is why the region carrying it also carries the smallest
+      mesh.
+    </p>
 
     <Callout
       kind="trap"
@@ -1093,7 +1213,7 @@ const asBuiltClocks = {
     <SpecTable
       :cols="asBuiltClocks.cols"
       :rows="asBuiltClocks.rows"
-      caption="Eleven clocks, all constrained and all met, on xcvu13p-fhgb2104-2L-e. Out-of-context synthesis of the deployed station-bus line. bus_clk1 binds, at 1.79x its 200 MHz target — it is the station carrying the three managers, so its switch arbitrates three injectors while the others arbitrate one. Listing every clock with its period is the check that the run was timed at all."
+      caption="Eleven clocks, all constrained and all meeting their request in OUT-OF-CONTEXT SYNTHESIS of the deployed station-bus line on xcvu13p-fhgb2104-2L-e with Vivado 2024.2. Nothing is placed and nothing is routed, so each Fmax is an upper bound and none of these is a closed-timing figure. bus_clk1 binds, at 1.79x its 200 MHz request — it is the station carrying the three managers, so its switch arbitrates three injectors while the others arbitrate one. Listing every clock with its period is the check that the run was timed at all: an empty timing query reads exactly like a clean design."
     />
 
     <Callout kind="measured" title="Per-station clock domains are free">
@@ -1269,5 +1389,18 @@ const asBuiltClocks = {
         carries, and it is not there yet.
       </p>
     </Callout>
+
+    <h2 class="doc-h2">Floorplanning one</h2>
+    <SpecTable :cols="procedure.cols" :rows="procedure.rows" />
+
+    <h2 class="doc-h2">Fixed, customizable, convention, or yours</h2>
+    <SpecTable
+      :cols="categories.cols"
+      :rows="categories.rows"
+      caption="This layer has an unusual top row: several of its constraints are fixed by the silicon rather than by a protocol anyone here designed, which is why they cannot be negotiated at any level."
+    />
+
+    <h2 class="doc-h2">What geometry does not own</h2>
+    <SpecTable :cols="notOwned.cols" :rows="notOwned.rows" />
   </DocPage>
 </template>

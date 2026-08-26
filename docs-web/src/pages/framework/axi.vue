@@ -317,7 +317,7 @@ const sw = {
   ],
   edges: [
     { from: "fl:r", to: "mr:l", dir: "h" },
-    { from: "inj:r", to: "mr:l", dir: "h" },
+    { from: "inj:t", to: "mr:l" },
     { from: "fr:r", to: "ml2:l", dir: "h" },
     { from: "inj:r", to: "ml2:l", dir: "h" },
     { from: "fl:r", to: "ej:l", dir: "h" },
@@ -844,35 +844,77 @@ const checkRows = [
   },
 ];
 
-const divCols = [
-  { key: "d", label: "Divergence" },
-  { key: "detail", label: "Detail" },
+const catCols = [
+  { key: "t", label: "Thing" },
+  { key: "c", label: "Category" },
 ];
-const divRows = [
+const catRows = [
   {
-    d: "<b>The package is four unrelated things in one directory.</b>",
-    detail:
-      "Fabric (<code>axi_n1.v</code>, <code>axi_xbar2.v</code>), reference models (<code>axi4_ram.v</code>, <code>axi4_master.v</code>), a control sequencer (<code>main_orch.v</code>), and a superseded block (<code>instruction_receiver.v</code>). The first three are separate concerns with separate audiences; the fourth is dead.",
+    t: "AXI4 itself — the five channels, the handshake, the burst rules",
+    c: "<b>fixed protocol</b>, and not ours. It is the reason this layer exists",
   },
   {
-    d: "<b><code>main_orch.v</code> is the control plane, not AXI plumbing.</b>",
-    detail:
-      "It belongs with the control agent — the two together are how a host drives the machine, and splitting them across packages is why “where does control live” has no good answer today.",
+    t: "the flit a station carries, and its <code>dst_stn</code> / <code>dst_port</code> routing",
+    c: "<b>fixed protocol</b> within the line. A station forwards it verbatim, so anything in the flit is line-global",
   },
   {
-    d: "<b>There are two implementations of N-to-1 concentration.</b>",
-    detail:
-      "<code>axi_n1.v</code> here and <code>mag_dram_port.v</code> in the memory agent solve the same problem with the same structure — round-robin, five queues, index-in-ID response routing, asynchronous crossing. <code>mag_dram_port</code> additionally packs the internal beat up to the memory beat and carries byte strobes. They should be one module with the packing ratio as a parameter.",
+    t: "the four invariants — reserve before inject, REQ and RSP never share, packet-atomic arbitration, routes not IDs",
+    c: "<b>fixed protocol.</b> Breaking any one of them is a deadlock, not a slowdown",
   },
   {
-    d: "<b>There are two memory models in two packages.</b>",
-    detail:
-      "They serve different purposes — reference versus multi-channel stub — which is fine, but both are simulation support and neither belongs next to synthesisable framework RTL.",
+    t: "the address map's window prefix and the control region's positional decode",
+    c: "<b>fixed protocol</b>, owned by <span class='chip'>ship</span> and consumed here",
   },
   {
-    d: "<b>Two trees carry divergent copies of framework modules.</b>",
-    detail:
-      "<code>src/reference/poc/</code> holds proof-of-concept copies — including a second <code>vec_alu</code> and a second <code>noc_cu_base</code> — and <code>tests/axi/build-jtagdbg/rtl/</code> a frozen pre-fix snapshot of the whole station bus. The snapshot is deliberate and its two real differences are named in that directory's own runner; the poc copies are not, and nothing compiles them. A measurement harness that carries its own divergent copy of the module under test is the one arrangement guaranteed to produce numbers that describe nothing.",
+    t: "<code>FW</code>, <code>AW</code>, <code>CRED</code>, <code>OST</code>, <code>LUT_PER_BRAM</code>, station count, ports per station",
+    c: "<b>customizable</b> — sized per deployment, and the page above says which were forced by measurement",
+  },
+  {
+    t: "<code>LINK_CDC</code>, and therefore whether each die runs its own fabric clock",
+    c: "<b>customizable</b>, and free in both directions — collapsing it <i>costs</i> 328 LUTs",
+  },
+  {
+    t: "which station a manager sits on",
+    c: "<b>convention</b>, forced here by where the host bridge is anchored rather than by the structure",
+  },
+  {
+    t: "declaring a control port single-beat",
+    c: "<b>convention</b> with teeth: it is a promise, and it is worth 5,013 LUTs on one station",
+  },
+  {
+    t: "what any master or subordinate on the line actually does",
+    c: "<b>yours</b>",
+  },
+];
+
+const notOwnedCols = [
+  { key: "n", label: "Not owned" },
+  { key: "w", label: "Who owns it" },
+];
+const notOwnedRows = [
+  {
+    n: "anything that speaks flits on the mesh",
+    w: "noc. The two flits share a word and nothing else — a station flit never enters a router",
+  },
+  {
+    n: "what a memory request means, and the descriptor behind a burst",
+    w: "sysnode. This layer sees the beats, never the intent",
+  },
+  {
+    n: "which window a mesh answers at",
+    w: "ship. The map is a ship-level fact; the interconnect only consumes the prefix",
+  },
+  {
+    n: "which die a station lands on, and the pblock it lands in",
+    w: "physical",
+  },
+  {
+    n: "the DDR4 controller, the host bridge, the debug bridge",
+    w: "the vendor. Converting to them once, in modules whose job is only conversion, is this layer's entire purpose",
+  },
+  {
+    n: "whether a master pipelines its bursts",
+    w: "that master. The line does not queue on its behalf, and a single-outstanding master gets the bandwidth it asked for",
   },
 ];
 </script>
@@ -949,7 +991,7 @@ const divRows = [
     <SpecTable
       :cols="ruleCols"
       :rows="ruleRows"
-      caption="Four rules, on every AXI interface in the source tree. axi4_master.v exists to encode rules 2 through 4 once: it takes a command and emits as many legal bursts as required"
+      caption="Four rules, on every AXI interface in the source tree. There is no longer one module that encodes them for everyone: the reference master that used to is retired to src/attic/legacy-axi/, superseded by orchestrator dispatch, so every master that issues AXI today — the memory agent's DRAM port, each station manager shim — carries rules 2 through 4 for itself"
     />
 
     <WaveTrace
@@ -964,15 +1006,22 @@ const divRows = [
     />
 
     <Callout
-      kind="note"
-      title="The reference master keeps one burst outstanding"
+      kind="trap"
+      title="Single-outstanding is what a reference master is for, and what a real one must not be"
     >
       <p>
-        That is deliberate for a reference: the state machine is readable and
-        checkable. It is also
-        <b>the first thing to change for a production master</b>, because with
-        real memory latency, single-outstanding leaves most of the bandwidth
-        unused.
+        The retired reference master kept <b>one burst outstanding</b>, which is
+        the right choice for a module whose job is to be readable and checkable
+        — and the wrong one for anything on a datapath, because with real memory
+        latency single-outstanding leaves most of the bandwidth unused.
+      </p>
+      <p>
+        The measurement on this page says how much:
+        <b>at one outstanding burst roughly half the elapsed time is
+        turnaround</b>, so the sustained-bandwidth figures below are
+        latency-bound rather than width-bound. Copying a reference master's
+        acceptance policy into a production one is the single easiest way to
+        halve a link and see nothing wrong in simulation.
       </p>
     </Callout>
 
@@ -1099,6 +1148,28 @@ const divRows = [
       </p>
     </Callout>
 
+    <Callout
+      kind="trap"
+      title="This concentrator is built twice, and the second copy is not on this page"
+    >
+      <p>
+        <code>axi_n1.v</code> here and
+        <code>mag_dram_port.v</code> in the memory agent solve the same problem
+        with the same structure — round robin, five queues, index-in-ID response
+        routing, one asynchronous crossing.
+        <code>mag_dram_port</code> additionally packs the internal beat up to
+        the memory beat and carries byte strobes, which is a parameter's worth
+        of difference, not a module's.
+      </p>
+      <p>
+        It matters to a reader rather than only to a maintainer:
+        <b>a fix to one does not reach the other</b>, and the diagram above
+        describes both, so a bug found here has a second home nobody will think
+        to check. If you are extending concentration, extend both or merge them
+        with the packing ratio as a parameter.
+      </p>
+    </Callout>
+
     <Callout kind="note" title="Width and clocks belong at the boundary">
       <p>
         The mesh's internal beat matches the flit payload, so nothing in the
@@ -1125,7 +1196,14 @@ const divRows = [
     <h2 class="doc-h2">The control-program engine</h2>
     <p class="doc-p">
       <code>main_orch.v</code> is an AXI slave so the host can load a program,
-      and an AXI master so it can execute one.
+      and an AXI master so it can execute one. It is synthesisable RTL that
+      drives real hardware, and it currently lives in
+      <code>src/kohakuaccel/verif/</code> beside the simulation memory models —
+      <b>a control-plane engine filed under verification</b>. Read the directory
+      as a mislabel rather than as a statement that this is a testbench part;
+      the misfiling is the live remnant of the same defect the package
+      reorganisation otherwise closed, and it is why "where does control live"
+      still has no good answer.
     </p>
     <SpecTable
       :cols="opCols"
@@ -1274,7 +1352,8 @@ const divRows = [
         LUT difference.
       </p>
       <p class="kt-text-caption">
-        <code>xcvu13p</code>, out-of-context synthesis, Vivado 2024.2,
+        <code>xcvu13p-fhgb2104-2L-e</code>, out-of-context synthesis, Vivado
+        2024.2,
         four-station line at FW=512, AW=43, BALANCED, no block RAM.
       </p>
     </Callout>
@@ -1361,7 +1440,7 @@ const divRows = [
     <WaveTrace
       v-bind="liteBroken"
       variant="broken"
-      label="terminate the burst signals (pre-2026-08-22)"
+      label="terminate the burst signals — what a Lite port cannot survive"
     />
     <WaveTrace
       v-bind="liteFixed"
@@ -1398,7 +1477,7 @@ const divRows = [
     <ResourceBars
       :items="totals"
       unit="CLB LUT sites"
-      caption="xcvu13p, Vivado 2024.2. The line column is the per-instance breakdown of ONE synthesis of the deployed configuration — FW=256, AW=43, BALANCED, no block RAM, LINK_FULL=0, LINK_CDC=1 — not a per-die extrapolation. The SmartConnect column is the superseded tree"
+      caption="xcvu13p-fhgb2104-2L-e, Vivado 2024.2, out-of-context SYNTHESIS. The line column is the per-instance breakdown of ONE synthesis of the deployed configuration — FW=256, AW=43, BALANCED, no block RAM, LINK_FULL=0, LINK_CDC=1 — not a per-die extrapolation. The SmartConnect column is the superseded tree"
     />
 
     <SpecTable
@@ -1440,10 +1519,10 @@ const divRows = [
           >the tell of that failure is the two strategies coming out the wrong
           way round</b
         >
-        — max-performance measuring less than minimum-area. Setting it
-        explicitly and asserting the readback fixes it. Earlier revisions said
-        no valid <code>axi_interconnect</code> number existed; that was the
-        obstacle.
+        — max-performance measuring less than minimum-area. Set it explicitly
+        and assert the readback: a vendor IP that silently accepts a
+        configuration it did not apply produces a number that describes a
+        different design.
       </p>
     </Callout>
 
@@ -1455,12 +1534,15 @@ const divRows = [
 
     <Callout kind="measured" title="Placed and routed, not just synthesised">
       <p>
-        The same line in a block design on <code>xcvu13p</code>, one pblock per
+        The same line in a block design on
+        <code>xcvu13p-fhgb2104-2L-e</code> with Vivado 2024.2, one pblock per
         SLR with the links deliberately unpinned, driven by three JTAG masters
         into sixteen block-RAM endpoints: <b>WNS +0.018 ns</b>, TNS 0.000 with 0
         failing of 152,262 endpoints, WHS +0.010 ns, pulse width +1.125 ns,
         <code>write_bitstream</code> reached. Ten clocks, each with a real
         <code>create_clock</code> or MMCM-derived constraint.
+        <b>This is the one placed-and-routed result on this page</b>, and it is
+        the fabric with block-RAM endpoints rather than the finished system.
       </p>
       <p>
         Latency by hop, 32-bit single-beat read at a 100 MHz control clock:
@@ -1564,6 +1646,30 @@ const divRows = [
       </p>
     </Callout>
 
+    <Callout
+      kind="trap"
+      title="Two trees hold their own copies of these modules, and only one of them says so"
+    >
+      <p>
+        <code>tests/axi/build-jtagdbg/rtl/</code> is a frozen pre-fix snapshot
+        of the whole station bus — <code>sb_line4</code>,
+        <code>sb_nmu</code>, <code>sb_axi2lite</code> and the rest. That one is
+        <b>deliberate</b>, and its two real differences from the live RTL are
+        named in that directory's own runner, which is what makes it a
+        measurement of something rather than a measurement of nothing.
+      </p>
+      <p>
+        <code>src/reference/poc/</code> is not. It holds proof-of-concept copies
+        of framework modules — a second <code>noc_cu_base</code> among them —
+        with no note saying how they differ, and nothing compiles them.
+        <b
+          >A harness carrying its own undeclared copy of the module under test
+          is the one arrangement guaranteed to produce numbers that describe
+          nothing</b
+        >, so before quoting any figure, check which tree it was built from.
+      </p>
+    </Callout>
+
     <h2 class="doc-h2">Where it does not help, and when not to build it</h2>
     <Callout
       kind="measured"
@@ -1643,7 +1749,10 @@ const divRows = [
       </p>
     </Callout>
 
-    <h2 class="doc-h2">Where today's source disagrees</h2>
-    <SpecTable :cols="divCols" :rows="divRows" />
+    <h2 class="doc-h2">Fixed protocol, addon, convention, or yours</h2>
+    <SpecTable :cols="catCols" :rows="catRows" />
+
+    <h2 class="doc-h2">What this boundary does not own</h2>
+    <SpecTable :cols="notOwnedCols" :rows="notOwnedRows" />
   </DocPage>
 </template>

@@ -142,7 +142,7 @@ const obligations = {
 
     <h2 class="doc-h2">Where to go next</h2>
 
-    <div class="grid gap-4 sm:grid-cols-3 mt-6">
+    <div class="grid gap-4 sm:grid-cols-2 mt-6">
       <RouterLink
         to="/component/sysnode/microarchitecture"
         class="card-hover p-5 no-underline block"
@@ -153,18 +153,32 @@ const obligations = {
           Sysnode micro
         </div>
         <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
-          The memory ports, the converged requester path, the write slots and
-          what the mover actually walks.
+          The memory ports, the converged requester path, the write slots, the
+          mover — and the RV64 processor fused through all of them.
         </p>
       </RouterLink>
       <RouterLink
-        to="/component/cpu/microarchitecture"
+        to="/component/rv64sys"
         class="card-hover p-5 no-underline block"
       >
         <div
           class="kt-text-title font-semibold text-warm-800 dark:text-warm-200 mb-1"
         >
-          CPU PE micro
+          RV64-sys
+        </div>
+        <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
+          The core that hosts a runtime: RV64IMA, traps, Sv39 and an L1. A whole
+          node with it lands at 34,722 LUT.
+        </p>
+      </RouterLink>
+      <RouterLink
+        to="/component/rv32pe/microarchitecture"
+        class="card-hover p-5 no-underline block"
+      >
+        <div
+          class="kt-text-title font-semibold text-warm-800 dark:text-warm-200 mb-1"
+        >
+          RV32 PE micro
         </div>
         <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
           Six register boundaries, one stall rule, two L1s split by who writes,

@@ -191,31 +191,36 @@ const conventions = {
   ],
 };
 
-const disagrees = {
+/* ---- what moves a ship's cost ------------------------------------------ */
+const knobs = {
   cols: [
-    { key: "w", label: "Where today's source disagrees" },
-    { key: "d", label: "Detail" },
+    { key: "k", label: "Knob", mono: true },
+    { key: "w", label: "What it moves" },
   ],
   rows: [
     {
-      w: "The generator has a hardcoded endpoint vocabulary",
-      d: "<code>scripts/py/gen_mesh.py</code> knows <code>mat</code> and <code>vec</code> by name and rejects anything else. Those are two of the reference project's compute units. The right shape is a registry: the generator knows how to place a thing with a fabric port and a coordinate, and each accelerator supplies its own list.",
+      k: "grid size",
+      w: "<strong>Everything.</strong> Routers are the fixed overhead and endpoints are what you wanted; the ratio between them is the topology decision. A grid one row larger is <code>NX</code> more routers whether or not you fill the locals.",
     },
     {
-      w: "Ship modules are named after the reference project",
-      d: "<code>ktpu_ship_2x2_6c2v_il</code> and its siblings are framework assemblies carrying a project prefix, in a directory whose name (<code>synth_top</code>) describes how they are used rather than what they are.",
+      k: "edge slots used",
+      w: "Nearly nothing. An edge endpoint costs a link, not a router — which is why capacity is <code>NX*NY + 2*(NX+NY)</code> and not <code>NX*NY</code>.",
     },
     {
-      w: "Topology is described twice",
-      d: "The mesh picture is one description; the board description consumed by the software stack is another, generated separately. Its capacity fields come from a build log and its address fields from a block design that nothing in the tree can read — so parts of it can only be verified against hardware.",
+      k: "<code>PORTS</code>",
+      w: "One <code>mag_mem_port</code> each, plus a fabric attachment each. A port serves roughly two clusters, and <strong>capped at 4</strong> by the parameter list rather than by anything structural.",
     },
     {
-      w: "The edge complex's port coordinates are four named parameter pairs",
-      d: "The generate that instantiates ports selects between them by index, so the port count is capped at four by the parameter list rather than by anything structural. A packed vector was rejected — reasonably, since one shift misaligns a whole port and still elaborates — but the resulting form does not scale.",
+      k: "<code>ILINK</code>",
+      w: "Zero generates <em>none</em> of it — no switch, no links, no extra AXI master, and the remote address decode folds to a constant. Enabled, it is <code>mag_link_cdc</code> at 139 LUT per crossing.",
     },
     {
-      w: "A reusable composition sits inside a project, in a directory of device tops",
-      d: "The concentrated memory boundary is <code>src/kohakuaccel/sysnode/sysnode.v</code>: it is assembly rather than a top, and nothing in it is specific to that project, so it belongs in the framework. As it stands a second project reuses it by reaching into the first one.",
+      k: "concentrated vs plain",
+      w: "Where the requesters meet and where the clock crossing happens, not how much there is of it. A device-image decision.",
+    },
+    {
+      k: "<code>MW</code>",
+      w: "The memory beat. <code>mag_dram_port</code> packs <code>DATA_W → MW</code>, so nothing inside the mesh learns the memory width.",
     },
   ],
 };
@@ -274,36 +279,48 @@ const meshGrid = {
 
 const chain = {
   nodes: [
-    { id: "t0", x: -8, y: 0, w: 6, label: "tie", sub: "LINK0" },
-    { id: "c0", x: 0, y: 0, w: 11, label: "mesh_0", sub: "SLR0", accent: true },
+    { id: "t0", x: -7, y: 0.5, w: 5, h: 5, label: "tie", sub: "LINK0" },
+    {
+      id: "c0",
+      x: 0,
+      y: 0,
+      w: 6,
+      h: 6,
+      label: "mesh_0",
+      sub: "SLR0",
+      accent: true,
+    },
     {
       id: "c1",
-      x: 13,
+      x: 11,
       y: 0,
-      w: 11,
+      w: 6,
+      h: 6,
       label: "mesh_1",
       sub: "SLR1",
       accent: true,
     },
     {
       id: "c3",
-      x: 26,
+      x: 22,
       y: 0,
-      w: 11,
+      w: 6,
+      h: 6,
       label: "mesh_3",
       sub: "SLR2",
       accent: true,
     },
     {
       id: "c2",
-      x: 39,
+      x: 33,
       y: 0,
-      w: 11,
+      w: 6,
+      h: 6,
       label: "mesh_2",
       sub: "SLR3",
       accent: true,
     },
-    { id: "t1", x: 52, y: 0, w: 6, label: "tie", sub: "LINK1" },
+    { id: "t1", x: 44, y: 0.5, w: 5, h: 5, label: "tie", sub: "LINK1" },
   ],
   edges: [
     { from: "t0:r", to: "c0:l", dir: "h", dash: true },
@@ -477,24 +494,92 @@ const insideAddr = [
 
 const addrFields = {
   cols: [
-    { key: "b", label: "Bits", mono: true },
-    { key: "n", label: "Field" },
-    { key: "m", label: "Meaning" },
+    { key: "f", label: "Field", mono: true },
+    { key: "w", label: "Width", align: "right" },
+    { key: "p", label: "Position", mono: true },
+    { key: "o", label: "Owner" },
   ],
   rows: [
     {
-      b: "[42:40]",
-      n: "window",
-      m: "<strong>Transport, not address space.</strong> The interconnect consumes it to choose a mesh's <code>S_AXI_MEM</code> port; the mesh receives <code>addr[39:0]</code> unmodified.",
+      f: "window",
+      w: "3",
+      p: "addr[42:40]",
+      o: "<strong>the device image.</strong> Transport, not address space: the interconnect consumes it to choose a mesh's <code>S_AXI_MEM</code> port, and the mesh receives <code>addr[39:0]</code> unmodified. It does not exist inside a ship",
     },
-    { b: "[39]", n: "aperture", m: "1 = special (staging L2, …), 0 = DRAM" },
-    { b: "[38]", n: "reserved", m: "must be 0" },
     {
-      b: "[37:36]",
-      n: "mesh",
-      m: "0..3. Tested <strong>absolutely</strong> — an address carries which mesh it belongs to, no matter who issued it or where it arrives.",
+      f: "aperture",
+      w: "1",
+      p: "addr[39]",
+      o: "framework. 1 selects a special region (staging L2, …), 0 selects DRAM",
     },
-    { b: "[35:0]", n: "local", m: "64 GB of map per mesh" },
+    { f: "reserved", w: "1", p: "addr[38]", o: "framework. MUST be 0" },
+    {
+      f: "mesh",
+      w: "2",
+      p: "addr[37:36]",
+      o: "framework, and tested <strong>absolutely</strong> — an address carries which mesh it belongs to no matter who issued it or where it arrives. This is what makes remote entry work",
+    },
+    {
+      f: "local",
+      w: "36",
+      p: "addr[35:0]",
+      o: "<strong>you.</strong> 64 GB of map per mesh, of which 4 GB is behind real memory",
+    },
+  ],
+};
+
+/* ---- window against address -------------------------------------------- */
+const winBroken = {
+  rows: [
+    {
+      name: "AWADDR",
+      kind: "bus",
+      values: ["0x300_0000_0000", null, null, null, null, null],
+    },
+    { name: "window", kind: "text", values: ["mesh 2", "", "", "", "", ""] },
+    { name: "addr[37:36]", kind: "text", values: ["0", "", "", "", "", ""] },
+    { name: "mine", kind: "bit", values: [0, 0, 0, 0, 0, 0], mark: [0] },
+    { name: "AWREADY", kind: "bit", values: [0, 0, 0, 0, 0, 0] },
+    { name: "BVALID", kind: "bit", values: [0, 0, 0, 0, 0, 0] },
+  ],
+  notes: [
+    {
+      cycle: 0,
+      text: "The window says mesh 2 and the address field says mesh 0. Both decoders are absolute and neither is wrong; they simply describe different meshes, so no requester on mesh 2's converged path claims the beat.",
+      tone: "bad",
+    },
+    {
+      cycle: 5,
+      text: "mine never rises, so nothing accepts and nothing answers. There is no DECERR and no timeout: it presents as a HANG, several layers away from the driver line that set the window. A driver that sets the window and forgets [37:36] sees exactly this.",
+      tone: "bad",
+    },
+  ],
+};
+
+const winFixed = {
+  rows: [
+    {
+      name: "AWADDR",
+      kind: "bus",
+      values: ["0x320_0000_0000", null, null, null, null, null],
+    },
+    { name: "window", kind: "text", values: ["mesh 2", "", "", "", "", ""] },
+    { name: "addr[37:36]", kind: "text", values: ["2", "", "", "", "", ""] },
+    { name: "mine", kind: "bit", values: [1, 1, 0, 0, 0, 0], mark: [0] },
+    { name: "AWREADY", kind: "bit", values: [0, 1, 0, 0, 0, 0] },
+    { name: "BVALID", kind: "bit", values: [0, 0, 0, 0, 1, 0] },
+  ],
+  notes: [
+    {
+      cycle: 0,
+      text: "The mesh id appears twice on purpose and both copies agree. That is not redundancy to be optimised away — the window chooses where a transaction ENTERS and the address chooses where it LANDS.",
+      tone: "good",
+    },
+    {
+      cycle: 4,
+      text: "Deliberately disagreeing is the remote case, and it is the same mechanism: mesh 2's window carrying [37:36] = 3 is decoded as remote by awaddr[37:36] != my_mesh and forwarded over the interlink. One field would make that unrepresentable.",
+      tone: "good",
+    },
   ],
 };
 
@@ -623,6 +708,126 @@ const placeOrder = {
   ],
 };
 
+/* ---- how you actually generate one -------------------------------------- */
+const procedure = {
+  cols: [
+    { key: "n", label: "#", mono: true, align: "center" },
+    { key: "s", label: "Step" },
+  ],
+  rows: [
+    {
+      n: "1",
+      s: "<strong>Write the picture, not the Verilog.</strong> A grid of 3-character tokens: <code>xxx</code> at the four corners, routers in the interior, gateways on the edge rings.",
+    },
+    {
+      n: "2",
+      s: "<strong>Check it fits the capacity formula</strong> — <code>NX*NY</code> router locals plus <code>2*(NX+NY)</code> edge slots, corners excluded — and fill edge slots before growing the grid, because an edge endpoint costs a link and a grid row costs <code>NX</code> routers.",
+    },
+    {
+      n: "3",
+      s: "<strong>Place at most four <code>mag</code> tiles, and place them on different rows.</strong> More than four is refused; on one row they share a funnel instead of splitting it.",
+    },
+    {
+      n: "4",
+      s: "<strong>Choose the memory boundary form</strong> — plain if the device image merges the masters, concentrated if the ship should.",
+    },
+    {
+      n: "5",
+      s: "<strong>Decide the interlink at elaboration.</strong> Off costs literally nothing, so the only reason to leave it on is that this image has a second mesh.",
+    },
+    {
+      n: "6",
+      s: "<strong>Generate. Never hand-edit the result</strong>, and never let a second file restate what the picture already said.",
+    },
+    {
+      n: "7",
+      s: "<strong>Assign the windows at 1 TiB spacing</strong>, leaving <code>0x000_…</code> free so control stays below 4 GiB, and read the offsets back out of the block design rather than trusting that they applied.",
+    },
+    {
+      n: "8",
+      s: "<strong>Elaborate and measure out of context</strong> before believing any of it.",
+    },
+  ],
+};
+
+const categories = {
+  cols: [
+    { key: "t", label: "Thing" },
+    { key: "c", label: "Category" },
+  ],
+  rows: [
+    {
+      t: "the ship's boundary — clock, reset, AXI, and nothing else",
+      c: "<strong>fixed protocol.</strong> It is what makes a ship droppable into a vendor block design without hand-wiring",
+    },
+    {
+      t: "the 40-bit address and its four fields",
+      c: "<strong>fixed protocol.</strong> A component that decodes differently is not on the framework",
+    },
+    {
+      t: "the interlink's dimension-order rule and its credit classes",
+      c: "<strong>fixed protocol.</strong> Changing it means redoing the deadlock argument",
+    },
+    {
+      t: "which coordinate each endpoint occupies, and what shape the grid is",
+      c: "<strong>customizable</strong> — that is what the picture is",
+    },
+    {
+      t: "plain against concentrated memory boundary",
+      c: "<strong>customizable</strong>, per device image",
+    },
+    {
+      t: "the mesh id at runtime",
+      c: "<strong>customizable</strong> — the elaboration parameter supplies only its reset value, so one generated module can occupy several positions",
+    },
+    {
+      t: "gateways on edge rings, compute on router locals",
+      c: "<strong>convention.</strong> The other way works and competes for the same router",
+    },
+    {
+      t: "regenerating rather than hand-editing",
+      c: "<strong>convention, forced in practice.</strong> An edit is lost on the next run and cannot be checked against anything",
+    },
+    {
+      t: "what any endpoint in the picture actually computes",
+      c: "<strong>yours</strong>",
+    },
+  ],
+};
+
+const notOwned = {
+  cols: [
+    { key: "n", label: "Not owned" },
+    { key: "w", label: "Who owns it" },
+  ],
+  rows: [
+    {
+      n: "the flit, the router, the link handshake",
+      w: "noc. Assembly instantiates them and defines none of them",
+    },
+    {
+      n: "what a descriptor means, and what the memory ports do with one",
+      w: "sysnode",
+    },
+    {
+      n: "the AXI surface in front of the boundary — arbitration, width, clock crossing",
+      w: "axi. A ship exposes AXI; it does not convert it",
+    },
+    {
+      n: "which die region a ship lands on, and what a link may cross",
+      w: "physical. Assembly decides that a link exists, not where it goes",
+    },
+    {
+      n: "whether a mesh's DRAM has anything in it",
+      w: "the runtime. The map gives 64 GB per mesh and 4 GB is real; staying under it is a compiler invariant nothing checks",
+    },
+    {
+      n: "how a program is split across meshes",
+      w: "the compiler. The mesh axis constrains placement; it does not schedule",
+    },
+  ],
+};
+
 const rungs = {
   cols: [
     { key: "n", label: "rung", mono: true, align: "center" },
@@ -698,11 +903,17 @@ const rungs = {
       caption="Which one to use is a device-image decision, not a mesh decision."
     />
 
-    <Callout kind="open" title="Where today's source disagrees">
+    <Callout
+      kind="note"
+      title="The concentrated form is framework RTL, not a device top"
+    >
       <p>
-        <code>src/kohakuaccel/sysnode/sysnode.v</code> is a reusable composition
-        in a directory of device tops. It is the concentrated memory boundary
-        above, and it is assembly, not a top.
+        It is <code>src/kohakuaccel/sysnode/sysnode.v</code> — assembly rather
+        than a top, and nothing in it is specific to any accelerator, so a
+        second project instantiates it directly instead of reaching into the
+        first one's directory. It was in a project's tree once and that is the
+        shape to avoid: a reusable composition parked among device tops is
+        reused by reaching across a boundary that then stops meaning anything.
       </p>
     </Callout>
 
@@ -717,6 +928,34 @@ const rungs = {
         actually wanted. The ratio between those two is the topology decision,
         and it is the reason the fabric pages spend so much effort on what a
         router costs per port.
+      </p>
+    </Callout>
+
+    <SpecTable
+      :cols="knobs.cols"
+      :rows="knobs.rows"
+      caption="The knobs that move ship cost, in the order they matter."
+    />
+
+    <Callout
+      kind="trap"
+      title="Port count is capped at four by the parameter list, not by the structure"
+    >
+      <p>
+        The edge complex's port coordinates are
+        <strong>four named parameter pairs</strong> —
+        <code>MEM_X/MEM_Y</code> through <code>MEM_X3/MEM_Y3</code> — and the
+        generate that instantiates ports selects between them by index. A fifth
+        port is not a parameter change; it is an edit to the parameter list, the
+        generate and the mesh checker, which refuses a map with more than four
+        <code>mag</code> tiles for exactly this reason.
+      </p>
+      <p>
+        A packed vector was rejected, and the reason is worth keeping rather
+        than fixing away: <strong>one shift misaligns a whole port at the wrong
+        node, and it elaborates cleanly</strong>. The form that does not scale
+        was chosen over the form that fails silently. If you raise the cap,
+        raise it as more named pairs.
       </p>
     </Callout>
 
@@ -857,6 +1096,28 @@ const rungs = {
     </p>
     <SpecTable :cols="tokenKinds.cols" :rows="tokenKinds.rows" />
 
+    <Callout
+      kind="trap"
+      title="The endpoint vocabulary is hardcoded, so “supplied by the accelerator” is not yet true"
+    >
+      <p>
+        <code>scripts/py/gen_mesh.py</code> carries
+        <code>KNOWN = {xxx, nul, mag, vec, mat}</code> and
+        <strong>raises on any other token</strong>. Two of those five name the
+        reference project's compute units, so a second accelerator cannot
+        describe its own mesh without editing the generator — and the generator
+        emits those module names with those parameters, which is the wrong seam
+        in the same place.
+      </p>
+      <p>
+        The right shape is a registry: the generator knows how to place a thing
+        that has a fabric port and a coordinate, and each accelerator supplies
+        its own list. Until then, read the token table above as three structural
+        kinds plus <em>this project's</em> two, and expect to edit Python before
+        your first map elaborates.
+      </p>
+    </Callout>
+
     <p class="doc-p">
       The generator emits the router instances with their per-axis grid bounds,
       the link nets between them, the endpoint instances, the edge complex with
@@ -881,6 +1142,41 @@ const rungs = {
         coordinates synthesis consumed. Any second description of the same
         topology is a place for the two to drift.
       </p>
+      <p>
+        <strong>Today there are two, and the drift is unguarded.</strong> The
+        mesh picture is one; the machine description the software stack reads is
+        another, generated separately. They already share values that must
+        agree and nothing compares them —
+        <code>TILES</code>, <code>GA</code> and <code>GB</code> are frozen at
+        synthesis into the generated top and repeated in the driver's machine
+        description, and a top that simply omits them elaborates
+        <strong>the compute unit's own defaults instead</strong>, silently
+        building a smaller machine than the software believes it has. Parts of
+        that description are worse: its capacity fields come from a build log
+        and its address fields from a block design nothing in the tree can read,
+        so they can only be verified against hardware.
+      </p>
+    </Callout>
+
+    <Callout
+      kind="trap"
+      title="A framework assembly carrying a project's prefix is a boundary that has stopped meaning anything"
+    >
+      <p>
+        <code>ktpu_ship_2x2_6c2v_il</code> and its siblings under
+        <code>src/kohakutpu/top/generated/</code> are
+        <strong>framework assemblies with a project prefix</strong>. Nothing in
+        the generator is specific to that accelerator except the two hardcoded
+        tokens above, so the name records who ran the generator rather than what
+        the module is.
+      </p>
+      <p>
+        It matters because it is how the dependency the framework spent effort
+        removing gets rebuilt by accident: a second accelerator that wants a
+        2x2 ship reaches into the first one's directory for it, and from then on
+        the two projects are coupled through a path rather than through an
+        interface.
+      </p>
     </Callout>
 
     <h3 class="doc-h3">Generation is elaboration, not runtime</h3>
@@ -904,10 +1200,8 @@ const rungs = {
     <SpecTable
       :cols="conventions.cols"
       :rows="conventions.rows"
-      caption="One forced, three free."
+      caption="One forced, three free. The fourth is free and currently violated — the drift it names is the one in the rule above."
     />
-
-    <SpecTable :cols="disagrees.cols" :rows="disagrees.rows" />
 
     <h2 class="doc-h2">Several ships in one image</h2>
     <p class="doc-p">
@@ -1047,7 +1341,7 @@ const rungs = {
     <SpecTable
       :cols="crossingCost.cols"
       :rows="crossingCost.rows"
-      caption="MEASURED on xcvu13p-fhgb2104-2L-e, against a 23,040-wire budget per boundary. The interlink and the station bus are what cross a boundary today. slr_cross was the SmartConnect tree's register slice and is superseded — it is shown only to price what the credited link replaced, a factor of 6.0 on the connective tissue between dies alone."
+      caption="CLB LUT sites on xcvu13p-fhgb2104-2L-e with Vivado 2024.2, against a 23,040-wire budget per boundary; the wire counts are post-placement and the LUT figures are the per-instance breakdown of one out-of-context synthesis. The interlink and the station bus are what cross a boundary today. slr_cross was the SmartConnect tree's register slice and is SUPERSEDED — it is shown only to price what the credited link replaced, a factor of 6.0 on the connective tissue between dies alone, and it is not in the design."
     />
 
     <h2 class="doc-h2">The address map</h2>
@@ -1076,7 +1370,11 @@ const rungs = {
       caption="Outside — what a host master drives"
     />
 
-    <SpecTable :cols="addrFields.cols" :rows="addrFields.rows" />
+    <SpecTable
+      :cols="addrFields.cols"
+      :rows="addrFields.rows"
+      caption="Inside a ship there are 40 bits and four fields; outside there are 43 and five. The window is the only one a mesh never sees."
+    />
 
     <SpecTable
       :cols="windows.cols"
@@ -1120,6 +1418,23 @@ const rungs = {
         >) and forwarded over the interlink.
       </p>
     </Callout>
+
+    <WaveTrace
+      :rows="winBroken.rows"
+      :notes="winBroken.notes"
+      variant="broken"
+      label="window says mesh 2, address says mesh 0 — nothing claims the beat"
+    />
+    <WaveTrace
+      :rows="winFixed.rows"
+      :notes="winFixed.notes"
+      variant="fixed"
+      label="both copies agree, and disagreeing on purpose is the remote case"
+    />
+    <p class="kt-text-caption text-warm-500 dark:text-warm-400 -mt-2 mb-6">
+      Schematic. The decode and the absence of any response are the rule; the
+      cycle numbers are illustration, not a measurement.
+    </p>
 
     <Callout kind="open" title="NOT YET TRACED">
       <p>
@@ -1252,13 +1567,18 @@ const rungs = {
 
     <Callout kind="open" title="No cost model for a collective exists">
       <p>
-        One link has been timed on the reference machine, and the result argues
-        against modelling the <em>link</em> at all: the measured rate was 3% of
-        the fabric's ceiling, so what a transfer costs is a property of the
-        engine driving it, not of the interconnect. A cost model keyed on
-        topology and bandwidth would have been wrong by a factor of 33. Recorded
-        as an open question in <code>docs/integrate/multi-mesh.md</code> §8 —
-        treat the ratio as belonging to the build that produced it.
+        There is no measured cross-mesh transfer rate this page can quote. The
+        one that used to appear here was taken before the memory mover was
+        rebuilt and describes an engine that no longer exists; it is
+        <strong>withdrawn</strong> rather than carried forward, and nothing has
+        replaced it.
+      </p>
+      <p>
+        What survives it is structural and does not need a number: a transfer's
+        cost is a property of <em>the engine driving the link</em>, not of the
+        link, so a cost model keyed on topology and raw bandwidth prices the
+        wrong thing. Any model built here has to be fitted against a
+        re-measurement on the current mover.
       </p>
     </Callout>
 
@@ -1273,5 +1593,23 @@ const rungs = {
         memory, and it becomes a runtime failure with no diagnosis.
       </p>
     </Callout>
+
+    <h2 class="doc-h2">Generating one</h2>
+    <SpecTable :cols="procedure.cols" :rows="procedure.rows" />
+
+    <h2 class="doc-h2">Fixed protocol, addon, convention, or yours</h2>
+    <SpecTable :cols="categories.cols" :rows="categories.rows" />
+
+    <h2 class="doc-h2">What assembly does not own</h2>
+    <SpecTable :cols="notOwned.cols" :rows="notOwned.rows" />
+    <p class="doc-p">
+      The first row is worth stating twice. Assembly knows how to instantiate a
+      router and wire a link; it knows nothing about what travels on one.
+      <strong
+        >That is why a mesh picture is a picture and not a program</strong
+      >
+      — everything it can express is placement, and everything it cannot is
+      somebody else's page.
+    </p>
   </DocPage>
 </template>

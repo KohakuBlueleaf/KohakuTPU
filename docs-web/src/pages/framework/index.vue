@@ -2,138 +2,159 @@
 /* ------------------------------------------------------------------ what is on the die */
 const die = {
   nodes: [
-    { id: "host", x: 10, y: 0, w: 12, h: 3, label: "host", sub: "PCIe" },
-    { id: "xdma", x: 3, y: 5, w: 11, h: 3, label: "XDMA", sub: "host DMA" },
+    { id: "host", x: 0, y: 8.5, w: 8, h: 5, label: "host", sub: "PCIe" },
+    { id: "xdma", x: 11, y: 3, w: 9, h: 5, label: "XDMA", sub: "host DMA" },
     {
       id: "jtag",
-      x: 18,
-      y: 5,
-      w: 11,
-      h: 3,
+      x: 11,
+      y: 14,
+      w: 9,
+      h: 5,
       label: "JTAG-AXI",
       sub: "bring-up",
     },
     {
       id: "axi",
-      x: 1,
-      y: 10.5,
-      w: 29,
-      h: 3.6,
-      label: "AXI surface  ·  arch/axi",
-      sub: "address decode · clock crossing · width conversion · N-to-1",
+      x: 23,
+      y: 1,
+      w: 9,
+      h: 17,
+      label: "AXI surface",
+      sub: "arch/axi · address decode · clock crossing · width conversion · N-to-1",
     },
     {
       id: "ddr",
-      x: 1,
-      y: 17,
+      x: 36,
+      y: 0,
       w: 9,
-      h: 3.4,
+      h: 5,
       label: "DDR4 × N",
       sub: "vendor controller",
     },
     {
-      id: "mag",
-      x: 13,
-      y: 17,
-      w: 16,
-      h: 3.4,
-      label: "system node  ·  arch/sysnode",
-      sub: "ONE component — MAG + ctrl PE, neither separable",
-      accent: true,
-    },
-    {
       id: "magmem",
-      x: 13,
-      y: 20.6,
-      w: 7,
-      h: 2.8,
+      x: 36,
+      y: 7.5,
+      w: 9,
+      h: 5,
       label: "MAG",
-      sub: "memory · cross-mesh · staging slot",
+      sub: "arch/sysnode · memory · cross-mesh · staging slot",
+      accent: true,
     },
     {
       id: "magcpu",
-      x: 22,
-      y: 20.6,
-      w: 7,
-      h: 2.8,
-      label: "ctrl PE (0,0)",
-      sub: "RV32 · mover · transform slot",
+      x: 36,
+      y: 14.5,
+      w: 9,
+      h: 5,
+      label: "RV64 host (0,0)",
+      sub: "runtime · mover · transform slot",
       accent: true,
     },
     {
+      id: "ilink",
+      x: 48,
+      y: 0,
+      w: 9,
+      h: 5,
+      label: "interlink",
+      sub: "other meshes",
+    },
+    {
       id: "hub",
-      x: 13,
-      y: 24,
-      w: 16,
-      h: 2.4,
+      x: 48,
+      y: 10,
+      w: 9,
+      h: 5,
       label: "sn_hub",
       sub: "the node's ports — nothing inside owns one",
     },
     {
       id: "mesh",
-      x: 1,
-      y: 27.5,
-      w: 28,
-      h: 4,
-      label: "mesh  ·  arch/noc",
-      sub: "routers + edge ring · one flit per cycle per link · XY",
+      x: 62,
+      y: 4,
+      w: 9,
+      h: 11,
+      label: "mesh",
+      sub: "arch/noc · routers + edge ring · one flit per cycle per link · XY",
       accent: true,
     },
     {
       id: "l2",
-      x: 1,
-      y: 33.5,
-      w: 13,
-      h: 3.4,
+      x: 74,
+      y: 2,
+      w: 9,
+      h: 5,
       label: "L2 adapter",
       sub: "addon slot",
     },
     {
       id: "cu",
-      x: 16,
-      y: 33.5,
-      w: 13,
-      h: 3.4,
+      x: 74,
+      y: 9,
+      w: 9,
+      h: 5,
       label: "compute unit",
       sub: "YOURS — inside and out",
       accent: true,
     },
     {
-      id: "ilink",
-      x: 33,
-      y: 27.5,
-      w: 10,
-      h: 3,
-      label: "interlink",
-      sub: "other meshes",
+      id: "rv32",
+      x: 74,
+      y: 16,
+      w: 9,
+      h: 5,
+      label: "RV32 PE",
+      sub: "a compute unit that is a processor",
     },
   ],
   edges: [
-    { from: "host:b", to: "xdma:t", dir: "v" },
-    { from: "host:b", to: "jtag:t", dir: "v" },
-    { from: "xdma:b", to: "axi:t", dir: "v" },
-    { from: "jtag:b", to: "axi:t", dir: "v" },
-    { from: "axi:b", to: "ddr:t", dir: "v", label: "memory window" },
+    { from: "host:r", to: "xdma:l", dir: "h" },
+    { from: "host:r", to: "jtag:l", dir: "h" },
+    { from: "xdma:r", to: "axi:l", dir: "h" },
+    { from: "jtag:r", to: "axi:l", dir: "h" },
+    { from: "axi:r", to: "ddr:l", dir: "h", label: "memory" },
     {
-      from: "axi:b",
-      to: "mag:t",
-      dir: "v",
+      from: "axi:r",
+      to: "magmem:l",
+      dir: "h",
       accent: true,
-      label: "control · dispatch",
+      label: "control",
     },
-    { from: "ddr:r", to: "magmem:l", dir: "h", label: "AXI" },
-    { from: "mag:b", to: "magmem:t", dir: "v" },
-    { from: "mag:b", to: "magcpu:t", dir: "v" },
-    { from: "magmem:b", to: "hub:t", dir: "v" },
-    { from: "magcpu:b", to: "hub:t", dir: "v" },
-    { from: "hub:b", to: "mesh:t", dir: "v", accent: true, label: "flits" },
-    { from: "mesh:b", to: "l2:t", dir: "v" },
-    { from: "mesh:b", to: "cu:t", dir: "v", accent: true },
+    { from: "ddr:b", to: "magmem:t", dir: "v", label: "AXI" },
+    { from: "magmem:b", to: "magcpu:t", dir: "v" },
     { from: "magmem:r", to: "ilink:l", dir: "h" },
+    { from: "magcpu:r", to: "hub:l", dir: "h" },
+    { from: "hub:r", to: "mesh:l", dir: "h", accent: true, label: "flits" },
+    { from: "mesh:r", to: "l2:l", dir: "h" },
+    { from: "mesh:r", to: "cu:l", dir: "h", accent: true },
+    { from: "mesh:r", to: "rv32:l", dir: "h" },
   ],
   groups: [
-    { x: 12, y: 16.6, w: 18, h: 10.2, label: "system node — ONE component" },
-    { x: 0, y: 26.5, w: 30, h: 11, label: "ship — one mesh per die region" },
+    { x: 34.5, y: 6, w: 24, h: 15, label: "the system node" },
+    { x: 60.5, y: 1, w: 23, h: 21, label: "ship — one per die region" },
+  ],
+};
+
+/* ------------------------------------------------------------------ the two processors */
+const processors = {
+  cols: [
+    { key: "p", label: "processor", mono: true },
+    { key: "w", label: "where it sits" },
+    { key: "j", label: "what it is for" },
+  ],
+  rows: [
+    {
+      p: "RV32 PE",
+      w: "on a router's local port, as an ordinary compute unit",
+      j: "a <b>batch compute unit</b>. It is kicked with one instruction, runs a program to completion, retires, and reports one 32-bit word back to whoever dispatched it. Nothing outlives the kick",
+    },
+    {
+      p: "RV64-sys",
+      w: "<b>inside the system node</b>, fused to the node's memory port, the mover's config window, the doorbell and staging",
+      j: "the <b>runtime host</b>. It outlives the work it dispatches, traps rather than halting, and carries the address translation and atomics a runtime needs",
+      _tone: "good",
+    },
   ],
 };
 
@@ -239,38 +260,77 @@ const systems = {
 };
 
 /* ------------------------------------------------------------------ ownership of a flit's bits */
-const owners = {
-  nodes: [
+const owners = [
+  { name: "routing header", bits: 32, value: "arch/noc" },
+  { name: "memory request", bits: 98, value: "arch/sysnode" },
+  { name: "yours", bits: 158, value: "you", accent: true },
+];
+
+const ownerSpec = {
+  cols: [
+    { key: "f", label: "Band", mono: true },
+    { key: "w", label: "Width", align: "right" },
+    { key: "p", label: "Position", mono: true },
+    { key: "o", label: "Owner" },
+  ],
+  rows: [
     {
-      id: "hdr",
-      x: 0,
-      y: 0,
-      w: 11,
-      h: 3,
-      label: "routing header",
-      sub: "arch/noc",
+      f: "routing header",
+      w: "32",
+      p: "flit[287:256]",
+      o: "<b>the fabric.</b> Destination, source, type, transaction, last. The router reads two of those fields and nothing else",
     },
     {
-      id: "mem",
-      x: 12,
-      y: 0,
-      w: 14,
-      h: 3,
-      label: "memory request encoding",
-      sub: "arch/sysnode",
+      f: "memory request",
+      w: "98",
+      p: "flit[255:158]",
+      o: "<b>the memory system</b>, on a memory descriptor: address, length, flags, entry count, extra destinations. On a unit-to-unit message these bits are yours instead",
     },
     {
-      id: "you",
-      x: 27,
-      y: 0,
-      w: 11,
-      h: 3,
-      label: "your payload",
-      sub: "you",
-      accent: true,
+      f: "yours",
+      w: "158",
+      p: "flit[157:0]",
+      o: "<b>you</b>, on your own message classes. On a memory descriptor the same bits are <b>reserved and MUST be zero</b> — the framework has not spent them yet, and a unit that uses them there is borrowing against a future version",
     },
   ],
-  edges: [],
+};
+
+/* ------------------------------------------------------------------ not owned */
+const notOwned = {
+  cols: [
+    { key: "n", label: "Not owned by the framework" },
+    { key: "w", label: "Who owns it" },
+  ],
+  rows: [
+    {
+      n: "<b>your datapath</b> — what it computes, how deep its pipeline is, what its instructions mean",
+      w: "you, entirely. Nothing in the framework knows whether it multiplies, sorts or hashes",
+    },
+    {
+      n: "<b>your memory system</b> — how many RAMs, how wide, what read latency, which primitive",
+      w: "you. There is no framework L1 and there could not be one",
+    },
+    {
+      n: "how many credits your endpoint holds, and how big its reassembly buffer is",
+      w: "you. The protocol defines that credits are required, not how many",
+    },
+    {
+      n: "what a buffer index means inside your unit",
+      w: "you — but you MUST publish it, because a sender naming a destination buffer has to mean what the receiver does",
+    },
+    {
+      n: "whether your workload suits this shape at all",
+      w: "you, and the table above is the check. Saying no is cheaper than finding out after floorplanning",
+    },
+    {
+      n: "the DRAM controller, the host bridge, the debug bridge",
+      w: "the vendor. The framework converts to them once and never exports its own assumptions outward",
+    },
+    {
+      n: "a cache, a coherence protocol, a replacement policy",
+      w: "<b>nobody. None of them exists</b> — reuse is a compiler obligation here, and the machine will not notice you fetching the same tile twice",
+    },
+  ],
 };
 
 /* ------------------------------------------------------------------ how work flows */
@@ -278,7 +338,7 @@ const flowNodesBase = [
   {
     id: "mir",
     x: 0,
-    y: -6,
+    y: -8,
     w: 11,
     h: 3.4,
     label: "status mirror",
@@ -333,7 +393,7 @@ const flowEdgesBase = [
     from: "host:r",
     to: "ctrl:l",
     dir: "h",
-    label: "program · PROG_KICK",
+    label: "PROG_KICK",
   },
   {
     id: "e4",
@@ -477,7 +537,7 @@ const ship = {
       w: 10,
       h: 2.8,
       label: "system node 0",
-      sub: "MAG + ctrl PE",
+      sub: "MAG + RV64 host",
       accent: true,
     },
     {
@@ -487,7 +547,7 @@ const ship = {
       w: 10,
       h: 2.8,
       label: "system node 1",
-      sub: "MAG + ctrl PE",
+      sub: "MAG + RV64 host",
       accent: true,
     },
     { id: "ddr1", x: 35, y: 6, w: 9, h: 2.8, label: "DDR4 ch 1" },
@@ -628,8 +688,9 @@ const protocols = {
 
     <h2 class="doc-h2">What is on the die</h2>
     <Fig
-      caption="One ship. A device image may hold several, one per die region, joined by the interlink. The system node is ONE component: MAG and the control processor are drawn separately because they are separate concerns, but neither is a module you can instantiate alone and neither owns a fabric port — sn_hub does, and everything inside is its client. The compute unit is the only block you have to write."
+      caption="One ship. A device image may hold several, one per die region, joined by the interlink. The system node is ONE component, neither half separable: MAG and the RV64 runtime host are drawn separately because they are separate concerns, but neither is a module you can instantiate alone and neither owns a fabric port — sn_hub does, and everything inside is its client. The compute unit is the only block you have to write; the RV32 PE beside it is what one looks like when the datapath you wanted was a processor."
       zoom
+      wide
     >
       <BlockDiagram
         :nodes="die.nodes"
@@ -637,6 +698,26 @@ const protocols = {
         :groups="die.groups"
       />
     </Fig>
+
+    <h3 class="doc-h3">There are two processors, and they are not variants</h3>
+    <p class="doc-p">
+      A reader who has met one of them will assume the other is the same core at
+      a different width. It is not — they share no RTL, and each exists because
+      the other could not do its job without giving up what makes it cheap.
+    </p>
+    <SpecTable
+      :cols="processors.cols"
+      :rows="processors.rows"
+      caption="A kick is one CU_INST flit that starts a program; a completion is the CU_SIGNAL that says it finished. The split, the contract both cores answer, and what each costs are on Processors on this framework."
+    />
+    <p class="doc-p">
+      The contract the framework hands either of them — how it is loaded,
+      dispatched to, and what it must have finished before it says so — is on
+      <RouterLink to="/framework/cpu" class="doc-link"
+        >Processors on this framework</RouterLink
+      >. That page is the one place the split is argued; this one only says both
+      are on the die.
+    </p>
 
     <h2 class="doc-h2">Four kinds of thing</h2>
     <p class="doc-p">
@@ -669,7 +750,7 @@ const protocols = {
     <SpecTable
       :cols="systems.cols"
       :rows="systems.rows"
-      caption='noc is a historical name; read it as the fabric if that helps. The system node is MAG plus the mover, the control processor and the interlink — never a plain "node", which is what a fabric endpoint is.'
+      caption='noc is a historical name; read it as the fabric if that helps. The system node is MAG plus the mover, the RV64 runtime host and the interlink — never a plain "node", which is what a fabric endpoint is.'
     />
 
     <Callout
@@ -716,11 +797,11 @@ const protocols = {
     </p>
 
     <h3 class="doc-h3">You inherit a way of asking, not a memory system</h3>
-    <Fig
-      caption="An instruction flit's bits have three owners, and only the last is yours. The machine already knows how to say fetch this region, in these entries, transformed this way, delivered to these nodes; how to say write this back; and how to say rearrange one region into another."
-    >
-      <BlockDiagram :nodes="owners.nodes" :edges="owners.edges" />
-    </Fig>
+    <BitField
+      :fields="owners"
+      caption="One 288-bit flit carrying a memory descriptor, and its bits have three owners. The machine already knows how to say fetch this region, in these entries, delivered to these nodes; how to say write this back; and how to say rearrange one region into another. Geometry at the defaults — FLIT_WIDTH 288, POS_WIDTH 4"
+    />
+    <SpecTable :cols="ownerSpec.cols" :rows="ownerSpec.rows" />
     <p class="doc-p">
       This is about <b>encoding and transport only</b>. It says nothing about
       what your unit does with the data once it arrives — how many memories it
@@ -884,22 +965,56 @@ const protocols = {
     <h2 class="doc-h2">Numbers</h2>
     <Callout
       kind="rule"
-      title="Measurements live with the project that produced them"
+      title="A measurement of an accelerator lives with that accelerator"
     >
       <p>
-        Framework pages carry no Fmax, LUT, FF, BRAM or utilisation figures. Any
-        such figure describes <b>one accelerator on one part</b> — for the
-        reference instance, <span class="chip">xcvu13p-fhgb2104-2L-e</span>.
-        Those numbers are evidence the framework closes on real silicon. They
-        are not specifications of it, and a framework doc that quotes them as if
-        they were is wrong.
+        An Fmax, LUT, FF, BRAM or utilisation figure for
+        <b>a compute unit somebody built</b> describes one accelerator on one
+        part — for the reference instance,
+        <span class="chip">xcvu13p-fhgb2104-2L-e</span> — and belongs on that
+        project's pages, never here. Those numbers are evidence the framework
+        reaches real silicon. They are not specifications of it, and a framework
+        page that quotes them as if they were is wrong.
       </p>
       <p>
-        Device facts — how many die regions a part has, how many hard memory
-        controllers, what a cascade may not cross — are not measurements and do
-        appear.
+        Three things are <i>not</i> that, and do appear on framework pages.
+        <b>Device facts</b> — how many die regions a part has, how many hard
+        memory controllers, what a cascade may not cross — are properties of the
+        silicon, not measurements of a design.
+        <b>The framework's own RTL measured out of context</b> — the station
+        bus, the four-station line, the vendor interconnects they are ranked
+        against — is on
+        <RouterLink to="/framework/measurements" class="doc-link"
+          >Out-of-context measurements</RouterLink
+        >
+        and nowhere else. And <b>the geometry a real image had to satisfy</b> is
+        on
+        <RouterLink to="/framework/physical" class="doc-link"
+          >Floorplan and clocks</RouterLink
+        >, where every row names the build it came from.
+      </p>
+      <p>
+        <b>No frequency anywhere in this tree is a closed-timing figure.</b>
+        Every one is out-of-context synthesis, which is an upper bound: this
+        project has measured a module lose <b>0.740&nbsp;ns</b> going from
+        synthesis to routing, so a small positive slack at synthesis is not a
+        promise that a placed design meets the same period.
       </p>
     </Callout>
+
+    <h2 class="doc-h2">What the framework does not own</h2>
+    <SpecTable :cols="notOwned.cols" :rows="notOwned.rows" />
+    <p class="doc-p">
+      The last row is the one people are most often surprised by, and it is a
+      position rather than an omission. A cache spends tags and comparators
+      discovering an access pattern at run time, and the workloads this machine
+      is for walk addresses a compiler already computed. What replaces it —
+      shared fetch, an addressed staging aperture, and a conversion stage the
+      mover drives — is on
+      <RouterLink to="/component/caching" class="doc-link"
+        >Staging, the transform slot and the tagged L2</RouterLink
+      >, together with the one caching proposal that clears the bar and why.
+    </p>
 
     <h2 class="doc-h2">House rule</h2>
     <Callout kind="note">
