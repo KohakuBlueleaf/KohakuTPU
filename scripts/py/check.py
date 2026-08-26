@@ -134,6 +134,9 @@ FAST = [
     # and had been reporting DRIFT to nobody.
     py("simd isa", "tests/pe/tools/rv_simd_emit.py", "--check"),
     py("simt isa", "tests/pe/tools/rv_simt_emit.py", "--check"),
+    # Nothing BUILDS the DSP vectors. Two deleted kernels left theirs behind and
+    # the bench ran them under the next index: 4 failures against correct RTL.
+    py("dsp vectors", "tests/pe/tools/rv_simd_gen.py", "--check"),
     # The style rules, over EVERY .v file. The count was reported for the live
     # source alone for months while tests/ held more findings than the whole
     # tree it claimed to describe.
@@ -166,7 +169,26 @@ def all_benches():
     return sorted(xsim.BENCHES)
 
 
-BLOCKS = [bench(b) for b in all_benches()] + [
+# Through khs_run.py, NOT bare: build/khd/cur belongs to whichever config
+# generated it last, and a bare run grades against what a width run left there.
+BLOCKS = [bench(b) for b in all_benches() if b != "khs_unit"] + [
+    # WITH THE FLOAT TIER ON. `khs_run.py` bare builds the integer half only, so
+    # for months the SIMD PE's float instructions were in no tier of this suite;
+    # the float cases include the integer ones, so this is a superset. ONE run,
+    # because khs_run writes a fixed vector directory and two would race.
+    check(
+        "khs_unit",
+        [
+            str(PY),
+            "tests/pe/tools/khs_run.py",
+            "--float",
+            "--fcvt-units",
+            "8",
+            "--fsfu",
+            "2",
+        ],
+        lane="xsim",
+    ),
     # NOT covered by any bench above. mm_xform and mag_system both compare the
     # occupant against ANOTHER INSTANCE of itself, so an arithmetic change
     # cancels out and reads as a pass; this is the only cross-check against the

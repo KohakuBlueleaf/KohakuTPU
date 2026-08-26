@@ -82,7 +82,7 @@ def sources_for(bench, top, with_tb=False):
     They are dropped by default because simulation constructs lint differently
     and the point is the synthesisable tree. But the class that has actually
     cost this tree time lives in the BENCHES: `khs_facc_tb` and `khs_ffold_tb`
-    each left `khs_float_lane`'s `op` input unconnected, which is `z`, and every
+    each left the float unit's `op` input unconnected, which is `z`, and every
     result came back X -- reading as a dead accumulator rather than a missing
     pin. `--tb` is how that gets caught next time.
     """

@@ -28,6 +28,10 @@ TOPS = ("src", "tests", "scripts", "compiler", "driver", "boards", "docs")
 
 EXTS = ("v", "vh", "sv", "py", "tcl", "ps1", "md", "json", "txt", "xdc", "f")
 
+#: Vendored or generated trees. Their citations are not ours to check, and
+#: `docs-web` walked bare is 9,862 files of mostly `node_modules`.
+SKIP_DIRS = {"node_modules", "dist", ".verify", ".review", ".git", "build"}
+
 CITE = re.compile(
     r"(?<![\w/.-])(?P<p>(?:" + "|".join(TOPS) + r")/[\w./-]*?"
     r"(?:\.(?:" + "|".join(EXTS) + r")|/))(?![\w.-])"
@@ -95,7 +99,15 @@ def main():
     for p in args.paths:
         q = ROOT / p
         if q.is_dir():
-            files += [f for f in sorted(q.rglob("*")) if f.suffix in TEXTY]
+            # `node_modules/@upsetjs/venn.js` is a DIRECTORY whose name ends in
+            # `.js`, so a suffix test alone hands read_text() a directory.
+            files += [
+                f
+                for f in sorted(q.rglob("*"))
+                if f.is_file()
+                and f.suffix in TEXTY
+                and not (set(f.parts) & SKIP_DIRS)
+            ]
         elif q.is_file():
             files.append(q)
 
