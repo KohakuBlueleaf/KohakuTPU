@@ -13,12 +13,20 @@ tags:
 you can build. A project keeps its assemblies under its own tree; the reference
 one is `src/kohakutpu/top/generated/`.
 
+Three terms are used throughout and defined here once. A **mesh** is the grid of
+routers, with endpoints attached to their ports, that carries traffic on chip. A
+**system node** is the single component at the mesh's edge that owns memory
+access, the host-facing windows and the cross-mesh links — see
+[sysnode](../sysnode/). An **SLR** is one die of the several this part is built
+from, and the unit a whole assembly has to fit inside — see
+[physical](../physical/).
+
 ## What it owns
 
 **A ship.** One complete, self-contained accelerator: a mesh of routers, the
-endpoints on them, one edge complex, the memory boundary behind it, and the AXI
+endpoints on them, one system node, the memory boundary behind it, and the AXI
 surface in front. A ship has a name, a fixed shape, and a boundary consisting of
-clock, reset and AXI interfaces — and nothing else.
+clocks, resets and AXI interfaces — and nothing else.
 
 **Generation.** Turning a picture of a mesh into that module, so that topology
 is a described thing rather than a thousand lines of hand-written instance
@@ -44,9 +52,10 @@ description**.
 
 | Page | What is in it |
 |---|---|
-| [what-is-a-ship](what-is-a-ship.md) | the boundary shape and why it is exactly clock, reset and AXI; the two forms of memory boundary; what a ship costs |
+| [what-is-a-ship](what-is-a-ship.md) | the boundary shape and why it is exactly clocks, resets and AXI; the two forms of memory boundary; what a ship costs |
 | [generation](generation.md) | the mesh picture, the token grammar, what the generator emits, and the conventions for choosing a shape |
 | [interlink](interlink.md) | several ships in one image: the second routing layer, the three structural properties of a link, what crosses, and the address map |
+| [v5-interconnect-groundtruth](v5-interconnect-groundtruth.md) | **a historical record**, not the shipping design: the vendor-interconnect device image the purpose-built bus replaced, kept as the baseline it had to beat |
 
 Choosing a shape, and what it costs, is
 [integrate/mesh-topology](../../integrate/mesh-topology.md).
@@ -58,7 +67,7 @@ is where the framework asks you what machine you want.
 
 | Thing | Category |
 |---|---|
-| the ship's boundary shape: clock, reset, AXI, and nothing else | **fixed protocol**. It is what makes a ship instantiable without hand-wiring |
+| the ship's boundary shape: clocks, resets, AXI, and nothing else — each interface naming its own clock and reset | **fixed protocol**. It is what makes a ship instantiable without hand-wiring |
 | the token grammar — corners empty, edges outside the router rectangle, tied-off ports | **fixed protocol**. It follows from the routing rule |
 | the interlink's topology rule, credit classes, registered crossing and encapsulation format | **fixed protocol**. Each has a deadlock or timing argument behind it |
 | the address map's *shape* — a segment per mesh for memory, a segment per mesh for control, the mesh id in the high address bits | **fixed protocol** |
@@ -90,7 +99,7 @@ is where the framework asks you what machine you want.
 | routing, links, the compute-unit port | [noc](../noc/) |
 | what a memory port does once traffic reaches it | [sysnode](../sysnode/) |
 | the AXI interfaces at the boundary, and their discipline | [axi](../axi.md) |
-| which die region a ship lands in, its pblock, its clocks | [physical](../physical/) |
+| which SLR a ship lands on, its pblock, and the frequency of each of its clocks | [physical](../physical/) |
 | the vendor block design that instantiates ships, memory controllers and the host bridge | the build flow — [workflow/build](../../workflow/build.md) |
 | what any endpoint computes | the accelerator being built |
 

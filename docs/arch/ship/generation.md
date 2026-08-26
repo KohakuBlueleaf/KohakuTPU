@@ -43,10 +43,10 @@ every mesh of every shape, so the processor costs no attach point and nothing
 places it. A map carrying the retired `cpu` token is rejected by name.
 
 The generator emits the router instances with their per-axis grid bounds, the
-link nets between them, the endpoint instances, the edge complex with its port
-coordinates, and the AXI boundary. Non-square grids fall out of it, which is why
-the router takes `GRID_X_HI` and `GRID_Y_HI` separately rather than one square
-bound.
+link nets between them, the endpoint instances, the edge complex — the system
+node's fabric-facing half — with its port coordinates, and the AXI boundary.
+Non-square grids fall out of it, which is why the router takes `GRID_X_HI` and
+`GRID_Y_HI` separately rather than one square bound.
 
 Two properties of the generated file matter more than its contents:
 
@@ -74,6 +74,23 @@ the ports at all — the resulting build is identical to one made before the
 interlink existed. That property is maintained deliberately: every addition sits
 inside a generate or is gated by the parameter, because "costs nothing when off"
 is only true if someone keeps checking.
+
+### The physical choices are made here too
+
+Three of a ship's parameters decide nothing about what it computes and
+everything about how it closes timing. They are named here because the generated
+top is where they take effect, and explained in
+[physical/clocking](../physical/clocking.md):
+
+| Choice | What it changes |
+|---|---|
+| per-endpoint-type clocking | each endpoint type gets its own clock, behind one crossing FIFO per direction on its network port. **One rate per type, not per instance** — so the domain count follows the mesh's *vocabulary*, not its population. Off, those clock ports tie to the fabric clock and no FIFO is built |
+| clocking the system node separately | breaks the combinational path from the node's flow control into a router's, at the cost of the same crossing FIFO per direction. The FIFO's flags stay registered even when both sides are driven from one clock |
+| per-domain reset entry | each domain takes the top-level reset as an asynchronous assert with a synchronous release at its own clock. The fabric is exempt, because the reset block feeding it already releases on the fabric clock |
+
+None of the three changes the mesh picture, the address map or anything a
+program can observe. All three change the netlist, so a measurement that does
+not name which of them were on has not named its configuration.
 
 ## Conventions
 

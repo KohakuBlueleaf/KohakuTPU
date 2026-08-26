@@ -1,21 +1,35 @@
 ---
-title: multimesh v5 interconnect and address map, as built
-summary: The SmartConnect topology, port map, clocking and address assignment of the shipping v5 design, recorded as the reference a purpose-built in-device AXI bus would have to match or beat.
+title: multimesh v5 interconnect and address map — a historical record
+summary: The vendor-interconnect topology, port map, clocking and address assignment of the v5 device image, kept as the baseline the purpose-built station bus had to match or beat. Not the shipping design.
 tags:
   - arch
   - ship
   - axi
   - reference
+  - historical
 ---
 
-# multimesh v5 interconnect and address map, as built
+# multimesh v5 interconnect and address map — a historical record
 
-Ground truth, not a proposal. This is what `scripts/tcl/multimesh_v5_bd.tcl`
-constructs today, recorded before any work starts on replacing the SmartConnect
-chain with a purpose-built bus in `kohakuaxi`. Numbers marked MEASURED come from
-post-synth utilization of the four-mesh design on `xcvu13p-fhgb2104-2L-e`.
+> **This page is a record of a superseded design. It is not the shipping
+> interconnect.** It describes the vendor SmartConnect tree that
+> `scripts/tcl/multimesh_v5_bd.tcl` builds, captured *before* work started on
+> replacing it. What replaced it is the **station bus** — one **station** per
+> SLR, arranged as a line with two link ports each and no root — in
+> [projects/kohakuaxi](../../projects/kohakuaxi/station-bus.md). Read this page
+> to know what that bus was measured against, not to know what the machine does
+> now.
 
-Any replacement has to serve every row of §2 and §5 and fit inside §6.
+Everything below was true of the v5 device image at the moment it was recorded.
+Two things have moved since and both are called out where they appear: the mesh
+populations were rebalanced across the dice, and the interconnect itself was
+replaced. **Every figure on this page predates at least one of those**, so no
+number here should be carried forward as current — see
+[physical/measurement](../physical/measurement.md) for what that obligation
+means in general.
+
+The page is kept because a replacement has to serve every row of §2 and §5 and
+fit inside §6, and that requirement outlives the design that generated it.
 
 ## 1. Physical arrangement
 
@@ -34,12 +48,21 @@ Mesh-to-SLR is deliberately NOT identity:
 | SLR3 | `mesh_2` | 2x2 | 7 | 2 |
 
 `leaf_smc_N` is indexed by **SLR**, not by mesh -- `leaf_smc_2` lives in SLR2 and
-serves `mesh_3`. This trips everyone once.
+serves `mesh_3`. The two indices are not interchangeable anywhere on this page.
 
 SLR1 carries the smallest mesh because it also carries XDMA, `root_smc`,
-`jtag_axi`, the control clock and one DDR4 controller. Even so it measured
-99.27% CLB against 88.70% for the cleanest SLR, which is why `mesh_1` is 4
-clusters and the others are 6 or 7.
+`jtag_axi`, the control clock and one DDR4 controller.
+
+> **The occupancy figures that decided that balance are pre-rebalance, and the
+> conclusion they support has since inverted.** The build the decision was made
+> on put SLR1 at 99.27% CLB against 88.70% for the cleanest die, which is why
+> `mesh_1` was cut to 4 clusters. Once it had been, v5's own post-placement
+> report makes **SLR1 the *least* utilised die of the four** — 88.61% CLB
+> against SLR0's 95.49%, and 45.0% DSP against SLR0's 79.6%. Both are true of
+> their own build. The post-rebalance table, placed and routed on
+> `xcvu13p-fhgb2104-2L-e`, is in
+> [projects/kohakutpu/v6-plan](../../projects/kohakutpu/v6-plan.md#61-slr1-is-the-emptiest-die-not-the-fullest);
+> that is the one to quote.
 
 ## 2. Topology
 
@@ -164,7 +187,13 @@ entirely if it routes on `[37:36]` directly. See `docs/address-map.md`.
 Each mesh's `M_AXI_DRAM` has its DDR4 at offset 0, range 4 GiB -- MAG strips the
 mesh and aperture bits before driving `dram_*`, so base 0 is required.
 
-## 6. Cost, MEASURED post-synth
+## 6. Cost, as measured at the time
+
+**Provenance:** post-synthesis hierarchical utilisation of the whole four-mesh
+design — in-context, **synthesised but not placed or routed** — on
+`xcvu13p-fhgb2104-2L-e` under Vivado 2024.2. The SLL table at the end of this
+section is the exception: it is **post-placement**, and therefore a different
+kind of claim from everything above it.
 
 | instance | n | Total LUTs | Logic LUTs | LUTRAMs | SRLs | FFs |
 |---|---|---|---|---|---|---|
@@ -175,11 +204,14 @@ mesh and aperture bits before driving `dram_*`, so base 0 is required.
 | `axi_gpio` | 1 | 86 | 86 | 0 | 0 | 212 |
 
 Those figures predate the SLR rebalance -- `root_smc` was `7+nclk` MI then and
-is `5+nclk` now, so it should be smaller. Retake before using as a baseline.
+is `5+nclk` now, so it should be smaller. **Retake before using any row as a
+baseline; do not carry one forward as current.**
 
-**Interconnect total is roughly 82k LUT**, about 7% of the design's 1.19M, and
-`root_smc` alone is 4% of SLR1. That is the number a purpose-built bus is
-competing against.
+**Interconnect total is roughly 82k LUT**, about 7% of the design's
+post-synthesis LUT total, and `root_smc` alone is around 4% of one SLR. That is
+the number a purpose-built bus was competing against — and
+[projects/kohakuaxi](../../projects/kohakuaxi/station-bus.md) carries what the
+replacement actually measured, per row, with its own provenance.
 
 SLL usage, post-placement, 7,814 total:
 
@@ -203,9 +235,11 @@ SLL usage, post-placement, 7,814 total:
 5. **Only one IO-driven BUFG may feed the MMCMs**, and it needs
    `CLOCK_DEDICATED_ROUTE ANY_CMT_COLUMN` -- five MMCMs across four SLRs exceeds
    `rule_bufg_mmcm_3loads` otherwise. Unrelated to the bus, but it shares SLR1.
-6. **`root_smc` is pblocked to SLR1** with XDMA and JTAG, which is the SLR at
-   99.27% CLB. Anything that shrinks it there is worth more than the same saving
-   elsewhere.
+6. **`root_smc` is pblocked to SLR1** with XDMA and JTAG. That was chosen when
+   SLR1 was the most crowded die; after the rebalance it is the emptiest, so a
+   saving there no longer relieves the binding constraint — see §1. The
+   structural point survives the inversion: **the root sits on whichever die
+   also carries the host bridge**, and that die gives up compute to do it.
 
 ## 8. Where a purpose-built bus could win
 

@@ -16,7 +16,8 @@ Read this page first. Then read the system that concerns you: [noc](noc/) if
 you are writing a compute unit, [sysnode](sysnode/) if you are deciding how it
 gets its operands, [axi](axi.md) if you are attaching something from outside,
 [ship](ship/) if you are assembling a device image, [physical](physical/) if
-you are deciding where it all goes on the die.
+you are deciding where it all goes on the die, and [cpu](cpu/) if you want one
+of the two processors the framework ships rather than a datapath of your own.
 
 One thing on this page is yours to write. Everything else is the framework.
 
@@ -44,10 +45,11 @@ One thing on this page is yours to write. Everything else is the framework.
              |  +-----------+  +------------+  |
              |  |    MAG    |  |  ctrl PE   |  |
              |  |           |  |   at (0,0) |  |
-             |  | mem ports |  | RV32 core  |  |
-             |  | agent     |  | imem+spad  |  |
-             |  | interlink |--|-------------- |----> other meshes
-             |  +-----+-----+  | mover      |  |
+             |  | mem ports |  | RV32 core, |  |
+             |  | agent     |  | or RV64 at |  |
+             |  | interlink |--|-CPU_RV64----- |----> other meshes
+             |  +-----+-----+  | imem+spad  |  |
+             |        |        | mover      |  |
              |        |        | xform slot |  |
              |        |        +-----+------+  |
              |        +-------+-------+        |
@@ -111,6 +113,25 @@ parameter that removes the processor.
 
 It is never a plain "node": a NoC endpoint is a node, and every compute unit
 sits on one.
+
+## The processors
+
+[**cpu**](cpu/) is not a sixth system. It is the two **processors** the
+framework ships, sitting inside the systems above rather than beside them:
+
+| | what it is | where it sits |
+|---|---|---|
+| [**RV32 PE**](cpu/rv32-pe/) | a small RV32 compute unit — kicked, runs to completion, reports a 32-bit word | on a fabric router's local port, like any other compute unit; and, as a control complex, inside the system node |
+| [**RV64 system core**](cpu/rv64-sys/) | a 64-bit runtime host that boots once and runs forever | fused into the system node, with no compute-unit shell — and, in a second configuration, on a fabric port as a compute unit |
+
+They are two processors rather than two sizes of one because their **lifecycles
+differ**: a batch compute unit is kicked and reports a completion, a runtime
+host has no completion to report and must not be flow-controlled by the fabric
+it is scheduling. [cpu](cpu/) is where that argument is made in full, with the
+comparison table and the measurement conditions.
+
+Neither is required. A compute unit you write does not have to be a processor,
+and nothing in the fabric knows the difference.
 
 ## What the framework actually removes
 

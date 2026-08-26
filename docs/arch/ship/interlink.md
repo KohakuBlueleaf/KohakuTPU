@@ -9,15 +9,19 @@ tags:
 
 # Several ships in one image
 
-One mesh is bounded by how much fabric a die region can hold. Past that, the
-answer is not a bigger mesh — it is several, joined at their edge complexes.
+One **mesh** — a grid of routers with endpoints attached, the fabric a ship is
+built around — is bounded by how much fabric one SLR can hold. An SLR is one die
+of the several this part is built from. Past that bound, the answer is not a
+bigger mesh: it is several meshes, joined at their system nodes by an
+**interlink**.
 
 That decision was made on measurement rather than on argument, and the losing
-option is instructive: a single mesh spanning several die regions was
-implemented, and its worst path was almost entirely routing with no logic in it.
-Stretching the fabric across a boundary does not fail because of wire count; it
-fails because a fabric whose premise is locality stops having any. See
-[physical](../physical/) for the general form, and
+option is instructive: a single mesh spanning several SLRs was implemented, and
+its worst path was almost entirely route delay with no logic in it. Stretching
+the fabric across a boundary does not fail because of wire count; it fails
+because a fabric whose premise is locality stops having any. See
+[physical/where-the-boundary-falls](../physical/where-the-boundary-falls.md) for
+the general form, and
 [projects/kohakutpu/ship](../../projects/kohakutpu/ship.md) for the worked
 instance — the device, the mesh populations, the alternative that failed, and
 what has actually been placed.
@@ -58,7 +62,8 @@ it that belongs to [physical](../physical/) but shows up here as protocol.
 **Nothing combinational crosses.** Every output is a register and every input is
 registered before use. A die-boundary crossing register *is* a flip-flop, so the
 tool can only use one when the path is flop to flop; one gate anywhere in the
-crossing forfeits it and the path becomes ordinary interconnect.
+crossing forfeits it and the path becomes ordinary interconnect. See
+[physical/device-facts](../physical/device-facts.md#hard-limits-that-are-correctness-rules).
 
 **`TREADY` does not cross, and the sending end never reads it.** The receiver is
 always ready because credit reserved the space before the beat was sent. Wiring
@@ -86,8 +91,12 @@ The endpoint carries three kinds of traffic and one rule:
   waiting for a far memory would put a boundary round trip inside a per-word
   loop.
 - **Fabric flits marked for another mesh**, encapsulated at the sending edge and
-  injected into the receiving mesh's fabric.
-- **A doorbell**, which is the synchronisation primitive between meshes.
+  injected into the receiving mesh's fabric. A **flit** is the mesh's unit of
+  transfer — one fixed-width word carrying its own header, defined bit-exactly
+  in [spec/flit-format](../../spec/flit-format.md).
+- **A doorbell**, which is the synchronisation primitive between meshes: a
+  single message a consumer waits on to learn that a producer's writes have
+  landed.
 
 **Completion means landed.** An inbound doorbell waits for every write ahead of
 it to have its write response before it counts, so a consumer released by a
@@ -139,29 +148,32 @@ between a design that closes and one that does not.
 Disabled, it costs nothing at all; see
 [generation](generation.md#generation-is-elaboration-not-runtime).
 
-## Its accept decision must not reach the NoC
+## Its accept decision must not reach the fabric
 
-**Twice the mesh's worst path has been the interlink's accept decision landing in
-a NoC router's own backpressure**, and from there in the *next* router's block-RAM
-enable. Both times the fix was a skid buffer, whose `i_ready` is never a function
-of `o_ready`:
+This is a structural rule about where the interlink's flow control may look, and
+it is the one place the interlink's design is dictated by the fabric next to it.
 
-| where | what reached back | endpoints | TNS | WNS |
-|---|---|---|---|---|
-| landing channel | the converged DRAM arbiter's decision *was* the AW/W accept | 421 | −82.587 | −0.413 |
-| encoder | `enc_busy` is combinational in `enc_data`, because the packet-match compares the flit's mesh, txn and source | 24 | −1.936 | −0.144 |
-| after both | — | **0** | — | **+0.057** |
+**A flit's fields are sliced straight off a router's output register.** So any
+term in the interlink's accept decision that *inspects* those fields — a
+packet-match comparing the flit's mesh id, transaction type and source; an
+arbiter whose grant is the write-accept — puts that router's own `ready` inside
+the interlink's combinational cone. From there it reaches the next router's
+memory enable, and the chain zig-zags router → node → router → node → router
+across three levels of hierarchy. Cells that are logically far apart get placed
+far apart, so the result is a path that is mostly route delay: a placement
+failure produced by a logic decision.
 
-The shape is the same each time and it is worth recognising directly: a flit's
-fields are sliced straight off a router's output register, so **any accept term
-that inspects them puts that router's own `ready` inside the interlink's cone.**
-The chain then zig-zags router → agent → router → agent → router across three
-hierarchies, which is why the second one measured 11 logic levels at **76%
-route** — the cells are logically far apart, so they are placed far apart.
+**The fix is a skid buffer at every such point**, chosen for one property — its
+input-ready is never a function of its output-ready. That breaks the cone at the
+boundary rather than pipelining what is behind it. Applied at both the landing
+channel and the encoder, it takes the mesh from failing to positive worst slack
+in **out-of-context synthesis** of the whole mesh top — `scripts/py/ooc_mesh.py`
+on `ktpu_ship_2x2_6c2v_1m`, tag `_pe`, `xcvu13p-fhgb2104-2L-e`, Vivado 2024.2,
+every clock at 3.333 ns, `-directive default`. **Synthesis slack is optimistic
+and a positive number there is not a closed one** — see
+[physical/measurement](../physical/measurement.md).
 
-The extra cycle a skid costs is free here: cross-mesh traffic is push-only and
-synchronises on the doorbell, never on a producer going idle.
-
-Figures are OOC synthesis of `ktpu_ship_2x2_6c2v_1m_pe`, `xcvu13p-fhgb2104-2L-e`,
-3.333 ns. Synthesis slack is optimistic — this vehicle has lost 0.740 ns synth to
-route before — so a positive number here is not yet a closed one.
+The extra cycle a skid costs is free here, and for a reason that belongs to the
+protocol rather than to the fix: cross-mesh traffic is push-only and
+synchronises on the doorbell, never on a producer going idle. Nothing observes
+the latency.
