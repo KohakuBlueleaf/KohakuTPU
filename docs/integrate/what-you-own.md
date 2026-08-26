@@ -8,13 +8,16 @@ tags:
 
 # Fixed, addon, convention, yours
 
+> **Kind: all four** — this page is the taxonomy itself, and every other page in
+> the tree classifies against it.
+
 Most frameworks offer two categories: what they give you and what you write. This
 one has four, and the two in the middle are where the useful decisions live.
 
 | | what it is | may you change it |
 |---|---|---|
 | **Fixed protocol** | flit format, port handshake, memory request/response encoding, credit and retry, cross-mesh encapsulation | **No.** Change it and you are no longer on the framework |
-| **Customisable addon** | ships working, and is *designed* to be swapped or extended: the transform stage in the memory agent, staging inside it, the adapter in a NoC endpoint's link | **Yes.** That is what the slot is for |
+| **Customizable addon** | ships working, and is *designed* to be swapped or extended: the transform stage in MAG, staging inside it, the adapter in a NoC endpoint's link | **Yes.** That is what the slot is for |
 | **Convention** | how to design a well-behaved unit, with worked examples. Fill-and-tag, unit-to-unit messaging, how to spend instruction bits | **Follow or don't** — but know which ones are forced by the memory agent's design and which are genuinely free |
 | **Yours** | the datapath, its memory structure, instruction semantics, pipeline depth | **Entirely** |
 
@@ -53,7 +56,7 @@ different scheme; you get to set the fields.
 
 ---
 
-## 2. Customisable addons
+## 2. Customizable addons
 
 An addon is a slot the framework already fills with something working, built so
 that replacing it is a supported operation rather than a fork. There are three,
@@ -90,16 +93,28 @@ traffic is unchanged; latency is two passes rather than one.
 ### Staging inside the memory agent
 
 A reserved address range backed by on-chip memory, so a working set that is
-re-read across passes does not go back to DRAM each time. **Design stage, not
-built.** The reason it is in this category rather than in "yours" is that the
-address range and the request path already exist to hang it on.
+re-read across passes does not go back to DRAM each time. It is reached through
+the **aperture** bit of the address rather than as DRAM, and it is **built and
+instantiated** — `STAGE` turns it on, and the generated tops in the tree set it.
+
+Two things about it are not knobs, whatever the parameter names suggest:
+
+- **`STAGE_AT_PORT` chooses where the store is, and only one value is usable.**
+  At 1 there is one store on the memory agent's converged path and every
+  requester reaches it. At 0 a whole store is built inside *every* memory port,
+  and none of those copies is reachable by the mover or the interlink, because
+  neither goes through a memory port. Set it to 1.
+  [spec/parameters.md](../spec/parameters.md) §5.
+- **It is not a cache.** Nothing fills it on a miss; something has to move bytes
+  into it deliberately, and that something is the mover.
 
 Worth knowing before you reach for it: the framework's answer to operand reuse
 today is not a cache but **shared fetch** — one instruction names the set of units
 consuming the same operand, the lowest-numbered one issues a single descriptor,
 and the memory agent delivers to all of them. That is the broadcast a shared cache
 would exist to provide, done with compiler knowledge and without arbitration or
-coherence. Any staging or caching proposal has to say what it adds beyond that.
+coherence. Any staging or caching proposal has to say what it adds beyond that;
+[memory-attach.md](memory-attach.md) is the one that tries.
 
 ### The adapter in a NoC endpoint's link
 
@@ -271,10 +286,14 @@ pulls in any project module — see [software-stack.md](software-stack.md) §6.
 
 ## 5. Open questions
 
-- **Two of the three addon slots are not in the shipping image.** The
-  memory-agent staging has RTL and a bench (`mag_stage`, `mag_stage_port`) but
-  no ship instantiates it; the endpoint adapter is a template with a bench and
-  no instantiation at all. Only the transform slot is load-bearing today.
+- **The endpoint adapter is a template with a bench and no instantiation.** The
+  interface shape is the load-bearing part; nothing in the reference instance
+  fills the slot, so it has never had to hold under load.
+- **The transform slot's occupant registers are unreachable under `CPU_RV64`.**
+  The port exists in `mag_xform` and is tied off by the RV64 control complex, so
+  an occupant that needs configuring is not portable across that parameter. Only
+  a zero-register occupant works in both.
+  [spec/transform-slot.md](../spec/transform-slot.md).
 - **The transform slot's geometry is declared per agent, not per occupant.**
   `IN_BITS`/`OUT_WORDS` are parameters on `mag_xform`, so a bank holding two
   occupants of different shapes cannot describe itself. With one real occupant

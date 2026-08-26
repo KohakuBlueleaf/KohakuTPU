@@ -9,6 +9,12 @@ tags:
 
 # Knowing you are correct
 
+> **Kind: Convention throughout.** Nothing here is checked and nothing is
+> required. What levels 2 and 3 *test for* is Fixed protocol — the obligations in
+> [spec/compute-unit-port.md](../spec/compute-unit-port.md) — but the five levels,
+> the order, the bench registry and the tiered runner are one worked practice,
+> offered because it localises faults and the obvious alternatives do not.
+
 "Does my compute unit work" is two questions wearing one coat, and they have
 different answers, different fixes, and identical symptoms at the end of a long
 simulation:

@@ -1,16 +1,23 @@
 ---
 title: Tooling traps
-summary: Vivado and XPM behaviours that cost real time, what each one does, why it does it, and how to avoid it.
+summary: Tool and language behaviours that cost real time — Vivado, XPM, the simulators and Verilog itself — what each one does, why it does it, and how to avoid it.
 tags:
   - workflow
   - vivado
   - xpm
+  - simulation
 ---
 
 # Tooling traps
 
-Every trap here was paid for once. None of them is exotic; every project that
-uses this framework will meet most of them. They share a shape:
+This page is the tree's home for **durable facts about how the tools behave**:
+things that are true of Vivado, of the vendor macro libraries, of the simulators
+and of Verilog, that a competent engineer would not guess and that cost days to
+discover. If a design decision elsewhere in these docs looks arbitrary, the
+reason is often on this page.
+
+None of them is exotic; every project that uses this framework will meet most of
+them. They share a shape:
 
 > **The tool does not fail. It does something else, quietly, and reports
 > success.**
@@ -288,6 +295,130 @@ one-bit net in one tool and a hard error in the other.
 Passing under a permissive simulator is not evidence that the stricter one will
 even compile the file, let alone synthesise it the same way. Where both are
 available, run both; where only one is, make it the one the build uses.
+
+### One vendor macro blocks the whole library under Verilator
+
+Two things stop Verilator compiling the vendor's XPM sources directly, and only
+one is fatal.
+
+**Assertions — solvable.** The XPM sources carry SystemVerilog assertions that
+Verilator rejects (cycle-delay ranges, boolean-abbrev repetition). One define
+clears every one of them across the FIFO, CDC and memory libraries at once; the
+narrower define that names assertions only clears some of them, which reads as
+progress and is not.
+
+**`deassign` — fatal.** After that define, the only remaining errors are a
+handful of Verilog-1995 `deassign` statements, all inside the **base memory
+module**. Verilator rejects `deassign` outright, and the FIFO macros instantiate
+that module, so a single module blocks every FIFO and every RAM in a design. The
+clock-divider primitive has the same problem.
+
+The consequence for planning: "Verilator cannot simulate this design" is almost
+never true at the design level. It is usually one vendor module, and the answer
+is a shim for that module rather than abandoning the tool. See
+[simulate.md](simulate.md#shims).
+
+### Verilator makes warnings fatal, so real findings get silenced in bulk
+
+Verilator's default is to treat warnings as errors, and a codebase written
+against a more permissive tool trips them by the hundred on first contact. The
+practical response is to silence the noisy classes and pass `-Wno-fatal`.
+
+That is the right move and it has a cost worth naming: **the silenced list is not
+noise.** Inferred latches and width truncations that discard the high bits of a
+shift are in there, they are real, and no other tool in this flow reports them.
+Keep an explicit "show everything" flag and run it as an occasional pass of its
+own, separate from the simulation loop.
+
+### A comment whose first word is `Verilator` fails the build
+
+Verilator parses `// verilator ...` as a metacomment — a directive — and an
+unrecognised one is a hard error, not a warning. So an ordinary English comment
+that happens to begin with the tool's name stops the build with
+"Unknown verilator comment".
+
+Start the line differently.
+
+---
+
+## Reports and object queries
+
+The Tcl object model returns an empty list for a query that matches nothing, and
+every consumer accepts an empty list. So an entire class of trap is "the number
+is zero because the query was wrong", and zero is a legitimate-looking answer.
+
+### A bare synthesis checkpoint carries no clocks
+
+Open a post-synthesis checkpoint that was written before any constraint applied,
+and every timing query against it returns nothing. `report_timing` prints no
+paths, `get_timing_paths` returns an empty list, and a script that counts failing
+paths reports **zero failing paths** on a design it never analysed.
+
+Check `get_clocks` first, and error if it is empty. "No failing paths" and "no
+analysis" must not be the same output.
+
+### `[` opens a character class in a Vivado glob
+
+`get_cells -hier -filter {NAME =~ g_stn[1]/*}` does not match `g_stn[1]`. The
+brackets are a glob character class, so the pattern matches the single character
+`1` in that position — and every bracketed instance in the design counts **zero**,
+in silence.
+
+Escape them before building the pattern:
+
+```tcl
+set pfx [string map [list "\[" "\\\[" "\]" "\\\]"] $prefix]
+```
+
+The same shape appears with `-filter {NAME == ...}` against a hierarchical
+generate name: use the literal path in braces, and check the result is non-empty
+rather than trusting the pattern.
+
+### A property name that does not exist filters to zero
+
+`get_cells -hier -filter {PRIMITIVE_GROUP == CLB_LUT}` returns nothing. The
+property exists; that value does not. Nothing warns, and the count lands in the
+column that reads as "that instance is empty".
+
+Count by `REF_NAME` against the primitive families you actually mean
+(`LUT?`, `FD*`, `RAMB*`, `CARRY*`), and sanity-check the total against
+`report_utilization` before believing any of the sub-counts.
+
+### `-of_objects` wants nets or pins, not a parent cell
+
+`get_cells -hier -of_objects <cell>` to enumerate a cell's contents returns
+nothing, silently. `-of_objects` traverses connectivity, not hierarchy. Scope by
+`NAME` instead.
+
+Relatedly, `report_timing -of_objects <path>` **refuses `-input_pins` and drops
+it** without complaint, and the header it emits reads `Delay type` in lower case
+— so a parser matching `Delay Type` produces empty dumps that look exactly like
+clean paths.
+
+### Parsing a utilisation report is three traps in one line
+
+- The total row is **`CLB LUTs*`**, with a trailing asterisk. An exact string
+  match on `CLB LUTs` drops the row that matters.
+- Sub-rows are **indented** inside the same table. A match anchored to the left
+  edge drops all of them.
+- Values are **not all integers**. A single 18 Kb block-RAM primitive makes
+  `Block RAM Tile` read `26.5`, and an integer test silently discards the row —
+  reporting zero block RAM for a design that uses it.
+
+Match on substring, test with a floating-point predicate, and print what was
+parsed.
+
+### `-hierarchical` re-parents leaves on a flattened netlist
+
+`report_utilization -hierarchical` on a netlist synthesised with the default
+`-flatten_hierarchy rebuilt` will confidently attribute LUTs to the wrong
+instance: the boundaries it reports were reconstructed after flattening, not
+preserved through it.
+
+To attribute area, re-synthesise with `-flatten_hierarchy none`. But that run is
+**not** the number to quote as the design's area — the shipped design synthesises
+at `rebuilt`, and boundary optimisation is a real saving `none` forbids. Two
+runs, two purposes. See [measure.md](measure.md#hierarchy-none-attributes-rebuilt-ships).
 
 ---
 

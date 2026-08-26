@@ -10,10 +10,15 @@ tags:
 
 # Mesh auto-caching: routers that remember
 
-Routers snoop memory traffic passing through them and answer later requests
-locally. This is the only option here that changes what the mesh *is*.
+Status: **PROPOSAL — nothing described on this page is built, and it is not
+recommended first**, for the reasons in §4. No router in this tree caches
+anything, and no figure here for what it would cost is a measurement. Read
+[notes/README](../README.md) before treating any of it as a description of
+hardware.
 
-Status: research. Not recommended for the first build, for reasons in §4.
+Routers snoop memory traffic passing through them and answer later requests
+locally. This is the only option here that changes what the mesh *is*, and the
+only one that risks deadlock.
 
 ## 1. The idea
 

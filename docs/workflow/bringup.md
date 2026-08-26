@@ -17,6 +17,14 @@ presents identically: nothing happens, or a plausible wrong number appears.
 The whole discipline is therefore about **ordering checks so that each one can
 only fail for one reason.**
 
+**Where it sits.** [build.md](build.md) produced the bitstream and
+[simulate.md](simulate.md) established that the RTL is right in simulation. This
+page is everything between programming the device and trusting a result from it.
+**Vocabulary:** a **mesh** is the on-chip network and the compute units attached
+to it; a **compute unit** is one of those units; a **granule** is the smallest
+unit an endpoint writes atomically; a **doorbell** is a write whose arrival is
+the signal that a transfer is complete.
+
 ## The governing principle
 
 > Every check should have exactly one new thing in it.
@@ -28,6 +36,31 @@ nothing.
 
 The ladder below adds one layer per rung. Whichever rung first fails names the
 layer that is broken — which a single end-to-end run cannot do.
+
+## Three habits that decide how long this takes
+
+**Suspect software before RTL, in that order: harness, transport, driver, then
+RTL.** By the time a design reaches a board it has passed simulation, and the
+layers added since then — the test harness, the debug transport, the driver's
+model of the machine — are the ones with no coverage at all. Searching them first
+is not optimism about the RTL; it is searching where the untested code is. A
+bring-up failure that turns out to be RTL is the minority case, and treating it
+as the default sends people to read Verilog for a day over a wrong constant.
+
+**Do one hardware operation at a time.** Debug transports, host DMA engines and
+the device itself are all state machines with limited outstanding capacity and no
+protection against being driven concurrently. Batching or overlapping accesses
+produces failures that are random, unattributable and not reproducible — and they
+look exactly like marginal hardware. Serialise, and a failure becomes a fact
+about one operation.
+
+**Anything you hand-run once becomes a driver method.** A command typed into a
+console to unstick a device, read a register, retune a clock or paint a region is
+knowledge that exists only in scrollback. The next person will not have it, and
+neither will you in a month. Every manual step that turned out to be necessary is
+a call the driver should expose, named for what it does — which is also what
+makes it testable, and what stops a bring-up procedure from being an oral
+tradition.
 
 ## The debug surface
 
@@ -228,10 +261,10 @@ that is still meaningful, scored against a reference implementation.
 Two rules for scoring it:
 
 **Judge on the tail, never the median.** A median can look perfect while a
-quarter of the elements are wrong. One observed case scored a near-perfect median
-next to a maximum error of order one. A spot-check of the median would have
-passed it. Report a distribution and a count of bad elements, not a single
-number.
+quarter of the elements are wrong — a near-perfect median sitting next to a
+maximum error of order one is an ordinary shape for a partially-broken datapath,
+and a spot-check of the median passes it. Report a distribution and a count of
+bad elements, not a single number.
 
 **Score against a model of the machine's own arithmetic**, not only against
 double precision. Comparing to double precision folds the format's inherent cost
@@ -281,7 +314,12 @@ will. Print the failing case's listing next to a passing case's.
 
 On some boards the first compute after programming is unreliable. **A failed
 first compute is not evidence of a fault — re-run before concluding anything.**
-This has already caused one session to declare a working card dead.
+The cost of not knowing this is declaring a working card dead.
+
+Programming also resets anything the device configures at load time. Clock
+generators come back at their build-time settings, not at whatever the last
+session tuned them to, so any runtime clock policy has to be re-applied after
+every reprogram, before the first read.
 
 ### There may be no soft reset
 
@@ -388,22 +426,31 @@ counter values, and the exact commands. The next bitstream is diffed against
 that sheet, and "is this better or worse than last time" is otherwise an argument
 rather than a measurement.
 
+## Two rules about driver code that only bring-up finds
+
+Both of these are about the driver rather than the machine, and both are invisible
+to every test that ran before the board existed.
+
+**A write to a device register that can be read back should be read back.** A
+driver that computes a register offset arithmetically — a clock divider, a window
+base, a mode field — and never verifies the result will happily write a valid
+value to the wrong register. The device accepts it, nothing changes, and the
+symptom is "the setting has no effect", which reads as a hardware fault. Read it
+back and raise when it does not match what was asked for. A register that cannot
+be read back should say so at the call site, so the caller knows the write is
+unverified.
+
+**Probe each entry point once, not each code path once.** A driver accumulates
+several routes to the same operation — a one-shot form, a batched form, a
+profiling form — and they diverge. A route that calls a helper the module never
+imported raises on every invocation and is caught by nothing, because the other
+routes use a different helper and the tests exercise those. A bring-up probe that
+walks *every public entry point* once, doing the smallest possible thing, finds
+this class in seconds. Coverage of code paths does not substitute: the failure is
+in the path nobody thought to cover.
+
 ## Open questions
 
 - **The status register field layout is documented differently in the driver
   comment and the RTL.** Only one field is ever polled, so nothing depends on it
   — but someone diagnosing a stall from that register will read the wrong field.
-
-**Closed since this page was written**, and both worth keeping because the shape
-of the fix is the general lesson:
-
-- *Clock retuning had no path to the device.* It was arithmetic in the driver
-  with nothing checking the register offsets against the IP, so a wrong offset
-  wrote a divider into a status register and the clock simply never changed. The
-  retune reads the rate back and raises when it does not match what was asked
-  for — which is the general form: **a write to a device register that can be
-  read back should be read back**, and one that cannot should say so.
-- *And it had never run.* The one-output retune called a function the module
-  never imported, so every call raised `NameError`. Nothing caught it because
-  the profile paths use a different helper, which is the argument for a probe
-  that exercises each entry point once rather than each code path once.

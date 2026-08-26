@@ -1,6 +1,6 @@
 ---
 title: Flit format
-summary: The 288-bit flit — header fields and their bit positions, the message type codes, every per-type payload layout, and which fields the framework owns.
+summary: The flit — header fields and their bit positions, the message type codes, every per-type payload layout, and which fields the framework owns. Widths follow FLIT_WIDTH and POS_WIDTH; 288 and 4 are what the reference build sets.
 tags:
   - spec
   - normative
@@ -10,10 +10,16 @@ tags:
 
 # Flit format
 
-> **Kind: Fixed.** Every field, width and bit position below is protocol. The
-> one exception is marked: §4.7.1's table of what each buffer index *typically
-> holds* is Convention; the namespace itself and the reservation of index 3 are
-> Fixed.
+> **Kind: Fixed.** Every field, ordering and bit position below is protocol.
+>
+> **Widths are not.** `FLIT_WIDTH` and `POS_WIDTH` are build-time parameters;
+> 288 and 4 are the reference build's values, and §1 says which numbers on this
+> page follow them, which the RTL computes, and which are literals that will
+> silently mean something else if you change one.
+>
+> One further exception is marked where it appears: §4.7.1's table of what each
+> buffer index *typically holds* is Convention; the namespace itself and the
+> reservation of index 3 are Fixed.
 
 Source of truth: `src/kohakuaccel/noc/noc_pkt.vh` for the declared layout, and the
 `HDR_*` macros in `src/kohakuaccel/noc/endpoint/noc_cu_base.v` for the parameterised form the
@@ -25,23 +31,58 @@ is inside one.
 
 ## 1. Geometry
 
-A flit is one indivisible unit of transfer. There is no sub-flit granularity and
-no flit spans two cycles.
+**A flit is one indivisible unit of transfer.** There is no sub-flit granularity
+and no flit spans two cycles. *That* is protocol, and it is true at any width.
 
-| Quantity | Expression | Default value |
+**The width is not.** `FLIT_WIDTH` and `POS_WIDTH` are build-time parameters, and
+288 is what the reference build sets. Read every number on this page against the
+three categories below, because they are three different kinds of claim and only
+the first is a contract.
+
+| | What it is | Example on this page |
 |---|---|---|
-| Flit width | `FLIT_WIDTH` | 288 |
-| Coordinate width | `POS_WIDTH` | 4 |
-| Header width | `4*POS_WIDTH + 16` | 32 |
-| Payload width | `FLIT_WIDTH - 4*POS_WIDTH - 16` | 256 |
+| **Protocol** | True at every width. A conforming build cannot change it. | A flit is indivisible; the header is the top of the flit and the payload the rest; the router reads `dst_x` and `dst_y` and nothing else |
+| **Derived** | Follows the parameters, and the RTL computes it. Change the parameter and this moves correctly. | Every header field position in §2, given as an expression *and* as its value at the defaults |
+| **Literal** | A hard-coded constant in the RTL that does **not** track the parameters. Change the parameter and this silently means something else. | Every payload field position in §4 |
+
+| Quantity | Expression | At the reference build | Category |
+|---|---|---|---|
+| Flit width | `FLIT_WIDTH` | 288 | parameter |
+| Coordinate width | `POS_WIDTH` | 4 | parameter |
+| Header width | `4*POS_WIDTH + 16` | 32 | derived |
+| Payload width | `FLIT_WIDTH - 4*POS_WIDTH - 16` | 256 | derived |
 
 The header is the top `4*POS_WIDTH + 16` bits; the payload is everything below
 it. The router reads `dst_x` and `dst_y` and nothing else — every other bit of a
-flit is opaque to the fabric.
+flit is opaque to the fabric. All three of those are protocol.
 
-**`POS_WIDTH = 4` caps a mesh at 16×16 coordinates**, edge endpoints included.
-The mesh generator's clamped-coordinate scheme places routers at `1..N` and
-endpoints just outside, so the usable router grid is at most 14×14.
+### 1.1 What actually happens if you change `FLIT_WIDTH`
+
+The parameter exists, every module accepts it, and a build at another value
+elaborates cleanly — **and is wrong**, because the two categories above do not
+move together.
+
+Header positions are computed from the parameters, so they follow. Payload field
+positions are literal part-selects in every module that reads one: the `addr`
+field of a memory descriptor is `[255:216]` whatever `FLIT_WIDTH` is, and at
+`FLIT_WIDTH = 320` the payload is 288 bits wide while every consumer still reads
+the descriptor at the old offsets. Nothing warns. §7 records where those literals
+live.
+
+So the honest statement, and the one an integrator needs:
+
+> **`FLIT_WIDTH` is a parameter that only one value has ever been validated at.**
+> Do not hard-code 288 — take it from the parameter and pass it down, as
+> [integrate/compute-unit.md](../integrate/compute-unit.md) §1 requires. And do
+> not expect a different value to work without first making §4's positions track
+> the parameter.
+
+The same holds for `POS_WIDTH`, with a harder ceiling: at 4 it caps a mesh at
+16×16 coordinates, edge endpoints included, and the mesh generator's
+clamped-coordinate scheme places routers at `1..N` with endpoints just outside,
+so the usable router grid is at most 14×14. Above 4 the orchestrator's status
+mirror, sized `1 << (2*POS_WIDTH)` words, overflows its decode window —
+[parameters.md](parameters.md) §1.
 
 ## 2. Header fields
 
@@ -170,10 +211,12 @@ unallocated type code.
 
 ## 4. Payload layouts
 
-All positions below are for the default 256-bit payload. A payload field's
-position is absolute within the payload, so a build with a different
-`FLIT_WIDTH` or `POS_WIDTH` changes the payload width and these tables do not
-carry over unchanged — see §7.
+**Every position in this section is Literal in the sense of §1** — a hard-coded
+part-select in the RTL that does not track `FLIT_WIDTH` or `POS_WIDTH`. The
+tables are correct at the reference build's 256-bit payload and at no other. A
+build that changes either parameter changes the payload width while these offsets
+stay where they are, and nothing on the path reports it. §7 records where the
+literals live.
 
 ### 4.1 `MEM_RD_REQ` (`0x0`) and `MEM_WR_REQ` (`0x1`) — descriptor flit
 
@@ -191,11 +234,26 @@ carry over unchanged — see §7.
 On a `MEM_WR_REQ` only `addr` and `len` are read. `flags`, `count`, `peer`,
 `n_peer` and `entry_words` are read on `MEM_RD_REQ` only.
 
-`addr[37:36]` names the **mesh** a request is aimed at, which the memory agent
-compares against its own id; `addr[39]` selects the special aperture rather than
-DRAM, and `addr[38]` is reserved and must be 0. See
-[address-map.md](../address-map.md) and
-[memory-protocol.md](memory-protocol.md) §8.
+The 40 bits are not flat. Their structure is protocol, and every consumer in the
+tree tests it absolutely — an address carries which mesh it belongs to whoever
+issued it and wherever it arrives:
+
+| Address bits | Flit bits | Field | Meaning |
+|---|---|---|---|
+| `[39]` | `255` | aperture | 1 selects a special aperture, 0 selects DRAM. |
+| `[38]` | `254` | reserved | MUST be 0. |
+| `[37:36]` | `253:252` | mesh | 0–3. Compared against the agent's own id. |
+| `[35:32]` | `251:248` | aperture index | Read **only when `[39]` is 1**: which aperture. `0` is the staging store, and it is the only one any memory port serves. |
+| `[35:0]` | `251:216` | local | 64 GB, when `[39]` is 0. |
+
+`[35:32]` therefore has two readings and the aperture bit chooses between them:
+on a DRAM address they are the top four bits of the offset, and on an aperture
+address they are the aperture's index. There is no third state.
+
+What happens when the mesh field or the aperture index names something this agent
+does not serve is in [memory-protocol.md](memory-protocol.md) §8, and the two
+cases do **not** behave alike. [address-map.md](../address-map.md) has the host's
+view of the same map.
 
 > **This field was documented as 34 bits with a 6-bit `addr_spare` below it, and
 > it is 40.** The framework's own header has said so for some time —
@@ -377,9 +435,9 @@ Request:
 > `noc_cu_base.v:241` reads `ctrl_req[247 -: 8]` and nothing above it, so a
 > compute unit answers the index whatever `op` says: a write to a plain unit
 > **performs a read and replies with the old value**, and looks exactly like a
-> write that landed. `noc_l2_adapter.v:194` is the only endpoint in the tree that
-> decodes `op` today, which is why the L2 adapter's base and enable registers are
-> writable and a unit's `CU_CTRL` block is not.
+> write that landed. `noc_l2_adapter.v:194`'s `r_op = rt_data[255 -: 8]` is the
+> only place in the tree that decodes `op` today, which is why the L2 adapter's
+> base and enable registers are writable and a unit's `CU_CTRL` block is not.
 >
 > A controller that writes a register **MUST** compare the reply's `value`
 > against what it wrote. `kohakuaccel.device.control_write` returns it for
@@ -448,4 +506,4 @@ can only reassemble one burst at a time if that is the case.
 | `rsvd` semantics undeclared | The remote-mesh marker, the mesh id and the read-response word index all live in `rsvd` and none is declared in `noc_pkt.vh`. |
 | `NOC_MEM_LEN` comment | `noc_pkt.vh` describes `len` as "payload flits minus 1". On a `MEM_RD_REQ` served by the entry read engine it is not read at all. |
 | `MEM_WR_ACK` status byte | Documented in the snapshot, absent from the RTL. |
-| `CU_CTRL` `op` is honoured by one endpoint | `noc_l2_adapter.v:194` decodes `op` as 0 read / 1 write; `noc_cu_base.v:241` reads the index and nothing above it, so every compute unit treats a write as a read and replies with the old value. A controller cannot tell the two apart except by comparing the reply against what it wrote. Making `noc_cu_base` honour `op` would give units writable control registers, which is a framework decision nobody has taken. |
+| `CU_CTRL` `op` is honoured by one endpoint | `noc_l2_adapter.v:194` decodes `op` as 0 read / 1 write (`r_op = rt_data[255 -: 8]`); `noc_cu_base.v:241` takes only the index (`ctrl_idx = ctrl_req[247 -: 8]`) and nothing above it, so every compute unit treats a write as a read and replies with the old value. A controller cannot tell the two apart except by comparing the reply against what it wrote. Making `noc_cu_base` honour `op` would give units writable control registers, which is a framework decision nobody has taken. |

@@ -9,12 +9,15 @@ tags:
 
 # AXI TLB and cache in the AXI library
 
-Translation and caching on the AXI path, in front of the DDR4 controller. Build
-the translation unconditionally -- it is a general fabric feature, not a
-KohakuTPU one. For the cache, compare against Xilinx **System Cache (PG118)** in
-§2 before writing any RTL.
+Status: **PROPOSAL — nothing on this page is built.** Neither the address
+translation nor the cache exists in the tree. Read
+[notes/README](../README.md) before treating any of it as a description of
+hardware.
 
-Status: discussion, nothing built.
+Translation and caching on the AXI path, in front of the DDR4 controller. The
+recommendation is to build the **translation** unconditionally — it is a general
+fabric feature, not one project's — and, for the **cache**, to compare against
+Xilinx System Cache (PG118) in §2 before writing any RTL.
 
 ## 1. Why it belongs in the AXI library regardless
 

@@ -1,6 +1,6 @@
 ---
 title: Control registers
-summary: The CU_CTRL block every compute unit answers over the mesh, and the orchestrator's AXI register map — dispatch, credits, completions, the status mirror and the mailbox.
+summary: Every control register in the framework — the CU_CTRL block a compute unit answers over the mesh, the orchestrator's AXI map, the mover and interlink windows, and the RV64 control complex's host window and control region.
 tags:
   - spec
   - normative
@@ -11,19 +11,27 @@ tags:
 # Control registers
 
 > **Kind: Fixed** throughout. Every offset, width and bit position below is
-> protocol. Two rows are labelled Convention where they are: what `cu_type`
-> should look like, and what a unit ought to put in `CU_DBG`.
+> protocol. Three rows are labelled Convention where they are: what `cu_type`
+> should look like, what a unit ought to put in `CU_DBG`, and the dispatch order
+> in §2.3.
 
-Two register surfaces, both framework-owned.
+Four register surfaces, all framework-owned. A **register surface** here means a
+set of addresses one agent writes and another agent answers; the four differ in
+who can reach them, not in kind.
 
-- **`CU_CTRL`** (§1) is reached over the mesh, one block per compute unit. It is
-  how a controller enumerates a machine it was not told the shape of.
-- **The orchestrator's register map** (§2–§5) is reached over AXI. It is how a
-  host dispatches work and observes completion.
+| § | Surface | Reached over | By |
+|---|---|---|---|
+| §1 | **`CU_CTRL`**, one block per compute unit | the mesh, as a flit | any controller. This is how a machine is enumerated without a hardcoded map. |
+| §2 | **The orchestrator's map** — dispatch, credit, the status mirror, the mailbox, the staging RAM | AXI, the system node's control window | the host |
+| §3–§4 | **The mover's and the interlink's windows**, forwarded verbatim out of the orchestrator | the same AXI window | the host |
+| §6–§7 | **The RV64 control complex's host window and control region** | a dedicated port, and the processor's own loads and stores | the host, and software running on the processor. Present only when `CPU_RV64` is set. |
 
-Neither is a debug convenience. Discovery and the status mirror are the only
-things standing between a driver and a hardcoded map, and the credit registers
-are the mechanism that keeps dispatch from deadlocking the mesh.
+§5 is a fifth thing and not a fourth surface: a host-side engine that drives §2
+on the host's behalf.
+
+None of these is a debug convenience. Discovery and the status mirror are the
+only things standing between a driver and a hardcoded map, and the credit
+registers are the mechanism that keeps dispatch from deadlocking the mesh.
 
 ## 1. `CU_CTRL` — the per-unit block
 
@@ -121,7 +129,7 @@ is not idle until its signals are on the wire.
 
 | Bits | Field | Width | Meaning |
 |---|---|---|---|
-| `[63:32]` | `instructions_retired` | 32 | Counts `exec_done`. |
+| `[63:32]` | `instructions_retired` | 32 | Counts **every** `exec_done`, including one asserted with no instruction in flight — which produces no completion. See [compute-unit-port.md](compute-unit-port.md) §4. |
 | `[31:0]` | `busy_cycles` | 32 | Counts cycles with `busy` high. |
 
 Counted inside `noc_cu_base`, so **every unit type reports these identically**
@@ -129,11 +137,15 @@ whatever it computes. That is the point of them living there, and it is why a
 unit MUST NOT reimplement them in `dbg_ctr`.
 
 Both accumulate since `resetn` and **neither can be cleared**. There is no clear
-register. A measurement is the difference between two reads, taken modulo 2³².
-At a few hundred MHz that is a wrap roughly every ten seconds.
+register. A measurement is the difference between two reads, taken modulo 2³² —
+and a reader **MUST** take it modulo 2³², because at any plausible fabric clock a
+32-bit counter wraps in seconds, not hours. The RV64 control complex's own
+counters are 64 bits for exactly this reason (§6.3), and they are *not*
+free-running, so the two cannot share a decoder.
 
-Wall-clock timing cannot substitute: one JTAG access is milliseconds against
-microseconds of compute.
+Wall-clock timing cannot substitute. A single access over the debug transport
+costs orders of magnitude more time than the work being measured, so the host's
+clock measures the transport.
 
 #### Index 3 — `CU_DBG`
 
@@ -223,6 +235,12 @@ walks the address, so a burst write hits consecutive registers in order.
 
 Unlisted offsets read zero and ignore writes.
 
+**Three of those ranges scale and the table shows them at the reference build.**
+`TX_FLIT` and `RX_FLIT` are `FLIT_WORDS` words each, and `STAGE` extends
+`STAGE_FLITS * FLIT_WORDS * 8` bytes from `0x2000` — §2.6. `FLIT_WORDS` is
+`ceil(FLIT_WIDTH / DATA_WIDTH)`, five here. Every other offset in the table is a
+fixed decode.
+
 ### 2.3 Dispatch
 
 The orchestrator holds instruction flits in a local staging RAM and forwards
@@ -232,17 +250,21 @@ operands rather than being fed by the controller.
 
 The sequence:
 
-1. Write the program's flits into `STAGE`, five 64-bit words per flit, starting
-   at slot `B`. §2.6.
-2. `PROG_BASE = B`, `PROG_LEN = n`, `PROG_DST = {y, x}`.
+1. Write the program's flits into `STAGE`, `FLIT_WORDS` words per flit — five at
+   the reference build — starting at slot `B`. §2.6.
+2. `PROG_BASE = B`, then `PROG_LEN = n`, then `PROG_DST = {y, x}` — **in that
+   order**.
 3. `PROG_CRED = c`, seeding the credit counter.
 4. Write `PROG_KICK`.
 
-**That order is NOT a hardware requirement. It is a workaround for the striding
-defect in §2.7**, and on a bitstream carrying that defect it is mandatory. Read
-§2.7 before changing anything in this sequence: on such a bitstream `PROG_LEN` is
-what actually launches the dispatch, `PROG_KICK` launches nothing, and each
-position of the order is forced for a different reason.
+> **Kind: Convention — but binding on a bitstream built before the write window
+> honoured byte strobes.** The order is not a hardware requirement: on current
+> RTL any order works, because `PROG_KICK` genuinely kicks. On an earlier
+> bitstream a 64-bit host write lands on four registers at once, `PROG_LEN` is
+> what actually launches the dispatch, `PROG_KICK` launches nothing, and each
+> position above is forced for a different reason. **§2.7 states which, and
+> which registers each write destroys.** Read it before changing anything in this
+> sequence.
 
 **A driver that elides unchanged writes must not elide these.** Kick 2 of a round
 normally carries a new `PROG_BASE` and the SAME `PROG_LEN`, so a write-shadow
@@ -331,18 +353,24 @@ framework would not otherwise construct — a `CU_CTRL` read, or a deliberately
 malformed header. An address-mapped bridge could only ever emit `MEM_RD_REQ` and
 `MEM_WR_REQ`.
 
-- Write the five words of `TX_FLIT`, low word first, then write `TX_KICK`.
+- Write all `FLIT_WORDS` words of `TX_FLIT` — five at the reference build — low
+  word first, then write `TX_KICK`. The window's extent scales with
+  `FLIT_WORDS`, so the register ranges in §2.2 are the reference build's.
 - The mailbox stamps **nothing**. Destination, source and every other field are
   exactly what was written. That is its purpose.
 - `TX_KICK` is **ignored while `prog_run` is set** and while the transmit FIFO is
   full; the mailbox and the dispatcher share one FIFO. A host **MUST** check
   `PROG_STAT[0]` or wait for the program to finish rather than assuming the
   kick took.
-- Receive: read `RX_STATUS[16]` for empty, read the five `RX_FLIT` words, then
+- Receive: read `RX_STATUS[16]` for empty, read all `FLIT_WORDS` `RX_FLIT` words, then
   write `RX_POP`. `RX_STATUS[17]` is a sticky overflow flag.
 
-**The staging RAM** holds instruction flits at `0x2000 + slot * 40`, five 64-bit
-words per flit, low word first.
+**The staging RAM** holds instruction flits at `0x2000 + slot * FLIT_WORDS * 8`,
+`FLIT_WORDS` words per flit, low word first. `FLIT_WORDS` is
+`ceil(FLIT_WIDTH / DATA_WIDTH)`, which the module computes — **five 64-bit words,
+so 40 bytes per slot, at the reference build's 288-bit flit and 64-bit control
+window.** A driver MUST derive the stride rather than assume 40; both inputs are
+parameters.
 
 Its extent is `STAGE_FLITS * 5 * 8` bytes and the decode is derived from that, not
 fixed at one page. A write inside the range lands in the RAM; a write outside it
@@ -358,24 +386,35 @@ mapping from `STAGE_FLITS`, never from a page.
 **Staging MUST be written as contiguous blocks, ascending. §2.7.** Word by word
 it loses three quarters of every flit on current silicon, with no symptom.
 
-### 2.7 The 32-byte write window — a defect, and the workaround built on it
+### 2.7 The 32-byte write window, and why the dispatch order exists
 
-**On a bitstream built before 2026-08-23, one 64-bit host write to this window
-writes FOUR registers.** Everything §2.3 calls a hardware requirement is a
-workaround for this, discovered empirically and mis-attributed.
+**A host write to this window does not arrive as one beat.** The window is
+reached across the station bus, whose managers pack to a 32-byte flit: the flit
+address is rounded **down**, and the mesh control port is 32 bits wide with an
+upsizer in front of it. One 64-bit host write therefore arrives at the
+orchestrator as **four 64-bit beats covering a whole 32-byte flit**, of which
+only one carries byte strobes.
 
-**How.** `noc_orchestrator.v:366` decodes `wsel` from `waddr`, the same register
-`:448` advances by 8 on every write beat; the aux path at `:424` did the same and
-neither read `s_axi_wstrb`. Every station-bus manager flit-aligns
-(`sb_nmu.v:134` `PACK=1` whenever `MW <= FW`, `:355` `hdr_size = FSZ`, `:381`
-address rounded **down** to the 32-byte flit), the mesh control port is 32-bit
-(`gen_station_wrap.py:664`), and `scripts/tcl/v6/40_bus.tcl:144` upsizes 32→64 in
-front of it. So a `write64` arrives as four 64-bit beats covering the whole flit,
-and the three the host did not write carry **zeros** — `sb_nmu.v:578` clears the
-packer at each flit's first beat and merges in only strobed lanes. That is why
-the symptom is a neighbour *zeroed* rather than corrupted.
+The current RTL handles that correctly. It obeys `s_axi_wstrb` in three ways,
+and the three are the contract:
 
-The window in 32-byte flits, in write-decode terms:
+- **A beat with no strobes does nothing at all** — no register write, and no
+  *arrival*, which is what `PROG_KICK` and `SIG_DONE` react to.
+- **Register writes byte-merge.** The 16-bit `PROG_*` registers additionally
+  require a strobe in bytes 0–1, since that is where they live.
+- **`AUX_CFG` accumulates** into a one-entry shadow at the 8-aligned offset and
+  pulses the merged value, because the client behind the window has no byte
+  enables of its own and can only be handed a whole word.
+
+**A bitstream built before that change writes four registers per host write**,
+and the three the host did not write are **zeroed** rather than corrupted — the
+packer clears at the flit's first beat and merges in only strobed lanes. Every
+requirement in §2.3 is a consequence of that behaviour, and on such a bitstream
+they are mandatory. The rest of this section states what a driver must do to
+remain correct on one.
+
+The window in 32-byte flits, in write-decode terms. "Exposure" describes a
+pre-strobe bitstream; on a current one every row is safe:
 
 | Flit | Registers | Exposure |
 |---|---|---|
@@ -383,50 +422,24 @@ The window in 32-byte flits, in write-decode terms:
 | `0x020` | `IRQ_EN`, –, –, – | Safe. |
 | `0x040` | `PROG_DST`, `PROG_LEN`, **`PROG_KICK`**, – | **Any write here fires a dispatch.** |
 | `0x060` | `PROG_CRED`, `PROG_BASE`, **`SIG_DONE`**, – | **Any write here zeroes the other two and clears `SIG_DONE`.** |
-| `0x100` | `TX_FLIT[0..3]` | **Safe even before the fix** — `:416` is the one path that honoured byte strobes. |
+| `0x100` | `TX_FLIT[0..3]` | **Safe on every bitstream.** This is the one path that always honoured byte strobes. |
 | `0x140` | `TX_KICK`, –, –, – | Safe: one decoded register in the flit. |
 | `0x1C0` | `RX_POP`, –, –, – | Safe: one decoded register in the flit. |
 | `0x800` | `AUX_CFG` +0x00/+0x08/+0x10/+0x18 | Mover `CTRL` shares a flit with its descriptor. §3. |
 | `0x2000`+ | `STAGE` | Safe as a **contiguous block write** — every beat is then strobed. A lone `write64` zeroes its three neighbours. |
 
-**The fix is the pattern this file already contained.** `TX_FLIT` was never
-exposed because `noc_orchestrator.v:416-420` loops over `s_axi_wstrb` per byte —
-one path in the whole FSM got it right and the rest wrote `s_axi_wdata`
-wholesale. The change generalises that loop; it invents nothing.
-`TX_KICK` and `RX_POP` are safe for a different and structural reason: each is
-the only **write-decoded** register in its flit, so no spurious kick or pop is
-reachable however the beats land.
+`TX_KICK` and `RX_POP` are safe for a structural reason rather than a strobe
+one: each is the only **write-decoded** register in its flit, so no spurious kick
+or pop is reachable however the beats land. That property does not depend on the
+bitstream.
 
-### 2.7.1 Fixed in RTL 2026-08-24 — but §2.3's order stays, because no bitstream carries it
+### 2.7.1 What a driver must still do
 
-The 2026-08-23 change was reverted the same day by a blanket RTL revert, which is
-why the defect above outlived its own fix. It was re-applied on 2026-08-24 in
-three parts: a beat with no strobes does nothing at all (no register write and no
-*arrival*, which is what `PROG_KICK` and `SIG_DONE` react to); register writes
-byte-merge, with the 16-bit `PROG_*` ones gated on `|s_axi_wstrb[1:0]`; and
-`AUX_CFG` accumulates at the 8-aligned offset into a one-entry shadow, because
-the client has no byte enables.
-
-**Measured, `tests/sysnode/mover_cfg32_tb.v`:**
-
-| shape | before | after |
-|---|---|---|
-| one 64-bit beat, strobes `FF` | 7 pulses, exact | 7 pulses, exact |
-| two halves, `0F` then `F0` | 64 of 64 words wrong | **0 wrong** |
-| 2-beat burst | 63 wrong | 63 — correct: it addresses two registers by construction, and no strobe rule can make it mean one |
-| **flit-aligned, the ship's shape** | **28 pulses, 64 of 64 wrong** | **7 pulses, 0 wrong** |
-
-`PASS mover_cfg32: 503 checks`, and again at the ship's clocking.
-
-**In simulation the kick order stops mattering.** Phases `F`, `I` and `J` of that
-bench show zero spurious kicks and both the documented *and* the natural `PROG_*`
-order reaching node `0x21`. The five writes still work — now because `PROG_KICK`
-genuinely kicks, which it never did before.
-
-**On silicon it still matters, and that is the operative fact.** The fix is in
-RTL and verified in simulation only; v7 and v7.1 are the bitstreams in hand and
-neither carries it. `Program.kick` keeps the order deliberately. See the
-retirement condition at the end of this section — it has not been met.
+The rules below are what a driver owes a **pre-strobe** bitstream. On a current
+one the ordering is no longer load-bearing, but nothing breaks by keeping it —
+and a driver that drops it stops working on any board that has not been
+reprogrammed. Retiring it is a deliberate act: name the bitstream that made it
+safe, then delete the ordering and this section together.
 
 **Staging is safe only as contiguous block writes, and only upwards.** Written
 word by word, each write zeroes the three staging words sharing its flit; the
@@ -445,53 +458,37 @@ stage a lower slot range while a higher one is live** — which is precisely the
 multi-program case `PROG_BASE` exists to serve. Stage upwards, or stage in
 multiples of four slots.
 
-**The trace.** `BASE, LEN, DST, CRED, KICK`, measured in `tests/sysnode/mover_cfg32_tb.v`
-phase E:
+**On a pre-strobe bitstream, `PROG_LEN` is what launches a dispatch and
+`PROG_KICK` launches nothing.** `PROG_KICK` at `0x50` shares a flit with
+`PROG_DST` and `PROG_LEN`, so any write in that flit *arrives* at the kick
+decode; and `PROG_KICK`'s own write zeroes `PROG_DST`. What each write in the
+mandated order `BASE, LEN, DST, CRED, KICK` does, and why each position is
+forced:
 
-| after | run | len | dst | cred | flits out |
-|---|---|---|---|---|---|
-| `BASE` | 0 | 4 | 21 | **0** | 0 |
-| `LEN` | **1** | 4 | **00** | 0 | 0 |
-| `DST` | 1 | **0** | 21 | 0 | 0 |
-| `CRED` | 0 | 0 | 21 | 12 | **4** |
-| `KICK` | 0 | 0 | 00 | 12 | 4 |
+| Write | Also does, on a pre-strobe bitstream | Why it is where it is |
+|---|---|---|
+| `PROG_BASE` | zeroes `PROG_CRED`, and clears `SIG_DONE` | the zeroed credit is what *holds* the dispatch that `PROG_LEN` fires |
+| `PROG_LEN` | zeroes `PROG_DST`, and fires the dispatch | it must fire while the credit is still zero |
+| `PROG_DST` | zeroes `PROG_LEN` | it repairs the destination before any flit moves; `PROG_LEN` is spent by now |
+| `PROG_CRED` | zeroes `PROG_BASE` | it releases the held dispatcher, and the base has been consumed |
+| `PROG_KICK` | zeroes `PROG_DST` | it is a no-op that must come last, since it destroys the destination |
 
-**`PROG_LEN` is the kick** — `0x50` is in its flit. **`PROG_KICK` has never
-launched anything on this silicon.** Each position is forced: `BASE`'s
-credit-zeroing is what *holds* the dispatch `LEN` fires; `DST` repairs the
-destination `LEN` destroyed before any flit moves; `CRED` releases the held
-dispatcher. Any other order and the dispatch leaves with `PROG_DST = 0` — node
-`{0,0}`, "answer the sender", dropped. Measured: the documented order puts the
-first flit at `0x21`, the natural order at `0x00`. **That** is why the recorded
-symptom is "launches nothing, silently": the flits go out and nothing retires.
+Any other order and the dispatch leaves with `PROG_DST = 0` — node `{0,0}`, which
+in the reply-addressing convention means "answer the sender" and which no
+endpoint can occupy, so the flits are dropped. The symptom is "launches nothing,
+silently": the flits go out and nothing retires.
 
-**The attribution in §2.3 is wrong three ways.** `PROG_BASE` zeroes the **credit
-only**; **`PROG_LEN`** zeroes `PROG_DST`; **`PROG_DST`** zeroes `PROG_LEN`. And a
-fourth effect was never recorded: **`PROG_BASE` also clears `SIG_DONE`**, so a
-completion baseline read before kicking is destroyed. `Program.await_node_at`
-survives only because it polls `NODE_STATUS`, which is per node and not in this
-window.
+**`SIG_DONE` is collateral, and worse than one lost baseline.** It sits at `0x70`,
+in the same flit as `PROG_CRED` and `PROG_BASE`, so a kick clears it **twice**;
+in a multi-kick round each kick destroys the completions the previous ones
+counted. A host **MUST NOT** wait on an absolute `SIG_DONE` total on a
+pre-strobe bitstream — it would poll for a number that keeps being reset, and
+hang. Wait on `NODE_STATUS` at `0x1000+` instead: that mirror is written only by
+arriving `CU_SIGNAL`s, never by a host write, and it is outside these flits
+entirely. **That immunity is an accident of address, not a design choice.**
 
-**The ordering may be retired ONLY once a post-fix bitstream ships, and not
-before.** `Program.kick` keeps it deliberately: v7 is on the card and v7.1 is
-being implemented without the fix, so dropping it would break every board that
-can be run today. Note what breaks in the other direction too — code that
-*relies* on `PROG_BASE` clearing the credit stops working on a post-fix
-bitstream, so the dependency runs both ways and the switch is a deliberate act,
-not a cleanup. When a post-fix bitstream ships, retire it on purpose: delete the
-ordering, delete this paragraph, and say which bitstream made it safe.
-
-**`SIG_DONE` is collateral, and it is worse than one lost baseline.** Every
-`PROG_CRED` and every `PROG_BASE` write clears it (0x70 shares their flit), so a
-kick clears it **twice**, and in a multi-kick round each kick destroys the
-completions the previous ones already counted. Any wait on an absolute
-`SIG_DONE` total — `Program.await_all` — would therefore poll for a number that
-keeps being reset, and hang. **It is latent, not live: `await_all` and
-`clear_done` have no callers.** Every path that actually waits uses
-`await_node_at` / `await_signal`, which poll `NODE_STATUS` at `0x1000+` — a
-per-node mirror written only by arriving `CU_SIGNAL`s, never by a host write, and
-outside these flits entirely. That immunity is an accident of address, not a
-design choice, so **do not start using `await_all` on a pre-fix bitstream.**
+Note the dependency runs both ways. Code that *relies* on `PROG_BASE` clearing
+the credit stops working on a current bitstream, where it does not.
 
 ## 3. The memory mover's command registers
 
@@ -531,7 +528,10 @@ Modes: `0` copy, `1` transpose (**faults — not implemented**), `2` gather,
 Fault codes: `0` none, `1` index length, `2` range, `3` AXI, `4` mode,
 `5` element width, `6` alignment, `7` a bound axis in a transform move.
 
-### 3.1 The control processor does not use this window
+### 3.1 The RV32 control processor does not use this window
+
+> **Applies to `CPU_RV64 = 0`, the default.** The RV64 complex reaches the mover
+> through its own control region and has no `MVGO` descriptor path at all; §7.
 
 **The mover is an executor of the control processor, not a peer.** To *issue a
 move* the processor does not touch these offsets one at a time. It builds a
@@ -630,6 +630,10 @@ Present only when the interlink is built. Writes go to `AUX_CFG` client offsets
 `0x80`+; reads come back through the `AUX_STATW` window at `0x0080`–`0x00FF`,
 whose index is `(offset - 0x80) / 8`.
 
+**The write offsets have two writers.** The host reaches them here, and the RV64
+control processor reaches the same three registers through its own control
+region at `0xC0` (§7.4). When both pulse in one cycle **the host wins**.
+
 Writes:
 
 | Offset | Fields |
@@ -664,6 +668,31 @@ Fault register bits:
 | `4` | `INJ` | An inbound flit could not be injected into the local mesh and was dropped. |
 
 All five are **sticky** and cleared only by writing `0x80` bit 2.
+
+### 4.1 Where a write that crosses the link lands
+
+Normative, because a driver or a runtime composing a cross-mesh descriptor has
+to know it. A write whose mesh field names another mesh leaves over the link;
+the receiving node places it by the **top bit of the address**:
+
+| Inbound address | Lands in |
+|---|---|
+| **bit 39 set** — a special address, which is how every aperture including staging is named | that mesh's **staging**, at the full 40-bit address. `mag_stage_port` claims it off the converged path |
+| anything else | that mesh's **DRAM**, by its **low 32 bits** |
+
+DRAM is truncated because local DRAM starts at zero and the mesh field sits high
+in the address, so all 40 bits would land the write far out of range. An
+aperture address must survive whole for the opposite reason: the aperture *is*
+named by the high bits, so a truncated one is no longer an aperture address and
+lands in DRAM at the aperture's offset.
+
+**Reads never cross the link.** It carries remote writes, compute-unit flits and
+doorbells only; a read's source **MUST** be in the requester's own mesh.
+
+**A write into staging honours byte strobes** — the bank memory is byte-enabled
+and the staging path passes the AXI strobes through — so a store narrower than
+the 32-byte word leaves the other lanes alone. Page tables, allocator bitmaps
+and mailbox words in staging are safe to update in place.
 
 ## 5. The host control-program engine
 
@@ -703,7 +732,279 @@ Opcodes:
 Three opcodes are enough because the machine's whole control surface is
 memory-mapped. Branches or arithmetic here would duplicate the host.
 
-## 6. Known divergences
+## 6. The RV64 host window
+
+> **Present only when `sysnode`'s `CPU_RV64` is non-zero.** With the default RV32
+> complex the window's ports exist on `sysnode` and are tied off: `hs_rdata`
+> reads `64'd0` and `hs_console_we` is low.
+
+Source of truth: `src/kohakuaccel/pe/rv64-sys/rv64_syscore.v`.
+
+The RV64 control complex has **no NoC compute-unit shell**. It answers no
+`CU_CTRL` block and it is not dispatched to. It *does* originate mesh traffic,
+through a dispatch mailbox in its own control region (§7.5) rather than through
+a shell. The host reaches it over a dedicated port on `sysnode` — not AXI, and
+not part of the orchestrator's map in §2.
+
+> **A flit addressed to its coordinate is accepted and discarded unless it is a
+> `CU_SIGNAL`, and a reader has to know that.** The mailbox holds `rx_busy` low,
+> which the hub reads as *not busy*, so an arriving flit is always taken: a
+> `CU_SIGNAL` is queued and everything else is dropped. A `CU_CTRL` read to that
+> coordinate therefore never replies, and the node reads as absent —
+> indistinguishable from an empty coordinate.
+>
+> With the default RV32 complex the same coordinate *is* a conforming compute
+> unit and does answer §1. **Which register surface exists at `(0, 0)` is decided
+> by `CPU_RV64`**, and there is no runtime way to discover which.
+
+### 6.1 The port
+
+| Signal | Direction | Width | Meaning |
+|---|---|---|---|
+| `hs_addr` | in | 32 | Byte address within the window. |
+| `hs_wr` | in | 1 | This cycle is a write. |
+| `hs_wdata` | in | 64 | Write data. |
+| `hs_wstrb` | in | 8 | Byte enables. **Honoured on the scratchpad and nowhere else** — see §6.2. |
+| `hs_rd` | in | 1 | This cycle is a read. **Not read by the RTL**; the read path is unconditional. |
+| `hs_rdata` | out | 64 | Registered. Valid **one cycle after** `hs_addr`. |
+| `hs_ready` | out | 1 | Tied to `1'b1`. There is no backpressure and no stall. |
+
+A write takes effect in the cycle `hs_wr` is high. A read is a pure function of
+`hs_addr`, registered once; a requester **MUST** hold the address for one cycle
+and sample on the next. Because the read path ignores `hs_rd`, reading has no
+side effect and cannot be sequenced against a write by the port.
+
+### 6.2 The three regions
+
+`hs_addr[31:28]` selects the region. Every other bit of `hs_addr[31:8]` is
+ignored.
+
+| `hs_addr[31:28]` | Region | Access | Addressed by |
+|---|---|---|---|
+| `0x0` | Instruction memory | **write only** | `hs_addr[IAW+1:2]`, one 32-bit word per address, from `hs_wdata[31:0]` |
+| `0x1` | Scratchpad | **write only** | `hs_addr[SAW+2:3]`, one 64-bit word per address, byte-enabled by `hs_wstrb` |
+| `0x2` | Control | read and write | `hs_addr[7:0]`, §6.3 |
+| other | — | none | writes are ignored |
+
+`IAW` is `$clog2(IMEM_WORDS)` and `SAW` is `$clog2(SPAD_WORDS)`; both are set by
+`sysnode`'s `PE_IMEM` and `PE_SPAD` ([parameters.md](parameters.md) §5.1).
+
+Four consequences, all of them things a loader has to know:
+
+- **The instruction memory takes the low 32 bits of `hs_wdata` and ignores
+  `hs_wstrb`.** Two instruction words per 64-bit host write is not available;
+  each write places one word.
+- **Neither memory can be read back.** There is no verify path over this window.
+- **The host and the core share the scratchpad's one write port, and the host
+  wins.** A host write asserted in the same cycle as a core store replaces both
+  the address and the data, so the core's store is lost silently. A host
+  **MUST NOT** write the scratchpad while the core is running — that is, between
+  `HR_BOOT = 1` and `HR_STATUS` reporting halted or exited.
+- **The read decode ignores `hs_addr[31:28]`.** `hs_rdata` is selected from
+  `hs_addr[7:0]` alone, so a read at offset `0x18` of *any* region returns
+  `HR_STATUS`. A reader **MUST** use region `0x2` regardless; the aliasing is a
+  property of the decode, not a second address for the same register.
+
+### 6.3 The control region's registers
+
+At `hs_addr[31:28] == 0x2`, offset `hs_addr[7:0]`. Every register is 64 bits.
+
+| Offset | Name | Access | Contents |
+|---|---|---|---|
+| `0x00` | `HR_BOOT` | W | `[0]` — writing 1 requests a boot and enables the run; writing 0 stops the core. A boot request is a **one-cycle pulse**, and it also clears the latched halt state and the exit flag and zeroes the cycle and retire counters. |
+| `0x08` | `HR_PC` | W | A 64-bit boot PC is **stored and never read.** The core always starts at its `RESET_PC`, which `rv64_syscore` fixes at 0. |
+| `0x10` | `HR_DBELL` | W | `[0]` — the software-interrupt doorbell. Drives the core's `irq_soft` directly and stays at the written level; it is not a pulse and the core does not clear it. Software clears it by reading it back through the control region and having the host write 0. |
+| `0x18` | `HR_STATUS` | R | `[3]` exited, `[2]` halted, `[1:0]` halt cause. `[63:4]` zero. |
+| `0x20` | `HR_EXIT` | R | The 64-bit word the program last stored to the control region's `R_EXIT`. §7. |
+| `0x28` | `HR_HALTPC` | R | The PC latched when the core halted. |
+| `0x30` | `HR_CYCLES` | R | Free-running cycle count while the core is out of reset. **64 bits**, unlike the compute-unit shell's 32. |
+| `0x38` | `HR_RETIRED` | R | Instructions retired. 64 bits. |
+| other | — | R | `64'd0`. |
+
+**`halted` and `cause` are latched, and the latch is what makes them readable.**
+The core's own `halted` output is cleared as soon as its reset is re-asserted,
+which the complex does the moment it halts, so an unlatched status register would
+report nothing forever.
+
+**A boot clears the latch, and clears `exited`.** So the sequence a host runs is:
+write the memories, write `HR_BOOT = 1`, poll `HR_STATUS`, and read `HR_EXIT`
+once `[3]` or `[2]` is set.
+
+**Undefined:** the halt cause encoding is not specified here. It is two bits
+produced by `rv64_core`; see
+[arch/cpu/rv64-sys/architecture.md](../arch/cpu/rv64-sys/architecture.md).
+
+## 7. The RV64 control region
+
+> **Present only when `sysnode`'s `CPU_RV64` is non-zero.**
+
+This is the processor's *own* view — a range in its physical address space that
+software reaches by ordinary load and store. It is not the host window, and the
+two do not share offsets.
+
+**A store into this range is a command, never a line.** The range is decoded
+ahead of the L1 and is uncached by construction, so a control write is never
+buffered and never reordered against a later one.
+
+### 7.1 Where it is
+
+A **256-byte** range at `CTRL_BASE`, default `0x0000_0000_0002_0000`. The decode
+is `pa[ADDR_W-1:8] == CTRL_BASE[ADDR_W-1:8]` — a bit test, not a magnitude
+compare, so `CTRL_BASE` **MUST** be 256-byte aligned. The offset is `pa[7:0]`.
+
+Reads are answered from the early address and writes from the registered one,
+which means a read is answered in the cycle after the access starts, exactly as
+an L1 hit is.
+
+### 7.2 The map
+
+| Offset | Name | Access | Contents |
+|---|---|---|---|
+| `0x00` | `R_EXIT` | W | Any store sets the `exited` flag and latches the stored word, which the host reads at `HR_EXIT`. This is how a program terminates: it is a store, not an instruction. |
+| `0x08` | `R_CONSOLE` | W | `[7:0]` is emitted on the complex's console byte port for one cycle. There is no buffering and no flow control; a byte written while the consumer is not looking is lost. |
+| `0x10` | `R_DBELL` | **R** | `{63'd0, dbell}` — the doorbell the host set at `HR_DBELL`. **Read-only from the processor**: a store here is decoded by no case and does nothing. Software cannot acknowledge its own doorbell. |
+| `0x18` | `R_SATP` | **R** | A **read-only mirror** of the `satp` CSR. `satp` is architectural state owned by supervisor software and written with `CSRRW`; this offset exists so a host can read the translation root without a path into the register file. A store here is decoded by no case and does nothing. |
+| `0x20` | mover status | R | `[32]` mover busy, `[31:28]` mover fault, `[27:0]` moves completed. `[63:33]` zero. |
+| `0x28` | doorbell status | R | The 64-bit word on the complex's `db_status` input: `mag_ilink`'s four inbound doorbell counts, mesh 0 in `[15:0]` up to mesh 3 in `[63:48]`, or zero when no interlink is built. |
+| `0x40`–`0x7F` | dispatch mailbox | RW | A store writes mailbox register `pa[5:3]`; a load reads it. §7.5. |
+| `0x80`–`0xBF` | mover config | W | A store writes mover register `pa[5:0]` with the stored 64-bit value. §7.3. |
+| `0xC0`–`0xFF` | interlink config | W | A store drives the complex's `db_*` port with address `{2'b10, pa[5:0]}` and the stored value, so it writes interlink client register `0x80 + pa[5:0]`. §7.4. |
+| everything else | — | R | `64'd0`. Writes are ignored. |
+
+Note the two status words differ from the RV32 complex's single `node_word`
+([§3.1](#31-the-rv32-control-processor-does-not-use-this-window)): the fields are
+in different places and the occupant fault is absent. A driver **MUST NOT** share
+a decoder between them.
+
+### 7.3 The mover window reaches only half the mover
+
+A store at `0x80 + k` writes mover register `k`, for `k` in `0x00`–`0x3F`. The
+register index is `pa[5:0]` zero-extended.
+
+**`0x40` and above of the mover's map are therefore unreachable from the
+processor.** That is the mover's immediate register (`0x40`, the fill value and
+the padding value) and its gather pitch and word count (`0x50`) —
+[§3](#3-the-memory-movers-command-registers). A program running on the RV64
+complex can command `COPY`, `GENERATE` and `XFORM` moves, and cannot fully
+configure `FILL` or `GATHER`. The host's `AUX_CFG` window (§3) still reaches all
+of them, and the processor's writes win over the host's when both pulse in one
+cycle.
+
+**There is no `MVGO` descriptor path.** The RV32 complex issues a move by storing
+a pointer to a register-write list; the RV64 complex has no such register, so a
+move costs one store per field of the descriptor rather than one store total.
+
+### 7.4 The interlink window
+
+A store at `0xC0 + k` drives `db_en`, `db_data` and `db_addr = {2'b10, k}`, so
+it writes the interlink's client register `0x80 + k` — the same map the host
+reaches through `AUX_CFG` ([§4](#4-the-interlink-registers)). `0x28` reads
+`db_status`.
+
+`sysnode` connects all four in the `CPU_RV64` branch. `db_en` / `db_addr` /
+`db_data` reach `mag` as a **second writer** on the interlink's config port,
+where **the host wins a same-cycle collision** — the host path is a debug path
+and the processor can retry.
+
+The three registers that exist, at their control-region offsets:
+
+| Offset | Interlink register | Fields |
+|---|---|---|
+| `0xC0` | `0x80` control | `[0]` enable — **reset to 1**; `[1]` clear the inbound doorbell counts; `[2]` clear the sticky fault register |
+| `0xC8` | `0x88` mesh id | `[1:0]`, reset to the node's `MESH_ID` parameter |
+| `0xD0` | `0x90` ring | `[1:0]` destination mesh, `[15:8]` transaction tag. **The write itself rings the doorbell** |
+
+Offsets `0xD8`–`0xFF` decode to interlink registers that do not exist and are
+ignored.
+
+**Receiving a doorbell.** Each inbound ring increments the 16-bit count for its
+source mesh, read at `0x28`, and **raises the core's external interrupt as a
+level** while any count is non-zero. A ring arriving while another is being
+serviced is therefore not lost. A handler **MUST** clear the counts (`0xC0` bit
+1) to drop the line; a clear racing an arriving doorbell loses to the doorbell,
+so a count may survive a clear rather than a ring being lost.
+
+> **The doorbell is not ordered against data by hardware.** The interlink's
+> outbound arbiter selects between a remote write, a compute-unit flit and a
+> doorbell by **rotating priority**, so a ring requested while a remote write is
+> still queued may leave first. A producer **MUST** establish the ordering
+> itself: issue the writes, poll the mover's status at `0x20` until it is no
+> longer busy, and only then ring. Do not treat a doorbell as a release fence.
+
+The mover window (§7.3) reaches the mover's registers `0x00`–`0x3F` for the
+matching reason: the mover's own map starts at `0x00`, so it needs no offset.
+
+### 7.5 The dispatch mailbox
+
+Source of truth: `src/kohakuaccel/pe/rv64-sys/rv64_noc_mbox.v`.
+
+This is how the RV64 complex reaches the mesh. Dropping the compute-unit shell
+dropped the complex's only path onto the fabric with it, and the mailbox is the
+replacement: **software writes a dispatch, not a flit.** A flit is 288 bits
+against a 64-bit store port, so composing one in software would be five stores
+with a tearing window in the middle. Instead a program names a destination and
+two payload words, and hardware assembles the `CU_INST`.
+
+Registers at `0x40 + index * 8`, the index being `pa[5:3]`:
+
+| Offset | Index | Name | Access | Contents |
+|---|---|---|---|---|
+| `0x40` | 0 | `M_DST` | RW | `[POS_WIDTH-1:0]` destination x, `[8+:POS_WIDTH]` destination y. Reads back in the same packing |
+| `0x48` | 1 | `M_ARG0` | RW | Payload word 0 — the low 64 bits of the flit's payload |
+| `0x50` | 2 | `M_ARG1` | RW | Payload word 1 — the next 64 bits |
+| `0x58` | 3 | `M_GO` | W | Any store builds the flit and offers it to the hub. **Ignored while a previous flit is still offered** |
+| `0x60` | 4 | `M_STAT` | RO | `[7:0]` completions queued, `[15]` a dispatch is offered and not yet taken, `[31]` sticky queue overflow. All other bits zero |
+| `0x68` | 5 | `M_HEAD` | RO | The oldest queued completion, or `64'd0` when the queue is empty |
+| `0x70` | 6 | `M_POP` | W | Any store discards the head. A store when the queue is empty does nothing |
+| `0x78` | 7 | — | RO | `64'd0` |
+
+The flit `M_GO` builds is a `CU_INST` (type `0x5`): destination from `M_DST`,
+source from the complex's own `(my_x, my_y)`, `last` set, an 8-bit `txn` the
+mailbox increments per dispatch, and `{M_ARG1, M_ARG0}` zero-extended as the
+payload. Nothing else in the flit is reachable from software.
+
+A queued completion is one 64-bit word:
+
+| Bits | Field | Width | Meaning |
+|---|---|---|---|
+| `[63:56]` | zero | 8 | — |
+| `[55:52]` | `src_y` | `POS_WIDTH` | The signalling node's y |
+| `[51:48]` | `src_x` | `POS_WIDTH` | Its x |
+| `[47:40]` | `code` | 8 | The `CU_SIGNAL` code |
+| `[39:8]` | `arg` | 32 | Its argument |
+| `[7:0]` | zero | 8 | — |
+
+The field positions above are shown at the reference build's `POS_WIDTH = 4`;
+the packing is `{8'd0, src_y, src_x, code, arg}` left-justified in the word.
+
+Four rules bind a dispatcher.
+
+- **`M_GO` is ignored while `M_STAT[15]` is set.** An offered flit is held until
+  the hub takes it, because withdrawing one destroys it and the loss is silent
+  downstream. A second `M_GO` inside that window does nothing and reports
+  nothing. A dispatcher **MUST** check `M_STAT[15]` before every `M_GO` after the
+  first.
+- **A completion the queue cannot hold is accepted and dropped.** The queue is
+  `CQ_DEPTH` deep, 16 at the reference build. The mailbox never raises busy on
+  the hub — held, an unwanted completion would sit at the head of the hub's queue
+  and stall the link for everything behind it, including the traffic that would
+  drain the queue. `M_STAT[31]` is **sticky** and is the only witness, because a
+  dropped completion and a unit that never finished are otherwise identical from
+  software.
+- **Popping is a write.** Reading `M_HEAD` has no side effect. The control region
+  answers a read from a register one cycle later, so a read-triggered pop would
+  have to guess which cycle the read happened on.
+- **Credit is the program's.** There is no credit register here and no credit
+  counter. The rule of [§2.4](#24-credit) still holds — a sender **MUST NOT**
+  dispatch more instructions to a node than that node's instruction FIFO can
+  hold — and in this configuration nothing in hardware enforces it. The depth is
+  `inst_depth` from that node's `CU_CAPS` (§1.3).
+
+A non-empty queue raises the core's external interrupt, alongside the node's
+`irq_summary`. Waiting for a completion is exactly the condition a scheduler
+must not have to poll for.
+
+## 8. Known divergences
 
 | Divergence | Detail |
 |---|---|
@@ -713,3 +1014,11 @@ memory-mapped. Branches or arithmetic here would duplicate the host.
 | Staging window versus 4 KB | The decode is derived from `STAGE_WORDS` and at the default `STAGE_FLITS = 128` extends past `0x2FFF`. Correct in RTL; a hazard for a host that assumes one page. §2.6. |
 | `CU_VERSION` default | The parameter defaults to `8'h01`; every instantiation in the tree overrides it to the current build number. A unit that forgets to override it reports a version it does not have. |
 | Orchestrator location | `noc_orchestrator.v` lives under `src/kohakuaccel/noc/` but is the memory agent's control plane and is instantiated only by `mag.v`. |
+| `HR_PC` has no consumer | The RV64 host window accepts a 64-bit boot PC at `0x08` and stores it. `rv64_core` takes its start address from the `RESET_PC` parameter, which `rv64_syscore` fixes at 0, and has no PC input. The register is a reservation. §6.3. |
+| RV64 host-window read decode | `hs_rdata` is selected from `hs_addr[7:0]` with no test of `hs_addr[31:28]`, so every region aliases the control region for reads. §6.2. |
+| RV64 mover window is half-width | The control region carries mover register index `pa[5:0]`, so offsets `0x40` and above of the mover's map cannot be written by the processor. §7.3. |
+| Doorbells are not ordered against data | The interlink's outbound arbiter picks between a remote write, a flit and a doorbell by rotating priority, so a ring can leave ahead of a queued write. A producer must order it in software — writes, then the mover idle, then the ring. §7.4. |
+| RV64 coordinate is not enumerable | The complex is a live hub client at `(0, 0)` and dispatches, but it wears no compute-unit shell, so it answers no `CU_CTRL` read. A controller walking the mesh sees the coordinate as empty, and there is no runtime way to tell which configuration a bitstream carries. §6. |
+| RV64 dispatch has no credit mechanism | The orchestrator's dispatch path holds a credit counter and stalls locally at zero (§2.4). The mailbox has neither, so on this path the rule against over-dispatching a node's instruction FIFO is enforced only by the program. §7.5. |
+| RV64 ordering guarantee unpublished | A compute unit's completion means every write it made is visible; that is a dispatcher's only sequencing point. The RV64 complex has no shell and has not published an equivalent guarantee for traffic it originates. §7.5. |
+| RV64 status words differ from RV32's | The RV32 complex reports `{busy, mover fault, occupant fault}` in one 32-bit `node_word`; the RV64 control region reports mover busy, mover fault and moves-completed at `0x20` in different positions and carries no occupant fault, because its transform register port is tied off. §7.2, [transform-slot.md](transform-slot.md). |

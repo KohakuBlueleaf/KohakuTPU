@@ -9,11 +9,17 @@ tags:
 
 # Choosing a mesh
 
-A mesh is a grid of routers, the endpoints hanging off them, and one memory
-agent. You choose its shape by writing a picture of it. This page is about
-choosing well: what the grid can hold, what an extra endpoint really costs, and
-which of these decisions is actually a floorplanning decision wearing a topology
-costume.
+> **Kind: Yours, inside limits that are Fixed.** How many endpoints, where they
+> sit, how many memory ports and how many meshes are all your decisions. The
+> constraints they live inside — the coordinate clamp, the empty corners, XY
+> routing, one transform slot per agent — are fixed protocol and are not
+> negotiable. §2's map format is a **convention** of the generator.
+
+A **mesh** is a grid of routers, the endpoints hanging off them, and one system
+node holding the memory agent. You choose its shape by writing a picture of it.
+This page is about choosing well: what the grid can hold, what an extra endpoint
+really costs, and which of these decisions is actually a floorplanning decision
+wearing a topology costume.
 
 The router's own behaviour — ports, routing rule, flow control — is
 [arch/noc/README.md](../arch/noc/README.md). The physical constraints behind §6

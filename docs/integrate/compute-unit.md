@@ -9,6 +9,17 @@ tags:
 
 # Writing a compute unit
 
+> **Kind: the unit is Yours; the port is Fixed protocol.** §1, §3, §7 and §8
+> describe the port and its handshake, which are contract — the normative form is
+> [spec/compute-unit-port.md](../spec/compute-unit-port.md). §4, §5, §6 and §9
+> are **convention**, and §4's first three idioms are the *forced* kind: the
+> memory agent hands you data in that shape whether or not you designed for it.
+> Everything §5 describes is **yours** outright.
+
+A **compute unit** is the block you write and attach to a mesh: it receives
+instructions, fetches its own operands, computes, and sends results back. It is
+the only block a project has to write.
+
 **The compute unit is yours.** Its datapath, its memories — how many, how wide,
 which primitive, what read latency — its pipeline depth, what its instructions
 mean. The framework has no template for any of that, and the evidence is that the
@@ -459,15 +470,17 @@ dispositions, both in use:
 
 **Decide `recv_ready` from flit type, not from your state alone.** A memory
 response only makes sense inside a fetch, but a unit-to-unit transfer is
-unsolicited by definition. `mx_cluster_cu` registered `recv_ready` on state and
-silently discarded peer data during a fill; it is combinational and
-type-dispatched now.
+unsolicited by definition, so a `recv_ready` registered on unit state alone
+accepts a flit class the state was not expecting and discards it — peer data
+arriving during a fill is the case that bites. Make it combinational in the flit
+type; both production units do.
 
 ---
 
-## 9. Traps that have cost real time
+## 9. Traps
 
-Each was found in simulation on this codebase.
+Each of these elaborates cleanly, simulates plausibly, and produces a wrong
+answer or a hang rather than an error.
 
 **Concatenations must be exactly `FLIT_WIDTH` wide.** Verilog left-pads a short
 one, shifting the header into the payload; the flit routes nowhere and nothing

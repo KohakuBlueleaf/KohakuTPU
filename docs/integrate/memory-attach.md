@@ -9,9 +9,14 @@ tags:
 
 # Memory attach
 
-A design record, not a specification. Nothing here is built. It exists so the
-argument survives the discussion that produced it, including the several places
-the first version of it was wrong.
+> **Kind: none of the four yet.** This page describes a **proposal**, and nothing
+> on it is built. When it is, the block would be a *customizable addon* — a slot
+> at a mesh endpoint, beside the one `noc_l2_adapter` already occupies. Read it
+> as a design record, not as something you can attach to. What you *can* attach
+> to today is §2 and §6, and those are marked.
+
+A design record. It exists so the argument survives the discussion that produced
+it.
 
 ---
 
@@ -22,8 +27,8 @@ implements it: build `MEM_RD_REQ` / `MEM_WR_REQ` descriptors, allocate
 transaction tags, match responses back to them, respect one outstanding write,
 honour credits.
 
-`src/kohakuaccel/pe/rv32/noc/rv_noc_req.v` is 289 lines of exactly that, and its
-header states the job plainly:
+`src/kohakuaccel/pe/rv32/noc/rv_noc_req.v` is a few hundred lines of exactly
+that, and its header states the job plainly:
 
 > *"everything about the framework memory protocol that RV32 software must never
 > see."*
@@ -75,7 +80,11 @@ Cross-mesh is a shipping capability, not a hole.
 **Explicit L2 exists in two forms, both selectable, both in ship tops.**
 `mag_stage` behind `mag_stage_port` in the system node, and `noc_l2_adapter` at a
 mesh endpoint — chosen per endpoint by `gen_mesh.py --l2-mag / --l2-cu /
---l2-vec`, at 8 URAM per CU adapter and 64 per agent.
+--l2-vec`. Their sizes follow from their parameters rather than from a
+measurement: the endpoint adapter's default `DEPTH` is 8192 lines of `DATA_W`,
+and the agent's staging store is `STAGE_BANKS × STAGE_ENTRIES` entries of
+`4 × DATA_W`, 2 MiB at the defaults
+([spec/parameters.md](../spec/parameters.md) §5).
 
 ---
 
@@ -100,7 +109,7 @@ This is where the first version of this document was wrong, and the error is
 worth recording because it is easy to repeat.
 
 `rv_l1` + `rv_noc_req` is a tagged cache whose miss becomes a flit. It works, it
-passes 116 checks in `rv_front`, and it is the exact mechanism this document
+is exercised by the `rv_front` bench, and it is the exact mechanism this document
 wants. **It is not a product**, because:
 
 > A unit's innermost cache is not ours to design. A mature core or unit has its
@@ -191,11 +200,102 @@ should be said at integration time rather than discovered as a phantom packet.
 | **3. Tagged L2 → NoC** | holds lines, translates misses | **Yes. This is the product** |
 
 **On (1).** The map belongs to whoever builds the machine. What *is* framework
-work is the **contract and its checker**: the fabric carries no `LOCK`, no
-`CACHE`, no `PROT` and no timeout; `sb_nmu` is INCR-only, bounded by `MAX_BURST`,
-and reserves response credit before injecting. A foreign master breaks these
-silently. `tests/axi/sb_axi_check.v` already exists and belongs in the
-integration deliverable rather than in the test tree alone.
+work is the **contract and its checker**, and this is the part of the page that
+applies to something you can attach to today.
+
+The station bus is the AXI fabric that carries host traffic across the card. A
+**manager** (`sb_nmu`) is where an AXI master joins it; a **subordinate**
+(`sb_nsu`) is where a slave hangs off it. Between them everything travels as
+flits, and the four rules below are what a foreign master has to live inside.
+Breaking any of them fails silently.
+
+**The fabric carries no `LOCK`, no `CACHE`, no `PROT` and no timeout.** No master
+in the framework drives them, nothing on the path carries them, and a master that
+depends on any of them for correctness is depending on something that does not
+exist. A miss that never returns hangs the client; there is nothing to time it
+out.
+
+**Bursts are INCR only, and bounded by `MAX_BURST`.** A `WRAP` or `FIXED` burst
+is not rejected — it is carried as `INCR`, which is a plausible wrong answer
+rather than an error.
+
+**A read reserves its whole response before it injects, and the reservation is
+counted in FLITS, not in AXI beats.** A master wider than the fabric flit returns
+`MW / FW` flits per beat, so a burst of `n` beats needs `n × MW / FW` flits of
+response room — not `n`. `sb_nmu` computes that floor itself and **clamps
+`RSP_DEPTH` up to it**, so the parameter cannot be under-sized from outside. What
+you still owe it is a truthful `MAX_BURST`: the floor is
+`MAX_BURST × MW / FW`, so a master that declares single-beat and then issues a
+burst has under-reserved by however much it lied.
+
+> The failure mode is what makes this worth stating. **An under-reserved read
+> does not overflow.** The reservation simply never succeeds, the address
+> handshake never fires, and that port hangs forever with no error raised
+> anywhere on the path. Any credit or reservation scheme that counts in the
+> transport's unit must have its buffer sized in that unit too — and where a
+> width ratio sits between the two, write the depth as a function of the ratio
+> rather than documenting the rule and hoping.
+
+**`REQ_DEPTH` is the one an integrator must size by hand.** The asymmetry is the
+whole point and it is easy to miss:
+
+| | Floors itself? | So it is |
+|---|---|---|
+| `RSP_DEPTH` | **Yes** — `sb_nmu` silently raises it to (burst limit × split factor) | a tuning preference. You cannot get it wrong from outside |
+| `REQ_DEPTH` | **No** — taken as given, subject only to the vendor FIFO's depth-16 minimum | an **obligation**. Get it wrong and the station wedges |
+
+The rule is **`REQ_DEPTH >= max AxLEN + 1`** — a packet longer than the request
+FIFO wedges the station, and reports it only as a stall.
+
+**This is not theoretical. It has already happened on silicon:** `sb_line4.v`
+records that 16-deep FIFOs *"wedged every burst over 16 beats on v6.5
+hardware"*, which is why its 64-bit JTAG manager is not left at a shallow depth.
+
+### The obligation is a pairing, not a number
+
+Two legal ways to size a request queue, and one combination that wedges:
+
+| Declare `MAX_BURST`? | Depth | Verdict |
+|---|---|---|
+| **Yes**, the real limit | as shallow as that limit | **Correct.** A single-beat port at depth 16 is right *because* the bound is a protocol guarantee, not a hope about software |
+| **No** (`0` = unbounded) | the width's 4 KB bound | **Correct.** You have promised nothing, so you must cover everything legal |
+| **No** | shallow anyway | **This is the wedge.** Nothing declares the limit and nothing covers it |
+
+**The unbounded case is width-derived, and 256 is rarely the answer.** AXI4's
+4 KB boundary rule caps a burst at `4096 / (MW/8)` beats, so a wide port can
+legally issue *fewer* beats than a narrow one. `sb_root9` sizes its bulk request
+queue at **64** and says why: a 512-bit port cannot legally exceed 64 beats, so
+*"a deeper queue is sized for a burst that cannot legally arrive."* The general
+bound is `min(256, 4096 / (MW / 8))`.
+
+The two shipping topologies differ, and both are defensible: `sb_line4` gives its
+bulk managers 256 — generous, covering the narrowest port it might carry — while
+`sb_root9` derives 64 from its actual port width. Deriving is the better habit;
+being generous is the safer default if you are unsure.
+
+**The response side is where flits-not-beats bites**, and `sb_root9` has the
+worked instance: its bulk response depth is `(FW < 512) ? 128 : 64`, because *"a
+512-bit manager on a 256-bit fabric returns two per beat"* — 64 beats becomes 128
+flits. You do not have to compute that one; `sb_nmu` floors `RSP_DEPTH` itself.
+You do have to compute the request side.
+
+`sb_nmu`'s own defaults are `REQ_DEPTH = 512`, `RSP_DEPTH = 256`.
+
+> The RTL records the cost of sizing up, and it is close to free: **no extra
+> BRAM at all**, because a RAMB36 row is 512 deep — a shallow queue was already
+> paying for rows it never used — against a double-digit LUT delta.
+> *(Attribution: a comment in `sb_line4.v`, which states +71 LUT at `MW = 64`
+> and +88 at `MW = 512`. It is not a report in this tree, and it names no part,
+> tool or mode.)*
+
+A last floor worth knowing about, since it turns a sizing mistake into a build
+failure rather than a hang: the underlying FIFO primitive refuses a depth below
+16, and it does so by ending the simulation at time zero rather than warning. A
+Lite port asking for 4 gets that, not a small FIFO.
+
+`tests/axi/sb_axi_check.v` already exists and belongs in the integration
+deliverable rather than in the test tree alone. The station bus itself is
+[projects/kohakuaxi/station-bus.md](../projects/kohakuaxi/station-bus.md).
 
 **On (2).** A bridge with no tags, no lines, no flush and no coherence. It is the
 right answer for a client that already has its own cache hierarchy — putting our
@@ -277,7 +377,8 @@ The block costs a tag array, line storage and its own control.
 
 It also **removes**, from every unit behind it: flit construction, the
 transaction tag table, response matching, write-ordering state and credit
-accounting — `rv_noc_req`'s 289 lines, paid once per L2 instead of once per unit.
+accounting — everything `rv_noc_req` does, paid once per L2 instead of once per
+unit.
 That is why §7.2 matters to the arithmetic and not only to the flexibility: with
 N masters behind one L2, the per-unit saving is multiplied and the tag array is
 not.
@@ -314,10 +415,15 @@ answer with no exception raised.
 
 ## 12. Relationship to the rest of the machine
 
-**The system-node control processor needs none of this.** It sits inside the
-memory system already; a segment file is enough to let a 32-bit core name the
-40-bit space, and DRAM and staging are both simply addresses to it. That design
-is `docs/arch/sysnode/control-processor.md`.
+**The system node's control processor needs none of this, whichever one it is.**
+It sits inside the memory system already, beside `mag_stage_port` and
+`mag_dram_port` rather than out at a mesh port, so DRAM and staging are both
+simply addresses to it. The RV32 complex names the 40-bit space through a segment
+file; the RV64 complex has Sv39 translation and an L1 of its own, and reaches
+memory through a single node port. Neither needs a block between it and the
+fabric, because neither is behind the fabric. That is
+[arch/sysnode/control-processor.md](../arch/sysnode/control-processor.md) and
+[arch/cpu/rv64-sys/memory-system.md](../arch/cpu/rv64-sys/memory-system.md).
 
 **What this generalises is the attach, not the core.** The same tag array with a
 different fill backend serves a unit at a mesh port, a foreign core with an AXI

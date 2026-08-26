@@ -174,6 +174,32 @@ flit.
 Consequence a unit MUST plan for: a receive queue the unit stops draining will
 stall the instruction stream as well.
 
+### 3.1.1 `CU_CTRL` is outside that backpressure, and a second one is lost
+
+`noc_in_busy` covers the instruction and receive FIFOs and **nothing else**. A
+`CU_CTRL` flit enters neither, so the port never raises `busy` on its account and
+never refuses one.
+
+The base holds exactly **one** pending reply. A `CU_CTRL` flit arriving while a
+reply is still pending is taken off the link, its index discarded, and no reply
+is ever generated for it. The pending reply is unaffected. Nothing is reported,
+on the wire or in simulation.
+
+> **A controller MUST NOT have more than one `CU_CTRL` read outstanding to one
+> unit.** It MUST wait for the reply before issuing the next request to that
+> node.
+
+This is a **requester-side** obligation, unlike the rest of this document, and it
+is stated here because this is the page that describes the endpoint that drops
+the flit. The failure it prevents has no diagnostic at all: the second requester
+waits forever for an answer to a flit the endpoint consumed and threw away, and
+no counter moves, no fault is raised, and the link stays healthy. A controller
+enumerating a mesh in parallel across nodes is safe; enumerating one node in
+parallel with itself is not.
+
+The same rule is stated from the register side in
+[control-registers.md](control-registers.md) §1.1.
+
 ### 3.2 What the base does on the outbound side
 
 Three producers share the one outbound register, in strict priority:
@@ -209,7 +235,11 @@ The unit's obligations:
   completion would find `in_flight` low and never be queued — a permanently lost
   dispatch credit. Leave at least one cycle between them.
 - An `exec_done` asserted while no instruction is in flight is **discarded**. It
-  produces no `CU_SIGNAL` and no credit.
+  produces no `CU_SIGNAL` and no credit. It **is** still counted: the base's
+  retired-instruction counter (`CU_CTRL` index 2) increments on every `exec_done`
+  without testing `in_flight`, so a unit that pulses spuriously reports more
+  retirements than completions and the two can only be reconciled against the
+  orchestrator's own count.
 - The unit **MUST NOT** accept an instruction it cannot retire in bounded time
   without further external input that is not guaranteed to arrive.
 
@@ -226,8 +256,10 @@ What the framework does for the unit, so the unit MUST NOT do it itself:
   | `last` set on the `CU_INST` flit | `SIG_BATCH_COMPLETE` (`0x01`) | `{24'd0, txn}` of that instruction |
   | otherwise | `SIG_INST_COMPLETE` (`0x00`) | `exec_result` |
 
-- Queues completions rather than holding one. The queue is 16 deep. A unit that
-  retires faster than a congested link drains does not lose credits.
+- Queues completions rather than holding one. The queue is 16 deep — a
+  `localparam` inside `noc_cu_base`, not a parameter, so it is the same in every
+  build and a unit may rely on it. A unit that retires faster than a congested
+  link drains does not lose credits.
 
 A unit **MUST NOT** emit `SIG_INST_COMPLETE`, `SIG_BATCH_COMPLETE` or `SIG_FAULT`
 on its own `send_*` path. It **MAY** emit other `CU_SIGNAL` codes — both
@@ -310,7 +342,7 @@ A unit implementing the mesh-facing port directly owes, in addition to §2:
 | Flits between one `(src, dst)` pair arrive in the order they were sent. | XY dimension-order routing gives exactly one path per pair. |
 | A flit offered on `noc_in_*` is never lost, provided the unit honours §2. | Hop-by-hop retry. |
 | `CU_INST` flits are delivered to the datapath in arrival order. | The instruction FIFO. |
-| `CU_CTRL` never reaches the datapath and is answered whatever the datapath is doing. | The base answers it. |
+| `CU_CTRL` never reaches the datapath and is answered whatever the datapath is doing — **provided the controller keeps only one outstanding**. | The base answers it. §3.1.1. |
 | Completions are emitted in retirement order. | The completion queue is a FIFO. |
 | At most one instruction is in flight. | `inst_valid` is gated on `!in_flight`. |
 | The source coordinates on an inbound flit identify the sender uniquely and are preserved across an inter-mesh crossing. | The interlink does not rewrite them. |

@@ -9,6 +9,12 @@ tags:
 
 # Addon slots
 
+> **Kind: Customizable addon**, which is the whole subject. The four obligations
+> below are what makes something an addon rather than a hook, and the *interfaces*
+> they describe are Fixed protocol — the normative form is
+> [spec/transform-slot.md](../spec/transform-slot.md). What goes inside a slot is
+> Yours.
+
 An **addon** is a part the framework ships working and expects you to replace.
 [what-you-own](what-you-own.md) says which parts those are. This page says what
 a slot actually *is*, using the one the reference project fills.
@@ -84,6 +90,23 @@ so a project with no transform gets a read path that is a wire and still obeys
 the fixed output shape. This is the pattern `noc_l2_adapter` already uses, where
 `PASS=1` reduces the adapter to a straight connection. A slot whose empty state
 costs nothing is a slot people leave in.
+
+### The fifth thing, which is not an obligation but is worth knowing
+
+**A slot's control path can be present without being connected.** The transform
+slot carries an occupant register port through `mag_xform` — write strobe, id,
+offset, data, and a combinational read back — and whether anything drives it
+depends on which control processor the node was built with. With the RV32 complex
+it is decoded out of the processor's node range. With the RV64 complex
+(`CPU_RV64`) it is **tied off**, and an occupant's registers are unreachable.
+
+The consequence for you: **an occupant that needs configuration is not portable
+across that parameter, and one with no registers is.** The shipping occupant
+derives everything it needs from its per-move `mode` bits and from the data
+itself, which is why a zero-register occupant is a complete one — and why that is
+worth aiming for rather than a coincidence.
+[spec/transform-slot.md](../spec/transform-slot.md) has the contract and the
+divergence.
 
 ## Where the module boundary falls
 

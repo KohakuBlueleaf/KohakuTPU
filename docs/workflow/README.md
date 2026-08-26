@@ -8,19 +8,35 @@ tags:
 
 # Workflow
 
+**What this section is.** The other trees describe the machine. This one
+describes the *practice* of getting a design onto it: the loop from an RTL edit
+to a running device, what each stage costs, what it tells you, and how each one
+lies if you set it up wrong. It is written as method — none of it depends on
+building this particular accelerator.
+
 Hardware has no `pip install`. There is no step where you take a dependency and
-move on; every part of the machine has to be synthesised, measured, placed,
-routed and brought up on real silicon, and each of those has its own failure
-modes and its own hours.
+move on; every part of the machine has to be simulated, synthesised, measured,
+placed, routed and brought up on real silicon, and each of those has its own
+failure modes and its own hours.
 
 This is where a project's schedule actually goes. It is also where a framework
 saves the most time — but only if the practice is written down, because most of
 what is expensive here is not difficult. It is just easy to get wrong in a way
 that produces a plausible answer.
 
+**Vocabulary.** A **ship** is one complete assembly floorplanned for a specific
+device ([what is a ship](../arch/ship/what-is-a-ship.md)); a **mesh** is the
+on-chip network and the compute units on it ([noc](../arch/noc/README.md)); a
+**system node** is the single component serving one mesh with memory access and
+dispatch ([sysnode](../arch/sysnode/README.md)); a **compute unit** is the block
+you write ([compute-unit](../integrate/compute-unit.md)).
+
 ## The loop
 
     edit RTL
+      |
+      v
+    lint                          seconds                 simulate.md
       |
       v
     simulate                      seconds to minutes      simulate.md
@@ -49,6 +65,7 @@ or a mistake costs the whole run.**
 
 | stage | cost | answers | does not answer |
 |---|---|---|---|
+| **lint** | seconds | does it elaborate — modules, ports, parameters | anything about behaviour |
 | **software tests** | seconds | is the compiler / driver logic right | anything about hardware |
 | **unit simulation** | seconds | is the arithmetic bit-exact | anything about handshakes |
 | **module simulation** | seconds–minutes | does the block obey its protocol under stress | anything crossing a boundary |
@@ -85,13 +102,22 @@ Three that recur:
 - **A per-module measurement is optimistic about the assembly**, sometimes
   substantially. Composition costs frequency, and a design filling a device does
   not hold the slack that one block alone does.
+- **A synthesis result is optimistic about the routed result.** Synthesis
+  estimates routing, and the estimate is generous. A synthesis Fmax is not a
+  closed-timing figure, whatever it says.
 - **A simulation pass covers the traffic it exercised and nothing else.** It is
   corroboration for structural properties, never proof of them. See
   [simulate.md](simulate.md).
 
-The habit that prevents all three: **write down which claim you have.** "Meets
-300 MHz, not pushed" and "fails at 3.0 ns, so the ceiling is near there" are
-different statements, and one of them is not a frequency.
+The habit that prevents all four: **write down which claim you have, with the
+instrument that produced it.** "Meets its 3.33 ns target, not pushed" and "fails
+at 3.0 ns, so the ceiling is near there" are different statements, and one of
+them is not a frequency. Every figure in this tree names its part, its tool
+version, whether it was in or out of context, whether it was synthesised or
+routed, and which script produced it —
+[measure.md](measure.md#every-figure-carries-its-provenance) is the rule and
+[arch/physical/measurement.md](../arch/physical/measurement.md) is where it sits
+as architecture.
 
 ## When to skip a stage, and when not to
 
@@ -132,10 +158,20 @@ finishes in about a minute, and something to run before calling a thing done. If
 the fast tier drifts up to a minute, fix it; a ten-second question that becomes a
 five-minute question teaches people to stop asking it.
 
-`scripts/py/check.py` is that structure: `fast` is the linters, the two pytest
-suites and the doc and style gates; `unit` adds the RTL benches that have caught
-the most; `blocks` runs every bench; `full` is all of it — 107 checks in about
-ten minutes at `-j4`.
+`scripts/py/check.py` is that structure, and its header states each tier's
+measured cost at `-j4`: `fast` is the pure-Python compiler and schedule checks
+against a functional model; `unit` is the RTL benches that have caught the most;
+`blocks` runs every block's own bench; `e2e` is the tier for compiler-emitted
+instructions through the real RTL; `full` is all of them. Every check is
+**bounded**, and one that produces no result inside its budget is killed and
+reported as `STALLED` — a different event from a `FAIL`, and printed as one.
+
+Two properties of a tiered suite decide whether it can be trusted, and both are
+easy to leave implicit: **whether tiers nest** — "the unit tier passed" is not
+"the linters passed" unless the unit tier contains them — and **whether a tier
+can become empty**. A tier whose membership drains away when the thing it tested
+is retired does not disappear; it passes, silently, for running nothing. Assert
+that each tier is non-empty. See [simulate.md](simulate.md).
 
 The corollary: **a check that takes much longer than usual is a stall, not
 slowness.** Investigate it rather than waiting it out.
@@ -164,9 +200,10 @@ floorplan constraints and the software's model of the machine all describe the
 same object. Hand-maintaining more than one copy guarantees they diverge, and the
 divergence presents as a hardware fault.
 
-**Record a number when it appears**, with the part, the target, the tool version,
-and whether the run met or failed. A number that exists only in a terminal
-scrollback is lost, and it will be re-measured — or worse, remembered
+**Record a number when it appears**, with the part, the target period, the tool
+version, whether it was in or out of context, whether it was synthesised or
+routed, and whether the run met or failed. A number that exists only in a
+terminal scrollback is lost, and it will be re-measured — or worse, remembered
 approximately.
 
 That applies to simulation too, and there it is mechanical:
@@ -189,22 +226,45 @@ between framework machinery and project configuration, which is what a second
 project needs.
 
 **[measure.md](measure.md)** — out-of-context measurement, the core practice for
-answering "is my unit fast enough" without building a device. How to run one, how
-to read it, and the ten ways it lies if set up wrong.
+answering "is my unit fast enough" without building a device. What a figure
+produced this way is and is not, what provenance every number carries, how to
+report failing paths so they name a problem rather than an endpoint, and the
+dozen ways the measurement lies if set up wrong.
 
-**[timing-closure.md](timing-closure.md)** — reading a critical path,
-distinguishing control-bound from compute-bound, floorplanning as the first lever
-rather than the last, and what a utilisation report actually says.
+**[timing-closure.md](timing-closure.md)** — the method: group the failing paths
+and fix the one root a group shares, read logic levels rather than slack,
+floorplan before pipelining, spend flip-flops because they are the resource you
+have, and treat implementation directives as zero-sum.
 
-**[simulate.md](simulate.md)** — the four simulation levels, what only each can
-catch, multi-clock simulation, and the minimal-test discipline.
+**[simulate.md](simulate.md)** — which simulator answers which question, the four
+levels of test and what only each can catch, cross-checking two simulators
+against each other, multi-clock simulation, running real programs against RTL,
+and the minimal-test discipline.
 
 **[bringup.md](bringup.md)** — bitstream to first correct result: the debug
 surface, the ladder, and how to tell a build problem from an RTL problem from a
 driver problem.
 
-**[tooling-traps.md](tooling-traps.md)** — the tool and macro behaviours that
-cost real time. Every future project meets most of them.
+**[tooling-traps.md](tooling-traps.md)** — durable facts about how the tools
+behave: Vivado, the vendor macro libraries, the simulators and Verilog itself.
+Every future project meets most of them.
+
+## What this section does not cover
+
+Stating the boundary explicitly, because a page that lists only capabilities
+reads as marketing:
+
+- **How to design a compute unit.** That is [integrate/](../integrate/README.md).
+  This tree assumes you have RTL and want to know whether it works.
+- **What the machine is.** [arch/](../arch/README.md) describes the parts;
+  nothing here explains the mesh, the node or the flit protocol beyond naming
+  them.
+- **Any specific accelerator's numbers.** Frequency, resource and utilisation
+  figures describe one accelerator on one part and live with
+  [that project](../projects/README.md). These pages carry practice, and the
+  worked examples they cite are cited for their shape, not their values.
+- **Hardware operation of a particular board.** Power, cooling, thermal limits
+  and clock policy on a specific card are the project's, not the framework's.
 
 ## Where this fits
 

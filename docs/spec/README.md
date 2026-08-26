@@ -29,6 +29,14 @@ A reader of a specification has to know what they are **allowed** to violate.
 Every statement in this tree is one of three kinds, and each is marked where it
 appears.
 
+**These are the tree's four kinds minus one.** [The constitution](../README.md)
+says everything in KohakuAccel is *fixed protocol*, *customizable addon*,
+*convention* or *yours*; this tree carries the first three and never the fourth,
+because **a specification does not describe something that is yours.** The moment
+a thing is yours there is nothing left to specify — which is why the compute
+unit's datapath, its memories and its instruction semantics appear here only as
+the boundary they present, never as a requirement.
+
 | Kind | What it is | Can you change it? |
 |---|---|---|
 | **Fixed** | The protocol. Flit format, port handshake, memory request and response encoding, retry and credit, cross-mesh encapsulation. Anything stating a signal, a bit position or a handshake rule. | **No.** Change it and you are not on the framework any more. |
@@ -68,12 +76,23 @@ cannot forward a shape it does not know. See
 | Document | What it covers | Kinds inside |
 |---|---|---|
 | [compute-unit-port.md](compute-unit-port.md) | Every signal a compute unit presents, every obligation it meets, and everything it may never do. | Fixed throughout. §10 is illustration. |
-| [flit-format.md](flit-format.md) | The 288-bit flit: header fields, bit positions, message types, per-type payload layouts, and who owns each field. | Fixed. One Convention pocket in §4.7.1. |
+| [flit-format.md](flit-format.md) | The flit: header fields, bit positions, message types, per-type payload layouts, and who owns each field. §1 separates what is protocol from what follows `FLIT_WIDTH`. | Fixed. One Convention pocket in §4.7.1. |
 | [instruction-encoding.md](instruction-encoding.md) | The three owners of instruction bits, and the split inside `CU_INST`. | Fixed for the header and the memory descriptors; Convention for how a unit spends its own payload. |
 | [memory-protocol.md](memory-protocol.md) | Request, response, descriptor and streaming traffic against the memory agent, plus the ordering guarantees and their absences. | Fixed for the encoding and ordering; one Addon (§10); several Conventions the agent forces (§3.2.3). |
-| [control-registers.md](control-registers.md) | The `CU_CTRL` block every unit answers, and the orchestrator's AXI register map. | Fixed. |
+| [control-registers.md](control-registers.md) | Four register surfaces: the `CU_CTRL` block every unit answers, the orchestrator's AXI map, the mover's and the interlink's windows, and the RV64 control complex's host window and control region. | Fixed. One Convention (the dispatch order, §2.3). |
 | [transform-slot.md](transform-slot.md) | The shared transform bank on the mover's read-return path: where it sits, how an occupant is selected, and what the port and geometry contracts are. | Fixed interface, Addon occupant. |
-| [parameters.md](parameters.md) | Every parameter of every framework module: type, default, effect, legal range. | Reference. |
+| [parameters.md](parameters.md) | Every parameter of every framework module: type, default, effect, legal range. | **Fixed** about ranges and meanings; the values are **Yours**. |
+
+**Two processors, one node.** The system node ships a control processor, and
+which one is a build-time choice: `CPU_RV64 = 0` selects the RV32 complex, which
+sits on the mesh as a compute unit; non-zero selects the RV64 complex, which does
+not, and which the host reaches through a dedicated window instead. Where that
+choice changes a contract, the page says so — [parameters.md](parameters.md)
+§5.1, [control-registers.md](control-registers.md) §6–§7, and
+[transform-slot.md](transform-slot.md). Everywhere else it changes nothing: the
+flit format, the port, the memory protocol and the instruction encoding are
+identical either way. The architecture is
+[arch/cpu/](../arch/cpu/README.md).
 
 ## What to read, in what order
 
@@ -95,7 +114,8 @@ cannot forward a shape it does not know. See
 - [control-registers.md](control-registers.md) — needed when you write the
   driver or the bring-up script, not when you write the datapath. The framework
   answers the `CU_CTRL` block on your behalf; §1.4 is the one part that reaches
-  your logic.
+  your logic. §6 and §7 are needed only if your node carries the RV64 control
+  complex and you are loading or driving software on it.
 - [transform-slot.md](transform-slot.md) — needed when memory holds your
   operands in a format your datapath does not want, and only then. A unit that
   reads what it was given never meets the slot.
@@ -112,7 +132,24 @@ that the framework will not take away later.
 least significant. `f[255 -: 40]` is the 40 bits from 255 down to 216, which is
 how the RTL writes it. Flit fields are given twice where they differ: once as an
 expression in `FLIT_WIDTH` and `POS_WIDTH`, and once as the concrete positions at
-the default `FLIT_WIDTH = 288`, `POS_WIDTH = 4`.
+the reference build's `FLIT_WIDTH = 288`, `POS_WIDTH = 4`.
+
+**A width is not a contract unless this tree says so.** `FLIT_WIDTH`,
+`POS_WIDTH`, `DATA_W`, `ADDR_W` and the queue depths are build-time parameters,
+and the numbers this tree prints beside them are what the reference build sets.
+Three claims are distinct and each page marks which it is making:
+
+- what is **true at every legal value** — protocol, and the only kind you may
+  build a contract on;
+- what **follows the parameter** because the RTL computes it;
+- what is a **literal in the RTL** that does not track the parameter, and will
+  therefore silently mean something else if you change it.
+
+The third is the dangerous one and it is not rare — every flit payload field
+position is in it. [flit-format.md](flit-format.md) §1 works the three through
+for the flit; [parameters.md](parameters.md) gives the legal range for each
+parameter and says where a value is genuinely constrained rather than merely
+untried.
 
 **Kind.** Sections and rows carry one of **Fixed**, **Addon** or **Convention**,
 as defined above. An unmarked normative statement is Fixed.
@@ -136,3 +173,20 @@ from an earlier document. Where a header comment, a `noc_pkt.vh` macro or an
 earlier pre-reframing snapshot disagrees with the silicon, the
 silicon wins and the disagreement is recorded in the relevant document under
 "Known divergences". Do not resolve one of those by reading the other file.
+
+**A contract names a module and a signal. A line number is a hint, and only a
+divergence carries one.** The distinction is deliberate and it is about what
+rots:
+
+- A **requirement** — what a signal must do, what a field means, what a
+  handshake obliges — is stated as module and signal, never as a line. A
+  refactor moves lines; it does not move the contract, and a contract whose
+  evidence has to be re-verified after every edit is a worse contract.
+- A **divergence** is a claim that one specific expression in one specific file
+  disagrees with this tree. There the exact spot *is* the evidence, and naming
+  only the module would make the claim unfalsifiable. Those carry a line
+  number — and each also quotes the expression, so a reader who finds the line
+  has moved can still find the code by searching for it.
+
+Treat the file as authoritative and the line number as a pointer that was true
+when it was written.

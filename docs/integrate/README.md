@@ -20,6 +20,33 @@ and *should I be here at all*.
 
 ---
 
+## 0. The words
+
+Every page in this section uses these, and none of them means what it might mean
+elsewhere. Defined once here; the pages that specify them are linked.
+
+| Term | What it is |
+|---|---|
+| **flit** | The unit of transfer on the on-chip network: one indivisible word, header and payload, moved in one cycle. Nothing is smaller and nothing spans two cycles — *that* is protocol. Its **width is a build parameter**, `FLIT_WIDTH`, which the reference build sets to 288. Take it from the parameter; never hard-code it. [spec/flit-format.md](../spec/flit-format.md) §1 |
+| **mesh** | One grid of routers, the endpoints hanging off them, and one system node with its own DRAM. A device image holds up to four. |
+| **node** | An endpoint on a mesh, at a coordinate. Your compute unit is one. |
+| **system node** | The component every mesh has exactly one of: DRAM access, cross-mesh communication, dispatch, and a control processor. Never called "a node". [arch/sysnode/](../arch/sysnode/) |
+| **MAG** | *Memory Access Gateway* — the memory half of the system node. It turns descriptors into DRAM traffic and answers every memory request on the mesh. It has no fabric port of its own. |
+| **compute unit** | The block you write. The only one you have to. |
+| **completion** | The signal flit a unit emits when an instruction retires. It is what returns a dispatch credit, which is why it is not optional. |
+| **kick** | A host write that launches a staged program at a node. One kick, one destination. [spec/control-registers.md](../spec/control-registers.md) §2.3 |
+| **mover** | The descriptor engine inside the system node: layout, gather, fill and format conversion, with its own AXI master and no mesh presence. It is the system node's memory unit, not a compute unit, and an ordinary unit cannot command it. |
+| **transform slot** | The place on the mover's read-return path where a format conversion goes. Shipped filled, built to be replaced. [spec/transform-slot.md](../spec/transform-slot.md) |
+| **granule** | The unit a `CU_DATA` offset counts. What is protocol is that the flit payload, the mover's word and MAG's internal beat are all **the same size on purpose**; that size is `DATA_W/8`, 32 bytes in the reference build. |
+| **buf_id** | The field naming *which* buffer of a destination unit a transfer writes into. A framework namespace, not a free field: index 3 is reserved. [spec/flit-format.md](../spec/flit-format.md) §4.7.1 |
+| **aperture** | The top address bit selecting something other than DRAM — today, the on-chip staging store. [address-map.md](../address-map.md) |
+| **staging** | An on-chip store reached through the aperture bit rather than through DRAM. |
+| **doorbell** | A write whose *arrival* is the signal, rather than its value. The interlink uses one to tell another mesh that data has landed. |
+| **station** | A junction on the AXI fabric that carries host traffic across the card. Where an AXI master joins is a *manager*; where a slave hangs off is a *subordinate*. [projects/kohakuaxi/station-bus.md](../projects/kohakuaxi/station-bus.md) |
+| **ship** | One complete assembly — mesh, system node, host interface — floorplanned for a specific device. [arch/ship/](../arch/ship/) |
+
+---
+
 ## 1. What the framework actually removes
 
 Not the design work. **The connection problem.**
@@ -53,7 +80,7 @@ middle are where the useful decisions live.
 | | what it is | may you change it |
 |---|---|---|
 | **Fixed protocol** | flit format, port handshake, memory encoding, credit and retry, cross-mesh encapsulation | **No.** Change it and you are off the framework |
-| **Customisable addon** | ships working, designed to be swapped: the transform stage in the memory agent, staging inside it, the adapter in an endpoint's link | **Yes.** That is what the slot is for |
+| **Customizable addon** | ships working, designed to be swapped: the transform stage in MAG, staging inside it, the adapter in an endpoint's link | **Yes.** That is what the slot is for |
 | **Convention** | how to design a well-behaved unit, with worked examples — some forced by the memory agent, some free | **Follow or don't**, but know which is which |
 | **Yours** | datapath, memory structure, instruction semantics, pipeline depth | **Entirely** |
 
@@ -125,8 +152,12 @@ below.
                         │   memory · agent       │         │
                         │   interlink            │         │
                         │                        │         │
-                        │  ctrl PE  at (0,0)     │         │
-                        │   RV32 · mover         │         │
+                        │  control processor     │         │
+                        │   RV32 at (0,0)        │         │
+                        │    -- or --            │         │
+                        │   RV64, off-mesh       │         │
+                        │                        │         │
+                        │   mover                │         │
                         │   ┌──────────────────┐ │         │
                         │   │ transform slot   │ │         │
                         │   │ ADDON: yours     │ │         │
@@ -150,6 +181,21 @@ The port is a contract, not a container: `noc_cu_base` holds the mesh-facing sid
 so that a unit conforms by construction, and everything below it — including all
 of the unit's storage — is designed by you.
 
+**The node always holds a processor; which one is a build-time choice you do not
+have to make.** `CPU_RV64 = 0`, the default and what ships, gives the RV32
+complex, which sits on the mesh at `(0, 0)` as an ordinary compute unit. Set, it
+gives the RV64 complex — RV64IMA with Sv39 translation and its own L1 — which
+has no mesh presence at all and is loaded and booted through a dedicated host
+window. That second branch is **not finished**: its hub port is tied off both
+ways, so it neither dispatches to compute units nor receives their traffic
+([spec/parameters.md](../spec/parameters.md) §5).
+
+Either way the mover and the transform slot are the same, and **nothing about
+your unit changes**: the flit format, the port, the memory protocol and the
+instruction encoding are identical, and the host dispatches your work through the
+orchestrator in both. [arch/cpu/](../arch/cpu/README.md) says why the machine has
+two processors and how to choose.
+
 ---
 
 ## 3. What a project is
@@ -165,10 +211,13 @@ The directory shape that follows from that, as the tree has it today:
 ```
     src/kohakuaccel/     the RTL framework. Shared by every project.
       noc/               mesh, router, flit protocol, compute-unit port
-      sysnode/           memory agent, mover, control processor, interlink
+      sysnode/           memory agent, mover, interlink, and cpu/, which
+                         wraps whichever processor the node was built with
       axi/               station bus, links, AXI plumbing
-      pe/rv32/           the CPU PE; SIMD_EN names an extension it does
-                         not own
+      pe/rv32/           the RV32 CPU PE; SIMD_EN names an extension it
+                         does not own
+      pe/rv64-sys/       the RV64 control complex: core, Sv39 MMU, L1,
+                         node port, and the syscore that holds them
       common/            FIFOs, named memory primitives
       verif/             bench-only models
     src/templates/       a conforming CU, a transform occupant, an endpoint

@@ -10,14 +10,19 @@ tags:
 
 # Mesh staging: URAM as an endpoint
 
-A node that owns URAM, sits on a spare local port, and answers memory requests
-like any other endpoint. No router change, no new instruction, no new protocol.
+Status: **BUILT and shipping — form 2 only.** `src/kohakuaccel/noc/endpoint/noc_l2_adapter.v`,
+benched by `tests/noc/noc_l2_adapter_tb.v`, and selected with
+`gen_mesh.py --l2-cu` / `--l2-vec`. **Forms 1 and 3 below are not built.**
 
-Status: **form 2 is built and shipping** as `src/kohakuaccel/noc/endpoint/noc_l2_adapter.v`,
-benched by `tests/noc/noc_l2_adapter_tb.v`, and selected with `gen_mesh.py
---l2-cu / --l2-vec`. Note the limit form 2 turns out to have: an in-link adapter
-snoops its own endpoint's outbound flits, so it can only serve the unit behind
-it and cannot move data between clusters.
+A node that owns URAM, sits on a local port, and answers memory requests like
+any other endpoint. No router change, no new instruction, no new protocol. See
+[README](README.md) for the alternatives and which of them exist.
+
+> **The limit form 2 turns out to have.** An in-link adapter snoops its own
+> endpoint's outbound flits, so it can only serve the unit behind it. It cannot
+> move data between compute units, which is what a shared store would be for.
+> That is a property of sitting in the link rather than on the mesh, and it is
+> not a bug to be fixed in this form.
 
 ## Why this is the cheap one
 
@@ -42,24 +47,25 @@ regression there is expensive.
 
 ## Two forms, and the second is the important one
 
-**Form 1: a new endpoint.** The store hangs off an otherwise-unused local port.
-Simple, but it requires a spare local -- and not every mesh has one. A two-router
-mesh carrying six clusters and one agent (MEASURED from the placed hierarchy) has
-no room.
+**Form 1 — a new endpoint. NOT BUILT.** The store hangs off an otherwise-unused
+local port. Simple, but it requires a spare local port — and not every mesh has
+one. A two-router mesh carrying six clusters and one agent (MEASURED from the
+placed hierarchy) has no room.
 
-**Form 2: an adapter in the local link.** The store is inserted *between* a router
-and an endpoint that already exists:
+**Form 2 — an adapter in the local link. BUILT.** The store is inserted
+*between* a router and an endpoint that already exists:
 
     router  <->  L2 adapter  <->  existing endpoint (cluster / vector / agent)
 
 It consumes no local port, works on any mesh, and can be placed next to whichever
 URAM columns are convenient. This is the form that generalises.
 
-**Form 3: merged into an existing endpoint.** The compute unit itself owns URAM
-and answers L2-range requests alongside its normal work. Costs no port and no
-adapter, but it modifies the endpoint -- so it is not hot-pluggable, and every
-endpoint type would need the change separately. Mentioned for completeness; form 2
-dominates it unless the URAM must be inside the unit for another reason.
+**Form 3 — merged into an existing endpoint. NOT BUILT.** The compute unit
+itself owns URAM and answers staging-range requests alongside its normal work.
+Costs no port and no adapter, but it modifies the endpoint — so it is not
+hot-pluggable, and every endpoint type would need the change separately.
+Mentioned for completeness; form 2 dominates it unless the URAM must be inside
+the unit for another reason.
 
 ## Hot-plug: the property that makes form 2 worth it
 
@@ -147,17 +153,20 @@ several nodes of 32-64 URAMs each are easier to place than one block of 160.
 ## Capacity and width
 
 Same arithmetic as [mag-staging](mag-staging.md): one URAM288 is 288 Kb (36 KB),
-natively 4096 x 72 b, and a 936-bit line (13 URAMs in parallel) delivers exactly
-one L1 entry per read.
+natively 4,096 × 72 b, so a line wide enough for one whole L1 entry takes 13–14
+URAMs in parallel and delivers exactly one entry per read.
 
-| node size | capacity | 936-b lines |
-|---|---|---|
-| 13 URAM | 468 KB | 4,096 |
-| 26 URAM | 936 KB | 4,096 (1,872-b line) |
-| 52 URAM | 1.9 MB | 4,096 x 4 banks |
+| node size | capacity |
+|---|---|
+| 13–14 URAM | ~470–500 KB |
+| 26–28 URAM | ~940 KB–1 MB |
+| 52–56 URAM | ~1.9–2 MB |
 
-Two or three such nodes per SLR reach the same 3.5-5.9 MB as a centralised L2,
-with none of the reach problem.
+Two or three such nodes per SLR reach the same few megabytes as a centralised
+store, with none of the reach problem. **This is arithmetic on the primitive's
+size, not a placed result**, and the shipped configuration is 8 URAM per
+compute-unit adapter — far below any of these rows, because the built form
+serves one unit rather than a mesh.
 
 ## What it costs that agent staging does not
 
@@ -166,15 +175,16 @@ a 2x2 mesh that is 1-2 hops each way. At ~450 MHz router frequency this is a few
 nanoseconds -- still far inside the 30-40 ns DRAM round trip (ASSUMED), but not
 free, and it consumes link bandwidth that agent traffic would otherwise have.
 
-**Bandwidth ceiling.** A local port is one flit per cycle. A 288-bit flit at
-300 MHz is ~10.8 GB/s per node. A centralised L2 reading 13 URAMs in parallel
-inside the agent is not limited this way -- it can hand a full 936-bit entry to the
-fill path per cycle. **This is the real trade: mesh staging buys placement freedom
-and pays in per-node bandwidth.**
+**Bandwidth ceiling.** A local port is one flit per cycle. A 288-bit flit at an
+assumed 300 MHz is ~10.8 GB/s per node (arithmetic, ASSUMED clock). A
+centralised store reading many URAMs in parallel inside the agent is not limited
+this way — it can hand a full entry to the fill path per cycle. **This is the
+real trade: mesh staging buys placement freedom and pays in per-node
+bandwidth.**
 
 Whether that matters depends on how many nodes share the load. Three nodes at
-10.8 GB/s each is 32 GB/s, against ~77 GB/s of DDR4 -- so this only wins if the
-hit rate is high enough that DRAM is not the limiter anyway.
+10.8 GB/s each is ~32 GB/s, against roughly 77 GB/s of DDR4 — so this only wins
+if the hit rate is high enough that DRAM is not the limiter anyway.
 
 ## Inside the router, packaged differently
 

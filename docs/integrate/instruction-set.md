@@ -9,6 +9,12 @@ tags:
 
 # Designing your instruction set
 
+> **Kind: mixed.** The envelope in §2, the dispatch path in §3 and the completion
+> protocol in §4 are **fixed protocol**. Everything in §5 — where to put an
+> opcode, how to overlap fields, what zero should mean — is **convention, and
+> free**: nothing checks any of it, and the payload bits it is about are
+> **yours**. §6 is one project's worked example.
+
 The framework carries instructions to your unit and completions back. It has no
 opinion about what an instruction *means* — that is the whole point. What it does
 have is an envelope, a delivery mechanism with a shape, and a completion protocol
@@ -30,6 +36,13 @@ is yours:
 | `kohakuaccel/noc` | the flit header: routing, message class, transaction id, batch marker | obey it |
 | the system node | the memory instruction set: read and write descriptors, streaming fetches, entry geometry, multicast, and the memory mover's commands | **use it** |
 | you | the `CU_INST` payload: what your unit computes | define it |
+
+**The whole 256-bit payload is yours, with no framework-reserved region inside
+it.** `noc_pkt.vh` declares a substructure (`NOC_INST_LEN`, `NOC_INST_CLASS`)
+that no module reads and that describes a multi-flit mechanism the framework does
+not implement; [spec/instruction-encoding.md](../spec/instruction-encoding.md) §5
+settles that in favour of the silicon and §7 there records the divergence. Spend
+the payload from bit 255 downward as you like.
 
 The middle row is the one that changes how you should think about this page. The
 memory agent already has an instruction set, and it is a good one — it expresses
@@ -62,6 +75,40 @@ your unit cannot walk DRAM affinely, so it hands the memory agent a descriptor;
 and the memory agent has no idea what the bytes mean, which is why the transform
 stage is a slot rather than a feature
 ([what-you-own.md](what-you-own.md) §2).
+
+### 1.1 And there may be a fifth: a processor in the node
+
+The system node ships a control processor, and `CPU_RV64`
+([spec/parameters.md](../spec/parameters.md) §5) chooses which. Set, it is an
+**RV64IMA machine with Sv39 translation, an L1 onto DRAM, a scratchpad and the
+memory mover as its memory unit** — a full instruction set, and one you do not
+design, extend or encode into. You target it with a RISC-V toolchain.
+
+Two things follow for your unit's ISA, and only two:
+
+- **Nothing changes about your encoding.** The RV64 complex has no compute-unit
+  shell: it is not on the mesh, it issues no `CU_INST`, and it does not dispatch
+  to you. Your instructions still arrive from the orchestrator, addressed and
+  credited exactly as §3 describes. The five instruction sets do not overlap.
+- **The layering argument above gains a rung, and it runs the other way.** The
+  control program cannot branch and your unit cannot walk memory; a processor in
+  the node can do both. Work that would otherwise be a host round trip — deciding
+  what to move next, reacting to a fault — has somewhere on-card it could live.
+  Whether it *should* is a scheduling question for your compiler, not an encoding
+  one.
+
+**Do not plan a kernel around it yet.** `CPU_RV64` defaults to 0, and in the
+non-default branch the processor's mesh port is tied off in both directions: it
+originates no flit and a flit sent to it is discarded. It can drive the mover and
+touch memory; it cannot dispatch to your unit or sequence two units against each
+other. That is the host's job in both configurations today.
+[spec/parameters.md](../spec/parameters.md) §5 lists what the branch leaves
+unconnected.
+
+The register surfaces are
+[spec/control-registers.md](../spec/control-registers.md) §6–§7; the architecture
+is [arch/cpu/rv64-sys/](../arch/cpu/rv64-sys/README.md); and the reason the node
+has two processors at all is [arch/cpu/](../arch/cpu/README.md).
 
 ---
 
@@ -312,14 +359,6 @@ only to stage it and kick it. If your unit is programmable, this is the shape:
 
 ## 7. Open questions
 
-- **`src/kohakuaccel/noc/noc_pkt.vh` declares a `CU_INST` payload substructure**
-  (`NOC_INST_LEN`, `NOC_INST_CLASS`, `NOC_INST_BODY`) that neither production
-  unit uses — both spend the payload from bit 255 downward as they choose. The
-  header file itself notes that it is included by nothing. Whether that
-  substructure is a reserved allocation projects must respect, or dead
-  declaration, is for [spec/instruction-encoding.md](../spec/instruction-encoding.md)
-  to settle; until it does, treat the payload as opaque and check the spec before
-  assuming bits are free.
 - **`txn_id` is 8 bits and serves two purposes.** On `CU_INST` it is the program
   id reported by a batch completion; on other message classes units use it as a
   tag they chose. Nothing enforces that a program id is unique across in-flight

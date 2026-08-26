@@ -10,9 +10,51 @@ tags:
 
 # Layout transformation on a chain of scratchpads
 
-A problem statement, not a solution. It is deliberately context-free: no
-hardware knowledge is needed, and **no absolute rates appear anywhere**. All
-costs are relative credits, defined in §5.
+Status: **OPEN QUESTION.** A problem statement, not a solution. Nothing here is
+normative, nothing here is a description of hardware, and §7 lists what is still
+unanswered. Read [notes/README](README.md) first.
+
+It is deliberately context-free: no hardware knowledge is needed, and **no
+absolute rates appear anywhere**. All costs are relative credits, defined in §5.
+
+## 0. Why this note exists at all
+
+**Movement, not arithmetic, sets the cost on this machine**, and four things
+follow from that. Each is stated here because a reader who does not hold them
+will read the rest of this page as an academic exercise rather than as the
+constraint it describes.
+
+**The cost of movement is credits, and §5 is the model.** Not bytes, not cycles,
+not nanoseconds. A plan is compared against another plan by adding up the credit
+table in §5 — which is derived from two ratios only, the width of each path and
+the locality penalty of slow memory — and the *ordering* those credits produce
+is robust to the exact constants. A plan that spends one or two extra local
+passes to avoid a non-sequential slow-memory access or a multi-hop link transfer
+is almost always correct.
+
+**A naive movement method is not an architectural floor.** If a transformation
+is slow, the first question is which affine map was chosen and how it was
+decomposed, not whether the engine is fast enough. §4.2 is that question, and it
+has no general answer yet; §6 shows one instance where the *same* tensor
+transformation costs the floor under one sharding and all-to-all traffic under
+another. **Slow movement is evidence of a bad plan until a better plan has been
+tried and also failed.**
+
+**The on-chip store is generous, so "it does not fit" is usually a tiling
+question.** The staging notes' own arithmetic gives 3.5–5.9 MB of buildable
+store per SLR from free URAM alone, and the reference part has four SLRs — so
+what is available on chip is in the mid-teens of megabytes, not a few hundred
+kilobytes. §4.3 is about *ordering* tiles so each is complete before use, not
+about whether they fit at all.
+
+**Host round trips are banned outright.** A transformation that leaves the card
+and comes back is not a slow plan, it is a disallowed one: the round trip is
+latency measured against a host driver and an interconnect, where every other
+operation in this model is measured against on-card paths, and the two are not
+in the same regime. The whole point of a movement engine that takes affine
+descriptors is that no plan expressible in §2.4 needs one. *(The frequently
+quoted multiplier for how much worse a round trip is has no source in this
+documentation tree and is deliberately not printed here.)*
 
 ## 1. The object
 

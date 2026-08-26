@@ -14,6 +14,18 @@ knows what is in it. It is not one command, and it is not one tool: it is a
 pipeline of generators, measurements, an assembly step and a very long
 implementation run.
 
+**Where it sits.** [simulate.md](simulate.md) answers whether the design is
+correct and [measure.md](measure.md) whether it is fast enough. This page is what
+happens after both: turning verified RTL into something a device can be
+programmed with. **Vocabulary:** a **ship** is one complete assembly floorplanned
+for a specific device ([what is a ship](../arch/ship/what-is-a-ship.md)); a
+**mesh** is the on-chip network and the compute units on it; a **system node** is
+the single component serving one mesh with memory access and dispatch.
+
+**The instrument, once.** Everything below is Vivado 2024.2 against
+`xcvu13p-fhgb2104-2L-e`, which is the part the reference instance ships on. The
+flow is not specific to either; the costs quoted are.
+
     map / manifest                  what machine to build
       |
       |  generators
@@ -121,9 +133,10 @@ unreachable. Synthesis prunes it, the design builds, meets timing and programs.
 > **An unconnected output is harmless. An undriven input is the fault.**
 
 An output left dangling costs at most the cone that feeds it, and the log says
-so. An undriven input silently deletes everything behind it. One shipped design
-had a whole engine commandable by nothing for exactly this reason. Nothing
-failed. It simply never ran.
+so. An undriven input silently deletes everything behind it — up to and including
+a whole engine that is commandable by nothing, which builds, meets timing,
+programs, and never runs. Nothing in the flow reports it, because from the tool's
+point of view nothing went wrong.
 
 Two fixes:
 
@@ -154,10 +167,12 @@ differently:
 | the synthesis log | capacities and interface version | invisibly — it describes one build and rots |
 | explicit arguments | the address map | never defaulted — it comes from an assembly nothing else can read |
 
-Hand transcription is the known fault. One board description was written by
-reading a synthesis log by eye, missed that the bitstream had smaller capacities
-than the RTL's defaults, and produced a run in which the overwhelming majority of
-output elements were wrong **while every gate passed**.
+Hand transcription is the known fault, and its signature is worth recognising: a
+description read off a synthesis log by eye misses that the bitstream was built
+with smaller capacities than the RTL's defaults, the software plans work that
+overruns them, and the run produces mostly wrong output **while every gate
+passes**. Nothing in the software's view of the machine is inconsistent; it is
+consistent with a machine that was not built.
 
 So the generator compares what it read against what the software plans for, and
 warns — or refuses, under a strict flag — when the build has *less* capacity than
@@ -192,7 +207,7 @@ See [tooling-traps.md](tooling-traps.md) for these in detail.
 
 ### The address map
 
-Two rules, both learned expensively:
+Two rules:
 
 **Format wide addresses as wide addresses.** Tcl's `%X` is 32-bit. An address
 above 4 GB comes back truncated, and on a wide map that silently piles every
@@ -358,9 +373,12 @@ one runner broken while the others keep working.
   across a Tcl script, a PowerShell runner and a Python runner, in three
   incompatible formats.
 - Two source-list tables disagree about which files a bench needs.
-- The device part appears in at least three places, and at least one of them
-  historically named a faster speed grade than the board carries — which makes
-  every measurement taken through it optimistic by an unrecorded amount.
+- **The device part appears in at least three places and nothing reconciles
+  them.** This is the highest-consequence duplication in the flow: a script
+  naming a faster speed grade than the board carries makes every measurement
+  taken through it optimistic by an amount nobody can reconstruct afterwards, and
+  the figures look entirely normal. Until a manifest owns the part, grep for it
+  before trusting a sweep. See [measure.md](measure.md#device-choice-is-part-of-the-measurement).
 - Where the thread-count hook is registered as a build-step hook is not recorded
   anywhere; the setting reaches the generated run script, but the registration is
   not in any file under version control.

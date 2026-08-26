@@ -10,6 +10,16 @@ tags:
 
 # Programs across several meshes
 
+> **Kind: Convention throughout, and free.** The framework has no opinion about
+> how a compiler represents meshes; the two facts it *does* fix — that a mesh
+> owns its memory, and how a transfer crosses a boundary — are Fixed protocol and
+> are specified in [spec/memory-protocol.md](../spec/memory-protocol.md) §9.3.
+> Everything else on this page is one design worked out against those two, offered
+> as a starting point.
+
+A **mesh** is one grid of routers, the endpoints hanging off them, and one system
+node with its own DRAM behind it. A device image holds up to four.
+
 [mesh-topology.md](mesh-topology.md) §6 reaches one conclusion about big
 machines: **size a mesh to one die, and reach for more dies by adding meshes.**
 This page is what that costs on the software side, and it is more than it looks.
@@ -209,11 +219,14 @@ measured yet — and every cost model on an unmeasured link is fiction.
 - **Whether the mesh axis should appear in the kernel language at all**, or only
   as a property of values. It is placement-bearing, unlike an ordinary grid
   dimension, so it does not behave like the loops beside it.
-- **No cost model for a collective exists.** One link has now been timed on the
-  reference machine, and the result argues against modelling the *link* at all:
-  the measured rate was 3% of the fabric's ceiling, so what a transfer costs is a
-  property of the engine driving it, not of the interconnect. A cost model keyed
-  on topology and bandwidth would have been wrong by a factor of 33.
+- **No cost model for a collective exists, and there is no measured link rate to
+  build one on.** Every timing of the interlink in this tree predates the memory
+  mover's rebuild and **must not be quoted**; there is no current figure. What
+  survives the retirement is a structural argument rather than a number: the
+  engine driving a transfer, not the link, has been the limit every time it was
+  looked at, so a cost model keyed on link bandwidth would be modelling the wrong
+  thing. Anything more than that needs a fresh measurement, and until one exists
+  a collective's cost is **unmodelled**, not estimated.
 - **Capacity is not checked.** Nothing refuses an allocation that does not fit a
   mesh's memory; it becomes a runtime failure with no diagnosis.
 - **Whether a project's parallel splits should be a solver or a rule.** Within

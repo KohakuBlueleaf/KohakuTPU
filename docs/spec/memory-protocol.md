@@ -34,10 +34,15 @@ Source of truth: `src/kohakuaccel/sysnode/core/mag.v` and
 
 ## 1. What the agent presents to the mesh
 
-The agent presents `MEM_PORTS` independent NoC endpoints, each at its own
+The agent presents `PORTS` independent NoC endpoints, each at its own
 coordinate. Each port owns its intake queues, read engine, write slots and AXI
 channel. Nothing is shared between ports except the address space on the far side
 of AXI.
+
+`PORTS` is `mag`'s and `sysnode`'s parameter of that name, 1 by default and at
+most 4 — the RTL declares four coordinate pairs and no more
+([parameters.md](parameters.md) §5). The protocol below holds at every legal
+value; only the count varies.
 
 Consequences that are protocol, not implementation:
 
@@ -62,7 +67,7 @@ orchestrator's coordinate, arrives at port 0, and is handed to the agent because
 | Flit | Goes to | Backpressure |
 |---|---|---|
 | `MEM_RD_REQ`, `MEM_WR_REQ`, `MEM_WR_DATA` | that port's engine | The engine's intake queues. |
-| any type with `rsvd[2]` set | the interlink encapsulator | Round-robin across ports; a port waiting its turn holds `busy`, bounded by `MEM_PORTS` cycles. |
+| any type with `rsvd[2]` set | the interlink encapsulator | Round-robin across ports; a port waiting its turn holds `busy`, bounded by `PORTS` cycles. |
 | everything else | the control agent | Round-robin. **If the agent cannot take it at all, the flit is accepted and dropped.** |
 
 The last row is deliberate and it is a protocol guarantee running the other way:
@@ -239,6 +244,48 @@ Two idioms follow, both used by the reference units and neither required:
 A unit whose buffer geometry does not match the agent's entry can still request
 plain reads (§3.1) and place beats itself. It gives up streaming and multicast to
 do so.
+
+#### 3.2.4 How much a requester may have outstanding, and in what unit
+
+**A requester's outstanding budget is counted in response FLITS, not in requests
+and not in entries.** One descriptor is one flit out and
+
+    count × entry_words
+
+flits back, up to `255 × 4` at the field limits — from a single request that took
+one cycle to send.
+
+The rule, and it is absolute:
+
+> A requester **MUST NOT** have more response flits outstanding than its receive
+> path can absorb, and **MUST** compute that number in flits.
+
+The receive path is bounded by `RECV_DEPTH`
+([compute-unit-port.md](compute-unit-port.md) §8.2), which is a depth **in
+flits**. A requester that budgets in requests, or in entries, is off by
+`entry_words` and by `count` respectively, and the error is in the unsafe
+direction: it issues more than it can take.
+
+Exceeding it does not overflow and does not corrupt. The requester's
+`noc_in_busy` goes high, the link stalls, and — the mesh being in-order behind it
+— everything else on that link stalls with it, including traffic that would have
+freed the resource. **Local over-commitment becomes a network-wide stall**, which
+is the one failure hop-by-hop flow control does not solve.
+
+Two ways to stay inside it, both used in the tree:
+
+- **Apply the bound as backpressure rather than as a constant.** Hold
+  `recv_ready` and let the receive queue fill; issue the next descriptor only
+  once the previous run has drained. This needs no arithmetic and survives a
+  change of `RECV_DEPTH`.
+- **Bound the run at issue.** Choose `count` so that `count × entry_words` fits
+  the depth. This allows deeper overlap and has to be recomputed if either the
+  depth or the entry geometry changes.
+
+The same rule applies to a **multicast** requester in one direction only: the
+extra destinations receive their own copies, so a listed peer must size its
+budget against traffic it never asked for. A peer that has no notion of how much
+is coming can only use the backpressure form.
 
 ## 4. Writes
 
@@ -424,8 +471,22 @@ that does not exist.
 | Input flit dropped because backpressure was late | The flit is lost. | Simulation `$display` only. |
 | `MEM_WR_DATA` with no matching open write | Dropped. | Simulation `$display` only. |
 | Write descriptor arrives with no free slot | Not popped. Blocks the write queue. | Nothing. Presents as a hang. |
-| Read or write naming a mesh other than the agent's own, in `addr[37:36]`, on a flit **not** marked remote | **Not forwarded.** The access aliases to local memory with the mesh field ignored. | `mag.v:455` raises `bad_remote_req` into the interlink's status when `ILINK != 0`. A build without an interlink reports nothing. |
+| **DRAM** read or write (`addr[39] = 0`) naming a mesh other than the agent's own, in `addr[37:36]`, on a flit **not** marked remote | **Not forwarded.** The access aliases to local memory with the mesh field ignored. | `mag.v` raises `bad_remote_req` into the interlink's status when `ILINK != 0`. A build without an interlink reports nothing. |
+| **Aperture** read (`addr[39] = 1`, `addr[38] = 0`) naming another mesh, or an aperture other than 0 | **Dropped**, not aliased. No `MEM_RD_RESP` is ever emitted, so the requester waits forever. | Simulation `$display` only. |
+| **Aperture** write, same condition | **Dropped.** No AXI transaction and **no `MEM_WR_ACK`**; the write slot is freed rather than wedged. | Simulation `$display` only. |
 | AXI slave error response (`BRESP`/`RRESP` non-OKAY) | Ignored. | Nothing. `MEM_WR_ACK` carries no status. |
+
+The two aperture rows apply **only when the port decodes apertures at all** —
+`mag_mem_port`'s `AP_DECODE`, which `mag` drives from the node's `STAGE`
+([parameters.md](parameters.md) §5). With no staging built anywhere, `addr[39]`
+is not tested and an aperture address is served as DRAM.
+
+**The asymmetry between the DRAM rows and the aperture rows is deliberate and a
+requester must know which it is getting.** A wrong-mesh DRAM address is *aliased*
+— it reads or writes the local bytes at the same offset, plausibly and silently.
+A wrong-mesh or unimplemented *aperture* address is *dropped* — a read hangs and
+a write is never acknowledged. Neither is a fault a program can catch; the second
+is at least visible as a stall rather than as a wrong answer.
 
 **A memory request MUST address the local mesh.** There is no remote read and no
 remote compute-unit write in v1; only the mover's writes and encapsulated
@@ -440,8 +501,22 @@ only far enough to state their contracts. The mechanism is in
 ### 9.1 The memory window
 
 The agent is an AXI4 slave `DATA_W` bits wide, through which the host uploads and
-reads back memory. **An upload is written verbatim** — the whole address space is
-addressable and no address bit carries a marker.
+reads back memory. **An upload is written verbatim**: no address bit carries a
+conversion marker, and the bytes that land are the bytes that were sent.
+
+**What the window reaches is DRAM, and only DRAM.** The host's upload becomes an
+ordinary requester on the agent's converged path, and nothing on that path
+decodes `addr[39]` for the aperture or `addr[37:36]` for another mesh. So:
+
+- an upload with `addr[39]` set does **not** reach the staging store — staging is
+  the mover's to write;
+- an upload naming another mesh does **not** cross the interlink — it reaches
+  local DRAM above the local capacity, where nothing answers.
+
+Neither faults. A host that wants bytes in staging asks the control processor to
+move them there; a host that wants bytes in another mesh writes them into that
+mesh's own window. [address-map.md](../address-map.md) has the host-side map and
+the routing prefix that chooses the window.
 
 **Retired:** `addr[ADDR_W-1]` and `addr[ADDR_W-2]` used to mean `QUANT` and
 `BLAYOUT`, converting an upload on the way in, and the window was 32 of 34

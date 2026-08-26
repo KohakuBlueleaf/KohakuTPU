@@ -10,12 +10,22 @@ tags:
 
 # The transform slot
 
-A transform converts data between the format memory holds and the format a
-compute unit wants. The framework fixes where the slot sits, how it is selected
-and how it is driven; what goes in it belongs to the accelerator.
+> **Kind: Fixed interface, Addon occupant.** Where the slot sits, how an occupant
+> is selected, the port it presents, the geometry it must declare and the three
+> hard rules are all **fixed protocol** — an occupant that breaks one of them
+> stalls a move or delivers the wrong bytes. What the occupant *computes* is a
+> **customizable addon**: the framework carries its mode bits without reading
+> them and is named after no number format.
 
-The shipping example is KohakuTPU's FP16→MXFP7 quantiser, in
-`src/kohakutpu/transform/xform_bank.v`.
+A transform converts data between the format memory holds and the format a
+compute unit wants. The **memory mover** — the descriptor engine inside the
+system node that walks addresses and moves bytes without any compute unit being
+involved — is the only thing that drives it.
+
+The framework fixes where the slot sits, how it is selected and how it is driven;
+what goes in it belongs to the accelerator. The shipping example is KohakuTPU's
+FP16→MXFP7 quantiser, in `src/kohakutpu/transform/xform_bank.v`; the empty
+default is `src/templates/transform/xform_bank.v`.
 
 ## Position
 
@@ -39,14 +49,12 @@ at line rate and never handshaken, which is what an in-order R return already is
 and the FIFO holds converted words rather than source ones. A converting move is
 mover mode 5.
 
-> It was a separate engine, `mm_xfer.v`, with no walker: `src += IN_BITS/8`,
-> `dst += OUT_WORDS*DATA_W/8`, one contiguous burst per entry. That engine is
-> deleted. It was split out because the mover's flow control is one word in per
-> word out and a 2:1 transform breaks that invariant, and the cost was a gather
-> pass into staging for any strided source, on the one converged master
-> everything else is arbitrated around.
-> [arch/sysnode/simd-model](../arch/sysnode/simd-model.md) has what replaced the
-> invariant and what the gather cost; the reservation survived unchanged.
+The invariant this placement breaks, and which the mover therefore does not
+have, is *one word in per word out*: a transform consumes `IN_BITS` and produces
+`OUT_WORDS`, so the mover's read-side reservation counts `OUT_WORDS` per entry
+rather than one per beat. That reservation is still taken before the AR and is
+still static. [arch/sysnode/simd-model](../arch/sysnode/simd-model.md) has the
+argument for the arrangement.
 
 ### Why one is enough
 
@@ -190,6 +198,22 @@ and whether a write is followed by a move is the program's business.
 
 The **host** has no path to them. The host talks to the processor for work.
 
+> **This holds only for the RV32 control complex** — `sysnode`'s `CPU_RV64 = 0`,
+> the default. `rv_mag_pe` decodes that range and drives `mag_xform`'s
+> `cfg_en / cfg_id / cfg_addr / cfg_data` from it, and returns `cfg_rdata`.
+>
+> **With `CPU_RV64` non-zero the register port is tied off.** `rv64_mag_pe`
+> instantiates `mag_xform` with `cfg_en` at zero and `cfg_rdata` unconnected, and
+> the RV64 control region carries no occupant window, so **an occupant's
+> registers are unreachable in that configuration** — the bank's own `0x00` fault
+> and `0x04` geometry included. An occupant with no registers of its own is
+> unaffected, which is the case the shipping bank is in; one that needs
+> configuration cannot be driven there.
+>
+> Because `0x00` cannot be written, `fault` is also **unclearable** in that
+> configuration: it is sticky, and any write to register `0x00` is the only thing
+> that clears it. See [parameters.md](parameters.md) §5.1.
+
 ### Configuration is only legal while ungranted
 
 Grant is held for a whole run (§Arbitration), so the ordering above is safe by
@@ -240,22 +264,36 @@ expansion is `IN_BITS 512 / OUT_WORDS 4`, not `1024 / 8`.
 ## Arbitration
 
 Requesters contend for the bank through `mag_xform.v`. **Grant is held for a
-whole run**, and a requester must not issue its read until it holds one — that
-is what makes it impossible for a beat to arrive with nowhere to go. Per-entry
-grant would be finer-grained but is unsafe: a requester issues the next entry's
-read while the current entry is still in the occupant, so its beats can land
-before it could re-acquire.
+whole run**, and a requester **MUST NOT** issue its read until it holds one —
+that is what makes it impossible for a beat to arrive with nowhere to go.
+Per-entry grant would be finer-grained but is unsafe: a requester issues the next
+entry's read while the current entry is still in the occupant, so its beats can
+land before it could re-acquire.
+
+A beat presented without a grant is **dropped**, and reported by a simulation
+`$display` only.
+
+> **There is one requester today.** `mag_xform`'s `NREQ` defaults to 2, and both
+> instantiations in the tree pass 1: the memory mover is the only thing that
+> drives the slot. The arbiter is built and never arbitrates. An occupant author
+> gains nothing from that — the grant discipline above is what the port contract
+> is written against, and a second requester may be added without the occupant
+> changing — but a reader comparing this page against a netlist should expect to
+> find the arbitration folded away.
 
 ## Timing
 
-The agent registers the beat before the bank, and registers again after the
-requester mux. `mag_mem_port.v` recorded why the first register exists: the read
-FIFO's BRAM output into the quantiser's DSP control was **9 LUT levels,
-4.399 ns, and set the WNS on every SLR1 probe**. Taking the transform out of the
-port removes that path from the port entirely.
+Two register stages are part of the contract, not an implementation choice:
 
-The mux register costs one cycle **per entry**, not per beat, which is why it was
-acceptable to move the transform out of the port at all.
+- **The agent registers the beat before the bank.** An occupant may therefore
+  treat `beat` as arriving from a register, and the path from whatever memory
+  feeds the read return to the occupant's first stage of logic is broken.
+- **The agent registers again after the requester mux.** This costs one cycle
+  **per entry**, not per beat, which is what makes the mux affordable.
+
+An occupant that adds combinational depth in front of its own first register is
+extending a path the agent has already broken once, and gets no third stage.
+What either stage is worth on a given part is in [projects/](../projects/).
 
 ## The default occupant
 

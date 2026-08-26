@@ -10,6 +10,13 @@ tags:
 
 # A tagged cache at the endpoint
 
+Status: **PROPOSAL — nothing described on this page is built.** No tag array, no
+fill and no evict logic exists anywhere in the tree, and no figure for its cost
+has been measured. What *is* built is the endpoint slot it would occupy —
+`noc_l2_adapter`, which holds explicit-address staging rather than a cache. Do
+not read this page as a description of hardware; read
+[notes/README](../README.md) first.
+
 The other four candidates in [README](README.md) all ask *where should data sit
 between DRAM and a compute unit*. This one asks a different question:
 
@@ -84,13 +91,13 @@ PE, making it a framework block any endpoint can sit behind, and sizing it to
 L2** — with the fill path targeting the explicit staging that already exists
 rather than going straight to DRAM.
 
-## The hierarchy this completes
+## The hierarchy this would complete
 
     DRAM
       <AXI>     tagged L3            -- vendor AXI cache IP, not written here
       <AXI>     explicit L2 staging  -- mag_stage, in the system node      BUILT
       <NoC>     explicit L2 adapter  -- noc_l2_adapter, at an endpoint     BUILT
-      <NoC>     tagged L2            -- this note                          MISSING
+      <NoC>     tagged L2            -- this note                     NOT BUILT
                 unit
 
 Everything below the tagged L2 is explicit-address. The tagged L2 is the layer

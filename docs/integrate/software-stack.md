@@ -10,6 +10,14 @@ tags:
 
 # The software stack
 
+> **Kind: mixed.** The `Transport` interface, the dispatch protocol and the
+> control-register surfaces it drives are **fixed protocol** — they are
+> [spec/control-registers.md](../spec/control-registers.md) seen from the host.
+> The layering below that — where a framework `Machine` stops and a project
+> `Target` starts, what the four transport backends are, how the three
+> simulation levels divide — is **convention**, and it is one worked answer. The
+> encoder, the scheduler and the device model are **yours**.
+
 Every accelerator built on this framework needs the same five things on the host
 side. Only two of them are about your accelerator.
 
@@ -18,6 +26,48 @@ argued for **has since been made**: `kohakuaccel` is the framework, `kohakutpu`
 is this project on top of it, and `driver/tests/test_isolation.py` fails if the
 framework ever imports the project again. §6 maps what moved where, and names
 the couplings that are still uncut.
+
+---
+
+## 0. Where the host stops
+
+Everything below assumes the host drives the machine. That is one of two shapes,
+and which one you are in changes what "the software stack" means.
+
+**The system node ships a control processor**, and which one is a build-time
+parameter — `CPU_RV64` ([spec/parameters.md](../spec/parameters.md) §5).
+
+| | `CPU_RV64 = 0` — the RV32 complex, the default | `CPU_RV64` set — the RV64 complex |
+|---|---|---|
+| what it is on the mesh | an ordinary compute unit: a `CU_CTRL` block, an instruction FIFO, completions | **nothing.** Its hub port is tied off both ways: it sends no flit, and a flit sent to its coordinate is accepted and discarded |
+| how the host reaches it | dispatch, exactly like any unit | a dedicated window: load instruction memory, load scratchpad, ring a boot doorbell, poll status |
+| what runs on it | short RV32 routines the host dispatches | **a program.** RV64IMA with Sv39 translation, an L1 onto DRAM, a scratchpad, and the memory mover as its memory unit |
+| what the host does per step | everything: stage, kick, poll, decide | **boots it once** |
+
+The second column is the one that changes this page. It is a runtime processor
+inside the node — something to *target*, not just something to drive. The work
+that §3 describes as the host's, and §5 as a simulation of the host's, has
+somewhere on-card it could move to.
+
+**Two cautions before you plan around that.** `CPU_RV64` defaults to 0, so the
+first column is what ships; and the second column is **not finished** — the RV64
+branch leaves the processor's mesh port tied off, so it can neither dispatch to a
+compute unit nor receive one's traffic, and it has no doorbell and no external
+interrupt ([spec/parameters.md](../spec/parameters.md) §5). Today it runs a
+program against memory and the mover, and the *host* still dispatches every
+compute unit through the orchestrator.
+
+**So nothing on this page is retired.** The orchestrator's map is the same either
+way, and a machine with the RV64 complex still needs transport, still needs a
+loader, and still needs completion tracking for the compute units. What changes
+is that a second target exists, with its own toolchain, its own memory image and
+its own contract:
+[spec/control-registers.md](../spec/control-registers.md) §6–§7 for the window
+and the control region, and
+[arch/cpu/rv64-sys/programming.md](../arch/cpu/rv64-sys/programming.md) for how a
+program is built and run.
+
+The rest of this page is the host side, which every machine has.
 
 ---
 
@@ -186,6 +236,14 @@ framework asks the registry. §6.
 argument. The driver should surface it as the unit's fault code, not as a
 generic failure — the unit went to the trouble of encoding one.
 
+**On a node carrying the RV64 complex there is a second set of counters and they
+are not reached this way.** Cycles and retirements come from the processor's host
+window rather than from a `CU_CTRL` read, they are 64 bits rather than 32 —
+because a runtime runs long enough to wrap 32 — and they are zeroed at each boot
+rather than being free-running since reset. A driver **MUST NOT** difference two
+reads across a boot, and **MUST NOT** feed them to a decoder written for
+`CU_COUNTERS`. [spec/control-registers.md](../spec/control-registers.md) §6.3.
+
 **Disassembly.** Turning a staged flit back into readable fields is a project's
 job today and is worth having from the start: the most common bring-up question
 is "is the machine wrong, or did I stage what I think I staged".
@@ -303,8 +361,9 @@ those are tooling rather than driver Python or RTL:
    `mx_fpacc.v`, all under `src/kohakutpu/`, so the RTL framework did not build
    alone. The unit is `src/kohakumpe/simd/` now — project→project, the allowed
    direction — and `SIMD_EN` is a slot like `xform_bank`. **Fixed.**
-   `scripts/py/deps.py` holds it: 0 project dependencies over 252 framework
-   files, and the 82 `src/kohakuaccel/**/*.v` parse with no project source.
+   `scripts/py/deps.py` holds it: it reads every instantiation under
+   `src/kohakuaccel/` and fails the run on one whose module is defined only under
+   a project, so the framework tree parses with no project source on the path.
 
 ### What the separation looks like
 
