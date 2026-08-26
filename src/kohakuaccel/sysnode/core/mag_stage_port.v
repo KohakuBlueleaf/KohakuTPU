@@ -176,6 +176,7 @@ module mag_stage_port #(
         .a_mine(), .a_gnt(), .a_fault(), .a_rvalid(), .a_rdata(),
         .b_req(b_go_w || b_go_r), .b_we(b_go_w), .b_addr(addr),
         .b_wdata(w_data[id*SW +: SW]),
+        .b_wstrb(w_strb[id*SBYTES +: SBYTES]),
         .b_mine(stg_mine), .b_gnt(stg_gnt),
         .b_rvalid(stg_rvalid), .b_rdata(stg_rdata)
     );

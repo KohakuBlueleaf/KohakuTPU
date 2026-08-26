@@ -51,6 +51,10 @@ module mag_stage #(
     input  wire                    b_we,
     input  wire [ADDR_W-1:0]       b_addr,
     input  wire [DATA_W-1:0]       b_wdata,
+    // BYTE STROBES, because port B takes AXI beats and a processor's 64-bit
+    // store is one lane of the word: without them the other lanes took the
+    // same value, three of every four page-table entries with it.
+    input  wire [DATA_W/8-1:0]     b_wstrb,
     output wire                    b_mine,
     output wire                    b_gnt,
     output wire                    b_rvalid,
@@ -111,6 +115,7 @@ module mag_stage #(
     wire [BANKS-1:0] d_aw, d_ar, d_bw, d_br;
     wire [RW-1:0]    d_ar_row, d_br_row;
     wire [EW-1:0]    d_bword;
+    wire [DATA_W/8-1:0] d_bstrb;
     wire [BANKS*WORDS*DATA_W-1:0] d_wide;   // one slice per bank
 
     generate if (PIPE != 0) begin : g_disp
@@ -121,6 +126,7 @@ module mag_stage #(
         reg  [BANKS-1:0]        aw_q, ar_q, bw_q, br_q;
         reg  [RW-1:0]           arow_q, brow_q;
         reg  [EW-1:0]           bword_q;
+        reg  [DATA_W/8-1:0]     bstrb_q;
 
         always @(posedge clk) begin
             if (rst) begin
@@ -132,6 +138,7 @@ module mag_stage #(
                 bw_q <= b_hit & {BANKS{b_we}};
                 br_q <= b_hit & {BANKS{~b_we}};
                 arow_q <= a_row; brow_q <= b_row; bword_q <= b_word;
+                bstrb_q <= b_wstrb;
                 wide_q <= {BANKS{wide_d}};
             end
         end
@@ -139,6 +146,7 @@ module mag_stage #(
         assign d_bw = bw_q; assign d_br = br_q;
         assign d_ar_row = arow_q; assign d_br_row = brow_q;
         assign d_bword = bword_q; assign d_wide = wide_q;
+        assign d_bstrb = bstrb_q;
     end else begin : g_nodisp
         assign d_aw = a_hit & {BANKS{a_we}};
         assign d_ar = a_hit & {BANKS{~a_we}};
@@ -146,6 +154,7 @@ module mag_stage #(
         assign d_br = b_hit & {BANKS{~b_we}};
         assign d_ar_row = a_row; assign d_br_row = b_row;
         assign d_bword = b_word; assign d_wide = {BANKS{wide_d}};
+        assign d_bstrb = b_wstrb;
     end endgenerate
 
     // ---- the banks ---------------------------------------------------------
@@ -159,16 +168,24 @@ module mag_stage #(
         wire [RW-1:0]   bk_rrow = d_ar[g] ? d_ar_row : d_br_row;
 
         for (w = 0; w < WORDS; w = w + 1) begin : g_word
-            // A writes every word of its entry; the host writes the one its
-            // address names.
+            // A writes every word of its entry, whole; the host writes the one
+            // its address names, under its strobes.
             wire bk_we = bk_awr || (d_bw[g] && (d_bword == w[EW-1:0]));
-            kohaku_sdpram #(.WIDTH(DATA_W), .DEPTH(ROWS), .MEM_PRIM("ultra"),
-                            .READ_LAT(RLAT)) u_bank (
-                .clk(clk),
-                .wr_en(bk_we), .wr_addr(bk_wrow),
-                .wr_data(d_wide[(g*WORDS + w)*DATA_W +: DATA_W]),
-                .rd_en(1'b1), .rd_addr(bk_rrow),
-                .rd_data(bank_rd[(g*WORDS + w)*DATA_W +: DATA_W])
+            wire [DATA_W/8-1:0] bk_strb = bk_awr ? {(DATA_W/8){1'b1}} : d_bstrb;
+            kohaku_sdpram_be #(
+                .WIDTH    (DATA_W),
+                .DEPTH    (ROWS),
+                .MEM_PRIM ("ultra"),
+                .READ_LAT (RLAT)
+            ) u_bank (
+                .clk     (clk),
+                .wr_en   (bk_we),
+                .wr_addr (bk_wrow),
+                .wr_data (d_wide[(g*WORDS + w)*DATA_W +: DATA_W]),
+                .wr_strb (bk_strb),
+                .rd_en   (1'b1),
+                .rd_addr (bk_rrow),
+                .rd_data (bank_rd[(g*WORDS + w)*DATA_W +: DATA_W])
             );
         end
 
