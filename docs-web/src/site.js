@@ -10,6 +10,32 @@ import { routes } from "vue-router/auto-routes";
  * appears, titled from its filename.
  */
 const META = {
+  "/idea": {
+    title: "Why KohakuAccel — the idea",
+    short: "Overview",
+    order: 0,
+  },
+  "/idea/beginning": {
+    title: "It began as one accelerator",
+    short: "One accelerator",
+    order: 1,
+  },
+  "/idea/platform": {
+    title: "A memory unit and a NoC make a platform",
+    short: "The platform",
+    order: 2,
+  },
+  "/idea/framework": {
+    title: "From a platform to a framework",
+    short: "The framework",
+    order: 3,
+  },
+  "/idea/soc": {
+    title: "A general SoC design framework",
+    short: "The SoC framework",
+    order: 4,
+  },
+
   "/framework": { title: "What is on the die", short: "Overview", order: 0 },
   "/framework/noc": { title: "Mesh and routers", short: "NoC", order: 1 },
   "/framework/sysnode": {
@@ -166,6 +192,13 @@ const META = {
 };
 
 const SECTION_DEF = {
+  idea: {
+    title: "The idea",
+    domain: "framework",
+    icon: "i-carbon-idea",
+    blurb:
+      "How it grew from one accelerator to a general SoC platform — and why.",
+  },
   framework: {
     title: "Framework",
     domain: "framework",
@@ -191,7 +224,7 @@ const SECTION_DEF = {
     blurb: "A mesh whose compute units are processors.",
   },
 };
-const SECTION_ORDER = ["framework", "component", "tpu", "mpe"];
+const SECTION_ORDER = ["idea", "framework", "component", "tpu", "mpe"];
 
 /** Every routable path with a component, parent paths joined. */
 function walk(list, base = "") {
@@ -214,6 +247,31 @@ const titleFrom = (path) => {
 
 const ALL = walk(routes).filter((p) => p !== "/" && !p.includes(":"));
 
+const depthOf = (path) => path.split("/").filter(Boolean).length;
+
+/**
+ * The sidebar tree: the section overview (depth 1) and each sub-topic (depth 2)
+ * as top nodes, with deeper pages (depth >= 3) nested under their sub-topic as
+ * a collapsible group. A sub-topic with no deeper pages is a plain leaf. The
+ * URLs already carry the hierarchy, so this only reshapes what the nav draws —
+ * no page moves, no broken links.
+ */
+function buildTree(pages) {
+  const l2 = pages.filter((p) => depthOf(p.path) <= 2);
+  const l3 = pages.filter((p) => depthOf(p.path) >= 3);
+  const nodes = l2.map((p) => {
+    const children = l3
+      .filter((c) => c.path.startsWith(`${p.path}/`))
+      .sort((a, b) => a.order - b.order);
+    return children.length ? { ...p, children } : { ...p };
+  });
+  // A deep page whose sub-topic parent is absent still gets a place.
+  for (const c of l3) {
+    if (!l2.some((p) => c.path.startsWith(`${p.path}/`))) nodes.push({ ...c });
+  }
+  return nodes.sort((a, b) => a.order - b.order || a.path.localeCompare(b.path));
+}
+
 export const SECTIONS = SECTION_ORDER.map((key) => {
   const def = SECTION_DEF[key];
   const pages = ALL.filter((p) => p === `/${key}` || p.startsWith(`/${key}/`))
@@ -228,7 +286,7 @@ export const SECTIONS = SECTION_ORDER.map((key) => {
       };
     })
     .sort((a, b) => a.order - b.order || a.path.localeCompare(b.path));
-  return { key, ...def, pages };
+  return { key, ...def, pages, tree: buildTree(pages) };
 }).filter((s) => s.pages.length);
 
 export const ALL_PAGES = SECTIONS.flatMap((s) =>
