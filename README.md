@@ -37,14 +37,16 @@ the port, the flit format, dispatch, credits, completion, faults, discovery,
 memory requests, unit-to-unit transfer, and cross-mesh addressing. That work
 is unglamorous. It is where the silent failures live. You do not have to work
 it out. [`docs/integrate/`](docs/integrate/README.md) is the surface you build
-against.
+against, and [`docs/glossary.md`](docs/glossary.md) defines every word on this
+page that means something specific here — flit, granule, station, mover, MAG,
+system node, kick, completion — in one alphabetical place.
 
 Ownership has four categories, not two ([full table](docs/integrate/what-you-own.md)):
 
 | | examples | may you change it |
 |---|---|---|
 | **Fixed protocol** | flit format, port handshake, memory encoding, credits | No. If you change it, you are off the framework |
-| **Customisable addon** | the read-path transform in the memory agent, L2 staging, the endpoint adapter | Yes. That is what the slot is for |
+| **Customizable addon** | the read-path transform in the memory agent, L2 staging, the endpoint adapter | Yes. That is what the slot is for |
 | **Convention** | how a well-behaved unit is shaped, each marked *forced* or *free* | Follow or don't, but know which is which |
 | **Yours** | datapath, memories, instruction semantics, pipeline depth | Entirely |
 
@@ -55,12 +57,18 @@ Ownership has four categories, not two ([full table](docs/integrate/what-you-own
 - `axi/` is the station bus. A line of stations carries host traffic (XDMA and
   JTAG) to every die of a multi-SLR part, with per-station clocks and link
   CDCs.
-- `sysnode/` is the system node, one per mesh. The agent (`mag`) turns mesh
-  traffic into DRAM traffic, with streaming fetches and multicast; the memory
-  mover walks six-dimensional strided descriptors and carries a swappable
-  transform slot on its read return; an optional RV32 control processor drives
-  the mover as an execution unit rather than through a command window; and the
-  interlink joins one mesh to the next.
+- `sysnode/` is the system node, one per mesh. The agent (`mag`, the *memory
+  access gateway*) turns mesh traffic into DRAM traffic, with streaming fetches
+  and multicast; the memory mover walks six-dimensional strided descriptors and
+  carries a swappable transform slot on its read return; and the interlink joins
+  one mesh to the next.
+
+  **A control processor is structural, not an option.** There is no parameter
+  that removes it: the node cannot be built without a processor, and the mover
+  is that processor's execution unit rather than a peer with a command window.
+  What *is* a parameter is `CPU_RV64` (default 0), and it chooses **which**
+  processor — the RV32 complex, which answers on the mesh at `(0,0)`, or the
+  RV64 complex, which has no mesh presence and is loaded through a host window.
 - `noc/` is the mesh: XY routers, the orchestrator, the L2 endpoint adapter,
   and `noc_cu_base`. Every compute unit wraps `noc_cu_base`. It handles
   framing, discovery, completion, and credits, so a unit conforms by
@@ -71,6 +79,13 @@ Ownership has four categories, not two ([full table](docs/integrate/what-you-own
 - `pe/rv32/` is the RV32I controller PE, a compute unit that happens to be a
   processor. `SIMD_EN` names a wide datapath it does not own — a slot, 0 by
   default, filled by [KohakuMPE](docs/projects/kohakumpe/README.md).
+- `pe/rv64-sys/` is the RV64IMA + Zicsr system core: an in-order pipeline with a
+  branch predictor, an Sv39 page-table walker, a write-back L1 and a
+  machine-mode trap and interrupt model. It ships in two wrappers — a mesh
+  compute unit (`rv64_sys_pe`) and a shell-less core that fuses to MAG
+  (`rv64_syscore`). [`docs/arch/cpu/`](docs/arch/cpu/README.md) says why the
+  framework carries two processors, how to choose, and what the RV64 branch does
+  not do yet.
 
 **The build list is `scripts/py/xsim.py`**, and only that. Each library also
 carries a `FILES.f` inventory, generated from the tree by
@@ -118,17 +133,17 @@ second, unrelated accelerator built from the framework alone.
   `'SX'`.
 - **Hardware half** (`src/examples/saxpy/`). `saxpy_cu.v` is built from the CU
   template. It decodes the same ISA field for field, and does plain reads and
-  a burst write against the real memory agent. The unit bench passes 20
-  checks with the convention checker mounted.
+  a burst write against the real memory agent. Its bench runs with the
+  convention checker mounted: `python scripts/py/xsim.py saxpy_cu`.
 - **Composed.** A three-line token table and a map picture generate a real
   mesh: a router, the memory agent, the orchestrator, and two saxpy units.
   The mesh bench drives it the way a host drives the card. It uploads
   operands over AXI, stages and dispatches the program through the
   orchestrator, observes completion in the status mirror, and reads the
-  results back bit-exact. 14 checks.
+  results back bit-exact: `python scripts/py/xsim.py saxpy_mesh`.
 
-When that simulates green, "a new accelerator is a new compute unit plus a new
-ISA" is demonstrated rather than claimed.
+Both print a verdict and a check count. When they are green, "a new accelerator
+is a new compute unit plus a new ISA" is demonstrated rather than claimed.
 
 ### Building your own
 
@@ -207,10 +222,11 @@ the four-mesh design, but they have not run on hardware yet:
 
 - **L2.** Staging in the memory agent, reached by address, and an adapter at
   the NoC endpoint, reached by instruction. Either is optional, and
-  `gen_mesh.py` selects them independently. The agent's banks are split
-  rather than one array. Banking and pipelining measured 337, then 357, then
-  381 MHz in out-of-context synthesis at equal URAM. Conditions are in
-  [`results.md`](docs/projects/kohakutpu/results.md).
+  `gen_mesh.py` selects them independently. The agent's banks are split rather
+  than one array, and how the banking and the pipelining were arrived at is a
+  measured table in [`results.md`](docs/projects/kohakutpu/results.md) — read it
+  there, with the conditions each row was taken under, rather than as a
+  frequency quoted here.
 - **Per-mesh, per-component clock control.** One generator per mesh. The
   matrix core, the vector core, and the fabric sit on separate outputs.
 - **Double-pumped matrix core.** The DSPs take a 2x clock. A `BUFGCE_DIV`
@@ -219,15 +235,30 @@ the four-mesh design, but they have not run on hardware yet:
 - **Per-domain reset architecture.** Every clock domain releases its reset
   locally through a domain-entry synchronizer. Only the raw reset crosses
   domains.
-- **The control processor.** `CTRL_PE` defaults to 0 and the shipping meshes do
-  not carry it; the probes and the `_pe` ship top do.
+
+**Hardware, built but not finished: the RV64 system processor.** Every mesh has
+a control processor, and `CPU_RV64` chooses which. It defaults to 0, so what
+ships is the RV32 complex. The RV64 branch elaborates, simulates and runs
+programs — core, mover, transform slot, memory path, host window and console are
+all connected — but in the node configuration the hub's compute-unit port is
+tied off in both directions, the interlink doorbell is unconnected, and
+`irq_summary` and `pe_status` are tied off
+(`src/kohakuaccel/sysnode/sysnode.v`). It cannot yet dispatch an instruction to
+a compute unit or consume the completion that comes back, which is the job the
+configuration exists for. See
+[`docs/arch/cpu/rv64-sys/`](docs/arch/cpu/rv64-sys/README.md).
 
 **Software: a working driver and compiler stack.** Kernels compile to cluster
 *and* vector programs. Flash attention runs. Tinygrad works as an optional
 frontend into the same kernel library.
 
 Every measured number, with the conditions it was taken under, is in
-[`results.md`](docs/projects/kohakutpu/results.md).
+[`results.md`](docs/projects/kohakutpu/results.md). Unless a row there says
+otherwise, a figure is `xcvu13p-fhgb2104-2L-e` under Vivado 2024.2,
+**out-of-context synthesis only** — no place, no route. **No frequency anywhere
+in this repository is a closed-timing result**, and synthesis slack is
+optimistic, so read one as an upper bound on the logic rather than as a speed
+the assembled machine runs at.
 
 ### What makes it interesting
 
@@ -235,8 +266,10 @@ Every measured number, with the conditions it was taken under, is in
 scale shared by a block of 32. This is a microscaling format, but the scale is
 deliberately *not* a power of two. An E8M0 scale wastes up to a full bit of
 significand, depending on where a block's peak falls in its binade. Three
-mantissa bits put that peak at 63 every time. The field is still 8 bits, and
-the measured relative error drops from p50 0.54% to 0.38%.
+mantissa bits put that peak at 63 every time. The field is still 8 bits, and the
+p50 relative error drops from 0.54% to 0.38% — E8M0 against E5M3, measured per
+element on correlated operands,
+[`results.md`](docs/projects/kohakutpu/results.md) §6.1.
 
 **MACs that cost zero LUTs.** Four tensor CUs chain through the DSP48E2's
 `PCOUT -> PCIN` cascade. The multiply *and* the whole K=32 reduction happen
@@ -267,7 +300,7 @@ Python 3.13+, and numpy is the only hard dependency.
 ```bash
 pip install -e .               # the whole tree: compiler, driver, kernels
 pip install -e ".[tinygrad]"   # optional, adds the tinygrad frontend
-pytest                         # 1315 tests, no hardware needed
+pytest                         # no hardware needed
 ```
 
 Nothing reaches the card unless you ask for it. Everything runs against unit
@@ -279,15 +312,35 @@ python demos/kohakutpu/flash_attention.py     # learn by reading the output
 python -m kohakutpu.viz                       # a kernel, at every level
 ```
 
-For the RTL, simulation is Vivado `xsim` (the mesh needs `-L xpm`, so iverilog
-will not do). Benches run against both a behavioural DSP and the real
-`DSP48E2`, so a failure is attributable to one or the other:
+For the RTL there are two simulators and a synthesiser, and they answer different
+questions. **Verilator is the inner loop**: `--lint-only` reaches a missing
+module, a port mismatch or a bad parameter in seconds, and a built model runs a
+long program far faster than xsim can. **xsim is the gate of record** — it is
+Vivado's, it propagates X, and the mesh needs `-L xpm`, so iverilog will not do.
+**Vivado owns every resource and frequency number**; neither simulator sees
+whether an array actually became block RAM.
+
+Verilator is installed **in WSL**. The conda and MSYS2 packages are 4.x, which
+has no `--timing`, and every bench here generates its clock with `always #N` —
+4.x drops that silently. [`sim/verilator/docs/setup.md`](sim/verilator/docs/setup.md)
+has the install and the reasoning; `sim/verilator/` also holds the XPM shims,
+the C++ harnesses and the cross-check benches.
+
+Benches run against both a behavioural DSP and the real `DSP48E2`, so a failure
+is attributable to one or the other.
 
 ```bash
-python scripts/py/check.py fast        # ~2.5 min: no Vivado, but every test
-python scripts/py/check.py full -j 6   # ~7 min: 107 checks, every bench
-python scripts/py/xsim.py saxpy_mesh   # the platform acceptance test
+python scripts/py/vlt.py cluster_node --lint-only   # seconds, no C++ build
+python scripts/py/xsim.py saxpy_mesh                # the platform acceptance test
+python scripts/py/check.py fast                     # no Vivado; 11 s at -j4
+python scripts/py/check.py full -j 6                # every bench
 ```
+
+`check.py`'s own header names each tier and the cost measured for it at `-j4`;
+that header is the figure to trust, not one copied into a README.
+[`docs/workflow/simulate.md`](docs/workflow/simulate.md) covers which simulator
+answers which question, the four levels of test, and what a passing suite does
+and does not mean.
 
 `full --counts <file>` records the numbers each check printed and
 `--counts-baseline <file>` fails the run when any of them moved. That is what a
@@ -300,6 +353,7 @@ does, what it costs, and where it stops.
 
 | | |
 |---|---|
+| [the glossary](docs/glossary.md) | every project-specific term, what it is, where it sits, and which page covers it properly. Start here if a word is unfamiliar |
 | [the framework](docs/integrate/README.md) | what you own, what is fixed, and how to put your own compute unit on it |
 | [the machine](docs/projects/kohakutpu/README.md) | KohakuTPU top to bottom, in the order the decisions were forced |
 | [writing kernels](docs/projects/kohakutpu/writing-kernels.md) | how much of the schedule to say, and what a tiling actually means |
@@ -310,9 +364,11 @@ does, what it costs, and where it stops.
 
 ```
    src/kohakuaccel/   the hardware framework: station bus, system node, NoC,
-                      and the CPU and SIMD processing elements
+                      and the two CPU processing elements -- pe/rv32/ and
+                      pe/rv64-sys/
    src/kohakutpu/     this machine: matmul, vector, transform, generated tops
-   src/kohakumpe/     a second project: the SIMT processing element
+   src/kohakumpe/     a second project: the SIMT processing element, and the
+                      SIMD unit that fills the framework's SIMD_EN slot
    src/templates/     the extension points, each with its bench
    src/examples/      saxpy, the platform acceptance test (RTL half)
    src/reference/     retained knowledge: arithmetic cores, PoCs. attic/ holds

@@ -34,7 +34,7 @@ on-chip network, a dispatch mechanism and a driver for the fifth time is not.
 ## Four kinds of thing
 
 "You supply this, we supply that" is too coarse to build against. Everything in
-KohakuAccel is one of four kinds, and every page in this tree says which:
+KohakuAccel is one of four kinds:
 
 | | what it is | can you change it |
 |---|---|---|
@@ -47,7 +47,44 @@ A convention is not a specification and not a default implementation. It is
 "here is how we did it, here is why, here is what breaks if you deviate."
 Mistaking a convention for a contract wastes effort obeying a suggestion;
 mistaking a contract for a convention produces traffic that routes plausibly
-and means something else. Every page says which it is talking about.
+and means something else.
+
+### Where a build-time parameter falls
+
+Parameters are not a fifth kind, and the split is worth stating because it is
+easy to get backwards:
+
+> **A framework parameter's value is yours. Its range, its meaning and what it
+> costs are fixed protocol.**
+
+Setting `L1_LINES` to 128 is your call. What `L1_LINES` *means*, which values are
+legal, and what happens at the edges is not — and a parameter whose out-of-range
+value fails silently rather than loudly is a defect in the part, not a choice you
+made. Where a parameter has a value the shipped design uses, the page says so and
+says why, because a default is evidence about the design and not merely a
+starting point.
+
+**The word "framework" in that rule is load-bearing.** A parameter on something
+*you* built is yours entirely — value, range and meaning alike — because you also
+wrote the specification it answers to. The rule divides a knob you turn from a
+contract someone else keeps; it does not apply where you are both parties.
+
+### Where the labels appear
+
+The scheme classifies **parts of the machine**, so it is applied where parts are
+described, not uniformly across the tree:
+
+| | |
+|---|---|
+| **[arch/](arch/)** | every *system* page ends with a table sorting its parts into the four |
+| **[spec/](spec/)** | every page is normative. It uses three of the four — a specification never describes something that is yours |
+| **[integrate/](integrate/)** | every page opens by naming its kind, because this is the section you build against |
+| **[projects/](projects/)** | a project page labels what was **forced** versus what was chosen; see [projects/](projects/) for why that matters more here than anywhere |
+| **[workflow/](workflow/)** | **outside the scheme.** These pages describe practice, not parts. "How to close timing" is neither a protocol nor an addon |
+| **[notes/](notes/)** | **outside the scheme**, and not normative at all |
+
+A page describing one component in depth inherits its section's classification
+rather than repeating it.
 
 ## How much is actually yours
 
@@ -90,8 +127,9 @@ closure practice and bringup path that get it onto real silicon.
     +--------------------------------------------------------+
     |  system node       ONE component, one per mesh          |
     |    MAG          memory access, cross-mesh, the agent    |
-    |    ctrl PE      dispatch, small compute, the mover      |
-    |                 and its transform slot                  |
+    |    control PE   a processor fused to MAG: dispatch,     |
+    |                 supervision, the mover and its          |
+    |                 transform slot                          |
     |    hub          N attachments; nothing inside owns one  |
     |    descriptors in -> DRAM traffic -> streamed responses |
     |    the PE answers at (0,0) -- a corner, so it costs no  |
@@ -118,6 +156,26 @@ interlink.
 The compute unit is the only block you have to write. The addon slots are
 places you *may* write, with something working already in them.
 
+### Two processors, and why
+
+The framework carries two RISC-V cores, because two jobs in the picture above
+have different lifecycles and a single core cannot have both shapes:
+
+| | lifecycle | where it sits |
+|---|---|---|
+| **RV32 PE** | kicked, runs to completion, reports one word | a mesh endpoint, behind the compute-unit port |
+| **RV64 system core** | boots once and runs until the image is torn down | no compute-unit shell; fused directly to MAG |
+
+A batch unit can afford to block on the network; the unit that *arbitrates* the
+network cannot. That difference, not instruction width, is why there are two.
+
+**The node always has a control processor** — it is structural, and there is no
+build without one. **Which** processor is a parameter: `CPU_RV64` selects the
+RV64 complex and **defaults to 0**, so a bare build carries the RV32 one. The
+RV64 configuration's fabric-facing paths are not all connected yet;
+[arch/cpu/](arch/cpu/) covers both cores, the parameter, and what each
+configuration does and does not yet do.
+
 ## Does your workload fit
 
 The framework assumes a shape. It fits when:
@@ -141,9 +199,10 @@ Saying no here is cheaper than finding out after floorplanning.
 
 **[arch/](arch/)** — what exists and how it maps to real circuit. Start with
 [arch/README](arch/README.md) for the macro view, then the system that concerns
-you: [noc](arch/noc/), [sysnode](arch/sysnode/), [ship](arch/ship/) for assembly,
-[physical](arch/physical/) for floorplan and clocking, and
-[axi](arch/axi.md) for the boundary to everything outside.
+you: [noc](arch/noc/), [sysnode](arch/sysnode/), [cpu](arch/cpu/) for the two
+processors, [ship](arch/ship/) for assembly, [physical](arch/physical/) for
+floorplan and clocking, and [axi](arch/axi.md) for the boundary to everything
+outside.
 
 Each system's README states what it owns, which of the four kinds its parts
 are, what it does *not* own and which neighbour takes over, and where today's
@@ -171,6 +230,10 @@ tensor accelerator that exercises every part of the framework.
 **[notes/](notes/)** — design rationale and open research. Why decisions went
 the way they did, and what is still undecided.
 
+**[glossary.md](glossary.md)** — every project-specific term in one alphabetical
+page: what it is, where it sits, which of the four kinds it is, and which page
+covers it properly. Start here when a word on any page is unfamiliar.
+
 ## Numbers
 
 Measurements live with the project that produced them, never in framework docs.
@@ -187,8 +250,14 @@ it, and a framework doc that quotes them as if they were is wrong.
       sysnode/           THE system node, one component: MAG, the control
                          processor with the mover and its transform slot,
                          the interlink, and the hub that owns every port
-      pe/rv32/           the CPU PE; SIMD_EN names an extension it does
-                         not own
+        cpu/             the control processor as MAG sees it, in both
+                         RV32 and RV64 form
+      pe/rv32/           the RV32 CPU PE; SIMD_EN names an extension it
+                         does not own
+      pe/rv64-sys/       the RV64 core, in two configurations: a mesh
+                         compute unit, and the shell-less core that fuses
+                         to MAG. core/ holds the pipeline, ALU, L1, MMU
+                         and node-port arbiter
       axi/               station bus, links, AXI plumbing
       common/            shared primitives: FIFOs, named memory wrappers
       verif/             bench-only models: axi_ram, port checkers

@@ -2,10 +2,51 @@
 
 House style, the tools that enforce it, and the parts still under discussion.
 
+## The check suite
+
+`scripts/py/check.py` runs one tier of checks in parallel and reports a hang as a
+hang.
+
+```
+python scripts/py/check.py fast
+python scripts/py/check.py full -j 6
+```
+
+Its own module docstring names the tiers and the cost measured for each at `-j4`
+— `fast` 11 s, `unit` 40 s, `blocks` 63 s. Read it there. **This page does not
+restate a check total**, because the tier lists are edited far more often than a
+front-door document is, and a stale total here would read as the size of the
+suite.
+
+Three things about that structure are worth knowing before you trust a green
+line.
+
+**A tier is a set, not a level.** `TIERS` is a plain dictionary of lists and each
+tier is composed by name out of the others. Whether tiers nest is a decision
+someone made in that file rather than a property of the word — so read `TIERS`
+rather than assuming it, in either direction.
+
+**Membership can drain away without the tier disappearing.** `E2E` — the tier
+meant to run compiler-emitted instructions through the real RTL, and the only one
+that separates a compiler fault from a hardware one — **is the empty list today**.
+It emptied when the package feeding it was retired. `check.py e2e` still exists,
+still runs and still passes, having run nothing of its own. A tier that can empty
+out and stay green is a gate reporting success for running nothing, and nothing
+in the runner checks that a tier is non-empty. Treat that as a known defect in
+the suite, not as coverage.
+
+**Every check is bounded.** One that produces no result inside its budget is
+killed and reported as **STALLED**, which is a different event from a `FAIL` and
+is printed as one. A check taking much longer than usual is a stall, not
+slowness — investigate it rather than waiting it out.
+
 ## Python — settled, and enforced
 
 `black` is the formatter and `ruff` is the linter. Both are in `check.py`'s
-`fast` list, which every tier includes, over **every** directory:
+`fast` list, and every tier is composed as that list plus its own additions — so
+they run whichever tier you invoke. `TIERS` in `scripts/py/check.py` is the
+authority on what a tier contains; read it there rather than trusting this
+sentence. The scope is **every** directory:
 
 ```
 python -m ruff check .
@@ -13,7 +54,7 @@ python -m black --check -q .
 ```
 
 The scope was `compiler driver scripts` and that was the same mistake the
-Verilog table made below — `tests/pe/tools` alone is 34 files of generators and
+Verilog table made below — `tests/pe/tools/` alone is dozens of generators and
 golden models that every PE suite is graded by, and `demos/` is what a reader
 runs first. A gate over a subset reads as done. `scripts` is in scope because it
 is not scratch either: `check.py`, `xsim.py` and `gen_mesh.py` are load-bearing.
@@ -24,66 +65,73 @@ Three rules carry a per-file exemption, each with its reason in `pyproject.toml`
   failure has to catch every failure.
 - **`RUF059`** in `demos/`. `B, C, H, W = x.shape` names the layout, and
   `_, _, H, W` deletes the only thing that line says.
-- **`UP031`** in `tests/pe/tools/`. 442 `%` format strings across 34 generators
-  and golden models, most of them aligned table rows. Ruff's own fix rewrites
-  them as `.format()`, which `UP032` then flags — two mechanical passes over
-  code every PE suite is graded by, to reach a style nobody asked for. `%` is
-  not a defect, and an exemption with a reason beats a rewrite without one.
+- **`UP031`** in `tests/pe/tools/`. Several hundred `%` format strings across the
+  generators and golden models, most of them aligned table rows. Ruff's own fix
+  rewrites them as `.format()`, which `UP032` then flags — two mechanical passes
+  over code every PE suite is graded by, to reach a style nobody asked for. `%`
+  is not a defect, and an exemption with a reason beats a rewrite without one.
 
 **Run `black` before `ruff`'s report is meaningful.** Formatting first removes
 most line-length and continuation noise, so what ruff then reports is
 substance. `ruff check --fix` is safe to apply; `--unsafe-fixes` is not, and
 should be read case by case.
 
-## Documentation — three things are now checked
+## Documentation — four gates
 
-Prose cannot be checked. Two things inside prose can, and both had rotted
-silently because nothing looked:
+Prose cannot be checked. Four things inside prose can, and each had rotted
+silently because nothing looked. All four are in `check.py`'s `fast` list.
 
-```
-python scripts/py/docpaths.py     # every repo path a doc cites, against the tree
-python scripts/py/specparams.py   # docs/spec/parameters.md, against the RTL
-```
+| gate | what it proves | what it cannot |
+|---|---|---|
+| `python scripts/py/docpaths.py` | every repo-rooted path a doc names still exists — prose, `code` spans and Vue string literals alike — and so does the target of every relative markdown link | anything about a fragment: it strips `#heading` before resolving |
+| `python scripts/py/docanchors.py` | a `page.md#heading` link lands on a heading that page actually defines | — |
+| `python scripts/py/doclines.py` | a `file.v:123` citation names a file that exists and a line that exists and is not blank | **whether that line still says what the doc claims.** `--show` prints the cited line so a person can check |
+| `python scripts/py/specparams.py` | `docs/spec/parameters.md` against the `parameter` declarations in the RTL, reporting MISSING, EXTRA and DEFAULT separately | a row whose Default cell carries prose rather than a value |
 
-Both are in `check.py`'s `fast` list, so every tier runs them.
+Each takes paths, so `python scripts/py/docpaths.py README.md` checks one file.
+**Run the gate for the state of the tree.** This page does not print a finding
+count, because a count printed on a page rots the day after it is written and
+nothing tells the next reader that it has.
 
-**`docpaths.py`** checks two things over 1,249 citations in 159 files: every
-repo-rooted path a doc names, and every relative markdown link. It found **103
-dangling paths and 12 dangling links**. Almost all were two renames the docs
-never learned about: the old `kohakunoc` tree became `src/kohakuaccel/noc/`, and
-`mas` became `sysnode`. The paths are invisible to a link checker — they are
-prose, `code` spans and Vue string literals — and the links were invisible to a
-path check, because `../mas/` names no top-level directory at all. Both halves
-were needed. A line that
-deliberately names a dead path ("the retired `src/ktpu`", "directories that no
-longer exist") is skipped by a word test on that line, and a placeholder like
-`src/examples/NAME/NAME_cu.v` by an all-caps segment test. Both heuristics err
-toward silence, because a checker that cries wolf is a checker people delete.
+**Why more than one gate.** They see different defects and this tree has had all
+of them. A repo-rooted path sitting in prose is invisible to a link
+checker. A relative link like `../mas/` is invisible to a path check, because it
+names no top-level directory at all — `docpaths.py` covers both. And a link
+whose *file* resolves while its *heading* was renamed is invisible to both: it
+passes every check and lands the reader silently at the top of the page, which is
+the gap `docanchors.py` closes. A cited *line* rots faster than a path, which is
+`doclines.py`.
 
-**`specparams.py`** found **42 mismatches** against the RTL: parameters the
-tables omitted, parameters that were not that module's, and defaults that
-disagreed. The worst was **`ADDR_W` documented as 34** in five tables, with a
-6-bit `addr_spare` beside it in `flit-format.md` and the mesh id at
-`addr[33:32]`. Every module on the memory path declares 40, `mag_mem_port.v`
-slices `[255 -: 40]` through a localparam whose comment says slicing it by
-`ADDR_W` "read `addr >> 6` on a 34-bit build, silently", and `address-map.md`
-had it right the whole time. **A sender that followed the spec would have placed
-every request 64× too high** with nothing on the path reporting it.
+The path gates err toward silence, because a checker that cries wolf is a checker
+people delete. A line that deliberately names a dead path — "the retired
+`src/ktpu`", "directories that no longer exist" — is skipped by a word test on
+that line, and a placeholder like `src/examples/NAME/NAME_cu.v` by an all-caps
+segment test.
+
+**`specparams.py` exists because of one class of defect.** A normative parameter
+table is the one doc a reader trusts without checking. `ADDR_W` was documented as
+**34** in five tables, with a 6-bit `addr_spare` beside it in `flit-format.md`
+and the mesh id at `addr[33:32]`. Every module on the memory path declares **40**;
+`mag_mem_port.v` slices `[255 -: 40]` through a localparam whose comment says
+slicing it by `ADDR_W` "read `addr >> 6` on a 34-bit build, silently"; and
+`address-map.md` had it right the whole time. **A sender that followed the spec
+would have placed every request 64× too high**, with nothing on the path
+reporting it.
 
 Four normative pages said the same wrong thing, which is what a spec tree does
 when one page is copied into the next. The lesson is not "check the specs" — it
 is that a normative claim about a bit position is checkable, so check it.
 
-Both gates were watched failing before being trusted: `docpaths.py` on a
-booby-trapped snapshot, `specparams.py` against the pre-fix docs, where it
-reports 42 and exits 1.
+These gates were watched failing before they were trusted — `docpaths.py` on a
+booby-trapped snapshot, `specparams.py` against the pre-fix docs. **A check you
+have not watched fail is an assumption.**
 
 ## Verilog — the rules live in `format-example2.v`
 
 **`format-example2.v` is normative.** It is every syntactic form Verilog-2001
 has, each written in the shape this tree wants, with the reason beside it — read
 it the way PEP-8's examples are read. Nothing here restates it; this section is
-the summary and the measurement.
+the summary, and the tooling that measures conformance to it.
 
 It is verified, not asserted. Both modules in it parse under `xvlog -sv` and
 elaborate under `xelab`, and its bench module runs to `PASS -- 2 checks` with no
@@ -94,41 +142,58 @@ There is no formatter in the toolchain. Verible is the tool for this and is
 only. More to the point, a formatter would not decide most of these — F4/F5/F7
 are structure and F6 is which token starts a line.
 
-| | Rule | Was | Now | Fixed by |
-|---|---|---|---|---|
-| **F1** | 80 columns | — | — | hand |
-| **F2** | 4 spaces, never a tab | — | — | hand |
-| **F3** | a declaration is ONE line; a continuation line is not | 81 | **0** | `--fix-decls` |
-| **F4** | `begin`/`end` on every `if`/`else`/`for`/`while` body | 1,779 | **0** | `--fix-blocks`, then hand |
-| **F4a** | the same rule applied to an `always` body | 300 | **0** | `--fix-blocks`, then hand |
-| **F5** | `case` items indented one level inside `case` | 26 | **0** | `--fix-case` |
-| **F6** | multi-line expression in its own parens, operator LEADING | 110 | **0** | hand |
-| **F7** | `generate` adds no indent; every `begin` in one is named | 7 | **0** | hand |
-| **F8** | one item per line in a port list and an instantiation | — | — | hand |
-| **F9** | comments above the code, at its indent | — | — | hand |
-| **F10** | `<=` under `@(posedge)`, `=` elsewhere, never both | — | — | hand |
-| **F11** | every literal wider than one bit is sized and based | — | — | hand |
-| **F12** | compiler directives at column 0 | — | — | hand |
+| | Rule | Fixed by |
+|---|---|---|
+| **F1** | 80 columns | hand |
+| **F2** | 4 spaces, never a tab | hand |
+| **F3** | a declaration is ONE line; a continuation line is not | `--fix-decls` |
+| **F4** | `begin`/`end` on every `if`/`else`/`for`/`while` body | `--fix-blocks`, then hand |
+| **F4a** | the same rule applied to an `always` body | `--fix-blocks`, then hand |
+| **F5** | `case` items indented one level inside `case` | `--fix-case` |
+| **F6** | multi-line expression in its own parens, operator LEADING | hand |
+| **F7** | `generate` adds no indent; every `begin` in one is named | hand |
+| **F8** | one item per line in a port list and an instantiation | hand |
+| **F9** | comments above the code, at its indent | hand |
+| **F10** | `<=` under `@(posedge)`, `=` elsewhere, never both | hand |
+| **F11** | every literal wider than one bit is sized and based | hand |
+| **F12** | compiler directives at column 0 | hand |
 
-**2,303 → 0 across all 391 `.v` files** under `src/` and `tests/` — every
-directory, including `tests/`, `src/examples`, `src/reference` and `src/attic`.
-Run `python scripts/py/vstyle.py src tests` and the total is zero.
+### Getting the count, rather than reading one
 
-### The scope was the thing this table got wrong
+**The scope is every `.v` file under `src/` and `tests/`** — including `tests/`,
+`src/examples/`, `src/reference/` and `src/attic/`.
 
-The previous version of it read **"1,283 → 146 across 180 files"** and did not
-say which 180. They were `src/kohakuaccel`, `src/kohakutpu`, `src/kohakumpe`
-and `src/templates` — the live source, 187 files today. The other 204 files
-were never measured, and they held **more findings than the whole reported
-tree**: `tests/` alone was 1,916, of which 1,507 were F4. A table that reports
-a subset and calls it the tree is worse than no table, because it reads as done.
+```
+python scripts/py/vstyle.py src tests           # per-rule totals and a grand total
+python scripts/py/vstyle.py src tests --show    # per-file rows, worst first
+python scripts/py/vstyle.py src tests --lines   # every finding, with its line
+python scripts/py/vstyle.py src tests --rule F6 # one rule only
+```
 
-Three counts in the old table had also moved because the CHECKER was wrong, not
-the tree: `if ((SEED_UNITS != 0)` is a condition broken across lines and was
-read as a missing body (11), and `always @* begin` opens its block on the
-header line but the sensitivity test looks for a `)` that `@*` does not have
-(2). A style count is a claim; that was the third and fourth time one in this
-file was wrong, and the scope error above is the fifth.
+`check.py`'s `fast` tier runs the first of those, so a regression fails the suite
+instead of waiting for someone to re-read this page. The counts and the listing
+come from the same predicates and cannot disagree: each check returns a list of
+lines and the count is its length.
+
+**This page states the rules and does not state a total.** A count on a page is a
+claim with an undated timestamp — nothing tells the next reader it has moved, and
+it will have. Three ways it has been wrong here before, and they are the three to
+expect:
+
+- **Scope.** An earlier table measured `src/kohakuaccel`, `src/kohakutpu`,
+  `src/kohakumpe` and `src/templates` and called the result the tree. The
+  unmeasured half held more findings than the reported half — `tests/` alone
+  more than everything counted. **A table that reports a subset and calls it the
+  tree is worse than no table, because it reads as done.**
+- **The checker, not the tree.** `if ((SEED_UNITS != 0)` is a condition broken
+  across lines and was read as a missing body; `always @* begin` opens its block
+  on the header line, but the sensitivity test looked for a `)` that `@*` does
+  not have. Both moved a published number without a line of RTL changing.
+- **The moment of measurement.** A `--fix` run computes its counts *before* it
+  writes, so a number printed by a fixing pass describes the tree that no longer
+  exists by the time you read it.
+
+**Read a style count as a claim that needs checking, not as a measurement.**
 
 ### The evidence is the numbers, not the PASS
 
@@ -143,14 +208,10 @@ python scripts/py/check.py full --counts build/counts-base.json
 python scripts/py/check.py full --counts-baseline build/counts-base.json
 ```
 
-Drift fails the run and prints the was/now pair. This pass cleared it twice —
-after the mechanical fixers over 148 files, and again after the hand pass —
-each time **104/104 ran, 104 compared**, every number identical.
-
-`vstyle.py --lines` prints rule, line number and source text per finding, and
-`--rule F6` narrows it. The counts and the listing come from the same
-predicates, so they cannot disagree; the checks return line lists and the count
-is their length.
+Drift fails the run and prints the was/now pair, and a label missing from either
+side is deliberately *not* drift — the bench list changes, and calling that a
+regression is how a ledger becomes something people delete. Take the ledger
+**before** the change; afterwards there is nothing left to compare against.
 
 `--fix-blocks` now reaches six shapes it used to refuse, each because the
 refusal was about a *wrong match* rather than about the rewrite being unsafe:
@@ -183,7 +244,7 @@ refusal was about a *wrong match* rather than about the rewrite being unsafe:
 - **`if (C) A; else B;` on ONE line**, both arms a single simple statement.
   This is most of the benches' spin loops.
 
-Those last three took the residue from 180 to 56 without a hand edit.
+Those last three removed most of what was left without a hand edit.
 
 Two bugs in the driver itself, both of which read as "the fixer refused this
 file" rather than as failures:
@@ -194,34 +255,26 @@ file" rather than as failures:
 - **One pass reaches one nesting level.** Wrapping `for (i..) for (j..) x;`
   leaves the inner `for` bare, so the passes run to a fixpoint.
 
-### Two counts in this table were wrong, and the way they were wrong is the lesson
+### Two of these checks have measured the wrong thing, and how is the lesson
 
-**F7 was reported as 185, then 188, then 0. It was 7** — one file in `src/attic`
-and one in `src/reference/arithmetic`, both outside the scope anything had been
-measuring, both now labelled. The counter had been matching every `begin` inside
-a generate *region*, and `noc_l2_adapter.v` wraps its entire body in one
-`generate if (PASS)`, so every `always ... begin` in the file counted. This is
-the second time this exact check has measured the wrong thing; the first version
-reported 385 for the same reason and was "fixed" by restricting it to generate
-regions, which was not enough. The **0** was right about the live source and
-wrong about the tree, for the scope reason above.
+**F7 counted the word `begin`, not a block.** The check had been matching every
+`begin` inside a generate *region*, and `noc_l2_adapter.v` wraps its whole body
+in one `generate if (PASS)` — so every `always ... begin` in that file counted as
+an unnamed generate block. Restricting the walk to generate regions was the first
+attempted fix and was not enough.
 
 What it takes to be right: walk the region tracking whether each open block is
 *procedural*, and note that an `always` whose body is
 `if (..) begin .. end else begin .. end` opens **two** blocks at the same level —
-so the always must stay "armed" across its whole statement, not just until the
+so the `always` must stay "armed" across its whole statement, not just until the
 first `begin`. Erring toward procedural undercounts, which is the safe direction.
 
-**F4 was reported as 777, then 753.** Both were pre-fix numbers printed by a
-`--fix` run, which computes counts before writing. The rule itself was also
-under-specified at first: the original R2 regex saw only the next-line form and
-missed `if (go) x <= 1'b0;` entirely, which is most of them.
+**F4 was under-specified before it was mis-counted.** The original regex saw only
+the next-line form and missed `if (go) x <= 1'b0;` entirely, which is most of
+them. A rule that does not describe the shape it means will produce a stable,
+confident, wrong number for as long as nobody reads the predicate.
 
-**Read a style count as a claim that needs checking, not as a measurement.**
-
-`scripts/py/vstyle.py` measures them; `--show` gives per-file rows worst first
-and `--lines` every finding with its line. Three rules are mechanically
-rewritable:
+Three rules are mechanically rewritable:
 
 - `--fix-decls` (F3) re-packs one declaration's names onto full lines. No
   reordering, no reindentation of anything else.
@@ -245,10 +298,10 @@ rewritable:
   comes along at the right depth instead of being re-flattened.
 
 Everything else is a human's. Apply a pass, then run
-`check.py full --counts-baseline <ledger>`: 104 checks and their numbers are the
-only thing separating a reformat from a rewrite. A one-character slip during
-this work — a `\` typed for `//` — broke 30 benches and was invisible until the
-suite ran.
+`check.py full --counts-baseline <ledger>`: the checks *and their numbers* are
+the only thing separating a reformat from a rewrite. A one-character slip during
+this work — a `\` typed for `//` — broke dozens of benches and was invisible
+until the suite ran.
 
 **A file no bench compiles has nothing to catch a bad reformat**, and roughly
 half of `src/reference`, all of `src/attic` and the frozen station-bus copies in
@@ -256,8 +309,9 @@ half of `src/reference`, all of `src/attic` and the frozen station-bus copies in
 each file ALONE under `xvlog -sv`, which is what both fixer corruptions
 presented as. Standalone parse is stricter than a bench build — a file needing a
 macro from a sibling fails there and is fine in the suite — so compare the
-failing SET before and after, never the count. One file fails today and did
-before this pass: `src/reference/arithmetic/fp_exp.v` uses SystemVerilog `int`.
+failing SET before and after, never the count. `src/reference/arithmetic/fp_exp.v`
+is a standing member of that set: it declares a wire named `int`, which `-sv`
+takes as a keyword. Its presence is not a regression; something joining it is.
 
 F6 is the one rule only half of which is checkable. The script sees the trailing
 operator; whether an expression *should* have been broken at all is judgement,
@@ -265,9 +319,9 @@ and `format-example2.v` is where that judgement is shown rather than stated.
 
 ### The correction that matters
 
-An earlier version of this file said R1 was *"one name per `localparam`
-statement"* and counted 124. **That was wrong.** The hand-formatted half of
-`format-example.v` keeps multi-name declarations:
+An earlier version of this file stated the declaration rule as *"one name per
+`localparam` statement"* and reported a count against it. **The rule was wrong.**
+The hand-formatted half of `format-example.v` keeps multi-name declarations:
 
 ```verilog
 localparam [3:0] A_ADD = 4'd0, A_SUB = 4'd1, A_SLL = 4'd2, A_SLT = 4'd3;
@@ -281,9 +335,11 @@ read as a table and diff as a paragraph, because adding a name in the middle
 re-aligns every line and the diff then touches all of them and says nothing.
 Note that `A_SLTU=` above is already mis-aligned, which is what always happens.
 
-Correcting the rule dropped the count from 124 to **83**, and fixing the F4
-checker to catch the same-line form (`if (go) lsu_done <= 1'b0;`, which the
-next-line-only regex missed entirely) raised its count from 204 to **777**.
+Correcting the rule moved its count down; fixing the F4 checker to catch the
+same-line form (`if (go) lsu_done <= 1'b0;`, which the next-line-only regex
+missed entirely) moved that one up several-fold. **Neither move was a change to
+the tree.** That is the whole argument for reading the predicate before reading
+the number.
 
 One more: `strip_block_comments` used to delete a multi-line `/* .. */`
 outright, which joined the code above it to the code below and shifted every
@@ -334,24 +390,53 @@ unformatted source — 4184 cycles, 832 requests over 112 gathers, the same halt
 word and cause, 4 checks. That is the bar for each file: reformat it, run its
 bench, compare the numbers and not just the PASS.
 
-At tree scale that bar is `--counts-baseline`, which applies it to all 104
-checks at once instead of one file at a time. Take the ledger BEFORE the pass —
+At tree scale that bar is `--counts-baseline`, which applies it to every check in
+the tier at once instead of one file at a time. Take the ledger BEFORE the pass —
 after it, there is nothing left to compare against.
 
-### Verilog linting — available now
+### Verilog linting, and the two Verilator entry points
+
+**There are two entry points, they use two different Verilators, and they answer
+different questions.** Read this before installing anything.
+
+| | `scripts/py/vlint.py` | `scripts/py/vlt.py` |
+|---|---|---|
+| what it does | `verilator --lint-only -Wall` and nothing else | **runs** a bench under Verilator; `--lint-only` also available |
+| which Verilator | a native Windows build, conda-forge | **5.x, in WSL** |
+| scope | the synthesisable tree; benches excluded unless `--tb` | whatever the bench is made of, XPM shims included |
+| documented in | this page | [`sim/verilator/`](sim/verilator/README.md) |
+
+Both take a bench's source list from `xsim.py`, so there is no second list to
+drift.
 
 ```
 python scripts/py/vlint.py <bench> [--top <generated_top>]
 python scripts/py/vlint.py <bench> --tb     # lint the testbench too
 python scripts/py/vlint.py --list
+
+python scripts/py/vlt.py <bench> --lint-only
+python scripts/py/vlt.py <bench> --warn     # show the silenced warning classes
 ```
 
-`verilator --lint-only -Wall` over a bench's own source list from `xsim.py`, so
-there is no second list to drift. Waivers are in the script with a reason each;
-anything not waived is a finding. Verilator comes from
-`micromamba create -n hdlfmt -c conda-forge verilator`.
+**Do not install a conda Verilator and expect to run benches with it.** The
+conda-forge and MSYS2 packages are 4.x; 4.x has no `--timing`, and every bench in
+this tree generates its clock with `always #N`. Those delays are dropped
+*silently* — the bench does not fail, it runs and does nothing. Lint never
+evaluates a delay, which is why the same build is fine for `vlint.py` and unfit
+for anything else.
 
-Three things it needs to be honest, each of which cost a run to find:
+```
+micromamba create -n hdlfmt -c conda-forge verilator   # lint only, for vlint.py
+wsl -d Ubuntu-24.04 -- sudo apt-get install -y verilator   # 5.x, for vlt.py
+```
+
+[`sim/verilator/docs/setup.md`](sim/verilator/docs/setup.md) records the routes
+that were tried and why only the WSL one was taken; `sim/verilator/` is also
+where the shims, the C++ harnesses and the cross-check benches are documented.
+`vlint.py`'s waivers live in the script with a reason each; anything not waived
+is a finding.
+
+Four things `vlint.py` needs to be honest, each of which cost a run to find:
 
 - **Vendor libraries on the search path.** `DSP48E2` and the `xpm_*` macros are
   Vivado's, so without `-y` on `unisims` and `xpm_*/hdl` every module naming a
@@ -372,15 +457,18 @@ Three things it needs to be honest, each of which cost a run to find:
   later VENDOR finding's context lines were printed as ours too. It needs its
   own flag.
 
-Current state on `ctrlpe_mesh`, our RTL only: **79 `PINCONNECTEMPTY`,
-64 `PINMISSING`** — `GENUNNAMED` is clear (its 3 were labelled), and so are
-`MODMISSING` and `WIDTHTRUNC`.
+Run it for the current state — `python scripts/py/vlint.py ctrlpe_mesh` is the
+usual whole-mesh sweep. Two things to know before reading its output:
 
-The 64 `PINMISSING` in `src/` are **7 source lines**, not 64: 8 `sb_hub`
-instances in `sb_stn_line.v` of which one connects `stat_flits`/`stat_wait`,
-4 `sb_link` in `sb_line4.v`, 4 in `mag_link.v`, 2 in `noc_orchestrator.v`, and
-`DSP48E2`'s unused cascade pins in `vec_dsp.v`. In `src/` every one is an
-unconnected **output**, which is the harmless direction.
+**A finding count is instances, not source lines.** The `PINMISSING` findings in
+`src/` collapse to a handful of instantiations — several `sb_hub` in
+`sb_stn_line.v`, `sb_link` in `sb_line4.v` and in `mag_link.v`, a pair in
+`noc_orchestrator.v`, and `DSP48E2`'s unused cascade pins in `vec_dsp.v`. Reading
+the count as a to-do list overstates the work by an order of magnitude.
+
+**In `src/` an unconnected pin is an unconnected output**, which is the harmless
+direction. The dangerous direction is an unconnected *input* — and that is the
+next section.
 
 ### …and that is exactly why it was not enough
 
@@ -418,11 +506,11 @@ that looks exactly like a latent overflow, on code that is already correctly
 guarded. **Read the guard before calling a width warning a bug** — and then
 still fix the width, so the next reader does not have to.
 
-And the honest summary of a day spent on this: of the failures chased, **three
-were code** (the three rows above) and the rest were **stale tests, stale
-generated artifacts, or a bench configured differently from the ship**. A test
-that fails is a claim about the code; check which of the two is wrong before
-fixing either.
+One proportion is worth carrying out of that table: of the failures chased while
+the linter was being wired up, only a minority were code. The rest were **stale
+tests, stale generated artifacts, or a bench configured differently from the
+ship**. A test that fails is a claim about the code; check which of the two is
+wrong before fixing either.
 
 ## Standing rules that are not style
 
