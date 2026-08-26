@@ -9,6 +9,27 @@ tags:
 
 # Address map: outside vs inside
 
+Addressing is the one convention every other part of the machine assumes, so it
+is worth reading before anything else in this tree.
+
+Four terms are used throughout, defined once here:
+
+| term | what it is |
+|---|---|
+| **mesh** | one grid of routers with its own DDR4 behind it. A device image holds up to four. |
+| **MAG** | the Memory Access Gateway inside a mesh's [system node](arch/sysnode/) — it turns descriptors into DRAM traffic and answers every request on the mesh |
+| **mover** | the engine inside MAG that executes descriptors; it is the only issuer of some address forms, which matters below |
+| **staging L2** | an on-chip store reached through the *aperture* bit rather than through DRAM |
+
+This page is a **fixed protocol**: nothing here is adjustable, and a component
+that decodes differently is not on the framework.
+
+The RTL citations below (`mag.v:667-671` and similar) are pointers into the
+source at the time of writing. Treat the file as authoritative and the line
+number as a hint.
+
+---
+
 The machine is a **40-bit** machine. Every address a unit issues, every address in
 an instruction, and every address a decoder tests is 40 bits:
 
@@ -113,4 +134,19 @@ behind it (`C0_DDR4_ADDRESS_BLOCK` assigns at `<0x0_0000_0000 [ 4G ]>`), so
 addresses from 4 GB to 64 GB within a mesh decode correctly, reach `M_AXI_DRAM`,
 and hit nothing. Staying under 4 GB per mesh is a compiler invariant, not
 something the hardware checks -- unlike an unimplemented aperture, which does
-fault (`mag_stage.v:77`).
+fault (`mag_stage.v:81`).
+
+## What 40 bits buys elsewhere
+
+The width is not only a capacity decision. The system node's RV64 control
+processor implements Sv39 virtual memory, and a Sv39 page-table entry nominally
+carries a 44-bit physical page number. Because a physical address here is 40
+bits, that field is stored as **28 bits**, which brings a translation-cache entry
+to 57 bits — narrow enough to sit in one block-RAM port. At 44 bits the entry
+would be 73 bits, one bit over the 72-bit port width, and the array would
+silently become LUTs.
+
+So the address width chosen for the fabric is what makes the processor's
+translation cache a block RAM rather than logic.
+[arch/cpu/rv64-sys/memory-system.md](arch/cpu/rv64-sys/memory-system.md) carries
+the detail.

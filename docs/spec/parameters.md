@@ -10,12 +10,25 @@ tags:
 
 # Parameters
 
-> **Kind: reference.** Defaults are defaults, not requirements. Where a value is
-> genuinely constrained the "legal range" column says so, and those constraints
-> are Fixed.
+> **Kind: Fixed — about ranges and meanings. The values are Yours.**
+>
+> **A parameter's value is yours. Its range, its meaning and what it costs are
+> fixed protocol.** So the "Controls" and "Legal range" columns are normative and
+> a build that violates one is not on the framework; the "Default" column is
+> evidence, not instruction.
+>
+> This page is therefore silent on which value you should pick — with one
+> exception. **Where a value is the shipped one, that is a fact about the design
+> and the page says so**, because "every top in the tree sets this" is
+> information a reader cannot get from a range.
 
 Exhaustive lookup. Every parameter of every framework module, grouped by the role
 the module plays rather than by which package currently holds it.
+
+**No area or frequency figures appear here.** What a parameter costs on a given
+part is a property of one accelerator on one device and lives in
+[projects/](../projects/). This page states what a parameter *means* and what
+values are legal.
 
 Compute-unit parameters are not here: a unit's parameters are the unit's, and
 that includes every parameter describing its local memory — width, depth,
@@ -28,6 +41,38 @@ the others, because Verilog needs it before the port list. Those are marked
 **derived** and **MUST NOT** be overridden. Overriding one elaborates cleanly and
 builds something else.
 
+## 0. Parameters that fail silently
+
+**An out-of-range value that fails silently is a defect in the part, not a
+mistake the reader made.** Every one this tree knows about is named here and
+again in its own row, because a range nobody can check is a range nobody will
+obey.
+
+Nothing in this framework range-checks a parameter at elaboration. There is no
+`$fatal` on a bad depth and no assertion on a bad coordinate. So the failure
+modes below are the whole of the feedback you get:
+
+| Failure | Parameters that have it | What you see |
+|---|---|---|
+| **Deadlock** — the build is correct until a resource runs out, then stops | `WR_SLOTS` under two per writing node; `FIFO_D` too small for `MAX_OUT × BURST_MAX`; `IL_MAX_BEATS` above the far end's `IL_RX_BEATS` | A hang. No error, no counter, nothing to point at |
+| **Silent misread** — the design computes on the wrong bits | `FLIT_WIDTH` at any value but 288, because payload positions are literals | Plausible wrong answers |
+| **Silent overflow** — a structure outgrows its window | `POS_WIDTH` above 4, which overflows the orchestrator's status mirror | Registers that alias |
+| **Wrong-node delivery** | a port coordinate that is not where the port actually is; a `GRID_HI` that disagrees with the routers' | A hang at a router whose turn request is never granted |
+| **Unreachable structure** — built, and nothing can address it | `STAGE_AT_PORT` at 0 with `STAGE` set, which puts the staging store where the mover and the interlink cannot reach it | A hang on the first move into staging: no requester claims the beat, so the access is never answered |
+| **Known-broken** | `RD_OUT` above 1 | Memory corruption, reproducibly |
+
+Two of these deserve their own line because the asymmetry is invisible:
+
+- **`WR_SLOTS` must be at least two per node that can have a write in flight,
+  not one.** Under-sizing does not corrupt anything. It deadlocks.
+- **A depth that floors itself and a depth that does not are different kinds of
+  parameter.** Where a module clamps a depth up to a safe minimum, the value is a
+  tuning preference and you cannot get it wrong from outside. Where it does not,
+  the value is an **obligation**. This framework's queues do not clamp; the
+  station bus's response queue does and its request queue does not, which is why
+  `REQ_DEPTH` is the one an integrator sizes by hand —
+  [integrate/memory-attach.md](../integrate/memory-attach.md) §6.
+
 ## 1. Cross-cutting constants
 
 These appear in many modules and **MUST** hold the same value in all of them. A
@@ -36,8 +81,8 @@ elaborates, and the flits are misparsed.
 
 | Name | Type | Default | Controls | Legal range |
 |---|---|---|---|---|
-| `FLIT_WIDTH` / `DATA_WIDTH` (mesh) | integer | `288` | The width of a flit, and therefore of every mesh link, FIFO and register carrying one. | **Effectively fixed at 288.** The header is parameterised, but every payload field position in the framework is a literal part-select. Changing this changes the payload width and silently invalidates every descriptor decode. |
-| `POS_WIDTH` | integer | `4` | Coordinate width, and therefore the maximum mesh extent (16×16 including edge endpoints). | **Effectively fixed at 4.** The driver packs `{y,x}` into one byte, and the orchestrator's status mirror is `1 << (2*POS_WIDTH)` words inside a 4 KB decode window, which overflows above 4. |
+| `FLIT_WIDTH` / `DATA_WIDTH` (mesh) | integer | `288` | The width of a flit, and therefore of every mesh link, FIFO and register carrying one. | **A parameter, but only 288 is validated.** The header is parameterised and follows; every payload field position in the framework is a **literal** part-select and does not. Another value elaborates cleanly and silently misreads every descriptor. Take it from the parameter, do not hard-code it, and do not change it without first making the payload positions track it. [flit-format.md](flit-format.md) §1.1. |
+| `POS_WIDTH` | integer | `4` | Coordinate width, and therefore the maximum mesh extent — 16×16 including edge endpoints at the default. | **A parameter with a hard ceiling at 4.** Above it the orchestrator's status mirror, sized `1 << (2*POS_WIDTH)` words, overflows its decode window, and the driver packs `{y,x}` into one byte. Below 4 is legal and merely smaller. |
 | `DATA_W` (AXI) | integer | `256` | AXI data width on the memory path. Equals the flit payload width by design, so nothing in the path has to gear between them. | Must equal the flit payload width, i.e. `FLIT_WIDTH - 4*POS_WIDTH - 16`. A wider DRAM interface is converted below the memory agent, not here. |
 | `ADDR_W` | integer | `40` | Physical address width, and the width of the flit's `addr` field. | The flit's `addr` field is **40 bits and is not parameterised** — `mag_mem_port.v` slices `[255 -: 40]` whatever `ADDR_W` is, because it is a flit contract rather than a width. `[39]` selects the aperture, `[38]` is reserved, `[37:36]` is the mesh id; see [address-map.md](../address-map.md). |
 | `ID_W` / `ID_WIDTH` | integer | `4` | AXI ID width. | Any. Must match across a master/slave pair; `axi_n1` widens it by its own index field. |
@@ -145,7 +190,7 @@ Register map: [control-registers.md](control-registers.md) §2.
 
 | Name | Type | Default | Controls | Legal range |
 |---|---|---|---|---|
-| `DATA_WIDTH` | integer | `64` | AXI data width. A 288-bit flit is five beats at 64. | Must divide the flit into a whole number of beats with padding; the module computes `FLIT_WORDS` by rounding up. |
+| `DATA_WIDTH` | integer | `64` | AXI data width on the control window. Together with `FLIT_WIDTH` it sets `FLIT_WORDS = ceil(FLIT_WIDTH / DATA_WIDTH)`, which is the stride of every flit-shaped window in the register map — `TX_FLIT`, `RX_FLIT` and `STAGE`. At the reference build's 288 and 64 that is five words, 40 bytes. | Must divide the flit into a whole number of beats with padding; the module computes `FLIT_WORDS` by rounding up. |
 | `ADDR_WIDTH` | integer | `32` | AXI address width. Only the low 16 bits are decoded. | `>= 16`. |
 | `ID_WIDTH` | integer | `4` | AXI ID width. | Any. |
 | `FLIT_WIDTH` | integer | `288` | Flit width. | See §1. |
@@ -235,27 +280,182 @@ and does not elaborate alone.
 | `STAGE_FLITS` | integer | `128` | Orchestrator staging RAM depth, in flits. | Power of two. |
 | `WR_SLOTS` | integer | `16` | Write-reassembly slots per memory engine. | `>= 1`. |
 | `STAGE` | integer | `0` | Build the staging store. **Zero generates none of it.** | 0 or non-zero. |
-| `STAGE_BANKS` | integer | `4` | Banks in the staging store. | `>= 1`. |
-| `STAGE_ENTRIES` | integer | `16384` | Entries per bank. 4 × 16384 is 64 URAM, 2 MB. | Power of two. |
+| `STAGE_BANKS` | integer | `4` | Banks in the staging store. | Power of two — the address splits `$clog2(BANKS)` bank bits below the row index. |
+| `STAGE_ENTRIES` | integer | `16384` | Entries in the store **in total, across all banks**, not per bank. Rows per bank are `STAGE_ENTRIES / STAGE_BANKS`. An entry is `4 × DATA_W` bits, so the default store holds 2 MiB. | Power of two, and a whole multiple of `STAGE_BANKS`. |
 | `STAGE_PIPE` | integer | `1` | Extra register stage on the staging read. | 0 or 1. |
-| `STAGE_AT_PORT` | integer | `0` | 0 puts one store on the converged path; 1 puts one inside each engine, unreachable by mover and interlink. | 0 or 1. |
-| `PE_IMEM` | integer | `2048` | Words of instruction memory. | Power of two. |
-| `PE_SPAD` | integer | `2048` | Words of scratchpad. | Power of two. |
+| `STAGE_AT_PORT` | integer | `0` | **Where the staging store is built, and the two placements are not equivalent.** `1` builds **one** store on the memory agent's converged path, reachable by every requester. `0` builds a **whole store inside every memory engine** — `PORTS` copies of `STAGE_BANKS × STAGE_ENTRIES`, none of which the memory mover or the interlink can reach, because neither goes through a memory port. **`1` is the shipping value**; every generated top in the tree sets it. See the note below. | 0 or 1. |
+| `CPU_RV64` | integer | `0` | **Which** control processor the node carries — not *whether* it carries one. `0` instantiates `rv_mag_pe`, the RV32 complex, which sits on the mesh behind a compute-unit shell. Non-zero instantiates `rv64_mag_pe`, the RV64 complex, which has no shell and is reached through the `hs_*` host window instead ([control-registers.md](control-registers.md) §6). The mover and the transform slot are the same in both. **`0` is the shipping value and the default keeps the RV32 path byte-identical** — nothing outside the `generate` changes. **The non-default branch is incomplete; read the note below before selecting it.** | 0 or non-zero. |
+| `PE_IMEM` | integer | `2048` | Words of instruction memory. 32-bit words in both processors. | Power of two. |
+| `PE_SPAD` | integer | `2048` | Words of scratchpad. 64-bit words on the RV64. | Power of two. |
 | `PE_L1_LINES` | integer | `128` | Lines in the processor's own L1. | Power of two. |
-| `PE_MEM_PRIM` | string | `"block"` | Storage primitive for the processor's imem and scratchpad. | `"block"`, `"distributed"`, `"ultra"`. |
+| `PE_MEM_PRIM` | string | `"block"` | Storage primitive for the processor's imem and scratchpad. On the RV64 it reaches the imem, the L1 and the TLB; the scratchpad's primitive is `SPAD_STYLE`, which `sysnode` does **not** forward. §5.1. | `"block"`, `"distributed"`, `"ultra"`. |
 | `XFORM_SLOTS` | integer | `1` | Transform occupants the slot selects between. | `>= 1`. |
 | `XID_W` | integer | `4` | Width of the occupant id. | `>= clog2(XFORM_SLOTS)`. |
 | `XMODE_W` | integer | `4` | Width of the mode field handed to an occupant. | Any. |
 | `XFORM_IN_BITS` | integer | `2048` | **Declared by the occupant.** Bits consumed per entry. | Must match the bank. |
 | `XFORM_OUT_WORDS` | integer | `4` | **Declared by the occupant.** Words produced per entry. | Must match the bank. |
 
-**Two of `mag`'s parameters are still not forwarded** and take `mag`'s defaults
-whatever a top asks for: `IL_RX_BEATS` and `IL_MAX_BEATS`. A ship cannot change
-the interlink's credit depth without editing `sysnode.v`. The transform geometry
-**is** forwarded now, so a project whose occupant is not 2048-in / 4-out can
-express that.
+**A control processor is structural; which one is the parameter.** There is no
+`CTRL_PE` and no configuration in which the node has no processor —
+`sysnode.v` says so in as many words, and `mag`'s derived `MP1` counts the
+processor's two requesters unconditionally. `CPU_RV64` chooses between two
+processors, not between one and none.
+
+**The two choices are not equally finished, and a parameter table that presented
+them as equivalent would be lying by omission.** With `CPU_RV64` non-zero the
+node's hub port for the processor is tied off in both directions. These are
+**signals, not parameters** — there is no knob that connects them:
+
+- The processor's outbound flit port is held at zero, so it **never sends a
+  flit.** It cannot dispatch to a compute unit, cannot issue a `CU_CTRL` read,
+  and cannot originate any mesh traffic.
+- Its inbound busy line is held at zero, which the hub reads as *not busy*, so a
+  flit addressed to the processor's coordinate is **accepted and silently
+  discarded** — not backpressured, not answered, not reported.
+- Its doorbell port, both directions, is unconnected and its status input tied to
+  zero, so there is no doorbell at all. §7.4 of
+  [control-registers.md](control-registers.md).
+- Its external-interrupt input and its status output are tied off, so no
+  interrupt reaches the core and the node publishes no processor status word.
+
+What **is** connected and working in that branch: the core itself, the memory
+mover, the transform slot, the memory path onto MAG, the host window, and the
+console byte port.
+
+Two rules follow, and they are absolute:
+
+- **A driver enumerating a mesh MUST expect the control processor's coordinate to
+  read as absent when `CPU_RV64` is set.** No reply comes back, because nothing
+  answers and the request flit is consumed. That is the same signature as an
+  empty coordinate ([compute-unit-port.md](compute-unit-port.md) §7), and there
+  is no way to tell the two apart from the mesh.
+- **Work is dispatched to compute units by the host in both configurations.** The
+  orchestrator is instantiated unconditionally and its AXI map (§2 of
+  [control-registers.md](control-registers.md)) is identical either way. Nothing
+  about a compute unit's contract changes with this parameter.
+
+**`STAGE_AT_PORT`: both values are legal, and only one is usable.** The range is
+0 or 1 and the choice is yours; what follows is fact rather than advice, and it
+is the reason no top in the tree picks 0. The name reads as a neutral placement
+choice and the two values are not comparable:
+
+- At **1** there is one store, on the converged path, and every requester on that
+  path reaches it — the memory engines, the host upload, the processor's L1 and
+  the processor's mover.
+- At **0** the store is built inside `mag_mem_port`, once per port. A memory port
+  is reached only from the mesh, so the mover and the interlink cannot address
+  any of those copies at all. The store is replicated `PORTS` times and the
+  addressable capacity does not grow with it: `PORTS` copies of
+  `STAGE_BANKS × STAGE_ENTRIES` obtain one store's worth of reachable space.
+
+`mag.v` sets `mag_mem_port`'s `STAGE` to `(STAGE_AT_PORT != 0) ? 0 : STAGE` and
+`mag_stage_port`'s to `(STAGE_AT_PORT != 0) ? STAGE : 0`, so exactly one of the
+two placements is built. `AP_DECODE` is driven from `STAGE` at every port
+regardless, which is why a port can decode the aperture bit while holding no
+store — that is the shipping arrangement.
+
+**Some inner parameters `sysnode` does not forward**, and they therefore take
+the inner module's default whatever a top asks for. Each is documented under the
+module that declares it, not here:
+
+- the interlink's receive-buffer and maximum-packet sizes, declared by `mag` — a
+  ship cannot change the interlink's credit depth without editing `sysnode.v`;
+- the RV64 translation-cache depth, declared by `rv64_mag_pe`;
+- the RV64 scratchpad and register-file storage primitives, declared by
+  `rv64_syscore`;
+- the RV64 atomic-extension switch, declared by `rv64_core` — `rv64_syscore`
+  passes the literal `1`, so atomics cannot be turned off from a top.
+
+**`sysnode` renames what it does forward.** Its `PE_IMEM`, `PE_SPAD`,
+`PE_L1_LINES` and `PE_MEM_PRIM` are overrides on the processor's own
+`IMEM_WORDS`, `SPAD_WORDS`, `L1_LINES` and `MEM_PRIM`. Use the `PE_*` names when
+you instantiate `sysnode`; the inner names are not `sysnode` parameters and
+passing one is silently ignored.
+
+The transform geometry **is** forwarded under its own names, so a project whose
+occupant is not 2048-in / 4-out can express that.
 
 **Never call this a "node".** A NoC endpoint is a node; this is the system node.
+
+### 5.1 The RV64 control complex — `CPU_RV64 != 0`
+
+Reached only when `sysnode`'s `CPU_RV64` is non-zero. The architecture is
+[arch/cpu/rv64-sys/](../arch/cpu/rv64-sys/README.md); the register surfaces are
+[control-registers.md](control-registers.md) §6 and §7.
+
+Three modules nest: `rv64_mag_pe` holds the processor, the memory mover and the
+transform slot; `rv64_syscore` holds the processor, its Sv39 translation, its L1
+and its address decode; `rv64_core` is the physical-address machine inside that.
+
+### `rv64_mag_pe` — `src/kohakuaccel/sysnode/cpu/rv64_mag_pe.v`
+
+The peer of `rv_mag_pe`. Same mover, same transform slot, different processor.
+Instantiated only when `sysnode`'s `CPU_RV64` is non-zero.
+
+| Name | Type | Default | Controls | Legal range |
+|---|---|---|---|---|
+| `FLIT_WIDTH` | integer | `288` | Width of the hub's flits: the dispatch mailbox's `CU_INST` out and `CU_SIGNAL` in. `sysnode` forwards its own. | See §1. |
+| `POS_WIDTH` | integer | `4` | Width of a mesh coordinate in a flit header. `sysnode` forwards its own. | See §1. |
+| `ADDR_W` | integer | `40` | Physical address width. | See §1. |
+| `DATA_W` | integer | `256` | Width of the node port and of the mover's master. | See §1. |
+| `ID_W` | integer | `4` | AXI ID width on the mover's master. | Any. |
+| `IMEM_WORDS` | integer | `8192` | Instruction-memory words, 32 bits each. **`sysnode` overrides this with `PE_IMEM`, whose default is 2048.** | Power of two. |
+| `SPAD_WORDS` | integer | `4096` | Scratchpad words, **64 bits** each. `sysnode` overrides with `PE_SPAD`. | Power of two. |
+| `L1_LINES` | integer | `64` | Lines in the processor's L1. `sysnode` overrides with `PE_L1_LINES`. | Power of two. |
+| `TLB_ENTRIES` | integer | `32` | Entries in the Sv39 translation cache. **Not forwarded by `sysnode`.** | Power of two. |
+| `MEM_PRIM` | string | `"block"` | Primitive for the imem, the L1 and the TLB. `sysnode` forwards `PE_MEM_PRIM`. | `"block"`, `"distributed"`, `"ultra"`. |
+| `XFORM_SLOTS`, `XID_W`, `XMODE_W` | integer | `1`, `4`, `4` | Passed to `mag_xform`. | See `mag`. |
+| `XFORM_IN_BITS`, `XFORM_OUT_WORDS` | integer | `2048`, `4` | The occupant's declared geometry. | Must match the bank; `XFORM_OUT_WORDS <= 4`. |
+
+**The occupant register port is tied off here.** `rv64_mag_pe` instantiates
+`mag_xform` with `cfg_en` at zero and `cfg_rdata` unconnected, so in an
+`CPU_RV64` build a transform occupant's registers are **unreachable** — by the
+processor and by the host alike. A zero-register occupant is unaffected; one that
+needs configuration is not usable in this configuration.
+[transform-slot.md](transform-slot.md) has the contract those registers satisfy
+when they are reachable.
+
+### `rv64_syscore` — `src/kohakuaccel/pe/rv64-sys/rv64_syscore.v`
+
+| Name | Type | Default | Controls | Legal range |
+|---|---|---|---|---|
+| `ADDR_W` | integer | `40` | Physical address width, and the width of the node port. | See §1. |
+| `DATA_W` | integer | `256` | Node-port data width. | See §1. |
+| `FLIT_WIDTH` | integer | `288` | Width of the dispatch mailbox's flits. `rv64_mag_pe` forwards its own. | See §1. |
+| `POS_WIDTH` | integer | `4` | Width of a mesh coordinate; sizes the mailbox's destination and source fields. | See §1. |
+| `IMEM_WORDS` | integer | `8192` | 32-bit instruction words. | Power of two. |
+| `SPAD_WORDS` | integer | `4096` | 64-bit scratchpad words. Also sets the scratchpad's decoded extent: the range is `SPAD_WORDS * 8` bytes at `SPAD_BASE`. | Power of two. |
+| `L1_LINES` | integer | `64` | L1 lines. A line is 256 bits. | Power of two. |
+| `TLB_ENTRIES` | integer | `32` | Sv39 translation-cache entries. | Power of two. |
+| `MEM_PRIM` | string | `"block"` | Primitive for the imem, the L1 and the TLB. | `"block"`, `"distributed"`, `"ultra"`. |
+| `SPAD_STYLE` | string | `"ultra"` | `ram_style` attribute on the scratchpad array. Separate from `MEM_PRIM` because the scratchpad is the one structure here that is deep and byte-writable, and the right answer for it differs from the imem's. **Not forwarded by `rv64_mag_pe` or `sysnode`.** | Any value the tool accepts as `ram_style`: `"block"`, `"distributed"`, `"ultra"`, `"registers"`. |
+| `RF_PRIM` | string | `"distributed"` | Primitive for the core's register file. **Not forwarded.** | `"distributed"`, `"block"`. |
+| `SPAD_BASE` | 64-bit | `64'h0000_0000_0001_0000` | Physical base of the scratchpad range. | **Must be aligned to and sized by `SPAD_WORDS * 8`.** The decode is a bit test on `pa[ADDR_W-1:$clog2(SPAD_WORDS*8)]`, not a magnitude compare, so a misaligned base decodes a different range than it names. |
+| `CTRL_BASE` | 64-bit | `64'h0000_0000_0002_0000` | Physical base of the 256-byte control region. §6 of [control-registers.md](control-registers.md). | **Must be 256-byte aligned.** The decode is `pa[ADDR_W-1:8]`. |
+| `NODE_BASE` | 64-bit | `64'h0000_0000_1000_0000` | Base of the node range — everything the processor reaches through its AXI master. | **`2**28` exactly.** The decode is `\|pa[ADDR_W-1:28]`, so any address at or above `2**28` is in the node range whatever this parameter says. Changing it does not move the range. |
+| `CACHE_LO` | 64-bit | `64'h0000_0000_8000_0000` | Within the node range, the boundary at and above which accesses go through the L1; below it they are uncached. | **`2**31` exactly.** The decode is `pa[31]`, so this parameter likewise does not move the boundary. |
+
+Two consequences a reader implementing against this must know:
+
+- **`NODE_BASE` and `CACHE_LO` are documentation, not decode.** The RTL tests
+  `|pa[ADDR_W-1:28]` and `pa[31]` directly. Overriding either parameter
+  elaborates cleanly and changes nothing.
+- **The L1 caches the node range at and above `2**31` and nothing else.** The
+  scratchpad, the control region and the low half of the node range — which is
+  where staging and the node's own registers sit — are uncached by construction.
+
+### `rv64_core` — `src/kohakuaccel/pe/rv64-sys/core/rv64_core.v`
+
+| Name | Type | Default | Controls | Legal range |
+|---|---|---|---|---|
+| `RESET_PC` | 64-bit | `64'h0000_0000_0000_0000` | The address the PC takes out of reset. `rv64_syscore` passes `64'd0`. | Any. |
+| `MEM_PRIM` | string | `"distributed"` | Register-file primitive. `rv64_syscore` passes `RF_PRIM`. | `"distributed"`, `"block"`. |
+| `HAS_ATOMIC` | integer | `1` | Build the A extension. At zero `AMO_EN` folds to false, `e_amo` is tied off so the atomic FSM never leaves idle and constant-propagates away, and an `AMO` opcode raises **illegal instruction** rather than becoming undefined — the behaviour is defined either way, which is what makes the parameter safe to turn off. **`rv64_syscore` passes the literal `1`**, so this is reachable only by instantiating `rv64_core` directly. | 0 or non-zero. |
+| `PADDR_W` | integer | `40` | Physical address width, which sizes `satp.PPN` to `PADDR_W - 12` bits; PPN bits beyond it are WARL zero. `rv64_syscore` passes `ADDR_W`. | See §1. |
+
+`RESET_PC` is fixed at 0 by `rv64_syscore`. The host window's `HR_PC` register
+(§6 of [control-registers.md](control-registers.md)) accepts a boot PC and
+**nothing consumes it**: the core always starts at `RESET_PC`.
 
 ### `sn_hub` — `src/kohakuaccel/sysnode/core/sn_hub.v`
 
@@ -273,10 +473,10 @@ client share them. Nothing else in the node has a NoC port.
 | `MEM_Y2` | integer | `4` | Mesh row of port 2. | As above. |
 | `MEM_Y3` | integer | `5` | Mesh row of port 3. | As above. |
 
-**The rows are parameters, not a port**, and that is a measured decision: a
-port's row is a build-time constant compared against a flit field on every port
-every cycle. Carried in as a wire it cannot fold across the module boundary,
-and that cost **155 LUT**.
+**The rows are parameters, not a port.** A port's row is a build-time constant
+compared against a flit field on every port every cycle. Carried in as a wire it
+cannot fold across the module boundary, and the comparators survive into the
+netlist; as a parameter they fold away.
 
 The control processor's coordinate is a **localparam of `(0,0)`, not a
 parameter**. A corner touches no router, so it is free in every mesh by
@@ -294,7 +494,7 @@ The single point where a partition touches everything outside it. Protocol:
 | `DATA_W` | integer | `256` | AXI memory width. Equals the flit payload by design. | See §1. |
 | `ADDR_W` | integer | `40` | Physical address width. | See §1. |
 | `ID_W` | integer | `4` | AXI ID width. | Any. |
-| `PORTS` | integer | `1` | How many memory engines, one per hub attachment. **This is the unit the machine grows by**, not a tuning knob: an engine owns its intake, read logic, write slots and AXI channel. **Measured: a second port is 6,557 LUT and no DSP.** | 1–4. Four coordinate pairs are declared. |
+| `PORTS` | integer | `1` | How many memory engines, one per hub attachment. **This is the unit the machine grows by**, not a tuning knob: an engine owns its intake, read logic, write slots and AXI channel, so a second port is a second server rather than a wider one. What one costs on a given part is in [projects/](../projects/). | 1–4. Four coordinate pairs are declared. |
 | `ILINK` | integer | `0` | Build the interlink. **Zero generates none of it** — no switch, no links, no extra AXI master, and the remote decode folds to a constant false. | 0 or non-zero. |
 | `MESH_ID` | integer | `0` | This mesh's id when the interlink is absent. With the interlink present the id is a runtime register instead. | 0–3. |
 | `LINK_W` | integer | `288` | Interlink beat width. One beat is one flit. | Must match at both ends and in every pipe stage. |
@@ -316,10 +516,10 @@ The single point where a partition touches everything outside it. Protocol:
 | `WR_SLOTS` | integer | `16` | Write reassembly slots per memory port. | **At least two per node that can have a write in flight.** Under-sizing deadlocks; it does not corrupt. |
 | `MW` | integer | `DATA_W` | Memory beat width at `M_AXI_DRAM`. `mag_dram_port` packs `DATA_W` up to this, so at 512 an 8-beat 256-bit burst becomes 4 beats. | `DATA_W` times a power of two. |
 | `STAGE` | integer | `0` | Build the staging store. **Zero generates none of it.** | 0 or non-zero. |
-| `STAGE_BANKS` | integer | `4` | Banks in the staging store. | `>= 1`. |
-| `STAGE_ENTRIES` | integer | `16384` | Entries per bank. At the defaults that is 4 banks × 16,384 × 256 bits = 16 Mib of URAM. | `>= 1`. |
+| `STAGE_BANKS` | integer | `4` | Banks in the staging store. The address takes `$clog2(BANKS)` bank bits below the row index, so a sequential fill spreads across banks. | Power of two. |
+| `STAGE_ENTRIES` | integer | `16384` | Entries **in total, across all banks**. `mag_stage` derives `ROWS = ENTRIES / BANKS`, so at the defaults each of 4 banks holds 4096 rows. An entry is `4 × DATA_W` bits, so the default store is 2 MiB. | Power of two, and a whole multiple of `STAGE_BANKS`. |
 | `STAGE_PIPE` | integer | `1` | Extra register stages on the staging read path, for timing. | `>= 0`. |
-| `STAGE_AT_PORT` | integer | `0` | Put the staging store behind a memory port instead of on the converged path. The two placements are an A/B — `mm_mesh_stage -d MM_L2_PORT` runs the same checks either way. | 0 or non-zero. |
+| `STAGE_AT_PORT` | integer | `0` | Which of the two placements is built: `1` one store on the converged path, `0` a store inside **every** memory engine, none reachable by the mover or the interlink. `1` is the shipping value. See the note under `sysnode` in this section. | 0 or non-zero. |
 
 Port coordinates are named per port rather than packed into one vector: a packed
 field is one shift away from pointing a whole port at the wrong node, and it
@@ -347,10 +547,10 @@ One memory endpoint and the AXI master behind it.
 | `Q_MARGIN` | integer | `4` | Entries of headroom at which the port raises backpressure. **This is a real margin, counted by the port itself** — the FIFO's own `almost` flag is not one. | `< Q_DEPTH`. |
 | `MEM_TYPE` | string | `"distributed"` | Storage primitive for the intake queues. | `"distributed"`, `"block"`, `"ultra"`. |
 | `MESH_ID` | 2-bit | `2'd0` | Which mesh this port belongs to, for the absolute address test. A request whose `addr[37:36]` names another mesh is not this port's. | 0–3. Must agree with the interlink's runtime id. |
-| `AP_DECODE` | integer | `0` | Decode the aperture bit (`addr[39]`) at the port rather than downstream. Off, the port treats every address as DRAM. | 0 or non-zero. Requires `STAGE`. |
-| `STAGE` | integer | `0` | Build the staging store behind this port. | 0 or non-zero. |
-| `STAGE_BANKS` | integer | `4` | Banks in that store. | `>= 1`. |
-| `STAGE_ENTRIES` | integer | `16384` | Entries per bank. | `>= 1`. |
+| `AP_DECODE` | integer | `0` | **Apertures exist somewhere in this node.** Non-zero makes the port test `addr[39]` and refuse — rather than alias onto DRAM — an aperture address it cannot serve. It is *not* the same as `STAGE`: `mag.v` drives it from the node's `STAGE` at every port regardless of where the store was placed, so a port with `AP_DECODE = 1` and `STAGE = 0` is the shipping arrangement. See [memory-protocol.md](memory-protocol.md) §8. | 0 or non-zero. |
+| `STAGE` | integer | `0` | Build a staging store **behind this port**. Set from the node only when `STAGE_AT_PORT` is 0. | 0 or non-zero. |
+| `STAGE_BANKS` | integer | `4` | Banks in that store. | Power of two. |
+| `STAGE_ENTRIES` | integer | `16384` | Entries in that store, **in total across its banks**. | Power of two, and a whole multiple of `STAGE_BANKS`. |
 | `STAGE_PIPE` | integer | `1` | Extra register stages on the staging read path. | `>= 0`. |
 
 **Fixed constants, not parameters.** `WBURST` is 8: a write slot holds eight
@@ -432,7 +632,7 @@ converges and where AXI exists exactly once; `mag.v:934` instantiates it with
 | `BQ` | integer | `16` | Write-response queue depth. | Power of two. |
 | `ARQ` | integer | `16` | Read-address queue depth. | Power of two. |
 | `RQ` | integer | `64` | Read-data queue depth. | Power of two. |
-| `RD_OUT` | integer | `1` | Reads one requester may have in flight. **DEFAULTS OFF BECAUSE IT IS BROKEN**: at 4 it measured 2,744 → 8,917 MB/s on 20-word bursts and **corrupted memory in `mover_chain1`**. The bandwidth is real and so is the corruption. | `1`, until the corruption is found. |
+| `RD_OUT` | integer | `1` | Reads one requester may have in flight. **DEFAULTS OFF BECAUSE IT IS BROKEN**: above 1 it raises read throughput and also corrupts memory in the `mover_chain1` bench. Both effects are reproducible. | `1`, until the corruption is found. |
 | `WR_MEM` | string | `"block"` | Storage primitive for the wide queues. | `"distributed"`, `"block"`. |
 
 ### `mag_dram_rr` — `src/kohakuaccel/sysnode/core/mag_dram_port.v`
@@ -641,6 +841,21 @@ resource cost **and the read latency** can move without the RTL changing. Read
 latency is not a detail; it sets how far an address must lead its data, and
 callers build pipeline structure on that number.
 
+### `kohaku_sdpram_be` — `src/kohakuaccel/common/kohaku_sdpram_be.v`
+
+`kohaku_sdpram` with a byte strobe per write lane (`wr_strb`, `WIDTH/8` bits).
+A separate module rather than a parameter, so the whole-word callers keep a
+port nobody has to drive. Its one caller is the staging store's bank array:
+port B of `mag_stage` takes AXI beats, and a processor's 64-bit store is one
+lane of a 256-bit word.
+
+| Name | Type | Default | Controls | Legal range |
+|---|---|---|---|---|
+| `WIDTH` | integer | `256` | Word width. | A multiple of 8. |
+| `DEPTH` | integer | `512` | Word count. | Any; the address width is `$clog2(DEPTH)`. |
+| `MEM_PRIM` | string | `"block"` | The primitive. | `"block"`, `"ultra"` — both carry byte write enables. |
+| `READ_LAT` | integer | `1` | Read latency in cycles. | `1` or `2`. |
+
 ### `MultiBitLut` — `src/attic/common/lut.v`
 
 Direct instantiation of LUT primitives for a small hard-coded table.
@@ -680,7 +895,7 @@ nothing else.
 | Name | Type | Default | Controls | Legal range |
 |---|---|---|---|---|
 | `DATA_W` | integer | `256` | Beat width. | See §1. |
-| `NREQ` | integer | `2` | Requesters contending for the bank. | `>= 1`. |
+| `NREQ` | integer | `2` | Requesters contending for the bank. **Both instantiations in the tree pass 1** — the memory mover is the only driver of the slot — so the arbiter is present but never arbitrates in any build that ships. The default is not the shipping value. | `>= 1`. |
 | `SLOTS`, `ID_W`, `MODE_W` | integer | `1`, `1`, `1` | Passed through to the bank. | See `mag`. |
 | `IN_BITS`, `OUT_WORDS` | integer | `2048`, `4` | The occupant's declared geometry. | Must match the bank; `OUT_WORDS <= 4`, because the bank presents `word0..word3`. |
 
