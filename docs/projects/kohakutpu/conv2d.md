@@ -10,6 +10,13 @@ tags:
 
 # Fast 3x3 conv on this machine
 
+> **Kind: Yours throughout.** Expressing 3x3 convolution as an implicit GEMM, and
+> the layout fork that follows, are kernel decisions answering this project's own
+> operand format. The framework neither offers nor forbids it, and an accelerator
+> with a different datapath would resolve the same fork differently. §5's branch A
+> is the exception and says so: it asks for a change inside the framework's own
+> fill path.
+
 Target: the SDXL UNet convolutions, on the instructions that already exist — no
 new opcode, no RTL change.
 
@@ -34,8 +41,12 @@ the stack. **One kernel tuned once serves all three**, and a regression at one
 resolution is a regression at all of them. Every shape already satisfies the
 hardware's `M = 4a, N = 4b, K = 32c`.
 
-At 24 clusters x 512 MAC/cycle = 12,288 MAC/cycle: 12.3 ms for the whole chip at
-100 MHz, 4.10 ms at 300 MHz.
+**ARITHMETIC**, at the v7 population of 30 matmul clusters and the measured
+512 MAC/cycle per cluster ([results.md](results.md) §8): 15,360 MAC/cycle, so
+one of these layers is 983,000 cycles — **9.8 ms at a 100 MHz matmul clock,
+3.3 ms at 300 MHz.** Those are peak-rate bounds on the arithmetic alone; no
+measured efficiency is applied, and [results.md](results.md) §8.2's best
+large-GEMM figure is 75.5%.
 
 ## 2. Conv here is compute-bound, and not marginally
 
@@ -220,18 +231,18 @@ expected — `COPY` with both descriptors is an arbitrary N-D affine strided cop
 and a source element whose `valid` is low injects an immediate, "which is how
 `pad` works", so bounded axes give zero padding natively.
 
-**And on the engine this was measured against, it must not.** ~98 MB/s, one
-32-byte word per packet, ~33 cycles each: building a 31.5 MB `A'` at that rate
-is **~320 ms against 12.3 ms of convolution**, 26x more expensive than the work
-it exists to enable. The same arithmetic kills full im2col and kills a host-side
-build over any transport this machine has.
+**Branch B is unpriced, because there is no mover rate to price it with.** The
+rate this section was once decided against was measured on a mover that sent one
+32-byte word per packet; that engine has since been rebuilt to coalesce, and the
+figure has been withdrawn rather than carried forward
+([multi-mesh.md](multi-mesh.md) §8). Nobody has measured the current one.
 
-**THAT RATE IS SUPERSEDED and the conclusion is therefore open.** It predates
-the mover rebuild — `multi-mesh.md` §8 has the measurement and says so — and one
-word per packet is exactly what the rebuild coalesces. Nobody has re-measured
-the mover, so branch B is **unpriced**, not refuted. What is unchanged is the
-ratio it has to beat: a build pass that costs more than the convolution it feeds
-is not worth wiring in, whatever the rate.
+What the branch has to beat is unchanged and can be stated without a rate:
+**`A'` is 31.5 MB against 9.8 ms of convolution at a 100 MHz matmul clock**
+(§1), so a build pass is worth wiring in only if it moves that operand in
+materially less time than the arithmetic it feeds. A build pass that costs more than its own
+convolution is not worth having at any rate, and the same arithmetic applies to
+full im2col and to a host-side build over any transport this machine has.
 
 Branch C is what runs meanwhile, and the enabling change for branch B is the
 same one it always was — the descriptor in the fill path, so `A'` is never

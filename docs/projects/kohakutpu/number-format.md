@@ -9,6 +9,11 @@ tags:
 
 # MXFP7
 
+> **Kind: Yours throughout.** MXFP7 — the int7 significand, the E5M3 shared scale
+> and the block size — is this project's format, and nothing in the framework
+> knows it exists. It is the sharpest illustration of the "yours" row: the
+> framework carries these bytes without ever interpreting one.
+
 The element format KohakuTPU's tensor core multiplies in. A **microscaling**
 format in the OCP style — one scale shared by a block of elements — with two
 deliberate departures from OCP: the block is 32 along the reduction axis only,

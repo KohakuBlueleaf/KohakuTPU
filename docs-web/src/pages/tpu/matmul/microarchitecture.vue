@@ -401,15 +401,15 @@ const zVsW = {
   ],
   rows: [
     {
-      w: "<b>stage 7, on <code>W</code></b> — what <code>mx_mac.v</code> builds",
+      w: "<b>the LAST stage, on <code>W</code></b> — what ships",
       s: "W = C",
-      c: "the two results are <b>contemporary</b>: two cycles of alignment, so 2 cycles of operand delay per TCU",
+      c: "the two results are <b>contemporary</b>. Only the <code>C</code> register's own alignment is owed: <b>2 cycles of operand delay per TCU</b>, so the delays are 0, 2, 4, 6 and the core is 17 cycles deep",
       _tone: "good",
     },
     {
-      w: "stage 0, on <code>Z</code> — what <code>matmul.md</code> §3.1 describes",
+      w: "stage 0, on <code>Z</code> — the arrangement that lost",
       s: "Z = C",
-      c: "the upstream TCU's result would have to be ready <b>before this TCU starts</b> — 8 cycles of operand skew per TCU",
+      c: "the upstream TCU's result would have to be ready <b>before this TCU starts</b>: <b>8 cycles of operand skew per TCU</b>, four times the delay lines for the same arithmetic",
       _tone: "warn",
     },
   ],
@@ -439,14 +439,14 @@ const skewCost = {
       s: "SRL16E / SRL32",
       d: "2 … 7 inside a TCU, 2 / 4 / 6 between them",
       c: "<b>one LUT per bit at ANY depth</b> — a full LUT to use at most 7 of 16 stages",
-      b: "the build results.md §2.1 measures: 224 SRL of TCU 0's 336 LUT",
+      b: "the build results.md §2.1 measures: <b>1,458 LUT of SRL</b> in a 4,751-LUT cluster — 224 of TCU 0's 336, 280 in each of TCUs 1–3, 394 of the operand delay's 450",
       _tone: "warn",
     },
     {
       s: "<b>flip-flops</b>, <code>shreg_extract = &quot;no&quot;</code>",
       d: "the same",
-      c: "<b>−1,568 LUT for +9,800 FF</b> per cluster, control-set count and all three clocks unmoved",
-      b: "what <code>mx_tcu.v</code> and <code>mx_cluster_core.v</code> build today",
+      c: "one FF per bit per stage, and <b>no LUT</b>. The device is LUT-bound at 66% with FF at 34%, so the skew moves into the half of the CLB that is idle",
+      b: "what <code>mx_tcu.v</code> and <code>mx_cluster_core.v</code> build today — the attribute is on the delay arrays in both",
       _tone: "good",
     },
   ],
@@ -500,7 +500,7 @@ const sweepSteps = [
     macs: "65,536",
     entries: 48,
     out: "1,024",
-    note: "on_last_kb is set for EVERY issue of the final K block, not only the last one, because the last K block completes every sub-tile it touches. ADD_EMIT is ADD's operand selects with EMIT's output: it adds nothing at all to stage 3, the path the cluster closes timing on.",
+    note: "on_last_kb is set for EVERY issue of the final K block, not only the last one, because the last K block completes every sub-tile it touches. ADD_EMIT is ADD's operand selects with EMIT's output: it adds nothing at all to stage 3, the path the cluster binds on.",
   },
   {
     title: "the ledger",
@@ -1360,7 +1360,7 @@ const traps = {
       c: "larger-by-EXPONENT is not larger-by-MAGNITUDE at equal exponents. The merge re-checks the borrow and swaps",
     },
     {
-      s: "the quantiser misses 300 MHz by nine times",
+      s: "the quantiser misses its 300 MHz target by nine times",
       c: "packing a whole entry in one cycle — 128 parallel barrel shifters, measured at <b>32.5 MHz</b>. An 8-bit window is all the range that can occur",
     },
   ],
@@ -1373,7 +1373,7 @@ const traps = {
     summary="The circuit, read out of the Verilog: how one DSP48E2 is configured, how 256 of them chain, where the cross-unit partial actually enters, what the resident accumulator costs to hold, and what a 2x matmul clock adds that nothing else needs."
     domain="tpu"
     status="shipped"
-    source="src/kohakutpu/matmul/ · src/kohakutpu/transform/mx_quant.v · xcvu13p-fhgb2104-2L-e"
+    source="src/kohakutpu/matmul/ · src/kohakutpu/transform/mx_quant.v · xcvu13p-fhgb2104-2L-e, Vivado 2024.2, out-of-context synthesis"
   >
     <p class="doc-p">
       <RouterLink to="/tpu/matmul" class="doc-link"
@@ -1381,9 +1381,10 @@ const traps = {
       >
       page is the argument: why two int7 MACs per DSP, why the packing offset is
       19, why the systolic/mesh boundary sits at K = 32. This page is the
-      <b>construction</b> — the ports, the register stages, the delays that make
-      the arithmetic line up, and the places where the built RTL and the prose
-      disagree. Where they do, both are shown.
+      <b>construction</b>: the ports, the register stages, and the delays that
+      make the arithmetic line up. Everything here is read out of the Verilog,
+      and where a different arrangement was available it is named beside the one
+      that ships, with what each costs.
     </p>
 
     <h2 class="doc-h2">The cell: one DSP48E2 with all four ALU slots in use</h2>
@@ -1480,16 +1481,13 @@ const traps = {
     </Fig>
 
     <Callout
-      kind="note"
-      title="The prose doc puts this partial in a different place"
+      kind="trap"
+      title="Which STAGE takes the upstream partial is the decision; the port is its consequence"
     >
       <p>
-        <code>matmul.md</code> §3.1 describes the upstream partial entering
-        <b>at CU entry</b>, as <code>Z = C</code> on stage 0. The RTL puts it on
-        the <b>last</b> stage, as <code>W = C</code>. The port is the same and
-        the claim it supports — zero fabric adders across the whole K = 32 — is
-        unchanged; what differs is the stage, and the stage is what sets the
-        operand delay.
+        Both arrangements below reach the claim this design is built on — zero
+        fabric adders across the whole K = 32 — and they cost four times the
+        operand skew apart. Read the third column, not the second.
       </p>
     </Callout>
 
@@ -1556,7 +1554,7 @@ const traps = {
     <SpecTable
       :cols="skewCost.cols"
       :rows="skewCost.rows"
-      caption="Both rows are real measurements on xcvu13p-fhgb2104-2L-e and they describe two different builds. results.md §2.1's per-TCU SRL column — 224 of TCU 0's 336 LUT, 394 of the top-level operand delay's 450 — is the earlier one; the flop swap is what the shipping RTL forces"
+      caption="The SRL row is measured — out-of-context synthesis of mx_cluster on xcvu13p-fhgb2104-2L-e, Vivado 2024.2, 300 MHz target, and its per-component rows sum to the parent exactly. The flop row is what the shipping RTL forces; that build has NOT been re-measured as a matched pair against the SRL one, so the swap has no LUT figure here and none should be inferred from the 1,458"
     />
 
     <h2 class="doc-h2">The K sweep: the tile stays, the operands move</h2>
@@ -2093,8 +2091,7 @@ const traps = {
         The pair latch raises <code>pair_v</code> for one
         <code>clk2x</code> cycle and a second register widens it, so the
         <code>clk1x</code> edge cannot miss it. It is <b>not</b> replaceable by
-        a toggle handshake: <code>part_bus</code> is read <i>with</i>
-        <code>part_valid</code>, so synchroniser latency would break the
+        a toggle handshake: <code>part_bus</code> is read <i>with</i> <code>part_valid</code>, so synchroniser latency would break the
         alignment the whole chain is built on. And <code>pp</code>, the pair
         phase, follows <b>VALID</b> rather than the clock phase.
       </p>

@@ -9,6 +9,12 @@ tags:
 
 # Results
 
+> **Kind: none — this page reports measurements of parts labelled elsewhere.** No
+> row here is a design surface, so none is Fixed, addon, convention or yours in
+> its own right. What governs the page instead is this directory's provenance
+> rule: every figure names its part, tool, mode and producing script, and no
+> frequency here is a closed-timing figure.
+
 Every measured figure for KohakuTPU lives here, so there is one place to check
 whether a number is current. Design pages cite this file rather than restating
 it, and other sections of the tree should link here rather than quoting.
@@ -22,8 +28,29 @@ it ([projects/README.md](../README.md)).
 
 ## 1. How to read these numbers
 
-**Almost everything here is out-of-context synthesis.** Nothing is placed and the
-route is estimated. That has a precise consequence in each direction:
+**Every figure's provenance, unless a row states otherwise:**
+
+| | |
+|---|---|
+| part | `xcvu13p-fhgb2104-2L-e` |
+| tool | Vivado 2024.2 |
+| mode | **out-of-context**, **synthesis only** — no opt, no place, no route |
+| produced by | `scripts/tcl/ooc_*.tcl`, one script per top module; each script's header states what its run measures |
+
+Three kinds of figure appear on this page and they are not interchangeable.
+**MEASURED** is read off a netlist, a report or a bench. **ARITHMETIC** is
+derived from measured figures, with the derivation shown. **PROJECTED** is
+neither, and is labelled at the point of use. Anything whose conditions cannot
+be stated is marked `[unverified]` rather than printed as fact.
+
+**No frequency on this page is a closed-timing result.** They are
+out-of-context synthesis slack, and synthesis slack is optimistic: `m62_c1` lost
+0.740 ns going from synthesis to routing, so a figure here can be a full speed
+grade above what the same logic does once placed. The framework's statement of
+what an out-of-context number means is
+[workflow/measure.md](../../workflow/measure.md); this page obeys it.
+
+That has a precise consequence in each direction:
 
 | | |
 |---|---|
@@ -210,8 +237,9 @@ The tile memory comparison behind the last row of the fourteen:
 ```
 
 **The primitive was never the problem.** The same 352-bit memory measures **837
-MHz standing alone**, so anything slower is the module's own logic. Blaming the
-RAM for the 241 MHz result hid a loop-order question for two rounds.
+MHz standing alone**, so anything slower is the module's own logic. A memory
+that is an order of magnitude faster than the block around it cannot be what
+bounds the block, and reaching for the primitive is the wrong first move.
 
 The `READ_LAT=1` row is worth its own line: without the block RAM's output
 register the path begins at the RAM's clock-to-out — about 1.2 ns — rather than at
@@ -357,12 +385,21 @@ LUTs at 46% and BRAM at 8%.
 **That table uses the 272-DSP cluster and is therefore not current.** The measured
 cluster is **304 DSP** once both the block-scale multiply (16, one per lane) and
 the normalising shift (32, two per lane) are counted, which takes the DSP-bound
-count to `12,288 / 304 = 40`. The 272 figure gives 45 and an earlier draft using
-only the cascade's 256 gave 48. **All three numbers have been quoted somewhere; 40
-is the one the current cluster supports.** The LUT and BRAM headroom is unaffected
-either way, and the conclusion — DSP-bound, which is the right place to be bound
-on this part — moves further in the same direction with each correction, which is
-exactly why it was never caught by the answer looking wrong.
+count to `12,288 / 304 = 40`.
+
+**Three cluster counts are derivable from this project's own figures, and only
+one is current:** 48 from the cascade's 256 DSPs alone, 45 from the 272-DSP
+cluster, **40 from the 304-DSP cluster that is built.** Use 40. The arithmetic
+behind each is the same division and the difference is entirely in what the
+cluster's DSP count is taken to include — so a figure quoted without naming its
+per-cluster DSP count cannot be checked, and every one of the three has appeared
+somewhere.
+
+The LUT and BRAM headroom is unaffected either way, and the conclusion —
+DSP-bound, which is the right place to be bound on this part — moves further in
+the same direction with each correction. **That is why an error of this kind is
+not caught by the answer looking wrong**: it strengthens the claim it is
+supporting.
 
 The 32-cluster configuration is what a four-partition floorplan would build: about
 9.8 TFLOPS on roughly a third of the LUTs.
@@ -562,10 +599,11 @@ one by ~6e-4 rather than the observed 2.139.
 **The blown elements are OPERAND RANGE, and that one is closed.** Their count
 follows operand magnitude and nothing else — scaling an operand by an exact power
 of two (which changes no mantissa) takes 75 blown at a true peak of 5.79 to
-**195** at 11.57 and to **zero** at 1.45. This is the same trap that once
-retracted a whole hardware narrative: a contraction driven past the drain,
-saturating at the FP16 maximum. Keep the contraction in range and
-do not read a saturated element as evidence about the machine.
+**195** at 11.57 and to **zero** at 1.45. It is a contraction driven past the
+drain and saturating at the FP16 maximum ([accumulator.md](accumulator.md) §7).
+Keep the contraction in range, and **do not read a saturated element as evidence
+about the machine** — it is the most common way a synthetic benchmark
+manufactures a hardware defect that is not there.
 
 **The flickering is separate and still open**, and it does not follow magnitude.
 Non-deterministic unit assignment is eliminated (the idle set was identical every
@@ -573,21 +611,23 @@ run, and pinning placement changed nothing), as is stale tile state and
 transport — the bad elements sit **one per 4x4 sub-tile**, and sixteen of those
 share one 32-byte word, so no skew or dropped beat can produce it. Between runs
 on byte-identical operands `run1/run0` is an **exact power of two in 75 of 85**
-cases with neither run correct, which points at the per-block E8M0 scale rather
-than the multiply-accumulate. Next test is `preq`: host-packed MXFP7 bypasses
-MAG's on-the-fly quantiser entirely.
+cases with neither run correct, which points at the **exponent of the per-block
+scale** rather than at the multiply-accumulate. (The hardware's block scale is
+E5M3; a run-to-run ratio that is an exact power of two moves its E5 field and
+leaves its M3 field alone, which is what makes the scale rather than the
+significand the suspect.)
 
-> **Overtaken by the transform-slot redesign.** There is no on-the-fly quantiser
-> to bypass any more — a fetch is never transformed, so what `preq` proposed as
-> an experiment is now the only path there is. The experiment therefore cannot
-> be run as a comparison; if the scale is still suspect, the place to look is the
-> converting move's output, not the fetch's.
+The obvious next experiment — feed the cluster host-packed MXFP7 so the
+quantiser is bypassed — **cannot be run as a comparison**, because there is no
+on-the-fly quantiser left to bypass: a fetch is never transformed, so the
+"bypassed" path is now the only path there is
+([number-format.md](number-format.md) §5.1). If the scale is still suspect, the
+place to look is the converting move's output rather than the fetch's.
 
-**The reproducer was not kept**: `scripts/py/nondeterminism.py` is deleted and
-survives only in git history. It ran the same kernel twice on byte-identical
-operands and diffed the results, in about thirty seconds. Anyone picking this up
-writes it again — which is cheap, and is also the reason the finding above is a
-claim about a measurement nobody can currently repeat.
+**No reproducer is currently in the tree**, so the finding above is a claim about
+a measurement nobody can presently repeat. One is cheap to write: run the same
+kernel twice on byte-identical operands and diff the results, which takes about
+thirty seconds on the card.
 
 The rates recorded in §6.4 above — "4 of 65,536 over 10%", maxima of 1.00 and
 2.43 — are very likely the same phenomenon seen earlier and recorded as a rate
@@ -779,18 +819,20 @@ Read correctly, on the current machine:
 the machine is the array.** That is what withdrew a wider bus as a lever and it is
 the standing answer to "surely we are bandwidth-bound by now".
 
-Getting this wrong pointed falsely at bandwidth three times:
+Three ways of reading it wrong, each of which produces a figure that looks
+exactly like a saturated bus:
 
-| the mistake | what it read | what was true |
+| the error | what it reads | what is true |
 |---|---|---|
-| reads and writes summed, then added to both mesh directions | 91.5% "of data movement" — scheduling exhausted | the busiest path was 28.3%; the missing 30% was **latency**, and two one-line fixes took 69.6% → 80.7% |
-| per-port sums divided by one port | `mem_rd 101.9%`, `noc_out 110.4%` at 8 clusters — a saturated bus | `mem_rd 25.5%`, `noc_out 27.6%` against `flops 67.9%` |
-| a stall counter whose *event* changed meaning | one counter went 0.0% → 39.8% at an unchanged cycle count | the port now declines flits routinely because it demultiplexes two consumers by type; it counts demultiplexing, not congestion |
+| summing reads and writes, then adding both mesh directions | 91.5% "of data movement" — scheduling exhausted | the busiest single path is 28.3%; the missing 30% is **latency**, and two one-line fixes took 69.6% → 80.7% |
+| dividing per-port sums by one port | `mem_rd 101.9%`, `noc_out 110.4%` at 8 clusters | `mem_rd 25.5%`, `noc_out 27.6%` against `flops 67.9%` |
+| a stall counter whose *event* has changed meaning | one counter goes 0.0% → 39.8% at an unchanged cycle count | the port declines flits routinely because it demultiplexes two consumers by type; it counts demultiplexing, not congestion |
 
-**An impossible percentage looks exactly like a saturated bus.** A derived figure
-needs its **predicate** re-checked as well as its denominator whenever the thing
-it counts changes shape, and a stall counter that moves while the cycle count does
-not is a change in meaning until proven otherwise.
+Two rules follow, and both are cheap to apply. **A derived figure needs its
+predicate re-checked as well as its denominator** whenever the thing it counts
+changes shape. And **a stall counter that moves while the cycle count does not is
+a change in meaning until proven otherwise** — a real congestion change costs
+cycles.
 
 The 2.62 GB/s read figure that accompanies the baseline runs is **demand**,
 measured against a bench RAM with no latency. Real memory would not reduce the
@@ -1024,7 +1066,7 @@ real memory agent rather than a stub, which is the stronger test.
 - **No place-and-route on a populated die** for any cluster-count configuration.
   Every scaling figure in §5.1 is arithmetic on one synthesised cluster.
 - **The resident tile in URAM has not been re-measured in context.** The
-  standalone probe is 585 MHz against a cluster that closes at 344, and the
+  standalone probe is 585 MHz against a cluster measuring 344 in the same mode, and the
   pipeline argument says the seam does not move — but URAM's clock-to-out is worse
   than block RAM's and the accumulator is what the cluster closes on, so treat the
   in-context figure as unmeasured rather than unchanged.

@@ -1,90 +1,97 @@
 <script setup>
-/* Every figure on this page is out-of-context synthesis on one part,
- * xcvu13p-fhgb2104-2L-e, Vivado 2024.2, synth only. The CONSTRAINT ASKED is
- * named on every row: the controller PE was measured at 3.333 ns, the two wide
- * classes at 2.857 ns, and a tighter ask buys LUT it cannot spend on megahertz.
- * Sources are named per table. */
+/* Three processing-element classes on one mesh.
+ *
+ * PROVENANCE. Every resource or frequency figure names its part, its tool, its
+ * requested period, its -flatten_hierarchy setting and the script that produced
+ * it. The RV32 PE row is scripts/tcl/ooc_rv_pe.tcl at -flatten_hierarchy none,
+ * transcribed from docs/arch/cpu/rv32-pe/performance.md. The two wide rows are
+ * one frozen tree of a scripts/py/khs_sweep.py campaign at rebuilt, tabulated in
+ * docs/projects/kohakumpe/unit-counts.md. The three flows differ, so the rows do
+ * not subtract, and that is stated on the page rather than left to the reader.
+ */
 
+/* ------------------------------------------------------------- lineage */
 const lineage = {
   nodes: [
     {
       id: "core",
-      x: 8,
+      x: 12,
       y: 0,
-      w: 16,
-      h: 4,
-      label: "the base core",
-      sub: "RV32I · no multiply, no float · six register boundaries",
+      w: 13,
+      h: 4.6,
+      label: "rv_core — the framework's RV32IM controller",
+      sub: "six register boundaries · one stall rule · mul, mulh, mulhsu, mulhu · NO divide, NO float",
       accent: true,
     },
     {
       id: "cpu",
       x: 0,
-      y: 7,
-      w: 9,
+      y: 8.5,
+      w: 11,
       h: 4.4,
-      label: "controller PE",
-      sub: "2,477 LUT · 377.9 MHz · 3.333 ns",
+      label: "RV32 PE",
+      sub: "rv_pe with SIMD_EN = 0",
     },
     {
       id: "simd",
-      x: 11.5,
-      y: 7,
-      w: 9,
+      x: 13,
+      y: 8.5,
+      w: 11,
       h: 4.4,
       label: "SIMD PE",
-      sub: "13,772 LUT · 353.4 MHz · 2.857 ns",
+      sub: "rv_pe + khs_unit at the execute stage",
     },
     {
       id: "simt",
-      x: 23,
-      y: 7,
-      w: 9,
+      x: 26,
+      y: 8.5,
+      w: 11,
       h: 4.4,
       label: "SIMT PE",
-      sub: "21,586 LUT · 365.6 MHz · 2.857 ns",
+      sub: "kht_pe — a rebuild on the same shape, not a parameter on it",
     },
     {
       id: "cpuw",
       x: 0,
-      y: 14,
-      w: 9,
+      y: 16,
+      w: 11,
       h: 4.4,
       label: "one 32-bit operation",
-      sub: "no multiply, no float",
+      sub: "including one 33×33 signed product",
     },
     {
       id: "dspw",
-      x: 11.5,
-      y: 14,
-      w: 9,
+      x: 13,
+      y: 16,
+      w: 11,
       h: 4.4,
-      label: "8 packed lanes + 4 float",
-      sub: "32 int8 ops from one instruction",
+      label: "one packed vector",
+      sub: "8 slots of 32 bits, ONE address stream",
     },
     {
       id: "gpuw",
-      x: 23,
-      y: 14,
-      w: 9,
+      x: 26,
+      y: 16,
+      w: 11,
       h: 4.4,
-      label: "8 threads + 8 float",
-      sub: "own path, own address, own multiply",
+      label: "8 threads",
+      sub: "own path, own address, own product",
     },
   ],
   edges: [
     { from: "core:b", to: "cpu:t", dir: "v", label: "as it is" },
-    { from: "core:b", to: "dsp:t", dir: "v", label: "SIMD_EN", accent: true },
-    { from: "core:b", to: "gpu:t", dir: "v", label: "rebuild" },
+    { from: "core:b", to: "simd:t", dir: "v", accent: true, label: "SIMD_EN" },
+    { from: "core:b", to: "simt:t", dir: "v", label: "rebuild" },
     { from: "cpu:b", to: "cpuw:t", dir: "v" },
-    { from: "dsp:b", to: "dspw:t", dir: "v", accent: true },
-    { from: "gpu:b", to: "gpuw:t", dir: "v", accent: true },
+    { from: "simd:b", to: "dspw:t", dir: "v", accent: true },
+    { from: "simt:b", to: "gpuw:t", dir: "v", accent: true },
   ],
   groups: [
-    { x: -1, y: 12.6, w: 34, h: 7.2, label: "what ONE instruction drives" },
+    { x: -1.2, y: 14.7, w: 39.4, h: 7, label: "what ONE instruction drives" },
   ],
 };
 
+/* ------------------------------------------------------- what each ships */
 const classes = {
   cols: [
     { key: "cls", label: "PE class" },
@@ -94,162 +101,187 @@ const classes = {
     { key: "bram", label: "BRAM", align: "right", mono: true },
     { key: "dsp", label: "DSP48", align: "right", mono: true },
     { key: "fmax", label: "Fmax", align: "right", mono: true },
-    { key: "ask", label: "ask", align: "right", mono: true },
+    { key: "fl", label: "flatten", align: "right", mono: true },
   ],
   rows: [
     {
-      cls: "<b>controller</b> — <code>rv_pe</code>",
+      cls: "<b>RV32 PE</b><br><code>rv_pe</code>, <code>SIMD_EN = 0</code>",
       arith:
-        "RV32I only — <b>no multiply, no divide, no float</b>. One 32-bit scalar datapath",
-      lut: "<b>2,477</b>",
-      ff: "4,140",
-      bram: "5",
-      dsp: "0",
-      fmax: "377.9 MHz",
-      ask: "3.333 ns",
+        "RV32<b>IM</b> — one 32-bit datapath with a multiplier. <code>mul</code>, <code>mulh</code>, <code>mulhsu</code> and <code>mulhu</code> are always built; <code>div</code>, <code>divu</code>, <code>rem</code> and <code>remu</code> are decoded and <b>refused by name</b>. No vector tier",
+      lut: "<b>2,586</b>",
+      ff: "3,844",
+      bram: "9",
+      dsp: "<b>4</b>",
+      fmax: "363.5<br><span class='opacity-60'>+0.582 ns · met</span>",
+      fl: "none",
+      _tone: "good",
     },
     {
-      cls: "<b>DSP</b> — <code>rv_pe</code>, <code>SIMD_EN&nbsp;=&nbsp;1</code><br>8 int + 4 float",
+      cls: "<b>SIMD PE</b><br>8 slots · 8 integer lanes · 4 float units",
       arith:
-        "<b>SWAR packed int8/int16/int32</b> — add, compare, shift, <code>vmul</code>, and <code>vdot</code> into the accumulators — plus a <b>float tier of 4 lanes</b>",
-      lut: "<b>13,772</b>",
-      ff: "10,126",
+        "the base core's, plus <b>packed int8 / int16 / int32</b> — add, subtract, saturating add and subtract, min, max, <code>vmul</code> — a packed shifter, a cross-lane permute, reduction trees, and an <b>IEEE binary32</b> float tier. No seeds and no accumulator in this row",
+      lut: "<b>15,682</b>",
+      ff: "9,836",
       bram: "13",
-      dsp: "72",
-      fmax: "353.4 MHz",
-      ask: "<b>2.857 ns</b>",
+      dsp: "56",
+      fmax: "349.3",
+      fl: "rebuilt",
     },
     {
-      cls: "<b>GPU</b> — <code>kht_pe</code><br>8 int + 8 float, 16 waves",
+      cls: "<b>SIMT PE</b><br>8 threads · 16 waves · 8 float units",
       arith:
-        "per-thread RV32I <b>+ RV32M</b> (<code>mul</code>, <code>mulh</code>, <code>mulhsu</code>, <code>mulhu</code>, one product per lane) plus a <b>float tier of 8 lanes</b>",
-      lut: "<b>21,586</b>",
+        "the base ISA, <b>per thread</b>: <code>add x5, x3, x4</code> is <code>x5[lane] = x3[lane] + x4[lane]</code>. Plus an active mask, a divergence stack, a subgroup butterfly, a banked shared memory, per-thread RV32M and an <b>IEEE binary32</b> float tier. No seeds in this row",
+      lut: "<b>19,461</b>",
       ff: "17,268",
       bram: "30.5",
       dsp: "48",
-      fmax: "365.6 MHz",
-      ask: "<b>2.857 ns</b>",
+      fmax: "361.0",
+      fl: "rebuilt",
     },
   ],
 };
 
-const budget = {
-  items: [
+/* ------------------------------------------------------------ the widths */
+const granule = `   SLOTS / THREADS   32-bit elements the machine is built around    8, FIXED
+   UNITS             how many are BUILT for a feature               0, 1, 2, 4, 8 or -1
+   PASSES            slots / units, one issued per cycle            derived
+
+   8 x 32 bit  =  256 bit  =  one native memory entry  =  one flit payload
+
+   integer width  <-  the memory granule (coalescing)       FIXED by the granule
+   float width    <-  arithmetic demand (throughput vs LUT)  A KNOB`;
+
+/* --------------------------------------------------------- the multiply */
+const holdBroken = {
+  rows: [
+    { name: "EX", kind: "bus", values: ["mul", "mul", "mul", "next"] },
+    { name: "hold EX", kind: "bit", values: [1, 1, 1, 0] },
+    { name: "MEM", kind: "bus", values: ["prev", "prev", "prev", "mul"] },
+    { name: "MEM valid", kind: "bit", values: [1, 1, 1, 1], mark: [1, 2] },
     {
-      label: "controller PE — assembled, 3.333 ns ask",
-      value: 2477,
-      note: "377.9 MHz",
+      name: "retires",
+      kind: "text",
+      values: ["prev", "prev", "prev", "mul"],
+      mark: [1, 2],
+    },
+  ],
+  notes: [
+    {
+      cycle: 0,
+      text: "The multiply holds EX for three cycles. The MEMORY stall is safe to freeze the MEM-valid bit under, because it stops EX and MEM together — so the same treatment looks safe here.",
     },
     {
-      label: "SIMD PE — 8 int, no float tier, 3.333 ns ask",
-      value: 10343,
-      note: "357.1 MHz",
+      cycle: 1,
+      text: "It is not. This hold stops EX alone, so MEM keeps advancing — and with its valid bit frozen the instruction sitting in it retires again, with the same correct answer, once per held cycle.",
+      tone: "bad",
     },
     {
-      label: "SIMD PE — 8 int + 4 float, THE DSP REFERENCE, 2.857 ns ask",
-      value: 13772,
-      note: "353.4 MHz · measured",
-    },
-    {
-      label:
-        "SIMT PE — 8 int + 8 float + RV32M, THE GPU REFERENCE, 2.857 ns ask",
-      value: 21586,
-      note: "365.6 MHz · measured",
-    },
-    {
-      label: "SIMD PE — 8 int + 16 float, one lane per element, 3.333 ns ask",
-      value: 22743,
-      note: "346.5 MHz",
+      cycle: 3,
+      text: "Every answer written is right and the retired-instruction count has run away. There is no wrong value anywhere to trip an assertion on, which is why this presents as a counter that disagrees with the program rather than as a failure.",
+      tone: "bad",
     },
   ],
 };
 
-const granule = `   ELEMENTS   how many fit a 256-bit register at the operand width
-              the INSTRUCTION names          8 at 32 bit, 16 at 16 bit
-   LANES      how many are built             a BUILD PARAMETER
-   INTERVAL   elements / lanes
+const holdFixed = {
+  rows: [
+    { name: "EX", kind: "bus", values: ["mul", "mul", "mul", "next"] },
+    { name: "hold EX", kind: "bit", values: [1, 1, 1, 0] },
+    { name: "MEM", kind: "bus", values: ["prev", null, null, "mul"] },
+    { name: "MEM valid", kind: "bit", values: [1, 0, 0, 1], mark: [3] },
+    { name: "retires", kind: "text", values: ["prev", "", "", "mul"] },
+  ],
+  notes: [
+    {
+      cycle: 1,
+      text: "A hold that stops only the upper stage MUST send the lower stage a bubble. MEM advances into an invalid slot and retires nothing.",
+      tone: "good",
+    },
+    {
+      cycle: 3,
+      text: "Three stall cycles for the multiply. Against them: a software multiply on the EASY case — int8 operands, which unroll to eight shift-add steps — measured about 54 cycles each on the full-system bench, and a general 32×32 unrolls to far more.",
+      tone: "good",
+    },
+  ],
+};
 
-   8 lanes x 32 bit  =  256 bit  =  one native entry  =  one flit
+/* -------------------------------------------------------------- RV32M */
+const mEnc = [
+  { name: "funct7", bits: 7, value: "0000001", accent: true },
+  { name: "rs2", bits: 5 },
+  { name: "rs1", bits: 5 },
+  { name: "funct3", bits: 3, value: "which of eight", accent: true },
+  { name: "rd", bits: 5 },
+  { name: "opcode", bits: 7, value: "0110011 — OP" },
+];
 
-   integer lanes  <-  the memory granule  (coalescing)      8, FIXED
-   float lanes    <-  arithmetic demand   (throughput/LUT)  a KNOB`;
-
-/* ONE dtype configuration, machine-wide. Operand width is a per-instruction
- * property; the internal format is always E8M15 and there is no build in which
- * it is anything else. The classes differ in float PRESENCE and WIDTH only. */
-const dtype = {
+const mFields = {
   cols: [
-    { key: "p", label: "Legitimately a parameter" },
-    { key: "n", label: "NOT a parameter" },
+    { key: "f", label: "Field", mono: true },
+    { key: "w", label: "Width", align: "right", mono: true },
+    { key: "p", label: "Position", mono: true },
+    { key: "o", label: "Owner" },
   ],
   rows: [
     {
-      p: "whether a float tier exists at all",
-      n: "which format the datapath computes in",
+      f: "opcode",
+      w: "7",
+      p: "[6:0] = 0110011",
+      o: "<b>RISC-V.</b> The standard OP major, <b>not</b> one of the four custom ones — which is why RV32M costs none of the pool and a compiler emits it with <code>-march=rv32im</code> and nothing else",
       _tone: "good",
     },
     {
-      p: "how many float lanes, and the issue interval that follows",
-      n: "whether an operand is FP16 or FP32",
-      _tone: "good",
+      f: "funct7",
+      w: "7",
+      p: "[31:25] = 0000001",
+      o: "<b>RISC-V.</b> The M extension's selector inside the register-register group that already existed",
+    },
+    {
+      f: "funct3[2]",
+      w: "1",
+      p: "[14]",
+      o: "<b>this implementation's refusal.</b> Set is exactly <code>div</code> / <code>divu</code> / <code>rem</code> / <code>remu</code>. <code>rv_id.v</code> makes it a term of <i>illegal</i> and never a term of the multiply enable, so the four divides fault <b>by name</b> rather than by falling off the end of a case",
+      _tone: "warn",
+    },
+    {
+      f: "funct3[1:0]",
+      w: "2",
+      p: "[13:12]",
+      o: "<b>RISC-V.</b> 0 <code>mul</code> · 1 <code>mulh</code> · 2 <code>mulhsu</code> · 3 <code>mulhu</code>. <code>rv_ex.v</code> reads these two bits three ways and builds nothing else from them",
+    },
+    {
+      f: "rd · rs1 · rs2",
+      w: "5 each",
+      p: "[11:7] · [19:15] · [24:20]",
+      o: "the instruction. On the SIMT PE these name the <b>per-thread</b> file, so one <code>mul</code> is <code>LANES</code> products",
     },
   ],
 };
 
-const mesh = {
+const mDecode = {
   cols: [
-    { key: "what", label: "" },
-    { key: "lut", label: "LUT", align: "right", mono: true },
-    { key: "dsp", label: "DSP48", align: "right", mono: true },
-    { key: "bram", label: "BRAM tiles", align: "right", mono: true },
-    { key: "ff", label: "FF", align: "right", mono: true },
-    { key: "fma", label: "FP FMA / clk", align: "right", mono: true },
+    { key: "i", label: "Instruction", mono: true },
+    { key: "f", label: "funct3[1:0]", mono: true, align: "right" },
+    { key: "a", label: "a_sgn — rs1", mono: true, align: "right" },
+    { key: "b", label: "b_sgn — rs2", mono: true, align: "right" },
+    { key: "h", label: "hi_sel", mono: true, align: "right" },
   ],
   rows: [
     {
-      what: "8 × SIMD PE — 4 float lanes each",
-      lut: "110,176",
-      dsp: "576",
-      bram: "104",
-      ff: "81,008",
-      fma: "32",
+      i: "mul",
+      f: "00",
+      a: "1",
+      b: "<b>0</b>",
+      h: "0",
+      _tone: "warn",
     },
-    {
-      what: "4 × SIMT PE — 8 float lanes each",
-      lut: "86,344",
-      dsp: "192",
-      bram: "122",
-      ff: "69,072",
-      fma: "32",
-    },
-    {
-      what: "2 × controller PE",
-      lut: "4,954",
-      dsp: "0",
-      bram: "10",
-      ff: "8,280",
-      fma: "0",
-    },
-    {
-      what: "<b>one mesh</b>",
-      lut: "<b>201,474</b>",
-      dsp: "<b>768</b>",
-      bram: "<b>236</b>",
-      ff: "<b>158,360</b>",
-      fma: "<b>64</b>",
-      _tone: "good",
-    },
-    {
-      what: "available",
-      lut: "~350,000",
-      dsp: "3,072",
-      bram: "—",
-      ff: "—",
-      fma: "—",
-    },
+    { i: "mulh", f: "01", a: "1", b: "<b>1</b>", h: "1", _tone: "good" },
+    { i: "mulhsu", f: "10", a: "1", b: "0", h: "1" },
+    { i: "mulhu", f: "11", a: "0", b: "0", h: "1" },
   ],
 };
 
+/* ------------------------------------------------------------- routing */
 const routing = {
   cols: [
     { key: "work", label: "The work" },
@@ -258,34 +290,35 @@ const routing = {
   ],
   rows: [
     {
-      work: "deciding what to do next — sequencing kernels, walking descriptors, reacting to completions",
-      pe: "<b>controller PE</b>",
-      why: "a hand-written state machine does it until the policy changes, and then it does it wrong",
+      work: "deciding what happens next — sequencing kernels, walking descriptors, reacting to completions",
+      pe: "<b>RV32 PE</b>",
+      why: "one 32-bit datapath and a program counter is the whole requirement, and a hand-written state machine does the job until the policy changes",
     },
     {
-      work: "vertex transform, blending, colour-space conversion — one address stream, every element treated the same",
+      work: "vertex transform, blending, colour-space conversion — one address stream, every element treated the same, arithmetic dense",
       pe: "<b>SIMD PE</b>",
-      why: "widening the datapath and letting one instruction drive eight of them; 24.9× on an int8 dot against a scalar core that has a multiplier",
+      why: "one instruction drives eight 32-bit slots, and the packed element types put four int8 pairs through one native carry chain per slot. There is nothing to diverge and nothing to serialise",
     },
     {
-      work: "a fragment shader where lane 3 takes the <code>if</code> and lane 4 takes the <code>else</code>; a texture fetch whose address is per-lane",
+      work: "a fragment shader where lane 3 takes the <code>if</code> and lane 4 takes the <code>else</code>; a texture fetch whose address is per lane",
       pe: "<b>SIMT PE</b>",
-      why: "an active mask, an IPDOM stack and an address per lane — none of which the SIMD tier anticipates",
+      why: "an active mask, a divergence stack and an address per lane — none of which the SIMD tier anticipates, and adding them there would cost every uniform kernel",
     },
     {
       work: "a fixed dataflow with operands resident across many passes and no control flow at all",
-      pe: "not a PE at all",
-      why: "that is a systolic array, and a PE is scalar control, uniform width, or divergence — an array is none of the three",
+      pe: "<b>not a PE at all</b>",
+      why: "that is a systolic array. A PE is scalar control, uniform width, or divergence, and an array is none of the three",
     },
   ],
 };
 
+/* ---------------------------------------------------------- opcode map */
 const majors = {
   cols: [
-    { key: "major", label: "major", mono: true },
-    { key: "op", label: "opcode", mono: true },
-    { key: "owner", label: "owner" },
-    { key: "carries", label: "carries" },
+    { key: "major", label: "Major", mono: true },
+    { key: "op", label: "Opcode", mono: true },
+    { key: "owner", label: "Owner" },
+    { key: "carries", label: "Carries" },
   ],
   rows: [
     {
@@ -293,92 +326,186 @@ const majors = {
       op: "0x0B",
       owner: "<b>SIMD PE</b>",
       carries:
-        "the packed-integer tier: memory, packed ALU, bitwise, shifts, dot and accumulators, moves, permute",
+        "the packed-integer tier: vector load and store, packed arithmetic, bitwise, immediate shifts, moves and reductions, and the cross-lane permute",
+    },
+    {
+      major: "custom-0<br><code>funct3 = 5</code>",
+      op: "0x0B",
+      owner: "<b>SIMD PE</b>",
+      carries:
+        "<b>reserved and unmapped.</b> The retired integer dot unit and its accumulator lived here — <code>vdot</code>, <code>vdotn</code>, <code>vaccz</code>, <code>vaccrd</code>, <code>vaccwr</code>, and the <code>MULS</code> and <code>DOT_DSP</code> knobs that sized them. Keeping the group unmapped is what makes a binary built for them <b>fault</b>",
+      _tone: "warn",
     },
     {
       major: "custom-1",
       op: "0x2B",
       owner: "<b>SIMD PE</b>",
       carries:
-        "the float tier. A build without E8M15 leaves the major unmapped, so a float instruction faults rather than landing in a decode case",
+        "the float tier: the accumulator group, the converters, the elementwise base and the four seeds. <code>FLOAT_LANES = 0</code> leaves the major unmapped, so a float instruction faults at the opcode",
+    },
+    {
+      major: "custom-1<br><code>funct3 = 1</code>",
+      op: "0x2B",
+      owner: "<b>SIMD PE</b>",
+      carries:
+        "<b>declared and not built.</b> <code>vfredsum.f32</code> encodes and <b>faults</b>. The golden model implements it, so the model is ahead of the RTL here — and returning slot 0 alone would be the plausible wrong answer a refusal exists to prevent",
+      _tone: "bad",
     },
     {
       major: "custom-2",
       op: "0x5B",
       owner: "<b>SIMT PE</b>",
       carries:
-        "the R-type groups: scalar ALU, scalar/vector moves, divergence, subgroup, the uniform-base and lane-linear memory forms",
+        "the R-type groups: scalar ALU, scalar/vector moves, divergence, subgroup, the uniform-base and lane-linear memory forms, and the float group",
+    },
+    {
+      major: "custom-2<br><code>funct3 = 6, 7</code>",
+      op: "0x5B",
+      owner: "<b>SIMT PE</b>",
+      carries: "<b>unallocated.</b> Reserved, and they fault",
     },
     {
       major: "custom-3",
       op: "0x7B",
       owner: "<b>SIMT PE</b>",
       carries:
-        "the I-type groups: scalar immediate ALU, scalar shifts, the two uniform branches",
+        "the I-type groups: scalar immediate ALU and the two uniform branches. Its <code>funct3</code> space is deliberately <b>not</b> filled",
     },
     {
       major: "OP",
       op: "0x33",
-      owner: "<b>standard — not in the pool</b>",
+      owner: "<b>RISC-V — not in the pool</b>",
       carries:
-        "<code>funct7 = 0000001</code> is <code>RV32M</code>: <code>mul</code>, <code>mulh</code>, <code>mulhsu</code>, <code>mulhu</code> on the SIMT PE's per-thread file. <code>funct3</code> 100–111 is <code>div</code>/<code>rem</code> and is decoded and <b>refused</b>",
+        "<code>funct7 = 0000001</code> is RV32M, on every RV32 core in the tree. The divides are decoded and refused",
       _tone: "good",
+    },
+    {
+      major: "AMO",
+      op: "0x2F",
+      owner: "<b>nobody</b>",
+      carries:
+        "<b>not in the legal opcode set at all.</b> An <code>amo*</code> word raises an illegal-instruction fault rather than being decoded into something adjacent — there are no atomics on either class",
+      _tone: "bad",
     },
   ],
 };
-
-const rtype = [
-  { name: "funct7", bits: 7, value: "operation" },
-  { name: "rs2", bits: 5 },
-  { name: "rs1", bits: 5 },
-  { name: "funct3", bits: 3, value: "group" },
-  { name: "rd", bits: 5 },
-  { name: "opcode", bits: 7, value: "custom-N", accent: true },
-];
 
 const mulWhere = {
   cols: [
-    { key: "c", label: "The cost, on the controller PE" },
-    { key: "g", label: "The same thing on the SIMT PE" },
+    { key: "c", label: "What a multi-cycle unit costs a short in-order core" },
+    { key: "g", label: "The same thing on a barrel-scheduled core" },
   ],
   rows: [
     {
-      c: "<b>The result mux lengthens the distance-1 forwarding path.</b> <code>ex_alu</code> feeds <code>fwd_x_val</code>, which is an input to <code>x_op1_reg</code> — the register the critical path already ends at",
-      g: "<b>That path does not exist.</b> Barrel scheduling deleted it: with as many resident waves as the pipeline is deep, no two in-flight instructions share a wave, so there is no forwarding network and no interlock to lengthen",
+      c: "<b>The result mux lengthens the distance-1 forwarding path.</b> The multiply result joins through the same wire that feeds both the memory-stage value and the forwarding network, and that network ends at the register the core's critical path once terminated at — so adding a case to that mux was one more level in exactly the wrong place",
+      g: "<b>That path does not exist.</b> With as many resident wave contexts as the pipeline is deep, no two in-flight instructions share a wave, so there is no forwarding network and no distance-1 interlock to lengthen",
       _tone: "good",
     },
     {
-      c: "<b>A multi-cycle result needs a new stall term</b>, and stall terms fan out — the <code>FWD_X</code> experiment priced widening one at <b>5 MHz</b>",
-      g: "<b>The flag was already there.</b> A wave with a float in flight is skipped by the scheduler via one pending bit per wave; a multiply sets and clears the <i>same</i> bit and retires through the <i>same</i> slot",
+      c: "<b>A multi-cycle result needs a stall term, and stall terms fan out across the whole front end.</b> That geometry is visible in the shipped core from a different source: an address decode reaching a stall term that reaches the front end's pipeline registers",
+      g: "<b>The flag was already there.</b> A wave with a float in flight is skipped by the scheduler through one pending bit per wave; a multiply sets and clears the <i>same</i> bit and retires through the <i>same</i> write port, padded to the float tier's exact latency so the two can never want it on one cycle",
       _tone: "good",
+    },
+    {
+      c: "<b>The option not taken is a scoreboard</b> letting the multiply retire out of order. The hazard unit is the whole of this core's complexity budget — three sources by position, one stall rule, nothing else — and a scoreboard ends that invariant for one instruction",
+      g: "<b>Also not taken, for the opposite reason.</b> There is no per-register scoreboard because there does not need to be one: a per-wave pending bit restores the barrel-scheduling invariant that a multi-cycle unit breaks",
     },
   ],
 };
 
-// KohakuMPE is GPU/GPGPU. Workload discussion on this page is RENDERING; any AI
-// workload belongs to a project page under projects/, never here and never on a
-// framework page.
+/* ---------------------------------------------------------- four kinds */
+const kinds = {
+  cols: [
+    { key: "t", label: "Thing" },
+    { key: "c", label: "Category" },
+  ],
+  rows: [
+    {
+      t: "the compute-unit port every class presents, and the kick and completion across it",
+      c: "<b>fixed protocol</b>, and the framework's",
+    },
+    {
+      t: "which custom major belongs to which class",
+      c: "<b>fixed protocol.</b> The allocation is recorded outside both classes' ISA modules, because a table one tier owns is not an authority the other can check itself against",
+    },
+    {
+      t: "RV32M at its standard encoding, and the four divides faulting",
+      c: "<b>fixed protocol</b> of the base core. There is no <code>HAS_M</code>, no RV32I build, and nothing to configure",
+    },
+    {
+      t: "a feature at zero faults rather than computing something plausible",
+      c: "<b>fixed protocol</b> of both wide classes",
+    },
+    {
+      t: "<code>khs_unit</code> and <code>khs_scalar_decode</code> behind the framework's <code>SIMD_EN</code>",
+      c: "<b>customizable addon</b> — a slot the framework names behind a parameter that is 0 by default",
+    },
+    {
+      t: "every unit count on either wide class",
+      c: "<b>yours.</b> Range and meaning are set by this project's own specification, not by the framework's parameter rule",
+    },
+    {
+      t: "which class a piece of work goes to",
+      c: "<b>convention.</b> The table above is how the shipped parts happen to agree; nothing enforces it",
+    },
+  ],
+};
+
+const notOwned = {
+  cols: [
+    { key: "n", label: "Not settled here" },
+    { key: "w", label: "Where it is" },
+  ],
+  rows: [
+    {
+      n: "how the base core is built — the six register boundaries, the hazard rules, the predictor, the two L1s, the requestor",
+      w: "the framework's RV32 controller PE. Both wide classes inherit it and neither may change it",
+    },
+    {
+      n: "what a SIMD width costs, and what a SIMT gate costs",
+      w: "each class's own pages, where the campaign and the tree behind each row are named",
+    },
+    {
+      n: "whether a mesh of these fits, and at what clock",
+      w: "<b>nowhere yet.</b> Every figure either wide class has is out-of-context synthesis of one PE, and no mesh of them has been placed",
+    },
+    {
+      n: "how many PEs one system node carries",
+      w: "the framework's system node. The measured shape is that one memory agent serves up to four PEs, and sharing it costs <b>+13.7%</b> on a fixed compute-bound program",
+    },
+  ],
+};
 </script>
 
 <template>
   <DocPage
     title="SIMD, SIMT and what is not a PE"
-    summary="Three kinds of processing element share one mesh: the controller PE, the SIMD PE and the SIMT PE. What arithmetic each ships, what each costs, which work routes to which, and where the room in the opcode map actually is."
+    summary="Three classes of processing element share one mesh and one base core. What arithmetic each ships, which work routes to which, where the room in the opcode map actually is, and why the multiplier is nearly free on one of them and was expensive on another."
     domain="simt"
     status="measured"
-    source="src/kohakuaccel/pe/rv32/ · docs/arch/pe/"
+    source="src/kohakuaccel/pe/rv32/ · src/kohakumpe/ · docs/arch/cpu/rv32-pe/ · docs/projects/kohakumpe/configurable-widths.md"
   >
+    <h2 class="doc-h2">What this page settles</h2>
     <p class="doc-p">
-      Every class here is a compute unit first: one local port, one instruction
-      FIFO, the four
-      <code>CU_CTRL</code> registers. A driver enumerates one without knowing it
-      is a processor. The only thing different is what it does with an
-      instruction — a <code>CU_INST</code> is a <b>kick</b>, and the unit
-      retires when the program halts.
+      Three things. <b>Which class a piece of work belongs on</b>, which is a
+      question about the shape of the work and never about which is faster.
+      <b>Where the multiply is</b>, which is on all three and is not a knob on
+      any of them. And <b>who owns which opcode major</b>, which is the one
+      allocation that has to be settled centrally because four is all RISC-V
+      reserves.
+    </p>
+    <p class="doc-p">
+      The alternative that was rejected is a single configurable wide class that
+      stretches from uniform to divergent. It fails on cost rather than on
+      taste: an active mask, a divergence stack and a per-lane address path are
+      hardware that a uniform kernel cannot use and would still pay for, and the
+      measurement below says the base machines differ by 543 LUT in the
+      <i>other</i> direction. Two classes and one shared base core is what buys
+      the uniform case its cheapness without giving up the divergent one.
     </p>
 
     <Fig
-      caption="The lineage. The SIMD PE is a parameter on the base core; the SIMT PE is a rebuild on its shape rather than a parameter on it. All three figures are OOC synthesis on xcvu13p-fhgb2104-2L-e, Vivado 2024.2 — the controller at a 3.333 ns ask, the two wide classes at 2.857 ns."
+      caption="The lineage. The SIMD PE is a parameter on the base core — SIMD_EN elaborates the extension or it does not, a generate rather than a zero width. The SIMT PE is a rebuild on the base core's shape rather than a parameter on it: it keeps the six register boundaries and the hazard style because those are what close at this clock, and changes which register file an ordinary RV32I opcode addresses. RV32IM is the base ISA on all three, per-thread included."
       zoom
     >
       <BlockDiagram
@@ -388,249 +515,260 @@ const mulWhere = {
       />
     </Fig>
 
-    <h2 class="doc-h2">What each class actually ships</h2>
+    <p class="doc-p">
+      Every class here is a compute unit first: one local port on the mesh, one
+      instruction FIFO, the same control registers a driver enumerates any unit
+      through. A driver reads one without knowing it is a processor. The only
+      thing different is what it does with an instruction — an instruction flit
+      is a <b>kick</b> that starts a program, and the unit retires when the
+      program halts.
+    </p>
+
+    <h2 class="doc-h2">What each class ships, and what it costs</h2>
 
     <p class="doc-p">
-      Naming the LUT without naming the arithmetic is what let “the machine has
-      float” and “the machine has no multiply” both circulate as true. The
-      arithmetic is the first column for that reason.
+      A LUT total without the arithmetic beside it says nothing: two of these
+      three carry a float tier, all three carry an integer multiplier, and none
+      of that is visible in a number. The arithmetic is the first column for
+      that reason.
     </p>
 
     <SpecTable
       :cols="classes.cols"
       :rows="classes.rows"
-      caption="xcvu13p-fhgb2104-2L-e, Vivado 2024.2, out-of-context synthesis only — pre-placement, so a routed result will be somewhat worse. Resource figures are CLB LUT sites. Both wide classes report 48/48 component tests passing on the build these figures come from. div and rem fault on every class, per-thread included. Sources: docs/arch/pe/performance.md, docs/projects/kohakumpe/simd/, docs/projects/kohakumpe/simt/status.md."
+      caption="Three whole assembled PEs on xcvu13p-fhgb2104-2L-e with Vivado 2024.2, out-of-context SYNTHESIS at a 3.333 ns request, -directive default. Nothing placed, nothing routed. Figures are CLB LUT sites. The RV32 PE row is scripts/tcl/ooc_rv_pe.tcl, top rv_pe, at -flatten_hierarchy none. The two wide rows are the reference rows of one frozen tree of a scripts/py/khs_sweep.py campaign at rebuilt, tabulated in docs/projects/kohakumpe/unit-counts.md."
     />
 
     <Callout
       kind="trap"
-      title="Read the ask column before subtracting two rows"
+      title="These three rows line up in columns and do not subtract"
     >
       <p>
-        The controller row is at the older <b>3.333 ns</b> request and the two
-        wide rows at <b>2.857 ns</b>. On this core a tighter ask buys LUT and no
-        megahertz at all — ~90 extra sites at 2.5 ns, 350–400 at 2.0 ns — so a
-        controller figure lifted from a 2.857 ns run would be larger and no
-        faster. A difference taken across two asks measures the constraint as
-        much as the design.
+        <b>Two different flatten settings.</b> The RV32 row is
+        <span class="chip">-flatten_hierarchy none</span>, which is what its
+        script asks for, and the two wide rows are
+        <span class="chip">rebuilt</span>, which is what the ship synthesises at
+        because nothing in the build scripts sets the setting on the ship's run.
+        On this same RV32 PE the two settings differ by
+        <b>+720 LUT and −4.1 MHz</b> for <span class="chip">none</span>. On the
+        assembled SIMT PE at one target, <span class="chip">none</span> read
+        <b>636 LUT high</b>. And the gap is
+        <b>configuration-dependent</b> — on the SIMD PE it measured 647 LUT at
+        one setting of one knob and 243 at another, because at the first setting
+        all of the difference was the tool inferring DSP48 post-adders the RTL
+        placed explicitly at the second. It cannot be applied as a correction.
       </p>
       <p>
-        <b>Two synthesis flows are in that table too.</b> The controller and DSP
-        rows are <code>-flatten_hierarchy none</code>; the GPU row is
-        <code>rebuilt</code>. Run both ways on the same GPU design at a 2.500 ns
-        ask, <code>none</code> costs <b>+720 LUT and −4.1 MHz</b> — real, but
-        small enough that the rows compare once it is named. The controller PE
-        also has a fully flattened figure, <b>2,491 LUT at 410.8 MHz</b>, 33 MHz
-        of which is the flow rather than the design.
+        <b>Two different source trees.</b> The wide rows predate the float
+        tier's rebuild in binary32 and the removal of the integer dot unit;
+        <b>no absolute total for either wide class describes a PE that can be
+        built from the RTL as it now stands.</b> What survives is the shape —
+        what a marginal unit costs, and which knobs are not levers — and those
+        are on each class's own pages.
+      </p>
+      <p>
+        <b>The symptom of ignoring this is a delta that reads as a design
+        change.</b> "The extension costs 13,096 LUT" is the RV32 row subtracted
+        from the SIMD row, and it is two flows, two trees and two configurations
+        differenced into one number.
       </p>
     </Callout>
 
-    <Callout
-      kind="measured"
-      title="The DSP48 counts are not on the same axis as the LUT counts"
-    >
+    <h2 class="doc-h2">Every compute feature is a width</h2>
+
+    <Callout kind="rule" title="A count, never a boolean, and 0 means not built">
       <p>
-        The SIMD PE's <b>72</b> includes <code>SIMD_DOTDSP&nbsp;=&nbsp;1</code>,
-        which keeps the <code>vdot</code> sum inside the DSP48 column and
-        <i>buys LUT back</i>: 32 more DSP for a measured
-        <b>256 LUT and 32 CARRY8</b> per eight lanes. DSP is the cheap resource
-        on this device and LUT is the binding one, so the two wide classes are
-        spending on the same axis in opposite directions — and the LUT totals
-        still compare.
+        There is no boolean "has a float tier" and no boolean "has a
+        multiplier". Each feature that has a width is a <b>unit count</b> with
+        legal values 0, 1, 2, 4, 8 and −1 for full rate, and the count sets how
+        many cycles an operation takes, <b>never what the instruction set
+        contains</b>. The same binary and the same golden memory image run at
+        every width. A count of <span class="chip">0</span> means the hardware
+        is not instantiated and every encoding needing it <b>faults at
+        decode</b>, because a feature that decodes with no datapath returns a
+        plausible wrong answer.
+      </p>
+      <p>
+        Two consequences follow that a reader will not guess.
+        <b>The integer ALU is one IM unit</b> — add, subtract, compare, bitwise
+        and multiply through one operand path and one result path, rather than
+        an ALU beside a multiplier array with a dispatch mux between them —
+        because multiplexers are the expensive primitive on this fabric and two
+        units serving one issue port need a mux in front and a mux behind, both
+        wider than the logic they arbitrate. So the multiply count is
+        <b>not a knob on either wide class</b>: it follows
+        <span class="chip">ILANES</span> on SIMD and
+        <span class="chip">LANES</span> on SIMT. And
+        <b>there is no dot-product unit</b>: a dot product is a packed multiply
+        followed by a reduction, and a part that needs a high rate carries
+        matrix units instead.
       </p>
     </Callout>
-
-    <h2 class="doc-h2">The reference configurations, and why they differ</h2>
-
-    <Callout
-      kind="rule"
-      title="8 int + 4 float is the DSP reference; 8 int + 8 float is the GPU reference"
-    >
-      <p>
-        <b
-          >Both are buildable, both are measured, and float is not optional in
-          either — rendering needs it.</b
-        >
-        The integer number is the same on both classes and the float number is
-        not, and neither of those facts is arbitrary.
-      </p>
-      <p>
-        <b
-          >Lane count and element count are separate numbers, and only one of
-          them is a build parameter.</b
-        >
-        How many <i>elements</i> a 256-bit register holds follows from the
-        operand width the instruction names — 8 at 32 bits, 16 at 16 — and the
-        <i>lanes</i> are the parameter. The issue interval is
-        <code>elements / lanes</code>: four float lanes over a sixteen-element
-        vector is one vector every four cycles, which is not a narrower machine
-        but a slower one.
-      </p>
-      <div
-        class="font-mono kt-text-caption whitespace-pre text-warm-700 dark:text-warm-300 leading-6 overflow-x-auto my-3"
-      >
-        {{ granule }}
-      </div>
-      <p>
-        <b>The integer lanes are the address path.</b> A contiguous 32-bit load
-        by eight threads is exactly one <code>MEM_RD_REQ</code>, one native
-        memory entry, one flit. Narrowing them breaks single-request coalescing
-        permanently — every coalesced load becomes two or more requests, for
-        every kernel, forever. Float carries no such constraint, which is why it
-        is the knob and the integer side is not. That asymmetry is the whole
-        justification for <code>int 8 / float 4</code> over
-        <code>int 4 / float 4</code>, and for rejecting
-        <code>int &lt; float</code> outright.
-      </p>
-      <p>
-        The two classes land on different float counts because a lane costs LUT
-        and each class had a different amount to spend. The
-        <b>width</b> differs; nothing else about the float does.
-      </p>
-    </Callout>
-
-    <h3 class="doc-h3">
-      There is one dtype configuration, and it is the whole design
-    </h3>
 
     <div
       class="font-mono kt-text-caption whitespace-pre text-warm-700 dark:text-warm-300 leading-6 overflow-x-auto my-3"
     >
-      FP32 or FP16 operands in -&gt; E8M15 compute -&gt; FP32 or FP16 out
+      {{ granule }}
     </div>
-
-    <p class="doc-p">
-      <b>Operand width is a per-instruction property, not a build option</b>,
-      and the internal format is <b>always E8M15</b> — an 8-bit exponent, a
-      15-bit mantissa. There is no build in which the datapath computes in
-      anything else, and there is no per-class float format to compare. Two PE
-      classes carrying float carry the <i>same</i> float, so a result from one
-      is comparable to a result from the other by construction rather than by
-      intent.
-    </p>
-
-    <SpecTable
-      :cols="dtype.cols"
-      :rows="dtype.rows"
-      caption="So: the controller PE has no float tier; the SIMD PE has one at four lanes; the SIMT PE has one at eight. All three statements are about presence and width — none of them is about format"
-    />
-
-    <Callout
-      kind="measured"
-      title="Precision is not the deficit it sounds like"
-    >
-      <p>
-        E8M15 is a <b>1.5e-5</b> relative error —
-        <b>32× better than the fp16</b> that mobile fragment shaders run at —
-        with no subnormals, one rounding mode and a documented one-ulp deviation
-        on subtractive alignment. E8 is FP32's exponent field, which is what
-        lets one internal format serve both operand widths without a second
-        datapath.
-      </p>
-    </Callout>
-
-    <h2 class="doc-h2">What a mesh of these is</h2>
-
-    <p class="doc-p">
-      The mesh population is <b>8 SIMD PEs, 4 SIMT PEs and 2 controller PEs</b>,
-      and its float width is chosen rather than fallen into:
-      <code>8 × 4 + 4 × 8 = 64</code> FP FMA per clock, which is
-      <b>one Mali-G610 shader core's width, exactly</b>.
-    </p>
-
-    <SpecTable
-      :cols="mesh.cols"
-      :rows="mesh.rows"
-      caption="Multiples of the measured per-PE figures above — the DSP and GPU rows at a 2.857 ns ask, the controller row at 3.333 ns. LUT is the binding resource and DSP is not, 768 of 3,072, which is what makes SIMD_DOTDSP and the DSP48-backed float lanes the right trade rather than a convenience"
-    />
-
-    <Callout kind="note" title="PE count per mesh is not decided by LUT alone">
-      <p>
-        At 2,477 LUT each, a mesh's ~350,000 usable LUT would hold over a
-        hundred controller PEs — and that is not the limit. Each unit lives
-        entirely on <code>noc_clk</code> and its requestor speaks to the memory
-        agent over the fabric, so PE count is bounded by the agent's capacity:
-        <b>four PEs per NoC/MAG pair is the measured ceiling</b>, and sharing
-        one agent between four costs +13.7 % on a fixed compute-bound program —
-        <RouterLink to="/framework/cpu" class="doc-link"
-          >controller PE</RouterLink
-        >.
-      </p>
-    </Callout>
-
-    <Callout
-      kind="measured"
-      title="A quarter of a controller PE is not a processor"
-    >
-      <p>
-        <code>u_base</code> — the framework attach every compute unit on this
-        fabric carries, processor or not — is <b>657 LUT and 1,381 FF</b>. On
-        the controller PE that is a quarter of the unit and the marginal cost of
-        <i>this unit being a processor</i> is nearer <b>1,900 LUT</b>; on the
-        SIMT PE the same attach is <b>3.0 %</b>. It is the one number in this
-        whole comparison that is identical in every row.
-      </p>
-    </Callout>
-
-    <h2 class="doc-h2">Where the multiply is, and where it is not</h2>
-
-    <p class="doc-p">
-      A <b>scalar</b> register-register multiply exists nowhere in this machine.
-      The controller PE is RV32I, so <code>mul</code> faults; the SIMD PE's
-      multiply lives in the <i>vector</i> register file behind custom-0, reached
-      by putting operands in <code>v0..v7</code>; the SIMT PE's
-      <i>uniform</i> ALU on custom-2 is the same ten register-register
-      operations RV32I has.
-    </p>
 
     <Callout
       kind="rule"
-      title="But the SIMT PE multiplies, per thread, with a standard opcode"
+      title="The integer width is the address path; the float width is not"
     >
       <p>
-        <code>mul</code>, <code>mulh</code>, <code>mulhsu</code> and
-        <code>mulhu</code> execute on the SIMT PE's <b>per-thread</b> register
-        file, one product per lane, on the standard <code>OP</code> encoding. A
-        shader that writes <code>a * b</code> gets one instruction. On the
-        controller PE and the SIMD PE's scalar half the same expression still
-        calls libgcc — about <b>54 cycles</b>, measured. <code>div</code> and
-        <code>rem</code> fault everywhere, per-thread included.
+        A contiguous 32-bit load by eight slots or eight threads is exactly one
+        memory read request, one native memory entry, one flit payload — the
+        strongest machine-level alignment in either design. Narrow the integer
+        side and every coalesced load becomes two or more requests,
+        <b>for every kernel, permanently</b>. That is why the vector is 256 bits
+        in every configuration, and why fewer integer lanes than float units is
+        rejected outright: it starves addressing to feed arithmetic, so every
+        memory operation serialises while the float units wait.
+      </p>
+      <p>
+        Float has no such tie. A unit count below the element count costs an
+        <b>issue interval</b> of <span class="chip">elements / units</span> and
+        nothing else — four float units over eight slots is one vector every two
+        cycles, which is a slower machine and not a narrower one. Latency is the
+        cheapest thing to trade in a datapath that is already six cycles deep.
+        <b
+          >The one exception is the SIMD float accumulator, where the unit count
+          is architectural</b
+        >: an element's accumulate chain becomes a shorter strided subset of the
+        partials, and float addition does not associate, so a build with a
+        different count computes different answers on the same program.
       </p>
     </Callout>
 
+    <h2 class="doc-h2">Where the multiply is</h2>
+
     <p class="doc-p">
-      <b
-        >That the multiplier landed there rather than on the controller is the
-        finding, not an accident.</b
-      >
-      The controller PE's costing named two risks, and the SIMT PE has neither
-      of them.
+      <b>Every RV32 core in this tree is RV32IM.</b>
+      <span class="chip">mul</span>, <span class="chip">mulh</span>,
+      <span class="chip">mulhsu</span> and <span class="chip">mulhu</span> are
+      always built — on the RV32 PE, on the SIMD PE's scalar half, and on the
+      SIMT PE's per-thread file alike — and the four DSP48 in the RV32 PE's row
+      above <i>are</i> that multiplier. There is no
+      <span class="chip">HAS_M</span> and nothing to configure. Address
+      arithmetic is what wants it: a control processor computing descriptor
+      addresses, strides and mesh coordinates was the core most obviously
+      missing it, and on the SIMT side a pixel index is
+      <span class="chip">y * width + x</span> and a mip or Morton address is a
+      multiply, each of which would otherwise be a software shift-add chain
+      running on every lane of every fragment.
     </p>
+
+    <BitField
+      :fields="mEnc"
+      caption="RV32M sits at its standard RISC-V encoding inside the register-register group that already existed. No new opcode major was spent on it, on either class"
+    />
+
+    <SpecTable
+      :cols="mFields.cols"
+      :rows="mFields.rows"
+      caption="Read out of src/kohakuaccel/pe/rv32/core/rv_id.v and rv_ex.v. The owner column is what says which bits are RISC-V's and which are this implementation's."
+    />
+
+    <SpecTable
+      :cols="mDecode.cols"
+      :rows="mDecode.rows"
+      caption="One 33×33 signed product serves all four forms, in three registered stages, and only the operand extension and which half is returned differ. rv_ex.v builds exactly three wires from funct3[1:0]: a_sgn = (f3[1:0] != 3), b_sgn = (f3[1:0] == 1), hi_sel = (f3[1:0] != 0)."
+    />
+
+    <Callout kind="trap" title="Only mulh sign-extends rs2">
+      <p>
+        <span class="chip">b_sgn</span> is
+        <span class="chip">(x_f3[1:0] == 1)</span>, so
+        <span class="chip">mulh</span> is the <b>only</b> form that sign-extends
+        the second operand. <span class="chip">mul</span> reads
+        <span class="chip">rs2</span> <b>unsigned</b> — and that is correct
+        rather than a bug, because the low 32 bits of a product do not depend on
+        how either operand was extended. The three sign variants are
+        <b>three different readings of one product</b>, not three multipliers.
+      </p>
+      <p>
+        The symptom of getting it backwards is narrow and easy to miss: every
+        <span class="chip">mul</span> is still right, and only
+        <span class="chip">mulhsu</span> and <span class="chip">mulhu</span>
+        return a wrong high half — on operands whose top bit is set, which a
+        kernel using the multiplier for small indices never produces. It is a
+        corner a workload cannot reach, so it has to be pinned by a test written
+        against the specification.
+      </p>
+    </Callout>
+
+    <Callout
+      kind="rule"
+      title="A multiply hold stops EX alone, so it MUST bubble the stage below"
+    >
+      <p>
+        The multiplier is <b>free-running</b>: the operands are frozen for the
+        whole hold, so every capture takes the same value and gating would buy
+        nothing but a mux. What the hold must not do is stop the memory stage as
+        well. A stall that stops two adjacent stages together may safely freeze
+        the register between them — that is what the <i>memory</i> stall does —
+        and a hold that stops only the upper stage must not, because the lower
+        stage continues to advance.
+      </p>
+      <p>
+        <b>The counter also resets on advance.</b> Back-to-back multiplies hold
+        the multiply-in condition across the stage boundary, so without an
+        explicit reset the second would retire carrying the first one's product.
+      </p>
+    </Callout>
+
+    <WaveTrace
+      :rows="holdBroken.rows"
+      :notes="holdBroken.notes"
+      variant="broken"
+      label="MEM-valid frozen under the hold — one retirement per held cycle, every answer correct"
+    />
+    <WaveTrace
+      :rows="holdFixed.rows"
+      :notes="holdFixed.notes"
+      variant="fixed"
+      label="A bubble into MEM — three stall cycles, one retirement"
+    />
+
+    <Callout
+      kind="rule"
+      title="div and rem are refused, and the refusal has arithmetic behind it"
+    >
+      <p>
+        An iterative divider is priced at about <b>35 cycles</b> against a
+        software routine's 60–80 — a 2× on a rare instruction — where
+        <span class="chip">mul</span> replaces roughly
+        <b>54 cycles</b> of shift-add on the easy case, measured on the
+        full-system bench against a build without the multiplier. Once
+        <span class="chip">mul</span> exists, divide-by-a-constant
+        strength-reduces to <span class="chip">mulhu</span>, which is the case
+        software actually meets. A long sequential unit also does not suit a
+        barrel-scheduled pipeline whose whole invariant is a fixed latency.
+      </p>
+      <p>
+        The refusal is doubled deliberately: the assembler refuses the mnemonics
+        outright <i>and</i> the decoder faults the encodings, so a divide cannot
+        be assembled or executed by accident.
+      </p>
+    </Callout>
 
     <SpecTable
       :cols="mulWhere.cols"
       :rows="mulWhere.rows"
-      caption="The multiplier is built at the float tier's own latency on purpose: equal latency makes a collision between a float result and a multiply result structurally impossible rather than arbitrated, because one instruction issues per cycle. It is an increment on machinery that already existed for float, not a second mechanism — and it ships with that tier rather than separately from it. Source: docs/arch/pe/microarchitecture.md"
+      caption="The same arithmetic in two pipelines. Neither column is an argument that one pipeline is better — they are the reason the same unit is a three-stall-cycle hold with a stall term on one core and rides machinery that already existed on the other."
     />
 
     <Callout
-      kind="note"
-      title="The general rule, with a built example behind it"
+      kind="open"
+      title="One frequency figure the RTL records has no run behind it"
     >
       <p>
-        A multi-cycle unit is
-        <b>cheap in a machine that already has a way to park an instruction</b>,
-        and
-        <b
-          >expensive in one whose whole complexity budget is three positional
-          forwards and one stall rule</b
-        >. What a multiplier, a divider or scalar float would each cost on the
-        controller PE is still costed on the
-        <RouterLink to="/framework/cpu" class="doc-link"
-          >controller PE</RouterLink
-        >
-        page — and the answer there is still <code>mul</code> yes,
-        <code>div</code> no, scalar float no.
+        <span class="chip">rv_ex.v</span> records the multiplier's form as
+        measured at <b>365.6 MHz</b>, and
+        <b>no report in this tree backs that figure</b> — nothing measures the
+        multiplier in isolation. Treat it as unverified. What <i>is</i> measured
+        is the assembled unit with the multiplier built, which is the RV32 PE
+        row above.
       </p>
     </Callout>
 
@@ -638,100 +776,97 @@ const mulWhere = {
 
     <SpecTable :cols="routing.cols" :rows="routing.rows" />
 
-    <Callout kind="rule" title="The SIMD tier's own boundary, quoted">
+    <Callout kind="rule" title="Going wide is for work that is uniform">
       <p>
-        “per-lane branching, per-lane addresses, masks and predication — a SIMT
-        core's. Nothing here anticipates them, and adding them here would cost
-        every uniform kernel.”
+        The distinction between the two wide classes is <b>not lane count</b>.
+        It is <b>whether the lanes may disagree</b> — on an address, or on which
+        side of a branch they are executing. SIMD says no and is cheaper for it;
+        SIMT says yes and pays for an active mask, a divergence stack and a
+        lane-serialising load/store unit.
       </p>
       <p>
-        This design goes wide on work that is <i>uniform</i>. When lanes need to
-        take different paths, or fetch from different addresses, the answer is a
-        different machine and not a wider one.
+        So when lanes need different paths or different addresses, the answer is
+        a <b>different machine, not a wider one</b>. That is the whole reason
+        there are two wide classes rather than one configurable one, and the
+        measurement that makes it a design rather than an assertion is that
+        SIMD's base PE is <b>543 LUT cheaper</b> than SIMT's at matched widths —
+        10,309 against 10,852 — even though SIMD's base carries the shifter, the
+        permute network and thirty-two multipliers and SIMT's carries no
+        multiplier inside the lane array at all.
       </p>
     </Callout>
 
     <h2 class="doc-h2">The opcode map</h2>
 
     <p class="doc-p">
-      RISC-V reserves <b>four</b> custom opcode majors and no more. Every PE
-      class draws from that one pool
-      <b>for the instructions RISC-V has not already standardised</b>, so the
-      allocation is recorded outside both tiers' ISA modules — a table that
-      lives in one tier's source is not an authority the other tier can check
-      itself against.
+      RISC-V reserves <b>four</b> custom opcode majors and no more. Every class
+      draws from that one pool for the instructions RISC-V has not already
+      standardised, so the allocation is recorded outside both classes' ISA
+      modules.
     </p>
-
-    <BitField
-      :fields="rtype"
-      caption="An R-type custom instruction. funct3 selects the group, funct7 the operation inside it, and the low two bits of funct7 are the element type on every typed DSP group"
-    />
 
     <SpecTable
       :cols="majors.cols"
       :rows="majors.rows"
-      caption="All four custom majors are spoken for. The last row is not one of them — it is the standard OP major, and it is there because anyone counting remaining encoding room must not charge RV32M against the pool. Verified in src/kohakumpe/simt/kht_predec.v, which decodes funct7 0000001 into is_imul and is_mdiv and makes is_mdiv a term of illegal"
+      caption="All four custom majors are spoken for. The last two rows are not part of the pool and are here because anyone counting remaining encoding room must not charge RV32M against it, and must not assume the atomics major is available to be claimed."
     />
 
     <Callout
       kind="rule"
-      title="Standard encoding space is worth more than its size suggests"
+      title="The scarcity is in format-distinct instructions, not in instructions"
     >
       <p>
-        <code>RV32M</code> cost <b>none</b> of the four custom majors, and a
-        compiler emits it with <code>-march=rv32im</code> and nothing else. That
-        is the property no custom-major extension in this machine has — and it
-        is exactly why a non-conforming scalar float behind a custom major was
-        refused: the core's first design objective is that ordinary compilers
-        work unmodified, and a float extension a compiler cannot target defeats
-        it.
-      </p>
-    </Callout>
-
-    <Callout kind="rule" title="This is not the constraint it looks like">
-      <p>
-        <b
-          >The scarcity is in format-distinct instructions, not in
-          instructions.</b
-        >
-        An R-type group has a 7-bit <code>funct7</code>, so it holds
-        <b>128</b> operations. The extensions deliberately deferred today —
-        atomics, texture, ray tracing — are all R-type shaped, and each fits in
-        <code>funct7</code> room inside an existing group without touching the
-        major allocation at all.
+        An R-type group has a 7-bit <span class="chip">funct7</span>, so it
+        holds <b>128</b> operations. The extensions deliberately deferred today
+        — atomics, texture, ray tracing — are all R-type shaped, and each fits
+        in <span class="chip">funct7</span> room inside an existing group
+        without touching the major allocation at all.
       </p>
       <p>
-        <code>custom-3</code>'s <code>funct3</code> space is deliberately
+        <span class="chip">custom-3</span>'s
+        <span class="chip">funct3</span> space is deliberately
         <b>not</b> filled. Leave it that way: it is the only I-type room the
-        machine has left, and an I-type instruction is the one shape that cannot
-        be squeezed in anywhere else — an I-type layout has no
-        <code>funct7</code>, so an I-type group holds exactly one instruction.
+        machine has left, and an I-type layout has no
+        <span class="chip">funct7</span>, so an I-type group holds exactly one
+        instruction. The SIMD tier hit that wall and spent a whole
+        <span class="chip">funct3</span> on its vector load and another on its
+        vector store.
       </p>
     </Callout>
 
-    <Callout kind="note" title="Why the DSP majors were not reused">
+    <Callout
+      kind="note"
+      title="Why the SIMD majors were not reused on the SIMT side"
+    >
       <p>
-        A GPU build carries no SIMD tier, so <code>custom-0</code> and
-        <code>custom-1</code> would be free in it. They are left alone anyway:
-        if the GPU ever exposes the DSP's packed integer operations, it should
-        reuse <b>the DSP's own encodings unchanged</b>, so the assembler, the
+        A SIMT build carries no SIMD tier, so
+        <span class="chip">custom-0</span> and
+        <span class="chip">custom-1</span> would be free in it. They are left
+        alone anyway, for two reasons. A hypothetical PE carrying both classes
+        would never have to renumber either set. And if the SIMT side ever
+        exposes the packed-integer operations, it should reuse
+        <b>the SIMD tier's own encodings unchanged</b>, so the assembler, the
         golden model and the disassembler share code instead of forking a second
         packed-integer table.
       </p>
     </Callout>
 
-    <h2 class="doc-h2">Where to go next</h2>
+    <h2 class="doc-h2">Fixed protocol, addon, convention, or yours</h2>
+    <SpecTable :cols="kinds.cols" :rows="kinds.rows" />
+
+    <h2 class="doc-h2">What this page does not settle</h2>
+    <SpecTable :cols="notOwned.cols" :rows="notOwned.rows" />
 
     <div class="grid gap-4 sm:grid-cols-3 mt-6">
       <RouterLink to="/framework/cpu" class="card-hover p-5 no-underline block">
         <div
           class="kt-text-title font-semibold text-warm-800 dark:text-warm-200 mb-1"
         >
-          CPU PE
+          Processors on this framework
         </div>
         <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
-          Six register boundaries, one stall rule, two L1s split by who writes,
-          and the 38 LUT that make a doorbell correct.
+          The contract every core answers, and why there are two of them rather
+          than one that stretches.
         </p>
       </RouterLink>
       <RouterLink to="/mpe/simd" class="card-hover p-5 no-underline block">
@@ -741,9 +876,8 @@ const mulWhere = {
           SIMD PE
         </div>
         <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
-          Eight lanes, four int8 elements sharing one carry chain, an
-          accumulator that issues one dot per cycle, and a float tier of
-          rotating partials.
+          Eight 32-bit slots, four int8 elements sharing one native carry chain,
+          a cross-lane permute, and a binary32 float tier whose width is a knob.
         </p>
       </RouterLink>
       <RouterLink to="/mpe/simt" class="card-hover p-5 no-underline block">
@@ -753,8 +887,8 @@ const mulWhere = {
           SIMT PE
         </div>
         <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
-          The SIMT class: a mask that is a write enable, an IPDOM stack that is
-          a memory, per-thread RV32M, and eight float lanes.
+          A mask that is a write enable, a divergence stack that is a memory,
+          per-thread RV32M, and an address per lane.
         </p>
       </RouterLink>
     </div>

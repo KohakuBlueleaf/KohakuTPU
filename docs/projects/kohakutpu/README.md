@@ -1,6 +1,6 @@
 ---
 title: KohakuTPU
-summary: An MXFP7 tensor accelerator on xcvu13p-fhgb2104-2L-e — the reference instance, and the proof the framework closes on real silicon.
+summary: An MXFP7 tensor accelerator on xcvu13p-fhgb2104-2L-e — the framework's reference instance, and the worked example every framework interface was shaped against.
 tags:
   - kohakutpu
   - overview
@@ -13,14 +13,49 @@ and a vector core — a number format designed around a DSP48E2, an instruction 
 spent on that datapath, and a compiler that plans against the machine's own
 capacities.
 
-**Device: `xcvu13p-fhgb2104-2L-e`.** Every measurement in these pages was taken on
-that part, and they describe *this* accelerator rather than the framework
-([results.md](results.md) §1).
+**Device: `xcvu13p-fhgb2104-2L-e`, Vivado 2024.2.** Every measurement in these
+pages was taken on that part with that tool, and they describe *this*
+accelerator rather than the framework. Almost all of them are **out-of-context
+synthesis**, which makes every frequency an upper bound and no frequency a
+closed-timing result; [results.md](results.md) §1 states the provenance rule
+these pages are written to, and every figure is expected to name the run behind
+it.
 
 KohakuTPU is the framework's worked example. It is the reason the framework's
 interfaces are the shape they are, it is where a second project looks to see how
-the first one solved something, and it is the evidence that a compute unit written
-against the port contract actually closes timing on a real device.
+the first one solved something, and it is the evidence that a compute unit
+written against the port contract can be built, measured and put on a device.
+
+---
+
+## 0. The words these pages use
+
+The reader is assumed to know digital logic, computer architecture and FPGAs in
+general, and to know nothing at all about this machine. Every term below is a
+KohakuAccel or KohakuTPU term, not an industry one, and it means only what is
+written here.
+
+| term | what it is |
+|---|---|
+| **compute unit** | the block a project writes. It attaches to the network at one port and is otherwise entirely the project's. KohakuTPU has two kinds: a **matmul cluster** and a **vector core**. |
+| **mesh** | the on-chip network the compute units hang off — a grid of routers, plus one system node. |
+| **node** | a coordinate on the mesh. A router occupies one; a compute unit attaches at one. |
+| **system node** | the one component that owns a mesh's memory: the **memory agent** (MAG), a control processor, the **mover**, and the hub every port passes through. |
+| **flit** | the unit the mesh moves: a header plus a 256-bit payload. An instruction is a flit; an operand word is a flit. |
+| **ship** | one complete device image — meshes, system nodes, host interface — floorplanned for a named part. KohakuTPU's is four meshes, one per SLR. |
+| **interlink** | the registered, credit-flow link joining one mesh's memory agent to the next one's, across an SLR boundary. |
+| **kick** | the host write that starts a staged program running. Nothing runs until one arrives. |
+| **completion** | the signal a compute unit returns when an instruction retires. It is also what refills dispatch credit, so completions are flow control and not only notification. |
+| **mover** | the descriptor-driven engine inside the system node that walks memory and copies it, without a compute unit's involvement. |
+| **transform slot** | a place on the memory agent's path where a project may insert a datapath that rewrites data as it streams past. KohakuTPU's MXFP7 quantiser is what occupies it here. |
+| **staging** | the 2 MB store inside each mesh's memory agent, reachable by address rather than by instruction. Built; see [results.md](results.md) and [relayout.md](relayout.md) for what is and is not wired to it. |
+| **granule** | 32 bytes — the smallest unit any data path on this machine moves. A 4x4 FP16 sub-tile is exactly one. |
+| **relayout** | changing a buffer's byte order. This machine's orders are not interchangeable, and [relayout.md](relayout.md) is what one costs. |
+| **station** | one node of the AXI fabric outside the meshes — see [kohakuaxi/](../kohakuaxi/README.md). Distinct from a mesh node; the two networks do not share a vocabulary. |
+
+The four categories every page labels its subjects with — **fixed protocol**,
+**customizable addon**, **convention**, **yours** — are defined in
+[docs/README.md](../../README.md) and applied to KohakuTPU in §3.1 below.
 
 ---
 
@@ -62,10 +97,12 @@ arithmetic property of the datapath, not a concession the framework made
 commands; one `FILL` flit becomes 128 response flits; four flits become a whole
 matmul ([isa.md](isa.md) §8).
 
-**That the thing that limits a dataflow machine is usually not what it looks
-like.** Three separate times a measurement pointed at bandwidth and was wrong, and
-the machine went from 6.8% of its own datapath peak to 87.6% without widening a
-single bus ([results.md](results.md) §8).
+**That a dataflow machine's ceiling is a property of its schedule, not of its
+buses.** The machine went from 6.8% of its own datapath peak to 87.6% **without
+widening a single bus** — every gain came from what was requested and when, not
+from more wire ([results.md](results.md) §8). An arithmetic ceiling derived from
+operand traffic is only as sound as its assumption that each byte is fetched
+once, and that assumption is the schedule's to keep.
 
 ### 2.1 Two units, one port — and nothing else in common
 
@@ -129,7 +166,7 @@ a project to prove anything.
 |---|---|
 | matmul datapath | **built and verified** against both a behavioural model and a real DSP48E2 |
 | accumulator | **built**, FP22, resident tile, peer transfer reachable |
-| cluster as an endpoint | **built**, one mesh port, closes with margin |
+| cluster as an endpoint | **built**, one mesh port, and meets a 310 MHz target in out-of-context synthesis with slack ([results.md](results.md) §2). Not placed at any cluster count |
 | quantiser | **built**, as the transform slot's occupant at id 1; a fetch is never transformed |
 | vector ALU | **built and measured** — FMA within one ulp (correctly rounded outside one stated subtractive corner), faithful seeds |
 | vector core around it | **built**, and its instruction set partly so |
@@ -192,6 +229,15 @@ Then the pages about writing against it, in no particular order:
   off, and the ops where it is worse than calling the library.
 - **[hardware-wants.md](hardware-wants.md)** — ten asks the compiler and the
   kernels ran into, each naming the level it was established at.
+
+And two about the device image rather than the datapath:
+
+- **[v6-plan.md](v6-plan.md)** — replacing the AXI tree outside the meshes with
+  a station line: what it recovered, which die the recovery landed on, and why
+  that was not the die that needed it. The fabric itself is
+  [kohakuaxi/](../kohakuaxi/README.md).
+- **[xdma-channels.md](xdma-channels.md)** — the host DMA block is 17.7% of one
+  SLR; what its channel count costs, and what one unmade change would return.
 
 If you are here to see whether the framework would suit a different datapath,
 read [integrate/](../../integrate/README.md) instead; these pages are specific on

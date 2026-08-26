@@ -216,84 +216,81 @@ const follows = {
 };
 
 // ---------------------------------------------------------------------------
-// The float tier. Operand width is a PROPERTY OF THE INSTRUCTION. There is no
-// dtype knob and no dtype name for the capability — see khs_float_lane's own
-// header, quoted on the page.
+// The float tier. IEEE binary32 is the ONLY compute type, so a thread is a whole
+// 32-bit slot: no format bit in the encoding, no conversion at either edge, no
+// reserved half of a register. The units are the SIMD tier's rv_fpu and
+// khs_fp32_sfu, instantiated here and never forked.
 // ---------------------------------------------------------------------------
 const floatPath = {
   nodes: [
-    { id: "a32", x: 0, y: 0, w: 10, label: "FP32 in", sub: "vreg[31:0]" },
-    { id: "a16", x: 0, y: 4.4, w: 10, label: "FP16 in", sub: "vreg[15:0]" },
-    { id: "cvt", x: 13, y: 2.2, w: 11, label: "vec_cvt", sub: "→ E8M15" },
     {
-      id: "alu",
-      x: 26,
+      id: "src",
+      x: 0,
+      y: 2.2,
+      w: 11,
+      label: "per-thread regs",
+      sub: "one binary32 element per LANE",
+    },
+    {
+      id: "sel",
+      x: 14,
+      y: 2.2,
+      w: 12,
+      label: "operand select",
+      sub: "unit u on pass p serves thread p·U + u",
+      accent: true,
+    },
+    {
+      id: "fma",
+      x: 29,
+      y: 0,
+      w: 14,
+      h: 4,
+      label: "FMA × FLANES",
+      sub: "6 deep · II 1 · 2 DSP48 each",
+      accent: true,
+    },
+    {
+      id: "sfu",
+      x: 29,
+      y: 6,
+      w: 14,
+      h: 4,
+      label: "seed × FSFU_UNITS",
+      sub: "exp2 log2 rcp rsqrt · 10 deep",
+    },
+    {
+      id: "we",
+      x: 46,
       y: 2.2,
       w: 13,
-      label: "vec_alu FMA",
-      sub: "E8M15 · 15 cyc · II 1",
+      label: "per-lane write enable",
+      sub: "a decode of the retiring pass index",
       accent: true,
     },
-    { id: "y32", x: 41, y: 0, w: 10, label: "FP32 out", sub: "vreg[31:0]" },
-    { id: "y16", x: 41, y: 4.4, w: 10, label: "FP16 out", sub: "vreg[15:0]" },
     {
-      id: "half",
-      x: 13,
-      y: 9.8,
+      id: "out",
+      x: 62,
+      y: 2.2,
       w: 11,
-      label: "half = f7[2]",
-      sub: "per instruction",
-      accent: true,
-    },
-    {
-      id: "hp",
-      x: 26,
-      y: 9.8,
-      w: 13,
-      label: "hpipe, 15 deep",
-      sub: "the width follows the result",
+      label: "per-thread regs",
+      sub: "written in place",
     },
   ],
   edges: [
-    { from: "a32:r", to: "cvt:l", dir: "h" },
-    { from: "a16:r", to: "cvt:l", dir: "h" },
-    { from: "cvt:r", to: "alu:l", dir: "h", accent: true },
-    { from: "alu:r", to: "y32:l", dir: "h" },
-    { from: "alu:r", to: "y16:l", dir: "h" },
-    { from: "half:t", to: "cvt:b", dir: "v", accent: true },
-    { from: "half:r", to: "hp:l", dir: "h" },
-    { from: "hp:r", to: "y16:b", dir: "h", label: "selects" },
-  ],
-};
-
-const conversions = {
-  cols: [
-    { key: "c", label: "Conversion", mono: true },
-    { key: "p", label: "Property" },
-  ],
-  rows: [
-    {
-      c: "FP16 → E8M15",
-      p: "<b>exact</b> — nothing is lost, and a subnormal normalises into an ordinary E8M15 value",
-      _tone: "good",
-    },
-    {
-      c: "FP32 → E8M15",
-      p: "the exponent field is kept <b>verbatim</b>, so range is FP32's; mantissa below bit 8 is rounded off",
-      _tone: "good",
-    },
-    {
-      c: "E8M15 → FP16",
-      p: "the one direction that is both lossy <b>and</b> range-limited — a finite overflow <b>saturates silently</b> to the largest finite FP16",
-      _tone: "bad",
-    },
+    { from: "src:r", to: "sel:l", dir: "h" },
+    { from: "sel:r", to: "fma:l", dir: "h", accent: true },
+    { from: "sel:r", to: "sfu:l", dir: "h" },
+    { from: "fma:r", to: "we:l", dir: "h", accent: true },
+    { from: "sfu:r", to: "we:l", dir: "h" },
+    { from: "we:r", to: "out:l", dir: "h", accent: true },
   ],
 };
 
 const granule = `   8 lanes x 32 bit  =  256 bit  =  one native memory entry  =  one flit payload
 
    integer lanes  <-  the memory granule  (256-bit entry / flit)   8, FIXED
-   float lanes    <-  arithmetic demand   (throughput vs LUT)      a KNOB`;
+   float units    <-  arithmetic demand   (throughput vs LUT)      A KNOB`;
 
 const renderMix = {
   cols: [
@@ -320,17 +317,17 @@ const renderMix = {
     },
     {
       stage: "texture filtering",
-      needs: "fixed-point or E8M15 weights",
+      needs: "fixed-point or float weights",
       kind: "float-ish",
     },
     {
       stage: "fragment / colour shading",
-      needs: "mediump — E8M15 exceeds fp16 in range and mantissa",
+      needs: "mediump at least — binary32 exceeds it in range and mantissa",
       kind: "<b>float</b>",
     },
     {
       stage: "vertex transform",
-      needs: "E8M15 products into an FP32 accumulator",
+      needs: "binary32 products into a binary32 accumulator",
       kind: "<b>float</b>",
     },
   ],
@@ -362,10 +359,14 @@ const vmemF7 = [
   { name: "width", bits: 2, value: "b / h / w" },
 ];
 
+/* funct7[2] selects the SEED half; funct7[1:0] names the operation within it.
+ * There is no operand-width bit and there never was one: binary32 is the only
+ * compute type, so a thread is a whole 32-bit slot. Read out of the field table
+ * tests/pe/tools/rv_simt_isa.py. */
 const fltF7 = [
   { name: "reserved", bits: 4, value: "0" },
-  { name: "half", bits: 1, value: "operand width", accent: true },
-  { name: "op", bits: 2, value: "fma / mul / add / sub", accent: true },
+  { name: "seed", bits: 1, value: "0 = arithmetic, 1 = seed", accent: true },
+  { name: "op", bits: 2, value: "which of the four", accent: true },
 ];
 
 const groups = {
@@ -407,11 +408,18 @@ const groups = {
       what: "scalar base + vector offset — six op stems × widths × four scales",
     },
     {
-      g: "FLT",
+      g: "<b>FLT</b>",
       enc: "custom-2, funct3 5",
-      n: "8",
-      what: "<code>vfma</code>, <code>vfmul</code>, <code>vfadd</code>, <code>vfsub</code> and their <code>_h</code> forms",
+      n: "<b>8</b>",
+      what: "<code>vfma</code>, <code>vfmul</code>, <code>vfadd</code>, <code>vfsub</code>, and the four base-2 seeds <code>vfexp2</code>, <code>vflog2</code>, <code>vfrcp</code>, <code>vfrsqrt</code>. <b>One operand width</b> — binary32 — so there are no narrow forms. A build with <code>FLANES = 0</code> faults on all eight; one with <code>FSFU_UNITS = 0</code> faults on the four seeds and keeps the other four",
       _tone: "good",
+    },
+    {
+      g: "—",
+      enc: "custom-2, funct3 6–7",
+      n: "0",
+      what: "<b>unallocated.</b> Reserved, and they fault",
+      _tone: "warn",
     },
     {
       g: "—",
@@ -454,7 +462,13 @@ const fltOps = {
     {
       i: "vfsub vd, vs1, vs2",
       d: "vd = vs1 - vs2",
-      how: "inverts vs2's <b>sign bit</b> — bit 31 or bit 15, whichever the width bit says. A lane has no subtract and negating a float is one bit",
+      how: "inverts vs2's <b>sign bit</b>. A unit has no subtract and negating a float is one bit",
+    },
+    {
+      i: "vfexp2 · vflog2<br>vfrcp · vfrsqrt",
+      d: "one operand each",
+      how: "<b>the seed half</b>, on the <code>FSFU_UNITS</code> of the float units that carry a <code>khs_fp32_sfu</code> beside their multiply-add. Newton refinement is an instruction sequence deliberately: <code>1/a</code> is <code>y' = y(2−ay)</code>, two multiply-adds, and <code>rsqrt</code> is <code>y' = y(1.5−0.5ay²)</code>, three",
+      _tone: "warn",
     },
   ],
 };
@@ -615,7 +629,7 @@ const residency = {
       where: "x0..x31",
       scope: "per LANE, per WAVE",
       who: "this shader only",
-      prim: "block RAM<br><span class='opacity-60'>2 banks per lane, 3 at HAS_FLT</span>",
+      prim: "block RAM<br><span class='opacity-60'>2 banks per lane, 3 where float units are built — vfma's addend needs a third read port</span>",
     },
     {
       where: "s0..s31",
@@ -726,7 +740,7 @@ const gates = {
     },
     {
       g: "G9",
-      gen: "HAS_FLT, FLANES",
+      gen: "FLANES, FSFU_UNITS",
       adds: "the float tier — and, riding its retire slot, RV32M integer multiply",
       built: "yes",
       _tone: "good",
@@ -957,37 +971,30 @@ const crossLane = {
 // ---------------------------------------------------------------------------
 // Budget — every row measured, and every row on the same part.
 // ---------------------------------------------------------------------------
+/* Every bar is `-flatten_hierarchy none`, from the ladder's own suites, at
+ * 3.333 ns, on an INTEGER-ONLY lane array. They are internally comparable and
+ * they MUST NOT be added: kht_core contains a kht_unit and kht_pe contains
+ * both. `none` is NOT the ship. */
 const budget = [
   {
-    label: "controller PE — rv_pe, SIMD_EN = 0",
-    value: 2477,
-    note: "measured · 2.857 ns",
-  },
-  {
-    label: "kht_unit at G3 — the SIMT unit alone, integer lanes",
+    label: "kht_unit at G3 — the unit alone, shuffle off",
     value: 3204,
-    note: "measured · 3.333 ns",
+    note: "measured · none · integer-only",
   },
   {
-    label: "kht_core — the pipeline, kht_unit inside it",
+    label: "kht_unit at G3 + G8 — the butterfly built",
+    value: 4139,
+    note: "measured · none · integer-only",
+  },
+  {
+    label: "kht_core — the pipeline, with a kht_unit INSIDE it",
     value: 9653,
-    note: "measured · 3.333 ns",
+    note: "measured · none · integer-only",
   },
   {
-    label: "SIMD PE — SIMD 8 + 4 float lanes",
-    value: 13772,
-    note: "measured · 2.857 ns",
-  },
-  {
-    label: "SIMT PE, integer only — the campaign's baseline",
-    value: 15794,
-    note: "measured · 2.500 ns",
-    tone: "warn",
-  },
-  {
-    label: "SIMT PE, 8 int + 8 float lanes, RV32M — OF RECORD",
-    value: 21586,
-    note: "measured · 2.857 ns",
+    label: "kht_pe — the assembled PE, and the only row that is a PE",
+    value: 16115,
+    note: "measured · none · integer-only · 182.0 MHz",
     tone: "accent",
   },
   {
@@ -1005,21 +1012,256 @@ const record = {
     {
       key: "k",
       label:
-        "kht_pe · 8 lanes / 16 waves · xcvu13p-fhgb2104-2L-e · OOC synth at 2.857 ns",
+        "kht_pe · 8 threads / 16 waves / 8 float units / no seed units · xcvu13p-fhgb2104-2L-e · Vivado 2024.2 · OOC synthesis · -flatten_hierarchy rebuilt · 3.333 ns",
     },
     { key: "v", label: "", mono: true, align: "right" },
   ],
   rows: [
-    { k: "LUT", v: "<b>21,586</b>", _tone: "good" },
+    { k: "LUT", v: "<b>19,461</b>", _tone: "good" },
     { k: "FF", v: "17,268" },
     { k: "BRAM", v: "30.5" },
     {
       k: "DSP48",
-      v: "<b>48</b> <span class='opacity-60'>— 2/lane float, 4/lane multiply</span>",
+      v: "<b>48</b> <span class='opacity-60'>— 2 × FLANES + 4 × LANES, exact on every measured row, including the two where LANES itself moves</span>",
     },
-    { k: "control sets", v: "201" },
-    { k: "Fmax", v: "<b>365.6 MHz</b>", _tone: "good" },
-    { k: "slack", v: "<b>+0.122 ns</b>", _tone: "good" },
+    { k: "control sets", v: "202" },
+    { k: "requested", v: "<b>3.333 ns</b> — 300.0 MHz" },
+    {
+      k: "achieved",
+      v: "<b>361.0 MHz</b> <span class='opacity-60'>— a synthesis estimate and a screen, not a closed clock</span>",
+    },
+    {
+      k: "the tree",
+      v: "one frozen source tree of a khs_sweep campaign, and <b>NOT the RTL as it now stands</b>",
+      _tone: "warn",
+    },
+  ],
+};
+
+/* Every row is a DELTA against the reference row above with ONE knob moved, on
+ * that same frozen tree, at rebuilt and 3.333 ns. Transcribed from
+ * docs/projects/kohakumpe/unit-counts.md, which names the tree per table. */
+const simtWidths = {
+  cols: [
+    { key: "f", label: "knob", mono: true },
+    { key: "u", label: "value", mono: true, align: "right" },
+    { key: "lut", label: "LUT", mono: true, align: "right" },
+    { key: "d", label: "ΔLUT", mono: true, align: "right" },
+    { key: "ff", label: "FF", mono: true, align: "right" },
+    { key: "bram", label: "BRAM", mono: true, align: "right" },
+    { key: "dsp", label: "DSP", mono: true, align: "right" },
+    { key: "fx", label: "Fmax", mono: true, align: "right" },
+  ],
+  rows: [
+    {
+      f: "—",
+      u: "the reference row",
+      lut: "<b>19,461</b>",
+      d: "—",
+      ff: "17,268",
+      bram: "30.5",
+      dsp: "48",
+      fx: "361.0",
+      _tone: "good",
+    },
+    {
+      f: "FLANES",
+      u: "4",
+      lut: "16,307",
+      d: "<b>−3,154</b>",
+      ff: "13,917",
+      bram: "30.5",
+      dsp: "40",
+      fx: "334.7",
+    },
+    {
+      f: "",
+      u: "2",
+      lut: "14,100",
+      d: "<b>−5,361</b>",
+      ff: "12,233",
+      bram: "30.5",
+      dsp: "36",
+      fx: "378.9",
+    },
+    {
+      f: "FSFU_UNITS",
+      u: "2",
+      lut: "20,841",
+      d: "<b>+1,380</b>",
+      ff: "17,954",
+      bram: "33.5",
+      dsp: "50",
+      fx: "346.4",
+    },
+    {
+      f: "",
+      u: "8 — full rate",
+      lut: "22,084",
+      d: "<b>+2,623</b>",
+      ff: "20,065",
+      bram: "42.5",
+      dsp: "56",
+      fx: "363.9",
+      _tone: "warn",
+    },
+    {
+      f: "SHFL_UNITS",
+      u: "4",
+      lut: "19,488",
+      d: "<b>+27</b>",
+      ff: "17,264",
+      bram: "30.5",
+      dsp: "48",
+      fx: "377.9",
+      _tone: "warn",
+    },
+    {
+      f: "",
+      u: "2",
+      lut: "19,318",
+      d: "−143",
+      ff: "17,261",
+      bram: "30.5",
+      dsp: "48",
+      fx: "379.4",
+    },
+    {
+      f: "",
+      u: "1",
+      lut: "18,944",
+      d: "<b>−517</b>",
+      ff: "17,270",
+      bram: "30.5",
+      dsp: "48",
+      fx: "343.1",
+    },
+    {
+      f: "the shuffle GATE",
+      u: "0 — it <b>faults</b>",
+      lut: "18,581",
+      d: "−880",
+      ff: "17,267",
+      bram: "30.5",
+      dsp: "48",
+      fx: "383.0",
+    },
+    {
+      f: "LDS_BANKS",
+      u: "4",
+      lut: "18,847",
+      d: "<b>−614</b>",
+      ff: "17,267",
+      bram: "26.5",
+      dsp: "48",
+      fx: "405.2",
+    },
+    {
+      f: "",
+      u: "1",
+      lut: "17,899",
+      d: "<b>−1,562</b>",
+      ff: "17,264",
+      bram: "24.5",
+      dsp: "48",
+      fx: "361.0",
+    },
+    {
+      f: "the LDS GATE",
+      u: "0 — no shared memory",
+      lut: "17,656",
+      d: "−1,805",
+      ff: "16,930",
+      bram: "24.5",
+      dsp: "48",
+      fx: "376.4",
+    },
+    {
+      f: "WAVES",
+      u: "8",
+      lut: "18,802",
+      d: "<b>−659</b>",
+      ff: "16,756",
+      bram: "30.5",
+      dsp: "48",
+      fx: "380.4",
+    },
+    {
+      f: "",
+      u: "4",
+      lut: "18,414",
+      d: "<b>−1,047</b>",
+      ff: "16,497",
+      bram: "30.5",
+      dsp: "48",
+      fx: "352.6",
+    },
+    {
+      f: "IPDOM_D",
+      u: "4 — half the stack",
+      lut: "19,453",
+      d: "<b>−8</b>",
+      ff: "17,247",
+      bram: "30.5",
+      dsp: "48",
+      fx: "360.2",
+    },
+    {
+      f: "HAS_MASK + HAS_IPDOM",
+      u: "0 — the gate",
+      lut: "19,264",
+      d: "−197",
+      ff: "17,028",
+      bram: "30.5",
+      dsp: "48",
+      fx: "380.5",
+    },
+    {
+      f: "LANES",
+      u: "4, with FLANES 4",
+      lut: "11,369",
+      d: "−8,092",
+      ff: "10,712",
+      bram: "20.5",
+      dsp: "24",
+      fx: "383.4",
+    },
+  ],
+};
+
+const gatesCost = {
+  cols: [
+    { key: "g", label: "gate", mono: true },
+    { key: "l", label: "LUT", mono: true, align: "right" },
+    { key: "b", label: "BRAM", mono: true, align: "right" },
+    { key: "c", label: "ctrl sets", mono: true, align: "right" },
+  ],
+  rows: [
+    {
+      g: "HAS_MASK + HAS_IPDOM — the mask array and the divergence stack",
+      l: "<b>681</b>",
+      b: "0",
+      c: "−37",
+    },
+    {
+      g: "HAS_SHFL — the subgroup butterfly",
+      l: "<b>1,224</b>",
+      b: "0",
+      c: "0",
+    },
+    {
+      g: "HAS_LDSBANK — the banked LDS and its address resolver",
+      l: "<b>1,948</b>",
+      b: "6",
+      c: "−16",
+    },
+    {
+      g: "<b>the three together</b>",
+      l: "<b>3,853</b>",
+      b: "6",
+      c: "—",
+      _tone: "good",
+    },
   ],
 };
 
@@ -1034,130 +1276,137 @@ const shaders = {
   ],
   rows: [
     {
-      s: "gpu_smoke.s",
+      s: "simt_smoke.s",
       ex: "kick argument, <code>vlaneid</code>, RV32I per lane, lane-linear store",
       r: "<b>PASS</b>",
       _tone: "good",
     },
     {
-      s: "gpu_diverge.s",
+      s: "simt_diverge.s",
       ex: "<code>split</code>/<code>join</code>: odd and even lanes take different paths and reconverge",
       r: "<b>PASS</b>",
       _tone: "good",
     },
     {
-      s: "gpu_nested.s",
+      s: "simt_nested.s",
       ex: "a split inside a split — two stack pairs, the phase bit toggling at both levels",
       r: "<b>PASS</b>",
       _tone: "good",
     },
     {
-      s: "gpu_gather.s",
+      s: "simt_gather.s",
       ex: "a <b>real gather</b>: per-lane base <code>lw</code> across five 32-byte lines, six fills",
       r: "<b>PASS</b>",
       _tone: "good",
     },
     {
-      s: "gpu_isa.s",
-      ex: "execution coverage: 29 instruction results, every scalar ALU form, every subgroup path, reductions under a non-trivial mask and over negative data",
+      s: "simt_isa.s",
+      ex: "execution coverage — one result per instruction form, every scalar ALU form, every subgroup path, reductions under a non-trivial mask and over negative data",
       r: "<b>PASS</b>",
       _tone: "good",
     },
     {
-      s: "gpu_lds.s",
-      ex: "<b>G4</b>: the banked LDS at both ends of its range — conflict-free, reversed, and every lane on one bank. Run with the gate <b>off and on</b>",
+      s: "simt_lds.s",
+      ex: "<b>G4</b>: the banked shared memory at both ends of its range — conflict-free, reversed, and every lane on one bank. Run at <b>four bank counts including none</b>",
       r: "<b>PASS</b>",
       _tone: "good",
     },
     {
-      s: "gpu_shfl.s",
-      ex: "<b>G8</b>: the butterfly — every stage in turn, full reversal, <code>bcast</code>, and a lane whose source is masked off",
+      s: "simt_shfl.s",
+      ex: "<b>G8</b>: the butterfly — every stage in turn, full reversal, <code>bcast</code>, a lane whose source is masked off, and <b>four shuffle widths</b>",
       r: "<b>PASS</b>",
       _tone: "good",
     },
     {
-      s: "gpu_waves.s",
+      s: "simt_waves.s",
       ex: "<b>G7</b>: a real dispatch — every wave writes its own slice, 1 to 16 waves",
       r: "<b>PASS</b>",
       _tone: "good",
     },
     {
-      s: "gpu_chain.s",
-      ex: "<b>G7's witness</b>: a 20-deep dependency chain, where interleaving actually pays",
+      s: "simt_chain.s",
+      ex: "<b>G7's witness</b>: a 20-deep dependency chain, at 1 wave and 2. It stalls every instruction with one wave and none with two — <b>1.90 cycles per instruction against 0.90</b>, a 2.1× on the dependent section against a theoretical 2.0× for removing a one-cycle distance-1 hazard",
       r: "<b>PASS</b>",
       _tone: "good",
     },
     {
-      s: "gpu_fault.s",
+      s: "simt_fault.s",
       ex: "the <b>region fault</b>: a per-lane access to an unmapped region halts with cause 3 at the faulting PC",
       r: "<b>PASS</b>",
       _tone: "good",
     },
     {
-      s: "gpu_float.s",
-      ex: "<b>G9</b>: the float tier on narrow operands, <code>vfma</code> chain included, at 1 wave <b>and</b> at 16 — one wave is the <i>worst</i> case, because with nothing else runnable the 15-cycle latency is exposed rather than hidden",
+      s: "simt_valu.s",
+      ex: "<b>the per-thread ALU itself.</b> Every other shader reaches only a handful of its operations, so without this the lane datapaths are nine tenths untested",
       r: "<b>PASS</b>",
       _tone: "good",
     },
     {
-      s: "gpu_f32.s",
-      ex: "the two <b>wide-operand format witnesses</b>, at 1 wave and at 16",
+      s: "simt_f32.s",
+      ex: "the format witnesses — an operand only binary32's exponent range holds, and a mantissa bit only its significand keeps",
       r: "<b>PASS</b>",
       _tone: "good",
     },
     {
-      s: "gpu_mul.s",
-      ex: "<b>RV32M</b>: the sign corners — <code>mulh</code>, <code>mulhu</code> and <code>mulhsu</code> are three different high halves of the same two bit patterns",
+      s: "simt_fwalk.s",
+      ex: "<b>the pass walk.</b> Per-lane <i>distinct</i> float operands, so a build whose units serve the wrong threads is a wrong word rather than a slow pass — every other float shader has uniform operands and would pass a crossed placement. <b>One wave is the WORST case for the float tier</b>, not the easy one: with nothing else runnable the tier's latency is exposed rather than hidden, so a dependent chain that is right at one wave is right at any occupancy",
+      r: "<b>PASS</b> at four unit counts, and at 1 wave and 16",
+      _tone: "good",
+    },
+    {
+      s: "simt_mul.s",
+      ex: "<b>RV32M</b>: the sign corners — <code>mulh</code>, <code>mulhu</code> and <code>mulhsu</code> are three different high halves of the same two bit patterns — and one row with <b>no float tier at all</b>, because <code>mul</code> does not depend on one",
       r: "<b>PASS</b>",
       _tone: "good",
     },
   ],
 };
 
+/* The banked shared memory, measured ON HARDWARE by simt_lds.s. */
 const runOut = {
   cols: [
-    {
-      key: "k",
-      label:
-        "One shader through SIMT PE + router + MAG + RAM, 8 lanes × 16 waves",
-    },
-    { key: "v", label: "", mono: true, align: "right" },
+    { key: "a", label: "access", mono: true },
+    { key: "b", label: "banks touched", align: "right" },
+    { key: "p", label: "passes", align: "right", mono: true },
   ],
   rows: [
     {
-      k: "halt word",
-      v: "00000055 <span class='opacity-60'>(model 00000055)</span>",
+      a: "lane <i>i</i> → word <i>i</i> — conflict-free",
+      b: "8 distinct",
+      p: "<b>1</b>",
       _tone: "good",
     },
     {
-      k: "halt cause",
-      v: "1 <span class='opacity-60'>(model 1)</span>",
+      a: "lane <i>i</i> → word 7−<i>i</i> — reversed",
+      b: "8 distinct",
+      p: "<b>1</b>",
       _tone: "good",
     },
-    { k: "kick to done", v: "475 cycles" },
-    { k: "memory", v: "8 request(s) over 1 gather(s)", _tone: "warn" },
+    {
+      a: "lane <i>i</i> → word 8<i>i</i> — the worst case",
+      b: "all one bank",
+      p: "<b>8</b>",
+      _tone: "warn",
+    },
   ],
 };
 
 const ldsWitness = {
   cols: [
-    { key: "g", label: "HAS_LDSBANK", mono: true, align: "right" },
+    { key: "g", label: "the banked path", mono: true },
     { key: "r", label: "requests", align: "right", mono: true },
-    { key: "ga", label: "gathers", align: "right", mono: true },
-    { key: "res", label: "result", align: "right" },
+    { key: "res", label: "the answer", align: "right" },
   ],
   rows: [
     {
-      g: "0 <span class='opacity-60'>serial walk</span>",
-      r: "<b>48</b>",
-      ga: "6",
-      res: "PASS",
+      g: "off <span class='opacity-60'>— the serial walk</span>",
+      r: "<b>48</b> <span class='opacity-60'>= 8 × 6</span>",
+      res: "identical",
     },
     {
-      g: "1 <span class='opacity-60'>banked</span>",
-      r: "<b>34</b>",
-      ga: "6",
-      res: "PASS",
+      g: "on <span class='opacity-60'>— the resolver</span>",
+      r: "<b>34</b> <span class='opacity-60'>= 1 + 1 + 8 + 8 + 8 + 8</span>",
+      res: "identical",
       _tone: "good",
     },
   ],
@@ -1245,29 +1494,119 @@ const ldsWitness = {
       caption="Costs are out-of-context synthesis at LANES = 8 on xcvu13p-fhgb2104-2L-e at the 3.333 ns ask, synth only. The mask, stack and butterfly rows are kht_unit; the scheduling row is kht_core minus kht_unit. Not placed and routed."
     />
 
-    <h2 class="doc-h2">The arithmetic: 8 integer lanes, 8 float lanes</h2>
-
     <Callout
-      kind="measured"
-      title="The configuration of record, and all of it is built"
+      kind="trap"
+      title="SIMD does not beat SIMT on LUT at matched features"
     >
       <p>
-        <b>8 integer lanes and 8 float lanes, with RV32M integer multiply.</b>
-        It is stated here because a baseline nobody names gets silently assumed
-        to be something else — and an earlier revision of this page said the
-        reference was 8 int + 4 float and that neither number was built. Both
-        halves of that are false now.
+        It is the obvious expectation and the measurement says otherwise. With
+        the mask, the divergence stack, the shuffle and the banked shared memory
+        all off, at 8 fused multiply-adds and 8 multiply units, this PE measures
+        <b>16,118</b>. The comparable SIMD figure — its own reference less the
+        packed shifter and the permute — is <b>16,775</b>, which is
+        <b>657 LUT, 4.1%, dearer.</b>
+      </p>
+      <p>
+        Both halves of that are worth keeping. <b>SIMD's base PE is 543 LUT
+        cheaper</b> than this one — 10,309 against 10,852 — even though it
+        carries the shifter, the permute network and thirty-two multipliers and
+        this one carries no multiplier inside the lane array at all. So the
+        divergence hardware is real and the SIMD tier does not pay for it. And
+        <b>SIMD is not a subset of SIMT</b>: it carries packed
+        int8/int16/int32 lanes, a cross-lane permute, a vector scratchpad and
+        optionally a rotating float accumulator. "SIMD must be much cheaper at
+        the same features" is not reachable by removing redundancy; it is a
+        decision about which SIMD features to drop.
+      </p>
+    </Callout>
+
+    <h2 class="doc-h2">The arithmetic: 8 threads, 8 float units</h2>
+
+    <Callout
+      kind="rule"
+      title="The reference row is one named generic set, not a maximum and not a menu price"
+    >
+      <p>
+        A baseline nobody names gets silently assumed to be something else, so
+        the configuration is stated with the number:
+        <b>8 threads, 16 waves, 8 binary32 FMA units, no seed units</b>, with
+        the mask, the divergence stack, the subgroup butterfly and the banked
+        shared memory all built. Every per-feature figure below is a
+        <b>delta</b> against that build with one knob moved.
+      </p>
+      <p>
+        <b>The thread ALU width is not configurable.</b> A SIMT processor is its
+        threads: <code>LANES</code> threads means <code>LANES</code> integer-and-
+        multiply units, and the multiply count follows — it is the one width on
+        either core set by definition rather than by measurement.
+      </p>
+    </Callout>
+
+    <Callout
+      kind="trap"
+      title="This total describes a configuration the RTL can no longer build"
+    >
+      <p>
+        The float tier was rebuilt from an E8M15 datapath with two operand
+        formats into a binary32-only one, and the separate float gate and the
+        per-thread multiplier count were removed.
+        <b>Re-measurement against the current parameter set has not been
+        published</b>, so no absolute total on this page is a figure for a PE
+        the RTL can build today.
+      </p>
+      <p>
+        The rows are kept because <b>the shapes are the findings</b> — what a
+        marginal unit costs, where a width pays, which knobs are not levers. The
+        symptom of ignoring this is a mesh total: one of these figures
+        multiplied by a PE count, pricing a machine that cannot be built, wrong
+        in an unknown direction rather than merely stale.
       </p>
     </Callout>
 
     <SpecTable
       :cols="record.cols"
       :rows="record.rows"
-      caption="The whole unit — SIMT core, windows, banked LDS, L1, requestor, fabric port — with the float tier and the multiplier both in it. Source: build/sweep/g-350-pad/run.log. MEASURED, synth only: this project has measured a module lose 0.740 ns between synthesis and routing."
+      caption="The whole assembled PE — SIMT core, windows, banked shared memory, L1, requestor, fabric port. xcvu13p-fhgb2104-2L-e, Vivado 2024.2, OUT-OF-CONTEXT SYNTHESIS ONLY at a 3.333 ns request, -flatten_hierarchy rebuilt, -directive default. Nothing is placed and nothing is routed: this project has measured a module lose 0.740 ns between synthesis and routing, so the frequency is a screen rather than a result. Transcribed from docs/projects/kohakumpe/unit-counts.md, which names the frozen tree behind each of its tables."
+    />
+
+    <SpecTable
+      :cols="simtWidths.cols"
+      :rows="simtWidths.rows"
+      caption="One knob moved at a time, on the same frozen tree as the reference row, at -flatten_hierarchy rebuilt and a 3.333 ns request. Every cell is measured; a knob point that was not synthesised is absent rather than inferred. DSP and BRAM follow the closed forms exactly on every row; LUT does not, which is why the counts are tabulated rather than fitted to a slope. Fmax in MHz, and it is a screen: it moves by tens of megahertz between rows that differ in nothing that should matter, so no decision recorded here was made on it."
+    />
+
+    <Callout
+      kind="trap"
+      title="Four shuffle units of eight COST 27 LUT rather than saving any"
+    >
+      <p>
+        A cross-lane width pays at one or two units and nowhere else, and the
+        curve above says so directly: 8 → 4 is <b>+27</b>, 4 → 2 is −170, and
+        2 → 1 is another −374. The mechanism is that a narrow build is a
+        <b>direct select</b>, not a narrowed network — a butterfly routes every
+        lane at once and cannot be sliced, so one output lane is a
+        <code>LANES</code>-to-1 32-bit mux either way. That mux is what the
+        width pays for, and it is why one unit recovers <b>59%</b> of what
+        deleting the shuffle entirely saves rather than all of it.
+      </p>
+      <p>
+        <b>The default costs exactly zero.</b> At full width the original
+        full-width form is kept in its own elaboration branch and the walk
+        exists only in the narrow one, so the knob is byte-identical to the
+        reference in every column until it is used. The same shape appears on
+        the SIMD PE's permute, which is the second measurement that makes this a
+        property rather than one campaign's oddity.
+      </p>
+    </Callout>
+
+    <SpecTable
+      :cols="gatesCost.cols"
+      :rows="gatesCost.rows"
+      caption="The three blocks that make this core SIMT rather than SIMD, from one earlier campaign than the table above — internally comparable, and never subtracted against it. Its rows were taken before the integer dot unit was removed from the neighbouring core."
     />
 
     <h3 class="doc-h3">
-      Why the two numbers are equal now, and what still pins the integer one
+      Why the two widths are equal here, and what pins the integer one
     </h3>
 
     <div
@@ -1282,93 +1621,100 @@ const ldsWitness = {
       strongest machine-level alignment in the design — narrow the integer side
       and every coalesced load becomes two or more requests, for every kernel,
       permanently. Float has no such constraint: it is pure arithmetic, deeply
-      pipelined at II = 1, and sixteen resident wave contexts hide its 15-cycle
-      latency rather than stalling on it.
-      <b>Eight integer lanes is a constraint; eight float lanes is a choice</b>,
-      and what the knob was turned <i>to</i> is set by the mesh:
-      <code>8×4 + 4×8 = 64</code> FP FMA per clock is one Mali-G610 shader core,
-      and at four float lanes the same mesh is 48 and short.
+      pipelined at II = 1, and sixteen resident wave contexts hide its latency
+      rather than stalling on it.
+      <b>Eight threads is a constraint; eight float units is a choice</b> — the
+      count is a knob with legal values 0, 1, 2, 4 and 8, and a narrower one
+      costs an issue interval rather than an instruction.
     </p>
 
     <Callout
-      kind="trap"
-      title="FLANES < LANES returns ZERO in the upper lanes, and zero is a plausible float answer"
+      kind="rule"
+      title="A float count below the thread count walks, and the walk is a write enable"
     >
       <p>
-        <code>kht_fpu</code>'s <code>g_nolane</code> assigns
-        <code>32'd0</code> to every lane above <code>FLANES</code>, because
-        there is no walk sequencer to feed them. A shader run on a reduced build
-        gets a <b>silently wrong result rather than a fault</b> — and zero is a
-        number a float kernel meets constantly, so nothing downstream trips on
-        it either.
+        A unit count <code>U</code> below <code>LANES</code> issues
+        <code>LANES / U</code> passes, one per cycle. SIMT places a pass with
+        the register file's <b>per-lane write enable</b>: thread <i>i</i> is
+        served by unit <code>i mod U</code>, a compile-time constant, and the
+        enable is a decode of the retiring pass index. There is
+        <b>no staging register and no runtime unit select</b>, which is what
+        makes a fractional rate cheaper here than on the SIMD PE.
       </p>
       <p>
-        This is the one place in this PE that breaks its own rule that a build
-        which cannot do something faults instead of answering plausibly, and it
-        is guarded by <b>convention only</b>: <code>FLANES</code> must equal
-        <code>LANES</code>
-        in any build that runs a shader, the configuration of record is
-        <code>FLANES = 8</code>, and every shader in the suite runs against
-        that. Treat a reduced build as an area measurement and never dispatch to
-        one.
+        <b>Zero is a plausible float answer, which is why the walk exists at
+        all.</b> Tying every thread above <code>FLANES</code> to a constant
+        instead of sequencing them gives a reduced build a silently wrong result
+        rather than a fault — and zero is a number a float kernel meets
+        constantly, so nothing downstream trips on it either. The walk
+        is built, and a count that does not divide <code>LANES</code> is
+        <b>refused at elaboration</b> by a module that does not exist.
       </p>
     </Callout>
 
     <h3 class="doc-h3">
-      The float tier takes both operand widths, and that is not a knob
+      One operand width, so there is nothing to select
     </h3>
 
     <Callout
       kind="rule"
-      title="Operand width is a property of the INSTRUCTION, not of the build"
+      title="The compute format is IEEE binary32 and there is no knob for it"
     >
       <p>
-        The funct7 bit that distinguishes <code>vfma</code> from
-        <code>vfma_h</code> drives <code>half</code> in <code>kht_fpu</code>,
-        which drives <code>wide(!half)</code> into the lane.
-        <code>wide</code> is a <b>port</b> on <code>khs_float_lane</code>, not a
-        parameter, and that lane's own header states the contract:
-      </p>
-      <p class="font-mono kt-text-caption">
-        BOTH INPUT FORMATS AND THE ONE COMPUTE FORMAT ARE THE CONTRACT, not
-        options: there is no parameter here that removes either edge.
+        A 32-bit word holds exactly one element, so the float tier's slot count
+        <i>is</i> the thread count and <b>nothing converts at either edge</b>.
+        There is no narrow form, no width bit to delay alongside a result, and
+        no second datapath. What <i>is</i> a parameter is how many float units
+        are built (<code>FLANES</code>) and how many of them are seed-capable
+        (<code>FSFU_UNITS</code>). Neither selects a format.
       </p>
       <p>
-        So there is no build of this PE that has the float tier and refuses one
-        of the two widths. What <i>is</i> a parameter is whether a float tier
-        exists at all (<code>HAS_FLT</code>) and how many lanes it has
-        (<code>FLANES</code>). Neither selects a format.
+        <b>KohakuMPE holds no E8M15.</b> The float lane that converts FP16 and
+        FP32 operands into a 24-bit internal format is KohakuTPU's vector core:
+        a different project, with its own modules, none of it on this path. A
+        precision figure quoted from one says nothing about the other, and a
+        total that contains an E8M15 datapath is not a stale measurement of this
+        machine — it is a measurement of a different one.
       </p>
     </Callout>
 
     <Fig
-      caption="One datapath, two operand edges. The width bit cannot be read at the result: y_e8 emerges 15 cycles after launch, by which time op belongs to whatever the scheduler picked next — so kht_fpu delays the bit through hpipe and the format follows its own result. Selecting from the live op passes at one wave and fails at sixteen."
+      caption="The float array and its placement. Where a SIMD unit stages a pass into a register and writes once at the end, SIMT writes straight into the register file with a per-lane enable and a constant source — the difference is why the same fractional rate costs less here."
       zoom
+      wide
     >
       <BlockDiagram :nodes="floatPath.nodes" :edges="floatPath.edges" />
     </Fig>
-
-    <SpecTable
-      :cols="conversions.cols"
-      :rows="conversions.rows"
-      caption="The three conversions are not symmetric, and that asymmetry is why the wide form is the DEFAULT encoding and the narrow one carries the _h suffix: the format that can only lose precision is the safer default, and the one that can lose magnitude is the one a shader asks for on purpose."
-    />
 
     <Callout
       kind="note"
       title="Where the arithmetic comes from, and why it is not forked"
     >
       <p>
-        Every float lane is one <code>khs_float_lane</code> — the
-        <RouterLink to="/mpe/simd" class="doc-link">SIMD tier</RouterLink>'s,
-        verbatim. <code>kht_fpu</code> selects operands, drives the width bit
-        and converts the result back; <b>it does not compute</b>. That is what
-        makes a GPU float number comparable to a DSP float number, and what
-        keeps <code>cost(SIMT) = G8 − G0</code> meaning anything at all. The
-        SIMD tier instantiates the same lane with <code>.wide(1'b0)</code> and
-        never raises it, because its float unit is an <i>accumulator</i> and the
-        operand width changes FSLOTS, the partial count and the fold order —
-        architecture, not a port widening.
+        Both PEs instantiate <b>the same float unit</b>, so the per-unit DSP and
+        BRAM costs are identical on the two cores by construction rather than by
+        intent: a float unit is 2 DSP, and the seed capability adds 1 DSP and
+        1.5 BRAM to a unit that has it.
+      </p>
+      <p>
+        The LUT costs are <i>not</i> identical, and the honest form of that
+        statement is a <b>pair of marginals rather than one number per core</b>.
+        Measured as the difference between two synthesised rows one step apart:
+        this PE's unit is <b>789 and 1,104 LUT</b> at the two steps where it was
+        taken, and the SIMD PE's is <b>1,095 and 1,003</b>. The two ranges
+        <b>bracket each other</b> — this PE's unit is cheaper at the wide end
+        and dearer at the narrow one — so there is no single figure, and any
+        page that reports one has averaged.
+      </p>
+      <p>
+        <b>An average from a tier total is not a worse estimate; it is a
+        measurement of a different thing.</b> A float tier is
+        <code>units × cost(unit)</code> <i>plus</i> a fixed overhead that does
+        not scale with units at all — the third register-file read port
+        <code>vfma</code>'s addend needs, the retire path and the pass
+        sequencer — paid once at any nonzero count. Dividing charges the units
+        for it, and every average ever computed that way on either core has
+        concluded that one core's unit is far dearer than the other's.
       </p>
     </Callout>
 
@@ -1416,7 +1762,7 @@ const ldsWitness = {
     <h3 class="doc-h3">The float group</h3>
 
     <Fig
-      caption="The FLT funct7. One bit picks the operand width and two pick the operation, so the datapath slices the field instead of comparing against one constant per encoding — the same trick the vmem group uses."
+      caption="The FLT funct7. One bit picks the seed half and two pick the operation within it, so the datapath slices the field instead of comparing against one constant per encoding — the same trick the vmem group uses. There is no operand-width bit: binary32 is the only compute type, so a thread is a whole 32-bit slot and there is nothing to select."
     >
       <BitField :fields="fltF7" />
     </Fig>
@@ -1424,8 +1770,31 @@ const ldsWitness = {
     <SpecTable
       :cols="fltOps.cols"
       :rows="fltOps.rows"
-      caption="One datapath serves all four: there is never a second adder or a second multiplier. Latency is 15 cycles at II = 1 — vec_alu's own depth — and RV32M is padded to exactly that, so both retire through ONE write port with no arbitration."
+      caption="One datapath serves the first four: vfadd is the unit with its multiplier forced to 1.0 and vfmul is the unit with its addend forced to 0.0, so there is never a second adder or a second multiplier. The units are the SIMD tier's rv_fpu and khs_fp32_sfu, instantiated here and never forked, which is what makes a SIMT float result comparable to a SIMD one element for element."
     />
+
+    <Callout
+      kind="rule"
+      title="The tier has ONE latency, and a nonzero seed count is what sets it"
+    >
+      <p>
+        A fused multiply-add on this device is <b>6 cycles</b> deep and a seed
+        is <b>10</b>, so a tier that can issue a seed pads the multiply-add path
+        by four to match. The tier's latency —
+        <code>ALAT</code> — is therefore <b>6 with
+        <code>FSFU_UNITS = 0</code> and 10 otherwise</b>, on both cores, and
+        both modules check the depth they were told against the depth they
+        built at elaboration.
+      </p>
+      <p>
+        <b>RV32M is padded to exactly that same latency</b>, so the two retire
+        through <b>one</b> write port with no arbitration: two results can only
+        want the port on the same cycle if they were issued on the same cycle,
+        which cannot happen because one instruction issues per cycle. A per-wave
+        pending bit blocks the issuing wave for both, so the multiplier needed
+        no second mechanism at all.
+      </p>
+    </Callout>
 
     <h3 class="doc-h3">Divergence</h3>
 
@@ -1440,9 +1809,11 @@ const ldsWitness = {
         <code>join</code> pops one. The resume PC is always the popping join's
         own <code>pc+4</code>, so a stack entry is <code>LANES</code> bits and
         carries no PC — exact for structured control flow, which SPIR-V
-        guarantees by naming a merge block for every selection and loop. An
-        earlier plan said D−1 and was wrong; the statement now appears in the
-        table, in the generated header, in the model and in the RTL.
+        guarantees by naming a merge block for every selection and loop.
+        <b>The two ways of counting differ by a factor of two and both look
+        reasonable</b>, so the depth rule is stated wherever the depth is — in
+        the encoding table, in the generated header, in the golden model and in
+        the RTL.
       </p>
       <p>
         <b>Overflow is a fault</b> — not a wrap, not a mask merge, not a
@@ -1587,7 +1958,7 @@ const ldsWitness = {
     <SpecTable
       :cols="residency.cols"
       :rows="residency.rows"
-      caption="The external/internal L1 split is the base controller PE's and is inherited unchanged: split by WHO WRITES, not by what is stored, which is what removes coherence from the design."
+      caption="The external/internal L1 split is the base RV32 core's and is inherited unchanged: split by WHO WRITES, not by what is stored, which is what removes coherence from the design."
     />
 
     <h2 class="doc-h2">The measurement ladder</h2>
@@ -1775,12 +2146,35 @@ const ldsWitness = {
       :items="budget"
       unit="LUT on xcvu13p-fhgb2104-2L-e"
       :max="35000"
-      caption="Every non-TARGET row is a measurement, and each names its ask because the ask moved three times during this work (3.333 → 2.500 → 2.857 ns). The bars cannot show one thing that matters: only the last two GPU rows are a PE, and the rows above them must not be added up — kht_core already contains a kht_unit"
+      caption="Every non-TARGET bar is out-of-context synthesis on xcvu13p-fhgb2104-2L-e, Vivado 2024.2, at a 3.333 ns request, -flatten_hierarchy none, on an INTEGER-ONLY lane array — so none of them is comparable with the arithmetic-tier rows above, and `none` is not what the ship synthesises at. The bars cannot show the one thing that matters most: kht_core contains a kht_unit and kht_pe contains both, so THE ROWS MUST NEVER BE ADDED UP, and only the last one is a PE"
     />
 
     <Callout
+      kind="trap"
+      title="Only the last bar is a PE, and it carries no float units and no multiplier"
+    >
+      <p>
+        The area lands where the design wanted it — <b>16,115 LUT</b> against a
+        20–25k target, with room — and it must not be read against a budget that
+        assumes arithmetic. <code>kht_valu</code> is <code>LANES</code> copies of
+        the base RV32I ALU with <b>no multiplier and no float inside that
+        module</b>: the float units and the multiplier arrive as
+        <i>sibling</i> modules beside it, which is exactly why the ladder never
+        sees them and why the ladder's totals must never be quoted as the PE.
+      </p>
+      <p>
+        <b>These rows are also a starting point rather than a result.</b> They
+        predate the frequency work described on the
+        <RouterLink to="/mpe/simt/microarchitecture" class="doc-link"
+          >microarchitecture page</RouterLink
+        >, which took the same shape from <b>182 to 394 MHz on 321 LUT
+        fewer</b>, and they predate the arithmetic tier entirely.
+      </p>
+    </Callout>
+
+    <Callout
       kind="rule"
-      title="Three reporting rules, all of which were learned the expensive way"
+      title="Five reporting rules, and breaking any of them produces a number that looks authoritative"
     >
       <p>
         <b>Name the top.</b> A ladder whose top is one submodule
@@ -1794,18 +2188,46 @@ const ldsWitness = {
         for this PE, including the reassuring ones.
       </p>
       <p>
-        <b>Name which G0.</b> Today's G0 is <code>G0(int)</code> — an
-        integer-only lane array. An earlier revision claimed G0 was measured
-        against a float lane tier; it was not, and that sentence is what let an
-        integer-only figure be read against a float-capable budget.
-        <b>A G8 total quoted without naming its lane array is not a result.</b>
+        <b>Name the arithmetic tier.</b> Today's G0 is
+        <code>G0(int)</code> — an integer-only lane array, and it stays that way
+        on purpose, because the float lane is the SIMD tier's and pricing SIMT
+        around a lane this project did not design would answer a different
+        question. An integer-only figure and a float-capable figure are
+        different machines, and so are a PE with and without the multiplier.
+        <b>A G8 total quoted without naming its lane array is not a result</b>,
+        and neither is a total that does not say whether the multiplier is in
+        it.
+      </p>
+      <p>
+        <b>Name the flatten.</b>
+        <code>-flatten_hierarchy none</code> is <b>not the ship</b>: nothing in
+        the build scripts sets the setting on the ship's synthesis run, so it
+        takes Vivado's default, <code>rebuilt</code>. Measured on the assembled
+        PE at the same request, <code>none</code> read
+        <b>636 LUT high</b> — 22,257 against 21,621 — because a preserved
+        boundary cannot trim an unread output port or fold a constant across a
+        module edge. <code>none</code> is what makes a per-block row
+        attributable and it stays the diagnostic;
+        <b>a row quoted against a budget must be <code>rebuilt</code></b>. The
+        ladder and the budget bars on this page are <code>none</code>; the
+        arithmetic-tier tables are <code>rebuilt</code>; the two sets do not
+        subtract.
       </p>
       <p>
         <b>Synth is not route.</b> Every figure on this page is out-of-context
         synthesis. This project has measured a module lose 0.740 ns between
         synthesis and routing; a small negative slack at synth is not something
         placement absorbs. These numbers size the design and rank the gates.
-        They do not close timing.
+        They do not close timing, and nothing here claims a closed clock.
+      </p>
+      <p>
+        <b>And read the configuration back off the run log.</b> Every generic
+        must be visible on the <code>synth_design</code> command line: a knob
+        that is parsed but not applied produces a row that varies in its
+        <i>tag</i> and not in its netlist. Two guards in this path failed
+        silently once — a timing query returns nothing rather than failing, so
+        an unconstrained run reports no Fmax line while every LUT figure is the
+        unconstrained one and the whole thing reads exactly like a clean design.
       </p>
     </Callout>
 
@@ -1820,48 +2242,64 @@ const ldsWitness = {
     <SpecTable
       :cols="shaders.cols"
       :rows="shaders.rows"
-      caption="Four checks each. The whole set runs from one command — python tests/pe/tools/rv_simt_suite.py --gates — as 19 cases, and it is SERIAL by construction: xsim names its build directory after the bench, so two concurrent runs destroy each other's work area and surface as a random shader failing rather than as a collision."
+      caption="Fourteen shaders, run in 34 CASES: several run more than once, at a different width or wave count, because that is what makes “the ISA knows no unit count” a test rather than a claim — one image, one golden memory, only the generic changes. The whole set runs from one command, python tests/pe/tools/rv_simt_suite.py --gates, and it is SERIAL by construction: the simulator names its build directory after the bench, so two concurrent runs destroy each other's work area and surface as a random shader failing rather than as a collision."
     />
+
+    <h3 class="doc-h3">The banked shared memory, on hardware</h3>
 
     <SpecTable
       :cols="runOut.cols"
       :rows="runOut.rows"
-      caption="PASS — 4 checks, 0 errors. The ladder measures what the IPDOM stack costs; only gpu_nested.s proves the split pushed a pair, the first join took the false half, the second took the outer mask, and the pointer came back to zero."
+      caption="Measured on hardware by simt_lds.s. Consecutive words are different banks, which is why stride 1 is conflict-free and stride LANES is the worst case — the same trade every GPU makes. The reversed case is the one that proves the RETURN CROSSBAR: bank 7's word has to reach lane 0, rather than lane 0 always taking bank 0."
     />
-
-    <Callout
-      kind="measured"
-      title="8 requests over 1 gather is the witness reading its pre-coalescer value"
-    >
-      <p>
-        The LSU serialises lanes today, so the ratio is <code>LANES</code> by
-        construction. It is counted <b>now</b>, before a coalescer exists, so
-        the improvement will be a measured change rather than a number that
-        appears from nothing — a witness that only appears once the optimisation
-        lands cannot show the optimisation working. <code>gpu_gather.s</code> is
-        the case it will be judged on: lane <i>i</i> reads word 5<i>i</i>, so
-        eight lanes fall on <b>five</b> distinct 32-byte lines and
-        <code>16 request(s) over 2 gather(s)</code> should become
-        <code>6 over 2</code>.
-      </p>
-    </Callout>
 
     <SpecTable
       :cols="ldsWitness.cols"
       :rows="ldsWitness.rows"
-      caption="G4's witness is the same shader, the same correct answer, one parameter changed: 34 is 1 + 1 + 8 + 8 + 8 + 8 exactly, and 48 is 8 × 6. A controlled difference rather than an argument about what a resolver ought to do — and the reversed case is the one that proves the return crossbar, because lane 0 must take bank 7's word."
+      caption="The same shader, the same correct answer, one parameter changed, and only the request count moves. That is the witness as a CONTROLLED DIFFERENCE — one parameter, one shader, one number — rather than an argument about what a resolver ought to do. Fewer banks is a width like any other: more conflicts, more passes, the same answer, and forward progress unchanged because the resolver still serves the lowest outstanding lane."
     />
+
+    <Callout
+      kind="measured"
+      title="The request counter is reported NOW, before the coalescer exists"
+    >
+      <p>
+        The load/store unit serialises lanes today, so the request-to-gather
+        ratio is <code>LANES</code> <b>by construction</b>. It is counted before
+        the optimisation exists precisely so the improvement will be a measured
+        change rather than a number that appears from nothing —
+        <b>a witness that only appears once the optimisation lands cannot show
+        the optimisation working.</b>
+      </p>
+      <p>
+        <code>simt_gather.s</code> is the case it will be judged on: a per-lane
+        base load across <b>five</b> distinct 32-byte lines, so a working
+        coalescer is visible as the request count falling toward the line count.
+        The three addressing tiers are already distinguished in the encoding, so
+        the coalescer replaces the walk <b>without the ISA moving</b>.
+      </p>
+    </Callout>
 
     <h3 class="doc-h3">Not built yet</h3>
     <p class="doc-p">
       <b>G5</b>, the coalescer, and <b>G6</b>, MSHRs. G7 interleaves
       <i>issue</i>, but one instruction is in flight at a time and a miss holds
       the whole front end, so until G6 lets a stalled wave step aside, more
-      waves buy hazard-free issue and nothing else. Also outstanding: the
-      lane/interval walk sequencer that <code>FLANES &lt; LANES</code> and
-      <code>ILANES ≤ LANES</code> both need, which is ruled to the DSP realm and
-      instantiated here rather than forked.
+      waves buy hazard-free issue and nothing else.
     </p>
+
+    <Callout kind="open" title="One thing verified on SIMD and NOT on SIMT">
+      <p>
+        The seed units are the same modules on both PEs, and the seed
+        <i>datapath</i> and the seed <b>walk</b> are both exercised — on the
+        SIMD PE, at every unit count, and they pass. What is untested is
+        <b>the SIMT side's own operand routing and placement for a seed</b>,
+        because no SIMT shader can issue one today and the reference seed model
+        is a float64 approximation rather than a bit-exact one. A bench that
+        compares an exact memory checksum cannot grade an approximation, so
+        closing this needs a tolerance-comparing SIMT bench that does not exist.
+      </p>
+    </Callout>
 
     <Callout kind="open" title="G5 needs a memory path that does not exist yet">
       <p>

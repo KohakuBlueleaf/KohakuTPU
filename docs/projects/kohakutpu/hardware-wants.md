@@ -10,6 +10,12 @@ tags:
 
 # What the software stack wants from the next silicon
 
+> **Kind: mixed, and each ask names its own level.** The ten asks land on
+> different layers — some on this project's datapath, some on the framework's
+> Fixed protocol, some on the compiler — and which layer an ask lands on is the
+> point of the page. Read each one's stated level as its kind; nothing here is a
+> framework commitment.
+
 Everything here was hit while writing the compiler or a kernel, and each entry
 says **where** it was established. Nothing is speculative: if a level is not
 named, it is not on this list.

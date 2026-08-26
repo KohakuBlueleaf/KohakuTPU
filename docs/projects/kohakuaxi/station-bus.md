@@ -10,6 +10,12 @@ tags:
 
 # Station bus — a line of AXI stations
 
+> **Kind: Yours throughout — a general AXI fabric, not a framework contract.** The
+> line topology, the NMU/NSU split and the credit-flow links are this project's
+> design, and the page says plainly that nothing in it assumes an accelerator.
+> Where it meets a mesh it must satisfy the framework's AXI boundary
+> ([arch/axi](../../arch/axi.md)); everything else is a choice.
+
 Many AXI masters to many slaves without a crossbar, when the endpoints
 span multiple clock domains, data widths and dies. Nothing here assumes an
 accelerator or a vendor part beyond "FPGA with LUT6 and a die-to-die budget".
@@ -17,6 +23,17 @@ accelerator or a vendor part beyond "FPGA with LUT6 and a die-to-die budget".
 This is a general AXI fabric. It is used by KohakuTPU, but nothing in the
 design knows that: KohakuTPU appears here only as a worked example in §2, and
 "one station per SLR on a 4-SLR part" is *that example's* shape, not a rule.
+
+> **[README.md](README.md) is the shorter route in** — what the fabric is, where
+> it sits, what a port costs and what it does not do, in one page. This one is
+> the full design and the full measurement set, and it assumes you have read
+> that first.
+
+**Provenance for every figure below: `xcvu13p-fhgb2104-2L-e`, Vivado 2024.2,
+out-of-context synthesis unless a heading says *placed*.** Out-of-context
+frequency bounds what the RTL can do, never what a placed design will do; §2.9
+is the only routed result on this page and is the one to act on. Nothing here is
+a closed-timing figure except the rows in §2.9 that say so.
 
 ## 1. What it is
 
@@ -761,14 +778,14 @@ testbench runs each station on a different clock; hop count is not the only term
 ### 2.13 Cross-SLR wires
 
 23,040 SLLs per boundary, shared between both directions
-(`docs/projects/kohakutpu/ship.md:59`). A boundary carries **two** streams —
+([../kohakutpu/ship.md](../kohakutpu/ship.md) §1.1). A boundary carries **two** streams —
 one REQ, one RSP — because a master both reads and writes across it. That is
 what `LINK_FULL=0` builds and it is the minimum, not an economy. `LINK_FULL=1`
 builds four, which only a line with masters on both sides of a boundary needs.
 
 Wire counts here are **derived**, not placed. Each direction carries `W`
 payload bits plus one `valid`, and one credit bit returns, so a stream costs
-`W+2`. From `sb_line4.v:121`:
+`W+2`. From `src/kohakuaccel/axi/topo/sb_line4.v:140-141`:
 
 ```
 RQW = 2*STNW + PORTW + SRCW + TAGW + 3 + AW + 8 + 3 + FW + FW/8
@@ -784,8 +801,11 @@ At the deployed shape — `STNW=2`, `PORTW=2`, `SRCW=2`, `TAGW=4`, `AW=43`:
 | line, FW=512, `LINK_FULL=1` | 645 | 524 | 2,346 | 10.18% |
 | `mag_link_cdc` interlink, for scale | | | 772 | 3.35% |
 
-An earlier revision printed 642 and 626 here: those came from the sweep script's
-hardcoded `AW=40`, the same defect as Appendix A item 13.
+**A sweep must vary what it claims to vary.** An earlier revision of this table
+printed 642 and 626, from a sweep script that parsed an address-width argument
+and never passed it to `synth_design` — so four `AW` rows were four labels on one
+netlist. The figures above are re-measured at 43. A knob can be reported without
+ever reaching the tool, and nothing in the output says so.
 
 **The routed design confirms the derivation.** §2.9's placement reports actual
 SLL usage per boundary, against 629 derived for this configuration:
@@ -1049,7 +1069,8 @@ that forces two parameters outright and constrains a third:
 |---|---|---|
 | `AW` | **43** | `mesh_{id}` MEM sits at `(id+1) << 40` |
 | control windows | below 4 GB | `M_AXI_LITE` is 32-bit |
-| `FW` | **≥ 256** | `sb_nsu` supports `SDW ≤ FW` only (`sb_nsu.v:105`), and the widest slave is `mesh_{id}/S_AXI_MEM` at 256 bits |
+| `FW` | **≥ 256** | `sb_nsu` supports `SDW ≤ FW` only, enforced by the elaboration guard at
+`src/kohakuaccel/axi/station/sb_nsu.v:106`, and the widest slave is `mesh_{id}/S_AXI_MEM` at 256 bits |
 
 An earlier revision of this table read `FW ≥ 512`, on the belief that
 `S_AXI_MEM` was a 512-bit slave. It is 256 (`ktpu_ship_*.v`, `DW=256`). Only
@@ -1287,6 +1308,44 @@ kinds. Regenerate rather than edit: the file states this in its first line.
   four-station line `FW` spans 17,120 to 49,008 LUTs from 128 to 1024, while
   every outstanding/store-and-forward option together spans a few percent.
 
+### Sizing the request queue: derive it from the port width
+
+The response queue is clamped (above). The **request** queue is not, and the rule
+it needs is a pairing rather than a number.
+
+**Derive the depth from the port width, not from a constant.**
+`src/kohakuaccel/axi/topo/sb_root9.v:105` sets `P_BULK_REQ = 64` and states why
+in the RTL: *"AXI4's 4 KB rule caps a 512-bit port at 64 beats, so a deeper queue
+is sized for a burst that cannot legally arrive."* A hardcoded 256 is right only
+for the narrowest port on the line; the width-derived form is right for every
+port.
+
+**The obligation is a pairing, and one of the four combinations wedges:**
+
+| declared `MAX_BURST` | queue depth | outcome |
+|---|---|---|
+| declared | sized to the declaration | correct, and the cheapest |
+| unbounded | sized to the width's 4 KB bound | correct |
+| unbounded | sized to the width's bound, oversized | correct, wasteful |
+| **unbounded** | **shallow** | **wedges** — a packet longer than the queue never completes |
+
+`src/kohakuaccel/axi/topo/sb_line4.v:342` takes the first row for the Lite
+manager (`MAX_BURST=1`, depth 16) and the second for the others (depth 256,
+AXI4's maximum `AxLEN + 1`).
+
+**The failure behind this rule is silicon, not a bench assertion.**
+`src/kohakuaccel/axi/topo/sb_line4.v:331-332` records it: *"16-deep FIFOs wedged
+every burst over 16 beats on v6.5 hardware."* A request queue shallower than a
+legal burst does not overflow and does not error — earlier packets always drain
+on their token, and an incomplete one has no token yet, so the port simply stops.
+
+**What going deep costs**, attributed to
+`src/kohakuaccel/axi/topo/sb_line4.v:337-341`'s inline comment and **not** to any
+report or sweep in §2: **+71 LUT at a 64-bit port, +88 at 512-bit, and +0 BRAM.**
+The block-RAM figure is the useful one — a RAMB36 row is 512 deep, so a depth-64
+queue was already paying for rows it never used, and raising it to 256 fills them
+instead of buying more.
+
 ### Resets: control path only
 
 The datapath takes no reset by construction — the skid payload, the link's
@@ -1386,7 +1445,7 @@ reason is given rather than the preference.
 |---|---|---|
 | `FW` | **256** | The widest slave, `S_AXI_MEM`, is 256 bits, so the fabric meets it exactly and the 512-bit XDMA master splits 2:1 (673 checks). 22,106 LUTs against 30,785 at 512 — 28% — and 629 cross-SLR wires against 1,173. At 200 MHz it carries 6.4 GB/s, which is exactly what the 512-bit-at-100 MHz SmartConnect provided. |
 | `AW` | **43** | Forced: mesh MEM sits at `(id+1)<<40`. Costs 3.6% over 32 bits (21,345 → 22,106). |
-| bus clock | **200 MHz** | Meets the bandwidth above. OOC binding clock is `bus_clk1` at 357.9 MHz, 1.79× the target; the routed design closes at +0.068 ns. Area is flat from 150 to 300 MHz (0.3%), so the constraint is free anywhere in that range and there is headroom to raise it later without paying for it. |
+| bus clock | **200 MHz** | Meets the bandwidth above. OOC binding clock is `bus_clk1` at 357.9 MHz, 1.79× the target, and the routed design in §2.9 meets every constraint. Area is flat from 150 to 300 MHz (0.3%), so the constraint is free anywhere in that range and there is headroom to raise it later without paying for it. |
 | `LINK_FULL` | **0** | Not a saving — a declaration. Every master sits on station 1, so each boundary needs one REQ stream and one RSP stream, which is what 0 builds. 1 builds four streams and is only correct if masters sit on both sides of a boundary. |
 | `LINK_CDC` | **1** | Each die gets its own fabric clock, which is the point — a shared clock couples every station to the worst one, and the SLL hop alone is 0.755 ns. |
 | `OST` / `STORE_FWD` | **`BALANCED`** | The whole outstanding range spans 4.3% (30,512 → 31,838). Not a lever; take the middle. |
@@ -1405,8 +1464,8 @@ lands where there was already the most room and does not relieve the binding
 constraint, which is SLR0. Every die also sits at 88–95% CLB occupancy while
 using 61–69% of its LUTs, so the design is packing-bound and a LUT saving
 converts into placeable sites only as well as the placer packs what remains.
-`docs/projects/kohakutpu/v6-plan.md` works through what the freed resource
-actually buys.
+[../kohakutpu/v6-plan.md](../kohakutpu/v6-plan.md) works through what the freed
+resource actually buys.
 
 **What it costs.** Latency rises with hop count — 21 control cycles to the local
 station, 31 to the far end of the line — where a tree is flat. Sustained
@@ -1465,23 +1524,48 @@ station bus registers every station output by construction, and the die-crossing
 pipelines are flops by design — six link instances carry 12,166 of the deployed
 line's 48,167 flip-flops (§2.8), a quarter of the total for three boundaries.
 
-### Open questions
+### Settled by measurement
 
-- ~~**Head-of-line cost of packet-atomic arbitration**~~ — measured, bounded at
-  one packet. A third VC is not warranted.
-- ~~**Should the RSP VC carry write responses?**~~ — measured, identical bound.
-  The delay is arbitration, not flit width, so a narrow completion path cannot
-  shorten it. Keep them shared.
-- ~~**Error containment**~~ — `TIMEOUT` knob, proven, priced.
+- **Head-of-line cost of packet-atomic arbitration** is bounded at one packet.
+  A third virtual channel is not warranted.
+- **The response channel carries write responses too**, and should. The delay is
+  arbitration, not flit width, so a narrow completion path cannot shorten it.
+- **Error containment** is the `TIMEOUT` knob: proven to answer `SLVERR` rather
+  than hang, and priced at +1,511 LUT over nine endpoints.
+
+### Open
+
 - **Multicast writes** are nearly free in a broadcast-ejection station and the
   invariant break has a known fix: the segment knows the fan-out N at decode
-  time, so the master shim decrements credit by N and merges N completions,
+  time, so the manager shim decrements credit by N and merges N completions,
   taking the worst response code. **Not built — nothing issues one**, and
   adding a deadlock-relevant path with no test that exercises it is worse than
   not having the feature.
-- **The config port's own path** — a config port reachable only through the
+- **The config port's own path.** A config port reachable only through the
   fabric cannot debug a hung fabric. `STATS` exposes counters as plain wires;
-  reading them still needs a port wired outside the fabric, local to that SLR.
+  reading them still needs a port wired outside the fabric, local to that die.
+- **Per-station marginal cost is inferred, not measured.** Every line measured
+  here has four stations, so the cost of the station count itself — S, and the
+  links that come with it — is read off the port sweeps rather than swept
+  directly.
+- **The `K×Q` claim rests on the structure, not on this data.** SmartConnect's
+  marginal subordinate cost rises about 10% between its two measured intervals
+  where the station's shows no trend across four, but an additive fit misses
+  SmartConnect by 3.8% and the station by 3.1%, which is not a distinction
+  totals can carry. Settling it needs a subordinate sweep at a second manager
+  count, on both structures.
+- **Nothing measures the design being replaced**, on latency or on throughput.
+  Every comparison here is resources.
+- **Timing covers one configuration.** Resources cover the whole option space at
+  both levels; timing covers only the deployed configuration, and throughput
+  only two flit widths. Carrying every option through timing needs a synthesis
+  per option with its own constraint set.
+- **Power.** §2.9 records a routed vectorless estimate at Medium confidence with
+  no traffic behind it, and no counterpart exists for the tree. A real answer
+  needs activity-driven estimation on both.
+- **Seed and directive variation is unexplored.** A configuration re-synthesised
+  separately reproduced bit-identically (§2.4), so single runs are sound for
+  resources; that argument does not extend to timing.
 
 ## Prior art
 
@@ -1491,141 +1575,3 @@ line's 48,167 flip-flops (§2.8), a quarter of the total for three boundaries.
 | credit flow control | standard in every die-to-die and chiplet link |
 | packet-atomic arbitration | how AXI's no-interleaving rule is met without a reorder buffer |
 
-## Appendix A. Open review findings
-
-Known defects in this document. Struck entries are closed and the section that
-closed them is named; the rest are open.
-
-### A.1 Benchmarking the design itself
-
-1. ~~**No option sweep.**~~ §2.1 sweeps every preset against LUT / FF / BRAM at
-   a fixed port count. Performance across presets is still only Fmax, not
-   throughput.
-2. ~~**No `AW` or flit-width sweep.**~~ §2.2 and §2.3.
-3. **Chaining is partly measured.** §2.5 gives the four-station line across
-   width, address width and every option, and §2.9 times it; §2.4 separates
-   per-port from per-station cost. What is still missing is S itself — every
-   line measured here has four stations, so the per-station and per-link
-   marginal cost is inferred from the port sweep rather than measured directly.
-4. ~~**Per-station heterogeneity is never discussed.**~~ *What may differ per
-   station* now scopes every parameter, and `-d SB_MIXPRESET` runs four
-   unlike stations on one line through the full 604-check suite.
-
-### A.2 Comparing against SmartConnect
-
-5. ~~**No controlled baseline.**~~ §2.6 builds SmartConnect at matched port
-   count and width, gives its per-slave-port slope, and states why a rebuild is
-   ~2× low on the shipped instance. One limit survives and is now documented
-   rather than assumed away: the rebuild will not build multiple clock domains
-   however they are declared, so the clock axis has no vendor baseline at all.
-6. ~~**The comparison is written as one product version against another.**~~ It
-   is now SmartConnect against station bus at two fixed endpoint sets: the
-   four-die KohakuAccel replacement (§2.8) and a single-die 3×9 peripheral
-   fabric with no links and no clock crossings, which is the case where the
-   station bus has none of its structural advantages and wins only 0.72× — and
-   loses on flip-flops.
-7. **Not every option is compared on every metric.** Resources now cover the
-   whole option space at both levels (§2.1, §2.5). Timing covers the deployed
-   configuration only (§2.9), and throughput covers two flit widths (§2.12).
-   Carrying every option through timing would need a synthesis per option with
-   its own constraint set, which is a sweep nobody has run.
-
-### A.3 Conclusions
-
-8. ~~**No number-driven recommendation.**~~ §7 gives one value per knob with the
-   measurement that forces it, what the whole choice buys (3.70× overall,
-   4.77× on the die that is full), and what it costs in latency and throughput.
-9. ~~**BRAM is treated as one global choice.**~~ `LUT_PER_BRAM` is per-station
-   per-FIFO in the scope table, §2.1 prices both settings, and the mixed-preset
-   run drives 0/820/0/820 across the four stations at once.
-
-### A.4 Method defects
-
-10. ~~§2.1, §2.1b and §2.2 are three different storage configurations presented
-    as one coherent set.~~ §2.1 states both storage settings side by side; §2.4,
-    §2.5 and §2.8 are all `BALANCED`, no block RAM, `AW=43`, and say so. §2.9 is
-    the one block-RAM table left and is labelled as such.
-11. ~~§2.1 reports one arbitrary point and calls it "one station".~~ It sweeps
-    all four presets against both storage settings. The point it used to report,
-    9,254, was the cheapest corner of three independent knobs at once.
-12. ~~**Every headline number is FW=256, which §4 rules out for a drop-in.**~~
-    §4 was wrong to rule it out: the mesh slave port is 256 bits and the only
-    512-bit master splits through `sb_nmu`. Headline numbers are now `FW=512`
-    and `FW=256` is a measured, simulated option rather than an exclusion.
-13. ~~§2.2 measures `AW=40`; §4 requires 43.~~ Worse than recorded: the line
-    sweep parsed `aw` and never passed it to `synth_design`, so every line-level
-    `AW` row would have been the same netlist under four different labels. Fixed
-    in `ooc_line_sweep.tcl` and re-measured at 43.
-14. ~~§2.8's SmartConnect column mixes provenance~~ — confirmed and now stated
-    per row: SLR1 and SLR2 are v5 reports, SLR0 and SLR3 are a **v4** leaf
-    report, and the inter-die row is 3× a **v2** `slr_cross`. Only two of five
-    rows are v5, because the others were never re-synthesised for it.
-15. ~~§2.2's Fmax and §2.1b's resources come from different runs of different
-    configurations.~~ §2.8 and §2.9 are now the same synthesis: the per-die
-    breakdown sums to the total, and the eleven-clock timing table is that
-    netlist's.
-16. ~~§2.5 quotes W=640/528 in a table under text stating RQW=642/RSW=524.~~
-    §2.12 now derives both from `sb_line4.v:121` at the deployed shape, and says
-    which of its two tables is derived and which is measured.
-17. ~~Measured and derived numbers sit in adjacent tables, unmarked.~~ §2's
-    method paragraph now names the three derived quantities; everything else is
-    a netlist or simulation measurement.
-18. ~~n=1 everywhere; no repeat, seed, or directive variation.~~ Partly: a
-    configuration re-synthesised separately reproduced bit-identically (§2.4),
-    so n=1 is sound for resources. Directive and seed variation is still
-    unexplored, and would matter for timing rather than area.
-19. ~~Every figure is post-synthesis OOC. No post-place-and-route number
-    exists.~~ §2.9 places and routes the line with per-SLR pblocks: WNS
-    +0.068 ns, all constraints met, bitstream written.
-
-### A.5 Unsupported claims
-
-20. ~~"Per-port cost is O(1)" — no port-count sweep exists.~~ §2.4 sweeps both
-    sides: 818 LUTs per 32-bit slave port, 822–1,217 per 32-bit master and 4,212
-    for the 512-bit one — each constant in the opposite side's count, with the
-    slave line straight to 3.1% worst case over an eightfold range. §2.4 also
-    states what the sweeps do not show: each holds the other side fixed, so
-    independence between the two counts remains a structural argument rather
-    than a measured one.
-21. **"The `K×Q` term never appears" — measured, and it does not separate the
-    two structures.** §2.6 now has SmartConnect at 3×5, 3×9, 3×16 and 6×9. Its
-    marginal slave cost rises ~10% between intervals where the station's shows
-    no trend, but an additive fit misses SmartConnect by 3.8% and the station by
-    3.1%, which is not a distinction the totals can carry. The claim stands on
-    the structure (broadcast ejection), not on this data, and proving it needs a
-    slave sweep at a second master count on both sides.
-22. ~~"2(S−1) AXI ports saved" — no resource number attached.~~ §2.7 attaches
-    two: the measured inter-die tissue is 9,795 LUTs against 1,641, and the
-    six ports themselves come to ~11,000 at SmartConnect's own per-port slope.
-23. ~~§3's "no status port needed" generalises from a single comparison.~~ It
-    now gives the structural reason (`RXD = max(16, CRED)` bounds everything in
-    flight) instead of the elaboration check it wrongly claimed, and separates
-    the `CRED ≥ 2·PIPE` throughput condition from safety.
-
-### A.6 Missing measurements
-
-24. ~~**No bandwidth or throughput measurement anywhere.**~~ §2.12 measures
-    sustained write bandwidth per hop count. It is a single-outstanding floor;
-    a pipelined-master ceiling is still unmeasured.
-25. No latency or throughput measured for the design being replaced.
-26. ~~No area/frequency curve — one 200 MHz point.~~ §2.5 sweeps 150–500 MHz:
-    area flat to 300 MHz, +6.3% at 350, +11% beyond, and the structure saturates
-    at about 390 MHz with 350 the highest target that closes.
-27. No power — **and this stays open**. §2.9 records a routed 5.442 W estimate,
-    but it is vectorless at Medium confidence with no traffic behind it, and no
-    counterpart exists for the tree. A real answer needs SAIF-driven estimation
-    on both, which nothing here does.
-28. ~~No `axi_interconnect` comparison.~~ §2.6 measures both strategies at two
-    widths and two clock counts. It also supplies the clock-domain baseline
-    SmartConnect refused to give: 1→4 domains costs `axi_interconnect` 9,833
-    LUTs, against −328 for the station bus.
-
-### A.7 Structure
-
-29. ~~§2.1b is deployment-specific and sits inside results promised as
-    general.~~ §2 now runs standalone first (2.1–2.6) and in-context after
-    (2.7–2.14), and says so in its opening.
-30. ~~Numbering runs 2.1, 2.1a, 2.1b, 2.2 — insertion damage.~~
-31. ~~§4 names five presets; §2 measures none of them by name.~~ §2.1 measures
-    four by name; `NARROW` is §2.2's `FW=256` row.
-32. Verification is disconnected from the results it qualifies.

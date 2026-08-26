@@ -11,10 +11,33 @@ tags:
 
 # Microarchitecture
 
-`kht_core` is a **rebuild** on the base core's shape, not an extension of it.
+> **Kind: Yours throughout.** The two PCs, the three hold signals, the
+> lane-serialising LSU, the IPDOM pair-stack and the halt-and-flush are this
+> project's RTL. The framework specifies only the port this unit presents
+> ([spec/compute-unit-port](../../../spec/compute-unit-port.md)); everything on
+> this page sits behind it.
+
+## What this is and where it sits
+
+`kht_core` is the SIMT PE's pipeline. Above it, `kht_pe` wraps it with the
+windows, the kick and completion logic, the internal L1 and the fabric port that
+make it an ordinary compute unit on a mesh; below it, `kht_unit` holds the
+per-thread register file, the active mask, the divergence stack and the lane
+arrays, and `kht_lds` holds the banked shared memory. Nothing on this page is
+framework mechanism — how a flit routes or how a memory agent serves a
+descriptor is [arch/](../../../arch/README.md).
+
+It is a **rebuild** on the base controller PE's shape, not an extension of it.
 The base core's six register boundaries and its hazard style are kept because
 they are what close at this clock. What changes is which register file an
-ordinary RV32I opcode addresses.
+ordinary RV32I opcode addresses: the **per-thread** one, so `add x5, x3, x4` is
+`x5[lane] = x3[lane] + x4[lane]` for every active lane. The scalar file and all
+control flow live in the custom opcode space — [isa](isa.md).
+
+**Read the interface first.** This page is point 4 of the standard order: what
+it is, where it sits, the interface, how it works inside, what it costs, what it
+does not do. [isa](isa.md) is the interface, [ladder](ladder.md) is the cost,
+and the last section here is what it does not do.
 
 ## The whole unit
 
@@ -49,10 +72,10 @@ ordinary RV32I opcode addresses.
 
 ## Decode does not happen at fetch — it happens at image load
 
-The base core registers its decoded outputs into EX (`rv_id` has
-`output reg x_valid`) and closes at 410 MHz. `kht_core` had **no decode stage** at
-all: `wire instr = imem_data`, and then decode, operand read, address generation
-and the PC update all in one cycle. That is the whole of why it started at 182.
+A pipeline whose decode, operand read, address generation and PC update all
+happen in the cycle after a block RAM read does not close: measured that way,
+this core reached 182 MHz while the base controller PE, which splits fetch,
+decode and execute, reaches 410.
 
 Adding a decode stage would cost a cycle of branch latency. **Predecoding does
 not**, because every decode signal is a pure function of the instruction word:
@@ -80,10 +103,12 @@ clock enable were spent producing `mem_store` alone.
 
 **Cost: one memory the width of the control word** (`KHT_CW = 60` bits ×
 `IMEM_WORDS`), which the tool maps to the same BRAM class as the instruction
-window. **+55 MHz** on the assembled PE. It was 50 bits before the float tier and
-RV32M each claimed some — `kht_core` checks the literal `60` in its ports against
-`KHT_CW` at elaboration, because widening the word and leaving a port behind has
-already cost one synthesis run to an out-of-range part-select.
+window. **+55 MHz** on the assembled PE.
+
+> **Widen the word and a port left behind becomes an out-of-range part-select,
+> not an error.** `kht_core` checks the literal width in its ports against
+> `KHT_CW` at elaboration for that reason: the producer, the consumer and the
+> layout header are three files that must agree on one number.
 
 ## The timing budget is about nine levels, and that is arithmetic
 
@@ -107,7 +132,40 @@ that costs 0.909 ns before any logic runs:
 So a cone at ten-plus levels is a defect, a cone at nine is at the line, and
 **shortening a level is worth 0.24 ns while shaving a LUT off one is worth
 0.04.** That is why the fixes below are all about removing levels or fanout, and
-why "add a pipeline stage" has been the last resort rather than the first.
+why "add a pipeline stage" is the last resort rather than the first.
+
+### Every fix that mattered was the same fix
+
+**A cone that starts at a block RAM begins a third of its budget in debt.** The
+work is to make cones start at flip-flops, and to stop putting a hold signal in
+series with decisions it only needs to gate. This core reached 182 MHz before
+that work and 394 after it, on **321 LUT fewer** than it started with — breaking
+long combinational cones lets the tool pack simpler logic, and the only thing
+that grew was flip-flops.
+
+| what | where it was | what it became | worth |
+|---|---|---|---|
+| decode | between the window and the control registers | on the memory's **write** path (`kht_predec`) | +55 MHz |
+| the instruction itself | a block RAM output | a **fabric register** | +22 MHz |
+| the scalar ALU | after the file read, same cycle | **before** it, operands registered | — |
+| the lane ALU | straight off the vector register file | behind a fabric register | +6 MHz |
+| every lane's address | indexed off the vector file per lane | computed once into a register | +28 MHz |
+| the round-robin pick | five LUT levels into the window's address | a **register** | +4 MHz |
+| `lane_on` | a wide mux into the request, then the cache's stall, then `hold` | registered in the walk's first phase | **+50 MHz** |
+| `hold` | inside the redirect decision, three LUTs deep | one AND at the clock enable | — |
+| the branch's zero test | a 32-bit reduce on the file read | a **stored bit** in the file | — |
+
+Three memories each cost the same 0.85–0.91 ns and each needed the same answer:
+the instruction window, the scalar file and the vector register file. **The
+largest single win was one register on a one-bit signal**, because that signal
+reached the cache's stall and the stall reaches every clock enable in the core.
+
+> **A step backwards on Fmax is not always a step backwards.** Two changes in
+> that sequence read as small losses and were kept, because they traded a broad
+> shallow problem for one deep one: the number of failing endpoints went
+> **1,633 → 70** and a whole family of front-end cones disappeared. The next
+> change then collected the win, because there was one cone left to aim at
+> instead of five. **Group failing paths by cone before ranking them by slack.**
 
 The **register-class rule** is the whole design and it is visible in that
 picture: an ordinary RV32I opcode drives `kht_unit`; the scalar file is reached
@@ -275,9 +333,9 @@ FSM, whose reset pin was reached through `go` and two more levels of next-state.
 when its last wave is, and the unit flushes and completes then. A fault is a
 property of the program rather than of the wave that happened to hit it.
 
-**What G7 does not do is hide memory latency.** One instruction is in flight at
-a time, so a miss still holds the whole front end. See
-[status](status.md#not-built-yet).
+**What the scheduler does not do is hide memory latency.** One instruction is in
+flight at a time, so a miss still holds the whole front end. See
+[status](status.md#not-built).
 
 ## The hold signals: three destinations, three meanings
 
@@ -923,7 +981,7 @@ outstanding lane, because that lane is by construction the lowest lane on its ow
 bank. So a sequence ends in at most LANES passes and cannot stall. The block
 asserts it rather than trusting the argument.
 
-### Measured on hardware by `gpu_lds.s`
+### Measured on hardware by `simt_lds.s`
 
 ```
    lane i -> word i      banks 0..7, all distinct        1 pass
@@ -1048,12 +1106,13 @@ halt word with its own.
 Lane 0 only, and only when lane 0 was active, because that is exactly what the
 golden model records.
 
-## Traps, collected
+## Symptom to cause
 
-Every row is a failure that happened, not one that was anticipated. They are
-listed because each looks like something else while you are in it.
+A reference for anyone changing this core. Each row is a failure mode this
+structure admits, listed by what it **looks like** rather than by what it is,
+because every one of them looks like something else from inside it.
 
-| Symptom | Cause |
+| symptom | cause |
 |---|---|
 | every PC executes twice | the window was driven from the architectural PC, which lags the fetch |
 | one instruction silently never happens | `imem_addr` ran on while `f1` was held, so the resumed `f2 <= f1` no longer named the word in flight |
@@ -1071,12 +1130,12 @@ listed because each looks like something else while you are in it.
 | the banked LDS resolves the wrong lanes on its first cycle | it reads `vt_rd2` for **every** lane combinationally in EX, so it needs the same warm-up `split` does |
 | every wave computes the same address and they collide | the *model's* `rdctl 5` read the flat control table instead of the wave id — invisible with one wave, fatal with two |
 | one wave's `ecall` ends the whole dispatch | `ecall` must retire **one wave**; only a fault kills the unit |
-| the unit closes at 324 MHz and the core containing it at 72 | the cross-lane reduction was a **serial chain** of LANES 32-bit adds, and it lives in `kht_core` where the unit-only ladder never looked |
+| the unit reports 324 MHz and the core containing it 72 | the cross-lane reduction was a **serial chain** of LANES 32-bit adds, and it lives in `kht_core` where a unit-only ladder never looks |
 | a hierarchical reference simulates and will not synthesise | `u_vt.v1_rd` — read ports must be **ports** (`rd1_o`/`rd2_o`) |
-| a Vivado run reports clean and every LUT figure is unconstrained | the OOC `create_clock` was guarded by a `get_ports` test that evaluates before the design exists. The XDC is now unconditional and the script **errors** if `get_clocks` is empty |
+| a Vivado run reports clean and every LUT figure is unconstrained | an out-of-context `create_clock` guarded by a `get_ports` test that evaluates before the design exists. A timing query returns nothing rather than failing, so there is no Fmax line and every resource figure is the unconstrained one. Make the constraint unconditional and **error** if `get_clocks` comes back empty |
 | three dependent `vfma` launch in consecutive cycles with stale addends | `fpend` blocks **fetch**, but the front end is three deep — the float must also redirect its own wave to `pc+4` to kill the two already in flight |
 | `mul x10, x6, x8` jumps forty bytes and skips nine instructions | `is_imul` was added to `br_take` and not to `redir_pc`, so a multiply took `f2_pc + imm_i` — and an R-type's imm field is `funct7\|rs2` |
-| a wave comes back one instruction late for every cycle it waited on a float | the per-wave PC increment was gated on the fetch, not on `rdy[cur]`. Invisible before G9: the only unready wave used to be a **dead** one |
+| a wave comes back one instruction late for every cycle it waited on a float | the per-wave PC increment gated on the fetch rather than on `rdy[cur]`. Invisible until a multi-cycle unit existed: before that, the only unready wave was a **dead** one, whose pointer nobody reads again |
 | the machine wedges with sixteen waves runnable, on a `vfmul` | a held instruction is `go` on every cycle of the hold, so the float re-launched the lane array every cycle and `f_soon` never cleared. `x_defer` must carry every core-level hold that is not `base_hold` |
 | a `join` underflows and faults in perfectly balanced code | the stack committed on `go` rather than `go_c`, so a join sitting under another wave's `f_soon` popped once per cycle |
 | a `vfma` reads its addend from before the instruction that set it | `vd` is a **source** for `vfma` and was not compared as one — seen as `c = 0x0400` where the shader had just built `0x4000` |
@@ -1127,7 +1186,7 @@ control is zeroed up front:
                            ^^^^^^^^^^^^   ^^^ read your own value
 ```
 
-`gpu_shfl.s` exercises this with an xor of 4 and lanes 0–1 masked off: lane 4's
+`simt_shfl.s` exercises this with an xor of 4 and lanes 0–1 masked off: lane 4's
 source is lane 0, which is inactive, so lane 4 must keep its own value.
 
 ### Control is WB-stage
@@ -1141,29 +1200,70 @@ describes, avoided rather than repeated.
 
 ## The float tier and the multiplier: one shadow pipe, two producers
 
-Both are 15 cycles, II = 1, and that is not a coincidence — giving the
-multiplier the float tier's exact latency lets it ride machinery that already
-existed instead of needing a second mechanism.
+Both retire at the same latency, one instruction per cycle, and that is not a
+coincidence — giving the multiplier the float tier's exact latency lets it ride
+machinery that already exists instead of needing a second mechanism.
 
 ```
-   EX                                        +15                    WB
+   ALAT  =  6   with no seed units built
+            10  with them, because a seed is four stages deeper and the
+                multiply-add path pads to match
+
+   EX                                       +ALAT                   WB
    ---------------------------------------------------------------------
    w1_q (vs1) --+
-   w2_q (vs2) --+--> kht_fpu   8 x khs_float_lane --> fpu_y --+
-   w3_q (vd)  --+       ^                                     |
-                        |                              fsh_mul[FLAT]
-   w1_q,w2_q ------> kht_imul  8 x 33x33 signed  --> imul_y --+--> fwb_data
-                        (3 real stages + a 12-stage FLOP pad) |
-                                                              v
+   w2_q (vs2) --+--> kht_fpu   FLANES x rv_fpu  --> fpu_y --+
+   w3_q (vd)  --+       ^      FSFU_UNITS of them also      |
+                        |      carrying a khs_fp32_sfu      |
+                        |                            fsh_mul[FLAT]
+   w1_q,w2_q ------> kht_imul  LANES x 33x33 signed --> imul_y --+--> fwb_data
+                        (3 real stages + a FLOP pad to ALAT)     |
+                                                                 v
                                       fwb_v / fwb_wa / fwb_mask --> VRF port
 ```
 
+**The arithmetic is the SIMD tier's and nothing here is new.** Every unit is one
+`rv_fpu`, IEEE binary32 in and out, and a seed unit carries a `khs_fp32_sfu`
+beside it. Single-sourced arithmetic is what makes a SIMT float number
+comparable to a SIMD float number, element for element, and it is why this PE
+never forks either module.
+
+**Binary32 is the only compute type**, so a thread is a whole 32-bit slot: there
+is no format bit, no conversion at either edge and no reserved half of a
+register. KohakuMPE holds no E8M15 anywhere.
+
 `fsh_*` is a shadow shift register exactly `FLAT` deep, carrying the valid bit,
-the destination address, the write mask and the wave. **It must match `vec_alu`'s
-own depth**, because it carries what the lane array does not: if the two disagree
-a result lands on the wrong register with no witness. It is free-running, like
-the lane array it shadows — `vec_alu` has no clock enable, so gating the shadow
-would desynchronise the two.
+the destination address, the write mask, the wave and the pass index. **It must
+match the array's own depth**, because it carries what the lane array does not:
+if the two disagree a result lands on the wrong register with no witness. Both
+modules check the depth they were told against the depth they built, at
+elaboration. It is free-running, like the lane array it shadows — the array has
+no clock enable, so gating the shadow would desynchronise the two.
+
+### Fewer units than threads: the pass walk
+
+`FLANES` and `FSFU_UNITS` are independent unit counts and neither has to equal
+`LANES`. A thread count above either is served by `LANES / units` passes, one
+per cycle, sequenced by `kht_unit` and counted inside `kht_fpu` only through a
+`pass` index.
+
+**A pass is placed by the register file's per-lane write enable**: thread *i* is
+served by unit `i mod U`, a compile-time constant, and the enable is a decode of
+the retiring pass index. There is no staging register and no runtime unit
+select, which is why a fractional rate is cheaper here than on the SIMD PE,
+whose vector file has no per-element enable
+([unit-counts](../unit-counts.md#1-the-parameters)).
+
+The unit array outputs **one slot per unit, not per thread**, and the caller
+places it — where a result belongs depends on the pass that is retiring rather
+than on the pass being issued.
+
+> **Zero is a plausible float answer.** An earlier arrangement tied the lanes
+> above `FLANES` to `32'd0` rather than sequencing them, so a reduced build
+> returned silently wrong upper lanes and no fault — and zero is a value a float
+> kernel meets constantly, so nothing downstream tripped on it either. The walk
+> replaced it. A count that does not divide `LANES` is now refused at
+> elaboration rather than elaborating cleanly and reporting a plausible Fmax.
 
 ### A float redirects its own wave, and that is the whole of how fpend works
 
@@ -1191,91 +1291,52 @@ landed.
 > and came back one instruction late for every cycle it waited.
 
 **The pad is flip-flops and the RTL says so explicitly** —
-`(* srl_style = "register" *)` refuses the SRL16E the shape would otherwise map
-to. An SRL16E is **one LUT per bit at any depth**, and this PE is LUT-bound while
-the flop half of the CLB is idle: −256 LUT for +3,329 FF at an identical
-365.6 MHz. Measured at the 2.857 ns ask; at 2.500 the same change read as
-−15.6 MHz, which was an artifact of asking for timing the design was not going to
-meet.
+`(* srl_style = "register" *)` refuses the shift-register primitive the shape
+would otherwise map to. **An SRL costs one LUT per bit at any depth**, and this
+PE is LUT-bound while the flop half of the CLB is idle. Measured on this pad at
+a deeper pipeline than it now has: **−256 LUT for +3,329 FF at an identical
+frequency**. The rule generalises across this repository — shallow, wide delay
+lines belong in flops here, not in SRLs — but the *magnitude* is proportional to
+the pad's depth, so it is smaller now.
 
-`fsh_v` is a shadow shift register carrying valid, destination and mask; the
-result that emerges at `FLAT` is selected by `fsh_mul[FLAT]`. **There is no
-per-register scoreboard**, and that is the point: with `WAVES >= depth` no two
-in-flight instructions share a wave, so a per-wave pending bit (`fpend`)
-restores the barrel-scheduling invariant that a multi-cycle unit breaks.
+> The same change measured **−15.6 MHz** when the run was asking for timing the
+> design was not going to meet. A frequency delta taken at an unmeetable
+> constraint is an artefact of the constraint, not a property of the change.
 
-### The width bit is delayed to the result, not read at the operands
-
-```
-   launch    op[2] --> hpipe[0] --> ... --> hpipe[ALAT-1] = y_half
-                                                              |
-   y_e8 --+--> vec_cvt_e8_to_f16 --> {16'd0, y16} --+          |
-          |                                         +--> vy <--+
-          +--> vec_cvt_e8_to_f32 --> y32 -----------+
-```
-
-**`y_e8` emerges 15 cycles after launch, by which time `op` belongs to whatever
-the scheduler picked next.** Selecting the output conversion from the live `op`
-writes a narrow result into a wide destination for any wave that is not running
-alone — so it passes at one wave and fails at sixteen. One bit deep enough to
-reach the result; Vivado maps it to an SRL.
-
-### Operand width is per instruction, and it is not a build option
-
-```
-   vfma  vfmul  vfadd  vfsub        funct7 0-3    wide operands
-   vfma_h vfmul_h vfadd_h vfsub_h   funct7 4-7    narrow operands
-                                           ^
-                    f7[2] -> kht_fpu.half -> khs_float_lane.wide(!half)
-```
-
-`wide` is a **port** on `khs_float_lane`, not a parameter, and that module's
-header states the contract: both input formats and the one compute format *are*
-the contract, not options — there is no parameter that removes either edge. A
-build either has the float tier or faults on all eight encodings.
-
-The three conversions are not symmetric. `FP32 → E8M15` copies the exponent
-verbatim and rounds off only mantissa below bit 8; `FP16 → E8M15` is exact; and
-`E8M15 → FP16` is the one direction that is both lossy **and** range-limited,
-saturating silently on a finite overflow. That is why the wide form is the
-*default* encoding and the narrow one carries the suffix.
-
-> **The lanes above `FLANES` return ZERO, and zero is a plausible float answer.**
-> `kht_fpu`'s `g_nolane` assigns `32'd0` there because `FLANES < LANES` has no
-> walk sequencer to feed them, so a shader run on a reduced build gets silently
-> wrong upper lanes and no fault — the one place this PE breaks its own rule that
-> a build which cannot do something faults instead of answering plausibly. It is
-> guarded by convention only: `FLANES` must equal `LANES` in any build that runs
-> a shader. Reduced builds are for area measurement.
+**There is no per-register scoreboard**, and that is the point: with
+`WAVES >= depth` no two in-flight instructions share a wave, so a per-wave
+pending bit (`fpend`) restores the barrel-scheduling invariant that a
+multi-cycle unit breaks.
 
 ## What is encoded but has no datapath
 
 ```
-   HAS_SHFL = 0:   shflxor, bcast  --> illegal --> FAULT (cause 3)
-   HAS_SHFL = 1:   both built on the butterfly above
-   HAS_FLT  = 0:   all eight float ops AND every RV32M op --> FAULT
-   HAS_FLT  = 1:   the tier is built, and it takes BOTH operand widths
+   SHFL_UNITS = 0:  shflxor, bcast   --> illegal --> FAULT (cause 3)
+   SHFL_UNITS > 0:  both built on the butterfly above, at that width
+   FLANES     = 0:  every float op   --> FAULT
+   FSFU_UNITS = 0:  every seed op    --> FAULT
 
-   bar          :  decoded, read by NOTHING --> retires as a NO-OP
+   bar           :  decoded, read by NOTHING --> retires as a NO-OP
 ```
 
-**RV32M is gated on `HAS_FLT`, not on a gate of its own**, because the multiplier
-shares the float tier's retire slot and its per-wave pending bit —
-`is_imul = ictl[C_IMUL] && (HAS_FLT != 0)`. There is no float-free build with a
-multiplier, and asking for one gets a fault rather than the ordinary ALU's opinion
-of a `funct7` it does not know.
+**RV32M has no gate of its own and no longer rides one.** The multiply count is
+`LANES`, because a thread's ALU is an integer-and-multiply unit; the multiplier
+shares the float tier's retire slot and per-wave pending bit, and its pad is
+sized to whatever that tier's latency is. A build with no float units still has
+`mul`, `mulh`, `mulhsu` and `mulhu`. Divide and remainder are not built and
+fault.
+
+With a gate off, an instruction would otherwise set a write enable with no
+datapath behind it and write the ALU result — a plausible wrong answer. **A
+build that cannot do something faults instead**, and the fault is tested rather
+than asserted: running the shuffle shader against a build with the shuffle at
+zero halts with cause 3, which is the fault working and not a regression.
 
 **`bar` is the one exception to the fault rule, and it should not be.**
-`kht_predec` sets `C_BAR`; nothing in `kht_core` reads it, and the golden model
-has no barrier either — so a workgroup barrier retires silently. With one wave
-per workgroup a no-op is correct; with more than one it is a race with no
-witness. Every other unbuilt thing here faults.
-
-With the gate off these two decode and would otherwise set a write enable with
-no shuffle datapath behind it, writing the ALU result. **A build that cannot do
-something faults rather than returning a plausible wrong answer** — running
-`gpu_shfl.s` against a `HAS_SHFL = 0` build halts with cause 3, which is the
-fault working, not a regression.
+`kht_predec` sets its control bit; nothing in `kht_core` reads it, and the
+golden model has no barrier either — so a workgroup barrier retires silently.
+With one wave per workgroup a no-op is correct; with more than one it is a race
+with no witness. **Do not write a shader that relies on it.**
 
 `s2v` was in the same state and was **built** instead, because a scalar-to-vector
 broadcast is fundamental and costs almost nothing — the value is uniform by
@@ -1299,16 +1360,36 @@ by a mux at the port itself (`fwb_v ? ... : ...`), which is an arbitration-free
 choice because the core dropped `go` two cycles earlier to empty writeback for
 exactly this.
 
-## Debugging rule this bring-up earned
+## What this core does not do
 
-Trap 4 cost two rounds of arithmetic guessing about which operand was wrong.
-What actually solved it was adding five fields to one trace line:
+Point 6 of the order, and it is not optional.
+
+- **It does not hide memory latency.** One instruction is in flight at a time,
+  so a cache miss holds the whole front end and more waves buy hazard-free issue
+  and nothing else. Letting a stalled wave step aside needs multiple outstanding
+  misses, which is not built.
+- **It does not coalesce.** A per-lane access walks its active lanes one at a
+  time. The three addressing tiers are already distinguished in the encoding, so
+  a coalescer replaces the walk without the ISA moving — and the request counter
+  is already reported so the change will be a measured one.
+- **It has no float accumulator.** The float tier retires straight to the vector
+  file. That structure is the [SIMD PE](../simd/float.md)'s, and this core does
+  not want one.
+- **It has no working barrier.** `bar` retires as a no-op — see above.
+- **It has no texture sampler, rasteriser, depth unit, blend unit or atomics.**
+  The A extension's opcode major is not in the legal set, so an atomic raises an
+  illegal-instruction fault rather than being decoded into something adjacent.
+  [comparison](comparison.md) is what that costs against a shipped mobile GPU.
+
+## Debugging: probe the state, do not re-read the source
+
+The walk failures above cost rounds of arithmetic guessing about which operand
+was wrong. What resolved them was adding fields to one trace line:
 
 ```
   TR <t> LSU ln 0 ea 80000000 rgn 5 vmem 1 lin 1 sc 2 sv1 80000000 off 0 wd 1
                                          ^^^^^^
-                              `vmem 0` on a vsinw2 was the entire answer
+                              one wrong decode bit was the entire answer
 ```
 
-**Probe the state; do not re-read the source.** The bench's `KHT_TRACE` block is
-bounded so a wedged run cannot fill the log.
+The bench's trace block is bounded so a wedged run cannot fill the log.

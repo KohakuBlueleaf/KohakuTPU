@@ -9,6 +9,12 @@ tags:
 
 # The vector core
 
+> **Kind: Yours throughout.** E8M15, the lane count, the transcendental seeds and
+> the chain depth are this project's second compute unit, and it shares nothing
+> with its first but the port. That two units of such different shape are both
+> ordinary clients is the framework claim this page is evidence for
+> ([spec/compute-unit-port](../../spec/compute-unit-port.md)).
+
 KohakuTPU's second compute unit. Where the cluster runs one macro-op, the vector
 core runs *kernels* — it is the part of the machine that is programmed rather
 than parameterised, and the only one whose instruction set can branch.

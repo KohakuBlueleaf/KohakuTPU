@@ -1,42 +1,57 @@
 <script setup>
-/* SIMD PE — what the machine is and what it costs.
+/* SIMD PE — what the machine is, what it costs, and what each width buys.
  *
- * PROVENANCE. Resource and frequency figures are out-of-context synthesis on
- * xcvu13p-fhgb2104-2L-e, Vivado 2024.2, synth only. TWO ASKS are in play and
- * every table says which: 2.857 ns (350 MHz) for the reference float build,
- * which does not close with slack to spare, and 3.333 ns (300 MHz) for the
- * integer-only unit and the block probes. Rows from the two are NOT comparable.
- * Cycle figures: the PE's own CTL_CYCLE counter on the full system.
- * Source: docs/projects/kohakumpe/simd/.
+ * PROVENANCE. Every resource and frequency figure is out-of-context SYNTHESIS
+ * on xcvu13p-fhgb2104-2L-e, Vivado 2024.2, -directive default, at a 3.333 ns
+ * target, and nothing is placed or routed. Every table names its
+ * -flatten_hierarchy setting and the frozen source tree it was taken on, and
+ * rows from different trees are never subtracted.
+ *
+ * The delta tables are transcribed from docs/projects/kohakumpe/unit-counts.md,
+ * which is the price list and names, per table, the tree behind each row. The
+ * ISA tables are read out of src/kohakumpe/simd/khs_unit.v and its generated
+ * decode header rather than restated from prose.
  */
 
-const reference = `SIMD PE, 8 integer lanes + 4 float lanes
+const reference = `SIMD PE reference row -- 8 slots, 8 integer lanes, 4 binary32 FMA units
 
-  13,772 LUT  ·  10,126 FF  ·  13 BRAM  ·  72 DSP48  ·  353.4 MHz`;
+  15,682 LUT  ·  9,836 FF  ·  13 BRAM  ·  56 DSP48  ·  130 control sets
 
-const dtype = `FP32 or FP16 operands in   ->   E8M15 compute   ->   FP32 or FP16 out`;
+  requested 3.333 ns (300.0 MHz)   ->   achieved 349.3 MHz`;
 
-const granule = `   8 lanes x 32 bit  =  256 bit  =  one native memory entry  =  one flit
+const refCfg = `SIMD_EN 1   SIMD 8   ILANES 8   MULS 4   NACC 2   VREGS 8
+VSPAD 1024  NPART 16  SHIFT_UNITS 8 (full)  PERM_UNITS 8 (full)  RED_PIPE 1
+FLOAT_LANES 4   FSFU_UNITS 0   HAS_FALU 1   HAS_FACC 0   HAS_FCVT 0
+WB_STAGE 0   VREG_PRIM distributed   MEM_PRIM block   RECV_MEM distributed`;
 
-   integer lanes    the memory granule                      8, FIXED
-   float ELEMENTS   register width / element width         16, DERIVED
-   float LANES      arithmetic demand (throughput vs LUT)    4, A KNOB`;
+const dtype = `IEEE binary32 in  ->  binary32 compute  ->  binary32 out`;
 
-const meshSum = `   8 SIMD PEs    8 x 13,772  =  110,176
-   4 SIMT PEs    4 x 21,586  =   86,344
-                              --------
-                               196,520      the PE array, under 200k
-   2 controllers                  4,954
-                              --------
-                               201,474      against a ~350k budget
+const granule = `   SLOTS    32-bit words in a vector register    8, FIXED (VW = 32 * SIMD)
+   UNITS    how many are BUILT for a feature     0, 1, 2, 4, 8, or -1 for full
+   PASSES   slots / units, one issued per cycle  derived
 
-   float throughput   8 x 4  +  4 x 8  =  64 FMA / clock`;
+   8 slots x 32 bit  =  256 bit  =  one native memory entry  =  one flit payload
 
-const dspSum = `   8 integer lanes  x  (4 khs_mul + 4 cascaded DSP48 for the dot sum)  =  64
-   4 float lanes    x  2 (vec_alu's DSP-E and DSP-M)                     =   8
-                                                                      -------
-                                                                          72`;
+   integer width   the memory granule (coalescing)         FIXED by the granule
+   float width     arithmetic demand (throughput vs LUT)    A KNOB`;
 
+/* The per-unit DSP and BRAM costs of the float tier are identical on both cores
+ * because both instantiate the same units. The SIMT closed form is current and
+ * reproduces every measured SIMT row with zero error. The equivalent SIMD form
+ * is WITHDRAWN: it carried a term for the integer lane's multipliers sized by a
+ * parameter that no longer exists. */
+const dspForm = `   a binary32 FMA unit          2 DSP48                    both cores
+   the seed capability          + 1 DSP48 and 1.5 BRAM     both cores
+                                three RAMB18, one ROM per polynomial coefficient
+
+   SIMT, checked with zero error against every measured row:
+       DSP  = 2*FLANES + 4*LANES
+       BRAM = 26.5 + (FLANES>0 ? 4 : 0) + 1.5*FSFU_UNITS
+
+   SIMD: WITHDRAWN. The fitted form carried a 6*SIMD term for the integer
+         lane's multipliers, and the parameter that sized them is gone.`;
+
+/* ------------------------------------------------------------ the shape */
 const shape = {
   nodes: [
     {
@@ -55,8 +70,8 @@ const shape = {
       y: 6,
       w: 14,
       h: 4.4,
-      label: "the base RV32I core",
-      sub: "addresses, trip counts, branches",
+      label: "the base core — rv_core",
+      sub: "RV32IM: addresses, trip counts, branches",
     },
     {
       id: "vu",
@@ -65,7 +80,7 @@ const shape = {
       w: 16,
       h: 4.4,
       label: "the vector unit — khs_unit",
-      sub: "the elements, all of them",
+      sub: "the slots, all of them",
       accent: true,
     },
     {
@@ -75,7 +90,7 @@ const shape = {
       w: 14,
       h: 3.2,
       label: "x0..x31 · 32 bits",
-      sub: "NO multiply, NO float",
+      sub: "RV32IM — mul yes, div faults",
     },
     {
       id: "sp",
@@ -88,40 +103,31 @@ const shape = {
     },
     { id: "v", x: 19, y: 12.4, w: 16, h: 3.2, label: "v0..v7 · 256 bits" },
     {
-      id: "acc",
+      id: "facc",
       x: 19,
       y: 16.4,
       w: 16,
       h: 3.2,
-      label: "acc0, acc1 · 8 × int32",
-      sub: "one vector register wide",
-    },
-    {
-      id: "facc",
-      x: 19,
-      y: 20.4,
-      w: 16,
-      h: 3.2,
-      label: "facc0, facc1 · 16 E8M15 slots",
-      sub: "over 16 rotating partials",
+      label: "float accumulator · HAS_FACC",
+      sub: "NACC banks of NPART rotating partials — OFF by default",
     },
     {
       id: "vsp",
       x: 19,
-      y: 24.4,
+      y: 20.4,
       w: 16,
       h: 3.2,
       label: "vector scratchpad · 256-bit",
-      sub: "1024 × 256, 8 BRAM = SIMD banks",
+      sub: "1024 × 256, SIMD banks of block RAM",
     },
     {
       id: "lanes",
       x: 19,
-      y: 28.4,
+      y: 24.4,
       w: 16,
       h: 3.4,
-      label: "lane0 … lane7   flane0 … flane3",
-      sub: "8 integer, 4 float",
+      label: "ILANES integer · FLOAT_LANES float",
+      sub: "8 and 4 at the reference row; either may be 0",
       accent: true,
     },
   ],
@@ -131,8 +137,7 @@ const shape = {
     { from: "sc:b", to: "x:t", dir: "v" },
     { from: "x:b", to: "sp:t", dir: "v" },
     { from: "vu:b", to: "v:t", dir: "v" },
-    { from: "v:b", to: "acc:t", dir: "v" },
-    { from: "acc:b", to: "facc:t", dir: "v" },
+    { from: "v:b", to: "facc:t", dir: "v" },
     { from: "facc:b", to: "vsp:t", dir: "v" },
     { from: "vsp:b", to: "lanes:t", dir: "v" },
     { from: "sc:r", to: "vu:l", dir: "h", label: "rs1 + imm" },
@@ -143,75 +148,457 @@ const counts = {
   cols: [
     { key: "n", label: "quantity", mono: true },
     { key: "k", label: "kind" },
-    { key: "v", label: "at the reference", align: "right", mono: true },
+    { key: "v", label: "reference row", align: "right", mono: true },
     { key: "w", label: "What it is" },
   ],
   rows: [
     {
-      n: "integer lanes",
-      k: "parameter, but fixed in practice",
+      n: "SIMD",
+      k: "architecture",
       v: "8",
-      w: "<b>the address path.</b> 8 × 32 bit is one flit and one <code>MEM_RD_REQ</code>; narrowing it turns every coalesced load into two or more requests, permanently",
+      w: "32-bit slots in a vector register, so <code>VW = 256</code>. <b>The address path.</b> 8 × 32 bit is one flit payload and one memory-agent entry; narrowing it turns every coalesced load into two or more requests, permanently. Settable at 2, 4, 8 or 16, and priced rather than offered below 8",
     },
     {
-      n: "float elements",
-      k: "<b>derived</b>",
-      v: "16",
-      w: "a register width divided by an element width. Nobody's choice, and it is what the accumulator is sized in",
+      n: "ILANES",
+      k: "<b>unit count</b>",
+      v: "8",
+      w: "integer <b>IM</b> lanes — the packed ALU and its multipliers are one unit with one operand path and one result path. It narrows the <b>ALU and not the multipliers</b>, and the DSP column proves it: flat at 8, 4 and 2. <code>0</code> builds none and every integer vector encoding faults",
     },
     {
-      n: "float lanes",
-      k: "<b>parameter</b>",
+      n: "FLOAT_LANES",
+      k: "<b>unit count</b>",
       v: "<b>4</b>",
-      w: "how many float lanes are BUILT. Also <b>architectural</b> — it changes the accumulation order, and float addition does not associate",
+      w: "binary32 fused multiply-add units. <code>0</code> builds no float tier at all and every float encoding faults. <b>Architectural when the accumulator is built</b>, because it changes the answers and not only the area",
       _tone: "good",
     },
     {
-      n: "passes",
+      n: "FSFU_UNITS",
+      k: "<b>unit count</b>",
+      v: "0",
+      w: "how many of those units are <b>seed-capable</b> — <code>exp2</code>, <code>log2</code>, <code>rcp</code>, <code>rsqrt</code>. A subset of <code>FLOAT_LANES</code>, and a nonzero count <b>deepens the whole tier</b> from 6 cycles to 10 so the tier has one latency and one retire shadow",
+    },
+    {
+      n: "PASSES",
       k: "derived",
-      v: "4",
-      w: "<code>elements / lanes</code> — the issue interval. A <code>vfmacc</code> holds MEM for that many cycles and <b>retires once</b>",
+      v: "2",
+      w: "<code>SIMD / units</code> — the issue interval. A feature below full width holds the memory stage for that many cycles and <b>retires once</b>",
     },
   ],
 };
 
-const conversions = {
+/* ---- the price list, tree W, against 15,682 ---------------------------- */
+const widthsW = {
   cols: [
-    { key: "c", label: "conversion", mono: true },
-    { key: "w", label: "What it costs" },
+    { key: "k", label: "knob", mono: true },
+    { key: "v", label: "value", mono: true, align: "right" },
+    { key: "lut", label: "LUT", mono: true, align: "right" },
+    { key: "d", label: "ΔLUT", mono: true, align: "right" },
+    { key: "ff", label: "FF", mono: true, align: "right" },
+    { key: "bram", label: "BRAM", mono: true, align: "right" },
+    { key: "dsp", label: "DSP", mono: true, align: "right" },
+    { key: "f", label: "Fmax", mono: true, align: "right" },
   ],
   rows: [
     {
-      c: "FP16 → E8M15",
-      w: "<b>exact.</b> An 8-bit exponent covers FP16's range with room, and a subnormal normalises into an ordinary value",
+      k: "—",
+      v: "the reference row",
+      lut: "<b>15,682</b>",
+      d: "—",
+      ff: "9,836",
+      bram: "13",
+      dsp: "56",
+      f: "349.3",
       _tone: "good",
     },
     {
-      c: "FP32 → E8M15",
-      w: "<b>mantissa only.</b> E8 <i>is</i> FP32's exponent field, verbatim, so nothing about the range is lost; 23 mantissa bits round to 15, and an FP32 subnormal flushes because E8M15's smallest normal is 2⁻¹²⁶",
+      k: "PERM_UNITS",
+      v: "2",
+      lut: "15,185",
+      d: "<b>−497</b>",
+      ff: "10,077",
+      bram: "13",
+      dsp: "56",
+      f: "335.8",
+    },
+    {
+      k: "",
+      v: "1",
+      lut: "14,459",
+      d: "<b>−1,223</b>",
+      ff: "10,080",
+      bram: "13",
+      dsp: "56",
+      f: "318.3",
+    },
+    {
+      k: "SHIFT_UNITS",
+      v: "4",
+      lut: "14,970",
+      d: "<b>−712</b>",
+      ff: "10,085",
+      bram: "13",
+      dsp: "56",
+      f: "344.4",
+    },
+    {
+      k: "",
+      v: "2",
+      lut: "14,623",
+      d: "<b>−1,059</b>",
+      ff: "10,083",
+      bram: "13",
+      dsp: "56",
+      f: "320.6",
       _tone: "good",
     },
     {
-      c: "E8M15 → FP16",
-      w: "<b>the one conversion that is both lossy and range-limited.</b> It rounds to 10 mantissa bits and <b>saturates a finite overflow at 65504</b> rather than producing an infinity",
+      k: "",
+      v: "1",
+      lut: "14,779",
+      d: "<b>−903</b>",
+      ff: "10,098",
+      bram: "13",
+      dsp: "56",
+      f: "345.7",
+    },
+    {
+      k: "the shifter GATE",
+      v: "0 — shifts <b>fault</b>",
+      lut: "14,757",
+      d: "−925",
+      ff: "9,749",
+      bram: "13",
+      dsp: "56",
+      f: "343.5",
+      _tone: "warn",
+    },
+    {
+      k: "FLOAT_LANES",
+      v: "8",
+      lut: "20,063",
+      d: "<b>+4,381</b>",
+      ff: "13,499",
+      bram: "13",
+      dsp: "64",
+      f: "310.4",
+    },
+    {
+      k: "",
+      v: "2",
+      lut: "13,676",
+      d: "<b>−2,006</b>",
+      ff: "8,011",
+      bram: "13",
+      dsp: "52",
+      f: "324.4",
+    },
+    {
+      k: "FSFU_UNITS",
+      v: "1",
+      lut: "16,674",
+      d: "<b>+992</b>",
+      ff: "10,232",
+      bram: "14.5",
+      dsp: "57",
+      f: "318.1",
+    },
+    {
+      k: "",
+      v: "4 — full rate",
+      lut: "16,668",
+      d: "<b>+986</b>",
+      ff: "11,292",
+      bram: "19",
+      dsp: "60",
+      f: "318.1",
+      _tone: "warn",
+    },
+    {
+      k: "NACC",
+      v: "1",
+      lut: "15,128",
+      d: "−554",
+      ff: "9,564",
+      bram: "13",
+      dsp: "56",
+      f: "321.6",
+    },
+    {
+      k: "",
+      v: "4",
+      lut: "16,005",
+      d: "+323",
+      ff: "10,362",
+      bram: "13",
+      dsp: "56",
+      f: "341.9",
+    },
+    {
+      k: "VREGS",
+      v: "4 — half the file",
+      lut: "15,647",
+      d: "<b>−35</b>",
+      ff: "9,846",
+      bram: "13",
+      dsp: "56",
+      f: "327.3",
+    },
+    {
+      k: "WB_STAGE",
+      v: "1 — <b>what rv_pe ships</b>",
+      lut: "15,736",
+      d: "+54",
+      ff: "10,110",
+      bram: "13",
+      dsp: "56",
+      f: "341.9",
+    },
+    {
+      k: "VREG_PRIM",
+      v: "block",
+      lut: "15,674",
+      d: "−8",
+      ff: "9,068",
+      bram: "<b>25</b>",
+      dsp: "56",
+      f: "<b>253.7</b>",
+      _tone: "bad",
+    },
+    {
+      k: "SIMD",
+      v: "4",
+      lut: "11,282",
+      d: "−4,400",
+      ff: "9,017",
+      bram: "9",
+      dsp: "32",
+      f: "322.9",
+    },
+    {
+      k: "",
+      v: "16",
+      lut: "24,830",
+      d: "+9,148",
+      ff: "11,448",
+      bram: "21",
+      dsp: "104",
+      f: "307.7",
+    },
+    {
+      k: "SIMD_EN",
+      v: "0 — the base core alone",
+      lut: "2,661",
+      d: "−13,021",
+      ff: "4,140",
+      bram: "5",
+      dsp: "0",
+      f: "396.5",
+      _tone: "warn",
+    },
+    {
+      k: "<b>combined</b>",
+      v: "<b>PERM 1 + SHIFT 2</b>",
+      lut: "<b>13,586</b>",
+      d: "<b>−2,096</b>",
+      ff: "10,313",
+      bram: "13",
+      dsp: "56",
+      f: "367.8",
+      _tone: "good",
+    },
+  ],
+};
+
+/* ---- three knobs that exist only on the later tree ---------------------- */
+const widthsWp = {
+  cols: [
+    { key: "c", label: "change", mono: true },
+    { key: "d", label: "ΔLUT", mono: true, align: "right" },
+    { key: "n", label: "note" },
+  ],
+  rows: [
+    {
+      c: "ILANES 8 → 4",
+      d: "<b>−1,558</b>",
+      n: "<b>DSP stays at 61 across 8, 4 and 2.</b> Fabric adders and DSP columns are two budgets and one knob must not span both",
+      _tone: "good",
+    },
+    {
+      c: "ILANES 4 → 2",
+      d: "−346",
+      n: "FF rises 92 then 72 — the staging register the walk needs",
+    },
+    { c: "SHIFT_UNITS 8 → 2", d: "−777", n: "" },
+    { c: "PERM_UNITS 8 → 2", d: "−742", n: "" },
+    {
+      c: "RED_UNITS 1 → 0",
+      d: "−551",
+      n: "removes <code>vredsum</code> and <code>vredmax</code>; both encodings then fault",
+    },
+    {
+      c: "HAS_SHROUND 1 → 0",
+      d: "−398",
+      n: "<code>vsrari</code> rounds toward zero rather than faulting — it removes a rounding step, not an instruction",
+    },
+    { c: "FSFU_UNITS 1 → 0", d: "−847", n: "" },
+    {
+      c: "FSFU_UNITS 1 → 4 — <b>full rate</b>",
+      d: "<b>−66</b>",
+      n: "<b>full rate is cheaper than one unit, for four times the rate.</b> Not an artefact — see the trap below",
+      _tone: "good",
+    },
+    {
+      c: "FLOAT_LANES 4 → 8",
+      d: "+4,203",
+      n: "<b>1,051 LUT per fused multiply-add unit</b>",
+    },
+  ],
+};
+
+const marginal = {
+  cols: [
+    { key: "u", label: "unit" },
+    { key: "a", label: "the arithmetic behind it", mono: true },
+    { key: "p", label: "per unit", align: "right", mono: true },
+  ],
+  rows: [
+    {
+      u: "SIMD FP FMA",
+      a: "(20,063 − 15,682)/4 and (15,682 − 13,676)/2",
+      p: "<b>1,095</b> and <b>1,003</b>",
+      _tone: "good",
+    },
+    {
+      u: "SIMT FP FMA",
+      a: "(19,461 − 16,307)/4 and (16,307 − 14,100)/2",
+      p: "<b>789</b> and <b>1,104</b>",
+      _tone: "good",
+    },
+    {
+      u: "SIMD 32-bit slot — <code>SIMD</code>",
+      a: "(15,682 − 11,282)/4 and (24,830 − 15,682)/8",
+      p: "1,100 and 1,144",
+    },
+    {
+      u: "SIMD float accumulator bank",
+      a: "(15,682 − 15,128)/1 and (16,005 − 15,682)/2",
+      p: "554 then 162",
+    },
+    {
+      u: "SIMD multiply depth — the retired <code>MULS</code>",
+      a: "4 → 2 is +580 LUT for −24 DSP",
+      p: "a LUT-for-DSP trade, the wrong direction here",
       _tone: "warn",
     },
   ],
 };
 
-const precision = {
+const modelErr = {
   cols: [
-    { key: "f", label: "Format" },
-    { key: "e", label: "rel. error, half ulp", align: "right", mono: true },
+    { key: "r", label: "prediction row" },
+    { key: "n", label: "knobs", mono: true, align: "right" },
+    { key: "p", label: "predicted", mono: true, align: "right" },
+    { key: "m", label: "measured", mono: true, align: "right" },
+    { key: "d", label: "error", mono: true, align: "right" },
   ],
   rows: [
-    { f: "FP16 — what a mobile fragment shader runs at", e: "4.9e-4" },
     {
-      f: "<b>E8M15 — what every partial sum here carries</b>",
-      e: "<b>1.5e-5</b>",
+      r: "<b>SIMD</b> — <code>PERM_UNITS</code> 1 + <code>SHIFT_UNITS</code> 2",
+      n: "2",
+      p: "13,400",
+      m: "<b>13,586</b>",
+      d: "<b>+186 · +1.4%</b>",
       _tone: "good",
     },
-    { f: "FP32", e: "6.0e-8" },
+    {
+      r: "<b>SIMT</b> — <code>WAVES</code> 8 + <code>IPDOM_D</code> 4 + a memory format off",
+      n: "3",
+      p: "16,812",
+      m: "<b>16,552</b>",
+      d: "<b>−260 · −1.5%</b>",
+      _tone: "good",
+    },
+    {
+      r: "DSP and BRAM, on both predictions",
+      n: "—",
+      p: "56 / 13 and 48 / 30.5",
+      m: "<b>exact</b>",
+      d: "<b>0</b>",
+      _tone: "good",
+    },
+    {
+      r: "rows that moved <b>seven</b> knobs at once",
+      n: "7",
+      p: "—",
+      m: "—",
+      d: "<b>up to 44%</b>, one-directional",
+      _tone: "bad",
+    },
+  ],
+};
+
+/* ---------------------------------------------------- what it buys, in cycles */
+const buys = {
+  cols: [
+    { key: "f", label: "Feature" },
+    { key: "k", label: "Kernel", mono: true },
+    { key: "s", label: "scalar", align: "right", mono: true },
+    { key: "v0", label: "vector, WB 0", align: "right", mono: true },
+    { key: "v1", label: "vector, <b>WB 1</b>", align: "right", mono: true },
+    { key: "x", label: "speedup, <b>WB 1</b>", align: "right", mono: true },
+  ],
+  rows: [
+    {
+      f: "the permute — <code>vsldw</code>, <code>vunpk</code>, saturating <code>vpack</code>",
+      k: "fir_i16_v",
+      s: "3,407",
+      v0: "559",
+      v1: "<b>745</b>",
+      x: "<b>4.6×</b>",
+    },
+    {
+      f: "the permute, and the packed shift — <code>vslli</code> / <code>vsrari</code>",
+      k: "epilogue_v",
+      s: "8,028",
+      v0: "245",
+      v1: "<b>325</b>",
+      x: "<b>24.7×</b>",
+      _tone: "good",
+    },
+    {
+      f: "the reduction trees",
+      k: "reduce_i32_v",
+      s: "3,093",
+      v0: "251",
+      v1: "<b>283</b>",
+      x: "<b>10.9×</b>",
+    },
+    {
+      f: "vector <code>vld</code> / <code>vst</code>",
+      k: "memcpy32_v",
+      s: "783",
+      v0: "239",
+      v1: "<b>271</b>",
+      x: "<b>2.9×</b>",
+    },
+    {
+      f: "<b>the seed units</b>",
+      k: "<b>none exists</b>",
+      s: "—",
+      v0: "—",
+      v1: "—",
+      x: "—",
+      _tone: "bad",
+    },
+    {
+      f: "<b>the float tier itself</b>",
+      k: "<b>none exists</b>",
+      s: "—",
+      v0: "—",
+      v1: "—",
+      x: "—",
+      _tone: "bad",
+    },
   ],
 };
 
@@ -223,374 +610,44 @@ const params = {
   rows: [
     {
       t: "the compute format",
-      c: "<b>not a parameter at all.</b> E8M15, always, in every build",
+      c: "<b>not a parameter at all.</b> IEEE binary32, always, in every build. There is no <code>f2f</code> convert because there is no second format to convert to",
       _tone: "good",
     },
     {
-      t: "operand width",
-      c: "<b>not a parameter</b> — it is a field of the instruction word",
+      t: "the vector width — <code>SIMD</code>",
+      c: "<b>architecture.</b> It sets <code>VW = 32 · SIMD</code>, which moves the register file, the scratchpad row, the permute network and the reduction trees together. It is not a unit count",
+    },
+    {
+      t: "ILANES · SHIFT_UNITS · PERM_UNITS · FLOAT_LANES · FSFU_UNITS · FCVT_UNITS",
+      c: "<b>unit counts</b> — 0, 1, 2, 4, 8, or −1 for full rate, and a nonzero value must divide <code>SIMD</code>. A width costs cycles, never encodings; <code>0</code> means the hardware is absent and its encodings <b>fault at decode</b>",
       _tone: "good",
     },
     {
-      t: "SIMD_FLOAT",
-      c: "a <b>presence</b> switch: float tier, or no float tier and custom-1 unmapped. It does not select a format",
+      t: "RED_UNITS · HAS_SHROUND · HAS_FALU · HAS_FACC",
+      c: "<b>gates</b>, spelled as counts whose only values are 0 and 1 — one vocabulary, one way to say none. <code>HAS_SHROUND</code> is the one entry that does not fault at 0, because it removes a rounding step rather than an instruction",
     },
     {
-      t: "SIMD_FLOAT_LANES",
-      c: "a <b>width</b> knob — and <b>architectural</b>, because it changes the accumulation order and therefore the answers",
-    },
-    {
-      t: "SIMD_NPART",
-      c: "<b>fixed protocol</b> — the rotation count is part of the ISA's stated order",
-    },
-    {
-      t: "SIMD_LANES, SIMD_VREGS, SIMD_NACC, SIMD_MULS, SIMD_SHIFT, SIMD_PERM, SIMD_VSPAD",
-      c: "ordinary parameters, each measured as itself",
-    },
-    {
-      t: "SIMD_DOTDSP, SIMD_WB",
-      c: "parameters, <b>both defaulting to 1</b> on <code>rv_pe</code> — they pay only at a binding constraint, and each changes a latency",
+      t: "NPART",
+      c: "<b>fixed protocol when HAS_FACC is on.</b> The rotation count is part of the ISA's stated accumulation order, and float addition does not associate, so it changes the answers",
       _tone: "warn",
+    },
+    {
+      t: "FLOAT_LANES, <i>when the accumulator is built</i>",
+      c: "<b>fixed protocol too, and this is the one a reader will miss.</b> With fewer units an element's accumulate chain is a shorter strided subset of the partials, so the order changes and so do the answers. The elementwise groups carry no such contract",
+      _tone: "warn",
+    },
+    {
+      t: "NACC · VREGS · VSPAD_ENTRIES · WB_STAGE · RED_PIPE · VREG_PRIM · MEM_PRIM · USE_DSP",
+      c: "structural parameters, each measured as itself",
     },
     {
       t: "SIMD_EN = 0",
-      c: "the unit disappears — generate, not zero-width — and the PE is the base core bit for bit",
+      c: "the unit disappears — a <code>generate</code>, not a zero width — and the PE is the base core bit for bit",
     },
   ],
 };
 
-const knobs = {
-  cols: [
-    { key: "a", label: "ask", align: "right", mono: true },
-    { key: "k", label: "knobs" },
-    { key: "l", label: "LUT", align: "right", mono: true },
-    { key: "f", label: "Fmax", align: "right", mono: true },
-    { key: "w", label: "" },
-  ],
-  rows: [
-    {
-      a: "2.857 ns",
-      k: "neither",
-      l: "14,982",
-      f: "322.0",
-      w: "the assembled 8 int + 4 float PE at the ask it is now constrained to",
-    },
-    {
-      a: "<b>2.857 ns</b>",
-      k: "<b>both</b>",
-      l: "<b>13,772</b>",
-      f: "<b>353.4</b>",
-      w: "<b>the shipped reference</b> — 10,126 FF, 13 BRAM, 72 DSP48",
-      _tone: "good",
-    },
-    {
-      a: "3.333 ns",
-      k: "<code>SIMD_WB</code> alone",
-      l: "+89",
-      f: "−28 MHz",
-      w: "where the PE closes with positive slack, an extra register is pure cost",
-      _tone: "warn",
-    },
-  ],
-};
-
-const knobCost = {
-  cols: [
-    { key: "k", label: "knob", mono: true },
-    { key: "b", label: "what it buys" },
-    { key: "c", label: "what it costs in cycles" },
-  ],
-  rows: [
-    {
-      k: "SIMD_DOTDSP",
-      b: "the dot sum stays in the DSP48 column — 256 LUT + 32 CARRY8 back at eight lanes, for 32 more DSP columns",
-      c: "<code>DOT_LAT</code> goes <b>2 → 4</b>, so <code>vaccrd</code>/<code>vaccz</code>/<code>vaccwr</code> behind a dot in flight wait 4 cycles",
-      _tone: "warn",
-    },
-    {
-      k: "SIMD_WB",
-      b: "the vector file's write path is halved",
-      c: "a distance-1 dependency costs a second stall, <b>and distance 2 becomes a hazard that did not exist</b>",
-      _tone: "warn",
-    },
-  ],
-};
-
-const sweepBars = {
-  items: [
-    {
-      label: "s8 — the baseline of this table",
-      value: 7961,
-      note: "368.7 MHz",
-    },
-    {
-      label: "s8, no permute network",
-      value: 6327,
-      note: "−1,634 LUT · +33.9 MHz",
-    },
-    {
-      label: "s8, no packed shifter",
-      value: 6448,
-      note: "−1,513 LUT · +24.4 MHz",
-    },
-    { label: "s8, one accumulator", value: 7575, note: "−386 LUT · +0.2 MHz" },
-    {
-      label: "s8, 32 vector registers",
-      value: 7853,
-      note: "−108 LUT · bigger file, SMALLER unit",
-    },
-    {
-      label: "s8, 2 multipliers per lane",
-      value: 7330,
-      note: "−631 LUT · −16 DSP · int8 gone",
-    },
-    { label: "s4 — four lanes", value: 4138, note: "−3,823 LUT · −1.3 MHz" },
-    { label: "s2 — two lanes", value: 2091, note: "−5,870 LUT · +33.4 MHz" },
-    {
-      label: "s8, multipliers in fabric ✗",
-      value: 15068,
-      note: "+7,107 LUT · −73.4 MHz",
-      tone: "bad",
-    },
-    {
-      label: "s8, block-RAM vector file ✗",
-      value: 8158,
-      note: "+197 LUT · +8 BRAM · −97.9 MHz",
-      tone: "bad",
-    },
-  ],
-};
-
-const dropped = {
-  cols: [
-    { key: "d", label: "Dropped" },
-    { key: "w", label: "Why" },
-  ],
-  rows: [
-    {
-      d: "<b>every float-tier LUT figure taken before the operand edge became unconditional</b> — the assembled 14,579 / 17,844 / 22,743 rows at 3.333 ns",
-      w: "the float lane now carries <b>both</b> operand converters unconditionally; those builds carried only the narrow one. It is a different lane, so the totals are not comparable and every one of them is low",
-      _tone: "bad",
-    },
-    {
-      d: "<b>the tier-alone lane-count curve</b> — 11,432 / 6,353 / 3,808 / 2,475 and <code>1,270 + 635 × lanes</code>",
-      w: "<b>withdrawn for provenance, not because it was wrong.</b> It came from the tier probe, whose script and module have both since been renamed, so no run can be tied to the module that exists now — and the probe's accumulator <b>folds differently</b> from the unit's in any case. It needs re-measuring, not reinstating",
-      _tone: "warn",
-    },
-    {
-      d: "<b>8 int + 4 float = 15,119 LUT / 9,720 FF / 40 DSP</b>",
-      w: "a probe delta subtracted from an assembled build — arithmetic across two scopes, never a measurement. The measured reference is <b>13,772 / 10,126 / 72</b>",
-      _tone: "bad",
-    },
-    {
-      d: "<b>8 int + 8 float = 16,214 LUT</b>",
-      w: "derived from a SIMD = 4 proxy whose vector register is 128 bits rather than 256 — a floor rather than an estimate, and it never paid for the walk sequencer",
-      _tone: "bad",
-    },
-    {
-      d: "“the float tier costs 12,400 LUT and 10.6 MHz”, and “sixteen float lanes, unconditionally”",
-      w: "both sentences rested on one float lane per element being the only expressible build. The lane count is a parameter and the reference is four",
-      _tone: "bad",
-    },
-  ],
-};
-
-const thesis = {
-  cols: [
-    { key: "k", label: "Kernel" },
-    { key: "s", label: "scalar", align: "right", mono: true },
-    { key: "v", label: "vector", align: "right", mono: true },
-    { key: "x", label: "speedup", align: "right", mono: true },
-    { key: "a", label: "against" },
-  ],
-  rows: [
-    {
-      k: "int8 dot, 128 elements",
-      s: "8,221",
-      v: "52",
-      x: "<b>158.1×</b>",
-      a: "the core as it ships",
-    },
-    {
-      k: "int8 dot, 128 elements",
-      s: "1,297",
-      v: "52",
-      x: "<b>24.9×</b>",
-      a: "a scalar core that has a multiplier — <b>the honest SIMD number</b>",
-      _tone: "good",
-    },
-    {
-      k: "requantise epilogue, 256 elements",
-      s: "8,025",
-      v: "242",
-      x: "33.2×",
-      a: "—",
-    },
-    {
-      k: "int32 sum and signed max, 256",
-      s: "3,090",
-      v: "248",
-      x: "12.5×",
-      a: "—",
-    },
-    {
-      k: "8-tap int16 FIR, constant taps",
-      s: "3,404",
-      v: "556",
-      x: "6.1×",
-      a: "—",
-    },
-    { k: "256-word copy", s: "780", v: "236", x: "3.3×", a: "—" },
-  ],
-};
-
-const vtiming = {
-  cols: [
-    { key: "e", label: "Event" },
-    { key: "c", label: "Cost" },
-  ],
-  rows: [
-    {
-      e: "ALU, logic, shift, permute, moves, <code>vld</code>, <code>vst</code>",
-      c: "1 cycle",
-    },
-    {
-      e: "<code>vdot</code>, including back to back",
-      c: "1 cycle; the accumulate lands <code>DOT_LAT</code> later — <b>4 as shipped</b>, 2 at <code>SIMD_DOTDSP = 0</code>",
-    },
-    { e: "<code>vmul</code>", c: "2 cycles" },
-    {
-      e: "<code>vredsum</code> / <code>vredmax</code> at more than two lanes",
-      c: "2 cycles",
-    },
-    { e: "RAW on a vector register, distance 1", c: "1 stall" },
-    {
-      e: "RAW at distance 2",
-      c: "<b>1 stall at <code>SIMD_WB = 1</code></b>, which is what ships",
-    },
-    { e: "<code>vld</code> behind a <code>vst</code>", c: "1 stall" },
-    {
-      e: "<code>vaccrd</code> / <code>vaccz</code> / <code>vaccwr</code> behind a dot in flight",
-      c: "up to <code>DOT_LAT</code> — <b>4 as shipped</b>",
-    },
-    {
-      e: "<code>vfmacc</code> / <code>vfmsac</code>, <b>including back to back into the same accumulator</b>",
-      c: "<code>passes</code> cycles — <b>4 at four float lanes</b>, 1 at one lane per element. It retires once, and each pass's accumulate lands 15 cycles later in the background",
-    },
-    {
-      e: "<code>vfaccz</code>",
-      c: "<code>NPART</code> cycles — a sweep of a one-write-port memory",
-    },
-    {
-      e: "<code>vfaccwr</code>",
-      c: "the element count again to walk one converter over the seed, then the <code>NPART</code> sweep",
-    },
-    {
-      e: "<code>vfaccrd</code>",
-      c: "≈ <b>270 cycles</b>, and <b>the same at every lane count</b>",
-    },
-    {
-      e: "<code>vfaccz</code> / <code>vfaccwr</code> / <code>vfaccrd</code> behind a float accumulate in flight",
-      c: "up to 15 stalls",
-    },
-  ],
-};
-
-const isa = {
-  cols: [
-    { key: "i", label: "Instruction", mono: true },
-    { key: "w", label: "What it does" },
-  ],
-  rows: [
-    {
-      i: "vld / vst",
-      w: "a whole vector to or from <code>xs1 + imm</code>. <b>Line-aligned by contract</b> — a misaligned address faults",
-    },
-    {
-      i: "vadd / vsub",
-      w: "element-wise, wrapping — <code>.s8</code>, <code>.s16</code>, <code>.s32</code>",
-    },
-    { i: "vsadd / vssub", w: "element-wise, signed saturating" },
-    {
-      i: "vmin / vmax",
-      w: "element-wise signed minimum / maximum — one mux each, off the same adder",
-    },
-    {
-      i: "vmul",
-      w: "element-wise product, low half kept (<code>.s8</code> and <code>.s16</code> only)",
-    },
-    {
-      i: "vand / vor / vxor / vandn",
-      w: "bitwise, untyped. <code>vandn</code> is <code>vs1 &amp; ~vs2</code>",
-    },
-    { i: "vslli / vsrli / vsrai", w: "immediate shifts, three element widths" },
-    {
-      i: "vsrari",
-      w: "right arithmetic, <b>rounding</b> — the requantise primitive",
-    },
-    {
-      i: "vdot / vdotn",
-      w: "<code>acc[ad] ±=</code> the dot product within each 32-bit lane. <code>.s32</code> <b>faults</b> — an int32 product does not fit a 34-bit lane sum",
-    },
-    {
-      i: "vaccz / vaccwr / vaccrd",
-      w: "clear, seed from a vector register (the bias), read back as int32 lanes",
-    },
-    {
-      i: "vsplat / vextr",
-      w: "a scalar into every lane; one lane out to a scalar register",
-    },
-    {
-      i: "vredsum / vredmax",
-      w: "the sum, or the signed maximum, of the 32-bit lanes into a scalar register",
-    },
-    {
-      i: "vsldw0..7",
-      w: "lane <i>i</i> ← lane <code>(k+i)</code> of <code>{vs2, vs1}</code> — a <b>rotate</b> of the concatenation, so every index is defined at every width",
-    },
-    {
-      i: "vpack / vunpkl / vunpkh",
-      w: "two vectors narrowed to one with signed saturation; or half a vector widened and sign-extended",
-    },
-  ],
-};
-
-const fisa = {
-  cols: [
-    { key: "i", label: "Instruction", mono: true },
-    { key: "w", label: "What it does" },
-  ],
-  rows: [
-    {
-      i: "vfaccz ad",
-      w: "<code>facc[ad] ← 0</code>, every slot. <b>Untyped</b> — zero is zero in either width",
-    },
-    {
-      i: "vfmacc.f16 ad, vs1, vs2",
-      w: "<code>facc[ad][i] += vs1[i] * vs2[i]</code>, elementwise",
-    },
-    { i: "vfmsac.f16 ad, vs1, vs2", w: "the same, subtracted" },
-    {
-      i: "vfaccwr.f16 ad, vs1",
-      w: "seed from a vector register — the bias vector",
-    },
-    {
-      i: "vfaccrd.f16 vd, as1",
-      w: "fold the partials and return one FP16 per element",
-    },
-    {
-      i: "vfredsum.f16 xd, as1",
-      w: "encoded and <b>NOT BUILT</b>; it faults",
-      _tone: "bad",
-    },
-    {
-      i: "any .f32 form",
-      w: "encoded and <b>refused by this unit today</b> — the lane has the edge, the unit ties the width bit low",
-      _tone: "warn",
-    },
-  ],
-};
-
+/* --------------------------------------------------------------- the ISA */
 const rType = [
   { name: "funct7", bits: 7, value: "op<<2 | et" },
   { name: "rs2", bits: 5 },
@@ -601,13 +658,303 @@ const rType = [
 ];
 
 const fType = [
-  { name: "funct7", bits: 7, value: "op<<2 | WIDTH" },
+  { name: "funct7", bits: 7, value: "op<<2 | ft" },
   { name: "rs2", bits: 5 },
   { name: "rs1", bits: 5 },
-  { name: "funct3", bits: 3, value: "FMAC / FRED / FCVT" },
+  { name: "funct3", bits: 3, value: "FMAC/FRED/FCVT/FALU/FSFU" },
   { name: "rd", bits: 5 },
   { name: "0101011", bits: 7, value: "custom-1", accent: true },
 ];
+
+const fields = {
+  cols: [
+    { key: "f", label: "Field", mono: true },
+    { key: "w", label: "Width", align: "right", mono: true },
+    { key: "p", label: "Position", mono: true },
+    { key: "o", label: "Owner" },
+  ],
+  rows: [
+    {
+      f: "opcode",
+      w: "7",
+      p: "[6:0]",
+      o: "<b>fixed.</b> <code>0x0B</code> custom-0 is the integer tier; <code>0x2B</code> custom-1 is the float tier. A build with <code>FLOAT_LANES = 0</code> leaves custom-1 unmapped, so a float instruction faults <b>at the opcode major</b> rather than inside a decode case",
+    },
+    {
+      f: "rd",
+      w: "5",
+      p: "[11:7]",
+      o: "the instruction. On <code>vst</code> it carries the <b>data</b> register: RV32's S-format exists to keep <code>rs1</code> and <code>rs2</code> in place for the scalar read, and a vector store's data comes from the vector file, so that constraint does not apply",
+    },
+    {
+      f: "funct3",
+      w: "3",
+      p: "[14:12]",
+      o: "<b>fixed.</b> Names the group — the table below is the allocation, and slot 5 on custom-0 and slot 1 on custom-1 are both spoken for by things that do not exist",
+    },
+    { f: "rs1", w: "5", p: "[19:15]", o: "the instruction" },
+    { f: "rs2", w: "5", p: "[24:20]", o: "the instruction, or an immediate shift amount on <code>VSHI</code>" },
+    {
+      f: "funct7[6:2]",
+      w: "5",
+      p: "[31:27]",
+      o: "<b>the group.</b> The operation within it — except on <code>VPRM</code>, which spends three bits on a lane index instead, because <code>vsldw</code> needs somewhere to put one and an R-type has no field left",
+    },
+    {
+      f: "funct7[1:0]<br>on a typed integer group",
+      w: "2",
+      p: "[26:25]",
+      o: "<b>fixed:</b> 0 = int8, 1 = int16, 2 = int32. Read <b>straight off the instruction word</b> rather than out of a decode case, so two adjacent instructions may use different widths with no state to change",
+      _tone: "warn",
+    },
+    {
+      f: "funct7[1:0]<br>on custom-1",
+      w: "2",
+      p: "[26:25]",
+      o: "<b>fixed:</b> <code>f32</code> is the only value a build accepts. Every other value is an unmapped encoding rather than a silent reinterpretation — the field is kept where the integer tier's is precisely so that no reader has to check whether it moved",
+      _tone: "warn",
+    },
+  ],
+};
+
+const isa = {
+  cols: [
+    { key: "g", label: "funct3", mono: true },
+    { key: "i", label: "Instructions", mono: true },
+    { key: "w", label: "What they do, and what faults" },
+  ],
+  rows: [
+    {
+      g: "0 · 1 — <code>VLD</code> / <code>VST</code>",
+      i: "vld · vst",
+      w: "a whole vector to or from <code>xs1 + imm</code>. <b>Vector-aligned by contract</b> — a misaligned address faults in the same stage and by the same path as any other bad address, which is what lets the wide face be a plain row index with no rotate, no merging and no second read",
+    },
+    {
+      g: "2 — <code>VINT</code>",
+      i: "vadd · vsub · vsadd · vssub · vmin · vmax · vmul",
+      w: "element-wise over <code>.s8</code> / <code>.s16</code> / <code>.s32</code>: wrapping and saturating add and subtract, signed minimum and maximum, and the low half of the product — <code>vmul</code> in <code>.s8</code> and <code>.s16</code> only. Faults at <code>ILANES = 0</code>",
+    },
+    {
+      g: "3 — <code>VBIT</code>",
+      i: "vand · vor · vxor · vandn",
+      w: "bitwise, untyped. <code>vandn</code> is <code>vs1 &amp; ~vs2</code>, and it is what blends a float compare's mask",
+    },
+    {
+      g: "4 — <code>VSHI</code>",
+      i: "vslli · vsrli · vsrai · vsrari",
+      w: "immediate shifts at three element widths. <code>vsrari</code> is the rounding right shift — the requantise primitive, and the one operation a plain <code>vsrai</code> gets subtly wrong. Faults at <code>SHIFT_UNITS = 0</code>",
+    },
+    {
+      g: "<b>5 — <code>VMAC</code></b>",
+      i: "—",
+      w: "<b>reserved and unmapped.</b> The retired integer dot unit and its accumulators lived here. Keeping the group unmapped is what makes an old binary <b>fault</b> rather than decode as something adjacent",
+      _tone: "warn",
+    },
+    {
+      g: "6 — <code>VMOV</code>",
+      i: "vsplat · vextr · vredsum · vredmax",
+      w: "a scalar into every slot; one slot out to a scalar register; the sum or the signed maximum of the 32-bit slots into a scalar register. A <code>vextr</code> lane index at or above <code>SIMD</code> <b>faults</b> rather than wrapping — one encoding must not mean element 5 on an eight-lane build and element 1 on a four-lane one. The two reductions fault at <code>RED_UNITS = 0</code>",
+    },
+    {
+      g: "7 — <code>VPRM</code>",
+      i: "vsldw · vpack.s16 · vpack.s32 · vunpkl/h.s8 · vunpkl/h.s16",
+      w: "the cross-lane network. <code>vsldw</code> is a <b>rotate</b> of <code>{vs2, vs1}</code>, so every index is defined at every width rather than leaving a hole the RTL and the model could disagree about; pack narrows two vectors to one with signed saturation and unpack widens half a vector with sign extension. Faults at <code>PERM_UNITS = 0</code>",
+    },
+  ],
+};
+
+const fisa = {
+  cols: [
+    { key: "g", label: "funct3", mono: true },
+    { key: "i", label: "Instructions", mono: true },
+    { key: "w", label: "What they do, and what faults" },
+  ],
+  rows: [
+    {
+      g: "3 — <code>FALU</code>",
+      i: "vfmul · vfadd · vfsub · vfma · vfmin · vfmax · vfcmplt · vfcmpgt · vfcmpeq",
+      w: "the elementwise base, and what every CPU SIMD ISA ships as its float tier. <code>vfmin</code> and <code>vfmax</code> are IEEE minNum and maxNum, so <b>a NaN operand loses</b>; the three compares write <b>all ones or all zeros per element</b> into an ordinary vector register, so a branchless conditional is a compare and a bitwise blend with no new architectural state",
+      _tone: "good",
+    },
+    {
+      g: "4 — <code>FSFU</code>",
+      i: "vfexp2 · vflog2 · vfrcp · vfrsqrt",
+      w: "the four base-2 seeds. <b>A unit count, not a boolean:</b> <code>FSFU_UNITS</code> of the FMA units carry a seed table beside their multiply-add, and Newton refinement is an instruction sequence deliberately — <code>1/a</code> is two multiply-adds and <code>rsqrt</code> is three. Faults at 0",
+    },
+    {
+      g: "0 — <code>FMAC</code>",
+      i: "vfmacc · vfmsac · vfaccz · vfaccrd · vfaccwr",
+      w: "the rotating accumulator. <b>Off by default</b> — it is the tier's <i>extra</i> rather than its floor: a vertex transform, a float dot or a long reduction justify it, and elementwise colour work does not. Faults at <code>HAS_FACC = 0</code>",
+      _tone: "warn",
+    },
+    {
+      g: "2 — <code>FCVT</code>",
+      i: "vfcvt.f2i · vfcvt.i2f",
+      w: "binary32 ↔ int32, <code>FCVT_UNITS</code> converters per pass. <b>Built, and never priced</b> — the group had no datapath when the campaigns below were run, so every published figure for it measures a converter that did not convert. It has one now and has not been re-measured. Faults at 0",
+      _tone: "warn",
+    },
+    {
+      g: "<b>1 — <code>FRED</code></b>",
+      i: "vfredsum.f32",
+      w: "<b>encoded and NOT built. It faults.</b> A cross-slot sum is a second pass that does not exist, and returning slot 0 alone would be the plausible wrong answer a refusal exists to prevent. The <b>golden model does implement it</b>, so the model is ahead of the RTL here — a kernel finishes the cross-slot sum with the integer reduction or in scalar code",
+      _tone: "bad",
+    },
+  ],
+};
+
+const timing = {
+  cols: [
+    { key: "e", label: "Event" },
+    { key: "c", label: "Cost" },
+  ],
+  rows: [
+    {
+      e: "ALU, logic, shift, permute, moves, <code>vld</code>, <code>vst</code> at full width",
+      c: "1 cycle",
+    },
+    {
+      e: "any of the above at <code>U &lt; SIMD</code> units",
+      c: "<code>SIMD / U</code> cycles — the memory stage is held until the last pass issues, and the instruction <b>retires once</b>",
+    },
+    { e: "<code>vmul</code>", c: "2 cycles" },
+    {
+      e: "<code>vredsum</code> / <code>vredmax</code> at more than two slots",
+      c: "2 cycles — <code>RED_PIPE</code> registers the level below the root",
+    },
+    {
+      e: "read-after-write on a vector register, distance 1",
+      c: "1 stall",
+    },
+    {
+      e: "read-after-write at distance 2",
+      c: "<b>1 stall at <code>SIMD_WB = 1</code>, which is what <code>rv_pe</code> ships.</b> Free at 0",
+      _tone: "warn",
+    },
+    { e: "<code>vld</code> behind a <code>vst</code>", c: "1 stall" },
+    {
+      e: "a <code>vld</code> in decode behind any scalar store into the vector window",
+      c: "1 cycle — a <b>bubble</b>, not a stall",
+    },
+    {
+      e: "an elementwise float instruction",
+      c: "issues once every <code>ALAT + passes</code> cycles — 7 at full width with no seed units, 11 with them",
+    },
+    {
+      e: "<code>vfmacc</code> / <code>vfmsac</code>, <b>including back to back into the same accumulator</b>",
+      c: "<code>passes</code> cycles. It retires once and each pass's accumulate lands <code>ALAT</code> later in the background",
+      _tone: "good",
+    },
+    {
+      e: "<code>vfaccz</code> / <code>vfaccwr</code>",
+      c: "<code>NPART</code> cycles — a sweep of a one-write-port memory, 16 by default",
+    },
+    {
+      e: "<code>vfaccrd</code>",
+      c: "<code>NPART × (ALAT+1) + passes</code> — <b>112 + passes</b> at the defaults, and the same at every unit count",
+    },
+    {
+      e: "<code>vfaccz</code> / <code>vfaccwr</code> / <code>vfaccrd</code> behind a float accumulate in flight",
+      c: "up to <code>ALAT</code> stalls. It happens once at the end of a reduction, not inside it",
+    },
+  ],
+};
+
+const rules = {
+  cols: [
+    { key: "r", label: "Rule" },
+    { key: "w", label: "What breaks otherwise" },
+  ],
+  rows: [
+    {
+      r: "<b>Vector addresses are aligned</b> to the vector width",
+      w: "a misaligned <code>vld</code> or <code>vst</code> faults rather than splitting. A stencil therefore cannot reach one element earlier with a misaligned load — it loads two aligned vectors and slides them past each other",
+    },
+    {
+      r: "<b>The vector scratchpad is store-only from the scalar side</b>",
+      w: "stage data with <code>sw</code>, read it with <code>vld</code>; a scalar load of the region faults. Adding a fifth region to the scalar load mux would cost frequency on every load in every program, to serve an access a <code>vld</code> already performs better",
+    },
+    {
+      r: "<b><code>vsldw</code> slides by slots, not by elements</b>",
+      w: "sliding int16 data by one element means widening it to int32 first. The index is a range limit, not a meaning that changes with the width — the operation is “rotate <code>{v2,v1}</code> left by <i>idx</i> words” at every <code>SIMD</code>",
+    },
+    {
+      r: "<b>Reductions cross slots; arithmetic does not</b>",
+      w: "keep <code>SIMD</code> running totals in a vector register and reduce once at the end, rather than reducing inside a loop",
+    },
+    {
+      r: "<b>A float accumulator must be zeroed before it is used</b>",
+      w: "the partials are a memory and a memory has no reset, so a kernel that skips <code>vfaccz</code> reads whatever the RAM powered up holding",
+      _tone: "warn",
+    },
+    {
+      r: "<b><code>NPART</code> and <code>FLOAT_LANES</code> change float answers</b>",
+      w: "neither is a tuning knob when the accumulator is built. The order is architectural and float addition does not associate, so a kernel validated at one value is <b>not validated at another</b> — and the component bench carries the unit count in its configuration guard so a mismatch names itself instead of failing as arithmetic",
+      _tone: "warn",
+    },
+    {
+      r: "<b>A build that lacks a feature faults on its encodings</b>",
+      w: "a kernel written for one configuration and run on a narrower one halts with an illegal instruction at the offending program counter. A build that merely has the feature <i>narrower</i> runs the same kernel with the same answers and more cycles",
+    },
+    {
+      r: "<b>Scalar arithmetic is RV32IM</b>",
+      w: "<code>mul</code> and its three high halves are there; divide, remainder and scalar float are not. A C expression that divides calls libgcc — move the work into a vector instruction, or let the compiler strength-reduce a constant divisor to <code>mulhu</code>",
+    },
+  ],
+};
+
+const dropped = {
+  cols: [
+    { key: "d", label: "Withdrawn" },
+    { key: "w", label: "Why" },
+  ],
+  rows: [
+    {
+      d: "<b>every absolute total for a PE the current RTL can build</b>",
+      w: "there is none. Every published total predates the float tier's rebuild in binary32, the removal of the integer dot unit, <code>MULS</code> and <code>DOT_DSP</code>, and the converter group gaining its datapath. <b>Re-measurement against the current parameter set has not been published.</b> The delta tables above are kept because the shapes they establish are the findings",
+      _tone: "bad",
+    },
+    {
+      d: "<b>every assembled-PE total taken at <code>-flatten_hierarchy none</code></b>, and the mesh arithmetic built on them",
+      w: "<b>the ship does not synthesise at <code>none</code>.</b> Nothing in the build scripts sets the flatten setting on the ship's run, so it takes Vivado's default, <code>rebuilt</code>. The gap between the two is configuration-dependent — 647 LUT at one knob setting and 243 at another, because at the first all of the difference was the tool inferring DSP48 post-adders the RTL placed explicitly at the second — so it cannot be carried as a correction. <b>A difference between two rows of one <code>none</code> flow is still sound; an absolute total from one is not.</b> The per-block census taken at <code>none</code> is unaffected and stands, because attribution <i>has</i> to be taken there",
+      _tone: "bad",
+    },
+    {
+      d: "<b>every figure for the integer dot unit, its accumulator, <code>MULS</code> and <code>DOT_DSP</code></b>",
+      w: "<code>vdot</code>, <code>vdotn</code>, <code>vaccz</code>, <code>vaccrd</code>, <code>vaccwr</code>, the integer accumulator banks and both knobs are <b>gone from the RTL</b>. Those rows measure a different machine, not an older measurement of this one",
+      _tone: "bad",
+    },
+    {
+      d: "<b>every float-tier figure taken on the E8M15 datapath</b>, including both operand-format gates and every total containing them",
+      w: "it is a different tier: different arithmetic, different converters, different element granularity. <b>KohakuMPE holds no E8M15 at all</b> — the compute format is IEEE binary32 and a 32-bit word holds exactly one element, so the slot count is 8 rather than 16 and nothing converts at either edge. The totals are not comparable in either direction",
+      _tone: "bad",
+    },
+    {
+      d: "<b>every accumulator area figure taken before its operation port was connected</b>",
+      w: "those units were a pass-through rather than a fused multiply-add — an unconnected input port is tied to zero, and zero is a legal opcode. Any accumulator figure published before the fix priced the wrong thing",
+      _tone: "bad",
+    },
+    {
+      d: "<b>every converter-group figure</b>",
+      w: "the group had no datapath when it was priced. It has one now and has not been re-measured",
+      _tone: "warn",
+    },
+    {
+      d: "<b>the tier-alone unit-count curve</b> and the linear fit taken from it",
+      w: "<b>withdrawn for provenance rather than for being wrong.</b> The probe's script and module have both since been renamed, so no run can be tied to the module that exists now. It needs re-measuring, not reinstating",
+      _tone: "warn",
+    },
+    {
+      d: "<b>any total derived by subtracting a probe delta from an assembled build</b>",
+      w: "arithmetic across two scopes is never a measurement",
+      _tone: "bad",
+    },
+    {
+      d: "<b>“the float tier costs <i>N</i> LUT and <i>M</i> MHz”</b>, in every form it was written",
+      w: "each rested on one float unit per element being the only expressible build. Both halves of that are gone",
+      _tone: "bad",
+    },
+  ],
+};
 
 const laneRows = [
   {
@@ -651,67 +998,182 @@ const laneRows = [
   },
 ];
 
-const fmaccPass = [
-  {
-    name: "MEM",
-    kind: "bus",
-    values: ["vfmacc", "vfmacc", "vfmacc", "vfmacc", "next"],
-  },
+const passWalk = [
+  { name: "MEM", kind: "bus", values: ["vfma", "vfma", "vfma", "vfma", "next"] },
   { name: "pass", kind: "bus", values: ["0", "1", "2", "3", "—"] },
   {
-    name: "elements driven",
+    name: "slots driven",
     kind: "bus",
-    values: ["3..0", "7..4", "11..8", "15..12", "—"],
+    values: ["1..0", "3..2", "5..4", "7..6", "—"],
   },
   { name: "MEM held", kind: "bit", values: [1, 1, 1, 0, 0] },
   { name: "retires", kind: "bit", values: [0, 0, 0, 1, 0], mark: [3] },
+];
+
+const passBroken = [
+  { name: "MEM", kind: "bus", values: ["vfma", "vfma", "vfma", "next", "—"] },
+  { name: "pass", kind: "bus", values: ["0", "1", "2", "—", "—"] },
+  {
+    name: "slots driven",
+    kind: "bus",
+    values: ["1..0", "3..2", "5..4", "—", "—"],
+  },
+  { name: "MEM held", kind: "bit", values: [1, 1, 0, 0, 0] },
+  {
+    name: "slots 7..6",
+    kind: "text",
+    values: ["", "", "", "never written", ""],
+    mark: [3],
+  },
 ];
 </script>
 
 <template>
   <DocPage
     title="SIMD PE"
-    summary="The controller PE with a wide datapath behind it — one program counter, one instruction, eight integer lanes and four float ones. What it is, why the float lane count is a different number from the element count, why there is no dtype knob anywhere, and what a mesh of these holds."
+    summary="The framework's RV32IM controller core with a wide uniform datapath attached to its execute stage — one program counter, one instruction, eight 32-bit slots. What it is, why every compute feature is a unit count rather than a switch, why there is no format knob anywhere, and what each width costs."
     domain="simd"
     status="measured"
-    source="src/kohakumpe/simd/ · docs/projects/kohakumpe/simd/ · OOC on xcvu13p-fhgb2104-2L-e at 2.857 ns (reference) and 3.333 ns"
+    source="src/kohakumpe/simd/ · docs/projects/kohakumpe/simd/ · configurable-widths.md · unit-counts.md"
   >
+    <h2 class="doc-h2">What it owns</h2>
+    <p class="doc-p">Four things, and nothing else.</p>
+    <div class="grid gap-3 sm:grid-cols-2 my-5">
+      <div class="card p-4">
+        <div
+          class="kt-text-caption font-semibold text-warm-800 dark:text-warm-200 mb-1"
+        >
+          A packed integer tier
+        </div>
+        <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
+          Eight 32-bit slots, each cut into 4 × int8, 2 × int16 or 1 × int32 by
+          a mask — so one instruction is 32 byte additions.
+        </p>
+      </div>
+      <div class="card p-4">
+        <div
+          class="kt-text-caption font-semibold text-warm-800 dark:text-warm-200 mb-1"
+        >
+          A binary32 float tier
+        </div>
+        <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
+          Elementwise arithmetic, four seeds, converters, and a
+          <b>rotating accumulator</b> whose order is part of the ISA.
+        </p>
+      </div>
+      <div class="card p-4">
+        <div
+          class="kt-text-caption font-semibold text-warm-800 dark:text-warm-200 mb-1"
+        >
+          Two more memories
+        </div>
+        <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
+          A 256-bit vector scratchpad with two faces, and a vector register file
+          — both this project's design, both behind the framework's port.
+        </p>
+      </div>
+      <div class="card p-4">
+        <div
+          class="kt-text-caption font-semibold text-warm-800 dark:text-warm-200 mb-1"
+        >
+          A framework slot occupant
+        </div>
+        <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
+          <span class="chip">khs_unit</span> is what the framework's
+          <span class="chip">SIMD_EN</span> parameter names, and at 0 the PE is
+          the base core bit for bit.
+        </p>
+      </div>
+    </div>
+
     <p class="doc-p">
-      Everything the base core is stays true: RV32I, one port on the fabric, the
-      same kick and the same completion. What is added is a second register
-      file, a second scratchpad, and an array of lanes that all execute
-      <b>the same instruction at the same time</b>.
+      Everything the base core is stays true: RV32IM, in order, single issue,
+      one port on the fabric, the same kick and the same completion. What is
+      added is a second register file, a second scratchpad, and an array of
+      units that all execute <b>the same instruction at the same time</b>. The
+      scalar half keeps doing what it is good at — addresses, trip counts,
+      branches — and <b>the vector unit never computes an address and never
+      takes a branch</b>. A loop is a scalar loop whose body happens to move 32
+      bytes at a time.
     </p>
 
-    <Callout kind="measured" title="The reference configuration">
+    <p class="doc-p">
+      The alternative that was rejected is per-lane control: masks, predication
+      and an address per lane, which would make this one machine that covers
+      both the uniform and the divergent case. It loses on cost in the uniform
+      direction — an active mask, a divergence stack and a lane-serialising
+      load/store unit are hardware a uniform kernel cannot use and would still
+      pay for. That case is a
+      <RouterLink to="/mpe/simt" class="doc-link">different machine</RouterLink>,
+      and the two land within 1% of each other at matched widths, which is what
+      makes the split a design rather than a preference.
+    </p>
+
+    <h2 class="doc-h2">What it costs</h2>
+
+    <Fig
+      caption="The scalar core keeps the addresses and the control flow; the vector unit keeps the elements. Three things cross the boundary between the two halves and only three: the address rs1 + imm computed by the EX adder, a scalar operand for vsplat, and — in the other direction — a stall. With SIMD_EN = 0 the whole right-hand column disappears, a generate rather than a zero width, leaving the base core bit for bit."
+      zoom
+    >
+      <BlockDiagram :nodes="shape.nodes" :edges="shape.edges" />
+    </Fig>
+
+    <Callout kind="measured" title="The reference row">
       <div
         class="font-mono kt-text-body whitespace-pre text-warm-700 dark:text-warm-300 leading-7 overflow-x-auto my-1"
       >
         {{ reference }}
       </div>
       <p>
-        Assembled <code>rv_pe</code> on <code>xcvu13p-fhgb2104-2L-e</code>, OOC
-        synthesis at the <b>2.857 ns ask (350 MHz)</b>,
-        <code>SIMD_DOTDSP = 1</code>, <code>SIMD_WB = 1</code>. Against a 300
-        MHz mesh clock that is <b>18 % margin</b>. Hold beside it the same PE
-        with the extension switched off — 2,477 LUT at 377.9 MHz, measured at
-        3.333 ns, so read it as a scale and not as a subtraction.
+        Assembled <code>rv_pe</code> on
+        <code>xcvu13p-fhgb2104-2L-e</code>, Vivado 2024.2,
+        <b>out-of-context synthesis only</b>,
+        <code>-flatten_hierarchy rebuilt</code>,
+        <code>-directive default</code>, at a 3.333 ns request. Nothing is
+        placed and nothing is routed, and the frequency is a screen for a
+        structural problem rather than a result.
       </p>
       <p>
-        <b>This is the build, not a point on a menu.</b> Eight integer lanes are
-        fixed by the memory granule, four float lanes are the chosen width, and
-        the float datapath has exactly one arithmetic format.
+        <b>This is one named generic set, not every feature at maximum.</b> A
+        LUT figure without its configuration is not a measurement — the reader
+        fills the gaps with zeros and prices a bare core against a fully
+        featured one. Three things a reader will assume are on are off here:
+        the float accumulator, the converters, and the seed units.
+      </p>
+      <div
+        class="font-mono kt-text-caption whitespace-pre text-warm-700 dark:text-warm-300 leading-6 overflow-x-auto my-2"
+      >
+        {{ refCfg }}
+      </div>
+    </Callout>
+
+    <Callout
+      kind="trap"
+      title="No absolute total on this page describes a PE the RTL can build today"
+    >
+      <p>
+        The float tier was rebuilt from an E8M15 datapath with two operand
+        formats into a binary32-only one, which deleted both operand converters;
+        the integer dot unit, its accumulator, the
+        <code>MULS</code> multiplier-depth knob and the
+        <code>DOT_DSP</code> mapping knob were removed; the
+        <code>HAS_SHIFT</code> / <code>HAS_PERM</code> /
+        <code>HAS_FLOAT</code> booleans went in favour of the counts alone; and
+        the converter group gained the datapath it had been missing.
+        <b>Re-measurement against the current parameter set has not been
+        published.</b>
+      </p>
+      <p>
+        The rows below are kept because <b>the shapes are the findings</b>: what
+        a marginal unit costs, where a width pays and where it does not, and
+        which knobs are not levers at all. The symptom of ignoring this is a
+        mesh total — one of these figures multiplied by a PE count — which
+        prices a machine that cannot be built, wrong in an unknown direction
+        rather than merely stale.
       </p>
     </Callout>
 
-    <Fig
-      caption="The scalar core keeps doing what it is good at: addresses, trip counts, branches. The vector unit never computes an address and never takes a branch. A loop is a scalar loop whose body happens to move 32 bytes at a time — and with SIMD_EN = 0 all of the right-hand column disappears, generate rather than zero-width, leaving the base core bit for bit."
-      zoom
-    >
-      <BlockDiagram :nodes="shape.nodes" :edges="shape.edges" />
-    </Fig>
-
-    <h2 class="doc-h2">Two halves, and only one of them is a choice</h2>
+    <h2 class="doc-h2">Every compute feature is a width, and 0 means not built</h2>
 
     <div
       class="font-mono kt-text-caption whitespace-pre text-warm-700 dark:text-warm-300 leading-6 overflow-x-auto my-3"
@@ -721,50 +1183,114 @@ const fmaccPass = [
 
     <Callout
       kind="rule"
-      title="The integer lanes are the address path; the float lanes are not"
+      title="A width costs cycles, never encodings — and 0 faults"
     >
       <p>
-        A contiguous 32-bit load by eight lanes is exactly one
-        <code>MEM_RD_REQ</code>, and that is the strongest machine-level
-        alignment in the design — narrow the integer side and every coalesced
-        load becomes two or more requests, for every kernel, forever. The lane
-        is 32 bits for a second reason pointing the same way:
-        <code>vdot</code> reduces <i>within</i> a lane into one int32, so an
-        accumulator is exactly one vector register wide and
-        <code>vaccrd</code> is a move rather than a narrowing.
+        A feature with <code>U</code> units serving <code>SIMD</code> slots
+        issues <code>SIMD / U</code> passes, one per cycle, sequenced by the
+        hardware. <b>The ISA carries no count</b>: the same instruction, the
+        same binary and the same golden memory image run at every width, and the
+        only visible difference is cycles.
       </p>
       <p>
-        Float has no such tie. Fewer lanes cost an <b>issue interval</b> of
-        <code>elements / lanes</code>, and latency is the cheapest thing to
-        trade in a datapath that is already fifteen cycles deep. That asymmetry
-        is why <code>int 4 / float 4</code> is rejected — it halves the memory
-        alignment to buy what the float knob already buys — and why
-        <code>int &lt; float</code> is rejected outright.
+        <b>A width at zero means the feature is not built</b>, and every
+        encoding that would need it <b>MUST</b> fault at decode. Faulting is
+        part of the contract rather than a nicety — a feature that decodes with
+        no datapath returns a plausible wrong answer, which is worse than
+        refusing. And <b>a width at full costs nothing</b>: at
+        <code>U == SIMD</code> the hardware is the plain un-walked array,
+        because the sequencing logic exists only in the narrow branch.
       </p>
     </Callout>
 
     <SpecTable
       :cols="counts.cols"
       :rows="counts.rows"
-      caption="Four numbers that are routinely collapsed into one. Elements come from arithmetic on widths; lanes are the parameter; passes fall out of the two"
+      caption="Five numbers that are routinely collapsed into one. The vector width is architecture; the unit counts are the parameters; the pass count falls out of the two"
     />
 
     <WaveTrace
-      :rows="fmaccPass"
-      label="one vfmacc at four float lanes — four passes, one instruction"
+      :rows="passBroken"
+      variant="broken"
+      label="A width that does not divide the slot count — the pass count truncates"
+      :notes="[
+        {
+          cycle: 2,
+          text: 'Three units over eight slots. The pass count is a truncating divide, so the walk runs three passes and covers six slots.',
+          tone: 'bad',
+        },
+        {
+          cycle: 3,
+          text: 'The instruction retires with the top two slots never written. The build elaborated cleanly, synthesised, and reported a plausible frequency — so this fails only in a component bench, on a workload, or on silicon. It is refused at ELABORATION instead.',
+          tone: 'bad',
+        },
+      ]"
+    />
+
+    <WaveTrace
+      :rows="passWalk"
+      variant="fixed"
+      label="Two float units over eight slots — four passes, one instruction"
       :notes="[
         {
           cycle: 0,
-          text: 'A float lane issues one operation per cycle at every lane count. What a lane count costs the INSTRUCTION is the pass walk: the MEM stage holds until the last pass has gone.',
+          text: 'A float unit issues one operation per cycle at every count. What a narrow count costs the INSTRUCTION is the pass walk: unit u on pass p serves element p·U + u, and the memory stage is held until the last pass has gone.',
           tone: 'good',
         },
         {
           cycle: 3,
-          text: 'The vector file is written, the scalar writeback fires and the accumulator index advances exactly ONCE, whatever the lane count. Nothing in the program sees the passes.',
+          text: 'The vector file is written, the scalar writeback fires, and the accumulator index advances exactly ONCE, whatever the unit count. Nothing in the program sees the passes.',
           tone: 'good',
         },
       ]"
     />
+
+    <Callout
+      kind="trap"
+      title="A width that does not divide the element count elaborates cleanly"
+    >
+      <p>
+        That is the whole reason the rule is enforced at <b>elaboration</b>,
+        written as an instantiation of a module that does not exist so the error
+        names the rule that broke:
+        <span class="chip"
+          >Module &lt;khs_unit_requires_PERM_UNITS_to_divide_SIMD&gt; not
+          found</span
+        >. A refusal at elaboration is the only place the mistake is cheap.
+      </p>
+      <p>
+        The rules: every width is 0, −1, or divides the element count and does
+        not exceed it; <code>FSFU_UNITS &lt;= FLOAT_LANES</code>, because a seed
+        unit <i>is</i> a float unit; a float <b>group</b> with no units is
+        refused rather than silently given the widest tier;
+        <code>HAS_SHROUND</code> requires <code>SHIFT_UNITS &gt; 0</code>; and
+        the tier's declared latency must equal the depth its array builds.
+      </p>
+    </Callout>
+
+    <Callout
+      kind="rule"
+      title="The integer width is the address path; the float width is not"
+    >
+      <p>
+        A contiguous 32-bit load by eight slots is exactly one memory read
+        request, one native memory entry, one flit payload — the strongest
+        machine-level alignment in the design. Narrow the <i>vector</i> and
+        every coalesced load becomes two or more requests, for every kernel,
+        permanently. That asymmetry is the whole justification for the shape: it
+        is why <i>four integer lanes and four float lanes</i> is rejected — it
+        halves the memory alignment to buy what the float knob already buys —
+        and why <i>fewer integer lanes than float lanes</i> is rejected
+        outright, because it starves addressing to feed arithmetic.
+      </p>
+      <p>
+        <b><code>ILANES</code> is nonetheless a real width</b>, and narrowing it
+        costs cycles rather than alignment: it narrows the ALU and not the
+        multipliers, and the register width does not move with it. What is fixed
+        is <code>SIMD</code>, the register width; what is configurable is how
+        many lanes serve it per pass.
+      </p>
+    </Callout>
 
     <h2 class="doc-h2">There is one float format, and it is not a setting</h2>
 
@@ -774,271 +1300,193 @@ const fmaccPass = [
       {{ dtype }}
     </div>
 
-    <Callout
-      kind="rule"
-      title="Operand width is a property of an instruction, not of a build"
-    >
+    <p class="doc-p">
+      <b>The compute format is IEEE binary32 throughout</b> and there is no knob
+      for it. A 32-bit word holds exactly one element, so the float tier's slot
+      count <i>is</i> <code>SIMD</code> and <b>nothing converts at either
+      edge</b>. <b>Denormals flush to sign-preserved zero</b> on input and
+      output, which is D3D11's functional requirement rather than a shortcut —
+      gradual-underflow hardware would be non-conformant as well as expensive.
+      There is no <code>f2f</code> convert, because there is no second format to
+      convert to.
+    </p>
+
+    <Callout kind="trap" title="KohakuMPE holds no E8M15">
       <p>
-        <code>khs_float_lane</code> carries one operand port and
-        <b>both converters, unconditionally</b>; a width bit picks which one
-        drives the datapath, and the datapath below is E8M15 either way. Its own
-        header states it as a contract rather than an option:
-        <i
-          >“BOTH INPUT FORMATS AND THE ONE COMPUTE FORMAT ARE THE CONTRACT, not
-          options: there is no parameter here that removes either edge.”</i
-        >
+        <code>khs_fp32_alu.v</code>, <code>khs_fp32_sfu.v</code> and
+        <code>khs_fcvt.v</code> are this project's and compute in binary32.
+        <b>KohakuTPU's vector core is the one that computes in E8M15</b>, a
+        24-bit internal format, with its own modules — and none of it is on any
+        KohakuMPE path. A precision figure quoted from one project says nothing
+        about the other, and a total that contains an E8M15 datapath is not a
+        stale measurement of this one: it is a measurement of a different
+        machine.
       </p>
       <p>
-        So there is <b>no dtype axis anywhere in this PE</b>.
-        <code>SIMD_FLOAT</code> is a presence switch — float tier or no float
-        tier — and <code>SIMD_FLOAT_LANES</code> is a width knob. Neither is a
-        format knob, and a reader should not go looking for one.
+        <code>rv_fpu.v</code> sits in the <b>framework</b> rather than in either
+        project, because RV32F is a standard extension over binary32 and
+        binary32 is nobody's private format. That single-sourcing is why a SIMD
+        float result and a SIMT float result agree element for element.
       </p>
     </Callout>
-
-    <SpecTable
-      :cols="conversions.cols"
-      :rows="conversions.rows"
-      caption="An FP16 value round-trips unchanged through a kernel that reads and writes FP16, so the only conversion a kernel has to think about is the way out"
-    />
-
-    <Callout
-      kind="trap"
-      title="The SIMD tier builds the FP32 edge and cannot reach it"
-    >
-      <p>Three facts, and they belong together:</p>
-      <ol class="list-decimal ml-5 space-y-1">
-        <li>
-          <code>khs_float_lane</code> takes <b>both widths unconditionally</b> —
-          no parameter removes either edge, so both converters are elaborated in
-          every float lane and both are paid for.
-        </li>
-        <li>
-          <code>khs_unit.v:819</code> ties <code>.wide(1'b0)</code> on every one
-          of those lanes, and <code>khs_unit.v:286</code>'s <code>bad_fet</code>
-          <b>faults every <code>.f32</code> encoding</b> — except
-          <code>vfaccz</code>, which is untyped because zero is zero in either
-          width.
-        </li>
-        <li>
-          <b
-            >Net: the SIMD PE carries the FP32 converters in its 13,772 LUT and
-            cannot issue an FP32 instruction.</b
-          >
-        </li>
-      </ol>
-      <p>
-        That is a half-finished transition — not a capability, and not a planned
-        one. It is written here as what it is rather than listed as supported or
-        as coming.
-      </p>
-    </Callout>
-
-    <Callout
-      kind="open"
-      title="Why it is not one wire away — and the two decisions left"
-    >
-      <p>
-        The blocker is a <b>correctness</b> constraint, not an unfinished chore.
-        <b>A 256-bit register holds 8 FP32 against 16 FP16</b>, so the element
-        count, the partial count and the fold order all change with the operand
-        width — and float addition does not associate.
-        <b>Changing the fold order changes the answer.</b> Untying the bit
-        without deciding what follows would not produce a slower or a bigger
-        machine; it would produce a different one, silently — the same class of
-        change as altering <code>NPART</code> or the lane count, both of which
-        this design treats as architectural.
-      </p>
-      <p>
-        Whoever finishes this has two decisions to make, and neither is
-        mechanical:
-      </p>
-      <ul class="list-disc ml-5 space-y-1">
-        <li>
-          <b>What the element count means at the wide width.</b> It is a
-          register width divided by an element width, so it halves — which means
-          the accumulator, the seed walk and the pack walk are all addressing a
-          different number of slots depending on an instruction field.
-        </li>
-        <li>
-          <b>What happens to the accumulator's fold.</b> Each element's chain is
-          the subset of partial-turns congruent to its pass; halving the element
-          count re-partitions those subsets, so a build that accepts both widths
-          has to define the fold order for each — and
-          <b>state it in the ISA</b>, because a kernel validated at one width
-          would not be validated at the other.
-        </li>
-      </ul>
-      <p>
-        The
-        <RouterLink to="/mpe/simt" class="doc-link">SIMT PE</RouterLink> drives
-        the same lane with the width bit live because it has one element per
-        lane in both formats and pays none of that. The arithmetic is
-        single-sourced — the operand edge is shared, and only the decision to
-        reach it differs.
-      </p>
-    </Callout>
-
-    <SpecTable
-      :cols="precision.cols"
-      :rows="precision.rows"
-      caption="E8M15 is not a compromise: 1.5e-5 is 32x better than the FP16 a mobile fragment shader runs at, with an 8-bit exponent — more range than the FP24 of the DX9 era had. A dot product of FP16 inputs accumulates 32x more accurately than its own operands, in a format whose range covers FP32's verbatim"
-    />
 
     <h2 class="doc-h2">What is a parameter, and what is not</h2>
 
     <SpecTable
       :cols="params.cols"
       :rows="params.rows"
-      caption="Two things were routinely conflated here and the docs are where that conflation lived: whether the float tier EXISTS, and how WIDE it is, are both real knobs — which format it computes in is not one, and never was"
+      caption="Both cores spell “none” the same way: a count of 0. The booleans that used to sit beside counts are gone, because a boolean beside a count is two ways to say one thing — and the same 0 once meant the WIDEST possible float tier here and NO float tier next door, so a caller that forgot the parameter got opposite machines from the two cores"
     />
 
-    <h2 class="doc-h2">What it costs</h2>
+    <h2 class="doc-h2">The price list</h2>
 
     <div
       class="font-mono kt-text-caption whitespace-pre text-warm-700 dark:text-warm-300 leading-6 overflow-x-auto my-3"
     >
-      {{ dspSum }}
+      {{ dspForm }}
     </div>
 
-    <p class="doc-p">
-      Where the 72 DSP48 comes from is worth writing out, because it is a
-      decision rather than a rounding: <code>SIMD_DOTDSP = 1</code> keeps the
-      dot sum inside the DSP48 column, and does that by adding a
-      <i>second</i> set of multipliers per integer lane — because
-      <code>p0..p3</code> must still surface for <code>vmul</code>, and an
-      operand with two consumers cannot be cascaded. At
-      <code>SIMD_DOTDSP = 0</code> the total is 40.
-    </p>
-
     <SpecTable
-      :cols="knobs.cols"
-      :rows="knobs.rows"
-      caption="rv_pe defaults SIMD_DOTDSP = 1 and SIMD_WB = 1. khs_unit's own parameter defaults are still 0, so a probe or a bench that instantiates the unit directly gets the other machine unless it says otherwise — khs_unit_tb defaults both to 1 to match what ships"
+      :cols="widthsW.cols"
+      :rows="widthsW.rows"
+      caption="One frozen source tree, out-of-context SYNTHESIS on xcvu13p-fhgb2104-2L-e, Vivado 2024.2, -flatten_hierarchy rebuilt, -directive default, at a 3.333 ns request. Every cell is measured; a knob point that was not synthesised is absent rather than inferred. Fmax in MHz, and it is a screen: no decision recorded here was made on it."
     />
 
-    <SpecTable
-      :cols="knobCost.cols"
-      :rows="knobCost.rows"
-      caption="Neither knob is free in cycles, and that is the part a resource table hides. The kernel figures further down were taken with BOTH OFF and have not been re-measured against the shipped pair"
-    />
-
-    <h3 class="doc-h3">What a mesh holds</h3>
-
-    <Fig
-      caption="PROJECTED — arithmetic over per-PE measurements, not a placed mesh. The SIMT PE figure is that unit's own; the controller figure is 2,477 each. The float throughput of the array is exactly one Mali-G610 shader core's worth — computed at 1.5e-5 rather than the 4.9e-4 such a core would run at."
+    <Callout
+      kind="trap"
+      title="A width can beat deleting the feature, and a cross-lane width pays only at one or two units"
     >
-      <div
-        class="font-mono kt-text-caption whitespace-pre text-warm-700 dark:text-warm-300 leading-6 overflow-x-auto"
-      >
-        {{ meshSum }}
-      </div>
-    </Fig>
-
-    <h3 class="doc-h3">The integer configuration sweep</h3>
-
-    <p class="doc-p">
-      <b
-        >These are <code>khs_unit</code> alone, integer only, at 3.333 ns, with
-        <code>SIMD_DOTDSP = 0</code> and <code>WB_STAGE = 0</code>.</b
-      >
-      They are not the shipped configuration and their absolute LUT is not the
-      reference's. What they remain good for is the question they were run to
-      answer — what each optional block costs <i>relative to the others</i>, on
-      modules that have not changed since.
-    </p>
-
-    <ResourceBars
-      :items="sweepBars.items"
-      unit="LUT · khs_unit alone, integer only, OOC at 3.333 ns on xcvu13p-fhgb2104-2L-e"
-      caption="✗ marks a configuration that does not meet the 3.333 ns request. Both are priced for the comparison rather than offered: fabric multipliers and a block-RAM register file are the two ways to build this unit that are worse on every axis at once"
-    />
-
-    <Callout kind="measured" title="What the rows say">
       <p>
-        <b
-          >Everything on the critical path is the register file's read-to-write
-          loop</b
-        >, so what moves the frequency is what sits <i>in</i> that loop.
-        Removing the permute network buys 33.9 MHz and the shifter 24.4 — both
-        shorten the result mux that feeds the write port. Fabric multipliers
-        cost 73.4 MHz and a block-RAM register file 97.9, because both put
-        something slower <i>into</i> it. The knobs that touch neither — register
-        count, accumulator count, multipliers per lane — move it by less than
-        half a megahertz.
+        <code>SHIFT_UNITS</code> 2 recovers <b>1,059 LUT</b> of the 925 that
+        removing the shifter entirely saves — <b>more than deletion</b> — and
+        keeps every shift instruction. The arithmetic that refuses a width here
+        charges one operand mux per shifter <i>removed</i>, where a walk pays
+        one mux per unit <i>kept</i>: at two units that is two muxes against six
+        shifters, not one against one.
       </p>
       <p>
-        <b>A DSP column is worth about 230 LUT</b>, which is the same argument
-        that buys <code>SIMD_DOTDSP</code> 32 more of them.
-        <b>The vector register count is free in both directions</b> — thirty-two
-        entries are <i>cheaper</i> than eight, because a distributed-RAM
-        primitive is 32 deep either way and a small file wastes the depth it
-        does not use.
-        <b>Accumulators are the one structure that grows badly</b>: two to four
-        costs 2,203 LUT, because the read mux in front of the array grows with
-        both count and width.
+        The permute curve is the same shape from the other side and it is
+        strongly non-linear: 8 units and 2 units differ by 497 LUT, and 2 and 1
+        by 726. A narrow build is a <b>direct select</b>, not a narrowed
+        network — a butterfly routes every lane at once and cannot be sliced, so
+        one output lane is a <code>2 × SIMD</code>-to-1 32-bit mux either way.
+        That mux is what the width pays for, and it is why one unit recovers
+        only part of what deleting the feature saves.
+      </p>
+      <p>
+        <b>The default costs exactly zero.</b> At full width the original
+        full-width form is kept in its own elaboration branch and the walk
+        exists only in the narrow one, so both knobs are byte-identical to the
+        reference in every column until they are used.
       </p>
     </Callout>
 
-    <Callout kind="open" title="Figures that were NOT carried forward">
+    <Callout
+      kind="trap"
+      title="A fractional seed rate is worst in the middle, and this is a property rather than one campaign's oddity"
+    >
       <p>
-        The SIMD PE changed substantially, so a number that was true of the old
-        build is not automatically a worse measurement of this one — it can be a
-        measurement of a different machine. These were dropped rather than
-        updated, and each is listed so nobody re-derives it from an older page.
-      </p>
-    </Callout>
-
-    <SpecTable :cols="dropped.cols" :rows="dropped.rows" />
-
-    <h2 class="doc-h2">What the instructions buy</h2>
-
-    <SpecTable
-      :cols="thesis.cols"
-      :rows="thesis.rows"
-      caption="Kernel-only cycles, same PE, same data, same independently computed reference for both forms — MEASURED on the integer-only build with SIMD_DOTDSP = 0 and SIMD_WB = 0. The base core is RV32I and has no multiplier, so an int8 dot's scalar loop spends 84 % of its cycles in a software multiply at about 54 cycles each; quoting 158x would be mostly a statement that the base core cannot multiply, which is why every multiplying kernel carries a twin whose multiply is costed at one instruction"
-    />
-
-    <Callout kind="note" title="Two things bound every kernel here">
-      <p>
-        <b>Loop overhead bounds everything at short vectors.</b> The copy moves
-        eight times the data per instruction and measures 3.3×, because the two
-        pointer bumps, the counter and the branch do not shrink. That is the
-        Amdahl ceiling for any kernel on this machine, and it is a property of
-        the loop rather than of the datapath — at two lanes the vector copy
-        actually <i>loses</i> to the scalar one, 908 cycles against 780.
+        Four seed units of eight measured <b>cheaper than two</b>, on the SIMT
+        core, over five points on one frozen tree. Splitting each row into seed
+        hardware at 276 LUT a unit leaves a residual — the walk — of 185, 674,
+        −78 and 0 at one, two, four and eight units, and that residual is the
+        sum of two terms moving in <b>opposite directions</b>. The
+        <b>placement mux</b> does not exist at one unit and grows with the
+        count; the <b>pass decode</b> has <code>SIMD/U</code> values and shrinks
+        with it. At full rate both index arms are the same expression and the
+        mux folds entirely, which is why a full-rate seed tier is pure seed
+        hardware.
       </p>
       <p>
-        <b>A kernel whose scalar form is already good wins the least.</b> The
-        FIR's taps are compile-time constants, so its scalar form
-        strength-reduces to two instructions per tap with no software multiply
-        to remove. 6.1× is width alone, and it is the narrowest frontier in the
-        suite.
+        <b>A second, independent measurement on this core gives the same
+        shape</b>, which is what makes it a rule rather than an observation:
+        full rate measured <b>66 LUT below</b> one unit, for four times the
+        rate. <b>Take the seed count equal to the float count and spend the DSP
+        and BRAM, or take one unit.</b> The middle is the one place not to sit.
       </p>
     </Callout>
 
     <SpecTable
-      :cols="vtiming.cols"
-      :rows="vtiming.rows"
-      caption="The measured CPI of the integer vector kernels is 1.17 to 1.53 — the stalls above, plus the loop's own mispredicted exit"
+      :cols="widthsWp.cols"
+      :rows="widthsWp.rows"
+      caption="ILANES, RED_UNITS and HAS_SHROUND do not exist on the tree above. Their reference row is a different one — 16,782 LUT, 10,487 FF, 61 DSP, 14.5 BRAM, at SIMD 8, ILANES 8, FLOAT_LANES 4, FSFU_UNITS 1 — and these deltas are never subtracted against the table before them."
     />
 
-    <h2 class="doc-h2">One instruction, eight lanes</h2>
+    <h2 class="doc-h2">Price a unit marginally, never by dividing the tier</h2>
+
+    <Callout
+      kind="rule"
+      title="A tier's total divided by its unit count is a measurement of the overhead"
+    >
+      <p>
+        A float tier is not <code>units × cost(unit)</code>. It is
+        <code>units × cost(unit)</code>
+        <b>plus a fixed overhead that does not scale with units at all</b>: the
+        third register-file read port the fused multiply-add's addend needs, the
+        retire path, the scoreboard, and the pass sequencer. That overhead is
+        paid once, at any nonzero unit count.
+      </p>
+      <p>
+        So dividing charges the units for it, and the error is not small.
+        <b>The average is not a worse estimate of the marginal cost; it is a
+        measurement of a different thing.</b> Every average ever computed from a
+        tier total on either core has concluded that one core's float unit is
+        far dearer than the other's — and the marginals below say the two
+        <b>bracket each other</b>.
+      </p>
+    </Callout>
+
+    <SpecTable
+      :cols="marginal.cols"
+      :rows="marginal.rows"
+      caption="Each figure is the difference between two synthesised rows one step apart, divided by the change in that count, with the subtraction written out. The two float-unit columns disagree by design and both are given: this PE's unit is dearer at the wide end and the SIMT PE's at the narrow end, so a single number would be an average — and this page does not average."
+    />
+
+    <Callout
+      kind="trap"
+      title="SIMD does not beat SIMT on LUT at matched features"
+    >
+      <p>
+        With the mask, the divergence stack, the shuffle and the banked shared
+        memory all off, at 8 fused multiply-adds and 8 multiply units, the SIMT
+        PE measures <b>16,118</b>. This PE's comparable figure — its own
+        reference less the packed shifter and the permute — is
+        <b>16,775</b>, which is <b>657 LUT, 4.1%, dearer.</b>
+      </p>
+      <p>
+        That is not a defect to remove. This PE is <b>not a subset</b> of the
+        other: it carries packed int8/int16/int32 lanes, a cross-lane permute
+        network, a vector scratchpad and optionally a rotating float
+        accumulator, and every one of those is priced above. And its base PE is
+        <b>543 LUT cheaper</b> than the SIMT one — 10,309 against 10,852 — even
+        while carrying the shifter, the permute network and thirty-two
+        multipliers, so the divergence hardware is real and this PE does not pay
+        for it.
+      </p>
+    </Callout>
+
+    <SpecTable
+      :cols="modelErr.cols"
+      :rows="modelErr.rows"
+      caption="Re-estimating a single-knob row proves nothing — that row IS the point its own term came from. These moved knobs no term was fitted on. Two prediction rows, five knobs, and the two LUT errors have OPPOSITE signs, so adding single-knob deltas is unbiased here rather than systematically optimistic. Where the model is weak: it cannot see two features that share control logic, so removing features TOGETHER saves more than removing them one at a time — an estimate used as a ceiling is safe, and one used as a floor is not."
+    />
+
+    <h2 class="doc-h2">One instruction, eight slots</h2>
 
     <LaneGrid
       :lanes="8"
       :rows="laneRows"
-      caption="One vadd.s16, eight lanes, sixteen int16 additions. Lane L reads bits 32L+31..32L of each source and writes the same bits of the destination — nothing is broadcast, nothing is muxed, no lane can see another lane's data. That is why the array costs almost exactly SIMD times one lane, and why there is nothing to diverge and nothing to serialise"
+      caption="One vadd.s16, eight slots, sixteen int16 additions. Slot L reads bits 32L+31..32L of each source and writes the same bits of the destination — nothing is broadcast, nothing is muxed, and no slot can see another slot's data. That is why the array costs almost exactly ILANES times one lane, and why frequency barely moves as it widens: widening adds copies, not depth"
     />
 
     <p class="doc-p">
-      Every arithmetic instruction carries a two-bit <b>element type</b>, so a
-      <code>vadd.s8</code> at eight lanes adds 32 pairs of bytes in one cycle:
-      eight lanes times four elements. Element 0 is at the <i>low</i> end — the
-      same order a little-endian byte array arrives in — and the type is a field
-      of the instruction word rather than a mode, so two adjacent instructions
-      may use different widths with no state to change. How that is built out of
-      one native carry chain is on the
+      Every integer arithmetic instruction carries a two-bit
+      <b>element type</b>, so a <code>vadd.s8</code> at eight lanes adds 32
+      pairs of bytes in one cycle. Element 0 is at the <i>low</i> end — the same
+      order a little-endian byte array arrives in, so an int8 vector loaded from
+      memory is already packed correctly with no shuffling. How that is built
+      out of one native carry chain, and why the obvious construction is the
+      slow one, is on the
       <RouterLink to="/mpe/simd/microarchitecture" class="doc-link"
         >microarchitecture page</RouterLink
       >.
@@ -1046,69 +1494,168 @@ const fmaccPass = [
 
     <h2 class="doc-h2">The encoding</h2>
 
-    <p class="doc-p">
-      RISC-V custom-0 (<code>0x0B</code>) carries the whole integer tier;
-      custom-1 (<code>0x2B</code>) carries the float tier.
-      <code>funct3</code> selects the group; <code>funct7</code> selects the
-      operation within it, and its low two bits are the element type on custom-0
-      and the <b>operand width</b> on custom-1.
-      <b>69 instructions — 63 integer and 6 float.</b>
-    </p>
-
     <BitField
       :fields="rType"
-      caption="R-type on custom-0: funct7[1:0] is the element type — 0 = int8, 1 = int16, 2 = int32. vld and vst use an I-type layout with the store's data register in the rd position, because a vector store's data comes from the VECTOR file and RV32's S-format constraint does not apply"
+      caption="R-type on custom-0 (0x0B): funct3 selects the group and funct7 the operation within it, with the low two bits carrying the element type"
     />
     <BitField
       :fields="fType"
-      caption="R-type on custom-1: funct7[1:0] is the OPERAND WIDTH — 0 = f16, 1 = f32. That field is the only place a format appears anywhere in this machine, and it is per-instruction"
+      caption="R-type on custom-1 (0x2B): the same shape, and funct7[1:0] is the float type — f32 is the only value a build accepts"
     />
 
-    <Callout kind="rule" title="One table, four consumers">
-      <p>
-        The encoding is defined once, in a field table, and four consumers are
-        generated from or checked against it: the assembler, the golden model,
-        the RTL decode (<code>khs_isa.vh</code>), and the C intrinsic header
-        (<code>khs_intrin.h</code>). A test encodes and decodes every
-        instruction through all four and fails on any disagreement, which is
-        what makes “one source of truth” a property rather than an intention.
-      </p>
-    </Callout>
+    <SpecTable
+      :cols="fields.cols"
+      :rows="fields.rows"
+      caption="The owner column is what tells a reader which bits are theirs. Everything marked fixed is protocol between four consumers generated from or checked against one field table — the assembler, the golden model, the RTL decode header and the C intrinsic header — and a test encodes and decodes every instruction through all four and fails on any disagreement."
+    />
 
     <SpecTable
       :cols="isa.cols"
       :rows="isa.rows"
-      caption="The integer tier. Accumulators are deliberately not spelled a0 — that is a scalar ABI name, and a program that meant one and wrote the other should not assemble"
+      caption="The integer tier: 56 instructions on custom-0. Every group's encodings fault when its unit count is 0 — an encoding must be RECOGNISED to be refused, so the decode is not itself gated"
     />
 
     <SpecTable
       :cols="fisa.cols"
       :rows="fisa.rows"
-      caption="The float tier. SIMD_FLOAT = 0 elaborates none of it and leaves custom-1 unmapped, so a float instruction faults as an illegal encoding rather than landing in a decode case that computes something plausible"
+      caption="The float tier: 21 instructions on custom-1, and the two rows that are not instructions the hardware performs. FLOAT_LANES = 0 elaborates none of it and leaves custom-1 unmapped, so a float instruction faults at the opcode major rather than landing in a decode case that computes something plausible"
     />
 
-    <Callout kind="rule" title="Rules a kernel must respect">
+    <Callout
+      kind="trap"
+      title="An encoding test proves nothing about execution"
+    >
       <p>
-        <b>Vector addresses are aligned</b> to the vector width, or they fault.
-        <b>The vector scratchpad is store-only from the scalar side</b> — stage
-        data with <code>sw</code>, read it with <code>vld</code>.
-        <b><code>vsldw</code> slides by lanes, not elements.</b>
-        <b>Reductions cross lanes; arithmetic does not</b> — keep
-        <code>SIMD</code> running totals in a vector register and reduce once at
-        the end.
+        An instruction can round-trip perfectly through all four consumers, set
+        a write enable, and have <b>no datapath behind it</b>. Two instances
+        have been fixed on this PE: a converter group whose registered decode
+        signals had no branch in the <b>result mux</b>, so its instructions
+        wrote the integer lane's output; and an accumulator whose float units
+        were instantiated without connecting their operation port, so the tool
+        tied it to opcode zero — a pass-through — and the tier neither
+        multiplied nor accumulated.
       </p>
       <p>
-        <b>A float accumulator must be zeroed before it is used</b>: the
-        partials are a memory and a memory has no reset, so a kernel that skips
-        <code>vfaccz</code> reads whatever the RAM powered up holding. And
-        <b
-          ><code>SIMD_NPART</code> and <code>SIMD_FLOAT_LANES</code> change
-          float answers</b
-        >
-        — neither is a tuning knob, because the accumulation order is
-        architectural and a kernel validated at one value is not validated at
-        another.
+        <b>No bench built from the decode can catch it</b>, because the
+        generator, the golden model and the RTL are all written from one
+        instruction table, so a feature missing from the <i>datapath</i> is
+        missing from all three consistently. Three checks find the whole class:
+        follow the decode register to the <b>result</b> and count its reads;
+        grep the synthesis log for <code>[Synth 8-7071]</code> and keep only the
+        <b>inputs</b>, because an unconnected input is tied to zero and zero is
+        usually a legal opcode; and <b>read the area column</b> — those
+        accumulator units synthesised at roughly a fifth of what a working unit
+        costs, and a full multiply-add cannot be that small.
       </p>
     </Callout>
+
+    <h2 class="doc-h2">Latencies, and where every stall comes from</h2>
+
+    <SpecTable
+      :cols="timing.cols"
+      :rows="timing.rows"
+      caption="ALAT is the float tier's latency: 6 cycles with no seed units and 10 with any, because a seed is four stages deeper and the multiply-add path pads to match so the tier has ONE latency and one retire shadow. WB_STAGE is where the vector file is written: 0 keeps the RAW hazard at distance 1 and puts read-compute-write in one cycle; 1 registers the result first, costing a second stall and halving the path. rv_pe defaults SIMD_WB to 1 and khs_unit's own WB_STAGE default is 0, so what a bench builds depends on which level it instantiates — a component bench must set it explicitly to match what ships."
+    />
+
+    <Callout
+      kind="rule"
+      title="One elementwise float instruction is in flight at a time, and the cause is the writeback"
+    >
+      <p>
+        The issue interval for the elementwise groups is
+        <code>ALAT + passes</code> rather than <code>passes</code> alone. Each
+        pass places its results into a <b>single staging register</b> and the
+        whole register is written to the vector file when the last pass lands.
+        That makes the write port a mux rather than an arbitration and needs no
+        per-element write enable — but the staging register is <b>shared</b>, so
+        two instructions in flight would overwrite each other, and the
+        scoreboard does not catch it because it only blocks <i>dependent</i>
+        instructions.
+      </p>
+      <p>
+        Serialising is the correct fix and the cheap one, and it is what ships.
+        <b>The accumulator group does not have this limit</b>: a
+        <code>vfmacc</code> issues back to back, including into the same
+        accumulator, because the rotation breaks the recurrence. The
+        <RouterLink to="/mpe/simt" class="doc-link">SIMT PE</RouterLink> does not
+        have it either, and the difference is exactly the missing write enable —
+        its register file has a per-lane one, so a pass writes straight into it
+        with a constant source and there is no staging register to share.
+      </p>
+    </Callout>
+
+    <h2 class="doc-h2">What the widths buy, in cycles</h2>
+
+    <SpecTable
+      :cols="buys.cols"
+      :rows="buys.rows"
+      caption="The same workload written twice, scalar and vector, from tests/pe/tools/rv_simd_kernels.py, run on the assembled PE with real routers, the real memory agent and RAM behind it. Both writeback settings are given because the bench does not default to the shipped one. No verdict moves between the two columns: the shipped writeback costs between 1.9% and 33.3% of a vector kernel's cycles, and every feature still wins by 2.9× to 24.7×."
+    />
+
+    <Callout
+      kind="note"
+      title="Why the two writeback columns are comparable, and what the control is"
+    >
+      <p>
+        Both were taken on the same tree in the same session, differing only in
+        the writeback define. That is the claim; this is the control that tests
+        it. The writeback is inside the vector result path and touches nothing
+        else, so a <b>scalar</b> kernel must be unaffected — and all seven
+        scalar kernels are identical <b>to the cycle</b> across the pair. If
+        anything else had drifted between the runs it would almost certainly
+        have moved one of the seven. <b>A paired cycle measurement without a
+        control of this kind is two runs, not a comparison.</b>
+      </p>
+      <p>
+        The second half of believing it is that the cost lands where the
+        mechanism predicts rather than evenly: the two kernels built from long
+        chains of dependent vector operations pay +33%, and distance 2 is
+        exactly what the shipped writeback turns into a stall, while the kernel
+        that was never dependency-bound pays two cycles.
+      </p>
+    </Callout>
+
+    <Callout
+      kind="open"
+      title="The float tier has no kernel evidence at all"
+    >
+      <p>
+        The last two rows above are the weakest part of this page and are stated
+        rather than omitted. Nothing under <code>compiler/</code> references
+        this PE or any of its instructions, and its only kernel library contains
+        <b>zero float instructions</b>. The integer features each have a paired
+        kernel representing real work; the float tier — <b>the largest single
+        block in the PE</b> — has a component bench and a golden model and no
+        workload.
+      </p>
+      <p>
+        So any statement that the float tier is validated means
+        <i>validated against a model</i>. The question that raises is not
+        whether the integer extras earn their LUT — measured, they do — but
+        whether this PE has a float workload at all, which is a
+        <b>compiler</b> question and not an RTL one.
+      </p>
+    </Callout>
+
+    <h2 class="doc-h2">Rules a kernel must respect</h2>
+
+    <SpecTable :cols="rules.cols" :rows="rules.rows" />
+
+    <h2 class="doc-h2">Figures that were not carried forward</h2>
+
+    <Callout
+      kind="open"
+      title="A number that was true of an older build is a measurement of a different machine"
+    >
+      <p>
+        The PE changed substantially — the integer dot unit and its accumulators
+        were removed, every feature became a unit count, and the float tier's
+        format changed. A figure from before that is not a worse measurement of
+        this machine; it is a measurement of another one. Each was dropped
+        rather than updated, and each is listed so nobody re-derives it.
+      </p>
+    </Callout>
+
+    <SpecTable :cols="dropped.cols" :rows="dropped.rows" />
   </DocPage>
 </template>

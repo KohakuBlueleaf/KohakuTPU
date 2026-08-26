@@ -9,6 +9,13 @@ tags:
 
 # The ship and the device
 
+> **Kind: the mesh populations and the die assignment are Yours; the ship's
+> boundary is Fixed protocol.** What each die ended up holding, and choosing four
+> independent meshes over one, are this project's. The boundary shape that made it
+> assemblable — one clock, one reset, AXI outside, everything fixed at elaboration
+> — is the framework's
+> ([arch/ship/what-is-a-ship](../../arch/ship/what-is-a-ship.md)).
+
 A **ship** is one complete assembly floorplanned for a specific device. This page
 is KohakuTPU's: which part, why the machine is shaped the way the silicon forced
 it to be, and what each die holds.
@@ -184,10 +191,15 @@ block. That is what makes the accumulator's move to URAM free
 ([accumulator.md](accumulator.md) §1.1) and what motivates the staging discussion
 in [notes/cache/](../../notes/cache/README.md).
 
-**The vector core count stops at 16 for a reason worth naming precisely.**
-Throughput is still near linear there and vector occupancy only falls from 97% to
-88% between 8 and 16 cores. **16 is where the device runs out**, not where the
-architecture stops paying.
+**The vector core count stops at 16 because the device runs out, not because the
+architecture stops paying.** Throughput is still near linear there, and vector
+occupancy falls only from 97% to 88% between 8 and 16 cores.
+
+> Those two occupancy figures are `[unverified]`. They do not appear in
+> [results.md](results.md) and no run in this repository is known to have
+> produced them, so they are marked rather than repeated as fact. The
+> conclusion does not rest on them: the binding constraint at device level is
+> the 95.80% CLB occupancy above, which is measured.
 
 ---
 

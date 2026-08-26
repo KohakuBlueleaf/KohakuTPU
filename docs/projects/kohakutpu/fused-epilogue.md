@@ -10,6 +10,14 @@ tags:
 
 # The fused epilogue: cluster → NoC → vector core → DRAM
 
+> **Kind: the fusion is Yours; the transport it rides on is Fixed protocol.**
+> Draining an accumulator into another unit's L1 rather than through DRAM is this
+> project's choice and its own encoding. The unit-to-unit envelope that carries it
+> — `CU_DATA`, the `buf_id` namespace and the acknowledgement rule — is Fixed
+> protocol and not this project's to vary
+> ([spec/flit-format](../../spec/flit-format.md),
+> [spec/memory-protocol](../../spec/memory-protocol.md)).
+
 A matmul followed by an activation used to lower to
 
 ```
@@ -239,6 +247,8 @@ infinity).
    The gate is copied, not understood.
 5. **Silicon.** Everything above is `MODEL=1` behavioural simulation.
 
-Measured offline at `32x64 @ 32x64`, `gm=4 gn=8 nk=2`, four cores of each kind:
-94 instruction flits against 107, no temp against a 2 KB one, and no folded
-constant on the card against two 16 KB broadcast arrays.
+Measured on the unit models (`kohakutpu.model`) at `32x64 @ 32x64`,
+`gm=4 gn=8 nk=2`, four cores of each kind: 94 instruction flits against 107, no
+temp against a 2 KB one, and no folded constant on the card against two 16 KB
+broadcast arrays. **Nothing in this comparison has run on silicon** — see *Still
+unverified* above.

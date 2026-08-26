@@ -46,7 +46,7 @@ const meshShape = {
       y: 5,
       w: 13,
       label: "system node",
-      sub: "MAG + ctrl PE: tagged responses, descriptors, transform slot",
+      sub: "MAG + RV64 host: tagged responses, descriptors, transform slot",
       accent: true,
     },
     {
@@ -83,57 +83,90 @@ const meshShape = {
       to: "mesh:t",
       dir: "v",
       accent: true,
-      label: "MXFP7 quantiser",
+      label: "operands, already MXFP7",
     },
     { from: "mesh:b", to: "clu:t", dir: "v", accent: true, label: "one port" },
     { from: "mesh:b", to: "vec:t", dir: "v", accent: true, label: "one port" },
   ],
-  groups: [{ x: -1.4, y: 18.2, w: 32.8, h: 5.4, label: "two units, one port" }],
+  groups: [
+    {
+      x: -1.4,
+      y: 18.2,
+      w: 32.8,
+      h: 5.4,
+      label: "two units, one port each, nothing else in common",
+    },
+  ],
 };
 
-/* The four-mesh line, as enumerated off the multi-mesh build. */
+/* What the project owns, bounded. */
+const owns = [
+  {
+    t: "MXFP7",
+    d: "An int7 significand with an E5M3 scale shared by 32 elements along K, and the quantiser that produces it — the occupant of the framework's transform slot.",
+  },
+  {
+    t: "The matmul cluster",
+    d: "Four tensor CUs of 64 DSP48E2 chained into one accumulator: 512 MAC/cycle, one mesh port, a resident output tile.",
+  },
+  {
+    t: "The vector core",
+    d: "Sixteen E8M15 lanes with four base-2 transcendental seeds at full rate — a second unit that shares nothing with the first but the port.",
+  },
+  {
+    t: "Two instruction sets, and a compiler",
+    d: "Three cluster opcodes in a 256-bit payload, a 32-bit vector word, and a stack that plans tiles against the machine's own capacities.",
+  },
+];
+
+/* The four-mesh line, as enumerated off multimesh_v7's own control plane. */
 const ship = {
   nodes: [
     {
       id: "m0",
       x: 0,
       y: 0,
-      w: 12,
+      w: 7,
+      h: 6.5,
       label: "mesh_0",
-      sub: "SLR0 · ddr4_2 · 6+2",
+      sub: "SLR0 · ddr4_2 · 8+2",
     },
     {
       id: "m1",
-      x: 15,
+      x: 11,
       y: 0,
-      w: 12,
+      w: 7,
+      h: 6.5,
       label: "mesh_1",
-      sub: "SLR1 · ddr4_3 · 6+0",
+      sub: "SLR1 · ddr4_3 · 6+2",
       accent: true,
     },
     {
       id: "m3",
-      x: 30,
+      x: 22,
       y: 0,
-      w: 12,
+      w: 7,
+      h: 6.5,
       label: "mesh_3",
-      sub: "SLR2 · ddr4_1 · 6+2",
+      sub: "SLR2 · ddr4_1 · 8+2",
     },
     {
       id: "m2",
-      x: 45,
+      x: 33,
       y: 0,
-      w: 12,
+      w: 7,
+      h: 6.5,
       label: "mesh_2",
-      sub: "SLR3 · ddr4_0 · 6+2",
+      sub: "SLR3 · ddr4_0 · 8+2",
     },
     {
       id: "xdma",
-      x: 15,
-      y: 7,
-      w: 12,
+      x: 11,
+      y: 10,
+      w: 7,
+      h: 6.5,
       label: "XDMA / PCIe",
-      sub: "76,319 LUT — 17.7% of an SLR",
+      sub: "76,319 LUT — 17.7% of a die region",
     },
   ],
   edges: [
@@ -269,7 +302,7 @@ const status = {
     },
     {
       p: "cluster as an endpoint",
-      s: "<b>built</b>, one mesh port, closes with margin",
+      s: "<b>built</b>, one mesh port. Meets a 310 MHz target in <b>out-of-context synthesis</b> with slack — not a closed-timing result, and not placed at any cluster count",
       _tone: "good",
     },
     {
@@ -333,6 +366,103 @@ const layering = {
     { o: "four flits", b: "a whole 32x128x32 matmul" },
   ],
 };
+
+/* The per-unit budget a reader sizes their own machine from. */
+const budget = {
+  cols: [
+    { key: "u", label: "one of these" },
+    { key: "l", label: "LUT", mono: true, align: "right" },
+    { key: "f", label: "FF", mono: true, align: "right" },
+    { key: "b", label: "BRAM36", mono: true, align: "right" },
+    { key: "d", label: "DSP", mono: true, align: "right" },
+    { key: "p", label: "ports", mono: true, align: "right" },
+  ],
+  rows: [
+    {
+      u: "<b>matmul cluster</b> — <code>mx_cluster_cu</code> in the shape that ships",
+      l: "16,390",
+      f: "18,404",
+      b: "35",
+      d: "<b>304</b>",
+      p: "1",
+    },
+    {
+      u: "<b>vector core</b> — <code>vec_cu</code> after the shrink",
+      l: "35,629",
+      f: "22,145",
+      b: "44",
+      d: "51",
+      p: "1",
+    },
+    {
+      u: "the MXFP7 quantiser — one per agent, not per unit",
+      l: "4,267",
+      f: "—",
+      b: "0",
+      d: "32",
+      p: "—",
+    },
+    {
+      u: "<b>one SLR has</b>",
+      l: "<b>432,000</b>",
+      f: "<b>864,000</b>",
+      b: "<b>672</b>",
+      d: "<b>3,072</b>",
+      p: "—",
+      _tone: "good",
+    },
+    {
+      u: "…of which the host die gives up to XDMA before anything else",
+      l: "76,319",
+      f: "72,059",
+      b: "124",
+      d: "0",
+      p: "—",
+      _tone: "warn",
+    },
+  ],
+};
+
+const notOwned = {
+  cols: [
+    { key: "n", label: "not KohakuTPU's" },
+    { key: "w", label: "who owns it" },
+  ],
+  rows: [
+    {
+      n: "the mesh port's six signals, its retry rule, and the flit header",
+      w: "the framework's fabric. Both units are ordinary clients of it and neither may change it",
+    },
+    {
+      n: "how an instruction arrives and how a completion returns",
+      w: "the framework. What the payload bits <i>mean</i> is this project's, and the two units spend them completely differently",
+    },
+    {
+      n: "descriptors, addresses, the memory request and response encoding",
+      w: "the system node. This project supplies the transform slot's occupant and nothing else on that path",
+    },
+    {
+      n: "the mover, and the transform stage it runs through",
+      w: "the system node's control processor. <b>The quantiser in the slot is this project's; the slot is not</b>",
+    },
+    {
+      n: "DRAM, host DMA, the AXI fabric outside the meshes",
+      w: "the framework's AXI side",
+    },
+    {
+      n: "routers, links, XY routing and the acyclic argument behind it",
+      w: "the fabric. Changing it is designing a different machine",
+    },
+    {
+      n: "which coordinate a unit occupies, and what a link may cross",
+      w: "ship assembly and the floorplan",
+    },
+    {
+      n: "carrying a flit between meshes",
+      w: "the interlink. A cluster never learns another mesh exists",
+    },
+  ],
+};
 </script>
 
 <template>
@@ -341,8 +471,36 @@ const layering = {
     summary="An MXFP7 tensor accelerator on xcvu13p-fhgb2104-2L-e: two compute units that share nothing but a mesh port, an instruction set spent on the datapath, and a compiler that plans against the machine's own capacities."
     domain="tpu"
     status="measured"
-    source="xcvu13p-fhgb2104-2L-e · docs/projects/kohakutpu/README.md · ship.md"
+    source="xcvu13p-fhgb2104-2L-e, Vivado 2024.2 · docs/projects/kohakutpu/README.md · ship.md"
   >
+    <h2 class="doc-h2">What this project owns</h2>
+    <p class="doc-p">Four things, and nothing else.</p>
+    <div class="grid gap-3 sm:grid-cols-2 my-5">
+      <div v-for="o in owns" :key="o.t" class="card p-4">
+        <div
+          class="kt-text-caption font-semibold text-warm-800 dark:text-warm-200 mb-1"
+        >
+          {{ o.t }}
+        </div>
+        <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
+          {{ o.d }}
+        </p>
+      </div>
+    </div>
+
+    <p class="doc-p">
+      The obvious way to build a tensor unit on this part is to multiply FP8
+      elements and sum them in a floating-point adder tree, and that is what the
+      design this one replaced did. It was rejected on measurement:
+      <b>the adder tree was 84% of the tensor core</b> — 10,656 of 12,731 LUTs
+      for 128 MACs — because every product arrived carrying its own exponent, so
+      every node in the tree had to align, add and normalise. Factoring the
+      exponent out of a block of 32 along K does not make that tree cheaper; it
+      <b>leaves it nothing to do</b>. The cost of the narrower thing is that the
+      format is not one anybody else speaks, so the quantiser, the packing, the
+      guard-bit budget and both ends of the conversion are all written by hand.
+    </p>
+
     <p class="doc-p">
       <code>C = A · B</code> in MXFP7: a 7-bit signed significand with an E5M3
       scale shared by a block of 32, multiplied inside DSP48E2s and reduced as
@@ -409,32 +567,40 @@ const layering = {
     </p>
 
     <Fig
-      caption="The four meshes are a line, not a grid — an SLL joins only adjacent SLRs, so the buildable fabric is the SLR stack in order and the mesh ids are not in SLR order. Populations shown are read off the multi-mesh build's own control-plane enumeration; the four-mesh plan in ship.md names 6+4 / 4+4 / 4+4 / 6+4 instead. mesh_0 to mesh_2 is three hops — the diameter, and precisely the pair a 2x2 grid would have made adjacent."
+      caption="The four meshes are a line, not a grid — an SLL joins only adjacent SLRs, so the buildable fabric is the SLR stack in order, and the mesh ids are not in SLR order. Populations are read off multimesh_v7's own control-plane enumeration on 2026-08-23: 38 units, 30 matmul clusters and 8 vector cores. mesh_0 to mesh_2 is three hops — the diameter, and precisely the pair a 2x2 grid would have made adjacent."
       zoom
-      wide
     >
       <BlockDiagram :nodes="ship.nodes" :edges="ship.edges" />
     </Fig>
 
     <Callout
       kind="trap"
-      title="A population is a property of a build, never of “the ship”"
+      title="A population is a property of a named build, never of “the ship”"
     >
       <p>
-        The four-mesh plan is 6+4 / 4+4 / 4+4 / 6+4. A placed run measured
-        meshes of 6+2 and 6+0 from the placed hierarchy. Both are true of their
-        own build. Check which build a figure came from before carrying it — and
-        read unit populations off the card's control plane rather than trusting
-        a document.
+        Three sets of numbers are in circulation and each is true of its own
+        build. The four-mesh <i>plan</i> is 6+4 / 4+4 / 4+4 / 6+4. An earlier
+        placed run measured meshes of 6+2 and 6+0 from the placed hierarchy.
+        <code>multimesh_v7</code> enumerates 8+2 / 6+2 / 8+2 / 8+2.
+      </p>
+      <p>
+        <b
+          >Read a population off the card's control plane rather than off a
+          document</b
+        >, and check which build a figure came from before carrying it. The
+        symptom of getting this wrong is not an error: it is a per-unit figure
+        divided by the wrong unit count, which lands somewhere plausible.
       </p>
     </Callout>
 
     <p class="doc-p">
-      <b>mesh_1 has no vector core.</b> SLR1 holds the host interface, so it is
-      the most crowded die and its mesh gave up the vector cores rather than the
-      clusters. The consequence is not “mesh_1 is a spare”: it is six perfectly
-      good matmul clusters that can run any stage needing no epilogue, and
-      nothing else.
+      <b>mesh_1 is the small one, and SLR1 is why.</b> That die holds the host
+      interface — XDMA alone is 76,319 LUT, 17.7% of an SLR — so it gives up
+      roughly a vector core's worth of fabric before a single cluster is placed,
+      and its mesh is two clusters short of the other three. The mesh on the
+      grid diagonal of SLR1 is where the other small map would have gone, for the
+      same reason: a crowded die's cheapest neighbours are the ones it is
+      cheapest to reach.
     </p>
 
     <h2 class="doc-h2">What it demonstrates</h2>
@@ -465,12 +631,18 @@ const layering = {
 
     <p class="doc-p">
       <b
-        >That the thing that limits a dataflow machine is usually not what it
-        looks like.</b
+        >That a dataflow machine's ceiling is a property of its schedule, not of
+        its buses.</b
       >
-      Three separate times a measurement pointed at bandwidth and was wrong, and
-      the machine went from 6.8% of its own datapath peak to 87.6% without
-      widening a single bus.
+      The machine went from <b>6.8% of its own datapath peak to 87.6%</b> on the
+      same 256-cube, in simulation, <b>without widening a single bus</b> — 42.0
+      to 538.3 GFLOP/s, where the cycle counts are measured and the rate is
+      those counts against a nominal 300 MHz. An arithmetic ceiling derived from
+      operand traffic is only as sound as its assumption that each byte is
+      fetched once, and that assumption is the schedule's to keep. Every step
+      and its conditions are on
+      <RouterLink to="/tpu/results" class="doc-link">the results page</RouterLink
+      >.
     </p>
 
     <h2 class="doc-h2">Which framework features it exercises</h2>
@@ -506,6 +678,122 @@ const layering = {
         data, currently guarded rather than fixed.
       </p>
     </Callout>
+
+    <h2 class="doc-h2">Sizing one of these</h2>
+
+    <p class="doc-p">
+      Everything below is arithmetic on measured per-unit figures, and the
+      arithmetic is shown so it can be checked. Every LUT, FF, BRAM and DSP
+      figure in the table is <b>out-of-context synthesis</b> of that module
+      standing alone on <code>xcvu13p-fhgb2104-2L-e</code> with Vivado 2024.2;
+      the XDMA row is the odd one out and is per-IP utilisation read out of an
+      <i>implemented</i> single-mesh design.
+    </p>
+
+    <SpecTable
+      :cols="budget.cols"
+      :rows="budget.rows"
+      caption="A cluster's 35 BRAM36 is 13 RAMB36 per operand port, 26 for the two, 5 for the resident tile and 4 for the receive queue — a named breakdown rather than a total. The vector core's 44 is reported as tiles, which is the unit a mixed count reconciles in: 5 RAMB36 plus 2 RAMB18 is 6 tiles, not 7 primitives"
+    />
+
+    <Callout kind="rule" title="Divide by the DSP count, then stop believing it">
+      <p>
+        A cluster is 304 DSP48E2 and the device has 12,288, so
+        <code>12,288 / 304 = 40</code> clusters is the ceiling — <b>DSP-bound</b>,
+        which is the right place to be bound on this part. Then note what that
+        division assumes: a die holding nothing but clusters, no vector cores, no
+        memory agents, no DDR4 controllers, no AXI fabric, no host interface, and
+        a placement that succeeds.
+      </p>
+      <p>
+        <b>What was actually built is 30 clusters and 8 vector cores</b>, on a
+        placement measuring 95.80% CLB on its worst die. The gap is not an error
+        in the arithmetic; it is everything the arithmetic left out. Treat
+        <code>12,288 / 304</code> as an upper bound that names its own binding
+        resource, and take the population off the card.
+      </p>
+    </Callout>
+
+    <h3 class="doc-h3">A procedure</h3>
+    <ol class="doc-p list-decimal pl-5 space-y-2">
+      <li>
+        <b>Fix the element format before anything else.</b> It sets the operand
+        width, which sets the DSP packing, which sets the cascade depth, which
+        <i>is</i> the block size. Nothing downstream is independent of it.
+      </li>
+      <li>
+        <b>Count DSPs per unit and divide into the part's.</b> Count the whole
+        unit, not its multiply array: the 304 above includes 256 of cascade, 16
+        of block-scale multiply and 32 of normalising shift, and counting only
+        the first gives 48 clusters instead of 40.
+      </li>
+      <li>
+        <b>Take the host die's fixed cost off the top.</b> Whichever SLR carries
+        PCIe gives up 76,319 LUT to XDMA alone, before a DDR4 controller or a
+        single unit. That is roughly a vector core's worth of fabric, and it is
+        why the smallest mesh goes there.
+      </li>
+      <li>
+        <b>Count endpoints, not units.</b> Your units, each at one mesh port,
+        plus one to four memory agent ports. Not the control plane — it has no
+        node of its own.
+      </li>
+      <li>
+        <b>Pick the smallest router grid that holds them.</b> Capacity is
+        <code>NX·NY</code> router locals plus <code>2·(NX+NY)</code> edge slots.
+        A 2x2 grid is <code>4 + 8 = 12</code>, and the generated 2x2 map carries
+        six clusters and four vector cores — ten units plus two agent ports,
+        which is all twelve. Fill edge slots before growing the grid: an edge
+        endpoint costs a link, a local costs a router, and a router is thousands
+        of LUTs apiece. A cluster on a router's <i>east</i> port rather than its
+        local is what lets a 2x2 carry ten units at all.
+      </li>
+      <li>
+        <b>Check every cluster is SLR-resident.</b> A DSP cascade is a physical
+        object and does not propagate across a die boundary, so a cluster that
+        straddles one cannot be built at all — this is a hard constraint, not a
+        timing preference.
+      </li>
+      <li>
+        <b>Measure out of context, then place, and expect to lose slack.</b>
+        Synthesis slack is optimistic; one module in this tree lost 0.740 ns
+        between synthesis and routing. A device past roughly 70% full erodes it
+        further.
+      </li>
+      <li>
+        <b>Ladder the clocks on the card, and score error rather than
+        pass/fail.</b>
+        Drive each clock domain with a workload that actually reaches the unit it
+        clocks, hold the others low, and read relative error against a
+        double-precision reference. On this machine that step found three of four
+        profile clocks unreachable, and no synthesis figure had said so.
+      </li>
+    </ol>
+
+    <Callout kind="open" title="What the flow still does not answer">
+      <p>
+        <b>No cluster-count configuration has been through place-and-route.</b>
+        Every scaling figure on these pages is multiplication on one synthesised
+        cluster, and nothing checks a mesh map against the device it is meant for
+        — endpoint count, grid size and die capacity are related by arithmetic
+        nobody performs until synthesis fails.
+      </p>
+      <p>
+        Endpoint placement <i>within</i> a die is unmodelled, and it is not free:
+        a layout change that placed a cluster as one column of a band instead of
+        straddling a neighbour's router cost about three points of peak at eight
+        clusters, entirely in routing. No tool in the flow predicts that from a
+        map.
+      </p>
+    </Callout>
+
+    <h2 class="doc-h2">What this project does not own</h2>
+
+    <SpecTable
+      :cols="notOwned.cols"
+      :rows="notOwned.rows"
+      caption="The line matters in both directions. Everything on the left is fixed protocol this project obeys; almost everything else on these pages is the project's own, and that asymmetry is what makes the framework claim testable rather than decorative"
+    />
 
     <h2 class="doc-h2">How to read the rest</h2>
 

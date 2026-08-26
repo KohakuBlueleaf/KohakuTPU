@@ -149,13 +149,16 @@ const sChoice = {
   ],
 };
 
-/* The cluster: four tensor CUs chained into one accumulator. */
+/* The cluster: four tensor CUs chained into one accumulator.
+ * Geometry note: the TCU gaps are 3 units wide so an edge label fits BETWEEN
+ * two boxes rather than on them, and the group's top edge sits above the
+ * operand row so no wire crosses its caption. */
 const cluster = {
   nodes: [
-    { id: "o0", x: 0, y: 0, w: 11, h: 2.6, label: "A0 B0", sub: "K 0..7" },
-    { id: "o1", x: 12.5, y: 0, w: 11, h: 2.6, label: "A1 B1", sub: "K 8..15" },
-    { id: "o2", x: 25, y: 0, w: 11, h: 2.6, label: "A2 B2", sub: "K 16..23" },
-    { id: "o3", x: 37.5, y: 0, w: 11, h: 2.6, label: "A3 B3", sub: "K 24..31" },
+    { id: "o0", x: 0, y: 0, w: 11, h: 2.6, label: "A0 B0", sub: "K 0..7 · delay 0" },
+    { id: "o1", x: 14, y: 0, w: 11, h: 2.6, label: "A1 B1", sub: "K 8..15 · delay 2" },
+    { id: "o2", x: 28, y: 0, w: 11, h: 2.6, label: "A2 B2", sub: "K 16..23 · delay 4" },
+    { id: "o3", x: 42, y: 0, w: 11, h: 2.6, label: "A3 B3", sub: "K 24..31 · delay 6" },
     {
       id: "t0",
       x: 0,
@@ -163,38 +166,38 @@ const cluster = {
       w: 11,
       h: 4,
       label: "TCU 0",
-      sub: "4x8x4 · 64 DSP",
+      sub: "4x8x4 · 64 DSP · W = 0",
     },
     {
       id: "t1",
-      x: 12.5,
+      x: 14,
       y: 6,
       w: 11,
       h: 4,
       label: "TCU 1",
-      sub: "4x8x4 · 64 DSP",
+      sub: "4x8x4 · 64 DSP · W = C",
     },
     {
       id: "t2",
-      x: 25,
+      x: 28,
       y: 6,
       w: 11,
       h: 4,
       label: "TCU 2",
-      sub: "4x8x4 · 64 DSP",
+      sub: "4x8x4 · 64 DSP · W = C",
     },
     {
       id: "t3",
-      x: 37.5,
+      x: 42,
       y: 6,
       w: 11,
       h: 4,
       label: "TCU 3",
-      sub: "4x8x4 · 64 DSP",
+      sub: "4x8x4 · 64 DSP · W = C",
     },
     {
       id: "acu",
-      x: 52,
+      x: 57,
       y: 6,
       w: 13,
       h: 4,
@@ -204,7 +207,7 @@ const cluster = {
     },
     {
       id: "mesh",
-      x: 52,
+      x: 57,
       y: 13,
       w: 13,
       label: "mesh port",
@@ -217,39 +220,37 @@ const cluster = {
     { from: "o1:b", to: "t1:t", dir: "v" },
     { from: "o2:b", to: "t2:t", dir: "v" },
     { from: "o3:b", to: "t3:t", dir: "v" },
-    { from: "t0:r", to: "t1:l", dir: "h", accent: true, label: "C port, 48 b" },
-    { from: "t1:r", to: "t2:l", dir: "h", accent: true, label: "C port" },
-    { from: "t2:r", to: "t3:l", dir: "h", accent: true, label: "C port" },
+    { from: "t0:r", to: "t1:l", dir: "h", accent: true, label: "→ W" },
+    { from: "t1:r", to: "t2:l", dir: "h", accent: true, label: "→ W" },
+    { from: "t2:r", to: "t3:l", dir: "h", accent: true, label: "→ W" },
     {
       from: "t3:r",
       to: "acu:l",
       dir: "h",
       accent: true,
-      label: "16 x int, exact",
+      label: "16 × int",
     },
     { from: "acu:b", to: "mesh:t", dir: "v", accent: true },
   ],
   groups: [
     {
       x: -1.2,
-      y: 4.6,
-      w: 50.4,
-      h: 6.8,
-      label: "256 DSP · zero fabric adders · no port to the mesh at all",
+      y: -1.2,
+      w: 55.4,
+      h: 12.6,
+      label:
+        "mx_cluster_core — 256 DSP, zero fabric adders, and no port to the mesh at all",
     },
   ],
 };
 
-/* Operand skew: a cascade adds one pipeline stage per DSP. */
+/* Operand skew, as mx_tcu.v builds it: stage 0 takes the operands undelayed and
+ * stage k reads a k-deep shift register. One register per STAGE carries the
+ * whole 56-bit bundle, not 32 separate 7-bit lines. */
 const CYC = 12;
 const TILES = 4;
 const skewRows = Array.from({ length: 8 }, (_, k) => ({
-  name:
-    k === 0
-      ? "k=0 (A1/A2 reg)"
-      : k === 1
-        ? "k=1 (B1/B2 reg)"
-        : `k=${k} (SRL32 +${k})`,
+  name: k === 0 ? "k=0 · no delay" : `k=${k} · ${k}-deep sr`,
   kind: "bus",
   values: Array.from({ length: CYC }, (_, c) =>
     c >= k && c < k + TILES ? `T${c - k}` : undefined,
@@ -267,14 +268,41 @@ skewRows.push({
 const skewNotes = [
   {
     cycle: 0,
-    text: "The DSP's own A1/A2 and B1/B2 input registers absorb the first two stages before any SRL is needed.",
+    text: "Stage k's operands must arrive k cycles after stage 0's, because the cascade adds one pipeline stage per DSP. The delay is explicit: stage 0 reads the operand bundle directly and stage k reads the end of a k-deep shift register.",
   },
   {
     cycle: 8,
-    text: "SRL32 makes skew one LUT per bit at any depth up to 32: 7 bit x 32 lanes = 224 LUT and no FFs, against 7 bit x 8 stages x 32 lanes = 1,792 FF for a flop chain.",
+    text: "One shift register serves a whole STAGE — four rows of A and four columns of B at that k, 56 bits — rather than 32 narrow 7-bit lines. That is what makes the delay lines eight objects per tensor CU instead of 256.",
+  },
+  {
+    cycle: 11,
+    text: "Stage k's P lands at t + k + 4, so stage 7 completes at t + 11. Four tiles are in flight down the chain at once, which is the only condition under which the per-stage skew is exercised at all.",
     tone: "good",
   },
 ];
+
+/* Where the skew is HELD is a separate decision from how deep it is. */
+const skewStore = {
+  cols: [
+    { key: "s", label: "held in", mono: true },
+    { key: "c", label: "what a depth-k line costs" },
+    { key: "b", label: "what the shipping RTL does" },
+  ],
+  rows: [
+    {
+      s: "SRL16E / SRL32",
+      c: "<b>one LUT per bit at ANY depth.</b> These lines are 2 to 7 deep inside a tensor CU and 2, 4 and 6 deep between them, so an SRL16E pays a whole LUT to use at most 7 of its 16 stages",
+      b: "not used",
+      _tone: "warn",
+    },
+    {
+      s: "<b>flip-flops</b>",
+      c: "one FF per bit per stage — more registers, and no LUT at all",
+      b: "<code>mx_tcu.v</code> and <code>mx_cluster_core.v</code> both carry <code>(* shreg_extract = &quot;no&quot; *)</code> on the delay arrays, so synthesis is forbidden to infer an SRL",
+      _tone: "good",
+    },
+  ],
+};
 
 /* The K sweep: one step per K block, gm=8 gn=8 nk=4 (32x128x32). */
 const sweep = [
@@ -557,7 +585,7 @@ const notBuilt = {
     summary="Two int7 MACs per DSP48E2 sharing an activation through the pre-adder, a cascade that reduces K=32 without touching the fabric, and a K sweep that reads one pair of operands and spends it on 32 multiply-accumulates."
     domain="tpu"
     status="shipped"
-    source="xcvu13p-fhgb2104-2L-e · docs/projects/kohakutpu/matmul.md · isa.md"
+    source="xcvu13p-fhgb2104-2L-e, Vivado 2024.2, out-of-context synthesis · docs/projects/kohakutpu/matmul.md · isa.md"
   >
     <p class="doc-p">
       A <b>cluster</b> is four tensor CUs chained into an accumulator; a tensor
@@ -664,8 +692,41 @@ const notBuilt = {
       is free to carry the upstream partial.
     </p>
 
+    <Callout
+      kind="trap"
+      title="The upstream partial enters the LAST stage on W, not CU entry on Z"
+    >
+      <p>
+        Both choices reach the same claim — zero fabric adders across the whole
+        K = 32 — and they cost completely different amounts of skew, so the
+        stage is the decision and the port is only its consequence.
+      </p>
+      <p>
+        <b>On <code>Z</code> at stage 0</b>, the upstream CU's result would have
+        to be ready <i>before this CU starts</i>, which is
+        <b>eight cycles of operand delay per tensor CU</b> — the whole depth of
+        the chain, four times over.
+        <b>On <code>W</code> at the last stage</b> the two results are
+        contemporary and need only the alignment the <code>C</code> register
+        itself imposes: <b>two cycles per CU</b>, so the operand delays are 0,
+        2, 4, 6 and the core is <code>11 + 2·(NTCU−1) = 17</code> cycles deep.
+      </p>
+      <p>
+        Assuming one cycle instead of two is the symptom to know:
+        <b>half of every tile's products vanish</b> and the other half are
+        summed against the previous tile, because the downstream stage samples
+        its neighbour a cycle early — when the neighbour still holds the
+        previous tile's value, or zero on the first tile.
+        <b>Nothing errors</b>, and with stable operands nothing is even wrong.
+        The circuit is on
+        <RouterLink to="/tpu/matmul/microarchitecture" class="doc-link"
+          >the microarchitecture page</RouterLink
+        >.
+      </p>
+    </Callout>
+
     <Fig
-      caption="Z = PCIN within a CU, Z = C at CU entry. OPMODE selects Z from {0, PCIN, P, C, …} and X/Y from the multiplier, so M + C and M + PCIN are both single-DSP operations: the entire K=32 accumulation across all four CUs costs zero fabric adders, and each CU stays an independent 8-deep cascade that can be placed on its own."
+      caption="Inside a tensor CU the reduction is Z = PCIN. The upstream CU's partial enters on W, at the LAST stage of the chain — not at CU entry. OPMODE selects Z from {0, PCIN, P, C, …}, W from {0, C, …} and X/Y from the multiplier, so M + PCIN + C is one DSP operation: the entire K=32 accumulation across all four CUs costs zero fabric adders, and each CU stays an independent 8-deep cascade that can be placed on its own."
       zoom
       wide
     >
@@ -688,12 +749,13 @@ const notBuilt = {
       putting the boundary at K=32 rather than at the whole problem.
     </p>
 
-    <h3 class="doc-h3">Operand skew, and why it is SRLs</h3>
+    <h3 class="doc-h3">Operand skew, and what holds it</h3>
 
     <p class="doc-p">
       A cascade adds one pipeline stage per DSP, so the operand for stage
       <code>k</code> must arrive <code>k</code> cycles after stage 0 — eight
-      stages of skew on 7-bit operands.
+      stages of skew on 7-bit operands, and another two per tensor CU on top of
+      that.
     </p>
 
     <WaveTrace
@@ -702,10 +764,33 @@ const notBuilt = {
       label="operand skew down one 8-deep chain, four tiles streaming"
     />
 
-    <p class="doc-p">
-      Measured, this is where a tensor CU's LUTs actually go: 224 of TCU 0's 336
-      are SRLs and the routing logic is the remaining ~112.
-    </p>
+    <SpecTable
+      :cols="skewStore.cols"
+      :rows="skewStore.rows"
+      caption="A shift register is not a memory — no address, no read port — so unlike a BRAM or URAM its latency is not a tool heuristic and there is no correctness reason to name a primitive. The reason to name one anyway is area, and it points the other way from the usual advice: the shallow, wide lines a DSP cascade needs are exactly the shape an SRL is bad at."
+    />
+
+    <Callout kind="measured" title="How much of a cluster the skew is">
+      <p>
+        Reading the earlier, SRL-built cluster's own breakdown: 224 SRL of TCU
+        0's 336 LUT, 280 each in TCUs 1, 2 and 3, and 394 of the top-level
+        operand delay's 450 — <b>1,458 LUT of shift register</b> in a cluster
+        measuring 4,751. That is the size of the prize the flop swap plays for,
+        and it is <b>31% of that cluster's LUTs</b> spent on nothing but making
+        operands arrive on the right cycle.
+      </p>
+      <p>
+        Both numbers are out-of-context synthesis of <code>mx_cluster</code> on
+        <code>xcvu13p-fhgb2104-2L-e</code>, Vivado 2024.2, against a 300 MHz
+        target. The per-component rows sum to the parent exactly — 336 + 448 +
+        476 + 476 + 450 + 2,565 = 4,751 LUT, and 256 DSP — which is what makes
+        them a breakdown rather than rows from different runs.
+        <b
+          >The flop-built cluster has not been re-measured as a matched pair,
+          so no LUT figure for the swap is quoted here.</b
+        >
+      </p>
+    </Callout>
 
     <h2 class="doc-h2">
       The K sweep: one operand read, 32 multiply-accumulates
@@ -878,7 +963,7 @@ const notBuilt = {
       <code>ADD_EMIT</code> removes the need for a command slot rather than
       finding one, and in the pipeline it is <code>ADD</code>'s operand selects
       with <code>EMIT</code>'s output — one term in three expressions and
-      nothing at all in stage 3, the path that closes timing. The explicit
+      nothing at all in stage 3, the path the cluster binds on. The explicit
       <code>EMIT</code> stays, because an output tile drained without a
       completing sweep still needs it.
     </p>

@@ -1,6 +1,6 @@
 ---
 title: Lanes and packed elements
-summary: What a lane is, how one instruction drives eight of them, how four int8 elements share a single 32-bit carry chain, the three operations that cross lanes, and why the float lane count is a separate number from the element count.
+summary: What a lane is, how one instruction drives eight of them, how four int8 elements share a single 32-bit carry chain, the three operations that cross lanes, and why the float unit count is a separate number from the element count.
 tags:
   - architecture
   - pe
@@ -8,6 +8,11 @@ tags:
 ---
 
 # Lanes and packed elements
+
+> **Kind: Yours throughout.** What a lane is, how packed elements share a carry
+> chain, and which operations cross lanes are this project's datapath structure.
+> The framework fixes the width at which operands arrive, never how a unit
+> divides them internally.
 
 Three ideas stack here and they are independent, which is why conflating any two
 of them produces a wrong mental model of the machine.
@@ -18,7 +23,7 @@ values a vector register holds, which follows from the register width and the
 element width and is nobody's choice.
 
 Read them separately. They fail differently, they cost differently, and only
-one and a half of them are parameters.
+some of them are parameters.
 
 ## What a lane is
 
@@ -44,60 +49,66 @@ register, with the control inputs shared with every other lane.
 
 Lane *L* reads bits `32L+31 .. 32L` of each source and writes the same bits of
 the destination. Nothing is broadcast, nothing is muxed, no lane can see another
-lane's data. That is why the array costs almost exactly `SIMD` times one lane,
-and why frequency barely moves as `SIMD` grows: widening adds copies, not depth.
+lane's data. That is why the array costs almost exactly the lane count times one
+lane, and why frequency barely moves as the array widens: widening adds copies,
+not depth.
 
-The control bus above is the reason this is a SIMD core and not a SIMT core. Every
-lane gets the same operation because there is only one instruction being
+The control bus above is the reason this is a SIMD core and not a SIMT core.
+Every lane gets the same operation because there is only one instruction being
 decoded. There is no lane mask and no per-lane address, so there is nothing to
 diverge and nothing to serialise — and equally, no way to express a kernel that
 needs those.
 
-### Why a lane is 32 bits and a register is 256
+### Two numbers, and only one of them is the register width
 
-The register width comes from the machine around it: **256 bits is one flit, one
-memory-agent entry, and one L1 line**, so a vector register is exactly the unit
-that moves between DRAM and this PE in a single transaction. The vector
+```
+   SIMD     32-bit slots in a vector register.  VW = 32 x SIMD.
+            8 at the reference, so a register is 256 bits.
+   ILANES   how many lanes are BUILT to serve those slots.
+            8 at full rate; fewer walk SIMD/ILANES passes.
+```
+
+The **register width** comes from the machine around it: 256 bits is one flit
+payload, one memory-agent entry and one L1 line, so a vector register is exactly
+the unit that moves between DRAM and this PE in a single transaction. The vector
 scratchpad's row is the same 256 bits ([memory](memory.md)).
 
-The *lane* width comes from the accumulator. `vdot` reduces the elements inside
-a lane into one int32 ([accumulator](accumulator.md)), so an accumulator holds
-`SIMD` int32 values — exactly one vector register wide. A lane wider than 32 bits
-would make the accumulator wider than a register and `vaccrd` a narrowing
-operation instead of a move.
+The **slot** width is 32 bits because that is one int32 and one binary32 — the
+widest element either tier computes, and the width a reduction returns into a
+scalar register.
 
-`SIMD_LANES` is a parameter — 2, 4 or 8 lanes, for 64, 128 or 256-bit registers —
-but at anything below 8 the memory alignment above is gone, which is why the
-reference is 8 and the narrower builds are priced rather than offered.
+`SIMD` is settable at 2, 4, 8 or 16, but at anything below 8 the memory
+alignment above is gone, which is why the reference is 8 and the narrower builds
+are priced rather than offered. `ILANES` is a genuine width: it costs cycles and
+nothing else, and it narrows the ALU without narrowing the multipliers, because
+fabric adders and DSP columns are two separate budgets.
 
-## The float lanes are a different count
+## The float units are a different count again
 
-Everything above is the **integer** lane array, where one lane per 32 bits of
-register is forced. The float tier has no such tie, so its lane count is its own
-parameter and the two numbers separate:
+Everything above is the **integer** lane array. The float tier has no tie to the
+memory granule, so its unit count is its own parameter:
 
 ```
-   integer lanes    SIMD_LANES             8, and fixed by the memory granule
-   float ELEMENTS   2 x SIMD_LANES        16 at SIMD 8 -- a register width
-                                        divided by an element width, not a
-                                        choice anyone makes
-   float LANES      SIMD_FLOAT_LANES      4 at the reference -- a knob
-   passes           elements / lanes     4 -- the issue interval
+   elements       SIMD                  8 at SIMD 8 -- a register width divided
+                                        by an element width, not a choice
+   float units    FLOAT_LANES           a knob; 0 means no float tier
+   passes         elements / units      the issue interval
 ```
 
-A `vfmacc` at four lanes drives elements 3..0 into the lanes, then 7..4, then
-11..8, then 15..12 — one pass per cycle — and **retires once**. The accumulator
-is sixteen slots wide at every lane count, because it is sized in elements.
+A fused multiply-add at four units drives elements 3..0 into the units, then
+7..4 — one pass per cycle — and **retires once**. Nothing in the program sees
+the passes.
 
-Fewer lanes cost an issue interval and buy LUT. They also **change the answers**,
-because an element's accumulate chain becomes a shorter strided subset of the
-partials and float addition does not associate — the full argument is in
-[float](float.md#elements-lanes-and-passes).
+Fewer units cost an issue interval and buy LUT. When the rotating accumulator is
+built they also **change the answers**, because an element's accumulate chain
+becomes a shorter strided subset of the partials and float addition does not
+associate — the full argument is in
+[float](float.md#elements-units-and-passes).
 
 ## Packing: three ways to read 32 bits
 
-Every arithmetic instruction carries a two-bit **element type** in its encoding,
-and it says how to cut each lane up.
+Every integer arithmetic instruction carries a two-bit **element type** in its
+encoding, and it says how to cut each lane up.
 
 ```
      bit  31          24 23          16 15           8 7            0
@@ -124,16 +135,16 @@ different widths with no state to change.
 This is where a packed datapath is usually built wrong, so it is worth following
 in full.
 
-> **The obvious construction is the slow one, and it was built first.** Four byte
-> adders per lane with the carry between them gated by the element width computes
-> the right answer. Gating a carry means putting a LUT between the bytes, and **a
-> LUT in the carry path stops the FPGA using its dedicated carry chain**: four
-> gated bytes become seven chains in series, measured at **2.05 ns of a 4.72 ns
-> critical path**.
+> **The obvious construction is the slow one.** Four byte adders per lane with
+> the carry between them gated by the element width computes the right answer.
+> But gating a carry means putting a LUT between the bytes, and **a LUT in the
+> carry path stops the FPGA using its dedicated carry chain**: four gated bytes
+> become seven chains in series, measured at **2.05 ns of a 4.72 ns critical
+> path**.
 
-The construction used instead gets the identical answer from **one native 32-bit
-add**. Let `M` be each element's most significant bit — `0x80808080` for int8,
-`0x80008000` for int16, `0x80000000` for int32:
+The construction used instead gets the identical answer from **one native
+32-bit add**. Let `M` be each element's most significant bit — `0x80808080` for
+int8, `0x80008000` for int16, `0x80000000` for int32:
 
 ```
    add    y = ((a & ~M) + (b & ~M)) ^ ((a ^ b) & M)
@@ -164,8 +175,8 @@ one carry chain, any of three element widths chosen by a mask.
 
 `mask` is an **input** to the lane, not derived in it: it depends only on the
 element width, which is identical in every lane, so `khs_unit` builds it once in
-EX and registers it. Deriving it per lane would put a mux in front of the adder
-in the one cycle this module exists to keep short.
+the execute stage and registers it. Deriving it per lane would put a mux in
+front of the adder in the one cycle this module exists to keep short.
 
 ### Saturation and compare come out of the sign bits
 
@@ -173,7 +184,7 @@ The construction deliberately destroys the carry out of each element — which i
 the bit saturation and signed comparison would normally be built from. It is
 recoverable, and cheaply, from three sign bits per element:
 
-| Quantity | From |
+| quantity | from |
 |---|---|
 | carry **into** the element's MSB | `y_ms ^ a_ms ^ b_ms` |
 | carry **out** of the element | majority of `a_ms`, `b_ms`, and that carry-in |
@@ -192,20 +203,20 @@ max-reduction cost one mux each rather than a comparator array of their own.
 add, saturating subtract, min, max, and the compare inside the reduction — comes
 out of this one adder plus a mux.**
 
-> **`e` is an argument and must stay one.** Read as a module-level net from
-> inside `spread`, a continuous assignment calling it is not reliably sensitive
-> to that net, so the spread keeps whatever width was current when its flag last
-> changed. Measured: *a `vmin.s8` after a `vsrli.s16` spread an s8 compare with
-> the s16 pattern and took four bytes from the wrong operand.*
+> **A width argument must reach the function that uses it.** Read as a
+> module-level net from inside a function, a continuous assignment calling that
+> function is not reliably sensitive to the net, so the function keeps whatever
+> width was current when its own arguments last changed — and a `vmin.s8` after
+> a `vsrli.s16` then compares with the wrong element pattern. Pass the width in.
 
 ## The packed shifter
 
-A packed shift looks like it needs a left barrel shifter, a right barrel shifter,
-and a per-element bit reversal to share one of them between the two. It needs
-one rotate.
+A packed shift looks like it needs a left barrel shifter, a right barrel
+shifter, and a per-element bit reversal to share one of them between the two. It
+needs one rotate.
 
 A right shift by `s` is a 32-bit rotate right by `s`. A left shift by `s` is a
-rotate right by `32-s`. In both cases the bits that arrive from the wrong element
+rotate right by `32−s`. In both cases the bits that arrive from the wrong element
 — including the ones the rotate carried around the end of the word — land exactly
 where a per-element mask is already zero:
 
@@ -216,47 +227,53 @@ where a per-element mask is already zero:
 ```
 
 The masks depend only on the element width and the shift amount, both of which
-are the same in every lane, so they are built **once for the whole unit** in EX
-and registered rather than rebuilt `SIMD` times in MEM.
+are the same in every lane, so they are built **once for the whole unit** in the
+execute stage and registered rather than rebuilt per lane in memory.
 
-The bit reversal the base core's EX stage uses for the same trick is free there
-because it is one 32-bit word; here it would be a three-way mux on 32 bits per
-lane — **512 LUT at SIMD 8** — because the reversal has to happen *within* an
+The bit reversal the base core's execute stage uses for the same trick is free
+there because it is one 32-bit word; here it would be a three-way mux on 32 bits
+per lane — **512 LUT at SIMD 8** — because the reversal has to happen *within* an
 element and the element width is a runtime field.
 
 `vsrari` is the rounding right shift — the requantise primitive, and the one
 operation a plain `vsrai` gets subtly wrong. Round-half-up is
-`(x >>> s) + bit s-1 of x`: an increment per element, not an addition of half an
+`(x >>> s) + bit s−1 of x`: an increment per element, not an addition of half an
 ulp before the shift.
 
 > **The round bit comes out of the ORIGINAL word.** The rotate lands
 > `x[e·EW + s − 1]` at the top of the element *below* `e`, so picking it out of
-> the rotated word reads the wrong element's bit. `rmask` selects it in place —
-> one bit per element, built once per unit like the others — and an OR-reduce over
-> each element puts it at that element's LSB, where it is a carry-in.
+> the rotated word reads the wrong element's bit. A separate mask selects it in
+> place — one bit per element, built once per unit like the others — and an
+> OR-reduce over each element puts it at that element's LSB, where it is a
+> carry-in.
 
-### Why the increment has its own adder
+### The increment has its own adder, and that is a measured decision
 
-`vsrari` reads only one source vector, so the main adder's second input looked
-free — and it borrowed it. That is the second-largest timing decision in the
-unit, and it went the other way.
+`vsrari` reads only one source vector, so the main adder's second input looks
+free. Sharing it costs more than a second adder does.
 
-> The mux in front of the adder is in its cone **whether or not a shift is
-> issued**: **~0.8 ns of a 4.72 ns path**, paid by add, min, max and every
-> compare. `khs_lane` now instantiates the packed adder **twice** — once on the
-> operands and once on the shifter's output — and the second one is four `CARRY8`
-> and a handful of LUTs, which is cheaper than what sharing cost in delay.
+> The mux in front of the shared adder is in its cone **whether or not a shift
+> is issued**: **~0.8 ns of a 4.72 ns path**, paid by add, min, max and every
+> compare. The lane therefore instantiates the packed adder **twice** — once on
+> the operands and once on the shifter's output — and the second one is four
+> `CARRY8` and a handful of LUTs, which is cheaper than what sharing cost in
+> delay.
 
-> **Refusing the encoding is not removing the hardware.** With the shifter still
-> instantiated, a build "without" it measured **32 LUT LARGER** than the one with
-> it, because the only thing that changed was a decode term. `SIMD_SHIFT = 0` is a
-> real removal; a decode change alone is not.
+`HAS_SHROUND` removes that second adder; `vsrari` then rounds toward zero rather
+than faulting, because the instruction still exists and only its rounding step
+is gone.
+
+> **Refusing an encoding is not removing the hardware.** With the shifter still
+> instantiated, a build "without" it measured **32 LUT larger** than the one
+> with it, because the only thing that changed was a decode term. A width of 0
+> is a real removal; a decode change alone is not.
 
 ## When lanes must talk
 
 Element-wise work never crosses lanes, which is what keeps the lane array cheap.
 Three operations are the exceptions, and each exists because real kernels cannot
-be written without it.
+be written without it. All three are built by `PERM_UNITS`, and all three fault
+when it is 0.
 
 **`vsldw` — the slide.** Vector loads are line-aligned by contract, so a stencil
 or a FIR cannot simply load "one element earlier". It loads two adjacent vectors
@@ -279,13 +296,15 @@ of the concatenation, so every index is defined at every width rather than
 leaving a "what happens past the end" hole that the RTL and the golden model
 could disagree about.
 
-This is the one structure in the datapath whose cost grows with `SIMD` — each
-output lane picks one of `2 × SIMD` inputs — and it is the reason the permute
-network is a separate parameter.
+This is the one structure in the datapath whose cost grows with the register
+width — each output lane picks one of `2 × SIMD` inputs — which is why the
+permute is its own width, and why narrowing it to one or two units is the
+largest cycles-only saving available on this PE
+([unit-counts](../unit-counts.md)).
 
-> **Leave the slide an indexed select.** `idx` is three bits so `idx + i` never
-> reaches `2 × SIMD` and the tool already prunes the modulo to an 8-way mux.
-> Rewriting it as an explicit `if (idx == k)` loop to "help" measured
+> **Leave the slide an indexed select.** The index is three bits, so `idx + i`
+> never reaches `2 × SIMD` and the tool already prunes the modulo to an 8-way
+> mux. Rewriting it as an explicit `if (idx == k)` loop to "help" measured
 > **1,600 → 1,824 LUT**: a priority chain is not a mux.
 
 **`vpack` — narrowing with saturation.** Two source vectors in, one out, with
@@ -305,34 +324,64 @@ one NOR.
 
 > **Both sources are consumed, so the pack loop runs to `VW/16` per source.**
 > Running it to half that count leaves the top half of the result **undriven**,
-> which reads as high-Z and then spreads X through everything downstream — a
-> whole-vector failure whose first visible symptom is nowhere near this module.
+> which reads as high-Z in simulation and then spreads X through everything
+> downstream — a whole-vector failure whose first visible symptom is nowhere near
+> this module.
 
-**`vunpk` — widening.** The other direction, taking the low or the high half of a
-vector's elements and sign-extending them. It is pure wiring plus a sign bit.
+**`vunpk` — widening.** The other direction, taking the low or the high half of
+a vector's elements and sign-extending them. It is pure wiring plus a sign bit.
 
 ## Reductions
 
-`vredsum` and `vredmax` collapse a vector's `SIMD` int32 lanes to one 32-bit
-value in a scalar register — the last step of a dot product, and the step a loop
-over accumulators ends with.
+`vredsum` and `vredmax` collapse a vector's 32-bit lanes to one value in a
+scalar register — the last step of a dot product, and the step a loop over
+partial sums ends with. `RED_UNITS = 0` removes both, and then both encodings
+fault.
 
 They are a **tree**, not a chain. Nodes are indexed heap-style, leaves at
-`SIMD..2*SIMD-1` and node *n* combining *2n* and *2n+1*, so the depth is
-structural rather than something the tool has to find: `log2(SIMD)` levels,
-three at SIMD 8.
+`SIMD..2·SIMD−1` and node *n* combining *2n* and *2n+1*, so the depth is
+structural rather than something the tool has to find: `log2(SIMD)` levels, three
+at SIMD 8.
 
 > A reduction written as a loop carrying a value between iterations synthesises
-> as exactly that serial chain — `SIMD` adders deep in one stage. That is the
-> shape that cost the matmul accumulator **~68 MHz** once.
+> as exactly that serial chain — `SIMD` adders deep in one stage. This is the
+> single most expensive shape in the repository: the same mistake in the SIMT
+> core's cross-lane reduction measured **44 logic levels** and took that core to
+> **71.7 MHz** while the unit inside it closed at 324.
 
-> **And even log depth is too much for one cycle.** Measured once the lane adder
-> stopped being the limit, the max tree became the critical path at **12 logic
-> levels and 3.43 ns**, five `CARRY8` in series, because every node is a 32-bit
-> signed compare and a mux. `RED_PIPE = 1` registers the level below the root,
-> which halves the depth for one cycle of latency on an instruction that runs
-> **once per reduction** rather than once per element — so it costs nothing a
-> kernel can measure.
+> **And even log depth is too much for one cycle.** Once the lane adder stopped
+> being the limit, the max tree became the critical path at **12 logic levels
+> and 3.43 ns**, five `CARRY8` in series, because every node is a 32-bit signed
+> compare and a mux. `RED_PIPE = 1` registers the level below the root, which
+> halves the depth for one cycle of latency on an instruction that runs **once
+> per reduction** rather than once per element — so it costs nothing a kernel
+> can measure.
 
 The `vextr` instruction is the single-lane form: lane `k` of a vector into a
-scalar register, with `k` an immediate.
+scalar register, with `k` an immediate. A lane index at or above the build's
+`SIMD` **faults**, rather than wrapping — one encoding must not mean element 5
+on an eight-lane build and element 1 on a four-lane one.
+
+`vsldw`'s three-bit slide index is a different case and is allowed: the
+operation is "rotate `{v2,v1}` left by `idx` words" at every width, and only the
+reachable subset shrinks as `SIMD` grows. An upper bound is fine; a changing
+meaning is not.
+
+## The multipliers
+
+`vmul` is the element-wise product, low half kept, in `.s8` and `.s16`. Each
+lane's multipliers are part of its integer unit rather than a separate array, so
+they follow `ILANES` and there is no separate depth to choose.
+
+The primitive is **named, not inferred**: the multiplier is its own module
+because Vivado's `use_dsp` attribute takes a string *literal* and not a
+parameter, so choosing between a DSP48 and fabric has to be a generate
+somewhere. Doing it once there keeps the choice out of the lane's datapath.
+
+**A DSP48 is a pipelined primitive and must be used as one.** Register the
+operands and register the product. Using one combinationally — multiply and
+post-add into the output register in a single cycle — has measured 23 logic
+levels in this repository, which is more than twice the depth at which a path is
+already in trouble. On this device LUT is the binding resource and DSP is not:
+moving the multipliers into fabric costs about 230 LUT per DSP column freed and
+loses tens of megahertz, so the hard multipliers stay.

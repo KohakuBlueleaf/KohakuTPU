@@ -9,6 +9,16 @@ tags:
 
 # Writing kernels
 
+> **Kind: Convention — but only partly the free kind.** How much of a schedule to
+> state, and where to let the compiler decide, is this project's idiom: all three
+> rungs emit the same instructions, so saying less costs nothing and a kernel may
+> sit anywhere in the band. Three of the rules here are **forced** and the
+> compiler enforces them rather than advising them — a statement that reads what
+> an earlier statement in the same stage wrote, a contraction that states no
+> split, and an accumulator chained from a loop opened after the tile are each
+> *refused* at compile time, by name. The tensor and kernel levels themselves are
+> this project's own software surface, and the framework has no opinion on them.
+
 There are two levels you write at, and one rule for choosing.
 
 **Write at the tensor level unless you need a kernel.** A tensor-level program

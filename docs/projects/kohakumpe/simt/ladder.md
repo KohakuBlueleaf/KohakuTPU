@@ -11,6 +11,12 @@ tags:
 
 # The measurement ladder
 
+> **Kind: Convention, and free.** Building the design as parameters rather than
+> branches, so one script measures every gate and the rows are comparable by
+> construction, is this project's measurement discipline. The general form
+> belongs to [workflow/measure](../../../workflow/measure.md); nothing here is
+> required.
+
 The SIMT PE exists to answer one question: **what does SIMT cost on this
 fabric?** A number produced by building a SIMT core and comparing it to
 somebody else's SIMD core answers nothing, because the two differ in the lane
@@ -36,13 +42,18 @@ happened to keep. `kht_unit` uses `generate` blocks whose unbuilt branches
 contain no storage and no datapath, which is what makes *"the total is the sum
 of the measured deltas"* true rather than intended.
 
-**It leaks if you are not watching.** G8's first measurement had `HAS_SHFL = 0`
-at 3,232 LUT against the pre-G8 build's 3,204: the network was correctly inside
-a generate, but its *writeback mux input* was not, so 28 LUT of a gate that was
-switched off survived. The fix is to make the select constant-false at
-elaboration — `(HAS_SHFL != 0) && m_shfl` — so the input is trimmed. Worth 28
-LUT? No. Worth the property? Yes: the rule is what every delta on this page
-rests on, and a rule that holds "mostly" is not one you can add up.
+**It leaks if you are not watching.** A network can be correctly inside a
+generate while its *writeback mux input* is not, and 28 LUT of a gate that is
+switched off then survives — the shuffle's first measurement read 3,232 against
+the ungated build's 3,204 for exactly that reason. The fix is to make the select
+constant-false **at elaboration** so the input is trimmed. Worth 28 LUT? No.
+Worth the property? Yes: the rule is what every delta on this page rests on, and
+a rule that holds "mostly" is not one that can be added up.
+
+**Check the leak the same way it was found**: the `off` column of a gate sweep
+must be **bit-identical** to an independent sweep that never builds the gate at
+all. Two sweeps agreeing exactly is the proof; one sweep looking plausible is
+not.
 
 The consequence is that there is **one synthesis script**
 (`scripts/tcl/ooc_simt_pe.tcl`) for the whole ladder, and the rows are comparable
@@ -56,19 +67,19 @@ to each other by construction rather than by care.
 | G1 | `WAVES 16` | wave-indexed storage — many wave contexts | yes |
 | G2 | `HAS_MASK 1` | the active mask, `tmc`, predication | yes |
 | G3 | `HAS_IPDOM 1` | `split`/`join`, the bounded stack, the overflow fault | yes |
-| G4 | `HAS_LDSBANK` | divergent LDS addressing, bank conflicts in hardware | **yes** |
+| G4 | `LDS_BANKS` | divergent shared-memory addressing, bank conflicts in hardware | **yes** |
 | G5 | — | the coalescer: one gather becomes one request when lanes agree | no |
 | G6 | — | MSHRs: more than one miss in flight | no |
 | G7 | `WAVES` on `kht_core` | the wave scheduler: waves genuinely issuing, not merely stored | **yes** |
-| G8 | `HAS_SHFL` | the subgroup butterfly for `shflxor` and `bcast` | **yes** |
-| G9 | `HAS_FLT`, `FLANES` | the float tier — and, riding its retire slot, RV32M integer multiply | **yes** |
+| G8 | `SHFL_UNITS` | the subgroup butterfly for `shflxor` and `bcast` | **yes** |
+| G9 | `FLANES`, `FSFU_UNITS` | the float tier — and, riding its retire slot, RV32M integer multiply | **yes** |
 
-**G9 is a gate on `kht_pe`, not on `kht_unit`**, and it is the one gate this page
-does not carry a row for. Its deltas are measured on the assembled PE and live in
-[status](status.md#read-this-before-quoting-a-lut-figure), because the arithmetic
-it adds is inherited from the SIMD tier rather than built here — measuring it on
-`kht_unit` would price a lane array this project deliberately does not own. That
-is the same reason `cost(SIMT) = G8 − G0` stops at G8.
+**G9 is measured on `kht_pe`, not on `kht_unit`**, and it is the one gate this
+page does not carry a row for. The arithmetic it adds is inherited from the SIMD
+tier rather than built here, so measuring it on `kht_unit` would price a lane
+array this project deliberately does not own. Its deltas are in
+[unit-counts](../unit-counts.md#3b-simt-against-19461). That is the same reason
+`cost(SIMT) = G8 − G0` stops at G8.
 
 ## What has been measured
 
@@ -78,8 +89,8 @@ these are not placed-and-routed figures and are not presented as such.
 
 > **Provenance.** `python scripts/py/ooc_sweep.py gpu-ladder` writes
 > `build/sweep_gpu-ladder.md`, and that file is the source for this table.
-> Measured 2026-08-22 on the current tree. `HAS_SHFL = 0` on every row — the
-> butterfly is G8's and must not be inside a G0–G3 figure.
+> Measured 2026-08-22. The shuffle is **off** on every row — the butterfly is
+> G8's and must not be inside a G0–G3 figure.
 
 | Gate | WAVES | mask | ipdom | LUT | ΔLUT | FF | BRAM | ctrl sets | Fmax |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -119,25 +130,21 @@ This is worth stating because the usual objection to SIMT is that divergence
 tracking is on the critical path. At this width, on this fabric, it measurably
 is not.
 
-### G3 was over its bracket, and why it is not now
+### G3 is a memory, not an indexed flop array
 
-G3 was first built with the IPDOM stack as an **indexed flop array**: `WAVES ×
-IPDOM_D` entries behind a wide read mux and an equally wide write decoder. It
-came in far over its `<+1k` bracket. That is a shape this project has been
-billed for twice before — `khs_facc` at 29,409 LUT and `rv_l1`'s valid/dirty at
-701, both fixed the same way.
+**An indexed flop array is the most expensive shape on this fabric**, and the
+divergence stack is the third structure in this repository to be billed for it —
+alongside a float partial store that measured 29,409 LUT as flops and 843 as
+LUTRAM, and a cache's valid/dirty bits. Behind a wide read mux and an equally
+wide write decoder, `WAVES × IPDOM_D` entries came in far over the bracket set
+for the gate.
 
-Rebuilt as a `kohaku_sdpram` in `distributed` mode with `READ_LAT 0`, the whole
-gate is **+188 LUT**, and the sweep shows where it went: G3 is the only row with
-`lut_mem` non-zero, at **20 LUT of distributed RAM** — the stack itself. The
-rest is the pointer, phase and fault logic, visible as control sets going 18 →
-36.
-
-`READ_LAT 0` is what keeps a `join` combinational, so the stack costs no cycle.
-
-(The flop version's exact figure is not quoted here: it was measured before the
-sweep suite existed and its log did not survive. The shape it belongs to is the
-point, and the current number is cited.)
+Built instead as a single-port distributed RAM with **zero read latency**, the
+whole gate is **+188 LUT**, and the sweep shows where it went: G3 is the only
+row with a non-zero distributed-RAM column, at **20 LUT** — the stack itself.
+The rest is the pointer, phase and fault logic, visible as control sets going
+18 → 36. Zero read latency is what keeps a `join` combinational, so the stack
+costs no cycle.
 
 One word holds the pair a `split` pushes — `{outer, false}` — so two pushes are
 **one write** and a single write port suffices. A phase bit per wave says which
@@ -170,20 +177,25 @@ so it is measured rather than extrapolated from the 8-lane row. Full gate set,
 16 waves, `block`. Source: `build/sweep_gpu-lanes.md`, via
 `python scripts/py/ooc_sweep.py gpu-lanes`.
 
-| LANES | LUT | LUT/lane | FF | BRAM | ctrl sets | Fmax |
+| LANES | LUT | **marginal LUT/lane** | FF | BRAM | ctrl sets | Fmax |
 |---:|---:|---:|---:|---:|---:|---:|
-| 4 | 1,659 | 415 | 316 | 4 | **36** | 324.1 MHz |
-| 8 | 3,204 | 401 | 516 | 8 | **36** | 324.1 MHz |
-| 16 | 6,355 | 397 | 916 | 16 | **36** | 324.0 MHz |
-| 32 | 12,478 | 390 | 1,716 | 32 | **36** | 324.1 MHz |
+| 4 | 1,659 | — | 316 | 4 | **36** | 324.1 MHz |
+| 8 | 3,204 | (3,204−1,659)/4 = **386** | 516 | 8 | **36** | 324.1 MHz |
+| 16 | 6,355 | (6,355−3,204)/8 = **394** | 916 | 16 | **36** | 324.0 MHz |
+| 32 | 12,478 | (12,478−6,355)/16 = **383** | 1,716 | 32 | **36** | 324.1 MHz |
 
-Both curves are straight to within noise across a factor of eight:
+**The per-lane column is marginal, not the total divided by the count.** Dividing
+gives 415 at four lanes falling to 390 at thirty-two, which reads as a lane that
+gets cheaper as the array widens; it does not. What is happening is that a fixed
+intercept is being amortised over more lanes, and the fit says so directly:
 
 ```
    LUT  =  112  +  386.4 x LANES        exact at 4, 8 and 32; +61 at 16
    FF   =  116  +  50    x LANES        EXACT at all four points
    BRAM =                1   x LANES
 ```
+
+Both curves are straight to within noise across a factor of eight.
 
 Three readings:
 
@@ -302,30 +314,27 @@ So the honest statement is three-part, and the ladder can now make all three:
 "Sixteen waves are free" is true only of the first line, which is exactly why
 the other two are measured separately.
 
-### One caveat on the `kht_unit` column: 3,200 against 3,204
+### One caveat: two suites disagree by four LUT
 
-The `WAVES = 16` row above is **3,200 LUT** (`build/sweep_gpu-waves.md`, tag
-`gpu-kht_unit-l8-w16-m1-i1-s0-block-t3.333`). Three other sweeps report
-**3,204** for a tag that is character-for-character the same one —
-`build/sweep_gpu-lanes.md` at `l-8`, `build/sweep_gpu-shfl.md` at `sh-8-off`,
-and `build/sweep_gpu-ladder.md` at `g3-ipdom`. The split is 3,180 + 20 LUTRAM
-against 3,184 + 20; FF, BRAM and control sets agree exactly at 516 / 8 / 36.
+The `WAVES = 16` row above reads **3,200 LUT** in one suite and **3,204** in
+three others, for a configuration tag that is character-for-character the same.
+Flip-flops, BRAM and control sets agree exactly; only the LUT column differs, by
+0.12%.
 
-Four LUT, 0.12%. It is recorded rather than reconciled because the two
-candidate explanations cannot be separated from the sweep files alone: the
-suites were run at different times and the tree moved between them (the same
-row read 3,232 before the mux-trim fix), or synthesis is not bit-reproducible
-on this module. **The station bus measured the opposite** — a configuration
-re-synthesised separately came back bit-identical
-(`docs/projects/kohakuaxi/station-bus.md` §2.4) — so "OOC runs repeat exactly"
-is not a property to assume project-wide. It holds where it has been checked.
+It is **recorded rather than reconciled**, because the two candidate
+explanations cannot be separated from the sweep files alone: the suites ran at
+different times and the tree moved between them, or synthesis is not
+bit-reproducible on this module. Elsewhere in this repository a configuration
+re-synthesised separately has come back bit-identical, so **"out-of-context runs
+repeat exactly" is not a property to assume project-wide.** It holds where it
+has been checked.
 
-Nothing on this page turns on 4 LUT. It matters only if someone subtracts two
+Nothing on this page turns on four LUT. It matters only if someone subtracts two
 rows that came from different suites and reads the residue as a gate.
 
 ## G8: the butterfly, and why complexity class is the whole argument
 
-`kht_unit` with `HAS_SHFL` off against on, everything else held. Source:
+`kht_unit` with the shuffle off against on, everything else held. Source:
 `build/sweep_gpu-shfl.md`, via `python scripts/py/ooc_sweep.py gpu-shfl`.
 
 | LANES | off | on | **ΔLUT** | Δ per lane | Fmax off | Fmax on |
@@ -344,10 +353,10 @@ network as designed, arriving as a measurement.
 
 **The `off` column is bit-identical to the [lane-scaling](#lane-scaling) table** —
 1,659 / 3,204 / 6,355 / 12,478 LUT, 316 / 516 / 916 / 1,716 FF, 324 MHz — which
-is two independent sweeps agreeing exactly, and the proof that `HAS_SHFL = 0`
-now elaborates *nothing*. Before the mux-trim fix that row read 1,666 / 3,232 /
-6,393 / 12,358 at 312–323 MHz: the leak was costing clock as well as area, and
-at 32 lanes it was costing 12 MHz.
+is two independent sweeps agreeing exactly, and the proof that a shuffle at zero
+elaborates *nothing*. Before the mux-trim fix that row read 1,666 / 3,232 /
+6,393 / 12,358 at 312–323 MHz: **the leak was costing clock as well as area**,
+and at 32 lanes it was costing 12 MHz.
 
 ### Against G4, at the same widths
 
@@ -395,14 +404,14 @@ top module, every generic and the target period.
 | `gpu-sched` | the same `WAVES` sweep one level up | `kht_core` | 5 | [G7](#g7-the-scheduler-storage-against-issue) |
 | `gpu-lanes` | `LANES` 4→32 at the full gate set | `kht_unit` | 4 | [lane scaling](#lane-scaling) |
 | `gpu-lds` | `LANES` 4→32 on the banked LDS | `kht_lds` | 4 | [G4](#g4-the-banked-lds-and-the-first-gate-that-is-not-free) |
-| `gpu-shfl` | `HAS_SHFL` off/on at four widths | `kht_unit` | 8 | [G8](#g8-the-butterfly-and-why-complexity-class-is-the-whole-argument) |
+| `gpu-shfl` | the shuffle off/on at four widths | `kht_unit` | 8 | [G8](#g8-the-butterfly-and-why-complexity-class-is-the-whole-argument) |
 | `gpu-vregprim` | `VREG_PRIM` block vs distributed | `kht_unit` | 2 | [the primitive](#the-register-file-primitive) |
-| `gpu-pe` | `LANES`, `WAVES` on the **assembled PE** | `kht_pe` | 4 | [the assembled PE](#the-assembled-pe-across-shapes--the-baseline-superseded-at-816) |
+| `gpu-pe` | `LANES`, `WAVES` on the **assembled PE** | `kht_pe` | 4 | [the assembled PE](#the-assembled-pe-across-shapes) |
 
 Every row above holds `period = 3.333` and `VREG_PRIM = block` unless the suite
-is `gpu-vregprim`. `HAS_SHFL = 0` on every suite except `gpu-shfl` and
-**`gpu-pe`**, which builds the butterfly because the shipped PE carries it — so
-a `gpu-pe` row is not comparable to a G0–G3 row without accounting for G8.
+is `gpu-vregprim`. The shuffle is **off** on every suite except `gpu-shfl` and
+**`gpu-pe`**, which builds the butterfly — so a `gpu-pe` row is not comparable
+to a G0–G3 row without accounting for G8.
 
 ```
 python scripts/py/ooc_sweep.py gpu-ladder      # -> build/sweep_gpu-ladder.md
@@ -432,38 +441,34 @@ measures *what SIMT costs around a lane* rather than what the lane itself must
 eventually contain.
 
 That is the right scope for the SIMT question and the wrong scope for a budget.
-It is also no longer a description of the PE. **The shipped PE has eight float
-lanes and RV32M**, and they arrive as sibling modules — `kht_fpu` and `kht_imul`
-beside `kht_valu`, not inside it — which is exactly why the ladder never sees
-them and why the ladder's totals must never be quoted as the PE.
+It is also not a description of the whole PE. The float units and the multiplier
+arrive as **sibling modules** — `kht_fpu` and `kht_imul` beside `kht_valu`, not
+inside it — which is exactly why the ladder never sees them and why the ladder's
+totals must never be quoted as the PE.
 
 | what | where it is | on the ladder? |
 |---|---|---|
 | ten RV32I lane operations | `kht_valu`, inside `kht_unit` | **yes**, G0–G8 |
-| eight float lanes | `kht_fpu`, inside `kht_unit` at `HAS_FLT` | no — G9, measured on the PE |
+| `FLANES` binary32 units | `kht_fpu`, inside `kht_unit` | no — G9, measured on the PE |
 | `mul`/`mulh`/`mulhsu`/`mulhu` | `kht_imul`, beside it, same retire slot | no — G9, measured on the PE |
 
-### Lanes are a separate purchase from threads
+### Arithmetic units are a separate purchase from threads
 
 ```
-   8 threads over 8 float lanes  ->  1 cycle per float instruction   <- BUILT
-   8 threads over 4 float lanes  ->  2 cycles per float instruction
-   8 threads over 2 float lanes  ->  4 cycles per float instruction
+   8 threads over 8 float units  ->  1 cycle per float instruction
+   8 threads over 4 float units  ->  2 cycles per float instruction
+   8 threads over 2 float units  ->  4 cycles per float instruction
 ```
 
-The built configuration is interval **1**, so no walk sequencer exists in either
-PE class. The same trade applies to **integer** — an all-float shader should not
-pay for eight idle ALUs, so `ILANES <= LANES` with interval `LANES / ILANES` is
-wanted on both sides — and neither side has it. Resolving that is `ask-03`, and
-it belongs to the DSP realm because both PE classes inherit the arithmetic.
+All three are **buildable**: a thread count above the unit count is served by a
+pass walk, placed by the register file's per-lane write enable. Only the cycles
+change, and [unit-counts](../unit-counts.md#3b-simt-against-19461) prices the
+unit.
 
-`FLANES` exists as a parameter, and that is *not* the same as the configuration
-being expressible: `kht_fpu` ties the lanes above `FLANES` to zero rather than
-sequencing them, so `FLANES < LANES` returns zeros today rather than taking more
-cycles. An earlier revision of this section priced 2 and 4 float lanes as
-ESTIMATES from the SIMD tier's rate (`1,270 + 635 × lanes`); those rows are
-withdrawn — the eight-lane point is measured and the reduced points are not
-buildable.
+The same trade would apply to the **integer** side — an all-float shader should
+not pay for idle ALUs — and there it is **not built**: a SIMT processor is its
+threads, so the integer lane count is fixed by definition. The
+[SIMD PE](../simd/README.md) has that axis instead, as `ILANES`.
 
 ### What this means for `G0`
 
@@ -481,11 +486,11 @@ Two rules, both of which exist because breaking them produces a number that
 looks authoritative and is not.
 
 **Name which G0.** The headline is `G8 − G0`, and today's G0 is **`G0(int)`** —
-the base RV32I ALU replicated, with no float lane and no multiplier. An earlier
-revision of this page claimed G0 was measured against a float lane tier; it was
-not, and that sentence is what allowed an integer-only figure to be read against
-a float-capable budget. Any other lane array produces a second G0 and a second
-headline. **A G8 total quoted without naming its lane array is not a result.**
+the base RV32I ALU replicated, with no float unit and no multiplier. Any other
+lane array produces a second G0 and a second headline, and a figure that does
+not name its lane array is what lets an integer-only number be read against a
+float-capable budget. **A G8 total quoted without naming its lane array is not a
+result.**
 
 **Synth is not route.** Every figure here is out-of-context synthesis. This
 project has measured a module lose 0.740 ns between synthesis and routing; a
@@ -511,176 +516,79 @@ levels, and it lives in `kht_core` where no row on this page looked. Fixed as a
 tree. A gate's Fmax column is a statement about **the top it was measured on**,
 and nothing else.
 
-## Shrinking it: ten attempts, three that paid
+## What shrinking this PE cost, and what it did not
 
-A LUT-reduction campaign on the assembled PE, all at 8 int + 8 float lanes, 16
-waves, 2.857 ns. **Result: 21,621 → 20,086 LUT at `rebuilt`, −1,535 (−7.1%),
-and 364.8 → 392.0 MHz.** Measured on the tree as of 2026-08-23 16:08.
+A LUT-reduction pass on the assembled PE measured ten structural rewrites. Three
+paid, one was made for correctness and cost area, and six were reverted. The
+per-signal figures come from a LUT-primitive census at `none`, which is why they
+do not add to the CLB-site totals a `rebuilt` run reports.
 
-Three changes took −1,745; a fourth, required for spec compliance rather than for
-area, gave +210 back. It is in the table because a mandated change still has a
-price and the price should be on the record.
+### What paid
 
-The per-signal figures below are **LUT primitives** from `ooc_lut_census` at
-`none`, which is why they do not add up to the CLB-LUT-site totals above.
+| change | delta on the signal |
+|---|---:|
+| one carry chain serving add, subtract and both compares where four expressions built four; the three logic operations collapsed into one LUT6; the result case cut from nine arms to five | **−1,008** |
+| the reduction tree's function decodes hoisted **out of** the tree, one signed comparator serving both max and min, and the two logic reductions sharing a select | **−613** |
+| the vector-file write mux **named once** instead of written out on both the port and the debug probe, and the probe narrowed to the one lane anything reads | **≈−238** |
 
-### The three that paid
-
-| change | signal | before | after | delta |
-|---|---|---:|---:|---:|
-| `kht_valu`: one carry chain for add/sub/slt/sltu where four expressions built four; the three logic ops collapsed into one LUT6; result case 9 arms → 5 | `u_vt/u_alu/y` | 2,909 | 1,901 | **−1,008** |
-| `kht_core`: `rnode`'s `f7` decodes hoisted out of the tree, one signed comparator serving both max and min, and/or sharing a select | `g_rlvl.g_rn.g_live.rq` | 1,290 | 677 | **−613** |
-| `kht_unit`: the vector-file write mux named once instead of written out on both the port and the probe; `dbg_wr_data` narrowed to lane 0, the only part anything reads | `u_vt/dbg_wr_data` | 238 | below cut | **≈−238** |
-
-### The one that cost, and was made anyway
-
-`kht_predec.v`'s float bound moved from `KHT_FLT_VFSUB_H` to `KHT_FLT_VFRSQRT_H`,
-so `funct7` 12–15 stop decoding illegal. **+210 LUT and +4.7 MHz at `rebuilt`**
-(19,876 → 20,086, 387.3 → 392.0), cleanly attributable: no shared source moved
-between the two runs.
-
-The cost is real and diffuse — the census's top rows are unchanged within noise
-and the 206 extra LUT primitives are spread over ~1,670 signals. The mechanism is
-that a fault decision moved OFF the predecoded path: those four encodings used to
-be `C_ILLEGAL`, one stored bit computed once on the write side, and are now
-`is_flt` faulting through `unbuilt`, which is live logic in `kht_core`.
-
-It also **moved the binding path onto the predecoder**: `gw_buf_reg[97]` →
-`u_ictl/u_ram/.../DINADIN[2]`, 8 levels, the CU_DATA granule walking through
-`kht_predec` into the control RAM. That path has no `HAS_FSFU` dependence, which
-is why the seeds-on and seeds-off builds now report the *same* 392.0 MHz.
-
-### The seven that did not, and the number that killed each
+### What did not pay, with the number that killed it
 
 | attempt | result |
 |---|---|
-| one shared PC incrementer instead of `WAVES` of them | `nxt` **+15**, and it became the binding path at `rebuilt` — 12 levels, 4 CARRY8 |
-| one address adder a lane instead of two and a mux | `ea_all_q` **+41** |
-| the float retire folded into the writeback mux as a sixth arm | −145 LUT but **361.5 → 339.4 MHz** |
-| a bidirectional barrel shifter instead of one direction between two bit reversals | `u_vt/u_alu/y` **+193** |
-| `kht_fpu`'s operand select hoisted, the vfsub sign flip folded into the addend mux | **±0** |
-| `kht_imul`'s product narrowed 66 → 64 bits (exact for all four signednesses) | **±0** LUT, **±0** DSP |
-| a dual-format `vec_cvt` converter picking on `wide` inside | **+429** at `none`, **+578** at `rebuilt` |
+| one shared program-counter incrementer instead of one per wave | **+15**, and it became the binding path — 12 levels, 4 CARRY8 |
+| one address adder per lane instead of two and a mux | **+41** |
+| the float retire folded into the writeback mux as a sixth arm | −145 LUT but **−22 MHz** |
+| a bidirectional barrel shifter instead of one direction between two bit reversals | **+193** |
+| the float operand select hoisted, and a sign flip folded into the addend mux | **±0** |
+| the multiplier's product narrowed by two bits, exact for all four signednesses | **±0** LUT, **±0** DSP |
 
-### What the seven have in common
+### The rule the six share
 
-**Vivado already shares carry chains across a generate loop, and it packs its own
-inferred shifter tighter than a hand-written one. What pays is reducing the
+**The tool already shares carry chains across a generate loop, and it packs its
+own inferred shifter tighter than a hand-written one. What pays is reducing the
 number of distinct functions feeding ONE mux, and not writing the same wide mux
 twice. Sharing arithmetic operators does not.**
 
-That contradicts the instinct the campaign started with, which is why the seven
-rows are here: re-running them costs a day and buys nothing. The converter row
-generalises furthest — the FP16 and FP32 conversions share **no** datapath (one
-is a leading-one search and a shift, the other a 15-bit round), so choosing
-between their *results* is one mux and choosing *inside* them is three: exponent,
-significand, and the format entering the specials.
+That is the opposite of the instinct such a pass usually starts with, which is
+why the failures are recorded: re-running them costs a day and buys nothing.
+[The SIMD PE's performance page](../simd/performance.md#count-the-select-inputs-before-spending-a-run)
+carries the quantitative form of the same rule — five inputs or fewer, data and
+select together, and one LUT6 does the whole thing; more than six and the tool is
+already using dedicated mux silicon that a "simpler" flat form throws away.
 
-### `HAS_FSFU` is default-off by measurement
+**A correctness fix has a price, and the price belongs on the record.** Widening
+the float decode so four encodings stop faulting cost **+210 LUT**, spread
+diffusely over some 1,670 signals rather than concentrated anywhere. The
+mechanism is that a fault decision moved **off** the predecoded path: those
+encodings had been one stored bit computed once on the image-load side, and
+became live logic in the core. It also moved the binding path onto the
+predecoder — which is why builds with and without the seed units then reported
+the *same* frequency, the binding path no longer depending on that parameter.
 
-At `rebuilt`, the four seeds cost, on the assembled PE:
+## Only an assembled row is a PE
 
-| | LUT | FF | BRAM | DSP | MHz |
-|---|---:|---:|---:|---:|---:|
-| `HAS_FSFU = 0` | 20,086 | 17,282 | 30.5 | 48 | 392.0 |
-| `HAS_FSFU = 1` | 22,369 | 20,073 | 42.5 | 56 | 392.0 |
-| **cost** | **+2,283** | +2,791 | **+12** | **+8** | **±0** |
+Each row names the top it was synthesised on. All at 8 lanes, 16 waves, block
+register-file primitive, 3.333 ns, `-flatten_hierarchy none`, **integer-only
+lane array**.
 
-Four PEs of that is **+9,132 LUT**. Off is a priced decision, not a preference.
+| top | what it contains | LUT | Fmax |
+|---|---|---:|---:|
+| `kht_unit` | G0–G3, shuffle off | 3,204 | 324.1 MHz |
+| `kht_unit` | G0–G3 **+ G8** | 4,139 | 285.5 MHz |
+| `kht_lds` | G4, on its own | 1,633 | 514.9 MHz |
+| `kht_core` | the pipeline, **with a `kht_unit` inside it** | 9,653 | 279.5 MHz |
+| `kht_pe` | the assembled PE | 16,115 | 182.0 MHz |
 
-The +12 BRAM tiles are 24 RAMB18, which is **3 per lane** — `vec_tables`, one ROM
-per coefficient. The +8 DSP is **one per lane**: DSP-P, the polynomial multiply,
-which at `HAS_FSFU = 0` folds away and leaves the lane at 2 DSP rather than 3.
-That fold is the direct evidence the seed tables are gone at the default, and it
-is why an `HAS_FSFU = 0` float lane is not comparable with one that issues
-min/max/compare or the seeds. **±0 MHz because both builds bind on the
-predecoder**, which does not depend on this parameter.
+**These rows must not be added up.** `kht_core` contains a `kht_unit`, so its
+figure already includes one of the first two; whether it also contains the shared
+memory is not something a column of separate out-of-context runs can tell you.
+Only the last row is a PE, and it carries no float units and no multiplier —
+[unit-counts](../unit-counts.md) is where a figure for the arithmetic tier lives.
 
-**The seeds are reachable at both widths.** The decode now admits `funct7` 12–15,
-so `vfexp2_h`/`vflog2_h`/`vfrcp_h`/`vfrsqrt_h` are no longer illegal — the ISA
-table defined them and the RTL refused them, which broke the rule that an
-optional float feature supports both input formats.
+### The assembled PE across shapes
 
-### What is checked, and how
-
-Per case, not per bench, because a blanket tolerance over a bench containing
-exactly-reproducible cases is how an exact case silently stops being exact.
-
-| | how | bound |
-|---|---|---|
-| **specials** — zero, −0, both infinities, NaN, all four ops, both widths | **EXACT** | — |
-| `vfexp2` on finite data | tolerance | 0.509 ulp |
-| `vflog2` | tolerance | 0.638× its limit (0.99 ulp, or 2⁻¹⁸ absolute near zero) |
-| `vfrcp` | tolerance | 0.546 ulp |
-| `vfrsqrt` | tolerance | 0.549 ulp |
-
-The finite path is a float64 reference rather than bit-exact because `vec_alu`
-computes it from a 32-segment table plus a range reduction; the bounds are
-`vec_alu_tb`'s own measured worst case. `rv_simd_fsfu_test.py` additionally holds
-the finite path to 1e-4 relative, so a specials fix cannot pass while the
-arithmetic rots.
-
-**WHY THE SPECIALS ARE PINNED EXACTLY AND NOT TOLERANCED.** `rsqrt(-0)` returned
-`+inf` where IEEE requires `-inf` — `vec_alu`'s `OP_RSQRT` hardcoded
-`spec_sign_c = 1'b0` while `OP_INV` two blocks up took the sign from its input
-and was right. **No kernel in the library issues `vfrsqrt` at all**, so no
-workload could ever have found it, and no tolerance would have either: the
-magnitude was infinite and correct, and only the sign was wrong. It was found by
-reading what IEEE requires and then checking the RTL against it, which is the
-only instrument that reaches a corner nothing executes.
-
-Two cautions from finding it. **Derive the expectation before reading the RTL** —
-a corner transcribed from the hardware makes the bench defend whatever the
-hardware does, and the first version of that assertion pinned the defect. And
-**a corner can be checked carefully along the wrong axis and still be wrong**: the
-assertion read "= +inf, *not NaN*", so it was checked on the inf-versus-NaN axis,
-which is where a different bug had just been, and the sign was never questioned.
-
-## Budget
-
-The target for the assembled PE is **20–25k LUT**, with 30k a review line and
-35k a ceiling.
-
-**The shipped PE is inside it, with the whole arithmetic tier in the number:**
-**21,586 LUT at 365.6 MHz**, 8 int + 8 float lanes with RV32M, at the
-2.857 ns ask ([status](status.md#the-configuration-of-record)). For scale on the
-same device: the base controller PE is 2,477 LUT and the SIMD PE at SIMD 8 +
-4 float lanes is **13,772 LUT, measured** at the same ask — a figure that was
-15,119 DERIVED when this section was first written and could not then be built.
-
-**Every figure under the target on this page is still integer-only**, and that is
-the trap the band exists around: the ladder tops out at `kht_unit` and the budget
-is about `kht_pe`. The two differ by the whole front end, the L1, the requestor,
-the fabric port *and* the arithmetic tier.
-
-**An earlier revision of this section said the scheduler and the butterfly were
-"where the budget will actually go, and none of them is measured yet." Both are
-now measured**, so is the LDS, so is the assembled PE, and so — on the PE — is
-G9. What is left unmeasured is G5 and G6.
-
-Everything measured so far, at 8 lanes, `block`, 16 waves, each row naming the
-top it was synthesised on:
-
-| top | what it contains | LUT | Fmax | ask | source |
-|---|---|---:|---:|---:|---|
-| `kht_unit` | G0–G3, `HAS_SHFL 0` | 3,204 | 324.1 MHz | 3.333 | `build/sweep_gpu-ladder.md` |
-| `kht_unit` | G0–G3 **+ G8** | 4,139 | 285.5 MHz | 3.333 | `build/sweep_gpu-shfl.md` |
-| `kht_lds` | G4, on its own | 1,633 | 514.9 MHz | 3.333 | `build/sweep_gpu-lds.md` |
-| `kht_core` | the pipeline, **`kht_unit` inside it** | 9,653 | 279.5 MHz | 3.333 | `build/sweep_gpu-sched.md` |
-| `kht_pe` | the assembled PE, integer-only — the **baseline** | 16,115 | 182.0 MHz | 3.333 | `build/sweep_gpu-pe.md` |
-| **`kht_pe`** | **the shipped PE — + G8, G9 and RV32M** | **21,586** | **365.6 MHz** | **2.857** | `build/sweep/g-350-pad` |
-
-**Only the last two rows are a PE, and the rows above them must not be added up.**
-`kht_core` contains a `kht_unit`, so 9,653 already includes one of the first two;
-whether it also contains the LDS is not something a column of separate OOC runs
-can tell you. The 20–25k budget is about the last row and nothing else.
-
-### The assembled PE across shapes — the BASELINE, superseded at 8×16
-
-`kht_pe` with the full gate set and `HAS_SHFL = 1` — G8 is **in** these rows,
-unlike every G0–G3 figure on this page. `VREG_PRIM = block`, 3.333 ns,
-`xcvu13p-fhgb2104-2L-e`, OOC synth, **integer-only lane array**. Source:
-`build/sweep_gpu-pe.md`, via `python scripts/py/ooc_sweep.py gpu-pe`.
+Same conditions, with the shuffle **on**, so these are not comparable to the
+G0–G3 rows above without accounting for it.
 
 | LANES | WAVES | LUT | of which LUTRAM | FF | BRAM | ctrl sets | Fmax |
 |---:|---:|---:|---:|---:|---:|---:|---:|
@@ -689,41 +597,29 @@ unlike every G0–G3 figure on this page. `VREG_PRIM = block`, 3.333 ns,
 | **8** | **16** | **16,115** | 3,548 | 7,342 | 19 | 162 | **182.0 MHz** |
 | 16 | 16 | 29,961 | 3,568 | 8,834 | 35 | 178 | 170.9 MHz |
 
-**The 8×16 row is where the frequency campaign started, not where it ended.** It
-is an integer-only machine with no multiplier; the shipped PE at that shape is
-21,586 LUT at 365.6 MHz. The 4- and 16-lane rows have never been re-swept, so
-they remain the only figures that exist for those widths and they carry the same
-float-free, multiply-free lane array.
+**These are a starting point, not a result.** They predate the frequency work
+described in [microarchitecture](microarchitecture.md#every-fix-that-mattered-was-the-same-fix),
+which took the same shape from 182 to 394 MHz on fewer LUT, and they predate the
+arithmetic tier entirely. The 4- and 16-lane rows have never been re-swept, so
+they remain the only figures that exist for those widths.
 
-**Sixteen lanes is 29,961** — past the 25k target, at the 30k review line, and
-that is *before* the arithmetic tier. The [lane-scaling](#lane-scaling) and
-[G4](#g4-the-banked-lds-and-the-first-gate-that-is-not-free) rows put
-`kht_unit + kht_lds` alone at 12,549 there; assembled it is 2.4× that, and the
-LUTRAM column says where the rest is not — 3,538 to 3,568 across a fourfold
-change in LANES, so the growth is all logic.
+**Sixteen lanes is 29,961 LUT before any arithmetic tier.** The
+[lane-scaling](#lane-scaling) and [G4](#g4-the-banked-lds-and-the-first-gate-that-is-not-free)
+rows put `kht_unit + kht_lds` alone at 12,549 there; assembled it is 2.4× that,
+and the LUTRAM column says where the rest is *not* — flat across a fourfold
+change in lane count, so the growth is all logic.
 
-### The clock was the result, and then it was fixed
+### Naming the top, collected
 
-Every submodule row on this page sits at 324.1 MHz. **The assembled PE first sat
-at 170–190** — 182.0 MHz at the shipped 8 × 16 shape, against what was then a
-300 MHz mesh clock. It did not close, and no arrangement of the rows above could
-have told you that.
+Every submodule row on this page sits at 324.1 MHz, and neither of the two
+enclosing levels does. That is the whole argument for the rule:
 
-That is the third and most expensive time [name the top](#reporting-rules) has
-been collected on:
-
-| top | Fmax | found by |
+| top | Fmax when first synthesised | what it found |
 |---|---:|---|
-| `kht_unit` | 324.1 MHz | the ladder |
-| `kht_core` | **71.7 MHz** when first synthesised | measuring G7 — a 44-level serial reduction |
-| `kht_pe` | **182.0 MHz** when first synthesised | this suite |
+| `kht_unit` | 324.1 MHz | the ladder's own view |
+| `kht_core` | **71.7 MHz** | a 44-level serial reduction, in the level the ladder never looked at |
+| `kht_pe` | **182.0 MHz** | a decode cone starting at a block RAM |
 
-**The binding path was then read out nineteen times over, and the PE now closes
-365.6 MHz with the whole arithmetic tier in it** — see
-[the frequency campaign](status.md#the-frequency-campaign). Every fix was found
-by reading the reported critical path, and almost all of them were the same fix:
-a cone that starts at a block RAM begins a third of its budget in debt.
-
-A gate's Fmax column is still a statement about the top it was measured on.
-**No frequency claim for this PE may be taken from a `kht_unit` row** — including
-the reassuring ones.
+A gate's Fmax column is a statement about the top it was measured on and nothing
+else. **No frequency claim for this PE may be taken from a `kht_unit` row** —
+including the reassuring ones.

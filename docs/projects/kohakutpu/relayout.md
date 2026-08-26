@@ -9,14 +9,26 @@ tags:
 
 # Relayout on the card
 
-`lang/backend.py:_conversions` computes every byte-order change a kernel implies
-and records it on `Compiled.conversions`. Until now the only thing that executed
-one was `kohakuaccel.rt.Runtime.convert`: read the buffer to the host, repack it
-in numpy, upload it again. That is what `Device.counters["relayouts"]` counts,
-and [sdxl-requirements.md](sdxl-requirements.md) §4 prices it at **37.7 GB per
-UNet forward and 2.3 TB per image**.
+> **Kind: the kernel is Yours; the granularity that constrains it is Fixed
+> protocol.** Choosing to convert byte order on a vector core rather than through
+> the host, and the granule transpose that makes it possible, are this project's
+> design. The 32-byte word granularity that set the wall (§2), and the mover's
+> descriptor form that §7 works against, are Fixed protocol
+> ([arch/sysnode/simd-model](../../arch/sysnode/simd-model.md)).
 
-This page is what it took to run those conversions on a vector core instead.
+**A relayout is a change of a buffer's byte order.** A buffer on this card
+exists in exactly one order, and the orders are not interchangeable: a matmul
+cluster fills operands in one, drains results in another, and a vector core
+reduces along rows in a third. So every handoff between the two kinds of compute
+unit is a conversion, and something has to perform it.
+
+**Where it sits.** The compiler computes every conversion a kernel implies and
+records it on the compiled object. Executing one used to mean a **host round
+trip** — read the buffer back over the link, repack it in numpy, upload it again
+— which [sdxl-requirements.md](sdxl-requirements.md) §4 prices at **37.7 GB per
+UNet forward and 2.3 TB per image**. This page is what it takes to run those
+conversions on a vector core instead: what made it look impossible, what closes
+it, and what it costs once it runs.
 
 Every number is labelled:
 
@@ -44,9 +56,9 @@ the instruction stream, which crosses the same link at 40 bytes each (five
 | `flash_attention` 4 heads, L=128 | 6 | **0** | 1,056.0 | **288.0** | 10,048 | 11,000 |
 | `flash_attention` 4 heads, L=256 | 12 | **0** | 3,616.0 | **544.0** | 24,672 | 27,056 |
 
-The relayout counts are lower than this page first reported — §8.1 found that
-half of `flash_attention`'s were moving bytes nobody read, and dropping them
-helps the host path identically.
+Those counts already have §8.1 applied: half of `flash_attention`'s conversions
+move bytes nobody reads, and are no longer run. Dropping them helps the host path
+by exactly as much, so it is not a property of executing conversions on the card.
 
 **Every conversion these kernels record now runs on the card.** The `relayouts`
 counter — a host round trip, and nothing else — goes to zero, and the new
@@ -77,10 +89,12 @@ Both terms crossing the link, ARITHMETIC at 40 bytes a flit:
 The gap widens with `Lkv` because the data a conversion moves grows with the
 tensor while the program that moves it does not.
 
-### 1.2 The instruction stream, and what it took to halve it
+### 1.1 The instruction stream, and what halved it
 
-The first working version cost 824 / 6,372 / 14,140 / 35,228 flits on the four
-calls above. Three changes, all MEASURED here:
+A relayout that runs on the card moves its bytes for free and its *program* over
+the host link, so the flit count is the term to watch. Against a straightforward
+first implementation at 824 / 6,372 / 14,140 / 35,228 flits on the four calls
+above, three changes, all MEASURED here:
 
 | change | why it is free | flits it removed, `flash` L=256 |
 |---|---|---|
@@ -100,7 +114,7 @@ by 34 words and only for this kernel. The saving would be ~2,500 flits of 42,396
 on the block, against a mechanism whose failure mode is a stale image running
 and returning wrong bytes.
 
-### 1.1 One whole `BasicTransformerBlock`
+### 1.2 One whole `BasicTransformerBlock`
 
 MEASURED at `DIM=256, HEADS=4, TOKENS=64, CTX=256` — the same call
 [sdxl-requirements.md](sdxl-requirements.md) §4.2 measured, and the host figures
@@ -307,8 +321,8 @@ So the condition is not "the permutation has no cycles" — it is "the cycles ar
 contained in something that fits `C`". The run width IS that container, and the
 planner's test is exactly this: the run's walk is a bijection onto `[0, words)`.
 
-**And this does NOT imply the shard-axis invariant, which I assumed it did until
-I computed it.** In place at width `w` gives shard-locality only when the shard
+**In place does not imply the shard-axis invariant.** In place at width `w` gives
+shard-locality only when the shard
 block is a whole number of runs. MEASURED, `entry:2x2 -> entry:8x2` over
 (64, 128) is in place at 256 words a run and is NOT shard-local at four ways —
 the 128-word block is narrower than the run, so a word can move between blocks
@@ -318,7 +332,8 @@ without leaving its run. At two ways, where the block IS a run, it is local.
 
 That staging span is what the MAG L2 is for, and it is now allocatable.
 
-SOURCE `mag_stage.v:74`: the store is reached BY ADDRESS and never by an
+SOURCE `src/kohakuaccel/sysnode/core/mag_stage.v:74`: the store is reached BY
+ADDRESS and never by an
 instruction — `addr[39] && !addr[38] && addr[37:36]==MESH && addr[35:32]==AP_STAGE`.
 `machinespec.stage_addr` forms it and `kohakutpu.staging.stage_arena` hands it
 out: **2 MB per mesh**, `STAGE_BANKS 4 x STAGE_ENTRIES 16,384 x 256 b`.
@@ -349,7 +364,8 @@ arena bounds it at 2 MB — an offset past that WRAPS onto another entry rather
 than faulting. **No compute unit has issued a staging address on the card.**
 
 A REMOTE staging address is now traced, and the answer is no: `mag_ilink`'s AXI
-slave side is wired to the **mover's** write channel alone (`mag.v:667-671`), so
+slave side is wired to the **mover's** write channel alone
+(`src/kohakuaccel/sysnode/core/mag.v:667-671`), so
 nothing a compute unit or the host issues reaches the forwarder. Only the mover
 crosses. `docs/address-map.md` has the path.
 
@@ -403,18 +419,16 @@ groups per instruction, so VL=128 bought flits and not cycles. Four rotations
 per output word is the floor now that the merge is a predicate rather than an
 instruction, and there is nothing under it with the instructions this core has.
 
-The figures in the two tables above are the ones this page reported before §8
-and §12 landed; §12 carries the current ones.
+**The two tables above predate the predicated `VSHUF` of §12**, which is now
+built; §12 carries the current figures. They are kept because the *ratio* they
+establish — the transpose against the permutation it accompanies — is what
+decides where to spend effort, and that ratio did not change.
 
 **So the conclusion this page ends on is not "relayout is solved".** It is that
 executing a conversion on the card removes the host from the loop and costs real
 cycles, and that the way to make attention fast is
 [sdxl-requirements.md](sdxl-requirements.md) §5.2 — delete the conversions at the
-kernel level — not to execute them faster. The one hardware change that would
-move this: **a predicated `VSHUF`, or any cross-lane select with a lane-index
-source**, would take seven ops per word to four. `vec_lanes` has the predicate
-file already; whether `VSHUF` honours `pm`/`pr` is not something to guess at, and
-`model.VectorUnit._shuffle` does not model it.
+kernel level — not to execute them faster.
 
 ### 6.2 Credits, and the parameters they come from
 
@@ -510,15 +524,12 @@ That last row is the one to keep: **in place does not imply shard-local**, and
 ## 7. The memory mover: what it can and cannot be asked for
 
 **A transpose is a DESCRIPTOR, not a mode, and `MODE_TRANSPOSE` is not a gap.**
-`docs/notes/data-movement-problem.md` §2.4: every index permutation *is* affine —
-a transpose merely reorders the `(c_k, s_k)` pairs — so it is `COPY` with the
-source and the destination walked in different orders, six levels each. That the
-RTL refuses mode 1 in `I_IDLE` is a canned convenience nobody built and nobody
-needs; **do not file it as missing RTL and do not design around its absence.**
-
-Two earlier readings on this page were wrong and are corrected here: "the
-descriptor was never implemented in software" (it does not need one), and "mode 1
-needs RTL" (nothing needs mode 1). `driver/tests/test_mover.py` builds a
+[notes/data-movement-problem.md](../../notes/data-movement-problem.md) §2.4:
+every index permutation *is* affine — a transpose merely reorders the
+`(c_k, s_k)` pairs — so it is `COPY` with the source and the destination walked
+in different orders, six levels each. That the RTL refuses mode 1 in `I_IDLE` is
+a canned convenience nobody built and nobody needs; **do not file it as missing
+RTL and do not design around its absence.** `driver/tests/test_mover.py` builds a
 `(rows, cols)` transpose out of two walkers to make the point concrete.
 
 Three facts decide what the mover IS good for, all SOURCE `mm_mover.v`:
@@ -550,8 +561,9 @@ rather than to ask for a mode. `driver/tests/test_mover.py` checks the encoding
 field by field against `mm_mover.v`'s decode.
 
 **No behaviour is verified and NO RATE EXISTS TO QUOTE.** The status decode is
-correct — `mag.v:331` builds `{mv_done[23:0], rd_sum, wr_sum, mv_fault, 3'd0,
-mv_busy}`, matching `status()` field for field — but on silicon the engine
+correct — `src/kohakuaccel/sysnode/core/mag.v:399` builds `mv_stat` as
+`{mv_done[23:0], rd_sum, wr_sum, …}`,
+matching `status()` field for field — but on silicon the engine
 accepts a command byte-identical to a passing bench, reports done with no fault
 and **zero reads and zero writes**, and the destination is wrong. Identically at
 200 and 100 MHz, so it is not timing. It has never moved a byte on the card and
@@ -618,11 +630,12 @@ MEASURED on `flash_attention`, over its own conversions:
 | temps in DRAM | 32.0 | 27,384 |
 | temps in `S` (2 MB) | **2.0** | **27,384** |
 
-**16x in credits at no flit cost**, and the same answers. It also subsumes the
-buffer-relocation idea this page used to carry as future work: relocating a
-buffer mid-call reached 3 credits a byte, and placing it correctly to begin with
-reaches 2 without changing an address, without a lifetime question, and without
-`Kernel.__call__` learning to accept a new one.
+**16x in credits at no flit cost**, and the same answers. It also settles the
+obvious alternative: **relocating** a buffer mid-call reaches 3 credits a byte,
+where placing it correctly to begin with reaches 2 — without changing an
+address, without a lifetime question, and without the call interface learning to
+accept a new one. Placement beats relocation here, and it is cheaper to
+implement as well as cheaper to run.
 
 **And it buys nothing at all against the term that actually dominates.** Credits
 price MOVEMENT. What a `Tile` conversion costs is ALU work — MEASURED at 4x256,
@@ -675,8 +688,8 @@ upload against a read and a walk, and `relayouts` never counted it.
 
 ## 10. `Buffer.repeated()` wrote part of its result and reported success
 
-The worst failure shape this project has, found by the `kernels` agent and fixed
-here. MEASURED before the fix: a 2,048-element pass against a 512-element table
+The worst failure shape this machine has: a partial write reported as a complete
+one. MEASURED before the fix, a 2,048-element pass against a 512-element table
 wrote 512 elements, **left 1,536 unwritten and returned success**; at more than
 one grid instance it refused instead.
 
@@ -720,12 +733,13 @@ wrong window, not a fault.
 
 ---
 
-## 12. The predicated `VSHUF` ask — asked, verified, BUILT, measured
+## 12. The predicated `VSHUF`, and what it was worth
 
-§6.1 asked for a predicated `VSHUF` on the strength of the transpose being 81%
-of `flash_attention`'s cycles. §12.2 below is the RTL reading that said it was
-two unconnected signals rather than new datapath. `veccore` then built it, and
-this is what it was worth.
+**Built.** `VSHUF` now honours the predicate fields `pm`/`pr` that every ALU
+instruction already carried, which took the granule transpose from a rotate-and-
+select merge to a rotate alone. What it cost in the vector core is
+[vector-core.md](vector-core.md) §5.3: **+396 LUT, +1.4%, no registers, no DSP,
+no BRAM, and no movement in timing.**
 
 The merge is gone: four loads, four rotates per output word, four stores. **24
 instructions per 32 words against 36**, and the twelve `VSEL` a block spent do
@@ -767,86 +781,24 @@ easy to get backwards and all three are now pinned by tests:
   core forces `pm=0` — a model reading `pm` off any of the four would predicate
   a load by accident.
 
-### 12.2 The reading that said it was two signals, not a datapath
+**Where the 1.45x comes from.** Counting the block rather than the merge: 4
+`VLD` + 16 `VSHUF` + 12 `VSEL` + 4 `VST` = 36 instructions per 32 words, and
+predication deletes the twelve `VSEL` — **36 to 24, so 1.5x** on the body. The
+measured 1.45x is that, less the per-run preamble, descriptors and flits, which
+do not scale with the body.
 
-Read from the RTL before it was built, **it was not new datapath — it was two
-signals that were not connected.** Kept because the shape of the argument is the
-reusable part: the file is the record of how the ask was priced.
+### 12.2 A build-configuration risk
 
-**The predicate already drives a per-slice write enable.** `vec_lanes.v:436-441`:
+The vector ALU carries a `HAS_SEL` parameter that gates `VSEL` into existence.
+**At zero, `VSEL` returns its first operand — silently, with no fault** — so
+`Subtile` would return wrong lanes and report success. The vector core takes the
+default of 1 and nothing overrides it, so this is latent rather than live; but
+it is the shape of failure a build knob should never have, and it belongs with
+whoever owns the build configuration.
 
-```verilog
-    wsl = p_ph * wwid + wg;
-    nx_we[wsl] = ((p_pm == 2'd0) ? 1'b1
-               :  (p_pm == 2'd1) ? p_pmask[wsl]
-                                 : ~p_pmask[wsl]) & p_tmask[wsl];
-```
-
-`p_pmask` comes from the predicate file itself — `vec_lanes.v:364`,
-`pmask_now = preg[q_pr][q_chunk*16 +: 16]`, over `reg [127:0] preg [0:3]` at
-`:135`. So "write only the lanes a predicate selects" exists, per slice, today.
-
-**`VSHUF` does not come down that path.** It writes through the load/store port,
-and that branch hard-codes every lane — `vec_lanes.v:431-433`:
-
-```verilog
-    if (ls_we) begin
-        nx_we = 16'hFFFF;
-        nx_wa = ls_waddr;
-```
-
-`vec_core.v:760-763` is where the shuffle takes it (`lw_wdata <= shuf_out`), and
-`vec_core.v:232` wires `lw_we`/`lw_waddr`/`lw_wdata` to those `ls_*` inputs. The
-rotate itself is a dedicated two-stage network on the register read port
-(`vec_core.v:336-356`), deliberately outside the ALU pipeline: "Two 4:1 stages
-are one LUT6 per bit each; the flat 16:1 was four."
-
-**The instruction word already carries the fields.** `vec_core.v:251`:
-`wire [1:0] d_pr = ir[4:3], d_pm = ir[2:1];` — decoded for every opcode. They
-reach `vec_lanes` only as `.iss_pm(g_pm), .iss_pr(g_pr)` (`vec_core.v:236`),
-latched on the ALU issue branches (`:497`, `:547`, `:622`) and **not** on the
-`VSHUF` branch (`:568`). `hw/vector.py:alu` already places `pr`/`pm` in a
-`VSHUF` word, so the encoder needs no change at all.
-
-So the delta is:
-
-| where | change |
-|---|---|
-| `vec_core` | latch `d_pr`/`d_pm` on the `VSHUF` issue branch; two new output ports |
-| `vec_lanes` | two new inputs; on the `ls_we` branch use the term already written at `:439-441`, indexed `preg[ls_pr][ls_waddr[2:0]*16 +: 16]` — the chunk is already the low three bits of `ls_waddr` |
-
-**Not priced here, and deliberately.** The only genuinely new logic is a THIRD
-read of `preg`: the existing two (`:363`, `:364`) are indexed by the ALU
-pipeline's `q_pr`/`q_chunk`, which the `ls` path does not share, so it needs its
-own 4:1 over a 4 x 128-bit array. Everything else is two ports and one 3:1
-select replacing a constant. Whoever owns `vec_lanes` should put a number on it.
-
-**One trap in the change.** The ALU term ANDs `p_tmask`, the tail mask. The
-`ls` path must NOT inherit that: a `VST` or `VSHUF` writes whole chunks whatever
-`VL` is, which is the documented behaviour and what the model implements.
-
-**The win, as predicted then and measured now.** "Seven ops per word to four" is
-right for the merge but the block is what matters: 4 `VLD` + 16 `VSHUF` + 12
-`VSEL` + 4 `VST` = 36 instructions per 32 words, and predication deletes the
-twelve `VSEL` — **36 to 24, 1.5x**, not 1.75x. Measured after the build: 1.45x,
-the difference being the per-run overhead that does not scale with the body.
-
-### 11.1 A risk this reading turned up
-
-`vec_alu.v:66` has `parameter integer HAS_SEL = 1`, and `:219-220` builds `VSEL`
-only when it is non-zero — at zero the `default: va = s1_a` arm at `:211` makes
-`VSEL` return its FIRST operand, silently and with no fault. `Subtile` would then
-return wrong lanes and report success.
-
-CHECKED: `vec_lanes.v:170` instantiates `vec_alu` with `.MODEL` and `.PIPE_MUX`
-only, so the vector core keeps the default of 1. Nothing else in `src/` overrides
-it for this unit. **If a build ever gates it off, the granule transpose breaks
-quietly** — that belongs with whoever owns the build configuration.
-
-Also checked against the model, since `Subtile` depends on it: `vec_alu.v:201`
-is `sel_nz = (HAS_SEL != 0) && (|s1_c[22:0])` — magnitude bits only, so `-0.0`
-is FALSE. `model.VectorUnit`'s `np.where(c != 0.0, ...)` agrees, because numpy
-also holds `-0.0 == 0.0`.
+One related detail, because `Subtile` depends on it: `VSEL`'s condition tests
+the **magnitude bits only**, so `-0.0` is false. The unit model agrees, because
+numpy also holds `-0.0 == 0.0`.
 
 ## 13. What is not done
 

@@ -9,6 +9,10 @@ tags:
 
 # Tinygrad as the tensor frontend
 
+> **Kind: Yours throughout.** An optional tensor frontend, where its seam falls
+> and what it switches off are this project's software choices. The framework has
+> no frontend and no opinion about one.
+
 `ktpugrad` makes `Tensor(x, device="KTPU")` work by matching tinygrad's lowered
 loop nest against this project's kernel library and dispatching the library
 kernel. It is **an optional frontend, not a replacement for L5** — the reason is

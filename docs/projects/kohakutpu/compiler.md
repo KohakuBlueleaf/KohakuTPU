@@ -9,16 +9,22 @@ tags:
 
 # The software stack
 
+> **Kind: Yours throughout.** The three IR levels, the tile-choice discount, the
+> grid and the round-cutting are this project's own compiler, and nothing in the
+> framework requires any of them. The only Fixed protocol it touches is the
+> instruction encoding it emits
+> ([spec/instruction-encoding](../../spec/instruction-encoding.md)); every level
+> above that is a design this project chose.
+
 What turns a tensor program into flits, uploads them, kicks the machine and reads
 the answer back. `compiler/` and `driver/`, pure Python with numpy for the
 numeric model and nothing else in the core.
 
-The two halves this page used to describe as "still converging" have converged.
-The separate `ktpu.ir` / `ktpu.passes` / `ktpu.codegen` pipeline is retired and
-lives only in git history; one path runs now, `kohakutpu.lang` down to
-`kohakutpu.isa`, and it emits cluster and vector programs alike. **§7 is the
-current status.** §1–§3 are the design reasoning behind the levels, which
-survives the reorganisation even where a module name in them does not.
+**There is one compilation path**: `kohakutpu.lang` down to `kohakutpu.isa`,
+emitting cluster and vector programs alike. A second pipeline once existed and is
+retired; nothing in the tree reaches it. **§7 is the current status.** §1–§3 are
+the design reasoning behind the levels, which holds even where a module name in
+them has since moved.
 
 ---
 

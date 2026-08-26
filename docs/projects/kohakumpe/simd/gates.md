@@ -1,6 +1,6 @@
 ---
 title: SIMD PE gates
-summary: The benches that must pass before a SIMD PE number is quotable, what the list does not cover, the two ways a number here can look like evidence without being any — a check count that cannot fall and a stale artifact that turns a wrong path into a pass — and why the float specials have to be pinned against the spec rather than against a workload.
+summary: The benches that must pass before a SIMD PE number is quotable, what the list does not cover, and four ways a figure here can read as evidence without being any.
 tags:
   - architecture
   - pe
@@ -10,273 +10,203 @@ tags:
 
 # SIMD PE gates
 
+> **Kind: Convention, and free.** Which benches must pass before a number is
+> quotable is this project's own evidence standard, and nothing in the framework
+> enforces it. It is worth copying rather than obeying; the general form is in
+> [workflow/measure](../../../workflow/measure.md).
+
+A number from this PE is quotable when the list below passes. This page is that
+list, what it does **not** cover, and the four failure modes that produce a
+figure which looks like evidence and is not — each of which has been paid for at
+least once in this repository.
+
 ## The list
 
 Run in this order; the cheap ones fail fastest.
 
 ```
-python tests/pe/tools/rv_simd_isa_test.py     # 106 instructions, 0 disagreements
-python tests/pe/tools/rv_simd_emit.py --check # 2 of 2 generated files agree
+python tests/pe/tools/rv_simd_isa_test.py     # every instruction, 0 disagreements
+python tests/pe/tools/rv_simd_emit.py --check # the generated files agree
+python tests/pe/tools/khs_seed_emit.py --check --report
 
-python tests/pe/tools/khs_float_vec.py
-python scripts/py/xsim.py khs_float_lane      # 4000 vectors, 0 mismatches
+python tests/pe/tools/rv_fpu_vec.py tests/pe/build/fpu
+python scripts/py/xsim.py rv_fpu              # the multiply-add, on the bits
 
-python tests/pe/tools/rv_simd_fsfu_test.py     # 101 checks: the seed model
-                                               # against vec_alu_tb section 9
+python tests/pe/tools/khs_sfu_vec.py tests/pe/build/fpu
+python scripts/py/xsim.py khs_sfu             # the four seeds, on the bits
 
-python tests/pe/tools/khs_gen.py --simd 8 --float --flanes 4 --no-facc
-python scripts/py/xsim.py khs_unit -d KHS_FLOAT=1 -d KHS_FLANES=4 \
-                                   -d KHS_FACC=0                 # 60 checks
+python tests/pe/tools/khs_facc_vec.py \
+    tests/pe/build/khd/fp32/facc_ops.txt tests/pe/build/khd/fp32/facc_exp.txt
+python scripts/py/xsim.py khs_facc
+python scripts/py/xsim.py khs_ffold
 
-python tests/pe/tools/khs_gen.py --simd 8
-python scripts/py/xsim.py khs_unit                                # 36 checks
+python tests/pe/tools/khs_run.py --float --fcvt-units 8 --fsfu 2
+python tests/pe/tools/khs_run.py                 # the integer half alone
 
 python tests/pe/tools/rv_simd_gen.py --simd 8
-python scripts/py/xsim.py rv_dsp              # assembled PE, 48 checks
+python scripts/py/xsim.py rv_dsp              # the assembled PE
 ```
 
-`vec_alu` and `vec_lanes` are shared arithmetic, so **anything that touches
-`vec_alu.v` or `khs_float_lane.v` must also run them at DEFAULT parameters** —
-those two protect the vector core and the SIMT PE, which instantiate the same
-files:
+`rv_fpu.v` is the **framework's**, so anything that touches it must also run the
+SIMT PE, whose float units instantiate the same file:
 
 ```
-python scripts/py/xsim.py vec_alu             # 26,900 checks, 0 errors
-python scripts/py/xsim.py vec_alu --model 0   # the same, on the real DSP48E2
-python scripts/py/xsim.py vec_lanes           # 1,158 checks, 0 errors
+python tests/pe/tools/rv_simt_suite.py --gates
 ```
-
-`--model 0` swaps `vec_dsp`'s behavioural multiplier for DSP48E2 and pulls in
-`glbl` and `-L unisims_ver`. **Run it for any change to `vec_alu`'s arithmetic**;
-both models currently agree bit for bit, every group's worst case identical, so a
-divergence would mean the DSP configuration rather than the maths.
 
 ## What the list does not cover
 
-- Nothing here is narrowed any more, and that is recent. **`--no-fsfu` used to
-  be in this list**, because the FSFU-on configuration failed 4 of 62 on the FP32
-  seed corners — and `SIMD_FSFU = 1` is what synthesises, so the gate was
-  excluding the shipped build. It was a golden-model fault and not the lane:
-  `rv_simd_model.py`'s seed path ended in `max(min(y, 3.4e38), -3.4e38)`, so it
-  could not produce an infinity for **any** input, and its `else` branches
-  conflated negative with zero (`log2(-1)` and `rsqrt(-1)` returned a large
-  finite where IEEE and the hardware both say NaN). `vec_alu_tb` section 9 had
-  been checking those same specials directly against the RTL and passing the
-  whole time. Fixed in the model; the FSFU configuration is now **60 checks, 0
-  errors** and `rv_simd_fsfu_test.py` pins the model to that table so the two
-  cannot drift apart again.
+- **`khs_run.py` with no arguments builds the integer half only.** The float
+  row is a superset — its stream carries the integer cases too — so both rows
+  are in the list and the float one is not optional.
+- **A component bench does not default to the shipped writeback.**
+  `rv_pe` defaults `SIMD_WB` to 1 and `khs_unit`'s own `WB_STAGE` default is 0,
+  so a bare run of the assembled-PE bench is not the configuration the card
+  runs. Pass the writeback explicitly, and publish both columns rather than one.
+- **No SIMD feature has shipping-workload evidence, because there is no
+  compiler path to this PE.** Nothing under `compiler/` references the SIMD PE
+  or any of its instructions. Its only kernel library is
+  `tests/pe/tools/rv_simd_kernels.py`, which exists to exercise the RTL.
+- **The float tier has no kernel evidence at all.** That library contains zero
+  float instructions, and neither does anything else in the repository. The
+  integer features each have a paired kernel representing real work; the float
+  tier has a component bench and a golden model and no workload. Any statement
+  that the float tier is validated means *validated against a model*, and
+  whether this PE has a float workload at all is a compiler question, not an
+  RTL one.
 
-  **The lesson is the narrowing, not the clamp.** A gate that is trimmed until
-  it passes reports the trim as success; the flag `--no-fsfu` looked like a
-  configuration choice and was actually a suppressed failure.
-- **The assembled-PE cycle bench does not default to the shipped writeback.**
-  `rv_simd_tb.v` defines `RV_SIMD_WB` to 0 while `rv_pe.v` defaults it to 1, and
-  the bench never passes `SIMD_DOTDSP`, so that one takes the shipped 1. A bare
-  `xsim.py rv_dsp` is therefore `DOTDSP = 1, WB = 0`. **Pass `-d RV_SIMD_WB=1`
-  for the configuration the card runs** — both columns are published in
-  [performance](performance.md#what-each-feature-costs-against-the-kernel-that-uses-it),
-  and the shipped one costs 1.9 % to 33.3 % of a vector kernel's cycles.
+## Four ways a number reads as evidence and is not
 
-  `-d` is safe for this define. It is **not** safe for `MX_MODEL`: `xsim.py`
-  appends its own `MX_MODEL={args.model}` *after* the user's defines, so
-  `-d MX_MODEL=0` is silently overridden and the run reports `MODEL=1` while
-  looking like it obeyed. Use `--model 0`, which also pulls in the DSP48
-  primitive, `glbl` and `-L unisims_ver`.
-- **`SIMD_FLOAT_LANES` used to be un-checked and now is not.** `FLANES` must
-  divide `2 × SIMD`; 3 elaborated, synthesised, reported a plausible 330.4 MHz
-  and failed the component bench 10 of 66, because `PASSES` truncated to 5 and
-  the walk covered 15 of 16 elements. `khs_unit` now instantiates a module that
-  does not exist in the illegal branch, so the build stops at elaboration:
+### A gate that is narrowed reports the trim as a pass
 
-  ```
-  ERROR: [VRFC 10-2063] Module <khs_unit_requires_FLOAT_LANES_to_divide_2x_SIMD>
-  not found while processing module instance <g_bad_fl.u_bad>
-  ```
+A flag that looks like a configuration choice can be a suppressed failure. A
+`--no-<feature>` flag excluded the seed-capable configuration from this list
+while the seed-capable configuration was the one that synthesised — so the gate
+was passing by excluding the shipped build.
 
-  A second guard covers `PASSES` dividing `NPART` when the accumulator is built.
-  Neither fires at 2, 4, 8 or 16 lanes — all four still elaborate and pass.
+**Suspect the model before the hardware.** In that instance the defect was the
+golden model's: its seed path ended in a clamp to the largest finite value, so
+it could not produce an infinity for any input, and its fallthrough conflated a
+negative operand with zero. The hardware was right and the reference was wrong.
 
-## Numbers that look like evidence and are not
+**The lesson is the narrowing, not the clamp.** When a gate is trimmed until it
+passes, the trim is what the green line is reporting.
 
-Two of these in one day, in the same benches. They are different mechanisms with
-the same failure mode: **a figure that reads as proof of work done, when what it
-actually measures is something else.**
+### A check count can be a case count
 
-### A check count is a CASE count, not a coverage count
+A bench that makes a fixed number of unconditional checks per case has a check
+count that is nearly constant by construction, and every other increment sits
+inside a mismatch branch. Such a count **can go down when things get better**:
+fixing a defect removes the failure reports that were themselves counted.
 
-`khs_unit_tb.v` makes **exactly six unconditional checks per case** — write-stream
-compare, write count, scalar count, vector-file dump length, scratchpad dump
-length, case completed. Ten cases is therefore a **floor of 60**, and every other
-`checks = checks + 1` in that file sits inside a mismatch branch.
-
-- **A passing run compares far more than it counts.** It walks the whole write
-  stream instruction by instruction, then 64 vector-file words, 16 accumulator
-  words and every scratchpad word, per case. None of that increments the number,
-  so the count is nearly constant by construction.
-- **The count can go DOWN when things get better.** The FSFU fix took it from
-  `62 checks, 4 errors` to `60 checks, 0 errors`. The two "extra" checks were the
-  failure reports themselves (+1 check and +1 error each); the other two errors
-  came from the write-stream compare, which raises `errors` **without** raising
-  `checks`. Nothing was lost — but that has to be derived from the accounting,
-  not assumed because the line went green.
+A passing run of that bench compares far more than it counts — the whole write
+stream instruction by instruction, then the vector file, the accumulator and
+every scratchpad word, per case — and none of that increments the number.
 
 **Not every bench counts this way, and the difference is not visible from the
-number.** `vec_alu_tb` counts unconditionally: adding three specials moved it
-26,897 → 26,900 and its specials group 21 → 24, which is exactly what three new
-checks should look like. So a delta there IS readable and a delta in
-`khs_unit_tb` is not. Same word, two meanings — read how the bench counts before
-quoting its total as progress.
+number.** A bench that counts unconditionally moves by exactly the number of
+checks added. Same word, two meanings: **read how a bench counts before quoting
+its total as progress.**
 
 ### A stale artifact turns a wrong path into a pass
 
-**A missing file is a loud failure. An OLD file is a silent one.** Three benches
-in this repository hit that on the same day. Two were this PE's.
+**A missing file is a loud failure. An old file is a silent one.** A generator
+that writes to one directory and a bench that reads from another produce a loud
+`NORETIRE` when nothing is there — and a silent pass when a superseded tree from
+before a rename still is. A guard that checks the *contents* of a file it found
+cannot catch a file it should never have found.
 
-**1. `rv_dsp` was failing outright and had been for as long as the rename.**
-`rv_simd_gen.py` wrote its cases to `tests/pe/build/simd/dsp%02d/` while the
-renamed `rv_simd_tb.v` opened `simd%02d/`. Nothing was there to find, so the
-bench read an empty instruction memory and reported `NORETIRE` — loud, and
-therefore harmless once anyone ran it.
+Three rules follow, and all three are cheap:
 
-**2. Two paths in the same bench were silent.** `rv_simd_tb.v` also read
-`<PE_DIR>/dsp/ix00/prog.hex` and `<PE_DIR>/dsp/ndsp.hex` — the second being the
-**case count** — from a `tests/pe/build/dsp/` tree left behind by the pre-rename
-generator. A guard on the count existed and was correct; it never fired, because
-the stale file was readable.
+- a `$readmemh` path and the generator that fills it are one fact in two files.
+  When either is renamed, grep the other; **do not go from memory**;
+- **delete the superseded output tree**, so a wrong path fails loudly instead of
+  finding something;
+- **check the path, not just the payload.**
 
-**The damage was bounded from the artifacts, not from confidence.** The stale
-`ndsp.hex` held `0000000f` and so does the freshly generated one — fifteen cases
-either way — so the fifteen workload cases were read from the correct
-`simd/simdNN/` path and their cycle counts are real. Only `ix00`, the
-bench-driven vector-scratchpad case, read a stale image. After fixing both paths,
-deleting `tests/pe/build/dsp/`, and re-running: **48 checks, 0 errors, and every
-cycle count byte-identical.** Nothing had to be retracted.
+When a stale path is found, do not discard the results and do not keep them:
+**open the stale artifact, compare it to the fresh one, and say which results
+the difference can and cannot have touched.**
 
-That is the procedure worth repeating. When a stale path is found, do not
-discard the results and do not keep them — **open the stale artifact, compare it
-to the fresh one, and say which results the difference can and cannot have
-touched.**
+### Decode without datapath
 
-### The rules these leave behind
+**A feature can be decoded, wired, parameterised and priced in LUT, and still
+not exist.** The instruction is named in the table, a register is written, the
+fault checks are wired, and the parameter appears in a cost report — and none of
+that touches the datapath. Two instances of it have been fixed on this PE: a
+converter group whose registered decode signals had no branch in the result mux,
+so its instructions wrote the *integer* lane's output; and an accumulator whose
+float units were instantiated without connecting their operation port, so the
+tool tied it to opcode zero, a pass-through, and the tier neither multiplied nor
+accumulated.
 
-- A `$readmemh` path and the generator that fills it are one fact in two files.
-  When either is renamed, grep the other; **do not go from memory.**
-- Delete the superseded output tree, so a wrong path fails loudly instead of
-  finding something.
-- A guard that checks the *contents* of a file it found cannot catch a file it
-  should never have found. Check the **path**, not just the payload.
-- **Read how a bench counts before quoting its count.** A number that cannot
-  fall is not the same kind of evidence as one that can.
-- **A file's contents *now* are not evidence about a run from *before*.** Two
-  people made this exact error in opposite files within an hour: one claimed a
-  CRITICAL WARNING could not have come from an `.xdc` that had been fixed since
-  the run, while the other's own comment in that same file still described a
-  guard the first had already removed. Neither instance is remarkable; the pair
-  is, because it shows the error is structural rather than careless. The run log
-  named the file and the line, and that was the better evidence all along.
-- **A true observation is not yet a rule, and generalising it takes a second
-  measurement.** Every claim overturned in a day had this shape — a sound
-  reading of one case, promoted before a second case had been looked at:
+**Follow the signal to the RESULT, not from the instruction.** Three checks find
+the whole class:
 
-  | the observation, correct | the rule, false | the second case |
-  |---|---|---|
-  | `khs_unit_tb`'s check count is a case count | "a check count is a case count" | `vec_alu_tb` counts unconditionally; its deltas *are* readable |
-  | `rebuilt` beats `none` by 647 LUT | "the flatten gap is 647 LUT" | at the shipped `DOTDSP = 1` it is **243** — the 647 was all DSP inference for `sum_r` |
-  | duty writes timed out, so a clock could not be retuned over JTAG | "that build is unusable" | a different revision's acceptance run had already retuned all four wizards by that method |
+- **grep the decode register and count its reads.** Declared, assigned, and
+  *nothing* is the signature. A dead decode register is not automatically a
+  bug — one whose function is fully covered by another signal is a flop the tool
+  removes — so the question is whether the *instruction* has a datapath, not
+  whether the *signal* has a reader.
+- **grep the synthesis log for `[Synth 8-7071]` and keep only the INPUTS.** An
+  unconnected *output* is ordinary; nobody read a status flag. An unconnected
+  *input* is tied to zero and silently becomes a legal-looking value. The
+  unconnected operation port above was named in every synthesis log for as long
+  as the feature existed.
+- **read the area column.** Those accumulator units synthesised at roughly a
+  fifth of what the elementwise ones cost. A full multiply-add unit cannot be
+  that small, and the discrepancy is the missing datapath appearing as a number.
 
-  **The second case is usually already in your data**; it does not get found by
-  thinking harder about the first. The flatten gap needed one more synthesis at
-  the other setting. The check count needed reading a second testbench's
-  accounting. The clock one needed noticing that the log rolls across builds, so
-  the timeouts belonged to an older revision than the conclusion drawn from
-  them — and the evidence that would have refuted it was sitting in a passing
-  run nobody re-read. When a finding is about to become a rule, name the second
-  case that would falsify it and go and look; if there is none available, say
-  "true of X" rather than the general form.
+**No bench built from the decode can catch it.** The generator, the golden model
+and the RTL are all written from one instruction table, so a feature missing
+from the *datapath* is missing from all three consistently and they agree with
+each other about nothing being wrong. A generator that excludes an instruction
+because "the unit faults on it" makes that worse: the exclusion is correct at a
+width of 0 and conceals the defect at every other width.
 
-## DECODE WITHOUT DATAPATH — a named defect class, four instances
+## Why the specials have to be pinned against the spec
 
-**A feature can be decoded, wired, parameterised, priced in LUT, and still not
-exist.** Four confirmed instances in this repository, three of them found on one
-day in three unrelated subsystems, so this is a pattern and not an accident.
+**A special case is exactly the input a workload never supplies.** Coverage from
+kernels is coverage of the middle of the range; the edges are only pinned by a
+table written against the specification.
 
-| where | what decodes | what is missing | what the hardware does |
-|---|---|---|---|
-| **`SIMD_FCVT`** | six `vfcvt` forms; `m_is_fcvt` and `m_fcvt_op` are registered | **no branch in the `vres` result mux** — both registers are assigned and never read | writes the **integer lane output** |
-| **`SIMD_FACC`** | the whole accumulator group | **`.op` left unconnected** on `khs_unit:1177`'s four `khs_float_lane`s | tied to 0 = `OP_MOV`, so it passes `a` through instead of multiply-accumulating |
-| station bus | `s_awburst` / `s_arburst`, sampled on `sb_nmu` | the flit has **no burst-type field**; `sb_nsu` hardwires `m_awburst = 2'b01` | WRAP and FIXED execute as **INCR**, silently |
-| SIMT `HAS_MASK` / `HAS_IPDOM` | `tmc`, `split`, `join` | `unbuilt` faults on `HAS_SHFL`/`HAS_FLT`/`HAS_FSFU` but **omits these two** | a generate branch with no datapath returns a plausible non-answer |
+A seed returning `+inf` where IEEE requires `−inf` on a negative zero survived
+for as long as the seed existed, because no kernel in the library issues that
+seed at all — so no amount of workload evidence could have found it, and no
+tolerance would have either: the magnitude was infinite and correct, and only
+the sign was wrong. It took reading the specification and then checking the RTL
+against it. The tell was internal: two seeds in the same file contradicted each
+other on one input class, one deriving the sign from its operand and the other
+hard-coding it, which is not a decision anyone made.
 
-### The detection rule
+Two cautions follow, and they are why the specials are checked **exactly** and
+per case rather than under a blanket tolerance:
 
-**Follow the signal to the RESULT, not from the instruction.** A decode is easy
-to read and easy to believe: the opcode is named, the register is written, the
-fault checks are wired, the parameter appears in a price list. None of that
-touches the datapath.
+- **derive the expectation before reading the RTL.** A corner transcribed from
+  the hardware makes the bench defend whatever the hardware does.
+- **a corner can be checked carefully along the wrong axis and still be wrong.**
+  An assertion that reads "= +inf, *not NaN*" is checked on the infinity-versus-NaN
+  axis, and the sign is never questioned.
 
-- For a register that decodes an instruction, **grep it and count the reads.**
-  Declared + assigned + *nothing* is the signature. `m_is_fcvt` and `m_fcvt_op`
-  both have exactly two occurrences.
-- **A dead decode register is not automatically a bug** — `m_is_falu` and
-  `m_is_fsfu` are also assigned and never read, but their function is fully
-  covered by `m_is_fel` and `m_fop`, so they are dead flops the tool removes.
-  The question is whether the *instruction* has a datapath, not whether the
-  *signal* has a reader.
-- **The synthesis log is evidence, and one filter finds this whole class.**
-  `port 'op' of module 'khs_float_lane' is unconnected` names the FACC bug
-  outright, and it had been in every log for as long as the feature existed.
-  **Grep `[Synth 8-7071]` and keep only the INPUTS**: an unconnected *output* is
-  ordinary — nobody read a status flag — while an unconnected *input* is tied to
-  0 and silently becomes a legal-looking value, here opcode 0, `OP_MOV`. Worth
-  running on any tier before pricing it. The same filter over the SIMT build
-  returns only outputs, so that tier is clean.
-- **So is the area column.** Those FACC lanes synthesise at ~256 LUT against
-  ~1,150 for the elementwise ones. A full FMA lane cannot be 256 LUT, and the
-  discrepancy is the missing datapath showing up as a number.
+The finite paths are held to a measured tolerance because the seeds are a table
+plus a range reduction rather than a correctly-rounded function; the bounds are
+the component bench's own measured worst case, and a second test holds the same
+path to a relative error so a specials fix cannot pass while the arithmetic
+rots.
 
-### Why no bench catches these — and one of them is a harness defect in its own right
+## One observation is not yet a rule
 
-**A bench built from the decode inherits the decode's blind spot.** The
-generator, the golden model and the RTL were all written from one instruction
-table, so a feature missing from the *datapath* is missing from all three
-consistently and they agree with each other about nothing being wrong.
+Every claim overturned quickly in this project has had the same shape: a sound
+reading of one case, promoted to a general rule before a second case was looked
+at.
 
-**`khs_gen.py`'s `NOT_BUILT` exclusion hides `SIMD_FCVT` by construction.** It
-excludes all six `vfcvt` forms with the stated reason *"the unit faults on
-these"* — which is **true at `SIMD_FCVT = 0` and false at `SIMD_FCVT = 1`, the
-exact configuration the exclusion then conceals.** At 0 the exclusion is correct
-and unnecessary; at 1 the instructions become legal, return the integer lane
-output, and are still never emitted. **That is a test-harness defect and it
-belongs beside the RTL one**, because it is the reason the RTL one survived: a
-generator that skips an instruction can never disagree with a datapath that
-lacks it.
+| the observation, correct | the rule, false | the second case |
+|---|---|---|
+| one bench's check count is a case count | "a check count is a case count" | another bench counts unconditionally, and its deltas *are* readable |
+| `-flatten_hierarchy rebuilt` beat `none` by 647 LUT | "the flatten gap is 647 LUT" | at a different setting of one knob it is 243 — the 647 was all DSP inference for one signal |
+| a synthesis run repeated bit-identically | "out-of-context runs repeat exactly" | another module's row came back four LUT apart across two suites |
 
-The same shape as [the narrowed gate](#what-the-list-does-not-cover) and
-[pinning the specials](#why-the-specials-have-to-be-pinned-exactly): **the cases
-a workload never supplies are the cases nothing checks.** Kernel coverage cannot
-find an unimplemented instruction, because no kernel issues it — which is
-generally *why* it was never implemented.
-
-That is the same shape as [the narrowed gate](#what-the-list-does-not-cover) and
-as [pinning the specials](#why-the-specials-have-to-be-pinned-exactly): **the
-cases a workload never supplies are the cases nothing checks.** Kernel coverage
-cannot find an unimplemented instruction, because no kernel issues it — that is
-*why* it was never implemented.
-
-## Why the specials have to be pinned exactly
-
-`rsqrt(-0)` returned **+inf** where IEEE requires **-inf**, for as long as the
-seed existed. `vec_alu_tb` section 9 tested `inv(+inf)` but not `inv(-inf)`,
-`exp2(-0)` or `rsqrt(-0)`, so nothing pinned it — and **no kernel in the SIMD
-library issues `vfrsqrt` at all**, so no amount of workload evidence could ever
-have caught it. It took reading `vec_alu.v` against the specification, and the
-tell was internal: `OP_INV` derived the same sign from `raD_s` and got
-`inv(-0) = -inf` right while `OP_RSQRT` hardcoded `1'b0` twenty lines later. Two
-seeds contradicting each other on one input class is not a decision anyone made.
-
-The general point: **a special case is exactly the input a workload never
-supplies.** Coverage from kernels is coverage of the middle of the range. The
-edges only get pinned by a table written against the spec, which is what section
-9 is for — and every gap in that table is a case where the RTL is matched by
-somebody *reading* it, which is how a golden model comes to encode a bug as
-correct. All three gaps above are now closed.
+**The second case is usually already in your data**; it does not get found by
+thinking harder about the first. When a finding is about to become a rule, name
+the second case that would falsify it and go and look. If there is none
+available, say "true of X" rather than the general form.

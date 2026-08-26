@@ -772,8 +772,8 @@ const cvt = {
     { from: "o16:r", to: "st:l", dir: "h" },
     { from: "o32:r", to: "st:l", dir: "h" },
     {
-      from: "o16:b",
-      to: "i16:b",
+      from: "o16:t",
+      to: "i16:t",
       dir: "v",
       dash: true,
       label: "VCVT reuses these",
@@ -1250,7 +1250,7 @@ const opcodes = {
     summary="How one E8M15 lane is built for the operations it performs — which term lands on which DSP port, why the alignment is one shifter and not two, how four transcendental seeds share the FMA's normaliser, and what the network around sixteen of them costs."
     domain="tpu"
     status="measured"
-    source="src/kohakutpu/vector/ · xcvu13p-fhgb2104-2L-e · docs/projects/kohakutpu/vector-core.md · results.md §3, §3.1, §6.3"
+    source="src/kohakutpu/vector/ · xcvu13p-fhgb2104-2L-e, Vivado 2024.2, out-of-context synthesis · docs/projects/kohakutpu/vector-core.md · results.md §3, §3.1, §6.3"
   >
     <p class="doc-p">
       <RouterLink to="/tpu/vector" class="doc-link"

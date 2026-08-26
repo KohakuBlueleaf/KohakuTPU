@@ -9,8 +9,23 @@ tags:
 
 # Memory: what exists, what binds it, what is missing
 
-The card holds **16 GiB**, and a layout decides read speed — so this is not an
-allocator question alone.
+> **Kind: the layout is Yours; the two granules that bind it are Fixed protocol.**
+> How this project arranges tensors in DRAM is entirely its own, and a second
+> accelerator would arrange them differently. The granule sizes every span must
+> respect are not — they follow the flit payload and the memory agent's internal
+> beat ([address-map](../../address-map.md),
+> [spec/memory-protocol](../../spec/memory-protocol.md)).
+
+**What this page is:** how KohakuTPU decides where a tensor goes in DRAM, and
+why that is not only an allocator question. The card holds **16 GiB** across
+four DDR4 channels, 4 GB per mesh, and a buffer's **byte order** decides how
+fast anything can read it — so placement and layout are one decision.
+
+Three terms it assumes. A **granule** is 32 bytes: the smallest unit any data
+path on this machine moves. A **`FILL`** is a matmul cluster's instruction to
+load operand entries from memory into its own L1; a **`DRAIN`** is its
+instruction to write the finished output tile back out
+([isa.md](isa.md) §3, §5).
 
 ## 1. What binds the layout
 
@@ -45,12 +60,11 @@ staging fallback pays that conversion; fusing avoids it. That is the real cost o
 the shapes where fusion is refused — see [fused-epilogue.md](fused-epilogue.md).
 
 **What is NOT modelled: DRAM row locality.** Nothing here knows a page size or a
-bank, so two buffers read together may land in the same bank and serialise. The
-one link figure ever measured is 98 MB/s at 3% of the interlink — superseded,
-since it predates the mover rebuild (`multi-mesh.md` §8) — and `mag_dram_port`
-crosses through `xpm_fifo_async`. DRAM was not the bottleneck at that rate and
-nothing since has made it one, so this is correctly unbuilt rather than
-forgotten. Revisit when a kernel is DRAM-bound, and re-measure first.
+bank, so two buffers read together may land in the same bank and serialise. No
+kernel measured so far has been DRAM-bound, so this is correctly unbuilt rather
+than forgotten. Revisit when one is — and measure the DRAM path first, because
+there is currently no measurement of it to plan against
+([multi-mesh.md](multi-mesh.md) §8).
 
 ## 2. What exists now
 

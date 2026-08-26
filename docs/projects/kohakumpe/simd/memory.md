@@ -10,12 +10,23 @@ tags:
 
 # Vector memory
 
-The SIMD PE has two register files, two scratchpads and — on a float build — one
-more array behind the accumulator. The split is by **width**, not by what is
-stored. The scalar side is 32 bits wide because that is what an RV32 load
-returns; the vector side is 256 bits wide because that is one flit, one
-memory-agent entry, and one cache line. Neither can be the other cheaply, and
-this page is why.
+> **Kind: the scratchpad is Yours; the faces it presents are Fixed protocol.**
+> Bank count, row width and the register file are this project's design, and the
+> framework has no opinion on a unit's storage. How a delivery names its
+> destination (`buf_id`) and what a doorbell means are Fixed protocol
+> ([spec/flit-format](../../../spec/flit-format.md)).
+
+The SIMD PE has two register files, two scratchpads and — on a build with the
+float accumulator — one more array behind it. The split is by **width**, not by
+what is stored. The scalar side is 32 bits wide because that is what an RV32
+load returns; the vector side is 256 bits wide because that is one flit payload,
+one memory-agent entry, and one cache line. Neither can be the other cheaply,
+and this page is why.
+
+Two framework terms are used below and defined here. A **window** is a region of
+a compute unit's address map that the on-chip network may write into directly; a
+`buf_id` names which window a delivery targets. A **doorbell** is a word written
+last, after a payload, that a consumer polls to learn the payload has landed.
 
 ```
    +------------------------------------------------------------------+
@@ -75,10 +86,10 @@ and scales with the datapath rather than with a capacity guess: 8 BRAM at eight
 lanes, 2 at two. The whole array is 8 × 1024 × 32 b = **32 KB**, and the primitive
 is **declared, not inferred**.
 
-> **The read enable is a real signal, not a constant 1.** Left at 1 the port reads
-> whatever row the EX adder happened to produce for a scalar instruction, so every
-> NoC write would look like a cross-port collision and the permanent assertion
-> below would fire continuously in a working machine.
+> **The read enable is a real signal, not a constant 1.** Left at 1 the port
+> reads whatever row the execute stage's adder happened to produce for a scalar
+> instruction, so every network write looks like a cross-port collision and the
+> permanent assertion below fires continuously in a working machine.
 
 ## The scalar core can store here but cannot load
 
@@ -100,12 +111,14 @@ owns — the wide one — with the byte enables of a single bank, because only o
 instruction is in MEM at a time and that port is therefore free whenever no vector
 instruction is using it.
 
-> **Sharing the NoC's port and arbitrating instead cost the assembled PE
-> 93.6 MHz** — 284.3 against a 377.9 baseline. Arbitration needs the NoC's write
-> enable, which is combinational from the receive FIFO's empty flag, and that
-> signal then reaches the MEM stage's stall, the fetch hold, and the instruction
-> window's address. The framework's own requestor registers its push handshake for
-> exactly this reason; a window write is the same trap one level down.
+> **Do not let a network flag reach the core's stall network.** Sharing the
+> network's port and arbitrating for it instead cost the assembled PE
+> **93.6 MHz** — 284.3 against a 377.9 baseline. Arbitration needs the network's
+> write enable, which is combinational from the receive FIFO's empty flag, and
+> that signal then reaches the memory stage's stall, the fetch hold, and the
+> instruction window's address. The framework's own requestor registers its push
+> handshake for exactly this reason; a window write is the same trap one level
+> down.
 
 The cost of the choice is one interlock: a vector load one instruction behind a
 scalar store into this window takes a **bubble in decode** — the same mechanism the
@@ -169,13 +182,14 @@ hazard is handled a stage earlier by a stall, because a bypass mux at 256 bits i
 256 LUT on the widest path in the unit against 32 for the scalar one —
 [pipeline](pipeline.md#hazards).
 
-> **A stall holds the OUTPUT REGISTER, not the address.** Holding the address puts
-> the MEM stage's stall — which carries a cache miss and a push handshake — in front
-> of the array, so the whole of it lands on the read path: **the assembled PE bound
-> there at 318.3 MHz.** The read enable reaches the primitive's *enable* instead,
-> which is a clock-enable arc, and the address arrives straight from the
-> instruction. The two are equivalent: with the enable low the array holds its last
-> value, which is exactly what re-reading a held address produced.
+> **A stall holds the OUTPUT REGISTER, not the address.** Holding the address
+> puts the memory stage's stall — which carries a cache miss and a push
+> handshake — in front of the array, so the whole of it lands on the read path,
+> and the assembled PE bound there at **318.3 MHz**. Send the stall to the
+> primitive's *enable* instead, which is a clock-enable arc, and let the address
+> arrive straight from the instruction. The two are equivalent: with the enable
+> low the array holds its last value, which is what re-reading a held address
+> produced.
 
 ### Why eight registers, and why the count is nearly free
 
@@ -191,35 +205,39 @@ and a build that carries eight faults on `v8` rather than aliasing it.
 
 ## The third array: the float partials
 
-A float build carries one more memory, and making it a memory is what makes the
-float tier affordable at all. The rotating partials are **two mirrored
-distributed-RAM instances** — the same 1W2R construction as the register file, and
-for the same reason: one read port serves the accumulate, the other serves the
-fold.
+A build with `HAS_FACC` carries one more memory, and making it a memory is what
+makes the float accumulator affordable at all. The rotating partials are **two
+mirrored distributed-RAM instances** — the same one-write-two-read construction
+as the register file, and for the same reason: one read port serves the
+accumulate, the other serves the fold.
 
 ```
-   depth   NACC * NPART              2 x 16 rows
-   width   24 * float lanes          one E8M15 partial per LANE
+   depth   NACC * NPART              2 x 16 rows at the defaults
+   width   32 * float units          one binary32 partial per UNIT
    prim    "distributed"             LUTRAM, read latency 0
 ```
 
-> As flops the array was **29,409 LUT of a 52,532-LUT unit** — 56 % of the whole
-> thing — because every one of 12,288 bits carried a D-input mux between an
+> **An indexed flop array is the single most expensive shape on this fabric.**
+> Built as flops, this array measured **29,409 LUT of a 52,532-LUT unit** — 56%
+> of the whole thing — because every bit carried a D-input mux between an
 > accumulate result, a seed and zero, with two variable-index read muxes on top.
-> **As LUTRAM it is 843.**
+> As LUTRAM the same storage is **843**. The same shape has been paid for
+> elsewhere in this repository — a divergence stack and a cache's valid/dirty
+> bits — and it is fixed the same way each time: make it a memory.
 
 Two properties follow from it being a memory rather than an array, and both are
 visible to a program:
 
-- **a write port is a write port**, so `vfaccz` and `vfaccwr` sweep `NPART` entries
-  instead of clearing in parallel — the same shape `rv_l1`'s invalidate-all has,
-  and the reason those two instructions are the expensive ones;
-- **the width is the LANE count, not the element count.** At four float lanes the
-  array is a quarter of what it is at sixteen, and each element's accumulate chain
+- **a write port is a write port**, so `vfaccz` and `vfaccwr` sweep `NPART`
+  entries instead of clearing in parallel — the same shape a cache's
+  invalidate-all has, and the reason those two instructions are the expensive
+  ones;
+- **the width is the UNIT count, not the element count.** At two float units the
+  array is a quarter of what it is at eight, and each element's accumulate chain
   is correspondingly shorter — which changes the answers, not just the area
   ([float](float.md#the-accumulator-is-rotating-partials)).
 
 > **The address is arithmetic and not a concatenation.** At `NACC = 1` the
-> accumulator select is `$clog2(1) = 0` bits wide and a concatenated address is
-> malformed — every partial then reads back zero, which is exactly how it failed
-> once.
+> accumulator select is `$clog2(1) = 0` bits wide, so a concatenated address is
+> malformed and every partial reads back zero. A zero-width field forced into a
+> concatenation is a silent failure; compute the address instead.

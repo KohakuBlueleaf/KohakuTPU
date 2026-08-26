@@ -245,11 +245,12 @@ and only for part of the K sweep.
 The instruction is done with the sequencer the moment the manager takes it. The
 sweep runs on for `gm*gn*nk` cycles afterwards and needs nothing more from the
 CU, so holding the instruction there only stopped the CU from doing the one thing
-that would overlap with it — filling the other half of L1. Measured, `FILL` was
-22.3% of the machine's time with the array idle through every cycle of it.
+that would overlap with it — filling the other half of L1. Measured on the
+baseline machine, `FILL` was 22.3% of the machine's time with the array idle
+through every cycle of it ([results.md](results.md) §8.1).
 
-What *is* finished is a separate question, and getting it wrong was expensive
-twice:
+**What counts as finished is a separate question, and two plausible answers are
+both wrong:**
 
 - **Not "the last tile has been issued."** The cascade is ~19 cycles deep, so
   when the counters finish there are still that many results in flight. Reporting

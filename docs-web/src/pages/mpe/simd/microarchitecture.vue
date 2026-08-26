@@ -4,10 +4,16 @@
 // operations it supports, module by module, read out of the RTL rather than
 // restated from prose.
 //
-// TWO ASKS. The khs_unit sweeps and the block probes here are OOC synthesis on
-// xcvu13p-fhgb2104-2L-e at 3.333 ns, integer only, with SIMD_DOTDSP = 0 and
-// WB_STAGE = 0. The assembled reference build is at 2.857 ns with both on.
-// Rows from the two are not comparable; each one below says which it is.
+// PROVENANCE. Every resource and frequency figure is out-of-context SYNTHESIS
+// on xcvu13p-fhgb2104-2L-e, Vivado 2024.2, at a 3.333 ns target. No placement
+// and no routing, so an Fmax here is an upper bound.
+//
+// The path-delay and logic-level figures are read out of the module headers
+// they were recorded in; the block probes measure a module in isolation and
+// say so. Per-block figures here are `-flatten_hierarchy none`, which is the
+// setting that makes them attributable and is NOT what the ship synthesises at.
+// Whole-PE totals are on the SIMD PE page and come from
+// docs/projects/kohakumpe/unit-counts.md, which names the tree per table.
 // ===========================================================================
 
 const PART = "xcvu13p-fhgb2104-2L-e";
@@ -27,7 +33,7 @@ const map = {
     {
       id: "msk",
       x: 0,
-      y: 4.5,
+      y: 8,
       w: 15,
       label: "shift + element masks",
       sub: "built ONCE, not SIMD times",
@@ -45,7 +51,7 @@ const map = {
     {
       id: "vsp",
       x: 18,
-      y: 4.5,
+      y: 8,
       w: 15,
       label: "khs_vspad",
       sub: "SIMD banks × 1024 × 32b",
@@ -63,7 +69,7 @@ const map = {
     {
       id: "psh",
       x: 36,
-      y: 4.5,
+      y: 8,
       w: 15,
       label: "khs_pshift32",
       sub: "one rotate, masked",
@@ -71,7 +77,7 @@ const map = {
     {
       id: "rnd",
       x: 36,
-      y: 9,
+      y: 14,
       w: 15,
       label: "khs_padd32  u_rnd",
       sub: "the vsrari increment, its OWN adder",
@@ -79,10 +85,10 @@ const map = {
     {
       id: "mul",
       x: 36,
-      y: 13.5,
+      y: 20,
       w: 15,
-      label: "khs_mul × MULS",
-      sub: "17×17 ×2 · 9×9 ×2, +4 cascaded",
+      label: "khs_mul × 4",
+      sub: "17×17 ×2 · 9×9 ×2 — part of the IM unit",
     },
 
     {
@@ -96,23 +102,15 @@ const map = {
     {
       id: "red",
       x: 54,
-      y: 4.5,
+      y: 8,
       w: 15,
       label: "khs_reduce",
       sub: "a tree, root registered",
     },
     {
-      id: "acc",
-      x: 54,
-      y: 9,
-      w: 15,
-      label: "acc[NACC × SIMD]",
-      sub: "int32 · one-cycle recurrence",
-    },
-    {
       id: "res",
       x: 54,
-      y: 13.5,
+      y: 20,
       w: 15,
       label: "the result mux",
       sub: "every select is a decode bit",
@@ -121,7 +119,7 @@ const map = {
     {
       id: "wsc",
       x: 72,
-      y: 4.5,
+      y: 8,
       w: 14,
       label: "w_sc → rv_mem",
       sub: "vextr · vredsum · vredmax",
@@ -130,23 +128,23 @@ const map = {
     {
       id: "fl",
       x: 18,
-      y: 19.5,
+      y: 27,
       w: 16,
-      label: "khs_float_lane × LANES",
-      sub: "vec_alu, op tied to FMA · 4 at the reference",
+      label: "khs_fp32_alu",
+      sub: "FLOAT_LANES FMA units, FSFU_UNITS of them seed-capable",
     },
     {
       id: "fac",
       x: 37,
-      y: 19.5,
+      y: 27,
       w: 16,
-      label: "khs_facc",
-      sub: "NPART partials, LANES wide",
+      label: "khs_facc — HAS_FACC only",
+      sub: "NPART rotating partials per bank",
     },
     {
       id: "ffo",
       x: 56,
-      y: 19.5,
+      y: 27,
       w: 15,
       label: "khs_ffold",
       sub: "serial, once per PASS",
@@ -158,13 +156,12 @@ const map = {
     { from: "msk:r", to: "psh:l", dir: "h", accent: true },
     { from: "msk:r", to: "padd:l", dir: "h", accent: true },
     { from: "vrf:r", to: "padd:l", dir: "h", accent: true },
-    { from: "vrf:b", to: "mul:l", dir: "v" },
+    { from: "vrf:r", to: "mul:l" },
     { from: "vsp:r", to: "res:l", dir: "h", dash: true },
     { from: "padd:r", to: "res:l", dir: "h", accent: true },
     { from: "psh:b", to: "rnd:t", dir: "v" },
     { from: "rnd:r", to: "res:l", dir: "h" },
-    { from: "mul:r", to: "acc:l", dir: "h" },
-    { from: "acc:b", to: "res:t", dir: "v" },
+    { from: "mul:r", to: "res:l", dir: "h" },
     { from: "vrf:r", to: "perm:l", dir: "h" },
     { from: "perm:r", to: "res:r", dir: "h" },
     { from: "vrf:r", to: "red:l", dir: "h" },
@@ -176,13 +173,13 @@ const map = {
     { from: "ffo:l", to: "fac:r", dir: "h" },
   ],
   groups: [
-    { x: 35, y: -1.3, w: 17, h: 18, label: "khs_lane × SIMD" },
+    { x: 35, y: -1.3, w: 17, h: 25.5, label: "khs_lane × ILANES — one IM unit" },
     {
       x: 17,
-      y: 18.3,
+      y: 25.7,
       w: 55,
-      h: 5.6,
-      label: "the float tier — SIMD_FLOAT = 1 only",
+      h: 5.8,
+      label: "the float tier — FLOAT_LANES > 0 only",
     },
   ],
 };
@@ -419,77 +416,81 @@ const shiftForms = {
 // ============================================================== khs_mul
 const mulMap = {
   nodes: [
-    { id: "a", x: 0, y: 0, w: 13, label: "a[31:0]", sub: "one lane of v1" },
-    { id: "b", x: 0, y: 4.5, w: 13, label: "b[31:0]", sub: "one lane of v2" },
+    {
+      id: "a",
+      x: 0,
+      y: 0,
+      w: 9,
+      h: 5,
+      label: "a[31:0]",
+      sub: "one lane of v1",
+    },
+    {
+      id: "b",
+      x: 0,
+      y: 6.5,
+      w: 9,
+      h: 5,
+      label: "b[31:0]",
+      sub: "one lane of v2",
+    },
     {
       id: "et",
       x: 0,
-      y: 9,
-      w: 13,
+      y: 13,
+      w: 9,
+      h: 5,
       label: "et",
       sub: "the element type, in the instruction",
       accent: true,
     },
     {
       id: "m0",
-      x: 17,
+      x: 14,
       y: 0,
-      w: 17.5,
+      w: 9,
+      h: 4.4,
       label: "u_m0 — 17 × 17",
       sub: "s8 a[7:0] · s16 a[15:0]",
       accent: true,
     },
     {
       id: "m1",
-      x: 17,
-      y: 4.5,
-      w: 17.5,
+      x: 14,
+      y: 5.6,
+      w: 9,
+      h: 4.4,
       label: "u_m1 — 17 × 17",
       sub: "s8 a[15:8] · s16 a[31:16]",
       accent: true,
     },
     {
       id: "m2",
-      x: 17,
-      y: 9,
-      w: 17.5,
+      x: 14,
+      y: 11.2,
+      w: 9,
+      h: 4.4,
       label: "u_m2 — 9 × 9",
       sub: "a[23:16], int8 ONLY",
     },
     {
       id: "m3",
-      x: 17,
-      y: 13.5,
-      w: 17.5,
+      x: 14,
+      y: 16.8,
+      w: 9,
+      h: 4.4,
       label: "u_m3 — 9 × 9",
       sub: "a[31:24], int8 ONLY",
     },
     {
       id: "lo",
-      x: 38,
-      y: 11.2,
-      w: 14,
+      x: 28,
+      y: 7,
+      w: 9,
+      h: 7,
       label: "mul_lo",
-      sub: "the products, at +1 — the FANOUT that forces the second set",
+      sub: "the products, at +1, into the result mux",
       accent: true,
-    },
-    {
-      id: "casc",
-      x: 55,
-      y: 2.2,
-      w: 16,
-      h: 4.4,
-      label: "c0 → c1 → c2 → c3",
-      sub: "a SECOND set, PCIN cascade, dot_sum at +4",
-      accent: true,
-    },
-    {
-      id: "fab",
-      x: 55,
-      y: 9,
-      w: 16,
-      label: "sum_r ← p0+p1+hi",
-      sub: "SIMD_DOTDSP = 0 · dot_sum at +2",
     },
   ],
   edges: [
@@ -497,35 +498,10 @@ const mulMap = {
     { from: "b:r", to: "m1:l", dir: "h" },
     { from: "et:r", to: "m2:l", dir: "h", accent: true, label: "operand mux" },
     { from: "et:r", to: "m3:l", dir: "h" },
-    { from: "m0:b", to: "lo:l", dir: "v", accent: true },
+    { from: "m0:r", to: "lo:l", dir: "h", accent: true },
+    { from: "m1:r", to: "lo:l", dir: "h" },
     { from: "m2:r", to: "lo:l", dir: "h" },
-    { from: "a:r", to: "casc:l", dir: "h", dash: true },
-    { from: "m0:r", to: "fab:l", dir: "h" },
-    { from: "m1:r", to: "fab:l", dir: "h" },
-  ],
-};
-
-const dotLat = {
-  cols: [
-    { key: "b", label: "build", mono: true },
-    { key: "d", label: "DOT_LAT", mono: true, align: "right" },
-    { key: "s", label: "where the sum comes from" },
-    { key: "c", label: "at eight lanes" },
-  ],
-  rows: [
-    {
-      b: "SIMD_DOTDSP = 0",
-      d: "2",
-      s: "a fabric adder tree, one register behind the products",
-      c: "32 DSP48 · 256 LUT + 32 CARRY8 of adder",
-    },
-    {
-      b: "<b>SIMD_DOTDSP = 1, MULS ≥ 4</b>",
-      d: "<b>4</b>",
-      s: "a <b>DSP48 PCIN cascade</b> — four terms, one hop per cycle, operands pipelined so term <i>k</i> waits <i>k</i> cycles",
-      c: "<b>64 DSP48 · 0 LUT + 0 CARRY8</b>",
-      _tone: "good",
-    },
+    { from: "m3:r", to: "lo:l", dir: "h" },
   ],
 };
 
@@ -541,78 +517,21 @@ const mulWidths = {
       et: "s8",
       m01: "a[7:0]·b[7:0], a[15:8]·b[15:8]",
       m23: "a[23:16]·b[23:16], a[31:24]·b[31:24]",
-      r: "four products, summed to one int32 per lane. <b>32 MACs per instruction</b> at SIMD 8",
+      r: "four independent low-half products per lane. At <code>ILANES = 8</code> that is <b>32 int8 products from one instruction</b>",
       _tone: "good",
     },
     {
       et: "s16",
       m01: "a[15:0]·b[15:0], a[31:16]·b[31:16]",
-      m23: "<b>idle</b> — <code>hi</code> is tied to <code>34'sd0</code>",
-      r: "two products per lane, 16 MACs per instruction",
+      m23: "<b>idle</b> — nothing reads them at this width",
+      r: "two products per lane, 16 per instruction",
     },
     {
       et: "s32",
       m01: "—",
       m23: "—",
-      r: "<b>ILLEGAL → FAULT.</b> An int32 product does not fit a 34-bit lane sum, for <code>vdot</code> and <code>vmul</code> alike",
+      r: "<b>not encoded for <code>vmul</code>.</b> A 32×32 product does not fit the lane's result path, so the element type is refused rather than truncated",
       _tone: "bad",
-    },
-    {
-      et: "s8, MULS = 2",
-      m01: "built",
-      m23: "<b>not elaborated</b>",
-      r: "<b>ILLEGAL → FAULT.</b> A two-multiplier lane would return zero for the top two elements, so the encoding is refused instead",
-      _tone: "bad",
-    },
-  ],
-};
-
-const dotPipe = {
-  rows: [
-    {
-      name: "MEM",
-      kind: "bus",
-      values: ["vdot #1", "vdot #2", "vdot #3", "", "", ""],
-    },
-    { name: "mul_en", kind: "bit", values: [1, 1, 1, 0, 0, 0] },
-    {
-      name: "p0..p3",
-      kind: "bus",
-      values: [null, "#1", "#2", "#3", null, null],
-      mark: [1],
-    },
-    {
-      name: "sum_r",
-      kind: "bus",
-      values: [null, null, "#1", "#2", "#3", null],
-      mark: [2],
-    },
-    {
-      name: "acc_pipe",
-      kind: "bus",
-      values: ["00", "01", "11", "11", "10", "00"],
-    },
-    {
-      name: "the add fires",
-      kind: "bus",
-      values: [null, null, "#1", "#2", "#3", null],
-      mark: [2, 3, 4],
-    },
-    {
-      name: "",
-      kind: "text",
-      values: ["issue", "issue", "issue", "", "", "acc holds #3"],
-    },
-  ],
-  notes: [
-    {
-      text: "Drawn at DOT_LAT = 2. Each stage is a register, so the stages are a pipeline and not a latency to wait out — the accumulator index and the negate bit travel down beside the sum, so each one reaches the accumulate stage in ISSUE ORDER.",
-      tone: "good",
-    },
-    {
-      cycle: 2,
-      text: "A DOT DOES NOT WAIT FOR A DOT. Making vdot wait like vaccrd / vaccz / vaccwr cost 3 cycles per dot on dot2_i8_v — 80 cycles for 58 instructions, where every other hazard in that kernel accounts for 9.",
-      tone: "good",
     },
   ],
 };
@@ -802,143 +721,101 @@ const spad = {
   ],
 };
 
-// ========================================================= the float lane
+// ========================================================= the float array
 const fLane = {
   nodes: [
     {
       id: "a",
       x: 0,
       y: 0,
-      w: 13,
-      label: "a[31:0]",
-      sub: "FP16 in [15:0], or FP32",
+      w: 9,
+      h: 5.5,
+      label: "v1 · v2",
+      sub: "VW bits — VW/32 binary32 elements",
     },
     {
-      id: "b",
+      id: "d",
       x: 0,
-      y: 4.5,
-      w: 13,
-      label: "b[31:0]",
-      sub: "sign-flipped for vfmsac",
+      y: 7,
+      w: 9,
+      h: 5.5,
+      label: "vd",
+      sub: "the addend, for vfma only",
     },
     {
       id: "p",
       x: 0,
-      y: 13.5,
-      w: 13,
-      label: "the partial",
-      sub: "from khs_facc, E8M15",
-    },
-    {
-      id: "ca",
-      x: 16,
-      y: 0,
-      w: 16,
-      label: "vec_cvt_f16_to_e8  × 2",
-      sub: "one per operand · EXACT",
+      y: 14,
+      w: 9,
+      h: 5.5,
+      label: "pass",
+      sub: "sized for the SEED walk, the longer of the two",
       accent: true,
-    },
-    {
-      id: "cw",
-      x: 16,
-      y: 4.5,
-      w: 16,
-      label: "vec_cvt_f32_to_e8  × 2",
-      sub: "one per operand · exponent verbatim",
-      accent: true,
-    },
-    {
-      id: "wid",
-      x: 16,
-      y: 9,
-      w: 16,
-      label: "wide",
-      sub: "TIED LOW in khs_unit — live in the SIMT PE",
     },
     {
       id: "sel",
-      x: 35,
-      y: 4.5,
-      w: 14,
-      label: "a_sel / b_sel",
-      sub: "wide picks the edge; raw_e8 picks the fold path",
-    },
-    {
-      id: "alu",
-      x: 52,
-      y: 4.5,
-      w: 17,
-      h: 4.4,
-      label: "vec_alu  op = OP_FMA",
-      sub: "ALAT = 14 + PIPE_MUX = 15 · II = 1 · 2 DSP48",
+      x: 14,
+      y: 7,
+      w: 9,
+      h: 5.5,
+      label: "element select",
+      sub: "unit u on pass p serves element p·U + u",
       accent: true,
     },
     {
+      id: "fma",
+      x: 28,
+      y: 0,
+      w: 9,
+      h: 6.5,
+      label: "FMA × FLOAT_LANES",
+      sub: "6 deep · II = 1 · 2 DSP48 each",
+      accent: true,
+    },
+    {
+      id: "sfu",
+      x: 28,
+      y: 9,
+      w: 9,
+      h: 6.5,
+      label: "seed × FSFU_UNITS",
+      sub: "exp2 log2 rcp rsqrt · 10 deep · beside the FMA, not inside it",
+      accent: true,
+    },
+    {
+      id: "pad",
+      x: 42,
+      y: 0,
+      w: 9,
+      h: 6.5,
+      label: "flip-flop pad",
+      sub: "6 → 10 whenever seeds are built, nothing when they are not",
+    },
+    {
       id: "out",
-      x: 52,
-      y: 13.5,
-      w: 17,
-      label: "out — E8M15",
-      sub: "back into the partial it came from",
+      x: 42,
+      y: 9,
+      w: 9,
+      h: 6.5,
+      label: "out",
+      sub: "one 32-bit slot per UNIT; the caller places them",
     },
   ],
   edges: [
-    { from: "a:r", to: "ca:l", dir: "h" },
-    { from: "b:r", to: "ca:l", dir: "h" },
-    { from: "a:r", to: "cw:l", dir: "h" },
-    { from: "ca:r", to: "sel:l", dir: "h", accent: true },
-    { from: "cw:r", to: "sel:l", dir: "h" },
-    { from: "wid:r", to: "sel:l", dir: "h" },
-    { from: "sel:r", to: "alu:l", dir: "h", accent: true },
-    { from: "p:r", to: "alu:l", dir: "h", label: "c" },
-    { from: "alu:b", to: "out:t", dir: "v", accent: true },
-  ],
-};
-
-const laneBlocks = [
-  {
-    label: "normaliser — leading-one search and a 48-bit shift",
-    value: 156,
-    note: "26 %",
-  },
-  {
-    label: "aligner — a 48-bit shift and its sticky",
-    value: 113,
-    note: "19 %",
-  },
-  { label: "magnitude and sign recovery", value: 67, note: "11 %" },
-  { label: "exponent base and shift amount", value: 39, note: "6 %" },
-  { label: "rounder, exponent bounds, assemble", value: 29, note: "5 %" },
-  { label: "specials", value: 24, note: "4 %" },
-  { label: "the pipeline's delay lines, as SRLs", value: 139, note: "23 %" },
-];
-
-const dspPrice = {
-  cols: [
-    { key: "b", label: "Block", mono: true },
-    { key: "f", label: "In fabric — SHIPPED", align: "right" },
-    { key: "d", label: "Rebuilt on a DSP48", align: "right" },
-    { key: "n", label: "" },
-  ],
-  rows: [
-    {
-      b: "aligner",
-      f: "113 LUT",
-      d: "<b>44 LUT + 1 DSP</b>",
-      n: "the DSP's B port is 18 bits, so a 7-bit shift splits 4 + 2: a multiply by a one-hot power of two, then a placement mux over the 48-bit field",
-    },
-    {
-      b: "normaliser",
-      f: "156 LUT",
-      d: "<b>114 LUT + 1 DSP</b>",
-      n: "only <b>seventeen bits</b> of the normalised value are ever used, so it extracts a 27-bit window (the DSP's A port) by <code>pos[5:3]</code> and multiplies by <code>2^(7−pos[2:0])</code>; the answer is <code>P[26:10]</code>",
-    },
+    { from: "a:r", to: "sel:l", dir: "h" },
+    { from: "d:r", to: "sel:l", dir: "h", label: "c" },
+    { from: "p:r", to: "sel:l", dir: "h", accent: true },
+    { from: "sel:r", to: "fma:l", dir: "h", accent: true },
+    { from: "sel:r", to: "sfu:l", dir: "h" },
+    { from: "fma:r", to: "pad:l", dir: "h", accent: true },
+    { from: "pad:b", to: "out:t", dir: "v", accent: true },
+    { from: "sfu:r", to: "out:l", dir: "h" },
   ],
 };
 
 // =============================================== khs_facc, the rotation
 const NPART = 16,
-  ALAT = 15;
+  ALAT = 10;
 const strip = (rd, wr, flight) => ({ rd, wr, flight });
 
 const rot = [
@@ -951,7 +828,7 @@ const rot = [
   },
   {
     title: "cycle 1 — the second reads partial 1, one cycle later",
-    note: "The lane will not return that first result for fourteen more cycles. Nothing waits, because the next accumulate is reading a DIFFERENT partial.",
+    note: "The array will not return that first result for nine more cycles. Nothing waits, because the next accumulate is reading a DIFFERENT partial.",
     ...strip(1, null, [0]),
     cyc: "1",
     inflight: 1,
@@ -964,26 +841,26 @@ const rot = [
     inflight: 2,
   },
   {
-    title: "cycle 14 — fourteen in flight, one partial still untouched",
-    note: "This is the state the rotation exists to reach: the lane is full, II is still 1, and the recurrence has never once been closed.",
-    ...strip(14, null, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]),
-    cyc: "14",
-    inflight: 14,
+    title: "cycle 9 — nine in flight, six partials still untouched",
+    note: "This is the state the rotation exists to reach: the array is full, II is still 1, and the recurrence has never once been closed.",
+    ...strip(9, null, [0, 1, 2, 3, 4, 5, 6, 7, 8]),
+    cyc: "9",
+    inflight: 9,
   },
   {
-    title: "cycle 15 — the LAST free partial, and the first result returns",
-    note: "wr_idx is rd_idx delayed by exactly ALAT, so accumulate #0's result lands on partial 0 — the partial its addend came from. Fifteen are in flight and the sixteenth is being read: the lane is exactly saturated.",
-    ...strip(15, 0, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]),
-    cyc: "15",
-    inflight: 15,
+    title: "cycle 10 — the first result returns",
+    note: "wr_idx is rd_idx delayed by exactly ALAT, so accumulate #0's result lands on partial 0 — the partial its addend came from. Ten are in flight and the eleventh is being read.",
+    ...strip(10, 0, [1, 2, 3, 4, 5, 6, 7, 8, 9]),
+    cyc: "10",
+    inflight: 10,
   },
   {
     title:
-      "cycle 16 — the counter wraps onto the partial written ONE cycle ago",
-    note: "NPART > ALAT is the whole guarantee, and this is where it is spent: partial 0 was written at the cycle-15 edge and is read at cycle 16. With NPART = 15 the write and the re-read would be the same cycle, and a read-first array would hand back the stale value.",
-    ...strip(0, 1, [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]),
+      "cycle 16 — the counter wraps onto a partial written SIX cycles ago",
+    note: "NPART > ALAT is the whole guarantee, and this is where it is spent: partial 0 was written at the cycle-10 edge and is read again at cycle 16. With NPART equal to ALAT the write and the re-read would be the same cycle, and a read-first array would hand back the stale value. ALAT is 6 with no seed units and 10 with any, so NPART has to clear the larger.",
+    ...strip(0, 6, [7, 8, 9, 10, 11, 12, 13, 14, 15]),
     cyc: "16",
-    inflight: 15,
+    inflight: 9,
   },
   {
     title: "vfaccz / vfaccwr — a SWEEP, because a memory has one write port",
@@ -1005,17 +882,12 @@ const foldCost = {
     {
       s: "the fold, per pass",
       c: "(NPART / passes) × (ALAT+1)",
-      w: "each step depends on the last, so the steps are <code>ALAT</code> apart. Through <b>the same lane</b> the accumulate used — combining partials in a second adder would round differently from the path it is meant to finish. <b>One fold per PASS</b>, over that pass's own strided subset",
+      w: "each step depends on the last, so the steps are <code>ALAT</code> apart. It runs through <b>the same array</b> the accumulate used — combining partials in a second adder would round differently from the path it is meant to finish. <b>One fold per PASS</b>, over that pass's own strided subset",
     },
     {
-      s: "packing back to FP16, per pass",
-      c: "lanes",
-      w: "ONE walked <code>vec_cvt_e8_to_f16</code>. It carries a 48-bit subnormal shifter at <b>161 LUT</b>; sixteen of them would be <b>2,576 LUT</b> hung on the end of an instruction that already holds the stage for hundreds of cycles",
-    },
-    {
-      s: "vfaccrd, total",
-      c: "≈ 270",
-      w: "<b>the same at every lane count</b> — <code>passes</code> folds of <code>NPART/passes</code> steps is <code>NPART</code> steps either way. <b>Once per reduction, against a kernel of thousands.</b> A tree would be log2(NPART) float adders standing idle the rest of the time",
+      s: "<code>vfaccrd</code>, total",
+      c: "≈ NPART × (ALAT+1)",
+      w: "<b>the same at every unit count</b> — <code>passes</code> folds of <code>NPART/passes</code> steps is <code>NPART</code> steps either way. <b>Once per reduction, against a kernel of thousands.</b> A tree would be log2(NPART) float adders standing idle the rest of the time. This is arithmetic on the two parameters, not a measured cycle count",
       _tone: "good",
     },
   ],
@@ -1128,11 +1000,6 @@ const traps = {
       c: "several terms folded into one register makes the DSP48 do multiply-then-post-add <b>combinationally</b> into PREG — an unpipelined column. <b>One multiply per stage</b>; flops are the cheap resource here and an unpipelined DSP48 is not",
     },
     {
-      m: "khs_lane",
-      s: "with <code>SIMD_DOTDSP = 1</code> the dot result never arrives",
-      c: "the cascade was gated by <code>mul_en</code>. That is a per-instruction pulse — the fabric path gates only the products with it and lets the sum register flow — so gating a multi-stage cascade <b>freezes hops 2..N</b>. It must free-run, as the accumulator's own shift register does",
-    },
-    {
       m: "khs_perm",
       s: "X spreads through everything downstream",
       c: "the pack loop ran to half the element count. Both sources are consumed, so half leaves the top half of the result <b>undriven</b> — which reads as high-Z",
@@ -1144,8 +1011,8 @@ const traps = {
     },
     {
       m: "khs_vregfile",
-      s: "the assembled PE bound at 318.3 MHz on the read path",
-      c: "a stall held the <b>address</b>. That puts the MEM stage's stall — which carries a cache miss and a push handshake — in front of the array. The read enable reaches the primitive's <b>enable</b> instead, which is a clock-enable arc",
+      s: "the assembled PE binds on the vector file's read path, and the unit alone reports it is fine",
+      c: "a stall held the <b>address</b>. That puts the MEM stage's stall — which carries a cache miss and a push handshake — in front of the array. Sending it to the primitive's <b>enable</b> instead is a clock-enable arc: <b>+22.2 MHz on the PE, and 12 logic levels down to 8</b>",
     },
     {
       m: "khs_unit",
@@ -1154,7 +1021,7 @@ const traps = {
     },
     {
       m: "khs_unit",
-      s: "the assembled PE lost 93.6 MHz — 284.3 against a 377.9 baseline",
+      s: "the assembled PE gave up <b>55.4 MHz for 164 LUT</b> on a path carrying no vector logic at all",
       c: "the scalar store into the vector window shared the <b>NoC's</b> port and arbitrated. The arbitration put the receive FIFO's empty flag into the MEM stall and from there into the fetch address",
     },
     {
@@ -1178,9 +1045,19 @@ const traps = {
       c: "a seed lands at turn 0, which belongs to pass 0. With disjoint per-pass chains, <b>the first PASSES partials must all take the seed</b> — hence the sweep's own index and the widened seed window",
     },
     {
-      m: "khs_float_lane",
-      s: "every result reads as a dead accumulator",
-      c: "an unconnected <code>raw_e8</code> is <code>z</code>, the operand select goes X, and it reads as a missing <i>value</i> rather than a missing <b>port</b>. It cost two benches a run, and there is now a non-synthesis check that names it",
+      m: "khs_unit",
+      s: "every accumulated element reads back X in simulation and <code>a × 1.0 + 0</code> in synthesis",
+      c: "the float array's <code>op</code> port was left <b>unconnected</b> on every unit. An unconnected input is <code>z</code> in simulation and <code>0</code> — which is <code>OP_MOV</code> — in synthesis, so it reads as a missing <i>value</i> rather than a missing <b>port</b>. Connecting it took the unit's own float stream from 13 errors to 1, and <b>cost no area</b>: the tier measures 3,936 LUT working against 4,174 broken",
+    },
+    {
+      m: "khs_fp32_alu",
+      s: "<code>vfadd vd, vs1, vs2</code> adds <code>vd</code> instead of <code>vs2</code>",
+      c: "add and subtract take their second operand on the <b>addend</b> port, because the underlying unit computes <code>a × 1.0 + c</code> for both. Wiring <code>c</code> to the destination is right for <code>vfma</code> and only for <code>vfma</code>. It answers a plausible finite, and it cost six checks across three cases before the operand select came back",
+    },
+    {
+      m: "khs_fp32_alu",
+      s: "an FMA unit builds a wider element select than it can reach",
+      c: "<code>pass</code> is sized for the <b>seed</b> walk, which is the longer of the two whenever there are fewer seed units than FMA units. Each walk must index at its <b>own</b> width — that is what <code>PSW_A</code> exists for — or the placement mux is built across elements no unit on that walk ever addresses",
     },
   ],
 };
@@ -1189,10 +1066,10 @@ const traps = {
 <template>
   <DocPage
     title="SIMD microarchitecture"
-    summary="How the datapath is actually constructed: one native 32-bit carry chain cut into 2 × int16 or 4 × int8 by a mask, a packed shifter that is one rotate, four multipliers on DSP48E2 and four more when the dot sum stays in the column, a full permutation network, and a float lane whose fifteen-cycle recurrence is broken rather than shortened."
+    summary="How the datapath is actually constructed: one native 32-bit carry chain cut into 2 × int16 or 4 × int8 by a mask, a packed shifter that is one rotate, per-lane multipliers on DSP48E2, a full permutation network, and a float accumulator whose six-cycle recurrence is broken rather than shortened."
     domain="simd"
     status="measured"
-    source="src/kohakumpe/simd/ · docs/projects/kohakumpe/simd/ · OOC on xcvu13p-fhgb2104-2L-e at 3.333 ns (unit probes) and 2.857 ns (assembled reference)"
+    source="src/kohakumpe/simd/ · docs/projects/kohakumpe/simd/ · OOC synthesis on xcvu13p-fhgb2104-2L-e, Vivado 2024.2, 3.333 ns"
   >
     <p class="doc-p">
       The
@@ -1558,20 +1435,31 @@ const traps = {
     </p>
 
     <Fig
-      caption="khs_mul exists as its own module because `use_dsp` takes a string LITERAL and not a parameter, so choosing between a DSP48 and fabric has to be a generate somewhere; doing it once there keeps the choice out of khs_lane's datapath and makes it a configuration row rather than a synthesis guess. The accented path is the one that forces the second set of multipliers: p0..p3 must surface for mul_lo, and an operand with two consumers cannot be cascaded."
+      caption="khs_mul exists as its own module because `use_dsp` takes a string LITERAL and not a parameter, so choosing between a DSP48 and fabric has to be a generate somewhere; doing it once there keeps the choice out of khs_lane's datapath and makes the primitive a configuration row rather than a synthesis guess. Four multipliers is what the widest element type needs and nothing narrows them, because the integer ALU is ONE IM unit: add, subtract, compare, bitwise and multiply share one operand path and one result path, so there is no dispatch mux between an ALU and a multiplier array."
       zoom
-      wide
     >
       <BlockDiagram :nodes="mulMap.nodes" :edges="mulMap.edges" />
     </Fig>
 
-    <Callout kind="rule" title="There is no cheaper arrangement on this device">
+    <Callout
+      kind="rule"
+      title="Multiplexers are the expensive primitive here, not logic"
+    >
       <p>
-        A <code>DSP48E2</code>'s B port is 18 bits <b>signed</b>, which holds
-        one int8 operand and not two. The well-known trick of packing two int8
+        Two units serving one issue port need an operand mux in front and a
+        result mux behind, and both are <b>wider than the logic they
+        arbitrate</b>. One fused IM unit has neither. That is why the multiplier
+        count is not a knob on either core — it follows
+        <code>ILANES</code> here and <code>LANES</code> on the SIMT PE — and why
+        narrowing it would trade a LUT-bound resource for a DSP-bound one on a
+        part where DSP is the cheap column.
+      </p>
+      <p>
+        The primitive itself is not negotiable either. A
+        <code>DSP48E2</code>'s B port is 18 bits <b>signed</b>, which holds one
+        int8 operand and not two, and the well-known trick of packing two int8
         MACs into one DSP48 requires the two products to
-        <b>share an operand</b> — and a dot product's operands both vary, so
-        they cannot.
+        <b>share an operand</b>.
       </p>
     </Callout>
 
@@ -1581,38 +1469,15 @@ const traps = {
       caption="What the four multipliers do at each element width. The output register is the DSP's own MREG when the tool takes it, so the latency is one cycle either way and the lane's timing does not move with the primitive"
     />
 
-    <WaveTrace
-      label="three vdot back to back — II = 1 into the SAME accumulator"
-      :rows="dotPipe.rows"
-      :notes="dotPipe.notes"
-    />
-
-    <SpecTable
-      :cols="dotLat.cols"
-      :rows="dotLat.rows"
-      caption="DOT_LAT is a CONTRACT between khs_unit and khs_lane: both derive it from the same two parameters, and a disagreement lands an accumulate on the wrong destination. It is also visible to a program — vaccrd, vaccz and vaccwr behind a dot in flight wait DOT_LAT cycles, so 4 as shipped rather than 2"
-    />
-
     <Callout
       kind="trap"
-      title="The cascade free-runs; gating it with mul_en freezes it"
+      title="Folding several terms into one register unpipelines the DSP column"
     >
       <p>
-        <code>mul_en</code> is a per-instruction pulse, and the fabric path can
-        gate the products with it because the sum register flows anyway.
-        <b
-          >Gating a multi-stage cascade instead freezes hops 2..N and the result
-          never arrives.</b
-        >
-        The accumulator's own shift register free-runs on the same clock, which
-        is what keeps the two aligned.
-      </p>
-      <p>
-        The other half of the same lesson is upstream: folding several terms
-        into one register makes the DSP48 do multiply-then-post-add
-        <i>combinationally</i> into PREG — an unpipelined column, which cost
-        <b>12 MHz</b> when it was written that way.
-        <b>One multiply per stage</b>, and flops are the cheap resource here.
+        It makes the DSP48 do multiply-then-post-add
+        <i>combinationally</i> into PREG, which cost <b>12 MHz</b> when it was
+        written that way. <b>One multiply per stage</b> — flops are the cheap
+        resource here and an unpipelined DSP48 is not.
       </p>
     </Callout>
 
@@ -1623,11 +1488,11 @@ const traps = {
       cheap.
       <code>khs_perm</code> is everything that does: the slide, the saturating
       pack, and the widening unpack. <b>The slide is the expensive one</b>, and
-      it is why <code>SIMD_PERM</code> exists.
+      it is why <code>PERM_UNITS</code> is a width rather than a gate.
     </p>
 
     <Fig
-      caption="The whole network at SIMD 8: each of eight output lanes selects one of 2 × SIMD = 16 inputs, so it is a 32-bit mux per lane whose width grows with SIMD — the only structure here that does. The filled crosspoints are vsldw3 vd, v1, v2: lane i takes lane (idx + i) mod 16 of the concatenation. It is a ROTATE and not a clamp, so every index is defined at every SIMD width rather than leaving a “what happens past the end” hole. Measured at 1,634 LUT and 33.9 MHz — the largest optional block on both counts."
+      caption="The whole network at SIMD 8 and PERM_UNITS 8: each of eight output words selects one of 2 × SIMD = 16 inputs, so it is a 32-bit mux per output whose width grows with SIMD — the only structure here that does. The filled crosspoints are vsldw3 vd, v1, v2: output i takes word (idx + i) mod 16 of the concatenation. It is a ROTATE and not a clamp, so every index is defined at every SIMD width rather than leaving a “what happens past the end” hole."
       zoom
       wide
     >
@@ -1762,13 +1627,49 @@ const traps = {
       <p>
         Holding the address puts the MEM stage's stall — which carries a cache
         miss and a push handshake — in front of the array, so the whole of it
-        lands on the read path:
-        <b>the assembled PE bound there at 318.3 MHz</b>. The read enable
-        reaches the primitive's <b>enable</b>
-        instead, which is a clock-enable arc, and the address arrives straight
-        from the instruction. The two are equivalent: with the enable low the
-        array holds its last value, which is exactly what re-reading a held
-        address produced.
+        lands on the read path and the assembled PE binds there. Sending the
+        stall to the primitive's <b>enable</b> instead is a clock-enable arc
+        rather than a mux in front of the array, and the address then arrives
+        straight from the instruction. <b>The two are equivalent</b>: with the
+        enable low the array holds its last value, which is exactly what
+        re-reading a held address produced. <b>Worth +22.2 MHz on the assembled
+        PE, and it took the binding path from 12 logic levels to 8.</b>
+      </p>
+      <p>
+        <b>The general rule is worth more than the megahertz: let a stall reach
+        an enable pin, never an address or a datapath.</b> It is the same idea
+        that removed the network arbitration one level up.
+      </p>
+    </Callout>
+
+    <Callout
+      kind="rule"
+      title="Aim timing work at the assembled PE — a unit-level gain can be a PE-level loss"
+    >
+      <p>
+        Two aimed timing changes in one campaign were each measured at
+        <b>both</b> levels, and they disagree. Shortening the unit's own
+        read-compute-write loop by deciding a compare in EX made
+        <b>the unit 31.0 MHz faster and the PE 21.4 MHz slower</b>. It did not
+        make anything worse — it moved the binding path somewhere the
+        unit-alone measurement cannot see, into the memory stage's stall and
+        from there into the vector file's read <i>address</i>. That path only
+        exists when the unit is inside a core, because the hold it rides is the
+        core's and carries a cache miss and a push handshake with it.
+      </p>
+      <p>
+        The configuration matrix compares the <b>size</b> of many builds and is
+        right to measure the unit alone. <b>The clock is a property of the whole
+        PE</b>, and the fix above is what the exposed path then needed.
+      </p>
+      <p>
+        <b>The absolute frequencies of those rows are deliberately not
+        printed.</b> They are assembled-PE totals taken at
+        <code>-flatten_hierarchy none</code> on a source tree that predates the
+        current float tier, and every figure of that shape is
+        <RouterLink to="/mpe/simd" class="doc-link">withdrawn</RouterLink>. The
+        <i>differences</i> between two rows of one flow survive; the endpoints
+        do not.
       </p>
     </Callout>
 
@@ -1795,10 +1696,23 @@ const traps = {
         the <b>vector unit</b> owns — the wide one — with the byte enables of a
         single bank, because only one instruction is in MEM at a time. Sharing
         the NoC's port and arbitrating instead cost the assembled PE
-        <b>93.6 MHz: 284.3 against a 377.9 baseline</b>, because the arbitration
-        needs the NoC's write enable, which is combinational from the receive
-        FIFO's empty flag, and that signal then reaches the MEM stage's stall,
-        the fetch hold, and the instruction window's address.
+        <b>55.4 MHz, and 164 LUT to undo</b>, because the arbitration needs the
+        NoC's write enable, which is combinational from the receive FIFO's empty
+        flag, and that signal then reaches the MEM stage's stall, the fetch
+        hold, and the instruction window's address.
+      </p>
+      <p>
+        That is a <b>difference between two rows of one sweep</b> —
+        <code>scripts/tcl/ooc_simd_pe.tcl</code>, the whole <code>rv_pe</code>
+        with the extension built, at a 3.333 ns request. The two rows'
+        <i>absolute</i> frequencies are deliberately not printed: they are
+        assembled-PE totals taken at <code>-flatten_hierarchy none</code>, and
+        every figure of that shape is
+        <RouterLink to="/mpe/simd" class="doc-link">withdrawn</RouterLink> —
+        the ship synthesises at Vivado's default, <code>rebuilt</code>, and the
+        gap between the two settings varies with configuration, so it cannot be
+        applied as a correction either. Only the within-flow difference
+        survives.
       </p>
     </Callout>
 
@@ -1826,19 +1740,19 @@ const traps = {
     </Callout>
 
     <h2 class="doc-h2">
-      The float lane — one port, two widths, one compute format
+      The float array — one element width, two walks, one array
     </h2>
 
     <p class="doc-p">
-      An E8M15 fused multiply-add on this device is <b>fifteen cycles deep</b>,
-      so <code>acc = a*b + acc</code> on a single accumulator issues one
-      operation every fifteen cycles and a tier built that way would be slower
-      than the scalar core it sits in. Everything in the accumulator follows
-      from breaking that recurrence without shortening it.
+      <code>khs_fp32_alu</code> is <code>FLOAT_LANES</code> fused multiply-add
+      units walking a vector that is <b>32 bits per element</b>. With binary32
+      the only compute type there are no narrow slots, no width select and no
+      packing: a <code>VW</code>-bit vector is <code>VW/32</code> elements, and
+      the walk is <code>elements / FLOAT_LANES</code> passes.
     </p>
 
     <Fig
-      caption="khs_float_lane. The tier needs NO new float arithmetic: vec_alu is the vector core's shipped, verified module with its operation tied to FMA, and the conversions sit on the lane's edges rather than being instructions. BOTH converters are unconditional — the lane's header calls both input formats and the one compute format a contract rather than options — and `wide` picks between them per operation."
+      caption="Unit u on pass p serves element p·U + u, and the caller places the results because where one belongs depends on the pass that is retiring. A seed unit sits BESIDE the FMA rather than inside it, and there are FSFU_UNITS of them, so the two walks have different lengths over the same array."
       zoom
       wide
     >
@@ -1847,75 +1761,91 @@ const traps = {
 
     <Callout
       kind="trap"
-      title="khs_unit ties that width bit LOW, so the FP32 edge is built and unreachable"
+      title="Two walks over one array means two pass widths, and only one of them is the port"
     >
       <p>
-        Every float lane in <code>khs_unit</code> is instantiated with
-        <code>wide</code> tied to <code>1'b0</code>, and the decoder refuses any
-        float element type but <code>f16</code> — except <code>vfaccz</code>,
-        which is untyped. <b>The area is spent and the encoding faults.</b> That
-        is a half-finished transition, not a capability.
+        The seed walk is the <b>longer</b> of the two whenever there are fewer
+        seed units than FMA units, so the <code>pass</code> port is sized for
+        it. An FMA unit indexing with all of that builds an element select
+        <b>wider than it can reach</b> — a placement mux across elements no unit
+        on its walk ever addresses. Each walk indexes at its own width, which is
+        what the array's <code>PSW_A</code> local exists for.
       </p>
       <p>
-        The blocker is structural:
-        <b>a 256-bit register holds 8 FP32 against 16 FP16</b>, so the element
-        count, the partial count and the fold order all change with the operand
-        width — and float addition does not associate. The
-        <RouterLink to="/mpe/simt" class="doc-link">SIMT PE</RouterLink> drives
-        the same lane with the bit live because it has one element per lane in
-        both formats and pays none of that.
+        The same fix on the enclosing unit's staging register is worth
+        <b>489 LUT</b> at one seed unit of four, and it is what flips a
+        fractional-rate seed tier from a LUT loss into a saving.
       </p>
     </Callout>
 
-    <Callout kind="rule" title="ALAT is a contract, not a detail">
+    <Callout kind="rule" title="The depths are 6 and 10, and the pad is flip-flops">
       <p>
-        <code>localparam ALAT = 14 + (PIPE_MUX ? 1 : 0)</code> — 15 as it ships
-        — <b>must equal what vec_alu actually is</b>, because the accumulator
-        above rotates its partials by exactly this number. Get it wrong and a
-        write lands on a partial that has already been read again.
-        <code>vec_lanes.v</code> derives its own copy the same way and says the
-        same thing.
+        An FMA is <b>6 cycles</b> deep and a seed is <b>10</b>, so the FMA is
+        padded to match <i>whenever seeds are built</i> and by nothing when they
+        are not — which is why a nonzero <code>FSFU_UNITS</code> deepens the
+        whole tier. The enclosing unit derives the same
+        <code>FLOAT_ALAT</code> from the same parameter and the two are checked
+        against each other at elaboration, because a mismatch lands a result on
+        the wrong register with no witness.
       </p>
       <p>
-        <code>khs_e8_fma</code> is the same lane with everything except the FMA
-        made unreachable and a register on each side, so an out-of-context run
-        measures the lane and not its pins.
-        <b>Nothing in <code>vec_alu</code> is modified</b> — what a stripped
-        lane costs is a measurement rather than a subtraction done on paper.
+        <b>The pad is flip-flops, deliberately.</b> LUT is what binds this PE
+        and an <code>SRL16E</code> is one LUT per bit at any depth, so the
+        cheaper-looking primitive is the expensive one here.
       </p>
     </Callout>
 
-    <h3 class="doc-h3">Where the LUT is inside the FMA</h3>
-
-    <ResourceBars
-      :items="laneBlocks"
-      unit="LUT"
-      caption="vec_alu's FMA taken apart stage by stage, from the block probes on xcvu13p-fhgb2104-2L-e at 3.333 ns. Two barrel shifters are 44 % of it. This is NOT a lane total — the lane also carries the two operand converters, which the block probe does not measure"
-    />
-
-    <SpecTable
-      :cols="dspPrice.cols"
-      :rows="dspPrice.rows"
-      caption="A variable shift is a multiply by a one-hot power of two, so both shifters can be rebuilt against a DSP48 — and the split is set by the port width. NEITHER is in the shipped lane: they are measurement probes that nothing instantiates, and taking them would mean this unit owning a fork of another project's verified FMA. They are what the shifters WOULD be worth, not what they cost"
-    />
+    <Callout
+      kind="rule"
+      title="A seed count is NOT monotonic in LUT, and the middle is the worst place to sit"
+    >
+      <p>
+        BRAM and DSP are exactly linear in the count. LUT is not: the residual
+        after the seed hardware is the sum of two terms that move in
+        <b>opposite</b> directions — the placement mux grows with the unit count
+        (at one unit every element's seed source is the same unit, so there is
+        no mux at all) and the pass decode shrinks with it. It is smallest at
+        both ends.
+      </p>
+      <p>
+        Full rate builds <b>no walk at all</b>, because both index arms become
+        the same expression and the placement mux folds. Quarter rate — the
+        ratio every desktop GPU provisions transcendentals at — saves three
+        quarters of the BRAM and DSP and rather less of the LUT.
+      </p>
+    </Callout>
 
     <h3 class="doc-h3">khs_facc — rotating partials, and the counter</h3>
 
     <p class="doc-p">
-      One architectural accumulator, <code>NPART</code> partials underneath it,
-      and a counter. <code>rd_idx</code> advances on every accepted accumulate —
-      <b>once per PASS</b>, not once per instruction — and
-      <code>wr_idx</code> is that same counter
-      <b>delayed by exactly the lane's latency</b>, so a result lands on the
+      A binary32 fused multiply-add is six or ten cycles deep, so
+      <code>acc = a*b + acc</code> on a single accumulator would issue one
+      operation every ten cycles and a tier built that way would be slower than
+      the scalar core it sits in. <b>The rotation breaks that recurrence without
+      shortening it</b>: one architectural accumulator, <code>NPART</code>
+      partials underneath it, and a counter. <code>rd_idx</code> advances on
+      every accepted accumulate — <b>once per PASS</b>, not once per instruction
+      — and <code>wr_idx</code> is that same counter
+      <b>delayed by exactly the array's latency</b>, so a result lands on the
       partial its addend came from. Scrub it: the row to watch is how many are
       in flight.
     </p>
 
-    <StepPlayer :steps="rot" label="the rotation at NPART = 16, ALAT = 15">
+    <Callout kind="note" title="The whole accumulator group is off by default">
+      <p>
+        <code>HAS_FACC</code> is <b>0</b> in the shipped parameter list. It is
+        the SIMD PE's extra — justified by vertex transform, float dot and long
+        reductions — and a shader doing elementwise colour work pays nothing for
+        it. At the anchor it is worth <b>+6,664 LUT, +7,388 FF and +16 DSP</b>,
+        which makes it the single largest optional block in the unit.
+      </p>
+    </Callout>
+
+    <StepPlayer :steps="rot" label="the rotation at NPART = 16, ALAT = 10">
       <template #default="{ state }">
         <svg viewBox="0 0 800 158" class="dgm" role="img">
           <text x="20" y="14" class="dgm-sub">
-            partials — one distributed-RAM row each, E8M15
+            partials — one distributed-RAM row each, binary32
           </text>
 
           <g v-for="k in NPART" :key="`p${k}`">
@@ -2041,13 +1971,13 @@ const traps = {
     </Callout>
 
     <h3 class="doc-h3">
-      khs_ffold — serial, through the same lane, once per pass
+      khs_ffold — serial, through the same array, once per pass
     </h3>
 
     <SpecTable
       :cols="foldCost.cols"
       :rows="foldCost.rows"
-      caption="The fold multiplies a partial — already E8M15 — by E8_ONE, which is why the lane carries the raw_e8 / a_e8 operand path: the fold needs the lane WITHOUT the conversion in front of it. Every lane folds at once, so the whole accumulator folds in the time one lane takes"
+      caption="The fold runs through the same array the accumulate used rather than through a second adder, because a second adder would round differently from the path it is meant to finish. Every unit folds at once, so the whole accumulator folds in the time one unit takes"
     />
 
     <Callout kind="trap" title="A flat fold would sum ACROSS elements">
@@ -2055,15 +1985,13 @@ const traps = {
         Element <i>e</i>'s chain is the turns congruent to its pass, so folding
         flat over all <code>NPART</code> partials returns a
         <b>plausible wrong answer</b>. The unit runs one fold per pass instead,
-        each over that pass's own strided subset — and the tier probe, which
-        does fold flat, is therefore comparable in lane count and <b>not</b> in
-        arithmetic. Its own header says so.
+        each over that pass's own strided subset.
       </p>
       <p>
-        A float accumulate is still in flight
-        <b>fifteen cycles after its instruction retires</b>, so
-        <code>vfaccz</code>, <code>vfaccwr</code> and <code>vfaccrd</code> stall
-        until the shadow — a fifteen-bit shift register read in EX — is clear.
+        A float accumulate is still in flight <b><code>ALAT</code> cycles after
+        its instruction retires</b>, so <code>vfaccz</code>,
+        <code>vfaccwr</code> and <code>vfaccrd</code> stall until the shadow — a
+        shift register of that depth, read in EX — is clear.
         <code>vfmacc</code> is deliberately <b>not</b> on that list: rotation is
         what lets one issue every cycle.
       </p>
@@ -2098,23 +2026,34 @@ const traps = {
 
     <Callout kind="note" title="Where the numbers are">
       <p>
-        The <code>khs_unit</code> sweeps and the block probes on this page are
-        out-of-context synthesis on <b>{{ PART }}</b> at
-        <code>SIMD = 8</code> and a <b>3.333 ns</b> request, integer only, with
-        <code>SIMD_DOTDSP = 0</code> and <code>WB_STAGE = 0</code>. The
-        assembled reference build — 8 int + 4 float,
-        <b>13,772 LUT · 10,126 FF · 13 BRAM · 72 DSP48 · 353.4 MHz</b> — is at
-        <b>2.857 ns</b> with both knobs on. Rows from the two are not
-        comparable, and Vivado 2024.2 synthesis only means a routed result will
-        be somewhat worse.
+        Every path delay, logic-level count and block figure on this page is
+        <b>out-of-context synthesis</b> on <b>{{ PART }}</b>, Vivado 2024.2, at
+        <code>SIMD = 8</code> and a <b>3.333 ns</b> request. Nothing is placed
+        and nothing is routed, so a frequency here is an upper bound — this
+        project has measured a module lose 0.740 ns from synthesis to routing.
+        Where a figure measures a module in isolation rather than the assembled
+        unit, the row says so.
       </p>
       <p>
-        Cycle figures come from the PE's own <code>CTL_CYCLE</code> counter on
-        the full system, and <b>predate both shipped knobs</b>, each of which
-        adds a stall class. The full tables, the mesh arithmetic and the list of
-        figures that were <i>not</i> carried forward are on
+        <b>The whole-PE totals are not here.</b> The reference row, every
+        per-feature delta, and the list of figures that were <i>not</i> carried
+        forward are on
         <RouterLink to="/mpe/simd" class="doc-link">the SIMD PE page</RouterLink
-        >.
+        >, taken from
+        <code>docs/projects/kohakumpe/unit-counts.md</code>, which names the
+        frozen source tree behind each of its tables.
+      </p>
+      <p>
+        <b>The two flatten settings answer different questions and are not
+        mixed.</b> The per-block figures on this page are
+        <code>-flatten_hierarchy none</code>, and they have to be: it is the
+        setting that preserves module boundaries, so a census there names real
+        cells. <code>rebuilt</code> <b>re-parents leaves</b>, so a per-block row
+        taken there is not that block's cost — from one reference build the
+        vector register file reported <b>5,657 LUT while holding 444 LUTRAM</b>,
+        having absorbed several thousand LUT of logic that is not its own.
+        <b>A subtraction between two <code>rebuilt</code> totals is sound; a
+        <code>rebuilt</code> hierarchy row is not.</b>
       </p>
     </Callout>
   </DocPage>

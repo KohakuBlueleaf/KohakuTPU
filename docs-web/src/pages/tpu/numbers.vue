@@ -20,58 +20,58 @@ const ladder = {
       id: "a",
       x: 0,
       y: 0,
-      w: 12,
-      h: 4,
+      w: 7,
+      h: 7.5,
       label: "DRAM / mesh",
-      sub: "FP16 / FP32 / int8 — software-visible",
+      sub: "FP16 — software-visible",
     },
     {
       id: "b",
-      x: 15,
+      x: 11,
       y: 0,
-      w: 12,
-      h: 4,
+      w: 7,
+      h: 7.5,
       label: "L1 · tensor CU",
       sub: "int7 + E5M3 · 928 bits per entry",
       accent: true,
     },
     {
       id: "c",
-      x: 30,
+      x: 22,
       y: 0,
-      w: 12,
-      h: 4,
+      w: 7,
+      h: 7.5,
       label: "cluster output",
       sub: "int19 + scale · one exact K=32 block",
       accent: true,
     },
     {
       id: "d",
-      x: 45,
+      x: 33,
       y: 0,
-      w: 12,
-      h: 4,
+      w: 7,
+      h: 7.5,
       label: "accumulator",
       sub: "FP22 S1E7M14 · one add per 32 MACs",
       accent: true,
     },
     {
       id: "e",
-      x: 60,
+      x: 44,
       y: 0,
-      w: 12,
-      h: 4,
+      w: 7,
+      h: 7.5,
       label: "mesh / DRAM",
       sub: "FP16 — software-visible again",
     },
     {
       id: "v",
-      x: 60,
-      y: 8,
-      w: 12,
-      h: 4,
+      x: 44,
+      y: 11,
+      w: 7,
+      h: 7.5,
       label: "vector core",
-      sub: "E8M15 internal · FP32/FP16 in memory",
+      sub: "E8M15 inside · FP32 or FP16 in memory",
     },
   ],
   edges: [
@@ -183,9 +183,15 @@ const errLadder = {
       _tone: "good",
     },
     {
-      f: "E8M16 (designed, not built)",
+      f: "E8M16 — 17 significand bits",
+      e: "7.6e-6",
+      n: "2x better, and free on the DSP's 18-bit <i>signed</i> B port, which stops at 17. It still overflows the addend's 48-bit window by 4 bits, so the alignment shifter leaves the DSP",
+      _tone: "warn",
+    },
+    {
+      f: "E8M17 — 18 significand bits",
       e: "3.8e-6",
-      n: "4x better, bought at the one place in the datapath that is already the critical path",
+      n: "4x better, bought at the one place in the datapath that is already the critical path: an 18-bit unsigned significand reads negative on a signed port, and the window overflows by 7",
       _tone: "warn",
     },
     {
@@ -312,7 +318,7 @@ const notCovered = [
     summary="An int7 significand with an E5M3 scale shared by 32 elements — why this format, what the anchor is for, every format a value passes through on its way across the machine, and the one place precision actually dies."
     domain="tpu"
     status="shipped"
-    source="xcvu13p-fhgb2104-2L-e · docs/projects/kohakutpu/number-format.md · results.md §6"
+    source="xcvu13p-fhgb2104-2L-e, Vivado 2024.2 · docs/projects/kohakutpu/number-format.md · results.md §6"
   >
     <p class="doc-p">
       The element format KohakuTPU's tensor core multiplies in. A
@@ -474,8 +480,7 @@ const notCovered = [
       <code>exp = ea[i] + eb[j] - anchor - 6</code> with
       <code>ANCHOR = 2 · SBIAS = 40</code>, and
       <code>val = part · (m8a · m8b)</code> with <code>m8 = 8 + M</code>.
-      <b>The exponent halves add; the mantissas multiply.</b>
-      <code>(1 + Ma/8)(1 + Mb/8)</code> is <code>(m8a · m8b) / 64</code> with
+      <b>The exponent halves add; the mantissas multiply.</b> <code>(1 + Ma/8)(1 + Mb/8)</code> is <code>(m8a · m8b) / 64</code> with
       the product in <code>[64, 225]</code>, so the partial sum is multiplied by
       an 8-bit integer and the <code>/64</code> comes off the exponent as the
       <code>-6</code>. That is <b>exact</b>: no shifter, no rounding, and no
@@ -554,9 +559,8 @@ const notCovered = [
     <h2 class="doc-h2">The dtype ladder</h2>
 
     <Fig
-      caption="Left to right, the four arrows are: the quantiser — a max-tree to an E5M3 scale, then a shift-and-round to int7; the exact integer accumulation over K=32; a single normalise into the accumulator; and the conversion at EMIT, which is the step that saturates, silently, at 65,504. The machine as a whole is AMP FP16-MXFP7 — operands and results in memory are FP16, the multiply is MXFP7, the accumulate is FP22 — so the throughput unit is FLOPS, not IOPS, and one MAC counts as 2 FLOPs."
+      caption="This is a ladder of FORMATS, not a dataflow: the first arrow is the quantiser — a max-tree to an E5M3 scale, then a shift-and-round to int7 — and it does NOT happen on the way from DRAM to L1. It is a separate mover pass run beforehand, so what actually crosses that arrow at run time is already int7 + E5M3. The other three do sit on the datapath: the exact integer accumulation over K=32, a single normalise into the accumulator, and the conversion at EMIT, which is the step that saturates, silently, at 65,504. The machine as a whole is AMP FP16-MXFP7 — operands and results in memory are FP16, the multiply is MXFP7, the accumulate is FP22 — so the throughput unit is FLOPS, not IOPS, and one MAC counts as 2 FLOPs."
       zoom
-      wide
     >
       <BlockDiagram :nodes="ladder.nodes" :edges="ladder.edges" />
     </Fig>

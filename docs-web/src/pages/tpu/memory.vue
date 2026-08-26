@@ -5,56 +5,57 @@
 const tiers = {
   nodes: [
     {
-      id: "dram",
+      id: "addr",
       x: 0,
       y: 0,
-      w: 42,
-      h: 3.6,
-      label: "DDR4 — 16 GiB on the card",
-      sub: "4 GB per mesh, every master sees its own at offset 0",
+      w: 44,
+      h: 4.2,
+      label: "one 40-bit address space per mesh",
+      sub: "DRAM 4 GB · staging 2 MB · addr[39] picks between them, and no instruction names either",
     },
     {
       id: "mag",
       x: 0,
-      y: 6,
-      w: 26,
-      h: 3.6,
-      label: "system node — MAG half",
-      sub: "burst engine · tagged responses. The descriptor walk and the MXFP7 quantiser slot are the node's control PE, not MAG",
+      y: 7,
+      w: 21,
+      h: 4.2,
+      label: "system node — MAG",
+      sub: "descriptor walk · burst engine · tagged responses. A fetch is NEVER transformed",
       accent: true,
     },
     {
-      id: "l2",
-      x: 30,
-      y: 6,
-      w: 12,
-      h: 3.6,
-      label: "L2 / staging",
-      sub: "NOT BUILT — an addon slot",
+      id: "mover",
+      x: 23,
+      y: 7,
+      w: 21,
+      h: 4.2,
+      label: "the mover, and the transform slot in it",
+      sub: "the control processor's, not MAG's. mem/L2 → slot → mem/L2, mode 5",
+      accent: true,
     },
     {
       id: "mesh",
       x: 0,
-      y: 12,
-      w: 42,
+      y: 14,
+      w: 44,
       h: 3.2,
-      label: "mesh — one 256-bit word per cycle per port",
+      label: "mesh — one 256-bit word per cycle per port per direction",
       accent: true,
     },
     {
       id: "l1c",
       x: 0,
-      y: 18,
-      w: 20,
+      y: 20,
+      w: 21,
       h: 4,
       label: "cluster L1",
       sub: "u_l1a + u_l1b · 928 bit · 512 entries/side · lat 1",
     },
     {
       id: "l1v",
-      x: 22,
-      y: 18,
-      w: 20,
+      x: 23,
+      y: 20,
+      w: 21,
       h: 4,
       label: "vector L1",
       sub: "256 bit · 512 words · block RAM · no tags · lat 1",
@@ -62,8 +63,8 @@ const tiers = {
     {
       id: "tile",
       x: 0,
-      y: 24,
-      w: 20,
+      y: 26,
+      w: 21,
       h: 4,
       label: "accumulator tile",
       sub: "352 bit · 5 primitives · lat 2 · FP22",
@@ -71,23 +72,29 @@ const tiers = {
     },
     {
       id: "rf",
-      x: 22,
-      y: 24,
-      w: 20,
+      x: 23,
+      y: 26,
+      w: 21,
       h: 4,
       label: "register file",
       sub: "3 mirrors · striped by lane · 3R1W",
     },
   ],
   edges: [
-    { from: "dram:b", to: "mag:t", dir: "v" },
-    { from: "mag:r", to: "l2:l", dir: "h", dash: true },
+    { from: "addr:b", to: "mag:t", dir: "v" },
+    {
+      from: "addr:b",
+      to: "mover:t",
+      dir: "v",
+      dash: true,
+      label: "mem → slot → mem",
+    },
     {
       from: "mag:b",
       to: "mesh:t",
       dir: "v",
       accent: true,
-      label: "quantise in transit",
+      label: "already MXFP7",
     },
     { from: "mesh:b", to: "l1c:t", dir: "v", accent: true },
     { from: "mesh:b", to: "l1v:t", dir: "v", accent: true },
@@ -96,9 +103,40 @@ const tiers = {
       to: "tile:t",
       dir: "v",
       accent: true,
-      label: "512 MAC/cycle",
+      label: "512 MAC/cyc",
     },
     { from: "l1v:b", to: "rf:t", dir: "v", label: "convert on read" },
+  ],
+};
+
+/* The staging tier, from mag_stage.v's own shipped parameters. */
+const staging = {
+  cols: [
+    { key: "k", label: "" },
+    { key: "v", label: "", mono: true },
+  ],
+  rows: [
+    { k: "capacity", v: "<b>2 MB per mesh</b>" },
+    {
+      k: "shape",
+      v: "<code>BANKS = 4</code> x 4,096 rows = <b>64 URAM</b>; <code>ENTRIES = 16,384</code> of 4 x 256 bits",
+    },
+    {
+      k: "a line",
+      v: "<b>one FILL entry, 1,024 bits</b> — the memory-port entry width, not L1's 928",
+    },
+    {
+      k: "reached by",
+      v: "<b>address only.</b> <code>addr[39] &amp;&amp; !addr[38] &amp;&amp; addr[37:36] == mesh &amp;&amp; addr[35:32] == aperture</code>",
+    },
+    {
+      k: "why banked",
+      v: "URAM columns are spread across a die whose worst SLR is at 95.80% CLB; <code>BANKS = 1</code> is the monolithic shape, kept for comparison",
+    },
+    {
+      k: "two ports",
+      v: "the agent's operand path takes a <b>whole entry</b> per access; the host window takes <b>one word</b>",
+    },
   ],
 };
 
@@ -118,16 +156,16 @@ const ladder = {
     },
     {
       t: "<b>MAG</b>",
-      c: "no storage — it is a walk, a burst engine and a transform slot",
+      c: "no storage — a descriptor walk, a burst engine and tagged responses",
       w: "—",
-      p: "the quantiser lives here, not in the compute unit",
+      p: "<b>a fetch is never transformed.</b> Operands reach the mesh in the format they are already in",
     },
     {
-      t: "<b>L2 / staging</b>",
-      c: "<b>not built</b>",
-      w: "—",
-      p: "an addon slot in the same agent; where the next structural decision about this machine gets made",
-      _tone: "warn",
+      t: "<b>the mover, and the transform slot in it</b>",
+      c: "no storage either — a staging FIFO between the read return and the write side",
+      w: "2,048 bits in, 4 x 256 out per entry",
+      p: "the <b>control processor's</b>, not MAG's. The MXFP7 quantiser occupies the slot at id 1, and only a move — descriptor <code>mode 5</code>, mem/L2 → slot → mem/L2 — can reach it",
+      _tone: "good",
     },
     {
       t: "cluster L1 A and B",
@@ -432,16 +470,57 @@ const missing = [
     summary="The tiers a value passes through and what each holds — and the one number that is not about arithmetic at all: the size of the tile a cluster holds resident decides how many mesh ports it needs."
     domain="tpu"
     status="building"
-    source="xcvu13p-fhgb2104-2L-e · docs/projects/kohakutpu/accumulator.md · memory.md · results.md §2, §9"
+    source="xcvu13p-fhgb2104-2L-e, Vivado 2024.2 · docs/projects/kohakutpu/accumulator.md · memory.md · results.md §2, §9"
   >
     <Fig
-      caption="The tiers, and where each capacity comes from. The quantiser sits on the memory-agent side rather than in the compute unit: putting it in the CU would put a 32-element max-tree and a shift/round per element in 32 places instead of one, and would put FP16 on the mesh, throwing away the 2.2x density the format was chosen for."
+      caption="The tiers, and where each capacity comes from. The quantiser sits on the memory-agent side rather than in the compute unit: putting it in the CU would put a 32-element max-tree and a shift/round per element in 32 places instead of one, and would put FP16 on the mesh, throwing away the 2.2x density the format was chosen for. But it does NOT sit on the fetch path — the mover reads the address space through the transform slot and writes the converted copy back to it, so by the time a cluster fetches, the operand is already in its final format."
       zoom
     >
       <BlockDiagram :nodes="tiers.nodes" :edges="tiers.edges" />
     </Fig>
 
     <SpecTable :cols="ladder.cols" :rows="ladder.rows" />
+
+    <h3 class="doc-h3">The staging tier, and how far it is verified</h3>
+
+    <p class="doc-p">
+      The 2 MB store inside each mesh's memory agent is
+      <b>built and allocatable</b>: a kernel names a tier and the runtime hands
+      out an address in it, which the cluster's <code>FILL</code> and
+      <code>DRAIN</code> then carry like any other. Nothing about it is an
+      instruction — it is an aperture of the same 40-bit address space DRAM
+      lives in, and the agent decides which store answers by decoding the
+      address.
+    </p>
+
+    <SpecTable :cols="staging.cols" :rows="staging.rows" />
+
+    <Callout
+      kind="trap"
+      title="The control plane is verified on silicon and the data path is not"
+    >
+      <p>
+        What has been shown on the card is that all ten mesh L2 adapters answer
+        their capability, base, enable and counter registers and take a written
+        base — measured on <code>multimesh_v7</code>, mesh 0. What has been shown
+        in the compiler and the unit models is that a staging address can be
+        <i>formed</i>, that both accept it, and that the arena bounds it at 2 MB.
+      </p>
+      <p>
+        <b>No compute unit has issued a staging address on the card.</b> Two
+        consequences follow and both are quiet. An offset past 2 MB
+        <b>wraps onto another entry rather than faulting</b>. And a runtime with
+        no staging arena places the same buffer in DRAM
+        <b>silently</b>, returning the same numbers — which is what lets a kernel
+        name a tier the machine it runs on may not carry, and also what stops a
+        missing tier from ever announcing itself.
+      </p>
+      <p>
+        A <i>remote</i> staging address does not resolve at all: the interlink's
+        AXI slave side is wired to the mover's write channel alone, so a staging
+        address in another mesh has no path that forms it.
+      </p>
+    </Callout>
 
     <h2 class="doc-h2">
       Why the buffer is working storage, not a staging pipe
@@ -706,12 +785,23 @@ const missing = [
         step smaller was exactly right.
       </p>
       <p>
-        On the compiler's planner the bank fields are still written as zero,
-        <b
-          >so every chunk lives in bank 0 and half of a 512-entry L1 is
-          unreachable</b
-        >. Wiring them would restore <code>gn = 32</code> at
-        <code>nk ≥ 9</code>.
+        Two properties of the fix are worth carrying.
+        <b>Truncation makes the bank bit free in both directions</b>: at 256
+        entries per side the bank bit falls off the top, so zero is the lower
+        half and every instruction written before the bits existed still
+        addresses exactly what it did — where widening the offset to 9 bits
+        would have moved every field below it. And
+        <b>the offset cannot carry into the bank</b>: a sweep that overruns its
+        region wraps inside its own half rather than walking into the other
+        bank's operands.
+      </p>
+      <p>
+        The compiler now emits the bank fields — the backend alternates the bank
+        per sweep step and range-checks each operand's span against a 256-entry
+        bank. <b>Adding those fields with the check immediately failed 25
+        tests</b>, on an entry the path had been reaching only by relying on the
+        8-bit wrap: the defect was silent on the planner side precisely because
+        the wrap was doing the addressing.
       </p>
     </Callout>
 
@@ -830,12 +920,16 @@ const missing = [
     <Callout kind="open" title="What is NOT modelled: DRAM row locality">
       <p>
         Nothing here knows a page size or a bank, so two buffers read together
-        may land in the same bank and serialise. Against the measured cross-mesh
-        rates — the mover's
-        <b>0.098 GB/s</b>, a remote drain's <b>1.253 GB/s</b> sustained, and a
-        <b>3.20 GB/s</b> link ceiling at 100.09 MHz — DRAM is not currently the
-        bottleneck, so this is correctly unbuilt rather than forgotten. Revisit
-        when a kernel is DRAM-bound.
+        may land in the same bank and serialise. It is unbuilt because no kernel
+        measured so far is DRAM-bound — every rate ceiling reached in this
+        machine has been the schedule or the engine driving a transfer, never
+        the memory device. Revisit when a kernel actually is DRAM-bound.
+      </p>
+      <p>
+        <b>The cross-mesh rates that used to appear here are withdrawn.</b> They
+        were taken before the memory mover was rebuilt and describe an engine
+        that no longer exists. No re-measurement has been made, so this page
+        quotes none.
       </p>
     </Callout>
   </DocPage>

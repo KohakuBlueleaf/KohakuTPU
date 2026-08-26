@@ -9,9 +9,21 @@ tags:
 
 # The accumulator
 
-The fifth unit in a cluster, the only one that talks to the mesh, and the block
-the whole cluster closes timing on. It is where floating point starts, where the
-output tile lives, and where the block scale is finally applied.
+> **Kind: Yours throughout.** The accumulator tile, its banking and the pacing
+> contract are internal to this project's compute unit, and the framework has no
+> opinion on a unit's storage. The pacing contract is this project's own: removing
+> the rotating banks turned a structural guarantee into a requirement on the
+> caller (§4), and the manager meets it by construction. The framework's separate
+> obligation — that a unit must not accept an instruction it cannot retire in
+> bounded time ([spec/compute-unit-port](../../spec/compute-unit-port.md)) — is
+> met a level up, where a `GEMM` retires the moment the manager takes it
+> ([isa.md](isa.md) §4.5).
+
+The fifth unit in a matmul cluster, the only one that talks to the mesh, and the
+block that sets the whole cluster's frequency — after all the timing work the
+cluster measures within a few MHz of what the accumulator measures standing
+alone. It is where floating point starts, where the output tile lives, and where
+the block scale is finally applied.
 
 Its design is driven by one number that is not about arithmetic at all: **the
 size of the tile it holds resident decides how many mesh ports a cluster needs.**
@@ -76,10 +88,11 @@ convention in this area that is not a free choice.
 | BRAM36 | 5 | 512 sub-tiles | 16 x 32 | 21.3 |
 | URAM288 | 5 | 4096 sub-tiles | 64 x 64 | 64.0 |
 
-Measured on the 6-cluster mesh, moving the tile to URAM read **30 URAM in and
-BRAM down 254 → 224** — a 1:1 exchange, because five primitives is five
-primitives and only the depth behind them changes. The resident output block went
-from 64x128 to 256x256 for no net memory.
+Measured out-of-context on the 6-cluster mesh top, moving the tile to URAM read
+**30 URAM in and BRAM down 254 → 224** — a 1:1 exchange, because five primitives
+is five primitives and only the depth behind them changes. The resident output
+block went from 64x128 to 256x256 for no net memory. **The in-context frequency
+of that swap has not been re-measured** ([results.md](results.md) §11).
 
 **URAM costs no pipeline stage here, and that is the whole reason it is free.**
 `READ_LAT = 2` is already the operating point (§4), so the align stage already

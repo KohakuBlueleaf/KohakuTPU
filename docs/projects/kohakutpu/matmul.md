@@ -9,6 +9,12 @@ tags:
 
 # The tensor core
 
+> **Kind: Yours throughout.** The MAC pairing, the pre-adder sharing, the cascade
+> depth and the packing offset are this project's datapath top to bottom. The
+> framework fixes only how operands arrive and how results leave
+> ([spec/compute-unit-port](../../spec/compute-unit-port.md)); everything between
+> those boundaries is a decision it declines to make.
+
 KohakuTPU's compute unit. A **cluster** is four tensor CUs chained into an
 accumulator; a tensor CU is a 4x8x4 block of 64 DSP48E2s. Per cycle a cluster
 computes `4 x 32 x 4` — 512 MACs, 1,024 FLOP.
@@ -318,7 +324,9 @@ register enabled is 5 primitives at 349.4 MHz ([results.md](results.md) §2.4).
 
 Packing density is set by product width against the 27-bit A port and the 48-bit
 accumulator. The whole table is worth recording because it is the one parameter
-that would change the machine's peak rate:
+that would change the machine's peak rate. **The last column is ARITHMETIC** —
+the packs-per-DSP figure applied to the part's full 12,288 DSP48E2s, which is a
+bound on the silicon rather than a population anything has been built at:
 
 | element | product | packs | S | guard | depth | MACs/cycle at 12,288 DSP |
 |---|---|---|---|---|---|---|

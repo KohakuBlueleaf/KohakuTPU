@@ -1,6 +1,16 @@
 <script setup>
-/* Every measured KohakuTPU figure, with its conditions. The device is
- * xcvu13p-fhgb2104-2L-e for every row unless a row says otherwise. */
+/* Every measured KohakuTPU figure, with its conditions.
+ *
+ * PROVENANCE. The device is xcvu13p-fhgb2104-2L-e and the tool is Vivado
+ * 2024.2 for every row unless a row says otherwise. Almost everything here is
+ * OUT-OF-CONTEXT SYNTHESIS: nothing is placed and the route is estimated. The
+ * placed rows say so explicitly and are the only ones that are.
+ *
+ * NO FREQUENCY ON THIS PAGE IS A CLOSED-TIMING FIGURE. Every one is a
+ * synthesis estimate against a stated target, and synthesis slack is
+ * optimistic — one module in this tree lost 0.740 ns from synthesis to
+ * routing. Rates in GFLOP/s are measured CYCLE COUNTS multiplied by a NOMINAL
+ * 300 MHz; the cycles are the measurement and the clock is an assumption. */
 
 const reading = {
   cols: [
@@ -614,24 +624,31 @@ const scaling = {
     { key: "r", label: "" },
     { key: "p", label: "per cluster", mono: true, align: "right" },
     { key: "a", label: "x32", mono: true, align: "right" },
-    { key: "b", label: "x45", mono: true, align: "right" },
-    { key: "d", label: "of device (x45)", mono: true, align: "right" },
+    { key: "b", label: "x40", mono: true, align: "right" },
+    { key: "d", label: "of device (x40)", mono: true, align: "right" },
   ],
   rows: [
-    { r: "LUT", p: "17,521", a: "560,672", b: "788,445", d: "<b>45.6%</b>" },
-    { r: "FF", p: "17,612", a: "563,584", b: "792,540", d: "22.9%" },
-    { r: "BRAM36", p: "5", a: "160", b: "225", d: "8.4%" },
+    { r: "LUT", p: "16,390", a: "524,480", b: "655,600", d: "<b>37.9%</b>" },
+    { r: "FF", p: "18,404", a: "588,928", b: "736,160", d: "21.3%" },
+    {
+      r: "BRAM36",
+      p: "35",
+      a: "1,120",
+      b: "1,400",
+      d: "<b>52.1%</b>",
+      _tone: "warn",
+    },
     {
       r: "DSP",
-      p: "272",
-      a: "8,704",
-      b: "12,240",
-      d: "<b>99.6%</b>",
+      p: "<b>304</b>",
+      a: "9,728",
+      b: "12,160",
+      d: "<b>99.0%</b>",
       _tone: "bad",
     },
     { r: "URAM", p: "0", a: "0", b: "0", d: "0%" },
-    { r: "mesh ports", p: "2", a: "64", b: "90", d: "—" },
-    { r: "MACs/cycle", p: "512", a: "16,384", b: "23,040", d: "—" },
+    { r: "mesh ports", p: "1", a: "32", b: "40", d: "—" },
+    { r: "MACs/cycle", p: "512", a: "16,384", b: "20,480", d: "—" },
   ],
 };
 
@@ -1060,8 +1077,154 @@ const notMeasured = [
   "<b>The resident tile in URAM has not been re-measured in context.</b> The standalone probe is 585 MHz against a cluster that closes at 344, and the pipeline argument says the seam does not move — but URAM's clock-to-out is worse than block RAM's and the accumulator is what the cluster closes on, so treat the in-context figure as unmeasured rather than unchanged.",
   "<b><code>mx_cluster_core</code> was never synthesised standalone.</b> Where a figure for it appears it was inferred from the cluster minus its parts.",
   "<b>MW=16 has not been synthesised since MW=14 became the default.</b> Its last figure was 302.3 MHz from a 300 MHz-target run several steps earlier. “Costs less and carries more slack” is sound on the evidence that chose the operating point and is <i>not</i> a claim about what FP24 would measure on today's block.",
-  "<b>The online quantisation path has not been re-run</b> since per-row memory ports. Its last measurement was 408.6 GFLOP/s at 66.5%, and the read-engine split is exactly what it was short of.",
+  "<b>The online quantisation path no longer exists</b> and will not be re-run. Its last measurement was 408.6 GFLOP/s at 66.5% on per-row memory ports. The transform slot moved off the fetch path entirely — a fetch is never transformed — so that figure stands as history and is <i>not</i> a number this machine can produce again.",
 ];
+
+/* §9.5 — the measured clock ladder. */
+const clocks = {
+  cols: [
+    { key: "d", label: "domain", mono: true },
+    { key: "c", label: "clean to", mono: true, align: "right" },
+    { key: "f", label: "first degradation", mono: true, align: "right" },
+    { key: "x", label: "dies", mono: true, align: "right" },
+    { key: "s", label: "the ship profile asks", mono: true, align: "right" },
+    { key: "v", label: "verdict" },
+  ],
+  rows: [
+    {
+      d: "mat2x",
+      c: "<b>400</b>",
+      f: "450",
+      x: "700",
+      s: "<b>600</b>",
+      v: "<b>unreachable</b> — asks 1.5x what it does",
+      _tone: "bad",
+    },
+    {
+      d: "vec",
+      c: "<b>350</b>",
+      f: "400",
+      x: "450",
+      s: "300",
+      v: "met, with margin",
+      _tone: "good",
+    },
+    {
+      d: "noc",
+      c: "<b>300</b>",
+      f: "—",
+      x: "350",
+      s: "300",
+      v: "met, and <b>exactly at its cliff</b>",
+      _tone: "warn",
+    },
+    {
+      d: "mag",
+      c: "<b>250</b>",
+      f: "300",
+      x: "350",
+      s: "<b>300</b>",
+      v: "<b>unreachable</b>",
+      _tone: "bad",
+    },
+  ],
+};
+
+const profiles = {
+  cols: [
+    { key: "p", label: "profile", mono: true },
+    { key: "n", label: "noc", mono: true, align: "right" },
+    { key: "m", label: "mat2x", mono: true, align: "right" },
+    { key: "v", label: "vec", mono: true, align: "right" },
+    { key: "g", label: "mag", mono: true, align: "right" },
+    { key: "w", label: "" },
+  ],
+  rows: [
+    { p: "low", n: "100", m: "200", v: "100", g: "100", w: "the idle profile" },
+    { p: "mid", n: "200", m: "400", v: "200", g: "200", w: "" },
+    {
+      p: "<b>safe</b>",
+      n: "200",
+      m: "300",
+      v: "300",
+      g: "200",
+      w: "<b>inside all four measured ceilings</b> — what v7 silicon runs",
+      _tone: "good",
+    },
+    {
+      p: "ship",
+      n: "300",
+      m: "600",
+      v: "300",
+      g: "300",
+      w: "<b>three of the four are above what the silicon does.</b> What v7.1 exists to earn",
+      _tone: "bad",
+    },
+  ],
+};
+
+/* §9.1 — the L1 footprint band. */
+const band = {
+  cols: [
+    { key: "w", label: "L1 words used", mono: true, align: "right" },
+    { key: "r", label: "two independent kernels" },
+  ],
+  rows: [
+    { w: "256", r: "clean", _tone: "good" },
+    { w: "288", r: "clean", _tone: "good" },
+    { w: "320", r: "clean", _tone: "good" },
+    { w: "352", r: "<b>wrong</b>", _tone: "bad" },
+    { w: "384", r: "<b>wrong</b>", _tone: "bad" },
+    { w: "416", r: "<b>wrong</b>", _tone: "bad" },
+    { w: "448", r: "<b>wrong</b>", _tone: "bad" },
+    { w: "480", r: "<b>wrong</b>", _tone: "bad" },
+    { w: "512", r: "clean", _tone: "good" },
+  ],
+};
+
+/* §9.4 — the bring-up ladder, as rungs rather than as a bug story. */
+const ladder = {
+  cols: [
+    { key: "r", label: "rung" },
+    { key: "a", label: "what it adds" },
+    { key: "v", label: "result on multimesh_v7", mono: true },
+  ],
+  rows: [
+    { r: "master width", a: "the transport itself", v: "64-bit" },
+    {
+      r: "write path, byte-exact",
+      a: "that a written word reads back",
+      v: "clean on all 4 meshes",
+    },
+    {
+      r: "<code>A_CAPS</code>",
+      a: "that the agent answers",
+      v: "0x01040120 on all 4",
+    },
+    {
+      r: "enumeration",
+      a: "that every unit is present",
+      v: "<b>38 units — 8+2 / 6+2 / 8+2 / 8+2</b>, CU_VERSION 4",
+    },
+    {
+      r: "<b>one flit to one unit</b>",
+      a: "dispatch, and nothing else",
+      v: "<b>10 of 10 on mesh 0</b>",
+      _tone: "good",
+    },
+    {
+      r: "32x64x64 against fp32",
+      a: "the whole datapath",
+      v: "p50 1.72e-03, p99 6.60e-03, peak 0.59",
+    },
+    {
+      r: "two runs, same operands",
+      a: "determinism",
+      v: "<b>identical, 2,048 of 2,048</b>",
+      _tone: "good",
+    },
+  ],
+};
 </script>
 
 <template>
@@ -1070,16 +1233,25 @@ const notMeasured = [
     summary="Every measured KohakuTPU figure with its conditions — resources, Fmax by block, the per-SLR budget it sits in, accuracy, throughput, and what closed and what did not."
     domain="tpu"
     status="measured"
-    source="Every figure on this page is xcvu13p-fhgb2104-2L-e unless a row says otherwise · docs/projects/kohakutpu/results.md · ship.md"
+    source="Every figure is xcvu13p-fhgb2104-2L-e, Vivado 2024.2, unless a row says otherwise · docs/projects/kohakutpu/results.md · ship.md"
   >
     <Callout
       kind="rule"
-      title="Almost everything here is out-of-context synthesis"
+      title="Almost everything here is out-of-context synthesis, and no frequency here is a closed-timing figure"
     >
       <p>
-        Nothing is placed and the route is estimated. These numbers describe
-        <b>one accelerator on one part</b>. They are evidence the framework
-        closes on real silicon; they are not specifications of it.
+        Nothing is placed and the route is estimated, except on the few rows
+        that say otherwise. These numbers describe
+        <b>one accelerator on one part</b> — they are evidence the framework
+        reaches real silicon, not specifications of it.
+      </p>
+      <p>
+        <b>Every megahertz on this page is a synthesis estimate against a
+        stated target.</b> Synthesis slack is optimistic: one module in this
+        tree lost <b>0.740&nbsp;ns</b> going from synthesis to routing, so a
+        small positive slack here is not a promise that a placed design meets
+        the same period. Nothing on this page says a placed design has run at
+        300&nbsp;MHz, because none has been built.
       </p>
     </Callout>
 
@@ -1091,9 +1263,10 @@ const notMeasured = [
       they were written <code>M x N x K</code>, and those have been converted,
       so the numbers are the ones measured and only the labels moved.
       <b>GFLOP/s is <code>2 · MACs / cycles · 300 MHz</code></b
-      >: the cycle counts are measured and the rates are that arithmetic on top
-      of them. And <b>one MAC is 2 FLOP</b>, with the unit FLOPS rather than
-      IOPS because MXFP7 is a floating-point format.
+      >, where <b>the cycle counts are the measurement and 300 MHz is a nominal
+      clock</b> — no placed design has been shown to run at it, so a rate here
+      is a cycle count wearing a unit. And <b>one MAC is 2 FLOP</b>, with the
+      unit FLOPS rather than IOPS because MXFP7 is a floating-point format.
     </p>
 
     <h2 class="doc-h2">The part it is all measured on</h2>
@@ -1161,7 +1334,7 @@ const notMeasured = [
       :items="clusterLuts"
       unit="LUT"
       :max="2600"
-      caption="The breakdown of mx_cluster — 4,751 LUT total, 256 DSP, ‡ 300 MHz-target run. A tensor CU's LUTs are almost all operand skew; the accumulator is 54% of that cluster and holds the critical path, and it is the only part that is real fabric arithmetic"
+      caption="The breakdown of mx_cluster, ‡ 300 MHz-target run. It SUMS to its parent, which is what makes it a breakdown rather than rows from different runs: 336 + 448 + 476 + 476 + 450 + 2,565 = 4,751 LUT, 784 + 728 + 728 + 728 + 581 + 1,240 = 4,789 FF, and 4 x 64 = 256 DSP — all three the mx_cluster row above. A tensor CU's LUTs are almost all operand skew, and the SRL column of this build sums to 1,458 LUT, 31% of the cluster, spent on nothing but making operands arrive on the right cycle. The accumulator is 54% of the cluster and holds the critical path, and it is the only part that is real fabric arithmetic"
     />
 
     <h3 class="doc-h3">The normalising shift as a DSP multiply</h3>
@@ -1228,7 +1401,7 @@ const notMeasured = [
     <SpecTable
       :cols="tileMemory.cols"
       :rows="tileMemory.rows"
-      caption="The primitive was never the problem — the same 352-bit memory measures 837 MHz standing alone, so anything slower is the module's own logic. Blaming the RAM for the 241 MHz result hid a loop-order question for two rounds. Without the block RAM's output register the path begins at the RAM's clock-to-out, about 1.2 ns, rather than at a flip-flop, and that alone cost about 70 MHz"
+      caption="The primitive was never the problem — the same 352-bit memory measures 837 MHz standing alone, so anything slower is the module's own logic, and a memory's standalone figure is the way to tell the two apart. Without the block RAM's output register the path begins at the RAM's clock-to-out, about 1.2 ns, rather than at a flip-flop, and that alone cost about 70 MHz"
     />
 
     <SpecTable
@@ -1298,27 +1471,53 @@ const notMeasured = [
     <SpecTable
       :cols="scaling.cols"
       :rows="scaling.rows"
-      caption="PROJECTED — one cluster is what was synthesised, nothing at 32 or 45 clusters has been built, so every column but the first is multiplication. At 300 MHz, 45 clusters is ~13.8 TFLOPS of AMP FP16-MXFP7; the 32-cluster configuration is what a four-partition floorplan would build, about 9.8 TFLOPS on roughly a third of the LUTs"
+      caption="PROJECTED — one cluster is what was synthesised, nothing at 32 or 40 clusters has been built, so every column but the first is multiplication. The per-cluster column is mx_cluster_cu in the shape that ships. At a NOMINAL 300 MHz, 40 clusters is ~12.3 TFLOPS of AMP FP16-MXFP7 and the 32-cluster configuration — what a four-partition floorplan would build — is ~9.8 TFLOPS; the MAC counts are the structural claim and the clock is an assumption no placed design has met"
     />
 
     <Callout
       kind="trap"
-      title="That table uses the 272-DSP cluster and is therefore not current"
+      title="The DSP-bound cluster count has been quoted as 48, 45 and 40, and only one of those is current"
     >
       <p>
         The measured cluster is <b>304 DSP</b> once both the block-scale
         multiply (16, one per lane) and the normalising shift (32, two per lane)
-        are counted, which takes the DSP-bound count to
-        <code>12,288 / 304 = 40</code>. The 272 figure gives 45 and an earlier
-        draft using only the cascade's 256 gave 48.
-        <b
-          >All three numbers have been quoted somewhere; 40 is the one the
-          current cluster supports.</b
-        >
-        The LUT and BRAM headroom is unaffected either way, and the conclusion —
-        DSP-bound, which is the right place to be bound on this part — moves
-        further in the same direction with each correction, which is exactly why
-        it was never caught by the answer looking wrong.
+        are counted, which puts the DSP-bound count at
+        <code>12,288 / 304 = 40</code>. The older 272-DSP cluster gives 45, and
+        a draft counting only the cascade's 256 gave 48.
+        <b>All three have been quoted somewhere; 40 is the one the current
+        cluster supports</b>, and the table above uses it.
+      </p>
+      <p>
+        The conclusion — <b>DSP-bound</b>, which is the right place to be bound
+        on this part — moves further in the same direction with each correction,
+        which is exactly why it was never caught by the answer looking wrong.
+        What did move is BRAM: the shipping cluster carries 35 BRAM36 against
+        the 5 of the bare one-port build, so at 40 clusters block RAM is at
+        <b>52%</b> of the device rather than the 8% an earlier table showed.
+      </p>
+    </Callout>
+
+    <Callout
+      kind="measured"
+      title="What was actually built is 30 clusters, and that is not a contradiction of the 40"
+    >
+      <p>
+        <code>multimesh_v7</code> enumerates
+        <b>38 units on the card — 8+2 / 6+2 / 8+2 / 8+2</b>, which is 30 matmul
+        clusters and 8 vector cores across four meshes, verified 2026-08-23 by
+        reading the control plane rather than by trusting a plan. That is a
+        placed, routed, programmed design.
+      </p>
+      <p>
+        <b>The 40 and the 30 are different kinds of number and must not be
+        subtracted.</b> The 40 is one out-of-context cluster's DSP count divided
+        into the device's, on a die holding nothing else. The 30 is what fits
+        beside eight vector cores, four memory agents, four DDR4 controllers, the
+        AXI fabric and a 76,319-LUT host DMA block, at a placement that already
+        measures 95.80% CLB on its worst die.
+        <b>The binding resource on a populated die is fabric and placement</b>,
+        not the hard block the arithmetic divides by — which is why the
+        arithmetic is a ceiling and the enumeration is a population.
       </p>
     </Callout>
 
@@ -1328,7 +1527,7 @@ const notMeasured = [
       :items="hostIp"
       unit="LUT, against one SLR's 432,000"
       :max="432000"
-      caption="Out-of-context per-IP synthesis from the IMPLEMENTED single-mesh design. XDMA is 17.7% of an SLR on its own, so whichever die hosts PCIe gives up roughly a vector core's worth of fabric to do it — which is the constraint behind the floorplan"
+      caption="Per-IP utilisation read out of the IMPLEMENTED single-mesh design on xcvu13p-fhgb2104-2L-e — a placed figure for each IP inside a placed image, not an out-of-context run. XDMA is 17.7% of one die region on its own, so whichever die hosts PCIe gives up roughly a vector core's worth of fabric to do it, which is the constraint behind the floorplan"
     />
 
     <h3 class="doc-h3">Placed occupancy</h3>
@@ -1419,7 +1618,10 @@ const notMeasured = [
 
     <p class="doc-p">
       Peak is <b>512 MAC/cycle per cluster</b>, so a two-cluster machine peaks
-      at 1,024 MAC/cycle — <b>614 GFLOP/s at 300 MHz</b>.
+      at 1,024 MAC/cycle. At a nominal 300 MHz that is 614 GFLOP/s —
+      <b>the MAC rate is the structural figure and the clock is the
+      assumption</b>, so the “% peak” column below is the one that means
+      something and is clock-independent.
     </p>
 
     <SpecTable
@@ -1533,7 +1735,86 @@ const notMeasured = [
       </p>
     </Callout>
 
+    <h2 class="doc-h2">What the silicon's clocks actually do</h2>
+
+    <p class="doc-p">
+      Everything above this heading is synthesis. This section is not: it is a
+      frequency ladder run <b>on the card</b>, and it is the only place on this
+      page where a frequency is a property of a placed, routed, programmed
+      design rather than of a netlist.
+    </p>
+
+    <SpecTable
+      :cols="clocks.cols"
+      :rows="clocks.rows"
+      caption="Measured on multimesh_v7, mesh 0, 2026-08-23, by scripts/py/fmax_ladder.py. Each domain is laddered while the other three are held at the low profile, and each is scored as relative error against fp32 — never as pass/fail. MHz throughout"
+    />
+
+    <Callout
+      kind="trap"
+      title="Three of the four clocks the ship profile asks for are above what this silicon does"
+    >
+      <p>
+        <code>mat2x</code> is asked for 600 and is clean to 400.
+        <code>mag</code> is asked for 300 and is clean to 250.
+        <code>noc</code> is asked for exactly the number at which it stops. Only
+        <code>vec</code> has margin.
+      </p>
+      <p>
+        <b><code>mat2x</code>'s floor is the number format, not the clock.</b> It
+        is bit-identical from 200 to 400 — p50 1.561e-02, p99 1.064, max 9.425 at
+        every step — and then degrades to p50 1.574, which is 157%, at the 600
+        the profile asks for. So a frequency sweep that scores error tells you
+        <i>which</i> of the two you are looking at; one that scores pass/fail
+        does not.
+      </p>
+      <p>
+        <b><code>noc</code> has no graceful degradation.</b> Clean at 300, hung
+        at 350, with no intermediate error at all. A routing fabric loses a
+        packet rather than corrupting a number, so a timing failure there is a
+        <b>timeout</b>, and a domain that shows no error gradient is not
+        therefore safe.
+      </p>
+    </Callout>
+
+    <SpecTable
+      :cols="profiles.cols"
+      :rows="profiles.rows"
+      caption="The board file's clock profiles against those ceilings, in MHz. safe is the one that fits inside all four measured limits, and it is what v7 silicon runs"
+    />
+
+    <Callout
+      kind="rule"
+      title="Two ways a frequency ladder measures nothing, both of which read as a pass"
+    >
+      <p>
+        <b>The workload must drive the unit the domain clocks.</b> Laddering
+        <code>vec</code> against a matmul returns bit-identical error at all
+        eleven steps — because the matmul cluster runs it and the vector core
+        sits idle. That reads as “clean to 600” and is
+        <i>no measurement at all</i>. Each domain here is driven by something
+        that reaches it: a matmul for <code>mat2x</code>, an
+        <code>rmsnorm</code> for <code>vec</code>.
+      </p>
+      <p>
+        <b>A pass/fail verdict hides the answer.</b> The first version of this
+        ladder reported <code>ok</code> per rung, which meant only “the unit
+        signalled” — and a <code>FILL</code> has no numeric output to be wrong.
+        Every rung passed at every frequency and the table said nothing.
+      </p>
+    </Callout>
+
     <h2 class="doc-h2">Defects found by measurement</h2>
+
+    <h3 class="doc-h3">An L1 footprint band that returns wrong data</h3>
+
+    <SpecTable
+      :cols="band.cols"
+      :rows="band.rows"
+      caption="Measured, unexplained, and guarded rather than fixed. A vector kernel whose buffers occupy 352 to 480 of the core's 512 L1 words returns wrong data; 320 and below is clean and so is exactly 512, which is what makes it a band rather than a capacity limit. The corruption is 16 L1 words wide. The cost is a capability limit rather than a wrong answer, because the driver caps the footprint below the band: at a channel count of 320 with 32 groups a normalisation group is 10·hw elements, so the spatial extent is capped at hw ≤ 128 — an 8x16 tile works and a 12x16 does not"
+    />
+
+    <h3 class="doc-h3">The 8-bit L1 offset wrap</h3>
 
     <SpecTable
       :cols="offsetWrap.cols"
@@ -1575,6 +1856,57 @@ const notMeasured = [
 
     <h2 class="doc-h2">Verification</h2>
 
+    <h3 class="doc-h3">The ladder that finds a defect, rung by rung</h3>
+
+    <p class="doc-p">
+      A matmul engages the memory agent, DRAM, staging and every cluster at
+      once, so when it fails it cannot say which of them is broken.
+      <b>Every rung below adds exactly one thing</b>, and that is the whole
+      method: the first rung that fails names the layer.
+    </p>
+
+    <SpecTable
+      :cols="ladder.cols"
+      :rows="ladder.rows"
+      caption="Run on multimesh_v7, 2026-08-23, at 100/200/100/100. The one-flit rung is the load-bearing one and is now a driver call in its own right — it is dispatch with the datapath, the memory system and the schedule all removed"
+    />
+
+    <Callout
+      kind="trap"
+      title="Three failures that present identically: a unit that never signals, with the bus healthy throughout"
+    >
+      <p>
+        None of the three is an RTL fault and none raises an error on the card.
+        Each is a rule the hardware already stated and the software did not
+        keep, so each is worth knowing as a rule rather than as a story.
+      </p>
+      <p>
+        <b>A program's registers have a required write order.</b> Seeding the
+        destination, base, length and credit <i>before</i> the kick leaves the
+        program register reading <code>run=1</code> with
+        <code>flits_left&gt;0</code> and <code>credit=0</code> — running, with
+        nothing to spend.
+      </p>
+      <p>
+        <b>A write shadow must not elide a register a later kick shares.</b>
+        Dropping a length write because the previous kick used the same length
+        sends every completion to the first node and none to the second, so node
+        2 signals nothing at all.
+      </p>
+      <p>
+        <b>A DRAM write shorter than 32 bytes zeroes the rest of the line.</b>
+        A loop of consecutive single-word writes leaves only its
+        <i>last</i> word. This is the sharpest of the three because the preflight
+        hides it: a byte-exact write-path check that uses block writes certifies
+        the path clean while every hand-written single word silently destroys
+        its neighbours. Writing a full 32-byte line and then poking one word into
+        it returns
+        <code>['0x0', '0xdeadbeefdeadbeef', '0x0', '0x0']</code> —
+        <b>deterministically</b>, which supersedes the earlier account that single
+        writes “vanish about half the time”.
+      </p>
+    </Callout>
+
     <SpecTable
       :cols="benches.cols"
       :rows="benches.rows"
@@ -1597,12 +1929,25 @@ const notMeasured = [
       </p>
     </Callout>
 
-    <h2 class="doc-h2">What closed, and what did not</h2>
+    <h2 class="doc-h2">What met its synthesis target, and what did not</h2>
+
+    <Callout
+      kind="rule"
+      title="“Met its target” is not “closed timing”, and the difference is the whole point of this section"
+    >
+      <p>
+        A block that met its target cleared an out-of-context
+        <i>synthesis</i> constraint and the tool stopped trying. It was not
+        placed, it was not routed, and no design containing it has been shown to
+        run at that period. <b>Every retracted claim in this repository was made
+        by reading one of these rows as a closed frequency.</b>
+      </p>
+    </Callout>
 
     <SpecTable
       :cols="closed.cols"
       :rows="closed.rows"
-      caption="Closed, out-of-context, against a 300 or 310 MHz target"
+      caption="Met their out-of-context SYNTHESIS target of 300 or 310 MHz, on xcvu13p-fhgb2104-2L-e with Vivado 2024.2. Each is a lower bound on what that block's logic can do and an upper bound on what a placed design containing it would achieve"
     />
 
     <SpecTable :cols="ceilings.cols" :rows="ceilings.rows" />
@@ -1632,6 +1977,12 @@ const notMeasured = [
       <b>12,731 LUT + 64 DSP</b>, new <b>1,188 LUT + 64 DSP</b>, about 10.7x
       fewer LUTs. Same DSP count, same MAC count, different numerics, and
       essentially all of the difference is accumulation leaving the fabric.
+      <i
+        >Both figures are out-of-context synthesis of one tensor core on
+        xcvu13p-fhgb2104-2L-e; the old one predates the current tool version and
+        is quoted as the baseline the replacement was judged against, not as a
+        current measurement.</i
+      >
     </p>
   </DocPage>
 </template>

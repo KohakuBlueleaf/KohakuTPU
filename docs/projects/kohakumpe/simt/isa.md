@@ -11,6 +11,12 @@ tags:
 
 # The instruction set
 
+> **Kind: Yours throughout — one project's instruction set.** The register-class
+> rule, the opcode majors, divergence, subgroup ops and the addressing tiers are
+> this project's own encoding inside the payload the framework hands it.
+> Generating four consumers from one field table is this project's tooling
+> convention, and a good one, but it is not framework machinery.
+
 **106 instructions in the custom space: 98 on custom-2, 8 on custom-3** — plus
 the RV32I base, which is the per-thread half, and the four RV32M multiplies,
 which ride RV32I's own encoding rather than the custom space.
@@ -22,7 +28,7 @@ which ride RV32I's own encoding rather than the custom space.
 | `DIV` | custom-2, 2 | 4 | `split`, `join`, `tmc`, `bar` |
 | `SUB` | custom-2, 3 | 10 | subgroup: shuffle, broadcast, ballot, five reductions, `vreadfirst`, `vlaneid` |
 | `VMEM` | custom-2, 4 | 64 | scalar base + vector offset, six op stems × widths × four scales |
-| **`FLT`** | **custom-2, 5** | **8** | **`vfma`, `vfmul`, `vfadd`, `vfsub`, and the four `_h` forms** |
+| **`FLT`** | **custom-2, 5** | **8** | **`vfma`, `vfmul`, `vfadd`, `vfsub`, and the four seeds `vfexp2`, `vflog2`, `vfrcp`, `vfrsqrt`** |
 | — | custom-3, 0–7 | 8 | scalar ALU immediate, and the two uniform branches |
 | *(RV32M)* | *OP major, `funct7 = 0000001`* | *4* | *`mul`, `mulh`, `mulhsu`, `mulhu` — **not** in the custom table or its count* |
 
@@ -61,113 +67,85 @@ instead of eight in total.
 
 custom-0 and custom-1 are left alone. A GPU build carries no SIMD tier, so they
 would be free — but leaving them untouched means a hypothetical PE carrying both
-never has to renumber either set. [opcode-map](../../../arch/pe/opcode-map.md) is the
+never has to renumber either set. [opcode-map](../../../arch/cpu/rv32-pe/opcode-map.md) is the
 authority.
 
 ## Arithmetic: the float tier and RV32M
 
-Both are **built**, and an earlier revision of this page said neither existed.
-The arithmetic is **inherited from the DSP realm and never forked** — every float
-lane is one `khs_float_lane`, which is what keeps `cost(SIMT) = G8 − G0`
-meaningful ([ladder](ladder.md#what-this-means-for-g0)).
+Both are **built**. The arithmetic is **inherited from the
+[SIMD tier](../simd/float.md) and never forked** — every float unit is one
+`rv_fpu` and a seed unit carries a `khs_fp32_sfu` beside it, which is what keeps
+the cost identity in [ladder](ladder.md#what-this-means-for-g0) meaningful.
 
 | group | encoding | what |
 |---|---|---|
-| `FLT` | custom-2 `funct3 = 5`, funct7 0–7 | `vfma`, `vfmul`, `vfadd`, `vfsub` and their `_h` forms. `funct7[2]` selects the operand width, `funct7[1:0]` the operation |
-| RV32M | the **existing** OP group, `funct7 = 0000001` | `mul`, `mulh`, `mulhsu`, `mulhu` |
+| `FLT` | custom-2 `funct3 = 5`, funct7 0–7 | `funct7[2]` selects the seed half; `funct7[1:0]` the operation within it |
+| RV32M | the **existing** register-register group, `funct7 = 0000001` | `mul`, `mulh`, `mulhsu`, `mulhu` |
 
 **No new opcode major was spent on either.** RV32M sits at its standard RISC-V
-encoding inside the register-register group that already existed, because all
-four custom majors are spoken for; the float tier fits in a funct3 slot custom-2
-already had spare.
+encoding inside the group that already existed, because all four custom majors
+are spoken for; the float tier fits in a `funct3` slot custom-2 already had
+spare.
 
-### Operand width is a property of the instruction
-
-```
-   FP32 or FP16 operands in  ->  E8M15 compute  ->  FP32 or FP16 out
-```
-
-The eight `FLT` encodings are four operations at two operand widths.
-`funct7[2]` is that width bit and nothing else moves: it reaches `kht_fpu` as
-`half` and drives `wide(!half)` into `khs_float_lane`, whose `wide` is a **port
-and not a parameter**. There is no build option here — a PE that has the float
-tier has both edges, and one that does not have the tier faults on all eight
-encodings.
-
-The three conversions involved are not symmetric, and that asymmetry is the
-whole reason the wide form is the *default* encoding rather than the suffixed
-one:
-
-| conversion | property |
-|---|---|
-| `FP16 → E8M15` | **exact** |
-| `FP32 → E8M15` | exponent field kept **verbatim**; mantissa below bit 8 rounded off |
-| `E8M15 → FP16` | lossy **and** range-limited — a finite overflow **saturates silently** |
-
-The format that can only lose precision is the safer default; the one that can
-lose *magnitude* is the one a shader asks for on purpose. That reverses the
-order the tier first shipped in, and the reason is that property rather than a
-preference.
-
-### The float register layout, which is architecture
+### One format, and it is not encoded
 
 ```
-   vfma, vfmul, vfadd, vfsub          the DEFAULT encoding
-   vreg[31:0]   one FP32 element
-
-   vfma_h, vfmul_h, vfadd_h, vfsub_h
-   vreg[31:16]  element 1  RESERVED, must be written zero, reads undefined
-   vreg[15:0]   element 0  one FP16 element
+   IEEE binary32 in   ->   binary32 compute   ->   binary32 out
 ```
 
-**Reserved, not "unused".** Undefined bits become somebody's undefined
-behaviour, and packed 2×FP16 later turns element 1 live *without changing the
-layout* — so it is an opcode addition rather than a migration. `kht_fpu` asserts
-the reserved half is zero on every narrow-operand float read in simulation, and
-returns zero there on the result path, so a shader that ignores the contract
-gets a defined value rather than whatever the integer lanes last left in that
-register.
+Binary32 is the only compute type. A thread is a whole 32-bit slot, so there is
+no format bit in the encoding, no conversion at either edge and no reserved half
+of a register — one element fills `vreg[31:0]` and that is the whole layout.
+Denormals flush to sign-preserved zero on input and output.
 
-### What the four operations are, and what they read
+A build with `FLANES = 0` faults on all eight `FLT` encodings; a build with
+`FSFU_UNITS = 0` faults on the four seeds and keeps the other four.
+
+### What the eight operations are, and what they read
 
 ```
    vfma   vd, vs1, vs2       vd = vs1 * vs2 + vd      THREE reads, vd is a source
    vfmul  vd, vs1, vs2       vd = vs1 * vs2
    vfadd  vd, vs1, vs2       vd = vs1 + vs2
    vfsub  vd, vs1, vs2       vd = vs1 - vs2
+
+   vfexp2 vd, vs1            the four seeds, one operand each. Newton
+   vflog2 vd, vs1            refinement is an instruction sequence,
+   vfrcp  vd, vs1            deliberately: 1/a is two multiply-adds and
+   vfrsqrt vd, vs1           rsqrt is three
 ```
 
-One datapath serves all four. `vfadd` is the lane with its multiplier forced to
-1.0 and `vfmul` is the lane with its addend forced to 0.0; `vfsub` inverts vs2's
-**sign bit** rather than subtracting, because a lane has no subtract and negating
-a float is one bit — bit 31 or bit 15, whichever the width bit says. There is
-never a second adder or a second multiplier.
+One datapath serves the first four. `vfadd` is the unit with its multiplier
+forced to 1.0 and `vfmul` is the unit with its addend forced to 0.0; `vfsub`
+inverts `vs2`'s **sign bit** rather than subtracting, because negating a float
+is one bit. There is never a second adder or a second multiplier.
 
 `vfma`'s third read is the **destination**, so it needs no new instruction field
 — but it does mean `rd` is a source and is compared as one by the hazard logic,
-and it means the vector register file carries a third mirrored read port at
-`HAS_FLT = 1`.
+and it means the vector register file carries a third mirrored read port
+whenever float units are built.
 
-### Latency is 15 for both, and that is deliberate
+### Both multi-cycle units share one latency, and that is deliberate
 
 ```
-   float    15 cycles, II = 1     vec_alu's own depth at PIPE_MUX = 1
-   RV32M    15 cycles, II = 1     3 real stages + a 12-stage pad
+   float    ALAT cycles, one instruction per cycle
+            ALAT = 6 with no seed units, 10 with them
+   RV32M    the same, always: 3 real stages plus a pad to ALAT
 ```
 
 The multiplier is padded to the float tier's exact latency so the two retire
 through **one** write port with no arbitration: two results can only want that
-port on the same cycle if they were issued on the same cycle, which cannot happen
-because one instruction issues per cycle. A per-wave pending bit blocks the
-issuing wave for both. See
+port on the same cycle if they were issued on the same cycle, which cannot
+happen because one instruction issues per cycle. A per-wave pending bit blocks
+the issuing wave for both. See
 [microarchitecture](microarchitecture.md#the-float-tier-and-the-multiplier-one-shadow-pipe-two-producers).
 
-**There is no int ↔ float conversion instruction**, deliberately. `vec_cvt`
-carries FP16/FP32 ↔ E8M15 and nothing integer, so an `int → float` opcode would
-mean inventing normalise-and-round arithmetic in the GPU realm — exactly the fork
-the tier ruling refuses. It is also not needed: a float bit pattern *is* an
-integer, so constants come from `saddi` + `s2v` and real data comes from memory,
-which is where a shader's floats come from anyway.
+**There is no int ↔ float conversion instruction on this PE**, deliberately. It
+would mean instantiating a converter this core does not otherwise need, and it
+is not required: a float bit pattern *is* an integer, so constants come from a
+scalar immediate broadcast and real data comes from memory, which is where a
+shader's floats come from anyway. The [SIMD PE](../simd/float.md) has the
+converter group, because its vector unit already has a use for one.
 
 ## What has no encoding, deliberately
 
@@ -176,7 +154,7 @@ Each of these is an absence with a reason, not an omission.
 **No divide or remainder.** `funct3` `100`–`111` in the RV32M group stay illegal
 and fault. Divide is a long sequential unit or a large combinational one, neither
 of which suits a barrel-scheduled pipeline whose whole invariant is a fixed
-latency; and divide-by-a-constant strength-reduces to `mulhu`, which now exists.
+latency; and divide-by-a-constant strength-reduces to `mulhu`.
 
 **No atomics.** The A extension's major is not in the legal opcode set at all, so
 an `amo*` word raises an illegal-instruction fault rather than being decoded into
@@ -214,8 +192,9 @@ PC — exact for structured control flow, which SPIR-V guarantees by naming a
 merge block for every selection and loop.
 
 > **A depth of D therefore permits D/2 nested levels, not D−1.**
-> This is stated wherever the depth is: in the table, in the generated header, in
-> the model and in the RTL. An earlier plan said D−1 and was wrong.
+> It is stated wherever the depth is — in the table, in the generated header, in
+> the model and in the RTL — because the two ways of counting differ by a factor
+> of two and both look reasonable.
 
 Overflow is a **fault**. Not a wrap, not a mask merge, not a truncation — a
 masked-off lane that silently reactivates is a wrong answer with no witness.
@@ -228,10 +207,11 @@ unimplemented.
 
 > **`bar` ENCODES but does not EXECUTE, and it does not fault either.**
 > `kht_predec` sets `C_BAR`, and nothing in `kht_core` or in the golden model
-> reads it — so a `bar` retires as a no-op. Every other unbuilt thing in this ISA
-> raises a fault (`shflxor` without `HAS_SHFL`, a float or RV32M op without
-> `HAS_FLT`), which is the rule this instruction is currently the single
-> exception to. **Do not write a shader that relies on it**: with one wave per
+> reads it — so a `bar` retires as a no-op. Every other unbuilt thing in this
+> ISA raises a fault — `shflxor` at `SHFL_UNITS = 0`, a float operation at
+> `FLANES = 0`, a seed at `FSFU_UNITS = 0` — which is the rule this instruction
+> is the single exception to. **Do not write a shader that relies on it**: with
+> one wave per
 > workgroup the no-op happens to be correct, and with more than one it is a race
 > with no witness.
 
@@ -264,10 +244,12 @@ is, and *every* per-thread address ultimately derives from it. It costs no read
 port and no storage, because the value is a constant per lane — a mux in front of
 the write.
 
-> **`shflxor` and `bcast` are built** on the G8 butterfly — `log2(LANES)`
-> conditional swaps, with a lane whose source is masked off reading its own
-> value. In a build with `HAS_SHFL = 0` they still fault rather than writing the
-> ALU result and returning a plausible wrong answer.
+> **`shflxor` and `bcast` are built** on the subgroup butterfly —
+> `log2(LANES)` conditional swaps, with a lane whose source is masked off
+> reading its own value. `SHFL_UNITS` is a width like any other: below full
+> width the network becomes a per-output-lane select taking more passes, and at
+> **0** both encodings fault rather than writing the ALU result and returning a
+> plausible wrong answer.
 
 ## The three addressing tiers
 
@@ -363,12 +345,14 @@ beside every other RV32I opcode rather than in the GPU field table — which is
 exactly what "no new opcode major was spent" means in practice. The 106-instruction
 count above is the custom space only.
 
-> **An encoding test proves nothing about execution.** Three instructions —
-> `s2v`, `shflxor`, `bcast` — round-tripped perfectly through all four
-> consumers, set a write enable, and had no datapath behind them; a fourth,
-> `reduxmin`, used the wrong identity. None of that is visible to a table test.
-> `tests/pe/prog/gpu_isa.s` is the answer: it runs each instruction on the RTL
-> and stores the result where the golden model is compared against it.
+> **An encoding test proves nothing about execution.** An instruction can
+> round-trip perfectly through every consumer, set a write enable, and have no
+> datapath behind it; a reduction can have a datapath and the wrong identity for
+> an inactive lane. Neither is visible to a table test.
+> `tests/pe/prog/simt_isa.s` is the answer: it runs each instruction on the RTL
+> and stores the result where the golden model is compared against it. The
+> detection rule for the whole class is in
+> [the SIMD PE's gates](../simd/gates.md#decode-without-datapath).
 
 There is deliberately **no C intrinsic header**, unlike the SIMD tier's fourth
 consumer: these programs are shaders through a frontend, not C through GCC, and

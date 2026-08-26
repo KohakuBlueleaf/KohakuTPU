@@ -10,6 +10,13 @@ tags:
 
 # Four meshes
 
+> **Kind: the mesh population and the split choices are Yours; the addressing is
+> Fixed protocol.** How many meshes, what each holds and which splits a workload
+> can take are this project's decisions. What an address means across meshes, and
+> how a transfer crosses one, are Fixed protocol shared by every project
+> ([address-map](../../address-map.md),
+> [arch/ship/interlink](../../arch/ship/interlink.md)).
+
 KohakuTPU is four meshes on one device, one per SLR, each with its own DDR4
 channel ([ship.md](ship.md)). This page is what that means when you write a
 kernel: where a value has to live, what crossing costs, and the one split this
@@ -164,9 +171,10 @@ contraction split costs no FP16 round trip.
 
 There are two peer paths and they are easy to confuse:
 
-- **The direct ACU-to-ACU wire does not exist.** `mx_cluster_cu.v:387` leaves
-  `.peer_out()` open, so there is no cluster-to-cluster accumulator chain, at any
-  distance. `FWD` has no command source either.
+- **The direct ACU-to-ACU wire does not exist.**
+  `src/kohakutpu/matmul/mx_cluster_cu.v:435` and `:455` leave `.peer_out()` open,
+  so there is no cluster-to-cluster accumulator chain, at any distance. `FWD` has
+  no command source either.
 - **The drain path does, and it reaches another mesh.** A `DRAIN` with `dbuf=2`
   leaves through the drain queue carrying the accumulator's own 352-bit float,
   and `dmesh`/`dfin` aim it at a cluster in another mesh.
@@ -253,39 +261,39 @@ automatic version — not the other way round.
 
 ## 8. What a crossing actually costs
 
-**Measured 2026-08-13, mesh_1 -> mesh_3 over link1**, `mm_mover` P1 push, mesh
-clock measured at 100.09 MHz off `mag_link`'s free-running idle counter:
+The measurement below is the **remote drain path**. It is the only interlink
+figure this project currently stands behind.
+
+> **There is no mover rate to quote.** The one interlink rate ever measured
+> through `mm_mover` predates the mover rebuild — it was taken on an engine that
+> sent one 32-byte word per packet, and the current engine coalesces — so it
+> describes hardware that no longer exists and has been withdrawn rather than
+> carried forward. Nobody has re-measured the mover on today's RTL. A design
+> that needs a mover rate has to measure one.
+
+**Measured 2026-08-13 on the card**, one cluster on mesh_0 streaming
+remote drains into mesh_2, 128 sub-tiles each. Mesh clock measured at
+100.09 MHz off `mag_link`'s free-running idle counter; timed in hardware cycles
+off `CU_COUNTERS` as a slope between two trip counts, reproducible to 0.05%. A
+wall clock cannot do this — a drain moves 288 bytes and JTAG would be timing
+itself.
 
 | | |
 |---|---|
-| moved | 131,514,368 B |
-| wall | 1.337–1.350 s |
-| **rate** | **98 MB/s (0.098 GB/s)** |
-| link1 tx | 4,109,824 packets / 4,109,824 beats |
-| mesh_3 rx | identical, `IL_FAULT` empty, stall count 0 |
+| link payload | 9,216 B in **736.1 cycles** |
+| tx and rx | 32 packets / 288 beats each, nothing dropped, `IL_FAULT` clean |
+| **rate, sustained** | **1.253 GB/s** |
+| beats per packet | **9.00** |
+| link ceiling at 100.09 MHz | 3.20 GB/s — arithmetic, not measured |
 
-**That is the MOVER's figure, not the link's, and it is SUPERSEDED. Do not
-quote it as the mover's rate.** It was taken before the mover was rebuilt — one
-32-byte word per packet is what the table's `beats per packet` column reports,
-and the current engine coalesces — so it measures an engine that no longer
-exists. It is kept because the CONTRAST below is what the section is for, and
-that contrast is between two paths on one bitstream. The mover's rate on today's
-RTL has not been measured.
+At 18 drains there is no credit stall at all and the rate reads 1.378 GB/s;
+**quote the sustained 1.253**, since `stalled` is 8.7% per drain and occupancy
+40.1% at the rate above.
 
-The same fabric, driven by the drain path instead, ran **12.8x faster on that
-bitstream**:
-
-| path | rate | beats per packet |
-|---|---|---|
-| `mm_mover` P1 push | 0.098 GB/s | **1.00** |
-| remote `DRAIN`, one cluster | **1.253 GB/s** sustained | **9.00** |
-| link ceiling at 100.09 MHz | 3.20 GB/s | — |
-
-One cluster on mesh_0 streaming remote drains into mesh_2, 128 sub-tiles each:
-9,216 B of link payload in **736.1 cycles**, tx and rx both 32 packets / 288
-beats, nothing dropped. Timed in hardware cycles off `CU_COUNTERS` as a slope
-between two trip counts, reproducible to 0.05% -- a wall clock cannot do this,
-since a drain moves 288 bytes and JTAG would time itself.
+A packet's beat count is what separates the two paths: a drain pays one header
+handshake per 288 bytes, where a one-word-per-packet engine pays one per 32.
+That ratio is a property of the packetisation and survives the withdrawn
+measurement; the rate that went with it does not.
 
 ### 8.1 The mesh clock ceiling is 150 MHz, and it buys 1.28x not 1.5x
 
@@ -320,44 +328,33 @@ resets every mesh, so re-open the `Card` after one and restore 100 MHz in a
 `finally`.
 
 **The crossing itself is nearly free.** The same program draining locally costs
-445.5 cycles, so the remote path adds **290.6 cycles for 288 beats -- about one
+445.5 cycles, so the remote path adds **290.6 cycles for 288 beats — about one
 cycle per beat.** The interlink adds wire time and essentially nothing else.
 
-This is also the first time the link has ever been pressed: `stalled` is 8.7%
-per drain and occupancy 40.1%, where the mover showed exactly zero credit stall
-across 3.7 s. At 18 drains there is no stall and the rate is 1.378 GB/s; quote
-the **sustained** 1.253.
-
 So the interlink's floor is **measured at 1.25 GB/s and its true ceiling is above
-what any single source can reach.** The mover is behind by ~13x because at one
-beat per packet it pays a header handshake every 32 bytes, where a drain pays one
-per 288.
+what any single source can reach.**
 
-One consequence for anything designed against these numbers:
-
-- **Quote 0.098 GB/s for the mover, 1.25 GB/s for the drain path, and 3.2 GB/s
-  for the fabric.** A design that assumes one where it meant another will be
-  wrong by up to 33x.
-- A local control run — same mover, same bytes, mesh_1 to itself — managed
-  **61 MB/s**, so a remote write is *faster* than a local one. A remote write is
-  posted, answered the moment the packet is queued, while a local one waits for a
-  real DDR4 `BRESP`.
+One structural fact worth designing against, independent of any rate: a remote
+write is **posted** — answered the moment the packet is queued — while a local
+write waits for a real DDR4 `BRESP`. A cross-mesh write is therefore not
+automatically slower than a local one.
 
 Still not measured:
 
+- **The mover, on today's RTL.** See the note above.
 - **The three-SLR link (0 <-> 2).** Expected slower from the pipe stages it
-  needs. link1 between 1 and 3 is SLR-adjacent; this number is from the easy one.
+  needs. The measurement above crosses SLR-adjacent dies; this is the easy one.
 - **Per-mesh floorplans are not equivalent.** mesh_1 is a different map on the
   most crowded die.
 
-> Repeating this: **`interlink.clear()` does not clear the traffic counters**,
-> despite its docstring. `IL_CTRL[1]` only drives `dbell_clr`; `n_tx_pkt`,
-> `n_tx_beat`, `n_idle` and `n_stall` live in `mag_link.v` and reset only on
-> `resetn`. Take deltas. And a JTAG poll costs ~13 ms, so a transfer has to run
-> for seconds before the wall time means anything.
+> **`interlink.clear()` does not clear the traffic counters**, despite its
+> docstring. `IL_CTRL[1]` only drives `dbell_clr`; `n_tx_pkt`, `n_tx_beat`,
+> `n_idle` and `n_stall` live in `mag_link.v` and reset only on `resetn`. Take
+> deltas. And a JTAG poll costs ~13 ms, so a transfer has to run for seconds
+> before a wall-clock figure means anything.
 
-> An earlier round of debugging concluded that mesh_0 was faulty. **It is not.**
-> Given identical host-generated operands all four meshes produce identical
-> results to the digit; the failures were a synthetic benchmark saturating the
-> FP16 drain at 65504, which no normalised network reaches. Do not plan around a
-> mesh_0 defect.
+> **The four meshes are not numerically different from each other.** Given
+> identical host-generated operands all four produce identical results to the
+> digit. A benchmark that appears to single one out is far more likely to be
+> saturating the FP16 drain at 65,504 — which no normalised network reaches —
+> than to have found a defective die ([results.md](results.md) §6.6).

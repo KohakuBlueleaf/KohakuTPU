@@ -319,13 +319,22 @@ const costs = {
   ],
 };
 
+/* The lane-count argument, re-derived on the port the RTL actually has.
+ * ONE port, and the two directions are separate wires, so they are counted
+ * separately: adding them prices capacity that never competes. */
 const bound = {
   cols: [
     { key: "m", label: "mode", mono: true },
     { key: "o", label: "ops/result", align: "right" },
     {
       key: "c",
-      label: "ops/cycle at the bandwidth ceiling",
+      label: "results/cycle the inbound word allows",
+      align: "right",
+      mono: true,
+    },
+    {
+      key: "k",
+      label: "results/cycle 16 ALUs allow",
       align: "right",
       mono: true,
     },
@@ -335,21 +344,24 @@ const bound = {
     {
       m: "<code>FLAT</code>",
       o: "1",
-      c: "10.7",
-      b: "<b>memory</b>",
+      c: "8",
+      k: "16",
+      b: "<b>memory</b>, by 2x",
       _tone: "warn",
     },
     {
       m: "<code>D2</code>",
       o: "2",
-      c: "21.4",
-      b: "<b>compute</b>",
+      c: "8",
+      k: "8",
+      b: "<b>exactly balanced</b>",
       _tone: "good",
     },
     {
       m: "<code>D4</code>",
       o: "4",
-      c: "42.7",
+      c: "8",
+      k: "4",
       b: "<b>compute</b>",
       _tone: "good",
     },
@@ -553,7 +565,7 @@ const open = [
     summary="A programmable elementwise and reduction engine: E8M15 chosen so an FMA fits one DSP exactly, four base-2 transcendental seeds at full rate, sixteen lanes because that is where two mesh ports meet a depth-2 chain — and a deliberate refusal to do anything data-dependent."
     domain="tpu"
     status="building"
-    source="xcvu13p-fhgb2104-2L-e · docs/projects/kohakutpu/vector-core.md · results.md §3, §6.3"
+    source="xcvu13p-fhgb2104-2L-e, Vivado 2024.2, out-of-context synthesis · docs/projects/kohakutpu/vector-core.md · results.md §3, §6.3"
   >
     <p class="doc-p">
       KohakuTPU's second compute unit. Where the cluster runs one macro-op, the
@@ -833,27 +845,63 @@ const open = [
     <h2 class="doc-h2">Sixteen ALUs, and why chaining is mandatory</h2>
 
     <p class="doc-p">
-      A mesh flit payload is 256 bits, and a vector core is a two-port endpoint
-      like a cluster, so 512 payload bit/cycle — 32 FP16 elements. A flat
-      elementwise op reads two vectors and writes one:
-      <b>3 elements of traffic per result</b>. That is a bandwidth ceiling of
-      <code>32 / 3 = 10.7</code> results/cycle against a compute ceiling of 16.
+      <b>The core attaches at one mesh port</b>, exactly as a matmul cluster
+      does — <code>vec_cu.v</code> has a single
+      <code>noc_in_*</code>/<code>noc_out_*</code> pair and so does
+      <code>mx_cluster_cu.v</code>. A flit payload is 256 bits, so the port
+      carries <b>16 FP16 elements per cycle in each direction</b>, and the two
+      directions are separate wires that never compete.
     </p>
 
-    <SpecTable :cols="bound.cols" :rows="bound.rows" />
+    <p class="doc-p">
+      A flat elementwise op reads two vectors and writes one, so per result it
+      needs <b>2 elements inbound and 1 outbound</b>. Inbound binds:
+      <code>16 / 2 = 8</code> results/cycle, against 16 outbound. Sixteen ALUs
+      supply <code>16 / ops-per-result</code>. Those two curves cross at two ops
+      per result.
+    </p>
+
+    <SpecTable
+      :cols="bound.cols"
+      :rows="bound.rows"
+      caption="Both columns are arithmetic on the built port, not measurements. Read and write are counted separately on purpose: they are different wires served in the same cycle, so summing them prices capacity that never competes — the same error that pointed three throughput diagnoses at bandwidth"
+    />
 
     <p class="doc-p">
-      <b>Flat mode is memory-bound and more lanes would not help it.</b>
-      <code>D2</code> already saturates the ALUs. So 16 lanes is not a round
-      number: it is where two ports of mesh bandwidth and a depth-2 chain meet.
-      Halving the pass count is worth exactly as much as doubling the ALU count
-      and costs far less — a <code>D4</code> chain writes no intermediate to the
-      register file at all.
+      <b>Flat mode is memory-bound by a factor of two, and more lanes would not
+      help it.</b> <code>D2</code> is where the port and the array meet exactly. So 16 lanes
+      is not a round number: it is the array size at which one mesh port and a
+      depth-2 chain balance. Halving the pass count is worth exactly as much as
+      doubling the ALU count and costs far less — a <code>D4</code> chain writes
+      no intermediate to the register file at all.
       <b
         >Chaining is not an optimisation here; it is what makes the core
         compute-bound at all.</b
       >
     </p>
+
+    <Callout
+      kind="trap"
+      title="A second port would buy nothing here, for the same reason it bought nothing on a cluster"
+    >
+      <p>
+        The link is <b>full duplex</b>, and an elementwise pass loads on one
+        direction and stores on the other. A second port adds a second pair of
+        wires that the same traffic pattern loads the same way, so the binding
+        direction stays exactly as loaded — while the port costs a router local,
+        and locals are the scarce resource on a mesh. A cluster was two
+        endpoints until the second was measured to buy nothing, and eight
+        clusters at two locals each force a 4x4 grid where one local each fits
+        2x4: <b>eight extra routers, at thousands of LUTs apiece</b>.
+      </p>
+      <p>
+        Take a second port when the two directions
+        <i>genuinely</i> conflict — a unit that streams operands in
+        <i>and</i> streams results out continuously, at rates that together
+        exceed one link. An elementwise vector pass is not that shape: it is
+        2 in and 1 out, so it is inbound-bound on any number of ports.
+      </p>
+    </Callout>
 
     <SpecTable
       :cols="modes.cols"

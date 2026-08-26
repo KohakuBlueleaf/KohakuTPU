@@ -10,6 +10,11 @@ tags:
 
 # SDXL as a requirements inventory
 
+> **Kind: Yours throughout.** Which layers a workload issues, which op each
+> becomes and which kernels close the gaps are this project's inventory against
+> its own instruction set. A second accelerator would produce a different table
+> from the same framework.
+
 **This page is not a plan to run SDXL.** SDXL is used here as the probe: it is a
 modern network with convolution, two kinds of attention, three kinds of
 normalisation, gating, resampling and a decoder, so enumerating what it issues
@@ -166,7 +171,8 @@ projection out.
 | timestep embedding | `[B, 320]` then `[B, 1280]` | fp16 | `Flat` / `Entry` |
 
 The transposed `v` is not a preference: `kernels.flash_attention` declares
-`v = L.In(..., Dv, Lkv)`, SOURCE `compiler/kohakutpu/kernels/attention.py:34`.
+`v = L.In(..., Dv, Lkv)`, SOURCE
+`compiler/kohakutpu/kernels/attention.py:139`.
 
 ### 1.5 The VAE decoder
 
@@ -229,27 +235,32 @@ the last two levels, where the plane is 512x512 and 1024x1024.
 
 ### 2.2 Against this machine
 
-Peak, ARITHMETIC from `results.md` §8's 512 MAC/cycle per cluster and the v7
-population of 8+2 / 6+2 / 8+2 / 8+2:
+Peak, **ARITHMETIC** from [results.md](results.md) §8's measured 512 MAC/cycle
+per cluster and the v7 population of 8+2 / 6+2 / 8+2 / 8+2, which is 30 matmul
+clusters and 8 vector cores:
 
 ```
    30 clusters x 512 MAC/cycle = 15,360 MAC/cycle
-   at mat_clk2x = 600 MHz (ship profile)   9.22e12 MAC/s = 18.4 TFLOP/s
-   at mat_clk2x = 300 MHz (mid profile)    4.61e12 MAC/s =  9.2 TFLOP/s
+   at a matmul clock of 400 MHz  6.14e12 MAC/s = 12.3 TFLOP/s
+   at a matmul clock of 300 MHz  4.61e12 MAC/s =  9.2 TFLOP/s
 ```
 
-> The board note in `boards/multimesh_v7.json` reads `8+2 / 6+2 / 8+2 / 8+2 =
-> 36 units`. That arithmetic is 10+8+10+10 = **38**, of which 30 are clusters
-> and 8 are vector cores. The 36 is not reproduced here; the cluster count 30 is
-> what the table above uses.
+> **400 MHz is the ceiling this silicon has been measured to, not the one the
+> board profile asks for.** The `ship` profile requests 600 MHz on the matmul
+> domain; laddered on the card, that domain is bit-identical to 400, degrades at
+> 450 and dies at 700, and at 600 the error is 157% ([results.md](results.md)
+> §9.5). **A peak quoted at 600 MHz describes a machine that does not exist**,
+> so the rows below stop at 400. The card currently runs its meshes at 100–150
+> MHz ([multi-mesh.md](multi-mesh.md) §8.1), which is another factor again.
 
-| | at 600 MHz | at 300 MHz |
+| | at 400 MHz | at 300 MHz |
 |---|---|---|
-| 208 TMAC at 100% of peak | 22.6 s | 45.1 s |
-| at 75.5%, the best MEASURED large-GEMM efficiency (`results.md` §8.2) | 29.9 s | 59.7 s |
-| VAE decode alone, at 100% | 0.57 s | 1.14 s |
+| 208 TMAC at 100% of peak — an unreachable bound, stated as one | 33.9 s | 45.1 s |
+| at 75.5%, the best MEASURED large-GEMM efficiency ([results.md](results.md) §8.2) | 44.8 s | 59.7 s |
+| VAE decode alone, at 100% | 0.85 s | 1.14 s |
 
-Nothing in §2 is the problem. §4 is the problem.
+Nothing in §2 is the problem. §4 is the problem — and it is the problem by a
+margin that no clock choice in this table would close.
 
 ### 2.3 Parameters and footprint
 
@@ -453,7 +464,8 @@ Five facts from the RTL that decide what each is good for:
    "a foreign mesh's address is not ours and passes through, which is what lets
    mesh 0 reach mesh 3's L2." **This is the one store on the card that two
    different units can hand a tensor through.**
-2. **Only its narrow port is wired.** `mag_stage_port.v:167` ties `a_req` to
+2. **Only its narrow port is wired.**
+   `src/kohakuaccel/sysnode/core/mag_stage_port.v:174` ties `a_req` to
    zero: the entry-granular 1,024-bit port A — the whole subject of
    `notes/cache/mag-staging.md` §2 — is unused, and all traffic goes through the
    256-bit port B, one claimed burst at a time, round-robin. So the store's
@@ -557,9 +569,11 @@ the checkpoint array, and the batch axis rides the WEIGHT:
 
 MEASURED: `np.array_equal` with the wide projection followed by a host permute.
 
-**It costs NOTHING. The `gn = 4` this page used to predict is wrong.** A lane
-group is FOUR elements, so `gn = 8` covers 32 columns and a 64-wide head is TWO
-whole N tiles — the tiling never changes and nothing is recomputed. MEASURED at
+**It costs NOTHING**, and the reason is a property of the head width rather than
+of the split. A lane group is FOUR elements, so `gn = 8` covers 32 columns and a
+64-wide head is TWO whole N tiles — the tiling never changes and nothing is
+recomputed. A head width that was *not* a whole number of N tiles would force
+`gn = 4` and the penalty in the third row below. MEASURED at
 `256x1280 -> 20 heads x 64`, and the same at `1024x640 -> 10x64` and
 `256x2048 -> 20x64`:
 
@@ -628,8 +642,9 @@ and never read — the temps are reused across key blocks, so after block `j` re
 `scores` as `flat`, block `j+1`'s DRAIN wrote the whole buffer as `tile` and the
 old order was already dead. They are no longer executed or charged. **The list is
 therefore no longer the authority: anything that zips `compiled.conversions`
-against `cost.relayouts` misaligns after the first drop**, which is how an
-earlier version of this section mislabelled a `tile -> flat` at 152 cycles.
+against `cost.relayouts` misaligns after the first drop**, and the resulting
+mislabelling is silent — a conversion's cost gets attributed to the wrong pair
+of layouts, which reads as a plausible number rather than as an error.
 
 **What is left is two granule transposes a key block, and they are 99.6% of it.**
 Priced from each conversion's own layouts at `4x256`:
@@ -787,8 +802,6 @@ It deletes one of the three handoffs, worth 38,511 cycles per key block —
 
 ### 5.3 Cross-unit and cross-mesh staging through the MAG L2
 
-### 5.3 Cross-unit and cross-mesh staging through the MAG L2
-
 **Level: compiler + driver.** This is the answer to "how to use L2 to cache
 temporary state so a transpose does not round-trip through DRAM".
 
@@ -845,7 +858,8 @@ operand that is streamed.** `K` and `V` are re-read by every query block; `Q` an
 the output are streamed. Put `K` and `V` in L2, per head, and the DRAM traffic of
 a self-attention drops by the query-block count.
 
-**Cross-mesh.** `mag_stage.v:69` tests the mesh id absolutely, and the header
+**Cross-mesh.** `src/kohakuaccel/sysnode/core/mag_stage.v:69` tests the mesh id
+absolutely, and the header
 says a foreign address passes through — so mesh 0 writing
 `SPECIAL_BIT | (3 << 36) | off` lands in mesh 3's L2. Combined with
 `cross-mesh is write-only` (push, never pull) and the doorbell, an all-to-all
@@ -859,13 +873,12 @@ host traffic and says do not plan around it until someone follows the path.
 ### 5.4 LayerNorm and softmax at SDXL's widths
 
 **Level: compiler. BUILT and MEASURED.** `kernels/wide.py`, `ops/norm.py`,
-`api.py`; `compiler/tests/test_sdxl_norms.py`. Kept in full because the fix this
-page first prescribed is IMPOSSIBLE, and that is worth more than the fix.
+`api.py`; `compiler/tests/test_sdxl_norms.py`. The impossibility proof below is
+worth more than the fix, because it rules out the obvious approach for good.
 
-`kernels/wide.py:_legal` USED TO demand a power-of-two sub-row count because
-`fold_flat` halved what was left at every level. `kernels/groupnorm.py:fold`
-solves the same problem and **does not** have the restriction — it lifts an odd
-row into a buffer of its own length and folds it in at the end:
+A fold that halves what is left at every level demands a power-of-two sub-row
+count. The group-norm fold solves the same problem without that restriction — it
+lifts an odd row into a buffer of its own length and folds it in at the end:
 
 ```python
     tails, n = [], rows
@@ -1141,7 +1154,8 @@ is "thousands of operations per token, not billions" (`vector-core.md` §9), and
 head**. It is the one operator in the pipeline that `flash_attention` does not
 fit, for two reasons:
 
-1. **`block == Dv` is required** (`attention.py:47`), and `Dv = 512` here. A
+1. **`block == Dv` is required**
+   (`compiler/kohakutpu/kernels/attention.py:152`), and `Dv = 512` here. A
    512-wide key block against a 16,384-long key axis is 32 blocks, which is fine,
    but the temps become `span x 512`, and with `qblock` unset `span = 16,384` —
    16 MB per temp, against 2 MB of L2 and three temps.
@@ -1173,7 +1187,7 @@ blocker.
 | C3a | ~~converts buffers the next stage overwrites~~ **CLOSED.** `3*blocks - 3` of `flash_attention`'s conversions are no longer run or charged | MEASURED: `4x256` went from 21 run to 12, and `cost.time` from 739,258 to 507,352. `compiled.conversions` still LISTS 21, so it is no longer the authority — do not zip it against `cost.relayouts` |
 | C3b | **`Buffer.repeated` serves ONE grid instance.** `_agree` exempts a broadcast from the length rule; `_span` and `_at` still charge it `part * instance` | MEASURED: 1,152 of 2,048 elements unwritten and success reported, §5.4 |
 | C4 | No L2 address can be formed. `machinespec.SPECIAL_BIT` is dead; `global_addr` raises above 1<<36 | SOURCE |
-| C5 | No transpose, permute or slice view in the DSL. `Spread` is "the only address-dependent operand this DSL has" | SOURCE `lang/buffers.py:257` |
+| C5 | No transpose, permute or slice view in the DSL. `Spread` — a buffer read periodically, `take` elements of every `period` — is the only address-dependent operand it has | SOURCE `compiler/kohakutpu/lang/buffers.py:269` |
 | C6 | A per-channel epilogue operand cannot be **staged** — `linear_bias` is fused-only | `hardware-wants.md` §7 |
 | C6a | **A fused epilogue has no FORM for a full-shape operand.** Its one side operand is spelled `b[j]` and lowered as a per-CHANNEL walk; `acc_o[a, b]` is a `Slice`, which has no arithmetic. The budget is there — 7 of 8 descriptors, 256 of 320 L1 words at `gm=gn=8` — the spelling is not | MEASURED: four rewrites, §5.2a. Worth 20.8% of a `4x256` flash call |
 | C7 | ~~the cost model does not price a MAG round trip~~ **`cost.relayouts` now prices a conversion**, which is how §5.2a was measured at all | — |
@@ -1205,15 +1219,16 @@ blocker.
 
 1. ~~**Whether a remote *staging* address forwards over the interlink.**~~
    **SETTLED, and the answer is no.** `mag_ilink`'s AXI slave side is wired to
-   the mover's write channel alone (`mag.v:667-671`); a compute unit's request
+   the mover's write channel alone
+   (`src/kohakuaccel/sysnode/core/mag.v:667-671`); a compute unit's request
    and a host access both reach `M_AXI_DRAM` with the full 40-bit address and
    land in local DRAM above 64 GB, where nothing answers. Only the mover
    crosses. §5.3's cross-mesh half therefore needs a mover pass on the
    **sending** side, not a remote address on the receiving one.
-2. **The memory mover's rate.** The 98 MB/s figure that kills branch B in
-   `conv2d.md` §6 predates the mover rebuild and must not be quoted. Nothing
-   here uses a mover rate; §5.8 chooses the vector-core form partly for that
-   reason.
+2. **The memory mover's rate.** There is none to quote: the figure branch B in
+   [conv2d.md](conv2d.md) §6 was once decided against predates the mover rebuild
+   and has been withdrawn. Nothing here uses a mover rate; §5.8 chooses the
+   vector-core form partly for that reason.
 3. **Whether the unit models are byte-faithful across an unexecuted
    conversion.** MEASURED: `mlp` records a `Tile -> Entry` conversion, the
    two orders differ in 16,192 of 16,384 elements, and the kernel nonetheless
@@ -1221,8 +1236,8 @@ blocker.
    two-call form. The `relayouts` counter says why: the runtime performed a
    host round trip. That is consistent, but it has **never been run on
    silicon**, and it is the first thing to check when `mlp` next is.
-4. **Everything on this page is simulation.** No conv, no attention, no norm
-   figure here came off the card, and the card was hung when this was written.
+4. **Everything on this page is simulation.** No conv, no attention and no norm
+   figure here came off the card.
 5. **`gn = 4` for a 64-wide head projection** (§5.2) has not been measured
    against `gn = 8`. The intensity arithmetic says 5.3 against 8.0; whether that
    shows at 700-900 MAC/byte is an experiment, not a derivation.
@@ -1234,16 +1249,15 @@ blocker.
 Effort is in the units this project has used before — a compiler change that
 touches one pass, or an RTL change with a bench.
 
-**DONE**, and kept here so the cost estimates can be checked against what they
-turned out to be:
+**BUILT**, with what each one is and what it unlocked:
 
-| item | level | what it turned out to be | what it unlocked |
+| item | level | what it is | what it unlocked |
 |---|---|---|---|
-| §5.4 split `fold_flat` | compiler | one pass in `kernels/wide.py`, but NOT the odd tail this page prescribed — that is impossible, see §5.4 | **all 210 LayerNorms and all 46 GroupNorms** |
+| §5.4 split `fold_flat` | compiler | one pass in `kernels/wide.py`. A **split** at the power of two below an odd count, not a periodic tail — §5.4 proves the tail impossible | **all 210 LayerNorms and all 46 GroupNorms** |
 | §5.5 `group_norm_wide` | kernel | one kernel sharing `layernorm_wide`'s arithmetic, plus the SiLU pair | the UNet and VAE resnet normalisation |
-| §5.2 head split as an N-partition | kernel | a RESHAPE and two kernels; **x1.00 cycles and x1.00 flits**, not the 1.32x this page predicted | requirements 20 and 22, and 4 host permutes per attention |
-| §5.1 execute `conversions` on the card | compiler | done by the relayout work | the host, out of every INTRA-kernel relayout |
-| §5.6 stride-2 packer | compiler | `ConvEntry(step=)` — not `stride=`, which collides with the batch stride `_held` reads | the 2 `Downsample2D`, against a MEASURED **4.00x** |
+| §5.2 head split as an N-partition | kernel | a RESHAPE and two kernels, at **x1.00 cycles and x1.00 flits** | requirements 20 and 22, and 4 host permutes per attention |
+| §5.1 execute `conversions` on the card | compiler | the relayout path in [relayout.md](relayout.md) | the host, out of every INTRA-kernel relayout |
+| §5.6 stride-2 packer | compiler | `ConvEntry(step=)` — the name is `step`, not `stride`, which collides with the batch byte stride the backend reads | the 2 `Downsample2D`, against a MEASURED **4.00x** |
 | §5.8 upsample fused into conv | kernel | four 2x2 convolutions on the original plane, weights folded at load | the 2 `Upsample2D` and the VAE's 3, at **2.0-2.15x** and a quarter of the activation |
 
 **LEFT**, in the order the evidence now argues for:
@@ -1262,10 +1276,10 @@ turned out to be:
 
 ## 8. The order the evidence argues for
 
-Rewritten once the cycles were measured rather than reasoned about. The first
-version of this list put the head split first because it "deletes work"; that
-was right about the permutes and **wrong about where the time goes**, and §5.2a
-is the correction.
+Ordered by measured cycles, not by how much work an item appears to delete.
+Those two orderings disagree here: deleting host permutes is real and removes
+**zero cycles of conversion** (§5.2), while the item that changes the floor is
+the one nothing at the kernel or compiler level can reach.
 
 1. **The drain order, in RTL.** §5.2b: conversions are 49-68% of a flash call,
    99.6% of that is the two `tile <-> flat` crossings, and they exist because
@@ -1360,7 +1374,7 @@ since no UNet count reaches 32 channels a group.
 |---|---|
 | `ResnetBlock2D` | runs |
 | down-block (2 resnets + downsample) | runs |
-| `BasicTransformerBlock` | **BLOCKED, not refused** — `isa/relayout.py:361` reads an undefined `MASK_ROWS`, so every granule conversion raises `AttributeError` and `flash_attention` cannot plan. An in-flight edit in another agent's file, not a property of the kernels |
+| `BasicTransformerBlock` | not assembled here. Its parts each run; the composed fragment has not been graded, and §9.2's host-move accounting is what it would have to carry |
 
 Two traps the assembly turned up, both in the caller and worth writing down:
 

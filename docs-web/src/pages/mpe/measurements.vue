@@ -370,7 +370,7 @@ const tick = (t) => (t === 0 ? "0" : `${t / 1000}k`);
   <DocPage
     title="SIMT PE measurements"
     summary="Eight synthesis sweeps over the SIMT unit, its scheduler, its cross-lane networks and the assembled PE. One part, synthesis only."
-    domain="mpe"
+    domain="simt"
     status="measured"
     :source="`build/sweep_gpu-*.md · scripts/py/ooc_sweep.py · scripts/tcl/ooc_simt_pe.tcl · ${PART} · ${TOOL}`"
   >
@@ -381,14 +381,41 @@ const tick = (t) => (t === 0 ? "0" : `${t / 1000}k`);
       <p>
         Everything on this page is <b>out-of-context synthesis</b> — no
         optimisation, no placement, no routing. It sizes designs and ranks
-        options. It closes nothing.
+        options. It closes nothing, and this repository has measured a module
+        lose <b>0.740&nbsp;ns</b> between synthesis and routing, so a small
+        negative slack here is not something placement absorbs.
         <b>LUT is not independent of the constraint</b> either: synthesis spends
         area chasing timing it cannot reach, so every table carries the period
         it was asked for. How a row is produced, and the two guards in that path
         that failed silently first, are on
-        <a class="text-gem hover:underline" href="#/framework/measurements"
-          >the framework's measurement page</a
+        <RouterLink to="/framework/measurements" class="doc-link"
+          >the framework's measurement page</RouterLink
         >.
+      </p>
+    </Callout>
+
+    <Callout
+      kind="trap"
+      title="Every row on this page is -flatten_hierarchy none, and none is not the ship"
+    >
+      <p>
+        Nothing in <code>scripts/tcl</code> sets
+        <code>FLATTEN_HIERARCHY</code> on the ship's synthesis run, so the ship
+        takes Vivado's own default, <code>rebuilt</code>. Measured on the
+        assembled PE at the same request, <code>none</code> read
+        <b>636 LUT high</b> — 22,257 against 21,621 — because a preserved
+        boundary cannot trim an unread output port or fold a constant across a
+        module edge.
+      </p>
+      <p>
+        <code>none</code> is what makes a per-block row <b>attributable</b>,
+        which is exactly what a ladder needs, so it stays the diagnostic and it
+        is the right setting for everything here.
+        <b>A row quoted against a budget must be <code>rebuilt</code></b>, and
+        the arithmetic-tier tables on the
+        <RouterLink to="/mpe/simt" class="doc-link">SIMT PE page</RouterLink>
+        are — so the two sets of figures do not subtract. The symptom of mixing
+        them is a delta of a few hundred LUT that reads as a design change.
       </p>
     </Callout>
 
@@ -404,7 +431,8 @@ const tick = (t) => (t === 0 ? "0" : `${t / 1000}k`);
       The ladder is arranged so that one gate turns one generic on one module,
       which makes each delta attributable to that parameter and nothing else. A
       gate that is not built elaborates <i>none</i> of its logic — that property
-      is what lets the deltas be added up, and it has leaked once already.
+      is what lets the deltas be added up, and a gate that leaks any logic when
+      off makes every delta below it unattributable.
     </p>
 
     <ResourceBars
@@ -472,29 +500,57 @@ const tick = (t) => (t === 0 ? "0" : `${t / 1000}k`);
       title="16,115 LUT at eight lanes — inside the band, and 118 MHz short of the mesh clock"
     >
       <p>
-        The area lands where the design wanted it: <b>16,115 LUT</b> against a
-        20–25k target, with room. It is an <b>integer-only</b> machine —
-        <code>kht_valu</code> is LANES copies of the base RV32I ALU and the SIMT
-        ISA has no float encodings — so it must not be read against a budget
-        that assumes float capability.
+        The area lands where the design wanted it: <b>16,115 LUT</b> against the
+        20–25k band this PE is judged against, with room. But
+        <b>it must not be read against a budget that assumes arithmetic</b>:
+        this row carries <b>no float units and no multiplier</b>.
+        <code>kht_valu</code> is <code>LANES</code> copies of the base RV32I
+        ALU — ten operations, no multiplier and no float
+        <i>inside that module</i> — and the float units and the multiplier
+        arrive as <b>sibling</b> modules beside it,
+        <code>kht_fpu</code> and <code>kht_imul</code>. That is exactly why the
+        ladder never sees them, and why the ladder's totals are not the PE. The
+        SIMT PE <b>does</b> have a float tier and RV32M, both built and both
+        run; what they cost is a
+        <RouterLink to="/mpe/simt" class="doc-link">separate table</RouterLink>
+        taken at a different flatten setting.
       </p>
       <p>
-        <b>Sixteen lanes is 29,961</b>: past the 25k target, at the 30k review
+        <b>Sixteen lanes is 29,961</b>: past the 25k band, at the 30k review
         line, and slower still. Its LUTRAM barely moves — 3,538 to 3,568 across
-        a fourfold change in LANES — so all of that growth is logic.
+        a fourfold change in <code>LANES</code> — so all of that growth is
+        logic.
       </p>
       <p>
         And <b>182.0&nbsp;MHz against a 300&nbsp;MHz mesh clock.</b> Every
-        <code>kht_unit</code> row sits at 324.1; the assembly does not. Summing
-        submodules also underestimated the area by <b>2,515 LUT — 18%</b>. Both
-        are the same lesson.
+        <code>kht_unit</code> row sits at 324.1; the assembly does not.
+      </p>
+    </Callout>
+
+    <Callout
+      kind="trap"
+      title="These assembled rows are a starting point, not a result"
+    >
+      <p>
+        They <b>predate the frequency work</b> described on the
+        <RouterLink to="/mpe/simt/microarchitecture" class="doc-link"
+          >microarchitecture page</RouterLink
+        >, which took this same shape from <b>182 to 394 MHz on 321 LUT
+        fewer</b> — breaking long combinational cones lets the tool pack simpler
+        logic, and the only thing that grew was flip-flops. They also predate
+        the arithmetic tier entirely.
+      </p>
+      <p>
+        The 4- and 16-lane rows have <b>never been re-swept</b>, so they remain
+        the only figures that exist for those widths. Read them as the shape of
+        lane scaling on an assembled PE, and not as what the PE measures today.
       </p>
     </Callout>
 
     <SpecTable
       :cols="nameTheTop.cols"
       :rows="nameTheTop.rows"
-      caption="Name the top. Three times now, the same rule has been collected on — and each time the number came from a level nobody was measuring."
+      caption="Name the top. Each figure below came from a different level, and a frequency quoted without its top module names none of them."
     />
 
     <h2 class="doc-h2">What a wave actually costs, in three parts</h2>
@@ -533,9 +589,9 @@ const tick = (t) => (t === 0 ? "0" : `${t / 1000}k`);
     <p class="doc-p">
       <code>kht_unit</code> is straight in LANES and flat in frequency across a
       factor of eight, because <b>there is no cross-lane network in it</b> —
-      lanes are independent, so a wider array is wider and not deeper. That
-      caveat has since been collected on twice: the banked LDS is quadratic and
-      the butterfly is N&nbsp;log&nbsp;N, and both cost clock.
+      lanes are independent, so a wider array is wider and not deeper. Two
+      structures break that caveat: the banked LDS is quadratic and the
+      butterfly is N&nbsp;log&nbsp;N, and both cost clock.
     </p>
 
     <Fig

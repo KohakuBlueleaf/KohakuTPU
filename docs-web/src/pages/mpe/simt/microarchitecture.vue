@@ -29,7 +29,7 @@ const unit = {
 
     {
       id: "pcq",
-      x: 11.5,
+      x: 12.5,
       y: 0,
       w: 10,
       label: "nxt[wave]",
@@ -37,7 +37,7 @@ const unit = {
     },
     {
       id: "imem",
-      x: 11.5,
+      x: 12.5,
       y: 6,
       w: 10,
       label: "imem window",
@@ -45,7 +45,7 @@ const unit = {
     },
     {
       id: "ictl",
-      x: 11.5,
+      x: 12.5,
       y: 11,
       w: 10,
       label: "ictl window",
@@ -55,7 +55,7 @@ const unit = {
 
     {
       id: "fetch",
-      x: 23,
+      x: 25,
       y: 0,
       w: 11,
       label: "fetch",
@@ -63,7 +63,7 @@ const unit = {
     },
     {
       id: "ex",
-      x: 23,
+      x: 25,
       y: 6,
       w: 11,
       label: "EX",
@@ -72,7 +72,7 @@ const unit = {
     },
     {
       id: "sfile",
-      x: 23,
+      x: 25,
       y: 11,
       w: 11,
       label: "scalar file + SALU",
@@ -81,7 +81,7 @@ const unit = {
 
     {
       id: "vreg",
-      x: 37,
+      x: 38.5,
       y: 6,
       w: 10,
       label: "kht_vregfile",
@@ -90,7 +90,7 @@ const unit = {
     },
     {
       id: "mask",
-      x: 37,
+      x: 38.5,
       y: 11,
       w: 10,
       label: "mask + IPDOM",
@@ -99,7 +99,7 @@ const unit = {
     },
     {
       id: "valu",
-      x: 37,
+      x: 38.5,
       y: 16,
       w: 10,
       label: "kht_valu",
@@ -108,7 +108,7 @@ const unit = {
     },
     {
       id: "fpu",
-      x: 37,
+      x: 38.5,
       y: 21,
       w: 10,
       label: "kht_fpu · kht_imul",
@@ -116,11 +116,11 @@ const unit = {
       accent: true,
     },
 
-    { id: "lsu", x: 50, y: 0, w: 10, label: "LSU", sub: "walks lanes" },
+    { id: "lsu", x: 51, y: 0, w: 10, label: "LSU", sub: "walks lanes" },
 
     {
       id: "comp",
-      x: 62,
+      x: 63.5,
       y: 0,
       w: 10,
       label: "completion",
@@ -128,13 +128,13 @@ const unit = {
     },
     {
       id: "l1",
-      x: 62,
+      x: 63.5,
       y: 6,
       w: 10,
       label: "rv_l1",
       sub: "write-back, ONE miss",
     },
-    { id: "mag", x: 62, y: 11, w: 10, label: "fabric → MAG", sub: "DRAM" },
+    { id: "mag", x: 63.5, y: 11, w: 10, label: "fabric → MAG", sub: "DRAM" },
   ],
   edges: [
     { from: "kick:r", to: "pcq:l", dir: "h", accent: true },
@@ -163,7 +163,7 @@ const unit = {
       label: "flush, then done",
     },
   ],
-  groups: [{ x: 36, y: 5.9, w: 12, h: 18.5, label: "kht_unit" }],
+  groups: [{ x: 37.5, y: 5.9, w: 12, h: 18.5, label: "kht_unit" }],
 };
 
 // ------------------------------------------------------- decode at image load
@@ -1102,7 +1102,7 @@ const ipdom = [
   {
     title: "join — phase 1 takes the OUTER mask, and pops",
     instr: "join",
-    note: "mask ← pair0.outer = 11111111. sp = 0, phase = 0. Reconverged, and the pointer is back where it started — which is exactly what gpu_nested.s proves, at two levels.",
+    note: "mask ← pair0.outer = 11111111. sp = 0, phase = 0. Reconverged, and the pointer is back where it started — which is exactly what simt_nested.s proves, at two levels.",
     mask: OUTER,
     pred: null,
     active: 8,
@@ -1739,7 +1739,7 @@ const shadow = {
       y: 1,
       w: 14,
       label: "kht_fpu",
-      sub: "8 × khs_float_lane",
+      sub: "FLANES × rv_fpu · FSFU_UNITS of them with a khs_fp32_sfu beside",
       accent: true,
     },
     {
@@ -1841,7 +1841,7 @@ const fpendTrace = {
       tone: "good",
     },
     {
-      text: "The cycle count here is illustrative: FLAT is 15, drawn short so the mechanism is visible in one screen.",
+      text: "The cycle count here is illustrative: FLAT is the tier's own latency — 6 with no seed units built and 10 with them — drawn short so the mechanism is visible in one screen.",
     },
   ],
 };
@@ -1875,7 +1875,7 @@ const notScoreboard = {
 
 const measuredLatency = {
   cols: [
-    { key: "l", label: "gpu_float.s launched", align: "right", mono: true },
+    { key: "l", label: "simt_float.s launched", align: "right", mono: true },
     { key: "c", label: "cycles", align: "right", mono: true },
     { key: "w", label: "work", align: "right", mono: true },
   ],
@@ -2071,15 +2071,14 @@ const noDatapath = {
       _tone: "bad",
     },
     {
-      i: "the eight FLT encodings",
-      needs: "the float tier — <code>HAS_FLT</code>",
+      i: "the FLT encodings",
+      needs: "float units — <code>FLANES &gt; 0</code>",
       does: "<b>illegal → FAULT (cause 3)</b>",
       _tone: "bad",
     },
     {
-      i: "mul · mulh · mulhsu · mulhu",
-      needs:
-        "<code>HAS_FLT</code> — the multiplier shares the float tier's retire slot and its pending bit, so there is no float-free build with a multiplier",
+      i: "the four seed encodings",
+      needs: "seed units — <code>FSFU_UNITS &gt; 0</code>, a subset of the float units",
       does: "<b>illegal → FAULT (cause 3)</b>",
       _tone: "bad",
     },
@@ -2904,7 +2903,7 @@ const trapTable = {
     <SpecTable
       :cols="ldsPasses.cols"
       :rows="ldsPasses.rows"
-      caption="Measured on hardware by gpu_lds.s. The reversed case is the one that proves the RETURN CROSSBAR: bank 7's word has to reach lane 0, rather than lane 0 always taking bank 0. Two cycles a pass, because the banks register their address — drive, then take — and `done` is a cycle after 'no lanes left', or the caller reads lrdata one pass stale."
+      caption="Measured on hardware by simt_lds.s. The reversed case is the one that proves the RETURN CROSSBAR: bank 7's word has to reach lane 0, rather than lane 0 always taking bank 0. Two cycles a pass, because the banks register their address — drive, then take — and `done` is a cycle after 'no lanes left', or the caller reads lrdata one pass stale."
     />
 
     <h2 class="doc-h2">The subgroup butterfly</h2>
@@ -2938,7 +2937,11 @@ const trapTable = {
       The float tier and the multiplier: one shadow pipe, two producers
     </h2>
     <p class="doc-p">
-      Both are 15 cycles at II = 1, and that is not a coincidence — giving the
+      Both retire at the tier's latency <code>ALAT</code>, one instruction per
+      cycle — <b>6 cycles with no seed units built and 10 with them</b>, because
+      a seed is four stages deeper and the multiply-add path pads to match so
+      the tier has one latency and one retire shadow. That the two match is not
+      a coincidence — giving the
       multiplier the float tier's <i>exact</i> latency makes a write-port
       collision <b>structurally impossible</b> instead of arbitrated: two
       results can only want the port on one cycle if they were issued on one
@@ -2946,7 +2949,7 @@ const trapTable = {
     </p>
 
     <Fig
-      caption="fsh_* is a shadow shift register exactly FLAT deep, carrying the valid bit, the destination, the mask and the wave — everything the lane array does not carry. It MUST match vec_alu's own depth, because if the two disagree a result lands on the wrong register with no witness. It is free-running, like the lane array it shadows: vec_alu has no clock enable, so gating this would desynchronise the two."
+      caption="Every float unit is one rv_fpu — the FRAMEWORK's, because RV32F is a standard extension over IEEE binary32 — and a seed unit carries a khs_fp32_sfu beside it. Neither is forked from the SIMD tier, which is what makes a SIMT float result comparable to a SIMD one element for element. fsh_* is a shadow shift register exactly FLAT deep, carrying the valid bit, the destination address, the write mask, the wave and the pass index — everything the lane array does not carry. It MUST match the array's own depth, because if the two disagree a result lands on the wrong register with no witness, and both modules check the depth they were told against the depth they built at elaboration. It is free-running, like the lane array it shadows: the array has no clock enable, so gating this would desynchronise the two."
       zoom
       wide
     >
@@ -3007,10 +3010,10 @@ const trapTable = {
         <code>(* srl_style = "register" *)</code> refuses the SRL16E the shape
         would otherwise map to. An SRL16E is
         <b>one LUT per bit at any depth</b>, and this PE is LUT-bound while the
-        flop half of the CLB is idle:
-        <b>−256 LUT for +3,329 FF at an identical 365.6 MHz</b>, measured at the
-        2.857 ns ask. At 2.500 the same change read as −15.6 MHz — an artifact
-        of asking for timing the design was not going to meet, not a property of
+        flop half of the CLB is idle: the change measured
+        <b>−256 LUT for +3,329 FF at an unchanged Fmax</b> on a matched pair. At
+        a much tighter target the same change read as −15.6 MHz — an artifact of
+        asking for timing the design was not going to meet, not a property of
         the pad.
       </p>
       <p>
@@ -3085,7 +3088,7 @@ const trapTable = {
     <SpecTable
       :cols="noDatapath.cols"
       :rows="noDatapath.rows"
-      caption="A build that cannot do something FAULTS rather than returning a plausible wrong answer — running gpu_shfl.s against a HAS_SHFL = 0 build halts with cause 3, which is the fault working, not a regression. bar is the one exception and it should not be: with one wave per workgroup a no-op happens to be correct, and with more than one it is a race with no witness."
+      caption="A build that cannot do something FAULTS rather than returning a plausible wrong answer — running simt_shfl.s against a HAS_SHFL = 0 build halts with cause 3, which is the fault working, not a regression. bar is the one exception and it should not be: with one wave per workgroup a no-op happens to be correct, and with more than one it is a race with no witness."
     />
 
     <Callout

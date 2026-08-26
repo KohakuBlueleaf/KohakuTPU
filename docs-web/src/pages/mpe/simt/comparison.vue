@@ -1,10 +1,22 @@
 <script setup>
-// ===========================================================================
-// SIMT PE — where this lands against shipped GPUs.
-// Drawn from docs/projects/kohakumpe/simt/comparison.md. Every figure for this machine is
-// one accelerator on one part, xcvu13p-fhgb2104-2L-e, out-of-context synthesis
-// at the 2.857 ns ask (350 MHz) unless a row says otherwise.
-// ===========================================================================
+/* Where the arithmetic width lands against shipped mobile GPUs.
+ *
+ * PROVENANCE. Two kinds of number appear here and they are kept apart.
+ *
+ *   WIDTH — fused multiply-adds issued per clock by a named configuration.
+ *   Arithmetic over unit counts. Exact, and the load-bearing half of the page.
+ *
+ *   RATE — GFLOP/s and instructions per fragment. Width multiplied by an
+ *   ASSUMED 350 MHz. No frequency figure in this project is a closed-timing
+ *   result and no mesh of these PEs has been placed, so every rate is PROJECTED
+ *   and labelled.
+ *
+ * AREA is deliberately absent. Every published LUT total for either PE predates
+ * the float tier's rebuild in binary32, so no figure this project has can say
+ * whether the mesh below fits. Source: docs/projects/kohakumpe/simt/comparison.md
+ * and unit-counts.md.
+ */
+const CLK = 350;
 
 const shipped = {
   cols: [
@@ -24,54 +36,11 @@ const shipped = {
   ],
 };
 
-const measured = {
-  cols: [
-    { key: "u", label: "Unit" },
-    { key: "lut", label: "LUT", align: "right", mono: true },
-    { key: "ff", label: "FF", align: "right", mono: true },
-    { key: "bram", label: "BRAM", align: "right", mono: true },
-    { key: "dsp", label: "DSP48", align: "right", mono: true },
-    { key: "f", label: "Fmax", align: "right", mono: true },
-    { key: "s", label: "slack", align: "right", mono: true },
-  ],
-  rows: [
-    {
-      u: "<b>SIMT PE</b> — 8 int + 8 float lanes, RV32M",
-      lut: "<b>21,586</b>",
-      ff: "17,268",
-      bram: "30.5",
-      dsp: "<b>48</b>",
-      f: "<b>365.6 MHz</b>",
-      s: "+0.122",
-      _tone: "good",
-    },
-    {
-      u: "<b>SIMD PE</b> — SIMD 8 + 4 float lanes",
-      lut: "<b>13,772</b>",
-      ff: "10,126",
-      bram: "13",
-      dsp: "<b>72</b>",
-      f: "353.4 MHz",
-      s: "+0.027",
-      _tone: "good",
-    },
-    {
-      u: "controller PE — <code>rv_pe</code>, SIMD_EN = 0",
-      lut: "2,477",
-      ff: "4,140",
-      bram: "5",
-      dsp: "0",
-      f: "377.9 MHz",
-      s: "—",
-    },
-  ],
-};
+const perClock = `   SIMD PE at 4 float units                  4 FMA/clk
+   SIMT PE at 8 float units                  8 FMA/clk
 
-const perClock = `   SIMD PE, 4 float lanes                    4 FMA/clk
-   SIMT PE, 8 float lanes                    8 FMA/clk
-
-   mesh = 8 DSP x 4  +  4 GPU x 8   =  32 + 32  =  64 FMA/clk
-   device = 4 meshes                             = 256 FMA/clk`;
+   mesh   =  8 SIMD x 4  +  4 SIMT x 8  =  32 + 32  =   64 FMA/clk
+   device =  4 meshes                              =  256 FMA/clk`;
 
 const meshFig = {
   nodes: [
@@ -79,134 +48,47 @@ const meshFig = {
       id: "simd",
       x: 0,
       y: 0,
-      w: 14,
+      w: 10,
+      h: 6,
       label: "8 × SIMD PE",
-      sub: "4 float lanes each → 32",
+      sub: "4 float units each → 32 FMA/clk",
     },
     {
       id: "simt",
       x: 0,
-      y: 5,
-      w: 14,
+      y: 8,
+      w: 10,
+      h: 6,
       label: "4 × SIMT PE",
-      sub: "8 float lanes each → 32",
+      sub: "8 float units each → 32 FMA/clk",
       accent: true,
     },
     {
-      id: "ctl",
-      x: 0,
-      y: 10,
-      w: 14,
-      label: "2 × controller PE",
-      sub: "no float lanes",
-    },
-    {
       id: "sum",
-      x: 20,
-      y: 4.4,
-      w: 14,
+      x: 16,
+      y: 4,
+      w: 10,
+      h: 6,
       label: "one mesh",
-      sub: "64 FP FMA / clock",
+      sub: "64 FP FMA per clock",
       accent: true,
     },
     {
       id: "g610",
-      x: 38,
-      y: 4.4,
-      w: 16,
-      label: "one Mali-G610 shader core",
-      sub: "64 FMA/clk — parity on width",
-      accent: true,
+      x: 32,
+      y: 4,
+      w: 10,
+      h: 6,
+      label: "one Mali-G610 or G710 shader core",
+      sub: "64 FMA/clk",
     },
   ],
   edges: [
-    { from: "dsp:r", to: "sum:l", dir: "h" },
-    { from: "gpu:r", to: "sum:l", dir: "h", accent: true },
-    { from: "ctl:r", to: "sum:l", dir: "h", dash: true },
-    { from: "sum:r", to: "g610:l", dir: "h", accent: true, label: "=" },
+    { from: "simd:r", to: "sum:l", dir: "h" },
+    { from: "simt:r", to: "sum:l", dir: "h", accent: true },
+    { from: "sum:r", to: "g610:l", dir: "h", accent: true, label: "same width" },
   ],
 };
-
-const meshFit = {
-  cols: [
-    { key: "w", label: "" },
-    { key: "n", label: "count", align: "right", mono: true },
-    { key: "each", label: "LUT each", align: "right", mono: true },
-    { key: "lut", label: "LUT", align: "right", mono: true },
-    { key: "dsp", label: "DSP48", align: "right", mono: true },
-    { key: "bram", label: "BRAM", align: "right", mono: true },
-    { key: "fma", label: "FMA/clk", align: "right", mono: true },
-  ],
-  rows: [
-    {
-      w: "SIMD PE, SIMD 8 + 4 float",
-      n: "8",
-      each: "13,772",
-      lut: "110,176",
-      dsp: "576",
-      bram: "104",
-      fma: "32",
-    },
-    {
-      w: "SIMT PE, 8 int + 8 float",
-      n: "4",
-      each: "21,586",
-      lut: "86,344",
-      dsp: "192",
-      bram: "122",
-      fma: "32",
-    },
-    {
-      w: "controller PE",
-      n: "2",
-      each: "2,477",
-      lut: "4,954",
-      dsp: "0",
-      bram: "10",
-      fma: "—",
-    },
-    {
-      w: "<b>mesh total</b>",
-      n: "<b>14</b>",
-      each: "",
-      lut: "<b>201,474</b>",
-      dsp: "<b>768</b>",
-      bram: "<b>236</b>",
-      fma: "<b>64</b>",
-      _tone: "good",
-    },
-    {
-      w: "against the budget",
-      n: "",
-      each: "",
-      lut: "~350,000",
-      dsp: "3,072",
-      bram: "672",
-      fma: "—",
-    },
-    {
-      w: "<b>used</b>",
-      n: "",
-      each: "",
-      lut: "<b>58 %</b>",
-      dsp: "<b>25 %</b>",
-      bram: "<b>35 %</b>",
-      fma: "",
-    },
-  ],
-};
-
-const occupancy = [
-  {
-    label:
-      "LUT — of the ~350,000 a mesh has once fabric and memory agent are paid for",
-    value: 58,
-    note: "%",
-    tone: "accent",
-  },
-  { label: "BRAM — per SLR on this part", value: 35, note: "%", tone: "good" },
-  { label: "DSP48 — per SLR on this part", value: 25, note: "%", tone: "good" },
-];
 
 const lands = {
   cols: [
@@ -217,28 +99,23 @@ const lands = {
   ],
   rows: [
     {
-      w: "<b>one of our meshes</b>",
+      w: "<b>one of these meshes — PROJECTED</b>",
       f: "64",
-      c: "350 MHz",
+      c: "350 assumed",
       g: "<b>44.8</b>",
       _tone: "good",
     },
     { w: "Mali-G57 / G77 core", f: "16", c: "~950 MHz", g: "~30" },
-    { w: "Mali-G310, minimum config", f: "16", c: "~650 MHz", g: "~21" },
+    { w: "Mali-G310, minimum configuration", f: "16", c: "~650 MHz", g: "~21" },
     { w: "Mali-G610 / G710 core", f: "64", c: "~850 MHz", g: "~109" },
     {
-      w: "<b>our whole device</b>",
+      w: "<b>a four-mesh device — PROJECTED</b>",
       f: "256",
-      c: "350 MHz",
+      c: "350 assumed",
       g: "<b>179.2</b>",
       _tone: "good",
     },
-    {
-      w: "Mali-G57 MC3 — Dimensity 700 class",
-      f: "48",
-      c: "~950 MHz",
-      g: "~91",
-    },
+    { w: "Mali-G57 MC3 — Dimensity 700 class", f: "48", c: "~950 MHz", g: "~91" },
     {
       w: "Adreno 540 — Snapdragon 835, 2017",
       f: "not disclosed",
@@ -250,49 +127,54 @@ const lands = {
 };
 
 const gflops = [
-  { label: "Mali-G310, minimum config — one core", value: 21 },
+  { label: "Mali-G310, minimum configuration — one core", value: 21 },
   { label: "Mali-G57 / G77 — one core", value: 30 },
   {
-    label: "one of our meshes — 64 FMA/clk at 350 MHz",
+    label: "one of these meshes — PROJECTED, 64 FMA/clk at an assumed 350 MHz",
     value: 44.8,
     tone: "accent",
   },
   { label: "Mali-G57 MC3 — Dimensity 700 class", value: 91 },
   { label: "Mali-G610 / G710 — one core", value: 109, tone: "good" },
-  { label: "our whole device — 4 meshes", value: 179.2, tone: "accent" },
+  {
+    label: "a four-mesh device — PROJECTED, 256 FMA/clk at an assumed 350 MHz",
+    value: 179.2,
+    tone: "accent",
+  },
   { label: "Adreno 540 — Snapdragon 835, 2017", value: 567, tone: "warn" },
   { label: "Mali-G610 MC6", value: 653, tone: "warn" },
 ];
 
-const issue = `   4 meshes x 4 SIMT PE x 8 threads x 350 MHz  =  44.8 G thread-instructions/s`;
+const issue = `   4 meshes x 4 SIMT PE x 8 threads x 350 MHz  =  44.8 G thread-instructions/s
+                                                  PROJECTED`;
 
 const frames = {
   cols: [
-    { key: "t", label: "Target" },
+    { key: "t", label: "Target, at 2× overdraw" },
     { key: "f", label: "fragments/s", align: "right", mono: true },
     { key: "i", label: "instructions each", align: "right", mono: true },
     { key: "u", label: "issue used", align: "right", mono: true },
+    { key: "b", label: "budget per fragment", align: "right", mono: true },
   ],
   rows: [
     {
-      t: "720p, 30 fps, 2× overdraw",
+      t: "720p, 30 fps",
       f: "55.3 M",
       i: "50",
       u: "<b>6.2 %</b>",
+      b: "<b>810</b>",
       _tone: "good",
     },
     {
-      t: "1080p, 60 fps, 2× overdraw",
+      t: "1080p, 60 fps",
       f: "248.8 M",
       i: "200",
       u: "<b>111 %</b>",
+      b: "<b>180</b>",
       _tone: "bad",
     },
   ],
 };
-
-const budgets = `   720p30, 2x overdraw    810 thread-instructions per fragment
-   1080p60, 2x overdraw   180 thread-instructions per fragment`;
 
 const missing = {
   cols: [
@@ -302,22 +184,27 @@ const missing = {
   rows: [
     {
       w: "<b>a rasteriser</b> — triangle setup, edge functions, coverage",
-      us: "software, on the same PEs that shade. <b>Unmeasured, and the single largest unknown on this page.</b> A Mali core spends none of its 16 or 64 lanes on it",
+      us: "software, on the same PEs that shade. <b>Unmeasured, and the single largest unknown on this page by a wide margin.</b> A Mali core does this in fixed function and spends none of its 16 or 64 units on it",
       _tone: "bad",
     },
     {
       w: "<b>a texture sampler</b>",
-      us: "address math is the integer path and costs nothing new; filtering is lane code at <b>12 FMAs per RGBA bilinear tap</b>. Both are priced — but a shipped part gets them free and we pay issue slots",
+      us: "address arithmetic is the integer path and costs nothing new; filtering is lane code at <b>12 multiply-adds per RGBA bilinear tap</b>. Both are priced — but a shipped part gets them free and this machine pays issue slots",
       _tone: "warn",
     },
     {
       w: "<b>depth and blend fixed function</b>, and <b>atomics</b>",
-      us: "neither exists. The A extension's major is not in <code>kht_predec</code>'s legal set, so an <code>amo*</code> opcode raises an illegal-instruction fault rather than being quietly ignored",
+      us: "neither exists. The A extension's opcode major is <b>not in the legal set at all</b>, so an <code>amo*</code> word raises an illegal-instruction fault rather than being decoded into something adjacent",
       _tone: "bad",
     },
     {
-      w: "<b>a driver and API stack</b>",
-      us: "SPIR-V → NIR → this ISA is a <b>designed path with no implementation</b> anywhere in <code>src/</code> or <code>compiler/</code>. Nothing here runs a shader written in GLSL today",
+      w: "<b>a driver and a shading-language path</b>",
+      us: "SPIR-V to this ISA is a <b>designed route with no implementation</b> anywhere in <code>src/</code> or <code>compiler/</code>. Nothing here runs a shader written in a shading language today",
+      _tone: "bad",
+    },
+    {
+      w: "<b>a placed and routed design</b>",
+      us: "every figure either PE has is out-of-context synthesis of <b>one</b> PE. The interconnect and the memory agent are budgeted for but have never been co-placed with a dozen of them, and <b>the clock is what would move</b>",
       _tone: "bad",
     },
   ],
@@ -331,18 +218,48 @@ const next = {
   rows: [
     {
       n: "1",
-      w: "<b>Software rasterisation cost</b>, in instructions per triangle and per fragment. Until this exists, the frame budgets above describe <b>shading only</b>, and the honest headline is “the shading is affordable”, not “the frame is”",
+      w: "<b>Software rasterisation cost</b>, in instructions per triangle and per fragment. Until this exists the frame budgets describe <b>shading only</b>, and the honest headline is “the shading is affordable”, not “the frame is”",
       _tone: "bad",
     },
     {
       n: "2",
-      w: "<b>A real shader corpus through the issue model</b>, so 50 and 200 instructions per fragment stop being placeholders — 810 and 180 per fragment are what such a corpus would be judged against",
+      w: "<b>A real shader corpus through the issue model</b>, so 50 and 200 instructions per fragment stop being placeholders. <b>810 and 180 per fragment are what such a corpus would be judged against</b>",
       _tone: "warn",
     },
     {
       n: "3",
-      w: "<b>Place and route one mesh.</b> Every figure here is out-of-context synthesis at 58 % LUT occupancy; the interconnect and the memory agent are budgeted for but not co-placed with twelve PEs, and the clock is what would move",
+      w: "<b>Re-measure both PEs against the current float tier.</b> No area figure this project has describes a PE the RTL can build today, so nothing on this page can yet say whether the mesh in the diagram fits",
       _tone: "warn",
+    },
+    {
+      n: "4",
+      w: "<b>Place and route one mesh.</b> Every rate here is computed on an assumed clock until it does",
+      _tone: "warn",
+    },
+  ],
+};
+
+const kinds = {
+  cols: [
+    { key: "t", label: "Thing" },
+    { key: "c", label: "Category" },
+  ],
+  rows: [
+    {
+      t: "the 64 FMA/clk mesh target itself",
+      c: "<b>yours.</b> It is the one figure on this page that is a design decision rather than a measurement or an assumption — and it is what the SIMT PE's float unit count was chosen against",
+    },
+    {
+      t: "the float unit counts behind it",
+      c: "<b>yours</b> — independent widths on both classes, set per instance",
+    },
+    {
+      t: "IEEE binary32 as the compute format",
+      c: "<b>not a parameter at all</b>, on either class",
+    },
+    {
+      t: "comparing on FMA per clock rather than on GFLOP/s",
+      c: "<b>convention.</b> Nothing enforces it, and it is worth copying: GFLOPS across vendors and clock domains hides where the difference comes from, which for an FPGA is always the clock",
     },
   ],
 };
@@ -351,67 +268,60 @@ const next = {
 <template>
   <DocPage
     title="Where this lands against shipped GPUs"
-    summary="What the measured numbers are worth in industry terms, which mobile parts they correspond to, and what class of rendering workload that makes plausible. Arithmetic is not this machine's limit; fixed function and the software stack are."
+    summary="What the arithmetic width is worth in industry terms, which mobile parts it corresponds to, what class of rendering that makes plausible — and why arithmetic is not this machine's limit."
     domain="simt"
-    status="measured"
-    source="docs/projects/kohakumpe/simt/comparison.md · xcvu13p-fhgb2104-2L-e, OOC synth at 2.857 ns"
+    status="projected"
+    source="docs/projects/kohakumpe/simt/comparison.md · docs/projects/kohakumpe/unit-counts.md"
   >
+    <h2 class="doc-h2">What this page settles, and what it cannot</h2>
     <p class="doc-p">
-      A FLOPS number is only useful if it tells you what to attempt. This page
-      establishes the comparison honestly, then spends most of its length on the
-      part that actually decides feasibility, which is not arithmetic.
+      It settles <b>width</b>: how many fused multiply-adds a named
+      configuration issues per clock, and which shipped parts that corresponds
+      to. Width is arithmetic over unit counts and is exact.
+    </p>
+    <p class="doc-p">
+      It cannot settle <b>area</b> or <b>clock</b>. Every published LUT total
+      for either PE class predates the float tier's rebuild in binary32, so no
+      figure this project has describes a PE the RTL can build today — which
+      means <b>nothing here says whether the mesh below fits</b>. And no
+      frequency figure in this project is a closed-timing result: they are
+      out-of-context synthesis estimates of <i>one</i> PE at a time, they are
+      the optimistic end, and this repository has measured a module lose
+      <b>0.740&nbsp;ns</b> between synthesis and routing. Every rate below is
+      therefore computed at an <b>assumed 350 MHz</b> and labelled PROJECTED. It
+      is not a measured frame rate and it is not a closed clock.
     </p>
 
+    <Callout
+      kind="rule"
+      title="Read the width comparisons as load-bearing and the rates as arithmetic on top of an assumption"
+    >
+      <p>
+        Peak floating-point rate is
+        <span class="chip">units × 2 × clock</span>, because a fused
+        multiply-add is two operations. The <b>units</b> half is measured. The
+        <b>clock</b> half is assumed, and a 10% change in it moves the last
+        section of this page across its own threshold. Where a reading depends
+        on the clock, this page says so.
+      </p>
+    </Callout>
+
     <h2 class="doc-h2">The unit of comparison is FMA per clock</h2>
-    <p class="doc-p">
-      Peak floating-point rate is <code>lanes × 2 × clock</code>, because a
-      fused multiply-add is two operations. Comparing lane counts across vendors
-      is meaningful; comparing GFLOPS across vendors and clock domains hides
-      where the difference comes from, which for an FPGA is always the clock.
-    </p>
 
     <SpecTable
       :cols="shipped.cols"
       :rows="shipped.rows"
-      caption="ARM documents Mali per shader core, so the comparison is exact. Qualcomm does not disclose an FP32 ALU count for Adreno, so that one is compared on quoted throughput only. Sanity check on the older figure: G77 MP11 at ~850 MHz gives 11 × 16 × 2 × 0.85 GHz ≈ 299 GFLOP/s, which matches published MP11 numbers."
+      caption="ARM documents Mali per shader core, so the comparison is exact. Qualcomm does not disclose an FP32 ALU count for Adreno, so that one is compared on quoted throughput only. Sanity check on the older figure: a G77 MP11 at ~850 MHz gives 11 × 16 × 2 × 0.85 GHz ≈ 299 GFLOP/s, which matches published MP11 numbers."
     />
 
-    <h2 class="doc-h2">What this machine has</h2>
+    <h2 class="doc-h2">What this configuration has</h2>
 
-    <SpecTable
-      :cols="measured.cols"
-      :rows="measured.rows"
-      caption="Both PE classes at the configuration of record, at the 2.857 ns ask, on xcvu13p-fhgb2104-2L-e. MEASURED — nothing here is an estimate. The SIMT PE figure is the whole unit: SIMT core, windows, banked LDS, L1, requestor, fabric port, with the float tier and the integer multiplier both built. Sources: build/sweep/g-350-pad/run.log and build/sweep/d-350/run.log"
-    />
-
-    <Callout
-      kind="trap"
-      title="Superseded figures that appear in older revisions"
-    >
-      <p>
-        All at the <b>3.333 or 2.500 ns</b> ask and none of them this machine:
-        <code>kht_core</code> at 9,653 LUT / 279.5 MHz; the integer-only
-        assembled PE at 15,638 LUT / 392.8 MHz; the float-without-multiplier
-        build at 19,215 LUT / 405.2 MHz; and the ~22k LUT <i>estimate</i> for a
-        float-capable PE that this measurement replaced.
-        <b>Quote none of them without its ask.</b>
-      </p>
-    </Callout>
-
-    <Callout
-      kind="note"
-      title="The float tier takes both operand widths, and that is not a build option"
-    >
-      <p>
-        Nothing in the table above is a dtype configuration. Operand width is
-        selected
-        <b>per instruction</b>, by a funct7 bit that reaches the lane as a port
-        rather than a parameter — so there is no build of this PE that has the
-        float tier and refuses one of the two widths. See
-        <RouterLink to="/mpe/simt" class="doc-link">the SIMT PE page</RouterLink
-        >.
-      </p>
-    </Callout>
+    <p class="doc-p">
+      Both PE classes compute in IEEE binary32 with the same units — one
+      <span class="chip">rv_fpu</span> per unit, never forked between the two —
+      so their multiply-adds are directly commensurable and a mesh total is a
+      plain sum rather than a conversion.
+    </p>
 
     <div
       class="font-mono kt-text-caption whitespace-pre text-warm-700 dark:text-warm-300 leading-6 overflow-x-auto my-3"
@@ -420,37 +330,49 @@ const next = {
     </div>
 
     <Fig
-      caption="The target is met exactly on width. One mesh is 64 FP FMA per clock, which is one Mali-G610/G710 shader core — and it is reached by the two PE classes contributing half each, rather than by either one being widened past its own sensible point."
+      caption="One mesh is 64 FP FMA per clock, which is one Mali-G610 or G710 shader core exactly — and it is reached by the two PE classes contributing half each rather than by either being widened past its own sensible point. At four float units on the SIMT side the same mesh is 48 and short. This is the one figure on the page that is a design decision rather than a measurement or an assumption, and it is the target the SIMT PE's float count was chosen against."
       zoom
       wide
     >
       <BlockDiagram :nodes="meshFig.nodes" :edges="meshFig.edges" />
     </Fig>
 
-    <h3 class="doc-h3">The mesh fits, with room</h3>
-
-    <SpecTable
-      :cols="meshFit.cols"
-      :rows="meshFit.rows"
-      caption="The LUT budget is the ~350,000 a mesh has once the fabric and the memory agent are paid for; the DSP48 and BRAM denominators are PER SLR on this part, which is the right denominator because a mesh is placed in one."
-    />
-
-    <ResourceBars
-      :items="occupancy"
-      unit="% of the mesh budget"
-      :max="100"
-      caption="MEASURED occupancy from the table above. The arithmetic target is not what constrains the mesh: at 58 % of the LUT and a quarter of the DSP48 the width could be bought again — which is the finding, because for eighteen months the assumption was that reaching a shader core's width would exhaust the die"
-    />
-
     <Callout
-      kind="rule"
-      title="Every rate below is computed at 350 MHz, the ask — not at either Fmax"
+      kind="trap"
+      title="An array throughput is a configuration, not a property of the design"
     >
       <p>
-        Both PE classes close <b>above</b> the 350 MHz ask in synthesis — 365.6
-        and 353.4 — so the mesh clock is set by the slower of the two rather
-        than by either missing. But out-of-context synthesis is not routing, and
-        this project has measured a module lose <b>0.740 ns</b> between the two.
+        The float count is a <b>knob</b> on both classes, with legal values 0,
+        1, 2, 4, 8 and −1 for full rate, and a narrower one costs an issue
+        interval rather than an instruction. Quoting an array throughput without
+        naming the unit counts behind it describes a configuration and calls it
+        a machine — the same twelve PEs at eight float units each would be
+        <b>96</b> FMA per clock, and at two they would be 24.
+      </p>
+      <p>
+        The count above is the one that lands on a shader core's width. It is
+        not the widest the parts will build, and it is not a menu price.
+      </p>
+    </Callout>
+
+    <Callout
+      kind="trap"
+      title="This page makes no claim about whether that mesh fits on a die"
+    >
+      <p>
+        It is the obvious next question and it cannot be answered from anything
+        this project has measured. Every absolute LUT total for either class was
+        taken before the float tier was rebuilt from an E8M15 datapath with two
+        operand formats into a binary32-only one, before the integer dot unit
+        and its accumulator were removed, and before the converter group gained
+        its datapath. <b>Multiplying one of those totals by a PE count prices a
+        machine that cannot be built</b>, and the answer would be wrong in an
+        unknown direction rather than merely stale.
+      </p>
+      <p>
+        The symptom of doing it anyway is a page that reports a die-occupancy
+        percentage to two significant figures on top of a withdrawn number. Item
+        3 below is what would fix it.
       </p>
     </Callout>
 
@@ -459,38 +381,38 @@ const next = {
     <SpecTable
       :cols="lands.cols"
       :rows="lands.rows"
-      caption="All rows at 350 MHz for this machine."
+      caption="PROJECTED for this machine, at an ASSUMED 350 MHz — not a measured or a closed clock. The shipped parts are published unit counts at typical clocks."
     />
 
     <ResourceBars
       :items="gflops"
       unit="GFLOP/s"
-      caption="Our two rows are MEASURED width at the 350 MHz ask; the shipped parts are published lane counts at typical clocks. Adreno 540's ALU count is not disclosed, so its bar is quoted throughput only"
+      caption="The two accented rows are PROJECTED: a measured unit count multiplied by an assumed clock. The shipped parts are published counts at typical clocks; Adreno 540's ALU count is not disclosed, so its bar is quoted throughput only"
     />
 
-    <Callout kind="measured" title="Three readings">
+    <Callout kind="note" title="Three readings, and two of them are about width">
       <p>
-        <b>One mesh is four G57 cores wide and about 1.5× one in throughput.</b>
-        Once the width ratio reaches 4:1 the clock deficit stops deciding the
-        outcome.
+        <b>One mesh is four G57 cores wide</b> and about 1.5× one in projected
+        throughput. Once the width ratio reaches 4:1 the clock deficit stops
+        deciding the outcome — which is the general shape of what an FPGA can
+        and cannot buy back.
       </p>
       <p>
-        <b>One mesh matches one G610/G710 core in width exactly</b>, and reaches
-        <b>41 %</b> of it in throughput. That is the standing target, and the
-        remaining gap is entirely clock — 350 MHz against ~850 — not lanes.
+        <b>One mesh matches one G610 or G710 core in width exactly</b>, and
+        would reach about <b>41%</b> of it in throughput at the assumed clock.
+        The remaining gap is <b>entirely clock</b> — 350 MHz against ~850 — and
+        not units.
       </p>
       <p>
-        <b
-          >The device sits between a 2020 mid-range mobile GPU and a 2017
-          flagship</b
-        >
-        — almost exactly 2× a Mali-G57 MC3, and 32 % of an Adreno 540. A full
-        G610 MC6 is not reachable: it is 1.5× the width <i>and</i> 2.4× the
-        clock.
+        <b>The device would sit between a 2020 mid-range mobile GPU and a 2017
+        flagship</b> — roughly 2× a Mali-G57 MC3, and about a third of an Adreno
+        540. A full G610 MC6 is <b>not reachable</b>: it is 1.5× the width
+        <i>and</i> 2.4× the clock, and neither half of that is closeable here.
       </p>
     </Callout>
 
     <h2 class="doc-h2">What that makes plausible</h2>
+
     <p class="doc-p">
       The useful question is not GFLOPS, it is whether the machine can issue
       enough instructions per pixel. Issue capacity is one instruction per cycle
@@ -506,96 +428,84 @@ const next = {
     <SpecTable
       :cols="frames.cols"
       :rows="frames.rows"
-      caption="Two frame budgets at 2× overdraw, against that issue capacity."
+      caption="Two frame budgets against that issue capacity. 50 and 200 instructions per fragment are PLACEHOLDERS rather than a measured shader corpus."
     />
 
-    <p class="doc-p">
-      Read as an instruction budget rather than as a percentage, the same two
-      rows say:
-    </p>
-
-    <div
-      class="font-mono kt-text-caption whitespace-pre text-warm-700 dark:text-warm-300 leading-6 overflow-x-auto my-3"
-    >
-      {{ budgets }}
-    </div>
-
     <Callout
-      kind="measured"
-      title="1080p60 with 200-instruction shaders is now just PAST the ceiling rather than just under it"
+      kind="trap"
+      title="Read the instruction budget, not the percentage"
     >
       <p>
-        111 % of issue, where the 380 MHz working assumption this page
-        previously carried put it at 102 %. The measured clock moved the
-        crossing point, and the honest form of the claim is the instruction
-        budget: <b>180 per fragment at 1080p60, 810 at 720p30</b>.
+        The percentage moves with the assumed clock and the budget does not, so
+        state it as <b>810 thread-instructions per fragment at 720p30</b> and
+        <b>180 at 1080p60</b>, both at 2× overdraw.
+        <b>1080p60 with 200-instruction shaders sits just past the ceiling
+        rather than just under it</b>, and a 10% change in the assumed clock
+        moves it across — which is exactly the kind of conclusion a percentage
+        hides and a budget does not.
       </p>
       <p>
-        The supporting traffic is not the constraint either, and it does not
-        move with the clock. A framebuffer at 720p30 is ~221 MB/s written and
-        read; one RGBA bilinear tap per fragment is 12 FMAs and a 32-byte entry
-        read, so ~1.8 GB/s at 720p30 — against four DRAM channels.
+        The supporting traffic is <b>not</b> the constraint, and it does not
+        move with the clock either. A framebuffer at 720p30 is ~221 MB/s written
+        and read; one RGBA bilinear tap per fragment is 12 multiply-adds and a
+        32-byte entry read, so ~1.8 GB/s at 720p30 — against four DRAM channels.
       </p>
       <p>
         <b
           >So a small real-time renderer at 720p30 is comfortably inside the
           arithmetic, and 1080p60 with rich shaders is at or slightly over the
-          ceiling.</b
+          ceiling</b
         >
+        — as an arithmetic bound, not as a frame rate.
       </p>
     </Callout>
 
     <h2 class="doc-h2">What these numbers do not say</h2>
     <p class="doc-p">
       Everything above prices <b>arithmetic</b>. Rendering is not
-      arithmetic-bound on this machine, and the gap is fixed function. Every
-      item below was re-checked against the tree for this revision and every one
-      is still true.
+      arithmetic-bound on this machine, and the gap is fixed function.
     </p>
 
     <SpecTable :cols="missing.cols" :rows="missing.rows" />
 
-    <Callout kind="note" title="Precision is NOT on that list">
+    <Callout kind="note" title="Precision is not on that list">
       <p>
-        E8M15 carries FP32's full 8-bit exponent, so range is FP32-equivalent
-        and only the significand is short — <b>1.5e-5 relative error</b>, which
-        is 32× better than the fp16 that mobile fragment shaders actually run
-        at, and more range than the FP24 that shipped in DX9-era hardware. For
-        colour, filter weights and interpolation this is above the bar rather
-        than below it.
+        Both PE classes compute in <b>IEEE binary32</b> throughout, which is the
+        format desktop shading uses and a wider one than the fp16 mobile
+        fragment shaders actually run at. For colour, filter weights and
+        interpolation this machine is at the bar rather than below it.
       </p>
       <p>
-        The only mobile advantage is a <i>rate</i> one: those parts run fp16 at
-        double their FP32 rate, bought by dropping to E5M10.
+        The only mobile advantage here is a <i>rate</i> one: those parts run
+        fp16 at double their FP32 rate, which this machine does not — one
+        element per 32-bit word and one compute format means there is no such
+        trade to make, and buying it would mean a second datapath rather than a
+        mode.
       </p>
       <p>
-        <b>Integer multiply is no longer on the list either.</b> RV32M
-        <code>mul</code>/<code>mulh</code>/<code>mulhsu</code>/<code
-          >mulhu</code
-        >
-        are built, one 33×33 signed product per lane, so
-        <code>y * width + x</code> is one instruction rather than a shift-add
-        chain. Divide and remainder still fault, deliberately —
-        divide-by-a-constant strength-reduces to <code>mulhu</code>.
+        <b>Integer multiply is not on the list either.</b> RV32M is built on
+        both classes, one 33×33 signed product per lane, so a pixel index or a
+        Morton address is one instruction rather than a shift-add chain. Divide
+        and remainder fault, deliberately — divide-by-a-constant
+        strength-reduces to <code>mulhu</code>.
       </p>
     </Callout>
 
     <h2 class="doc-h2">What to measure next, in order</h2>
 
-    <SpecTable
-      :cols="next.cols"
-      :rows="next.rows"
-      caption="Item 1 of the previous revision — “the eight-lane float build, which settles the Fmax derate and turns ~22k LUT from ESTIMATE into a number” — is DONE, and the measured table above is that number."
-    />
+    <SpecTable :cols="next.cols" :rows="next.rows" />
 
     <Callout
       kind="open"
-      title="Until item 1 lands, treat the frame budgets as an upper bound on what the arithmetic permits, not a frame rate"
+      title="Until item 1 lands, the frame budgets are an upper bound on what the arithmetic permits, not a frame rate"
     >
       <p>
         Nothing on this page prices triangle setup, coverage, or the driver that
         would have to produce the shader in the first place.
       </p>
     </Callout>
+
+    <h2 class="doc-h2">Fixed protocol, addon, convention, or yours</h2>
+    <SpecTable :cols="kinds.cols" :rows="kinds.rows" />
   </DocPage>
 </template>

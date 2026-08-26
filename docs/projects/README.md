@@ -23,7 +23,7 @@ way: a project doc cites the framework, never the reverse.
 |---|---|
 | [kohakutpu/](kohakutpu/README.md) | An MXFP7 tensor accelerator on `xcvu13p-fhgb2104-2L-e`. The reference instance. |
 | [kohakumpe/](kohakumpe/README.md) | The same framework with **processors** on the port instead of a fixed datapath — a SIMD PE and a SIMT PE. It also supplies the SIMD unit that fills the framework's `SIMD_EN` slot. |
-| [kohakuaxi/](kohakuaxi/station-bus.md) | The station bus: a line of AXI stations replacing a large crossbar, at O(1) per port. |
+| [kohakuaxi/](kohakuaxi/README.md) | The station bus: a line of AXI stations replacing a large crossbar, at O(1) per port. It is the fabric the other two reach their DRAM and their control registers through. |
 
 Two projects rather than one is the point of the numbers rule below: the same
 framework measures differently under each, and neither set of figures is a
@@ -35,21 +35,38 @@ property of the framework.
 BRAM count, utilisation percentage and GFLOP/s figure in this directory was taken
 from a specific design, on a specific device, under stated synthesis conditions.
 
-Those numbers are **evidence that the framework closes on real silicon**. They
-are not specifications of it. A second project on a different part will measure
+Those numbers are **evidence that the framework reaches real silicon**. They are
+not specifications of it. A second project on a different part will measure
 different numbers from the same framework, and that is the expected outcome, not
 a discrepancy.
 
-Three obligations follow, and a project doc that skips one is wrong:
+Four obligations follow, and a project doc that skips one is wrong:
 
 - **Name the device.** Never quote a frequency or a utilisation without it.
+  For both accelerators here that is `xcvu13p-fhgb2104-2L-e`.
+- **Name the tool and the mode.** Vivado 2024.2, and whether the run was
+  **out-of-context or in-context**, **synthesis or routed**. Those four words
+  change what a figure means, and none of them can be inferred from the number.
 - **Say which direction the number bounds.** An out-of-context synthesis result
   that *met* its target is a **lower bound** on what the block can do; a run that
   *missed* is a **ceiling**. Out-of-context timing is an upper bound on placed
   timing in every case, because nothing is placed and the route is estimated.
-- **Say where it came from.** Which run, which target frequency, which
-  parameters. A figure whose conditions cannot be stated is reported as
-  unconfirmed rather than as fact.
+- **Say where it came from.** Which script, which top module, which target
+  frequency, which parameters. A figure whose conditions cannot be stated is
+  reported as unconfirmed rather than as fact.
+
+**No frequency anywhere in this directory is a closed-timing figure**, and no
+page may present one as though it were. Every one is out-of-context synthesis
+slack, which is optimistic — KohakuTPU's `m62_c1` mesh probe lost 0.740 ns
+between synthesis and routing, enough to move a figure by most of a speed grade.
+What *is* evidence that a design reaches silicon is a placed-and-routed result
+with a written bitstream, and the pages that have one say so explicitly:
+[kohakutpu/results.md](kohakutpu/results.md) §5.3 and
+[kohakuaxi/station-bus.md](kohakuaxi/station-bus.md) §2.9.
+
+Anything not measured is labelled **PROJECTED** or **ESTIMATE** where it is
+used. Anything whose origin cannot be established is marked `[unverified]` and
+is not repaired by repetition.
 
 Each project keeps its measurements in one file — for KohakuTPU that is
 [results.md](kohakutpu/results.md) — so there is a single place to check whether
