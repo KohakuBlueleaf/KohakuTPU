@@ -9,6 +9,11 @@ tags:
 
 # The transform stage
 
+A **transform slot** is a socket in the datapath where a format conversion may
+be plugged in: bytes go in on one side, converted bytes come out on the other,
+and the machine around it does not change when the conversion does. The module
+that fills the socket is its **occupant**.
+
 **The slot is fixed protocol; what plugs into it is an addon.** The framework
 fixes where the stage sits, how it is selected and how it is driven. What it
 *does* is a property of the accelerator you are building, and the reference
@@ -37,9 +42,16 @@ onto the mover's AXI channel. All are gone, and
 [spec/transform-slot](../../spec/transform-slot.md) carries the argument. The
 short version is that a per-port transform is fed from that port's AXI R
 channel, every port master converges onto one DRAM master, and a staged read
-never transforms — so N instances could consume one beat per cycle between
-them. Each was 4,491 LUT and 32 DSP; the fold moved who drives the slot, not
-what it costs, and [simd-model](simd-model.md) has the measurement.
+never transforms — so N instances could consume one beat per cycle between them,
+N−1 idle by construction.
+
+**One instance is 4,499 LUT and 32 DSP** — measured out-of-context on
+`xcvu13p-fhgb2104-2L-e`, Vivado 2024.2, at 3.333 ns, `sysnode` whole at
+`PORTS=2`, by `scripts/tcl/ooc_sysnode_rv64.tcl`. That figure is the framework's
+arbiter plus the reference project's bank and its occupant, so it is what *this*
+project's transform costs rather than what a slot costs. Moving the slot onto
+the mover changed who drives it, not what it is;
+[simd-model](simd-model.md#where-the-slot-sits) has the comparison.
 
 ## What the framework fixes about it
 
@@ -96,10 +108,17 @@ system, and a transform is pre- or post-processing on a move. The reservation is
 what it always was, a static count of destination words known before the AR goes
 out; it is just `OUT_WORDS` per entry instead of one per read element.
 
-**An occupant has registers**, reached from the control processor's node range by
-ordinary load and store and indexed by occupant id — for configuration a `mode`
-field is too narrow to carry, like a palette or a coefficient table, and for the
-bank's own status.
+**An occupant has registers**, reached from the control processor's control
+range by ordinary load and store and indexed by occupant id — for configuration
+a `mode` field is too narrow to carry, like a palette or a coefficient table,
+and for the bank's own status.
+
+> **The register path is connected on the default RV32 complex and tied off on
+> the RV64 one**, so in the RV64 configuration the register space exists in the
+> RTL and nothing can reach it —
+> [simd-model](simd-model.md#occupant-registers). The reference occupant needs
+> no registers, which is why the gap has not blocked anything; an occupant that
+> needs a palette would be blocked by it.
 
 > Both of these replaced an earlier shape, and the reason it was chosen is worth
 > keeping: the slot used to be reached by a **separate engine** with no walker,

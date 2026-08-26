@@ -12,6 +12,13 @@ tags:
 The server behind the instruction set, and the thing you add more of when the
 machine stops scaling.
 
+Two words this page leans on. An **entry** is the unit a read is expressed in: a
+fixed number of consecutive data words, four by default, which is what one
+request fetches and what one response delivers. A **run** is a sequence of
+consecutive entries named by a single request — one flit that means several
+hundred cycles of traffic. Everything else the page defines where it appears;
+the node's shared vocabulary is in [the README](README.md#the-vocabulary-once).
+
 **A port carries no transform.** It used to carry one each; the slot now sits on
 the mover's read-return path and belongs to the mover —
 [transform-stage](transform-stage.md).
@@ -158,27 +165,101 @@ count.
 
 **Per memory port.** Two flit-wide intake FIFOs. The write slot array — a small
 register file of per-slot state indexed by source, plus a data array of
-`WR_SLOTS x WBURST` beats. The read engine's emit buffer, a few beat-wide
-registers. One AXI master channel.
+`WR_SLOTS x WBURST` beats, which is a **block RAM**. The read engine's emit
+buffer, a few beat-wide registers. One AXI master channel.
 
-**Measured, out of context on `xcvu13p` at 3.333 ns, 2026-08-24:** a second port
-is **6,557 LUT, 12,916 FF and no DSP** (21,459 → 28,016 for the whole node). It
-used to be 10,960 LUT and 32 DSP, and the difference is entirely the transform
-leaving the port — which is also what makes a node with more than two ports
-affordable.
+**Measured, out-of-context synthesis on `xcvu13p-fhgb2104-2L-e`, Vivado 2024.2,
+at 3.333 ns, design state Synthesized, `sysnode` whole at `PORTS=2`** —
+hierarchical rows, from the run each one names. Nothing here is routed.
 
-**DSP is 35 at one port and 35 at two.** A per-port transform would have shown
-up there and does not, which is what "one bank per node" means as a measurement
-rather than a claim.
+| the run | script | `mag_mem_port`, each | block RAM in it | URAM in it |
+|---|---|---|---|---|
+| RV64 complex, `STAGE_AT_PORT=1`, 2026-08-26 23:46 | `ooc_sysnode_rv64.tcl 2` | **2,064** and **2,032** LUT | **4 RAMB36 each** | 0 |
+| RV32 complex, `STAGE_AT_PORT=0`, 2026-08-26 09:04 | `ooc_sysnode.tcl` | 5,423 and 5,418 LUT | 0 | 64 each |
 
-The slot data array is the part that grows fastest, since it is
-`WR_SLOTS * WBURST * DATA_W` bits and both factors are sized for correctness
-rather than tuned. Two structural choices keep the logic around it cheap: a
-per-slot "the next beat is the last" term is precomputed from registered state
-only, so the ready decision is a 1-bit select rather than mux-then-add-then-
-compare; and free / match / pick are three separate priority scans over the slot
-array rather than one scan with conditions, so none of them lands in the other's
-path.
+**The two rows differ in two things, and neither is a port getting cheaper.**
+
+The larger difference is the staging store moving out of the port and onto the
+converged path, where one instance serves every requester instead of one per
+port — [edge-and-control](edge-and-control.md#staging-inside-the-memory-agent).
+That is what the URAM column shows. Wherever that store sits, a write into it
+changes **only the lanes its strobes name** — the bank memory is byte-enabled —
+so a narrow store does not clear the rest of the 32-byte word;
+[staging honours byte
+strobes](edge-and-control.md#staging-honours-byte-strobes) has why that is a
+correctness property rather than a convenience.
+
+The second is that the RV32 row **predates the write-slot data array becoming a
+block RAM.** In that run the array is still distributed RAM, and the report
+charges the port 1,220 LUTRAM for it. The RV32 configuration has not been
+re-synthesised since; read its row as the last measurement of that
+configuration, not as its current cost. The array is shared, so the change
+applies there too.
+
+Neither row is a *marginal* figure: a hierarchical row is what an instance
+charges, not what adding one costs, and the two differ wherever a shared arbiter
+widens.
+
+> **A marginal per-port figure of +6,557 LUT and +12,916 FF** (21,459 → 28,016
+> for the whole node at one port and two) is carried in this tree from
+> `ooc_sysnode.tcl` runs of 2026-08-24, in the two-module, RV32,
+> `STAGE_AT_PORT=0` shape. **It has not been re-measured against the node as it
+> ships**, and the shape it was taken in is the one where each port carried its
+> own staging store. Treat it as historical: the direction is right, the value
+> belongs to a configuration the node no longer builds in.
+
+**A port uses no DSP, and the node's DSP count does not move with the port
+count** — 47 for the whole RV64 node, of which 32 is one transform bank, 4 the
+processor's multiplier, and 11 the mover: 3 in the mover proper and 8 in its
+PRNG's constant multiplies. A per-port transform would show up there and does
+not, which is what "one bank per node" means as a measurement rather than a
+claim; `ooc_sysnode.tcl` errors above 48 DSP to keep it that way.
+
+### The slot data array is a block RAM, read one beat ahead
+
+The array is one burst per slot: `WR_SLOTS` slots by `WBURST` beats of `DATA_W`,
+which is 16 × 8 × 256 bits — 32 Kbit at the shipped sizing. Both factors are set
+for correctness rather than tuned, so this is the part of a port that grows
+fastest. Written as a plain register array it inferred distributed RAM read at
+three different indices, and the RV32 run above charges each port **1,220
+LUTRAM** for it — on a device carrying 2,688 block RAM tiles, of which the whole
+node uses 57.5. It is now one simple dual-port block RAM, **4 RAMB36 per
+port**.
+
+**Read the memory columns of a synthesis report, not only the logic ones.** An
+array whose width and depth are both fixed by correctness parameters is exactly
+the shape that ought to be a memory, and nothing in the tool's output says it
+has become logic instead.
+
+The write side is unchanged: an arriving data flit writes at `{matched slot,
+that slot's beat count}`, one beat per flit, and the two indices are already
+registered state.
+
+The read side is the part worth copying. A block RAM answers a cycle after its
+address is presented, and the AXI write channel can stall for any number of
+cycles, so "read the beat you are about to drive" does not work. Three pieces
+make it work:
+
+1. **A current-beat register.** One register holds the beat on the bus; the
+   RAM's output holds the one behind it. A beat can therefore leave every cycle,
+   because the next one is already out of the array when it is needed.
+2. **The read enable *is* the advance.** The array is read only on the cycle the
+   current-beat register takes the RAM's output — never freely. A block RAM's
+   output holds its value while its enable is low, so the next beat survives a
+   stall of any length. A free-running enable instead walks the address on
+   through the stall, and the data arrives one beat behind for the rest of the
+   burst.
+3. **One priming cycle per burst.** Beat 0's address is presented while the slot
+   is still being picked, in the idle cycle before the burst starts, so the
+   first cycle of the transfer already has beat 0 at the RAM's output and spends
+   itself taking it into the register. That one cycle is the entire cost; every
+   cycle after it moves a beat.
+
+Two structural choices keep the logic *around* the array cheap: a per-slot "the
+next beat is the last" term is precomputed from registered state only, so the
+ready decision is a 1-bit select rather than mux-then-add-then-compare; and
+free / match / pick are three separate priority scans over the slot array rather
+than one scan with conditions, so none of them lands in the other's path.
 
 Intake FIFO primitive choice is a genuine trade, not a default. Block RAM saves
 LUTs and costs frequency, because the worst path already starts at that FIFO's

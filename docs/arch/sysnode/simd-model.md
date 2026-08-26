@@ -10,7 +10,7 @@ tags:
 
 | layer | is | owns |
 |---|---|---|
-| control processor | a scalar RV32 with a scratchpad | **what** and **where** — descriptors, control flow, the irregular cases |
+| control processor | the node's scalar processor | **what** and **where** — descriptors, control flow, the irregular cases |
 | memory mover | its SIMD unit | **when** — the walk, bursting, ordering, backpressure, padding |
 | transform slot | that SIMD unit's extension | **what shape** — the byte envelope of a stream |
 
@@ -18,79 +18,84 @@ There is **one walker in the system and the mover owns it**. Anything that must
 traverse memory does so by being a transform on a move, never by walking for
 itself.
 
-Everything here is built and simulated. The two shape changes this page used to
-carry as in-flight — the slot folding onto the mover's datapath, and occupant
-registers — landed on 2026-08-24; where a decision was reversed, the reason it
-was made the first way is kept, because that is the useful half.
+**The bottom two layers belong to the node, not to the processor.** The node is
+built with one of two control complexes, chosen by `CPU_RV64` — the default RV32
+one, or an RV64 one. Both assemble the same mover and the same slot, unchanged,
+and only the top layer differs — [control-processor](control-processor.md).
 
 ## One front door
 
 The mover is an **executor of the processor, not a peer with a doorbell**. The
-descriptor is architectural state, program order is the queue, and the mover
-exposes nothing externally — the host talks to the processor for work.
+descriptor is architectural state, program order is the queue, and the mover has
+no fabric endpoint of its own — the host talks to the processor for work.
 
-So a move is commanded one way. The processor builds a descriptor in its
-scratchpad with ordinary stores and stores the pointer to `MVGO`:
+So a move is commanded one way: **a store into an address range the processor
+decodes**, uncached and not reorderable against the move it commands. The two
+complexes place that range differently and hand the mover the same nine
+registers either way.
 
-```
-word 0        : n, the number of register writes
-then n times  : {24'b0, offset[7:0]}, value[31:0], value[63:32]
-```
+| | the RV64 complex | the RV32 complex |
+|---|---|---|
+| where the range is | the control region at `0x0002_0000` | the node range at `0xF000_0000` |
+| how a descriptor is delivered | one store per mover register, straight through | one store of a **pointer**; `mv_exec` fetches the register list from the scratchpad and replays it |
+| what `busy` spans | the move | the descriptor fetch **and** the move, so one poll covers both |
 
-`mv_exec.v` fetches it and drives `mm_mover`'s `cfg` port offset for offset.
-`busy` spans descriptor fetch **and** the move, so one poll covers both, and two
-descriptors from different pointers are verified independent — the walk carries
-no state.
+The pointer form buys a seven-register move for one store, at the cost of a
+small fetch engine and a scratchpad port; the direct form costs seven stores and
+no engine. Both leave the mover's interface identical, which is the point — the
+mover does not know which processor is in front of it.
+
+The **host's** config window is a different thing and it does not disappear.
+Issuing a move register-by-register from the host is the transport cost this
+design exists to delete, but bring-up needs a path that works before any program
+runs. When the processor and the host both write in one cycle, **the processor
+wins.**
 
 ## Registers are registers
 
-The processor reaches the mover's and each occupant's control and status through
-its **node range**, by ordinary load and store. That range is already carved out
-ahead of the L1 (`l1_req = l1_req_core && !is_node`), which is what such a window
-needs: uncached, and not reorderable against `MVGO`.
-
-| address | | |
-|---|---|---|
-| `0xF000_0000` | W | `MVGO` — the descriptor pointer, and the go |
-| `0xF000_0000` | R | status: `[0]` busy, `[7:4]` mover fault, `[11:8]` occupant fault |
-| `0xF001_0000 \| (id << 8) \| reg` | RW | occupant `id`'s register `reg` |
-
-Bit 16 splits the range. Nothing about this is special: a register the processor
-can read and one it can write are the same mechanism, and whether a given write
-is followed by a move is the program's business.
-
-The mover's own nine registers are not in this window — they are written by the
-descriptor, which is already a stream of `{offset, value}` register writes, so a
-seven-write move costs the program one store rather than seven.
-
-> **A node read is held one cycle.** `rv_l1` answers in WB, one cycle after the
-> request, and the node path has to arrive with it. Combinational, it is sampled
-> with `l1_req` already low and the L1 array's word is returned instead — which
-> is why a status load read zero however the mover was doing. That was latent
-> before the slot registers gave it a second reader.
-
-The **host-facing** config window is a different thing and it disappears: issuing
-a move register-by-register from the host is the transport cost the executor
-design exists to delete.
+Nothing about a control range is special: a register the processor can read and
+one it can write are the same mechanism, and whether a given write is followed
+by a move is the program's business.
 
 **Space is not a constraint.** `mm_mover` decodes `reg_sel = {cfg_addr[7:3],
 3'b000}` at `0x00, 0x10, 0x18, 0x20, 0x28, 0x30, 0x38, 0x40, 0x50` — nine of the
-sixteen 8-byte slots in the client range. The fold returned `mm_xfer`'s four, so
-**seven are free: `0x08, 0x48, 0x58, 0x60, 0x68, 0x70, 0x78`**. The transform's
-id and mode needed none of them: they ride the source walker header's free upper
-bits, `[50:47]` and `[58:55]`, because a transform applies to the read side.
+sixteen 8-byte slots in the client range, so **seven are free: `0x08, 0x48,
+0x58, 0x60, 0x68, 0x70, 0x78`**. The transform's id and mode needed none of
+them: they ride the source walker header's free upper bits, `[50:47]` and
+`[58:55]`, because a transform applies to the read side.
+
+> **A register range must be reached by an early read and a registered write.**
+> On both complexes the range is decoded ahead of the L1, and on both the read
+> has to arrive in the cycle the L1 would have answered — a combinational read
+> is sampled with the request already low and the cache array's word is returned
+> in its place, so a status load reports zero however the mover is doing. The
+> write must not be combinational either: driven off the address adder it lands
+> on a register's clock enable and puts the adder in a 15-level chain. Read
+> early, write registered. This is the same rule as
+> [control-processor](control-processor.md#one-handshake-for-every-access-and-it-costs-a-cycle)'s.
 
 ### Status and faults
 
-A load in the node range returns `busy` and the mover's fault code, with the
-bank's own sticky fault beside it at `[11:8]` rather than merged into it. The
-bank's fault is **per bank, not per occupant** — the one condition a bank can
-detect for itself is an id naming no occupant, and that is a property of the
-demux rather than of any occupant.
+A load in the range returns `busy` and the mover's fault code as **disjoint
+fields**. The two complexes place them differently, and both keep them apart:
 
-> These were OR-ed into one word, so bit 0 read `fault[0] | busy` and a poll on
-> bit 0 spun forever on fault code 1. Now disjoint: `[0]` busy, `[7:4]` mover
-> fault.
+| | busy | mover fault | retired-move count | bank fault |
+|---|---|---|---|---|
+| RV64, control region `0x20` | `[32]` | `[31:28]` | `[27:0]` | — |
+| RV32, node range `0xF000_0000` | `[0]` | `[7:4]` | — | `[11:8]` |
+
+**Disjoint is the load-bearing part, not the positions.** Merged into one word,
+bit 0 reads `fault[0] | busy`; a poll loop on bit 0 then spins forever on fault
+code 1, and no code can tell a fault from a move in flight. **A status word
+whose fields overlap is not a status word.**
+
+The transform bank's own sticky fault sits beside the mover's rather than merged
+into it, and is **per bank, not per occupant** — the one condition a bank can
+detect for itself is an id naming no occupant, which is a property of the demux
+rather than of any occupant. **The RV64 complex has no column for it above,
+because the bank's register port is tied off there, so neither the bank's fault
+nor any occupant register is reachable today** —
+[control-processor](control-processor.md#where-todays-source-disagrees).
 
 **A fault aborts the run and the run still completes.** The mover stops issuing,
 `busy` falls normally, the fault field is non-zero — the existing poll is
@@ -108,8 +113,8 @@ which holds the project's occupants and demuxes the id internally.
 held for a whole run**, and a requester must not issue its read until it holds
 one — that is what makes it impossible for a beat to arrive with nowhere to go.
 
-Properties of the contract that follow from the RTL and are easy to get wrong —
-the middle three each cost a debugging pass:
+Properties of the contract that follow from the RTL, each of which an occupant
+author has to design around:
 
 - **Beats are pushed at line rate and never handshaken.** `need_beat` is left
   unconnected; an occupant that cannot take line rate buffers internally.
@@ -169,19 +174,30 @@ so entry N's write never overlapped entry N+1's read either.
 all**, against 3 folded bursts for the contiguous case — 27 ARs across both. The
 gather the old engine needed is gone, not cheaper.
 
-**Measured, OOC on `xcvu13p` at 3.333 ns, `PORTS=2`** — hierarchical,
-`-flatten_hierarchy none`, so a leaf is charged where it lives:
+**Measured, out-of-context synthesis on `xcvu13p-fhgb2104-2L-e`, Vivado 2024.2,
+at 3.333 ns, `PORTS=2`, `sysnode` whole** — the hierarchical report of the run
+each column names:
 
-| instance | | LUT | DSP |
-|---|---|---|---|
-| `u_xform` | `mag_xform` + the bank + its occupant | 4,491 | 32 |
-| `u_mover` | `mm_mover`, the slot folded onto its read path | 4,655 | 3 |
-| `u_mag` | the whole agent | 28,418 | 35 |
+| instance | | LUT, RV64 node | LUT, RV32 node | DSP |
+|---|---|---|---|---|
+| `u_xform` | `mag_xform` + the bank + its occupant | 4,499 | 4,356 | 32 |
+| `u_mover` | `mm_mover`, the slot folded onto its read path | 4,651 | 4,601 | 3 |
+| `u_mag` | MAG, without the mover or the slot | 19,047 | 18,924 | 0 |
 
-`u_xform` is the **same 4,491 LUT and 32 DSP** the slot cost as a separate stage:
-the fold moved who drives it, not what it is. The node's DSP total is 35 at any
-port count, which is the figure that says there is one bank rather than one per
-port — `ooc_sysnode.tcl` errors above 48 to keep it that way.
+Produced by `scripts/tcl/ooc_sysnode_rv64.tcl` and `scripts/tcl/ooc_sysnode.tcl`
+respectively. The two runs differ in more than the processor — the RV64 one also
+moves staging out of the memory ports — so read the pair as *the mover and the
+slot do not move with the processor*, which is what "they belong to the node"
+means as a measurement, and not as a difference of anything else.
+
+The node's DSP total is **39 with either processor** — 32 for one transform
+bank, 3 for the mover, 4 for the core's multiplier. A figure that does not scale
+with the port count is what says there is one bank rather than one per port, and
+`ooc_sysnode.tcl` errors above 48 to keep it that way.
+
+> **Hierarchical rows here come from a `rebuilt` netlist**, so a leaf may be
+> charged to the instance it was re-parented into. The top-line node totals are
+> exact; treat the breakdown as attribution.
 
 ### What the mover does with it
 
@@ -196,7 +212,7 @@ reservation exists so a read return can never be refused. Folded, the rule reads
 "do not issue an entry's ARs without room for its `OUT_WORDS`" — still a static
 count, still known before the AR.
 
-Two things the fold had to get right, both of which failed first:
+Two invariants hold the folded path together, and each fails silently:
 
 - **The read run must close at the entry boundary.** Held open across the stall
   that waits for `done`, its AR never goes out and the wait is permanent.
@@ -213,9 +229,16 @@ whole entries, which is what the compiler emits anyway.
 ## Occupant registers
 
 `cfg_en / cfg_id / cfg_addr / cfg_data / cfg_rdata / fault` on the bank, reached
-from the processor's node range and indexed by occupant id. `cfg_rdata` is a
+from the processor's control range and indexed by occupant id. `cfg_rdata` is a
 combinational read of `cfg_addr`, so there is no write-enable: a write is
 `cfg_en`, a read is always available.
+
+> **This is wired on the RV32 complex and tied off on the RV64 one.**
+> `rv64_mag_pe` drives the bank's `cfg_en` to zero and leaves `cfg_rdata` and
+> `fault` unread, so **in that configuration no occupant register is readable or
+> writable and the bank's fault is not observable**. Everything below describes
+> the contract, which the RTL implements and the default RV32 configuration
+> reaches; what is missing is the connection inside the RV64 complex.
 
 The shipping occupant still needs none — `mode` picks its packing and its scale
 is derived per entry — and that a complete occupant needs zero registers is what
@@ -277,15 +300,19 @@ Every row runs in `scripts/py/check.py blocks`.
 |---|---|
 | `mm_xform` | the mover and the slot against a reference occupant, contiguous **and strided within an entry** |
 | `xform_identity` | the framework alone — `kohakuaccel`, `templates`, `verif` and no project source — so the `xform_bank` dependency rule cannot rot |
-| `mm_mover` | every other mode, unchanged by the fold |
+| `mm_mover` | every other mode |
 | `mag_system` | the converting move reaching real memory through the agent, with two compute units and the NoC live |
-| `rv_mag_pe` | the node-range decode, a slot register written and one read back |
-| `ctrlpe_mesh` | **a full mesh** — the processor runs RV32 assembly that programs a mode-5 move, driven only through the station bus |
-| `ctrlpe_mesh2` | **two meshes** — mesh 0 converts and the result lands in mesh 1 over the interlink; one header field decides local or remote |
+| `rv_mag_pe` | the RV32 complex: the node-range decode, a slot register written and one read back |
+| `rv64_mag_pe` | the RV64 complex: the processor with the mover and the bank instantiated |
+| `ctrlpe_mesh` | **a full mesh**, RV32 — the processor runs assembly that programs a mode-5 move, driven only through the station bus |
+| `ctrlpe_mesh2` | **two meshes**, RV32 — mesh 0 converts and the result lands in mesh 1 over the interlink; one header field decides local or remote |
 
 The last two are the ones that matter for "does software drive it": nothing is
 poked hierarchically, the descriptor is staged as `CU_DATA` and the processor
-executes `lui` / `addi` / `sw` to `MVGO` exactly as a compiled program would.
+executes ordinary loads and stores exactly as a compiled program would.
+**Neither has an RV64 counterpart yet** — there is no whole-node simulation with
+`CPU_RV64=1`, so the mesh-level "software drives it" evidence is the RV32
+complex's.
 
 ## What does not fit
 

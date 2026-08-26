@@ -14,8 +14,9 @@ has to do, and it is easy to miss because it is spread over two systems.
 
 ## The instruction space is shared three ways
 
-An instruction reaching a compute unit is one flit, and that flit's bits belong
-to three different owners:
+An instruction reaching a compute unit is one **flit** — one fixed-width word of
+on-chip network traffic, a routing header plus a payload, 288 bits in the
+reference build. That flit's bits belong to three different owners:
 
 | Field | Owner | Fixed? |
 |---|---|---|
@@ -73,13 +74,31 @@ with no multipliers: each dimension carries its own partial sum, incremented on
 step and zeroed on wrap, so the address is an adder tree rather than a product.
 That is what makes a strided N-dimensional walk cost one element per cycle.
 
-## Resolved
+## Who issues a mover command
 
-**`mm_mover.v` used to depend on `mx_tdesc.v` in `src/kohakutpu/matmul/`** — a
-framework module reaching into a project package, which is backwards. Both files
-were misplaced: `mx_tdesc` is a general N-dimensional affine address generator
-with bound axes and nothing matmul-specific in it. It now lives beside the mover
-that uses it, at `src/kohakuaccel/sysnode/mover/mx_tdesc.v`.
+A read or a write is issued by a compute unit, as a flit. **A mover command is
+not** — it is a store into an address range the node's control processor
+decodes, and no compute unit can reach it. Nothing outside the node addresses
+the mover at all; the host's own path to it is a window on the node's control
+slave, arbitrated against the processor's stores.
 
-Its name still carries the project's `mx_` prefix. That is cosmetic and is the
-only trace left.
+That is why the mover's command set is described with the processor rather than
+with the flit protocol — [simd-model](simd-model.md#one-front-door) — and why
+the six modes are the *processor's* instruction set rather than a compute unit's.
+
+> **Two of the mover's nine registers are not reachable from the RV64
+> processor.** Its control region maps the mover's config offsets
+> `0x00`–`0x3F`, and the fill immediate (`0x40`) and the gather pitch and word
+> count (`0x50`) fall outside that window. A `FILL` or `GATHER` move therefore
+> cannot be fully programmed from a program running on it; both remain reachable
+> from the host's config window, and from the default RV32 processor, whose
+> descriptor form replays an arbitrary `{offset, value}` list. See
+> [control-processor](control-processor.md#where-todays-source-disagrees).
+
+## Where today's source disagrees
+
+**`mx_tdesc.v` carries a project prefix it has outgrown.** The descriptor walker
+is a general N-dimensional affine address generator with bound axes and nothing
+project-specific in it, and it lives with the mover that uses it at
+`src/kohakuaccel/sysnode/mover/mx_tdesc.v`. Only the `mx_` in its name still
+says otherwise.
