@@ -210,7 +210,7 @@ module mag_mem_port #(
     wire [3:0]  in_ty  = `MP_HDR_TY(rq_flit);
     wire [POS_WIDTH-1:0] in_sx = `MP_SRC_X(rq_flit);
     wire [POS_WIDTH-1:0] in_sy = `MP_SRC_Y(rq_flit);
-    // NOC_MEM_ADDR is 40 bits WHATEVER ADDR_W is -- a flit contract, not a width.
+    // NOC_MEM_ADDR is 40 bits WHATEVER ADDR_W is: a flit contract, not a width.
     // Slicing it by ADDR_W read `addr >> 6` on a 34-bit build, silently.
     localparam integer FA = 40;
     wire [ADDR_W-1:0] in_addr = rq_flit[255 -: FA];
@@ -434,16 +434,26 @@ module mag_mem_port #(
     localparam integer WBW    = (WBURST <= 1) ? 1 : $clog2(WBURST);
 
     reg                  ws_val  [0:WR_SLOTS-1];   // descriptor seen
-    reg                  ws_rdy  [0:WR_SLOTS-1];   // data complete, ready for AXI
+    reg                  ws_rdy  [0:WR_SLOTS-1];   // data complete, AXI-ready
     reg                  ws_iss  [0:WR_SLOTS-1];   // issued to AXI, awaiting ack
     reg [POS_WIDTH-1:0]  ws_x    [0:WR_SLOTS-1], ws_y [0:WR_SLOTS-1];
     reg [7:0]            ws_txn  [0:WR_SLOTS-1];
     reg [ADDR_W-1:0]     ws_addr [0:WR_SLOTS-1];
     reg                  ws_stg  [0:WR_SLOTS-1];   // lands in staging, not DRAM
-    reg                  ws_bad  [0:WR_SLOTS-1];   // reserved aperture: goes nowhere
+    reg                  ws_bad  [0:WR_SLOTS-1];   // reserved aperture: dropped
     reg [WBW:0]          ws_len  [0:WR_SLOTS-1];   // beats expected
     reg [WBW:0]          ws_cnt  [0:WR_SLOTS-1];   // beats received
-    reg [DATA_W-1:0]     ws_data [0:WR_SLOTS*WBURST-1];
+
+    // THE SLOT DATA IS BLOCK RAM, READ ONE BEAT AHEAD. As a reg array it was
+    // distributed RAM read at three indices -- 1,218 LUT per port, in a node
+    // with 46 of 2,688 BRAM tiles in use. `wd_cur` is the beat on the bus,
+    // `wd_next` the one behind it, and the read enable is the advance itself,
+    // so `wd_next` HOLDS across a stall; the RAM samples its address at the
+    // edge after it is presented, which a free-running enable got one behind.
+    wire [DATA_W-1:0]      wd_next;
+    (* EXTRACT_RESET = "no" *) reg [DATA_W-1:0] wd_cur;
+    reg [WS_BITS+WBW-1:0]  wd_raddr;      // the beat after `wd_next`
+    reg                    wd_ok;         // `wd_cur` holds this burst's beat
 
     // "this slot's next beat is its last", per slot and from registered state
     // only, so `ws_rdy` sees a 1-bit select instead of mux -> add -> compare.
@@ -587,12 +597,13 @@ module mag_mem_port #(
             .a_fault  (),
             .a_rvalid (stg_rvalid),
             .a_rdata  (stg_rdata),
-            .b_req    ((st == S_WR_DATA) && wr_stg),
+            .b_req    ((st == S_WR_DATA) && wr_stg && wd_ok),
             .b_we     (1'b1),
             .b_addr   (
                 m_awaddr + {{(ADDR_W-WBW-1-LSB){1'b0}}, wb_cnt, {LSB{1'b0}}}
             ),
-            .b_wdata  (ws_data[{ws_cur, wb_cnt[WBW-1:0]}]),
+            .b_wdata  (wd_cur),
+            .b_wstrb  ({(DATA_W/8){1'b1}}),
             .b_mine   (),
             .b_gnt    (stg_b_gnt),
             .b_rvalid (),
@@ -699,6 +710,45 @@ module mag_mem_port #(
     reg               wr_bad;      // ... or names a reserved aperture
     wire [WBW:0]      wb_nxt = wb_cnt + 1'b1;
 
+    // Beat 0 is addressed while still in S_IDLE, so the first S_WR_DATA cycle
+    // already has it on `wd_next`: one priming cycle per burst, not two.
+    wire wd_axi_adv = !m_wvalid || (m_wready && !m_wlast);
+    wire wd_adv = (
+        (st == S_WR_DATA)
+        && !wr_bad
+        && (!wd_ok || (wr_stg ? stg_b_gnt : wd_axi_adv))
+    );
+    wire [WS_BITS+WBW-1:0] wd_a = (
+        (st == S_IDLE) ? {ws_pick, {WBW{1'b0}}}
+        : wd_raddr
+    );
+
+    kohaku_sdpram #(
+        .WIDTH    (DATA_W),
+        .DEPTH    (WR_SLOTS * WBURST),
+        .MEM_PRIM ("block"),
+        .READ_LAT (1)
+    ) u_wsdata (
+        .clk     (clk),
+        .wr_en   (take_wr_data),
+        .wr_addr ({ws_match, ws_cnt[ws_match][WBW-1:0]}),
+        .wr_data (wq_flit[DATA_W-1:0]),
+        .rd_en   ((st == S_IDLE) || wd_adv),
+        .rd_addr (wd_a),
+        .rd_data (wd_next)
+    );
+
+    always @(posedge clk) begin
+        if (ws_issue) begin
+            wd_raddr <= {ws_pick, {{(WBW-1){1'b0}}, 1'b1}};
+        end else if (wd_adv) begin
+            wd_raddr <= wd_raddr + 1'b1;
+        end
+        if (wd_adv) begin
+            wd_cur <= wd_next;
+        end
+    end
+
     // The NoC write path's B latch. m_bready is tied high, so the slave's
     // response is consumed the cycle it appears whether or not S_WR_ACK can act
     // on it -- and often it cannot, the read emitter owning the output register.
@@ -732,7 +782,6 @@ module mag_mem_port #(
                 ws_cnt[ws_free]  <= 0;
             end
             if (take_wr_data) begin
-                ws_data[{ws_match, ws_cnt[ws_match][WBW-1:0]}] <= wq_flit[DATA_W-1:0];
                 ws_cnt[ws_match] <= ws_cnt[ws_match] + 1'b1;
                 // ready only when the WHOLE burst has landed
                 if (ws_fill_now[ws_match]) begin
@@ -777,6 +826,7 @@ module mag_mem_port #(
             ws_done <= 1'b0;
             wb_cnt <= 0;
             wb_len <= 0;
+            wd_ok  <= 1'b0;
             wr_stg <= 1'b0;
             wr_bad <= 1'b0;
             rd_stg <= 1'b0;
@@ -841,7 +891,7 @@ module mag_mem_port #(
                         rq_y   <= ws_y[ws_pick];
                         rq_txn <= ws_txn[ws_pick];
                         m_awaddr <= ws_addr[ws_pick][ADDR_W-1:0];
-                        m_awlen  <= {{(8-WBW-1){1'b0}}, (ws_len[ws_pick] - 1'b1)};
+                        m_awlen  <= {{(8-WBW-1){1'b0}}, ws_len[ws_pick] - 1'b1};
                         m_awid   <= {ID_W{1'b0}};
                         // A staged write never reaches AXI: no AW, no W, no B.
                         // Nor does one naming a reserved aperture -- dropped.
@@ -850,6 +900,7 @@ module mag_mem_port #(
                         wr_bad <= ws_bad[ws_pick];
                         wb_cnt <= 0;
                         wb_len <= ws_len[ws_pick];
+                        wd_ok  <= 1'b0;
                         n_wr <= n_wr + 16'd1;
                         st <= S_WR_DATA;
                     end
@@ -883,6 +934,9 @@ module mag_mem_port #(
                     if (wr_bad) begin
                         ws_done <= 1'b1;
                         st      <= S_IDLE;
+                    end else if (!wd_ok) begin
+                        // `wd_adv` takes beat 0 into `wd_cur` this cycle.
+                        wd_ok <= 1'b1;
                     end else if (wr_stg) begin
                         // One word per beat through port B, which is the
                         // granularity the host window uses and needs no burst.
@@ -895,7 +949,7 @@ module mag_mem_port #(
                         end
                     end else begin
                         if (!m_wvalid) begin
-                            m_wdata  <= ws_data[{ws_cur, wb_cnt[WBW-1:0]}];
+                            m_wdata  <= wd_cur;
                             m_wlast  <= (wb_nxt == wb_len);
                             m_wvalid <= 1'b1;
                         end else if (m_wready) begin
@@ -904,10 +958,7 @@ module mag_mem_port #(
                                 m_wlast  <= 1'b0;
                                 st <= S_WR_ACK;
                             end else begin
-                                // The NEXT beat's data, indexed by the next
-                                // count -- reading ws_data at the current count
-                                // here would resend beat 0 for the whole burst.
-                                m_wdata <= ws_data[{ws_cur, wb_nxt[WBW-1:0]}];
+                                m_wdata <= wd_cur;
                                 m_wlast <= (wb_nxt + 1'b1 == wb_len);
                                 wb_cnt  <= wb_nxt;
                             end
@@ -925,7 +976,7 @@ module mag_mem_port #(
                             {(FLIT_WIDTH-4*POS_WIDTH-16){1'b0}}
                         };
                         mem_out_valid <= 1'b1;
-                        ws_done <= 1'b1;    // release the slot for its next write
+                        ws_done <= 1'b1;    // free the slot for its next write
                         st <= S_IDLE;
                     end
                 end
