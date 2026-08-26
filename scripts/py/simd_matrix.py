@@ -15,28 +15,33 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
-# The tclargs of ooc_simd_pe.tcl, in order, so a row says what it was built as
-# instead of what its directory name claims.
+# The knobs ooc_simd_pe.tcl NAMES in @@@REC. Read positionally from tclargs,
+# position 2 stayed labelled `muls` long after it became the integer-lane count.
 ORDER = [
-    "den",
+    "dsp_en",
     "simd",
-    "muls",
-    "hsh",
-    "hpm",
-    "wbs",
-    "per",
-    "flt",
-    "npt",
-    "fln",
-    "rmem",
-    "dotd",
+    "ilanes",
+    "shiftu",
+    "permu",
+    "red",
+    "wb",
+    "float",
+    "flanes",
+    "npart",
     "falu",
     "fsfu",
     "facc",
     "fcvt",
-    "flat",
+    "f16",
+    "f32",
+    "nacc",
+    "vregs",
+    "rmem",
     "vprim",
+    "flat",
     "sdir",
+    "period",
+    "xgen",
 ]
 
 KEYS = [
@@ -47,6 +52,7 @@ KEYS = [
     "lut_srl",
     "ff",
     "bram",
+    "uram",
     "dsp",
     "ctrlsets",
 ]
@@ -57,19 +63,12 @@ def parse(log):
     text = log.read_text(errors="ignore")
     rec, fmax, units, cfg = {}, [], {}, {}
 
-    # The tclargs echo Vivado prints on the command line it was launched with.
-    m = re.search(r"-tclargs\s+(.*)", text)
-    if m:
-        vals = m.group(1).split()
-        for k, v in zip(ORDER, vals):
-            cfg[k] = v
-
     for ln in text.splitlines():
         if ln.startswith("@@@REC "):
             for kv in ln[len("@@@REC ") :].split():
                 if "=" in kv:
                     k, v = kv.split("=", 1)
-                    rec[k] = v
+                    (cfg if k in ORDER else rec)[k] = v
         elif ln.startswith("@@@FMAX "):
             f = ln.split()
             if len(f) >= 4 and f[3] != "none":
