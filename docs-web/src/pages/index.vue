@@ -71,9 +71,9 @@ const die = {
     { from: "host:r", to: "jtag:l", dir: "h" },
     { from: "xdma:r", to: "axi:l", dir: "h" },
     { from: "jtag:r", to: "axi:l", dir: "h" },
-    { from: "axi:r", to: "ddr:l", dir: "h" },
-    { from: "axi:r", to: "mag:l", dir: "h", accent: true },
-    { from: "ddr:b", to: "mag:t", dir: "v" },
+    { from: "axi:r", to: "ddr:l", dir: "h", dash: true, label: "control" },
+    { from: "axi:r", to: "mag:l", dir: "h", accent: true, label: "data" },
+    { from: "mag:t", to: "ddr:b", dir: "v", accent: true, label: "memory" },
     { from: "mag:r", to: "mesh:l", dir: "h", accent: true },
     { from: "mesh:r", to: "cu:l", dir: "h", accent: true },
     { from: "mesh:r", to: "l2:l", dir: "h" },
@@ -88,7 +88,7 @@ const die = {
       <p
         class="kt-text-caption uppercase tracking-widest text-warm-400 dark:text-warm-600 font-semibold mb-3"
       >
-        Architecture reference
+        A framework for FPGA accelerators
       </p>
       <h1
         class="text-4xl sm:text-5xl font-semibold tracking-tight text-warm-900 dark:text-warm-100 leading-tight"
@@ -98,14 +98,40 @@ const die = {
       <p
         class="kt-text-emphasis text-warm-600 dark:text-warm-400 mt-4 max-w-[68ch] leading-7"
       >
-        A framework for building FPGA accelerators around a compute unit you
-        design. You write the datapath; the framework is DRAM and its
-        controllers, a memory agent that turns descriptors into transfers, an
-        on-chip network, the host interface, floorplanning, clock domains, and
-        the flow that closes timing.
+        You write a compute datapath. The framework brings everything around
+        it: DRAM and its controllers, a memory agent that turns descriptors into
+        transfers, an on-chip network, the host interface, a programmable
+        runtime host, floorplanning, and the flow that closes timing.
       </p>
+
+      <div
+        class="mt-6 rounded-xl border border-warm-200 dark:border-warm-700 bg-warm-100/60 dark:bg-warm-900/40 p-5 max-w-[70ch]"
+      >
+        <p
+          class="kt-text-caption uppercase tracking-widest text-warm-400 dark:text-warm-600 font-semibold mb-2"
+        >
+          The stand
+        </p>
+        <p class="kt-text-body text-warm-700 dark:text-warm-300 leading-7">
+          One opinion runs through all of it: <b>build hardware the way frontier
+          software is built.</b> A general substrate you program, a fast
+          iteration loop, reuse over re-spin — and generality treated as cheap
+          enough to pay for, not a luxury to avoid. The system node is the
+          clearest case: there is a cheaper fixed-function controller, and we
+          build a full OS-capable RV64 processor instead, so the hard, changing
+          work becomes a program on the card rather than a hardware re-spin.
+        </p>
+        <RouterLink
+          to="/idea"
+          class="inline-flex items-center gap-1.5 mt-3 kt-text-body font-medium text-gem no-underline hover:gap-2.5 transition-all"
+        >
+          The idea — why KohakuAccel
+          <span class="i-carbon-arrow-right" />
+        </RouterLink>
+      </div>
+
       <p
-        class="kt-text-caption text-warm-500 dark:text-warm-400 mt-4 max-w-[68ch] leading-6"
+        class="kt-text-caption text-warm-500 dark:text-warm-400 mt-5 max-w-[68ch] leading-6"
       >
         These pages are the visual companion to
         <span class="chip">docs/</span> — the same content, drawn. Every
@@ -114,7 +140,7 @@ const die = {
     </section>
 
     <Fig
-      caption="What is actually on the die. A ship is one complete assembly of this, floorplanned for a specific device; an image may hold several meshes, one per die region, joined by the interlink. Two processors are on it and they are not variants of each other: an RV32 PE is an ordinary compute unit that happens to run programs — kicked, it runs to completion and reports one word — while the system node's RV64 host runs the runtime that does the kicking."
+      caption="What is actually on the die. DRAM is reached only through the system node: the host and debug write to the AXI surface (data), the node's MAG turns descriptors into DRAM transfers (memory), and the dashed AXI→DDR link is the controller's configuration, not a data path — there is no direct host access to DRAM. A ship is one complete assembly of this, floorplanned for a specific device; an image may hold several meshes, one per die region, joined by the interlink. Two processors are on it and they are not variants of each other: an RV32 PE is an ordinary compute unit that happens to run programs — kicked, it runs to completion and reports one word — while the system node's RV64 host runs the runtime that does the kicking."
       zoom
     >
       <BlockDiagram :nodes="die.nodes" :edges="die.edges" />
