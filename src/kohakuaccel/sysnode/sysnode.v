@@ -56,6 +56,10 @@ module sysnode #(
     parameter integer STAGE_PIPE  = 1,
     parameter integer STAGE_AT_PORT = 0,
     // ---- the control processor. NOT OPTIONAL: there is no CTRL_PE. ----
+    // CPU_RV64 swaps it for the RV64 complex: same mover, same transform slot,
+    // different processor. It has no NoC compute-unit shell (decisions.md D1),
+    // so the host reaches it through `hs_*` instead of CU_DATA/CU_INST.
+    parameter integer CPU_RV64   = 0,
     parameter integer PE_IMEM    = 2048,
     parameter integer PE_SPAD    = 2048,
     parameter integer PE_L1_LINES = 128,
@@ -172,6 +176,16 @@ module sysnode #(
     output wire [63:0]           pe_status,
     output wire                  pe_busy,
 
+    // The RV64 processor's host window. Unused when CPU_RV64 = 0.
+    input  wire [31:0]           hs_addr,
+    input  wire                  hs_wr,
+    input  wire [63:0]           hs_wdata,
+    input  wire [7:0]            hs_wstrb,
+    input  wire                  hs_rd,
+    output wire [63:0]           hs_rdata,
+    output wire                  hs_console_we,
+    output wire [7:0]            hs_console,
+
     output wire [LINK_W-1:0]     link0_out_tdata,
     output wire [TUSER_W-1:0]    link0_out_tuser,
     output wire                  link0_out_tlast,
@@ -239,6 +253,13 @@ module sysnode #(
     wire        aux_cfg_en;
     wire [7:0]  aux_cfg_addr;
     wire [63:0] aux_cfg_data;
+
+    // The control processor's own path into the interlink. Only the RV64
+    // complex drives it; the RV32 one has no such window and ties it off.
+    wire        cpu_il_en;
+    wire [7:0]  cpu_il_addr;
+    wire [63:0] cpu_il_data;
+    wire [63:0] cpu_dbell_counts;
 
     sn_hub #(
         .FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH),
@@ -342,6 +363,8 @@ module sysnode #(
         .mv_rlast(mv_rlast), .mv_rvalid(mv_rvalid), .mv_rready(mv_rready),
         .aux_cfg_en(aux_cfg_en), .aux_cfg_addr(aux_cfg_addr),
         .aux_cfg_data(aux_cfg_data),
+        .cpu_il_en(cpu_il_en), .cpu_il_addr(cpu_il_addr),
+        .cpu_il_data(cpu_il_data), .cpu_dbell_counts(cpu_dbell_counts),
         .mv_busy(mv_busy), .mv_fault(mv_fault), .mv_done(mv_done),
         .cp_awaddr(cp_awaddr), .cp_awlen(cp_awlen), .cp_awvalid(cp_awvalid),
         .cp_awready(cp_awready),
@@ -365,6 +388,86 @@ module sysnode #(
         .link1_in_tlast(link1_in_tlast), .link1_in_tvalid(link1_in_tvalid),
         .link1_in_tready(link1_in_tready)
     );
+
+generate
+if (CPU_RV64 != 0) begin : g_rv64
+    // A LEVEL, NOT AN EDGE: an inbound doorbell stays pending until the
+    // handler clears the counts through the config window, so a ring taken
+    // while another is being serviced is not lost. Registered: 64 inputs.
+    reg dbell_pend;
+    always @(posedge clk) begin
+        dbell_pend <= |cpu_dbell_counts;
+    end
+
+    // No CU shell, but the hub port is a client all the same: the processor
+    // dispatches through a control-region mailbox instead of a kick-and-report
+    // lifecycle, which is what lets a runtime command units it did not start.
+    rv64_mag_pe #(
+        .FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH),
+        .ADDR_W(ADDR_W), .DATA_W(DATA_W), .ID_W(ID_W),
+        .IMEM_WORDS(PE_IMEM), .SPAD_WORDS(PE_SPAD),
+        .L1_LINES(PE_L1_LINES), .MEM_PRIM(PE_MEM_PRIM),
+        .XFORM_SLOTS(XFORM_SLOTS), .XID_W(XID_W), .XMODE_W(XMODE_W),
+        .XFORM_IN_BITS(XFORM_IN_BITS), .XFORM_OUT_WORDS(XFORM_OUT_WORDS)
+    ) u_pe (
+        .clk(clk), .resetn(resetn),
+        .hs_addr(hs_addr), .hs_wr(hs_wr), .hs_wdata(hs_wdata),
+        .hs_wstrb(hs_wstrb), .hs_rd(hs_rd), .hs_rdata(hs_rdata),
+        .hs_ready(),
+        // (0,0), the same corner `sn_hub` decodes the PE at.
+        .my_x({POS_WIDTH{1'b0}}), .my_y({POS_WIDTH{1'b0}}),
+        .noc_in_data(pe_rx_data), .noc_in_valid(pe_rx_valid),
+        .noc_in_busy(pe_rx_busy),
+        .noc_out_data(pe_tx_data), .noc_out_valid(pe_tx_valid),
+        .noc_out_busy(pe_tx_busy),
+        .cp_awaddr(cp_awaddr), .cp_awlen(cp_awlen),
+        .cp_awvalid(cp_awvalid), .cp_awready(cp_awready),
+        .cp_wdata(cp_wdata), .cp_wstrb(cp_wstrb), .cp_wlast(cp_wlast),
+        .cp_wvalid(cp_wvalid), .cp_wready(cp_wready),
+        .cp_bvalid(cp_bvalid), .cp_bready(cp_bready),
+        .cp_araddr(cp_araddr), .cp_arlen(cp_arlen),
+        .cp_arvalid(cp_arvalid), .cp_arready(cp_arready),
+        .cp_rdata(cp_rdata), .cp_rlast(cp_rlast), .cp_rvalid(cp_rvalid),
+        .cp_rready(cp_rready),
+        .mv_awid(mv_awid), .mv_awaddr(mv_awaddr), .mv_awlen(mv_awlen),
+        .mv_awsize(mv_awsize), .mv_awburst(mv_awburst),
+        .mv_awvalid(mv_awvalid), .mv_awready(mv_awready),
+        .mv_wdata(mv_wdata), .mv_wstrb(mv_wstrb), .mv_wlast(mv_wlast),
+        .mv_wvalid(mv_wvalid), .mv_wready(mv_wready),
+        .mv_bid(mv_bid), .mv_bresp(mv_bresp), .mv_bvalid(mv_bvalid),
+        .mv_bready(mv_bready),
+        .mv_arid(mv_arid), .mv_araddr(mv_araddr), .mv_arlen(mv_arlen),
+        .mv_arsize(mv_arsize), .mv_arburst(mv_arburst),
+        .mv_arvalid(mv_arvalid), .mv_arready(mv_arready),
+        .mv_rid(mv_rid), .mv_rdata(mv_rdata), .mv_rresp(mv_rresp),
+        .mv_rlast(mv_rlast), .mv_rvalid(mv_rvalid), .mv_rready(mv_rready),
+        .aux_cfg_en(aux_cfg_en), .aux_cfg_addr(aux_cfg_addr),
+        .aux_cfg_data(aux_cfg_data), .ilink_on(ILINK != 0),
+        .mv_busy(mv_busy), .mv_fault(mv_fault), .mv_done(mv_done),
+        // The processor's own reach into the interlink: it rings a doorbell in
+        // another mesh through the config window, and reads the four inbound
+        // counts back. Left dangling this was a control region that answered
+        // writes and changed nothing.
+        .db_status(cpu_dbell_counts),
+        .db_en(cpu_il_en), .db_addr(cpu_il_addr), .db_data(cpu_il_data),
+        // The node conditions a runtime must react to rather than poll: a
+        // mover descriptor that failed, the host asking it to stop, and a
+        // doorbell rung from another mesh. Tied low this line existed but
+        // could never fire, so `mie[11]` was dead.
+        .irq_summary((|mv_fault) || pe_halt_req || dbell_pend), .busy(pe_busy),
+        .dbg_console_we(hs_console_we), .dbg_console(hs_console)
+    );
+    // Enough for a host to tell a running node from a stopped one without the
+    // control window. The RV32 branch reports its own; this mirrors the shape.
+    assign pe_status = {62'd0, |mv_fault, pe_busy};
+end
+else begin : g_rv32
+    assign hs_rdata     = 64'd0;
+    assign hs_console_we = 1'b0;
+    assign hs_console    = 8'd0;
+    assign cpu_il_en    = 1'b0;
+    assign cpu_il_addr  = 8'd0;
+    assign cpu_il_data  = 64'd0;
 
     rv_mag_pe #(
         .FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH),
@@ -405,6 +508,8 @@ module sysnode #(
         .mv_busy(mv_busy), .mv_fault(mv_fault), .mv_done(mv_done),
         .halt_req(pe_halt_req), .pe_status(pe_status), .busy(pe_busy)
     );
+end
+endgenerate
 endmodule
 
 `default_nettype wire

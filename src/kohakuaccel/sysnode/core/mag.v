@@ -265,6 +265,13 @@ module mag #(
     output wire                  aux_cfg_en,
     output wire [7:0]            aux_cfg_addr,
     output wire [63:0]           aux_cfg_data,
+    // The node's own processor reaching the interlink's config window, so it
+    // can ring a doorbell without a host round trip. The host wins a same-cycle
+    // collision: it is a debug path and the processor retries.
+    input  wire                  cpu_il_en,
+    input  wire [7:0]            cpu_il_addr,
+    input  wire [63:0]           cpu_il_data,
+    output wire [63:0]           cpu_dbell_counts,
     // Mirrored into AUX_STAT so the host reads liveness in one 64-bit load.
     input  wire                  mv_busy,
     input  wire [3:0]            mv_fault,
@@ -660,9 +667,11 @@ module mag #(
             .MEM_X(MEM_X), .MEM_Y(MEM_Y)
         ) u_il (
             .clk(clk), .resetn(resetn),
-            .cfg_en(aux_cfg_en), .cfg_addr(aux_cfg_addr),
-            .cfg_data(aux_cfg_data),
+            .cfg_en(aux_cfg_en || cpu_il_en),
+            .cfg_addr(aux_cfg_en ? aux_cfg_addr : cpu_il_addr),
+            .cfg_data(aux_cfg_en ? aux_cfg_data : cpu_il_data),
             .stat_sel(il_stat_sel), .stat_q(il_stat_q), .my_mesh(il_mesh),
+            .dbell_counts(cpu_dbell_counts),
 
             .s_awaddr(mv_awaddr), .s_awlen(mv_awlen), .s_awvalid(mv_awvalid),
             .s_awready(mvx_awready),
@@ -793,6 +802,7 @@ module mag #(
         assign il_mesh    = MESH_ID[1:0];
         assign my_mesh    = MESH_ID[1:0];
         assign il_stat_q  = 64'd0;
+        assign cpu_dbell_counts = 64'd0;   // no interlink, no doorbells
         assign enc_busy   = 1'b1;
         assign inj_data   = {FLIT_WIDTH{1'b0}};
         assign inj_valid  = 1'b0;
