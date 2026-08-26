@@ -36,30 +36,31 @@ VIVADO = pathlib.Path(r"D:\Xilinx\Vivado\2024.2\bin\vivado.bat")
 TCL = ROOT / "scripts" / "tcl" / "ooc_khs.tcl"
 RUN = ROOT / "tests" / "pe" / "tools" / "khs_run.py"
 
-#: name -> simd, vregs, nacc, vspad, muls, shift, perm, wb, use_dsp, vreg_prim,
-#: float, npart. NPART is ARCHITECTURAL -- float addition does not associate, so
-#: two builds with different counts compute different answers on one program.
+#: name -> simd, vregs, nacc, vspad, ilanes, shiftu, permu, wb, use_dsp,
+#: vreg_prim, float, npart. The three width fields USED TO BE muls/shift/perm;
+#: they are now unit COUNTS where 0 is not built. NPART is ARCHITECTURAL -- float
+#: addition does not associate, so two counts compute different answers.
 CONFIGS = {
-    # the width sweep: 09 S27's Stage 2 question, at equal everything else
-    "s2": (2, 8, 2, 1024, 4, 1, 1, 0, "yes", "distributed"),
-    "s4": (4, 8, 2, 1024, 4, 1, 1, 0, "yes", "distributed"),
-    "s8": (8, 8, 2, 1024, 4, 1, 1, 0, "yes", "distributed"),
+    # the width sweep: at equal everything else
+    "s2": (2, 8, 2, 1024, 2, 2, 2, 0, "yes", "distributed"),
+    "s4": (4, 8, 2, 1024, 4, 4, 4, 0, "yes", "distributed"),
+    "s8": (8, 8, 2, 1024, 8, 8, 8, 0, "yes", "distributed"),
     # with X / without X, all at SIMD 8
-    "s8-nosh": (8, 8, 2, 1024, 4, 0, 1, 0, "yes", "distributed"),
-    "s8-nopm": (8, 8, 2, 1024, 4, 1, 0, 0, "yes", "distributed"),
-    "s8-m2": (8, 8, 2, 1024, 2, 1, 1, 0, "yes", "distributed"),
-    "s8-lutmul": (8, 8, 2, 1024, 4, 1, 1, 0, "no", "distributed"),
-    "s8-v32": (8, 32, 2, 1024, 4, 1, 1, 0, "yes", "distributed"),
-    "s8-v4": (8, 4, 2, 1024, 4, 1, 1, 0, "yes", "distributed"),
-    "s8-a1": (8, 8, 1, 1024, 4, 1, 1, 0, "yes", "distributed"),
-    "s8-a4": (8, 8, 4, 1024, 4, 1, 1, 0, "yes", "distributed"),
-    "s8-bramrf": (8, 8, 2, 1024, 4, 1, 1, 0, "yes", "block"),
+    "s8-nosh": (8, 8, 2, 1024, 8, 0, 8, 0, "yes", "distributed"),
+    "s8-nopm": (8, 8, 2, 1024, 8, 8, 0, 0, "yes", "distributed"),
+    "s8-il2": (8, 8, 2, 1024, 2, 8, 8, 0, "yes", "distributed"),
+    "s8-lutmul": (8, 8, 2, 1024, 8, 8, 8, 0, "no", "distributed"),
+    "s8-v32": (8, 32, 2, 1024, 8, 8, 8, 0, "yes", "distributed"),
+    "s8-v4": (8, 4, 2, 1024, 8, 8, 8, 0, "yes", "distributed"),
+    "s8-a1": (8, 8, 1, 1024, 8, 8, 8, 0, "yes", "distributed"),
+    "s8-a4": (8, 8, 4, 1024, 8, 8, 8, 0, "yes", "distributed"),
+    "s8-bramrf": (8, 8, 2, 1024, 8, 8, 8, 0, "yes", "block"),
     # the write a stage later: a second stall for a shorter path
-    "s8-wb": (8, 8, 2, 1024, 4, 1, 1, 1, "yes", "distributed"),
-    "s2-wb": (2, 8, 2, 1024, 4, 1, 1, 1, "yes", "distributed"),
-    "s8-wb-nopm": (8, 8, 2, 1024, 4, 1, 0, 1, "yes", "distributed"),
-    # everything the matrix can turn off, turned off
-    "s8-min": (8, 4, 1, 1024, 2, 0, 0, 0, "yes", "distributed"),
+    "s8-wb": (8, 8, 2, 1024, 8, 8, 8, 1, "yes", "distributed"),
+    "s2-wb": (2, 8, 2, 1024, 2, 2, 2, 1, "yes", "distributed"),
+    "s8-wb-nopm": (8, 8, 2, 1024, 8, 8, 0, 1, "yes", "distributed"),
+    # every width at its narrowest that is still built
+    "s8-min": (8, 4, 1, 1024, 1, 0, 0, 0, "yes", "distributed"),
 }
 for _n, _c in list(CONFIGS.items()):
     CONFIGS[_n] = _c + (0, 0)
@@ -68,10 +69,10 @@ for _n, _c in list(CONFIGS.items()):
 #: `s8-float-a4` prices the rotation contract in accumulators.
 CONFIGS.update(
     {
-        "s8-float": (8, 8, 2, 1024, 4, 1, 1, 0, "yes", "distributed", 1, 16),
-        "s8-float-a4": (8, 8, 4, 1024, 4, 1, 1, 0, "yes", "distributed", 1, 16),
-        "s8-floatonly": (8, 8, 2, 1024, 2, 0, 0, 0, "yes", "distributed", 1, 16),
-        "s4-float": (4, 8, 2, 1024, 4, 1, 1, 0, "yes", "distributed", 1, 16),
+        "s8-float": (8, 8, 2, 1024, 8, 8, 8, 0, "yes", "distributed", 1, 16),
+        "s8-float-a4": (8, 8, 4, 1024, 8, 8, 8, 0, "yes", "distributed", 1, 16),
+        "s8-floatonly": (8, 8, 2, 1024, 1, 0, 0, 0, "yes", "distributed", 1, 16),
+        "s4-float": (4, 8, 2, 1024, 4, 4, 4, 0, "yes", "distributed", 1, 16),
     }
 )
 
@@ -84,7 +85,7 @@ REVISIONS = {
     "r2": "decode registered at EX->MEM; HAS_SHIFT removes khs_pshift32",
     "r3": "WB_STAGE parameter: the vector file may be written a cycle later",
     "r4": "SWAR adder (one native carry chain); the rounding shift gets its own",
-    "r5": "vdot at II=1 back to back; the scalar store moves off the NoC's "
+    "r5": "the integer dot at II=1 back to back; the scalar store moves off the NoC's "
     "scratchpad port onto the vector unit's, and its interlock becomes a "
     "decode bubble",
     "r6": "cmp_sub decided in EX and registered, off the head of the binding path",
@@ -93,10 +94,9 @@ REVISIONS = {
     "r8": "the float tier: rotating partials in two mirrored distributed RAMs "
     "rather than an indexed flop array, a one-shot zero/seed sweep, and "
     "a drain hazard so an accumulator read waits for the lane",
-    "r9": "the float tier's FP16 conversions are ONE converter walked over the "
-    "slots rather than one per slot: vfaccrd and vfaccwr already hold the "
-    "MEM stage for hundreds of cycles, and 32 parallel converters were "
-    "3,296 LUT of hardware that ran once per kernel",
+    "r9": "the float tier converts nothing at either accumulator edge: a "
+    "partial is a binary32 word, so vfaccwr seeds from the source register "
+    "and vfaccrd places the folded words unchanged",
 }
 
 FIELDS = [
@@ -117,9 +117,10 @@ FIELDS = [
     "vregs",
     "nacc",
     "vspad",
-    "muls",
-    "shift",
-    "perm",
+    "ilanes",
+    "shiftu",
+    "permu",
+    "red",
     "wb",
     "float",
     "npart",
@@ -157,9 +158,9 @@ def take_lock(work_root):
 
 
 def run_ooc(cfg, target, work):
-    simd, vregs, nacc, vspad, muls, sh, pm, wb, udsp, vprm, flt, npart = CONFIGS[cfg]
+    simd, vregs, nacc, vspad, iln, shu, pmu, wb, udsp, vprm, flt, npart = CONFIGS[cfg]
     work.mkdir(parents=True, exist_ok=True)
-    args = [simd, vregs, nacc, vspad, muls, sh, pm, udsp, vprm, target, wb, flt, npart]
+    args = [simd, vregs, nacc, vspad, iln, shu, pmu, udsp, vprm, target, wb, flt, npart]
     cmd = [
         str(VIVADO),
         "-mode",
@@ -211,14 +212,20 @@ def run_ooc(cfg, target, work):
 
 
 def run_gate(cfg, wall):
-    simd, vregs, nacc, _vspad, muls, sh, pm, wb, _udsp, vprm, flt, _npart = CONFIGS[cfg]
+    simd, vregs, nacc, _vspad, iln, shu, pmu, wb, _udsp, vprm, flt, _npart = CONFIGS[
+        cfg
+    ]
     cmd = [
         sys.executable,
         str(RUN),
         "--simd",
         str(simd),
-        "--muls",
-        str(muls),
+        "--ilanes",
+        str(iln),
+        "--shift-units",
+        str(shu),
+        "--perm-units",
+        str(pmu),
         "--vregs",
         str(vregs),
         "--nacc",
@@ -230,10 +237,6 @@ def run_gate(cfg, wall):
         "--wb-stage",
         str(wb),
     ]
-    if not sh:
-        cmd.append("--no-shift")
-    if not pm:
-        cmd.append("--no-perm")
     if flt:
         cmd.append("--float")
     r = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True, check=False)
@@ -263,7 +266,7 @@ def main():
         return 1
     atexit.register(lambda: lock.unlink(missing_ok=True))
 
-    simd, vregs, nacc, vspad, muls, sh, pm, wb, udsp, vprm, flt, npart = CONFIGS[
+    simd, vregs, nacc, vspad, iln, shu, pmu, wb, udsp, vprm, flt, npart = CONFIGS[
         a.config
     ]
 
@@ -299,9 +302,10 @@ def main():
                 "vregs": vregs,
                 "nacc": nacc,
                 "vspad": vspad,
-                "muls": muls,
-                "shift": sh,
-                "perm": pm,
+                "ilanes": iln,
+                "shiftu": shu,
+                "permu": pmu,
+                "red": 1,
                 "wb": wb,
                 "float": flt,
                 "npart": npart,

@@ -298,8 +298,9 @@ module rv_core_tb;
             $display("========================================");
             $finish;
         end
-        $display("--- %0d co-simulation cases, regfile %0s, FWD_X %0d, BTB %0d ---",
-                 ncase, RF_PRIM, `RV_FWD_X, `RV_BTB);
+        $display(
+            "--- %0d RV32IM co-simulation cases, regfile %0s, FWD_X %0d, BTB %0d ---",
+            ncase, RF_PRIM, `RV_FWD_X, `RV_BTB);
 
         for (c = 0; c < ncase; c = c + 1) begin
             resetn = 1'b0;

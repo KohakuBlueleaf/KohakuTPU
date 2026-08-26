@@ -5,17 +5,15 @@ build without float lacks these encodings **at the opcode major** -- a program
 using one faults rather than landing in a decode case that computes something
 plausible.
 
-## One dtype configuration, and it is not a knob
+## One dtype
 
 ```
-    FP32 or FP16 operands in  ->  E8M15 compute  ->  FP32 or FP16 out
+    IEEE binary32 in  ->  binary32 compute  ->  binary32 out
 ```
 
-`funct7[1:0]` picks the operand width per instruction, exactly as the integer
-tier's element type does, and it reaches the conversion at the lane's edge and
-nothing below it. **Every group below is registered at both widths, including
-the optional ones.** There is no parameter anywhere that removes either width
-and no build computes in anything but E8M15.
+`funct7[1:0]` carries the element type, where the integer tier's is, and `f32`
+is the only value a build accepts. Denormals flush to sign-preserved zero on
+input and output.
 
 ## The SIMD PE is a CPU, so FALU is the base and the rest are additions
 
@@ -28,31 +26,25 @@ shape, and the shape is what the RTL parameters follow.
 | group | what | built |
 |---|---|---|
 | `FALU` | mul, add, sub, fma, min, max, compare | **always, wherever float exists** |
-| `FCVT` | float <-> int32, f16 <-> f32 | parameter, on by default |
-| `FSFU` | exp2, log2, rcp, rsqrt | parameter, on by default |
+| `FCVT` | binary32 <-> int32 | parameter, a UNIT COUNT |
+| `FSFU` | exp2, log2, rcp, rsqrt | parameter, a UNIT COUNT |
 | `FMAC` | the rotating accumulator and its fold | parameter, **off** by default |
 
 `FMAC` is off by default because it is the SIMD PE's *extra*, not its floor: a
-vertex transform accumulating into E8M15 partials, an int8-style float dot, or a
-long reduction justify it, and a shader doing elementwise colour work does not.
-The SIMT PE has no equivalent and does not want one. Being a parameter is also
-what lets the eight SIMD PEs in a mesh carry different feature sets, which makes
-the feature mix an axis of the balance study rather than one global choice.
+vertex transform, a float dot and a long reduction justify it, and a shader
+doing elementwise colour work does not. The SIMT PE has no equivalent and does
+not want one. Being a parameter is also what lets the eight SIMD PEs in a mesh
+carry different feature sets.
 
-## FALU packs; the accumulator does not
+## Everything packs at one element width
 
-A 256-bit register is **16 FP16 elements or 8 FP32 elements** under `FALU`,
-which is the integer tier's own rule (32 int8 / 16 int16 / 8 int32) and every
-CPU SIMD ISA's. So FP16 gets twice FP32's throughput for the cost of an operand
-mux rather than for lanes.
+A 256-bit register is **8 f32 elements** under every group, which is the
+integer tier's own rule (32 int8 / 16 int16 / 8 int32). FLANES lanes walk
+ELEMS/FLANES passes.
 
-`FMAC` keeps its own packing because a partial-sum machine sizes itself by the
-accumulator rather than by the operand.
-
-The SIMT PE places one element per 32-bit slot in both formats instead, because
-there a slot is a *thread*. The arithmetic is identical either way -- same lane,
-same E8M15, same conversions -- so a SIMD float result and a SIMT float result
-agree element for element. Only the addressing differs.
+The SIMT PE places one element per 32-bit slot, because there a slot is a
+*thread*. The arithmetic is identical either way -- same `rv_fpu` -- so a SIMD
+float result and a SIMT float result agree element for element.
 
 ## Compares need no mask register
 
@@ -63,16 +55,17 @@ architectural state and no select instruction.
 
 ## The accumulation order is CONTRACT, not implementation
 
-An accumulator slot holds **NPART partials** in E8M15, and the `n`th accumulate
-since `vfaccz` lands on partial `n mod NPART`. `vfaccrd` and `vfredsum` combine
-them in index order.
+An accumulator slot holds **NPART partials**, and the `n`th accumulate since
+`vfaccz` lands on partial `n mod NPART`. `vfaccrd` and `vfredsum` combine them
+in index order.
 
-That is not a detail leaking out. The lane is fifteen cycles deep, so
-`acc = a*b + acc` on one partial issues at II = 15; the vector core breaks the
-recurrence with rotating partials (`vec_lanes.v` s7.3) and this does the same.
-**Float addition does not associate**, so the rotation changes the answer -- a
-machine rotating by 8 and a model rotating by 16 would disagree on ordinary data
-and each be right by its own lights. The count is architectural.
+That is not a detail leaking out. The lane is several cycles deep, so
+`acc = a*b + acc` on one partial issues at II = the lane's depth; the vector
+core breaks the recurrence with rotating partials (`vec_lanes.v` s7.3) and this
+does the same. **Float addition does not associate**, so the rotation changes
+the answer -- a machine rotating by 8 and a model rotating by 16 would disagree
+on ordinary data and each be right by its own lights. The count is
+architectural.
 
 `FALU` carries no such contract: every instruction is one pass of independent
 elements, so its answer does not depend on how many lanes were built.
@@ -85,25 +78,24 @@ OPC_KHF = 0x2B  # custom-1
 
 F3_FMAC, F3_FRED, F3_FCVT, F3_FALU, F3_FSFU = 0, 1, 2, 3, 4
 
-#: Operand width, in funct7[1:0] exactly as the integer tier does it.
-FT_F16, FT_F32 = 0, 1
-FT_NAME = {FT_F16: "f16", FT_F32: "f32"}
+#: Operand width, in funct7[1:0] exactly as the integer tier does it. The f16
+#: encoding is RESERVED, not defined: FP32 is the only compute type.
+FT_F32 = 1
+FT_NAME = {FT_F32: "f32"}
 
-#: Registered at BOTH widths, in every group. This is the dtype rule, spelled
-#: once: an optional feature is optional in its presence, never in its formats.
-FLOAT_TYPES = (FT_F16, FT_F32)
+FLOAT_TYPES = (FT_F32,)
 
 FALU_VFMUL, FALU_VFADD, FALU_VFSUB, FALU_VFMA = 0, 1, 2, 3
 FALU_VFMIN, FALU_VFMAX = 4, 5
 FALU_VFCMPLT, FALU_VFCMPGT, FALU_VFCMPEQ = 6, 7, 8
 
-FCVT_F2I, FCVT_I2F, FCVT_F2F = 0, 1, 2
+FCVT_F2I, FCVT_I2F = 0, 1
 
 FSFU_EXP2, FSFU_LOG2, FSFU_RCP, FSFU_RSQRT = 0, 1, 2, 3
 
-#: `vec_alu`'s own opcodes, which the lane forwards unchanged. Every FALU and
-#: FSFU instruction maps onto one of these, so the mapping lives beside the
-#: instruction table rather than in the RTL where it could drift from it.
+#: `rv_fpu`'s own opcodes, which khs_fp32_alu forwards unchanged. Every FALU
+#: instruction maps onto one of these; the four seeds are 16..19 and reach
+#: `khs_fp32_sfu` through their low two bits.
 VEC_OP = {
     "MOV": 0,
     "NEG": 1,
@@ -125,7 +117,7 @@ VEC_OP = {
     "RSQRT": 19,
 }
 
-#: instruction stem -> the vec_alu opcode that implements it.
+#: instruction stem -> the unit opcode that implements it.
 FOP_OF = {
     "vfmul": "MUL",
     "vfadd": "ADD",
@@ -142,10 +134,7 @@ FOP_OF = {
     "vfrsqrt": "RSQRT",
 }
 
-_PACK = (
-    "A 256-bit register is 16 %s elements; the element count is the "
-    "register width over the operand width, not the lane count."
-)
+_PACK = "A 256-bit register is 8 f32 elements."
 
 
 def register(add, ops):
@@ -162,14 +151,14 @@ def register(add, ops):
     # ------------------------------------------- FALU: the elementwise base
     for ft in FLOAT_TYPES:
         n = FT_NAME[ft]
-        pack = _PACK % n if ft == FT_F16 else ("A 256-bit register is 8 f32 elements.")
+        pack = _PACK
 
         add(
             "vfmul.%s" % n,
             F3_FALU,
             (FALU_VFMUL << 2) | ft,
             (VD, VS1, VS2),
-            "vd[i] <- vs1[i] * vs2[i] over %s. The lane's addend is forced to "
+            "vd[i] <- vs1[i] * vs2[i] over %s. The unit's addend is forced to "
             "zero rather than a second multiplier being built. %s" % (n, pack),
             opcode=OPC_KHF,
         )
@@ -178,7 +167,7 @@ def register(add, ops):
             F3_FALU,
             (FALU_VFADD << 2) | ft,
             (VD, VS1, VS2),
-            "vd[i] <- vs1[i] + vs2[i] over %s. The lane's multiplier is forced "
+            "vd[i] <- vs1[i] + vs2[i] over %s. The unit's multiplier is forced "
             "to 1.0 rather than a second adder being built. %s" % (n, pack),
             opcode=OPC_KHF,
         )
@@ -207,9 +196,9 @@ def register(add, ops):
             F3_FALU,
             (FALU_VFMIN << 2) | ft,
             (VD, VS1, VS2),
-            "vd[i] <- min(vs1[i], vs2[i]) over %s. The winner is selected at "
-            "the lane's first cycle and sent through as winner*1.0 + 0, which "
-            "is bit-exact. %s" % (n, pack),
+            "vd[i] <- min(vs1[i], vs2[i]) over %s. IEEE minNum: a NaN operand "
+            "LOSES. The winner is selected at the unit's first cycle and sent "
+            "through as winner*1.0 + 0, which is bit-exact. %s" % (n, pack),
             opcode=OPC_KHF,
         )
         add(
@@ -246,8 +235,8 @@ def register(add, ops):
             F3_FCVT,
             (FCVT_F2I << 2) | ft,
             (VD, VS1),
-            "vd[i] <- (int32)vs1[i], truncating toward zero, where vs1 holds %s "
-            "elements. Saturates at int32's bounds; a NaN gives zero." % n,
+            "vd[i] <- (int32)vs1[i], truncating toward zero. Saturates at "
+            "int32's bounds; a NaN gives zero.",
             opcode=OPC_KHF,
         )
         add(
@@ -258,23 +247,8 @@ def register(add, ops):
             "vd[i] <- (%s)(int32)vs1[i], round to nearest even." % n,
             opcode=OPC_KHF,
         )
-        add(
-            "vfcvt.f2f.%s" % n,
-            F3_FCVT,
-            (FCVT_F2F << 2) | ft,
-            (VD, VS1),
-            "vd <- vs1 converted to %s: the element type names the DESTINATION, "
-            "so .f32 widens f16->f32 (exact -- E8 is FP32's exponent verbatim) "
-            "and .f16 narrows f32->f16 (rounds, and a finite overflow saturates "
-            "rather than becoming an infinity)." % n,
-            opcode=OPC_KHF,
-        )
 
-    # ------------------------------- FSFU: the four seeds the lane already has
-    # `vec_alu` computes all four at FULL RATE, II = 1, sharing the FMA's own
-    # normaliser and rounder -- a real GPU's special-function unit runs them at
-    # a quarter rate. They cost LUT here only because exposing them stops the
-    # tool constant-folding the lane's operation select.
+    # ------------------------------------------------- FSFU: the four seeds
     for ft in FLOAT_TYPES:
         n = FT_NAME[ft]
         for op, mn, doc in (
@@ -288,8 +262,10 @@ def register(add, ops):
                 F3_FSFU,
                 (op << 2) | ft,
                 (VD, VS1),
-                "vd[i] <- %s, over %s. Full rate, II=1, through the same "
-                "normaliser and rounder the FMA uses." % (doc, n),
+                "vd[i] <- %s, over %s. A 256-segment quadratic through the same "
+                "normaliser and rounder the FMA uses; FSFU_UNITS says how many "
+                "of the float units carry one, and a seed walks "
+                "SIMD/FSFU_UNITS passes." % (doc, n),
                 opcode=OPC_KHF,
             )
 
@@ -303,7 +279,7 @@ def register(add, ops):
             (AD, VS1, VS2),
             "facc[ad] += vs1 * vs2, elementwise over %s. Lands on the next "
             "rotating partial, so consecutive ones issue at II=1 despite a "
-            "15-deep lane; the order is contract." % n,
+            "multi-cycle unit; the order is contract." % n,
             opcode=OPC_KHF,
         )
         add(
@@ -327,12 +303,7 @@ def register(add, ops):
             F3_FMAC,
             (3 << 2) | ft,
             (VD, AS1),
-            "vd <- facc[as1], %s"
-            % (
-                "rounded and saturated back to f16"
-                if ft == FT_F16
-                else "widened to f32 exactly"
-            ),
+            "vd <- facc[as1], each slot's partials folded in index order",
             opcode=OPC_KHF,
         )
         add(
@@ -341,7 +312,7 @@ def register(add, ops):
             (0 << 2) | ft,
             (XD, AS1),
             "xd <- the sum of every slot of facc[as1]. Serial through one "
-            "lane's adder: it runs once per kernel, and a float adder tree "
+            "unit's adder: it runs once per kernel, and a float adder tree "
             "would be four normalisers and four rounders for that.",
             opcode=OPC_KHF,
         )
@@ -349,8 +320,8 @@ def register(add, ops):
     add(
         "vfaccz",
         F3_FMAC,
-        (2 << 2) | FT_F16,
+        (2 << 2) | FT_F32,
         (AD,),
-        "facc[ad] <- 0, every slot. Untyped: zero is zero in either format.",
+        "facc[ad] <- 0, every slot. Untyped: zero is zero.",
         opcode=OPC_KHF,
     )

@@ -14,14 +14,12 @@ is the failure this whole layer exists to catch.
 | | |
 |---|---|
 | `v[VREGS]` | vector registers, `VW = 32 * SIMD` bits each, held as ints |
-| `acc[NACC]` | accumulators, `SIMD` int32 lanes -- exactly one vreg wide |
+| `facc[NACC]` | the FLOAT accumulator: `SIMD` slots of `NPART` binary32 partials |
 | `vspad` | the vector scratchpad, `VSPAD_ENTRIES` entries of `VW` bits |
 
-The accumulator being **exactly as wide as a vector register** is the design
-decision the rest follows from: `vdot` reduces the elements *within* each 32-bit
-lane rather than across the whole vector, so a 4-way int8 dot and a 2-way int16
-dot both land in one int32 per lane. That is the ARM `SDOT` / x86 `VPDPBUSD`
-shape, and it is what makes `vaccrd` a plain move rather than a narrowing.
+There is no integer dot unit and no integer accumulator. A dot product is a
+packed `vmul` followed by `vredsum`, or a multiply whose partials the scalar
+core sums; the float accumulator below is a separate structure.
 
 ## The memory map gains one region
 
@@ -35,90 +33,25 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-import rv_simd_f16 as F
+import khs_fp32 as K
+import khs_seed_tab as SEED
 import rv_simd_isa as I
 from rv_model import CAUSE_FAULT, MASK, Halt, Machine, sx
 
-
-def fsfu_e8(base, e8):
-    """One seed on one E8M15 element. SPECIALS EXACT, finite by float64.
-
-    The specials are transcribed from tests/vector/vec_alu_tb.v section 9, which
-    pins them ON THE RTL and passes -- exp2(-inf)=0, log2(-2)=NaN, inv(-0)=-inf,
-    rsqrt(-4)=NaN. `rv_simd_fsfu_test.py` asserts this function against that same
-    table, so the two cannot drift apart.
-
-    The FINITE path is a float64 REFERENCE and not bit-exact: vec_alu computes it
-    from a 32-segment table plus a range reduction. A bench comparing these on
-    finite data must do it by tolerance and name the cases that carry one.
-
-    WHAT USED TO BE HERE, and passed for a long time: a final
-    `max(min(y, 3.4e38), -3.4e38)`. It turned EVERY infinity and NaN into
-    0x7f7fca00, so the model could not produce an infinity for ANY input -- and
-    3.4e38 is not even FP32 max (7f7fc99e against 7f7fffff). It is what made
-    rsqrt(-1) a large finite where the hardware correctly returns NaN.
-    """
-    import math
-    import struct
-
-    e, m = (e8 >> 15) & 0xFF, e8 & 0x7FFF
-    s, zero, inf, nan = (
-        (e8 >> 23) & 1,
-        e == 0,
-        e == 0xFF and m == 0,
-        e == 0xFF and m != 0,
-    )
-    neg = s and not zero  # -0 is NOT negative here
-    f = struct.unpack("<f", struct.pack("<I", F.e8_to_f32(e8)))[0]
-    inf_p, inf_n, nan_v = float("inf"), float("-inf"), float("nan")
-
-    if nan:
-        y = nan_v
-    elif base == "vfexp2":
-        # 2**x: +inf saturates up, -inf all the way down to zero.
-        if inf:
-            y = inf_p if not s else 0.0
-        else:
-            try:
-                y = 2.0**f
-            except OverflowError:
-                # float64 STOPS AT 2^1024 and the exponent field does not: any
-                # x above it is +inf, which is what the RTL already returns for
-                # e_a > 134. Without this the whole float stream dies in the
-                # GENERATOR, so `khs_run.py --float` could not run at all.
-                y = inf_p
-    elif base == "vflog2":
-        y = nan_v if neg else inf_n if zero else inf_p if inf else math.log2(f)
-    elif base == "vfrcp":
-        # THE SIGN SURVIVES AT BOTH ENDS: vec_alu's OP_INV takes spec_sign_c
-        # from the input's sign, so 1/-inf is -0 and not +0. vec_alu_tb section 9
-        # tests inv(+inf) and not inv(-inf), so nothing else pins this.
-        y = (
-            (inf_n if s else inf_p)
-            if zero
-            else (-0.0 if s else 0.0) if inf else 1.0 / f
-        )
-    elif base == "vfrsqrt":
-        # THE SIGN SURVIVES THROUGH ZERO: 5.4.1 gives squareRoot(-0) = -0 and
-        # 1/-0 is -inf, so rsqrt(-0) is -inf, as OpenCL and CUDA also specify.
-        # This read `inf_p if zero` -- transcribed from vec_alu's OP_RSQRT, which
-        # hardcodes spec_sign_c = 1'b0 and is wrong on that one input.
-        y = (
-            nan_v
-            if neg
-            else (inf_n if s else inf_p) if zero else 0.0 if inf else 1.0 / math.sqrt(f)
-        )
-    else:
-        raise ValueError("not a seed: %s" % base)
-
-    if math.isnan(y):
-        return F.E8_NAN
-    try:
-        bits = struct.unpack("<I", struct.pack("<f", y))[0]
-    except OverflowError:  # IEEE overflows to INFINITY
-        bits = 0xFF800000 if y < 0 else 0x7F800000
-    return F.f32_to_e8(bits)
-
+#: The FALU stem -> the rv_fpu opcode that implements it. `vfadd` is the FMA
+#: with its multiplier forced to one and `vfmul` the FMA with its addend forced
+#: to zero, which is what the RTL does rather than a second datapath.
+FALU_OP = {
+    "vfmul": K.OP_MUL,
+    "vfadd": K.OP_ADD,
+    "vfsub": K.OP_SUB,
+    "vfma": K.OP_FMA,
+    "vfmin": K.OP_MIN,
+    "vfmax": K.OP_MAX,
+    "vfcmplt": K.OP_CMPLT,
+    "vfcmpgt": K.OP_CMPGT,
+    "vfcmpeq": K.OP_CMPEQ,
+}
 
 VSPAD_BASE = 0x4000_0000
 R_VSPAD = 5  # beside rv_model's R_SPAD..R_DRAM
@@ -149,24 +82,18 @@ class DspMachine(Machine):
         self.vregs = vregs
         self.nacc = nacc
         self.v = [0] * vregs
-        self.acc = [[0] * simd for _ in range(nacc)]
         # The float accumulator: 2*SIMD slots of NPART E8M15 partials each, and
         # a per-accumulator turn counter. See _exec_float -- the rotation is
         # architectural, not an implementation detail.
         self.npart = npart
-        # HOW MANY FLOAT UNITS THE BUILD HAS, against 2*SIMD elements. **0 means
-        # NOT BUILT**, the same spelling khs_unit and the SIMT PE now use; it
-        # used to mean "one per element", so the same 0 described opposite
-        # machines. The count is ARCHITECTURAL for the same reason NPART is:
-        # with fewer units an element's chain is npart/passes partials instead
-        # of npart, so the accumulation order -- and therefore the answer --
-        # differs. A model that ignored it would not be bit-exact.
-        # UNSPECIFIED IS NOT ZERO. An explicit 0 is "not built"; omitting the
-        # argument gets the widest tier, so the callers that never cared about
-        # the count are unchanged and only a deliberate 0 turns the tier off.
-        self.flanes = (2 * simd) if flanes is None else flanes
-        self.fpasses = (2 * simd) // self.flanes if self.flanes else 0
-        self.facc = [[[0] * npart for _ in range(2 * simd)] for _ in range(nacc)]
+        # HOW MANY FLOAT UNITS THE BUILD HAS, against SIMD elements. **0 means
+        # NOT BUILT**, the same spelling khs_unit and the SIMT PE now use. The
+        # count is ARCHITECTURAL for the same reason NPART is: with fewer units
+        # an element's chain is npart/passes partials instead of npart, so the
+        # accumulation order -- and therefore the answer -- differs.
+        self.flanes = simd if flanes is None else flanes
+        self.fpasses = simd // self.flanes if self.flanes else 0
+        self.facc = [[[0] * npart for _ in range(simd)] for _ in range(nacc)]
         self.fturn = [0] * nacc
         self.vspad = [0] * vspad_entries
         self.vcount = {}  # name -> dynamic count, for the frontier
@@ -227,275 +154,117 @@ class DspMachine(Machine):
         return self._exec(name, o, pc)
 
     # ---- the float tier -------------------------------------------------
-    # `e8_fma_hw`, NOT `e8_fma`: the model has to be what the MACHINE does, and
-    # the lane carries a one-ulp deviation from correct rounding on subtractive
-    # alignment (rv_simd_f16.py). Modelling the definition instead would make
-    # every bit-exact comparison fail on 0.5% of real data and call the hardware
+    # `khs_fp32.fpu` IS `rv_fpu`, stage for stage: the model has to be what the
+    # MACHINE does, and the unit carries a one-ulp deviation from correct
+    # rounding on a subtractive alignment. Modelling the definition instead
+    # would fail every bit-exact comparison that hit one and call the hardware
     # wrong for matching its own arithmetic.
     #
-    # E8M15 throughout, the vector core's format, and its accumulation shape:
-    # each of the 2*SIMD slots holds NPART PARTIALS, and consecutive accumulate
-    # operations land on successive partials. That is what breaks the FMA's
-    # 14-cycle recurrence in `vec_lanes`, and it is ARCHITECTURAL rather than a
-    # hardware detail -- float addition does not associate, so a model that
+    # BINARY32 THROUGHOUT, and the accumulator's shape: each of the SIMD slots
+    # holds NPART PARTIALS, and consecutive accumulates land on successive
+    # partials. That is what breaks the FMA's recurrence, and it is
+    # ARCHITECTURAL -- float addition does not associate, so a model that
     # accumulated serially into one partial would compute a different answer
     # from the machine. The order is part of the contract.
     def _fslots(self, val):
-        """A vector register read as 2*SIMD FP16 elements."""
-        return [(val >> (16 * i)) & 0xFFFF for i in range(2 * self.simd)]
-
-    def _f32slots(self, val):
-        """The same register read as SIMD FP32 elements."""
-        return [(val >> (32 * j)) & 0xFFFF_FFFF for j in range(self.simd)]
-
-    # FP32 ELEMENT j OCCUPIES SLOT 2j, and that is the whole of the difference.
-    # An even lane takes its own 16-bit slot and its neighbour's as one FP32
-    # while the odd lane idles, so the pass an element rides on, the partial its
-    # chain lives in and the order the fold walks them are the SAME FUNCTIONS OF
-    # THE SLOT INDEX in both formats -- only the conversion at the edge differs.
-    def _fin(self, val, wide):
-        """(slot index, E8M15 word) for every element of a source register.
-
-        The slots FP32 does not own are ZERO, not absent: the partials are one
-        memory word per turn, so a lane with nothing to do still writes -- and a
-        zero factor is what makes that write the addend it just read.
-        """
-        if not wide:
-            return [(i, F.f16_to_e8(x)) for i, x in enumerate(self._fslots(val))]
-        out = [(i, 0) for i in range(2 * self.simd)]
-        for j, x in enumerate(self._f32slots(val)):
-            out[2 * j] = (2 * j, F.f32_to_e8(x))
-        return out
+        """A vector register read as SIMD binary32 elements."""
+        return [(val >> (32 * i)) & MASK for i in range(self.simd)]
 
     def _fold(self, parts):
         """The partials, combined in index order -- once per reduction."""
         tot = 0
         for p in parts:
-            tot = F.e8_fma_hw(p, F.f16_to_e8(0x3C00), tot)
+            tot = K.fpu(K.OP_FMA, p, K.F32_ONE, tot)[0]
         return tot
 
-    # ---- FALU, FCVT, FSFU: the elementwise groups ------------------------
-    # PACKED, unlike the accumulator above. A register is vw/w elements at the
-    # operand width -- 16 f16 or 8 f32 -- which is the integer tier's rule and
-    # every CPU SIMD ISA's. The SIMT PE places one element per 32-bit slot
-    # instead because there a slot is a thread; the arithmetic is identical
-    # either way, so the two agree element for element.
-    def _fpack_in(self, val, w):
-        m = (1 << w) - 1
-        cv = F.f16_to_e8 if w == 16 else F.f32_to_e8
-        return [cv((val >> (w * i)) & m) for i in range(self.vw // w)]
-
-    def _fpack_out(self, e8s, w):
-        cv = F.e8_to_f16 if w == 16 else F.e8_to_f32
+    def _fpack_out(self, words):
         out = 0
-        for i, e in enumerate(e8s):
-            out |= (cv(e) & ((1 << w) - 1)) << (w * i)
+        for i, w in enumerate(words):
+            out |= (w & MASK) << (32 * i)
         return out & self.vmask
 
-    @staticmethod
-    def _e8_nan(x):
-        return ((x >> 15) & 0xFF) == 0xFF and (x & 0x7FFF) != 0
-
-    @staticmethod
-    def _e8_key(x):
-        """Sign-magnitude as an orderable integer. +0 and -0 both key to 0."""
-        mag = x & 0x7FFFFF
-        return -mag if (x >> 23) & 1 else mag
-
-    def _exec_falu(self, base, w, o, pc):
-        one = F.f16_to_e8(0x3C00)
-        a = self._fpack_in(self.v[o["vs1"]], w)
-        b = self._fpack_in(self.v[o["vs2"]], w)
-        d = self._fpack_in(self.v[o["vd"]], w)
-        n = self.vw // w
-        allset = (1 << w) - 1
+    def _exec_falu(self, base, o, pc):
+        a = self._fslots(self.v[o["vs1"]])
+        b = self._fslots(self.v[o["vs2"]])
+        d = self._fslots(self.v[o["vd"]])
+        op = FALU_OP[base]
+        # add and sub take their second operand on the ADDEND port; fma takes
+        # the destination there.
+        wants_b = base in ("vfadd", "vfsub")
         r, mask_out = [], 0
-
-        for i in range(n):
-            x, y, z = a[i], b[i], d[i]
-            if base == "vfmul":
-                r.append(F.e8_fma_hw(x, y, 0))
-            elif base == "vfadd":
-                r.append(F.e8_fma_hw(x, one, y))
-            elif base == "vfsub":
-                r.append(F.e8_fma_hw(x, one, y ^ (1 << 23)))
-            elif base == "vfma":
-                r.append(F.e8_fma_hw(x, y, z))
-            elif base in ("vfmin", "vfmax"):
-                # vec_alu.v:177 `OP_MAX: va = cmp_lt ? s1_b : s1_a`, and MIN the
-                # same on cmp_gt. A NaN makes both compares false, so the winner
-                # is VS1 -- taken from the RTL rather than chosen here, because
-                # the lane is shipped silicon and this model follows it.
-                if self._e8_nan(x) or self._e8_nan(y):
-                    win = x
-                else:
-                    ka, kb = self._e8_key(x), self._e8_key(y)
-                    win = y if ((ka < kb) if base == "vfmax" else (ka > kb)) else x
-                r.append(F.e8_fma_hw(win, one, 0))
+        for i in range(self.simd):
+            y, pred = K.fpu(op, a[i], b[i], b[i] if wants_b else d[i])
+            if base.startswith("vfcmp"):
+                mask_out |= (MASK if pred else 0) << (32 * i)
             else:
-                if self._e8_nan(x) or self._e8_nan(y):
-                    hit = False
-                else:
-                    ka, kb = self._e8_key(x), self._e8_key(y)
-                    hit = {"vfcmplt": ka < kb, "vfcmpgt": ka > kb, "vfcmpeq": ka == kb}[
-                        base
-                    ]
-                mask_out |= (allset if hit else 0) << (w * i)
-
+                r.append(y)
         if base.startswith("vfcmp"):
             self.v[o["vd"]] = mask_out & self.vmask
         else:
-            self.v[o["vd"]] = self._fpack_out(r, w)
+            self.v[o["vd"]] = self._fpack_out(r)
 
-    def _exec_fcvt(self, kind, w, o, pc):
-        n = self.vw // w
-        src = self.v[o["vs1"]]
-        m = (1 << w) - 1
-
+    def _exec_fcvt(self, kind, o, pc):
+        src = self._fslots(self.v[o["vs1"]])
         if kind == "f2i":
-            # One int32 per float element, so an f16 source would fill two
-            # registers: the LOW SIMD elements only, exactly as vunpkl narrows.
-            out = 0
-            for i in range(min(n, self.simd)):
-                e8 = (F.f16_to_e8 if w == 16 else F.f32_to_e8)((src >> (w * i)) & m)
-                out |= (self._e8_trunc_i32(e8) & MASK) << (32 * i)
-            self.v[o["vd"]] = out & self.vmask
-            return
-
-        if kind == "i2f":
-            out = 0
-            for i in range(min(n, self.simd)):
-                v = sx((src >> (32 * i)) & MASK, 32)
-                e8 = self._i32_to_e8(v)
-                cv = F.e8_to_f16 if w == 16 else F.e8_to_f32
-                out |= (cv(e8) & m) << (w * i)
-            self.v[o["vd"]] = out & self.vmask
-            return
-
-        # f2f: the element type names the DESTINATION, and the count halves or
-        # doubles, so this is the float vunpkl / vpack.
-        out = 0
-        if w == 32:  # widen f16 -> f32
-            for j in range(self.simd):
-                out |= (
-                    F.e8_to_f32(F.f16_to_e8((src >> (16 * j)) & 0xFFFF)) & 0xFFFF_FFFF
-                ) << (32 * j)
-        else:  # narrow f32 -> f16
-            for j in range(self.simd):
-                out |= (
-                    F.e8_to_f16(F.f32_to_e8((src >> (32 * j)) & 0xFFFF_FFFF)) & 0xFFFF
-                ) << (16 * j)
-        self.v[o["vd"]] = out & self.vmask
-        return
-
-    @staticmethod
-    def _e8_trunc_i32(e8):
-        """E8M15 -> int32, toward zero, saturating. A NaN gives zero."""
-        s, e, sig, kind = F.e8_parts(e8)
-        if kind in ("zero", "nan"):
-            return 0
-        if kind == "inf":
-            return -(1 << 31) if s else (1 << 31) - 1
-        sh = (e - 127) - 15
-        v = (sig << sh) if sh >= 0 else (sig >> -sh)
-        v = -v if s else v
-        lo, hi = -(1 << 31), (1 << 31) - 1
-        return lo if v < lo else min(v, hi)
-
-    @staticmethod
-    def _i32_to_e8(v):
-        """int32 -> E8M15, round to nearest even."""
-        if v == 0:
-            return 0
-        s = 1 if v < 0 else 0
-        mag = abs(v)
-        k = mag.bit_length() - 1
-        if k >= 15:
-            sig = mag >> (k - 15)
-            guard = (mag >> (k - 16)) & 1 if k >= 16 else 0
-            stick = 1 if (k >= 17 and (mag & ((1 << (k - 16)) - 1))) else 0
+            self.v[o["vd"]] = self._fpack_out([K.f2i(x) & MASK for x in src])
         else:
-            sig, guard, stick = mag << (15 - k), 0, 0
-        if guard & (stick | (sig & 1)):
-            sig += 1
-            if sig >> 16:
-                sig >>= 1
-                k += 1
-        return (s << 23) | ((k + 127) << 15) | (sig & 0x7FFF)
+            self.v[o["vd"]] = self._fpack_out([K.i2f(x) for x in src])
 
-    def _exec_fsfu(self, base, w, o, pc):
-        a = self._fpack_in(self.v[o["vs1"]], w)
-        self.v[o["vd"]] = self._fpack_out([fsfu_e8(base, x) for x in a], w)
+    def _exec_fsfu(self, base, o, pc):
+        a = self._fslots(self.v[o["vs1"]])
+        fsel = K.SEED_OF[base]
+        self.v[o["vd"]] = self._fpack_out([K.seed(fsel, x, SEED.TAB) for x in a])
 
     def _exec_float(self, base, suf, o, pc):
-        # `vfcvt` spells its direction before its type: vfcvt.f2i.f16.
+        # `vfcvt` spells its direction before its type: vfcvt.f2i.f32.
         kind = None
         if "." in suf:
             kind, _, suf = suf.partition(".")
-        if suf not in ("f16", "f32", ""):
+        if suf not in ("f32", ""):
             raise Halt(CAUSE_FAULT, pc)
 
         if kind is not None:
-            return self._exec_fcvt(kind, 32 if suf == "f32" else 16, o, pc)
-        w = 32 if suf == "f32" else 16
-        if base in (
-            "vfmul",
-            "vfadd",
-            "vfsub",
-            "vfma",
-            "vfmin",
-            "vfmax",
-            "vfcmplt",
-            "vfcmpgt",
-            "vfcmpeq",
-        ):
-            return self._exec_falu(base, w, o, pc)
-        if base in ("vfexp2", "vflog2", "vfrcp", "vfrsqrt"):
-            return self._exec_fsfu(base, w, o, pc)
-        # FP32 needs two narrow lanes to carry one element, so a one-lane float
-        # tier has no FP32 encoding at all -- khs_unit faults on it.
-        wide = suf == "f32"
-        if wide and self.flanes < 2:
-            raise Halt(CAUSE_FAULT, pc)
+            return self._exec_fcvt(kind, o, pc)
+        if base in FALU_OP:
+            return self._exec_falu(base, o, pc)
+        if base in K.SEED_OF:
+            return self._exec_fsfu(base, o, pc)
         ad = o.get("ad", o.get("as1"))
 
         if base == "vfaccz":
-            self.facc[ad] = [[0] * self.npart for _ in range(2 * self.simd)]
+            self.facc[ad] = [[0] * self.npart for _ in range(self.simd)]
             self.fturn[ad] = 0
             return None
         if base in ("vfmacc", "vfmsac"):
-            # The subtract flips each element's SIGN BIT, which moves with the
-            # format: bit 31 of an FP32 element, bit 15 of an FP16 one.
-            w = 32 if wide else 16
             neg = (
-                sum(1 << (w * n + w - 1) for n in range(self.vw // w))
+                sum(1 << (32 * n + 31) for n in range(self.simd))
                 if base == "vfmsac"
                 else 0
             )
-            a = self._fin(self.v[o["vs1"]], wide)
-            b = self._fin(self.v[o["vs2"]] ^ neg, wide)
+            a = self._fslots(self.v[o["vs1"]])
+            b = self._fslots(self.v[o["vs2"]] ^ neg)
             k = self.fturn[ad]
-            for (i, ae), (_, be) in zip(a, b):
+            for i in range(self.simd):
                 # Element i is handled on pass i//flanes, and the turn counter
                 # advances once per PASS -- so each pass owns the partials
                 # congruent to it, and the passes never collide.
                 idx = (k + i // self.flanes) % self.npart
-                self.facc[ad][i][idx] = F.e8_fma_hw(ae, be, self.facc[ad][i][idx])
+                self.facc[ad][i][idx] = K.fpu(
+                    K.OP_FMA, a[i], b[i], self.facc[ad][i][idx]
+                )[0]
             self.fturn[ad] = (k + self.fpasses) % self.npart
             return None
         if base == "vfaccwr":
             # The seed for element i lands on ITS pass's first partial, not on
-            # partial 0 -- partial 0 belongs to pass 0 alone. Slots FP32 leaves
-            # idle are zeroed, as the sweep's own word zeroes them.
-            self.facc[ad] = [[0] * self.npart for _ in range(2 * self.simd)]
-            for i, e in self._fin(self.v[o["vs1"]], wide):
+            # partial 0 -- partial 0 belongs to pass 0 alone.
+            self.facc[ad] = [[0] * self.npart for _ in range(self.simd)]
+            for i, e in enumerate(self._fslots(self.v[o["vs1"]])):
                 self.facc[ad][i][i // self.flanes] = e
             self.fturn[ad] = 0
             return None
         if base == "vfaccrd":
-            out = 0
-            step = 2 if wide else 1
-            for i in range(0, 2 * self.simd, step):
+            out = []
+            for i in range(self.simd):
                 # Only this element's own chain: the partials congruent to its
                 # pass, in the order the fold walks them.
                 parts = self.facc[ad][i]
@@ -504,17 +273,14 @@ class DspMachine(Machine):
                     parts[k * self.fpasses + p]
                     for k in range(self.npart // self.fpasses)
                 ]
-                tot = self._fold(mine)
-                out |= (F.e8_to_f32(tot) if wide else F.e8_to_f16(tot)) << (16 * i)
-            self.v[o["vd"]] = out
+                out.append(self._fold(mine))
+            self.v[o["vd"]] = self._fpack_out(out)
             return None
         if base == "vfredsum":
             tot = 0
-            for i in range(0, 2 * self.simd, 2 if wide else 1):
-                tot = F.e8_fma_hw(
-                    self._fold(self.facc[ad][i]), F.f16_to_e8(0x3C00), tot
-                )
-            return (F.e8_to_f32(tot) if wide else F.e8_to_f16(tot)) & MASK
+            for i in range(self.simd):
+                tot = K.fpu(K.OP_FMA, self._fold(self.facc[ad][i]), K.F32_ONE, tot)[0]
+            return tot & MASK
         raise Halt(CAUSE_FAULT, pc)
 
     def _exec(self, name, o, pc):
@@ -591,25 +357,9 @@ class DspMachine(Machine):
             self.v[o["vd"]] = self._pack(r, bits)
             return None
 
-        # ---- dot product and the accumulators ----
-        if base in ("vdot", "vdotn"):
-            per = 32 // bits
-            a = self._elems(self.v[o["vs1"]], bits)
-            b = self._elems(self.v[o["vs2"]], bits)
-            acc = self.acc[o["ad"]]
-            for j in range(self.simd):
-                s = sum(a[j * per + k] * b[j * per + k] for k in range(per))
-                acc[j] = sx((acc[j] + (s if base == "vdot" else -s)) & MASK, 32)
-            return None
-        if base == "vaccz":
-            self.acc[o["ad"]] = [0] * self.simd
-            return None
-        if base == "vaccrd":
-            self.v[o["vd"]] = self._from_lanes(self.acc[o["as1"]])
-            return None
-        if base == "vaccwr":
-            self.acc[o["ad"]] = self._lanes(self.v[o["vs1"]])
-            return None
+        # THE INTEGER DOT AND ITS ACCUMULATOR ARE NOT BUILT. A dot product is
+        # `vmul` then `vredsum`; the encodings fault in `khs_unit`, so a stream
+        # containing one is a generator defect and must not be modelled here.
 
         # ---- scalar moves and reductions ----
         if base == "vsplat":

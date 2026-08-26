@@ -1,4 +1,8 @@
-"""A golden RV32I model, and the memory map the PE presents to software.
+"""A golden RV32IM model, and the memory map the PE presents to software.
+
+M is the multiply half only -- `mul`, `mulh`, `mulhsu`, `mulhu`. div and rem
+are not built in the RTL and must fault here too, which they do by falling
+through to the funct7 refusal rather than by a rule of their own.
 
 The RTL is co-simulated against this one instruction at a time: for every
 instruction that commits, the bench compares PC, destination register and
@@ -247,11 +251,20 @@ class Machine:
                 raise Halt(CAUSE_FAULT, pc)
             if opc == 0x13 and f3 == 5 and f7 not in (0x00, 0x20):
                 raise Halt(CAUSE_FAULT, pc)
-            if opc == 0x33 and f7 not in (0x00, 0x20):
+            # `not f3 & 4` DELIBERATELY LEAVES div/rem OUT: they then fall to
+            # the f7 guard below and fault there, which is exactly how the RTL
+            # refuses them (`n_illegal = f3[2]`), rather than by a second rule.
+            m_mul = opc == 0x33 and f7 == 0x01 and not (f3 & 4)
+            if opc == 0x33 and f7 not in (0x00, 0x20) and not m_mul:
                 raise Halt(CAUSE_FAULT, pc)
             if opc == 0x33 and f7 == 0x20 and f3 not in (0, 5):
                 raise Halt(CAUSE_FAULT, pc)
-            if f3 == 0:
+            if m_mul:
+                # One 33x33 signed product serves all four, as the RTL does.
+                sa, sb = sx(a, 32), sx(b, 32)
+                full = {0: sa * sb, 1: sa * sb, 2: sa * b, 3: a * b}[f3]
+                val = (full & MASK) if f3 == 0 else ((full >> 32) & MASK)
+            elif f3 == 0:
                 val = (
                     (a - b) & MASK
                     if (opc == 0x33 and f7 == 0x20)

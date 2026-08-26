@@ -247,42 +247,32 @@ def check_fir_i16_v():
     return want, vspad_words(m, K.VO_OFF, K.FIR_OUT)
 
 
-def check_f16_dot():
-    """An FP16 dot product, model-only until the float tier exists in RTL.
+def check_f32_dot():
+    """A binary32 dot product, model-only: `vfredsum` has no RTL yet.
 
     THE ORDER IS THE CONTRACT. Each slot holds NPART rotating partials and
     consecutive accumulates land on successive ones, because that is what breaks
-    the FMA's 14-cycle recurrence in `vec_lanes`. Float addition does not
-    associate, so a reference that summed serially would compute a different
-    answer from a correct machine; this one rotates identically.
+    the FMA's recurrence. Float addition does not associate, so a reference that
+    summed serially would compute a different answer from a correct machine;
+    this one rotates identically.
 
     IT SHARES THE ARITHMETIC PRIMITIVE WITH THE MODEL, AND THAT IS NOT CIRCULAR.
     What this checks is the KERNEL and the path through it -- the loop, the
     ordering, the instruction semantics, the model's execution. The primitive
-    itself is checked twice elsewhere and neither is against itself: bit for bit
-    against the RTL in `khs_float_lane_tb`, and against exact arithmetic in
-    `rv_simd_f16.selftest`, which is what quantifies the lane's one-ulp
-    subtractive deviation rather than hiding it.
+    itself is checked bit for bit against the RTL in `rv_fpu_tb`.
     """
-    import rv_simd_f16 as F
+    import khs_fp32 as F
 
     n_vec, npart = 8, 16
-    slots = 2 * SIMD
+    slots = SIMD
 
-    xs = xorshift_stream(0xF16D_07, n_vec * SIMD * 2)
-    a16 = [w & 0xFFFF for w in xs[: n_vec * SIMD]] + [
-        (w >> 16) & 0xFFFF for w in xs[: n_vec * SIMD]
-    ]
-    b16 = [w & 0xFFFF for w in xs[n_vec * SIMD :]] + [
-        (w >> 16) & 0xFFFF for w in xs[n_vec * SIMD :]
-    ]
-    # Keep the operands finite and ordinary: a NaN or an infinity in the stream
-    # would test the specials, which is a different kernel.
-    fix = lambda v: (v & 0x83FF) | 0x3800
-    a16 = [fix(v) for v in a16][: n_vec * slots]
-    b16 = [fix(v) for v in b16][: n_vec * slots]
+    xs = xorshift_stream(0xF32D_07, n_vec * SIMD * 2)
+    # Finite and ordinary: a NaN or an infinity in the stream would test the
+    # specials, which is a different kernel.
+    fix = lambda v: (v & 0x807F_FFFF) | 0x3F00_0000
+    a32 = [fix(w) for w in xs[: n_vec * SIMD]]
+    b32 = [fix(w) for w in xs[n_vec * SIMD :]]
 
-    # Two FP16 elements per store: the packing is done here, not in assembly.
     src = [
         "    li   s0, VSPAD+0",
         "    li   s1, VSPAD+0x400",
@@ -290,22 +280,20 @@ def check_f16_dot():
         "    vfaccz acc0",
     ]
     for i in range(n_vec * SIMD):
-        wa = (a16[2 * i + 1] << 16) | a16[2 * i]
-        wb = (b16[2 * i + 1] << 16) | b16[2 * i]
-        src.append("    li   t1, 0x%08x" % wa)
+        src.append("    li   t1, 0x%08x" % a32[i])
         src.append("    sw   t1, %d(s0)" % (4 * i))
-        src.append("    li   t1, 0x%08x" % wb)
+        src.append("    li   t1, 0x%08x" % b32[i])
         src.append("    sw   t1, %d(s1)" % (4 * i))
     src += [
-        "f16_loop:",
+        "f32_loop:",
         "    vld  v0, 0(s0)",
         "    vld  v1, 0(s1)",
-        "    vfmacc.f16 acc0, v0, v1",
+        "    vfmacc.f32 acc0, v0, v1",
         "    addi s0, s0, %d" % (4 * SIMD),
         "    addi s1, s1, %d" % (4 * SIMD),
         "    addi s2, s2, -1",
-        "    bnez s2, f16_loop",
-        "    vfredsum.f16 a2, acc0",
+        "    bnez s2, f32_loop",
+        "    vfredsum.f32 a2, acc0",
         "    li   t0, SPAD+%d" % K.O_OFF,
         "    sw   a2, 0(t0)",
         "    li   a0, 0",
@@ -325,21 +313,18 @@ def check_f16_dot():
     m.imem[: len(words)] = words
     m.run(limit=4_000_000)
 
-    one = F.f16_to_e8(0x3C00)
     part = [[0] * npart for _ in range(slots)]
     for v in range(n_vec):
         for s in range(slots):
             i = v * slots + s
-            part[s][v % npart] = F.e8_fma_hw(
-                F.f16_to_e8(a16[i]), F.f16_to_e8(b16[i]), part[s][v % npart]
-            )
+            part[s][v % npart] = F.fpu(F.OP_FMA, a32[i], b32[i], part[s][v % npart])[0]
     tot = 0
     for parts in part:
         slot = 0
         for p in parts:
-            slot = F.e8_fma_hw(p, one, slot)
-        tot = F.e8_fma_hw(slot, one, tot)
-    want = F.e8_to_f16(tot)
+            slot = F.fpu(F.OP_FMA, p, F.F32_ONE, slot)[0]
+        tot = F.fpu(F.OP_FMA, slot, F.F32_ONE, tot)[0]
+    want = tot
     got = spad_words(m, K.O_OFF, 1)[0]
     return want, got
 
@@ -354,7 +339,7 @@ CHECKS = [
     ("dot_i8_v", check_dot_i8_v),
     ("dot2_i8_v", check_dot2_i8_v),
     ("vsw_hazard", check_vsw_hazard),
-    ("f16_dot", check_f16_dot),
+    ("f32_dot", check_f32_dot),
     ("reduce_i32_v", check_reduce_i32_v),
     ("memcpy32_v", check_memcpy32_v),
     ("epilogue_v", check_epilogue_v),

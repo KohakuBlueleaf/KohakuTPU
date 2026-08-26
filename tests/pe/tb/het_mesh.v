@@ -37,17 +37,10 @@ module het_mesh #(
     parameter integer SIMD_VREGS  = 8,
     parameter integer SIMD_NACC   = 2,
     parameter integer SIMD_VSPAD  = 1024,
-    parameter integer SIMD_MULS   = 4,
-    // 0 FOR NOW, and the reason is scheduling rather than design: the float
-    // tier's accumulator and fold are being reworked for FP32 input and may not
-    // survive in their present form, and `FLOAT_MODEL` is not plumbed through
-    // `rv_pe` so a float SIMD PE only elaborates at --model 0. The DSP's role
-    // here is the INTEGER SIMD tier, `vdot`, which that rework does not touch.
-    parameter integer SIMD_FLOAT    = 0,
-    parameter integer SIMD_FLOAT_LANES = 4,
+    parameter integer SIMD_ILANES = 8,
+    parameter integer SIMD_FLOAT_LANES = 0,
     parameter integer LANES      = 8,
     parameter integer WAVES      = 16,
-    parameter integer FMODEL     = 1,
     parameter integer RAM_DEPTH  = 1024
 )(
     input  wire clk,
@@ -150,8 +143,8 @@ module het_mesh #(
              .DRAM_BASE(40'h00_0000_0000),
              .IMEM_WORDS(IMEM_WORDS), .SPAD_WORDS(SPAD_WORDS),
              .L1_LINES(L1_LINES), .LANES(LANES), .WAVES(WAVES),
-             .HAS_MASK(1), .HAS_IPDOM(1), .HAS_LDSBANK(1), .HAS_SHFL(1),
-             .FLANES(LANES), .MUL_UNITS(LANES), .FMODEL(FMODEL),
+             .HAS_MASK(1), .HAS_IPDOM(1), .LDS_BANKS(-1), .SHFL_UNITS(-1),
+             .FLANES(LANES),
              .IPDOM_D(8), .MEM_PRIM("block"), .VREG_PRIM("block"),
              .INST_DEPTH(16), .RECV_DEPTH(512)) u_gpu (
         .clk(clk), .resetn(rstn),
@@ -177,7 +170,7 @@ module het_mesh #(
                 .INST_DEPTH(16), .RECV_DEPTH(32),
                 .SIMD_EN(1), .SIMD_LANES(SIMD_LANES), .SIMD_VREGS(SIMD_VREGS),
                 .SIMD_NACC(SIMD_NACC), .SIMD_VSPAD(SIMD_VSPAD),
-                .SIMD_MULS(SIMD_MULS), .SIMD_FLOAT(SIMD_FLOAT),
+                .SIMD_ILANES(SIMD_ILANES),
                 .SIMD_FLOAT_LANES(SIMD_FLOAT_LANES)) u_dsp (
             .clk(clk), .resetn(rstn),
             .noc_in_data(lo_i[g]), .noc_in_valid(lo_iv[g]), .noc_in_busy(lo_ib[g]),

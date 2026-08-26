@@ -110,6 +110,57 @@ def case_alu_reg():
     return prog("\n".join(b))
 
 
+def case_muldiv():
+    # The SIGN BOUNDARIES are the whole point: mulh, mulhsu and mulhu differ
+    # ONLY in how they extend, so a pool without negatives grades all three the
+    # same and a swapped extension bit passes.
+    vals = [
+        0,
+        1,
+        0xFFFFFFFF,
+        0x80000000,
+        0x7FFFFFFF,
+        0x12345678,
+        0xDEADBEEF,
+        0x0000FFFF,
+    ]
+    b = []
+    for i, v in enumerate(vals):
+        b.append("    li x%d, 0x%08X" % (5 + i, v))
+    for op in ("mul", "mulh", "mulhsu", "mulhu"):
+        for i in range(len(vals)):
+            for j in range(len(vals)):
+                b.append("    %s x20, x%d, x%d" % (op, 5 + i, 5 + j))
+                b.append("    add x21, x21, x20")
+    # Back-to-back, which is what `mc`'s reset-on-advance is for: without it the
+    # second multiply retires with the first one's product.
+    for i in range(len(vals)):
+        b.append("    mul x22, x%d, x%d" % (5 + i, 5 + ((i + 1) % len(vals))))
+        b.append("    mulh x23, x%d, x%d" % (5 + i, 5 + ((i + 2) % len(vals))))
+        b.append("    add x21, x21, x22")
+        b.append("    add x21, x21, x23")
+    # A multiply feeding the instruction directly behind it -- the distance-1
+    # forward, which is the case that reads `ex_alu` on the cycle the hold ends.
+    b.append("    mul x24, x5, x6")
+    b.append("    add x21, x21, x24")
+    b.append("    mul x25, x24, x7")
+    b.append("    sub x21, x21, x25")
+    return prog("\n".join(b))
+
+
+def case_div_illegal():
+    """`div` must FAULT on a core that has the multiplier but not the divider.
+
+    Emitted as `.word` because the assembler refuses the mnemonic outright --
+    that refusal is the point, so the encoding is named here directly rather
+    than being made assemblable.
+    """
+    # funct7 0000001, funct3 100 (div), rd x20, rs1 x5, rs2 x6, opcode 0110011
+    div = (0b0000001 << 25) | (6 << 20) | (5 << 15) | (0b100 << 12) | (20 << 7) | 0x33
+    b = ["    li x5, 0x0000002A", "    li x6, 0x00000007", "    .word 0x%08X" % div]
+    return prog("\n".join(b))
+
+
 def case_lui_auipc():
     b = []
     for v in (0, 1, 0xFFFFF, 0x80000, 0x12345):
@@ -344,6 +395,8 @@ DIRECTED = [
     ("loop", case_loop),
     ("fence_nop", case_fence_nop),
     ("peer_push", case_peer_push),
+    ("muldiv", case_muldiv),
+    ("div_illegal", case_div_illegal),
 ]
 
 

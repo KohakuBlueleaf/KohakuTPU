@@ -1,7 +1,7 @@
 """Generate and run the SIMD datapath's component test, and name what failed.
 
     python tests/pe/tools/khs_run.py
-    python tests/pe/tools/khs_run.py --simd 4 --muls 2 --no-perm
+    python tests/pe/tools/khs_run.py --simd 4 --ilanes 2 --perm-units 0
 
 The bench reports a failing write by case and instruction index, because that is
 what Verilog can cheaply carry; this joins it to the mnemonic from the
@@ -31,23 +31,28 @@ WFAIL = re.compile(r"FAIL case(\d+) write (\d+) \(instruction (\d+)\)")
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--simd", type=int, default=8, choices=(2, 4, 8))
-    ap.add_argument("--muls", type=int, default=4, choices=(2, 4))
     ap.add_argument("--vregs", type=int, default=8)
     ap.add_argument("--nacc", type=int, default=2)
-    ap.add_argument("--no-shift", action="store_true")
-    ap.add_argument("--no-perm", action="store_true")
+    # THE COMPUTE WIDTHS. 0 is NOT BUILT and its encodings leave the stream; a
+    # nonzero value below full changes only the cycle count, so the same
+    # vectors grade every width of a feature that IS built.
+    # None = FULL RATE FOR THIS VECTOR. A hard 8 made `--simd 4` ask for more
+    # units than elements, which the elaboration guard refuses.
+    ap.add_argument("--ilanes", type=int, default=None, choices=(0, 1, 2, 4, 8))
+    ap.add_argument("--red", type=int, default=1, choices=(0, 1))
+    # int32 <-> binary32 converter units; 0 faults the whole FCVT group.
+    ap.add_argument("--fcvt-units", type=int, default=0, choices=(0, 1, 2, 4, 8))
     ap.add_argument(
         "--float", action="store_true", dest="flt", help="build the float tier"
     )
     # ARCHITECTURAL, so the generator and the bench must be told the SAME
     # number: fewer lanes is a shorter partial chain per element and therefore a
     # different answer. The bench refuses vectors built for another count.
-    # DEFAULTS TO 2*SIMD, NOT TO 0: 0 now means the float tier is not built.
     ap.add_argument(
         "--flanes",
         type=int,
         default=None,
-        help="float units built; 0 = none, default 2*SIMD",
+        help="float units built; 0 = none, default SIMD",
     )
     # NOT architectural, unlike --flanes: an elementwise seed's result depends on
     # its own element and nothing else, so the SAME vectors must pass at every
@@ -63,24 +68,22 @@ def main():
     # isolate the elementwise tier from the accumulator.
     ap.add_argument("--no-falu", action="store_true")
     ap.add_argument("--no-facc", action="store_true")
-    # NOT architectural: an element's answer does not depend on which OTHER
-    # formats the build carries, so the same vectors must pass with either off.
-    ap.add_argument("--no-f16", action="store_true")
-    ap.add_argument("--no-f32", action="store_true")
     # NOT architectural: the permute's answer is the same at every count, only
     # the cycles change, so the same stream grades every width.
     ap.add_argument(
         "--perm-units",
         type=int,
-        default=0,
-        help="permute output words per pass; 0 = one per word",
+        default=None,
+        choices=(0, 1, 2, 4, 8),
+        help="permute output words per pass; 0 = NOT BUILT",
     )
     # NOT architectural either: the shift's answer is the same at every count.
     ap.add_argument(
         "--shift-units",
         type=int,
-        default=0,
-        help="packed-shift units per pass; 0 = one per lane",
+        default=None,
+        choices=(0, 1, 2, 4, 8),
+        help="packed-shift units per pass; 0 = NOT BUILT",
     )
     ap.add_argument(
         "--vreg-prim", default="distributed", choices=("distributed", "block")
@@ -89,21 +92,32 @@ def main():
     ap.add_argument("--wall", type=float, default=600.0)
     ap.add_argument("--keep", action="store_true")
     a = ap.parse_args()
+    for w in ("ilanes", "shift_units", "perm_units"):
+        if getattr(a, w) is None:
+            setattr(a, w, a.simd)
+        n = getattr(a, w)
+        if n > a.simd:
+            ap.error(
+                "--%s %d exceeds --simd %d: a width is units PER PASS over the "
+                "vector, so it cannot be wider than the vector."
+                % (w.replace("_", "-"), n, a.simd)
+            )
     if a.flanes is None:
-        a.flanes = 2 * a.simd
+        a.flanes = a.simd
     if a.flt and a.flanes == 0:
         ap.error(
             "--float with --flanes 0: 0 means the tier is NOT built. "
-            "Use --flanes %d for one unit per element." % (2 * a.simd)
+            "Use --flanes %d for the widest float tier." % a.simd
         )
 
-    tag = "s%d_m%d_v%d_a%d%s%s%s" % (
+    tag = "s%d_il%d_sh%d_pm%d_r%d_v%d_a%d%s" % (
         a.simd,
-        a.muls,
+        a.ilanes,
+        a.shift_units,
+        a.perm_units,
+        a.red,
         a.vregs,
         a.nacc,
-        "" if not a.no_shift else "_nosh",
-        "" if not a.no_perm else "_nopm",
         "_float" if a.flt else "",
     )
 
@@ -112,17 +126,21 @@ def main():
         str(TOOLS / "khs_gen.py"),
         "--simd",
         str(a.simd),
-        "--muls",
-        str(a.muls),
         "--vregs",
         str(a.vregs),
         "--nacc",
         str(a.nacc),
+        "--ilanes",
+        str(a.ilanes),
+        "--shiftu",
+        str(a.shift_units),
+        "--permu",
+        str(a.perm_units),
+        "--red",
+        str(a.red),
+        "--fcvtu",
+        str(a.fcvt_units),
     ]
-    if a.no_shift:
-        gen.append("--no-shift")
-    if a.no_perm:
-        gen.append("--no-perm")
     if a.flt:
         gen.append("--float")
     if a.no_falu:
@@ -131,10 +149,6 @@ def main():
         gen.append("--no-facc")
     if a.fsfu == 0:
         gen.append("--no-fsfu")
-    if a.no_f16:
-        gen.append("--no-f16")
-    if a.no_f32:
-        gen.append("--no-f32")
     gen += ["--flanes", str(a.flanes)]
     if subprocess.run(gen, cwd=str(ROOT), check=False).returncode:
         return 1
@@ -148,19 +162,24 @@ def main():
         "-d",
         "KHS_SIMD=%d" % a.simd,
         "-d",
-        "KHS_MULS=%d" % a.muls,
-        "-d",
         "KHS_VREGS=%d" % a.vregs,
         "-d",
         "KHS_NACC=%d" % a.nacc,
         "-d",
-        "KHS_SHIFT=%d" % (0 if a.no_shift else 1),
+        "KHS_ILANES=%d" % a.ilanes,
+        # DERIVED, NOT A KNOB HERE: the round adder lives INSIDE the shifter, so
+        # asking for it with no shifter is refused at elaboration. The bench
+        # would otherwise fail to build rather than report a configuration.
         "-d",
-        "KHS_PERM=%d" % (0 if a.no_perm else 1),
+        "KHS_SHROUND=%d" % (1 if a.shift_units else 0),
         "-d",
         "KHS_PERMU=%d" % a.perm_units,
         "-d",
         "KHS_SHIFTU=%d" % a.shift_units,
+        "-d",
+        "KHS_RED=%d" % a.red,
+        "-d",
+        "KHS_FCVTU=%d" % a.fcvt_units,
         "-d",
         "KHS_FLOAT=%d" % (1 if a.flt else 0),
         "-d",
@@ -171,10 +190,6 @@ def main():
         "KHS_FALU=%d" % (0 if a.no_falu else 1),
         "-d",
         "KHS_FACC=%d" % (0 if a.no_facc else 1),
-        "-d",
-        "KHS_F16=%d" % (0 if a.no_f16 else 1),
-        "-d",
-        "KHS_F32=%d" % (0 if a.no_f32 else 1),
         "-d",
         "KHS_WB=%d" % a.wb_stage,
     ]

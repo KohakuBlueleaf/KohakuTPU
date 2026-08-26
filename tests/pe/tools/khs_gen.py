@@ -2,7 +2,7 @@
 
     python tests/pe/tools/khs_gen.py --simd 8
 
-Writes tests/pe/build/khd/s<SIMD>/{prog,vfin,afin,spinit,spfin,scal,meta}.hex,
+Writes tests/pe/build/khd/s<SIMD>/{prog,vfin,spinit,spfin,scal,meta}.hex,
 which tests/pe/tb/khs_unit_tb.v walks.
 
 PUSH BUGS DOWN. This drives `khs_unit` on its own, with no core around it, so a
@@ -38,7 +38,16 @@ MASK32 = 0xFFFF_FFFF
 #: Which instructions a configuration carries. A variant is verified AS ITSELF:
 #: a stream that used an encoding the build refuses would fault rather than
 #: measure, and a stream that avoided one the build HAS would leave it untested.
-FEAT_ALL = {"shift": True, "perm": True, "muls": 4, "float": False}
+#: WIDTHS, NOT BOOLEANS. 0 is not built and its encodings are absent from the
+#: stream; any nonzero value emits the same stream and grades the same vectors.
+FEAT_ALL = {
+    "ilanes": 8,
+    "shiftu": 8,
+    "permu": 8,
+    "red": 1,
+    "fcvtu": 0,
+    "float": False,
+}
 
 #: Rotating partials per float accumulator. ARCHITECTURAL -- float addition
 #: does not associate, so the model must carry the number the RTL was built with.
@@ -46,19 +55,9 @@ NPART = 16
 
 #: Encoded and NOT BUILT: the unit faults on these, so a generator that emitted
 #: one would fail the gate for the right reason at the wrong time. `vfredsum`
-#: needs a second pass across the slots that does not exist; FCVT's f2i/i2f half
-#: needs integer-to-float arithmetic `vec_cvt` does not carry, so the group
-#: defaults off.
-NOT_BUILT = (
-    "vfredsum.f16",
-    "vfredsum.f32",
-    "vfcvt.f2i.f16",
-    "vfcvt.f2i.f32",
-    "vfcvt.i2f.f16",
-    "vfcvt.i2f.f32",
-    "vfcvt.f2f.f16",
-    "vfcvt.f2f.f32",
-)
+#: needs a second pass across the slots that does not exist. FCVT left this list
+#: when khs_fcvt.v gave it a datapath.
+NOT_BUILT = ("vfredsum.f32",)
 
 #: The elementwise operations, in the order the directed case walks them.
 FALU_OPS = (
@@ -74,26 +73,9 @@ FALU_OPS = (
 )
 FSFU_OPS = ("vfexp2", "vflog2", "vfrcp", "vfrsqrt")
 
-#: The conversion edges, which banded random data never reaches.
-#: FP16 -> E8M15 is exact, subnormals included, so what matters here is the
-#: normalising shift; FP32 -> E8M15 keeps the exponent and rounds the mantissa,
-#: so what matters is the tie, the tie's carry, and the one input that carries
-#: OUT of E8M15's exponent -- 0x7f7fffff, the largest finite FP32, rounds up to
-#: an infinity. FP32 subnormals have nowhere to go and flush.
-F16_CORNERS = (
-    0x0000,
-    0x8000,
-    0x0001,
-    0x03FF,
-    0x0400,
-    0x3C00,
-    0xBC00,
-    0x7BFF,
-    0xFBFF,
-    0x7C00,
-    0xFC00,
-    0x7E00,
-)
+#: The float edges, which banded random data never reaches: both zeros, a
+#: denormal (which FLUSHES), both infinities, a NaN, the largest finite, and the
+#: ties the rounder has to break.
 F32_CORNERS = (
     0x0000_0000,
     0x8000_0000,
@@ -178,58 +160,39 @@ class Stream:
                 return False
             if op.group in (IF.F3_FMAC, IF.F3_FRED) and not self.feat.get("facc", True):
                 return False
-            # ONLY THE ACCUMULATOR needs a lane pair for FP32: it packs FP16 two
-            # per 32-bit slot and gives FP32 the even slot alone. An elementwise
-            # lane takes a whole element in either format, so FALU and FSFU have
-            # no such constraint.
-            if name.endswith(".f32") and op.group == IF.F3_FMAC and self.m.flanes < 2:
-                return False
-            # A MEMORY FORMAT THE BUILD DOES NOT CARRY IS AN ABSENT ENCODING,
-            # exactly like an absent group -- khs_unit's `bad_fet` faults it.
-            if name.endswith(".f32") and not self.feat.get("f32", True):
-                return False
-            return not (name.endswith(".f16") and not self.feat.get("f16", True))
-        if op.group == I.F3_VSHI and not self.feat["shift"]:
+            if op.group == IF.F3_FCVT:
+                return bool(self.feat.get("fcvtu"))
+            return True
+        # A WIDTH AT ZERO IS AN ABSENT ENCODING. A narrower width is NOT: it
+        # costs cycles and grades against the same golden vectors, which is what
+        # makes one stream test every width of a feature that is built.
+        if op.group == I.F3_VSHI and not self.feat["shiftu"]:
             return False
-        if op.group == I.F3_VPRM and not self.feat["perm"]:  # noqa: SIM103
+        if op.group == I.F3_VPRM and not self.feat["permu"]:
             return False
-        # int8 at MULS < 4 is TWO PASSES now, not a refusal: the operand width is
-        # the same and only the cycle count moves, so the stream emits it at
-        # every multiplier count and the same golden vectors grade both.
+        if op.group in (I.F3_VINT, I.F3_VBIT) and not self.feat["ilanes"]:
+            return False
+        if op.group == I.F3_VMOV and name in ("vredsum", "vredmax"):
+            return bool(self.feat["red"])
+        # The integer dot group is not built at all; `I.ISA` no longer has it.
         return True
 
     def seed_vspad(self, float_case=False):
-        # BANDED FP16 FOR THE FLOAT CASES, not uniform words. One FP16 in 32 is
-        # an infinity or a NaN, a NaN accumulates to a NaN whatever the hardware
-        # does, and after thirty accumulates most slots would be NaN -- so a
-        # dropped accumulate or a doubled zero-sweep would still compare equal.
-        # "f32" bands the SAME WORDS as FP32 instead, for the same reason.
+        # BANDED FOR THE FLOAT CASES, not uniform words. One uniform word in 256
+        # is an infinity or a NaN, a NaN accumulates to a NaN whatever the
+        # hardware does, and after thirty accumulates most slots would be NaN --
+        # so a dropped accumulate or a doubled zero-sweep would still compare
+        # equal. The edges get their own directed cases instead.
         n = VSPAD_ENTRIES * self.simd
-        if float_case == "f32":
+        if float_case:
             words = [self.f32v() for _ in range(n)]
-        elif float_case:
-            words = [(self.f16v() << 16) | self.f16v() for _ in range(n)]
         else:
             words = [self.rng.getrandbits(32) for _ in range(n)]
         self.m.load_vspad_words(words)
         return words
 
-    def f16v(self):
-        """One finite FP16, exponent banded so 2^-6 <= |x| < 2^6."""
-        return (
-            (self.rng.getrandbits(1) << 15)
-            | (self.rng.randrange(9, 21) << 10)
-            | self.rng.getrandbits(10)
-        )
-
     def f32v(self):
-        """One finite FP32, banded the same way, with the LOW mantissa bits set.
-
-        The low eight bits are what `f32_to_e8` rounds away, so leaving them
-        random is what makes the wide edge's rounding a tested property rather
-        than an assumed one -- data with them clear converts exactly and would
-        pass against a truncating converter.
-        """
+        """One finite binary32, exponent banded so 2^-6 <= |x| < 2^6."""
         return (
             (self.rng.getrandbits(1) << 31)
             | (self.rng.randrange(121, 133) << 23)
@@ -237,6 +200,10 @@ class Stream:
         )
 
     def emit(self, name, **o):
+        # Directed cases reached `emit` straight, putting encodings a width-zero
+        # build faults in front of a model that executes them all.
+        if not self.has(name):
+            return
         # Clamp every register index to what this build has, once, here --
         # rather than at each of the hundred call sites that would have to
         # remember.
@@ -270,16 +237,7 @@ class Stream:
 
     # ---- program shapes ---------------------------------------------------
     def load_all(self):
-        """Zero the accumulators, then fill every vector register.
-
-        The `vaccz` prologue is the same discipline as `rv_gen.zero_regs()` and
-        for the same reason: the accumulator array has no reset, so it survives
-        between cases while the model starts every case from zero. Resetting 512
-        flops in RTL to paper over that would spend control sets on state
-        software has to initialise anyway.
-        """
-        for a in range(NACC):
-            self.emit("vaccz", ad=a)
+        """Fill every vector register."""
         for v in range(VREGS):
             self.emit("vld", vd=v, imm=v * self.vb, xs1=self.base_reg)
 
@@ -301,26 +259,22 @@ class Stream:
         for et in ("s8", "s16"):
             if self.has("vmul.%s" % et):
                 self.emit("vmul.%s" % et, vd=6, vs1=1, vs2=2)
-        # Accumulators: seed, accumulate, subtract, read back.
+        # A DOT PRODUCT WITHOUT A DOT UNIT: multiply, then reduce. This is the
+        # sequence that replaces `vdot`, so it is a directed case rather than an
+        # incidental one.
         for et in ("s8", "s16"):
-            if not self.has("vdot.%s" % et):
-                continue
-            self.emit("vaccz", ad=0)
-            for _ in range(4):
-                self.emit("vdot.%s" % et, ad=0, vs1=1, vs2=2)
-            self.emit("vdotn.%s" % et, ad=0, vs1=1, vs2=3)
-            self.emit("vaccrd", vd=7, as1=0)
-            self.emit("vaccwr", ad=1, vs1=7)
-            self.emit("vdot.%s" % et, ad=1, vs1=2, vs2=3)
-            self.emit("vaccrd", vd=6, as1=1)
+            if self.has("vmul.%s" % et) and self.has("vredsum"):
+                self.emit("vmul.%s" % et, vd=7, vs1=1, vs2=2)
+                self.emit("vredsum", xd=self.xpool[0], vs1=7)
         # Moves and reductions.
         self.m.x[6] = 0x1234_5678
         self.emit("vsplat", vd=2, xs1=6)
         for ln in range(min(8, self.simd)):
             self.emit("vextr", xd=7, vs1=1, sh=ln)
-        self.emit("vredsum", xd=7, vs1=1)
-        self.emit("vredmax", xd=7, vs1=1)
-        if self.feat["perm"]:
+        if self.has("vredsum"):
+            self.emit("vredsum", xd=7, vs1=1)
+            self.emit("vredmax", xd=7, vs1=1)
+        if self.feat["permu"]:
             # Every slide index, so a lane picked from the wrong side shows.
             for k in range(8):
                 self.emit("vsldw%d" % k, vd=3, vs1=1, vs2=2)
@@ -357,7 +311,7 @@ class Stream:
             self.emit("vssub.%s" % et, vd=5, vs1=1, vs2=2)  # overflows negative
             self.emit("vsub.%s" % et, vd=6, vs1=1, vs2=2)
         # A pack whose sources are outside the narrow range in both directions.
-        if self.feat["perm"]:
+        if self.feat["permu"]:
             self.m.x[6] = 0x7FFF8000
             self.emit("vsplat", vd=1, xs1=6)
             self.m.x[6] = 0x0000FFFF
@@ -374,30 +328,23 @@ class Stream:
             self.emit("vsub.s32", vd=5, vs1=4, vs2=1)  # distance 1 again
             self.emit("vmul.s16", vd=2, vs1=5, vs2=4)  # the extra cycle
             self.emit("vadd.s16", vd=3, vs1=2, vs2=2)  # reads it at once
-            self.emit("vaccz", ad=0)
-            self.emit("vdot.s16", ad=0, vs1=2, vs2=3)
-            self.emit("vdot.s16", ad=0, vs1=3, vs2=2)  # back to back, II=1
-            self.emit("vaccrd", vd=6, as1=0)  # drains the pipe
-            self.emit("vredsum", xd=7, vs1=6)
+            self.emit("vmul.s16", vd=6, vs1=2, vs2=3)  # back-to-back multiplies
+            self.emit("vmul.s16", vd=6, vs1=3, vs2=2)  # -- the walk's reset
+            if self.has("vredsum"):
+                self.emit("vredsum", xd=7, vs1=6)
             self.emit("vst", vs=6, imm=0, xs1=self.base_reg)
             self.emit("vld", vd=7, imm=0, xs1=self.base_reg)  # store then load
 
-    def float_corners(self, sfx):
-        """The conversion edges, on every path a float operand can enter by.
+    def float_corners(self, sfx="f32"):
+        """The float edges, on every path a float operand can enter by.
 
-        Random data never reaches a subnormal, an infinity, a NaN, or the one
-        FP32 that OVERFLOWS on the way in -- 0x7f7fffff rounds up out of E8M15's
-        exponent and becomes an infinity. `vsplat` is how an exact bit pattern
-        gets into a register at all, so each corner is splatted and then driven
-        through the operand path (vfmacc/vfmsac) and the seed path (vfaccwr),
-        both read back through the same width they went in as.
+        Random data never reaches a denormal, an infinity or a NaN. `vsplat` is
+        how an exact bit pattern gets into a register at all, so each corner is
+        splatted and then driven through the operand path (vfmacc/vfmsac) and
+        the seed path (vfaccwr).
         """
         self.load_all()
-        vals = (
-            F32_CORNERS
-            if sfx == "f32"
-            else [(a << 16) | b for a in F16_CORNERS for b in (0x3C00, 0x0001)]
-        )
+        vals = F32_CORNERS
         for i, w in enumerate(vals):
             self.m.x[6] = w
             self.emit("vsplat", vd=1, xs1=6)
@@ -410,34 +357,13 @@ class Stream:
             self.emit("vfaccwr.%s" % sfx, ad=1, vs1=1)
             self.emit("vfaccrd.%s" % sfx, vd=4, as1=1)
 
-    def float_mixed(self):
-        """Both widths on ONE accumulator, which is what proves the idle lanes idle.
-
-        This tier has no lane mask, so the thing an FP32 pass leaves untouched is
-        the ODD slots -- and a seed writes all of them. Seeding in FP16, then
-        accumulating and reading in FP32, gives a wrong answer the moment an odd
-        lane's partial reaches the wide result; the converse catches an FP32 seed
-        that failed to clear the slots it does not own.
-        """
-        self.load_all()
-        for i in range(3):
-            self.emit("vfaccwr.f16", ad=0, vs1=1 + i)
-            for k in range(NPART // 2):
-                self.emit("vfmacc.f32", ad=0, vs1=2 + (k % 3), vs2=5 + (k % 3))
-            self.emit("vfaccrd.f32", vd=i, as1=0)
-
-            self.emit("vfaccwr.f32", ad=1, vs1=1 + i)
-            for k in range(NPART // 2):
-                self.emit("vfmsac.f16", ad=1, vs1=2 + (k % 3), vs2=5 + (k % 3))
-            self.emit("vfaccrd.f16", vd=3 + i, as1=1)
-
-    def float_directed(self, sfx="f16"):
+    def float_directed(self, sfx="f32"):
         """The float accumulator: zero, accumulate, seed, subtract, read back.
 
         Every read-back is issued with NO GAP behind the last accumulate, and
         every accumulate with no gap behind a zero. Both are the cases the
-        hazards exist for: a float accumulate is in flight for fifteen cycles
-        after it retires, and a zero sweeps the partials for NPART.
+        hazards exist for: a float accumulate is still in flight when it
+        retires, and a zero sweeps the partials for NPART.
         """
         self.load_all()
         for a in range(NACC):
@@ -474,13 +400,13 @@ class Stream:
             for a in range(NACC):
                 self.emit("vfaccrd.%s" % sfx, vd=5 + a, as1=a)
 
-    def falu_directed(self, sfx="f16"):
+    def falu_directed(self, sfx="f32"):
         """The elementwise group, as a DEPENDENT CHAIN.
 
         Every instruction reads the one before it, so the scoreboard serialises
         them and the vector-file writes stay in program order -- which is what
         the bench's write trace compares. INDEPENDENT elementwise instructions
-        retire OUT of order by construction: the result lands fifteen cycles
+        retire OUT of order by construction: the result lands FLOAT_ALAT cycles
         after the instruction leaves MEM, so a short instruction behind it
         reaches the write port first. That is correct and it is not tested
         here, because testing it needs a compare that does not assume order.
@@ -505,18 +431,22 @@ class Stream:
         # hazard has to hold across the tiers, not only within the float one.
         if self.has("vfmul.%s" % sfx):
             self.emit("vfmul.%s" % sfx, vd=5, vs1=1, vs2=2)
-            self.emit("vadd.s32", vd=6, vs1=5, vs2=5)
+            # A DEPENDENT READER, so the float is ordered before the vld below.
+            # An elementwise float retires late and an INDEPENDENT instruction
+            # behind it legitimately overtakes it, which the write trace cannot
+            # express. `vadd.s32` did this until ILANES=0 filtered it out and
+            # the vld started landing first.
+            if self.has("vadd.s32"):
+                self.emit("vadd.s32", vd=6, vs1=5, vs2=5)
+            else:
+                self.emit("vst", vs=5, imm=0, xs1=self.base_reg)
             self.emit("vst", vs=6, imm=0, xs1=self.base_reg)
             self.emit("vld", vd=7, imm=0, xs1=self.base_reg)
 
-    def falu_corners(self, sfx):
-        """The elementwise ops on the conversion edges, which banded data misses."""
+    def falu_corners(self, sfx="f32"):
+        """The elementwise ops on the float edges, which banded data misses."""
         self.load_all()
-        vals = (
-            F32_CORNERS
-            if sfx == "f32"
-            else [(a << 16) | b for a in F16_CORNERS for b in (0x3C00, 0x0001)]
-        )
+        vals = F32_CORNERS
         for i, w in enumerate(vals):
             self.m.x[6] = w
             self.emit("vsplat", vd=1, xs1=6)
@@ -526,7 +456,13 @@ class Stream:
                 name = "%s.%s" % (op, sfx)
                 if self.has(name):
                     self.emit(name, vd=3, vs1=1, vs2=2)
-                    self.emit("vadd.s32", vd=4, vs1=3, vs2=3)
+                    # Dependent, for the reason falu_directed's tail is. A STORE
+                    # rather than another float: it orders without inventing
+                    # arithmetic on a compare's mask.
+                    if self.has("vadd.s32"):
+                        self.emit("vadd.s32", vd=4, vs1=3, vs2=3)
+                    else:
+                        self.emit("vst", vs=3, imm=0, xs1=self.base_reg)
 
     def float_random(self, n):
         """The float tier only, on banded data, with the accumulators read out."""
@@ -546,7 +482,7 @@ class Stream:
                     vals[o.name] = self.rng.randrange(32)
             self.emit(name, **vals)
         for a in range(NACC):
-            self.emit("vfaccrd.f16", vd=a, as1=a)
+            self.emit("vfaccrd.f32", vd=a, as1=a)
 
     def random(self, n):
         self.load_all()
@@ -601,41 +537,23 @@ INT_CASES = [
 FLOAT_CASES = [
     ("floatd", lambda s: s.float_directed(), True),
     ("floatr", lambda s: s.float_random(200), True),
-    ("f16edge", lambda s: s.float_corners("f16"), True),
-    ("falud", lambda s: s.falu_directed("f16"), True),
-    ("faluedge", lambda s: s.falu_corners("f16"), True),
-]
-#: The wide edge. Held apart from FLOAT_CASES because a one-lane float tier has
-#: no FP32 encoding at all, and a case that emitted one would fault instead of
-#: measuring.
-WIDE_CASES = [
-    ("f32d", lambda s: s.float_directed("f32"), "f32"),
-    ("f32mix", lambda s: s.float_mixed(), "f32"),
-    ("f32edge", lambda s: s.float_corners("f32"), "f32"),
-    ("falu32d", lambda s: s.falu_directed("f32"), "f32"),
-    ("falu32e", lambda s: s.falu_corners("f32"), "f32"),
+    ("f32edge", lambda s: s.float_corners(), True),
+    ("falud", lambda s: s.falu_directed(), True),
+    ("faluedge", lambda s: s.falu_corners(), True),
 ]
 
 
 def cases_for(feat, flanes):
-    """`flanes` is the float UNIT COUNT, and 0 now means the tier is not built."""
+    """`flanes` is the float UNIT COUNT, and 0 means the tier is not built."""
     if not feat.get("float"):
         return INT_CASES
     acc = feat.get("facc", True)
     el = feat.get("falu", True) or feat.get("fsfu", True)
-    narrow = [
+    return INT_CASES + [
         c
         for c in FLOAT_CASES
         if ((c[0].startswith("falu") and el) or (not c[0].startswith("falu") and acc))
-        and feat.get("f16", True)
     ]
-    wide = [
-        c
-        for c in WIDE_CASES
-        if ((c[0].startswith("falu") and el) or (not c[0].startswith("falu") and acc))
-        and feat.get("f32", True)
-    ]
-    return INT_CASES + narrow + (wide if flanes >= 2 else [])
 
 
 def build(simd, outdir, feat, tag, flanes=0):
@@ -644,7 +562,7 @@ def build(simd, outdir, feat, tag, flanes=0):
     d = pathlib.Path(outdir) / "cur"
     d.mkdir(parents=True, exist_ok=True)
     cases = cases_for(feat, flanes)
-    prog, vfin, afin, spinit, spfin, scal, meta = [], [], [], [], [], [], []
+    prog, vfin, spinit, spfin, scal, meta = [], [], [], [], [], []
     wtr, names = [], []
     for n, (name, fn, is_float) in enumerate(cases):
         s = Stream(simd, seed=1000 + n, feat=feat, flanes=flanes)
@@ -656,7 +574,6 @@ def build(simd, outdir, feat, tag, flanes=0):
         vfin.append(
             [(s.m.v[v] >> (32 * k)) & MASK32 for v in range(VREGS) for k in range(simd)]
         )
-        afin.append([s.m.acc[a][k] & MASK32 for a in range(NACC) for k in range(simd)])
         spfin.append(s.m.vspad_words())
         scal.append(s.scalars)
         print(
@@ -699,15 +616,16 @@ def build(simd, outdir, feat, tag, flanes=0):
     (d / "prog.hex").write_text("".join("%024x\n" % w for w in flat_prog))
     (d / "scal.hex").write_text(to_hex(flat_scal))
     (d / "vfin.hex").write_text(to_hex([w for c in vfin for w in c]))
-    (d / "afin.hex").write_text(to_hex([w for c in afin for w in c]))
     (d / "spinit.hex").write_text(to_hex([w for c in spinit for w in c]))
     (d / "spfin.hex").write_text(to_hex([w for c in spfin for w in c]))
     # The vectors CARRY their configuration and the bench checks it against its
     # own parameters. A `-d TAG=name` string would have done the same job, but
     # xvlog gives a bare define an identifier rather than a string literal, and
     # a check the bench can make itself is worth more than a path it is told.
-    # meta[12] is the float LANE count. It is architectural -- it changes the
-    # accumulation order -- so the bench must refuse vectors built for another.
+    # EVERY WIDTH IS CARRIED, because a width of 0 removes encodings from the
+    # stream: vectors built with the shifter cannot grade a build without it.
+    # meta[12] is the float LANE count, architectural because it changes the
+    # accumulation order.
     meta = [
         len(cases),
         ni,
@@ -717,11 +635,12 @@ def build(simd, outdir, feat, tag, flanes=0):
         VSPAD_ENTRIES,
         simd,
         nw,
-        feat["muls"],
-        1 if feat["shift"] else 0,
-        1 if feat["perm"] else 0,
+        feat["ilanes"],
+        feat["shiftu"],
+        feat["permu"],
         1 if feat.get("float") else 0,
         flanes,
+        feat["red"],
     ]
     (d / "meta.hex").write_text(to_hex(meta))
     (d / "counts.hex").write_text(to_hex([len(p) for p in prog]))
@@ -732,11 +651,15 @@ def build(simd, outdir, feat, tag, flanes=0):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--simd", type=int, default=8, choices=(2, 4, 8))
-    ap.add_argument("--muls", type=int, default=4, choices=(2, 4))
     ap.add_argument("--vregs", type=int, default=8)
     ap.add_argument("--nacc", type=int, default=2)
-    ap.add_argument("--no-shift", action="store_true")
-    ap.add_argument("--no-perm", action="store_true")
+    # WIDTHS, and 0 means the feature is NOT BUILT. A nonzero value below full
+    # changes only the cycle count, so it does not change the stream.
+    ap.add_argument("--ilanes", type=int, default=8, choices=(0, 1, 2, 4, 8))
+    ap.add_argument("--shiftu", type=int, default=8, choices=(0, 1, 2, 4, 8))
+    ap.add_argument("--permu", type=int, default=8, choices=(0, 1, 2, 4, 8))
+    ap.add_argument("--red", type=int, default=1, choices=(0, 1))
+    ap.add_argument("--fcvtu", type=int, default=0, choices=(0, 1, 2, 4, 8))
     ap.add_argument(
         "--float", action="store_true", dest="flt", help="the float tier is built"
     )
@@ -751,35 +674,24 @@ def main():
     ap.add_argument(
         "--no-facc", action="store_true", help="the float accumulator is NOT built"
     )
-    ap.add_argument(
-        "--no-f16", action="store_true", help="the FP16 memory format is NOT built"
-    )
-    ap.add_argument(
-        "--no-f32", action="store_true", help="the FP32 memory format is NOT built"
-    )
-    # DEFAULTS TO 2*SIMD, NOT TO 0. 0 now means the tier is not built, so an
-    # omitted flag has to name the widest build rather than lean on a 0 that
-    # used to mean it.
+    # 0 IS NOT BUILT, and the maximum is SIMD -- there is no 2*SIMD width.
     ap.add_argument(
         "--flanes",
         type=int,
         default=None,
-        help="float units built; 0 = none, default 2*SIMD",
+        help="float units built; 0 = none, default SIMD",
     )
     ap.add_argument("--out", default=str(ROOT / "tests" / "pe" / "build" / "khd"))
     a = ap.parse_args()
     if a.flanes is None:
-        a.flanes = 2 * a.simd
-    # `--float --flanes 0` is a contradiction now that 0 means "not built":
-    # khs_unit refuses it at elaboration, and the model would divide by zero
-    # placing an element on its pass. Say so here instead.
+        a.flanes = a.simd
+    # `--float --flanes 0` is a contradiction: khs_unit refuses it at
+    # elaboration, and the model would divide by zero placing an element.
     if a.flt and a.flanes == 0:
         ap.error(
             "--float with --flanes 0: 0 means the tier is NOT built. "
-            "Use --flanes %d for one unit per element." % (2 * a.simd)
+            "Use --flanes %d for the widest float tier." % a.simd
         )
-    if a.flt and a.no_f16 and a.no_f32:
-        ap.error("--no-f16 with --no-f32 leaves the float tier no memory format")
     # The register-file and accumulator counts are BEHAVIOURAL -- a program
     # written for eight vector registers faults on a build with four -- so they
     # move the generated stream, not just the synthesis.
@@ -793,25 +705,26 @@ def main():
     # at or above it, exactly as khs_unit does.
     I.SIMD = a.simd
     feat = {
-        "shift": not a.no_shift,
-        "perm": not a.no_perm,
-        "muls": a.muls,
+        "ilanes": a.ilanes,
+        "shiftu": a.shiftu,
+        "permu": a.permu,
+        "red": a.red,
+        "fcvtu": a.fcvtu,
         "float": a.flt,
         "falu": not a.no_falu,
         "fsfu": not a.no_fsfu,
         "facc": not a.no_facc,
-        "f16": not a.no_f16,
-        "f32": not a.no_f32,
     }
     # The directory names the CONFIGURATION, so a bench cannot read vectors
     # built for a build it is not.
-    tag = "s%d_m%d_v%d_a%d%s%s%s" % (
+    tag = "s%d_il%d_sh%d_pm%d_r%d_v%d_a%d%s" % (
         a.simd,
-        a.muls,
+        feat["ilanes"],
+        feat["shiftu"],
+        feat["permu"],
+        feat["red"],
         VREGS,
         NACC,
-        "" if feat["shift"] else "_nosh",
-        "" if feat["perm"] else "_nopm",
         "_float" if feat["float"] else "",
     )
     build(a.simd, a.out, feat, tag, flanes=a.flanes)

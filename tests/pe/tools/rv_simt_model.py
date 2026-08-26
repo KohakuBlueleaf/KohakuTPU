@@ -41,18 +41,12 @@ Two consequences a frontend must honour:
 
 MASK = 0xFFFFFFFF
 
-# G9's arithmetic is the SIMD tier's, so its MODEL is too: `e8_fma_hw` reproduces
-# the built lane rather than the correctly-rounded definition, which is the only
-# way a golden model can be bit-exact against `vec_alu`.
-from rv_simd_f16 import (
-    e8_fma_hw,
-    e8_to_f16,
-    e8_to_f32,
-    f16_to_e8,
-    f32_to_e8,
-)
+# G9's arithmetic is the SIMD tier's, so its MODEL is too: `khs_fp32.fpu`
+# reproduces the built unit rather than the correctly-rounded definition, which
+# is the only way a golden model can be bit-exact against `rv_fpu`.
+import khs_fp32 as KF
+import khs_seed_tab as KSEED
 
-F16_ONE, F16_ZERO = 0x3C00, 0x0000
 F32_ONE = 0x3F80_0000
 
 # Regions, as the SIMT PE's MEM stage decodes them. LDS replaces the SIMD tier's
@@ -153,8 +147,12 @@ class GpuMachine:
         depth=8,
         ctl=None,
         nlive=1,
+        has_fsfu=False,
     ):
         self.lanes = lanes
+        # THE SEEDS ARE A UNIT COUNT ON THE PE and 0 is the shipping value, so
+        # the model faults on one unless the caller says the build carries them.
+        self.has_fsfu = has_fsfu
         self.imem = [0] * imem_words
         self.lds = [0] * lds_words
         self.spad = [0] * 2048
@@ -504,47 +502,35 @@ class GpuMachine:
             return (pc, rd, out)
 
         if f3 == 5:  # FLT (G9)
-            # THE MODEL IS THE DSP TIER'S, NOT A SECOND ONE. `e8_fma_hw` is the
-            # lane as built -- alignment window, clamped shift, uncomplemented
-            # sticky and all -- so this is bit-exact against the hardware for
-            # the same reason the arithmetic was not forked.
-            # funct7[3] IS THE FORMAT and funct7[2:0] the operation: 0-3 the
-            # arithmetic four, 4-7 the FSFU seeds, +8 for the FP16 form of each.
-            # This read `funct7[2]` as the format and refused everything above 7
-            # -- the encoding from before the seeds took a bit -- so it faulted
-            # on every `_h` operation while the RTL computed it. It was invisible
-            # because kht_sys_tb was reading a stale image: see its `simt/user`.
-            if f7 > 15:
+            # THE MODEL IS THE SIMD TIER'S, NOT A SECOND ONE. `KF.fpu` is
+            # `rv_fpu` as built -- alignment window, clamped shift,
+            # uncomplemented sticky and all -- so this is bit-exact against the
+            # hardware for the same reason the arithmetic was not forked.
+            # funct7[2:0] is the operation: 0-3 the arithmetic four, 4-7 the
+            # FSFU seeds. FP32 is the only compute type, so there is no format
+            # bit and nothing above 7 is mapped.
+            if f7 > 7:
                 raise Halt(CAUSE_FAULT, pc)
-            # The seeds are HAS_FSFU, which is OFF in the build this models, and
-            # the PE faults on one rather than returning what FMA made of it.
-            if f7 & 4:
+            if (f7 & 4) and not self.has_fsfu:
                 raise Halt(CAUSE_FAULT, pc)
-            half = bool(f7 & 8)
-            cvt_in = f16_to_e8 if half else f32_to_e8
-            cvt_out = e8_to_f16 if half else e8_to_f32
-            mask = 0xFFFF if half else MASK
-            one = F16_ONE if half else F32_ONE
-            sign = 0x8000 if half else 0x8000_0000
             out = {}
             for ln in w.active():
-                av = w.x[rs1][ln] & mask
-                bv = w.x[rs2][ln] & mask
-                dv = w.x[rd][ln] & mask
+                av = w.x[rs1][ln] & MASK
+                bv = w.x[rs2][ln] & MASK
+                dv = w.x[rd][ln] & MASK
+                if f7 & 4:
+                    out[ln] = KF.seed(f7 & 3, av, KSEED.TAB)
+                    continue
                 op = f7 & 3
                 if op == 1:  # vfmul
-                    sa, sb, sc = av, bv, 0
+                    fop, sc = KF.OP_MUL, 0
                 elif op == 2:  # vfadd
-                    sa, sb, sc = av, one, bv
+                    fop, sc = KF.OP_ADD, bv
                 elif op == 3:  # vfsub
-                    sa, sb, sc = av, one, bv ^ sign
+                    fop, sc = KF.OP_SUB, bv
                 else:  # vfma
-                    sa, sb, sc = av, bv, dv
-                y = cvt_out(e8_fma_hw(cvt_in(sa), cvt_in(sb), cvt_in(sc)))
-                # On the FP16 path element 1 is RESERVED and reads back zero, so
-                # a shader that ignores the contract gets a defined value rather
-                # than whatever the integer lanes last left in the upper half.
-                out[ln] = y & mask
+                    fop, sc = KF.OP_FMA, dv
+                out[ln] = KF.fpu(fop, av, bv, sc)[0]
             for ln, v in out.items():
                 w.x[rd][ln] = v
             return (pc, rd, out)

@@ -16,16 +16,21 @@ Three structural properties:
 * **Data lives in the scratchpad** -- one cycle, always hits. A kernel bound by
   a fill round trip measures the memory agent, not arithmetic specialization.
 
-## The multiply problem, which is a finding
+## The multiply problem, and what RV32IM did to it
 
-The base core has no multiplier, so `a*b` for two runtime values is eight
-unrolled shift-add steps -- 48 instructions. A naive "SIMD PE vs scalar" speedup
-would therefore mostly measure *owning a multiplier* rather than SIMD width.
+**This premise is now HISTORICAL.** It was written when the base core was RV32I:
+`a*b` for two runtime values was eight unrolled shift-add steps -- 48
+instructions -- so a naive "SIMD PE vs scalar" speedup would mostly have
+measured *owning a multiplier* rather than SIMD width. Every multiplying kernel
+therefore has a `_nomul` twin -- same loop, same loads, same traffic, the
+multiply replaced by one `add` -- whose cycles are what the kernel would cost if
+a multiply were one instruction.
 
-Every multiplying kernel has a `_nomul` twin: same loop, same loads, same
-traffic, the multiply replaced by one `add`. It computes a different (still
-model-checked) answer, and its cycles are what the kernel would cost if a
-multiply were one instruction. The two separate the two effects.
+The core is RV32IM now and `mul` is one instruction that holds EX for three
+cycles, so the scalar kernels no longer pay 48. The twins are kept because they
+still separate multiply cost from loop cost, but **the ratio they were built to
+correct for is gone**, and any speedup quoted from the pre-RV32IM rows is
+against a machine that no longer exists.
 
 `fir_i16` needs no twin -- its taps are compile-time constants, strength-reduced
 to shifts and adds, so no software multiply appears in it at all.
@@ -514,80 +519,6 @@ def k_null():
 # comparison already reach.
 
 
-def k_dot_i8_vec():
-    """The same int8 dot, as one `vdot.s8` per 4*SIMD elements.
-
-    The headline: `vdot.s8` replaces four multiplies AND their adds per 32-bit
-    lane, so at SIMD 8 one instruction does 32 int8 multiply-accumulates that
-    the scalar twin pays 48 instructions each for.
-    """
-    per = 4 * SIMD  # int8 elements per vector
-    body = """
-    li   s0, VSPAD+%d
-    li   s1, VSPAD+%d
-    li   s2, %d
-    vaccz acc0
-dotv_loop:
-    vld  v0, 0(s0)
-    vld  v1, 0(s1)
-    vdot.s8 acc0, v0, v1
-    addi s0, s0, %d
-    addi s1, s1, %d
-    addi s2, s2, -1
-    bnez s2, dotv_loop
-    vaccrd v2, acc0
-    vredsum a2, v2
-    li   t0, SPAD+%d
-    sw   a2, 0(t0)
-""" % (VA_OFF, VB_OFF, DOT_N // per, vbytes(), vbytes(), O_OFF)
-    pre = fill_at("VSPAD", VA_OFF, DOT_N // 4, tag="va") + fill_at(
-        "VSPAD", VB_OFF, DOT_N // 4, seed=0x0BAD_F00D, tag="vb"
-    )
-    return pre, body, 1
-
-
-def k_dot2_i8_vec():
-    """One activation vector against TWO weight vectors: adjacent `vdot`s.
-
-    The multi-output matvec shape, and the only case in the suite that can see
-    the accumulator's issue interval -- `dot_i8_v` spaces its dots six
-    instructions apart and would run the same at any II.
-    """
-    per = 4 * SIMD  # int8 elements per vector
-    body = """
-    li   s0, VSPAD+%d
-    li   s1, VSPAD+%d
-    li   s3, VSPAD+%d
-    li   s2, %d
-    vaccz acc0
-    vaccz acc1
-dot2v_loop:
-    vld  v0, 0(s0)
-    vld  v1, 0(s1)
-    vld  v2, 0(s3)
-    vdot.s8 acc0, v0, v1
-    vdot.s8 acc1, v0, v2
-    addi s0, s0, %d
-    addi s1, s1, %d
-    addi s3, s3, %d
-    addi s2, s2, -1
-    bnez s2, dot2v_loop
-    vaccrd v3, acc0
-    vredsum a2, v3
-    vaccrd v4, acc1
-    vredsum a3, v4
-    li   t0, SPAD+%d
-    sw   a2, 0(t0)
-    sw   a3, 4(t0)
-""" % (VA_OFF, VB_OFF, VC_OFF, DOT_N // per, vbytes(), vbytes(), vbytes(), O_OFF)
-    pre = (
-        fill_at("VSPAD", VA_OFF, DOT_N // 4, tag="v2a")
-        + fill_at("VSPAD", VB_OFF, DOT_N // 4, seed=0x0BAD_F00D, tag="v2b")
-        + fill_at("VSPAD", VC_OFF, DOT_N // 4, seed=0x5EED_1234, tag="v2c")
-    )
-    return pre, body, 2
-
-
 def k_vsw_hazard():
     """A scalar `sw` into the vector window with a `vld` of ANOTHER row behind it.
 
@@ -877,8 +808,9 @@ SUITE = [
     ("reduce_i32", k_reduce_i32, "sum and signed max"),
     ("epilogue", k_epilogue, "bias, ReLU, shift, saturate, pack"),
     ("memcpy32_v", k_memcpy32_vec, "VECTOR: pure width"),
-    ("dot_i8_v", k_dot_i8_vec, "VECTOR: int8 dot"),
-    ("dot2_i8_v", k_dot2_i8_vec, "VECTOR: int8 dot, two accumulators"),
+    # `dot_i8_v` and `dot2_i8_v` are GONE with the integer dot unit. They existed
+    # to measure `vdot` against its scalar twin; there is no dot unit to measure,
+    # and a dot product now belongs to the matrix units.
     ("vsw_hazard", k_vsw_hazard, "VECTOR: scalar store, then a load of another row"),
     ("reduce_i32_v", k_reduce_i32_vec, "VECTOR: sum and signed max"),
     ("epilogue_v", k_epilogue_vec, "VECTOR: requantise epilogue"),

@@ -1,15 +1,13 @@
-# G9: the float tier, FP32 half -- the DEFAULT format. Unsuffixed vfma/vfmul/
-# vfadd/vfsub are FP32; the `_h` forms in gpu_float.s are FP16.
+# G9: the float tier. FP32 is the only compute type, so vfma/vfmul/vfadd/vfsub
+# are binary32 and there are no other forms.
 #
-# TWO CASES HERE ARE NOT ARITHMETIC CHECKS, they are format checks, and they are
-# the reason this file exists rather than being folded into gpu_float.s:
+# TWO CASES HERE ARE NOT ARITHMETIC CHECKS, they are FORMAT checks:
 #
-#   RANGE   2^100 * 2^-100. In FP16 2^100 is +inf and the answer is NaN, so a
-#           build that decodes the format bit and then converts as FP16 anyway
-#           fails here and passes everything else.
-#   TRUNCATION  E8M15 keeps 15 mantissa bits, so FP32's low 8 are dropped on the
-#           way in. 1.0+1ulp multiplied by 1.0 must come back as exactly 1.0.
-#           The input differs from the output, on purpose.
+#   RANGE   2^100 * 2^-100 = 1.0. Neither operand exists in a narrower format,
+#           so a datapath that quietly narrowed would answer NaN.
+#   PRECISION  (1.0 + 1ulp) * 1.0 must come back as EXACTLY 1.0 + 1ulp. A
+#           datapath carrying fewer than 24 mantissa bits drops that ulp; this
+#           is what the migration off E8M15 bought.
 #
 # CONSTANTS COME FROM INTEGER IMMEDIATES: an FP32 bit pattern is a 32-bit
 # integer, and every constant below is a 12-bit immediate shifted left 20.
@@ -50,7 +48,7 @@
         saddi   s2, s1, 96
         vsinw2  x6, s2          # slot 3
 
-        # RANGE. 2^100 * 2^-100 = 1.0, and neither operand exists in FP16.
+        # RANGE. 2^100 * 2^-100 = 1.0, over 200 binades apart.
         addi    x11, x0, 0x718
         slli    x11, x11, 20    # x11 = 2^100
         addi    x12, x0, 0x0D8
@@ -59,7 +57,7 @@
         saddi   s2, s1, 128
         vsinw2  x13, s2         # slot 4, must be 0x3F800000
 
-        # TRUNCATION. (1.0 + 1ulp) * 1.0 loses the ulp entering E8M15.
+        # PRECISION. (1.0 + 1ulp) * 1.0 KEEPS the ulp: 24 mantissa bits.
         addi    x14, x0, 0x3F8
         slli    x14, x14, 20
         addi    x14, x14, 1     # x14 = 0x3F800001
@@ -67,10 +65,10 @@
         slli    x15, x15, 20    # x15 = 1.0
         vfmul   x16, x14, x15
         saddi   s2, s1, 160
-        vsinw2  x16, s2         # slot 5, must be 0x3F800000
+        vsinw2  x16, s2         # slot 5, must be 0x3F800001
 
-        # A DEPENDENT CHAIN, as in the FP16 shader: each vfma waits fifteen
-        # cycles for the one before it and the wave is unrunnable throughout.
+        # A DEPENDENT CHAIN: each vfma waits the whole tier's latency for the
+        # one before it and the wave is unrunnable throughout.
         # 1.0, then +1*1 three times = 4.0
         addi    x7, x0, 0x3F8
         slli    x7, x7, 20      # x7 = 1.0

@@ -50,14 +50,15 @@
 `ifndef RV_SIMD_LANES
  `define RV_SIMD_LANES 8
 `endif
-`ifndef RV_SIMD_MULS
- `define RV_SIMD_MULS 4
+// COMPUTE WIDTHS: 0 is not built. Defaults are the full-width machine.
+`ifndef RV_SIMD_ILANES
+ `define RV_SIMD_ILANES 8
 `endif
-`ifndef RV_SIMD_SHIFT
- `define RV_SIMD_SHIFT 1
+`ifndef RV_SIMD_SHIFTU
+ `define RV_SIMD_SHIFTU 8
 `endif
-`ifndef RV_SIMD_PERM
- `define RV_SIMD_PERM 1
+`ifndef RV_SIMD_PERMU
+ `define RV_SIMD_PERMU 8
 `endif
 `ifndef RV_SIMD_WB
  `define RV_SIMD_WB 0
@@ -110,8 +111,10 @@ module rv_simd_tb;
               .FWD_X(`RV_FWD_X), .REGFILE_PRIM(RF_PRIM),
               .RAM_DEPTH(RAM_DEPTH),
               .SIMD_EN(`RV_SIMD_EN), .SIMD_LANES(`RV_SIMD_LANES),
-              .SIMD_MULS(`RV_SIMD_MULS), .SIMD_SHIFT(`RV_SIMD_SHIFT),
-              .SIMD_PERM(`RV_SIMD_PERM), .SIMD_WB(`RV_SIMD_WB)) dut (
+              .SIMD_ILANES(`RV_SIMD_ILANES),
+              .SIMD_SHIFT_UNITS(`RV_SIMD_SHIFTU),
+              .SIMD_PERM_UNITS(`RV_SIMD_PERMU),
+              .SIMD_WB(`RV_SIMD_WB)) dut (
         .clk(clk), .rstn(rstn),
         .ext_in_data(ag_out), .ext_in_valid(ag_out_valid),
         .ext_in_busy(ag_out_busy),

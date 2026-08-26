@@ -1,4 +1,4 @@
-"""Vectors for `khs_facc_tb` and `khs_ffold_tb`.
+"""Vectors for `khs_facc_tb` and `khs_ffold_tb`, in binary32.
 
     python tests/pe/tools/khs_facc_vec.py <ops.txt> <exp.txt> [nops] [npart]
 
@@ -14,29 +14,25 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-import rv_simd_f16 as F
-
-#: E8M15 1.0 -- the fold multiplies a partial by it, so the fold and the
-#: accumulate share one lane and one rounding.
-E8_ONE = 127 << 15
+import khs_fp32 as K
 
 
 def ops(n, seed=0xFACC):
-    """`n` (a, b) FP16 pairs, exponents banded so no product overflows."""
+    """`n` (a, b) binary32 pairs, exponents banded so no product overflows."""
     rng = random.Random(seed)
     out = []
     for _ in range(n):
-        # e5 in [9, 20] is 2^-6 .. 2^5, so 200 products of them stay far inside
-        # E8M15's range and the accumulation never saturates.
+        # e8 in [117, 137] is 2^-10 .. 2^10, so 200 products of them stay far
+        # inside binary32's range and the accumulation never saturates.
         a = (
-            (rng.getrandbits(1) << 15)
-            | (rng.randrange(9, 21) << 10)
-            | rng.getrandbits(10)
+            (rng.getrandbits(1) << 31)
+            | (rng.randrange(117, 138) << 23)
+            | rng.getrandbits(23)
         )
         b = (
-            (rng.getrandbits(1) << 15)
-            | (rng.randrange(9, 21) << 10)
-            | rng.getrandbits(10)
+            (rng.getrandbits(1) << 31)
+            | (rng.randrange(117, 138) << 23)
+            | rng.getrandbits(23)
         )
         out.append((a, b))
     return out
@@ -46,35 +42,33 @@ def deviation(pairs, npart):
     """Accumulate steps where the lane differs from correct rounding.
 
     The lane carries a plain sticky through a subtractive alignment, so it can
-    be one ulp high; the adversarial lane stream oversamples exactly that case.
-    On ordinary magnitudes the alignment rarely reaches the end of the window,
-    and the number a user needs is this one, not that one.
+    be one ulp high. The number a user needs is how often that happens on
+    ordinary magnitudes, which is this one.
     """
     part_hw = [0] * npart
     part_ex = [0] * npart
     off = 0
     for i, (a, b) in enumerate(pairs):
         k = i % npart
-        ae, be = F.f16_to_e8(a), F.f16_to_e8(b)
-        if F.e8_fma_hw(ae, be, part_hw[k]) != F.e8_fma(ae, be, part_ex[k]):
+        hw = K.fpu(K.OP_FMA, a, b, part_hw[k])[0]
+        ex = K.fma_exact(a, b, part_ex[k])
+        if hw != ex:
             off += 1
-        part_hw[k] = F.e8_fma_hw(ae, be, part_hw[k])
-        part_ex[k] = F.e8_fma(ae, be, part_ex[k])
+        part_hw[k] = hw
+        part_ex[k] = ex
     return off
 
 
 def partials(pairs, npart):
     """What the rotating accumulator holds after the stream, partial by partial.
 
-    `e8_fma_hw` and not `e8_fma`: the RTL is the machine, and the deviation
-    between the machine and the definition is the lane bench's measurement, not
-    this one's. Mixing the two here would fail the accumulator for the lane's
-    rounding.
+    `K.fpu` and not `K.fma_exact`: the RTL is the machine, and the deviation
+    between the machine and the definition is measured above, not graded here.
     """
     part = [0] * npart
     for i, (a, b) in enumerate(pairs):
         k = i % npart
-        part[k] = F.e8_fma_hw(F.f16_to_e8(a), F.f16_to_e8(b), part[k])
+        part[k] = K.fpu(K.OP_FMA, a, b, part[k])[0]
     return part
 
 
@@ -86,13 +80,21 @@ def fold(part):
     """
     total = 0
     for p in part:
-        total = F.e8_fma_hw(p, E8_ONE, total)
+        total = K.fpu(K.OP_FMA, p, K.F32_ONE, total)[0]
     return total
 
 
+#: ABSOLUTE: a relative default writes into the caller's cwd, not the build.
+DEFAULT_DIR = pathlib.Path(__file__).resolve().parents[1] / "build" / "khd" / "fp32"
+
+
 def main():
-    op_path = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "khs_facc_ops.txt")
-    ex_path = pathlib.Path(sys.argv[2] if len(sys.argv) > 2 else "khs_facc_exp.txt")
+    op_path = (
+        pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_DIR / "facc_ops.txt"
+    )
+    ex_path = (
+        pathlib.Path(sys.argv[2]) if len(sys.argv) > 2 else DEFAULT_DIR / "facc_exp.txt"
+    )
     nops = int(sys.argv[3]) if len(sys.argv) > 3 else 200
     npart = int(sys.argv[4]) if len(sys.argv) > 4 else 16
 
@@ -103,11 +105,11 @@ def main():
 
     with op_path.open("w") as fh:
         for a, b in pairs:
-            fh.write("%04x %04x\n" % (a, b))
+            fh.write("%08x %08x\n" % (a, b))
     with ex_path.open("w") as fh:
         for p in part:
-            fh.write("%06x\n" % p)
-        fh.write("%06x\n" % tot)
+            fh.write("%08x\n" % p)
+        fh.write("%08x\n" % tot)
 
     print("  wrote %d ops to %s" % (len(pairs), op_path))
     print("  wrote %d partials + the fold to %s" % (npart, ex_path))

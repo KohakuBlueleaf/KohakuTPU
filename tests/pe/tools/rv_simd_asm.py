@@ -12,7 +12,7 @@ Syntax follows the base assembler's, with two register namespaces added:
     vld    v3, 64(a0)          vector registers are v0..v7
     vst    v3, 0(a1)           accumulators are acc0..acc1
     vadd.s16 v0, v1, v2
-    vdot.s8  acc0, v1, v2
+    vmul.s8  v3, v1, v2
     vslli.s32 v0, v1, 3
     vsplat v0, t1              t1 is an ordinary scalar register
     vextr  t0, v1, 2

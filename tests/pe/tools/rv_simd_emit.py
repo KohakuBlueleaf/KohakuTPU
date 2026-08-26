@@ -131,14 +131,19 @@ def verilog():
         ("FSFU", IF.F3_FSFU),
     ):
         L.append("localparam [2:0] KHF_F3_%-5s = 3'd%d;" % (nm, v))
-    L += ["", "// funct7[1:0]: the float element type"]
-    for v, n in ((IF.FT_F16, "F16"), (IF.FT_F32, "F32")):
+    L += [
+        "",
+        "// funct7[1:0]: the float element type. FP32 is the only compute type,",
+        "// so every other value of the field is an unmapped encoding.",
+    ]
+    for v, n in ((IF.FT_F32, "F32"),):
         L.append("localparam [1:0] KHF_FT_%-3s = 2'd%d;" % (n, v))
 
     L += [
         "",
-        "// vec_alu's own opcodes, forwarded by khs_float_lane. A FALU or FSFU",
-        "// instruction maps onto exactly one of these.",
+        "// rv_fpu's own opcodes, forwarded by khs_fp32_alu. A FALU instruction",
+        "// maps onto exactly one of these; a seed's low two bits are",
+        "// khs_fp32_sfu's function select.",
     ]
     for n, v in sorted(IF.VEC_OP.items(), key=lambda kv: kv[1]):
         L.append("localparam [4:0] KHS_FOP_%-6s = 5'd%d;" % (n, v))
@@ -262,7 +267,7 @@ def c_header():
         " * Vector register numbers are IMMEDIATES here, not operands the",
         " * compiler allocates -- which is what buys `no compiler fork`. The",
         " * consequence is that GCC cannot see the vector state at all: two",
-        " * identical vdot calls are not one value, they accumulate. So the",
+        " * identical vector calls are not one value, they carry state. So the",
         " * compiler may not reorder, hoist or common these, and it cannot",
         " * software-pipeline the vector datapath. On an in-order single-issue",
         " * core whose multi-cycle ops stall in the existing hazard unit that",

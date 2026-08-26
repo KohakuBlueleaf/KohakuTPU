@@ -147,7 +147,7 @@ def e8_parts(x: int):
     return s, e, (1 << 15) | m, "num"
 
 
-def e8_fma(a: int, b: int, c: int, negate: bool = False) -> int:
+def e8_fma(a: int, b: int, c: int, negate: bool = False, sticky_in: int = 0) -> int:
     """a*b + c in E8M15, computed exactly and rounded ONCE, to nearest even.
 
     Written from the definition rather than from the lane's pipeline: the lane
@@ -157,6 +157,10 @@ def e8_fma(a: int, b: int, c: int, negate: bool = False) -> int:
 
     E8M15 has no subnormals, so a result below the smallest normal flushes to
     zero, and one at or above 2^128 becomes an infinity.
+
+    `sticky_in` ORs into the sticky, which only ever matters on an exact tie.
+    It is how `e8_fma_hw` reproduces the lane's zero-addend sticky; leave it 0
+    for the definition.
     """
     sa, ea, siga, ka = e8_parts(a)
     sb, eb, sigb, kb = e8_parts(b)
@@ -199,9 +203,10 @@ def e8_fma(a: int, b: int, c: int, negate: bool = False) -> int:
         sig = mag >> (k - 15)
         guard = (mag >> (k - 16)) & 1 if k >= 16 else 0
         stick = 1 if (k >= 17 and (mag & ((1 << (k - 16)) - 1))) else 0
+        stick |= sticky_in
     else:
         sig = mag << (15 - k)
-        guard = stick = 0
+        guard, stick = 0, 0
 
     if guard & (stick | (sig & 1)):
         sig += 1
@@ -251,7 +256,10 @@ def e8_fma_hw(a: int, b: int, c: int) -> int:
     if ka == "zero" or kb == "zero":
         return c
     if kc == "zero":
-        return e8_fma(a, b, 0)
+        # `vc_g`'s implicit one is phantom at c=0 and s_amt is forced to 48, so
+        # algn_stk asserts on every plain multiply and nearest-even degenerates
+        # to half-UP: vfmul.f16 3944*3544 ties, and the lane says 32ef not 32ee.
+        return e8_fma(a, b, 0, sticky_in=1)
 
     s = ea + eb - ec - 110
     if s < 0:

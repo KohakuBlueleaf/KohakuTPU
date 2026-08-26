@@ -6,7 +6,7 @@
 // and the state they produce.
 //
 // IT READS THE STATE BACK THROUGH THE ISA, not through the hierarchy. The
-// vector file is dumped with `vextr`, the accumulators with `vaccrd` then
+// vector file is dumped with `vextr`, the scratchpad with `vld` then
 // `vextr`, and the scratchpad with `vld` then `vextr` -- so the comparison uses
 // only paths software has, and no part of it depends on what an XPM array
 // happens to call its internal memory this tool version. The dump order
@@ -30,27 +30,16 @@
 `ifndef KHS_SIMD
  `define KHS_SIMD 8
 `endif
-`ifndef KHS_MULS
- `define KHS_MULS 4
-`endif
-`ifndef KHS_SHIFT
- `define KHS_SHIFT 1
-`endif
-`ifndef KHS_PERM
- `define KHS_PERM 1
-`endif
-// Both default to what SHIPS, so a bare bench run tests the built machine.
-// KHS_WB=0 / KHS_DOTDSP=0 still elaborate and must still pass -- the answers
-// are identical either way and only the latency contract differs.
+// Defaults to what SHIPS, so a bare bench run tests the built machine.
+// KHS_WB=0 still elaborates and must still pass -- the answers are identical
+// either way and only the latency contract differs.
 `ifndef KHS_WB
  `define KHS_WB 1
-`endif
-`ifndef KHS_DOTDSP
- `define KHS_DOTDSP 1
 `endif
 `ifndef KHS_VREGS
  `define KHS_VREGS 8
 `endif
+// Banks in the FLOAT accumulator; there is no integer one.
 `ifndef KHS_NACC
  `define KHS_NACC 2
 `endif
@@ -60,7 +49,12 @@
 // Permute OUTPUT words per pass. NOT architectural: the answer is the same at
 // every count, only the cycles change, so one stream grades every width.
 `ifndef KHS_PERMU
- `define KHS_PERMU 0
+ `define KHS_PERMU 8
+`endif
+// int32 <-> float converter units per pass. 0 = not built and f2i/i2f fault;
+// f2f needs no unit and is built whenever both memory formats are.
+`ifndef KHS_FCVTU
+ `define KHS_FCVTU 0
 `endif
 // The float GROUPS, each its own switch so a run can isolate one. They default
 // on so that `-d KHS_FLOAT=1` alone still builds the whole float side.
@@ -77,13 +71,20 @@
 // which other formats the build carries, so one stream grades either.
 // Packed-shift units per pass. NOT architectural: same answer at every width.
 `ifndef KHS_SHIFTU
- `define KHS_SHIFTU 0
+ `define KHS_SHIFTU 8
 `endif
-`ifndef KHS_F16
- `define KHS_F16 1
+// Integer ALU units per pass. NOT architectural, for the same reason the shift
+// and permute widths are not: the answer is the same, only the cycles change.
+`ifndef KHS_ILANES
+ `define KHS_ILANES 8
 `endif
-`ifndef KHS_F32
- `define KHS_F32 1
+// The reduce tree and the rounding-shift adder. Both ARCHITECTURAL -- off, the
+// encodings they serve fault -- so a stream using them must not set these to 0.
+`ifndef KHS_RED
+ `define KHS_RED 1
+`endif
+`ifndef KHS_SHROUND
+ `define KHS_SHROUND 1
 `endif
 // Rotating partials per float accumulator. ARCHITECTURAL: the golden model
 // rotates by the same number, and a build that changed it would compute
@@ -91,17 +92,12 @@
 `ifndef KHS_NPART
  `define KHS_NPART 16
 `endif
-// Float LANES against 2*SIMD float ELEMENTS. 0 = one per element. ALSO
-// architectural: with fewer lanes an element's chain is NPART/PASSES partials,
-// so the accumulation ORDER and therefore the answer changes. The vector
-// generator must be told the same number.
-// 0 IS "NOT BUILT" now, so the default names the widest build rather than
-// leaning on a 0 that used to mean it.
+// Float LANES against the vector's element count. ARCHITECTURAL: with fewer
+// lanes an element's chain is NPART/PASSES partials, so the accumulation ORDER
+// and therefore the answer changes -- the generator must be told the same
+// number. 0 IS NOT BUILT; the maximum is SIMD.
 `ifndef KHS_FLANES
- `define KHS_FLANES (2 * `KHS_SIMD)
-`endif
-`ifndef MX_MODEL
- `define MX_MODEL 1
+ `define KHS_FLANES `KHS_SIMD
 `endif
 
 module khs_unit_tb;
@@ -129,6 +125,15 @@ module khs_unit_tb;
     end
 
     integer errors = 0, checks = 0;
+
+    // A WIDTH THAT COSTS NO CYCLES IS NOT WALKING, and its passing checks mean
+    // nothing. Phase 1 only: the fixed vextr dump would dilute the number.
+    reg [31:0] cyc = 32'd0;
+    always @(posedge clk) begin
+        cyc <= cyc + 32'd1;
+    end
+    integer cyc0;
+    integer cyc_used [0:MAXC-1];
     task chk(input [63:0] got, input [63:0] want, input [255:0] what);
         begin
             checks = checks + 1;
@@ -164,12 +169,12 @@ module khs_unit_tb;
 `endif
 
     khs_unit #(.SIMD(SIMD), .VREGS(VREGS), .NACC(NACC),
-               .VSPAD_ENTRIES(ENTRIES), .MULS(`KHS_MULS),
-               .HAS_SHIFT(`KHS_SHIFT), .SHIFT_UNITS(`KHS_SHIFTU),
-               .HAS_PERM(`KHS_PERM),
+               .VSPAD_ENTRIES(ENTRIES),
+               .SHIFT_UNITS(`KHS_SHIFTU),
+               .ILANES(`KHS_ILANES),
+               .RED_UNITS(`KHS_RED), .HAS_SHROUND(`KHS_SHROUND),
                .PERM_UNITS(`KHS_PERMU),
-               .DOT_DSP(`KHS_DOTDSP),
-               .HAS_FLOAT(`KHS_FLOAT), .FLOAT_LANES(`KHS_FLANES),
+               .FLOAT_LANES(`KHS_FLOAT ? `KHS_FLANES : 0),
                // The groups the generator was told to emit, and no others: a
                // bench carrying a group the stream avoids leaves it untested,
                // and one lacking a group the stream uses faults instead of
@@ -183,10 +188,8 @@ module khs_unit_tb;
 `else
                .FSFU_UNITS(`KHS_FLOAT ? `KHS_FSFU : 0),
 `endif
-               .HAS_FACC(`KHS_FLOAT && `KHS_FACC), .HAS_FCVT(0),
-               .HAS_F16(`KHS_F16), .HAS_F32(`KHS_F32),
+               .HAS_FACC(`KHS_FLOAT && `KHS_FACC), .FCVT_UNITS(`KHS_FCVTU),
                .NPART(`KHS_NPART),
-               .FLOAT_MODEL(`MX_MODEL),
                .WB_STAGE(`KHS_WB),
                .USE_DSP("yes"), .MEM_PRIM("block"),
                .VREG_PRIM(VREG_PRIM)) dut (
@@ -209,7 +212,6 @@ module khs_unit_tb;
     reg [95:0] prog   [0:MAXC*MAXI-1];
     reg [31:0] scal   [0:MAXC*MAXS-1];
     reg [31:0] vfin   [0:MAXC*VREGS*8-1];
-    reg [31:0] afin   [0:MAXC*NACC*8-1];
     reg [31:0] spinit [0:MAXC*VWORDS-1];
     reg [31:0] spfin  [0:MAXC*VWORDS-1];
     // TWELVE, NOT EIGHT. The configuration guard below reads meta[8..11] --
@@ -285,30 +287,33 @@ module khs_unit_tb;
     // DROPPING VALID DOES NOT END A FOLD. `vfaccrd` holds MEM for
     // NPART*(ALAT+1) cycles and writes the vector file on the last one, so a
     // case ending in one loses its final write unless the drain is waited for.
+    // WAIT FOR THE WRITE PORT TO GO QUIET, not a fixed count. The elementwise
+    // float pipe is ~15 cycles deep and nothing holds `stall` while it drains,
+    // so the old `repeat (8)` dropped the last float write of any case that did
+    // not happen to end on an instruction depending on it -- invisible at
+    // ILANES=8, where a `vadd.s32` always did, and four lost writes at 0.
     task quiet;
+        integer qz;
         begin
             x_valid <= 1'b0;
             @(negedge clk);
             while (stall) begin
                 @(negedge clk);
             end
-            repeat (8) @(posedge clk);
+            qz = 0;
+            while (qz < 24) begin
+                @(posedge clk);
+                qz = wr_valid ? 0 : (qz + 1);
+            end
         end
     endtask
 
-    // The three dump encodings, built from the GENERATED header rather than
-    // from numbers written here twice.
+    // The dump encodings, built from the GENERATED header rather than from
+    // numbers written here twice.
     function [31:0] enc_vextr;
         input [4:0] vs1;
         input [4:0] lane;
         enc_vextr = {KHS_MOV_EXTR, lane, vs1, KHS_F3_VMOV, 5'd0, KHS_OPCODE};
-    endfunction
-
-    function [31:0] enc_vaccrd;
-        input [4:0] vd;
-        input [4:0] acc;
-        enc_vaccrd = {KHS_MAC_ACCRD, KHS_ET_S8, 5'd0, acc, KHS_F3_VMAC, vd,
-                      KHS_OPCODE};
     endfunction
 
     function [31:0] enc_vld;
@@ -356,11 +361,13 @@ module khs_unit_tb;
             wbad = 0;
             wbase = cs * wstride;
             warmed = 1'b1;
+            cyc0 = cyc;
             for (i = 0; i < icount[cs]; i = i + 1) begin
                 base = cs * stride + i;
                 issue(prog[base][95:64], prog[base][63:32], prog[base][31:0]);
             end
             quiet;
+            cyc_used[cs] = cyc - cyc0;
             warmed = 1'b0;
             checks = checks + 1;
             if (wbad) begin
@@ -400,29 +407,7 @@ module khs_unit_tb;
                 end
             end
 
-            // ---- phase 3: the accumulators, through vaccrd then vextr ----
-            nsc = 0;
-            for (a = 0; a < NACC; a = a + 1) begin
-                issue(enc_vaccrd(5'd0, a[4:0]), 32'd0, 32'd0);
-                for (k = 0; k < SIMD; k = k + 1) begin
-                    issue(enc_vextr(5'd0, k[4:0]), 32'd0, 32'd0);
-                end
-            end
-            quiet;
-            for (i = 0; i < NACC * SIMD; i = i + 1) begin
-                a = i / SIMD;
-                k = i % SIMD;
-                if (got_sc[i] !== afin[cs * NACC * SIMD + a * SIMD + k]) begin
-                    $display("  FAIL acc%0d lane %0d: got %08x want %08x",
-                             a, k, got_sc[i],
-                             afin[cs * NACC * SIMD + a * SIMD + k]);
-                    errors = errors + 1;
-                    checks = checks + 1;
-                    i = NACC * SIMD;
-                end
-            end
-
-            // ---- phase 4: the scratchpad, through vld then vextr ----
+            // ---- phase 3: the scratchpad, through vld then vextr ----
             nsc = 0;
             for (i = 0; i < ENTRIES; i = i + 1) begin
                 issue(enc_vld(5'd0), VSPAD_BASE + i * (SIMD * 4), 32'd0);
@@ -468,14 +453,19 @@ module khs_unit_tb;
         // datapath, or for a build that has the permute unit when this one does
         // not, would otherwise report a plausible failure about the wrong
         // machine.
-        if ((meta[6] != SIMD) || (meta[8] != `KHS_MULS)
-            || (meta[9] != `KHS_SHIFT) || (meta[10] != `KHS_PERM)
+        // EVERY WIDTH IS CHECKED, not only the ones that existed when this was
+        // written: a stream built for a machine with the shifter against a
+        // build without it reports a plausible failure about the wrong machine.
+        if ((meta[6] != SIMD) || (meta[8] != `KHS_ILANES)
+            || (meta[9] != `KHS_SHIFTU) || (meta[10] != `KHS_PERMU)
             || (meta[11] != `KHS_FLOAT) || (meta[12] != `KHS_FLANES)
+            || (meta[13] != `KHS_RED)
             || (meta[3] != VREGS) || (meta[4] != NACC)) begin
-            $display("  FAIL vectors are SIMD %0d MULS %0d shift %0d perm %0d float %0d flanes %0d vregs %0d nacc %0d; the bench is SIMD %0d MULS %0d shift %0d perm %0d float %0d flanes %0d vregs %0d nacc %0d",
+            $display("  FAIL vectors are SIMD %0d ilanes %0d shiftu %0d permu %0d float %0d flanes %0d red %0d vregs %0d nacc %0d; the bench is SIMD %0d ilanes %0d shiftu %0d permu %0d float %0d flanes %0d red %0d vregs %0d nacc %0d",
                      meta[6], meta[8], meta[9], meta[10], meta[11], meta[12],
-                     meta[3], meta[4], SIMD, `KHS_MULS, `KHS_SHIFT, `KHS_PERM,
-                     `KHS_FLOAT, `KHS_FLANES, VREGS, NACC);
+                     meta[13], meta[3], meta[4],
+                     SIMD, `KHS_ILANES, `KHS_SHIFTU, `KHS_PERMU,
+                     `KHS_FLOAT, `KHS_FLANES, `KHS_RED, VREGS, NACC);
             $display("========================================");
             $display("  FAIL -- 0 checks, 1 errors");
             $display("========================================");
@@ -485,7 +475,6 @@ module khs_unit_tb;
         $readmemh({`PE_DIR, "/khd/cur/prog.hex"},    prog);
         $readmemh({`PE_DIR, "/khd/cur/scal.hex"},    scal);
         $readmemh({`PE_DIR, "/khd/cur/vfin.hex"},    vfin);
-        $readmemh({`PE_DIR, "/khd/cur/afin.hex"},    afin);
         $readmemh({`PE_DIR, "/khd/cur/spinit.hex"},  spinit);
         $readmemh({`PE_DIR, "/khd/cur/spfin.hex"},   spfin);
         $readmemh({`PE_DIR, "/khd/cur/counts.hex"},  icount);
@@ -493,13 +482,14 @@ module khs_unit_tb;
         $readmemh({`PE_DIR, "/khd/cur/wtrace.hex"},  wtrace);
         $readmemh({`PE_DIR, "/khd/cur/wcounts.hex"}, wcount);
 
-        $display("--- %0d cases, SIMD %0d, VREGS %0d, NACC %0d, MULS %0d, shift %0d, perm %0d, float %0d ---",
-                 ncase, SIMD, VREGS, NACC, `KHS_MULS, `KHS_SHIFT, `KHS_PERM,
-                 `KHS_FLOAT);
+        $display("--- %0d cases, SIMD %0d, ilanes %0d, shiftu %0d, permu %0d, red %0d, float %0d, flanes %0d, vregs %0d ---",
+                 ncase, SIMD, `KHS_ILANES, `KHS_SHIFTU, `KHS_PERMU, `KHS_RED,
+                 `KHS_FLOAT, `KHS_FLANES, VREGS);
         for (c = 0; c < ncase; c = c + 1) begin
             run_case(c);
-            $display("    case%0d  %0d instructions  %s",
-                     c, icount[c], (errors == 0) ? "ok" : "see failures above");
+            $display("    case%0d  %0d instructions  %0d cycles  %s",
+                     c, icount[c], cyc_used[c],
+                     (errors == 0) ? "ok" : "see failures above");
         end
 
         $display("========================================");

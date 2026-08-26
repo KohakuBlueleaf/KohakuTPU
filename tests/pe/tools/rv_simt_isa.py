@@ -421,26 +421,16 @@ for _stem, _opv, _what, _lin in _VMEM_OPS:
             _add(_nm, F3_VMEM, _f7, _ops, _doc)
 
 # ---------------------------------------------------------------- float (G9)
-# THE ARITHMETIC IS THE DSP TIER'S, NOT A SECOND ONE. Every operation here is
-# `khs_float_lane` -- FP16 in, E8M15 through vec_alu's FMA, FP16 out -- so the
-# golden model is the SIMD tier's model and its vectors, already verified.
-# FP16 -> E8M15 is EXACT, which is the whole reason this format was chosen over
-# storing FP32 and rounding it on every operation.
-#
-#     vreg[31:16]  element 1  RESERVED, must be written zero, reads undefined
-#     vreg[15:0]   element 0  FP16
-#
-# Reserved, NOT unused: undefined bits become somebody's undefined behaviour,
-# and packed 2xFP16 later turns element 1 live without changing the layout.
+# THE ARITHMETIC IS THE SIMD TIER'S, NOT A SECOND ONE. Every operation here is
+# `rv_fpu` -- IEEE binary32 in and out -- so the golden model is the SIMD tier's
+# model and its vectors, already verified. A thread is one 32-bit slot and there
+# is no second format.
 #
 # vfma's destination is also its addend, because an R-type has two sources and
-# an FMA needs three. That is also exactly the lane's own shape: FMA(a, b, c).
-# funct7 = {half, op[2:0]}. THE FORMAT BIT IS THE TOP ONE so that adding an
-# operation never disturbs it: the seeds below took funct7[2], which the format
-# used to occupy.
+# an FMA needs three. That is also exactly the unit's own shape: FMA(a, b, c).
+# funct7 = op[2:0]; funct7[3] was the format bit and is now RESERVED.
 FLT_FMA, FLT_MUL, FLT_ADD, FLT_SUB = 0, 1, 2, 3
 FLT_EXP2, FLT_LOG2, FLT_RCP, FLT_RSQRT = 4, 5, 6, 7
-FLT_HALF = 8
 
 _add(
     "vfma",
@@ -476,12 +466,9 @@ _add(
     "in; subtraction is not a separate operation in the lane.",
 )
 
-# THE FOUR SEEDS, and they are the SIMD PE's FSFU group on the same lane.
-# `vec_alu` computes all four at FULL RATE, II=1, sharing the FMA's normaliser
-# and rounder -- a real GPU's special-function unit runs them at a quarter rate.
-# They are a parameter (HAS_FSFU) rather than a fixture: exposing them stops the
-# tool constant-folding the lane's operation select, and this PE has twice the
-# SIMD PE's float lanes to pay that on.
+# THE FOUR SEEDS, and they are the SIMD PE's FSFU group on the same unit.
+# `khs_fp32_sfu` is a 256-segment quadratic through the FMA's own normaliser and
+# rounder; FSFU_UNITS says how many of the float units carry one.
 #
 # THEY BELONG HERE AND NOT ONLY ON THE SIMD PE. rsqrt is normalisation and
 # lighting, exp2/log2 are tone-mapping and fog -- fragment-shader work, which is
@@ -499,49 +486,15 @@ for _n, _op, _d in (
         F3_FLT,
         _op,
         (VD, VS1),
-        "vd <- %s, per lane, FP32. Full rate, II=1, through the same "
-        "normaliser and rounder the FMA uses." % _d,
+        "vd <- %s, per lane, FP32. A seed unit walks LANES/FSFU_UNITS passes "
+        "where an FMA walks LANES/FLANES." % _d,
     )
 
-# funct7[3] is the format bit; nothing else moves. FP32 -> E8M15 copies the
-# exponent verbatim and only truncates mantissa, so the wide format is the one
-# that cannot surprise a shader with an overflow -- hence the default.
-for _n, _op, _d in (
-    ("vfma_h", FLT_FMA, "vd <- vs1 * vs2 + vd, per lane, FP16 in vreg[15:0]"),
-    ("vfmul_h", FLT_MUL, "vd <- vs1 * vs2, per lane, FP16 in vreg[15:0]"),
-    ("vfadd_h", FLT_ADD, "vd <- vs1 + vs2, per lane, FP16 in vreg[15:0]"),
-    ("vfsub_h", FLT_SUB, "vd <- vs1 - vs2, per lane, FP16 in vreg[15:0]"),
-):
-    _add(
-        _n,
-        F3_FLT,
-        FLT_HALF | _op,
-        (VD, VS1, VS2),
-        _d + ". FP16 -> E8M15 is EXACT, so this is the cheaper-to-store format "
-        "and never the less accurate one going in; only the result narrows, "
-        "and that direction saturates rather than wrapping.",
-    )
-for _n, _op, _d in (
-    ("vfexp2_h", FLT_EXP2, "2 raised to vs1"),
-    ("vflog2_h", FLT_LOG2, "the base-2 logarithm of vs1"),
-    ("vfrcp_h", FLT_RCP, "1 / vs1"),
-    ("vfrsqrt_h", FLT_RSQRT, "1 / sqrt(vs1)"),
-):
-    _add(
-        _n,
-        F3_FLT,
-        FLT_HALF | _op,
-        (VD, VS1),
-        "vd <- %s, per lane, FP16 in vreg[15:0]." % _d,
-    )
-# NO int <-> float CONVERSION, and that is deliberate. `vec_cvt` carries
-# FP16/FP32 <-> E8M15 and nothing integer, so an int->float instruction would
-# mean inventing normalise-and-round arithmetic HERE -- the fork the tier ruling
-# refuses. It is also not needed to have a working float tier: an FP16 bit
-# pattern is a 16-bit integer, so a shader builds constants with `saddi`+`s2v`
-# and reads real data straight out of memory, which is where a shader's floats
-# come from anyway. funct7 4 and 5 are left UNENCODED rather than encoded and
-# faulting, so the gap is visible in the table instead of at run time.
+# NO int <-> float CONVERSION, and that is deliberate: it is not needed to have
+# a working float tier. An FP32 bit pattern is a 32-bit integer, so a shader
+# builds constants with `saddi`+`sslli`+`s2v` and reads real data straight out
+# of memory, which is where a shader's floats come from anyway. The SIMD PE
+# carries `vfcvt` for the cases that need it.
 
 # ------------------------------------------------------- scalar ALU, immediate
 # custom-3. One instruction per funct3 because an I-type has no funct7.

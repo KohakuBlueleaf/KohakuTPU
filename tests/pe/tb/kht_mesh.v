@@ -32,26 +32,13 @@ module kht_mesh #(
     parameter integer WAVES      = 16,
     parameter integer HAS_MASK   = 1,
     parameter integer HAS_IPDOM  = 1,
-    parameter integer HAS_LDSBANK = 1,
-    parameter integer HAS_SHFL   = 1,
-    // The three float/multiply unit counts, each its own, 0 = not built. A bench
+    // The unit counts, each its own, 0 = not built and -1 = full rate. A bench
     // that runs a shader at FLANES < LANES is testing the pass walk, which is
     // the only place it can be tested against real kernels.
     parameter integer FLANES     = 8,
     parameter integer FSFU_UNITS = 0,
-    parameter integer MUL_UNITS  = 8,
-    parameter integer HAS_F16    = 1,
-    parameter integer HAS_F32    = 1,
-    parameter integer SHFL_UNITS = 0,
-    parameter integer LDS_BANKS  = 0,
-    // 0, MATCHING kht_pe, and that is the guard rather than a preference:
-    // kht_unit's FMODEL "defaults to the SYNTHESIS value, so a bench that
-    // forgets it fails to elaborate rather than quietly measuring a different
-    // multiplier". Defaulting to 1 here defeated exactly that -- every SIMT
-    // float shader ran vec_dsp's behavioural model, not DSP48E2. The two do
-    // agree (vec_alu at --model 0: 26,897 checks, every group's worst case
-    // bit-identical to MODEL=1), so nothing was hidden; the guard was.
-    parameter integer FMODEL     = 0,
+    parameter integer SHFL_UNITS = -1,
+    parameter integer LDS_BANKS  = -1,
     parameter integer IPDOM_D    = 8,
     parameter         VREG_PRIM  = "block",
     parameter integer RAM_DEPTH  = 4096
@@ -106,11 +93,8 @@ module kht_mesh #(
              .IMEM_WORDS(IMEM_WORDS), .SPAD_WORDS(SPAD_WORDS),
              .L1_LINES(L1_LINES), .LANES(LANES), .WAVES(WAVES),
              .HAS_MASK(HAS_MASK), .HAS_IPDOM(HAS_IPDOM),
-             .HAS_LDSBANK(HAS_LDSBANK), .HAS_SHFL(HAS_SHFL),
-             .FLANES(FLANES), .FSFU_UNITS(FSFU_UNITS), .MUL_UNITS(MUL_UNITS),
-             .HAS_F16(HAS_F16), .HAS_F32(HAS_F32),
+             .FLANES(FLANES), .FSFU_UNITS(FSFU_UNITS),
              .SHFL_UNITS(SHFL_UNITS), .LDS_BANKS(LDS_BANKS),
-             .FMODEL(FMODEL),
              .IPDOM_D(IPDOM_D),
              .MEM_PRIM("block"), .VREG_PRIM(VREG_PRIM),
              .INST_DEPTH(16), .RECV_DEPTH(512)) u_pe (

@@ -57,13 +57,10 @@ CASES = [
     ("chain", "zero", 2, []),
     ("fault", "zero", 1, []),
     # G9. One wave is the WORST case for the float tier, not the easy one: with
-    # nothing else runnable the 15-cycle latency is exposed rather than hidden,
-    # so a dependent chain that is right here is right at any occupancy.
-    ("float", "zero", 1, []),
-    ("float", "zero", 16, []),
-    # FP32 is the DEFAULT format and FP16 the `_h` variant, so both halves run.
-    # gpu_f32 carries the two format witnesses: a 2^100 operand FP16 cannot
-    # hold, and a mantissa bit E8M15 must drop.
+    # nothing else runnable the tier's latency is exposed rather than hidden, so
+    # a dependent chain that is right here is right at any occupancy.
+    # simt_f32 carries the two format witnesses: a 2^100 operand and a mantissa
+    # bit only 24 significand bits keep.
     ("f32", "zero", 1, []),
     ("f32", "zero", 16, []),
     # THE PASS WALK. Per-lane distinct float operands, so a build whose units
@@ -77,20 +74,12 @@ CASES = [
     ("fwalk", "zero", 1, ["KHT_FLANES=2"]),
     ("fwalk", "zero", 1, ["KHT_FLANES=1"]),
     ("fwalk", "zero", 16, ["KHT_FLANES=2"]),
-    ("float", "zero", 16, ["KHT_FLANES=2"]),
     ("f32", "zero", 16, ["KHT_FLANES=4"]),
-    # Same image, same golden DRAM, on a build carrying only the format the
-    # shader uses. simt_f32.s is the ONLY shader with no `_h` in it; simt_float.s
-    # and simt_fwalk.s mix the two deliberately and cannot run here.
-    ("f32", "zero", 16, ["KHT_F16=0"]),
-    ("mul", "zero", 1, ["KHT_MUL=2"]),
-    ("mul", "zero", 16, ["KHT_MUL=4"]),
-    ("mul", "zero", 16, ["KHT_MUL=1"]),
-    # THE TWO COUNTS ARE INDEPENDENT, and only these two rows say so: RV32M used
-    # to be gated on the float tier, so a multiply-without-floats build did not
-    # exist and a float-without-multiply build faulted every `mul` it never used.
+    ("f32", "zero", 16, ["KHT_FLANES=2"]),
+    # THE MULTIPLY IS NOT A WIDTH. A thread's ALU is an IM unit, so the multiply
+    # count is LANES and there is no `KHT_MUL`. What still needs saying is that
+    # `mul` does not depend on the float tier: this row runs it with no floats.
     ("mul", "zero", 16, ["KHT_FLANES=0"]),
-    ("fwalk", "zero", 16, ["KHT_MUL=0"]),
     # RV32M. The sign corners are the point: mulh/mulhu/mulhsu are three
     # different high halves of the same two bit patterns.
     ("mul", "zero", 1, []),

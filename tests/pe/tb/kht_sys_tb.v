@@ -40,9 +40,6 @@
 `ifndef KHT_IPDOM
  `define KHT_IPDOM 1
 `endif
-`ifndef KHT_LDSBANK
- `define KHT_LDSBANK 1
-`endif
 `ifndef KHT_FLT
  `define KHT_FLT 1
 `endif
@@ -56,38 +53,15 @@
 `ifndef KHT_FSFU
  `define KHT_FSFU 0
 `endif
-`ifndef KHT_MUL
- `define KHT_MUL (`KHT_FLT ? `KHT_LANES : 0)
-`endif
-// The memory FORMATS. NOT architectural: a thread's answer does not depend on
-// which OTHER format the build carries, so one image grades either.
 // Shuffle OUTPUT lanes per pass. NOT architectural: same answer at every width,
 // only the cycles change.
 `ifndef KHT_SHFLU
- `define KHT_SHFLU 0
+ `define KHT_SHFLU -1
 `endif
 // LDS banks. NOT architectural: fewer banks is more conflicts and more passes,
 // and kht_lds' sequencer already drains them.
 `ifndef KHT_LDSB
- `define KHT_LDSB 0
-`endif
-`ifndef KHT_F16
- `define KHT_F16 1
-`endif
-`ifndef KHT_F32
- `define KHT_F32 1
-`endif
-`ifndef KHT_SHFL
- `define KHT_SHFL 1
-`endif
-// FROM MX_MODEL, which is the same switch that decides whether xsim.py links
-// unisims_ver -- so the multiplier and the library it needs cannot disagree.
-// `xsim.py kht_sys` runs behavioural; `--model 0` runs the real DSP48E2.
-`ifndef MX_MODEL
- `define MX_MODEL 1
-`endif
-`ifndef KHT_FMODEL
- `define KHT_FMODEL `MX_MODEL
+ `define KHT_LDSB -1
 `endif
 
 module kht_sys_tb;
@@ -131,12 +105,9 @@ module kht_sys_tb;
                .IMEM_WORDS(IW), .SPAD_WORDS(SW), .L1_LINES(128),
                .LANES(LANES), .WAVES(`KHT_WAVES),
                .HAS_MASK(`KHT_MASK), .HAS_IPDOM(`KHT_IPDOM),
-               .HAS_LDSBANK(`KHT_LDSBANK), .HAS_SHFL(`KHT_SHFL),
                .FLANES(`KHT_FLANES),
-               .FSFU_UNITS(`KHT_FSFU), .MUL_UNITS(`KHT_MUL),
-               .HAS_F16(`KHT_F16), .HAS_F32(`KHT_F32),
+               .FSFU_UNITS(`KHT_FSFU),
                .SHFL_UNITS(`KHT_SHFLU), .LDS_BANKS(`KHT_LDSB),
-               .FMODEL(`KHT_FMODEL),
                .VREG_PRIM("block"), .RAM_DEPTH(RAM_DEPTH)) dut (
         .clk(clk), .rstn(rstn),
         .ext_in_data(ag_out), .ext_in_valid(ag_out_valid),
@@ -206,7 +177,7 @@ module kht_sys_tb;
     // The instance only exists when the gate is on, and a hierarchical
     // reference to an unbuilt generate branch is an elaboration error.
     generate
-    if (`KHT_LDSBANK != 0) begin : g_ldstrace
+    if (`KHT_LDSB != 0) begin : g_ldstrace
     integer dn = 0;
     always @(posedge clk) if (rstn && (dn < 26)) begin
         if (dut.u_pe.g_banklds.u_lds.run) begin

@@ -46,9 +46,11 @@ module rv_mesh #(
     parameter integer SIMD_VREGS    = 8,
     parameter integer SIMD_NACC     = 2,
     parameter integer SIMD_VSPAD    = 1024,
-    parameter integer SIMD_MULS     = 4,
-    parameter integer SIMD_SHIFT    = 1,
-    parameter integer SIMD_PERM     = 1,
+    // COMPUTE WIDTHS: 0 is not built. Defaults are the full-width machine, and
+    // the names match `rv_pe`'s so a caller does not have to learn two.
+    parameter integer SIMD_ILANES      = 8,
+    parameter integer SIMD_SHIFT_UNITS = 8,
+    parameter integer SIMD_PERM_UNITS  = 8,
     parameter integer SIMD_WB       = 0
 )(
     input  wire clk,
@@ -167,8 +169,9 @@ module rv_mesh #(
                     .INST_DEPTH(16), .RECV_DEPTH(32),
                     .SIMD_EN(SIMD_EN), .SIMD_LANES(SIMD_LANES),
                     .SIMD_VREGS(SIMD_VREGS), .SIMD_NACC(SIMD_NACC),
-                    .SIMD_VSPAD(SIMD_VSPAD), .SIMD_MULS(SIMD_MULS),
-                    .SIMD_SHIFT(SIMD_SHIFT), .SIMD_PERM(SIMD_PERM),
+                    .SIMD_VSPAD(SIMD_VSPAD), .SIMD_ILANES(SIMD_ILANES),
+                    .SIMD_SHIFT_UNITS(SIMD_SHIFT_UNITS),
+                    .SIMD_PERM_UNITS(SIMD_PERM_UNITS),
                     .SIMD_WB(SIMD_WB)) u_pe (
                 .clk(clk), .resetn(rstn),
                 .noc_in_data(lo_i[g]), .noc_in_valid(lo_iv[g]),

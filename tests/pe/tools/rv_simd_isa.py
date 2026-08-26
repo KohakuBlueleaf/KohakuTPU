@@ -32,7 +32,7 @@ faults with an illegal instruction rather than computing something plausible.
 | 2 | `VINT` | `op<<2 \\| et` -- packed integer arithmetic |
 | 3 | `VBIT` | `op` -- bitwise, untyped |
 | 4 | `VSHI` | `op<<2 \\| et`, `rs2` = shift amount |
-| 5 | `VMAC` | `op<<2 \\| et` -- dot product and the accumulators |
+| 5 | `VMAC` | RESERVED -- unmapped, no integer dot unit or accumulator |
 | 6 | `VMOV` | `op` -- scalar/vector moves and reductions |
 | 7 | `VPRM` | `op<<3 \\| idx` -- permute: slide, pack, unpack |
 
@@ -52,8 +52,8 @@ the vector source in the `rd` position.
 
 Vector register numbers are **immediates**, not operands GCC allocates -- that
 is what buys "no compiler fork" (09B S2.2). The consequence is that GCC cannot
-see the vector state at all: two identical `vdot` calls are not the same value,
-they accumulate. So every vector intrinsic must be `volatile`, and the compiler
+see the vector state at all: two identical vector calls are not the same value,
+they carry state. So every vector intrinsic must be `volatile`, and the compiler
 therefore **cannot schedule or software-pipeline the vector datapath**.
 
 On an in-order single-issue core whose multi-cycle ops stall in the existing
@@ -247,32 +247,10 @@ _typed(
     "requantise primitive, and the one a plain vsrai gets subtly wrong",
 )
 
-# ------------------------------------------------------- dot and accumulators
-_typed(
-    "vdot",
-    F3_VMAC,
-    0,
-    (ET_S8, ET_S16),
-    (AD, VS1, VS2),
-    "acc[ad] += the dot product of the elements within each 32-bit lane",
-)
-_typed(
-    "vdotn",
-    F3_VMAC,
-    1,
-    (ET_S8, ET_S16),
-    (AD, VS1, VS2),
-    "acc[ad] -= the dot product of the elements within each 32-bit lane",
-)
-_add("vaccz", F3_VMAC, (2 << 2) | 0, (AD,), "acc[ad] <- 0")
-_add("vaccrd", F3_VMAC, (3 << 2) | 0, (VD, AS1), "vd <- acc[as1], as int32 lanes")
-_add(
-    "vaccwr",
-    F3_VMAC,
-    (4 << 2) | 0,
-    (AD, VS1),
-    "acc[ad] <- vs1, as int32 lanes -- how a bias vector seeds an accumulation",
-)
+# THE VMAC GROUP IS UNMAPPED. There is no integer dot unit and no integer
+# accumulator: a dot product is `vmul` then `vredsum`, or a multiply whose
+# partials the scalar core sums. The funct3 value stays reserved rather than
+# being reused, so an old binary faults instead of decoding as something else.
 
 # ------------------------------------------------ scalar moves and reductions
 _add("vsplat", F3_VMOV, 0, (VD, XS1), "every 32-bit lane of vd <- xs1")
