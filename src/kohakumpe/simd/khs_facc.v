@@ -1,8 +1,12 @@
 // khs_facc -- the float tier's accumulator: NPART rotating partials per slot,
-// and the counter that makes II = 1 possible over a 15-deep lane.
+// and the counter that makes II = 1 possible over a deep lane.
 //
-// A LANE IS 15 CYCLES DEEP, so `acc = a*b + acc` on ONE partial issues at
-// II = 15. The vector core's answer (vec_lanes.v s7.3) is to rotate: the read
+// THE PARTIALS ARE BINARY32, one 32-bit word per slot. There is no E8M15 here
+// and no conversion at either edge: a seed is the register's own word and a
+// read is the folded word, so `vfaccwr` and `vfaccrd` cost no arithmetic.
+//
+// A LANE IS ALAT CYCLES DEEP, so `acc = a*b + acc` on ONE partial issues at
+// II = ALAT. The vector core's answer (vec_lanes.v s7.3) is to rotate: the read
 // index advances every accepted operation, and the write index is that same
 // counter delayed by exactly the lane's latency, so a result lands on the
 // partial its addend came from. With NPART > ALAT a partial is never re-read
@@ -14,7 +18,7 @@
 // implementation detail that can be tuned later.
 //
 // THE FOLD IS SERIAL AND THAT IS DELIBERATE. Combining NPART partials through
-// the lane costs NPART*ALAT cycles because each step depends on the last -- 240
+// the lane costs NPART*ALAT cycles because each step depends on the last -- 96
 // at NPART 16 -- and it runs ONCE per reduction, against a kernel of thousands
 // of cycles. A tree would be log2(NPART) float adders standing idle the rest of
 // the time.
@@ -32,8 +36,8 @@ module khs_facc #(
     parameter integer SLOTS  = 16,      // lanes built; one partial word per lane
     parameter integer NACC   = 2,
     parameter integer NPART  = 16,      // must exceed the lane's latency
-    parameter integer ALAT   = 15,
-    parameter integer PASSES = 1        // NARROW_SLOTS/SLOTS; must divide NPART
+    parameter integer ALAT   = 6,
+    parameter integer PASSES = 1        // FSLOTS/SLOTS; must divide NPART
 )(
     input  wire                        clk,
     input  wire                        resetn,
@@ -43,23 +47,23 @@ module khs_facc #(
     // WIDTHS GUARDED AGAINST NACC = 1: $clog2(1) is 0, so a bare
     // [$clog2(NACC)-1:0] is [-1:0] and every address built from it reads X.
     input  wire [((NACC>1)?$clog2(NACC):1)-1:0] acc_sel,
-    output wire [24*SLOTS-1:0]         rd_part,   // the addend for each lane
+    output wire [32*SLOTS-1:0]         rd_part,   // the addend for each lane
     output wire [((NPART>1)?$clog2(NPART):1)-1:0] rd_idx,
 
     // ---- retire: the lane results, ALAT later ----
     input  wire                        wb_valid,
-    input  wire [24*SLOTS-1:0]         wb_data,
+    input  wire [32*SLOTS-1:0]         wb_data,
 
     // ---- control ----
     input  wire                        do_zero,
     input  wire                        do_seed,
     input  wire [((NACC>1)?$clog2(NACC):1)-1:0] ctl_sel,
-    input  wire [24*SLOTS-1:0]         seed_data,
+    input  wire [32*SLOTS-1:0]         seed_data,
 
     // ---- read one partial, for the fold ----
     input  wire [((NACC>1)?$clog2(NACC):1)-1:0]  fold_sel,
     input  wire [((NPART>1)?$clog2(NPART):1)-1:0] fold_idx,
-    output wire [24*SLOTS-1:0]         fold_part,
+    output wire [32*SLOTS-1:0]         fold_part,
 
     // High while a zero or a seed is sweeping the partials; the unit holds the
     // instruction until it falls.
@@ -70,7 +74,7 @@ module khs_facc #(
 );
     localparam integer AW = (NACC  > 1) ? $clog2(NACC)  : 1;
     localparam integer PW = (NPART > 1) ? $clog2(NPART) : 1;
-    localparam integer DW = 24 * SLOTS;
+    localparam integer DW = 32 * SLOTS;
     localparam integer DEPTH = NACC * NPART;
     localparam integer XW = $clog2(DEPTH);
 

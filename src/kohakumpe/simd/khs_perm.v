@@ -33,13 +33,13 @@
 module khs_perm #(
     parameter integer SIMD     = 8,
     parameter integer HAS_PERM = 1,
-    // 0 = one unit per 32-bit output word, which is what every build had before
-    // the width was separable and is what keeps them bit-identical.
-    parameter integer UNITS    = 0,
+    // -1 = one unit per 32-bit output word. 0 is NOT BUILT and the caller
+    // elaborates no permute at all, so it never reaches this module.
+    parameter integer UNITS    = -1,
     // Derived, and in the parameter list because the port list needs it: a
     // localparam in the body is declared too late to size a port.
-    parameter integer PSW = ((SIMD / ((UNITS == 0) ? SIMD : UNITS)) > 1)
-                          ? $clog2(SIMD / ((UNITS == 0) ? SIMD : UNITS)) : 1
+    parameter integer UEFF = (UNITS < 0) ? SIMD : ((UNITS == 0) ? 1 : UNITS),
+    parameter integer PSW = ((SIMD / UEFF) > 1) ? $clog2(SIMD / UEFF) : 1
 )(
     input  wire [32*SIMD-1:0] v1,
     input  wire [32*SIMD-1:0] v2,
@@ -47,9 +47,9 @@ module khs_perm #(
     input  wire [2:0]         idx,
     // Which UNITS-sized slice of the result this pass produces.
     input  wire [PSW-1:0]     pass,
-    output wire [32*((UNITS == 0) ? SIMD : UNITS)-1:0] y
+    output wire [32*UEFF-1:0] y
 );
-    localparam integer U  = (UNITS == 0) ? SIMD : UNITS;
+    localparam integer U  = UEFF;
     localparam integer VW = 32 * SIMD;
     //: word, half and byte index widths into the OUTPUT.
     localparam integer EW = (SIMD > 1) ? $clog2(SIMD) : 1;
@@ -216,8 +216,11 @@ module khs_perm #(
     // A unit count that does not divide SIMD leaves output words unwritten by a
     // walk that still elaborates and reports an Fmax.
     generate
-    if ((UNITS != 0) && (((SIMD / UNITS) * UNITS) != SIMD)) begin : g_bad_pu
+    if ((UNITS > 0) && (((SIMD / UNITS) * UNITS) != SIMD)) begin : g_bad_pu
         khs_perm_requires_UNITS_to_divide_SIMD u_bad ();
+    end
+    if (UNITS < -1) begin : g_bad_pun
+        khs_perm_UNITS_below_minus_one_is_not_a_width u_bad ();
     end
     endgenerate
 

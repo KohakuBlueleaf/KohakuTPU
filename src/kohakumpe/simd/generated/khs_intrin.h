@@ -8,7 +8,7 @@
  * Vector register numbers are IMMEDIATES here, not operands the
  * compiler allocates -- which is what buys `no compiler fork`. The
  * consequence is that GCC cannot see the vector state at all: two
- * identical vdot calls are not one value, they accumulate. So the
+ * identical vector calls are not one value, they carry state. So the
  * compiler may not reorder, hoist or common these, and it cannot
  * software-pipeline the vector datapath. On an in-order single-issue
  * core whose multi-cycle ops stall in the existing hazard unit that
@@ -173,34 +173,6 @@
 #define khs_vsrari_s32(vd, vs1, sh) \
     __asm__ volatile(".insn r 0x0b, 4, 0x0e, x" #vd ", x" #vs1 ", x" #sh)
 
-/* acc[ad] += the dot product of the elements within each 32-bit lane (s8 elements) */
-#define khs_vdot_s8(ad, vs1, vs2) \
-    __asm__ volatile(".insn r 0x0b, 5, 0x00, x" #ad ", x" #vs1 ", x" #vs2)
-
-/* acc[ad] += the dot product of the elements within each 32-bit lane (s16 elements) */
-#define khs_vdot_s16(ad, vs1, vs2) \
-    __asm__ volatile(".insn r 0x0b, 5, 0x01, x" #ad ", x" #vs1 ", x" #vs2)
-
-/* acc[ad] -= the dot product of the elements within each 32-bit lane (s8 elements) */
-#define khs_vdotn_s8(ad, vs1, vs2) \
-    __asm__ volatile(".insn r 0x0b, 5, 0x04, x" #ad ", x" #vs1 ", x" #vs2)
-
-/* acc[ad] -= the dot product of the elements within each 32-bit lane (s16 elements) */
-#define khs_vdotn_s16(ad, vs1, vs2) \
-    __asm__ volatile(".insn r 0x0b, 5, 0x05, x" #ad ", x" #vs1 ", x" #vs2)
-
-/* acc[ad] <- 0 */
-#define khs_vaccz(ad) \
-    __asm__ volatile(".insn r 0x0b, 5, 0x08, x" #ad ", x0, x0")
-
-/* vd <- acc[as1], as int32 lanes */
-#define khs_vaccrd(vd, as1) \
-    __asm__ volatile(".insn r 0x0b, 5, 0x0c, x" #vd ", x" #as1 ", x0")
-
-/* acc[ad] <- vs1, as int32 lanes -- how a bias vector seeds an accumulation */
-#define khs_vaccwr(ad, vs1) \
-    __asm__ volatile(".insn r 0x0b, 5, 0x10, x" #ad ", x" #vs1 ", x0")
-
 /* every 32-bit lane of vd <- xs1 */
 #define khs_vsplat(vd, xs1) \
     __asm__ volatile(".insn r 0x0b, 6, 0x00, x" #vd ", %0, x0" : : "r"(xs1))
@@ -279,47 +251,11 @@
 #define khs_vunpkh_s16(vd, vs1) \
     __asm__ volatile(".insn r 0x0b, 7, 0x30, x" #vd ", x" #vs1 ", x0")
 
-/* vd[i] <- vs1[i] * vs2[i] over f16. The lane's addend is forced to zero rather than a second multiplier being built. A 256-bit register is 16 f16 elements; the element count is the register width over the operand width, not the lane count. */
-#define khs_vfmul_f16(vd, vs1, vs2) \
-    __asm__ volatile(".insn r 0x2b, 3, 0x00, x" #vd ", x" #vs1 ", x" #vs2)
-
-/* vd[i] <- vs1[i] + vs2[i] over f16. The lane's multiplier is forced to 1.0 rather than a second adder being built. A 256-bit register is 16 f16 elements; the element count is the register width over the operand width, not the lane count. */
-#define khs_vfadd_f16(vd, vs1, vs2) \
-    __asm__ volatile(".insn r 0x2b, 3, 0x04, x" #vd ", x" #vs1 ", x" #vs2)
-
-/* vd[i] <- vs1[i] - vs2[i] over f16. vs2's SIGN BIT is inverted and the add proceeds: negating a float is one bit, not a subtractor. A 256-bit register is 16 f16 elements; the element count is the register width over the operand width, not the lane count. */
-#define khs_vfsub_f16(vd, vs1, vs2) \
-    __asm__ volatile(".insn r 0x2b, 3, 0x08, x" #vd ", x" #vs1 ", x" #vs2)
-
-/* vd[i] <- vs1[i] * vs2[i] + vd[i] over f16, rounded ONCE. vd is read as the addend and then written, which is what makes this one fused operation rather than two instructions. A 256-bit register is 16 f16 elements; the element count is the register width over the operand width, not the lane count. */
-#define khs_vfma_f16(vd, vs1, vs2) \
-    __asm__ volatile(".insn r 0x2b, 3, 0x0c, x" #vd ", x" #vs1 ", x" #vs2)
-
-/* vd[i] <- min(vs1[i], vs2[i]) over f16. The winner is selected at the lane's first cycle and sent through as winner*1.0 + 0, which is bit-exact. A 256-bit register is 16 f16 elements; the element count is the register width over the operand width, not the lane count. */
-#define khs_vfmin_f16(vd, vs1, vs2) \
-    __asm__ volatile(".insn r 0x2b, 3, 0x10, x" #vd ", x" #vs1 ", x" #vs2)
-
-/* vd[i] <- max(vs1[i], vs2[i]) over f16. A 256-bit register is 16 f16 elements; the element count is the register width over the operand width, not the lane count. */
-#define khs_vfmax_f16(vd, vs1, vs2) \
-    __asm__ volatile(".insn r 0x2b, 3, 0x14, x" #vd ", x" #vs1 ", x" #vs2)
-
-/* vd[i] <- all ones if vs1[i] < vs2[i] else all zeros, over f16. A MASK IN AN ORDINARY VECTOR REGISTER, so vand/vandn/vor do the blend and a branchless conditional needs no new architectural state. NaN compares false in every form. A 256-bit register is 16 f16 elements; the element count is the register width over the operand width, not the lane count. */
-#define khs_vfcmplt_f16(vd, vs1, vs2) \
-    __asm__ volatile(".insn r 0x2b, 3, 0x18, x" #vd ", x" #vs1 ", x" #vs2)
-
-/* vd[i] <- all ones if vs1[i] > vs2[i] else all zeros, over f16. A MASK IN AN ORDINARY VECTOR REGISTER, so vand/vandn/vor do the blend and a branchless conditional needs no new architectural state. NaN compares false in every form. A 256-bit register is 16 f16 elements; the element count is the register width over the operand width, not the lane count. */
-#define khs_vfcmpgt_f16(vd, vs1, vs2) \
-    __asm__ volatile(".insn r 0x2b, 3, 0x1c, x" #vd ", x" #vs1 ", x" #vs2)
-
-/* vd[i] <- all ones if vs1[i] == vs2[i] else all zeros, over f16. A MASK IN AN ORDINARY VECTOR REGISTER, so vand/vandn/vor do the blend and a branchless conditional needs no new architectural state. NaN compares false in every form. A 256-bit register is 16 f16 elements; the element count is the register width over the operand width, not the lane count. */
-#define khs_vfcmpeq_f16(vd, vs1, vs2) \
-    __asm__ volatile(".insn r 0x2b, 3, 0x20, x" #vd ", x" #vs1 ", x" #vs2)
-
-/* vd[i] <- vs1[i] * vs2[i] over f32. The lane's addend is forced to zero rather than a second multiplier being built. A 256-bit register is 8 f32 elements. */
+/* vd[i] <- vs1[i] * vs2[i] over f32. The unit's addend is forced to zero rather than a second multiplier being built. A 256-bit register is 8 f32 elements. */
 #define khs_vfmul_f32(vd, vs1, vs2) \
     __asm__ volatile(".insn r 0x2b, 3, 0x01, x" #vd ", x" #vs1 ", x" #vs2)
 
-/* vd[i] <- vs1[i] + vs2[i] over f32. The lane's multiplier is forced to 1.0 rather than a second adder being built. A 256-bit register is 8 f32 elements. */
+/* vd[i] <- vs1[i] + vs2[i] over f32. The unit's multiplier is forced to 1.0 rather than a second adder being built. A 256-bit register is 8 f32 elements. */
 #define khs_vfadd_f32(vd, vs1, vs2) \
     __asm__ volatile(".insn r 0x2b, 3, 0x05, x" #vd ", x" #vs1 ", x" #vs2)
 
@@ -331,7 +267,7 @@
 #define khs_vfma_f32(vd, vs1, vs2) \
     __asm__ volatile(".insn r 0x2b, 3, 0x0d, x" #vd ", x" #vs1 ", x" #vs2)
 
-/* vd[i] <- min(vs1[i], vs2[i]) over f32. The winner is selected at the lane's first cycle and sent through as winner*1.0 + 0, which is bit-exact. A 256-bit register is 8 f32 elements. */
+/* vd[i] <- min(vs1[i], vs2[i]) over f32. IEEE minNum: a NaN operand LOSES. The winner is selected at the unit's first cycle and sent through as winner*1.0 + 0, which is bit-exact. A 256-bit register is 8 f32 elements. */
 #define khs_vfmin_f32(vd, vs1, vs2) \
     __asm__ volatile(".insn r 0x2b, 3, 0x11, x" #vd ", x" #vs1 ", x" #vs2)
 
@@ -351,19 +287,7 @@
 #define khs_vfcmpeq_f32(vd, vs1, vs2) \
     __asm__ volatile(".insn r 0x2b, 3, 0x21, x" #vd ", x" #vs1 ", x" #vs2)
 
-/* vd[i] <- (int32)vs1[i], truncating toward zero, where vs1 holds f16 elements. Saturates at int32's bounds; a NaN gives zero. */
-#define khs_vfcvt_f2i_f16(vd, vs1) \
-    __asm__ volatile(".insn r 0x2b, 2, 0x00, x" #vd ", x" #vs1 ", x0")
-
-/* vd[i] <- (f16)(int32)vs1[i], round to nearest even. */
-#define khs_vfcvt_i2f_f16(vd, vs1) \
-    __asm__ volatile(".insn r 0x2b, 2, 0x04, x" #vd ", x" #vs1 ", x0")
-
-/* vd <- vs1 converted to f16: the element type names the DESTINATION, so .f32 widens f16->f32 (exact -- E8 is FP32's exponent verbatim) and .f16 narrows f32->f16 (rounds, and a finite overflow saturates rather than becoming an infinity). */
-#define khs_vfcvt_f2f_f16(vd, vs1) \
-    __asm__ volatile(".insn r 0x2b, 2, 0x08, x" #vd ", x" #vs1 ", x0")
-
-/* vd[i] <- (int32)vs1[i], truncating toward zero, where vs1 holds f32 elements. Saturates at int32's bounds; a NaN gives zero. */
+/* vd[i] <- (int32)vs1[i], truncating toward zero. Saturates at int32's bounds; a NaN gives zero. */
 #define khs_vfcvt_f2i_f32(vd, vs1) \
     __asm__ volatile(".insn r 0x2b, 2, 0x01, x" #vd ", x" #vs1 ", x0")
 
@@ -371,65 +295,23 @@
 #define khs_vfcvt_i2f_f32(vd, vs1) \
     __asm__ volatile(".insn r 0x2b, 2, 0x05, x" #vd ", x" #vs1 ", x0")
 
-/* vd <- vs1 converted to f32: the element type names the DESTINATION, so .f32 widens f16->f32 (exact -- E8 is FP32's exponent verbatim) and .f16 narrows f32->f16 (rounds, and a finite overflow saturates rather than becoming an infinity). */
-#define khs_vfcvt_f2f_f32(vd, vs1) \
-    __asm__ volatile(".insn r 0x2b, 2, 0x09, x" #vd ", x" #vs1 ", x0")
-
-/* vd[i] <- 2 raised to vs1[i], over f16. Full rate, II=1, through the same normaliser and rounder the FMA uses. */
-#define khs_vfexp2_f16(vd, vs1) \
-    __asm__ volatile(".insn r 0x2b, 4, 0x00, x" #vd ", x" #vs1 ", x0")
-
-/* vd[i] <- the base-2 logarithm of vs1[i], over f16. Full rate, II=1, through the same normaliser and rounder the FMA uses. */
-#define khs_vflog2_f16(vd, vs1) \
-    __asm__ volatile(".insn r 0x2b, 4, 0x04, x" #vd ", x" #vs1 ", x0")
-
-/* vd[i] <- 1 / vs1[i], over f16. Full rate, II=1, through the same normaliser and rounder the FMA uses. */
-#define khs_vfrcp_f16(vd, vs1) \
-    __asm__ volatile(".insn r 0x2b, 4, 0x08, x" #vd ", x" #vs1 ", x0")
-
-/* vd[i] <- 1 / sqrt(vs1[i]), over f16. Full rate, II=1, through the same normaliser and rounder the FMA uses. */
-#define khs_vfrsqrt_f16(vd, vs1) \
-    __asm__ volatile(".insn r 0x2b, 4, 0x0c, x" #vd ", x" #vs1 ", x0")
-
-/* vd[i] <- 2 raised to vs1[i], over f32. Full rate, II=1, through the same normaliser and rounder the FMA uses. */
+/* vd[i] <- 2 raised to vs1[i], over f32. A 256-segment quadratic through the same normaliser and rounder the FMA uses; FSFU_UNITS says how many of the float units carry one, and a seed walks SIMD/FSFU_UNITS passes. */
 #define khs_vfexp2_f32(vd, vs1) \
     __asm__ volatile(".insn r 0x2b, 4, 0x01, x" #vd ", x" #vs1 ", x0")
 
-/* vd[i] <- the base-2 logarithm of vs1[i], over f32. Full rate, II=1, through the same normaliser and rounder the FMA uses. */
+/* vd[i] <- the base-2 logarithm of vs1[i], over f32. A 256-segment quadratic through the same normaliser and rounder the FMA uses; FSFU_UNITS says how many of the float units carry one, and a seed walks SIMD/FSFU_UNITS passes. */
 #define khs_vflog2_f32(vd, vs1) \
     __asm__ volatile(".insn r 0x2b, 4, 0x05, x" #vd ", x" #vs1 ", x0")
 
-/* vd[i] <- 1 / vs1[i], over f32. Full rate, II=1, through the same normaliser and rounder the FMA uses. */
+/* vd[i] <- 1 / vs1[i], over f32. A 256-segment quadratic through the same normaliser and rounder the FMA uses; FSFU_UNITS says how many of the float units carry one, and a seed walks SIMD/FSFU_UNITS passes. */
 #define khs_vfrcp_f32(vd, vs1) \
     __asm__ volatile(".insn r 0x2b, 4, 0x09, x" #vd ", x" #vs1 ", x0")
 
-/* vd[i] <- 1 / sqrt(vs1[i]), over f32. Full rate, II=1, through the same normaliser and rounder the FMA uses. */
+/* vd[i] <- 1 / sqrt(vs1[i]), over f32. A 256-segment quadratic through the same normaliser and rounder the FMA uses; FSFU_UNITS says how many of the float units carry one, and a seed walks SIMD/FSFU_UNITS passes. */
 #define khs_vfrsqrt_f32(vd, vs1) \
     __asm__ volatile(".insn r 0x2b, 4, 0x0d, x" #vd ", x" #vs1 ", x0")
 
-/* facc[ad] += vs1 * vs2, elementwise over f16. Lands on the next rotating partial, so consecutive ones issue at II=1 despite a 15-deep lane; the order is contract. */
-#define khs_vfmacc_f16(ad, vs1, vs2) \
-    __asm__ volatile(".insn r 0x2b, 0, 0x00, x" #ad ", x" #vs1 ", x" #vs2)
-
-/* facc[ad][i] -= vs1[i] * vs2[i], elementwise over f16 */
-#define khs_vfmsac_f16(ad, vs1, vs2) \
-    __asm__ volatile(".insn r 0x2b, 0, 0x04, x" #ad ", x" #vs1 ", x" #vs2)
-
-/* facc[ad] <- vs1 -- how a bias vector seeds a float accumulation */
-#define khs_vfaccwr_f16(ad, vs1) \
-    __asm__ volatile(".insn r 0x2b, 0, 0x10, x" #ad ", x" #vs1 ", x0")
-
-/* vd <- facc[as1], rounded and saturated back to f16 */
-#define khs_vfaccrd_f16(vd, as1) \
-    __asm__ volatile(".insn r 0x2b, 0, 0x0c, x" #vd ", x" #as1 ", x0")
-
-/* xd <- the sum of every slot of facc[as1]. Serial through one lane's adder: it runs once per kernel, and a float adder tree would be four normalisers and four rounders for that. */
-#define khs_vfredsum_f16(as1) ({ \
-    int32_t _khs_r; \
-    __asm__ volatile(".insn r 0x2b, 1, 0x00, %0, x" #as1 ", x0" : "=r"(_khs_r)); \
-    _khs_r; })
-
-/* facc[ad] += vs1 * vs2, elementwise over f32. Lands on the next rotating partial, so consecutive ones issue at II=1 despite a 15-deep lane; the order is contract. */
+/* facc[ad] += vs1 * vs2, elementwise over f32. Lands on the next rotating partial, so consecutive ones issue at II=1 despite a multi-cycle unit; the order is contract. */
 #define khs_vfmacc_f32(ad, vs1, vs2) \
     __asm__ volatile(".insn r 0x2b, 0, 0x01, x" #ad ", x" #vs1 ", x" #vs2)
 
@@ -441,18 +323,18 @@
 #define khs_vfaccwr_f32(ad, vs1) \
     __asm__ volatile(".insn r 0x2b, 0, 0x11, x" #ad ", x" #vs1 ", x0")
 
-/* vd <- facc[as1], widened to f32 exactly */
+/* vd <- facc[as1], each slot's partials folded in index order */
 #define khs_vfaccrd_f32(vd, as1) \
     __asm__ volatile(".insn r 0x2b, 0, 0x0d, x" #vd ", x" #as1 ", x0")
 
-/* xd <- the sum of every slot of facc[as1]. Serial through one lane's adder: it runs once per kernel, and a float adder tree would be four normalisers and four rounders for that. */
+/* xd <- the sum of every slot of facc[as1]. Serial through one unit's adder: it runs once per kernel, and a float adder tree would be four normalisers and four rounders for that. */
 #define khs_vfredsum_f32(as1) ({ \
     int32_t _khs_r; \
     __asm__ volatile(".insn r 0x2b, 1, 0x01, %0, x" #as1 ", x0" : "=r"(_khs_r)); \
     _khs_r; })
 
-/* facc[ad] <- 0, every slot. Untyped: zero is zero in either format. */
+/* facc[ad] <- 0, every slot. Untyped: zero is zero. */
 #define khs_vfaccz(ad) \
-    __asm__ volatile(".insn r 0x2b, 0, 0x08, x" #ad ", x0, x0")
+    __asm__ volatile(".insn r 0x2b, 0, 0x09, x" #ad ", x0, x0")
 
 #endif /* KHS_INTRIN_H */

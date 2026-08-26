@@ -1,7 +1,7 @@
 // khs_ffold -- combine an accumulator's NPART partials into one value per slot.
 //
 // SERIAL THROUGH THE LANE, AND DELIBERATELY SO. Each step depends on the last,
-// so the steps are ALAT apart: NPART*ALAT cycles, 240 at NPART 16. That runs
+// so the steps are ALAT apart: NPART*ALAT cycles, 96 at NPART 16. That runs
 // ONCE per reduction against a kernel of thousands of cycles, and the
 // alternative -- log2(NPART) float adders of their own -- is hardware that
 // stands idle the rest of the time and rounds differently from the accumulate
@@ -18,7 +18,7 @@
 
 module khs_ffold #(
     parameter integer NPART = 16,
-    parameter integer ALAT  = 15
+    parameter integer ALAT  = 6
 )(
     input  wire                     clk,
     input  wire                     resetn,

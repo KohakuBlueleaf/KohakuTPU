@@ -34,12 +34,13 @@ localparam [2:0] KHF_F3_FCVT  = 3'd2;
 localparam [2:0] KHF_F3_FALU  = 3'd3;
 localparam [2:0] KHF_F3_FSFU  = 3'd4;
 
-// funct7[1:0]: the float element type
-localparam [1:0] KHF_FT_F16 = 2'd0;
+// funct7[1:0]: the float element type. FP32 is the only compute type,
+// so every other value of the field is an unmapped encoding.
 localparam [1:0] KHF_FT_F32 = 2'd1;
 
-// vec_alu's own opcodes, forwarded by khs_float_lane. A FALU or FSFU
-// instruction maps onto exactly one of these.
+// rv_fpu's own opcodes, forwarded by khs_fp32_alu. A FALU instruction
+// maps onto exactly one of these; a seed's low two bits are
+// khs_fp32_sfu's function select.
 localparam [4:0] KHS_FOP_MOV    = 5'd0;
 localparam [4:0] KHS_FOP_NEG    = 5'd1;
 localparam [4:0] KHS_FOP_ABS    = 5'd2;
@@ -80,13 +81,6 @@ localparam [4:0] KHS_SH_SRLI      = 5'd1;
 localparam [4:0] KHS_SH_SRAI      = 5'd2;
 localparam [4:0] KHS_SH_SRARI     = 5'd3;
 
-// custom-0 funct3 = KHS_F3_VMAC: funct7[6:2] is the operation
-localparam [4:0] KHS_MAC_DOT       = 5'd0;
-localparam [4:0] KHS_MAC_DOTN      = 5'd1;
-localparam [4:0] KHS_MAC_ACCZ      = 5'd2;
-localparam [4:0] KHS_MAC_ACCRD     = 5'd3;
-localparam [4:0] KHS_MAC_ACCWR     = 5'd4;
-
 // custom-0 funct3 = KHS_F3_VMOV: funct7[6:0] is the operation
 localparam [6:0] KHS_MOV_SPLAT     = 7'd0;
 localparam [6:0] KHS_MOV_EXTR      = 7'd1;
@@ -115,7 +109,6 @@ localparam [4:0] KHF_FRED_FREDSUM   = 5'd0;
 // custom-1 funct3 = KHF_F3_FCVT: funct7[6:2] is the operation
 localparam [4:0] KHF_FCVT_FCVT_F2I  = 5'd0;
 localparam [4:0] KHF_FCVT_FCVT_I2F  = 5'd1;
-localparam [4:0] KHF_FCVT_FCVT_F2F  = 5'd2;
 
 // custom-1 funct3 = KHF_F3_FALU: funct7[6:2] is the operation
 localparam [4:0] KHF_FALU_FMUL      = 5'd0;
@@ -134,5 +127,5 @@ localparam [4:0] KHF_FSFU_FLOG2     = 5'd1;
 localparam [4:0] KHF_FSFU_FRCP      = 5'd2;
 localparam [4:0] KHF_FSFU_FRSQRT    = 5'd3;
 
-// 106 instructions: 63 integer on custom-0, 43 float on custom-1.
+// 77 instructions: 56 integer on custom-0, 21 float on custom-1.
 
