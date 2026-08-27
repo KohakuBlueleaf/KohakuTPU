@@ -224,12 +224,21 @@ five stores with a tearing window in the middle. Hardware assembles it.
 | index | offset | register | |
 |---|---|---|---|
 | 0 | `0x40` | `DST` | the destination's mesh coordinates: **x in bits 3:0, y in bits 11:8** |
-| 1 | `0x48` | `ARG0` | payload word 0 |
-| 2 | `0x50` | `ARG1` | payload word 1 |
-| 3 | `0x58` | `GO` | any write builds a `CU_INST` flit from `DST`, `ARG0`, `ARG1` and sends it |
-| 4 | `0x60` | `STAT` | read: `[4:0]` completions queued, `[15]` a dispatch still waiting to leave, `[31]` **sticky overflow** |
-| 5 | `0x68` | `HEAD` | read: the oldest completion, or 0 if the queue is empty |
-| 6 | `0x70` | `POP` | any write drops the head |
+| 1 | `0x48` | `ARG0` | payload bits `[63:0]` |
+| 2 | `0x50` | `ARG1` | payload bits `[127:64]` |
+| 3 | `0x58` | `ARG2` | payload bits `[191:128]` |
+| 4 | `0x60` | `ARG3` | payload bits `[255:192]` — **the top, where a unit's opcode lives at `[255:252]`** |
+| 5 | `0x68` | `GO` | any write builds a `CU_INST` flit from `DST` and `ARG0`–`ARG3` and sends it |
+| 6 | `0x70` | `STAT` | read: `[4:0]` completions queued, `[15]` a dispatch still waiting to leave, `[31]` **sticky overflow** |
+| 7 | `0x78` | `HEAD` | read: the oldest completion (0 if empty); **write: drop the head** |
+
+The four args are the **whole 256-bit `CU_INST` payload**: `{ARG3, ARG2, ARG1,
+ARG0}`, low word to high, with a unit's opcode at `payload[255:252]` = the top
+nibble of `ARG3`. The mailbox can express *any* payload to *any* node — the
+dispatch primitive is complete, whether or not a given program uses every bit.
+**Leaving `ARG3` at zero sends opcode 0 — a bare dispatch that retires with no
+work.** To *program* a unit, `ARG3` carries the opcode and its top fields; see
+"Programming a unit" below.
 
 A completion arrives as one 64-bit word:
 
@@ -239,16 +248,18 @@ A completion arrives as one 64-bit word:
 
 ```c
 *NM(0) = (1UL << 8) | 2UL;    /* the unit at y = 1, x = 2 */
-*NM(1) = payload_lo;
-*NM(2) = payload_hi;
-*NM(3) = 1UL;                 /* GO — the flit is built and sent */
+*NM(1) = payload_w0;          /* [63:0]   */
+*NM(2) = payload_w1;          /* [127:64] */
+*NM(3) = payload_w2;          /* [191:128] */
+*NM(4) = payload_w3;          /* [255:192] — opcode in the top nibble */
+*NM(5) = 1UL;                 /* GO — the flit is built and sent */
 
 /* ... a completion raises the external interrupt ... */
 
-unsigned long head = *NM(5);
+unsigned long head = *NM(7);
 unsigned long arg  = (head >> 8)  & 0xffffffffUL;
 unsigned long code = (head >> 40) & 0xffUL;
-*NM(6) = 1UL;                 /* POP */
+*NM(7) = 1UL;                 /* pop — a write to HEAD */
 ```
 
 Five rules, and each of them is something the hardware does that software has to
@@ -257,7 +268,7 @@ match:
 1. **Popping is a write, not a side effect of the read.** The control region
    answers a read from a register a cycle later, so a read-triggered pop would
    have to guess which cycle the read really happened on. Read `HEAD`, then
-   write `POP`.
+   write `HEAD` to drop it.
 2. **A completion raises the external interrupt line**, beside the node's own
    summary. A scheduler does not have to poll. The line stays asserted while the
    queue is non-empty, so a handler that does not drain the queue must mask
@@ -271,11 +282,50 @@ match:
 4. **A dispatch is held until the fabric takes it.** Writing `GO` while a
    previous flit is still waiting does nothing; `STAT` bit 15 says so. Withdrawing
    an offered flit would destroy it silently.
-5. **`DST`, `ARG0` and `ARG1` persist.** Dispatching again to the same unit with
+5. **`DST` and `ARG0`–`ARG3` persist.** Dispatching again to the same unit with
    the same payload is one write to `GO`.
 
 The complex answers at mesh coordinate **(0,0)**, which is a corner, so it costs
 no attachment point — [integration](integration.md#the-dispatch-mailbox).
+
+### Programming a unit
+
+A dispatch with a real opcode in `ARG3` *programs* the target: the same
+`CU_INST` the mesh's own controllers — and the host — send. A vector core, for
+instance, takes `op 1` to write an imem word, `op 2` to set a descriptor field,
+`op 3` to run from a pc — the encoding is the unit's, and lives in `vec_cu.v` /
+`mx_cluster_cu.v`. Staging a whole kernel is one `CU_INST` per word, then the
+descriptors, then a run:
+
+```c
+/* op at payload[255:252]=ARG3[63:60]; a vec imem word rides at payload[31:0]=ARG0. */
+static void put_imem(unsigned a, unsigned w) {   /* op 1 */
+    *NM(4) = (1UL<<60) | ((unsigned long)a<<51); *NM(1)=w; *NM(5)=1;
+}
+static void do_run(unsigned pc) {                /* op 3 */
+    *NM(4) = (3UL<<60) | ((unsigned long)pc<<51); *NM(5)=1;
+}
+```
+
+Two worked examples. `tests/rv64/mesh_vadd.c` stages a hand-written add kernel
+(the proven `vec_cu_tb.v` one) onto `vec0` and reads `3(i+1)` back. And
+`tests/rv64/mesh_art.c` does the same with **compiler-emitted** flits: the
+KohakuTPU compiler's `ElementwiseKernel` payloads are dropped into
+`vadd_artifact.h`, and the RV64 replays them — the on-chip dispatcher standing in
+for the host that used to stage and kick. Two rules the hardware forces on both:
+
+- **Wait for the flit to leave between writes.** `GO` while `STAT[15]` is set is
+  dropped (rule 4). Poll `STAT[15]==0`, or wait on each completion, before the
+  next `GO`. The mailbox has no credit gate — self-limit to the target's
+  instruction depth.
+- **A completion does not order the unit's DRAM writes.** A unit retires when its
+  last write beat is *sent*, and this L1 is not coherent with another unit's
+  writes — so reading the result immediately caches a stale value. Let the writes
+  land (a delay, or a later barrier) before the first read.
+
+Validated end to end under Verilator on the whole mesh —
+[`tests/mesh/rv64_mesh_2p2.v`](../../../../tests/mesh/rv64_mesh_2p2.v), one
+`sysnode` + router + two matmul clusters + two vector cores + `axi_ram` DRAM.
 
 ### Ringing another mesh, and being rung
 
@@ -385,9 +435,11 @@ invalidate** available to software, so a cached write may never reach memory —
 [memory-system](memory-system.md#what-the-core-publishes-about-ordering).
 
 **`FENCE` is a NOP and cannot be made to mean anything.** One hart, in-order,
-one outstanding access. `FENCE.I` likewise, and self-modifying code is
-impossible in either configuration — the instruction window has no write port
-the core can reach.
+one outstanding access. **`FENCE.I` is real on `rv64_syscore`:** it invalidates
+the I-cache, so after code is (re)loaded into DRAM — by the host or the mover,
+which reach physical memory — a `fence.i` makes the next fetch pull it fresh.
+On `rv64_sys_pe`, which has no I-cache and no write port into its window,
+`FENCE.I` is a NOP.
 
 **An unmapped *physical* address does not fault.** It aliases onto the
 scratchpad on a load and is dropped on a store. A wild pointer in machine mode
@@ -434,7 +486,7 @@ this core rather than of RISC-V in general:
    |---|---|---|
    | software | the host's doorbell register at `0x10` | the host, or `mip[3]` for the software-writable bit beside it |
    | timer | `time >= mtimecmp` | moving `mtimecmp` |
-   | external | a mover fault, a host halt request, a queued completion, **an inbound interlink ring** | clearing the mover fault, draining the mailbox with `POP`, clearing the counts at `0xC0` bit 1 |
+   | external | a mover fault, a host halt request, a queued completion, **an inbound interlink ring** | clearing the mover fault, draining the mailbox by writing `HEAD`, clearing the counts at `0xC0` bit 1 |
 
    The external line is an **OR of four levels**, so a handler must establish
    *which* raised it — read the mover status, the mailbox `STAT` and the

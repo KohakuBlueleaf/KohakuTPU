@@ -131,6 +131,7 @@ of which belong to the node whatever processor sits in it —
 | [integration](integration.md) | both wrappers: what replaces the compute-unit shell and why, the dispatch mailbox, the loader and the kick, the host window, the node port, and the node complex |
 | [performance](performance.md) | Dhrystone, IPC, the fabric-latency sweep, and LUT/Fmax — each with the part, the tool, the mode and the script that produced it |
 | [programming](programming.md) | link maps and the build lines a node program needs, the control region as code, the dispatch mailbox and the interlink doorbell, writing a trap handler across three privilege levels, and how to start a program |
+| [dispatch-convention](dispatch-convention.md) | the minimal contract for replaying a compiler artifact from the SysNode — the artifact shape, the runner loop over its steps, and the two ordering rules — for one node on one mesh |
 
 If the question is **"what can this thing actually do?"** rather than how any of
 it is built, start at

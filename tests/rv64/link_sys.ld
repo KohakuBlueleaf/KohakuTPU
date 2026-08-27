@@ -15,6 +15,10 @@ MEMORY
 {
     IMEM (rx)  : ORIGIN = 0x00000000, LENGTH = 32K
     SPAD (rw)  : ORIGIN = 0x00010000, LENGTH = 32K
+    /* Code placed here is fetched from DRAM through the I-cache, not the on-chip
+     * window -- this is how a program larger than IMEM, or a routine loaded at
+     * run time, executes. Empty in programs that have none. */
+    DRAM (rx)  : ORIGIN = 0x80000000, LENGTH = 16M
 }
 
 SECTIONS
@@ -34,6 +38,8 @@ SECTIONS
         *(.utext)
         . = ALIGN(4096);
     } > IMEM
+
+    .dram_text : { . = ALIGN(32); *(.dram_text .dram_text.*) } > DRAM
 
     .rodata : { . = ALIGN(8); *(.rodata .rodata.*) } > SPAD
     .data   : { . = ALIGN(8); *(.data .data.*) *(.sdata .sdata.*) } > SPAD

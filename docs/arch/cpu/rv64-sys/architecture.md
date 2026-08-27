@@ -35,7 +35,8 @@ user modes. Ordinary compilers work unmodified:
 | **RV64M** | complete: `MUL`, `MULH`, `MULHSU`, `MULHU`, `DIV`, `DIVU`, `REM`, `REMU`, and `MULW`, `DIVW`, `DIVUW`, `REMW`, `REMUW`. Multiply is 8 cycles, divide 66 |
 | **RV64A** | complete for both widths: `LR`/`SC` and all nine `AMO` operations. `aq` and `rl` are **decoded but ignored** — see [ordering](#ordering) |
 | **Zicsr** | `CSRRW`/`CSRRS`/`CSRRC` and the three immediate forms. `funct3 = 100` is illegal, as the specification requires |
-| `FENCE`, `FENCE.I` | decoded, execute as **NOP** — one hart, in-order, one outstanding access, and the instruction window is not writable from the data side |
+| `FENCE` | executes as **NOP** — one hart, in-order, one outstanding access |
+| `FENCE.I` | in `rv64_syscore`, **invalidates the I-cache** (Zifencei) so code rewritten in DRAM is fetched fresh; in `rv64_sys_pe`, which has no I-cache, it is a NOP |
 | `WFI` | decoded, executes as **NOP**. It does not idle the core |
 | `MRET` | redirect to `mepc`; `priv ← MPP`, `MIE ← MPIE`, `MPIE ← 1`, `MPP ← U`. Illegal outside machine mode |
 | `SRET` | redirect to `sepc`; `priv ← SPP`, `SIE ← SPIE`, `SPIE ← 1`, `SPP ← U`. Illegal in user mode |
@@ -45,7 +46,7 @@ user modes. Ordinary compilers work unmodified:
 | **`S`, `U` privilege** | **implemented**, with `medeleg`/`mideleg` delegation — [below](#the-privilege-model) |
 | **`F`, `D`, `Zfh` — floating point** | **absent.** No `f0..f31`, no `fcsr`, no rounding mode |
 | **`C` — compressed** | **absent.** Every instruction is 4 bytes |
-| `Zifencei` semantics, PMP, `Zicntr` beyond three counters | **absent** — [below](#what-is-deliberately-absent) |
+| PMP, `Zicntr` beyond three counters | **absent** — [below](#what-is-deliberately-absent) |
 
 Two decode details are contract because software can observe them:
 
@@ -381,9 +382,13 @@ the loader does not write it — it is reached through pointers.
   it. In `rv64_syscore` the same is true of the region below the node base. The
   core faults on a misaligned access and on an illegal encoding; it does not
   fault on a region.
-- **No self-modifying code.** The instruction window has no write port the core
-  can reach, in either configuration. `FENCE.I` is a NOP and cannot be made
-  meaningful.
+- **Code loading, and its limit.** `rv64_syscore` fetches from DRAM through an
+  I-cache, so a program larger than the on-chip window runs and code reloaded in
+  DRAM is made visible with `FENCE.I`. What is still not supported is a core store
+  that lands in the fetch path directly: DRAM is written by the host or the mover
+  (physical memory), not by the core's cached stores. `rv64_sys_pe` has no I-cache
+  — its instruction window has no write port the core can reach, so there
+  `FENCE.I` is a NOP.
 - **No `mstatus.MPRV`.** `SUM` and `MXR` are implemented and reach the MMU;
   `MPRV` — machine mode borrowing the previous level's translation — is not.
 - **No PMP and no physical memory protection of any kind.** Isolation between a

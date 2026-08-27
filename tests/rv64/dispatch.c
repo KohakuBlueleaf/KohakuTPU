@@ -14,10 +14,10 @@
 #define NM_DST    0
 #define NM_ARG0   1
 #define NM_ARG1   2
-#define NM_GO     3
-#define NM_STAT   4
-#define NM_HEAD   5
-#define NM_POP    6
+#define NM_GO     5
+#define NM_STAT   6
+#define NM_HEAD   7
+#define NM_POP    7       /* pop = a write to HEAD */
 
 static void putch(char c) { *CONSOLE = (unsigned char)c; }
 static void put_str(const char *s) { while (*s) putch(*s++); }
