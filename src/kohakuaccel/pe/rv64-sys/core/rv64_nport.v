@@ -53,6 +53,13 @@ module rv64_nport #(
     output reg                   u_ack,
     output reg  [63:0]           u_rdata,
 
+    // ---- I-cache fill: a 32-byte read, lowest priority (fetch defers to data)
+    input  wire                  if_req,
+    output wire                  if_ready,
+    input  wire [ADDR_W-6:0]     if_addr,
+    output reg                   if_resp_valid,
+    output reg  [255:0]          if_resp_data,
+
     output wire                  wr_idle,       // no write outstanding
 
     // ---- the AXI master ----
@@ -85,14 +92,18 @@ module rv64_nport #(
     assign cp_rready = 1'b1;
 
     localparam [2:0] S_IDLE = 3'd0, S_RD = 3'd1, S_WR = 3'd2;
-    localparam [1:0] C_WALK = 2'd0, C_FILL = 2'd1, C_WB = 2'd2, C_UNC = 2'd3;
+    localparam [2:0] C_WALK = 3'd0, C_FILL = 3'd1, C_WB = 3'd2, C_UNC = 3'd3;
+    localparam [2:0] C_IFILL = 3'd4;
 
     reg [2:0] st;
-    reg [1:0] who;
+    reg [2:0] who;
     reg [LSB-4:0] lane;          // which 64-bit lane of the beat
 
     assign fill_ready = (st == S_IDLE) && !w_req;
     assign wb_ready   = (st == S_IDLE) && !w_req && !fill_valid;
+    // I-fill is last: it only takes the port when no data client wants it.
+    assign if_ready   = (st == S_IDLE) && !w_req && !fill_valid && !wb_valid
+                      && !(u_req && !u_ack);
     assign wr_idle    = (st != S_WR) && !cp_awvalid && !cp_wvalid;
 
     always @(posedge clk) begin
@@ -104,11 +115,13 @@ module rv64_nport #(
             w_ack      <= 1'b0;
             u_ack      <= 1'b0;
             resp_valid <= 1'b0;
+            if_resp_valid <= 1'b0;
         end
         else begin
             w_ack      <= 1'b0;
             u_ack      <= 1'b0;
             resp_valid <= 1'b0;
+            if_resp_valid <= 1'b0;
 
             case (st)
                 S_IDLE: begin
@@ -161,6 +174,12 @@ module rv64_nport #(
                             st        <= S_RD;
                         end
                     end
+                    else if (if_req) begin
+                        who        <= C_IFILL;
+                        cp_araddr  <= {if_addr, 5'd0};
+                        cp_arvalid <= 1'b1;
+                        st         <= S_RD;
+                    end
                 end
 
                 S_RD: begin
@@ -176,6 +195,10 @@ module rv64_nport #(
                             C_WALK: begin
                                 w_data <= cp_rdata[{lane, 6'd0} +: 64];
                                 w_ack  <= 1'b1;
+                            end
+                            C_IFILL: begin
+                                if_resp_data  <= cp_rdata;
+                                if_resp_valid <= 1'b1;
                             end
                             default: begin
                                 u_rdata <= cp_rdata[{lane, 6'd0} +: 64];

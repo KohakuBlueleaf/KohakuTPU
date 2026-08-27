@@ -165,6 +165,17 @@ first, because a flag marks it taken — the instruction word is copied out of t
 array's output into `d_instr_hold`, and decode reads that copy for the rest of
 the hold. Both clear when fetch moves again.
 
+**The capture is gated on the stall of the fetch that produced the word, not the
+current one.** `imem_data` is the read of the *previous* `pc`, so its validity is
+the *previous* `imem_stall` — carried in `imem_stall_q`. The two diverge exactly
+when a hold begins because the **next** fetch missed: a `ret` at a line's last
+word whose shadow steps onto an uncached line raises `imem_stall` for that shadow
+while the bus still holds the valid `ret`. Gated on the live `imem_stall` the
+capture is skipped, and the fill then overwrites D with the shadow's word — the
+`ret` is lost and fetch runs off into the next line. Gating on `imem_stall_q`
+captures the `ret` that is actually on the bus. This is invisible to imem-resident
+code, whose fetch never stalls; only DRAM execution through the I-cache exposes it.
+
 **That is the general shape of holding a stage whose input is a synchronous
 array, and it is why a hold is never simply a clock enable.** A flop-input stage
 holds by not clocking; an array-input stage keeps being handed new data whether
@@ -363,17 +374,32 @@ after the refill lands, for one cycle after an `SFENCE.VMA` retires, and for the
 one cycle a trap's privilege change takes to land — the four cases in
 [memory-system](memory-system.md#fetch-is-translated-through-one-page-register).
 
-**The instruction-word capture has to be suppressed while it is asserted.** The
-hold register exists because the array keeps answering a frozen `pc`
-([above](#the-instruction-word-has-to-be-captured-when-fetch-stops)) — but under
-a fetch stall the address on the array is not yet a physical one, so the word on
-the bus belongs to nowhere, and capturing it pins that word in D for the rest of
-the stall.
+**The instruction-word capture is suppressed while the word's *own* fetch was
+stalled — `imem_stall_q`, not the live `imem_stall`.** When a fetch stall means
+the address on the array is not yet physical, the word on the bus belongs to
+nowhere and must not be captured; but the qualifier has to match the word, which
+is the *previous* fetch's, or a valid word held on the bus behind a stalling
+*next* fetch is wrongly skipped
+([above](#the-instruction-word-has-to-be-captured-when-fetch-stops)).
 
 Priority is **trap, then mispredict, then prediction**:
 
 a trap redirect wins over a mispredict, which wins over a prediction, and the
 next-PC mux picks its source in that order.
+
+### A redirect has to survive a bubble
+
+`go` retires E but `fd_go` (`go && !bubble`) is what lets `pc` take a new address.
+An E-stage redirect — a mispredict or a trap, both `e_kill` — retires on `go`, so
+if F is bubbled that cycle the target is computed once and then gone: `pc` never
+took it, and the wrong-path word the redirect left in D still carries its valid
+bit, so it later issues and, decoded illegal, traps. Both halves are latched into
+`redir_pend`/`redir_pend_pc` and D's valid bit is cleared, and the target is
+applied at the next `fd_go`. A D-stage prediction is excluded — it is the branch
+itself, not its shadow, and holds across the bubble on its own. F only ever
+bubbles on `imem_stall`, so this too is a DRAM-execution-only case: a taken branch
+out of DRAM whose shadow lands on an uncached line would otherwise walk `pc + 4`
+off the end.
 
 ### The trap redirects; everything else lands a cycle later
 

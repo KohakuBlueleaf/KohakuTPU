@@ -69,6 +69,7 @@ module rv64_core #(
     output wire        sum_o,
     output wire        mxr_o,
     output wire        sfence_o,
+    output wire        fence_i_o,     // FENCE.I retired: invalidate the I-cache
     output wire        priv_settle_o, // hold fetch: `priv_o` lands next edge
 
     // The wrapper's exit-region store, and the host's stop. Program exit is a
@@ -105,37 +106,63 @@ module rv64_core #(
     wire        fd_go = go && !bubble;
 
     assign imem_addr = pc;
-    assign pc_next = redirect ? redirect_pc : (pc + 64'd4);
+
+    // A REDIRECT MUST SURVIVE A BUBBLE. `go` retires E but `fd_go` (go && !bubble)
+    // gates `pc`, so an E-stage redirect (`e_kill`) retiring while F is bubbled by
+    // `imem_stall` (DRAM/I-cache only) loses BOTH halves of its squash: `pc` never
+    // takes the target, and the wrong-path word held in D keeps `d_valid` and later
+    // issues -- decoded illegal, it traps. Latch the target AND kill D, apply at
+    // fd_go. `d_redir` is excluded: it is the branch, not its shadow.
+    reg         redir_pend;
+    reg  [63:0] redir_pend_pc;
+    wire        take_redir    = redirect || redir_pend;
+    wire [63:0] take_redir_pc = redir_pend ? redir_pend_pc : redirect_pc;
+    assign pc_next = take_redir ? take_redir_pc : (pc + 64'd4);
 
     reg d_valid;
     reg [63:0] d_pc;
     reg [31:0] d_instr_hold;
     reg        d_fault_hold;
     reg        d_hold_v;
+    // imem_data is the read of the PREVIOUS fetch, but imem_stall is the CURRENT
+    // fetch's -- a one-cycle skew. Gate the D-word capture on the stall that
+    // matches the data, or a ret whose shadow misses on the next line has its
+    // word (valid, already on the bus) skipped and then overwritten by the fill.
+    reg        imem_stall_q;
+    always @(posedge clk) begin
+        imem_stall_q <= !resetn ? 1'b1 : imem_stall;
+    end
     always @(posedge clk) begin
         if (!resetn) begin
-            pc       <= RESET_PC;
-            d_valid  <= 1'b0;
-            d_pc     <= RESET_PC;
-            d_hold_v <= 1'b0;
+            pc         <= RESET_PC;
+            d_valid    <= 1'b0;
+            d_pc       <= RESET_PC;
+            d_hold_v   <= 1'b0;
+            redir_pend <= 1'b0;
         end
         else if (fd_go) begin
-            pc       <= pc_next;
-            d_valid  <= !redirect;
-            d_pc     <= pc;
-            d_hold_v <= 1'b0;
+            pc         <= pc_next;
+            d_valid    <= !take_redir;
+            d_pc       <= pc;
+            d_hold_v   <= 1'b0;
+            redir_pend <= 1'b0;
         end
-        // NOT WHILE FETCH IS UNTRANSLATED. The hold exists because the array
-        // keeps answering a held PC and D's word would otherwise be lost -- but
-        // under `imem_stall` the address is not yet a physical one, so the word
-        // on the bus belongs to nowhere. Capturing it pins that garbage in D
-        // for the rest of the stall.
-        else if ((stall || bubble) && !d_hold_v && !imem_stall) begin
-            // The instruction memory keeps answering the held PC, so D's word
-            // has to be captured once or it is lost when F stops moving.
-            d_instr_hold <= imem_data;
-            d_fault_hold <= imem_fault;
-            d_hold_v     <= 1'b1;
+        else begin
+            // F held: pin an E-stage redirect firing now, and squash the wrong-path
+            // instruction it left in D (first wins; younger is already killed).
+            if (e_kill && !redir_pend) begin
+                redir_pend    <= 1'b1;
+                redir_pend_pc <= redirect_pc;
+                d_valid       <= 1'b0;
+            end
+            // Capture D's word once, gated on imem_stall_q (the stall of the fetch
+            // that produced this word): under a live imem_stall the address is not
+            // yet physical, so its bus word belongs to nowhere and pins garbage.
+            if ((stall || bubble) && !d_hold_v && !imem_stall_q) begin
+                d_instr_hold <= imem_data;
+                d_fault_hold <= imem_fault;
+                d_hold_v     <= 1'b1;
+            end
         end
     end
 
@@ -151,7 +178,7 @@ module rv64_core #(
     wire [63:0] imm_d;
     wire [3:0]  alu_op_d;
     wire        alu_word_d, op1_pc_d, op2_imm_d, wr_reg_d;
-    wire        br_d, jal_d, jalr_d, ld_d, st_d, fence_d, ecall_d, ebreak_d;
+    wire        br_d, jal_d, jalr_d, ld_d, st_d, fence_d, fence_i_d, ecall_d, ebreak_d;
     wire [2:0]  mem_f3_d;
     wire        illegal_d;
 
@@ -169,7 +196,8 @@ module rv64_core #(
         .is_branch(br_d), .is_jal(jal_d), .is_jalr(jalr_d),
         .is_load(ld_d), .is_store(st_d),
         .is_amo(amo_d), .amo_op(amo_op_d), .mem_f3(mem_f3_d),
-        .is_fence(fence_d), .is_ecall(ecall_d), .is_ebreak(ebreak_d),
+        .is_fence(fence_d), .is_fence_i(fence_i_d),
+        .is_ecall(ecall_d), .is_ebreak(ebreak_d),
         .is_mret(mret_d), .is_wfi(wfi_d),
         .is_sret(sret_d), .is_sfence(sfence_d),
         .is_csr(csr_d), .csr_wr(csr_wr_d), .csr_imm(csr_imm_d),
@@ -224,6 +252,7 @@ module rv64_core #(
     reg        e_br, e_jal, e_jalr, e_ld, e_st, e_ecall, e_ebreak, e_ill;
     reg        e_md, e_amo;
     reg        e_csr, e_csr_wr, e_csr_imm, e_mret, e_wfi, e_sret, e_sfence;
+    reg        e_fence_i;
     reg        e_ifault;
     reg [11:0] e_csr_addr;
     reg        e_pred_t;
@@ -272,6 +301,7 @@ module rv64_core #(
             e_wfi      <= wfi_d;
             e_sret     <= sret_d;
             e_sfence   <= sfence_d;
+            e_fence_i  <= fence_i_d;
             e_ifault   <= d_fault;
         end
     end
@@ -656,6 +686,7 @@ module rv64_core #(
     // delegation mux -- into the fetch page register's clock enable, 21 logic
     // levels. A fence that fires on an SFENCE that then traps costs a re-walk.
     assign sfence_o   = boundary && e_sfence;
+    assign fence_i_o  = boundary && e_fence_i;
 
     // ECALL's cause names the mode it came from, which is how one handler tells
     // a user syscall from a supervisor one without reading any other state.

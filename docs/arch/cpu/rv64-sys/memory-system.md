@@ -636,10 +636,14 @@ statement that would be built on it.
   response.
 - **No cache maintenance instructions.** See
   [what the core publishes about ordering](#what-the-core-publishes-about-ordering).
-- **No instruction cache.** Fetch reaches the local instruction window directly,
-  through [the fetch page
-  register](#fetch-is-translated-through-one-page-register) when translation is
-  on. There is nothing to cache: the window is on-chip and answers in a cycle.
+- **A read-only I-cache over the cached range.** Fetch below the node base reads
+  the on-chip window directly (nothing to cache — it answers in a cycle); fetch
+  into the cached DRAM range goes through `rv64_icache`, a small fully-associative
+  read-only cache that fills a 32-byte line from DRAM. That is what lets a program
+  larger than the window run, and code be loaded into DRAM and executed. Both
+  paths translate through [the fetch page
+  register](#fetch-is-translated-through-one-page-register) first. `FENCE.I`
+  invalidates it.
 - **No instruction TLB.** One page register, refilled on a page crossing, and it
   is the data port that owns the MMU when the two want it at once.
 - **No superpage TLB entries.** A superpage is walked and mapped correctly, but

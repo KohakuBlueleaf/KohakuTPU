@@ -20,11 +20,13 @@ kohakuaccel/pe/rv64-sys/core/rv64_core.v
 kohakuaccel/pe/rv64-sys/core/rv64_csr.v
 kohakuaccel/pe/rv64-sys/core/rv64_decode.v
 kohakuaccel/pe/rv64-sys/core/rv64_defs.vh
+kohakuaccel/pe/rv64-sys/core/rv64_icache.v
 kohakuaccel/pe/rv64-sys/core/rv64_l1.v
 kohakuaccel/pe/rv64-sys/core/rv64_mmu.v
 kohakuaccel/pe/rv64-sys/core/rv64_muldiv.v
 kohakuaccel/pe/rv64-sys/core/rv64_nport.v
 kohakuaccel/pe/rv64-sys/core/rv64_ram_be.v
 kohakuaccel/pe/rv64-sys/core/rv64_regfile.v
+kohakuaccel/pe/rv64-sys/rv64_noc_mbox.v
 kohakuaccel/pe/rv64-sys/rv64_sys_pe.v
 kohakuaccel/pe/rv64-sys/rv64_syscore.v

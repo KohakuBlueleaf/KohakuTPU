@@ -34,6 +34,7 @@ module rv64_decode (
     output wire [4:0]  amo_op,       // funct5
     output reg  [2:0]  mem_f3,       // width and signedness, funct3 as-is
     output reg         is_fence,
+    output reg         is_fence_i,   // FENCE.I: make written code visible to fetch
     output reg         is_ecall,
     output reg         is_ebreak,
     output reg         is_mret,
@@ -118,6 +119,7 @@ module rv64_decode (
         is_amo    = 1'b0;
         mem_f3    = f3;
         is_fence  = 1'b0;
+        is_fence_i = 1'b0;
         is_ecall  = 1'b0;
         is_ebreak = 1'b0;
         is_mret   = 1'b0;
@@ -215,8 +217,9 @@ module rv64_decode (
                 // LR takes no second operand; SC's is the value to store.
             end
             OP_MISCM: begin
-                is_fence = 1'b1;
-                illegal  = (f3 != 3'b000) && (f3 != 3'b001);
+                is_fence   = 1'b1;
+                is_fence_i = (f3 == 3'b001);   // FENCE.I, distinct from FENCE
+                illegal    = (f3 != 3'b000) && (f3 != 3'b001);
             end
             OP_SYSTEM: begin
                 if (f3 == 3'b000) begin
