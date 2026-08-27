@@ -304,20 +304,21 @@ costs no attachment point.
 | index | offset | register | direction |
 |---|---|---|---|
 | 0 | `0x40` | `DST` | write — x in bits 3:0, y in bits 11:8 |
-| 1 | `0x48` | `ARG0` | write — payload word 0 |
-| 2 | `0x50` | `ARG1` | write — payload word 1 |
-| 3 | `0x58` | `GO` | write — build and send |
-| 4 | `0x60` | `STAT` | read — `[4:0]` queued, `[15]` a flit still offered, `[31]` sticky overflow |
-| 5 | `0x68` | `HEAD` | read — the oldest completion |
-| 6 | `0x70` | `POP` | write — drop the head |
+| 1 | `0x48` | `ARG0` | write — payload `[63:0]` |
+| 2 | `0x50` | `ARG1` | write — payload `[127:64]` |
+| 3 | `0x58` | `ARG2` | write — payload `[191:128]` |
+| 4 | `0x60` | `ARG3` | write — payload `[255:192]` (opcode at `[255:252]`) |
+| 5 | `0x68` | `GO` | write — build the whole 256-bit payload and send |
+| 6 | `0x70` | `STAT` | read — `[4:0]` queued, `[15]` a flit still offered, `[31]` sticky overflow |
+| 7 | `0x78` | `HEAD` | read — the oldest completion; write — drop the head |
 
 Four properties are contract, and each is a consequence of the fabric rather
 than a choice about registers:
 
 - **Hardware composes the flit, not software.** A flit is 288 bits against a
-  64-bit store port, so software composing one is five stores with a tearing
-  window in the middle. Three stores of *meaning* and one `GO` have no such
-  window.
+  64-bit store port. Software sets `DST` and the four payload words at leisure,
+  and `GO` builds the routing header and commits — the whole 256-bit payload,
+  any opcode to any node, with no tearing window.
 - **An inbound flit is always accepted, even when the queue is full.** Held
   instead, it would sit at the head of the hub's queue and stall the link for
   everything behind it — including the traffic that would drain the queue.

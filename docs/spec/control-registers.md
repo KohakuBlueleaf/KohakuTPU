@@ -943,25 +943,26 @@ dropped the complex's only path onto the fabric with it, and the mailbox is the
 replacement: **software writes a dispatch, not a flit.** A flit is 288 bits
 against a 64-bit store port, so composing one in software would be five stores
 with a tearing window in the middle. Instead a program names a destination and
-two payload words, and hardware assembles the `CU_INST`.
+the four payload words — the whole 256-bit payload — and hardware assembles the
+`CU_INST`.
 
 Registers at `0x40 + index * 8`, the index being `pa[5:3]`:
 
 | Offset | Index | Name | Access | Contents |
 |---|---|---|---|---|
 | `0x40` | 0 | `M_DST` | RW | `[POS_WIDTH-1:0]` destination x, `[8+:POS_WIDTH]` destination y. Reads back in the same packing |
-| `0x48` | 1 | `M_ARG0` | RW | Payload word 0 — the low 64 bits of the flit's payload |
-| `0x50` | 2 | `M_ARG1` | RW | Payload word 1 — the next 64 bits |
-| `0x58` | 3 | `M_GO` | W | Any store builds the flit and offers it to the hub. **Ignored while a previous flit is still offered** |
-| `0x60` | 4 | `M_STAT` | RO | `[7:0]` completions queued, `[15]` a dispatch is offered and not yet taken, `[31]` sticky queue overflow. All other bits zero |
-| `0x68` | 5 | `M_HEAD` | RO | The oldest queued completion, or `64'd0` when the queue is empty |
-| `0x70` | 6 | `M_POP` | W | Any store discards the head. A store when the queue is empty does nothing |
-| `0x78` | 7 | — | RO | `64'd0` |
+| `0x48` | 1 | `M_ARG0` | RW | Payload `[63:0]` |
+| `0x50` | 2 | `M_ARG1` | RW | Payload `[127:64]` |
+| `0x58` | 3 | `M_ARG2` | RW | Payload `[191:128]` |
+| `0x60` | 4 | `M_ARG3` | RW | Payload `[255:192]` — a unit's opcode is `[255:252]`, the top nibble |
+| `0x68` | 5 | `M_GO` | W | Any store builds the flit and offers it to the hub. **Ignored while a previous flit is still offered** |
+| `0x70` | 6 | `M_STAT` | RO | `[7:0]` completions queued, `[15]` a dispatch is offered and not yet taken, `[31]` sticky queue overflow. All other bits zero |
+| `0x78` | 7 | `M_HEAD` | RW | RO: the oldest queued completion, or `64'd0` when empty. **A store discards the head** |
 
 The flit `M_GO` builds is a `CU_INST` (type `0x5`): destination from `M_DST`,
 source from the complex's own `(my_x, my_y)`, `last` set, an 8-bit `txn` the
-mailbox increments per dispatch, and `{M_ARG1, M_ARG0}` zero-extended as the
-payload. Nothing else in the flit is reachable from software.
+mailbox increments per dispatch, and `{M_ARG3, M_ARG2, M_ARG1, M_ARG0}` as the
+full 256-bit payload. Nothing else in the flit is reachable from software.
 
 A queued completion is one 64-bit word:
 
@@ -991,9 +992,11 @@ Four rules bind a dispatcher.
   drain the queue. `M_STAT[31]` is **sticky** and is the only witness, because a
   dropped completion and a unit that never finished are otherwise identical from
   software.
-- **Popping is a write.** Reading `M_HEAD` has no side effect. The control region
-  answers a read from a register one cycle later, so a read-triggered pop would
-  have to guess which cycle the read happened on.
+- **Popping is a write to `M_HEAD`.** Reading it has no side effect; a store to
+  it discards the head. The control region answers a read from a register one
+  cycle later, so a read-triggered pop would have to guess which cycle the read
+  happened on — hence the explicit store. (Merging read-head and write-pop onto
+  one slot freed the eighth for `M_ARG3`.)
 - **Credit is the program's.** There is no credit register here and no credit
   counter. The rule of [§2.4](#24-credit) still holds — a sender **MUST NOT**
   dispatch more instructions to a node than that node's instruction FIFO can

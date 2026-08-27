@@ -2,9 +2,10 @@
 // completions in. SysCore drops the compute-unit shell by decision, and that
 // dropped its only path onto the fabric with it.
 //
-// SOFTWARE WRITES A DISPATCH, NOT A FLIT. A flit is 288 bits against a 64-bit
-// store port, so composing one in software is five stores with a tearing
-// window in the middle.
+// SOFTWARE WRITES A DISPATCH, NOT A FLIT: DST and four payload words set at
+// leisure, GO commits atomically -- no tearing window. The four words are the
+// WHOLE 256-bit CU_INST payload, so the primitive is complete even where the
+// compiler uses a subset.
 
 `default_nettype none
 
@@ -41,31 +42,28 @@ module rv64_noc_mbox #(
 
     localparam integer PAY_W = FLIT_WIDTH - 4*POS_WIDTH - 16;
 
-    // POPPING IS A WRITE, not a side effect of the read. The control region
-    // answers reads from a register a cycle later, so a read-triggered pop
-    // would have to guess which cycle the read really happened on.
-    localparam [2:0] R_DST = 3'd0, R_ARG0 = 3'd1, R_ARG1 = 3'd2;
-    localparam [2:0] R_GO  = 3'd3, R_STAT = 3'd4, R_HEAD = 3'd5;
-    localparam [2:0] R_POP = 3'd6;
+    // Eight 8-byte slots before the mover at 0x80; ARG0..ARG3 are the payload
+    // low-to-high (op at payload[255:252] = ARG3[63:60]). A WRITE to HEAD pops
+    // it -- explicit, since the region answers a read a cycle late.
+    localparam [2:0] R_DST  = 3'd0, R_ARG0 = 3'd1, R_ARG1 = 3'd2, R_ARG2 = 3'd3;
+    localparam [2:0] R_ARG3 = 3'd4, R_GO   = 3'd5, R_STAT = 3'd6, R_HEAD = 3'd7;
 
     reg [POS_WIDTH-1:0] dst_x, dst_y;
-    reg [63:0]          arg0, arg1;
+    reg [63:0]          arg0, arg1, arg2, arg3;
     reg [7:0]           txn;
 
-    // ---- outbound ----------------------------------------------------------
-    wire [PAY_W-1:0] payload = {{(PAY_W-128){1'b0}}, arg1, arg0};
+    // ---- outbound: the whole 256-bit payload, low word first ---------------
+    wire [PAY_W-1:0] payload = {arg3, arg2, arg1, arg0};
 
     always @(posedge clk) begin
-        // RESET THE CONTROL, NOT THE DATA. `dst`, `arg0` and `arg1` are written
-        // before they are read and a reset value costs a control set on 136
-        // bits of register for nothing.
+        // RESET THE CONTROL, NOT THE DATA: dst and the args are written before
+        // read, and reset values would cost a control set for nothing.
         if (!resetn) begin
             tx_valid <= 1'b0;
             txn      <= 8'd0;
         end
         else begin
-            // HOLD UNTIL TAKEN. Withdrawing an offered flit destroys it, and
-            // the loss is silent at every point downstream.
+            // HOLD UNTIL TAKEN. Withdrawing an offered flit destroys it.
             if (tx_valid && !tx_busy) begin
                 tx_valid <= 1'b0;
             end
@@ -78,6 +76,8 @@ module rv64_noc_mbox #(
                     end
                     R_ARG0: arg0 <= cfg_data;
                     R_ARG1: arg1 <= cfg_data;
+                    R_ARG2: arg2 <= cfg_data;
+                    R_ARG3: arg3 <= cfg_data;
                     R_GO: if (!tx_valid) begin
                         tx_data  <= {dst_x, dst_y, my_x, my_y,
                                      T_CU_INST, txn, 1'b1, 3'b000, payload};
@@ -99,9 +99,8 @@ module rv64_noc_mbox #(
     wire            cq_full  = (cq_used == CQ_DEPTH[CQ_AW:0]);
     assign cq_nonempty = (cq_wr != cq_rd);
 
-    // A flit the queue cannot take must still be ACCEPTED and dropped, never
-    // held: held, it sits at the head of the hub's queue and stalls the link
-    // for everything behind it, including the traffic that would drain us.
+    // A flit the queue cannot take is ACCEPTED and dropped, never held: held, it
+    // stalls the hub for everything behind it, including what would drain us.
     assign rx_busy = 1'b0;
 
     wire [3:0] rx_type = rx_data[FLIT_WIDTH-4*POS_WIDTH-1 -: 4];
@@ -132,12 +131,12 @@ module rv64_noc_mbox #(
                     cq_wr <= cq_wr + 1'b1;
                 end
                 else begin
-                    // STICKY, because a dropped completion and a unit that
-                    // never finished look identical from software.
+                    // STICKY: a dropped completion and a unit that never
+                    // finished look identical from software otherwise.
                     cq_ovf <= 1'b1;
                 end
             end
-            if (cfg_en && (cfg_addr == R_POP) && cq_nonempty) begin
+            if (cfg_en && (cfg_addr == R_HEAD) && cq_nonempty) begin
                 cq_rd <= cq_rd + 1'b1;
             end
         end
@@ -149,6 +148,8 @@ module rv64_noc_mbox #(
                                {(8-POS_WIDTH){1'b0}}, dst_x};
             R_ARG0: rd_data = arg0;
             R_ARG1: rd_data = arg1;
+            R_ARG2: rd_data = arg2;
+            R_ARG3: rd_data = arg3;
             R_STAT: rd_data = {32'd0, cq_ovf, 15'd0,
                                tx_valid, 7'd0, {(8-CQ_AW-1){1'b0}}, cq_used};
             R_HEAD: rd_data = cq_nonempty ? cq[cq_rd[CQ_AW-1:0]] : 64'd0;

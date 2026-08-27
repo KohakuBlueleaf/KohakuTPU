@@ -121,6 +121,9 @@ module rv64_syscore #(
     localparam [7:0] HR_BOOT = 8'h00, HR_PC = 8'h08, HR_DBELL = 8'h10;
     localparam [7:0] HR_STATUS = 8'h18, HR_EXIT = 8'h20, HR_HALTPC = 8'h28;
     localparam [7:0] HR_CYCLES = 8'h30, HR_RETIRED = 8'h38;
+    // The host pushes one stdin byte per write here; the core reads it back out
+    // of the control region at R_STDIN. See the stdin queue below.
+    localparam [7:0] HR_STDIN = 8'h40;
 
     reg         nm_en;
     reg  [2:0]  nm_addr;
@@ -204,6 +207,7 @@ module rv64_syscore #(
     wire [31:0] imem_data_c;
     wire        imem_stall_c;
     wire [63:0] fetch_pa;
+    wire [31:0] imem_sram_data;      // the on-chip window; DRAM code is cached
 
     // THE ARRAY IS ADDRESSED BY THE TRANSLATED PC. With translation off this is
     // the PC unchanged, so a machine-mode runtime fetches exactly as before.
@@ -212,7 +216,7 @@ module rv64_syscore #(
     ) u_imem (
         .clk(clk),
         .wr_en(h_imem_we), .wr_addr(hs_addr[IAW+1:2]), .wr_data(hs_wdata[31:0]),
-        .rd_en(1'b1), .rd_addr(fetch_pa[IAW+1:2]), .rd_data(imem_data_c)
+        .rd_en(1'b1), .rd_addr(fetch_pa[IAW+1:2]), .rd_data(imem_sram_data)
     );
 
     // ------------------------------------------------------------ the core
@@ -287,7 +291,9 @@ module rv64_syscore #(
 
     // `core_settle` is the cycle after a trap or return: the PC has moved but
     // `core_priv` has not, so `translating` is stale and no fetch may use it.
-    assign imem_stall_c = if_need || if_settle || sfence_q || core_settle;
+    wire ic_stall;      // a cached-fetch miss holds F; driven by the I-cache below
+    assign imem_stall_c = if_need || if_settle || sfence_q || core_settle
+                        || ic_stall;
 
     always @(posedge clk) begin
         if_settle <= 1'b0;
@@ -349,6 +355,37 @@ module rv64_syscore #(
     assign fetch_pa = translating
                     ? {{(64-ADDR_W){1'b0}}, if_ppn, imem_addr_c[11:0]}
                     : imem_addr_c;
+
+    // Fetch below the node base reads the on-chip window; fetch into the cached
+    // node range (DRAM code) goes through the I-cache, which fills from DRAM.
+    wire fetch_cached = |fetch_pa[ADDR_W-1:28] && fetch_pa[31];
+    wire fetch_ready  = !if_need && !if_settle && !sfence_q && !core_settle;
+    wire ic_en        = fetch_cached && fetch_ready;
+    wire [31:0]       ic_data;
+    wire              if_req_ic, if_ready_ic, if_rvalid_ic;
+    wire [ADDR_W-6:0] if_addr_ic;
+    wire [255:0]      if_rdata_ic;
+    // SELECT ON REGION, NOT READINESS. The mux picks the fetch's data source, so
+    // it follows the address (`fetch_cached`), not `ic_en`. Gating it with
+    // `fetch_ready` too meant a DRAM fetch during a data-access stall (ready low)
+    // picked imem_sram_data -- a wrong instruction, only when fetch and data both
+    // hit DRAM at once. `ic_stall` still holds F over a miss, so ic_data is valid
+    // whenever it is selected.
+    reg  ic_sel_q;
+    always @(posedge clk) begin
+        ic_sel_q <= fetch_cached;
+    end
+    wire core_fence_i;    // FENCE.I retired in the core -> drop every I-cache line
+
+    rv64_icache #(.LINES(2), .ADDR_W(ADDR_W), .MEM_PRIM(MEM_PRIM)) u_ic (
+        .clk(clk), .resetn(core_rstn),
+        .fetch_pa(fetch_pa[ADDR_W-1:0]), .en(ic_en),
+        .idata(ic_data), .stall(ic_stall), .inval(core_fence_i),
+        .if_req(if_req_ic), .if_ready(if_ready_ic), .if_addr(if_addr_ic),
+        .if_resp_valid(if_rvalid_ic), .if_resp_data(if_rdata_ic)
+    );
+
+    assign imem_data_c = ic_sel_q ? ic_data : imem_sram_data;
 
     rv64_mmu #(
         .ENTRIES(TLB_ENTRIES), .ADDR_W(ADDR_W), .MEM_PRIM(MEM_PRIM)
@@ -501,7 +538,10 @@ module rv64_syscore #(
         .wb_data(wb_data),
         .u_req(unc_act && !unc_done), .u_we(m_st_q), .u_addr(m_pa_q),
         .u_be(m_be_q), .u_wdata(m_wd_q),
-        .u_ack(u_ack), .u_rdata(u_rdata), .wr_idle(wr_idle),
+        .u_ack(u_ack), .u_rdata(u_rdata),
+        .if_req(if_req_ic), .if_ready(if_ready_ic), .if_addr(if_addr_ic),
+        .if_resp_valid(if_rvalid_ic), .if_resp_data(if_rdata_ic),
+        .wr_idle(wr_idle),
         .cp_awaddr(cp_awaddr), .cp_awlen(cp_awlen), .cp_awvalid(cp_awvalid),
         .cp_awready(cp_awready), .cp_wdata(cp_wdata), .cp_wstrb(cp_wstrb),
         .cp_wlast(cp_wlast), .cp_wvalid(cp_wvalid), .cp_wready(cp_wready),
@@ -515,6 +555,7 @@ module rv64_syscore #(
     // `mv.go` IS A STORE, not an opcode: decoding it from an address keeps the
     // ISA unchanged and matches the rule that control is a range.
     localparam [7:0] R_EXIT = 8'h00, R_CONSOLE = 8'h08, R_DBELL = 8'h10;
+    localparam [7:0] R_STDIN = 8'h30;
     localparam [7:0] R_SATP = 8'h18, R_NOC = 8'h40, R_MVCFG = 8'h80;
     localparam [7:0] R_DBCFG = 8'hC0;
 
@@ -572,6 +613,35 @@ module rv64_syscore #(
     assign dbg_console_we = ctrl_wr && (ctrl_off == R_CONSOLE);
     assign dbg_console    = m_wd_q[7:0];
 
+    // stdin: host writes HR_STDIN; core reads {valid,byte} at R_STDIN, writes it
+    // to pop. Reset by `resetn` not `core_rstn`, so the host preloads before boot.
+    localparam integer SIN_DEPTH = 64;
+    localparam integer SIN_AW    = 6;                     // $clog2(64)
+    reg  [7:0]      sin_mem [0:SIN_DEPTH-1];
+    reg  [SIN_AW:0] sin_wr, sin_rd;
+    wire            sin_empty = (sin_wr == sin_rd);
+    wire            sin_full;
+    assign          sin_full  = (sin_wr[SIN_AW-1:0] == sin_rd[SIN_AW-1:0])
+                              && (sin_wr[SIN_AW]     != sin_rd[SIN_AW]);
+    wire [7:0]      sin_head  = sin_mem[sin_rd[SIN_AW-1:0]];
+    wire sin_push = h_ctrl_we && (hs_addr[7:0] == HR_STDIN) && !sin_full;
+    wire sin_pop  = ctrl_wr   && (ctrl_off     == R_STDIN)  && !sin_empty;
+    always @(posedge clk) begin
+        if (!resetn) begin
+            sin_wr <= {(SIN_AW+1){1'b0}};
+            sin_rd <= {(SIN_AW+1){1'b0}};
+        end
+        else begin
+            if (sin_push) begin
+                sin_mem[sin_wr[SIN_AW-1:0]] <= hs_wdata[7:0];
+                sin_wr <= sin_wr + 1'b1;
+            end
+            if (sin_pop) begin
+                sin_rd <= sin_rd + 1'b1;
+            end
+        end
+    end
+
     reg [63:0] ctrl_q;
     always @(posedge clk) begin
         if (ctrl_off_rd[7:6] == 2'b01) begin
@@ -579,6 +649,7 @@ module rv64_syscore #(
         end else begin
             case (ctrl_off_rd)
                 R_DBELL: ctrl_q <= {63'd0, dbell};
+                R_STDIN: ctrl_q <= {55'd0, !sin_empty, sin_head};
                 // A read-only mirror of the CSR.
                 R_SATP:  ctrl_q <= core_satp;
                 8'h20:   ctrl_q <= {31'd0, mv_busy, mv_fault, mv_done[27:0]};
@@ -661,6 +732,7 @@ module rv64_syscore #(
         .imem_fault(imem_fault_c),
         .priv_o(core_priv), .satp_o(core_satp),
         .sum_o(core_sum), .mxr_o(core_mxr), .sfence_o(core_sfence),
+        .fence_i_o(core_fence_i),
         .priv_settle_o(core_settle),
         // A completion waiting is exactly the condition a scheduler must not
         // have to poll for, so it raises the external line beside the node's.
