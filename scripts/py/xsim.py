@@ -1297,6 +1297,7 @@ BENCHES["rv64_nport"] = (
 RV64_SYSCORE = RV64_CORE + [
     "src/kohakuaccel/pe/rv64-sys/core/rv64_ram_be.v",
     "src/kohakuaccel/pe/rv64-sys/core/rv64_l1.v",
+    "src/kohakuaccel/pe/rv64-sys/core/rv64_icache.v",
     "src/kohakuaccel/pe/rv64-sys/core/rv64_mmu.v",
     "src/kohakuaccel/pe/rv64-sys/core/rv64_nport.v",
     "src/kohakuaccel/pe/rv64-sys/rv64_noc_mbox.v",
@@ -1304,6 +1305,71 @@ RV64_SYSCORE = RV64_CORE + [
 ]
 
 BENCHES["rv64_syscore"] = ("rv64_syscore", RV64_SYSCORE)
+
+# The whole mesh under Verilator: RV64 node + router + 2 mat + 2 vec + axi_ram.
+# Shared by the hand-wired top and the gen_mesh-generated top.
+_RV64_MESH_SRCS = (
+    COMMON + NOC + MATMUL + MOVER + VECTOR + RV64_SYSCORE
+    + [
+        "src/kohakutpu/matmul/mx_cluster_cu.v",
+        "src/kohakutpu/vector/vec_cvt.v",
+        "src/kohakutpu/vector/vec_regfile.v",
+        "src/kohakutpu/vector/vec_lanes.v",
+        "src/kohakutpu/vector/vec_agu.v",
+        "src/kohakutpu/vector/vec_core.v",
+        "src/kohakutpu/vector/vec_cu.v",
+        "src/kohakuaccel/verif/axi_ram.v",
+        "src/kohakuaccel/sysnode/mover/mv_exec.v",
+        "src/kohakuaccel/sysnode/core/mag_mem_port.v",
+        "src/kohakuaccel/sysnode/core/mag_stage_port.v",
+        "src/kohakuaccel/sysnode/core/mag_dram_port.v",
+        "src/kohakuaccel/sysnode/interlink/il_pkt_arb.v",
+        "src/kohakuaccel/sysnode/interlink/mag_link.v",
+        "src/kohakuaccel/sysnode/interlink/mag_link_pipe.v",
+        "src/kohakuaccel/sysnode/interlink/mag_switch.v",
+        "src/kohakuaccel/sysnode/interlink/mag_ilink.v",
+        "src/kohakuaccel/sysnode/core/mag.v",
+        "src/kohakuaccel/sysnode/core/sn_hub.v",
+        "src/kohakuaccel/sysnode/sysnode.v",
+        "src/kohakuaccel/sysnode/cpu/rv64_mag_pe.v",
+        # sysnode's RV32 branch still elaborates even though CPU_RV64=1.
+        "src/kohakuaccel/pe/rv32/mem/rv_ram_be.v",
+        "src/kohakuaccel/pe/rv32/mem/rv_imem.v",
+        "src/kohakuaccel/pe/rv32/mem/rv_spad.v",
+        "src/kohakuaccel/pe/rv32/mem/rv_l1.v",
+        "src/kohakuaccel/pe/rv32/core/rv_regfile.v",
+        "src/kohakuaccel/pe/rv32/core/rv_bpred.v",
+        "src/kohakuaccel/pe/rv32/core/rv_if.v",
+        "src/kohakuaccel/pe/rv32/core/rv_id.v",
+        "src/kohakuaccel/pe/rv32/core/rv_ex.v",
+        "src/kohakuaccel/pe/rv32/core/rv_mem.v",
+        "src/kohakuaccel/pe/rv32/core/rv_wb.v",
+        "src/kohakuaccel/pe/rv32/core/rv_core.v",
+        "src/kohakuaccel/pe/rv32/noc/rv_noc_req.v",
+        "src/kohakuaccel/pe/rv32/noc/rv_mag_req.v",
+        "src/kohakuaccel/sysnode/cpu/rv_mag_pe.v",
+    ]
+)
+BENCHES["rv64_mesh_2p2"] = (
+    "rv64_mesh_2p2", _RV64_MESH_SRCS + ["tests/mesh/rv64_mesh_2p2.v"]
+)
+# The SAME mesh, but the top comes from gen_mesh.py --cpu-rv64 --mat-pump (the
+# real generation flow) instead of the hand-wired top: ktpu_2p2_rv64 wrapped by
+# rv64_gen_2p2 (axi_ram + clock fan-out + hs_).
+BENCHES["rv64_gen_2p2"] = (
+    "rv64_gen_2p2",
+    _RV64_MESH_SRCS + ["tests/mesh/ktpu_2p2_rv64.v", "tests/mesh/rv64_gen_2p2.v"]
+)
+# The generated mesh reached through the compact 4 KB load window (rv64_load_win),
+# the tidy per-node control front end -- a plain register bus, no AXI.
+BENCHES["rv64_win_2p2"] = (
+    "rv64_win_2p2",
+    _RV64_MESH_SRCS + [
+        "tests/mesh/ktpu_2p2_rv64.v",
+        "src/kohakuaccel/sysnode/cpu/rv64_load_win.v",
+        "tests/mesh/rv64_win_2p2.v",
+    ]
+)
 
 # The node-level complex: the RV64 CPU plus the mover and transform bank that
 # `rv_mag_pe` carries. Those two are parts of the NODE, not of the processor.

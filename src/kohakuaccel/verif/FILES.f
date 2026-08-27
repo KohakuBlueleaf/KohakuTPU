@@ -6,6 +6,7 @@ kohakuaccel/verif/main_orch.v
 kohakuaccel/verif/noc_cluster_2x2.v
 kohakuaccel/verif/noc_pair.v
 kohakuaccel/verif/noc_tile_1r.v
+kohakuaccel/verif/rv64_node_pair.v
 kohakuaccel/verif/rv64_pe_pair.v
 kohakuaccel/verif/rv64_syscore_pair.v
 kohakuaccel/verif/sdpram_probe.v

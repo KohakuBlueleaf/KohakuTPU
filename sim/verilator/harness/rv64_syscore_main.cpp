@@ -8,6 +8,9 @@
 
 #include "Vrv64_syscore.h"
 #include "verilated.h"
+#if VM_TRACE
+#include "verilated_vcd_c.h"
+#endif
 
 #include <cstdint>
 #include <cstdio>
@@ -21,13 +24,18 @@ static const uint32_t H_IMEM = 0x0000'0000u;
 static const uint32_t H_SPAD = 0x1000'0000u;
 static const uint32_t H_CTRL = 0x2000'0000u;
 static const uint8_t  HR_BOOT = 0x00, HR_PC = 0x08, HR_STATUS = 0x18,
-                      HR_EXIT = 0x20, HR_HALTPC = 0x28;
+                      HR_EXIT = 0x20, HR_HALTPC = 0x28, HR_STDIN = 0x40;
 static const uint64_t SPAD_BASE = 0x0001'0000ull;
 
 static VerilatedContext *ctx;
 static Vrv64_syscore *dut;
 static uint64_t cycles = 0;
 static std::string console;
+#if VM_TRACE
+static VerilatedVcdC *tfp = nullptr;   // opened only for a --trace build
+static bool     trace_on = false;      // gated to the run phase, not the load
+static uint64_t vcd_time = 0;          // half-cycle granularity
+#endif
 
 // ---- the node's memory, and its latency ------------------------------------
 static std::unordered_map<uint64_t, uint64_t> node;   // by 8-byte word
@@ -94,6 +102,26 @@ static void node_service() {
                     w = (w & ~m) | (v & m);
                 }
         }
+        // FENCE.I demo: when the guest sets the mailbox GO, copy DRAM code from
+        // src to dst so the code the I-cache holds no longer matches memory.
+        static bool swapped = false;
+        if (!swapped) {
+            auto rd = [&](uint64_t a) {
+                auto it = node.find(a >> 3);
+                return it == node.end() ? 0ull : it->second;
+            };
+            if (rd(0x10001018)) {                        // H_GO
+                uint64_t src = rd(0x10001000), dst = rd(0x10001008),
+                         len = rd(0x10001010);
+                for (uint64_t i = 0; i < len; i += 8)
+                    node[(dst + i) >> 3] = rd(src + i);
+                node[0x10001020 >> 3] = 1;               // H_ACK
+                swapped = true;
+                printf("  [host] copied %llu bytes of DRAM code %llx -> %llx\n",
+                       (unsigned long long)len, (unsigned long long)src,
+                       (unsigned long long)dst);
+            }
+        }
         dut->cp_bvalid = 1;
         w_wait = -1;
         got_aw = got_w = false;
@@ -150,11 +178,17 @@ static void tick() {
     node_service();
     noc_service();
     dut->eval();
+#if VM_TRACE
+    if (tfp && trace_on) tfp->dump(vcd_time++);
+#endif
     if (dut->mv_cfg_en) ++mv_writes;
     if (dut->db_en) ++db_writes;
     if (dut->dbg_console_we) console.push_back((char)dut->dbg_console);
     dut->clk = 1;
     dut->eval();
+#if VM_TRACE
+    if (tfp && trace_on) tfp->dump(vcd_time++);
+#endif
     ctx->timeInc(1);
     ++cycles;
 }
@@ -218,6 +252,8 @@ int main(int argc, char **argv) {
     const char *elf = nullptr;
     uint64_t max_cycles = 20000000;
     std::string expect = "syscore ok";
+    std::string stdin_input;
+    bool have_stdin = false;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--elf" && i + 1 < argc) elf = argv[++i];
@@ -225,6 +261,10 @@ int main(int argc, char **argv) {
             max_cycles = strtoull(argv[++i], nullptr, 0);
         else if (a == "--latency" && i + 1 < argc) LATENCY = atoi(argv[++i]);
         else if (a == "--expect" && i + 1 < argc) expect = argv[++i];
+        else if (a == "--stdin" && i + 1 < argc) {
+            stdin_input = argv[++i];
+            have_stdin = true;
+        }
     }
     if (!elf) { printf("  --elf is required\n"); return 2; }
     if (!load_elf(elf)) return 2;
@@ -232,13 +272,20 @@ int main(int argc, char **argv) {
     uint64_t text_bytes = 0, spad_bytes = 0;
     for (auto &kv : image) {
         if (kv.first < SPAD_BASE) { if (kv.first + 1 > text_bytes) text_bytes = kv.first + 1; }
-        else { uint64_t o = kv.first - SPAD_BASE;
+        else if (kv.first < 0x80000000ull) { uint64_t o = kv.first - SPAD_BASE;
                if (o + 1 > spad_bytes) spad_bytes = o + 1; }
+        // else: DRAM code (.dram_text) -- placed into node memory below.
     }
     printf("  text %llu bytes, spad %llu bytes, node latency %d\n",
            (unsigned long long)text_bytes, (unsigned long long)spad_bytes, LATENCY);
 
     dut = new Vrv64_syscore(ctx);
+#if VM_TRACE
+    ctx->traceEverOn(true);
+    tfp = new VerilatedVcdC;
+    dut->trace(tfp, 99);
+    tfp->open("trace.vcd");
+#endif
     dut->resetn = 0;
     dut->hs_wr = dut->hs_rd = 0;
     dut->hs_wstrb = 0;
@@ -262,9 +309,43 @@ int main(int argc, char **argv) {
         for (int j = 0; j < 8; ++j) w |= (uint64_t)img(SPAD_BASE + a + j) << (8 * j);
         hwrite(H_SPAD | (uint32_t)a, w);
     }
+    // Code linked into DRAM (.dram_text) goes straight into node memory, so the
+    // I-cache fills it as it would real DRAM.
+    uint64_t dram_bytes = 0;
+    for (auto &kv : image) {
+        if (kv.first >= 0x80000000ull) {
+            uint64_t &w = node[kv.first >> 3];
+            int b = (int)(kv.first & 7);
+            uint64_t m = 0xffull << (b * 8);
+            w = (w & ~m) | ((uint64_t)kv.second << (b * 8));
+            ++dram_bytes;
+        }
+    }
     uint64_t load_cycles = cycles;
+    if (dram_bytes) printf("  dram-text  %llu bytes into node memory\n",
+                           (unsigned long long)dram_bytes);
+
+    // Preload stdin before boot -- the queue survives reset. \n/\t interpreted,
+    // trailing newline appended so a line reader terminates.
+    if (have_stdin) {
+        std::string in;
+        for (size_t i = 0; i < stdin_input.size(); ++i) {
+            char c = stdin_input[i];
+            if (c == '\\' && i + 1 < stdin_input.size()) {
+                char n = stdin_input[++i];
+                c = (n == 'n') ? '\n' : (n == 't') ? '\t' : n;
+            }
+            in.push_back(c);
+        }
+        if (in.empty() || in.back() != '\n') in.push_back('\n');
+        for (unsigned char c : in) hwrite(H_CTRL | HR_STDIN, c);
+        printf("  stdin      %zu bytes preloaded\n", (size_t)in.size());
+    }
 
     hwrite(H_CTRL | HR_PC, entry_pc);
+#if VM_TRACE
+    trace_on = true;   // start the VCD at boot; the load phase is uninteresting
+#endif
     hwrite(H_CTRL | HR_BOOT, 1);
 
     uint64_t run0 = cycles, st = 0;
@@ -312,6 +393,9 @@ int main(int argc, char **argv) {
     printf("  %s\n", ok ? "PASS" : "FAIL");
     printf("========================================\n");
 
+#if VM_TRACE
+    if (tfp) { tfp->close(); delete tfp; printf("  trace      trace.vcd\n"); }
+#endif
     dut->final();
     delete dut;
     delete ctx;
