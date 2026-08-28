@@ -80,7 +80,23 @@ if {$top eq "sb_link_pair"} {
     read_xdc [file join $root scripts xdc ooc_station.xdc]
 }
 
-puts "@@@ top $top dir $dirv preset $pset lpb $lpb tagw $tagw ost $ost sf $sfwd fw $fw tmo $tmo"
+set lfull [lindex $argv 11]
+set lmem  [lindex $argv 12]
+set iskid   [lindex $argv 13]
+set cfgonly [lindex $argv 14]
+if {$lfull eq ""} { set lfull 1 }
+if {$lmem  eq ""} { set lmem distributed }
+if {$iskid eq ""} { set iskid 0 }
+if {$cfgonly eq ""} { set cfgonly 0 }
+# These generics exist only on specific tops; add them just there.
+set gextra {}
+if {$top eq "sb_line4" || $top eq "sb_quad"} {
+    set gextra [list -generic LINK_FULL=$lfull -generic LINK_MEM=$lmem]
+}
+if {$top eq "sb_slr1"} {
+    set gextra [list -generic ISKID=$iskid -generic CFG_ONLY=$cfgonly]
+}
+puts "@@@ top $top dir $dirv preset $pset lpb $lpb tagw $tagw ost $ost sf $sfwd fw $fw tmo $tmo lfull $lfull lmem $lmem"
 
 # flatten none: the per-instance breakdown is the point -- which of NMU, NSU or
 # station carries the cost is the whole question the design makes a claim about.
@@ -89,7 +105,7 @@ synth_design -top $top -part $part -mode out_of_context \
              -generic PRESET=$pset -generic LUT_PER_BRAM=$lpb \
              -generic TAGW=$tagw -generic OST=$ost \
              -generic STORE_FWD=$sfwd -generic FW=$fw -generic TIMEOUT=$tmo \
-             -generic AW=$aw -generic REQ_W=$lrq -generic RSP_W=$lrs
+             -generic AW=$aw -generic REQ_W=$lrq -generic RSP_W=$lrs {*}$gextra
 
 ooc_record "$top-$pset-fw$fw-ost$ost-sf$sfwd-lpb$lpb-aw$aw" \
     "top=$top preset=$pset fw=$fw aw=$aw ost=$ost sfwd=$sfwd lpb=$lpb tmo=$tmo" \

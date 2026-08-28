@@ -12,7 +12,8 @@
 module sb_link_cdc #(
     parameter integer W    = 640,
     parameter integer PIPE = 4,                 // stages, sender side
-    parameter integer CRED = 16
+    parameter integer CRED = 16,
+    parameter         MEMORY_TYPE = "distributed"   // T3: "block" -> BRAM RX
 )(
     input  wire         i_clk,
     input  wire         i_rst,
@@ -107,7 +108,7 @@ module sb_link_cdc #(
     end
 
     wire rxf_full, rx_empty;
-    async_fifo #(.DATA_WIDTH(W), .FIFO_DEPTH(RXD)) u_rxf (
+    async_fifo #(.DATA_WIDTH(W), .FIFO_DEPTH(RXD), .MEMORY_TYPE(MEMORY_TYPE)) u_rxf (
         .wr_clk(i_clk), .wr_rst(irst_q),
         .wr_en(pipe_v[PIPE-1]), .wr_data(pipe_d[PIPE-1]), .wr_full(rxf_full),
         .rd_clk(o_clk), .rd_en(pop), .rd_data(o_data), .rd_empty(rx_empty)

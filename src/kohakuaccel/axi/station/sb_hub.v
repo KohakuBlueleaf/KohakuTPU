@@ -12,7 +12,10 @@ module sb_hub #(
     parameter integer PW   = 64,                        // payload, excluding dst
     parameter integer DW   = (NDST <= 1) ? 1 : $clog2(NDST),
     parameter integer SW   = (NSRC <= 1) ? 1 : $clog2(NSRC),
-    parameter integer STATS = 0                         // 0 costs nothing
+    parameter integer STATS = 0,                        // 0 costs nothing
+    // 1: register each source input, so the arbiter starts from a flop instead
+    // of a combinational path back into a source FIFO (Fmax; costs FF+skid LUT).
+    parameter integer ISKID = 0
 )(
     input  wire                clk,
     input  wire                rst,
@@ -36,28 +39,53 @@ module sb_hub #(
     // Out of range would hold the select at x and wedge the path; drop instead.
     wire o_rdy_sel = (o_dst < NDST) ? o_ready[o_dst] : 1'b1;
 
+    // Arbiter's view of the inputs: raw, or flopped through a per-source skid.
+    wire [NSRC-1:0]     a_valid, a_ready, a_last;
+    wire [NSRC*DW-1:0]  a_dst;
+    wire [NSRC*PW-1:0]  a_pay;
+    genvar gi;
+    generate
+    if (ISKID) begin : g_iskid
+        for (gi = 0; gi < NSRC; gi = gi + 1) begin : g_sk
+            sb_skid #(.W(1 + DW + PW)) u_isk (
+                .clk(clk), .rst(rst),
+                .i_valid(i_valid[gi]), .i_ready(i_ready[gi]),
+                .i_data({i_last[gi], i_dst[gi*DW +: DW], i_pay[gi*PW +: PW]}),
+                .o_valid(a_valid[gi]), .o_ready(a_ready[gi]),
+                .o_data({a_last[gi], a_dst[gi*DW +: DW], a_pay[gi*PW +: PW]}));
+        end
+    end else begin : g_noskid
+        assign a_valid = i_valid;
+        assign i_ready = a_ready;
+        assign a_last  = i_last;
+        assign a_dst   = i_dst;
+        assign a_pay   = i_pay;
+    end
+    endgenerate
+
     // ---------------------------------------------------------- arbitration
     reg  [SW-1:0] rr, lock_sel;
     reg           locked;
 
-    // Scan downward from the pointer so a higher-priority match overwrites the
-    // lower one -- the idiom axi_n1.v and mag.v already use.
-    reg  [SW-1:0] scan_sel;
-    reg           scan_any;
-    integer       k;
+    // Round-robin as rotate-mask / isolate-lowest / encode: no serial scan and
+    // no `% NSRC` on a variable (the old downward scan was a modulo per step).
+    wire [NSRC-1:0] rr_mask;              // ones at and above the pointer
+    genvar gm;
+    generate for (gm = 0; gm < NSRC; gm = gm + 1) begin : g_rrm
+        assign rr_mask[gm] = (gm >= rr);
+    end endgenerate
+    wire [NSRC-1:0] hi   = a_valid & rr_mask;
+    wire [NSRC-1:0] pick = (|hi) ? (hi & (~hi + 1'b1)) : (a_valid & (~a_valid + 1'b1));
+    wire            scan_any = |a_valid;
+    reg  [SW-1:0]   scan_sel;
+    integer         k;
     always @(*) begin
         scan_sel = {SW{1'b0}};
-        scan_any = 1'b0;
-        for (k = NSRC-1; k >= 0; k = k - 1) begin
-            if (i_valid[(k + rr) % NSRC]) begin
-                scan_sel = (k + rr) % NSRC;
-                scan_any = 1'b1;
-            end
-        end
+        for (k = 0; k < NSRC; k = k + 1) if (pick[k]) scan_sel = scan_sel | k[SW-1:0];
     end
 
     wire [SW-1:0] sel   = locked ? lock_sel : scan_sel;
-    wire          any   = locked ? i_valid[lock_sel] : scan_any;
+    wire          any   = locked ? a_valid[lock_sel] : scan_any;
     wire          grant = any && skid_rdy;
 
     always @(posedge clk) begin
@@ -66,10 +94,10 @@ module sb_hub #(
             locked   <= 1'b0;
             lock_sel <= {SW{1'b0}};
         end else if (grant) begin
-            locked   <= !i_last[sel];
+            locked   <= !a_last[sel];
             lock_sel <= sel;
-            if (i_last[sel]) begin
-                rr <= (sel + 1'b1) % NSRC;
+            if (a_last[sel]) begin
+                rr <= (sel == NSRC-1) ? {SW{1'b0}} : (sel + 1'b1);
             end
         end
     end
@@ -77,30 +105,33 @@ module sb_hub #(
     genvar g;
     generate
     for (g = 0; g < NSRC; g = g + 1) begin : g_irdy
-        assign i_ready[g] = grant && (sel == g);
+        assign a_ready[g] = grant && (sel == g);
     end
     endgenerate
 
     // ------------------------------------------------------ registered path
-    // NEVER `i_pay[sel*PW +: PW]`: a variable BIT offset builds a BARREL
-    // SHIFTER, measured 14,632 LUT for two hubs against ~1,700 for the mux.
-
-    // LUT-ONLY WIN. Transistor reference: on an ASIC both forms are the same
-    // one-hot pass-gate mux, identical gate count. This divergence is FPGA-only.
+    // An NSRC:1 mux on the binary `sel`, written as an explicit per-source
+    // select. NOT `a_pay[sel*PW +: PW]`: PW is not a power of two, so the
+    // variable offset is a multiply and synthesis built a BARREL SHIFTER --
+    // measured 5,712 LUT for one hub's skid input against ~370 for this form.
     reg [DW-1:0] dst_sel;
     reg [PW-1:0] pay_sel;
     integer      j;
     always @(*) begin
-        dst_sel = {DW{1'b0}};
-        pay_sel = {PW{1'b0}};
-        for (j = 0; j < NSRC; j = j + 1) begin
-            if (sel == j) begin
-                dst_sel = i_dst[j*DW +: DW];
-                pay_sel = i_pay[j*PW +: PW];
+        dst_sel = a_dst[0 +: DW];
+        pay_sel = a_pay[0 +: PW];
+        for (j = 1; j < NSRC; j = j + 1) begin
+            if (sel == j[SW-1:0]) begin
+                dst_sel = a_dst[j*DW +: DW];
+                pay_sel = a_pay[j*PW +: PW];
             end
         end
     end
 
+    // The NSRC:1 select and the skid's 2:1 (hold vs input) are each ~1
+    // LUT/bit on the payload; that is the hub's floor. A `keep` on the
+    // selected payload to "split the cone" ADDED a stage instead: measured
+    // +4,054 LUT on the 4-station bus (loop 4), reverted.
     sb_skid #(.W(DW + PW)) u_skid (
         .clk(clk), .rst(rst),
         .i_valid(any), .i_ready(skid_rdy),

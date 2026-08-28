@@ -31,6 +31,10 @@ module sb_line4 #(
     // the streams are dead. LINK_FULL=0 omits them, halving cross-SLR wires.
     parameter integer MGR_STN   = 1,
     parameter integer LINK_FULL = 1,
+    parameter integer ISKID     = 0,   // register station-hub inputs (Fmax)
+    // T3: "block" moves each link's RX buffer from ~W LUTRAM to near-empty BRAM
+    // -- the win in full-link mode, where the dead directions multiply the links.
+    parameter         LINK_MEM  = "distributed",
     // Port 0's slave width. Defaults to the flit width; set it independently to
     // test a wide slave behind a narrow fabric.
     parameter integer WIDE_DW   = FW,
@@ -56,7 +60,17 @@ module sb_line4 #(
     parameter integer LPB0 = LUT_PER_BRAM, LPB1 = LUT_PER_BRAM,
     parameter integer LPB2 = LUT_PER_BRAM, LPB3 = LUT_PER_BRAM,
     parameter integer TMO0 = TIMEOUT, TMO1 = TIMEOUT,
-    parameter integer TMO2 = TIMEOUT, TMO3 = TIMEOUT
+    parameter integer TMO2 = TIMEOUT, TMO3 = TIMEOUT,
+    // Per-manager sb_nmu shrink knobs (station MGR_STN). OUTST 0 = full 1<<TAGW
+    // tags; a small value shrinks the tag table (measured -721 LUT at 32b going
+    // 16->4). FORCE_PLACE 1 drops the pack datapath -- WORD-sub masters only,
+    // never JTAG/xdma, which pack to the mesh. Both preserve 256-burst.
+    parameter integer MOST0 = 0, MOST1 = 0, MOST2 = 0,
+    parameter integer MPLC0 = 0, MPLC1 = 0, MPLC2 = 0,
+    // 1: the 32-bit (i>0) subordinate ports are single-beat config ports --
+    // sb_nsu SINGLE_BEAT (skid channel queues, folded slice walk). Only for
+    // ports proven single-transaction; a burst to one hangs it.
+    parameter integer NSB = 0
 )(
     input  wire bus_clk0,   input wire bus_rst0,
     input  wire bus_clk1,   input wire bus_rst1,
@@ -272,7 +286,7 @@ module sb_line4 #(
 
         sb_stn_line #(.FW(FW), .AW(AW), .TAGW(TAGW), .NSTN(4), .STN(s),
                       .NM(SNM), .NQ(NQ), .STNW(STNW), .PORTW(PORTW),
-                      .SRCW(SRCW), .RQW(RQW), .RSW(RSW)) u_stn (
+                      .SRCW(SRCW), .RQW(RQW), .RSW(RSW), .ISKID(ISKID)) u_stn (
             .clk(bclk[s]), .rst(brst[s]),
             .nm_req_valid(sq_valid), .nm_req_ready(sq_ready),
             .nm_req_dstn(sq_dstn), .nm_req_dport(sq_dprt),
@@ -331,8 +345,13 @@ module sb_line4 #(
                 // Manager 0 (JTAG) is 64-bit: the driver's word. 16-deep
                 // FIFOs wedged every burst over 16 beats on v6.5 hardware.
                 localparam integer MW = (i == 1) ? 512 : ((i == 0) ? 64 : 32);
+                localparam integer M_OST = (i == 0) ? MOST0 : (i == 1) ? MOST1
+                                         : (i == 2) ? MOST2 : 0;
+                localparam integer M_PLC = (i == 0) ? MPLC0 : (i == 1) ? MPLC1
+                                         : (i == 2) ? MPLC2 : 0;
                 sb_nmu #(.MW(MW), .MIDW(MAXID), .AW(AW), .FW(FW), .TAGW(TAGW),
                          .DSTW(DPW), .LUT_PER_BRAM(S_LPB),
+                         .OUTST(M_OST), .FORCE_PLACE(M_PLC),
                          .STORE_FWD(S_SFW), .NSEG(NSEG),
                          // 256 = AXI4's max AxLEN + 1, and sb_nmu's rule is
                          // REQ_DEPTH >= that or a longer packet wedges. Costs
@@ -428,7 +447,8 @@ module sb_line4 #(
             sb_nsu #(.SDW(DW), .SIDW(MAXID), .AW(AW), .FW(FW), .TAGW(TAGW),
                      .SRCW(NSUS), .WOST(S_OST), .ROST(S_OST), .TIMEOUT(S_TMO),
                      .LUT_PER_BRAM(S_LPB),
-                     .REQ_DEPTH(16), .RSP_DEPTH(16)) u_nsu (
+                     .REQ_DEPTH(16), .RSP_DEPTH(16),
+                     .SINGLE_BEAT((i > 0) ? NSB : 0)) u_nsu (
                 .bus_clk(bclk[s]), .bus_rst(brst[s]),
                 .req_valid(e_valid[K]), .req_ready(e_ready[K]),
                 .req_src(e_src[s*NSUS +: NSUS]),
@@ -482,7 +502,7 @@ module sb_line4 #(
 
         if (NEED_R) begin : g_r
             if (LINK_CDC) begin : g_cdc
-                sb_link_cdc #(.W(RQW), .PIPE(PIPE), .CRED(CRED)) u_rq_fwd (
+                sb_link_cdc #(.W(RQW), .PIPE(PIPE), .CRED(CRED), .MEMORY_TYPE(LINK_MEM)) u_rq_fwd (
                     .i_clk(bclk[s]), .i_rst(brst[s]),
                     .i_valid(st_rt_rqv[s]), .i_ready(st_rt_rqr[s]),
                     .i_data(st_rt_rqp[s*RQW +: RQW]),
@@ -491,7 +511,7 @@ module sb_line4 #(
                     .o_data(st_lf_rqp[(s+1)*RQW +: RQW]),
                     .stat_sent(), .stat_nocred());
 
-                sb_link_cdc #(.W(RSW), .PIPE(PIPE), .CRED(CRED)) u_rs_bwd (
+                sb_link_cdc #(.W(RSW), .PIPE(PIPE), .CRED(CRED), .MEMORY_TYPE(LINK_MEM)) u_rs_bwd (
                     .i_clk(bclk[s+1]), .i_rst(brst[s+1]),
                     .i_valid(st_lt_rsv[s+1]), .i_ready(st_lt_rsr[s+1]),
                     .i_data(st_lt_rsp[(s+1)*RSW +: RSW]),
@@ -500,14 +520,14 @@ module sb_line4 #(
                     .o_data(st_rf_rsp[s*RSW +: RSW]),
                     .stat_sent(), .stat_nocred());
             end else begin : g_sync
-                sb_link #(.W(RQW), .PIPE(PIPE), .CRED(CRED)) u_rq_fwd (
+                sb_link #(.W(RQW), .PIPE(PIPE), .CRED(CRED), .MEMORY_TYPE(LINK_MEM)) u_rq_fwd (
                     .clk(bclk[0]), .rst(brst[0]),
                     .i_valid(st_rt_rqv[s]), .i_ready(st_rt_rqr[s]),
                     .i_data(st_rt_rqp[s*RQW +: RQW]),
                     .o_valid(st_lf_rqv[s+1]), .o_ready(st_lf_rqr[s+1]),
                     .o_data(st_lf_rqp[(s+1)*RQW +: RQW]));
 
-                sb_link #(.W(RSW), .PIPE(PIPE), .CRED(CRED)) u_rs_bwd (
+                sb_link #(.W(RSW), .PIPE(PIPE), .CRED(CRED), .MEMORY_TYPE(LINK_MEM)) u_rs_bwd (
                     .clk(bclk[0]), .rst(brst[0]),
                     .i_valid(st_lt_rsv[s+1]), .i_ready(st_lt_rsr[s+1]),
                     .i_data(st_lt_rsp[(s+1)*RSW +: RSW]),
@@ -525,7 +545,7 @@ module sb_line4 #(
 
         if (NEED_L) begin : g_l
             if (LINK_CDC) begin : g_cdc
-                sb_link_cdc #(.W(RQW), .PIPE(PIPE), .CRED(CRED)) u_rq_bwd (
+                sb_link_cdc #(.W(RQW), .PIPE(PIPE), .CRED(CRED), .MEMORY_TYPE(LINK_MEM)) u_rq_bwd (
                     .i_clk(bclk[s+1]), .i_rst(brst[s+1]),
                     .i_valid(st_lt_rqv[s+1]), .i_ready(st_lt_rqr[s+1]),
                     .i_data(st_lt_rqp[(s+1)*RQW +: RQW]),
@@ -534,7 +554,7 @@ module sb_line4 #(
                     .o_data(st_rf_rqp[s*RQW +: RQW]),
                     .stat_sent(), .stat_nocred());
 
-                sb_link_cdc #(.W(RSW), .PIPE(PIPE), .CRED(CRED)) u_rs_fwd (
+                sb_link_cdc #(.W(RSW), .PIPE(PIPE), .CRED(CRED), .MEMORY_TYPE(LINK_MEM)) u_rs_fwd (
                     .i_clk(bclk[s]), .i_rst(brst[s]),
                     .i_valid(st_rt_rsv[s]), .i_ready(st_rt_rsr[s]),
                     .i_data(st_rt_rsp[s*RSW +: RSW]),
@@ -543,14 +563,14 @@ module sb_line4 #(
                     .o_data(st_lf_rsp[(s+1)*RSW +: RSW]),
                     .stat_sent(), .stat_nocred());
             end else begin : g_sync
-                sb_link #(.W(RQW), .PIPE(PIPE), .CRED(CRED)) u_rq_bwd (
+                sb_link #(.W(RQW), .PIPE(PIPE), .CRED(CRED), .MEMORY_TYPE(LINK_MEM)) u_rq_bwd (
                     .clk(bclk[0]), .rst(brst[0]),
                     .i_valid(st_lt_rqv[s+1]), .i_ready(st_lt_rqr[s+1]),
                     .i_data(st_lt_rqp[(s+1)*RQW +: RQW]),
                     .o_valid(st_rf_rqv[s]), .o_ready(st_rf_rqr[s]),
                     .o_data(st_rf_rqp[s*RQW +: RQW]));
 
-                sb_link #(.W(RSW), .PIPE(PIPE), .CRED(CRED)) u_rs_fwd (
+                sb_link #(.W(RSW), .PIPE(PIPE), .CRED(CRED), .MEMORY_TYPE(LINK_MEM)) u_rs_fwd (
                     .clk(bclk[0]), .rst(brst[0]),
                     .i_valid(st_rt_rsv[s]), .i_ready(st_rt_rsr[s]),
                     .i_data(st_rt_rsp[s*RSW +: RSW]),

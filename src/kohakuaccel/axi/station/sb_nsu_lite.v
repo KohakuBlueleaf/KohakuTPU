@@ -17,7 +17,9 @@ module sb_nsu_lite #(
     parameter integer WOST      = 1,
     parameter integer ROST      = 1,
     parameter integer REQ_DEPTH = 4,
-    parameter integer RSP_DEPTH = 4
+    parameter integer RSP_DEPTH = 4,
+    parameter integer SAME_CLK  = 0,
+    parameter integer SINGLE_BEAT = 0
 )(
     input  wire            bus_clk,
     input  wire            bus_rst,
@@ -83,7 +85,8 @@ module sb_nsu_lite #(
     sb_nsu #(
         .SDW(SDW), .SIDW(1), .AW(AW), .FW(FW), .TAGW(TAGW), .SRCW(SRCW),
         .WOST(WOST), .ROST(ROST),
-        .REQ_DEPTH(REQ_DEPTH), .RSP_DEPTH(RSP_DEPTH)
+        .REQ_DEPTH(REQ_DEPTH), .RSP_DEPTH(RSP_DEPTH),
+        .SAME_CLK(SAME_CLK), .SINGLE_BEAT(SINGLE_BEAT)
     ) u_nsu (
         .bus_clk(bus_clk), .bus_rst(bus_rst),
         .req_valid(req_valid), .req_ready(req_ready), .req_src(req_src),

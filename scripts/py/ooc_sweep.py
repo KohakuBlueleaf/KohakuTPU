@@ -37,6 +37,7 @@ SUITE_JOBS = {
     "smc-base": 3,
     "xbar-anchor": 3,
     "line-preset": 3,
+    "line-linkfull": 2,
     "line-width": 3,
     "line-freq": 3,
     "line-ports": 3,
@@ -99,8 +100,9 @@ def line(
     half=0,
     aw=43,
     nm=3,
+    linkmem="distributed",
 ):
-    return (tag, LINE, [fw, nq, cdc, per, tag, lpb, ost, sfwd, half, aw, nm])
+    return (tag, LINE, [fw, nq, cdc, per, tag, lpb, ost, sfwd, half, aw, nm, linkmem])
 
 
 # ooc_simt_pe.tcl: top lanes waves has_mask has_ipdom period prim has_shfl
@@ -259,6 +261,14 @@ SUITES = {
         line("ln-fw256-bram", fw=256, lpb=0),
         line("ln-full", half=1),
         line("ln-nocdc", cdc=0),
+    ],
+    # T3: the full-link-mode cost. ln-ship = LINK_FULL=0 (the ship, half the
+    # cross-SLR links); lf-full = LINK_FULL=1 (all directions, incl. dead ones).
+    "line-linkfull": [
+        line("lf-ship", half=0),
+        line("lf-full", half=1),
+        line("lf-ship-bram", half=0, linkmem="block"),
+        line("lf-full-bram", half=1, linkmem="block"),
     ],
     # Flit width at line level, and the wide-slave-behind-narrow-fabric case.
     "line-width": [

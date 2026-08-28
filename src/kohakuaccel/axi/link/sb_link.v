@@ -12,7 +12,10 @@ module sb_link #(
     parameter integer W    = 640,
     parameter integer PIPE = 4,                 // stages EACH way
     parameter integer CRED = 16,                // >= 2*PIPE + slack
-    parameter integer STATS = 0                 // 0 costs nothing
+    parameter integer STATS = 0,                // 0 costs nothing
+    // T3: the RX buffer is ~W LUTRAM per link; "block" moves it to near-empty
+    // BRAM, which is the win in full-link mode where the links multiply.
+    parameter         MEMORY_TYPE = "distributed"
 )(
     input  wire         clk,
     input  wire         rst,
@@ -85,7 +88,7 @@ module sb_link #(
 
     // --------------------------------------------------------- receive side
     wire rxf_full;
-    sync_fifo #(.DATA_WIDTH(W), .FIFO_DEPTH(RXD)) u_rxf (
+    sync_fifo #(.DATA_WIDTH(W), .FIFO_DEPTH(RXD), .MEMORY_TYPE(MEMORY_TYPE)) u_rxf (
         .clk(clk), .rst(rst_q),
         .wr_en(pipe_v[PIPE-1]), .wr_data(pipe_d[PIPE-1]),
         .wr_busy(rxf_full), .wr_almost(),

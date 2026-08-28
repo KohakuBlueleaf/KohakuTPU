@@ -16,7 +16,8 @@ module sb_station #(
     // A station whose source is a LINK must forward the originating manager
     // index, not stamp its own, or every response returns to manager 0.
     parameter integer SRC_PASS = 0,
-    parameter integer STATS = 0                  // 0 costs nothing
+    parameter integer STATS = 0,                 // 0 costs nothing
+    parameter integer ISKID = 0                  // register hub inputs (Fmax)
 )(
     input  wire                  clk,
     input  wire                  rst,
@@ -114,7 +115,7 @@ module sb_station #(
     end
     endgenerate
 
-    sb_hub #(.NSRC(NM), .NDST(NS), .PW(REQ_PW), .STATS(STATS)) u_req (
+    sb_hub #(.NSRC(NM), .NDST(NS), .PW(REQ_PW), .STATS(STATS), .ISKID(ISKID)) u_req (
         .clk(clk), .rst(rst),
         .i_valid(nm_req_valid), .i_ready(nm_req_ready), .i_last(nm_req_last),
         .i_dst(hub_rq_dst), .i_pay(req_pay),
@@ -147,7 +148,7 @@ module sb_station #(
     end
     endgenerate
 
-    sb_hub #(.NSRC(NS), .NDST(NM), .PW(RSP_PW), .STATS(STATS)) u_rsp (
+    sb_hub #(.NSRC(NS), .NDST(NM), .PW(RSP_PW), .STATS(STATS), .ISKID(ISKID)) u_rsp (
         .clk(clk), .rst(rst),
         .i_valid(ns_rsp_valid), .i_ready(ns_rsp_ready), .i_last(ns_rsp_last),
         .i_dst(hub_rs_dst), .i_pay(rsp_pay),

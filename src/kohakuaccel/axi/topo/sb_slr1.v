@@ -26,7 +26,12 @@ module sb_slr1 #(
     // The speed-for-size axis: 1 outstanding and no store-and-forward is what
     // axi_interconnect's minimum-area mode does.
     parameter integer OST       = 4,
-    parameter integer STORE_FWD = 1
+    parameter integer STORE_FWD = 1,
+    parameter integer ISKID     = 0,
+    // 1: memory ports (512b xdma mgr, wide mem sub) go to the kaxi fabric instead;
+    // this station carries only config traffic -> the <10k-LUT SLR1 target.
+    parameter integer CFG_ONLY  = 0,
+    parameter integer MW1       = (CFG_ONLY != 0) ? 32 : 512
 )(
     input  wire                 bus_clk,
     input  wire                 bus_rst,
@@ -164,7 +169,7 @@ module sb_slr1 #(
     wire [1:0]            d_resp;
     wire [FW-1:0]         d_data;
 
-    sb_station #(.NM(NM), .NS(NS), .FW(FW), .AW(AW), .TAGW(TAGW)) u_stn (
+    sb_station #(.NM(NM), .NS(NS), .FW(FW), .AW(AW), .TAGW(TAGW), .ISKID(ISKID)) u_stn (
         .clk(bus_clk), .rst(bus_rst),
         .nm_req_valid(q_valid), .nm_req_ready(q_ready), .nm_req_dst(q_dst),
         .nm_req_dport(q_dpt), .nm_req_src({NM*SRCW{1'b0}}),
@@ -234,14 +239,14 @@ module sb_slr1 #(
         `SB1_FLIT(0), .stat_decerr(dc0)
     );
 
-    sb_nmu #(.MW(512), .MIDW(MAXID), .AW(AW), .FW(FW), .TAGW(TAGW),
+    sb_nmu #(.MW(MW1), .MIDW(MAXID), .AW(AW), .FW(FW), .TAGW(TAGW),
              .DSTW(DSTW), .LUT_PER_BRAM(LUT_PER_BRAM),
              .STORE_FWD(STORE_FWD), .NSEG(NSEG1), .REQ_DEPTH(64), .RSP_DEPTH(64),
              .REQ_MEM(P_DEEP), .RSP_MEM(P_DEEP),
              .SEG_BASE(S1_BASE), .SEG_MASK(S1_MASK), .SEG_XLT(S1_BASE),
              .SEG_DST(S1_DST), .SEG_DPORT(S1_DST), .SEG_VLD({NSEG1{1'b1}})) u_nmu1 (
         .s_aclk(clk_xdma), .s_aresetn(aresetn_xdma),
-        `SB1_AXI(1, 512), .bus_clk(bus_clk), .bus_rst(bus_rst),
+        `SB1_AXI(1, MW1), .bus_clk(bus_clk), .bus_rst(bus_rst),
         `SB1_FLIT(1), .stat_decerr(dc1)
     );
 
@@ -259,7 +264,7 @@ module sb_slr1 #(
     genvar i;
     generate
     for (i = 0; i < NS; i = i + 1) begin : g_nsu
-        localparam integer DW = (i < 1) ? FW : 32;
+        localparam integer DW = (!CFG_ONLY && i < 1) ? FW : 32;
         if (DW < MAXW) begin : g_pad
             assign sp_wdata[i*MAXW + DW +: MAXW-DW] = {(MAXW-DW){1'b0}};
             assign sp_wstrb[i*(MAXW/8) + DW/8 +: (MAXW-DW)/8] =

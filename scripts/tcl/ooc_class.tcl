@@ -31,12 +31,18 @@ proc ooc_count {label {prefix {}}} {
 # `__N` so every LUT of one signal lands in one bucket.
 proc ooc_lut_census {label prefix {top 24}} {
     set pfx [string map [list "\[" "\\\[" "\]" "\\\]"] $prefix]
-    set cells [get_cells -quiet -hier -filter "REF_NAME =~ LUT? && NAME =~ $pfx/*"]
+    # Empty prefix = whole design; a NAME filter of "/*" matches nothing.
+    if {$prefix eq ""} {
+        set cells [get_cells -quiet -hier -filter "REF_NAME =~ LUT?"]
+    } else {
+        set cells [get_cells -quiet -hier -filter "REF_NAME =~ LUT? && NAME =~ $pfx/*"]
+    }
     array set bucket {}
     foreach c $cells {
         set n [get_property NAME $c]
         # Drop the scoping prefix, then everything is one flat name.
-        set n [string range $n [expr {[string length $prefix] + 1}] end]
+        set drop [expr {$prefix eq "" ? 0 : [string length $prefix] + 1}]
+        set n [string range $n $drop end]
         regsub {_i_[0-9]+$} $n "" n
         regsub {__[0-9]+$} $n "" n
         regsub -all {\[[0-9]+\]} $n "" n

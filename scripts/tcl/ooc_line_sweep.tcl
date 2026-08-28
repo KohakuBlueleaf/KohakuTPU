@@ -15,6 +15,8 @@ set sfwd [lindex $argv 7]
 set half [lindex $argv 8]
 set aw   [lindex $argv 9]
 set nm   [lindex $argv 10]
+set lmem [lindex $argv 11]
+if {$lmem eq ""} { set lmem "distributed" }
 if {$aw eq ""} { set aw 43 }
 if {$nm eq ""} { set nm 3 }
 if {$fw   eq ""} { set fw   512 }
@@ -85,7 +87,7 @@ synth_design -top sb_line4 -part $part -mode out_of_context \
              -generic PORTW=$portw -generic LUT_PER_BRAM=$lpb \
              -generic OST=$ost -generic STORE_FWD=$sfwd \
              -generic AW=$aw -generic LINK_FULL=$half \
-             -generic NM=$nm -generic SRCW=$srcw
+             -generic NM=$nm -generic SRCW=$srcw -generic LINK_MEM=$lmem
 
 source [file join $root scripts tcl ooc_class.tcl]
 

@@ -41,6 +41,17 @@ module sb_nmu #(
     // 0 drops the packet-complete token: the hub holds its grant through an
     // underrun, stalling the station, and REQ_DEPTH stops covering a burst.
     parameter integer STORE_FWD   = 1,
+    // F4: 1 enforces AXI same-ID response ordering (block a same-ID request to a
+    // DIFFERENT dst while one is outstanding); 0 = old unordered, for an A/B bench.
+    parameter integer ID_ORDER    = 1,
+    // Outstanding tags in flight. 0 = the whole flit tag space (1<<TAGW). NTAG
+    // sizes the tag arrays, rf_tag read muxes, priority encoder and ID-order
+    // scan; a config master needs a handful, not 16. Must be <= 1<<TAGW.
+    parameter integer OUTST       = 0,
+    // 1 = PLACE each beat in its flit lane instead of PACKING a full-width flit:
+    // drops the pk_d/pk_s accumulator, costs one flit per beat. Config/control
+    // masters onto WORD subs only -- never a memory master feeding the mesh.
+    parameter integer FORCE_PLACE = 0,
     // Decode table. Last match wins; overlapping entries are a config error.
     parameter [NSEG*AW-1:0]   SEG_BASE = {NSEG*AW{1'b0}},
     parameter [NSEG*AW-1:0]   SEG_MASK = {NSEG*AW{1'b0}},   // 1 = compare
@@ -49,7 +60,10 @@ module sb_nmu #(
     // Port at the DESTINATION station. SEG_DST routes this hop only, so a flit
     // leaving over a link would otherwise arrive with a meaningless index.
     parameter [NSEG*DSTW-1:0] SEG_DPORT = {NSEG*DSTW{1'b0}},
-    parameter [NSEG-1:0]      SEG_VLD  = {NSEG{1'b0}}
+    parameter [NSEG-1:0]      SEG_VLD  = {NSEG{1'b0}},
+    // 1: s_aclk IS bus_clk -- req/rsp/token queues become sync FIFOs. A
+    // crossing only where the clocks actually differ.
+    parameter integer SAME_CLK = 0
 )(
     input  wire                s_aclk,
     input  wire                s_aresetn,
@@ -115,7 +129,7 @@ module sb_nmu #(
 
     output wire [31:0]         stat_decerr
 );
-    localparam integer NTAG  = 1 << TAGW;
+    localparam integer NTAG  = (OUTST > 0 && OUTST < (1 << TAGW)) ? OUTST : (1 << TAGW);
     // MW > FW splits a port beat into SUB flits, so the fabric can run narrower
     // than its widest manager -- every mux and FIFO scales with FW.
 
@@ -131,10 +145,7 @@ module sb_nmu #(
     // only full-width transfers. Without it a burst reaches the subordinate
     // as an AXI narrow transfer, which the mesh's word-walking memory port
     // cannot honour (measured on v6.5). MW > FW splits instead.
-    localparam integer PACK  = (SUB <= 1) ? 1 : 0;
-    // XPM's async FIFO $finish-es below depth 16, so a Lite port asking for 4
-    // kills the simulation at time 0 rather than warning.
-    localparam integer RQD   = (REQ_DEPTH < 16) ? 16 : REQ_DEPTH;
+    localparam integer PACK  = (FORCE_PLACE != 0 && SUB <= 1) ? 0 : ((SUB <= 1) ? 1 : 0);
     // The 4 KB rule caps a legal burst; sizing the queues past it buys nothing.
     localparam integer AXI_MAXB = (4096/(MW/8) > 256) ? 256 : 4096/(MW/8);
     // The 4 KB bound is 256 beats on a 32-bit port. An AXI4-Lite master is
@@ -147,6 +158,11 @@ module sb_nmu #(
     localparam integer RSP_MIN = MAXB * SUB;
     localparam integer RSP_FLR = (RSP_MIN < 16) ? 16 : RSP_MIN;
     localparam integer RSD   = (RSP_DEPTH < RSP_FLR) ? RSP_FLR : RSP_DEPTH;
+    // REQ mirror of RSP_FLR: STORE_FWD = AXI "write packet mode" (PG247), so the
+    // FIFO holds a whole burst -- cover MAXB or it wedges; pow2>=16 for XPM.
+    localparam integer REQ_MIN = (STORE_FWD != 0) ? MAXB : 1;
+    localparam integer REQ_FLR = (REQ_MIN < 16) ? 16 : (1 << $clog2(REQ_MIN));
+    localparam integer RQD   = (REQ_DEPTH < REQ_FLR) ? REQ_FLR : REQ_DEPTH;
     localparam integer CWR   = $clog2(RSD) + 1;
     localparam integer CW    = (CWR < 9) ? 9 : CWR;
     localparam integer SZ    = $clog2(MW/8);
@@ -211,18 +227,22 @@ module sb_nmu #(
 
     wire [DECW-1:0] awd = decode(s_awaddr);
     wire [DECW-1:0] ard = decode(s_araddr);
-    wire            aw_hit  = awd[DECW-1];
+    // F5: WRAP/FIXED have no flit field; running them as INCR is silent wrong
+    // data. Route a non-INCR burst to the error path (sunk + DECERR) instead.
+    wire            aw_hit  = awd[DECW-1] && (s_awburst == 2'b01);
     wire [DSTW-1:0] aw_dst  = awd[DECW-2 -: DSTW];
     wire [DSTW-1:0] aw_dpt  = awd[DECW-2-DSTW -: DSTW];
     wire [AW-1:0]   aw_xadr = awd[AW-1:0];
-    wire            ar_hit  = ard[DECW-1];
+    wire            ar_hit  = ard[DECW-1] && (s_arburst == 2'b01);   // F5, as AW
     wire [DSTW-1:0] ar_dst  = ard[DECW-2 -: DSTW];
     wire [DSTW-1:0] ar_dpt  = ard[DECW-2-DSTW -: DSTW];
     wire [AW-1:0]   ar_xadr = ard[AW-1:0];
 
     // ============================================================= tag table
     reg [NTAG-1:0]  tag_busy;
+    reg [NTAG-1:0]  tag_rd;                   // F4: 1 = read tag (vs write)
     reg [MIDW-1:0]  tg_id   [0:NTAG-1];
+    reg [DSTW-1:0]  tg_dst  [0:NTAG-1];       // F4: this tag's destination
     // BYTE offset within the flit, not a lane index: a beat NARROWER than the
     // port advances its lane every (MW/8)/(1<<size) beats, not every beat.
     reg [FBW-1:0]   tg_lane [0:NTAG-1];
@@ -242,6 +262,21 @@ module sb_nmu #(
                 tag_new   = t[TAGW-1:0];
                 tag_avail = 1'b1;
             end
+        end
+    end
+
+    // F4: block a same-ID request to a DIFFERENT dst than an outstanding same-
+    // channel one -- its response could overtake via the arrival-ordered RSP FIFO.
+    reg aw_ord_ok, ar_ord_ok;
+    integer o;
+    always @(*) begin
+        aw_ord_ok = 1'b1;
+        ar_ord_ok = 1'b1;
+        for (o = 0; o < NTAG; o = o + 1) begin
+            if (tag_busy[o] && !tag_rd[o] && (tg_id[o] == s_awid)
+                && (tg_dst[o] != aw_dst)) aw_ord_ok = 1'b0;
+            if (tag_busy[o] &&  tag_rd[o] && (tg_id[o] == s_arid)
+                && (tg_dst[o] != ar_dst)) ar_ord_ok = 1'b0;
         end
     end
 
@@ -283,19 +318,25 @@ module sb_nmu #(
     reg [8:0] tg_left [0:NTAG-1];
     reg  [((SUB > 1) ? (MW-FW) : 1)-1:0] gath;
     reg  [SUBW-1:0] gsub;
+    reg  [1:0]      g_resp;    // worst RRESP of a split read's earlier flits (T2.C)
 
     wire [RSP_W-1:0] rspf_out;
     wire [TAGW-1:0]  rf_tag     = rspf_out[RSP_W-1 -: TAGW];
     wire             rsp_wr_o   = rspf_out[RSP_W-TAGW-1];
     wire             rsp_last_o = rspf_out[RSP_W-TAGW-2];
     wire [1:0]       rf_resp    = rspf_out[FW+1 -: 2];
+    // F6: this bus does not monitor exclusive access (AxLOCK dropped, IDs
+    // remapped), so it must not forward a subordinate EXOKAY as exclusive success.
+    wire [1:0]       rf_respx   = (rf_resp == 2'b01) ? 2'b00 : rf_resp;
     wire [FW-1:0]    rf_data    = rspf_out[FW-1:0];
 
     wire aw_ok = s_awvalid && (wst == W_IDLE) && !reqf_full && !tokf_full
-                 && (!aw_hit || (tag_avail && (rsp_credit >= {{(CW-1){1'b0}}, 1'b1})));
+                 && (!aw_hit || (tag_avail && (rsp_credit >= {{(CW-1){1'b0}}, 1'b1})))
+                 && (!aw_hit || (ID_ORDER == 0) || aw_ord_ok);
     wire ar_ok = s_arvalid && (wst == W_IDLE) && !reqf_full && !tokf_full
                  && ar_hit && tag_avail
-                 && (rsp_credit >= {{(CW-9){1'b0}}, ar_beats});
+                 && (rsp_credit >= {{(CW-9){1'b0}}, ar_beats})
+                 && ((ID_ORDER == 0) || ar_ord_ok);
 
     wire aw_go   = aw_ok && (!ar_ok || !pri);
     wire ar_go   = ar_ok && !aw_go;
@@ -372,6 +413,7 @@ module sb_nmu #(
             w_boff   <= {FBW{1'b0}};
             pri      <= 1'b0;
             tag_busy <= {NTAG{1'b0}};
+            tag_rd   <= {NTAG{1'b0}};
         end else begin
             if (aw_go || ar_go) begin
                 pri <= !pri;
@@ -392,7 +434,9 @@ module sb_nmu #(
                 wst    <= aw_hit ? W_DATA : W_ESINK;
                 if (aw_hit) begin
                     tag_busy[tag_new] <= 1'b1;
+                    tag_rd  [tag_new] <= 1'b0;
                     tg_id  [tag_new]  <= s_awid;
+                    tg_dst [tag_new]  <= aw_dst;
                     tg_lane[tag_new]  <= {FBW{1'b0}};
                     tg_sz  [tag_new]  <= s_awsize;
                     tg_rsv [tag_new]  <= 9'd1;
@@ -401,7 +445,9 @@ module sb_nmu #(
 
             if (ar_go) begin
                 tag_busy[tag_new] <= 1'b1;
+                tag_rd  [tag_new] <= 1'b1;
                 tg_id  [tag_new]  <= s_arid;
+                tg_dst [tag_new]  <= ar_dst;
                 tg_lane[tag_new]  <= s_araddr[FBW-1:0];
                 tg_sz  [tag_new]  <= s_arsize;
                 tg_rsv [tag_new]  <= ar_beats;
@@ -504,13 +550,20 @@ module sb_nmu #(
     wire [REQ_W-1:0] reqf_out;
     wire             reqf_pop, flit_hav;
 
-    async_fifo #(.DATA_WIDTH(REQ_W), .FIFO_DEPTH(RQD),
-                 .MEMORY_TYPE(REQ_STY)) u_reqf (
-        .wr_clk(s_aclk), .wr_rst(srst), .wr_en(req_push), .wr_data(req_in),
-        .wr_full(reqf_full),
-        .rd_clk(bus_clk), .rd_en(reqf_pop), .rd_data(reqf_out),
-        .rd_empty(reqf_empty)
-    );
+    generate if (SAME_CLK) begin : g_reqf_sync
+        sync_fifo #(.DATA_WIDTH(REQ_W), .FIFO_DEPTH(RQD), .MEMORY_TYPE(REQ_STY)) u_reqf (
+            .clk(s_aclk), .rst(srst),
+            .wr_en(req_push), .wr_data(req_in), .wr_busy(reqf_full), .wr_almost(),
+            .rd_en(reqf_pop), .rd_data(reqf_out), .rd_busy(reqf_empty));
+    end else begin : g_reqf_async
+        async_fifo #(.DATA_WIDTH(REQ_W), .FIFO_DEPTH(RQD),
+                     .MEMORY_TYPE(REQ_STY)) u_reqf (
+            .wr_clk(s_aclk), .wr_rst(srst), .wr_en(req_push), .wr_data(req_in),
+            .wr_full(reqf_full),
+            .rd_clk(bus_clk), .rd_en(reqf_pop), .rd_data(reqf_out),
+            .rd_empty(reqf_empty)
+        );
+    end endgenerate
 
     // STORE AND FORWARD: the station holds its grant for a whole packet, so a
     // FIFO underrun mid-packet stalls everyone. Token is 2 cycles late by CDC.
@@ -527,13 +580,20 @@ module sb_nmu #(
     if (STORE_FWD) begin : g_sf
         wire tok_pop = !sending && req_valid && req_ready;
 
-        async_fifo #(.DATA_WIDTH(1), .FIFO_DEPTH(RQD),
-                     .MEMORY_TYPE(TOK_MEM)) u_tokf (
-            .wr_clk(s_aclk), .wr_rst(srst), .wr_en(tok_dly[2]),
-            .wr_data(1'b0), .wr_full(tokf_full),
-            .rd_clk(bus_clk), .rd_en(tok_pop), .rd_data(),
-            .rd_empty(tokf_empty)
-        );
+        if (SAME_CLK) begin : g_tok_sync
+            sync_fifo #(.DATA_WIDTH(1), .FIFO_DEPTH(RQD), .MEMORY_TYPE(TOK_MEM)) u_tokf (
+                .clk(s_aclk), .rst(srst),
+                .wr_en(tok_dly[2]), .wr_data(1'b0), .wr_busy(tokf_full), .wr_almost(),
+                .rd_en(tok_pop), .rd_data(), .rd_busy(tokf_empty));
+        end else begin : g_tok_async
+            async_fifo #(.DATA_WIDTH(1), .FIFO_DEPTH(RQD),
+                         .MEMORY_TYPE(TOK_MEM)) u_tokf (
+                .wr_clk(s_aclk), .wr_rst(srst), .wr_en(tok_dly[2]),
+                .wr_data(1'b0), .wr_full(tokf_full),
+                .rd_clk(bus_clk), .rd_en(tok_pop), .rd_data(),
+                .rd_empty(tokf_empty)
+            );
+        end
 
         assign req_valid = (sending || !tokf_empty) && flit_hav;
 
@@ -632,18 +692,28 @@ module sb_nmu #(
                     // pk_v is low all through assembly, so it cannot mark the
                     // start (that re-captured head as 0 and no burst opened).
                     if (!mid) begin
-                        pk_d <= {FW{1'b0}};
-                        pk_s <= {(FW/8){1'b0}};
                         pk_head <= o_head;
                         pk_dst <= o_dst; pk_dpt <= o_dpt; pk_tag <= o_tag;
                         pk_wr  <= o_wr;  pk_addr <= o_addr;
                         pk_len <= o_len; pk_size <= o_size;
                     end
-                    pk_d[o_lane*MW     +: MW]   <= (ln_old & ~o_msk)
-                                                   | (o_data & o_msk);
-                    pk_s[o_lane*(MW/8) +: MW/8] <= st_old | o_strb;
                     pk_last <= o_last;
                     mid <= !ends;
+                end
+            end
+        end
+        // one enabled register per lane, never `pk_d[o_lane*MW +: MW] <=` (a
+        // variable-offset part-select write = a barrel shifter over FW bits)
+        genvar gl;
+        for (gl = 0; gl < NLANE; gl = gl + 1) begin : g_lane
+            always @(posedge bus_clk) begin
+                if (eat && !mid) begin
+                    pk_d[gl*MW +: MW] <= {MW{1'b0}};
+                    pk_s[gl*(MW/8) +: MW/8] <= {(MW/8){1'b0}};
+                end
+                if (eat && (o_lane == gl[LANEW-1:0])) begin
+                    pk_d[gl*MW +: MW]       <= (ln_old & ~o_msk) | (o_data & o_msk);
+                    pk_s[gl*(MW/8) +: MW/8] <= st_old | o_strb;
                 end
             end
         end
@@ -686,14 +756,23 @@ module sb_nmu #(
     end
     endgenerate
 
-    async_fifo #(.DATA_WIDTH(RSP_W), .FIFO_DEPTH(RSD),
-                 .MEMORY_TYPE(RSP_STY)) u_rspf (
-        .wr_clk(bus_clk), .wr_rst(bus_rst_q), .wr_en(rsp_valid && rsp_ready),
-        .wr_data({rsp_tag, rsp_wr, rsp_last, rsp_resp, rsp_data}),
-        .wr_full(rspf_full),
-        .rd_clk(s_aclk), .rd_en(rsp_pop), .rd_data(rspf_out),
-        .rd_empty(rspf_empty)
-    );
+    generate if (SAME_CLK) begin : g_rspf_sync
+        sync_fifo #(.DATA_WIDTH(RSP_W), .FIFO_DEPTH(RSD), .MEMORY_TYPE(RSP_STY)) u_rspf (
+            .clk(bus_clk), .rst(bus_rst_q),
+            .wr_en(rsp_valid && rsp_ready),
+            .wr_data({rsp_tag, rsp_wr, rsp_last, rsp_resp, rsp_data}),
+            .wr_busy(rspf_full), .wr_almost(),
+            .rd_en(rsp_pop), .rd_data(rspf_out), .rd_busy(rspf_empty));
+    end else begin : g_rspf_async
+        async_fifo #(.DATA_WIDTH(RSP_W), .FIFO_DEPTH(RSD),
+                     .MEMORY_TYPE(RSP_STY)) u_rspf (
+            .wr_clk(bus_clk), .wr_rst(bus_rst_q), .wr_en(rsp_valid && rsp_ready),
+            .wr_data({rsp_tag, rsp_wr, rsp_last, rsp_resp, rsp_data}),
+            .wr_full(rspf_full),
+            .rd_clk(s_aclk), .rd_en(rsp_pop), .rd_data(rspf_out),
+            .rd_empty(rspf_empty)
+        );
+    end endgenerate
 
     assign rsp_ready = 1'b1;                    // reserved before injection
 
@@ -723,6 +802,17 @@ module sb_nmu #(
         end
     end
 
+    // T2.C: carry the WORST resp across a gathered split read, so an error in an
+    // earlier flit is not masked by a later OKAY.
+    always @(posedge s_aclk) begin
+        if (srst || (r_nrm && s_rready)) begin
+            g_resp <= 2'b00;
+        end else if (r_eat) begin
+            g_resp <= ((g_resp == 2'b11) || (rf_respx == 2'b11)) ? 2'b11
+                    : ((g_resp == 2'b10) || (rf_respx == 2'b10)) ? 2'b10 : 2'b00;
+        end
+    end
+
     // SUB==2 holds one flit, so there is nothing to shift. A generate, not an
     // if: at SUB==2 the shift's part-select reverses and fails elaboration.
     generate
@@ -743,13 +833,15 @@ module sb_nmu #(
 
     assign s_bvalid = b_err || b_nrm;
     assign s_bid    = b_err ? w_eid  : tg_id[rf_tag];
-    assign s_bresp  = b_err ? 2'b11  : rf_resp;
+    assign s_bresp  = b_err ? 2'b11  : rf_respx;
 
     assign s_rvalid = r_err || r_nrm;
     assign s_rid    = r_err ? er_id  : tg_id[rf_tag];
     assign s_rdata  = (SUB <= 1) ? rf_data[rd_lane*MW +: MW]
                                  : {rf_data, gath};
-    assign s_rresp  = r_err ? 2'b11  : rf_resp;
+    wire [1:0] r_resp_g = ((g_resp == 2'b11) || (rf_respx == 2'b11)) ? 2'b11
+                        : ((g_resp == 2'b10) || (rf_respx == 2'b10)) ? 2'b10 : 2'b00;
+    assign s_rresp  = r_err ? 2'b11  : r_resp_g;
     assign s_rlast  = r_err ? (er_left == 8'd0) : rd_fin;
 
     // A PACKING port serves possibly-many beats out of one flit, so the flit

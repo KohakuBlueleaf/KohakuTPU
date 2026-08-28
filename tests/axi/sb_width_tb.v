@@ -47,6 +47,7 @@ module sb_width_tb;
     reg  [7:0]      awlen = 0, arlen = 0;
     reg  [2:0]      awsize = 0, arsize = 0;
     reg             awvld = 0, arvld = 0, wvld = 0, wlast = 0;
+    reg  [1:0]      awburst = 2'b01, arburst = 2'b01;   // F5: drive non-INCR
     reg  [MW-1:0]   wdata = 0;
     reg  [MB-1:0]   wstrb = 0;
     reg             brdy = 1, rrdy = 1;
@@ -85,12 +86,12 @@ module sb_width_tb;
              .SEG_DPORT({DSTW{1'b0}}), .SEG_VLD(1'b1)) u_nmu (
         .s_aclk(clk), .s_aresetn(rstn),
         .s_awid(awid), .s_awaddr(awaddr), .s_awlen(awlen), .s_awsize(awsize),
-        .s_awburst(2'b01), .s_awvalid(awvld), .s_awready(awrdy),
+        .s_awburst(awburst), .s_awvalid(awvld), .s_awready(awrdy),
         .s_wdata(wdata), .s_wstrb(wstrb), .s_wlast(wlast), .s_wvalid(wvld),
         .s_wready(wrdy),
         .s_bid(), .s_bresp(bresp), .s_bvalid(bvld), .s_bready(brdy),
         .s_arid(arid), .s_araddr(araddr), .s_arlen(arlen), .s_arsize(arsize),
-        .s_arburst(2'b01), .s_arvalid(arvld), .s_arready(arrdy),
+        .s_arburst(arburst), .s_arvalid(arvld), .s_arready(arrdy),
         .s_rid(), .s_rdata(rdata), .s_rresp(rresp), .s_rlast(rlast),
         .s_rvalid(rvld), .s_rready(rrdy),
         .bus_clk(clk), .bus_rst(!rstn),
@@ -350,6 +351,37 @@ module sb_width_tb;
         end
         $display("    LARGEST PASSING BURST: %0d beats of %0d bits (legal max %0d)",
                  biggest, MW, maxlen);
+
+        // F5: a non-INCR burst must be refused with DECERR, not run as INCR.
+        awburst = 2'b10;                             // WRAP write
+        tick;
+        awid = 4'd1; awaddr = 40'h100; awlen = 8'd0; awsize = MSZ; awvld = 1'b1;
+        wdata = {MW{1'b0}}; wstrb = {MB{1'b1}}; wlast = 1'b1; wvld = 1'b1; #TS;
+        spin = 0; while (!awrdy && spin < 2000) begin tick; spin = spin + 1; end
+        tick; awvld = 1'b0;
+        spin = 0; while (!wrdy && spin < 2000) begin tick; spin = spin + 1; end
+        tick; wvld = 1'b0; wlast = 1'b0;
+        spin = 0; while (!bvld && spin < 4000) begin tick; spin = spin + 1; end
+        checks = checks + 1;
+        if (bresp !== 2'b11) begin
+            errors = errors + 1;
+            $display("    FAIL F5: WRAP write bresp %b, want DECERR", bresp);
+        end else $display("    F5 WRAP write refused (DECERR) ok");
+        awburst = 2'b01; tick;
+
+        arburst = 2'b00;                             // FIXED read
+        tick;
+        arid = 4'd2; araddr = 40'h100; arlen = 8'd0; arsize = MSZ; arvld = 1'b1;
+        #TS;
+        spin = 0; while (!arrdy && spin < 2000) begin tick; spin = spin + 1; end
+        tick; arvld = 1'b0;
+        spin = 0; while (!rvld && spin < 4000) begin tick; spin = spin + 1; end
+        checks = checks + 1;
+        if (rresp !== 2'b11) begin
+            errors = errors + 1;
+            $display("    FAIL F5: FIXED read rresp %b, want DECERR", rresp);
+        end else $display("    F5 FIXED read refused (DECERR) ok");
+        arburst = 2'b01; tick;
 
         if (errors) begin
             $display("FAIL  %0d errors in %0d checks", errors, checks);

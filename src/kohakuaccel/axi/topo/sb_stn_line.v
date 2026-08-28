@@ -22,6 +22,7 @@ module sb_stn_line #(
     parameter integer PORTW = (NQ   <= 1) ? 1 : $clog2(NQ),
     parameter integer SRCW  = (NM   <= 1) ? 1 : $clog2(NM),
     parameter integer STATS = 0,
+    parameter integer ISKID = 0,               // register hub inputs (Fmax)
     // Parameters, not localparams: the link ports use them, and a port cannot
     // see a localparam declared after it.
     parameter integer RQW = STNW + PORTW + STNW + SRCW + TAGW + 3
@@ -161,7 +162,7 @@ module sb_stn_line #(
     wire [2:0]       ij_valid, ij_ready;
     wire [RQW-1:0]   ij_pay;
 
-    sb_hub #(.NSRC(NM), .NDST(3), .PW(RQW), .STATS(STATS)) u_inj (
+    sb_hub #(.NSRC(NM), .NDST(3), .PW(RQW), .STATS(STATS), .ISKID(ISKID)) u_inj (
         .clk(clk), .rst(rst),
         .i_valid(nm_req_valid), .i_ready(nm_req_ready), .i_last(nm_req_last),
         .i_dst(inj_dst), .i_pay(inj_pay),
@@ -189,7 +190,7 @@ module sb_stn_line #(
     wire rq_last_rf = rf_req_pay[FW/8 + FW + 3 + 8 + AW];
 
     // to_right: from_left passing through, or an injection heading right
-    sb_hub #(.NSRC(2), .NDST(1), .PW(RQW)) u_rq_right (
+    sb_hub #(.NSRC(2), .NDST(1), .PW(RQW), .ISKID(ISKID)) u_rq_right (
         .clk(clk), .rst(rst),
         .i_valid({lf_thr_v, ij_valid[D_RIGHT]}),
         .i_ready({lf_thr_r, ij_ready[D_RIGHT]}),
@@ -198,7 +199,7 @@ module sb_stn_line #(
         .o_valid(rt_req_valid), .o_ready(rt_req_ready), .o_pay(rt_req_pay)
     );
 
-    sb_hub #(.NSRC(2), .NDST(1), .PW(RQW)) u_rq_left (
+    sb_hub #(.NSRC(2), .NDST(1), .PW(RQW), .ISKID(ISKID)) u_rq_left (
         .clk(clk), .rst(rst),
         .i_valid({rf_thr_v, ij_valid[D_LEFT]}),
         .i_ready({rf_thr_r, ij_ready[D_LEFT]}),
@@ -217,7 +218,7 @@ module sb_stn_line #(
     wire [STNW-1:0]  ej_dstn_unused;
     wire [PORTW-1:0] ej_dport_unused;
 
-    sb_hub #(.NSRC(3), .NDST(NQ), .PW(RQW)) u_rq_eject (
+    sb_hub #(.NSRC(3), .NDST(NQ), .PW(RQW), .ISKID(ISKID)) u_rq_eject (
         .clk(clk), .rst(rst),
         .i_valid({rf_loc_v, lf_loc_v, ij_valid[D_LOC]}),
         .i_ready({rf_loc_r, lf_loc_r, ij_ready[D_LOC]}),
@@ -250,7 +251,7 @@ module sb_stn_line #(
     wire [2:0]     cl_valid, cl_ready;
     wire [RSW-1:0] cl_pay;
 
-    sb_hub #(.NSRC(NQ), .NDST(3), .PW(RSW)) u_rs_col (
+    sb_hub #(.NSRC(NQ), .NDST(3), .PW(RSW), .ISKID(ISKID)) u_rs_col (
         .clk(clk), .rst(rst),
         .i_valid(ns_rsp_valid), .i_ready(ns_rsp_ready), .i_last(ns_rsp_last),
         .i_dst(col_dst), .i_pay(col_pay),
@@ -277,7 +278,7 @@ module sb_stn_line #(
     wire rs_last_rf = rf_rsp_pay[RS_LAST];
     wire rs_last_cl = cl_pay[RS_LAST];
 
-    sb_hub #(.NSRC(2), .NDST(1), .PW(RSW)) u_rs_right (
+    sb_hub #(.NSRC(2), .NDST(1), .PW(RSW), .ISKID(ISKID)) u_rs_right (
         .clk(clk), .rst(rst),
         .i_valid({lfs_thr_v, cl_valid[D_RIGHT]}),
         .i_ready({lfs_thr_r, cl_ready[D_RIGHT]}),
@@ -286,7 +287,7 @@ module sb_stn_line #(
         .o_valid(rt_rsp_valid), .o_ready(rt_rsp_ready), .o_pay(rt_rsp_pay)
     );
 
-    sb_hub #(.NSRC(2), .NDST(1), .PW(RSW)) u_rs_left (
+    sb_hub #(.NSRC(2), .NDST(1), .PW(RSW), .ISKID(ISKID)) u_rs_left (
         .clk(clk), .rst(rst),
         .i_valid({rfs_thr_v, cl_valid[D_LEFT]}),
         .i_ready({rfs_thr_r, cl_ready[D_LEFT]}),
@@ -302,7 +303,7 @@ module sb_stn_line #(
     wire [STNW-1:0] es_dstn_unused;
     wire [SRCW-1:0] es_dport_unused;
 
-    sb_hub #(.NSRC(3), .NDST(NM), .PW(RSW)) u_rs_eject (
+    sb_hub #(.NSRC(3), .NDST(NM), .PW(RSW), .ISKID(ISKID)) u_rs_eject (
         .clk(clk), .rst(rst),
         .i_valid({rfs_loc_v, lfs_loc_v, cl_valid[D_LOC]}),
         .i_ready({rfs_loc_r, lfs_loc_r, cl_ready[D_LOC]}),

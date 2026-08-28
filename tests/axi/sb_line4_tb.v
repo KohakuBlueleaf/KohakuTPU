@@ -36,6 +36,7 @@ module sb_line4_tb;
     reg [31:0] xcyc = 0;
     reg [31:0] bw_t0, bw_t1;
     integer    bw_i;
+    integer    f4sp;
     reg [1:0] exp_b = 2'b00;
 
     reg bus_clk = 0, clk_ctrl = 0, clk_xdma = 0;
@@ -230,9 +231,32 @@ module sb_line4_tb;
     localparam integer T0 = P_TO, T1 = P_TO, T2 = P_TO, T3 = P_TO;
 `endif
 
+`ifdef SB_ISKID
+    localparam integer P_ISKID = 1;
+`else
+    localparam integer P_ISKID = 0;
+`endif
+    // -d SB_SHRINK exercises the per-manager NMU shrink: JTAG OUTST=4 (serial,
+    // keeps pack+256-burst), xdma OUTST=8, ctrl OUTST=2 + FORCE_PLACE. Manager 2
+    // FORCE_PLACE is valid only against WORD subs -- the bench proves it.
+`ifdef SB_SHRINK
+    localparam integer MG0 = 4, MG1 = 8, MG2 = 2;
+    localparam integer MP0 = 0, MP1 = 0, MP2 = 1;
+`else
+    localparam integer MG0 = 0, MG1 = 0, MG2 = 0;
+    localparam integer MP0 = 0, MP1 = 0, MP2 = 0;
+`endif
+`ifdef SB_NSB
+    localparam integer P_NSB = 1;   // 32-bit subs as single-beat config ports
+`else
+    localparam integer P_NSB = 0;
+`endif
     sb_line4 #(.AW(AW), .FW(P_FW), .NQ(NQ), .PORTW(PORTW), .CRED(P_CRED),
                .LINK_CDC(P_CDC), .LINK_FULL(P_FULL), .OST(P_OST),
-               .STORE_FWD(P_SF), .TIMEOUT(P_TO), .WIDE_DW(P_WIDE),
+               .STORE_FWD(P_SF), .TIMEOUT(P_TO), .WIDE_DW(P_WIDE), .ISKID(P_ISKID),
+               .NSB(P_NSB),
+               .MOST0(MG0), .MOST1(MG1), .MOST2(MG2),
+               .MPLC0(MP0), .MPLC1(MP1), .MPLC2(MP2),
                .OST0(M0), .OST1(M1), .OST2(M2), .OST3(M3),
                .SFW0(F0), .SFW1(F1), .SFW2(F2), .SFW3(F3),
                .LPB0(B0), .LPB1(B1), .LPB2(B2), .LPB3(B3),
@@ -795,6 +819,48 @@ module sb_line4_tb;
             j_read (adr(3, 1) + 40'hB00 + n*4, 2'b00);
             j_read (adr(1, 1) + 40'hB00 + n*4, 2'b00);
         end
+
+        // F4: two same-ARID reads, FAR (stn 3) then NEAR (stn 1); the near must
+        // not overtake. ID_ORDER=1 holds the near AR till far retires; 0 = the bug.
+        $display("--- phase 10b: F4 same-ID reorder, far-then-near shared ARID");
+        x_write(adr(3, 0) + 40'hE00, 8'd0);
+        x_write(adr(1, 0) + 40'h2E00, 8'd0);
+        @(negedge clk_xdma); #TS;
+        arid[1] = 4'd4; araddr[1] = adr(3, 0) + 40'hE00; arlen[1] = 8'd0;
+        arsize[1] = 3'd6; arvld[1] = 1'b1; rrdy[1] = 1'b1;
+        #TS;
+        f4sp = 0;
+        while (!arrdy[1] && f4sp < 8000) begin @(negedge clk_xdma); #TS; f4sp=f4sp+1; end
+        @(negedge clk_xdma); #TS; arvld[1] = 1'b0;
+        fork
+            begin : f4_issue_near
+                @(negedge clk_xdma); #TS;
+                araddr[1] = adr(1, 0) + 40'h2E00; arvld[1] = 1'b1;  // same ARID
+                f4sp = 0;
+                while (!arrdy[1] && f4sp < 8000) begin
+                    @(negedge clk_xdma); #TS; f4sp = f4sp + 1;
+                end
+                $display("    F4 AR2(near) accepted %0d cyc after issue", f4sp);
+                @(negedge clk_xdma); #TS; arvld[1] = 1'b0;
+            end
+            begin : f4_collect
+                while (!rvld[1]) begin @(negedge clk_xdma); #TS; end
+                $display("    F4 R#1 far=%b near=%b",
+                         rdata_v[MAXW +: MAXW] === pat512(adr(3,0)+40'hE00, 0),
+                         rdata_v[MAXW +: MAXW] === pat512(adr(1,0)+40'h2E00, 0));
+                if (rdata_v[MAXW +: MAXW] !== pat512(adr(3, 0) + 40'hE00, 0)) begin
+                    errors = errors + 1;
+                    $display("    FAIL F4: R#1 is not the FAR read -- near overtook");
+                end
+                @(negedge clk_xdma); #TS;
+                while (!rvld[1]) begin @(negedge clk_xdma); #TS; end
+                if (rdata_v[MAXW +: MAXW] !== pat512(adr(1, 0) + 40'h2E00, 0)) begin
+                    errors = errors + 1;
+                    $display("    FAIL F4: R#2 is not the NEAR read");
+                end
+                @(negedge clk_xdma); #TS;
+            end
+        join
 
         // Random subordinate backpressure, which is where a shared buffer or a
         // grant held across an underrun stops being a throughput question.
