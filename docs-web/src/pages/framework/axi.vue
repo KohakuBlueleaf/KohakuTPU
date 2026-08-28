@@ -955,6 +955,21 @@ const notOwnedRows = [
       </p>
     </Callout>
 
+    <Callout kind="rule" title="KohakuAXI is two systems, never conflated">
+      <p>
+        The <b>station bus</b> on this page carries <i>host</i> traffic to
+        endpoints of many widths and clocks across the dies. The
+        <RouterLink to="/framework/xbar-cache" class="doc-link"
+          >fused crossbar-cache</RouterLink
+        >
+        carries <i>memory</i> traffic from M masters to N cached DRAM channels
+        as one system with AXI only at its edges — one wide array per home,
+        control-only engines, and a clock crossing only at a port that declares
+        one. They share no module, and a number from one says nothing about the
+        other.
+      </p>
+    </Callout>
+
     <Callout
       kind="note"
       title="Two failure modes if this boundary is left implicit"
@@ -1179,11 +1194,15 @@ const notOwnedRows = [
         without any module inside the mesh knowing.
       </p>
       <p>
-        There are exactly two places a domain boundary exists: <b>memory</b>, in
-        the concentrator, through asynchronous FIFOs; and <b>the host</b>, in
-        whichever vendor interconnect merges the debug bridge and the DMA engine
-        onto the control path — which is already multi-clock and is the right
-        place to leave it.
+        A domain boundary exists in four places: <b>memory</b>, in the
+        concentrator, through asynchronous FIFOs; <b>the host</b>, in whichever
+        vendor interconnect merges the debug bridge and the DMA engine onto the
+        control path — which is already multi-clock and is the right place to
+        leave it; <b>a station-bus manager port</b>, whose shim crosses into the
+        bus clock with no parameter describing the relationship; and
+        <b>a crossbar-cache port that declares itself off the fabric clock</b>,
+        per port, at its edge — a port on the fabric clock has no crossing at
+        all.
       </p>
       <p>
         The queue depths split by job: address queues only have to cover the
@@ -1593,6 +1612,44 @@ const notOwnedRows = [
       :rows="chooseRows"
       caption="These are the settings the deployed line carries, not an open menu. Each was forced by a measurement or by the port set and address map the replacement inherited"
     />
+
+    <Callout
+      kind="measured"
+      title="The ship recipe, per port: 23,053 LUT for the bus, 8,044 on the manager station"
+    >
+      <p>
+        The line as the block design builds it today — block-RAM FIFOs,
+        outstanding 4 / 8 / 2 on the JTAG, XDMA and control managers, the
+        control manager placing rather than packing — measures
+        <b>23,053 LUT, 42,223 FF, 90 BRAM</b>, one synthesis via
+        <code>scripts/tcl/ooc_line_d2.tcl</code>. The station every manager
+        crosses is <b>8,044</b>: hub set 2,122; the 64-bit and 512-bit managers
+        1,158 and 967; the 32-bit control manager 609; the 512-bit subordinate
+        760; each 32-bit subordinate 808–811. A leaf station's hub set is 1,215
+        and a link pair 431.
+      </p>
+      <p>
+        Three facts set those figures. The hub's select is a case on the binary
+        grant and sits at one LUT per payload bit — indexing by
+        <code>sel × PW</code> is a barrel shifter (+6,263 over the bus) and a
+        <code>keep</code> on the selected payload adds a stage (+4,054). A
+        subordinate whose 4 KB bound fits one burst (<code>NSPM ≤ 1</code>,
+        every port ≥ 128 bits) has no splitter — a load-and-hold instead of a
+        40-bit adder, −115 per wide port. Lane and slice writes are per-lane
+        enables, never a variable part-select assignment — −190 on the JTAG
+        manager, −45 on XDMA.
+      </p>
+      <p>
+        Two knobs exist for configurations the ship does not have:
+        <code>SAME_CLK</code> makes a shim's request and response queues
+        synchronous when the port is on the station's fabric clock, and
+        <code>SINGLE_BEAT</code> (<code>NSB</code> at the line) replaces a
+        subordinate's three depth-16 channel queues with skids and folds the
+        slice walk to constants — <b>−318 LUT per port</b>, verified on a Lite
+        endpoint. The ship's 32-bit subordinates take bursts, so it runs with
+        <code>NSB = 0</code>.
+      </p>
+    </Callout>
 
     <Callout
       kind="trap"

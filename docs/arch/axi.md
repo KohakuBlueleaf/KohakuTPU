@@ -25,6 +25,11 @@ tree means both:
 |---|---|
 | **the AXI surface** | the boundary itself: the slave face a host writes, the master face that drives memory, and the discipline every AXI interface here obeys |
 | **the station bus** | the on-chip AXI *fabric* that carries traffic between those faces across the die. It converts AXI into its own flits internally and back at the far end — [projects/kohakuaxi](../projects/kohakuaxi/station-bus.md) |
+| **the fused crossbar-cache** | the *memory* path from several AXI masters to several DRAM channels, with a cache per channel. One system with AXI only at its edges: no internal AXI hop, no per-hop buffering, a clock crossing only at a port that declares one — [projects/kohakuaxi/xbar-cache](../projects/kohakuaxi/xbar-cache.md) |
+
+The second and third are two systems for two jobs and are never one thing: the
+station bus reaches endpoints of many widths and clocks with host traffic, the
+crossbar-cache reaches DRAM at one width with memory traffic.
 
 ## What it owns
 
@@ -296,6 +301,45 @@ rather than taking it as a parameter.
 What this deliberately is *not*: address decode (there is one subordinate, so
 there is nothing to decode), protocol conversion, or arbitrary topology.
 
+## The fused crossbar-cache
+
+Where several masters reach several DRAM channels *and* each channel wants a
+cache, the concentrator above is not the shape: it has one subordinate. The
+vendor shape is a crossbar IP in front of a cache IP per channel, which is three
+AXI endpoints in series and copies every wide beat at each of them.
+
+`kx_mempath_e` (`src/kohakuaxi/`) keeps AXI at the two edges and nothing
+AXI-shaped between:
+
+| piece | what it carries |
+|---|---|
+| one array per home (`kx_carray`) | the only wide store: a URAM row of `{valid, tag, line}`, the hit compare, the served word, and the fill taken straight off that home's DRAM `R` channel |
+| engines (`kx_rd_engine`, `kx_wr_engine`) | control only — arbitration, one request record, the DRAM address channel, and the *index* of the home or master the fabric should select |
+| the crossbar | not a module: an N:1 per master and an M:1 per home on **registered binary** indices the engines publish |
+| edges (`kx_link`) | per port and per channel, a wire when the port shares the fabric clock and an asynchronous FIFO when it does not |
+
+Three properties follow and each is the reason for a design choice elsewhere on
+this page:
+
+**A crossing exists only where a port says its clock differs.** The fabric
+runs on one clock; each master and each home carries one bit saying whether it
+is on that clock. So the crossing count is the count of ports that differ,
+which clock the fabric runs on is the integrator's choice, and a cross-die port
+is simply a port that differs.
+
+**The engine grouping is a knob, on each side independently.** One engine per
+home serves every home in parallel; one engine for all homes serialises them
+and collapses the write-side fan-in. Read and write choose separately, because
+their per-home costs are not alike.
+
+**The line is `K` IO words.** At one word per line a full-strobe write
+allocates; at more, a write invalidates and a fill assembles the line from the
+channel's burst. The number and its costs are the project page's.
+
+The whole measured table, the per-knob costs and the vendor path at the same
+shape are [projects/kohakuaxi/xbar-cache](../projects/kohakuaxi/xbar-cache.md).
+No figure appears here.
+
 ## Width belongs at the boundary
 
 The mesh's internal beat matches the flit payload, so that nothing in the
@@ -314,7 +358,9 @@ inside either. Domain boundaries exist in exactly three places:
   the DMA engine onto the control path — which is already multi-clock and is
   the right place to leave it;
 - **a station-bus manager port**, whose shim crosses into the bus clock with no
-  parameter describing the relationship.
+  parameter describing the relationship;
+- **a crossbar-cache port that declares itself off the fabric clock**, per
+  port, at the edge; a port on the fabric clock has no crossing at all.
 
 A fourth exists inside a mesh and belongs to that system rather than this one:
 a compute unit may run on its own clock behind a local-link crossing, while

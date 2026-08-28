@@ -16,10 +16,18 @@ tags:
 > meets a mesh is Fixed protocol, because `S_AXI_MEM` and `S_AXI_CTRL` are
 > ([arch/axi](../../arch/axi.md)).
 
-KohakuAXI is the AXI fabric **outside** the meshes: the thing that carries a
-host DMA engine, its narrow register port, and a JTAG debug master to every DRAM
-controller, every mesh and every clock wizard on a four-die part. It is **a line
-of identical stations**, not a crossbar and not a tree.
+KohakuAXI is **two systems**, and this page is about the first:
+
+| | what it connects | structure | page |
+|---|---|---|---|
+| **the station bus** | a host DMA engine, its narrow register port and a JTAG debug master to every DRAM controller, every mesh and every clock wizard across the dies | a line of identical stations, credited links between them | this page, [station-bus.md](station-bus.md) |
+| **the fused crossbar-cache** | M AXI masters to N DRAM channels, each channel fronted by a cache | one system with AXI only at its edges: per-home arrays, control-only engines, registered binary-index muxes, a crossing only at a port whose clock differs | [xbar-cache.md](xbar-cache.md) |
+
+They share no module and are never conflated: the station bus carries *host*
+traffic to endpoints of many widths and clocks; the crossbar-cache carries
+*memory* traffic at one width into DRAM, with a cache in the path. The rest of
+this page is the station bus. It is **a line of identical stations**, not a
+crossbar and not a tree.
 
 It is the third project in this directory, and the only one that is not an
 accelerator. Nothing in its design knows about an accelerator: it assumes an
@@ -145,7 +153,8 @@ of the fabric.
 |---|---|
 | protocol | AXI4 at every port. A port declared Lite is emitted as a **true AXI4-Lite interface** — no ID signals, the AXI4-only fields tied to the constants Lite implies. |
 | width | any port width from 8 bits up to the flit width converts fully. A manager **wider** than the flit splits, which is the supported direction. |
-| clock | **a shim takes no parameter describing the clock relationship** — not the ratio, not whether it is synchronous. Each station runs its own fabric clock and the crossing lives inside the link. |
+| clock | **a shim takes no parameter describing the clock relationship** — not the ratio, not whether it is synchronous. Each station runs its own fabric clock and the crossing lives inside the link. A port that *is* on its station's fabric clock declares `SAME_CLK = 1` and its queues become synchronous FIFOs: a crossing only where the clocks differ. |
+| burst | a port that only ever issues single beats declares `SINGLE_BEAT = 1` on its subordinate shim (`NSB` on `sb_line4`): its channel queues become one-entry skids and the slice walk folds to constants. A port that bursts keeps the general walk; the bench refuses the declaration on a port that bursts. |
 | ID | the port's own, whatever width. IDs terminate at the shim. |
 
 ### 3.1 Lite ports are served, not tolerated
@@ -206,6 +215,14 @@ Against the SmartConnect tree it replaces, at the same endpoint set:
 carried the tree's root**. The per-die breakdown and the provenance of each
 SmartConnect row are [station-bus.md](station-bus.md) §2.8; that column is not
 uniformly from one build, and the page says which row came from where.
+
+The same line at the **ship recipe** — block-RAM FIFOs, outstanding 4/8/2 on the
+three managers, the control manager placing rather than packing — measures
+**23,053 LUT, 42,223 FF, 90 BRAM**, of which the manager station on SLR1 is
+**8,044**. Per port on that station: hub set 2,122; the 512-bit and 64-bit
+managers 1,158 and 967; the 32-bit control manager 609; the 512-bit subordinate
+760; each 32-bit subordinate 808–811. [station-bus.md](station-bus.md) §2.17
+carries the breakdown.
 
 ### 4.2 Per port, which is the claim worth testing
 
@@ -338,6 +355,9 @@ not worth new RTL.
   its invariants, every measurement with the sweep that produced it, the vendor
   comparisons, the width rules, what may differ per station, the configuration
   presets, the cost model and the verification status.
+- **[xbar-cache.md](xbar-cache.md)** — the second system: the fused
+  crossbar-cache between AXI masters and DRAM channels, its clock model, its
+  whole measured table, its per-knob costs and the vendor path at the same shape.
 - **[../kohakutpu/v6-plan.md](../kohakutpu/v6-plan.md)** — one deployment of it:
   what replacing KohakuTPU's SmartConnect tree changed, which die the recovered
   resource landed on, and why that die was not the one that needed it.

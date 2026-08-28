@@ -981,6 +981,59 @@ The wrappers themselves are **build artifacts** — `ooc_sweep.py` generates
 reproducing this table means re-running the suite, not synthesising a file that
 is sitting in the tree.
 
+### 2.17 The ship recipe, per port
+
+The line as the block design builds it today — `sb_line4`, `FW=256`, `AW=43`,
+`NQ=4`, `PORTW=2`, `LINK_FULL=0`, block-RAM FIFOs, outstanding 4 / 8 / 2 on the
+64-bit JTAG, 512-bit XDMA and 32-bit control managers, the control manager
+placing rather than packing (`FORCE_PLACE`), one fabric clock per station.
+One synthesis via `scripts/tcl/ooc_line_d2.tcl`, 300 MHz ask, per-instance
+figures from its hierarchy report. Stations are isolated: the whole bus is
+Σ(stations) + links, and the manager station on SLR1 is the one every manager
+crosses.
+
+| | LUT |
+|---|---|
+| **whole bus** | **23,053** — 42,223 FF, 90 BRAM |
+| **SLR1 station** (3 managers, 4 subordinates, 8 hubs) | **8,044** |
+| — hub set | 2,122 |
+| — NMU, 64-bit JTAG, `OUTST=4` | 1,158 |
+| — NMU, 512-bit XDMA, `OUTST=8` | 967 |
+| — NMU, 32-bit control, `OUTST=2`, `FORCE_PLACE` | 609 |
+| — NSU, 512-bit | 760 |
+| — NSU, 32-bit burst endpoint × 3 | 811 / 808 / 808 |
+| a leaf station's hub set (one injecting link) | 1,215 |
+| one link pair, request + response | 431 |
+
+Three structural facts set those figures, and each is a rule for whoever
+changes the shims:
+
+- **The hub's select is a case on the binary grant, and it is at its floor.**
+  An `NSRC:1` select and the skid's hold-or-pass 2:1 are each about one LUT per
+  payload bit on a 355–520-bit flit; the eight hubs a station carries are the
+  line topology's per-station cost. Indexing the payload by `sel × PW` builds a
+  barrel shifter instead (+6,263 over the bus), and a `keep` on the selected
+  payload to split the cone adds a LUT stage (+4,054) — both measured, neither
+  a lever.
+- **A subordinate port that can never split a burst has no splitter.** When
+  the port's 4 KB bound fits in one AXI4 burst (`NSPM ≤ 1`, every port ≥ 128
+  bits), the address generators are a load-and-hold: no 40-bit adder, no
+  subtract, no compare. −115 LUT per wide port; a 32-bit port keeps the split
+  because it needs it.
+- **Lane and slice writes are per-lane enables, never a variable part-select
+  assignment.** The manager's pack register and the subordinate's read
+  accumulator each write one lane, selected by an equality per lane; −190 LUT
+  on the JTAG manager, −45 on XDMA, relative to `pk_d[lane*MW +: MW] <=`.
+
+Two knobs exist for configurations the ship does not have: `SAME_CLK` on either
+shim replaces its asynchronous request and response queues with synchronous
+FIFOs when the port is on the station's fabric clock (no ship port is), and
+`SINGLE_BEAT` on `sb_nsu` — `NSB` at the line level — replaces a subordinate's
+three depth-16 channel queues with one-entry skids and folds the slice walk to
+constants when the port only ever sees single beats: **−318 LUT per port**,
+verified on a Lite endpoint. The ship's 32-bit subordinates take bursts, so the
+line runs with `NSB = 0`.
+
 ### Link and die crossing
 
 **Credits, not `ready`.** `valid`/`ready` does not pipeline: n stages cost a
@@ -1059,6 +1112,8 @@ individually. At 820 it declines BRAM everywhere on its own.
 | `STORE_FWD` | packet-complete token | dropping it is `MIN_AREA`'s speed-for-size trade |
 | `FW` | flit width | 512 → 256 takes the 3x9 station 15,780 → 12,398 LUTs, the line 30,785 → 22,106 |
 | `MAX_BURST` | longest burst a port may issue | sets the response-FIFO floor; 1 on a Lite port |
+| `SAME_CLK` | per shim: the port clock **is** the fabric clock, so the request/response queues are synchronous FIFOs | no gray pointers or synchronisers on that port; no ship port qualifies |
+| `SINGLE_BEAT` / `NSB` | per subordinate shim: every request is one beat, so the channel queues are skids and the slice walk is constant | **−318 LUT per port**; a bursting port must not declare it |
 
 ### What a drop-in replacement fixes, and what is left to choose
 
@@ -1294,7 +1349,16 @@ kinds. Regenerate rather than edit: the file states this in its first line.
 - **Never index a payload by a variable bit offset.** `i_pay[sel*PW +: PW]`
   builds a barrel shifter: measured 14,632 LUT for two hubs against ~1,700 for
   a constant-offset mux with an equality compare. FPGA-only divergence — on an
-  ASIC both forms are the same one-hot pass-gate mux.
+  ASIC both forms are the same one-hot pass-gate mux. The same rule holds for a
+  variable-offset *write* (`reg[lane*W +: W] <= x`): write every lane under its
+  own enable instead.
+- **A `keep` on a mux output does not split a cone, it adds a stage.** The
+  select and the register behind it already pack at one LUT per bit; forcing the
+  boundary costs a second LUT per bit (+4,054 on the four-station bus).
+- **Arithmetic a port cannot exercise still synthesises.** A burst splitter on
+  a port whose bursts never split is 1,640 LUT of adders across sixteen
+  subordinates; derive the need from the width (`NSPM`) and generate nothing
+  when it is one.
 - **LUTRAM is 1 LUT per bit at 32 deep**; a RAMB36 SDP is 72×512, so its cost
   is `ceil(W/72)` tiles regardless of depth. One BRAM ≈ 2.25×D LUT.
 - **Dual-port BRAM caps at 36 bits per port**, worse than SDP's 72 for a

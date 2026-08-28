@@ -260,6 +260,8 @@ it, and a framework doc that quotes them as if they were is wrong.
                          and node-port arbiter
       axi/               station bus, links, AXI plumbing
       common/            shared primitives: FIFOs, named memory wrappers
+    src/kohakuaxi/       the fused crossbar-cache: M AXI masters to N cached
+                         DRAM channels, one system, AXI only at its edges
       verif/             bench-only models: axi_ram, port checkers
     src/templates/       worked examples with benches: CU, transform occupant,
                          endpoint adapter

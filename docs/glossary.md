@@ -351,6 +351,14 @@ where a slave hangs off is a *subordinate*.
 → [projects/kohakuaxi/station-bus](projects/kohakuaxi/station-bus.md),
 [arch/axi](arch/axi.md).
 
+### home
+
+One DRAM channel together with the cache that fronts it, inside the
+[crossbar-cache](#xbar-cache--crossbar-cache). An address belongs to exactly one
+home, chosen by a field of the address, so there is nothing to keep coherent
+between homes. Not a mesh term.
+→ [projects/kohakuaxi/xbar-cache](projects/kohakuaxi/xbar-cache.md).
+
 ### system node
 
 The component every mesh has exactly one of, and the single point where a mesh
@@ -361,6 +369,17 @@ node"** — see [node](#node). Its two halves do not ship separately: the memory
 half cannot start work without a host round trip, and the processor alone cannot
 reach memory or another mesh.
 → [arch/sysnode](arch/sysnode/README.md).
+
+### xbar-cache / crossbar-cache
+
+The second KohakuAXI system: M AXI masters to N cached DRAM channels as **one**
+structure, with AXI at the two edges and nothing AXI-shaped inside. Each
+[home](#home) has one wide array; the engines carry control only; the crossbar
+is a set of registered binary-index muxes; a clock crossing exists only at a
+port that declares its clock differs. Not the [station bus](#station--station-bus),
+and never conflated with it.
+→ [projects/kohakuaxi/xbar-cache](projects/kohakuaxi/xbar-cache.md),
+[arch/axi](arch/axi.md).
 
 ### transform slot
 

@@ -59,10 +59,20 @@ const META = {
     short: "AXI",
     order: 6,
   },
+  "/framework/xbar-cache": {
+    title: "The fused crossbar-cache",
+    short: "Xbar-cache",
+    order: 7,
+  },
   "/framework/measurements": {
     title: "Out-of-context measurements",
     short: "Measurements",
-    order: 7,
+    order: 8,
+  },
+  "/framework/estimator": {
+    title: "Resource estimator",
+    short: "Estimator",
+    order: 9,
   },
 
   "/tpu": { title: "The accelerator", short: "Overview", order: 0 },
