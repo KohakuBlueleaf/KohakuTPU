@@ -196,6 +196,140 @@ BENCHES = {
             "tests/axi/axi_n1_tb.v",
         ],
     ),
+    # KohakuAXI M x N crossbar -- lint-only entry (top = the RTL module itself).
+    "kaxi_lint": (
+        "kaxi_xbar",
+        [
+            "src/kohakuaccel/common/sync_fifo.v",
+            "src/kohakuaccel/common/async_fifo.v",
+            "src/kohakuaccel/axi/simple/axi_n1.v",
+            "src/kohakuaxi/kaxi_xbar.v",
+        ],
+    ),
+    # KohakuAXI full system (xbar + per-home L3) -- lint-only entry.
+    "kaxi_top_lint": (
+        "kaxi_top",
+        [
+            "src/kohakuaccel/common/sync_fifo.v",
+            "src/kohakuaccel/common/async_fifo.v",
+            "src/kohakuaccel/axi/simple/axi_n1.v",
+            "src/kohakuaxi/kaxi_xbar.v",
+            "src/kohakuaxi/kaxi_l3.v",
+            "src/kohakuaxi/kaxi_top.v",
+        ],
+    ),
+    # KohakuAXI full system end-to-end: master -> xbar -> L3 -> axi4_ram (xsim).
+    "kaxi_top": (
+        "kaxi_top_tb",
+        [
+            "src/kohakuaccel/common/sync_fifo.v",
+            "src/kohakuaccel/common/async_fifo.v",
+            "src/kohakuaccel/axi/simple/axi_n1.v",
+            "src/kohakuaxi/kaxi_xbar.v",
+            "src/kohakuaxi/kaxi_l3.v",
+            "src/kohakuaxi/kaxi_top.v",
+            "src/kohakuaccel/verif/axi4_ram.v",
+            "tests/axi/kaxi_top_tb.v",
+        ],
+    ),
+    # KohakuAXI M x N crossbar -- routing + W-order + data-integrity, M masters
+    # spread across N homes. -d M=.. -d NHOME=.. -d NTXN=.. to resize.
+    "kaxi_xbar": (
+        "kaxi_xbar_tb",
+        [
+            "src/kohakuaccel/common/sync_fifo.v",
+            "src/kohakuaccel/common/async_fifo.v",
+            "src/kohakuaccel/axi/simple/axi_n1.v",
+            "src/kohakuaxi/kaxi_xbar.v",
+            "tests/axi/kaxi_xbar_tb.v",
+        ],
+    ),
+    # The min-area rewrite (kaxi_xbar2) on the same bench: run with -d KAXI2.
+    "kaxi_xbar2": (
+        "kaxi_xbar_tb",
+        [
+            "src/kohakuaxi/kaxi_xbar2.v",
+            "tests/axi/kaxi_xbar_tb.v",
+        ],
+    ),
+    # SASD-write + SAMD-read mixture (kaxi_xbar3): run with -d KAXI3.
+    "kaxi_xbar3": (
+        "kaxi_xbar_tb",
+        [
+            "src/kohakuaxi/kaxi_xbar3.v",
+            "tests/axi/kaxi_xbar_tb.v",
+        ],
+    ),
+    # FULL SAMD (parallel write+read per home), the memory-path form: run -d KAXI4.
+    "kaxi_xbar4": (
+        "kaxi_xbar_tb",
+        [
+            "src/kohakuaxi/kaxi_xbar4.v",
+            "tests/axi/kaxi_xbar_tb.v",
+        ],
+    ),
+    # kaxi_xbar4 with clean per-master read mux (-16% LUT): run -d KAXI4B.
+    "kaxi_xbar4b": (
+        "kaxi_xbar_tb",
+        [
+            "src/kohakuaxi/kaxi_xbar4b.v",
+            "tests/axi/kaxi_xbar_tb.v",
+        ],
+    ),
+    # Fresh-work-dir alias of kaxi_xbar4b (a stuck xsim zombie locked the other dir).
+    "kaxi_xbar4c": (
+        "kaxi_xbar_tb",
+        [
+            "src/kohakuaxi/kaxi_xbar4b.v",
+            "tests/axi/kaxi_xbar_tb.v",
+        ],
+    ),
+    # Configurable R/W SASD|SAMD crossbar: -d KAXI5 -d KX_WR=0/1 -d KX_RD=0/1.
+    "kaxi_xbar5": (
+        "kaxi_xbar_tb",
+        [
+            "src/kohakuaxi/kaxi_wr.v",
+            "src/kohakuaxi/kaxi_rd.v",
+            "src/kohakuaxi/kaxi_xbar5.v",
+            "tests/axi/kaxi_xbar_tb.v",
+        ],
+    ),
+    # Fused xbar-cache, engine-composed: masters -> kx_carray[N] via rd/wr engines -> DRAM.
+    "kx_mempath": (
+        "kx_mempath_tb",
+        [
+            "src/kohakuaccel/common/kohaku_sdpram.v",
+            "src/kohakuaccel/common/async_fifo.v",
+            "src/kohakuaxi/kx_scdc.v",
+            "src/kohakuaxi/kx_link.v",
+            "src/kohakuaxi/kx_carray.v",
+            "src/kohakuaxi/kx_rd_engine.v",
+            "src/kohakuaxi/kx_wr_engine.v",
+            "src/kohakuaxi/kx_mempath_e.v",
+            "src/kohakuaccel/verif/axi4_ram.v",
+            "tests/axi/kx_mempath_tb.v",
+        ],
+    ),
+    # Output-engine de-concentrator: 1 AXI -> N subs, address-routed.
+    "sb_deconcentrate": (
+        "sb_deconcentrate_tb",
+        [
+            "src/kohakuaccel/axi/station/sb_axi_deconcentrate.v",
+            "src/kohakuaccel/verif/axi4_ram.v",
+            "tests/axi/sb_deconcentrate_tb.v",
+        ],
+    ),
+    # KohakuAXI per-home L3 cache. Array is an EXPLICIT kohaku_sdpram (XPM, BRAM/
+    # URAM by RAM_STYLE), so xsim only. write-through + read-allocate vs axi4_ram.
+    "kaxi_l3": (
+        "kaxi_l3_tb",
+        [
+            "src/kohakuaxi/kaxi_l3.v",
+            "src/kohakuaccel/common/kohaku_sdpram.v",
+            "src/kohakuaccel/verif/axi4_ram.v",
+            "tests/axi/kaxi_l3_tb.v",
+        ],
+    ),
     # The station bus at root_smc's shape -- 3 managers, 9 subordinates, four
     # non-harmonic clocks, widths 32/512. The SmartConnect replacement candidate.
     "sb_root9": (
@@ -270,6 +404,7 @@ BENCHES = {
         [
             "src/kohakuaccel/common/sync_fifo.v",
             "src/kohakuaccel/common/async_fifo.v",
+            "src/kohakuaccel/common/sb_skid.v",
             "src/kohakuaccel/axi/station/sb_nmu.v",
             "src/kohakuaccel/axi/station/sb_nsu.v",
             "src/kohakuaccel/verif/axi4_ram.v",
@@ -294,6 +429,21 @@ BENCHES = {
             "src/kohakuaccel/verif/axi4_ram.v",
             "tests/axi/sb_axi_check.v",
             "tests/axi/sb_line4_tb.v",
+        ],
+    ),
+    # SLR1 station smoke harness -- the verification the per-domain-CDC shrink needs.
+    "sb_slr1": (
+        "sb_slr1_tb",
+        [
+            "src/kohakuaccel/common/sync_fifo.v",
+            "src/kohakuaccel/common/async_fifo.v",
+            "src/kohakuaccel/common/sb_skid.v",
+            "src/kohakuaccel/axi/station/sb_hub.v",
+            "src/kohakuaccel/axi/station/sb_station.v",
+            "src/kohakuaccel/axi/station/sb_nmu.v",
+            "src/kohakuaccel/axi/station/sb_nsu.v",
+            "src/kohakuaccel/axi/topo/sb_slr1.v",
+            "tests/axi/sb_slr1_tb.v",
         ],
     ),
     # THE ONLY BENCH where the station bus meets a real mesh. Every other bus
