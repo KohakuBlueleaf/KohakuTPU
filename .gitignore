@@ -10,6 +10,11 @@ khs_float_vec.txt
 .vscode/
 *.jou
 build-*/
+# the frozen pre-fix station-bus snapshot is tracked on purpose; it is not a build dir
+!tests/axi/build-jtagdbg/
+.srcs/
+.gen/
+*.rpt
 
 # xsim leaves work libraries, snapshots and waveforms beside the benches.
 tests/**/w_*/
