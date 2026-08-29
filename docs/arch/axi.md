@@ -18,18 +18,26 @@ a host DMA engine, a DDR controller, a debug bridge, a vendor interconnect —
 speaks **AXI**. This layer is the translation, and it is the only place in the
 tree where both dialects appear.
 
-Two things are worth separating before anything else, because "AXI" in this
-tree means both:
+"AXI" in this tree means three kinds of AXI carrying three kinds of traffic,
+and the boundary discipline they all keep. Name the kind before quoting a
+number from it:
 
-| | what it is |
-|---|---|
-| **the AXI surface** | the boundary itself: the slave face a host writes, the master face that drives memory, and the discipline every AXI interface here obeys |
-| **the station bus** | the on-chip AXI *fabric* that carries traffic between those faces across the die. It converts AXI into its own flits internally and back at the far end — [projects/kohakuaxi](../projects/kohakuaxi/station-bus.md) |
-| **the fused crossbar-cache** | the *memory* path from several AXI masters to several DRAM channels, with a cache per channel. One system with AXI only at its edges: no internal AXI hop, no per-hop buffering, a clock crossing only at a port that declares one — [projects/kohakuaxi/xbar-cache](../projects/kohakuaxi/xbar-cache.md) |
+| kind | protocol | carries | where it lives |
+|---|---|---|---|
+| **1 · the station bus**, with MAG's slave port and the utilities around it | AXI4 and AXI4-Lite at whatever width and clock each endpoint has: 512 b at 250 MHz from XDMA, 64 b at 100 MHz from JTAG, 32-bit Lite registers | host and control traffic — register windows, instruction staging, the memory window, the clock wizard's and the DDR controller's register ports — across the dies, as a line of stations with no crossbar | [projects/kohakuaxi/station-bus](../projects/kohakuaxi/station-bus.md); a framework component |
+| **2 · Kohaku Xache** — the DRAM fabric | AXI4 at 512 bits at exactly two places: where a MAG DRAM master attaches and where a DDR channel attaches; nothing AXI-shaped between | memory traffic from M meshes to N DRAM channels with a tagged cache fused per channel, a streaming read engine with a per-master read queue, channel interleaving as wires | [projects/kohakuaxi/xbar-cache](../projects/kohakuaxi/xbar-cache.md); a framework component |
+| **3 · the interlink** — MAG to MAG | AXI4-Stream: 288-bit beats, one NoC flit per beat, a 96-bit `TUSER` packet header, packets of up to 32 beats, credit per class, `tready` never crosses | the mover's remote writes, flits bound for another mesh, doorbells — over an SLL with nothing but registers in the crossing | `src/kohakuaccel/sysnode/interlink/`, [spec/parameters](../spec/parameters.md) §7; part of the system node |
 
-The second and third are two systems for two jobs and are never one thing: the
-station bus reaches endpoints of many widths and clocks with host traffic, the
-crossbar-cache reaches DRAM at one width with memory traffic.
+The first two are the framework's two AXI systems, and they are never one
+thing: the station bus reaches endpoints of many widths and clocks with host
+traffic, the Xache reaches DRAM at one width with memory traffic. The third is
+not AXI4 at all — it borrows the stream's signals for their shape and replaces
+its flow control with credits, because a Laguna crossing is usable only as
+flop → SLL → flop and a `tready` travelling back would put a gate in it.
+
+The AXI *surface* below is the boundary itself: the slave face a host writes,
+the master face that drives memory, and the discipline every AXI interface here
+obeys.
 
 ## What it owns
 

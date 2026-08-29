@@ -43,6 +43,18 @@ const parts = {
       what: "a module between a router local port and the unit on it, same six signals on both faces",
       swap: "dropping yours in. <code>PASS&nbsp;=&nbsp;1</code> makes it a wire",
     },
+    {
+      part: "<b>Station bus</b> — <code>sb_*</code>",
+      what: "the host's AXI interconnect: a line of stations, one per die, each with its own clock, carrying control and staging traffic to endpoints of any width. Replaced the SmartConnect tree at 3.7× fewer LUTs",
+      swap: "configuring it — station count, ports per station, flit width, credits, block RAM — per deployment. Every knob's cost is measured",
+      _tone: "good",
+    },
+    {
+      part: "<b>Kohaku Xache</b> — <code>kx_xache</code>",
+      what: "the DRAM fabric: M mesh masters to N channels with a tagged 2 MB cache fused per channel, AXI only at the two edges. 9,642 LUT at the ship point against 38,975 for the vendor path with the same memory",
+      swap: "configuring it — masters, homes, line width, engine sharing, read engine and queue, interleave, per-port clocks. Every point of that grid is measured and the estimator prices any other",
+      _tone: "good",
+    },
   ],
 };
 
@@ -197,6 +209,36 @@ const obligations = {
         <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
           Staging, the transform slot and the tagged L2 that is designed and not
           built — three answers to reuse, only one of which is a cache.
+        </p>
+      </RouterLink>
+      <RouterLink
+        to="/component/station-bus"
+        class="card-hover p-5 no-underline block"
+      >
+        <div
+          class="kt-text-title font-semibold text-warm-800 dark:text-warm-200 mb-1"
+        >
+          The station bus
+        </div>
+        <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
+          A line of stations across the dies for the host's AXI: credits instead
+          of ready, a clock per station for free, 23,053 LUT where the vendor
+          tree took 81,881.
+        </p>
+      </RouterLink>
+      <RouterLink
+        to="/component/xache"
+        class="card-hover p-5 no-underline block"
+      >
+        <div
+          class="kt-text-title font-semibold text-warm-800 dark:text-warm-200 mb-1"
+        >
+          Kohaku Xache
+        </div>
+        <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
+          M masters to N cached DRAM channels as one fabric: a streaming read
+          engine, a per-master read queue, interleaving as wires — 18.3 GB/s per
+          master, 9,642 LUT.
         </p>
       </RouterLink>
     </div>

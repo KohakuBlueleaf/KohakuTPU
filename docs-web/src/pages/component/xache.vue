@@ -1,10 +1,11 @@
 <script setup>
 /**
- * /framework/xbar-cache — the fused crossbar-cache, kx_xache.
+ * /component/xache — Kohaku Xache (the Kohaku-Xache System, KX): the fused
+ * crossbar-cache, kx_xache.
  *
  * Drawn from, in full:
  *   docs/projects/kohakuaxi/xbar-cache.md
- *   src/kohakuaxi/{kx_xache,kx_carray,kx_rd_engine,kx_wr_engine,kx_link,kx_scdc}.v
+ *   src/kohakuaxi/{kx_xache,kx_carray,kx_rd_engine,kx_rd_pipe,kx_wr_engine,kx_perm,kx_link,kx_scdc}.v
  *   scripts/tcl/ooc_kx.tcl · scripts/tcl/ooc_vendor_xc.tcl · scripts/tcl/ooc_syscache.tcl
  *
  * Every number is transcribed once, in src/content/estimator.js, and read from
@@ -22,14 +23,20 @@ import {
 const n = (v) => (v == null ? "—" : Math.round(v).toLocaleString());
 
 /* ---------------------------------------------------------------- structure */
+/* Every node is a real module or a real family of muxes in kx_xache.v; every
+   edge is a port group between them. Validated against the RTL: the read
+   engine drives the array's lookup port and the fill address, the write
+   engine drives the home's AW/W and the array's write port through the W mux,
+   the served word returns through the R mux, and the DRAM R channel writes the
+   array directly (fill_go). */
 const fused = {
   groups: [
     {
       x: -1.5,
       y: 5,
-      w: 62,
-      h: 14.5,
-      label: "kx_xache — ONE clock, clk. Nothing AXI-shaped inside",
+      w: 64,
+      h: 20.5,
+      label: "kx_xache — one clock, clk; AXI only at the two edges",
     },
   ],
   nodes: [
@@ -57,80 +64,90 @@ const fused = {
       x: 0,
       y: 6,
       w: 31,
-      h: 3,
+      h: 3.4,
       label: "master edges — kx_link × 5 per port",
-      sub: "wire when MCDC[m]=0 · async FIFO when 1",
+      sub: "wires on clk · async FIFOs when MCDC[m] = 1 · the address permutation (kx_perm) sits here",
     },
     {
       id: "re",
       x: 0,
-      y: 11,
+      y: 12,
       w: 14,
-      h: 3.4,
+      h: 3.8,
       label: "read engines",
-      sub: "control only · one per home (SAMD) or one for all (SASD)",
+      sub: "kx_rd_engine or kx_rd_pipe · control only · one per home or one for all",
       accent: true,
     },
     {
       id: "we",
       x: 16,
-      y: 11,
+      y: 12,
       w: 15,
-      h: 3.4,
+      h: 3.8,
       label: "write engines",
-      sub: "control only · RSAMD and WSAMD independent",
+      sub: "kx_wr_engine · control only · one per home or one for all",
       accent: true,
     },
     {
-      id: "xb",
+      id: "xw",
       x: 34,
       y: 6,
-      w: 26,
-      h: 3,
-      label: "the crossbar is not a module",
-      sub: "N:1 per master (R) · M:1 per home (W) · registered binary indices",
+      w: 13,
+      h: 3.4,
+      label: "W mux, M:1 per home",
+      sub: "on the write engine's registered master index",
+      accent: true,
+    },
+    {
+      id: "xr",
+      x: 49,
+      y: 6,
+      w: 13,
+      h: 3.4,
+      label: "R mux, N:1 per master",
+      sub: "on the read engine's registered home index",
       accent: true,
     },
     {
       id: "c0",
       x: 34,
-      y: 11,
-      w: 8,
-      h: 3.4,
+      y: 12,
+      w: 8.5,
+      h: 3.8,
       label: "kx_carray 0",
-      sub: "64 URAM · {v, tag, K×W}",
+      sub: "64 URAM · {v, tag, K×W} · served word",
     },
     {
       id: "c1",
-      x: 43,
-      y: 11,
-      w: 8,
-      h: 3.4,
+      x: 43.75,
+      y: 12,
+      w: 8.5,
+      h: 3.8,
       label: "kx_carray 1",
       sub: "the only wide store",
     },
     {
       id: "cx",
-      x: 52,
-      y: 11,
-      w: 8,
-      h: 3.4,
+      x: 53.5,
+      y: 12,
+      w: 8.5,
+      h: 3.8,
       label: "kx_carray N−1",
-      sub: "fill straight off R",
+      sub: "one per home",
     },
     {
       id: "he",
       x: 0,
-      y: 16,
-      w: 60,
-      h: 3,
+      y: 18.5,
+      w: 62,
+      h: 3.4,
       label: "DRAM edges — kx_link × 5 per home",
-      sub: "wire when HCDC[h]=0 · async FIFO when 1 · W/R FIFOs in block RAM",
+      sub: "wires on clk · async FIFOs when HCDC[h] = 1, the W and R ones in block RAM",
     },
     {
       id: "d0",
       x: 0,
-      y: 21.5,
+      y: 24.5,
       w: 9,
       h: 3,
       label: "DRAM ch 0",
@@ -139,7 +156,7 @@ const fused = {
     {
       id: "d1",
       x: 11,
-      y: 21.5,
+      y: 24.5,
       w: 9,
       h: 3,
       label: "DRAM ch 1",
@@ -148,7 +165,7 @@ const fused = {
     {
       id: "dx",
       x: 22,
-      y: 21.5,
+      y: 24.5,
       w: 9,
       h: 3,
       label: "DRAM ch N−1",
@@ -161,14 +178,27 @@ const fused = {
     { from: "mx:b", to: "me:t" },
     { from: "me:b", to: "re:t", label: "AR" },
     { from: "me:b", to: "we:t", label: "AW · W" },
-    { from: "me:r", to: "xb:l", label: "W data", dir: "h", accent: true },
-    { from: "xb:b", to: "c0:t", label: "word / write", accent: true },
-    { from: "xb:b", to: "c1:t" },
-    { from: "xb:b", to: "cx:t" },
-    { from: "re:r", to: "c0:l", label: "idx · tag · sub", dir: "h" },
-    { from: "re:b", to: "he:t", label: "AR, one line" },
-    { from: "we:b", to: "he:t", label: "AW · W beats" },
-    { from: "c0:b", to: "he:t", label: "R fills the line", dash: true },
+    { from: "me:r", to: "xw:l", label: "W data", dir: "h", accent: true },
+    { from: "xr:l", to: "me:r", label: "R data", dir: "h", accent: true },
+    { from: "xw:b", to: "c0:t", label: "write word", accent: true },
+    { from: "xw:b", to: "c1:t" },
+    { from: "xw:b", to: "cx:t" },
+    { from: "c0:t", to: "xr:b", label: "served word", accent: true },
+    { from: "c1:t", to: "xr:b" },
+    { from: "cx:t", to: "xr:b" },
+    {
+      from: "re:r",
+      to: "c0:l",
+      label: "lookup idx · tag · sub, fill idx",
+      dir: "h",
+    },
+    {
+      from: "re:b",
+      to: "he:t",
+      label: "AR: one line, or the rest of the burst",
+    },
+    { from: "we:b", to: "he:t", label: "AW · W, write-through" },
+    { from: "he:t", to: "c0:b", label: "R fills the line", dash: true },
     { from: "he:b", to: "d0:t" },
     { from: "he:b", to: "d1:t" },
     { from: "he:b", to: "dx:t" },
@@ -579,8 +609,9 @@ const knobCostRowsP1 = [
 
 /* ------------------------------------------------------------- vendor */
 const V = KX_VENDOR;
-const ship = KX_ROWS_R1.find((r) => isShip(r) && r[5] === 4);
-const noCdc = KX_ROWS_R1.find((r) => isShip(r) && r[5] === 0);
+/* the fused rows beside the vendor: the shipped RTL (streaming engine) */
+const ship = KX_ROWS[1].find((r) => isShip(r) && r[5] === 4);
+const noCdc = KX_ROWS[1].find((r) => isShip(r) && r[5] === 0);
 const vendorCols = [
   { key: "c", label: "4×4 @ 512, one synthesis each" },
   { key: "lut", label: "LUT", mono: true, align: "right" },
@@ -616,20 +647,47 @@ const vendorRows = [
     f: "",
   },
   {
-    c: "system_cache × 4 at a real 2 MB, data-memory type 2 — still block RAM",
+    c: "system_cache × 4 at a real 2 MB, data memory in block RAM (type 2)",
     lut: n(4 * V.syscache_2mb.lut),
     ff: n(4 * V.syscache_2mb.ff),
     b: n(4 * V.syscache_2mb.bram),
     u: "0",
     f: `${V.syscache_2mb.fmax} at a 10 ns request`,
-    _tone: "bad",
+    _tone: "warn",
   },
   {
-    c: "<b>vendor, composed, like-for-like memory</b>",
-    lut: `<b>${n(V.composed_2mb.lut)}</b>`,
+    c: "vendor, composed, 2 MB in block RAM",
+    lut: n(V.composed_2mb.lut),
     ff: n(V.composed_2mb.ff),
     b: n(V.composed_2mb.bram),
     u: "0",
+    f: "≤ 244",
+    _tone: "warn",
+  },
+  {
+    c: "system_cache × 4 at a real 2 MB, data memory in URAM (type 3) — 64 URAM each, as a Xache home",
+    lut: n(4 * V.syscache_2mb_uram.lut),
+    ff: n(4 * V.syscache_2mb_uram.ff),
+    b: n(4 * V.syscache_2mb_uram.bram),
+    u: n(4 * V.syscache_2mb_uram.uram),
+    f: `${V.syscache_2mb_uram.fmax}, the same path`,
+    _tone: "bad",
+  },
+  {
+    c: "system_cache × 4 at 2 MB, data and tags in URAM",
+    lut: n(4 * V.syscache_2mb_uram_tag.lut),
+    ff: n(4 * V.syscache_2mb_uram_tag.ff),
+    b: n(4 * V.syscache_2mb_uram_tag.bram),
+    u: n(4 * V.syscache_2mb_uram_tag.uram),
+    f: `${V.syscache_2mb_uram_tag.fmax} — the tag lookup through URAM`,
+    _tone: "warn",
+  },
+  {
+    c: "<b>vendor, composed, like-for-like memory</b> — 2 MB in URAM",
+    lut: `<b>${n(V.composed_2mb_uram.lut)}</b>`,
+    ff: n(V.composed_2mb_uram.ff),
+    b: n(V.composed_2mb_uram.bram),
+    u: n(V.composed_2mb_uram.uram),
     f: "≤ 244",
     _tone: "bad",
   },
@@ -655,8 +713,15 @@ const vendorRows = [
 
 const bars = [
   {
-    label: "vendor: SmartConnect + 4 × system_cache at 2 MB",
+    label: "vendor: SmartConnect + 4 × system_cache at 2 MB in block RAM",
     value: V.composed_2mb.lut,
+    note: "Σ of standalone synths",
+    tone: "warn",
+  },
+  {
+    label:
+      "vendor: SmartConnect + 4 × system_cache at 2 MB in URAM — like-for-like",
+    value: V.composed_2mb_uram.lut,
     note: "Σ of standalone synths",
     tone: "bad",
   },
@@ -1090,8 +1155,8 @@ const catRows = [
 
 <template>
   <DocPage
-    title="The fused crossbar-cache"
-    summary="M AXI masters to N cached DRAM channels as one system: AXI only at the edges, one wide array per home, control-only engines, registered binary-index muxes, and a clock crossing only at a port that declares one."
+    title="Kohaku Xache"
+    summary="The Kohaku-Xache System (KX, Xache = crossbar-cache): M AXI masters to N cached DRAM channels as one fabric — AXI only at the two edges, one tagged wide array fused per channel, control-only engines, a streaming read engine with a per-master read queue, channel interleaving as wires, and a clock crossing only at a port that declares one."
     domain="framework"
     status="measured"
     :source="`src/kohakuaxi/ · docs/projects/kohakuaxi/xbar-cache.md · scripts/tcl/ooc_kx.tcl · ${PART} · ${TARGET_MHZ} MHz ask · synthesis only`"
@@ -1103,23 +1168,29 @@ const catRows = [
       boundary carries its own buffering, width and ID machinery — and, if the
       clocks differ, its own converters. <code>kx_xache</code> speaks AXI at
       exactly two places, where a master attaches and where a DRAM channel
-      attaches, and has nothing AXI-shaped between them.
+      attaches, and has nothing AXI-shaped between them. <b>KX</b> is the family
+      prefix (Kohaku-Xache System), <b>Xache</b> is the fabric, and every module
+      of it is <code>kx_*</code>.
     </p>
 
-    <Callout kind="rule" title="Two systems, never one">
+    <Callout kind="rule" title="One of two AXI systems, never conflated">
       <p>
-        This is the second of KohakuAXI's two systems. The
-        <RouterLink to="/framework/axi" class="doc-link"
+        Kohaku Xache carries the meshes' <i>memory</i> traffic at one width into
+        DRAM with a cache in the path. The other framework component that speaks
+        AXI, the
+        <RouterLink to="/component/station-bus" class="doc-link"
           >station bus</RouterLink
+        >, carries the <i>host's</i> control traffic to endpoints of many widths
+        and clocks across the dies. They share no module;
+        <RouterLink to="/framework/axi" class="doc-link"
+          >AXI in this machine</RouterLink
         >
-        carries <i>host</i> traffic to endpoints of many widths and clocks
-        across the dies; this carries <i>memory</i> traffic at one width into
-        DRAM with a cache in the path. They share no module.
+        says which kind of AXI goes where.
       </p>
     </Callout>
 
     <Fig
-      caption="Three kinds of module, each carrying one kind of thing: the per-home array carries wide data and nothing else; the engines carry control and publish the INDEX of the home or master the fabric should select; the edges are a wire or an asynchronous FIFO, per port and per channel. The crossbar is two families of muxes inside kx_xache on those registered indices — an N:1 per master on the read side, an M:1 per home on the write side."
+      caption="Three kinds of module, each carrying one kind of thing: the per-home array carries wide data and nothing else; the engines carry control and publish the INDEX of the home or master the fabric should select; the edges are a wire or an asynchronous FIFO, per port and per channel. The crossbar is two families of muxes on those registered indices — an M:1 per home on the write side, an N:1 per master on the read side — written inside kx_xache rather than as a module of their own, because a mux on a registered binary index packs as one LUT6 + MUXF7 per bit and a module boundary would only hide that."
       zoom
       wide
     >
@@ -1138,17 +1209,21 @@ const catRows = [
       <StateMachine :states="rdStates" :edges="rdEdges" />
     </Fig>
 
-    <Callout kind="rule" title="The DRAM request is always one line">
+    <Callout
+      kind="rule"
+      title="The one-beat engine's DRAM request is always one line"
+    >
       <p>
         <code>arlen = K − 1</code>, <code>arsize = W</code>, <code>INCR</code>,
         line-aligned, whatever the master asked for; the master's burst is
-        walked one IO word per engine round. Writes go <b>through</b>: each W
-        beat drives the home's DRAM W port and the array's write port on the
-        same cycle, so the array is never dirty and a flush is a valid-clear,
-        not a drain. At <code>K = 1</code> a full-strobe write allocates the
-        row; at <code>K &gt; 1</code> a write invalidates it, because a line
-        cannot be assembled from one IO word and merging into a URAM row is not
-        a single-port write.
+        walked one IO word per engine round. (The streaming engine below fetches
+        the rest of the burst instead.) Writes go <b>through</b>: each W beat
+        drives the home's DRAM W port and the array's write port on the same
+        cycle, so the array is never dirty and a flush is a valid-clear, not a
+        drain. At <code>K = 1</code> a full-strobe write allocates the row; at
+        <code>K &gt; 1</code> a write invalidates it, because a line cannot be
+        assembled from one IO word and merging into a URAM row is not a
+        single-port write.
       </p>
     </Callout>
 
@@ -1299,17 +1374,24 @@ const catRows = [
     <SpecTable
       :cols="vendorCols"
       :rows="vendorRows"
-      caption="Two vendor rows, both kept. The default row compares the crossbar and cache MACHINERY, because in that block design the vendor cache mapped 17 BRAM per instance at its default data-memory type — about 150 KB, not the 2 MB it was asked for. The 2 MB row is like-for-like on memory: the vendor cache then maps 561 BRAM per instance and tops out at 244 MHz"
+      caption="Three vendor rows, all kept. The default row compares the crossbar and cache MACHINERY, because in that block design the vendor cache mapped 17 BRAM per instance at its default data-memory type — about 150 KB, not the 2 MB it was asked for. The two 2 MB rows are the IP at a real 2 MB with its data memory in block RAM (561 per instance) and in URAM (64 per instance, the same 64 a Xache home uses — the IP's choice list is automatic / BRAM / URAM); the URAM row is the like-for-like one. Both top out at 244 MHz on the same path"
     />
 
-    <Callout kind="measured" title="At the real memory size">
+    <Callout
+      kind="measured"
+      title="At the real memory size, in the same primitive"
+    >
       <p>
-        <b>4.2× fewer LUT</b> with no crossings and 3.5× at the ship point with
-        its four; the memory in URAM where 2,244 BRAM would be 83% of the part's
-        2,688; and 300 MHz met where the vendor cache's 244 MHz Fmax cannot
-        reach it. At the vendor's defaults — where its cache is a fraction of
-        the size — the fused system is still 38% fewer LUT and 45% fewer FF with
-        the full 2 MB per home present.
+        With the vendor cache's data memory in URAM — the fair row, and the one
+        the IP offers as a choice — the fused system is
+        <b>5.0× fewer LUT</b> with no crossings and 4.0× at the ship point with
+        its four, 3.4× fewer FF, and meets 300 MHz where the vendor cache's 244
+        MHz Fmax cannot reach it. The vendor's block-RAM build is 757 LUT larger
+        per cache and takes 2,244 BRAM, 83% of the part's 2,688; it is kept
+        because it is what the IP builds by default at that size. At the
+        vendor's defaults — where its cache is a fraction of the size — the
+        fused system is still 40% fewer LUT and 16% fewer FF with the full 2 MB
+        per home present.
       </p>
     </Callout>
 

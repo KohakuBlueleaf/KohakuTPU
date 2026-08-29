@@ -1,6 +1,6 @@
 /**
- * Resource estimator data: the Xache (kx_xache, the xbar-cache) and the station
- * bus, each as a per-knob cost model fitted to and validated against one OOC
+ * Resource estimator data: Kohaku Xache (kx_xache, the crossbar-cache) and the
+ * station bus, each as a per-knob cost model fitted to and validated against one OOC
  * synthesis per configuration (xcvu13p-fhgb2104-2L-e, Vivado 2024.2, 300 MHz
  * target, synthesis only). Every number here is transcribed from the
  * result.txt of one scripts/tcl/ooc_kx.tcl run per Xache row and one
@@ -19,7 +19,7 @@
 export const PART = "xcvu13p-fhgb2104-2L-e";
 export const TARGET_MHZ = 300;
 
-/* ---------------- xbar-cache: measured rows ---------------- */
+/* ---------------- Kohaku Xache: measured rows ---------------- */
 /* [M, N, K, rsamd, wsamd, n_cdc, LUT, FF, URAM, BRAM, Fmax] — 64 URAM per home */
 export const KX_ROWS = {
   /* RD_PIPE = 0: the one-beat engine on the current array */
@@ -222,7 +222,7 @@ export function kxUram(n, k) {
 }
 export const kxBram = (ncdc) => 16 * ncdc;
 
-/* ---------------- xbar-cache: the vendor path at the same shape ----------------
+/* ---------------- Kohaku Xache: the vendor path at the same shape ----------------
  * One block design, one synthesis, same 300 MHz clock (scripts/tcl/ooc_vendor_xc.tcl):
  * a 4×4 SmartConnect at 512 bits with one system_cache per channel. In that BD
  * the vendor cache did NOT build its 2 MB — 17 BRAM per cache at its default
@@ -239,7 +239,9 @@ export const KX_VENDOR = {
     bram: 68,
     uram: 0,
   },
-  syscache_2mb: { lut: 8279, ff: 5238, bram: 561, uram: 0, fmax: 244 }, // per cache, ×4
+  syscache_2mb: { lut: 8279, ff: 5238, bram: 561, uram: 0, fmax: 244 }, // per cache, ×4, data in block RAM (type 2)
+  syscache_2mb_uram: { lut: 7522, ff: 4712, bram: 49, uram: 64, fmax: 244 }, // per cache, ×4, data in URAM (type 3)
+  syscache_2mb_uram_tag: { lut: 7495, ff: 4712, bram: 1, uram: 72, fmax: 197 }, // tags in URAM too: −27 LUT, −47 MHz
 };
 KX_VENDOR.composed_default = {
   lut: KX_VENDOR.smc_4x4.lut + KX_VENDOR.syscache_default_x4.lut, // 16,062
@@ -250,7 +252,16 @@ KX_VENDOR.composed_2mb = {
   lut: KX_VENDOR.smc_4x4.lut + 4 * KX_VENDOR.syscache_2mb.lut, // 42,003
   ff: KX_VENDOR.smc_4x4.ff + 4 * KX_VENDOR.syscache_2mb.ff, // 28,690
   bram: 4 * KX_VENDOR.syscache_2mb.bram, // 2,244
+  uram: 0,
   fmax: KX_VENDOR.syscache_2mb.fmax,
+};
+/* the like-for-like row: the vendor cache's data memory in URAM, as the Xache's is */
+KX_VENDOR.composed_2mb_uram = {
+  lut: KX_VENDOR.smc_4x4.lut + 4 * KX_VENDOR.syscache_2mb_uram.lut, // 38,975
+  ff: KX_VENDOR.smc_4x4.ff + 4 * KX_VENDOR.syscache_2mb_uram.ff, // 26,586
+  bram: 4 * KX_VENDOR.syscache_2mb_uram.bram, // 196
+  uram: 4 * KX_VENDOR.syscache_2mb_uram.uram, // 256
+  fmax: KX_VENDOR.syscache_2mb_uram.fmax,
 };
 
 /* ---------------- station bus: measured rows ---------------- */
@@ -278,7 +289,7 @@ export const STN_ROWS = [
     bus: 23053,
     ff: 42223,
     bram: 90,
-    slr1: 8044,
+    slr1: 8043,
     hub: 2122,
   },
   {

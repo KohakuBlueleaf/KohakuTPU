@@ -23,7 +23,7 @@ import {
 const n = (v) => (v == null ? "—" : Math.round(v).toLocaleString());
 const pct = (p) => (p == null ? "—" : `${p >= 0 ? "+" : ""}${p.toFixed(2)}%`);
 
-/* ---------------- xbar-cache calculator ---------------- */
+/* ---------------- Kohaku Xache calculator ---------------- */
 /* rp: the read engine — 0 the one-beat engine, 1 the streaming engine (RD_OUTQ 4) */
 const kx = reactive({ rp: 1, M: 4, N: 4, K: 1, rsamd: 1, wsamd: 1, cdc: 4 });
 const kxOut = computed(() => ({
@@ -172,7 +172,7 @@ const shipStn = stnEstimate({ stations: stn.stations }).lut;
 <template>
   <DocPage
     title="Resource estimator"
-    summary="A per-knob LUT/FF/URAM/BRAM bill for the fused xbar-cache and the station bus, fitted to one out-of-context synthesis per configuration and validated against every one of them."
+    summary="A per-knob LUT/FF/URAM/BRAM bill for Kohaku Xache and the station bus, fitted to one out-of-context synthesis per configuration and validated against every one of them."
     domain="framework"
     status="measured"
     :source="`scripts/py/kx_cost.py · src/content/estimator.js · scripts/tcl/ooc_kx.tcl · ${PART} · ${TARGET_MHZ} MHz target · synthesis only`"
@@ -190,7 +190,7 @@ const shipStn = stnEstimate({ stations: stn.stations }).lut;
       </p>
     </Callout>
 
-    <h2 class="doc-h2">Fused xbar-cache</h2>
+    <h2 class="doc-h2">Kohaku Xache</h2>
     <p class="doc-p">
       M AXI masters in, N DRAM homes out, one 2 MB cache per home (64 URAM), no
       AXI inside. Knobs: the read engine (one-beat, or streaming with a read

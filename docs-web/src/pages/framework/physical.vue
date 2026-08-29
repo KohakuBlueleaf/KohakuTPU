@@ -889,8 +889,8 @@ const asBuiltClocks = {
       The per-die cost of both structures — the line as built and the tree it
       replaced, with the provenance of every row, because that baseline is
       <b>not uniformly from one build</b> — is on
-      <RouterLink to="/framework/axi" class="doc-link"
-        >AXI and the station bus</RouterLink
+      <RouterLink to="/component/station-bus" class="doc-link"
+        >The station bus</RouterLink
       >, which is the page that owns the structure. Two things follow from it
       that belong here rather than there.
     </p>

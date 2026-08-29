@@ -55,24 +55,19 @@ const META = {
     order: 5,
   },
   "/framework/axi": {
-    title: "AXI and the station bus",
+    title: "AXI in this machine",
     short: "AXI",
     order: 6,
-  },
-  "/framework/xbar-cache": {
-    title: "The fused crossbar-cache",
-    short: "Xbar-cache",
-    order: 7,
   },
   "/framework/measurements": {
     title: "Out-of-context measurements",
     short: "Measurements",
-    order: 8,
+    order: 7,
   },
   "/framework/estimator": {
     title: "Resource estimator",
     short: "Estimator",
-    order: 9,
+    order: 8,
   },
 
   "/tpu": { title: "The accelerator", short: "Overview", order: 0 },
@@ -159,6 +154,18 @@ const META = {
     short: "Caching",
     order: 9,
     domain: "cpu",
+  },
+  "/component/station-bus": {
+    title: "The station bus",
+    short: "Station bus",
+    order: 10,
+    domain: "framework",
+  },
+  "/component/xache": {
+    title: "Kohaku Xache",
+    short: "Xache",
+    order: 11,
+    domain: "framework",
   },
 
   "/mpe": {
@@ -279,7 +286,9 @@ function buildTree(pages) {
   for (const c of l3) {
     if (!l2.some((p) => c.path.startsWith(`${p.path}/`))) nodes.push({ ...c });
   }
-  return nodes.sort((a, b) => a.order - b.order || a.path.localeCompare(b.path));
+  return nodes.sort(
+    (a, b) => a.order - b.order || a.path.localeCompare(b.path),
+  );
 }
 
 export const SECTIONS = SECTION_ORDER.map((key) => {
