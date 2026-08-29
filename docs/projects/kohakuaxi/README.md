@@ -21,7 +21,7 @@ KohakuAXI is **two systems**, and this page is about the first:
 | | what it connects | structure | page |
 |---|---|---|---|
 | **the station bus** | a host DMA engine, its narrow register port and a JTAG debug master to every DRAM controller, every mesh and every clock wizard across the dies | a line of identical stations, credited links between them | this page, [station-bus.md](station-bus.md) |
-| **the fused crossbar-cache** | M AXI masters to N DRAM channels, each channel fronted by a cache | one system with AXI only at its edges: per-home arrays, control-only engines, registered binary-index muxes, a crossing only at a port whose clock differs | [xbar-cache.md](xbar-cache.md) |
+| **the Xache** (xbar-cache; `kx_` = Kohaku-Xache System) | M AXI masters to N DRAM channels, each channel fronted by a cache | one system with AXI only at its edges: per-home arrays, control-only engines, registered binary-index muxes, a crossing only at a port whose clock differs, channel interleaving by an address-bit swap, a streaming read engine with a per-master read queue across the channels | [xbar-cache.md](xbar-cache.md) |
 
 They share no module and are never conflated: the station bus carries *host*
 traffic to endpoints of many widths and clocks; the crossbar-cache carries
@@ -357,7 +357,8 @@ not worth new RTL.
   presets, the cost model and the verification status.
 - **[xbar-cache.md](xbar-cache.md)** — the second system: the fused
   crossbar-cache between AXI masters and DRAM channels, its clock model, its
-  whole measured table, its per-knob costs and the vendor path at the same shape.
+  two read engines and the read queue, its whole measured tables, its per-knob
+  costs, its measured bandwidth and the vendor path at the same shape.
 - **[../kohakutpu/v6-plan.md](../kohakutpu/v6-plan.md)** — one deployment of it:
   what replacing KohakuTPU's SmartConnect tree changed, which die the recovered
   resource landed on, and why that die was not the one that needed it.

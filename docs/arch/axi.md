@@ -308,13 +308,13 @@ cache, the concentrator above is not the shape: it has one subordinate. The
 vendor shape is a crossbar IP in front of a cache IP per channel, which is three
 AXI endpoints in series and copies every wide beat at each of them.
 
-`kx_mempath_e` (`src/kohakuaxi/`) keeps AXI at the two edges and nothing
+`kx_xache` (`src/kohakuaxi/`) keeps AXI at the two edges and nothing
 AXI-shaped between:
 
 | piece | what it carries |
 |---|---|
 | one array per home (`kx_carray`) | the only wide store: a URAM row of `{valid, tag, line}`, the hit compare, the served word, and the fill taken straight off that home's DRAM `R` channel |
-| engines (`kx_rd_engine`, `kx_wr_engine`) | control only — arbitration, one request record, the DRAM address channel, and the *index* of the home or master the fabric should select |
+| engines (`kx_rd_engine` or `kx_rd_pipe`, `kx_wr_engine`) | control only — arbitration, one request record, the DRAM address channel, and the *index* of the home or master the fabric should select. The read engine is a knob: one beat per array round, or a lookup every cycle with a miss fetching the rest of the burst and `RD_OUTQ` bursts queued per master in order |
 | the crossbar | not a module: an N:1 per master and an M:1 per home on **registered binary** indices the engines publish |
 | edges (`kx_link`) | per port and per channel, a wire when the port shares the fabric clock and an asynchronous FIFO when it does not |
 

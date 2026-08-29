@@ -59,7 +59,7 @@ modes below are the whole of the feedback you get:
 | **Silent overflow** — a structure outgrows its window | `POS_WIDTH` above 4, which overflows the orchestrator's status mirror | Registers that alias |
 | **Wrong-node delivery** | a port coordinate that is not where the port actually is; a `GRID_HI` that disagrees with the routers' | A hang at a router whose turn request is never granted |
 | **Unreachable structure** — built, and nothing can address it | `STAGE_AT_PORT` at 0 with `STAGE` set, which puts the staging store where the mover and the interlink cannot reach it | A hang on the first move into staging: no requester claims the beat, so the access is never answered |
-| **Known-broken** | `RD_OUT` above 1 | Memory corruption, reproducibly |
+| **Silent hazard** | `RD_OUT` above 1 with a requester that reuses one AXI ID and expects out-of-order data | none; the port returns same-ID responses in order, so a requester that cannot consume two bursts back to back stalls its own second burst |
 
 Two of these deserve their own line because the asymmetry is invisible:
 
@@ -515,6 +515,7 @@ The single point where a partition touches everything outside it. Protocol:
 | `STAGE_FLITS` | integer | `128` | Passed to the control agent's staging RAM. | See §4. |
 | `WR_SLOTS` | integer | `16` | Write reassembly slots per memory port. | **At least two per node that can have a write in flight.** Under-sizing deadlocks; it does not corrupt. |
 | `MW` | integer | `DATA_W` | Memory beat width at `M_AXI_DRAM`. `mag_dram_port` packs `DATA_W` up to this, so at 512 an 8-beat 256-bit burst becomes 4 beats. | `DATA_W` times a power of two. |
+| `DRAM_RD_OUT` | integer | `` `KOHAKU_DRAM_RD_OUT `` (1) | `mag_dram_port`'s `RD_OUT`: DRAM reads one internal requester may hold in flight. The default is a macro so a bench can set it under a generated top whose parameters it cannot reach (`-d KOHAKU_DRAM_RD_OUT=4`). | `1`, `2`, `4`. |
 | `STAGE` | integer | `0` | Build the staging store. **Zero generates none of it.** | 0 or non-zero. |
 | `STAGE_BANKS` | integer | `4` | Banks in the staging store. The address takes `$clog2(BANKS)` bank bits below the row index, so a sequential fill spreads across banks. | Power of two. |
 | `STAGE_ENTRIES` | integer | `16384` | Entries **in total, across all banks**. `mag_stage` derives `ROWS = ENTRIES / BANKS`, so at the defaults each of 4 banks holds 4096 rows. An entry is `4 × DATA_W` bits, so the default store is 2 MiB. | Power of two, and a whole multiple of `STAGE_BANKS`. |
@@ -632,7 +633,7 @@ converges and where AXI exists exactly once; `mag.v:934` instantiates it with
 | `BQ` | integer | `16` | Write-response queue depth. | Power of two. |
 | `ARQ` | integer | `16` | Read-address queue depth. | Power of two. |
 | `RQ` | integer | `64` | Read-data queue depth. | Power of two. |
-| `RD_OUT` | integer | `1` | Reads one requester may have in flight. **DEFAULTS OFF BECAUSE IT IS BROKEN**: above 1 it raises read throughput and also corrupts memory in the `mover_chain1` bench. Both effects are reproducible. | `1`, until the corruption is found. |
+| `RD_OUT` | integer | `1` | Reads one requester may have in flight; the id is the requester and AXI returns same-id responses in order, so the queue behind the active burst needs no reorder buffer. At 4, one requester's 20-word reads go 2,744 → 8,917 MB/s at 300 MHz against a 106 ns DRAM (`mag_dram_port_bw_tb`), and 256-word reads reach 9,375 of the 9,600 MB/s the 256-bit internal beat allows. Verified at 2 and 4 by `mag_dram_port_tb` (queued reads, every head phase and length parity, two requesters at once) and by `mover_chain1/2/4` (588 / 591 / 597 checks). `mag` exposes it as `DRAM_RD_OUT`. | `1`, `2`, `4`; the default is the shipped value. |
 | `WR_MEM` | string | `"block"` | Storage primitive for the wide queues. | `"distributed"`, `"block"`. |
 
 ### `mag_dram_rr` — `src/kohakuaccel/sysnode/core/mag_dram_port.v`
