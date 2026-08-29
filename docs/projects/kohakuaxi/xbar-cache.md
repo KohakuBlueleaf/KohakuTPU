@@ -485,28 +485,40 @@ BRAM per cache (≈150 KB usable) at its default data-memory type. So this row
 compares the crossbar and the cache *machinery*, not the memory: the fused
 system is 38% fewer LUT and 45% fewer FF with 2 MB per home actually present.
 
-**Vendor at a real 2 MB.** `system_cache` alone, 2 MB, 512-bit, data-memory
-type 2, from `scripts/tcl/ooc_syscache.tcl`:
+**Vendor at a real 2 MB.** `system_cache` alone, 2 MB, 512-bit, from
+`scripts/tcl/ooc_syscache.tcl`, at each data-memory type the IP offers
+(`C_CACHE_DATA_MEMORY_TYPE`: 0 automatic, 2 block RAM, 3 UltraRAM — the IP's
+own choice list):
 
-| cell | LUT | FF | BRAM | URAM | Fmax |
-|---|---|---|---|---|---|
-| `system_cache`, 2 MB | 8,279 | 5,238 | 561 | 0 | 244 MHz at a 10 ns request (slack +5.909) |
+| cell | data memory | LUT | FF | BRAM | URAM | Fmax |
+|---|---|---|---|---|---|---|
+| `system_cache`, 2 MB | block RAM (type 2) | 8,279 | 5,238 | 561 | 0 | 244 MHz at a 10 ns request (slack +5.909) |
+| `system_cache`, 2 MB | **UltraRAM (type 3)** | **7,522** | 4,712 | 49 | **64** | 244 MHz, the same path |
+| `system_cache`, 2 MB | UltraRAM, tags in UltraRAM too (`C_CACHE_TAG_MEMORY_TYPE` 3) | 7,495 | 4,712 | 1 | 72 | 197 MHz (slack +4.933): the tag lookup through URAM |
 
-It still maps to block RAM, not URAM, and its 244 MHz is below the 300 MHz the
-fused system is asked for. Composed at the ship shape — the crossbar
-plus four of them — and set beside the fused system:
+In URAM the vendor cache lands on the same 64 URAM per 2 MB the Xache's home
+uses, keeps 49 block RAM for its tags, and is 757 LUT and 526 FF smaller than
+its block-RAM build; its 244 MHz does not move, and is below the 300 MHz the
+fused system is asked for. Moving its tags into URAM as well saves 27 LUT and
+48 BRAM for 8 URAM and costs 47 MHz, so the data-in-URAM row is the one
+compared below. Composed at the ship shape — the crossbar plus four
+of them — and set beside the fused system, on the current array with the
+streaming engine (§5.4):
 
 | 4×4 @512, 4 × 2 MB | LUT | FF | BRAM | URAM | Fmax |
 |---|---|---|---|---|---|
-| SmartConnect 8,887 + 4 × `system_cache` 8,279 | **42,003** | 28,690 | 2,244 | 0 | ≤ 244, cache-bound |
-| **fused `kx_xache`, no crossing** | **9,914** | 7,390 | 0 | 256 | 492 |
-| **fused `kx_xache`, ship (4 DRAM-side crossings)** | **11,865** | 10,788 | 64 | 256 | 456 |
+| SmartConnect 8,887 + 4 × `system_cache` in block RAM | 42,003 | 28,690 | 2,244 | 0 | ≤ 244, cache-bound |
+| **SmartConnect 8,887 + 4 × `system_cache` in URAM — like-for-like** | **38,975** | 26,586 | 196 | 256 | ≤ 244, cache-bound |
+| **fused `kx_xache`, no crossing** | **7,839** | 7,763 | 0 | 256 | 469 |
+| **fused `kx_xache`, ship (4 DRAM-side crossings)** | **9,642** | 11,183 | 64 | 256 | 469 |
 
-At the real memory size the fused system is 4.2× fewer LUT (3.5× at the ship
-point with its crossings), keeps the memory in URAM where 2,244 BRAM would be
-83% of the part's 2,688, and meets the 300 MHz ask where the vendor cache's
-244 MHz Fmax cannot. The vendor composition is a Σ of standalone synths, as the station-bus
-page's vendor rows are; the fused figure is one synthesis of one netlist.
+Against the vendor path with the same memory in the same primitive, the fused
+system is 5.0× fewer LUT (4.0× at the ship point with its crossings) and 3.4×
+fewer FF, and meets the 300 MHz ask where the vendor cache's 244 MHz Fmax
+cannot; the block-RAM row is kept because it is what the IP builds by default
+at that size, and the 2,244 BRAM it takes are 83% of the part's 2,688. The
+vendor composition is a Σ of standalone synths, as the station-bus page's
+vendor rows are; the fused figure is one synthesis of one netlist.
 
 ### 5.4 The streaming engine
 
