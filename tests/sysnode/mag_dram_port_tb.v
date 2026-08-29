@@ -6,8 +6,13 @@
 
 // MW is a parameter so xelab -generic_top can also run R=1, where the packing
 // is an identity and the burst-length divide must be bypassed.
+`ifndef TB_RD_OUT
+  `define TB_RD_OUT 1
+`endif
+
 module mag_dram_port_tb #(
-    parameter integer MW = 512 );
+    parameter integer MW = 512,
+    parameter integer RD_OUT = `TB_RD_OUT );
     localparam integer N      = 5;
     localparam integer ADDR_W = 40;
     localparam integer SW     = 256;
@@ -47,7 +52,7 @@ module mag_dram_port_tb #(
     wire             wlast, wvalid, wready, bvalid, bready, rlast, rvalid, rready;
 
     mag_dram_port #(.N(N), .ADDR_W(ADDR_W), .SW(SW), .MW(MW), .ID_W(ID_W),
-                    .WR_MEM("distributed")) u_dut (
+                    .WR_MEM("distributed"), .RD_OUT(RD_OUT)) u_dut (
         .s_aclk(s_aclk), .s_aresetn(resetn),
         .q_valid(q_valid), .q_ready(q_ready), .q_addr(q_addr),
         .q_len(q_len), .q_write(q_write),
@@ -96,7 +101,7 @@ module mag_dram_port_tb #(
     reg [SW-1:0] golden [0:8191];
 
     // ---- one write burst from requester `p` ------------------------------
-    task do_write(input integer p, input integer word, input integer beats);
+    task automatic do_write(input integer p, input integer word, input integer beats);
         integer i;
         reg [SW-1:0] d;
         begin
@@ -130,7 +135,7 @@ module mag_dram_port_tb #(
     endtask
 
     // ---- one read burst from requester `p`, checked against golden -------
-    task do_read(input integer p, input integer word, input integer beats);
+    task automatic do_read(input integer p, input integer word, input integer beats);
         integer i;
         begin
             @(posedge s_aclk);
@@ -165,7 +170,60 @@ module mag_dram_port_tb #(
         end
     endtask
 
-    integer head, tail, base;
+    // ---- the read split in two, so a requester can hold several in flight ---
+    task automatic rd_issue(input integer p, input integer word, input integer beats);
+        begin
+            @(posedge s_aclk);
+            q_addr[p*ADDR_W +: ADDR_W] = word * SBYTES;
+            q_len [p*16     +: 16]     = beats - 1;
+            q_write[p] = 1'b0;
+            q_valid[p] = 1'b1;
+            @(posedge s_aclk);
+            while (!q_ready[p]) begin
+                @(posedge s_aclk);
+            end
+            q_valid[p] = 1'b0;
+            $display("  %0t issued p%0d word %0d beats %0d", $time, p, word, beats);
+        end
+    endtask
+    task automatic rd_collect(input integer p, input integer word, input integer beats);
+        integer i;
+        begin
+            for (i = 0; i < beats; i = i + 1) begin
+                r_ready[p] = 1'b1;
+                @(posedge s_aclk);
+                while (!r_valid[p]) begin
+                    @(posedge s_aclk);
+                end
+                checks = checks + 1;
+                if (r_data[p*SW +: SW] !== golden[word + i]) begin
+                    fail("queued read data mismatch");
+                end
+                if ((i == beats - 1) && !r_last[p]) begin
+                    fail("queued rlast not on last beat");
+                end
+                if ((i != beats - 1) && r_last[p]) begin
+                    fail("queued rlast early");
+                end
+            end
+            r_ready[p] = 1'b0;
+            $display("  %0t collected p%0d word %0d beats %0d", $time, p, word, beats);
+        end
+    endtask
+    // `n` bursts from requester `p`, the issuer running ahead of the collector
+    // as far as RD_OUT lets it: every head phase and length parity, in order
+    task automatic rd_queue(input integer p, input integer word, input integer n);
+        integer k, ki, kc;
+        begin
+            for (k = 0; k < n; k = k + 1) do_write(p, word + k*40 + (k % 2), 5 + (k % 3));
+            fork
+                for (ki = 0; ki < n; ki = ki + 1) rd_issue(p, word + ki*40 + (ki % 2), 5 + (ki % 3));
+                for (kc = 0; kc < n; kc = kc + 1) rd_collect(p, word + kc*40 + (kc % 2), 5 + (kc % 3));
+            join
+        end
+    endtask
+
+    integer head, tail, base, qq;
 
     initial begin
         q_valid = 0; q_write = 0; q_addr = 0; q_len = 0;
@@ -199,9 +257,26 @@ module mag_dram_port_tb #(
         do_read (3, 700, 5);
         do_read (4, 800, 6);
 
+        $display("  %0t matrix, singles, long and every-requester done: %0d checks", $time, checks);
+        // RD_OUT reads in flight from one requester, then from two at once
+        if (RD_OUT > 1) begin
+            rd_queue(0, 1024, RD_OUT);
+            rd_queue(0, 1300, RD_OUT + 2);
+            fork
+                rd_queue(1, 1600, RD_OUT);
+                rd_queue(2, 2000, RD_OUT);
+            join
+            // a write from a third requester in the middle of a queued stream
+            fork
+                rd_queue(3, 2400, RD_OUT);
+                do_write(4, 2800, 9);
+            join
+            do_read(4, 2800, 9);
+        end
+
         repeat (50) @(posedge s_aclk);
         if (errors == 0) begin
-            $display("PASS mag_dram_port_tb: %0d checks", checks);
+            $display("PASS mag_dram_port_tb: %0d checks (RD_OUT=%0d)", checks, RD_OUT);
         end
         else begin
             $display("FAIL mag_dram_port_tb: %0d errors over %0d checks",

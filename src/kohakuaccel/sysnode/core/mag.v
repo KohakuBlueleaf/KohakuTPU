@@ -34,6 +34,10 @@
 
 `default_nettype none
 
+`ifndef KOHAKU_DRAM_RD_OUT
+  `define KOHAKU_DRAM_RD_OUT 1
+`endif
+
 module mag #(
     parameter integer FLIT_WIDTH = 288,
     parameter integer POS_WIDTH  = 4,
@@ -62,6 +66,10 @@ module mag #(
     // mag_dram_port packs DATA_W -> MW, so at 512 an 8-beat 256-bit burst
     // becomes 4 beats. Defaults EQUAL, which is the R=1 no-sub-beat case.
     parameter integer MW         = DATA_W,
+    // DRAM reads one requester may hold in flight (mag_dram_port RD_OUT). The
+    // macro lets a bench set it under a generated top whose parameters it
+    // cannot reach; the default is the shipped value.
+    parameter integer DRAM_RD_OUT = `KOHAKU_DRAM_RD_OUT,
     parameter integer MEM_X      = 0,       // port 0
     parameter integer MEM_Y      = 1,
     parameter integer MEM_X1     = 0,       // port 1
@@ -942,7 +950,7 @@ module mag #(
     );
 
     mag_dram_port #(.N(MP1), .ADDR_W(ADDR_W), .SW(DATA_W), .MW(MW),
-                    .ID_W(ID_W)) u_dram (
+                    .ID_W(ID_W), .RD_OUT(DRAM_RD_OUT)) u_dram (
         .s_aclk(clk), .s_aresetn(resetn),
         .q_valid(dq_valid), .q_ready(dq_ready), .q_addr(dq_addr),
         .q_len(dq_len), .q_write(dq_write),

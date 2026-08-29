@@ -22,7 +22,8 @@ module mag_dram_port #(
     parameter integer ARQ     = 16,
     parameter integer RQ      = 64,
     // Reads a requester may have in flight. 4 measures 2,744 -> 8,917 MB/s on
-    // 20-word bursts and DEFAULTS OFF: it corrupts memory in mover_chain1.
+    // 20-word bursts (mag_dram_port_bw_tb, 300 MHz, 106 ns DRAM); verified at
+    // 2 and 4 by mag_dram_port_tb's queued reads and mover_chain1/2/4.
     parameter integer RD_OUT  = 1,
     parameter         WR_MEM  = "block"
 )(

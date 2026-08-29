@@ -7,8 +7,13 @@
 `default_nettype none
 `timescale 1ns/1ps
 
+`ifndef TB_RD_OUT
+  `define TB_RD_OUT 1
+`endif
+
 module mag_dram_port_bw_tb;
     localparam integer N = 5, AWID = 34, SW = 256, MW = 512, IDW = 4;
+    localparam integer RD_OUT = `TB_RD_OUT;
     localparam integer REQ = 3, REQ2 = 4;
     localparam integer R = MW / SW;
 
@@ -46,7 +51,8 @@ module mag_dram_port_bw_tb;
     assign m_bid = m_bid_r;
     assign m_rid = m_rid_r;
 
-    mag_dram_port #(.N(N), .ADDR_W(AWID), .SW(SW), .MW(MW), .ID_W(IDW)) dut (
+    mag_dram_port #(.N(N), .ADDR_W(AWID), .SW(SW), .MW(MW), .ID_W(IDW),
+                    .RD_OUT(RD_OUT)) dut (
         .s_aclk(s_clk), .s_aresetn(rstn),
         .q_valid(q_valid), .q_ready(q_ready), .q_addr(q_addr),
         .q_len(q_len), .q_write(q_write),
@@ -164,8 +170,8 @@ module mag_dram_port_bw_tb;
             mesh_mhz = mhz;
             LAT      = $rtoi(dram_ns / (2.0 * m_half));
             repeat (20) @(negedge s_clk);
-            $display("--- mesh %0d MHz, ui_clk %0d MHz, DRAM %0d ns = %0d ui-cycles ---",
-                     $rtoi(mhz), $rtoi(500.0 / m_half), $rtoi(dram_ns), LAT);
+            $display("--- mesh %0d MHz, ui_clk %0d MHz, DRAM %0d ns = %0d ui-cycles, RD_OUT %0d ---",
+                     $rtoi(mhz), $rtoi(500.0 / m_half), $rtoi(dram_ns), LAT, RD_OUT);
         end
     endtask
 

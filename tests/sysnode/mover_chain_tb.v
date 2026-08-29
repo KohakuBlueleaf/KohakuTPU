@@ -181,17 +181,17 @@ module mover_chain_core #(
 
     // ---- the source mover's AXI, for the burst monitor -------------------
     // Hierarchical because the generated top exposes neither status nor bus.
-    wire        mv_busy   = mesh[SRCP].u.u_mag.u_pe.u_mover.stat_busy;
-    wire [3:0]  mv_fault  = mesh[SRCP].u.u_mag.u_pe.u_mover.stat_fault;
-    wire [31:0] mv_done   = mesh[SRCP].u.u_mag.u_pe.u_mover.stat_done;
-    wire [AW-1:0] mv_araddr = mesh[SRCP].u.u_mag.u_pe.u_mover.m_araddr;
-    wire [7:0]  mv_arlen   = mesh[SRCP].u.u_mag.u_pe.u_mover.m_arlen;
-    wire        mv_arv     = mesh[SRCP].u.u_mag.u_pe.u_mover.m_arvalid;
-    wire        mv_arr     = mesh[SRCP].u.u_mag.u_pe.u_mover.m_arready;
-    wire [AW-1:0] mv_awaddr = mesh[SRCP].u.u_mag.u_pe.u_mover.m_awaddr;
-    wire [7:0]  mv_awlen   = mesh[SRCP].u.u_mag.u_pe.u_mover.m_awlen;
-    wire        mv_awv     = mesh[SRCP].u.u_mag.u_pe.u_mover.m_awvalid;
-    wire        mv_awr     = mesh[SRCP].u.u_mag.u_pe.u_mover.m_awready;
+    wire        mv_busy   = mesh[SRCP].u.u_mag.g_rv32.u_pe.u_mover.stat_busy;
+    wire [3:0]  mv_fault  = mesh[SRCP].u.u_mag.g_rv32.u_pe.u_mover.stat_fault;
+    wire [31:0] mv_done   = mesh[SRCP].u.u_mag.g_rv32.u_pe.u_mover.stat_done;
+    wire [AW-1:0] mv_araddr = mesh[SRCP].u.u_mag.g_rv32.u_pe.u_mover.m_araddr;
+    wire [7:0]  mv_arlen   = mesh[SRCP].u.u_mag.g_rv32.u_pe.u_mover.m_arlen;
+    wire        mv_arv     = mesh[SRCP].u.u_mag.g_rv32.u_pe.u_mover.m_arvalid;
+    wire        mv_arr     = mesh[SRCP].u.u_mag.g_rv32.u_pe.u_mover.m_arready;
+    wire [AW-1:0] mv_awaddr = mesh[SRCP].u.u_mag.g_rv32.u_pe.u_mover.m_awaddr;
+    wire [7:0]  mv_awlen   = mesh[SRCP].u.u_mag.g_rv32.u_pe.u_mover.m_awlen;
+    wire        mv_awv     = mesh[SRCP].u.u_mag.g_rv32.u_pe.u_mover.m_awvalid;
+    wire        mv_awr     = mesh[SRCP].u.u_mag.g_rv32.u_pe.u_mover.m_awready;
 
     integer merr = 0, n_ar = 0, n_aw = 0;
     reg [3:0] aw_mesh_seen;
