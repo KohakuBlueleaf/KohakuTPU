@@ -577,32 +577,53 @@ about 11,000 LUTs — and that slope is measured on a reconstruction that reads
 
 ### 2.8 In context: the KohakuAccel deployment
 
-The SmartConnect tree and the station line, per die and in total. Line figures are
-`FW=256`, `LUT_PER_BRAM=820` (no block RAM), `LINK_FULL=0`, four slaves per
-station, three masters on SLR1. Station totals include that station's switch,
-its NSU shims, and on SLR1 its three NMU shims.
+The SmartConnect tree and the station line, per die and in total, both sides at
+the same endpoint set: four slaves per station, three masters on SLR1.
 
-Both sides at the same endpoint set. The station column is the per-instance
-breakdown of one synthesis of the deployed configuration — `FW=256`, `AW=43`,
-`BALANCED`, no block RAM, `LINK_FULL=0`, `LINK_CDC=1` — not a per-die
-extrapolation. Its rows sum to 22,074 against the 22,106 reported for the whole
-netlist, the 32 LUT difference being top-level glue, and its flip-flops sum to
-48,167 exactly.
+**The line as built — the ship recipe** (§2.17: `FW=256`, `AW=43`, `NQ=4`,
+`LINK_FULL=0`, `LINK_CDC=1`, block-RAM FIFOs, outstanding 4 / 8 / 2 on the
+three managers, the control manager placing rather than packing, one synthesis
+via `scripts/tcl/ooc_line_d2.tcl`). Each station row is that station's hub set
+plus its NSU shims and, on SLR1, its three NMU shims, read from the hierarchy
+report; the rows sum to the netlist exactly — 23,053 LUT with 32 of top-level
+glue, 42,223 FF, 84 RAMB36 + 13 RAMB18:
+
+| | SMC LUTs | line LUTs | ratio | SMC FF | line FF | line BRAM |
+|---|---|---|---|---|---|---|
+| SLR0 | 8,516 | 4,385 | 1.94× | 16,575 | 6,323 | 15 + 3 |
+| SLR1 | 41,788 | **8,043** | **5.20×** | 57,002 | 11,031 | 39 + 4 |
+| SLR2 | 13,266 | 4,908 | 2.70× | 24,984 | 7,054 | 15 + 3 |
+| SLR3 | 8,516 | 4,392 | 1.94× | 16,575 | 6,329 | 15 + 3 |
+| inter-die | 9,795 | 1,293 | 7.58× | 14,988 | 11,486 | 0 |
+| top glue | | 32 | | | | |
+| **total** | **81,881** | **23,053** | **3.55×** | **130,124** | **42,223** | 84 + 13 |
+
+SLR1 is hub set 2,122 + NMUs 1,158 / 967 / 609 + NSUs 760 / 811 / 808 / 808.
+The leaf stations differ only in their hub set — 1,209 and 1,216 at the two
+ends of the line, 1,732 on SLR2, which forwards in both directions — over the
+same four NSUs (752 + 3 × 808). A link pair is 431 LUT (241 request + 190
+response) and 3,826–3,834 FF, the die-crossing pipelines being flops by design.
+
+**The earlier configuration** — the same line with no block RAM
+(`LUT_PER_BRAM=820`, `BALANCED`), the row the FW and AW sweeps of §2.5 were
+run at, kept because those sweeps are quoted against it:
 
 | | SMC LUTs | line LUTs | ratio | SMC FF | line FF |
 |---|---|---|---|---|---|
 | SLR0 | 8,516 | 3,718 | 2.29× | 16,575 | 6,963 |
-| SLR1 | 41,788 | **8,756** | **4.77×** | 57,002 | 14,380 |
+| SLR1 | 41,788 | 8,756 | 4.77× | 57,002 | 14,380 |
 | SLR2 | 13,266 | 4,239 | 3.13× | 24,984 | 7,695 |
 | SLR3 | 8,516 | 3,720 | 2.29× | 16,575 | 6,963 |
 | inter-die | 9,795 | 1,641 | 5.97× | 14,988 | 12,166 |
 | **total** | **81,881** | **22,106** | **3.70×** | **130,124** | **48,167** |
 | BRAM | 0 | 0 | | | |
 
-SLR1 breaks down as three NMUs at 1,017 + 2,119 + 1,005, four NSUs at 1,001 +
-563 + 563 + 560, and a 1,928-LUT switch — the switch being larger than the other
-stations' because it arbitrates three injecting masters rather than one. The
-512-bit NMU costs about twice a 32-bit one at this flit width.
+Its rows sum to 22,074 against the 22,106 reported for the whole netlist, the
+32 LUT difference being top-level glue. SLR1 there broke down as three NMUs at
+1,017 + 2,119 + 1,005, four NSUs at 1,001 + 563 + 563 + 560, and a 1,928-LUT
+switch. The ship recipe spends 947 more LUT on the line than this
+configuration and 5,944 fewer flip-flops, and moves the deep queues into 90
+block RAM; the per-port reasons are §2.17.
 
 The saving concentrates on SLR1, which carries the root SmartConnect and XDMA.
 Whether that is where the device needs it is a separate question, answered in
@@ -995,7 +1016,7 @@ crosses.
 | | LUT |
 |---|---|
 | **whole bus** | **23,053** — 42,223 FF, 90 BRAM |
-| **SLR1 station** (3 managers, 4 subordinates, 8 hubs) | **8,044** |
+| **SLR1 station** (3 managers, 4 subordinates, 8 hubs) | **8,043** |
 | — hub set | 2,122 |
 | — NMU, 64-bit JTAG, `OUTST=4` | 1,158 |
 | — NMU, 512-bit XDMA, `OUTST=8` | 967 |
@@ -1516,10 +1537,12 @@ reason is given rather than the preference.
 | `LUT_PER_BRAM` | **820**, i.e. no block RAM | Block RAM saves 5,804 LUTs for 130.5 tiles — 44 LUTs per tile, against the ~820 a tile is worth on this device. Per station, so a die with spare block RAM may choose otherwise. |
 | `MAX_BURST` | **1** on the 32-bit ports | Single-beat is a protocol guarantee on `M_AXI_LITE`. Declaring it keeps their response FIFOs at depth 16 instead of the 256 the 4 KB rule would demand. |
 
-**What that buys.** 22,106 LUTs and 48,167 flip-flops against the tree's 81,881
-and 130,124 — **3.70×**, and **4.77× on SLR1**, the die carrying both
-`root_smc` and XDMA. The interconnect frees about 33,000 LUTs there; XDMA at one
-channel per direction frees roughly 17,000 more.
+**What that buys.** At the ship recipe (§2.17), 23,053 LUTs and 42,223
+flip-flops against the tree's 81,881 and 130,124 — **3.55×**, and **5.20× on
+SLR1**, the die carrying both `root_smc` and XDMA (the no-block-RAM
+configuration this table was chosen at: 22,106 / 48,167, 3.70× and 4.77×). The
+interconnect frees about 33,000 LUTs there; XDMA at one channel per direction
+frees roughly 17,000 more.
 
 **Where it does not help.** SLR1 is the *least* utilised die in the placed v5
 design — 88.61% CLB against SLR0's 95.49%, and 45% DSP against 79.6% — because

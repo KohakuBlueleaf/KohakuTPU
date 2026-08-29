@@ -259,12 +259,13 @@ currently uses.
 
 Two inputs, and the second is extrapolated rather than measured.
 
-**Interconnect.** At the deployed configuration — `FW=256`, `AW=43`,
-`BALANCED`, no block RAM, `LINK_FULL=0`, `LINK_CDC=1` — the whole four-station
-line measures **22,106 LUT / 48,167 FF**, against v5's tree total of 81,881 LUT
-/ 130,124 FF: **3.70x**. Per die the saving concentrates where the tree's root
-sat — SLR1 goes from 41,788 to 8,756, a factor of **4.77**. Both columns and
-their per-row provenance are in
+**Interconnect.** At the ship recipe — `FW=256`, `AW=43`, `LINK_FULL=0`,
+`LINK_CDC=1`, block-RAM FIFOs, outstanding 4 / 8 / 2 on the managers — the
+whole four-station line measures **23,053 LUT / 42,223 FF / 90 BRAM**, against
+v5's tree total of 81,881 LUT / 130,124 FF: **3.55×**. Per die the saving
+concentrates where the tree's root sat — SLR1 goes from 41,788 to 8,043, a
+factor of **5.20**. (The earlier no-block-RAM configuration measured 22,106 /
+48,167, 3.70×.) Both columns and their per-row provenance are in
 [kohakuaxi/station-bus.md](../kohakuaxi/station-bus.md) §2.8.
 
 **XDMA**, above: about 17,000 LUT and 48 RAMB36, all on SLR1.

@@ -200,26 +200,26 @@ converter in front of that one port.
 ### 4.1 The deployed line
 
 Four stations, four subordinates each, three managers on station 1, flit width
-256, address width 43, four outstanding transactions with store-and-forward, no
-block RAM, per-station fabric clocks. **Out-of-context synthesis.**
+256, address width 43, per-station fabric clocks, at the **ship recipe** —
+block-RAM FIFOs, outstanding 4 / 8 / 2 on the three managers, the control
+manager placing rather than packing. **Out-of-context synthesis**, one run.
 
 | | |
 |---|---|
-| CLB LUTs | **22,106** — 14,492 as logic, 7,614 as distributed RAM |
-| CLB registers | **48,167** |
-| block RAM / SRL | 0 / 0 |
-| control sets | 975 |
+| CLB LUTs | **23,053** — 19,599 as logic, 3,454 as distributed RAM |
+| CLB registers | **42,223** |
+| block RAM | 84 RAMB36 + 13 RAMB18 |
+| per die (station + ports) | SLR0 4,385 · SLR1 **8,043** · SLR2 4,908 · SLR3 4,392 · three link pairs 1,293 |
 
 Against the SmartConnect tree it replaces, at the same endpoint set:
-**81,881 LUT and 130,124 FF, so 3.70x** — and **4.77x on the one die that
+**81,881 LUT and 130,124 FF, so 3.55×** — and **5.20× on the one die that
 carried the tree's root**. The per-die breakdown and the provenance of each
 SmartConnect row are [station-bus.md](station-bus.md) §2.8; that column is not
-uniformly from one build, and the page says which row came from where.
+uniformly from one build, and the page says which row came from where. The
+earlier no-block-RAM configuration the width and address sweeps were run at
+measured 22,106 LUT / 48,167 FF (3.70×) and is kept there beside it.
 
-The same line at the **ship recipe** — block-RAM FIFOs, outstanding 4/8/2 on the
-three managers, the control manager placing rather than packing — measures
-**23,053 LUT, 42,223 FF, 90 BRAM**, of which the manager station on SLR1 is
-**8,044**. Per port on that station: hub set 2,122; the 512-bit and 64-bit
+On the manager station, **8,043** breaks down as: hub set 2,122; the 512-bit and 64-bit
 managers 1,158 and 967; the 32-bit control manager 609; the 512-bit subordinate
 760; each 32-bit subordinate 808–811. [station-bus.md](station-bus.md) §2.17
 carries the breakdown.
