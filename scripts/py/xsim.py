@@ -294,20 +294,25 @@ BENCHES = {
             "tests/axi/kaxi_xbar_tb.v",
         ],
     ),
-    # Fused xbar-cache, engine-composed: masters -> kx_carray[N] via rd/wr engines -> DRAM.
-    "kx_mempath": (
-        "kx_mempath_tb",
+    # The Xache (KX = Kohaku-Xache System, Xache = xbar-cache): masters -> per-home
+    # cache arrays via rd/wr engines -> DRAM. -d TB_M/TB_N/TB_K/TB_RSAMD/TB_WSAMD/
+    # TB_TWOCLK/TB_SETS/TB_SET_W resize it; -d TB_ILV=<bit> interleaves the homes
+    # at 2^bit bytes (12 = 4 KB); -d TB_PERF adds the cycle-counted streams.
+    "kx_xache": (
+        "kx_xache_tb",
         [
             "src/kohakuaccel/common/kohaku_sdpram.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaxi/kx_scdc.v",
             "src/kohakuaxi/kx_link.v",
+            "src/kohakuaxi/kx_perm.v",
             "src/kohakuaxi/kx_carray.v",
             "src/kohakuaxi/kx_rd_engine.v",
+            "src/kohakuaxi/kx_rd_pipe.v",
             "src/kohakuaxi/kx_wr_engine.v",
-            "src/kohakuaxi/kx_mempath_e.v",
+            "src/kohakuaxi/kx_xache.v",
             "src/kohakuaccel/verif/axi4_ram.v",
-            "tests/axi/kx_mempath_tb.v",
+            "tests/axi/kx_xache_tb.v",
         ],
     ),
     # Output-engine de-concentrator: 1 AXI -> N subs, address-routed.

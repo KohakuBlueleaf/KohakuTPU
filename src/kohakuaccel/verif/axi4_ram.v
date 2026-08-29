@@ -12,7 +12,8 @@ module axi4_ram #(
     parameter DATA_WIDTH = 64,
     parameter ADDR_WIDTH = 64,
     parameter ID_WIDTH   = 4,
-    parameter DEPTH      = 4096          // in DATA_WIDTH-wide words
+    parameter DEPTH      = 4096,         // in DATA_WIDTH-wide words
+    parameter RD_LAT_CYC = 0             // cycles from AR accept to the first R beat
 ) (
     input  wire                    clk,
     input  wire                    resetn,      // ACTIVE LOW, like every AXI reset
@@ -145,8 +146,9 @@ module axi4_ram #(
     end
 
     // ----------------------------------------------------------------- read
-    localparam R_IDLE = 1'b0, R_DATA = 1'b1;
-    reg                  rstate;
+    localparam [1:0] R_IDLE = 2'd0, R_DATA = 2'd1, R_WAIT = 2'd2;
+    reg [1:0]            rstate;
+    reg [15:0]           rwait;
     reg [ADDR_WIDTH-1:0] raddr;
     reg [8:0]            rbeats;          // 9 bits: ARLEN+1 can be 256
     reg [7:0]            rlen;            // captured ARLEN, needed by WRAP
@@ -191,8 +193,14 @@ module axi4_ram #(
                         rlen   <= s_axi_arlen;
                         rsize  <= s_axi_arsize;
                         rburst <= s_axi_arburst;
-                        rstate <= R_DATA;
+                        rwait  <= RD_LAT_CYC;
+                        rstate <= (RD_LAT_CYC > 0) ? R_WAIT : R_DATA;
                     end
+                end
+                R_WAIT: begin
+                    if (rvalid_r && s_axi_rready) rvalid_r <= 1'b0;
+                    rwait <= rwait - 16'd1;
+                    if (rwait <= 16'd1) rstate <= R_DATA;
                 end
                 R_DATA: if (r_can_advance) begin
                     if (rbeats != 9'd0) begin
@@ -207,6 +215,7 @@ module axi4_ram #(
                         rstate   <= R_IDLE;
                     end
                 end
+                default: rstate <= R_IDLE;
             endcase
         end
     end
