@@ -5,7 +5,7 @@
 // owner of at most one home). Combinational route, 2-deep skids only, ZERO BRAM,
 // single clock. The master index rides the top of the ID for the return path.
 // v1 trades write/read throughput per home for area+simplicity; multi-outstanding
-// is a measured upgrade. Superseded by kx_mempath_e (the fused xbar-cache).
+// is a measured upgrade. Superseded by kx_xache (the Xache, the fused xbar-cache).
 
 `default_nettype none
 

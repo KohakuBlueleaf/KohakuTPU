@@ -1,15 +1,20 @@
-// Fused xbar-cache, engine-composed. AXI only at the two edges (M masters in, N DRAM
-// out); between them no AXI. The whole fabric -- N kx_carray (one cache per home,
-// holding all wide data), the engines (control only) and the crossbar -- runs on ONE
-// clock, `clk`. A crossing exists only at a port's edge and only where the user says
-// that port's clock differs (MCDC[m] / HCDC[h]); a port on `clk` costs nothing.
-// Every wide select is a one-hot AND-OR at its natural fan-in. Engine grouping is a
-// knob: SAMD = one per home, SASD = one over all homes; RSAMD/WSAMD independent.
-// One outstanding read + one write per master.
+// KX = Kohaku-Xache System; Xache = xbar-cache. This is the Xache: M AXI masters to
+// N cached DRAM channels ("homes") as ONE system. AXI only at the two edges;
+// between them no AXI. The whole fabric -- N kx_carray (one cache array per home,
+// holding all wide data), the engines (control only) and the crossbar -- runs on
+// ONE clock, `clk`. A crossing exists only at a port's edge and only where the
+// user says that port's clock differs (MCDC[m] / HCDC[h]); a port on `clk` costs
+// nothing. Every wide select is an indexed mux on a registered binary index.
+// Engine grouping is a knob: SAMD = one per home, SASD = one over all homes;
+// RSAMD/WSAMD independent. Channel interleaving is an address-bit permutation at
+// the master edge (NSWAP/SWAP_*), i.e. wires. The read engine is a knob too:
+// RD_PIPE=0 serves one beat per array round, RD_PIPE=1 streams a lookup per
+// cycle and lets a master hold RD_OUTQ bursts across the homes, drained in
+// order. One outstanding write per master.
 
 `default_nettype none
 
-module kx_mempath_e #(
+module kx_xache #(
     parameter integer M         = 4,
     parameter integer N_HOME    = 4,
     parameter integer AW        = 40,
@@ -25,6 +30,21 @@ module kx_mempath_e #(
     parameter integer RSAMD     = 1,
     parameter integer WSAMD     = 1,
     parameter integer CDC_DEPTH = 16,
+    // Address permutation at the master edge: NSWAP bit-pair swaps (one byte of
+    // bit index per pair in SWAP_A / SWAP_B), applied in order, 0 LUT. Channel
+    // interleave at 2^G bytes = rotate [G, HOME_LSB+log2 N) down by log2 N:
+    // pairs (i, i+log2 N) for i = G .. HOME_LSB-1 (see kx_perm.v for why not a
+    // plain field swap). Every bit must be >= max(LINE_LSB, 12) -- a line stays
+    // in one home, the AXI 4 KB rule keeps a burst in one -- enforced at elab.
+    parameter integer NSWAP     = 0,
+    parameter [((NSWAP < 1) ? 1 : NSWAP)*8-1:0] SWAP_A = 0,
+    parameter [((NSWAP < 1) ? 1 : NSWAP)*8-1:0] SWAP_B = 0,
+    // Read path. RD_PIPE=1: the streaming engine (kx_rd_pipe) -- one lookup per
+    // cycle, a miss becomes one DRAM read for the rest of the burst, responses
+    // ordered per master. RD_OUTQ: bursts a master may have outstanding across
+    // homes; above 1 needs RD_PIPE (the one-beat engine has no ordering).
+    parameter integer RD_PIPE   = 0,
+    parameter integer RD_OUTQ   = 1,
     parameter integer MIDX_W    = (M <= 1) ? 1 : $clog2(M),
     parameter integer HIDX_W    = (N_HOME <= 1) ? 1 : $clog2(N_HOME),
     parameter integer IDW       = ID_W + MIDX_W,
@@ -111,6 +131,11 @@ module kx_mempath_e #(
     genvar e, i, m, h;
     localparam integer NRE = RSAMD ? N_HOME : 1;
     localparam integer NWE = WSAMD ? N_HOME : 1;
+    localparam integer SEQW = (RD_OUTQ <= 1) ? 1 : $clog2(RD_OUTQ);
+    localparam integer OSTW = $clog2(RD_OUTQ + 1);
+    generate if (RD_OUTQ > 1 && RD_PIPE == 0) begin : g_outq_guard
+        kx_xache_RD_OUTQ_above_1_needs_RD_PIPE u_illegal ();
+    end endgenerate
 
     // ======================= master edge: one crossing per port iff MCDC =======================
     // x_* is the master's bus on `clk`
@@ -221,31 +246,51 @@ module kx_mempath_e #(
     wire [HIDX_W-1:0] rhome [0:M-1];
     wire [HIDX_W-1:0] whome [0:M-1];
     wire [M*IDW-1:0]  arid_ot, awid_ot;
+    // p_* is the master's address after the permutation: the space every engine,
+    // array and DRAM port sees. NSWAP=0 makes it x_* by wire.
+    wire [M*AW-1:0]   p_awaddr, p_araddr;
+    localparam integer SWAP_MIN = (LINE_LSB > 12) ? LINE_LSB : 12;
     generate for (m = 0; m < M; m = m + 1) begin : g_route
-        assign rhome[m] = x_araddr[m*AW + HOME_LSB +: HIDX_W];
-        assign whome[m] = x_awaddr[m*AW + HOME_LSB +: HIDX_W];
+        kx_perm #(.WIDTH(AW), .NSWAP(NSWAP), .SWAP_A(SWAP_A), .SWAP_B(SWAP_B),
+                          .MIN_BIT(SWAP_MIN)) u_paw (.i(x_awaddr[m*AW +: AW]), .o(p_awaddr[m*AW +: AW]));
+        kx_perm #(.WIDTH(AW), .NSWAP(NSWAP), .SWAP_A(SWAP_A), .SWAP_B(SWAP_B),
+                          .MIN_BIT(SWAP_MIN)) u_par (.i(x_araddr[m*AW +: AW]), .o(p_araddr[m*AW +: AW]));
+        assign rhome[m] = p_araddr[m*AW + HOME_LSB +: HIDX_W];
+        assign whome[m] = p_awaddr[m*AW + HOME_LSB +: HIDX_W];
         assign arid_ot[m*IDW +: IDW] = {m[MIDX_W-1:0], x_arid[m*ID_W +: ID_W]};
         assign awid_ot[m*IDW +: IDW] = {m[MIDX_W-1:0], x_awid[m*ID_W +: ID_W]};
     end endgenerate
 
-    wire [N_HOME-1:0]          c_flush, c_rd_en, c_hit, c_fill_go, c_fill_done, c_wr_en, c_wr_full;
-    wire [N_HOME*SET_W-1:0]    c_rd_idx, c_wr_idx;
-    wire [N_HOME*TAG_W-1:0]    c_rd_tag, c_wr_tag;
+    wire [N_HOME-1:0]          c_flush, c_rd_en, c_rd_take, c_land, c_hit_c, c_hit;
+    wire [N_HOME-1:0]          c_fill_go, c_fill_ready, c_fill_done, c_wr_en, c_wr_full;
+    wire [N_HOME*SET_W-1:0]    c_rd_idx, c_fill_idx, c_wr_idx;
+    wire [N_HOME*TAG_W-1:0]    c_rd_tag, c_fill_tag, c_wr_tag;
     wire [N_HOME*(SUBW+1)-1:0] c_rd_sub;
     wire [N_HOME*W-1:0]        c_word, c_wr_word;
 
     generate for (h = 0; h < N_HOME; h = h + 1) begin : g_carray
-        kx_carray #(.AW(AW), .W(W), .SETS(SETS), .SET_W(SET_W), .K(K), .RAM_STYLE(RAM_STYLE)) u_c (
+        kx_carray #(.AW(AW), .W(W), .SETS(SETS), .SET_W(SET_W), .K(K), .RAM_STYLE(RAM_STYLE),
+                    .FILL_SERVE(RD_PIPE ? 0 : 1)) u_c (
             .clk(clk), .resetn(rstn),
             .rd_en(c_rd_en[h]), .rd_idx(c_rd_idx[h*SET_W +: SET_W]),
             .rd_tag(c_rd_tag[h*TAG_W +: TAG_W]), .rd_sub(c_rd_sub[h*(SUBW+1) +: SUBW+1]),
+            .rd_take(c_rd_take[h]), .land(c_land[h]), .hit_c(c_hit_c[h]),
             .hit(c_hit[h]), .word(c_word[h*W +: W]),
             .fill_go(c_fill_go[h]), .r_data(y_rdata[h*W +: W]), .r_valid(y_rvalid[h]),
-            .r_last(y_rlast[h]), .fill_done(c_fill_done[h]),
+            .r_last(y_rlast[h]), .fill_idx(c_fill_idx[h*SET_W +: SET_W]),
+            .fill_tag(c_fill_tag[h*TAG_W +: TAG_W]), .fill_ready(c_fill_ready[h]),
+            .fill_done(c_fill_done[h]),
             .wr_en(c_wr_en[h]), .wr_idx(c_wr_idx[h*SET_W +: SET_W]),
             .wr_tag(c_wr_tag[h*TAG_W +: TAG_W]), .wr_word(c_wr_word[h*W +: W]),
             .wr_full(c_wr_full[h]), .flush_busy(c_flush[h]));
     end endgenerate
+
+    // per-master read bookkeeping (kept in g_agg): the sequence number given to
+    // each burst and the one that may drain next
+    wire [SEQW-1:0]  seq_alloc [0:M-1];
+    wire [SEQW-1:0]  seq_drain [0:M-1];
+    wire [M-1:0]     ar_ok;                 // below RD_OUTQ: the engines may take this master's AR
+    localparam integer HOSN = 1 << SEQW;
 
     // per-master target-home valid gating, per-home ready gathering
     wire [M-1:0]   ar_rdy_hm [0:N_HOME-1];
@@ -265,6 +310,7 @@ module kx_mempath_e #(
     // (5 LUT/bit); a flop-driven select lets the 4:1 map to LUT6+MUXF7.
     wire [HIDX_W-1:0] r_hidx_e [0:NRE-1];
     wire [MIDX_W-1:0] w_midx_e [0:NWE-1];
+    wire [SEQW-1:0]   r_seq_e  [0:NRE-1];
 
     // ================================ READ engines ================================
     generate for (e = 0; e < NRE; e = e + 1) begin : g_rd
@@ -278,15 +324,18 @@ module kx_mempath_e #(
         wire [NH*M*AW-1:0]  q_addr;
         wire [NH*M*8-1:0]   q_len;
         wire [NH*M*3-1:0]   q_size;
+        wire [NH*M*SEQW-1:0] q_seq;
         wire            r_val, r_rdy, r_last;
         wire [IDW-1:0]  r_id;
         wire [1:0]      r_resp;
         wire [NH-1:0]   r_home;
+        wire [SEQW-1:0] r_seq;
         wire [MIDX_W-1:0] r_own = r_id[ID_W +: MIDX_W];
+        assign r_seq_e[e] = r_seq;
 
         wire [IDW-1:0] e_arid;  wire [AW-1:0] e_araddr; wire [7:0] e_arlen;
         wire [2:0] e_arsize;    wire [1:0] e_arburst;
-        wire [SET_W-1:0] e_rd_idx; wire [TAG_W-1:0] e_rd_tag; wire [SUBW:0] e_rd_sub;
+        wire [SET_W-1:0] e_rd_idx, e_fl_idx; wire [TAG_W-1:0] e_rd_tag, e_fl_tag; wire [SUBW:0] e_rd_sub;
 
         // no r_data here: the fabric selects the home's word straight onto the
         // master (one M×N one-hot, below); this engine contributes sel_r bits only
@@ -299,23 +348,38 @@ module kx_mempath_e #(
             assign c_rd_idx[GH*SET_W +: SET_W] = e_rd_idx;
             assign c_rd_tag[GH*TAG_W +: TAG_W] = e_rd_tag;
             assign c_rd_sub[GH*(SUBW+1) +: SUBW+1] = e_rd_sub;
+            assign c_fill_idx[GH*SET_W +: SET_W] = e_fl_idx;
+            assign c_fill_tag[GH*TAG_W +: TAG_W] = e_fl_tag;
             for (m = 0; m < M; m = m + 1) begin : g_m
                 wire tgt = (rhome[m] == GH[HIDX_W-1:0]);
-                assign q_val[i*M+m] = x_arvalid[m] && tgt;
+                // an engine may only latch an AR the master edge will count
+                assign q_val[i*M+m] = x_arvalid[m] && tgt && ar_ok[m];
                 assign ar_rdy_hm[GH][m] = q_rdy[i*M+m];
                 assign q_id[(i*M+m)*IDW +: IDW] = arid_ot[m*IDW +: IDW];
-                assign q_addr[(i*M+m)*AW +: AW] = x_araddr[m*AW +: AW];
+                assign q_addr[(i*M+m)*AW +: AW] = p_araddr[m*AW +: AW];
                 assign q_len[(i*M+m)*8 +: 8]    = x_arlen[m*8 +: 8];
                 assign q_size[(i*M+m)*3 +: 3]   = x_arsize[m*3 +: 3];
+                assign q_seq[(i*M+m)*SEQW +: SEQW] = seq_alloc[m];
             end
         end
+        // ordered drain: only the master's oldest outstanding burst presents.
+        // The turn is REGISTERED: it changes a cycle after the previous burst's
+        // last beat, when the engine's first landing is still >= RD_LAT away,
+        // and the compare was the head of the accept path.
+        reg turn_q;
+        always @(posedge clk) turn_q <= (RD_PIPE == 0) || (r_seq == seq_drain[r_own]);
         for (m = 0; m < M; m = m + 1) begin : g_rsp
-            assign rv_em[m][e] = r_val && (r_own == m[MIDX_W-1:0]);
+            assign rv_em[m][e] = r_val && (r_own == m[MIDX_W-1:0]) && turn_q;
             assign rd_em[m][e] = {r_id[ID_W-1:0], r_resp, r_last};
         end
-        // the engine retires only on the master's DELAYED valid (x_rvalid lags
-        // r_val by the index flop), so ready is qualified by it
-        assign r_rdy = x_rready[r_own] && x_rvalid[r_own];
+        // RD_PIPE=0: the engine retires only on the master's DELAYED valid
+        // (x_rvalid lags r_val by the index flop). RD_PIPE=1: on ITS OWN visible
+        // valid -- another engine's burst may be draining to the same master.
+        wire [M-1:0] rv_e_m;
+        for (m = 0; m < M; m = m + 1) begin : g_rvm
+            assign rv_e_m[m] = rv_em[m][e];
+        end
+        assign r_rdy = x_rready[r_own] && ((RD_PIPE != 0) ? (|rv_e_m) : x_rvalid[r_own]);
         // publish this engine's (home, master) one-hot for the fabric's R select
         for (h = 0; h < N_HOME; h = h + 1) begin : g_selr
             for (m = 0; m < M; m = m + 1) begin : g_m
@@ -327,20 +391,45 @@ module kx_mempath_e #(
             end
         end
 
-        kx_rd_engine #(.M(M), .NH(NH), .AW(AW), .W(W), .IDW(IDW), .SET_W(SET_W),
-                       .K(K), .RAM_STYLE(RAM_STYLE)) u_re (
-            .clk(clk), .resetn(rstn), .flush_busy(c_flush[BASE +: NH]),
-            .mr_qval(q_val), .mr_qrdy(q_rdy), .mr_qid(q_id), .mr_qaddr(q_addr),
-            .mr_qlen(q_len), .mr_qsize(q_size),
-            .r_val(r_val), .r_rdy(r_rdy), .r_id(r_id), .r_resp(r_resp), .r_last(r_last),
-            .r_home(r_home), .r_hidx(r_hidx_l),
-            .c_rd_en(c_rd_en[BASE +: NH]), .c_rd_idx(e_rd_idx), .c_rd_tag(e_rd_tag),
-            .c_rd_sub(e_rd_sub), .c_hit(c_hit[BASE +: NH]),
-            .c_fill_go(c_fill_go[BASE +: NH]), .c_fill_done(c_fill_done[BASE +: NH]),
-            .m_arid(e_arid), .m_araddr(e_araddr), .m_arlen(e_arlen), .m_arsize(e_arsize),
-            .m_arburst(e_arburst), .m_arvalid(y_arvalid[BASE +: NH]),
-            .m_arready(y_arready[BASE +: NH]),
-            .m_rresp(y_rresp[BASE*2 +: NH*2]), .m_rready(y_rready[BASE +: NH]));
+        if (RD_PIPE) begin : g_pipe
+            kx_rd_pipe #(.M(M), .NH(NH), .AW(AW), .W(W), .IDW(IDW), .SET_W(SET_W),
+                         .K(K), .RAM_STYLE(RAM_STYLE), .SEQW(SEQW)) u_re (
+                .clk(clk), .resetn(rstn), .flush_busy(c_flush[BASE +: NH]),
+                .mr_qval(q_val), .mr_qrdy(q_rdy), .mr_qid(q_id), .mr_qaddr(q_addr),
+                .mr_qlen(q_len), .mr_qseq(q_seq),
+                .r_val(r_val), .r_rdy(r_rdy), .r_id(r_id), .r_resp(r_resp), .r_last(r_last),
+                .r_home(r_home), .r_hidx(r_hidx_l), .r_seq(r_seq),
+                .c_rd_en(c_rd_en[BASE +: NH]), .c_rd_idx(e_rd_idx), .c_rd_tag(e_rd_tag),
+                .c_rd_sub(e_rd_sub), .c_rd_take(c_rd_take[BASE +: NH]),
+                .c_land(c_land[BASE +: NH]), .c_hit_c(c_hit_c[BASE +: NH]),
+                .c_fill_go(c_fill_go[BASE +: NH]), .c_fill_idx(e_fl_idx), .c_fill_tag(e_fl_tag),
+                .c_fill_ready(c_fill_ready[BASE +: NH]), .c_fill_done(c_fill_done[BASE +: NH]),
+                .m_arid(e_arid), .m_araddr(e_araddr), .m_arlen(e_arlen), .m_arsize(e_arsize),
+                .m_arburst(e_arburst), .m_arvalid(y_arvalid[BASE +: NH]),
+                .m_arready(y_arready[BASE +: NH]),
+                .m_rvalid(y_rvalid[BASE +: NH]), .m_rlast(y_rlast[BASE +: NH]),
+                .m_rresp(y_rresp[BASE*2 +: NH*2]), .m_rready(y_rready[BASE +: NH]));
+        end else begin : g_one
+            assign r_seq = {SEQW{1'b0}};
+            assign e_fl_idx = e_rd_idx;
+            assign e_fl_tag = e_rd_tag;
+            assign c_rd_take[BASE +: NH] = {NH{1'b1}};
+            kx_rd_engine #(.M(M), .NH(NH), .AW(AW), .W(W), .IDW(IDW), .SET_W(SET_W),
+                           .K(K), .RAM_STYLE(RAM_STYLE)) u_re (
+                .clk(clk), .resetn(rstn), .flush_busy(c_flush[BASE +: NH]),
+                .mr_qval(q_val), .mr_qrdy(q_rdy), .mr_qid(q_id), .mr_qaddr(q_addr),
+                .mr_qlen(q_len), .mr_qsize(q_size),
+                .r_val(r_val), .r_rdy(r_rdy), .r_id(r_id), .r_resp(r_resp), .r_last(r_last),
+                .r_home(r_home), .r_hidx(r_hidx_l),
+                .c_rd_en(c_rd_en[BASE +: NH]), .c_rd_idx(e_rd_idx), .c_rd_tag(e_rd_tag),
+                .c_rd_sub(e_rd_sub), .c_hit(c_hit[BASE +: NH]),
+                .c_fill_go(c_fill_go[BASE +: NH]), .c_fill_ready(c_fill_ready[BASE +: NH]),
+                .c_fill_done(c_fill_done[BASE +: NH]),
+                .m_arid(e_arid), .m_araddr(e_araddr), .m_arlen(e_arlen), .m_arsize(e_arsize),
+                .m_arburst(e_arburst), .m_arvalid(y_arvalid[BASE +: NH]),
+                .m_arready(y_arready[BASE +: NH]),
+                .m_rresp(y_rresp[BASE*2 +: NH*2]), .m_rready(y_rready[BASE +: NH]));
+        end
     end endgenerate
 
     // ================================ WRITE engines ===============================
@@ -394,7 +483,7 @@ module kx_mempath_e #(
                 assign q_val[i*M+m] = x_awvalid[m] && tgt;
                 assign aw_rdy_hm[GH][m] = q_rdy[i*M+m];
                 assign q_id[(i*M+m)*IDW +: IDW] = awid_ot[m*IDW +: IDW];
-                assign q_addr[(i*M+m)*AW +: AW] = x_awaddr[m*AW +: AW];
+                assign q_addr[(i*M+m)*AW +: AW] = p_awaddr[m*AW +: AW];
                 assign q_len[(i*M+m)*8 +: 8]    = x_awlen[m*8 +: 8];
                 assign q_size[(i*M+m)*3 +: 3]   = x_awsize[m*3 +: 3];
                 assign w_val[i*M+m] = x_wvalid[m] && tgt;
@@ -435,13 +524,40 @@ module kx_mempath_e #(
             assign wrr[h] = w_rdy_hm [h][m] && (whome[m] == h[HIDX_W-1:0]);
         end
         reg rv_q;
-        assign x_arready[m] = |arr;
+        // outstanding bursts per master: AR accepted while below RD_OUTQ; a
+        // sequence number per burst and the home it went to, so the oldest
+        // drains first and the R data select is known before it presents
+        wire ar_acc = x_arvalid[m] && x_arready[m];
+        wire rl_acc = x_rvalid[m] && x_rready[m] && x_rlast[m];
+        reg  [SEQW-1:0]   seqa_r, seqd_r;
+        reg  [OSTW-1:0]   outst;
+        reg  [HIDX_W-1:0] hos [0:HOSN-1];
+        wire [SEQW-1:0]   seq_drain_n = seqd_r + (rl_acc ? 1'b1 : 1'b0);
+        assign seq_alloc[m] = seqa_r;
+        assign seq_drain[m] = seqd_r;
+        integer oq;
+        always @(posedge clk) begin
+            if (!rstn) begin
+                seqa_r <= 0; seqd_r <= 0; outst <= 0;
+                for (oq = 0; oq < HOSN; oq = oq + 1) hos[oq] <= 0;
+            end else begin
+                if (ar_acc) begin
+                    seqa_r <= seqa_r + 1'b1;
+                    hos[seqa_r] <= rhome[m];
+                end
+                if (rl_acc) seqd_r <= seq_drain_n;
+                outst <= outst + (ar_acc ? 1'b1 : 1'b0) - (rl_acc ? 1'b1 : 1'b0);
+            end
+        end
+        assign ar_ok[m] = (outst < RD_OUTQ);
+        assign x_arready[m] = |arr && ar_ok[m];
         assign x_awready[m] = |awr;
         assign x_wready [m] = |wrr;
-        // delayed valid, MASKED by the live one: the cycle after the engine
-        // retires, rv_q is still high and would present a phantom beat of
-        // stale data (measured: every burst beat N+1 returned beat N)
-        assign x_rvalid [m] = rv_q && (|rv_em[m]);
+        // RD_PIPE=0: delayed valid, MASKED by the live one -- the cycle after
+        // the engine retires, rv_q is still high and would present a phantom
+        // beat of stale data (measured: every burst beat N+1 returned beat N).
+        // RD_PIPE=1: the engine's registered valid, gated by turn.
+        assign x_rvalid [m] = RD_PIPE ? (|rv_em[m]) : (rv_q && (|rv_em[m]));
         assign x_bvalid [m] = |bv_em[m];
 
         // narrow response fields, one-hot across engines
@@ -484,10 +600,22 @@ module kx_mempath_e #(
             ridx_c = {HIDX_W{1'b0}};
             for (ee2 = 0; ee2 < NRE; ee2 = ee2 + 1) if (rv_em[m][ee2]) ridx_c = ridx_c | r_hidx_e[ee2];
         end
-        // index and valid delayed together so data/valid stay aligned; the
-        // engine holds r_val in R_DRAIN until this delayed valid is accepted
+        // RD_PIPE=0: index and valid delayed together so data/valid stay
+        // aligned; the engine holds r_val in R_DRAIN until this delayed valid
+        // is accepted. RD_PIPE=1: the index is the home of the burst that drains
+        // next, known from the AR -- registered the cycle it becomes current, so
+        // it is stable before the first beat presents and streams need no delay.
         reg [HIDX_W-1:0] ridx_m;
-        always @(posedge clk) begin ridx_m <= ridx_c; rv_q <= |rv_em[m] && rstn; end
+        if (RD_PIPE == 0) begin : g_ridx_one
+            always @(posedge clk) begin ridx_m <= ridx_c; rv_q <= |rv_em[m] && rstn; end
+        end else if (RSAMD) begin : g_ridx_seq
+            always @(posedge clk) begin
+                rv_q <= 1'b0;
+                ridx_m <= (ar_acc && (seqa_r == seq_drain_n)) ? rhome[m] : hos[seq_drain_n];
+            end
+        end else begin : g_ridx_sasd
+            always @(posedge clk) begin rv_q <= 1'b0; ridx_m <= r_hidx_e[0]; end
+        end
         assign x_rdata[m*W +: W] = c_word[ridx_m*W +: W];
     end endgenerate
 

@@ -47,6 +47,7 @@ module kx_rd_engine #(
     output wire [SUBW:0]        c_rd_sub,
     input  wire [NH-1:0]        c_hit,
     output wire [NH-1:0]        c_fill_go,
+    input  wire [NH-1:0]        c_fill_ready,
     input  wire [NH-1:0]        c_fill_done,
 
     output wire [IDW-1:0]       m_arid,
@@ -94,7 +95,7 @@ module kx_rd_engine #(
     assign c_rd_sub  = sub_of(ra);
     assign c_rd_en   = {NH{rst == R_ISSUE}} & sel;
     assign c_fill_go = {NH{rst == R_FETCH}} & sel;
-    assign m_rready  = c_fill_go;
+    assign m_rready  = c_fill_go & c_fill_ready;
 
     wire sel_hit  = |(c_hit & sel);
     wire sel_done = |(c_fill_done & sel);

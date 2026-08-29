@@ -3,7 +3,7 @@
 // single write is in flight bus-wide, so m_wdata is one M:1 512b mux BROADCAST to
 // every home (only the target home asserts m_wvalid) instead of xbar2's N per-home
 // muxes. Trades write concurrency for ~ (N-1) x one wide mux of LUT. Same ports as
-// kaxi_xbar2. Superseded by kx_mempath_e (the fused xbar-cache).
+// kaxi_xbar2. Superseded by kx_xache (the Xache, the fused xbar-cache).
 
 `default_nettype none
 

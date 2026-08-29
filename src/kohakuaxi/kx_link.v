@@ -1,8 +1,8 @@
-// One internal fabric link, resolved at elaboration: SAME=1 (the two ends share a
-// clock) is a bare combinational passthrough that costs nothing; SAME=0 crosses
-// clock domains through kx_scdc. This is where "a crossing only where clocks
-// differ" is enforced -- kx_mempath instantiates one per (master,home) path with
-// SAME = (MCLK[m] == HCLK[h]).
+// One edge link of the Xache, resolved at elaboration: SAME=1 (the port shares the
+// fabric clock) is a bare combinational passthrough that costs nothing; SAME=0
+// crosses clock domains through kx_scdc. This is where "a crossing only where
+// clocks differ" is enforced -- kx_xache instantiates one per AXI channel per
+// port with SAME = !MCDC[m] (or !HCDC[h]).
 
 `default_nettype none
 

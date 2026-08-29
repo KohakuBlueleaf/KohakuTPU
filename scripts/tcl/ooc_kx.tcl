@@ -1,15 +1,16 @@
-# OOC synth of kx_mempath_e for ONE config, capturing EVERYTHING to <outdir>:
+# OOC synth of kx_xache (the Xache) for ONE config, capturing EVERYTHING to <outdir>:
 #   synth.log (full Vivado log), hier.rpt (per-module LUT/FF/BRAM/URAM to the
 #   leaf), timing.rpt (every path, -max_paths 100 across all endpoints), util.rpt,
 #   result.txt (one-line LUT|FF|URAM|BRAM|WNS|Fmax). One run per config, never two.
 #
 #   vivado -mode batch -source scripts/tcl/ooc_kx.tcl -tclargs <outdir> <generics|-> <file>...
+#   generics: NAME:VALUE joined by +, e.g. SETS:32768+SET_W:15+HCDC:4'b1111
 
 if {[llength $argv] < 3} { puts "usage: ooc_kx.tcl <outdir> <generics|-> <file>..."; exit 2 }
 set outdir [lindex $argv 0]
 set gspec  [lindex $argv 1]
 set files  [lrange $argv 2 end]
-set top    kx_mempath_e
+set top    kx_xache
 set period 3.333
 set part   xcvu13p-fhgb2104-2L-e
 file mkdir $outdir

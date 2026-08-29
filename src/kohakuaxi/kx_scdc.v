@@ -1,6 +1,6 @@
-// Internal stream clock-domain crossing for the fused xbar-cache: one valid/ready
-// beat of WIDTH bits, wr_clk to rd_clk, over async_fifo (FWFT). Instantiated ONLY
-// where two ports' clocks differ; shared-clock paths never elaborate it.
+// Stream clock-domain crossing at a Xache edge: one valid/ready beat of WIDTH bits,
+// wr_clk to rd_clk, over async_fifo (FWFT). Instantiated ONLY where a port's clock
+// differs from the fabric clock; shared-clock ports never elaborate it.
 
 `default_nettype none
 

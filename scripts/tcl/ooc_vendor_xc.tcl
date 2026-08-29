@@ -1,6 +1,6 @@
 # Vendor xbar-cache baseline at a UNIFORM shape: M masters -> axi crossbar -> N
 # system_caches -> N DRAM ports, all one width, one clock. The number to compare the
-# fused kx_mempath_e against (same M/N/W/cache size). Composition is ONE BD so the
+# Xache (kx_xache) against (same M/N/W/cache size). Composition is ONE BD so the
 # vendor gets the same fusion opportunity; per-cell counts are reported too.
 #   vivado -mode batch -source ooc_vendor_xc.tcl -tclargs <out> <ip> <M> <N> <W> <cache_bytes>
 #   ip = smartconnect (SAMD) | axi_interconnect (strategy 1 = shared/SASD, 2 = full)
