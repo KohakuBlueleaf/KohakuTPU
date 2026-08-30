@@ -86,6 +86,55 @@ export const KX_OUTQ = [
   [8, 9678, 11231, 469.3],
 ];
 
+/* The Partitioned Xache (kx_pxache): the ship shape (4×4 K1, 64 URAM per home,
+   the 16 KB rotation, four DRAM-side crossings unless noted) at P partitions,
+   one scripts/tcl/ooc_mod.tcl synthesis each, beside the kx_xache baseline.
+   [label, P, LUT, FF, URAM, BRAM, WNS ns, Fmax] */
+export const KX_PX = [
+  ["kx_xache, ship — the baseline", 1, 9994, 11175, 256, 64, 1.202, 469.3],
+  ["kx_pxache, ship", 1, 9972, 11675, 256, 94, 1.029, 434.0],
+  [
+    "kx_pxache, ship, one master and one home per partition",
+    4,
+    10960,
+    26570,
+    256,
+    298,
+    0.569,
+    361.8,
+  ],
+  [
+    "kx_pxache, no crossing, one per partition",
+    4,
+    9657,
+    23118,
+    256,
+    234,
+    0.548,
+    359.1,
+  ],
+  [
+    "the same with a register before every landing RAM (HOP_RXREG=1, 4-cycle hops)",
+    4,
+    10528,
+    40562,
+    256,
+    298,
+    0.775,
+    390.9,
+  ],
+  [
+    "one lane: kx_lane NT=3, W=590 (three hops)",
+    null,
+    79,
+    1857,
+    0,
+    25.5,
+    1.831,
+    665.8,
+  ],
+];
+
 /* FF: linear least-squares per family over
    [1, N, M, M·N, N·(K−1), N·[K>1], rSASD, wSASD·N, CDC] — from kx_cost.py --json */
 export const KX_FF = {

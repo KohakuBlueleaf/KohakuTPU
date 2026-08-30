@@ -129,7 +129,8 @@ const pe = {
       y: -1.3,
       w: 36.4,
       h: 9.5,
-      label: "the framework's RV32IM controller core, unchanged in both classes",
+      label:
+        "the framework's RV32IM controller core, unchanged in both classes",
     },
     {
       x: 48.8,
@@ -652,11 +653,10 @@ const notOwned = {
       title="Every figure on these pages is out-of-context synthesis, and five things have to be named before one means anything"
     >
       <p>
-        The <b>part</b> —
-        <span class="chip">xcvu13p-fhgb2104-2L-e</span> unless stated otherwise.
-        The <b>tool</b> — Vivado 2024.2. The <b>requested period</b>, because
-        LUT is not independent of it: synthesis spends area chasing timing it
-        cannot reach. The <b>flow</b> —
+        The <b>part</b> — <span class="chip">xcvu13p-fhgb2104-2L-e</span> unless
+        stated otherwise. The <b>tool</b> — Vivado 2024.2. The
+        <b>requested period</b>, because LUT is not independent of it: synthesis
+        spends area chasing timing it cannot reach. The <b>flow</b> —
         <span class="chip">-flatten_hierarchy</span> and the directive. And the
         <b>script</b> that produced it.
       </p>
@@ -666,8 +666,9 @@ const notOwned = {
         repository has measured a module lose <b>0.740&nbsp;ns</b> between
         synthesis and routing — and they move by tens of megahertz between rows
         that differ in nothing that should matter. Treat them as a screen for a
-        structural problem, not as a result. <b>Nothing here is placed or
-        routed</b>, and no mesh of these PEs has been assembled.
+        structural problem, not as a result.
+        <b>Nothing here is placed or routed</b>, and no mesh of these PEs has
+        been assembled.
       </p>
     </Callout>
 
@@ -702,11 +703,13 @@ const notOwned = {
         your question, and say which it is.
       </p>
       <p>
-        <b>The symptom of getting this wrong is a delta that looks like a design
-        change.</b> The RV32 PE row below is a
-        <span class="chip">none</span> figure and the two wide rows are
-        <span class="chip">rebuilt</span>; the columns line up and the rows do
-        not subtract.
+        <b
+          >The symptom of getting this wrong is a delta that looks like a design
+          change.</b
+        >
+        The RV32 PE row below is a <span class="chip">none</span> figure and the
+        two wide rows are <span class="chip">rebuilt</span>; the columns line up
+        and the rows do not subtract.
       </p>
     </Callout>
 
@@ -738,10 +741,13 @@ const notOwned = {
         A second, independent measurement on the <i>other</i> core gives the
         same shape, which is what makes it a property rather than one campaign's
         oddity: full rate measured <b>66 LUT below</b> one unit, for four times
-        the rate. <b>Take the seed count equal to the float count and spend the
-        DSP and BRAM, or take one unit.</b> Quarter rate — the ratio every
-        desktop GPU provisions transcendentals at — saves three quarters of the
-        BRAM and DSP and only 44% of the LUT.
+        the rate.
+        <b
+          >Take the seed count equal to the float count and spend the DSP and
+          BRAM, or take one unit.</b
+        >
+        Quarter rate — the ratio every desktop GPU provisions transcendentals at
+        — saves three quarters of the BRAM and DSP and only 44% of the LUT.
       </p>
     </Callout>
 
@@ -786,11 +792,12 @@ const notOwned = {
       title="A width that does not divide the element count elaborates cleanly, synthesises, and reports a plausible frequency"
     >
       <p>
-        That is the whole reason the rule is enforced at <b>elaboration</b>
-        rather than left to a bench. A non-dividing count truncates the pass
-        count, so the walk covers <i>some</i> of the elements rather than all of
-        them — and the build is otherwise entirely well-formed. It fails only in
-        a component bench, on a workload, or on silicon.
+        That is the whole reason the rule is enforced at
+        <b>elaboration</b> rather than left to a bench. A non-dividing count
+        truncates the pass count, so the walk covers <i>some</i> of the elements
+        rather than all of them — and the build is otherwise entirely
+        well-formed. It fails only in a component bench, on a workload, or on
+        silicon.
       </p>
       <p>
         The refusal is written as an instantiation of a module that does not
@@ -828,8 +835,11 @@ const notOwned = {
         <span class="chip">HAS_PERM</span> /
         <span class="chip">HAS_FLOAT</span> booleans went in favour of the
         counts alone; and the converter group gained the datapath it had been
-        missing. <b>Re-measurement against the current parameter set has not
-        been published.</b>
+        missing.
+        <b
+          >Re-measurement against the current parameter set has not been
+          published.</b
+        >
       </p>
       <p>
         What survives is the <b>shape</b>, and the shapes are the findings: what
@@ -857,10 +867,10 @@ const notOwned = {
         With the mask, the divergence stack, the shuffle and the banked shared
         memory all off, at 8 fused multiply-adds and 8 multiply units, the SIMT
         PE measures <b>16,118</b>. The comparable SIMD figure — its own
-        reference less the packed shifter and the permute — is
-        <b>16,775</b>, which is <b>657 LUT, 4.1%, dearer.</b> The two land
-        within 1% of each other at matched widths, and the price list says why
-        that is not a redundancy to remove.
+        reference less the packed shifter and the permute — is <b>16,775</b>,
+        which is <b>657 LUT, 4.1%, dearer.</b> The two land within 1% of each
+        other at matched widths, and the price list says why that is not a
+        redundancy to remove.
       </p>
       <p>
         SIMD's base PE is <b>543 LUT cheaper</b> than SIMT's — 10,309 against
@@ -1025,9 +1035,11 @@ const notOwned = {
         reached 44%.
       </li>
       <li>
-        <b>Synthesise it and read the configuration line back off the
-        <span class="chip">synth_design</span> command in the run log.</b> A
-        knob that is parsed but not applied produces a row that varies in its
+        <b
+          >Synthesise it and read the configuration line back off the
+          <span class="chip">synth_design</span> command in the run log.</b
+        >
+        A knob that is parsed but not applied produces a row that varies in its
         tag and not in its netlist.
       </li>
       <li>
@@ -1068,43 +1080,5 @@ const notOwned = {
 
     <h2 class="doc-h2">What this project does not own</h2>
     <SpecTable :cols="notOwned.cols" :rows="notOwned.rows" />
-
-    <h2 class="doc-h2">Where to go next</h2>
-
-    <div class="grid gap-4 sm:grid-cols-3 mt-6">
-      <RouterLink to="/mpe/hetero" class="card-hover p-5 no-underline block">
-        <div
-          class="kt-text-title font-semibold text-warm-800 dark:text-warm-200 mb-1"
-        >
-          The three classes side by side
-        </div>
-        <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
-          What arithmetic each ships, what each costs, which work routes where,
-          and where the room in the opcode map actually is.
-        </p>
-      </RouterLink>
-      <RouterLink to="/mpe/simd" class="card-hover p-5 no-underline block">
-        <div
-          class="kt-text-title font-semibold text-warm-800 dark:text-warm-200 mb-1"
-        >
-          SIMD PE
-        </div>
-        <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
-          Eight 32-bit slots, four int8 elements sharing one native carry chain,
-          a cross-lane permute, and a rotating float accumulator.
-        </p>
-      </RouterLink>
-      <RouterLink to="/mpe/simt" class="card-hover p-5 no-underline block">
-        <div
-          class="kt-text-title font-semibold text-warm-800 dark:text-warm-200 mb-1"
-        >
-          SIMT PE
-        </div>
-        <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
-          A mask that is a write enable, a divergence stack that is a memory,
-          per-thread RV32M, and a lane-serialising load/store unit.
-        </p>
-      </RouterLink>
-    </div>
   </DocPage>
 </template>

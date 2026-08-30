@@ -55,7 +55,15 @@ const die = {
       sub: "yours",
       accent: true,
     },
-    { id: "l2", x: 56.5, y: 7, w: 8.5, h: 5, label: "L2 adapter", sub: "addon" },
+    {
+      id: "l2",
+      x: 56.5,
+      y: 7,
+      w: 8.5,
+      h: 5,
+      label: "L2 adapter",
+      sub: "addon",
+    },
     {
       id: "rv32",
       x: 56.5,
@@ -98,8 +106,8 @@ const die = {
       <p
         class="kt-text-emphasis text-warm-600 dark:text-warm-400 mt-4 max-w-[68ch] leading-7"
       >
-        You write a compute datapath. The framework brings everything around
-        it: DRAM and its controllers, a memory agent that turns descriptors into
+        You write a compute datapath. The framework brings everything around it:
+        DRAM and its controllers, a memory agent that turns descriptors into
         transfers, an on-chip network, the host interface, a programmable
         runtime host, floorplanning, and the flow that closes timing.
       </p>
@@ -113,19 +121,20 @@ const die = {
           The stand
         </p>
         <p class="kt-text-body text-warm-700 dark:text-warm-300 leading-7">
-          One opinion runs through all of it: <b>build hardware the way frontier
-          software is built.</b> A general substrate you program, a fast
-          iteration loop, reuse over re-spin — and generality treated as cheap
-          enough to pay for, not a luxury to avoid. The system node is the
-          clearest case: there is a cheaper fixed-function controller, and we
-          build a full OS-capable RV64 processor instead, so the hard, changing
-          work becomes a program on the card rather than a hardware re-spin.
+          One opinion runs through all of it:
+          <b>build hardware the way frontier software is built.</b> A general
+          substrate you program, a fast iteration loop, reuse over re-spin — and
+          generality treated as cheap enough to pay for, not a luxury to avoid.
+          The system node is the clearest case: there is a cheaper
+          fixed-function controller, and we build a full OS-capable RV64
+          processor instead, so the hard, changing work becomes a program on the
+          card rather than a hardware re-spin.
         </p>
         <RouterLink
-          to="/idea"
+          to="/machine"
           class="inline-flex items-center gap-1.5 mt-3 kt-text-body font-medium text-gem no-underline hover:gap-2.5 transition-all"
         >
-          The idea — why KohakuAccel
+          Everything we ship — on one sheet
           <span class="i-carbon-arrow-right" />
         </RouterLink>
       </div>

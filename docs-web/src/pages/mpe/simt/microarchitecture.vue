@@ -18,14 +18,6 @@ const unit = {
       sub: "CU_INST · op = wave count",
     },
     { id: "port", x: 0, y: 6, w: 10, label: "fabric port", sub: "CU_DATA" },
-    {
-      id: "lds",
-      x: 0,
-      y: 11,
-      w: 10,
-      label: "kht_lds",
-      sub: "LANES banks, interleaved",
-    },
 
     {
       id: "pcq",
@@ -116,11 +108,22 @@ const unit = {
       accent: true,
     },
 
-    { id: "lsu", x: 51, y: 0, w: 10, label: "LSU", sub: "walks lanes" },
+    // The LDS sits over its only consumer: the LSU reaches it with one short
+    // vertical, and the fabric fill arrives over the top edge of the diagram
+    // rather than cutting across the front end.
+    {
+      id: "lds",
+      x: 56,
+      y: 0,
+      w: 10,
+      label: "kht_lds",
+      sub: "LANES banks, interleaved",
+    },
+    { id: "lsu", x: 56, y: 6, w: 10, label: "LSU", sub: "walks lanes" },
 
     {
       id: "comp",
-      x: 63.5,
+      x: 68.5,
       y: 0,
       w: 10,
       label: "completion",
@@ -128,31 +131,31 @@ const unit = {
     },
     {
       id: "l1",
-      x: 63.5,
+      x: 68.5,
       y: 6,
       w: 10,
       label: "rv_l1",
       sub: "write-back, ONE miss",
     },
-    { id: "mag", x: 63.5, y: 11, w: 10, label: "fabric → MAG", sub: "DRAM" },
+    { id: "mag", x: 68.5, y: 11, w: 10, label: "fabric → MAG", sub: "DRAM" },
   ],
   edges: [
     { from: "kick:r", to: "pcq:l", dir: "h", accent: true },
     { from: "port:r", to: "imem:l", dir: "h" },
     { from: "port:r", to: "ictl:l", dir: "h", label: "kht_predec" },
-    { from: "port:b", to: "lds:t", dir: "v" },
+    { from: "port:l", to: "lds:t" },
     { from: "pcq:r", to: "fetch:l", dir: "h" },
     { from: "imem:r", to: "fetch:l", dir: "h" },
     { from: "ictl:r", to: "ex:l", dir: "h", accent: true },
     { from: "fetch:b", to: "ex:t", dir: "v", accent: true },
     { from: "ex:b", to: "sfile:t", dir: "v" },
     { from: "ex:r", to: "vreg:l", dir: "h", accent: true },
-    { from: "ex:t", to: "lsu:b", dir: "v", label: "the memory op" },
+    { from: "ex:t", to: "lsu:l", label: "the memory op" },
     { from: "vreg:b", to: "mask:t", dir: "v", accent: true },
     { from: "mask:b", to: "valu:t", dir: "v", accent: true },
     { from: "valu:b", to: "fpu:t", dir: "v", accent: true },
     { from: "valu:l", to: "sfile:r", dir: "h" },
-    { from: "lsu:l", to: "lds:r", dir: "h" },
+    { from: "lsu:t", to: "lds:b", dir: "v" },
     { from: "lsu:r", to: "l1:l", dir: "h" },
     { from: "l1:b", to: "mag:t", dir: "v" },
     {
@@ -167,20 +170,31 @@ const unit = {
 };
 
 // ------------------------------------------------------- decode at image load
+// Three rows: the word goes straight into imem along the top, and through
+// kht_predec into ictl along the bottom; the one address sits on the middle
+// row and reaches both arrays from BETWEEN them, so it cuts neither path.
 const predec = {
   nodes: [
     {
       id: "cud",
       x: 0,
-      y: 3,
+      y: 0,
       w: 12,
       label: "CU_DATA word",
       sub: "once per shader",
     },
     {
+      id: "addr",
+      x: 15,
+      y: 4.5,
+      w: 12,
+      label: "imem_addr",
+      sub: "one address, both arrays",
+    },
+    {
       id: "pd",
       x: 15,
-      y: 6.5,
+      y: 9,
       w: 12,
       label: "kht_predec",
       sub: "combinational",
@@ -190,24 +204,16 @@ const predec = {
     {
       id: "ic",
       x: 31,
-      y: 6.5,
+      y: 9,
       w: 11,
       label: "ictl",
       sub: "60b · READ_LAT 1",
       accent: true,
     },
     {
-      id: "addr",
-      x: 15,
-      y: 13.5,
-      w: 12,
-      label: "imem_addr",
-      sub: "one address, both arrays",
-    },
-    {
       id: "out",
       x: 46,
-      y: 3,
+      y: 4.5,
       w: 12,
       label: "instr + ctrl",
       sub: "arrive TOGETHER, in EX",
@@ -218,13 +224,13 @@ const predec = {
     { from: "cud:r", to: "im:l", dir: "h" },
     { from: "cud:r", to: "pd:l", dir: "h" },
     { from: "pd:r", to: "ic:l", dir: "h", accent: true },
-    { from: "addr:r", to: "ic:b", dir: "v" },
-    { from: "addr:r", to: "im:b", dir: "v" },
+    { from: "addr:r", to: "im:b" },
+    { from: "addr:r", to: "ic:t" },
     { from: "im:r", to: "out:l", dir: "h" },
     { from: "ic:r", to: "out:l", dir: "h", accent: true },
   ],
   groups: [
-    { x: 30, y: -1, w: 13, h: 11.6, label: "the instruction window, twice" },
+    { x: 30, y: -1, w: 13, h: 14.2, label: "the instruction window, twice" },
   ],
 };
 
@@ -423,6 +429,10 @@ const interleave = {
 };
 
 // --------------------------------------------------------------- hold graph
+// s_hz and f_soon each feed BOTH hold and x_defer. Two shared sources stacked
+// on one side of two stacked sinks is a K2,2 in two columns and always
+// crosses, so the four are drawn as a diamond: hold above x_defer, s_hz on
+// the left of that axis and f_soon on the right.
 const holds = {
   nodes: [
     { id: "l1s", x: 0, y: 0, w: 11, label: "l1_stall", sub: "from registers" },
@@ -460,17 +470,9 @@ const holds = {
       sub: "the scalar interlock",
     },
     {
-      id: "fsoon",
-      x: 0,
-      y: 25,
-      w: 11,
-      label: "f_soon",
-      sub: "a float lands in 2",
-    },
-    {
       id: "need",
       x: 0,
-      y: 29,
+      y: 27,
       w: 11,
       label: "lsu_need",
       sub: "the walk, gated",
@@ -488,16 +490,24 @@ const holds = {
     {
       id: "hold",
       x: 15,
-      y: 14.5,
+      y: 13,
       w: 12,
       label: "hold",
       sub: "mixed",
       accent: true,
     },
+    {
+      id: "xdefer",
+      x: 15,
+      y: 27,
+      w: 12,
+      label: "kht_unit.x_defer",
+      sub: "READ it, do NOT COMMIT it",
+    },
 
     {
       id: "xhold",
-      x: 31,
+      x: 33,
       y: 2,
       w: 13,
       label: "kht_unit.x_hold",
@@ -505,19 +515,19 @@ const holds = {
     },
     {
       id: "fetchgo",
-      x: 31,
-      y: 14.5,
+      x: 33,
+      y: 13,
       w: 13,
       label: "fetch · nxt[] · go",
       sub: "DO NOT RETIRE",
     },
     {
-      id: "xdefer",
-      x: 31,
-      y: 27,
+      id: "fsoon",
+      x: 33,
+      y: 20,
       w: 13,
-      label: "kht_unit.x_defer",
-      sub: "READ it, do NOT COMMIT it",
+      label: "f_soon",
+      sub: "a float lands in 2",
     },
   ],
   edges: [
@@ -529,11 +539,11 @@ const holds = {
     { from: "warm:r", to: "hold:l", dir: "h" },
     { from: "want:r", to: "hold:l", dir: "h" },
     { from: "shz:r", to: "hold:l", dir: "h" },
-    { from: "fsoon:r", to: "hold:l", dir: "h" },
     { from: "hold:r", to: "fetchgo:l", dir: "h", accent: true },
-    { from: "need:r", to: "xdefer:l", dir: "h", accent: true },
     { from: "shz:r", to: "xdefer:l", dir: "h", accent: true },
-    { from: "fsoon:r", to: "xdefer:l", dir: "h", accent: true },
+    { from: "need:r", to: "xdefer:l", dir: "h", accent: true },
+    { from: "fsoon:t", to: "hold:b" },
+    { from: "fsoon:b", to: "xdefer:t", accent: true },
   ],
 };
 
@@ -1296,8 +1306,10 @@ const zeroFlag = {
 const lsuSm = {
   states: [
     { id: "IDLE", x: 0, y: 0, label: "IDLE" },
-    { id: "RUN", x: 7, y: -2.6, label: "RUN" },
-    { id: "LDSW", x: 7, y: 2.6, label: "LDS", sub: "wait" },
+    // RUN sits low so its self-loop (drawn above a state) has room and the
+    // return curve can bulge over the LDS branch instead of through it.
+    { id: "RUN", x: 7, y: 4.5, label: "RUN" },
+    { id: "LDSW", x: 7, y: -4.5, label: "LDS", sub: "wait" },
     { id: "DRAIN", x: 14, y: 0, label: "DRAIN" },
     { id: "DONE", x: 21, y: 0, label: "DONE" },
   ],
@@ -1308,7 +1320,10 @@ const lsuSm = {
     { from: "RUN", to: "DRAIN", label: "lane_last" },
     { from: "LDSW", to: "DRAIN", label: "lds_done" },
     { from: "DRAIN", to: "DONE" },
-    { from: "DONE", to: "IDLE", label: "go — retires", curve: -110 },
+    // The return curve peaks at curve/2 and its label sits at 0.6·curve+9,
+    // so only a POSITIVE curve keeps the label off its own arc; +135 bulges
+    // upward, 15 px clear of the LDS circle and the lds_done label.
+    { from: "DONE", to: "IDLE", label: "go — retires", curve: 135 },
   ],
 };
 
@@ -1728,24 +1743,29 @@ const butterfly = {
 };
 
 // ------------------------------------------------ float tier + multiplier
+// vs1 and vs2 both feed BOTH units, which two stacked registers beside two
+// stacked units cannot draw without a crossing. So vs2 sits BETWEEN the
+// units and reaches each with a straight vertical; vs1 stays on the left
+// between the two rows it feeds, and the addend is beside the only unit
+// that takes it.
 const shadow = {
   nodes: [
-    { id: "w1", x: 0, y: 0, w: 10, label: "w1_q", sub: "vs1" },
-    { id: "w2", x: 0, y: 4, w: 10, label: "w2_q", sub: "vs2" },
-    { id: "w3", x: 0, y: 8, w: 10, label: "w3_q", sub: "vd — the addend" },
+    { id: "w3", x: 0, y: 0, w: 10, label: "w3_q", sub: "vd — the addend" },
+    { id: "w1", x: 0, y: 5.6, w: 10, label: "w1_q", sub: "vs1" },
     {
       id: "fpu",
       x: 14,
-      y: 1,
+      y: 0,
       w: 14,
       label: "kht_fpu",
       sub: "FLANES × rv_fpu · FSFU_UNITS of them with a khs_fp32_sfu beside",
       accent: true,
     },
+    { id: "w2", x: 16, y: 5.6, w: 10, label: "w2_q", sub: "vs2 — both units" },
     {
       id: "imul",
       x: 14,
-      y: 7,
+      y: 11.2,
       w: 14,
       label: "kht_imul",
       sub: "8 × 33×33 signed",
@@ -1754,7 +1774,7 @@ const shadow = {
     {
       id: "sh",
       x: 14,
-      y: 13.5,
+      y: 17,
       w: 14,
       label: "fsh_* shadow pipe",
       sub: "valid · wa · mask · wave",
@@ -1762,7 +1782,7 @@ const shadow = {
     {
       id: "sel",
       x: 32,
-      y: 4,
+      y: 5.6,
       w: 12,
       label: "fsh_mul[FLAT]",
       sub: "which unit retires",
@@ -1771,7 +1791,7 @@ const shadow = {
     {
       id: "port",
       x: 48,
-      y: 4,
+      y: 5.6,
       w: 13,
       label: "the VRF write port",
       sub: "a MUX, never an arbitration",
@@ -1780,18 +1800,18 @@ const shadow = {
     {
       id: "soon",
       x: 32,
-      y: 13.5,
+      y: 17,
       w: 12,
       label: "f_soon = fsh_v[FLAT-2]",
       sub: "two cycles of warning",
     },
   ],
   edges: [
-    { from: "w1:r", to: "fpu:l", dir: "h" },
-    { from: "w2:r", to: "fpu:l", dir: "h" },
     { from: "w3:r", to: "fpu:l", dir: "h" },
+    { from: "w1:r", to: "fpu:l", dir: "h" },
     { from: "w1:r", to: "imul:l", dir: "h" },
-    { from: "w2:r", to: "imul:l", dir: "h" },
+    { from: "w2:t", to: "fpu:b", dir: "v" },
+    { from: "w2:b", to: "imul:t", dir: "v" },
     { from: "fpu:r", to: "sel:l", dir: "h" },
     { from: "imul:r", to: "sel:l", dir: "h" },
     { from: "sh:r", to: "sel:l", dir: "h" },
@@ -2078,7 +2098,8 @@ const noDatapath = {
     },
     {
       i: "the four seed encodings",
-      needs: "seed units — <code>FSFU_UNITS &gt; 0</code>, a subset of the float units",
+      needs:
+        "seed units — <code>FSFU_UNITS &gt; 0</code>, a subset of the float units",
       does: "<b>illegal → FAULT (cause 3)</b>",
       _tone: "bad",
     },
@@ -2941,11 +2962,11 @@ const trapTable = {
       cycle — <b>6 cycles with no seed units built and 10 with them</b>, because
       a seed is four stages deeper and the multiply-add path pads to match so
       the tier has one latency and one retire shadow. That the two match is not
-      a coincidence — giving the
-      multiplier the float tier's <i>exact</i> latency makes a write-port
-      collision <b>structurally impossible</b> instead of arbitrated: two
-      results can only want the port on one cycle if they were issued on one
-      cycle, and exactly one instruction issues per cycle.
+      a coincidence — giving the multiplier the float tier's
+      <i>exact</i> latency makes a write-port collision
+      <b>structurally impossible</b> instead of arbitrated: two results can only
+      want the port on one cycle if they were issued on one cycle, and exactly
+      one instruction issues per cycle.
     </p>
 
     <Fig

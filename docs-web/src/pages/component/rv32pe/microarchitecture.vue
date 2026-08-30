@@ -95,22 +95,28 @@ const boundaries = {
 
 /* --- EX: the ALU --------------------------------------------------------- */
 
+/* Both operands feed all five units. Two sources on the same side of a column
+ * cannot both reach two shared boxes without a crossing (the four wires form a
+ * cycle whose two diagonals meet), so x_op2 sits in front and fans to every
+ * unit, and x_op1 is drawn with its top and bottom wires only, passing above
+ * and below x_op2. The two boxes share a centre line so the slot sort falls
+ * back to list order: x_op1 must take the OUTER lane on add and on bw. */
 const alu = {
   nodes: [
     {
       id: "op1",
       x: 0,
-      y: 6.5,
-      w: 11,
+      y: 7.7,
+      w: 10,
       h: 3.6,
       label: "x_op1",
       sub: "rs1, PC, or zero",
     },
     {
       id: "op2",
-      x: 0,
-      y: 11,
-      w: 11,
+      x: 13,
+      y: 7.7,
+      w: 10,
       h: 3.6,
       label: "x_op2",
       sub: "rs2 or the immediate",
@@ -118,7 +124,7 @@ const alu = {
 
     {
       id: "add",
-      x: 16,
+      x: 27,
       y: 0,
       w: 15,
       h: 3.4,
@@ -128,7 +134,7 @@ const alu = {
     },
     {
       id: "sub",
-      x: 16,
+      x: 27,
       y: 3.9,
       w: 15,
       h: 3.4,
@@ -137,7 +143,7 @@ const alu = {
     },
     {
       id: "cmp",
-      x: 16,
+      x: 27,
       y: 7.8,
       w: 15,
       h: 3.4,
@@ -147,7 +153,7 @@ const alu = {
     },
     {
       id: "shf",
-      x: 16,
+      x: 27,
       y: 11.7,
       w: 15,
       h: 3.4,
@@ -157,7 +163,7 @@ const alu = {
     },
     {
       id: "bw",
-      x: 16,
+      x: 27,
       y: 15.6,
       w: 15,
       h: 3.4,
@@ -167,7 +173,7 @@ const alu = {
 
     {
       id: "mux",
-      x: 36,
+      x: 46,
       y: 0,
       w: 11,
       h: 19,
@@ -177,7 +183,7 @@ const alu = {
     },
     {
       id: "out",
-      x: 52,
+      x: 61,
       y: 7.8,
       w: 13,
       h: 3.4,
@@ -187,16 +193,13 @@ const alu = {
     },
   ],
   edges: [
-    { from: "op1:r", to: "add:l" },
-    { from: "op1:r", to: "sub:l" },
-    { from: "op1:r", to: "cmp:l" },
-    { from: "op1:r", to: "shf:l" },
-    { from: "op1:r", to: "bw:l" },
-    { from: "op2:r", to: "add:l" },
-    { from: "op2:r", to: "sub:l" },
+    { from: "op1:t", to: "add:l" },
+    { from: "op2:t", to: "add:l" },
+    { from: "op2:t", to: "sub:l" },
     { from: "op2:r", to: "cmp:l" },
-    { from: "op2:r", to: "shf:l" },
-    { from: "op2:r", to: "bw:l" },
+    { from: "op2:b", to: "bw:l" },
+    { from: "op2:b", to: "shf:l" },
+    { from: "op1:b", to: "bw:l" },
     { from: "add:r", to: "mux:l" },
     { from: "sub:r", to: "mux:l" },
     { from: "cmp:r", to: "mux:l" },
@@ -948,6 +951,12 @@ const bpX = {
 
 /* --- the forwarding network ---------------------------------------------- */
 
+/* stall_d belongs to EX and MEM alone, so it sits in the pocket between those
+ * two rows, fed from EX's bottom and MEM's top; the four wires into fwd_pick
+ * then never have to cross it. Its two left-face slots (at 1/3 and 2/3 of its
+ * height) are placed EXACTLY on the two stub lanes — 14 px below EX's bottom
+ * edge and 14 px above MEM's top — so each dashed wire is one L-bend and no
+ * run of it lies alongside the EX → fwd_pick wire. */
 const forward = {
   nodes: [
     {
@@ -960,9 +969,19 @@ const forward = {
       sub: "distance 1 · the ALU output, combinational",
     },
     {
+      id: "sd",
+      x: 21,
+      y: 3.375,
+      w: 16,
+      h: 4.5,
+      label: "stall_d",
+      sub: "raised instead, when that producer is a load",
+      accent: true,
+    },
+    {
       id: "mem",
       x: 0,
-      y: 5.5,
+      y: 7.25,
       w: 17,
       h: 4,
       label: "MEM — m_val",
@@ -971,7 +990,7 @@ const forward = {
     {
       id: "wb",
       x: 0,
-      y: 11,
+      y: 12.75,
       w: 17,
       h: 4,
       label: "WB — wstage_val",
@@ -980,7 +999,7 @@ const forward = {
     {
       id: "rf",
       x: 0,
-      y: 16.5,
+      y: 18.25,
       w: 17,
       h: 4,
       label: "rv_regfile — rd1 · rd2",
@@ -988,8 +1007,8 @@ const forward = {
     },
     {
       id: "pick",
-      x: 26,
-      y: 5.5,
+      x: 42,
+      y: 6,
       w: 14,
       h: 9.5,
       label: "fwd_pick",
@@ -998,33 +1017,23 @@ const forward = {
     },
     {
       id: "op",
-      x: 46,
-      y: 5.5,
+      x: 62,
+      y: 6,
       w: 14,
       h: 9.5,
       label: "x_op1 · x_op2",
       sub: "the ID → EX operand register",
       accent: true,
     },
-    {
-      id: "sd",
-      x: 26,
-      y: 18,
-      w: 14,
-      h: 4,
-      label: "stall_d",
-      sub: "raised instead, when that producer is a load",
-      accent: true,
-    },
   ],
   edges: [
+    { from: "ex:b", to: "sd:l", dash: true },
+    { from: "mem:t", to: "sd:l", dash: true },
     { from: "ex:r", to: "pick:l" },
     { from: "mem:r", to: "pick:l" },
     { from: "wb:r", to: "pick:l" },
     { from: "rf:r", to: "pick:l" },
     { from: "pick:r", to: "op:l", accent: true },
-    { from: "ex:r", to: "sd:l", dash: true },
-    { from: "mem:r", to: "sd:l", dash: true },
   ],
 };
 
@@ -1197,13 +1206,20 @@ const loadUse = [
 
 /* --- the register file --------------------------------------------------- */
 
+/* The read address and the write port both reach both arrays. Two sources on
+ * the same side of a column cannot share two boxes without a crossing, so the
+ * write port sits in front, between the arrays and the live address, and the
+ * live address passes above and below it: array #1 on top, the bypass compare
+ * (the write port's own) in the middle, array #2 at the bottom. live and wport
+ * share a centre line so the slot sort falls back to list order — live takes
+ * the outer lane on both arrays. */
 const regfile = {
   nodes: [
     {
       id: "addr",
       x: 0,
       y: 3,
-      w: 14,
+      w: 13,
       h: 3.6,
       label: "ra1 · ra2",
       sub: "f2_instr[19:15], [24:20]",
@@ -1212,24 +1228,33 @@ const regfile = {
       id: "en",
       x: 0,
       y: 7.5,
-      w: 14,
+      w: 13,
       h: 3.6,
       label: "ra_en = !hold_front",
       sub: "re-issue the read while held",
     },
     {
       id: "live",
-      x: 18,
-      y: 5,
-      w: 13,
+      x: 16,
+      y: 5.2,
+      w: 11,
       h: 3.6,
       label: "ra1_live",
       sub: "ra_en ? ra1 : ra1_q",
       accent: true,
     },
     {
+      id: "wport",
+      x: 30,
+      y: 5.2,
+      w: 12,
+      h: 3.6,
+      label: "we · wa · wd",
+      sub: "from rv_wb, same edge",
+    },
+    {
       id: "p1",
-      x: 35,
+      x: 45,
       y: 0,
       w: 15,
       h: 3.6,
@@ -1237,27 +1262,9 @@ const regfile = {
       sub: "32 × 32 · distributed · LAT 1",
     },
     {
-      id: "p2",
-      x: 35,
-      y: 4.5,
-      w: 15,
-      h: 3.6,
-      label: "kohaku_sdpram #2",
-      sub: "the mirror, written identically",
-    },
-    {
-      id: "wport",
-      x: 18,
-      y: 10.5,
-      w: 13,
-      h: 3.6,
-      label: "we · wa · wd",
-      sub: "from rv_wb, same edge",
-    },
-    {
       id: "byp",
-      x: 35,
-      y: 10.5,
+      x: 45,
+      y: 5.2,
       w: 15,
       h: 3.6,
       label: "byp1 · byp2 · byp_d",
@@ -1265,9 +1272,18 @@ const regfile = {
       accent: true,
     },
     {
+      id: "p2",
+      x: 45,
+      y: 10.4,
+      w: 15,
+      h: 3.6,
+      label: "kohaku_sdpram #2",
+      sub: "the mirror, written identically",
+    },
+    {
       id: "sel",
-      x: 54,
-      y: 4.5,
+      x: 63,
+      y: 5,
       w: 14,
       h: 4,
       label: "rd1 · rd2",
@@ -1278,11 +1294,11 @@ const regfile = {
   edges: [
     { from: "addr:r", to: "live:l" },
     { from: "en:r", to: "live:l" },
-    { from: "live:r", to: "p1:l" },
-    { from: "live:r", to: "p2:l" },
-    { from: "wport:r", to: "p1:l" },
-    { from: "wport:r", to: "p2:l" },
+    { from: "live:t", to: "p1:l" },
+    { from: "wport:t", to: "p1:l" },
     { from: "wport:r", to: "byp:l" },
+    { from: "wport:b", to: "p2:l" },
+    { from: "live:b", to: "p2:l" },
     { from: "p1:r", to: "sel:l", accent: true },
     { from: "p2:r", to: "sel:l", accent: true },
     { from: "byp:r", to: "sel:l" },
@@ -2011,15 +2027,14 @@ const coreSplit = {
         <b>The per-instance figures below are all from this one run</b>, so they
         are internally consistent and they are not the whole story. The same
         configuration at a <b>3.333 ns</b> request is
-        <b>2,586 LUT at the same 363.5 MHz</b>, with
-        <b>+0.582 ns</b> of slack —
+        <b>2,586 LUT at the same 363.5 MHz</b>, with <b>+0.582 ns</b> of slack —
         <RouterLink to="/component/rv32pe" class="doc-link"
           >the two requests side by side</RouterLink
         >. The tighter ask bought <b>zero megahertz for 86 LUT sites</b>, which
-        is what over-constraining looks like when the binding path is already
-        as short as the structure allows. Every breakdown on this page inherits
-        the 2.500 ns run's numbers; do not mix a row from it with a total from
-        the other.
+        is what over-constraining looks like when the binding path is already as
+        short as the structure allows. Every breakdown on this page inherits the
+        2.500 ns run's numbers; do not mix a row from it with a total from the
+        other.
       </p>
       <p class="font-mono kt-text-caption">
         worst path, same run: u_core/u_ex/m_addr_reg[29]/C →
@@ -2088,7 +2103,10 @@ const coreSplit = {
         keeps the EX register the same width.
       </p>
       <p>
-        <b>The two registers in <code>rv_id</code> stop for different reasons.</b>
+        <b
+          >The two registers in <code>rv_id</code> stop for different
+          reasons.</b
+        >
         A data hazard freezes decode and feeds EX a bubble; a memory stall
         freezes EX as well and nothing moves at all. One enable could not
         express both.
@@ -2113,7 +2131,7 @@ const coreSplit = {
     </p>
 
     <Fig
-      caption="Five producers, one result mux: the three shift encodings all select the same input, and the comparator triple is shared with the branch unit, so a ten-way select is a five-input mux."
+      caption="Five producers, one result mux: the three shift encodings all select the same input, and the comparator triple is shared with the branch unit, so a ten-way select is a five-input mux. Every unit takes both operands; x_op1's fan-out is drawn as its top and bottom wires only."
       zoom
       wide
     >
@@ -2244,7 +2262,10 @@ const coreSplit = {
       <BlockDiagram :nodes="resultMux.nodes" :edges="resultMux.edges" />
     </Fig>
 
-    <Callout kind="rule" title="The alternative, if the mux ever measures worse">
+    <Callout
+      kind="rule"
+      title="The alternative, if the mux ever measures worse"
+    >
       <p>
         Retire the product through MEM on its own writeback port. That leaves
         the distance-1 forward untouched, at the price of one more stall cycle.
@@ -2259,7 +2280,10 @@ const coreSplit = {
 
     <h3 class="doc-h3">What the multiplier replaces</h3>
 
-    <Callout kind="measured" title="About 54 cycles each, and that is the easy case">
+    <Callout
+      kind="measured"
+      title="About 54 cycles each, and that is the easy case"
+    >
       <p>
         A software multiply was measured before the unit existed, on the
         full-system bench (<code>tests/pe/tools/rv_run.py</code> — real routers,
@@ -2308,7 +2332,9 @@ const coreSplit = {
       </p>
     </Callout>
 
-    <h3 class="doc-h3">Why <code>div</code> and <code>rem</code> are a different answer</h3>
+    <h3 class="doc-h3">
+      Why <code>div</code> and <code>rem</code> are a different answer
+    </h3>
 
     <p class="doc-p">
       An iterative divider is ~35 cycles and a <b>33-bit subtract per cycle</b>,
@@ -2322,12 +2348,11 @@ const coreSplit = {
       So a divider carries its own 33-bit subtractor, its own remainder shift
       register, its own quotient register, the sign fixups
       <code>div</code>'s truncate-toward-zero needs, and the two mandated
-      special cases (÷0, and −2³¹ ÷ −1).
-      <b>ESTIMATE 200–300 LUT</b> — reasoned from measured neighbours on the
-      same part, not measured — which is most of the EX stage again, for an
-      instruction a controller issues approximately never. And it is 35 cycles
-      against libgcc's ~60–80: a 2× on a rare instruction, where the multiplier
-      is an 8–13× on a common one.
+      special cases (÷0, and −2³¹ ÷ −1). <b>ESTIMATE 200–300 LUT</b> — reasoned
+      from measured neighbours on the same part, not measured — which is most of
+      the EX stage again, for an instruction a controller issues approximately
+      never. And it is 35 cycles against libgcc's ~60–80: a 2× on a rare
+      instruction, where the multiplier is an 8–13× on a common one.
     </p>
 
     <Callout kind="rule" title="Iterative division is a trap at this size">
@@ -2351,7 +2376,10 @@ const coreSplit = {
       purchase anyway, and neither is about the LUT.
     </p>
 
-    <Callout kind="rule" title="Fifteen cycles, and an encoding no compiler emits">
+    <Callout
+      kind="rule"
+      title="Fifteen cycles, and an encoding no compiler emits"
+    >
       <p>
         <b>Fifteen cycles into a three-source in-order forwarding network.</b>
         <code>fadd</code> would stall EX for fifteen cycles, or need the
@@ -2414,7 +2442,10 @@ const coreSplit = {
       caption="ECALL, EBREAK, an illegal encoding, a misaligned access and an unmapped region all take one path out of EX: a halt is a redirect that also stops fetch. There are no CSRs and no trap vector"
     />
 
-    <Callout kind="rule" title="Everything in EX is qualified by “EX is not held”">
+    <Callout
+      kind="rule"
+      title="Everything in EX is qualified by “EX is not held”"
+    >
       <p>
         The resolve, the predictor update and the halt are all gated by it.
         Without that, a stalled memory stage would let the same branch resolve
@@ -2897,8 +2928,8 @@ const coreSplit = {
       </li>
       <li>
         <b>Read the site column, never the primitive column</b>, and never
-        subtract one from the other. The two accountings disagree by roughly
-        10 % on this unit and the difference is not a measurement.
+        subtract one from the other. The two accountings disagree by roughly 10
+        % on this unit and the difference is not a measurement.
       </li>
       <li>
         <b>Re-measure anything the change shares a path with.</b> A saving is a
@@ -2919,11 +2950,14 @@ const coreSplit = {
         the flow says which of these paths would move.
       </p>
       <p>
-        <b>The cost of <i>attaching</i> is not separated from the cost of
-        computing.</b> Choosing between many small PEs and few large ones needs
-        that subtraction, and the framework measures it with a null unit rather
-        than deriving it — so the answer exists for one configuration and is not
-        a model.
+        <b
+          >The cost of <i>attaching</i> is not separated from the cost of
+          computing.</b
+        >
+        Choosing between many small PEs and few large ones needs that
+        subtraction, and the framework measures it with a null unit rather than
+        deriving it — so the answer exists for one configuration and is not a
+        model.
       </p>
       <p>
         <b>And the SIMD seam is unelaborated.</b> At

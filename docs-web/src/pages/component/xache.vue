@@ -18,9 +18,82 @@ import {
   KX_ROWS,
   KX_ROWS_R1,
   KX_VENDOR,
+  KX_PX,
 } from "@/content/estimator";
 
 const n = (v) => (v == null ? "—" : Math.round(v).toLocaleString());
+
+/* ------------------------------------------------- the partitioned form */
+const pxCols = [
+  { key: "c", label: "" },
+  { key: "p", label: "P", mono: true, align: "right" },
+  { key: "lut", label: "LUT", mono: true, align: "right" },
+  { key: "ff", label: "FF", mono: true, align: "right" },
+  { key: "u", label: "URAM", mono: true, align: "right" },
+  { key: "b", label: "BRAM", mono: true, align: "right" },
+  { key: "w", label: "WNS ns", mono: true, align: "right" },
+  { key: "f", label: "Fmax MHz", mono: true, align: "right" },
+];
+const pxRows = KX_PX.map((r, i) => ({
+  c: r[0],
+  p: r[1] == null ? "—" : `${r[1]}`,
+  lut: i === 1 || i === 2 ? `<b>${n(r[2])}</b>` : n(r[2]),
+  ff: n(r[3]),
+  u: n(r[4]),
+  b: `${r[5]}`,
+  w: `+${r[6].toFixed(3)}`,
+  f: r[7].toFixed(0),
+  _tone: i === 1 || i === 2 ? "good" : i === 4 ? "warn" : undefined,
+}));
+/* kx_pxache_tb with TB_PERF beside kx_xache_tb: 4×4 K1, block-RAM arrays,
+   4 KB interleave, 24-cycle DRAM, 64-beat bursts, 4 outstanding; cycles on
+   the fabric clock */
+const pxPerfCols = [
+  { key: "s", label: "scenario" },
+  { key: "x", label: "kx_xache", mono: true, align: "right" },
+  { key: "a", label: "kx_pxache P=1", mono: true, align: "right" },
+  { key: "b", label: "P=4, one per partition", mono: true, align: "right" },
+];
+const pxPerfRows = [
+  {
+    s: "1 master reads 64 KB, hits",
+    x: "1,044 · 18.8 GB/s",
+    a: "<b>1,038</b> · 18.9",
+    b: "<b>1,036</b> · 19.0",
+    _tone: "good",
+  },
+  {
+    s: "4 masters read 16 KB each, hits",
+    x: "465 · 42.3",
+    a: "<b>467</b> · 42.1",
+    b: "<b>473</b> · 41.6",
+    _tone: "good",
+  },
+  {
+    s: "4 masters read 16 KB each under one ID",
+    x: "—",
+    a: "467 · 42.1",
+    b: "473 · 41.6",
+  },
+  {
+    s: "1 master writes 64 KB",
+    x: "1,104 · 17.8",
+    a: "1,120 · 17.6",
+    b: "1,264 · 15.6 (the bench waits for each remote B)",
+  },
+  {
+    s: "4 masters write 16 KB each",
+    x: "477 · 41.2",
+    a: "481 · 40.9",
+    b: "508 · 38.7",
+  },
+  {
+    s: "32-beat hit, master 0 to the home in partition 0 / 1 / 2 / 3",
+    x: "39",
+    a: "39 / 39 / 39 / 39",
+    b: "<b>39 / 45 / 51 / 57</b>",
+  },
+];
 
 /* ---------------------------------------------------------------- structure */
 /* Every node is a real module or a real family of muxes in kx_xache.v; every
@@ -29,70 +102,34 @@ const n = (v) => (v == null ? "—" : Math.round(v).toLocaleString());
    engine drives the home's AW/W and the array's write port through the W mux,
    the served word returns through the R mux, and the DRAM R channel writes the
    array directly (fill_go). */
+/* Four rows in flow order, the two AXI edges as full-width bars: the M masters
+   and the N channels are what those bars ARE, so they are not drawn again
+   above and below them. */
 const fused = {
   groups: [
     {
       x: -1.5,
-      y: 5,
-      w: 64,
-      h: 20.5,
+      y: -2,
+      w: 72.5,
+      h: 25.4,
       label: "kx_xache — one clock, clk; AXI only at the two edges",
     },
   ],
   nodes: [
-    { id: "m0", x: 0, y: 0, w: 9, h: 3, label: "master 0", sub: "AXI4 · 512b" },
-    {
-      id: "m1",
-      x: 11,
-      y: 0,
-      w: 9,
-      h: 3,
-      label: "master 1",
-      sub: "AXI4 · 512b",
-    },
-    {
-      id: "mx",
-      x: 22,
-      y: 0,
-      w: 9,
-      h: 3,
-      label: "master M−1",
-      sub: "AXI4 · 512b",
-    },
     {
       id: "me",
       x: 0,
-      y: 6,
-      w: 31,
-      h: 3.4,
-      label: "master edges — kx_link × 5 per port",
+      y: 0,
+      w: 69.5,
+      h: 3.6,
+      label: "master edges — M × AXI4 · 512b — kx_link × 5 per port",
       sub: "wires on clk · async FIFOs when MCDC[m] = 1 · the address permutation (kx_perm) sits here",
     },
     {
-      id: "re",
-      x: 0,
-      y: 12,
-      w: 14,
-      h: 3.8,
-      label: "read engines",
-      sub: "kx_rd_engine or kx_rd_pipe · control only · one per home or one for all",
-      accent: true,
-    },
-    {
-      id: "we",
-      x: 16,
-      y: 12,
-      w: 15,
-      h: 3.8,
-      label: "write engines",
-      sub: "kx_wr_engine · control only · one per home or one for all",
-      accent: true,
-    },
-    {
       id: "xw",
-      x: 34,
-      y: 6,
-      w: 13,
+      x: 36,
+      y: 6.2,
+      w: 13.5,
       h: 3.4,
       label: "W mux, M:1 per home",
       sub: "on the write engine's registered master index",
@@ -100,37 +137,57 @@ const fused = {
     },
     {
       id: "xr",
-      x: 49,
-      y: 6,
-      w: 13,
+      x: 55,
+      y: 6.2,
+      w: 14.5,
       h: 3.4,
       label: "R mux, N:1 per master",
       sub: "on the read engine's registered home index",
       accent: true,
     },
     {
+      id: "we",
+      x: 0,
+      y: 12.6,
+      w: 12,
+      h: 3.8,
+      label: "write engines",
+      sub: "kx_wr_engine · control only · one per home or one for all",
+      accent: true,
+    },
+    {
+      id: "re",
+      x: 14,
+      y: 12.6,
+      w: 15,
+      h: 3.8,
+      label: "read engines",
+      sub: "kx_rd_engine or kx_rd_pipe · control only · one per home or one for all",
+      accent: true,
+    },
+    {
       id: "c0",
-      x: 34,
-      y: 12,
-      w: 8.5,
+      x: 36,
+      y: 12.6,
+      w: 9,
       h: 3.8,
       label: "kx_carray 0",
       sub: "64 URAM · {v, tag, K×W} · served word",
     },
     {
       id: "c1",
-      x: 43.75,
-      y: 12,
-      w: 8.5,
+      x: 46.5,
+      y: 12.6,
+      w: 9,
       h: 3.8,
       label: "kx_carray 1",
       sub: "the only wide store",
     },
     {
       id: "cx",
-      x: 53.5,
-      y: 12,
-      w: 8.5,
+      x: 60.5,
+      y: 12.6,
+      w: 9,
       h: 3.8,
       label: "kx_carray N−1",
       sub: "one per home",
@@ -138,70 +195,42 @@ const fused = {
     {
       id: "he",
       x: 0,
-      y: 18.5,
-      w: 62,
-      h: 3.4,
-      label: "DRAM edges — kx_link × 5 per home",
+      y: 19.4,
+      w: 69.5,
+      h: 3.6,
+      label: "DRAM edges — N × AXI4 · 512b — kx_link × 5 per home",
       sub: "wires on clk · async FIFOs when HCDC[h] = 1, the W and R ones in block RAM",
-    },
-    {
-      id: "d0",
-      x: 0,
-      y: 24.5,
-      w: 9,
-      h: 3,
-      label: "DRAM ch 0",
-      sub: "AXI4 · 512b",
-    },
-    {
-      id: "d1",
-      x: 11,
-      y: 24.5,
-      w: 9,
-      h: 3,
-      label: "DRAM ch 1",
-      sub: "AXI4 · 512b",
-    },
-    {
-      id: "dx",
-      x: 22,
-      y: 24.5,
-      w: 9,
-      h: 3,
-      label: "DRAM ch N−1",
-      sub: "AXI4 · 512b",
     },
   ],
   edges: [
-    { from: "m0:b", to: "me:t" },
-    { from: "m1:b", to: "me:t" },
-    { from: "mx:b", to: "me:t" },
-    { from: "me:b", to: "re:t", label: "AR" },
-    { from: "me:b", to: "we:t", label: "AW · W" },
-    { from: "me:r", to: "xw:l", label: "W data", dir: "h", accent: true },
-    { from: "xr:l", to: "me:r", label: "R data", dir: "h", accent: true },
-    { from: "xw:b", to: "c0:t", label: "write word", accent: true },
-    { from: "xw:b", to: "c1:t" },
-    { from: "xw:b", to: "cx:t" },
-    { from: "c0:t", to: "xr:b", label: "served word", accent: true },
-    { from: "c1:t", to: "xr:b" },
-    { from: "cx:t", to: "xr:b" },
+    { from: "me:b", to: "we:t", label: "AW · W", dir: "v" },
+    { from: "me:b", to: "re:t", label: "AR", dir: "v" },
+    { from: "xr:t", to: "me:b", label: "R data", dir: "v", accent: true },
+    { from: "me:b", to: "xw:t", label: "W data", dir: "v", accent: true },
+    { from: "xw:b", to: "c0:t", label: "write word", dir: "v", accent: true },
+    { from: "xw:b", to: "c1:t", dir: "v" },
+    { from: "c1:t", to: "xr:b", dir: "v" },
+    { from: "cx:t", to: "xr:b", label: "served word", dir: "v", accent: true },
     {
       from: "re:r",
       to: "c0:l",
-      label: "lookup idx · tag · sub, fill idx",
+      label: "lookup idx · tag",
       dir: "h",
     },
     {
       from: "re:b",
       to: "he:t",
-      label: "AR: one line, or the rest of the burst",
+      label: "AR: one line, or rest of the burst",
+      dir: "v",
     },
-    { from: "we:b", to: "he:t", label: "AW · W, write-through" },
-    { from: "he:t", to: "c0:b", label: "R fills the line", dash: true },
-    { from: "he:b", to: "d0:t" },
-    { from: "he:b", to: "d1:t" },
-    { from: "he:b", to: "dx:t" },
+    { from: "we:b", to: "he:t", label: "AW · W, write-through", dir: "v" },
+    {
+      from: "he:t",
+      to: "c0:b",
+      label: "R fills the line",
+      dash: true,
+      dir: "v",
+    },
   ],
 };
 
@@ -895,29 +924,33 @@ const granRows = [
 ];
 
 /* ---- the streaming read engine (RD_PIPE=1) and the read queue (RD_OUTQ) ---- */
+/* The chain sits on y = 0 and the three outcomes return to issue on arcs: take
+   above (+), drop below (−), and fetch over the top of take (+330 clears its
+   circle by 20 px). Circles grow to their subs, hence the 8- and 10-unit
+   pitch. */
 const rdpStates = [
   { id: "idle", x: 0, y: 0, label: "IDLE", sub: "round robin" },
   {
     id: "issue",
-    x: 7,
+    x: 8,
     y: 0,
     label: "issue",
     sub: "a lookup per cycle",
     accent: true,
   },
-  { id: "land", x: 14, y: 0, label: "landing", sub: "RD_LAT later" },
+  { id: "land", x: 16, y: 0, label: "landing", sub: "RD_LAT later" },
   {
     id: "take",
-    x: 21,
+    x: 26,
     y: -4,
     label: "take",
     sub: "needed & hit & room",
     accent: true,
   },
-  { id: "drop", x: 21, y: 4, label: "drop", sub: "stalled / not my turn" },
+  { id: "drop", x: 26, y: 4, label: "drop", sub: "stalled / not my turn" },
   {
     id: "miss",
-    x: 28,
+    x: 36,
     y: 0,
     label: "fetch",
     sub: "one AR: rest of burst",
@@ -929,10 +962,12 @@ const rdpEdges = [
   { from: "issue", to: "land" },
   { from: "land", to: "take", label: "beat == next" },
   { from: "land", to: "drop", label: "else" },
-  { from: "drop", to: "issue", label: "restart at need", curve: 60 },
-  { from: "take", to: "issue", label: "r_val, +1", curve: -60 },
+  // A leftward edge bulges UP for a positive curve: take (above) is +, drop
+  // (below) is −, and fetch's return goes over the top of take.
+  { from: "drop", to: "issue", label: "restart at need", curve: -100 },
+  { from: "take", to: "issue", label: "r_val, +1", curve: 100 },
   { from: "land", to: "miss", label: "needed & miss" },
-  { from: "miss", to: "issue", label: "fills → fill_lim", curve: 90 },
+  { from: "miss", to: "issue", label: "fills → fill_lim", curve: 330 },
 ];
 
 const rdqKnobCols = [
@@ -1243,6 +1278,56 @@ const catRows = [
       caption="The same RTL under five clock plans. A cross-SLR port has its own clock in this model whether or not the frequency is nominally equal, so the die boundary and the clock boundary are one edge, paid once"
     />
 
+    <h3 class="doc-h3">One partition, and the partitioned form</h3>
+    <p class="doc-p">
+      The Xache is a single-partition fabric: everything in it is placed in one
+      region of the part, and no register-to-register path inside it crosses a
+      die. Every number on this page is that fabric's. Its partitioned form,
+      <code>kx_pxache</code> (<code>src/kohakuaxi/pxache/</code>,
+      docs/projects/kohakuaxi/pxache.md, and
+      <RouterLink to="/component/pxache" class="doc-link"
+        >its own page with the lane, hop and port diagrams</RouterLink
+      >), assigns the masters and homes to <code>P</code> partitions of one
+      clock and joins them with <b>per-source lanes</b>: a master's AR and AW/W
+      stream, a home's R/B stream, each a chain of <code>kx_hop</code>s — one
+      registered, credited hop per boundary, a tap at every partition, nothing
+      muxed in transit — so every (master, home) pair keeps its own path and a
+      boundary carries the crossbar's bandwidth. A hop is a TX register whose
+      wire lands in a 16-entry ring RAM — the RAM's write port is the landing
+      register — three cycles per direction; its destination and kind bits come
+      out of distributed RAM, which is what took the lane from 469 to 666 MHz.
+      <code>HOP_RXREG = 1</code> adds a flop before each landing RAM for a
+      placement that wants one at both ends of a die crossing, at a cycle more
+      per hop.
+    </p>
+    <Callout kind="rule" title="Nothing downstream of an engine ever waits">
+      <p>
+        The Xache orders one master's reads by holding a completed burst at its
+        home until it is that master's oldest. Across a boundary that deadlocks:
+        two masters, two homes, unequal latencies, each home holding the other
+        master's burst. So <code>kx_pxache</code> holds nothing: a read reserves
+        a <b>slot and a page of beats in a reorder ring</b> per master at the
+        AR, beats from any home land the cycle they are offered at
+        <code>{slot, beat}</code>, and the drain presents the oldest slot in
+        issue order; a write takes a slot for its B and sends every beat before
+        the next AW. The pick among sources is combinational and prefers the
+        slot being drained — an engine's lookahead needs its ready in the cycle
+        it presents (a cycle late: a beat per three cycles), and a plain
+        lowest-valid pick let a near home land ahead of the drain (1,224 cycles
+        against 1,044).
+      </p>
+    </Callout>
+    <SpecTable
+      :cols="pxCols"
+      :rows="pxRows"
+      caption="The ship shape at P partitions, one ooc_mod.tcl synthesis each, beside the kx_xache baseline. P=1 is the Xache within 22 LUT (the 30 BRAM are four reorder rings at the width floor); four partitions are 36 hops for 966 LUT over the Xache and 14,900 FF, BRAM at the width floor — 24 wide hops at 8.5, 12 narrow, 30 rings, 64 edges; the amber row is the same design with a register before every landing RAM, 432 fewer LUT and a cycle more per hop. Every ready and accept is gathered at elaboration over that partition's homes or masters only, so no unregistered path leaves a partition"
+    />
+    <SpecTable
+      :cols="pxPerfCols"
+      :rows="pxPerfRows"
+      caption="kx_pxache_tb with TB_PERF beside kx_xache_tb: 4×4 K1, block-RAM arrays, the 4 KB interleave, a 24-cycle DRAM, 64-beat bursts, four outstanding, GB/s at 300 MHz. Reads across four partitions are within 2% of one; +8 cycles per boundary on a round trip is the whole latency cost; the single-ID row is the case the Xache's bench never ran, at the same rate because the ring orders by slot, never by ID"
+    />
+
     <h2 class="doc-h2">Channel interleaving is an address permutation</h2>
     <p class="doc-p">
       The home is a field of the address and every home receives the whole
@@ -1305,7 +1390,7 @@ const catRows = [
     <SpecTable
       :cols="tblCols"
       :rows="tblRowsP1"
-      caption="RD_PIPE=1, RD_OUTQ=4, the current array. The ship at RD_OUTQ 1 / 2 / 8 is within 90 LUT of the 4 row: the queue depth is bookkeeping, not datapath"
+      caption="RD_PIPE=1, RD_OUTQ=4, the current array. The ship at RD_OUTQ 1 / 2 / 8 is within 90 LUT of the 4 row: the queue depth is bookkeeping, not datapath. The ship with the 16 KB rotation (NSWAP 18, pairs (i, i+2) for i = 14..31) over a flat 16 GB is 9,994 LUT / 11,175 FF / 64 BRAM at 469 MHz — 352 above the un-rotated ship, one measurement"
     />
     <h3 class="doc-h3">The one-beat engine on the current array</h3>
     <SpecTable

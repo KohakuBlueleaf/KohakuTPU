@@ -436,20 +436,23 @@ const headroom = {
 };
 
 // ------------------------------------------------------- the 17-bit split
+// Layout: a and b both feed both partial products (a K2,2), which always
+// crosses when the two operands share a column. So b sits BETWEEN the two
+// partial products and feeds them top and bottom; a fans out from the left.
 const split = {
   nodes: [
     {
       id: "a",
       x: 0,
-      y: 3,
+      y: 4.7,
       w: 12,
       label: "a — 24-bit significand",
       sub: "split at bit 17",
     },
-    { id: "b", x: 0, y: 8.5, w: 12, label: "b", sub: "the other operand" },
+    { id: "b", x: 16, y: 4.7, w: 12, label: "b", sub: "the other operand" },
     {
       id: "hi",
-      x: 15,
+      x: 16,
       y: 0,
       w: 12,
       label: "high partial product",
@@ -457,15 +460,15 @@ const split = {
     },
     {
       id: "lo",
-      x: 15,
-      y: 6,
+      x: 16,
+      y: 9.4,
       w: 12,
       label: "low partial product",
       sub: "→ DSP-M",
     },
     {
       id: "dspp",
-      x: 30,
+      x: 31,
       y: 0,
       w: 13,
       h: 4,
@@ -475,8 +478,8 @@ const split = {
     },
     {
       id: "dspm",
-      x: 30,
-      y: 6,
+      x: 31,
+      y: 8.3,
       w: 13,
       h: 5.4,
       label: "DSP-M — three ALU operands",
@@ -485,16 +488,16 @@ const split = {
     },
     {
       id: "cc",
-      x: 30,
-      y: 13.5,
+      x: 31,
+      y: 16,
       w: 13,
       label: "C = the addend",
       sub: "free, on the W mux",
     },
     {
       id: "out",
-      x: 47,
-      y: 6,
+      x: 48,
+      y: 8.3,
       w: 13,
       h: 5.4,
       label: "24×24 + addend, one pass",
@@ -505,8 +508,8 @@ const split = {
   edges: [
     { from: "a:r", to: "hi:l", dir: "h" },
     { from: "a:r", to: "lo:l", dir: "h" },
-    { from: "b:r", to: "lo:l", dir: "h" },
-    { from: "b:r", to: "hi:l", dir: "h" },
+    { from: "b:t", to: "hi:b", dir: "v" },
+    { from: "b:b", to: "lo:t", dir: "v" },
     { from: "hi:r", to: "dspp:l", dir: "h" },
     { from: "lo:r", to: "dspm:l", dir: "h" },
     { from: "dspp:b", to: "dspm:t", dir: "v", accent: true, label: "cascade" },
@@ -558,7 +561,7 @@ const seeds = {
     },
     {
       id: "h2",
-      x: 48,
+      x: 51,
       y: 6.5,
       w: 14,
       h: 4.4,
@@ -568,7 +571,7 @@ const seeds = {
     },
     {
       id: "id",
-      x: 48,
+      x: 51,
       y: 0,
       w: 14,
       label: "identity substitute",
@@ -576,7 +579,7 @@ const seeds = {
     },
     {
       id: "f",
-      x: 65,
+      x: 68,
       y: 6.5,
       w: 12,
       h: 4.4,

@@ -13,7 +13,8 @@ const overview = {
       h: 33,
       label: "the system node — ONE component, one per mesh",
     },
-    { x: 22.5, y: 7.4, w: 70, h: 21.5, label: "MAG — the memory gateway" },
+    /* Starts right of sn_hub so its label is not hidden behind the hub. */
+    { x: 25.5, y: 7.8, w: 67, h: 21.1, label: "MAG — the memory gateway" },
     {
       x: 28.5,
       y: -2.2,
@@ -145,9 +146,15 @@ const overview = {
     { from: "cpu:r", to: "hostm:l", label: "mv.go" },
     { from: "eng:r", to: "q:l", accent: true },
     { from: "edge:r", to: "q:l", label: "interlink", dash: true },
-    { from: "hostw:r", to: "q:t" },
+    /* Three wires on q's top: the mover is listed first so it takes the
+     * left slot and wraps round the left of the host window, the window
+     * drops straight into the middle slot, and the aperture leaves from the
+     * right slot up the free corridor to mag_stage_port. */
     { from: "hostm:b", to: "q:t", label: "MV" },
-    { from: "cpu:b", to: "q:l", label: "cp_*" },
+    { from: "hostw:b", to: "q:t" },
+    /* Leaves the processor's right side so it does not run through the MAG
+     * group label under the processor. */
+    { from: "cpu:r", to: "q:l", label: "cp_*" },
     { from: "q:r", to: "dramp:l", accent: true },
     { from: "q:t", to: "stagep:l", label: "aperture" },
     { from: "stagep:b", to: "dramp:t", label: "not staged" },
@@ -446,11 +453,36 @@ const descSpec = {
       o: "<b>framework</b> — and it is 40 bits <i>whatever</i> <code>ADDR_W</code> is",
       _tone: "warn",
     },
-    { f: "len", w: "8", p: "flit[215 -: 8]", o: "framework — beats − 1, and MUST be ≤ 7" },
-    { f: "flags", w: "8", p: "flit[207 -: 8]", o: "framework; bits 4–5 reserved to the addon" },
-    { f: "count", w: "8", p: "flit[199 -: 8]", o: "framework — entries in the run, 0 means 1" },
-    { f: "peer", w: "24", p: "flit[191 -: 24]", o: "framework — three {y,x} bytes" },
-    { f: "n_peer", w: "2", p: "flit[167 -: 2]", o: "framework — 0–3 extra destinations" },
+    {
+      f: "len",
+      w: "8",
+      p: "flit[215 -: 8]",
+      o: "framework — beats − 1, and MUST be ≤ 7",
+    },
+    {
+      f: "flags",
+      w: "8",
+      p: "flit[207 -: 8]",
+      o: "framework; bits 4–5 reserved to the addon",
+    },
+    {
+      f: "count",
+      w: "8",
+      p: "flit[199 -: 8]",
+      o: "framework — entries in the run, 0 means 1",
+    },
+    {
+      f: "peer",
+      w: "24",
+      p: "flit[191 -: 24]",
+      o: "framework — three {y,x} bytes",
+    },
+    {
+      f: "n_peer",
+      w: "2",
+      p: "flit[167 -: 2]",
+      o: "framework — 0–3 extra destinations",
+    },
     {
       f: "entry_words",
       w: "8",
@@ -494,7 +526,11 @@ const modes = {
       d: "a counter-based PRNG keyed on the destination's <b>absolute word address</b>, so one fill and four fills of its quarters produce identical bytes",
       s: "built",
     },
-    { m: "FILL", d: "an immediate, splatted at the configured element width", s: "built" },
+    {
+      m: "FILL",
+      d: "an immediate, splatted at the configured element width",
+      s: "built",
+    },
     {
       m: "TRANSFORM",
       d: "mode 5 — the source walk feeds the transform slot and the destination counts <b>entries</b>",
@@ -1211,7 +1247,6 @@ const catRows = [
     cat: "<b>yours</b>, entirely",
   },
 ];
-
 </script>
 
 <template>
@@ -1261,7 +1296,9 @@ const catRows = [
     <p class="doc-p">Four things, and nothing else.</p>
     <div class="grid gap-3 sm:grid-cols-2 my-5">
       <div class="card p-4">
-        <div class="kt-text-caption font-semibold text-warm-800 dark:text-warm-200 mb-1">
+        <div
+          class="kt-text-caption font-semibold text-warm-800 dark:text-warm-200 mb-1"
+        >
           The memory instruction set
         </div>
         <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
@@ -1270,7 +1307,9 @@ const catRows = [
         </p>
       </div>
       <div class="card p-4">
-        <div class="kt-text-caption font-semibold text-warm-800 dark:text-warm-200 mb-1">
+        <div
+          class="kt-text-caption font-semibold text-warm-800 dark:text-warm-200 mb-1"
+        >
           The service behind it
         </div>
         <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
@@ -1279,17 +1318,21 @@ const catRows = [
         </p>
       </div>
       <div class="card p-4">
-        <div class="kt-text-caption font-semibold text-warm-800 dark:text-warm-200 mb-1">
+        <div
+          class="kt-text-caption font-semibold text-warm-800 dark:text-warm-200 mb-1"
+        >
           Two addon slots
         </div>
         <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
           The <span class="chip">transform slot</span> on the mover's read
-          return, and <span class="chip">staging</span> in the address map.
-          Both ship working and both are built to be replaced.
+          return, and <span class="chip">staging</span> in the address map. Both
+          ship working and both are built to be replaced.
         </p>
       </div>
       <div class="card p-4">
-        <div class="kt-text-caption font-semibold text-warm-800 dark:text-warm-200 mb-1">
+        <div
+          class="kt-text-caption font-semibold text-warm-800 dark:text-warm-200 mb-1"
+        >
           The edge
         </div>
         <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
@@ -1306,11 +1349,13 @@ const catRows = [
       request encoding are copied into every unit — each copy a place to get it
       wrong, and each unit's author solving a problem that has nothing to do
       with their datapath. The other rejected alternative is subtler:
-      <b>give the memory service, the control plane, the inter-mesh link and the
-      processor an attachment each.</b> A mesh has very few attachments to give
-      away, three of those four are nearly idle, and paying four times over for
-      three idle consumers is how a fabric runs out of ports before it runs out
-      of bandwidth.
+      <b
+        >give the memory service, the control plane, the inter-mesh link and the
+        processor an attachment each.</b
+      >
+      A mesh has very few attachments to give away, three of those four are
+      nearly idle, and paying four times over for three idle consumers is how a
+      fabric runs out of ports before it runs out of bandwidth.
     </p>
 
     <Callout kind="rule" title="The split this system draws">
@@ -1707,8 +1752,8 @@ const catRows = [
     </p>
     <p class="doc-p kt-text-caption">
       One instance measured <b>4,499 LUT and 32 DSP</b> — out-of-context
-      synthesis on <code>xcvu13p-fhgb2104-2L-e</code>, Vivado 2024.2, at
-      3.333 ns, <code>sysnode</code> whole at <code>PORTS = 2</code>, by
+      synthesis on <code>xcvu13p-fhgb2104-2L-e</code>, Vivado 2024.2, at 3.333
+      ns, <code>sysnode</code> whole at <code>PORTS = 2</code>, by
       <code>scripts/tcl/ooc_sysnode_rv64.tcl</code>. That is the framework's
       arbiter plus <i>this project's</i> bank and occupant, so it is what one
       accelerator's transform costs rather than what a slot costs.
@@ -1933,9 +1978,10 @@ const catRows = [
         is not limited this way.
       </p>
       <p class="kt-text-caption">
-        300 MHz here is <b>an assumed rate for the arithmetic, not a measured
-        one</b>. No Fmax in this tree is a closed-timing figure; every clock
-        result is out-of-context synthesis, and synthesis slack is optimistic.
+        300 MHz here is
+        <b>an assumed rate for the arithmetic, not a measured one</b>. No Fmax
+        in this tree is a closed-timing figure; every clock result is
+        out-of-context synthesis, and synthesis slack is optimistic.
       </p>
       <p>
         <b
@@ -2025,12 +2071,14 @@ const catRows = [
       <p>
         Inbound, the ports round-robin into each single-input client, and the
         pointer moves only on an accepted flit; moving it every cycle would let
-        a port lose its turn to one that had nothing to send. <b>The three
-        arbiters are separate</b> — sharing one would let a stalled interlink
-        hold up dispatch, or a busy processor hold up the agent.
+        a port lose its turn to one that had nothing to send.
+        <b>The three arbiters are separate</b> — sharing one would let a stalled
+        interlink hold up dispatch, or a busy processor hold up the agent.
       </p>
       <p>
-        <b>Inbound order matters too, because one flit can satisfy two tests.</b>
+        <b
+          >Inbound order matters too, because one flit can satisfy two tests.</b
+        >
         A memory flit may also be marked remote, and the engine is not the
         consumer of one that is leaving this mesh — so remote is asked first,
         then the processor's coordinate, then the type.
@@ -2135,7 +2183,10 @@ const catRows = [
       write.
     </p>
 
-    <Callout kind="rule" title="Arrival order is not load-bearing, and that is a proof">
+    <Callout
+      kind="rule"
+      title="Arrival order is not load-bearing, and that is a proof"
+    >
       <p>
         Every response flit carries its own destination: <code>txn</code> is the
         requester's tag <b>plus this entry's index in the run</b>, and
@@ -2158,7 +2209,10 @@ const catRows = [
       </p>
     </Callout>
 
-    <Callout kind="rule" title="Content-independent backpressure is self-clearing, and that is a proof">
+    <Callout
+      kind="rule"
+      title="Content-independent backpressure is self-clearing, and that is a proof"
+    >
       <p>
         <code>mem_in_busy</code> is a function of this port's own queue
         occupancy and nothing else. It never depends on what the arriving flit
@@ -2188,13 +2242,15 @@ const catRows = [
     <p class="doc-p">
       Three numbers fall out of the protocol and you need all three before
       writing a fill path. A response is
-      <code>entry_words</code> flits per entry and
-      <code>count</code> entries per run, so
-      <b>one request produces <code>entry_words × count</code> response
-      flits</b> — up to <code>4 × 255</code> = 1,020 at the defaults, arriving
-      over as many cycles as the fabric takes. Your unit must be able to absorb
-      every one of them: <b>credits are your obligation, not the fabric's</b>,
-      and issuing a request whose response you cannot absorb is how a fabric
+      <code>entry_words</code> flits per entry and <code>count</code> entries
+      per run, so
+      <b
+        >one request produces <code>entry_words × count</code> response flits</b
+      >
+      — up to <code>4 × 255</code> = 1,020 at the defaults, arriving over as
+      many cycles as the fabric takes. Your unit must be able to absorb every
+      one of them: <b>credits are your obligation, not the fabric's</b>, and
+      issuing a request whose response you cannot absorb is how a fabric
       deadlocks. On the write side a burst is <code>len + 1</code> beats with
       <code>len ≤ 7</code>, so a store larger than 8 beats is several
       descriptors, and <b>a source MUST NOT have two writes open at once</b>
@@ -2211,13 +2267,11 @@ const catRows = [
       </li>
       <li>
         <b>Write the fill path against the header, never a counter.</b> Derive
-        the write address from <code>txn</code> and
-        <code>rsvd[1:0]</code>. A cursor is correct only for as long as there is
-        exactly one server, and nothing tells you when that stops being true.
+        the write address from <code>txn</code> and <code>rsvd[1:0]</code>. A
+        cursor is correct only for as long as there is exactly one server, and
+        nothing tells you when that stops being true.
       </li>
-      <li>
-        <b>Size your tag space</b> so a run cannot wrap the 8-bit sum.
-      </li>
+      <li><b>Size your tag space</b> so a run cannot wrap the 8-bit sum.</li>
       <li>
         <b>Drop your write acks.</b> Slot sizing assumes you do not wait on
         them, and a unit that waits <i>and</i> a slot count sized for a unit
@@ -2233,8 +2287,8 @@ const catRows = [
         operand, rather than issuing identical requests.
       </li>
       <li>
-        <b>Put format conversion in the transform slot</b>, scheduled as a
-        mover pass — not in your unit, and not on the fetch. A fetch is never
+        <b>Put format conversion in the transform slot</b>, scheduled as a mover
+        pass — not in your unit, and not on the fetch. A fetch is never
         transformed.
       </li>
     </ol>
@@ -2252,9 +2306,9 @@ const catRows = [
       <p>
         <b>Nothing checks a slot count against a mesh.</b>
         <code>WR_SLOTS</code> must be at least two per node that can have a
-        write in flight, and that is arithmetic nobody performs — an
-        under-sized array does not corrupt anything, it deadlocks, and the
-        symptom appears at a node that did nothing wrong.
+        write in flight, and that is arithmetic nobody performs — an under-sized
+        array does not corrupt anything, it deadlocks, and the symptom appears
+        at a node that did nothing wrong.
       </p>
       <p>
         <b>No latency bound is offered on a write ack.</b> The read-response
@@ -2294,10 +2348,9 @@ const catRows = [
         <code>mag_switch</code>, <code>mag_ilink</code> and
         <code>il_pkt_arb</code> — implement a second routing layer with its own
         topology, its own deadlock argument and its own credit protocol, and
-        they live inside the gateway because the gateway hosts the endpoint.
-        The package boundary belongs with the ship.
+        they live inside the gateway because the gateway hosts the endpoint. The
+        package boundary belongs with the ship.
       </p>
     </Callout>
-
   </DocPage>
 </template>

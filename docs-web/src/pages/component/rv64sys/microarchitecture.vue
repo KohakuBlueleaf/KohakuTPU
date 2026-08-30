@@ -163,7 +163,11 @@ const occupancy = {
   ],
 };
 
-/* --- the forwarding network ---------------------------------------------- */
+/* --- the forwarding network ----------------------------------------------
+ * The mux's left side carries four slots at y = 7.4 / 9.3 / 11.2 / 13.1, so
+ * each source sits where its own wire is straight or its exit line is clear
+ * of every other slot: a run 0.1 unit from another source's exit reads as
+ * one wire. */
 
 const forward = {
   nodes: [
@@ -179,7 +183,7 @@ const forward = {
     {
       id: "w",
       x: 0,
-      y: 5.5,
+      y: 7.3,
       w: 18,
       h: 4,
       label: "W — w_data",
@@ -188,7 +192,7 @@ const forward = {
     {
       id: "wq",
       x: 0,
-      y: 11,
+      y: 12.5,
       w: 18,
       h: 4,
       label: "W−1 — w_val_q",
@@ -198,7 +202,7 @@ const forward = {
     {
       id: "rf",
       x: 0,
-      y: 16.5,
+      y: 18,
       w: 18,
       h: 4,
       label: "rv64_regfile",
@@ -225,9 +229,11 @@ const forward = {
       accent: true,
     },
     {
+      // beside M, its only source: below the mux it would cut the three
+      // lower sources' wires on the way down. Centred on M's upper slot.
       id: "bub",
       x: 27,
-      y: 18,
+      y: -0.67,
       w: 14,
       h: 4,
       label: "bubble",
@@ -236,12 +242,12 @@ const forward = {
     },
   ],
   edges: [
+    { from: "m:r", to: "bub:l", label: "if it is a load", dash: true },
     { from: "m:r", to: "mux:l" },
     { from: "w:r", to: "mux:l" },
     { from: "wq:r", to: "mux:l", accent: true },
     { from: "rf:r", to: "mux:l" },
     { from: "mux:r", to: "held:l", accent: true },
-    { from: "m:r", to: "bub:l", label: "if it is a load", dash: true },
   ],
 };
 
@@ -996,10 +1002,30 @@ const peSplit = {
       w: "the wrapper — the range decode, the two-phase handshake, the control region, the fetch page register",
     },
     { i: "u_core", l: "<b>5,944</b>", f: "3,218", w: "the pipeline" },
-    { i: "u_l1", l: "349", f: "499", w: "the write-back L1's control; the arrays are block RAM and LUTRAM" },
-    { i: "u_np", l: "288", f: "725", w: "the node port — a priority mux and one set of 256-bit AXI registers" },
-    { i: "u_mmu", l: "151", f: "217", w: "the TLB's control and the walker; the array is one block RAM" },
-    { i: "u_mbox", l: "138", f: "308", w: "the dispatch mailbox and its 16-deep completion queue" },
+    {
+      i: "u_l1",
+      l: "349",
+      f: "499",
+      w: "the write-back L1's control; the arrays are block RAM and LUTRAM",
+    },
+    {
+      i: "u_np",
+      l: "288",
+      f: "725",
+      w: "the node port — a priority mux and one set of 256-bit AXI registers",
+    },
+    {
+      i: "u_mmu",
+      l: "151",
+      f: "217",
+      w: "the TLB's control and the walker; the array is one block RAM",
+    },
+    {
+      i: "u_mbox",
+      l: "138",
+      f: "308",
+      w: "the dispatch mailbox and its 16-deep completion queue",
+    },
     { i: "<b>total</b>", l: "<b>7,334</b>", f: "<b>5,856</b>", w: "" },
   ],
 };
@@ -1007,7 +1033,8 @@ const peSplit = {
 const coreSplit = {
   items: [
     {
-      label: "core glue — forwarding muxes, hazard logic, load align, the trap path",
+      label:
+        "core glue — forwarding muxes, hazard logic, load align, the trap path",
       value: 2201,
     },
     { label: "u_md — multiply and divide, plus 4 DSP", value: 1366 },
@@ -1167,7 +1194,10 @@ const absent = {
     source="src/kohakuaccel/pe/rv64-sys/ · docs/arch/cpu/rv64-sys/microarchitecture.md"
   >
     <h2 class="doc-h2">What it owns</h2>
-    <p class="doc-p">Four mechanisms, and every other section is one of them seen from a different angle.</p>
+    <p class="doc-p">
+      Four mechanisms, and every other section is one of them seen from a
+      different angle.
+    </p>
     <div class="grid gap-3 sm:grid-cols-2 my-5">
       <div class="card p-4">
         <div
@@ -1217,7 +1247,9 @@ const absent = {
 
     <p class="doc-p">
       How <code>rv64_core</code> is built, cycle by cycle. The
-      <RouterLink to="/component/rv64sys" class="doc-link">RV64 system core</RouterLink>
+      <RouterLink to="/component/rv64sys" class="doc-link"
+        >RV64 system core</RouterLink
+      >
       page is the contract; this page is the machine that keeps it, and
       everything on it is free to change. The core exists to host a runtime,
       which is what makes a return-address stack and a divider worth their area
@@ -1253,24 +1285,27 @@ const absent = {
         <b>Out-of-context synthesis — not placed and not routed</b> — on
         <code>xcvu13p-fhgb2104-2L-e</code> under Vivado 2024.2, by
         <code>scripts/tcl/ooc_syscore.tcl</code> with
-        <code>-flatten_hierarchy rebuilt</code>, at a
-        <b>3.333 ns request</b>. Cycle figures come from Verilator 5.020 driving
-        a C++ harness, against independently written models.
+        <code>-flatten_hierarchy rebuilt</code>, at a <b>3.333 ns request</b>.
+        Cycle figures come from Verilator 5.020 driving a C++ harness, against
+        independently written models.
       </p>
       <p>
         Synthesis slack is optimistic and there is no routed result for anything
-        here. <b>Never quote a LUT or an Fmax from a simulator, and never quote a
-        cycle count from synthesis.</b>
+        here.
+        <b
+          >Never quote a LUT or an Fmax from a simulator, and never quote a
+          cycle count from synthesis.</b
+        >
       </p>
     </Callout>
 
     <h2 class="doc-h2">Five stages, six register boundaries</h2>
 
     <p class="doc-p">
-      The sixth boundary, W−1, is not architectural — <b>nothing reads it but the
-      forwarding network</b>. It exists because of what a synchronous array does
-      with a write and a read on the same edge, and the forwarding network below
-      is about exactly that.
+      The sixth boundary, W−1, is not architectural —
+      <b>nothing reads it but the forwarding network</b>. It exists because of
+      what a synchronous array does with a write and a read on the same edge,
+      and the forwarding network below is about exactly that.
     </p>
 
     <Fig
@@ -1298,14 +1333,17 @@ const absent = {
     <p class="doc-p">
       The whole address path in fetch is
       <code>pc → 2:1 mux → the arrays' address pins</code>, and nothing else.
-      That is deliberate: the instruction memory and the predictor register their
-      own address input, so any logic in front of the mux is logic in front of a
-      memory, and the fetch loop closes only because there is none. The
-      predictor's lookup goes out with the <b>fetch</b> address and its answer
-      arrives with the instruction it describes.
+      That is deliberate: the instruction memory and the predictor register
+      their own address input, so any logic in front of the mux is logic in
+      front of a memory, and the fetch loop closes only because there is none.
+      The predictor's lookup goes out with the <b>fetch</b> address and its
+      answer arrives with the instruction it describes.
     </p>
 
-    <Callout kind="rule" title="Translation joins fetch as a register, not as a lookup">
+    <Callout
+      kind="rule"
+      title="Translation joins fetch as a register, not as a lookup"
+    >
       <p>
         With Sv39 on, the instruction array is addressed by the
         <b>translated</b> PC — and the translation comes from
@@ -1321,42 +1359,50 @@ const absent = {
         in flight waits for a translation it does not need. Fetch holds while a
         page is being resolved, for the cycle after a translation lands (the
         array is still answering the old address), for the cycle after
-        <code>sfence.vma</code> retires, and for the cycle after a trap while the
-        privilege register settles — because whether the new PC is translated
-        depends on a privilege level that is one cycle stale. That last one is
-        the
+        <code>sfence.vma</code> retires, and for the cycle after a trap while
+        the privilege register settles — because whether the new PC is
+        translated depends on a privilege level that is one cycle stale. That
+        last one is the
         <RouterLink to="/component/rv64sys" class="doc-link"
           >trap timing contract</RouterLink
         >.
       </p>
       <p>
-        <b>The hold is also why the word D captures is not captured under it.</b>
+        <b
+          >The hold is also why the word D captures is not captured under it.</b
+        >
         Under a translation stall the address on the array's pins is not yet a
         physical one, so the word on the bus belongs to nowhere; capturing it
         would pin that garbage in decode for the rest of the stall.
       </p>
     </Callout>
 
-    <Callout kind="trap" title="A faulted fetch decodes as a NOP, and traps in execute">
+    <Callout
+      kind="trap"
+      title="A faulted fetch decodes as a NOP, and traps in execute"
+    >
       <p>
         A fetch whose page faulted still delivers a word — the wrapper installs
         the faulting page as a <i>poisoned</i> entry and lets the fetch through,
-        because retrying the walk instead hangs the machine: fetch is stalled, so
-        the core never reaches an instruction boundary, so it never takes the
+        because retrying the walk instead hangs the machine: fetch is stalled,
+        so the core never reaches an instruction boundary, so it never takes the
         trap that would fix the mapping.
       </p>
       <p>
         The word that arrives is whatever the untranslated array held.
-        <b>It is replaced with a NOP encoding before the decoder sees it</b>, and
-        a fault flag travels beside it through the same holding register the
+        <b>It is replaced with a NOP encoding before the decoder sees it</b>,
+        and a fault flag travels beside it through the same holding register the
         instruction word uses. Decoded for real, it could issue a load or
         redirect fetch <i>before</i> the trap lands. The NOP reaches execute,
-        traps there with cause 12, and <code>tval</code> is the PC that could not
-        be fetched.
+        traps there with cause 12, and <code>tval</code> is the PC that could
+        not be fetched.
       </p>
     </Callout>
 
-    <Callout kind="trap" title="Freezing the PC does not freeze the word decode is looking at">
+    <Callout
+      kind="trap"
+      title="Freezing the PC does not freeze the word decode is looking at"
+    >
       <p>
         The array is addressed by <code>pc</code>, and D holds the instruction
         fetched from the <i>previous</i> <code>pc</code>. One cycle after a hold
@@ -1366,20 +1412,26 @@ const absent = {
       <p>
         A holding register solves it: on the <b>first</b> cycle of a hold — and
         only the first, because a flag marks it taken — the instruction word is
-        copied out of the array's output, and decode reads that copy for the rest
-        of the hold.
+        copied out of the array's output, and decode reads that copy for the
+        rest of the hold.
       </p>
       <p>
-        <b>That is the general shape of holding a stage whose input is a
-        synchronous array, and it is why a hold is never simply a clock
-        enable.</b> A flop-input stage holds by not clocking; an array-input
-        stage keeps being handed new data whether it wants it or not, so it has
-        to capture. The same trap is one register-file read away in any design
-        that stalls a stage fed by block RAM.
+        <b
+          >That is the general shape of holding a stage whose input is a
+          synchronous array, and it is why a hold is never simply a clock
+          enable.</b
+        >
+        A flop-input stage holds by not clocking; an array-input stage keeps
+        being handed new data whether it wants it or not, so it has to capture.
+        The same trap is one register-file read away in any design that stalls a
+        stage fed by block RAM.
       </p>
     </Callout>
 
-    <Callout kind="rule" title="A stage fed by an array MUST capture its input on the first held cycle">
+    <Callout
+      kind="rule"
+      title="A stage fed by an array MUST capture its input on the first held cycle"
+    >
       <p>
         Holding <span class="chip">pc</span> is necessary and it is not
         sufficient. The stage <b>MUST</b> copy the array's output on the
@@ -1416,15 +1468,17 @@ const absent = {
       </p>
     </Callout>
 
-    <h2 class="doc-h2">Why a read-first register file needs three forward sources</h2>
+    <h2 class="doc-h2">
+      Why a read-first register file needs three forward sources
+    </h2>
 
     <p class="doc-p">
       In-order, single issue, one write port. That settles most of the hazard
       question before it is asked: write-after-write and write-after-read cannot
-      occur, and structural hazards are designed out rather than arbitrated — the
-      register file is 2R1W as two mirrored single-read arrays, and instruction
-      and data memories are separate ports. What is left is <b>read-after-write</b>,
-      <b>control</b>, and <b>multi-cycle occupancy</b>.
+      occur, and structural hazards are designed out rather than arbitrated —
+      the register file is 2R1W as two mirrored single-read arrays, and
+      instruction and data memories are separate ports. What is left is
+      <b>read-after-write</b>, <b>control</b>, and <b>multi-cycle occupancy</b>.
     </p>
 
     <Fig
@@ -1437,25 +1491,30 @@ const absent = {
 
     <SpecTable :cols="distances.cols" :rows="distances.rows" />
 
-    <Callout kind="rule" title="Count your forward sources from the memory primitive, not from the stage diagram">
+    <Callout
+      kind="rule"
+      title="Count your forward sources from the memory primitive, not from the stage diagram"
+    >
       <p>
         Work the third one through. Instruction <i>I</i> is in E at cycle
         <i>T</i>; its operand address left D during <i>T−1</i>, and the array at
-        read latency 1 returns the data at <i>T</i>.
-        <i>I−3</i> wrote the register file at the edge ending <i>T−1</i> —
+        read latency 1 returns the data at <i>T</i>. <i>I−3</i> wrote the
+        register file at the edge ending <i>T−1</i> —
         <b>the same edge that captured I's read</b>. The array is
         <b>read-first</b>: a write and a read of one address on one edge return
-        the <i>old</i> value. <i>I−4</i> wrote one edge earlier, so the array does
-        return it, and no fourth source is needed.
+        the <i>old</i> value. <i>I−4</i> wrote one edge earlier, so the array
+        does return it, and no fourth source is needed.
       </p>
       <p>
-        <b>A write-first array needs two sources, a read-first array needs three,
-        and a flop file with a write-through port needs two — and nothing in the
-        pipeline drawing tells you which you are looking at.</b> Get it wrong in
-        the cheap direction and the core is incorrect for exactly one
-        producer-to-consumer spacing, which is the kind of bug a casual test
-        suite does not reach. The co-simulation behind this core covers every
-        spacing by construction for that reason.
+        <b
+          >A write-first array needs two sources, a read-first array needs
+          three, and a flop file with a write-through port needs two — and
+          nothing in the pipeline drawing tells you which you are looking at.</b
+        >
+        Get it wrong in the cheap direction and the core is incorrect for
+        exactly one producer-to-consumer spacing, which is the kind of bug a
+        casual test suite does not reach. The co-simulation behind this core
+        covers every spacing by construction for that reason.
       </p>
       <p>
         That is the price of putting the register file in a memory primitive
@@ -1466,8 +1525,8 @@ const absent = {
 
     <Callout kind="note" title="The select is computed in D, and it is exact">
       <p>
-        The three selects compare register numbers <b>in decode</b>, against E, M
-        and W <i>as they are in that cycle</i> — not against where the
+        The three selects compare register numbers <b>in decode</b>, against E,
+        M and W <i>as they are in that cycle</i> — not against where the
         instruction's producers will be. That is exact rather than approximate
         because <b>the pipeline shifts exactly one stage per cycle</b>: “compare
         against E, M and W now” and “compare against M, W and W−1 when I get to
@@ -1475,35 +1534,41 @@ const absent = {
       </p>
       <p>
         The motivation is timing. Comparing in E put the comparator, the 4:1 mux
-        and the ALU in one cycle and made the comparator the binding path. Moving
-        it to D leaves E with a mux and measured <b>−156 LUT and +12.1 MHz</b>,
-        with byte-identical cycle counts on all three test programs — which is
-        the correctness argument a pure timing transform owes.
+        and the ALU in one cycle and made the comparator the binding path.
+        Moving it to D leaves E with a mux and measured
+        <b>−156 LUT and +12.1 MHz</b>, with byte-identical cycle counts on all
+        three test programs — which is the correctness argument a pure timing
+        transform owes.
       </p>
     </Callout>
 
-    <Callout kind="rule" title="A forwarding network describes the pipeline for exactly one cycle">
+    <Callout
+      kind="rule"
+      title="A forwarding network describes the pipeline for exactly one cycle"
+    >
       <p>
         M and W keep draining while E is held, so all three sources move on
         underneath frozen selects. Reading the mux on a later cycle returns
         another instruction's result. The answer is one latch pair,
-        <code>op_held</code>, in front of everything E does with its operands: on
-        the <b>first</b> stalled cycle the mux is still correct — the drain
+        <code>op_held</code>, in front of everything E does with its operands:
+        on the <b>first</b> stalled cycle the mux is still correct — the drain
         happens at the <i>end</i> of that cycle — so that is the cycle to
         capture.
       </p>
       <p>
         Everything downstream inherits the fix at once: the effective address,
         the branch comparison, the store data, the AMO's address and source, the
-        CSR write data, and the multiplier's operands. Without it, a stalled load
-        recomputes its address from a network that has moved, and the symptom is
-        a spurious misalignment fault on an access that was aligned when it was
-        issued.
+        CSR write data, and the multiplier's operands. Without it, a stalled
+        load recomputes its address from a network that has moved, and the
+        symptom is a spurious misalignment fault on an access that was aligned
+        when it was issued.
       </p>
       <p>
-        <b>Any structure that holds an instruction longer than one cycle must
-        take a copy on entry</b>, and doing it once structurally is cheaper and
-        safer than each unit remembering to.
+        <b
+          >Any structure that holds an instruction longer than one cycle must
+          take a copy on entry</b
+        >, and doing it once structurally is cheaper and safer than each unit
+        remembering to.
       </p>
     </Callout>
 
@@ -1515,14 +1580,19 @@ const absent = {
       caption="Two enables carry all of it: one gates the whole pipeline and is low when the core is halted or stalled; the other gates fetch and decode alone and is additionally low on a bubble. Every register in the core takes one of the two. Priority is trap, then mispredict, then prediction"
     />
 
-    <Callout kind="rule" title="The kill and the redirect are deliberately different signals">
+    <Callout
+      kind="rule"
+      title="The kill and the redirect are deliberately different signals"
+    >
       <p>
         The E stage's own valid bit is cleared by the trap-or-mispredict pair
         only, <i>not</i> by the redirect. That asymmetry is what lets a D-stage
-        prediction steer fetch while the branch that caused it still travels into
-        E to be checked against what the predictor said.
-        <b>Gate the valid bit on the redirect instead and a correctly predicted
-        branch kills itself.</b>
+        prediction steer fetch while the branch that caused it still travels
+        into E to be checked against what the predictor said.
+        <b
+          >Gate the valid bit on the redirect instead and a correctly predicted
+          branch kills itself.</b
+        >
       </p>
     </Callout>
 
@@ -1545,19 +1615,24 @@ const absent = {
         registered writeback is exactly such state.
       </p>
       <p>
-        The debugging corollary is worth as much as the rule: <b>if a value goes
-        missing, check the drain before checking the forwarding.</b> The
-        forwarding network is what makes a wrong value appear; the drain is what
-        makes a right value disappear.
+        The debugging corollary is worth as much as the rule:
+        <b
+          >if a value goes missing, check the drain before checking the
+          forwarding.</b
+        >
+        The forwarding network is what makes a wrong value appear; the drain is
+        what makes a right value disappear.
       </p>
     </Callout>
 
-    <h3 class="doc-h3">Getting the width of a stall wrong, in both directions</h3>
+    <h3 class="doc-h3">
+      Getting the width of a stall wrong, in both directions
+    </h3>
 
     <p class="doc-p">
-      Those last two sentences are two different bugs, and a stall applied at the
-      wrong width produces one or the other. Freeze too much and a value that
-      was correct is destroyed. Freeze too little — the stage but not its
+      Those last two sentences are two different bugs, and a stall applied at
+      the wrong width produces one or the other. Freeze too much and a value
+      that was correct is destroyed. Freeze too little — the stage but not its
       operands — and a value that was never correct is used. Both traces below
       hold the same instruction for the same two cycles.
     </p>
@@ -1592,8 +1667,10 @@ const absent = {
         the last cycle in which the pipeline still describes the instruction
         being held. W has to capture M before the bubble replaces it, and the
         operand latch has to read the forward mux before the drain moves it.
-        <b>A cycle later, neither the value nor the network that produced it
-        still exists.</b>
+        <b
+          >A cycle later, neither the value nor the network that produced it
+          still exists.</b
+        >
       </p>
       <p>
         Which is why <span class="chip">op_held</span> is structural rather than
@@ -1635,19 +1712,26 @@ const absent = {
 
     <Callout kind="rule" title="The ALU is one adder and one shifter">
       <p>
-        <b>Subtract is add-with-inverted-operand, and the carry out of that same
-        adder <i>is</i> the unsigned compare.</b> With subtract asserted the
-        adder computes <code>a - b</code> and its carry is set exactly when
-        <code>a &gt;= b</code>, so <code>SLTU</code> is the inverse of a wire
-        rather than a second 64-bit comparator. <code>SLT</code> differs from it
-        only by the sign correction.
+        <b
+          >Subtract is add-with-inverted-operand, and the carry out of that same
+          adder <i>is</i> the unsigned compare.</b
+        >
+        With subtract asserted the adder computes <code>a - b</code> and its
+        carry is set exactly when <code>a &gt;= b</code>, so
+        <code>SLTU</code> is the inverse of a wire rather than a second 64-bit
+        comparator. <code>SLT</code> differs from it only by the sign
+        correction.
       </p>
       <p>
-        <b>One arithmetic right shifter covers <code>SLL</code>,
-        <code>SRL</code>, <code>SRA</code> and all three <code>W</code>
-        forms.</b> A left shift is a right shift between two bit reversals, and a
-        reversal is wiring. Written as three separate expressions — <code>&lt;&lt;</code>,
-        <code>&gt;&gt;</code>, <code>&gt;&gt;&gt;</code> — synthesis builds
+        <b
+          >One arithmetic right shifter covers <code>SLL</code>,
+          <code>SRL</code>, <code>SRA</code> and all three
+          <code>W</code> forms.</b
+        >
+        A left shift is a right shift between two bit reversals, and a reversal
+        is wiring. Written as three separate expressions —
+        <code>&lt;&lt;</code>, <code>&gt;&gt;</code>,
+        <code>&gt;&gt;&gt;</code> — synthesis builds
         <b>three 64-bit barrel shifters</b>: the shared form measured
         <b>539 LUT against 1,038</b> for the three, on the same exhaustively
         verified behaviour.
@@ -1656,11 +1740,14 @@ const absent = {
         The <code>W</code> forms are the same hardware, and <b>every</b>
         <code>W</code> result is sign-extended from bit 31 once, at the output —
         including <code>SLTU</code>'s, which is zero or one and extends to
-        itself. Stating it once is cheaper and safer than deciding per operation.
+        itself. Stating it once is cheaper and safer than deciding per
+        operation.
       </p>
     </Callout>
 
-    <h3 class="doc-h3">The effective address, and the one consumer that is not registered</h3>
+    <h3 class="doc-h3">
+      The effective address, and the one consumer that is not registered
+    </h3>
 
     <Fig
       caption="The address adder is roughly eight logic levels on its own against a budget of about eleven for a whole path, so anything it feeds combinationally starts two thirds spent. Only the read address escapes registration, because a read has to be issued in the first cycle to be answered in the second."
@@ -1679,19 +1766,20 @@ const absent = {
         misalignment test, no range decode.
       </p>
       <p>
-        The visible consequence: <b>a misaligned access issues its transaction
-        and then traps.</b> That is harmless here — a misaligned store already
-        emits no byte strobes, and a read has no side effect on this fabric — and
-        it is what makes a misaligned access trap <i>once</i>, after the
-        transaction retires, rather than on every cycle it is held.
+        The visible consequence:
+        <b>a misaligned access issues its transaction and then traps.</b> That
+        is harmless here — a misaligned store already emits no byte strobes, and
+        a read has no side effect on this fabric — and it is what makes a
+        misaligned access trap <i>once</i>, after the transaction retires,
+        rather than on every cycle it is held.
       </p>
     </Callout>
 
     <Callout kind="rule" title="The store path replicates, it does not shift">
       <p>
         The byte strobes already select which lanes are written, so a sub-word
-        datum only has to be <b>present</b> in the lane it lands in — it does not
-        have to be moved there. A byte is replicated eight times, a halfword
+        datum only has to be <b>present</b> in the lane it lands in — it does
+        not have to be moved there. A byte is replicated eight times, a halfword
         four, a word twice.
       </p>
       <p>
@@ -1704,10 +1792,13 @@ const absent = {
         both units, area <i>and</i> frequency.
       </p>
       <p>
-        <b>The general move: when a datum has to reach a position, ask whether
-        anything downstream already selects position.</b> If it does, put the
-        datum everywhere and let the existing selector do the work. It is worth
-        nothing where you would have to build the selector to use it.
+        <b
+          >The general move: when a datum has to reach a position, ask whether
+          anything downstream already selects position.</b
+        >
+        If it does, put the datum everywhere and let the existing selector do
+        the work. It is worth nothing where you would have to build the selector
+        to use it.
       </p>
     </Callout>
 
@@ -1715,11 +1806,11 @@ const absent = {
 
     <p class="doc-p">
       Multiply-divide, atomics and the CSR write all take more than a cycle, all
-      live inside E, and all obey the same two rules: <b>latch the operands on
-      entry</b>, and <b>start exactly once</b>. Both exist for the same
-      underlying reason — an instruction that holds E sees a pipeline that keeps
-      moving underneath it, so neither its inputs nor its start condition can be
-      re-read.
+      live inside E, and all obey the same two rules:
+      <b>latch the operands on entry</b>, and <b>start exactly once</b>. Both
+      exist for the same underlying reason — an instruction that holds E sees a
+      pipeline that keeps moving underneath it, so neither its inputs nor its
+      start condition can be re-read.
     </p>
 
     <Fig
@@ -1731,42 +1822,54 @@ const absent = {
 
     <Callout kind="rule" title="Why the multiplier is 4 DSP and not 9 to 16">
       <p>
-        A flat 64×64 product wants 9 to 16 DSP48s. This issues <b>four 32×32
-        partial products through one multiplier over four cycles</b> and
-        accumulates them by range, which measures <b>4 DSP</b> — the number that
-        keeps the whole system node inside its 48-DSP ceiling with 35 already
-        spent elsewhere.
+        A flat 64×64 product wants 9 to 16 DSP48s. This issues
+        <b
+          >four 32×32 partial products through one multiplier over four
+          cycles</b
+        >
+        and accumulates them by range, which measures <b>4 DSP</b> — the number
+        that keeps the whole system node inside its 48-DSP ceiling with 35
+        already spent elsewhere.
       </p>
       <p>
-        <b>A DSP48E2 is a pipelined primitive, and using it combinationally
-        forfeits frequency for no area gain.</b> Driven combinationally, the path
+        <b
+          >A DSP48E2 is a pipelined primitive, and using it combinationally
+          forfeits frequency for no area gain.</b
+        >
+        Driven combinationally, the path
         <code>count → operand mux → DSP → accumulator add</code> was
-        <b>23 logic levels and 11 CARRY8 in one cycle</b> and held the whole core
-        to 216.5 MHz. Registering it — two stages, which is the shape the
+        <b>23 logic levels and 11 CARRY8 in one cycle</b> and held the whole
+        core to 216.5 MHz. Registering it — two stages, which is the shape the
         primitive wants — bought <b>+47 MHz, and the LUT count fell</b>.
       </p>
       <p>
-        <b>The registers you put around a hard multiplier are the ones already
-        inside it.</b> Vivado absorbs them; you pay flip-flops the device has in
-        abundance and get the primitive's rated frequency. The same is true of a
-        block RAM's output register.
+        <b
+          >The registers you put around a hard multiplier are the ones already
+          inside it.</b
+        >
+        Vivado absorbs them; you pay flip-flops the device has in abundance and
+        get the primitive's rated frequency. The same is true of a block RAM's
+        output register.
       </p>
       <p>
-        Two economies inside the accumulate: <b>each partial lands in its own
-        range</b>, so the adder is as wide as the range rather than as wide as
-        the product; and <b>the signed correction is 64 bits wide, not 128</b>,
-        because both subtrahends are shifted left by 64 and cannot borrow into
-        the low half.
+        Two economies inside the accumulate:
+        <b>each partial lands in its own range</b>, so the adder is as wide as
+        the range rather than as wide as the product; and
+        <b>the signed correction is 64 bits wide, not 128</b>, because both
+        subtrahends are shifted left by 64 and cannot borrow into the low half.
       </p>
     </Callout>
 
-    <Callout kind="rule" title="A sequencer MUST start on an edge it manufactures, never on the condition that selected it">
+    <Callout
+      kind="rule"
+      title="A sequencer MUST start on an edge it manufactures, never on the condition that selected it"
+    >
       <p>
         The instruction sits in E for the whole operation, so the condition that
         launched it is still true on every cycle of it. The unit
-        <b>MUST</b> qualify its start with a one-bit
-        <i>already fired</i> flag, and that flag <b>MUST</b> clear only when the
-        instruction leaves E — not when the unit finishes, and not on a stall.
+        <b>MUST</b> qualify its start with a one-bit <i>already fired</i> flag,
+        and that flag <b>MUST</b> clear only when the instruction leaves E — not
+        when the unit finishes, and not on a stall.
       </p>
     </Callout>
 
@@ -1784,7 +1887,10 @@ const absent = {
       label="One already-fired flag — the level becomes an edge"
     />
 
-    <Callout kind="trap" title="A relaunching sequencer presents as a hang, and a relaunching atomic presents as thousands of writes">
+    <Callout
+      kind="trap"
+      title="A relaunching sequencer presents as a hang, and a relaunching atomic presents as thousands of writes"
+    >
       <p>
         For a divide the failure is silent and total: the counter never leaves
         zero, <span class="chip">done</span> never asserts, and the core stalls
@@ -1798,8 +1904,10 @@ const absent = {
         re-issuing every phase it had already completed, so a single
         <span class="chip">amoadd</span> becomes thousands of writes. The
         general form of that one is worth carrying away on its own:
-        <b>narrowing an <span class="chip">if</span> changes its
-        <span class="chip">else</span>.</b>
+        <b
+          >narrowing an <span class="chip">if</span> changes its
+          <span class="chip">else</span>.</b
+        >
       </p>
       <p>
         Divide is restoring, one bit per cycle, on magnitudes with the signs
@@ -1810,7 +1918,9 @@ const absent = {
       </p>
     </Callout>
 
-    <h3 class="doc-h3">Why the divider is built here and refused on the RV32 PE</h3>
+    <h3 class="doc-h3">
+      Why the divider is built here and refused on the RV32 PE
+    </h3>
 
     <p class="doc-p">
       The
@@ -1880,35 +1990,45 @@ const absent = {
     <Callout kind="rule" title="Why a CSR instruction costs two cycles">
       <p>
         Fan-out, and nothing else. Driven combinationally, the write data would
-        run <code>writeback value → forward mux → operand → the
-        read-modify-write → every CSR register's data pins</code> — one path into
-        thirteen 64-bit registers. So the instruction stalls E for one cycle
-        while its write data is captured. <b>The read is unaffected</b>: the read
-        data is combinational on the registered address, so a CSR read still
-        returns the pre-write value, which is what the instruction owes.
+        run
+        <code
+          >writeback value → forward mux → operand → the read-modify-write →
+          every CSR register's data pins</code
+        >
+        — one path into thirteen 64-bit registers. So the instruction stalls E
+        for one cycle while its write data is captured.
+        <b>The read is unaffected</b>: the read data is combinational on the
+        registered address, so a CSR read still returns the pre-write value,
+        which is what the instruction owes.
       </p>
       <p>
         The write enable is deliberately <b>narrower</b> than “not stalled and
         not trapping”. Both of those carry the misalignment test, which carries
         the forward mux and the address adder — and putting the adder on a CSR
         register's clock enable measured 17 logic levels. A CSR instruction is
-        never a load, a store or an atomic, so <b>the only things that can
-        legitimately kill its write are an illegal CSR address and a pending
-        interrupt</b>, and those are the only two the enable tests.
+        never a load, a store or an atomic, so
+        <b
+          >the only things that can legitimately kill its write are an illegal
+          CSR address and a pending interrupt</b
+        >, and those are the only two the enable tests.
       </p>
       <p>
-        <b>When a guard is too wide, the fix is to enumerate what can actually
-        fire rather than to reuse a convenient aggregate.</b> The aggregate drags
-        in every term its other users needed.
+        <b
+          >When a guard is too wide, the fix is to enumerate what can actually
+          fire rather than to reuse a convenient aggregate.</b
+        >
+        The aggregate drags in every term its other users needed.
       </p>
     </Callout>
 
-    <h2 class="doc-h2">Why the predictor is bigger than the RV32 PE's, and differently shaped</h2>
+    <h2 class="doc-h2">
+      Why the predictor is bigger than the RV32 PE's, and differently shaped
+    </h2>
 
     <p class="doc-p">
       Not “the same thing, larger”. The two cores' predictors answer different
-      branch populations, and each of this one's three additions is a response to
-      a specific property of runtime code that a kernel loop does not have.
+      branch populations, and each of this one's three additions is a response
+      to a specific property of runtime code that a kernel loop does not have.
     </p>
 
     <SpecTable :cols="predPop.cols" :rows="predPop.rows" />
@@ -1919,7 +2039,9 @@ const absent = {
       caption="Note which of the three additions is free. The BTB and the direction table are block RAM, so entry count buys depth rather than logic; the stack is the one that costs real LUT, and it is the one whose contribution is currently unmeasured"
     />
 
-    <h3 class="doc-h3">The target is 39 bits, and that is a block-RAM decision</h3>
+    <h3 class="doc-h3">
+      The target is 39 bits, and that is a block-RAM decision
+    </h3>
 
     <Fig
       caption="What is built: 50 bits, and it maps to a block RAM. Sv39 makes 39 bits the real address space and an instruction address is even, so target[38:1] loses nothing — the answer is reassembled as {25'd0, stored, 1'b0}. The module's own header comment says 51; the expression beside it is 1 + TAG_W + 38, and the expression is the one that synthesises."
@@ -1947,19 +2069,26 @@ const absent = {
       becomes LUTs — which nothing in the build will tell you.
     </p>
 
-    <Callout kind="rule" title="A block-RAM port is 72 bits at its widest, and an array one bit over becomes LUTs silently">
+    <Callout
+      kind="rule"
+      title="A block-RAM port is 72 bits at its widest, and an array one bit over becomes LUTs silently"
+    >
       <p>
-        It is a property of the device rather than of this design. It decides the
-        shape of this entry, it decides the shape of the
+        It is a property of the device rather than of this design. It decides
+        the shape of this entry, it decides the shape of the
         <RouterLink to="/component/rv64sys/memory-system" class="doc-link"
           >TLB entry</RouterLink
         >, and it is why every array in this core names its primitive instead of
         being inferred.
       </p>
       <p>
-        The practical form: <b>check that the synthesis report says block RAM
-        where you expected block RAM.</b> A 74-bit ROM elsewhere in this tree came
-        back as 2,798 LUT and zero block RAM for exactly this reason.
+        The practical form:
+        <b
+          >check that the synthesis report says block RAM where you expected
+          block RAM.</b
+        >
+        A 74-bit ROM elsewhere in this tree came back as 2,798 LUT and zero
+        block RAM for exactly this reason.
       </p>
     </Callout>
 
@@ -1969,8 +2098,9 @@ const absent = {
       E resolves every branch against the real answer, so a wrong prediction
       costs the redirect penalty and never correctness. Three consequences
       follow, and all three are why the structure is as cheap as it is: the tag
-      can be short and the tables can alias; <b>history updates on the resolve,
-      not on the prediction</b>, so there is no speculative state to repair; and
+      can be short and the tables can alias;
+      <b>history updates on the resolve, not on the prediction</b>, so there is
+      no speculative state to repair; and
       <b>the resolve is registered on the way in</b>, because E's comparator
       driving a read-modify-write of a saturating counter is a long path for
       something non-architectural.
@@ -1980,8 +2110,8 @@ const absent = {
       Neither array has a reset, so a <b>power-on sweep</b> writes every entry
       before a prediction is allowed out: the BTB to all-zero, the PHT to
       <code>01</code> — weakly not-taken. A jump forces its counter to
-      <code>11</code> rather than incrementing it; a conditional branch saturates
-      up or down by one.
+      <code>11</code> rather than incrementing it; a conditional branch
+      saturates up or down by one.
     </p>
 
     <SpecTable
@@ -1990,23 +2120,30 @@ const absent = {
       caption="For +362 LUT and 2 BRAM. This is what the BTB and the direction table deliver together; the return-address stack's contribution is not separated out"
     />
 
-    <Callout kind="trap" title="The return stack is complete, and its answer reaches the wrong instruction">
+    <Callout
+      kind="trap"
+      title="The return stack is complete, and its answer reaches the wrong instruction"
+    >
       <p>
-        The stack itself works: a call pushes the link address, a return pops it,
-        and the top of stack is a flop precisely so a prediction costs no array
-        read. <b>The answer is a two-way mux — the stack, or the BTB — and the two
-        inputs to that mux describe different instructions.</b> The select and
-        the stack data are <b>registered one cycle</b>, so they describe the
-        instruction that was in decode <i>last</i> cycle; the BTB's hit test is
-        computed from the decode-stage PC and is not registered, so it describes
-        the instruction in decode <i>now</i>.
+        The stack itself works: a call pushes the link address, a return pops
+        it, and the top of stack is a flop precisely so a prediction costs no
+        array read.
+        <b
+          >The answer is a two-way mux — the stack, or the BTB — and the two
+          inputs to that mux describe different instructions.</b
+        >
+        The select and the stack data are <b>registered one cycle</b>, so they
+        describe the instruction that was in decode <i>last</i> cycle; the BTB's
+        hit test is computed from the decode-stage PC and is not registered, so
+        it describes the instruction in decode <i>now</i>.
       </p>
       <p>
         Work a return through. It is in decode at cycle <i>T</i>: the stack pops
-        at <i>T</i>, and the answer offered at <i>T</i> is the BTB's. The stack's
-        answer is offered at <i>T+1</i>, to the return's fall-through, which is
-        not usually a control instruction at all. <b>As built, a return is
-        predicted from its own BTB entry</b> — the case a stack exists to avoid.
+        at <i>T</i>, and the answer offered at <i>T</i> is the BTB's. The
+        stack's answer is offered at <i>T+1</i>, to the return's fall-through,
+        which is not usually a control instruction at all.
+        <b>As built, a return is predicted from its own BTB entry</b> — the case
+        a stack exists to avoid.
       </p>
       <p>
         This is an accuracy question and not a correctness one, for the reason
@@ -2018,14 +2155,18 @@ const absent = {
     <h2 class="doc-h2">Why the register file is LUTRAM and not block RAM</h2>
 
     <p class="doc-p">
-      31 × 64, two reads and one write, as <b>two mirrored single-read arrays
-      written identically</b> — a simple dual-port RAM has one read port, so two
-      reads means two copies. The storage doubles; the LUT count does not.
-      <code>x0</code> is not stored: refusing the write costs one AND gate and
-      removes the case where a stale <code>x0</code> can exist at all.
+      31 × 64, two reads and one write, as
+      <b>two mirrored single-read arrays written identically</b> — a simple
+      dual-port RAM has one read port, so two reads means two copies. The
+      storage doubles; the LUT count does not. <code>x0</code> is not stored:
+      refusing the write costs one AND gate and removes the case where a stale
+      <code>x0</code> can exist at all.
     </p>
 
-    <Callout kind="measured" title="Block-RAM clock-to-out is slow, and no logic restructuring moves it">
+    <Callout
+      kind="measured"
+      title="Block-RAM clock-to-out is slow, and no logic restructuring moves it"
+    >
       <p>
         At <code>block</code> the binding path is the array's own clock-to-out,
         and it stayed the top path through two rounds of optimisation — first
@@ -2035,10 +2176,10 @@ const absent = {
         takes 67 failing paths to zero.
       </p>
       <p>
-        <b>That 5 LUT is not a stable price.</b> The same swap cost 89 LUT before
-        the forward select moved to D. Removing logic from a path changes what
-        the next change to that path is worth, and the two measurements are not
-        comparable — the later one is the real price.
+        <b>That 5 LUT is not a stable price.</b> The same swap cost 89 LUT
+        before the forward select moved to D. Removing logic from a path changes
+        what the next change to that path is worth, and the two measurements are
+        not comparable — the later one is the real price.
       </p>
     </Callout>
 
@@ -2056,7 +2197,10 @@ const absent = {
       caption="The same run, and these seven sum to 5,944 exactly. Read it for its shape: the forwarding-and-hazard glue, multiply-and-divide and the CSR file are each over a thousand LUT, and the decoder and the register file together are under four hundred"
     />
 
-    <Callout kind="trap" title="The same register file is 211 LUT and 1,555 LUT, in two reports of the same design">
+    <Callout
+      kind="trap"
+      title="The same register file is 211 LUT and 1,555 LUT, in two reports of the same design"
+    >
       <p>
         The array is <b>4 Kbit of storage</b> — 31 usable entries of 64 bits,
         mirrored — and nothing about 4 Kbit costs fifteen hundred LUTs. Under
@@ -2073,18 +2217,19 @@ const absent = {
       </p>
       <p>
         <b>The evidence is in the same report rather than in the argument:</b>
-        under <code>rebuilt</code>, <code>u_alu</code> and <code>u_dec</code>
-        have <b>no row at all</b>, while under <code>none</code> they have 539
-        and 118. Their logic did not disappear; it was absorbed into neighbours,
-        and <code>u_rf</code> is one of the neighbours.
+        under <code>rebuilt</code>, <code>u_alu</code> and
+        <code>u_dec</code> have <b>no row at all</b>, while under
+        <code>none</code> they have 539 and 118. Their logic did not disappear;
+        it was absorbed into neighbours, and <code>u_rf</code> is one of the
+        neighbours.
       </p>
       <p>
         A second symptom of the same thing: under <code>rebuilt</code> the
-        children of <code>u_core</code> sum to <b>6,179</b> against a parent
-        row of <b>6,169</b>. A LUT shared between two children is charged to
-        both and counted once above them, so a rebuilt breakdown can over-count
-        by exactly the shared logic. <b>Totals reconcile; attributions do not
-        have to.</b>
+        children of <code>u_core</code> sum to <b>6,179</b> against a parent row
+        of <b>6,169</b>. A LUT shared between two children is charged to both
+        and counted once above them, so a rebuilt breakdown can over-count by
+        exactly the shared logic.
+        <b>Totals reconcile; attributions do not have to.</b>
       </p>
     </Callout>
 
@@ -2106,18 +2251,21 @@ const absent = {
       <p>
         <b>Architecturally visible state is the expensive part of a core.</b>
         Two dozen 64-bit CSRs is fifteen hundred flip-flops before any logic,
-        and <code>mcycle</code>, <code>mtime</code> and <code>minstret</code>
-        are three 64-bit increments on top. So the file implements the set the
-        runtime uses rather than the set the specification permits — and where a
-        register is implemented, <b>the bits that are not are not stored</b>,
-        which is the WARL row above and is worth two hundred LUT and four
-        hundred flops on its own.
+        and <code>mcycle</code>, <code>mtime</code> and
+        <code>minstret</code> are three 64-bit increments on top. So the file
+        implements the set the runtime uses rather than the set the
+        specification permits — and where a register is implemented,
+        <b>the bits that are not are not stored</b>, which is the WARL row above
+        and is worth two hundred LUT and four hundred flops on its own.
       </p>
       <p>
-        <b>Area and frequency moving the same way is the signature of removing
-        logic</b> rather than trading it. The last three rows all do it, and all
-        three are the same shape of change: something late in the datapath had
-        been let into a path it did not belong in.
+        <b
+          >Area and frequency moving the same way is the signature of removing
+          logic</b
+        >
+        rather than trading it. The last three rows all do it, and all three are
+        the same shape of change: something late in the datapath had been let
+        into a path it did not belong in.
       </p>
     </Callout>
 
@@ -2127,32 +2275,41 @@ const absent = {
       The binding path has moved repeatedly, and each move is a general lesson
       rather than a fix: a <b>pipelined primitive used combinationally</b>; a
       <b>block RAM's clock-to-out</b>, which no restructuring moves; a
-      <b>comparator in the same cycle as the mux it selects and the ALU behind
-      it</b>; and, repeatedly and with different endpoints,
-      <b>the forward mux reaching through the 64-bit address adder into something
-      late</b> — a range decode, a byte-write enable, a CSR write enable, the
-      predictor's stack pointer, the fetch page register's clock enable.
+      <b
+        >comparator in the same cycle as the mux it selects and the ALU behind
+        it</b
+      >; and, repeatedly and with different endpoints,
+      <b
+        >the forward mux reaching through the 64-bit address adder into
+        something late</b
+      >
+      — a range decode, a byte-write enable, a CSR write enable, the predictor's
+      stack pointer, the fetch page register's clock enable.
     </p>
 
     <p class="doc-p">
       Privilege and translation added three more of the same shape, and all
-      three were fixed the same way — <b>by narrowing what the adder is allowed
-      to reach</b>, never by re-timing the endpoint the tool named.
-      <span class="chip">medeleg</span> indexed by the cause itself was a 64:1
-      mux downstream of the adder, <b>28 levels and −3.496 ns</b>; the core now
-      selects among bits the CSR file has already indexed with constants. The
-      trap decision as the enable of every CSR register was <b>18 levels</b>;
-      the writes moved a cycle later. And the MMU's <span class="chip">busy</span>
+      three were fixed the same way —
+      <b>by narrowing what the adder is allowed to reach</b>, never by re-timing
+      the endpoint the tool named. <span class="chip">medeleg</span> indexed by
+      the cause itself was a 64:1 mux downstream of the adder,
+      <b>28 levels and −3.496 ns</b>; the core now selects among bits the CSR
+      file has already indexed with constants. The trap decision as the enable
+      of every CSR register was <b>18 levels</b>; the writes moved a cycle
+      later. And the MMU's <span class="chip">busy</span>
       driven from the raw TLB hit landed on every CSR write enable at
-      <b>25 levels and −3.842 ns</b>; it is register-derived now, at the price of
-      one cycle per translated access.
+      <b>25 levels and −3.842 ns</b>; it is register-derived now, at the price
+      of one cycle per translated access.
     </p>
 
-    <Callout kind="measured" title="A design has a critical region, and one endpoint rarely names it">
+    <Callout
+      kind="measured"
+      title="A design has a critical region, and one endpoint rarely names it"
+    >
       <p>
-        Both synthesis scripts therefore report <b>every</b> negative-slack path,
-        collapsed to <code>startpoint → endpoint</code> and counted per group,
-        worst group first. At one point that report read
+        Both synthesis scripts therefore report <b>every</b> negative-slack
+        path, collapsed to <code>startpoint → endpoint</code> and counted per
+        group, worst group first. At one point that report read
       </p>
       <p class="font-mono kt-text-caption">
         @@@FAILN 68<br />
@@ -2208,9 +2365,12 @@ const absent = {
         mover's mode register through its <code>fifo_room</code> calculation
         into the command FIFO's write enable, at −0.081 ns and 12 levels, with
         all 123 failing endpoints in that one cone.
-        <b>Registering the room limit took the add-and-compare out of the
-        admission path and closed it</b> — that was the last failing path in the
-        node, which is why the figure above is a positive one.
+        <b
+          >Registering the room limit took the add-and-compare out of the
+          admission path and closed it</b
+        >
+        — that was the last failing path in the node, which is why the figure
+        above is a positive one.
       </p>
       <p>
         <b>Both figures are synthesis.</b> Meeting the request here means
@@ -2222,39 +2382,50 @@ const absent = {
 
     <h2 class="doc-h2">Three things refused, and why</h2>
 
-    <Callout kind="rule" title="No address-generation stage — and it costs a cycle on every access">
+    <Callout
+      kind="rule"
+      title="No address-generation stage — and it costs a cycle on every access"
+    >
       <p>
         The RV32 PE computes the effective address in EX and accesses the array
         in MEM, so the address arrives a whole stage early and everything
         downstream of it has a registered address to work from. This core
         computes the address in E and consumes the data in M with nothing
-        between, so <b>every consumer of the address is one adder-delay behind
-        the signal it has to drive</b>.
+        between, so
+        <b
+          >every consumer of the address is one adder-delay behind the signal it
+          has to drive</b
+        >.
       </p>
       <p>
         Adding the stage costs a seventh register boundary, a stage deeper for
         every branch and trap redirect to kill, and a re-derivation of the whole
         three-source forwarding network. Registering each consumer individually
-        costs <b>one extra cycle on every access, the local scratchpad
-        included</b>. The second is what is built.
+        costs
+        <b>one extra cycle on every access, the local scratchpad included</b>.
+        The second is what is built.
       </p>
       <p>
-        <b>A pipeline that computes an address and consumes it in the very next
-        stage has no slack anywhere downstream of the adder, and pays for that in
-        either a boundary or a cycle.</b> Which is cheaper depends on how much the
-        redirect path is already carrying — here the predictor and the trap logic
-        both kill two instructions, and a seventh boundary would make that three.
+        <b
+          >A pipeline that computes an address and consumes it in the very next
+          stage has no slack anywhere downstream of the adder, and pays for that
+          in either a boundary or a cycle.</b
+        >
+        Which is cheaper depends on how much the redirect path is already
+        carrying — here the predictor and the trap logic both kill two
+        instructions, and a seventh boundary would make that three.
       </p>
     </Callout>
 
     <Callout kind="rule" title="No scoreboard — a multi-cycle unit stalls E">
       <p>
-        Which is why a divide costs 66 cycles of the whole machine rather than 66
-        cycles of one instruction. It is refused, and not on area:
+        Which is why a divide costs 66 cycles of the whole machine rather than
+        66 cycles of one instruction. It is refused, and not on area:
         <b>the hazard unit is the whole of this core's complexity budget</b> —
-        three forward sources selected by position, two stall rules, nothing else
-        — and every one of those sources is <i>positional</i>. The distance-1
-        source is “whatever is in M”, not “the producer of this register”.
+        three forward sources selected by position, two stall rules, nothing
+        else — and every one of those sources is <i>positional</i>. The
+        distance-1 source is “whatever is in M”, not “the producer of this
+        register”.
       </p>
       <p>
         Out-of-order retire ends that. A forward source stops being a stage and
@@ -2263,16 +2434,21 @@ const absent = {
         all, because D would no longer know which stage its producer will be in.
       </p>
       <p>
-        <b>A multi-cycle unit is cheap in a machine that already has a way to
-        park an instruction and expensive in one whose whole complexity budget is
-        positional forwarding.</b> The SIMT PE is the contrast that proves it: it
-        carries multi-cycle units cheaply because barrel scheduling had already
-        given it one pending bit per wave before any multi-cycle unit was
-        proposed.
+        <b
+          >A multi-cycle unit is cheap in a machine that already has a way to
+          park an instruction and expensive in one whose whole complexity budget
+          is positional forwarding.</b
+        >
+        The SIMT PE is the contrast that proves it: it carries multi-cycle units
+        cheaply because barrel scheduling had already given it one pending bit
+        per wave before any multi-cycle unit was proposed.
       </p>
     </Callout>
 
-    <Callout kind="open" title="No hit-under-miss — and it is one change that reprices three modules">
+    <Callout
+      kind="open"
+      title="No hit-under-miss — and it is one change that reprices three modules"
+    >
       <p>
         The core stalls in E for the whole of a memory access, and that single
         property is load-bearing three modules away: it is what lets the
@@ -2283,9 +2459,9 @@ const absent = {
         A non-blocking L1 is the single largest lever on the fabric-latency
         numbers — each unit of fabric latency currently costs each access one
         core cycle, with nothing overlapped. But it does not arrive alone. It
-        needs a miss-status file, it needs the arbiter to become real arbitration
-        with per-client response routing, and it needs the core to be able to
-        park an instruction, which is the section above.
+        needs a miss-status file, it needs the arbiter to become real
+        arbitration with per-client response routing, and it needs the core to
+        be able to park an instruction, which is the section above.
       </p>
     </Callout>
 
@@ -2310,19 +2486,25 @@ const absent = {
         are designing a different core, not tuning this one.
       </li>
       <li>
-        <b>Count your forward sources from the memory primitive, not from the
-        stage diagram.</b> A write-first array needs two, a read-first array
-        needs three, and a flop file with a write-through port needs two.
-        Nothing in the pipeline drawing tells you which you are looking at, and
-        getting it wrong in the cheap direction is incorrect for exactly one
-        producer-to-consumer spacing.
+        <b
+          >Count your forward sources from the memory primitive, not from the
+          stage diagram.</b
+        >
+        A write-first array needs two, a read-first array needs three, and a
+        flop file with a write-through port needs two. Nothing in the pipeline
+        drawing tells you which you are looking at, and getting it wrong in the
+        cheap direction is incorrect for exactly one producer-to-consumer
+        spacing.
       </li>
       <li>
-        <b>For every new structure that can hold an instruction longer than one
-        cycle, ask what it re-reads.</b> Its operands must be captured on entry
-        and its start must be an edge you manufacture. Both failures are shown
-        as traces above, and both are silent in simulation until the exact
-        producer-to-consumer spacing that exposes them.
+        <b
+          >For every new structure that can hold an instruction longer than one
+          cycle, ask what it re-reads.</b
+        >
+        Its operands must be captured on entry and its start must be an edge you
+        manufacture. Both failures are shown as traces above, and both are
+        silent in simulation until the exact producer-to-consumer spacing that
+        exposes them.
       </li>
       <li>
         <b>For every new stall, name the stage that raised it</b> and confirm
@@ -2336,20 +2518,26 @@ const absent = {
         the LUT column.
       </li>
       <li>
-        <b>For anything the trap decision enables, ask how wide the enable
-        is.</b> That decision carries the address adder through the misalignment
-        test, so it may be the enable of a flag and not of a register file: the
-        state a trap writes is registered a cycle behind it, delegation is
-        selected from bits indexed by constants, and <i>is a handler installed</i>
+        <b
+          >For anything the trap decision enables, ask how wide the enable
+          is.</b
+        >
+        That decision carries the address adder through the misalignment test,
+        so it may be the enable of a flag and not of a register file: the state
+        a trap writes is registered a cycle behind it, delegation is selected
+        from bits indexed by constants, and <i>is a handler installed</i>
         is a flag set by the CSR write rather than a compare done at the trap.
         Each of those was a 15-to-28-level path before it was narrowed.
       </li>
       <li>
-        <b>Measure the change out of context, and re-measure anything you
-        measured before it.</b> Removing logic from a path changes what the next
-        change to that path is worth — the register-file primitive swap cost
-        89 LUT before the forward select moved to decode and 5 LUT after, and
-        only the later figure is the real price.
+        <b
+          >Measure the change out of context, and re-measure anything you
+          measured before it.</b
+        >
+        Removing logic from a path changes what the next change to that path is
+        worth — the register-file primitive swap cost 89 LUT before the forward
+        select moved to decode and 5 LUT after, and only the later figure is the
+        real price.
       </li>
       <li>
         <b>Check cycle counts on all three test programs, byte-identical</b>,
@@ -2380,18 +2568,22 @@ const absent = {
         synthesis.
       </p>
       <p>
-        <b>And the hierarchical utilisation report cannot answer “what does this
-        module cost”.</b> Under a flattening flow a row is an attribution rather
-        than a measurement — <span class="chip">u_rf</span> reports over 2,000
-        LUT and is not the register file, while
-        <span class="chip">u_alu</span> and
+        <b
+          >And the hierarchical utilisation report cannot answer “what does this
+          module cost”.</b
+        >
+        Under a flattening flow a row is an attribution rather than a
+        measurement — <span class="chip">u_rf</span> reports over 2,000 LUT and
+        is not the register file, while <span class="chip">u_alu</span> and
         <span class="chip">u_dec</span> have no row at all. The only way to ask
         the question is to synthesise the module as its own top, and the flow
         does not do that for you.
       </p>
     </Callout>
 
-    <h2 class="doc-h2">What this microarchitecture deliberately does not have</h2>
+    <h2 class="doc-h2">
+      What this microarchitecture deliberately does not have
+    </h2>
 
     <SpecTable :cols="absent.cols" :rows="absent.rows" />
   </DocPage>

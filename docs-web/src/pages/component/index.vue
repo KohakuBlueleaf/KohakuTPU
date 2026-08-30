@@ -55,6 +55,12 @@ const parts = {
       swap: "configuring it — masters, homes, line width, engine sharing, read engine and queue, interleave, per-port clocks. Every point of that grid is measured and the estimator prices any other",
       _tone: "good",
     },
+    {
+      part: "<b>Partitioned Xache</b> — <code>kx_pxache</code>",
+      what: "the Xache across the dies: masters and homes assigned to partitions of one clock, one registered, credited hop per boundary, a lane per source so a boundary carries the crossbar's bandwidth, a reorder ring per master so nothing waits. 966 LUT over the Xache for four partitions, three cycles per hop",
+      swap: "a partition map and a reset per partition; which partition is which die is the block design's",
+      _tone: "good",
+    },
   ],
 };
 
@@ -151,96 +157,5 @@ const obligations = {
         project file and nothing in the framework.
       </p>
     </Callout>
-
-    <h2 class="doc-h2">Where to go next</h2>
-
-    <div class="grid gap-4 sm:grid-cols-2 mt-6">
-      <RouterLink
-        to="/component/sysnode/microarchitecture"
-        class="card-hover p-5 no-underline block"
-      >
-        <div
-          class="kt-text-title font-semibold text-warm-800 dark:text-warm-200 mb-1"
-        >
-          Sysnode micro
-        </div>
-        <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
-          The memory ports, the converged requester path, the write slots, the
-          mover — and the RV64 processor fused through all of them.
-        </p>
-      </RouterLink>
-      <RouterLink
-        to="/component/rv64sys"
-        class="card-hover p-5 no-underline block"
-      >
-        <div
-          class="kt-text-title font-semibold text-warm-800 dark:text-warm-200 mb-1"
-        >
-          RV64-sys
-        </div>
-        <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
-          The core that hosts a runtime: RV64IMA, traps, Sv39 and an L1. A whole
-          node with it lands at 34,722 LUT.
-        </p>
-      </RouterLink>
-      <RouterLink
-        to="/component/rv32pe/microarchitecture"
-        class="card-hover p-5 no-underline block"
-      >
-        <div
-          class="kt-text-title font-semibold text-warm-800 dark:text-warm-200 mb-1"
-        >
-          RV32 PE micro
-        </div>
-        <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
-          Six register boundaries, one stall rule, two L1s split by who writes,
-          and the 38 LUT that make a doorbell correct.
-        </p>
-      </RouterLink>
-      <RouterLink
-        to="/component/caching"
-        class="card-hover p-5 no-underline block"
-      >
-        <div
-          class="kt-text-title font-semibold text-warm-800 dark:text-warm-200 mb-1"
-        >
-          Caching
-        </div>
-        <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
-          Staging, the transform slot and the tagged L2 that is designed and not
-          built — three answers to reuse, only one of which is a cache.
-        </p>
-      </RouterLink>
-      <RouterLink
-        to="/component/station-bus"
-        class="card-hover p-5 no-underline block"
-      >
-        <div
-          class="kt-text-title font-semibold text-warm-800 dark:text-warm-200 mb-1"
-        >
-          The station bus
-        </div>
-        <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
-          A line of stations across the dies for the host's AXI: credits instead
-          of ready, a clock per station for free, 23,053 LUT where the vendor
-          tree took 81,881.
-        </p>
-      </RouterLink>
-      <RouterLink
-        to="/component/xache"
-        class="card-hover p-5 no-underline block"
-      >
-        <div
-          class="kt-text-title font-semibold text-warm-800 dark:text-warm-200 mb-1"
-        >
-          Kohaku Xache
-        </div>
-        <p class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6">
-          M masters to N cached DRAM channels as one fabric: a streaming read
-          engine, a per-master read queue, interleaving as wires — 18.3 GB/s per
-          master, 9,642 LUT.
-        </p>
-      </RouterLink>
-    </div>
   </DocPage>
 </template>

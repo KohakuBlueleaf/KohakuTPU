@@ -10,33 +10,17 @@ import { routes } from "vue-router/auto-routes";
  * appears, titled from its filename.
  */
 const META = {
-  "/idea": {
-    title: "Why KohakuAccel — the idea",
-    short: "Overview",
+  "/machine": {
+    title: "Everything we ship",
+    short: "Everything we ship",
     order: 0,
   },
-  "/idea/beginning": {
-    title: "It began as one accelerator",
-    short: "One accelerator",
-    order: 1,
-  },
-  "/idea/platform": {
-    title: "A memory unit and a NoC make a platform",
-    short: "The platform",
-    order: 2,
-  },
-  "/idea/framework": {
-    title: "From a platform to a framework",
-    short: "The framework",
-    order: 3,
-  },
-  "/idea/soc": {
-    title: "A general SoC design framework",
-    short: "The SoC framework",
-    order: 4,
-  },
 
-  "/framework": { title: "What is on the die", short: "Overview", order: 0 },
+  "/framework": {
+    title: "What is on the die",
+    short: "What is on the die",
+    order: 0,
+  },
   "/framework/noc": { title: "Mesh and routers", short: "NoC", order: 1 },
   "/framework/sysnode": {
     title: "The system node",
@@ -70,7 +54,7 @@ const META = {
     order: 8,
   },
 
-  "/tpu": { title: "The accelerator", short: "Overview", order: 0 },
+  "/tpu": { title: "The accelerator", short: "The accelerator", order: 0 },
   "/tpu/matmul": { title: "Matmul cluster", short: "Matmul", order: 1 },
   "/tpu/matmul/microarchitecture": {
     title: "Matmul cluster — microarchitecture",
@@ -97,7 +81,7 @@ const META = {
 
   "/component": {
     title: "The parts the framework ships",
-    short: "Overview",
+    short: "What a component is",
     order: 0,
     domain: "cpu",
   },
@@ -167,10 +151,16 @@ const META = {
     order: 11,
     domain: "framework",
   },
+  "/component/pxache": {
+    title: "Partitioned Xache",
+    short: "Partitioned Xache",
+    order: 12,
+    domain: "framework",
+  },
 
   "/mpe": {
     title: "A mesh of processors",
-    short: "Overview",
+    short: "A mesh of processors",
     order: 0,
     domain: "simt",
   },
@@ -209,12 +199,12 @@ const META = {
 };
 
 const SECTION_DEF = {
-  idea: {
-    title: "The idea",
+  machine: {
+    title: "The machine",
     domain: "framework",
-    icon: "i-carbon-idea",
+    icon: "i-carbon-map",
     blurb:
-      "How it grew from one accelerator to a general SoC platform — and why.",
+      "Everything shipped, on one sheet: card, dies, nodes, meshes, units, down to the primitive.",
   },
   framework: {
     title: "Framework",
@@ -241,7 +231,7 @@ const SECTION_DEF = {
     blurb: "A mesh whose compute units are processors.",
   },
 };
-const SECTION_ORDER = ["idea", "framework", "component", "tpu", "mpe"];
+const SECTION_ORDER = ["machine", "framework", "component", "tpu", "mpe"];
 
 /** Every routable path with a component, parent paths joined. */
 function walk(list, base = "") {
@@ -267,14 +257,15 @@ const ALL = walk(routes).filter((p) => p !== "/" && !p.includes(":"));
 const depthOf = (path) => path.split("/").filter(Boolean).length;
 
 /**
- * The sidebar tree: the section overview (depth 1) and each sub-topic (depth 2)
- * as top nodes, with deeper pages (depth >= 3) nested under their sub-topic as
- * a collapsible group. A sub-topic with no deeper pages is a plain leaf. The
- * URLs already carry the hierarchy, so this only reshapes what the nav draws —
- * no page moves, no broken links.
+ * The sidebar tree: each sub-topic (depth 2) as a top node, with deeper pages
+ * (depth >= 3) nested under their sub-topic as a collapsible group. A sub-topic
+ * with no deeper pages is a plain leaf. The section root (depth 1) is NOT in
+ * the tree: its one entry is the section's tab in the top bar, and a page gets
+ * one entry. The URLs already carry the hierarchy, so this only reshapes what
+ * the nav draws — no page moves, no broken links.
  */
 function buildTree(pages) {
-  const l2 = pages.filter((p) => depthOf(p.path) <= 2);
+  const l2 = pages.filter((p) => depthOf(p.path) === 2);
   const l3 = pages.filter((p) => depthOf(p.path) >= 3);
   const nodes = l2.map((p) => {
     const children = l3

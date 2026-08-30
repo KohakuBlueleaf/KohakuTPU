@@ -18,23 +18,36 @@ const P = computed(() =>
     props.states.map((s) => [s.id, { x: s.x * U, y: s.y * U }]),
   ),
 );
+// A circle grows to hold its text: 5.5 px per sub glyph, 6.5 per label glyph
+// (measured), so a sub wider than the chord is not clipped at the rim.
+const rOf = (s) =>
+  Math.max(
+    props.r,
+    Math.ceil((String(s.sub ?? "").length * 5.5) / 2) + 6,
+    Math.ceil((String(s.label ?? "").length * 6.5) / 2) + 6,
+  );
+const R = computed(() =>
+  Object.fromEntries(props.states.map((s) => [s.id, rOf(s)])),
+);
 
 function arc(e) {
   const a = P.value[e.from];
   const b = P.value[e.to];
   if (!a || !b) return "";
+  const ra = R.value[e.from];
+  const rb = R.value[e.to];
   if (e.self) {
-    return `M${a.x - 10},${a.y - props.r} A22,22 0 1,1 ${a.x + 10},${a.y - props.r}`;
+    return `M${a.x - 10},${a.y - ra} A22,22 0 1,1 ${a.x + 10},${a.y - ra}`;
   }
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const len = Math.hypot(dx, dy) || 1;
   const ux = dx / len;
   const uy = dy / len;
-  const ax = a.x + ux * props.r;
-  const ay = a.y + uy * props.r;
-  const bx = b.x - ux * props.r;
-  const by = b.y - uy * props.r;
+  const ax = a.x + ux * ra;
+  const ay = a.y + uy * ra;
+  const bx = b.x - ux * rb;
+  const by = b.y - uy * rb;
   const c = e.curve ?? 0;
   const mx = (ax + bx) / 2 - uy * c;
   const my = (ay + by) / 2 + ux * c;
@@ -44,25 +57,70 @@ function arc(e) {
 function lab(e) {
   const a = P.value[e.from];
   const b = P.value[e.to];
-  if (!a || !b) return { x: 0, y: 0 };
-  if (e.self) return { x: a.x, y: a.y - props.r - 26 };
+  if (!a || !b) return { x: 0, y: 0, anchor: "middle" };
+  // The self loop's top is ~42 px above the rim; the label used to sit at 26.
+  if (e.self)
+    return { x: a.x, y: a.y - R.value[e.from] - 50, anchor: "middle" };
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len;
+  const ny = dx / len;
   const c = e.curve ?? 0;
+  // Outside the arc on EITHER side: the arc peaks at c/2, so the label sits
+  // 0.1·|c| + 9 beyond it (adding 9 regardless of sign put a negative curve's
+  // label inside its own arc). A straight edge's label goes 14 px to the
+  // OTHER side: +9 is the row the neighbouring circles' subs are written on.
+  let off = c === 0 ? -14 : c * 0.6 + Math.sign(c) * 9;
+  // A steep edge: text centred 14 px beside the line still straddles it, so
+  // the label starts (or ends) 8 px clear of the line instead.
+  const steep = Math.abs(nx) > 0.5;
+  let anchor = "middle";
+  if (steep) {
+    if (c === 0) off = -8;
+    anchor = nx * off > 0 ? "start" : "end";
+  }
   return {
-    x: (a.x + b.x) / 2 - (dy / len) * (c * 0.6 + 9),
-    y: (a.y + b.y) / 2 + (dx / len) * (c * 0.6 + 9),
+    x: (a.x + b.x) / 2 + nx * off,
+    y: (a.y + b.y) / 2 + ny * off + (steep ? 3 : 0),
+    anchor,
   };
 }
 
+/* The box holds every circle, every arc's peak and every label — the states
+ * alone used to set it, so a tall return arc was clipped at the top. */
 const vb = computed(() => {
-  const xs = props.states.map((s) => s.x * U);
-  const ys = props.states.map((s) => s.y * U);
-  const m = props.r + 40;
-  return `${Math.min(...xs) - m} ${Math.min(...ys) - m} ${
-    Math.max(...xs) - Math.min(...xs) + m * 2
-  } ${Math.max(...ys) - Math.min(...ys) + m * 2}`;
+  const xs = [];
+  const ys = [];
+  for (const s of props.states) {
+    const p = P.value[s.id];
+    const r = R.value[s.id];
+    xs.push(p.x - r, p.x + r);
+    ys.push(p.y - r, p.y + r);
+  }
+  for (const e of props.edges) {
+    const a = P.value[e.from];
+    const b = P.value[e.to];
+    if (!a || !b) continue;
+    const l = lab(e);
+    const w = String(e.label ?? "").length * 5.5;
+    xs.push(l.x - w / 2, l.x + w / 2);
+    ys.push(l.y - 10, l.y + 4);
+    if (e.self) {
+      ys.push(a.y - R.value[e.from] - 46);
+    } else {
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const c = (e.curve ?? 0) / 2;
+      xs.push((a.x + b.x) / 2 - (dy / len) * c);
+      ys.push((a.y + b.y) / 2 + (dx / len) * c);
+    }
+  }
+  const m = 20;
+  const x0 = Math.min(...xs) - m;
+  const y0 = Math.min(...ys) - m;
+  return `${x0} ${y0} ${Math.max(...xs) + m - x0} ${Math.max(...ys) + m - y0}`;
 });
 </script>
 
@@ -88,7 +146,7 @@ const vb = computed(() => {
         v-if="e.label"
         :x="lab(e).x"
         :y="lab(e).y"
-        text-anchor="middle"
+        :text-anchor="lab(e).anchor"
         class="dgm-sub"
       >
         {{ e.label }}
@@ -99,7 +157,7 @@ const vb = computed(() => {
       <circle
         :cx="P[s.id].x"
         :cy="P[s.id].y"
-        :r="props.r"
+        :r="R[s.id]"
         :class="
           s.accent || props.active === s.id ? 'dgm-box-accent' : 'dgm-box'
         "

@@ -87,19 +87,37 @@ in the microarchitecture docs.
 5. **Leave gaps wider than the edge labels.** A label longer than the space
    between two columns lands on a box. Shorten the label or widen the gap;
    40 px of gap will not hold `cp_* — a requester`.
+6. **No wire crosses another.** A crossing is a layout fault, not a router
+   limit: order the rows so every wire goes toward its consumer without
+   cutting the other direction's run (port → response tap → request tap →
+   home), keep a fan-out to two representative wires, and list first the wire
+   that must take the lane nearest its box. Jogs are fine. The one crossing you
+   keep is one you can prove no row order removes; the router then draws it as
+   a jump (the horizontal arcs over the vertical) so it never reads as a turn.
 
 `BlockDiagram` enforces 2–4 itself: it assigns each edge its own slot on a
 side, routes around obstacles, and places labels last so they avoid each other
-and the boxes. **1 and 5 are yours.** Run `overlap.mjs` — it catches all of it,
-including a `wide` that is not actually wide.
+and the boxes. **1, 5 and 6 are yours.** Run `overlap.mjs` — it catches 1–5,
+including a `wide` that is not actually wide — and `crossings.mjs`, which
+prints every crossing with its two wires named (the router also `console.warn`s
+them in dev).
 
-**`<BlockDiagram :nodes :edges :groups unit>`** — grid units, not pixels.
+**`<BlockDiagram :nodes :edges :groups :tags unit>`** — grid units, not pixels.
 ```js
-nodes: [{ id, x, y, w=10, h=3.2, label, sub, accent }]
+nodes: [{ id, x, y, w=10, h=3.2, label, sub, accent, tag }]
 edges: [{ from: 'a:b', to: 'c:t', label, accent, dash, dir: 'h'|'v'|'auto' }]
-groups: [{ x, y, w, h, label }]   // dashed hierarchy box behind
+groups: [{ x, y, w, h, label, tag }]   // dashed hierarchy box behind
+tags:   [{ key, label }]               // optional: one chip per key
 ```
-`from`/`to` take `id` or `id:side` with side ∈ `t b l r`.
+`from`/`to` take `id` or `id:side` with side ∈ `t b l r`. With `tags`, a chip
+bar sits above the drawing: click dims everything carrying that `tag` (and
+every wire touching a dimmed box), double-click solos it. Dimming never
+re-routes, so the layout — and the crossing count — stays what you audited.
+
+**`<Fig zoom wide|sheet caption>`** — every `zoom` figure has a full-screen
+button: drag to pan, wheel to zoom, `0` fit, `1` actual size, `±`, `Esc`.
+`sheet` is `wide` for a drawing meant to be read in that viewer (the
+/machine sheet); it is exempt from the tall-wide audit and nothing else.
 
 **`<WaveTrace :rows :notes cycles start variant label>`** — the cycle trace.
 **This replaces every ASCII timing table.**
@@ -228,6 +246,7 @@ npx vite build   --outDir .verify/NAME
 npx vite preview --outDir .verify/NAME --port PORT --strictPort
 
 BASE=http://localhost:PORT node scripts/overlap.mjs   # must be 0 on your route
+BASE=http://localhost:PORT node scripts/crossings.mjs /your/route   # must be 0 too
 BASE=http://localhost:PORT node scripts/shots.mjs     # -> .review/*.png
 BASE=http://localhost:PORT node scripts/peek.mjs /your/route --y 2600
 ```

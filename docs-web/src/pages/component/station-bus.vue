@@ -25,20 +25,31 @@ const line = {
     },
   ],
   nodes: [
+    /* The masters sit symmetrically over station 1 and high enough that
+     * each wire jogs to its slot above the group, so the verticals cross
+     * the group's top edge right of its label. */
     {
       id: "mj",
-      x: 6.5,
-      y: 0,
+      x: 8.25,
+      y: -2.5,
       w: 7.5,
       h: 3,
       label: "JTAG-AXI",
       sub: "64b @100",
     },
-    { id: "mx", x: 15, y: 0, w: 7.5, h: 3, label: "XDMA", sub: "512b @250" },
+    {
+      id: "mx",
+      x: 16.75,
+      y: -2.5,
+      w: 7.5,
+      h: 3,
+      label: "XDMA",
+      sub: "512b @250",
+    },
     {
       id: "ml",
-      x: 23.5,
-      y: 0,
+      x: 25.25,
+      y: -2.5,
       w: 7.5,
       h: 3,
       label: "XDMA-Lite",
@@ -110,51 +121,57 @@ const line = {
 };
 
 // ------------------------------------------------------------- the switch
+/* Laid out as the station sits on the line: the left link enters at the left
+ * and leaves through to_right beside it, the right link enters at the right
+ * and leaves through to_left, the K masters inject from above into both, and
+ * eject collects both link inputs below and broadcasts to the Q slaves. The
+ * six input/mux wires form a 6-cycle, which two columns cannot draw without
+ * a crossing; this ring can. */
 const sw = {
   nodes: [
-    { id: "fl", x: 0, y: 4, w: 12, h: 3, label: "from left" },
-    { id: "fr", x: 0, y: 12, w: 12, h: 3, label: "from right" },
-    {
-      id: "inj",
-      x: 0,
-      y: 8,
-      w: 12,
-      h: 3,
-      label: "inject",
-      sub: "K:1 round robin",
-      accent: true,
-    },
+    { id: "fl", x: 0, y: 6, w: 12, h: 3, label: "from left" },
     {
       id: "mr",
-      x: 18,
-      y: 0,
+      x: 17,
+      y: 6,
       w: 14,
       h: 3,
       label: "to_right",
       sub: "mux2(from_left, inject)",
     },
     {
+      id: "inj",
+      x: 26,
+      y: 0,
+      w: 15,
+      h: 3,
+      label: "inject",
+      sub: "K:1 round robin",
+      accent: true,
+    },
+    {
       id: "ml2",
-      x: 18,
-      y: 8,
+      x: 36,
+      y: 6,
       w: 14,
       h: 3,
       label: "to_left",
       sub: "mux2(from_right, inject)",
     },
+    { id: "fr", x: 55, y: 6, w: 12, h: 3, label: "from right" },
     {
       id: "ej",
-      x: 18,
-      y: 16,
-      w: 14,
+      x: 27,
+      y: 12,
+      w: 13,
       h: 3,
       label: "eject",
       sub: "mux2(from_left, from_right)",
     },
     {
       id: "q",
-      x: 40,
-      y: 16,
+      x: 25.5,
+      y: 18,
       w: 16,
       h: 3,
       label: "Q subordinates",
@@ -164,12 +181,12 @@ const sw = {
   ],
   edges: [
     { from: "fl:r", to: "mr:l", dir: "h" },
-    { from: "inj:t", to: "mr:l" },
-    { from: "fr:r", to: "ml2:l", dir: "h" },
-    { from: "inj:r", to: "ml2:l", dir: "h" },
-    { from: "fl:r", to: "ej:l", dir: "h" },
-    { from: "fr:r", to: "ej:l", dir: "h" },
-    { from: "ej:r", to: "q:l", label: "broadcast", dir: "h", accent: true },
+    { from: "fr:l", to: "ml2:r", dir: "h" },
+    { from: "inj:b", to: "mr:t" },
+    { from: "inj:b", to: "ml2:t" },
+    { from: "fl:b", to: "ej:l" },
+    { from: "fr:b", to: "ej:r" },
+    { from: "ej:b", to: "q:t", label: "broadcast", accent: true },
   ],
 };
 

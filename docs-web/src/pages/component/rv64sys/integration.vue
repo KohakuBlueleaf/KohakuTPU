@@ -335,7 +335,7 @@ const peWrap = {
     {
       id: "load",
       x: 37,
-      y: 6,
+      y: 6.7, // centred on base's lower slot, so CU_DATA is straight
       w: 14,
       h: 4.6,
       label: "the loader",
@@ -354,7 +354,7 @@ const peWrap = {
     {
       id: "mem",
       x: 56,
-      y: 6,
+      y: 6.7,
       w: 14,
       h: 4.6,
       label: "instruction window · scratchpad",
@@ -367,7 +367,9 @@ const peWrap = {
     { from: "base:r", to: "load:l", label: "CU_DATA" },
     { from: "kick:r", to: "core:l", label: "boot" },
     { from: "load:r", to: "mem:l" },
-    { from: "core:b", to: "base:b", label: "CU_SIGNAL", accent: true },
+    // the completion returns over the top row: a bottom return would have to
+    // cut one of the two fan-out wires to reach base
+    { from: "core:t", to: "base:t", label: "CU_SIGNAL", accent: true },
   ],
 };
 
@@ -415,7 +417,11 @@ const peCtrl = {
       w: "<b>exit</b> — end the run; the low 32 bits become the completion's argument",
       r: "the doorbell bit",
     },
-    { o: "0x08", w: "one console byte, observation only", r: "the doorbell bit" },
+    {
+      o: "0x08",
+      w: "one console byte, observation only",
+      r: "the doorbell bit",
+    },
     {
       o: "0x10",
       w: "the doorbell; bit 0 reaches the core's software interrupt line",
@@ -774,7 +780,11 @@ const hostRegs = {
       n: "HR_DBELL",
       w: "doorbell; bit 0 reaches the core's software interrupt line",
     },
-    { o: "0x18", n: "HR_STATUS", w: "<code>{exited, halted, cause[1:0]}</code>" },
+    {
+      o: "0x18",
+      n: "HR_STATUS",
+      w: "<code>{exited, halted, cause[1:0]}</code>",
+    },
     { o: "0x20", n: "HR_EXIT", w: "the program's exit word" },
     { o: "0x28", n: "HR_HALTPC", w: "where it stopped" },
     {
@@ -803,14 +813,22 @@ const scCtrl = {
       r: "0",
     },
     { o: "0x08", w: "console byte, observation only", r: "0" },
-    { o: "0x10", w: "doorbell; bit 0 reaches the software interrupt line", r: "the doorbell bit" },
+    {
+      o: "0x10",
+      w: "doorbell; bit 0 reaches the software interrupt line",
+      r: "the doorbell bit",
+    },
     {
       o: "0x18",
       w: "<b>nothing.</b> <code>satp</code> is CSR <code>0x180</code> and supervisor software owns it",
       r: "<code>satp</code> — a <b>read-only mirror</b>, so the host can see which address space is installed without stopping the core",
       _tone: "warn",
     },
-    { o: "0x20", w: "—", r: "<code>{mv_busy, mv_fault[3:0], mv_done[27:0]}</code>" },
+    {
+      o: "0x20",
+      w: "—",
+      r: "<code>{mv_busy, mv_fault[3:0], mv_done[27:0]}</code>",
+    },
     {
       o: "0x28",
       w: "—",
@@ -973,7 +991,11 @@ const wired = {
     { key: "s", label: "The RV64 branch" },
   ],
   rows: [
-    { p: "the host window <code>hs_*</code>", s: "<b>connected</b>", _tone: "good" },
+    {
+      p: "the host window <code>hs_*</code>",
+      s: "<b>connected</b>",
+      _tone: "good",
+    },
     {
       p: "the processor's memory path <code>cp_*</code> onto MAG",
       s: "<b>connected</b>",
@@ -1147,7 +1169,11 @@ const peParams = {
       d: "ultra",
       w: "measured: <code>ultra</code> 289.9 MHz / 6,962 LUT / 1 URAM against <code>block</code> 280.9 / 7,007 / 10 BRAM. UltraRAM wins on the byte-write-enable path",
     },
-    { p: "RF_PRIM", d: "distributed", w: "passed to the core's <code>MEM_PRIM</code>" },
+    {
+      p: "RF_PRIM",
+      d: "distributed",
+      w: "passed to the core's <code>MEM_PRIM</code>",
+    },
   ],
 };
 
@@ -1222,7 +1248,10 @@ const intAbsent = {
       n: "a reset PC and a kick argument",
       w: "both wrappers latch one and use neither; programs start at 0",
     },
-    { n: "image read-back", w: "the host window's memory selectors are write-only" },
+    {
+      n: "image read-back",
+      w: "the host window's memory selectors are write-only",
+    },
     {
       n: "a second processor per wrapper",
       w: "one core each, and the reservation machinery assumes it",
@@ -1244,10 +1273,10 @@ const intAbsent = {
     source="src/kohakuaccel/pe/rv64-sys/ · docs/arch/cpu/rv64-sys/integration.md"
   >
     <p class="doc-p">
-      <code>rv64_core</code> has no fabric interface, no memory map and no way to
-      be started. All three come from a wrapper, and there are two — plus a third
-      module that is not a third configuration but the node complex the second
-      one sits inside.
+      <code>rv64_core</code> has no fabric interface, no memory map and no way
+      to be started. All three come from a wrapper, and there are two — plus a
+      third module that is not a third configuration but the node complex the
+      second one sits inside.
     </p>
 
     <h2 class="doc-h2">What a wrapper owns</h2>
@@ -1306,36 +1335,36 @@ const intAbsent = {
 
     <Callout kind="note" title="Terms, defined once">
       <p>
-        A <b>flit</b> is the 288-bit unit the fabric carries; a <b>compute
-        unit</b> is anything that attaches to one fabric port, takes instructions
-        one at a time and signals retirement; a <b>kick</b> is the instruction
-        that starts one; a <b>completion</b> is the flit it sends back.
-        <b>MAG</b> is the system node's memory access half. The <b>mover</b> is
-        the node's descriptor-walking memory engine, and the <b>transform
-        slot</b> is the addon position on the mover's read-return path.
-        <b>Staging</b> is on-chip memory inside MAG shared by the mover and the
-        inter-mesh link.
+        A <b>flit</b> is the 288-bit unit the fabric carries; a
+        <b>compute unit</b> is anything that attaches to one fabric port, takes
+        instructions one at a time and signals retirement; a <b>kick</b> is the
+        instruction that starts one; a <b>completion</b> is the flit it sends
+        back. <b>MAG</b> is the system node's memory access half. The
+        <b>mover</b> is the node's descriptor-walking memory engine, and the
+        <b>transform slot</b> is the addon position on the mover's read-return
+        path. <b>Staging</b> is on-chip memory inside MAG shared by the mover
+        and the inter-mesh link.
       </p>
     </Callout>
 
     <h2 class="doc-h2">Why the node processor has no compute-unit shell</h2>
 
     <p class="doc-p">
-      <code>noc_cu_base</code> is the framework's compute-unit shell: it owns the
-      fabric port, the instruction queue, the <code>CU_CTRL</code> registers and
-      the kick-and-complete handshake. Every compute unit on the fabric has one.
-      The node processor does not, and the reasons are ordered by weight —
+      <code>noc_cu_base</code> is the framework's compute-unit shell: it owns
+      the fabric port, the instruction queue, the <code>CU_CTRL</code> registers
+      and the kick-and-complete handshake. Every compute unit on the fabric has
+      one. The node processor does not, and the reasons are ordered by weight —
       <b>area is the least of them</b>, since the shell measures 756 LUT against
       a whole-node budget of 35,000.
     </p>
 
     <p class="doc-p">
-      <b>Lifecycle.</b> The shell implements <i>someone kicks me, I run to
-      completion, I report a 32-bit word</i>. A runtime boots once and runs
-      forever: there is no completion to report and nothing for the result field
-      to carry. Building a run-then-done machine around a program meant never to
-      end is the wrong shape, and every diagnostic that lives inside it inherits
-      the wrong shape too.
+      <b>Lifecycle.</b> The shell implements
+      <i>someone kicks me, I run to completion, I report a 32-bit word</i>. A
+      runtime boots once and runs forever: there is no completion to report and
+      nothing for the result field to carry. Building a run-then-done machine
+      around a program meant never to end is the wrong shape, and every
+      diagnostic that lives inside it inherits the wrong shape too.
     </p>
 
     <Fig
@@ -1346,14 +1375,20 @@ const intAbsent = {
       <BlockDiagram :nodes="deadlock.nodes" :edges="deadlock.edges" />
     </Fig>
 
-    <Callout kind="rule" title="The unit that arbitrates the fabric must not be flow-controlled by the fabric">
+    <Callout
+      kind="rule"
+      title="The unit that arbitrates the fabric must not be flow-controlled by the fabric"
+    >
       <p>
         A compute unit can afford to block; the scheduler cannot.
-        <b>The mailbox that replaces the shell ties its busy line low and never
-        raises it</b> — a completion the queue cannot take is accepted and
-        dropped, and a sticky overflow bit records that it happened. Dropping a
-        completion loses information; holding one stalls the link that would
-        have delivered the traffic that drains the queue.
+        <b
+          >The mailbox that replaces the shell ties its busy line low and never
+          raises it</b
+        >
+        — a completion the queue cannot take is accepted and dropped, and a
+        sticky overflow bit records that it happened. Dropping a completion
+        loses information; holding one stalls the link that would have delivered
+        the traffic that drains the queue.
       </p>
       <p>
         <b>And the loader is a second memory-write protocol.</b> MAG already
@@ -1395,16 +1430,19 @@ const intAbsent = {
       caption="A granule is 256 bits, spooled one word per cycle rather than written as a wide port, which is what keeps both memories at their natural width and off any wide write path. A rejected transfer is consumed and dropped, not written somewhere. The bounds check is expressed in granule units for both forms, so a word-granularity write reaches only the first eighth of the instruction window or the first quarter of the scratchpad"
     />
 
-    <Callout kind="rule" title="A kick MUST NOT be accepted until all three receive-quiet conditions hold">
+    <Callout
+      kind="rule"
+      title="A kick MUST NOT be accepted until all three receive-quiet conditions hold"
+    >
       <p>
-        <code>CU_INST</code> and <code>CU_DATA</code> arrive on <b>two
-        queues</b>, so a kick can overtake the image it is the doorbell for. The
-        kick machine <b>MUST</b> wait on <b>receive-quiet</b> — no pending
-        receive, <b>no granule in flight</b>, and the loader idle — before it
-        accepts one. Any two of the three release early. The core is
-        additionally <b>held in reset until the boot pulse</b>, so no instruction
-        is fetched before the image is complete. The hold clears by the unit's
-        own progress and cannot deadlock.
+        <code>CU_INST</code> and <code>CU_DATA</code> arrive on
+        <b>two queues</b>, so a kick can overtake the image it is the doorbell
+        for. The kick machine <b>MUST</b> wait on <b>receive-quiet</b> — no
+        pending receive, <b>no granule in flight</b>, and the loader idle —
+        before it accepts one. Any two of the three release early. The core is
+        additionally <b>held in reset until the boot pulse</b>, so no
+        instruction is fetched before the image is complete. The hold clears by
+        the unit's own progress and cannot deadlock.
       </p>
     </Callout>
 
@@ -1434,20 +1472,20 @@ const intAbsent = {
       title="A short image does not fault — it executes whatever the window held before"
     >
       <p>
-        There is no unmapped-fetch fault and no image checksum, so a core started
-        against a partly written window fetches the previous run's instructions,
-        or zeros, and runs them. The symptom is a completion that arrives with a
-        plausible exit word from a program that never ran, or a fault at an
-        address nothing was linked to.
+        There is no unmapped-fetch fault and no image checksum, so a core
+        started against a partly written window fetches the previous run's
+        instructions, or zeros, and runs them. The symptom is a completion that
+        arrives with a plausible exit word from a program that never ran, or a
+        fault at an address nothing was linked to.
       </p>
       <p>
         The second trace is the one to watch for, because
-        <b>the window it leaves open shrinks as the loader drains</b>: it depends
-        on fetch latency, it is not reproducible between runs, and adding
-        observation makes it disappear. The granule is spooled a word per cycle
-        on purpose — it is what keeps both memories at their natural width and
-        off any wide write path — so “the flit was consumed” and “the memory was
-        written” are several cycles apart by design.
+        <b>the window it leaves open shrinks as the loader drains</b>: it
+        depends on fetch latency, it is not reproducible between runs, and
+        adding observation makes it disappear. The granule is spooled a word per
+        cycle on purpose — it is what keeps both memories at their natural width
+        and off any wide write path — so “the flit was consumed” and “the memory
+        was written” are several cycles apart by design.
       </p>
     </Callout>
 
@@ -1458,7 +1496,10 @@ const intAbsent = {
       <StateMachine :states="kickFsm.states" :edges="kickFsm.edges" :r="42" />
     </Fig>
 
-    <Callout kind="note" title="The counters clear on the boot pulse, not on the core's reset">
+    <Callout
+      kind="note"
+      title="The counters clear on the boot pulse, not on the core's reset"
+    >
       <p>
         The core is put back into reset when the run ends, and counters cleared
         there would read zero to whoever asked for them.
@@ -1487,14 +1528,17 @@ const intAbsent = {
 
     <SpecTable :cols="hostRegs.cols" :rows="hostRegs.rows" />
 
-    <Callout kind="rule" title="A diagnostic that lives inside the thing being reset is not a diagnostic">
+    <Callout
+      kind="rule"
+      title="A diagnostic that lives inside the thing being reset is not a diagnostic"
+    >
       <p>
         Running is enabled by <code>HR_BOOT</code> and dropped the moment the
-        core halts, and dropping it takes the core back into reset — which clears
-        the core's own <code>halted</code> output. A status register reading that
-        output directly reports nothing at all. The halt, its cause and its halt
-        PC <b>MUST</b> be captured into registers outside that reset domain, and
-        they <b>MUST</b> hold until the next boot.
+        core halts, and dropping it takes the core back into reset — which
+        clears the core's own <code>halted</code> output. A status register
+        reading that output directly reports nothing at all. The halt, its cause
+        and its halt PC <b>MUST</b> be captured into registers outside that
+        reset domain, and they <b>MUST</b> hold until the next boot.
       </p>
     </Callout>
 
@@ -1551,22 +1595,24 @@ const intAbsent = {
 
     <p class="doc-p">
       One AXI master, 40-bit address, 256-bit data, one outstanding access, no
-      bursts. It is deliberately <b>the same shape the RV32 control processor
-      presents</b>, so the RV64 complex drops into the same socket inside the
-      node. The control region is 256 bytes and is where everything that is not
-      memory lives; reads are early and writes are registered.
+      bursts. It is deliberately
+      <b>the same shape the RV32 control processor presents</b>, so the RV64
+      complex drops into the same socket inside the node. The control region is
+      256 bytes and is where everything that is not memory lives; reads are
+      early and writes are registered.
     </p>
 
     <SpecTable :cols="scCtrl.cols" :rows="scCtrl.rows" />
 
     <Callout kind="rule" title="mv.go is a store, not an opcode">
       <p>
-        Decoding the mover's command window out of an address range keeps the ISA
-        unchanged and matches the framework rule that control is a range rather
-        than an instruction. The register index is the low six bits of the
-        offset, so <b>the byte offset inside the window <i>is</i> the config
-        address</b>; the descriptor a program builds in its own memory becomes
-        seven stores, in program order, and <b>program order is the queue</b>.
+        Decoding the mover's command window out of an address range keeps the
+        ISA unchanged and matches the framework rule that control is a range
+        rather than an instruction. The register index is the low six bits of
+        the offset, so
+        <b>the byte offset inside the window <i>is</i> the config address</b>;
+        the descriptor a program builds in its own memory becomes seven stores,
+        in program order, and <b>program order is the queue</b>.
       </p>
     </Callout>
 
@@ -1578,16 +1624,20 @@ const intAbsent = {
         The mover answers at config offsets
         <code>0x00, 0x10, 0x18, 0x20, 0x28, 0x30, 0x38, 0x40, 0x50</code>. The
         control region maps its own <code>0x80</code>–<code>0xBF</code> onto
-        mover offsets <code>0x00</code>–<code>0x3F</code>, so <code>0x40</code>
-        — the fill immediate — and <code>0x50</code> — the gather pitch and word
-        count — land <b>outside it, in the doorbell sub-range</b>.
+        mover offsets <code>0x00</code>–<code>0x3F</code>, so
+        <code>0x40</code> — the fill immediate — and <code>0x50</code> — the
+        gather pitch and word count — land
+        <b>outside it, in the doorbell sub-range</b>.
       </p>
       <p>
-        <b>The symptom is a FILL or GATHER move that runs with a stale immediate
-        or stale geometry and reports success.</b> Both registers stay reachable
-        from the host's config window, which passes every offset below
-        <code>0x80</code> through. The two windows were sized independently and
-        nothing about the address map makes the overlap deliberate.
+        <b
+          >The symptom is a FILL or GATHER move that runs with a stale immediate
+          or stale geometry and reports success.</b
+        >
+        Both registers stay reachable from the host's config window, which
+        passes every offset below <code>0x80</code> through. The two windows
+        were sized independently and nothing about the address map makes the
+        overlap deliberate.
       </p>
     </Callout>
 
@@ -1597,8 +1647,8 @@ const intAbsent = {
       A processor reaches the mesh next door through <b>three registers</b> at
       control offset <code>0xC0</code>. Nothing else it does crosses the link:
       its own loads and stores are local in both directions, so the sequence for
-      handing work to another node is always <b>move the data with the mover,
-      wait for it, then ring</b>.
+      handing work to another node is always
+      <b>move the data with the mover, wait for it, then ring</b>.
     </p>
 
     <SpecTable
@@ -1613,7 +1663,10 @@ const intAbsent = {
       caption="Field by field. Two of the owner cells are warnings rather than descriptions: the enable is rewritten by every store to its register, and the tag a sender chooses is not what the receiver reads"
     />
 
-    <Callout kind="rule" title="An inbound ring is a level, and the handler clears the counts">
+    <Callout
+      kind="rule"
+      title="An inbound ring is a level, and the handler clears the counts"
+    >
       <p>
         Each inbound ring increments the count for <b>its source mesh</b>, and
         the node holds the processor's <b>external interrupt</b> asserted while
@@ -1622,34 +1675,46 @@ const intAbsent = {
         counts dismisses exactly what it has seen.
       </p>
       <p>
-        <b>An inbound doorbell waits for every write that arrived ahead of it to
-        be acknowledged by its memory before it counts</b>, so the ring a far
-        handler sees is backed by data that is in memory rather than in a queue.
-        That is the only synchronisation that crosses the link, because the far
-        side's memory is not readable from here at all — and it orders the ring
-        against writes already on the link, not against writes still leaving.
+        <b
+          >An inbound doorbell waits for every write that arrived ahead of it to
+          be acknowledged by its memory before it counts</b
+        >, so the ring a far handler sees is backed by data that is in memory
+        rather than in a queue. That is the only synchronisation that crosses
+        the link, because the far side's memory is not readable from here at all
+        — and it orders the ring against writes already on the link, not against
+        writes still leaving.
       </p>
     </Callout>
 
-    <Callout kind="rule" title="Wait for the mover to report idle before you ring">
+    <Callout
+      kind="rule"
+      title="Wait for the mover to report idle before you ring"
+    >
       <p>
-        The sequence is <b>mover write → poll <code>MV_STAT</code> bit 32 until
-        it clears → ring</b>, and the middle step is load-bearing. The mover
-        reports idle only once every write packet has been accepted onto the
-        link, and the link delivers in order; together with the receiving rule
-        above, that is what makes the ring mean <i>the data is there</i>.
+        The sequence is
+        <b
+          >mover write → poll <code>MV_STAT</code> bit 32 until it clears →
+          ring</b
+        >, and the middle step is load-bearing. The mover reports idle only once
+        every write packet has been accepted onto the link, and the link
+        delivers in order; together with the receiving rule above, that is what
+        makes the ring mean <i>the data is there</i>.
       </p>
       <p>
         <b>The ring is not a release fence on its own.</b> The sending arbiter
         rotates between writes, flits and doorbells, so a ring issued while a
         burst is still going out can reach the link ahead of the rest of that
-        burst. <b>The symptom is a receiver that reads a partly written
-        buffer</b> — timing-dependent, so it survives a small transfer and fails
-        on a large one, and no barrier instruction substitutes for the poll.
+        burst.
+        <b>The symptom is a receiver that reads a partly written buffer</b> —
+        timing-dependent, so it survives a small transfer and fails on a large
+        one, and no barrier instruction substitutes for the poll.
       </p>
     </Callout>
 
-    <Callout kind="trap" title="Clearing the counts rewrites the enable bit in the same store">
+    <Callout
+      kind="trap"
+      title="Clearing the counts rewrites the enable bit in the same store"
+    >
       <p>
         <code>0xC0</code> is one register with three fields, and
         <b>bit 0 is taken as the enable on every write to it</b>. So the obvious
@@ -1657,30 +1722,36 @@ const intAbsent = {
         <i>and disables the interlink</i>, in one store, with nothing to say so.
       </p>
       <p>
-        The acknowledge is <code>0b11</code>: enable and clear together, which is
-        what the shipped handler writes. <b>The symptom is a machine that
-        services exactly one ring and then goes quiet</b> — no fault bit, no
-        error, because switching a link off is not a fault. It looks like the
-        far node stopped sending.
+        The acknowledge is <code>0b11</code>: enable and clear together, which
+        is what the shipped handler writes.
+        <b
+          >The symptom is a machine that services exactly one ring and then goes
+          quiet</b
+        >
+        — no fault bit, no error, because switching a link off is not a fault.
+        It looks like the far node stopped sending.
       </p>
     </Callout>
 
-    <Callout kind="measured" title="Two nodes, one link, and the bench that proves the four pieces compose">
+    <Callout
+      kind="measured"
+      title="Two nodes, one link, and the bench that proves the four pieces compose"
+    >
       <p>
-        <span class="chip">rv64_node_pair</span> is <b>two complete
-        <code>sysnode</code>s</b> cross-connected link to link, each with its own
-        DRAM model and its own program. Mesh 0 writes sixteen 64-bit words into
-        its own staging, has the mover copy four 32-byte words into
-        <b>mesh 1's</b> staging across the link, and rings mesh 1. Mesh 1 takes
-        the ring <b>as an external interrupt</b>, clears the counts in its
+        <span class="chip">rv64_node_pair</span> is
+        <b>two complete <code>sysnode</code>s</b> cross-connected link to link,
+        each with its own DRAM model and its own program. Mesh 0 writes sixteen
+        64-bit words into its own staging, has the mover copy four 32-byte words
+        into <b>mesh 1's</b> staging across the link, and rings mesh 1. Mesh 1
+        takes the ring <b>as an external interrupt</b>, clears the counts in its
         handler, checks the words it was sent, and rings back; mesh 0 polls its
         own count for the reply and clears it.
       </p>
       <p>
         Both programs exit zero. Four abilities are load-bearing in that one run
-        and <b>each of them looks correct in isolation</b>: the doorbell window's
-        address offset, byte strobes through staging, the rule that keeps a
-        remote staging write's full address, and the interrupt level. A
+        and <b>each of them looks correct in isolation</b>: the doorbell
+        window's address offset, byte strobes through staging, the rule that
+        keeps a remote staging write's full address, and the interrupt level. A
         single-node bench proves none of them.
       </p>
     </Callout>
@@ -1689,10 +1760,11 @@ const intAbsent = {
 
     <p class="doc-p">
       Dropping the compute-unit shell dropped the processor's only path onto the
-      fabric with it. What replaces it is <b>seven registers at control offset
-      <code>0x40</code></b> and a 16-deep completion queue —
-      <code>rv64_noc_mbox</code>, a client of the node's hub rather than an
-      endpoint of its own. Software writes a destination and two payload words;
+      fabric with it. What replaces it is
+      <b>seven registers at control offset <code>0x40</code></b> and a 16-deep
+      completion queue — <code>rv64_noc_mbox</code>, a client of the node's hub
+      rather than an endpoint of its own. Software writes a destination and two
+      payload words;
       <b>hardware builds the flit.</b>
     </p>
 
@@ -1722,7 +1794,10 @@ const intAbsent = {
       caption="Field by field, and the owner column is the one to read before writing a dispatcher. Everything hardware owns here is either a header field software cannot see or a status bit software cannot write; everything software owns is carried verbatim and never interpreted"
     />
 
-    <Callout kind="trap" title="The transaction id is hardware's, and it does not come back on its own">
+    <Callout
+      kind="trap"
+      title="The transaction id is hardware's, and it does not come back on its own"
+    >
       <p>
         Every accepted GO increments an 8-bit <code>txn</code> in the flit
         header, and <b>software can neither read nor write it</b>. The framework
@@ -1732,9 +1807,9 @@ const intAbsent = {
       </p>
       <p>
         So a dispatcher that needs to match a completion to a dispatch matches
-        on <b>the source coordinate</b>, and keeps its own outstanding-work table
-        keyed on it. One instruction in flight per unit makes that exact; more
-        than one needs the unit to put something identifying in
+        on <b>the source coordinate</b>, and keeps its own outstanding-work
+        table keyed on it. One instruction in flight per unit makes that exact;
+        more than one needs the unit to put something identifying in
         <code>arg</code>, which is the unit's contract to publish rather than
         the mailbox's.
       </p>
@@ -1743,12 +1818,15 @@ const intAbsent = {
     <h2 class="doc-h2">The node complex — rv64_mag_pe</h2>
 
     <p class="doc-p">
-      <code>rv64_syscore</code> is the processor. <code>rv64_mag_pe</code> is the
-      processor <b>plus the node's memory mover and the transform slot on its
-      read-return path</b>, and the distinction matters for every area argument
-      made about it: the RV32 and RV64 complexes hold the <i>same</i> three
-      things and differ only in the processor. The mover and the slot belong to
-      the node, not to whichever CPU sits in it.
+      <code>rv64_syscore</code> is the processor. <code>rv64_mag_pe</code> is
+      the processor
+      <b
+        >plus the node's memory mover and the transform slot on its read-return
+        path</b
+      >, and the distinction matters for every area argument made about it: the
+      RV32 and RV64 complexes hold the <i>same</i> three things and differ only
+      in the processor. The mover and the slot belong to the node, not to
+      whichever CPU sits in it.
     </p>
 
     <Fig
@@ -1760,11 +1838,15 @@ const intAbsent = {
 
     <h2 class="doc-h2">What is wired at the node, and what is not</h2>
 
-    <Callout kind="trap" title="The parameter is off by default, and the generator does not emit it">
+    <Callout
+      kind="trap"
+      title="The parameter is off by default, and the generator does not emit it"
+    >
       <p>
-        <code>rv64_mag_pe</code> is instantiated inside <code>sysnode</code>
-        behind <code>CPU_RV64</code>, and <b>that parameter is 0</b>: a node
-        built without asking for it ships the RV32 control complex.
+        <code>rv64_mag_pe</code> is instantiated inside
+        <code>sysnode</code> behind <code>CPU_RV64</code>, and
+        <b>that parameter is 0</b>: a node built without asking for it ships the
+        RV32 control complex.
       </p>
       <p>
         <b>The mesh generator emits no value for it at all</b>, so every
@@ -1783,14 +1865,19 @@ const intAbsent = {
       caption="Read from sysnode.v. A tied-off port is not a decision — it is a wire nobody has run yet, and each of the three at the bottom of this table changes what a runtime can do"
     />
 
-    <Callout kind="rule" title="A control region that answers writes and changes nothing is worse than one that faults">
+    <Callout
+      kind="rule"
+      title="A control region that answers writes and changes nothing is worse than one that faults"
+    >
       <p>
         Every row above marked <i>connected</i> was once a constant, and the
         failure mode was the same each time: the control region decoded the
-        range, accepted the store, and drove nothing. <b>A doorbell that reports
-        success and rings nowhere is indistinguishable from a peer that is
-        slow</b>, and an interrupt line tied low makes <code>mie</code> bit 11
-        dead however software programs it.
+        range, accepted the store, and drove nothing.
+        <b
+          >A doorbell that reports success and rings nowhere is
+          indistinguishable from a peer that is slow</b
+        >, and an interrupt line tied low makes <code>mie</code> bit 11 dead
+        however software programs it.
       </p>
       <p>
         <b>The check is at the instantiation, not in the module.</b> Each of
@@ -1803,18 +1890,19 @@ const intAbsent = {
 
     <Callout kind="open" title="So, in the RV64 configuration as it stands">
       <p>
-        The processor boots, runs, reaches DRAM and staging through MAG, commands
-        the mover, dispatches to compute units and consumes their completions,
-        rings a doorbell in another mesh, takes an external interrupt from the
-        node, and reports to the host.
+        The processor boots, runs, reaches DRAM and staging through MAG,
+        commands the mover, dispatches to compute units and consumes their
+        completions, rings a doorbell in another mesh, takes an external
+        interrupt from the node, and reports to the host.
       </p>
       <p>
         What it still <b>cannot</b> do: reach the transform slot's registers,
         program the mover's fill immediate or gather geometry, or be selected by
-        the ship generator. And <b>the evidence stops one level below the
-        node</b> — the processor, its privilege model, its translation and its
-        mailbox are each proved by directed programs against the complex, and
-        there is no whole-node simulation with this processor in it.
+        the ship generator. And
+        <b>the evidence stops one level below the node</b> — the processor, its
+        privilege model, its translation and its mailbox are each proved by
+        directed programs against the complex, and there is no whole-node
+        simulation with this processor in it.
       </p>
     </Callout>
 
@@ -1829,9 +1917,13 @@ const intAbsent = {
 
     <SpecTable :cols="coreParams.cols" :rows="coreParams.rows" />
 
-    <Callout kind="measured" title="Dropping atomics is worth 776 LUT — 13.3 % of the core — at essentially no change in frequency">
+    <Callout
+      kind="measured"
+      title="Dropping atomics is worth 776 LUT — 13.3 % of the core — at essentially no change in frequency"
+    >
       <p>
-        A mesh compute unit may take that trade: it has no second writer to race.
+        A mesh compute unit may take that trade: it has no second writer to
+        race.
         <b>The node processor may not</b>, and the reason is not preference:
         staging is multi-writer but single-reader, which makes it a mailbox
         rather than shared memory. It gives join and release and never mutual
@@ -1873,7 +1965,9 @@ const intAbsent = {
         wrapper needs one because two queues have no order between them.
       </li>
       <li>
-        <b>Write the interlock against the memory, not against the transport.</b>
+        <b
+          >Write the interlock against the memory, not against the transport.</b
+        >
         “The flit was consumed” is not “the words were written”. Enumerate every
         stage that can still be in flight and require all of them idle.
       </li>
@@ -1902,11 +1996,16 @@ const intAbsent = {
       </li>
     </ol>
 
-    <Callout kind="open" title="Open questions, and one parameter that does not do what it says">
+    <Callout
+      kind="open"
+      title="Open questions, and one parameter that does not do what it says"
+    >
       <p>
-        <b><span class="chip">NODE_BASE</span> and
-        <span class="chip">CACHE_LO</span> are not honoured.</b> The decode is
-        written as <span class="chip">|pa[39:28]</span> and
+        <b
+          ><span class="chip">NODE_BASE</span> and
+          <span class="chip">CACHE_LO</span> are not honoured.</b
+        >
+        The decode is written as <span class="chip">|pa[39:28]</span> and
         <span class="chip">pa[31]</span> with the bit positions as literals, for
         the timing reason the memory system carries — so changing either
         parameter changes nothing at all. Treat both as documentation and edit
@@ -1927,17 +2026,17 @@ const intAbsent = {
         reports when it is broken.
       </p>
       <p>
-        <b>The completion queue's depth is not tied to anything.</b> Sixteen is a
-        constant; the number of units a dispatcher may have outstanding is a
-        software decision made somewhere else, and the only feedback when the two
-        disagree is a sticky bit nobody is obliged to read.
+        <b>The completion queue's depth is not tied to anything.</b> Sixteen is
+        a constant; the number of units a dispatcher may have outstanding is a
+        software decision made somewhere else, and the only feedback when the
+        two disagree is a sticky bit nobody is obliged to read.
       </p>
       <p>
-        <b>And there is no whole-node simulation with this complex in it.</b> The
-        node- and mesh-level benches exercise the RV32 one; the RV64 evidence
-        stops at the complex and its directed programs. So “the node boots a
-        runtime, commands the mover and dispatches to a compute unit” is proven
-        one level below the node, not at it.
+        <b>And there is no whole-node simulation with this complex in it.</b>
+        The node- and mesh-level benches exercise the RV32 one; the RV64
+        evidence stops at the complex and its directed programs. So “the node
+        boots a runtime, commands the mover and dispatches to a compute unit” is
+        proven one level below the node, not at it.
       </p>
     </Callout>
 

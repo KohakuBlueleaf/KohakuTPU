@@ -48,7 +48,15 @@ const cpath = {
       sub: "bit tests, registered on the first cycle",
       accent: true,
     },
-    { id: "spad", x: 51, y: -4, w: 11, h: 4, label: "scratchpad", sub: "1 cycle" },
+    {
+      id: "spad",
+      x: 51,
+      y: -4,
+      w: 11,
+      h: 4,
+      label: "scratchpad",
+      sub: "1 cycle",
+    },
     {
       id: "ctrl",
       x: 51,
@@ -328,7 +336,9 @@ const rsEdges = [
   { from: "RS_IDLE", to: "RS_FILL", label: "take_rd_e" },
   { from: "RS_FILL", to: "RS_FILL", label: "beat", self: true },
   { from: "RS_FILL", to: "RS_WAIT", label: "last beat" },
-  { from: "RS_WAIT", to: "RS_FILL", label: "entry i+1", curve: -70 },
+  // + bulges UP on a leftward edge: the label clears STG→WAIT's, which sits
+  // exactly where a downward arc's label landed.
+  { from: "RS_WAIT", to: "RS_FILL", label: "entry i+1", curve: 70 },
   { from: "RS_WAIT", to: "RS_IDLE", label: "run done", curve: 145 },
   { from: "RS_IDLE", to: "RS_STG", label: "staged" },
   { from: "RS_STG", to: "RS_WAIT", label: "stg_rvalid" },
@@ -719,20 +729,46 @@ const raBroken = {
     {
       name: "state",
       kind: "text",
-      values: ["IDLE", "WR_DATA", "WR_DATA", "WR_DATA", "WR_DATA", "WR_DATA", "WR_DATA"],
+      values: [
+        "IDLE",
+        "WR_DATA",
+        "WR_DATA",
+        "WR_DATA",
+        "WR_DATA",
+        "WR_DATA",
+        "WR_DATA",
+      ],
     },
     { name: "m_wready", kind: "bit", values: [0, 0, 0, 1, 0, 1, 1] },
     { name: "wd_adv", kind: "bit", values: [0, 1, 1, 1, 0, 1, 1] },
-    { name: "rd_en (free)", kind: "bit", values: [1, 1, 1, 1, 1, 1, 1], mark: [4] },
-    { name: "wd_raddr", kind: "bus", values: ["1", "1", "2", "3", "4", "4", "5"] },
+    {
+      name: "rd_en (free)",
+      kind: "bit",
+      values: [1, 1, 1, 1, 1, 1, 1],
+      mark: [4],
+    },
+    {
+      name: "wd_raddr",
+      kind: "bus",
+      values: ["1", "1", "2", "3", "4", "4", "5"],
+    },
     {
       name: "wd_next",
       kind: "bus",
       values: [null, "b0", "b1", "b2", "b3", "b4", "b5"],
       mark: [5],
     },
-    { name: "wd_cur", kind: "bus", values: [null, null, "b0", "b1", "b2", "b2", "b4"], mark: [6] },
-    { name: "on the bus", kind: "text", values: ["", "", "", "b0", "—", "b1", "b2"] },
+    {
+      name: "wd_cur",
+      kind: "bus",
+      values: [null, null, "b0", "b1", "b2", "b2", "b4"],
+      mark: [6],
+    },
+    {
+      name: "on the bus",
+      kind: "text",
+      values: ["", "", "", "b0", "—", "b1", "b2"],
+    },
   ],
   notes: [
     {
@@ -758,20 +794,45 @@ const raFixed = {
     {
       name: "state",
       kind: "text",
-      values: ["IDLE", "WR_DATA", "WR_DATA", "WR_DATA", "WR_DATA", "WR_DATA", "WR_DATA"],
+      values: [
+        "IDLE",
+        "WR_DATA",
+        "WR_DATA",
+        "WR_DATA",
+        "WR_DATA",
+        "WR_DATA",
+        "WR_DATA",
+      ],
     },
     { name: "m_wready", kind: "bit", values: [0, 0, 0, 1, 0, 1, 1] },
     { name: "wd_ok", kind: "bit", values: [0, 0, 1, 1, 1, 1, 1] },
-    { name: "wd_adv = rd_en", kind: "bit", values: [1, 1, 1, 1, 0, 1, 1], mark: [4] },
-    { name: "wd_raddr", kind: "bus", values: ["1", "1", "2", "3", "4", "4", "5"] },
+    {
+      name: "wd_adv = rd_en",
+      kind: "bit",
+      values: [1, 1, 1, 1, 0, 1, 1],
+      mark: [4],
+    },
+    {
+      name: "wd_raddr",
+      kind: "bus",
+      values: ["1", "1", "2", "3", "4", "4", "5"],
+    },
     {
       name: "wd_next",
       kind: "bus",
       values: [null, "b0", "b1", "b2", "b3", "b3", "b4"],
       mark: [5],
     },
-    { name: "wd_cur", kind: "bus", values: [null, null, "b0", "b1", "b2", "b2", "b3"] },
-    { name: "on the bus", kind: "text", values: ["", "", "", "b0", "—", "b1", "b2"] },
+    {
+      name: "wd_cur",
+      kind: "bus",
+      values: [null, null, "b0", "b1", "b2", "b2", "b3"],
+    },
+    {
+      name: "on the bus",
+      kind: "text",
+      values: ["", "", "", "b0", "—", "b1", "b2"],
+    },
   ],
   notes: [
     {
@@ -1311,7 +1372,9 @@ const wSm = {
     { id: "W_IDLE", x: 0, y: 0, label: "IDLE" },
     { id: "W_ARM", x: 7, y: 0, label: "ARM", sub: "wait for data" },
     { id: "W_DATA", x: 14, y: 0, label: "DATA" },
-    { id: "W_GEN", x: 7, y: 5, label: "GEN", sub: "two PRNG halves" },
+    // Right of ARM, not under it: under it, K_GEN's and pr_valid's labels
+    // shared one row between two near-vertical edges.
+    { id: "W_GEN", x: 11, y: 6, label: "GEN", sub: "two PRNG halves" },
   ],
   edges: [
     { from: "W_IDLE", to: "W_ARM", label: "not resident" },
@@ -1454,7 +1517,6 @@ const timingRows = [
     w: "<code>mm_mover.v</code>",
   },
 ];
-
 </script>
 
 <template>
@@ -1486,13 +1548,14 @@ const timingRows = [
 
     <h2 class="doc-h2">The control complex, in front of all of it</h2>
     <p class="doc-p">
-      Before any of that, the node contains a processor. <b>It is not
-      optional</b> — <code>sysnode.v</code> instantiates one unconditionally and
-      there is no slot to leave empty. <b>Which processor it is, is a
-      parameter</b>: <code>CPU_RV64</code>, whose default is <code>0</code> and
-      selects an RV32 complex; at <code>1</code> it selects an RV64 one, with
-      supervisor privilege, Sv39 translation, a write-back L1 and one AXI master
-      onto the same converged path everything else uses.
+      Before any of that, the node contains a processor.
+      <b>It is not optional</b> — <code>sysnode.v</code> instantiates one
+      unconditionally and there is no slot to leave empty.
+      <b>Which processor it is, is a parameter</b>: <code>CPU_RV64</code>, whose
+      default is <code>0</code> and selects an RV32 complex; at
+      <code>1</code> it selects an RV64 one, with supervisor privilege, Sv39
+      translation, a write-back L1 and one AXI master onto the same converged
+      path everything else uses.
     </p>
     <p class="doc-p">
       What follows is the RV64 memory path, because it is the one with a
@@ -1519,18 +1582,18 @@ const timingRows = [
       <p>
         Four things leave the processor — the page-table walker, the L1's fill,
         its writeback, and an uncached 64-bit access — and
-        <b>never two at once</b>, which is what lets
-        <code>rv64_nport</code> be a priority mux rather than a queue: the MMU
-        holds the core while it walks, the L1 sequences its own eviction ahead
-        of its own fill, and the core stalls on any node access so it cannot
-        issue a second.
+        <b>never two at once</b>, which is what lets <code>rv64_nport</code> be
+        a priority mux rather than a queue: the MMU holds the core while it
+        walks, the L1 sequences its own eviction ahead of its own fill, and the
+        core stalls on any node access so it cannot issue a second.
       </p>
       <p>
-        <b>That invariant is the thing that breaks first if the L1 ever becomes
-        non-blocking</b>, because then a fill and an uncached access can
-        overlap and the module needs real arbitration and per-client response
-        routing. A line is one 256-bit beat, so there are no bursts on this port
-        at all.
+        <b
+          >That invariant is the thing that breaks first if the L1 ever becomes
+          non-blocking</b
+        >, because then a fill and an uncached access can overlap and the module
+        needs real arbitration and per-client response routing. A line is one
+        256-bit beat, so there are no bursts on this port at all.
       </p>
     </Callout>
 
@@ -1540,7 +1603,10 @@ const timingRows = [
       caption="Four regions, decided by bit tests. Every range is power-of-two aligned and power-of-two sized so that each test is one equality or one bit"
     />
 
-    <Callout kind="measured" title="Bit tests, because the decode is in the stall path">
+    <Callout
+      kind="measured"
+      title="Bit tests, because the decode is in the stall path"
+    >
       <p>
         Forward mux, address adder, decode, stall — and stall gates
         <b>every</b> pipeline register, including the predictor's return-address
@@ -1554,7 +1620,10 @@ const timingRows = [
       </p>
     </Callout>
 
-    <Callout kind="rule" title="Register every consumer of the effective address, except a read address">
+    <Callout
+      kind="rule"
+      title="Register every consumer of the effective address, except a read address"
+    >
       <p>
         A read has to be issued in the first cycle to be answered in the second.
         <b>Nothing else does.</b> Writes, write enables, control decodes and
@@ -1571,7 +1640,10 @@ const timingRows = [
       </p>
     </Callout>
 
-    <Callout kind="trap" title="A TLB entry is 57 bits because the card is 40-bit physical">
+    <Callout
+      kind="trap"
+      title="A TLB entry is 57 bits because the card is 40-bit physical"
+    >
       <p>
         Sv39's PPN field is architecturally <b>44</b> bits. No address on this
         card exceeds 40, so the stored PPN is 28 and an entry is
@@ -1593,8 +1665,11 @@ const timingRows = [
       doorbell's are the sub-range above it — both take their register index
       from the address rather than from a decode. Decoding a command from an
       address leaves the ISA unmodified, so a stock RV64 toolchain compiles a
-      move. <b>When the host's config window and the processor's store pulse in
-      the same cycle, the processor wins.</b>
+      move.
+      <b
+        >When the host's config window and the processor's store pulse in the
+        same cycle, the processor wins.</b
+      >
     </p>
 
     <Callout
@@ -1611,11 +1686,13 @@ const timingRows = [
         — land in the <b>doorbell</b> sub-range instead.
       </p>
       <p>
-        <b>The symptom is a FILL or GATHER move that runs with a stale immediate
-        or stale geometry and reports success.</b> Both registers stay reachable
-        from the host's config window, which passes every offset below
-        <code>0x80</code> through, and from the RV32 complex, whose
-        <code>mv_exec</code> replays an arbitrary
+        <b
+          >The symptom is a FILL or GATHER move that runs with a stale immediate
+          or stale geometry and reports success.</b
+        >
+        Both registers stay reachable from the host's config window, which
+        passes every offset below <code>0x80</code> through, and from the RV32
+        complex, whose <code>mv_exec</code> replays an arbitrary
         <code>{offset, value}</code> list from the scratchpad and can name any
         of the nine. The two windows were sized independently.
       </p>
@@ -1629,8 +1706,10 @@ const timingRows = [
         <code>sysnode.v</code> takes <code>CPU_RV64</code>, but
         <code>gen_mesh.py</code> emits no value for it — so every generated ship
         top elaborates the default RV32 branch, and
-        <b>there is no way to build a ship with the RV64 complex without editing
-        the generator</b>. Every RV64 figure on this site comes from
+        <b
+          >there is no way to build a ship with the RV64 complex without editing
+          the generator</b
+        >. Every RV64 figure on this site comes from
         <code>scripts/tcl/ooc_sysnode_rv64.tcl</code>, a standalone
         <code>sysnode</code> synthesis that sets the parameter directly.
       </p>
@@ -1650,20 +1729,21 @@ const timingRows = [
 
     <Callout kind="rule" title="Leaving the shell out is not free">
       <p>
-        The shell guarantees <b>every write is visible when the completion
-        arrives</b>. That is the host's and a dispatcher's only sequencing
-        point, and a complex without it has to publish its own ordering
-        guarantee to whoever waits on it. <b>The RV64 complex has not done so
-        for its cached range</b>, where a store reaches DRAM only when its line
-        is evicted and there is no software-reachable flush.
+        The shell guarantees
+        <b>every write is visible when the completion arrives</b>. That is the
+        host's and a dispatcher's only sequencing point, and a complex without
+        it has to publish its own ordering guarantee to whoever waits on it.
+        <b>The RV64 complex has not done so for its cached range</b>, where a
+        store reaches DRAM only when its line is evicted and there is no
+        software-reachable flush.
       </p>
       <p>
         The other consequence is structural, and it is answered rather than
-        outstanding: with no shell the processor is <b>not enumerated and not
-        kicked</b>, but it does dispatch. A mailbox in its control region builds
-        <code>CU_INST</code> flits and queues the <code>CU_SIGNAL</code>s that
-        come back, as a client of the hub at the <code>(0,0)</code> corner the
-        hub already decodes the processor at.
+        outstanding: with no shell the processor is
+        <b>not enumerated and not kicked</b>, but it does dispatch. A mailbox in
+        its control region builds <code>CU_INST</code> flits and queues the
+        <code>CU_SIGNAL</code>s that come back, as a client of the hub at the
+        <code>(0,0)</code> corner the hub already decodes the processor at.
         <b>Its inbound busy line is tied low</b> — the unit that arbitrates the
         fabric must not be flow-controlled by it — so a completion the queue
         cannot take is dropped and recorded in a sticky bit rather than held.
@@ -1842,9 +1922,12 @@ const timingRows = [
         descriptor.
       </p>
       <p>
-        <b>The symptom of a divergence is a plausible wrong result, not an
-        error</b> — a run length or an entry width read from the wrong bits
-        produces a well-formed request for the wrong bytes.
+        <b
+          >The symptom of a divergence is a plausible wrong result, not an
+          error</b
+        >
+        — a run length or an entry width read from the wrong bits produces a
+        well-formed request for the wrong bytes.
         <b>One divergence has already happened</b> in this tree, on the address
         field: sliced by <code>ADDR_W</code> instead of the flit's fixed 40, it
         read <code>addr &gt;&gt; 6</code> on a narrower build and placed every
@@ -1966,15 +2049,20 @@ const timingRows = [
       </p>
     </Callout>
 
-    <h3 class="doc-h3">The slot data array is block RAM, read one beat ahead</h3>
+    <h3 class="doc-h3">
+      The slot data array is block RAM, read one beat ahead
+    </h3>
 
     <p class="doc-p">
-      The slot table's flags are per slot and cheap. <b>Its data is
-      <code>WR_SLOTS × WBURST</code> beats of <code>DATA_W</code></b> — 32 Kbit
-      at the defaults — and as a register array that is distributed RAM read at
-      three indices, <b>1,218 LUT per port</b> in a node using 46 of the part's
-      2,688 block RAM tiles. Moving it into block RAM is the largest single
-      economy in the node: <b>−2,918 LUT for +8 tiles</b>, four per port.
+      The slot table's flags are per slot and cheap.
+      <b
+        >Its data is <code>WR_SLOTS × WBURST</code> beats of
+        <code>DATA_W</code></b
+      >
+      — 32 Kbit at the defaults — and as a register array that is distributed
+      RAM read at three indices, <b>1,218 LUT per port</b> in a node using 46 of
+      the part's 2,688 block RAM tiles. Moving it into block RAM is the largest
+      single economy in the node: <b>−2,918 LUT for +8 tiles</b>, four per port.
     </p>
 
     <p class="doc-p">
@@ -2002,9 +2090,12 @@ const timingRows = [
       <p>
         With the enable tied to the advance, a stall stops both together:
         <code>wd_next</code> holds, <code>wd_raddr</code> holds, and nothing is
-        re-read or skipped. <b>Beat 0 is addressed while the machine is still in
-        <code>S_IDLE</code></b>, so the first data cycle already has it — one
-        priming cycle per burst rather than two.
+        re-read or skipped.
+        <b
+          >Beat 0 is addressed while the machine is still in
+          <code>S_IDLE</code></b
+        >, so the first data cycle already has it — one priming cycle per burst
+        rather than two.
       </p>
     </Callout>
 
@@ -2022,7 +2113,10 @@ const timingRows = [
       label="The read enable is the advance — the stall holds everything together"
     />
 
-    <Callout kind="trap" title="The symptom is a well-formed write of the wrong bytes">
+    <Callout
+      kind="trap"
+      title="The symptom is a well-formed write of the wrong bytes"
+    >
       <p>
         The burst has the right address, the right length and the right beat
         count. One beat in the middle carries the beat after it, and the last
@@ -2065,12 +2159,15 @@ const timingRows = [
       caption="Byte enables exist on four of the agent's five write paths. The one they do not exist on is the one every compute unit uses — and the one they were most recently added to is the one a runtime's page tables live behind"
     />
 
-    <Callout kind="trap" title="A store that writes four times as much as it was asked to">
+    <Callout
+      kind="trap"
+      title="A store that writes four times as much as it was asked to"
+    >
       <p>
         Staging's write port takes AXI beats, and a processor's 64-bit store is
         <b>one lane of a 32-byte word</b>. Without strobes the bank wrote the
-        whole word, so every lane took the same value — the store succeeded,
-        the value it wrote was correct, and the three words beside it were
+        whole word, so every lane took the same value — the store succeeded, the
+        value it wrote was correct, and the three words beside it were
         destroyed.
       </p>
       <p>
@@ -2139,18 +2236,24 @@ const timingRows = [
       <p>
         <code>rv64_mag_pe</code> drives the bank's <code>cfg_en</code> to zero
         and leaves <code>cfg_rdata</code> and its fault output unread, so
-        <b>no occupant register is readable or writable and the bank's own fault
-        code is not observable</b> in that configuration. The RV32 complex
-        reaches both through its node range, so this is a connection the swap
-        dropped rather than a design position.
+        <b
+          >no occupant register is readable or writable and the bank's own fault
+          code is not observable</b
+        >
+        in that configuration. The RV32 complex reaches both through its node
+        range, so this is a connection the swap dropped rather than a design
+        position.
       </p>
       <p>
-        <b>The symptom is invisible today and would be a wrong-format operand
-        tomorrow.</b> The reference occupant needs no registers — its mode picks
-        its packing and its scale is derived per entry — so nothing has hit it.
-        An occupant fed by a palette or a coefficient table would be fed
-        whatever the array powered up holding, and the bank's one self-detected
-        fault, an id naming no occupant, would go unread.
+        <b
+          >The symptom is invisible today and would be a wrong-format operand
+          tomorrow.</b
+        >
+        The reference occupant needs no registers — its mode picks its packing
+        and its scale is derived per entry — so nothing has hit it. An occupant
+        fed by a palette or a coefficient table would be fed whatever the array
+        powered up holding, and the bank's one self-detected fault, an id naming
+        no occupant, would go unread.
       </p>
     </Callout>
 
@@ -2189,15 +2292,19 @@ const timingRows = [
       </p>
     </Callout>
 
-    <Callout kind="rule" title="A remote write keeps all 40 bits only if it is special">
+    <Callout
+      kind="rule"
+      title="A remote write keeps all 40 bits only if it is special"
+    >
       <p>
         When a write arrives over the interlink, the inbound handler decides
         what address to present to this mesh from <b>one bit</b>. A
         <b>special address — bit 39 set</b> — is presented whole, all 40 bits,
         and <span class="chip">mag_stage_port</span> claims it by that bit and
-        the mesh field. <b>A DRAM address is presented by its low 32 bits
-        only</b>, because local DRAM starts at zero and the mesh field would
-        otherwise put the write 4 GB out of range.
+        the mesh field.
+        <b>A DRAM address is presented by its low 32 bits only</b>, because
+        local DRAM starts at zero and the mesh field would otherwise put the
+        write 4 GB out of range.
       </p>
       <p>
         <b>Reads never cross</b>, in either form. A mover source must be in this
@@ -2219,11 +2326,11 @@ const timingRows = [
       </p>
       <p>
         <b>Every party reports success.</b> The mover completes, the write
-        response is returned, the doorbell that follows says the data has
-        landed — and the far mesh's processor reads its staging and finds
-        whatever was there before. The reader and the writer disagree about one
-        address and neither can see the other's memory, so there is nothing to
-        compare against. <b>Only a two-node bench catches this</b>, which is why
+        response is returned, the doorbell that follows says the data has landed
+        — and the far mesh's processor reads its staging and finds whatever was
+        there before. The reader and the writer disagree about one address and
+        neither can see the other's memory, so there is nothing to compare
+        against. <b>Only a two-node bench catches this</b>, which is why
         <span class="chip">rv64_node_pair</span> exists.
       </p>
     </Callout>
@@ -2300,18 +2407,25 @@ const timingRows = [
       title="The converged form runs on port B alone — a quarter of the width"
     >
       <p>
-        <code>mag_stage_port</code> ties <code>a_req</code>,
-        <code>a_we</code>, <code>a_addr</code> and <code>a_wdata</code> to zero
-        and leaves every A output unconnected, with the comment
-        <i>“Port A is mag_mem_port's entry-granular fill read and is not
-        ours.”</i> So the shared store is reached
-        <b>one <code>DATA_W</code> word per access, with one read
-        outstanding</b> — the port holds a single returned word, so a second
-        request would drop the first.
+        <code>mag_stage_port</code> ties <code>a_req</code>, <code>a_we</code>,
+        <code>a_addr</code> and <code>a_wdata</code> to zero and leaves every A
+        output unconnected, with the comment
+        <i
+          >“Port A is mag_mem_port's entry-granular fill read and is not
+          ours.”</i
+        >
+        So the shared store is reached
+        <b
+          >one <code>DATA_W</code> word per access, with one read outstanding</b
+        >
+        — the port holds a single returned word, so a second request would drop
+        the first.
       </p>
       <p>
-        <b>The entry-granular argument belongs to
-        <code>STAGE_AT_PORT = 0</code> and does not describe what ships.</b>
+        <b
+          >The entry-granular argument belongs to
+          <code>STAGE_AT_PORT = 0</code> and does not describe what ships.</b
+        >
         Reachability is still the right trade — a store the mover and the
         interlink cannot address cannot hold a runtime's working set at all —
         but the width has to be quoted with it: staging is
@@ -2341,8 +2455,10 @@ const timingRows = [
         The reason the arrangement survived is the durable part:
         <b>URAM is plentiful on this device</b>, so a doubled megabyte-scale
         array does not announce itself in a LUT count.
-        <b>Read the memory columns of every synthesis report, not only the logic
-        ones.</b>
+        <b
+          >Read the memory columns of every synthesis report, not only the logic
+          ones.</b
+        >
       </p>
       <p class="kt-text-caption">
         <code>mag.v</code> still defaults <code>STAGE_AT_PORT</code> to
@@ -2354,7 +2470,10 @@ const timingRows = [
       </p>
     </Callout>
 
-    <Callout kind="trap" title="Staging serves one burst at a time, across everyone">
+    <Callout
+      kind="trap"
+      title="Staging serves one burst at a time, across everyone"
+    >
       <p>
         Round-robin on a single id, so a processor's page-table walks and its
         mailbox polling interleave with whatever the mover is driving into
@@ -2399,8 +2518,8 @@ const timingRows = [
     >
       <p>
         <code>mag_dram_port.v</code> states both halves. Four outstanding reads
-        per requester measures <b>2,744 → 8,917 MB/s</b> on 20-word bursts —
-        and <b>it corrupts memory</b> in the mover's chained-burst bench. The
+        per requester measures <b>2,744 → 8,917 MB/s</b> on 20-word bursts — and
+        <b>it corrupts memory</b> in the mover's chained-burst bench. The
         default is 1, which keeps the pending arrays legal and never uses them.
       </p>
       <p>
@@ -2507,6 +2626,5 @@ const timingRows = [
       :rows="timingRows"
       caption="Every figure is out-of-context synthesis or a placed run on xcvu13p-fhgb2104-2L-e, at the clock the source states beside it. Where a source names a vehicle — the SLR1 probe, a 6+2 mesh, ktpu_ship_2x2_6c2v_il_pump, mm_mesh — that vehicle is what was measured, and the number does not transfer to another one"
     />
-
   </DocPage>
 </template>

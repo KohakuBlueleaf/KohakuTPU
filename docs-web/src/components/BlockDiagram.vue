@@ -12,9 +12,27 @@ const props = defineProps({
   groups: { type: Array, default: () => [] },
   unit: { type: Number, default: 16 },
   pad: { type: Number, default: 12 },
+  // [{ key, label }] — a chip per key; a node/group carrying `tag: key` dims
+  // when its chip is off, and so does every wire touching a dimmed node.
+  tags: { type: Array, default: () => [] },
 });
 
 const U = props.unit;
+
+/* ---- tag toggles: dim, never re-route, so the layout stays put ---------- */
+const hidden = reactive(new Set());
+const toggleTag = (k) => (hidden.has(k) ? hidden.delete(k) : hidden.add(k));
+const soloTag = (k) => {
+  hidden.clear();
+  for (const t of props.tags) if (t.key !== k) hidden.add(t.key);
+};
+const offTag = (t) => t != null && hidden.has(t);
+const offEdge = (e) => {
+  if (offTag(e.tag)) return true;
+  const a = props.nodes.find((n) => n.id === String(e.from).split(":")[0]);
+  const b = props.nodes.find((n) => n.id === String(e.to).split(":")[0]);
+  return offTag(a?.tag) || offTag(b?.tag);
+};
 const N = computed(() =>
   Object.fromEntries(
     props.nodes.map((n) => [n.id, { ...n, w: n.w ?? 10, h: n.h ?? 3.2 }]),
@@ -52,8 +70,7 @@ function sidesFor(e) {
   const dx = b.x + b.w / 2 - (a.x + a.w / 2);
   const dy = b.y + b.h / 2 - (a.y + a.h / 2);
   const dir = e.dir ?? "auto";
-  const horiz =
-    dir === "h" || (dir !== "v" && Math.abs(dx) >= Math.abs(dy));
+  const horiz = dir === "h" || (dir !== "v" && Math.abs(dx) >= Math.abs(dy));
   const fs = f.side || (horiz ? (dx > 0 ? "r" : "l") : dy > 0 ? "b" : "t");
   const ts = t.side || OPP[fs];
   return { f: fs, t: ts };
@@ -117,6 +134,41 @@ function point(id, side, slot) {
 const CLR = 12; // clearance kept around every box
 const SEP = 10; // minimum pitch between routing lanes, so wires read apart
 const BEND = 14; // a bend costs this much, to prefer straight runs
+const CROSS = 45; // cutting across a wire already routed costs this much
+const JUMP = 5; // radius of the arc a horizontal wire draws over a vertical one
+
+/* A move across a wire already routed the other way. The lane bookkeeping
+ * below only knew about two wires SHARING a lane; a wire cutting straight
+ * through another read as one with it, and the router had no reason not to. */
+function crossesUsed(a, b, ax, maps) {
+  let n = 0;
+  // A run meeting the END of a claimed segment is still a crossing: the
+  // segment ends where the wire's fixed stub, or its next run, carries on.
+  for (const m of maps) {
+    if (ax) {
+      const x = a.x;
+      const lo = Math.min(a.y, b.y);
+      const hi = Math.max(a.y, b.y);
+      for (const [k, segs] of Object.entries(m)) {
+        if (k[0] !== "y") continue;
+        const y = Number(k.slice(1));
+        if (y <= lo + 0.5 || y >= hi - 0.5) continue;
+        if (segs.some(([s0, s1]) => s0 - 0.5 <= x && x <= s1 + 0.5)) n++;
+      }
+    } else {
+      const y = a.y;
+      const lo = Math.min(a.x, b.x);
+      const hi = Math.max(a.x, b.x);
+      for (const [k, segs] of Object.entries(m)) {
+        if (k[0] !== "x") continue;
+        const x = Number(k.slice(1));
+        if (x <= lo + 0.5 || x >= hi - 0.5) continue;
+        if (segs.some(([s0, s1]) => s0 - 0.5 <= y && y <= s1 + 0.5)) n++;
+      }
+    }
+  }
+  return n;
+}
 
 function boxes() {
   return props.nodes.map((n) => box(N.value[n.id]));
@@ -157,7 +209,7 @@ function lanes(raw, keep) {
   return [...new Set([...out, ...keep])].sort((a, b) => a - b);
 }
 
-function route(p1, p2, bs, used) {
+function route(p1, p2, bs, used, fixed = {}) {
   const rx = [];
   const ry = [];
   for (const b of bs) {
@@ -219,16 +271,13 @@ function route(p1, p2, bs, used) {
         Math.abs(b.x - a.x) +
         Math.abs(b.y - a.y) +
         (cdir >= 0 && cdir !== ax ? BEND : 0) +
-        (busy ? 60 : 0);
+        (busy ? 60 : 0) +
+        crossesUsed(a, b, ax, [used, fixed]) * CROSS;
       const k = key(ni, nj);
       if (g[k] === undefined || g[cur] + cost < g[k]) {
         g[k] = g[cur] + cost;
         prev[k] = [cur, ax];
-        open.push([
-          g[k] + Math.abs(b.x - p2.x) + Math.abs(b.y - p2.y),
-          k,
-          ax,
-        ]);
+        open.push([g[k] + Math.abs(b.x - p2.x) + Math.abs(b.y - p2.y), k, ax]);
       }
     }
   }
@@ -247,7 +296,8 @@ function route(p1, p2, bs, used) {
     const b = out[i + 1];
     if (a.x === b.x)
       (used[`x${a.x}`] ??= []).push([Math.min(a.y, b.y), Math.max(a.y, b.y)]);
-    else (used[`y${a.y}`] ??= []).push([Math.min(a.x, b.x), Math.max(a.x, b.x)]);
+    else
+      (used[`y${a.y}`] ??= []).push([Math.min(a.x, b.x), Math.max(a.x, b.x)]);
   }
   return out;
 }
@@ -273,7 +323,9 @@ function simplify(p) {
 function gLabel(g) {
   const s = String(g.label ?? "");
   const max = Math.max(6, Math.floor((g.w * U - 12) / 5.4));
-  return s.length <= max ? s : s.slice(0, max - 1).replace(/[ ,;.]+$/, "") + "…";
+  return s.length <= max
+    ? s
+    : s.slice(0, max - 1).replace(/[ ,;.]+$/, "") + "…";
 }
 
 function placeLabels(rows) {
@@ -294,11 +346,14 @@ function placeLabels(rows) {
   const hit = (r) =>
     taken.some(
       (t) =>
-        r.x < t.x + t.w && r.x + r.w > t.x && r.y < t.y + t.h && r.y + r.h > t.y,
+        r.x < t.x + t.w &&
+        r.x + r.w > t.x &&
+        r.y < t.y + t.h &&
+        r.y + r.h > t.y,
     );
   for (const row of rows) {
     if (!row.e.label) continue;
-    const w = String(row.e.label).length * 5.4 + 6;
+    const w = String(row.e.label).length * 5.6 + 6; // measured: 5.5 px per glyph
     const seg = longest(row.pts);
     const vert = Math.abs(seg.b.y - seg.a.y) > Math.abs(seg.b.x - seg.a.x);
     let put = null;
@@ -387,10 +442,21 @@ function longest(p) {
   return { a: p[best], b: p[best + 1] };
 }
 
-const paths = computed(() => {
+/* Wires are routed one after another and each later one steers around the
+ * earlier ones, so the ORDER decides how many crossings are left. Three orders
+ * are tried and the one with the fewest crossings is kept. */
+function routeAll(order) {
   const bs = boxes();
   const used = {};
-  return placeLabels(props.edges.map((e, i) => {
+  const fixed = {};
+  const claim = (m, a, b) => {
+    if (a.x === b.x)
+      (m[`x${a.x}`] ??= []).push([Math.min(a.y, b.y), Math.max(a.y, b.y)]);
+    else (m[`y${a.y}`] ??= []).push([Math.min(a.x, b.x), Math.max(a.x, b.x)]);
+  };
+  // Every wire's two stubs are fixed before any routing, so the first wire
+  // routed already steers clear of the last one's.
+  const ends = props.edges.map((e, i) => {
     const s = sidesFor(e);
     const p0 = point(ref(e.from).id, s.f, slots.value[`${i}:f`]);
     const p3 = point(ref(e.to).id, s.t, slots.value[`${i}:t`]);
@@ -398,16 +464,122 @@ const paths = computed(() => {
     const nt = nrm[s.t];
     const p1 = { x: p0.x + nf[0] * LEAD, y: p0.y + nf[1] * LEAD };
     const p2 = { x: p3.x + nt[0] * LEAD, y: p3.y + nt[1] * LEAD };
-    const p = simplify([p0, ...route(p1, p2, bs, used), p3]);
-    return {
-      e,
-      pts: p,
-      d: p.map((q, k) => `${k ? "L" : "M"}${q.x},${q.y}`).join(" "),
+    claim(fixed, p0, p1);
+    claim(fixed, p2, p3);
+    return { p0, p1, p2, p3 };
+  });
+  const rows = new Array(props.edges.length);
+  for (const i of order) {
+    const { p0, p1, p2, p3 } = ends[i];
+    rows[i] = {
+      e: props.edges[i],
+      pts: simplify([p0, ...route(p1, p2, bs, used, fixed), p3]),
       lab: null,
     };
-  }));
+  }
+  return rows;
+}
+
+const segsOf = (r) => {
+  const o = [];
+  for (let k = 0; k < r.pts.length - 1; k++) o.push([r.pts[k], r.pts[k + 1]]);
+  return o;
+};
+
+/** Every proper crossing between a horizontal run of one wire and a vertical
+ *  run of another: [{ i, j, x, y, seg }], `seg` the horizontal wire's segment. */
+function crossingsOf(rows) {
+  const out = [];
+  for (let i = 0; i < rows.length; i++) {
+    const si = segsOf(rows[i]);
+    for (let j = 0; j < rows.length; j++) {
+      if (i === j) continue;
+      const sj = segsOf(rows[j]);
+      si.forEach(([a, b], k) => {
+        if (a.y !== b.y || a.x === b.x) return; // horizontal runs only
+        const lo = Math.min(a.x, b.x);
+        const hi = Math.max(a.x, b.x);
+        for (const [c, d] of sj) {
+          if (c.x !== d.x || c.y === d.y) continue; // against vertical runs
+          const y0 = Math.min(c.y, d.y);
+          const y1 = Math.max(c.y, d.y);
+          if (
+            lo + 0.5 < c.x &&
+            c.x < hi - 0.5 &&
+            y0 + 0.5 < a.y &&
+            a.y < y1 - 0.5
+          )
+            out.push({ i, j, x: c.x, y: a.y, seg: k });
+        }
+      });
+    }
+  }
+  return out;
+}
+
+const routed = computed(() => {
+  const n = props.edges.length;
+  const centre = (id) => {
+    const b = box(N.value[id] ?? { x: 0, y: 0, w: 0, h: 0 });
+    return { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+  };
+  const span = (e) => {
+    const a = centre(ref(e.from).id);
+    const b = centre(ref(e.to).id);
+    return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+  };
+  const natural = [...Array(n).keys()];
+  const longFirst = [...natural].sort(
+    (i, j) => span(props.edges[j]) - span(props.edges[i]),
+  );
+  let best = null;
+  for (const order of [natural, longFirst, [...longFirst].reverse()]) {
+    const rows = routeAll(order);
+    const x = crossingsOf(rows);
+    if (!best || x.length < best.x.length) best = { rows, x };
+    if (!x.length) break;
+  }
+  if (import.meta.env.DEV && best.x.length) {
+    const names = best.x.map(
+      (c) =>
+        `${props.edges[c.i].from}→${props.edges[c.i].to} × ${props.edges[c.j].from}→${props.edges[c.j].to}`,
+    );
+    console.warn(
+      `BlockDiagram: ${best.x.length} crossing(s) drawn as jumps:\n  ${names.join("\n  ")}`,
+    );
+  }
+  return best;
 });
 
+const crossings = computed(() => routed.value.x);
+
+/* A crossing that survives is DRAWN as one: the horizontal wire arcs over the
+ * vertical one, the way a hand-drawn schematic does it, so two wires that
+ * cross never read as one wire that turns. */
+function pathD(row, i) {
+  const segs = segsOf(row);
+  const hops = crossings.value.filter((c) => c.i === i);
+  let d = `M${row.pts[0].x},${row.pts[0].y}`;
+  segs.forEach(([a, b], k) => {
+    const xs = hops
+      .filter((c) => c.seg === k)
+      .map((c) => c.x)
+      .sort((p, q) => (b.x > a.x ? p - q : q - p));
+    for (const x of xs) {
+      const dir = b.x > a.x ? 1 : -1;
+      d += ` L${x - dir * JUMP},${a.y} A${JUMP},${JUMP} 0 0 ${dir > 0 ? 1 : 0} ${x + dir * JUMP},${a.y}`;
+    }
+    d += ` L${b.x},${b.y}`;
+  });
+  return d;
+}
+
+const paths = computed(() =>
+  placeLabels(routed.value.rows).map((row, i) => ({
+    ...row,
+    d: pathD(row, i),
+  })),
+);
 
 // Long subs are the common case in these docs and shrinking them to fit is
 // how you get 7px text that still overflows. Wrap instead, then shrink only
@@ -492,111 +664,192 @@ const vb = computed(() => {
 </script>
 
 <template>
-  <svg :viewBox="vb" class="dgm" role="img">
-    <defs>
-      <marker
-        id="bd-arrow"
-        viewBox="0 0 8 8"
-        refX="7"
-        refY="4"
-        markerWidth="6"
-        markerHeight="6"
-        orient="auto-start-reverse"
+  <div class="dgm-wrap">
+    <div v-if="props.tags.length" class="dgm-tags">
+      <button
+        v-for="t in props.tags"
+        :key="t.key"
+        type="button"
+        class="dgm-tag"
+        :class="hidden.has(t.key) ? 'dgm-tag-off' : ''"
+        :aria-pressed="!hidden.has(t.key)"
+        :title="`${hidden.has(t.key) ? 'show' : 'dim'} ${t.label} — double-click for only this`"
+        @click="toggleTag(t.key)"
+        @dblclick.prevent="soloTag(t.key)"
       >
-        <path d="M0,0 L8,4 L0,8 z" fill="currentColor" />
-      </marker>
-      <marker
-        id="bd-arrow-a"
-        viewBox="0 0 8 8"
-        refX="7"
-        refY="4"
-        markerWidth="6"
-        markerHeight="6"
-        orient="auto-start-reverse"
+        {{ t.label }}
+      </button>
+      <button
+        v-if="hidden.size"
+        type="button"
+        class="dgm-tag dgm-tag-all"
+        @click="hidden.clear()"
       >
-        <path d="M0,0 L8,4 L0,8 z" fill="var(--gem-main)" />
-      </marker>
-    </defs>
+        all
+      </button>
+    </div>
+    <svg
+      :viewBox="vb"
+      class="dgm"
+      role="img"
+      :data-crossings="crossings.length"
+    >
+      <defs>
+        <marker
+          id="bd-arrow"
+          viewBox="0 0 8 8"
+          refX="7"
+          refY="4"
+          markerWidth="6"
+          markerHeight="6"
+          orient="auto-start-reverse"
+        >
+          <path d="M0,0 L8,4 L0,8 z" fill="currentColor" />
+        </marker>
+        <marker
+          id="bd-arrow-a"
+          viewBox="0 0 8 8"
+          refX="7"
+          refY="4"
+          markerWidth="6"
+          markerHeight="6"
+          orient="auto-start-reverse"
+        >
+          <path d="M0,0 L8,4 L0,8 z" fill="var(--gem-main)" />
+        </marker>
+      </defs>
 
-    <g v-for="(g, i) in props.groups" :key="`g${i}`">
-      <rect
-        :x="g.x * U"
-        :y="g.y * U"
-        :width="g.w * U"
-        :height="g.h * U"
-        rx="8"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="1"
-        stroke-dasharray="4 4"
-        opacity="0.35"
-      />
-      <text
-        v-if="g.label"
-        :x="g.x * U + 8"
-        :y="g.y * U - 4"
-        class="dgm-sub"
-        opacity="0.7"
+      <g
+        v-for="(g, i) in props.groups"
+        :key="`g${i}`"
+        :class="offTag(g.tag) ? 'dgm-off' : ''"
       >
-        {{ gLabel(g) }}
-      </text>
-    </g>
-
-    <path
-      v-for="(p, i) in paths"
-      :key="`e${i}`"
-      :d="p.d"
-      fill="none"
-      :class="p.e.accent ? 'dgm-edge-accent' : 'dgm-edge'"
-      :stroke-dasharray="p.e.dash ? '5 4' : undefined"
-      :marker-end="p.e.accent ? 'url(#bd-arrow-a)' : 'url(#bd-arrow)'"
-    />
-
-    <g v-for="n in props.nodes" :key="n.id">
-      <rect
-        :x="box(N[n.id]).x"
-        :y="box(N[n.id]).y"
-        :width="box(N[n.id]).w"
-        :height="box(N[n.id]).h"
-        rx="6"
-        :class="n.accent ? 'dgm-box-accent' : 'dgm-box'"
-      />
-      <text
-        v-for="(row, k) in stack(n).rows"
-        :key="k"
-        :x="stack(n).cx"
-        :y="row.y"
-        text-anchor="middle"
-        :class="row.cls"
-        :font-weight="row.weight"
-        :font-size="row.size"
-      >
-        {{ row.t }}
-      </text>
-    </g>
-
-    <!-- Labels last, over a halo: drawn inside the edge group they were
-         painted over by every node the wire passed under. -->
-    <g v-for="(p, i) in paths" :key="`l${i}`">
-      <template v-if="p.e.label && p.lab">
         <rect
-          :x="p.lab.r.x"
-          :y="p.lab.r.y"
-          :width="p.lab.r.w"
-          :height="p.lab.r.h"
-          rx="3"
-          fill="var(--color-bg)"
-          opacity="0.94"
+          :x="g.x * U"
+          :y="g.y * U"
+          :width="g.w * U"
+          :height="g.h * U"
+          rx="8"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1"
+          stroke-dasharray="4 4"
+          opacity="0.35"
         />
         <text
-          :x="p.lab.x"
-          :y="p.lab.y"
-          :text-anchor="p.lab.anchor"
+          v-if="g.label"
+          :x="g.x * U + 8"
+          :y="g.y * U - 4"
           class="dgm-sub"
+          opacity="0.7"
         >
-          {{ p.e.label }}
+          {{ gLabel(g) }}
         </text>
-      </template>
-    </g>
-  </svg>
+      </g>
+
+      <path
+        v-for="(p, i) in paths"
+        :key="`e${i}`"
+        :d="p.d"
+        fill="none"
+        :class="[
+          p.e.accent ? 'dgm-edge-accent' : 'dgm-edge',
+          offEdge(p.e) ? 'dgm-off' : '',
+        ]"
+        :stroke-dasharray="p.e.dash ? '5 4' : undefined"
+        :marker-end="p.e.accent ? 'url(#bd-arrow-a)' : 'url(#bd-arrow)'"
+      />
+
+      <g
+        v-for="n in props.nodes"
+        :key="n.id"
+        :class="offTag(n.tag) ? 'dgm-off' : ''"
+      >
+        <rect
+          :x="box(N[n.id]).x"
+          :y="box(N[n.id]).y"
+          :width="box(N[n.id]).w"
+          :height="box(N[n.id]).h"
+          rx="6"
+          :class="n.accent ? 'dgm-box-accent' : 'dgm-box'"
+        />
+        <text
+          v-for="(row, k) in stack(n).rows"
+          :key="k"
+          :x="stack(n).cx"
+          :y="row.y"
+          text-anchor="middle"
+          :class="row.cls"
+          :font-weight="row.weight"
+          :font-size="row.size"
+        >
+          {{ row.t }}
+        </text>
+      </g>
+
+      <!-- Labels last, over a halo: drawn inside the edge group they were
+         painted over by every node the wire passed under. -->
+      <g
+        v-for="(p, i) in paths"
+        :key="`l${i}`"
+        :class="offEdge(p.e) ? 'dgm-off' : ''"
+      >
+        <template v-if="p.e.label && p.lab">
+          <rect
+            :x="p.lab.r.x"
+            :y="p.lab.r.y"
+            :width="p.lab.r.w"
+            :height="p.lab.r.h"
+            rx="3"
+            fill="var(--color-bg)"
+            opacity="0.94"
+          />
+          <text
+            :x="p.lab.x"
+            :y="p.lab.y"
+            :text-anchor="p.lab.anchor"
+            class="dgm-sub"
+          >
+            {{ p.e.label }}
+          </text>
+        </template>
+      </g>
+    </svg>
+  </div>
 </template>
+
+<style>
+.dgm-wrap {
+  position: relative;
+}
+.dgm-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.dgm-tag {
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  background: color-mix(in srgb, var(--gem-main) 14%, transparent);
+  color: inherit;
+  cursor: pointer;
+}
+.dgm-tag-off {
+  background: transparent;
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+.dgm-tag-all {
+  background: transparent;
+  font-weight: 600;
+}
+.dgm-off {
+  opacity: 0.1;
+  transition: opacity 0.2s;
+}
+</style>

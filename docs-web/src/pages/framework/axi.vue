@@ -16,15 +16,20 @@ const kinds = {
     {
       x: -1.5,
       y: 4.5,
-      w: 69,
-      h: 17.5,
-      label: "three kinds of AXI — one boundary discipline",
+      w: 79,
+      h: 23.5,
+      label: "three kinds of AXI — one discipline",
     },
   ],
+  /* The MAG slave port sits beside the DRAM masters on one row, so the host
+   * memory window's dashed edge is a straight horizontal that nothing from
+   * the station bus has to cut; kinds 2 and 3 hang below that row. The host
+   * sits over the station bus's centre so its wire is straight and clear of
+   * the group label. */
   nodes: [
     {
       id: "host",
-      x: 0,
+      x: 8,
       y: 0,
       w: 14,
       h: 3,
@@ -42,17 +47,8 @@ const kinds = {
       accent: true,
     },
     {
-      id: "ctl",
-      x: 0,
-      y: 12,
-      w: 14,
-      h: 3.6,
-      label: "MAG slave port",
-      sub: "control window · staging · memory window",
-    },
-    {
       id: "util",
-      x: 16,
+      x: 0,
       y: 12,
       w: 14,
       h: 3.6,
@@ -60,9 +56,18 @@ const kinds = {
       sub: "clk_wiz · DDR controller register port · Lite registers",
     },
     {
+      id: "ctl",
+      x: 16,
+      y: 12,
+      w: 14,
+      h: 3.6,
+      label: "MAG slave port",
+      sub: "control window · staging · memory window",
+    },
+    {
       id: "mag",
-      x: 34,
-      y: 6,
+      x: 44,
+      y: 12,
       w: 14,
       h: 3.6,
       label: "MAG DRAM masters × M",
@@ -70,8 +75,8 @@ const kinds = {
     },
     {
       id: "kx",
-      x: 34,
-      y: 12,
+      x: 44,
+      y: 18,
       w: 14,
       h: 3.6,
       label: "2 · Kohaku Xache",
@@ -80,8 +85,8 @@ const kinds = {
     },
     {
       id: "ddr",
-      x: 34,
-      y: 18,
+      x: 44,
+      y: 24,
       w: 14,
       h: 3,
       label: "DDR4 × N",
@@ -89,8 +94,8 @@ const kinds = {
     },
     {
       id: "il",
-      x: 52,
-      y: 6,
+      x: 62,
+      y: 12,
       w: 14,
       h: 3.6,
       label: "3 · the interlink",
@@ -99,8 +104,8 @@ const kinds = {
     },
     {
       id: "peer",
-      x: 52,
-      y: 12,
+      x: 62,
+      y: 18,
       w: 14,
       h: 3.6,
       label: "another mesh's MAG",
@@ -166,15 +171,17 @@ const surface = {
     {
       x: -1.5,
       y: 4.5,
-      w: 85,
+      w: 102,
       h: 11,
       label: "src/kohakuaccel/axi — conversion, and only conversion",
     },
   ],
+  /* Everything that a wire enters from above starts right of the group
+   * label; the framework bar alone spans the label's width below it. */
   nodes: [
     {
       id: "host",
-      x: 0,
+      x: 17,
       y: 0,
       w: 14,
       h: 3,
@@ -183,7 +190,7 @@ const surface = {
     },
     {
       id: "dbg",
-      x: 17,
+      x: 34,
       y: 0,
       w: 14,
       h: 3,
@@ -192,7 +199,7 @@ const surface = {
     },
     {
       id: "ddr",
-      x: 51,
+      x: 68,
       y: 0,
       w: 14,
       h: 3,
@@ -201,7 +208,7 @@ const surface = {
     },
     {
       id: "model",
-      x: 68,
+      x: 85,
       y: 0,
       w: 14,
       h: 3,
@@ -210,7 +217,7 @@ const surface = {
     },
     {
       id: "slave",
-      x: 0,
+      x: 17,
       y: 6,
       w: 31,
       h: 3.4,
@@ -220,7 +227,7 @@ const surface = {
     },
     {
       id: "n1",
-      x: 51,
+      x: 68,
       y: 6,
       w: 31,
       h: 3.4,
@@ -230,7 +237,7 @@ const surface = {
     },
     {
       id: "orch",
-      x: 34,
+      x: 51,
       y: 0,
       w: 14,
       h: 3,

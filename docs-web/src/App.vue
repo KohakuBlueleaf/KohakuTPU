@@ -35,7 +35,8 @@ watch(
   () => route.path,
   () => {
     for (const s of SECTIONS)
-      for (const n of s.tree) if (n.children && groupActive(n)) open[n.path] = true;
+      for (const n of s.tree)
+        if (n.children && groupActive(n)) open[n.path] = true;
   },
   { immediate: true },
 );
@@ -164,7 +165,12 @@ watch(
 
         <!-- the tree: section → sub-topic → page -->
         <template v-else>
-          <div v-for="s in SECTIONS" :key="s.key" class="px-3 py-3">
+          <!-- a section whose only page is its root has nothing to list: the tab is its entry -->
+          <div
+            v-for="s in SECTIONS.filter((x) => x.tree.length)"
+            :key="s.key"
+            class="px-3 py-3"
+          >
             <div
               class="kt-text-caption uppercase tracking-wider text-warm-400 dark:text-warm-600 px-2.5 mb-2 font-semibold"
             >

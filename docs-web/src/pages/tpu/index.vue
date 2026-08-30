@@ -598,8 +598,8 @@ const notOwned = {
       interface — XDMA alone is 76,319 LUT, 17.7% of an SLR — so it gives up
       roughly a vector core's worth of fabric before a single cluster is placed,
       and its mesh is two clusters short of the other three. The mesh on the
-      grid diagonal of SLR1 is where the other small map would have gone, for the
-      same reason: a crowded die's cheapest neighbours are the ones it is
+      grid diagonal of SLR1 is where the other small map would have gone, for
+      the same reason: a crowded die's cheapest neighbours are the ones it is
       cheapest to reach.
     </p>
 
@@ -641,7 +641,8 @@ const notOwned = {
       operand traffic is only as sound as its assumption that each byte is
       fetched once, and that assumption is the schedule's to keep. Every step
       and its conditions are on
-      <RouterLink to="/tpu/results" class="doc-link">the results page</RouterLink
+      <RouterLink to="/tpu/results" class="doc-link"
+        >the results page</RouterLink
       >.
     </p>
 
@@ -696,14 +697,17 @@ const notOwned = {
       caption="A cluster's 35 BRAM36 is 13 RAMB36 per operand port, 26 for the two, 5 for the resident tile and 4 for the receive queue — a named breakdown rather than a total. The vector core's 44 is reported as tiles, which is the unit a mixed count reconciles in: 5 RAMB36 plus 2 RAMB18 is 6 tiles, not 7 primitives"
     />
 
-    <Callout kind="rule" title="Divide by the DSP count, then stop believing it">
+    <Callout
+      kind="rule"
+      title="Divide by the DSP count, then stop believing it"
+    >
       <p>
         A cluster is 304 DSP48E2 and the device has 12,288, so
-        <code>12,288 / 304 = 40</code> clusters is the ceiling — <b>DSP-bound</b>,
-        which is the right place to be bound on this part. Then note what that
-        division assumes: a die holding nothing but clusters, no vector cores, no
-        memory agents, no DDR4 controllers, no AXI fabric, no host interface, and
-        a placement that succeeds.
+        <code>12,288 / 304 = 40</code> clusters is the ceiling —
+        <b>DSP-bound</b>, which is the right place to be bound on this part.
+        Then note what that division assumes: a die holding nothing but
+        clusters, no vector cores, no memory agents, no DDR4 controllers, no AXI
+        fabric, no host interface, and a placement that succeeds.
       </p>
       <p>
         <b>What was actually built is 30 clusters and 8 vector cores</b>, on a
@@ -761,12 +765,14 @@ const notOwned = {
         further.
       </li>
       <li>
-        <b>Ladder the clocks on the card, and score error rather than
-        pass/fail.</b>
-        Drive each clock domain with a workload that actually reaches the unit it
-        clocks, hold the others low, and read relative error against a
-        double-precision reference. On this machine that step found three of four
-        profile clocks unreachable, and no synthesis figure had said so.
+        <b
+          >Ladder the clocks on the card, and score error rather than
+          pass/fail.</b
+        >
+        Drive each clock domain with a workload that actually reaches the unit
+        it clocks, hold the others low, and read relative error against a
+        double-precision reference. On this machine that step found three of
+        four profile clocks unreachable, and no synthesis figure had said so.
       </li>
     </ol>
 
@@ -774,16 +780,16 @@ const notOwned = {
       <p>
         <b>No cluster-count configuration has been through place-and-route.</b>
         Every scaling figure on these pages is multiplication on one synthesised
-        cluster, and nothing checks a mesh map against the device it is meant for
-        — endpoint count, grid size and die capacity are related by arithmetic
-        nobody performs until synthesis fails.
+        cluster, and nothing checks a mesh map against the device it is meant
+        for — endpoint count, grid size and die capacity are related by
+        arithmetic nobody performs until synthesis fails.
       </p>
       <p>
-        Endpoint placement <i>within</i> a die is unmodelled, and it is not free:
-        a layout change that placed a cluster as one column of a band instead of
-        straddling a neighbour's router cost about three points of peak at eight
-        clusters, entirely in routing. No tool in the flow predicts that from a
-        map.
+        Endpoint placement <i>within</i> a die is unmodelled, and it is not
+        free: a layout change that placed a cluster as one column of a band
+        instead of straddling a neighbour's router cost about three points of
+        peak at eight clusters, entirely in routing. No tool in the flow
+        predicts that from a map.
       </p>
     </Callout>
 
@@ -795,85 +801,14 @@ const notOwned = {
       caption="The line matters in both directions. Everything on the left is fixed protocol this project obeys; almost everything else on these pages is the project's own, and that asymmetry is what makes the framework claim testable rather than decorative"
     />
 
-    <h2 class="doc-h2">How to read the rest</h2>
-
     <p class="doc-p">
-      The order below is the order the decisions were forced, and each page
-      assumes the one before it.
-    </p>
-
-    <div class="grid gap-3 sm:grid-cols-2 mt-4">
-      <RouterLink to="/tpu/numbers" class="card-hover p-4 no-underline block">
-        <div
-          class="kt-text-caption font-semibold text-warm-800 dark:text-warm-200"
-        >
-          1 · MXFP7 and the dtype ladder
-        </div>
-        <p
-          class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6 mt-1"
-        >
-          The format sets the operand width, which sets the packing, which sets
-          the cascade depth, which sets the block size. Start here or nothing
-          else will look motivated.
-        </p>
-      </RouterLink>
-      <RouterLink to="/tpu/matmul" class="card-hover p-4 no-underline block">
-        <div
-          class="kt-text-caption font-semibold text-warm-800 dark:text-warm-200"
-        >
-          2 · The matmul cluster
-        </div>
-        <p
-          class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6 mt-1"
-        >
-          Two int7 MACs per DSP sharing an activation through the pre-adder, the
-          packing offset, the guard-bit budget, and the cascade that reduces
-          K=32 without touching the fabric.
-        </p>
-      </RouterLink>
-      <RouterLink to="/tpu/memory" class="card-hover p-4 no-underline block">
-        <div
-          class="kt-text-caption font-semibold text-warm-800 dark:text-warm-200"
-        >
-          3 · Residency and accumulators
-        </div>
-        <p
-          class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6 mt-1"
-        >
-          The resident output tile, why its size decides the port count, the
-          reuse contract, and where floating point starts.
-        </p>
-      </RouterLink>
-      <RouterLink to="/tpu/vector" class="card-hover p-4 no-underline block">
-        <div
-          class="kt-text-caption font-semibold text-warm-800 dark:text-warm-200"
-        >
-          4 · The vector core
-        </div>
-        <p
-          class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6 mt-1"
-        >
-          The second unit: E8M15 chosen so an FMA fits one DSP exactly, four
-          base-2 seeds at full rate, and what it deliberately does not do.
-        </p>
-      </RouterLink>
-      <RouterLink
-        to="/tpu/results"
-        class="card-hover p-4 no-underline block sm:col-span-2"
+      Read
+      <RouterLink to="/tpu/numbers" class="doc-link"
+        >MXFP7 and the dtype ladder</RouterLink
       >
-        <div
-          class="kt-text-caption font-semibold text-warm-800 dark:text-warm-200"
-        >
-          5 · What was measured
-        </div>
-        <p
-          class="kt-text-caption text-warm-500 dark:text-warm-400 leading-6 mt-1"
-        >
-          Every measured number with its conditions — resources, Fmax by block,
-          per-SLR capacity, accuracy, throughput, and what closed and what did
-          not.
-        </p>
-      </RouterLink>
-    </div>
+      before the units: the format sets the operand width, which sets the DSP
+      packing, which sets the cascade depth, which is the block size — nothing
+      on the other pages is independent of it.
+    </p>
   </DocPage>
 </template>
