@@ -81,6 +81,10 @@ module ktpu_min_1m_l2_pump #(
     // control combinationally: 12 levels, -0.561, the mesh WNS in every config
     // measured. The FIFO flags are registered even when both clocks are one.
     parameter integer MAG_CDC   = 1,
+    // The DRAM master's queues. 1: they cross to dram_aclk (async FIFOs). 0:
+    // dram_aclk MUST BE axi_aclk and they are synchronous -- the one-clock
+    // memory path where the fabric behind M_AXI_DRAM shares the node's clock.
+    parameter integer DRAM_CDC  = 1,
     parameter integer CDC_DEPTH = 16
 )(
     // axi_aclk IS the clock the AXI and AXIS ports run on, which is MAG's: they
@@ -304,7 +308,7 @@ module ktpu_min_1m_l2_pump #(
           .ID_W(IDW), .PORTS(1), .MEM_X(0), .MEM_Y(1),
           .GRID_LO(1), .GRID_HI(1), .STAGE_FLITS(128),
           .ILINK(1), .MESH_ID(MESH_ID), .LINK_W(LKW), .TUSER_W(LKU),
-          .MW(MW),
+          .MW(MW), .DRAM_CDC(DRAM_CDC),
           .STAGE(1), .STAGE_BANKS(L2_MAG_BANKS),
           .STAGE_ENTRIES(L2_MAG_ENTRIES), .STAGE_AT_PORT(1)) u_mag (
         .clk(mag_clk_i), .resetn(resetn),

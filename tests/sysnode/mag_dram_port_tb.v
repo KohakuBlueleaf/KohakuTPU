@@ -9,6 +9,10 @@
 `ifndef TB_RD_OUT
   `define TB_RD_OUT 1
 `endif
+// 0: the one-clock port -- m_aclk is s_aclk and the queues are synchronous.
+`ifndef TB_DRAM_CDC
+  `define TB_DRAM_CDC 1
+`endif
 
 module mag_dram_port_tb #(
     parameter integer MW = 512,
@@ -27,6 +31,7 @@ module mag_dram_port_tb #(
     always begin
         #1.7 m_aclk = ~m_aclk;
     end
+    wire mclk = (`TB_DRAM_CDC != 0) ? m_aclk : s_aclk;
 
     reg  [N-1:0]        q_valid, q_write;
     wire [N-1:0]        q_ready;
@@ -52,7 +57,8 @@ module mag_dram_port_tb #(
     wire             wlast, wvalid, wready, bvalid, bready, rlast, rvalid, rready;
 
     mag_dram_port #(.N(N), .ADDR_W(ADDR_W), .SW(SW), .MW(MW), .ID_W(ID_W),
-                    .WR_MEM("distributed"), .RD_OUT(RD_OUT)) u_dut (
+                    .WR_MEM("distributed"), .RD_OUT(RD_OUT),
+                    .DRAM_CDC(`TB_DRAM_CDC)) u_dut (
         .s_aclk(s_aclk), .s_aresetn(resetn),
         .q_valid(q_valid), .q_ready(q_ready), .q_addr(q_addr),
         .q_len(q_len), .q_write(q_write),
@@ -60,7 +66,7 @@ module mag_dram_port_tb #(
         .w_strb({(N*SW/8){1'b1}}),
         .r_valid(r_valid), .r_ready(r_ready), .r_data(r_data), .r_last(r_last),
         .b_valid(b_valid),
-        .m_aclk(m_aclk), .m_aresetn(resetn),
+        .m_aclk(mclk), .m_aresetn(resetn),
         .m_awid(awid), .m_awaddr(awaddr), .m_awlen(awlen), .m_awsize(awsize),
         .m_awburst(awburst), .m_awvalid(awvalid), .m_awready(awready),
         .m_wdata(wdata), .m_wstrb(wstrb), .m_wlast(wlast), .m_wvalid(wvalid),
@@ -74,7 +80,7 @@ module mag_dram_port_tb #(
 
     axi_ram #(.DATA_W(MW), .ADDR_W(ADDR_W), .ID_W(ID_W), .WORDS(4096),
               .PORTS(1)) u_ram (
-        .clk(m_aclk), .resetn(resetn),
+        .clk(mclk), .resetn(resetn),
         .s_awid(awid), .s_awaddr(awaddr), .s_awlen(awlen), .s_awsize(awsize),
         .s_awburst(awburst), .s_awvalid(awvalid), .s_awready(awready),
         .s_wdata(wdata), .s_wstrb(wstrb), .s_wlast(wlast), .s_wvalid(wvalid),

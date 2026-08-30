@@ -387,7 +387,7 @@ def emit(
         else ""
     )
     mod = "sysnode"
-    extra = ",\n          .MW(MW)" if single else ""
+    extra = ",\n          .MW(MW), .DRAM_CDC(DRAM_CDC)" if single else ""
     # STAGE_AT_PORT=1: one store on the converged path, reachable by the mover
     # and the interlink. 64 URAM against 256 per-port, measured.
     if l2_mag:
@@ -834,18 +834,26 @@ def render(
     split_reset=False,
     cpu_rv64=False,
 ):
-    # Only axi_aresetn itself crosses domains; each domain releases locally.
+    # Only axi_aresetn itself crosses domains; each domain releases locally,
+    # the NoC fabric included (its BD reset is the sysnode clock's in v8).
     RST_SYNC = (
         "\n"
-        "    // Per-domain reset entry (async assert / sync release). The\n"
-        "    // fabric keeps raw axi_aresetn: its reset already releases on\n"
-        "    // noc_clk. Everything else re-synchronizes at its own clock.\n"
+        "    // Per-domain reset entry (async assert / sync release): only\n"
+        "    // axi_aresetn crosses a domain, every domain releases on its own clock.\n"
         "    wire rstn_mag, rstn_mat, rstn_vec;\n"
         "    kh_rst_sync u_rs_mag (.clk(mag_clk_i), .arstn(axi_aresetn), .rstn(rstn_mag));\n"
         "    kh_rst_sync u_rs_mat (.clk(mat_clk),   .arstn(axi_aresetn), .rstn(rstn_mat));\n"
         "    kh_rst_sync u_rs_vec (.clk(vec_clk),   .arstn(axi_aresetn), .rstn(rstn_vec));\n"
         if split_reset
         else ""
+    )
+    # The fabric's own release, on noc_clk, off the one raw reset.
+    NOC_RST = (
+        "    wire rstn_noc;\n"
+        "    kh_rst_sync u_rs_noc (.clk(clk), .arstn(axi_aresetn), .rstn(rstn_noc));\n"
+        "    wire resetn = rstn_noc;"
+        if split_reset
+        else "    wire resetn = axi_aresetn;"
     )
     PE_WIRES = (
         "\n    wire [FW-1:0] pe_o_d, pe_i_d;\n"
@@ -1022,6 +1030,10 @@ module {name} #(
     // control combinationally: 12 levels, -0.561, the mesh WNS in every config
     // measured. The FIFO flags are registered even when both clocks are one.
     parameter integer MAG_CDC   = {1 if mat_pump else 0},
+    // The DRAM master's queues. 1: they cross to dram_aclk (async FIFOs). 0:
+    // dram_aclk MUST BE axi_aclk and they are synchronous -- the one-clock
+    // memory path where the fabric behind M_AXI_DRAM shares the node's clock.
+    parameter integer DRAM_CDC  = 1,
     parameter integer CDC_DEPTH = 16
 )(
     // axi_aclk IS the clock the AXI and AXIS ports run on, which is MAG's: they
@@ -1103,7 +1115,7 @@ module {name} #(
     // The instances below are written against clk/resetn; aliasing once here
     // keeps the generator's body independent of the boundary's naming.
     wire clk    = noc_clk;
-    wire resetn = axi_aresetn;
+{NOC_RST}
     wire rst    = !resetn;
 
 {MASTER_WIRES}

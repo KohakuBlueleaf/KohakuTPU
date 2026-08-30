@@ -91,6 +91,10 @@ module ktpu_ship_1x1_2c2v_1m #(
     // control combinationally: 12 levels, -0.561, the mesh WNS in every config
     // measured. The FIFO flags are registered even when both clocks are one.
     parameter integer MAG_CDC   = 0,
+    // The DRAM master's queues. 1: they cross to dram_aclk (async FIFOs). 0:
+    // dram_aclk MUST BE axi_aclk and they are synchronous -- the one-clock
+    // memory path where the fabric behind M_AXI_DRAM shares the node's clock.
+    parameter integer DRAM_CDC  = 1,
     parameter integer CDC_DEPTH = 16
 )(
     // axi_aclk IS the clock the AXI and AXIS ports run on, which is MAG's: they
@@ -229,7 +233,9 @@ module ktpu_ship_1x1_2c2v_1m #(
     // The instances below are written against clk/resetn; aliasing once here
     // keeps the generator's body independent of the boundary's naming.
     wire clk    = noc_clk;
-    wire resetn = axi_aresetn;
+    wire rstn_noc;
+    kh_rst_sync u_rs_noc (.clk(clk), .arstn(axi_aresetn), .rstn(rstn_noc));
+    wire resetn = rstn_noc;
     wire rst    = !resetn;
 
 
@@ -244,9 +250,8 @@ module ktpu_ship_1x1_2c2v_1m #(
     wire pe_o_v, pe_o_b, pe_i_v, pe_i_b;
     wire [63:0] pe_status;
     wire pe_busy;
-    // Per-domain reset entry (async assert / sync release). The
-    // fabric keeps raw axi_aresetn: its reset already releases on
-    // noc_clk. Everything else re-synchronizes at its own clock.
+    // Per-domain reset entry (async assert / sync release): only
+    // axi_aresetn crosses a domain, every domain releases on its own clock.
     wire rstn_mag, rstn_mat, rstn_vec;
     kh_rst_sync u_rs_mag (.clk(mag_clk_i), .arstn(axi_aresetn), .rstn(rstn_mag));
     kh_rst_sync u_rs_mat (.clk(mat_clk),   .arstn(axi_aresetn), .rstn(rstn_mat));
@@ -328,7 +333,7 @@ module ktpu_ship_1x1_2c2v_1m #(
           .ID_W(IDW), .PORTS(1), .MEM_X(0), .MEM_Y(1),
           .GRID_LO(1), .GRID_HI(1), .STAGE_FLITS(128),
           .ILINK(1), .MESH_ID(MESH_ID), .LINK_W(LKW), .TUSER_W(LKU),
-          .MW(MW),
+          .MW(MW), .DRAM_CDC(DRAM_CDC),
           .STAGE(1), .STAGE_BANKS(L2_MAG_BANKS),
           .STAGE_ENTRIES(L2_MAG_ENTRIES), .STAGE_AT_PORT(1)) u_mag (
         .clk(mag_clk_i), .resetn(rstn_mag),

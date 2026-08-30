@@ -1,0 +1,10 @@
+# 2+2 on the 6+2 router grid: the same 2x2 routers and two MAG ports, two
+# clusters on column 1's locals, two vector cores on column 2's north and south
+# edges, every other port tied off. The small mesh for the dies that are not
+# under test in multimesh_v8 -- enough to dispatch to and read back from, so a
+# heterogeneous shape across system nodes can be exercised, at a fraction of
+# 6+2's bulk.
+xxx nul vec xxx
+mag mat nul xxx
+mag mat nul xxx
+xxx nul vec xxx

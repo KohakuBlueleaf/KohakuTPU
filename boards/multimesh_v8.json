@@ -1,0 +1,39 @@
+{
+  "name": "multimesh_v8",
+  "design": "multimesh_v8",
+  "transport": "jtag",
+  "meshes": 4,
+  "vco_mhz": 1200,
+  "wizard_outputs": {
+    "noc":   {"index": 0, "nominal_mhz": 300},
+    "mat2x": {"index": 1, "nominal_mhz": 600},
+    "vec":   {"index": 2, "nominal_mhz": 300},
+    "sys":   {"index": 3, "nominal_mhz": 300, "only_on_mesh": 1}
+  },
+  "profiles": {
+    "low":  {"noc": 100, "mat2x": 200, "vec": 100, "sys": 100},
+    "mid":  {"noc": 200, "mat2x": 400, "vec": 200, "sys": 200},
+    "safe": {"noc": 200, "mat2x": 300, "vec": 300, "sys": 200},
+    "ship": {"noc": 300, "mat2x": 600, "vec": 300, "sys": 300}
+  },
+  "idle_profile": "low",
+  "ctrl_stride": "0x10000",
+  "ctrl_base": "0x800000",
+  "wizard_base": "0x900000",
+  "ddrctrl_base": "0x0",
+  "ddrctrl_stride": "0x100000",
+  "mem_window_shift": 40,
+  "mem_window_offset": 1,
+  "dram_mesh_shift": 36,
+  "dram_flat_gb": 16,
+  "dram_interleave_kb": 16,
+  "mem_words": 536870912,
+  "agent_at_offset_zero": true,
+  "max_burst_beats": 64,
+  "bitstream": "C:/Users/apoll/Desktop/vivado/multimesh_v8/multimesh_v8.runs/impl_1/multimesh_v8_wrapper.bit",
+  "probes": "",
+  "host_write_granule": 32,
+  "host_write_replicates": false,
+  "burst_read": true,
+  "notes": "v8, the one-SLR probe: four stations, four MIGs, four system nodes on ONE sysnode clock (mesh 1's wizard output 3 = 'sys'; wizards 0/2/3 have no fourth output), ONE Kohaku Xache (M=4 masters, N=4 homes, 64 URAM per MIG, RD_PIPE=1 RD_OUTQ=4, SLRX register stages on every master-home pair, 16 KB rotation interleave over a flat 16 GB at [33:0], mesh bits [37:36] zero, HCDC on the four DRAM edges only). Meshes 2x2 2+2 / 2x2 6+2 (SLR1) / 2+2 / 2+2, no L2 adapters, staging 64 URAM per node. ADDRESSING CHANGED FROM v7: DRAM is one 16 GB space seen identically by every node -- (m+1)<<40 still picks WHICH node the host enters through, never a channel; remote-DRAM semantics of [37:36] are gone, and the interlink faults on a non-zero mesh field, so every DRAM address must be below 16 GB with [37:36] = 0. Retuning 'sys' on mesh 1 retunes every node and the Xache together; a node's NoC/mat/vec retune stays per die. NOT YET ON SILICON: bitstream target only until the acceptance script exists."
+}

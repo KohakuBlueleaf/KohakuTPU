@@ -25,7 +25,11 @@ module mag_dram_port #(
     // 20-word bursts (mag_dram_port_bw_tb, 300 MHz, 106 ns DRAM); verified at
     // 2 and 4 by mag_dram_port_tb's queued reads and mover_chain1/2/4.
     parameter integer RD_OUT  = 1,
-    parameter         WR_MEM  = "block"
+    parameter         WR_MEM  = "block",
+    // 1: the five queues cross s_aclk -> m_aclk (async FIFOs). 0: m_aclk IS
+    // s_aclk and the queues are synchronous FIFOs on it -- the v8 one-clock
+    // memory path, where the fabric behind this port shares the node's clock.
+    parameter integer DRAM_CDC = 1
 )(
     input  wire                  s_aclk,
     input  wire                  s_aresetn,
@@ -232,22 +236,40 @@ module mag_dram_port #(
     wire aw_fire = wr_push;
 
     // ================================================== AR / AW crossings
-    async_fifo #(.DATA_WIDTH(ADDR_W+8+IDX_W), .FIFO_DEPTH(ARQ)) u_arq (
-        .wr_clk(s_aclk), .wr_rst(srst), .wr_en(ar_fire),
-        .wr_data({rd_al, rd_mb[7:0], s1_rid}), .wr_full(ar_full),
-        .rd_clk(m_aclk), .rd_en(m_arvalid && m_arready),
-        .rd_data({m_araddr, m_arlen, ar_id}), .rd_empty(ar_empty));
+    // Both FIFO kinds are show-ahead with the same flags, so each queue is one
+    // generate pair and nothing downstream knows which was built.
+    generate if (DRAM_CDC) begin : g_arq
+        async_fifo #(.DATA_WIDTH(ADDR_W+8+IDX_W), .FIFO_DEPTH(ARQ)) u_f (
+            .wr_clk(s_aclk), .wr_rst(srst), .wr_en(ar_fire),
+            .wr_data({rd_al, rd_mb[7:0], s1_rid}), .wr_full(ar_full),
+            .rd_clk(m_aclk), .rd_en(m_arvalid && m_arready),
+            .rd_data({m_araddr, m_arlen, ar_id}), .rd_empty(ar_empty));
+    end else begin : g_arq_s
+        sync_fifo #(.DATA_WIDTH(ADDR_W+8+IDX_W), .FIFO_DEPTH(ARQ)) u_f (
+            .clk(s_aclk), .rst(srst), .wr_en(ar_fire),
+            .wr_data({rd_al, rd_mb[7:0], s1_rid}), .wr_busy(ar_full), .wr_almost(),
+            .rd_en(m_arvalid && m_arready),
+            .rd_data({m_araddr, m_arlen, ar_id}), .rd_busy(ar_empty));
+    end endgenerate
 
     assign m_arvalid = !ar_empty;
     assign m_arsize  = MSIZE;
     assign m_arburst = 2'b01;
     assign m_arid    = {{(ID_W-IDX_W){1'b0}}, ar_id};
 
-    async_fifo #(.DATA_WIDTH(ADDR_W+8+IDX_W), .FIFO_DEPTH(AWQ)) u_awq (
-        .wr_clk(s_aclk), .wr_rst(srst), .wr_en(aw_fire),
-        .wr_data({wr_al, wr_mb[7:0], s1_wid}), .wr_full(aw_full),
-        .rd_clk(m_aclk), .rd_en(m_awvalid && m_awready),
-        .rd_data({m_awaddr, m_awlen, aw_id}), .rd_empty(aw_empty));
+    generate if (DRAM_CDC) begin : g_awq
+        async_fifo #(.DATA_WIDTH(ADDR_W+8+IDX_W), .FIFO_DEPTH(AWQ)) u_f (
+            .wr_clk(s_aclk), .wr_rst(srst), .wr_en(aw_fire),
+            .wr_data({wr_al, wr_mb[7:0], s1_wid}), .wr_full(aw_full),
+            .rd_clk(m_aclk), .rd_en(m_awvalid && m_awready),
+            .rd_data({m_awaddr, m_awlen, aw_id}), .rd_empty(aw_empty));
+    end else begin : g_awq_s
+        sync_fifo #(.DATA_WIDTH(ADDR_W+8+IDX_W), .FIFO_DEPTH(AWQ)) u_f (
+            .clk(s_aclk), .rst(srst), .wr_en(aw_fire),
+            .wr_data({wr_al, wr_mb[7:0], s1_wid}), .wr_busy(aw_full), .wr_almost(),
+            .rd_en(m_awvalid && m_awready),
+            .rd_data({m_awaddr, m_awlen, aw_id}), .rd_busy(aw_empty));
+    end endgenerate
 
     assign m_awvalid = !aw_empty;
     assign m_awsize  = MSIZE;
@@ -283,13 +305,23 @@ module mag_dram_port #(
         | ({{(MW/8-SBYTES){1'b0}}, w_bstrb} << (wph * SBYTES))
     );
 
-    async_fifo #(.DATA_WIDTH(MW + MW/8 + 1), .FIFO_DEPTH(WQ),
-                 .MEMORY_TYPE(WR_MEM)) u_wq (
-        .wr_clk(s_aclk), .wr_rst(srst),
-        .wr_en(w_fire && w_emit),
-        .wr_data({wacc_next, wstrb_next, w_end}), .wr_full(wq_full),
-        .rd_clk(m_aclk), .rd_en(m_wvalid && m_wready),
-        .rd_data({m_wdata, m_wstrb, m_wlast}), .rd_empty(wq_empty));
+    generate if (DRAM_CDC) begin : g_wq
+        async_fifo #(.DATA_WIDTH(MW + MW/8 + 1), .FIFO_DEPTH(WQ),
+                     .MEMORY_TYPE(WR_MEM)) u_f (
+            .wr_clk(s_aclk), .wr_rst(srst),
+            .wr_en(w_fire && w_emit),
+            .wr_data({wacc_next, wstrb_next, w_end}), .wr_full(wq_full),
+            .rd_clk(m_aclk), .rd_en(m_wvalid && m_wready),
+            .rd_data({m_wdata, m_wstrb, m_wlast}), .rd_empty(wq_empty));
+    end else begin : g_wq_s
+        sync_fifo #(.DATA_WIDTH(MW + MW/8 + 1), .FIFO_DEPTH(WQ),
+                    .MEMORY_TYPE(WR_MEM)) u_f (
+            .clk(s_aclk), .rst(srst),
+            .wr_en(w_fire && w_emit),
+            .wr_data({wacc_next, wstrb_next, w_end}), .wr_busy(wq_full), .wr_almost(),
+            .rd_en(m_wvalid && m_wready),
+            .rd_data({m_wdata, m_wstrb, m_wlast}), .rd_busy(wq_empty));
+    end endgenerate
 
     assign m_wvalid = !wq_empty;
 
@@ -333,11 +365,18 @@ module mag_dram_port #(
     // xpm_fifo_async with USE_ADV_FEATURES off does not flag an overflow, it
     // DISCARDS the write: a tied-high ready loses data silently.
     assign m_bready = !bq_full;
-    async_fifo #(.DATA_WIDTH(IDX_W), .FIFO_DEPTH(BQ)) u_bq (
-        .wr_clk(m_aclk), .wr_rst(mrst), .wr_en(m_bvalid && m_bready),
-        .wr_data(m_bid[IDX_W-1:0]), .wr_full(bq_full),
-        .rd_clk(s_aclk), .rd_en(!bq_empty), .rd_data(bq_id),
-        .rd_empty(bq_empty));
+    generate if (DRAM_CDC) begin : g_bq
+        async_fifo #(.DATA_WIDTH(IDX_W), .FIFO_DEPTH(BQ)) u_f (
+            .wr_clk(m_aclk), .wr_rst(mrst), .wr_en(m_bvalid && m_bready),
+            .wr_data(m_bid[IDX_W-1:0]), .wr_full(bq_full),
+            .rd_clk(s_aclk), .rd_en(!bq_empty), .rd_data(bq_id),
+            .rd_empty(bq_empty));
+    end else begin : g_bq_s
+        sync_fifo #(.DATA_WIDTH(IDX_W), .FIFO_DEPTH(BQ)) u_f (
+            .clk(s_aclk), .rst(srst), .wr_en(m_bvalid && m_bready),
+            .wr_data(m_bid[IDX_W-1:0]), .wr_busy(bq_full), .wr_almost(),
+            .rd_en(!bq_empty), .rd_data(bq_id), .rd_busy(bq_empty));
+    end endgenerate
 
     always @(posedge s_aclk) begin
         if (srst) begin
@@ -356,12 +395,20 @@ module mag_dram_port #(
     // Each memory beat becomes up to R internal ones; the over-fetched head
     // and tail are DISCARDED rather than avoided.
     assign m_rready = !rq_full;
-    async_fifo #(.DATA_WIDTH(MW+IDX_W), .FIFO_DEPTH(RQ),
-                 .MEMORY_TYPE(WR_MEM)) u_rq (
-        .wr_clk(m_aclk), .wr_rst(mrst), .wr_en(m_rvalid && m_rready),
-        .wr_data({m_rdata, m_rid[IDX_W-1:0]}), .wr_full(rq_full),
-        .rd_clk(s_aclk), .rd_en(rq_pop), .rd_data({rq_data, rq_id}),
-        .rd_empty(rq_empty));
+    generate if (DRAM_CDC) begin : g_rq
+        async_fifo #(.DATA_WIDTH(MW+IDX_W), .FIFO_DEPTH(RQ),
+                     .MEMORY_TYPE(WR_MEM)) u_f (
+            .wr_clk(m_aclk), .wr_rst(mrst), .wr_en(m_rvalid && m_rready),
+            .wr_data({m_rdata, m_rid[IDX_W-1:0]}), .wr_full(rq_full),
+            .rd_clk(s_aclk), .rd_en(rq_pop), .rd_data({rq_data, rq_id}),
+            .rd_empty(rq_empty));
+    end else begin : g_rq_s
+        sync_fifo #(.DATA_WIDTH(MW+IDX_W), .FIFO_DEPTH(RQ),
+                    .MEMORY_TYPE(WR_MEM)) u_f (
+            .clk(s_aclk), .rst(srst), .wr_en(m_rvalid && m_rready),
+            .wr_data({m_rdata, m_rid[IDX_W-1:0]}), .wr_busy(rq_full), .wr_almost(),
+            .rd_en(rq_pop), .rd_data({rq_data, rq_id}), .rd_busy(rq_empty));
+    end endgenerate
 
     wire [RLOG-1:0] cur_ph   = rph[rq_id];
     wire [15:0]     cur_left = rleft[rq_id];

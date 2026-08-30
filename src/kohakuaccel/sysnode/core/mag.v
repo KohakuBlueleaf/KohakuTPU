@@ -70,6 +70,8 @@ module mag #(
     // macro lets a bench set it under a generated top whose parameters it
     // cannot reach; the default is the shipped value.
     parameter integer DRAM_RD_OUT = `KOHAKU_DRAM_RD_OUT,
+    // 0: dram_aclk IS clk and the DRAM port's queues are synchronous.
+    parameter integer DRAM_CDC   = 1,
     parameter integer MEM_X      = 0,       // port 0
     parameter integer MEM_Y      = 1,
     parameter integer MEM_X1     = 0,       // port 1
@@ -950,7 +952,7 @@ module mag #(
     );
 
     mag_dram_port #(.N(MP1), .ADDR_W(ADDR_W), .SW(DATA_W), .MW(MW),
-                    .ID_W(ID_W), .RD_OUT(DRAM_RD_OUT)) u_dram (
+                    .ID_W(ID_W), .RD_OUT(DRAM_RD_OUT), .DRAM_CDC(DRAM_CDC)) u_dram (
         .s_aclk(clk), .s_aresetn(resetn),
         .q_valid(dq_valid), .q_ready(dq_ready), .q_addr(dq_addr),
         .q_len(dq_len), .q_write(dq_write),

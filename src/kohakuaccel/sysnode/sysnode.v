@@ -38,6 +38,8 @@ module sysnode #(
     parameter integer LINK_W     = 288,
     parameter integer TUSER_W    = 96,
     parameter integer MW         = DATA_W,
+    // 0: dram_aclk IS clk and the DRAM port's queues are synchronous.
+    parameter integer DRAM_CDC   = 1,
     parameter integer MEM_X      = 0,
     parameter integer MEM_Y      = 1,
     parameter integer MEM_X1     = 0,
@@ -292,6 +294,7 @@ module sysnode #(
         .FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH), .DATA_W(DATA_W),
         .ADDR_W(ADDR_W), .ID_W(ID_W), .PORTS(PORTS), .ILINK(ILINK),
         .MESH_ID(MESH_ID), .LINK_W(LINK_W), .TUSER_W(TUSER_W), .MW(MW),
+        .DRAM_CDC(DRAM_CDC),
         .MEM_X(MEM_X), .MEM_Y(MEM_Y), .MEM_X1(MEM_X1), .MEM_Y1(MEM_Y1),
         .MEM_X2(MEM_X2), .MEM_Y2(MEM_Y2), .MEM_X3(MEM_X3), .MEM_Y3(MEM_Y3),
         .GRID_LO(GRID_LO), .GRID_HI(GRID_HI), .STAGE_FLITS(STAGE_FLITS),
