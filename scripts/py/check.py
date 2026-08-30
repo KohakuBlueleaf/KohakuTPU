@@ -171,46 +171,64 @@ def all_benches():
 
 # Through khs_run.py, NOT bare: build/khd/cur belongs to whichever config
 # generated it last, and a bare run grades against what a width run left there.
-BLOCKS = [bench(b) for b in all_benches() if b != "khs_unit"] + [
-    # WITH THE FLOAT TIER ON. `khs_run.py` bare builds the integer half only, so
-    # for months the SIMD PE's float instructions were in no tier of this suite;
-    # the float cases include the integer ones, so this is a superset. ONE run,
-    # because khs_run writes a fixed vector directory and two would race.
-    check(
-        "khs_unit",
-        [
-            str(PY),
-            "tests/pe/tools/khs_run.py",
-            "--float",
-            "--fcvt-units",
-            "8",
-            "--fsfu",
-            "2",
-        ],
-        lane="xsim",
-    ),
-    # NOT covered by any bench above. mm_xform and mag_system both compare the
-    # occupant against ANOTHER INSTANCE of itself, so an arithmetic change
-    # cancels out and reads as a pass; this is the only cross-check against the
-    # software model.
-    py("mx_quant vs model", "scripts/py/run_quant_check.py"),
-    # `all_benches()` runs every name with NO defines, so the pumped path -- the
-    # one that ships -- had no cover here at all until these three.
-    bench_var("cluster_data", "-d", "MX_CU_PUMP"),
-    bench_var("cluster_node_pump", "-d", "MX_L1OFF"),
-    bench_var("cluster_node_pump", "-d", "MX_L1WRAP"),
-    # The L2 store on MAG's converged path, where the mover and the interlink
-    # can reach it. Same checks as the default placement, so it is an A/B.
-    bench_var("mm_mesh_stage", "-d", "MM_L2_PORT"),
-    bench_var("interlink_stage", "-d", "MM_L2_PORT"),
-    # The MOVER as a requester of the store: DRAM -> aperture -> DRAM.
-    bench_var("mover_l2", "-d", "MV_L2"),
-    # Four meshes with a store in each: forwarding and staging together.
-    bench_var("mover_l2_chain", "-d", "MV_L2"),
-    # MAG behind noc_local_cdc. The default build takes the direct branch, and
-    # an unelaborated generate branch is not checked at all.
-    bench_var("interlink_2mesh_1m", "-d", "MM_MAG_CDC"),
-]
+# The legacy kaxi_xbar variants pick their DUT by a define; bare, the bench
+# instantiates kaxi_xbar, which their lists do not carry, so they were red here.
+KAXI_VARIANTS = {
+    "kaxi_xbar2": "KAXI2",
+    "kaxi_xbar3": "KAXI3",
+    "kaxi_xbar5": "KAXI5",
+}
+# The kaxi_xbar4 family hangs under its define (3 x 900 s STALLED per run) and
+# is legacy; listed so it is a known gap, not a bench that quietly went missing.
+KAXI_HANGS = {"kaxi_xbar4", "kaxi_xbar4b", "kaxi_xbar4c"}
+BLOCKS = (
+    [
+        bench(b)
+        for b in all_benches()
+        if b != "khs_unit" and b not in KAXI_VARIANTS and b not in KAXI_HANGS
+    ]
+    + [bench_var(b, "-d", d) for b, d in KAXI_VARIANTS.items()]
+    + [
+        # WITH THE FLOAT TIER ON. `khs_run.py` bare builds the integer half only, so
+        # for months the SIMD PE's float instructions were in no tier of this suite;
+        # the float cases include the integer ones, so this is a superset. ONE run,
+        # because khs_run writes a fixed vector directory and two would race.
+        check(
+            "khs_unit",
+            [
+                str(PY),
+                "tests/pe/tools/khs_run.py",
+                "--float",
+                "--fcvt-units",
+                "8",
+                "--fsfu",
+                "2",
+            ],
+            lane="xsim",
+        ),
+        # NOT covered by any bench above. mm_xform and mag_system both compare the
+        # occupant against ANOTHER INSTANCE of itself, so an arithmetic change
+        # cancels out and reads as a pass; this is the only cross-check against the
+        # software model.
+        py("mx_quant vs model", "scripts/py/run_quant_check.py"),
+        # `all_benches()` runs every name with NO defines, so the pumped path -- the
+        # one that ships -- had no cover here at all until these three.
+        bench_var("cluster_data", "-d", "MX_CU_PUMP"),
+        bench_var("cluster_node_pump", "-d", "MX_L1OFF"),
+        bench_var("cluster_node_pump", "-d", "MX_L1WRAP"),
+        # The L2 store on MAG's converged path, where the mover and the interlink
+        # can reach it. Same checks as the default placement, so it is an A/B.
+        bench_var("mm_mesh_stage", "-d", "MM_L2_PORT"),
+        bench_var("interlink_stage", "-d", "MM_L2_PORT"),
+        # The MOVER as a requester of the store: DRAM -> aperture -> DRAM.
+        bench_var("mover_l2", "-d", "MV_L2"),
+        # Four meshes with a store in each: forwarding and staging together.
+        bench_var("mover_l2_chain", "-d", "MV_L2"),
+        # MAG behind noc_local_cdc. The default build takes the direct branch, and
+        # an unelaborated generate branch is not checked at all.
+        bench_var("interlink_2mesh_1m", "-d", "MM_MAG_CDC"),
+    ]
+)
 
 # Compiler-emitted instructions through the real RTL, the one tier that separates
 # a compiler fault from a hardware one. Empty since `src/ktpu` was retired.

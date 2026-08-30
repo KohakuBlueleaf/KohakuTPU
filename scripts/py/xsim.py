@@ -203,7 +203,7 @@ BENCHES = {
             "src/kohakuaccel/common/sync_fifo.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/axi/simple/axi_n1.v",
-            "src/kohakuaxi/kaxi_xbar.v",
+            "src/kohakuaxi/legacy/kaxi/kaxi_xbar.v",
         ],
     ),
     # KohakuAXI full system (xbar + per-home L3) -- lint-only entry.
@@ -212,10 +212,11 @@ BENCHES = {
         [
             "src/kohakuaccel/common/sync_fifo.v",
             "src/kohakuaccel/common/async_fifo.v",
+            "src/kohakuaccel/common/kohaku_sdpram.v",
             "src/kohakuaccel/axi/simple/axi_n1.v",
-            "src/kohakuaxi/kaxi_xbar.v",
-            "src/kohakuaxi/kaxi_l3.v",
-            "src/kohakuaxi/kaxi_top.v",
+            "src/kohakuaxi/legacy/kaxi/kaxi_xbar.v",
+            "src/kohakuaxi/legacy/kaxi/kaxi_l3.v",
+            "src/kohakuaxi/legacy/kaxi/kaxi_top.v",
         ],
     ),
     # KohakuAXI full system end-to-end: master -> xbar -> L3 -> axi4_ram (xsim).
@@ -224,10 +225,11 @@ BENCHES = {
         [
             "src/kohakuaccel/common/sync_fifo.v",
             "src/kohakuaccel/common/async_fifo.v",
+            "src/kohakuaccel/common/kohaku_sdpram.v",
             "src/kohakuaccel/axi/simple/axi_n1.v",
-            "src/kohakuaxi/kaxi_xbar.v",
-            "src/kohakuaxi/kaxi_l3.v",
-            "src/kohakuaxi/kaxi_top.v",
+            "src/kohakuaxi/legacy/kaxi/kaxi_xbar.v",
+            "src/kohakuaxi/legacy/kaxi/kaxi_l3.v",
+            "src/kohakuaxi/legacy/kaxi/kaxi_top.v",
             "src/kohakuaccel/verif/axi4_ram.v",
             "tests/axi/kaxi_top_tb.v",
         ],
@@ -240,7 +242,7 @@ BENCHES = {
             "src/kohakuaccel/common/sync_fifo.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/axi/simple/axi_n1.v",
-            "src/kohakuaxi/kaxi_xbar.v",
+            "src/kohakuaxi/legacy/kaxi/kaxi_xbar.v",
             "tests/axi/kaxi_xbar_tb.v",
         ],
     ),
@@ -248,7 +250,7 @@ BENCHES = {
     "kaxi_xbar2": (
         "kaxi_xbar_tb",
         [
-            "src/kohakuaxi/kaxi_xbar2.v",
+            "src/kohakuaxi/legacy/kaxi/kaxi_xbar2.v",
             "tests/axi/kaxi_xbar_tb.v",
         ],
     ),
@@ -256,7 +258,7 @@ BENCHES = {
     "kaxi_xbar3": (
         "kaxi_xbar_tb",
         [
-            "src/kohakuaxi/kaxi_xbar3.v",
+            "src/kohakuaxi/legacy/kaxi/kaxi_xbar3.v",
             "tests/axi/kaxi_xbar_tb.v",
         ],
     ),
@@ -264,7 +266,7 @@ BENCHES = {
     "kaxi_xbar4": (
         "kaxi_xbar_tb",
         [
-            "src/kohakuaxi/kaxi_xbar4.v",
+            "src/kohakuaxi/legacy/kaxi/kaxi_xbar4.v",
             "tests/axi/kaxi_xbar_tb.v",
         ],
     ),
@@ -272,7 +274,7 @@ BENCHES = {
     "kaxi_xbar4b": (
         "kaxi_xbar_tb",
         [
-            "src/kohakuaxi/kaxi_xbar4b.v",
+            "src/kohakuaxi/legacy/kaxi/kaxi_xbar4b.v",
             "tests/axi/kaxi_xbar_tb.v",
         ],
     ),
@@ -280,7 +282,7 @@ BENCHES = {
     "kaxi_xbar4c": (
         "kaxi_xbar_tb",
         [
-            "src/kohakuaxi/kaxi_xbar4b.v",
+            "src/kohakuaxi/legacy/kaxi/kaxi_xbar4b.v",
             "tests/axi/kaxi_xbar_tb.v",
         ],
     ),
@@ -288,9 +290,9 @@ BENCHES = {
     "kaxi_xbar5": (
         "kaxi_xbar_tb",
         [
-            "src/kohakuaxi/kaxi_wr.v",
-            "src/kohakuaxi/kaxi_rd.v",
-            "src/kohakuaxi/kaxi_xbar5.v",
+            "src/kohakuaxi/legacy/kaxi/kaxi_wr.v",
+            "src/kohakuaxi/legacy/kaxi/kaxi_rd.v",
+            "src/kohakuaxi/legacy/kaxi/kaxi_xbar5.v",
             "tests/axi/kaxi_xbar_tb.v",
         ],
     ),
@@ -303,14 +305,15 @@ BENCHES = {
         [
             "src/kohakuaccel/common/kohaku_sdpram.v",
             "src/kohakuaccel/common/async_fifo.v",
-            "src/kohakuaxi/kx_scdc.v",
-            "src/kohakuaxi/kx_link.v",
-            "src/kohakuaxi/kx_perm.v",
-            "src/kohakuaxi/kx_carray.v",
-            "src/kohakuaxi/kx_rd_engine.v",
-            "src/kohakuaxi/kx_rd_pipe.v",
-            "src/kohakuaxi/kx_wr_engine.v",
-            "src/kohakuaxi/kx_xache.v",
+            "src/kohakuaccel/common/sync_fifo.v",
+            "src/kohakuaxi/xache/edge/kx_scdc.v",
+            "src/kohakuaxi/xache/edge/kx_link.v",
+            "src/kohakuaxi/xache/edge/kx_perm.v",
+            "src/kohakuaxi/xache/array/kx_carray.v",
+            "src/kohakuaxi/xache/engine/kx_rd_engine.v",
+            "src/kohakuaxi/xache/engine/kx_rd_pipe.v",
+            "src/kohakuaxi/xache/engine/kx_wr_engine.v",
+            "src/kohakuaxi/xache/kx_xache.v",
             "src/kohakuaccel/verif/axi4_ram.v",
             "tests/axi/kx_xache_tb.v",
         ],
@@ -329,7 +332,7 @@ BENCHES = {
     "kaxi_l3": (
         "kaxi_l3_tb",
         [
-            "src/kohakuaxi/kaxi_l3.v",
+            "src/kohakuaxi/legacy/kaxi/kaxi_l3.v",
             "src/kohakuaccel/common/kohaku_sdpram.v",
             "src/kohakuaccel/verif/axi4_ram.v",
             "tests/axi/kaxi_l3_tb.v",
@@ -1464,7 +1467,12 @@ BENCHES["rv64_syscore"] = ("rv64_syscore", RV64_SYSCORE)
 # The whole mesh under Verilator: RV64 node + router + 2 mat + 2 vec + axi_ram.
 # Shared by the hand-wired top and the gen_mesh-generated top.
 _RV64_MESH_SRCS = (
-    COMMON + NOC + MATMUL + MOVER + VECTOR + RV64_SYSCORE
+    COMMON
+    + NOC
+    + MATMUL
+    + MOVER
+    + VECTOR
+    + RV64_SYSCORE
     + [
         "src/kohakutpu/matmul/mx_cluster_cu.v",
         "src/kohakutpu/vector/vec_cvt.v",
@@ -1506,24 +1514,26 @@ _RV64_MESH_SRCS = (
     ]
 )
 BENCHES["rv64_mesh_2p2"] = (
-    "rv64_mesh_2p2", _RV64_MESH_SRCS + ["tests/mesh/rv64_mesh_2p2.v"]
+    "rv64_mesh_2p2",
+    _RV64_MESH_SRCS + ["tests/mesh/rv64_mesh_2p2.v"],
 )
 # The SAME mesh, but the top comes from gen_mesh.py --cpu-rv64 --mat-pump (the
 # real generation flow) instead of the hand-wired top: ktpu_2p2_rv64 wrapped by
 # rv64_gen_2p2 (axi_ram + clock fan-out + hs_).
 BENCHES["rv64_gen_2p2"] = (
     "rv64_gen_2p2",
-    _RV64_MESH_SRCS + ["tests/mesh/ktpu_2p2_rv64.v", "tests/mesh/rv64_gen_2p2.v"]
+    _RV64_MESH_SRCS + ["tests/mesh/ktpu_2p2_rv64.v", "tests/mesh/rv64_gen_2p2.v"],
 )
 # The generated mesh reached through the compact 4 KB load window (rv64_load_win),
 # the tidy per-node control front end -- a plain register bus, no AXI.
 BENCHES["rv64_win_2p2"] = (
     "rv64_win_2p2",
-    _RV64_MESH_SRCS + [
+    _RV64_MESH_SRCS
+    + [
         "tests/mesh/ktpu_2p2_rv64.v",
         "src/kohakuaccel/sysnode/cpu/rv64_load_win.v",
         "tests/mesh/rv64_win_2p2.v",
-    ]
+    ],
 )
 
 # The node-level complex: the RV64 CPU plus the mover and transform bank that
@@ -1987,6 +1997,63 @@ BENCHES["sb_mesh_e2e_sr"] = (
     + ["src/kohakuaccel/common/kh_rst_sync.v"],
 )
 
+# Kohaku Partitioned Xache: one credited single-boundary hop, either landing
+# buffer (-d TB_BUF=xpm|lean), any width (-d TB_W).
+BENCHES["kx_hop"] = (
+    "kx_hop_tb",
+    [
+        "src/kohakuaccel/common/kohaku_sdpram.v",
+        "src/kohakuaccel/common/sync_fifo.v",
+        "src/kohakuaxi/pxache/lane/kx_hop.v",
+        "tests/axi/kx_hop_tb.v",
+    ],
+)
+KX_PXACHE_SRC = [
+    "src/kohakuaccel/common/kohaku_sdpram.v",
+    "src/kohakuaccel/common/async_fifo.v",
+    "src/kohakuaccel/common/sync_fifo.v",
+    "src/kohakuaxi/xache/edge/kx_scdc.v",
+    "src/kohakuaxi/xache/edge/kx_link.v",
+    "src/kohakuaxi/xache/edge/kx_perm.v",
+    "src/kohakuaxi/xache/array/kx_carray.v",
+    "src/kohakuaxi/xache/engine/kx_rd_pipe.v",
+    "src/kohakuaxi/xache/engine/kx_wr_engine.v",
+    "src/kohakuaxi/pxache/lane/kx_hop.v",
+    "src/kohakuaxi/pxache/lane/kx_lane.v",
+    "src/kohakuaxi/pxache/kx_pxache.v",
+]
+# a lane alone: a source and NT taps (-d TB_NT, -d TB_W)
+BENCHES["kx_lane"] = (
+    "kx_lane_tb",
+    [
+        "src/kohakuaccel/common/kohaku_sdpram.v",
+        "src/kohakuaccel/common/sync_fifo.v",
+        "src/kohakuaxi/pxache/lane/kx_hop.v",
+        "src/kohakuaxi/pxache/lane/kx_lane.v",
+        "tests/axi/kx_lane_tb.v",
+    ],
+)
+BENCHES["kx_lane_lint"] = ("kx_lane", BENCHES["kx_lane"][1][:-1])
+# the partitioned fabric: the kx_xache bench body with -d TB_P partitions
+# (master m and home h in partition m and h), an axi4_ram per home
+BENCHES["kx_pxache"] = (
+    "kx_pxache_tb",
+    KX_PXACHE_SRC + ["src/kohakuaccel/verif/axi4_ram.v", "tests/axi/kx_pxache_tb.v"],
+)
+BENCHES["kx_pxache_lint"] = ("kx_pxache", KX_PXACHE_SRC)
+
+# multimesh_v8 tops -- lint-only entries (top = the generated pump module).
+for _v8top in ("ktpu_ship_2x2_6c2v_1m_nol2_pump", "ktpu_ship_2x2_2c2v_1m_nol2_pump"):
+    BENCHES["v8_lint_" + _v8top.split("_")[3]] = (
+        _v8top,
+        MESH_1M
+        + [
+            "src/kohakutpu/matmul/mx_cluster_cu_pump.v",
+            "src/kohakuaccel/common/kh_rst_sync.v",
+            f"src/kohakutpu/top/generated/{_v8top}.v",
+        ],
+    )
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -2040,7 +2107,7 @@ def main():
     # a two-space test failed them all while this filter hid the line saying so.
     def keep(ln):
         return (
-            ln.startswith(("---", "    ", "  ", "==="))
+            ln.startswith(("---", "    ", "  ", "===", "@@@"))
             or "ERROR" in ln
             or ln.strip().startswith(("PASS", "FAIL"))
         )
@@ -2161,6 +2228,13 @@ def main():
         + tops
         + ["-s", "tb"]
     )
+    # No stimulus in a lint-only top: `-runall` printed no verdict and every
+    # `*_lint` row was red under check.py by construction.
+    if args.bench.endswith("_lint"):
+        print(f"PASS -- {args.bench}: {top} elaborated, lint-only entry")
+        if not args.keep:
+            shutil.rmtree(work, ignore_errors=True)
+        sys.exit(0)
     # --vcd dumps a scope's signals for reading cycle by cycle.
     if args.vcd:
         # COUNTED: a wrong scope returns an empty list and writes a VCD with no

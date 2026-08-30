@@ -104,9 +104,7 @@ def main():
             files += [
                 f
                 for f in sorted(q.rglob("*"))
-                if f.is_file()
-                and f.suffix in TEXTY
-                and not (set(f.parts) & SKIP_DIRS)
+                if f.is_file() and f.suffix in TEXTY and not (set(f.parts) & SKIP_DIRS)
             ]
         elif q.is_file():
             files.append(q)

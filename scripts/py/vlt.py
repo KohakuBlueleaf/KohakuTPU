@@ -72,6 +72,9 @@ def main() -> int:
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--warn", action="store_true", help="show the silenced warnings")
     ap.add_argument("--define", "-d", action="append", default=[])
+    # Top-level parameter overrides (verilator -G): a lint-only entry whose top
+    # is an RTL module has no bench to set MODEL from MX_MODEL.
+    ap.add_argument("--gparam", "-G", action="append", default=[], help="NAME=VALUE")
     ap.add_argument("--model", type=int, default=1, help="1 = behavioural, 0 = DSP48")
     # NOT 0 ("one per core"). This host has 172 logical CPUs and Verilator 5.020
     # aborts at exit with "attempted to destroy locked Thread Pool" at that width
@@ -183,6 +186,7 @@ def main() -> int:
     if not args.warn:
         cmd += [f"-Wno-{w}" for w in SILENCED]
     cmd += [f"+define+{d}" for d in args.define + [f"MX_MODEL={args.model}"]]
+    cmd += [f"-G{g}" for g in args.gparam]
     cmd += ["--top-module", top, "-f", "vlt.f"]
     if harness:
         cmd += [to_wsl(harness)]
@@ -192,7 +196,15 @@ def main() -> int:
     # CAPTURED, not streamed: a --binary build prints one g++ line per translation
     # unit and buries anything worth reading. Errors are re-printed below.
     if args.native:
-        bp = subprocess.run(cmd, cwd=work, check=False, capture_output=True, text=True)
+        bp = subprocess.run(
+            cmd,
+            cwd=work,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
     else:
         bp = subprocess.run(
             [
@@ -209,6 +221,8 @@ def main() -> int:
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
     rc = bp.returncode
     blog = (bp.stdout or "") + (bp.stderr or "")
@@ -229,10 +243,22 @@ def main() -> int:
     if args.native:
         run = [str(work / "obj_dir/vsim")] + args.run_args.split()
     t_run = time.monotonic()
-    rp = subprocess.run(run, capture_output=True, text=True, check=False)
+    # utf-8 explicitly: the console codepage (cp950 here) cannot decode a
+    # non-ASCII byte in the simulator's output and the whole run's text is lost
+    rp = subprocess.run(
+        run,
+        capture_output=True,
+        text=True,
+        check=False,
+        encoding="utf-8",
+        errors="replace",
+    )
     out = rp.stdout + (rp.stderr or "")
     t_run = time.monotonic() - t_run
     print(out)
+    # a model that dies (signal, abort) prints nothing; say so, loudly
+    if rp.returncode != 0:
+        print(f"  @@@ RUN EXIT {rp.returncode} -- the model did not finish normally")
     print(f"  @@@ TIMING build {t_build:.2f}s  run {t_run:.2f}s")
 
     # A harness build is meant to be KEPT and re-driven -- rebuilding a C++ model

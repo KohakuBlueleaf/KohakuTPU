@@ -5,6 +5,7 @@ kohakuaccel/sysnode/core/mag_stage.v
 kohakuaccel/sysnode/core/mag_stage_port.v
 kohakuaccel/sysnode/core/mag_xform.v
 kohakuaccel/sysnode/core/sn_hub.v
+kohakuaccel/sysnode/cpu/rv64_load_win.v
 kohakuaccel/sysnode/cpu/rv64_mag_pe.v
 kohakuaccel/sysnode/cpu/rv_mag_pe.v
 kohakuaccel/sysnode/interlink/il_pkt_arb.v

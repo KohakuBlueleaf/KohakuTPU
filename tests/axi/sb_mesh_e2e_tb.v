@@ -92,6 +92,9 @@ module sb_mesh_e2e_tb;
     always begin
         #1.667 noc1 = ~noc1;
     end
+`ifndef TB_DRAM_CDC
+  `define TB_DRAM_CDC 1
+`endif
     reg mat0 = 0, vec0 = 0, mag0 = 0, dram0 = 0;
     reg mat1 = 0, vec1 = 0, mag1 = 0, dram1 = 0;
     always begin
@@ -251,10 +254,11 @@ module sb_mesh_e2e_tb;
         wire mclk = (m == 0) ? mag0   : mag1;
         wire tclk = (m == 0) ? mat0   : mat1;
         wire vclk = (m == 0) ? vec0   : vec1;
-        wire dclk = (m == 0) ? dram0  : dram1;
+        // TB_DRAM_CDC 0: the one-clock memory path, dram_aclk IS the node's clock
+        wire dclk = (`TB_DRAM_CDC != 0) ? ((m == 0) ? dram0 : dram1) : mclk;
 
         ktpu_min_1m #(.MESH_ID(m), .MODEL(1), .MW(DRAM_W),
-                      .MAG_CDC(1), .UNIT_CDC(1)) u (
+                      .MAG_CDC(1), .UNIT_CDC(1), .DRAM_CDC(`TB_DRAM_CDC)) u (
             .axi_aclk(mclk), .axi_aresetn(rstn),
             .noc_clk(aclk), .mat_clk(tclk), .vec_clk(vclk),
             .dram_aclk(dclk), .dram_aresetn(rstn),

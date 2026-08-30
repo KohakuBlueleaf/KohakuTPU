@@ -335,6 +335,16 @@ So the coarsest legal interleave is 4 KB, which is also what the AMD UMC's
 4K option and every vendor crossbar do. Finer than 4 KB is not a wire — it is a
 per-beat `AW` in the write engine — and is not built.
 
+### 3.2 One partition
+
+The Xache is a **single-partition** fabric: everything in it is placed in one
+region of the part, and no register-to-register path inside it crosses a die.
+Every number on this page is that fabric's. Its partitioned form,
+[`kx_pxache`](pxache.md), spreads the masters and homes over `P` partitions
+with one registered, credited hop per boundary and a reorder ring per master;
+at `P = 1` it is this fabric (9,972 LUT against 9,994, the same latency and
+bandwidth), and four partitions cost 966 LUT at three cycles per hop.
+
 ---
 
 ## 4. Knobs
@@ -547,6 +557,17 @@ The ship at `RD_OUTQ` 1 / 2 / 4 / 8: 9,607 / 9,607 / 9,642 / 9,678 LUT,
 11,147 / 11,151 / 11,183 / 11,231 FF, 445 / 445 / 469 / 469 MHz. The queue
 depth is bookkeeping — a sequence number per master and a home-of-sequence
 table — not datapath.
+
+**The ship with the 16 KB rotation** (`NSWAP = 18`, `(i, i+2)`, `i = 14..31`)
+over a flat 16 GB:
+
+| M | N | K | read | write | crossings | LUT | FF | URAM | BRAM | WNS ns | Fmax MHz |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 4 | 4 | 1 | SAMD | SAMD | 4, DRAM side + 16 KB rotation | 9,994 | 11,175 | 256 | 64 | +1.202 | 469 |
+
+The rotation row is 352 above the un-rotated ship (9,642), while the 4 KB
+rotation on the first array measured no difference; one measurement, not a
+rule.
 
 The streaming engine is **cheaper than the one-beat engine at every shape**,
 by 569 at the digit and 681 at the ship, and by far more where the one-beat
@@ -944,11 +965,14 @@ component benches beneath it are `kx_carray`, `kx_rd_engine`, `kx_wr_engine`,
 - **[station-bus.md](station-bus.md)** — the other KohakuAXI system: a line of
   stations carrying host traffic across the dies. It is what a host reaches a
   mesh through; this page is what a set of masters reaches DRAM through.
+- **[pxache.md](pxache.md)** — this fabric across the dies: `kx_pxache`.
 - **[README.md](README.md)** — KohakuAXI in one page.
 - **[../../arch/axi.md](../../arch/axi.md)** — the framework's statement of
   its AXI boundary.
 
-RTL: `src/kohakuaxi/` — `kx_xache.v` (the system), `kx_carray.v`,
-`kx_rd_engine.v`, `kx_wr_engine.v`, `kx_link.v`, `kx_scdc.v`. Measurement:
-`scripts/tcl/ooc_kx.tcl` (one configuration, every report), `scripts/py/kx_cost.py`
-(the per-knob model and its validation gate).
+RTL: `src/kohakuaxi/xache/` — `kx_xache.v` (the system), `array/kx_carray.v`,
+`engine/kx_rd_engine.v`, `engine/kx_rd_pipe.v`, `engine/kx_wr_engine.v`,
+`edge/kx_link.v`, `edge/kx_scdc.v`, `edge/kx_perm.v`; the earlier crossbars
+are under `src/kohakuaxi/legacy/`. Measurement: `scripts/tcl/ooc_kx.tcl` (one
+configuration, every report), `scripts/py/kx_cost.py` (the per-knob model and
+its validation gate).

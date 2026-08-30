@@ -230,12 +230,16 @@ Then the pages about writing against it, in no particular order:
 - **[hardware-wants.md](hardware-wants.md)** — ten asks the compiler and the
   kernels ran into, each naming the level it was established at.
 
-And two about the device image rather than the datapath:
+And three about the device image rather than the datapath:
 
 - **[v6-plan.md](v6-plan.md)** — replacing the AXI tree outside the meshes with
   a station line: what it recovered, which die the recovery landed on, and why
   that was not the die that needed it. The fabric itself is
   [kohakuaxi/](../kohakuaxi/README.md).
+- **[v8-plan.md](v8-plan.md)** — the one-SLR probe: four full dies on one
+  sysnode clock behind ONE Kohaku Xache pinned across them, the one-clock DRAM
+  port, the address map verified three ways, and the ladder each rung of the
+  build had to climb.
 - **[xdma-channels.md](xdma-channels.md)** — the host DMA block is 17.7% of one
   SLR; what its channel count costs, and what one unmade change would return.
 

@@ -22,7 +22,7 @@ KohakuAXI is **two systems**, and this page is about the first:
 |---|---|---|---|
 | **the station bus** | a host DMA engine, its narrow register port and a JTAG debug master to every DRAM controller, every mesh and every clock wizard across the dies | a line of identical stations, credited links between them | this page, [station-bus.md](station-bus.md) |
 | **the Xache** (xbar-cache; `kx_` = Kohaku-Xache System) | M AXI masters to N DRAM channels, each channel fronted by a cache | one system with AXI only at its edges: per-home arrays, control-only engines, registered binary-index muxes, a crossing only at a port whose clock differs, channel interleaving by an address-bit swap, a streaming read engine with a per-master read queue across the channels | [xbar-cache.md](xbar-cache.md) |
-
+| **the Partitioned Xache** (`kx_pxache`) | the same masters and homes spread over the dies | the Xache's arrays and engines with per-source lanes between partitions — one registered, credited hop per boundary, tapped at every partition, nothing muxed in transit — and a reorder ring per master so nothing waits on a turn. P = 1 is the Xache; four partitions cost 966 LUT, three cycles per hop | [pxache.md](pxache.md) |
 They share no module and are never conflated: the station bus carries *host*
 traffic to endpoints of many widths and clocks; the crossbar-cache carries
 *memory* traffic at one width into DRAM, with a cache in the path. The rest of
@@ -359,6 +359,9 @@ not worth new RTL.
   crossbar-cache between AXI masters and DRAM channels, its clock model, its
   two read engines and the read queue, its whole measured tables, its per-knob
   costs, its measured bandwidth and the vendor path at the same shape.
+- **[pxache.md](pxache.md)** — the Xache across the dies: lanes of hops,
+  the reorder ring, the deadlock a held turn builds across unequal latencies,
+  and the four-partition cost measured against the single-partition fabric.
 - **[../kohakutpu/v6-plan.md](../kohakutpu/v6-plan.md)** — one deployment of it:
   what replacing KohakuTPU's SmartConnect tree changed, which die the recovered
   resource landed on, and why that die was not the one that needed it.
@@ -367,4 +370,6 @@ not worth new RTL.
 
 RTL: `src/kohakuaccel/axi/` — `station/` for the shims and the switch, `link/`
 for the credited crossing, `topo/` for the line and the sweep tops, `bd/` for the
-generated block-design wrappers.
+generated block-design wrappers. The Xache is `src/kohakuaxi/xache/` and its
+partitioned form `src/kohakuaxi/pxache/`; device-specific wrappers live under
+the top-level `xilinx-fpga/`, never in `src/`.

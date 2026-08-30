@@ -19,6 +19,7 @@ RD_OUTQ are not terms: the first is wires, the second 71 LUT from 1 to 8.
 ROWS_R1 is the first array revision's table, kept as the record it is; the
 model is fitted to ROWS only.
 """
+
 import argparse
 import json
 import sys
@@ -88,8 +89,15 @@ def features(m, n, k, rsamd, wsamd, ncdc):
     # home per extra IO-word plus one fill-register doubling; read-SASD near
     # constant; write-SASD collapses N write paths.
     return [
-        1.0, n, m, m * n, n * (k - 1), n * (1 if k > 1 else 0),
-        (1 - rsamd), (1 - wsamd) * n, ncdc,
+        1.0,
+        n,
+        m,
+        m * n,
+        n * (k - 1),
+        n * (1 if k > 1 else 0),
+        (1 - rsamd),
+        (1 - wsamd) * n,
+        ncdc,
     ]
 
 
@@ -99,7 +107,10 @@ NAMES = ["base", "c_n", "c_m", "c_mn", "c_k", "c_kfill", "r_sasd", "w_sasd", "cd
 def lstsq(X, y):
     # normal equations with Gaussian elimination -- no numpy dependency
     p = len(X[0])
-    A = [[sum(X[r][i] * X[r][j] for r in range(len(X))) for j in range(p)] for i in range(p)]
+    A = [
+        [sum(X[r][i] * X[r][j] for r in range(len(X))) for j in range(p)]
+        for i in range(p)
+    ]
     b = [sum(X[r][i] * y[r] for r in range(len(X))) for i in range(p)]
     for i in range(p):
         piv = max(range(i, p), key=lambda r: abs(A[r][i]))
@@ -181,11 +192,24 @@ class LutSteps:
         ship = self.ship
         d_m = self._interp(self.M, m) - ship
         d_n = self._interp(self.N, n) - ship
-        x_mn = (self.MN88 - ship - (self.M.get(8, ship) - ship) - (self.N.get(8, ship) - ship)) if self.MN88 else 0.0
+        x_mn = (
+            (
+                self.MN88
+                - ship
+                - (self.M.get(8, ship) - ship)
+                - (self.N.get(8, ship) - ship)
+            )
+            if self.MN88
+            else 0.0
+        )
         d_mn = x_mn * ((m - 4) / 4.0) * ((n - 4) / 4.0)
         d_k = (self._interp(self.K, k) - ship) * (n / 4.0)
         if not wsamd and k > 1 and self.K2:
-            d_k = (self._interp(self.K, k) - ship) / self.K2 * (self.KS_A * n + self.KS_B * m * n)
+            d_k = (
+                (self._interp(self.K, k) - ship)
+                / self.K2
+                * (self.KS_A * n + self.KS_B * m * n)
+            )
         both = self.SASD_A * n + self.SASD_B * m * n
         scale = (both / self.S4) if self.S4 else 1.0
         if not rsamd and not wsamd:
@@ -201,7 +225,9 @@ class LutSteps:
 
 
 def estimate_ff(coef, m, n, k, rsamd, wsamd, ncdc):
-    return sum(coef[nm] * f for nm, f in zip(NAMES, features(m, n, k, rsamd, wsamd, ncdc)))
+    return sum(
+        coef[nm] * f for nm, f in zip(NAMES, features(m, n, k, rsamd, wsamd, ncdc))
+    )
 
 
 def memory(n, k, ncdc):
@@ -220,14 +246,18 @@ def validate(verbose=True):
         F = fit_ff(rp)
         if verbose:
             print(f"--- RD_PIPE={rp}: {len(rows)} rows")
-            print(f"{'M':>2} {'N':>2} {'K':>2} rS wS cdc | {'LUT':>6} {'est':>7} {'err%':>6} | {'FF':>6} {'est':>7} {'err%':>6}")
+            print(
+                f"{'M':>2} {'N':>2} {'K':>2} rS wS cdc | {'LUT':>6} {'est':>7} {'err%':>6} | {'FF':>6} {'est':>7} {'err%':>6}"
+            )
         for key, (lut, ff, *_rest) in rows.items():
             el, ef = L.estimate(*key), estimate_ff(F, *key)
             pl, pf = 100.0 * (el - lut) / lut, 100.0 * (ef - ff) / ff
             worst_l, worst_f = max(worst_l, abs(pl)), max(worst_f, abs(pf))
             if verbose:
                 m, n, k, r, w, c = key
-                print(f"{m:>2} {n:>2} {k:>2} {r:>2} {w:>2} {c:>3} | {lut:>6} {el:>7.0f} {pl:>+6.2f} | {ff:>6} {ef:>7.0f} {pf:>+6.2f}")
+                print(
+                    f"{m:>2} {n:>2} {k:>2} {r:>2} {w:>2} {c:>3} | {lut:>6} {el:>7.0f} {pl:>+6.2f} | {ff:>6} {ef:>7.0f} {pf:>+6.2f}"
+                )
     if verbose:
         print(f"max |err|: LUT {worst_l:.2f}%  FF {worst_f:.2f}%  (target < 3%)")
     return worst_l, worst_f
@@ -245,10 +275,21 @@ def main():
                 L = LutSteps(rp)
                 out[f"rp{rp}"] = {
                     "ff": fit_ff(rp),
-                    "lut_steps": {"ship": L.ship, "M": L.M, "N": L.N, "K": L.K, "MN88": L.MN88,
-                                  "RSASD": L.RSASD, "WSASD": L.WSASD, "CDC": L.CDC,
-                                  "SASD_A": L.SASD_A, "SASD_B": L.SASD_B, "S4": L.S4,
-                                  "KS_A": L.KS_A, "KS_B": L.KS_B},
+                    "lut_steps": {
+                        "ship": L.ship,
+                        "M": L.M,
+                        "N": L.N,
+                        "K": L.K,
+                        "MN88": L.MN88,
+                        "RSASD": L.RSASD,
+                        "WSASD": L.WSASD,
+                        "CDC": L.CDC,
+                        "SASD_A": L.SASD_A,
+                        "SASD_B": L.SASD_B,
+                        "S4": L.S4,
+                        "KS_A": L.KS_A,
+                        "KS_B": L.KS_B,
+                    },
                     "rows": [list(k) + list(v) for k, v in rows_of(rp).items()],
                 }
         print(json.dumps(out, indent=1))
@@ -256,10 +297,16 @@ def main():
     if a.est:
         kv = dict(s.split("=") for s in a.est)
         m, n, k = int(kv.get("M", 4)), int(kv.get("N", 4)), int(kv.get("K", 1))
-        r, w, c = int(kv.get("RSAMD", 1)), int(kv.get("WSAMD", 1)), int(kv.get("CDC", 0))
+        r, w, c = (
+            int(kv.get("RSAMD", 1)),
+            int(kv.get("WSAMD", 1)),
+            int(kv.get("CDC", 0)),
+        )
         rp = int(kv.get("RP", 1))
         u, b = memory(n, k, c)
-        print(f"LUT {LutSteps(rp).estimate(m, n, k, r, w, c):.0f}  FF {estimate_ff(fit_ff(rp), m, n, k, r, w, c):.0f}  URAM {u}  BRAM {b}")
+        print(
+            f"LUT {LutSteps(rp).estimate(m, n, k, r, w, c):.0f}  FF {estimate_ff(fit_ff(rp), m, n, k, r, w, c):.0f}  URAM {u}  BRAM {b}"
+        )
         return
     wl, wf = validate()
     if wl >= 3 or wf >= 3:

@@ -354,7 +354,7 @@ where a slave hangs off is a *subordinate*.
 ### home
 
 One DRAM channel together with the cache that fronts it, inside the
-[crossbar-cache](#xbar-cache--crossbar-cache). An address belongs to exactly one
+[crossbar-cache](#xbar-cache--xache--kx). An address belongs to exactly one
 home, chosen by a field of the address, so there is nothing to keep coherent
 between homes. Not a mesh term.
 → [projects/kohakuaxi/xbar-cache](projects/kohakuaxi/xbar-cache.md).

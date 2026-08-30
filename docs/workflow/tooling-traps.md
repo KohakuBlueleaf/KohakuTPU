@@ -296,6 +296,16 @@ Passing under a permissive simulator is not evidence that the stricter one will
 even compile the file, let alone synthesise it the same way. Where both are
 available, run both; where only one is, make it the one the build uses.
 
+### The Verilator XPM FIFO shim is faster than the library
+
+`sim/verilator/shims/` models `xpm_fifo_sync` behaviourally. In first-word
+fall-through mode the shim presents a written word two cycles earlier than the
+XPM library does in xsim: a register → boundary → register → FIFO hop measures
+3 cycles accept-to-deliver under Verilator and 5 under xsim with the real
+macro (`kx_hop_tb`, `TB_LEAN=0`). A named primitive through `kohaku_sdpram`
+measures the same in both (4). Take any XPM-FIFO latency from xsim, never from
+Verilator; Verilator's number is a lower bound.
+
 ### One vendor macro blocks the whole library under Verilator
 
 Two things stop Verilator compiling the vendor's XPM sources directly, and only
@@ -338,6 +348,56 @@ that happens to begin with the tool's name stops the build with
 "Unknown verilator comment".
 
 Start the line differently.
+
+### A lint-only bench prints no verdict, so it failed by construction
+
+`xsim.py`'s `*_lint` entries elaborate an RTL module as the top. A module has
+no `initial` block, so `xsim -runall` returns at once having printed nothing,
+the harness finds no `PASS` line, and every such row was red in `check.py`
+from the day it was added — including the `kaxi_lint` precedent the newer
+ones copied. Elaboration *is* the check for these; the harness now prints the
+verdict itself after `xelab` and never runs the simulator.
+
+### One wedged simulator starves every other xsim on the machine
+
+A legacy bench that never finishes (`kaxi_xbar4 -d KAXI4` and its two
+variants) left an `xsimk` spinning at one core. While it lived, a 32-shape
+gate did three shapes in 40 minutes and `check.py full` sat on its
+fifteenth row; killing it, both finished at their usual pace. A stuck
+simulator is not a local loss — find it (`xsimk`, hours of CPU, started when
+the hung row was) before reading anything else as slow, and keep a bench
+that is known to hang out of the tier, listed as a gap.
+
+### Verilator 5.020 overflows its stack at a `fork` inside a task
+
+`kx_pxache_tb` runs under xsim and dies under Verilator — SIGILL or SIGSEGV
+after ~13 s with nothing printed (`--binary`, `--timing`). AddressSanitizer
+names it: a **stack-overflow** in `VlCoroutine`'s constructor, entered from
+the fork inside the bench's `stream_rd` task. `kx_xache_tb`, the same bench
+without that fork, runs in 0.2 s under the same tool. Verilator 5.020
+(the WSL package) predates the fork-in-task and stack-sizing fixes of the
+5.02x line; the bench is not changed for it, and xsim is the gate of record.
+A model that dies prints nothing because its stdout buffer dies with it —
+`stdbuf -oL` first, then read the last lines.
+
+### A register in front of a RAM's write port is a duplicate
+
+A block RAM's and a distributed RAM's write port register WE, ADDR and DIN
+at the clock edge. A "landing register" placed in front of one — the reflex
+for a wire arriving from another die — is a second register stage that
+costs a cycle and a flop per bit and adds nothing the RAM does not already
+do. `kx_hop` measured 4 cycles accept-to-deliver with it and 3 without,
+590 FF per hop either way (`kx_hop_tb`). What only a placed run can settle is
+whether the crossing's far end wants a fabric flop for its own timing; keep
+that as a parameter, not the default.
+
+### A verdict at column 0 is dropped by the harness
+
+`xsim.py` keeps only indented lines, `ERROR` lines and `PASS`/`FAIL`
+verdicts, so a bench's `@@@ PERF …` measurement lines at column 0 never
+reached the caller — the Xache's bandwidth figures were being read from a
+kept work directory. Lines starting `@@@` are now kept; a bench that prints
+a number it wants read should still indent it.
 
 ---
 
@@ -508,6 +568,40 @@ foreach m {M00 M01 M02 M03 M04 M05 M06 M07} {
     puts "@@@ $m -> [expr {[llength $ends] >= 2 ? $ends : {UNCONNECTED}}]"
 }
 ```
+
+### A module-reference parameter is typed from its default
+
+IPI decides whether a Verilog parameter is an integer or a bit-string from the
+**default value**, not from the declared width. `parameter [NSWAP*8-1:0] SWAP_A
+= 0` — a width in terms of another parameter and an unsized zero — is an
+integer, and `set_property CONFIG.SWAP_A 0b0001...` is refused with
+`IP_Flow 19-3452 Invalid long/float value`. A fixed width with a sized zero is
+a bit-string:
+
+```verilog
+parameter [255:0] SWAP_A = 256'h0;   // bit-string: CONFIG.SWAP_A 0b... is accepted
+```
+
+Slice it down to the consumer's width at the instantiation
+(`.SWAP_A(SWAP_A[NSWAP*8-1:0])`).
+
+### Dropping module-reference caches forces a repackage on open
+
+`<proj>.gen/sources_1/bd/mref/<module>/component.xml` is packaged once and the
+RTL is never re-parsed, so a source change reaches the block design only after
+that directory is deleted. Delete it **only before a rebuild**: deleted before a
+plain `open_project`, every module is repackaged on open, which is where a batch
+session can die without a message.
+
+### Runs outlive the session that launched them
+
+`launch_runs -jobs N` hands the runs to a scheduler (`vrs.exe`) and per-run
+`runme.bat` chains. Killing the Vivado session that launched them stops
+nothing: the scheduler keeps dispatching queued runs, each finished run starts
+the next, and the project directory stays locked. To stop a build, enumerate
+processes whose **command line names the project directory** — excluding the
+shell doing the enumerating, whose command line contains it too — kill them,
+and confirm none remain before touching the project.
 
 ### A net outlives the cell at its far end
 

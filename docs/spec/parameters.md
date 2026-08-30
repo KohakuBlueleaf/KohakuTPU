@@ -267,6 +267,7 @@ and does not elaborate alone.
 | `ADDR_W` | integer | `40` | Physical address width. | See §1. |
 | `ID_W` | integer | `4` | AXI ID width. | Any. |
 | `MW` | integer | `DATA_W` | Memory beat width at the DRAM master. `mag_dram_port` packs `DATA_W` up to this. | `DATA_W` times a power of two. |
+| `DRAM_CDC` | integer | `1` | Passed to `mag`: 1 crosses the DRAM master into its own clock through an asynchronous FIFO per channel; 0 keeps it on the mesh clock with synchronous queues, for a block design that declares the two domains the same. | 0 or non-zero. |
 | `ILINK` | integer | `0` | Build the interlink. **Zero generates none of it.** | 0 or non-zero. |
 | `MESH_ID` | integer | `0` | This mesh's id when the interlink is absent. | 0–3. |
 | `LINK_W` | integer | `288` | Interlink AXIS payload width. | Both ends must agree. |
@@ -516,6 +517,7 @@ The single point where a partition touches everything outside it. Protocol:
 | `WR_SLOTS` | integer | `16` | Write reassembly slots per memory port. | **At least two per node that can have a write in flight.** Under-sizing deadlocks; it does not corrupt. |
 | `MW` | integer | `DATA_W` | Memory beat width at `M_AXI_DRAM`. `mag_dram_port` packs `DATA_W` up to this, so at 512 an 8-beat 256-bit burst becomes 4 beats. | `DATA_W` times a power of two. |
 | `DRAM_RD_OUT` | integer | `` `KOHAKU_DRAM_RD_OUT `` (1) | `mag_dram_port`'s `RD_OUT`: DRAM reads one internal requester may hold in flight. The default is a macro so a bench can set it under a generated top whose parameters it cannot reach (`-d KOHAKU_DRAM_RD_OUT=4`). | `1`, `2`, `4`. |
+| `DRAM_CDC` | integer | `1` | `mag_dram_port`'s `DRAM_CDC`: 1 crosses `M_AXI_DRAM` into its own clock through an asynchronous FIFO per channel; 0 keeps it on the mesh clock with synchronous queues. A block design whose DRAM controller and mesh share a clock domain must set 0, or the tool rejects the mismatched `CLK_DOMAIN`. | 0 or non-zero. |
 | `STAGE` | integer | `0` | Build the staging store. **Zero generates none of it.** | 0 or non-zero. |
 | `STAGE_BANKS` | integer | `4` | Banks in the staging store. The address takes `$clog2(BANKS)` bank bits below the row index, so a sequential fill spreads across banks. | Power of two. |
 | `STAGE_ENTRIES` | integer | `16384` | Entries **in total, across all banks**. `mag_stage` derives `ROWS = ENTRIES / BANKS`, so at the defaults each of 4 banks holds 4096 rows. An entry is `4 × DATA_W` bits, so the default store is 2 MiB. | Power of two, and a whole multiple of `STAGE_BANKS`. |
@@ -618,7 +620,7 @@ No master in the framework drives them.
 
 N requesters onto one AXI4 master, packing a narrow internal beat up to a wider
 memory beat across a clock crossing. This is where every internal requester
-converges and where AXI exists exactly once; `mag.v:934` instantiates it with
+converges and where AXI exists exactly once; `mag.v:954` instantiates it with
 `N = MP1`.
 
 | Name | Type | Default | Controls | Legal range |
@@ -635,6 +637,7 @@ converges and where AXI exists exactly once; `mag.v:934` instantiates it with
 | `RQ` | integer | `64` | Read-data queue depth. | Power of two. |
 | `RD_OUT` | integer | `1` | Reads one requester may have in flight; the id is the requester and AXI returns same-id responses in order, so the queue behind the active burst needs no reorder buffer. At 4, one requester's 20-word reads go 2,744 → 8,917 MB/s at 300 MHz against a 106 ns DRAM (`mag_dram_port_bw_tb`), and 256-word reads reach 9,375 of the 9,600 MB/s the 256-bit internal beat allows. Verified at 2 and 4 by `mag_dram_port_tb` (queued reads, every head phase and length parity, two requesters at once) and by `mover_chain1/2/4` (588 / 591 / 597 checks). `mag` exposes it as `DRAM_RD_OUT`. | `1`, `2`, `4`; the default is the shipped value. |
 | `WR_MEM` | string | `"block"` | Storage primitive for the wide queues. | `"distributed"`, `"block"`. |
+| `DRAM_CDC` | integer | `1` | 1: the AXI side is on its own clock and every channel queue is an asynchronous FIFO across the crossing. 0: the AXI side is on the requesters' clock and the queues are synchronous FIFOs of the same depths; the memory clock port is unused. | 0 or non-zero. |
 
 ### `mag_dram_rr` — `src/kohakuaccel/sysnode/core/mag_dram_port.v`
 
@@ -676,6 +679,7 @@ replication.
 | `ADDR_WIDTH` | integer | `64` | Address width. | Any. |
 | `ID_WIDTH` | integer | `4` | AXI ID width. | Any. |
 | `DEPTH` | integer | `4096` | Storage depth in `DATA_WIDTH`-wide words. | Any. |
+| `RD_LAT_CYC` | integer | `0` | Cycles from `AR` accept to the first `R` beat — a DRAM-latency model for the benches that stream through it; `kx_xache_tb` and `kx_pxache_tb` run their bandwidth scenarios at 24. | `>= 0`. |
 
 ### `axi4_master` — `src/attic/legacy-axi/axi4_master.v`
 

@@ -15,9 +15,13 @@ kohakutpu/top/generated/ktpu_ship_2x1_6c0v_1m_pump.v
 kohakutpu/top/generated/ktpu_ship_2x1_6c0v_il.v
 kohakutpu/top/generated/ktpu_ship_2x1_6c0v_il_pump.v
 kohakutpu/top/generated/ktpu_ship_2x2.v
+kohakutpu/top/generated/ktpu_ship_2x2_2c2v_1m_nol2.v
+kohakutpu/top/generated/ktpu_ship_2x2_2c2v_1m_nol2_pump.v
 kohakutpu/top/generated/ktpu_ship_2x2_6c0v_il.v
 kohakutpu/top/generated/ktpu_ship_2x2_6c0v_il_pump.v
 kohakutpu/top/generated/ktpu_ship_2x2_6c2v_1m.v
+kohakutpu/top/generated/ktpu_ship_2x2_6c2v_1m_nol2.v
+kohakutpu/top/generated/ktpu_ship_2x2_6c2v_1m_nol2_pump.v
 kohakutpu/top/generated/ktpu_ship_2x2_6c2v_1m_pump.v
 kohakutpu/top/generated/ktpu_ship_2x2_6c2v_il.v
 kohakutpu/top/generated/ktpu_ship_2x2_6c2v_il_pump.v

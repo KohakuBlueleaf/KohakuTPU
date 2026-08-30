@@ -8,12 +8,17 @@ kohakuaccel/axi/link/sb_link_pair.v
 kohakuaccel/axi/simple/axi_n1.v
 kohakuaccel/axi/simple/axi_xbar2.v
 kohakuaccel/axi/station/sb_axi2lite.v
+kohakuaccel/axi/station/sb_axi_cdc.v
+kohakuaccel/axi/station/sb_axi_concentrate.v
+kohakuaccel/axi/station/sb_axi_deconcentrate.v
 kohakuaccel/axi/station/sb_hub.v
 kohakuaccel/axi/station/sb_nmu.v
 kohakuaccel/axi/station/sb_nmu_lite.v
 kohakuaccel/axi/station/sb_nsu.v
 kohakuaccel/axi/station/sb_nsu_lite.v
 kohakuaccel/axi/station/sb_station.v
+kohakuaccel/axi/station/sb_station_in.v
+kohakuaccel/axi/station/sb_station_out.v
 kohakuaccel/axi/topo/sb_chain2.v
 kohakuaccel/axi/topo/sb_leaf.v
 kohakuaccel/axi/topo/sb_line4.v
