@@ -47,7 +47,14 @@ read_verilog [list \
     [file join $stn sb_nmu.v] \
     [file join $stn sb_nsu.v] \
     [file join $topo sb_root9.v] \
+    [file join $root src kohakutransmit prim kts_fifo.v] \
+    [file join $root src kohakutransmit link kts_tx.v] \
+    [file join $root src kohakutransmit link kts_rx.v] \
+    [file join $root src kohakutransmit carrier kts_pipe.v] \
+    [file join $root src kohakutransmit prim kts_afifo.v] \
+    [file join $root src kohakutransmit carrier kts_cdc.v] \
     [file join $link sb_link.v] \
+    [file join $link sb_link_kts.v] \
     [file join $link sb_link_pair.v] \
     [file join $topo sb_slr1.v] \
     [file join $topo sb_leaf.v] \
@@ -90,11 +97,19 @@ if {$iskid eq ""} { set iskid 0 }
 if {$cfgonly eq ""} { set cfgonly 0 }
 # These generics exist only on specific tops; add them just there.
 set gextra {}
+set lcdc [lindex $argv 16]
+if {$lcdc eq ""} { set lcdc 0 }
+set kts [lindex $argv 15]
+if {$kts eq ""} { set kts 0 }
 if {$top eq "sb_line4" || $top eq "sb_quad"} {
-    set gextra [list -generic LINK_FULL=$lfull -generic LINK_MEM=$lmem]
+    set gextra [list -generic LINK_FULL=$lfull -generic LINK_MEM=$lmem \
+                     -generic LINK_CDC=$lcdc -generic LINK_KTS=$kts]
 }
 if {$top eq "sb_slr1"} {
     set gextra [list -generic ISKID=$iskid -generic CFG_ONLY=$cfgonly]
+}
+if {$top eq "sb_link_pair"} {
+    set gextra [list -generic KTS=$kts]
 }
 puts "@@@ top $top dir $dirv preset $pset lpb $lpb tagw $tagw ost $ost sf $sfwd fw $fw tmo $tmo lfull $lfull lmem $lmem"
 
@@ -107,8 +122,8 @@ synth_design -top $top -part $part -mode out_of_context \
              -generic STORE_FWD=$sfwd -generic FW=$fw -generic TIMEOUT=$tmo \
              -generic AW=$aw -generic REQ_W=$lrq -generic RSP_W=$lrs {*}$gextra
 
-ooc_record "$top-$pset-fw$fw-ost$ost-sf$sfwd-lpb$lpb-aw$aw" \
-    "top=$top preset=$pset fw=$fw aw=$aw ost=$ost sfwd=$sfwd lpb=$lpb tmo=$tmo" \
+ooc_record "$top-$pset-fw$fw-ost$ost-sf$sfwd-lpb$lpb-aw$aw-kts$kts-cdc$lcdc-lf$lfull" \
+    "top=$top preset=$pset fw=$fw aw=$aw ost=$ost sfwd=$sfwd lpb=$lpb tmo=$tmo kts=$kts cdc=$lcdc lfull=$lfull" \
     2000 2
 
 puts "@@@ ============================ device totals"

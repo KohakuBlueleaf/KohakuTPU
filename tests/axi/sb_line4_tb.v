@@ -251,8 +251,14 @@ module sb_line4_tb;
 `else
     localparam integer P_NSB = 0;
 `endif
+`ifdef SB_KTS
+    localparam integer P_KTS = 1;   // one surface per direction, not four links
+`else
+    localparam integer P_KTS = 0;
+`endif
     sb_line4 #(.AW(AW), .FW(P_FW), .NQ(NQ), .PORTW(PORTW), .CRED(P_CRED),
-               .LINK_CDC(P_CDC), .LINK_FULL(P_FULL), .OST(P_OST),
+               .LINK_CDC(P_CDC), .LINK_FULL(P_FULL), .LINK_KTS(P_KTS),
+               .OST(P_OST),
                .STORE_FWD(P_SF), .TIMEOUT(P_TO), .WIDE_DW(P_WIDE), .ISKID(P_ISKID),
                .NSB(P_NSB),
                .MOST0(MG0), .MOST1(MG1), .MOST2(MG2),

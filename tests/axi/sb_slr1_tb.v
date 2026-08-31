@@ -21,11 +21,21 @@ module sb_slr1_tb;
 `endif
 
     reg bus_clk = 0, clk_ctrl = 0, clk_xdma = 0, clk_mesh = 0, clk_ddr = 0;
-    always #1.00  bus_clk  = ~bus_clk;    // 500 MHz
-    always #5.00  clk_ctrl = ~clk_ctrl;   // 100 MHz
-    always #2.00  clk_xdma = ~clk_xdma;   // 250 MHz
-    always #2.11  clk_mesh = ~clk_mesh;   // ~237 MHz
-    always #1.667 clk_ddr  = ~clk_ddr;    // ~300 MHz
+    always begin  // 500 MHz
+        #1.00  bus_clk  = ~bus_clk;
+    end
+    always begin  // 100 MHz
+        #5.00  clk_ctrl = ~clk_ctrl;
+    end
+    always begin  // 250 MHz
+        #2.00  clk_xdma = ~clk_xdma;
+    end
+    always begin  // ~237 MHz
+        #2.11  clk_mesh = ~clk_mesh;
+    end
+    always begin  // ~300 MHz
+        #1.667 clk_ddr  = ~clk_ddr;
+    end
     reg rstn = 0;
     initial begin rstn = 0; #40 rstn = 1; end
 
@@ -102,7 +112,9 @@ module sb_slr1_tb;
             .arready(sp_arready[s]), .rid(sp_rid[s*MAXID +: MAXID]),
             .rdata(sp_rdata[s*MAXW +: DW]), .rresp(sp_rresp[s*2 +: 2]),
             .rlast(sp_rlast[s]), .rvalid(sp_rvalid[s]), .rready(sp_rready[s]));
-        if (DW < MAXW) assign sp_rdata[s*MAXW + DW +: MAXW-DW] = 0;
+        if (DW < MAXW) begin : g_pad
+            assign sp_rdata[s*MAXW + DW +: MAXW-DW] = 0;
+        end
     end endgenerate
 
     // ---- manager-0 driver on clk_ctrl (single-beat write then read) ----
@@ -148,8 +160,12 @@ module sb_slr1_tb;
         wr1(A_S1, 32'h12345678); rd1(A_S1, 32'h12345678);
         wr1(A_S4, 32'hCAFEF00D); rd1(A_S4, 32'hCAFEF00D);
         repeat (20) @(negedge clk_ctrl);
-        if (errors == 0) $display("PASS -- sb_slr1 %0d checks", checks);
-        else             $display("FAIL -- %0d errors of %0d", errors, checks);
+        if (errors == 0) begin
+            $display("PASS -- sb_slr1 %0d checks", checks);
+        end
+        else begin
+            $display("FAIL -- %0d errors of %0d", errors, checks);
+        end
         $finish;
     end
     initial begin #500000 $display("FAIL WATCHDOG"); $finish; end
@@ -172,7 +188,12 @@ module slv_ram #(parameter integer AW=40, DW=32, IDW=4)(
     reg [DW-1:0] mem [0:WORDS-1];
     reg [AW-1:0] wa, ra; reg [7:0] rleft; reg [IDW-1:0] wid_q, rid_q;
     reg wact, ract;
-    integer i; initial for (i=0;i<WORDS;i=i+1) mem[i]=0;
+    integer i;
+    initial begin
+        for (i = 0; i < WORDS; i = i + 1) begin
+            mem[i] = 0;
+        end
+    end
     localparam integer LSB = (DW==256) ? 5 : 2;
     always @(posedge clk) begin
         if (!rstn) begin awready<=0; wready<=0; bvalid<=0; arready<=0; rvalid<=0;
@@ -185,7 +206,9 @@ module slv_ram #(parameter integer AW=40, DW=32, IDW=4)(
                 mem[wa[AW-1:LSB] % WORDS] <= wdata; wa <= wa + (1<<LSB);
                 if (wlast) begin wact<=0; bid<=wid_q; bresp<=0; bvalid<=1; end
             end
-            if (bvalid && bready) bvalid <= 0;
+            if (bvalid && bready) begin
+                bvalid <= 0;
+            end
             arready <= !ract && !rvalid;
             if (arvalid && arready) begin ra<=araddr; rid_q<=arid; rleft<=arlen;
                                           ract<=1; end
@@ -194,7 +217,9 @@ module slv_ram #(parameter integer AW=40, DW=32, IDW=4)(
                 rlast <= (rleft==0); rvalid<=1;
             end else if (rvalid && rready) begin
                 rvalid <= 0;
-                if (rlast) ract<=0;
+                if (rlast) begin
+                    ract<=0;
+                end
                 else begin ra<=ra+(1<<LSB); rleft<=rleft-1; end
             end
         end

@@ -49,6 +49,13 @@ module sb_skid #(
         end
     end
 
+    // The skid itself is W LUT: `out_data`'s 2:1. The 700-odd the hierarchy
+    // report shows for the memory ports' instance is the port's own
+    // `mem_out_data` select parked at this level by the rebuilt hierarchy
+    // (LUT census of the node's checkpoint: 259 + 256 mem_out_data, 257
+    // out_data); registering the source measured -100 on the node, not the
+    // -577 the split suggested. Forcing one materialisation with `keep` was
+    // MEASURED at +845 LUT. A hierarchy row is not a cost; census it.
     always @(posedge clk) begin
         if (out_en) begin
             out_data <= hold_valid ? hold_data : i_data;

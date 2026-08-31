@@ -68,11 +68,15 @@ module station_in_probe #(
     localparam [AW-1:0] MSK = {8'hFF, 32'd0};
     function [NSEG*AW-1:0] mkbase; input integer u; integer k; begin
         mkbase = {NSEG*AW{1'b0}};
-        for (k = 0; k < NSEG; k = k + 1) mkbase[k*AW +: AW] = k << 32;
+        for (k = 0; k < NSEG; k = k + 1) begin
+            mkbase[k*AW +: AW] = k << 32;
+        end
     end endfunction
     function [NSEG*DSTW-1:0] mkdst; input integer u; integer k; begin
         mkdst = {NSEG*DSTW{1'b0}};
-        for (k = 0; k < NSEG; k = k + 1) mkdst[k*DSTW +: DSTW] = k[DSTW-1:0];
+        for (k = 0; k < NSEG; k = k + 1) begin
+            mkdst[k*DSTW +: DSTW] = k[DSTW-1:0];
+        end
     end endfunction
 
     sb_station_in #(.M(M), .DW(DW), .AW(AW), .IDW(4), .FW(256), .TAGW(4),
@@ -163,11 +167,15 @@ module indep_probe #(
     localparam [AW-1:0] MSK = {8'hFF, 32'd0};
     function [NSEG*AW-1:0] mkbase; input integer u; integer k; begin
         mkbase = {NSEG*AW{1'b0}};
-        for (k = 0; k < NSEG; k = k + 1) mkbase[k*AW +: AW] = k << 32;
+        for (k = 0; k < NSEG; k = k + 1) begin
+            mkbase[k*AW +: AW] = k << 32;
+        end
     end endfunction
     function [NSEG*DSTW-1:0] mkdst; input integer u; integer k; begin
         mkdst = {NSEG*DSTW{1'b0}};
-        for (k = 0; k < NSEG; k = k + 1) mkdst[k*DSTW +: DSTW] = k[DSTW-1:0];
+        for (k = 0; k < NSEG; k = k + 1) begin
+            mkdst[k*DSTW +: DSTW] = k[DSTW-1:0];
+        end
     end endfunction
 
     genvar g;

@@ -94,8 +94,9 @@ module sb_axi_concentrate #(
     always @(*) begin
         aw_grant = {OW{1'b0}};
         aw_gv    = 1'b0;
-        for (gi = M-1; gi >= 0; gi = gi - 1)
+        for (gi = M-1; gi >= 0; gi = gi - 1) begin
             if (s_awvalid[gi]) begin aw_grant = gi[OW-1:0]; aw_gv = 1'b1; end
+        end
     end
 
     wire aw_fire = !w_busy && aw_gv && m_awready;   // AW accepted, lock owner
@@ -152,8 +153,9 @@ module sb_axi_concentrate #(
     always @(*) begin
         ar_grant = {OW{1'b0}};
         ar_gv    = 1'b0;
-        for (gi = M-1; gi >= 0; gi = gi - 1)
+        for (gi = M-1; gi >= 0; gi = gi - 1) begin
             if (s_arvalid[gi]) begin ar_grant = gi[OW-1:0]; ar_gv = 1'b1; end
+        end
     end
 
     assign m_arvalid = ar_gv;

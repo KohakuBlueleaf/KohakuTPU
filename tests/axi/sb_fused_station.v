@@ -81,11 +81,15 @@ module sb_fused_station #(
     localparam [AW-1:0] MSK = {8'hFF, 32'd0};
     function [NSEG*AW-1:0] mkbase; input integer u; integer k; begin
         mkbase={NSEG*AW{1'b0}};
-        for (k=0;k<NSEG;k=k+1) mkbase[k*AW +: AW] = k << 32;
+        for (k=0;k<NSEG;k=k+1) begin
+            mkbase[k*AW +: AW] = k << 32;
+        end
     end endfunction
     function [NSEG*DSTW-1:0] mkprt; input integer u; integer k; begin
         mkprt={NSEG*DSTW{1'b0}};
-        for (k=0;k<NSEG;k=k+1) mkprt[k*DSTW +: DSTW] = k[DSTW-1:0];
+        for (k=0;k<NSEG;k=k+1) begin
+            mkprt[k*DSTW +: DSTW] = k[DSTW-1:0];
+        end
     end endfunction
 
     // fused input engine: M masters -> 1 flit (dst=station 0, dport=sub)

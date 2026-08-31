@@ -4,6 +4,7 @@ kohakuaccel/axi/bd/sb_bd_root.v
 kohakuaccel/axi/bd/sb_v6_bus.v
 kohakuaccel/axi/link/sb_link.v
 kohakuaccel/axi/link/sb_link_cdc.v
+kohakuaccel/axi/link/sb_link_kts.v
 kohakuaccel/axi/link/sb_link_pair.v
 kohakuaccel/axi/simple/axi_n1.v
 kohakuaccel/axi/simple/axi_xbar2.v

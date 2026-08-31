@@ -349,7 +349,9 @@ module sb_nsu #(
             // sub-burst's B (b_go) frees the slot and reaches the manager.
             if (b_acc) begin
                 w_bmrg[bw_id] <= resp_worse(w_bmrg[bw_id], m_bresp);
-                if (!b_final) w_nsp[bw_id] <= w_nsp[bw_id] - 1'b1;
+                if (!b_final) begin
+                    w_nsp[bw_id] <= w_nsp[bw_id] - 1'b1;
+                end
             end
             // Free on the zombie path too, or the slot re-arms its timer and
             // fires a SECOND SLVERR for a transaction already answered.
@@ -432,8 +434,12 @@ module sb_nsu #(
                 awg_id   <= m_awid_lo;
             end else if (awg_busy && m_awready) begin
                 awg_addr <= awg_addr + ({{(AW-BTW){1'b0}}, awg_sub} << SBW);
-                if (awg_left == awg_sub) awg_busy <= 1'b0;
-                else                     awg_left <= awg_left - awg_sub;
+                if (awg_left == awg_sub) begin
+                    awg_busy <= 1'b0;
+                end
+                else begin
+                    awg_left <= awg_left - awg_sub;
+                end
             end
         end
     end endgenerate
@@ -478,8 +484,12 @@ module sb_nsu #(
     assign m_wlast  = wq_out[0] || w_subend;
 
     always @(posedge m_aclk) begin
-        if (mrst)       wcnt <= {SBLOG{1'b0}};
-        else if (wbeat) wcnt <= m_wlast ? {SBLOG{1'b0}} : (wcnt + 1'b1);
+        if (mrst) begin
+            wcnt <= {SBLOG{1'b0}};
+        end
+        else if (wbeat) begin
+            wcnt <= m_wlast ? {SBLOG{1'b0}} : (wcnt + 1'b1);
+        end
     end
 
     // ---- READ address generator: same split as writes.
@@ -537,8 +547,12 @@ module sb_nsu #(
                 arg_id   <= m_arid_lo;
             end else if (arg_busy && m_arready) begin
                 arg_addr <= arg_addr + ({{(AW-BTW){1'b0}}, arg_sub} << SBW);
-                if (arg_left == arg_sub) arg_busy <= 1'b0;
-                else                     arg_left <= arg_left - arg_sub;
+                if (arg_left == arg_sub) begin
+                    arg_busy <= 1'b0;
+                end
+                else begin
+                    arg_left <= arg_left - arg_sub;
+                end
             end
         end
     end endgenerate
@@ -730,8 +744,11 @@ module sb_nsu #(
         // variable-offset part-select write = a barrel shifter over FW bits)
         genvar gs;
         for (gs = 0; gs < NSLICE; gs = gs + 1) begin : g_acc
-            always @(posedge bus_clk)
-                if (take && (o_sl == gs[SLW-1:0])) acc[gs*SDW +: SDW] <= o_rdata;
+            always @(posedge bus_clk) begin
+                if (take && (o_sl == gs[SLW-1:0])) begin
+                    acc[gs*SDW +: SDW] <= o_rdata;
+                end
+            end
         end
 
         assign rsp_dst  = fl_dst;  assign rsp_tag  = fl_tag;
@@ -750,8 +767,8 @@ module sb_nsu #(
         end
         // F8: decode is per-burst, so a 4 KB crosser (illegal, A3.4.1) mis-routes
         // its overflow -- flag the master bug; legal traffic is F1's split.
-        if (!mrst && (start_wr || start_rd) &&
-            (({6'd0, rq_addr[11:0]} + rq_bytes) > 18'd4096)) begin
+        if (!mrst && (start_wr || start_rd)
+            && (({6'd0, rq_addr[11:0]} + rq_bytes) > 18'd4096)) begin
             $display("%0t ERROR sb_nsu: burst crosses 4 KB (addr %h span %0d B)",
                      $time, rq_addr, rq_bytes);
         end

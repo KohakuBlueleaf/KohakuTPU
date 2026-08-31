@@ -210,6 +210,8 @@ manager placing rather than packing. **Out-of-context synthesis**, one run.
 | CLB registers | **42,223** |
 | block RAM | 84 RAMB36 + 13 RAMB18 |
 | per die (station + ports) | SLR0 4,385 · SLR1 **8,043** · SLR2 4,908 · SLR3 4,392 · three link pairs 1,293 |
+| with clock-crossing links, four subordinates per station | 23,405 LUT: SLR1 8,040 · SLR2 4,912 · SLR0/3 4,386 / 4,394 · links 1,641 |
+| with clock-crossing links, three subordinates per station (256-bit + 2 × 32-bit) | 19,204 LUT: SLR1 **7,077** · SLR2 **3,830** · SLR0/3 3,307 / 3,317 · links 1,641 |
 
 Against the SmartConnect tree it replaces, at the same endpoint set:
 **81,881 LUT and 130,124 FF, so 3.55×** — and **5.20× on the one die that

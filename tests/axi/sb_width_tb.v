@@ -366,7 +366,10 @@ module sb_width_tb;
         if (bresp !== 2'b11) begin
             errors = errors + 1;
             $display("    FAIL F5: WRAP write bresp %b, want DECERR", bresp);
-        end else $display("    F5 WRAP write refused (DECERR) ok");
+        end
+        else begin
+            $display("    F5 WRAP write refused (DECERR) ok");
+        end
         awburst = 2'b01; tick;
 
         arburst = 2'b00;                             // FIXED read
@@ -380,7 +383,10 @@ module sb_width_tb;
         if (rresp !== 2'b11) begin
             errors = errors + 1;
             $display("    FAIL F5: FIXED read rresp %b, want DECERR", rresp);
-        end else $display("    F5 FIXED read refused (DECERR) ok");
+        end
+        else begin
+            $display("    F5 FIXED read refused (DECERR) ok");
+        end
         arburst = 2'b01; tick;
 
         if (errors) begin

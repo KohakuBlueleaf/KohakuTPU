@@ -233,10 +233,44 @@ module sb_mesh2_ctrl_tb;
 
     // ONE SET PER MESH. Shared nets here mean both meshes drive the same wire
     // and every remote beat resolves to X.
-    wire [287:0] lk_d [0:1][0:1];      // [mesh][port]
-    wire [95:0]  lk_u [0:1][0:1];
-    wire         lk_l [0:1][0:1];
-    wire         lk_v [0:1][0:1];
+    wire [287:0] lk_f  [0:1][0:1];     // [mesh][port]
+    wire         lk_v  [0:1][0:1];
+    wire         lk_vc [0:1][0:1];
+    wire         lk_l  [0:1][0:1];
+    wire [3:0]   lk_cn [0:1][0:1];
+    wire         lk_cv [0:1][0:1];
+    wire         lk_cvc[0:1][0:1];
+
+    // The two meshes run on DIFFERENT mag clocks here, so the interlink
+    // crosses one. A surface between two domains needs kts_cdc: wired
+    // straight across, the far side samples credit counts in a foreign domain
+    // and the sender accumulates more credit than it was ever issued.
+    wire         c01_v, c01_vc, c01_l, c01_cv, c01_cvc;
+    wire [287:0] c01_f;
+    wire [3:0]   c01_cn;
+    wire         c10_v, c10_vc, c10_l, c10_cv, c10_cvc;
+    wire [287:0] c10_f;
+    wire [3:0]   c10_cn;
+
+    kts_cdc #(.W(288), .VC(2), .D(64), .CN_W(4)) u_cdc01 (
+        .a_clk(mag0), .a_rst(!rstn), .b_clk(mag1), .b_rst(!rstn),
+        .i_valid(lk_v[0][1]), .i_vc(lk_vc[0][1]), .i_last(lk_l[0][1]),
+        .i_flit(lk_f[0][1]),
+        .o_valid(c01_v), .o_vc(c01_vc), .o_last(c01_l), .o_flit(c01_f),
+        .i_crd_valid(lk_cv[1][0]), .i_crd_vc(lk_cvc[1][0]),
+        .i_crd_n(lk_cn[1][0]),
+        .o_crd_valid(c01_cv), .o_crd_vc(c01_cvc), .o_crd_n(c01_cn)
+    );
+
+    kts_cdc #(.W(288), .VC(2), .D(64), .CN_W(4)) u_cdc10 (
+        .a_clk(mag1), .a_rst(!rstn), .b_clk(mag0), .b_rst(!rstn),
+        .i_valid(lk_v[1][0]), .i_vc(lk_vc[1][0]), .i_last(lk_l[1][0]),
+        .i_flit(lk_f[1][0]),
+        .o_valid(c10_v), .o_vc(c10_vc), .o_last(c10_l), .o_flit(c10_f),
+        .i_crd_valid(lk_cv[0][1]), .i_crd_vc(lk_cvc[0][1]),
+        .i_crd_n(lk_cn[0][1]),
+        .o_crd_valid(c10_cv), .o_crd_vc(c10_cvc), .o_crd_n(c10_cn)
+    );
 
     // The control leg of each station port, between the 32-bit NSU and the mesh.
     wire [IDW-1:0] cs_awid[0:1], cs_arid[0:1], cs_bid[0:1], cs_rid[0:1];
@@ -303,6 +337,8 @@ module sb_mesh2_ctrl_tb;
         ktpu_ship_1x1_2c2v_1m #(.MESH_ID(g), .MODEL(1), .MW(DRAM_W),
                                 .MAG_CDC(1), .UNIT_CDC(1)) u (
             .axi_aclk(mclk), .axi_aresetn(rstn),
+            .hs_addr(32'd0), .hs_wr(1'b0), .hs_wdata(64'd0), .hs_wstrb(8'd0),
+            .hs_rd(1'b0),
             .noc_clk(aclk), .mat_clk(tclk), .vec_clk(vclk),
             .dram_aclk(dclk), .dram_aresetn(rstn),
 
@@ -371,22 +407,28 @@ module sb_mesh2_ctrl_tb;
 
             // mesh0.link1 <-> mesh1.link0, per the generated top's CH_SEQ note.
             // The far side of each pair ties tready high, which is the rule.
-            .M_AXIS_LINK0_tdata (lk_d[g][0]), .M_AXIS_LINK0_tuser(lk_u[g][0]),
-            .M_AXIS_LINK0_tlast (lk_l[g][0]), .M_AXIS_LINK0_tvalid(lk_v[g][0]),
-            .M_AXIS_LINK0_tready(1'b1),
-            .S_AXIS_LINK0_tdata ((g == 1) ? lk_d[0][1] : 288'd0),
-            .S_AXIS_LINK0_tuser ((g == 1) ? lk_u[0][1] : 96'd0),
-            .S_AXIS_LINK0_tlast ((g == 1) ? lk_l[0][1] : 1'b0),
-            .S_AXIS_LINK0_tvalid((g == 1) ? lk_v[0][1] : 1'b0),
-            .S_AXIS_LINK0_tready(),
-            .M_AXIS_LINK1_tdata (lk_d[g][1]), .M_AXIS_LINK1_tuser(lk_u[g][1]),
-            .M_AXIS_LINK1_tlast (lk_l[g][1]), .M_AXIS_LINK1_tvalid(lk_v[g][1]),
-            .M_AXIS_LINK1_tready(1'b1),
-            .S_AXIS_LINK1_tdata ((g == 0) ? lk_d[1][0] : 288'd0),
-            .S_AXIS_LINK1_tuser ((g == 0) ? lk_u[1][0] : 96'd0),
-            .S_AXIS_LINK1_tlast ((g == 0) ? lk_l[1][0] : 1'b0),
-            .S_AXIS_LINK1_tvalid((g == 0) ? lk_v[1][0] : 1'b0),
-            .S_AXIS_LINK1_tready()
+            .LINK0_OUT_valid(lk_v[g][0]), .LINK0_OUT_vc(lk_vc[g][0]),
+            .LINK0_OUT_last(lk_l[g][0]), .LINK0_OUT_flit(lk_f[g][0]),
+            .LINK0_OUT_crd_valid((g == 1) ? c10_cv : 1'b0),
+            .LINK0_OUT_crd_vc((g == 1) ? c10_cvc : 1'b0),
+            .LINK0_OUT_crd_n((g == 1) ? c10_cn : 4'd0),
+            .LINK0_IN_valid((g == 1) ? c01_v : 1'b0),
+            .LINK0_IN_vc((g == 1) ? c01_vc : 1'b0),
+            .LINK0_IN_last((g == 1) ? c01_l : 1'b0),
+            .LINK0_IN_flit((g == 1) ? c01_f : 288'd0),
+            .LINK0_IN_crd_valid(lk_cv[g][0]), .LINK0_IN_crd_vc(lk_cvc[g][0]),
+            .LINK0_IN_crd_n(lk_cn[g][0]),
+            .LINK1_OUT_valid(lk_v[g][1]), .LINK1_OUT_vc(lk_vc[g][1]),
+            .LINK1_OUT_last(lk_l[g][1]), .LINK1_OUT_flit(lk_f[g][1]),
+            .LINK1_OUT_crd_valid((g == 0) ? c01_cv : 1'b0),
+            .LINK1_OUT_crd_vc((g == 0) ? c01_cvc : 1'b0),
+            .LINK1_OUT_crd_n((g == 0) ? c01_cn : 4'd0),
+            .LINK1_IN_valid((g == 0) ? c10_v : 1'b0),
+            .LINK1_IN_vc((g == 0) ? c10_vc : 1'b0),
+            .LINK1_IN_last((g == 0) ? c10_l : 1'b0),
+            .LINK1_IN_flit((g == 0) ? c10_f : 288'd0),
+            .LINK1_IN_crd_valid(lk_cv[g][1]), .LINK1_IN_crd_vc(lk_cvc[g][1]),
+            .LINK1_IN_crd_n(lk_cn[g][1])
         );
 
         axi_ram #(.DATA_W(DRAM_W), .ADDR_W(MESH_AW), .ID_W(IDW),

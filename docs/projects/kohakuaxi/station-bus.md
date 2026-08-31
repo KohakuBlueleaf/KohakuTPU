@@ -604,6 +604,24 @@ ends of the line, 1,732 on SLR2, which forwards in both directions — over the
 same four NSUs (752 + 3 × 808). A link pair is 431 LUT (241 request + 190
 response) and 3,826–3,834 FF, the die-crossing pipelines being flops by design.
 
+**The same line with the links crossing clocks (`LINK_CDC=1`, the block
+design's setting), and the three-subordinate station** (`NQ=3`: one 256-bit
+port and two 32-bit, the shape a station carries when the DRAM path is the
+Xache's). One synthesis each, rows summing to the netlist:
+
+| | NQ=4, CDC links | NQ=3, CDC links |
+|---|---|---|
+| whole line | **23,405** (19,951 logic + 3,454 LUTRAM), 42,901 FF, 84 + 13 BRAM | **19,204** (16,198 + 3,006), 38,569 FF, 76 + 9 BRAM |
+| SLR0 station | 4,386 = hubs 1,210 + NSU 752 + 3 × 808 | 3,307 = hubs 941 + 750 + 2 × 808 |
+| SLR1 station | **8,040** = hubs 2,122 + NMUs 1,158 / 967 / 609 + NSUs 756 / 812 / 808 / 808 | **7,077** = hubs 1,845 + NMUs 1,152 / 1,102 / 598 + NSUs 760 / 812 / 808 |
+| SLR2 station | **4,912** = hubs 1,738 + 750 + 3 × 808 | **3,830** = hubs 1,464 + 750 + 2 × 808 |
+| SLR3 station | 4,394 = hubs 1,218 + 752 + 3 × 808 | 3,317 = hubs 949 + 752 + 2 × 808 |
+| three CDC link pairs | 1,641 = 3 × (299 request + 248 response) | 1,641 |
+
+A CDC link pair costs 547 against the synchronous 431; a fourth 32-bit
+subordinate costs 808 per station; the 256-bit subordinate costs what the
+512-bit one does (750 against 760), its queues being block RAM either way.
+
 **The earlier configuration** — the same line with no block RAM
 (`LUT_PER_BRAM=820`, `BALANCED`), the row the FW and AW sweeps of §2.5 were
 run at, kept because those sweeps are quoted against it:

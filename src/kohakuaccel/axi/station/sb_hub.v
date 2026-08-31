@@ -81,7 +81,11 @@ module sb_hub #(
     integer         k;
     always @(*) begin
         scan_sel = {SW{1'b0}};
-        for (k = 0; k < NSRC; k = k + 1) if (pick[k]) scan_sel = scan_sel | k[SW-1:0];
+        for (k = 0; k < NSRC; k = k + 1) begin
+            if (pick[k]) begin
+                scan_sel = scan_sel | k[SW-1:0];
+            end
+        end
     end
 
     wire [SW-1:0] sel   = locked ? lock_sel : scan_sel;

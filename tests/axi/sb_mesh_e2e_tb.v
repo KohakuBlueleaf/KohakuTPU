@@ -260,6 +260,8 @@ module sb_mesh_e2e_tb;
         ktpu_min_1m #(.MESH_ID(m), .MODEL(1), .MW(DRAM_W),
                       .MAG_CDC(1), .UNIT_CDC(1), .DRAM_CDC(`TB_DRAM_CDC)) u (
             .axi_aclk(mclk), .axi_aresetn(rstn),
+            .hs_addr(32'd0), .hs_wr(1'b0), .hs_wdata(64'd0), .hs_wstrb(8'd0),
+            .hs_rd(1'b0),
             .noc_clk(aclk), .mat_clk(tclk), .vec_clk(vclk),
             .dram_aclk(dclk), .dram_aresetn(rstn),
 
@@ -320,16 +322,18 @@ module sb_mesh_e2e_tb;
             .M_AXI_DRAM_rresp(dm_rresp[m]), .M_AXI_DRAM_rlast(dm_rlast[m]),
             .M_AXI_DRAM_rvalid(dm_rvalid[m]), .M_AXI_DRAM_rready(dm_rready[m]),
 
-            .M_AXIS_LINK0_tdata(), .M_AXIS_LINK0_tuser(), .M_AXIS_LINK0_tlast(),
-            .M_AXIS_LINK0_tvalid(), .M_AXIS_LINK0_tready(1'b1),
-            .S_AXIS_LINK0_tdata(288'd0), .S_AXIS_LINK0_tuser(96'd0),
-            .S_AXIS_LINK0_tlast(1'b0), .S_AXIS_LINK0_tvalid(1'b0),
-            .S_AXIS_LINK0_tready(),
-            .M_AXIS_LINK1_tdata(), .M_AXIS_LINK1_tuser(), .M_AXIS_LINK1_tlast(),
-            .M_AXIS_LINK1_tvalid(), .M_AXIS_LINK1_tready(1'b1),
-            .S_AXIS_LINK1_tdata(288'd0), .S_AXIS_LINK1_tuser(96'd0),
-            .S_AXIS_LINK1_tlast(1'b0), .S_AXIS_LINK1_tvalid(1'b0),
-            .S_AXIS_LINK1_tready()
+            .LINK0_OUT_valid(), .LINK0_OUT_vc(), .LINK0_OUT_last(),
+            .LINK0_OUT_flit(), .LINK0_OUT_crd_valid(1'b0),
+            .LINK0_OUT_crd_vc(1'b0), .LINK0_OUT_crd_n(4'd0),
+            .LINK0_IN_valid(1'b0), .LINK0_IN_vc(1'b0), .LINK0_IN_last(1'b0),
+            .LINK0_IN_flit(288'd0), .LINK0_IN_crd_valid(),
+            .LINK0_IN_crd_vc(), .LINK0_IN_crd_n(),
+            .LINK1_OUT_valid(), .LINK1_OUT_vc(), .LINK1_OUT_last(),
+            .LINK1_OUT_flit(), .LINK1_OUT_crd_valid(1'b0),
+            .LINK1_OUT_crd_vc(1'b0), .LINK1_OUT_crd_n(4'd0),
+            .LINK1_IN_valid(1'b0), .LINK1_IN_vc(1'b0), .LINK1_IN_last(1'b0),
+            .LINK1_IN_flit(288'd0), .LINK1_IN_crd_valid(),
+            .LINK1_IN_crd_vc(), .LINK1_IN_crd_n()
         );
 
         axi_ram #(.DATA_W(DRAM_W), .ADDR_W(MESH_AW), .ID_W(IDW),

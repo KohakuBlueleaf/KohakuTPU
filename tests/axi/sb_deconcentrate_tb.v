@@ -11,7 +11,9 @@ module sb_deconcentrate_tb;
     localparam integer STRB = DW/8;
 
     reg clk = 0, rst = 1;
-    always #1.667 clk = ~clk;
+    always begin
+        #1.667 clk = ~clk;
+    end
 
     reg  [IDW-1:0] s_awid, s_arid;
     reg  [AW-1:0]  s_awaddr, s_araddr;
@@ -140,10 +142,12 @@ module sb_deconcentrate_tb;
         repeat (8) @(posedge clk); rst = 0; repeat (4) @(posedge clk);
 
         // distinct single-beat data to each of the 4 ports, then read back.
-        for (p = 0; p < N; p = p + 1)
+        for (p = 0; p < N; p = p + 1) begin
             axi_write(p << PSEL_LSB, 8'd0, 512'hA5A5_0000 + (p << 24));
-        for (p = 0; p < N; p = p + 1)
+        end
+        for (p = 0; p < N; p = p + 1) begin
             axi_read_check(p << PSEL_LSB, 8'd0, 512'hA5A5_0000 + (p << 24));
+        end
 
         // a 4-beat burst to port 2, read back.
         axi_write((2 << PSEL_LSB) | 40'h400, 8'd3, 512'hDEAD_1000);
@@ -153,8 +157,12 @@ module sb_deconcentrate_tb;
         axi_read_check(0, 8'd0, 512'hA5A5_0000);
 
         repeat (8) @(posedge clk);
-        if (errors == 0) $display("  PASS -- deconcentrate 1->%0d, %0d checks, 0 errors", N, checks);
-        else             $display("  FAIL -- %0d errors in %0d checks", errors, checks);
+        if (errors == 0) begin
+            $display("  PASS -- deconcentrate 1->%0d, %0d checks, 0 errors", N, checks);
+        end
+        else begin
+            $display("  FAIL -- %0d errors in %0d checks", errors, checks);
+        end
         $finish;
     end
 endmodule

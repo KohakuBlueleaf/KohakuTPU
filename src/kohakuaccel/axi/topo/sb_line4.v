@@ -31,6 +31,9 @@ module sb_line4 #(
     // the streams are dead. LINK_FULL=0 omits them, halving cross-SLR wires.
     parameter integer MGR_STN   = 1,
     parameter integer LINK_FULL = 1,
+    // 1 replaces each boundary's four credit links with one transmit surface
+    // per direction. sb_link and sb_link_cdc are unchanged and still ship.
+    parameter integer LINK_KTS  = 0,
     parameter integer ISKID     = 0,   // register station-hub inputs (Fmax)
     // T3: "block" moves each link's RX buffer from ~W LUTRAM to near-empty BRAM
     // -- the win in full-link mode, where the dead directions multiply the links.
@@ -345,10 +348,8 @@ module sb_line4 #(
                 // Manager 0 (JTAG) is 64-bit: the driver's word. 16-deep
                 // FIFOs wedged every burst over 16 beats on v6.5 hardware.
                 localparam integer MW = (i == 1) ? 512 : ((i == 0) ? 64 : 32);
-                localparam integer M_OST = (i == 0) ? MOST0 : (i == 1) ? MOST1
-                                         : (i == 2) ? MOST2 : 0;
-                localparam integer M_PLC = (i == 0) ? MPLC0 : (i == 1) ? MPLC1
-                                         : (i == 2) ? MPLC2 : 0;
+                localparam integer M_OST = (i == 0) ? MOST0 : (i == 1) ? MOST1 : (i == 2) ? MOST2 : 0;
+                localparam integer M_PLC = (i == 0) ? MPLC0 : (i == 1) ? MPLC1 : (i == 2) ? MPLC2 : 0;
                 sb_nmu #(.MW(MW), .MIDW(MAXID), .AW(AW), .FW(FW), .TAGW(TAGW),
                          .DSTW(DPW), .LUT_PER_BRAM(S_LPB),
                          .OUTST(M_OST), .FORCE_PLACE(M_PLC),
@@ -500,7 +501,106 @@ module sb_line4 #(
         localparam integer NEED_R = LINK_FULL || (s >= MGR_STN);
         localparam integer NEED_L = LINK_FULL || (s <  MGR_STN);
 
-        if (NEED_R) begin : g_r
+        // At LINK_CDC each station owns its clock; at 0 every bus clock is the
+        // same net and the links live on station 0's.
+        wire lclk = LINK_CDC ? bclk[s]   : bclk[0];
+        wire lrst = LINK_CDC ? brst[s]   : brst[0];
+        wire rclk = LINK_CDC ? bclk[s+1] : bclk[0];
+        wire rrst = LINK_CDC ? brst[s+1] : brst[0];
+
+        if (LINK_KTS) begin : g_kts
+            // One surface per DIRECTION. With managers on one station only one
+            // class per direction is live, so those surfaces carry one VC and
+            // build no second buffer; the full line carries both on two VCs.
+            if (LINK_FULL) begin : g_both
+                sb_link_kts #(.WA(RQW), .WB(RSW), .VCN(2), .PIPE(PIPE),
+                              .CRED(CRED), .CDC(LINK_CDC),
+                              .MEMORY_TYPE(LINK_MEM)) u_fwd (
+                    .i_clk(lclk), .i_rst(lrst), .o_clk(rclk), .o_rst(rrst),
+                    .a_i_valid(st_rt_rqv[s]), .a_i_ready(st_rt_rqr[s]),
+                    .a_i_data(st_rt_rqp[s*RQW +: RQW]),
+                    .b_i_valid(st_rt_rsv[s]), .b_i_ready(st_rt_rsr[s]),
+                    .b_i_data(st_rt_rsp[s*RSW +: RSW]),
+                    .a_o_valid(st_lf_rqv[s+1]), .a_o_ready(st_lf_rqr[s+1]),
+                    .a_o_data(st_lf_rqp[(s+1)*RQW +: RQW]),
+                    .b_o_valid(st_lf_rsv[s+1]), .b_o_ready(st_lf_rsr[s+1]),
+                    .b_o_data(st_lf_rsp[(s+1)*RSW +: RSW]));
+
+                sb_link_kts #(.WA(RQW), .WB(RSW), .VCN(2), .PIPE(PIPE),
+                              .CRED(CRED), .CDC(LINK_CDC),
+                              .MEMORY_TYPE(LINK_MEM)) u_bwd (
+                    .i_clk(rclk), .i_rst(rrst), .o_clk(lclk), .o_rst(lrst),
+                    .a_i_valid(st_lt_rqv[s+1]), .a_i_ready(st_lt_rqr[s+1]),
+                    .a_i_data(st_lt_rqp[(s+1)*RQW +: RQW]),
+                    .b_i_valid(st_lt_rsv[s+1]), .b_i_ready(st_lt_rsr[s+1]),
+                    .b_i_data(st_lt_rsp[(s+1)*RSW +: RSW]),
+                    .a_o_valid(st_rf_rqv[s]), .a_o_ready(st_rf_rqr[s]),
+                    .a_o_data(st_rf_rqp[s*RQW +: RQW]),
+                    .b_o_valid(st_rf_rsv[s]), .b_o_ready(st_rf_rsr[s]),
+                    .b_o_data(st_rf_rsp[s*RSW +: RSW]));
+            end
+            else if (NEED_R) begin : g_r_only
+                sb_link_kts #(.WA(RQW), .WB(1), .VCN(1), .PIPE(PIPE),
+                              .CRED(CRED), .CDC(LINK_CDC),
+                              .MEMORY_TYPE(LINK_MEM)) u_fwd (
+                    .i_clk(lclk), .i_rst(lrst), .o_clk(rclk), .o_rst(rrst),
+                    .a_i_valid(st_rt_rqv[s]), .a_i_ready(st_rt_rqr[s]),
+                    .a_i_data(st_rt_rqp[s*RQW +: RQW]),
+                    .b_i_valid(1'b0), .b_i_ready(), .b_i_data(1'b0),
+                    .a_o_valid(st_lf_rqv[s+1]), .a_o_ready(st_lf_rqr[s+1]),
+                    .a_o_data(st_lf_rqp[(s+1)*RQW +: RQW]),
+                    .b_o_valid(), .b_o_ready(1'b1), .b_o_data());
+
+                sb_link_kts #(.WA(RSW), .WB(1), .VCN(1), .PIPE(PIPE),
+                              .CRED(CRED), .CDC(LINK_CDC),
+                              .MEMORY_TYPE(LINK_MEM)) u_bwd (
+                    .i_clk(rclk), .i_rst(rrst), .o_clk(lclk), .o_rst(lrst),
+                    .a_i_valid(st_lt_rsv[s+1]), .a_i_ready(st_lt_rsr[s+1]),
+                    .a_i_data(st_lt_rsp[(s+1)*RSW +: RSW]),
+                    .b_i_valid(1'b0), .b_i_ready(), .b_i_data(1'b0),
+                    .a_o_valid(st_rf_rsv[s]), .a_o_ready(st_rf_rsr[s]),
+                    .a_o_data(st_rf_rsp[s*RSW +: RSW]),
+                    .b_o_valid(), .b_o_ready(1'b1), .b_o_data());
+
+                assign st_lt_rqr[s+1]              = 1'b1;
+                assign st_rf_rqv[s]                = 1'b0;
+                assign st_rf_rqp[s*RQW +: RQW]     = {RQW{1'b0}};
+                assign st_rt_rsr[s]                = 1'b1;
+                assign st_lf_rsv[s+1]              = 1'b0;
+                assign st_lf_rsp[(s+1)*RSW +: RSW] = {RSW{1'b0}};
+            end
+            else begin : g_l_only
+                sb_link_kts #(.WA(RSW), .WB(1), .VCN(1), .PIPE(PIPE),
+                              .CRED(CRED), .CDC(LINK_CDC),
+                              .MEMORY_TYPE(LINK_MEM)) u_fwd (
+                    .i_clk(lclk), .i_rst(lrst), .o_clk(rclk), .o_rst(rrst),
+                    .a_i_valid(st_rt_rsv[s]), .a_i_ready(st_rt_rsr[s]),
+                    .a_i_data(st_rt_rsp[s*RSW +: RSW]),
+                    .b_i_valid(1'b0), .b_i_ready(), .b_i_data(1'b0),
+                    .a_o_valid(st_lf_rsv[s+1]), .a_o_ready(st_lf_rsr[s+1]),
+                    .a_o_data(st_lf_rsp[(s+1)*RSW +: RSW]),
+                    .b_o_valid(), .b_o_ready(1'b1), .b_o_data());
+
+                sb_link_kts #(.WA(RQW), .WB(1), .VCN(1), .PIPE(PIPE),
+                              .CRED(CRED), .CDC(LINK_CDC),
+                              .MEMORY_TYPE(LINK_MEM)) u_bwd (
+                    .i_clk(rclk), .i_rst(rrst), .o_clk(lclk), .o_rst(lrst),
+                    .a_i_valid(st_lt_rqv[s+1]), .a_i_ready(st_lt_rqr[s+1]),
+                    .a_i_data(st_lt_rqp[(s+1)*RQW +: RQW]),
+                    .b_i_valid(1'b0), .b_i_ready(), .b_i_data(1'b0),
+                    .a_o_valid(st_rf_rqv[s]), .a_o_ready(st_rf_rqr[s]),
+                    .a_o_data(st_rf_rqp[s*RQW +: RQW]),
+                    .b_o_valid(), .b_o_ready(1'b1), .b_o_data());
+
+                assign st_rt_rqr[s]                = 1'b1;
+                assign st_lf_rqv[s+1]              = 1'b0;
+                assign st_lf_rqp[(s+1)*RQW +: RQW] = {RQW{1'b0}};
+                assign st_lt_rsr[s+1]              = 1'b1;
+                assign st_rf_rsv[s]                = 1'b0;
+                assign st_rf_rsp[s*RSW +: RSW]     = {RSW{1'b0}};
+            end
+        end
+        else if (NEED_R) begin : g_r
             if (LINK_CDC) begin : g_cdc
                 sb_link_cdc #(.W(RQW), .PIPE(PIPE), .CRED(CRED), .MEMORY_TYPE(LINK_MEM)) u_rq_fwd (
                     .i_clk(bclk[s]), .i_rst(brst[s]),
@@ -543,7 +643,10 @@ module sb_line4 #(
             assign st_rf_rsp[s*RSW +: RSW]     = {RSW{1'b0}};
         end
 
-        if (NEED_L) begin : g_l
+        if (LINK_KTS) begin : g_l_kts
+            // g_kts above drove both directions and both classes.
+        end
+        else if (NEED_L) begin : g_l
             if (LINK_CDC) begin : g_cdc
                 sb_link_cdc #(.W(RQW), .PIPE(PIPE), .CRED(CRED), .MEMORY_TYPE(LINK_MEM)) u_rq_bwd (
                     .i_clk(bclk[s+1]), .i_rst(brst[s+1]),
