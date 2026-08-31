@@ -28,7 +28,12 @@ if {$gspec ne "-"} {
     }
 }
 foreach f $files { read_verilog $f }
-set cmd [list synth_design -top $top -part $part -mode out_of_context]
+# Every source's directory is an include directory, so a module's `include of
+# a header that lives beside another module's file resolves.
+set incdirs {}
+foreach f $files { lappend incdirs [file dirname $f] }
+set incdirs [lsort -unique $incdirs]
+set cmd [list synth_design -top $top -part $part -mode out_of_context -include_dirs $incdirs]
 foreach g $generics { lappend cmd -generic $g }
 if {[catch {eval $cmd} err]} { puts "SYNTH FAILED: $err"; exit 1 }
 
@@ -77,8 +82,15 @@ report_timing -delay_type max -max_paths 100 -nworst 1 -sort_by slack -file "$ou
 report_timing_summary -file "$outdir/timing_summary.rpt"
 
 set paths [get_timing_paths -delay_type max -max_paths 1 -nworst 1]
-set wns [get_property SLACK [lindex $paths 0]]
-set fmax [expr {1000.0 / ($period - $wns)}]
+# A design with no register-to-register path (a RAM whose read lands on a
+# port) has no slack to report; say so rather than divide by nothing.
+if {[llength $paths] == 0} {
+    set wns 0.0
+    set fmax 0.0
+} else {
+    set wns [get_property SLACK [lindex $paths 0]]
+    set fmax [expr {1000.0 / ($period - $wns)}]
+}
 
 set lut "?"; set ff "?"; set uram "?"; set bram "?"
 foreach line [split [report_utilization -return_string] "\n"] {

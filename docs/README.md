@@ -262,6 +262,9 @@ it, and a framework doc that quotes them as if they were is wrong.
       common/            shared primitives: FIFOs, named memory wrappers
     src/kohakuaxi/       the fused crossbar-cache: M AXI masters to N cached
                          DRAM channels, one system, AXI only at its edges
+    src/kohakutransmit/  Kohaku Transmit Surface: the credited, latency-
+                         insensitive link — ends, carriers, switch, bridges.
+                         Imports nothing; anything may import it
       verif/             bench-only models: axi_ram, port checkers
     src/templates/       worked examples with benches: CU, transform occupant,
                          endpoint adapter

@@ -30,6 +30,9 @@ FRAMEWORK = ("src", "kohakuaccel")
 PROJECTS = {("src", "kohakutpu"), ("src", "kohakumpe")}
 #: Trees a framework module may name without it being a project dependency.
 NEUTRAL = (("src", "templates"), ("src", "reference"), ("src", "attic"), ("sim",))
+#: Standalone libraries: anything may instantiate them; they instantiate
+#: nothing outside their own tree. Checked in both directions.
+LIBRARIES = {("src", "kohakutransmit")}
 
 #: Slots: named behind a parameter defaulting to 0, so nothing elaborates one.
 #: `src/templates/` also has `xform_bank`, so NEUTRAL eats it -- two print.
@@ -113,7 +116,18 @@ def main() -> int:
     bad, allowed = [], []
     for p, clean in bodies.items():
         parts = p.relative_to(ROOT).parts
-        if parts[:2] != FRAMEWORK:
+        home = parts[:2]
+        if home in LIBRARIES:
+            # A library names only itself.
+            for name in sorted(set(INST.findall(clean))):
+                if name in KEYWORDS or name not in owner:
+                    continue
+                if any(q.relative_to(ROOT).parts[:2] == home for q in owner[name]):
+                    continue
+                where = sorted(q.relative_to(ROOT).as_posix() for q in owner[name])
+                bad.append((p.relative_to(ROOT).as_posix(), name, where))
+            continue
+        if home != FRAMEWORK:
             continue
         for name in sorted(set(INST.findall(clean))):
             if name in KEYWORDS or name not in owner:

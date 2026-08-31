@@ -24,6 +24,7 @@ way: a project doc cites the framework, never the reverse.
 | [kohakutpu/](kohakutpu/README.md) | An MXFP7 tensor accelerator on `xcvu13p-fhgb2104-2L-e`. The reference instance. |
 | [kohakumpe/](kohakumpe/README.md) | The same framework with **processors** on the port instead of a fixed datapath — a SIMD PE and a SIMT PE. It also supplies the SIMD unit that fills the framework's `SIMD_EN` slot. |
 | [kohakuaxi/](kohakuaxi/README.md) | Two AXI systems. The **station bus**: a line of AXI stations replacing a large crossbar, at O(1) per port — the fabric the other two reach their meshes and control registers through. The **fused crossbar-cache**: M masters to N cached DRAM channels as one system with AXI only at its edges. |
+| [kohakutransmit/](kohakutransmit/README.md) | **Kohaku Transmit Surface**: a credit-based transport with no `ready` on the wire — latency-insensitive across register stages, dies, clock domains and chips; carried over AXI4-Stream, AXI4 or a serial stream; AXI4 carried over it. A standalone project that imports nothing and is documented on its own. |
 
 Two projects rather than one is the point of the numbers rule below: the same
 framework measures differently under each, and neither set of figures is a

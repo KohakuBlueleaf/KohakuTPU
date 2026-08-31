@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Lint the RTL with verilator, using a bench's own source list.
 
-    python scripts/py/vlint.py ctrlpe_mesh
+    python scripts/py/vlint.py sb_mesh2_ctrl
     python scripts/py/vlint.py --list
-    python scripts/py/vlint.py ctrlpe_mesh --top ktpu_ctrlpe_1x1
+    python scripts/py/vlint.py sb_mesh2_ctrl --top ktpu_ship_1x1_2c2v_1m
 
 The list comes from `xsim.py` for the same reason `ooc_mesh.py` takes it from
 there: a second hand-kept list drifts, and the first symptom is a lint run
@@ -29,6 +29,7 @@ MAMBA_ENV = pathlib.Path(os.environ["USERPROFILE"]) / "micromamba/envs/hdlfmt/Li
 
 INCDIRS = (
     "src/kohakuaccel/noc",
+    "src/kohakuaccel/pe/rv64-sys/core",
     "src/kohakumpe/simd",
     "src/kohakumpe/simd/generated",
     "src/kohakumpe/simt",

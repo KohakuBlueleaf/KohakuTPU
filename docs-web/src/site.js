@@ -158,6 +158,13 @@ const META = {
     domain: "framework",
   },
 
+  "/transmit": {
+    title: "Kohaku Transmit Surface",
+    short: "Kohaku Transmit Surface",
+    order: 0,
+    domain: "framework",
+  },
+
   "/mpe": {
     title: "A mesh of processors",
     short: "A mesh of processors",
@@ -230,8 +237,15 @@ const SECTION_DEF = {
     icon: "i-carbon-cpu",
     blurb: "A mesh whose compute units are processors.",
   },
+  transmit: {
+    title: "KTS",
+    domain: "framework",
+    icon: "i-carbon-connection-signal",
+    blurb:
+      "Kohaku Transmit Surface: a credited link with no ready on the wire — any length, any width, any carrier.",
+  },
 };
-const SECTION_ORDER = ["machine", "framework", "component", "tpu", "mpe"];
+const SECTION_ORDER = ["machine", "framework", "component", "tpu", "mpe", "transmit"];
 
 /** Every routable path with a component, parent paths joined. */
 function walk(list, base = "") {

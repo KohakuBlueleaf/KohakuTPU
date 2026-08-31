@@ -19,7 +19,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 #: Packages whose immediate children are libraries. `templates/`, `examples/`,
 #: `reference/` and `attic/` carry no manifest and are not inventoried here.
-PACKAGES = ("kohakuaccel", "kohakutpu", "kohakumpe")
+PACKAGES = ("kohakuaccel", "kohakutpu", "kohakumpe", "kohakutransmit")
 SUFFIX = (".v", ".vh")
 
 
