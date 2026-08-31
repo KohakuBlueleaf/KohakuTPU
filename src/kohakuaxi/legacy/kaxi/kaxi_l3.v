@@ -118,8 +118,8 @@ module kaxi_l3 #(
     wire [SET_W-1:0] rd_idx = idx_of(r_addr);
 
     wire [ROW_W-1:0] rd_row;                          // {valid, tag, data}
-    wire             r_hit  = rd_row[ROW_W-1] &&
-                              (rd_row[DATA_W +: TAG_W] == exptag_q);
+    wire             r_hit  = rd_row[ROW_W-1]
+                              && (rd_row[DATA_W +: TAG_W] == exptag_q);
 
     reg arrdy;
     assign s_arready = arrdy && !flushing;
@@ -130,52 +130,60 @@ module kaxi_l3 #(
             rst_st <= R_IDLE; s_rvalid <= 1'b0; m_arvalid <= 1'b0; arrdy <= 1'b1;
         end else begin
             case (rst_st)
-            R_IDLE: begin
-                s_rvalid <= 1'b0;
-                if (s_arvalid && arrdy && !flushing) begin
-                    r_addr <= s_araddr; r_left <= s_arlen; r_id <= s_arid;
-                    r_size <= s_arsize; r_burst <= s_arburst;
-                    arrdy <= 1'b0; rst_st <= R_ISSUE;
+                R_IDLE: begin
+                    s_rvalid <= 1'b0;
+                    if (s_arvalid && arrdy && !flushing) begin
+                        r_addr <= s_araddr; r_left <= s_arlen; r_id <= s_arid;
+                        r_size <= s_arsize; r_burst <= s_arburst;
+                        arrdy <= 1'b0; rst_st <= R_ISSUE;
+                    end
                 end
-            end
-            R_ISSUE: begin
-                exptag_q <= tag_of(r_addr); ridx_q <= rd_idx;
-                rwait    <= RD_WAIT[2:0]; rst_st <= R_WAIT;
-            end
-            R_WAIT: if (rwait <= 3'd1) rst_st <= R_CHK; else rwait <= rwait - 3'd1;
-            R_CHK: begin
-                if (!r_incr) begin                    // non-INCR: SLVERR, no walk
-                    s_rdata <= {DATA_W{1'b0}}; s_rid <= r_id; s_rresp <= 2'b10;
-                    s_rlast <= (r_left == 8'd0); s_rvalid <= 1'b1;
-                    rst_st  <= R_DRAIN;
-                end else if (r_hit) begin
-                    s_rdata <= rd_row[DATA_W-1:0]; s_rid <= r_id; s_rresp <= 2'b00;
-                    s_rlast <= (r_left == 8'd0); s_rvalid <= 1'b1;
-                    rst_st  <= R_DRAIN;
-                end else begin
-                    m_arid <= r_id;
-                    m_araddr <= {r_addr[ADDR_W-1:LINE_LSB], {LINE_LSB{1'b0}}};
-                    m_arlen <= 8'd0; m_arsize <= r_size; m_arburst <= 2'b01;
-                    m_arvalid <= 1'b1; rst_st <= R_FETCH;
+                R_ISSUE: begin
+                    exptag_q <= tag_of(r_addr); ridx_q <= rd_idx;
+                    rwait    <= RD_WAIT[2:0]; rst_st <= R_WAIT;
                 end
-            end
-            R_FETCH: begin
-                if (m_arvalid && m_arready) m_arvalid <= 1'b0;
-                if (m_rvalid) begin
-                    s_rdata <= m_rdata; s_rid <= r_id; s_rresp <= m_rresp;
-                    s_rlast <= (r_left == 8'd0); s_rvalid <= 1'b1;
-                    rst_st  <= R_DRAIN;   // fill happens in the write-port block
+                R_WAIT: begin
+                    if (rwait <= 3'd1) begin
+                        rst_st <= R_CHK;
+                    end else begin
+                        rwait <= rwait - 3'd1;
+                    end
                 end
-            end
-            R_DRAIN: if (s_rvalid && s_rready) begin
-                s_rvalid <= 1'b0;
-                if (s_rlast) begin arrdy <= 1'b1; rst_st <= R_IDLE; end
-                else begin
-                    r_addr <= r_addr + BYTE_STEP; r_left <= r_left - 8'd1;
-                    rst_st <= R_ISSUE;
+                R_CHK: begin
+                    if (!r_incr) begin                    // non-INCR: SLVERR, no walk
+                        s_rdata <= {DATA_W{1'b0}}; s_rid <= r_id; s_rresp <= 2'b10;
+                        s_rlast <= (r_left == 8'd0); s_rvalid <= 1'b1;
+                        rst_st  <= R_DRAIN;
+                    end else if (r_hit) begin
+                        s_rdata <= rd_row[DATA_W-1:0]; s_rid <= r_id; s_rresp <= 2'b00;
+                        s_rlast <= (r_left == 8'd0); s_rvalid <= 1'b1;
+                        rst_st  <= R_DRAIN;
+                    end else begin
+                        m_arid <= r_id;
+                        m_araddr <= {r_addr[ADDR_W-1:LINE_LSB], {LINE_LSB{1'b0}}};
+                        m_arlen <= 8'd0; m_arsize <= r_size; m_arburst <= 2'b01;
+                        m_arvalid <= 1'b1; rst_st <= R_FETCH;
+                    end
                 end
-            end
-            default: rst_st <= R_IDLE;
+                R_FETCH: begin
+                    if (m_arvalid && m_arready) begin
+                        m_arvalid <= 1'b0;
+                    end
+                    if (m_rvalid) begin
+                        s_rdata <= m_rdata; s_rid <= r_id; s_rresp <= m_rresp;
+                        s_rlast <= (r_left == 8'd0); s_rvalid <= 1'b1;
+                        rst_st  <= R_DRAIN;   // fill happens in the write-port block
+                    end
+                end
+                R_DRAIN: if (s_rvalid && s_rready) begin
+                    s_rvalid <= 1'b0;
+                    if (s_rlast) begin arrdy <= 1'b1; rst_st <= R_IDLE; end
+                    else begin
+                        r_addr <= r_addr + BYTE_STEP; r_left <= r_left - 8'd1;
+                        rst_st <= R_ISSUE;
+                    end
+                end
+                default: rst_st <= R_IDLE;
             endcase
         end
     end
@@ -200,27 +208,29 @@ module kaxi_l3 #(
             s_bvalid <= 1'b0; m_bready <= 1'b0;
         end else begin
             case (wst)
-            W_IDLE: begin
-                s_bvalid <= 1'b0;
-                if (s_awvalid && awrdy && !flushing) begin
-                    m_awid <= s_awid; m_awaddr <= s_awaddr; m_awlen <= s_awlen;
-                    m_awsize <= s_awsize; m_awburst <= s_awburst; m_awvalid <= 1'b1;
-                    w_addr <= s_awaddr; w_incr <= (s_awburst == 2'b01);
-                    awrdy <= 1'b0; wst <= W_AW;
+                W_IDLE: begin
+                    s_bvalid <= 1'b0;
+                    if (s_awvalid && awrdy && !flushing) begin
+                        m_awid <= s_awid; m_awaddr <= s_awaddr; m_awlen <= s_awlen;
+                        m_awsize <= s_awsize; m_awburst <= s_awburst; m_awvalid <= 1'b1;
+                        w_addr <= s_awaddr; w_incr <= (s_awburst == 2'b01);
+                        awrdy <= 1'b0; wst <= W_AW;
+                    end
                 end
-            end
-            W_AW: if (m_awready) begin m_awvalid <= 1'b0; wst <= W_DATA; end
-            W_DATA: if (s_wvalid && s_wready) begin
-                w_addr <= w_addr + BYTE_STEP;
-                if (s_wlast) begin m_bready <= 1'b1; wst <= W_RESP; end
-            end
-            W_RESP: if (m_bvalid) begin
-                s_bid <= m_bid; s_bresp <= m_bresp; s_bvalid <= 1'b1;
-                m_bready <= 1'b0; awrdy <= 1'b1; wst <= W_IDLE;
-            end
-            default: wst <= W_IDLE;
+                W_AW: if (m_awready) begin m_awvalid <= 1'b0; wst <= W_DATA; end
+                W_DATA: if (s_wvalid && s_wready) begin
+                    w_addr <= w_addr + BYTE_STEP;
+                    if (s_wlast) begin m_bready <= 1'b1; wst <= W_RESP; end
+                end
+                W_RESP: if (m_bvalid) begin
+                    s_bid <= m_bid; s_bresp <= m_bresp; s_bvalid <= 1'b1;
+                    m_bready <= 1'b0; awrdy <= 1'b1; wst <= W_IDLE;
+                end
+                default: wst <= W_IDLE;
             endcase
-            if (s_bvalid && s_bready) s_bvalid <= 1'b0;
+            if (s_bvalid && s_bready) begin
+                s_bvalid <= 1'b0;
+            end
         end
     end
 
@@ -229,7 +239,9 @@ module kaxi_l3 #(
         if (!resetn) begin flushing <= 1'b1; flush_idx <= {SET_W{1'b0}}; end
         else if (flushing) begin
             flush_idx <= flush_idx + 1'b1;
-            if (flush_idx == (SETS-1)) flushing <= 1'b0;
+            if (flush_idx == (SETS-1)) begin
+                flushing <= 1'b0;
+            end
         end
     end
 

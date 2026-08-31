@@ -109,12 +109,12 @@ module kaxi_xbar2 #(
             arg[h] = {MIDX_W{1'b0}}; arg_v[h] = 1'b0;
             for (k = 0; k < M; k = k + 1) begin
                 cand = (rrw[h] + k) % M;
-                if (!awg_v[h] && s_awvalid[cand] && !wbusy[cand] &&
-                    (s_awaddr[cand*ADDR_W + HOME_LSB +: HIDX_W] == h[HIDX_W-1:0]))
+                if (!awg_v[h] && s_awvalid[cand] && !wbusy[cand]
+                    && (s_awaddr[cand*ADDR_W + HOME_LSB +: HIDX_W] == h[HIDX_W-1:0]))
                     begin awg[h] = cand; awg_v[h] = 1'b1; end
                 cand = (rrr[h] + k) % M;
-                if (!arg_v[h] && s_arvalid[cand] && !rbusy[cand] &&
-                    (s_araddr[cand*ADDR_W + HOME_LSB +: HIDX_W] == h[HIDX_W-1:0]))
+                if (!arg_v[h] && s_arvalid[cand] && !rbusy[cand]
+                    && (s_araddr[cand*ADDR_W + HOME_LSB +: HIDX_W] == h[HIDX_W-1:0]))
                     begin arg[h] = cand; arg_v[h] = 1'b1; end
             end
         end
@@ -130,8 +130,9 @@ module kaxi_xbar2 #(
         s_rresp = {M*2{1'b0}}; s_rlast = {M{1'b0}};
         for (h = 0; h < N_HOME; h = h + 1) begin
             // write accept of the granted master
-            if ((wst[h] == WI) && awg_v[h] && m_awready[h])
+            if ((wst[h] == WI) && awg_v[h] && m_awready[h]) begin
                 s_awready[awg[h]] = 1'b1;
+            end
             if (wst[h] == WD) begin
                 s_wready[curw[h]] = m_wready[h];
             end
@@ -141,8 +142,9 @@ module kaxi_xbar2 #(
                 s_bresp[curw[h]*2 +: 2]       = m_bresp[h*2 +: 2];
             end
             // read accept of the granted master
-            if ((rst[h] == RI) && arg_v[h] && m_arready[h])
+            if ((rst[h] == RI) && arg_v[h] && m_arready[h]) begin
                 s_arready[arg[h]] = 1'b1;
+            end
             if (rst[h] == RD) begin
                 s_rvalid[curr[h]] = m_rvalid[h];
                 s_rid  [curr[h]*ID_W +: ID_W] = m_rid[h*SID_W +: ID_W];
@@ -176,7 +178,9 @@ module kaxi_xbar2 #(
                 m_wstrb [h*STRB_W +: STRB_W] = s_wstrb[curw[h]*STRB_W +: STRB_W];
                 m_wlast [h]                  = s_wlast[curw[h]];
             end
-            if (wst[h] == WB) m_bready[h] = s_bready[curw[h]];
+            if (wst[h] == WB) begin
+                m_bready[h] = s_bready[curw[h]];
+            end
             if (rst[h] == RI) begin
                 m_arvalid[h] = arg_v[h];
                 m_arid   [h*SID_W +: SID_W]  = {arg[h], s_arid[arg[h]*ID_W +: ID_W]};
@@ -185,7 +189,9 @@ module kaxi_xbar2 #(
                 m_arsize [h*3 +: 3]          = s_arsize[arg[h]*3 +: 3];
                 m_arburst[h*2 +: 2]          = s_arburst[arg[h]*2 +: 2];
             end
-            if (rst[h] == RD) m_rready[h] = s_rready[curr[h]];
+            if (rst[h] == RD) begin
+                m_rready[h] = s_rready[curr[h]];
+            end
         end
     end
 
@@ -201,27 +207,27 @@ module kaxi_xbar2 #(
             for (h = 0; h < N_HOME; h = h + 1) begin
                 // write
                 case (wst[h])
-                WI: if (awg_v[h] && m_awready[h]) begin
-                        curw[h] <= awg[h]; rrw[h] <= (awg[h] + 1'b1) % M;
-                        wbusy[awg[h]] <= 1'b1; wst[h] <= WD;
-                    end
-                WD: if (s_wvalid[curw[h]] && m_wready[h] && s_wlast[curw[h]])
-                        wst[h] <= WB;
-                WB: if (m_bvalid[h] && s_bready[curw[h]]) begin
-                        wbusy[curw[h]] <= 1'b0; wst[h] <= WI;
-                    end
-                default: wst[h] <= WI;
+                    WI: if (awg_v[h] && m_awready[h]) begin
+                            curw[h] <= awg[h]; rrw[h] <= (awg[h] + 1'b1) % M;
+                            wbusy[awg[h]] <= 1'b1; wst[h] <= WD;
+                        end
+                    WD: if (s_wvalid[curw[h]] && m_wready[h] && s_wlast[curw[h]])
+                            wst[h] <= WB;
+                    WB: if (m_bvalid[h] && s_bready[curw[h]]) begin
+                            wbusy[curw[h]] <= 1'b0; wst[h] <= WI;
+                        end
+                    default: wst[h] <= WI;
                 endcase
                 // read
                 case (rst[h])
-                RI: if (arg_v[h] && m_arready[h]) begin
-                        curr[h] <= arg[h]; rrr[h] <= (arg[h] + 1'b1) % M;
-                        rbusy[arg[h]] <= 1'b1; rst[h] <= RD;
-                    end
-                RD: if (m_rvalid[h] && s_rready[curr[h]] && m_rlast[h]) begin
-                        rbusy[curr[h]] <= 1'b0; rst[h] <= RI;
-                    end
-                default: rst[h] <= RI;
+                    RI: if (arg_v[h] && m_arready[h]) begin
+                            curr[h] <= arg[h]; rrr[h] <= (arg[h] + 1'b1) % M;
+                            rbusy[arg[h]] <= 1'b1; rst[h] <= RD;
+                        end
+                    RD: if (m_rvalid[h] && s_rready[curr[h]] && m_rlast[h]) begin
+                            rbusy[curr[h]] <= 1'b0; rst[h] <= RI;
+                        end
+                    default: rst[h] <= RI;
                 endcase
             end
         end

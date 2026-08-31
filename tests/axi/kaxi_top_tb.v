@@ -192,9 +192,12 @@ module kaxi_top_tb;
         end
 
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d homes end-to-end, %0d checks, 0 errors",
-                                  N_HOME, checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d homes end-to-end, %0d checks, 0 errors",
+                     N_HOME, checks);
+        end else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end

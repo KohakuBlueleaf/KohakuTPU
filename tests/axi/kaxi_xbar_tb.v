@@ -197,7 +197,9 @@ module kaxi_tbm #(
             end
             checks = checks + 1;
 `ifdef TRACE
-            if (IDX == 0) $display("%0t TBCNT  m0 B#%0d", $time, b_i);
+            if (IDX == 0) begin
+                $display("%0t TBCNT  m0 B#%0d", $time, b_i);
+            end
 `endif
             if (bid !== IDX[ID_W-1:0]) begin
                 errors = errors + 1;
@@ -297,7 +299,9 @@ module kaxi_tbslv #(
 
     initial begin
         sseed = SEED;
-        for (i = 0; i < WORDS; i = i + 1) mem[i] = {DATA_W{1'b0}};
+        for (i = 0; i < WORDS; i = i + 1) begin
+            mem[i] = {DATA_W{1'b0}};
+        end
     end
 
     assign awready = sl_awr && !wq_act && !bvalid;
@@ -323,7 +327,9 @@ module kaxi_tbslv #(
                     wq_act <= 1'b0; bid <= wq_id; bvalid <= 1'b1;
                 end
             end
-            if (bvalid && bready) bvalid <= 1'b0;
+            if (bvalid && bready) begin
+                bvalid <= 1'b0;
+            end
 
             if (arvalid && arready) begin
                 rq_id <= arid; rq_addr <= araddr;
@@ -336,7 +342,9 @@ module kaxi_tbslv #(
                 rvalid <= 1'b1;
                 rq_addr <= rq_addr + 34'd32;
                 rq_left <= rq_left - 9'd1;
-                if (rq_left == 9'd1) rq_act <= 1'b0;
+                if (rq_left == 9'd1) begin
+                    rq_act <= 1'b0;
+                end
             end else if (rvalid && rready) begin
                 rvalid <= 1'b0;
             end
@@ -359,7 +367,9 @@ module kaxi_xbar_tb;
     localparam integer SLV_WORDS = M * WORDS;
 
     reg clk = 0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
     reg resetn = 0;
     reg go_wr = 0, go_rd = 0;
 
@@ -507,12 +517,13 @@ module kaxi_xbar_tb;
             if (wd > 150000) begin
                 $display("  FAIL WATCHDOG -- stuck. go_wr=%b go_rd=%b", go_wr, go_rd);
                 $display("    wr_done_v=%b rd_done_v=%b", wr_done_v, rd_done_v);
-                for (i = 0; i < M; i = i + 1)
+                for (i = 0; i < M; i = i + 1) begin
                     $display("    m%0d checks=%0d errors=%0d awv=%b awr=%b wv=%b wr=%b bv=%b br=%b arv=%b arr=%b rv=%b rr=%b",
                              i, mchecks[i], merrors[i],
                              s_awvalid[i], s_awready[i], s_wvalid[i], s_wready[i],
                              s_bvalid[i], s_bready[i], s_arvalid[i], s_arready[i],
                              s_rvalid[i], s_rready[i]);
+                end
                 $display("    m_awvalid=%b m_awready=%b m_wvalid=%b m_wready=%b m_bvalid=%b m_arvalid=%b m_arready=%b m_rvalid=%b",
                          m_awvalid, m_awready, m_wvalid, m_wready, m_bvalid, m_arvalid, m_arready, m_rvalid);
                 $display("  FAIL -- watchdog");

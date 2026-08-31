@@ -115,8 +115,8 @@ module kaxi_xbar3 #(
             arg[h] = 0; arg_v[h] = 1'b0;
             for (k = 0; k < M; k = k + 1) begin
                 cr = (rrr[h] + k) % M;
-                if (!arg_v[h] && s_arvalid[cr] && !rbusy[cr] &&
-                    (s_araddr[cr*ADDR_W + HOME_LSB +: HIDX_W] == h[HIDX_W-1:0]))
+                if (!arg_v[h] && s_arvalid[cr] && !rbusy[cr]
+                    && (s_araddr[cr*ADDR_W + HOME_LSB +: HIDX_W] == h[HIDX_W-1:0]))
                     begin arg[h] = cr; arg_v[h] = 1'b1; end
             end
         end
@@ -128,8 +128,12 @@ module kaxi_xbar3 #(
         s_arready = {M{1'b0}}; s_rvalid = {M{1'b0}};
         s_bid = 0; s_bresp = 0; s_rid = 0; s_rdata = 0; s_rresp = 0; s_rlast = 0;
         // write (global)
-        if ((gw_st == GW_IDLE) && gaw_v && m_awready[gaw_h]) s_awready[gaw_m] = 1'b1;
-        if (gw_st == GW_DATA) s_wready[gw_m] = m_wready[gw_h];
+        if ((gw_st == GW_IDLE) && gaw_v && m_awready[gaw_h]) begin
+            s_awready[gaw_m] = 1'b1;
+        end
+        if (gw_st == GW_DATA) begin
+            s_wready[gw_m] = m_wready[gw_h];
+        end
         if (gw_st == GW_RESP) begin
             s_bvalid[gw_m] = m_bvalid[gw_h];
             s_bid  [gw_m*ID_W +: ID_W] = m_bid[gw_h*SID_W +: ID_W];
@@ -137,7 +141,9 @@ module kaxi_xbar3 #(
         end
         // read (per home)
         for (h = 0; h < N_HOME; h = h + 1) begin
-            if ((rst[h] == RI) && arg_v[h] && m_arready[h]) s_arready[arg[h]] = 1'b1;
+            if ((rst[h] == RI) && arg_v[h] && m_arready[h]) begin
+                s_arready[arg[h]] = 1'b1;
+            end
             if (rst[h] == RD) begin
                 s_rvalid[curr[h]] = m_rvalid[h];
                 s_rid  [curr[h]*ID_W +: ID_W]     = m_rid[h*SID_W +: ID_W];
@@ -164,10 +170,12 @@ module kaxi_xbar3 #(
                 m_awsize [h*3 +: 3]           = s_awsize[gaw_m*3 +: 3];
                 m_awburst[h*2 +: 2]           = s_awburst[gaw_m*2 +: 2];
             end
-            if ((gw_st == GW_DATA) && (gw_h == h[HIDX_W-1:0]))
+            if ((gw_st == GW_DATA) && (gw_h == h[HIDX_W-1:0])) begin
                 m_wvalid[h] = s_wvalid[gw_m];
-            if ((gw_st == GW_RESP) && (gw_h == h[HIDX_W-1:0]))
+            end
+            if ((gw_st == GW_RESP) && (gw_h == h[HIDX_W-1:0])) begin
                 m_bready[h] = s_bready[gw_m];
+            end
             // read AR (per home)
             if (rst[h] == RI) begin
                 m_arvalid[h] = arg_v[h];
@@ -177,7 +185,9 @@ module kaxi_xbar3 #(
                 m_arsize [h*3 +: 3]           = s_arsize[arg[h]*3 +: 3];
                 m_arburst[h*2 +: 2]           = s_arburst[arg[h]*2 +: 2];
             end
-            if (rst[h] == RD) m_rready[h] = s_rready[curr[h]];
+            if (rst[h] == RD) begin
+                m_rready[h] = s_rready[curr[h]];
+            end
         end
         // the ONE shared write datapath, broadcast (mux on gw_m only)
         for (h = 0; h < N_HOME; h = h + 1) begin
@@ -195,26 +205,28 @@ module kaxi_xbar3 #(
         end else begin
             // global write
             case (gw_st)
-            GW_IDLE: if (gaw_v && m_awready[gaw_h]) begin
-                        gw_m <= gaw_m; gw_h <= gaw_h; gw_rr <= (gaw_m + 1'b1) % M;
-                        gw_st <= GW_DATA;
-                    end
-            GW_DATA: if (s_wvalid[gw_m] && m_wready[gw_h] && s_wlast[gw_m])
-                        gw_st <= GW_RESP;
-            GW_RESP: if (m_bvalid[gw_h] && s_bready[gw_m]) gw_st <= GW_IDLE;
-            default: gw_st <= GW_IDLE;
+                GW_IDLE: if (gaw_v && m_awready[gaw_h]) begin
+                            gw_m <= gaw_m; gw_h <= gaw_h; gw_rr <= (gaw_m + 1'b1) % M;
+                            gw_st <= GW_DATA;
+                        end
+                GW_DATA: if (s_wvalid[gw_m] && m_wready[gw_h] && s_wlast[gw_m])
+                            gw_st <= GW_RESP;
+                GW_RESP: if (m_bvalid[gw_h] && s_bready[gw_m]) begin
+                    gw_st <= GW_IDLE;
+                end
+                default: gw_st <= GW_IDLE;
             endcase
             // per-home read
             for (h = 0; h < N_HOME; h = h + 1) begin
                 case (rst[h])
-                RI: if (arg_v[h] && m_arready[h]) begin
-                        curr[h] <= arg[h]; rrr[h] <= (arg[h] + 1'b1) % M;
-                        rbusy[arg[h]] <= 1'b1; rst[h] <= RD;
-                    end
-                RD: if (m_rvalid[h] && s_rready[curr[h]] && m_rlast[h]) begin
-                        rbusy[curr[h]] <= 1'b0; rst[h] <= RI;
-                    end
-                default: rst[h] <= RI;
+                    RI: if (arg_v[h] && m_arready[h]) begin
+                            curr[h] <= arg[h]; rrr[h] <= (arg[h] + 1'b1) % M;
+                            rbusy[arg[h]] <= 1'b1; rst[h] <= RD;
+                        end
+                    RD: if (m_rvalid[h] && s_rready[curr[h]] && m_rlast[h]) begin
+                            rbusy[curr[h]] <= 1'b0; rst[h] <= RI;
+                        end
+                    default: rst[h] <= RI;
                 endcase
             end
         end

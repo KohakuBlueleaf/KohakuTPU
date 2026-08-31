@@ -71,10 +71,12 @@ module kaxi_wr #(
                 wg[h] = 0; wg_v[h] = 1'b0;
                 for (k = 0; k < M; k = k + 1) begin
                     rot = {1'b0, wrr[h]} + k[MIDX_W:0];
-                    if (rot >= M[MIDX_W:0]) rot = rot - M[MIDX_W:0];
+                    if (rot >= M[MIDX_W:0]) begin
+                        rot = rot - M[MIDX_W:0];
+                    end
                     cw  = rot[MIDX_W-1:0];
-                    if (!wg_v[h] && s_awvalid[cw] && !wbusy[cw] &&
-                        (s_awaddr[cw*ADDR_W + HOME_LSB +: HIDX_W] == h[HIDX_W-1:0]))
+                    if (!wg_v[h] && s_awvalid[cw] && !wbusy[cw]
+                        && (s_awaddr[cw*ADDR_W + HOME_LSB +: HIDX_W] == h[HIDX_W-1:0]))
                         begin wg[h] = cw; wg_v[h] = 1'b1; end
                 end
             end
@@ -85,9 +87,15 @@ module kaxi_wr #(
             m_awvalid = 0; m_wvalid = 0; m_bready = 0;
             m_awid = 0; m_awaddr = 0; m_awlen = 0; m_awsize = 0; m_awburst = 0;
             for (h = 0; h < N_HOME; h = h + 1) begin
-                if ((wst[h] == 2'd0) && wg_v[h] && m_awready[h]) s_awready[wg[h]] = 1'b1;
-                if (wst[h] == 2'd1) s_wready[wcur[h]] = m_wready[h];
-                if (wst[h] == 2'd2) s_bvalid[wcur[h]] = m_bvalid[h];
+                if ((wst[h] == 2'd0) && wg_v[h] && m_awready[h]) begin
+                    s_awready[wg[h]] = 1'b1;
+                end
+                if (wst[h] == 2'd1) begin
+                    s_wready[wcur[h]] = m_wready[h];
+                end
+                if (wst[h] == 2'd2) begin
+                    s_bvalid[wcur[h]] = m_bvalid[h];
+                end
                 if ((wst[h] == 2'd0) && wg_v[h]) begin
                     m_awvalid[h] = 1'b1;
                     m_awid   [h*SID_W +: SID_W]   = {wg[h], s_awid[wg[h]*ID_W +: ID_W]};
@@ -96,8 +104,12 @@ module kaxi_wr #(
                     m_awsize [h*3 +: 3]           = s_awsize[wg[h]*3 +: 3];
                     m_awburst[h*2 +: 2]           = s_awburst[wg[h]*2 +: 2];
                 end
-                if (wst[h] == 2'd1) m_wvalid[h] = s_wvalid[wcur[h]];
-                if (wst[h] == 2'd2) m_bready[h] = s_bready[wcur[h]];
+                if (wst[h] == 2'd1) begin
+                    m_wvalid[h] = s_wvalid[wcur[h]];
+                end
+                if (wst[h] == 2'd2) begin
+                    m_bready[h] = s_bready[wcur[h]];
+                end
             end
             for (mm = 0; mm < M; mm = mm + 1) begin
                 s_bid  [mm*ID_W +: ID_W] = m_bid  [whome[mm]*SID_W +: ID_W];
@@ -120,21 +132,26 @@ module kaxi_wr #(
                 for (h = 0; h < N_HOME; h = h + 1) begin
                     wst[h] <= 0; wrr[h] <= 0; wdsel[h] <= 0;
                 end
-                for (mm = 0; mm < M; mm = mm + 1) whome[mm] <= 0;
-            end else for (h = 0; h < N_HOME; h = h + 1) begin
-                case (wst[h])
-                2'd0: if (wg_v[h] && m_awready[h]) begin
-                        wcur[h] <= wg[h]; wdsel[h] <= wg[h]; whome[wg[h]] <= h[HIDX_W-1:0];
-                        wrr[h] <= (wg[h] == (M-1)) ? {MIDX_W{1'b0}} : (wg[h] + 1'b1);
-                        wbusy[wg[h]] <= 1'b1; wst[h] <= 2'd1;
-                    end
-                2'd1: if (s_wvalid[wcur[h]] && m_wready[h] && s_wlast[wcur[h]])
-                        wst[h] <= 2'd2;
-                2'd2: if (m_bvalid[h] && s_bready[wcur[h]]) begin
-                        wbusy[wcur[h]] <= 1'b0; wst[h] <= 2'd0;
-                    end
-                default: wst[h] <= 2'd0;
-                endcase
+                for (mm = 0; mm < M; mm = mm + 1) begin
+                    whome[mm] <= 0;
+                end
+            end else begin
+                for (h = 0; h < N_HOME; h = h + 1) begin
+                    case (wst[h])
+                        2'd0: if (wg_v[h] && m_awready[h]) begin
+                                wcur[h] <= wg[h]; wdsel[h] <= wg[h]; whome[wg[h]] <= h[HIDX_W-1:0];
+                                wrr[h] <= (wg[h] == (M-1)) ? {MIDX_W{1'b0}} : (wg[h] + 1'b1);
+                                wbusy[wg[h]] <= 1'b1; wst[h] <= 2'd1;
+                            end
+                        2'd1: if (s_wvalid[wcur[h]] && m_wready[h] && s_wlast[wcur[h]]) begin
+                                wst[h] <= 2'd2;
+                            end
+                        2'd2: if (m_bvalid[h] && s_bready[wcur[h]]) begin
+                                wbusy[wcur[h]] <= 1'b0; wst[h] <= 2'd0;
+                            end
+                        default: wst[h] <= 2'd0;
+                    endcase
+                end
             end
         end
     end else begin : g_sasd
@@ -146,7 +163,9 @@ module kaxi_wr #(
             am = 0; av = 1'b0; ah = 0;
             for (k = 0; k < M; k = k + 1) begin
                 rot = {1'b0, gw_rr} + k[MIDX_W:0];
-                if (rot >= M[MIDX_W:0]) rot = rot - M[MIDX_W:0];
+                if (rot >= M[MIDX_W:0]) begin
+                    rot = rot - M[MIDX_W:0];
+                end
                 if (!av && s_awvalid[rot[MIDX_W-1:0]]) begin
                     am = rot[MIDX_W-1:0]; av = 1'b1;
                     ah = s_awaddr[am*ADDR_W + HOME_LSB +: HIDX_W];
@@ -159,8 +178,12 @@ module kaxi_wr #(
             m_awvalid = 0; m_wvalid = 0; m_bready = 0;
             m_awid = 0; m_awaddr = 0; m_awlen = 0; m_awsize = 0; m_awburst = 0;
             m_wdata = 0; m_wstrb = 0; m_wlast = 0;
-            if ((gw == 2'd0) && av && m_awready[ah]) s_awready[am] = 1'b1;
-            if (gw == 2'd1) s_wready[gw_m] = m_wready[gw_h];
+            if ((gw == 2'd0) && av && m_awready[ah]) begin
+                s_awready[am] = 1'b1;
+            end
+            if (gw == 2'd1) begin
+                s_wready[gw_m] = m_wready[gw_h];
+            end
             if (gw == 2'd2) begin
                 s_bvalid[gw_m] = m_bvalid[gw_h];
                 s_bid  [gw_m*ID_W +: ID_W] = m_bid[gw_h*SID_W +: ID_W];
@@ -175,25 +198,36 @@ module kaxi_wr #(
                     m_awsize [h*3 +: 3]           = s_awsize[am*3 +: 3];
                     m_awburst[h*2 +: 2]           = s_awburst[am*2 +: 2];
                 end
-                if ((gw == 2'd1) && (gw_h == h[HIDX_W-1:0])) m_wvalid[h] = s_wvalid[gw_m];
-                if ((gw == 2'd2) && (gw_h == h[HIDX_W-1:0])) m_bready[h] = s_bready[gw_m];
+                if ((gw == 2'd1) && (gw_h == h[HIDX_W-1:0])) begin
+                    m_wvalid[h] = s_wvalid[gw_m];
+                end
+                if ((gw == 2'd2) && (gw_h == h[HIDX_W-1:0])) begin
+                    m_bready[h] = s_bready[gw_m];
+                end
                 m_wdata[h*DATA_W +: DATA_W] = s_wdata[gw_m*DATA_W +: DATA_W];
                 m_wstrb[h*STRB_W +: STRB_W] = s_wstrb[gw_m*STRB_W +: STRB_W];
                 m_wlast[h]                  = s_wlast[gw_m];
             end
         end
         always @(posedge clk) begin
-            if (!resetn) begin gw <= 0; gw_rr <= 0; end
-            else case (gw)
-            2'd0: if (av && m_awready[ah]) begin
-                    gw_m <= am; gw_h <= ah;
-                    gw_rr <= (am == (M-1)) ? {MIDX_W{1'b0}} : (am + 1'b1);
-                    gw <= 2'd1;
-                end
-            2'd1: if (s_wvalid[gw_m] && m_wready[gw_h] && s_wlast[gw_m]) gw <= 2'd2;
-            2'd2: if (m_bvalid[gw_h] && s_bready[gw_m]) gw <= 2'd0;
-            default: gw <= 2'd0;
-            endcase
+            if (!resetn) begin
+                gw <= 0; gw_rr <= 0;
+            end else begin
+                case (gw)
+                    2'd0: if (av && m_awready[ah]) begin
+                            gw_m <= am; gw_h <= ah;
+                            gw_rr <= (am == (M-1)) ? {MIDX_W{1'b0}} : (am + 1'b1);
+                            gw <= 2'd1;
+                        end
+                    2'd1: if (s_wvalid[gw_m] && m_wready[gw_h] && s_wlast[gw_m]) begin
+                            gw <= 2'd2;
+                        end
+                    2'd2: if (m_bvalid[gw_h] && s_bready[gw_m]) begin
+                            gw <= 2'd0;
+                        end
+                    default: gw <= 2'd0;
+                endcase
+            end
         end
     end
     endgenerate

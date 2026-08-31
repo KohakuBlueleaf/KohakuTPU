@@ -164,16 +164,23 @@ module kaxi_xbar #(
                             || (rid_home[a_id] == ar_home[gm]);
         always @(posedge clk) begin
             if (!resetn) begin
-                for (k = 0; k < NID; k = k + 1) rid_cnt[k] <= {RCW{1'b0}};
+                for (k = 0; k < NID; k = k + 1) begin
+                    rid_cnt[k] <= {RCW{1'b0}};
+                end
             end else begin
-                if (ar_fire[gm] && (rid_cnt[a_id] == {RCW{1'b0}}))
+                if (ar_fire[gm] && (rid_cnt[a_id] == {RCW{1'b0}})) begin
                     rid_home[a_id] <= ar_home[gm];
+                end
                 // Same-id retire+issue in one cycle nets zero; else adjust each.
                 if (ar_fire[gm] && r_retire[gm] && (a_id == r_id)) begin
                     rid_cnt[a_id] <= rid_cnt[a_id];
                 end else begin
-                    if (ar_fire[gm])  rid_cnt[a_id] <= rid_cnt[a_id] + 1'b1;
-                    if (r_retire[gm]) rid_cnt[r_id] <= rid_cnt[r_id] - 1'b1;
+                    if (ar_fire[gm]) begin
+                        rid_cnt[a_id] <= rid_cnt[a_id] + 1'b1;
+                    end
+                    if (r_retire[gm]) begin
+                        rid_cnt[r_id] <= rid_cnt[r_id] - 1'b1;
+                    end
                 end
             end
         end
