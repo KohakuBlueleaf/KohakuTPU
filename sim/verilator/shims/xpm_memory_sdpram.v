@@ -63,7 +63,7 @@ module xpm_memory_sdpram #(
             $fatal(1, "xpm_memory_sdpram shim: WRITE_MODE_B=%s not modelled", WRITE_MODE_B);
         if (USE_MEM_INIT != 0 || MEMORY_INIT_FILE != "none")
             $fatal(1, "xpm_memory_sdpram shim: memory init not modelled");
-        if (READ_LATENCY_B > 2)
+        if (READ_LATENCY_B > 8)
             $fatal(1, "xpm_memory_sdpram shim: READ_LATENCY_B=%0d not modelled", READ_LATENCY_B);
     end
 
@@ -100,14 +100,21 @@ module xpm_memory_sdpram #(
             if (READ_LATENCY_B == 1) begin : g_lat1
                 assign doutb = q1;
             end
-            else begin : g_lat2
-                // The block RAM's optional output register: gated by regceb.
-                reg [READ_DATA_WIDTH_B-1:0] q2;
+            else begin : g_latn
+                // The optional output registers, all gated by regceb: one for a
+                // block RAM, up to three more for a URAM cascade (READ_LAT 4 in
+                // kx_carray) -- what the real cell absorbs as pipeline stages.
+                reg [READ_DATA_WIDTH_B-1:0] qn [1:READ_LATENCY_B-1];
+                integer s;
                 always @(posedge clkb) begin
-                    if (rstb)       q2 <= {READ_DATA_WIDTH_B{1'b0}};
-                    else if (regceb) q2 <= q1;
+                    if (rstb) begin
+                        for (s = 1; s < READ_LATENCY_B; s = s + 1) qn[s] <= {READ_DATA_WIDTH_B{1'b0}};
+                    end else if (regceb) begin
+                        qn[1] <= q1;
+                        for (s = 2; s < READ_LATENCY_B; s = s + 1) qn[s] <= qn[s-1];
+                    end
                 end
-                assign doutb = q2;
+                assign doutb = qn[READ_LATENCY_B-1];
             end
         end
     endgenerate

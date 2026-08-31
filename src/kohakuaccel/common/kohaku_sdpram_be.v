@@ -1,27 +1,36 @@
-// Simple dual-port RAM with BYTE write enables: kohaku_sdpram's shape, plus a
-// strobe per byte on the write port. Same explicit-primitive rule.
+// Simple dual-port RAM with write lanes: kohaku_sdpram's shape, plus a strobe
+// per BYTE_W-bit lane on the write port. Same explicit-primitive rule.
 //
 // A separate module rather than a parameter on kohaku_sdpram, so its 80-odd
 // instantiations keep their whole-word port and none of them acquires an
-// input nobody drives. The one caller is the staging store, whose port B takes
-// AXI beats: a 64-bit store from the processor is one lane of a 256-bit word,
-// and without strobes the other three lanes took the same value -- which is a
-// page table with three of every four entries overwritten.
+// input nobody drives. The staging store's port B takes AXI beats: a 64-bit
+// store from the processor is one lane of a 256-bit word, and without strobes
+// the other three lanes took the same value -- a page table with three of
+// every four entries overwritten. The Xache array lands one sub-word of a wide
+// row the same way, with no line buffer and no read-modify-write.
+//
+// BYTE_W per UG974: 8 (WIDTH a multiple of 8), 9 (a multiple of 9) -- RAMB36
+// and URAM288 carry both in silicon, 72 = 8 x 9 (UG573 p.115) -- or WIDTH,
+// one strobe for the whole word.
 
 `default_nettype none
 
 module kohaku_sdpram_be #(
     parameter integer WIDTH    = 256,
     parameter integer DEPTH    = 512,
-    parameter         MEM_PRIM = "block",       // "block"|"ultra"
-    parameter integer READ_LAT = 1
+    parameter integer BYTE_W   = 8,             // 8 | 9 | WIDTH
+    parameter         MEM_PRIM = "block",       // "distributed"|"block"|"ultra"
+    parameter integer READ_LAT = 1,             // 0 only legal for distributed
+    parameter integer CASCADE  = 0,             // xpm CASCADE_HEIGHT; 0 = the tool's (8 for URAM, UG901 p.117)
+    parameter         WR_MODE  = "read_first",  // "read_first"|"no_change"|"write_first"
+    parameter integer NSTRB    = WIDTH / BYTE_W
 )(
     input  wire                     clk,
 
     input  wire                     wr_en,
+    input  wire [NSTRB-1:0]         wr_strb,
     input  wire [$clog2(DEPTH)-1:0] wr_addr,
     input  wire [WIDTH-1:0]         wr_data,
-    input  wire [WIDTH/8-1:0]       wr_strb,
 
     input  wire                     rd_en,
     input  wire [$clog2(DEPTH)-1:0] rd_addr,
@@ -34,17 +43,17 @@ module kohaku_sdpram_be #(
         .ADDR_WIDTH_B(AW),
         .WRITE_DATA_WIDTH_A(WIDTH),
         .READ_DATA_WIDTH_B(WIDTH),
-        .BYTE_WRITE_WIDTH_A(8),
+        .BYTE_WRITE_WIDTH_A(BYTE_W),
         .MEMORY_SIZE(WIDTH * DEPTH),         // BITS, not words
         .MEMORY_PRIMITIVE(MEM_PRIM),
         .CLOCKING_MODE("common_clock"),
         .READ_LATENCY_B(READ_LAT),
-        .WRITE_MODE_B("read_first"),
+        .WRITE_MODE_B(WR_MODE),
         .MEMORY_INIT_FILE("none"),
-        .USE_MEM_INIT(0),
+        .USE_MEM_INIT(0),                    // no init: URAM cannot be initialised
         .ECC_MODE("no_ecc"),
         .AUTO_SLEEP_TIME(0),
-        .CASCADE_HEIGHT(0),
+        .CASCADE_HEIGHT(CASCADE),
         .SIM_ASSERT_CHK(0),
         .WAKEUP_TIME("disable_sleep")
     ) u_ram (

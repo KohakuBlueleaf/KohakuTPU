@@ -54,7 +54,7 @@ set MESHES {
     2 ktpu_ship_2x2_2c2v_1m_nol2_pump
     3 ktpu_ship_2x2_2c2v_1m_nol2_pump
 }
-# 4 banks x 16384 entries IS 64 URAM of staging per node.
+# 16384 entries of 1024 b in 4 banks of 4096 IS 64 single URAM of staging per node.
 set L2_MAG_BANKS    4
 set L2_MAG_ENTRIES  16384
 # The node's DRAM master on the sysnode clock: its queues are synchronous and

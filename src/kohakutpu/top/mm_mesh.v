@@ -54,7 +54,7 @@ module mm_mesh #(
     parameter integer L2_VEC_A34   = 0,
     // MAG-side staging, special aperture 0. 0 generates none of it.
     parameter integer L2_MAG         = 0,
-    parameter integer L2_MAG_BANKS   = 4,      // 64 URAM, 2 MB
+    parameter integer L2_MAG_BANKS   = 4,      // 4 x 16 single URAM, 2 MB
     parameter integer L2_MAG_ENTRIES = 16384,
     parameter integer L2_MAG_MESH    = 0,
     // 1 moves the store off the NoC memory port onto MAG's converged internal

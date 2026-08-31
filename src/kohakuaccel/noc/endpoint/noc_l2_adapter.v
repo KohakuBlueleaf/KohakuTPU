@@ -160,12 +160,30 @@ module noc_l2_adapter #(
     reg  [255:0]   wr_data;
     wire [255:0]   rd_data;
 
-    kohaku_sdpram #(.WIDTH(256), .DEPTH(DEPTH), .MEM_PRIM("ultra"),
-                    .READ_LAT(2)) u_ram (
-        .clk(clk),
-        .wr_en(wr_en), .wr_addr(wr_addr), .wr_data(wr_data),
-        .rd_en(1'b1),  .rd_addr(rd_addr), .rd_data(rd_data)
-    );
+    // ONE URAM DEEP PER BANK: rows beyond 4,096 go to another bank, never a
+    // cascade, and the bank select rides beside the two read stages so the
+    // latency the read engine is built on stays 2. 8,192 lines = 2 x 4 URAM.
+    localparam integer NB  = (DEPTH > 4096) ? (DEPTH / 4096) : 1;
+    localparam integer BW  = (NB <= 1) ? 1 : $clog2(NB);
+    localparam integer ROWS = DEPTH / NB;
+    localparam integer RW  = $clog2(ROWS);
+    wire [255:0]  bank_rd [0:NB-1];
+    reg  [BW-1:0] bsel_sr [0:1];
+    genvar gb;
+    for (gb = 0; gb < NB; gb = gb + 1) begin : g_bank
+        wire wr_hit = (NB <= 1) ? 1'b1 : (wr_addr[AW-1 -: BW] == gb[BW-1:0]);
+        kohaku_sdpram #(.WIDTH(256), .DEPTH(ROWS), .MEM_PRIM("ultra"),
+                        .READ_LAT(2)) u_ram (
+            .clk(clk),
+            .wr_en(wr_en && wr_hit), .wr_addr(wr_addr[RW-1:0]), .wr_data(wr_data),
+            .rd_en(1'b1),  .rd_addr(rd_addr[RW-1:0]), .rd_data(bank_rd[gb])
+        );
+    end
+    always @(posedge clk) begin
+        bsel_sr[0] <= (NB <= 1) ? {BW{1'b0}} : rd_addr[AW-1 -: BW];
+        bsel_sr[1] <= bsel_sr[0];
+    end
+    assign rd_data = bank_rd[bsel_sr[1]];
 
     // ---- read engine -------------------------------------------------------
     // No reorder buffer: the CU tags responses {entry, word} (mx_cluster_cu.v).

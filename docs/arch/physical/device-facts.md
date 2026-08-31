@@ -106,6 +106,57 @@ a named wrapper rather than writing an array and hoping. Pipeline depth is a
 design decision, not a synthesis outcome.
 [workflow/tooling-traps](../../workflow/tooling-traps.md#memory-primitives-are-named-never-inferred).
 
+## Memory blocks: the geometry that is a rule
+
+The large on-chip memories in this framework are built from the part's
+UltraRAM and block RAM, and the shape of those blocks is a design input in the
+same way the die boundary is. Facts first (UG573 *UltraScale Architecture
+Memory Resources*, UG901 *Vivado Synthesis* v2025.1, UG974, DS923; the counts
+from the part itself through `get_sites`):
+
+| | |
+|---|---|
+| an UltraRAM block | **4,096 × 72 bits**, two ports, one clock, an optional pipeline register on each port's output (`OREG`) and input (`IREG`) inside the block |
+| depth beyond 4,096 in one slice | a **cascade**: `CASCADE_ORDER` FIRST / MIDDLE / LAST over dedicated routing between blocks that are **adjacent in one column**, bottom-up; the chain is "limited only by the height of the SLR" |
+| a cascade's frequency | set by the cascade registers (`REG_CAS`), which UG573 says "should be used in each block or every few blocks depending on the maximum frequency requirement"; without them the read walks the chain combinationally |
+| how synthesis builds depth | UG901: "Vivado synthesis limits the height of the chain to eight to provide flexibility to the place and route tool", and "to fully pipeline the RAM ... add together the number of rows and columns in the RAM matrix" — the registers must be in the RTL, the tool does not add them |
+| the vendor's own advice for large memories | the XPM memory macro's note (UG974): "for better timing performance in larger memories (>1 Mb), use CASCADE_HEIGHT of 1 with sufficient read latencies" |
+| what the block does at -2L | DS923: **500 MHz with `OREG` on, 404 MHz without** |
+| how many, on `xcvu13p` | **1,280 UltraRAM** in five columns, **16 per clock region per column**, 256 per column, **320 per SLR** — so 64 vertically in one column of one SLR; **2,688 block-RAM tiles** in fourteen columns, 12 per clock region per column, 672 per SLR |
+
+From those facts, the rule for a memory deeper than a block:
+
+> **Depth is the one axis the device constrains, and a chain's depth is
+> chosen by a routed run, never by synthesis.** A chain of `D` blocks is a
+> rigid vertical run of `D` sites in one column and wants `D + 1` output
+> registers (rows + columns); one block deep needs neither and is the only
+> depth that needs no proof. Width is free: each 72-bit slice is its own
+> chain. The dispatch to the banks and each bank's output are registered, the
+> return mux reads the registers, and the banks interleave on the low address
+> bits.
+
+What a depth costs in fabric is set by the cost identity: at a fixed
+capacity, the read select is (blocks per row ÷ chain depth):1 over the read
+port whichever way the row is cut — by banks or by a wider row — so a wider
+row does not cheapen the mux; it removes the chain, saves the tag, and lets a
+fill land through the block's write lanes. What a depth costs on the device
+is placement freedom and long vertical wires around the column, which
+synthesis cannot see: the crossbar-cache's 4-deep chains read the same 368
+MHz at synthesis as its 8-deep chain read 330, and the 8-deep one routed at
+UG949 congestion level 6 on the card. Both shapes are knobs of the named
+wrappers (`kohaku_sdpram` / `kohaku_sdpram_be`: `CASCADE`, `READ_LAT`,
+`WR_MODE`, `BYTE_W`) and of every array that uses them (`BANKS`, `K`,
+`ARR_LAT` / `RLAT`). The shipped depths: the crossbar-cache's array is one
+bank of 4-deep chains at `K = 2` (15 chains a home, routed per SLR at
+WNS +0.020 / 300 MHz with no effective congestion window above level 5,
+`scripts/tcl/impl_pxache.tcl`); the staging store is one bank of 4-deep
+chains (16 chains, read latency 5), routed inside one SLR beside the 4-bank
+shape with no congestion window above level 5 in either and the node's slack
+owned by the RV64 core in both (`scripts/tcl/impl_sysnode.tcl`), −1,568 LUT
+at synthesis; the L2 endpoint adapter 2 banks × 4. The measurements behind it are
+[projects/kohakutpu/results](../../projects/kohakutpu/results.md#41-memory-shapes)
+and [projects/kohakuaxi/pxache](../../projects/kohakuaxi/pxache.md#1-what-a-partition-costs-in-one-table).
+
 ## What is actually scarce, in order
 
 On this part, for this kind of design:
@@ -153,3 +204,8 @@ numbering is not the mapping.
 **Name the primitive; never infer a memory.** *(Free.)* Instantiate through a
 wrapper with the memory type as a parameter, so that read latency is chosen
 rather than discovered and a 73-bit array cannot quietly become LUTs.
+
+**Bank at the block's depth; never chain.** *(Free, and measured.)* A memory
+deeper than 4,096 rows is banks of 4,096, registered in and out, with the
+return mux after the register — see
+[Memory blocks](#memory-blocks-the-geometry-that-is-a-rule).

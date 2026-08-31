@@ -33,7 +33,11 @@ module kohaku_sdpram #(
     parameter integer WIDTH    = 256,
     parameter integer DEPTH    = 512,
     parameter         MEM_PRIM = "block",       // "distributed"|"block"|"ultra"
-    parameter integer READ_LAT = 1              // 0 only legal for distributed
+    parameter integer READ_LAT = 1,             // 0 only legal for distributed
+    // xpm passthroughs. CASCADE_HEIGHT 0 = the tool's choice (8 for URAM,
+    // UG901 p.122); 1 = no chain, a fabric mux over single blocks.
+    parameter integer CASCADE  = 0,
+    parameter         WR_MODE  = "read_first"   // "read_first"|"no_change"|"write_first"
 )(
     input  wire                     clk,
 
@@ -57,12 +61,12 @@ module kohaku_sdpram #(
         .MEMORY_PRIMITIVE(MEM_PRIM),
         .CLOCKING_MODE("common_clock"),
         .READ_LATENCY_B(READ_LAT),
-        .WRITE_MODE_B("read_first"),
+        .WRITE_MODE_B(WR_MODE),
         .MEMORY_INIT_FILE("none"),
         .USE_MEM_INIT(0),                    // no init: URAM cannot be initialised
         .ECC_MODE("no_ecc"),
         .AUTO_SLEEP_TIME(0),
-        .CASCADE_HEIGHT(0),
+        .CASCADE_HEIGHT(CASCADE),
         .SIM_ASSERT_CHK(0),
         .WAKEUP_TIME("disable_sleep")
     ) u_ram (
