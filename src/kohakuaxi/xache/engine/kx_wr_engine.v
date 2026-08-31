@@ -74,7 +74,14 @@ module kx_wr_engine #(
     wire [P-1:0] pick = |hi ? (hi & (~hi + 1'b1)) : (elig & (~elig + 1'b1));
     wire         wg_v = |elig;
     reg  [PIDX_W-1:0] wg_p; integer ek;
-    always @(*) begin wg_p = 0; for (ek = 0; ek < P; ek = ek + 1) if (pick[ek]) wg_p = wg_p | ek[PIDX_W-1:0]; end
+    always @(*) begin
+        wg_p = 0;
+        for (ek = 0; ek < P; ek = ek + 1) begin
+            if (pick[ek]) begin
+                wg_p = wg_p | ek[PIDX_W-1:0];
+            end
+        end
+    end
 
     localparam [1:0] W_IDLE=0, W_AW=1, W_DATA=2, W_RESP=3;
     reg [1:0]      wst;
@@ -90,7 +97,14 @@ module kx_wr_engine #(
     wire h_awready = |(m_awready & hsel);
     wire h_bvalid  = |(m_bvalid & hsel);
     reg [1:0] h_bresp; integer hk;
-    always @(*) begin h_bresp = 2'b00; for (hk = 0; hk < NH; hk = hk + 1) if (hsel[hk]) h_bresp = h_bresp | m_bresp[hk*2 +: 2]; end
+    always @(*) begin
+        h_bresp = 2'b00;
+        for (hk = 0; hk < NH; hk = hk + 1) begin
+            if (hsel[hk]) begin
+                h_bresp = h_bresp | m_bresp[hk*2 +: 2];
+            end
+        end
+    end
 
     wire wr_beat = (wst == W_DATA) && src_wval && h_wready;
 
@@ -108,26 +122,30 @@ module kx_wr_engine #(
         if (!resetn) begin
             wst <= W_IDLE; m_awvalid <= 0; b_val <= 1'b0; warr_mask <= {P{1'b1}}; gsel <= 0; gidx <= 0; hsel <= 0;
         end else begin
-            if (b_val && b_rdy) b_val <= 1'b0;
+            if (b_val && b_rdy) begin
+                b_val <= 1'b0;
+            end
             case (wst)
-            W_IDLE: if (wg_v) begin
-                wid <= mw_qid[wg_p*IDW +: IDW]; wa <= mw_qaddr[wg_p*AW +: AW];
-                wlen <= mw_qlen[wg_p*8 +: 8]; wsz <= mw_qsize[wg_p*3 +: 3];
-                wa_beat <= mw_qaddr[wg_p*AW +: AW];
-                gsel <= pick; gidx <= wg_p; hsel <= 0; hsel[wg_p / M] <= 1'b1;
-                warr_mask <= ~((pick << 1) - 1'b1);
-                m_awvalid <= 0; m_awvalid[wg_p / M] <= 1'b1;
-                wst <= W_AW;
-            end
-            W_AW: if (h_awready) begin m_awvalid <= 0; wst <= W_DATA; end
-            W_DATA: if (wr_beat) begin
-                wa_beat <= wa_beat + (W/8);
-                if (src_wlast) wst <= W_RESP;
-            end
-            W_RESP: if (h_bvalid) begin
-                b_id <= wid; b_resp <= h_bresp; b_val <= 1'b1; wst <= W_IDLE;
-            end
-            default: wst <= W_IDLE;
+                W_IDLE: if (wg_v) begin
+                    wid <= mw_qid[wg_p*IDW +: IDW]; wa <= mw_qaddr[wg_p*AW +: AW];
+                    wlen <= mw_qlen[wg_p*8 +: 8]; wsz <= mw_qsize[wg_p*3 +: 3];
+                    wa_beat <= mw_qaddr[wg_p*AW +: AW];
+                    gsel <= pick; gidx <= wg_p; hsel <= 0; hsel[wg_p / M] <= 1'b1;
+                    warr_mask <= ~((pick << 1) - 1'b1);
+                    m_awvalid <= 0; m_awvalid[wg_p / M] <= 1'b1;
+                    wst <= W_AW;
+                end
+                W_AW: if (h_awready) begin m_awvalid <= 0; wst <= W_DATA; end
+                W_DATA: if (wr_beat) begin
+                    wa_beat <= wa_beat + (W/8);
+                    if (src_wlast) begin
+                        wst <= W_RESP;
+                    end
+                end
+                W_RESP: if (h_bvalid) begin
+                    b_id <= wid; b_resp <= h_bresp; b_val <= 1'b1; wst <= W_IDLE;
+                end
+                default: wst <= W_IDLE;
             endcase
         end
     end

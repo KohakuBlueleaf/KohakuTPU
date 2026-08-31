@@ -37,10 +37,26 @@ module kx_pxache #(
     parameter integer W         = 512,
     parameter integer ID_W      = 4,
     parameter integer HOME_LSB  = 32,
-    parameter integer SETS      = 32768,
-    parameter integer SET_W     = 15,
-    parameter integer K         = 1,
+    // The shipped array: 16,384 sets of K=2 words = the same 8 MB as 32,768 x 1.
+    // K=2 with write lanes (kx_carray LANE_W) at one bank is a 4-deep chain,
+    // ROUTED per SLR at WNS +0.020 / 300 MHz: 11,788 LUT synth, 11,288 routed,
+    // 240 URAM, one cycle less hit latency than K=1 BANKS=2 (12,816 / 256).
+    parameter integer SETS      = 16384,
+    parameter integer SET_W     = 14,
+    parameter integer K         = 2,
     parameter         RAM_STYLE = "ultra",
+    // BANKS and K both set the URAM chain depth, SETS/BANKS/4096 -- the one axis
+    // the device constrains (kx_carray.v, UG573/UG901). SYNTH at P=4, W=512,
+    // SETS=32768, one run each: K=1 at 8/4/2/1 banks 16,092 / 13,916 / 12,816 /
+    // 10,659 LUT; K=2 without write lanes 13,772 (1 bank), 15,868 (2). Synth
+    // Fmax was 368.3 at every depth but the 8-deep 329.6, yet the 8-deep chain
+    // routed at UG949 congestion level 6: depth is settled by the routed run
+    // (scripts/tcl/impl_pxache.tcl), not by synth.
+    parameter integer BANKS     = 1,        // kx_carray banks; 1 = one array
+    parameter integer RING_WR_REG = 1,      // register the reorder ring's write port
+    parameter integer ARR_WP_REG  = 0,      // kx_carray's write-port bundle registered
+    parameter integer ARR_LAT     = 0,      // kx_carray's primitive read latency; 0 = URAM 4 / else 1
+    parameter integer LANE_W      = 8,      // kx_carray's write lane at K > 1: 8 or 9
     parameter [M-1:0]        MCDC = {M{1'b0}},
     parameter [N_HOME-1:0]   HCDC = {N_HOME{1'b0}},
     parameter integer CDC_DEPTH = 16,
@@ -559,6 +575,7 @@ module kx_pxache #(
         // at {slot, beat} in the ring, so no address is ever added
         wire [HIDX_W-1:0] rq_home_v [0:RD_OUTQ-1];
         wire [PBA:0]      rq_wc_v   [0:RD_OUTQ-1];
+        wire [PBA:0]      rq_wcv_v  [0:RD_OUTQ-1];
         wire [PBA:0]      rq_nb_v   [0:RD_OUTQ-1];
         wire [ID_W-1:0]   rq_id_v   [0:RD_OUTQ-1];
         wire [SEQW-1:0]   dslot = rq_dp[SEQW-1:0];
@@ -572,23 +589,77 @@ module kx_pxache #(
         wire [W-1:0]    ld_w  = rs_w[m][rpick];
         wire [SEQW-1:0] ld_s  = ld_d[RNW-1 -: SEQW];
         wire            ld_go = |rsv;
-        for (e = 0; e < RD_OUTQ; e = e + 1) begin : g_rq
-            reg [HIDX_W-1:0] home;  reg [PBA:0] wc, nb;  reg [ID_W-1:0] id;
-            wire alloc = ar_acc && (rq_wp[SEQW-1:0] == e[SEQW-1:0]);
-            wire land  = ld_go  && (ld_s == e[SEQW-1:0]);
+
+        // RING_WR_REG registers ONLY the ring's write port, so the K:1 landing
+        // mux drives a flop instead of the port and its address arithmetic.
+        // `rs_r` -- the ready back to the sources -- is untouched: a ready one
+        // cycle late ran the engine at a beat per three cycles (hit-32 102 vs
+        // 39), which is why the pick is combinational in the first place.
+        wire                 wr_go;
+        wire [SEQW+PBA-1:0]  wr_addr;
+        wire [W+2:0]         wr_data;
+        wire                 vis_go;    // what advances the count the drain sees
+        wire [SEQW-1:0]      vis_s;
+        wire [SEQW+PBA-1:0]  ld_addr = {ld_s, rq_wc_v[ld_s][PBA-1:0]};
+
+        if (RING_WR_REG == 0) begin : g_rw_comb
+            assign wr_go   = ld_go;
+            assign wr_addr = ld_addr;
+            assign wr_data = {ld_d[2:0], ld_w};
+            assign vis_go  = ld_go;
+            assign vis_s   = ld_s;
+        end else begin : g_rw_reg
+            reg                go_q;
+            reg [SEQW+PBA-1:0] a_q;
+            reg [W+2:0]        d_q;
+            reg [SEQW-1:0]     s_q;
             always @(posedge clk) begin
                 if (!rm) begin
-                    home <= {HIDX_W{1'b0}}; wc <= {(PBA+1){1'b0}}; nb <= {(PBA+1){1'b0}}; id <= {ID_W{1'b0}};
-                end else if (alloc) begin
-                    home <= rhome[m]; wc <= {(PBA+1){1'b0}}; nb <= ar_beats; id <= arid_m;
-                end else if (land) begin
-                    wc <= wc + 1'b1;
+                    go_q <= 1'b0;
+                end else begin
+                    go_q <= ld_go;
+                end
+                if (ld_go) begin
+                    a_q <= ld_addr;
+                    d_q <= {ld_d[2:0], ld_w};
+                    s_q <= ld_s;
                 end
             end
-            assign rq_home_v[e] = home;  assign rq_wc_v[e] = wc;
+            assign wr_go   = go_q;
+            assign wr_addr = a_q;
+            assign wr_data = d_q;
+            assign vis_go  = go_q;
+            assign vis_s   = s_q;
+        end
+
+        for (e = 0; e < RD_OUTQ; e = e + 1) begin : g_rq
+            reg [HIDX_W-1:0] home;  reg [PBA:0] wc, wcv, nb;  reg [ID_W-1:0] id;
+            wire alloc = ar_acc && (rq_wp[SEQW-1:0] == e[SEQW-1:0]);
+            // `wc` allocates the address, so it must advance the cycle the mux
+            // picks; `wcv` is what the drain may read, so it advances with the
+            // write. They are the same signal when the port is not registered.
+            wire land  = ld_go  && (ld_s  == e[SEQW-1:0]);
+            wire landv = vis_go && (vis_s == e[SEQW-1:0]);
+            always @(posedge clk) begin
+                if (!rm) begin
+                    home <= {HIDX_W{1'b0}}; wc <= {(PBA+1){1'b0}};
+                    wcv <= {(PBA+1){1'b0}}; nb <= {(PBA+1){1'b0}}; id <= {ID_W{1'b0}};
+                end else if (alloc) begin
+                    home <= rhome[m]; wc <= {(PBA+1){1'b0}};
+                    wcv <= {(PBA+1){1'b0}}; nb <= ar_beats; id <= arid_m;
+                end else begin
+                    if (land) begin
+                        wc <= wc + 1'b1;
+                    end
+                    if (landv) begin
+                        wcv <= wcv + 1'b1;
+                    end
+                end
+            end
+            assign rq_home_v[e] = home;  assign rq_wc_v[e]  = wc;
+            assign rq_wcv_v[e]  = wcv;
             assign rq_nb_v[e]   = nb;    assign rq_id_v[e] = id;
         end
-        wire [SEQW+PBA-1:0] ld_addr = {ld_s, rq_wc_v[ld_s][PBA-1:0]};
         // the drain: the oldest slot, beat by beat as its beats land
         reg  [PBA:0]    rc;                             // beats of the drain slot read out
         reg             o_v;
@@ -596,13 +667,13 @@ module kx_pxache #(
         // ISSUED, and a new AR re-owned it under that beat during a stall
         reg  [ID_W-1:0] o_id;
         wire            o_take   = o_v && x_rready[m];
-        wire            readable = (rq_used != {(SEQW+1){1'b0}}) && (rc != rq_wc_v[dslot]);
+        wire            readable = (rq_used != {(SEQW+1){1'b0}}) && (rc != rq_wcv_v[dslot]);
         wire            issue    = readable && (!o_v || o_take);
         wire            d_last   = ((rc + 1'b1) == rq_nb_v[dslot]);
         wire [W+2:0]    o_d;                            // {resp, last, data}
         kohaku_sdpram #(.WIDTH(W+3), .DEPTH(RBUF_DEPTH), .MEM_PRIM("block"), .READ_LAT(1)) u_rb (
             .clk(clk),
-            .wr_en(ld_go), .wr_addr(ld_addr), .wr_data({ld_d[2:0], ld_w}),
+            .wr_en(wr_go), .wr_addr(wr_addr), .wr_data(wr_data),
             .rd_en(issue), .rd_addr({dslot, rc[PBA-1:0]}), .rd_data(o_d));
         always @(posedge clk) begin
             if (!rm) begin
@@ -722,7 +793,8 @@ module kx_pxache #(
 
         // ---- the array
         kx_carray #(.AW(AW), .W(W), .SETS(SETS), .SET_W(SET_W), .K(K), .RAM_STYLE(RAM_STYLE),
-                    .FILL_SERVE(0)) u_c (
+                    .BANKS(BANKS), .WPORT_REG(ARR_WP_REG), .FILL_SERVE(0),
+                    .ARR_LAT(ARR_LAT), .LANE_W(LANE_W)) u_c (
             .clk(clk), .resetn(rh),
             .rd_en(c_rd_en[h]), .rd_idx(c_rd_idx[h*SET_W +: SET_W]),
             .rd_tag(c_rd_tag[h*TAG_W +: TAG_W]), .rd_sub(c_rd_sub[h*(SUBW+1) +: SUBW+1]),
@@ -752,7 +824,7 @@ module kx_pxache #(
         wire [2:0] e_arsize;   wire [1:0] e_arburst;
         wire [SET_W-1:0] e_rd_idx, e_fl_idx; wire [TAG_W-1:0] e_rd_tag, e_fl_tag; wire [SUBW:0] e_rd_sub;
         kx_rd_pipe #(.M(M), .NH(1), .AW(AW), .W(W), .IDW(IDW), .SET_W(SET_W),
-                     .K(K), .RAM_STYLE(RAM_STYLE), .SEQW(SEQW)) u_re (
+                     .K(K), .RAM_STYLE(RAM_STYLE), .BANKS(BANKS), .ARR_LAT(ARR_LAT), .SEQW(SEQW)) u_re (
             .clk(clk), .resetn(rh), .flush_busy(c_flush[h]),
             .mr_qval(hq_ar_v[h]), .mr_qrdy(hq_ar_r[h]), .mr_qid(q_id), .mr_qaddr(q_addr),
             .mr_qlen(q_len), .mr_qseq(q_seq),

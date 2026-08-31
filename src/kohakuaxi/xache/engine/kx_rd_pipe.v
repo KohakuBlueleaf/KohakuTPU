@@ -20,6 +20,8 @@ module kx_rd_pipe #(
     parameter integer SET_W     = 15,
     parameter integer K         = 1,
     parameter         RAM_STYLE = "ultra",
+    parameter integer BANKS     = 8,          // kx_carray's: its RD_LAT is the array's plus one
+    parameter integer ARR_LAT   = 0,          // kx_carray's: primitive read latency, 0 = URAM 4 / else 1
     parameter integer SEQW      = 2,
     parameter integer WBYTES_LG = $clog2(W/8),
     parameter integer SUBW      = (K <= 1) ? 0 : $clog2(K),
@@ -74,7 +76,7 @@ module kx_rd_pipe #(
     input  wire [NH*2-1:0]      m_rresp,
     output wire [NH-1:0]        m_rready
 );
-    localparam integer RD_LAT = (RAM_STYLE == "ultra") ? 4 : 1;
+    localparam integer RD_LAT = ((ARR_LAT != 0) ? ARR_LAT : ((RAM_STYLE == "ultra") ? 4 : 1)) + ((BANKS > 1) ? 1 : 0);
     localparam integer HIW    = (NH <= 1) ? 1 : $clog2(NH);
     localparam integer NOMISS = 512;                            // fl_lim value before any miss
 
@@ -103,9 +105,15 @@ module kx_rd_pipe #(
         reg [3:0]  s3; reg [15:0] s2; reg [63:0] s1; reg [3:0] t;
         integer i;
         begin
-            for (i = 0; i < 64; i = i + 1) a1[i] = |x[i*4 +: 4];
-            for (i = 0; i < 16; i = i + 1) a2[i] = |a1[i*4 +: 4];
-            for (i = 0; i < 4;  i = i + 1) a3[i] = |a2[i*4 +: 4];
+            for (i = 0; i < 64; i = i + 1) begin
+                a1[i] = |x[i*4 +: 4];
+            end
+            for (i = 0; i < 16; i = i + 1) begin
+                a2[i] = |a1[i*4 +: 4];
+            end
+            for (i = 0; i < 4;  i = i + 1) begin
+                a3[i] = |a2[i*4 +: 4];
+            end
             s3 = low4(a3);
             for (i = 0; i < 4;  i = i + 1) begin t = low4(a2[i*4 +: 4]); s2[i*4 +: 4] = t & {4{s3[i]}}; end
             for (i = 0; i < 16; i = i + 1) begin t = low4(a1[i*4 +: 4]); s1[i*4 +: 4] = t & {4{s2[i]}}; end
@@ -118,7 +126,14 @@ module kx_rd_pipe #(
     wire [255:0] low_el = low1(elig_p);
     wire [P-1:0] pick_c = |hi ? low_hi[P-1:0] : low_el[P-1:0];
     reg  [PIDX_W-1:0] rg_c; integer ek;
-    always @(*) begin rg_c = 0; for (ek = 0; ek < P; ek = ek + 1) if (pick_c[ek]) rg_c = rg_c | ek[PIDX_W-1:0]; end
+    always @(*) begin
+        rg_c = 0;
+        for (ek = 0; ek < P; ek = ek + 1) begin
+            if (pick_c[ek]) begin
+                rg_c = rg_c | ek[PIDX_W-1:0];
+            end
+        end
+    end
     // the grant is registered: combinational, the arbiter reached the fabric's
     // AR bookkeeping at 14 levels (read-SASD 4x4 at 276 MHz). AXI holds ARVALID
     // until ARREADY, so a pick a cycle old is still valid; it is re-qualified
@@ -161,13 +176,19 @@ module kx_rd_pipe #(
     reg [8:0]        lb [0:RD_LAT-1];
     integer s;
     generate if (RD_LAT == 1) begin : g_lv1
-        always @(posedge clk) lv <= resetn ? issue : 1'b0;
+        always @(posedge clk) begin
+            lv <= resetn ? issue : 1'b0;
+        end
     end else begin : g_lvn
-        always @(posedge clk) lv <= resetn ? {lv[RD_LAT-2:0], issue} : {RD_LAT{1'b0}};
+        always @(posedge clk) begin
+            lv <= resetn ? {lv[RD_LAT-2:0], issue} : {RD_LAT{1'b0}};
+        end
     end endgenerate
     always @(posedge clk) begin
         lb[0] <= lk;
-        for (s = 1; s < RD_LAT; s = s + 1) lb[s] <= lb[s-1];
+        for (s = 1; s < RD_LAT; s = s + 1) begin
+            lb[s] <= lb[s-1];
+        end
     end
     wire       land_v = lv[RD_LAT-1];
     wire [8:0] land_b = lb[RD_LAT-1];
@@ -226,7 +247,14 @@ module kx_rd_pipe #(
     wire   fl_line    = |(c_fill_done & sel);
     wire   fl_last    = fl_beat && (fl_beats == 9'd1);
     reg [1:0] sel_resp; integer hk;
-    always @(*) begin sel_resp = 2'b00; for (hk = 0; hk < NH; hk = hk + 1) if (sel[hk]) sel_resp = sel_resp | m_rresp[hk*2 +: 2]; end
+    always @(*) begin
+        sel_resp = 2'b00;
+        for (hk = 0; hk < NH; hk = hk + 1) begin
+            if (sel[hk]) begin
+                sel_resp = sel_resp | m_rresp[hk*2 +: 2];
+            end
+        end
+    end
     wire   miss_after = miss_act ? !fl_last : miss_now;
     wire   burst_done = (dr_next > rlen) && !miss_after;
 
@@ -253,8 +281,12 @@ module kx_rd_pipe #(
                 end
             end else begin
                 // issuer
-                if (restart)    lk <= need;
-                else if (issue) lk <= lk + 9'd1;
+                if (restart) begin
+                    lk <= need;
+                end
+                else if (issue) begin
+                    lk <= lk + 9'd1;
+                end
 
                 // presenter
                 if (take) begin
@@ -263,7 +295,9 @@ module kx_rd_pipe #(
                 end else if (accept) begin
                     r_val  <= 1'b0;
                 end
-                if (accept) dr <= dr + 9'd1;
+                if (accept) begin
+                    dr <= dr + 9'd1;
+                end
 
                 // a miss on the beat the master needs: one DRAM read to the end
                 if (miss_now) begin
@@ -277,16 +311,24 @@ module kx_rd_pipe #(
                     miss_act <= 1'b1;
                     m_arvalid <= sel;
                 end
-                if (|m_arvalid) m_arvalid <= m_arvalid & ~m_arready;
+                if (|m_arvalid) begin
+                    m_arvalid <= m_arvalid & ~m_arready;
+                end
                 if (fl_beat) begin
                     fl_off   <= fl_off + 1'b1;
                     fl_beats <= fl_beats - 9'd1;
                     r_resp   <= r_resp | sel_resp;
-                    if (fl_last) miss_act <= 1'b0;
+                    if (fl_last) begin
+                        miss_act <= 1'b0;
+                    end
                 end
-                if (fl_line) fl_lim <= fl_lim + K;
+                if (fl_line) begin
+                    fl_lim <= fl_lim + K;
+                end
 
-                if (burst_done) busy <= 1'b0;
+                if (burst_done) begin
+                    busy <= 1'b0;
+                end
             end
         end
     end

@@ -25,6 +25,7 @@ module kx_xache #(
     parameter integer SET_W     = 15,
     parameter integer K         = 1,
     parameter         RAM_STYLE = "ultra",
+    parameter integer BANKS     = 8,                  // kx_carray banks; 1 = one array
     parameter [M-1:0]        MCDC = {M{1'b0}},        // 1: master m's clock != clk
     parameter [N_HOME-1:0]   HCDC = {N_HOME{1'b0}},   // 1: home h's DRAM clock != clk
     parameter integer RSAMD     = 1,
@@ -270,7 +271,7 @@ module kx_xache #(
 
     generate for (h = 0; h < N_HOME; h = h + 1) begin : g_carray
         kx_carray #(.AW(AW), .W(W), .SETS(SETS), .SET_W(SET_W), .K(K), .RAM_STYLE(RAM_STYLE),
-                    .FILL_SERVE(RD_PIPE ? 0 : 1)) u_c (
+                    .BANKS(BANKS), .FILL_SERVE(RD_PIPE ? 0 : 1)) u_c (
             .clk(clk), .resetn(rstn),
             .rd_en(c_rd_en[h]), .rd_idx(c_rd_idx[h*SET_W +: SET_W]),
             .rd_tag(c_rd_tag[h*TAG_W +: TAG_W]), .rd_sub(c_rd_sub[h*(SUBW+1) +: SUBW+1]),
@@ -367,7 +368,9 @@ module kx_xache #(
         // last beat, when the engine's first landing is still >= RD_LAT away,
         // and the compare was the head of the accept path.
         reg turn_q;
-        always @(posedge clk) turn_q <= (RD_PIPE == 0) || (r_seq == seq_drain[r_own]);
+        always @(posedge clk) begin
+            turn_q <= (RD_PIPE == 0) || (r_seq == seq_drain[r_own]);
+        end
         for (m = 0; m < M; m = m + 1) begin : g_rsp
             assign rv_em[m][e] = r_val && (r_own == m[MIDX_W-1:0]) && turn_q;
             assign rd_em[m][e] = {r_id[ID_W-1:0], r_resp, r_last};
@@ -393,7 +396,7 @@ module kx_xache #(
 
         if (RD_PIPE) begin : g_pipe
             kx_rd_pipe #(.M(M), .NH(NH), .AW(AW), .W(W), .IDW(IDW), .SET_W(SET_W),
-                         .K(K), .RAM_STYLE(RAM_STYLE), .SEQW(SEQW)) u_re (
+                         .K(K), .RAM_STYLE(RAM_STYLE), .BANKS(BANKS), .SEQW(SEQW)) u_re (
                 .clk(clk), .resetn(rstn), .flush_busy(c_flush[BASE +: NH]),
                 .mr_qval(q_val), .mr_qrdy(q_rdy), .mr_qid(q_id), .mr_qaddr(q_addr),
                 .mr_qlen(q_len), .mr_qseq(q_seq),
@@ -415,7 +418,7 @@ module kx_xache #(
             assign e_fl_tag = e_rd_tag;
             assign c_rd_take[BASE +: NH] = {NH{1'b1}};
             kx_rd_engine #(.M(M), .NH(NH), .AW(AW), .W(W), .IDW(IDW), .SET_W(SET_W),
-                           .K(K), .RAM_STYLE(RAM_STYLE)) u_re (
+                           .K(K), .RAM_STYLE(RAM_STYLE), .BANKS(BANKS)) u_re (
                 .clk(clk), .resetn(rstn), .flush_busy(c_flush[BASE +: NH]),
                 .mr_qval(q_val), .mr_qrdy(q_rdy), .mr_qid(q_id), .mr_qaddr(q_addr),
                 .mr_qlen(q_len), .mr_qsize(q_size),
@@ -539,13 +542,17 @@ module kx_xache #(
         always @(posedge clk) begin
             if (!rstn) begin
                 seqa_r <= 0; seqd_r <= 0; outst <= 0;
-                for (oq = 0; oq < HOSN; oq = oq + 1) hos[oq] <= 0;
+                for (oq = 0; oq < HOSN; oq = oq + 1) begin
+                    hos[oq] <= 0;
+                end
             end else begin
                 if (ar_acc) begin
                     seqa_r <= seqa_r + 1'b1;
                     hos[seqa_r] <= rhome[m];
                 end
-                if (rl_acc) seqd_r <= seq_drain_n;
+                if (rl_acc) begin
+                    seqd_r <= seq_drain_n;
+                end
                 outst <= outst + (ar_acc ? 1'b1 : 1'b0) - (rl_acc ? 1'b1 : 1'b0);
             end
         end
@@ -571,8 +578,12 @@ module kx_xache #(
         reg [RNW-1:0] rsel; reg [BW-1:0] bsel; integer ee;
         always @(*) begin
             rsel = {RNW{1'b0}}; bsel = {BW{1'b0}};
-            for (ee = 0; ee < NRE; ee = ee + 1) rsel = rsel | rt[ee*RNW +: RNW];
-            for (ee = 0; ee < NWE; ee = ee + 1) bsel = bsel | bt[ee*BW +: BW];
+            for (ee = 0; ee < NRE; ee = ee + 1) begin
+                rsel = rsel | rt[ee*RNW +: RNW];
+            end
+            for (ee = 0; ee < NWE; ee = ee + 1) begin
+                bsel = bsel | bt[ee*BW +: BW];
+            end
         end
         assign x_rid  [m*ID_W +: ID_W] = rsel[3 +: ID_W];
         assign x_rresp[m*2 +: 2]       = rsel[1 +: 2];
@@ -598,7 +609,11 @@ module kx_xache #(
         reg [HIDX_W-1:0] ridx_c; integer ee2;
         always @(*) begin
             ridx_c = {HIDX_W{1'b0}};
-            for (ee2 = 0; ee2 < NRE; ee2 = ee2 + 1) if (rv_em[m][ee2]) ridx_c = ridx_c | r_hidx_e[ee2];
+            for (ee2 = 0; ee2 < NRE; ee2 = ee2 + 1) begin
+                if (rv_em[m][ee2]) begin
+                    ridx_c = ridx_c | r_hidx_e[ee2];
+                end
+            end
         end
         // RD_PIPE=0: index and valid delayed together so data/valid stay
         // aligned; the engine holds r_val in R_DRAIN until this delayed valid
@@ -634,8 +649,11 @@ module kx_xache #(
         reg [MIDX_W-1:0] widx_h; integer ee3;
         always @(*) begin
             widx_h = {MIDX_W{1'b0}};
-            for (ee3 = 0; ee3 < NWE; ee3 = ee3 + 1)
-                if (WSAMD ? (ee3 == h) : 1'b1) widx_h = widx_h | w_midx_e[ee3];
+            for (ee3 = 0; ee3 < NWE; ee3 = ee3 + 1) begin
+                if (WSAMD ? (ee3 == h) : 1'b1) begin
+                    widx_h = widx_h | w_midx_e[ee3];
+                end
+            end
         end
         wire [W-1:0]    wdata_h = x_wdata[widx_h*W +: W];
         wire [STRB-1:0] wstrb_h = x_wstrb[widx_h*STRB +: STRB];

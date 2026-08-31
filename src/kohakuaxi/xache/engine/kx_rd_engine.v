@@ -15,6 +15,7 @@ module kx_rd_engine #(
     parameter integer SET_W     = 15,
     parameter integer K         = 1,
     parameter         RAM_STYLE = "ultra",
+    parameter integer BANKS     = 8,          // kx_carray's: its RD_LAT is the array's plus one
     parameter integer WBYTES_LG = $clog2(W/8),
     parameter integer SUBW      = (K <= 1) ? 0 : $clog2(K),
     parameter integer LINE_LSB  = WBYTES_LG + SUBW,
@@ -60,7 +61,7 @@ module kx_rd_engine #(
     input  wire [NH*2-1:0]      m_rresp,
     output wire [NH-1:0]        m_rready
 );
-    localparam integer RD_LAT = (RAM_STYLE == "ultra") ? 4 : 1;
+    localparam integer RD_LAT = ((RAM_STYLE == "ultra") ? 4 : 1) + ((BANKS > 1) ? 1 : 0);
     localparam integer RD_WAIT = RD_LAT + 1;
 
     function [SET_W-1:0] idx_of; input [AW-1:0] a; begin idx_of = a[LINE_LSB +: SET_W]; end endfunction
@@ -78,7 +79,14 @@ module kx_rd_engine #(
     wire [P-1:0] pick = |hi ? (hi & (~hi + 1'b1)) : (elig & (~elig + 1'b1));
     wire         rg_v = |elig;
     reg  [PIDX_W-1:0] rg_p; integer ek;
-    always @(*) begin rg_p = 0; for (ek = 0; ek < P; ek = ek + 1) if (pick[ek]) rg_p = rg_p | ek[PIDX_W-1:0]; end
+    always @(*) begin
+        rg_p = 0;
+        for (ek = 0; ek < P; ek = ek + 1) begin
+            if (pick[ek]) begin
+                rg_p = rg_p | ek[PIDX_W-1:0];
+            end
+        end
+    end
 
     localparam [2:0] R_IDLE=0, R_ISSUE=1, R_WAIT=2, R_CHK=3, R_FETCH=4, R_DRAIN=5;
     reg [2:0]        rst;
@@ -100,7 +108,14 @@ module kx_rd_engine #(
     wire sel_hit  = |(c_hit & sel);
     wire sel_done = |(c_fill_done & sel);
     reg [1:0] sel_resp; integer hk;
-    always @(*) begin sel_resp = 2'b00; for (hk = 0; hk < NH; hk = hk + 1) if (sel[hk]) sel_resp = sel_resp | m_rresp[hk*2 +: 2]; end
+    always @(*) begin
+        sel_resp = 2'b00;
+        for (hk = 0; hk < NH; hk = hk + 1) begin
+            if (sel[hk]) begin
+                sel_resp = sel_resp | m_rresp[hk*2 +: 2];
+            end
+        end
+    end
 
     assign m_arid    = rid;
     assign m_araddr  = {ra[AW-1:LINE_LSB], {LINE_LSB{1'b0}}};
@@ -114,37 +129,45 @@ module kx_rd_engine #(
             rst <= R_IDLE; r_val <= 1'b0; m_arvalid <= 0; rarr_mask <= {P{1'b1}}; sel <= 0; sidx <= 0; r_home <= 0; r_hidx <= 0;
         end else begin
             case (rst)
-            R_IDLE: begin
-                r_val <= 1'b0;
-                if (rg_v) begin
-                    ra <= mr_qaddr[rg_p*AW +: AW]; rleft <= mr_qlen[rg_p*8 +: 8];
-                    rid <= mr_qid[rg_p*IDW +: IDW];
-                    sel <= 0; sel[rg_p / M] <= 1'b1; sidx <= rg_p / M;
-                    rarr_mask <= ~((pick << 1) - 1'b1);
-                    rst <= R_ISSUE;
+                R_IDLE: begin
+                    r_val <= 1'b0;
+                    if (rg_v) begin
+                        ra <= mr_qaddr[rg_p*AW +: AW]; rleft <= mr_qlen[rg_p*8 +: 8];
+                        rid <= mr_qid[rg_p*IDW +: IDW];
+                        sel <= 0; sel[rg_p / M] <= 1'b1; sidx <= rg_p / M;
+                        rarr_mask <= ~((pick << 1) - 1'b1);
+                        rst <= R_ISSUE;
+                    end
                 end
-            end
-            R_ISSUE: begin rwait <= RD_WAIT[2:0]; rst <= R_WAIT; end
-            R_WAIT: if (rwait <= 3'd1) rst <= R_CHK; else rwait <= rwait - 3'd1;
-            R_CHK: if (sel_hit) begin
-                    r_id <= rid; r_resp <= 2'b00; r_last <= (rleft == 8'd0);
-                    r_home <= sel; r_hidx <= sidx; r_val <= 1'b1; rst <= R_DRAIN;
-                end else begin
-                    m_arvalid <= sel; rst <= R_FETCH;
+                R_ISSUE: begin rwait <= RD_WAIT[2:0]; rst <= R_WAIT; end
+                R_WAIT: begin
+                    if (rwait <= 3'd1) begin
+                        rst <= R_CHK;
+                    end else begin
+                        rwait <= rwait - 3'd1;
+                    end
                 end
-            R_FETCH: begin
-                m_arvalid <= m_arvalid & ~m_arready;
-                if (sel_done) begin
-                    r_id <= rid; r_resp <= sel_resp; r_last <= (rleft == 8'd0);
-                    r_home <= sel; r_hidx <= sidx; r_val <= 1'b1; rst <= R_DRAIN;
+                R_CHK: if (sel_hit) begin
+                        r_id <= rid; r_resp <= 2'b00; r_last <= (rleft == 8'd0);
+                        r_home <= sel; r_hidx <= sidx; r_val <= 1'b1; rst <= R_DRAIN;
+                    end else begin
+                        m_arvalid <= sel; rst <= R_FETCH;
+                    end
+                R_FETCH: begin
+                    m_arvalid <= m_arvalid & ~m_arready;
+                    if (sel_done) begin
+                        r_id <= rid; r_resp <= sel_resp; r_last <= (rleft == 8'd0);
+                        r_home <= sel; r_hidx <= sidx; r_val <= 1'b1; rst <= R_DRAIN;
+                    end
                 end
-            end
-            R_DRAIN: if (r_val && r_rdy) begin
-                r_val <= 1'b0;
-                if (r_last) rst <= R_IDLE;
-                else begin ra <= ra + (W/8); rleft <= rleft - 8'd1; rst <= R_ISSUE; end
-            end
-            default: rst <= R_IDLE;
+                R_DRAIN: if (r_val && r_rdy) begin
+                    r_val <= 1'b0;
+                    if (r_last) begin
+                        rst <= R_IDLE;
+                    end
+                    else begin ra <= ra + (W/8); rleft <= rleft - 8'd1; rst <= R_ISSUE; end
+                end
+                default: rst <= R_IDLE;
             endcase
         end
     end

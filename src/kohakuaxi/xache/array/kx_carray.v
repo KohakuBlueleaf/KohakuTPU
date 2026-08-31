@@ -10,6 +10,17 @@
 // advances every cycle whether or not a lookup was issued. Fills take a per-beat
 // line address from the engine and yield to the write port (`fill_ready`), so a
 // master write is never dropped under a fill.
+//
+// BANKS splits the sets over BANKS arrays (bank = the low select bits, so
+// consecutive sets rotate); K widens the row to K words. Both shorten the URAM
+// cascade, the one axis the device constrains: UG573 p.116 cascades bottom-up
+// in ONE column, UG901 p.117 caps a chain at 8, UG901 p.118 wants rows +
+// columns output registers (ARR_LAT). The ship shape at K=1/BANKS=1 is eight
+// 8-deep chains at 4 of 9 registers: routed at UG949 congestion level 6. The
+// read select costs the same (8/depth):1 over W either way; K > 1 also drops
+// the fill line buffer (write lanes) and the master-write data 2:1. Every bank
+// reads the same in-bank address every cycle; the select rides the lookup
+// pipeline and a registered BANKS:1 row mux costs the one extra cycle of RD_LAT.
 
 `default_nettype none
 
@@ -20,13 +31,17 @@ module kx_carray #(
     parameter integer SET_W     = 15,
     parameter integer K         = 1,
     parameter         RAM_STYLE = "ultra",
+    parameter integer BANKS     = 8,
+    parameter integer WPORT_REG = 0,            // 1: the write-port bundle registered
     parameter integer FILL_SERVE = 1,           // 1: a completed fill also loads `word` (the one-line engine)
+    parameter integer ARR_LAT   = 0,            // primitive read latency; 0 = URAM 4 / else 1
+    parameter integer LANE_W    = 8,            // K > 1 write lane: 8, or 9 (the 72 = 8 x 9 native lane)
+    parameter integer SPAN_LG   = 12,           // a fill never crosses this: the AXI 4 KB page
     parameter integer WBYTES_LG = $clog2(W/8),
     parameter integer SUBW      = (K <= 1) ? 0 : $clog2(K),
     parameter integer LINE_LSB  = WBYTES_LG + SUBW,
     parameter integer CW        = K * W,
     parameter integer TAG_W     = AW - LINE_LSB - SET_W,
-    parameter integer ROW_W     = 1 + TAG_W + CW,
     parameter integer BCW       = (K <= 1) ? 1 : $clog2(K)
 )(
     input  wire                 clk,
@@ -59,14 +74,28 @@ module kx_carray #(
 
     output wire                 flush_busy
 );
-    localparam integer RD_LAT = (RAM_STYLE == "ultra") ? 4 : 1;
+    localparam integer RAM_LAT = (ARR_LAT != 0) ? ARR_LAT : ((RAM_STYLE == "ultra") ? 4 : 1);
+    localparam integer RD_LAT  = RAM_LAT + ((BANKS > 1) ? 1 : 0);
+    localparam integer BLG     = (BANKS <= 1) ? 1 : $clog2(BANKS);
+
+    // Row layout: K sub-words at stride SS (W rounded up to whole lanes), then
+    // the tag, then valid; padded to whole lanes. K = 1 is one lane, the row.
+    localparam integer SS     = (K <= 1) ? W : ((W + LANE_W - 1) / LANE_W) * LANE_W;
+    localparam integer DOFF   = K * SS;
+    localparam integer ROW_L  = DOFF + TAG_W + 1;
+    localparam integer BYTE_W = (K <= 1) ? ROW_L : LANE_W;
+    localparam integer ROW_P  = ((ROW_L + BYTE_W - 1) / BYTE_W) * BYTE_W;
+    localparam integer NSTRB  = ROW_P / BYTE_W;
+    localparam integer DSTRB  = (K <= 1) ? 1 : SS / BYTE_W;    // lanes per sub-word
 
     reg flushing; reg [SET_W-1:0] flush_idx;
     always @(posedge clk) begin
         if (!resetn) begin flushing <= 1'b1; flush_idx <= 0; end
         else if (flushing) begin
             flush_idx <= flush_idx + 1'b1;
-            if (flush_idx == (SETS-1)) flushing <= 1'b0;
+            if (flush_idx == (SETS-1)) begin
+                flushing <= 1'b0;
+            end
         end
     end
 
@@ -76,9 +105,13 @@ module kx_carray #(
     reg [SUBW:0]     sub_p [0:RD_LAT-1];
     integer s;
     generate if (RD_LAT == 1) begin : g_rp1
-        always @(posedge clk) rd_pipe <= rd_en;
+        always @(posedge clk) begin
+            rd_pipe <= rd_en;
+        end
     end else begin : g_rpn
-        always @(posedge clk) rd_pipe <= {rd_pipe[RD_LAT-2:0], rd_en};
+        always @(posedge clk) begin
+            rd_pipe <= {rd_pipe[RD_LAT-2:0], rd_en};
+        end
     end endgenerate
     always @(posedge clk) begin
         tag_p[0] <= rd_tag; sub_p[0] <= rd_sub;
@@ -87,8 +120,8 @@ module kx_carray #(
     wire [TAG_W-1:0] q_tag = tag_p[RD_LAT-1];
     wire [SUBW:0]    q_sub = sub_p[RD_LAT-1];
 
-    wire [ROW_W-1:0] rd_row;
-    wire hit_now = rd_row[ROW_W-1] && (rd_row[CW +: TAG_W] == q_tag);
+    wire [ROW_P-1:0] rd_row;
+    wire hit_now = rd_row[ROW_L-1] && (rd_row[DOFF +: TAG_W] == q_tag);
     assign land  = rd_pipe[RD_LAT-1];
     assign hit_c = hit_now;
 
@@ -104,29 +137,33 @@ module kx_carray #(
         if (wr_en) begin w_idx_q <= wr_idx; w_tag_q <= wr_tag; w_word_q <= wr_word; w_full_q <= wr_full; end
     end
 
-    // fill: K=1 writes every beat; K>1 buffers K-1 beats and writes on the last.
-    // A beat is taken only when the write port is free this cycle.
+    // fill: every beat is a write. K = 1 lands the row in one; K > 1 lands
+    // sub-word bc through its lanes, invalidating the row on the FIRST beat and
+    // validating it with the tag on the LAST, so a half-written line is never
+    // observable (a lookup in the window misses, as it does while a K = 1 fill
+    // is in flight). A beat is taken only when the write port is free.
     assign fill_ready = !flushing && !w_en_q;
     wire beat = fill_go && r_valid && fill_ready;
-    wire [CW-1:0] fill_line;
     wire          line_end;
+    wire          line_first;
+    wire [K-1:0]  sub_oh;                   // one-hot of the beat's sub-word
     generate if (K <= 1) begin : g_k1
-        assign fill_line = r_data;
-        assign line_end  = 1'b1;
+        assign line_end   = 1'b1;
+        assign line_first = 1'b1;
+        assign sub_oh     = 1'b1;
     end else begin : g_kn
-        reg [CW-1:0]  line_buf;
         reg [BCW-1:0] bc;
-        integer fk;
+        assign line_end   = (bc == K-1);
+        assign line_first = (bc == 0);
         genvar j;
-        for (j = 0; j < K; j = j + 1) begin : g_fl
-            assign fill_line[j*W +: W] = (bc == j[BCW-1:0]) ? r_data : line_buf[j*W +: W];
+        for (j = 0; j < K; j = j + 1) begin : g_oh
+            assign sub_oh[j] = (bc == j[BCW-1:0]);
         end
-        assign line_end = (bc == K-1);
         always @(posedge clk) begin
-            if (!resetn || !fill_go) bc <= 0;
+            if (!resetn || !fill_go) begin
+                bc <= 0;
+            end
             else if (beat) begin
-                for (fk = 0; fk < K; fk = fk + 1)
-                    if (bc == fk[BCW-1:0]) line_buf[fk*W +: W] <= r_data;
                 bc <= line_end ? {BCW{1'b0}} : bc + 1'b1;
             end
         end
@@ -134,31 +171,190 @@ module kx_carray #(
     assign fill_done = beat && line_end;
 
     // the served word: captured on a taken landing (and, for the one-line engine,
-    // on the fill it waited for). Sub-word select on the binary q_sub; K=1 a wire.
-    wire [W-1:0]  row_word  = (K <= 1) ? rd_row[W-1:0]   : rd_row[q_sub*W +: W];
-    wire [W-1:0]  fill_word = (K <= 1) ? fill_line[W-1:0] : fill_line[q_sub*W +: W];
+    // on the fill it waited for -- the beat carrying q_sub is held until the last).
+    // Sub-word select on the binary q_sub; K=1 a wire.
+    wire [W-1:0]  row_word  = (K <= 1) ? rd_row[W-1:0] : rd_row[q_sub*SS +: W];
+    wire [W-1:0]  fill_word;
+    generate if ((FILL_SERVE != 0) && (K > 1)) begin : g_fs_k
+        wire        fill_mine = beat && sub_oh[q_sub[BCW-1:0]];
+        reg [W-1:0] fw_q;
+        always @(posedge clk) begin
+            if (fill_mine) begin
+                fw_q <= r_data;
+            end
+        end
+        assign fill_word = fill_mine ? r_data : fw_q;
+    end else begin : g_fs_1
+        assign fill_word = r_data;
+    end endgenerate
     reg [W-1:0] word_q;
     reg         hit_q;
     always @(posedge clk) begin
-        if (land && rd_take) hit_q <= hit_now;
-        if ((FILL_SERVE != 0) && fill_done) word_q <= fill_word;
-        else if (land && rd_take)          word_q <= row_word;
+        if (land && rd_take) begin
+            hit_q <= hit_now;
+        end
+        if ((FILL_SERVE != 0) && fill_done) begin
+            word_q <= fill_word;
+        end
+        else if (land && rd_take) begin
+            word_q <= row_word;
+        end
     end
     assign hit  = hit_q;
     assign word = word_q;
 
-    // one write port: flush > master write > fill (a fill yields via fill_ready).
-    wire             ram_we    = flushing || w_en_q || fill_done;
-    wire             use_fill  = fill_done;
-    wire [SET_W-1:0] ram_waddr = flushing ? flush_idx : use_fill ? fill_idx : w_idx_q;
-    wire             ram_valid = !flushing && (use_fill || ((K == 1) && w_full_q));
-    wire [TAG_W-1:0] ram_tag   = use_fill ? fill_tag : w_tag_q;
-    wire [CW-1:0]    ram_data  = use_fill ? fill_line : {K{w_word_q}};
+    // FILL POISON. fill_go spans the engine's AR to its last beat, so a master
+    // write that lands in that window into a line the fill has still to land
+    // may post-date the fill's DRAM read: the copy in flight is stale. Every
+    // line this fill lands after such a write lands with valid 0 and is fetched
+    // again. The span is the fill's remaining lines: ascending, inside one page.
+    localparam integer PL = SPAN_LG - LINE_LSB;             // log2 lines per page
+    wire w_in_span;
+    generate if (PL <= 0) begin : g_sp0
+        assign w_in_span = (w_idx_q == fill_idx);
+    end else if (PL >= SET_W) begin : g_spall
+        assign w_in_span = (w_idx_q >= fill_idx);
+    end else begin : g_span
+        assign w_in_span = (w_idx_q[SET_W-1:PL] == fill_idx[SET_W-1:PL])
+                           && (w_idx_q[PL-1:0] >= fill_idx[PL-1:0]);
+    end endgenerate
+    reg poison;
+    always @(posedge clk) begin
+        if (!resetn || !fill_go) begin
+            poison <= 1'b0;
+        end
+        else if (w_en_q && w_in_span) begin
+            poison <= 1'b1;
+        end
+    end
 
-    kohaku_sdpram #(.WIDTH(ROW_W), .DEPTH(SETS), .MEM_PRIM(RAM_STYLE), .READ_LAT(RD_LAT)) u_arr (
-        .clk(clk), .wr_en(ram_we), .wr_addr(ram_waddr), .wr_data({ram_valid, ram_tag, ram_data}),
-        .rd_en(1'b1), .rd_addr(rd_idx), .rd_data(rd_row)
-    );
+    // one write port: flush > master write > fill (a fill yields via fill_ready).
+    // What a write touches -- K = 1: the whole row, allocating on a full-word
+    // master write as ever. K > 1: a fill beat its sub-word's lanes plus the
+    // meta lanes on the first (valid 0) and last (valid 1) beat; a flush or a
+    // master write the meta lanes only, valid 0. A K > 1 master write is thus an
+    // invalidate whose data never reaches the port, and the W-wide fill/master
+    // data 2:1 that K = 1 needs is gone.
+    wire             ram_we_c    = flushing || w_en_q || beat;
+    wire             use_fill    = beat;
+    wire [SET_W-1:0] ram_waddr_c = flushing ? flush_idx : use_fill ? fill_idx : w_idx_q;
+    wire             ram_valid_c = !flushing && ((use_fill && line_end && !poison) || ((K == 1) && !use_fill && w_full_q));
+    wire [TAG_W-1:0] ram_tag_c   = use_fill ? fill_tag : w_tag_q;
+    wire [W-1:0]     ram_wsrc    = (K > 1) ? r_data : (use_fill ? r_data : w_word_q);
+    wire [NSTRB-1:0] ram_strb_c;
+    generate if (K <= 1) begin : g_sb1
+        assign ram_strb_c = 1'b1;
+    end else begin : g_sbn
+        wire [NSTRB-1:0] mmask, dmask;
+        genvar l;
+        for (l = 0; l < NSTRB; l = l + 1) begin : g_lane
+            if (l < K*DSTRB) begin : g_d
+                assign mmask[l] = 1'b0;
+                assign dmask[l] = sub_oh[l / DSTRB];
+            end else begin : g_m
+                assign mmask[l] = 1'b1;
+                assign dmask[l] = 1'b0;
+            end
+        end
+        assign ram_strb_c = use_fill ? (dmask | ((line_first || line_end) ? mmask : {NSTRB{1'b0}}))
+                                     : mmask;
+    end endgenerate
+
+    wire             ram_we;
+    wire [SET_W-1:0] ram_waddr;
+    wire             ram_valid;
+    wire [TAG_W-1:0] ram_tag;
+    wire [W-1:0]     ram_wd;
+    wire [NSTRB-1:0] ram_strb;
+
+    // WPORT_REG moves the whole bundle -- enable included, or a delayed enable
+    // writes the wrong row -- one cycle later, so the fabric select is no
+    // longer in one cone with the port itself.
+    generate if (WPORT_REG == 0) begin : g_wp_comb
+        assign ram_we    = ram_we_c;
+        assign ram_waddr = ram_waddr_c;
+        assign ram_valid = ram_valid_c;
+        assign ram_tag   = ram_tag_c;
+        assign ram_wd    = ram_wsrc;
+        assign ram_strb  = ram_strb_c;
+    end else begin : g_wp_reg
+        reg              we_q;
+        reg [SET_W-1:0]  wa_q;
+        reg              wv_q;
+        reg [TAG_W-1:0]  wt_q;
+        reg [W-1:0]      wd_q;
+        reg [NSTRB-1:0]  ws_q;
+        always @(posedge clk) begin
+            we_q <= ram_we_c && resetn;
+            if (ram_we_c) begin
+                wa_q <= ram_waddr_c;
+                wv_q <= ram_valid_c;
+                wt_q <= ram_tag_c;
+                wd_q <= ram_wsrc;
+                ws_q <= ram_strb_c;
+            end
+        end
+        assign ram_we    = we_q;
+        assign ram_waddr = wa_q;
+        assign ram_valid = wv_q;
+        assign ram_tag   = wt_q;
+        assign ram_wd    = wd_q;
+        assign ram_strb  = ws_q;
+    end endgenerate
+
+    // the physical row: the one W word replicated into every sub-word slot (the
+    // lanes pick the slot), zeros in the slot and row padding, tag, valid
+    wire [ROW_P-1:0] ram_row;
+    genvar k;
+    generate
+        for (k = 0; k < K; k = k + 1) begin : g_slot
+            assign ram_row[k*SS +: W] = ram_wd;
+            if (SS > W) begin : g_spad
+                assign ram_row[k*SS + W +: SS - W] = {(SS - W){1'b0}};
+            end
+        end
+        if (ROW_P > ROW_L) begin : g_rpad
+            assign ram_row[ROW_P-1:ROW_L] = {(ROW_P - ROW_L){1'b0}};
+        end
+    endgenerate
+    assign ram_row[DOFF +: TAG_W] = ram_tag;
+    assign ram_row[ROW_L-1]       = ram_valid;
+
+    generate if (BANKS <= 1) begin : g_one
+        kohaku_sdpram_be #(.WIDTH(ROW_P), .DEPTH(SETS), .BYTE_W(BYTE_W), .MEM_PRIM(RAM_STYLE), .READ_LAT(RD_LAT)) u_arr (
+            .clk(clk), .wr_en(ram_we), .wr_strb(ram_strb), .wr_addr(ram_waddr), .wr_data(ram_row),
+            .rd_en(1'b1), .rd_addr(rd_idx), .rd_data(rd_row)
+        );
+    end else begin : g_bank
+        wire [ROW_P-1:0] bank_row [0:BANKS-1];
+        reg  [BLG-1:0]   bsel_p [0:RAM_LAT-1];
+        integer bs;
+        always @(posedge clk) begin
+            bsel_p[0] <= rd_idx[BLG-1:0];
+            for (bs = 1; bs < RAM_LAT; bs = bs + 1) begin
+                bsel_p[bs] <= bsel_p[bs-1];
+            end
+        end
+
+        // ONE LEVEL IS THE FLOOR. At BANKS = 8 this is 2 LUT + 1 MUXF7 per bit
+        // and the F7 is free silicon, so every split is worse: two 4:1 then a
+        // 2:1 is 2.5 LUT/bit, four 2:1 then a 4:1 is 3. Built as a knob and
+        // withdrawn -- it also moved the array's read latency, which the
+        // engines take from `land`, and the bench stopped making progress.
+        reg [ROW_P-1:0] row_q;
+        always @(posedge clk) begin
+            row_q <= bank_row[bsel_p[RAM_LAT-1]];
+        end
+        assign rd_row = row_q;
+        genvar b;
+        for (b = 0; b < BANKS; b = b + 1) begin : g_b
+            kohaku_sdpram_be #(.WIDTH(ROW_P), .DEPTH(SETS/BANKS), .BYTE_W(BYTE_W), .MEM_PRIM(RAM_STYLE), .READ_LAT(RAM_LAT)) u_arr (
+                .clk(clk), .wr_en(ram_we && (ram_waddr[BLG-1:0] == b[BLG-1:0])), .wr_strb(ram_strb),
+                .wr_addr(ram_waddr[SET_W-1:BLG]), .wr_data(ram_row),
+                .rd_en(1'b1), .rd_addr(rd_idx[SET_W-1:BLG]), .rd_data(bank_row[b])
+            );
+        end
+    end endgenerate
 
     assign flush_busy = flushing;
 endmodule

@@ -50,6 +50,41 @@ crossings unless the row says none.
 | `kx_pxache`, no DRAM-side crossing, one per partition | 4 | 9,657 | 23,118 | 256 | 234 | +0.548 | 359 |
 | one lane alone: `kx_lane` NT=3, W=590 (three hops, three taps) | — | 79 | 1,857 | 0 | 25.5 | +1.831 | 666 |
 
+The array's shape, at the same 8 MB, four partitions, ring register on, one
+synthesis per row. The rows differ in how deep each home's UltraRAM chain is
+and how the row is cut (`BANKS` against `K`, §4); the 8-deep row is the one
+above with the ring register, and it is the chain that congests at route
+(UG949 level 6 on the shipped card):
+
+| array | chain | LUT | FF | URAM | WNS ns | Fmax MHz |
+|---|---|---|---|---|---|---|
+| `K=1 BANKS=1` | 8-deep | 10,659 | 28,762 | 256 | +0.299 | 330 |
+| **`K=2 BANKS=1`, write lanes — the default** | 4-deep | **11,788** | 28,786 | **240** | +0.618 | 368 |
+| `K=1 BANKS=2` | 4-deep | 12,816 | 33,058 | 256 | +0.618 | 368 |
+| `K=4 BANKS=1`, write lanes | 2-deep | 12,814 | 32,906 | 232 | +0.618 | 368 |
+| `K=1 BANKS=4` | 2-deep | 13,916 | 37,350 | 256 | +0.618 | 368 |
+| `K=8 BANKS=1`, 9-bit lanes | one deep, no chain | 14,854 | 41,058 | 232 | +0.618 | 368 |
+| `K=1 BANKS=8` | one deep | 16,092 | 45,898 | 256 | +0.618 | 368 |
+
+At a fixed capacity the read select costs the same (blocks per row ÷ depth):1
+over the port whichever axis cuts the row, so a wider row does not cheapen
+the mux — it removes the chain, saves the tag (one per row) and, with the
+write lanes, the fill line buffer and the master-write 2:1. What a depth
+costs on the device is a routed question: `scripts/tcl/impl_pxache.tcl`
+places each partition in its SLR (masters, homes and edges pinned, each hop's
+transmit half in the sending SLR and its landing half in the receiving one)
+and routes at 300 MHz. Both 4-deep rows meet timing — `K=2 BANKS=1` at
+**WNS +0.020, 11,288 LUT routed, 240 URAM**; `K=1 BANKS=2` at +0.014,
+12,446 LUT — with every net routed and no effective congestion window above
+level 5; the worst paths are the lanes' landing RAM to the next transmit
+register and the die crossing itself, not the arrays. The one-deep control
+(`K=8`, 9-bit lanes, no chain) routes at +0.027 and 14,377 LUT and shows the
+same placer level-5 windows at the URAM columns — that pressure is the
+array's density, not the chain's; the one-deep `K=1 BANKS=8` shape routes at
++0.091 and 15,742 LUT, the 2-deep `K=4 BANKS=1` at +0.020 and 12,306. The
+8-deep chain is under-registered by UG901's count (rows + columns) and is not
+offered.
+
 Read it as three numbers:
 
 - **P = 1 is the Xache.** 9,972 against 9,994 LUT; hit latency 39 cycles
@@ -227,8 +262,21 @@ partition.
 | `RD_OUTQ`, `WR_OUTQ` | 4 | read slots (each a page of the reorder ring) and write slots per master |
 | `HOP_DEPTH` | 16 | landing ring entries; ≥ 4 streams |
 | `HOP_BUF` | `lean` | the ring, or `xpm` (one cycle slower) |
-| `HOP_RXREG` | 0 | 1: a register in front of every landing RAM, +1 cycle per hop (§2.1) |
-| the Xache's | the ship's | `M`, `N_HOME`, `K`, `W`, `SETS`, `MCDC`, `HCDC`, `NSWAP`, `SWAP_A/B`, `RAM_STYLE`, `CDC_DEPTH` — unchanged in meaning and in cost |
+| `HOP_RXREG` | 0 | 1: a register in front of every landing RAM, +1 cycle per hop (§2.1). At the default array it is +949 LUT and +14,000 FF for +0.19 ns (368 → 396 MHz): a timing lever, not an area one |
+| `K`, `SETS`, `SET_W` | 2, 16384, 14 | the array's row: `K` words of `W` per set, so the same 8 MB at half the sets. `K` cuts the UltraRAM chain's depth without a bank mux (§1); the line a master sees is unchanged |
+| `BANKS` | 1 | `kx_carray` banks; `SETS / BANKS / 4096` is the chain depth, and a bank is a `BANKS`:1 select on the row plus one cycle |
+| `LANE_W` | 8 | at `K > 1` the array writes one sub-word per fill beat through the primitive's write lanes (`kohaku_sdpram_be`), 8 or 9 bits; 9 is the 72-bit UltraRAM's own lane and packs it fully (K=8: 58 blocks a home against 65) |
+| `ARR_LAT` | 0 | the array primitive's read latency; 0 = 4 on UltraRAM. UG901 asks rows + columns output registers of a chain |
+| `RING_WR_REG`, `ARR_WP_REG` | 1, 0 | the reorder ring's write port registered (−412 LUT, +47 MHz, +1 cycle); the array's write-port bundle registered (within noise) |
+| the Xache's | the ship's | `M`, `N_HOME`, `W`, `MCDC`, `HCDC`, `NSWAP`, `SWAP_A/B`, `RAM_STYLE`, `CDC_DEPTH` — unchanged in meaning and in cost |
+
+At `K > 1` a fill lands one sub-word per beat, invalidating the row on the
+first beat and validating it with the tag on the last, so a half-written line
+is never observable; and a master write that arrives while a fill of the same
+line's page is in flight poisons that fill (`kx_carray` `SPAN_LG`, the AXI
+4 KB page), so a copy read from DRAM before the write cannot land valid. A
+master write at `K > 1` invalidates its line rather than allocating it; the
+bench's write-then-read streams measure the same bandwidth either way (§5).
 
 The engines are one per home on both sides (the Xache's SAMD); `RSAMD` and
 `WSAMD` do not exist here, because a shared engine across partitions would be

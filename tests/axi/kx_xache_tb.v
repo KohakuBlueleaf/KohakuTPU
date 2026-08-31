@@ -50,9 +50,12 @@
 `ifndef TB_PERF
   `define TB_PERF 0
 `endif
+`ifndef TB_BANKS
+  `define TB_BANKS 8
+`endif
 
 module kx_xache_tb;
-    localparam integer M=`TB_M, N=`TB_N, K=`TB_K, TWOCLK=`TB_TWOCLK;
+    localparam integer M=`TB_M, N=`TB_N, K=`TB_K, TWOCLK=`TB_TWOCLK, BANKS=`TB_BANKS;
     localparam integer RSAMD=`TB_RSAMD, WSAMD=`TB_WSAMD;
     localparam integer RDPIPE=`TB_RDPIPE, RDQ=`TB_RDQ, DLAT=`TB_DLAT;
     localparam integer W=512, IDW_S=4, HOME_LSB=32, SETS=`TB_SETS, SET_W=`TB_SET_W;
@@ -68,15 +71,24 @@ module kx_xache_tb;
     localparam integer NSWAP = (ILV != 0) ? (HOME_LSB - ILV) : 0;
     localparam integer NSW   = (NSWAP < 1) ? 1 : NSWAP;
     function [NSW*8-1:0] mk_swap; input integer base; integer i;
-        begin mk_swap = 0; for (i = 0; i < NSW; i = i + 1) mk_swap[i*8 +: 8] = base + i; end
+        begin
+            mk_swap = 0;
+            for (i = 0; i < NSW; i = i + 1) begin
+                mk_swap[i*8 +: 8] = base + i;
+            end
+        end
     endfunction
     localparam [NSW*8-1:0] SWAP_A = mk_swap(ILV);
     localparam [NSW*8-1:0] SWAP_B = mk_swap(ILV + HIW);
 
     reg clk0 = 0, clk1 = 0;
     reg rstn = 0, rstn1 = 0;
-    always #1.667 clk0 = ~clk0;                     // xbar/master clock ~ 300 MHz
-    always #2.100 clk1 = ~clk1;                     // DRAM clock ~ 238 MHz
+    always begin  // xbar/master clock ~ 300 MHz
+        #1.667 clk0 = ~clk0;
+    end
+    always begin  // DRAM clock ~ 238 MHz
+        #2.100 clk1 = ~clk1;
+    end
     wire clk = clk0;
     wire dclk = (TWOCLK!=0) ? clk1 : clk0;
     wire drstn = (TWOCLK!=0) ? rstn1 : rstn;
@@ -105,7 +117,7 @@ module kx_xache_tb;
     wire [N*STRB-1:0] d_wstrb;
 
     kx_xache #(.M(M), .N_HOME(N), .AW(AW), .W(W), .ID_W(IDW_S), .HOME_LSB(HOME_LSB),
-                 .SETS(SETS), .SET_W(SET_W), .K(K), .RAM_STYLE("block"),
+                 .SETS(SETS), .SET_W(SET_W), .K(K), .RAM_STYLE("block"), .BANKS(BANKS),
                  .MCDC(MCDC), .HCDC(HCDC), .RSAMD(RSAMD), .WSAMD(WSAMD),
                  .NSWAP(NSWAP), .SWAP_A(SWAP_A), .SWAP_B(SWAP_B),
                  .RD_PIPE(RDPIPE), .RD_OUTQ(RDQ)) dut (
@@ -157,8 +169,12 @@ module kx_xache_tb;
             .s_axi_rvalid(d_rvalid[g]), .s_axi_rready(d_rready[g])
         );
         always @(posedge dclk) begin
-            if (d_arvalid[g] && d_arready[g]) n_ar[g] <= n_ar[g] + 1;
-            if (d_awvalid[g] && d_awready[g]) n_aw[g] <= n_aw[g] + 1;
+            if (d_arvalid[g] && d_arready[g]) begin
+                n_ar[g] <= n_ar[g] + 1;
+            end
+            if (d_awvalid[g] && d_awready[g]) begin
+                n_aw[g] <= n_aw[g] + 1;
+            end
         end
     end endgenerate
 
@@ -173,7 +189,9 @@ module kx_xache_tb;
         end
     end
     integer cyc = 0;
-    always @(posedge clk) cyc <= cyc + 1;
+    always @(posedge clk) begin
+        cyc <= cyc + 1;
+    end
     // a hang fails in seconds, not at the harness's ten-minute limit
     initial begin
         #4_000_000;
@@ -253,7 +271,9 @@ module kx_xache_tb;
             for (b = 0; b < nb; b = b + 1) begin
                 if (stall && (($urandom % 4) == 0)) begin
                     s_rready[mi]=0;
-                    for (k = 0; k < 1 + ($urandom % 3); k = k + 1) @(negedge clk);
+                    for (k = 0; k < 1 + ($urandom % 3); k = k + 1) begin
+                        @(negedge clk);
+                    end
                 end
                 s_rready[mi]=1;
                 do @(posedge clk); while(!s_rvalid[mi]);
@@ -291,8 +311,12 @@ module kx_xache_tb;
         integer pi, pc;
         begin
             fork
-                for (pi = 0; pi < pages; pi = pi + 1) rd_issue(mi, base + pi*PG, 64);
-                for (pc = 0; pc < pages; pc = pc + 1) rd_collect(mi, base + pc*PG, {8{64'hD000_0000 + (mi<<16) + pc}}, 64, stall);
+                for (pi = 0; pi < pages; pi = pi + 1) begin
+                    rd_issue(mi, base + pi*PG, 64);
+                end
+                for (pc = 0; pc < pages; pc = pc + 1) begin
+                    rd_collect(mi, base + pc*PG, {8{64'hD000_0000 + (mi<<16) + pc}}, 64, stall);
+                end
             join
         end
     endtask
@@ -309,8 +333,12 @@ module kx_xache_tb;
         repeat(SETS+80) @(posedge clk);          // let the flush finish
 
         // distinct data per home: write-through then read back (fill/hit)
-        for (p=0;p<N;p=p+1) wr1(0, haddr(p,40'h200), {8{64'hC0DE_0000 + (p<<20)}});
-        for (p=0;p<N;p=p+1) rd1(0, haddr(p,40'h200), {8{64'hC0DE_0000 + (p<<20)}});
+        for (p=0;p<N;p=p+1) begin
+            wr1(0, haddr(p,40'h200), {8{64'hC0DE_0000 + (p<<20)}});
+        end
+        for (p=0;p<N;p=p+1) begin
+            rd1(0, haddr(p,40'h200), {8{64'hC0DE_0000 + (p<<20)}});
+        end
         // adjacent sub-word within the same K-line must not alias (k x IO)
         if (K > 1) begin
             wr1(0, haddr(0,40'h200)+64, {8{64'hA5A5_1111}});
@@ -355,7 +383,9 @@ module kx_xache_tb;
         // an interleave, spread with one. Then read back through it.
         repeat(20) @(posedge clk);
         clear_counts;
-        for (h = 0; h < N; h = h + 1) exp_cnt[h] = 0;
+        for (h = 0; h < N; h = h + 1) begin
+            exp_cnt[h] = 0;
+        end
         for (p = 0; p < 16; p = p + 1) begin
             wr1(0, p*PG + 40'h100, {8{64'h5EED_0000 + p}});
             exp_cnt[home_of(p*PG + 40'h100)] = exp_cnt[home_of(p*PG + 40'h100)] + 1;
@@ -372,7 +402,9 @@ module kx_xache_tb;
                 $display("  FAIL interleave: every page on home %0d (ILV=%0d): no spread", h, ILV);
             end
         end
-        for (p = 0; p < 16; p = p + 1) rd1(0, p*PG + 40'h100, {8{64'h5EED_0000 + p}});
+        for (p = 0; p < 16; p = p + 1) begin
+            rd1(0, p*PG + 40'h100, {8{64'h5EED_0000 + p}});
+        end
 
         // outstanding bursts: one master issues 8 pages ahead of its collector
         // (misses, then hits), then every master at once on distinct regions
@@ -381,16 +413,32 @@ module kx_xache_tb;
             stream_rd(0, 40'h0, 8, 1);
             stream_rd(0, 40'h0, 8, 0);
             fork
-                if (M > 0) stream_wr(0, 40'h0 * 4 * PG, 4);
-                if (M > 1) stream_wr(1, 40'h1 * 4 * PG, 4);
-                if (M > 2) stream_wr(2, 40'h2 * 4 * PG, 4);
-                if (M > 3) stream_wr(3, 40'h3 * 4 * PG, 4);
+                if (M > 0) begin
+                    stream_wr(0, 40'h0 * 4 * PG, 4);
+                end
+                if (M > 1) begin
+                    stream_wr(1, 40'h1 * 4 * PG, 4);
+                end
+                if (M > 2) begin
+                    stream_wr(2, 40'h2 * 4 * PG, 4);
+                end
+                if (M > 3) begin
+                    stream_wr(3, 40'h3 * 4 * PG, 4);
+                end
             join
             fork
-                if (M > 0) stream_rd(0, 40'h0 * 4 * PG, 4, 1);
-                if (M > 1) stream_rd(1, 40'h1 * 4 * PG, 4, 1);
-                if (M > 2) stream_rd(2, 40'h2 * 4 * PG, 4, 1);
-                if (M > 3) stream_rd(3, 40'h3 * 4 * PG, 4, 1);
+                if (M > 0) begin
+                    stream_rd(0, 40'h0 * 4 * PG, 4, 1);
+                end
+                if (M > 1) begin
+                    stream_rd(1, 40'h1 * 4 * PG, 4, 1);
+                end
+                if (M > 2) begin
+                    stream_rd(2, 40'h2 * 4 * PG, 4, 1);
+                end
+                if (M > 3) begin
+                    stream_rd(3, 40'h3 * 4 * PG, 4, 1);
+                end
             join
         end
 
@@ -422,14 +470,30 @@ module kx_xache_tb;
             // up to 8 masters concurrently, 4 pages (16 KB) each, distinct regions
             clear_counts; t0 = cyc;
             fork
-                if (M > 0) stream_wr(0, 40'h0 * 4 * PG, 4);
-                if (M > 1) stream_wr(1, 40'h1 * 4 * PG, 4);
-                if (M > 2) stream_wr(2, 40'h2 * 4 * PG, 4);
-                if (M > 3) stream_wr(3, 40'h3 * 4 * PG, 4);
-                if (M > 4) stream_wr(4, 40'h4 * 4 * PG, 4);
-                if (M > 5) stream_wr(5, 40'h5 * 4 * PG, 4);
-                if (M > 6) stream_wr(6, 40'h6 * 4 * PG, 4);
-                if (M > 7) stream_wr(7, 40'h7 * 4 * PG, 4);
+                if (M > 0) begin
+                    stream_wr(0, 40'h0 * 4 * PG, 4);
+                end
+                if (M > 1) begin
+                    stream_wr(1, 40'h1 * 4 * PG, 4);
+                end
+                if (M > 2) begin
+                    stream_wr(2, 40'h2 * 4 * PG, 4);
+                end
+                if (M > 3) begin
+                    stream_wr(3, 40'h3 * 4 * PG, 4);
+                end
+                if (M > 4) begin
+                    stream_wr(4, 40'h4 * 4 * PG, 4);
+                end
+                if (M > 5) begin
+                    stream_wr(5, 40'h5 * 4 * PG, 4);
+                end
+                if (M > 6) begin
+                    stream_wr(6, 40'h6 * 4 * PG, 4);
+                end
+                if (M > 7) begin
+                    stream_wr(7, 40'h7 * 4 * PG, 4);
+                end
             join
             t1 = cyc; gbps = ((((M > 8) ? 8 : M) * 16384.0) / ((t1 - t0) * 3.333e-9)) / 1.0e9;
             $display("@@@ PERF wr_%0dm     cycles=%0d bytes=%0d GBps300=%0.2f homes_aw=%0d/%0d/%0d/%0d",
@@ -437,14 +501,30 @@ module kx_xache_tb;
                      n_aw[0], n_aw[(N>1)?1:0], n_aw[(N>2)?2:0], n_aw[(N>3)?3:0]);
             clear_counts; t0 = cyc;
             fork
-                if (M > 0) stream_rd(0, 40'h0 * 4 * PG, 4, 0);
-                if (M > 1) stream_rd(1, 40'h1 * 4 * PG, 4, 0);
-                if (M > 2) stream_rd(2, 40'h2 * 4 * PG, 4, 0);
-                if (M > 3) stream_rd(3, 40'h3 * 4 * PG, 4, 0);
-                if (M > 4) stream_rd(4, 40'h4 * 4 * PG, 4, 0);
-                if (M > 5) stream_rd(5, 40'h5 * 4 * PG, 4, 0);
-                if (M > 6) stream_rd(6, 40'h6 * 4 * PG, 4, 0);
-                if (M > 7) stream_rd(7, 40'h7 * 4 * PG, 4, 0);
+                if (M > 0) begin
+                    stream_rd(0, 40'h0 * 4 * PG, 4, 0);
+                end
+                if (M > 1) begin
+                    stream_rd(1, 40'h1 * 4 * PG, 4, 0);
+                end
+                if (M > 2) begin
+                    stream_rd(2, 40'h2 * 4 * PG, 4, 0);
+                end
+                if (M > 3) begin
+                    stream_rd(3, 40'h3 * 4 * PG, 4, 0);
+                end
+                if (M > 4) begin
+                    stream_rd(4, 40'h4 * 4 * PG, 4, 0);
+                end
+                if (M > 5) begin
+                    stream_rd(5, 40'h5 * 4 * PG, 4, 0);
+                end
+                if (M > 6) begin
+                    stream_rd(6, 40'h6 * 4 * PG, 4, 0);
+                end
+                if (M > 7) begin
+                    stream_rd(7, 40'h7 * 4 * PG, 4, 0);
+                end
             join
             t1 = cyc; gbps = ((((M > 8) ? 8 : M) * 16384.0) / ((t1 - t0) * 3.333e-9)) / 1.0e9;
             $display("@@@ PERF rd_%0dm     cycles=%0d bytes=%0d GBps300=%0.2f homes_ar=%0d/%0d/%0d/%0d",
@@ -454,14 +534,30 @@ module kx_xache_tb;
             // arrays it was spread over, misses where a granularity piled it up
             clear_counts; t0 = cyc;
             fork
-                if (M > 0) stream_rd(0, 40'h0 * 4 * PG, 4, 0);
-                if (M > 1) stream_rd(1, 40'h1 * 4 * PG, 4, 0);
-                if (M > 2) stream_rd(2, 40'h2 * 4 * PG, 4, 0);
-                if (M > 3) stream_rd(3, 40'h3 * 4 * PG, 4, 0);
-                if (M > 4) stream_rd(4, 40'h4 * 4 * PG, 4, 0);
-                if (M > 5) stream_rd(5, 40'h5 * 4 * PG, 4, 0);
-                if (M > 6) stream_rd(6, 40'h6 * 4 * PG, 4, 0);
-                if (M > 7) stream_rd(7, 40'h7 * 4 * PG, 4, 0);
+                if (M > 0) begin
+                    stream_rd(0, 40'h0 * 4 * PG, 4, 0);
+                end
+                if (M > 1) begin
+                    stream_rd(1, 40'h1 * 4 * PG, 4, 0);
+                end
+                if (M > 2) begin
+                    stream_rd(2, 40'h2 * 4 * PG, 4, 0);
+                end
+                if (M > 3) begin
+                    stream_rd(3, 40'h3 * 4 * PG, 4, 0);
+                end
+                if (M > 4) begin
+                    stream_rd(4, 40'h4 * 4 * PG, 4, 0);
+                end
+                if (M > 5) begin
+                    stream_rd(5, 40'h5 * 4 * PG, 4, 0);
+                end
+                if (M > 6) begin
+                    stream_rd(6, 40'h6 * 4 * PG, 4, 0);
+                end
+                if (M > 7) begin
+                    stream_rd(7, 40'h7 * 4 * PG, 4, 0);
+                end
             join
             t1 = cyc; gbps = ((((M > 8) ? 8 : M) * 16384.0) / ((t1 - t0) * 3.333e-9)) / 1.0e9;
             $display("@@@ PERF rd_%0dm_re  cycles=%0d bytes=%0d GBps300=%0.2f homes_ar=%0d/%0d/%0d/%0d",
@@ -470,10 +566,13 @@ module kx_xache_tb;
         end
 
         repeat(40) @(posedge clk);
-        if (errors==0) $display("  PASS -- kx_xache M%0d N%0d K%0d twoclk%0d ilv%0d rdpipe%0d rdq%0d dlat%0d, %0d checks, 0 errors",
-                                M, N, K, TWOCLK, ILV, RDPIPE, RDQ, DLAT, checks);
-        else           $display("  FAIL -- M%0d N%0d K%0d twoclk%0d ilv%0d rdpipe%0d rdq%0d dlat%0d: %0d errors / %0d checks",
-                                M, N, K, TWOCLK, ILV, RDPIPE, RDQ, DLAT, errors, checks);
+        if (errors==0) begin
+            $display("  PASS -- kx_xache M%0d N%0d K%0d twoclk%0d ilv%0d rdpipe%0d rdq%0d dlat%0d, %0d checks, 0 errors",
+                     M, N, K, TWOCLK, ILV, RDPIPE, RDQ, DLAT, checks);
+        end else begin
+            $display("  FAIL -- M%0d N%0d K%0d twoclk%0d ilv%0d rdpipe%0d rdq%0d dlat%0d: %0d errors / %0d checks",
+                     M, N, K, TWOCLK, ILV, RDPIPE, RDQ, DLAT, errors, checks);
+        end
         $finish;
     end
 endmodule

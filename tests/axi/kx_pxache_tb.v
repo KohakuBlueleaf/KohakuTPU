@@ -45,9 +45,30 @@
 `ifndef TB_RSTAG
   `define TB_RSTAG 0
 `endif
+`ifndef TB_BANKS
+  `define TB_BANKS 8
+`endif
+`ifndef TB_RINGREG
+  `define TB_RINGREG 0
+`endif
+`ifndef TB_WPREG
+  `define TB_WPREG 0
+`endif
+`ifndef TB_ARRLAT
+  `define TB_ARRLAT 0
+`endif
+`ifndef TB_LANEW
+  `define TB_LANEW 8
+`endif
+`ifndef TB_HOPRX
+  `define TB_HOPRX 0
+`endif
 
 module kx_pxache_tb;
     localparam integer M=`TB_M, N=`TB_N, K=`TB_K, TWOCLK=`TB_TWOCLK, P=`TB_P, RSTAG=`TB_RSTAG;
+    localparam integer BANKS=`TB_BANKS;
+    localparam integer RINGREG=`TB_RINGREG, WPREG=`TB_WPREG, ARRLAT=`TB_ARRLAT, LANEW=`TB_LANEW;
+    localparam integer HOPRX=`TB_HOPRX;
     localparam integer DLAT=`TB_DLAT;
     localparam integer W=512, IDW_S=4, HOME_LSB=32, SETS=`TB_SETS, SET_W=`TB_SET_W;
     localparam integer AW=40, IDW=IDW_S+((M<=1)?1:$clog2(M)), STRB=W/8;
@@ -110,6 +131,8 @@ module kx_pxache_tb;
 
     kx_pxache #(.P(P), .M(M), .N_HOME(N), .MP(MP), .HP(HP), .AW(AW), .W(W), .ID_W(IDW_S),
                 .HOME_LSB(HOME_LSB), .SETS(SETS), .SET_W(SET_W), .K(K), .RAM_STYLE("block"),
+                .BANKS(BANKS), .RING_WR_REG(RINGREG), .ARR_WP_REG(WPREG),
+                .ARR_LAT(ARRLAT), .LANE_W(LANEW), .HOP_RXREG(HOPRX),
                 .MCDC(MCDC), .HCDC(HCDC), .NSWAP(NSWAP), .SWAP_A(SWAP_A), .SWAP_B(SWAP_B)) dut (
         .clk(clk), .rstn_p(rstn_p),
         .m_clk({M{clk}}), .m_rstn({M{rstn}}),
