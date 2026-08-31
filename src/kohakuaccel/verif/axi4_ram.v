@@ -198,9 +198,13 @@ module axi4_ram #(
                     end
                 end
                 R_WAIT: begin
-                    if (rvalid_r && s_axi_rready) rvalid_r <= 1'b0;
+                    if (rvalid_r && s_axi_rready) begin
+                        rvalid_r <= 1'b0;
+                    end
                     rwait <= rwait - 16'd1;
-                    if (rwait <= 16'd1) rstate <= R_DATA;
+                    if (rwait <= 16'd1) begin
+                        rstate <= R_DATA;
+                    end
                 end
                 R_DATA: if (r_can_advance) begin
                     if (rbeats != 9'd0) begin

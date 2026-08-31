@@ -274,7 +274,7 @@ module ktpu_2p2_rv64 #(
           .ID_W(IDW), .PORTS(1), .MEM_X(0), .MEM_Y(1),
           .GRID_LO(1), .GRID_HI(1), .STAGE_FLITS(128),
           .MW(MW),
-          .CPU_RV64(1), .PE_IMEM(8192), .PE_SPAD(4096),
+          .PE_IMEM(8192), .PE_SPAD(4096),
           .PE_L1_LINES(64),
           .STAGE(1), .STAGE_AT_PORT(1)) u_mag (
         .clk(mag_clk_i), .resetn(resetn),

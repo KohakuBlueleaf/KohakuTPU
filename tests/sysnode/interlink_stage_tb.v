@@ -37,9 +37,10 @@ module interlink_stage_tb;
         #1.7 dclk = ~dclk;
     end
 
-    wire [LW-1:0] o0_d [0:1], o1_d [0:1];
-    wire [UW-1:0] o0_u [0:1], o1_u [0:1];
-    wire [1:0]    o0_l, o0_v, o1_l, o1_v;
+    wire [LW-1:0] o0_f [0:1], o1_f [0:1];
+    wire [1:0]    o0_v, o0_vc, o0_l, o1_v, o1_vc, o1_l;
+    wire [3:0]    o0_cn [0:1], o1_cn [0:1];
+    wire [1:0]    o0_cv, o0_cvc, o1_cv, o1_cvc;
 
     wire [IDW-1:0]  m_awid [0:1], m_arid [0:1], m_bid [0:1], m_rid [0:1];
     wire [AW-1:0]   m_awaddr[0:1], m_araddr[0:1];
@@ -119,22 +120,28 @@ module interlink_stage_tb;
             .dram_rready(m_rready[g]),
 
             // mesh0 reaches mesh1 by its UP link, as on the SLR chain.
-            .link0_out_tdata(o0_d[g]), .link0_out_tuser(o0_u[g]),
-            .link0_out_tlast(o0_l[g]), .link0_out_tvalid(o0_v[g]),
-            .link0_out_tready(1'b1),
-            .link0_in_tdata(g == 1 ? o1_d[0] : {LW{1'b0}}),
-            .link0_in_tuser(g == 1 ? o1_u[0] : {UW{1'b0}}),
-            .link0_in_tlast(g == 1 ? o1_l[0] : 1'b0),
-            .link0_in_tvalid(g == 1 ? o1_v[0] : 1'b0),
-            .link0_in_tready(),
-            .link1_out_tdata(o1_d[g]), .link1_out_tuser(o1_u[g]),
-            .link1_out_tlast(o1_l[g]), .link1_out_tvalid(o1_v[g]),
-            .link1_out_tready(1'b1),
-            .link1_in_tdata(g == 0 ? o0_d[1] : {LW{1'b0}}),
-            .link1_in_tuser(g == 0 ? o0_u[1] : {UW{1'b0}}),
-            .link1_in_tlast(g == 0 ? o0_l[1] : 1'b0),
-            .link1_in_tvalid(g == 0 ? o0_v[1] : 1'b0),
-            .link1_in_tready()
+            .link0_out_valid(o0_v[g]), .link0_out_vc(o0_vc[g]),
+            .link0_out_last(o0_l[g]), .link0_out_flit(o0_f[g]),
+            .link0_out_crd_valid(g == 1 ? o1_cv[0] : 1'b0),
+            .link0_out_crd_vc(g == 1 ? o1_cvc[0] : 1'b0),
+            .link0_out_crd_n(g == 1 ? o1_cn[0] : 4'd0),
+            .link0_in_valid(g == 1 ? o1_v[0] : 1'b0),
+            .link0_in_vc(g == 1 ? o1_vc[0] : 1'b0),
+            .link0_in_last(g == 1 ? o1_l[0] : 1'b0),
+            .link0_in_flit(g == 1 ? o1_f[0] : {LW{1'b0}}),
+            .link0_in_crd_valid(o0_cv[g]), .link0_in_crd_vc(o0_cvc[g]),
+            .link0_in_crd_n(o0_cn[g]),
+            .link1_out_valid(o1_v[g]), .link1_out_vc(o1_vc[g]),
+            .link1_out_last(o1_l[g]), .link1_out_flit(o1_f[g]),
+            .link1_out_crd_valid(g == 0 ? o0_cv[1] : 1'b0),
+            .link1_out_crd_vc(g == 0 ? o0_cvc[1] : 1'b0),
+            .link1_out_crd_n(g == 0 ? o0_cn[1] : 4'd0),
+            .link1_in_valid(g == 0 ? o0_v[1] : 1'b0),
+            .link1_in_vc(g == 0 ? o0_vc[1] : 1'b0),
+            .link1_in_last(g == 0 ? o0_l[1] : 1'b0),
+            .link1_in_flit(g == 0 ? o0_f[1] : {LW{1'b0}}),
+            .link1_in_crd_valid(o1_cv[g]), .link1_in_crd_vc(o1_cvc[g]),
+            .link1_in_crd_n(o1_cn[g])
         );
 
         axi_ram #(.DATA_W(MW), .ADDR_W(AW), .ID_W(IDW), .WORDS(2048),

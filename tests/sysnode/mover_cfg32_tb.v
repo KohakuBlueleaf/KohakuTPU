@@ -91,6 +91,8 @@ module mover_cfg32_core #(
     ktpu_min_1m #(.MESH_ID(0), .MODEL(1), .MW(MW),
                   .MAG_CDC(MAGCDC), .UNIT_CDC(UNITCDC)) u (
         .axi_aclk(clk), .axi_aresetn(resetn),
+        .hs_addr(32'd0), .hs_wr(1'b0), .hs_wdata(64'd0), .hs_wstrb(8'd0),
+        .hs_rd(1'b0),
         .noc_clk(noc_i), .mat_clk(mat_i), .vec_clk(vec_i),
         .dram_aclk(dclk), .dram_aresetn(resetn),
         .S_AXI_MEM_awid({IDW{1'b0}}), .S_AXI_MEM_awaddr({AW{1'b0}}),
@@ -134,16 +136,18 @@ module mover_cfg32_core #(
         .M_AXI_DRAM_rresp(m_rresp), .M_AXI_DRAM_rlast(m_rlast),
         .M_AXI_DRAM_rvalid(m_rvalid), .M_AXI_DRAM_rready(m_rready),
 
-        .M_AXIS_LINK0_tdata(), .M_AXIS_LINK0_tuser(), .M_AXIS_LINK0_tlast(),
-        .M_AXIS_LINK0_tvalid(), .M_AXIS_LINK0_tready(1'b1),
-        .S_AXIS_LINK0_tdata({LW{1'b0}}), .S_AXIS_LINK0_tuser({UW{1'b0}}),
-        .S_AXIS_LINK0_tlast(1'b0), .S_AXIS_LINK0_tvalid(1'b0),
-        .S_AXIS_LINK0_tready(),
-        .M_AXIS_LINK1_tdata(), .M_AXIS_LINK1_tuser(), .M_AXIS_LINK1_tlast(),
-        .M_AXIS_LINK1_tvalid(), .M_AXIS_LINK1_tready(1'b1),
-        .S_AXIS_LINK1_tdata({LW{1'b0}}), .S_AXIS_LINK1_tuser({UW{1'b0}}),
-        .S_AXIS_LINK1_tlast(1'b0), .S_AXIS_LINK1_tvalid(1'b0),
-        .S_AXIS_LINK1_tready()
+        .LINK0_OUT_valid(), .LINK0_OUT_vc(), .LINK0_OUT_last(),
+        .LINK0_OUT_flit(), .LINK0_OUT_crd_valid(1'b0),
+        .LINK0_OUT_crd_vc(1'b0), .LINK0_OUT_crd_n(4'd0),
+        .LINK0_IN_valid(1'b0), .LINK0_IN_vc(1'b0), .LINK0_IN_last(1'b0),
+        .LINK0_IN_flit({LW{1'b0}}), .LINK0_IN_crd_valid(),
+        .LINK0_IN_crd_vc(), .LINK0_IN_crd_n(),
+        .LINK1_OUT_valid(), .LINK1_OUT_vc(), .LINK1_OUT_last(),
+        .LINK1_OUT_flit(), .LINK1_OUT_crd_valid(1'b0),
+        .LINK1_OUT_crd_vc(1'b0), .LINK1_OUT_crd_n(4'd0),
+        .LINK1_IN_valid(1'b0), .LINK1_IN_vc(1'b0), .LINK1_IN_last(1'b0),
+        .LINK1_IN_flit({LW{1'b0}}), .LINK1_IN_crd_valid(),
+        .LINK1_IN_crd_vc(), .LINK1_IN_crd_n()
     );
 
     axi_ram #(.DATA_W(MW), .ADDR_W(AW), .ID_W(IDW), .WORDS(RAMW), .PORTS(1)) ram (

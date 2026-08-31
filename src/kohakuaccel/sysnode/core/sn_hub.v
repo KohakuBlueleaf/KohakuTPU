@@ -182,6 +182,9 @@ module sn_hub #(
         end
     end
 
+    wire [FLIT_WIDTH-1:0] enc_rx_d =
+        mem_in_data[enc_sel*FLIT_WIDTH +: FLIT_WIDTH];
+
     assign agt_rx_data  = mem_in_data[agt_sel*FLIT_WIDTH +: FLIT_WIDTH];
     assign agt_rx_valid = agt_any;
     assign pe_rx_data   = mem_in_data[pe_sel*FLIT_WIDTH +: FLIT_WIDTH];
@@ -240,7 +243,7 @@ module sn_hub #(
         .rst(!resetn),
         .i_valid(enc_any),
         .i_ready(enc_skid_rdy),
-        .i_data(mem_in_data[enc_sel*FLIT_WIDTH +: FLIT_WIDTH]),
+        .i_data(enc_rx_d),
         .o_valid(enc_valid),
         .o_ready(!enc_busy),
         .o_data(enc_data)

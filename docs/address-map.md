@@ -35,7 +35,7 @@ an instruction, and every address a decoder tests is 40 bits:
 
 ```
 [39]     aperture   1 = special (staging L2, ...), 0 = DRAM
-[38]     reserved   must be 0
+[38]     reserved   must be 0 on the fabric (see the processor's alias below)
 [37:36]  mesh       0..3
 [35:0]   local      64 GB
 ```
@@ -44,6 +44,36 @@ an instruction, and every address a decoder tests is 40 bits:
 `mag_stage_port.v:87-88` and `mag_mem_port.v:290-292` all test it
 **absolutely** -- an address carries which mesh it belongs to, no matter who
 issued it or where it arrives.
+
+### The processor's view: bit 38 is the uncached alias
+
+The system node's RV64 processor decides *cached or not* from the physical
+address it issues, before the address reaches the node port, and it uses the
+one bit the fabric keeps at zero:
+
+```
+processor physical address, 40 bits
+[39]     1 = special (staging, apertures): uncached, as on the fabric
+[38]     1 = UNCACHED ALIAS of the DRAM below it: same bytes, no L1
+[37:36]  mesh, as on the fabric
+[35:0]   local, as on the fabric
+```
+
+| processor issues | L1 | what leaves on `cp_*` |
+|---|---|---|
+| `[39] = 0, [38] = 0` — DRAM | cached (write-back, 32-byte lines) | the address |
+| `[39] = 0, [38] = 1` — the alias | **uncached**, every load/store to the fabric | the address with bit 38 **cleared** (`rv64_nport.v`) |
+| `[39] = 1` — staging, apertures | uncached | the address |
+
+So a program (or an Sv39 page table: the PPN is 28 bits wide here and holds
+bit 38) names shared memory as `pa | 1 << 38` and every access goes through
+to DRAM — the AMP form of sharing, with no coherence hardware. The fabric
+never sees the alias: nothing outside the processor decodes bit 38, and the
+mover, the host and every other AXI master keep the whole 40-bit space with
+bit 38 reserved-zero. Decoded in `rv64_syscore.v` (`in_cache`,
+`fetch_cached`), stripped in `rv64_nport.v` (`u_pa`, `w_pa`). This replaced a
+`pa[31]` test that striped a 16 GB space into alternating cached and uncached
+2 GB bands.
 
 `kohakuaccel/machinespec.py:global_addr` builds this form for the compiler, and
 raises for a `base` that does not fit one mesh's 64 GB.

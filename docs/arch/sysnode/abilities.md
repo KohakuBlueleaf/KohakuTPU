@@ -139,12 +139,14 @@ never share a page.
 | instruction window | `0x0000_0000` | 32 KB | fetch only; loaded by the host |
 | scratchpad | `0x0001_0000` | 32 KB | byte-writable local memory; `.data`, `.bss`, stack |
 | control region | `0x0002_0000` | 256 B | §5 |
-| node, uncached | bit 39..28 set, **bit 31 clear** | 40-bit space | straight to the memory agent: staging, DRAM below 2 GB, other meshes' apertures |
-| node, cached | bit 39..28 set, **bit 31 set** | 40-bit space | through the write-back L1 (2 KB, 64 lines) |
+| node, cached | at or above `2^28`, bits 39 and 38 clear — DRAM | 40-bit space | through the write-back L1 (2 KB, 64 lines) |
+| node, uncached | bit 39 set (staging, apertures), or **bit 38 set: the uncached alias of DRAM** | 40-bit space | straight to the memory agent; the port sees the address with bit 38 cleared |
 
-"Cached" is the single bit 31, not a magnitude compare. Staging apertures have
-bit 39 set, so they are always uncached — which is what page tables and
-mailboxes need.
+"Cached" is two bit tests, not a magnitude compare. Staging apertures have bit
+39 set, so they are always uncached — which is what page tables and mailboxes
+need — and `pa | 1 << 38` names the same DRAM bytes without the L1, which is
+how memory shared between nodes is reached without coherence hardware. The bit
+map is in [address-map.md](../../address-map.md).
 
 ## 3. Memory: what the processor can reach
 
@@ -348,7 +350,7 @@ any revision (`mag_link`, `mm_mover` §7, `interlink_2mesh_1m`,
 ## 12. What it costs — measured
 
 Out-of-context synthesis, `xcvu13p-fhgb2104-2L-e`, Vivado 2024.2, one clock
-at 3.333 ns, `scripts/tcl/ooc_sysnode_rv64.tcl 2` (`PORTS=2`, `STAGE=1`,
+at 3.333 ns, `scripts/tcl/ooc_sysnode.tcl 2` (`PORTS=2`, `STAGE=1`,
 `ILINK=1`, `STAGE_AT_PORT=1`, 32 KB instruction window, 32 KB scratchpad,
 64-line L1), design state Synthesized, reports `build/node_sn64_p2_*.rpt`.
 

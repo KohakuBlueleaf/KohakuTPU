@@ -56,12 +56,11 @@ module interlink_4mesh_tb;
     wire [3:0]    lrx_hv, lrx_dv, lrx_dl;
     reg  [3:0]    lrx_hr, lrx_dr;
 
-    wire [LW-1:0] dn_td [0:3];
-    wire [UW-1:0] dn_tu [0:3];
-    wire [3:0]    dn_tl, dn_tv;
-    wire [LW-1:0] up_td [0:3];
-    wire [UW-1:0] up_tu [0:3];
-    wire [3:0]    up_tl, up_tv;
+    wire [LW-1:0] dn_f [0:3], up_f [0:3];
+    wire [3:0]    dn_v, dn_vc, dn_l, up_v, up_vc, up_l;
+    wire [3:0]    c0_v, c0_vc, c1_v, c1_vc;
+    wire [3:0]    c0_n [0:3];
+    wire [3:0]    c1_n [0:3];
 
     wire [63:0] c_fwd [0:3];
     wire [3:0]  flt [0:3];
@@ -95,18 +94,26 @@ module interlink_4mesh_tb;
             .lrx_hdr(lrx_hdr[g]), .lrx_hvalid(lrx_hv[g]), .lrx_hready(lrx_hr[g]),
             .lrx_dat(lrx_dat[g]), .lrx_dlast(lrx_dl[g]), .lrx_dvalid(lrx_dv[g]),
             .lrx_dready(lrx_dr[g]),
-            .m0_tdata(dn_td[g]), .m0_tuser(dn_tu[g]), .m0_tlast(dn_tl[g]),
-            .m0_tvalid(dn_tv[g]), .m0_tready(1'b1),
-            .s0_tdata(HAS0 ? up_td[DN] : {LW{1'b0}}),
-            .s0_tuser(HAS0 ? up_tu[DN] : {UW{1'b0}}),
-            .s0_tlast(HAS0 ? up_tl[DN] : 1'b0),
-            .s0_tvalid(HAS0 ? up_tv[DN] : 1'b0), .s0_tready(),
-            .m1_tdata(up_td[g]), .m1_tuser(up_tu[g]), .m1_tlast(up_tl[g]),
-            .m1_tvalid(up_tv[g]), .m1_tready(1'b1),
-            .s1_tdata(HAS1 ? dn_td[UP] : {LW{1'b0}}),
-            .s1_tuser(HAS1 ? dn_tu[UP] : {UW{1'b0}}),
-            .s1_tlast(HAS1 ? dn_tl[UP] : 1'b0),
-            .s1_tvalid(HAS1 ? dn_tv[UP] : 1'b0), .s1_tready(),
+            .m0_valid(dn_v[g]), .m0_vc(dn_vc[g]), .m0_last(dn_l[g]),
+            .m0_flit(dn_f[g]),
+            .m0_crd_valid(HAS0 ? c1_v[DN] : 1'b0),
+            .m0_crd_vc(HAS0 ? c1_vc[DN] : 1'b0),
+            .m0_crd_n(HAS0 ? c1_n[DN] : 4'd0),
+            .s0_valid(HAS0 ? up_v[DN] : 1'b0),
+            .s0_vc(HAS0 ? up_vc[DN] : 1'b0),
+            .s0_last(HAS0 ? up_l[DN] : 1'b0),
+            .s0_flit(HAS0 ? up_f[DN] : {LW{1'b0}}),
+            .s0_crd_valid(c0_v[g]), .s0_crd_vc(c0_vc[g]), .s0_crd_n(c0_n[g]),
+            .m1_valid(up_v[g]), .m1_vc(up_vc[g]), .m1_last(up_l[g]),
+            .m1_flit(up_f[g]),
+            .m1_crd_valid(HAS1 ? c0_v[UP] : 1'b0),
+            .m1_crd_vc(HAS1 ? c0_vc[UP] : 1'b0),
+            .m1_crd_n(HAS1 ? c0_n[UP] : 4'd0),
+            .s1_valid(HAS1 ? dn_v[UP] : 1'b0),
+            .s1_vc(HAS1 ? dn_vc[UP] : 1'b0),
+            .s1_last(HAS1 ? dn_l[UP] : 1'b0),
+            .s1_flit(HAS1 ? dn_f[UP] : {LW{1'b0}}),
+            .s1_crd_valid(c1_v[g]), .s1_crd_vc(c1_vc[g]), .s1_crd_n(c1_n[g]),
             .ctr_tx0(), .ctr_rx0(), .ctr_stall0(c_st0[g]),
             .ctr_tx1(), .ctr_rx1(), .ctr_stall1(),
             .ctr_fwd(c_fwd[g]), .ctr_lblock(),
@@ -267,41 +274,27 @@ module interlink_4mesh_tb;
     // What each switch is holding when it stops. A deadlock is a cycle of
     // waits, so the state that names it is per link: which class is mid-packet,
     // what credit is left, and whether a header is stuck in a holding slot.
+    // A hierarchical reference needs a constant index, so the four meshes are
+    // written out rather than looped.
     task dump;
         begin
-            $display("        mesh | ltx hv/hr dv/dr | L0 tst cr0/cr1 q0/q1 ret | L1 tst cr0/cr1 q0/q1 ret");
-            $display("        0 | %b%b %b%b | %0d %0d/%0d %b%b %0d/%0d | %0d %0d/%0d %b%b %0d/%0d",
+            $display("        mesh | ltx hv/hr dv/dr | L0 send/recv cred | L1 send/recv cred");
+            $display("        0 | %b%b %b%b | %b %b %04h | %b %b %04h",
                 ltx_hv[0], ltx_hr[0], ltx_dv[0], ltx_dr[0],
-                m[0].u.u_l0.tst, m[0].u.u_l0.cred0, m[0].u.u_l0.cred1,
-                m[0].u.u_l0.q0_val, m[0].u.u_l0.q1_val,
-                m[0].u.u_l0.ret0, m[0].u.u_l0.ret1,
-                m[0].u.u_l1.tst, m[0].u.u_l1.cred0, m[0].u.u_l1.cred1,
-                m[0].u.u_l1.q0_val, m[0].u.u_l1.q1_val,
-                m[0].u.u_l1.ret0, m[0].u.u_l1.ret1);
-            $display("        1 | %b%b %b%b | %0d %0d/%0d %b%b %0d/%0d | %0d %0d/%0d %b%b %0d/%0d",
+                m[0].u.u_l0.s_dat, m[0].u.u_l0.r_dat, m[0].u.u_l0.cred_state[15:0],
+                m[0].u.u_l1.s_dat, m[0].u.u_l1.r_dat, m[0].u.u_l1.cred_state[15:0]);
+            $display("        1 | %b%b %b%b | %b %b %04h | %b %b %04h",
                 ltx_hv[1], ltx_hr[1], ltx_dv[1], ltx_dr[1],
-                m[1].u.u_l0.tst, m[1].u.u_l0.cred0, m[1].u.u_l0.cred1,
-                m[1].u.u_l0.q0_val, m[1].u.u_l0.q1_val,
-                m[1].u.u_l0.ret0, m[1].u.u_l0.ret1,
-                m[1].u.u_l1.tst, m[1].u.u_l1.cred0, m[1].u.u_l1.cred1,
-                m[1].u.u_l1.q0_val, m[1].u.u_l1.q1_val,
-                m[1].u.u_l1.ret0, m[1].u.u_l1.ret1);
-            $display("        3 | %b%b %b%b | %0d %0d/%0d %b%b %0d/%0d | %0d %0d/%0d %b%b %0d/%0d",
+                m[1].u.u_l0.s_dat, m[1].u.u_l0.r_dat, m[1].u.u_l0.cred_state[15:0],
+                m[1].u.u_l1.s_dat, m[1].u.u_l1.r_dat, m[1].u.u_l1.cred_state[15:0]);
+            $display("        3 | %b%b %b%b | %b %b %04h | %b %b %04h",
                 ltx_hv[3], ltx_hr[3], ltx_dv[3], ltx_dr[3],
-                m[3].u.u_l0.tst, m[3].u.u_l0.cred0, m[3].u.u_l0.cred1,
-                m[3].u.u_l0.q0_val, m[3].u.u_l0.q1_val,
-                m[3].u.u_l0.ret0, m[3].u.u_l0.ret1,
-                m[3].u.u_l1.tst, m[3].u.u_l1.cred0, m[3].u.u_l1.cred1,
-                m[3].u.u_l1.q0_val, m[3].u.u_l1.q1_val,
-                m[3].u.u_l1.ret0, m[3].u.u_l1.ret1);
-            $display("        2 | %b%b %b%b | %0d %0d/%0d %b%b %0d/%0d | %0d %0d/%0d %b%b %0d/%0d",
+                m[3].u.u_l0.s_dat, m[3].u.u_l0.r_dat, m[3].u.u_l0.cred_state[15:0],
+                m[3].u.u_l1.s_dat, m[3].u.u_l1.r_dat, m[3].u.u_l1.cred_state[15:0]);
+            $display("        2 | %b%b %b%b | %b %b %04h | %b %b %04h",
                 ltx_hv[2], ltx_hr[2], ltx_dv[2], ltx_dr[2],
-                m[2].u.u_l0.tst, m[2].u.u_l0.cred0, m[2].u.u_l0.cred1,
-                m[2].u.u_l0.q0_val, m[2].u.u_l0.q1_val,
-                m[2].u.u_l0.ret0, m[2].u.u_l0.ret1,
-                m[2].u.u_l1.tst, m[2].u.u_l1.cred0, m[2].u.u_l1.cred1,
-                m[2].u.u_l1.q0_val, m[2].u.u_l1.q1_val,
-                m[2].u.u_l1.ret0, m[2].u.u_l1.ret1);
+                m[2].u.u_l0.s_dat, m[2].u.u_l0.r_dat, m[2].u.u_l0.cred_state[15:0],
+                m[2].u.u_l1.s_dat, m[2].u.u_l1.r_dat, m[2].u.u_l1.cred_state[15:0]);
             // The transit muxes are where a wrong arbitration wedges: `busy`
             // set with the far side never granting is the signature.
             $display("        ldm busy/sel: %b%0d %b%0d %b%0d %b%0d",

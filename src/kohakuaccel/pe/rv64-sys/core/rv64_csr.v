@@ -116,6 +116,11 @@ module rv64_csr #(
     reg        mip_msi;
     reg [1:0]  priv;
 
+    // The trap's registered copies, declared before `settle` reads them.
+    reg        trap_q, deleg_q, mret_q, sret_q;
+    reg [1:0]  prev_q;
+    reg [63:0] pc_q, cause_q, val_q;
+
     assign mepc_o = mepc;
     assign sepc_o = sepc;
     assign priv_o = priv;
@@ -183,6 +188,29 @@ module rv64_csr #(
 
     assign tvec_o = deleg ? stvec : mtvec;
 
+    // sstatus is a window on mstatus, not a register: SIE, SPIE, SPP, SUM, MXR.
+    localparam [63:0] SSTATUS_MASK = 64'h0000_0000_000C_0122;
+
+    // WARL: A BIT THAT IS NOT IMPLEMENTED IS NOT STORED. Writes land through
+    // these masks, so the dead bits leave the flops and the 64-bit read mux.
+    //   mstatus SIE MIE SPIE MPIE SPP MPP SUM MXR | mie/mideleg the six S/M
+    //   bits | medeleg codes 0..15 | satp MODE + PPN, no ASID | xcause the
+    //   interrupt bit + 5 | xtvec direct only | xepc IALIGN 32
+    localparam [63:0] MSTATUS_MASK = 64'h0000_0000_000C_19AA;
+    localparam [63:0] MIE_MASK     = 64'h0000_0000_0000_0AAA;
+    localparam [63:0] MEDELEG_MASK = 64'h0000_0000_0000_FFFF;
+    localparam integer PPN_W       = ADDR_W - 12;
+    localparam [43:0] PPN_MASK     = {{(44-PPN_W){1'b0}}, {PPN_W{1'b1}}};
+    localparam [63:0] SATP_MASK    = {4'hF, 16'd0, PPN_MASK};
+    localparam [63:0] CAUSE_MASK   = 64'h8000_0000_0000_001F;
+    localparam [63:0] TVEC_MASK    = ~64'h3;
+    localparam [63:0] EPC_MASK     = ~64'h1;
+
+    // The value a CSR instruction writes: `rdata` is the read mux below.
+    wire [63:0] next = (op == 2'd1) ? wdata
+                     : (op == 2'd2) ? (rdata | wdata)
+                                    : (rdata & ~wdata);
+
     // "IS A HANDLER INSTALLED" IS A PROPERTY OF THE WRITE, NOT OF THE TRAP.
     // Testing `tvec_o != 0` in the core put a 64-bit compare -- three CARRY8 --
     // downstream of `deleg`, inside the trap decision.
@@ -203,23 +231,6 @@ module rv64_csr #(
     end
     assign tvec_set = deleg ? stvec_nz : mtvec_nz;
 
-    // sstatus is a window on mstatus, not a register: SIE, SPIE, SPP, SUM, MXR.
-    localparam [63:0] SSTATUS_MASK = 64'h0000_0000_000C_0122;
-
-    // WARL: A BIT THAT IS NOT IMPLEMENTED IS NOT STORED. Writes land through
-    // these masks, so the dead bits leave the flops and the 64-bit read mux.
-    //   mstatus SIE MIE SPIE MPIE SPP MPP SUM MXR | mie/mideleg the six S/M
-    //   bits | medeleg codes 0..15 | satp MODE + PPN, no ASID | xcause the
-    //   interrupt bit + 5 | xtvec direct only | xepc IALIGN 32
-    localparam [63:0] MSTATUS_MASK = 64'h0000_0000_000C_19AA;
-    localparam [63:0] MIE_MASK     = 64'h0000_0000_0000_0AAA;
-    localparam [63:0] MEDELEG_MASK = 64'h0000_0000_0000_FFFF;
-    localparam integer PPN_W       = ADDR_W - 12;
-    localparam [43:0] PPN_MASK     = {{(44-PPN_W){1'b0}}, {PPN_W{1'b1}}};
-    localparam [63:0] SATP_MASK    = {4'hF, 16'd0, PPN_MASK};
-    localparam [63:0] CAUSE_MASK   = 64'h8000_0000_0000_001F;
-    localparam [63:0] TVEC_MASK    = ~64'h3;
-    localparam [63:0] EPC_MASK     = ~64'h1;
     // What a supervisor write to `sie` may touch: delegated AND implemented.
     wire [63:0] sie_wmask = mideleg & MIE_MASK;
     wire [63:0] sie_keep  = mie & ~mideleg;
@@ -280,14 +291,7 @@ module rv64_csr #(
         end
     end
 
-    wire [63:0] next = (op == 2'd1) ? wdata
-                     : (op == 2'd2) ? (rdata | wdata)
-                                    : (rdata & ~wdata);
-
     // ---- write and trap -----------------------------------------------------
-    reg        trap_q, deleg_q, mret_q, sret_q;
-    reg [1:0]  prev_q;
-    reg [63:0] pc_q, cause_q, val_q;
     always @(posedge clk) begin
         if (!resetn) begin
             trap_q <= 1'b0;

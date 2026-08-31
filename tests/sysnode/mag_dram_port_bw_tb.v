@@ -10,6 +10,9 @@
 `ifndef TB_RD_OUT
   `define TB_RD_OUT 1
 `endif
+`ifndef TB_RREG
+  `define TB_RREG 1
+`endif
 
 module mag_dram_port_bw_tb;
     localparam integer N = 5, AWID = 34, SW = 256, MW = 512, IDW = 4;
@@ -52,7 +55,7 @@ module mag_dram_port_bw_tb;
     assign m_rid = m_rid_r;
 
     mag_dram_port #(.N(N), .ADDR_W(AWID), .SW(SW), .MW(MW), .ID_W(IDW),
-                    .RD_OUT(RD_OUT)) dut (
+                    .RD_OUT(RD_OUT), .R_REG(`TB_RREG)) dut (
         .s_aclk(s_clk), .s_aresetn(rstn),
         .q_valid(q_valid), .q_ready(q_ready), .q_addr(q_addr),
         .q_len(q_len), .q_write(q_write),

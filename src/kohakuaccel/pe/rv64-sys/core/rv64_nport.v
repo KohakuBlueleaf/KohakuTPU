@@ -84,6 +84,12 @@ module rv64_nport #(
     output wire                  cp_rready
 );
     localparam integer LSB = $clog2(DATA_W / 8);
+    // The processor's uncached alias bit (38 of 40) is its own view: the
+    // fabric's bit 38 is reserved-zero (docs/address-map.md), so every address
+    // leaving here has it cleared, whichever client issued it.
+    localparam integer UNC_BIT = ADDR_W - 2;
+    wire [ADDR_W-1:0] u_pa = u_addr & ~({{(ADDR_W-1){1'b0}}, 1'b1} << UNC_BIT);
+    wire [ADDR_W-1:0] w_pa = w_addr & ~({{(ADDR_W-1){1'b0}}, 1'b1} << UNC_BIT);
 
     assign cp_awlen  = 8'd0;
     assign cp_arlen  = 8'd0;
@@ -137,7 +143,7 @@ module rv64_nport #(
                     if (w_req && !w_ack) begin
                         who       <= C_WALK;
                         lane      <= w_addr[LSB-1:3];
-                        cp_araddr <= {w_addr[ADDR_W-1:LSB], {LSB{1'b0}}};
+                        cp_araddr <= {w_pa[ADDR_W-1:LSB], {LSB{1'b0}}};
                         cp_arvalid<= 1'b1;
                         st        <= S_RD;
                     end
@@ -160,7 +166,7 @@ module rv64_nport #(
                         who  <= C_UNC;
                         lane <= u_addr[LSB-1:3];
                         if (u_we) begin
-                            cp_awaddr <= {u_addr[ADDR_W-1:LSB], {LSB{1'b0}}};
+                            cp_awaddr <= {u_pa[ADDR_W-1:LSB], {LSB{1'b0}}};
                             cp_awvalid<= 1'b1;
                             cp_wdata  <= {(DATA_W/64){u_wdata}};
                             cp_wstrb  <= {{(DATA_W/8-8){1'b0}}, u_be}
@@ -169,7 +175,7 @@ module rv64_nport #(
                             st        <= S_WR;
                         end
                         else begin
-                            cp_araddr <= {u_addr[ADDR_W-1:LSB], {LSB{1'b0}}};
+                            cp_araddr <= {u_pa[ADDR_W-1:LSB], {LSB{1'b0}}};
                             cp_arvalid<= 1'b1;
                             st        <= S_RD;
                         end

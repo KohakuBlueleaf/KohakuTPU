@@ -51,13 +51,13 @@ module mag_switch_tb;
     wire [3:0]    lrx_hv, lrx_dv, lrx_dl;
     reg  [3:0]    lrx_hr, lrx_dr;
 
-    // One bundle per directed edge, named by which way it leaves the mesh.
-    wire [LW-1:0] dn_td [0:3];
-    wire [UW-1:0] dn_tu [0:3];
-    wire [3:0]    dn_tl, dn_tv;
-    wire [LW-1:0] up_td [0:3];
-    wire [UW-1:0] up_tu [0:3];
-    wire [3:0]    up_tl, up_tv;
+    // One surface per directed edge, named by which way it leaves the mesh,
+    // plus the credit each mesh issues on the link it receives there.
+    wire [LW-1:0] dn_f [0:3], up_f [0:3];
+    wire [3:0]    dn_v, dn_vc, dn_l, up_v, up_vc, up_l;
+    wire [3:0]    c0_v, c0_vc, c1_v, c1_vc;
+    wire [3:0]    c0_n [0:3];
+    wire [3:0]    c1_n [0:3];
 
     // The chain, and the only place the SLR order appears in this bench.
     function integer cpos(input integer m);
@@ -93,18 +93,26 @@ module mag_switch_tb;
             .lrx_hdr(lrx_hdr[g]), .lrx_hvalid(lrx_hv[g]), .lrx_hready(lrx_hr[g]),
             .lrx_dat(lrx_dat[g]), .lrx_dlast(lrx_dl[g]), .lrx_dvalid(lrx_dv[g]),
             .lrx_dready(lrx_dr[g]),
-            .m0_tdata(dn_td[g]), .m0_tuser(dn_tu[g]), .m0_tlast(dn_tl[g]),
-            .m0_tvalid(dn_tv[g]), .m0_tready(1'b1),
-            .s0_tdata(HAS0 ? up_td[DN] : {LW{1'b0}}),
-            .s0_tuser(HAS0 ? up_tu[DN] : {UW{1'b0}}),
-            .s0_tlast(HAS0 ? up_tl[DN] : 1'b0),
-            .s0_tvalid(HAS0 ? up_tv[DN] : 1'b0), .s0_tready(),
-            .m1_tdata(up_td[g]), .m1_tuser(up_tu[g]), .m1_tlast(up_tl[g]),
-            .m1_tvalid(up_tv[g]), .m1_tready(1'b1),
-            .s1_tdata(HAS1 ? dn_td[UP] : {LW{1'b0}}),
-            .s1_tuser(HAS1 ? dn_tu[UP] : {UW{1'b0}}),
-            .s1_tlast(HAS1 ? dn_tl[UP] : 1'b0),
-            .s1_tvalid(HAS1 ? dn_tv[UP] : 1'b0), .s1_tready(),
+            .m0_valid(dn_v[g]), .m0_vc(dn_vc[g]), .m0_last(dn_l[g]),
+            .m0_flit(dn_f[g]),
+            .m0_crd_valid(HAS0 ? c1_v[DN] : 1'b0),
+            .m0_crd_vc(HAS0 ? c1_vc[DN] : 1'b0),
+            .m0_crd_n(HAS0 ? c1_n[DN] : 4'd0),
+            .s0_valid(HAS0 ? up_v[DN] : 1'b0),
+            .s0_vc(HAS0 ? up_vc[DN] : 1'b0),
+            .s0_last(HAS0 ? up_l[DN] : 1'b0),
+            .s0_flit(HAS0 ? up_f[DN] : {LW{1'b0}}),
+            .s0_crd_valid(c0_v[g]), .s0_crd_vc(c0_vc[g]), .s0_crd_n(c0_n[g]),
+            .m1_valid(up_v[g]), .m1_vc(up_vc[g]), .m1_last(up_l[g]),
+            .m1_flit(up_f[g]),
+            .m1_crd_valid(HAS1 ? c0_v[UP] : 1'b0),
+            .m1_crd_vc(HAS1 ? c0_vc[UP] : 1'b0),
+            .m1_crd_n(HAS1 ? c0_n[UP] : 4'd0),
+            .s1_valid(HAS1 ? dn_v[UP] : 1'b0),
+            .s1_vc(HAS1 ? dn_vc[UP] : 1'b0),
+            .s1_last(HAS1 ? dn_l[UP] : 1'b0),
+            .s1_flit(HAS1 ? dn_f[UP] : {LW{1'b0}}),
+            .s1_crd_valid(c1_v[g]), .s1_crd_vc(c1_vc[g]), .s1_crd_n(c1_n[g]),
             .ctr_tx0(), .ctr_rx0(), .ctr_stall0(),
             .ctr_tx1(), .ctr_rx1(), .ctr_stall1(c_st1[g]),
             .ctr_fwd(c_fwd[g]), .ctr_lblock(c_lblk[g]),

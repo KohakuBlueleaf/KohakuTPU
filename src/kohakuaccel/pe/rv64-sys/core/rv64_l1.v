@@ -99,37 +99,42 @@ module rv64_l1 #(
     reg  [IDX_W-1:0] tag_wa;
     reg  [TW-1:0]    tag_wd;
 
-    // THE TAG AND THE DATA BOTH ANSWER A CYCLE AFTER THE ADDRESS. `probe_addr`
-    // here is the same cycle as `addr`, not a stage ahead as on the RV32 PE, so
-    // on the first cycle of an access `tt_q` still holds the PREVIOUS index's
-    // entry -- and for sequential addresses the neighbouring line carries the
-    // same tag, so it reports a hit, skips the fill, and returns the previous
-    // address's data. Every access therefore holds for one cycle first.
-    reg [ADDR_W-1:0] a_q;
-    reg              a_v;
+    // THE HIT IS A REGISTER. `tt_q` answers a cycle after the index went in;
+    // the compare against it is registered again (`hit_q`, with `hq_v` saying
+    // it belongs to THIS access: same index, an idle machine, no write in the
+    // way), so `stall` -- which gates every pipeline enable in the core -- is
+    // made of registers only. Through the compare it was 13 levels, -0.045 ns
+    // OOC and -0.175 with the interlink. `probe_addr` is the E-stage address a
+    // cycle ahead of `addr`, which is what keeps the access at two cycles:
+    // probe, compare, decide.
+    // A READ IMMEDIATELY AFTER A WRITE NEEDS AN EXTRA CYCLE: the data array is
+    // `no_change`, so port B's read output HOLDS while that port writes.
+    reg [IDX_W-1:0] tq_idx;        // the index `tt_q` describes
+    reg             hq_v, hit_q;
+    reg             wrote_q;
+
+    wire tag_ok = v_q && (tag_q == tag) && (tq_idx == idx);
+    wire hit    = hq_v && hit_q;
+    // A REAL miss, with the tag known: `tt_q` is this index's row (the stall
+    // holds `p_idx` at it), so the victim tag and dirty bit read right.
+    wire miss   = req && hq_v && !hit_q;
+
+    assign stall      = (st != L_IDLE) || (req && !hit);
+
+    // Three claimants on the one tag read port, in priority order: the sweep,
+    // the access that is waiting, and the access coming down from E. Leaving the
+    // sweep out reads the tag of whatever happened to be in M and writes a dirty
+    // line to that address instead.
+    wire [IDX_W-1:0] p_idx = flush_busy     ? scan[IDX_W-1:0]
+                           : (stall && req) ? idx
+                                            : probe_addr[IDX_W+4:5];
+
     always @(posedge clk) begin
-        a_q <= addr;
-        a_v <= req;
-    end
-    // A READ IMMEDIATELY AFTER A WRITE NEEDS AN EXTRA CYCLE. The array is
-    // `no_change`, so port B's read output HOLDS while that port is writing --
-    // sampling it the next cycle returns the pre-write value. The tell is a
-    // check that fails while printing the value it wanted.
-    reg wrote_q;
-    always @(posedge clk) begin
+        tq_idx  <= p_idx;
+        hit_q   <= tag_ok;
+        hq_v    <= req && (st == L_IDLE) && (tq_idx == idx) && !wrote_q;
         wrote_q <= (req && we && hit && !stall);
     end
-
-    wire fresh = a_v && (a_q == addr) && !wrote_q;
-
-    wire hit  = fresh && v_q && (tag_q == tag);
-    // A REAL miss, with the tag known. Acting on `!hit` alone starts a fill in
-    // the stale cycle, capturing the wrong victim tag and the wrong dirty bit.
-    wire miss = req && fresh && !hit;
-
-    // Holds on anything that is not a confirmed hit, which includes the stale
-    // first cycle -- `miss` above is narrower on purpose.
-    assign stall      = (st != L_IDLE) || (req && !hit);
     assign flush_busy = (
         (st == L_S_SCAN)
         || (st == L_S_TEST)
@@ -146,14 +151,6 @@ module rv64_l1 #(
     reg             dw_v;
     reg [IDX_W-1:0] dw_idx;
     wire            d_eff = d_q || (dw_v && (dw_idx == idx));
-
-    // Three claimants on the one tag read port, in priority order: the sweep,
-    // the access that is waiting, and the access coming down from E. Leaving the
-    // sweep out reads the tag of whatever happened to be in M and writes a dirty
-    // line to that address instead.
-    wire [IDX_W-1:0] p_idx = flush_busy     ? scan[IDX_W-1:0]
-                           : (stall && req) ? idx
-                                            : probe_addr[IDX_W+4:5];
 
     kohaku_sdpram #(.WIDTH(TW), .DEPTH(LINES),
                     .MEM_PRIM("distributed"), .READ_LAT(1)) u_tag (

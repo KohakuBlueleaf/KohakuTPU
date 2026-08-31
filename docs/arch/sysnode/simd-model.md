@@ -184,7 +184,7 @@ each column names:
 | `u_mover` | `mm_mover`, the slot folded onto its read path | 4,651 | 4,601 | 3 |
 | `u_mag` | MAG, without the mover or the slot | 19,047 | 18,924 | 0 |
 
-Produced by `scripts/tcl/ooc_sysnode_rv64.tcl` and `scripts/tcl/ooc_sysnode.tcl`
+Produced by `scripts/tcl/ooc_sysnode.tcl` and `scripts/tcl/ooc_sysnode.tcl`
 respectively. The two runs differ in more than the processor — the RV64 one also
 moves staging out of the memory ports — so read the pair as *the mover and the
 slot do not move with the processor*, which is what "they belong to the node"

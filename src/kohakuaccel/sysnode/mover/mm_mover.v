@@ -492,6 +492,9 @@ module mm_mover #(
 
     assign c_rd = w_take;
     assign f_rd = (wst == W_DATA) && (w_kind == K_RD) && m_wvalid && m_wready;
+    // Registering `fill_word` here to keep the generator out of this cone was
+    // MEASURED at +665 LUT in the processor, not the -256 predicted: it breaks
+    // sharing between the generator and the walkers. Left combinational.
     assign m_wdata = (w_kind == K_RD) ? f_dout
                    : (w_kind == K_FILL) ? fill_word : gdata;
     assign m_wlast = (w_left == 9'd1);

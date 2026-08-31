@@ -13,6 +13,10 @@
 `ifndef TB_DRAM_CDC
   `define TB_DRAM_CDC 1
 `endif
+// 0: the return bus unregistered (the pre-R_REG port).
+`ifndef TB_RREG
+  `define TB_RREG 1
+`endif
 
 module mag_dram_port_tb #(
     parameter integer MW = 512,
@@ -58,7 +62,7 @@ module mag_dram_port_tb #(
 
     mag_dram_port #(.N(N), .ADDR_W(ADDR_W), .SW(SW), .MW(MW), .ID_W(ID_W),
                     .WR_MEM("distributed"), .RD_OUT(RD_OUT),
-                    .DRAM_CDC(`TB_DRAM_CDC)) u_dut (
+                    .DRAM_CDC(`TB_DRAM_CDC), .R_REG(`TB_RREG)) u_dut (
         .s_aclk(s_aclk), .s_aresetn(resetn),
         .q_valid(q_valid), .q_ready(q_ready), .q_addr(q_addr),
         .q_len(q_len), .q_write(q_write),
@@ -221,10 +225,16 @@ module mag_dram_port_tb #(
     task automatic rd_queue(input integer p, input integer word, input integer n);
         integer k, ki, kc;
         begin
-            for (k = 0; k < n; k = k + 1) do_write(p, word + k*40 + (k % 2), 5 + (k % 3));
+            for (k = 0; k < n; k = k + 1) begin
+                do_write(p, word + k*40 + (k % 2), 5 + (k % 3));
+            end
             fork
-                for (ki = 0; ki < n; ki = ki + 1) rd_issue(p, word + ki*40 + (ki % 2), 5 + (ki % 3));
-                for (kc = 0; kc < n; kc = kc + 1) rd_collect(p, word + kc*40 + (kc % 2), 5 + (kc % 3));
+                for (ki = 0; ki < n; ki = ki + 1) begin
+                    rd_issue(p, word + ki*40 + (ki % 2), 5 + (ki % 3));
+                end
+                for (kc = 0; kc < n; kc = kc + 1) begin
+                    rd_collect(p, word + kc*40 + (kc % 2), 5 + (kc % 3));
+                end
             join
         end
     endtask

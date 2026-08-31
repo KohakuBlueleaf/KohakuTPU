@@ -681,7 +681,7 @@ module mag_ilink #(
 
                 // A DRAM address lands by its LOW 32 bits (local DRAM starts
                 // at zero; the mesh field would put it 4 GB out). A SPECIAL
-                // address keeps all 40: mag_stage_port claims by bit 39 and the
+                // address keeps all 40: mag_dram_port claims by bit 39 and the
                 // mesh field. Truncated, a mover's copy into the far mesh's
                 // staging landed in its DRAM at the aperture offset, silently.
                 IN_WR: if (in_act_wr) begin

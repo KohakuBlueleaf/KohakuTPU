@@ -1,10 +1,6 @@
-// rv64_mag_pe -- the system node's control complex with the RV64 core.
-//
-// The RV32 `rv_mag_pe` and this one hold the SAME three things: a processor, the
+// rv64_mag_pe -- the system node's control complex: the RV64 processor, the
 // memory mover as its SIMD memory unit, and the transform slot as that unit's
-// extension. Only the processor differs. The mover and the slot are parts of the
-// NODE, not of whichever CPU sits in it, so they are instantiated here unchanged
-// and their 4,601 and 4,356 LUT are not this work's to spend or to save.
+// extension. The mover and the slot are parts of the NODE, not of the CPU.
 //
 // `mv.go` IS A STORE, NOT AN OPCODE. `rv64_syscore` decodes the mover's window
 // out of its control region and emits a cfg write per store, which keeps the ISA

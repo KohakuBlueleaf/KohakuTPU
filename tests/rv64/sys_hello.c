@@ -11,14 +11,17 @@
 #define R_EXIT    ((volatile unsigned long *)(CTRL_BASE + 0x00))
 #define R_CONSOLE ((volatile unsigned long *)(CTRL_BASE + 0x08))
 
-/* Above NODE_BASE. Nothing is linked here; the fabric answers it.
- * NODE_SLICE moves this program's whole footprint so two units sharing one
- * fabric can be checked for NON-INTERFERENCE, not just for running at once. */
+/* Above NODE_BASE, through the UNCACHED ALIAS (bit 38 set: the port sees the
+ * address below it, no L1 in the way). Nothing is linked here; the fabric
+ * answers it. NODE_SLICE moves this program's whole footprint so two units
+ * sharing one fabric can be checked for NON-INTERFERENCE, not just for
+ * running at once. */
 #ifndef NODE_SLICE
 #define NODE_SLICE 0
 #endif
-#define NODE      ((volatile unsigned long *)(0x10000000UL + (NODE_SLICE)))
-#define NODE_FAR  ((volatile unsigned long *)(0x18000000UL + (NODE_SLICE)))
+#define UNC       0x4000000000UL
+#define NODE      ((volatile unsigned long *)(UNC + 0x10000000UL + (NODE_SLICE)))
+#define NODE_FAR  ((volatile unsigned long *)(UNC + 0x18000000UL + (NODE_SLICE)))
 
 static void putch(char c) { *R_CONSOLE = (unsigned char)c; }
 static void put_str(const char *s) { while (*s) putch(*s++); }

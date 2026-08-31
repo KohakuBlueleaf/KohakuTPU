@@ -47,7 +47,7 @@ N−1 idle by construction.
 
 **One instance is 4,499 LUT and 32 DSP** — measured out-of-context on
 `xcvu13p-fhgb2104-2L-e`, Vivado 2024.2, at 3.333 ns, `sysnode` whole at
-`PORTS=2`, by `scripts/tcl/ooc_sysnode_rv64.tcl`. That figure is the framework's
+`PORTS=2`, by `scripts/tcl/ooc_sysnode.tcl`. That figure is the framework's
 arbiter plus the reference project's bank and its occupant, so it is what *this*
 project's transform costs rather than what a slot costs. Moving the slot onto
 the mover changed who drives it, not what it is;

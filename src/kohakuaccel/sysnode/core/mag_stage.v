@@ -7,8 +7,11 @@
 // THE LINE IS ONE FILL ENTRY, 1024 bits, not mag-staging.md's 936: 936 is the
 // post-permutation L1 width, and MAG moves mag_mem_port.v's P_ENTRY_BITS.
 
-// BANKED, because URAM columns are spread across a die whose worst SLR is at
-// 95.80% CLB. BANKS=1 with PIPE=0 is the monolithic shape, for comparison.
+// ONE BANK OF 4-DEEP CHAINS. UG573 p.116 cascades bottom-up within a column;
+// UG901 p.118 wants rows + columns output registers, which RLAT's default
+// gives. Routed inside one SLR beside the ship's 4 x 1-deep: both without a
+// congestion window above UG949 level 5, the node's slack the RV64 core's
+// in both (-0.354 / -0.290 on the same path). BANKS is the knob either way.
 
 // WIDE PATH ONE DRIVER, NARROW PATH MANY. Write data is one registered
 // broadcast; only the address and control fan out per bank.
@@ -19,13 +22,20 @@ module mag_stage #(
     parameter integer DATA_W  = 256,
     parameter integer ADDR_W  = 40,
     parameter integer WORDS   = 4,         // response words in one entry
-    // SHIPPED: 4 banks x 4096 rows = 64 URAM, 2 MB. A bank shallower than 4096
-    // wastes URAM depth, so banking multiplies capacity rather than dividing it.
-    parameter integer BANKS   = 4,         // 1 is monolithic
+    // 1: one array, 16 chains of 4 URAM. Against 4 banks of 16 single URAM it
+    // is -1,568 LUT / -5,121 FF at synthesis (node 29,311 against 30,879) and
+    // -1,549 routed, with the return mux gone; 2 banks is -939.
+    parameter integer BANKS   = 1,
     parameter integer ENTRIES = 16384,     // total, across all banks
     // 1 registers the dispatch and each bank's output, so the only long wire
     // left is bank output register -> mux.
     parameter integer PIPE    = 1,
+    // The bank RAM's read stages and xpm passthroughs (kohaku_sdpram_be).
+    // UG901 p.118: a fully pipelined URAM matrix wants rows + columns stages,
+    // so 0 = blocks deep + 1: one deep 2 (the ship), two deep 3, four deep 5.
+    parameter integer RLAT    = 0,
+    parameter integer CASCADE = 0,
+    parameter         WR_MODE = "read_first",
     parameter [1:0]   MESH_ID = 2'd0,
     parameter [3:0]   AP_STAGE = 4'h0,
     // What the ARCHITECTURE defines (address-space-40bit.md s3), not what any
@@ -66,8 +76,9 @@ module mag_stage #(
     localparam integer BWS  = (BANKS <= 1) ? 1 : $clog2(BANKS);
     localparam integer ROWS = ENTRIES / BANKS;
     localparam integer RW   = (ROWS <= 1) ? 1 : $clog2(ROWS);
-    localparam integer RLAT = 2;                             // URAM read stages
-    localparam integer RTOT = (PIPE != 0) ? (RLAT + 2) : RLAT;
+    localparam integer DEEP = (ROWS + 4095) / 4096;          // URAM blocks in a chain
+    localparam integer RLAT_E = (RLAT != 0) ? RLAT : (DEEP + 1);
+    localparam integer RTOT = (PIPE != 0) ? (RLAT_E + 2) : RLAT_E;
 
     // ---- the decode, in the order that makes transit safe ------------------
     wire a_mesh = (a_addr[37:36] == MESH_ID) && !a_addr[38];
@@ -176,7 +187,9 @@ module mag_stage #(
                 .WIDTH    (DATA_W),
                 .DEPTH    (ROWS),
                 .MEM_PRIM ("ultra"),
-                .READ_LAT (RLAT)
+                .READ_LAT (RLAT_E),
+                .CASCADE  (CASCADE),
+                .WR_MODE  (WR_MODE)
             ) u_bank (
                 .clk     (clk),
                 .wr_en   (bk_we),
@@ -227,6 +240,9 @@ module mag_stage #(
         end
     end
 
+    // A plain N:1 on a simple counter: MEASURED, the part-select is what the
+    // tool wants here. Rewriting it as a compare per bank cost +517 LUT --
+    // a 4-deep priority chain 1,024 bits wide instead of one 4:1.
     wire [BWS-1:0] sel = bk_sr[RTOT-1];
     wire [WORDS*DATA_W-1:0] sel_entry =
         bank_out[sel*WORDS*DATA_W +: WORDS*DATA_W];

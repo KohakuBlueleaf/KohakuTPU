@@ -32,7 +32,8 @@ module noc_orchestrator #(
 
     parameter TX_DEPTH   = 16,
     parameter RX_DEPTH   = 16,
-    parameter STAGE_FLITS = 128    // instruction staging buffer, in flits
+    parameter STAGE_FLITS = 128,   // instruction staging buffer, in flits
+    parameter Q_MEM      = "block" // the TX/RX flit FIFOs' storage
 ) (
     input  wire                    clk,
     input  wire                    resetn,
@@ -131,13 +132,11 @@ module noc_orchestrator #(
     localparam [15:0] A_AUX_CFG = 16'h0800;
     localparam [15:0] A_AUX_END = A_AUX_CFG + 16'h0100;
 
-    // Infers LUTRAM (RAM64M8 x100 at STAGE_FLITS=128), not BRAM. NO ram_style
-    // attribute: "block" is rejected as infeasible and silently downgraded, and
-    // an ignored attribute reads like a guarantee. The likely blocker is the
-    // read destination being a variable part-select -- BRAM read data has to
-    // land in a plain register. ~1000 LUTs, one per system; revisit if
-    // STAGE_FLITS grows by an order of magnitude.
-    reg [DATA_WIDTH-1:0] stage_ram [0:STAGE_WORDS-1];
+    // Block RAM with byte enables, so a strobed host write lands whole and
+    // the dispatcher reads one word a cycle, a cycle behind its address.
+    wire                  stage_we;
+    wire [SW_BITS-1:0]    stage_widx;
+    wire [DATA_WIDTH-1:0] stage_q;
 
     reg [2*POS_WIDTH-1:0] prog_dst;
     reg [15:0]            prog_len;      // flits to send
@@ -155,6 +154,15 @@ module noc_orchestrator #(
     reg [15:0]            cred_val;
     reg [2:0]             prog_word;
     reg [PAD_WIDTH-1:0]   prog_flit;
+
+    kohaku_sdpram_be #(
+        .WIDTH(DATA_WIDTH), .DEPTH(STAGE_WORDS), .MEM_PRIM("block"), .READ_LAT(1)
+    ) u_stage (
+        .clk(clk),
+        .wr_en(stage_we), .wr_addr(stage_widx), .wr_data(s_axi_wdata),
+        .wr_strb(s_axi_wstrb),
+        .rd_en(1'b1), .rd_addr(prog_rd), .rd_data(stage_q)
+    );
 
     wire [DATA_WIDTH-1:0] caps_word =
         { {(DATA_WIDTH-48){1'b0}},
@@ -180,7 +188,7 @@ module noc_orchestrator #(
     wire [FLIT_WIDTH-1:0] tx_wr_data = disp_push ? disp_flit : tx_stage[FLIT_WIDTH-1:0];
 
     sync_fifo #(.DATA_WIDTH(FLIT_WIDTH), .FIFO_DEPTH(TX_DEPTH),
-                .MEMORY_TYPE("distributed")) u_tx (
+                .MEMORY_TYPE(Q_MEM)) u_tx (
         .clk(clk), .rst(!resetn),
         .wr_en(tx_wr_en), .wr_data(tx_wr_data), .wr_busy(tx_full),
         .rd_en(tx_pop),   .rd_data(tx_head),    .rd_busy(tx_empty)
@@ -215,7 +223,7 @@ module noc_orchestrator #(
     wire in_is_sig = (in_type == 4'h6);
 
     sync_fifo #(.DATA_WIDTH(FLIT_WIDTH), .FIFO_DEPTH(RX_DEPTH),
-                .MEMORY_TYPE("distributed")) u_rx (
+                .MEMORY_TYPE(Q_MEM)) u_rx (
         .clk(clk), .rst(!resetn),
         .wr_en(noc_in_valid && !rx_full && !in_is_sig),
         .wr_data(noc_in_data), .wr_busy(rx_full),
@@ -303,7 +311,28 @@ module noc_orchestrator #(
         end
     end
 
-    wire disp_can = prog_run && !tx_full && (prog_credit != 16'd0);
+    // A flit's five reads run uninterrupted once word 0 has RESERVED a credit
+    // and a TX slot. The push lands five cycles after word 0, so the credit is
+    // spent at word 0, not at the push -- spent at the push, the next flit's
+    // word 0 saw the old count and 128-flit programs over-dispatched (system32:
+    // 9 of 64 blocks ran). TX room is this module's own count with two slots
+    // of margin: the previous flit's push may still be pending at word 0.
+    localparam integer TXC_W = $clog2(TX_DEPTH) + 1;
+    reg  [TXC_W-1:0] tx_cnt;
+    wire tx_room  = (tx_cnt <= TX_DEPTH - 2);
+    wire disp_can = prog_run && tx_room && (prog_credit != 16'd0);
+    wire disp_rd  = prog_run && ((prog_word != 3'd0) || disp_can);
+    wire flit_go  = disp_rd && (prog_word == 3'd0);
+    reg        rd_v_q;
+    reg [2:0]  rd_word_q;
+
+    always @(posedge clk) begin
+        if (!resetn) begin
+            tx_cnt <= {TXC_W{1'b0}};
+        end else begin
+            tx_cnt <= tx_cnt + (tx_wr_en ? 1'b1 : 1'b0) - (tx_pop ? 1'b1 : 1'b0);
+        end
+    end
 
     // ALL dispatcher state is driven from this one block, credit counter and
     // kick included; the AXI write FSM only requests, via kick_req / cred_wr.
@@ -314,6 +343,7 @@ module noc_orchestrator #(
     // away entirely.
     always @(posedge clk) begin
         disp_push <= 1'b0;
+        rd_v_q    <= 1'b0;
         if (!resetn) begin
             prog_run    <= 1'b0;
             prog_word   <= 3'd0;
@@ -322,31 +352,32 @@ module noc_orchestrator #(
             // takes only once complete, word by word.
             prog_credit <= 16'd0;
         end else begin
-            // credit: one per CU_INST flit sent, refilled by SIG_INST_COMPLETE.
-            // A host write wins, so re-seeding between programs is predictable.
+            // credit: one per CU_INST flit, taken as its first word is read,
+            // refilled by SIG_INST_COMPLETE. A host write wins, so re-seeding
+            // between programs is predictable.
             if (cred_wr) begin
                 prog_credit <= cred_val;
             end
-            else if (disp_push && !in_inst_done && prog_credit != 16'd0) begin
+            else if (flit_go && !in_inst_done && prog_credit != 16'd0) begin
                 prog_credit <= prog_credit - 16'd1;
             end
-            else if (in_inst_done && !disp_push) begin
+            else if (in_inst_done && !flit_go) begin
                 prog_credit <= prog_credit + 16'd1;
             end
 
-            // kick_req only asserts while !prog_run and disp_can requires
+            // kick_req only asserts while !prog_run and disp_rd requires
             // prog_run, so these two arms are mutually exclusive
             if (kick_req && !prog_run && prog_len != 16'd0) begin
                 prog_run  <= 1'b1;
                 prog_left <= prog_len;
                 prog_rd   <= prog_base[SW_BITS-1:0] * FLIT_WORDS;
                 prog_word <= 3'd0;
-            end else if (disp_can) begin
-                prog_flit[prog_word*DATA_WIDTH +: DATA_WIDTH] <= stage_ram[prog_rd];
-                prog_rd <= prog_rd + 1'b1;
+            end else if (disp_rd) begin
+                rd_v_q    <= 1'b1;
+                rd_word_q <= prog_word;
+                prog_rd   <= prog_rd + 1'b1;
                 if (prog_word == FLIT_WORDS-1) begin
                     prog_word <= 3'd0;
-                    disp_push <= 1'b1;
                     if (prog_left == 16'd1) begin
                         prog_run <= 1'b0;
                     end
@@ -355,6 +386,14 @@ module noc_orchestrator #(
                     end
                 end else begin
                     prog_word <= prog_word + 3'd1;
+                end
+            end
+            // The word asked for last cycle lands now; the fifth completes the
+            // flit and the push follows a cycle behind it.
+            if (rd_v_q) begin
+                prog_flit[rd_word_q*DATA_WIDTH +: DATA_WIDTH] <= stage_q;
+                if (rd_word_q == FLIT_WORDS-1) begin
+                    disp_push <= 1'b1;
                 end
             end
         end
@@ -401,13 +440,14 @@ module noc_orchestrator #(
     // Index relative to A_STAGE. Slicing waddr directly folds base-address bits
     // into the index, harmless only while SW_BITS is small enough that 0x2000
     // aliases to 0.
-    wire [SW_BITS-1:0] stage_widx = (waddr[15:0] - A_STAGE) >> 3;
+    assign      stage_widx = (waddr[15:0] - A_STAGE) >> 3;
     wire        is_aux = (waddr[15:0] >= A_AUX_CFG) && (waddr[15:0] < A_AUX_END);
 
     // A station-bus manager flit-aligns, so one host write64 arrives as four
     // beats, one strobed: ignoring WSTRB made that eight register writes.
     wire w_live = |s_axi_wstrb;
     wire w_lo16 = |s_axi_wstrb[1:0];      // a 16-bit register lives in bytes 0-1
+    assign stage_we = (wstate == W_DATA) && s_axi_wvalid && w_live && is_stage;
 
     // dat/stb are ARGUMENTS: in a continuous assign xsim sensitises only the
     // argument list, so reading them from module scope pulsed stale data.
@@ -475,9 +515,7 @@ module noc_orchestrator #(
                     if (!w_live) begin
                         ;
                     end else if (is_stage) begin
-                        stage_ram[stage_widx]
-                            <= wmerge(stage_ram[stage_widx], s_axi_wdata,
-                                      s_axi_wstrb);
+                        ;                       // lands in u_stage via stage_we
                     end else if (is_tx_fl) begin
                         for (wb = 0; wb < DATA_WIDTH/8; wb = wb + 1) begin
                             if (s_axi_wstrb[wb]) begin

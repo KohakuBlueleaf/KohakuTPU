@@ -1,4 +1,7 @@
-// N requesters onto ONE AXI4 master, packing SW->MW across a clock crossing.
+// N requesters onto ONE AXI4 master, packing SW->MW across a clock crossing,
+// with MAG's staging store served from BEHIND the same arbiter (a staged
+// read through a one-word engine into the one return path, a staged write as
+// beats of the one W stream), so nothing N-wide exists for staging.
 // docs/mas/dram-port.md. Instantiated by mag.v as u_dram.
 //
 // THE q CONTRACT: a requester's {valid, write, addr, len} HOLDS unchanged
@@ -29,7 +32,18 @@ module mag_dram_port #(
     // 1: the five queues cross s_aclk -> m_aclk (async FIFOs). 0: m_aclk IS
     // s_aclk and the queues are synchronous FIFOs on it -- the v8 one-clock
     // memory path, where the fabric behind this port shares the node's clock.
-    parameter integer DRAM_CDC = 1
+    parameter integer DRAM_CDC = 1,
+    // 1: the one return bus is registered before it fans out to the N
+    // requesters. Unregistered, each memory port's two-entry skid built the
+    // bus's word select and staged 2:1 into BOTH its registers -- 709 LUT per
+    // port for 518 FF against 132 on a registered input (sb_skid.v:52). One
+    // cycle of return latency; the rate is unchanged.
+    parameter integer R_REG    = 1,
+    // The staging store on this path. 0 generates none of the staged path;
+    // the store itself is mag_stage, wired to stg_* by mag.v.
+    parameter integer STAGE    = 0,
+    parameter [1:0]   MESH_ID  = 2'd0,
+    parameter [3:0]   AP_STAGE = 4'h0
 )(
     input  wire                  s_aclk,
     input  wire                  s_aresetn,
@@ -52,7 +66,17 @@ module mag_dram_port #(
     output wire [N*SW-1:0]       r_data,
     output wire [N-1:0]          r_last,
 
-    output reg  [N-1:0]          b_valid,
+    output wire [N-1:0]          b_valid,
+
+    // ---- the staging store's port B: one word per access (STAGE != 0) ----
+    output wire                  stg_req,
+    output wire                  stg_we,
+    output wire [ADDR_W-1:0]     stg_addr,
+    output wire [SW-1:0]         stg_wdata,
+    output wire [SW/8-1:0]       stg_wstrb,
+    input  wire                  stg_gnt,
+    input  wire                  stg_rvalid,
+    input  wire [SW-1:0]         stg_rdata,
 
     input  wire                  m_aclk,
     input  wire                  m_aresetn,
@@ -98,9 +122,24 @@ module mag_dram_port #(
     // At R=1 there is no sub-beat, so the phase is 0 and the memory address is
     // aligned to SBYTES -- not to SBYTES<<RLOG, which would clear a real bit.
     localparam integer ALOG = SBLOG + ((R == 1) ? 0 : RLOG);
+    // SIZED: one internal beat, as a staged burst steps through the store.
+    localparam [ADDR_W-1:0] ASTEP = SBYTES;
 
     wire srst = !s_aresetn;
     wire mrst = !m_aresetn;
+
+    // The staging aperture. The map is absolute at 40 bits -- [39] special,
+    // [38] reserved-zero, [37:36] mesh, [35:32] aperture -- written relative to
+    // ADDR_W so a narrower STAGE=0 build still elaborates.
+    function stg_is;
+        input [ADDR_W-1:0] a;
+        begin
+            stg_is = (STAGE != 0)
+                     && a[ADDR_W-1] && !a[ADDR_W-2]
+                     && (a[ADDR_W-3 -: 2] == MESH_ID)
+                     && (a[ADDR_W-5 -: 4] == AP_STAGE);
+        end
+    endfunction
 
     // ---- every net declared before it is connected ----------------------
     wire ar_empty, aw_empty, wq_empty, bq_empty, rq_empty;
@@ -110,6 +149,8 @@ module mag_dram_port #(
     wire [IDX_W-1:0] wsel_id;
     wire [15:0]      wsel_n;
     wire [RLOG-1:0]  wsel_ph;
+    wire             wsel_stg;
+    wire [ADDR_W-1:0] wsel_addr;
     wire             wsel_empty;
 
     // Bursts a requester may hold PENDING behind the active one, and the widths
@@ -125,6 +166,8 @@ module mag_dram_port #(
     reg  [RLOG-1:0]   wph;
     reg  [15:0]       wleft;
     reg               wactive;
+    reg               wstg;          // the W burst on the bus lands in staging
+    reg  [ADDR_W-1:0] wsaddr;        // ... at this word
     reg  [RLOG-1:0]   rph  [0:N-1];
     reg  [15:0]       rleft[0:N-1];
     reg  [N-1:0]      rleft_z;
@@ -136,11 +179,47 @@ module mag_dram_port #(
     reg  [PPW-1:0]    phd  [0:N-1], ptl [0:N-1];
     reg  [RCW-1:0]    pn   [0:N-1], rd_cnt [0:N-1];
 
+    // ---- the staged read engine: one pending, one active, one word out ----
+    // `sq` holds a staged read the arbiter took while the engine was busy, so
+    // the capture stage stays free for DRAM reads meanwhile.
+    reg               sq_v;
+    reg  [IDX_W-1:0]  sq_id;
+    reg  [ADDR_W-1:0] sq_addr;
+    reg  [15:0]       sq_len;
+    reg               sr_v, sr_out, sr_hold, sr_nz;
+    wire              stage_free;           // R_REG: the return register can load
+    reg  [IDX_W-1:0]  sr_id;
+    reg  [ADDR_W-1:0] sr_addr;
+    reg  [15:0]       sr_left;       // words not yet requested
+    reg  [SW-1:0]     sr_word;
+
     // ================================================== request arbitration
 
     // RD_OUT OUTSTANDING READS PER REQUESTER: the id IS the requester and AXI
     // returns same-id responses in order, so a queue needs no reorder buffer.
-    wire [N-1:0] rd_req = q_valid & ~q_write & ~rd_busy;
+    //
+    // ORDER ACROSS THE TWO STORES, per requester: a staged read waits until the
+    // requester's count is zero (its DRAM reads have all returned), a DRAM read
+    // waits until its staged read is neither pending, captured nor active. At
+    // RD_OUT=1 `rd_busy` already says both; the masks are what keeps a larger
+    // RD_OUT honest.
+    wire [N-1:0] q_stg, rd_blk;
+    reg              s1_rv, s1_wv, s1_rstg, s1_wstg;
+    reg [IDX_W-1:0]  s1_rid, s1_wid;
+    reg [ADDR_W-1:0] s1_rad, s1_wad;
+    reg [15:0]       s1_rln, s1_wln;
+
+    genvar g;
+    generate for (g = 0; g < N; g = g + 1) begin : g_blk
+        assign q_stg[g]  = stg_is(q_addr[g*ADDR_W +: ADDR_W]);
+        assign rd_blk[g] = q_stg[g]
+            ? ((rd_cnt[g] != {RCW{1'b0}}) || sq_v)
+            : ((sr_v && (sr_id == g[IDX_W-1:0]))
+               || (sq_v && (sq_id == g[IDX_W-1:0]))
+               || (s1_rv && s1_rstg && (s1_rid == g[IDX_W-1:0])));
+    end endgenerate
+
+    wire [N-1:0] rd_req = q_valid & ~q_write & ~rd_busy & ~rd_blk;
     wire [N-1:0] wr_req = q_valid &  q_write;
 
     // REGISTERED REQUESTS: q_valid -> scan -> q_ready was the worst path at
@@ -164,13 +243,10 @@ module mag_dram_port #(
 
     // THE ARBITER'S CHOICE IS CAPTURED, not used the same cycle: scan, mux,
     // arithmetic and ready on one path cost 49 MHz in a 6+2 mesh.
-    reg              s1_rv, s1_wv;
-    reg [IDX_W-1:0]  s1_rid, s1_wid;
-    reg [ADDR_W-1:0] s1_rad, s1_wad;
-    reg [15:0]       s1_rln, s1_wln;
-
-    wire rd_push = s1_rv && !ar_full;
-    wire wr_push = s1_wv && !aw_full && !wsel_full;
+    // A staged read leaves the capture stage into `sq`; a staged write needs
+    // only its wsel entry, never the AW queue.
+    wire rd_push = s1_rv && (s1_rstg ? !sq_v : !ar_full);
+    wire wr_push = s1_wv && !wsel_full && (s1_wstg || !aw_full);
     wire rd_take = rd_any && (!s1_rv || rd_push);
     wire wr_take = wr_any && (!s1_wv || wr_push);
 
@@ -198,12 +274,14 @@ module mag_dram_port #(
             if (rd_take) begin
                 s1_rv <= 1'b1; s1_rid <= rd_sel;
                 s1_rad <= sel_rad; s1_rln <= sel_rln;
+                s1_rstg <= stg_is(sel_rad);
             end else if (rd_push) begin
                 s1_rv <= 1'b0;
             end
             if (wr_take) begin
                 s1_wv <= 1'b1; s1_wid <= wr_sel;
                 s1_wad <= sel_wad; s1_wln <= sel_wln;
+                s1_wstg <= stg_is(sel_wad);
             end else if (wr_push) begin
                 s1_wv <= 1'b0;
             end
@@ -232,8 +310,11 @@ module mag_dram_port #(
     wire [ADDR_W-1:0] rd_al = {rd_addr[ADDR_W-1:ALOG], {ALOG{1'b0}}};
     wire [ADDR_W-1:0] wr_al = {wr_addr[ADDR_W-1:ALOG], {ALOG{1'b0}}};
 
-    wire ar_fire = rd_push;
-    wire aw_fire = wr_push;
+    // Only a DRAM request reaches AXI; a staged one is pushed elsewhere.
+    wire ar_fire = rd_push && !s1_rstg;
+    wire aw_fire = wr_push && !s1_wstg;
+    wire sq_fire = rd_push &&  s1_rstg;
+    wire ws_fire = wr_push;
 
     // ================================================== AR / AW crossings
     // Both FIFO kinds are show-ahead with the same flags, so each queue is one
@@ -279,37 +360,49 @@ module mag_dram_port #(
     // ================================================== write data
 
     // AXI4 FORBIDS W INTERLEAVING, so W follows AW order: `wsel` names whose
-    // data the mux forwards and for how many source beats.
-    wire [SW-1:0]   w_beat = w_data[wsel_id*SW +: SW];
+    // data the mux forwards, for how many source beats, and where it lands --
+    // a staged burst carries its address here, since it has no AW entry.
+    wire [SW-1:0]     w_beat  = w_data[wsel_id*SW +: SW];
     wire [SBYTES-1:0] w_bstrb = w_strb[wsel_id*SBYTES +: SBYTES];
-    wire          w_fire = wactive && w_valid[wsel_id] && !wq_full;
-    wire          w_end  = (wleft == 16'd1);
-    wire          w_emit = (wph == RTOP) || w_end;
+    wire          sr_go;                  // the read engine owns port B this cycle
+    wire          w_fire_d = wactive && !wstg && w_valid[wsel_id] && !wq_full;
+    wire          w_fire_s = wactive &&  wstg && w_valid[wsel_id] && !sr_go;
+    wire          w_fire   = w_fire_d || w_fire_s;
+    wire          w_end    = (wleft == 16'd1);
+    wire          w_emit   = (R == 1) || (wph == RTOP) || w_end;
     wire          wsel_pop = w_fire && w_end;
 
-    sync_fifo #(.DATA_WIDTH(IDX_W+16+RLOG), .FIFO_DEPTH(AWQ)) u_wsel (
+    sync_fifo #(.DATA_WIDTH(IDX_W+16+RLOG+1+ADDR_W), .FIFO_DEPTH(AWQ)) u_wsel (
         .clk(s_aclk), .rst(srst),
-        .wr_en(aw_fire), .wr_data({s1_wid, wr_len, wr_ph}), .wr_busy(wsel_full),
-        .wr_almost(),
-        .rd_en(wsel_pop), .rd_data({wsel_id, wsel_n, wsel_ph}),
+        .wr_en(ws_fire), .wr_data({s1_wid, wr_len, wr_ph, s1_wstg, wr_addr}),
+        .wr_busy(wsel_full), .wr_almost(),
+        .rd_en(wsel_pop), .rd_data({wsel_id, wsel_n, wsel_ph, wsel_stg, wsel_addr}),
         .rd_busy(wsel_empty));
 
     // Strobes start CLEARED and only written lanes set them, so a partial head
     // and a partial tail both fall out with no special case.
-    wire [MW-1:0]   wacc_next = (
-        wacc
-        | ({{(MW-SW){1'b0}}, w_beat} << (wph * SW))
-    );
-    wire [MW/8-1:0] wstrb_next = (
-        wstrb_acc
-        | ({{(MW/8-SBYTES){1'b0}}, w_bstrb} << (wph * SBYTES))
-    );
+    wire [MW-1:0]   wacc_next;
+    wire [MW/8-1:0] wstrb_next;
+
+    generate if (R == 1) begin : g_pack1
+        // One source beat IS one memory beat, so the packer is the identity.
+        // Written out because `wph` reaches here through u_wsel and XPM memory
+        // is opaque: the tool cannot fold the shift away, and it measured
+        // 288 LUT + 288 FF of accumulator that never accumulates.
+        assign wacc_next  = w_beat;
+        assign wstrb_next = w_bstrb;
+    end else begin : g_packn
+        assign wacc_next  = wacc
+                          | ({{(MW-SW){1'b0}}, w_beat} << (wph * SW));
+        assign wstrb_next = wstrb_acc
+                          | ({{(MW/8-SBYTES){1'b0}}, w_bstrb} << (wph * SBYTES));
+    end endgenerate
 
     generate if (DRAM_CDC) begin : g_wq
         async_fifo #(.DATA_WIDTH(MW + MW/8 + 1), .FIFO_DEPTH(WQ),
                      .MEMORY_TYPE(WR_MEM)) u_f (
             .wr_clk(s_aclk), .wr_rst(srst),
-            .wr_en(w_fire && w_emit),
+            .wr_en(w_fire_d && w_emit),
             .wr_data({wacc_next, wstrb_next, w_end}), .wr_full(wq_full),
             .rd_clk(m_aclk), .rd_en(m_wvalid && m_wready),
             .rd_data({m_wdata, m_wstrb, m_wlast}), .rd_empty(wq_empty));
@@ -317,7 +410,7 @@ module mag_dram_port #(
         sync_fifo #(.DATA_WIDTH(MW + MW/8 + 1), .FIFO_DEPTH(WQ),
                     .MEMORY_TYPE(WR_MEM)) u_f (
             .clk(s_aclk), .rst(srst),
-            .wr_en(w_fire && w_emit),
+            .wr_en(w_fire_d && w_emit),
             .wr_data({wacc_next, wstrb_next, w_end}), .wr_busy(wq_full), .wr_almost(),
             .rd_en(m_wvalid && m_wready),
             .rd_data({m_wdata, m_wstrb, m_wlast}), .rd_busy(wq_empty));
@@ -326,20 +419,25 @@ module mag_dram_port #(
     assign m_wvalid = !wq_empty;
 
     always @(posedge s_aclk) begin
-        // `wacc`/`wstrb_acc` are not reset: EVERY burst clears them at :281 and
-        // every emit at :286, so the reset is a second initialisation.
+        // `wacc`/`wstrb_acc` are not reset: every burst clears them at its
+        // start and every emit clears them again, so the reset is a second
+        // initialisation. `wsaddr` is a payload `wstg` qualifies.
         if (srst) begin
-            wactive <= 1'b0; wph <= {RLOG{1'b0}}; wleft <= 16'd0;
+            wactive <= 1'b0; wph <= {RLOG{1'b0}}; wleft <= 16'd0; wstg <= 1'b0;
         end else if (!wactive) begin
             if (!wsel_empty) begin
                 wactive   <= 1'b1;
                 wph       <= wsel_ph;
                 wleft     <= wsel_n + 16'd1;
+                wstg      <= wsel_stg;
+                wsaddr    <= wsel_addr;
                 wacc      <= {MW{1'b0}};
                 wstrb_acc <= {(MW/8){1'b0}};
             end
         end else if (w_fire) begin
-            if (w_emit) begin
+            if (wstg) begin
+                wsaddr <= wsaddr + ASTEP;
+            end else if (w_emit) begin
                 wacc <= {MW{1'b0}}; wstrb_acc <= {(MW/8){1'b0}};
                 wph  <= {RLOG{1'b0}};
             end else begin
@@ -355,9 +453,12 @@ module mag_dram_port #(
         end
     end
 
-    genvar g;
+    // A DRAM burst's beats wait on the write queue; a staged burst's on the
+    // store's port, which the read engine takes first. Neither depends on the
+    // requester's valid.
     generate for (g = 0; g < N; g = g + 1) begin : g_wrdy
-        assign w_ready[g] = wactive && (wsel_id == g[IDX_W-1:0]) && !wq_full;
+        assign w_ready[g] = wactive && (wsel_id == g[IDX_W-1:0])
+                          && (wstg ? !sr_go : !wq_full);
     end endgenerate
 
     // ================================================== B
@@ -378,17 +479,76 @@ module mag_dram_port #(
             .rd_en(!bq_empty), .rd_data(bq_id), .rd_busy(bq_empty));
     end endgenerate
 
+    // A staged write is complete when its last beat lands; its B is OWED and
+    // paid on the first cycle the requester's bit is not carrying a DRAM B, so
+    // two responses for one requester never merge into one pulse.
+    wire sb_done = w_fire_s && w_end;
+
+    generate for (g = 0; g < N; g = g + 1) begin : g_b
+        reg        b_q;
+        reg  [4:0] owed;
+        wire bq_hit = !bq_empty && (bq_id == g[IDX_W-1:0]);
+        wire sb_pay = (owed != 5'd0) && !bq_hit;
+        wire sb_inc = sb_done && (wsel_id == g[IDX_W-1:0]);
+        always @(posedge s_aclk) begin
+            if (srst) begin
+                b_q  <= 1'b0;
+                owed <= 5'd0;
+            end
+            else begin
+                b_q  <= bq_hit || sb_pay;
+                owed <= owed + (sb_inc ? 5'd1 : 5'd0) - (sb_pay ? 5'd1 : 5'd0);
+            end
+        end
+        assign b_valid[g] = b_q;
+    end endgenerate
+
+    // ================================================== the staged read engine
+    // ONE WORD OUT AT A TIME: the store answers a fixed RTOT cycles after the
+    // request and nothing here can stall it, so a word is held until its
+    // requester takes it before the next is asked for.
+    assign sr_go = sr_v && sr_nz && !sr_out && !sr_hold;
+    wire   sr_take = sr_hold && ((R_REG != 0) ? stage_free : r_ready[sr_id]);
+    wire   sr_fin  = sr_take && !sr_nz;
+
     always @(posedge s_aclk) begin
         if (srst) begin
-            b_valid <= {N{1'b0}};
+            sq_v <= 1'b0; sr_v <= 1'b0; sr_out <= 1'b0; sr_hold <= 1'b0;
+            sr_nz <= 1'b0;
         end
         else begin
-            b_valid <= {N{1'b0}};
-            if (!bq_empty) begin
-                b_valid[bq_id] <= 1'b1;
+            if (sq_fire) begin
+                sq_v <= 1'b1; sq_id <= s1_rid; sq_addr <= s1_rad; sq_len <= s1_rln;
+            end
+            if (!sr_v && sq_v) begin
+                sr_v <= 1'b1; sr_id <= sq_id; sr_addr <= sq_addr;
+                sr_left <= sq_len + 16'd1; sr_nz <= 1'b1;
+                sq_v <= sq_fire;            // a take and a load in one cycle
+            end
+            if (sr_go && stg_gnt) begin
+                sr_out  <= 1'b1;
+                sr_addr <= sr_addr + ASTEP;
+                sr_left <= sr_left - 16'd1;
+                sr_nz   <= (sr_left != 16'd1);
+            end
+            if (stg_rvalid) begin
+                sr_word <= stg_rdata; sr_hold <= 1'b1; sr_out <= 1'b0;
+            end
+            if (sr_take) begin
+                sr_hold <= 1'b0;
+                if (!sr_nz) begin
+                    sr_v <= 1'b0;
+                end
             end
         end
     end
+
+    // Port B: the read engine first, the W stream's staged beats otherwise.
+    assign stg_req   = sr_go || w_fire_s;
+    assign stg_we    = !sr_go;
+    assign stg_addr  = sr_go ? sr_addr : wsaddr;
+    assign stg_wdata = w_beat;
+    assign stg_wstrb = w_bstrb;
 
     // ================================================== read return
 
@@ -412,21 +572,63 @@ module mag_dram_port #(
 
     wire [RLOG-1:0] cur_ph   = rph[rq_id];
     wire [15:0]     cur_left = rleft[rq_id];
-    wire            r_emit   = !rq_empty && (cur_left != 16'd0);
+    // THE ONE RETURN BUS. A held staged word drives it ahead of the DRAM head,
+    // whose beat waits: the same in-order head-of-line the queue already has.
+    wire            stg_emit = sr_hold;
+    wire            r_emit   = !rq_empty && (cur_left != 16'd0) && !stg_emit;
     wire [SW-1:0]   r_sub    = rq_data[cur_ph*SW +: SW];
-    wire            r_take   = r_emit && r_ready[rq_id];
+    wire [SW-1:0]   r_bus    = stg_emit ? sr_word : r_sub;
+    wire            r_take   = r_emit && ((R_REG != 0) ? stage_free : r_ready[rq_id]);
 
     // COMBINATIONAL, not registered: async_fifo is show-ahead, so a pop one
-    // cycle late re-reads the same beat.
+    // cycle late re-reads the same beat. The discard of an over-fetched beat
+    // needs no bus and goes on under a staged word.
     wire rq_pop = (
         (!rq_empty && cur_left == 16'd0)
         || (r_take && ((cur_ph == RTOP) || (cur_left == 16'd1)))
     );
 
+    wire [N-1:0] ri_valid, ri_last;
     generate for (g = 0; g < N; g = g + 1) begin : g_rd
-        assign r_valid[g] = r_emit && (rq_id == g[IDX_W-1:0]);
-        assign r_data[g*SW +: SW] = r_sub;
-        assign r_last[g]  = r_valid[g] && (cur_left == 16'd1);
+        wire d_here = r_emit   && (rq_id == g[IDX_W-1:0]);
+        wire s_here = stg_emit && (sr_id == g[IDX_W-1:0]);
+        assign ri_valid[g] = d_here || s_here;
+        assign ri_last[g]  = (d_here && (cur_left == 16'd1)) || (s_here && !sr_nz);
+    end endgenerate
+
+    // A take moves the beat INTO the register; it drains when its requester is
+    // ready, and a drain and a load share a cycle, so the rate is one per cycle.
+    generate if (R_REG != 0) begin : g_rreg
+        reg [N-1:0]  rq_v;
+        reg          rq_last;
+        reg [SW-1:0] rq_bus;
+        assign stage_free = !(|rq_v) || (|(rq_v & r_ready));
+        always @(posedge s_aclk) begin
+            if (srst) begin
+                rq_v <= {N{1'b0}};
+            end
+            else if (stage_free) begin
+                rq_v <= ri_valid;
+            end
+        end
+        always @(posedge s_aclk) begin
+            if (stage_free) begin
+                rq_last <= |ri_last;
+                rq_bus  <= r_bus;
+            end
+        end
+        assign r_valid = rq_v;
+        assign r_last  = rq_v & {N{rq_last}};
+        for (g = 0; g < N; g = g + 1) begin : g_rd_q
+            assign r_data[g*SW +: SW] = rq_bus;
+        end
+    end else begin : g_rwire
+        assign stage_free = 1'b0;
+        assign r_valid = ri_valid;
+        assign r_last  = ri_last;
+        for (g = 0; g < N; g = g + 1) begin : g_rd_w
+            assign r_data[g*SW +: SW] = r_bus;
+        end
     end endgenerate
 
     // A burst ENDS on its last internal beat, and the next must become active
@@ -438,6 +640,9 @@ module mag_dram_port #(
         wire mine_ar  = ar_fire && (s1_rid == g[IDX_W-1:0]);
         wire mine_tk  = r_take  && (rq_id  == g[IDX_W-1:0]);
         wire mine_fin = r_fin   && (rq_id  == g[IDX_W-1:0]);
+        // A staged read ends on the take of its last word; it never touched
+        // rleft/rph, only the count.
+        wire mine_sfn = sr_fin  && (sr_id  == g[IDX_W-1:0]);
 
         // rleft_z tracks rleft[g]==0 as a bit, so slot_free is one OR instead
         // of a 16-bit compare: 215 paths sat at 11 levels through this.
@@ -450,7 +655,7 @@ module mag_dram_port #(
         // be arbitrated again, which is what the old one-bit rd_busy did.
         wire [RCW-1:0] cnt_n =
             rd_cnt[g] + ((rd_take && (rd_sel == g[IDX_W-1:0])) ? 1'b1 : 1'b0)
-                      - (mine_fin ? 1'b1 : 1'b0);
+                      - ((mine_fin || mine_sfn) ? 1'b1 : 1'b0);
 
         always @(posedge s_aclk) begin
             if (srst) begin
@@ -566,6 +771,16 @@ module mag_dram_port #(
                     cq_len_p[ca*16 +: 16] <= q_len[ca*16 +: 16];
                 end
             end
+        end
+    end
+
+    // The store must take every access this port routes to it: its decode and
+    // this port's are the same bits, and port A is tied off on this path. A
+    // refusal here would drop a staged beat or lose a read word silently.
+    always @(posedge s_aclk) begin
+        if (!srst && stg_req && !stg_gnt) begin
+            $display("%0t ERROR mag_dram_port: staging refused %s at %h -- the store's decode and this port's have drifted apart",
+                     $time, stg_we ? "a write" : "a read", stg_addr);
         end
     end
 `endif

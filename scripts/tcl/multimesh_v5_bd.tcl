@@ -79,8 +79,7 @@ set SOURCES {
     src/kohakutpu/transform/mx_quant.v src/kohakuaccel/sysnode/core/mag_mem_port.v
     src/kohakuaccel/sysnode/mover/mm_prng.v src/kohakuaccel/sysnode/mover/mm_mover.v
     src/kohakuaccel/sysnode/interlink/il_pkt_arb.v src/kohakuaccel/sysnode/interlink/mag_link.v
-    src/kohakuaccel/sysnode/interlink/mag_link_cdc.v
-    src/kohakuaccel/sysnode/interlink/mag_link_pipe.v src/kohakuaccel/sysnode/interlink/mag_switch.v
+    src/kohakuaccel/sysnode/interlink/mag_switch.v
     src/kohakuaccel/sysnode/interlink/mag_ilink.v src/kohakuaccel/sysnode/core/mag.v
     src/kohakuaccel/sysnode/core/mag_dram_port.v src/kohakutpu/top/mag_1m.v
     src/kohakutpu/top/generated/ktpu_ship_2x2_7c2v_1m.v src/kohakutpu/top/generated/ktpu_ship_1x2_4c0v_1m.v
@@ -98,7 +97,6 @@ set SOURCES {
 set V5_SOURCES {
     src/kohakuaccel/noc/endpoint/noc_l2_adapter.v
     src/kohakuaccel/sysnode/core/mag_stage.v
-    src/kohakuaccel/sysnode/core/mag_stage_port.v
 }
 set missing {}
 foreach f $V5_SOURCES {

@@ -32,8 +32,9 @@ module mag_switch #(
     parameter integer LINK_W     = 288,
     parameter integer TUSER_W    = 96,
     parameter integer RX_BEATS   = 64,
-    parameter integer CRED_BATCH = 8,
-    parameter integer MAX_BEATS  = 32
+    parameter integer CRED_BATCH = 4,
+    parameter integer MAX_BEATS  = 32,
+    parameter integer CN_W       = 4
 )(
     input  wire                 clk,
     input  wire                 resetn,
@@ -58,28 +59,36 @@ module mag_switch #(
     input  wire                 lrx_dready,
 
     // ---- link 0: the neighbour one position DOWN the chain ----------------
-    output wire [LINK_W-1:0]    m0_tdata,
-    output wire [TUSER_W-1:0]   m0_tuser,
-    output wire                 m0_tlast,
-    output wire                 m0_tvalid,
-    input  wire                 m0_tready,
-    input  wire [LINK_W-1:0]    s0_tdata,
-    input  wire [TUSER_W-1:0]   s0_tuser,
-    input  wire                 s0_tlast,
-    input  wire                 s0_tvalid,
-    output wire                 s0_tready,
+    output wire                 m0_valid,
+    output wire                 m0_vc,
+    output wire                 m0_last,
+    output wire [LINK_W-1:0]    m0_flit,
+    input  wire                 m0_crd_valid,
+    input  wire                 m0_crd_vc,
+    input  wire [CN_W-1:0]      m0_crd_n,
+    input  wire                 s0_valid,
+    input  wire                 s0_vc,
+    input  wire                 s0_last,
+    input  wire [LINK_W-1:0]    s0_flit,
+    output wire                 s0_crd_valid,
+    output wire                 s0_crd_vc,
+    output wire [CN_W-1:0]      s0_crd_n,
 
     // ---- link 1: the neighbour one position UP ----------------------------
-    output wire [LINK_W-1:0]    m1_tdata,
-    output wire [TUSER_W-1:0]   m1_tuser,
-    output wire                 m1_tlast,
-    output wire                 m1_tvalid,
-    input  wire                 m1_tready,
-    input  wire [LINK_W-1:0]    s1_tdata,
-    input  wire [TUSER_W-1:0]   s1_tuser,
-    input  wire                 s1_tlast,
-    input  wire                 s1_tvalid,
-    output wire                 s1_tready,
+    output wire                 m1_valid,
+    output wire                 m1_vc,
+    output wire                 m1_last,
+    output wire [LINK_W-1:0]    m1_flit,
+    input  wire                 m1_crd_valid,
+    input  wire                 m1_crd_vc,
+    input  wire [CN_W-1:0]      m1_crd_n,
+    input  wire                 s1_valid,
+    input  wire                 s1_vc,
+    input  wire                 s1_last,
+    input  wire [LINK_W-1:0]    s1_flit,
+    output wire                 s1_crd_valid,
+    output wire                 s1_crd_vc,
+    output wire [CN_W-1:0]      s1_crd_n,
 
     // ---- status -----------------------------------------------------------
     output wire [63:0]          ctr_tx0, ctr_rx0, ctr_stall0,
@@ -257,8 +266,8 @@ module mag_switch #(
 
     // =====================================================================
     mag_link #(.LINK_W(LINK_W), .TUSER_W(TUSER_W), .RX_BEATS(RX_BEATS),
-               .CRED_BATCH(CRED_BATCH), .MAX_BEATS(MAX_BEATS)) u_l0 (
-        .clk(clk), .resetn(resetn), .my_mesh(my_mesh), .peer_mesh(peer0),
+               .CRD_BATCH(CRED_BATCH), .MAX_BEATS(MAX_BEATS), .CN_W(CN_W)) u_l0 (
+        .clk(clk), .resetn(resetn),
         .tx0_hdr(t00_hdr), .tx0_hvalid(t00_hv), .tx0_hready(t00_hr),
         .tx0_dat(t00_dat), .tx0_dlast(t00_dl), .tx0_dvalid(t00_dv),
         .tx0_dready(t00_dr),
@@ -271,17 +280,17 @@ module mag_switch #(
         .rx1_hdr(l0r1h), .rx1_hvalid(l0r1hv), .rx1_hready(l0r1hr),
         .rx1_dat(l0r1d), .rx1_dlast(l0r1dl), .rx1_dvalid(l0r1dv),
         .rx1_dready(l0r1dr),
-        .m_axis_tdata(m0_tdata), .m_axis_tuser(m0_tuser), .m_axis_tlast(m0_tlast),
-        .m_axis_tvalid(m0_tvalid), .m_axis_tready(m0_tready),
-        .s_axis_tdata(s0_tdata), .s_axis_tuser(s0_tuser), .s_axis_tlast(s0_tlast),
-        .s_axis_tvalid(s0_tvalid), .s_axis_tready(s0_tready),
+        .o_valid(m0_valid), .o_vc(m0_vc), .o_last(m0_last), .o_flit(m0_flit),
+        .o_crd_valid(m0_crd_valid), .o_crd_vc(m0_crd_vc), .o_crd_n(m0_crd_n),
+        .i_valid(s0_valid), .i_vc(s0_vc), .i_last(s0_last), .i_flit(s0_flit),
+        .i_crd_valid(s0_crd_valid), .i_crd_vc(s0_crd_vc), .i_crd_n(s0_crd_n),
         .ctr_tx(ctr_tx0), .ctr_rx(ctr_rx0), .ctr_stall(ctr_stall0),
         .cred_state(cred0_state), .fault_len(flen[0])
     );
 
     mag_link #(.LINK_W(LINK_W), .TUSER_W(TUSER_W), .RX_BEATS(RX_BEATS),
-               .CRED_BATCH(CRED_BATCH), .MAX_BEATS(MAX_BEATS)) u_l1 (
-        .clk(clk), .resetn(resetn), .my_mesh(my_mesh), .peer_mesh(peer1),
+               .CRD_BATCH(CRED_BATCH), .MAX_BEATS(MAX_BEATS), .CN_W(CN_W)) u_l1 (
+        .clk(clk), .resetn(resetn),
         .tx0_hdr(t10_hdr), .tx0_hvalid(t10_hv), .tx0_hready(t10_hr),
         .tx0_dat(t10_dat), .tx0_dlast(t10_dl), .tx0_dvalid(t10_dv),
         .tx0_dready(t10_dr),
@@ -294,10 +303,10 @@ module mag_switch #(
         .rx1_hdr(l1r1h), .rx1_hvalid(l1r1hv), .rx1_hready(l1r1hr),
         .rx1_dat(l1r1d), .rx1_dlast(l1r1dl), .rx1_dvalid(l1r1dv),
         .rx1_dready(l1r1dr),
-        .m_axis_tdata(m1_tdata), .m_axis_tuser(m1_tuser), .m_axis_tlast(m1_tlast),
-        .m_axis_tvalid(m1_tvalid), .m_axis_tready(m1_tready),
-        .s_axis_tdata(s1_tdata), .s_axis_tuser(s1_tuser), .s_axis_tlast(s1_tlast),
-        .s_axis_tvalid(s1_tvalid), .s_axis_tready(s1_tready),
+        .o_valid(m1_valid), .o_vc(m1_vc), .o_last(m1_last), .o_flit(m1_flit),
+        .o_crd_valid(m1_crd_valid), .o_crd_vc(m1_crd_vc), .o_crd_n(m1_crd_n),
+        .i_valid(s1_valid), .i_vc(s1_vc), .i_last(s1_last), .i_flit(s1_flit),
+        .i_crd_valid(s1_crd_valid), .i_crd_vc(s1_crd_vc), .i_crd_n(s1_crd_n),
         .ctr_tx(ctr_tx1), .ctr_rx(ctr_rx1), .ctr_stall(ctr_stall1),
         .cred_state(cred1_state), .fault_len(flen[1])
     );
@@ -323,8 +332,12 @@ module mag_switch #(
     end
     assign fault = {1'b0, fault_r};
 
+    // A class's header and its beats share one buffer, so mid-packet the head
+    // is a beat: counting only the header would miss every jam after the first
+    // flit.
     wire fwd_go  = (l0r1hv && l0r1hr) || (l1r1hv && l1r1hr);
-    wire fwd_blk = (l0r1hv && !l0r1hr) || (l1r1hv && !l1r1hr);
+    wire fwd_blk = (l0r1hv && !l0r1hr) || (l1r1hv && !l1r1hr)
+                || (l0r1dv && !l0r1dr) || (l1r1dv && !l1r1dr);
 
     reg [31:0] n_fwd, n_fwd_blk, n_lblk;
     always @(posedge clk) begin

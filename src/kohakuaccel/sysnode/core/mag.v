@@ -58,6 +58,7 @@ module mag #(
     parameter integer TUSER_W    = 96,
     parameter integer IL_RX_BEATS  = 64,
     parameter integer IL_MAX_BEATS = 32,
+    parameter integer IL_CN_W      = 4,
     // Requesters onto the one AXI master: the engines, the host upload, the
     // processor's mover, the processor's L1, and with the interlink the channel
     // inbound remote writes land through. The processor is not optional, so
@@ -72,6 +73,7 @@ module mag #(
     parameter integer DRAM_RD_OUT = `KOHAKU_DRAM_RD_OUT,
     // 0: dram_aclk IS clk and the DRAM port's queues are synchronous.
     parameter integer DRAM_CDC   = 1,
+    parameter integer DRAM_R_REG = 1,      // mag_dram_port R_REG: the return bus registered once
     parameter integer MEM_X      = 0,       // port 0
     parameter integer MEM_Y      = 1,
     parameter integer MEM_X1     = 0,       // port 1
@@ -88,9 +90,10 @@ module mag #(
     parameter integer WR_SLOTS   = 16,
     // MAG L2 staging, special aperture 0. 0 generates none of it.
     parameter integer STAGE         = 0,
-    parameter integer STAGE_BANKS   = 4,      // 64 URAM, 2 MB
+    parameter integer STAGE_BANKS   = 1,      // one array of 16 x 4-deep URAM chains, 2 MB
     parameter integer STAGE_ENTRIES = 16384,
     parameter integer STAGE_PIPE    = 1,
+    parameter integer STAGE_RLAT    = 0,      // mag_stage RLAT; 0 = blocks deep + 1
     // 0 = a store inside each mag_mem_port, unreachable by mover and interlink
     // and costing PORTS x 64 URAM. 1 = one store on the converged path.
     parameter integer STAGE_AT_PORT = 0
@@ -224,16 +227,20 @@ module mag #(
     // port. At ILINK=0 every output here is a constant and every input is
     // unread, so synthesis removes them and the generated top does not expose
     // them at all -- which is the form the block design sees.
-    output wire [LINK_W-1:0]     link0_out_tdata,
-    output wire [TUSER_W-1:0]    link0_out_tuser,
-    output wire                  link0_out_tlast,
-    output wire                  link0_out_tvalid,
-    input  wire                  link0_out_tready,
-    input  wire [LINK_W-1:0]     link0_in_tdata,
-    input  wire [TUSER_W-1:0]    link0_in_tuser,
-    input  wire                  link0_in_tlast,
-    input  wire                  link0_in_tvalid,
-    output wire                  link0_in_tready,
+    output wire                  link0_out_valid,
+    output wire                  link0_out_vc,
+    output wire                  link0_out_last,
+    output wire [LINK_W-1:0]     link0_out_flit,
+    input  wire                  link0_out_crd_valid,
+    input  wire                  link0_out_crd_vc,
+    input  wire [IL_CN_W-1:0]    link0_out_crd_n,
+    input  wire                  link0_in_valid,
+    input  wire                  link0_in_vc,
+    input  wire                  link0_in_last,
+    input  wire [LINK_W-1:0]     link0_in_flit,
+    output wire                  link0_in_crd_valid,
+    output wire                  link0_in_crd_vc,
+    output wire [IL_CN_W-1:0]    link0_in_crd_n,
 
     // ---- the control processor's mover, as requester MV -------------------
     // The mover lives in the processor now. MAG sees what it always saw: one
@@ -307,16 +314,20 @@ module mag #(
     output wire                  cp_rvalid,
     input  wire                  cp_rready,
 
-    output wire [LINK_W-1:0]     link1_out_tdata,
-    output wire [TUSER_W-1:0]    link1_out_tuser,
-    output wire                  link1_out_tlast,
-    output wire                  link1_out_tvalid,
-    input  wire                  link1_out_tready,
-    input  wire [LINK_W-1:0]     link1_in_tdata,
-    input  wire [TUSER_W-1:0]    link1_in_tuser,
-    input  wire                  link1_in_tlast,
-    input  wire                  link1_in_tvalid,
-    output wire                  link1_in_tready
+    output wire                  link1_out_valid,
+    output wire                  link1_out_vc,
+    output wire                  link1_out_last,
+    output wire [LINK_W-1:0]     link1_out_flit,
+    input  wire                  link1_out_crd_valid,
+    input  wire                  link1_out_crd_vc,
+    input  wire [IL_CN_W-1:0]    link1_out_crd_n,
+    input  wire                  link1_in_valid,
+    input  wire                  link1_in_vc,
+    input  wire                  link1_in_last,
+    input  wire [LINK_W-1:0]     link1_in_flit,
+    output wire                  link1_in_crd_valid,
+    output wire                  link1_in_crd_vc,
+    output wire [IL_CN_W-1:0]    link1_in_crd_n
 );
     // The upload rides one channel past the engines, the mover one past that.
     localparam integer UP = PORTS;           // its channel index
@@ -438,6 +449,7 @@ module mag #(
             .STAGE((STAGE_AT_PORT != 0) ? 0 : STAGE), .AP_DECODE(STAGE),
             .STAGE_BANKS(STAGE_BANKS),
             .STAGE_ENTRIES(STAGE_ENTRIES), .STAGE_PIPE(STAGE_PIPE),
+            .STAGE_RLAT(STAGE_RLAT),
             .MESH_ID(MESH_ID[1:0])
         ) u_eng (
             .clk(clk), .resetn(resetn),
@@ -759,7 +771,7 @@ module mag #(
 
         mag_switch #(
             .LINK_W(LINK_W), .TUSER_W(TUSER_W), .RX_BEATS(IL_RX_BEATS),
-            .MAX_BEATS(IL_MAX_BEATS)
+            .MAX_BEATS(IL_MAX_BEATS), .CN_W(IL_CN_W)
         ) u_sw (
             .clk(clk), .resetn(resetn), .my_mesh(il_mesh),
             .ltx_hdr(ltx_hdr), .ltx_hvalid(ltx_hvalid), .ltx_hready(ltx_hready),
@@ -768,18 +780,22 @@ module mag #(
             .lrx_hdr(lrx_hdr), .lrx_hvalid(lrx_hvalid), .lrx_hready(lrx_hready),
             .lrx_dat(lrx_dat), .lrx_dlast(lrx_dlast), .lrx_dvalid(lrx_dvalid),
             .lrx_dready(lrx_dready),
-            .m0_tdata(link0_out_tdata), .m0_tuser(link0_out_tuser),
-            .m0_tlast(link0_out_tlast), .m0_tvalid(link0_out_tvalid),
-            .m0_tready(link0_out_tready),
-            .s0_tdata(link0_in_tdata), .s0_tuser(link0_in_tuser),
-            .s0_tlast(link0_in_tlast), .s0_tvalid(link0_in_tvalid),
-            .s0_tready(link0_in_tready),
-            .m1_tdata(link1_out_tdata), .m1_tuser(link1_out_tuser),
-            .m1_tlast(link1_out_tlast), .m1_tvalid(link1_out_tvalid),
-            .m1_tready(link1_out_tready),
-            .s1_tdata(link1_in_tdata), .s1_tuser(link1_in_tuser),
-            .s1_tlast(link1_in_tlast), .s1_tvalid(link1_in_tvalid),
-            .s1_tready(link1_in_tready),
+            .m0_valid(link0_out_valid), .m0_vc(link0_out_vc),
+            .m0_last(link0_out_last), .m0_flit(link0_out_flit),
+            .m0_crd_valid(link0_out_crd_valid), .m0_crd_vc(link0_out_crd_vc),
+            .m0_crd_n(link0_out_crd_n),
+            .s0_valid(link0_in_valid), .s0_vc(link0_in_vc),
+            .s0_last(link0_in_last), .s0_flit(link0_in_flit),
+            .s0_crd_valid(link0_in_crd_valid), .s0_crd_vc(link0_in_crd_vc),
+            .s0_crd_n(link0_in_crd_n),
+            .m1_valid(link1_out_valid), .m1_vc(link1_out_vc),
+            .m1_last(link1_out_last), .m1_flit(link1_out_flit),
+            .m1_crd_valid(link1_out_crd_valid), .m1_crd_vc(link1_out_crd_vc),
+            .m1_crd_n(link1_out_crd_n),
+            .s1_valid(link1_in_valid), .s1_vc(link1_in_vc),
+            .s1_last(link1_in_last), .s1_flit(link1_in_flit),
+            .s1_crd_valid(link1_in_crd_valid), .s1_crd_vc(link1_in_crd_vc),
+            .s1_crd_n(link1_in_crd_n),
             .ctr_tx0(sw_tx0), .ctr_rx0(sw_rx0), .ctr_stall0(sw_st0),
             .ctr_tx1(sw_tx1), .ctr_rx1(sw_rx1), .ctr_stall1(sw_st1),
             .ctr_fwd(sw_fwd), .ctr_lblock(sw_lblk),
@@ -817,16 +833,20 @@ module mag #(
         assign inj_data   = {FLIT_WIDTH{1'b0}};
         assign inj_valid  = 1'b0;
 
-        assign link0_out_tdata  = {LINK_W{1'b0}};
-        assign link0_out_tuser  = {TUSER_W{1'b0}};
-        assign link0_out_tlast  = 1'b0;
-        assign link0_out_tvalid = 1'b0;
-        assign link0_in_tready  = 1'b1;
-        assign link1_out_tdata  = {LINK_W{1'b0}};
-        assign link1_out_tuser  = {TUSER_W{1'b0}};
-        assign link1_out_tlast  = 1'b0;
-        assign link1_out_tvalid = 1'b0;
-        assign link1_in_tready  = 1'b1;
+        assign link0_out_valid    = 1'b0;
+        assign link0_out_vc       = 1'b0;
+        assign link0_out_last     = 1'b0;
+        assign link0_out_flit     = {LINK_W{1'b0}};
+        assign link0_in_crd_valid = 1'b0;
+        assign link0_in_crd_vc    = 1'b0;
+        assign link0_in_crd_n     = {IL_CN_W{1'b0}};
+        assign link1_out_valid    = 1'b0;
+        assign link1_out_vc       = 1'b0;
+        assign link1_out_last     = 1'b0;
+        assign link1_out_flit     = {LINK_W{1'b0}};
+        assign link1_in_crd_valid = 1'b0;
+        assign link1_in_crd_vc    = 1'b0;
+        assign link1_in_crd_n     = {IL_CN_W{1'b0}};
     end
     endgenerate
 
@@ -921,45 +941,49 @@ module mag #(
         assign m_bresp[rq*2 +: 2] = 2'b00;
     end endgenerate
 
-    // ---- L2 on the converged path, before the DRAM port ------------------
-    wire [MP1-1:0]          dq_valid, dq_ready, dq_write;
-    wire [MP1*ADDR_W-1:0]   dq_addr;
-    wire [MP1*16-1:0]       dq_len;
-    wire [MP1-1:0]          dw_valid, dw_ready;
-    wire [MP1*DATA_W-1:0]   dw_data;
-    wire [MP1*DATA_W/8-1:0] dw_strb;
-    wire [MP1-1:0]          dr_valid, dr_ready, dr_last;
-    wire [MP1*DATA_W-1:0]   dr_data;
-    wire [MP1-1:0]          db_done;
+    // ---- L2 on the converged path: the store behind the DRAM port's arbiter,
+    // reached on its port B; port A is a per-port store's fill path, tied off.
+    wire                stg_req, stg_we, stg_gnt, stg_rvalid;
+    wire [ADDR_W-1:0]   stg_addr;
+    wire [DATA_W-1:0]   stg_wdata, stg_rdata;
+    wire [DATA_W/8-1:0] stg_wstrb;
 
-    mag_stage_port #(.N(MP1), .ADDR_W(ADDR_W), .SW(DATA_W),
-                     .STAGE((STAGE_AT_PORT != 0) ? STAGE : 0),
-                     .BANKS(STAGE_BANKS), .ENTRIES(STAGE_ENTRIES),
-                     .PIPE(STAGE_PIPE), .MESH_ID(MESH_ID[1:0])) u_l2 (
-        .clk(clk), .rst(!resetn),
+    generate
+    if ((STAGE != 0) && (STAGE_AT_PORT != 0)) begin : g_l2
+        mag_stage #(.DATA_W(DATA_W), .ADDR_W(ADDR_W), .WORDS(4),
+                    .BANKS(STAGE_BANKS), .ENTRIES(STAGE_ENTRIES),
+                    .PIPE(STAGE_PIPE), .RLAT(STAGE_RLAT), .MESH_ID(MESH_ID[1:0])) u_l2 (
+            .clk(clk), .rst(!resetn),
+            .a_req(1'b0), .a_we(1'b0), .a_addr({ADDR_W{1'b0}}),
+            .a_wdata({(4*DATA_W){1'b0}}),
+            .a_mine(), .a_gnt(), .a_fault(), .a_rvalid(), .a_rdata(),
+            .b_req(stg_req), .b_we(stg_we), .b_addr(stg_addr),
+            .b_wdata(stg_wdata), .b_wstrb(stg_wstrb),
+            .b_mine(), .b_gnt(stg_gnt), .b_rvalid(stg_rvalid),
+            .b_rdata(stg_rdata)
+        );
+    end else begin : g_no_l2
+        assign stg_gnt    = 1'b0;
+        assign stg_rvalid = 1'b0;
+        assign stg_rdata  = {DATA_W{1'b0}};
+    end
+    endgenerate
+
+    mag_dram_port #(.N(MP1), .ADDR_W(ADDR_W), .SW(DATA_W), .MW(MW),
+                    .ID_W(ID_W), .RD_OUT(DRAM_RD_OUT), .DRAM_CDC(DRAM_CDC),
+                    .R_REG(DRAM_R_REG),
+                    .STAGE((STAGE_AT_PORT != 0) ? STAGE : 0),
+                    .MESH_ID(MESH_ID[1:0]), .AP_STAGE(4'h0)) u_dram (
+        .s_aclk(clk), .s_aresetn(resetn),
         .q_valid(q_valid), .q_ready(q_ready), .q_addr(q_addr),
         .q_len(q_len), .q_write(q_write),
         .w_valid(w_valid_i), .w_ready(w_ready_i), .w_data(w_data_i),
         .w_strb(w_strb_i),
         .r_valid(r_valid_i), .r_ready(r_ready_i), .r_data(r_data_i),
         .r_last(r_last_i), .b_valid(b_done),
-        .dq_valid(dq_valid), .dq_ready(dq_ready), .dq_addr(dq_addr),
-        .dq_len(dq_len), .dq_write(dq_write),
-        .dw_valid(dw_valid), .dw_ready(dw_ready), .dw_data(dw_data),
-        .dw_strb(dw_strb),
-        .dr_valid(dr_valid), .dr_ready(dr_ready), .dr_data(dr_data),
-        .dr_last(dr_last), .db_valid(db_done)
-    );
-
-    mag_dram_port #(.N(MP1), .ADDR_W(ADDR_W), .SW(DATA_W), .MW(MW),
-                    .ID_W(ID_W), .RD_OUT(DRAM_RD_OUT), .DRAM_CDC(DRAM_CDC)) u_dram (
-        .s_aclk(clk), .s_aresetn(resetn),
-        .q_valid(dq_valid), .q_ready(dq_ready), .q_addr(dq_addr),
-        .q_len(dq_len), .q_write(dq_write),
-        .w_valid(dw_valid), .w_ready(dw_ready), .w_data(dw_data),
-        .w_strb(dw_strb),
-        .r_valid(dr_valid), .r_ready(dr_ready), .r_data(dr_data),
-        .r_last(dr_last), .b_valid(db_done),
+        .stg_req(stg_req), .stg_we(stg_we), .stg_addr(stg_addr),
+        .stg_wdata(stg_wdata), .stg_wstrb(stg_wstrb),
+        .stg_gnt(stg_gnt), .stg_rvalid(stg_rvalid), .stg_rdata(stg_rdata),
         .m_aclk(dram_aclk), .m_aresetn(dram_aresetn),
         .m_awid(dram_awid), .m_awaddr(dram_awaddr), .m_awlen(dram_awlen),
         .m_awsize(dram_awsize), .m_awburst(dram_awburst),

@@ -152,13 +152,15 @@ sized, so each test is one equality or one bit.
 |---|---|---|---|
 | scratchpad | `0x0001_0000`, `SPAD_WORDS × 8` bytes | the array directly | 1 cycle |
 | control region | `0x0002_0000`, 256 bytes | a register mux | 1 cycle |
-| node fabric, **cached** | in the node range with address bit 31 set | the L1, then `cp_*` on a miss | L1 hit, or a fabric round trip |
-| node fabric, **uncached** | in the node range with bit 31 clear | `cp_*` directly | a fabric round trip |
+| node fabric, **cached** | in the node range with bits 39 and 38 clear — DRAM | the L1, then `cp_*` on a miss | L1 hit, or a fabric round trip |
+| node fabric, **uncached** | in the node range with bit 39 set (staging, apertures) or bit 38 set (the uncached alias of DRAM) | `cp_*` directly, bit 38 cleared on the way out | a fabric round trip |
 
-The node range is everything at or above `2^28`. Inside it, **bit 31 alone
-decides whether an access is cached** — the parameter is named `CACHE_LO` and
-its comment reads "this and above", which is exact only within the first 4 GB;
-the RTL tests the bit.
+The node range is everything at or above `2^28`. Inside it, two bits decide
+whether an access is cached: bit 39 (the fabric's aperture bit) and bit 38,
+which the fabric keeps at zero and the processor uses as the **uncached alias**
+of DRAM — `pa | 1 << 38` is the same bytes with no L1 in the way, stripped in
+`rv64_nport` before the port. The bit map is in
+[address-map.md](../../address-map.md).
 
 > **Why a bit test rather than a compare.** This decode is in the stall path —
 > forward mux, address adder, decode, stall — and stall gates every pipeline
@@ -438,7 +440,7 @@ covered in [arch/cpu/rv64-sys](../cpu/rv64-sys/README.md).
 
 **Out-of-context synthesis, `xcvu13p-fhgb2104-2L-e`, Vivado 2024.2, one clock
 constraint at 3.333 ns, design state Synthesized, `PORTS=2` — which is the
-production width.** Produced by `scripts/tcl/ooc_sysnode_rv64.tcl 2` (RV64,
+production width.** Produced by `scripts/tcl/ooc_sysnode.tcl 2` (RV64,
 reports `build/node_sn64_p2_{util,hier,time}.rpt`, run of 2026-08-26 23:46) and
 `scripts/tcl/ooc_sysnode.tcl` (RV32), each synthesising `sysnode` whole with
 `-flatten_hierarchy rebuilt`, which is the ship flow. **Nothing here is routed.**

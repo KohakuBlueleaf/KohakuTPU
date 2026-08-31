@@ -50,9 +50,10 @@ module mover_chain_core #(
     reg  [31:0]  bd_a;
     wire [255:0] bd_rd [0:3];
 
-    wire [LW-1:0] o0_d [0:3], o1_d [0:3];
-    wire [UW-1:0] o0_u [0:3], o1_u [0:3];
-    wire [3:0]    o0_l, o0_v, o1_l, o1_v;
+    wire [LW-1:0] o0_f [0:3], o1_f [0:3];
+    wire [3:0]    o0_v, o0_vc, o0_l, o1_v, o1_vc, o1_l;
+    wire [3:0]    o0_cn [0:3], o1_cn [0:3];
+    wire [3:0]    o0_cv, o0_cvc, o1_cv, o1_cvc;
 
     reg  [31:0] sc_awaddr [0:3];
     reg  [3:0]  sc_awvalid, sc_wvalid;
@@ -84,6 +85,8 @@ module mover_chain_core #(
         ktpu_min_1m #(.MESH_ID(MID), .MODEL(1), .MW(MW)) u (
 `endif
             .axi_aclk(clk), .axi_aresetn(resetn),
+            .hs_addr(32'd0), .hs_wr(1'b0), .hs_wdata(64'd0), .hs_wstrb(8'd0),
+            .hs_rd(1'b0),
             // MAG runs on noc_clk at MAG_CDC=0, so leaving these unconnected
             // left the mover unclocked -- it reported stat_fault === X.
             .noc_clk(clk), .mat_clk(clk), .vec_clk(clk),
@@ -133,22 +136,28 @@ module mover_chain_core #(
             .M_AXI_DRAM_rresp(m_rresp[g]), .M_AXI_DRAM_rlast(m_rlast[g]),
             .M_AXI_DRAM_rvalid(m_rvalid[g]), .M_AXI_DRAM_rready(m_rready[g]),
 
-            .M_AXIS_LINK0_tdata(o0_d[g]), .M_AXIS_LINK0_tuser(o0_u[g]),
-            .M_AXIS_LINK0_tlast(o0_l[g]), .M_AXIS_LINK0_tvalid(o0_v[g]),
-            .M_AXIS_LINK0_tready(1'b1),
-            .S_AXIS_LINK0_tdata(HAS0 ? o1_d[g-1] : {LW{1'b0}}),
-            .S_AXIS_LINK0_tuser(HAS0 ? o1_u[g-1] : {UW{1'b0}}),
-            .S_AXIS_LINK0_tlast(HAS0 ? o1_l[g-1] : 1'b0),
-            .S_AXIS_LINK0_tvalid(HAS0 ? o1_v[g-1] : 1'b0),
-            .S_AXIS_LINK0_tready(),
-            .M_AXIS_LINK1_tdata(o1_d[g]), .M_AXIS_LINK1_tuser(o1_u[g]),
-            .M_AXIS_LINK1_tlast(o1_l[g]), .M_AXIS_LINK1_tvalid(o1_v[g]),
-            .M_AXIS_LINK1_tready(1'b1),
-            .S_AXIS_LINK1_tdata(HAS1 ? o0_d[g+1] : {LW{1'b0}}),
-            .S_AXIS_LINK1_tuser(HAS1 ? o0_u[g+1] : {UW{1'b0}}),
-            .S_AXIS_LINK1_tlast(HAS1 ? o0_l[g+1] : 1'b0),
-            .S_AXIS_LINK1_tvalid(HAS1 ? o0_v[g+1] : 1'b0),
-            .S_AXIS_LINK1_tready()
+            .LINK0_OUT_valid(o0_v[g]), .LINK0_OUT_vc(o0_vc[g]),
+            .LINK0_OUT_last(o0_l[g]), .LINK0_OUT_flit(o0_f[g]),
+            .LINK0_OUT_crd_valid(HAS0 ? o1_cv[g-1] : 1'b0),
+            .LINK0_OUT_crd_vc(HAS0 ? o1_cvc[g-1] : 1'b0),
+            .LINK0_OUT_crd_n(HAS0 ? o1_cn[g-1] : 4'd0),
+            .LINK0_IN_valid(HAS0 ? o1_v[g-1] : 1'b0),
+            .LINK0_IN_vc(HAS0 ? o1_vc[g-1] : 1'b0),
+            .LINK0_IN_last(HAS0 ? o1_l[g-1] : 1'b0),
+            .LINK0_IN_flit(HAS0 ? o1_f[g-1] : {LW{1'b0}}),
+            .LINK0_IN_crd_valid(o0_cv[g]), .LINK0_IN_crd_vc(o0_cvc[g]),
+            .LINK0_IN_crd_n(o0_cn[g]),
+            .LINK1_OUT_valid(o1_v[g]), .LINK1_OUT_vc(o1_vc[g]),
+            .LINK1_OUT_last(o1_l[g]), .LINK1_OUT_flit(o1_f[g]),
+            .LINK1_OUT_crd_valid(HAS1 ? o0_cv[g+1] : 1'b0),
+            .LINK1_OUT_crd_vc(HAS1 ? o0_cvc[g+1] : 1'b0),
+            .LINK1_OUT_crd_n(HAS1 ? o0_cn[g+1] : 4'd0),
+            .LINK1_IN_valid(HAS1 ? o0_v[g+1] : 1'b0),
+            .LINK1_IN_vc(HAS1 ? o0_vc[g+1] : 1'b0),
+            .LINK1_IN_last(HAS1 ? o0_l[g+1] : 1'b0),
+            .LINK1_IN_flit(HAS1 ? o0_f[g+1] : {LW{1'b0}}),
+            .LINK1_IN_crd_valid(o1_cv[g]), .LINK1_IN_crd_vc(o1_cvc[g]),
+            .LINK1_IN_crd_n(o1_cn[g])
         );
 
         axi_ram #(.DATA_W(MW), .ADDR_W(AW), .ID_W(IDW), .WORDS(RAMW),
@@ -181,17 +190,17 @@ module mover_chain_core #(
 
     // ---- the source mover's AXI, for the burst monitor -------------------
     // Hierarchical because the generated top exposes neither status nor bus.
-    wire        mv_busy   = mesh[SRCP].u.u_mag.g_rv32.u_pe.u_mover.stat_busy;
-    wire [3:0]  mv_fault  = mesh[SRCP].u.u_mag.g_rv32.u_pe.u_mover.stat_fault;
-    wire [31:0] mv_done   = mesh[SRCP].u.u_mag.g_rv32.u_pe.u_mover.stat_done;
-    wire [AW-1:0] mv_araddr = mesh[SRCP].u.u_mag.g_rv32.u_pe.u_mover.m_araddr;
-    wire [7:0]  mv_arlen   = mesh[SRCP].u.u_mag.g_rv32.u_pe.u_mover.m_arlen;
-    wire        mv_arv     = mesh[SRCP].u.u_mag.g_rv32.u_pe.u_mover.m_arvalid;
-    wire        mv_arr     = mesh[SRCP].u.u_mag.g_rv32.u_pe.u_mover.m_arready;
-    wire [AW-1:0] mv_awaddr = mesh[SRCP].u.u_mag.g_rv32.u_pe.u_mover.m_awaddr;
-    wire [7:0]  mv_awlen   = mesh[SRCP].u.u_mag.g_rv32.u_pe.u_mover.m_awlen;
-    wire        mv_awv     = mesh[SRCP].u.u_mag.g_rv32.u_pe.u_mover.m_awvalid;
-    wire        mv_awr     = mesh[SRCP].u.u_mag.g_rv32.u_pe.u_mover.m_awready;
+    wire        mv_busy   = mesh[SRCP].u.u_mag.u_pe.u_mover.stat_busy;
+    wire [3:0]  mv_fault  = mesh[SRCP].u.u_mag.u_pe.u_mover.stat_fault;
+    wire [31:0] mv_done   = mesh[SRCP].u.u_mag.u_pe.u_mover.stat_done;
+    wire [AW-1:0] mv_araddr = mesh[SRCP].u.u_mag.u_pe.u_mover.m_araddr;
+    wire [7:0]  mv_arlen   = mesh[SRCP].u.u_mag.u_pe.u_mover.m_arlen;
+    wire        mv_arv     = mesh[SRCP].u.u_mag.u_pe.u_mover.m_arvalid;
+    wire        mv_arr     = mesh[SRCP].u.u_mag.u_pe.u_mover.m_arready;
+    wire [AW-1:0] mv_awaddr = mesh[SRCP].u.u_mag.u_pe.u_mover.m_awaddr;
+    wire [7:0]  mv_awlen   = mesh[SRCP].u.u_mag.u_pe.u_mover.m_awlen;
+    wire        mv_awv     = mesh[SRCP].u.u_mag.u_pe.u_mover.m_awvalid;
+    wire        mv_awr     = mesh[SRCP].u.u_mag.u_pe.u_mover.m_awready;
 
     integer merr = 0, n_ar = 0, n_aw = 0;
     reg [3:0] aw_mesh_seen;
@@ -394,7 +403,7 @@ module mover_chain_core #(
 
 `ifdef MV_L2
     // THE MOVER REACHING L2 BY ADDRESS: DRAM -> aperture 0 -> DRAM, the only
-    // path that exercises the mover as a requester of mag_stage_port.
+    // path that exercises the mover as a staged requester of mag_dram_port.
     localparam [AW-1:0] A_STG = 40'h80_0000_0000 | (cat(SRCP) << 36);
     localparam [AW-1:0] BACK_OFF = 40'h3000;
     integer li;

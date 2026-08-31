@@ -50,9 +50,10 @@ module mag_mem_port #(
     // A staged fill reads port A rather than issuing AR; a write uses port B.
     parameter integer STAGE         = 0,      // a store AT THIS PORT
     parameter integer AP_DECODE     = 0,      // apertures exist SOMEWHERE
-    parameter integer STAGE_BANKS   = 4,      // 64 URAM, 2 MB
+    parameter integer STAGE_BANKS   = 1,      // one array of 16 x 4-deep URAM chains, 2 MB
     parameter integer STAGE_ENTRIES = 16384,
     parameter integer STAGE_PIPE    = 1,
+    parameter integer STAGE_RLAT    = 0,      // mag_stage RLAT; 0 = blocks deep + 1
     parameter [1:0]   MESH_ID       = 2'd0
 )(
     input  wire                clk,
@@ -159,6 +160,9 @@ module mag_mem_port #(
         mi_take && ((mi_ty == T_MEM_WR_REQ) || (mi_ty == T_MEM_WR_DATA))
     );
 
+    // Whole flits, though a descriptor's [157:0] is reserved-zero and unread:
+    // synthesis drops the unread LUTRAM columns itself (144 LUTRAM here for 288
+    // bits), and storing [287:158] explicitly measured the same 30,879 node.
     sync_fifo #(
         .DATA_WIDTH  (FLIT_WIDTH),
         .FIFO_DEPTH  (Q_DEPTH),
@@ -584,6 +588,7 @@ module mag_mem_port #(
             .BANKS   (STAGE_BANKS),
             .ENTRIES (STAGE_ENTRIES),
             .PIPE    (STAGE_PIPE),
+            .RLAT    (STAGE_RLAT),
             .MESH_ID (MESH_ID)
         ) u_stage (
             .clk      (clk),

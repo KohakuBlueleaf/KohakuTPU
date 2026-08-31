@@ -12,11 +12,25 @@
 `default_nettype none
 `timescale 1ns/1ps
 
+// -d TB_ENT total entries (16384 is the ship: 4 URAM deep at one bank),
+// -d TB_BANKS the banked DUT's banks, -d TB_RLAT its RLAT (0 = depth + 1).
+`ifndef TB_ENT
+  `define TB_ENT 1024
+`endif
+`ifndef TB_BANKS
+  `define TB_BANKS 2
+`endif
+`ifndef TB_RLAT
+  `define TB_RLAT 0
+`endif
+
 module mag_stage_tb;
     localparam integer DW    = 256;
     localparam integer AW    = 40;
     localparam integer WORDS = 4;
-    localparam integer ENT   = 1024;
+    localparam integer ENT   = `TB_ENT;
+    localparam integer BANKS = `TB_BANKS;
+    localparam integer RLAT  = `TB_RLAT;
     localparam integer LINE  = WORDS*DW;
     localparam integer EBYTES = (WORDS*DW)/8;      // 128
     localparam [1:0]   MESH  = 2'd0;
@@ -45,8 +59,8 @@ module mag_stage_tb;
     wire [LINE-1:0] ard_b, ard_m;
     wire [DW-1:0]   brd_b, brd_m;
 
-    mag_stage #(.DATA_W(DW), .ADDR_W(AW), .WORDS(WORDS), .BANKS(2),
-                .ENTRIES(ENT), .PIPE(1), .MESH_ID(MESH)) bnk (
+    mag_stage #(.DATA_W(DW), .ADDR_W(AW), .WORDS(WORDS), .BANKS(BANKS),
+                .ENTRIES(ENT), .PIPE(1), .RLAT(RLAT), .MESH_ID(MESH)) bnk (
         .clk(clk), .rst(rst),
         .a_req(a_req), .a_we(a_we), .a_addr(a_addr), .a_wdata(a_wdata),
         .a_mine(mine_b), .a_gnt(gnt_b), .a_fault(flt_b),

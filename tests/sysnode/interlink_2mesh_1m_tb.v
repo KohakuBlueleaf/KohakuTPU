@@ -18,9 +18,10 @@ module interlink_2mesh_1m_tb;
 
     // On the SLR chain mesh0 is the bottom end, so it reaches mesh1 by its UP
     // link: link1 of mesh0 faces link0 of mesh1, and the other two are dead.
-    wire [LW-1:0] o0_d [0:1], o1_d [0:1];
-    wire [UW-1:0] o0_u [0:1], o1_u [0:1];
-    wire [1:0]    o0_l, o0_v, o1_l, o1_v;
+    wire [LW-1:0] o0_f [0:1], o1_f [0:1];
+    wire [1:0]    o0_v, o0_vc, o0_l, o1_v, o1_vc, o1_l;
+    wire [3:0]    o0_cn [0:1], o1_cn [0:1];
+    wire [1:0]    o0_cv, o0_cvc, o1_cv, o1_cvc;
 
     // Per-mesh control slave and one packed master each.
     reg  [31:0] sc_awaddr [0:1];
@@ -52,6 +53,8 @@ module interlink_2mesh_1m_tb;
         ktpu_min_1m #(.MESH_ID(g), .MODEL(1), .MW(MW),
                       .MAG_CDC(MAGCDC)) u (
             .axi_aclk(clk), .axi_aresetn(resetn),
+            .hs_addr(32'd0), .hs_wr(1'b0), .hs_wdata(64'd0), .hs_wstrb(8'd0),
+            .hs_rd(1'b0),
             .noc_clk(clk),
             .dram_aclk(dclk), .dram_aresetn(resetn),
             .S_AXI_MEM_awid({IDW{1'b0}}), .S_AXI_MEM_awaddr({AW{1'b0}}),
@@ -99,22 +102,28 @@ module interlink_2mesh_1m_tb;
             .M_AXI_DRAM_rresp(m_rresp[g]), .M_AXI_DRAM_rlast(m_rlast[g]),
             .M_AXI_DRAM_rvalid(m_rvalid[g]), .M_AXI_DRAM_rready(m_rready[g]),
 
-            .M_AXIS_LINK0_tdata(o0_d[g]), .M_AXIS_LINK0_tuser(o0_u[g]),
-            .M_AXIS_LINK0_tlast(o0_l[g]), .M_AXIS_LINK0_tvalid(o0_v[g]),
-            .M_AXIS_LINK0_tready(1'b1),
-            .S_AXIS_LINK0_tdata(g == 1 ? o1_d[0] : {LW{1'b0}}),
-            .S_AXIS_LINK0_tuser(g == 1 ? o1_u[0] : {UW{1'b0}}),
-            .S_AXIS_LINK0_tlast(g == 1 ? o1_l[0] : 1'b0),
-            .S_AXIS_LINK0_tvalid(g == 1 ? o1_v[0] : 1'b0),
-            .S_AXIS_LINK0_tready(),
-            .M_AXIS_LINK1_tdata(o1_d[g]), .M_AXIS_LINK1_tuser(o1_u[g]),
-            .M_AXIS_LINK1_tlast(o1_l[g]), .M_AXIS_LINK1_tvalid(o1_v[g]),
-            .M_AXIS_LINK1_tready(1'b1),
-            .S_AXIS_LINK1_tdata(g == 0 ? o0_d[1] : {LW{1'b0}}),
-            .S_AXIS_LINK1_tuser(g == 0 ? o0_u[1] : {UW{1'b0}}),
-            .S_AXIS_LINK1_tlast(g == 0 ? o0_l[1] : 1'b0),
-            .S_AXIS_LINK1_tvalid(g == 0 ? o0_v[1] : 1'b0),
-            .S_AXIS_LINK1_tready()
+            .LINK0_OUT_valid(o0_v[g]), .LINK0_OUT_vc(o0_vc[g]),
+            .LINK0_OUT_last(o0_l[g]), .LINK0_OUT_flit(o0_f[g]),
+            .LINK0_OUT_crd_valid(g == 1 ? o1_cv[0] : 1'b0),
+            .LINK0_OUT_crd_vc(g == 1 ? o1_cvc[0] : 1'b0),
+            .LINK0_OUT_crd_n(g == 1 ? o1_cn[0] : 4'd0),
+            .LINK0_IN_valid(g == 1 ? o1_v[0] : 1'b0),
+            .LINK0_IN_vc(g == 1 ? o1_vc[0] : 1'b0),
+            .LINK0_IN_last(g == 1 ? o1_l[0] : 1'b0),
+            .LINK0_IN_flit(g == 1 ? o1_f[0] : {LW{1'b0}}),
+            .LINK0_IN_crd_valid(o0_cv[g]), .LINK0_IN_crd_vc(o0_cvc[g]),
+            .LINK0_IN_crd_n(o0_cn[g]),
+            .LINK1_OUT_valid(o1_v[g]), .LINK1_OUT_vc(o1_vc[g]),
+            .LINK1_OUT_last(o1_l[g]), .LINK1_OUT_flit(o1_f[g]),
+            .LINK1_OUT_crd_valid(g == 0 ? o0_cv[1] : 1'b0),
+            .LINK1_OUT_crd_vc(g == 0 ? o0_cvc[1] : 1'b0),
+            .LINK1_OUT_crd_n(g == 0 ? o0_cn[1] : 4'd0),
+            .LINK1_IN_valid(g == 0 ? o0_v[1] : 1'b0),
+            .LINK1_IN_vc(g == 0 ? o0_vc[1] : 1'b0),
+            .LINK1_IN_last(g == 0 ? o0_l[1] : 1'b0),
+            .LINK1_IN_flit(g == 0 ? o0_f[1] : {LW{1'b0}}),
+            .LINK1_IN_crd_valid(o1_cv[g]), .LINK1_IN_crd_vc(o1_cvc[g]),
+            .LINK1_IN_crd_n(o1_cn[g])
         );
 
         axi_ram #(.DATA_W(MW), .ADDR_W(AW), .ID_W(IDW), .WORDS(2048),

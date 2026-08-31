@@ -93,6 +93,13 @@ module rv64_core #(
     wire [63:0] pc_next;
     wire        redirect;
     wire [63:0] redirect_pc;
+    // Declared here, assigned where they are computed: xvlog rejects a net
+    // read above its declaration.
+    wire        e_kill, taken, csr_wait, load_use;
+    wire [63:0] target, ea, eff;
+    reg         e_valid;
+    reg  [63:0] e_pc;
+    reg         e_br, e_jal, e_jalr;
 
     // THE ONLY STALL IN THE PIPELINE. RV64M is multi-cycle, so E holds and F/D
     // hold with it; nothing else stops this core, and a load in particular does
@@ -212,11 +219,27 @@ module rv64_core #(
     wire        pr_taken;
     wire [63:0] pr_target;
 
-    wire d_issue = d_valid && fd_go;
-    wire d_call  = d_issue && (jal_d || jalr_d)
+    // THE STACK DOES NOT WAIT FOR `imem_stall`. `fd_go` carries the fetch
+    // stall -- the I-cache tag compare behind the privilege mux -- and through
+    // the push it reached the RAS enables at 12 levels, -0.189 ns at the node.
+    // The push or pop happens on the first cycle the word in D is real and E
+    // is not held; `d_seen` stops it repeating while D waits for fetch. A word
+    // a redirect then kills leaves a wrong entry, which costs a mispredict and
+    // never correctness.
+    reg  d_seen;
+    wire d_word  = d_valid && go && !load_use && !d_seen
+                && (d_hold_v || !imem_stall_q);
+    wire d_call  = d_word && (jal_d || jalr_d)
                 && ((rd_a == 5'd1) || (rd_a == 5'd5));
-    wire d_ret   = d_issue && jalr_d && (rd_a == 5'd0)
+    wire d_ret   = d_word && jalr_d && (rd_a == 5'd0)
                 && ((rs1_a == 5'd1) || (rs1_a == 5'd5));
+    always @(posedge clk) begin
+        if (!resetn || fd_go) begin
+            d_seen <= 1'b0;
+        end else if (d_word) begin
+            d_seen <= 1'b1;
+        end
+    end
 
     // NOT `!redirect`: `redirect` is driven by this, so reading it closes a
     // combinational loop. `d_redir` carries the `!e_redir` term instead.
@@ -244,12 +267,11 @@ module rv64_core #(
         .rs1_data(rf_rs1), .rs2_data(rf_rs2)
     );
 
-    reg        e_valid;
-    reg [63:0] e_pc, e_imm;
+    reg [63:0] e_imm;
     reg [4:0]  e_rs1, e_rs2, e_rd;
     reg [3:0]  e_alu_op;
     reg        e_word, e_op1pc, e_op2imm, e_wr;
-    reg        e_br, e_jal, e_jalr, e_ld, e_st, e_ecall, e_ebreak, e_ill;
+    reg        e_ld, e_st, e_ecall, e_ebreak, e_ill;
     reg        e_md, e_amo;
     reg        e_csr, e_csr_wr, e_csr_imm, e_mret, e_wfi, e_sret, e_sfence;
     reg        e_fence_i;
@@ -537,8 +559,8 @@ module rv64_core #(
         endcase
     end
 
-    wire taken = e_valid && ((e_br && br_take) || e_jal || e_jalr);
-    wire [63:0] target = e_jalr ? ((op_rs1 + e_imm) & ~64'd1) : (e_pc + e_imm);
+    assign taken  = e_valid && ((e_br && br_take) || e_jal || e_jalr);
+    assign target = e_jalr ? ((op_rs1 + e_imm) & ~64'd1) : (e_pc + e_imm);
 
     // E REDIRECTS ONLY ON A MISPREDICTION. A branch the predictor called right
     // costs nothing here; one it called wrong costs the same two kills a core
@@ -569,24 +591,26 @@ module rv64_core #(
 
     // Everything behind a trap dies with it, exactly as it does behind a
     // mispredict.
-    wire e_kill = e_redir || trap_redir;
+    assign e_kill = e_redir || trap_redir;
 
     // ---- E: the data address ------------------------------------------------
-    wire [63:0] ea = op_rs1 + e_imm;
-    wire [2:0]  sz = (
-        (e_f3[1:0] == 2'b00)   ? 3'd1
-        : (e_f3[1:0] == 2'b01) ? 3'd2
-        : (e_f3[1:0] == 2'b10) ? 3'd4
-        : 3'd8
+    assign ea = op_rs1 + e_imm;
+    // Four bits: as `3'd8` the double-word size truncated to 0 and a
+    // misaligned 8-byte access never trapped.
+    wire [3:0]  sz = (
+        (e_f3[1:0] == 2'b00)   ? 4'd1
+        : (e_f3[1:0] == 2'b01) ? 4'd2
+        : (e_f3[1:0] == 2'b10) ? 4'd4
+        : 4'd8
     );
     wire misalign = (
-        ((sz == 3'd2) && eff[0])
-        || ((sz == 3'd4) && (|eff[1:0]))
-        || ((sz == 3'd8) && (|eff[2:0]))
+        ((sz == 4'd2) && eff[0])
+        || ((sz == 4'd4) && (|eff[1:0]))
+        || ((sz == 4'd8) && (|eff[2:0]))
     );
 
     // The latched address once the AMO is past its first cycle; `ea` otherwise.
-    wire [63:0] eff = (amo_active && (a_state != A_IDLE)) ? a_addr : ea;
+    assign eff = (amo_active && (a_state != A_IDLE)) ? a_addr : ea;
 
     // NO `misalign` HERE, and that is the whole point: it was the LAST
     // address-derived term in `stall`, and `stall` gates every pipeline
@@ -630,7 +654,7 @@ module rv64_core #(
     // The read is unaffected: `rdata` is combinational on the registered address
     // and the write lands at the end of the holding cycle, so a CSR read still
     // returns the pre-write value, which is what the instruction owes.
-    wire csr_wait = csr_req && !csr_hold;
+    assign csr_wait = csr_req && !csr_hold;
 
     // A TRAP NEEDS AN INSTRUCTION BOUNDARY. `!stall` is what provides it: a
     // multi-cycle op that has started must finish, or its latched operands
@@ -875,7 +899,7 @@ module rv64_core #(
     // joins here rather than in `stall`: F and D hold while E drains, so no
     // instruction enters E until fetch can name one, and nothing already in
     // flight is delayed by a translation it does not need.
-    wire load_use = (
+    assign load_use = (
         e_valid
         && e_ld
         && (e_rd != 5'd0)

@@ -114,6 +114,12 @@ routing can never ask for. A wrong bound presents as a **hang**, not a wrong
 answer — the request is never granted and the input port's holding slot never
 clears. There is a simulation check that names it at the router.
 
+A generated ship (`scripts/py/gen_mesh.py`) does not use the two storage
+defaults: it forwards its own `ROUTER_DEPTH` (`512`) and `ROUTER_MEM`
+(`"block"`) to every router, a per-mesh policy a block design sets as
+`CONFIG.ROUTER_DEPTH` / `CONFIG.ROUTER_MEM`. The measured pair is in
+[arch/noc/router-circuit](../arch/noc/router-circuit.md).
+
 ### `InPortSwitch` — `src/kohakuaccel/noc/router/noc_inport.v`
 
 One per router input. Buffers arriving flits, computes the output direction for
@@ -202,6 +208,7 @@ Register map: [control-registers.md](control-registers.md) §2.
 | `TX_DEPTH` | integer | `16` | Transmit FIFO depth, shared by the dispatcher and the mailbox. | Power of two. |
 | `RX_DEPTH` | integer | `16` | Receive FIFO depth. `CU_SIGNAL` bypasses it, so this sizes only `CU_CTRL` replies and other unhandled traffic. | Power of two. |
 | `STAGE_FLITS` | integer | `128` | Instruction staging RAM depth, in flits. Sets how many flits can be staged across all pending programs. | Any. The staging window is `STAGE_FLITS * FLIT_WORDS * 8` bytes and at 128 it already exceeds one 4 KB page. |
+| `Q_MEM` | string | `"block"` | Storage primitive of the transmit and receive FIFOs; the staging RAM is block RAM regardless. | `"distributed"`, `"block"`. |
 
 ### `main_orch` — `src/kohakuaccel/verif/main_orch.v`
 
@@ -268,10 +275,12 @@ and does not elaborate alone.
 | `ID_W` | integer | `4` | AXI ID width. | Any. |
 | `MW` | integer | `DATA_W` | Memory beat width at the DRAM master. `mag_dram_port` packs `DATA_W` up to this. | `DATA_W` times a power of two. |
 | `DRAM_CDC` | integer | `1` | Passed to `mag`: 1 crosses the DRAM master into its own clock through an asynchronous FIFO per channel; 0 keeps it on the mesh clock with synchronous queues, for a block design that declares the two domains the same. | 0 or non-zero. |
+| `DRAM_R_REG` | integer | `1` | Passed to `mag`: 1 registers the DRAM port's one read-return bus once before it fans out to the requesters — one cycle of return latency at the same rate, and each memory port's response skid then costs 132 LUT instead of 709. | 0 or 1. |
 | `ILINK` | integer | `0` | Build the interlink. **Zero generates none of it.** | 0 or non-zero. |
 | `MESH_ID` | integer | `0` | This mesh's id when the interlink is absent. | 0–3. |
-| `LINK_W` | integer | `288` | Interlink AXIS payload width. | Both ends must agree. |
-| `TUSER_W` | integer | `96` | Interlink AXIS sideband width. | Both ends must agree. |
+| `LINK_W` | integer | `288` | Interlink flit width. | Both ends must agree. |
+| `TUSER_W` | integer | `96` | Interlink packet-header width, carried in the low bits of a packet's first flit. | Both ends must agree. |
+| `IL_CN_W` | integer | `4` | Width of the credit count on the interlink's backward wire. | Both ends must agree. |
 | `MEM_X`, `MEM_Y` | integer | `0`, `1` | Mesh coordinates of port 0. **The control agent answers here too.** | Reachable by the clamp. |
 | `MEM_X1`, `MEM_Y1` | integer | `0`, `3` | Coordinates of port 1. | As above, and on a different router. |
 | `MEM_X2`, `MEM_Y2` | integer | `0`, `4` | Coordinates of port 2. | As above. |
@@ -281,14 +290,14 @@ and does not elaborate alone.
 | `STAGE_FLITS` | integer | `128` | Orchestrator staging RAM depth, in flits. | Power of two. |
 | `WR_SLOTS` | integer | `16` | Write-reassembly slots per memory engine. | `>= 1`. |
 | `STAGE` | integer | `0` | Build the staging store. **Zero generates none of it.** | 0 or non-zero. |
-| `STAGE_BANKS` | integer | `4` | Banks in the staging store. | Power of two — the address splits `$clog2(BANKS)` bank bits below the row index. |
+| `STAGE_BANKS` | integer | `1` | Banks in the staging store; `STAGE_ENTRIES / STAGE_BANKS / 4096` is the UltraRAM chain depth. One bank is 16 chains of 4, routed without a congestion window above level 5 and −1,568 LUT against 4 banks of single blocks. | Power of two — the address splits `$clog2(BANKS)` bank bits below the row index. |
 | `STAGE_ENTRIES` | integer | `16384` | Entries in the store **in total, across all banks**, not per bank. Rows per bank are `STAGE_ENTRIES / STAGE_BANKS`. An entry is `4 × DATA_W` bits, so the default store holds 2 MiB. | Power of two, and a whole multiple of `STAGE_BANKS`. |
 | `STAGE_PIPE` | integer | `1` | Extra register stage on the staging read. | 0 or 1. |
+| `STAGE_RLAT` | integer | `0` | Passed to `mag_stage` as `RLAT`, the read latency of the store's UltraRAM chain. 0 = blocks deep + 1, UG901's rows-plus-columns register count: 2 at one block deep (`STAGE_BANKS` 4), 3 at two, 5 at four. | 0, or `>= 2`. |
 | `STAGE_AT_PORT` | integer | `0` | **Where the staging store is built, and the two placements are not equivalent.** `1` builds **one** store on the memory agent's converged path, reachable by every requester. `0` builds a **whole store inside every memory engine** — `PORTS` copies of `STAGE_BANKS × STAGE_ENTRIES`, none of which the memory mover or the interlink can reach, because neither goes through a memory port. **`1` is the shipping value**; every generated top in the tree sets it. See the note below. | 0 or 1. |
-| `CPU_RV64` | integer | `0` | **Which** control processor the node carries — not *whether* it carries one. `0` instantiates `rv_mag_pe`, the RV32 complex, which sits on the mesh behind a compute-unit shell. Non-zero instantiates `rv64_mag_pe`, the RV64 complex, which has no shell and is reached through the `hs_*` host window instead ([control-registers.md](control-registers.md) §6). The mover and the transform slot are the same in both. **`0` is the shipping value and the default keeps the RV32 path byte-identical** — nothing outside the `generate` changes. **The non-default branch is incomplete; read the note below before selecting it.** | 0 or non-zero. |
-| `PE_IMEM` | integer | `2048` | Words of instruction memory. 32-bit words in both processors. | Power of two. |
-| `PE_SPAD` | integer | `2048` | Words of scratchpad. 64-bit words on the RV64. | Power of two. |
-| `PE_L1_LINES` | integer | `128` | Lines in the processor's own L1. | Power of two. |
+| `PE_IMEM` | integer | `8192` | Words of the processor's instruction memory, 32 bits each. | Power of two. |
+| `PE_SPAD` | integer | `4096` | Words of the processor's scratchpad, 64 bits each. | Power of two. |
+| `PE_L1_LINES` | integer | `64` | Lines in the processor's own L1. | Power of two. |
 | `PE_MEM_PRIM` | string | `"block"` | Storage primitive for the processor's imem and scratchpad. On the RV64 it reaches the imem, the L1 and the TLB; the scratchpad's primitive is `SPAD_STYLE`, which `sysnode` does **not** forward. §5.1. | `"block"`, `"distributed"`, `"ultra"`. |
 | `XFORM_SLOTS` | integer | `1` | Transform occupants the slot selects between. | `>= 1`. |
 | `XID_W` | integer | `4` | Width of the occupant id. | `>= clog2(XFORM_SLOTS)`. |
@@ -378,11 +387,15 @@ occupant is not 2048-in / 4-out can express that.
 
 **Never call this a "node".** A NoC endpoint is a node; this is the system node.
 
-### 5.1 The RV64 control complex — `CPU_RV64 != 0`
+### 5.1 The RV64 control complex
 
-Reached only when `sysnode`'s `CPU_RV64` is non-zero. The architecture is
+The node's processor. The architecture is
 [arch/cpu/rv64-sys/](../arch/cpu/rv64-sys/README.md); the register surfaces are
-[control-registers.md](control-registers.md) §6 and §7.
+[control-registers.md](control-registers.md) §6 and §7. The host reaches it two
+ways that meet at the same window: the `hs_*` pins a bench drives, and the
+load slot at `+0x8000` of the node's control port (`rv64_load_win` behind
+`rv64_load_axi`; `sb_axi_deconcentrate` splits the port at bit 15), which is
+how a card loads and boots it over the station bus.
 
 Three modules nest: `rv64_mag_pe` holds the processor, the memory mover and the
 transform slot; `rv64_syscore` holds the processor, its Sv39 translation, its L1
@@ -390,8 +403,7 @@ and its address decode; `rv64_core` is the physical-address machine inside that.
 
 ### `rv64_mag_pe` — `src/kohakuaccel/sysnode/cpu/rv64_mag_pe.v`
 
-The peer of `rv_mag_pe`. Same mover, same transform slot, different processor.
-Instantiated only when `sysnode`'s `CPU_RV64` is non-zero.
+The processor, the memory mover and the transform slot, as `sysnode` holds them.
 
 | Name | Type | Default | Controls | Legal range |
 |---|---|---|---|---|
@@ -400,7 +412,7 @@ Instantiated only when `sysnode`'s `CPU_RV64` is non-zero.
 | `ADDR_W` | integer | `40` | Physical address width. | See §1. |
 | `DATA_W` | integer | `256` | Width of the node port and of the mover's master. | See §1. |
 | `ID_W` | integer | `4` | AXI ID width on the mover's master. | Any. |
-| `IMEM_WORDS` | integer | `8192` | Instruction-memory words, 32 bits each. **`sysnode` overrides this with `PE_IMEM`, whose default is 2048.** | Power of two. |
+| `IMEM_WORDS` | integer | `8192` | Instruction-memory words, 32 bits each. `sysnode` forwards `PE_IMEM`, the same value. | Power of two. |
 | `SPAD_WORDS` | integer | `4096` | Scratchpad words, **64 bits** each. `sysnode` overrides with `PE_SPAD`. | Power of two. |
 | `L1_LINES` | integer | `64` | Lines in the processor's L1. `sysnode` overrides with `PE_L1_LINES`. | Power of two. |
 | `TLB_ENTRIES` | integer | `32` | Entries in the Sv39 translation cache. **Not forwarded by `sysnode`.** | Power of two. |
@@ -409,9 +421,9 @@ Instantiated only when `sysnode`'s `CPU_RV64` is non-zero.
 | `XFORM_IN_BITS`, `XFORM_OUT_WORDS` | integer | `2048`, `4` | The occupant's declared geometry. | Must match the bank; `XFORM_OUT_WORDS <= 4`. |
 
 **The occupant register port is tied off here.** `rv64_mag_pe` instantiates
-`mag_xform` with `cfg_en` at zero and `cfg_rdata` unconnected, so in an
-`CPU_RV64` build a transform occupant's registers are **unreachable** — by the
-processor and by the host alike. A zero-register occupant is unaffected; one that
+`mag_xform` with `cfg_en` at zero and `cfg_rdata` unconnected, so a transform
+occupant's registers are **unreachable** — by the processor and by the host
+alike. A zero-register occupant is unaffected; one that
 needs configuration is not usable in this configuration.
 [transform-slot.md](transform-slot.md) has the contract those registers satisfy
 when they are reachable.
@@ -434,16 +446,20 @@ when they are reachable.
 | `SPAD_BASE` | 64-bit | `64'h0000_0000_0001_0000` | Physical base of the scratchpad range. | **Must be aligned to and sized by `SPAD_WORDS * 8`.** The decode is a bit test on `pa[ADDR_W-1:$clog2(SPAD_WORDS*8)]`, not a magnitude compare, so a misaligned base decodes a different range than it names. |
 | `CTRL_BASE` | 64-bit | `64'h0000_0000_0002_0000` | Physical base of the 256-byte control region. §6 of [control-registers.md](control-registers.md). | **Must be 256-byte aligned.** The decode is `pa[ADDR_W-1:8]`. |
 | `NODE_BASE` | 64-bit | `64'h0000_0000_1000_0000` | Base of the node range — everything the processor reaches through its AXI master. | **`2**28` exactly.** The decode is `\|pa[ADDR_W-1:28]`, so any address at or above `2**28` is in the node range whatever this parameter says. Changing it does not move the range. |
-| `CACHE_LO` | 64-bit | `64'h0000_0000_8000_0000` | Within the node range, the boundary at and above which accesses go through the L1; below it they are uncached. | **`2**31` exactly.** The decode is `pa[31]`, so this parameter likewise does not move the boundary. |
 
 Two consequences a reader implementing against this must know:
 
-- **`NODE_BASE` and `CACHE_LO` are documentation, not decode.** The RTL tests
-  `|pa[ADDR_W-1:28]` and `pa[31]` directly. Overriding either parameter
-  elaborates cleanly and changes nothing.
-- **The L1 caches the node range at and above `2**31` and nothing else.** The
-  scratchpad, the control region and the low half of the node range — which is
-  where staging and the node's own registers sit — are uncached by construction.
+- **`NODE_BASE` is documentation, not decode.** The RTL tests
+  `|pa[ADDR_W-1:28]` directly. Overriding the parameter elaborates cleanly and
+  changes nothing.
+- **Cacheability is an address alias, not a parameter.** Within the node range
+  an access goes through the L1 when bits 39 and 38 of its physical address
+  are both zero; bit 39 is the special half (staging and apertures), and bit
+  38 — reserved-zero on the fabric — is the processor's uncached alias of the
+  same DRAM word. The node port clears bit 38 before the request leaves the
+  processor, so the alias never reaches the fabric; a page table or an M-mode
+  address that sets it reads and writes DRAM uncached, which is what a shared
+  region between processors is mapped with. There is no option.
 
 ### `rv64_core` — `src/kohakuaccel/pe/rv64-sys/core/rv64_core.v`
 
@@ -500,8 +516,9 @@ The single point where a partition touches everything outside it. Protocol:
 | `MESH_ID` | integer | `0` | This mesh's id when the interlink is absent. With the interlink present the id is a runtime register instead. | 0–3. |
 | `LINK_W` | integer | `288` | Interlink beat width. One beat is one flit. | Must match at both ends and in every pipe stage. |
 | `TUSER_W` | integer | `96` | Interlink packet-header width. | Must match at both ends. |
-| `IL_RX_BEATS` | integer | `64` | Interlink receive buffer per class, in beats, and therefore the initial credit. | `>= IL_MAX_BEATS`. Both ends must agree. |
-| `IL_MAX_BEATS` | integer | `32` | Longest interlink packet this end may emit. | `<= IL_RX_BEATS`. Above it, a packet exists that can never be granted credit — a dead link. |
+| `IL_RX_BEATS` | integer | `64` | Interlink receive buffer per class, in flits, and therefore the credit issued to the peer. | `> IL_MAX_BEATS`. Both ends must agree. |
+| `IL_MAX_BEATS` | integer | `32` | Longest interlink packet this end may emit. | `< IL_RX_BEATS`. Above it a packet cannot be drained by a consumer that waits for its last beat. |
+| `IL_CN_W` | integer | `4` | Width of the credit count on the interlink's backward wire. | Must match at both ends. |
 | `MP1` | integer | `PORTS + 3 + (ILINK ? 1 : 0)` | **Derived.** Internal requester count, and therefore the width of the converged path into `mag_dram_port`: one per memory engine, one for the host upload, one for the processor's mover, one for the processor's L1, and one for inbound remote writes when the interlink is present. The processor is not optional, so neither is its pair. | Do not override. |
 | `MEM_X` | integer | `0` | Mesh X coordinate of memory port 0. | Reachable by the clamp. |
 | `MEM_Y` | integer | `1` | Mesh Y coordinate of port 0. **The control agent answers at this coordinate too.** | As above. |
@@ -518,10 +535,12 @@ The single point where a partition touches everything outside it. Protocol:
 | `MW` | integer | `DATA_W` | Memory beat width at `M_AXI_DRAM`. `mag_dram_port` packs `DATA_W` up to this, so at 512 an 8-beat 256-bit burst becomes 4 beats. | `DATA_W` times a power of two. |
 | `DRAM_RD_OUT` | integer | `` `KOHAKU_DRAM_RD_OUT `` (1) | `mag_dram_port`'s `RD_OUT`: DRAM reads one internal requester may hold in flight. The default is a macro so a bench can set it under a generated top whose parameters it cannot reach (`-d KOHAKU_DRAM_RD_OUT=4`). | `1`, `2`, `4`. |
 | `DRAM_CDC` | integer | `1` | `mag_dram_port`'s `DRAM_CDC`: 1 crosses `M_AXI_DRAM` into its own clock through an asynchronous FIFO per channel; 0 keeps it on the mesh clock with synchronous queues. A block design whose DRAM controller and mesh share a clock domain must set 0, or the tool rejects the mismatched `CLK_DOMAIN`. | 0 or non-zero. |
+| `DRAM_R_REG` | integer | `1` | `mag_dram_port`'s `R_REG`: the one read-return bus registered once before it fans out to the requesters. | 0 or 1. |
 | `STAGE` | integer | `0` | Build the staging store. **Zero generates none of it.** | 0 or non-zero. |
-| `STAGE_BANKS` | integer | `4` | Banks in the staging store. The address takes `$clog2(BANKS)` bank bits below the row index, so a sequential fill spreads across banks. | Power of two. |
+| `STAGE_BANKS` | integer | `1` | Banks in the staging store; the chain depth is `STAGE_ENTRIES / STAGE_BANKS / 4096`. With more than one bank the address takes `$clog2(BANKS)` bank bits below the row index, so a sequential fill spreads across banks. | Power of two. |
 | `STAGE_ENTRIES` | integer | `16384` | Entries **in total, across all banks**. `mag_stage` derives `ROWS = ENTRIES / BANKS`, so at the defaults each of 4 banks holds 4096 rows. An entry is `4 × DATA_W` bits, so the default store is 2 MiB. | Power of two, and a whole multiple of `STAGE_BANKS`. |
 | `STAGE_PIPE` | integer | `1` | Extra register stages on the staging read path, for timing. | `>= 0`. |
+| `STAGE_RLAT` | integer | `0` | `mag_stage`'s `RLAT`; 0 = blocks deep + 1 (2 / 3 / 5 at 4 / 2 / 1 banks of the default store). | 0, or `>= 2`. |
 | `STAGE_AT_PORT` | integer | `0` | Which of the two placements is built: `1` one store on the converged path, `0` a store inside **every** memory engine, none reachable by the mover or the interlink. `1` is the shipping value. See the note under `sysnode` in this section. | 0 or non-zero. |
 
 Port coordinates are named per port rather than packed into one vector: a packed
@@ -552,9 +571,10 @@ One memory endpoint and the AXI master behind it.
 | `MESH_ID` | 2-bit | `2'd0` | Which mesh this port belongs to, for the absolute address test. A request whose `addr[37:36]` names another mesh is not this port's. | 0–3. Must agree with the interlink's runtime id. |
 | `AP_DECODE` | integer | `0` | **Apertures exist somewhere in this node.** Non-zero makes the port test `addr[39]` and refuse — rather than alias onto DRAM — an aperture address it cannot serve. It is *not* the same as `STAGE`: `mag.v` drives it from the node's `STAGE` at every port regardless of where the store was placed, so a port with `AP_DECODE = 1` and `STAGE = 0` is the shipping arrangement. See [memory-protocol.md](memory-protocol.md) §8. | 0 or non-zero. |
 | `STAGE` | integer | `0` | Build a staging store **behind this port**. Set from the node only when `STAGE_AT_PORT` is 0. | 0 or non-zero. |
-| `STAGE_BANKS` | integer | `4` | Banks in that store. | Power of two. |
+| `STAGE_BANKS` | integer | `1` | Banks in that store. | Power of two. |
 | `STAGE_ENTRIES` | integer | `16384` | Entries in that store, **in total across its banks**. | Power of two, and a whole multiple of `STAGE_BANKS`. |
 | `STAGE_PIPE` | integer | `1` | Extra register stages on the staging read path. | `>= 0`. |
+| `STAGE_RLAT` | integer | `0` | That store's `RLAT`; 0 = blocks deep + 1. | 0, or `>= 2`. |
 
 **Fixed constants, not parameters.** `WBURST` is 8: a write slot holds eight
 beats, and a `MEM_WR_REQ` with `len > 7` has undefined behaviour. The transform's
@@ -638,6 +658,10 @@ converges and where AXI exists exactly once; `mag.v:954` instantiates it with
 | `RD_OUT` | integer | `1` | Reads one requester may have in flight; the id is the requester and AXI returns same-id responses in order, so the queue behind the active burst needs no reorder buffer. At 4, one requester's 20-word reads go 2,744 → 8,917 MB/s at 300 MHz against a 106 ns DRAM (`mag_dram_port_bw_tb`), and 256-word reads reach 9,375 of the 9,600 MB/s the 256-bit internal beat allows. Verified at 2 and 4 by `mag_dram_port_tb` (queued reads, every head phase and length parity, two requesters at once) and by `mover_chain1/2/4` (588 / 591 / 597 checks). `mag` exposes it as `DRAM_RD_OUT`. | `1`, `2`, `4`; the default is the shipped value. |
 | `WR_MEM` | string | `"block"` | Storage primitive for the wide queues. | `"distributed"`, `"block"`. |
 | `DRAM_CDC` | integer | `1` | 1: the AXI side is on its own clock and every channel queue is an asynchronous FIFO across the crossing. 0: the AXI side is on the requesters' clock and the queues are synchronous FIFOs of the same depths; the memory clock port is unused. | 0 or non-zero. |
+| `R_REG` | integer | `1` | 1: the one read-return bus (`r_data`, shared by every requester) is registered before it fans out, so a requester's two-entry skid sees a register rather than the R:1 word select and the staged-word 2:1 — 709 → 132 LUT per memory port for the same 518 FF. One cycle of return latency at the same rate: `mag_dram_port_bw_tb` reads 9,153 against 9,161 MB/s, first word at 50 against 49 cycles. 0: the bus is combinational. | 0 or 1. |
+| `STAGE` | integer | `0` | Non-zero: the staging store hangs off this port's arbiter through the `stg_*` pins, and an address in the staging aperture is served from it instead of DRAM — a staged read through a one-word engine merged at the return mux, a staged write riding the W stream. `mag` passes `STAGE` when `STAGE_AT_PORT` is set. | 0 or non-zero. |
+| `MESH_ID` | 2-bit | `2'd0` | The mesh whose aperture this port claims: address bits `[37:36]` must equal it, and bit 38 must be zero, for `stg_is` to hold. | 0 … 3. |
+| `AP_STAGE` | 4-bit | `4'h0` | The aperture id, address bits `[35:32]` under bit 39, that names the staging store. | 0 … 15; the architecture reserves 0 for staging. |
 
 ### `mag_dram_rr` — `src/kohakuaccel/sysnode/core/mag_dram_port.v`
 
@@ -729,9 +753,10 @@ dimension-order on mesh coordinates over a rectangular grid of meshes.
 |---|---|---|---|---|
 | `LINK_W` | integer | `288` | Beat width. | Must match everywhere on the link. |
 | `TUSER_W` | integer | `96` | Header width. | As above. |
-| `RX_BEATS` | integer | `64` | Receive buffer per class, in beats, and therefore the initial credit. | `>= MAX_BEATS`. |
-| `CRED_BATCH` | integer | `8` | Credits returned per credit packet. | `<= RX_BEATS`. |
-| `MAX_BEATS` | integer | `32` | Longest packet emitted. | `<= RX_BEATS`. |
+| `RX_BEATS` | integer | `64` | Receive buffer per class, in flits, and therefore the credit the peer is issued. | `> MAX_BEATS`. |
+| `CRED_BATCH` | integer | `4` | Credits returned per backward-wire message. | `1 .. 2**CN_W - 1`. |
+| `MAX_BEATS` | integer | `32` | Longest packet emitted. | `< RX_BEATS`. |
+| `CN_W` | integer | `4` | Width of the credit count on the backward wire. | Must match at both ends. |
 
 Two links, not `N`: the mesh id is two bits, so a fifth mesh is an instruction-set
 change rather than a parameter change, and a port count that cannot vary is not
@@ -739,36 +764,25 @@ spelled as though it can.
 
 ### `mag_link` — `src/kohakuaccel/sysnode/interlink/mag_link.v`
 
-One full-duplex end of a mesh-to-mesh crossing. Two of these back to back, with
-nothing between them but registers, is a complete crossing.
+One full-duplex end of a mesh-to-mesh crossing, on a Kohaku Transmit Surface. A
+class is a virtual channel; a packet is its header zero-padded into one flit,
+then its beats, `last` on the final one. Two of these back to back, with nothing
+between them but register stages, is a complete crossing.
 
 | Name | Type | Default | Controls | Legal range |
 |---|---|---|---|---|
-| `LINK_W` | integer | `288` | Beat width. 288 is what one mesh port produces; the link itself is width-agnostic. | **Both ends and every pipe stage MUST agree.** |
-| `TUSER_W` | integer | `96` | Packet header width. | Both ends must agree. |
-| `RX_BEATS` | integer | `64` | Receive buffer per class, in beats, and therefore the initial credit. | **Both ends MUST agree.** A receiver smaller than the sender's credit overflows, and no backpressure is left to catch it. |
-| `CRED_BATCH` | integer | `8` | Credits returned per credit packet. | `<= RX_BEATS`. |
-| `MAX_BEATS` | integer | `32` | Longest packet this end may emit. | **`<= RX_BEATS`.** Above it there exists a packet that can never be granted credit, which presents as a dead link. |
+| `LINK_W` | integer | `288` | Flit width. 288 is what one mesh port produces; the link itself is width-agnostic. | **Both ends and every carrier stage MUST agree.** |
+| `TUSER_W` | integer | `96` | Packet header width. Rides in the low bits of the header flit. | `<= LINK_W`. Both ends must agree. |
+| `RX_BEATS` | integer | `64` | Receive buffer per class, in flits, and therefore the credit issued to the peer. | **Both ends MUST agree.** A packet is `MAX_BEATS + 1` flits, so this must exceed that. |
+| `CRD_BATCH` | integer | `4` | Credits accumulated before one is returned on the backward wire. | `1 .. 2**CN_W - 1`. |
+| `MAX_BEATS` | integer | `32` | Longest packet this end may emit. | **`< RX_BEATS`.** Above it a packet cannot be drained by a consumer that waits for its last beat. |
+| `CN_W` | integer | `4` | Width of the credit count on the backward wire. | Must match at both ends. |
+| `CW` | integer | `$clog2(RX_BEATS) + 1` | **Derived.** Credit counter width. | Do not override. |
 
-Credit is **per class** — "does this packet stop at the peer, or does the peer
-forward it" — as two counters. One shared pool would let a stalled forward path
-stop traffic that was going to terminate anyway.
-
-### `mag_link_pipe` — `src/kohakuaccel/sysnode/interlink/mag_link_pipe.v`
-
-Extra register stages in one direction. Those stages have to exist in the RTL:
-the placer will pull a register into a crossing site, but retiming will not
-invent one that was never written.
-
-| Name | Type | Default | Controls | Legal range |
-|---|---|---|---|---|
-| `LINK_W` | integer | `288` | Beat width. | Must match the link. |
-| `TUSER_W` | integer | `96` | Header width. | Must match the link. |
-| `DEPTH` | integer | `2` | Number of register stages. | `>= 1`. The `tap` input selects the live depth at run time; tie it to `DEPTH` for synthesis and it folds away. |
-
-A plain shift register is correct here **only because flow control is
-credit-based**. There is no handshake to preserve and no skid buffer, which is
-what makes inserting latency free rather than a redesign.
+Credit is **per class and per flit**, so a class-1 packet that runs out of credit
+mid-packet stops only itself: class 0's flits keep moving on the same wire
+between them. There is no `ready` on the wire, which is what lets the carrier be
+any number of register stages long.
 
 ### `il_pkt_mux2`, `il_pkt_demux` — `src/kohakuaccel/sysnode/interlink/il_pkt_arb.v`
 
@@ -838,6 +852,8 @@ synthesis to infer from the shape of a register array.**
 | `DEPTH` | integer | `512` | Word count. | Any; the address width is `$clog2(DEPTH)`. |
 | `MEM_PRIM` | string | `"block"` | The primitive. `"distributed"` is LUT RAM, wide and shallow. `"block"` is 512×72 at its widest. `"ultra"` is 4096×72, fixed, deep and narrow. | `"distributed"`, `"block"`, `"ultra"`. |
 | `READ_LAT` | integer | `1` | Read latency in cycles. | `0` is **legal only for `"distributed"`**. |
+| `CASCADE` | integer | `0` | The macro's `CASCADE_HEIGHT`: how many blocks synthesis may chain for depth beyond one block. `0` leaves it to the tool (eight for ultra RAM); `1` forbids a chain and the tool builds a fabric mux over single blocks. The framework's own depth rule is banks of one block at the caller ([arch/physical/device-facts](../arch/physical/device-facts.md#memory-blocks-the-geometry-that-is-a-rule)), so this is a measurement knob, not a design one. | `0`, or `1` … `64`. |
+| `WR_MODE` | string | `"read_first"` | The macro's `WRITE_MODE_B`. | `"read_first"`, `"write_first"`, `"no_change"` — **`"no_change"` on `"ultra"` fails XPM elaboration in Vivado 2024.2.** |
 
 Why this module exists rather than an inferred array: left to inference, whether
 an array becomes LUT RAM, block RAM or ultra RAM depends on a reset clause, a
@@ -848,18 +864,24 @@ callers build pipeline structure on that number.
 
 ### `kohaku_sdpram_be` — `src/kohakuaccel/common/kohaku_sdpram_be.v`
 
-`kohaku_sdpram` with a byte strobe per write lane (`wr_strb`, `WIDTH/8` bits).
-A separate module rather than a parameter, so the whole-word callers keep a
-port nobody has to drive. Its one caller is the staging store's bank array:
-port B of `mag_stage` takes AXI beats, and a processor's 64-bit store is one
-lane of a 256-bit word.
+`kohaku_sdpram` with a write strobe per lane (`wr_strb`, `WIDTH/BYTE_W` bits;
+a byte strobe at the default). A separate module rather than a parameter, so
+the whole-word callers keep a port nobody has to drive. Its callers are the
+staging store's bank array — port B of `mag_stage` takes AXI beats, and a
+processor's 64-bit store is one lane of a 256-bit word — the orchestrator's
+staging RAM, and the crossbar-cache array, which lands one sub-word of a wide
+row through the lanes with no line buffer.
 
 | Name | Type | Default | Controls | Legal range |
 |---|---|---|---|---|
-| `WIDTH` | integer | `256` | Word width. | A multiple of 8. |
+| `WIDTH` | integer | `256` | Word width. | A multiple of `BYTE_W`. |
 | `DEPTH` | integer | `512` | Word count. | Any; the address width is `$clog2(DEPTH)`. |
-| `MEM_PRIM` | string | `"block"` | The primitive. | `"block"`, `"ultra"` — both carry byte write enables. |
-| `READ_LAT` | integer | `1` | Read latency in cycles. | `1` or `2`. |
+| `BYTE_W` | integer | `8` | Width of one write lane; `wr_strb` is `WIDTH/BYTE_W` bits and drives the macro's `BYTE_WRITE_WIDTH_A`. 8 and 9 are the lanes block RAM and UltraRAM carry in silicon (72 = 8 × 9); `WIDTH` makes the strobe one bit, the whole word, which is `kohaku_sdpram`. | `8` (`WIDTH` a multiple of 8), `9` (a multiple of 9), or `WIDTH`. |
+| `NSTRB` | integer | `WIDTH / BYTE_W` | The strobe vector's width, derived so the port can be sized. | Leave at the default. |
+| `MEM_PRIM` | string | `"block"` | The primitive. | `"block"`, `"ultra"` — both carry the lanes. |
+| `READ_LAT` | integer | `1` | Read latency in cycles. | `1` or more; the staging store passes `RLAT`, blocks deep + 1. |
+| `CASCADE` | integer | `0` | As `kohaku_sdpram`. | As `kohaku_sdpram`. |
+| `WR_MODE` | string | `"read_first"` | As `kohaku_sdpram`. | As `kohaku_sdpram`. |
 
 ### `MultiBitLut` — `src/attic/common/lut.v`
 

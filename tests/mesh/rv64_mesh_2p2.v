@@ -74,7 +74,7 @@ module rv64_mesh_2p2 #(
               .ID_W(IDW), .PORTS(1), .MEM_X(0), .MEM_Y(1),
               .GRID_LO(1), .GRID_HI(1), .STAGE_FLITS(128), .MW(MW),
               .STAGE(1), .STAGE_AT_PORT(1), .ILINK(0),
-              .CPU_RV64(1), .PE_IMEM(8192), .PE_SPAD(4096),
+              .PE_IMEM(8192), .PE_SPAD(4096),
               .PE_L1_LINES(64)) u_node (
         .clk(clk), .resetn(resetn),
         .sm_awid('0), .sm_awaddr('0), .sm_awlen('0), .sm_awvalid(1'b0), .sm_awready(),
@@ -108,14 +108,18 @@ module rv64_mesh_2p2 #(
         .hs_addr(hs_addr), .hs_wr(hs_wr), .hs_wdata(hs_wdata), .hs_wstrb(hs_wstrb),
         .hs_rd(hs_rd), .hs_rdata(hs_rdata),
         .hs_console_we(hs_console_we), .hs_console(hs_console),
-        .link0_out_tdata(), .link0_out_tuser(), .link0_out_tlast(),
-        .link0_out_tvalid(), .link0_out_tready(1'b1),
-        .link0_in_tdata('0), .link0_in_tuser('0), .link0_in_tlast(1'b0),
-        .link0_in_tvalid(1'b0), .link0_in_tready(),
-        .link1_out_tdata(), .link1_out_tuser(), .link1_out_tlast(),
-        .link1_out_tvalid(), .link1_out_tready(1'b1),
-        .link1_in_tdata('0), .link1_in_tuser('0), .link1_in_tlast(1'b0),
-        .link1_in_tvalid(1'b0), .link1_in_tready()
+        .link0_out_valid(), .link0_out_vc(), .link0_out_last(),
+        .link0_out_flit(), .link0_out_crd_valid(1'b0), .link0_out_crd_vc(1'b0),
+        .link0_out_crd_n('0),
+        .link0_in_valid(1'b0), .link0_in_vc(1'b0), .link0_in_last(1'b0),
+        .link0_in_flit('0), .link0_in_crd_valid(), .link0_in_crd_vc(),
+        .link0_in_crd_n(),
+        .link1_out_valid(), .link1_out_vc(), .link1_out_last(),
+        .link1_out_flit(), .link1_out_crd_valid(1'b0), .link1_out_crd_vc(1'b0),
+        .link1_out_crd_n('0),
+        .link1_in_valid(1'b0), .link1_in_vc(1'b0), .link1_in_last(1'b0),
+        .link1_in_flit('0), .link1_in_crd_valid(), .link1_in_crd_vc(),
+        .link1_in_crd_n()
     );
 
     // ---- DRAM -------------------------------------------------------------

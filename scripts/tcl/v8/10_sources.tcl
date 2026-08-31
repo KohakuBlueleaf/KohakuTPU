@@ -71,13 +71,14 @@ set V8_SOURCES {
     src/kohakutpu/transform/mx_quant.v
     src/kohakuaccel/sysnode/core/mag_mem_port.v
     src/kohakuaccel/sysnode/core/mag_stage.v
-    src/kohakuaccel/sysnode/core/mag_stage_port.v
     src/kohakuaccel/sysnode/mover/mm_prng.v
     src/kohakuaccel/sysnode/mover/mm_mover.v
+    src/kohakutransmit/prim/kts_fifo.v
+    src/kohakutransmit/link/kts_tx.v
+    src/kohakutransmit/link/kts_rx.v
+    src/kohakutransmit/carrier/kts_pipe.v
     src/kohakuaccel/sysnode/interlink/il_pkt_arb.v
     src/kohakuaccel/sysnode/interlink/mag_link.v
-    src/kohakuaccel/sysnode/interlink/mag_link_pipe.v
-    xilinx-fpga/xcvu13p/bd/mag_link_pipe_bd.v
     src/kohakuaccel/sysnode/interlink/mag_switch.v
     src/kohakuaccel/sysnode/interlink/mag_ilink.v
     src/kohakuaccel/sysnode/core/mag_xform.v
@@ -85,22 +86,25 @@ set V8_SOURCES {
     src/kohakuaccel/sysnode/core/mag.v
     src/kohakuaccel/sysnode/core/mag_dram_port.v
 
-    src/kohakuaccel/pe/rv32/mem/rv_ram_be.v
-    src/kohakuaccel/pe/rv32/mem/rv_imem.v
-    src/kohakuaccel/pe/rv32/mem/rv_spad.v
-    src/kohakuaccel/pe/rv32/mem/rv_l1.v
-    src/kohakuaccel/pe/rv32/core/rv_regfile.v
-    src/kohakuaccel/pe/rv32/core/rv_bpred.v
-    src/kohakuaccel/pe/rv32/core/rv_if.v
-    src/kohakuaccel/pe/rv32/core/rv_id.v
-    src/kohakuaccel/pe/rv32/core/rv_ex.v
-    src/kohakuaccel/pe/rv32/core/rv_mem.v
-    src/kohakuaccel/pe/rv32/core/rv_wb.v
-    src/kohakuaccel/pe/rv32/core/rv_core.v
-    src/kohakuaccel/pe/rv32/noc/rv_noc_req.v
-    src/kohakuaccel/pe/rv32/noc/rv_mag_req.v
+    src/kohakuaccel/pe/rv64-sys/core/rv64_regfile.v
+    src/kohakuaccel/pe/rv64-sys/core/rv64_alu.v
+    src/kohakuaccel/pe/rv64-sys/core/rv64_muldiv.v
+    src/kohakuaccel/pe/rv64-sys/core/rv64_bpred.v
+    src/kohakuaccel/pe/rv64-sys/core/rv64_decode.v
+    src/kohakuaccel/pe/rv64-sys/core/rv64_csr.v
+    src/kohakuaccel/pe/rv64-sys/core/rv64_core.v
+    src/kohakuaccel/pe/rv64-sys/core/rv64_ram_be.v
+    src/kohakuaccel/pe/rv64-sys/core/rv64_l1.v
+    src/kohakuaccel/pe/rv64-sys/core/rv64_icache.v
+    src/kohakuaccel/pe/rv64-sys/core/rv64_mmu.v
+    src/kohakuaccel/pe/rv64-sys/core/rv64_nport.v
+    src/kohakuaccel/pe/rv64-sys/rv64_noc_mbox.v
+    src/kohakuaccel/pe/rv64-sys/rv64_syscore.v
     src/kohakuaccel/sysnode/mover/mv_exec.v
-    src/kohakuaccel/sysnode/cpu/rv_mag_pe.v
+    src/kohakuaccel/sysnode/cpu/rv64_mag_pe.v
+    src/kohakuaccel/sysnode/cpu/rv64_load_win.v
+    src/kohakuaccel/sysnode/cpu/rv64_load_axi.v
+    src/kohakuaccel/axi/station/sb_axi_deconcentrate.v
 
     src/kohakuaccel/sysnode/core/sn_hub.v
     src/kohakuaccel/sysnode/sysnode.v

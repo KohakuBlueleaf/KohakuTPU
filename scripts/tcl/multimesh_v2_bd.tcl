@@ -48,7 +48,7 @@ foreach f {
     src/kohakutpu/transform/mx_quant.v src/kohakuaccel/sysnode/core/mag_mem_port.v
     src/kohakuaccel/sysnode/mover/mm_prng.v src/kohakuaccel/sysnode/mover/mm_mover.v
     src/kohakuaccel/sysnode/interlink/il_pkt_arb.v src/kohakuaccel/sysnode/interlink/mag_link.v
-    src/kohakuaccel/sysnode/interlink/mag_link_pipe.v src/kohakuaccel/sysnode/interlink/mag_switch.v
+    src/kohakuaccel/sysnode/interlink/mag_switch.v
     src/kohakuaccel/sysnode/interlink/mag_ilink.v src/kohakuaccel/sysnode/core/mag.v
     src/kohakuaccel/sysnode/core/mag_dram_port.v src/kohakutpu/top/mag_1m.v
     src/kohakutpu/top/generated/ktpu_ship_2x2_6c2v_1m.v src/kohakutpu/top/generated/ktpu_ship_2x1_6c0v_1m.v

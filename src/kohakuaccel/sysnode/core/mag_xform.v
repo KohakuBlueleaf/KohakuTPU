@@ -151,17 +151,31 @@ module mag_xform #(
     // occupants and demuxes `id` internally; the framework never names a
     // transform. A project with none instantiates the identity bank, where
     // every id is bypass, and the read path is a wire.
-    xform_bank #(.DATA_W(DATA_W), .SLOTS(SLOTS), .ID_W(ID_W),
-                 .MODE_W(MODE_W), .IN_BITS(IN_BITS), .OUT_WORDS(OUT_WORDS))
-    u_bank (
-        .clk(clk), .rst(rst),
-        .start(s_start), .id(s_id), .mode(s_mode),
-        .beat(s_beat), .beat_valid(s_bv),
-        .need_beat(), .done(done),
-        .word0(word0), .word1(word1), .word2(word2), .word3(word3),
-        .cfg_en(cfg_en), .cfg_id(cfg_id), .cfg_addr(cfg_addr),
-        .cfg_data(cfg_data), .cfg_rdata(cfg_rdata), .fault(fault)
-    );
+    // SLOTS=0 generates NO occupant: the bank is absent, an entry never
+    // completes, and a requester that asks for one holds forever.
+    generate
+    if (SLOTS > 0) begin : g_bank
+        xform_bank #(.DATA_W(DATA_W), .SLOTS(SLOTS), .ID_W(ID_W),
+                     .MODE_W(MODE_W), .IN_BITS(IN_BITS), .OUT_WORDS(OUT_WORDS))
+        u_bank (
+            .clk(clk), .rst(rst),
+            .start(s_start), .id(s_id), .mode(s_mode),
+            .beat(s_beat), .beat_valid(s_bv),
+            .need_beat(), .done(done),
+            .word0(word0), .word1(word1), .word2(word2), .word3(word3),
+            .cfg_en(cfg_en), .cfg_id(cfg_id), .cfg_addr(cfg_addr),
+            .cfg_data(cfg_data), .cfg_rdata(cfg_rdata), .fault(fault)
+        );
+    end else begin : g_no_bank
+        assign done      = 1'b0;
+        assign word0     = {DATA_W{1'b0}};
+        assign word1     = {DATA_W{1'b0}};
+        assign word2     = {DATA_W{1'b0}};
+        assign word3     = {DATA_W{1'b0}};
+        assign cfg_rdata = 32'd0;
+        assign fault     = 4'd0;
+    end
+    endgenerate
 
 `ifndef SYNTHESIS
     integer w;

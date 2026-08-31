@@ -75,14 +75,18 @@ module mag_1m_upload_tb;
         .dram_arvalid(m_arvalid), .dram_arready(m_arready),
         .dram_rid(m_rid), .dram_rdata(m_rdata), .dram_rresp(m_rresp),
         .dram_rlast(m_rlast), .dram_rvalid(m_rvalid), .dram_rready(m_rready),
-        .link0_out_tdata(), .link0_out_tuser(), .link0_out_tlast(),
-        .link0_out_tvalid(), .link0_out_tready(1'b1),
-        .link0_in_tdata(288'd0), .link0_in_tuser(96'd0), .link0_in_tlast(1'b0),
-        .link0_in_tvalid(1'b0), .link0_in_tready(),
-        .link1_out_tdata(), .link1_out_tuser(), .link1_out_tlast(),
-        .link1_out_tvalid(), .link1_out_tready(1'b1),
-        .link1_in_tdata(288'd0), .link1_in_tuser(96'd0), .link1_in_tlast(1'b0),
-        .link1_in_tvalid(1'b0), .link1_in_tready()
+        .link0_out_valid(), .link0_out_vc(), .link0_out_last(),
+        .link0_out_flit(), .link0_out_crd_valid(1'b0), .link0_out_crd_vc(1'b0),
+        .link0_out_crd_n(4'd0),
+        .link0_in_valid(1'b0), .link0_in_vc(1'b0), .link0_in_last(1'b0),
+        .link0_in_flit(288'd0), .link0_in_crd_valid(), .link0_in_crd_vc(),
+        .link0_in_crd_n(),
+        .link1_out_valid(), .link1_out_vc(), .link1_out_last(),
+        .link1_out_flit(), .link1_out_crd_valid(1'b0), .link1_out_crd_vc(1'b0),
+        .link1_out_crd_n(4'd0),
+        .link1_in_valid(1'b0), .link1_in_vc(1'b0), .link1_in_last(1'b0),
+        .link1_in_flit(288'd0), .link1_in_crd_valid(), .link1_in_crd_vc(),
+        .link1_in_crd_n()
     );
 
     axi_ram #(.DATA_W(MW), .ADDR_W(AW), .ID_W(IDW), .WORDS(2048),

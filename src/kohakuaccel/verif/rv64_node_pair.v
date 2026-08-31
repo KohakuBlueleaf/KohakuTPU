@@ -49,12 +49,16 @@ module rv64_node_pair #(
     output reg  [31:0]           dn_beats      // mesh 1 -> mesh 0
 );
     // ---- the links, one direction each way --------------------------------
-    wire [LINK_W-1:0]  l0_d [0:1];
-    wire [TUSER_W-1:0] l0_u [0:1];
-    wire [1:0]         l0_l, l0_v;
-    wire [LINK_W-1:0]  l1_d [0:1];
-    wire [TUSER_W-1:0] l1_u [0:1];
-    wire [1:0]         l1_l, l1_v;
+    // Forward wire per link per node, and the credit wire that node issues for
+    // what it receives there.
+    wire [LINK_W-1:0]  l0_f [0:1];
+    wire [1:0]         l0_v, l0_vc, l0_l;
+    wire [3:0]         l0_cn [0:1];
+    wire [1:0]         l0_cv, l0_cvc;
+    wire [LINK_W-1:0]  l1_f [0:1];
+    wire [1:0]         l1_v, l1_vc, l1_l;
+    wire [3:0]         l1_cn [0:1];
+    wire [1:0]         l1_cv, l1_cvc;
 
     // ---- DRAM behind each node ----------------------------------------------
     wire [ID_W-1:0]   m_awid [0:1], m_arid [0:1], m_bid [0:1], m_rid [0:1];
@@ -130,7 +134,6 @@ module rv64_node_pair #(
             .STAGE_BANKS   (4),
             .STAGE_ENTRIES (1024),
             .STAGE_AT_PORT (1),
-            .CPU_RV64      (1),
             .PE_IMEM       (8192),
             .PE_SPAD       (4096),
             .PE_L1_LINES   (64)
@@ -246,26 +249,34 @@ module rv64_node_pair #(
             .hs_console_we   (con_we[g]),
             .hs_console      (con[g]),
 
-            .link0_out_tdata (l0_d[g]),
-            .link0_out_tuser (l0_u[g]),
-            .link0_out_tlast (l0_l[g]),
-            .link0_out_tvalid(l0_v[g]),
-            .link0_out_tready(1'b1),
-            .link0_in_tdata  ((g == 1) ? l1_d[0] : {LINK_W{1'b0}}),
-            .link0_in_tuser  ((g == 1) ? l1_u[0] : {TUSER_W{1'b0}}),
-            .link0_in_tlast  ((g == 1) ? l1_l[0] : 1'b0),
-            .link0_in_tvalid ((g == 1) ? l1_v[0] : 1'b0),
-            .link0_in_tready (),
-            .link1_out_tdata (l1_d[g]),
-            .link1_out_tuser (l1_u[g]),
-            .link1_out_tlast (l1_l[g]),
-            .link1_out_tvalid(l1_v[g]),
-            .link1_out_tready(1'b1),
-            .link1_in_tdata  ((g == 0) ? l0_d[1] : {LINK_W{1'b0}}),
-            .link1_in_tuser  ((g == 0) ? l0_u[1] : {TUSER_W{1'b0}}),
-            .link1_in_tlast  ((g == 0) ? l0_l[1] : 1'b0),
-            .link1_in_tvalid ((g == 0) ? l0_v[1] : 1'b0),
-            .link1_in_tready ()
+            .link0_out_valid    (l0_v[g]),
+            .link0_out_vc       (l0_vc[g]),
+            .link0_out_last     (l0_l[g]),
+            .link0_out_flit     (l0_f[g]),
+            .link0_out_crd_valid((g == 1) ? l1_cv[0]  : 1'b0),
+            .link0_out_crd_vc   ((g == 1) ? l1_cvc[0] : 1'b0),
+            .link0_out_crd_n    ((g == 1) ? l1_cn[0]  : 4'd0),
+            .link0_in_valid     ((g == 1) ? l1_v[0]  : 1'b0),
+            .link0_in_vc        ((g == 1) ? l1_vc[0] : 1'b0),
+            .link0_in_last      ((g == 1) ? l1_l[0]  : 1'b0),
+            .link0_in_flit      ((g == 1) ? l1_f[0]  : {LINK_W{1'b0}}),
+            .link0_in_crd_valid (l0_cv[g]),
+            .link0_in_crd_vc    (l0_cvc[g]),
+            .link0_in_crd_n     (l0_cn[g]),
+            .link1_out_valid    (l1_v[g]),
+            .link1_out_vc       (l1_vc[g]),
+            .link1_out_last     (l1_l[g]),
+            .link1_out_flit     (l1_f[g]),
+            .link1_out_crd_valid((g == 0) ? l0_cv[1]  : 1'b0),
+            .link1_out_crd_vc   ((g == 0) ? l0_cvc[1] : 1'b0),
+            .link1_out_crd_n    ((g == 0) ? l0_cn[1]  : 4'd0),
+            .link1_in_valid     ((g == 0) ? l0_v[1]  : 1'b0),
+            .link1_in_vc        ((g == 0) ? l0_vc[1] : 1'b0),
+            .link1_in_last      ((g == 0) ? l0_l[1]  : 1'b0),
+            .link1_in_flit      ((g == 0) ? l0_f[1]  : {LINK_W{1'b0}}),
+            .link1_in_crd_valid (l1_cv[g]),
+            .link1_in_crd_vc    (l1_cvc[g]),
+            .link1_in_crd_n     (l1_cn[g])
         );
 
         axi_ram #(

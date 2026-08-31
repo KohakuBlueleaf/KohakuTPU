@@ -75,10 +75,11 @@ set SRC {
     src/kohakutpu/transform/mx_quant.v src/kohakuaccel/sysnode/core/mag_mem_port.v
     src/kohakuaccel/sysnode/mover/mm_prng.v src/kohakuaccel/sysnode/mover/mm_mover.v
     src/kohakuaccel/sysnode/interlink/il_pkt_arb.v src/kohakuaccel/sysnode/interlink/mag_link.v
-    src/kohakuaccel/sysnode/interlink/mag_link_cdc.v src/kohakuaccel/sysnode/interlink/mag_link_pipe.v
+    src/kohakutransmit/prim/kts_fifo.v src/kohakutransmit/link/kts_tx.v
+    src/kohakutransmit/link/kts_rx.v src/kohakutransmit/carrier/kts_pipe.v
     src/kohakuaccel/sysnode/interlink/mag_switch.v src/kohakuaccel/sysnode/interlink/mag_ilink.v src/kohakuaccel/sysnode/core/mag.v
     src/kohakuaccel/sysnode/core/mag_dram_port.v src/kohakuaccel/sysnode/core/mag_stage.v
-    src/kohakuaccel/sysnode/core/mag_stage_port.v src/kohakutpu/top/mag_1m.v
+    src/kohakutpu/top/mag_1m.v
     src/kohakuaccel/common/clk/ktpu_div2.v src/kohakuaccel/common/clk/ktpu_pumpclk.v
     src/kohakuaccel/common/sb_skid.v src/kohakuaccel/axi/station/sb_hub.v
     src/kohakuaccel/axi/station/sb_nmu.v src/kohakuaccel/axi/station/sb_nsu.v

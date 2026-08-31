@@ -160,14 +160,18 @@ module kht_mesh #(
         .mem_rd_count(), .mem_wr_count(),
         .pe_halt_req(1'b0), .pe_status(), .pe_busy(),
         .mv_busy(), .mv_fault(), .mv_done(),
-        .link0_out_tdata(), .link0_out_tuser(), .link0_out_tlast(),
-        .link0_out_tvalid(), .link0_out_tready(1'b1),
-        .link0_in_tdata({FW{1'b0}}), .link0_in_tuser(96'd0),
-        .link0_in_tlast(1'b0), .link0_in_tvalid(1'b0), .link0_in_tready(),
-        .link1_out_tdata(), .link1_out_tuser(), .link1_out_tlast(),
-        .link1_out_tvalid(), .link1_out_tready(1'b1),
-        .link1_in_tdata({FW{1'b0}}), .link1_in_tuser(96'd0),
-        .link1_in_tlast(1'b0), .link1_in_tvalid(1'b0), .link1_in_tready()
+        .link0_out_valid(), .link0_out_vc(), .link0_out_last(),
+        .link0_out_flit(), .link0_out_crd_valid(1'b0), .link0_out_crd_vc(1'b0),
+        .link0_out_crd_n(4'd0),
+        .link0_in_valid(1'b0), .link0_in_vc(1'b0), .link0_in_last(1'b0),
+        .link0_in_flit({FW{1'b0}}), .link0_in_crd_valid(),
+        .link0_in_crd_vc(), .link0_in_crd_n(),
+        .link1_out_valid(), .link1_out_vc(), .link1_out_last(),
+        .link1_out_flit(), .link1_out_crd_valid(1'b0), .link1_out_crd_vc(1'b0),
+        .link1_out_crd_n(4'd0),
+        .link1_in_valid(1'b0), .link1_in_vc(1'b0), .link1_in_last(1'b0),
+        .link1_in_flit({FW{1'b0}}), .link1_in_crd_valid(),
+        .link1_in_crd_vc(), .link1_in_crd_n()
     );
 
     axi4_ram #(.DATA_WIDTH(DW), .ADDR_WIDTH(AW), .ID_WIDTH(IDW),

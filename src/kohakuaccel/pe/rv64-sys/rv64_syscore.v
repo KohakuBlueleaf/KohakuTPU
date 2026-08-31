@@ -34,10 +34,7 @@ module rv64_syscore #(
 
     parameter [63:0]  SPAD_BASE  = 64'h0000_0000_0001_0000,
     parameter [63:0]  CTRL_BASE  = 64'h0000_0000_0002_0000,
-    parameter [63:0]  NODE_BASE  = 64'h0000_0000_1000_0000,
-    // Within the node range, this and above is cached. Below it -- staging and
-    // the node's own registers -- is not.
-    parameter [63:0]  CACHE_LO   = 64'h0000_0000_8000_0000
+    parameter [63:0]  NODE_BASE  = 64'h0000_0000_1000_0000
 )(
     input  wire                   clk,
     input  wire                   resetn,
@@ -256,7 +253,16 @@ module rv64_syscore #(
     // covers about a thousand instructions and refills on the crossing. The
     // data port wins the MMU; a fetch stall issues no data access, so the two
     // cannot wait on each other.
-    wire translating = (core_satp[63:60] == 4'd8) && (core_priv != 2'd3);
+    // REGISTERED: as a wire, `core_priv` sat in front of the fetch address
+    // mux, the I-cache tag compare, the stall and so every pipeline enable --
+    // 12 levels, -0.189 ns at the node. `settle_q` holds fetch the one extra
+    // cycle this register lags `core_priv` after a trap or return.
+    reg translating, settle_q;
+    always @(posedge clk) begin
+        translating <= (core_satp[63:60] == 4'd8) && (core_priv != 2'd3);
+        settle_q    <= core_settle;
+    end
+    wire fetch_settle = core_settle || settle_q;
 
     reg         if_ok;
     reg  [26:0] if_vpn;
@@ -292,7 +298,7 @@ module rv64_syscore #(
     // `core_settle` is the cycle after a trap or return: the PC has moved but
     // `core_priv` has not, so `translating` is stale and no fetch may use it.
     wire ic_stall;      // a cached-fetch miss holds F; driven by the I-cache below
-    assign imem_stall_c = if_need || if_settle || sfence_q || core_settle
+    assign imem_stall_c = if_need || if_settle || sfence_q || fetch_settle
                         || ic_stall;
 
     always @(posedge clk) begin
@@ -313,7 +319,7 @@ module rv64_syscore #(
             // address adder -- and that put the whole operand cone into these
             // registers. `dmem_req` is decode-only and exists for this.
             // A data access is already in E and cannot be deferred; a fetch can.
-            if (if_need && !dmem_req_c && !core_settle) begin
+            if (if_need && !dmem_req_c && !fetch_settle) begin
                 if_req  <= 1'b1;
                 if_wait <= 2'd2;
             end
@@ -352,14 +358,16 @@ module rv64_syscore #(
     end
     wire imem_fault_c = imem_fault_q;
 
+    localparam integer UNC_BIT = ADDR_W - 2;   // the uncached alias bit (38 of 40)
+
     assign fetch_pa = translating
                     ? {{(64-ADDR_W){1'b0}}, if_ppn, imem_addr_c[11:0]}
                     : imem_addr_c;
 
     // Fetch below the node base reads the on-chip window; fetch into the cached
     // node range (DRAM code) goes through the I-cache, which fills from DRAM.
-    wire fetch_cached = |fetch_pa[ADDR_W-1:28] && fetch_pa[31];
-    wire fetch_ready  = !if_need && !if_settle && !sfence_q && !core_settle;
+    wire fetch_cached = |fetch_pa[ADDR_W-1:28] && !fetch_pa[ADDR_W-1] && !fetch_pa[UNC_BIT];
+    wire fetch_ready  = !if_need && !if_settle && !sfence_q && !fetch_settle;
     wire ic_en        = fetch_cached && fetch_ready;
     wire [31:0]       ic_data;
     wire              if_req_ic, if_ready_ic, if_rvalid_ic;
@@ -418,10 +426,25 @@ module rv64_syscore #(
     wire in_spad  = (pa[ADDR_W-1:SPAD_LSB] == SPAD_BASE[ADDR_W-1:SPAD_LSB]);
     wire in_ctrl  = (pa[ADDR_W-1:8]        == CTRL_BASE[ADDR_W-1:8]);
     wire in_node  = |pa[ADDR_W-1:28];                    // NODE_BASE = 2^28
-    wire in_cache = in_node && pa[31];                   // CACHE_LO = 2^31
+    // DRAM is cached; the special half (bit 39: staging, apertures) and the
+    // UNCACHED ALIAS of DRAM (bit 38 set: the same bytes, no L1) are not. The
+    // alias is how shared memory is reached without coherence hardware: map
+    // the shared page at pa | 2^38 and every load and store goes to the fabric.
+    // rv64_nport clears bit 38 on the way out, so the fabric never sees it.
+    // The old `pa[31]` test striped a 16 GB space every 2 GB.
+    wire in_cache = in_node && !pa[ADDR_W-1] && !pa[UNC_BIT];
     wire in_unc   = in_node && !in_cache;
 
     wire acc_ok = core_mem_req && !mmu_busy && !dmem_fault_w;
+
+    // The access-in-flight state the spad, the L1 and the control region all
+    // read; declared ahead of the first of them.
+    reg  mem_started;
+    reg  sel_spad, sel_ctrl, sel_cache, sel_unc;
+    reg [ADDR_W-1:0] m_pa_q;
+    reg [7:0]        m_be_q;
+    reg [63:0]       m_wd_q;
+    reg              m_st_q;
 
     // ------------------------------------------------------------ local spad
     // THE READ ADDRESS IS EARLY, THE WRITE IS REGISTERED. The read has to be
@@ -456,8 +479,6 @@ module rv64_syscore #(
     // `dmem_req` -- decode only. The range decode, which needs the address
     // adder, is REGISTERED on that first cycle and only steers cycles 2+. That
     // keeps the adder out of `stall`, which gates every pipeline register.
-    reg  mem_started;
-    reg  sel_spad, sel_ctrl, sel_cache, sel_unc;
     wire mem_first = dmem_req_c && !mem_started && !mmu_busy;
 
     wire l1_act  = sel_cache && mem_started;
@@ -474,10 +495,6 @@ module rv64_syscore #(
     // the data array's byte-write-enable through the address adder and the
     // decode: `wb_val_reg -> u_l1/.../ENBWREN`, 14 levels, 200 failing paths.
     // The core is held across the lookup anyway, so the register is free.
-    reg [ADDR_W-1:0] m_pa_q;
-    reg [7:0]        m_be_q;
-    reg [63:0]       m_wd_q;
-    reg              m_st_q;
     always @(posedge clk) if (mem_first) begin
         m_pa_q <= pa;
         m_be_q <= dmem_wstrb_c;
@@ -487,7 +504,10 @@ module rv64_syscore #(
 
     rv64_l1 #(.LINES(L1_LINES), .ADDR_W(ADDR_W), .MEM_PRIM(MEM_PRIM)) u_l1 (
         .clk(clk), .resetn(core_rstn),
-        .probe_addr(m_pa_q), .req(l1_act), .we(m_st_q), .be(m_be_q),
+        // The probe is the translated address a cycle before `addr` captures
+        // it: only its page-offset bits index the tag array, and those are the
+        // core's own, as the scratchpad's early read address already is.
+        .probe_addr(pa), .req(l1_act), .we(m_st_q), .be(m_be_q),
         .addr(m_pa_q), .wdata(m_wd_q), .rdata(l1_rdata), .stall(l1_stall),
         .flush(1'b0), .inval(1'b0), .flush_busy(l1_flush_busy),
         .fill_valid(fill_valid), .fill_ready(fill_ready), .fill_addr(fill_addr),

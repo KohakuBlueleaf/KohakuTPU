@@ -12,9 +12,9 @@
 #define R_EXIT    ((volatile unsigned long *)(CTRL_BASE + 0x00))
 #define R_CONSOLE ((volatile unsigned long *)(CTRL_BASE + 0x08))
 
-/* An uncached mailbox in the node range (bit 31 clear -> uncached), so writes
- * reach the host immediately and it can act on them. */
-#define HS 0x10001000UL
+/* An uncached mailbox: the node range through its uncached alias (bit 38 set;
+ * the port sees 0x1000_1000), so writes reach the host immediately. */
+#define HS 0x4010001000UL
 #define H_SRC ((volatile unsigned long *)(HS + 0x00))
 #define H_DST ((volatile unsigned long *)(HS + 0x08))
 #define H_LEN ((volatile unsigned long *)(HS + 0x10))
