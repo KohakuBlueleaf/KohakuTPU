@@ -31,6 +31,9 @@ param(
     # Main-class projects: one row each, showing impl_1 once it has a log,
     # synth_1 before that. Point at the .runs directory.
     [string[]]$Main = @(
+        'C:\Users\apoll\Desktop\vivado\multimesh_v8t2\multimesh_v8t2.runs',
+        'C:\Users\apoll\Desktop\vivado\multimesh_v8t\multimesh_v8t.runs',
+        'C:\Users\apoll\Desktop\vivado\multimesh_v8\multimesh_v8.runs',
         'C:\Users\apoll\Desktop\vivado\multimesh_v7t\multimesh_v7t.runs',
         'C:\Users\apoll\Desktop\vivado\multimesh_v7\multimesh_v7.runs',
         'C:\Users\apoll\Desktop\vivado\multimesh_v71\multimesh_v71.runs',
@@ -400,8 +403,12 @@ function Show-Status {
             # Alnum-only boundary: multimesh_v7 must not swallow multimesh_v7t,
             # but multimesh_v7t_wrapper.vdi IS v7t's own worker.
             $proj = (Split-Path $md -Leaf) -replace '\.runs$', ''
-            $mine = @($procs | Where-Object { $_.CommandLine -and
-                      $_.CommandLine -match ([regex]::Escape($proj) + '(?![0-9a-zA-Z])') })
+            # The driver session (scripts/tcl/<ver>_impl.tcl) never names the
+            # project on its command line; count it as the project's too.
+            $drv = [regex]::Escape(($proj -replace '^multimesh_', '') + '_impl.tcl')
+            $mine = @($procs | Where-Object { $_.CommandLine -and (
+                      $_.CommandLine -match ([regex]::Escape($proj) + '(?![0-9a-zA-Z])') -or
+                      $_.CommandLine -match ('[\\/]' + $drv + '(?![0-9a-zA-Z])')) })
             if ($mine.Count) {
                 $m.state = if ($m.state -eq 'done') { 'done' } else { 'running' }
                 $m.memGB = '{0:n1}' -f (($mine | Measure-Object WorkingSetSize -Sum).Sum / 1GB)

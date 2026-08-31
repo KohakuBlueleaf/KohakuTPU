@@ -1,0 +1,36 @@
+{
+  "name": "multimesh_v8t",
+  "design": "multimesh_v8t",
+  "transport": "jtag",
+  "meshes": 4,
+  "vco_mhz": 1200,
+  "wizard_outputs": {
+    "noc": {"index": 0, "nominal_mhz": 300, "unloaded": true},
+    "sys": {"index": 3, "nominal_mhz": 300, "only_on_mesh": 1}
+  },
+  "profiles": {
+    "low":  {"noc": 100, "sys": 100},
+    "mid":  {"noc": 200, "sys": 200},
+    "ship": {"noc": 300, "sys": 300}
+  },
+  "idle_profile": "low",
+  "ctrl_stride": "0x10000",
+  "ctrl_base": "0x800000",
+  "wizard_base": "0x900000",
+  "ddrctrl_base": "0x0",
+  "ddrctrl_stride": "0x100000",
+  "mem_window_shift": 40,
+  "mem_window_offset": 1,
+  "dram_mesh_shift": 36,
+  "dram_flat_gb": 16,
+  "dram_interleave_kb": 16,
+  "mem_words": 536870912,
+  "agent_at_offset_zero": true,
+  "max_burst_beats": 64,
+  "bitstream": "C:/Users/apoll/Desktop/vivado/multimesh_v8t/multimesh_v8t.runs/impl_1/multimesh_v8t_wrapper.bit",
+  "probes": "",
+  "host_write_granule": 32,
+  "host_write_replicates": false,
+  "burst_read": true,
+  "notes": "v8t, the no-mesh probe of v8: four stations, four MIGs, four system nodes (ktpu_node_v8t: sysnode with the fabric side tied off, 64 URAM staging, RV32 complex) on ONE sysnode clock (mesh 1's wizard output 3 = 'sys'; wizards 0/2/3 keep only an unloaded first output), ONE partition-aware Kohaku Xache (kx_pxache P=4, a partition per die, 64 URAM per MIG, HCDC on the four DRAM edges only, 16 KB rotation over a flat 16 GB at [33:0], mesh bits [37:36] zero). NO mesh, NO interlink: a kick has nowhere to go; the image exists to measure the memory path. Addressing as v8: (m+1)<<40 picks WHICH node the host enters through, never a channel; every DRAM address must be below 16 GB with [37:36] = 0. Retuning 'sys' on mesh 1 retunes every node and the Xache together. NOT PROGRAMMED by the flow that built it; no on-silicon acceptance yet."
+}
