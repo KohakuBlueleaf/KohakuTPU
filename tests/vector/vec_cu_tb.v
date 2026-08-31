@@ -19,6 +19,14 @@
 `default_nettype none
 `timescale 1ns/1ps
 
+// -d TB_RFPAD=36 / -d TB_RFPACK=2: the register file's padded / packed shapes.
+`ifndef TB_RFPAD
+`define TB_RFPAD 24
+`endif
+`ifndef TB_RFPACK
+`define TB_RFPACK 1
+`endif
+
 module vec_cu_tb;
     localparam FW = 288;
     localparam PW = 4;
@@ -50,7 +58,8 @@ module vec_cu_tb;
 
     vec_cu #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .POS_X(CX), .POS_Y(CY),
              .MEM_X(MX), .MEM_Y(MY), .INST_DEPTH(32), .MODEL(1),
-             .L1_DEPTH(512), .L1_PRIM("block")) dut (
+             .L1_DEPTH(512), .L1_PRIM("block"),
+             .RF_PAD(`TB_RFPAD), .RF_PACK(`TB_RFPACK)) dut (
         .clk(clk), .resetn(resetn),
         .noc_in_data(in_data), .noc_in_valid(in_valid), .noc_in_busy(in_busy),
         .noc_out_data(out_data), .noc_out_valid(out_valid),

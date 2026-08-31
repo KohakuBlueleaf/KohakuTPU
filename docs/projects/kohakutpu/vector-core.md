@@ -555,6 +555,34 @@ below the 300 floor — so that copy stays in LUTRAM. A whole-module primitive
 parameter hid the fact that only one of three consumers could not afford the
 trade; splitting it kept two thirds of the area win for one eighth of the memory.
 
+**What the block copies cost, measured** (`vec_core` out of context,
+`scripts/tcl/ooc_mod.tcl`, 3.333 ns, `xcvu13p-fhgb2104-2L-e`, reports in
+`build/ooc/vec_*`): one RAMB18 per lane per copy — 32 RAMB18, 16 tiles per
+core — and that is the floor the architecture allows. A 24 × 128 array fills 7%
+of its RAMB18, but the two copies cannot share a primitive (a RAMB36's two ports
+are 36 bits each and the write takes one), and packing lanes into one word is
+bounded by the RAM's 9-bit write-enable groups. Two shape knobs on `vec_regfile`
+are kept because both were built and measured, and both leave the count where it
+is:
+
+| `vec_regfile` | copies b + c | LUT | tiles | WNS |
+|---|---|---|---|---|
+| `PAD_W` 24, `LANES` 1 — default | 32 RAMB18 | 29,140 | 16 | +0.797 |
+| `PAD_W` 36 (names the RAMB18's 36 × 512 word) | 32 RAMB18 | 29,140 | 16 | +0.797 |
+| `LANES` 2 (two 27-bit lanes per 54-bit `kohaku_sdpram_be` word, 9-bit strobes) | 16 RAMB36 | 29,200 | 16 | +0.797 |
+
+They reach the core as `vec_core` / `vec_cu` `RF_PAD` and `RF_PACK`, and the
+generated ship as `VEC_RF_PAD` / `VEC_RF_PACK`.
+
+**The coefficient ROM is where the core's block RAM went.** Each ALU holds the
+same 256-entry table of three 22-bit coefficients (§4.2). Emitted as three
+`rom_style = "block"` registers it costs 3 RAMB18 per ALU — 48 per core, 24
+tiles, more than the register file. `scripts/py/vec_tables.py` now emits it as
+one 66-bit word `{c2, c1, c0}` with the three outputs sliced from it, which is
+**one RAMB36 per ALU, 16 tiles per core, at the same 29,140 LUT and the same
+slack**; `--split` reproduces the three-ROM form. With it the core is 36.5 tiles:
+16 register file, 16 tables, 4 L1, 0.5 instruction memory.
+
 **L1 is a scratchpad, not a cache.** No tags: the access pattern is strided
 streaming produced by the address generator, so every address is known in
 advance, and tags would buy nothing and cost a lookup in the load path. It is

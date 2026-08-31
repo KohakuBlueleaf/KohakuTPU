@@ -63,6 +63,35 @@ module vec_regfile_tb;
     end
     endgenerate
 
+    // ---------------- the same sixteen, padded to 36 and packed two per word ----
+    // Both shapes must be indistinguishable from the flat one at the ports:
+    // same data back, and lane s's write enable touching lane s alone.
+    wire [383:0] p_qa, p_qb, p_qc;
+    wire [383:0] k_qa, k_qb, k_qc;
+
+    generate
+    for (s = 0; s < 16; s = s + 1) begin : g_pad
+        vec_regfile #(.AW(7), .DW(24), .PRIM("distributed"), .PAD_W(36)) u_rf (
+            .clk(clk),
+            .wr_en(m_we[s]), .wr_addr(m_wa), .wr_data(m_wd[s*24 +: 24]),
+            .ra_addr(m_ra), .rb_addr(m_ra), .rc_addr(m_ra),
+            .ra_data(p_qa[s*24 +: 24]),
+            .rb_data(p_qb[s*24 +: 24]),
+            .rc_data(p_qc[s*24 +: 24])
+        );
+    end
+    for (s = 0; s < 8; s = s + 1) begin : g_pack
+        vec_regfile #(.AW(7), .DW(24), .PRIM("distributed"), .LANES(2)) u_rf (
+            .clk(clk),
+            .wr_en(m_we[2*s +: 2]), .wr_addr(m_wa), .wr_data(m_wd[s*48 +: 48]),
+            .ra_addr(m_ra), .rb_addr(m_ra), .rc_addr(m_ra),
+            .ra_data(k_qa[s*48 +: 48]),
+            .rb_data(k_qb[s*48 +: 48]),
+            .rc_data(k_qc[s*48 +: 48])
+        );
+    end
+    endgenerate
+
     integer i;
     reg [6:0] aw;
     reg [3:0] ix;
@@ -119,6 +148,16 @@ module vec_regfile_tb;
                     "packed A", i);
                 chk(m_qc[i*24 +: 24], 24'h020000 + {16'd0, aw[3:0], ix},
                     "packed C", i);
+                chk(p_qb[i*24 +: 24], 24'h020000 + {16'd0, aw[3:0], ix},
+                    "pad36 B", i);
+                chk(p_qc[i*24 +: 24], 24'h020000 + {16'd0, aw[3:0], ix},
+                    "pad36 C", i);
+                chk(k_qa[i*24 +: 24], 24'h020000 + {16'd0, aw[3:0], ix},
+                    "pack2 A", i);
+                chk(k_qb[i*24 +: 24], 24'h020000 + {16'd0, aw[3:0], ix},
+                    "pack2 B", i);
+                chk(k_qc[i*24 +: 24], 24'h020000 + {16'd0, aw[3:0], ix},
+                    "pack2 C", i);
             end
         end
 
@@ -137,7 +176,30 @@ module vec_regfile_tb;
             chk(m_qa[i*24 +: 24],
                 (i < 8) ? 24'h0AAAAA : (24'h020000 + {20'd0, ix}),
                 "selective write", i);
+            chk(p_qb[i*24 +: 24],
+                (i < 8) ? 24'h0AAAAA : (24'h020000 + {20'd0, ix}),
+                "selective write pad36", i);
+            chk(k_qb[i*24 +: 24],
+                (i < 8) ? 24'h0AAAAA : (24'h020000 + {20'd0, ix}),
+                "selective write pack2", i);
         end
+
+        $display("--- 4. a packed pair: the ODD lane alone ---");
+        // Lane 9 written, lane 8 (its word-mate) untouched: the strobe groups
+        // split the word where the lanes meet, not somewhere inside one.
+        for (i = 0; i < 16; i = i + 1) begin
+            m_wd[i*24 +: 24] = 24'h055555;
+        end
+        @(negedge clk);
+        m_we = 16'h0200; m_wa = 7'd0;
+        @(negedge clk); m_we = 16'd0;
+        @(negedge clk); m_ra = 7'd0;
+        @(negedge clk);
+        chk(k_qb[8*24 +: 24], 24'h020000 + {20'd0, 4'd8}, "pack2 lane 8 kept", 8);
+        chk(k_qb[9*24 +: 24], 24'h055555, "pack2 lane 9 written", 9);
+        chk(k_qc[9*24 +: 24], 24'h055555, "pack2 lane 9 written C", 9);
+        chk(k_qa[9*24 +: 24], 24'h055555, "pack2 lane 9 written A", 9);
+        chk(m_qa[8*24 +: 24], 24'h020000 + {20'd0, 4'd8}, "flat lane 8 kept", 8);
 
         $display("========================================");
         if (errors == 0) begin

@@ -306,7 +306,6 @@ def emit(
     l2_vec=False,
     tokens=None,
     split_reset=False,
-    cpu_rv64=False,
 ):
     # ALWAYS SINGLE. MAG converges its internal requesters onto one AXI master
     # itself, so there is no packed bus left to fan out.
@@ -324,10 +323,11 @@ def emit(
     for y in range(1, m.ny + 1):
         for x in range(1, m.nx + 1):
             e.body.append(
-                # Depth 512, not 32: a 288-bit port is 4 RAMB36 at any depth to
-                # 512. Measured per router: 20 BRAM either way, -1.8 MHz.
-                f"    NoCRouter #(.DATA_WIDTH(FW), .FIFO_DEPTH(512),\n"
-                f'                .MEMORY_TYPE("block"), .POS_WIDTH(PW),\n'
+                # ROUTER_DEPTH/ROUTER_MEM are top parameters: 512/"block" ships
+                # (4 RAMB36 per 288-bit port at any depth to 512), 32/"distributed"
+                # is the BRAM-free form at +710 LUT per router (noc_router.v).
+                f"    NoCRouter #(.DATA_WIDTH(FW), .FIFO_DEPTH(ROUTER_DEPTH),\n"
+                f"                .MEMORY_TYPE(ROUTER_MEM), .POS_WIDTH(PW),\n"
                 f"                .POS_X({x}), .POS_Y({y}), .GRID_LO(1),\n"
                 f"                .GRID_HI({max(m.nx, m.ny)}), .GRID_X_HI({m.nx}),\n"
                 f"                .GRID_Y_HI({m.ny})) r{x}_{y} (\n"
@@ -383,6 +383,7 @@ def emit(
     )
     il = (
         ",\n          .ILINK(1), .MESH_ID(MESH_ID), .LINK_W(LKW), .TUSER_W(LKU)"
+        ", .IL_CN_W(LKC)"
         if ilink
         else ""
     )
@@ -395,31 +396,23 @@ def emit(
             ",\n          .STAGE(1), .STAGE_BANKS(L2_MAG_BANKS)"
             ",\n          .STAGE_ENTRIES(L2_MAG_ENTRIES), .STAGE_AT_PORT(1)"
         )
-    # The RV64 system core in place of the RV32 controller: same mover and
-    # transform slot, its own imem/spad/L1 and the host-load window below.
-    if cpu_rv64:
-        extra += (
-            ",\n          .CPU_RV64(1), .PE_IMEM(8192), .PE_SPAD(4096)"
-            ",\n          .PE_L1_LINES(64)"
-        )
-        if not l2_mag:
-            extra += ",\n          .STAGE(1), .STAGE_AT_PORT(1)"
+    # The RV64 complex keeps its page tables and mailbox in staging, so a node
+    # always has the store even when no L2 was asked for.
+    if not l2_mag:
+        extra += ",\n          .STAGE(1), .STAGE_AT_PORT(1)"
     clks = (
         ",\n        .dram_aclk(dram_aclk), .dram_aresetn(dram_aresetn)"
         if single
         else ""
     )
     # The processor is part of the node and answers at (0,0); it costs no
-    # attach point and there is nothing here to select. RV64 also brings the
-    # host-load window hs_*, surfaced at the top for a loader to drive.
-    hs_conn = (
-        """
+    # attach point and there is nothing here to select. Its direct host window
+    # hs_* is surfaced at the top for a bench; a card uses the load slot at
+    # +0x8000 of S_AXI_CTRL instead.
+    hs_conn = """
         .hs_addr(hs_addr), .hs_wr(hs_wr), .hs_wdata(hs_wdata), .hs_wstrb(hs_wstrb),
         .hs_rd(hs_rd), .hs_rdata(hs_rdata),
         .hs_console_we(hs_console_we), .hs_console(hs_console),"""
-        if cpu_rv64
-        else ""
-    )
     cp = hs_conn + """
         .pe_halt_req(1'b0), .pe_status(pe_status), .pe_busy(pe_busy),"""
     e.body.append(
@@ -528,7 +521,8 @@ def emit(
              .MEM_X({mmx}), .MEM_Y({mmy}), .MODEL(MODEL),
              .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
              .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
-             .L1_DEPTH(L1_DEPTH), .L1_PRIM(VEC_PRIM)) u_vec{i} (
+             .L1_DEPTH(L1_DEPTH), .L1_PRIM(VEC_PRIM),
+             .RF_PAD(VEC_RF_PAD), .RF_PACK(VEC_RF_PACK)) u_vec{i} (
         .clk(clk), .unit_clk(vec_clk), .resetn({rs_vec}),
         {conn_v},
         .dbg_cycles(vc_cyc[{i}]), .dbg_fault(vc_flt[{i}])
@@ -580,7 +574,6 @@ def emit(
         l2_cu,
         l2_vec,
         split_reset,
-        cpu_rv64,
     )
 
 
@@ -631,19 +624,21 @@ def _mag_master_names(nmag, ilink=False):
     return names
 
 
-# One AXI-Stream per direction per link, named so Vivado infers the interface
-# without an .xci: MAG drives M_AXIS_LINKn and receives S_AXIS_LINKn.
+# One transmit surface per direction per link: the forward wire out, the credit
+# wire back. Plain pins -- there is no ready, so there is no stream to infer.
 LINK_FIELDS = [
-    ("tdata", "LKW", "o"),
-    ("tuser", "LKU", "o"),
-    ("tlast", "1", "o"),
-    ("tvalid", "1", "o"),
-    ("tready", "1", "i"),
+    ("valid", "1", "o"),
+    ("vc", "1", "o"),
+    ("last", "1", "o"),
+    ("flit", "LKW", "o"),
+    ("crd_valid", "1", "i"),
+    ("crd_vc", "1", "i"),
+    ("crd_n", "LKC", "i"),
 ]
 
 
 def link_names(nlink=2):
-    return [(f"M_AXIS_LINK{i}", f"S_AXIS_LINK{i}") for i in range(nlink)]
+    return [(f"LINK{i}_OUT", f"LINK{i}_IN") for i in range(nlink)]
 
 
 def link_decls(ilink):
@@ -666,20 +661,13 @@ def link_conn(ilink):
     """The `.linkN_*` connections on the mag instance, or tie-offs at ILINK=0."""
     if not ilink:
         return ""
+    # The field's direction decides how the port is DECLARED, never which name
+    # it joins: the out surface is always mst, the in surface always slv.
     out = []
     for i, (mst, slv) in enumerate(link_names()):
-        out.append(
-            f"        .link{i}_out_tdata({mst}_tdata), "
-            f".link{i}_out_tuser({mst}_tuser),\n"
-            f"        .link{i}_out_tlast({mst}_tlast), "
-            f".link{i}_out_tvalid({mst}_tvalid),\n"
-            f"        .link{i}_out_tready({mst}_tready),\n"
-            f"        .link{i}_in_tdata({slv}_tdata), "
-            f".link{i}_in_tuser({slv}_tuser),\n"
-            f"        .link{i}_in_tlast({slv}_tlast), "
-            f".link{i}_in_tvalid({slv}_tvalid),\n"
-            f"        .link{i}_in_tready({slv}_tready),"
-        )
+        for f, _, _d in LINK_FIELDS:
+            out.append(f"        .link{i}_out_{f}({mst}_{f}),")
+            out.append(f"        .link{i}_in_{f}({slv}_{f}),")
     return "\n".join(out)
 
 
@@ -832,7 +820,6 @@ def render(
     l2_cu=False,
     l2_vec=False,
     split_reset=False,
-    cpu_rv64=False,
 ):
     # Only axi_aresetn itself crosses domains; each domain releases locally,
     # the NoC fabric included (its BD reset is the sysnode clock's in v8).
@@ -864,7 +851,7 @@ def render(
     picture = "\n".join("//   " + " ".join(r) for r in m.rows)
     ncu, nvec = len(m.cus), len(m.vecs)
     mnames = master_names(len(m.mags), ilink, single)
-    lnames = [n for pair in link_names() for n in pair] if ilink else []
+    lnames = []
     # M_AXI_DRAM belongs to dram_aclk. Naming it here too makes the interface
     # claimed by two clocks and Vivado cannot infer CLK_DOMAIN: BD 41-1732.
     axi_masters = [] if single else mnames
@@ -881,6 +868,7 @@ def render(
     // is mag.v's TUSER_W.
     parameter integer LKW      = 288,
     parameter integer LKU      = 96,
+    parameter integer LKC      = 4,
     // Only the RESET value -- IL_MESH is writable, so the four instances of
     // this module differ by this parameter alone.
     parameter integer MESH_ID  = {mesh_id},
@@ -891,12 +879,11 @@ def render(
     LINK_HEADER = (
         """
 //
-// INTERLINK ON. Two full-duplex links: M_AXIS_LINKn out, S_AXIS_LINKn in.
+// INTERLINK ON. Two full-duplex transmit surfaces: LINKn_OUT out, LINKn_IN in.
 // link0 is the neighbour one position DOWN the chain and link1 one position UP
-// (mag_switch.v CH_SEQ), so one end's link1 faces the other's link0.
-// TREADY MUST NOT CROSS AN SLR. The far end has to be another mesh's
-// S_AXIS_LINK, whose tready is tied high; a real slave there reintroduces the
-// combinational SLR crossing mag_link.v exists to avoid."""
+// (mag_switch.v CH_SEQ), so one end's link1 faces the other's link0. The far
+// end must be another mesh's LINKn_IN: flit wire forward, credit wire back,
+// nothing combinational either way, which is what the SLL crossing needs."""
         if ilink
         else ""
     )
@@ -916,7 +903,7 @@ def render(
     L2_PARAMS = ""
     if l2_mag:
         L2_PARAMS += (
-            "    parameter integer L2_MAG_BANKS   = 4,      // 64 URAM, 2 MB\n"
+            "    parameter integer L2_MAG_BANKS   = 4,      // 4 x 16 single URAM, 2 MB\n"
             "    parameter integer L2_MAG_ENTRIES = 16384,\n"
         )
     if l2_cu:
@@ -954,8 +941,9 @@ def render(
         if single
         else ""
     )
-    # The RV64 host-load window, surfaced as a bare parallel bus. On the card an
-    # AXI->hs adapter on a station Lite port drives it; a bench drives it directly.
+    # The RV64 host window, surfaced as a bare parallel bus for a bench. A card
+    # reaches the same window through the load slot at +0x8000 of S_AXI_CTRL
+    # and leaves these tied off.
     HS_PORTS = (
         "    input  wire [31:0]  hs_addr,\n"
         "    input  wire         hs_wr,\n"
@@ -965,8 +953,6 @@ def render(
         "    output wire [63:0]  hs_rdata,\n"
         "    output wire         hs_console_we,\n"
         "    output wire [7:0]   hs_console,\n"
-        if cpu_rv64
-        else ""
     )
     return f"""// {name} -- GENERATED by scripts/py/gen_mesh.py. Do not edit by hand.
 //
@@ -1021,6 +1007,14 @@ module {name} #(
     // Measured on noc_cu_base: 8 BRAM either way, +34 LUT, 574 -> 567 MHz.
     parameter integer INST_DEPTH = 512,
     parameter integer RECV_DEPTH = 512,
+    // Router in-port FIFOs. 512/"block" ships: 4 RAMB36 per 288-bit port at
+    // any depth to 512. 32/"distributed" is the module default -- no BRAM,
+    // measured +710 LUT per router (noc_router.v). A per-mesh policy knob.
+    parameter integer ROUTER_DEPTH = 512,
+    parameter         ROUTER_MEM   = "block",
+    // Vector register file b/c copies (vec_regfile PAD_W / LANES).
+    parameter integer VEC_RF_PAD   = 24,
+    parameter integer VEC_RF_PACK  = 1,
     // Compute units on their own clocks, behind one noc_local_cdc per
     // direction. ONE RATE PER TYPE, not per instance: every cluster takes
     // `mat_clk` and every vector core `vec_clk`. THE NoC FABRIC STAYS ONE
@@ -1221,12 +1215,6 @@ def main():
         "release) each for the MAG, matmul and vector domains; only "
         "axi_aresetn itself crosses domains",
     )
-    ap.add_argument(
-        "--cpu-rv64",
-        action="store_true",
-        help="the RV64 system core (CPU_RV64=1) in place of the RV32 "
-        "controller, with its host-load window hs_* surfaced at the top",
-    )
     args = ap.parse_args()
 
     if args.mesh_id and not args.ilink:
@@ -1264,7 +1252,6 @@ def main():
             args.l2_vec,
             tokens,
             args.split_reset,
-            args.cpu_rv64,
         )
     except MeshError as exc:
         sys.exit(f"gen_mesh: {exc}")

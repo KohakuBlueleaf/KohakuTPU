@@ -57,6 +57,14 @@ module ktpu_ship_2x2 #(
     // Measured on noc_cu_base: 8 BRAM either way, +34 LUT, 574 -> 567 MHz.
     parameter integer INST_DEPTH = 512,
     parameter integer RECV_DEPTH = 512,
+    // Router in-port FIFOs. 512/"block" ships: 4 RAMB36 per 288-bit port at
+    // any depth to 512. 32/"distributed" is the module default -- no BRAM,
+    // measured +710 LUT per router (noc_router.v). A per-mesh policy knob.
+    parameter integer ROUTER_DEPTH = 512,
+    parameter         ROUTER_MEM   = "block",
+    // Vector register file b/c copies (vec_regfile PAD_W / LANES).
+    parameter integer VEC_RF_PAD   = 24,
+    parameter integer VEC_RF_PACK  = 1,
     // Compute units on their own clocks, behind one noc_local_cdc per
     // direction. ONE RATE PER TYPE, not per instance: every cluster takes
     // `mat_clk` and every vector core `vec_clk`. THE NoC FABRIC STAYS ONE
@@ -95,6 +103,14 @@ module ktpu_ship_2x2 #(
     (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 dram_aresetn RST" *)
     (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
     input  wire dram_aresetn,
+    input  wire [31:0]  hs_addr,
+    input  wire         hs_wr,
+    input  wire [63:0]  hs_wdata,
+    input  wire [7:0]   hs_wstrb,
+    input  wire         hs_rd,
+    output wire [63:0]  hs_rdata,
+    output wire         hs_console_we,
+    output wire [7:0]   hs_console,
 
     input  wire [IDW-1:0]   S_AXI_MEM_awid,
     input  wire [AW-1:0]    S_AXI_MEM_awaddr,
@@ -247,8 +263,8 @@ module ktpu_ship_2x2 #(
     wire [FW-1:0] l015_L2_2_fd; wire l015_L2_2_fv; wire l015_L2_2_fb;
     wire [FW-1:0] l015_L2_2_rd; wire l015_L2_2_rv; wire l015_L2_2_rb;
 
-    NoCRouter #(.DATA_WIDTH(FW), .FIFO_DEPTH(512),
-                .MEMORY_TYPE("block"), .POS_WIDTH(PW),
+    NoCRouter #(.DATA_WIDTH(FW), .FIFO_DEPTH(ROUTER_DEPTH),
+                .MEMORY_TYPE(ROUTER_MEM), .POS_WIDTH(PW),
                 .POS_X(1), .POS_Y(1), .GRID_LO(1),
                 .GRID_HI(2), .GRID_X_HI(2),
                 .GRID_Y_HI(2)) r1_1 (
@@ -264,8 +280,8 @@ module ktpu_ship_2x2 #(
         .local_in_data(l004_L1_1_fd),  .local_in_valid(l004_L1_1_fv),  .local_in_busy(l004_L1_1_fb),
         .local_out_data(l004_L1_1_rd), .local_out_valid(l004_L1_1_rv), .local_out_busy(l004_L1_1_rb)
     );
-    NoCRouter #(.DATA_WIDTH(FW), .FIFO_DEPTH(512),
-                .MEMORY_TYPE("block"), .POS_WIDTH(PW),
+    NoCRouter #(.DATA_WIDTH(FW), .FIFO_DEPTH(ROUTER_DEPTH),
+                .MEMORY_TYPE(ROUTER_MEM), .POS_WIDTH(PW),
                 .POS_X(2), .POS_Y(1), .GRID_LO(1),
                 .GRID_HI(2), .GRID_X_HI(2),
                 .GRID_Y_HI(2)) r2_1 (
@@ -281,8 +297,8 @@ module ktpu_ship_2x2 #(
         .local_in_data(l008_L2_1_fd),  .local_in_valid(l008_L2_1_fv),  .local_in_busy(l008_L2_1_fb),
         .local_out_data(l008_L2_1_rd), .local_out_valid(l008_L2_1_rv), .local_out_busy(l008_L2_1_rb)
     );
-    NoCRouter #(.DATA_WIDTH(FW), .FIFO_DEPTH(512),
-                .MEMORY_TYPE("block"), .POS_WIDTH(PW),
+    NoCRouter #(.DATA_WIDTH(FW), .FIFO_DEPTH(ROUTER_DEPTH),
+                .MEMORY_TYPE(ROUTER_MEM), .POS_WIDTH(PW),
                 .POS_X(1), .POS_Y(2), .GRID_LO(1),
                 .GRID_HI(2), .GRID_X_HI(2),
                 .GRID_Y_HI(2)) r1_2 (
@@ -298,8 +314,8 @@ module ktpu_ship_2x2 #(
         .local_in_data(l012_L1_2_fd),  .local_in_valid(l012_L1_2_fv),  .local_in_busy(l012_L1_2_fb),
         .local_out_data(l012_L1_2_rd), .local_out_valid(l012_L1_2_rv), .local_out_busy(l012_L1_2_rb)
     );
-    NoCRouter #(.DATA_WIDTH(FW), .FIFO_DEPTH(512),
-                .MEMORY_TYPE("block"), .POS_WIDTH(PW),
+    NoCRouter #(.DATA_WIDTH(FW), .FIFO_DEPTH(ROUTER_DEPTH),
+                .MEMORY_TYPE(ROUTER_MEM), .POS_WIDTH(PW),
                 .POS_X(2), .POS_Y(2), .GRID_LO(1),
                 .GRID_HI(2), .GRID_X_HI(2),
                 .GRID_Y_HI(2)) r2_2 (
@@ -361,7 +377,8 @@ module ktpu_ship_2x2 #(
     sysnode #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(AW),
           .ID_W(IDW), .PORTS(2), .MEM_X(0), .MEM_Y(1), .MEM_X1(0), .MEM_Y1(2),
           .GRID_LO(1), .GRID_HI(2), .STAGE_FLITS(128),
-          .MW(MW), .DRAM_CDC(DRAM_CDC)) u_mag (
+          .MW(MW), .DRAM_CDC(DRAM_CDC),
+          .STAGE(1), .STAGE_AT_PORT(1)) u_mag (
         .clk(mag_clk_i), .resetn(resetn),
         .dram_aclk(dram_aclk), .dram_aresetn(dram_aresetn),
         .sm_awid(S_AXI_MEM_awid), .sm_awaddr(S_AXI_MEM_awaddr),
@@ -421,6 +438,9 @@ module ktpu_ship_2x2 #(
         .dram_rlast(M_AXI_DRAM_rlast),
         .dram_rvalid(M_AXI_DRAM_rvalid),
         .dram_rready(M_AXI_DRAM_rready),
+        .hs_addr(hs_addr), .hs_wr(hs_wr), .hs_wdata(hs_wdata), .hs_wstrb(hs_wstrb),
+        .hs_rd(hs_rd), .hs_rdata(hs_rdata),
+        .hs_console_we(hs_console_we), .hs_console(hs_console),
         .pe_halt_req(1'b0), .pe_status(pe_status), .pe_busy(pe_busy),
         .mem_in_data(mag_i_d), .mem_in_valid(mag_i_v), .mem_in_busy(mag_i_b),
         .mem_out_data(mag_o_d), .mem_out_valid(mag_o_v), .mem_out_busy(mag_o_b),
@@ -471,7 +491,8 @@ module ktpu_ship_2x2 #(
              .MEM_X(0), .MEM_Y(1), .MODEL(MODEL),
              .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
              .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
-             .L1_DEPTH(L1_DEPTH), .L1_PRIM(VEC_PRIM)) u_vec0 (
+             .L1_DEPTH(L1_DEPTH), .L1_PRIM(VEC_PRIM),
+             .RF_PAD(VEC_RF_PAD), .RF_PACK(VEC_RF_PACK)) u_vec0 (
         .clk(clk), .unit_clk(vec_clk), .resetn(resetn),
         .noc_out_data(l002_v1_0_fd), .noc_out_valid(l002_v1_0_fv), .noc_out_busy(l002_v1_0_fb), .noc_in_data(l002_v1_0_rd), .noc_in_valid(l002_v1_0_rv), .noc_in_busy(l002_v1_0_rb),
         .dbg_cycles(vc_cyc[0]), .dbg_fault(vc_flt[0])
@@ -480,7 +501,8 @@ module ktpu_ship_2x2 #(
              .MEM_X(0), .MEM_Y(1), .MODEL(MODEL),
              .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
              .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
-             .L1_DEPTH(L1_DEPTH), .L1_PRIM(VEC_PRIM)) u_vec1 (
+             .L1_DEPTH(L1_DEPTH), .L1_PRIM(VEC_PRIM),
+             .RF_PAD(VEC_RF_PAD), .RF_PACK(VEC_RF_PACK)) u_vec1 (
         .clk(clk), .unit_clk(vec_clk), .resetn(resetn),
         .noc_out_data(l006_v2_0_fd), .noc_out_valid(l006_v2_0_fv), .noc_out_busy(l006_v2_0_fb), .noc_in_data(l006_v2_0_rd), .noc_in_valid(l006_v2_0_rv), .noc_in_busy(l006_v2_0_rb),
         .dbg_cycles(vc_cyc[1]), .dbg_fault(vc_flt[1])
@@ -489,7 +511,8 @@ module ktpu_ship_2x2 #(
              .MEM_X(0), .MEM_Y(1), .MODEL(MODEL),
              .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
              .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
-             .L1_DEPTH(L1_DEPTH), .L1_PRIM(VEC_PRIM)) u_vec2 (
+             .L1_DEPTH(L1_DEPTH), .L1_PRIM(VEC_PRIM),
+             .RF_PAD(VEC_RF_PAD), .RF_PACK(VEC_RF_PACK)) u_vec2 (
         .clk(clk), .unit_clk(vec_clk), .resetn(resetn),
         .noc_out_data(l005_h2_1_rd), .noc_out_valid(l005_h2_1_rv), .noc_out_busy(l005_h2_1_rb), .noc_in_data(l005_h2_1_fd), .noc_in_valid(l005_h2_1_fv), .noc_in_busy(l005_h2_1_fb),
         .dbg_cycles(vc_cyc[2]), .dbg_fault(vc_flt[2])
@@ -498,7 +521,8 @@ module ktpu_ship_2x2 #(
              .MEM_X(0), .MEM_Y(2), .MODEL(MODEL),
              .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
              .UNIT_CDC(UNIT_CDC), .CDC_DEPTH(CDC_DEPTH),
-             .L1_DEPTH(L1_DEPTH), .L1_PRIM(VEC_PRIM)) u_vec3 (
+             .L1_DEPTH(L1_DEPTH), .L1_PRIM(VEC_PRIM),
+             .RF_PAD(VEC_RF_PAD), .RF_PACK(VEC_RF_PACK)) u_vec3 (
         .clk(clk), .unit_clk(vec_clk), .resetn(resetn),
         .noc_out_data(l013_h2_2_rd), .noc_out_valid(l013_h2_2_rv), .noc_out_busy(l013_h2_2_rb), .noc_in_data(l013_h2_2_fd), .noc_in_valid(l013_h2_2_fv), .noc_in_busy(l013_h2_2_fb),
         .dbg_cycles(vc_cyc[3]), .dbg_fault(vc_flt[3])

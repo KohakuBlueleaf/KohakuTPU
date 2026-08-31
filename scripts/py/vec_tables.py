@@ -2,6 +2,7 @@
 
     python scripts/py/vec_tables.py            # measure only, print the report
     python scripts/py/vec_tables.py --write    # regenerate src/kohakutpu/vector/vec_tables.v
+    python scripts/py/vec_tables.py --write --split   # the three-ROM form, for an A/B
 
 Four seeds -- exp2, log2, inv, rsqrt -- each a quadratic minimax-ish polynomial
 per segment. See docs/compute/vector-core.md s4.
@@ -190,7 +191,7 @@ def report(err):
         )
 
 
-def emit(tab, err):
+def emit(tab, err, split=False):
     L = []
     L.append("// Transcendental coefficient ROMs for the vector ALU.")
     L.append("//")
@@ -246,11 +247,26 @@ def emit(tab, err):
         "    // vec_alu drops its own u_d_ix stage to pay for it -- the address was"
     )
     L.append("    // already registered, so this is a register MOVE and cycle 3 is")
-    L.append("    // still when c0/c1/c2 land. 3,568 LUT per core -> 16 RAMB36.")
-    L.append(f'    (* rom_style = "block" *) output reg signed [{CW-1}:0] c0,')
-    L.append(f'    (* rom_style = "block" *) output reg signed [{CW-1}:0] c1,')
-    L.append(f'    (* rom_style = "block" *) output reg signed [{CW-1}:0] c2')
-    L.append(");")
+    L.append("    // still when c0/c1/c2 land. As LUTs this was 3,568 per core.")
+    if split:
+        L.append("    // Three ROMs: routed v7 spent 3 RAMB18 per ALU on them.")
+        L.append(f'    (* rom_style = "block" *) output reg signed [{CW-1}:0] c0,')
+        L.append(f'    (* rom_style = "block" *) output reg signed [{CW-1}:0] c1,')
+        L.append(f'    (* rom_style = "block" *) output reg signed [{CW-1}:0] c2')
+        L.append(");")
+    else:
+        L.append(f"    output wire signed [{CW-1}:0] c0,")
+        L.append(f"    output wire signed [{CW-1}:0] c1,")
+        L.append(f"    output wire signed [{CW-1}:0] c2")
+        L.append(");")
+        L.append(
+            f"    // ONE {3 * CW}-bit word {{c2, c1, c0}}: three 22-bit ROMs were three"
+        )
+        L.append("    // RAMB18 per ALU (routed v7); one word is one RAMB36-class ROM.")
+        L.append(f'    (* rom_style = "block" *) reg [{3 * CW - 1}:0] w;')
+        L.append(f"    assign c0 = w[{CW - 1}:0];")
+        L.append(f"    assign c1 = w[{2 * CW - 1}:{CW}];")
+        L.append(f"    assign c2 = w[{3 * CW - 1}:{2 * CW}];")
     L.append("    // One flat case over {fsel, idx}, constant-indexed throughout.")
     L.append("    // NON-BLOCKING: u_d_c1 in vec_alu registers c1 on the same edge, so")
     L.append(
@@ -258,18 +274,32 @@ def emit(tab, err):
     )
     L.append("    always @(posedge clk) begin")
     L.append("        case ({fsel, idx})")
+    cmask = (1 << CW) - 1
+    # Case items sit one level inside `case` (vstyle F5).
+    ind = " " * 12
     for fsel in (F_EXP2, F_LOG2, F_INV, F_RSQRT):
         nidx = 2 * NSEG if fsel == F_RSQRT else NSEG
-        L.append(f"        // ---- {FNAMES[fsel]} ----")
+        L.append(f"{ind}// ---- {FNAMES[fsel]} ----")
         for idx6 in range(nidx):
             C0, C1, C2 = tab[(fsel, idx6)]
             a = (fsel << 6) | idx6
-            f = [f"-{CW}'sd{-v}" if v < 0 else f"{CW}'sd{v}" for v in (C0, C1, C2)]
-            L.append(
-                f"        8'd{a:<3}: begin c0 <= {f[0]} ; c1 <= {f[1]} ;"
-                f" c2 <= {f[2]} ; end"
-            )
-    L.append("        default: begin c0 <= 22'sd0 ; c1 <= 22'sd0 ; c2 <= 22'sd0 ; end")
+            if split:
+                f = [f"-{CW}'sd{-v}" if v < 0 else f"{CW}'sd{v}" for v in (C0, C1, C2)]
+                L.append(
+                    f"{ind}8'd{a:<3}: begin c0 <= {f[0]} ; c1 <= {f[1]} ;"
+                    f" c2 <= {f[2]} ; end"
+                )
+            else:
+                # Two's complement hex fields: a signed literal's minus sign
+                # inside a concatenation is legal but reads as a subtraction.
+                h = [f"{CW}'h{(v & cmask):06x}" for v in (C2, C1, C0)]
+                L.append(f"{ind}8'd{a:<3}: begin w <= {{{h[0]}, {h[1]}, {h[2]}}}; end")
+    if split:
+        L.append(
+            f"{ind}default: begin c0 <= 22'sd0 ; c1 <= 22'sd0 ; c2 <= 22'sd0 ; end"
+        )
+    else:
+        L.append(f"{ind}default: begin w <= {3 * CW}'d0; end")
     L.append("        endcase")
     L.append("    end")
     L.append("endmodule")
@@ -281,13 +311,18 @@ def emit(tab, err):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--write", action="store_true", help=f"write {OUT.name}")
+    ap.add_argument(
+        "--split",
+        action="store_true",
+        help="three 22-bit ROMs (3 RAMB18 per ALU) instead of one 66-bit word",
+    )
     args = ap.parse_args()
 
     tab, err = build()
     report(err)
     if args.write:
         OUT.parent.mkdir(parents=True, exist_ok=True)
-        OUT.write_text(emit(tab, err), encoding="utf-8")
+        OUT.write_text(emit(tab, err, split=args.split), encoding="utf-8")
         print(f"\n  wrote {OUT.relative_to(ROOT)}  ({len(tab)} segments)")
     else:
         print("\n  (no --write, nothing regenerated)")

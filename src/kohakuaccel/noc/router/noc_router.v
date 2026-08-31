@@ -1,9 +1,10 @@
 // 5-port mesh router. See docs/noc/spec.md.
 //
-// FIFO_DEPTH only has to cover the backpressure round-trip, so 32 in distributed
-// RAM rather than a URAM-backed 4096: depth does not prevent deadlock (XY routing
-// does), and an SRL32 costs ~1 LUT/bit at any depth up to 32. Measured on
-// xcvu13p: 15 URAM -> 0, for +400 LUT per router.
+// FIFO_DEPTH only has to cover the backpressure round-trip: depth does not
+// prevent deadlock (XY routing does). The generated ship overrides the two
+// storage defaults per mesh (ROUTER_DEPTH / ROUTER_MEM); measured on the 2x2
+// grid at 3.333 ns: 32/"distributed" 3,762 LUT / 0 tiles / 426 MHz,
+// 512/"block" 3,052 LUT / 20 tiles / 386 MHz.
 module NoCRouter #(
     parameter DATA_WIDTH  = 288,
     parameter FIFO_DEPTH  = 32,

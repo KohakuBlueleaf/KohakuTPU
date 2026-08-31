@@ -13,12 +13,11 @@
 // host upload and the memory mover, plus the interlink's landing channel. Merge them with one SmartConnect in the
 // block design; hand-written arbitration here would duplicate it badly.
 //
-// INTERLINK ON. Two full-duplex links: M_AXIS_LINKn out, S_AXIS_LINKn in.
+// INTERLINK ON. Two full-duplex transmit surfaces: LINKn_OUT out, LINKn_IN in.
 // link0 is the neighbour one position DOWN the chain and link1 one position UP
-// (mag_switch.v CH_SEQ), so one end's link1 faces the other's link0.
-// TREADY MUST NOT CROSS AN SLR. The far end has to be another mesh's
-// S_AXIS_LINK, whose tready is tied high; a real slave there reintroduces the
-// combinational SLR crossing mag_link.v exists to avoid.
+// (mag_switch.v CH_SEQ), so one end's link1 faces the other's link0. The far
+// end must be another mesh's LINKn_IN: flit wire forward, credit wire back,
+// nothing combinational either way, which is what the SLL crossing needs.
 
 `default_nettype none
 
@@ -36,6 +35,7 @@ module ktpu_ship_2x2_6c0v_il_pump #(
     // is mag.v's TUSER_W.
     parameter integer LKW      = 288,
     parameter integer LKU      = 96,
+    parameter integer LKC      = 4,
     // Only the RESET value -- IL_MESH is writable, so the four instances of
     // this module differ by this parameter alone.
     parameter integer MESH_ID  = 0,
@@ -71,6 +71,14 @@ module ktpu_ship_2x2_6c0v_il_pump #(
     // Measured on noc_cu_base: 8 BRAM either way, +34 LUT, 574 -> 567 MHz.
     parameter integer INST_DEPTH = 512,
     parameter integer RECV_DEPTH = 512,
+    // Router in-port FIFOs. 512/"block" ships: 4 RAMB36 per 288-bit port at
+    // any depth to 512. 32/"distributed" is the module default -- no BRAM,
+    // measured +710 LUT per router (noc_router.v). A per-mesh policy knob.
+    parameter integer ROUTER_DEPTH = 512,
+    parameter         ROUTER_MEM   = "block",
+    // Vector register file b/c copies (vec_regfile PAD_W / LANES).
+    parameter integer VEC_RF_PAD   = 24,
+    parameter integer VEC_RF_PACK  = 1,
     // Compute units on their own clocks, behind one noc_local_cdc per
     // direction. ONE RATE PER TYPE, not per instance: every cluster takes
     // `mat_clk` and every vector core `vec_clk`. THE NoC FABRIC STAYS ONE
@@ -89,7 +97,7 @@ module ktpu_ship_2x2_6c0v_il_pump #(
     // axi_aclk IS the clock the AXI and AXIS ports run on, which is MAG's: they
     // all live in the system node. noc_clk is the fabric and carries no interface.
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 axi_aclk CLK" *)
-    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF S_AXI_MEM:S_AXI_CTRL:M_AXIS_LINK0:S_AXIS_LINK0:M_AXIS_LINK1:S_AXIS_LINK1, ASSOCIATED_RESET axi_aresetn" *)
+    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF S_AXI_MEM:S_AXI_CTRL, ASSOCIATED_RESET axi_aresetn" *)
     input  wire axi_aclk,
     (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 axi_aresetn RST" *)
     (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
@@ -111,6 +119,14 @@ module ktpu_ship_2x2_6c0v_il_pump #(
     (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 dram_aresetn RST" *)
     (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
     input  wire dram_aresetn,
+    input  wire [31:0]  hs_addr,
+    input  wire         hs_wr,
+    input  wire [63:0]  hs_wdata,
+    input  wire [7:0]   hs_wstrb,
+    input  wire         hs_rd,
+    output wire [63:0]  hs_rdata,
+    output wire         hs_console_we,
+    output wire [7:0]   hs_console,
 
     input  wire [IDW-1:0]   S_AXI_MEM_awid,
     input  wire [AW-1:0]    S_AXI_MEM_awaddr,
@@ -194,28 +210,36 @@ module ktpu_ship_2x2_6c0v_il_pump #(
     input  wire M_AXI_DRAM_rlast,
     input  wire M_AXI_DRAM_rvalid,
     output wire M_AXI_DRAM_rready,
-    // ---- M_AXIS_LINK0 / S_AXIS_LINK0 ----
-    output wire [LKW-1:0] M_AXIS_LINK0_tdata,
-    input  wire [LKW-1:0] S_AXIS_LINK0_tdata,
-    output wire [LKU-1:0] M_AXIS_LINK0_tuser,
-    input  wire [LKU-1:0] S_AXIS_LINK0_tuser,
-    output wire M_AXIS_LINK0_tlast,
-    input  wire S_AXIS_LINK0_tlast,
-    output wire M_AXIS_LINK0_tvalid,
-    input  wire S_AXIS_LINK0_tvalid,
-    input  wire M_AXIS_LINK0_tready,
-    output wire S_AXIS_LINK0_tready,
-    // ---- M_AXIS_LINK1 / S_AXIS_LINK1 ----
-    output wire [LKW-1:0] M_AXIS_LINK1_tdata,
-    input  wire [LKW-1:0] S_AXIS_LINK1_tdata,
-    output wire [LKU-1:0] M_AXIS_LINK1_tuser,
-    input  wire [LKU-1:0] S_AXIS_LINK1_tuser,
-    output wire M_AXIS_LINK1_tlast,
-    input  wire S_AXIS_LINK1_tlast,
-    output wire M_AXIS_LINK1_tvalid,
-    input  wire S_AXIS_LINK1_tvalid,
-    input  wire M_AXIS_LINK1_tready,
-    output wire S_AXIS_LINK1_tready
+    // ---- LINK0_OUT / LINK0_IN ----
+    output wire LINK0_OUT_valid,
+    input  wire LINK0_IN_valid,
+    output wire LINK0_OUT_vc,
+    input  wire LINK0_IN_vc,
+    output wire LINK0_OUT_last,
+    input  wire LINK0_IN_last,
+    output wire [LKW-1:0] LINK0_OUT_flit,
+    input  wire [LKW-1:0] LINK0_IN_flit,
+    input  wire LINK0_OUT_crd_valid,
+    output wire LINK0_IN_crd_valid,
+    input  wire LINK0_OUT_crd_vc,
+    output wire LINK0_IN_crd_vc,
+    input  wire [LKC-1:0] LINK0_OUT_crd_n,
+    output wire [LKC-1:0] LINK0_IN_crd_n,
+    // ---- LINK1_OUT / LINK1_IN ----
+    output wire LINK1_OUT_valid,
+    input  wire LINK1_IN_valid,
+    output wire LINK1_OUT_vc,
+    input  wire LINK1_IN_vc,
+    output wire LINK1_OUT_last,
+    input  wire LINK1_IN_last,
+    output wire [LKW-1:0] LINK1_OUT_flit,
+    input  wire [LKW-1:0] LINK1_IN_flit,
+    input  wire LINK1_OUT_crd_valid,
+    output wire LINK1_IN_crd_valid,
+    input  wire LINK1_OUT_crd_vc,
+    output wire LINK1_IN_crd_vc,
+    input  wire [LKC-1:0] LINK1_OUT_crd_n,
+    output wire [LKC-1:0] LINK1_IN_crd_n
 );
     localparam integer NMAG = 2;
     localparam integer NCU  = 6;
@@ -285,8 +309,8 @@ module ktpu_ship_2x2_6c0v_il_pump #(
     wire [FW-1:0] l015_L2_2_fd; wire l015_L2_2_fv; wire l015_L2_2_fb;
     wire [FW-1:0] l015_L2_2_rd; wire l015_L2_2_rv; wire l015_L2_2_rb;
 
-    NoCRouter #(.DATA_WIDTH(FW), .FIFO_DEPTH(512),
-                .MEMORY_TYPE("block"), .POS_WIDTH(PW),
+    NoCRouter #(.DATA_WIDTH(FW), .FIFO_DEPTH(ROUTER_DEPTH),
+                .MEMORY_TYPE(ROUTER_MEM), .POS_WIDTH(PW),
                 .POS_X(1), .POS_Y(1), .GRID_LO(1),
                 .GRID_HI(2), .GRID_X_HI(2),
                 .GRID_Y_HI(2)) r1_1 (
@@ -302,8 +326,8 @@ module ktpu_ship_2x2_6c0v_il_pump #(
         .local_in_data(l004_L1_1_fd),  .local_in_valid(l004_L1_1_fv),  .local_in_busy(l004_L1_1_fb),
         .local_out_data(l004_L1_1_rd), .local_out_valid(l004_L1_1_rv), .local_out_busy(l004_L1_1_rb)
     );
-    NoCRouter #(.DATA_WIDTH(FW), .FIFO_DEPTH(512),
-                .MEMORY_TYPE("block"), .POS_WIDTH(PW),
+    NoCRouter #(.DATA_WIDTH(FW), .FIFO_DEPTH(ROUTER_DEPTH),
+                .MEMORY_TYPE(ROUTER_MEM), .POS_WIDTH(PW),
                 .POS_X(2), .POS_Y(1), .GRID_LO(1),
                 .GRID_HI(2), .GRID_X_HI(2),
                 .GRID_Y_HI(2)) r2_1 (
@@ -319,8 +343,8 @@ module ktpu_ship_2x2_6c0v_il_pump #(
         .local_in_data(l008_L2_1_fd),  .local_in_valid(l008_L2_1_fv),  .local_in_busy(l008_L2_1_fb),
         .local_out_data(l008_L2_1_rd), .local_out_valid(l008_L2_1_rv), .local_out_busy(l008_L2_1_rb)
     );
-    NoCRouter #(.DATA_WIDTH(FW), .FIFO_DEPTH(512),
-                .MEMORY_TYPE("block"), .POS_WIDTH(PW),
+    NoCRouter #(.DATA_WIDTH(FW), .FIFO_DEPTH(ROUTER_DEPTH),
+                .MEMORY_TYPE(ROUTER_MEM), .POS_WIDTH(PW),
                 .POS_X(1), .POS_Y(2), .GRID_LO(1),
                 .GRID_HI(2), .GRID_X_HI(2),
                 .GRID_Y_HI(2)) r1_2 (
@@ -336,8 +360,8 @@ module ktpu_ship_2x2_6c0v_il_pump #(
         .local_in_data(l012_L1_2_fd),  .local_in_valid(l012_L1_2_fv),  .local_in_busy(l012_L1_2_fb),
         .local_out_data(l012_L1_2_rd), .local_out_valid(l012_L1_2_rv), .local_out_busy(l012_L1_2_rb)
     );
-    NoCRouter #(.DATA_WIDTH(FW), .FIFO_DEPTH(512),
-                .MEMORY_TYPE("block"), .POS_WIDTH(PW),
+    NoCRouter #(.DATA_WIDTH(FW), .FIFO_DEPTH(ROUTER_DEPTH),
+                .MEMORY_TYPE(ROUTER_MEM), .POS_WIDTH(PW),
                 .POS_X(2), .POS_Y(2), .GRID_LO(1),
                 .GRID_HI(2), .GRID_X_HI(2),
                 .GRID_Y_HI(2)) r2_2 (
@@ -399,8 +423,9 @@ module ktpu_ship_2x2_6c0v_il_pump #(
     sysnode #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(AW),
           .ID_W(IDW), .PORTS(2), .MEM_X(0), .MEM_Y(1), .MEM_X1(0), .MEM_Y1(2),
           .GRID_LO(1), .GRID_HI(2), .STAGE_FLITS(128),
-          .ILINK(1), .MESH_ID(MESH_ID), .LINK_W(LKW), .TUSER_W(LKU),
-          .MW(MW), .DRAM_CDC(DRAM_CDC)) u_mag (
+          .ILINK(1), .MESH_ID(MESH_ID), .LINK_W(LKW), .TUSER_W(LKU), .IL_CN_W(LKC),
+          .MW(MW), .DRAM_CDC(DRAM_CDC),
+          .STAGE(1), .STAGE_AT_PORT(1)) u_mag (
         .clk(mag_clk_i), .resetn(resetn),
         .dram_aclk(dram_aclk), .dram_aresetn(dram_aresetn),
         .sm_awid(S_AXI_MEM_awid), .sm_awaddr(S_AXI_MEM_awaddr),
@@ -460,18 +485,37 @@ module ktpu_ship_2x2_6c0v_il_pump #(
         .dram_rlast(M_AXI_DRAM_rlast),
         .dram_rvalid(M_AXI_DRAM_rvalid),
         .dram_rready(M_AXI_DRAM_rready),
-        .link0_out_tdata(M_AXIS_LINK0_tdata), .link0_out_tuser(M_AXIS_LINK0_tuser),
-        .link0_out_tlast(M_AXIS_LINK0_tlast), .link0_out_tvalid(M_AXIS_LINK0_tvalid),
-        .link0_out_tready(M_AXIS_LINK0_tready),
-        .link0_in_tdata(S_AXIS_LINK0_tdata), .link0_in_tuser(S_AXIS_LINK0_tuser),
-        .link0_in_tlast(S_AXIS_LINK0_tlast), .link0_in_tvalid(S_AXIS_LINK0_tvalid),
-        .link0_in_tready(S_AXIS_LINK0_tready),
-        .link1_out_tdata(M_AXIS_LINK1_tdata), .link1_out_tuser(M_AXIS_LINK1_tuser),
-        .link1_out_tlast(M_AXIS_LINK1_tlast), .link1_out_tvalid(M_AXIS_LINK1_tvalid),
-        .link1_out_tready(M_AXIS_LINK1_tready),
-        .link1_in_tdata(S_AXIS_LINK1_tdata), .link1_in_tuser(S_AXIS_LINK1_tuser),
-        .link1_in_tlast(S_AXIS_LINK1_tlast), .link1_in_tvalid(S_AXIS_LINK1_tvalid),
-        .link1_in_tready(S_AXIS_LINK1_tready),
+        .link0_out_valid(LINK0_OUT_valid),
+        .link0_in_valid(LINK0_IN_valid),
+        .link0_out_vc(LINK0_OUT_vc),
+        .link0_in_vc(LINK0_IN_vc),
+        .link0_out_last(LINK0_OUT_last),
+        .link0_in_last(LINK0_IN_last),
+        .link0_out_flit(LINK0_OUT_flit),
+        .link0_in_flit(LINK0_IN_flit),
+        .link0_out_crd_valid(LINK0_OUT_crd_valid),
+        .link0_in_crd_valid(LINK0_IN_crd_valid),
+        .link0_out_crd_vc(LINK0_OUT_crd_vc),
+        .link0_in_crd_vc(LINK0_IN_crd_vc),
+        .link0_out_crd_n(LINK0_OUT_crd_n),
+        .link0_in_crd_n(LINK0_IN_crd_n),
+        .link1_out_valid(LINK1_OUT_valid),
+        .link1_in_valid(LINK1_IN_valid),
+        .link1_out_vc(LINK1_OUT_vc),
+        .link1_in_vc(LINK1_IN_vc),
+        .link1_out_last(LINK1_OUT_last),
+        .link1_in_last(LINK1_IN_last),
+        .link1_out_flit(LINK1_OUT_flit),
+        .link1_in_flit(LINK1_IN_flit),
+        .link1_out_crd_valid(LINK1_OUT_crd_valid),
+        .link1_in_crd_valid(LINK1_IN_crd_valid),
+        .link1_out_crd_vc(LINK1_OUT_crd_vc),
+        .link1_in_crd_vc(LINK1_IN_crd_vc),
+        .link1_out_crd_n(LINK1_OUT_crd_n),
+        .link1_in_crd_n(LINK1_IN_crd_n),
+        .hs_addr(hs_addr), .hs_wr(hs_wr), .hs_wdata(hs_wdata), .hs_wstrb(hs_wstrb),
+        .hs_rd(hs_rd), .hs_rdata(hs_rdata),
+        .hs_console_we(hs_console_we), .hs_console(hs_console),
         .pe_halt_req(1'b0), .pe_status(pe_status), .pe_busy(pe_busy),
         .mem_in_data(mag_i_d), .mem_in_valid(mag_i_v), .mem_in_busy(mag_i_b),
         .mem_out_data(mag_o_d), .mem_out_valid(mag_o_v), .mem_out_busy(mag_o_b),

@@ -13,6 +13,15 @@
 `default_nettype none
 `timescale 1ns/1ps
 
+// -d TB_RFPAD=36 / -d TB_RFPACK=2 run the same checks over the register file's
+// padded and packed shapes (vec_regfile.v).
+`ifndef TB_RFPAD
+`define TB_RFPAD 24
+`endif
+`ifndef TB_RFPACK
+`define TB_RFPACK 1
+`endif
+
 module vec_lanes_tb;
     localparam [1:0] M_FLAT = 2'd0, M_D2 = 2'd1, M_D4 = 2'd2, M_TREE = 2'd3;
     localparam [2:0] R_EXPSUM = 3'd5;
@@ -47,7 +56,7 @@ module vec_lanes_tb;
     wire [23:0]  red_result;
     wire         red_valid, pipe_empty;
 
-    vec_lanes #(.MODEL(1)) dut (
+    vec_lanes #(.MODEL(1), .RF_PAD(`TB_RFPAD), .RF_PACK(`TB_RFPACK)) dut (
         .clk(clk), .rst(rst), .mode(mode),
         .ls_we(ls_we), .ls_waddr(ls_waddr), .ls_wdata(ls_wdata),
         .ls_raddr(ls_raddr), .ls_ractive(ls_ractive), .ls_rdata(ls_rdata),

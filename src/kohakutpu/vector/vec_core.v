@@ -24,6 +24,8 @@ module vec_core #(
     parameter integer L1_DEPTH   = 512,
     parameter         L1_PRIM    = "block",
     parameter         RF_PRIM    = "block",
+    parameter integer RF_PAD     = 24,     // vec_regfile PAD_W (b/c copies)
+    parameter integer RF_PACK    = 1,      // vec_regfile LANES per b/c word
     // 34 UNTIL vec_cu's `c_val`/`ld_data` widen IN THE SAME STEP: a narrow
     // driver leaves [39:34] x, and x in `cbase` makes the whole `addr` sum x.
     parameter integer AW         = 40
@@ -225,7 +227,8 @@ module vec_core #(
     wire [3:0]   wb_vreg;
     wire [127:0] p_bits;
 
-    vec_lanes #(.MODEL(MODEL), .RF_PRIM(RF_PRIM)) u_lanes (
+    vec_lanes #(.MODEL(MODEL), .RF_PRIM(RF_PRIM), .RF_PAD(RF_PAD),
+                .RF_PACK(RF_PACK)) u_lanes (
         .clk(clk), .rst(rst), .mode(vmode),
         .ls_we(lw_we), .ls_waddr(lw_waddr), .ls_wdata(lw_wdata),
         .ls_raddr(lw_raddr), .ls_ractive(lw_ract), .ls_rdata(lw_rdata),

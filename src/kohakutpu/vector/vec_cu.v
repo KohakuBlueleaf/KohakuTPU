@@ -34,6 +34,9 @@ module vec_cu #(
     parameter integer MODEL      = 1,
     parameter integer L1_DEPTH   = 512,
     parameter         L1_PRIM    = "block",
+    // The register file's b/c copies -- vec_regfile PAD_W and LANES.
+    parameter integer RF_PAD     = 24,
+    parameter integer RF_PACK    = 1,
     // A/B'd at RECV_DEPTH=64: -312 LUT, -280 FF, +4 BRAM tiles, and Fmax
     // identical to the digit (WNS 0.335 both arms, same path). The recv data
     // path is nowhere near critical here -- unlike the register file's port a.
@@ -219,7 +222,8 @@ module vec_cu #(
     wire [7:0]  nd_txn  = nd_rem ? nd_fin : 8'h00;
     wire [2:0]  nd_rsvd = nd_rem ? {1'b1, nd_mesh} : 3'b000;
 
-    vec_core #(.MODEL(MODEL), .L1_DEPTH(L1_DEPTH), .L1_PRIM(L1_PRIM)) u_core (
+    vec_core #(.MODEL(MODEL), .L1_DEPTH(L1_DEPTH), .L1_PRIM(L1_PRIM),
+               .RF_PAD(RF_PAD), .RF_PACK(RF_PACK)) u_core (
         .clk(u_clk), .rst(!u_resetn),
         .ld_en(ld_en), .ld_kind(ld_kind), .ld_addr(ld_addr), .ld_data(ld_data),
         .start(start), .start_pc(start_pc),

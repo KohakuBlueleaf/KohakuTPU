@@ -88,8 +88,16 @@ top is where they take effect, and explained in
 | clocking the system node separately | breaks the combinational path from the node's flow control into a router's, at the cost of the same crossing FIFO per direction. The FIFO's flags stay registered even when both sides are driven from one clock |
 | per-domain reset entry | each domain takes the top-level reset as an asynchronous assert with a synchronous release at its own clock. The fabric is exempt, because the reset block feeding it already releases on the fabric clock |
 
-None of the three changes the mesh picture, the address map or anything a
-program can observe. All three change the netlist, so a measurement that does
+Two more decide only where storage lands, and are top parameters for the same
+reason — a block design sets them per mesh:
+
+| Parameter | What it changes |
+|---|---|
+| `ROUTER_DEPTH`, `ROUTER_MEM` (512, `"block"`) | every router's in-port flit buffers: 20 block-RAM tiles per router, or none at 32 / `"distributed"` for +710 LUT per router ([noc/router-circuit](../noc/router-circuit.md)) |
+| `VEC_RF_PAD`, `VEC_RF_PACK` (24, 1) | the vector register file's two block-RAM read copies: the stored word's width, and whether two lanes share one strobed word ([kohakutpu/vector-core](../../projects/kohakutpu/vector-core.md) §6) |
+
+None of these changes the mesh picture, the address map or anything a
+program can observe. All of them change the netlist, so a measurement that does
 not name which of them were on has not named its configuration.
 
 ## Conventions

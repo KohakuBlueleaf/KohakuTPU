@@ -33,6 +33,10 @@
 module vec_lanes #(
     parameter integer MODEL   = 1,
     parameter         RF_PRIM = "block",
+    // The b/c copies' shape: PAD 36 names the RAMB18 36 x 512 word, PACK 2
+    // stores two lanes per 54-bit strobed word. See vec_regfile.v.
+    parameter integer RF_PAD  = 24,
+    parameter integer RF_PACK = 1,
     // Passed DOWN to vec_alu rather than read from a macro there, so the array
     // and its ALUs cannot disagree about the latency the taps below assume.
     parameter integer PIPE_MUX = `VL_PM
@@ -153,15 +157,30 @@ module vec_lanes #(
 
     genvar s;
     generate
-    for (s = 0; s < 16; s = s + 1) begin : g_rf
-        vec_regfile #(.AW(7), .DW(24), .PRIM(RF_PRIM)) u_rf (
-            .clk(clk),
-            .wr_en(rf_we[s]), .wr_addr(rf_waddr), .wr_data(rf_wdata[s*24 +: 24]),
-            .ra_addr(rd_a_addr), .rb_addr(iss_rb), .rc_addr(iss_rc),
-            .ra_data(rf_a[s*24 +: 24]),
-            .rb_data(rf_b[s*24 +: 24]),
-            .rc_data(rf_c[s*24 +: 24])
-        );
+    if (RF_PACK == 2) begin : g_rf2
+        for (s = 0; s < 8; s = s + 1) begin : g_rf
+            vec_regfile #(.AW(7), .DW(24), .PRIM(RF_PRIM), .LANES(2)) u_rf (
+                .clk(clk),
+                .wr_en(rf_we[2*s +: 2]), .wr_addr(rf_waddr),
+                .wr_data(rf_wdata[s*48 +: 48]),
+                .ra_addr(rd_a_addr), .rb_addr(iss_rb), .rc_addr(iss_rc),
+                .ra_data(rf_a[s*48 +: 48]),
+                .rb_data(rf_b[s*48 +: 48]),
+                .rc_data(rf_c[s*48 +: 48])
+            );
+        end
+    end
+    else begin : g_rf1
+        for (s = 0; s < 16; s = s + 1) begin : g_rf
+            vec_regfile #(.AW(7), .DW(24), .PRIM(RF_PRIM), .PAD_W(RF_PAD)) u_rf (
+                .clk(clk),
+                .wr_en(rf_we[s]), .wr_addr(rf_waddr), .wr_data(rf_wdata[s*24 +: 24]),
+                .ra_addr(rd_a_addr), .rb_addr(iss_rb), .rc_addr(iss_rc),
+                .ra_data(rf_a[s*24 +: 24]),
+                .rb_data(rf_b[s*24 +: 24]),
+                .rc_data(rf_c[s*24 +: 24])
+            );
+        end
     end
     endgenerate
 

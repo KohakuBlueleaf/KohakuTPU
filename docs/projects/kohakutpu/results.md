@@ -298,7 +298,21 @@ all control reaching a datapath, never the arithmetic.
 
 **`vec_lanes` −34.9%, `vec_cu` −26.4%**, with Fmax *up* and the worst path no
 longer in the core at all — it is inside the ALU, so the core now sits at the ALU
-floor. BRAM became a counted resource: 44 tiles per core.
+floor. BRAM became a counted resource: 44 tiles per core then, **36.5 now**.
+
+Where those tiles are, `vec_core` out of context (`scripts/tcl/ooc_mod.tcl`,
+3.333 ns ask, `MODEL=0`, L1 512 block, register file block; `build/ooc/vec_*`):
+
+| `vec_core` | LUT | FF | RAMB36 / RAMB18 | tiles | WNS |
+|---|---|---|---|---|---|
+| coefficient ROM as three 22-bit ROMs, register file 24-bit copies | 29,140 | 24,696 | 4 / 81 | 44.5 | +0.797 |
+| **coefficient ROM as one 66-bit word — what `vec_tables.py` emits** | 29,140 | 25,320 | 20 / 33 | **36.5** | +0.797 |
+| + register-file copies padded to 36 (`RF_PAD 36`) | 29,140 | 25,320 | 20 / 33 | 36.5 | +0.797 |
+| + two lanes per register-file word (`RF_PACK 2`) | 29,200 | 25,318 | 36 / 1 | 36.5 | +0.797 |
+
+The 8 tiles are the sixteen ROMs going from 3 RAMB18 each to 1 RAMB36 each;
+the register file is one RAMB18 per lane per block copy in every row, its floor
+([vector-core.md](vector-core.md) §6).
 
 | change | LUT |
 |---|---|
@@ -344,6 +358,8 @@ the framework, and framework pages should link to this row rather than quoting i
 | `mx_quant` (the MXFP7 quantiser) | 4,267 | — | 0 | 32 | **400.6** | 310 MHz-target run; it is KohakuTPU's, on the memory-agent side |
 | `mag_mem_port` | — | — | — | — | 330.0 | |
 | `NoCRouter` | 3,281 | — | — | — | **≥450** | 2.5 ns with +0.278 ns slack, 7 logic levels |
+| `NoCRouter`, 2×2 grid, in-port FIFOs 512 / `"block"` — what the ship emits | 3,052 | 3,165 | **20** | 0 | 386 | 3.333 ns ask, `build/ooc/router_block512` |
+| `NoCRouter`, same, FIFOs 32 / `"distributed"` (`ROUTER_DEPTH` / `ROUTER_MEM`) | 3,762 | 5,965 | **0** | 0 | 426 | +710 LUT for 20 tiles; `build/ooc/router_dist32` |
 | router (earlier run) | — | — | — | — | 406 | 452 for two routers linked |
 | output port switch | — | — | — | — | 644 | |
 | input port switch | — | — | — | — | 732 | |
@@ -359,6 +375,48 @@ than a slogan.
 > on the memory-agent side of the mesh by design
 > ([number-format.md](number-format.md) §5), so none of the cluster rows include
 > it.
+
+### 4.1 Memory shapes
+
+The measurements behind the framework's depth rule — one block deep needs no
+proof, a deeper chain ships on a routed one
+([arch/physical/device-facts](../../arch/physical/device-facts.md#memory-blocks-the-geometry-that-is-a-rule)).
+Out-of-context synthesis, `scripts/tcl/ooc_mod.tcl`, 3.333 ns ask, Vivado
+2024.2; Fmax is `1000 / (period − WNS)`, an estimate that routing lowers. The
+staging store is `src/kohakuaccel/sysnode/core/mag_stage.v` with both ports
+live (in the node port A is tied off, which prunes the 1,024-bit entry mux);
+the primitive is `src/kohakuaccel/common/kohaku_sdpram_be.v` at 256 bits wide.
+
+| shape | LUT | FF | URAM / BRAM | WNS | est. MHz |
+|---|---|---|---|---|---|
+| staging, 4 banks × 16 blocks, read latency 2, registered dispatch and outputs | 3,504 | 8,289 | 64 | +1.897 | 696 |
+| staging, 4 banks, read latency 3 | 3,504 | 12,386 | 64 | +1.897 | 696 |
+| staging, 2 banks × 2-deep chain, read latency 3 | 2,137 | 6,230 | 64 | +1.682 | 606 |
+| staging, one array, 4-deep chain, read latency 2 | 815 | 3,146 | 64 | +0.909 | 412 |
+| staging, **one array, 4-deep chain, read latency 5** (rows + columns) — **ships** | 819 | 3,149 | 64 | +1.828 | 664 |
+| staging, one array, `CASCADE_HEIGHT` 1 (the tool's mux), read latency 5 | 2,915 | 7,357 | 64 | +1.499 | 545 |
+| 256 × 16,384 URAM, chain, read latency 2 / 5 | 0 / 0 | 256 / 256 | 16 | +0.909 / +2.159 | 412 / 852 |
+| 256 × 16,384 URAM, `CASCADE_HEIGHT` 4, read latency 3 | 0 | 256 | 16 | +1.475 | 538 |
+| 256 × 16,384 URAM, `CASCADE_HEIGHT` 1, read latency 3 / 5 | 520 / 524 | 268 / 1,311 | 16 | +1.807 / +2.030 | 655 / 767 |
+| 256 × 4,096 URAM, one block, read latency 3 | 0 | 256 | 4 | +2.159 | 852 |
+| 64 × 8,192 block RAM, tool chain / `CASCADE_HEIGHT` 1 / 4, read latency 2 | 11 / 43 / 22 | 0 / 65 / 0 | 16 BRAM | +2.021 / +1.949 / +1.553 | 762 / 722 / 562 |
+| 64-wide LUTRAM, 32 / 64 / 128 / 256 deep | 184 / 184 / 312 / 544 | 64 | 0 | +2.7 | — |
+| crossbar-cache array `kx_carray`, 8 banks × 8 blocks (K=1) | 1,658 | 5,914 | 64 | +1.515 | 550 |
+| crossbar-cache array, one 8-deep chain (K=1) | 584 | 1,649 | 64 | +1.404 | 518 |
+| crossbar-cache array, **one bank of 4-deep chains at K=2, write lanes** — **ships**; whole-Xache numbers in [kohakuaxi/pxache §1](../kohakuaxi/pxache.md#1-what-a-partition-costs-in-one-table) | — | — | 60 | — | — |
+
+At the node (`scripts/tcl/ooc_sysnode.tcl`, PORTS 2, ILINK 1, DRAM CDC 1):
+**30,879 LUT / 44,710 FF** with the 4-bank staging store, 29,940 / 42,672 at
+2 banks (2-deep chains, read latency 3) and **29,311 / 39,589 at one bank**
+(4-deep chains, read latency 5) — the 1,568 LUT are the banks' return select
+(a 4:1 of 1,024 bits) and their control. Routed inside one SLR
+(`scripts/tcl/impl_sysnode.tcl`), the one-bank node and the four-bank node
+both place and route with no congestion window above level 5, and the slack
+of both is the RV64 core's redirect path (−0.354 and −0.290 on the same
+path); that routed pair, not the synthesis number, is why the chain ships.
+The register in front of the DRAM port's return bus (`R_REG`) is a further
+−100. `WRITE_MODE_B = no_change` on an UltraRAM fails XPM elaboration in
+Vivado 2024.2; the wrapper's `WR_MODE` knob therefore ships as `read_first`.
 
 ---
 

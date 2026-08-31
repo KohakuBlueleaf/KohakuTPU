@@ -4,12 +4,11 @@
 // use. Instruction FIFOs want "block": a RAMB36E2's widest shape is 512x72, so a
 // 288-bit entry is 4 BRAMs and depth 512 fills them exactly.
 //
-// ROUTER FLIT BUFFERS NOW WANT "block" TOO, and that reverses the argument this
-// comment used to make. A 32-deep 288-bit buffer really does waste 94% of the 4
-// BRAMs it occupies -- but it is 168 LUT in distributed RAM, the design is
-// LUT-bound and only LUT, and BRAM sits near empty. Measured on one NoCRouter at
-// 320 MHz: 3,751 -> 2,911 LUT for 20 BRAM tiles, 451 -> 410 MHz. The waste is
-// the point of the trade, not an argument against it.
+// A 288-bit buffer is 4 RAMB36 at ANY depth to 512, so "block" for a router's
+// in-port FIFO buys LUT with tiles it mostly leaves empty. Measured on one
+// NoCRouter (2x2 grid, 3.333 ns ask): 512/"block" 3,052 LUT / 20 tiles /
+// 386 MHz against 32/"distributed" 3,762 / 0 / 426 MHz -- 36 LUT per tile.
+// Which side of that trade a mesh takes is its ROUTER_MEM parameter.
 
 module sync_fifo #(
     parameter DATA_WIDTH        = 288,

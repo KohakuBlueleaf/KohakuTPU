@@ -35,181 +35,187 @@ module vec_tables (
     // it to a heuristic. The one cycle of latency is stated by the RTL, and
     // vec_alu drops its own u_d_ix stage to pay for it -- the address was
     // already registered, so this is a register MOVE and cycle 3 is
-    // still when c0/c1/c2 land. 3,568 LUT per core -> 16 RAMB36.
-    (* rom_style = "block" *) output reg signed [21:0] c0,
-    (* rom_style = "block" *) output reg signed [21:0] c1,
-    (* rom_style = "block" *) output reg signed [21:0] c2
+    // still when c0/c1/c2 land. As LUTs this was 3,568 per core.
+    output wire signed [21:0] c0,
+    output wire signed [21:0] c1,
+    output wire signed [21:0] c2
 );
+    // ONE 66-bit word {c2, c1, c0}: three 22-bit ROMs were three
+    // RAMB18 per ALU (routed v7); one word is one RAMB36-class ROM.
+    (* rom_style = "block" *) reg [65:0] w;
+    assign c0 = w[21:0];
+    assign c1 = w[43:22];
+    assign c2 = w[65:44];
     // One flat case over {fsel, idx}, constant-indexed throughout.
     // NON-BLOCKING: u_d_c1 in vec_alu registers c1 on the same edge, so
     // blocking assignments here are a scheduler race, not a style point.
     always @(posedge clk) begin
         case ({fsel, idx})
             // ---- exp2 ----
-            8'd0  : begin c0 <= 22'sd0 ; c1 <= 22'sd363393 ; c2 <= 22'sd63660 ; end
-            8'd1  : begin c0 <= 22'sd22961 ; c1 <= 22'sd371350 ; c2 <= 22'sd65054 ; end
-            8'd2  : begin c0 <= 22'sd46424 ; c1 <= 22'sd379481 ; c2 <= 22'sd66479 ; end
-            8'd3  : begin c0 <= 22'sd70402 ; c1 <= 22'sd387791 ; c2 <= 22'sd67934 ; end
-            8'd4  : begin c0 <= 22'sd94904 ; c1 <= 22'sd396282 ; c2 <= 22'sd69422 ; end
-            8'd5  : begin c0 <= 22'sd119943 ; c1 <= 22'sd404960 ; c2 <= 22'sd70942 ; end
-            8'd6  : begin c0 <= 22'sd145530 ; c1 <= 22'sd413827 ; c2 <= 22'sd72495 ; end
-            8'd7  : begin c0 <= 22'sd171678 ; c1 <= 22'sd422889 ; c2 <= 22'sd74083 ; end
-            8'd8  : begin c0 <= 22'sd198398 ; c1 <= 22'sd432149 ; c2 <= 22'sd75705 ; end
-            8'd9  : begin c0 <= 22'sd225703 ; c1 <= 22'sd441612 ; c2 <= 22'sd77363 ; end
-            8'd10 : begin c0 <= 22'sd253606 ; c1 <= 22'sd451282 ; c2 <= 22'sd79057 ; end
-            8'd11 : begin c0 <= 22'sd282120 ; c1 <= 22'sd461164 ; c2 <= 22'sd80788 ; end
-            8'd12 : begin c0 <= 22'sd311259 ; c1 <= 22'sd471262 ; c2 <= 22'sd82557 ; end
-            8'd13 : begin c0 <= 22'sd341035 ; c1 <= 22'sd481581 ; c2 <= 22'sd84365 ; end
-            8'd14 : begin c0 <= 22'sd371464 ; c1 <= 22'sd492126 ; c2 <= 22'sd86212 ; end
-            8'd15 : begin c0 <= 22'sd402559 ; c1 <= 22'sd502903 ; c2 <= 22'sd88100 ; end
-            8'd16 : begin c0 <= 22'sd434334 ; c1 <= 22'sd513915 ; c2 <= 22'sd90029 ; end
-            8'd17 : begin c0 <= 22'sd466806 ; c1 <= 22'sd525168 ; c2 <= 22'sd92000 ; end
-            8'd18 : begin c0 <= 22'sd499989 ; c1 <= 22'sd536668 ; c2 <= 22'sd94015 ; end
-            8'd19 : begin c0 <= 22'sd533898 ; c1 <= 22'sd548419 ; c2 <= 22'sd96074 ; end
-            8'd20 : begin c0 <= 22'sd568549 ; c1 <= 22'sd560428 ; c2 <= 22'sd98177 ; end
-            8'd21 : begin c0 <= 22'sd603960 ; c1 <= 22'sd572700 ; c2 <= 22'sd100327 ; end
-            8'd22 : begin c0 <= 22'sd640146 ; c1 <= 22'sd585240 ; c2 <= 22'sd102524 ; end
-            8'd23 : begin c0 <= 22'sd677124 ; c1 <= 22'sd598055 ; c2 <= 22'sd104769 ; end
-            8'd24 : begin c0 <= 22'sd714912 ; c1 <= 22'sd611151 ; c2 <= 22'sd107063 ; end
-            8'd25 : begin c0 <= 22'sd753527 ; c1 <= 22'sd624534 ; c2 <= 22'sd109408 ; end
-            8'd26 : begin c0 <= 22'sd792988 ; c1 <= 22'sd638209 ; c2 <= 22'sd111803 ; end
-            8'd27 : begin c0 <= 22'sd833313 ; c1 <= 22'sd652184 ; c2 <= 22'sd114251 ; end
-            8'd28 : begin c0 <= 22'sd874521 ; c1 <= 22'sd666465 ; c2 <= 22'sd116753 ; end
-            8'd29 : begin c0 <= 22'sd916631 ; c1 <= 22'sd681059 ; c2 <= 22'sd119310 ; end
-            8'd30 : begin c0 <= 22'sd959664 ; c1 <= 22'sd695972 ; c2 <= 22'sd121922 ; end
-            8'd31 : begin c0 <= 22'sd1003638 ; c1 <= 22'sd711212 ; c2 <= 22'sd124592 ; end
+            8'd0  : begin w <= {22'h00f8ac, 22'h058b81, 22'h000000}; end
+            8'd1  : begin w <= {22'h00fe1e, 22'h05aa96, 22'h0059b1}; end
+            8'd2  : begin w <= {22'h0103af, 22'h05ca59, 22'h00b558}; end
+            8'd3  : begin w <= {22'h01095e, 22'h05eacf, 22'h011302}; end
+            8'd4  : begin w <= {22'h010f2e, 22'h060bfa, 22'h0172b8}; end
+            8'd5  : begin w <= {22'h01151e, 22'h062de0, 22'h01d487}; end
+            8'd6  : begin w <= {22'h011b2f, 22'h065083, 22'h02387a}; end
+            8'd7  : begin w <= {22'h012163, 22'h0673e9, 22'h029e9e}; end
+            8'd8  : begin w <= {22'h0127b9, 22'h069815, 22'h0306fe}; end
+            8'd9  : begin w <= {22'h012e33, 22'h06bd0c, 22'h0371a7}; end
+            8'd10 : begin w <= {22'h0134d1, 22'h06e2d2, 22'h03dea6}; end
+            8'd11 : begin w <= {22'h013b94, 22'h07096c, 22'h044e08}; end
+            8'd12 : begin w <= {22'h01427d, 22'h0730de, 22'h04bfdb}; end
+            8'd13 : begin w <= {22'h01498d, 22'h07592d, 22'h05342b}; end
+            8'd14 : begin w <= {22'h0150c4, 22'h07825e, 22'h05ab08}; end
+            8'd15 : begin w <= {22'h015824, 22'h07ac77, 22'h06247f}; end
+            8'd16 : begin w <= {22'h015fad, 22'h07d77b, 22'h06a09e}; end
+            8'd17 : begin w <= {22'h016760, 22'h080370, 22'h071f76}; end
+            8'd18 : begin w <= {22'h016f3f, 22'h08305c, 22'h07a115}; end
+            8'd19 : begin w <= {22'h01774a, 22'h085e43, 22'h08258a}; end
+            8'd20 : begin w <= {22'h017f81, 22'h088d2c, 22'h08ace5}; end
+            8'd21 : begin w <= {22'h0187e7, 22'h08bd1c, 22'h093738}; end
+            8'd22 : begin w <= {22'h01907c, 22'h08ee18, 22'h09c492}; end
+            8'd23 : begin w <= {22'h019941, 22'h092027, 22'h0a5504}; end
+            8'd24 : begin w <= {22'h01a237, 22'h09534f, 22'h0ae8a0}; end
+            8'd25 : begin w <= {22'h01ab60, 22'h098796, 22'h0b7f77}; end
+            8'd26 : begin w <= {22'h01b4bb, 22'h09bd01, 22'h0c199c}; end
+            8'd27 : begin w <= {22'h01be4b, 22'h09f398, 22'h0cb721}; end
+            8'd28 : begin w <= {22'h01c811, 22'h0a2b61, 22'h0d5819}; end
+            8'd29 : begin w <= {22'h01d20e, 22'h0a6463, 22'h0dfc97}; end
+            8'd30 : begin w <= {22'h01dc42, 22'h0a9ea4, 22'h0ea4b0}; end
+            8'd31 : begin w <= {22'h01e6b0, 22'h0ada2c, 22'h0f5076}; end
             // ---- log2 ----
-            8'd64 : begin c0 <= 22'sd0 ; c1 <= 22'sd756254 ; c2 <= -22'sd183340 ; end
-            8'd65 : begin c0 <= 22'sd46551 ; c1 <= 22'sd733345 ; c2 <= -22'sd172556 ; end
-            8'd66 : begin c0 <= 22'sd91712 ; c1 <= 22'sd711782 ; c2 <= -22'sd162697 ; end
-            8'd67 : begin c0 <= 22'sd135563 ; c1 <= 22'sd691452 ; c2 <= -22'sd153660 ; end
-            8'd68 : begin c0 <= 22'sd178180 ; c1 <= 22'sd672250 ; c2 <= -22'sd145355 ; end
-            8'd69 : begin c0 <= 22'sd219628 ; c1 <= 22'sd654086 ; c2 <= -22'sd137705 ; end
-            8'd70 : begin c0 <= 22'sd259971 ; c1 <= 22'sd636878 ; c2 <= -22'sd130644 ; end
-            8'd71 : begin c0 <= 22'sd299266 ; c1 <= 22'sd620551 ; c2 <= -22'sd124113 ; end
-            8'd72 : begin c0 <= 22'sd337566 ; c1 <= 22'sd605041 ; c2 <= -22'sd118059 ; end
-            8'd73 : begin c0 <= 22'sd374921 ; c1 <= 22'sd590287 ; c2 <= -22'sd112438 ; end
-            8'd74 : begin c0 <= 22'sd411375 ; c1 <= 22'sd576236 ; c2 <= -22'sd107208 ; end
-            8'd75 : begin c0 <= 22'sd446971 ; c1 <= 22'sd562837 ; c2 <= -22'sd102336 ; end
-            8'd76 : begin c0 <= 22'sd481749 ; c1 <= 22'sd550048 ; c2 <= -22'sd97788 ; end
-            8'd77 : begin c0 <= 22'sd515746 ; c1 <= 22'sd537827 ; c2 <= -22'sd93537 ; end
-            8'd78 : begin c0 <= 22'sd548995 ; c1 <= 22'sd526137 ; c2 <= -22'sd89557 ; end
-            8'd79 : begin c0 <= 22'sd581529 ; c1 <= 22'sd514945 ; c2 <= -22'sd85825 ; end
-            8'd80 : begin c0 <= 22'sd613378 ; c1 <= 22'sd504218 ; c2 <= -22'sd82322 ; end
-            8'd81 : begin c0 <= 22'sd644570 ; c1 <= 22'sd493930 ; c2 <= -22'sd79030 ; end
-            8'd82 : begin c0 <= 22'sd675132 ; c1 <= 22'sd484053 ; c2 <= -22'sd75931 ; end
-            8'd83 : begin c0 <= 22'sd705089 ; c1 <= 22'sd474563 ; c2 <= -22'sd73010 ; end
-            8'd84 : begin c0 <= 22'sd734464 ; c1 <= 22'sd465438 ; c2 <= -22'sd70256 ; end
-            8'd85 : begin c0 <= 22'sd763280 ; c1 <= 22'sd456657 ; c2 <= -22'sd67654 ; end
-            8'd86 : begin c0 <= 22'sd791557 ; c1 <= 22'sd448201 ; c2 <= -22'sd65194 ; end
-            8'd87 : begin c0 <= 22'sd819315 ; c1 <= 22'sd440053 ; c2 <= -22'sd62865 ; end
-            8'd88 : begin c0 <= 22'sd846573 ; c1 <= 22'sd432196 ; c2 <= -22'sd60660 ; end
-            8'd89 : begin c0 <= 22'sd873349 ; c1 <= 22'sd424615 ; c2 <= -22'sd58568 ; end
-            8'd90 : begin c0 <= 22'sd899658 ; c1 <= 22'sd417295 ; c2 <= -22'sd56583 ; end
-            8'd91 : begin c0 <= 22'sd925518 ; c1 <= 22'sd410222 ; c2 <= -22'sd54697 ; end
-            8'd92 : begin c0 <= 22'sd950944 ; c1 <= 22'sd403386 ; c2 <= -22'sd52904 ; end
-            8'd93 : begin c0 <= 22'sd975949 ; c1 <= 22'sd396774 ; c2 <= -22'sd51197 ; end
-            8'd94 : begin c0 <= 22'sd1000547 ; c1 <= 22'sd390375 ; c2 <= -22'sd49572 ; end
-            8'd95 : begin c0 <= 22'sd1024752 ; c1 <= 22'sd384179 ; c2 <= -22'sd48023 ; end
+            8'd64 : begin w <= {22'h3d33d4, 22'h0b8a1e, 22'h000000}; end
+            8'd65 : begin w <= {22'h3d5df4, 22'h0b30a1, 22'h00b5d7}; end
+            8'd66 : begin w <= {22'h3d8477, 22'h0adc66, 22'h016640}; end
+            8'd67 : begin w <= {22'h3da7c4, 22'h0a8cfc, 22'h02118b}; end
+            8'd68 : begin w <= {22'h3dc835, 22'h0a41fa, 22'h02b804}; end
+            8'd69 : begin w <= {22'h3de617, 22'h09fb06, 22'h0359ec}; end
+            8'd70 : begin w <= {22'h3e01ac, 22'h09b7ce, 22'h03f783}; end
+            8'd71 : begin w <= {22'h3e1b2f, 22'h097807, 22'h049102}; end
+            8'd72 : begin w <= {22'h3e32d5, 22'h093b71, 22'h05269e}; end
+            8'd73 : begin w <= {22'h3e48ca, 22'h0901cf, 22'h05b889}; end
+            8'd74 : begin w <= {22'h3e5d38, 22'h08caec, 22'h0646ef}; end
+            8'd75 : begin w <= {22'h3e7040, 22'h089695, 22'h06d1fb}; end
+            8'd76 : begin w <= {22'h3e8204, 22'h0864a0, 22'h0759d5}; end
+            8'd77 : begin w <= {22'h3e929f, 22'h0834e3, 22'h07dea2}; end
+            8'd78 : begin w <= {22'h3ea22b, 22'h080739, 22'h086083}; end
+            8'd79 : begin w <= {22'h3eb0bf, 22'h07db81, 22'h08df99}; end
+            8'd80 : begin w <= {22'h3ebe6e, 22'h07b19a, 22'h095c02}; end
+            8'd81 : begin w <= {22'h3ecb4a, 22'h07896a, 22'h09d5da}; end
+            8'd82 : begin w <= {22'h3ed765, 22'h0762d5, 22'h0a4d3c}; end
+            8'd83 : begin w <= {22'h3ee2ce, 22'h073dc3, 22'h0ac241}; end
+            8'd84 : begin w <= {22'h3eed90, 22'h071a1e, 22'h0b3500}; end
+            8'd85 : begin w <= {22'h3ef7ba, 22'h06f7d1, 22'h0ba590}; end
+            8'd86 : begin w <= {22'h3f0156, 22'h06d6c9, 22'h0c1405}; end
+            8'd87 : begin w <= {22'h3f0a6f, 22'h06b6f5, 22'h0c8073}; end
+            8'd88 : begin w <= {22'h3f130c, 22'h069844, 22'h0ceaed}; end
+            8'd89 : begin w <= {22'h3f1b38, 22'h067aa7, 22'h0d5385}; end
+            8'd90 : begin w <= {22'h3f22f9, 22'h065e0f, 22'h0dba4a}; end
+            8'd91 : begin w <= {22'h3f2a57, 22'h06426e, 22'h0e1f4e}; end
+            8'd92 : begin w <= {22'h3f3158, 22'h0627ba, 22'h0e82a0}; end
+            8'd93 : begin w <= {22'h3f3803, 22'h060de6, 22'h0ee44d}; end
+            8'd94 : begin w <= {22'h3f3e5c, 22'h05f4e7, 22'h0f4463}; end
+            8'd95 : begin w <= {22'h3f4469, 22'h05dcb3, 22'h0fa2f0}; end
             // ---- inv ----
-            8'd128: begin c0 <= 22'sd1048575 ; c1 <= -22'sd524013 ; c2 <= 22'sd250275 ; end
-            8'd129: begin c0 <= 22'sd1016800 ; c1 <= -22'sd492751 ; c2 <= 22'sd228522 ; end
-            8'd130: begin c0 <= 22'sd986894 ; c1 <= -22'sd464205 ; c2 <= 22'sd209219 ; end
-            8'd131: begin c0 <= 22'sd958697 ; c1 <= -22'sd438069 ; c2 <= 22'sd192030 ; end
-            8'd132: begin c0 <= 22'sd932067 ; c1 <= -22'sd414079 ; c2 <= 22'sd176674 ; end
-            8'd133: begin c0 <= 22'sd906876 ; c1 <= -22'sd392008 ; c2 <= 22'sd162912 ; end
-            8'd134: begin c0 <= 22'sd883011 ; c1 <= -22'sd371655 ; c2 <= 22'sd150544 ; end
-            8'd135: begin c0 <= 22'sd860370 ; c1 <= -22'sd352846 ; c2 <= 22'sd139396 ; end
-            8'd136: begin c0 <= 22'sd838860 ; c1 <= -22'sd335430 ; c2 <= 22'sd129323 ; end
-            8'd137: begin c0 <= 22'sd818400 ; c1 <= -22'sd319273 ; c2 <= 22'sd120197 ; end
-            8'd138: begin c0 <= 22'sd798915 ; c1 <= -22'sd304255 ; c2 <= 22'sd111910 ; end
-            8'd139: begin c0 <= 22'sd780335 ; c1 <= -22'sd290272 ; c2 <= 22'sd104367 ; end
-            8'd140: begin c0 <= 22'sd762600 ; c1 <= -22'sd277231 ; c2 <= 22'sd97488 ; end
-            8'd141: begin c0 <= 22'sd745654 ; c1 <= -22'sd265050 ; c2 <= 22'sd91200 ; end
-            8'd142: begin c0 <= 22'sd729444 ; c1 <= -22'sd253654 ; c2 <= 22'sd85441 ; end
-            8'd143: begin c0 <= 22'sd713924 ; c1 <= -22'sd242978 ; c2 <= 22'sd80158 ; end
-            8'd144: begin c0 <= 22'sd699050 ; c1 <= -22'sd232962 ; c2 <= 22'sd75301 ; end
-            8'd145: begin c0 <= 22'sd684784 ; c1 <= -22'sd223552 ; c2 <= 22'sd70828 ; end
-            8'd146: begin c0 <= 22'sd671088 ; c1 <= -22'sd214701 ; c2 <= 22'sd66703 ; end
-            8'd147: begin c0 <= 22'sd657930 ; c1 <= -22'sd206366 ; c2 <= 22'sd62893 ; end
-            8'd148: begin c0 <= 22'sd645277 ; c1 <= -22'sd198507 ; c2 <= 22'sd59367 ; end
-            8'd149: begin c0 <= 22'sd633102 ; c1 <= -22'sd191088 ; c2 <= 22'sd56099 ; end
-            8'd150: begin c0 <= 22'sd621378 ; c1 <= -22'sd184078 ; c2 <= 22'sd53067 ; end
-            8'd151: begin c0 <= 22'sd610080 ; c1 <= -22'sd177446 ; c2 <= 22'sd50250 ; end
-            8'd152: begin c0 <= 22'sd599186 ; c1 <= -22'sd171166 ; c2 <= 22'sd47629 ; end
-            8'd153: begin c0 <= 22'sd588674 ; c1 <= -22'sd165214 ; c2 <= 22'sd45187 ; end
-            8'd154: begin c0 <= 22'sd578525 ; c1 <= -22'sd159567 ; c2 <= 22'sd42909 ; end
-            8'd155: begin c0 <= 22'sd568719 ; c1 <= -22'sd154205 ; c2 <= 22'sd40781 ; end
-            8'd156: begin c0 <= 22'sd559240 ; c1 <= -22'sd149108 ; c2 <= 22'sd38792 ; end
-            8'd157: begin c0 <= 22'sd550073 ; c1 <= -22'sd144260 ; c2 <= 22'sd36931 ; end
-            8'd158: begin c0 <= 22'sd541200 ; c1 <= -22'sd139645 ; c2 <= 22'sd35186 ; end
-            8'd159: begin c0 <= 22'sd532610 ; c1 <= -22'sd135247 ; c2 <= 22'sd33550 ; end
+            8'd128: begin w <= {22'h03d1a3, 22'h380113, 22'h0fffff}; end
+            8'd129: begin w <= {22'h037caa, 22'h387b31, 22'h0f83e0}; end
+            8'd130: begin w <= {22'h033143, 22'h38eab3, 22'h0f0f0e}; end
+            8'd131: begin w <= {22'h02ee1e, 22'h3950cb, 22'h0ea0e9}; end
+            8'd132: begin w <= {22'h02b222, 22'h39ae81, 22'h0e38e3}; end
+            8'd133: begin w <= {22'h027c60, 22'h3a04b8, 22'h0dd67c}; end
+            8'd134: begin w <= {22'h024c10, 22'h3a5439, 22'h0d7943}; end
+            8'd135: begin w <= {22'h022084, 22'h3a9db2, 22'h0d20d2}; end
+            8'd136: begin w <= {22'h01f92b, 22'h3ae1ba, 22'h0ccccc}; end
+            8'd137: begin w <= {22'h01d585, 22'h3b20d7, 22'h0c7ce0}; end
+            8'd138: begin w <= {22'h01b526, 22'h3b5b81, 22'h0c30c3}; end
+            8'd139: begin w <= {22'h0197af, 22'h3b9220, 22'h0be82f}; end
+            8'd140: begin w <= {22'h017cd0, 22'h3bc511, 22'h0ba2e8}; end
+            8'd141: begin w <= {22'h016440, 22'h3bf4a6, 22'h0b60b6}; end
+            8'd142: begin w <= {22'h014dc1, 22'h3c212a, 22'h0b2164}; end
+            8'd143: begin w <= {22'h01391e, 22'h3c4ade, 22'h0ae4c4}; end
+            8'd144: begin w <= {22'h012625, 22'h3c71fe, 22'h0aaaaa}; end
+            8'd145: begin w <= {22'h0114ac, 22'h3c96c0, 22'h0a72f0}; end
+            8'd146: begin w <= {22'h01048f, 22'h3cb953, 22'h0a3d70}; end
+            8'd147: begin w <= {22'h00f5ad, 22'h3cd9e2, 22'h0a0a0a}; end
+            8'd148: begin w <= {22'h00e7e7, 22'h3cf895, 22'h09d89d}; end
+            8'd149: begin w <= {22'h00db23, 22'h3d1590, 22'h09a90e}; end
+            8'd150: begin w <= {22'h00cf4b, 22'h3d30f2, 22'h097b42}; end
+            8'd151: begin w <= {22'h00c44a, 22'h3d4ada, 22'h094f20}; end
+            8'd152: begin w <= {22'h00ba0d, 22'h3d6362, 22'h092492}; end
+            8'd153: begin w <= {22'h00b083, 22'h3d7aa2, 22'h08fb82}; end
+            8'd154: begin w <= {22'h00a79d, 22'h3d90b1, 22'h08d3dd}; end
+            8'd155: begin w <= {22'h009f4d, 22'h3da5a3, 22'h08ad8f}; end
+            8'd156: begin w <= {22'h009788, 22'h3db98c, 22'h088888}; end
+            8'd157: begin w <= {22'h009043, 22'h3dcc7c, 22'h0864b9}; end
+            8'd158: begin w <= {22'h008972, 22'h3dde83, 22'h084210}; end
+            8'd159: begin w <= {22'h00830e, 22'h3defb1, 22'h082082}; end
             // ---- rsqrt ----
-            8'd192: begin c0 <= 22'sd1048576 ; c1 <= -22'sd262057 ; c2 <= 22'sd94579 ; end
-            8'd193: begin c0 <= 22'sd1032566 ; c1 <= -22'sd250241 ; c2 <= 22'sd87677 ; end
-            8'd194: begin c0 <= 22'sd1017268 ; c1 <= -22'sd239287 ; c2 <= 22'sd81461 ; end
-            8'd195: begin c0 <= 22'sd1002630 ; c1 <= -22'sd229109 ; c2 <= 22'sd75844 ; end
-            8'd196: begin c0 <= 22'sd988607 ; c1 <= -22'sd219633 ; c2 <= 22'sd70755 ; end
-            8'd197: begin c0 <= 22'sd975156 ; c1 <= -22'sd210792 ; c2 <= 22'sd66132 ; end
-            8'd198: begin c0 <= 22'sd962239 ; c1 <= -22'sd202529 ; c2 <= 22'sd61920 ; end
-            8'd199: begin c0 <= 22'sd949823 ; c1 <= -22'sd194792 ; c2 <= 22'sd58075 ; end
-            8'd200: begin c0 <= 22'sd937875 ; c1 <= -22'sd187535 ; c2 <= 22'sd54556 ; end
-            8'd201: begin c0 <= 22'sd926367 ; c1 <= -22'sd180718 ; c2 <= 22'sd51329 ; end
-            8'd202: begin c0 <= 22'sd915272 ; c1 <= -22'sd174304 ; c2 <= 22'sd48362 ; end
-            8'd203: begin c0 <= 22'sd904567 ; c1 <= -22'sd168260 ; c2 <= 22'sd45630 ; end
-            8'd204: begin c0 <= 22'sd894229 ; c1 <= -22'sd162558 ; c2 <= 22'sd43110 ; end
-            8'd205: begin c0 <= 22'sd884237 ; c1 <= -22'sd157171 ; c2 <= 22'sd40780 ; end
-            8'd206: begin c0 <= 22'sd874573 ; c1 <= -22'sd152075 ; c2 <= 22'sd38623 ; end
-            8'd207: begin c0 <= 22'sd865219 ; c1 <= -22'sd147248 ; c2 <= 22'sd36622 ; end
-            8'd208: begin c0 <= 22'sd856159 ; c1 <= -22'sd142672 ; c2 <= 22'sd34763 ; end
-            8'd209: begin c0 <= 22'sd847377 ; c1 <= -22'sd138328 ; c2 <= 22'sd33034 ; end
-            8'd210: begin c0 <= 22'sd838861 ; c1 <= -22'sd134199 ; c2 <= 22'sd31423 ; end
-            8'd211: begin c0 <= 22'sd830596 ; c1 <= -22'sd130272 ; c2 <= 22'sd29919 ; end
-            8'd212: begin c0 <= 22'sd822571 ; c1 <= -22'sd126533 ; c2 <= 22'sd28515 ; end
-            8'd213: begin c0 <= 22'sd814774 ; c1 <= -22'sd122970 ; c2 <= 22'sd27201 ; end
-            8'd214: begin c0 <= 22'sd807194 ; c1 <= -22'sd119570 ; c2 <= 22'sd25970 ; end
-            8'd215: begin c0 <= 22'sd799822 ; c1 <= -22'sd116325 ; c2 <= 22'sd24816 ; end
-            8'd216: begin c0 <= 22'sd792649 ; c1 <= -22'sd113223 ; c2 <= 22'sd23733 ; end
-            8'd217: begin c0 <= 22'sd785665 ; c1 <= -22'sd110257 ; c2 <= 22'sd22714 ; end
-            8'd218: begin c0 <= 22'sd778863 ; c1 <= -22'sd107418 ; c2 <= 22'sd21756 ; end
-            8'd219: begin c0 <= 22'sd772234 ; c1 <= -22'sd104699 ; c2 <= 22'sd20853 ; end
-            8'd220: begin c0 <= 22'sd765772 ; c1 <= -22'sd102093 ; c2 <= 22'sd20002 ; end
-            8'd221: begin c0 <= 22'sd759469 ; c1 <= -22'sd99593 ; c2 <= 22'sd19199 ; end
-            8'd222: begin c0 <= 22'sd753319 ; c1 <= -22'sd97194 ; c2 <= 22'sd18440 ; end
-            8'd223: begin c0 <= 22'sd747317 ; c1 <= -22'sd94889 ; c2 <= 22'sd17723 ; end
-            8'd224: begin c0 <= 22'sd741455 ; c1 <= -22'sd185303 ; c2 <= 22'sd66877 ; end
-            8'd225: begin c0 <= 22'sd730134 ; c1 <= -22'sd176947 ; c2 <= 22'sd61997 ; end
-            8'd226: begin c0 <= 22'sd719317 ; c1 <= -22'sd169201 ; c2 <= 22'sd57601 ; end
-            8'd227: begin c0 <= 22'sd708967 ; c1 <= -22'sd162005 ; c2 <= 22'sd53630 ; end
-            8'd228: begin c0 <= 22'sd699051 ; c1 <= -22'sd155304 ; c2 <= 22'sd50032 ; end
-            8'd229: begin c0 <= 22'sd689539 ; c1 <= -22'sd149053 ; c2 <= 22'sd46762 ; end
-            8'd230: begin c0 <= 22'sd680406 ; c1 <= -22'sd143210 ; c2 <= 22'sd43784 ; end
-            8'd231: begin c0 <= 22'sd671626 ; c1 <= -22'sd137739 ; c2 <= 22'sd41065 ; end
-            8'd232: begin c0 <= 22'sd663178 ; c1 <= -22'sd132607 ; c2 <= 22'sd38577 ; end
-            8'd233: begin c0 <= 22'sd655040 ; c1 <= -22'sd127787 ; c2 <= 22'sd36295 ; end
-            8'd234: begin c0 <= 22'sd647195 ; c1 <= -22'sd123251 ; c2 <= 22'sd34197 ; end
-            8'd235: begin c0 <= 22'sd639625 ; c1 <= -22'sd118978 ; c2 <= 22'sd32266 ; end
-            8'd236: begin c0 <= 22'sd632315 ; c1 <= -22'sd114946 ; c2 <= 22'sd30483 ; end
-            8'd237: begin c0 <= 22'sd625250 ; c1 <= -22'sd111137 ; c2 <= 22'sd28836 ; end
-            8'd238: begin c0 <= 22'sd618416 ; c1 <= -22'sd107533 ; c2 <= 22'sd27310 ; end
-            8'd239: begin c0 <= 22'sd611802 ; c1 <= -22'sd104120 ; c2 <= 22'sd25895 ; end
-            8'd240: begin c0 <= 22'sd605396 ; c1 <= -22'sd100884 ; c2 <= 22'sd24581 ; end
-            8'd241: begin c0 <= 22'sd599186 ; c1 <= -22'sd97812 ; c2 <= 22'sd23358 ; end
-            8'd242: begin c0 <= 22'sd593164 ; c1 <= -22'sd94893 ; c2 <= 22'sd22219 ; end
-            8'd243: begin c0 <= 22'sd587320 ; c1 <= -22'sd92116 ; c2 <= 22'sd21156 ; end
-            8'd244: begin c0 <= 22'sd581645 ; c1 <= -22'sd89473 ; c2 <= 22'sd20163 ; end
-            8'd245: begin c0 <= 22'sd576132 ; c1 <= -22'sd86953 ; c2 <= 22'sd19234 ; end
-            8'd246: begin c0 <= 22'sd570772 ; c1 <= -22'sd84549 ; c2 <= 22'sd18364 ; end
-            8'd247: begin c0 <= 22'sd565560 ; c1 <= -22'sd82254 ; c2 <= 22'sd17548 ; end
-            8'd248: begin c0 <= 22'sd560487 ; c1 <= -22'sd80061 ; c2 <= 22'sd16781 ; end
-            8'd249: begin c0 <= 22'sd555549 ; c1 <= -22'sd77964 ; c2 <= 22'sd16061 ; end
-            8'd250: begin c0 <= 22'sd550739 ; c1 <= -22'sd75956 ; c2 <= 22'sd15384 ; end
-            8'd251: begin c0 <= 22'sd546052 ; c1 <= -22'sd74034 ; c2 <= 22'sd14745 ; end
-            8'd252: begin c0 <= 22'sd541482 ; c1 <= -22'sd72191 ; c2 <= 22'sd14144 ; end
-            8'd253: begin c0 <= 22'sd537026 ; c1 <= -22'sd70423 ; c2 <= 22'sd13576 ; end
-            8'd254: begin c0 <= 22'sd532677 ; c1 <= -22'sd68726 ; c2 <= 22'sd13039 ; end
-            8'd255: begin c0 <= 22'sd528433 ; c1 <= -22'sd67097 ; c2 <= 22'sd12532 ; end
-            default: begin c0 <= 22'sd0 ; c1 <= 22'sd0 ; c2 <= 22'sd0 ; end
+            8'd192: begin w <= {22'h017173, 22'h3c0057, 22'h100000}; end
+            8'd193: begin w <= {22'h01567d, 22'h3c2e7f, 22'h0fc176}; end
+            8'd194: begin w <= {22'h013e35, 22'h3c5949, 22'h0f85b4}; end
+            8'd195: begin w <= {22'h012844, 22'h3c810b, 22'h0f4c86}; end
+            8'd196: begin w <= {22'h011463, 22'h3ca60f, 22'h0f15bf}; end
+            8'd197: begin w <= {22'h010254, 22'h3cc898, 22'h0ee134}; end
+            8'd198: begin w <= {22'h00f1e0, 22'h3ce8df, 22'h0eaebf}; end
+            8'd199: begin w <= {22'h00e2db, 22'h3d0718, 22'h0e7e3f}; end
+            8'd200: begin w <= {22'h00d51c, 22'h3d2371, 22'h0e4f93}; end
+            8'd201: begin w <= {22'h00c881, 22'h3d3e12, 22'h0e229f}; end
+            8'd202: begin w <= {22'h00bcea, 22'h3d5720, 22'h0df748}; end
+            8'd203: begin w <= {22'h00b23e, 22'h3d6ebc, 22'h0dcd77}; end
+            8'd204: begin w <= {22'h00a866, 22'h3d8502, 22'h0da515}; end
+            8'd205: begin w <= {22'h009f4c, 22'h3d9a0d, 22'h0d7e0d}; end
+            8'd206: begin w <= {22'h0096df, 22'h3dadf5, 22'h0d584d}; end
+            8'd207: begin w <= {22'h008f0e, 22'h3dc0d0, 22'h0d33c3}; end
+            8'd208: begin w <= {22'h0087cb, 22'h3dd2b0, 22'h0d105f}; end
+            8'd209: begin w <= {22'h00810a, 22'h3de3a8, 22'h0cee11}; end
+            8'd210: begin w <= {22'h007abf, 22'h3df3c9, 22'h0ccccd}; end
+            8'd211: begin w <= {22'h0074df, 22'h3e0320, 22'h0cac84}; end
+            8'd212: begin w <= {22'h006f63, 22'h3e11bb, 22'h0c8d2b}; end
+            8'd213: begin w <= {22'h006a41, 22'h3e1fa6, 22'h0c6eb6}; end
+            8'd214: begin w <= {22'h006572, 22'h3e2cee, 22'h0c511a}; end
+            8'd215: begin w <= {22'h0060f0, 22'h3e399b, 22'h0c344e}; end
+            8'd216: begin w <= {22'h005cb5, 22'h3e45b9, 22'h0c1849}; end
+            8'd217: begin w <= {22'h0058ba, 22'h3e514f, 22'h0bfd01}; end
+            8'd218: begin w <= {22'h0054fc, 22'h3e5c66, 22'h0be26f}; end
+            8'd219: begin w <= {22'h005175, 22'h3e6705, 22'h0bc88a}; end
+            8'd220: begin w <= {22'h004e22, 22'h3e7133, 22'h0baf4c}; end
+            8'd221: begin w <= {22'h004aff, 22'h3e7af7, 22'h0b96ad}; end
+            8'd222: begin w <= {22'h004808, 22'h3e8456, 22'h0b7ea7}; end
+            8'd223: begin w <= {22'h00453b, 22'h3e8d57, 22'h0b6735}; end
+            8'd224: begin w <= {22'h01053d, 22'h3d2c29, 22'h0b504f}; end
+            8'd225: begin w <= {22'h00f22d, 22'h3d4ccd, 22'h0b2416}; end
+            8'd226: begin w <= {22'h00e101, 22'h3d6b0f, 22'h0af9d5}; end
+            8'd227: begin w <= {22'h00d17e, 22'h3d872b, 22'h0ad167}; end
+            8'd228: begin w <= {22'h00c370, 22'h3da158, 22'h0aaaab}; end
+            8'd229: begin w <= {22'h00b6aa, 22'h3db9c3, 22'h0a8583}; end
+            8'd230: begin w <= {22'h00ab08, 22'h3dd096, 22'h0a61d6}; end
+            8'd231: begin w <= {22'h00a069, 22'h3de5f5, 22'h0a3f8a}; end
+            8'd232: begin w <= {22'h0096b1, 22'h3dfa01, 22'h0a1e8a}; end
+            8'd233: begin w <= {22'h008dc7, 22'h3e0cd5, 22'h09fec0}; end
+            8'd234: begin w <= {22'h008595, 22'h3e1e8d, 22'h09e01b}; end
+            8'd235: begin w <= {22'h007e0a, 22'h3e2f3e, 22'h09c289}; end
+            8'd236: begin w <= {22'h007713, 22'h3e3efe, 22'h09a5fb}; end
+            8'd237: begin w <= {22'h0070a4, 22'h3e4ddf, 22'h098a62}; end
+            8'd238: begin w <= {22'h006aae, 22'h3e5bf3, 22'h096fb0}; end
+            8'd239: begin w <= {22'h006527, 22'h3e6948, 22'h0955da}; end
+            8'd240: begin w <= {22'h006005, 22'h3e75ec, 22'h093cd4}; end
+            8'd241: begin w <= {22'h005b3e, 22'h3e81ec, 22'h092492}; end
+            8'd242: begin w <= {22'h0056cb, 22'h3e8d53, 22'h090d0c}; end
+            8'd243: begin w <= {22'h0052a4, 22'h3e982c, 22'h08f638}; end
+            8'd244: begin w <= {22'h004ec3, 22'h3ea27f, 22'h08e00d}; end
+            8'd245: begin w <= {22'h004b22, 22'h3eac57, 22'h08ca84}; end
+            8'd246: begin w <= {22'h0047bc, 22'h3eb5bb, 22'h08b594}; end
+            8'd247: begin w <= {22'h00448c, 22'h3ebeb2, 22'h08a138}; end
+            8'd248: begin w <= {22'h00418d, 22'h3ec743, 22'h088d67}; end
+            8'd249: begin w <= {22'h003ebd, 22'h3ecf74, 22'h087a1d}; end
+            8'd250: begin w <= {22'h003c18, 22'h3ed74c, 22'h086753}; end
+            8'd251: begin w <= {22'h003999, 22'h3edece, 22'h085504}; end
+            8'd252: begin w <= {22'h003740, 22'h3ee601, 22'h08432a}; end
+            8'd253: begin w <= {22'h003508, 22'h3eece9, 22'h0831c2}; end
+            8'd254: begin w <= {22'h0032ef, 22'h3ef38a, 22'h0820c5}; end
+            8'd255: begin w <= {22'h0030f4, 22'h3ef9e7, 22'h081031}; end
+            default: begin w <= 66'd0; end
         endcase
     end
 endmodule

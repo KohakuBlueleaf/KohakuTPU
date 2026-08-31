@@ -37,6 +37,7 @@ source [file join $root scripts tcl ooc_class.tcl]
 # silently synthesising a black box.
 set repo_path [dict create \
     kohaku_sdpram.v [file join $root src kohakuaccel common kohaku_sdpram.v] \
+    kohaku_sdpram_be.v [file join $root src kohakuaccel common kohaku_sdpram_be.v] \
     mx_fpacc.v      [file join $root src kohakutpu matmul mx_fpacc.v] \
     vec_dsp.v       [file join $root src kohakutpu vector vec_dsp.v] \
     vec_delay.v     [file join $root src kohakutpu vector vec_delay.v] \

@@ -125,17 +125,22 @@ LUTs back is the correct trade rather than an argument against it. The
 parameter exists because the right answer differs per instance, not because
 there is a default worth defending.
 
-Two recorded measurements of that trade, both `[unverified]` — the source is
-named, but no report in this tree reproduces either:
+The trade, measured on one router of the shipped 2×2 grid (`NoCRouter`,
+`DATA_WIDTH` 288, out of context, `scripts/tcl/ooc_mod.tcl`, 3.333 ns ask,
+Vivado 2024.2, `xcvu13p-fhgb2104-2L-e`; reports in `build/ooc/router_*`):
 
-| change | effect | recorded in |
-|---|---|---|
-| `FIFO_DEPTH` 4096 in URAM → 32 in distributed RAM | **15 URAM → 0, for +400 LUT per router** | `noc_router.v` |
-| `FIFO_DEPTH` 32 → 512, `MEMORY_TYPE` `"block"` | **20 BRAM per router either way, −1.8 MHz** | `scripts/py/gen_mesh.py` |
+| `FIFO_DEPTH` / `MEMORY_TYPE` | LUT | FF | BRAM tiles | WNS | est. MHz |
+|---|---|---|---|---|---|
+| 512 / `"block"` — what the generated ship emits | 3,052 | 3,165 | **20** | +0.745 | 386 |
+| 32 / `"distributed"` — the module default | 3,762 | 5,965 | **0** | +0.986 | 426 |
 
-The second row is the one that explains the shipped setting: a 288-bit port is
-four `RAMB36` tiles at *any* depth up to 512, so once the tile is spent the
-depth is already paid for.
+So the block-RAM form buys 710 LUT for 20 tiles — 36 LUT per tile — and the
+LUTRAM form is the faster of the two. A 288-bit port is four `RAMB36` tiles at
+*any* depth up to 512, so once the tile is spent the depth is already paid
+for; that is why the block form is emitted at 512 and not 32. Two older
+figures survive in the sources and are superseded by the table: "15 URAM → 0
+for +400 LUT per router" (`noc_router.v`, the URAM era) and "3,751 → 2,911 LUT
+for 20 tiles" (`sync_fifo.v`, an earlier router).
 
 ## The shipped configuration is not the default
 
@@ -144,13 +149,18 @@ design will get the resource picture wrong.
 
 | | `noc_router.v` default | what `gen_mesh.py` emits |
 |---|---|---|
-| `FIFO_DEPTH` | 32 | **512** |
-| `MEMORY_TYPE` | `"distributed"` | **`"block"`** |
+| `FIFO_DEPTH` | 32 | **`ROUTER_DEPTH`, 512** |
+| `MEMORY_TYPE` | `"distributed"` | **`ROUTER_MEM`, `"block"`** |
 
-The generated mesh raises the depth **because the storage was already paid
-for**, not because a deeper buffer is safer. Depth does not prevent deadlock;
-the routing function does ([routing](routing.md)). A buffer only has to cover
-the backpressure round trip.
+The generated top carries the pair as its own parameters, `ROUTER_DEPTH` and
+`ROUTER_MEM`, forwarded to every router it instantiates, so a block design
+sets the storage policy per mesh (`CONFIG.ROUTER_MEM`) without regenerating:
+a die short of block RAM takes `32` / `"distributed"` for its four routers at
+the cost above (−80 tiles, +2,840 LUT for a 2×2), a die short of LUTs keeps
+the default. The generated mesh raises the depth **because the storage was
+already paid for**, not because a deeper buffer is safer. Depth does not
+prevent deadlock; the routing function does ([routing](routing.md)). A buffer
+only has to cover the backpressure round trip.
 
 The same reasoning is applied at the endpoint. `noc_cu_base`'s instruction and
 receive queues default to 32 and 16 and are generated at **512 each**, recorded
