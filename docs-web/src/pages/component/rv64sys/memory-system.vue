@@ -3,7 +3,7 @@
 // RV64 system core — the memory system.
 // Presents docs/arch/cpu/rv64-sys/memory-system.md.
 //
-// In-context rows come from one run of scripts/tcl/ooc_sysnode_rv64.tcl 2
+// In-context rows come from one run of scripts/tcl/ooc_sysnode.tcl 2
 // (sysnode as top, CPU_RV64 = 1, PORTS = 2), xcvu13p-fhgb2104-2L-e,
 // Vivado 2024.2, out-of-context SYNTHESIS, 3.333 ns, reports
 // build/node_sn64_p2_{util,hier,time}.rpt. Standalone rows are rv64_syscore
@@ -1868,7 +1868,7 @@ const absent = {
         <code>xcvu13p-fhgb2104-2L-e</code> under Vivado 2024.2 at a
         <b>3.333 ns request</b>. The <span class="chip">node</span> columns are
         the hierarchical rows of one run of
-        <code>scripts/tcl/ooc_sysnode_rv64.tcl 2</code> —
+        <code>scripts/tcl/ooc_sysnode.tcl 2</code> —
         <code>sysnode</code> as top, <code>CPU_RV64 = 1</code>,
         <code>PORTS = 2</code>, the default <i>rebuilt</i> flattening the ship
         flow uses. The <span class="chip">none</span> column is

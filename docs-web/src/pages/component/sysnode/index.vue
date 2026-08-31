@@ -721,7 +721,7 @@ const catRows = [
     <SpecTable
       :cols="nodeCost.cols"
       :rows="nodeCost.rows"
-      caption="sysnode synthesised AS TOP, out of context, on xcvu13p-fhgb2104-2L-e with Vivado 2024.2, -directive default (so hierarchical rows are a REBUILT netlist), one clock request at 3.333 ns, PORTS = 2 — from report_utilization, which counts CLB LUT sites. Top row scripts/tcl/ooc_sysnode.tcl, bottom scripts/tcl/ooc_sysnode_rv64.tcl 2. BRAM is in tiles"
+      caption="sysnode synthesised AS TOP, out of context, on xcvu13p-fhgb2104-2L-e with Vivado 2024.2, -directive default (so hierarchical rows are a REBUILT netlist), one clock request at 3.333 ns, PORTS = 2 — from report_utilization, which counts CLB LUT sites. Top row scripts/tcl/ooc_sysnode.tcl, bottom scripts/tcl/ooc_sysnode.tcl 2. BRAM is in tiles"
     />
 
     <Callout kind="measured" title="300 MHz is met in out-of-context synthesis, with nothing failing">

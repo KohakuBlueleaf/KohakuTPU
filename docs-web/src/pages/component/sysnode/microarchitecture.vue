@@ -1710,7 +1710,7 @@ const timingRows = [
           >there is no way to build a ship with the RV64 complex without editing
           the generator</b
         >. Every RV64 figure on this site comes from
-        <code>scripts/tcl/ooc_sysnode_rv64.tcl</code>, a standalone
+        <code>scripts/tcl/ooc_sysnode.tcl</code>, a standalone
         <code>sysnode</code> synthesis that sets the parameter directly.
       </p>
       <p>

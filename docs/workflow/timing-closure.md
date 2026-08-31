@@ -84,7 +84,7 @@ path does not do.
 
 ### The worked example
 
-`scripts/tcl/ooc_sysnode_rv64.tcl` carries the compact form. Its `@@@GROUP` block
+`scripts/tcl/ooc_sysnode.tcl` carries the compact form. Its `@@@GROUP` block
 is the whole technique in thirty lines:
 
 ```tcl

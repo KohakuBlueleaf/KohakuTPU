@@ -39,10 +39,6 @@ module rv_noc_req #(
     // translation costs no logic at all.
     parameter [39:0]  DRAM_BASE  = 40'h00_0000_0000,
     parameter integer WR_MAX     = 1,       // un-acknowledged writes allowed
-    // 0 = FLITS ONLY. The MAG-resident processor reaches memory through
-    // rv_mag_req on MAG's converged path, so its fill and writeback never
-    // become flits; dispatch and completions still do.
-    parameter integer MEM_PATH   = 1,
     // buf_id allocation, published in docs/arch/pe/programming.md as
     // flit-format.md s4.7.1 requires. 3 is reserved to the framework.
     parameter [7:0]   BUF_SPAD   = 8'd0,    // raw 32-byte granules
@@ -177,8 +173,7 @@ module rv_noc_req #(
     // A read is only issued when nothing is outstanding: one blocking miss is
     // the whole miss model, so a second tag would have nothing to name.
     wire take_fill = (
-        (MEM_PATH != 0)
-        && (st == S_IDLE)
+        (st == S_IDLE)
         && tx_free
         && fill_valid
         && !rd_pend
@@ -192,8 +187,7 @@ module rv_noc_req #(
     // agent's in-use set where the two rules do compose.
     wire wr_room   = (n_out < WR_MAX[15:0]);
     wire take_wb = (
-        (MEM_PATH != 0)
-        && (st == S_IDLE)
+        (st == S_IDLE)
         && tx_free
         && wb_valid
         && !take_fill

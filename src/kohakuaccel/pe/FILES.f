@@ -11,7 +11,6 @@ kohakuaccel/pe/rv32/mem/rv_imem.v
 kohakuaccel/pe/rv32/mem/rv_l1.v
 kohakuaccel/pe/rv32/mem/rv_ram_be.v
 kohakuaccel/pe/rv32/mem/rv_spad.v
-kohakuaccel/pe/rv32/noc/rv_mag_req.v
 kohakuaccel/pe/rv32/noc/rv_noc_req.v
 kohakuaccel/pe/rv32/rv_pe.v
 kohakuaccel/pe/rv64-sys/core/rv64_alu.v

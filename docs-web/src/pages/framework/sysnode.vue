@@ -1754,7 +1754,7 @@ const catRows = [
       One instance measured <b>4,499 LUT and 32 DSP</b> — out-of-context
       synthesis on <code>xcvu13p-fhgb2104-2L-e</code>, Vivado 2024.2, at 3.333
       ns, <code>sysnode</code> whole at <code>PORTS = 2</code>, by
-      <code>scripts/tcl/ooc_sysnode_rv64.tcl</code>. That is the framework's
+      <code>scripts/tcl/ooc_sysnode.tcl</code>. That is the framework's
       arbiter plus <i>this project's</i> bank and occupant, so it is what one
       accelerator's transform costs rather than what a slot costs.
     </p>

@@ -61,9 +61,6 @@ MANIFEST = [
     # The probes' 8+2 point. Absent from this list, it never regenerated and
     # silently held whatever the generator emitted when it was first written.
     ("ktpu_ship_2x2_8c2v_1m", "mesh_2x2_8+2.txt", True, True, (True, True, True)),
-    # One system node, one router, one cluster, one vector core. Every node has
-    # a control processor now, so this top is no longer the one that has one.
-    ("ktpu_ctrlpe_1x1", "mesh_1x1_ctrlpe.txt", True, True, (False, False, False), True),
     ("ktpu_ship_2x1_6c0v_il", "mesh_2x1_6+0.txt", True, False),
     ("ktpu_ship_2x2", "mesh_2x2_4cu4vec.txt", False, False),
     ("ktpu_ship_2x2_il", "mesh_2x2_4+4.txt", True, False),

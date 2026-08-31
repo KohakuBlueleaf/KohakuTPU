@@ -3,7 +3,7 @@
 // RV64 system core — the contract.
 // Presents docs/arch/cpu/rv64-sys/README.md and architecture.md.
 //
-// Node figures: one run of scripts/tcl/ooc_sysnode_rv64.tcl 2 —
+// Node figures: one run of scripts/tcl/ooc_sysnode.tcl 2 —
 // sysnode as top, CPU_RV64 = 1, PORTS = 2, xcvu13p-fhgb2104-2L-e,
 // Vivado 2024.2, out-of-context SYNTHESIS (not placed, not routed),
 // the default `rebuilt` flattening, 3.333 ns request; reports
@@ -1915,7 +1915,7 @@ const absent = {
 
     <Callout kind="measured" title="Where these rows come from">
       <p>
-        One run of <code>scripts/tcl/ooc_sysnode_rv64.tcl 2</code>:
+        One run of <code>scripts/tcl/ooc_sysnode.tcl 2</code>:
         <code>sysnode</code> as the top with <code>CPU_RV64 = 1</code>,
         <code>PORTS = 2</code>, <code>STAGE = 1</code>,
         <code>ILINK = 1</code>, <code>STAGE_AT_PORT = 1</code>,

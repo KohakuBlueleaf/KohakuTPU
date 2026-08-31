@@ -458,19 +458,19 @@ Both stores are in the v7 ship top, SOURCE
 
 Five facts from the RTL that decide what each is good for:
 
-1. **The MAG store is mesh-wide and shared.** It sits on `mag_stage_port.v`,
-   the converged path where every requester meets — compute units, the mover,
-   the interlink, and the host through `S_AXI_MEM`. Its own header says
-   "a foreign mesh's address is not ours and passes through, which is what lets
-   mesh 0 reach mesh 3's L2." **This is the one store on the card that two
-   different units can hand a tensor through.**
-2. **Only its narrow port is wired.**
-   `src/kohakuaccel/sysnode/core/mag_stage_port.v:174` ties `a_req` to
-   zero: the entry-granular 1,024-bit port A — the whole subject of
-   `notes/cache/mag-staging.md` §2 — is unused, and all traffic goes through the
-   256-bit port B, one claimed burst at a time, round-robin. So the store's
-   advantage is **latency and DRAM-traffic relief, not width**; it is the same
-   256 bits per MAG clock the DRAM path is.
+1. **The MAG store is mesh-wide and shared.** It sits behind the DRAM port's
+   arbiter (`src/kohakuaccel/sysnode/core/mag_dram_port.v`), the converged
+   path where every requester meets — compute units, the mover, the
+   interlink, and the host through `S_AXI_MEM`; a foreign mesh's address is
+   not claimed and passes through, which is what lets mesh 0 reach mesh 3's
+   L2. **This is the one store on the card that two different units can hand
+   a tensor through.**
+2. **Only its narrow port is wired.** `src/kohakuaccel/sysnode/core/mag.v`
+   ties the store's entry-granular 1,024-bit port A off — the whole subject
+   of `notes/cache/mag-staging.md` §2 — and all traffic goes through the
+   256-bit port B from the DRAM port, one claimed burst at a time. So the
+   store's advantage is **latency and DRAM-traffic relief, not width**; it is
+   the same 256 bits per MAG clock the DRAM path is.
 3. **The NoC adapter can only serve the unit behind it.** It snoops its own
    endpoint's outbound flits (`eu_*`), so it is a private scratchpad. It cannot
    move data between clusters, and `notes/cache/noc-staging.md` already records

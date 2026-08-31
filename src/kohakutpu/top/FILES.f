@@ -1,5 +1,3 @@
-kohakutpu/top/generated/ktpu_ctrlpe_1x1.v
-kohakutpu/top/generated/ktpu_ctrlpe_1x1_pump.v
 kohakutpu/top/generated/ktpu_min_1m.v
 kohakutpu/top/generated/ktpu_min_1m_l2.v
 kohakutpu/top/generated/ktpu_min_1m_l2_pump.v

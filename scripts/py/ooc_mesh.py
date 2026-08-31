@@ -3,10 +3,10 @@
 
     python scripts/py/ooc_mesh.py ktpu_ship_2x2_6c2v_1m ktpu_ship_2x2_6c2v_1m_pe
 
-The source list is TAKEN FROM xsim.py's `ctrlpe_mesh` bench rather than written
-here: a hand-kept second list drifts, and the first symptom of drift is a top
-that synthesises against RTL the benches no longer use. The bench's own top and
-testbench are dropped and the requested one substituted.
+The source list is TAKEN FROM xsim.py's `sb_mesh2_ctrl` bench rather than
+written here: a hand-kept second list drifts, and the first symptom of drift is
+a top that synthesises against RTL the benches no longer use. The bench's own
+top and testbench are dropped and the requested one substituted.
 
 One run per top, sequentially -- six concurrent Vivado runs is the project's
 ceiling and a mesh is far too big to want two of them fighting for memory.
@@ -55,14 +55,12 @@ puts "@@@ MESH {top} LUT=$nlut FF=$nff BRAM=$nbram URAM=$nuram DSP=$ndsp WNS=$sl
 
 
 def sources_for(top):
-    """The ctrlpe_mesh bench's list, with its own top and TB swapped out."""
-    files = xsim.BENCHES["ctrlpe_mesh"][1]
+    """The sb_mesh2_ctrl bench's list, with its own top and TB swapped out."""
+    files = xsim.BENCHES["sb_mesh2_ctrl"][1]
     keep = [
         f
         for f in dict.fromkeys(files)
-        if not f.endswith("ctrlpe_mesh_tb.v")
-        and "top/generated/" not in f
-        and "/verif/" not in f
+        if not f.endswith("_tb.v") and "top/generated/" not in f and "/verif/" not in f
     ]
     return keep + [f"src/kohakutpu/top/generated/{top}.v"]
 
@@ -75,6 +73,7 @@ def run(top, build):
         f"{{{(ROOT / d).as_posix()}}}"
         for d in (
             "src/kohakuaccel/noc",
+            "src/kohakuaccel/pe/rv64-sys/core",
             "src/kohakumpe/simd",
             "src/kohakumpe/simd/generated",
             "src/kohakumpe/simt",

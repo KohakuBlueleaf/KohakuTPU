@@ -225,7 +225,7 @@ instead of a long list of one problem's aliases.
     @@@GROUP   61 paths  worst  -0.208  lvl   9  u_ctrl/addr_reg -> u_ctrl/hit_reg
     @@@GROUP   25 paths  worst  -0.061  lvl  12  u_alu/stage2_reg -> u_alu/acc_reg
 
-`scripts/tcl/ooc_sysnode_rv64.tcl` carries the compact implementation and
+`scripts/tcl/ooc_sysnode.tcl` carries the compact implementation and
 `ooc_cones` in `scripts/tcl/ooc_class.tcl` the fuller one, which additionally
 dumps a representative path per group cell by cell and lists the design's
 highest-fanout nets.

@@ -41,7 +41,7 @@ Two scripts produce them:
   at `-flatten_hierarchy rebuilt`, which is the ship flow; with `HIER` it
   switches to `none`, which is the flow whose hierarchical rows are an
   attribution;
-- `scripts/tcl/ooc_sysnode_rv64.tcl <ports>` — `sysnode` whole with
+- `scripts/tcl/ooc_sysnode.tcl <ports>` — `sysnode` whole with
   `CPU_RV64 = 1`, which writes `build/node_sn64_p2_*.rpt`.
 
 > **No Fmax on this page is a closed-timing figure.** Every one is a
@@ -355,7 +355,7 @@ Two readings that a careless comparison gets wrong:
 
 **This is the current measurement of the processor as it ships.** From
 `build/node_sn64_p2_hier.rpt`, `build/node_sn64_p2_util.rpt` and
-`build/node_sn64_p2_time.rpt` — one run of `scripts/tcl/ooc_sysnode_rv64.tcl 2`
+`build/node_sn64_p2_time.rpt` — one run of `scripts/tcl/ooc_sysnode.tcl 2`
 on 2026-08-26, `sysnode` as the top with `CPU_RV64=1 PORTS=2 STAGE=1 ILINK=1
 STAGE_AT_PORT=1 PE_IMEM=8192 PE_SPAD=4096 PE_L1_LINES=64`,
 `-flatten_hierarchy rebuilt`, design state **Synthesized**, and
