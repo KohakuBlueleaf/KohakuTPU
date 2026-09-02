@@ -858,7 +858,7 @@ operand that is streamed.** `K` and `V` are re-read by every query block; `Q` an
 the output are streamed. Put `K` and `V` in L2, per head, and the DRAM traffic of
 a self-attention drops by the query-block count.
 
-**Cross-mesh.** `src/kohakuaccel/sysnode/core/mag_stage.v:69` tests the mesh id
+**Cross-mesh.** `src/kohakuaccel/sysnode/core/mag_stage.v:70` tests the mesh id
 absolutely, and the header
 says a foreign address passes through — so mesh 0 writing
 `SPECIAL_BIT | (3 << 36) | off` lands in mesh 3's L2. Combined with

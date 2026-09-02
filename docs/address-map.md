@@ -40,7 +40,7 @@ an instruction, and every address a decoder tests is 40 bits:
 [35:0]   local      64 GB
 ```
 
-`mm_mover.v`'s header states it, and `mag_stage.v:69-75`,
+`mm_mover.v`'s header states it, and `mag_stage.v:70-76`,
 `mag_stage_port.v:87-88` and `mag_mem_port.v:290-292` all test it
 **absolutely** -- an address carries which mesh it belongs to, no matter who
 issued it or where it arrives.
@@ -164,7 +164,7 @@ behind it (`C0_DDR4_ADDRESS_BLOCK` assigns at `<0x0_0000_0000 [ 4G ]>`), so
 addresses from 4 GB to 64 GB within a mesh decode correctly, reach `M_AXI_DRAM`,
 and hit nothing. Staying under 4 GB per mesh is a compiler invariant, not
 something the hardware checks -- unlike an unimplemented aperture, which does
-fault (`mag_stage.v:82`).
+fault (`mag_stage.v:93`).
 
 ## What 40 bits buys elsewhere
 

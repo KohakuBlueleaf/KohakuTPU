@@ -332,7 +332,7 @@ without leaving its run. At two ways, where the block IS a run, it is local.
 
 That staging span is what the MAG L2 is for, and it is now allocatable.
 
-SOURCE `src/kohakuaccel/sysnode/core/mag_stage.v:74`: the store is reached BY
+SOURCE `src/kohakuaccel/sysnode/core/mag_stage.v:75`: the store is reached BY
 ADDRESS and never by an
 instruction — `addr[39] && !addr[38] && addr[37:36]==MESH && addr[35:32]==AP_STAGE`.
 `machinespec.stage_addr` forms it and `kohakutpu.staging.stage_arena` hands it

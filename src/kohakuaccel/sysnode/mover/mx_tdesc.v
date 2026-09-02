@@ -34,7 +34,10 @@ module mx_tdesc #(
     parameter integer CW   = 16,    // loop count width
     parameter integer SW   = 32,    // stride width (signed)
     parameter integer XW   = 16,    // axis position width (signed)
-    parameter integer LOWB = 5      // width of the low-bit test on `addr`
+    parameter integer LOWB = 5,     // width of the low-bit test on `addr`
+    // 1: the element comes from a two-entry queue the walker fills on its
+    // own count, so `next` pops AW+3 flops; 0: the walker's registers direct.
+    parameter integer OREG = 0
 )(
     input  wire            clk,
     input  wire            rst,
@@ -155,8 +158,21 @@ module mx_tdesc #(
     end
     endgenerate
 
-    assign last   = &at_max;
-    assign active = run;
+    // The walker's own element: presented directly at OREG 0, through the
+    // queue at the end of the module at OREG 1.
+    wire w_last = &at_max;
+    wire step;
+
+    // Element 0's `last`, read straight off the descriptor: at OREG 1 the
+    // queue takes element 0 from `start` itself and the walker steps past it.
+    wire [NDIM-1:0] at_max0;
+    generate
+    for (g = 0; g < NDIM; g = g + 1) begin : g_zero
+        assign at_max0[g] = !dim_live[g]
+                          || (eff_count[g] == {{(CW-1){1'b0}}, 1'b1});
+    end
+    endgenerate
+    wire last0 = &at_max0;
 
     always @(posedge clk) begin
         // Only `run`: `start` clears the walker below at :163.
@@ -167,8 +183,8 @@ module mx_tdesc #(
             for (i = 0; i < NDIM; i = i + 1) begin
                 idx[i] <= {CW{1'b0}}; psum[i] <= {SW{1'b0}}; apsum[i] <= {XW{1'b0}};
             end
-        end else if (run && next) begin
-            if (last) begin
+        end else if (run && step) begin
+            if (w_last) begin
                 run <= 1'b0;
             end else begin
                 for (i = 0; i < NDIM; i = i + 1) begin
@@ -215,7 +231,7 @@ module mx_tdesc #(
         end
         off_sum = os_t[0];
     end
-    assign addr = d_base + {{(AW-SW){off_sum[SW-1]}}, off_sum};
+    wire [AW-1:0] w_addr = d_base + {{(AW-SW){off_sum[SW-1]}}, off_sum};
 
     // An alignment test reads only the low LOWB bits, which carry nothing from
     // above: folded narrow it is one CARRY8, not a slice of the 40-bit sum.
@@ -234,7 +250,7 @@ module mx_tdesc #(
             end
         end
     end
-    assign low_nz = |(d_base[LOWB-1:0] + ls_t[0]);
+    wire w_low_nz = |(d_base[LOWB-1:0] + ls_t[0]);
 `ifndef SYNTHESIS
     always @(posedge clk) begin
         if (!rst && (low_nz !== |addr[LOWB-1:0])) begin
@@ -287,7 +303,67 @@ module mx_tdesc #(
             );
         end
     end
-    assign valid = &ax_ok;
+    wire w_valid = &ax_ok;
+
+    // ---- the element presented -------------------------------------------
+    generate if (OREG == 0) begin : g_direct
+        assign step   = next;
+        assign active = run;
+        assign last   = w_last;
+        assign valid  = w_valid;
+        assign addr   = w_addr;
+        assign low_nz = w_low_nz;
+    end else begin : g_oreg
+        // A two-entry queue the walker fills on its own count: `next` pops it,
+        // so the caller's step reaches AW+3 flops and not the walker's
+        // enables (2,700 endpoints, 79% route, at the v8t5 route). `start`
+        // loads element 0 itself and the walker's first step (`q_pend`)
+        // passes it unpushed, so element 1 is pushed two cycles after start:
+        // the caller's first pop must wait that long (a muxed start state
+        // that had element 1 ready a cycle earlier cost 190 LUT a walker).
+        reg [AW+2:0]  q_e0, q_e1;             // {low_nz, last, valid, addr}
+        reg [1:0]     q_cnt;
+        reg           q_rd, q_pend;
+        wire          q_pop  = next && (q_cnt != 2'd0);
+        wire          q_push = run && !q_pend && (q_cnt != 2'd2);
+        wire          q_wr   = q_rd ^ q_cnt[0];
+        wire [AW+2:0] q_in   = {w_low_nz, w_last, w_valid, w_addr};
+        // element 0's bounds: every axis sum is its base
+        reg [1:0] ok0;
+        integer zi;
+        always @(*) begin
+            for (zi = 0; zi < 2; zi = zi + 1) begin
+                ok0[zi] = (d_aext[zi] == {XW{1'b0}})
+                       || ((d_abase[zi] >= 0)
+                           && (d_abase[zi] < $signed({1'b0, d_aext[zi]})));
+            end
+        end
+        wire [AW+2:0] q_e0v = {|d_base[LOWB-1:0], last0, &ok0, d_base};
+        assign step = q_push || q_pend;
+        always @(posedge clk) begin
+            if (rst) begin
+                q_cnt <= 2'd0; q_rd <= 1'b0; q_pend <= 1'b0;
+            end else if (start) begin
+                q_cnt <= 2'd1; q_rd <= 1'b0; q_e0 <= q_e0v; q_pend <= 1'b1;
+            end else begin
+                q_pend <= 1'b0;
+                q_cnt  <= q_cnt + {1'b0, q_push} - {1'b0, q_pop};
+                if (q_pop) begin
+                    q_rd <= !q_rd;
+                end
+                if (q_push) begin
+                    if (q_wr) begin q_e1 <= q_in; end
+                    else begin q_e0 <= q_in; end
+                end
+            end
+        end
+        wire [AW+2:0] q_hd = q_rd ? q_e1 : q_e0;
+        assign active = (q_cnt != 2'd0);
+        assign addr   = q_hd[AW-1:0];
+        assign valid  = q_hd[AW];
+        assign last   = q_hd[AW+1];
+        assign low_nz = q_hd[AW+2];
+    end endgenerate
 
 endmodule
 

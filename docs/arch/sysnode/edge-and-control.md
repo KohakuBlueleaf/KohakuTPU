@@ -131,8 +131,12 @@ the converged path, channel `MV`, which is all the agent ever knew about it.
 
 Two descriptor walkers, source and destination, stepped in lockstep with the
 destination defining the iteration space — which is what makes a source stride
-of zero a broadcast with no extra mode. It has **no fabric endpoint**: it reads
-memory and writes memory, and never talks to a compute unit.
+of zero a broadcast with no extra mode. Each walker presents its element from a
+two-entry queue it fills on its own count (`mx_tdesc` `OREG`), so the mover's
+step pops a register rather than enabling the walker; the start loads element
+0 into the queue itself, and the mover waits one cycle for the walker to step
+past it before the first latch. It has **no fabric endpoint**: it reads memory
+and writes memory, and never talks to a compute unit.
 
 The host's `AUX_CFG` window still reaches it, forwarded verbatim with the offset
 preserved so a driver keeps its own register offsets. That path is a **slice of

@@ -124,6 +124,10 @@ module mm_mover #(
     localparam [3:0] I_GO = 4'd4, I_GA1 = 4'd5, I_GA2 = 4'd6, I_GA3 = 4'd7;
     localparam [3:0] I_LAT = 4'd8, I_RUN = 4'd9, I_FLUSH = 4'd10;
     localparam [3:0] I_DRAIN = 4'd11, I_DONE = 4'd12, I_FAULT = 4'd13;
+    // One cycle between the walkers' start and the element latch: their
+    // queues (mx_tdesc OREG) hold element 0 from the start and need the cycle
+    // to step past it, so element 1 is there when I_LAT pops.
+    localparam [3:0] I_GO2 = 4'd14;
 
     localparam [1:0] W_IDLE = 2'd0, W_ARM = 2'd1, W_GEN = 2'd2, W_DATA = 2'd3;
 
@@ -179,7 +183,19 @@ module mm_mover #(
     reg [1:0]  wst;
     reg        go;
 
-    wire [7:0] reg_sel = {cfg_addr[7:3], 3'b000};
+    // The configuration write lands in a register first: the processor is
+    // most of a die away and the wire alone was 3.5 ns at the v8t5 route.
+    // `stat_busy` covers the cycle through `go`, so a poll after the write
+    // sees busy exactly when it did.
+    reg        cfg_en_q;
+    reg [7:0]  cfg_addr_q;
+    reg [63:0] cfg_data_q;
+    always @(posedge clk) begin
+        cfg_en_q   <= cfg_en && resetn;
+        cfg_addr_q <= cfg_addr;
+        cfg_data_q <= cfg_data;
+    end
+    wire [7:0] reg_sel = {cfg_addr_q[7:3], 3'b000};
 
     // Burst caps. flags[7:5] is a log2 cap with 0 meaning BURST_MAX, so a
     // driver can reproduce the pre-burst behaviour with flags[7:5] = 1.
@@ -190,6 +206,7 @@ module mm_mover #(
     // ================================================== descriptor walkers
     wire [ADDR_W-1:0] src_addr, dst_addr;
     wire src_last, dst_last, src_valid, dst_valid, src_active, dst_active;
+    wire dst_low_nz;                 // dst_addr[4:0] != 0, off the walker's registers
 
     reg  elem_adv;                          // combinational, driven below
 
@@ -211,7 +228,10 @@ module mm_mover #(
     wire desc_next  = elem_adv && !walk_last;
     wire dst_next   = xf ? (desc_next && ent_pen) : desc_next;
 
-    mx_tdesc #(.NDIM(6), .AW(ADDR_W), .CW(16), .SW(32), .XW(16)) u_src (
+    // OREG 1: the walkers present their element from a two-entry queue, so
+    // `proc` reaches 43 flops each, not every walker enable.
+    mx_tdesc #(.NDIM(6), .AW(ADDR_W), .CW(16), .SW(32), .XW(16),
+               .OREG(1)) u_src (
         .clk(clk), .rst(!resetn),
         .ld_dim_en(d_dim_en && (ld_sel == 1'b0)), .ld_dim(ld_dim),
         .ld_count(ld_count), .ld_stride(ld_stride),
@@ -225,7 +245,8 @@ module mm_mover #(
         .low_nz()
     );
 
-    mx_tdesc #(.NDIM(6), .AW(ADDR_W), .CW(16), .SW(32), .XW(16)) u_dst (
+    mx_tdesc #(.NDIM(6), .AW(ADDR_W), .CW(16), .SW(32), .XW(16),
+               .OREG(1)) u_dst (
         .clk(clk), .rst(!resetn),
         .ld_dim_en(d_dim_en && (ld_sel == 1'b1)), .ld_dim(ld_dim),
         .ld_count(ld_count), .ld_stride(ld_stride),
@@ -236,7 +257,7 @@ module mm_mover #(
         .ld_abase(d_abase), .ld_aext(d_aext),
         .start(desc_start), .next(dst_next),
         .active(dst_active), .last(dst_last), .valid(dst_valid), .addr(dst_addr),
-        .low_nz()
+        .low_nz(dst_low_nz)
     );
 
     // ================================================== index buffer
@@ -303,7 +324,7 @@ module mm_mover #(
     // Space for a whole burst is reserved before its AR goes out, so the read
     // return can never be refused and never backs up into the shared FIFO.
     assign m_rready  = 1'b1;
-    assign stat_busy = (ist != I_IDLE);
+    assign stat_busy = (ist != I_IDLE) || go;
 
     // TWO registers before the address: BRAM output straight into a 32x32
     // multiply measured 188 MHz, so the index is captured before the multiplier.
@@ -320,7 +341,7 @@ module mm_mover #(
 
     wire [ADDR_W-1:0] lt_rd = (mode == MODE_GATHER) ? gath_addr : src_addr;
     wire              lt_rv = (mode == MODE_GATHER) ? 1'b1      : src_valid;
-    wire              lt_ma = |dst_addr[4:0];
+    wire              lt_ma = dst_low_nz;
     // A padded element issues no read, and a transform counts IN_BEATS off the
     // return -- a bound axis leaves the occupant a beat short, forever. Faulted.
     wire              lt_xpad = xf && !lt_rv;
@@ -661,59 +682,59 @@ module mm_mover #(
             end
 
             // ---- register writes ----
-            if (cfg_en) begin
+            if (cfg_en_q) begin
                 case (reg_sel)
                     8'h00: begin
-                        mode   <= cfg_data[2:0];
-                        ewidth <= cfg_data[4:3];
-                        flags  <= cfg_data[15:8];
-                        go     <= cfg_data[16];
-                        room_lim <= (cfg_data[2:0] == MODE_XFORM)
+                        mode   <= cfg_data_q[2:0];
+                        ewidth <= cfg_data_q[4:3];
+                        flags  <= cfg_data_q[15:8];
+                        go     <= cfg_data_q[16];
+                        room_lim <= (cfg_data_q[2:0] == MODE_XFORM)
                                   ? XF_ROOM_LIM : CP_ROOM_LIM;
                     end
                     8'h10: begin
-                        ld_sel   <= cfg_data[0];
-                        d_base   <= cfg_data[4 +: ADDR_W];
-                        d_ndim   <= cfg_data[46:44];
+                        ld_sel   <= cfg_data_q[0];
+                        d_base   <= cfg_data_q[4 +: ADDR_W];
+                        d_ndim   <= cfg_data_q[46:44];
                         d_hdr_en <= 1'b1;
-                        if (cfg_data[0]) begin
-                            dst_base   <= cfg_data[4 +: ADDR_W];
+                        if (cfg_data_q[0]) begin
+                            dst_base   <= cfg_data_q[4 +: ADDR_W];
                         end
                         else begin
-                            d_src_base <= cfg_data[4 +: ADDR_W];
+                            d_src_base <= cfg_data_q[4 +: ADDR_W];
                             // The transform applies to the READ side, so its id
                             // and mode ride the source header's free upper bits.
-                            xf_id      <= cfg_data[47 +: XID_W];
-                            xf_mode    <= cfg_data[55 +: XMODE_W];
+                            xf_id      <= cfg_data_q[47 +: XID_W];
+                            xf_mode    <= cfg_data_q[55 +: XMODE_W];
                         end
                     end
                     8'h18: begin
-                        ld_sel    <= cfg_data[0];
-                        ld_dim    <= cfg_data[3:1];
-                        ld_count  <= cfg_data[19:4];
-                        ld_stride <= cfg_data[51:20];
+                        ld_sel    <= cfg_data_q[0];
+                        ld_dim    <= cfg_data_q[3:1];
+                        ld_count  <= cfg_data_q[19:4];
+                        ld_stride <= cfg_data_q[51:20];
                     end
                     8'h20: begin
-                        d_axis   <= cfg_data[1:0];
-                        d_astep  <= cfg_data[17:2];
+                        d_axis   <= cfg_data_q[1:0];
+                        d_astep  <= cfg_data_q[17:2];
                         d_dim_en <= 1'b1;
                     end
                     8'h28: begin
-                        ld_sel   <= cfg_data[0];
-                        d_ax_sel <= cfg_data[1];
-                        d_abase  <= cfg_data[17:2];
-                        d_aext   <= cfg_data[33:18];
+                        ld_sel   <= cfg_data_q[0];
+                        d_ax_sel <= cfg_data_q[1];
+                        d_abase  <= cfg_data_q[17:2];
+                        d_aext   <= cfg_data_q[33:18];
                         d_ax_en  <= 1'b1;
                     end
                     8'h30: begin
-                        idx_base  <= cfg_data[ADDR_W-1:0];
-                        idx_count <= cfg_data[55:40];
+                        idx_base  <= cfg_data_q[ADDR_W-1:0];
+                        idx_count <= cfg_data_q[55:40];
                     end
-                    8'h38: seed <= cfg_data;
-                    8'h40: imm  <= cfg_data[31:0];
+                    8'h38: seed <= cfg_data_q;
+                    8'h40: imm  <= cfg_data_q[31:0];
                     8'h50: begin
-                        gath_pitch <= cfg_data[31:0];
-                        gath_words <= cfg_data[47:32];
+                        gath_pitch <= cfg_data_q[31:0];
+                        gath_words <= cfg_data_q[47:32];
                     end
                     default: ;
                 endcase
@@ -798,8 +819,9 @@ module mm_mover #(
 
                 I_GO: begin
                     ix_raddr <= 8'd0;
-                    ist <= (mode == MODE_GATHER) ? I_GA1 : I_LAT;
+                    ist <= (mode == MODE_GATHER) ? I_GA1 : I_GO2;
                 end
+                I_GO2: ist <= I_LAT;
 
                 // One cycle for the index to leave the buffer into `idx_r`, one
                 // for the multiply, one for the base add.

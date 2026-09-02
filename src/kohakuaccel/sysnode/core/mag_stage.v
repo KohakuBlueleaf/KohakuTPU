@@ -13,8 +13,9 @@
 // placement. The staging pays for the return mux in fabric instead: ENTRIES /
 // BANKS must stay at or under 4096, one URAM deep.
 
-// WIDE PATH ONE DRIVER, NARROW PATH MANY. Write data is one registered
-// broadcast; only the address and control fan out per bank.
+// EVERY BANK HAS ITS OWN COPY of the dispatch registers, data and address
+// alike (PIPE 1): a single row register drove 64 URAM address pins across a
+// die's height, 3.5 ns of net at zero logic levels.
 
 `default_nettype none
 
@@ -123,22 +124,30 @@ module mag_stage #(
 
     // PIPE picks which set the banks see. GENERATED, not muxed: a ternary on a
     // parameter still infers the registers, and 1,024 dead FF is not a nothing.
+    // Everything a bank takes, one slice per bank.
     wire [BANKS-1:0] d_aw, d_ar, d_bw, d_br;
-    wire [RW-1:0]    d_ar_row, d_br_row;
-    wire [EW-1:0]    d_bword;
-    wire [DATA_W/8-1:0] d_bstrb;
-    wire [BANKS*WORDS*DATA_W-1:0] d_wide;   // one slice per bank
+    wire [BANKS*RW-1:0]    d_ar_row, d_br_row;
+    wire [BANKS*EW-1:0]    d_bword;
+    wire [BANKS*DATA_W/8-1:0] d_bstrb;
+    wire [BANKS*WORDS*DATA_W-1:0] d_wide;
 
     generate if (PIPE != 0) begin : g_disp
-        // One copy per bank: as a single register this was the worst data path,
-        // 4.860 ns at 98.4% route and ZERO logic levels. DONT_TOUCH or merged.
+        // ONE COPY PER BANK, DONT_TOUCH or merged: as a single register the
+        // wide data was 4.860 ns at 98.4% route, and the row address 3.5 ns of
+        // net into 64 URAM pins, both at zero logic levels.
         (* DONT_TOUCH = "yes" *)
         reg  [BANKS*WORDS*DATA_W-1:0] wide_q;
+        (* DONT_TOUCH = "yes" *)
+        reg  [BANKS*RW-1:0]     arow_q, brow_q;
+        (* DONT_TOUCH = "yes" *)
+        reg  [BANKS*EW-1:0]     bword_q;
+        (* DONT_TOUCH = "yes" *)
+        reg  [BANKS*DATA_W/8-1:0] bstrb_q;
         reg  [BANKS-1:0]        aw_q, ar_q, bw_q, br_q;
-        reg  [RW-1:0]           arow_q, brow_q;
-        reg  [EW-1:0]           bword_q;
-        reg  [DATA_W/8-1:0]     bstrb_q;
 
+        // ONLY THE ENABLES SEE THE RESET. A data register loaded in the
+        // reset's else branch takes the reset as its clock enable: 5,885
+        // wide_q bits on the synchroniser's output at the v8t5 route.
         always @(posedge clk) begin
             if (rst) begin
                 aw_q <= {BANKS{1'b0}}; ar_q <= {BANKS{1'b0}};
@@ -148,10 +157,12 @@ module mag_stage #(
                 ar_q <= a_hit & {BANKS{~a_we}};
                 bw_q <= b_hit & {BANKS{b_we}};
                 br_q <= b_hit & {BANKS{~b_we}};
-                arow_q <= a_row; brow_q <= b_row; bword_q <= b_word;
-                bstrb_q <= b_wstrb;
-                wide_q <= {BANKS{wide_d}};
             end
+            arow_q  <= {BANKS{a_row}};
+            brow_q  <= {BANKS{b_row}};
+            bword_q <= {BANKS{b_word}};
+            bstrb_q <= {BANKS{b_wstrb}};
+            wide_q  <= {BANKS{wide_d}};
         end
         assign d_aw = aw_q; assign d_ar = ar_q;
         assign d_bw = bw_q; assign d_br = br_q;
@@ -163,9 +174,9 @@ module mag_stage #(
         assign d_ar = a_hit & {BANKS{~a_we}};
         assign d_bw = b_hit & {BANKS{b_we}};
         assign d_br = b_hit & {BANKS{~b_we}};
-        assign d_ar_row = a_row; assign d_br_row = b_row;
-        assign d_bword = b_word; assign d_wide = {BANKS{wide_d}};
-        assign d_bstrb = b_wstrb;
+        assign d_ar_row = {BANKS{a_row}}; assign d_br_row = {BANKS{b_row}};
+        assign d_bword = {BANKS{b_word}}; assign d_wide = {BANKS{wide_d}};
+        assign d_bstrb = {BANKS{b_wstrb}};
     end endgenerate
 
     // ---- the banks ---------------------------------------------------------
@@ -174,15 +185,19 @@ module mag_stage #(
 
     generate
     for (g = 0; g < BANKS; g = g + 1) begin : g_bank
-        wire            bk_awr = d_aw[g];
-        wire [RW-1:0]   bk_wrow = bk_awr ? d_ar_row : d_br_row;
-        wire [RW-1:0]   bk_rrow = d_ar[g] ? d_ar_row : d_br_row;
+        wire            bk_awr  = d_aw[g];
+        wire [RW-1:0]   bk_arow = d_ar_row[g*RW +: RW];
+        wire [RW-1:0]   bk_brow = d_br_row[g*RW +: RW];
+        wire [EW-1:0]   bk_bword = d_bword[g*EW +: EW];
+        wire [DATA_W/8-1:0] bk_bstrb = d_bstrb[g*(DATA_W/8) +: DATA_W/8];
+        wire [RW-1:0]   bk_wrow = bk_awr ? bk_arow : bk_brow;
+        wire [RW-1:0]   bk_rrow = d_ar[g] ? bk_arow : bk_brow;
 
         for (w = 0; w < WORDS; w = w + 1) begin : g_word
             // A writes every word of its entry, whole; the host writes the one
             // its address names, under its strobes.
-            wire bk_we = bk_awr || (d_bw[g] && (d_bword == w[EW-1:0]));
-            wire [DATA_W/8-1:0] bk_strb = bk_awr ? {(DATA_W/8){1'b1}} : d_bstrb;
+            wire bk_we = bk_awr || (d_bw[g] && (bk_bword == w[EW-1:0]));
+            wire [DATA_W/8-1:0] bk_strb = bk_awr ? {(DATA_W/8){1'b1}} : bk_bstrb;
             kohaku_sdpram_be #(
                 .WIDTH    (DATA_W),
                 .DEPTH    (ROWS),
