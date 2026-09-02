@@ -80,15 +80,22 @@ interconnect.
 
 ### 1.2 The memory map is not the obvious one
 
-**Exactly one DDR4 controller per SLR**, and the channel numbering does not match
-the die numbering:
+**Exactly one DDR4 controller per SLR**, and the board's channel numbering does
+not match the die numbering. Read off the placed-IO reports of three builds and
+the device model (banks 61–63 are SLR0, 64–67 SLR1, 68–71 SLR2, 72–74 SLR3):
 
-| channel | SLR | notes |
-|---|---|---|
-| `ddr4_c0` | SLR3 | |
-| `ddr4_c1` | SLR2 | the single-mesh design on the card today |
-| `ddr4_c2` | SLR0 | |
-| `ddr4_c3` | SLR1 | **XDMA/PCIe is also here** |
+| board channel | its banks | SLR | block-design cell | notes |
+|---|---|---|---|---|
+| `c0_ddr4` | 72 73 74 | SLR3 | `ddr4_3` | |
+| `c1_ddr4` | 69 70 71 | SLR2 | `ddr4_2` | |
+| `c2_ddr4` | 61 62 63 | SLR0 | `ddr4_0` | |
+| `c3_ddr4` | 65 66 67 | SLR1 | `ddr4_1` | **XDMA/PCIe is also here** (`PCIE40E4_X0Y1`, GTY quads 224–227, the AY23 reference in bank 64) |
+
+The block design names the controller by the die it is in — `ddr4_<slr>` — and
+the board's numbering appears in exactly one line of the build
+(`DDR_PORT_OF_SLR` in `scripts/tcl/v8t2/00_config.tcl`), where the cell meets
+its board port. The synthesis analysis re-derives the table from the package
+pins and fails the build if the two disagree.
 
 So **XDMA lands in SLR1**, and it is expensive: measured at 76,319 LUT and 72,059
 FF, **17.7% of an SLR on its own** ([results.md](results.md) §5.2). Whichever die
@@ -110,34 +117,33 @@ fact the whole arrangement rests on is the one-controller-per-SLR line above: **
 mesh ever needs a cross-SLR path to its own DRAM**, so the only nets that cross
 are the four links.
 
-| mesh | SLR | size | DRAM | why this die |
+| mesh | SLR | DRAM cell | population, `multimesh_v7` | population, `multimesh_v8t2` |
 |---|---|---|---|---|
-| 0 | SLR0 | 6+4 | `ddr4_2` | empty otherwise; only `ddr4_2` is on it |
-| 1 | SLR1 | 4+4 | `ddr4_3` | XDMA is here, so it is the most crowded die |
-| 2 | SLR3 | 4+4 | `ddr4_0` | the grid diagonal of SLR1 |
-| 3 | SLR2 | 6+4 | `ddr4_1` | already held a 6+4 |
+| 0 | SLR0 | `ddr4_0` | 2×2, 8+2 | 2×2, 2+2 |
+| 1 | SLR1 | `ddr4_1` | 2×2, **6+2** | 2×2, 2+2 |
+| 2 | SLR2 | `ddr4_2` | 2×2, 8+2 | 2×2, 2+2 |
+| 3 | SLR3 | `ddr4_3` | 2×2, 8+2 | 2×2, 2+2 |
 
-`6+4` is six matmul clusters and four vector cores. The small meshes go on SLR1
-and its **grid diagonal**, which is where the crowded die's neighbours are
-cheapest to reach.
+`8+2` is eight matmul clusters and two vector cores. **Every index is the
+SLR** — mesh, station, Xache partition, DRAM cell — and the smallest mesh goes
+on SLR1, the die that also carries XDMA, JTAG and the clock root.
 
-**Three of the four links are SLR-adjacent and one is not, and that is forced** —
-a 4-cycle cannot embed in a 4-node path without one edge spanning. The long one is
-what a plain shift-register pipe exists for, legal precisely because the link
-protocol is credit-based and has no handshake to preserve. **Add stages there and
-nowhere else**: a pipeline stage anywhere with a real ready signal reintroduces
-the combinational crossing the link asserts against.
+**The meshes are a line, joined by three SLR-adjacent links** — mesh `i`'s
+`LINK1` to mesh `i+1`'s `LINK0`, no diagonal and no spanning edge
+([multi-mesh.md](multi-mesh.md) §2). Each crossing is a register pair
+(`kts_pipe_bd`, one register on each die), legal precisely because the link
+protocol is credit-based and has no handshake to preserve. **Add stages there
+and nowhere else**: a pipeline stage anywhere with a real ready signal
+reintroduces the combinational crossing the link asserts against.
 
 Every mesh master sees only its own DRAM's 4 GB at offset 0. The mesh id rides the
 interlink header rather than the local address, which is why a mesh's masters need
 no address-decode change to become one of four.
 
 > **Populations move between generations, and the pages here name different
-> ones.** The four-mesh plan above is 6+4 / 4+4 / 4+4 / 6+4. A placed run recorded
-> in [notes/cache/](../../notes/cache/README.md) measured meshes of 6+2 and 6+0
-> from the placed hierarchy. Both are true of their own build. Treat a population
-> as a property of a named build, never as a property of "the ship", and check
-> which build a figure came from before carrying it.
+> ones.** Treat a population as a property of a named build, never as a
+> property of "the ship", and check which build a figure came from before
+> carrying it.
 
 ---
 

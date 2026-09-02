@@ -19,11 +19,14 @@ module ktpu_node_v8t #(
     parameter integer MW       = 512,
     parameter integer PORTS    = 2,
     parameter integer MESH_ID  = 0,
+    parameter integer ILINK    = 0,      // 1: build the two link surfaces
     parameter integer L2_MAG_BANKS   = 4,      // 4 x 4096 x 1024 b = 64 single URAM, 2 MB
     parameter integer L2_MAG_ENTRIES = 16384,
     // 0: dram_aclk MUST be axi_aclk and the DRAM master's queues are
     // synchronous -- the one-clock memory path into the Xache.
     parameter integer DRAM_CDC  = 1,
+    // Memory beats one DRAM AR may carry: the Xache's read slot (RB_BEATS).
+    parameter integer DRAM_AR_MAX = 0,
     parameter integer CDC_DEPTH = 16
 )(
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 axi_aclk CLK" *)
@@ -119,7 +122,43 @@ module ktpu_node_v8t #(
     input  wire [1:0]       M_AXI_DRAM_rresp,
     input  wire             M_AXI_DRAM_rlast,
     input  wire             M_AXI_DRAM_rvalid,
-    output wire             M_AXI_DRAM_rready
+    output wire             M_AXI_DRAM_rready,
+
+    // The interlink, one KTS surface per side. The ports exist at ILINK 0 too
+    // -- a BD cell's port list may not depend on a parameter -- and are tied
+    // off inside.
+    // sysnode's own naming: link<n>_out_* is the outgoing flit stream and the
+    // credits RETURNING for it; link<n>_in_* is the incoming stream and the
+    // credits this node emits for it.
+    input  wire             link0_in_valid,
+    input  wire             link0_in_vc,
+    input  wire             link0_in_last,
+    input  wire [287:0]     link0_in_flit,
+    output wire             link0_in_crd_valid,
+    output wire             link0_in_crd_vc,
+    output wire [3:0]       link0_in_crd_n,
+    output wire             link0_out_valid,
+    output wire             link0_out_vc,
+    output wire             link0_out_last,
+    output wire [287:0]     link0_out_flit,
+    input  wire             link0_out_crd_valid,
+    input  wire             link0_out_crd_vc,
+    input  wire [3:0]       link0_out_crd_n,
+
+    input  wire             link1_in_valid,
+    input  wire             link1_in_vc,
+    input  wire             link1_in_last,
+    input  wire [287:0]     link1_in_flit,
+    output wire             link1_in_crd_valid,
+    output wire             link1_in_crd_vc,
+    output wire [3:0]       link1_in_crd_n,
+    output wire             link1_out_valid,
+    output wire             link1_out_vc,
+    output wire             link1_out_last,
+    output wire [287:0]     link1_out_flit,
+    input  wire             link1_out_crd_valid,
+    input  wire             link1_out_crd_vc,
+    input  wire [3:0]       link1_out_crd_n
 );
     localparam integer LKW = 288;
     localparam integer LKU = 96;
@@ -140,18 +179,46 @@ module ktpu_node_v8t #(
     wire [63:0]         pe_status_unused, hs_rdata_unused;
     wire                pe_busy_unused, hs_console_we_unused;
     wire [7:0]          hs_console_unused;
-    wire [LKW-1:0]      l0_flit_unused, l1_flit_unused;
-    wire [3:0]          l0_crdn_unused, l1_crdn_unused;
-    wire                l0_v_unused, l0_vc_unused, l0_l_unused;
-    wire                l0_cv_unused, l0_cvc_unused;
-    wire                l1_v_unused, l1_vc_unused, l1_l_unused;
-    wire                l1_cv_unused, l1_cvc_unused;
+    // At ILINK 0 the surfaces are not built: nothing arrives, and what the node
+    // would emit is dropped at the boundary rather than held.
+    wire            l0_ov, l0_ovc, l0_ol;  wire [LKW-1:0] l0_of;
+    wire            l0_icv, l0_icvc;       wire [3:0]     l0_icn;
+    wire            l1_ov, l1_ovc, l1_ol;  wire [LKW-1:0] l1_of;
+    wire            l1_icv, l1_icvc;       wire [3:0]     l1_icn;
+    wire            l0_iv  = (ILINK != 0) ? link0_in_valid     : 1'b0;
+    wire            l0_ivc = (ILINK != 0) ? link0_in_vc        : 1'b0;
+    wire            l0_il  = (ILINK != 0) ? link0_in_last      : 1'b0;
+    wire [LKW-1:0]  l0_if  = (ILINK != 0) ? link0_in_flit      : {LKW{1'b0}};
+    wire            l0_ocv = (ILINK != 0) ? link0_out_crd_valid : 1'b0;
+    wire            l0_ocvc= (ILINK != 0) ? link0_out_crd_vc   : 1'b0;
+    wire [3:0]      l0_ocn = (ILINK != 0) ? link0_out_crd_n    : 4'd0;
+    wire            l1_iv  = (ILINK != 0) ? link1_in_valid     : 1'b0;
+    wire            l1_ivc = (ILINK != 0) ? link1_in_vc        : 1'b0;
+    wire            l1_il  = (ILINK != 0) ? link1_in_last      : 1'b0;
+    wire [LKW-1:0]  l1_if  = (ILINK != 0) ? link1_in_flit      : {LKW{1'b0}};
+    wire            l1_ocv = (ILINK != 0) ? link1_out_crd_valid : 1'b0;
+    wire            l1_ocvc= (ILINK != 0) ? link1_out_crd_vc   : 1'b0;
+    wire [3:0]      l1_ocn = (ILINK != 0) ? link1_out_crd_n    : 4'd0;
+    assign link0_out_valid = (ILINK != 0) ? l0_ov  : 1'b0;
+    assign link0_out_vc    = (ILINK != 0) ? l0_ovc : 1'b0;
+    assign link0_out_last  = (ILINK != 0) ? l0_ol  : 1'b0;
+    assign link0_out_flit  = (ILINK != 0) ? l0_of  : {LKW{1'b0}};
+    assign link0_in_crd_valid = (ILINK != 0) ? l0_icv  : 1'b0;
+    assign link0_in_crd_vc    = (ILINK != 0) ? l0_icvc : 1'b0;
+    assign link0_in_crd_n     = (ILINK != 0) ? l0_icn  : 4'd0;
+    assign link1_out_valid = (ILINK != 0) ? l1_ov  : 1'b0;
+    assign link1_out_vc    = (ILINK != 0) ? l1_ovc : 1'b0;
+    assign link1_out_last  = (ILINK != 0) ? l1_ol  : 1'b0;
+    assign link1_out_flit  = (ILINK != 0) ? l1_of  : {LKW{1'b0}};
+    assign link1_in_crd_valid = (ILINK != 0) ? l1_icv  : 1'b0;
+    assign link1_in_crd_vc    = (ILINK != 0) ? l1_icvc : 1'b0;
+    assign link1_in_crd_n     = (ILINK != 0) ? l1_icn  : 4'd0;
 
     sysnode #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(AW),
               .ID_W(IDW), .PORTS(PORTS), .MEM_X(0), .MEM_Y(1), .MEM_X1(0), .MEM_Y1(2),
               .GRID_LO(1), .GRID_HI(2), .STAGE_FLITS(128),
-              .ILINK(0), .MESH_ID(MESH_ID), .LINK_W(LKW), .TUSER_W(LKU),
-              .MW(MW), .DRAM_CDC(DRAM_CDC),
+              .ILINK(ILINK), .MESH_ID(MESH_ID), .LINK_W(LKW), .TUSER_W(LKU),
+              .MW(MW), .DRAM_CDC(DRAM_CDC), .DRAM_AR_MAX(DRAM_AR_MAX),
               .STAGE(1), .STAGE_BANKS(L2_MAG_BANKS),
               .STAGE_ENTRIES(L2_MAG_ENTRIES), .STAGE_AT_PORT(1)) u_mag (
         .clk(axi_aclk), .resetn(rstn_mag),
@@ -210,20 +277,20 @@ module ktpu_node_v8t #(
         .hs_addr(32'd0), .hs_wr(1'b0), .hs_wdata(64'd0), .hs_wstrb(8'd0), .hs_rd(1'b0),
         .hs_rdata(hs_rdata_unused), .hs_console_we(hs_console_we_unused),
         .hs_console(hs_console_unused),
-        .link0_out_valid(l0_v_unused), .link0_out_vc(l0_vc_unused),
-        .link0_out_last(l0_l_unused), .link0_out_flit(l0_flit_unused),
-        .link0_out_crd_valid(1'b0), .link0_out_crd_vc(1'b0),
-        .link0_out_crd_n(4'd0),
-        .link0_in_valid(1'b0), .link0_in_vc(1'b0), .link0_in_last(1'b0),
-        .link0_in_flit({LKW{1'b0}}), .link0_in_crd_valid(l0_cv_unused),
-        .link0_in_crd_vc(l0_cvc_unused), .link0_in_crd_n(l0_crdn_unused),
-        .link1_out_valid(l1_v_unused), .link1_out_vc(l1_vc_unused),
-        .link1_out_last(l1_l_unused), .link1_out_flit(l1_flit_unused),
-        .link1_out_crd_valid(1'b0), .link1_out_crd_vc(1'b0),
-        .link1_out_crd_n(4'd0),
-        .link1_in_valid(1'b0), .link1_in_vc(1'b0), .link1_in_last(1'b0),
-        .link1_in_flit({LKW{1'b0}}), .link1_in_crd_valid(l1_cv_unused),
-        .link1_in_crd_vc(l1_cvc_unused), .link1_in_crd_n(l1_crdn_unused)
+        .link0_out_valid(l0_ov), .link0_out_vc(l0_ovc),
+        .link0_out_last(l0_ol), .link0_out_flit(l0_of),
+        .link0_out_crd_valid(l0_ocv), .link0_out_crd_vc(l0_ocvc),
+        .link0_out_crd_n(l0_ocn),
+        .link0_in_valid(l0_iv), .link0_in_vc(l0_ivc), .link0_in_last(l0_il),
+        .link0_in_flit(l0_if), .link0_in_crd_valid(l0_icv),
+        .link0_in_crd_vc(l0_icvc), .link0_in_crd_n(l0_icn),
+        .link1_out_valid(l1_ov), .link1_out_vc(l1_ovc),
+        .link1_out_last(l1_ol), .link1_out_flit(l1_of),
+        .link1_out_crd_valid(l1_ocv), .link1_out_crd_vc(l1_ocvc),
+        .link1_out_crd_n(l1_ocn),
+        .link1_in_valid(l1_iv), .link1_in_vc(l1_ivc), .link1_in_last(l1_il),
+        .link1_in_flit(l1_if), .link1_in_crd_valid(l1_icv),
+        .link1_in_crd_vc(l1_icvc), .link1_in_crd_n(l1_icn)
     );
 endmodule
 

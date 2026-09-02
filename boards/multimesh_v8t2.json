@@ -1,0 +1,39 @@
+{
+  "name": "multimesh_v8t2",
+  "design": "multimesh_v8t2",
+  "transport": "jtag",
+  "meshes": 4,
+  "vco_mhz": 1200,
+  "wizard_outputs": {
+    "noc": {"index": 0, "nominal_mhz": 300},
+    "mat2x": {"index": 1, "nominal_mhz": 600},
+    "vec": {"index": 2, "nominal_mhz": 300},
+    "sys": {"index": 3, "nominal_mhz": 300, "only_on_mesh": 1}
+  },
+  "profiles": {
+    "low":  {"noc": 100, "mat2x": 200, "vec": 100, "sys": 100},
+    "mid":  {"noc": 200, "mat2x": 400, "vec": 200, "sys": 200},
+    "ship": {"noc": 300, "mat2x": 600, "vec": 300, "sys": 300}
+  },
+  "idle_profile": "low",
+  "ctrl_stride": "0x10000",
+  "ctrl_base": "0x800000",
+  "wizard_base": "0x900000",
+  "ddrctrl_base": "0x0",
+  "ddrctrl_stride": "0x100000",
+  "mem_window_shift": 40,
+  "mem_window_offset": 1,
+  "dram_mesh_shift": 36,
+  "dram_flat_gb": 16,
+  "dram_interleave_kb": 16,
+  "mem_words": 536870912,
+  "agent_at_offset_zero": true,
+  "max_burst_beats": 64,
+  "chain": [0, 1, 2, 3],
+  "bitstream": "C:/Users/apoll/Desktop/vivado/multimesh_v8t2/multimesh_v8t2.runs/impl_1/multimesh_v8t2_wrapper.bit",
+  "probes": "",
+  "host_write_granule": 32,
+  "host_write_replicates": false,
+  "burst_read": true,
+  "notes": "v8t2, the ship shape of the v8 memory path: four 2x2 meshes of 2 clusters + 2 vector cores around a system node (MAG ilink ON, chain 0-1-2-3 through kts_pipe_bd register pairs), all four nodes and the partition-aware Kohaku Xache (kx_pxache P=4, K 2, 16384 sets, 60 URAM per home, HCDC on the four DRAM edges, 16 KB rotation over a flat 16 GB at [33:0]) on ONE sysnode clock (mesh 1's wizard output 3 = 'sys'); per-die wizards drive noc/mat2x/vec. Every index is the SLR: mesh i = station i = Xache partition i = ddr4_i (the controller whose pins are in SLR i). The four stations and the JTAG master share ONE fixed 200 MHz system clock (clk_wiz_ctrl out2; ctrl 100 MHz is out1), so the JTAG NMU has no clock crossing. Addressing as v8: (m+1)<<40 picks WHICH node the host enters through, never a channel; every DRAM address must be below 16 GB with [37:36] = 0. Retuning 'sys' on mesh 1 retunes every node and the Xache together; retuning mesh i's wizard retunes that die's noc/mat/vec. NOT PROGRAMMED by the flow that built it; no on-silicon acceptance yet."
+}

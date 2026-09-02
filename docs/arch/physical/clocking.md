@@ -146,6 +146,22 @@ The variable one is an ordinary clocking primitive with dynamic reconfiguration
 enabled, driven over a narrow bus clocked from the *fixed* domain. Changing the
 frequency is a register write.
 
+The fixed generator may carry more than the control plane. On the reference
+instance it has two outputs — 100 MHz for the reconfiguration ports, the
+resets' boot lock and the control endpoints, and a 200 MHz **system clock** for
+the debug bridge and every station of the host bus — so the bus and the master
+that drives it are one domain and the master's port needs no crossing. Neither
+output is ever retuned.
+
+**A reset for a domain that spans dies is delivered once per die.** A die
+crossing is one register driving one register; a single reset register fanning
+into several dies is a long net with thousands of loads, and measures as such.
+So the reset of a die-spanning clock — the system node clock, the system clock
+above — goes through a small tree: one sending register per die pinned with the
+source, a landing register and a fan-out register pinned to the die, every load
+on that die taking its own copy. All copies release on the same edge, so two
+ends of a crossing pipe never see different reset states.
+
 The arithmetic to get right when choosing its configuration is which multiplier
 step the output moves by, and the temptation to push the phase-detector
 frequency low for finer steps should be resisted twice: the multiplier field

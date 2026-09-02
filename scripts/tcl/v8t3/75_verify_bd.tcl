@@ -1,7 +1,7 @@
 # Verify the BUILT block design without synthesising it: every clock net,
 # reset net, module, interlink hop and address segment read back from the BD
 # against the plan. 70_analyze repeats the checks on the netlist after synth.
-#   vivado -mode batch -source scripts/tcl/v8t2/75_verify_bd.tcl
+#   vivado -mode batch -source scripts/tcl/v8t3/75_verify_bd.tcl
 
 set here [file dirname [file normalize [info script]]]
 if {![info exists design_name]} { source $here/00_config.tcl }
@@ -31,10 +31,12 @@ proc srcpin {pin} {
     if {![llength $src]} { return "no-driver" }
     return [string trimleft [lindex $src 0] /]
 }
+# IPI lowercases a module reference's pin names when it repackages it, so the
+# comparison is on case-folded names -- get_bd_pins matched them either way.
 proc want {pin w} {
     set got [srcpin $pin]
     puts [format "  %-40s <- %s" $pin $got]
-    if {$got ne $w} { bad "$pin driven by $got, want $w" }
+    if {[string tolower $got] ne [string tolower $w]} { bad "$pin driven by $got, want $w" }
 }
 # Pins and ports are different object types and one Vivado list cannot hold
 # both (Common 17-224), so each is walked as names.
@@ -59,29 +61,29 @@ foreach {mid mod} $MESHES {
     set c [get_bd_cells -quiet mesh_$mid]
     if {![llength $c]} { bad "mesh_$mid absent" ; continue }
     set ref [get_property VLNV $c]
-    puts [format "  mesh_%s  %s  MESH_ID=%s banks=%s entries=%s DRAM_CDC=%s MAG_CDC=%s UNIT_CDC=%s" $mid $ref \
-          [get_property CONFIG.MESH_ID $c] [get_property -quiet CONFIG.L2_MAG_BANKS $c] \
+    puts [format "  mesh_%s  %s  MESH_ID=%s ILINK=%s PORTS=%s banks=%s entries=%s DRAM_CDC=%s DRAM_AR_MAX=%s" $mid $ref \
+          [get_property CONFIG.MESH_ID $c] [get_property -quiet CONFIG.ILINK $c] \
+          [get_property -quiet CONFIG.PORTS $c] [get_property -quiet CONFIG.L2_MAG_BANKS $c] \
           [get_property -quiet CONFIG.L2_MAG_ENTRIES $c] [get_property -quiet CONFIG.DRAM_CDC $c] \
-          [get_property -quiet CONFIG.MAG_CDC $c] [get_property -quiet CONFIG.UNIT_CDC $c]]
+          [get_property -quiet CONFIG.DRAM_AR_MAX $c]]
     if {[get_property CONFIG.MESH_ID $c] ne "$mid"} { bad "mesh_$mid has MESH_ID [get_property CONFIG.MESH_ID $c]" }
     if {![string match "*module_ref:$mod:*" $ref]} { bad "mesh_$mid is $ref, want $mod" }
     if {[get_property -quiet CONFIG.DRAM_CDC $c] ne "0"} { bad "mesh_$mid DRAM_CDC is not 0" }
+    # The node's AR split and the Xache's read slot are one value: a burst the
+    # slot cannot hold is a protocol error at the Xache.
+    if {[get_property -quiet CONFIG.DRAM_AR_MAX $c] ne "$KX_RB_BEATS"} { bad "mesh_$mid DRAM_AR_MAX is not KX_RB_BEATS ($KX_RB_BEATS)" }
     if {[get_property -quiet CONFIG.L2_MAG_BANKS $c] ne "$L2_MAG_BANKS"} { bad "mesh_$mid staging banks" }
     if {[get_property -quiet CONFIG.L2_MAG_ENTRIES $c] ne "$L2_MAG_ENTRIES"} { bad "mesh_$mid staging entries" }
-    want mesh_$mid/axi_aclk     $SYS_CLK
+    want mesh_$mid/axi_aclk     [v8_sys_clk $mid]
     want mesh_$mid/axi_aresetn  [v8_rstn $mid]
-    want mesh_$mid/dram_aclk    $SYS_CLK
+    want mesh_$mid/dram_aclk    [v8_sys_clk $mid]
     want mesh_$mid/dram_aresetn [v8_rstn $mid]
-    want mesh_$mid/noc_clk      clk_wiz_mesh$mid/clk_out1
-    want mesh_$mid/vec_clk      clk_wiz_mesh$mid/clk_out3
-    want mesh_$mid/mat_clk2x    clk_wiz_mesh$mid/clk_out2
-    want mesh_$mid/mat_clk      div2_mesh$mid/clk1x
-    want div2_mesh$mid/clk2x    clk_wiz_mesh$mid/clk_out2
-    want div2_mesh$mid/clr      dclr_mesh$mid/Res
-    want dclr_mesh$mid/Op1      clk_wiz_mesh$mid/locked
-    foreach p {hs_wr hs_rd} { want mesh_$mid/$p zero_1/dout }
+    if {[get_property -quiet CONFIG.ILINK $c] ne "$NODE_ILINK"} { bad "mesh_$mid ILINK is not $NODE_ILINK" }
 }
-if {[llength [get_bd_cells -quiet node_*]]} { bad "a node_* cell exists: v8t2 carries meshes, not bare nodes" }
+# v8t3 has no mesh at all: no mesh clock domain and none of its cells.
+foreach n {div2_mesh0 dclr_mesh0 div2_mesh1 dclr_mesh1} {
+    if {[llength [get_bd_cells -quiet $n]]} { bad "$n exists: v8t3 carries no matmul pump" }
+}
 
 # ---- the interlink chain: mesh i's LINK1 faces mesh i+1's LINK0 ------------
 puts "\n=== interlink ==="
@@ -92,10 +94,11 @@ foreach hop {{0 1} {1 2} {2 3}} {
         set c [get_bd_cells -quiet $name]
         if {![llength $c]} { bad "$name absent" ; continue }
         if {![string match "*module_ref:kts_pipe_bd:*" [get_property VLNV $c]]} { bad "$name is not kts_pipe_bd" }
-        foreach {p w} [list W $IL_W VCW $IL_VCW CN_W $IL_CN_W] {
+        foreach {p w} [list W $IL_W VCW $IL_VCW CN_W $IL_CN_W ASYNC $IL_ASYNC CRED $IL_CRED] {
             if {[get_property -quiet CONFIG.$p $c] ne "$w"} { bad "$name $p is [get_property -quiet CONFIG.$p $c], want $w" }
         }
-        want $name/clk     $SYS_CLK
+        want $name/clk     [v8_sys_clk $tx]
+        want $name/clk_rx  [v8_sys_clk $rx]
         want $name/rstn_tx [v8_rstn $tx]
         want $name/rstn_rx [v8_rstn $rx]
         foreach f {valid vc last flit} {
@@ -139,14 +142,18 @@ set kx [get_bd_cells -quiet xache]
 if {![llength $kx]} { bad "xache absent" } else {
     if {![string match "*module_ref:kx_pbd_4x4:*" [get_property VLNV $kx]]} { bad "xache is not kx_pbd_4x4" }
     foreach {p w} [list SETS $KX_SETS SET_W $KX_SET_W K $KX_K BANKS $KX_BANKS RD_OUTQ $KX_RD_OUTQ \
-                        WR_OUTQ $KX_WR_OUTQ HOP_DEPTH $KX_HOP_DEPTH HOP_RXREG $KX_HOP_RXREG \
-                        NSWAP $KX_NSWAP CDC_DEPTH $KX_CDC_DEPTH] {
+                        WR_OUTQ $KX_WR_OUTQ RB_BEATS $KX_RB_BEATS \
+                        HOP_DEPTH $KX_HOP_DEPTH HOP_RXREG $KX_HOP_RXREG \
+                        NSWAP $KX_NSWAP CDC_DEPTH $KX_CDC_DEPTH PCLK $KX_PCLK \
+                        MEM_TRUNK $KX_MEM_TRUNK MEM_RB $KX_MEM_RB \
+                        MEM_HRD $KX_MEM_HRD MEM_HWR $KX_MEM_HWR] {
         set got [get_property -quiet CONFIG.$p $kx]
         puts [format "  %-10s %s" $p $got]
         if {$got ne "$w"} { bad "xache $p is $got, want $w" }
     }
-    want xache/aclk $SYS_CLK
+    if {[llength [get_bd_pins -quiet xache/aclk]]} { bad "xache still has an aclk pin" }
     foreach {mid mod} $MESHES {
+        want xache/p_clk$mid  [v8_sys_clk $mid]
         want xache/d_rstn$mid [v8_rstn $mid]
         want xache/h_clk$mid  ddr4_$mid/c0_ddr4_ui_clk
         want xache/h_rstn$mid rst_ddr4_$mid/peripheral_aresetn
@@ -158,37 +165,64 @@ if {![llength $kx]} { bad "xache absent" } else {
 
 # ---- one clock, one reset: every PSR's clock and lock, both trees ----------
 puts "\n=== resets ==="
-foreach {name clkw lockw} [list rst_ctrl $CTRL_CLK clk_wiz_ctrl/locked \
-                                rst_bus  $BUS_CLK  clk_wiz_ctrl/locked \
-                                rst_sys  $SYS_CLK  $SYS_LOCK] {
+set ext [expr {$PER_DIE_CLK ? "lock_all/Res" : "clk_wiz_ctrl/locked"}]
+set psrw [list rst_ctrl $CTRL_CLK clk_wiz_ctrl/locked]
+if {$PER_DIE_CLK} {
+    foreach {mid mod} $MESHES {
+        lappend psrw rst_bus$mid [v8_bus_clk $mid] clk_wiz_ctrl/locked
+        lappend psrw rst_sys$mid [v8_sys_clk $mid] [v8_sys_lock $mid]
+    }
+} else {
+    lappend psrw rst_bus [v8_bus_clk 0] clk_wiz_ctrl/locked
+    lappend psrw rst_sys [v8_sys_clk 0] [v8_sys_lock 0]
+}
+foreach {name clkw lockw} $psrw {
     want $name/slowest_sync_clk $clkw
     want $name/dcm_locked $lockw
-    want $name/ext_reset_in clk_wiz_ctrl/locked
+    want $name/ext_reset_in $ext
 }
-want rst_tree/clk         $SYS_CLK
-want rst_tree/rstn_in     rst_sys/peripheral_aresetn
-want rst_tree_bus/clk     $BUS_CLK
-want rst_tree_bus/rstn_in rst_bus/peripheral_aresetn
+if {$PER_DIE_CLK} {
+    # No die leaves reset until every wizard has locked.
+    want lock_cat/In0 clk_wiz_ctrl/locked
+    foreach {mid mod} $MESHES {
+        want lock_cat/In[expr {$mid + 1}] clk_wiz_mesh$mid/locked
+    }
+    want lock_all/Op1 lock_cat/dout
+    foreach t {rst_tree rst_tree_bus} {
+        if {[llength [get_bd_cells -quiet $t]]} { bad "$t exists: no reset spans a die at PER_DIE_CLK 1" }
+    }
+} else {
+    want rst_tree/clk         [v8_sys_clk 0]
+    want rst_tree/rstn_in     rst_sys/peripheral_aresetn
+    want rst_tree_bus/clk     [v8_bus_clk 0]
+    want rst_tree_bus/rstn_in rst_bus/peripheral_aresetn
+}
 foreach {mid mod} $MESHES {
     want bus_rst_inv$mid/Op1 [v8_bus_rstn $mid]
 }
 set npsr [llength [get_bd_cells -quiet rst_*]]
-# two trees are modules, not proc_sys_reset
-if {$npsr != 9} { bad "$npsr rst_* cells, want 9: ctrl, bus, sys, 2 trees, 4 MIG" }
+# ctrl + 4 MIG + bus + sys, the last two per die at PER_DIE_CLK 1; at 0 the two
+# trees are modules, not proc_sys_reset, and count here too.
+set nwant [expr {$PER_DIE_CLK ? 13 : 9}]
+if {$npsr != $nwant} { bad "$npsr rst_* cells, want $nwant" }
 foreach {mid mod} $MESHES {
     set has [llength [get_bd_pins -quiet clk_wiz_mesh$mid/clk_out4]]
-    if {$mid == $SYS_WIZ && !$has} { bad "clk_wiz_mesh$mid lacks clk_out4, the sysnode clock" }
-    if {$mid != $SYS_WIZ && $has}  { bad "clk_wiz_mesh$mid has a clk_out4" }
+    if {($PER_DIE_CLK || $mid == $SYS_WIZ) && !$has} { bad "clk_wiz_mesh$mid lacks clk_out4, the sysnode clock" }
+    if {!$PER_DIE_CLK && $mid != $SYS_WIZ && $has}  { bad "clk_wiz_mesh$mid has a clk_out4" }
+    if {![llength [get_bd_pins -quiet [v8_bus_clk $mid]]]} { bad "[v8_bus_clk $mid] does not exist" }
 }
 if {[llength [get_bd_cells -quiet clk_wiz_bus*]]} { bad "a per-die bus wizard exists" }
-if {![llength [get_bd_pins -quiet clk_wiz_ctrl/clk_out2]]} { bad "clk_wiz_ctrl has no clk_out2, the system clock" }
 
 # ---- station bus, per die -------------------------------------------------
 puts "\n=== station bus ==="
 set sb [get_bd_cells -quiet station_bus]
 if {![string match "*module_ref:$SB_WRAP:*" [get_property VLNV $sb]]} { bad "station_bus is not $SB_WRAP" }
 foreach {p w} [list FW $FW OST $OST LINK_CDC $LINK_CDC LINK_FULL $LINK_FULL LINK_KTS $LINK_KTS \
-                    MGR0_DOM $MGR0_DOM CRED $CRED PIPE $PIPE SEG_OVERRIDE 1] {
+                    MGR0_DOM $MGR0_DOM CRED $CRED PIPE $PIPE SEG_OVERRIDE 1 \
+                    LUT_PER_BRAM $LUT_PER_BRAM LPB1 $SB_LPB1 \
+                    MREQ0 $SB_MREQ0 MREQ1 $SB_MREQ1 MREQ2 $SB_MREQ2 \
+                    MRSP0 $SB_MRSP0 MRSP1 $SB_MRSP1 MRSP2 $SB_MRSP2 \
+                    MMAXB0 $SB_MMAXB0 MMAXB1 $SB_MMAXB1 MMAXB2 $SB_MMAXB2] {
     set got [get_property -quiet CONFIG.$p $sb]
     if {$got ne "$w"} { bad "station_bus $p is $got, want $w" }
 }
@@ -198,13 +232,13 @@ foreach {nm w} [list SEG_BASE_P [v8_cat $seg_base $AW] SEG_MASK_P [v8_cat $seg_m
 }
 ok "station segment literals match the intended table"
 foreach {mid mod} $MESHES {
-    want station_bus/clk_s$mid     $SYS_CLK
+    want station_bus/clk_s$mid     [v8_sys_clk $mid]
     want station_bus/aresetn_s$mid [v8_rstn $mid]
-    want station_bus/bus_clk$mid   $BUS_CLK
+    want station_bus/bus_clk$mid   [v8_bus_clk $mid]
     want station_bus/bus_rst$mid   bus_rst_inv$mid/Res
     want station_bus/clk_ddr$mid   ddr4_$mid/c0_ddr4_ui_clk
     want station_bus/aresetn_ddr$mid rst_ddr4_$mid/peripheral_aresetn
-    want dwc_ctrl$mid/s_axi_aclk    $SYS_CLK
+    want dwc_ctrl$mid/s_axi_aclk    [v8_sys_clk $mid]
     want dwc_ctrl$mid/s_axi_aresetn [v8_rstn $mid]
     want clk_wiz_mesh$mid/s_axi_aclk    $CTRL_CLK
     want clk_wiz_mesh$mid/s_axi_aresetn rst_ctrl/peripheral_aresetn
@@ -220,7 +254,7 @@ foreach {mid mod} $MESHES {
 want station_bus/clk_ctrl     $CTRL_CLK
 want station_bus/aresetn_ctrl rst_ctrl/peripheral_aresetn
 want station_bus/clk_xdma     xdma_0/axi_aclk
-want jtag_ctrl/aclk           $BUS_CLK
+want jtag_ctrl/aclk           [v8_bus_clk 1]
 want jtag_ctrl/aresetn        [v8_bus_rstn 1]
 if {[peer_of jtag_ctrl/M_AXI] ne "station_bus/S00_AXI"} { bad "jtag_ctrl is not S00" }
 if {[peer_of xdma_0/M_AXI] ne "station_bus/S01_AXI"} { bad "xdma M_AXI is not S01" }
@@ -259,5 +293,5 @@ foreach need [list ${design_name}_pblocks.xdc ${design_name}_clocks.xdc pcie.xdc
     elseif {![get_property is_enabled [lindex $f 0]]} { bad "$need is disabled" }
 }
 puts ""
-if {$fail} { error "v8t2 BD verify: $fail check(s) FAILED" }
-puts "@@@ v8t2 BD verify: all checks passed"
+if {$fail} { error "$design_name BD verify:$fail check(s) FAILED" }
+puts "@@@ v8t3 BD verify: all checks passed"

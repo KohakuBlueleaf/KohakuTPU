@@ -185,3 +185,75 @@ What this image does **not** do: it is not programmed onto the card by this
 flow, and no on-silicon acceptance exists for it yet; `boards/multimesh_v8.json`
 names the bitstream and the addressing change so the driver is not surprised
 when one is written.
+
+---
+
+## 7. v8t2 — the ship shape
+
+`scripts/tcl/v8t2/` behind `multimesh_v8t2_bd.tcl` (build, verify, synthesise,
+analyse) and `v8t2_impl.tcl` (implement, report). It is the v8 memory path
+carried to the card as one image, with six decisions that differ from §1–§6:
+
+| | v8 probe (§1–§6) | **v8t2** |
+|---|---|---|
+| dies | 2+2 / 6+2 / 2+2 / 2+2 | **2×2 mesh of 2 clusters + 2 vector cores on every die** (`ktpu_ship_2x2_2c2v_1m_nol2_pump`), so every wizard output has a load |
+| indices | mesh id = SLR; MIG named by the board (`ddr4_{DDR_OF_SLR[h]}`) | **every index is the SLR**: mesh = station = Xache partition/home = `ddr4_<slr>`; the board's channel numbering appears once, `DDR_PORT_OF_SLR` |
+| interlink | `mag_link_pipe_bd` | **`kts_pipe_bd`** per hop and direction on the sysnode clock: `u_tx` pinned with the leaving die, `u_rx` with the landing die, each half on its die's reset copy; chain `0-1-2-3`, mesh `i`'s `LINK1` to mesh `i+1`'s `LINK0` |
+| station bus | a fabric clock per station, JTAG on ctrl | **one fixed 200 MHz system clock** (`clk_wiz_ctrl/clk_out2`) for the four stations *and* the JTAG master: `LINK_CDC 0` (register-pipe links), `MGR0_DOM 1` (the JTAG NMU on the bus clock, synchronous queues), the `sb_bd_line4_jbus` wrapper |
+| bus reset | four `rst_bus<i>` | **`rst_bus` → `rst_tree_bus`**, one registered copy per die, the same tree the sysnode reset uses |
+| Xache | 32768 sets, K 1, 64 URAM per home | the routed proof shape: **16384 sets × 2 ways, one bank, 60 URAM per home**; node staging one bank 4 deep (64 URAM) |
+
+Clocks and resets, one reset per clock — seven `proc_sys_reset`:
+
+| clock | source | rate | reset | loads |
+|---|---|---|---|---|
+| ctrl | `clk_wiz_ctrl/clk_out1` (fixed) | 100 | `rst_ctrl` | the wizards' AXI-Lite, every reset's boot lock, MIG `sys_rst`, station port 3 |
+| **system** | `clk_wiz_ctrl/clk_out2` (fixed) | 200 | `rst_bus` → `rst_tree_bus` → `bus_rst<i>` | `jtag_ctrl`, all four stations and their links |
+| sys | `clk_wiz_mesh1/clk_out4` (DRP) | 300 | `rst_sys` → `rst_tree` → `rstn_o<i>` | every mesh's `axi_aclk` and `dram_aclk`, the Xache, station ports 0/1, the six pipes, the width converters |
+| noc_i / mat2x_i / vec_i | `clk_wiz_mesh<i>/clk_out1,2,3` (DRP) | 300 / 600 / 300 | the top's `kh_rst_sync` from `axi_aresetn` | die i's fabric, clusters (`mat_clk` = ÷2 via `ktpu_div2`), vector cores |
+| ui_i | `ddr4_<i>/c0_ddr4_ui_clk` | ~300 | `rst_ddr4_<i>` | MIG i, `xache/h_clk<i>`, station i's port 2 |
+| xdma | `xdma_0/axi_aclk` | 250 | XDMA's own | its masters |
+
+Floorplan: `pb_slr<i>` over clock-region rows `4i..4i+3` holds `mesh_i`,
+`div2_mesh<i>`/`dclr_mesh<i>`, `clk_wiz_mesh<i>`, `ddr4_<i>` + `rst_ddr4_<i>`,
+`dwc_ctrl<i>`, `bus_rst_inv<i>`, station `g_stn[i]`, the Xache's partition `i`
+and hop halves, both trees' landing/fan-out registers and the pipe halves that
+sit on die `i`. SLR1 also holds XDMA, JTAG, the ctrl wizard, both die-spanning
+resets and both trees' sending registers. The station links stay unpinned.
+
+What the two check stages assert, beyond §5: the MIG in `pb_slr<i>` has its
+IOBs in SLR `i` (from the package pins *and* the placed netlist); every mesh's
+`MESH_ID` equals its cell index equals its SLR; the six pipes are wired in
+chain order; every pipe register drives exactly one load (a Laguna pair);
+seven resets, none reaching a register on another clock; the JTAG NMU carries
+no asynchronous FIFO; `jtag_ctrl/aclk` is the system clock.
+
+Build, one Vivado at a time and never a block-design build beside another
+session: `multimesh_v8t2_bd.tcl -tclargs rebuild` (block design),
+`v8t2/75_verify_bd.tcl`, `multimesh_v8t2_bd.tcl -tclargs synth` (OOC IP,
+`synth_1`, `70_analyze`), `v8t2_impl.tcl` (`impl_1` to `write_bitstream`, then
+`80_report`). `scripts/ps1/probe_status.ps1` follows the project through every
+stage, including the block-design build before a run directory exists; give
+the synth and impl sessions `-log <project dir>/build.log` and `impl.log`, the
+two files it reads as the driver's heartbeat once a run has finished and the
+Tcl stage after it (analyze, report) is what is running.
+`boards/multimesh_v8t2.json` describes the image to the driver.
+
+**Routed** (impl_1, 2026-09-01, 11h20m to bitstream; reports in
+`build/multimesh_v8t2_impl_*`): 0 routing errors, **WHS 0.000**, WNS −1.896.
+Per-SLR CLB 70.6 / **88.0** / 71.7 / 65.9 % (LUT 158,480 / 218,755 /
+159,827 / 158,411); 17,931 die-crossing nets, 13,955 of them the Xache's
+hop and readback chains, 1,881 the station links, 297 × 6 the interlink
+pipes — whose registers sit in **Laguna** sites (3,574 cells), not CLBs.
+Per-clock routed worst: sysnode −1.896 (13 levels, 191 MHz), noc
+−0.457…−1.176, vec −0.544…−1.439, mat2x/div2 skew-dominated
+−0.974…−1.486, bus **−0.527** (JTAG→NMU write, 181 MHz), MIG ui
+−0.313…−0.748, XDMA −1.003; ctrl +2.517. Of the 200 worst setup paths 195
+start in `u_mag` (127 on mesh 1 — 24 of them reset-class at −1.820 — 66 on
+mesh 2, 2 on mesh 3, one of those ending in station 3's NSU): the RV64
+redirect/PC cluster and the MAG engine CE fanout. The other 5 start in the
+Xache hops (one ending in mesh 1), and **none crosses a die — no
+die-crossing path exists in the 400 worst**. Hold's ten worst are +0.000…+0.007, five of
+them pipe Laguna pairs. The sysnode clock is DRP-retunable (§clock table):
+every rate at or below 191 MHz is met as built, and the 100 MHz floor
+carries 3.3 ns of margin over the worst path.

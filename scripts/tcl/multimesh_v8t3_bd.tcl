@@ -1,11 +1,11 @@
-# multimesh v8t2: the ship shape of the v8 memory path -- four 2x2 meshes
+# multimesh v8t3: the ship shape of the v8 memory path -- four 2x2 meshes
 # (2 clusters + 2 vector cores + system node each) on ONE sysnode clock, the
 # interlink chain 0-1-2-3, ONE partition-aware Kohaku Xache, four MIGs named by
 # SLR, four stations and JTAG on ONE fixed 200 MHz system clock.
-#   vivado -mode batch -source scripts/tcl/multimesh_v8t2_bd.tcl \
+#   vivado -mode batch -source scripts/tcl/multimesh_v8t3_bd.tcl \
 #     ?-tclargs rebuild|synth ?jobs N? ?noanalyze??
-# Every knob is in scripts/tcl/v8t2/00_config.tcl and nowhere else. Its own
-# project, always. Implementation is scripts/tcl/v8t2_impl.tcl.
+# Every knob is in scripts/tcl/v8t3/00_config.tcl and nowhere else. Its own
+# project, always. Implementation is scripts/tcl/v8t3_impl.tcl.
 
 set here [file dirname [file normalize [info script]]]
 set do_synth [expr {[lsearch $argv synth] >= 0}]
@@ -13,8 +13,12 @@ set do_build [expr {[lsearch $argv rebuild] >= 0 || !$do_synth}]
 set njobs 4
 if {[set i [lsearch $argv jobs]] >= 0} { set njobs [lindex $argv [expr {$i + 1}]] }
 
-source $here/v8t2/00_config.tcl
-set stages $here/v8t2
+# A variant (multimesh_v8t4_bd.tcl) sets these before sourcing this file: the
+# stages are shared, only the config differs.
+if {![info exists V8_CONFIG]} { set V8_CONFIG $here/v8t3/00_config.tcl }
+if {![info exists V8_STAGES]} { set V8_STAGES $here/v8t3 }
+source $V8_CONFIG
+set stages $V8_STAGES
 set_param general.maxThreads 16
 
 # bd/mref/<mod>/component.xml is packaged ONCE and the RTL never re-parsed:
@@ -32,20 +36,20 @@ if {$do_build} {
         }
     }
 }
-puts "@@@ v8t2 mref: dropped [llength $v8_dropped] stale module-reference cache(s)"
+puts "@@@ ${design_name} mref: dropped [llength $v8_dropped] stale module-reference cache(s)"
 
 if {!$do_build && [file exists $proj_dir/${design_name}.xpr]} {
     open_project $proj_dir/${design_name}.xpr
     if {[get_property top [current_fileset]] ne "${design_name}_wrapper"} {
         error "top is [get_property top [current_fileset]], not the BD wrapper"
     }
-    puts "@@@ v8t2: reopened $proj_dir, top [get_property top [current_fileset]]"
+    puts "@@@ ${design_name}: reopened $proj_dir, top [get_property top [current_fileset]]"
     set v8_need_build 0
 } else {
     # ONE SHOT: a rebuild starts from nothing, so no stale file survives.
     if {$do_build && [file isdirectory $proj_dir]} {
         file delete -force $proj_dir
-        puts "@@@ v8t2: wiped $proj_dir"
+        puts "@@@ ${design_name}: wiped $proj_dir"
     }
     create_project -force $design_name $proj_dir -part $part
     set_property target_language Verilog [current_project]
@@ -82,12 +86,12 @@ set_property top_auto_set 0 [current_fileset]
 if {[get_property top [current_fileset]] ne "${design_name}_wrapper"} {
     error "top is [get_property top [current_fileset]], not the BD wrapper"
 }
-puts "@@@ v8t2 top: [get_property top [current_fileset]] in $proj_dir"
+puts "@@@ ${design_name} top: [get_property top [current_fileset]] in $proj_dir"
 
 }
 
 if {!$do_synth} {
-    puts "@@@ v8t2: block design built. Verify with v8t2/75_verify_bd.tcl; -tclargs synth to synthesise."
+    puts "@@@ ${design_name}: block design built. Verify with v8t3/75_verify_bd.tcl; -tclargs synth to synthesise."
     return
 }
 
@@ -103,11 +107,33 @@ proc v8_pending {runs} {
     }
     return $todo
 }
+# A module reference's OOC run is NOT marked out of date when its RTL changes --
+# Vivado tracks the packaged component, not the source mtime -- so an edited
+# source silently re-links the previous netlist (a v8t4 "re-synthesis" that
+# finished in 51 s and kept a 30-minute-old Xache). `resynth` resets them.
+if {[lsearch $argv resynth] >= 0} {
+    set v8_mref [list station_bus xache rst_tree rst_tree_bus]
+    foreach {mid mod} $MESHES { lappend v8_mref mesh_$mid }
+    foreach hop {{0 1} {1 2} {2 3}} {
+        lassign $hop lo hi
+        lappend v8_mref pipe_${lo}_to_${hi} pipe_${hi}_to_${lo}
+    }
+    set v8_reset {}
+    foreach c $v8_mref {
+        foreach r [get_runs -quiet ${design_name}_${c}_0_synth_1] { lappend v8_reset $r }
+    }
+    lappend v8_reset synth_1
+    foreach r $v8_reset {
+        if {![string match "Not started" [get_property STATUS [get_runs $r]]]} { reset_run $r }
+    }
+    puts "@@@ resynth: reset [llength $v8_reset] run(s) -- [join $v8_mref {, }]"
+}
+
 # OOC IP first and explicitly, at OOC_JOBS. IP runs do not carry IS_SYNTHESIS;
 # match them by name.
 set ooc [v8_pending [get_runs -quiet -filter {NAME =~ "*_synth_1" && NAME != "synth_1"}]]
 if {[llength $ooc]} {
-    puts "@@@ v8t2 ooc: [llength $ooc] runs, -jobs $OOC_JOBS"
+    puts "@@@ ${design_name} ooc: [llength $ooc] runs, -jobs $OOC_JOBS"
     launch_runs $ooc -jobs $OOC_JOBS
     foreach r $ooc { wait_on_run $r }
     foreach r $ooc {
@@ -116,20 +142,20 @@ if {[llength $ooc]} {
         }
     }
 } else {
-    puts "@@@ v8t2 ooc: every IP run already complete"
+    puts "@@@ ${design_name} ooc: every IP run already complete"
 }
 if {[llength [v8_pending synth_1]]} {
-    puts "@@@ v8t2 synth_1: launched at [clock format [clock seconds] -format %H:%M:%S]"
+    puts "@@@ ${design_name} synth_1: launched at [clock format [clock seconds] -format %H:%M:%S]"
     launch_runs synth_1 -jobs $njobs
     wait_on_run synth_1
 } else {
-    puts "@@@ v8t2 synth_1: already complete"
+    puts "@@@ ${design_name} synth_1: already complete"
 }
 if {[get_property PROGRESS [get_runs synth_1]] != "100%"} {
     error "synthesis failed: $proj_dir/${design_name}.runs/synth_1/runme.log"
 }
-puts "@@@ v8t2 synth_1: done at [clock format [clock seconds] -format %H:%M:%S]"
-# The analysis reads the synth_1 checkpoint (v8t2_analyze.tcl) and runs beside
-# v8t2_impl.tcl, not in front of it; `analyze` keeps the inline form.
+puts "@@@ ${design_name} synth_1: done at [clock format [clock seconds] -format %H:%M:%S]"
+# The analysis reads the synth_1 checkpoint (v8t3_analyze.tcl) and runs beside
+# v8t3_impl.tcl, not in front of it; `analyze` keeps the inline form.
 if {[lsearch $argv analyze] >= 0} { source $stages/70_analyze.tcl }
-puts "@@@ v8t2: synthesis done. Next: v8t2_impl.tcl (impl) and v8t2_analyze.tcl (checks), side by side."
+puts "@@@ ${design_name}: synthesis done. Next: v8t3_impl.tcl (impl) and v8t3_analyze.tcl (checks), side by side."

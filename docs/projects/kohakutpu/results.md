@@ -496,6 +496,400 @@ A full 288-bit flit link is about 5% of one boundary, so **the interlink is not
 what constrains the crossing** — fabric occupancy is. The single-mesh design on
 the card places nothing at all in one SLR.
 
+### 5.4 v8t2 — the first fully routed device image
+
+`multimesh_v8t2` (four 2×2 2+2 meshes, four system nodes with interlink, the
+partitioned Xache, one-clock station bus; [v8-plan.md](v8-plan.md) §7) through
+`write_bitstream`, 2026-09-01. Zero routing errors, hold met (WHS 0.000).
+
+| per SLR | 0 | 1 | 2 | 3 |
+|---|---|---|---|---|
+| CLB | 70.61% | **87.96%** | 71.68% | 65.93% |
+| LUT | 158,480 | 218,755 | 159,827 | 158,411 |
+| FF | 208,409 | 275,521 | 217,218 | 207,647 |
+| BRAM tile | 405 | 512.5 | 408 | 405 |
+| URAM / DSP | 135 / 792 | 135 / 792 | 135 / 792 | 135 / 792 |
+
+Die crossings: 17,931 nets — Xache hop + readback chains 13,955, station
+links 1,881, interlink pipes 297 × 6 (their registers in 3,574 Laguna
+sites), everything else < 50 each. Congestion concentrates in level-5–7
+windows on SLR1-north and SLR2-south long wires, owned by `u_mag`,
+`u_quant` and the Xache's URAM columns (100% within every hot window).
+
+Routed worst path per clock (ask in ns / WNS / levels): sysnode 3.333 /
+**−1.896** / 13; noc 3.333 / −0.457…−1.176 / 7; vec 3.333 / −0.544…−1.439 /
+6–8; mat2x 1.667 and div2 3.333, skew-dominated −0.974…−1.486; bus 5.000 /
+−0.527 / 10; MIG ui 3.332 / −0.313…−0.748; XDMA 4.000 / −1.003; ctrl
+10.000 / +2.517. Of the 200 worst setup paths, 195 start in `u_mag` on the
+sysnode clock (127 mesh 1, 66 mesh 2, 2 mesh 3 — the RV64 redirect/PC
+cluster and MAG engine CE fanout, 24 reset-class), 5 in the Xache hops, and
+**none crosses an SLR** — nor does any of the 400 worst. The sysnode clock is a DRP knob: as built the image is met at any
+sysnode rate ≤ 191 MHz, and the binding paths are module-scale (RV64 core,
+MAG fanout), not floorplan-scale.
+
+### 5.5 v8t3 — the same machine with no mesh, and a die that is 22% full and congested
+
+`multimesh_v8t3` is v8t2 with every fix of the round (flat Xache rows, the
+LUT6 slot mux, one shared boundary trunk per direction, 4-bank MAG staging,
+the imem cascade) and **all four meshes removed**: each die is one system node
+with its interlink, its station, its Xache partition and its MIG. Routed
+2026-09-02, `write_bitstream` clean.
+
+| per SLR | 0 | 1 | 2 | 3 |
+|---|---|---|---|---|
+| CLB | 22.01% | **44.36%** | 21.99% | 20.47% |
+| LUT | 52,704 | 113,930 | 55,257 | 52,609 |
+| FF | 73,828 | 138,729 | 78,692 | 73,774 |
+| BRAM tile | 143.5 | 266 | 161.5 | 143.5 |
+| URAM / DSP | 129 / 50 | 129 / 50 | 129 / 50 | 129 / 50 |
+
+Timing improved against v8t2 — **WNS −1.621, TNS −38,163** against v8t2's
+−1.896 / −99,608 — and the SLR boundaries are nowhere near full: **2,421 /
+2,368 / 2,344 SLLs of 23,040** per boundary, 10.2–10.5%.
+
+The result that matters is the one those two facts frame. Four meshes came out,
+CLB occupancy fell from 71–88% to 20–44%, and congestion dropped only one
+level: still **5 on the placer's final windows and 6 on the router's initial
+ones**, and every window is in SLR2, exactly where v8t2's were. A die at 22%
+occupancy with 10% of its SLLs used is not short of anything. Congestion that
+survives emptying the die by three quarters is not a capacity problem.
+
+**Nothing is stretched.** `scripts/tcl/v8t3/86_congestion.tcl` bins all 736,738
+placed primitives by owner and clock region. Every `mesh_i` and every `ddr4_i`
+is wholly inside its own SLR; the Xache's four partitions split 10,262 / 12,907
+/ 12,826 / 10,322 across the four dies as designed, and each interlink pipe has
+exactly 297 cells on each side of its boundary. The floorplan did what it was
+told.
+
+What differs is the arrangement *within* each die. Writing each module's centre
+of mass as its clock-region column (a die is columns X0–X7; every MIG lands in
+X4):
+
+| die | node | Xache partition | MIG | also |
+|---|---|---|---|---|
+| 0 | **X2** (45,602 of 63,508) | **X3** (6,678) | X4 | — |
+| 1 | **X2** (33,715) | **X3** (7,628) | X4 | XDMA X5–X7, 121,987 |
+| 2 | **X5** (28,980), X4 (20,637), X3 (14,640) | **X3** (9,353) | X4 | — |
+| 3 | **X5** (40,185), X6 (16,103) | X3–X5 (3,301 / 3,248 / 2,859) | X4 | — |
+
+In dies 0 and 1 the node and its Xache partition are adjacent columns with the
+MIG outboard of both. In die 3 they overlap at X5. **Die 2 is the only one
+where they sit on opposite sides of the MIG**: the node's mass at X5, its
+partition at X3, and `ddr4_2`'s 53,597 cells filling X4 between them — with a
+third of the node (20,637 cells) inside that same column.
+
+Every congestion window in the design is in that gap, and its occupants are
+exactly those four. In the worst placer window: `ddr4_2` 42.3% of the cells,
+`mesh_2` 31.0%, station 2 20.5%, the Xache 6.2%.
+
+**40% of the nets routed through that window have neither driver nor load
+inside it** — 9,794 of 24,772; the second window 9,489 of 22,552. Attributed
+by the scope that declares them, the pass-through is:
+
+| owner | pass-through nets | share |
+|---|---|---|
+| **Kohaku Xache** | **4,321** | **44.1%** |
+| `ddr4_2` | 2,249 | 23.0% |
+| `mesh_2` | 1,838 | 18.8% |
+| `station_bus` | 1,361 | 13.9% |
+
+and three levels down, the Xache's share is its two boundary trunks and its
+home: `g_chain.g_b[2].g_d[0].u_tk` 1,043, `g_b[1].g_d[1].u_tk` 729,
+`g_b[1].g_d[0].u_tk` 444, `g_home[2].u_c` 766, `g_home[2].u_we` 428. The
+sampled driver→load pairs name the traffic outright — 120 nets run
+`g_b[2].g_d[0].u_tk → g_b[1].g_d[0].u_tk`, one boundary trunk straight into
+the other.
+
+That is the Xache chain **passing through die 2**. Die 2 is the middle of the
+chain and the middle of the interlink line, so everything between die 3 and
+dies 1–0 traverses it — and because its node and its partition sit on opposite
+sides of the MIG, that traffic crosses the MIG's column to do so.
+
+Why the placer chose it is legible from the same table: partition 2's boundary
+trunk pulls it toward partition 1, which is firmly at X3, while node 2's
+interlink pulls it toward node 1 at X2 on one side and node 3 at X5 on the
+other — and node 1 cannot move right because XDMA owns X5–X7 of its die. The
+node follows the interlink, the partition follows the trunk, and in die 2 alone
+the two pulls point opposite ways across the MIG.
+
+A second mechanism points at the same place. Every die-spanning clock is rooted
+in **column X4** at the SLR1↔SLR2 boundary: the sysnode clock
+(`clk_wiz_mesh1/…/clkout4_buf/O`) at **X4Y7 with 182,409 leaf loads**, the bus
+clock at X4Y7 with 30,868, the control clock at X4Y8 with 9,197. So the column
+that already holds each MIG also carries the root and the first hop of
+distribution for a clock feeding all four dies, immediately below the rows the
+congestion windows occupy (clock rows Y8–Y10). UG949 warns exactly this: clock
+loads near an SLL crossing compete with SLL routing.
+
+The two mechanisms take two tests, deliberately not mixed. **v8t4 tests the
+clock one**: four sysnode clocks of ~45k loads each, rooted in their own dies,
+and no clock root at a die boundary carrying four dies of distribution. It does
+NOT address the first — the Xache chain still passes through die 2 and still
+crosses the MIG's column — so a v8t4 that improves slack without moving the
+congestion level would be the expected result, not a surprise. **The floorplan
+test is `CMP_COLS`** in `scripts/tcl/v8t3/00_config.tcl`, which gives each
+die's node, Xache partition and station a pblock on one side of the MIG's
+column; it defaults to empty, so neither v8t3 nor v8t4 carries it.
+
+### 5.6 v8t4 — a clock per die
+
+`multimesh_v8t4` is `multimesh_v8t3` **with one knob**: `PER_DIE_CLK 1` in
+`scripts/tcl/v8t3/00_config.tcl`. The two builds source the same stage scripts,
+so nothing else can differ between them.
+
+| | v8t3 | v8t4 |
+|---|---|---|
+| sysnode clock | one, `clk_wiz_mesh1/clk_out4`, four dies | one per die, off that die's own wizard |
+| bus clock | one, `clk_wiz_ctrl/clk_out2`, four stations | one per station, `clk_out2..5`, its own BUFG |
+| sysnode reset | one `proc_sys_reset` + `xcvu13p_rst_tree` | one per die, no tree |
+| bus reset | one + tree | one per die, no tree |
+| Xache boundary trunk | register pipe, one clock | clock crossing (`KX_PCLK 1`) |
+| interlink hop | register pipe, one clock | `kts_cdc` crossing (`IL_ASYNC 1`) |
+| station link | `sb_link` | `sb_link_cdc` (`LINK_CDC 1`) |
+
+No clock net and no reset net spans four dies. A node still meets its Xache
+partition, its station's port 0 and its own DRAM master with **no crossing at
+all** — they share die *i*'s clock — so the crossings appear only where a die
+boundary already was.
+
+Independent clocks release independently, and the interlink surface has no
+`ready`: a die that starts sending into a die still in reset loses those flits.
+So all nine resets are held until **every** wizard has locked (`lock_cat` +
+`lock_all` into each `proc_sys_reset`'s `ext_reset_in`).
+
+Three crossings, three existing verified structures. `kts_pipe_bd` at
+`ASYNC 1` puts a `kts_cdc` between its two pipe halves;
+`tests/transmit/kts_pipe_bd_tb.v` runs three links at once — 3:1, 1:3 and
+synchronous — with
+the landing die released 2,000 ns after the sending die, and passes 26,058
+checks with the slow receiver still taking 1.000 flit per receiver cycle. The
+Xache at `PCLK 1` passes its P=4 and P=2 matrices (4,013–4,015 checks each,
+staggered per-partition resets). The station link at `LINK_CDC 1` is the v6/v7
+shape.
+
+**Routed 2026-09-02, `write_bitstream` clean, hold met (WHS 0.000).**
+
+| | v8t2 | v8t3 | **v8t4** |
+|---|---|---|---|
+| WNS | −1.896 | −1.621 | **−0.699** |
+| TNS | −99,608 | −38,163 | **−7,965** |
+| failing endpoints | — | — | 34,001 of 1,027,751 |
+| congestion, placer | L6/L7 | L5 ×2 | **L5 ×2** |
+| congestion, router | — | L5 ×1, L6 ×3 | **L5 ×2, L6 ×2** |
+
+| per SLR | 0 | 1 | 2 | 3 |
+|---|---|---|---|---|
+| CLB | 22.52% | 46.97% | 24.90% | 20.91% |
+| LUT | 53,002 | 115,304 | 56,014 | 52,924 |
+| FF | 74,773 | 142,918 | 81,910 | 75,070 |
+| BRAM tile | 148 | 275 | 170.5 | 148 |
+| URAM / DSP | 129 / 50 | 129 / 50 | 129 / 50 | 129 / 50 |
+
+SLL per boundary 2,499 / 2,497 / 2,461 of 23,040 (10.7–10.9%). The three
+crossings cost **+2,744 LUT, +9,648 FF, +27 BRAM tiles** against v8t3, with
+URAM and DSP unchanged — 0.25% of the device's LUT for **+0.922 ns of WNS and
+4.8× the TNS**.
+
+The congestion behaved as §5.5 predicted, which is the useful part. The level
+did not fall — placer congestion stays at L5 — but the **hot region moved**:
+v8t3's six windows were all in SLR2, v8t4's four router windows are three in
+SLR1 and one in SLR2, and `ddr4_2` fell out of the top occupants entirely
+(42% of the worst window in v8t3, absent or 15% now). What is left in every
+window is `xache/u_kx` (20–39%), a node's `u_mag` (26–34%) and
+`station_bus/u_line` (12–17%) — the through-traffic, untouched, because
+nothing in v8t4 addresses where the chain runs. That is what `CMP_COLS` is
+for.
+
+### 5.7 Which primitive holds a FIFO — the cost law, measured
+
+A block-RAM tile is 72 × 512. Every FIFO in the Xache and the station bus is
+515–640 bits wide and **16 deep** except one, so each spends ⌈w/72⌉ tiles to
+hold 16 of 512 rows: 97% of every tile is empty. LUTRAM wastes nothing, so the
+LUT it costs to free one tile is
+
+`LUT per tile ≈ 1.125 × depth`
+
+— from the two geometries alone, and it predicts what was measured out of
+context on `kx_pxache` at v8t4's shape (P 4, K 2, 16384 sets, 4 banks, one
+trunk a boundary, a clock a partition, `HCDC` all ones), 3.333 ns:
+
+| class | width × depth | tiles | LUTRAM on xpm, LUT per tile (alone) |
+|---|---|---|---|
+| boundary trunk rings | ~523 × 16 | 90 | **39** |
+| DRAM-edge read CDC | 521 × 16 | 30 | 40 |
+| DRAM-edge write CDC | 577 × 16 | 34 | 38 |
+| **master reorder buffer** | 515 × **256** | 30 | **420** |
+| station bus, every FIFO | 530–640 × 16 | 90.5 | 39 |
+
+**Where the LUT and FF go.** One converted 523 × 16 ring, depth-6 hierarchy,
+xpm `distributed`: **446 LUT / 1,284 FF, of which the LUTRAM is 300 LUT / 12
+FF.** The memory carries **1,034 FF for a 517-bit word** — two output
+registers, where block RAM's own output flop had been one of them for free —
+and the ring's FASTW split builds **two** complete `xpm_fifo_async`, each with
+its own gray pointer CDC, FWFT counter and reset synchroniser (146 LUT / 238
+FF), for halves that are written and read in lockstep. The LUTRAM itself is
+already at the primitive's floor: 28 bits a LUT because a 16-deep queue fills
+half of every RAM32.
+
+So the LUTRAM side of the trade is rebuilt in the design's own idiom, the
+shape of the synchronous `kx_hop_ring` on two clocks:
+
+- **`kohaku_aring`** (`src/kohakuaccel/common/`): one LUTRAM array, one
+  gray-coded pointer crossing, one output register. `FULL 0` where the sender's
+  credits bound occupancy (the trunk rings — no full flag, no read-pointer
+  crossing at all); `FULL 1` for a valid/ready edge (`kx_scdc`, and
+  `async_fifo`'s new `"lean"` type, which the station bus selects through
+  `LUT_PER_BRAM`). `sync_fifo` gained the same `"lean"` inferred ring on one
+  clock.
+- **`kx_lram`**: the reorder ring's LUTRAM inferred directly, one registered
+  read, no wrapper: 2,887 LUT at 515 × 256, 1,444 at × 128, **592 at × 64**.
+
+Nothing about a queue's width, depth or interface changes at any tier, and
+every tier passes the Xache bench on the lean structures (4,013–4,015 checks in
+the per-partition-clock and two-clock-DRAM configurations), `kohaku_aring` its
+own (17,887 checks, 3:1 and 1:3, both flow-control shapes, reader released
+late), and the station bus at `LUT_PER_BRAM` 0 and 120 (7 checks each).
+
+**What SDP LUTRAM costs.** A RAM32M16 or RAM64M8 gives seven usable read
+ports of its eight, so simple-dual-port LUTRAM packs **56 bits a LUT at depth
+32 or 64 and 28 at depth 16**, and past 64 rows adds a LUT read mux per bit
+per 64 rows. A 16-deep class therefore costs about width/2 LUT whatever its
+depth up to 32 — depth is no lever there — while a deep buffer costs
+width × depth / 56 plus the mux, where depth is the whole lever. Each
+component alone, block against lean (`build/ooc/{trunk,link577,rb,nsu}_*`):
+
+| component | block LUT / FF / tiles | lean LUT / FF | LUT a tile freed |
+|---|---|---|---|
+| `kx_trunk`, two rings 523 + 526 × 16, ASYNC | 906 / 1,641 / 15 | 1,228 / 2,233 | 21.5 |
+| `kx_link` 577 × 16 (DRAM write CDC) | 75 / 121 / 8.5 | 358 / 621 | 33 |
+| `kx_link` 521 × 16 (DRAM read CDC) | 75 / 121 / 7.5 | 327 / 563 | 34 |
+| `kx_lram` 515 × 256 (reorder ring, a page a slot) | 12 / — / 7.5 | 2,887 / 515 | 383 |
+| `kx_lram` 515 × 64 (reorder ring, 16 beats a slot) | 12 / — / 7.5 | 592 / 515 | 77 |
+| `sb_nsu`, five depth-16 queues | 1,042 / 1,814 / 16.5 | 1,580 / 2,109 | 33 |
+
+Against xpm's `distributed` structures a lean trunk is −232 LUT / −1,427 FF,
+a lean link −50 / −650, and the station line at `LUT_PER_BRAM 120` −2,769 /
+−11,583 (26,487 / 41,484 against 29,256 / 53,067; 26,473 / 43,797 at 0).
+
+**The read slot.** The reorder ring was `RD_OUTQ × 4096/STRB` = 256 deep
+because a slot held a whole 4 KB page and, in block RAM, the rows were free.
+`kx_pxache` gained `RB_BEATS`: the beats a read slot holds (0 = a page). At 16
+the ring is 64 deep and the LUTRAM 592 a master instead of 2,887. A read burst
+longer than a slot is a protocol error (the bench reports it), so the same
+value bounds every master's bursts: `mag_dram_port` gained `AR_MAX`
+(`DRAM_AR_MAX` on `mag`, `sysnode`, `ktpu_node_v8t`), which issues a longer
+request as back-to-back ARs on its id and tells the return side once, and the
+build config sets both from `KX_RB_BEATS`. The Xache bench passes every tier
+at slot 0 and 16 (4,013 / 3,837 checks, four partitions on trunks and
+per-partition clocks), the DRAM port at `AR_MAX` 0 and 4 (64 checks each),
+the mover chain through the node at 16 (597 checks).
+
+`kx_pxache`'s `MEM_TRUNK` / `MEM_RB` / `MEM_HRD` / `MEM_HWR` are each
+`"block"` | `"distributed"`, threaded through `kx_pbd_4x4` and the build
+config (`KX_MEM_*`). The station bus has the same dial as a threshold,
+`LUT_PER_BRAM`, evaluated per FIFO in `sb_nsu.v` — the law above in
+LUTs-per-tile form.
+
+**The whole Xache, chain live.** `kx_pxache`'s `MP` / `HP` default to every
+master and home on partition 0, so a whole-Xache run must set them: with the
+defaults no request crosses a boundary and the trunks are dead logic, kept only
+as xpm's clock-crossing cells and deleted outright on the lean ring. With
+`MP = HP = {3,2,1,0}` (`build/ooc/kxlive_*`, one run a tier, `clk_p[0..3]`,
+`m_clk[0..3]` and `h_clk[0..3]` each an asynchronous clock at 3.333 ns):
+
+| Xache tier | LUT | FF | BRAM | Fmax MHz | per die LUT (0 / 1 / 2 / 3) | per die tiles |
+|---|---|---|---|---|---|---|
+| T0, v8t4 as shipped | 17,659 | 29,099 | 184 | 260.7 | 3,800 / 5,219 / 5,128 / 3,513 | 38.5 / 53.5 / 53.5 / 38.5 |
+| T0 with the 16-beat read slot | 17,887 | 28,980 | 184 | 279.6 | 3,862 / 5,115 / 5,100 / 3,811 | same |
+| T1 trunk rings | 19,948 | 32,718 | 94 | 278.9 | 4,140 / 5,814 / 5,789 / 4,204 | 23.5 each |
+| T2 + reorder ring, 16-beat slot | 22,073 | 34,699 | 64 | 280.4 | 4,789 / 6,439 / 6,414 / 4,432 | 16 each |
+| T3 + DRAM read CDC | 22,946 | 36,436 | 34 | 287.7 | 4,940 / 6,694 / 6,642 / 4,672 | 8.5 each |
+| T4 + DRAM write CDC | 24,089 | 38,462 | 0 | 271.2 | 5,249 / 6,959 / 6,901 / 4,982 | 0 |
+
+A die is its partition; a trunk's landing rings count on the landing die and
+its mux and credits on the sending die (`scripts/py/kx_slr.py`). The worst
+path at every tier is a same-die master write-queue pointer into the home
+engine's lock enable on die 2, 13 to 15 logic levels, 79% route; die 0 and 3
+close at 300 MHz, die 1 misses by 0.060 ns.
+
+**Station tiers** (`sb_line4`, v8t4's knobs, `build/ooc/sbtier_lpb0`,
+`sblean_*`). S1 leaves 19 tiles, all on station 1: the xdma manager's request
+queue (647 × 256, 9 tiles) and response queue (264 × 256, 4), and the jtag
+manager's (143 × 256, 2, and 264 × 256, 4). Their depth is now a knob
+(`sb_line4` `MREQ0..2` / `MRSP0..2` / `MMAXB0..2`, the build's `SB_MREQ*`,
+`SB_MRSP*`, `SB_MMAXB*`, `SB_LPB1`): `sb_nmu` raises a depth to its floor,
+one `MAX_BURST` packet, times two flits for the 512-bit xdma response, so 64 /
+128 there is behaviour-identical to 256. The jtag driver splits at 256 KB, so
+its bursts reach 256 beats and that manager keeps its 256 floor.
+
+| station tier | LUT | FF | BRAM | Fmax | station 1 LUT / FF / tiles |
+|---|---|---|---|---|---|
+| S0, block everywhere | 26,473 | 43,797 | 90.5 | 299.8 | 11,289 / 15,982 / 41 |
+| S1, threshold 120, lean rings | 26,487 | 41,484 | 19 | 299.8 | 11,387 / 15,553 / 19 |
+| S2, xdma 64 / 128, station 1 at 270 | 27,850 | 42,063 | 6 | 299.8 | 12,752 / 16,134 / 6 |
+| S2, xdma 128 / 128, station 1 at 290 | 28,925 | 42,120 | 6 | 299.8 | 13,827 / 16,191 / 6 |
+| S3, xdma 64 / 128, station 1 at 580 | 30,087 | 42,433 | 0 | 323.3 | 14,989 / 16,504 / 0 |
+| S3, xdma 128 / 256, station 1 at 580 | 31,904 | 42,497 | 0 | 323.3 | 16,806 / 16,568 / 0 |
+
+Stations 0, 2 and 3 are the same in every tier (4,736 / 5,622 / 4,741 LUT,
+0 tiles from S1 on). The line bench passes at every setting (671 checks, jtag
+on the control clock and on the bus clock), the mesh end-to-end bench at 7.
+
+**The logic pass on T4 and S2** (`build/ooc/kxlive_t4z`, `sblean_s2x_64_128`;
+same shape, same generics). Xache: the master's slot-free flags and the
+trunk's credit-not-zero flag are registers from their next-state counts
+instead of a subtract-and-compare in front of the arbitration, which is where
+the 13-level path from a master's write-queue pointer to the home engine's
+take began; and the request inject flit lets the W data ride every flit type
+instead of zeroing it on AR, AW and WX, an AND a bit that the census had
+folded into the trunk's slot mux (the response side already rode its word).
+Station: a hub with four or more sources keeps its payload select
+as one LUT6 a bit shared by the skid's hold and output registers (`sb_hub`
+`PAYMUX`; the 4-source PW-270 hub alone is 466 LUT against 844), and the
+manager's credit reclaim, which read the response FIFO's block RAM through a
+16-entry tag table into two adders, is registered and lands one cycle late.
+
+| | LUT | FF | BRAM | Fmax MHz | worst path |
+|---|---|---|---|---|---|
+| Xache T4 before | 24,089 | 38,462 | 0 | 271.2 | master wq pointer → home take, 13 levels, die 1 −0.354 |
+| Xache T4 after the LUT pass | 23,019 | 38,481 | 0 | 317.9 | master write-home latch → home take, 11 levels; partition clocks +0.187 / +0.359 / +0.526 / +0.768 |
+| Xache T4 after the Fmax pass (below) | **23,055** | 47,917 | 0 | **358.0** | every path 9 levels; +0.540 at 3.333, +0.064 at 2.857 |
+| station S2 before | 27,850 | 42,063 | 6 | 299.8 | jtag RSP block RAM → tag table → credit, 14 levels |
+| station S2 after | **26,730** | 42,092 | 6 | **330.5** | — |
+
+Per die the Xache is 5,088 / 6,513 / 6,417 / 5,000 LUT. What remains is at
+its floors: 8,808 LUTRAM (width-bound), the trunk slot muxes 3,325 and the
+reorder-ring landing muxes 2,094 at one LUT6 a bit, the array bank select
+2,128 (one a bit, the `BANKS 4` choice), the write engines' W select ~2,800,
+and ~4,000 of control. Keeping the trunk mux's LUT6s with `DONT_TOUCH`
+changed nothing. Below this is a tier that keeps a class on block RAM (T3
+saves 1,328 LUTRAM for 34 tiles) or a shape change. The station's 1,120 LUT
+is −275 a station from the hub select.
+
+**Xache Fmax to 358 MHz** (`scripts/tcl/ooc_paths.tcl`: the same synthesis
+at a 2.857 ns ask with every path under 0.25 ns of slack bucketed by its
+start and end register groups, `build/ooc/kxlive_t4*_350/paths.txt`). At
+317.9 MHz every failing class started at a master's write-home latch and ran
+through the trunk arbitration into the far home's read take, 11 levels. Three
+registers, each one entry at full rate with no hold mux, each costing one
+cycle of latency and no LUT:
+
+| register | what it cuts | Fmax after |
+|---|---|---|
+| the master's inject offer (`qo_vq` / `qo_dq`): the AXI master holds its beat, so accept = empty or popping | master valid → trunk `sel` → response ready → home take | 327.2 |
+| a head after every landing ring (`hv_q` / `hd_q`, 12 of them): the ring refills it the cycle it leaves | ring output → dst decode → consumer ready or next trunk → the ring's own pop | 321.4 (the classes moved) |
+| the write engine's grant (`pick`), re-qualified against the live valids as `kx_rd_pipe` already did | one head's decode → the isolate-lowest over every source → the other head's ready | **358.0**, +0.064 ns, every path 9 levels |
+
+23,055 LUT, 47,917 FF (the twenty 526-bit registers), per die 5,085 / 6,432
+/ 6,437 / 5,100 LUT and 10,861 / 13,100 / 13,099 / 10,858 FF. Hit-32
+latency from master 0 to home 0 / 1 / 2 / 3 at T4 is
+36 / 53 / 65 / 81 cycles against 36 / 50 / 60 / 75 before: the remote
+requests pay one cycle at the inject and two a hop. Toward 400 MHz the next
+classes are the response landing (home read pipe `rid` → the master's slot
+counters through the landing pick, 2.68 ns), the head's destination decode
+into the next ring (2.60) and a head's valid into the home's take (2.55);
+each wants one more register: the master's landing pick and the home's take.
+
 ---
 
 ## 6. Accuracy
