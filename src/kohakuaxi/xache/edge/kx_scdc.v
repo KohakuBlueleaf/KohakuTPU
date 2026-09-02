@@ -27,6 +27,7 @@ module kx_scdc #(
     generate if (MEM == "distributed") begin : g_lean
         // The read side's reset is the write side's, landed through two flops
         // -- the same derivation xpm_fifo_async makes inside itself.
+        (* ASYNC_REG = "TRUE" *)
         reg rd_r1, rd_r2;
         always @(posedge rd_clk) begin
             rd_r1 <= !wr_rst;

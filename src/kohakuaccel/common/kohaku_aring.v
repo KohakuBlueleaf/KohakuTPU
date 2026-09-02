@@ -41,6 +41,7 @@ module kohaku_aring #(
         if (!wr_rstn) begin wp <= 0; wp_g <= 0; end
         else if (wr_en) begin wp <= wp_n; wp_g <= wp_n ^ (wp_n >> 1); end
     end
+    (* ASYNC_REG = "TRUE" *)
     reg [AW:0] wg_s1, wg_s2;
     always @(posedge clk) begin
         if (!rstn) begin wg_s1 <= 0; wg_s2 <= 0; end
@@ -73,7 +74,9 @@ module kohaku_aring #(
     // ---- full: the read pointer crossed back, where credits do not bound it
     generate if (FULL != 0) begin : g_full
         wire [AW:0] rp_n = rp + 1'b1;
-        reg  [AW:0] rp_g, rg_s1, rg_s2, rp_w;
+        reg  [AW:0] rp_g, rp_w;
+        (* ASYNC_REG = "TRUE" *)
+        reg  [AW:0] rg_s1, rg_s2;
         always @(posedge clk) begin
             if (!rstn) begin rp_g <= 0; end
             else if (issue) begin rp_g <= rp_n ^ (rp_n >> 1); end

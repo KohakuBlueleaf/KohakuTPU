@@ -154,7 +154,8 @@ module ktpu_quad_ref #(
             assign l0_icv = 1'b0; assign l0_icvc = 1'b0; assign l0_icn = {LKC{1'b0}};
         end else begin : g_dn
             kts_pipe_bd #(.W(LKW), .VCW(1), .CN_W(LKC)) u_pu (
-                .clk(clk), .rstn_tx(rstn[n-1]), .rstn_rx(rstn[n]),
+                .clk(clk), .clk_rx(clk),
+                .rstn_tx(rstn[n-1]), .rstn_rx(rstn[n]),
                 .i_valid(u_v[n-1]), .i_vc(u_vc[n-1]), .i_last(u_l[n-1]),
                 .i_flit(u_f[(n-1)*LKW +: LKW]),
                 .o_valid(l0_iv), .o_vc(l0_ivc), .o_last(l0_il), .o_flit(l0_if),
@@ -162,7 +163,8 @@ module ktpu_quad_ref #(
                 .o_crd_valid(u_cv[n-1]), .o_crd_vc(u_cvc[n-1]),
                 .o_crd_n(u_cn[(n-1)*LKC +: LKC]));
             kts_pipe_bd #(.W(LKW), .VCW(1), .CN_W(LKC)) u_pd (
-                .clk(clk), .rstn_tx(rstn[n]), .rstn_rx(rstn[n-1]),
+                .clk(clk), .clk_rx(clk),
+                .rstn_tx(rstn[n]), .rstn_rx(rstn[n-1]),
                 .i_valid(l0_ov), .i_vc(l0_ovc), .i_last(l0_ol), .i_flit(l0_of),
                 .o_valid(dwn_v[n-1]), .o_vc(dwn_vc[n-1]), .o_last(dwn_l[n-1]),
                 .o_flit(dwn_f[(n-1)*LKW +: LKW]),

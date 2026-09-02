@@ -49,6 +49,18 @@ module kts_pipe_bd #(
     output wire [VCW-1:0]  o_crd_vc,
     output wire [CN_W-1:0] o_crd_n
 );
+    // Each half inverts its own reset in a register of its own: one inverter
+    // shared by both halves is pinned with one die and drives the other's reset
+    // pins across the boundary.
+    reg rst_tx_q = 1'b1;
+    reg rst_rx_q = 1'b1;
+    always @(posedge clk) begin
+        rst_tx_q <= !rstn_tx;
+    end
+    always @(posedge clk_rx) begin
+        rst_rx_q <= !rstn_rx;
+    end
+
     // The boundary: flits leave u_tx for u_rx, credits leave u_rx for u_tx.
     wire            x_valid, x_crd_valid;
     wire [VCW-1:0]  x_vc, x_crd_vc;
@@ -66,8 +78,8 @@ module kts_pipe_bd #(
 
     generate if (ASYNC != 0) begin : g_async
         kts_cdc #(.W(W), .VC(1 << VCW), .D(CRED), .CN_W(CN_W), .MEM(MEM)) u_x (
-            .a_clk(clk),    .a_rst(!rstn_tx),
-            .b_clk(clk_rx), .b_rst(!rstn_rx),
+            .a_clk(clk),    .a_rst(rst_tx_q),
+            .b_clk(clk_rx), .b_rst(rst_rx_q),
             .i_valid(x_valid), .i_vc(x_vc), .i_last(x_last), .i_flit(x_flit),
             .o_valid(y_valid), .o_vc(y_vc), .o_last(y_last), .o_flit(y_flit),
             .i_crd_valid(x_crd_valid), .i_crd_vc(x_crd_vc), .i_crd_n(x_crd_n),
@@ -83,7 +95,7 @@ module kts_pipe_bd #(
     end endgenerate
 
     kts_pipe #(.W(W), .VCW(VCW), .CN_W(CN_W), .N(1)) u_tx (
-        .clk(clk), .rst(!rstn_tx),
+        .clk(clk), .rst(rst_tx_q),
         .i_valid(i_valid), .i_vc(i_vc), .i_last(i_last), .i_flit(i_flit),
         .o_valid(x_valid), .o_vc(x_vc), .o_last(x_last), .o_flit(x_flit),
         .i_crd_valid(y_crd_valid), .i_crd_vc(y_crd_vc), .i_crd_n(y_crd_n),
@@ -91,7 +103,7 @@ module kts_pipe_bd #(
     );
 
     kts_pipe #(.W(W), .VCW(VCW), .CN_W(CN_W), .N(1)) u_rx (
-        .clk(clk_rx), .rst(!rstn_rx),
+        .clk(clk_rx), .rst(rst_rx_q),
         .i_valid(y_valid), .i_vc(y_vc), .i_last(y_last), .i_flit(y_flit),
         .o_valid(o_valid), .o_vc(o_vc), .o_last(o_last), .o_flit(o_flit),
         .i_crd_valid(i_crd_valid), .i_crd_vc(i_crd_vc), .i_crd_n(i_crd_n),

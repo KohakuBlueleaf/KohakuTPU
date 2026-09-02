@@ -115,7 +115,7 @@ module interlink_4mesh_tb;
     for (b = 0; b < 3; b = b + 1) begin : hop
 `ifdef TB_PIPE
         kts_pipe_bd #(.W(LW), .VCW(1), .CN_W(4)) u_up (
-            .clk(clk), .rstn_tx(resetn), .rstn_rx(resetn),
+            .clk(clk), .clk_rx(clk), .rstn_tx(resetn), .rstn_rx(resetn),
             .i_valid(up_v[b]), .i_vc(up_vc[b]), .i_last(up_l[b]),
             .i_flit(up_f[b]),
             .o_valid(s0_v[b+1]), .o_vc(s0_vc[b+1]), .o_last(s0_l[b+1]),
@@ -124,7 +124,7 @@ module interlink_4mesh_tb;
             .o_crd_valid(m1c_v[b]), .o_crd_vc(m1c_vc[b]), .o_crd_n(m1c_n[b])
         );
         kts_pipe_bd #(.W(LW), .VCW(1), .CN_W(4)) u_dn (
-            .clk(clk), .rstn_tx(resetn), .rstn_rx(resetn),
+            .clk(clk), .clk_rx(clk), .rstn_tx(resetn), .rstn_rx(resetn),
             .i_valid(dn_v[b+1]), .i_vc(dn_vc[b+1]), .i_last(dn_l[b+1]),
             .i_flit(dn_f[b+1]),
             .o_valid(s1_v[b]), .o_vc(s1_vc[b]), .o_last(s1_l[b]),

@@ -33,6 +33,7 @@ module async_fifo #(
     generate if (MEMORY_TYPE == "lean") begin : g_lean
         // kohaku_aring with a full flag; the read side's reset is the write
         // side's landed through two flops, as XPM derives it inside itself.
+        (* ASYNC_REG = "TRUE" *)
         reg rd_r1, rd_r2;
         always @(posedge rd_clk) begin
             rd_r1 <= !wr_rst;
