@@ -7,11 +7,11 @@
 // THE LINE IS ONE FILL ENTRY, 1024 bits, not mag-staging.md's 936: 936 is the
 // post-permutation L1 width, and MAG moves mag_mem_port.v's P_ENTRY_BITS.
 
-// ONE BANK OF 4-DEEP CHAINS. UG573 p.116 cascades bottom-up within a column;
-// UG901 p.118 wants rows + columns output registers, which RLAT's default
-// gives. Routed inside one SLR beside the ship's 4 x 1-deep: both without a
-// congestion window above UG949 level 5, the node's slack the RV64 core's
-// in both (-0.354 / -0.290 on the same path). BANKS is the knob either way.
+// BANKS OF SINGLE URAM, NEVER A CASCADE. A chain is combinational from the
+// first block's clock -- ~0.27 ns a hop, measured on a 4-deep RAMB36 -- and
+// UG573 p.116 cascades bottom-up inside ONE column, so depth also pins the
+// placement. The staging pays for the return mux in fabric instead: ENTRIES /
+// BANKS must stay at or under 4096, one URAM deep.
 
 // WIDE PATH ONE DRIVER, NARROW PATH MANY. Write data is one registered
 // broadcast; only the address and control fan out per bank.
@@ -22,10 +22,8 @@ module mag_stage #(
     parameter integer DATA_W  = 256,
     parameter integer ADDR_W  = 40,
     parameter integer WORDS   = 4,         // response words in one entry
-    // 1: one array, 16 chains of 4 URAM. Against 4 banks of 16 single URAM it
-    // is -1,568 LUT / -5,121 FF at synthesis (node 29,311 against 30,879) and
-    // -1,549 routed, with the return mux gone; 2 banks is -939.
-    parameter integer BANKS   = 1,
+    // ENTRIES / BANKS <= 4096: one URAM deep a bank, no chain
+    parameter integer BANKS   = 4,
     parameter integer ENTRIES = 16384,     // total, across all banks
     // 1 registers the dispatch and each bank's output, so the only long wire
     // left is bank output register -> mux.
@@ -40,7 +38,9 @@ module mag_stage #(
     parameter [3:0]   AP_STAGE = 4'h0,
     // What the ARCHITECTURE defines (address-space-40bit.md s3), not what any
     // port serves: no permission decision, only a_fault. mag_mem_port serves 0.
-    parameter [15:0]  AP_IMPL  = 16'h0037
+    parameter [15:0]  AP_IMPL  = 16'h0037,
+    // kohaku_mux KEEP on the bank and word selects
+    parameter integer MUX_KEEP = 0
 )(
     input  wire                    clk,
     input  wire                    rst,
@@ -240,17 +240,30 @@ module mag_stage #(
         end
     end
 
-    // A plain N:1 on a simple counter: MEASURED, the part-select is what the
-    // tool wants here. Rewriting it as a compare per bank cost +517 LUT --
-    // a 4-deep priority chain 1,024 bits wide instead of one 4:1.
+    // Both selects are registers and both muxes are kohaku_mux LUT6 trees, one
+    // LUT a bit: the entry select over BANKS, then port B's word over WORDS.
     wire [BWS-1:0] sel = bk_sr[RTOT-1];
-    wire [WORDS*DATA_W-1:0] sel_entry =
-        bank_out[sel*WORDS*DATA_W +: WORDS*DATA_W];
+    wire [WORDS*DATA_W-1:0] sel_entry;
+    generate if (BANKS <= 1) begin : g_one_bank
+        assign sel_entry = bank_out;
+    end else begin : g_bsel
+        kohaku_mux #(.W(WORDS*DATA_W), .N(BANKS), .KEEP(MUX_KEEP)) u_esel (
+            .d(bank_out), .sel(sel), .o(sel_entry));
+    end endgenerate
+
+    wire [EW-1:0] b_word_r = wd_sr[RTOT-1];
+    wire [DATA_W-1:0] b_word_d;
+    generate if (WORDS <= 1) begin : g_one_word
+        assign b_word_d = sel_entry;
+    end else begin : g_wsel
+        kohaku_mux #(.W(DATA_W), .N(WORDS), .KEEP(MUX_KEEP)) u_wsel (
+            .d(sel_entry), .sel(b_word_r), .o(b_word_d));
+    end endgenerate
 
     assign a_rvalid = a_sr[RTOT-1];
     assign a_rdata  = sel_entry;
     assign b_rvalid = b_sr[RTOT-1];
-    assign b_rdata  = sel_entry[wd_sr[RTOT-1]*DATA_W +: DATA_W];
+    assign b_rdata  = b_word_d;
 
 `ifndef SYNTHESIS
     // An unaligned entry access reads a line the address does not name, and

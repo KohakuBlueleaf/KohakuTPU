@@ -28,6 +28,10 @@ module mag_dram_port #(
     // 20-word bursts (mag_dram_port_bw_tb, 300 MHz, 106 ns DRAM); verified at
     // 2 and 4 by mag_dram_port_tb's queued reads and mover_chain1/2/4.
     parameter integer RD_OUT  = 1,
+    // Memory beats one AR may carry: a longer request goes out as several
+    // back-to-back ARs on its id, which AXI answers in order. 0 = the whole
+    // request. The Xache's read slot (kx_pxache RB_BEATS) is this bound.
+    parameter integer AR_MAX  = 0,
     parameter         WR_MEM  = "block",
     // 1: the five queues cross s_aclk -> m_aclk (async FIFOs). 0: m_aclk IS
     // s_aclk and the queues are synchronous FIFOs on it -- the v8 one-clock
@@ -245,7 +249,8 @@ module mag_dram_port #(
     // arithmetic and ready on one path cost 49 MHz in a 6+2 mesh.
     // A staged read leaves the capture stage into `sq`; a staged write needs
     // only its wsel entry, never the AW queue.
-    wire rd_push = s1_rv && (s1_rstg ? !sq_v : !ar_full);
+    wire ck_last;                       // the AR going out is its request's last
+    wire rd_push = s1_rv && (s1_rstg ? !sq_v : (!ar_full && ck_last));
     wire wr_push = s1_wv && !wsel_full && (s1_wstg || !aw_full);
     wire rd_take = rd_any && (!s1_rv || rd_push);
     wire wr_take = wr_any && (!s1_wv || wr_push);
@@ -310,11 +315,28 @@ module mag_dram_port #(
     wire [ADDR_W-1:0] rd_al = {rd_addr[ADDR_W-1:ALOG], {ALOG{1'b0}}};
     wire [ADDR_W-1:0] wr_al = {wr_addr[ADDR_W-1:ALOG], {ALOG{1'b0}}};
 
+    // The AR split: AMB memory beats a burst, ck_done of the request already
+    // out. The return side is told once, at the first AR, and counts the
+    // request's beats across its bursts; the address stays memory-aligned.
+    localparam integer AMB   = (AR_MAX > 0 && AR_MAX < 256) ? AR_MAX : 256;
+    localparam integer MBLOG = $clog2(MBYTES);
+    reg  [15:0]       ck_done;
+    wire [16:0]       ck_left = {1'b0, rd_mb} + 17'd1 - {1'b0, ck_done};
+    assign            ck_last = (ck_left <= AMB);
+    wire [7:0]        ck_len  = ck_last ? (ck_left[7:0] - 8'd1) : (AMB[7:0] - 8'd1);
+    wire [ADDR_W-1:0] ck_addr = rd_al + ({{(ADDR_W-16){1'b0}}, ck_done} << MBLOG);
+
     // Only a DRAM request reaches AXI; a staged one is pushed elsewhere.
-    wire ar_fire = rd_push && !s1_rstg;
+    wire ar_fire = s1_rv && !s1_rstg && !ar_full;
+    wire ar_req  = ar_fire && (ck_done == 16'd0);
     wire aw_fire = wr_push && !s1_wstg;
     wire sq_fire = rd_push &&  s1_rstg;
     wire ws_fire = wr_push;
+
+    always @(posedge s_aclk) begin
+        if (srst || rd_take) begin ck_done <= 16'd0; end
+        else if (ar_fire)    begin ck_done <= ck_last ? 16'd0 : ck_done + AMB[15:0]; end
+    end
 
     // ================================================== AR / AW crossings
     // Both FIFO kinds are show-ahead with the same flags, so each queue is one
@@ -322,13 +344,13 @@ module mag_dram_port #(
     generate if (DRAM_CDC) begin : g_arq
         async_fifo #(.DATA_WIDTH(ADDR_W+8+IDX_W), .FIFO_DEPTH(ARQ)) u_f (
             .wr_clk(s_aclk), .wr_rst(srst), .wr_en(ar_fire),
-            .wr_data({rd_al, rd_mb[7:0], s1_rid}), .wr_full(ar_full),
+            .wr_data({ck_addr, ck_len, s1_rid}), .wr_full(ar_full),
             .rd_clk(m_aclk), .rd_en(m_arvalid && m_arready),
             .rd_data({m_araddr, m_arlen, ar_id}), .rd_empty(ar_empty));
     end else begin : g_arq_s
         sync_fifo #(.DATA_WIDTH(ADDR_W+8+IDX_W), .FIFO_DEPTH(ARQ)) u_f (
             .clk(s_aclk), .rst(srst), .wr_en(ar_fire),
-            .wr_data({rd_al, rd_mb[7:0], s1_rid}), .wr_busy(ar_full), .wr_almost(),
+            .wr_data({ck_addr, ck_len, s1_rid}), .wr_busy(ar_full), .wr_almost(),
             .rd_en(m_arvalid && m_arready),
             .rd_data({m_araddr, m_arlen, ar_id}), .rd_busy(ar_empty));
     end endgenerate
@@ -637,7 +659,7 @@ module mag_dram_port #(
 
     integer kp;
     generate for (g = 0; g < N; g = g + 1) begin : g_rdq
-        wire mine_ar  = ar_fire && (s1_rid == g[IDX_W-1:0]);
+        wire mine_ar  = ar_req  && (s1_rid == g[IDX_W-1:0]);
         wire mine_tk  = r_take  && (rq_id  == g[IDX_W-1:0]);
         wire mine_fin = r_fin   && (rq_id  == g[IDX_W-1:0]);
         // A staged read ends on the take of its last word; it never touched

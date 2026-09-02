@@ -29,25 +29,31 @@ what has actually been placed.
 ## The interlink is a second routing layer
 
 It does not inherit the fabric's deadlock proof, so it gets its own by the same
-argument: dimension-order routing on **mesh** coordinates over a rectangular
-grid of meshes.
+argument, on the shape the silicon has. A die-to-die crossing joins only
+ADJACENT dies, so the meshes form a **line**, and the line is the index order:
+mesh `i` sits on die `i`.
 
 ```
-    mesh id -> (x, y) = (id[0], id[1])
-
-        (0,0) mesh0 -- mesh1 (1,0)      link0 is the X neighbour
-          |             |               link1 is the Y neighbour
-        (0,1) mesh2 -- mesh3 (1,1)
+    mesh0 ── mesh1 ── mesh2 ── mesh3      link0 is the neighbour one position DOWN
+    pos 0    pos 1    pos 2    pos 3      link1 is the neighbour one position UP
 ```
 
-X first, then Y. Two consequences, both load-bearing:
+The switch (`mag_switch`) writes that order exactly once, as a constant, and
+derives each neighbour from it rather than taking a configured peer id — a
+separately configured id would be a second place for the topology to be wrong,
+and the two would disagree in silence. Routing is **one comparison**: move one
+position toward the destination. Two consequences, both load-bearing:
 
-- A forwarded packet **always turns X into Y**, never Y into X. So link0's
-  forward class feeds link1, and link1's forward class is provably dead — traffic
-  there is the turn the model forbids, which makes it a fault to report rather
+- Position is monotone along a path, so a packet never reverses. Upward
+  traffic depends only on upward channels and downward only on downward: two
+  disjoint chains, acyclic, hence deadlock-free. **A ring would close that
+  cycle**, so the ends are ends — the missing neighbour's port is tied off, and
+  a packet arriving there still needing a forward is a fault to report rather
   than a case to handle.
-- The channel dependency graph is X to Y and nothing else. Acyclic, hence
-  deadlock-free — and only while the mesh-of-meshes stays a grid.
+- A mesh **forwards traffic that is nothing to do with it**. Transit and local
+  egress merge round-robin rather than transit-first: strict priority would let
+  a saturated through-stream pin the local queue's head, and round-robin bounds
+  a forward's wait at one local packet.
 
 There are two links per mesh, not `N`. The mesh id is a fixed narrow field, so
 adding a fifth mesh is a change to the message format rather than a parameter

@@ -42,6 +42,7 @@ module sysnode #(
     // 0: dram_aclk IS clk and the DRAM port's queues are synchronous.
     parameter integer DRAM_CDC   = 1,
     parameter integer DRAM_R_REG = 1,      // mag_dram_port R_REG: the return bus registered once
+    parameter integer DRAM_AR_MAX = 0,     // mag_dram_port AR_MAX: memory beats an AR may carry
     parameter integer MEM_X      = 0,
     parameter integer MEM_Y      = 1,
     parameter integer MEM_X1     = 0,
@@ -55,7 +56,7 @@ module sysnode #(
     parameter integer STAGE_FLITS = 128,
     parameter integer WR_SLOTS   = 16,
     parameter integer STAGE        = 0,
-    parameter integer STAGE_BANKS  = 1,
+    parameter integer STAGE_BANKS  = 4,
     parameter integer STAGE_ENTRIES = 16384,
     parameter integer STAGE_PIPE  = 1,
     parameter integer STAGE_RLAT  = 0,      // mag_stage RLAT; 0 = blocks deep + 1
@@ -374,6 +375,7 @@ module sysnode #(
         .ADDR_W(ADDR_W), .ID_W(ID_W), .PORTS(PORTS), .ILINK(ILINK),
         .MESH_ID(MESH_ID), .LINK_W(LINK_W), .TUSER_W(TUSER_W), .MW(MW),
         .IL_CN_W(IL_CN_W), .DRAM_CDC(DRAM_CDC), .DRAM_R_REG(DRAM_R_REG),
+        .DRAM_AR_MAX(DRAM_AR_MAX),
         .MEM_X(MEM_X), .MEM_Y(MEM_Y), .MEM_X1(MEM_X1), .MEM_Y1(MEM_Y1),
         .MEM_X2(MEM_X2), .MEM_Y2(MEM_Y2), .MEM_X3(MEM_X3), .MEM_Y3(MEM_Y3),
         .GRID_LO(GRID_LO), .GRID_HI(GRID_HI), .STAGE_FLITS(STAGE_FLITS),

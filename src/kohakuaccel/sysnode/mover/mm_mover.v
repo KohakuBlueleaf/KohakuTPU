@@ -221,7 +221,8 @@ module mm_mover #(
         .ld_ax_en(d_ax_en && (ld_sel == 1'b0)), .ld_ax_sel(d_ax_sel),
         .ld_abase(d_abase), .ld_aext(d_aext),
         .start(desc_start), .next(desc_next),
-        .active(src_active), .last(src_last), .valid(src_valid), .addr(src_addr)
+        .active(src_active), .last(src_last), .valid(src_valid), .addr(src_addr),
+        .low_nz()
     );
 
     mx_tdesc #(.NDIM(6), .AW(ADDR_W), .CW(16), .SW(32), .XW(16)) u_dst (
@@ -234,7 +235,8 @@ module mm_mover #(
         .ld_ax_en(d_ax_en && (ld_sel == 1'b1)), .ld_ax_sel(d_ax_sel),
         .ld_abase(d_abase), .ld_aext(d_aext),
         .start(desc_start), .next(dst_next),
-        .active(dst_active), .last(dst_last), .valid(dst_valid), .addr(dst_addr)
+        .active(dst_active), .last(dst_last), .valid(dst_valid), .addr(dst_addr),
+        .low_nz()
     );
 
     // ================================================== index buffer

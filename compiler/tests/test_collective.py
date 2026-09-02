@@ -13,9 +13,11 @@ import itertools
 from kohakuaccel.collective import converge, hops_to
 from kohakuaccel.machinespec import MachineSpec, MeshSpec
 
-#: The card: four meshes down the SLR stack, adjacent ones joined.
-CHAIN = ((0, 1), (1, 3), (3, 2))
-RING = CHAIN + ((2, 0),)
+#: The card: four meshes down the SLR stack, mesh i in SLR i, adjacent ones
+#: joined (rt.CHAIN). TWISTED is a fabric whose walk is not index order.
+CHAIN = ((0, 1), (1, 2), (2, 3))
+RING = CHAIN + ((3, 0),)
+TWISTED = ((0, 1), (1, 3), (3, 2))
 
 
 def card(links=CHAIN, n=4) -> MachineSpec:
@@ -26,9 +28,10 @@ def card(links=CHAIN, n=4) -> MachineSpec:
     )
 
 
-def test_fabric_order_is_not_index_order() -> None:
-    """The whole reason `path` exists: 0-1-3-2 down the stack, not 0-1-2-3."""
-    assert card().path() == (0, 1, 3, 2)
+def test_fabric_order_follows_the_links_not_the_indices() -> None:
+    """The whole reason `path` exists: the walk is read off the links."""
+    assert card().path() == (0, 1, 2, 3)
+    assert card(TWISTED).path() == (0, 1, 3, 2)
 
 
 def test_every_hop_crosses_one_link_wherever_the_sum_lands() -> None:
@@ -106,7 +109,8 @@ def test_no_links_means_complete_and_index_order() -> None:
 
 def test_a_subset_walks_on_its_own_induced_links() -> None:
     assert card().path([0, 1]) == (0, 1)
-    assert card().path([1, 3, 2]) == (1, 3, 2)
+    assert card().path([1, 2, 3]) == (1, 2, 3)
+    assert card(TWISTED).path([1, 3, 2]) == (1, 3, 2)
     try:
         card().path([0, 2])
     except ValueError as exc:

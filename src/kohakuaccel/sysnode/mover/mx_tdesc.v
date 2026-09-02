@@ -33,7 +33,8 @@ module mx_tdesc #(
     parameter integer AW   = 40,    // byte address width
     parameter integer CW   = 16,    // loop count width
     parameter integer SW   = 32,    // stride width (signed)
-    parameter integer XW   = 16     // axis position width (signed)
+    parameter integer XW   = 16,    // axis position width (signed)
+    parameter integer LOWB = 5      // width of the low-bit test on `addr`
 )(
     input  wire            clk,
     input  wire            rst,
@@ -61,7 +62,8 @@ module mx_tdesc #(
     output wire            active,        // a walk is in progress
     output wire            last,          // current element is the final one
     output wire            valid,         // current element is inside bounds
-    output wire [AW-1:0]   addr           // current element's byte address
+    output wire [AW-1:0]   addr,          // current element's byte address
+    output wire            low_nz         // addr's low LOWB bits are non-zero
 );
     integer i;
     genvar  g;
@@ -214,6 +216,33 @@ module mx_tdesc #(
         off_sum = os_t[0];
     end
     assign addr = d_base + {{(AW-SW){off_sum[SW-1]}}, off_sum};
+
+    // An alignment test reads only the low LOWB bits, which carry nothing from
+    // above: folded narrow it is one CARRY8, not a slice of the 40-bit sum.
+    reg [LOWB-1:0] ls_t [0:AN-1];
+    integer li, ln2, lk;
+    always @(*) begin
+        for (li = 0; li < AN;   li = li + 1) begin
+            ls_t[li] = {LOWB{1'b0}};
+        end
+        for (li = 0; li < NDIM; li = li + 1) begin
+            ls_t[li] = psum[li][LOWB-1:0];
+        end
+        for (ln2 = AN >> 1; ln2 > 0; ln2 = ln2 >> 1) begin
+            for (lk = 0; lk < ln2; lk = lk + 1) begin
+                ls_t[lk] = ls_t[lk] + ls_t[lk + ln2];
+            end
+        end
+    end
+    assign low_nz = |(d_base[LOWB-1:0] + ls_t[0]);
+`ifndef SYNTHESIS
+    always @(posedge clk) begin
+        if (!rst && (low_nz !== |addr[LOWB-1:0])) begin
+            $display("%0t ERROR mx_tdesc: low_nz %b != |addr[%0d:0] %b (addr %h)",
+                     $time, low_nz, LOWB-1, |addr[LOWB-1:0], addr);
+        end
+    end
+`endif
 
     // ONE SET OF LOOP VARIABLES PER always BLOCK -- sharing them between two
     // combinational blocks is a simulation race, not a style point.

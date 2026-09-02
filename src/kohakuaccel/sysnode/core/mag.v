@@ -34,6 +34,9 @@
 
 `default_nettype none
 
+`ifndef KOHAKU_DRAM_AR_MAX
+  `define KOHAKU_DRAM_AR_MAX 0
+`endif
 `ifndef KOHAKU_DRAM_RD_OUT
   `define KOHAKU_DRAM_RD_OUT 1
 `endif
@@ -71,6 +74,9 @@ module mag #(
     // macro lets a bench set it under a generated top whose parameters it
     // cannot reach; the default is the shipped value.
     parameter integer DRAM_RD_OUT = `KOHAKU_DRAM_RD_OUT,
+    // Memory beats one DRAM AR may carry (mag_dram_port AR_MAX); 0 = a request.
+    // A macro default for the same reason as DRAM_RD_OUT.
+    parameter integer DRAM_AR_MAX = `KOHAKU_DRAM_AR_MAX,
     // 0: dram_aclk IS clk and the DRAM port's queues are synchronous.
     parameter integer DRAM_CDC   = 1,
     parameter integer DRAM_R_REG = 1,      // mag_dram_port R_REG: the return bus registered once
@@ -90,7 +96,7 @@ module mag #(
     parameter integer WR_SLOTS   = 16,
     // MAG L2 staging, special aperture 0. 0 generates none of it.
     parameter integer STAGE         = 0,
-    parameter integer STAGE_BANKS   = 1,      // one array of 16 x 4-deep URAM chains, 2 MB
+    parameter integer STAGE_BANKS   = 4,      // 4 x 16 single URAM, 2 MB; never a chain
     parameter integer STAGE_ENTRIES = 16384,
     parameter integer STAGE_PIPE    = 1,
     parameter integer STAGE_RLAT    = 0,      // mag_stage RLAT; 0 = blocks deep + 1
@@ -970,7 +976,8 @@ module mag #(
     endgenerate
 
     mag_dram_port #(.N(MP1), .ADDR_W(ADDR_W), .SW(DATA_W), .MW(MW),
-                    .ID_W(ID_W), .RD_OUT(DRAM_RD_OUT), .DRAM_CDC(DRAM_CDC),
+                    .ID_W(ID_W), .RD_OUT(DRAM_RD_OUT), .AR_MAX(DRAM_AR_MAX),
+                    .DRAM_CDC(DRAM_CDC),
                     .R_REG(DRAM_R_REG),
                     .STAGE((STAGE_AT_PORT != 0) ? STAGE : 0),
                     .MESH_ID(MESH_ID[1:0]), .AP_STAGE(4'h0)) u_dram (

@@ -50,7 +50,7 @@ module mag_mem_port #(
     // A staged fill reads port A rather than issuing AR; a write uses port B.
     parameter integer STAGE         = 0,      // a store AT THIS PORT
     parameter integer AP_DECODE     = 0,      // apertures exist SOMEWHERE
-    parameter integer STAGE_BANKS   = 1,      // one array of 16 x 4-deep URAM chains, 2 MB
+    parameter integer STAGE_BANKS   = 4,      // 4 x 16 single URAM, 2 MB; never a chain
     parameter integer STAGE_ENTRIES = 16384,
     parameter integer STAGE_PIPE    = 1,
     parameter integer STAGE_RLAT    = 0,      // mag_stage RLAT; 0 = blocks deep + 1

@@ -547,9 +547,10 @@ def _units(mesh) -> dict:
     return {k: v for k, v in got.items() if v}
 
 
-#: Mesh index order along the SLR stack. SLR0=0, SLR1=1, SLR2=3, SLR3=2, and
-#: only ADJACENT SLRs carry SLLs -- so the fabric is this line, not a ring.
-CHAIN = (0, 1, 3, 2)
+#: Mesh index order along the SLR stack: mesh i is in SLR i, and only ADJACENT
+#: SLRs carry SLLs -- so the fabric is this line, not a ring. Mirrors
+#: mag_switch.v CH_SEQ.
+CHAIN = (0, 1, 2, 3)
 
 
 def _links(card) -> tuple:

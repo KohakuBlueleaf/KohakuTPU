@@ -227,6 +227,11 @@ BLOCKS = (
         # MAG behind noc_local_cdc. The default build takes the direct branch, and
         # an unelaborated generate branch is not checked at all.
         bench_var("interlink_2mesh_1m", "-d", "MM_MAG_CDC"),
+        # The chain through the block design's hop carrier (kts_pipe_bd): the
+        # credit loop at the latency the card has.
+        bench_var("interlink_4mesh", "-d", "TB_PIPE"),
+        # The JTAG manager on the bus clock (MGR0_DOM 1): the ship's station bus.
+        bench_var("sb_line4", "-d", "SB_MGR0BUS"),
     ]
 )
 

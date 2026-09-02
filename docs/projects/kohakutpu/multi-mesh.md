@@ -30,22 +30,23 @@ This page is specific on purpose.
 
 ## 1. What each mesh carries
 
-The four are **not** alike, and a compiler that assumes they are will place a
-softmax where no unit can run it:
+**Every index is the SLR.** Mesh `i` sits in SLR `i`, is station `i` on the
+host's bus, is partition and home `i` of the Kohaku Xache, and its DRAM
+controller is the block-design cell `ddr4_i` — the controller whose pins are in
+SLR `i` (the board's own channel numbering, `c2 c3 c1 c0` for SLR 0..3, appears
+in exactly one line of the build, `DDR_PORT_OF_SLR`). What differs between
+cards is the population:
 
-| mesh | map | clusters | vector cores | SLR | DRAM |
-|---|---|---|---|---|---|
-| 0 | `mesh_2x2_6+2` | 6 | 2 | SLR0 | `ddr4_2` |
-| 1 | `mesh_2x1_6+0` | 6 | **0** | SLR1 | `ddr4_3` |
-| 2 | `mesh_2x2_6+2` | 6 | 2 | SLR3 | `ddr4_0` |
-| 3 | `mesh_2x2_6+2` | 6 | 2 | SLR2 | `ddr4_1` |
+| card | mesh 0 | mesh 1 | mesh 2 | mesh 3 |
+|---|---|---|---|---|
+| `multimesh_v8t2` (the memory-path ship) | 2×2, 2 clusters + 2 vector cores | same | same | same |
+| `multimesh_v7` | 2×2, 8 + 2 | 2×2, **6 + 2** | 2×2, 8 + 2 | 2×2, 8 + 2 |
 
-**mesh_1 has no vector core.** SLR1 holds the host interface, so it is the most
-crowded die and its mesh gave up the vector cores rather than the clusters. The
-consequence is not "mesh_1 is a spare": it is six perfectly good matmul clusters
-that can run any stage needing no epilogue, and nothing else. `MachineSpec`
-carries a `MeshSpec` per mesh so a placement pass can read that off the unit
-table and refuse precisely (`compiler/kohakuaccel/machinespec.py`).
+SLR1 holds the host interface (XDMA, JTAG, the clock root), so it is the most
+crowded die and carries the smallest mesh on the compute card. The four meshes
+are otherwise the same module, differing only by `MESH_ID`. `MachineSpec`
+carries a `MeshSpec` per mesh so a placement pass reads each mesh's unit table
+and refuses precisely (`compiler/kohakuaccel/machinespec.py`).
 
 Unit populations come from enumeration over the control plane, not from this
 table — read them off the card rather than trusting a document.
@@ -55,23 +56,23 @@ table — read them off the card rather than trusting a document.
 ## 2. The chain, and the three links
 
 The meshes are a **line, not a grid**. An SLL joins only ADJACENT SLRs, so the
-buildable fabric is the SLR stack in order — and the mesh ids are not in SLR
-order:
+buildable fabric is the SLR stack in order, and the mesh ids ARE that order:
 
 ```
    SLR0     SLR1     SLR2     SLR3
-   mesh0 ── mesh1 ── mesh3 ── mesh2      link0 is the neighbour one position DOWN
+   mesh0 ── mesh1 ── mesh2 ── mesh3      link0 is the neighbour one position DOWN
    pos 0    pos 1    pos 2    pos 3      link1 is the one UP
 ```
 
 `mag_switch.v` writes that order exactly once, as `CH_SEQ`, and *derives* each
 neighbour from it rather than taking a configured peer id — a separately
 configured id would be a second place for the topology to be wrong, and the two
-would disagree in silence. The compiler mirrors it as `CHAIN = (0, 1, 3, 2)` in
+would disagree in silence. The compiler mirrors it as `CHAIN = (0, 1, 2, 3)` in
 `compiler/kohakutpu/rt.py`, and `MachineSpec.mesh_hops` is a breadth-first search
-over the link list built from that.
+over the link list built from that. The block design wires mesh `i`'s `LINK1`
+to mesh `i+1`'s `LINK0` and its verify stage checks the order against `CH_SEQ`.
 
-**mesh_0 to mesh_2 is three hops** — the diameter. They are the two ends of the
+**mesh_0 to mesh_3 is three hops** — the diameter. They are the two ends of the
 line, which is precisely the pair a 2x2 grid would have made adjacent.
 
 Three facts about routing that a kernel author has to design against:
@@ -81,23 +82,25 @@ Three facts about routing that a kernel author has to design against:
   graph is two disjoint chains, upward depending only on upward and likewise
   downward, hence acyclic and deadlock-free by shape. **A ring would close that
   cycle**, so do not design a traffic pattern that assumes one.
-- **A MAG forwards traffic that is nothing to do with its own mesh.** `0 -> 2`
-  transits mesh_1 and mesh_3, so a transfer can be slowed by a mesh it is not
+- **A MAG forwards traffic that is nothing to do with its own mesh.** `0 -> 3`
+  transits mesh_1 and mesh_2, so a transfer can be slowed by a mesh it is not
   addressing. Transit and local egress merge ROUND-ROBIN rather than
   transit-first: strict priority would let a saturated through-stream pin the
   local queue's head, and round-robin bounds a forward's wait at one local packet.
-- **The ends are ends.** mesh_0 has no lower neighbour and mesh_2 no higher one.
+- **The ends are ends.** mesh_0 has no lower neighbour and mesh_3 no higher one.
   The unused port is tied off, and a packet arriving there still needing a forward
   is a fault — the routing above cannot produce one.
 
 A ring *collective* is a traffic pattern rather than a routing change, so it is
-still allowed — but on this fabric its closing edge `2 -> 0` is not a link, and
+still allowed — but on this fabric its closing edge `3 -> 0` is not a link, and
 costs three hops rather than one.
 
-Every SLL crossing is pipelined by `mag_link_pipe.v`: the placer will pull a
-register into a Laguna site, but retiming will not invent one that was never
-written, so those stages exist in RTL. A plain shift register is correct there
-only because flow control is credit-based, with no ready travelling back.
+Every SLL crossing is a `kts_pipe_bd`: one register on the sending die and one
+on the landing die, flits forward and credits back, on the one sysnode clock,
+each half on its own die's copy of the reset. The placer pulls each pair into a
+Laguna site, but retiming will not invent a register that was never written, so
+those stages exist in RTL. A plain register pair is correct there only because
+flow control is credit-based, with no ready travelling back.
 
 ---
 
@@ -249,7 +252,7 @@ is exactly the kind of claim this project has been wrong about before
 | rung | on this chip | state |
 |---|---|---|
 | 1 | treat all four meshes as one device; the compiler places and inserts crossings | mesh axis exists in the IR; collectives do not |
-| 2 | place weights so traffic stays near in the chain, above all off the three-hop `0 <-> 2` | manual only |
+| 2 | place weights so traffic stays near in the chain, above all off the three-hop `0 <-> 3` | manual only |
 | 3 | tensor-parallel splits; column, head, and K through the drain path (§5) | manual only |
 | 4 | give mesh_1 the stages needing no vector core | `MachineSpec` can express it; nothing chooses it |
 
@@ -342,7 +345,7 @@ automatically slower than a local one.
 Still not measured:
 
 - **The mover, on today's RTL.** See the note above.
-- **The three-SLR link (0 <-> 2).** Expected slower from the pipe stages it
+- **The three-hop path (0 <-> 3).** Expected slower from the two forwards it
   needs. The measurement above crosses SLR-adjacent dies; this is the easy one.
 - **Per-mesh floorplans are not equivalent.** mesh_1 is a different map on the
   most crowded die.

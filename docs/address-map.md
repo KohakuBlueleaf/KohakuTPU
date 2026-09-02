@@ -140,7 +140,7 @@ the ilink.
 **It does not reach the forwarder, though.** `mag.v:667-671` wires
 `mag_ilink`'s AXI slave side to `mv_*` — the **mover's** write channel, and only
 that. `S_AXI_MEM` becomes its own requester on MAG's converged path
-(`mag.v:742`, `:753`, slot `UP`) and nothing on that path decodes `[37:36]` for
+(`mag.v:339`, `:526-537`, slot `UP`) and nothing on that path decodes `[37:36]` for
 forwarding, so a host write carrying another mesh's id reaches `M_AXI_DRAM` with
 its full 40-bit address and lands in **local DRAM above 64 GB**, where nothing
 answers.
@@ -164,7 +164,7 @@ behind it (`C0_DDR4_ADDRESS_BLOCK` assigns at `<0x0_0000_0000 [ 4G ]>`), so
 addresses from 4 GB to 64 GB within a mesh decode correctly, reach `M_AXI_DRAM`,
 and hit nothing. Staying under 4 GB per mesh is a compiler invariant, not
 something the hardware checks -- unlike an unimplemented aperture, which does
-fault (`mag_stage.v:81`).
+fault (`mag_stage.v:82`).
 
 ## What 40 bits buys elsewhere
 

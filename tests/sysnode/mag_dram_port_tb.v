@@ -6,6 +6,9 @@
 
 // MW is a parameter so xelab -generic_top can also run R=1, where the packing
 // is an identity and the burst-length divide must be bypassed.
+`ifndef TB_ARMAX
+`define TB_ARMAX 0
+`endif
 `ifndef TB_RD_OUT
   `define TB_RD_OUT 1
 `endif
@@ -61,7 +64,7 @@ module mag_dram_port_tb #(
     wire             wlast, wvalid, wready, bvalid, bready, rlast, rvalid, rready;
 
     mag_dram_port #(.N(N), .ADDR_W(ADDR_W), .SW(SW), .MW(MW), .ID_W(ID_W),
-                    .WR_MEM("distributed"), .RD_OUT(RD_OUT),
+                    .WR_MEM("distributed"), .RD_OUT(RD_OUT), .AR_MAX(`TB_ARMAX),
                     .DRAM_CDC(`TB_DRAM_CDC), .R_REG(`TB_RREG)) u_dut (
         .s_aclk(s_aclk), .s_aresetn(resetn),
         .q_valid(q_valid), .q_ready(q_ready), .q_addr(q_addr),

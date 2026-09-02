@@ -1,13 +1,14 @@
 // mag_switch -- the three-port switch inside MAG: link0, link1, local.
 //
 // docs/interlink/topology.md s2. A SECOND routing layer, so it needs its own
-// deadlock proof, and the proof is the shape: SLR0..SLR3 hold mesh 0, 1, 3, 2
-// and an SLL joins only ADJACENT SLRs, so the three buildable links are
+// deadlock proof, and the proof is the shape: SLR i holds mesh i (the block
+// design pins it there) and an SLL joins only ADJACENT SLRs, so the three
+// buildable links are
 //
-//        mesh0 ── mesh1 ── mesh3 ── mesh2      link0 is the lower neighbour
+//        mesh0 ── mesh1 ── mesh2 ── mesh3      link0 is the lower neighbour
 //        pos 0    pos 1    pos 2    pos 3      link1 is the higher one
 //
-// and mesh0 to mesh2 is three hops. ROUTING IS ONE COMPARISON -- move one
+// and mesh0 to mesh3 is three hops. ROUTING IS ONE COMPARISON -- move one
 // position toward the destination -- so position is monotone along a path and a
 // packet never reverses. The channel dependency graph is then two disjoint
 // chains, each upward channel depending only on the next upward one and
@@ -22,7 +23,7 @@
 // stop the mesh injecting in either direction; round-robin bounds transit's
 // wait at one local packet, which is all the proof above needs.
 //
-// mesh0 has no lower neighbour and mesh2 no higher one. Their unused port is
+// mesh0 has no lower neighbour and mesh3 no higher one. Their unused port is
 // tied off outside, and a packet arriving there still needing a forward is a
 // fault -- the routing above cannot produce one.
 
@@ -104,9 +105,9 @@ module mag_switch #(
                        F_SELF   = 1,   // local egress addressed to this mesh
                        F_PKTLEN = 2;   // a packet no credit can ever cover
 
-    // The chain, low bits first: position 0 is mesh0, position 3 is mesh2. This
-    // is the only place the SLR order is written.
-    localparam [7:0] CH_SEQ = 8'b10_11_01_00;
+    // The chain, low bits first: position p holds mesh p. This is the only
+    // place the SLR order is written; the compiler mirrors it (rt.py CHAIN).
+    localparam [7:0] CH_SEQ = 8'b11_10_01_00;
 
     function [1:0] ch_pos;
         input [1:0] m;

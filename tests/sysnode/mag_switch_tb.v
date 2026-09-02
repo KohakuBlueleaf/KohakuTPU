@@ -1,13 +1,13 @@
 // mag_switch_tb -- four switches wired as the SLR chain, and every route in it.
 //
-//        mesh0 ── mesh1 ── mesh3 ── mesh2      link1 is the higher neighbour,
+//        mesh0 ── mesh1 ── mesh2 ── mesh3      link1 is the higher neighbour,
 //        SLR0     SLR1     SLR2     SLR3       link0 the lower, so every link
 //                                              joins one m1 to one s0.
 //
 // Twelve ordered pairs over four hop counts. Six are one hop, four are two and
 // two are three -- and only the multi-hop ones FORWARD, so a bench testing
-// neighbours only would pass with the forward path disconnected. mesh0<->mesh2
-// is the pair that used to be a link and is now the longest path in the design.
+// neighbours only would pass with the forward path disconnected. mesh0<->mesh3
+// is the longest path in the design.
 //
 // Every packet carries a unique txn and a payload seeded from it, so a packet
 // arriving at the wrong mesh is caught by which scoreboard slot it lands in
@@ -59,12 +59,13 @@ module mag_switch_tb;
     wire [3:0]    c0_n [0:3];
     wire [3:0]    c1_n [0:3];
 
-    // The chain, and the only place the SLR order appears in this bench.
+    // The chain IS the index order (mesh i in SLR i, mag_switch.v CH_SEQ); the
+    // two maps stay so a re-ordered chain is one edit here.
     function integer cpos(input integer m);
-        cpos = (m == 0) ? 0 : (m == 1) ? 1 : (m == 3) ? 2 : 3;
+        cpos = m;
     endfunction
     function integer cat(input integer p);
-        cat = (p == 0) ? 0 : (p == 1) ? 1 : (p == 2) ? 3 : 2;
+        cat = p;
     endfunction
     function integer hops(input integer s, input integer d);
         hops = (cpos(s) > cpos(d)) ? (cpos(s) - cpos(d)) : (cpos(d) - cpos(s));
@@ -249,7 +250,7 @@ module mag_switch_tb;
     endtask
 
     initial begin
-        $display("=== mag_switch: the SLR chain 0-1-3-2, every ordered pair ===");
+        $display("=== mag_switch: the SLR chain 0-1-2-3, every ordered pair ===");
         reset_all;
 
         // ---- 1. all twelve routes, sequentially so a stall is unambiguous
@@ -280,19 +281,19 @@ module mag_switch_tb;
             end
         end
 
-        // Only mesh1 and mesh3 are interior, so they are the only two that can
+        // Only mesh1 and mesh2 are interior, so they are the only two that can
         // forward at all -- and both must have, or a multi-hop route did not run.
         checks = checks + 1;
         if (c_fwd[1][31:0] == 32'd0) begin
             fail("mesh1 never forwarded, so nothing crossed it");
         end
         checks = checks + 1;
-        if (c_fwd[3][31:0] == 32'd0) begin
-            fail("mesh3 never forwarded, so nothing crossed it");
+        if (c_fwd[2][31:0] == 32'd0) begin
+            fail("mesh2 never forwarded, so nothing crossed it");
         end
 
-        $display("  forwarded: mesh1 %0d, mesh3 %0d packets",
-                 c_fwd[1][31:0], c_fwd[3][31:0]);
+        $display("  forwarded: mesh1 %0d, mesh2 %0d packets",
+                 c_fwd[1][31:0], c_fwd[2][31:0]);
 
         // ---- 2. all twelve at once, which is where an arbiter livelocks
         reset_all;
@@ -343,8 +344,8 @@ module mag_switch_tb;
         end
 
         // ---- 3. a jammed forward path must not stop the rest of the chain.
-        // mesh2 stops consuming, so mesh0's three-hop traffic backs up through
-        // mesh1's and then mesh3's forward queues. Every other route must still
+        // mesh3 stops consuming, so mesh0's three-hop traffic backs up through
+        // mesh1's and then mesh2's forward queues. Every other route must still
         // complete.
         //
         // This proves LIVENESS under the jam. It does not prove that mesh0 can
@@ -355,21 +356,21 @@ module mag_switch_tb;
         // 16 packets, not 6: the chain holds a 64-beat class buffer at each of
         // four hops, so 6*31 beats vanish into them and never reach mesh0.
         reset_all;
-        rx_hold[2] <= 1'b1;
+        rx_hold[3] <= 1'b1;
         repeat (4) @(posedge clk);
 
         fork
             begin : jam
                 integer k;
                 for (k = 0; k < 16; k = k + 1) begin
-                    send(0, 2'd2, 8'd40 + k[7:0], MAXB[15:0] - 16'd1);
+                    send(0, 2'd3, 8'd40 + k[7:0], MAXB[15:0] - 16'd1);
                 end
             end
             begin : others
                 repeat (200) @(posedge clk);
                 send(1, 2'd0, 8'd10, 16'd3);      // one hop down
-                send(3, 2'd1, 8'd11, 16'd3);      // one hop down
-                send(3, 2'd0, 8'd12, 16'd3);      // two hops, crossing mesh1
+                send(2, 2'd1, 8'd11, 16'd3);      // one hop down
+                send(2, 2'd0, 8'd12, 16'd3);      // two hops, crossing mesh1
             end
         join_any
 
@@ -398,7 +399,7 @@ module mag_switch_tb;
         $display("  mesh0 link1 credit-stalled %0d cycles; local egress blocked %0d by head-of-line",
                  c_st1[0][31:0], c_lblk[0][31:0]);
 
-        rx_hold[2] <= 1'b0;
+        rx_hold[3] <= 1'b0;
         repeat (3000) @(posedge clk);
 
         // ---- 4. no fault bit anywhere. F_NOFWD in particular means a packet

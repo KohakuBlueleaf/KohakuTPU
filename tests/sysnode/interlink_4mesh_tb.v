@@ -1,4 +1,4 @@
-// interlink_4mesh_tb -- the SLR chain 0-1-3-2, under load designed to wedge it.
+// interlink_4mesh_tb -- the SLR chain 0-1-2-3, under load designed to wedge it.
 //
 // Functional tests do not find deadlocks; mag_switch_tb already proves every
 // route works once. This one is adversarial, and the difference is that it
@@ -6,8 +6,8 @@
 //
 //   * all-to-all with no idle gaps, long enough that every buffer fills and
 //     every credit is exhausted at least once;
-//   * SATURATING BIDIRECTIONAL TRANSIT -- mesh0->mesh2 and mesh2->mesh0 flat
-//     out, three hops each and crossing on every link, while mesh1 and mesh3
+//   * SATURATING BIDIRECTIONAL TRANSIT -- mesh0->mesh3 and mesh3->mesh0 flat
+//     out, three hops each and crossing on every link, while mesh1 and mesh2
 //     inject their own traffic into the same links. This is the case that
 //     deadlocks if transit and local arbitration is wrong, and the case the
 //     old 2x2 grid never had because no route there was longer than two hops;
@@ -62,29 +62,25 @@ module interlink_4mesh_tb;
     wire [3:0]    c0_n [0:3];
     wire [3:0]    c1_n [0:3];
 
+    // What each switch sees on its two link inputs -- the neighbour's flits
+    // and the neighbour's credits -- after the hop carrier or straight wires.
+    wire [LW-1:0] s0_f [0:3], s1_f [0:3];
+    wire [3:0]    s0_v, s0_vc, s0_l, s1_v, s1_vc, s1_l;
+    wire [3:0]    m0c_v, m0c_vc, m1c_v, m1c_vc;
+    wire [3:0]    m0c_n [0:3];
+    wire [3:0]    m1c_n [0:3];
+
     wire [63:0] c_fwd [0:3];
     wire [3:0]  flt [0:3];
     wire [63:0] c_st0 [0:3];
 
     reg [3:0] rx_hold;
 
-    // The chain, and the only place the SLR order appears in this bench.
-    function integer cpos(input integer m);
-        cpos = (m == 0) ? 0 : (m == 1) ? 1 : (m == 3) ? 2 : 3;
-    endfunction
-    function integer cat(input integer p);
-        cat = (p == 0) ? 0 : (p == 1) ? 1 : (p == 2) ? 3 : 2;
-    endfunction
-
-    genvar g;
+    // The chain IS the index order: mesh i sits in SLR i and its link1 faces
+    // mesh i+1 (mag_switch.v CH_SEQ). Meshes 0 and 3 are the ends.
+    genvar g, b;
     generate
     for (g = 0; g < 4; g = g + 1) begin : m
-        localparam integer P    = cpos(g);
-        localparam integer HAS0 = (P != 0) ? 1 : 0;
-        localparam integer HAS1 = (P != 3) ? 1 : 0;
-        localparam integer DN   = (P != 0) ? cat(P - 1) : 0;
-        localparam integer UP   = (P != 3) ? cat(P + 1) : 0;
-
         mag_switch #(.LINK_W(LW), .TUSER_W(UW), .RX_BEATS(RXB),
                      .MAX_BEATS(MAXB)) u (
             .clk(clk), .resetn(resetn), .my_mesh(g[1:0]),
@@ -96,23 +92,15 @@ module interlink_4mesh_tb;
             .lrx_dready(lrx_dr[g]),
             .m0_valid(dn_v[g]), .m0_vc(dn_vc[g]), .m0_last(dn_l[g]),
             .m0_flit(dn_f[g]),
-            .m0_crd_valid(HAS0 ? c1_v[DN] : 1'b0),
-            .m0_crd_vc(HAS0 ? c1_vc[DN] : 1'b0),
-            .m0_crd_n(HAS0 ? c1_n[DN] : 4'd0),
-            .s0_valid(HAS0 ? up_v[DN] : 1'b0),
-            .s0_vc(HAS0 ? up_vc[DN] : 1'b0),
-            .s0_last(HAS0 ? up_l[DN] : 1'b0),
-            .s0_flit(HAS0 ? up_f[DN] : {LW{1'b0}}),
+            .m0_crd_valid(m0c_v[g]), .m0_crd_vc(m0c_vc[g]), .m0_crd_n(m0c_n[g]),
+            .s0_valid(s0_v[g]), .s0_vc(s0_vc[g]), .s0_last(s0_l[g]),
+            .s0_flit(s0_f[g]),
             .s0_crd_valid(c0_v[g]), .s0_crd_vc(c0_vc[g]), .s0_crd_n(c0_n[g]),
             .m1_valid(up_v[g]), .m1_vc(up_vc[g]), .m1_last(up_l[g]),
             .m1_flit(up_f[g]),
-            .m1_crd_valid(HAS1 ? c0_v[UP] : 1'b0),
-            .m1_crd_vc(HAS1 ? c0_vc[UP] : 1'b0),
-            .m1_crd_n(HAS1 ? c0_n[UP] : 4'd0),
-            .s1_valid(HAS1 ? dn_v[UP] : 1'b0),
-            .s1_vc(HAS1 ? dn_vc[UP] : 1'b0),
-            .s1_last(HAS1 ? dn_l[UP] : 1'b0),
-            .s1_flit(HAS1 ? dn_f[UP] : {LW{1'b0}}),
+            .m1_crd_valid(m1c_v[g]), .m1_crd_vc(m1c_vc[g]), .m1_crd_n(m1c_n[g]),
+            .s1_valid(s1_v[g]), .s1_vc(s1_vc[g]), .s1_last(s1_l[g]),
+            .s1_flit(s1_f[g]),
             .s1_crd_valid(c1_v[g]), .s1_crd_vc(c1_vc[g]), .s1_crd_n(c1_n[g]),
             .ctr_tx0(), .ctr_rx0(), .ctr_stall0(c_st0[g]),
             .ctr_tx1(), .ctr_rx1(), .ctr_stall1(),
@@ -120,7 +108,64 @@ module interlink_4mesh_tb;
             .cred0_state(), .cred1_state(), .fault(flt[g])
         );
     end
+
+    // The three boundaries. TB_PIPE puts the block design's hop carrier
+    // (kts_pipe_bd: one register each side of the SLL, both wires) on every
+    // boundary, so the credit loop runs at the latency the card has.
+    for (b = 0; b < 3; b = b + 1) begin : hop
+`ifdef TB_PIPE
+        kts_pipe_bd #(.W(LW), .VCW(1), .CN_W(4)) u_up (
+            .clk(clk), .rstn_tx(resetn), .rstn_rx(resetn),
+            .i_valid(up_v[b]), .i_vc(up_vc[b]), .i_last(up_l[b]),
+            .i_flit(up_f[b]),
+            .o_valid(s0_v[b+1]), .o_vc(s0_vc[b+1]), .o_last(s0_l[b+1]),
+            .o_flit(s0_f[b+1]),
+            .i_crd_valid(c0_v[b+1]), .i_crd_vc(c0_vc[b+1]), .i_crd_n(c0_n[b+1]),
+            .o_crd_valid(m1c_v[b]), .o_crd_vc(m1c_vc[b]), .o_crd_n(m1c_n[b])
+        );
+        kts_pipe_bd #(.W(LW), .VCW(1), .CN_W(4)) u_dn (
+            .clk(clk), .rstn_tx(resetn), .rstn_rx(resetn),
+            .i_valid(dn_v[b+1]), .i_vc(dn_vc[b+1]), .i_last(dn_l[b+1]),
+            .i_flit(dn_f[b+1]),
+            .o_valid(s1_v[b]), .o_vc(s1_vc[b]), .o_last(s1_l[b]),
+            .o_flit(s1_f[b]),
+            .i_crd_valid(c1_v[b]), .i_crd_vc(c1_vc[b]), .i_crd_n(c1_n[b]),
+            .o_crd_valid(m0c_v[b+1]), .o_crd_vc(m0c_vc[b+1]), .o_crd_n(m0c_n[b+1])
+        );
+`else
+        assign s0_v[b+1]   = up_v[b];
+        assign s0_vc[b+1]  = up_vc[b];
+        assign s0_l[b+1]   = up_l[b];
+        assign s0_f[b+1]   = up_f[b];
+        assign m1c_v[b]    = c0_v[b+1];
+        assign m1c_vc[b]   = c0_vc[b+1];
+        assign m1c_n[b]    = c0_n[b+1];
+        assign s1_v[b]     = dn_v[b+1];
+        assign s1_vc[b]    = dn_vc[b+1];
+        assign s1_l[b]     = dn_l[b+1];
+        assign s1_f[b]     = dn_f[b+1];
+        assign m0c_v[b+1]  = c1_v[b];
+        assign m0c_vc[b+1] = c1_vc[b];
+        assign m0c_n[b+1]  = c1_n[b];
+`endif
+    end
     endgenerate
+
+    // The ends of the line have no neighbour.
+    assign s0_v[0]   = 1'b0;
+    assign s0_vc[0]  = 1'b0;
+    assign s0_l[0]   = 1'b0;
+    assign s0_f[0]   = {LW{1'b0}};
+    assign m0c_v[0]  = 1'b0;
+    assign m0c_vc[0] = 1'b0;
+    assign m0c_n[0]  = 4'd0;
+    assign s1_v[3]   = 1'b0;
+    assign s1_vc[3]  = 1'b0;
+    assign s1_l[3]   = 1'b0;
+    assign s1_f[3]   = {LW{1'b0}};
+    assign m1c_v[3]  = 1'b0;
+    assign m1c_vc[3] = 1'b0;
+    assign m1c_n[3]  = 4'd0;
 
     // ---- accounting -------------------------------------------------------
     integer sent [0:3];
@@ -287,30 +332,30 @@ module interlink_4mesh_tb;
                 ltx_hv[1], ltx_hr[1], ltx_dv[1], ltx_dr[1],
                 m[1].u.u_l0.s_dat, m[1].u.u_l0.r_dat, m[1].u.u_l0.cred_state[15:0],
                 m[1].u.u_l1.s_dat, m[1].u.u_l1.r_dat, m[1].u.u_l1.cred_state[15:0]);
-            $display("        3 | %b%b %b%b | %b %b %04h | %b %b %04h",
-                ltx_hv[3], ltx_hr[3], ltx_dv[3], ltx_dr[3],
-                m[3].u.u_l0.s_dat, m[3].u.u_l0.r_dat, m[3].u.u_l0.cred_state[15:0],
-                m[3].u.u_l1.s_dat, m[3].u.u_l1.r_dat, m[3].u.u_l1.cred_state[15:0]);
             $display("        2 | %b%b %b%b | %b %b %04h | %b %b %04h",
                 ltx_hv[2], ltx_hr[2], ltx_dv[2], ltx_dr[2],
                 m[2].u.u_l0.s_dat, m[2].u.u_l0.r_dat, m[2].u.u_l0.cred_state[15:0],
                 m[2].u.u_l1.s_dat, m[2].u.u_l1.r_dat, m[2].u.u_l1.cred_state[15:0]);
+            $display("        3 | %b%b %b%b | %b %b %04h | %b %b %04h",
+                ltx_hv[3], ltx_hr[3], ltx_dv[3], ltx_dr[3],
+                m[3].u.u_l0.s_dat, m[3].u.u_l0.r_dat, m[3].u.u_l0.cred_state[15:0],
+                m[3].u.u_l1.s_dat, m[3].u.u_l1.r_dat, m[3].u.u_l1.cred_state[15:0]);
             // The transit muxes are where a wrong arbitration wedges: `busy`
             // set with the far side never granting is the signature.
             $display("        ldm busy/sel: %b%0d %b%0d %b%0d %b%0d",
                 m[0].u.u_ldm.busy, m[0].u.u_ldm.sel_r,
                 m[1].u.u_ldm.busy, m[1].u.u_ldm.sel_r,
-                m[3].u.u_ldm.busy, m[3].u.u_ldm.sel_r,
-                m[2].u.u_ldm.busy, m[2].u.u_ldm.sel_r);
-            $display("        mesh1 t00/t01/t10/t11 busy-sel: %b%b %b%b %b%b %b%b   mesh3: %b%b %b%b %b%b %b%b",
+                m[2].u.u_ldm.busy, m[2].u.u_ldm.sel_r,
+                m[3].u.u_ldm.busy, m[3].u.u_ldm.sel_r);
+            $display("        mesh1 t00/t01/t10/t11 busy-sel: %b%b %b%b %b%b %b%b   mesh2: %b%b %b%b %b%b %b%b",
                 m[1].u.u_t00.busy, m[1].u.u_t00.sel,
                 m[1].u.u_t01.busy, m[1].u.u_t01.sel,
                 m[1].u.u_t10.busy, m[1].u.u_t10.sel,
                 m[1].u.u_t11.busy, m[1].u.u_t11.sel,
-                m[3].u.u_t00.busy, m[3].u.u_t00.sel,
-                m[3].u.u_t01.busy, m[3].u.u_t01.sel,
-                m[3].u.u_t10.busy, m[3].u.u_t10.sel,
-                m[3].u.u_t11.busy, m[3].u.u_t11.sel);
+                m[2].u.u_t00.busy, m[2].u.u_t00.sel,
+                m[2].u.u_t01.busy, m[2].u.u_t01.sel,
+                m[2].u.u_t10.busy, m[2].u.u_t10.sel,
+                m[2].u.u_t11.busy, m[2].u.u_t11.sel);
         end
     endtask
 
@@ -423,31 +468,31 @@ module interlink_4mesh_tb;
 
         // ---- 2. saturating bidirectional transit ----------------------
         // The two ends stream through the whole chain at once, so mesh1 and
-        // mesh3 each carry transit in BOTH directions while injecting their
+        // mesh2 each carry transit in BOTH directions while injecting their
         // own. Every link is loaded from both sides with no gap.
         fork
-            begin : up02
+            begin : up03
                 integer i;
                 for (i = 0; i < 48; i = i + 1) begin
-                    send(0, 2'd2, i[7:0], (i % 3) * 15);
+                    send(0, 2'd3, i[7:0], (i % 3) * 15);
                 end
             end
-            begin : dn20
+            begin : dn30
                 integer i;
                 for (i = 0; i < 48; i = i + 1) begin
-                    send(2, 2'd0, 8'd128 + i[7:0], (i % 3) * 15);
+                    send(3, 2'd0, 8'd192 + i[7:0], (i % 3) * 15);
                 end
             end
             begin : mid1
                 integer i;
                 for (i = 0; i < 32; i = i + 1) begin
-                    send(1, (i[0] ? 2'd2 : 2'd0), 8'd64 + i[7:0], 16'd7);
+                    send(1, (i[0] ? 2'd3 : 2'd0), 8'd64 + i[7:0], 16'd7);
                 end
             end
-            begin : mid3
+            begin : mid2
                 integer i;
                 for (i = 0; i < 32; i = i + 1) begin
-                    send(3, (i[0] ? 2'd0 : 2'd2), 8'd192 + i[7:0], 16'd7);
+                    send(2, (i[0] ? 2'd0 : 2'd3), 8'd128 + i[7:0], 16'd7);
                 end
             end
         join
@@ -463,7 +508,7 @@ module interlink_4mesh_tb;
         // Both interior meshes must have forwarded in both directions, or the
         // two streams never actually crossed and the case did not happen.
         checks = checks + 1;
-        if (c_fwd[1][31:0] == 32'd0 || c_fwd[3][31:0] == 32'd0) begin
+        if (c_fwd[1][31:0] == 32'd0 || c_fwd[2][31:0] == 32'd0) begin
             fail("an interior mesh never forwarded, so the chain was not crossed");
         end
 
@@ -471,13 +516,13 @@ module interlink_4mesh_tb;
         // deadlock. The forward path having been blocked is the evidence that
         // the buffers were actually loaded.
         checks = checks + 1;
-        if (c_fwd[1][63:32] == 32'd0 || c_fwd[3][63:32] == 32'd0) begin
+        if (c_fwd[1][63:32] == 32'd0 || c_fwd[2][63:32] == 32'd0) begin
             fail("a forward path was never once blocked, so nothing here was under load and the absence of a deadlock means nothing");
         end
 
-        $display("  delivered %0d packets; forwarded mesh1 %0d (blocked %0d), mesh3 %0d (blocked %0d)",
+        $display("  delivered %0d packets; forwarded mesh1 %0d (blocked %0d), mesh2 %0d (blocked %0d)",
                  total_got, c_fwd[1][31:0], c_fwd[1][63:32],
-                 c_fwd[3][31:0], c_fwd[3][63:32]);
+                 c_fwd[2][31:0], c_fwd[2][63:32]);
 
         // ---- 3. the three kinds, three hops, and doorbell ordering -----
         // A DOORBELL means "the data ahead of me has landed", so it must not
@@ -490,15 +535,15 @@ module interlink_4mesh_tb;
             ord_n[k] = 0;
         end
 
-        sendk(0, K_MEM_WR,   2'd2, 8'd20, 16'd7);
-        sendk(0, K_NOC_FLIT, 2'd2, 8'd21, 16'd7);
-        sendk(0, K_MEM_WR,   2'd2, 8'd22, 16'd7);
-        sendk(0, K_DOORBELL, 2'd2, 8'd23, 16'd0);
+        sendk(0, K_MEM_WR,   2'd3, 8'd20, 16'd7);
+        sendk(0, K_NOC_FLIT, 2'd3, 8'd21, 16'd7);
+        sendk(0, K_MEM_WR,   2'd3, 8'd22, 16'd7);
+        sendk(0, K_DOORBELL, 2'd3, 8'd23, 16'd0);
 
-        sendk(2, K_MEM_WR,   2'd0, 8'd30, 16'd7);
-        sendk(2, K_NOC_FLIT, 2'd0, 8'd31, 16'd7);
-        sendk(2, K_MEM_WR,   2'd0, 8'd32, 16'd7);
-        sendk(2, K_DOORBELL, 2'd0, 8'd33, 16'd0);
+        sendk(3, K_MEM_WR,   2'd0, 8'd30, 16'd7);
+        sendk(3, K_NOC_FLIT, 2'd0, 8'd31, 16'd7);
+        sendk(3, K_MEM_WR,   2'd0, 8'd32, 16'd7);
+        sendk(3, K_DOORBELL, 2'd0, 8'd33, 16'd0);
 
         drain(200);
 
@@ -520,7 +565,7 @@ module interlink_4mesh_tb;
             || land_kind[33] != K_DOORBELL
         ) begin
             fail("a packet kind did not survive two forwarding hops");
-            $display("        0->2 %0d %0d %0d %0d, 2->0 %0d %0d %0d %0d",
+            $display("        0->3 %0d %0d %0d %0d, 3->0 %0d %0d %0d %0d",
                      land_kind[20], land_kind[21], land_kind[22], land_kind[23],
                      land_kind[30], land_kind[31], land_kind[32], land_kind[33]);
         end
@@ -533,7 +578,7 @@ module interlink_4mesh_tb;
             || ord_db < land_ord[21]
             || ord_db < land_ord[22]
         ) begin
-            fail("a forwarded doorbell overtook the data it was released by, 0->2");
+            fail("a forwarded doorbell overtook the data it was released by, 0->3");
             $display("        arrival order: data %0d %0d %0d, doorbell %0d",
                      land_ord[20], land_ord[21], land_ord[22], ord_db);
         end
@@ -545,7 +590,7 @@ module interlink_4mesh_tb;
             || ord_db < land_ord[31]
             || ord_db < land_ord[32]
         ) begin
-            fail("a forwarded doorbell overtook the data it was released by, 2->0");
+            fail("a forwarded doorbell overtook the data it was released by, 3->0");
             $display("        arrival order: data %0d %0d %0d, doorbell %0d",
                      land_ord[30], land_ord[31], land_ord[32], ord_db);
         end

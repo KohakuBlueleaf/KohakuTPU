@@ -1,8 +1,9 @@
 // The mover across the SLR chain, at 1, 2 and 4 MAGs, driven the way software
 // drives it: descriptors written to S_AXI_CTRL, not to the module's registers.
 
-// The chain is a LINE, 0 - 1 - 3 - 2, so mesh0 to mesh2 is THREE hops and
-// transits two MAGs. `cat()` below is the only place that order appears.
+// The chain is a LINE, 0 - 1 - 2 - 3 (mesh i in SLR i), so mesh0 to mesh3 is
+// THREE hops and transits two MAGs. `cat()` below is the only place that
+// order appears.
 
 // A remote write is POSTED -- mag_ilink answers it locally and at once -- so
 // stat_busy falling does NOT mean the bytes landed. The bench times both.
@@ -39,9 +40,10 @@ module mover_chain_core #(
         cyc <= cyc + 1;
     end
 
-    // Chain position -> mesh id. The SLR order, and nothing else knows it.
+    // Chain position -> mesh id: the identity (mag_switch.v CH_SEQ). Kept as a
+    // map so a re-ordered chain is one edit here.
     function integer cat(input integer p);
-        cat = (p == 0) ? 0 : (p == 1) ? 1 : (p == 2) ? 3 : 2;
+        cat = p;
     endfunction
 
     localparam integer SRCM = 0;        // set below from cat(SRCP)
