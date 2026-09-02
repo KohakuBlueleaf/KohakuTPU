@@ -892,6 +892,607 @@ each wants one more register: the master's landing pick and the home's take.
 
 ---
 
+### 5.8 v8t5 — every path under a nanosecond at synthesis, by class
+
+`scripts/tcl/v8t5_paths.tcl` (`v8t3/87_synth_paths.tcl`) opens the
+synthesised project read-only beside the implementation and collects every
+setup endpoint with less than `V8_PATH_MARGIN` (1.0 ns) of slack, one path per
+endpoint: a row each in `build/multimesh_v8t5_synth_paths.tsv`, then the same
+paths by clock (`_perclock.txt`), by start/end register class with bit
+indices stripped (`_classes.txt`), the classes merged across the four dies
+(`_classes_merged.txt`), by owning module (`_owners.txt`), by logic level
+(`_levels.txt`), and a node-by-node `report_timing` of the worst path of every
+failing class (`_classes_full.rpt`, 400 of 577, indexed). Synthesis slack is
+optimistic against route (m62_c1 lost 0.740 ns), which is what the margin is
+for. Hold at synthesis is not collected.
+
+| clock | ask | WNS | TNS | failing | < 0.25 | < 0.50 | < 0.75 | < 1.00 |
+|---|---|---|---|---|---|---|---|---|
+| sysnode, die 0 | 3.333 | −0.791 | −157.4 | 523 | 1,079 | 3,928 | 6,549 | 11,121 |
+| sysnode, die 1 | 3.333 | −0.791 | −178.3 | 582 | 2,193 | 4,933 | 7,028 | 13,095 |
+| sysnode, die 2 | 3.333 | −0.791 | −173.2 | 556 | 2,856 | 5,743 | 8,858 | 14,450 |
+| sysnode, die 3 | 3.333 | −0.791 | −157.3 | 523 | 1,087 | 3,910 | 6,939 | 10,859 |
+| XDMA | 4.000 | −0.161 | −0.7 | 6 | 14 | 634 | 821 | 1,668 |
+| bus, station 1 | 5.000 | −0.020 | −0.1 | 8 | 19 | 143 | 730 | 862 |
+| MIG ui × 4 | 3.332 | +0.566 … +0.836 | 0 | 0 | 0 | 0 | 32 | 284 |
+
+2,198 failing endpoints in 577 classes, 164 once the die index is folded.
+Every one belongs to one of eight families; the worst path of each, node by
+node, is in the report.
+
+| family | endpoints | worst | levels | data path | where the time goes |
+|---|---|---|---|---|---|
+| **DRAM port AR split**: `s1_rln` → every ready in the node | 1,110 | −0.791 | 13–16 | 3.84 = 1.26 logic + 2.57 route | the captured length runs through four carry chains in one cycle — `rd_span` add, `rd_mb` round, `ck_left` subtract, the `≤ AMB` compare — into `rd_push`, `rd_take`, the grant, and out to the mover's AR skid enable (48 CE pins), every engine's `arvalid`/`awvalid`, the interlink and the node port, the capture registers, `ck_done`, `rr_rd`, `g_req[].sel_*` |
+| **RV64 instruction memory → decode** | 856 | −0.185 | 7–8 | 3.23 = 1.39 + 1.84 | the cascaded RAMB36 read (0.947 clock-to-out) → i-cache hold → decode of call/return and `rs1` → RAS push/pop → `ras_tos` (512), `redir_pend_pc` (256), `ras_sp`, `redir_pend`, `d_hold_v`, the RAS LUTRAM write pins |
+| RV64 `wb_val` → `pc`, `d_valid` | 260 | −0.052 | 12 | 3.18 = 0.85 + 2.34 | writeback value through forwarding into the next PC |
+| **Xache trunk return counters** `pb` → `pg`, `pb`, `pg` | 132 | −0.711 | 1 | 3.84 = 0.24 + 3.60 | `pb` on the receiving die, its increment/gray LUT (`g_pc[k].pg[j]_i_1`) pinned with the SENDING die by the constraint's `*_reg*` patterns, `pg` back on the receiving die: two die crossings on a 6-bit counter |
+| **Reset into the interlink pipes** | 18 | −0.759 | 1 | 3.79 = 0.12 + 3.68 | the die's `proc_sys_reset` output (fan-out 131) → the one LUT1 inverter synthesis shares between `kts_pipe_bd`'s halves, pinned with the landing die inside `kts_cdc` → the sending half's `f_q`/`b_q` reset pins on the sending die: a reset that crosses the boundary twice |
+| Xache write engine → the node's W queue | 18 | −0.208 | 11 | 2.97 = 0.58 + 2.39 | a chain head's valid through the home write engine's beat into the master's `wready`, the node's `wready`, the DRAM port's W-queue write |
+| station 1 → node 1, and JTAG → station 1 | 24 | −0.158 / −0.020 | 10 / 17 | 2.92 / 4.40 | the NSU response ring's full flag into the node's DRAM read queue; the JTAG bridge's burst length through the NMU's credit compare into its request-queue write enable (bus clock) |
+| XDMA (Xilinx IP) | 6 | −0.161 | 14–15 | 4.00 = 1.13 + 2.87 | the lite master's read FSM |
+
+Failing endpoints by logic level: 150 at 1 level (the two crossing families),
+856 at 7–8 (the RV64 decode), 1,110 at 12–16 (the AR split), 82 at 10–11 and
+17. Under the margin but not failing, 51,296 endpoints sit at 6–10 levels;
+the largest classes there are the Xache home take (`hv_q` → `word_q`, 512
+endpoints at +0.028, 11 levels), the home write into the array (`b_val` →
+`word_q`, 512 at +0.059) and the Xache response ids into the node's DRAM AW/W
+queues (+0.000 … +0.076), the instruction memory into `e_imm` (+0.039), the
+mover's descriptor kind (+0.027) and the JTAG bridge into the NMU's write
+counters (+0.103, 19 levels).
+
+The same families as RTL statements, in path order, from the node-by-node
+report. Each line is one stage the path runs through in a single cycle. The
+four sysnode families are as the v8t5 image built them; the tree now carries
+the shape §5.9 measures, and the citations below are to that tree.
+
+**AR split**: `s1_rln` captured at the take → the span add, the memory-beat
+round, the beats-left subtract and the `≤ AMB` compare, all combinational on
+the captured length → `src/kohakuaccel/sysnode/core/mag_dram_port.v:285`
+`rd_push` → `:287` `rd_take` → `:819` `q_ready` →
+`src/kohakuaccel/sysnode/core/mag.v:931` `m_arready = q_ready && ar_r` (and
+`:930` for AW) → the endpoints: `mag.v:556` `mv_arready` →
+`src/kohakuaccel/sysnode/mover/mm_mover.v:460` the AR skid →
+`src/kohakuaccel/common/sb_skid.v:34` `out_en`, `:35` `hold_en`, `:64`
+`hold_data` (48 CE pins), `:61` `out_data`; `mag.v:624` `h_arvalid` cleared
+on `m_arready[UP]`; `mag.v:880` `cp_arready` into the node port;
+`src/kohakuaccel/sysnode/interlink/mag_ilink.v:286` `loc_aw`; `mag.v:911`
+`sel_h`/`sel_w`; and back inside the port, `mag_dram_port.v:305` `rd_gnt`,
+`:315` the capture registers, the split's own counter, `rr_rd`, and the
+arbiter's request vector. In the tree the split's state is four registers
+(`:281`) loaded at the take from a per-requester beat count that is itself a
+register beside the request vector (`:248`, `:296`) and stepped at each AR
+(`:372`); `rd_push` reads one flag.
+
+**RV64 instruction memory → decode**: the cascaded instruction RAM
+(`src/kohakuaccel/pe/rv64-sys/rv64_sys_pe.v:229`, 0.947 ns to data) → the
+D-word hold select → `src/kohakuaccel/pe/rv64-sys/core/rv64_core.v:252`
+`d_word` → `:254` `d_call` / `:256` `d_ret` (decode of `rd`/`rs1` fields) →
+`p_call`/`p_ret` into the predictor →
+`src/kohakuaccel/pe/rv64-sys/core/rv64_bpred.v:189` the RAS LUTRAM write
+enable and `:202`–`:203` `ras_tos`, `ras_sp`. The second branch of the same
+start: `rv64_core.v:268` `d_predict` → `:629` `d_redir` → `:675` `pc_next`
+→ `pc` and the pending-redirect target (256 endpoints); and `:333` `e_btgt
+<= d_pc + imm_d`, the 64-bit add on the decoded immediate. In the tree the
+RAM runs at read latency 2 with its output register enabled by the core's
+fetch advance (`:123`, `rv64_sys_pe.v:232`), so decode starts from a
+register (`FETCH_LAT` in [spec/parameters](../../spec/parameters.md)).
+
+**RV64 writeback → next PC**: `rv64_core.v:981` `wb_val` → `:414`
+`op_rs1_raw` (the forwarding select) → `:438` `op_rs1` → the 64-bit equality
+and signed/unsigned compares → `:603` `br_take` → `:612` `taken` → `:625`
+`e_redir` → the redirect priority mux → `pc_next` → `pc`, `d_valid`. The
+64-bit compare sat between the forwarding mux and the redirect in one cycle.
+In the tree the compare is four 16-bit chunks combined in two levels
+(`:593`–`:598`), every E-level redirect is registered (`:177`, `:666`–`:675`)
+and `pc_next` selects between registers.
+
+**Xache trunk return counters**, `src/kohakuaxi/pxache/lane/kx_trunk.v:245`
+`pb`/`pg`, `:246` `pnext`, `:247`–`:253` the counter on `m_clk`; the
+increment/gray LUT that synthesis names `g_pc[k].pg[j]_i_1` is claimed by the
+sending die because `scripts/tcl/v8t3/60_constraints.tcl:116` lists
+`pb_reg*`/`pg_reg*`/`fok_m_reg*` only and `:127` gives the sender everything
+else. The three patterns at `:116` drop `_reg`.
+
+**Reset into the interlink pipes**: the crossing's `a_rst` and the sending
+pipe half's `rst` in `xilinx-fpga/xcvu13p/bd/kts_pipe_bd.v` were one
+`!rstn_tx` expression, so synthesis built one inverter and the crossing's
+pblock took it to the landing die; the endpoints are
+`src/kohakutransmit/carrier/kts_pipe.v:52` (the `f_q`/`b_q` reset branch)
+and `src/kohakutransmit/carrier/kts_cdc.v:124` `o_crd_valid`. In the tree
+each half inverts its own reset in a register of its own (`kts_pipe_bd.v:58`,
+`:81`, `:98`, `:106`).
+
+**Xache write engine → node W queue**, start
+`src/kohakuaxi/pxache/kx_pxache.v:574` `hv_q` (a chain head) → `:1537`
+`hq_w_v` → `src/kohakuaxi/xache/engine/kx_wr_engine.v:112` `src_wval` →
+`:127` `wr_beat` → `:130` `mw_wrdy` → `kx_pxache.v:1251` `lw_h` → `:1258`
+`x_wready` → `src/kohakuaxi/xache/edge/kx_link.v:29` (`SAME`: `s_ready =
+m_ready`, a wire) → the node's `M_AXI_DRAM` wready →
+`mag_dram_port.v:475` the W queue's `rd_en`. The register belongs at
+`kx_pxache.v:1258`.
+
+**Station 1 → node 1**, start `src/kohakuaccel/common/kohaku_aring.v:96`
+`wr_busy` (the full flag from the crossed read pointer) →
+`src/kohakuaccel/axi/station/sb_nsu.v:591` `m_rready` → the mesh's
+`S_AXI_MEM` rready → `mag.v:608` `m_rready[UP]` → `mag_dram_port.v:665`
+`r_take` → `:630` the R queue's head load. **JTAG → station 1**: the bridge's
+burst length → `src/kohakuaccel/axi/station/sb_nmu.v:335`–`:339` the credit
+and tag compares → `:343` `ar_go` → `:355` `req_push` → `:557` the request
+queue's write enable, 17 levels on the 5 ns bus clock.
+
+### 5.9 The sysnode alone at the shipped shape — three synthesis loops
+
+`scripts/tcl/ooc_paths.tcl` on `ktpu_node_v8t` at the v8t5 generics
+(`MESH_ID` 0, `ILINK` 1, `PORTS` 2, `L2_MAG_BANKS` 4, `L2_MAG_ENTRIES` 16384,
+`DRAM_CDC` 0, `DRAM_AR_MAX` 16), out of context, a 2.857 ns clock on every
+clock port with each port its own asynchronous group; the census is every
+path under 0.25 ns of slack at that period, `levels.txt` the same paths by
+logic level, `hier.rpt` the utilisation to depth 4. One run per loop, each
+after the module benches of §10 pass on the loop's RTL. The LUT baseline is
+the node's row in the v8t5 block-design synthesis
+(`build/multimesh_v8t5_synth_util_hier.rpt`). A block-design synthesis sees
+about 0.5 ns less slack than an out-of-context run of the same netlist
+(§5.8), and route about 0.74 ns less than synthesis (§5.6).
+
+| loop | RTL | LUT | FF | WNS at 2.857 | worst class | levels | data path | paths < 0.25 | classes | below zero at 3.333 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| v8t5 node, BD synthesis row | as shipped | 23,580 | 34,289 | | | | | | | 523–582 endpoints a die (§5.8) |
+| 1 | the AR split's state as registers stepped at each AR; the RV64 fetch word in the instruction RAM's output register (`FETCH_LAT` 2, both RAM enables from the core's advance, the predictor's tables and the I-cache at the same latency); `rleft_one` beside `rleft_z`; the mover's alignment test off the walker's register; one registered reset per pipe half | 23,792 | 34,397 | −0.993 | `rr_rd` → `ck_left` | 14 | 3.832 | 3,449 | 253 | 4 classes: the split's load from the arbiter's pick (3.686–3.832) and `wb_val` → `pc` (3.356) |
+| 2 | the memory-beat count per requester off its own presentation, registered beside the request vector, so the pick only muxes; every E-level redirect (mispredict, trap, JALR check) registered and applied at the next fetch advance, its target in two registers picked by the registered compare | 23,623 | 34,510 | −0.693 | `wb_val` → the pend registers | 12 | 3.446 | 3,497 | 276 | 3 classes, one family: the pend registers' enable was the kill itself |
+| 3 | the branch compare in four 16-bit chunks with a two-level combine; the pend enable from registers only; the misalign test per operand source on the low three bits, then one select | 23,620 | 34,512 | −0.301 | link VC FIFO → `b_owed` | 10 | 3.093 | 3,629 | 268 | none; the worst class has +0.175 |
+
+Block RAM, URAM and DSP are the v8t5 row's in every loop: 62 RAMB36 and 8
+RAMB18, 65 URAM, 47 DSP.
+
+Selected instance rows from `hier.rpt` (the block-design report stops at the
+node, so the sub-module rows have no shipped baseline):
+
+| instance | module | loop 1 LUT | loop 2 LUT | loop 3 LUT | loop 3 FF |
+|---|---|---|---|---|---|
+| (top) | ktpu_node_v8t | 23,792 | 23,623 | 23,620 | 34,512 |
+| u_mag/u_mag | mag | 7,496 | 7,511 | 7,511 | 16,489 |
+| u_mag/u_mag/u_dram | mag_dram_port | 2,365 | 2,360 | 2,360 | 2,185 |
+| u_mag/u_pe | rv64_mag_pe | 15,844 | 15,660 | 15,657 | 17,871 |
+| u_mag/u_pe/u_cpu | rv64_syscore | 7,189 | 6,979 | 6,993 | 7,168 |
+| u_mag/u_pe/u_cpu/u_core | rv64_core | 6,024 | 5,810 | 5,822 | 3,666 |
+| u_mag/u_pe/u_cpu/u_ic | rv64_icache | 271 | 272 | 274 | 687 |
+| u_mag/u_pe/u_mover | mm_mover | 4,168 | 4,177 | 4,177 | 5,791 |
+
+Loop 3 by logic level (paths under 0.25 ns at 2.857): 24 at 5, 32 at 6, 525
+at 8, 486 at 9, 2,403 at 10, 100 at 11, 23 at 12, 30 at 13, 4 at 14, one each
+at 16 and 18.
+
+Loop 3's classes below zero at 2.857 ns, the set a 350 MHz synthesis would
+have to clear:
+
+| family | worst | levels | data path | classes | paths |
+|---|---|---|---|---|---|
+| interlink: a link's VC FIFO (`kts_rx`, LUTRAM) read → `mag_ilink` `b_owed`, `ob_left`, `door_sent`, `a_r`; `mag_switch` `n_lblk` | −0.301 | 9–10 | 3.093 | 5 | 126 |
+| interlink: the same FIFO's read → its own LUTRAM write pins | −0.207 | 8 | 2.650 | 10 | 20 |
+| DRAM port: the R queue's FIFO read → `g_rdq[].rleft`, `rph`, `rleft_one`, `rleft_z` | −0.201 | 9–10 | 2.933 | 10 | 165 |
+| mover: `mx_tdesc` `d_axis` / `psum` → `e_kind`, `e_flt`, `e_xp`, `e_rd`, `e_wr` | −0.195 | 12–13 | 3.034 | 6 | 61 |
+| RV64: the scratchpad URAM → `wb_val` | −0.183 | 6 | 2.967 | 1 | 56 |
+| RV64: `wb_val` → `m_val` (the ALU behind the forward) | −0.170 | 18 | 3.009 | 1 | 64 |
+| RV64: `wb_val` → `u_mmu/resolved_q` | −0.136 | 13 | 2.975 | 1 | 1 |
+| mover: `e_wr` → the completion FIFO's LUTRAM write pins | −0.097 | 10 | 2.752 | 32 | 32 |
+
+The FETCH_LAT 2 fetch stage and the registered E-level redirect each add one
+cycle to a redirect: a mispredicted branch, a trap or a failed JALR check now
+loses four fetch slots.
+
+### 5.10 v8t5 placed and routed
+
+The implementation run's own reports (`impl_1/*_routed.rpt`,
+`*_utilization_placed.rpt`, `runme.log`), the ship flow's routed reports in
+`build/multimesh_v8t5_impl_*.rpt`, and two read-only opens of the routed
+checkpoint: `scripts/tcl/v8t5_routed_paths.tcl` (the §5.8 census on the
+routed design, margin 0.5 ns: 172,417 endpoints in 22,878 classes, 8,183 of
+them failing, in `build/multimesh_v8t5_routed_*`) and
+`scripts/tcl/v8t5_routed_nets.tcl` (`report_cdc`). Fully routed, 0 nets with
+routing errors; hold met at +0.002 ns; pulse width met; DRC with no critical
+warning.
+
+| clock | period | WNS | TNS | failing | < 0.25 | < 0.50 |
+|---|---|---|---|---|---|---|
+| sysnode, die 0 | 3.333 | −1.025 | −7,129 | 20,642 | 30,977 | 41,911 |
+| sysnode, die 1 | 3.333 | −1.023 | −5,210 | 15,448 | 26,232 | 39,109 |
+| sysnode, die 2 | 3.333 | −0.790 | −5,505 | 18,191 | 29,083 | 40,001 |
+| sysnode, die 3 | 3.333 | −0.850 | −3,654 | 13,392 | 22,716 | 32,718 |
+| PCIe GT `TXOUTCLK[3]_3` (Xilinx IP) | 2.000 | −0.023 | −0.2 | 18 | 1,604 | 4,645 |
+| MIG ui × 4 | 3.332 | +0.019 … +0.059 | 0 | 0 | 133 … 837 | 1,352 … 4,919 |
+| XDMA | 4.000 | +0.016 | 0 | 0 | 507 | 2,226 |
+| ctrl 2, ctrl 3 (bus) | 5.000 | +0.072, +0.120 | 0 | 0 | 197, 123 | 523, 548 |
+| every other clock and every inter-clock pair | | positive | | | | |
+
+WNS through the flow: −1.387 estimated after placement, −0.903 after
+physical optimisation, −0.786 at the router's start, −1.647 after its first
+global iteration, −1.080 after the fifth, −1.058 after hold fixing, −1.025
+routed.
+
+| die | LUT | % | FF | BRAM tiles | URAM | DSP | contents |
+|---|---|---|---|---|---|---|---|
+| SLR0 | 54,318 | 12.6 | 78,737 | 109.5 | 129 | 50 | mesh 0 (23,233 LUT), station 0 (3,591), ddr4_0 (20,076) |
+| SLR1 | 117,693 | 27.2 | 148,062 | 186.5 | 129 | 50 | mesh 1 (23,665), station 1 (10,181), ddr4_1 (20,083), XDMA, debug hub |
+| SLR2 | 57,005 | 13.2 | 87,681 | 117 | 129 | 50 | mesh 2 (23,532), station 2 (4,061), ddr4_2 (20,072) |
+| SLR3 | 53,900 | 12.5 | 78,083 | 109.5 | 129 | 50 | mesh 3 (23,112), station 3 (3,567), ddr4_3 (20,075) |
+
+Die crossings: 2,401 / 2,457 / 2,514 SLLs on the 0–1 / 1–2 / 2–3 boundaries
+(10.4 … 10.9 % of 23,040 each), 7,372 in all, none through a Laguna TX or RX
+register (at `IL_ASYNC` 1 the crossing is inside `kts_cdc`, at `PER_DIE_CLK`
+1 no reset spans a die, so `60_constraints.tcl` emits no `USER_SLL_REG`). By
+owner: the station bus 1,900 nets, the Xache 3,331, the block-design level
+1,999 (of which 2 span dies 0–2, 36 span 0–3 and 5 span 1–3), the debug hub
+51 (17 of them 1–3). The connectivity matrix counts 39 nets from die 1 to die
+3 and 18 from 3 to 1.
+
+Congestion. The placer's final report has three level-5 (32×32) windows: a
+long-south one at CLEL_R_X68Y588–DSP_X82Y615 and short east/west ones at
+CLEM_X72Y714–CLEL_R_X86Y760, each with the Xache (`u_kx`, 30–57 % of the
+window's cells) and a DDR4 controller's calibration logic
+(`u_ddr_cal_addr_decode`, `u_ddr_ui`) as the occupants. The router's initial
+estimate: global/short level 5, timing level 5, eight level-5 windows, all
+around `u_kx` with `ddr4_1`/`ddr4_2`/`ddr4_3` calibration, at X65–96 Y336–647
+(dies 1 and 2). After rip-up the effective levels are north 1, south 4, east
+2, west 2; the two CLB-congestion dumps hold four and two CLB tiles and no
+net.
+
+Routed classes merged across the four dies, the worst first
+(`build/multimesh_v8t5_routed_classes_merged.txt`, 13,196 classes):
+
+| slack | endpoints | levels | data path | logic | net | start → end |
+|---|---|---|---|---|---|---|
+| −1.025 | 4 | 7 | 3.646 | 0.782 | 2.864 | DRAM port R-queue FIFO (RAMB36) read → the same FIFO's `ENARDEN` |
+| −1.023 | 704 + 672 + 352 + 352 + 320 + 336 | 10 | 4.16 | 0.87 | 3.29 | mover `wa_nxt` → `u_dst`/`u_src` `psum`, `apsum`, `idx` (CE and reset pins) |
+| −1.006 | 62 + 82 | 14–15 | 4.11 | 1.97 | 2.14 | instruction RAM → `e_btgt` |
+| −1.002 | 33 + 38 | 11 | 4.03 | 1.21 | 2.82 | mover `stat_fault` → CPU `pc`, `redir_pend_pc` |
+| −0.985 | 54 + 49 | 10–11 | 4.30 | 0.98 | 3.33 | `e_s2_q` → `pc`, `redir_pend_pc` |
+| −0.979 | 151 | 13 | 4.30 | 1.62 | 2.68 | mover `u_src/psum` → `e_rd` |
+| −0.969 | 256 + 256 + 14 | 8 | 3.9–4.0 | 1.8–2.0 | 1.9–2.3 | instruction RAM → `ras_tos`, `ras_sp` |
+| −0.953 | 2 + 2 + 288 + 6 | 10–11 | 4.0–4.2 | 1.1–1.3 | 2.9 | station response ring full flag → DRAM port R queue, `rleft`, `rleft_z` |
+| −0.950 | 148 + 16 | 6–7 | 3.5–3.9 | 0.5–0.7 | 2.9–3.1 | Xache write engine, mover `w_kind` → DRAM port W queue |
+| −0.920 | 256 | 6 | 3.92 | 1.62 | 2.31 | scratchpad URAM → `wb_val` |
+| −0.908 | 352 + 176 + 176 | 7 | 3.68 | 0.72 | 2.96 | mover `occ` → `u_dst` `psum`, `apsum`, `idx` |
+| −0.904 | 1,429 + 3,768 + 1,485 + 865 | 3–4 | 3.75–4.00 | 0.25–0.59 | 3.2–3.6 | mover `w_kind`, the mover's data FIFO → staging `wide_q` |
+| −0.876 | 544 (die 0), 550, 433 | 6–9 | 3.8–4.0 | 0.5–0.9 | 3.0–3.4 | Xache chain head `hd_q[525]` → boundary trunk `u_tk` |
+| −0.773 | 5,817 | 6 | 3.87 | 0.53 | 3.34 | Xache chain head `hd_q[525]` → the same `hd_q` register |
+| −0.762 | 12 + 96 + 104 + 192 | 0 | 3.57–3.61 | 0.08 | 3.5 | node reset synchroniser `u_rs_mag/q` → mover `d_axis`, `d_count`, `d_astep`, `d_stride` |
+| −0.712 | 5,885 | 0 | 3.83 | 0.08 | 3.75 | node reset synchroniser `u_rs_mag/q` → staging `wide_q` |
+| −0.750 | 139 + 167 + 192 + 123 + 199 + 160 + 194 + 174 | 0 | 3.3–3.7 | 0.08 | 3.2–3.6 | staging `brow_q` → the banks' URAM `ADDR_A`/`ADDR_B` |
+| −0.686 | 4,338 | 1 | 3.65 | 0.13 | 3.52 | Xache master `rq_dp` → reorder buffer LUTRAM read |
+| −0.681 | 57 | 0 | 3.85 | 0.08 | 3.77 | DRAM port return register `rq_bus` → mover `ix_data` |
+| −0.663 | 103 + 5 + 27 + 38 | 1 | 3.7–3.9 | 0.15–0.22 | 3.5–3.7 | CPU `mv_cfg_en` → mover `seed`, `xf_id`, `idx_count`, `d_base` |
+| −0.644 | 75 + 86 + 72 + 84 | 0–1 | 3.2–3.5 | 0.08–0.29 | 3.1–3.2 | Xache home read engine `ra` → the home's URAM address pins |
+
+By end owner merged across dies (endpoints under 0.5 ns / failing):
+`mesh_N/u_mag/u_pe` 57,519 / 25,268; `mesh_N/u_mag/u_mag` 46,145 / 20,487;
+Xache boundary trunks `u_tk` 13,009 / 5,670; Xache homes `u_c` 8,583 /
+4,741; Xache chain heads `hd_q` 5,817 / 3,904; the station's NSU 4,918 /
+1,400; Xache reorder buffers `u_rb` 4,338 / 1,515; Xache hedges 6,486 /
+2,610. Failing endpoints by logic level: 6,477 at 0, 3,665 at 1, 1,656 at 2,
+6,878 at 3, 5,461 at 4, 4,258 at 5, 10,088 at 6, 8,558 at 7, 5,917 at 8,
+4,413 at 9, 7,263 at 10, 2,057 at 11, 1,001 at 12 and above.
+
+The families above as RTL: what the v8t5 image built, and what the tree
+carries (§5.11 measures it):
+
+- **Staging dispatch register**. v8t5 loaded `arow_q`, `brow_q`, `bword_q`,
+  `bstrb_q` and the `BANKS × WORDS × DATA_W`-bit `wide_q` in the `else`
+  branch of the reset `if`, so the synchroniser's reset was every one of
+  those bits' clock enable (the `u_rs_mag/q` → `wide_q` class, 5,885
+  endpoints at 0 levels), and `brow_q`/`arow_q` were one register each on
+  every bank's URAM address pins. In the tree
+  `src/kohakuaccel/sysnode/core/mag_stage.v:151`–`:166` load them
+  unconditionally and every one of them is a copy per bank (`:141`, `:162`),
+  as `wide_q` was (`:135`).
+- **Mover walkers' enables**. v8t5: `wa_ext`
+  (`src/kohakuaccel/sysnode/mover/mm_mover.v:445`–`:450`, from `wa_nxt`,
+  `wa_room` and a 40-bit compare) through the command FIFO's push into the
+  walkers' `next`, ending on the CE and reset pins of `mx_tdesc`'s `psum`,
+  `apsum`, `idx` (2,700 endpoints, 79 % route). In the tree each walker
+  presents its element from a two-entry queue (`mx_tdesc` `OREG` 1,
+  `src/kohakuaccel/sysnode/mover/mx_tdesc.v`), so `next` pops `AW + 3` flops
+  and the walker steps on its own count.
+- **Mover fault → PC**. `mm_mover` `stat_fault` →
+  `src/kohakuaccel/sysnode/sysnode.v:543` (`irq_summary`, an OR) →
+  `src/kohakuaccel/pe/rv64-sys/rv64_syscore.v:779` (`irq_ext`) → the core;
+  v8t5 took it straight into `src/kohakuaccel/pe/rv64-sys/core/rv64_csr.v:149`,
+  `:160`, `:165` (`mip`, `pend_ext`, `irq_pending`) →
+  `src/kohakuaccel/pe/rv64-sys/core/rv64_core.v:799` (`irq_raw`) →
+  `trap_take` → the redirect. In the tree both interrupt lines land in a
+  register at the core's edge first (`rv64_core.v:125`–`:129`).
+- **CPU → mover configuration**. `rv64_syscore.v:88` (`mv_cfg_en`, a
+  register) → `mm_mover.v:681` (`cfg_en`): one level and 3.5 ns of net in
+  v8t5; in the tree the write lands in `cfg_*_q` (`mm_mover.v:186`–`:194`)
+  first, and `stat_busy` covers the cycle through `go`.
+- **DRAM port R queue**. v8t5 read the block-RAM `sync_fifo`
+  (`src/kohakuaccel/sysnode/core/mag_dram_port.v:626`, first-word
+  fall-through) into the return-side compares and back into its own enable:
+  1.075 ns on the enable net to eight RAMB36 alone. In the tree the queue's
+  head is a register (`hd_*`, `:638`–`:674`) refilled as it leaves.
+- **Xache**. `src/kohakuaxi/pxache/kx_pxache.v:575` (`hd_q`, the chain
+  head): the destination decoded from its own top bits is its own enable,
+  into the boundary trunk and back into the head's 526 bits; `rq_dp` (the
+  drain pointer) addresses the reorder ring's LUTRAM as one copy, the home
+  read engine's `ra` (`src/kohakuaxi/xache/engine/kx_rd_pipe.v`) the home's
+  URAM banks, and the array's `flushing`
+  (`src/kohakuaxi/xache/array/kx_carray.v`) the data-in muxes. All four stay
+  as in v8t5: §5.11 measures the register and the replications out of
+  context and every variant puts a level into the home's response-ready
+  cone, so these are a placement-level loop, not an RTL one.
+
+Methodology: TIMING-54 (a scoped clock group inside the PCIe GT wizard,
+Xilinx's), TIMING-47 and XDCB-3 (`build/multimesh_v8t5_clocks.xdc:23`–`:24`
+put `xdma_0_axi_aclk` in its own group and, through
+`-include_generated_clocks pcie_refclk`, in the reference clock's group),
+TIMING-24 (the same command's group between ctrl `clk_out1` and `clk_out2`
+overrides an XPM `set_max_delay -datapath_only` at constraint position 501),
+TIMING-16 117 (all in the sysnode families above), LUTAR-1 16 (the debug
+hub's FIFO resets and the DDR4 PHY PLL resets), TIMING-9 and TIMING-10 one
+each. `report_cdc`: every Critical row (1,006 CDC-1, 8 CDC-4, 6 CDC-7, 3
+CDC-10, 2 CDC-11, 4 CDC-13, 2 CDC-14) is inside the PCIe/XDMA IP under its
+own clock groups; the design's own rows are 88 CDC-2 and 88 CDC-5, all the
+station bus's `kohaku_aring` lean-ring gray-pointer synchronisers
+(`wg_s1`, `rg_s1`, `rd_r1` in `src/kohakuaccel/common/kohaku_aring.v`)
+without `ASYNC_REG`, and 16,772 CDC-15 clock-enable-controlled structures.
+
+### 5.11 v8t6 — the routed-v8t5 fixes, out of context
+
+The RTL of §5.10's list as the v8t6 build carries it, measured the same way
+as §5.9 (`ooc_paths.tcl`, 2.857 ns, every clock its own group) against the
+loop-3 node and the v8t5 Xache tier (`build/ooc/kxlive_t4h_350`). Benches:
+33 runs, all PASS — the DRAM port at `AR_MAX` 0 and 16 and the read-only
+and bandwidth variants, the staging store, the mover's eleven (chains of
+1, 2 and 4, config, L2, transform), the system set (mag_system,
+mag_1m_upload, mag_wslot, mm_mesh_1m, interlink 2-mesh, stage and 4-mesh
+with the pipe carrier), the Xache four, the station line and the kts_cdc.
+
+| block | run | LUT | FF | WNS at 2.857 | worst class | paths < 0.25 | classes |
+|---|---|---|---|---|---|---|---|
+| node, loop 3 (§5.9) | `node_v8t5_fix3` | 23,620 | 34,512 | −0.301 | link VC FIFO → `b_owed`, 10 levels, 3.093 | 3,629 | 268 |
+| node, walkers with a muxed start state | `node_v8t6` | 24,020 | 35,462 | −0.301 | the same | 1,985 | 230 |
+| node, as v8t6 builds it | `node_v8t6b` | 23,837 | 35,470 | −0.301 | the same | 2,014 | 230 |
+| Xache, v8t5 tier | `kxlive_t4h_350` | 23,055 | | +0.064 | `rid` → the master's slot counters, 9 levels, 2.676 | 1,627 | 23 |
+| Xache, head decode registered and replicated, `rq_dp` and `flushing` replicated | `kxlive_v8t6` | 23,143 | 48,072 | −0.075 | `rid` → the home's `word_q` enable, 10 levels, 2.828 | 1,612 | 13 |
+| Xache, head decode registered, `rq_dp` and `ra` replicated | `kxlive_v8t6b` | 22,905 | | −0.258 | the same, 11 levels, 3.011 | 4,000 | 54 |
+| Xache, head decode registered and replicated only | `kxlive_v8t6c` | 22,755 | 47,935 | −0.143 | the same, 10 levels, 2.896 | 3,388 | 39 |
+
+The v8t6 node against loop 3: the two walker queues +196 LUT (1,014 and
+1,020 against 909 and 929), the mover's configuration register and start
+state +33, the staging +186 FF (the per-bank copies), the DRAM port +516 FF
+(the head register at the 512-bit memory beat), the walkers +172 FF, the
+configuration register +73 FF; block RAM, URAM and DSP unchanged; the worst
+class and slack unchanged. The Xache in v8t6 is the v8t5 netlist with the
+`ASYNC_REG` marks only.
+
+### 5.12 v8t6 placed and routed
+
+The same sources as §5.10 for the v8t6 project (`impl_1/*_routed.rpt`,
+`runme.log`, `build/multimesh_v8t6_impl_*.rpt`) and the routed census
+`scripts/tcl/v8t6_routed_paths.tcl` (margin 0.5 ns: 149,500 endpoints in
+20,236 classes, 6,749 of them failing, `build/multimesh_v8t6_routed_*`),
+which now sets every merged class against the v8t5 census as well
+(`scripts/tcl/v8t3/87_synth_paths.tcl` `V8_BASE`, the result in
+`build/multimesh_v8t6_routed_classes_diff.txt`). Fully routed, 0 nets with
+routing errors; hold met at +0.002 ns; pulse width met; DRC with no critical
+warning; the bitstream 113,318,504 bytes.
+
+| clock | period | WNS | TNS | failing | < 0.25 | < 0.50 | v8t5 WNS / TNS / failing |
+|---|---|---|---|---|---|---|---|
+| sysnode, die 0 | 3.333 | −0.453 | −686 | 4,925 | 13,981 | 25,951 | −1.025 / −7,129 / 20,642 |
+| sysnode, die 1 | 3.333 | −1.080 | −6,917 | 21,993 | 33,011 | 43,913 | −1.023 / −5,210 / 15,448 |
+| sysnode, die 2 | 3.333 | −0.702 | −3,471 | 14,450 | 24,629 | 36,421 | −0.790 / −5,505 / 18,191 |
+| sysnode, die 3 | 3.333 | −0.406 | −550 | 4,070 | 12,316 | 21,904 | −0.850 / −3,654 / 13,392 |
+| XDMA | 4.000 | −0.069 | −13 | 375 | 1,232 | 3,174 | +0.016 / 0 / 0 |
+| MIG ui × 4 | 3.332 | −0.017 … +0.058 | −0.02 | 1 + 1 | 146 … 759 | 1,551 … 3,707 | +0.019 … +0.059 / 0 / 0 |
+| PCIe GT `TXOUTCLK[3]_3` (Xilinx IP) | 2.000 | +0.004 | 0 | 0 | 1,289 | 4,890 | −0.023 / −0.2 / 18 |
+| ctrl 2, ctrl 3 (bus) | 5.000 | +0.457, +0.029 | 0 | 0 | 0, 193 | 3, 1,295 | +0.072, +0.120 |
+| every other clock and every inter-clock pair | | positive | | | | | positive |
+| the design | | −1.080 | −11,637 | 45,815 | | | −1.025 / −21,499 / 67,691 |
+
+WNS / TNS through the flow (v8t5 in brackets): −1.498 / −3,842 estimated
+after placement (−1.387 / −16,831), −0.879 / −3,449 after physical
+optimisation (−0.903 / −13,553), −0.809 / −953 at the router's start
+(−0.786 / −5,445), −1.748 / −18,285 after its first global iteration
+(−1.647 / −26,484), −1.119 / −12,888 after its eighth and last (v8t5:
+sixth, −1.080 / −22,809), −1.105 / −12,561 after hold fixing (−1.058 /
+−22,509), −1.080 / −11,637 routed.
+
+| die | LUT | % | FF | BRAM tiles | URAM | DSP | contents |
+|---|---|---|---|---|---|---|---|
+| SLR0 | 54,354 | 12.6 | 79,067 | 109.5 | 129 | 50 | mesh 0 (23,496 LUT), station 0 (3,588), ddr4_0 (20,104) |
+| SLR1 | 118,503 | 27.4 | 150,055 | 186.5 | 129 | 50 | mesh 1 (24,217), station 1 (10,202), ddr4_1 (20,076), XDMA (53,377), debug hub |
+| SLR2 | 57,646 | 13.3 | 89,200 | 117 | 129 | 50 | mesh 2 (24,149), station 2 (4,063), ddr4_2 (20,085) |
+| SLR3 | 54,056 | 12.5 | 79,281 | 109.5 | 129 | 50 | mesh 3 (23,279), station 3 (3,568), ddr4_3 (20,071) |
+
+Placed in all: 284,539 LUT (+1,626 on v8t5), 397,521 FF (+4,974), 522.5
+block RAM tiles, 516 URAM, 3,565 CARRY8, the same memories and DSPs. The
+meshes are +263 / +552 / +617 / +167 LUT on their v8t5 selves (the walkers'
+queues and the configuration register in every one, then the placer's
+physical synthesis pushing block-RAM output registers into the fabric on
+different dies: 28 nets and 550 cells this time, 3 and 209 in v8t5); the
+Xache 22,585 LUT / 47,917 FF / 256 URAM.
+
+Die crossings: 7,358 nets (v8t5 7,355): 2,462 touch die 0, 4,891 die 1,
+4,919 die 2, 2,533 die 3. By owner the six Xache trunks 573–575 each, the
+station links 132–373, the six interlink pipes 298 each, the block-design
+level 1,996 (36 span dies 0–3, 6 span 1–3, 1 spans 0–2), the debug hub 51.
+No Laguna register, as in v8t5, and no die-crossing path among the 400
+worst.
+
+Congestion. The placer's final report has eight level-5 windows in one
+place, the top of die 2 at X73–93 Y560–600, occupied by ddr4_2's
+calibration (`u_ddr_cal_addr_decode` 18–23 %, `u_ddr_mc_pi` 12–17 %) and
+`u_kx` (13–27 %); v8t5 had three, on dies 1 and 2. The router's initial
+estimate: global/short level 5 (32×32) as in v8t5, timing level 6 (64×64;
+v8t5 level 5), eighteen windows: die 2's top around `u_kx` and ddr4_2
+(X80–103 Y546–602), die 1 around `u_kx` and ddr4_1 (X83–106 Y346–433), a
+level-6 long-north window on die 0 (X68–99 Y75–138: mesh 0's `u_mag` 29 %,
+ddr4_0's calibration 25 %), die 0's mover and DRAM port (X66–87 Y90–153),
+die 1's mover, L2 and DRAM port (X72–103 Y444–475), die 2's CPU core with
+`u_mag` and `u_kx` (X91–106 Y610–665). Per die, the router's initial
+global / long / short estimate (north; south): SLR0 32×32 2.11 % / 32×32
+3.98 % / 16×16 0.99 %; 8×8 / 16×16 / 8×8 (v8t5 8×8 / 4×4 / 8×8; 4×4 / 8×8 /
+8×8); SLR1 16×16 2.04 % / 32×32 4.20 % / 8×8 1.52 %; 16×16 2.12 % / 32×32
+5.18 % / 16×16 1.44 % (v8t5 8×8 / 16×16 / 16×16; 8×8 / 32×32 / 4×4); SLR2
+32×32 2.98 % / 64×64 4.62 % / 32×32 1.87 %; 32×32 2.64 % / 32×32 4.28 % /
+16×16 1.64 % (v8t5 16×16 / 32×32 / 16×16; 32×32 / 32×32 / 16×16); SLR3 4×4
+/ 8×8 / 4×4; 8×8 / 8×8 / 4×4 (v8t5 8×8 / 16×16 / 4×4; 16×16 / 16×16 /
+16×16). After rip-up the effective levels are north 3, south 4, east 2,
+west 3 (v8t5 1 / 4 / 2 / 2) at 87.6 / 87.0 / 88.5 / 86.8 % maximum
+utilisation (91.1 / 86.0 / 91.3 / 90.1), the hotspots at X82–101 Y462–587;
+global routing 10.7 % vertical, 9.9 % horizontal; 42 pins with tight setup
+and hold (v8t5 9), all in the PCIe IP's asynchronous FIFO.
+
+Failing endpoints by logic level (v8t5 in brackets): 1,516 at 0 (6,477),
+2,208 at 1 (3,665), 1,215 at 2 (1,656), 2,426 at 3 (6,878), 5,351 at 4
+(5,461), 4,415 at 5 (4,258), 4,000 at 6 (10,088), 6,623 at 7 (8,558), 9,404
+at 8 (5,917), 4,632 at 9 (4,413), 3,121 at 10 (7,263), 545 at 11 (2,057),
+359 at 12 and above (1,001). By end owner merged across dies (endpoints
+under 0.5 ns / failing): `mesh_N/u_mag/u_pe` 52,025 / 18,394 (v8t5 57,519 /
+25,268); `mesh_N/u_mag/u_mag` 34,637 / 9,827 (46,145 / 20,487); Xache
+trunks `u_tk` 12,078 / 5,100 (13,009 / 5,670); Xache homes `u_c` 7,192 /
+3,583 (8,583 / 4,741); Xache chain heads `hd_q` 5,722 / 3,487 (5,817 /
+3,904); the station's NSU 4,747 / 2,188 (4,918 / 1,400); Xache hedges 4,326
+/ 1,264 (6,486 / 2,610); Xache reorder buffers `u_rb` 2,013 / 162 (4,338 /
+1,515).
+
+Routed classes merged across the four dies, the worst first
+(`build/multimesh_v8t6_routed_classes_merged.txt`; the die-1 copy of a class
+is named where it alone carries the slack):
+
+| slack | endpoints | levels | data path | logic | net | start → end |
+|---|---|---|---|---|---|---|
+| −1.080 | 35 | 10 | 4.09 | 1.07 | 3.02 | die 1: register-file bank read register → forward select → `op1_h` → `m_val` (v8t5 −0.72 / −0.56; the other dies under −0.72) |
+| −1.077 … −0.995 | 7 + 13 + 2 + 12 + 5 + 3 + 1 + 12 | 7–12 | 4.0–4.4 | 0.9–1.3 | 2.8–3.5 | die 1: `e_csr_addr`, `m_val`, `w_val_q`, `op_held`, `wb_val`, `z2` → `m_val`, `mtvec_nz`, `r_taken` |
+| −1.020 | 704 (300 failing) | 8 | 3.86 | | | walker `u_src` `d_count` → `apsum` (die 1; die 3 at −0.4) |
+| −1.008, −0.974 | 148 + 150 | 12–13 | 4.02 | | | walker `psum` → the element queue's `q_e0` (the address adder) |
+| −0.998 … −0.55 | 493 + 509 + 499 + 492 + 308 + 319 + 325 + 436 + 250 + 311 + 313 | 9–10 | 4.0 | | | `e_amo_op` → the CSR file (`mepc`, `minstret`, `stval`, `mtval`, `mtvec`, `stvec`, `mscratch`, `sepc`, `mcycle`, `mtimecmp`, `sscratch`); v8t5 −0.44 … −0.63 with 2–33 endpoints each |
+| −0.988 … −0.80 | 24 + 80 + 80 + 120 + 116 + 103 | 8–9 | 3.8–3.9 | | | mover `xb_cnt` → the command FIFO's LUTRAM, `ar_addr_i`, `e_rd`, `e_wr`, `ra_nxt`, `ra_base` |
+| −0.977 | 255 | 6 | 3.96 | | | scratchpad URAM → `wb_val` (v8t5 −0.920) |
+| −0.955, −0.713 | 47 + 512 | 11 | 3.98 | | | Xache head destination decode → DRAM port AR-queue read register, → home `word_q` |
+| −0.929, −0.907 | 1,408 (824) + 704 (468) | 8 | 3.85 | | | walker `u_dst` `d_count` → `psum`, `apsum` |
+| −0.928, −0.708 | 144 + 144 | 10 | 3.90 | | | DRAM port `rd_busy` → the mover's AR skid |
+| −0.916, −0.833 | 523 + 1,044 | 8 | 4.01 | | | DRAM port AR-queue empty flag → Xache trunk ring, chain head (v8t5 −0.724 / 628, −0.613 / 854) |
+| −0.868, −0.891 | 80 + 52 | 8 | 3.83 | | | DRAM port `wr_req_r` → interlink AW skid |
+| −0.857 | 312 (310) | 4 | 4.00 | 0.50 | 3.50 | station NSU request ring `o_v` → `rd_data` (v8t5 −0.556, 83) |
+| −0.851, −0.825 | 2,101 (1,614) + 2,099 (1,418) | 6 | 3.87 | 0.53 | 3.34 | Xache chain head `hd_q[525]` → trunk ring, → its own `hd_q` (v8t5 −0.876 / 3,068, −0.773 / 2,788) |
+| −0.844 … −0.294 | 80 + 248 + 256 + 224 + 70 + 50 + 256 | | | | | DRAM port `sr_v` → mover `m_awaddr`, interlink `d_r`, W skid, `pr_ctr`, command FIFO, NSU write queue |
+| −0.823 | 2,345 (606) | | | | | transform `s_id` → quantiser `src` (v8t5 −0.589) |
+| −0.673 | 255 | | | | | node reset synchroniser `u_rs_mag/q` → network port `cp_wdata` |
+| −0.649, −0.602, −0.460 | 1,046 + 1,044 + 502 | | | | | DRAM port AR-queue output register → Xache trunk ring, chain head, master queue |
+| −0.643 | 252 | | | | | system reset → DRAM port `rleft` |
+| −0.643 | 765 (297) | | | | | agent `noc_out_data` → interlink `dbell_n` (v8t5 −0.250) |
+| −0.581 … −0.250 | 2,509 (646) + 1,058 (130) + 407 (40) + 753 (108) + 113 (12) | 3–4 | | | | mover `w_kind`, the data FIFO → staging `wide_q` (v8t5 −0.90, 7,547 endpoints, 4,000 failing) |
+| −0.511 | 512 (508) | | | | | Xache chain head → home `word_q` (v8t5 −0.264, 448) |
+| −0.453 | | 10 | 3.61 | 0.79 | 2.82 | die 0's worst: `host_b_reg` replica → DRAM port R-queue `REGCE` (the head register's load) |
+| −0.406 | 1,408 (870) | 8 | | | | walker `u_src` `d_count` → `psum` (v8t5 −0.759, 32) |
+
+Against v8t5 (`*_classes_diff.txt`): gone are the R-queue's own enable
+(−1.025), `wa_nxt` → the walkers (−1.02, 2,736 endpoints), `stat_fault` →
+`pc` (−1.002, 71), `e_s2_q` → `pc` (−0.985, 103), `occ` → the walkers
+(−0.908, 528), the response ring's full flag → `rleft` (−0.940, 288),
+`u_wsel` → the W queue's write enables (−0.948), `wb_val` → `resolved_q`
+and `pc` (−0.947), `u_rs_mag/q` → `wide_q` (−0.712, 5,885) and `brow_q` →
+the URAM address pins. The reset synchroniser's other enables moved to
++0.494 (`d_count`, v8t5 −0.721), +0.280 (`if_resp_data`, −0.436), −0.046
+(`dbell_n`, −0.555), −0.043 (quantiser `src`, −0.390) and −0.493
+(`ix_data`, −0.133). The walker's enable moved from `wa_nxt` to its own
+`d_count` compare (−1.02 on die 1, −0.41 on die 3) and its address adder
+from `psum` → `e_rd` (−0.979, 151) to `psum` → `q_e0` (−1.008, 148).
+Worse: the CSR-write cone (−0.44 → −1.00), die 1's register-file forward
+(−0.72 → −1.08), head → `word_q` (−0.264 → −0.511), the NSU request ring
+(−0.556 → −0.857), `s_id` → `src` (−0.589 → −0.823), `noc_out_data` →
+`dbell_n` (−0.250 → −0.643). The by-class picture is what the per-die table
+says: dies 0, 2 and 3 lost 90 %, 37 % and 85 % of their TNS; die 1, the
+die with the XDMA, the debug hub and the 10,202-LUT station, lost 33 % more
+and holds the WNS in its CPU.
+
+The families as RTL:
+
+- **Register-file forward into the M register.**
+  `src/kohakuaccel/pe/rv64-sys/core/rv64_core.v:425`–`:438` (`op1_h`,
+  `op_rs1`), `:705` (`lo_h`), `:949` (`m_val <= e_result`): the bank's read
+  register, the forward select, the 110-fanout operand, the ALU and the
+  result select, 10 levels at 1.07 ns of logic. On die 1 it routes with
+  3.02 ns of net (v8t5 2.6–2.75, the other dies inside 3.333), the CPU
+  spread over X111–129 Y339–356. A placement item first (the die's mesh
+  beside the XDMA and station 1), a level out of the forward path second.
+- **CSR writes.** `rv64_core.v:315`–`:352` (`e_amo_op`), `:503`–`:518`, and
+  `src/kohakuaccel/pe/rv64-sys/core/rv64_csr.v:30` (`wr_en`), `:359`,
+  `:405`: the write data and enable of every CSR from the E-stage decode,
+  9–10 levels into 64-bit registers on every die.
+- **Walkers.** `src/kohakuaccel/sysnode/mover/mx_tdesc.v:142`–`:156`
+  (`at_max`, the innermost-first carry), `:184`–`:199` (`psum`, `apsum` on
+  the wrap), `:225`–`:234` (`w_addr = d_base + off_sum`, the sum of every
+  dimension's partial sum), `:341`–`:342` (`q_e0v`, `step`): the count
+  compare chain into the partial sums' enables (8 levels) and the address
+  adder into the queue entry (12–13 levels). The queue took the mover's
+  compare out of the enable; the walker's own chain and adder are the
+  depth that is left.
+- **Mover burst counter.** `src/kohakuaccel/sysnode/mover/mm_mover.v:216`–`:224`
+  (`xb_cnt`, `ent_first`, `ent_last`: 16-bit compares), `:887`: the
+  compares feed the address and enable registers and the command FIFO's
+  write, 8–9 levels.
+- **DRAM port controls.** `src/kohakuaccel/sysnode/core/mag_dram_port.v:166`
+  (`rd_busy`), `:252` (`rd_req`), `:759`; `:194` (`sr_v`), `:570`
+  (`sr_go`), `:583`–`:600`; `:747` (`rleft` under reset): `rd_busy` gates
+  the mover's AR skid 10 levels away, `sr_v` fans out to the mover, the
+  interlink's skids and the station's write queue, and the system reset
+  reaches 252 `rleft` bits as their enable.
+- **Network port.** `src/kohakuaccel/pe/rv64-sys/core/rv64_nport.v:160`–`:171`
+  (`cp_wdata`): the node reset synchroniser is the enable of 255 bits.
+- **Interlink.** `src/kohakuaccel/sysnode/interlink/mag_ilink.v:316` (`d_r`),
+  `:543`–`:563` (`ltx_dat`), `src/kohakuaccel/sysnode/interlink/il_pkt_arb.v:146`
+  (`sel_r`): the switch's select and the port's data register feed the
+  link's transmit register.
+- **Xache.** `src/kohakuaxi/xache/array/kx_carray.v:198`–`:201` (`word_q`):
+  the chain head's destination decode into the home's word register, and
+  the head into the trunk and itself, as in §5.10 with the same netlist.
+- **XDMA.** The XDMA's output register (hidden inside the IP) → station 1's
+  manager NMU request ring, the LUTRAM write enable, 7 levels at 4.000 ns
+  (0.850 logic, 2.927 net). The NMU's accept path has no register between
+  the XDMA and the ring's write: a skid at the NMU or an AXI register slice
+  on the XDMA master in the block design.
+
+Where the blocks landed, per die (`scripts/tcl/routed_bbox.tcl` on both
+routed checkpoints, `build/multimesh_v8t6_routed_bbox.txt` and the v8t5
+file: every block's primitive cells, slice bounding box, 10–90 % slice
+band and clock regions; `*_routed_clock_roots.rpt` the roots). The four
+DDR4 controllers sit in slice columns X117–145, clock-region column X4, on
+every die, 54,000 cells each, fixed by their pins.
+
+| die | CPU core, v8t6 (10–90 % band; regions) | CPU core, v8t5 | mesh median, v8t6 / v8t5 | clock root, v8t6 / v8t5 |
+|---|---|---|---|---|
+| 0 | X71–89 Y123–162; one region, X2Y2 97 % | X96–115 Y106–137; X3Y1 46 %, X3Y2 44 % | X94 Y121 / X130 Y133 | X3Y3 / X3Y3 |
+| 1 | X101–141 Y320–373; four regions across the DDR column, X4Y5 43 %, X3Y5 27 %, X3Y6 23 % | X102–137 Y265–283; X4Y4 53 %, X3Y4 45 % | X149 Y429 / X107 Y285 | X3Y5 / X4Y6 |
+| 2 | X131–156 Y646–675; four regions across the DDR column, X4Y11 33 %, X4Y10 32 %, X5Y10 23 %, X5Y11 11 % | X151–173 Y592–626; X5Y10 71 %, X5Y9 25 % | X165 Y640 / X155 Y560 | X4Y9 / X4Y9 |
+| 3 | X176–206 Y796–817; X6Y13 80 % | X150–198 Y782–810; X5Y13 67 %, X6Y13 28 % | X170 Y813 / X167 Y792 | X3Y12 / X5Y12 |
+
+The failing endpoints per die, mean clock skew and mean net delay (v8t6 /
+v8t5): die 0 −0.118 / −0.236 ns and 2.51 / 2.71 ns; die 1 −0.131 / −0.137
+and 2.66 / 2.60, on its worst thousand −0.228 / −0.048; die 2 −0.138 /
+−0.130 and 2.55 / 2.69; die 3 −0.176 / −0.102 and 2.27 / 2.62. Die 1's
+failing endpoints by owner (v8t5): the CPU and its mover 9,565 (6,819), the
+MAG 4,166 (4,865), the Xache 6,856 (3,405), the station 1,370 (277); die 2:
+4,564 (5,834), 2,916 (4,819), 6,434 (7,229), 449 (307).
+
+Clocks: every die's sysnode clock is its own MMCM and BUFG inside the die
+(MMCM_X0Y1, X0Y5, X0Y9, X0Y15), all four driven by one reference BUFG on
+die 1 (BUFGCE_X0Y119, pin AY23) over 3.03–3.54 ns of uncompensated route.
+That route sets each die's phase, which the dies' mutual asynchrony absorbs
+(one clock group per die, `IL_ASYNC` 1); the skew inside a die comes from
+its root and the regions a path spans. Station 1 is 25,874 cells against
+10,900 on the other dies and shares regions X4Y5 and X5Y5 with die 1's
+CPU; the compute-half pblock knob (`CMP_COLS` in
+`scripts/tcl/v8t3/60_constraints.tcl:56`–`:68`, a narrower pblock per die
+holding the node, its station and its Xache partition) is unset in this
+build.
+
+Methodology: TIMING-54 1, TIMING-47 28 (v8t5 32; XDCB-3 is gone, the XDMA
+clock in one group), TIMING-24 100, TIMING-16 57 (117, every one of them
+on die 1), LUTAR-1 16, TIMING-9 and TIMING-10 one each.
+
 ## 6. Accuracy
 
 ### 6.1 The block scale: E5M3 against E8M0

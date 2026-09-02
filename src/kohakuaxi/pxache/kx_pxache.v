@@ -560,7 +560,10 @@ module kx_pxache #(
                         assign id_w = cs_id[(cp*2 + d)*TSLOT +: TSLOT];
                         assign cs_ir[cp*2 + d] = ir;
                     end
-                    // dst decode: a head whose destination is NOT here forwards
+                    // dst decode: a head whose destination is NOT here forwards.
+                    // Decoded from the head, not registered with it: a `here_q`
+                    // flop put the response-ready cone a level deeper out of
+                    // context (-0.143 against +0.064 at 2.857, kxlive_v8t6c).
                     wire [PW-1:0] hdst_p = (cc2 == 0)
                         ? HP[hd_w[TSLOT-1 -: HIDX_W]*PW +: PW]
                         : MP[hd_w[TSLOT-1 -: MIDX_W]*PW +: PW];
@@ -1024,6 +1027,9 @@ module kx_pxache #(
         wire [ID_W-1:0] arid_m = x_arid[m*ID_W +: ID_W];
         wire [ID_W-1:0] awid_m = x_awid[m*ID_W +: ID_W];
         localparam integer WQW = (WR_OUTQ <= 1) ? 1 : $clog2(WR_OUTQ);
+        // The drain pointer addresses every LUTRAM of the reorder ring (one
+        // copy, 3.5 ns of net to 4,338 pins at the v8t5 route); a MAX_FANOUT
+        // replication here put a level into the response-ready cone (-0.26).
         reg  [SEQW:0] rq_wp, rq_dp;
         wire [SEQW:0] rq_used  = rq_wp - rq_dp;
         wire [PBA:0]  ar_beats = x_arlen[m*8 +: 8] + 1'b1;
