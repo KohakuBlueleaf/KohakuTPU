@@ -246,6 +246,17 @@ module sb_line4_tb;
     localparam integer MG0 = 0, MG1 = 0, MG2 = 0;
     localparam integer MP0 = 0, MP1 = 0, MP2 = 0;
 `endif
+    // -d SB_MREQ1 / SB_MRSP1 / SB_LPB1: the xdma manager's queue depths and
+    // station 1's own threshold, the S2 station tier. Defaults are the line's.
+`ifndef SB_MREQ1
+    `define SB_MREQ1 256
+`endif
+`ifndef SB_MRSP1
+    `define SB_MRSP1 256
+`endif
+`ifndef SB_LPB1
+    `define SB_LPB1 B1
+`endif
 `ifdef SB_NSB
     localparam integer P_NSB = 1;   // 32-bit subs as single-beat config ports
 `else
@@ -256,16 +267,26 @@ module sb_line4_tb;
 `else
     localparam integer P_KTS = 0;
 `endif
+    // -d SB_MGR0BUS: the jtag manager on station 1's bus clock (MGR0_DOM 1,
+    // synchronous NMU queues), so the jtag tasks drive on that clock.
+`ifdef SB_MGR0BUS
+    localparam integer P_M0 = 1;
+    wire jclk = bclk[1];
+`else
+    localparam integer P_M0 = 0;
+    wire jclk = clk_ctrl;
+`endif
     sb_line4 #(.AW(AW), .FW(P_FW), .NQ(NQ), .PORTW(PORTW), .CRED(P_CRED),
                .LINK_CDC(P_CDC), .LINK_FULL(P_FULL), .LINK_KTS(P_KTS),
                .OST(P_OST),
                .STORE_FWD(P_SF), .TIMEOUT(P_TO), .WIDE_DW(P_WIDE), .ISKID(P_ISKID),
-               .NSB(P_NSB),
+               .NSB(P_NSB), .MGR0_DOM(P_M0),
                .MOST0(MG0), .MOST1(MG1), .MOST2(MG2),
                .MPLC0(MP0), .MPLC1(MP1), .MPLC2(MP2),
+               .MREQ1(`SB_MREQ1), .MRSP1(`SB_MRSP1),
                .OST0(M0), .OST1(M1), .OST2(M2), .OST3(M3),
                .SFW0(F0), .SFW1(F1), .SFW2(F2), .SFW3(F3),
-               .LPB0(B0), .LPB1(B1), .LPB2(B2), .LPB3(B3),
+               .LPB0(B0), .LPB1(`SB_LPB1), .LPB2(B2), .LPB3(B3),
                .TMO0(T0), .TMO1(T1), .TMO2(T2), .TMO3(T3)) u_dut (
         .bus_clk0(bclk[0]), .bus_rst0(brst[0]),
         .bus_clk1(bclk[1]), .bus_rst1(brst[1]),
@@ -320,7 +341,7 @@ module sb_line4_tb;
     end
     endgenerate
 
-    wire [NM-1:0]    mclk = {clk_xdma, clk_xdma, clk_ctrl};
+    wire [NM-1:0]    mclk = {clk_xdma, clk_xdma, jclk};
     wire [32*NM-1:0] mchk_err, mchk_txn;
     wire [32*NS-1:0] schk_err, schk_txn;
 
@@ -448,7 +469,7 @@ module sb_line4_tb;
     task j_write;
         input [AW-1:0] a;
         begin
-            @(negedge clk_ctrl); #TS;
+            @(negedge jclk); #TS;
             awid[0] = 4'd1; awaddr[0] = a; awlen[0] = 8'd0;
             awsize[0] = 3'd2; awvld[0] = 1'b1;
             wdata[0] = a[2] ? {416'd0, pat32(a), 32'd0} : {448'd0, pat32(a)};
@@ -456,17 +477,17 @@ module sb_line4_tb;
             wlast[0] = 1'b1; wvld[0] = 1'b1;
             brdy[0]  = 1'b1;
             #TS;
-            while (!j_awrdy) begin @(negedge clk_ctrl); #TS; end
-            @(negedge clk_ctrl); #TS; awvld[0] = 1'b0;
-            while (!j_wrdy) begin @(negedge clk_ctrl); #TS; end
-            @(negedge clk_ctrl); #TS; wvld[0] = 1'b0;
-            while (!j_bvld) begin @(negedge clk_ctrl); #TS; end
+            while (!j_awrdy) begin @(negedge jclk); #TS; end
+            @(negedge jclk); #TS; awvld[0] = 1'b0;
+            while (!j_wrdy) begin @(negedge jclk); #TS; end
+            @(negedge jclk); #TS; wvld[0] = 1'b0;
+            while (!j_bvld) begin @(negedge jclk); #TS; end
             if (j_bresp !== exp_b) begin
                 errors = errors + 1;
                 $display("%0t FAIL jtag write @%h bresp %b exp %b", $time, a,
                          j_bresp, exp_b);
             end
-            @(negedge clk_ctrl); #TS; brdy[0] = 1'b1;
+            @(negedge jclk); #TS; brdy[0] = 1'b1;
         end
     endtask
 
@@ -474,13 +495,13 @@ module sb_line4_tb;
         input [AW-1:0] a;
         input [1:0]    exp_resp;
         begin
-            @(negedge clk_ctrl); #TS;
+            @(negedge jclk); #TS;
             arid[0] = 4'd2; araddr[0] = a; arlen[0] = 8'd0;
             arsize[0] = 3'd2; arvld[0] = 1'b1; rrdy[0] = 1'b1;
             #TS;
-            while (!j_arrdy) begin @(negedge clk_ctrl); #TS; end
-            @(negedge clk_ctrl); #TS; arvld[0] = 1'b0;
-            while (!j_rvld) begin @(negedge clk_ctrl); #TS; end
+            while (!j_arrdy) begin @(negedge jclk); #TS; end
+            @(negedge jclk); #TS; arvld[0] = 1'b0;
+            while (!j_rvld) begin @(negedge jclk); #TS; end
             if (j_rresp !== exp_resp) begin
                 errors = errors + 1;
                 $display("%0t FAIL jtag read @%h rresp %b exp %b", $time, a,
@@ -489,7 +510,7 @@ module sb_line4_tb;
                 chk({480'd0, a[2] ? j_rdata[63:32] : j_rdata[31:0]},
                     {480'd0, pat32(a)}, a);
             end
-            @(negedge clk_ctrl); #TS; rrdy[0] = 1'b1;
+            @(negedge jclk); #TS; rrdy[0] = 1'b1;
         end
     endtask
 
@@ -503,27 +524,27 @@ module sb_line4_tb;
         input [7:0]    len;
         integer b;
         begin
-            @(negedge clk_ctrl); #TS;
+            @(negedge jclk); #TS;
             awid[0] = 4'd5; awaddr[0] = a; awlen[0] = len;
             awsize[0] = 3'd3; awvld[0] = 1'b1; brdy[0] = 1'b1;
             #TS;
-            while (!j_awrdy) begin @(negedge clk_ctrl); #TS; end
-            @(negedge clk_ctrl); #TS; awvld[0] = 1'b0;
+            while (!j_awrdy) begin @(negedge jclk); #TS; end
+            @(negedge jclk); #TS; awvld[0] = 1'b0;
             for (b = 0; b <= len; b = b + 1) begin
                 wdata[0] = {448'd0, pat64(a + b*8)};
                 wstrb[0] = {56'd0, 8'hFF};
                 wlast[0] = (b == len); wvld[0] = 1'b1;
                 #TS;
-                while (!j_wrdy) begin @(negedge clk_ctrl); #TS; end
-                @(negedge clk_ctrl); #TS; wvld[0] = 1'b0;
+                while (!j_wrdy) begin @(negedge jclk); #TS; end
+                @(negedge jclk); #TS; wvld[0] = 1'b0;
             end
-            while (!j_bvld) begin @(negedge clk_ctrl); #TS; end
+            while (!j_bvld) begin @(negedge jclk); #TS; end
             if (j_bresp !== 2'b00) begin
                 errors = errors + 1;
                 $display("%0t FAIL jtag burst write @%h bresp %b", $time, a,
                          j_bresp);
             end
-            @(negedge clk_ctrl); #TS;
+            @(negedge jclk); #TS;
         end
     endtask
 
@@ -532,12 +553,12 @@ module sb_line4_tb;
         input [7:0]    len;
         integer b, spin;
         begin
-            @(negedge clk_ctrl); #TS;
+            @(negedge jclk); #TS;
             arid[0] = 4'd6; araddr[0] = a; arlen[0] = len;
             arsize[0] = 3'd3; arvld[0] = 1'b1; rrdy[0] = 1'b1;
             #TS;
-            while (!j_arrdy) begin @(negedge clk_ctrl); #TS; end
-            @(negedge clk_ctrl); #TS; arvld[0] = 1'b0;
+            while (!j_arrdy) begin @(negedge jclk); #TS; end
+            @(negedge jclk); #TS; arvld[0] = 1'b0;
             b = 0; spin = 0;
             while (b <= len && spin < 20000) begin
                 if (j_rvld) begin
@@ -550,7 +571,7 @@ module sb_line4_tb;
                     b = b + 1;
                 end
                 spin = spin + 1;
-                @(negedge clk_ctrl); #TS;
+                @(negedge jclk); #TS;
             end
             if (b <= len) begin
                 errors = errors + 1;

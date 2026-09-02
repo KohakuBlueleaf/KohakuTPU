@@ -824,7 +824,7 @@ builds four, which only a line with masters on both sides of a boundary needs.
 
 Wire counts here are **derived**, not placed. Each direction carries `W`
 payload bits plus one `valid`, and one credit bit returns, so a stream costs
-`W+2`. From `src/kohakuaccel/axi/topo/sb_line4.v:140-141`:
+`W+2`. From `src/kohakuaccel/axi/topo/sb_line4.v:162-163`:
 
 ```
 RQW = 2*STNW + PORTW + SRCW + TAGW + 3 + AW + 8 + 3 + FW + FW/8
@@ -1064,9 +1064,10 @@ changes the shims:
   accumulator each write one lane, selected by an equality per lane; −190 LUT
   on the JTAG manager, −45 on XDMA, relative to `pk_d[lane*MW +: MW] <=`.
 
-Two knobs exist for configurations the ship does not have: `SAME_CLK` on either
-shim replaces its asynchronous request and response queues with synchronous
-FIFOs when the port is on the station's fabric clock (no ship port is), and
+Two more knobs: `SAME_CLK` on either shim replaces its asynchronous request
+and response queues with synchronous FIFOs when the port is on the station's
+fabric clock — the one-system-clock card takes it on the JTAG manager through
+`MGR0_DOM=1`, no other ship port qualifies — and
 `SINGLE_BEAT` on `sb_nsu` — `NSB` at the line level — replaces a subordinate's
 three depth-16 channel queues with one-entry skids and folds the slice walk to
 constants when the port only ever sees single beats: **−318 LUT per port**,
@@ -1086,15 +1087,58 @@ credits ≥ 2 · pipeline_depth_each_way + margin
 
 ### Clock crossing lives in the link
 
-Each station runs its own fabric clock; a shared clock over four SLRs couples
-every station to the worst one, and the SLL hop alone is 0.755 ns. So every
-inter-station link is also a clock crossing, and `sb_link_cdc` contains it:
+`LINK_CDC` picks one of two link shapes, and both ship.
+
+**`LINK_CDC=1`: each station runs its own fabric clock.** A shared clock over
+four SLRs couples every station to the worst one, and the SLL hop alone is
+0.755 ns. So every inter-station link is also a clock crossing, and
+`sb_link_cdc` contains it:
 
 | | |
 |---|---|
 | data | `async_fifo`, wr = sender clock, rd = receiver clock |
 | credit return | **gray-coded pop counter**, 2-FF synchronised back |
 | block design sees | one clock per station. No CDC block, no clock converter |
+
+**`LINK_CDC=0`: the four bus clocks are one net.** The link is `sb_link`, a
+credited register pipe of `PIPE` stages each way whose registers are the die
+crossing, clocked and reset from the sending station. The clock is one net,
+but a reset that spans four dies is not: the block design delivers it as one
+registered copy per die (`xcvu13p_rst_tree`), and every link end takes its own
+station's copy — never station 0's from across the device. This is the shape
+where a manager can share the bus clock (`MGR0_DOM`, below) and lose its
+crossing altogether.
+
+The two shapes, one synthesis each at the deployed line (`NQ=4`, `FW=256`,
+`AW=43`, `LINK_FULL=0`, block-RAM FIFOs, NMU knobs at their defaults, bus
+asked at 200 MHz; `scripts/tcl/ooc_line4_sysclk.tcl`):
+
+| | `LINK_CDC=1`, JTAG on ctrl | `LINK_CDC=0`, `MGR0_DOM=1` |
+|---|---|---|
+| CLB LUTs (logic + LUTRAM) | 26,355 (22,901 + 3,454) | **25,760** (22,314 + 3,446) |
+| FF | 44,264 | 43,102 |
+| BRAM tiles | 90.5 | 90.5 |
+| control sets | 1,154 | 1,129 |
+| three link pairs, LUT / FF | 1,641 / 12,164 (299 + 248 per pair) | 1,293 / 11,486 (241 + 190) |
+| JTAG NMU, LUT / FF | 2,265 / 1,596 | 2,000 / 1,112 |
+| `bus_clk1` (the manager station) | 379.9 MHz, +2.368 ns | 299.8 MHz, +1.664 ns |
+| every other clock | 299.8–400.0 MHz | 299.8–400.0 MHz |
+
+The one-clock line is 595 LUT and 1,162 flip-flops smaller: 348 LUT of it is
+the links' gray counters and synchronisers, 265 the JTAG NMU's asynchronous
+queues. The manager station's clock loses 80 MHz of margin because that
+NMU's queue paths now belong to the bus domain; at 1.5× the 200 MHz ask it is
+not the binding clock of the card.
+
+**Routed in the card image** (`multimesh_v8t2` impl_1, 2026-09-01): stations
+0–3 place at 3,849 / 8,773 / 4,331 / 3,850 LUT, the six links together 1,843
+LUT / 11,494 FF; 1,881 die-crossing nets belong to `u_line` (the register-pipe
+links, each end pinned by its reset copy). The bus clock's routed worst path
+is the JTAG manager's write into station 1's NMU request queue — **−0.527 ns
+at the 5.000 ns ask** (181 MHz), 10 logic levels, zero die crossings — and no
+bus-clock path appears among the image's 200 worst (all on the sysnode
+clock). The prediction above held: the shared-clock NMU write is the binding
+bus path, and it binds the bus, not the card.
 
 The credit return must be a gray counter, not a pulse. Pops occur in the far
 clock and can outpace a slower near clock; a pulse synchroniser drops them and
@@ -1151,7 +1195,8 @@ individually. At 820 it declines BRAM everywhere on its own.
 | `STORE_FWD` | packet-complete token | dropping it is `MIN_AREA`'s speed-for-size trade |
 | `FW` | flit width | 512 → 256 takes the 3x9 station 15,780 → 12,398 LUTs, the line 30,785 → 22,106 |
 | `MAX_BURST` | longest burst a port may issue | sets the response-FIFO floor; 1 on a Lite port |
-| `SAME_CLK` | per shim: the port clock **is** the fabric clock, so the request/response queues are synchronous FIFOs | no gray pointers or synchronisers on that port; no ship port qualifies |
+| `SAME_CLK` | per shim: the port clock **is** the fabric clock, so the request/response queues are synchronous FIFOs | no gray pointers or synchronisers on that port |
+| `MGR0_DOM` | line level: 0 puts manager 0 (the JTAG master) on `clk_ctrl` and crosses inside its NMU; 1 puts it on station 1's bus clock with `SAME_CLK` on that NMU | the one-system-clock card's shape: JTAG and the four stations share one fixed 200 MHz clock and the JTAG NMU has no crossing |
 | `SINGLE_BEAT` / `NSB` | per subordinate shim: every request is one beat, so the channel queues are skids and the slice walk is constant | **−318 LUT per port**; a bursting port must not declare it |
 
 ### What a drop-in replacement fixes, and what is left to choose
@@ -1287,8 +1332,8 @@ Everything private to a shim is per-station.
 | `STORE_FWD` | **per-station** | private to that station's master shims |
 | `TIMEOUT` | **per-station** | private to the slave shim |
 | `LUT_PER_BRAM` | **per-station, per-FIFO** | only picks a storage primitive |
-| `REQ_DEPTH`, `RSP_DEPTH` | **per-shim** | buffer sizing, clamped to a legal floor |
-| `MAX_BURST` | **per-shim** | what that port may issue; sets the floor above |
+| `REQ_DEPTH`, `RSP_DEPTH` | **per-shim** | buffer sizing, clamped to a legal floor; on `sb_line4` the managers' are `MREQ0..2` / `MRSP0..2` |
+| `MAX_BURST` | **per-shim** | what that port may issue; sets the floor above; on `sb_line4` the managers' are `MMAXB0..2` |
 | `CRED`, `PIPE` | **per-link** | one `sb_link_cdc` owns both ends |
 | fabric clock | **per-station** | the link contains the crossing |
 
@@ -1345,13 +1390,14 @@ storage settings. `NARROW` is the `FW=256` row of §2.2.
 | | |
 |---|---|
 | topology | line, 4 stations, one per SLR, no root |
-| masters | 3, all on station 1: jtag 64-bit AXI4 @100 MHz, XDMA 512-bit @250 MHz, XDMA-Lite 32-bit @250 MHz |
+| masters | 3, all on station 1: jtag 64-bit AXI4, XDMA 512-bit @250 MHz, XDMA-Lite 32-bit @250 MHz |
 | slaves | 4 per station: mesh `S_AXI_MEM` 256-bit, mesh CTRL 32-bit, DDR ctrl 32-bit, clk_wiz 32-bit |
 | **no** GPIO endpoint | the interlink status port it existed for is not needed |
 | address width | 43 — mesh MEM sits at `(id+1)<<40`, control windows below 4 GB |
 | flit width | 256: it meets the widest slave exactly, and the 512-bit master splits 2:1 |
 | protocol | AXI4 full throughout; 32-bit ports are AXI4-Lite-compatible single-beat |
-| clocks | one fabric clock per station, plus ctrl 100 MHz, xdma 250 MHz, a mesh clock per SLR, one DDR clock |
+| clocks, per-die card (`multimesh_v7`) | one fabric clock per station (`LINK_CDC=1`), jtag on ctrl 100 MHz, xdma 250 MHz, the sysnode clock on ports 0/1, each die's MIG clock on port 2 |
+| clocks, one-system-clock card (`multimesh_v8t2`) | ONE fixed 200 MHz system clock for the four stations and the jtag master (`LINK_CDC=0`, `MGR0_DOM=1`), ctrl 100 MHz on port 3, xdma 250 MHz, the sysnode clock on ports 0/1, each die's MIG clock on port 2 |
 | address map | station at bit `AW-4`, endpoint at bit 16 — one 64K window each |
 
 The widest slave is 256 bits, not 512: `ktpu_ship_*.v` declares `S_AXI_MEM` at
@@ -1379,7 +1425,11 @@ gen_station_wrap.py --kind line4 --nq 4 --fw 256 --mgr-w 64,512,32 \
 `--mgr-w` lists the manager widths in station-1 port order, `--mgr-lite` /
 `--loc-lite` declare which manager and which per-station subordinate ports
 are AXI4-Lite, and the same script emits `root`, `leaf`, `link` and `line4`
-kinds. Regenerate rather than edit: the file states this in its first line.
+kinds. `--mgr0-bus` emits the one-system-clock wrapper, `sb_bd_line4_jbus`
+(`src/kohakuaccel/axi/bd/sb_bd_line4_jbus.v`): `MGR0_DOM` defaults to 1 and
+`S00_AXI` is associated with `bus_clk1` instead of `clk_ctrl`, so the block
+design's clock inference follows the jtag master onto the bus clock.
+Regenerate rather than edit: the file states this in its first line.
 
 ## 5. Cost model
 
@@ -1432,18 +1482,18 @@ port.
 | unbounded | sized to the width's bound, oversized | correct, wasteful |
 | **unbounded** | **shallow** | **wedges** — a packet longer than the queue never completes |
 
-`src/kohakuaccel/axi/topo/sb_line4.v:342` takes the first row for the Lite
+`src/kohakuaccel/axi/topo/sb_line4.v:369` takes the first row for the Lite
 manager (`MAX_BURST=1`, depth 16) and the second for the others (depth 256,
 AXI4's maximum `AxLEN + 1`).
 
 **The failure behind this rule is silicon, not a bench assertion.**
-`src/kohakuaccel/axi/topo/sb_line4.v:331-332` records it: *"16-deep FIFOs wedged
+`src/kohakuaccel/axi/topo/sb_line4.v:355-356` records it: *"16-deep FIFOs wedged
 every burst over 16 beats on v6.5 hardware."* A request queue shallower than a
 legal burst does not overflow and does not error — earlier packets always drain
 on their token, and an incomplete one has no token yet, so the port simply stops.
 
 **What going deep costs**, attributed to
-`src/kohakuaccel/axi/topo/sb_line4.v:337-341`'s inline comment and **not** to any
+`src/kohakuaccel/axi/topo/sb_line4.v:364-368`'s inline comment and **not** to any
 report or sweep in §2: **+71 LUT at a 64-bit port, +88 at 512-bit, and +0 BRAM.**
 The block-RAM figure is the useful one — a RAMB36 row is 512 deep, so a depth-64
 queue was already paying for rows it never used, and raising it to 256 fills them
@@ -1550,7 +1600,7 @@ reason is given rather than the preference.
 | `AW` | **43** | Forced: mesh MEM sits at `(id+1)<<40`. Costs 3.6% over 32 bits (21,345 → 22,106). |
 | bus clock | **200 MHz** | Meets the bandwidth above. OOC binding clock is `bus_clk1` at 357.9 MHz, 1.79× the target, and the routed design in §2.9 meets every constraint. Area is flat from 150 to 300 MHz (0.3%), so the constraint is free anywhere in that range and there is headroom to raise it later without paying for it. |
 | `LINK_FULL` | **0** | Not a saving — a declaration. Every master sits on station 1, so each boundary needs one REQ stream and one RSP stream, which is what 0 builds. 1 builds four streams and is only correct if masters sit on both sides of a boundary. |
-| `LINK_CDC` | **1** | Each die gets its own fabric clock, which is the point — a shared clock couples every station to the worst one, and the SLL hop alone is 0.755 ns. |
+| `LINK_CDC` | **1** on the per-die card, **0** on the one-system-clock card | At 1 each die gets its own fabric clock — a shared clock couples every station to the worst one, and the SLL hop alone is 0.755 ns. At 0 the four stations and the jtag master stand on one fixed 200 MHz clock, the links are register pipes, each end on its die's copy of the reset, and the jtag NMU loses its crossing (`MGR0_DOM=1`): 595 LUT and 1,162 FF less at the deployed line, `bus_clk1` 379.9 → 299.8 MHz against a 200 MHz ask (§3, *Clock crossing lives in the link*). |
 | `OST` / `STORE_FWD` | **`BALANCED`** | The whole outstanding range spans 4.3% (30,512 → 31,838). Not a lever; take the middle. |
 | `LUT_PER_BRAM` | **820**, i.e. no block RAM | Block RAM saves 5,804 LUTs for 130.5 tiles — 44 LUTs per tile, against the ~820 a tile is worth on this device. Per station, so a die with spare block RAM may choose otherwise. |
 | `MAX_BURST` | **1** on the 32-bit ports | Single-beat is a protocol guarantee on `M_AXI_LITE`. Declaring it keeps their response FIFOs at depth 16 instead of the 256 the 4 KB rule would demand. |

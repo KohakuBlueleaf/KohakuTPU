@@ -1,4 +1,5 @@
 kohakuaccel/axi/bd/sb_bd_leaf.v
+kohakuaccel/axi/bd/sb_bd_line4_jbus.v
 kohakuaccel/axi/bd/sb_bd_link.v
 kohakuaccel/axi/bd/sb_bd_root.v
 kohakuaccel/axi/bd/sb_v6_bus.v

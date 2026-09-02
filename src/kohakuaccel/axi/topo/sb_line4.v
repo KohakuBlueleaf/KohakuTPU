@@ -70,10 +70,20 @@ module sb_line4 #(
     // never JTAG/xdma, which pack to the mesh. Both preserve 256-burst.
     parameter integer MOST0 = 0, MOST1 = 0, MOST2 = 0,
     parameter integer MPLC0 = 0, MPLC1 = 0, MPLC2 = 0,
+    // Per-manager queue depths and burst bound (sb_nmu REQ_DEPTH, RSP_DEPTH,
+    // MAX_BURST). sb_nmu raises a depth to its floor -- one MAX_BURST packet,
+    // x SUB for RSP -- so a value under the floor is the floor, never a wedge.
+    // 256 rows only fill a block-RAM column; in LUTRAM the depth is the cost.
+    parameter integer MREQ0 = 256, MREQ1 = 256, MREQ2 = 16,
+    parameter integer MRSP0 = 256, MRSP1 = 256, MRSP2 = 16,
+    parameter integer MMAXB0 = 0, MMAXB1 = 0, MMAXB2 = 1,
     // 1: the 32-bit (i>0) subordinate ports are single-beat config ports --
     // sb_nsu SINGLE_BEAT (skid channel queues, folded slice walk). Only for
     // ports proven single-transaction; a burst to one hangs it.
-    parameter integer NSB = 0
+    parameter integer NSB = 0,
+    // Manager 0 (JTAG)'s AXI clock: 0 clk_ctrl, crossed inside the NMU; 1 the
+    // manager station's bus clock, with sb_nmu SAME_CLK (synchronous queues).
+    parameter integer MGR0_DOM = 0
 )(
     input  wire bus_clk0,   input wire bus_rst0,
     input  wire bus_clk1,   input wire bus_rst1,
@@ -344,30 +354,30 @@ module sb_line4 #(
         // ---- managers: real NMUs on station 1, tied off elsewhere ---------
         if (s == 1) begin : g_mgr
             wire [31:0] dc [0:NM-1];
+            wire m0_clk  = MGR0_DOM ? bclk[s]  : clk_ctrl;
+            wire m0_rstn = MGR0_DOM ? !brst[s] : aresetn_ctrl;
             for (i = 0; i < NM; i = i + 1) begin : g_nmu
                 // Manager 0 (JTAG) is 64-bit: the driver's word. 16-deep
                 // FIFOs wedged every burst over 16 beats on v6.5 hardware.
                 localparam integer MW = (i == 1) ? 512 : ((i == 0) ? 64 : 32);
                 localparam integer M_OST = (i == 0) ? MOST0 : (i == 1) ? MOST1 : (i == 2) ? MOST2 : 0;
                 localparam integer M_PLC = (i == 0) ? MPLC0 : (i == 1) ? MPLC1 : (i == 2) ? MPLC2 : 0;
+                localparam integer M_REQ = (i == 0) ? MREQ0 : (i == 1) ? MREQ1 : (i == 2) ? MREQ2 : 16;
+                localparam integer M_RSP = (i == 0) ? MRSP0 : (i == 1) ? MRSP1 : (i == 2) ? MRSP2 : 16;
+                localparam integer M_MXB = (i == 0) ? MMAXB0 : (i == 1) ? MMAXB1 : (i == 2) ? MMAXB2 : 1;
                 sb_nmu #(.MW(MW), .MIDW(MAXID), .AW(AW), .FW(FW), .TAGW(TAGW),
                          .DSTW(DPW), .LUT_PER_BRAM(S_LPB),
                          .OUTST(M_OST), .FORCE_PLACE(M_PLC),
                          .STORE_FWD(S_SFW), .NSEG(NSEG),
-                         // 256 = AXI4's max AxLEN + 1, and sb_nmu's rule is
-                         // REQ_DEPTH >= that or a longer packet wedges. Costs
-                         // +71 LUT at MW=64, +88 at MW=512, +0 BRAM measured:
-                         // a RAMB36 row is 512 deep, so depth 64 was paying
-                         // for rows it never used. Manager 2 is MAX_BURST=1.
-                         .REQ_DEPTH((i == 2) ? 16 : 256),
-                         .RSP_DEPTH((i == 2) ? 16 : 256),
-                         // Manager 2 stays a single-beat control port.
-                         .MAX_BURST((i == 2) ? 1 : 0),
+                         .REQ_DEPTH(M_REQ),
+                         .RSP_DEPTH(M_RSP),
+                         .MAX_BURST(M_MXB),
+                         .SAME_CLK((i == 0) ? MGR0_DOM : 0),
                          .SEG_BASE(L_BASE), .SEG_MASK(L_MASK),
                          .SEG_XLT(L_XLT), .SEG_DST(L_STN),
                          .SEG_DPORT(L_PRT), .SEG_VLD(L_VLD)) u_nmu (
-                    .s_aclk((i == 0) ? clk_ctrl : clk_xdma),
-                    .s_aresetn((i == 0) ? aresetn_ctrl : aresetn_xdma),
+                    .s_aclk((i == 0) ? m0_clk : clk_xdma),
+                    .s_aresetn((i == 0) ? m0_rstn : aresetn_xdma),
                     .s_awid(mp_awid[i*MAXID +: MAXID]),
                     .s_awaddr(mp_awaddr[i*AW +: AW]),
                     .s_awlen(mp_awlen[i*8 +: 8]),

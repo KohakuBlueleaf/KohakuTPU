@@ -561,12 +561,14 @@ endmodule
 """
 
 
-def emit_line4(name, mgr_w, nq, fw, mgr_lite=(), loc_lite=()):
+def emit_line4(name, mgr_w, nq, fw, mgr_lite=(), loc_lite=(), mgr0_bus=False):
     """Wrap sb_line4 so a block design can infer its interfaces.
 
     `mgr_w` is the manager widths (station 1 holds them all); `nq` endpoints per
     station, port 0 at `fw` bits and the rest 32. Emits 3 slaves and 4*nq
     masters plus the clocks, and instantiates sb_line4 on packed buses.
+    `mgr0_bus` puts manager 0 (jtag) on station 1's bus clock: MGR0_DOM
+    defaults to 1 and S00 is associated with bus_clk1 instead of clk_ctrl.
     """
     nm, ns = len(mgr_w), 4 * nq
     portw = max(1, (nq - 1).bit_length()) if nq > 1 else 1
@@ -599,9 +601,14 @@ def emit_line4(name, mgr_w, nq, fw, mgr_lite=(), loc_lite=()):
 
     # Each station's endpoints belong to its own local clock; port 2 is DDR and
     # ports 3+ are ctrl, matching sb_line4's port_dom().
+    def bus_assoc(s):
+        if mgr0_bus and s == 1:
+            return f"ASSOCIATED_BUSIF {s_names[0]}, ASSOCIATED_RESET bus_rst{s}"
+        return f"ASSOCIATED_RESET bus_rst{s}"
+
     bus_clks = "\n".join(
         f'    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 bus_clk{s} CLK" *)\n'
-        f'    (* X_INTERFACE_PARAMETER = "ASSOCIATED_RESET bus_rst{s}" *)\n'
+        f'    (* X_INTERFACE_PARAMETER = "{bus_assoc(s)}" *)\n'
         f"    input  wire bus_clk{s},\n"
         f'    (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 bus_rst{s} RST" *)\n'
         f'    (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_HIGH" *)\n'
@@ -625,6 +632,7 @@ def emit_line4(name, mgr_w, nq, fw, mgr_lite=(), loc_lite=()):
     )
 
     ctl_busif = mbusif(lambda k: k % nq >= 3)
+    ctl_assoc = ctl_busif if mgr0_bus else f"{s_names[0]}:{ctl_busif}"
     # Port 2 per station, not one shared clk_ddr: each SLR's DDR4 controller
     # runs on its own ui_clk, and one clock here forces a crossing IP.
     ddr_clks = "\n".join(
@@ -658,6 +666,8 @@ module {name} #(
     parameter integer LINK_FULL    = 0,
     parameter integer CRED         = 16,
     parameter integer PIPE         = 4,
+    parameter integer LINK_KTS     = 0,
+    parameter integer MGR0_DOM     = {1 if mgr0_bus else 0},
     // Per-station overrides; each defaults to the line-wide value above.
     parameter integer OST0 = OST, OST1 = OST, OST2 = OST, OST3 = OST,
     parameter integer SFW0 = STORE_FWD, SFW1 = STORE_FWD,
@@ -666,6 +676,10 @@ module {name} #(
     parameter integer LPB2 = LUT_PER_BRAM, LPB3 = LUT_PER_BRAM,
     parameter integer TMO0 = TIMEOUT, TMO1 = TIMEOUT,
     parameter integer TMO2 = TIMEOUT, TMO3 = TIMEOUT,
+    // Per-manager queue depths and burst bound (sb_line4 MREQ/MRSP/MMAXB).
+    parameter integer MREQ0 = 256, MREQ1 = 256, MREQ2 = 16,
+    parameter integer MRSP0 = 256, MRSP1 = 256, MRSP2 = 16,
+    parameter integer MMAXB0 = 0, MMAXB1 = 0, MMAXB2 = 1,
     // Address map, handed to sb_line4. At 0 its uniform 64 KB map applies,
     // which cannot express the mesh's 1 TB S_AXI_MEM window.
     parameter integer DSTW_P       = {dstw},
@@ -682,7 +696,7 @@ module {name} #(
 {bus_clks}
 
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 clk_ctrl CLK" *)
-    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF {s_names[0]}:{ctl_busif}, ASSOCIATED_RESET aresetn_ctrl" *)
+    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF {ctl_assoc}, ASSOCIATED_RESET aresetn_ctrl" *)
     input  wire clk_ctrl,
     (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 aresetn_ctrl RST" *)
     (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
@@ -742,10 +756,14 @@ module {name} #(
                .STORE_FWD(STORE_FWD), .LUT_PER_BRAM(LUT_PER_BRAM),
                .TIMEOUT(TIMEOUT), .PIPE(PIPE), .CRED(CRED),
                .LINK_CDC(LINK_CDC), .LINK_FULL(LINK_FULL),
+               .LINK_KTS(LINK_KTS), .MGR0_DOM(MGR0_DOM),
                .OST0(OST0), .OST1(OST1), .OST2(OST2), .OST3(OST3),
                .SFW0(SFW0), .SFW1(SFW1), .SFW2(SFW2), .SFW3(SFW3),
                .LPB0(LPB0), .LPB1(LPB1), .LPB2(LPB2), .LPB3(LPB3),
                .TMO0(TMO0), .TMO1(TMO1), .TMO2(TMO2), .TMO3(TMO3),
+               .MREQ0(MREQ0), .MREQ1(MREQ1), .MREQ2(MREQ2),
+               .MRSP0(MRSP0), .MRSP1(MRSP1), .MRSP2(MRSP2),
+               .MMAXB0(MMAXB0), .MMAXB1(MMAXB1), .MMAXB2(MMAXB2),
                .DSTW_P(DSTW_P), .SEG_OVERRIDE(SEG_OVERRIDE),
                .SEG_BASE_P(SEG_BASE_P), .SEG_MASK_P(SEG_MASK_P),
                .SEG_XLT_P(SEG_XLT_P), .SEG_DST_P(SEG_DST_P),
@@ -852,6 +870,8 @@ def main():
     # controller's C0_DDR4_S_AXI_CTRL, which is Lite.
     ap.add_argument("--loc-lite", default="")
     ap.add_argument("--loc-w", default="512,32")
+    # line4 only: manager 0 (jtag) on station 1's bus clock, MGR0_DOM 1.
+    ap.add_argument("--mgr0-bus", action="store_true")
     ap.add_argument("--nk", type=int, default=3)
     ap.add_argument("--aw", type=int, default=40)
     # OST outstanding needs clog2(OST) local id bits, so this cannot go below 2.
@@ -875,7 +895,9 @@ def main():
     loc_lite = {int(x) for x in args.loc_lite.split(",") if x.strip()}
     name = args.module or f"sb_bd_{args.kind}"
     if args.kind == "line4":
-        text = emit_line4(name, mgr_w, args.nq, args.fw, mgr_lite, loc_lite)
+        text = emit_line4(
+            name, mgr_w, args.nq, args.fw, mgr_lite, loc_lite, args.mgr0_bus
+        )
     elif args.kind == "root":
         text = emit_root(name, mgr_w, loc_w, args.nk)
     elif args.kind == "leaf":

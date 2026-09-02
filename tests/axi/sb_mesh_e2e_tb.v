@@ -92,6 +92,22 @@ module sb_mesh_e2e_tb;
     always begin
         #1.667 noc1 = ~noc1;
     end
+// Station-bus LUT_PER_BRAM threshold: 0 keeps every queue on block RAM, 120
+// converts every depth-16 queue to LUTRAM (the v8t5 ship value).
+`ifndef TB_LPB
+`define TB_LPB 0
+`endif
+// The S2 station tier: station 1's own threshold and the xdma manager's
+// queue depths (sb_line4 LPB1 / MREQ1 / MRSP1).
+`ifndef TB_LPB1
+`define TB_LPB1 `TB_LPB
+`endif
+`ifndef TB_MREQ1
+`define TB_MREQ1 256
+`endif
+`ifndef TB_MRSP1
+`define TB_MRSP1 256
+`endif
 `ifndef TB_DRAM_CDC
   `define TB_DRAM_CDC 1
 `endif
@@ -190,7 +206,8 @@ module sb_mesh_e2e_tb;
 
     sb_line4 #(.AW(AW), .FW(FW), .NQ(NQ), .PORTW(PORTW), .NM(NM),
                .MAXW(MAXW), .MAXID(MAXID), .WIDE_DW(FW),
-               .LINK_CDC(1), .LINK_FULL(0), .MGR_STN(1),
+               .LINK_CDC(1), .LINK_FULL(0), .MGR_STN(1), .LUT_PER_BRAM(`TB_LPB),
+               .LPB1(`TB_LPB1), .MREQ1(`TB_MREQ1), .MRSP1(`TB_MRSP1),
                .SEG_OVERRIDE(1), .SEG_BASE_P(SEG_BASE), .SEG_MASK_P(SEG_MASK),
                .SEG_XLT_P(SEG_XLT), .SEG_DST_P(SEG_DST),
                .SEG_DPORT_P(SEG_DPORT), .SEG_VLD_P({NS{1'b1}})) u_bus (

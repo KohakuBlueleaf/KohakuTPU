@@ -156,9 +156,10 @@ module sb_nsu #(
         begin bram_tiles = ((w + 71) / 72) * ((d + 511) / 512); end
     endfunction
 
-    localparam A_REQ = (lram_lut(RQW, RQD) > LUT_PER_BRAM * bram_tiles(RQW, RQD)) ? "block" : "distributed";
-    localparam A_RSP = (lram_lut(RSW, RSD) > LUT_PER_BRAM * bram_tiles(RSW, RSD)) ? "block" : "distributed";
-    localparam A_CHN = (lram_lut(WQW, CHD) > LUT_PER_BRAM * bram_tiles(WQW, CHD)) ? "block" : "distributed";
+    // "lean": the same LUTRAM without xpm's two output registers and control block.
+    localparam A_REQ = (lram_lut(RQW, RQD) > LUT_PER_BRAM * bram_tiles(RQW, RQD)) ? "block" : "lean";
+    localparam A_RSP = (lram_lut(RSW, RSD) > LUT_PER_BRAM * bram_tiles(RSW, RSD)) ? "block" : "lean";
+    localparam A_CHN = (lram_lut(WQW, CHD) > LUT_PER_BRAM * bram_tiles(WQW, CHD)) ? "block" : "lean";
 
     localparam REQ_STY = (LUT_PER_BRAM > 0) ? A_REQ : REQ_MEM;
     localparam RSP_STY = (LUT_PER_BRAM > 0) ? A_RSP : RSP_MEM;

@@ -197,15 +197,15 @@ The reason is that a parameter's value at elaboration need not appear anywhere
 as a literal. It can be a ternary chosen per generate index, a macro, a
 `localparam` computed from other parameters, or an expression evaluated at
 elaboration time. Searching for the number then fails while the design carries
-it. From this tree — `src/kohakuaccel/axi/topo/sb_line4.v:342`:
+it. From this tree — `src/kohakuaccel/axi/topo/sb_line4.v:365`:
 
 ```verilog
-.REQ_DEPTH((i == 2) ? 16 : 256),
+localparam integer M_REQ = (i == 0) ? MREQ0 : (i == 1) ? MREQ1 : (i == 2) ? MREQ2 : 16;
 ```
 
-Three of the four line stations elaborate with a request FIFO of 256. A search
-for `REQ_DEPTH(256)` returns nothing, because the digits `256` never sit next to
-the parameter name. **The value is computed, so it is invisible to a string
+Two of the line's three managers elaborate with a request queue of 256. A
+search for `REQ_DEPTH(256)` returns nothing, because the digits `256` never sit
+next to the parameter name. **The value is computed, so it is invisible to a string
 search and present in the silicon.**
 
 > **To establish that a value is absent, read the instantiation. A grep can

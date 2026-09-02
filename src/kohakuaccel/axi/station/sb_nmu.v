@@ -188,8 +188,9 @@ module sb_nmu #(
         begin bram_tiles = ((w + 71) / 72) * ((d + 511) / 512); end
     endfunction
 
-    localparam AUTO_REQ = (lram_lut(REQ_W, RQD) > LUT_PER_BRAM * bram_tiles(REQ_W, RQD)) ? "block" : "distributed";
-    localparam AUTO_RSP = (lram_lut(RSP_W, RSD) > LUT_PER_BRAM * bram_tiles(RSP_W, RSD)) ? "block" : "distributed";
+    // "lean": the same LUTRAM without xpm's two output registers and control block.
+    localparam AUTO_REQ = (lram_lut(REQ_W, RQD) > LUT_PER_BRAM * bram_tiles(REQ_W, RQD)) ? "block" : "lean";
+    localparam AUTO_RSP = (lram_lut(RSP_W, RSD) > LUT_PER_BRAM * bram_tiles(RSP_W, RSD)) ? "block" : "lean";
 
     localparam REQ_STY = (LUT_PER_BRAM > 0) ? AUTO_REQ : REQ_MEM;
     localparam RSP_STY = (LUT_PER_BRAM > 0) ? AUTO_RSP : RSP_MEM;
@@ -490,23 +491,25 @@ module sb_nmu #(
         end
     end
 
+    // The reclaim term returns what a SHORT answer never used (tg_rsv is read
+    // pre-decrement, so a full-length burst reclaims zero). REGISTERED, one
+    // cycle late: the FIFO dout, tag table and decrement stay out of the adders.
+    reg [CW-1:0] reclaim_q;
     always @(posedge s_aclk) begin
         if (srst) begin
             rsp_credit <= RSD[CW-1:0];
+            reclaim_q  <= {CW{1'b0}};
         end
-        // The last term reclaims what a SHORT answer never returned; tg_rsv is
-        // read pre-decrement, so a full-length burst reclaims exactly zero.
         else begin
+            reclaim_q <= (rsp_pop && rsp_last_o)
+                       ? {{(CW-9){1'b0}}, (tg_rsv[rf_tag] - 9'd1)}
+                       : {CW{1'b0}};
             rsp_credit <= (
                 rsp_credit
                 - (ar_go ? {{(CW-9){1'b0}}, ar_beats} : {CW{1'b0}})
                 - ((aw_go && aw_hit) ? {{(CW-1){1'b0}}, 1'b1} : {CW{1'b0}})
                 + (rsp_pop ? {{(CW-1){1'b0}}, 1'b1} : {CW{1'b0}})
-                + (
-                    (rsp_pop && rsp_last_o)
-                    ? {{(CW-9){1'b0}}, (tg_rsv[rf_tag] - 9'd1)}
-                    : {CW{1'b0}}
-                )
+                + reclaim_q
             );
         end
     end

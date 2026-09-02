@@ -15,7 +15,11 @@ module sb_hub #(
     parameter integer STATS = 0,                        // 0 costs nothing
     // 1: register each source input, so the arbiter starts from a flop instead
     // of a combinational path back into a source FIFO (Fmax; costs FF+skid LUT).
-    parameter integer ISKID = 0
+    parameter integer ISKID = 0,
+    // 1: the NSRC:1 payload select is one kept LUT6 a bit (kohaku_mux) shared
+    // by the skid's hold and output registers: a 4-source PW-270 hub is 466
+    // LUT. A 3-source hub packs its 3:1 into the skid's 2:1 at 1.3 a bit.
+    parameter integer PAYMUX = (NSRC >= 4) ? 1 : 0
 )(
     input  wire                clk,
     input  wire                rst,
@@ -118,19 +122,25 @@ module sb_hub #(
     // select. NOT `a_pay[sel*PW +: PW]`: PW is not a power of two, so the
     // variable offset is a multiply and synthesis built a BARREL SHIFTER --
     // measured 5,712 LUT for one hub's skid input against ~370 for this form.
-    reg [DW-1:0] dst_sel;
-    reg [PW-1:0] pay_sel;
-    integer      j;
+    reg  [DW-1:0] dst_sel;
+    wire [PW-1:0] pay_sel;
+    reg  [PW-1:0] pay_inf;
+    integer       j;
     always @(*) begin
         dst_sel = a_dst[0 +: DW];
-        pay_sel = a_pay[0 +: PW];
+        pay_inf = a_pay[0 +: PW];
         for (j = 1; j < NSRC; j = j + 1) begin
             if (sel == j[SW-1:0]) begin
                 dst_sel = a_dst[j*DW +: DW];
-                pay_sel = a_pay[j*PW +: PW];
+                pay_inf = a_pay[j*PW +: PW];
             end
         end
     end
+    generate if (PAYMUX != 0 && NSRC > 1) begin : g_paymux
+        kohaku_mux #(.W(PW), .N(NSRC), .KEEP(1)) u_pm (.d(a_pay), .sel(sel), .o(pay_sel));
+    end else begin : g_payinf
+        assign pay_sel = pay_inf;
+    end endgenerate
 
     // The NSRC:1 select and the skid's 2:1 (hold vs input) are each ~1
     // LUT/bit on the payload; that is the hub's floor. A `keep` on the
