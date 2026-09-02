@@ -95,6 +95,7 @@ foreach lv [lsort -integer [array names lvhist]] { puts $fh [format "%3d levels:
 close $fh
 
 report_utilization -file "$outdir/util.rpt"
+report_utilization -hierarchical -hierarchical_depth 4 -file "$outdir/hier.rpt"
 report_timing_summary -file "$outdir/timing_summary.rpt"
 set wp [get_timing_paths -delay_type max -max_paths 1 -nworst 1]
 set wns [expr {[llength $wp] ? [get_property SLACK [lindex $wp 0]] : 0.0}]
