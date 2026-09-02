@@ -175,6 +175,7 @@ module mag_dram_port #(
     reg  [RLOG-1:0]   rph  [0:N-1];
     reg  [15:0]       rleft[0:N-1];
     reg  [N-1:0]      rleft_z;
+    reg  [N-1:0]      rleft_one;
 
     // Bursts issued and not yet returning. The ACTIVE burst stays in rph/rleft
     // so the return path is the same N:1 mux it always was.
@@ -223,6 +224,31 @@ module mag_dram_port #(
                || (s1_rv && s1_rstg && (s1_rid == g[IDX_W-1:0])));
     end endgenerate
 
+    // The AR split's burst: AMB memory beats.
+    localparam integer      AMB      = (AR_MAX > 0 && AR_MAX < 256) ? AR_MAX : 256;
+    localparam integer      MBLOG    = $clog2(MBYTES);
+    localparam [ADDR_W-1:0] AMB_STEP = AMB << MBLOG;
+
+    // Each requester's memory-beat count off ITS OWN presentation, registered
+    // beside rd_req_r: the pick only muxes it. Adding behind the arbiter's
+    // scan put rr_rd -> ck_left at 14 levels, 3.832 ns.
+    wire [N*17-1:0] q_left_v;
+    wire [N-1:0]    q_last1_v;
+    reg  [N*17-1:0] q_left_r;
+    reg  [N-1:0]    q_last1_r;
+    generate for (g = 0; g < N; g = g + 1) begin : g_beats
+        wire [15:0]     q_ln  = q_len[g*16 +: 16];
+        wire [RLOG-1:0] q_ph  = (R == 1) ? {RLOG{1'b0}}
+                              : q_addr[g*ADDR_W + SBLOG +: RLOG];
+        // ceil((len + 1 + ph) / R) = (len + ph + R) >> RLOG; R 1 bypasses the
+        // shift, RLOG being 1 there.
+        wire [17:0]     q_sum = {2'b00, q_ln} + {{(18-RLOG){1'b0}}, q_ph}
+                              + (18'd1 << RLOG);
+        wire [16:0]     q_lft = (R == 1) ? ({1'b0, q_ln} + 17'd1) : q_sum[17:RLOG];
+        assign q_left_v[g*17 +: 17] = q_lft;
+        assign q_last1_v[g]         = (q_lft <= AMB[16:0]);
+    end endgenerate
+
     wire [N-1:0] rd_req = q_valid & ~q_write & ~rd_busy & ~rd_blk;
     wire [N-1:0] wr_req = q_valid &  q_write;
 
@@ -249,7 +275,13 @@ module mag_dram_port #(
     // arithmetic and ready on one path cost 49 MHz in a 6+2 mesh.
     // A staged read leaves the capture stage into `sq`; a staged write needs
     // only its wsel entry, never the AW queue.
-    wire ck_last;                       // the AR going out is its request's last
+    // The AR split's state is REGISTERED (loaded at the take, stepped at each
+    // AR), so rd_push and q_ready read one flag: the split's arithmetic on the
+    // arbiter's pick was 14 levels into every requester's ready.
+    reg               ck_last;          // the AR going out is its request's last
+    reg               ck_first;         // no AR of this request is out yet
+    reg  [16:0]       ck_left;          // memory beats still to issue
+    reg  [ADDR_W-1:0] ck_addr;          // memory-aligned address of the next AR
     wire rd_push = s1_rv && (s1_rstg ? !sq_v : (!ar_full && ck_last));
     wire wr_push = s1_wv && !wsel_full && (s1_wstg || !aw_full);
     wire rd_take = rd_any && (!s1_rv || rd_push);
@@ -261,6 +293,8 @@ module mag_dram_port #(
     wire [15:0]       sel_wln = q_len [wr_sel*16     +: 16];
 
     always @(posedge s_aclk) begin
+        q_left_r  <= q_left_v;
+        q_last1_r <= q_last1_v;
         if (srst) begin
             rd_req_r <= {N{1'b0}}; wr_req_r <= {N{1'b0}}; wr_gnt <= {N{1'b0}};
             rd_gnt   <= {N{1'b0}};
@@ -303,39 +337,43 @@ module mag_dram_port #(
     wire [RLOG-1:0] rd_ph = (R == 1) ? {RLOG{1'b0}} : rd_addr[SBLOG +: RLOG];
     wire [RLOG-1:0] wr_ph = (R == 1) ? {RLOG{1'b0}} : wr_addr[SBLOG +: RLOG];
 
-    wire [17:0] rd_span = {1'b0, rd_len} + 18'd1 + rd_ph;
     wire [17:0] wr_span = {1'b0, wr_len} + 18'd1 + wr_ph;
     // RLOG is 1 even at R=1, so the divide has to be bypassed rather than
     // trusted: one internal beat is one memory beat there.
-    wire [15:0] rd_mb = (R == 1) ? rd_len
-                       : (rd_span[17:RLOG] + (|rd_span[RLOG-1:0]) - 16'd1);
     wire [15:0] wr_mb = (R == 1) ? wr_len
                        : (wr_span[17:RLOG] + (|wr_span[RLOG-1:0]) - 16'd1);
 
-    wire [ADDR_W-1:0] rd_al = {rd_addr[ADDR_W-1:ALOG], {ALOG{1'b0}}};
     wire [ADDR_W-1:0] wr_al = {wr_addr[ADDR_W-1:ALOG], {ALOG{1'b0}}};
 
-    // The AR split: AMB memory beats a burst, ck_done of the request already
-    // out. The return side is told once, at the first AR, and counts the
-    // request's beats across its bursts; the address stays memory-aligned.
-    localparam integer AMB   = (AR_MAX > 0 && AR_MAX < 256) ? AR_MAX : 256;
-    localparam integer MBLOG = $clog2(MBYTES);
-    reg  [15:0]       ck_done;
-    wire [16:0]       ck_left = {1'b0, rd_mb} + 17'd1 - {1'b0, ck_done};
-    assign            ck_last = (ck_left <= AMB);
-    wire [7:0]        ck_len  = ck_last ? (ck_left[7:0] - 8'd1) : (AMB[7:0] - 8'd1);
-    wire [ADDR_W-1:0] ck_addr = rd_al + ({{(ADDR_W-16){1'b0}}, ck_done} << MBLOG);
+    // The AR split: ck_left of the request still to issue. The return side is
+    // told once, at the first AR, and counts the request's beats across its
+    // bursts; the address stays memory-aligned.
+    wire [16:0]       sel_left  = q_left_r[rd_sel*17 +: 17];
+    wire              sel_last1 = q_last1_r[rd_sel];
+    wire [16:0]       ck_next   = ck_left - AMB[16:0];
+    wire [7:0]        ck_len   = ck_last ? (ck_left[7:0] - 8'd1) : (AMB[7:0] - 8'd1);
 
     // Only a DRAM request reaches AXI; a staged one is pushed elsewhere.
     wire ar_fire = s1_rv && !s1_rstg && !ar_full;
-    wire ar_req  = ar_fire && (ck_done == 16'd0);
+    wire ar_req  = ar_fire && ck_first;
     wire aw_fire = wr_push && !s1_wstg;
     wire sq_fire = rd_push &&  s1_rstg;
     wire ws_fire = wr_push;
 
     always @(posedge s_aclk) begin
-        if (srst || rd_take) begin ck_done <= 16'd0; end
-        else if (ar_fire)    begin ck_done <= ck_last ? 16'd0 : ck_done + AMB[15:0]; end
+        if (srst) begin
+            ck_last <= 1'b0; ck_first <= 1'b0;
+        end else if (rd_take) begin
+            ck_left  <= sel_left;
+            ck_last  <= sel_last1;
+            ck_first <= 1'b1;
+            ck_addr  <= {sel_rad[ADDR_W-1:ALOG], {ALOG{1'b0}}};
+        end else if (ar_fire) begin
+            ck_left  <= ck_next;
+            ck_last  <= (ck_next <= AMB[16:0]);
+            ck_first <= 1'b0;
+            ck_addr  <= ck_addr + AMB_STEP;
+        end
     end
 
     // ================================================== AR / AW crossings
@@ -577,45 +615,70 @@ module mag_dram_port #(
     // Each memory beat becomes up to R internal ones; the over-fetched head
     // and tail are DISCARDED rather than avoided.
     assign m_rready = !rq_full;
+    wire hd_load;                       // the head register takes the queue's word
     generate if (DRAM_CDC) begin : g_rq
         async_fifo #(.DATA_WIDTH(MW+IDX_W), .FIFO_DEPTH(RQ),
                      .MEMORY_TYPE(WR_MEM)) u_f (
             .wr_clk(m_aclk), .wr_rst(mrst), .wr_en(m_rvalid && m_rready),
             .wr_data({m_rdata, m_rid[IDX_W-1:0]}), .wr_full(rq_full),
-            .rd_clk(s_aclk), .rd_en(rq_pop), .rd_data({rq_data, rq_id}),
+            .rd_clk(s_aclk), .rd_en(hd_load), .rd_data({rq_data, rq_id}),
             .rd_empty(rq_empty));
     end else begin : g_rq_s
         sync_fifo #(.DATA_WIDTH(MW+IDX_W), .FIFO_DEPTH(RQ),
                     .MEMORY_TYPE(WR_MEM)) u_f (
             .clk(s_aclk), .rst(srst), .wr_en(m_rvalid && m_rready),
             .wr_data({m_rdata, m_rid[IDX_W-1:0]}), .wr_busy(rq_full), .wr_almost(),
-            .rd_en(rq_pop), .rd_data({rq_data, rq_id}), .rd_busy(rq_empty));
+            .rd_en(hd_load), .rd_data({rq_data, rq_id}), .rd_busy(rq_empty));
     end endgenerate
 
-    wire [RLOG-1:0] cur_ph   = rph[rq_id];
-    wire [15:0]     cur_left = rleft[rq_id];
+    // THE HEAD IS A REGISTER after the queue, refilled as it leaves, so the id
+    // and beat the return side compares are flops: off the block RAM's read
+    // they were 0.78 ns of logic and 2.86 ns of net into the queue's own
+    // enable at the v8t5 route. One cycle on every DRAM return.
+    reg             hd_v;
+    reg [MW-1:0]    hd_data;
+    reg [IDX_W-1:0] hd_id;
+    wire            hd_take;
+    assign hd_load = !rq_empty && (!hd_v || hd_take);
+    always @(posedge s_aclk) begin
+        if (srst) begin
+            hd_v <= 1'b0;
+        end else if (hd_load) begin
+            hd_v <= 1'b1;
+        end else if (hd_take) begin
+            hd_v <= 1'b0;
+        end
+        if (hd_load) begin
+            hd_data <= rq_data;
+            hd_id   <= rq_id;
+        end
+    end
+
+    wire [RLOG-1:0] cur_ph   = rph[hd_id];
+    wire [15:0]     cur_left = rleft[hd_id];
     // THE ONE RETURN BUS. A held staged word drives it ahead of the DRAM head,
     // whose beat waits: the same in-order head-of-line the queue already has.
     wire            stg_emit = sr_hold;
-    wire            r_emit   = !rq_empty && (cur_left != 16'd0) && !stg_emit;
-    wire [SW-1:0]   r_sub    = rq_data[cur_ph*SW +: SW];
+    wire            r_emit   = hd_v && !rleft_z[hd_id] && !stg_emit;
+    wire [SW-1:0]   r_sub    = hd_data[cur_ph*SW +: SW];
     wire [SW-1:0]   r_bus    = stg_emit ? sr_word : r_sub;
-    wire            r_take   = r_emit && ((R_REG != 0) ? stage_free : r_ready[rq_id]);
+    wire            r_take   = r_emit && ((R_REG != 0) ? stage_free : r_ready[hd_id]);
 
-    // COMBINATIONAL, not registered: async_fifo is show-ahead, so a pop one
-    // cycle late re-reads the same beat. The discard of an over-fetched beat
-    // needs no bus and goes on under a staged word.
-    wire rq_pop = (
-        (!rq_empty && cur_left == 16'd0)
-        || (r_take && ((cur_ph == RTOP) || (cur_left == 16'd1)))
+    // The discard of an over-fetched beat needs no bus and goes on under a
+    // staged word. rleft_z / rleft_one are the count's ==0 / ==1 kept as bits
+    // (g_rdq), so no 16-bit compare on the muxed count sits in the take.
+    wire cur_one = rleft_one[hd_id];
+    assign hd_take = (
+        (hd_v && rleft_z[hd_id])
+        || (r_take && ((cur_ph == RTOP) || cur_one))
     );
 
     wire [N-1:0] ri_valid, ri_last;
     generate for (g = 0; g < N; g = g + 1) begin : g_rd
-        wire d_here = r_emit   && (rq_id == g[IDX_W-1:0]);
+        wire d_here = r_emit   && (hd_id == g[IDX_W-1:0]);
         wire s_here = stg_emit && (sr_id == g[IDX_W-1:0]);
         assign ri_valid[g] = d_here || s_here;
-        assign ri_last[g]  = (d_here && (cur_left == 16'd1)) || (s_here && !sr_nz);
+        assign ri_last[g]  = (d_here && cur_one) || (s_here && !sr_nz);
     end endgenerate
 
     // A take moves the beat INTO the register; it drains when its requester is
@@ -655,13 +718,13 @@ module mag_dram_port #(
 
     // A burst ENDS on its last internal beat, and the next must become active
     // in the SAME cycle or a bubble opens between back-to-back returns.
-    wire r_fin = r_take && (cur_left == 16'd1);
+    wire r_fin = r_take && cur_one;
 
     integer kp;
     generate for (g = 0; g < N; g = g + 1) begin : g_rdq
         wire mine_ar  = ar_req  && (s1_rid == g[IDX_W-1:0]);
-        wire mine_tk  = r_take  && (rq_id  == g[IDX_W-1:0]);
-        wire mine_fin = r_fin   && (rq_id  == g[IDX_W-1:0]);
+        wire mine_tk  = r_take  && (hd_id  == g[IDX_W-1:0]);
+        wire mine_fin = r_fin   && (hd_id  == g[IDX_W-1:0]);
         // A staged read ends on the take of its last word; it never touched
         // rleft/rph, only the count.
         wire mine_sfn = sr_fin  && (sr_id  == g[IDX_W-1:0]);
@@ -681,7 +744,7 @@ module mag_dram_port #(
 
         always @(posedge s_aclk) begin
             if (srst) begin
-                rleft[g] <= 16'd0; rleft_z[g] <= 1'b1;
+                rleft[g] <= 16'd0; rleft_z[g] <= 1'b1; rleft_one[g] <= 1'b0;
                 rph[g] <= {RLOG{1'b0}};
                 phd[g] <= {PPW{1'b0}}; ptl[g] <= {PPW{1'b0}};
                 pn[g] <= {RCW{1'b0}}; rd_cnt[g] <= {RCW{1'b0}};
@@ -705,6 +768,20 @@ module mag_dram_port #(
                 end
                 else if (mine_tk) begin
                     rleft_z[g] <= 1'b0;
+                end
+                // rleft_one tracks rleft[g]==1 the same way: loads compare the
+                // length, a take compares the count, a finish clears.
+                if (do_pop) begin
+                    rleft_one[g] <= (plen[g][phd[g]] == 16'd0);
+                end
+                else if (do_direct) begin
+                    rleft_one[g] <= (rd_len == 16'd0);
+                end
+                else if (mine_fin) begin
+                    rleft_one[g] <= 1'b0;
+                end
+                else if (mine_tk) begin
+                    rleft_one[g] <= (cur_left == 16'd2);
                 end
 
                 if (do_pop) begin
