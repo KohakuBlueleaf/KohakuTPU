@@ -30,6 +30,9 @@ module rv64_sys_pe #(
     // The core's own register file; `distributed` measured 329.8 MHz against
     // `block`'s 264.1 for 5 LUT.
     parameter         RF_PRIM    = "distributed",
+    // Fetch stages between the PC and decode (rv64_core FETCH_LAT): 2 keeps
+    // the instruction RAM's output register in front of decode.
+    parameter integer FETCH_LAT  = 2,
     parameter [63:0]  SPAD_BASE  = 64'h0000_0000_0001_0000,
     parameter [63:0]  CTRL_BASE  = 64'h0000_0000_0002_0000
 )(
@@ -217,14 +220,17 @@ module rv64_sys_pe #(
     wire [31:0]    imem_wd   = cd_imem_w ? wp_data[31:0] : gw_imem_d;
 
     // CASCADE 1: a four-deep RAMB36 chain is 1.939 ns from clock to data,
-    // ahead of decode's first LUT in a 3.333 ns period
+    // ahead of decode's first LUT in a 3.333 ns period; at FETCH_LAT 2 the
+    // block's output register takes that, enabled by the core's advance.
+    wire fetch_adv_c;
     kohaku_sdpram #(
-        .WIDTH(32), .DEPTH(IMEM_WORDS), .MEM_PRIM(MEM_PRIM), .READ_LAT(1),
-        .CASCADE(1)
+        .WIDTH(32), .DEPTH(IMEM_WORDS), .MEM_PRIM(MEM_PRIM),
+        .READ_LAT(FETCH_LAT), .CASCADE(1), .REG_CE(1)
     ) u_imem (
         .clk(clk),
         .wr_en(imem_we), .wr_addr(imem_wa_w), .wr_data(imem_wd),
-        .rd_en(1'b1), .rd_addr(imem_addr_c[IAW+1:2]), .rd_data(imem_data_c)
+        .rd_en((FETCH_LAT == 2) ? fetch_adv_c : 1'b1),
+        .rd_addr(imem_addr_c[IAW+1:2]), .rd_data(imem_data_c)
     );
 
     wire [63:0] dmem_addr_c, dmem_wdata_c, dmem_rdata_c;
@@ -390,10 +396,11 @@ module rv64_sys_pe #(
     end
 
     rv64_core #(
-        .RESET_PC(64'd0), .MEM_PRIM(RF_PRIM)
+        .RESET_PC(64'd0), .MEM_PRIM(RF_PRIM), .FETCH_LAT(FETCH_LAT)
     ) u_core (
         .clk(clk), .resetn(core_rstn),
         .imem_addr(imem_addr_c), .imem_data(imem_data_c),
+        .fetch_adv(fetch_adv_c),
         .dmem_addr(dmem_addr_c), .dmem_wdata(dmem_wdata_c),
         .dmem_wstrb(dmem_wstrb_c), .dmem_re(dmem_re_c),
         .dmem_rdata(dmem_rdata_c), .dmem_stall(1'b0),

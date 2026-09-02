@@ -37,7 +37,10 @@ module kohaku_sdpram #(
     // xpm passthroughs. CASCADE_HEIGHT 0 = the tool's choice (8 for URAM,
     // UG901 p.122); 1 = no chain, a fabric mux over single blocks.
     parameter integer CASCADE  = 0,
-    parameter         WR_MODE  = "read_first"   // "read_first"|"no_change"|"write_first"
+    parameter         WR_MODE  = "read_first",  // "read_first"|"no_change"|"write_first"
+    // 1: the READ_LAT 2 output register advances with rd_en, so a reader that
+    // holds rd_en low keeps BOTH stages: a two-deep fetch pipe inside the RAM.
+    parameter integer REG_CE   = 0
 )(
     input  wire                     clk,
 
@@ -81,7 +84,7 @@ module kohaku_sdpram #(
         .addrb(rd_addr),
         .doutb(rd_data),
         .rstb(1'b0),
-        .regceb(1'b1),
+        .regceb((REG_CE != 0) ? rd_en : 1'b1),
 
         .injectsbiterra(1'b0), .injectdbiterra(1'b0),
         .sbiterrb(), .dbiterrb(),

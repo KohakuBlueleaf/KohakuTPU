@@ -550,7 +550,8 @@ probing it to discover the privilege set works
 **Interrupt latency is bounded below by a divide.** A multi-cycle operation that
 has started must finish before a trap can be taken, so 66 cycles is the floor on
 the worst case, and an interrupt is additionally deferred past any load, store or
-AMO.
+AMO. Both interrupt lines land in a register at the core's edge, one cycle
+before the CSR sees them; the lines are levels, so nothing is lost to it.
 
 ## Running one
 

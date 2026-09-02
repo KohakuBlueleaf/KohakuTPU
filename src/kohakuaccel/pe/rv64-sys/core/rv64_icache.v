@@ -12,14 +12,19 @@
 module rv64_icache #(
     parameter integer LINES    = 4,           // fully-associative line buffers
     parameter integer ADDR_W   = 40,
-    parameter         MEM_PRIM = "block"       // interface symmetry; unused here
+    parameter         MEM_PRIM = "block",      // interface symmetry; unused here
+    // 2: the word is two registers behind the address and both advance only
+    // on `adv`, the core's fetch advance -- the shape of the instruction RAM's
+    // READ_LAT 2 with REG_CE. 1: one register, reloaded every cycle.
+    parameter integer LAT      = 1
 )(
     input  wire                clk,
     input  wire                resetn,
 
     input  wire [ADDR_W-1:0]   fetch_pa,       // physical fetch address
     input  wire                en,             // fetch is in the cached range
-    output wire [31:0]         idata,          // instruction, one cycle after a hit
+    input  wire                adv,            // the fetch pipe advances (LAT 2)
+    output wire [31:0]         idata,          // instruction, LAT cycles after a hit
     output wire                stall,           // hold fetch on a miss or fill settle
 
     input  wire                inval,          // FENCE.I: drop every line
@@ -53,16 +58,22 @@ module rv64_icache #(
 
     // A hit answers next cycle: the array-to-register path ends at idata_r, and
     // idata_r -> decode is a fresh register, so neither runs long into the core.
-    reg [31:0] idata_r;
+    reg [31:0] idata_r, idata_rr;
+    wire       ld_r = (LAT == 2) ? adv : 1'b1;
     always @(posedge clk) begin
-        idata_r <= 32'd0;
-        for (i = 0; i < LINES; i = i + 1) begin
-            if (cvld[i] && (ctag[i] == f_line)) begin
-                idata_r <= cdata[i][{fetch_pa[4:2], 5'd0} +: 32];
+        if (ld_r) begin
+            idata_r <= 32'd0;
+            for (i = 0; i < LINES; i = i + 1) begin
+                if (cvld[i] && (ctag[i] == f_line)) begin
+                    idata_r <= cdata[i][{fetch_pa[4:2], 5'd0} +: 32];
+                end
             end
         end
+        if (adv) begin
+            idata_rr <= idata_r;
+        end
     end
-    assign idata = idata_r;
+    assign idata = (LAT == 2) ? idata_rr : idata_r;
 
     localparam [1:0] S_IDLE = 2'd0, S_REQ = 2'd1, S_WAIT = 2'd2, S_SETTLE = 2'd3;
     reg [1:0]    st;

@@ -1,5 +1,5 @@
 // rv64_syscore -- the RV64 control complex that replaces the RV32 one inside a
-// system node. NO NoC compute-unit shell: see .plan/syscore/decisions.md D1.
+// system node. NO NoC compute-unit shell (decision D1).
 //
 //   core (physical)  ->  Sv39 MMU  ->  decode  ->  local spad / control
 //                                              ->  L1        -> node port
@@ -31,6 +31,9 @@ module rv64_syscore #(
     parameter         MEM_PRIM   = "block",
     parameter         SPAD_STYLE = "ultra",
     parameter         RF_PRIM    = "distributed",
+    // Fetch stages between the PC and decode (rv64_core FETCH_LAT): 2 keeps
+    // the instruction RAM's output register in front of decode.
+    parameter integer FETCH_LAT  = 2,
 
     parameter [63:0]  SPAD_BASE  = 64'h0000_0000_0001_0000,
     parameter [63:0]  CTRL_BASE  = 64'h0000_0000_0002_0000,
@@ -203,21 +206,23 @@ module rv64_syscore #(
     wire [63:0] imem_addr_c;
     wire [31:0] imem_data_c;
     wire        imem_stall_c;
+    wire        fetch_adv_c;
     wire [63:0] fetch_pa;
     wire [31:0] imem_sram_data;      // the on-chip window; DRAM code is cached
 
     // THE ARRAY IS ADDRESSED BY THE TRANSLATED PC. With translation off this is
     // the PC unchanged, so a machine-mode runtime fetches exactly as before.
     // CASCADE 1, NOT THE TOOL'S CHAIN: four RAMB36 deep is 1.939 ns from
-    // clock to data (1.081 + 0.27 a hop) of a 3.333 ns period before decode's
-    // first LUT.
+    // clock to data (1.081 + 0.27 a hop) of a 3.333 ns period. At FETCH_LAT 2
+    // the block's output register takes that, enabled by the core's advance.
     kohaku_sdpram #(
-        .WIDTH(32), .DEPTH(IMEM_WORDS), .MEM_PRIM(MEM_PRIM), .READ_LAT(1),
-        .CASCADE(1)
+        .WIDTH(32), .DEPTH(IMEM_WORDS), .MEM_PRIM(MEM_PRIM),
+        .READ_LAT(FETCH_LAT), .CASCADE(1), .REG_CE(1)
     ) u_imem (
         .clk(clk),
         .wr_en(h_imem_we), .wr_addr(hs_addr[IAW+1:2]), .wr_data(hs_wdata[31:0]),
-        .rd_en(1'b1), .rd_addr(fetch_pa[IAW+1:2]), .rd_data(imem_sram_data)
+        .rd_en((FETCH_LAT == 2) ? fetch_adv_c : 1'b1),
+        .rd_addr(fetch_pa[IAW+1:2]), .rd_data(imem_sram_data)
     );
 
     // ------------------------------------------------------------ the core
@@ -355,12 +360,16 @@ module rv64_syscore #(
         end
     end
 
-    // Travels with the word: the array answers a cycle after the address.
-    reg  imem_fault_q;
+    // Travels with the word: one register per fetch stage, advancing with it.
+    reg  imem_fault_q, imem_fault_l, imem_fault_q2;
     always @(posedge clk) begin
         imem_fault_q <= translating && if_hit && if_bad;
+        if (fetch_adv_c) begin
+            imem_fault_l  <= translating && if_hit && if_bad;
+            imem_fault_q2 <= imem_fault_l;
+        end
     end
-    wire imem_fault_c = imem_fault_q;
+    wire imem_fault_c = (FETCH_LAT == 2) ? imem_fault_q2 : imem_fault_q;
 
     localparam integer UNC_BIT = ADDR_W - 2;   // the uncached alias bit (38 of 40)
 
@@ -383,21 +392,28 @@ module rv64_syscore #(
     // picked imem_sram_data -- a wrong instruction, only when fetch and data both
     // hit DRAM at once. `ic_stall` still holds F over a miss, so ic_data is valid
     // whenever it is selected.
-    reg  ic_sel_q;
+    reg  ic_sel_q, ic_sel_l, ic_sel_q2;
     always @(posedge clk) begin
         ic_sel_q <= fetch_cached;
+        if (fetch_adv_c) begin
+            ic_sel_l  <= fetch_cached;
+            ic_sel_q2 <= ic_sel_l;
+        end
     end
+    wire ic_sel = (FETCH_LAT == 2) ? ic_sel_q2 : ic_sel_q;
     wire core_fence_i;    // FENCE.I retired in the core -> drop every I-cache line
 
-    rv64_icache #(.LINES(2), .ADDR_W(ADDR_W), .MEM_PRIM(MEM_PRIM)) u_ic (
+    rv64_icache #(
+        .LINES(2), .ADDR_W(ADDR_W), .MEM_PRIM(MEM_PRIM), .LAT(FETCH_LAT)
+    ) u_ic (
         .clk(clk), .resetn(core_rstn),
-        .fetch_pa(fetch_pa[ADDR_W-1:0]), .en(ic_en),
+        .fetch_pa(fetch_pa[ADDR_W-1:0]), .en(ic_en), .adv(fetch_adv_c),
         .idata(ic_data), .stall(ic_stall), .inval(core_fence_i),
         .if_req(if_req_ic), .if_ready(if_ready_ic), .if_addr(if_addr_ic),
         .if_resp_valid(if_rvalid_ic), .if_resp_data(if_rdata_ic)
     );
 
-    assign imem_data_c = ic_sel_q ? ic_data : imem_sram_data;
+    assign imem_data_c = ic_sel ? ic_data : imem_sram_data;
 
     rv64_mmu #(
         .ENTRIES(TLB_ENTRIES), .ADDR_W(ADDR_W), .MEM_PRIM(MEM_PRIM)
@@ -743,11 +759,11 @@ module rv64_syscore #(
 
     rv64_core #(
         .RESET_PC(64'd0), .MEM_PRIM(RF_PRIM), .HAS_ATOMIC(1),
-        .PADDR_W(ADDR_W)
+        .PADDR_W(ADDR_W), .FETCH_LAT(FETCH_LAT)
     ) u_core (
         .clk(clk), .resetn(core_rstn),
         .imem_addr(imem_addr_c), .imem_data(imem_data_c),
-        .imem_stall(imem_stall_c),
+        .imem_stall(imem_stall_c), .fetch_adv(fetch_adv_c),
         .dmem_addr(dmem_addr_c), .dmem_wdata(dmem_wdata_c),
         .dmem_wstrb(dmem_wstrb_c), .dmem_re(dmem_re_c),
         .dmem_rdata(dmem_rdata_c), .dmem_stall(dmem_stall_c),

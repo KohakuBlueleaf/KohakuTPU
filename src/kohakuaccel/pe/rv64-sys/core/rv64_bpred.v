@@ -26,7 +26,10 @@ module rv64_bpred #(
     parameter integer PHT_ENTRIES = 1024,       // power of two
     parameter integer HIST_W      = 8,
     parameter integer RAS_DEPTH   = 16,
-    parameter integer TAG_W       = 11
+    parameter integer TAG_W       = 11,
+    // The lookup's read latency, the core's FETCH_LAT: at 2 the tables' output
+    // registers advance with `q_en`, so the answer keeps step with the word.
+    parameter integer Q_LAT       = 1
 )(
     input  wire        clk,
     input  wire        resetn,
@@ -92,8 +95,9 @@ module rv64_bpred #(
     localparam integer SWEEP = BTB_BIGGER ? BTB_ENTRIES : PHT_ENTRIES;
     localparam integer SW_W  = $clog2(SWEEP);
     reg [SW_W:0] init_a;
-    reg          init_q;
+    reg          init_q, init_q2;
     wire         init_busy = !init_a[SW_W];
+    wire         init_gate = (Q_LAT == 2) ? (init_q || init_q2) : init_q;
 
     // ---- the registered resolve --------------------------------------------
     // `rv_bpred` records that EX's comparator reaching the counter's
@@ -107,6 +111,7 @@ module rv64_bpred #(
             r_valid <= 1'b0;
             init_a  <= {(SW_W+1){1'b0}};
             init_q  <= 1'b1;
+            init_q2 <= 1'b1;
         end
         else begin
             r_valid  <= u_valid;
@@ -119,7 +124,8 @@ module rv64_bpred #(
             if (init_busy) begin
                 init_a <= init_a + 1'b1;
             end
-            init_q <= init_busy;
+            init_q  <= init_busy;
+            init_q2 <= init_q;
         end
     end
 
@@ -135,7 +141,7 @@ module rv64_bpred #(
                                          : {1'b1, btag(r_pc), r_target[38:1]};
 
     kohaku_sdpram #(.WIDTH(BW), .DEPTH(BTB_ENTRIES),
-                    .MEM_PRIM("block"), .READ_LAT(1)) u_btb (
+                    .MEM_PRIM("block"), .READ_LAT(Q_LAT), .REG_CE(1)) u_btb (
         .clk(clk),
         .wr_en(btb_wr), .wr_addr(btb_wa), .wr_data(btb_wd),
         .rd_en(q_en), .rd_addr(bidx(q_addr)), .rd_data(b_q)
@@ -153,7 +159,7 @@ module rv64_bpred #(
     wire [1:0]        pht_wd = init_busy ? 2'b01 : n_cnt;
 
     kohaku_sdpram #(.WIDTH(2), .DEPTH(PHT_ENTRIES),
-                    .MEM_PRIM("block"), .READ_LAT(1)) u_pht (
+                    .MEM_PRIM("block"), .READ_LAT(Q_LAT), .REG_CE(1)) u_pht (
         .clk(clk),
         .wr_en(pht_wr), .wr_addr(pht_wa), .wr_data(pht_wd),
         .rd_en(q_en), .rd_addr(pidx(q_addr, ghist)), .rd_data(p_q)
@@ -215,7 +221,7 @@ module rv64_bpred #(
         pq_rv  <= ras_v;
     end
 
-    wire hit = !init_q && b_v && (b_t == btag(q_pc));
+    wire hit = !init_gate && b_v && (b_t == btag(q_pc));
 
     assign q_taken  = pq_ret ? pq_rv : (hit && p_q[1]);
     assign q_target = pq_ret ? pq_tos : {25'd0, b_g, 1'b0};

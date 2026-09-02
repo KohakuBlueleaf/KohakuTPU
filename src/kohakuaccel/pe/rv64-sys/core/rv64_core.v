@@ -1,4 +1,8 @@
-// SysCore's RV64I pipeline: F, D, E, M, W.
+// SysCore's RV64I pipeline: F, D, E, M, W. At FETCH_LAT 2 a second fetch
+// stage (F2) sits between the instruction array and D, inside the array's own
+// output register: the wrapper runs its RAM at READ_LAT 2 with both stages
+// enabled by `fetch_adv`, so a four-deep block-RAM chain's 1.939 ns clock-to-
+// data never meets decode's first LUT.
 //
 // THE REGISTER FILE'S READ LATENCY SETS THE SHAPE. Addresses go out in D and
 // data arrives in E, and a write landing on that same edge is not seen -- so
@@ -10,9 +14,8 @@
 // which is the same cycle the next instruction is in E -- so the forward from M
 // covers it and the pipeline never stalls for a load.
 //
-// A BRANCH RESOLVES IN E, so the two instructions behind it are killed. There is
-// no predictor: a control processor's branches are loop backedges, and a
-// predictor is LUT that the budget would rather spend elsewhere.
+// A BRANCH RESOLVES IN E against the prediction D made for it; a mispredict, a
+// trap or a failed JALR check is REGISTERED and steers fetch a cycle later.
 
 `default_nettype none
 
@@ -27,7 +30,10 @@ module rv64_core #(
     // the machine cannot express mutual exclusion or a shared counter at all.
     parameter integer HAS_ATOMIC = 1,
     // Physical address width; it sizes satp.PPN, and bits beyond are WARL zero.
-    parameter integer PADDR_W = 40
+    parameter integer PADDR_W = 40,
+    // Fetch stages between `imem_addr` and D: 1 (the word is the array's read)
+    // or 2 (the array's output register, advanced by `fetch_adv`).
+    parameter integer FETCH_LAT = 2
 )(
     input  wire        clk,
     input  wire        resetn,
@@ -38,6 +44,7 @@ module rv64_core #(
     // fetch translation is being resolved; zero when translation is off.
     input  wire        imem_stall,
     input  wire        imem_fault,    // with `imem_data`: the fetch page-faulted
+    output wire        fetch_adv,     // the fetch pipe advances: the RAM's enables
 
     output wire [63:0] dmem_addr,
     output wire [63:0] dmem_wdata,
@@ -60,6 +67,8 @@ module rv64_core #(
     input  wire [3:0]  dmem_fault_cause,
 
     // The node's doorbell lands on `irq_soft`; `irq_ext` is the summary line.
+    // Both are LEVELS and land in a register here: the mover's fault reached
+    // `pc` through the summary OR in one cycle, 11 levels at the v8t5 route.
     input  wire        irq_ext,
     input  wire        irq_soft,
 
@@ -91,11 +100,9 @@ module rv64_core #(
     // ---- F ------------------------------------------------------------------
     reg  [63:0] pc;
     wire [63:0] pc_next;
-    wire        redirect;
-    wire [63:0] redirect_pc;
     // Declared here, assigned where they are computed: xvlog rejects a net
     // read above its declaration.
-    wire        e_kill, taken, csr_wait, load_use;
+    wire        e_kill, taken, csr_wait, load_use, d_redir;
     wire [63:0] target, ea, eff;
     reg         e_valid;
     reg  [63:0] e_pc;
@@ -113,21 +120,30 @@ module rv64_core #(
     wire        fd_go = go && !bubble;
 
     assign imem_addr = pc;
+    assign fetch_adv = fd_go;
 
-    // A REDIRECT MUST SURVIVE A BUBBLE. `go` retires E but `fd_go` (go && !bubble)
-    // gates `pc`, so an E-stage redirect (`e_kill`) retiring while F is bubbled by
-    // `imem_stall` (DRAM/I-cache only) loses BOTH halves of its squash: `pc` never
-    // takes the target, and the wrong-path word held in D keeps `d_valid` and later
-    // issues -- decoded illegal, it traps. Latch the target AND kill D, apply at
-    // fd_go. `d_redir` is excluded: it is the branch, not its shadow.
+    reg irq_ext_q, irq_soft_q;
+    always @(posedge clk) begin
+        irq_ext_q  <= irq_ext;
+        irq_soft_q <= irq_soft;
+    end
+
+    // EVERY E-LEVEL REDIRECT (mispredict, trap, JALR check) IS REGISTERED and
+    // applied at the next fd_go: the branch compare off the W forward ends at
+    // pend_use_pc4, not at pc, d_valid and f2_v (12 levels, -0.517 ns at a
+    // 2.857 ns period). Fetch takes one wrong-path word more, killed with the
+    // rest, and the register carries the redirect across a bubble, where an
+    // immediate one lost both halves of its squash. A D-stage prediction
+    // (`d_redir`) still steers fetch the same cycle: it is registers only.
     reg         redir_pend;
-    reg  [63:0] redir_pend_pc;
-    wire        take_redir    = redirect || redir_pend;
-    wire [63:0] take_redir_pc = redir_pend ? redir_pend_pc : redirect_pc;
-    assign pc_next = take_redir ? take_redir_pc : (pc + 64'd4);
+    reg  [63:0] pend_pc_a, pend_pc4;
+    reg         pend_use_pc4;
+    wire        take_redir = redir_pend || d_redir;
 
     reg d_valid;
     reg [63:0] d_pc;
+    reg        f2_v;                    // FETCH_LAT 2: the word in the array's latch
+    reg [63:0] f2_pc;
     reg [31:0] d_instr_hold;
     reg        d_fault_hold;
     reg        d_hold_v;
@@ -142,30 +158,36 @@ module rv64_core #(
     always @(posedge clk) begin
         if (!resetn) begin
             pc         <= RESET_PC;
+            f2_v       <= 1'b0;
+            f2_pc      <= RESET_PC;
             d_valid    <= 1'b0;
             d_pc       <= RESET_PC;
             d_hold_v   <= 1'b0;
             redir_pend <= 1'b0;
         end
         else if (fd_go) begin
+            // A redirect kills the word in F2 and the one entering D alike.
             pc         <= pc_next;
-            d_valid    <= !take_redir;
-            d_pc       <= pc;
+            f2_v       <= !take_redir;
+            f2_pc      <= pc;
+            d_valid    <= (FETCH_LAT == 2) ? (f2_v && !take_redir) : !take_redir;
+            d_pc       <= (FETCH_LAT == 2) ? f2_pc : pc;
             d_hold_v   <= 1'b0;
-            redir_pend <= 1'b0;
+            // the one applied now is spent; a kill firing now waits its turn
+            redir_pend <= e_kill;
         end
         else begin
-            // F held: pin an E-stage redirect firing now, and squash the wrong-path
-            // instruction it left in D (first wins; younger is already killed).
+            // F held: pin the kill (first wins; younger is already killed). The
+            // wrong-path word in D is fenced by `redir_pend`, not killed here.
             if (e_kill && !redir_pend) begin
-                redir_pend    <= 1'b1;
-                redir_pend_pc <= redirect_pc;
-                d_valid       <= 1'b0;
+                redir_pend <= 1'b1;
             end
-            // Capture D's word once, gated on imem_stall_q (the stall of the fetch
-            // that produced this word): under a live imem_stall the address is not
-            // yet physical, so its bus word belongs to nowhere and pins garbage.
-            if ((stall || bubble) && !d_hold_v && !imem_stall_q) begin
+            // FETCH_LAT 1 only: capture D's word once, gated on imem_stall_q (the
+            // stall of the fetch that produced it): under a live imem_stall the
+            // address is not yet physical, so its bus word pins garbage. At 2 the
+            // array's output register holds the word itself.
+            if ((FETCH_LAT == 1) && (stall || bubble) && !d_hold_v
+                && !imem_stall_q) begin
                 d_instr_hold <= imem_data;
                 d_fault_hold <= imem_fault;
                 d_hold_v     <= 1'b1;
@@ -227,8 +249,8 @@ module rv64_core #(
     // a redirect then kills leaves a wrong entry, which costs a mispredict and
     // never correctness.
     reg  d_seen;
-    wire d_word  = d_valid && go && !load_use && !d_seen
-                && (d_hold_v || !imem_stall_q);
+    wire d_word  = d_valid && go && !load_use && !d_seen && !redir_pend
+                && ((FETCH_LAT == 2) || d_hold_v || !imem_stall_q);
     wire d_call  = d_word && (jal_d || jalr_d)
                 && ((rd_a == 5'd1) || (rd_a == 5'd5));
     wire d_ret   = d_word && jalr_d && (rd_a == 5'd0)
@@ -241,8 +263,8 @@ module rv64_core #(
         end
     end
 
-    // NOT `!redirect`: `redirect` is driven by this, so reading it closes a
-    // combinational loop. `d_redir` carries the `!e_redir` term instead.
+    // Masked by `redir_pend` in d_redir, never by the live E kill: the compare
+    // reaching pc through that mask is the path the register exists to cut.
     wire d_predict = d_valid && pr_taken && (br_d || jal_d || jalr_d);
 
     // JALR's check rides one cycle behind its bubble and updates the predictor
@@ -250,9 +272,9 @@ module rv64_core #(
     reg         jchk_v, jchk_pt;
     reg  [63:0] jchk_tgt, jchk_ptgt, jchk_pc;
 
-    rv64_bpred u_bp (
+    rv64_bpred #(.Q_LAT(FETCH_LAT)) u_bp (
         .clk(clk), .resetn(resetn),
-        .q_en(1'b1), .q_addr(pc), .q_pc(d_pc),
+        .q_en((FETCH_LAT == 2) ? fd_go : 1'b1), .q_addr(pc), .q_pc(d_pc),
         .q_taken(pr_taken), .q_target(pr_target),
         .p_call(d_call), .p_ret(d_ret), .p_link(d_pc + 64'd4),
         .u_valid(jchk_v || (e_valid && (e_br || e_jal) && !stall)),
@@ -302,10 +324,10 @@ module rv64_core #(
             e_valid <= 1'b0;
         end
         else if (go) begin
-            // `e_redir`, NOT `redirect`: a D-stage prediction kills the FETCH
-            // behind the branch, and the branch itself must reach E to be
-            // checked against what the predictor said.
-            e_valid   <= d_valid && !e_kill && !bubble;
+            // `e_kill` and the pending one, never `d_redir`: a D-stage
+            // prediction kills the FETCH behind the branch, and the branch
+            // itself must reach E to be checked against what the predictor said.
+            e_valid   <= d_valid && !e_kill && !redir_pend && !bubble;
             e_pred_t  <= d_predict;
             e_pred_tgt<= pr_target;
             e_btgt    <= d_pc + imm_d;
@@ -561,9 +583,20 @@ module rv64_core #(
                                                 : alu_y;
 
     // ---- E: branch resolve --------------------------------------------------
-    wire beq  = (op_rs1 == op_rs2);
-    wire blt  = ($signed(op_rs1) < $signed(op_rs2));
-    wire bltu = (op_rs1 < op_rs2);
+    // FOUR 16-BIT CHUNKS, NOT ONE 64-BIT COMPARE: a 64-bit `<` is eight CARRY8
+    // in series behind the forward mux (12 levels, 3.446 ns to the redirect);
+    // four parallel chains of two and a two-level combine end it at eight.
+    wire [3:0] c_eq, c_lt;
+    genvar ci;
+    generate for (ci = 0; ci < 4; ci = ci + 1) begin : g_cmp
+        assign c_eq[ci] = (op_rs1[ci*16 +: 16] == op_rs2[ci*16 +: 16]);
+        assign c_lt[ci] = (op_rs1[ci*16 +: 16] <  op_rs2[ci*16 +: 16]);
+    end endgenerate
+    wire top_slt = ($signed(op_rs1[63:48]) < $signed(op_rs2[63:48]));
+    wire lo_lt   = c_lt[2] || (c_eq[2] && (c_lt[1] || (c_eq[1] && c_lt[0])));
+    wire beq     = &c_eq;
+    wire blt     = top_slt || (c_eq[3] && lo_lt);
+    wire bltu    = c_lt[3] || (c_eq[3] && lo_lt);
     reg  br_take;
     always @(*) begin
         case (e_f3)
@@ -590,11 +623,10 @@ module rv64_core #(
                  && ((taken != e_pred_t)
                      || (taken && e_tgt_ne));
     wire e_redir  = mispred && !halted;
-    wire [63:0] e_redir_pc = taken ? e_btgt : e_pc4;
 
     // D redirects on a prediction, which kills the one instruction already
     // fetched behind it. The branch itself carries on into E to be checked.
-    wire d_redir = d_predict && !halted && !e_redir;
+    assign d_redir = d_predict && !halted && !redir_pend;
 
     // A trap outranks a mispredict, which outranks a prediction. Declared here
     // and driven below, where `ea` exists to become `mtval`.
@@ -623,14 +655,26 @@ module rv64_core #(
         end
     end
 
-    assign redirect    = jmis || trap_redir || e_redir || d_redir;
-    assign redirect_pc = jmis       ? jchk_tgt
-                       : trap_redir ? trap_pc_next
-                       : e_redir    ? e_redir_pc : pr_target;
-
     // Everything behind a trap dies with it, exactly as it does behind a
-    // mispredict.
+    // mispredict. A JALR check outranks a trap, a trap a mispredict.
     assign e_kill = e_redir || trap_redir || jmis;
+
+    // The pend target in two registers: `taken` picks between them at the
+    // apply, so the compare ends one flop short of the word it steers. Loaded
+    // whenever nothing is pending (the kill edge included) and at an apply, so
+    // the enable is registers only and `e_kill` fans out to one flop.
+    wire pend_ld = !redir_pend || fd_go;
+    always @(posedge clk) begin
+        if (pend_ld) begin
+            pend_pc_a    <= jmis ? jchk_tgt : trap_redir ? trap_pc_next : e_btgt;
+            pend_pc4     <= e_pc4;
+            pend_use_pc4 <= !jmis && !trap_redir && !taken;
+        end
+    end
+
+    assign pc_next = redir_pend ? (pend_use_pc4 ? pend_pc4 : pend_pc_a)
+                   : d_redir    ? pr_target
+                                : (pc + 64'd4);
 
     // ---- E: the data address ------------------------------------------------
     assign ea = op_rs1 + e_imm;
@@ -642,14 +686,33 @@ module rv64_core #(
         : (e_f3[1:0] == 2'b10) ? 4'd4
         : 4'd8
     );
-    wire misalign = (
-        ((sz == 4'd2) && eff[0])
-        || ((sz == 4'd4) && (|eff[1:0]))
-        || ((sz == 4'd8) && (|eff[2:0]))
-    );
+    // MISALIGN PER OPERAND SOURCE, then one select: the low three bits of the
+    // sum need only each source's low three, so the trap leaves the 64-bit
+    // forward mux (wb_val -> halted was 12 levels, 3.298 ns).
+    function mis3;
+        input [3:0] s;
+        input [2:0] lo;
+        begin
+            mis3 = ((s == 4'd2) && lo[0])
+                || ((s == 4'd4) && (|lo[1:0]))
+                || ((s == 4'd8) && (|lo[2:0]));
+        end
+    endfunction
+    wire [2:0] lo_m = m_val[2:0]   + e_imm[2:0];
+    wire [2:0] lo_w = w_data[2:0]  + e_imm[2:0];
+    wire [2:0] lo_q = w_val_q[2:0] + e_imm[2:0];
+    wire [2:0] lo_r = rf_rs1[2:0]  + e_imm[2:0];
+    wire [2:0] lo_h = op1_h[2:0]   + e_imm[2:0];
+    wire amo_latched = amo_active && (a_state != A_IDLE);
+    wire misalign = amo_latched ? mis3(sz, a_addr[2:0])
+                  : op_held     ? mis3(sz, lo_h)
+                  : e_s1_m      ? mis3(sz, lo_m)
+                  : e_s1_w      ? mis3(sz, lo_w)
+                  : e_s1_q      ? mis3(sz, lo_q)
+                                : mis3(sz, lo_r);
 
     // The latched address once the AMO is past its first cycle; `ea` otherwise.
-    assign eff = (amo_active && (a_state != A_IDLE)) ? a_addr : ea;
+    assign eff = amo_latched ? a_addr : ea;
 
     // NO `misalign` HERE, and that is the whole point: it was the LAST
     // address-derived term in `stall`, and `stall` gates every pipeline
@@ -819,7 +882,7 @@ module rv64_core #(
         .priv_o(priv_v), .settle(priv_settle_o),
         .satp_o(satp_o), .sum_o(sum_o), .mxr_o(mxr_o),
         .irq_pending(irq_pend), .irq_cause(irq_cause_v),
-        .irq_ext(irq_ext), .irq_soft(irq_soft),
+        .irq_ext(irq_ext_q), .irq_soft(irq_soft_q),
         .retire(dbg_retire)
     );
     assign priv_o = priv_v;
