@@ -245,14 +245,22 @@ module rv64_core #(
     // combinational loop. `d_redir` carries the `!e_redir` term instead.
     wire d_predict = d_valid && pr_taken && (br_d || jal_d || jalr_d);
 
+    // JALR's check rides one cycle behind its bubble and updates the predictor
+    // from here; declared with its reader (the block that drives it is below)
+    reg         jchk_v, jchk_pt;
+    reg  [63:0] jchk_tgt, jchk_ptgt, jchk_pc;
+
     rv64_bpred u_bp (
         .clk(clk), .resetn(resetn),
         .q_en(1'b1), .q_addr(pc), .q_pc(d_pc),
         .q_taken(pr_taken), .q_target(pr_target),
         .p_call(d_call), .p_ret(d_ret), .p_link(d_pc + 64'd4),
-        .u_valid(e_valid && (e_br || e_jal || e_jalr) && !stall),
-        .u_pc(e_pc), .u_taken(taken), .u_is_jump(e_jal || e_jalr),
-        .u_is_cond(e_br), .u_target(target)
+        .u_valid(jchk_v || (e_valid && (e_br || e_jal) && !stall)),
+        .u_pc(jchk_v ? jchk_pc : e_pc),
+        .u_taken(jchk_v ? 1'b1 : taken),
+        .u_is_jump(jchk_v ? 1'b1 : e_jal),
+        .u_is_cond(jchk_v ? 1'b0 : e_br),
+        .u_target(jchk_v ? jchk_tgt : e_btgt)
     );
 
     wire [63:0] rf_rs1, rf_rs2;
@@ -279,8 +287,15 @@ module rv64_core #(
     reg [11:0] e_csr_addr;
     reg        e_pred_t;
     reg [63:0] e_pred_tgt;
+    // the branch/JAL target and its prediction match, computed in D where pc
+    // and imm are registers: E's redirect carries no adder or comparator
+    reg [63:0] e_btgt, e_pc4;
     reg [4:0]  e_amo_op;
     reg [2:0]  e_f3;
+
+    // THE INSTRUCTION ONLY REACHES THE LOW 21 BITS (B imm 13, J 21): the high
+    // half is d_pc +/- 1 off the REGISTER, picked by the low add's carry, so
+    // the imem -> decode cone ends in a 21-bit add (3 CARRY8).
 
     always @(posedge clk) begin
         if (!resetn) begin
@@ -293,6 +308,8 @@ module rv64_core #(
             e_valid   <= d_valid && !e_kill && !bubble;
             e_pred_t  <= d_predict;
             e_pred_tgt<= pr_target;
+            e_btgt    <= d_pc + imm_d;
+            e_pc4     <= d_pc + 64'd4;
             e_md      <= md_d;
             e_pc     <= d_pc;
             e_imm    <= imm_d;
@@ -560,17 +577,20 @@ module rv64_core #(
     end
 
     assign taken  = e_valid && ((e_br && br_take) || e_jal || e_jalr);
-    assign target = e_jalr ? ((op_rs1 + e_imm) & ~64'd1) : (e_pc + e_imm);
+    // JALR's register-relative target: only ever the D input of jchk_tgt
+    wire [63:0] jalr_tgt = (op_rs1 + e_imm) & ~64'd1;
+    assign target = (e_br || e_jal) ? e_btgt : jalr_tgt;
 
-    // E REDIRECTS ONLY ON A MISPREDICTION. A branch the predictor called right
-    // costs nothing here; one it called wrong costs the same two kills a core
-    // with no predictor pays on EVERY taken branch.
-    wire is_ctrl  = e_br || e_jal || e_jalr;
-    wire mispred  = e_valid && is_ctrl && !stall
+    // E REDIRECTS ONLY ON A MISPREDICTED BRANCH OR JAL, register against
+    // register (target and its match come from D); a JALR checks a cycle later
+    // against its registered target (jchk below) behind its own bubble.
+    // e_pred_tgt, not live pr_target: a BTB update must not move it mid-hold.
+    wire e_tgt_ne = (e_btgt != e_pred_tgt);
+    wire mispred  = e_valid && (e_br || e_jal) && !stall
                  && ((taken != e_pred_t)
-                     || (taken && (target != e_pred_tgt)));
+                     || (taken && e_tgt_ne));
     wire e_redir  = mispred && !halted;
-    wire [63:0] e_redir_pc = taken ? target : (e_pc + 64'd4);
+    wire [63:0] e_redir_pc = taken ? e_btgt : e_pc4;
 
     // D redirects on a prediction, which kills the one instruction already
     // fetched behind it. The branch itself carries on into E to be checked.
@@ -585,13 +605,32 @@ module rv64_core #(
                 dg_irq;
     wire [63:0] trap_pc_next;
 
-    assign redirect    = trap_redir || e_redir || d_redir;
-    assign redirect_pc = trap_redir ? trap_pc_next
+    // ---- the JALR check, one cycle behind its bubble ------------------------
+    // E is empty when jmis fires (bubble below), so nothing needs a late kill:
+    // no dmem, no AMO, no M write is in flight for the wrong path.
+    wire jmis = jchk_v && !halted && (!jchk_pt || (jchk_tgt != jchk_ptgt));
+    always @(posedge clk) begin
+        if (!resetn) begin
+            jchk_v <= 1'b0;
+            jchk_pt <= 1'b0;
+            jchk_tgt <= 64'd0; jchk_ptgt <= 64'd0; jchk_pc <= 64'd0;
+        end else if (go) begin
+            jchk_v    <= e_valid && e_jalr && !trap_take;
+            jchk_pt   <= e_pred_t;
+            jchk_tgt  <= jalr_tgt;
+            jchk_ptgt <= e_pred_tgt;
+            jchk_pc   <= e_pc;
+        end
+    end
+
+    assign redirect    = jmis || trap_redir || e_redir || d_redir;
+    assign redirect_pc = jmis       ? jchk_tgt
+                       : trap_redir ? trap_pc_next
                        : e_redir    ? e_redir_pc : pr_target;
 
     // Everything behind a trap dies with it, exactly as it does behind a
     // mispredict.
-    assign e_kill = e_redir || trap_redir;
+    assign e_kill = e_redir || trap_redir || jmis;
 
     // ---- E: the data address ------------------------------------------------
     assign ea = op_rs1 + e_imm;
@@ -906,7 +945,9 @@ module rv64_core #(
         && d_valid
         && ((rs1_a == e_rd) || (rs2_a == e_rd))
     );
-    assign bubble = imem_stall || load_use;
+    // a JALR owns the next E slot for its check: the gap costs one cycle per
+    // JALR and buys a redirect with nothing in flight to kill
+    assign bubble = imem_stall || load_use || (e_valid && e_jalr);
 
     // Drains with W, for the same reason W drains with M.
     always @(posedge clk) begin

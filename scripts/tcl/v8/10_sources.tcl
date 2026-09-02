@@ -86,6 +86,7 @@ set V8_SOURCES {
     src/kohakuaccel/sysnode/core/mag.v
     src/kohakuaccel/sysnode/core/mag_dram_port.v
 
+    src/kohakuaccel/pe/rv64-sys/core/rv64_defs.vh
     src/kohakuaccel/pe/rv64-sys/core/rv64_regfile.v
     src/kohakuaccel/pe/rv64-sys/core/rv64_alu.v
     src/kohakuaccel/pe/rv64-sys/core/rv64_muldiv.v

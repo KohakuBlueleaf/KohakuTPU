@@ -216,8 +216,11 @@ module rv64_sys_pe #(
     wire           imem_we   = gw_imem_we || cd_imem_w;
     wire [31:0]    imem_wd   = cd_imem_w ? wp_data[31:0] : gw_imem_d;
 
+    // CASCADE 1: a four-deep RAMB36 chain is 1.939 ns from clock to data,
+    // ahead of decode's first LUT in a 3.333 ns period
     kohaku_sdpram #(
-        .WIDTH(32), .DEPTH(IMEM_WORDS), .MEM_PRIM(MEM_PRIM), .READ_LAT(1)
+        .WIDTH(32), .DEPTH(IMEM_WORDS), .MEM_PRIM(MEM_PRIM), .READ_LAT(1),
+        .CASCADE(1)
     ) u_imem (
         .clk(clk),
         .wr_en(imem_we), .wr_addr(imem_wa_w), .wr_data(imem_wd),

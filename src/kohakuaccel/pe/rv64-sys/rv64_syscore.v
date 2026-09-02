@@ -208,8 +208,12 @@ module rv64_syscore #(
 
     // THE ARRAY IS ADDRESSED BY THE TRANSLATED PC. With translation off this is
     // the PC unchanged, so a machine-mode runtime fetches exactly as before.
+    // CASCADE 1, NOT THE TOOL'S CHAIN: four RAMB36 deep is 1.939 ns from
+    // clock to data (1.081 + 0.27 a hop) of a 3.333 ns period before decode's
+    // first LUT.
     kohaku_sdpram #(
-        .WIDTH(32), .DEPTH(IMEM_WORDS), .MEM_PRIM(MEM_PRIM), .READ_LAT(1)
+        .WIDTH(32), .DEPTH(IMEM_WORDS), .MEM_PRIM(MEM_PRIM), .READ_LAT(1),
+        .CASCADE(1)
     ) u_imem (
         .clk(clk),
         .wr_en(h_imem_we), .wr_addr(hs_addr[IAW+1:2]), .wr_data(hs_wdata[31:0]),
