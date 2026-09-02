@@ -17,7 +17,9 @@ module kx_lane #(
     parameter integer DEPTH = 16,
     parameter         MEM   = "block",
     parameter         BUF   = "lean",
-    parameter integer RX_REG = 0
+    parameter integer RX_REG = 0,
+    // 1: the boundary crossings become the x_* ports (a kx_trunk owns them)
+    parameter integer EXT   = 0
 )(
     input  wire             clk,
     input  wire             rstn_s,             // the source partition's reset
@@ -31,7 +33,15 @@ module kx_lane #(
     output wire [NT-1:0]    t_valid,
     input  wire [NT-1:0]    t_ready,
     output wire [NT*DW-1:0] t_dst,
-    output wire [NT*W-1:0]  t_data
+    output wire [NT*W-1:0]  t_data,
+
+    // EXT=1: crossing t's send side out, its landed head back in
+    output wire [NT-1:0]          x_valid,
+    input  wire [NT-1:0]          x_ready,
+    output wire [NT*(DW+W)-1:0]   x_data,
+    input  wire [NT-1:0]          xm_valid,
+    output wire [NT-1:0]          xm_ready,
+    input  wire [NT*(DW+W)-1:0]   xm_data
 );
     localparam integer ND = 1 << DW;
     localparam integer FW = DW + W;
@@ -50,12 +60,25 @@ module kx_lane #(
             assign id = hd[t-1];
             assign srst = rstn_t[t-1];
         end
+        if (EXT != 0) begin : g_ext
+            wire srst_nc = srst;
+            assign x_valid[t]         = iv;
+            assign ir                 = x_ready[t];
+            assign x_data[t*FW +: FW] = id;
+            assign hv[t]              = xm_valid[t];
+            assign xm_ready[t]        = hr[t];
+            assign hd[t]              = xm_data[t*FW +: FW];
+        end else begin : g_hop
+            assign x_valid[t]         = 1'b0;
+            assign x_data[t*FW +: FW] = {FW{1'b0}};
+            assign xm_ready[t]        = 1'b0;
         // dst and the payload's top bit (a flit's kind) decode the head: fast bits
         kx_hop #(.WIDTH(FW), .DEPTH(DEPTH), .MEM(MEM), .BUF(BUF), .FASTW(DW + 1),
                  .RX_REG(RX_REG)) u_h (
             .clk(clk), .s_rstn(srst), .m_rstn(rstn_t[t]),
             .s_valid(iv), .s_ready(ir), .s_data(id),
             .m_valid(hv[t]), .m_ready(hr[t]), .m_data(hd[t]));
+        end
         wire [DW-1:0] dst  = hd[t][W +: DW];
         wire          take = TAKE[t*ND + dst];
         assign t_valid[t]          = hv[t] && take;

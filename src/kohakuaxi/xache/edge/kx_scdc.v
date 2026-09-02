@@ -24,11 +24,26 @@ module kx_scdc #(
     assign s_ready = !full;
     assign m_valid = !empty;
 
-    async_fifo #(.DATA_WIDTH(WIDTH), .FIFO_DEPTH(DEPTH), .MEMORY_TYPE(MEM)) u_fifo (
-        .wr_clk(wr_clk), .wr_rst(wr_rst), .wr_en(s_valid && !full), .wr_data(s_data),
-        .wr_full(full),
-        .rd_clk(rd_clk), .rd_en(m_valid && m_ready), .rd_data(m_data), .rd_empty(empty)
-    );
+    generate if (MEM == "distributed") begin : g_lean
+        // The read side's reset is the write side's, landed through two flops
+        // -- the same derivation xpm_fifo_async makes inside itself.
+        reg rd_r1, rd_r2;
+        always @(posedge rd_clk) begin
+            rd_r1 <= !wr_rst;
+            rd_r2 <= rd_r1;
+        end
+        kohaku_aring #(.WIDTH(WIDTH), .DEPTH(DEPTH), .FULL(1)) u_r (
+            .wr_clk(wr_clk), .wr_rstn(!wr_rst), .wr_en(s_valid && !full),
+            .wr_data(s_data), .wr_busy(full),
+            .clk(rd_clk), .rstn(rd_r2), .rd_en(m_valid && m_ready),
+            .rd_data(m_data), .rd_busy(empty));
+    end else begin : g_xpm
+        async_fifo #(.DATA_WIDTH(WIDTH), .FIFO_DEPTH(DEPTH), .MEMORY_TYPE(MEM)) u_fifo (
+            .wr_clk(wr_clk), .wr_rst(wr_rst), .wr_en(s_valid && !full), .wr_data(s_data),
+            .wr_full(full),
+            .rd_clk(rd_clk), .rd_en(m_valid && m_ready), .rd_data(m_data), .rd_empty(empty)
+        );
+    end endgenerate
 endmodule
 
 `default_nettype wire

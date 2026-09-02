@@ -18,6 +18,7 @@ module kx_wr_engine #(
     parameter integer SUBW      = (K <= 1) ? 0 : $clog2(K),
     parameter integer LINE_LSB  = WBYTES_LG + SUBW,
     parameter integer TAG_W     = AW - LINE_LSB - SET_W,
+    parameter integer BCW       = (K <= 1) ? 1 : $clog2(K),
     parameter integer P         = NH * M,
     parameter integer PIDX_W    = (P <= 1) ? 1 : $clog2(P)
 )(
@@ -46,6 +47,7 @@ module kx_wr_engine #(
 
     output wire [NH-1:0]        c_wr_en,
     output wire [SET_W-1:0]     c_wr_idx,
+    output wire [BCW-1:0]       c_wr_sub,
     output wire [TAG_W-1:0]     c_wr_tag,
 
     output wire [IDW-1:0]       m_awid,
@@ -66,13 +68,29 @@ module kx_wr_engine #(
 
     reg  [P-1:0] warr_mask;
     wire [P-1:0] elig;
+    // the granted slot's fields as an ARRAY, not a part-select on wg_p*AW: a
+    // compound index synthesises as a barrel shift over the whole P*AW bus
+    wire [IDW-1:0] q_id_a   [0:P-1];
+    wire [AW-1:0]  q_addr_a [0:P-1];
+    wire [7:0]     q_len_a  [0:P-1];
+    wire [2:0]     q_size_a [0:P-1];
     genvar gp;
     generate for (gp = 0; gp < P; gp = gp + 1) begin : g_el
         assign elig[gp] = mw_qval[gp] && !flush_busy[gp / M];
+        assign q_id_a[gp]   = mw_qid[gp*IDW +: IDW];
+        assign q_addr_a[gp] = mw_qaddr[gp*AW +: AW];
+        assign q_len_a[gp]  = mw_qlen[gp*8 +: 8];
+        assign q_size_a[gp] = mw_qsize[gp*3 +: 3];
     end endgenerate
-    wire [P-1:0] hi   = elig & warr_mask;
-    wire [P-1:0] pick = |hi ? (hi & (~hi + 1'b1)) : (elig & (~elig + 1'b1));
-    wire         wg_v = |elig;
+    wire [P-1:0] hi     = elig & warr_mask;
+    wire [P-1:0] pick_c = |hi ? (hi & (~hi + 1'b1)) : (elig & (~elig + 1'b1));
+    // The grant is REGISTERED (as kx_rd_pipe's) and re-qualified against the
+    // live valids: a source holds its request until ready; an old pick holds.
+    reg  [P-1:0] pick;
+    always @(posedge clk) begin
+        pick <= resetn ? pick_c : {P{1'b0}};
+    end
+    wire         wg_v = |(pick & elig);
     reg  [PIDX_W-1:0] wg_p; integer ek;
     always @(*) begin
         wg_p = 0;
@@ -108,7 +126,7 @@ module kx_wr_engine #(
 
     wire wr_beat = (wst == W_DATA) && src_wval && h_wready;
 
-    assign mw_qrdy  = {P{wst == W_IDLE}} & pick;
+    assign mw_qrdy  = {P{wst == W_IDLE}} & pick & elig;
     assign mw_wrdy  = {P{wr_beat}} & gsel;
     assign m_awid   = wid;  assign m_awaddr = wa;  assign m_awlen = wlen;
     assign m_awsize = wsz;  assign m_awburst = 2'b01;
@@ -117,6 +135,11 @@ module kx_wr_engine #(
     assign c_wr_en  = {NH{wr_beat}} & hsel;
     assign c_wr_idx = idx_of(wa_beat);
     assign c_wr_tag = tag_of(wa_beat);
+    generate if (SUBW == 0) begin : g_sub0
+        assign c_wr_sub = 1'b0;
+    end else begin : g_subn
+        assign c_wr_sub = wa_beat[WBYTES_LG +: SUBW];
+    end endgenerate
 
     always @(posedge clk) begin
         if (!resetn) begin
@@ -127,9 +150,9 @@ module kx_wr_engine #(
             end
             case (wst)
                 W_IDLE: if (wg_v) begin
-                    wid <= mw_qid[wg_p*IDW +: IDW]; wa <= mw_qaddr[wg_p*AW +: AW];
-                    wlen <= mw_qlen[wg_p*8 +: 8]; wsz <= mw_qsize[wg_p*3 +: 3];
-                    wa_beat <= mw_qaddr[wg_p*AW +: AW];
+                    wid <= q_id_a[wg_p]; wa <= q_addr_a[wg_p];
+                    wlen <= q_len_a[wg_p]; wsz <= q_size_a[wg_p];
+                    wa_beat <= q_addr_a[wg_p];
                     gsel <= pick; gidx <= wg_p; hsel <= 0; hsel[wg_p / M] <= 1'b1;
                     warr_mask <= ~((pick << 1) - 1'b1);
                     m_awvalid <= 0; m_awvalid[wg_p / M] <= 1'b1;

@@ -88,9 +88,19 @@ module kx_rd_pipe #(
     // ---------------------------------------------------------- arbitration
     reg  [P-1:0] rarr_mask;
     wire [P-1:0] elig;
+    // the granted slot's fields as an ARRAY, not a part-select on rg_p*AW: a
+    // compound index synthesises as a barrel shift over the whole P*AW bus
+    wire [AW-1:0]   q_addr_a [0:P-1];
+    wire [7:0]      q_len_a  [0:P-1];
+    wire [IDW-1:0]  q_id_a   [0:P-1];
+    wire [SEQW-1:0] q_seq_a  [0:P-1];
     genvar gp;
     generate for (gp = 0; gp < P; gp = gp + 1) begin : g_el
         assign elig[gp] = mr_qval[gp] && !flush_busy[gp / M];
+        assign q_addr_a[gp] = mr_qaddr[gp*AW +: AW];
+        assign q_len_a[gp]  = mr_qlen[gp*8 +: 8];
+        assign q_id_a[gp]   = mr_qid[gp*IDW +: IDW];
+        assign q_seq_a[gp]  = mr_qseq[gp*SEQW +: SEQW];
     end endgenerate
     wire [P-1:0] hi   = elig & rarr_mask;
     // lowest set bit, one-hot, as a tree of 4-wide groups: one LUT level per
@@ -267,11 +277,11 @@ module kx_rd_pipe #(
             if (!busy) begin
                 r_val <= 1'b0;
                 if (rg_v) begin
-                    ra   <= mr_qaddr[rg_p*AW +: AW];
-                    rlen <= {1'b0, mr_qlen[rg_p*8 +: 8]};
-                    rid  <= mr_qid[rg_p*IDW +: IDW];
-                    r_id <= mr_qid[rg_p*IDW +: IDW];
-                    r_seq <= mr_qseq[rg_p*SEQW +: SEQW];
+                    ra   <= q_addr_a[rg_p];
+                    rlen <= {1'b0, q_len_a[rg_p]};
+                    rid  <= q_id_a[rg_p];
+                    r_id <= q_id_a[rg_p];
+                    r_seq <= q_seq_a[rg_p];
                     sel <= 0; sel[rg_p / M] <= 1'b1;
                     r_home <= 0; r_home[rg_p / M] <= 1'b1;
                     r_hidx <= (rg_p / M);

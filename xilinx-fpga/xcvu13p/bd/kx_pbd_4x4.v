@@ -23,13 +23,18 @@ module kx_pbd_4x4 #(
     parameter [255:0] SWAP_B    = 256'h0,
     parameter integer RD_OUTQ   = 4,
     parameter integer WR_OUTQ   = 4,
+    parameter integer RB_BEATS  = 0,
     parameter integer HOP_DEPTH = 16,
     parameter         HOP_BUF   = "lean",
-    parameter integer HOP_RXREG = 0
+    parameter integer HOP_RXREG = 0,
+    parameter integer BND_TRUNK  = 0,
+    parameter integer PCLK       = 0,
+    parameter         MEM_TRUNK  = "block",
+    parameter         MEM_RB     = "block",
+    parameter         MEM_HRD    = "block",
+    parameter         MEM_HWR    = "block",
+    parameter integer TRUNK_SLOT = 0
 )(
-    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 aclk CLK" *)
-    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF S00_AXI:S01_AXI:S02_AXI:S03_AXI, ASSOCIATED_RESET d_rstn0" *)
-    input  wire aclk,
     (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 d_rstn0 RST" *)
     (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
     input  wire d_rstn0,
@@ -42,6 +47,18 @@ module kx_pbd_4x4 #(
     (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 d_rstn3 RST" *)
     (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
     input  wire d_rstn3,
+    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 p_clk0 CLK" *)
+    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF S00_AXI, ASSOCIATED_RESET d_rstn0" *)
+    input  wire p_clk0,
+    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 p_clk1 CLK" *)
+    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF S01_AXI, ASSOCIATED_RESET d_rstn1" *)
+    input  wire p_clk1,
+    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 p_clk2 CLK" *)
+    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF S02_AXI, ASSOCIATED_RESET d_rstn2" *)
+    input  wire p_clk2,
+    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 p_clk3 CLK" *)
+    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF S03_AXI, ASSOCIATED_RESET d_rstn3" *)
+    input  wire p_clk3,
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 h_clk0 CLK" *)
     (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF M00_AXI, ASSOCIATED_RESET h_rstn0" *)
     input  wire h_clk0,
@@ -581,10 +598,15 @@ module kx_pbd_4x4 #(
                 .CDC_DEPTH(CDC_DEPTH), .NSWAP(NSWAP),
                 .SWAP_A(SWAP_A[((NSWAP < 1) ? 1 : NSWAP)*8-1:0]),
                 .SWAP_B(SWAP_B[((NSWAP < 1) ? 1 : NSWAP)*8-1:0]),
-                .RD_OUTQ(RD_OUTQ), .WR_OUTQ(WR_OUTQ), .HOP_DEPTH(HOP_DEPTH),
-                .HOP_BUF(HOP_BUF), .HOP_RXREG(HOP_RXREG)) u_kx (
-        .clk(aclk), .rstn_p({d_rstn3, d_rstn2, d_rstn1, d_rstn0}),
-        .m_clk({M{aclk}}), .m_rstn({d_rstn3, d_rstn2, d_rstn1, d_rstn0}),
+                .RD_OUTQ(RD_OUTQ), .WR_OUTQ(WR_OUTQ), .RB_BEATS(RB_BEATS),
+                .HOP_DEPTH(HOP_DEPTH),
+                .HOP_BUF(HOP_BUF), .HOP_RXREG(HOP_RXREG),
+                .BND_TRUNK(BND_TRUNK), .TRUNK_SLOT(TRUNK_SLOT),
+                .MEM_TRUNK(MEM_TRUNK), .MEM_RB(MEM_RB),
+                .MEM_HRD(MEM_HRD), .MEM_HWR(MEM_HWR),
+                .PCLK(PCLK)) u_kx (
+        .clk(p_clk0), .clk_p({p_clk3, p_clk2, p_clk1, p_clk0}), .rstn_p({d_rstn3, d_rstn2, d_rstn1, d_rstn0}),
+        .m_clk({p_clk3, p_clk2, p_clk1, p_clk0}), .m_rstn({d_rstn3, d_rstn2, d_rstn1, d_rstn0}),
         .h_clk({h_clk3, h_clk2, h_clk1, h_clk0}), .h_rstn({h_rstn3, h_rstn2, h_rstn1, h_rstn0}),
         .s_awid(s_awid), .s_awaddr(s_awaddr), .s_awlen(s_awlen), .s_awsize(s_awsize), .s_awburst(s_awburst),
         .s_awvalid(s_awvalid), .s_awready(s_awready), .s_wdata(s_wdata), .s_wstrb(s_wstrb), .s_wlast(s_wlast),

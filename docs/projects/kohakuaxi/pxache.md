@@ -207,9 +207,10 @@ place reserved before its request leaves.
 
 ### 3.2 A read: slot and ring reserved at the AR
 
-Each master owns a **reorder ring**, a block RAM of `RD_OUTQ` pages of beats
-(a page is 4 KB, 64 beats at 512 bits — AXI forbids a burst crossing one, so
-no burst is longer). An AR takes the next free **slot**; the slot number rides
+Each master owns a **reorder ring** of `RD_OUTQ` slots of `RB_BEATS` beats
+(0 = a 4 KB page, 64 beats at 512 bits — AXI forbids a burst crossing one, so
+no burst is longer; a burst longer than a slot is a protocol error the bench
+reports). An AR takes the next free **slot**; the slot number rides
 to the home in the AR flit and comes back in every R flit. A beat from any
 source — a local engine or a lane tap — lands at `{slot, beat}` the cycle it
 is offered, whatever order the homes answer in; the **drain** reads the
@@ -259,7 +260,9 @@ partition.
 | `P` | 1, 4 | partitions of one clock. P = 1 generates no lane |
 | `MP[m]`, `HP[h]` | `{3,2,1,0}` | the partition of each master and home, packed `PW` bits each; the lane count and every `TAKE` table follow from them |
 | `rstn_p[P]` | released together, or 3 cycles apart | one reset per partition; a hop's halves take the two they sit in |
-| `RD_OUTQ`, `WR_OUTQ` | 4 | read slots (each a page of the reorder ring) and write slots per master |
+| `RD_OUTQ`, `WR_OUTQ` | 4 | read slots and write slots per master |
+| `RB_BEATS` | 0, 16 | beats a read slot holds, so the reorder ring is `RD_OUTQ × RB_BEATS` deep; 0 = a 4 KB page (256 deep at 512 bits). Every master's read bursts must fit a slot: the node's DRAM port splits its ARs at the same value (`DRAM_AR_MAX`). In LUTRAM the ring is 592 LUT a master at 16 beats and 2,887 at a page |
+| `MEM_TRUNK`, `MEM_RB`, `MEM_HRD`, `MEM_HWR` | `block`, `distributed` | the primitive behind each FIFO class: the boundary trunk rings, the reorder ring, the DRAM-edge read CDC, the DRAM-edge write CDC. `distributed` is an inferred ring (`kohaku_aring`, `kx_lram`), not xpm's: a 16-deep class costs ~width/2 LUT |
 | `HOP_DEPTH` | 16 | landing ring entries; ≥ 4 streams |
 | `HOP_BUF` | `lean` | the ring, or `xpm` (one cycle slower) |
 | `HOP_RXREG` | 0 | 1: a register in front of every landing RAM, +1 cycle per hop (§2.1). At the default array it is +949 LUT and +14,000 FF for +0.19 ns (368 → 396 MHz): a timing lever, not an area one |

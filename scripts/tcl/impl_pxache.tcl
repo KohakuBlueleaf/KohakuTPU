@@ -22,6 +22,7 @@ set_param general.maxThreads 8
 foreach f {
     src/kohakuaccel/common/kohaku_sdpram.v
     src/kohakuaccel/common/kohaku_sdpram_be.v
+    src/kohakuaccel/common/kohaku_mux.v
     src/kohakuaccel/common/async_fifo.v
     src/kohakuaccel/common/sync_fifo.v
     src/kohakuaxi/xache/edge/kx_scdc.v
@@ -32,8 +33,16 @@ foreach f {
     src/kohakuaxi/xache/engine/kx_wr_engine.v
     src/kohakuaxi/pxache/lane/kx_hop.v
     src/kohakuaxi/pxache/lane/kx_lane.v
+    src/kohakuaxi/pxache/lane/kx_trunk.v
+    src/kohakutransmit/prim/kts_fifo.v
+    src/kohakutransmit/link/kts_tx.v
+    src/kohakutransmit/link/kts_rx.v
+    src/kohakutransmit/packet/kts_switch.v
+    src/kohakuaxi/pxache/lane/kx_kedge.v
     src/kohakuaxi/pxache/kx_pxache.v
-} { read_verilog [file join $root $f] }
+} {
+    read_verilog [file join $root $f]
+}
 
 set generics {}
 if {$gspec ne "-"} {
@@ -43,7 +52,8 @@ if {$gspec ne "-"} {
     }
 }
 puts "@@@ impl_pxache $tag period $per generics {$generics}"
-set cmd [list synth_design -top kx_pxache -part $part -mode out_of_context]
+set cmd [list synth_design -top kx_pxache -part $part -mode out_of_context \
+    -include_dirs [file join $root src/kohakutransmit/packet]]
 foreach g $generics { lappend cmd -generic $g }
 if {[catch {eval $cmd} err]} { puts "SYNTH FAILED: $err"; exit 1 }
 report_utilization -file $out/util_synth.rpt
@@ -104,6 +114,32 @@ for {set p 0} {$p < $NP} {incr p} {
         }
     }
 }
+# BND_TRUNK: u_tk holds both halves; rx_*/g_ring*/pp_tx*/fok_tx* land with the
+# receiver, everything else sends; the g_p glue belongs to its partition
+if {[llength [get_cells -quiet -hier -filter "NAME =~ g_chain*"]]} {
+    for {set b 0} {$b < $NP - 1} {incr b} {
+        foreach d {0 1} {
+            set src [expr {$d ? $b : $b + 1}]
+            set dst [expr {$d ? $b + 1 : $b}]
+            set base "g_chain.g_b?$b?.g_d?$d?.u_tk"
+            set rxf "NAME =~ $base/rx_* || NAME =~ $base/g_ring* || NAME =~ $base/pp_tx* || NAME =~ $base/fok_tx*"
+            pin $dst "chain b$b d$d rx" [get_cells -quiet -hier -filter $rxf]
+            pin $src "chain b$b d$d tx" [get_cells -quiet -hier -filter \
+                "NAME =~ $base/* && NAME !~ $base/rx_* && NAME !~ $base/g_ring* && NAME !~ $base/pp_tx* && NAME !~ $base/fok_tx*"]
+        }
+    }
+    for {set p 0} {$p < $NP} {incr p} {
+        pin $p "chain glue p$p" [get_cells -quiet -hier -filter \
+            "NAME =~ g_chain.g_p?$p?.* && IS_PRIMITIVE"]
+    }
+}
+# BND_KTS: a partition's switch, kedge and glue all belong to its SLR
+if {[llength [get_cells -quiet -hier -filter "NAME =~ g_kts*"]]} {
+    for {set p 0} {$p < $NP} {incr p} {
+        pin $p "kts p$p" [get_cells -quiet -hier -filter \
+            "NAME =~ g_kts.g_p?$p?.* && IS_PRIMITIVE"]
+    }
+}
 
 opt_design
 place_design
@@ -142,6 +178,33 @@ foreach pb [get_pblocks] {
         puts "@@@ WARNING report pblock $pb failed: $err"
     }
 }
+# EVERY failing endpoint, not a sample: report_timing's 100 paths hid whole
+# clusters. One row per path, unsorted (sorting costs more than the dump).
+set ef [open $out/endpoints.tsv w]
+puts $ef "SLACK\tLEVELS\tSTART\tEND"
+foreach tp [get_timing_paths -quiet -max_paths 200000 -nworst 1 -setup -slack_lesser_than 0] {
+    puts $ef "[get_property SLACK $tp]\t[get_property LOGIC_LEVELS $tp]\t[get_property STARTPOINT_PIN $tp]\t[get_property ENDPOINT_PIN $tp]"
+}
+close $ef
+
+# The worst 5,000 paths WHATEVER the sign: a run that closes still has to be
+# compared cone by cone with the last one, or a new structure hides under a
+# positive WNS until some later run puts it on the critical path.
+set pf [open $out/paths.tsv w]
+puts $pf "SLACK\tLEVELS\tSTART\tEND"
+foreach tp [get_timing_paths -quiet -max_paths 5000 -nworst 1 -setup] {
+    puts $pf "[get_property SLACK $tp]\t[get_property LOGIC_LEVELS $tp]\t[get_property STARTPOINT_PIN $tp]\t[get_property ENDPOINT_PIN $tp]"
+}
+close $pf
+
+# every placed primitive's LOC: the occupancy analysis reads this offline
+set lf [open $out/cell_loc.tsv w]
+puts $lf "LOC\tNAME"
+foreach c [get_cells -quiet -hier -filter IS_PRIMITIVE] {
+    set l [get_property -quiet LOC $c]
+    if {$l ne ""} { puts $lf "$l\t[get_property NAME $c]" }
+}
+close $lf
 
 set wns [get_property SLACK [get_timing_paths -max_paths 1 -setup]]
 set fmax [expr {1000.0 / ($per - $wns)}]

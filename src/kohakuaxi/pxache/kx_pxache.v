@@ -38,9 +38,8 @@ module kx_pxache #(
     parameter integer ID_W      = 4,
     parameter integer HOME_LSB  = 32,
     // The shipped array: 16,384 sets of K=2 words = the same 8 MB as 32,768 x 1.
-    // K=2 with write lanes (kx_carray LANE_W) at one bank is a 4-deep chain,
-    // ROUTED per SLR at WNS +0.020 / 300 MHz: 11,788 LUT synth, 11,288 routed,
-    // 240 URAM, one cycle less hit latency than K=1 BANKS=2 (12,816 / 256).
+    // K=2 at one bank ROUTED per SLR at WNS +0.020 / 300 MHz: 11,288 LUT, 240
+    // URAM, one cycle less hit latency than K=1 BANKS=2 (12,816 / 256).
     parameter integer SETS      = 16384,
     parameter integer SET_W     = 14,
     parameter integer K         = 2,
@@ -56,25 +55,54 @@ module kx_pxache #(
     parameter integer RING_WR_REG = 1,      // register the reorder ring's write port
     parameter integer ARR_WP_REG  = 0,      // kx_carray's write-port bundle registered
     parameter integer ARR_LAT     = 0,      // kx_carray's primitive read latency; 0 = URAM 4 / else 1
-    parameter integer LANE_W      = 8,      // kx_carray's write lane at K > 1: 8 or 9
     parameter [M-1:0]        MCDC = {M{1'b0}},
     parameter [N_HOME-1:0]   HCDC = {N_HOME{1'b0}},
     parameter integer CDC_DEPTH = 16,
     parameter integer NSWAP     = 0,
     parameter [((NSWAP < 1) ? 1 : NSWAP)*8-1:0] SWAP_A = 0,
     parameter [((NSWAP < 1) ? 1 : NSWAP)*8-1:0] SWAP_B = 0,
-    // bursts a master may hold outstanding: read slots (a 4 KB page of beats
-    // each in its reorder ring) and write slots (B order)
+    // bursts a master may hold outstanding: read slots (RB_BEATS beats each in
+    // its reorder ring; 0 = a 4 KB page, the most AXI lets one burst span) and
+    // write slots (B order). A read burst longer than a slot is a protocol
+    // error here, so RB_BEATS is the burst bound the masters must honour: at
+    // W 512 a page is 64 beats and the ring 256 deep, which in LUTRAM is
+    // 2,887 LUT a master; 16 beats is 64 deep, 592 LUT, no read mux.
     parameter integer RD_OUTQ   = 4,
     parameter integer WR_OUTQ   = 4,
+    parameter integer RB_BEATS  = 0,
     parameter integer HOP_DEPTH = 16,
     parameter         HOP_BUF   = "lean",
     parameter integer HOP_RXREG = 0,        // 1: a flop before each landing RAM (+1 cycle per hop)
+    // Every FIFO here is ~520-580 bits wide and 16-32 deep, so a RAMB36 spends
+    // 512 rows to hold 32: "distributed" costs about one LUT per bit of width
+    // and gives the whole tile back. MEM_HWR is the 512-bit DRAM write path,
+    // the one place the 512-deep buffering is actually used.
+    parameter         MEM_TRUNK = "block",  // boundary trunk rings, 15 tiles a trunk
+    parameter         MEM_RB    = "block",  // master reorder buffer, 7.5 a master
+    parameter         MEM_HRD   = "block",  // DRAM-edge read CDC, 7.5 a home
+    parameter         MEM_HWR   = "block",  // DRAM-edge write CDC, 8.5 a home
+    // 0: a private crossing per lane per boundary (above). K >= 1: ONE shared
+    // trunk per boundary per direction with K slots per beat (kx_trunk) --
+    // the boundary wires drop from ~4,700 to ~1,200 (K=1) at P=4/W=512.
+    parameter integer BND_TRUNK  = 0,
+    parameter integer TRUNK_SLOT = 0,       // 0 = the widest lane flit
+    // 1: the boundaries are a KTS line -- a kts_switch per partition, the
+    // local port through kx_kedge; excludes BND_TRUNK
+    parameter integer BND_KTS   = 0,
+    parameter integer KTS_W     = 584,
+    parameter integer KTS_D     = 16,
+    // 1: a W flit carries a 4-bit strb code (F = whole line); a partial strb
+    // rides a WX flit (type 3) sent just before its beat. Slot 583 -> 526.
+    parameter integer BND_SCODE = 1,
+    // 1: each partition runs on clk_p[p] and every boundary trunk is the clock
+    // crossing (its landing ring already is the elastic store one needs).
+    parameter integer PCLK      = 0,
     parameter integer MIDX_W    = (M <= 1) ? 1 : $clog2(M),
     parameter integer HIDX_W    = (N_HOME <= 1) ? 1 : $clog2(N_HOME),
     parameter integer IDW       = ID_W + MIDX_W,
     parameter integer WBYTES_LG = $clog2(W/8),
     parameter integer SUBW      = (K <= 1) ? 0 : $clog2(K),
+    parameter integer BCW       = (K <= 1) ? 1 : $clog2(K),
     parameter integer LINE_LSB  = WBYTES_LG + SUBW,
     parameter integer TAG_W     = AW - LINE_LSB - SET_W,
     parameter integer STRB      = W/8,
@@ -87,6 +115,7 @@ module kx_pxache #(
     parameter integer DBW       = IDW + 2
 )(
     input  wire                    clk,
+    input  wire [P-1:0]            clk_p,      // per-partition clock; unused at PCLK 0
     input  wire [P-1:0]            rstn_p,     // one reset per partition
     input  wire [M-1:0]            m_clk,      // used iff MCDC[m]
     input  wire [M-1:0]            m_rstn,
@@ -166,10 +195,12 @@ module kx_pxache #(
     localparam integer AWWW = WPL + 1;                  // kind (1 = W beat) on top
     localparam integer RNW  = SEQW + ID_W + 2 + 1;      // {slot, id, resp, last}
     localparam integer RBW  = 1 + RNW + W;              // kind (1 = B) on top
-    // a read slot holds a 4 KB page of beats: AXI never lets a burst cross one
+    // a read slot holds RBB beats: a 4 KB page (AXI never lets a burst cross
+    // one) unless RB_BEATS bounds the bursts tighter
     localparam integer PGB  = 4096 / STRB;
-    localparam integer PBA  = $clog2(PGB);
-    localparam integer RBUF_DEPTH = RD_OUTQ * PGB;
+    localparam integer RBB  = (RB_BEATS > 0 && RB_BEATS < PGB) ? RB_BEATS : PGB;
+    localparam integer PBA  = $clog2(RBB);
+    localparam integer RBUF_DEPTH = RD_OUTQ * RBB;
 
     // ---- partition of a master / home, as constants and by wire index -----
     function integer f_mp(input integer mm);
@@ -206,6 +237,14 @@ module kx_pxache #(
         end
     endfunction
 
+    // Partition p's clock. At PCLK 0 every one of these IS clk, so the ternary
+    // folds away and the fabric is single-clock exactly as before.
+    wire [P-1:0] pc;
+    genvar pk;
+    generate for (pk = 0; pk < P; pk = pk + 1) begin : g_pclk
+        assign pc[pk] = (PCLK != 0) ? clk_p[pk] : clk;
+    end endgenerate
+
     // ======================= master edge: a crossing per port iff MCDC =======================
     wire [M*ID_W-1:0] x_awid, x_arid, x_bid, x_rid;
     wire [M*AW-1:0]   x_awaddr, x_araddr;
@@ -221,38 +260,38 @@ module kx_pxache #(
         localparam integer SAME = MCDC[m] ? 0 : 1;
         localparam integer PM   = f_mp(m);
         wire rm    = rstn_p[PM];
-        wire mclk  = MCDC[m] ? m_clk[m]  : clk;
+        wire mclk  = MCDC[m] ? m_clk[m]  : pc[PM];
         wire mrst  = MCDC[m] ? ~m_rstn[m] : ~rm;
         wire [ARW-1:0] aw_pk_o, ar_pk_o;
         kx_link #(.WIDTH(ARW), .SAME(SAME), .DEPTH(CDC_DEPTH)) u_aw (
             .wr_clk(mclk), .wr_rst(mrst),
             .s_valid(s_awvalid[m]), .s_ready(s_awready[m]),
             .s_data({s_awid[m*ID_W +: ID_W], s_awaddr[m*AW +: AW], s_awlen[m*8 +: 8], s_awsize[m*3 +: 3]}),
-            .rd_clk(clk), .m_valid(x_awvalid[m]), .m_ready(x_awready[m]), .m_data(aw_pk_o));
+            .rd_clk(pc[PM]), .m_valid(x_awvalid[m]), .m_ready(x_awready[m]), .m_data(aw_pk_o));
         assign {x_awid[m*ID_W +: ID_W], x_awaddr[m*AW +: AW], x_awlen[m*8 +: 8], x_awsize[m*3 +: 3]} = aw_pk_o;
         kx_link #(.WIDTH(ARW), .SAME(SAME), .DEPTH(CDC_DEPTH)) u_ar (
             .wr_clk(mclk), .wr_rst(mrst),
             .s_valid(s_arvalid[m]), .s_ready(s_arready[m]),
             .s_data({s_arid[m*ID_W +: ID_W], s_araddr[m*AW +: AW], s_arlen[m*8 +: 8], s_arsize[m*3 +: 3]}),
-            .rd_clk(clk), .m_valid(x_arvalid[m]), .m_ready(x_arready[m]), .m_data(ar_pk_o));
+            .rd_clk(pc[PM]), .m_valid(x_arvalid[m]), .m_ready(x_arready[m]), .m_data(ar_pk_o));
         assign {x_arid[m*ID_W +: ID_W], x_araddr[m*AW +: AW], x_arlen[m*8 +: 8], x_arsize[m*3 +: 3]} = ar_pk_o;
         wire [WW-1:0] w_pk_o;
         kx_link #(.WIDTH(WW), .SAME(SAME), .DEPTH(CDC_DEPTH), .MEM("block")) u_w (
             .wr_clk(mclk), .wr_rst(mrst),
             .s_valid(s_wvalid[m]), .s_ready(s_wready[m]),
             .s_data({s_wdata[m*W +: W], s_wstrb[m*STRB +: STRB], s_wlast[m]}),
-            .rd_clk(clk), .m_valid(x_wvalid[m]), .m_ready(x_wready[m]), .m_data(w_pk_o));
+            .rd_clk(pc[PM]), .m_valid(x_wvalid[m]), .m_ready(x_wready[m]), .m_data(w_pk_o));
         assign {x_wdata[m*W +: W], x_wstrb[m*STRB +: STRB], x_wlast[m]} = w_pk_o;
         wire [RW-1:0] r_pk_o;
         kx_link #(.WIDTH(RW), .SAME(SAME), .DEPTH(CDC_DEPTH), .MEM("block")) u_r (
-            .wr_clk(clk), .wr_rst(~rm),
+            .wr_clk(pc[PM]), .wr_rst(~rm),
             .s_valid(x_rvalid[m]), .s_ready(x_rready[m]),
             .s_data({x_rid[m*ID_W +: ID_W], x_rdata[m*W +: W], x_rresp[m*2 +: 2], x_rlast[m]}),
             .rd_clk(mclk), .m_valid(s_rvalid[m]), .m_ready(s_rready[m]), .m_data(r_pk_o));
         assign {s_rid[m*ID_W +: ID_W], s_rdata[m*W +: W], s_rresp[m*2 +: 2], s_rlast[m]} = r_pk_o;
         wire [BW-1:0] b_pk_o;
         kx_link #(.WIDTH(BW), .SAME(SAME), .DEPTH(CDC_DEPTH)) u_b (
-            .wr_clk(clk), .wr_rst(~rm),
+            .wr_clk(pc[PM]), .wr_rst(~rm),
             .s_valid(x_bvalid[m]), .s_ready(x_bready[m]),
             .s_data({x_bid[m*ID_W +: ID_W], x_bresp[m*2 +: 2]}),
             .rd_clk(mclk), .m_valid(s_bvalid[m]), .m_ready(s_bready[m]), .m_data(b_pk_o));
@@ -274,34 +313,34 @@ module kx_pxache #(
         localparam integer SAME = HCDC[h] ? 0 : 1;
         localparam integer PH   = f_hp(h);
         wire rh   = rstn_p[PH];
-        wire hclk = HCDC[h] ? h_clk[h]  : clk;
+        wire hclk = HCDC[h] ? h_clk[h]  : pc[PH];
         wire hrst = HCDC[h] ? ~h_rstn[h] : ~rh;
         wire [DARW-1:0] aw_o, ar_o;
         kx_link #(.WIDTH(DARW), .SAME(SAME), .DEPTH(CDC_DEPTH)) u_aw (
-            .wr_clk(clk), .wr_rst(~rh),
+            .wr_clk(pc[PH]), .wr_rst(~rh),
             .s_valid(y_awvalid[h]), .s_ready(y_awready[h]),
             .s_data({y_awid[h*IDW +: IDW], y_awaddr[h*AW +: AW], y_awlen[h*8 +: 8], y_awsize[h*3 +: 3], y_awburst[h*2 +: 2]}),
             .rd_clk(hclk), .m_valid(d_awvalid[h]), .m_ready(d_awready[h]), .m_data(aw_o));
         assign {d_awid[h*IDW +: IDW], d_awaddr[h*AW +: AW], d_awlen[h*8 +: 8], d_awsize[h*3 +: 3], d_awburst[h*2 +: 2]} = aw_o;
         kx_link #(.WIDTH(DARW), .SAME(SAME), .DEPTH(CDC_DEPTH)) u_ar (
-            .wr_clk(clk), .wr_rst(~rh),
+            .wr_clk(pc[PH]), .wr_rst(~rh),
             .s_valid(y_arvalid[h]), .s_ready(y_arready[h]),
             .s_data({y_arid[h*IDW +: IDW], y_araddr[h*AW +: AW], y_arlen[h*8 +: 8], y_arsize[h*3 +: 3], y_arburst[h*2 +: 2]}),
             .rd_clk(hclk), .m_valid(d_arvalid[h]), .m_ready(d_arready[h]), .m_data(ar_o));
         assign {d_arid[h*IDW +: IDW], d_araddr[h*AW +: AW], d_arlen[h*8 +: 8], d_arsize[h*3 +: 3], d_arburst[h*2 +: 2]} = ar_o;
         wire [WW-1:0] w_o;
-        kx_link #(.WIDTH(WW), .SAME(SAME), .DEPTH(CDC_DEPTH), .MEM("block")) u_w (
-            .wr_clk(clk), .wr_rst(~rh),
+        kx_link #(.WIDTH(WW), .SAME(SAME), .DEPTH(CDC_DEPTH), .MEM(MEM_HWR)) u_w (
+            .wr_clk(pc[PH]), .wr_rst(~rh),
             .s_valid(y_wvalid[h]), .s_ready(y_wready[h]),
             .s_data({y_wdata[h*W +: W], y_wstrb[h*STRB +: STRB], y_wlast[h]}),
             .rd_clk(hclk), .m_valid(d_wvalid[h]), .m_ready(d_wready[h]), .m_data(w_o));
         assign {d_wdata[h*W +: W], d_wstrb[h*STRB +: STRB], d_wlast[h]} = w_o;
         wire [DRW-1:0] r_o;
-        kx_link #(.WIDTH(DRW), .SAME(SAME), .DEPTH(CDC_DEPTH), .MEM("block")) u_r (
+        kx_link #(.WIDTH(DRW), .SAME(SAME), .DEPTH(CDC_DEPTH), .MEM(MEM_HRD)) u_r (
             .wr_clk(hclk), .wr_rst(hrst),
             .s_valid(d_rvalid[h]), .s_ready(d_rready[h]),
             .s_data({d_rid[h*IDW +: IDW], d_rdata[h*W +: W], d_rresp[h*2 +: 2], d_rlast[h]}),
-            .rd_clk(clk), .m_valid(y_rvalid[h]), .m_ready(y_rready[h]), .m_data(r_o));
+            .rd_clk(pc[PH]), .m_valid(y_rvalid[h]), .m_ready(y_rready[h]), .m_data(r_o));
         wire [IDW-1:0] y_rid_unused;
         assign {y_rid_unused, y_rdata[h*W +: W], y_rresp[h*2 +: 2], y_rlast[h]} = r_o;
         wire [DBW-1:0] b_o;
@@ -309,7 +348,7 @@ module kx_pxache #(
             .wr_clk(hclk), .wr_rst(hrst),
             .s_valid(d_bvalid[h]), .s_ready(d_bready[h]),
             .s_data({d_bid[h*IDW +: IDW], d_bresp[h*2 +: 2]}),
-            .rd_clk(clk), .m_valid(y_bvalid[h]), .m_ready(y_bready[h]), .m_data(b_o));
+            .rd_clk(pc[PH]), .m_valid(y_bvalid[h]), .m_ready(y_bready[h]), .m_data(b_o));
         assign {y_bid[h*IDW +: IDW], y_bresp[h*2 +: 2]} = b_o;
     end endgenerate
 
@@ -356,6 +395,605 @@ module kx_pxache #(
     wire [N_HOME*P-1:0]    rb_tv, rb_tr;
     wire [MIDX_W-1:0]      rb_tdst  [0:N_HOME*P-1];
     wire [RBW-1:0]         rb_td    [0:N_HOME*P-1];
+
+    // ---- boundary chains (BND_TRUNK > 0): ONE shared crossing (kx_trunk,
+    // N_CH=2) per boundary and direction, a REQ stream (every master's
+    // ar+aw+w, muxed once at its source) and an RSP stream (every home's r+b)
+    localparam integer KTSM   = (BND_KTS > 0) ? 1 : 0;
+    localparam integer TRK    = (BND_TRUNK > 0 || KTSM) ? 1 : 0;
+    localparam integer TRKC   = (BND_TRUNK > 0 && !KTSM) ? 1 : 0;
+    // REQ flit {dst h, type(2: 0 AW / 1 W / 2 AR), src m, payload}; RSP flit
+    // {dst m, kind(1: 0 R / 1 B), src h, payload}. dst/type at the top: the
+    // ring's FASTW distributed bits are what the head decode touches.
+    localparam integer SC     = (BND_SCODE != 0 && BND_TRUNK > 0 && BND_KTS == 0) ? 1 : 0;
+    localparam integer WPLC   = SC ? (W + 5) : WPL;   // {data, scode, last}
+    localparam integer QPW    = (WPLC > ARQW) ? WPLC : ARQW;
+    localparam integer REQW   = HIDX_W + 2 + MIDX_W + QPW;
+    localparam integer SPW    = RNW + W;
+    localparam integer RSPW   = MIDX_W + 1 + HIDX_W + SPW;
+    localparam integer FWMAX  = (REQW > RSPW) ? REQW : RSPW;
+    localparam integer TSLOT  = (TRUNK_SLOT > 0) ? TRUNK_SLOT : FWMAX;
+    localparam integer TFAST  = HIDX_W + 2 + MIDX_W;
+    localparam integer NB     = (P > 1) ? P - 1 : 1;
+    localparam integer MAXCH  = 2;
+    // direction d: 1 = up (sender b, receiver b+1), 0 = down
+    function integer f_in(input integer b, input integer d, input integer pp_);
+        f_in = d ? (pp_ <= b) : (pp_ > b);
+    endfunction
+    function integer f_nlm(input integer p_);
+        integer i;
+        begin
+            f_nlm = 0;
+            for (i = 0; i < M; i = i + 1) begin
+                if (f_mp(i) == p_) begin f_nlm = f_nlm + 1; end
+            end
+        end
+    endfunction
+    function integer f_lmx(input integer p_, input integer j_);
+        integer i, c_;
+        begin
+            f_lmx = 0;
+            c_ = 0;
+            for (i = 0; i < M; i = i + 1) begin
+                if (f_mp(i) == p_) begin
+                    if (c_ == j_) begin f_lmx = i; end
+                    c_ = c_ + 1;
+                end
+            end
+        end
+    endfunction
+    function integer f_nlh(input integer p_);
+        integer i;
+        begin
+            f_nlh = 0;
+            for (i = 0; i < N_HOME; i = i + 1) begin
+                if (f_hp(i) == p_) begin f_nlh = f_nlh + 1; end
+            end
+        end
+    endfunction
+    function integer f_lhx(input integer p_, input integer j_);
+        integer i, c_;
+        begin
+            f_lhx = 0;
+            c_ = 0;
+            for (i = 0; i < N_HOME; i = i + 1) begin
+                if (f_hp(i) == p_) begin
+                    if (c_ == j_) begin f_lhx = i; end
+                    c_ = c_ + 1;
+                end
+            end
+        end
+    endfunction
+    function integer f_char(input integer b, input integer d, input integer mm);
+        integer i;
+        begin
+            f_char = 0;
+            for (i = 0; i < mm; i = i + 1) begin
+                if (f_in(b, d, f_mp(i))) begin f_char = f_char + 2; end
+            end
+        end
+    endfunction
+    function integer f_chrb(input integer b, input integer d, input integer hh);
+        integer i;
+        begin
+            f_chrb = f_char(b, d, M);
+            for (i = 0; i < hh; i = i + 1) begin
+                if (f_in(b, d, f_hp(i))) begin f_chrb = f_chrb + 1; end
+            end
+        end
+    endfunction
+    function integer f_nch(input integer b, input integer d);
+        f_nch = f_chrb(b, d, N_HOME);
+    endfunction
+    localparam integer FWAR   = HIDX_W + ARQW;
+    localparam integer FWAWW  = HIDX_W + AWWW;
+    localparam integer FWRB   = MIDX_W + RBW;
+    // chain wires, indexed (b, d, ch): ch 0 = REQ, ch 1 = RSP; s = forward,
+    // s2 = inject (the trunk's fused pair)
+    wire [NB*2*MAXCH-1:0]       tk_sv, tk_sr, tk_mv, tk_mr, tk_s2v, tk_s2r;
+    wire [NB*2*MAXCH*TSLOT-1:0] tk_sd, tk_md, tk_s2d;
+    // partition-side glue, indexed (p, d): the landed head this partition
+    // consumes or forwards, and the local inject the arb offers
+    wire [P*2-1:0]        cq_hv, cq_hr, cs_hv, cs_hr;     // heads (REQ, RSP)
+    wire [P*2*TSLOT-1:0]  cq_hd, cs_hd;
+    wire [P*2-1:0]        cq_iv, cq_ir, cs_iv, cs_ir;     // injects
+    wire [P*2*TSLOT-1:0]  cq_id, cs_id;
+    wire [P*2*STRB-1:0]   cq_wx;                          // last WX strb per head
+    // per-source offers into the partition inject arbs
+    wire [M*2-1:0]            qo_v, qo_r;
+    wire [M*2*TSLOT-1:0]      qo_d;
+    wire [N_HOME*2-1:0]       so_v, so_r;
+    wire [N_HOME*2*TSLOT-1:0] so_d;
+
+    genvar b, d, cp, cc2;
+    generate if (TRKC && P > 1) begin : g_chain
+        for (b = 0; b < P - 1; b = b + 1) begin : g_b
+            for (d = 0; d < 2; d = d + 1) begin : g_d
+                localparam integer BASE = (b * 2 + d) * MAXCH;
+                kx_trunk #(.N_CH(2), .SLOT(TSLOT), .K(BND_TRUNK),
+                           .DEPTH(HOP_DEPTH), .MEM(MEM_TRUNK), .BUF(HOP_BUF),
+                           .FASTW(TFAST), .WVEC({RSPW[15:0], REQW[15:0]}),
+                           .FUSE(1), .LOCK_CH(0),
+                           .LK_TP(TSLOT - HIDX_W - 2), .LK_WL(TSLOT - REQW),
+                           .ASYNC(PCLK)) u_tk (
+                    .clk(pc[d ? b : b + 1]), .m_clk(pc[d ? b + 1 : b]),
+                    .s_rstn(rstn_p[d ? b : b + 1]), .m_rstn(rstn_p[d ? b + 1 : b]),
+                    .s_valid(tk_sv[BASE +: 2]), .s_ready(tk_sr[BASE +: 2]),
+                    .s_data(tk_sd[BASE*TSLOT +: 2*TSLOT]),
+                    .s2_valid(tk_s2v[BASE +: 2]), .s2_ready(tk_s2r[BASE +: 2]),
+                    .s2_data(tk_s2d[BASE*TSLOT +: 2*TSLOT]),
+                    .m_valid(tk_mv[BASE +: 2]), .m_ready(tk_mr[BASE +: 2]),
+                    .m_data(tk_md[BASE*TSLOT +: 2*TSLOT]));
+            end
+        end
+        // partition p, direction d: incoming ring = trunk(b_in), outgoing =
+        // trunk(b_out); the ends have one or the other. Inject merges with the
+        // forwarded head, alternating when both ask (a stalled forward must
+        // not starve the local master, nor the reverse).
+        for (cp = 0; cp < P; cp = cp + 1) begin : g_p
+            for (d = 0; d < 2; d = d + 1) begin : g_d
+                localparam integer BIN  = d ? cp - 1 : cp;      // landed from
+                localparam integer BOUT = d ? cp : cp - 1;      // sent toward
+                localparam integer HAS_IN  = d ? (cp > 0) : (cp < P - 1);
+                localparam integer HAS_OUT = d ? (cp < P - 1) : (cp > 0);
+                localparam integer IBASE = ((d ? cp - 1 : cp) * 2 + d) * MAXCH;
+                localparam integer OBASE = ((d ? cp : cp - 1) * 2 + d) * MAXCH;
+                for (cc2 = 0; cc2 < 2; cc2 = cc2 + 1) begin : g_ch
+                    // The head is a REGISTER after the landing ring, one
+                    // entry at full rate: the ring refills it as it leaves.
+                    wire        hv;
+                    wire [TSLOT-1:0] hd_w;
+                    wire        iv, ir, fw_v, fw_r, loc_take;
+                    wire [TSLOT-1:0] id_w;
+                    if (cc2 == 0) begin : g_q
+                        assign cq_hv[cp*2 + d] = hv;
+                        assign cq_hd[(cp*2 + d)*TSLOT +: TSLOT] = hd_w;
+                        assign loc_take = cq_hr[cp*2 + d];
+                        assign iv = cq_iv[cp*2 + d];
+                        assign id_w = cq_id[(cp*2 + d)*TSLOT +: TSLOT];
+                        assign cq_ir[cp*2 + d] = ir;
+                    end else begin : g_s
+                        assign cs_hv[cp*2 + d] = hv;
+                        assign cs_hd[(cp*2 + d)*TSLOT +: TSLOT] = hd_w;
+                        assign loc_take = cs_hr[cp*2 + d];
+                        assign iv = cs_iv[cp*2 + d];
+                        assign id_w = cs_id[(cp*2 + d)*TSLOT +: TSLOT];
+                        assign cs_ir[cp*2 + d] = ir;
+                    end
+                    // dst decode: a head whose destination is NOT here forwards
+                    wire [PW-1:0] hdst_p = (cc2 == 0)
+                        ? HP[hd_w[TSLOT-1 -: HIDX_W]*PW +: PW]
+                        : MP[hd_w[TSLOT-1 -: MIDX_W]*PW +: PW];
+                    wire here = (hdst_p == cp[PW-1:0]);
+                    assign fw_v = hv && !here;
+                    wire head_pop = here ? loc_take : (fw_v && fw_r);
+                    if (HAS_IN) begin : g_hr
+                        reg              hv_q;
+                        reg [TSLOT-1:0]  hd_q;
+                        wire             acc = tk_mv[IBASE + cc2] && (!hv_q || head_pop);
+                        always @(posedge pc[cp]) begin
+                            if (!rstn_p[cp]) begin hv_q <= 1'b0; end
+                            else if (acc) begin hv_q <= 1'b1; end
+                            else if (head_pop) begin hv_q <= 1'b0; end
+                            if (acc) begin hd_q <= tk_md[(IBASE + cc2)*TSLOT +: TSLOT]; end
+                        end
+                        assign hv   = hv_q;
+                        assign hd_w = hd_q;
+                        assign tk_mr[IBASE + cc2] = !hv_q || head_pop;
+                    end else begin : g_hr0
+                        assign hv   = 1'b0;
+                        assign hd_w = {TSLOT{1'b0}};
+                    end
+                    if (HAS_OUT) begin : g_out
+                        assign tk_sv[OBASE + cc2] = fw_v;
+                        assign tk_sd[(OBASE + cc2)*TSLOT +: TSLOT] = hd_w;
+                        assign tk_s2v[OBASE + cc2] = iv;
+                        assign tk_s2d[(OBASE + cc2)*TSLOT +: TSLOT] = id_w;
+                        assign fw_r = tk_sr[OBASE + cc2];
+                        assign ir   = tk_s2r[OBASE + cc2];
+                    end else begin : g_noout
+                        assign fw_r = 1'b0;
+                        assign ir   = 1'b0;
+`ifndef SYNTHESIS
+                        always @(posedge pc[cp]) begin
+                            if (rstn_p[cp] && fw_v) begin
+                                $display("%0t ERROR kx_pxache chain: flit passed the last partition unconsumed (p=%0d d=%0d ch=%0d)", $time, cp, d, cc2);
+                            end
+                        end
+`endif
+                    end
+                end
+
+                // ---- inject arbs: masters (REQ) / homes (RSP) of partition cp
+                localparam integer NLM = f_nlm(cp);
+                localparam integer NLH = f_nlh(cp);
+                if (NLM == 1) begin : g_qi1
+                    localparam integer M0 = f_lmx(cp, 0);
+                    assign cq_iv[cp*2 + d] = qo_v[M0*2 + d];
+                    assign cq_id[(cp*2 + d)*TSLOT +: TSLOT] = qo_d[(M0*2 + d)*TSLOT +: TSLOT];
+                    assign qo_r[M0*2 + d] = cq_ir[cp*2 + d];
+                end else if (NLM > 1) begin : g_qin
+                    localparam integer CLM = $clog2(NLM);
+                    reg [CLM-1:0] rr2;
+                    reg           lkd2;
+                    reg [CLM-1:0] lk2;
+                    wire [NLM-1:0] vv;
+                    reg  [NLM-1:0] oh;
+                    reg  [TSLOT-1:0] mxd;
+                    integer j2_, k2_;
+                    for (cc2 = 0; cc2 < NLM; cc2 = cc2 + 1) begin : g_v
+                        assign vv[cc2] = qo_v[f_lmx(cp, cc2)*2 + d];
+                        assign qo_r[f_lmx(cp, cc2)*2 + d] = oh[cc2] && cq_ir[cp*2 + d];
+                    end
+                    always @(*) begin
+                        oh = {NLM{1'b0}};
+                        if (lkd2) begin
+                            oh[lk2] = vv[lk2];
+                        end else begin
+                            for (j2_ = NLM - 1; j2_ >= 0; j2_ = j2_ - 1) begin
+                                k2_ = (rr2 + j2_ >= NLM) ? rr2 + j2_ - NLM : rr2 + j2_;
+                                if (vv[k2_]) begin
+                                    oh = {NLM{1'b0}};
+                                    oh[k2_] = 1'b1;
+                                end
+                            end
+                        end
+                        mxd = {TSLOT{1'b0}};
+                        for (j2_ = 0; j2_ < NLM; j2_ = j2_ + 1) begin
+                            if (oh[j2_]) begin mxd = qo_d[(f_lmx(cp, j2_)*2 + d)*TSLOT +: TSLOT]; end
+                        end
+                    end
+                    assign cq_iv[cp*2 + d] = |oh;
+                    assign cq_id[(cp*2 + d)*TSLOT +: TSLOT] = mxd;
+                    wire       gr2   = |oh && cq_ir[cp*2 + d];
+                    wire [1:0] i_typ = mxd[TSLOT-1-HIDX_W -: 2];
+                    wire       i_wl  = mxd[TSLOT-REQW];
+                    always @(posedge pc[cp]) begin
+                        if (!rstn_p[cp]) begin
+                            rr2 <= {CLM{1'b0}}; lkd2 <= 1'b0; lk2 <= {CLM{1'b0}};
+                        end else if (gr2) begin
+                            rr2 <= (rr2 + 1'b1 == NLM[CLM:0]) ? {CLM{1'b0}} : rr2 + 1'b1;
+                            if (i_typ == 2'd0) begin
+                                lkd2 <= 1'b1;
+                                for (j2_ = 0; j2_ < NLM; j2_ = j2_ + 1) begin
+                                    if (oh[j2_]) begin lk2 <= j2_[CLM-1:0]; end
+                                end
+                            end else if (i_typ == 2'd1 && i_wl) begin
+                                lkd2 <= 1'b0;
+                            end
+                        end
+                    end
+                end else begin : g_qi0
+                    assign cq_iv[cp*2 + d] = 1'b0;
+                    assign cq_id[(cp*2 + d)*TSLOT +: TSLOT] = {TSLOT{1'b0}};
+                end
+                if (NLH == 1) begin : g_si1
+                    localparam integer H0 = f_lhx(cp, 0);
+                    assign cs_iv[cp*2 + d] = so_v[H0*2 + d];
+                    assign cs_id[(cp*2 + d)*TSLOT +: TSLOT] = so_d[(H0*2 + d)*TSLOT +: TSLOT];
+                    assign so_r[H0*2 + d] = cs_ir[cp*2 + d];
+                end else if (NLH > 1) begin : g_sin
+                    localparam integer CLH = $clog2(NLH);
+                    reg [CLH-1:0] rr3;
+                    wire [NLH-1:0] vv;
+                    reg  [NLH-1:0] oh;
+                    reg  [TSLOT-1:0] mxd;
+                    integer j3_, k3_;
+                    for (cc2 = 0; cc2 < NLH; cc2 = cc2 + 1) begin : g_v
+                        assign vv[cc2] = so_v[f_lhx(cp, cc2)*2 + d];
+                        assign so_r[f_lhx(cp, cc2)*2 + d] = oh[cc2] && cs_ir[cp*2 + d];
+                    end
+                    always @(*) begin
+                        oh = {NLH{1'b0}};
+                        for (j3_ = NLH - 1; j3_ >= 0; j3_ = j3_ - 1) begin
+                            k3_ = (rr3 + j3_ >= NLH) ? rr3 + j3_ - NLH : rr3 + j3_;
+                            if (vv[k3_]) begin
+                                oh = {NLH{1'b0}};
+                                oh[k3_] = 1'b1;
+                            end
+                        end
+                        mxd = {TSLOT{1'b0}};
+                        for (j3_ = 0; j3_ < NLH; j3_ = j3_ + 1) begin
+                            if (oh[j3_]) begin mxd = so_d[(f_lhx(cp, j3_)*2 + d)*TSLOT +: TSLOT]; end
+                        end
+                    end
+                    assign cs_iv[cp*2 + d] = |vv;
+                    assign cs_id[(cp*2 + d)*TSLOT +: TSLOT] = mxd;
+                    always @(posedge pc[cp]) begin
+                        if (!rstn_p[cp]) begin rr3 <= {CLH{1'b0}}; end
+                        else if (|vv && cs_ir[cp*2 + d]) begin
+                            rr3 <= (rr3 + 1'b1 == NLH[CLH:0]) ? {CLH{1'b0}} : rr3 + 1'b1;
+                        end
+                    end
+                end else begin : g_si0
+                    assign cs_iv[cp*2 + d] = 1'b0;
+                    assign cs_id[(cp*2 + d)*TSLOT +: TSLOT] = {TSLOT{1'b0}};
+                end
+
+                // ---- consume readies: the head against this partition's slots
+                wire [TSLOT-1:0]  qh    = cq_hd[(cp*2 + d)*TSLOT +: TSLOT];
+                wire [HIDX_W-1:0] q_dst = qh[TSLOT-1 -: HIDX_W];
+                wire [1:0]        q_typ = qh[TSLOT-1-HIDX_W -: 2];
+                wire [MIDX_W-1:0] q_src = qh[TSLOT-1-HIDX_W-2 -: MIDX_W];
+                reg qrdy, q_mine;
+                integer hh_, mm_;
+                always @(*) begin
+                    qrdy = 1'b0;
+                    q_mine = 1'b0;
+                    for (hh_ = 0; hh_ < N_HOME; hh_ = hh_ + 1) begin
+                        if (f_hp(hh_) == cp) begin
+                            for (mm_ = 0; mm_ < M; mm_ = mm_ + 1) begin
+                                if (f_mp(mm_) != cp && (q_dst == hh_[HIDX_W-1:0]) && (q_src == mm_[MIDX_W-1:0])) begin
+                                    q_mine = 1'b1;
+                                    qrdy = (q_typ == 2'd0) ? hq_aw_r[hh_][mm_]
+                                         : (q_typ == 2'd1) ? hq_w_r[hh_][mm_]
+                                                           : hq_ar_r[hh_][mm_];
+                                end
+                            end
+                        end
+                    end
+                    // a WX carries only the strb of the beat behind it: latch and drop
+                    if (q_mine && q_typ == 2'd3) begin
+                        qrdy = 1'b1;
+                    end
+                end
+                assign cq_hr[cp*2 + d] = cq_hv[cp*2 + d] && qrdy;
+                wire wx_go = cq_hv[cp*2 + d] && cq_hr[cp*2 + d] && (q_typ == 2'd3);
+                reg [STRB-1:0] wx_s;
+                always @(posedge pc[cp]) begin
+                    if (!rstn_p[cp]) begin
+                        wx_s <= {STRB{1'b0}};
+                    end else if (wx_go) begin
+                        wx_s <= qh[TSLOT-REQW +: STRB];
+                    end
+                end
+                assign cq_wx[(cp*2 + d)*STRB +: STRB] = wx_s;
+                wire [TSLOT-1:0]  sh    = cs_hd[(cp*2 + d)*TSLOT +: TSLOT];
+                wire [MIDX_W-1:0] s_dst = sh[TSLOT-1 -: MIDX_W];
+                wire              s_knd = sh[TSLOT-1-MIDX_W];
+                wire [HIDX_W-1:0] s_src = sh[TSLOT-1-MIDX_W-1 -: HIDX_W];
+                reg srdy;
+                integer h2_, m2_;
+                always @(*) begin
+                    srdy = 1'b0;
+                    for (m2_ = 0; m2_ < M; m2_ = m2_ + 1) begin
+                        if (f_mp(m2_) == cp) begin
+                            for (h2_ = 0; h2_ < N_HOME; h2_ = h2_ + 1) begin
+                                if (f_hp(h2_) != cp && (s_dst == m2_[MIDX_W-1:0]) && (s_src == h2_[HIDX_W-1:0])) begin
+                                    srdy = s_knd ? bs_r[m2_][h2_] : rs_r[m2_][h2_];
+                                end
+                            end
+                        end
+                    end
+                end
+                assign cs_hr[cp*2 + d] = cs_hv[cp*2 + d] && srdy;
+            end
+        end
+    end endgenerate
+
+    // ---- KTS line: a switch per partition, the local port through kx_kedge
+    localparam integer KD = KTS_D;
+    wire [NB-1:0]        kRv, kRvc, kRl, kRcv, kRcvc;
+    wire [NB*KTS_W-1:0]  kRf;
+    wire [NB*4-1:0]      kRcn;
+    wire [NB-1:0]        kLv, kLvc, kLl, kLcv, kLcvc;
+    wire [NB*KTS_W-1:0]  kLf;
+    wire [NB*4-1:0]      kLcn;
+    generate if (KTSM && P > 1) begin : g_kts
+        for (cp = 0; cp < P; cp = cp + 1) begin : g_p
+            // 1. inject arbs per direction (masters -> q, homes -> s)
+            wire [1:0]         qi_v, qi_r, si_v, si_r;
+            wire [2*TSLOT-1:0] qi_d, si_d;
+            for (d = 0; d < 2; d = d + 1) begin : g_d
+                localparam integer NLM = f_nlm(cp);
+                localparam integer NLH = f_nlh(cp);
+                if (NLM == 1) begin : g_qi1
+                    localparam integer M0 = f_lmx(cp, 0);
+                    assign qi_v[d] = qo_v[M0*2 + d];
+                    assign qi_d[d*TSLOT +: TSLOT] = qo_d[(M0*2 + d)*TSLOT +: TSLOT];
+                    assign qo_r[M0*2 + d] = qi_r[d];
+                end else begin : g_qi0
+                    assign qi_v[d] = 1'b0;
+                    assign qi_d[d*TSLOT +: TSLOT] = {TSLOT{1'b0}};
+                end
+                if (NLH == 1) begin : g_si1
+                    localparam integer H0 = f_lhx(cp, 0);
+                    assign si_v[d] = so_v[H0*2 + d];
+                    assign si_d[d*TSLOT +: TSLOT] = so_d[(H0*2 + d)*TSLOT +: TSLOT];
+                    assign so_r[H0*2 + d] = si_r[d];
+                end else begin : g_si0
+                    assign si_v[d] = 1'b0;
+                    assign si_d[d*TSLOT +: TSLOT] = {TSLOT{1'b0}};
+                end
+            end
+            // 2. direction merge, WRREQ-atomic on the request side
+            reg qtg, qlk, qlkd;
+            wire qp = qlk ? qlkd : (qi_v[1] && (!qi_v[0] || qtg));
+            wire             qm_v = qp ? qi_v[1] : qi_v[0];
+            wire [TSLOT-1:0] qm_d = qp ? qi_d[TSLOT +: TSLOT] : qi_d[0 +: TSLOT];
+            wire qm_r;
+            assign qi_r[0] = qm_r && !qp;
+            assign qi_r[1] = qm_r && qp;
+            wire [1:0] qm_typ = qm_d[TSLOT-1-HIDX_W -: 2];
+            // the flit is top-aligned: pay sits at [TSLOT-REQW +: QPW], wlast
+            // is pay bit 0
+            wire qm_wl = qm_d[TSLOT-REQW];
+            always @(posedge pc[cp]) begin
+                if (!rstn_p[cp]) begin
+                    qtg <= 1'b0; qlk <= 1'b0; qlkd <= 1'b0;
+                end else if (qm_v && qm_r) begin
+                    if (qi_v[0] && qi_v[1]) begin qtg <= !qtg; end
+                    if (qm_typ == 2'd0) begin qlk <= 1'b1; qlkd <= qp; end
+                    else if (qm_typ == 2'd1 && qm_wl) begin qlk <= 1'b0; end
+                end
+            end
+            reg stg;
+            wire sp = si_v[1] && (!si_v[0] || stg);
+            wire             sm_v = sp ? si_v[1] : si_v[0];
+            wire [TSLOT-1:0] sm_d = sp ? si_d[TSLOT +: TSLOT] : si_d[0 +: TSLOT];
+            wire sm_r;
+            assign si_r[0] = sm_r && !sp;
+            assign si_r[1] = sm_r && sp;
+            always @(posedge pc[cp]) begin
+                if (!rstn_p[cp]) begin stg <= 1'b0; end
+                else if (sm_v && sm_r && si_v[0] && si_v[1]) begin stg <= !stg; end
+            end
+            // 3. consume readies against this partition's slots
+            wire             hq_v, hs_v;
+            wire [TSLOT-1:0] hq_f, hs_f;
+            wire [HIDX_W-1:0] k_dst = hq_f[TSLOT-1 -: HIDX_W];
+            wire [1:0]        k_typ = hq_f[TSLOT-1-HIDX_W -: 2];
+            wire [MIDX_W-1:0] k_src = hq_f[TSLOT-1-HIDX_W-2 -: MIDX_W];
+            reg kqrdy;
+            integer kh_, km_;
+            always @(*) begin
+                kqrdy = 1'b0;
+                for (kh_ = 0; kh_ < N_HOME; kh_ = kh_ + 1) begin
+                    if (f_hp(kh_) == cp) begin
+                        for (km_ = 0; km_ < M; km_ = km_ + 1) begin
+                            if (f_mp(km_) != cp && (k_dst == kh_[HIDX_W-1:0]) && (k_src == km_[MIDX_W-1:0])) begin
+                                kqrdy = (k_typ == 2'd0) ? hq_aw_r[kh_][km_]
+                                      : (k_typ == 2'd1) ? hq_w_r[kh_][km_]
+                                                        : hq_ar_r[kh_][km_];
+                            end
+                        end
+                    end
+                end
+            end
+            wire [MIDX_W-1:0] k_sdst = hs_f[TSLOT-1 -: MIDX_W];
+            wire              k_sknd = hs_f[TSLOT-1-MIDX_W];
+            wire [HIDX_W-1:0] k_ssrc = hs_f[TSLOT-1-MIDX_W-1 -: HIDX_W];
+            reg ksrdy;
+            integer ks_, kt_;
+            always @(*) begin
+                ksrdy = 1'b0;
+                for (kt_ = 0; kt_ < M; kt_ = kt_ + 1) begin
+                    if (f_mp(kt_) == cp) begin
+                        for (ks_ = 0; ks_ < N_HOME; ks_ = ks_ + 1) begin
+                            if (f_hp(ks_) != cp && (k_sdst == kt_[MIDX_W-1:0]) && (k_ssrc == ks_[HIDX_W-1:0])) begin
+                                ksrdy = k_sknd ? bs_r[kt_][ks_] : rs_r[kt_][ks_];
+                            end
+                        end
+                    end
+                end
+            end
+            assign cq_hv[cp*2 + 0] = hq_v;
+            assign cq_hd[(cp*2 + 0)*TSLOT +: TSLOT] = hq_f;
+            assign cq_hr[cp*2 + 0] = hq_v && kqrdy;
+            assign cs_hv[cp*2 + 0] = hs_v;
+            assign cs_hd[(cp*2 + 0)*TSLOT +: TSLOT] = hs_f;
+            assign cs_hr[cp*2 + 0] = hs_v && ksrdy;
+            assign cq_hv[cp*2 + 1] = 1'b0;
+            assign cq_hd[(cp*2 + 1)*TSLOT +: TSLOT] = {TSLOT{1'b0}};
+            assign cq_hr[cp*2 + 1] = 1'b0;
+            assign cs_hv[cp*2 + 1] = 1'b0;
+            assign cs_hd[(cp*2 + 1)*TSLOT +: TSLOT] = {TSLOT{1'b0}};
+            assign cs_hr[cp*2 + 1] = 1'b0;
+            // 4. the local port and the switch (flits top-aligned in TSLOT)
+            wire li_v, li_vc, li_l, lo_v, lo_vc, lo_l;
+            wire [KTS_W-1:0] li_f, lo_f;
+            wire li_cv, li_cvc, lo_cv, lo_cvc;
+            wire [3:0] li_cn, lo_cn;
+            wire [REQW-1:0] hq_fr;
+            wire [RSPW-1:0] hs_fr;
+            assign hq_f[TSLOT-1 -: REQW] = hq_fr;
+            assign hs_f[TSLOT-1 -: RSPW] = hs_fr;
+            if (TSLOT > REQW) begin : g_zq
+                assign hq_f[TSLOT-REQW-1:0] = {(TSLOT-REQW){1'b0}};
+            end
+            if (TSLOT > RSPW) begin : g_zs
+                assign hs_f[TSLOT-RSPW-1:0] = {(TSLOT-RSPW){1'b0}};
+            end
+            kx_kedge #(.W(KTS_W), .D(KD), .MEM("block"), .CN_W(4),
+                       .HIDX_W(HIDX_W), .MIDX_W(MIDX_W), .PW(PW),
+                       .QPW(QPW), .ARQW(ARQW), .AWQW(AWQW), .WPL(WPL), .SPW(SPW),
+                       .HPV({{(256-N_HOME*PW){1'b0}}, HP}),
+                       .MPV({{(256-M*PW){1'b0}}, MP})) u_ke (
+                .clk(pc[cp]), .rstn(rstn_p[cp]),
+                .q_valid(qm_v), .q_ready(qm_r), .q_flit(qm_d[TSLOT-1 -: REQW]),
+                .s_valid(sm_v), .s_ready(sm_r), .s_flit(sm_d[TSLOT-1 -: RSPW]),
+                .hq_valid(hq_v), .hq_ready(cq_hr[cp*2 + 0]), .hq_flit(hq_fr),
+                .hs_valid(hs_v), .hs_ready(cs_hr[cp*2 + 0]), .hs_flit(hs_fr),
+                .li_valid(li_v), .li_vc(li_vc), .li_last(li_l), .li_flit(li_f),
+                .li_crd_valid(li_cv), .li_crd_vc(li_cvc), .li_crd_n(li_cn),
+                .lo_valid(lo_v), .lo_vc(lo_vc), .lo_last(lo_l), .lo_flit(lo_f),
+                .lo_crd_valid(lo_cv), .lo_crd_vc(lo_cvc), .lo_crd_n(lo_cn));
+            localparam [7:0] CP8 = cp;
+            localparam [7:0] PM8 = P - 1;
+            if (cp == 0) begin : g_sw0
+                kts_switch #(.W(KTS_W), .VC(2), .K(2), .D(KD), .CMAX(KD), .CN_W(4),
+                    .MEM("block"),
+                    .LO({8'd1, 8'd0}), .HI({PM8, 8'd0})) u_sw (
+                    .clk(pc[cp]), .rst(!rstn_p[cp]),
+                    .i_valid({kLv[0], li_v}), .i_vc({kLvc[0], li_vc}),
+                    .i_last({kLl[0], li_l}), .i_flit({kLf[0 +: KTS_W], li_f}),
+                    .i_crd_valid({kLcv[0], li_cv}), .i_crd_vc({kLcvc[0], li_cvc}),
+                    .i_crd_n({kLcn[0 +: 4], li_cn}),
+                    .o_valid({kRv[0], lo_v}), .o_vc({kRvc[0], lo_vc}),
+                    .o_last({kRl[0], lo_l}), .o_flit({kRf[0 +: KTS_W], lo_f}),
+                    .o_crd_valid({kRcv[0], lo_cv}), .o_crd_vc({kRcvc[0], lo_cvc}),
+                    .o_crd_n({kRcn[0 +: 4], lo_cn}));
+            end else if (cp == P - 1) begin : g_swl
+                kts_switch #(.W(KTS_W), .VC(2), .K(2), .D(KD), .CMAX(KD), .CN_W(4),
+                    .MEM("block"),
+                    .LO({8'd0, CP8}), .HI({CP8 - 8'd1, CP8})) u_sw (
+                    .clk(pc[cp]), .rst(!rstn_p[cp]),
+                    .i_valid({kRv[NB-1], li_v}), .i_vc({kRvc[NB-1], li_vc}),
+                    .i_last({kRl[NB-1], li_l}), .i_flit({kRf[(NB-1)*KTS_W +: KTS_W], li_f}),
+                    .i_crd_valid({kRcv[NB-1], li_cv}), .i_crd_vc({kRcvc[NB-1], li_cvc}),
+                    .i_crd_n({kRcn[(NB-1)*4 +: 4], li_cn}),
+                    .o_valid({kLv[NB-1], lo_v}), .o_vc({kLvc[NB-1], lo_vc}),
+                    .o_last({kLl[NB-1], lo_l}), .o_flit({kLf[(NB-1)*KTS_W +: KTS_W], lo_f}),
+                    .o_crd_valid({kLcv[NB-1], lo_cv}), .o_crd_vc({kLcvc[NB-1], lo_cvc}),
+                    .o_crd_n({kLcn[(NB-1)*4 +: 4], lo_cn}));
+            end else begin : g_swm
+                kts_switch #(.W(KTS_W), .VC(2), .K(3), .D(KD), .CMAX(KD), .CN_W(4),
+                    .MEM("block"),
+                    .LO({CP8 + 8'd1, 8'd0, CP8}),
+                    .HI({PM8, CP8 - 8'd1, CP8})) u_sw (
+                    .clk(pc[cp]), .rst(!rstn_p[cp]),
+                    .i_valid({kLv[cp], kRv[cp-1], li_v}),
+                    .i_vc({kLvc[cp], kRvc[cp-1], li_vc}),
+                    .i_last({kLl[cp], kRl[cp-1], li_l}),
+                    .i_flit({kLf[cp*KTS_W +: KTS_W], kRf[(cp-1)*KTS_W +: KTS_W], li_f}),
+                    .i_crd_valid({kLcv[cp], kRcv[cp-1], li_cv}),
+                    .i_crd_vc({kLcvc[cp], kRcvc[cp-1], li_cvc}),
+                    .i_crd_n({kLcn[cp*4 +: 4], kRcn[(cp-1)*4 +: 4], li_cn}),
+                    .o_valid({kRv[cp], kLv[cp-1], lo_v}),
+                    .o_vc({kRvc[cp], kLvc[cp-1], lo_vc}),
+                    .o_last({kRl[cp], kLl[cp-1], lo_l}),
+                    .o_flit({kRf[cp*KTS_W +: KTS_W], kLf[(cp-1)*KTS_W +: KTS_W], lo_f}),
+                    .o_crd_valid({kRcv[cp], kLcv[cp-1], lo_cv}),
+                    .o_crd_vc({kRcvc[cp], kLcvc[cp-1], lo_cvc}),
+                    .o_crd_n({kRcn[cp*4 +: 4], kLcn[(cp-1)*4 +: 4], lo_cn}));
+            end
+        end
+    end endgenerate
+
+`ifndef SYNTHESIS
+    integer sb_, sd_, sw_, si_;
+    initial begin
+        #1;
+        for (sb_ = 0; sb_ < P - 1; sb_ = sb_ + 1) begin
+            sw_ = 0;
+            for (sd_ = 0; sd_ < 2; sd_ = sd_ + 1) begin
+                if (KTSM) begin
+                    sw_ = sw_ + (KTS_W + 3) + (1 + 1 + 4);
+                end else if (TRK) begin
+                    sw_ = sw_ + BND_TRUNK*(1 + 1 + TSLOT) + 2 + 1;
+                end else begin
+                    for (si_ = 0; si_ < M; si_ = si_ + 1) begin
+                        if (f_in(sb_, sd_, f_mp(si_))) begin sw_ = sw_ + (FWAR + 3) + (FWAWW + 3); end
+                    end
+                    for (si_ = 0; si_ < N_HOME; si_ = si_ + 1) begin
+                        if (f_in(sb_, sd_, f_hp(si_))) begin sw_ = sw_ + (FWRB + 3); end
+                    end
+                end
+            end
+            $display("@@@ SLL boundary %0d: %0d wires bidirectional (trunk K=%0d slot %0d)", sb_, sw_, BND_TRUNK, TSLOT);
+        end
+    end
+`endif
     // engine outputs per home, needed by the masters' sources
     wire [N_HOME-1:0]      r_val_h, r_rdy_h, r_last_h, b_val_h, b_rdy_h;
     wire [IDW-1:0]         r_id_h [0:N_HOME-1];
@@ -389,21 +1027,22 @@ module kx_pxache #(
         reg  [SEQW:0] rq_wp, rq_dp;
         wire [SEQW:0] rq_used  = rq_wp - rq_dp;
         wire [PBA:0]  ar_beats = x_arlen[m*8 +: 8] + 1'b1;
-        wire rd_ok = (rq_used != RD_OUTQ[SEQW:0]);
+        // Slot-free flags are REGISTERS from the next-state counts, so no
+        // subtract-and-compare sits in front of the arbitration.
+        reg  rd_ok, wr_ok;
         reg  [WQW:0] wq_wp, wq_dp;
-        wire wr_ok = ((wq_wp - wq_dp) != WR_OUTQ[WQW:0]);
         // the home the W beats go to, latched at the AW
         reg              wh_v;
         reg [HIDX_W-1:0] wh_q;
-        always @(posedge clk) begin
+        always @(posedge pc[PM]) begin
             if (!rm) begin wh_v <= 1'b0; wh_q <= {HIDX_W{1'b0}}; end
             else if (aw_acc) begin wh_v <= 1'b1; wh_q <= whome[m]; end
             else if (wl_acc) begin wh_v <= 1'b0; end
         end
 `ifndef SYNTHESIS
-        always @(posedge clk) begin
-            if (rm && ar_acc && (x_arlen[m*8 +: 8] >= PGB)) begin
-                $display("%0t ERROR kx_pxache: master %0d burst of %0d beats exceeds a page of %0d", $time, m, x_arlen[m*8 +: 8] + 1, PGB);
+        always @(posedge pc[PM]) begin
+            if (rm && ar_acc && (x_arlen[m*8 +: 8] >= RBB)) begin
+                $display("%0t ERROR kx_pxache: master %0d burst of %0d beats exceeds a read slot of %0d", $time, m, x_arlen[m*8 +: 8] + 1, RBB);
             end
         end
 `endif
@@ -448,7 +1087,81 @@ module kx_pxache #(
         wire dn_aw_v  = x_awvalid[m] && wr_ok && !wh_v && !aw_up && !aw_loc;
         wire up_w_v   = x_wvalid[m] && wh_v && w_up;
         wire dn_w_v   = x_wvalid[m] && wh_v && !w_up && !w_loc;
-        if (NTU > 0) begin : g_up
+        if (TRK) begin : g_ck
+            // one REQ offer per direction: W while wh_v, else AR/AW alternate
+            for (p = 0; p < 2; p = p + 1) begin : g_o
+                // KTS: no AR inside an open write burst (packet contiguity)
+                wire av  = ((p == 1) ? up_ar_v : dn_ar_v) && !(KTSM && wh_v);
+                wire wv_ = (p == 1) ? up_aw_v : dn_aw_v;
+                wire bv  = (p == 1) ? up_w_v  : dn_w_v;
+                reg tg, wx_q;
+                wire strb_f  = &x_wstrb[m*STRB +: STRB];
+                wire need_wx = (SC != 0) && bv && !strb_f && !wx_q;
+                wire pick_ar = av && (!wv_ || tg);
+                wire [1:0] typ = need_wx ? 2'd3
+                               : bv ? 2'd1 : (pick_ar ? 2'd2 : 2'd0);
+                wire [HIDX_W-1:0] dst = (bv || need_wx) ? wh_q
+                                      : (pick_ar ? rhome[m] : whome[m]);
+                // The W data rides in the flit's upper bits WHATEVER the type:
+                // a receiver decodes by `typ`; only the low field is a select.
+                reg [QPW-1:0] pay;
+                always @(*) begin
+                    pay = {QPW{1'b0}};
+                    if (SC != 0) begin
+                        pay[W+4:5] = x_wdata[m*W +: W];
+                    end
+                    if (need_wx) begin
+                        pay[STRB-1:0] = x_wstrb[m*STRB +: STRB];
+                    end else if (bv) begin
+                        if (SC != 0) begin
+                            pay[0]      = x_wlast[m];
+                            pay[4:1]    = strb_f ? 4'hF : 4'h0;
+                        end else begin
+                            pay[WPL-1:0] = w_pay;
+                        end
+                    end else if (pick_ar) begin
+                        pay[ARQW-1:0] = ar_pay;
+                    end else begin
+                        pay[AWQW-1:0] = aw_pay;
+                    end
+                end
+                // The offer is REGISTERED, one entry at full rate (accept =
+                // empty or popping); no hold mux, the master holds its beat.
+                wire             qi_v = av || wv_ || bv;
+                wire [TSLOT-1:0] qi_d;
+                assign qi_d[TSLOT-1 -: REQW] = {dst, typ, m[MIDX_W-1:0], pay};
+                if (TSLOT > REQW) begin : g_z
+                    assign qi_d[TSLOT-REQW-1:0] = {(TSLOT - REQW){1'b0}};
+                end
+                reg             qo_vq;
+                reg [TSLOT-1:0] qo_dq;
+                wire gr = qi_v && (!qo_vq || qo_r[m*2 + p]);
+                always @(posedge pc[PM]) begin
+                    if (!rm) begin qo_vq <= 1'b0; end
+                    else if (gr) begin qo_vq <= 1'b1; end
+                    else if (qo_r[m*2 + p]) begin qo_vq <= 1'b0; end
+                    if (gr) begin qo_dq <= qi_d; end
+                end
+                assign qo_v[m*2 + p] = qo_vq;
+                assign qo_d[(m*2 + p)*TSLOT +: TSLOT] = qo_dq;
+                always @(posedge pc[PM]) begin
+                    if (!rm) begin
+                        tg <= 1'b0; wx_q <= 1'b0;
+                    end else begin
+                        if (av && wv_ && gr && !need_wx) begin tg <= !tg; end
+                        if (gr && need_wx) begin wx_q <= 1'b1; end
+                        else if (gr && bv) begin wx_q <= 1'b0; end
+                    end
+                end
+                if (p == 1) begin : g_u
+                    assign up_ar_r  = gr && !bv && !need_wx && pick_ar;
+                    assign up_aww_r = gr && !need_wx && (bv || !pick_ar);
+                end else begin : g_dn2
+                    assign dn_ar_r  = gr && !bv && !need_wx && pick_ar;
+                    assign dn_aww_r = gr && !need_wx && (bv || !pick_ar);
+                end
+            end
+        end else if (NTU > 0) begin : g_up
             wire [NTU-1:0] rst_t;
             for (p = 0; p < NTU; p = p + 1) begin : g_r
                 assign rst_t[p] = rstn_p[PM + 1 + p];
@@ -459,12 +1172,12 @@ module kx_pxache #(
             wire [NTU*AWWW-1:0]   td_aww;
             kx_lane #(.W(ARQW), .DW(HIDX_W), .NT(NTU), .TAKE(f_take_req(m, 1)),
                       .DEPTH(HOP_DEPTH), .MEM("block"), .BUF(HOP_BUF), .RX_REG(HOP_RXREG))u_ar (
-                .clk(clk), .rstn_s(rm), .rstn_t(rst_t),
+                .clk(pc[PM]), .rstn_s(rm), .rstn_t(rst_t),
                 .s_valid(up_ar_v), .s_ready(up_ar_r), .s_dst(rhome[m]), .s_data(ar_pay),
                 .t_valid(tv_ar), .t_ready(tr_ar), .t_dst(td_ar_dst), .t_data(td_ar));
             kx_lane #(.W(AWWW), .DW(HIDX_W), .NT(NTU), .TAKE(f_take_req(m, 1)),
                       .DEPTH(HOP_DEPTH), .MEM("block"), .BUF(HOP_BUF), .RX_REG(HOP_RXREG))u_aww (
-                .clk(clk), .rstn_s(rm), .rstn_t(rst_t),
+                .clk(pc[PM]), .rstn_s(rm), .rstn_t(rst_t),
                 .s_valid(up_aw_v || up_w_v), .s_ready(up_aww_r),
                 .s_dst(aww_dst), .s_data(aww_flit),
                 .t_valid(tv_aww), .t_ready(tr_aww), .t_dst(td_aww_dst), .t_data(td_aww));
@@ -481,7 +1194,7 @@ module kx_pxache #(
         end else begin : g_noup
             assign up_ar_r = 1'b0; assign up_aww_r = 1'b0;
         end
-        if (NTD > 0) begin : g_dn
+        if (!TRK && NTD > 0) begin : g_dn
             wire [NTD-1:0] rst_t;
             for (p = 0; p < NTD; p = p + 1) begin : g_r
                 assign rst_t[p] = rstn_p[PM - 1 - p];
@@ -492,12 +1205,12 @@ module kx_pxache #(
             wire [NTD*AWWW-1:0]   td_aww;
             kx_lane #(.W(ARQW), .DW(HIDX_W), .NT(NTD), .TAKE(f_take_req(m, 0)),
                       .DEPTH(HOP_DEPTH), .MEM("block"), .BUF(HOP_BUF), .RX_REG(HOP_RXREG))u_ar (
-                .clk(clk), .rstn_s(rm), .rstn_t(rst_t),
+                .clk(pc[PM]), .rstn_s(rm), .rstn_t(rst_t),
                 .s_valid(dn_ar_v), .s_ready(dn_ar_r), .s_dst(rhome[m]), .s_data(ar_pay),
                 .t_valid(tv_ar), .t_ready(tr_ar), .t_dst(td_ar_dst), .t_data(td_ar));
             kx_lane #(.W(AWWW), .DW(HIDX_W), .NT(NTD), .TAKE(f_take_req(m, 0)),
                       .DEPTH(HOP_DEPTH), .MEM("block"), .BUF(HOP_BUF), .RX_REG(HOP_RXREG))u_aww (
-                .clk(clk), .rstn_s(rm), .rstn_t(rst_t),
+                .clk(pc[PM]), .rstn_s(rm), .rstn_t(rst_t),
                 .s_valid(dn_aw_v || dn_w_v), .s_ready(dn_aww_r),
                 .s_dst(aww_dst), .s_data(aww_flit),
                 .t_valid(tv_aww), .t_ready(tr_aww), .t_dst(td_aww_dst), .t_data(td_aww));
@@ -511,7 +1224,7 @@ module kx_pxache #(
                 assign aww_tdst[m*P + PM - 1 - p] = td_aww_dst[p*HIDX_W +: HIDX_W];
                 assign aww_td[m*P + PM - 1 - p]   = td_aww[p*AWWW +: AWWW];
             end
-        end else begin : g_nodn
+        end else if (!TRK) begin : g_nodn
             assign dn_ar_r = 1'b0; assign dn_aww_r = 1'b0;
         end
         // this master's own partition has no tap of its own lanes
@@ -538,10 +1251,24 @@ module kx_pxache #(
         assign x_awready[m] = wr_ok && !wh_v && (aw_loc ? (|law_h) : (aw_up ? up_aww_r : dn_aww_r));
         assign x_wready[m]  = wh_v  && (w_loc  ? (|lw_h)  : (w_up  ? up_aww_r : dn_aww_r));
 
-        // ---- response sources: the taps of every remote home's lane here
+        // ---- response sources: the RSP chain head here, or the lane taps
         for (h = 0; h < N_HOME; h = h + 1) begin : g_src
             localparam integer PH = f_hp(h);
-            if (PH != PM) begin : g_tap
+            if (TRK && PH != PM) begin : g_ctap
+                localparam integer DIRH = (KTSM != 0) ? 0 : ((PH < PM) ? 1 : 0);
+                wire [TSLOT-1:0]  sh   = cs_hd[(PM*2 + DIRH)*TSLOT +: TSLOT];
+                wire              sv   = cs_hv[PM*2 + DIRH];
+                wire [MIDX_W-1:0] sdst = sh[TSLOT-1 -: MIDX_W];
+                wire              sknd = sh[TSLOT-1-MIDX_W];
+                wire [HIDX_W-1:0] ssrc = sh[TSLOT-1-MIDX_W-1 -: HIDX_W];
+                wire [SPW-1:0]    spay = sh[TSLOT-1-MIDX_W-1-HIDX_W -: SPW];
+                wire mine = sv && (sdst == m[MIDX_W-1:0]) && (ssrc == h[HIDX_W-1:0]);
+                assign rs_v[m][h] = mine && !sknd;
+                assign rs_d[m][h] = spay[W +: RNW];
+                assign rs_w[m][h] = spay[W-1:0];
+                assign bs_v[m][h] = mine && sknd;
+                assign bs_d[m][h] = spay[W+1 +: BW];
+            end else if (PH != PM) begin : g_tap
                 wire              tv   = rb_tv[h*P + PM];
                 wire [RBW-1:0]    td   = rb_td[h*P + PM];
                 wire [MIDX_W-1:0] tdst = rb_tdst[h*P + PM];
@@ -613,7 +1340,7 @@ module kx_pxache #(
             reg [SEQW+PBA-1:0] a_q;
             reg [W+2:0]        d_q;
             reg [SEQW-1:0]     s_q;
-            always @(posedge clk) begin
+            always @(posedge pc[PM]) begin
                 if (!rm) begin
                     go_q <= 1'b0;
                 end else begin
@@ -640,7 +1367,7 @@ module kx_pxache #(
             // write. They are the same signal when the port is not registered.
             wire land  = ld_go  && (ld_s  == e[SEQW-1:0]);
             wire landv = vis_go && (vis_s == e[SEQW-1:0]);
-            always @(posedge clk) begin
+            always @(posedge pc[PM]) begin
                 if (!rm) begin
                     home <= {HIDX_W{1'b0}}; wc <= {(PBA+1){1'b0}};
                     wcv <= {(PBA+1){1'b0}}; nb <= {(PBA+1){1'b0}}; id <= {ID_W{1'b0}};
@@ -671,14 +1398,24 @@ module kx_pxache #(
         wire            issue    = readable && (!o_v || o_take);
         wire            d_last   = ((rc + 1'b1) == rq_nb_v[dslot]);
         wire [W+2:0]    o_d;                            // {resp, last, data}
-        kohaku_sdpram #(.WIDTH(W+3), .DEPTH(RBUF_DEPTH), .MEM_PRIM("block"), .READ_LAT(1)) u_rb (
-            .clk(clk),
-            .wr_en(wr_go), .wr_addr(wr_addr), .wr_data(wr_data),
-            .rd_en(issue), .rd_addr({dslot, rc[PBA-1:0]}), .rd_data(o_d));
-        always @(posedge clk) begin
+        if (MEM_RB == "distributed") begin : g_rb_lean
+            kx_lram #(.WIDTH(W+3), .DEPTH(RBUF_DEPTH)) u_rb (
+                .clk(pc[PM]),
+                .wr_en(wr_go), .wr_addr(wr_addr), .wr_data(wr_data),
+                .rd_en(issue), .rd_addr({dslot, rc[PBA-1:0]}), .rd_data(o_d));
+        end else begin : g_rb_xpm
+            kohaku_sdpram #(.WIDTH(W+3), .DEPTH(RBUF_DEPTH), .MEM_PRIM(MEM_RB), .READ_LAT(1)) u_rb (
+                .clk(pc[PM]),
+                .wr_en(wr_go), .wr_addr(wr_addr), .wr_data(wr_data),
+                .rd_en(issue), .rd_addr({dslot, rc[PBA-1:0]}), .rd_data(o_d));
+        end
+        always @(posedge pc[PM]) begin
             if (!rm) begin
                 rq_wp <= 0; rq_dp <= 0; rc <= 0; o_v <= 1'b0; o_id <= {ID_W{1'b0}};
+                rd_ok <= 1'b1;
             end else begin
+                rd_ok <= ((rq_wp + {{SEQW{1'b0}}, ar_acc})
+                          - (rq_dp + {{SEQW{1'b0}}, issue && d_last})) != RD_OUTQ[SEQW:0];
                 if (ar_acc) begin rq_wp <= rq_wp + 1'b1; end
                 if (issue) begin
                     o_id <= rq_id_v[dslot];
@@ -732,7 +1469,7 @@ module kx_pxache #(
             reg v, done;  reg [HIDX_W-1:0] home;  reg [ID_W-1:0] id;  reg [1:0] resp;
             wire alloc = aw_acc && (wq_wp[WQW-1:0] == e[WQW-1:0]);
             wire drain = b_out  && (wq_dp[WQW-1:0] == e[WQW-1:0]);
-            always @(posedge clk) begin
+            always @(posedge pc[PM]) begin
                 if (!rm) begin
                     v <= 1'b0; done <= 1'b0; home <= {HIDX_W{1'b0}}; id <= {ID_W{1'b0}}; resp <= 2'b00;
                 end else begin
@@ -748,9 +1485,11 @@ module kx_pxache #(
         assign x_bvalid[m]           = wq_done[wq_dp[WQW-1:0]];
         assign x_bid[m*ID_W +: ID_W] = wq_id_v[wq_dp[WQW-1:0]];
         assign x_bresp[m*2 +: 2]     = wq_resp_v[wq_dp[WQW-1:0]];
-        always @(posedge clk) begin
-            if (!rm) begin wq_wp <= 0; wq_dp <= 0; end
+        always @(posedge pc[PM]) begin
+            if (!rm) begin wq_wp <= 0; wq_dp <= 0; wr_ok <= 1'b1; end
             else begin
+                wr_ok <= ((wq_wp + {{WQW{1'b0}}, aw_acc})
+                          - (wq_dp + {{WQW{1'b0}}, b_out})) != WR_OUTQ[WQW:0];
                 if (aw_acc) begin wq_wp <= wq_wp + 1'b1; end
                 if (b_out)  begin wq_dp <= wq_dp + 1'b1; end
             end
@@ -763,6 +1502,7 @@ module kx_pxache #(
     wire [N_HOME*SET_W-1:0]    c_rd_idx, c_fill_idx, c_wr_idx;
     wire [N_HOME*TAG_W-1:0]    c_rd_tag, c_fill_tag, c_wr_tag;
     wire [N_HOME*(SUBW+1)-1:0] c_rd_sub;
+    wire [N_HOME*BCW-1:0]      c_wr_sub;
     wire [N_HOME*W-1:0]        c_wr_word;
 
     generate for (h = 0; h < N_HOME; h = h + 1) begin : g_home
@@ -772,10 +1512,32 @@ module kx_pxache #(
         localparam integer NTD = PH;
         wire rh = rstn_p[PH];
 
-        // ---- remote request slots: the taps of every remote master's lanes here
+        // ---- remote request slots: the REQ chain head here, or the lane taps
         for (m = 0; m < M; m = m + 1) begin : g_slot
             localparam integer PM = f_mp(m);
-            if (PM != PH) begin : g_tap
+            if (TRK && PM != PH) begin : g_ctap
+                localparam integer DIRM = (KTSM != 0) ? 0 : ((PM < PH) ? 1 : 0);
+                wire [TSLOT-1:0]  qh   = cq_hd[(PH*2 + DIRM)*TSLOT +: TSLOT];
+                wire              qv   = cq_hv[PH*2 + DIRM];
+                wire [HIDX_W-1:0] qdst = qh[TSLOT-1 -: HIDX_W];
+                wire [1:0]        qtyp = qh[TSLOT-1-HIDX_W -: 2];
+                wire [MIDX_W-1:0] qsrc = qh[TSLOT-1-HIDX_W-2 -: MIDX_W];
+                wire [QPW-1:0]    qpay = qh[TSLOT-1-HIDX_W-2-MIDX_W -: QPW];
+                wire mine = qv && (qdst == h[HIDX_W-1:0]) && (qsrc == m[MIDX_W-1:0]);
+                assign hq_ar_v[h][m] = mine && (qtyp == 2'd2);
+                assign hq_ar_d[h][m] = qpay[ARQW-1:0];
+                assign hq_aw_v[h][m] = mine && (qtyp == 2'd0);
+                assign hq_aw_d[h][m] = qpay[AWQW-1:0];
+                assign hq_w_v[h][m]  = mine && (qtyp == 2'd1);
+                if (SC != 0) begin : g_sc
+                    wire [STRB-1:0] ws = (qpay[4:1] == 4'hF)
+                        ? {STRB{1'b1}}
+                        : cq_wx[(PH*2 + DIRM)*STRB +: STRB];
+                    assign hq_w_d[h][m] = {qpay[W+4:5], ws, qpay[0]};
+                end else begin : g_nsc
+                    assign hq_w_d[h][m] = qpay[WPL-1:0];
+                end
+            end else if (PM != PH) begin : g_tap
                 wire            tv   = ar_tv[m*P + PH];
                 wire [HIDX_W-1:0] tdst = ar_tdst[m*P + PH];
                 assign hq_ar_v[h][m] = tv && (tdst == h[HIDX_W-1:0]);
@@ -794,8 +1556,8 @@ module kx_pxache #(
         // ---- the array
         kx_carray #(.AW(AW), .W(W), .SETS(SETS), .SET_W(SET_W), .K(K), .RAM_STYLE(RAM_STYLE),
                     .BANKS(BANKS), .WPORT_REG(ARR_WP_REG), .FILL_SERVE(0),
-                    .ARR_LAT(ARR_LAT), .LANE_W(LANE_W)) u_c (
-            .clk(clk), .resetn(rh),
+                    .ARR_LAT(ARR_LAT)) u_c (
+            .clk(pc[PH]), .resetn(rh),
             .rd_en(c_rd_en[h]), .rd_idx(c_rd_idx[h*SET_W +: SET_W]),
             .rd_tag(c_rd_tag[h*TAG_W +: TAG_W]), .rd_sub(c_rd_sub[h*(SUBW+1) +: SUBW+1]),
             .rd_take(c_rd_take[h]), .land(c_land[h]), .hit_c(c_hit_c[h]),
@@ -805,6 +1567,7 @@ module kx_pxache #(
             .fill_tag(c_fill_tag[h*TAG_W +: TAG_W]), .fill_ready(c_fill_ready[h]),
             .fill_done(c_fill_done[h]),
             .wr_en(c_wr_en[h]), .wr_idx(c_wr_idx[h*SET_W +: SET_W]),
+            .wr_sub(c_wr_sub[h*BCW +: BCW]),
             .wr_tag(c_wr_tag[h*TAG_W +: TAG_W]), .wr_word(c_wr_word[h*W +: W]),
             .wr_full(c_wr_full[h]), .flush_busy(c_flush[h]));
 
@@ -825,7 +1588,7 @@ module kx_pxache #(
         wire [SET_W-1:0] e_rd_idx, e_fl_idx; wire [TAG_W-1:0] e_rd_tag, e_fl_tag; wire [SUBW:0] e_rd_sub;
         kx_rd_pipe #(.M(M), .NH(1), .AW(AW), .W(W), .IDW(IDW), .SET_W(SET_W),
                      .K(K), .RAM_STYLE(RAM_STYLE), .BANKS(BANKS), .ARR_LAT(ARR_LAT), .SEQW(SEQW)) u_re (
-            .clk(clk), .resetn(rh), .flush_busy(c_flush[h]),
+            .clk(pc[PH]), .resetn(rh), .flush_busy(c_flush[h]),
             .mr_qval(hq_ar_v[h]), .mr_qrdy(hq_ar_r[h]), .mr_qid(q_id), .mr_qaddr(q_addr),
             .mr_qlen(q_len), .mr_qseq(q_seq),
             .r_val(r_val), .r_rdy(r_rdy), .r_id(r_id), .r_resp(r_resp), .r_last(r_last),
@@ -866,15 +1629,16 @@ module kx_pxache #(
         wire [1:0]      b_resp;
         wire [IDW-1:0] e_awid; wire [AW-1:0] e_awaddr; wire [7:0] e_awlen;
         wire [2:0] e_awsize;   wire [1:0] e_awburst;
-        wire [SET_W-1:0] e_wr_idx; wire [TAG_W-1:0] e_wr_tag;
+        wire [SET_W-1:0] e_wr_idx; wire [TAG_W-1:0] e_wr_tag; wire [BCW-1:0] e_wr_sub;
         kx_wr_engine #(.M(M), .NH(1), .AW(AW), .W(W), .IDW(IDW), .SET_W(SET_W), .K(K)) u_we (
-            .clk(clk), .resetn(rh), .flush_busy(c_flush[h]),
+            .clk(pc[PH]), .resetn(rh), .flush_busy(c_flush[h]),
             .mw_qval(hq_aw_v[h]), .mw_qrdy(hq_aw_r[h]), .mw_qid(wq_id), .mw_qaddr(wq_addr),
             .mw_qlen(wq_len), .mw_qsize(wq_size),
             .mw_wval(hq_w_v[h]), .mw_wrdy(hq_w_r[h]), .mw_wlast(w_last_m),
             .gsel(gsel), .gidx(gidx), .hsel(hsel_unused),
             .b_val(b_val), .b_rdy(b_rdy), .b_id(b_id), .b_resp(b_resp),
-            .c_wr_en(c_wr_en[h]), .c_wr_idx(e_wr_idx), .c_wr_tag(e_wr_tag),
+            .c_wr_en(c_wr_en[h]), .c_wr_idx(e_wr_idx), .c_wr_sub(e_wr_sub),
+            .c_wr_tag(e_wr_tag),
             .m_awid(e_awid), .m_awaddr(e_awaddr), .m_awlen(e_awlen), .m_awsize(e_awsize),
             .m_awburst(e_awburst), .m_awvalid(y_awvalid[h]), .m_awready(y_awready[h]),
             .m_wvalid(y_wvalid[h]), .m_wready(y_wready[h]),
@@ -884,6 +1648,7 @@ module kx_pxache #(
         assign y_awburst[h*2 +: 2] = e_awburst;
         assign y_wlast[h] = |(w_last_m & gsel);
         assign c_wr_idx[h*SET_W +: SET_W] = e_wr_idx;
+        assign c_wr_sub[h*BCW +: BCW] = e_wr_sub;
         assign c_wr_tag[h*TAG_W +: TAG_W] = e_wr_tag;
         assign b_val_h[h] = b_val;  assign b_id_h[h] = b_id;  assign b_resp_h[h] = b_resp;
         assign b_rdy = b_rdy_h[h];
@@ -933,7 +1698,24 @@ module kx_pxache #(
         wire [RNW-1:0] rb_hdr_b = {{SEQW{1'b0}}, b_id[ID_W-1:0], b_resp, 1'b0};
         wire [RBW-1:0] rb_up = {up_b, (up_b ? rb_hdr_b : rb_hdr_r), c_word[h*W +: W]};
         wire [RBW-1:0] rb_dn = {dn_b, (dn_b ? rb_hdr_b : rb_hdr_r), c_word[h*W +: W]};
-        if (NTU > 0) begin : g_up
+        if (TRK) begin : g_ck
+            for (p = 0; p < 2; p = p + 1) begin : g_o
+                wire kb = (p == 1) ? up_b : dn_b;
+                wire kr = (p == 1) ? up_r : dn_r;
+                wire [MIDX_W-1:0] dst = kb ? b_own : r_own;
+                assign so_v[h*2 + p] = kb || kr;
+                assign so_d[(h*2 + p)*TSLOT + TSLOT - 1 -: RSPW] =
+                    {dst, kb, h[HIDX_W-1:0], (kb ? rb_hdr_b : rb_hdr_r), c_word[h*W +: W]};
+                if (TSLOT > RSPW) begin : g_z
+                    assign so_d[(h*2 + p)*TSLOT +: TSLOT - RSPW] = {(TSLOT - RSPW){1'b0}};
+                end
+                if (p == 1) begin : g_u
+                    assign up_rb_r = so_r[h*2 + 1];
+                end else begin : g_dn2
+                    assign dn_rb_r = so_r[h*2 + 0];
+                end
+            end
+        end else if (NTU > 0) begin : g_up
             wire [NTU-1:0] rst_t;
             for (p = 0; p < NTU; p = p + 1) begin : g_r
                 assign rst_t[p] = rstn_p[PH + 1 + p];
@@ -943,7 +1725,7 @@ module kx_pxache #(
             wire [NTU*RBW-1:0]    td;
             kx_lane #(.W(RBW), .DW(MIDX_W), .NT(NTU), .TAKE(f_take_rsp(h, 1)),
                       .DEPTH(HOP_DEPTH), .MEM("block"), .BUF(HOP_BUF), .RX_REG(HOP_RXREG))u_rb (
-                .clk(clk), .rstn_s(rh), .rstn_t(rst_t),
+                .clk(pc[PH]), .rstn_s(rh), .rstn_t(rst_t),
                 .s_valid(up_b || up_r), .s_ready(up_rb_r),
                 .s_dst(up_b ? b_own : r_own), .s_data(rb_up),
                 .t_valid(tv), .t_ready(tr), .t_dst(tdst), .t_data(td));
@@ -956,7 +1738,7 @@ module kx_pxache #(
         end else begin : g_noup
             assign up_rb_r = 1'b0;
         end
-        if (NTD > 0) begin : g_dn
+        if (!TRK && NTD > 0) begin : g_dn
             wire [NTD-1:0] rst_t;
             for (p = 0; p < NTD; p = p + 1) begin : g_r
                 assign rst_t[p] = rstn_p[PH - 1 - p];
@@ -966,7 +1748,7 @@ module kx_pxache #(
             wire [NTD*RBW-1:0]    td;
             kx_lane #(.W(RBW), .DW(MIDX_W), .NT(NTD), .TAKE(f_take_rsp(h, 0)),
                       .DEPTH(HOP_DEPTH), .MEM("block"), .BUF(HOP_BUF), .RX_REG(HOP_RXREG))u_rb (
-                .clk(clk), .rstn_s(rh), .rstn_t(rst_t),
+                .clk(pc[PH]), .rstn_s(rh), .rstn_t(rst_t),
                 .s_valid(dn_b || dn_r), .s_ready(dn_rb_r),
                 .s_dst(dn_b ? b_own : r_own), .s_data(rb_dn),
                 .t_valid(tv), .t_ready(tr), .t_dst(tdst), .t_data(td));
@@ -976,7 +1758,7 @@ module kx_pxache #(
                 assign rb_tdst[h*P + PH - 1 - p] = tdst[p*MIDX_W +: MIDX_W];
                 assign rb_td[h*P + PH - 1 - p]   = td[p*RBW +: RBW];
             end
-        end else begin : g_nodn
+        end else if (!TRK) begin : g_nodn
             assign dn_rb_r = 1'b0;
         end
         assign rb_tv[h*P + PH]   = 1'b0;

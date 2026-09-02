@@ -30,6 +30,7 @@ MAMBA_ENV = pathlib.Path(os.environ["USERPROFILE"]) / "micromamba/envs/hdlfmt/Li
 INCDIRS = (
     "src/kohakuaccel/noc",
     "src/kohakuaccel/pe/rv64-sys/core",
+    "src/kohakutransmit/packet",
     "src/kohakumpe/simd",
     "src/kohakumpe/simd/generated",
     "src/kohakumpe/simt",

@@ -51,6 +51,7 @@ module kx_xache #(
     parameter integer IDW       = ID_W + MIDX_W,
     parameter integer WBYTES_LG = $clog2(W/8),
     parameter integer SUBW      = (K <= 1) ? 0 : $clog2(K),
+    parameter integer BCW       = (K <= 1) ? 1 : $clog2(K),
     parameter integer LINE_LSB  = WBYTES_LG + SUBW,
     parameter integer TAG_W     = AW - LINE_LSB - SET_W,
     parameter integer STRB      = W/8,
@@ -267,6 +268,7 @@ module kx_xache #(
     wire [N_HOME*SET_W-1:0]    c_rd_idx, c_fill_idx, c_wr_idx;
     wire [N_HOME*TAG_W-1:0]    c_rd_tag, c_fill_tag, c_wr_tag;
     wire [N_HOME*(SUBW+1)-1:0] c_rd_sub;
+    wire [N_HOME*BCW-1:0]      c_wr_sub;
     wire [N_HOME*W-1:0]        c_word, c_wr_word;
 
     generate for (h = 0; h < N_HOME; h = h + 1) begin : g_carray
@@ -282,6 +284,7 @@ module kx_xache #(
             .fill_tag(c_fill_tag[h*TAG_W +: TAG_W]), .fill_ready(c_fill_ready[h]),
             .fill_done(c_fill_done[h]),
             .wr_en(c_wr_en[h]), .wr_idx(c_wr_idx[h*SET_W +: SET_W]),
+            .wr_sub(c_wr_sub[h*BCW +: BCW]),
             .wr_tag(c_wr_tag[h*TAG_W +: TAG_W]), .wr_word(c_wr_word[h*W +: W]),
             .wr_full(c_wr_full[h]), .flush_busy(c_flush[h]));
     end endgenerate
@@ -458,7 +461,7 @@ module kx_xache #(
 
         wire [IDW-1:0] e_awid; wire [AW-1:0] e_awaddr; wire [7:0] e_awlen;
         wire [2:0] e_awsize;   wire [1:0] e_awburst;
-        wire [SET_W-1:0] e_wr_idx; wire [TAG_W-1:0] e_wr_tag;
+        wire [SET_W-1:0] e_wr_idx; wire [TAG_W-1:0] e_wr_tag; wire [BCW-1:0] e_wr_sub;
 
         wire g_wlast = |(w_last & gsel);
         // publish this engine's (home, master) one-hot for the fabric's W select:
@@ -480,6 +483,7 @@ module kx_xache #(
             assign y_awburst[GH*2 +: 2] = e_awburst;
             assign y_wlast[GH] = g_wlast;
             assign c_wr_idx[GH*SET_W +: SET_W] = e_wr_idx;
+            assign c_wr_sub[GH*BCW +: BCW] = e_wr_sub;
             assign c_wr_tag[GH*TAG_W +: TAG_W] = e_wr_tag;
             for (m = 0; m < M; m = m + 1) begin : g_m
                 wire tgt = (whome[m] == GH[HIDX_W-1:0]);
@@ -509,7 +513,8 @@ module kx_xache #(
             .mw_wval(w_val), .mw_wrdy(w_rdy), .mw_wlast(w_last),
             .gsel(gsel), .gidx(gidx_l), .hsel(hsel),
             .b_val(b_val), .b_rdy(b_rdy), .b_id(b_id), .b_resp(b_resp),
-            .c_wr_en(c_wr_en[BASE +: NH]), .c_wr_idx(e_wr_idx), .c_wr_tag(e_wr_tag),
+            .c_wr_en(c_wr_en[BASE +: NH]), .c_wr_idx(e_wr_idx),
+            .c_wr_sub(e_wr_sub), .c_wr_tag(e_wr_tag),
             .m_awid(e_awid), .m_awaddr(e_awaddr), .m_awlen(e_awlen), .m_awsize(e_awsize),
             .m_awburst(e_awburst), .m_awvalid(y_awvalid[BASE +: NH]),
             .m_awready(y_awready[BASE +: NH]),

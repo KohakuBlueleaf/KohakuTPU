@@ -88,7 +88,7 @@ module kx_hop_rx #(
     wire wr_busy, rd_busy;
     generate if (BUF == "lean") begin : g_lean
         kx_hop_ring #(.WIDTH(WIDTH), .DEPTH(DEPTH), .MEM(MEM), .FASTW(FASTW)) u_f (
-            .clk(clk), .rstn(rstn),
+            .clk(clk), .wr_clk(clk), .rstn(rstn), .wr_rstn(rstn),
             .wr_en(rx_v), .wr_data(rx_d), .wr_busy(wr_busy),
             .rd_en(m_valid && m_ready), .rd_data(m_data), .rd_busy(rd_busy));
     end else begin : g_xpm
@@ -114,10 +114,16 @@ module kx_hop_ring #(
     parameter integer WIDTH = 64,
     parameter integer DEPTH = 16,
     parameter         MEM   = "distributed",
-    parameter integer FASTW = 0
+    parameter integer FASTW = 0,
+    // 1: the write port runs on wr_clk and the read port on clk. The landing
+    // buffer of a crossing is already the elastic store a clock crossing
+    // needs, so the domains part here and nowhere else.
+    parameter integer ASYNC = 0
 )(
-    input  wire             clk,
+    input  wire             clk,                // read domain
+    input  wire             wr_clk,             // write domain; = clk at ASYNC 0
     input  wire             rstn,
+    input  wire             wr_rstn,            // write domain's reset
     input  wire             wr_en,
     input  wire [WIDTH-1:0] wr_data,
     output wire             wr_busy,
@@ -125,13 +131,44 @@ module kx_hop_ring #(
     output wire [WIDTH-1:0] rd_data,
     output wire             rd_busy
 );
+generate if (ASYNC != 0 && MEM == "distributed") begin : g_lean
+    // Credits bound occupancy, so no full flag: one LUTRAM, one pointer
+    // crossing, one output register (kohaku_aring).
+    kohaku_aring #(.WIDTH(WIDTH), .DEPTH(DEPTH), .FULL(0)) u_r (
+        .wr_clk(wr_clk), .wr_rstn(wr_rstn), .wr_en(wr_en), .wr_data(wr_data),
+        .wr_busy(wr_busy),
+        .clk(clk), .rstn(rstn), .rd_en(rd_en), .rd_data(rd_data), .rd_busy(rd_busy));
+end else if (ASYNC != 0) begin : g_async
+    // FWFT both sides, so the reader is the one the synchronous ring presents.
+    wire full_f, empty_f, full_m, empty_m;
+    if (FASTW > 0 && FASTW < WIDTH) begin : g_split
+        async_fifo #(.DATA_WIDTH(WIDTH - FASTW), .FIFO_DEPTH(DEPTH), .MEMORY_TYPE(MEM)) u_m (
+            .wr_clk(wr_clk), .wr_rst(!wr_rstn), .wr_en(wr_en),
+            .wr_data(wr_data[WIDTH-FASTW-1:0]), .wr_full(full_m),
+            .rd_clk(clk), .rd_en(rd_en), .rd_data(rd_data[WIDTH-FASTW-1:0]),
+            .rd_empty(empty_m));
+        async_fifo #(.DATA_WIDTH(FASTW), .FIFO_DEPTH(DEPTH), .MEMORY_TYPE("distributed")) u_f (
+            .wr_clk(wr_clk), .wr_rst(!wr_rstn), .wr_en(wr_en),
+            .wr_data(wr_data[WIDTH-1 -: FASTW]), .wr_full(full_f),
+            .rd_clk(clk), .rd_en(rd_en), .rd_data(rd_data[WIDTH-1 -: FASTW]),
+            .rd_empty(empty_f));
+    end else begin : g_one
+        assign full_f = 1'b0; assign empty_f = 1'b0;
+        async_fifo #(.DATA_WIDTH(WIDTH), .FIFO_DEPTH(DEPTH), .MEMORY_TYPE(MEM)) u_m (
+            .wr_clk(wr_clk), .wr_rst(!wr_rstn), .wr_en(wr_en),
+            .wr_data(wr_data), .wr_full(full_m),
+            .rd_clk(clk), .rd_en(rd_en), .rd_data(rd_data), .rd_empty(empty_m));
+    end
+    assign wr_busy = full_m  | full_f;
+    assign rd_busy = empty_m | empty_f;
+end else begin : g_sync
     localparam integer AW = (DEPTH <= 1) ? 1 : $clog2(DEPTH);
     reg [AW-1:0] wp, rp;
     reg [AW:0]   cnt;                    // words written and not yet issued
     reg          o_v;                    // rd_data holds a word
     wire o_take = o_v && rd_en;
     wire issue  = (cnt != 0) && (!o_v || o_take);
-    generate if (FASTW > 0 && FASTW < WIDTH) begin : g_split
+    if (FASTW > 0 && FASTW < WIDTH) begin : g_split
         kohaku_sdpram #(.WIDTH(WIDTH - FASTW), .DEPTH(DEPTH), .MEM_PRIM(MEM), .READ_LAT(1)) u_m (
             .clk(clk),
             .wr_en(wr_en), .wr_addr(wp), .wr_data(wr_data[WIDTH-FASTW-1:0]),
@@ -145,7 +182,7 @@ module kx_hop_ring #(
             .clk(clk),
             .wr_en(wr_en), .wr_addr(wp), .wr_data(wr_data),
             .rd_en(issue), .rd_addr(rp), .rd_data(rd_data));
-    end endgenerate
+    end
     always @(posedge clk) begin
         if (!rstn) begin
             wp <= 0; rp <= 0; cnt <= 0; o_v <= 1'b0;
@@ -158,6 +195,7 @@ module kx_hop_ring #(
     end
     assign rd_busy = !o_v;
     assign wr_busy = !rstn;
+end endgenerate
 endmodule
 
 module kx_hop #(

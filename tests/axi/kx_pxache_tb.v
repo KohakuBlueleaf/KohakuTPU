@@ -57,25 +57,59 @@
 `ifndef TB_ARRLAT
   `define TB_ARRLAT 0
 `endif
-`ifndef TB_LANEW
-  `define TB_LANEW 8
-`endif
 `ifndef TB_HOPRX
   `define TB_HOPRX 0
+`endif
+`ifndef TB_TRUNK
+  `define TB_TRUNK 0
+`endif
+`ifndef TB_KTS
+  `define TB_KTS 0
+`endif
+`ifndef TB_SCODE
+  `define TB_SCODE 1
+`endif
+// Memory tier, cumulative: 1 trunk rings, 2 + reorder buffer, 4 + DRAM read
+// CDC, 5 + DRAM write CDC -- all to LUTRAM. 6 is the ship point: the three
+// depth-16 classes to LUTRAM and the depth-256 reorder buffer to URAM, which
+// costs no LUT. An integer, not a string: a string `define does not survive
+// the shell.
+`ifndef TB_RBB
+`define TB_RBB 0
+`endif
+`ifndef TB_LRAM
+`define TB_LRAM 0
+`endif
+`ifndef TB_PCLK
+  `define TB_PCLK 0
+`endif
+`ifndef TB_PH1
+  `define TB_PH1 1.810
+`endif
+`ifndef TB_PH2
+  `define TB_PH2 1.523
+`endif
+`ifndef TB_PH3
+  `define TB_PH3 1.951
 `endif
 
 module kx_pxache_tb;
     localparam integer M=`TB_M, N=`TB_N, K=`TB_K, TWOCLK=`TB_TWOCLK, P=`TB_P, RSTAG=`TB_RSTAG;
     localparam integer BANKS=`TB_BANKS;
-    localparam integer RINGREG=`TB_RINGREG, WPREG=`TB_WPREG, ARRLAT=`TB_ARRLAT, LANEW=`TB_LANEW;
+    localparam integer RINGREG=`TB_RINGREG, WPREG=`TB_WPREG, ARRLAT=`TB_ARRLAT;
     localparam integer HOPRX=`TB_HOPRX;
+    localparam integer TRUNK=`TB_TRUNK;
     localparam integer DLAT=`TB_DLAT;
     localparam integer W=512, IDW_S=4, HOME_LSB=32, SETS=`TB_SETS, SET_W=`TB_SET_W;
     localparam integer AW=40, IDW=IDW_S+((M<=1)?1:$clog2(M)), STRB=W/8;
     localparam integer HIW = (N<=1) ? 1 : $clog2(N);
     localparam integer PW  = (P<=1) ? 1 : $clog2(P);
-    localparam [M-1:0] MCDC = {M{1'b0}};
-    localparam [N-1:0] HCDC = (TWOCLK!=0) ? {N{1'b1}} : {N{1'b0}};
+    // The bench drives every master on clk, so at TB_PCLK 1 -- where partition p
+    // runs on its own clock -- the master edge must be a real crossing. What
+    // ships is MCDC 0 with node p and partition p on ONE clock; that the two
+    // nets are the same is a wiring property, checked in 75_verify_bd, not here.
+    localparam [M-1:0] MCDC = (`TB_PCLK != 0) ? {M{1'b1}} : {M{1'b0}};
+    localparam [N-1:0] HCDC = (TWOCLK != 0 || `TB_PCLK != 0) ? {N{1'b1}} : {N{1'b0}};
     function [M*PW-1:0] mk_mp; input integer dummy; integer i;
         begin mk_mp = 0; for (i = 0; i < M; i = i + 1) begin mk_mp[i*PW +: PW] = i % P; end end
     endfunction
@@ -106,6 +140,24 @@ module kx_pxache_tb;
     wire dclk = (TWOCLK!=0) ? clk1 : clk0;
     wire drstn = (TWOCLK!=0) ? rstn1 : rstn;
 
+    // TB_PCLK: one clock per partition, all DIFFERENT and none a multiple of
+    // another, so every boundary trunk is a real crossing that drifts. The
+    // masters and the bench stay on clk (partition 0's), as the AXI edges do.
+    reg [P-1:0] pclk = 0;
+    localparam real PHALF0 = 1.667, PHALF1 = `TB_PH1, PHALF2 = `TB_PH2, PHALF3 = `TB_PH3;
+    always begin
+        #PHALF0 pclk[0] = ~pclk[0];
+    end
+    generate
+        if (P > 1) begin : g_pc1 always #PHALF1 begin pclk[1] = ~pclk[1]; end end
+        if (P > 2) begin : g_pc2 always #PHALF2 begin pclk[2] = ~pclk[2]; end end
+        if (P > 3) begin : g_pc3 always #PHALF3 begin pclk[3] = ~pclk[3]; end end
+    endgenerate
+    // Partition 0 IS the bench clock: the bench drives master 0's AXI on clk0
+    // with no edge CDC, so a separate same-rate clock there is a race, not a
+    // crossing. Partitions 1..3 are the crossings under test.
+    wire [P-1:0] clk_p_w = (`TB_PCLK != 0) ? {pclk[P-1:1], clk0} : {P{clk0}};
+
     reg  [M*IDW_S-1:0] s_awid, s_arid;
     reg  [M*AW-1:0]    s_awaddr, s_araddr;
     reg  [M*8-1:0]     s_awlen, s_arlen;
@@ -132,9 +184,16 @@ module kx_pxache_tb;
     kx_pxache #(.P(P), .M(M), .N_HOME(N), .MP(MP), .HP(HP), .AW(AW), .W(W), .ID_W(IDW_S),
                 .HOME_LSB(HOME_LSB), .SETS(SETS), .SET_W(SET_W), .K(K), .RAM_STYLE("block"),
                 .BANKS(BANKS), .RING_WR_REG(RINGREG), .ARR_WP_REG(WPREG),
-                .ARR_LAT(ARRLAT), .LANE_W(LANEW), .HOP_RXREG(HOPRX),
+                .ARR_LAT(ARRLAT), .HOP_RXREG(HOPRX), .BND_TRUNK(TRUNK),
+                .BND_KTS(`TB_KTS), .BND_SCODE(`TB_SCODE), .PCLK(`TB_PCLK),
+                .MEM_TRUNK((`TB_LRAM >= 1) ? "distributed" : "block"),
+                .MEM_RB   ((`TB_LRAM == 6) ? "ultra"
+                           : (`TB_LRAM >= 2) ? "distributed" : "block"),
+                .MEM_HRD  ((`TB_LRAM >= 4) ? "distributed" : "block"),
+                .MEM_HWR  ((`TB_LRAM >= 5) ? "distributed" : "block"),
+                .RB_BEATS(`TB_RBB),
                 .MCDC(MCDC), .HCDC(HCDC), .NSWAP(NSWAP), .SWAP_A(SWAP_A), .SWAP_B(SWAP_B)) dut (
-        .clk(clk), .rstn_p(rstn_p),
+        .clk(clk), .clk_p(clk_p_w), .rstn_p(rstn_p),
         .m_clk({M{clk}}), .m_rstn({M{rstn}}),
         .h_clk({N{dclk}}), .h_rstn({N{drstn}}),
         .s_awid(s_awid), .s_awaddr(s_awaddr), .s_awlen(s_awlen), .s_awsize(s_awsize),
@@ -266,6 +325,30 @@ module kx_pxache_tb;
         begin wrn(mi, a, d, 1, {STRB{1'b1}}); end
     endtask
 
+    // a burst whose beats alternate byte-lane halves: even beats write the low
+    // half, odd beats the high half, so a strb changes inside one open burst
+    task automatic wrn_alt(input integer mi, input [AW-1:0] a, input [W-1:0] d, input integer nb);
+        integer b;
+        begin
+            @(negedge clk);
+            s_awid[mi*IDW_S +: IDW_S]=1; s_awaddr[mi*AW +: AW]=a; s_awlen[mi*8 +: 8]=nb-1;
+            s_awsize[mi*3 +: 3]=3'd6; s_awburst[mi*2 +: 2]=2'b01; s_awvalid[mi]=1;
+            do @(posedge clk); while(!s_awready[mi]); @(negedge clk); s_awvalid[mi]=0;
+            for (b = 0; b < nb; b = b + 1) begin
+                s_wdata[mi*W +: W]=d+b;
+                s_wstrb[mi*STRB +: STRB] = (b % 2 == 0)
+                    ? {{(STRB/2){1'b0}}, {(STRB/2){1'b1}}}
+                    : {{(STRB/2){1'b1}}, {(STRB/2){1'b0}}};
+                s_wlast[mi]=(b==nb-1); s_wvalid[mi]=1;
+                do @(posedge clk); while(!s_wready[mi]); @(negedge clk);
+            end
+            s_wvalid[mi]=0; s_wlast[mi]=0;
+            s_bready[mi]=1; do @(posedge clk); while(!s_bvalid[mi]);
+            if (s_bresp[mi*2 +: 2]!==2'b00) begin errors=errors+1; $display("  FAIL bresp m%0d @%h",mi,a); end
+            @(negedge clk); s_bready[mi]=0;
+        end
+    endtask
+
     // The collector matches beats BY ID against a queue of expected bursts per
     // (master, ID): a fresh ID per burst by default, so bursts to different
     // homes may complete in any order, and one ID streaming across the homes,
@@ -352,28 +435,46 @@ module kx_pxache_tb;
         begin rdn(mi, a, exp, 1); end
     endtask
 
-    localparam integer PG = 4096;
+    // A stream moves whole 4 KB pages; the DUT's read slot (TB_RBB beats, a
+    // page at 0) bounds one burst, so a page goes as CHK bursts of RBBT beats
+    // carrying the same beat-indexed data as the one 64-beat burst would.
+    localparam integer PG   = 4096;
+    localparam integer RBBT = (`TB_RBB > 0 && `TB_RBB < 64) ? `TB_RBB : 64;
+    localparam integer CHK  = 64 / RBBT;
+    localparam integer LB   = (RBBT < 32) ? RBBT : 32;   // the latency burst
     task automatic stream_wr(input integer mi, input [AW-1:0] base, input integer pages);
-        integer p;
-        begin for (p = 0; p < pages; p = p + 1)
-            wrn(mi, base + p*PG, {8{64'hD000_0000 + (mi<<16) + p}}, 64, {STRB{1'b1}});
+        integer p, c;
+        begin
+            for (p = 0; p < pages; p = p + 1) begin
+                for (c = 0; c < CHK; c = c + 1) begin
+                    wrn(mi, base + p*PG + c*RBBT*STRB, {8{64'hD000_0000 + (mi<<16) + p}} + c*RBBT, RBBT, {STRB{1'b1}});
+                end
+            end
         end
     endtask
     task automatic stream_rd(input integer mi, input [AW-1:0] base, input integer pages, input integer stall);
-        integer pi;
+        integer pi, c;
         begin
             fork
-                for (pi = 0; pi < pages; pi = pi + 1) begin rd_issue(mi, base + pi*PG, {8{64'hD000_0000 + (mi<<16) + pi}}, 64); end
-                rd_collect(mi, pages, stall);
+                for (pi = 0; pi < pages; pi = pi + 1) begin
+                    for (c = 0; c < CHK; c = c + 1) begin
+                        rd_issue(mi, base + pi*PG + c*RBBT*STRB, {8{64'hD000_0000 + (mi<<16) + pi}} + c*RBBT, RBBT);
+                    end
+                end
+                rd_collect(mi, pages*CHK, stall);
             join
         end
     endtask
     task automatic stream_rd_id(input integer mi, input [AW-1:0] base, input integer pages, input integer stall, input integer id);
-        integer pi;
+        integer pi, c;
         begin
             fork
-                for (pi = 0; pi < pages; pi = pi + 1) begin rd_issue_id(mi, base + pi*PG, {8{64'hD000_0000 + (mi<<16) + pi}}, 64, id); end
-                rd_collect(mi, pages, stall);
+                for (pi = 0; pi < pages; pi = pi + 1) begin
+                    for (c = 0; c < CHK; c = c + 1) begin
+                        rd_issue_id(mi, base + pi*PG + c*RBBT*STRB, {8{64'hD000_0000 + (mi<<16) + pi}} + c*RBBT, RBBT, id);
+                    end
+                end
+                rd_collect(mi, pages*CHK, stall);
             join
         end
     endtask
@@ -408,6 +509,22 @@ module kx_pxache_tb;
         rdn(0, haddr(1,40'h800), {8{64'h1000_0000}}, 4);
         wrn(0, haddr(1,40'h800), {8{64'h2222_2222}}, 1, {{(STRB/2){1'b0}}, {(STRB/2){1'b1}}});
         rd1(0, haddr(1,40'h800), {{4{64'h1000_0000}}, {4{64'h2222_2222}}});
+        // partial strb into a home of the master's own partition
+        wr1(0, haddr(0,40'h880), {8{64'h4000_0000}});
+        wrn(0, haddr(0,40'h880), {8{64'h4444_4444}}, 1, {{(STRB/2){1'b0}}, {(STRB/2){1'b1}}});
+        rd1(0, haddr(0,40'h880), {{4{64'h4000_0000}}, {4{64'h4444_4444}}});
+        // a remote burst whose byte lanes change on every beat
+        wrn(0, haddr(1,40'h900), {8{64'h6100_0000}}, 4, {STRB{1'b1}});
+        wrn_alt(0, haddr(1,40'h900), {8{64'h6200_0000}}, 4);
+        for (p = 0; p < 4; p = p + 1) begin
+            if (p % 2 == 0) begin
+                rd1(0, haddr(1,40'h900) + p*64,
+                    {{4{64'h6100_0000}}, {3{64'h6200_0000}}, 64'h6200_0000 + p});
+            end else begin
+                rd1(0, haddr(1,40'h900) + p*64,
+                    {{4{64'h6200_0000}}, {3{64'h6100_0000}}, 64'h6100_0000 + p});
+            end
+        end
         if (M > 1) begin
             wr1(1, haddr(0,40'hC00), {8{64'hAAAA_0001}});
             wr1(0, haddr(0,40'hC40), {8{64'hAAAA_0000}});
@@ -477,9 +594,9 @@ module kx_pxache_tb;
         // hit-burst latency from master 0 to every home: 32 beats, second pass
         lat_loc = -1;
         for (h = 0; h < N; h = h + 1) begin
-            wrn(0, haddr(h, 40'h3000), {8{64'h9900_0000 + h}}, 32, {STRB{1'b1}});
-            rdn(0, haddr(h, 40'h3000), {8{64'h9900_0000 + h}}, 32);
-            t0 = cyc; rdn(0, haddr(h, 40'h3000), {8{64'h9900_0000 + h}}, 32); t1 = cyc;
+            wrn(0, haddr(h, 40'h3000), {8{64'h9900_0000 + h}}, LB, {STRB{1'b1}});
+            rdn(0, haddr(h, 40'h3000), {8{64'h9900_0000 + h}}, LB);
+            t0 = cyc; rdn(0, haddr(h, 40'h3000), {8{64'h9900_0000 + h}}, LB); t1 = cyc;
             lat_h = t1 - t0;
             $display("  @@@ LAT m0->h%0d partition %0d->%0d hit32 cycles=%0d", h, MP[0 +: PW], HP[h*PW +: PW], lat_h);
             if (HP[h*PW +: PW] == MP[0 +: PW]) begin lat_loc = lat_h; end
@@ -487,8 +604,8 @@ module kx_pxache_tb;
         if (P > 1) begin
             for (h = 0; h < N; h = h + 1) begin
                 if (HP[h*PW +: PW] != MP[0 +: PW]) begin
-                    wrn(0, haddr(h, 40'h3000), {8{64'h9900_0000 + h}}, 32, {STRB{1'b1}});
-                    t0 = cyc; rdn(0, haddr(h, 40'h3000), {8{64'h9900_0000 + h}}, 32); t1 = cyc;
+                    wrn(0, haddr(h, 40'h3000), {8{64'h9900_0000 + h}}, LB, {STRB{1'b1}});
+                    t0 = cyc; rdn(0, haddr(h, 40'h3000), {8{64'h9900_0000 + h}}, LB); t1 = cyc;
                     checks = checks + 1;
                     if (lat_loc >= 0 && (t1 - t0) <= lat_loc) begin
                         errors = errors + 1;
@@ -514,10 +631,10 @@ module kx_pxache_tb;
             t1 = cyc; gbps = (65536.0 / ((t1 - t0) * 3.333e-9)) / 1.0e9;
             $display("@@@ PERF rd_1m_re  cycles=%0d bytes=65536 GBps300=%0.2f homes_ar=%0d/%0d/%0d/%0d",
                      t1 - t0, gbps, n_ar[0], n_ar[(N>1)?1:0], n_ar[(N>2)?2:0], n_ar[(N>3)?3:0]);
-            t0 = cyc; rdn(0, 40'h0, {8{64'hD000_0000}}, 32); t1 = cyc;
+            t0 = cyc; rdn(0, 40'h0, {8{64'hD000_0000}}, LB); t1 = cyc;
             $display("@@@ PERF rd_2k_a   cycles=%0d bytes=2048 GBps300=%0.2f", t1 - t0,
                      (2048.0 / ((t1 - t0) * 3.333e-9)) / 1.0e9);
-            t0 = cyc; rdn(0, 40'h0, {8{64'hD000_0000}}, 32); t1 = cyc;
+            t0 = cyc; rdn(0, 40'h0, {8{64'hD000_0000}}, LB); t1 = cyc;
             $display("@@@ PERF rd_2k_hit cycles=%0d bytes=2048 GBps300=%0.2f", t1 - t0,
                      (2048.0 / ((t1 - t0) * 3.333e-9)) / 1.0e9);
             clear_counts; t0 = cyc;

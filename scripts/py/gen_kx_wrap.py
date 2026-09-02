@@ -163,9 +163,17 @@ def emit(m, n, w, aw, idw, home_lsb, pxache=False):
         lines += [
             "    parameter integer RD_OUTQ   = 4,",
             "    parameter integer WR_OUTQ   = 4,",
+            "    parameter integer RB_BEATS  = 0,",
             "    parameter integer HOP_DEPTH = 16,",
             '    parameter         HOP_BUF   = "lean",',
-            "    parameter integer HOP_RXREG = 0",
+            "    parameter integer HOP_RXREG = 0,",
+            "    parameter integer BND_TRUNK  = 0,",
+            "    parameter integer PCLK       = 0,",
+            '    parameter         MEM_TRUNK  = "block",',
+            '    parameter         MEM_RB     = "block",',
+            '    parameter         MEM_HRD    = "block",',
+            '    parameter         MEM_HWR    = "block",',
+            "    parameter integer TRUNK_SLOT = 0",
         ]
     else:
         lines += [
@@ -173,12 +181,20 @@ def emit(m, n, w, aw, idw, home_lsb, pxache=False):
             "    parameter integer RD_OUTQ   = 4,",
             "    parameter integer SLRX      = 1",
         ]
-    lines += [
-        ")(",
-        '    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 aclk CLK" *)',
-        f'    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF {s_busif}, ASSOCIATED_RESET d_rstn0" *)',
-        "    input  wire aclk,",
-    ]
+    # A master port rides its partition's clock, so under pxache the slave
+    # interfaces belong to p_clk<i> and there is no aclk left to own anything.
+    # IPI gives a clock pin with no ASSOCIATED_BUSIF EVERY interface in the
+    # module, which collides with each h_clk and fails validation (BD 41-1732).
+    lines += [")("]
+    if not pxache:
+        lines += [
+            '    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 aclk CLK" *)',
+            (
+                f'    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF {s_busif},'
+                f' ASSOCIATED_RESET d_rstn0" *)'
+            ),
+            "    input  wire aclk,",
+        ]
     # One reset per die, all on aclk: die i's copy resets home slice i and
     # master slice i (the die that owns MIG i and node i). This wrapper is the
     # only place where a die meets a slice; the fabric knows slices only.
@@ -189,6 +205,18 @@ def emit(m, n, w, aw, idw, home_lsb, pxache=False):
             '    (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)',
             f"    input  wire d_rstn{i},",
         ]
+    # Partition i's fabric clock: aclk at PCLK 0, die i's own clock at PCLK 1
+    # (where every boundary trunk is then the crossing).
+    if pxache:
+        for i in range(n):
+            lines += [
+                f'    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 p_clk{i} CLK" *)',
+                (
+                    f'    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF S{i:02d}_AXI,'
+                    f' ASSOCIATED_RESET d_rstn{i}" *)'
+                ),
+                f"    input  wire p_clk{i},",
+            ]
     for h in range(n):
         lines += [
             f'    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 h_clk{h} CLK" *)',
@@ -246,6 +274,7 @@ def emit(m, n, w, aw, idw, home_lsb, pxache=False):
     hclk = ", ".join(f"h_clk{h}" for h in reversed(range(n)))
     hrst = ", ".join(f"h_rstn{h}" for h in reversed(range(n)))
     drst = ", ".join(f"d_rstn{i}" for i in reversed(range(n)))
+    pclk = ", ".join(f"p_clk{i}" for i in reversed(range(n)))
     if pxache:
         pw = max(1, (n - 1).bit_length())
         ident = ", ".join(f"{pw}'d{i}" for i in reversed(range(n)))
@@ -261,10 +290,15 @@ def emit(m, n, w, aw, idw, home_lsb, pxache=False):
             "                .CDC_DEPTH(CDC_DEPTH), .NSWAP(NSWAP),",
             "                .SWAP_A(SWAP_A[((NSWAP < 1) ? 1 : NSWAP)*8-1:0]),",
             "                .SWAP_B(SWAP_B[((NSWAP < 1) ? 1 : NSWAP)*8-1:0]),",
-            "                .RD_OUTQ(RD_OUTQ), .WR_OUTQ(WR_OUTQ), .HOP_DEPTH(HOP_DEPTH),",
-            "                .HOP_BUF(HOP_BUF), .HOP_RXREG(HOP_RXREG)) u_kx (",
-            f"        .clk(aclk), .rstn_p({{{drst}}}),",
-            f"        .m_clk({{M{{aclk}}}}), .m_rstn({{{drst}}}),",
+            "                .RD_OUTQ(RD_OUTQ), .WR_OUTQ(WR_OUTQ), .RB_BEATS(RB_BEATS),",
+            "                .HOP_DEPTH(HOP_DEPTH),",
+            "                .HOP_BUF(HOP_BUF), .HOP_RXREG(HOP_RXREG),",
+            "                .BND_TRUNK(BND_TRUNK), .TRUNK_SLOT(TRUNK_SLOT),",
+            "                .MEM_TRUNK(MEM_TRUNK), .MEM_RB(MEM_RB),",
+            "                .MEM_HRD(MEM_HRD), .MEM_HWR(MEM_HWR),",
+            "                .PCLK(PCLK)) u_kx (",
+            f"        .clk(p_clk0), .clk_p({{{pclk}}}), .rstn_p({{{drst}}}),",
+            f"        .m_clk({{{pclk}}}), .m_rstn({{{drst}}}),",
             f"        .h_clk({{{hclk}}}), .h_rstn({{{hrst}}}),",
         ]
     else:

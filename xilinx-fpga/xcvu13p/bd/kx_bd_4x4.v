@@ -7,11 +7,11 @@
 `default_nettype none
 
 module kx_bd_4x4 #(
-    parameter integer SETS      = 32768,
-    parameter integer SET_W     = 15,
-    parameter integer K         = 1,
+    parameter integer SETS      = 16384,
+    parameter integer SET_W     = 14,
+    parameter integer K         = 2,
     parameter         RAM_STYLE = "ultra",
-    parameter integer BANKS     = 8,
+    parameter integer BANKS     = 1,
     parameter integer RSAMD     = 1,
     parameter integer WSAMD     = 1,
     parameter integer CDC_DEPTH = 16,
