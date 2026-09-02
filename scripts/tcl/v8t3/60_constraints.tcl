@@ -229,7 +229,8 @@ if {$PER_DIE_CLK} {
     append grp [v8_group clk_wiz_ctrl {clk_out2}]
 }
 foreach i {0 1 2 3} { append grp [v8_group ddr4_$i {c0_ddr4_ui_clk}] }
-append grp [v8_group xdma_0 {axi_aclk}]
+# No group of its own for xdma_0/axi_aclk: it is a generated clock of
+# pcie_refclk and the reference's group carries it (XDCB-3, TIMING-47).
 append grp " \\\n    -group \[get_clocks -include_generated_clocks pcie_refclk\]"
 puts $fh "set_clock_groups -asynchronous$grp"
 close $fh
