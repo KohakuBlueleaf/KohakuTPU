@@ -41,6 +41,35 @@ module sync_fifo #(
     output wire [DATA_WIDTH-1:0]    rd_data,
     output wire                     rd_busy
 );
+    generate if (MEMORY_TYPE == "lean") begin : g_lean
+        // One inferred LUTRAM and one output register: xpm "distributed"
+        // without its two output registers and control block.
+        localparam integer AW = (FIFO_DEPTH <= 1) ? 1 : $clog2(FIFO_DEPTH);
+        (* ram_style = "distributed" *) reg [DATA_WIDTH-1:0] mem [0:FIFO_DEPTH-1];
+        reg [AW:0]            wp, rp;
+        reg                   o_v;
+        reg  [DATA_WIDTH-1:0] o_d;
+        wire empty  = (wp == rp);
+        wire full_w = (wp[AW-1:0] == rp[AW-1:0]) && (wp[AW] != rp[AW]);
+        wire o_take = o_v && rd_en;
+        wire issue  = !empty && (!o_v || o_take);
+        wire wr_go  = wr_en && !full_w && !rst;
+        always @(posedge clk) begin
+            if (wr_go) begin mem[wp[AW-1:0]] <= wr_data; end
+            if (rst) begin
+                wp <= 0; rp <= 0; o_v <= 1'b0;
+            end
+            else begin
+                if (wr_go) begin wp <= wp + 1'b1; end
+                if (issue) begin rp <= rp + 1'b1; o_d <= mem[rp[AW-1:0]]; end
+                o_v <= issue || (o_v && !o_take);
+            end
+        end
+        assign wr_busy   = full_w | rst;
+        assign wr_almost = wr_busy;
+        assign rd_busy   = !o_v;
+        assign rd_data   = o_d;
+    end else begin : g_xpm
     wire rd_rst_busy, wr_rst_busy, empty, full, prog_full;
 
     // A LOCAL copy. The macro's own rst_busy sits with the FIFO memory, and
@@ -89,4 +118,5 @@ module sync_fifo #(
         .wr_clk(clk),
         .wr_en(wr_en)
     );
+    end endgenerate
 endmodule

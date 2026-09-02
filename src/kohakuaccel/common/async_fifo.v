@@ -14,7 +14,10 @@
 module async_fifo #(
     parameter integer DATA_WIDTH  = 64,
     parameter integer FIFO_DEPTH  = 16,           // must be a power of 2
-    parameter         MEMORY_TYPE = "distributed" // "distributed" | "block"
+    // Passed to xpm_fifo_async's FIFO_MEMORY_TYPE, which also takes "ultra":
+    // a wide word costs ceil(W/72) URAM288 whatever its depth, so a deep FIFO
+    // leaves block RAM for URAM at no LUT.
+    parameter         MEMORY_TYPE = "distributed" // "distributed"|"block"|"ultra"
 )(
     input  wire                  wr_clk,
     input  wire                  wr_rst,          // active high, wr_clk domain
@@ -27,6 +30,23 @@ module async_fifo #(
     output wire [DATA_WIDTH-1:0] rd_data,
     output wire                  rd_empty
 );
+    generate if (MEMORY_TYPE == "lean") begin : g_lean
+        // kohaku_aring with a full flag; the read side's reset is the write
+        // side's landed through two flops, as XPM derives it inside itself.
+        reg rd_r1, rd_r2;
+        always @(posedge rd_clk) begin
+            rd_r1 <= !wr_rst;
+            rd_r2 <= rd_r1;
+        end
+        wire lean_full, lean_busy;
+        kohaku_aring #(.WIDTH(DATA_WIDTH), .DEPTH(FIFO_DEPTH), .FULL(1)) u_r (
+            .wr_clk(wr_clk), .wr_rstn(!wr_rst), .wr_en(wr_en && !lean_full),
+            .wr_data(wr_data), .wr_busy(lean_full),
+            .clk(rd_clk), .rstn(rd_r2), .rd_en(rd_en),
+            .rd_data(rd_data), .rd_busy(lean_busy));
+        assign wr_full  = lean_full;
+        assign rd_empty = lean_busy;
+    end else begin : g_xpm
     wire wr_rst_busy, rd_rst_busy, full, empty;
 
     // Reset busy folded into the flags rather than exposed. XPM holds both for
@@ -87,6 +107,7 @@ module async_fifo #(
         .injectsbiterr(1'b0),
         .sleep(1'b0)
     );
+    end endgenerate
 endmodule
 
 `default_nettype wire

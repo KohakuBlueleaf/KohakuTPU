@@ -52,6 +52,7 @@ NOC = [
     # Every generated mesh now crosses MAG into the NoC with a pair of these,
     # and noc_local_cdc is only the wrapper -- async_fifo is what it holds.
     "src/kohakuaccel/noc/endpoint/noc_local_cdc.v",
+    "src/kohakuaccel/common/kohaku_aring.v",
     "src/kohakuaccel/common/async_fifo.v",
 ]
 
@@ -70,6 +71,7 @@ MOVER = [
     "src/kohakuaccel/sysnode/core/mag_xform.v",
     # mag.v instantiates the staging store unconditionally; at STAGE=0 the
     # generate is empty, but it still has to elaborate.
+    "src/kohakuaccel/common/kohaku_mux.v",
     "src/kohakuaccel/sysnode/core/mag_stage.v",
 ]
 
@@ -101,6 +103,7 @@ MESH_1M = (
         "src/kohakuaccel/common/sb_skid.v",
         "src/kohakuaccel/sysnode/core/mag_mem_port.v",
         "src/kohakuaccel/sysnode/interlink/il_pkt_arb.v",
+        "src/kohakuaccel/common/kohaku_sdpram.v",
         "src/kohakutransmit/prim/kts_fifo.v",
         "src/kohakutransmit/link/kts_tx.v",
         "src/kohakutransmit/link/kts_rx.v",
@@ -109,6 +112,7 @@ MESH_1M = (
         "src/kohakuaccel/sysnode/interlink/mag_switch.v",
         "src/kohakuaccel/sysnode/interlink/mag_ilink.v",
         "src/kohakuaccel/sysnode/core/mag.v",
+        "src/kohakuaccel/common/kohaku_aring.v",
         "src/kohakuaccel/common/async_fifo.v",
         "src/kohakuaccel/sysnode/core/mag_dram_port.v",
         # the node's processor is the RV64 complex and its load window
@@ -156,6 +160,7 @@ MESH_CDC = (
         "src/kohakuaccel/common/sb_skid.v",
         "src/kohakuaccel/sysnode/core/mag_mem_port.v",
         "src/kohakuaccel/sysnode/core/mag.v",
+        "src/kohakuaccel/common/kohaku_aring.v",
         "src/kohakuaccel/common/async_fifo.v",
         "src/kohakuaccel/sysnode/core/mag_dram_port.v",
         "src/kohakuaccel/noc/endpoint/noc_local_cdc.v",
@@ -194,6 +199,7 @@ BENCHES = {
         "axi_n1_tb",
         [
             "src/kohakuaccel/common/sync_fifo.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/axi/simple/axi_n1.v",
             "tests/axi/axi_n1_tb.v",
@@ -204,6 +210,7 @@ BENCHES = {
         "kaxi_xbar",
         [
             "src/kohakuaccel/common/sync_fifo.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/axi/simple/axi_n1.v",
             "src/kohakuaxi/legacy/kaxi/kaxi_xbar.v",
@@ -214,6 +221,7 @@ BENCHES = {
         "kaxi_top",
         [
             "src/kohakuaccel/common/sync_fifo.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/common/kohaku_sdpram.v",
             "src/kohakuaccel/axi/simple/axi_n1.v",
@@ -227,6 +235,7 @@ BENCHES = {
         "kaxi_top_tb",
         [
             "src/kohakuaccel/common/sync_fifo.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/common/kohaku_sdpram.v",
             "src/kohakuaccel/axi/simple/axi_n1.v",
@@ -243,6 +252,7 @@ BENCHES = {
         "kaxi_xbar_tb",
         [
             "src/kohakuaccel/common/sync_fifo.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/axi/simple/axi_n1.v",
             "src/kohakuaxi/legacy/kaxi/kaxi_xbar.v",
@@ -307,6 +317,7 @@ BENCHES = {
         "kx_xache_tb",
         [
             "src/kohakuaccel/common/kohaku_sdpram.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/common/sync_fifo.v",
             "src/kohakuaxi/xache/edge/kx_scdc.v",
@@ -348,8 +359,10 @@ BENCHES = {
         "sb_root9_tb",
         [
             "src/kohakuaccel/common/sync_fifo.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/common/sb_skid.v",
+            "src/kohakuaccel/common/kohaku_mux.v",
             "src/kohakuaccel/axi/station/sb_hub.v",
             "src/kohakuaccel/axi/station/sb_station.v",
             "src/kohakuaccel/axi/station/sb_nmu.v",
@@ -366,8 +379,10 @@ BENCHES = {
         "sb_chain2_tb",
         [
             "src/kohakuaccel/common/sync_fifo.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/common/sb_skid.v",
+            "src/kohakuaccel/common/kohaku_mux.v",
             "src/kohakuaccel/axi/station/sb_hub.v",
             "src/kohakuaccel/axi/station/sb_station.v",
             "src/kohakuaccel/axi/station/sb_nmu.v",
@@ -388,6 +403,7 @@ BENCHES = {
         "sb_conv12_tb",
         [
             "src/kohakuaccel/common/sync_fifo.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/common/sb_skid.v",
             "src/kohakuaccel/axi/station/sb_nmu.v",
@@ -415,6 +431,7 @@ BENCHES = {
         "sb_width_tb",
         [
             "src/kohakuaccel/common/sync_fifo.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/common/sb_skid.v",
             "src/kohakuaccel/axi/station/sb_nmu.v",
@@ -429,13 +446,16 @@ BENCHES = {
         "sb_line4_tb",
         [
             "src/kohakuaccel/common/sync_fifo.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/common/sb_skid.v",
+            "src/kohakuaccel/common/kohaku_mux.v",
             "src/kohakuaccel/axi/station/sb_hub.v",
             "src/kohakuaccel/axi/station/sb_nmu.v",
             "src/kohakuaccel/axi/station/sb_nsu.v",
             "src/kohakuaccel/axi/link/sb_link.v",
             "src/kohakuaccel/axi/link/sb_link_cdc.v",
+            "src/kohakuaccel/common/kohaku_sdpram.v",
             "src/kohakutransmit/prim/kts_fifo.v",
             "src/kohakutransmit/prim/kts_afifo.v",
             "src/kohakutransmit/link/kts_tx.v",
@@ -455,8 +475,10 @@ BENCHES = {
         "sb_slr1_tb",
         [
             "src/kohakuaccel/common/sync_fifo.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/common/sb_skid.v",
+            "src/kohakuaccel/common/kohaku_mux.v",
             "src/kohakuaccel/axi/station/sb_hub.v",
             "src/kohakuaccel/axi/station/sb_station.v",
             "src/kohakuaccel/axi/station/sb_nmu.v",
@@ -486,6 +508,7 @@ BENCHES = {
             "src/kohakuaccel/verif/axi_ram.v",
             "src/kohakuaccel/sysnode/core/mag_mem_port.v",
             "src/kohakuaccel/sysnode/interlink/il_pkt_arb.v",
+            "src/kohakuaccel/common/kohaku_sdpram.v",
             "src/kohakutransmit/prim/kts_fifo.v",
             "src/kohakutransmit/link/kts_tx.v",
             "src/kohakutransmit/link/kts_rx.v",
@@ -494,12 +517,14 @@ BENCHES = {
             "src/kohakuaccel/sysnode/interlink/mag_switch.v",
             "src/kohakuaccel/sysnode/interlink/mag_ilink.v",
             "src/kohakuaccel/sysnode/core/mag.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "src/kohakuaccel/sysnode/core/sn_hub.v",
             "src/kohakuaccel/sysnode/sysnode.v",
             "src/kohakutpu/top/generated/ktpu_min_1m.v",
             "src/kohakuaccel/common/sb_skid.v",
+            "src/kohakuaccel/common/kohaku_mux.v",
             "src/kohakuaccel/axi/station/sb_hub.v",
             "src/kohakuaccel/axi/station/sb_nmu.v",
             "src/kohakuaccel/axi/station/sb_nsu.v",
@@ -534,6 +559,7 @@ BENCHES = {
             "src/kohakuaccel/common/kh_rst_sync.v",
             "src/kohakuaccel/sysnode/core/mag_mem_port.v",
             "src/kohakuaccel/sysnode/interlink/il_pkt_arb.v",
+            "src/kohakuaccel/common/kohaku_sdpram.v",
             "src/kohakutransmit/prim/kts_fifo.v",
             "src/kohakutransmit/link/kts_tx.v",
             "src/kohakutransmit/link/kts_rx.v",
@@ -544,6 +570,7 @@ BENCHES = {
             "src/kohakuaccel/sysnode/interlink/mag_switch.v",
             "src/kohakuaccel/sysnode/interlink/mag_ilink.v",
             "src/kohakuaccel/sysnode/core/mag.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "src/kohakuaccel/noc/endpoint/noc_l2_adapter.v",
@@ -551,6 +578,7 @@ BENCHES = {
             "src/kohakuaccel/sysnode/sysnode.v",
             "src/kohakutpu/top/generated/ktpu_ship_1x1_2c2v_1m.v",
             "src/kohakuaccel/common/sb_skid.v",
+            "src/kohakuaccel/common/kohaku_mux.v",
             "src/kohakuaccel/axi/station/sb_hub.v",
             "src/kohakuaccel/axi/station/sb_nmu.v",
             "src/kohakuaccel/axi/station/sb_nsu.v",
@@ -567,8 +595,10 @@ BENCHES = {
         "sb_quad_tb",
         [
             "src/kohakuaccel/common/sync_fifo.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/common/sb_skid.v",
+            "src/kohakuaccel/common/kohaku_mux.v",
             "src/kohakuaccel/axi/station/sb_hub.v",
             "src/kohakuaccel/axi/station/sb_station.v",
             "src/kohakuaccel/axi/station/sb_nmu.v",
@@ -618,6 +648,7 @@ BENCHES = {
             "src/kohakuaccel/verif/axi_ram.v",
             "src/kohakuaccel/sysnode/core/mag_mem_port.v",
             "src/kohakuaccel/sysnode/interlink/il_pkt_arb.v",
+            "src/kohakuaccel/common/kohaku_sdpram.v",
             "src/kohakutransmit/prim/kts_fifo.v",
             "src/kohakutransmit/link/kts_tx.v",
             "src/kohakutransmit/link/kts_rx.v",
@@ -737,6 +768,7 @@ BENCHES = {
         "mag_stage_tb",
         COMMON
         + [
+            "src/kohakuaccel/common/kohaku_mux.v",
             "src/kohakuaccel/sysnode/core/mag_stage.v",
             "tests/sysnode/mag_stage_tb.v",
         ],
@@ -830,6 +862,7 @@ BENCHES = {
             "src/kohakuaccel/common/sb_skid.v",
             "src/kohakuaccel/sysnode/core/mag_mem_port.v",
             "src/kohakuaccel/sysnode/core/mag.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "tests/sysnode/mag_system_tb.v",
@@ -857,6 +890,7 @@ BENCHES = {
             "src/kohakuaccel/common/sb_skid.v",
             "src/kohakuaccel/sysnode/core/mag_mem_port.v",
             "src/kohakuaccel/sysnode/core/mag.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "src/kohakutpu/top/mm_mesh.v",
@@ -896,6 +930,7 @@ BENCHES = {
             "src/kohakuaccel/common/sb_skid.v",
             "src/kohakuaccel/sysnode/core/mag_mem_port.v",
             "src/kohakuaccel/sysnode/core/mag.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "src/kohakutpu/top/mm_mesh.v",
@@ -924,6 +959,7 @@ BENCHES = {
             "src/kohakuaccel/common/sb_skid.v",
             "src/kohakuaccel/sysnode/core/mag_mem_port.v",
             "src/kohakuaccel/sysnode/core/mag.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "src/kohakutpu/top/mm_mesh.v",
@@ -952,6 +988,7 @@ BENCHES = {
             "src/kohakuaccel/common/sb_skid.v",
             "src/kohakuaccel/sysnode/core/mag_mem_port.v",
             "src/kohakuaccel/sysnode/core/mag.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "src/kohakutpu/top/mm_mesh.v",
@@ -990,8 +1027,10 @@ BENCHES = {
             "src/kohakuaccel/common/sb_skid.v",
             "src/kohakuaccel/sysnode/core/mag_mem_port.v",
             "src/kohakuaccel/sysnode/core/mag.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/sysnode/core/mag_dram_port.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "src/kohakutpu/top/mm_mesh.v",
@@ -1005,6 +1044,7 @@ BENCHES = {
         COMMON
         + [
             "src/kohakuaccel/verif/axi_ram.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "tests/sysnode/mag_dram_port_tb.v",
@@ -1017,6 +1057,7 @@ BENCHES = {
         COMMON
         + [
             "src/kohakuaccel/verif/axi_ram.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "tests/sysnode/mag_dram_port_tb.v",
@@ -1035,6 +1076,7 @@ BENCHES = {
             "src/kohakuaccel/common/sb_skid.v",
             "src/kohakuaccel/sysnode/core/mag_mem_port.v",
             "src/kohakuaccel/sysnode/interlink/il_pkt_arb.v",
+            "src/kohakuaccel/common/kohaku_sdpram.v",
             "src/kohakutransmit/prim/kts_fifo.v",
             "src/kohakutransmit/link/kts_tx.v",
             "src/kohakutransmit/link/kts_rx.v",
@@ -1043,8 +1085,10 @@ BENCHES = {
             "src/kohakuaccel/sysnode/interlink/mag_switch.v",
             "src/kohakuaccel/sysnode/interlink/mag_ilink.v",
             "src/kohakuaccel/sysnode/core/mag.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/sysnode/core/mag_dram_port.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "src/kohakuaccel/verif/axi_ram.v",
@@ -1075,6 +1119,7 @@ BENCHES = {
             "src/kohakuaccel/common/sb_skid.v",
             "src/kohakuaccel/sysnode/core/mag_mem_port.v",
             "src/kohakuaccel/sysnode/interlink/il_pkt_arb.v",
+            "src/kohakuaccel/common/kohaku_sdpram.v",
             "src/kohakutransmit/prim/kts_fifo.v",
             "src/kohakutransmit/link/kts_tx.v",
             "src/kohakutransmit/link/kts_rx.v",
@@ -1083,8 +1128,10 @@ BENCHES = {
             "src/kohakuaccel/sysnode/interlink/mag_switch.v",
             "src/kohakuaccel/sysnode/interlink/mag_ilink.v",
             "src/kohakuaccel/sysnode/core/mag.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/sysnode/core/mag_dram_port.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "src/kohakuaccel/sysnode/core/sn_hub.v",
@@ -1106,6 +1153,7 @@ BENCHES = {
             "src/kohakuaccel/common/sb_skid.v",
             "src/kohakuaccel/sysnode/core/mag_mem_port.v",
             "src/kohakuaccel/sysnode/interlink/il_pkt_arb.v",
+            "src/kohakuaccel/common/kohaku_sdpram.v",
             "src/kohakutransmit/prim/kts_fifo.v",
             "src/kohakutransmit/link/kts_tx.v",
             "src/kohakutransmit/link/kts_rx.v",
@@ -1114,8 +1162,10 @@ BENCHES = {
             "src/kohakuaccel/sysnode/interlink/mag_switch.v",
             "src/kohakuaccel/sysnode/interlink/mag_ilink.v",
             "src/kohakuaccel/sysnode/core/mag.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/sysnode/core/mag_dram_port.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "src/kohakuaccel/sysnode/core/sn_hub.v",
@@ -1163,7 +1213,9 @@ BENCHES = {
         "mag_switch_tb",
         COMMON
         + [
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
+            "src/kohakuaccel/common/kohaku_sdpram.v",
             "src/kohakutransmit/prim/kts_fifo.v",
             "src/kohakutransmit/link/kts_tx.v",
             "src/kohakutransmit/link/kts_rx.v",
@@ -1179,12 +1231,15 @@ BENCHES = {
         "interlink_4mesh_tb",
         COMMON
         + [
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/sysnode/interlink/il_pkt_arb.v",
+            "src/kohakuaccel/common/kohaku_sdpram.v",
             "src/kohakutransmit/prim/kts_fifo.v",
             "src/kohakutransmit/link/kts_tx.v",
             "src/kohakutransmit/link/kts_rx.v",
             "src/kohakutransmit/carrier/kts_pipe.v",
+            "xilinx-fpga/xcvu13p/bd/kts_pipe_bd.v",
             "src/kohakuaccel/sysnode/interlink/mag_link.v",
             "src/kohakuaccel/sysnode/interlink/mag_switch.v",
             "tests/sysnode/interlink_4mesh_tb.v",
@@ -1197,8 +1252,10 @@ BENCHES = {
         "mag_link_tb",
         COMMON
         + [
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/sysnode/interlink/il_pkt_arb.v",
+            "src/kohakuaccel/common/kohaku_sdpram.v",
             "src/kohakutransmit/prim/kts_fifo.v",
             "src/kohakutransmit/link/kts_tx.v",
             "src/kohakutransmit/link/kts_rx.v",
@@ -1228,6 +1285,7 @@ BENCHES = {
         "mag_dram_port_bw_tb",
         COMMON
         + [
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "tests/sysnode/mag_dram_port_bw_tb.v",
@@ -1240,6 +1298,7 @@ BENCHES = {
     "sb_kts_carrier": (
         "sb_kts_carrier_tb",
         [
+            "src/kohakuaccel/common/kohaku_sdpram.v",
             "src/kohakutransmit/prim/kts_fifo.v",
             "src/kohakutransmit/prim/kts_ram.v",
             "src/kohakutransmit/link/kts_tx.v",
@@ -1311,6 +1370,7 @@ BENCHES = {
             "src/kohakuaccel/common/sb_skid.v",
             "src/kohakuaccel/sysnode/core/mag_mem_port.v",
             "src/kohakuaccel/sysnode/core/mag.v",
+            "src/kohakuaccel/common/kohaku_aring.v",
             "src/kohakuaccel/common/async_fifo.v",
             "src/kohakuaccel/sysnode/core/mag_dram_port.v",
             "tests/sysnode/mag_wslot_tb.v",
@@ -1344,6 +1404,7 @@ BENCHES["mag_mem_port"] = (
         "src/kohakuaccel/common/sb_skid.v",
         "src/kohakuaccel/common/kohaku_sdpram.v",
         "src/kohakuaccel/common/kohaku_sdpram_be.v",
+        "src/kohakuaccel/common/kohaku_mux.v",
         "src/kohakuaccel/sysnode/core/mag_stage.v",
         "src/kohakutpu/transform/mx_quant.v",
         "src/kohakuaccel/sysnode/core/mag_mem_port.v",
@@ -1542,6 +1603,19 @@ BENCHES["kts_cdc"] = (
         "tests/transmit/kts_cdc_tb.v",
     ],
 )
+# The block design's interlink hop: a pipe half per die with the crossing
+# between them, at 3:1 and 1:3 and on one clock, the landing die released 2,000
+# ns after the sending one.
+BENCHES["kts_pipe_bd"] = (
+    "kts_pipe_bd_tb",
+    KTS_LINK
+    + [
+        "src/kohakutransmit/prim/kts_afifo.v",
+        "src/kohakutransmit/carrier/kts_cdc.v",
+        "xilinx-fpga/xcvu13p/bd/kts_pipe_bd.v",
+        "tests/transmit/kts_pipe_bd_tb.v",
+    ],
+)
 
 RV64_CORE = RV64_COMMON + [
     "src/kohakuaccel/pe/rv64-sys/core/rv64_alu.v",
@@ -1621,6 +1695,7 @@ _RV64_MESH_SRCS = (
         "src/kohakuaccel/sysnode/core/mag_mem_port.v",
         "src/kohakuaccel/sysnode/core/mag_dram_port.v",
         "src/kohakuaccel/sysnode/interlink/il_pkt_arb.v",
+        "src/kohakuaccel/common/kohaku_sdpram.v",
         "src/kohakutransmit/prim/kts_fifo.v",
         "src/kohakutransmit/link/kts_tx.v",
         "src/kohakutransmit/link/kts_rx.v",
@@ -1697,6 +1772,7 @@ BENCHES["rv64_node_pair"] = (
         "src/kohakuaccel/common/sb_skid.v",
         "src/kohakuaccel/sysnode/core/mag_mem_port.v",
         "src/kohakuaccel/sysnode/interlink/il_pkt_arb.v",
+        "src/kohakuaccel/common/kohaku_sdpram.v",
         "src/kohakutransmit/prim/kts_fifo.v",
         "src/kohakutransmit/link/kts_tx.v",
         "src/kohakutransmit/link/kts_rx.v",
@@ -1705,6 +1781,7 @@ BENCHES["rv64_node_pair"] = (
         "src/kohakuaccel/sysnode/interlink/mag_switch.v",
         "src/kohakuaccel/sysnode/interlink/mag_ilink.v",
         "src/kohakuaccel/sysnode/core/mag.v",
+        "src/kohakuaccel/common/kohaku_aring.v",
         "src/kohakuaccel/common/async_fifo.v",
         "src/kohakuaccel/sysnode/core/mag_dram_port.v",
         "src/kohakuaccel/sysnode/core/sn_hub.v",
@@ -1742,6 +1819,7 @@ PE_SYS = PE_RV32 + [
     "src/kohakuaccel/noc/router/noc_router.v",
     "src/kohakuaccel/noc/ctrl/noc_orchestrator.v",
     "src/kohakuaccel/noc/endpoint/noc_cu_base.v",
+    "src/kohakuaccel/common/kohaku_aring.v",
     "src/kohakuaccel/common/async_fifo.v",
     "src/kohakuaccel/common/sb_skid.v",
     "src/kohakuaccel/sysnode/mover/mx_tdesc.v",
@@ -1749,6 +1827,7 @@ PE_SYS = PE_RV32 + [
     "src/kohakuaccel/sysnode/mover/mm_mover.v",
     "src/kohakutpu/transform/xform_bank.v",
     "src/kohakuaccel/sysnode/core/mag_xform.v",
+    "src/kohakuaccel/common/kohaku_mux.v",
     "src/kohakuaccel/sysnode/core/mag_stage.v",
     "src/kohakutpu/transform/mx_quant.v",
     "src/kohakuaccel/sysnode/core/mag_mem_port.v",
@@ -2006,6 +2085,7 @@ BENCHES["kx_hop"] = (
 )
 KX_PXACHE_SRC = [
     "src/kohakuaccel/common/kohaku_sdpram.v",
+    "src/kohakuaccel/common/kohaku_aring.v",
     "src/kohakuaccel/common/async_fifo.v",
     "src/kohakuaccel/common/sync_fifo.v",
     "src/kohakuaxi/xache/edge/kx_scdc.v",
@@ -2015,10 +2095,25 @@ KX_PXACHE_SRC = [
     "src/kohakuaxi/xache/array/kx_carray.v",
     "src/kohakuaxi/xache/engine/kx_rd_pipe.v",
     "src/kohakuaxi/xache/engine/kx_wr_engine.v",
+    "src/kohakuaccel/common/kohaku_aring.v",
+    "src/kohakuaxi/pxache/lane/kx_lram.v",
     "src/kohakuaxi/pxache/lane/kx_hop.v",
     "src/kohakuaxi/pxache/lane/kx_lane.v",
+    "src/kohakuaccel/common/kohaku_mux.v",
+    "src/kohakuaxi/pxache/lane/kx_trunk.v",
+    "src/kohakutransmit/prim/kts_fifo.v",
+    "src/kohakutransmit/link/kts_tx.v",
+    "src/kohakutransmit/link/kts_rx.v",
+    "src/kohakutransmit/packet/kts_switch.v",
+    "src/kohakuaxi/pxache/lane/kx_kedge.v",
     "src/kohakuaxi/pxache/kx_pxache.v",
 ]
+# The lean dual-clock ring alone: 3:1 and 1:3, credit-bounded (FULL 0) and
+# full-flagged (FULL 1), order and content on every word, and every link drains.
+BENCHES["kohaku_aring"] = (
+    "kx_aring_tb",
+    ["src/kohakuaccel/common/kohaku_aring.v", "tests/axi/kx_aring_tb.v"],
+)
 # a lane alone: a source and NT taps (-d TB_NT, -d TB_W)
 BENCHES["kx_lane"] = (
     "kx_lane_tb",
@@ -2056,6 +2151,21 @@ BENCHES["v8t_rst_tree_lint"] = (
     "xcvu13p_rst_tree",
     ["xilinx-fpga/xcvu13p/bd/xcvu13p_rst_tree.v"],
 )
+# The both-sided reference: 4 sysnodes + interlink pipes + the KTS xache.
+BENCHES["quad_ref_lint"] = (
+    "ktpu_quad_ref",
+    list(
+        dict.fromkeys(
+            MESH_1M
+            + KX_PXACHE_SRC
+            + [
+                "src/kohakutransmit/carrier/kts_pipe.v",
+                "xilinx-fpga/xcvu13p/bd/kts_pipe_bd.v",
+                "xilinx-fpga/xcvu13p/bd/ktpu_quad_ref.v",
+            ]
+        )
+    ),
+)
 
 # The simulated card: multimesh_v8t's own modules (scripts/tcl/v8t/10_sources.tcl,
 # kept in step by hand) with the vendor IP replaced by behavioural stand-ins,
@@ -2063,6 +2173,7 @@ BENCHES["v8t_rst_tree_lint"] = (
 # (sim/verilator/harness/v8t_card_main.cpp); the lint entry is the top alone.
 V8T_IMAGE_SRC = [
     "src/kohakuaccel/common/sync_fifo.v",
+    "src/kohakuaccel/common/kohaku_aring.v",
     "src/kohakuaccel/common/async_fifo.v",
     "src/kohakuaccel/common/kohaku_sdpram.v",
     "src/kohakuaccel/common/kohaku_sdpram_be.v",
@@ -2085,6 +2196,13 @@ V8T_IMAGE_SRC = [
     "src/kohakuaxi/xache/engine/kx_wr_engine.v",
     "src/kohakuaxi/pxache/lane/kx_hop.v",
     "src/kohakuaxi/pxache/lane/kx_lane.v",
+    "src/kohakuaccel/common/kohaku_mux.v",
+    "src/kohakuaxi/pxache/lane/kx_trunk.v",
+    "src/kohakutransmit/prim/kts_fifo.v",
+    "src/kohakutransmit/link/kts_tx.v",
+    "src/kohakutransmit/link/kts_rx.v",
+    "src/kohakutransmit/packet/kts_switch.v",
+    "src/kohakuaxi/pxache/lane/kx_kedge.v",
     "src/kohakuaxi/pxache/kx_pxache.v",
     "xilinx-fpga/xcvu13p/bd/kx_pbd_4x4.v",
     "xilinx-fpga/xcvu13p/bd/xcvu13p_rst_tree.v",
@@ -2097,6 +2215,7 @@ V8T_IMAGE_SRC = [
     "src/kohakuaccel/sysnode/mover/mx_tdesc.v",
     "src/kohakutpu/transform/mx_quant.v",
     "src/kohakuaccel/sysnode/core/mag_mem_port.v",
+    "src/kohakuaccel/common/kohaku_mux.v",
     "src/kohakuaccel/sysnode/core/mag_stage.v",
     "src/kohakuaccel/sysnode/mover/mm_prng.v",
     "src/kohakuaccel/sysnode/mover/mm_mover.v",
@@ -2318,15 +2437,17 @@ def main():
     # that pass today -- see the trap in docs/simulation.md s3.
     # An async FIFO is an xpm_cdc, which instantiates glbl. Detected from the
     # source list rather than listed per bench: mag.v now always pulls one in.
-    has_cdc = any("async_fifo.v" in f for f in files)
+    has_cdc = any(("async_fifo.v" in f) or ("kts_afifo.v" in f) for f in files)
     # An elaborate-only entry links the primitives too: a shipping top names
     # DSP48E2 directly and elaborates nothing without the library behind it.
     elab_only = ("_lint" in args.bench) or args.bench in HARNESS
     if args.model == 0 or args.bench in NEEDS_GLBL or has_cdc or elab_only:
         run(["xvlog.bat", "-work", "w", str(VIVADO / ".." / "data/verilog/src/glbl.v")])
         tops.append("w.glbl")
-    if args.model == 0 or elab_only:
-        libs += ["-L", "unisims_ver"]
+    # The library link is unconditional: an RTL module may name a primitive
+    # (kohaku_mux's LUT6) at MODEL=1, and linking a library resolves nothing
+    # that our own sources already define. Only glbl, above, changes behaviour.
+    libs += ["-L", "unisims_ver"]
     run(
         ["xelab.bat", "-debug", "typical", "-timescale", "1ns/1ps"]
         + libs
