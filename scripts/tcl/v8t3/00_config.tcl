@@ -99,6 +99,9 @@ set IL_CN_W     4
 # flit the credits allow in flight. IL_CRED is mag_link's RX_BEATS.
 set IL_ASYNC    0
 set IL_CRED     64
+# Register stages in each pipe half, free to walk from the node's port to the
+# die boundary; 1 is the v8t3..v8t6 image, each stage a cycle the credits absorb.
+set IL_STAGES   1
 
 # ---- dies ----------------------------------------------------------------
 # The board controller whose pins are in SLR s -- read off three builds'
@@ -112,8 +115,12 @@ set SLR_ROWS   {0 {Y0 Y3}  1 {Y4 Y7}  2 {Y8 Y11}  3 {Y12 Y15}}
 # splits its die; on the v8t3 image die 2 alone put its node at X5 and its Xache
 # partition at X3, on opposite sides of that block, and every congestion window
 # in the design is in the gap. Empty leaves the die-wide pblock as the only
-# constraint, which is what v8t3 and v8t4 were built with.
+# constraint, which is what v8t3 and v8t4 were built with. An entry is
+# {xlo xhi} over the die's rows or {xlo xhi ylo yhi}; CMP_STN lists the dies
+# whose station follows the node into the box (the others stay die-wide).
 set CMP_COLS   {}
+set CMP_STN    {0 1 2 3}
+set CMP_HOME   {0 1 2 3}
 
 # ---- Kohaku Xache (partition-aware) --------------------------------------
 # The routed proof shape (impl_pxache d4_k2b4_f4): 16384 sets x 2 ways in FOUR

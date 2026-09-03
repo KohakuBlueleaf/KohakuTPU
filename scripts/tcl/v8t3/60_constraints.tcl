@@ -54,30 +54,35 @@ foreach {mid mod} $MESHES {
     puts $fh "create_pblock pb_slr$mid"
     puts $fh "resize_pblock \[get_pblocks pb_slr$mid\] -add \{CLOCKREGION_X0${ylo}:CLOCKREGION_X7${yhi}\}"
     # CMP_COLS: the compute half of the die gets a narrower pblock, and the node,
-    # its Xache partition and its station go in THAT one instead -- a cell may
-    # sit in only one pblock, and 70_analyze fails a cell that sits in two.
+    # its Xache partition and (CMP_STN) its station go in THAT one instead -- a
+    # cell may sit in only one pblock, and 70_analyze fails a cell that sits in
+    # two. {xlo xhi} spans the die's rows; {xlo xhi ylo yhi} names the rows.
     set pbc pb_slr$mid
     if {[dict exists $CMP_COLS $mid]} {
-        lassign [dict get $CMP_COLS $mid] xlo xhi
+        lassign [dict get $CMP_COLS $mid] xlo xhi cylo cyhi
+        if {$cylo eq ""} { set cylo $ylo ; set cyhi $yhi }
         set pbc pb_cmp$mid
         puts $fh "create_pblock $pbc"
         puts $fh "resize_pblock \[get_pblocks $pbc\] -add\
- \{CLOCKREGION_${xlo}${ylo}:CLOCKREGION_${xhi}${yhi}\}"
+ \{CLOCKREGION_${xlo}${cylo}:CLOCKREGION_${xhi}${cyhi}\}"
         puts $fh "set_property CONTAIN_ROUTING false \[get_pblocks $pbc\]"
         incr ncmp
     }
+    set pbs [expr {[lsearch $CMP_STN $mid] >= 0 ? $pbc : "pb_slr$mid"}]
     # g_link is deliberately absent -- its pipeline registers ARE the die
     # crossing and must be free to place across it. Everything else in die i
     # carries the SLR index by construction.
-    foreach c [list station_bus/inst/u_line/g_stn\[$mid\].* mesh_$mid] {
-        v8_pin $fh $pbc $top/$c
-    }
+    v8_pin $fh $pbs $top/station_bus/inst/u_line/g_stn\[$mid\].*
+    v8_pin $fh $pbc $top/mesh_$mid
     foreach c [list clk_wiz_mesh$mid bus_rst_inv$mid \
                     ddr4_$mid rst_ddr4_$mid dwc_ctrl$mid] {
         v8_pin $fh pb_slr$mid $top/$c
     }
     v8_pin_scope $fh pb_slr$mid "$KX/g_hedge?$mid?" {}
-    v8_pin_scope $fh $pbc "$KX/g_home?$mid?" {g_up g_dn}
+    # A die half holds 128 URAM; the node's 65 and the home's 64 are 129, so
+    # CMP_HOME says which dies' homes share the box at all.
+    set pbh [expr {[lsearch $CMP_HOME $mid] >= 0 ? $pbc : "pb_slr$mid"}]
+    v8_pin_scope $fh $pbh "$KX/g_home?$mid?" {g_up g_dn}
     v8_pin_scope $fh $pbc "$KX/g_m?$mid?" {g_up g_dn}
     # die i's copies of the sysnode and bus resets: at PER_DIE_CLK 1 they are
     # generated here, otherwise the tree's landing and fan-out registers are.

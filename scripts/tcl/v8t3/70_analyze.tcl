@@ -205,6 +205,16 @@ foreach c $unclaimed_cells {
         }
     }
     set pbs [lsort -unique $pbs]
+    # pb_cmpN lies inside pb_slrN: neighbours split between the two are one
+    # die, and the leaf goes to the die pblock (the box is a preference).
+    set dies {}
+    foreach pb $pbs {
+        if {[regexp {^pb_(?:slr|cmp)(\d+)$} $pb -> d]} { lappend dies $d }
+    }
+    set dies [lsort -unique $dies]
+    if {[llength $pbs] > 1 && [llength $dies] == 1 && [llength $dies] * 2 >= [llength $pbs]} {
+        set pbs [list pb_slr[lindex $dies 0]]
+    }
     if {[llength $pbs] == 1} {
         puts $lfh "add_cells_to_pblock \[get_pblocks [lindex $pbs 0]\] \[get_cells -quiet \{[get_property NAME $c]\}\]"
         if {$pinned < 12} { puts "  pinned [get_property NAME $c] -> $pbs" }

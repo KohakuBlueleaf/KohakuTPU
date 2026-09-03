@@ -18,7 +18,7 @@ set BLOCKS {
     {il_port1   mesh_N/inst/u_mag/u_mag/g_ilink.u_sw/u_l1/*}
     {pipe_out   pipe_N_to_*/inst/*}
     {pipe_in    pipe_*_to_N/inst/*}
-    {stn_link   station_bus/inst/g_link\[N\]*}
+    {stn_link   station_bus/inst/u_line/g_link\[N\]*}
     {mesh       mesh_N/inst/*}
     {kx_chain   xache/inst/u_kx/g_chain.g_p\[N\].*}
     {kx_home    xache/inst/u_kx/g_home\[N\].*}
