@@ -1489,9 +1489,153 @@ CPU; the compute-half pblock knob (`CMP_COLS` in
 holding the node, its station and its Xache partition) is unset in this
 build.
 
+The die crossings and the interlink's two ports, v8t6 (10–90 % slice
+bands; the pipe halves sit in the clock-region rows the pblocks give them,
+the bottom and top rows of a die): a middle die's interlink sits at the die's
+centre with one port reaching each edge, an end die's has one port to reach.
+
+| die | interlink switch | port 0 | port 1 | own pipe halves |
+|---|---|---|---|---|
+| 0 | X89–111 Y144–188, region X3Y2 / X2Y2 | Y146–175 | Y157–201 (77 rows in all) | top row X2Y3 / X3Y3 |
+| 1 | X93–120 Y414–449, region X3Y7 | Y349–436 (127 rows in all, down to the die-0 side) | Y412–452 | bottom row X2Y5 / X3Y5, top row X3Y7 |
+| 2 | X145–170 Y605–634, region X5Y10 | Y533–632 (123 rows, 228 cells in the bottom row X4Y8) | Y610–679 (222 cells in the top row X5Y11) | bottom row X4Y8, top row X5Y11 / X4Y11 |
+| 3 | X146–170 Y778–801, region X5Y13 | Y777–803 | Y780–802 | bottom row X4Y11 / X5Y11 (in die 2) and X5Y12 |
+
+What that costs is in the interlink classes: the switch select and the
+DRAM port's `sr_v` into the ports' transmit registers, −0.447 (257
+endpoints) and −0.666 (248), 10 % of a middle die's failing set at most;
+no pipe or link class is worse than −0.189. The mesh's 10–90 % row span is
+84 / 133 / 93 / 75 rows on dies 0 to 3.
+
 Methodology: TIMING-54 1, TIMING-47 28 (v8t5 32; XDCB-3 is gone, the XDMA
 clock in one group), TIMING-24 100, TIMING-16 57 (117, every one of them
 on die 1), LUTAR-1 16, TIMING-9 and TIMING-10 one each.
+
+### 5.13 v8t7 — the placement loop: three pipe stages and a compute box per die
+
+`multimesh_v8t7` is v8t6's RTL and tiers with two placement knobs
+(`scripts/tcl/v8t7/00_config.tcl`): `IL_STAGES` 3, three register stages in
+each half of every interlink pipe carrier (`xilinx-fpga/xcvu13p/bd/kts_pipe_bd.v`
+`STAGES`, one in every earlier image), and `CMP_COLS`, a compute-half pblock
+per die holding the node, its station and its Xache master: die 0 in
+clock-region columns X0–X3, dies 1–3 in X5–X7, on the side of the DDR4
+column (X4) where each node already sat. The Xache homes and hedges stay
+die-wide (`CMP_HOME` empty): a die half holds 128 URAM
+(`scripts/tcl/part_regions.tcl`, `build/xcvu13p_regions.txt`) and a node's 65
+plus a home's 64 are 129. Benches: the carrier at 1 and 3 stages (25,997 and
+25,752 checks), the 4-mesh interlink with the 3-stage carrier and with wires
+(16 checks each). Analysis gate as v8t5: one hoisted Xache leaf with no
+pinned neighbour, and 24 ring synchronisers reset from the writing side
+(v8t5 11); the analyser now pins a leaf whose neighbours split between a
+die's box and its die pblock to the die.
+
+| clock | period | WNS | TNS | failing | v8t6 WNS / TNS / failing |
+|---|---|---|---|---|---|
+| sysnode, die 0 | 3.333 | −0.623 | −1,055 | 5,967 | −0.453 / −686 / 4,925 |
+| sysnode, die 1 | 3.333 | −0.888 | −2,853 | 11,129 | −1.080 / −6,917 / 21,993 |
+| sysnode, die 2 | 3.333 | −0.634 | −954 | 5,637 | −0.702 / −3,471 / 14,450 |
+| sysnode, die 3 | 3.333 | −0.691 | −1,775 | 7,751 | −0.406 / −550 / 4,070 |
+| XDMA | 4.000 | −0.227 | −121 | 947 | −0.069 / −13 / 375 |
+| MIG ui 1, 3 (Xilinx IP) | 3.332 | −0.226, −0.226 | −34, −27 | 406, 400 | −0.017, +0.058 |
+| MIG ui 0, 2 | 3.332 | −0.016, −0.081 | −0.04, −1.0 | 4, 17 | −0.001, +0.014 |
+| PCIe GT, ctrl clocks, every inter-clock pair | | positive | | | positive |
+| the design | | −0.888 | −6,819 | 32,258 | −1.080 / −11,637 / 45,815 |
+
+Hold met at 0.000 ns, 0 nets with routing errors, no die-crossing path
+among the 400 worst, no TIMING-16 row left (57 in v8t6). WNS / TNS through
+the flow: −0.924 / −1,934 estimated after placement (v8t6 −1.498 /
+−3,842), −0.359 / −920 after physical optimisation (−0.879 / −3,449),
+−0.317 / −48 at the router's start (−0.809 / −953), −1.140 / −8,437 after
+its first global iteration, −0.943 after its third and last (v8t6 eight),
+−0.934 / −7,425 after hold fixing, −0.888 / −6,819 routed. Effective
+congestion after rip-up north 2, south 2, east 1, west 1 (v8t6 3 / 4 / 2 /
+3); the router's initial long-route pressure moved into the boxes: die 1
+south 8.7 % of tiles (5.2), die 3 south 5.5 (1.4), die 0 north 3.3 (4.0).
+Placed: 285,658 LUT (+1,119), 404,291 FF (+6,770; the pipes 14,064 FF
+against 6,936), memories unchanged, 7,355 die crossings.
+
+The slack distribution of the sysnode clocks' failing endpoints, by 0.1 ns
+bin from the worst: 61 below −0.8 (all on die 1), 283 in −0.8 … −0.7, 676,
+1,515, 2,542, 3,403, 5,227, 7,324 and 9,453 in the last bin above −0.1;
+22,004 of the 32,258 are above −0.3. Within 0.1 ns of each die's own WNS:
+78 / 65 / 93 / 223 endpoints; within 0.2 ns: 395 / 405 / 281 / 729. v8t6
+had 57 endpoints below −1.0 and 807 below −0.8. Failing endpoints by logic
+level: 474 at 0 (v8t6 1,516), 137 at 1 (2,208), 289 at 2, 1,334 at 3, 3,738
+at 4, 3,008 at 5, 2,908 at 6, 4,854 at 7, 6,717 at 8, 3,609 at 9, 4,168 at
+10, 1,022 at 11 and above. Mean clock skew of the failing endpoints per die
+−0.078 / −0.165 / −0.178 / −0.134 (v8t6 −0.118 / −0.131 / −0.138 / −0.176);
+die 1's worst thousand −0.242, now on its Xache paths (−0.194) rather than
+its CPU (−0.130).
+
+Where the blocks landed (`build/multimesh_v8t7_routed_bbox.txt`; 10–90 %
+slice bands): the CPU cores in X73–94 Y204–234 (one region, X2Y3 90 %),
+X168–187 Y393–431 (X6Y6 43 %, X5Y6 25 %, X6Y7 16 %, X5Y7 15 %), X171–189
+Y563–597 (X6Y9 71 %) and X171–187 Y785–822 (X6Y13 68 %, X5Y13 30 %); the
+interlink ports of die 2 in Y538–591 and Y573–618 (v8t6 Y533–632 and
+Y610–679), the 3-stage pipe chains spread over the rows between; the meshes
+now 118 / 131 / 119 / 104 rows tall (v8t6 84 / 133 / 93 / 75), the movers
+of dies 1 and 3 over three region rows (Y335–454, Y769–859). The Xache
+partitions sit on the DDR4 column: chain, home and hedge in X4, the master
+at the box's inner edge (X141–156 on die 1). Clock roots X3Y3 / X4Y6 / X5Y9
+/ X5Y12.
+
+Against v8t6 (`build/multimesh_v8t7_routed_classes_diff.txt`, 10,484
+classes here, 7,479 only there). Better: the Xache chain head into the
+trunk ring +546 ns of TNS (−0.851 → −0.534) and into itself +332; transform
+`s_id` → quantiser `src` +154 (now +0.000); walker `u_src` `d_count` →
+`apsum` +113 (−1.020 → −0.528) and `u_dst` +89; the reset synchroniser →
+`cp_wdata` +93 (now +0.370); the CSR writes +81 … +37 each (`mepc` −0.998 →
+−0.630); `w_kind` → `wide_q` +76 and +67; `sr_v` → interlink `d_r` +65
+(−0.666 → −0.136) and → `m_awaddr` +41; the interlink rx FIFO → `ltx_dat`
++53 (now +0.005); scratchpad → `wb_val` +35. Gone: the die-1 register-file
+forward classes at −1.04 … −0.97, `xb_cnt` → the command FIFO and
+`ar_addr_i` (−0.99, 80), the head decode → DRAM port AR queue (−0.955).
+Worse, and new under the margin: the hedge `u_w` CDC full flag `rg_s2` →
+the trunk rings' `rd_data` (1,573 endpoints, 1,461 failing, −0.631) and →
+the chain heads (2,088, 1,529, −0.690); the head decode → home `word_q`
+(1,018, −0.844); `hv_q` → trunk ring (519, −0.837); master `home` → home
+`word_q` (634, −0.565) and → head (711, −0.435); home `rid` → `word_q`
+(390, −0.600); `u_src` `d_count` → `psum` −0.406 → −0.615 (748 failing,
+die 3); `w_kind_reg` → `wide_q` −0.342 → −0.722; `host_b` → `rleft` (284,
+−0.679); instruction RAM → `e_btgt` (254, −0.474); `sr_v` → the W skid
+−0.425 → −0.633.
+
+By end owner merged (failing): `mesh_N/u_mag/u_pe` 10,851 (v8t6 18,394),
+`mesh_N/u_mag/u_mag` 7,842 (9,827), Xache trunks 3,436 (5,100), homes
+2,482 (3,583), chain heads 2,698 (3,487), hedges `u_w` 1,383, the NSU 1,039
+(2,188). Per die the Xache is now the largest failing owner on die 1
+(4,400 of 11,129) and die 2 (2,973 of 5,637); the CPU and mover on dies 0
+and 3.
+
+The remaining families as RTL and place:
+
+- **Xache partition split by the box.** The hedges and homes on the DDR4
+  column (`CMP_HOME` empty), the masters inside the box, the chain heads
+  and trunk rings between: the hedge's full-flag synchroniser
+  (`src/kohakuaccel/common/kohaku_aring.v`, the `rg_s2` register) is one
+  register on 3,661 endpoints across that gap, and the head decode
+  (`src/kohakuaxi/pxache/kx_pxache.v:575`) into the home's `word_q`
+  (`src/kohakuaxi/xache/array/kx_carray.v:198`–`:201`) is 10 levels with
+  2.7 ns of net and −0.27 ns of skew on die 1. Fan-out first (copies of the
+  full flag per consumer group), then a box of the partition's own around
+  the column (X3–X5 holds 192 URAM).
+- **CPU forward into the M register**, `e_s1_q`, `wb_val`, `z1` → `m_val`
+  (`src/kohakuaccel/pe/rv64-sys/core/rv64_core.v:438`, `:949`): 10 levels
+  at 1.0–1.2 ns of logic with 2.8–3.1 ns of net on every die, the worst
+  −0.885 (die 1), −0.634 (die 2), −0.623 (die 0). The cores are compact
+  now; what is left is the cone.
+- **Walkers**, `d_count` → `psum` and `psum` → `q_e0`
+  (`src/kohakuaccel/sysnode/mover/mx_tdesc.v:142`–`:156`, `:225`–`:234`):
+  −0.615 and −0.856, the movers of dies 1 and 3 three region rows tall
+  inside the boxes.
+- **Mover → DRAM port W queue**, `ewidth`, `w_kind` → the W-queue block RAM
+  data pins (`src/kohakuaccel/sysnode/core/mag_dram_port.v:476`): die 1's
+  WNS, 5 levels, 3.2 ns of net.
+- **XDMA → station 1's NMU request ring**, 9 levels at 4.000 ns (−0.227,
+  947): the NMU's accept logic before the ring write, a skid at the NMU.
+- **MIG ui clocks 1 and 3** (−0.226): the memory controllers' own AXI
+  upsizer and calibration paths, 7 and 4 levels with 2.6–2.9 ns of net,
+  beside the Xache partitions now sitting on their column.
 
 ## 6. Accuracy
 
