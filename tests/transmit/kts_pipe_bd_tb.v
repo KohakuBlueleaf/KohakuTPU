@@ -16,6 +16,9 @@
 `ifndef TB_MEM
 `define TB_MEM "block"
 `endif
+`ifndef TB_STAGES
+`define TB_STAGES 1
+`endif
 
 module kts_pipe_bd_tb;
     localparam integer W    = 64;
@@ -74,7 +77,7 @@ module kts_pipe_bd_tb;
             .credits(credits)
         );
         kts_pipe_bd #(.W(W), .VCW(VCW), .CN_W(CN_W), .ASYNC(ASY), .CRED(D),
-                      .MEM(`TB_MEM)) u_hop (
+                      .STAGES(`TB_STAGES), .MEM(`TB_MEM)) u_hop (
             .clk(a_clk), .clk_rx(b_clk), .rstn_tx(rstn_a), .rstn_rx(rstn_b),
             .i_valid(tx_valid), .i_vc(tx_vc), .i_last(tx_last), .i_flit(tx_flit),
             .o_valid(c_valid), .o_vc(c_vc), .o_last(c_last), .o_flit(c_flit),

@@ -110,11 +110,14 @@ module interlink_4mesh_tb;
     end
 
     // The three boundaries. TB_PIPE puts the block design's hop carrier
-    // (kts_pipe_bd: one register each side of the SLL, both wires) on every
-    // boundary, so the credit loop runs at the latency the card has.
+    // (kts_pipe_bd: TB_PIPE_STAGES registers each side of the SLL, both wires)
+    // on every boundary, so the credit loop runs at the latency the card has.
+`ifndef TB_PIPE_STAGES
+`define TB_PIPE_STAGES 3
+`endif
     for (b = 0; b < 3; b = b + 1) begin : hop
 `ifdef TB_PIPE
-        kts_pipe_bd #(.W(LW), .VCW(1), .CN_W(4)) u_up (
+        kts_pipe_bd #(.W(LW), .VCW(1), .CN_W(4), .STAGES(`TB_PIPE_STAGES)) u_up (
             .clk(clk), .clk_rx(clk), .rstn_tx(resetn), .rstn_rx(resetn),
             .i_valid(up_v[b]), .i_vc(up_vc[b]), .i_last(up_l[b]),
             .i_flit(up_f[b]),
@@ -123,7 +126,7 @@ module interlink_4mesh_tb;
             .i_crd_valid(c0_v[b+1]), .i_crd_vc(c0_vc[b+1]), .i_crd_n(c0_n[b+1]),
             .o_crd_valid(m1c_v[b]), .o_crd_vc(m1c_vc[b]), .o_crd_n(m1c_n[b])
         );
-        kts_pipe_bd #(.W(LW), .VCW(1), .CN_W(4)) u_dn (
+        kts_pipe_bd #(.W(LW), .VCW(1), .CN_W(4), .STAGES(`TB_PIPE_STAGES)) u_dn (
             .clk(clk), .clk_rx(clk), .rstn_tx(resetn), .rstn_rx(resetn),
             .i_valid(dn_v[b+1]), .i_vc(dn_vc[b+1]), .i_last(dn_l[b+1]),
             .i_flit(dn_f[b+1]),

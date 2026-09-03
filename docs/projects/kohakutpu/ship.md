@@ -130,11 +130,12 @@ on SLR1, the die that also carries XDMA, JTAG and the clock root.
 
 **The meshes are a line, joined by three SLR-adjacent links** — mesh `i`'s
 `LINK1` to mesh `i+1`'s `LINK0`, no diagonal and no spanning edge
-([multi-mesh.md](multi-mesh.md) §2). Each crossing is a register pair
-(`kts_pipe_bd`, one register on each die), legal precisely because the link
-protocol is credit-based and has no handshake to preserve. **Add stages there
-and nowhere else**: a pipeline stage anywhere with a real ready signal
-reintroduces the combinational crossing the link asserts against.
+([multi-mesh.md](multi-mesh.md) §2). Each crossing is a register chain
+(`kts_pipe_bd`, `STAGES` registers on each die, 1 through v8t6 and 3 from
+v8t7), legal precisely because the link protocol is credit-based and has no
+handshake to preserve. **Add stages there and nowhere else**: a pipeline
+stage anywhere with a real ready signal reintroduces the combinational
+crossing the link asserts against.
 
 Every mesh master sees only its own DRAM's 4 GB at offset 0. The mesh id rides the
 interlink header rather than the local address, which is why a mesh's masters need

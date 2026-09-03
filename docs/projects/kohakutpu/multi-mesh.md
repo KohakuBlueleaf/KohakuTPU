@@ -95,12 +95,14 @@ A ring *collective* is a traffic pattern rather than a routing change, so it is
 still allowed — but on this fabric its closing edge `3 -> 0` is not a link, and
 costs three hops rather than one.
 
-Every SLL crossing is a `kts_pipe_bd`: one register on the sending die and one
-on the landing die, flits forward and credits back, on the one sysnode clock,
-each half on its own die's copy of the reset. The placer pulls each pair into a
-Laguna site, but retiming will not invent a register that was never written, so
-those stages exist in RTL. A plain register pair is correct there only because
-flow control is credit-based, with no ready travelling back.
+Every SLL crossing is a `kts_pipe_bd`: `STAGES` registers on the sending die
+and `STAGES` on the landing die (`IL_STAGES`: 1 through v8t6, 3 from v8t7),
+flits forward and credits back, each half on its own die's clock and copy of
+the reset. The placer pulls the boundary pair into a Laguna site and the
+other stages walk from there to the node's port, but retiming will not invent
+a register that was never written, so those stages exist in RTL. A plain
+register chain is correct there only because flow control is credit-based,
+with no ready travelling back; each stage is a cycle of the credit loop.
 
 ---
 

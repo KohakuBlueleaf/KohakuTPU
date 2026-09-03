@@ -22,7 +22,8 @@ module ktpu_quad_ref #(
     parameter integer KX_K     = 2,
     parameter integer KX_BANKS = 4,
     parameter integer LKW      = 288,
-    parameter integer LKC      = 4
+    parameter integer LKC      = 4,
+    parameter integer IL_STAGES = 1
 )(
     input  wire               clk,
     input  wire [N-1:0]       rstn,          // one registered copy per die
@@ -153,7 +154,7 @@ module ktpu_quad_ref #(
             assign l0_if = {LKW{1'b0}};
             assign l0_icv = 1'b0; assign l0_icvc = 1'b0; assign l0_icn = {LKC{1'b0}};
         end else begin : g_dn
-            kts_pipe_bd #(.W(LKW), .VCW(1), .CN_W(LKC)) u_pu (
+            kts_pipe_bd #(.W(LKW), .VCW(1), .CN_W(LKC), .STAGES(IL_STAGES)) u_pu (
                 .clk(clk), .clk_rx(clk),
                 .rstn_tx(rstn[n-1]), .rstn_rx(rstn[n]),
                 .i_valid(u_v[n-1]), .i_vc(u_vc[n-1]), .i_last(u_l[n-1]),
@@ -162,7 +163,7 @@ module ktpu_quad_ref #(
                 .i_crd_valid(l0_ocv), .i_crd_vc(l0_ocvc), .i_crd_n(l0_ocn),
                 .o_crd_valid(u_cv[n-1]), .o_crd_vc(u_cvc[n-1]),
                 .o_crd_n(u_cn[(n-1)*LKC +: LKC]));
-            kts_pipe_bd #(.W(LKW), .VCW(1), .CN_W(LKC)) u_pd (
+            kts_pipe_bd #(.W(LKW), .VCW(1), .CN_W(LKC), .STAGES(IL_STAGES)) u_pd (
                 .clk(clk), .clk_rx(clk),
                 .rstn_tx(rstn[n]), .rstn_rx(rstn[n-1]),
                 .i_valid(l0_ov), .i_vc(l0_ovc), .i_last(l0_ol), .i_flit(l0_of),

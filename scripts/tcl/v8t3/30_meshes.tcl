@@ -83,10 +83,11 @@ foreach {mid mod} $MESHES {
 # u_tx pinned with the leaving die and u_rx with the landing die
 # (60_constraints), each half on its own die's reset copy.
 proc v8_pipe {name sp dp tx rx} {
-    global IL_W IL_VCW IL_CN_W IL_ASYNC IL_CRED
+    global IL_W IL_VCW IL_CN_W IL_ASYNC IL_CRED IL_STAGES
     create_bd_cell -type module -reference kts_pipe_bd $name
     set_property -dict [list CONFIG.W $IL_W CONFIG.VCW $IL_VCW CONFIG.CN_W $IL_CN_W \
-                             CONFIG.ASYNC $IL_ASYNC CONFIG.CRED $IL_CRED] \
+                             CONFIG.ASYNC $IL_ASYNC CONFIG.CRED $IL_CRED \
+                             CONFIG.STAGES $IL_STAGES] \
         [get_bd_cells $name]
     connect_bd_net [get_bd_pins [v8_sys_clk $tx]] [get_bd_pins $name/clk]
     connect_bd_net [get_bd_pins [v8_sys_clk $rx]] [get_bd_pins $name/clk_rx]

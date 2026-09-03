@@ -5,6 +5,10 @@
 // (xcvu13p_rst_tree): no reset net crosses the boundary either. Device-specific
 // by name; the framework's kts_pipe knows nothing about dies.
 //
+// STAGES registers in each half, both wires, anywhere in the half's die: at 1
+// the node's link port was pulled to the die edge; a stage is a credit-loop
+// cycle, and CRED 64 covers tens of them.
+//
 // ASYNC 1: the two dies run on their own clocks and a kts_cdc sits between the
 // two halves. The surface has no ready, so its forward buffer must never fill:
 // the sender's credits bound flits in flight to CRED per VC and kts_cdc sizes
@@ -13,12 +17,13 @@
 `default_nettype none
 
 module kts_pipe_bd #(
-    parameter integer W     = 288,
-    parameter integer VCW   = 1,
-    parameter integer CN_W  = 4,
-    parameter integer ASYNC = 0,
-    parameter integer CRED  = 64,
-    parameter         MEM   = "block"
+    parameter integer W      = 288,
+    parameter integer VCW    = 1,
+    parameter integer CN_W   = 4,
+    parameter integer ASYNC  = 0,
+    parameter integer CRED   = 64,
+    parameter integer STAGES = 1,
+    parameter         MEM    = "block"
 )(
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 clk CLK" *)
     (* X_INTERFACE_PARAMETER = "ASSOCIATED_RESET rstn_tx" *)
@@ -94,7 +99,7 @@ module kts_pipe_bd #(
         assign y_crd_n     = x_crd_n;
     end endgenerate
 
-    kts_pipe #(.W(W), .VCW(VCW), .CN_W(CN_W), .N(1)) u_tx (
+    kts_pipe #(.W(W), .VCW(VCW), .CN_W(CN_W), .N(STAGES)) u_tx (
         .clk(clk), .rst(rst_tx_q),
         .i_valid(i_valid), .i_vc(i_vc), .i_last(i_last), .i_flit(i_flit),
         .o_valid(x_valid), .o_vc(x_vc), .o_last(x_last), .o_flit(x_flit),
@@ -102,7 +107,7 @@ module kts_pipe_bd #(
         .o_crd_valid(o_crd_valid), .o_crd_vc(o_crd_vc), .o_crd_n(o_crd_n)
     );
 
-    kts_pipe #(.W(W), .VCW(VCW), .CN_W(CN_W), .N(1)) u_rx (
+    kts_pipe #(.W(W), .VCW(VCW), .CN_W(CN_W), .N(STAGES)) u_rx (
         .clk(clk_rx), .rst(rst_rx_q),
         .i_valid(y_valid), .i_vc(y_vc), .i_last(y_last), .i_flit(y_flit),
         .o_valid(o_valid), .o_vc(o_vc), .o_last(o_last), .o_flit(o_flit),

@@ -94,7 +94,7 @@ foreach hop {{0 1} {1 2} {2 3}} {
         set c [get_bd_cells -quiet $name]
         if {![llength $c]} { bad "$name absent" ; continue }
         if {![string match "*module_ref:kts_pipe_bd:*" [get_property VLNV $c]]} { bad "$name is not kts_pipe_bd" }
-        foreach {p w} [list W $IL_W VCW $IL_VCW CN_W $IL_CN_W ASYNC $IL_ASYNC CRED $IL_CRED] {
+        foreach {p w} [list W $IL_W VCW $IL_VCW CN_W $IL_CN_W ASYNC $IL_ASYNC CRED $IL_CRED STAGES $IL_STAGES] {
             if {[get_property -quiet CONFIG.$p $c] ne "$w"} { bad "$name $p is [get_property -quiet CONFIG.$p $c], want $w" }
         }
         want $name/clk     [v8_sys_clk $tx]
