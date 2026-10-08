@@ -38,7 +38,7 @@
   `define KOHAKU_DRAM_AR_MAX 0
 `endif
 `ifndef KOHAKU_DRAM_RD_OUT
-  `define KOHAKU_DRAM_RD_OUT 1
+  `define KOHAKU_DRAM_RD_OUT 4
 `endif
 
 module mag #(
@@ -70,9 +70,8 @@ module mag #(
     // mag_dram_port packs DATA_W -> MW, so at 512 an 8-beat 256-bit burst
     // becomes 4 beats. Defaults EQUAL, which is the R=1 no-sub-beat case.
     parameter integer MW         = DATA_W,
-    // DRAM reads one requester may hold in flight (mag_dram_port RD_OUT). The
-    // macro lets a bench set it under a generated top whose parameters it
-    // cannot reach; the default is the shipped value.
+    // DRAM reads one requester may hold in flight (mag_dram_port RD_OUT): the
+    // Xache's RD_OUTQ 4. A macro so a bench can reach it under a generated top.
     parameter integer DRAM_RD_OUT = `KOHAKU_DRAM_RD_OUT,
     // Memory beats one DRAM AR may carry (mag_dram_port AR_MAX); 0 = a request.
     // A macro default for the same reason as DRAM_RD_OUT.
@@ -456,7 +455,9 @@ module mag #(
             .STAGE_BANKS(STAGE_BANKS),
             .STAGE_ENTRIES(STAGE_ENTRIES), .STAGE_PIPE(STAGE_PIPE),
             .STAGE_RLAT(STAGE_RLAT),
-            .MESH_ID(MESH_ID[1:0])
+            .MESH_ID(MESH_ID[1:0]),
+            // As many beats ahead as the DRAM port holds reads of one AR each.
+            .RD_AHEAD(DRAM_RD_OUT * 16)
         ) u_eng (
             .clk(clk), .resetn(resetn),
             .m_awid(m_awid[gp*ID_W +: ID_W]),

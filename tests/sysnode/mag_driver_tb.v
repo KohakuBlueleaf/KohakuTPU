@@ -404,23 +404,26 @@ module mag_driver_tb;
     // Hierarchical, because these are internal state rather than ports. Aliased
     // into arrays so every counter below SUMS over the ports rather than naming
     // one -- otherwise the profile silently describes port 0 alone.
-    wire [3:0] mp_st    [0:MEMP-1];
-    wire [1:0] mp_rs    [0:MEMP-1];
+    wire [2:0] mp_rs    [0:MEMP-1];
+    wire       mp_prd   [0:MEMP-1], mp_wact   [0:MEMP-1];
     wire       mp_eact  [0:MEMP-1], mp_qrdy   [0:MEMP-1];
-    wire       mp_free  [0:MEMP-1], mp_stout  [0:MEMP-1];
-    wire       mp_wrb   [0:MEMP-1], mp_bv     [0:MEMP-1];
+    wire       mp_free  [0:MEMP-1], mp_bwait  [0:MEMP-1];
+    wire       mp_ablk  [0:MEMP-1];
     wire       mp_rv    [0:MEMP-1], mp_wsfree [0:MEMP-1];
 
     generate
     for (gy = 0; gy < MEMP; gy = gy + 1) begin : g_tap
-        assign mp_st[gy]     = u_mag.g_port[gy].u_eng.st;
         assign mp_rs[gy]     = u_mag.g_port[gy].u_eng.rs;
+        assign mp_prd[gy]    = u_mag.g_port[gy].u_eng.pr_cnt != 4'd0;
+        assign mp_wact[gy]   = u_mag.g_port[gy].u_eng.we_act || u_mag.g_port[gy].u_eng.d_v;
         assign mp_eact[gy]   = u_mag.g_port[gy].u_eng.e_act;
         assign mp_qrdy[gy]   = u_mag.g_port[gy].u_eng.q_rdy;
         assign mp_free[gy]   = u_mag.g_port[gy].u_eng.out_free;
-        assign mp_stout[gy]  = u_mag.g_port[gy].u_eng.st_out;
-        assign mp_wrb[gy]    = u_mag.g_port[gy].u_eng.wr_b;
-        assign mp_bv[gy]     = u_mag.g_port[gy].u_eng.m_bvalid;
+        // The oldest posted write's ACK waits for its B, or for the output register.
+        assign mp_bwait[gy]  = !u_mag.g_port[gy].u_eng.ackq_empty
+                             && u_mag.g_port[gy].u_eng.ackq_needb
+                             && !u_mag.g_port[gy].u_eng.wr_b;
+        assign mp_ablk[gy]   = u_mag.g_port[gy].u_eng.ack_rdy && !u_mag.g_port[gy].u_eng.ack_go;
         assign mp_rv[gy]     = u_mag.g_port[gy].u_eng.m_rvalid;
         assign mp_wsfree[gy] = u_mag.g_port[gy].u_eng.ws_has_free;
     end
@@ -628,19 +631,19 @@ module mag_driver_tb;
         nm_qfill = 8'd0; nm_qwait = 8'd0; nm_qemit = 8'd0;
         nm_inbp = 8'd0; nm_outbp = 8'd0;
         for (mq = 0; mq < MEMP; mq = mq + 1) begin
-            if (mp_st[mq] == 4'd0) begin
+            if (!mp_prd[mq] && !mp_wact[mq] && (mp_rs[mq] == 3'd0)) begin
                 nm_idle  = nm_idle  + 8'd1;
             end
-            if (mp_st[mq] == 4'd2) begin
+            if (mp_prd[mq]) begin
                 nm_rd    = nm_rd    + 8'd1;
             end
-            if (mp_st[mq] == 4'd5 || mp_st[mq] == 4'd6) begin
+            if (mp_wact[mq]) begin
                 nm_wr    = nm_wr    + 8'd1;
             end
-            if (mp_rs[mq] == 2'd1) begin
+            if (mp_rs[mq] == 3'd1) begin
                 nm_qfill = nm_qfill + 8'd1;
             end
-            if (mp_rs[mq] == 2'd2) begin
+            if (mp_rs[mq] == 3'd2) begin
                 nm_qwait = nm_qwait + 8'd1;
             end
             if (mp_eact[mq]) begin
@@ -683,13 +686,9 @@ module mag_driver_tb;
     end
 
     // ---------------------------------------- WHY, not merely WHERE
-    // A state histogram says S_WR_ACK was 95% occupied, not whether that was
-    // work or waiting -- and only the second is a fault. Every counter below is
-    // a state PLUS the reason it could not advance, so a regression names its
-    // own cause instead of needing a bisect. `wack_nob` is the concrete case:
-    // cycles in S_WR_ACK with no B response in hand and none arriving, which is
-    // what a read emitter stealing the single cycle m_bready consumed it on
-    // looks like.
+    // Every counter below is a state PLUS the reason it could not advance, so a
+    // regression names its own cause: `wack_nob` an ACK waiting for its B,
+    // `wack_blk` an ACK that is ready but did not get the output register.
     reg [63:0] wack_nob = 0, wack_blk = 0, wslot_full = 0;
     reg [63:0] rfill_dry = 0, rwait_emit = 0, emit_bp = 0;
     reg [63:0] cu0_dwait = 0, cu0_gwait = 0;
@@ -700,13 +699,11 @@ module mag_driver_tb;
         n_wnob = 8'd0; n_wblk = 8'd0; n_wsfull = 8'd0;
         n_rdry = 8'd0; n_rwemit = 8'd0; n_ebp = 8'd0;
         for (wq = 0; wq < MEMP; wq = wq + 1) begin
-            if (mp_st[wq] == 4'd6) begin
-                if (!(mp_bv[wq] || mp_wrb[wq])) begin
-                    n_wnob = n_wnob + 8'd1;
-                end
-                else if (!mp_stout[wq]) begin
-                    n_wblk = n_wblk + 8'd1;
-                end
+            if (mp_bwait[wq]) begin
+                n_wnob = n_wnob + 8'd1;
+            end
+            if (mp_ablk[wq]) begin
+                n_wblk = n_wblk + 8'd1;
             end
             // No free write slot: intake cannot accept another descriptor,
             // which is how a stalled write path becomes a jammed input queue.
@@ -715,10 +712,10 @@ module mag_driver_tb;
             end
             // Read engine: starved by memory, or held up by the emit buffer.
             // The second says fetch/emit overlap has stopped being the win.
-            if ((mp_rs[wq] == 2'd1) && !mp_rv[wq]) begin
+            if ((mp_rs[wq] == 3'd1) && !mp_rv[wq]) begin
                 n_rdry = n_rdry + 8'd1;
             end
-            if ((mp_rs[wq] == 2'd2) && mp_qrdy[wq] && mp_eact[wq]) begin
+            if ((mp_rs[wq] == 3'd2) && mp_qrdy[wq] && mp_eact[wq]) begin
                 n_rwemit = n_rwemit + 8'd1;
             end
             // Emitter holding a flit the mesh will not take.

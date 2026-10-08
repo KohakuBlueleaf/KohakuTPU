@@ -19,18 +19,15 @@ consecutive entries named by a single request — one flit that means several
 hundred cycles of traffic. Everything else the page defines where it appears;
 the node's shared vocabulary is in [the README](README.md#the-vocabulary-once).
 
-**A port carries no transform.** It used to carry one each; the slot now sits on
-the mover's read-return path and belongs to the mover —
-[transform-stage](transform-stage.md).
+**A port carries no transform.** The transform slot sits on the mover's
+read-return path and belongs to the mover — [transform-stage](transform-stage.md).
 What a port serves is operands already in their final format.
 
 ## A port is the unit the machine grows by
 
-The read engine fetches one entry at a time. With a single engine, every compute
-unit in the mesh queues behind one state machine and one emit buffer. That was
-the constraint that stopped the reference machine scaling — and it stopped while
-nothing was saturated, which is the diagnostic: the limit was the *server*, not
-the bandwidth.
+Each port has one read engine and one emit buffer. With a single port, every
+compute unit in the mesh queues behind that one state machine: the limit is the
+*server*, not the bandwidth, and it binds while nothing is saturated.
 
 So a **memory port** is a whole server: its own intake queues, read engine,
 write slots, response emitter, and its own AXI master channel. `PORTS` of them
@@ -68,17 +65,22 @@ both", which is still local state, so the hazard above does not come back.
 
 ## Reads: the response says where it belongs
 
-The engine turns a request into consecutive AXI reads. When a **run** is
-requested, the next entry's address is issued the moment the current entry's
-last beat lands, not after that entry has finished leaving — that overlaps the
-address-to-first-beat latency, which would otherwise be paid once per entry. The
-address is accumulated rather than computed as `base + n * size`, because a
-runtime multiply lands directly in the address path.
+The engine turns a **run** into ARs of up to `RD_BEATS` beats (never across a
+4 KB boundary) issued ahead of the data, up to `RD_AHEAD` beats outstanding, so
+the address-to-first-beat latency is paid once per run rather than once per
+entry. A run's entries are contiguous, so a vector core's 1-word entries burst
+exactly like a cluster's 4-word ones.
 
 A finished entry is latched into an **emit buffer** before it is sent, so the
 next entry's AXI read can start immediately. Without the buffer, the fetch's own
 capture registers *are* the emit source, so fetch and emit exclude each other and
 two independent interfaces run at the sum of their times instead of the larger.
+
+**Runs chain.** Once every AR of the current DRAM run is out, the engine takes
+the next streamed descriptor and issues its ARs while the current run's words
+are still returning, so DRAM latency is paid once per stream of runs, not once
+per run. The next run's return context loads when the current run's last entry
+has finished emitting. A staged run, or a run behind one, is not chained.
 
 Every response flit is self-describing. Its transaction tag is the requester's
 own tag plus this entry's position in the run, and the word index within the
@@ -115,15 +117,14 @@ anything; it deadlocks.**
 
 ## Reads and writes run alongside each other
 
-A streaming fetch occupies the read path for its entire run. If it ran inside
-the same state machine as the write path, that machine never returns to idle, so
-no write slot can be issued: the slots fill, intake jams on a write descriptor
-nothing will accept, and the data flit behind it reports "no open write".
-Lengthening one transaction starves the other. The read engine therefore has its
-own state and its own return context, and shares only the single output register
-— where the emitter wins, and cannot starve the write path because a few
-response flits per entry against a fetch of several beats leaves most cycles
-free.
+A streaming fetch occupies the read path for its entire run, so the read engine
+has its own state and return context, and the write engine runs beside it:
+writes are posted — a slot's AW goes out when the slot is complete, its beats
+stream from the slot RAM one a cycle, and its `MEM_WR_ACK` leaves once the B
+response is in. Plain reads (pipelined, up to 8 in flight, each beat returned
+verbatim) share the one AXI read channel with the engine and never overlap a
+run. All three share only the single output register, where a waiting ACK goes
+after at most one read flit.
 
 ## Conventions
 
@@ -190,24 +191,13 @@ so a narrow store does not clear the rest of the 32-byte word;
 strobes](edge-and-control.md#staging-honours-byte-strobes) has why that is a
 correctness property rather than a convenience.
 
-The second is that the RV32 row **predates the write-slot data array becoming a
-block RAM.** In that run the array is still distributed RAM, and the report
-charges the port 1,220 LUTRAM for it. The RV32 configuration has not been
-re-synthesised since; read its row as the last measurement of that
-configuration, not as its current cost. The array is shared, so the change
-applies there too.
+The second is that the RV32 row is a measurement of the RV32 configuration with
+the write-slot data array in distributed RAM (1,220 LUTRAM); that configuration
+is not re-synthesised.
 
 Neither row is a *marginal* figure: a hierarchical row is what an instance
 charges, not what adding one costs, and the two differ wherever a shared arbiter
 widens.
-
-> **A marginal per-port figure of +6,557 LUT and +12,916 FF** (21,459 → 28,016
-> for the whole node at one port and two) is carried in this tree from
-> `ooc_sysnode.tcl` runs of 2026-08-24, in the two-module, RV32,
-> `STAGE_AT_PORT=0` shape. **It has not been re-measured against the node as it
-> ships**, and the shape it was taken in is the one where each port carried its
-> own staging store. Treat it as historical: the direction is right, the value
-> belongs to a configuration the node no longer builds in.
 
 **A port uses no DSP, and the node's DSP count does not move with the port
 count** — 47 for the whole RV64 node, of which 32 is one transform bank, 4 the
@@ -221,18 +211,17 @@ claim; `ooc_sysnode.tcl` errors above 48 DSP to keep it that way.
 The array is one burst per slot: `WR_SLOTS` slots by `WBURST` beats of `DATA_W`,
 which is 16 × 8 × 256 bits — 32 Kbit at the shipped sizing. Both factors are set
 for correctness rather than tuned, so this is the part of a port that grows
-fastest. Written as a plain register array it inferred distributed RAM read at
-three different indices, and the RV32 run above charges each port **1,220
-LUTRAM** for it — on a device carrying 2,688 block RAM tiles, of which the whole
-node uses 57.5. It is now one simple dual-port block RAM, **4 RAMB36 per
-port**.
+fastest. As a plain register array it infers distributed RAM read at three
+different indices — **1,220 LUTRAM** per port, on a device carrying 2,688 block
+RAM tiles of which the whole node uses 57.5. It is one simple dual-port block
+RAM, **4 RAMB36 per port**.
 
 **Read the memory columns of a synthesis report, not only the logic ones.** An
 array whose width and depth are both fixed by correctness parameters is exactly
 the shape that ought to be a memory, and nothing in the tool's output says it
 has become logic instead.
 
-The write side is unchanged: an arriving data flit writes at `{matched slot,
+The write side: an arriving data flit writes at `{matched slot,
 that slot's beat count}`, one beat per flit, and the two indices are already
 registered state.
 

@@ -132,9 +132,9 @@ module rv_sys_tb;
                      dut.u_mag.g_port[0].u_eng.ws_addr[
                          dut.u_mag.g_port[0].u_eng.ws_pick]);
         end
-        if (dut.u_mag.g_port[0].u_eng.ws_done && ($time > `RV_TRACE_FROM)) begin
+        if (dut.u_mag.g_port[0].u_eng.ack_go && ($time > `RV_TRACE_FROM)) begin
             $display("  TR %0t MAG free  slot %0d",
-                     $time, dut.u_mag.g_port[0].u_eng.ws_cur);
+                     $time, dut.u_mag.g_port[0].u_eng.ackq_slot);
         end
         if (
             dut.u_ram.s_axi_awvalid

@@ -813,8 +813,8 @@ depth — an `AR` issued while the previous `R` is still streaming, nothing more
 no new signalling, no ID scheme, the plain AXI address/data decoupling.
 
 The framework's master onto DRAM is `mag_dram_port` inside the system node,
-and it already carries that depth as `RD_OUT` (exposed on `mag` as
-`DRAM_RD_OUT`, default 1). It is verified at 2 and 4 by its component bench
+and it carries that depth as `RD_OUT` (exposed on `mag` as `DRAM_RD_OUT`,
+shipped at 4 to match `RD_OUTQ`). It is verified at 2 and 4 by its component bench
 with queued reads and by `mover_chain1/2/4`, and priced alone at 300 MHz:
 
 | `RD_OUT` | LUT | FF | BRAM | Fmax | one requester, 20-word bursts | 256-word bursts |

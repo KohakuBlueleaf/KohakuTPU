@@ -127,9 +127,8 @@ dropped.
 
 ## 3. Reads
 
-There are two request forms, distinguished by `flags[6]` (`STREAM`). They run in
-**separate state machines** and can be in flight at the same time, over the one
-AXI read channel.
+There are two request forms, distinguished by `flags[6]` (`STREAM`). They share
+the one AXI read channel and do not overlap; writes run alongside both.
 
 ### 3.1 Plain read
 
@@ -141,20 +140,21 @@ AXI read channel.
 - `last` is set on the flit carrying the final beat.
 - `rsvd[1:0]` is 0.
 
-This path exists for benches and bring-up. It occupies the port's shared FSM, so
-it excludes a write from being issued while it runs.
+This path exists for benches and bring-up. Up to 8 plain reads are pipelined;
+writes are not blocked by them.
 
 ### 3.2 Entry read and streaming fetch
 
-`STREAM = 1`. Served by the port's own read engine.
+`STREAM = 1`. Served by the port's own read engine. A DRAM descriptor queued
+behind a DRAM run is taken once that run's ARs are all issued, so its fetch
+overlaps the run's response flits; responses still leave in descriptor order.
 
 An **entry** is the unit this path works in, and its size is stated by the
 request: `entry_words × DATA_W/8` bytes, giving `entry_words` AXI beats and
 `entry_words` response flits.
 
 `entry_words` is `[165:158]` of the descriptor. **0, or any value above 4, means
-4** — which is what every existing requester sends, so the field is backward
-compatible by construction.
+4.** A cluster sends 4; a vector fill run sends 1.
 
 There is no second geometry. A fetch is never transformed, so no request can
 imply a source entry of a different size from the one it names — see §10.
@@ -164,9 +164,10 @@ A **streaming** request covers `count` consecutive entries:
 - Entry `i` is read from `addr + i × entry_bytes`. Entries **MUST** be contiguous
   in memory; the engine accumulates the address and offers no stride.
 - `count` is 8 bits. 0 means 1. The maximum run is 255 entries.
-- Entries are fetched and emitted in ascending order, and the next entry's AXI
-  address is issued the moment the previous entry's last beat lands, so the
-  request-to-first-beat latency is paid once per run rather than once per entry.
+- Entries are fetched and emitted in ascending order. ARs of up to `RD_BEATS`
+  beats (never across 4 KB) are issued ahead of the data, up to `RD_AHEAD` beats
+  outstanding, so the request-to-first-beat latency is paid once per run rather
+  than once per entry.
 
 #### 3.2.1 How a response names its slot
 

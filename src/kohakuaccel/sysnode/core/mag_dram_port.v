@@ -1,6 +1,7 @@
 // N requesters onto ONE AXI4 master, packing SW->MW across a clock crossing,
 // with MAG's staging store served from BEHIND the same arbiter (a staged
-// read through a one-word engine into the one return path, a staged write as
+// read through a streamed engine (a word issued a cycle) into the one return
+// path, a staged write as
 // beats of the one W stream), so nothing N-wide exists for staging.
 // docs/mas/dram-port.md. Instantiated by mag.v as u_dram.
 //
@@ -184,31 +185,41 @@ module mag_dram_port #(
     reg  [PPW-1:0]    phd  [0:N-1], ptl [0:N-1];
     reg  [RCW-1:0]    pn   [0:N-1], rd_cnt [0:N-1];
 
-    // ---- the staged read engine: one pending, one active, one word out ----
+    // ---- the staged read engine: one pending, one active, words streamed ----
     // `sq` holds a staged read the arbiter took while the engine was busy, so
     // the capture stage stays free for DRAM reads meanwhile.
     reg               sq_v;
     reg  [IDX_W-1:0]  sq_id;
     reg  [ADDR_W-1:0] sq_addr;
     reg  [15:0]       sq_len;
-    reg               sr_v, sr_out, sr_hold, sr_nz;
+    reg               sr_v;          // a staged read is being issued
     wire              stage_free;           // R_REG: the return register can load
     reg  [IDX_W-1:0]  sr_id;
     reg  [ADDR_W-1:0] sr_addr;
     reg  [15:0]       sr_left;       // words not yet requested
-    reg  [SW-1:0]     sr_word;
+    // The store's fixed latency means each word in flight owns a slot; its owner
+    // and last flag are written at issue, so reads issue back to back.
+    localparam integer SR_DEPTH = 8;
+    localparam integer SRW = $clog2(SR_DEPTH);
+    reg  [SW-1:0]     sr_fw  [0:SR_DEPTH-1];
+    reg               sr_fl  [0:SR_DEPTH-1];
+    reg  [IDX_W-1:0]  sr_fid [0:SR_DEPTH-1];
+    reg  [SRW-1:0]    sr_ip, sr_wp, sr_rp;
+    reg  [SRW:0]      sr_cnt, sr_inf;
+    wire              sr_hold = (sr_cnt != {(SRW+1){1'b0}});
+    wire [SW-1:0]     sr_word = sr_fw[sr_rp];
+    wire              sr_hlast = sr_fl[sr_rp];
+    wire [IDX_W-1:0]  sr_hid   = sr_fid[sr_rp];
 
     // ================================================== request arbitration
 
     // RD_OUT OUTSTANDING READS PER REQUESTER: the id IS the requester and AXI
     // returns same-id responses in order, so a queue needs no reorder buffer.
     //
-    // ORDER ACROSS THE TWO STORES, per requester: a staged read waits until the
-    // requester's count is zero (its DRAM reads have all returned), a DRAM read
-    // waits until its staged read is neither pending, captured nor active. At
-    // RD_OUT=1 `rd_busy` already says both; the masks are what keeps a larger
-    // RD_OUT honest.
+    // ORDER ACROSS THE TWO STORES, per requester: a staged read waits for its
+    // DRAM reads, a DRAM read for its staged ones; staged reads keep order.
     wire [N-1:0] q_stg, rd_blk;
+    reg  [RCW-1:0]   stg_out [0:N-1];   // staged reads captured and not yet ended
     reg              s1_rv, s1_wv, s1_rstg, s1_wstg;
     reg [IDX_W-1:0]  s1_rid, s1_wid;
     reg [ADDR_W-1:0] s1_rad, s1_wad;
@@ -218,10 +229,8 @@ module mag_dram_port #(
     generate for (g = 0; g < N; g = g + 1) begin : g_blk
         assign q_stg[g]  = stg_is(q_addr[g*ADDR_W +: ADDR_W]);
         assign rd_blk[g] = q_stg[g]
-            ? ((rd_cnt[g] != {RCW{1'b0}}) || sq_v)
-            : ((sr_v && (sr_id == g[IDX_W-1:0]))
-               || (sq_v && (sq_id == g[IDX_W-1:0]))
-               || (s1_rv && s1_rstg && (s1_rid == g[IDX_W-1:0])));
+            ? ((rd_cnt[g] != stg_out[g]) || sq_v)
+            : (stg_out[g] != {RCW{1'b0}});
     end endgenerate
 
     // The AR split's burst: AMB memory beats.
@@ -564,17 +573,18 @@ module mag_dram_port #(
     end endgenerate
 
     // ================================================== the staged read engine
-    // ONE WORD OUT AT A TIME: the store answers a fixed RTOT cycles after the
-    // request and nothing here can stall it, so a word is held until its
-    // requester takes it before the next is asked for.
-    assign sr_go = sr_v && sr_nz && !sr_out && !sr_hold;
-    wire   sr_take = sr_hold && ((R_REG != 0) ? stage_free : r_ready[sr_id]);
-    wire   sr_fin  = sr_take && !sr_nz;
+    // STREAMED: a word is requested every cycle while its return has a slot, so
+    // a burst comes back one word a cycle after the store's fixed latency.
+    assign sr_go = sr_v && (({1'b0, sr_cnt} + {1'b0, sr_inf}) < SR_DEPTH);
+    wire   sr_take = sr_hold && ((R_REG != 0) ? stage_free : r_ready[sr_hid]);
+    wire   sr_fin  = sr_take && sr_hlast;
+    wire   sr_iss  = sr_go && stg_gnt;
 
     always @(posedge s_aclk) begin
         if (srst) begin
-            sq_v <= 1'b0; sr_v <= 1'b0; sr_out <= 1'b0; sr_hold <= 1'b0;
-            sr_nz <= 1'b0;
+            sq_v <= 1'b0; sr_v <= 1'b0;
+            sr_ip <= {SRW{1'b0}}; sr_wp <= {SRW{1'b0}}; sr_rp <= {SRW{1'b0}};
+            sr_cnt <= {(SRW+1){1'b0}}; sr_inf <= {(SRW+1){1'b0}};
         end
         else begin
             if (sq_fire) begin
@@ -582,24 +592,28 @@ module mag_dram_port #(
             end
             if (!sr_v && sq_v) begin
                 sr_v <= 1'b1; sr_id <= sq_id; sr_addr <= sq_addr;
-                sr_left <= sq_len + 16'd1; sr_nz <= 1'b1;
+                sr_left <= sq_len + 16'd1;
                 sq_v <= sq_fire;            // a take and a load in one cycle
             end
-            if (sr_go && stg_gnt) begin
-                sr_out  <= 1'b1;
+            if (sr_iss) begin
                 sr_addr <= sr_addr + ASTEP;
                 sr_left <= sr_left - 16'd1;
-                sr_nz   <= (sr_left != 16'd1);
-            end
-            if (stg_rvalid) begin
-                sr_word <= stg_rdata; sr_hold <= 1'b1; sr_out <= 1'b0;
-            end
-            if (sr_take) begin
-                sr_hold <= 1'b0;
-                if (!sr_nz) begin
+                sr_fl[sr_ip]  <= (sr_left == 16'd1);
+                sr_fid[sr_ip] <= sr_id;
+                sr_ip <= sr_ip + 1'b1;
+                if (sr_left == 16'd1) begin
                     sr_v <= 1'b0;
                 end
             end
+            if (stg_rvalid) begin
+                sr_fw[sr_wp] <= stg_rdata;
+                sr_wp        <= sr_wp + 1'b1;
+            end
+            if (sr_take) begin
+                sr_rp <= sr_rp + 1'b1;
+            end
+            sr_cnt <= sr_cnt + {{SRW{1'b0}}, stg_rvalid} - {{SRW{1'b0}}, sr_take};
+            sr_inf <= sr_inf + {{SRW{1'b0}}, sr_iss} - {{SRW{1'b0}}, stg_rvalid};
         end
     end
 
@@ -676,9 +690,9 @@ module mag_dram_port #(
     wire [N-1:0] ri_valid, ri_last;
     generate for (g = 0; g < N; g = g + 1) begin : g_rd
         wire d_here = r_emit   && (hd_id == g[IDX_W-1:0]);
-        wire s_here = stg_emit && (sr_id == g[IDX_W-1:0]);
+        wire s_here = stg_emit && (sr_hid == g[IDX_W-1:0]);
         assign ri_valid[g] = d_here || s_here;
-        assign ri_last[g]  = (d_here && cur_one) || (s_here && !sr_nz);
+        assign ri_last[g]  = (d_here && cur_one) || (s_here && sr_hlast);
     end endgenerate
 
     // A take moves the beat INTO the register; it drains when its requester is
@@ -727,7 +741,8 @@ module mag_dram_port #(
         wire mine_fin = r_fin   && (hd_id  == g[IDX_W-1:0]);
         // A staged read ends on the take of its last word; it never touched
         // rleft/rph, only the count.
-        wire mine_sfn = sr_fin  && (sr_id  == g[IDX_W-1:0]);
+        wire mine_sfn = sr_fin  && (sr_hid == g[IDX_W-1:0]);
+        wire mine_stk = rd_take && rd_hot[g] && q_stg[g];
 
         // rleft_z tracks rleft[g]==0 as a bit, so slot_free is one OR instead
         // of a 16-bit compare: 215 paths sat at 11 levels through this.
@@ -737,7 +752,7 @@ module mag_dram_port #(
         wire do_push   = mine_ar && !do_direct;
 
         // Counted at CAPTURE, not at AR: between the two the requester must not
-        // be arbitrated again, which is what the old one-bit rd_busy did.
+        // be arbitrated again.
         wire [RCW-1:0] cnt_n =
             rd_cnt[g] + ((rd_take && (rd_sel == g[IDX_W-1:0])) ? 1'b1 : 1'b0)
                       - ((mine_fin || mine_sfn) ? 1'b1 : 1'b0);
@@ -748,14 +763,16 @@ module mag_dram_port #(
                 rph[g] <= {RLOG{1'b0}};
                 phd[g] <= {PPW{1'b0}}; ptl[g] <= {PPW{1'b0}};
                 pn[g] <= {RCW{1'b0}}; rd_cnt[g] <= {RCW{1'b0}};
+                stg_out[g] <= {RCW{1'b0}};
                 rd_busy[g] <= 1'b0;
                 for (kp = 0; kp < PD; kp = kp + 1) begin
                     pph[g][kp] <= {RLOG{1'b0}}; plen[g][kp] <= 16'd0;
                 end
             end else begin
                 rd_cnt[g]  <= cnt_n;
-                // REGISTERED, never a combinational compare into q_ready:
-                // HANDOFF-mag-dram-port.md s1f cost 49 MHz to that once.
+                stg_out[g] <= stg_out[g] + (mine_stk ? 1'b1 : 1'b0)
+                                         - (mine_sfn ? 1'b1 : 1'b0);
+                // REGISTERED: a combinational compare into q_ready costs 49 MHz.
                 rd_busy[g] <= (cnt_n >= RD_OUT[RCW-1:0]);
 
                 // Exact: loads write len+1 (len <= 256 by AXI), and mine_tk

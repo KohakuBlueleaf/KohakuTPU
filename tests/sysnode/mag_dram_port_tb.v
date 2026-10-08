@@ -9,8 +9,9 @@
 `ifndef TB_ARMAX
 `define TB_ARMAX 0
 `endif
+// The shipped depth (mag.v KOHAKU_DRAM_RD_OUT); -d TB_RD_OUT=1 is the one-in-flight port.
 `ifndef TB_RD_OUT
-  `define TB_RD_OUT 1
+  `define TB_RD_OUT 4
 `endif
 // 0: the one-clock port -- m_aclk is s_aclk and the queues are synchronous.
 `ifndef TB_DRAM_CDC
@@ -102,6 +103,62 @@ module mag_dram_port_tb #(
 
     integer errors = 0;
     integer checks = 0;
+    // HANDSHAKES ARE COUNTED AT THE EDGE and the tasks drive at negedge, so no
+    // task reads a ready/valid that the same edge already updated.
+    integer q_cnt [0:N-1], w_cnt [0:N-1], r_cnt [0:N-1], b_cnt [0:N-1];
+    reg [SW-1:0] r_cap [0:N-1];
+    reg          r_lcap [0:N-1];
+    integer mi;
+    initial begin
+        for (mi = 0; mi < N; mi = mi + 1) begin
+            q_cnt[mi] = 0; w_cnt[mi] = 0; r_cnt[mi] = 0; b_cnt[mi] = 0;
+        end
+    end
+    always @(posedge s_aclk) begin
+        for (mi = 0; mi < N; mi = mi + 1) begin
+            if (q_valid[mi] && q_ready[mi]) q_cnt[mi] <= q_cnt[mi] + 1;
+            if (w_valid[mi] && w_ready[mi]) w_cnt[mi] <= w_cnt[mi] + 1;
+            if (b_valid[mi]) b_cnt[mi] <= b_cnt[mi] + 1;
+            if (r_valid[mi] && r_ready[mi]) begin
+                r_cnt[mi]  <= r_cnt[mi] + 1;
+                r_cap[mi]  <= r_data[mi*SW +: SW];
+                r_lcap[mi] <= r_last[mi];
+            end
+        end
+    end
+
+    task automatic q_put(input integer p, input integer word, input integer beats,
+                         input wr);
+        integer c0;
+        begin
+            @(negedge s_aclk);
+            q_addr[p*ADDR_W +: ADDR_W] = word * SBYTES;
+            q_len [p*16     +: 16]     = beats - 1;
+            q_write[p] = wr;
+            q_valid[p] = 1'b1;
+            c0 = q_cnt[p];
+            while (q_cnt[p] == c0) @(negedge s_aclk);
+            q_valid[p] = 1'b0;
+        end
+    endtask
+
+    // Takes `beats` words from requester `p` and checks them against golden.
+    task automatic r_take(input integer p, input integer word, input integer beats,
+                          input [255:0] what);
+        integer i, c0;
+        begin
+            @(negedge s_aclk);
+            r_ready[p] = 1'b1;
+            for (i = 0; i < beats; i = i + 1) begin
+                c0 = r_cnt[p];
+                while (r_cnt[p] == c0) @(negedge s_aclk);
+                if (i == beats - 1) r_ready[p] = 1'b0;
+                checks = checks + 1;
+                if (r_cap[p] !== golden[word + i]) fail(what);
+                if (r_lcap[p] !== (i == beats - 1)) fail("rlast misplaced");
+            end
+        end
+    endtask
 
     task fail(input [255:0] why);
         begin
@@ -115,111 +172,43 @@ module mag_dram_port_tb #(
 
     // ---- one write burst from requester `p` ------------------------------
     task automatic do_write(input integer p, input integer word, input integer beats);
-        integer i;
+        integer i, c0, b0;
         reg [SW-1:0] d;
         begin
-            @(posedge s_aclk);
-            q_addr[p*ADDR_W +: ADDR_W] = word * SBYTES;
-            q_len [p*16     +: 16]     = beats - 1;
-            q_write[p] = 1'b1;
-            q_valid[p] = 1'b1;
-            @(posedge s_aclk);
-            while (!q_ready[p]) begin
-                @(posedge s_aclk);
-            end
-            q_valid[p] = 1'b0;
-
+            b0 = b_cnt[p];
+            q_put(p, word, beats, 1'b1);
             for (i = 0; i < beats; i = i + 1) begin
                 d = {$random, $random, $random, $random,
                      $random, $random, $random, $random};
                 golden[word + i] = d;
                 w_data[p*SW +: SW] = d;
                 w_valid[p] = 1'b1;
-                @(posedge s_aclk);
-                while (!w_ready[p]) begin
-                    @(posedge s_aclk);
-                end
+                c0 = w_cnt[p];
+                while (w_cnt[p] == c0) @(negedge s_aclk);
             end
             w_valid[p] = 1'b0;
-            while (!b_valid[p]) begin
-                @(posedge s_aclk);
-            end
+            while (b_cnt[p] == b0) @(negedge s_aclk);
         end
     endtask
 
     // ---- one read burst from requester `p`, checked against golden -------
     task automatic do_read(input integer p, input integer word, input integer beats);
-        integer i;
         begin
-            @(posedge s_aclk);
-            q_addr[p*ADDR_W +: ADDR_W] = word * SBYTES;
-            q_len [p*16     +: 16]     = beats - 1;
-            q_write[p] = 1'b0;
-            q_valid[p] = 1'b1;
-            @(posedge s_aclk);
-            while (!q_ready[p]) begin
-                @(posedge s_aclk);
-            end
-            q_valid[p] = 1'b0;
-
-            for (i = 0; i < beats; i = i + 1) begin
-                r_ready[p] = 1'b1;
-                @(posedge s_aclk);
-                while (!r_valid[p]) begin
-                    @(posedge s_aclk);
-                end
-                checks = checks + 1;
-                if (r_data[p*SW +: SW] !== golden[word + i]) begin
-                    fail("read data mismatch");
-                end
-                if ((i == beats - 1) && !r_last[p]) begin
-                    fail("rlast not on last beat");
-                end
-                if ((i != beats - 1) && r_last[p]) begin
-                    fail("rlast early");
-                end
-            end
-            r_ready[p] = 1'b0;
+            q_put(p, word, beats, 1'b0);
+            r_take(p, word, beats, "read data mismatch");
         end
     endtask
 
     // ---- the read split in two, so a requester can hold several in flight ---
     task automatic rd_issue(input integer p, input integer word, input integer beats);
         begin
-            @(posedge s_aclk);
-            q_addr[p*ADDR_W +: ADDR_W] = word * SBYTES;
-            q_len [p*16     +: 16]     = beats - 1;
-            q_write[p] = 1'b0;
-            q_valid[p] = 1'b1;
-            @(posedge s_aclk);
-            while (!q_ready[p]) begin
-                @(posedge s_aclk);
-            end
-            q_valid[p] = 1'b0;
+            q_put(p, word, beats, 1'b0);
             $display("  %0t issued p%0d word %0d beats %0d", $time, p, word, beats);
         end
     endtask
     task automatic rd_collect(input integer p, input integer word, input integer beats);
-        integer i;
         begin
-            for (i = 0; i < beats; i = i + 1) begin
-                r_ready[p] = 1'b1;
-                @(posedge s_aclk);
-                while (!r_valid[p]) begin
-                    @(posedge s_aclk);
-                end
-                checks = checks + 1;
-                if (r_data[p*SW +: SW] !== golden[word + i]) begin
-                    fail("queued read data mismatch");
-                end
-                if ((i == beats - 1) && !r_last[p]) begin
-                    fail("queued rlast not on last beat");
-                end
-                if ((i != beats - 1) && r_last[p]) begin
-                    fail("queued rlast early");
-                end
-            end
-            r_ready[p] = 1'b0;
+            r_take(p, word, beats, "queued read data mismatch");
             $display("  %0t collected p%0d word %0d beats %0d", $time, p, word, beats);
         end
     endtask

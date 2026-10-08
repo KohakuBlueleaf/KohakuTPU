@@ -162,6 +162,17 @@ module mag_mem_port_tb;
         end
     endfunction
 
+    function [FW-1:0] f_sreq(input [PW-1:0] sx, input [PW-1:0] sy,
+                             input [7:0] txn, input [AW-1:0] addr,
+                             input [7:0] cnt, input [7:0] ew);
+        begin
+            f_sreq = f_rreq(sx, sy, txn, addr, 8'd0);
+            f_sreq[207 -: 8] = 8'h40;             // STREAM
+            f_sreq[199 -: 8] = cnt;
+            f_sreq[165 -: 8] = ew;
+        end
+    endfunction
+
     // ---- one-flit-per-cycle driver --------------------------------------
     // The port drains roughly a burst per 14 cycles; a driver slower than
     // that never fills the slot table and proves nothing.
@@ -277,6 +288,82 @@ module mag_mem_port_tb;
         end
     end
 
+    // ---- read-response capture (phase 4) --------------------------------
+    reg          rcap = 1'b0;
+    integer      nr = 0, t_first, t_last, n_rresp = 0;
+    always @(posedge clk) begin
+        if (rstn && out_valid && !out_busy && (o_ty == 4'h2)) n_rresp = n_rresp + 1;
+    end
+    reg [7:0]    r_tag  [0:2047];
+    reg [1:0]    r_q    [0:2047];
+    reg          r_last [0:2047];
+    reg [PW-1:0] r_dx   [0:2047];
+    reg [255:0]  r_data [0:2047];
+    always @(posedge clk) begin
+        if (rcap && out_valid && !out_busy && (o_ty == 4'h2)) begin
+            r_tag[nr]  = out_data[FW-4*PW-5 -: 8];
+            r_last[nr] = out_data[FW-4*PW-13];
+            r_q[nr]    = out_data[FW-4*PW-15 -: 2];
+            r_dx[nr]   = o_dx;
+            r_data[nr] = out_data[255:0];
+            if (nr == 0) t_first = cyc;
+            t_last = cyc;
+            nr = nr + 1;
+        end
+    end
+
+    // Expected responses, in issue order: entry e of a descriptor is `ew` words.
+    integer ne = 0, ok_n;
+    task expect_stream(input [7:0] txn, input [AW-1:0] addr, input integer cnt,
+                       input integer ew, input [PW-1:0] dx);
+        integer e, w;
+        begin
+            for (e = 0; e < cnt; e = e + 1) begin
+                for (w = 0; w < ew; w = w + 1) begin
+                    ok_n = (r_tag[ne] == txn + e[7:0]) && (r_q[ne] == w[1:0])
+                        && (r_last[ne] == (w == ew - 1)) && (r_dx[ne] == dx)
+                        && (r_data[ne] == u_ram.mem[(addr >> 5) + e * ew + w]);
+                    if (!ok_n && (errors < 20)) begin
+                        $display("    resp %0d: tag %h q %0d last %0d (want tag %h q %0d)",
+                                 ne, r_tag[ne], r_q[ne], r_last[ne], txn + e[7:0], w);
+                    end
+                    chk(ok_n, "stream response tag/word/data in order");
+                    ne = ne + 1;
+                end
+            end
+        end
+    endtask
+
+    // Phase 5: entry e goes to the requester (dx0) then the peer (dx1) when nd is 1.
+    task expect_run(input [7:0] txn, input [AW-1:0] addr, input integer cnt,
+                    input integer ew, input integer nd, input [PW-1:0] dx0,
+                    input [PW-1:0] dx1);
+        integer e, d, w;
+        begin
+            for (e = 0; e < cnt; e = e + 1) begin
+                for (d = 0; d <= nd; d = d + 1) begin
+                    for (w = 0; w < ew; w = w + 1) begin
+                        ok_n = (r_tag[ne] == txn + e[7:0]) && (r_q[ne] == w[1:0])
+                            && (r_dx[ne] == ((d == 0) ? dx0 : dx1))
+                            && (r_data[ne] == u_ram.mem[(addr >> 5) + e * ew + w]);
+                        if (!ok_n && (errors < 20)) begin
+                            $display("    resp %0d: tag %h q %0d dx %0d (want tag %h q %0d dx %0d)",
+                                     ne, r_tag[ne], r_q[ne], r_dx[ne], txn + e[7:0], w,
+                                     (d == 0) ? dx0 : dx1);
+                        end
+                        chk(ok_n, "chained run: tag/word/destination/data in order");
+                        ne = ne + 1;
+                    end
+                end
+            end
+        end
+    endtask
+
+    integer n_nx = 0;
+    always @(posedge clk) begin
+        if (rstn && dut.take_nx) n_nx = n_nx + 1;
+    end
+
     function [255:0] peek(input [AW-1:0] a);
         peek = u_ram.mem[a >> 5];
     endfunction
@@ -380,6 +467,103 @@ module mag_mem_port_tb;
                     == {8{32'h0000_C000 + i * 17 + 32'd7}},
                 "phase-3 last beat exact");
         end
+
+        // ---- phase 4: streamed reads -------------------------------------
+        // Back-to-back descriptors from one source: 1/2/4-word entries, 4 KB
+        // crossings, the 255-entry maximum, a wrapping tag, then under backpressure.
+        // Phases 1-2 sent 300 one-beat and two (2 + 8 beat) plain reads.
+        repeat (3000) @(posedge clk);
+        $display("    plain-read beats answered: %0d of 310", n_rresp);
+        chk(n_rresp == 310, "every plain read answered without later traffic");
+        $display("--- phase 4: streamed reads");
+        for (i = 2048; i < 3072; i = i + 1) begin
+            u_ram.mem[i] = {8{i[31:0] ^ 32'h5A5A_0000}};
+        end
+        rcap = 1'b1;
+        nq(f_sreq(4'd1, 4'd0, 8'h00, 40'h0001_00A0, 8'd255, 8'd1));
+        spin = 0;
+        while ((nr < 255) && (spin < 30000)) begin @(posedge clk); spin = spin + 1; end
+        chk(nr == 255, "255-word stream fully answered");
+        $display("    255 x 1-word stream: %0d cycles first->last response", t_last - t_first);
+        nq(f_sreq(4'd1, 4'd0, 8'hF0, 40'h0001_3FE0, 8'd1, 8'd1));
+        nq(f_sreq(4'd1, 4'd0, 8'h30, 40'h0001_3F00, 8'd20, 8'd4));
+        nq(f_sreq(4'd1, 4'd0, 8'hE0, 40'h0001_5FC0, 8'd37, 8'd1));
+        nq(f_sreq(4'd1, 4'd0, 8'h07, 40'h0001_6040, 8'd9, 8'd2));
+        drain_tx;
+        spin = 0;
+        while ((nr < 255 + 1 + 80 + 37 + 18) && (spin < 30000)) begin
+            @(posedge clk); spin = spin + 1;
+        end
+        p1bp = 1'b1;
+        nq(f_sreq(4'd1, 4'd0, 8'h00, 40'h0001_00A0, 8'd255, 8'd1));
+        drain_tx;
+        spin = 0;
+        while ((nr < 2 * 255 + 1 + 80 + 37 + 18) && (spin < 30000)) begin
+            @(posedge clk); spin = spin + 1;
+        end
+        p1bp = 1'b0;
+        repeat (50) @(posedge clk);
+        chk(nr == 2 * 255 + 1 + 80 + 37 + 18, "no missing or extra responses");
+        expect_stream(8'h00, 40'h0001_00A0, 255, 1, 4'd1);
+        expect_stream(8'hF0, 40'h0001_3FE0, 1, 1, 4'd1);
+        expect_stream(8'h30, 40'h0001_3F00, 20, 4, 4'd1);
+        expect_stream(8'hE0, 40'h0001_5FC0, 37, 1, 4'd1);
+        expect_stream(8'h07, 40'h0001_6040, 9, 2, 4'd1);
+        expect_stream(8'h00, 40'h0001_00A0, 255, 1, 4'd1);
+
+        // ---- phase 5: runs chained behind each other ---------------------
+        // Two sources, one run fanned out to a peer, all queued at once, so each
+        // run after the first is taken while the one before is still returning.
+        $display("--- phase 5: chained runs, mixed sources, a peer fan-out");
+        nr = 0; ne = 0; n_nx = 0;
+        begin : p5
+            reg [FW-1:0] f;
+            nq(f_sreq(4'd2, 4'd0, 8'h10, 40'h0001_0800, 8'd64, 8'd1));
+            f = f_sreq(4'd3, 4'd0, 8'h50, 40'h0001_0C00, 8'd16, 8'd4);
+            f[167 -: 2] = 2'd1;                       // one peer ...
+            f[191 -: 24] = {16'd0, 4'd1, 4'd5};       // ... at (5,1)
+            nq(f);
+            nq(f_sreq(4'd2, 4'd0, 8'h90, 40'h0001_1000, 8'd64, 8'd1));
+            nq(f_sreq(4'd3, 4'd0, 8'hC0, 40'h0001_1800, 8'd3, 8'd2));
+        end
+        drain_tx;
+        spin = 0;
+        while ((nr < 64 + 128 + 64 + 6) && (spin < 30000)) begin
+            @(posedge clk); spin = spin + 1;
+        end
+        repeat (50) @(posedge clk);
+        chk(nr == 64 + 128 + 64 + 6, "phase 5: every response, none extra");
+        $display("    chained takes: %0d; %0d responses in %0d cycles", n_nx, nr,
+                 t_last - t_first);
+        chk(n_nx == 3, "each run after the first was taken while one was in flight");
+        expect_run(8'h10, 40'h0001_0800, 64, 1, 0, 4'd2, 4'd2);
+        expect_run(8'h50, 40'h0001_0C00, 16, 4, 1, 4'd3, 4'd5);
+        expect_run(8'h90, 40'h0001_1000, 64, 1, 0, 4'd2, 4'd2);
+        expect_run(8'hC0, 40'h0001_1800, 3, 2, 0, 4'd3, 4'd3);
+
+        // ---- phase 6: a next run arriving at every point of the one before --
+        // One-entry runs, the second sent 0..39 cycles after the first, so one of
+        // them lands in the cycle the first run hands off its last entry.
+        $display("--- phase 6: second run swept across the first's lifetime");
+        nr = 0; ne = 0;
+        for (i = 0; i < 40; i = i + 1) begin
+            nq(f_sreq(4'd1, 4'd1, i[7:0], 40'h0001_0800 + i * 32, 8'd1, 8'd1));
+            drain_tx;
+            repeat (i) @(posedge clk);
+            nq(f_sreq(4'd2, 4'd1, 8'h80 + i[7:0], 40'h0001_0C00 + i * 64, 8'd1, 8'd2));
+            drain_tx;
+            spin = 0;
+            while ((nr < 3 * (i + 1)) && (spin < 2000)) begin
+                @(posedge clk); spin = spin + 1;
+            end
+        end
+        repeat (50) @(posedge clk);
+        chk(nr == 120, "phase 6: every response, none extra");
+        for (i = 0; i < 40; i = i + 1) begin
+            expect_run(i[7:0], 40'h0001_0800 + i * 32, 1, 1, 0, 4'd1, 4'd1);
+            expect_run(8'h80 + i[7:0], 40'h0001_0C00 + i * 64, 1, 2, 0, 4'd2, 4'd2);
+        end
+        rcap = 1'b0;
 
         if (errors == 0) begin
             $display("PASS  %0d checks", checks);
