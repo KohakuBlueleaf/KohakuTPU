@@ -6,13 +6,14 @@ a tinygrad backend must have.
 
 from kohakuaccel.lang import dims, loop, units
 from kohakutpu.lang import kernel
+from kohakutpu.tiling import MatmulTiler
 
 from kohakutpu import lang as L
 
 M, K, N = dims("M, K, N")
 
 
-@kernel
+@kernel(tiler=MatmulTiler("M", "K", "N"))
 def matmul(a=L.In(..., M, K), b=L.In(N, K), c=L.Out(..., M, N), *, gm=8, gn=8, nk=2):
     """``C = a @ b.T``. `b` is stored ``[N][K]``, as a torch Linear keeps it.
 

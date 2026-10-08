@@ -17,6 +17,7 @@ MXFP7 -- see the hardware notes below. The other two are one band each.
 import numpy as np
 from kohakuaccel.lang import ceildiv, dims, loop, units
 from kohakutpu.lang import kernel
+from kohakutpu.tiling import MatmulTiler
 
 from kohakutpu import lang as L
 
@@ -105,7 +106,7 @@ def attn_out(
     y <<= h + r
 
 
-@kernel
+@kernel(tiler=MatmulTiler("Lq", "Dqk", "Dv"))
 def project_heads(
     x=L.In(Lq, Dqk),
     w=L.In(..., Dv, Dqk),

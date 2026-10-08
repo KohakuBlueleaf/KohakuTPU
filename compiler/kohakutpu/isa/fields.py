@@ -3,9 +3,10 @@
 The project half of `Backend.addresses`: a package relocates each field found
 here, so one compiled package serves every call whatever its buffers' addresses.
 
-* Cluster ('MG'): FILL and memory DRAIN carry `addr` (34 bits) and `addr_hi`
-  (6), one 40-bit address split in two (isa/cluster.py). A node-addressed
-  DRAIN (`dnode`) carries an L1 word offset instead, which is not memory.
+* Cluster ('MG'): FILL, memory DRAIN and an emitting GEMM (`emit`, the fused
+  drain's sweep) carry `addr` (34 bits) and `addr_hi` (6), one 40-bit address
+  split in two (isa/cluster.py). A node-addressed word (`dnode`) carries an L1
+  word offset instead, which is not memory.
 * Vector core ('VC'): a descriptor write (op 2) to field 0 is a base address,
   low 34 bits at [245:212] and high 6 at [68:63] (hw/vector.py `desc_flit`).
 """
@@ -13,8 +14,6 @@ here, so one compiled package serves every call whatever its buffers' addresses.
 from kohakuaccel.backend.slots import Backend
 from kohakutpu.isa.cluster import ISA
 
-_CU_LO = ISA.FILL.span("addr")
-_CU_HI = ISA.FILL.span("addr_hi")
 _CU_LO_BITS = ISA.cfg.addr_bits
 
 #: Vector descriptor base: (bit, width) of the two halves, and the op/field codes.
@@ -25,13 +24,14 @@ _VC_OP_DESC, _VC_FLD_BASE = 2, 0
 def cluster_addresses(word: int) -> list:
     """``[(segments, address)]`` of one cluster word."""
     fmt = ISA.set.find(word)
-    if fmt is None or fmt.name == "GEMM":
+    if fmt is None:
         return []
     f = fmt.decode(word)
-    if fmt.name == "DRAIN" and f["dnode"]:
+    if f["dnode"] or (fmt.name == "GEMM" and not f["emit"]):
         return []
+    lo, hi = fmt.span("addr"), fmt.span("addr_hi")
     addr = f["addr"] | f["addr_hi"] << _CU_LO_BITS
-    return [(((*_CU_LO, 0), (*_CU_HI, _CU_LO_BITS)), addr)]
+    return [(((*lo, 0), (*hi, _CU_LO_BITS)), addr)]
 
 
 def vector_addresses(word: int) -> list:

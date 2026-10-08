@@ -85,11 +85,27 @@ BEFORE = {
 }
 
 
+#: Digests with the fused drain on (the last GEMM before a memory DRAIN
+#: re-encoded with emit=1, the DRAIN with fuse=1).
+FUSED = {
+    "mm": "16:681fdc65621ff869",
+}
+
+
 @pytest.mark.parametrize("name", sorted(WITNESSED))
-def test_the_fixtures_emit_what_they_always_emitted(name):
+def test_the_fixtures_emit_what_they_always_emitted(name, monkeypatch):
     """The witness. A digest that moves means machine code changed."""
+    monkeypatch.setattr(type(BACKEND), "fuse_drain", False)
     kern, shapes, knobs = WITNESSED[name]
     assert digest(kern, operands(*shapes), **knobs) == BEFORE[name]
+
+
+@pytest.mark.parametrize("name", sorted(WITNESSED))
+def test_the_fused_drain_moves_only_what_it_fuses(name, monkeypatch):
+    """With the fused drain on, a kernel without a GEMM -> DRAIN pair is unmoved."""
+    monkeypatch.setattr(type(BACKEND), "fuse_drain", True)
+    kern, shapes, knobs = WITNESSED[name]
+    assert digest(kern, operands(*shapes), **knobs) == FUSED.get(name, BEFORE[name])
 
 
 def test_the_witness_carried_over_from_the_shipped_library_unchanged():

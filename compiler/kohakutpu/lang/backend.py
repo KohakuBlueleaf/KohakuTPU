@@ -10,7 +10,7 @@ import itertools
 
 import numpy as np
 from kohakuaccel.dispatch import deal
-from kohakuaccel.lang import Dim, Kernel, Stmt, resolve
+from kohakuaccel.lang import Dim, Stmt, resolve
 from kohakuaccel.lang import kernel as _traced
 from kohakutpu.hw import vector as V
 from kohakutpu.isa import ISA
@@ -65,6 +65,9 @@ class TpuBackend:
     #: One RUN stores a whole batch whatever `nelem` says, so a batched buffer
     #: whose stride is under this has each element written over by the next.
     batch_grain = BATCH_BYTES
+
+    #: A memory DRAIN rides the last sweep of its chain (`emit`/`fuse`).
+    fuse_drain = True
 
     def __init__(self, isa=ISA) -> None:
         self.isa = isa
@@ -445,6 +448,8 @@ class TpuBackend:
         #: side. Interleaved sweeps must not land on the operand being read.
         region: dict = {}
         free: dict = {}
+        #: Word index of the latest GEMM, so a DRAIN can fuse into the sweep before it.
+        last_gemm = -1
         for s in inst.stmts:
             match s.kind:
                 case "fill":
@@ -487,6 +492,7 @@ class TpuBackend:
                     # `acc` counts K chunks, so it also picks the bank the fill
                     # ahead of this sweep wrote.
                     bank = int(s.args["acc"]) % BANKS
+                    last_gemm = len(words)
                     words.append(
                         self.isa.gemm(
                             gm=s.args["gm"],
@@ -524,7 +530,18 @@ class TpuBackend:
                     span = s.args["gm"] * s.args["gn"]
                     at = (s.args["i"] * stage.body_grid[1] + s.args["j"]) * span
                     base = self._base(compiled, stage, inst, addrs, s.args["result"])
-                    words.append(self.isa.drain(addr=base + at * LO.WORD_BYTES, n=span))
+                    addr = base + at * LO.WORD_BYTES
+                    if self.fuse_drain and last_gemm == len(words) - 1:
+                        # The chain's last sweep writes each sub-tile as its last
+                        # K block completes; the DRAIN only waits for them.
+                        g = self.isa.GEMM.decode(words[last_gemm])
+                        g.pop("op", None)
+                        words[last_gemm] = self.isa.GEMM.encode(
+                            **{**g, "emit": 1, **self.isa.split_addr(addr)}
+                        )
+                        words.append(self.isa.drain(addr=addr, n=span, fuse=1))
+                    else:
+                        words.append(self.isa.drain(addr=addr, n=span))
                 case _:
                     raise LangError(f"no lowering for {s.kind!r} on a cluster")
         return words
@@ -1594,6 +1611,9 @@ def _scalar(compiled, leaf: Const) -> float:
 BACKEND = TpuBackend()
 
 
-def kernel(fn) -> Kernel:
-    """Decorator: a kernel on this machine, on whichever units its stages need."""
-    return _traced(fn, backend=BACKEND)
+def kernel(fn=None, *, tiler=None):
+    """Decorator: a kernel on this machine, on whichever units its stages need.
+
+    `tiler` chooses the tiling per call (`kohakutpu.tiling.MatmulTiler`).
+    """
+    return _traced(fn, backend=BACKEND, tiler=tiler)

@@ -131,7 +131,7 @@ class CuIsa:
                 f"FILL of {n} entries exceeds the {self.cfg.max_fill}-entry "
                 f"streaming count; split it"
             )
-        return self.FILL.encode(n=n, sel=sel, **self._addr(addr), **kw)
+        return self.FILL.encode(n=n, sel=sel, **self.split_addr(addr), **kw)
 
     def gemm(self, gm: int, gn: int, nk: int, **kw) -> int:
         """A GEMM payload."""
@@ -139,9 +139,9 @@ class CuIsa:
 
     def drain(self, addr: int, n: int, **kw) -> int:
         """A DRAIN payload."""
-        return self.DRAIN.encode(n=n, **self._addr(addr), **kw)
+        return self.DRAIN.encode(n=n, **self.split_addr(addr), **kw)
 
-    def _addr(self, addr: int) -> dict:
+    def split_addr(self, addr: int) -> dict:
         """Split a 40-bit address into its two encoded fields.
 
         Returns ``{"addr": low, "addr_hi": high}``. Raises :class:`ValueError`

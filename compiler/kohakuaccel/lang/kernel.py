@@ -452,13 +452,22 @@ class Compiled:
 class Kernel:
     """A traced kernel: one structure per tiling, one compilation per shape."""
 
-    def __init__(self, fn, backend: Backend) -> None:
+    def __init__(self, fn, backend: Backend, tiler=None) -> None:
         self._fn = fn
         self._backend = backend
         self._traces: dict = {}
         self._compiled: dict = {}
         self.signature = iface.read(fn)
+        #: Chooses the tiling knobs from the machine and the extents, for a call
+        #: that names none of them: `tiler.knobs` and `tiler(machine, extents)`.
+        self.tiler = tiler
         functools.update_wrapper(self, fn)
+
+    def knobs_for(self, machine, extents: dict, given: dict) -> dict:
+        """`given`, completed by the tiler when the caller named none of its knobs."""
+        if self.tiler is None or any(k in given for k in self.tiler.knobs):
+            return given
+        return {**self.tiler(machine, extents), **given}
 
     @property
     def backend(self) -> Backend:
@@ -638,18 +647,23 @@ class Kernel:
             _resize(self._backend, out)
         return out
 
+    def _resolve(self, args, kwargs) -> tuple:
+        """`(bound, runtime, extents, knobs)` for a call: the caller's knobs, the
+        tiler's for the rest."""
+        knobs = {k: kwargs.pop(k) for k in list(kwargs) if k in self.signature.knobs}
+        bound = iface.bind(self.signature, args, kwargs)
+        rt = _runtime_of(bound, self.name)
+        extents = iface.solve(self.signature, bound)
+        return bound, rt, extents, self.knobs_for(rt.machine, extents, knobs)
+
     def plan(self, *args, **kwargs) -> Compiled:
         """What calling with these arguments WOULD compile to, without running.
 
         Same binding and solving as :meth:`__call__`, so the grid, the layouts
         and the stages it reports are the ones that would execute.
         """
-        knobs = {k: kwargs.pop(k) for k in list(kwargs) if k in self.signature.knobs}
-        bound = iface.bind(self.signature, args, kwargs)
-        rt = _runtime_of(bound, self.name)
-        return self.compile(
-            rt.machine, iface.solve(self.signature, bound), _regrids(rt), **knobs
-        )
+        _, rt, extents, knobs = self._resolve(args, kwargs)
+        return self.compile(rt.machine, extents, _regrids(rt), **knobs)
 
     def footprint(self, *args, **kwargs) -> Footprint:
         """What calling with these arguments would need resident, without running.
@@ -661,12 +675,8 @@ class Kernel:
 
         Returns a :class:`~kohakuaccel.lifetime.Footprint`.
         """
-        knobs = {k: kwargs.pop(k) for k in list(kwargs) if k in self.signature.knobs}
-        bound = iface.bind(self.signature, args, kwargs)
-        rt = _runtime_of(bound, self.name)
-        compiled = self.compile(
-            rt.machine, iface.solve(self.signature, bound), _regrids(rt), **knobs
-        )
+        _, rt, extents, knobs = self._resolve(args, kwargs)
+        compiled = self.compile(rt.machine, extents, _regrids(rt), **knobs)
         return compiled.footprint(*_allocation(rt))
 
     def __call__(self, *args, **kwargs) -> Any:
@@ -676,10 +686,7 @@ class Kernel:
         they live on, and the results are allocated here. Keyword arguments
         matching a block parameter retune the tiling for this call only.
         """
-        knobs = {k: kwargs.pop(k) for k in list(kwargs) if k in self.signature.knobs}
-        bound = iface.bind(self.signature, args, kwargs)
-        rt = _runtime_of(bound, self.name)
-        extents = iface.solve(self.signature, bound)
+        bound, rt, extents, knobs = self._resolve(args, kwargs)
         compiled = self.compile(rt.machine, extents, _regrids(rt), **knobs)
         align, reuse = _allocation(rt)
         _afford(rt, compiled, align, reuse)
@@ -1091,13 +1098,14 @@ def _points(grid: tuple):
     return out
 
 
-def kernel(fn=None, *, backend: Backend):
+def kernel(fn=None, *, backend: Backend, tiler=None):
     """Decorator: record this function's structure once, call it per shape.
 
     A project binds its own backend, so its users write a plain `@kernel`.
+    `tiler` picks the tiling knobs per call when the caller names none.
     """
 
     def wrap(f) -> Kernel:
-        return Kernel(f, backend)
+        return Kernel(f, backend, tiler)
 
     return wrap if fn is None else wrap(fn)

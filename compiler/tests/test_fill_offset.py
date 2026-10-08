@@ -73,7 +73,23 @@ def encoded(fn, bound, knobs):
     return got, out
 
 
-def test_the_shipped_kernels_are_byte_identical():
+#: BASELINE with the fused drain on: each last GEMM before a memory DRAIN carries
+#: emit=1 and its address.
+FUSED = "32b4c7e4db0667ea371c5c0cf5fa9f3c0218da9aa75b4d7cbd1c6af24382761f"
+
+
+def library_digest() -> str:
+    h = hashlib.sha256()
+    for name, fn, bound, knobs in LIBRARY:
+        h.update(name.encode())
+        for index, at, words in encoded(fn, bound, knobs)[1]:
+            # Hex, not bytes: a vector flit carries a routing header above the
+            # 256-bit payload and does not fit a fixed width.
+            h.update(f"{index}{at}{[f'{w:x}' for w in words]}".encode())
+    return h.hexdigest()
+
+
+def test_the_shipped_kernels_are_byte_identical(monkeypatch):
     """The witness. Every flit of every kernel, against a digest predating this.
 
     A failure means a kernel that asked for no offset moved, which is the one
@@ -82,14 +98,14 @@ def test_the_shipped_kernels_are_byte_identical():
     after checking `test_a_fill_with_no_offset_keeps_the_old_address` is green,
     since that one holds across a retune and is the durable claim.
     """
-    h = hashlib.sha256()
-    for name, fn, bound, knobs in LIBRARY:
-        h.update(name.encode())
-        for index, at, words in encoded(fn, bound, knobs)[1]:
-            # Hex, not bytes: a vector flit carries a routing header above the
-            # 256-bit payload and does not fit a fixed width.
-            h.update(f"{index}{at}{[f'{w:x}' for w in words]}".encode())
-    assert h.hexdigest() == BASELINE
+    monkeypatch.setattr(type(BACKEND), "fuse_drain", False)
+    assert library_digest() == BASELINE
+
+
+def test_the_fused_drain_witness(monkeypatch):
+    """With the fused drain on, the library is pinned to its own digest."""
+    monkeypatch.setattr(type(BACKEND), "fuse_drain", True)
+    assert library_digest() == FUSED
 
 
 @pytest.mark.parametrize("name", [row[0] for row in LIBRARY])

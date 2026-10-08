@@ -834,8 +834,8 @@ checks the card-side copy byte-identical to `MxEntry.pack`, the reference.
 
 | operand | placed | knob |
 |---|---|---|
-| produced by a kernel, ≤ `mx_staging_max` (256 KB) | L2 staging, when a staging arena is attached | `mx_staging_max` |
-| uploaded by the host (a weight: reused across calls) | DRAM, where the Xache holds it | `mx_uploads_to_staging` (default off) |
+| produced by a kernel, ≤ `mx_staging_max` (the whole staging store) | L2 staging, when a staging arena is attached | `mx_staging_max` |
+| uploaded by the host (a weight: reused across calls) | L2 staging while it fits, else DRAM | `mx_uploads_to_staging` (default on) |
 | anything else, or a full staging store | DRAM | — |
 
 A copy stays with its tensor as long as the tensor does, so a reused weight is

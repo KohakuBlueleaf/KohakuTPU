@@ -13,14 +13,17 @@ import weakref
 
 import numpy as np
 from kohakuaccel.device import mover as DM
-from kohakuaccel.machinespec import MESH_SHIFT, MachineSpec, MeshSpec
+from kohakuaccel.dispatch import deal
+from kohakuaccel.machinespec import MESH_SHIFT, STAGE_BYTES, MachineSpec, MeshSpec
 from kohakuaccel.memory import Arena, Buffer, Layout
 from kohakuaccel.package import mover as PM
 from kohakuaccel.rt import Runtime
 from kohakutpu.isa import relayout as RL
 from kohakutpu.isa.fields import FIELDS
 from kohakutpu.isa.vecemit import BATCH_BYTES
+from kohakutpu.staging import STAGE_ALIGN
 
+from kohakutpu import imem as IM
 from kohakutpu import layout as LO
 
 FP16 = np.float16
@@ -367,9 +370,9 @@ class Holder:
 
     # ---------------------------------------------------------------- tiers
     #: Where a converted (MXFP7) operand lives, the `mx_tier` policy
-    #: (relayout.md §13): produced up to 256 KB to L2, uploads to DRAM.
-    mx_staging_max = 256 << 10
-    mx_uploads_to_staging = False
+    #: (relayout.md §13): in the staging store whenever there is one and it fits.
+    mx_staging_max = STAGE_BYTES
+    mx_uploads_to_staging = True
 
     def mx_tier(self, nbytes: int, produced: bool):
         """The tier a converted operand of `nbytes` is placed in: `L2` or None (DRAM)."""
@@ -599,6 +602,24 @@ class Holder:
     def _run(self, flits: list) -> None:
         self.dispatch({(0,): list(flits)}, "VC", "relayout")
 
+    def dispatch(
+        self, payloads: dict, unit: str, name: str = "kernel", nodes=None, acks=None
+    ):
+        """Node-dispatched, a vector core already holding the program gets only its
+        DESC words and a RUN (imem.rewrite)."""
+        if unit == "VC" and self.node is not None:
+            coords = tuple(nodes) if nodes is not None else self.machine.coords(unit)
+            placed = deal(payloads, coords)
+            # Per device, made on first use: Holder has no __init__ to declare it in.
+            held = self.__dict__.setdefault("_imem", {})
+            payloads = {
+                key: IM.rewrite(
+                    list(words), held.setdefault(tuple(placed[key]), IM.Resident())
+                )
+                for key, words in payloads.items()
+            }
+        return super().dispatch(payloads, unit, name, nodes, acks)
+
     def _route(self, plan, addr: int) -> str | None:
         """The tier this conversion walks into: `L2`, DRAM, or None for in place.
 
@@ -671,6 +692,8 @@ class Device(Holder, Runtime):
         )
         self.node = node
         self.fields = FIELDS
+        if node is not None:
+            self.staging = _staging_above(machine, node)
 
     def dispatch(
         self, payloads: dict, unit: str, name: str = "kernel", nodes=None, acks=None
@@ -717,6 +740,23 @@ class Device(Holder, Runtime):
             f"{self.machine.count('VC')} VC, "
             f"{self.arena.used:,}/{self.arena.size:,} bytes used)"
         )
+
+
+def _staging_above(machine, node) -> Arena | None:
+    """The mesh's staging store above the node's queue region, as an arena.
+
+    None when the queue does not live in staging or leaves none of it free.
+    """
+    base = machine.stage_addr(0)
+    start = getattr(node, "base", None)
+    if start is None or not base <= start < base + STAGE_BYTES:
+        return None
+    start = -(-(start + node.size) // STAGE_ALIGN) * STAGE_ALIGN
+    if start >= base + STAGE_BYTES:
+        return None
+    return Arena(
+        start, base + STAGE_BYTES - start, align=STAGE_ALIGN, mesh=machine.default
+    )
 
 
 def _units(mesh) -> dict:

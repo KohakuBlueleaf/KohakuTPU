@@ -537,7 +537,8 @@ def test_a_converted_temp_is_proposed_for_the_staging_store():
     dev.alloc = lambda n, tier=None: seen.append(tier) or plain(n, tier)
     out = np.asarray(flash_attention(*args).numpy())
     dev.alloc = plain
-    assert seen.count("l2") == len(converted)
+    # The converted temps, and the MXFP7 copy of each upload.
+    assert seen.count("l2") == len(converted) + len(args)
     assert dev.counters.get("staging_full", 0) == 0
 
     lean = C.credits(held, room=1 << 21)

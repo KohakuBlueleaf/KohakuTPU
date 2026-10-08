@@ -212,6 +212,8 @@ Then the pages about writing against it, in no particular order:
 
 - **[writing-kernels.md](writing-kernels.md)** — how much of the schedule to say,
   the one rule about stages, and why a tiling is a view rather than a checkpoint.
+- **[tiling.md](tiling.md)** — how a matmul-shaped kernel picks `gm`, `gn`, `nk`
+  per call: the cost model and what it chooses on the card model.
 - **[fused-epilogue.md](fused-epilogue.md)** — the drain that lands in a vector
   core's L1 instead of DRAM: the encoding, the sequencing, and the band it fits.
 - **[memory.md](memory.md)** — the two granules that bind every span, why the

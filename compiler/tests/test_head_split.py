@@ -57,12 +57,15 @@ def test_the_head_projection_is_the_WIDE_one_and_a_permute(heads, dh):
     """
     tokens, ctx = 128, 256
     x, w = randn((tokens, ctx), 2), randn((heads * dh, ctx), 3)
+    tiling = {"gm": 8, "gn": 8, "nk": 2}
 
     dev = SimDevice(size=1024 << 20)
-    split = project_heads(dev.tensor(x), dev.tensor(heads_of(w, heads))).numpy()
+    split = project_heads(
+        dev.tensor(x), dev.tensor(heads_of(w, heads)), **tiling
+    ).numpy()
 
     dev2 = SimDevice(size=1024 << 20)
-    wide = O.matmul(dev2.tensor(x), dev2.tensor(w)).numpy()
+    wide = O.matmul(dev2.tensor(x), dev2.tensor(w), **tiling).numpy()
     permuted = np.transpose(wide.reshape(tokens, heads, dh), (1, 0, 2))
 
     assert split.shape == (heads, tokens, dh)
