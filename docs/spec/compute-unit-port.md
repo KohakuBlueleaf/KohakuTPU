@@ -164,41 +164,27 @@ place:
 |---|---|
 | `CU_INST` (`0x5`) | The instruction FIFO, depth `INST_DEPTH`. |
 | `CU_CTRL` (`0x7`) | Answered by the base. **It never reaches the unit.** |
+| `MEM_WR_ACK` (`0x3`), at `ACK_FENCE = 1` | Counted against the unit's writes and consumed by the base (§3.3). |
 | everything else | The receive FIFO, depth `RECV_DEPTH`, presented as `recv_*`. |
 
-`noc_in_busy` is asserted when **either** FIFO is full, not the one the arriving
-flit would enter. That is deliberate: `busy` has to be meaningful in cycles when
-`noc_in_valid` is low, and the type field is only trustworthy alongside a valid
-flit.
+`noc_in_busy` is asserted when **either** FIFO is full, or a `CU_CTRL` reply is
+pending (§3.1.1), not according to what the arriving flit would need. That is
+deliberate: `busy` has to be meaningful in cycles when `noc_in_valid` is low, and
+the type field is only trustworthy alongside a valid flit.
 
 Consequence a unit MUST plan for: a receive queue the unit stops draining will
 stall the instruction stream as well.
 
-### 3.1.1 `CU_CTRL` is outside that backpressure, and a second one is lost
+### 3.1.1 `CU_CTRL` replies are one at a time
 
-`noc_in_busy` covers the instruction and receive FIFOs and **nothing else**. A
-`CU_CTRL` flit enters neither, so the port never raises `busy` on its account and
-never refuses one.
+The base holds exactly **one** pending `CU_CTRL` reply. While it is pending,
+`noc_in_busy` is high, so a second `CU_CTRL` — and every other flit behind it —
+waits on the link until the reply has left. No `CU_CTRL` read is lost; several
+outstanding reads to one unit are answered in arrival order.
 
-The base holds exactly **one** pending reply. A `CU_CTRL` flit arriving while a
-reply is still pending is taken off the link, its index discarded, and no reply
-is ever generated for it. The pending reply is unaffected. Nothing is reported,
-on the wire or in simulation.
-
-> **A controller MUST NOT have more than one `CU_CTRL` read outstanding to one
-> unit.** It MUST wait for the reply before issuing the next request to that
-> node.
-
-This is a **requester-side** obligation, unlike the rest of this document, and it
-is stated here because this is the page that describes the endpoint that drops
-the flit. The failure it prevents has no diagnostic at all: the second requester
-waits forever for an answer to a flit the endpoint consumed and threw away, and
-no counter moves, no fault is raised, and the link stays healthy. A controller
-enumerating a mesh in parallel across nodes is safe; enumerating one node in
-parallel with itself is not.
-
-The same rule is stated from the register side in
-[control-registers.md](control-registers.md) §1.1.
+The hold lasts until the reply wins the outbound register (§3.2), behind any
+queued completions. A controller that issues `CU_CTRL` reads must drain their
+replies, or the unit's input stays blocked.
 
 ### 3.2 What the base does on the outbound side
 
@@ -213,6 +199,31 @@ Three producers share the one outbound register, in strict priority:
 The base transmits `send_flit` **verbatim**. It does not stamp, rewrite or
 validate any header field. The unit owns the entire flit it sends, source
 coordinates included.
+
+### 3.3 The write fence (`ACK_FENCE`)
+
+At `ACK_FENCE = 1` a completion means the instruction's memory writes have
+**landed**:
+
+- The base counts every local `MEM_WR_REQ` it transmits (`NOC_RSVD` bit 2
+  clear) and every `MEM_WR_ACK` it receives. The acks are consumed by the base
+  and never reach `recv_*`.
+- The head `CU_SIGNAL` leaves only when the count is zero. The memory port sends
+  `MEM_WR_ACK` on the AXI write response ([memory-protocol.md](memory-protocol.md)
+  §5), so a dispatcher may read the results the moment the completion arrives,
+  with no delay and no readback.
+- The hold is live: while a completion waits, `send_ready` is low (§3.2), so no
+  new write joins the count and the outstanding acks drain it.
+- An ack whose payload bit 0 is set reports a write the memory port **dropped**
+  (an unserved aperture or another mesh's staging, §8 of the memory protocol).
+  The next completion then leaves as `SIG_FAULT` instead of a success, so the
+  instruction faults instead of hanging.
+- Remote writes (`NOC_RSVD` bit 2 set) are not counted: cross-mesh traffic is
+  fenced by the doorbell ([interlink.md](../arch/ship/interlink.md)).
+
+At `ACK_FENCE = 0` (the default) the acks go to `recv_*` like any other flit,
+for a unit that fences its own writes. KohakuTPU's `mx_cluster_cu` and `vec_cu`
+build with `ACK_FENCE = 1` and report `CU_VERSION 0x05`.
 
 ## 4. Instruction issue and retirement
 
@@ -253,6 +264,7 @@ What the framework does for the unit, so the unit MUST NOT do it itself:
   | Condition at `exec_done` | Code sent | Argument |
   |---|---|---|
   | `exec_fault` | `SIG_FAULT` (`0x04`) | `exec_result` |
+  | a dropped-write ack since the last completion (§3.3) | `SIG_FAULT` (`0x04`) | as the row that would otherwise apply |
   | `last` set on the `CU_INST` flit | `SIG_BATCH_COMPLETE` (`0x01`) | `{24'd0, txn}` of that instruction |
   | otherwise | `SIG_INST_COMPLETE` (`0x00`) | `exec_result` |
 
@@ -280,10 +292,8 @@ burst is not an instruction and nothing else would report it.
   simulation-only `$display` is **SHOULD**; silent loss is the whole hazard of
   dropping.
 - `MEM_WR_ACK` (`0x3`) is the specific case of the above that every writing unit
-  hits. Nothing consumes it. A unit that issues writes **MUST** dispose of the
-  acks, either by dropping them out of `recv_*` or by diverting them ahead of the
-  base, as `mx_cluster_cu` does by gating `noc_in_valid` and forcing
-  `noc_in_busy` low for that type.
+  hits. At `ACK_FENCE = 1` the base consumes it (§3.3). At `ACK_FENCE = 0` it
+  reaches `recv_*`, and a unit that issues writes **MUST** consume or drop it.
 
 ### 5.1 The bounded-coupling rule
 
@@ -342,7 +352,8 @@ A unit implementing the mesh-facing port directly owes, in addition to §2:
 | Flits between one `(src, dst)` pair arrive in the order they were sent. | XY dimension-order routing gives exactly one path per pair. |
 | A flit offered on `noc_in_*` is never lost, provided the unit honours §2. | Hop-by-hop retry. |
 | `CU_INST` flits are delivered to the datapath in arrival order. | The instruction FIFO. |
-| `CU_CTRL` never reaches the datapath and is answered whatever the datapath is doing — **provided the controller keeps only one outstanding**. | The base answers it. §3.1.1. |
+| `CU_CTRL` never reaches the datapath and is answered whatever the datapath is doing, one reply at a time. | The base answers it. §3.1.1. |
+| At `ACK_FENCE = 1`, a completion follows the acks of every local write the instruction made. | §3.3. |
 | Completions are emitted in retirement order. | The completion queue is a FIFO. |
 | At most one instruction is in flight. | `inst_valid` is gated on `!in_flight`. |
 | The source coordinates on an inbound flit identify the sender uniquely and are preserved across an inter-mesh crossing. | The interlink does not rewrite them. |
@@ -356,7 +367,7 @@ A unit implementing the mesh-facing port directly owes, in addition to §2:
 | Any bound on the latency of a response, or that one arrives at all. | Nothing in the mesh retries at the message level. |
 | That `send_ready` will be high in any particular cycle. | Signals and `CU_CTRL` outrank the unit. Hold and retry. |
 | That `noc_out_busy` is low. | Same. |
-| That a `MEM_WR_ACK` will be consumed by anyone. | Acks are fire-and-forget; see [memory-protocol.md](memory-protocol.md) §6. |
+| At `ACK_FENCE = 0`, that a `MEM_WR_ACK` will be consumed by anyone. | The unit consumes or drops it; see [memory-protocol.md](memory-protocol.md) §5. |
 | That two senders will not target the same unit at once. | If the unit can only reassemble one stream at a time, that is a **unit-level contract it must publish and check**, not something the mesh enforces. |
 | That the receive FIFO is deep enough for the requests the unit issued. | The unit MUST bound its own outstanding requests against `RECV_DEPTH`. |
 
@@ -395,7 +406,8 @@ Recorded because the RTL and the surrounding material disagree, and the RTL wins
 
 | Obligation | `mx_cluster_cu` | `vec_cu` |
 |---|---|---|
-| Unknown types | Drops them out of `recv_*`, and additionally diverts `MEM_WR_ACK` ahead of the base by gating `noc_in_valid` and forcing `noc_in_busy` low for that type. | Drops them out of `recv_*`. |
+| Unknown types | Drops them out of `recv_*`. | Drops them out of `recv_*`. |
+| Write fence | `ACK_FENCE = 1`; `MEM_WR_ACK` is the base's. | Same. |
 | Bounded coupling (§5.1) | `recv_ready` is low while a peer sub-tile or a `SIG_DATA_RECEIVED` is pending — both cleared by the send path. | `recv_ready` is low while `sg_pend`, cleared by the send path. |
 | Multi-flit framing | Frames `CU_DATA` by type, and checks each data flit's source against the open stream's. | Same, plus a `last`-versus-count check. |
 | Outstanding requests | One `MEM_RD_REQ` descriptor per `FILL`; the receive FIFO is the only bound, applied as backpressure rather than as a guessed constant. | One `VFILL` outstanding; the core holds a second until the first drains. |

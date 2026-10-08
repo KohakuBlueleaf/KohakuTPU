@@ -203,7 +203,11 @@ conventions in [memory-port](memory-port.md#conventions).
 2. **Name what you want ahead of time.** If your addresses are only knowable by
    following a pointer you have fetched, this system cannot serve you.
 3. **Responses are self-describing. Do not build a cursor.**
-4. **Write acks are fire-and-forget.** The slot count assumes you do not wait.
+4. **Do not wait per write.** `noc_cu_base` with `ACK_FENCE 1` counts and
+   consumes your write acks and holds your completion signal until they are
+   all in ([compute-unit-port §3.3](../../spec/compute-unit-port.md)); the
+   next descriptor still overlaps the previous burst, and the slot count
+   assumes it does.
 5. **Ask once for many consumers** — name extra destinations rather than issuing
    identical requests.
 6. **Hold your credits yourself.** Issuing a request whose response you cannot

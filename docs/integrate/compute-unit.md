@@ -449,24 +449,13 @@ holds your receive path closed may require another inbound flit to clear it.**
 That is the one rule whose violation deadlocks the mesh rather than your unit.
 
 **Drain flit types you do not consume.** Anything addressed to you that is not an
-instruction and not a control read lands in your receive queue — including write
-acknowledgements nobody wants. Held, they wedge the instructions behind them. Two
-dispositions, both in use:
-
-- Accept and drop, with a default arm on your `recv_ready` decode that is `1'b1`
-  for unknown types. `mx_cluster_cu` does this and prints a simulation message
-  naming the type, because silent loss is the whole hazard of dropping.
-- Filter ahead of the queue, for a type you never want:
-
-```verilog
-    wire in_ack = (in_ty == T_MEM_WR_ACK);
-    noc_cu_base ... u_base (
-        .noc_in_valid(noc_in_valid && !in_ack),
-        .noc_in_busy(base_in_busy), ...);
-    assign noc_in_busy = in_ack ? 1'b0 : base_in_busy;
-```
-
-  Cheaper than a queue slot, and it cannot fill.
+instruction, not a control read and not a write ack lands in your receive queue.
+Held, it wedges the instructions behind it. Write acks never reach the queue:
+with `ACK_FENCE 1`, `noc_cu_base` consumes them and holds `CU_SIGNAL` until
+every write has landed ([compute-unit-port §3.3](../spec/compute-unit-port.md)).
+For any other unwanted type, accept and drop with a default arm on your
+`recv_ready` decode that is `1'b1` for unknown types, and print a simulation
+message naming the type, because silent loss is the whole hazard of dropping.
 
 **Decide `recv_ready` from flit type, not from your state alone.** A memory
 response only makes sense inside a fetch, but a unit-to-unit transfer is

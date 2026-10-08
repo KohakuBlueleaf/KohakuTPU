@@ -98,6 +98,12 @@ module rv64_syscore #(
     output reg  [63:0]            db_data,
     input  wire [63:0]            db_status,
 
+    // ---- the transform bank's config port (CTRL 0x1D0 select, 0x1D8 data) --
+    output reg                    xf_cfg_en,
+    output reg  [7:0]             xf_cfg_id,
+    output reg  [7:0]             xf_cfg_addr,
+    output reg  [63:0]            xf_cfg_data,
+
     input  wire                   irq_summary,
 
     output wire                   running,
@@ -130,6 +136,10 @@ module rv64_syscore #(
     reg  [63:0] nm_data;
     wire [63:0] nm_rdata;
     wire        noc_cq_nonempty;
+    wire [63:0] rx_rdata;
+    wire        noc_rq_nonempty;
+    reg         rx_pop;
+    reg         l1_flush_p, l1_inval_p;
 
     reg         boot_req, boot_ack, run_en;
     reg  [63:0] boot_pc;
@@ -444,7 +454,7 @@ module rv64_syscore #(
     // sized, so each test is one equality or one bit.
     localparam integer SPAD_LSB = $clog2(SPAD_WORDS * 8);
     wire in_spad  = (pa[ADDR_W-1:SPAD_LSB] == SPAD_BASE[ADDR_W-1:SPAD_LSB]);
-    wire in_ctrl  = (pa[ADDR_W-1:8]        == CTRL_BASE[ADDR_W-1:8]);
+    wire in_ctrl  = (pa[ADDR_W-1:10]       == CTRL_BASE[ADDR_W-1:10]);
     wire in_node  = |pa[ADDR_W-1:28];                    // NODE_BASE = 2^28
     // DRAM is cached; the special half (bit 39: staging, apertures) and the
     // UNCACHED ALIAS of DRAM (bit 38 set: the same bytes, no L1) are not. The
@@ -529,7 +539,7 @@ module rv64_syscore #(
         // core's own, as the scratchpad's early read address already is.
         .probe_addr(pa), .req(l1_act), .we(m_st_q), .be(m_be_q),
         .addr(m_pa_q), .wdata(m_wd_q), .rdata(l1_rdata), .stall(l1_stall),
-        .flush(1'b0), .inval(1'b0), .flush_busy(l1_flush_busy),
+        .flush(l1_flush_p), .inval(l1_inval_p), .flush_busy(l1_flush_busy),
         .fill_valid(fill_valid), .fill_ready(fill_ready), .fill_addr(fill_addr),
         .resp_valid(resp_valid), .resp_data(resp_data),
         .wb_valid(wb_valid), .wb_ready(wb_ready), .wb_addr(wb_addr),
@@ -593,18 +603,24 @@ module rv64_syscore #(
 
     // ---------------------------------------------------- the control region
     // `mv.go` IS A STORE, not an opcode: decoding it from an address keeps the
-    // ISA unchanged and matches the rule that control is a range.
+    // ISA unchanged and matches the rule that control is a range. 1 KB, mapped
+    // in docs/spec/control-registers.md s7.2.
     localparam [7:0] R_EXIT = 8'h00, R_CONSOLE = 8'h08, R_DBELL = 8'h10;
     localparam [7:0] R_STDIN = 8'h30;
     localparam [7:0] R_SATP = 8'h18, R_NOC = 8'h40, R_MVCFG = 8'h80;
     localparam [7:0] R_DBCFG = 8'hC0;
+    // Offsets inside 0x100-0x1FF.
+    localparam [7:0] R1_RXPOP = 8'h80;
+    localparam [7:0] R1_DCACHE = 8'hC8, R1_XFSEL = 8'hD0, R1_XFDAT = 8'hD8;
 
     // READS EARLY, WRITES REGISTERED, for the same reason as the spad: the read
     // must be answered in the second cycle, the write must not carry the address
     // adder into a register's clock enable (`wb_val_reg -> db_addr_reg/CE`).
-    wire [7:0] ctrl_off_rd = pa[7:0];
-    wire [7:0] ctrl_off    = m_pa_q[7:0];
+    wire [9:0] ctrl_off_rd = pa[9:0];
+    wire [9:0] ctrl_off    = m_pa_q[9:0];
     wire       ctrl_wr     = mem_started && sel_ctrl && m_st_q;
+    wire       c_lo        = (ctrl_off[9:8] == 2'b00);
+    wire       c_hi        = (ctrl_off[9:8] == 2'b01);
 
     always @(posedge clk) begin
         if (!resetn) begin
@@ -612,12 +628,42 @@ module rv64_syscore #(
             mv_cfg_en <= 1'b0;
             db_en     <= 1'b0;
             nm_en     <= 1'b0;
+            rx_pop    <= 1'b0;
+            xf_cfg_en <= 1'b0;
+            l1_flush_p <= 1'b0;
+            l1_inval_p <= 1'b0;
         end
         else begin
             mv_cfg_en <= 1'b0;
             db_en     <= 1'b0;
             nm_en     <= 1'b0;
-            if (ctrl_wr) begin
+            rx_pop    <= 1'b0;
+            xf_cfg_en <= 1'b0;
+            l1_flush_p <= 1'b0;
+            l1_inval_p <= 1'b0;
+            if (ctrl_wr && c_hi) begin
+                if (ctrl_off[7] == 1'b0) begin
+                    mv_cfg_en   <= 1'b1;
+                    mv_cfg_addr <= {1'b0, ctrl_off[6:0]};
+                    mv_cfg_data <= m_wd_q;
+                end
+                if (ctrl_off[7:0] == R1_RXPOP) begin
+                    rx_pop <= 1'b1;
+                end
+                if (ctrl_off[7:0] == R1_DCACHE) begin
+                    l1_flush_p <= m_wd_q[0];
+                    l1_inval_p <= m_wd_q[1];
+                end
+                if (ctrl_off[7:0] == R1_XFSEL) begin
+                    xf_cfg_id   <= m_wd_q[15:8];
+                    xf_cfg_addr <= m_wd_q[7:0];
+                end
+                if (ctrl_off[7:0] == R1_XFDAT) begin
+                    xf_cfg_en   <= 1'b1;
+                    xf_cfg_data <= m_wd_q;
+                end
+            end
+            if (ctrl_wr && c_lo) begin
                 if (ctrl_off[7:6] == 2'b01) begin
                     nm_en   <= 1'b1;
                     nm_addr <= ctrl_off[5:3];
@@ -684,7 +730,14 @@ module rv64_syscore #(
 
     reg [63:0] ctrl_q;
     always @(posedge clk) begin
-        if (ctrl_off_rd[7:6] == 2'b01) begin
+        if (ctrl_off_rd[9:8] == 2'b01) begin
+            case (ctrl_off_rd[7:6])
+                2'b10:   ctrl_q <= rx_rdata;
+                2'b11:   ctrl_q <= (ctrl_off_rd[7:0] == R1_DCACHE) ? {63'd0, l1_flush_busy}
+                                                                  : 64'd0;
+                default: ctrl_q <= 64'd0;
+            endcase
+        end else if (ctrl_off_rd[7:6] == 2'b01) begin
             ctrl_q <= nm_rdata;
         end else begin
             case (ctrl_off_rd)
@@ -706,6 +759,8 @@ module rv64_syscore #(
         .my_x(my_x), .my_y(my_y),
         .cfg_en(nm_en), .cfg_addr(nm_addr), .cfg_data(nm_data),
         .rd_addr(ctrl_off_rd[5:3]), .rd_data(nm_rdata),
+        .rx_rd_addr(ctrl_off_rd[5:3]), .rx_rd_data(rx_rdata), .rx_pop(rx_pop),
+        .rq_nonempty(noc_rq_nonempty),
         .tx_data(noc_out_data), .tx_valid(noc_out_valid),
         .tx_busy(noc_out_busy),
         .rx_data(noc_in_data), .rx_valid(noc_in_valid), .rx_busy(noc_in_busy),
@@ -776,7 +831,7 @@ module rv64_syscore #(
         .priv_settle_o(core_settle),
         // A completion waiting is exactly the condition a scheduler must not
         // have to poll for, so it raises the external line beside the node's.
-        .irq_ext(irq_summary || noc_cq_nonempty), .irq_soft(dbell),
+        .irq_ext(irq_summary || noc_cq_nonempty || noc_rq_nonempty), .irq_soft(dbell),
         .ext_halt(exited),
         .halted(core_halted), .halt_cause(core_cause), .halt_pc(core_halt_pc),
         .dbg_pc(), .dbg_retire(core_retire)

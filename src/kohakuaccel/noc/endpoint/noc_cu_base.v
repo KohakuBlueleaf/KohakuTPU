@@ -30,7 +30,10 @@ module noc_cu_base #(
     // The receive queue is 288 bits wide and two thirds of this module's LUTs,
     // so it gets its own knob: `u_sig` is narrow enough that block RAM loses,
     // and one parameter governing both would force the wrong answer on one.
-    parameter RECV_MEM    = "distributed"
+    parameter RECV_MEM    = "distributed",
+    // 1: CU_SIGNAL waits for every local write's MEM_WR_ACK
+    // (docs/spec/compute-unit-port.md s3.3); 0: MEM_WR_ACKs pass to the datapath.
+    parameter ACK_FENCE   = 0
 ) (
     input  wire                   clk,
     input  wire                   resetn,
@@ -74,6 +77,8 @@ module noc_cu_base #(
     output wire [15:0]            inst_space,
     output wire                   busy
 );
+    localparam [3:0] T_MEM_WR_REQ = 4'h1;
+    localparam [3:0] T_MEM_WR_ACK = 4'h3;
     localparam [3:0] T_CU_INST   = 4'h5;
     localparam [3:0] T_CU_SIGNAL = 4'h6;
     localparam [3:0] T_CU_CTRL   = 4'h7;
@@ -94,6 +99,7 @@ module noc_cu_base #(
     wire [3:0] in_type = `HDR_TY(noc_in_data);
     wire       in_inst = (in_type == T_CU_INST);
     wire       in_ctrl = (in_type == T_CU_CTRL);
+    wire       in_ack  = (ACK_FENCE != 0) && (in_type == T_MEM_WR_ACK);
 
     wire inst_full, inst_empty, recv_full, recv_empty;
     wire inst_almost, recv_almost;
@@ -105,7 +111,8 @@ module noc_cu_base #(
     // valid flit. Plain `full` despite the name -- sync_fifo passes
     // USE_ADV_FEATURES(0) -- which is safe only because the link RETRIES.
     // See docs/noc/spec.md s2.1.
-    assign noc_in_busy = inst_almost | recv_almost;
+    // Also held while a CU_CTRL reply is pending.
+    assign noc_in_busy = inst_almost | recv_almost | ctrl_pend;
 
     sync_fifo #(.DATA_WIDTH(FLIT_WIDTH), .FIFO_DEPTH(INST_DEPTH),
                 .MEMORY_TYPE(MEM_TYPE)) u_inst (
@@ -123,7 +130,7 @@ module noc_cu_base #(
     sync_fifo #(.DATA_WIDTH(FLIT_WIDTH), .FIFO_DEPTH(RECV_DEPTH),
                 .MEMORY_TYPE(RECV_MEM)) u_recv (
         .clk(clk), .rst(!resetn),
-        .wr_en(noc_in_valid && !noc_in_busy && !in_inst && !in_ctrl),
+        .wr_en(noc_in_valid && !noc_in_busy && !in_inst && !in_ctrl && !in_ack),
         .wr_data(noc_in_data), .wr_busy(recv_full), .wr_almost(recv_almost),
         .rd_en(recv_valid && recv_ready), .rd_data(recv_flit), .rd_busy(recv_empty)
     );
@@ -193,7 +200,13 @@ module noc_cu_base #(
     // link that may be busy by the time the flit is presented, and a lost
     // CU_SIGNAL never returns its credit.
     wire tx_free   = !noc_out_valid || !noc_out_busy;
-    wire sig_sent  = sig_pend  && tx_free;
+
+    // The write fence: local writes outstanding, and a dropped-write flag.
+    reg  [15:0] wr_out;
+    reg         wr_err;
+    wire        wr_clear  = (ACK_FENCE == 0) || (wr_out == 16'd0);
+
+    wire sig_sent  = sig_pend  && tx_free && wr_clear;
     wire ctrl_sent = ctrl_pend && tx_free && !sig_pend;
     assign send_ready = tx_free && !sig_pend && !ctrl_pend;
 
@@ -304,7 +317,7 @@ module noc_cu_base #(
     wire [FLIT_WIDTH-1:0] out_sig =
         { s_x, s_y, POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
           T_CU_SIGNAL, s_id, 1'b1, 3'b000,
-          s_code, s_arg, {PAD_SIG{1'b0}} };
+          (wr_err ? SIG_FAULT : s_code), s_arg, {PAD_SIG{1'b0}} };
     wire [FLIT_WIDTH-1:0] out_ctrl =
         { ctrl_x, ctrl_y, POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
           T_CU_CTRL, ctrl_txn, 1'b1, 3'b000,
@@ -315,6 +328,30 @@ module noc_cu_base #(
                                    : ctrl_sent ? out_ctrl
                                                : send_flit;
     wire out_take = sig_sent | ctrl_sent | (send_valid && send_ready);
+
+    // A local MEM_WR_REQ leaving (NOC_RSVD bit 2 clear), and a MEM_WR_ACK arriving.
+    wire wr_req_out = (ACK_FENCE != 0) && send_valid && send_ready
+                      && (`HDR_TY(send_flit) == T_MEM_WR_REQ)
+                      && !send_flit[FLIT_WIDTH - 4*POS_WIDTH - 16 + 2];
+    wire wr_ack_in  = noc_in_valid && !noc_in_busy && in_ack;
+
+    always @(posedge clk) begin
+        if (!resetn) begin
+            wr_out <= 16'd0;
+            wr_err <= 1'b0;
+        end else begin
+            case ({wr_req_out, wr_ack_in})
+                2'b10: wr_out <= wr_out + 16'd1;
+                2'b01: wr_out <= wr_out - 16'd1;
+                default: ;
+            endcase
+            if (wr_ack_in && noc_in_data[0]) begin
+                wr_err <= 1'b1;
+            end else if (sig_sent) begin
+                wr_err <= 1'b0;
+            end
+        end
+    end
 
     always @(posedge clk) begin
         // `noc_out_data` is NOT reset: `noc_out_valid` qualifies it, and the XPM

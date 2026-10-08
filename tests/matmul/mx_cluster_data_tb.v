@@ -74,6 +74,26 @@ module mx_cluster_data_tb;
     wire [FLIT-1:0] noc_out_data;
     wire            noc_out_valid;
 
+    // The memory's MEM_WR_ACK, one per burst after its last data beat; the
+    // bench's own sends see the link busy while one is presented.
+    localparam [3:0] T_MEM_WR_ACK = 4'h3;
+    integer         ack_owed = 0;
+    reg             ack_v = 1'b0;
+    wire            dut_busy;
+    wire [FLIT-1:0] ack_f = {CU_X[3:0], CU_Y[3:0], MEM_X[3:0], MEM_Y[3:0],
+                             T_MEM_WR_ACK, 8'h00, 1'b1, 3'b000, 256'd0};
+    wire            last_wd = noc_out_valid
+                              && (noc_out_data[FLIT-4*PWID-1 -: 4] == T_MEM_WR_DATA)
+                              && noc_out_data[FLIT-4*PWID-13];
+    wire            ack_go  = (ack_owed > 0 || last_wd) && !noc_in_valid && !dut_busy && !ack_v;
+
+    assign noc_in_busy = dut_busy || ack_v;
+
+    always @(posedge clk) begin
+        ack_v    <= ack_go;
+        ack_owed <= ack_owed + (last_wd ? 1 : 0) - (ack_go ? 1 : 0);
+    end
+
     // GA/GB = 512 and block RAM, the production shape: two banks of 256, which
     // is the only configuration where the bank bit is not optimised away.
 `ifdef MX_CU_PUMP
@@ -93,8 +113,8 @@ module mx_cluster_data_tb;
     ) dut (
         .clk(clk), .clk2x(1'b0), .resetn(resetn),
 `endif
-        .noc_in_data(noc_in_data), .noc_in_valid(noc_in_valid),
-        .noc_in_busy(noc_in_busy),
+        .noc_in_data(ack_v ? ack_f : noc_in_data), .noc_in_valid(ack_v || noc_in_valid),
+        .noc_in_busy(dut_busy),
         .noc_out_data(noc_out_data), .noc_out_valid(noc_out_valid),
         .noc_out_busy(1'b0),
         .fills_done(), .gemms_done(), .drains_done()

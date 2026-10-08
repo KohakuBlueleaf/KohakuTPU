@@ -9,10 +9,14 @@
 
 `default_nettype none
 
+// Sends any flit type (DST[24] selects DST[23:20]); queues inbound CU_SIGNALs
+// in the completion queue and every other inbound flit whole in the RX queue.
+
 module rv64_noc_mbox #(
     parameter integer FLIT_WIDTH = 288,
     parameter integer POS_WIDTH  = 4,
-    parameter integer CQ_DEPTH   = 16
+    parameter integer CQ_DEPTH   = 16,
+    parameter integer RQ_DEPTH   = 8
 )(
     input  wire                   clk,
     input  wire                   resetn,
@@ -26,6 +30,13 @@ module rv64_noc_mbox #(
     input  wire [63:0]            cfg_data,
     input  wire [2:0]             rd_addr,
     output reg  [63:0]            rd_data,
+
+    // ---- the RX window: 0 HDR {valid[63], header[31:0]}, 1..4 P0..P3,
+    //      5 STAT {used}; rx_pop drops the head ----
+    input  wire [2:0]             rx_rd_addr,
+    output reg  [63:0]            rx_rd_data,
+    input  wire                   rx_pop,
+    output wire                   rq_nonempty,
 
     // ---- flits, as a client of the node's hub ----
     output reg  [FLIT_WIDTH-1:0]  tx_data,
@@ -49,6 +60,8 @@ module rv64_noc_mbox #(
     localparam [2:0] R_ARG3 = 3'd4, R_GO   = 3'd5, R_STAT = 3'd6, R_HEAD = 3'd7;
 
     reg [POS_WIDTH-1:0] dst_x, dst_y;
+    reg [3:0]           tx_type;     // DST[23:20], used when DST[24] is set
+    reg                 tx_typed;
     reg [63:0]          arg0, arg1, arg2, arg3;
     reg [7:0]           txn;
 
@@ -71,8 +84,10 @@ module rv64_noc_mbox #(
             if (cfg_en) begin
                 case (cfg_addr)
                     R_DST: begin
-                        dst_x <= cfg_data[POS_WIDTH-1:0];
-                        dst_y <= cfg_data[8 +: POS_WIDTH];
+                        dst_x    <= cfg_data[POS_WIDTH-1:0];
+                        dst_y    <= cfg_data[8 +: POS_WIDTH];
+                        tx_type  <= cfg_data[23:20];
+                        tx_typed <= cfg_data[24];
                     end
                     R_ARG0: arg0 <= cfg_data;
                     R_ARG1: arg1 <= cfg_data;
@@ -80,7 +95,8 @@ module rv64_noc_mbox #(
                     R_ARG3: arg3 <= cfg_data;
                     R_GO: if (!tx_valid) begin
                         tx_data  <= {dst_x, dst_y, my_x, my_y,
-                                     T_CU_INST, txn, 1'b1, 3'b000, payload};
+                                     tx_typed ? tx_type : T_CU_INST,
+                                     txn, 1'b1, 3'b000, payload};
                         tx_valid <= 1'b1;
                         txn      <= txn + 8'd1;
                     end
@@ -99,42 +115,70 @@ module rv64_noc_mbox #(
     wire            cq_full  = (cq_used == CQ_DEPTH[CQ_AW:0]);
     assign cq_nonempty = (cq_wr != cq_rd);
 
-    // A flit the queue cannot take is ACCEPTED and dropped, never held: held, it
-    // stalls the hub for everything behind it, including what would drain us.
-    assign rx_busy = 1'b0;
-
     wire [3:0] rx_type = rx_data[FLIT_WIDTH-4*POS_WIDTH-1 -: 4];
+    wire       rx_sig  = (rx_type == T_CU_SIGNAL);
+
+    // ---- the RX queue: every non-signal flit, whole --------------------------
+    localparam integer RQ_AW = $clog2(RQ_DEPTH);
+    reg [FLIT_WIDTH-1:0] rq [0:RQ_DEPTH-1];
+    reg [RQ_AW:0]        rq_wr, rq_rd;
+    wire [RQ_AW:0]       rq_used = rq_wr - rq_rd;
+    wire                 rq_full = (rq_used == RQ_DEPTH[RQ_AW:0]);
+    assign rq_nonempty = (rq_wr != rq_rd);
+
+    // Busy while either queue is full.
+    assign rx_busy = cq_full || rq_full;
+
+    always @(posedge clk) begin
+        if (!resetn) begin
+            rq_wr <= {(RQ_AW+1){1'b0}};
+            rq_rd <= {(RQ_AW+1){1'b0}};
+        end else begin
+            if (rx_valid && !rx_sig && !rq_full) begin
+                rq[rq_wr[RQ_AW-1:0]] <= rx_data;
+                rq_wr <= rq_wr + 1'b1;
+            end
+            if (rx_pop && rq_nonempty) begin
+                rq_rd <= rq_rd + 1'b1;
+            end
+        end
+    end
+
+    wire [FLIT_WIDTH-1:0] rq_head = rq[rq_rd[RQ_AW-1:0]];
+    always @(*) begin
+        case (rx_rd_addr)
+            3'd0:    rx_rd_data = {rq_nonempty, 31'd0, rq_head[FLIT_WIDTH-1 -: 32]};
+            3'd1:    rx_rd_data = rq_head[0   +: 64];
+            3'd2:    rx_rd_data = rq_head[64  +: 64];
+            3'd3:    rx_rd_data = rq_head[128 +: 64];
+            3'd4:    rx_rd_data = rq_head[192 +: 64];
+            3'd5:    rx_rd_data = {{(64-RQ_AW-1){1'b0}}, rq_used};
+            default: rx_rd_data = 64'd0;
+        endcase
+    end
+
     wire [POS_WIDTH-1:0] rx_sx = rx_data[FLIT_WIDTH-2*POS_WIDTH-1 -: POS_WIDTH];
     wire [POS_WIDTH-1:0] rx_sy = rx_data[FLIT_WIDTH-3*POS_WIDTH-1 -: POS_WIDTH];
-    wire [7:0]  rx_code = rx_data[7:0];
-    wire [31:0] rx_arg  = rx_data[39:8];
-
-    reg cq_ovf;
+    // A signal's code is the payload's top byte, its argument the 32 bits below.
+    wire [7:0]  rx_code = rx_data[FLIT_WIDTH-4*POS_WIDTH-17 -: 8];
+    wire [31:0] rx_arg  = rx_data[FLIT_WIDTH-4*POS_WIDTH-25 -: 32];
 
     always @(posedge clk) begin
         if (!resetn) begin
             cq_wr  <= {(CQ_AW+1){1'b0}};
             cq_rd  <= {(CQ_AW+1){1'b0}};
-            cq_ovf <= 1'b0;
         end
         else begin
-            if (rx_valid && (rx_type == T_CU_SIGNAL)) begin
-                if (!cq_full) begin
-                    cq[cq_wr[CQ_AW-1:0]] <= {
-                        8'd0,               // [63:56]
-                        rx_sy,              // [55:52] source y
-                        rx_sx,              // [51:48] source x
-                        rx_code,            // [47:40] completion code
-                        rx_arg,             // [39:8]  argument
-                        {(64-8-2*POS_WIDTH-8-32){1'b0}}
-                    };
-                    cq_wr <= cq_wr + 1'b1;
-                end
-                else begin
-                    // STICKY: a dropped completion and a unit that never
-                    // finished look identical from software otherwise.
-                    cq_ovf <= 1'b1;
-                end
+            if (rx_valid && rx_sig && !cq_full) begin
+                cq[cq_wr[CQ_AW-1:0]] <= {
+                    8'd0,               // [63:56]
+                    rx_sy,              // [55:52] source y
+                    rx_sx,              // [51:48] source x
+                    rx_code,            // [47:40] completion code
+                    rx_arg,             // [39:8]  argument
+                    {(64-8-2*POS_WIDTH-8-32){1'b0}}
+                };
+                cq_wr <= cq_wr + 1'b1;
             end
             if (cfg_en && (cfg_addr == R_HEAD) && cq_nonempty) begin
                 cq_rd <= cq_rd + 1'b1;
@@ -150,7 +194,8 @@ module rv64_noc_mbox #(
             R_ARG1: rd_data = arg1;
             R_ARG2: rd_data = arg2;
             R_ARG3: rd_data = arg3;
-            R_STAT: rd_data = {32'd0, cq_ovf, 15'd0,
+            // [31] is allocated and reads 0: a full queue holds the hub.
+            R_STAT: rd_data = {32'd0, 1'b0, 15'd0,
                                tx_valid, 7'd0, {(8-CQ_AW-1){1'b0}}, cq_used};
             R_HEAD: rd_data = cq_nonempty ? cq[cq_rd[CQ_AW-1:0]] : 64'd0;
             default: rd_data = 64'd0;

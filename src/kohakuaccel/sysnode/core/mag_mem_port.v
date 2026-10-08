@@ -639,7 +639,7 @@ module mag_mem_port #(
             && (wi_ty == T_MEM_WR_REQ)
             && stg_unserved(wi_addr)
         ) begin
-            $display("%0t ERROR mag_mem_port(mesh %0d, %0d,%0d):write at %h names a reserved aperture or another mesh -- DROPPED rather than aliased onto DRAM, so the drain will never ack",
+            $display("%0t ERROR mag_mem_port(mesh %0d, %0d,%0d):write at %h names a reserved aperture or another mesh -- DROPPED rather than aliased onto DRAM; its ACK carries the drop flag",
                      $time, MESH_ID, MEM_X, MEM_Y, wi_addr);
         end
         // THE DROP ITSELF, named at the moment it happens. Without this the
@@ -932,13 +932,12 @@ module mag_mem_port #(
                 // source, so nothing here depends on flit arrival order. The
                 // beat COUNTER, not the flit stream, decides where the burst
                 // ends: a requester that miscounts its own data must not
-                // desynchronise the response. Dropped, and the slot freed
-                // rather than wedged: no ack, so the requester hangs loudly
-                // instead of being told a lie.
+                // desynchronise the response. A reserved-aperture write is
+                // dropped and answered by an ACK with payload bit 0 set.
                 S_WR_DATA: begin
                     if (wr_bad) begin
-                        ws_done <= 1'b1;
-                        st      <= S_IDLE;
+                        wr_b <= 1'b1;
+                        st   <= S_WR_ACK;
                     end else if (!wd_ok) begin
                         // `wd_adv` takes beat 0 into `wd_cur` this cycle.
                         wd_ok <= 1'b1;
@@ -978,7 +977,7 @@ module mag_mem_port #(
                             rq_x, rq_y,
                             MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
                             T_MEM_WR_ACK, rq_txn, 1'b1, 3'b000,
-                            {(FLIT_WIDTH-4*POS_WIDTH-16){1'b0}}
+                            {(FLIT_WIDTH-4*POS_WIDTH-17){1'b0}}, wr_bad
                         };
                         mem_out_valid <= 1'b1;
                         ws_done <= 1'b1;    // free the slot for its next write

@@ -174,12 +174,7 @@ module mx_cluster_cu #(
     // receiver much further down.
     reg                   fault_r;
 
-    // ---- inbound demux by TYPE, as mag.v does on its shared memory ports ---
-    // A MEM_WR_ACK is ACCEPTED AND DROPPED here. Nothing consumes it, so queued
-    // it fills the receive FIFO, raises `noc_in_busy` for good, and wedges the
-    // instructions behind it. It was `a_in_busy = 1'b0` on a port of its own.
-    wire [3:0] in_ty  = noc_in_data[FLIT_WIDTH-4*POS_WIDTH-1 -: 4];
-    wire       in_ack = (in_ty == T_MEM_WR_ACK);
+    // Every inbound flit, MEM_WR_ACK included, goes to noc_cu_base (ACK_FENCE 1).
     wire       base_in_busy;
 
     wire [FLIT_WIDTH-1:0] tx_flit;
@@ -209,10 +204,9 @@ module mx_cluster_cu #(
         end
         assign u_resetn = ur_q[1];
 
-        // An ACK is dropped at the NoC face, so it never costs a FIFO slot.
         noc_local_cdc #(.FLIT_WIDTH(FLIT_WIDTH), .DEPTH(CDC_DEPTH)) u_cdc_in (
             .wr_clk(clk), .wr_resetn(resetn),
-            .i_data(noc_in_data), .i_valid(noc_in_valid && !in_ack),
+            .i_data(noc_in_data), .i_valid(noc_in_valid),
             .i_busy(port_in_busy),
             .rd_clk(u_clk), .rd_resetn(u_resetn),
             .o_data(bp_in_data), .o_valid(bp_in_valid), .o_busy(base_in_busy)
@@ -228,7 +222,7 @@ module mx_cluster_cu #(
         assign u_clk        = clk;
         assign u_resetn     = resetn;
         assign bp_in_data   = noc_in_data;
-        assign bp_in_valid  = noc_in_valid && !in_ack;
+        assign bp_in_valid  = noc_in_valid;
         assign port_in_busy = base_in_busy;
         assign noc_out_data  = bp_out_data;
         assign noc_out_valid = bp_out_valid;
@@ -240,9 +234,9 @@ module mx_cluster_cu #(
         .POS_X(CU_X), .POS_Y(CU_Y),
         // Mesh-wide build number -- see vec_cu.v. 0x03 is the CU_DATA
         // interconnect: unit-to-unit transfer on both halves of the mesh.
-        .CU_TYPE(16'h4D47), .CU_VERSION(8'h04), .N_BUFFERS(2),
+        .CU_TYPE(16'h4D47), .CU_VERSION(8'h05), .N_BUFFERS(2),
         .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
-        .RECV_MEM(RECV_MEM), .MEM_TYPE(MEM_TYPE)
+        .RECV_MEM(RECV_MEM), .MEM_TYPE(MEM_TYPE), .ACK_FENCE(1)
     ) u_base (
         .clk(u_clk), .resetn(u_resetn),
         .noc_in_data(bp_in_data), .noc_in_valid(bp_in_valid),
@@ -257,7 +251,7 @@ module mx_cluster_cu #(
         .inst_space(), .busy()
     );
 
-    assign noc_in_busy = in_ack ? 1'b0 : port_in_busy;
+    assign noc_in_busy = port_in_busy;
 
     // `n` is SIXTEEN bits: a 512-sub-tile resident tile means a DRAIN of 512,
     // and an 8-bit field wraps at 256, silently re-draining the start of the

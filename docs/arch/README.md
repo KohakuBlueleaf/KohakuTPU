@@ -284,8 +284,9 @@ read of it.
 **6. The compute unit computes, then writes results.** A write is a descriptor
 flit followed by data flits. The memory port matches data to descriptor by
 source coordinate rather than by arrival order, because the mesh may put another
-node's flit between them. The write ack is fire-and-forget: the unit does not
-wait for it.
+node's flit between them. The unit does not wait for a
+write's ack before the next write; `noc_cu_base` counts the acks and holds the
+unit's completion signal until every write has landed.
 
 **7. The unit retires the instruction.** It raises `exec_done`, and
 `noc_cu_base` queues a `CU_SIGNAL` back to whoever sent the instruction.

@@ -746,12 +746,10 @@ through a dispatch mailbox in its own control region (§7.5) rather than through
 a shell. The host reaches it over a dedicated port on `sysnode` — not AXI, and
 not part of the orchestrator's map in §2.
 
-> **A flit addressed to its coordinate is accepted and discarded unless it is a
-> `CU_SIGNAL`, and a reader has to know that.** The mailbox holds `rx_busy` low,
-> which the hub reads as *not busy*, so an arriving flit is always taken: a
-> `CU_SIGNAL` is queued and everything else is dropped. A `CU_CTRL` read to that
-> coordinate therefore never replies, and the node reads as absent —
-> indistinguishable from an empty coordinate.
+> **The complex is not a compute unit, so a `CU_CTRL` read addressed to its
+> coordinate lands in its RX queue as data (§7.5) and is answered by nothing.**
+> A controller walking the mesh sees the coordinate as empty unless software on
+> the node replies.
 >
 > With the default RV32 complex the same coordinate *is* a conforming compute
 > unit and does answer §1. **Which register surface exists at `(0, 0)` is decided
@@ -848,9 +846,9 @@ buffered and never reordered against a later one.
 
 ### 7.1 Where it is
 
-A **256-byte** range at `CTRL_BASE`, default `0x0000_0000_0002_0000`. The decode
-is `pa[ADDR_W-1:8] == CTRL_BASE[ADDR_W-1:8]` — a bit test, not a magnitude
-compare, so `CTRL_BASE` **MUST** be 256-byte aligned. The offset is `pa[7:0]`.
+A **1 KB** range at `CTRL_BASE`, default `0x0000_0000_0002_0000`. The decode
+is `pa[ADDR_W-1:10] == CTRL_BASE[ADDR_W-1:10]` — a bit test, not a magnitude
+compare, so `CTRL_BASE` **MUST** be 1 KB aligned. The offset is `pa[9:0]`.
 
 Reads are answered from the early address and writes from the registered one,
 which means a read is answered in the cycle after the access starts, exactly as
@@ -867,8 +865,15 @@ an L1 hit is.
 | `0x20` | mover status | R | `[32]` mover busy, `[31:28]` mover fault, `[27:0]` moves completed. `[63:33]` zero. |
 | `0x28` | doorbell status | R | The 64-bit word on the complex's `db_status` input: `mag_ilink`'s four inbound doorbell counts, mesh 0 in `[15:0]` up to mesh 3 in `[63:48]`, or zero when no interlink is built. |
 | `0x40`–`0x7F` | dispatch mailbox | RW | A store writes mailbox register `pa[5:3]`; a load reads it. §7.5. |
-| `0x80`–`0xBF` | mover config | W | A store writes mover register `pa[5:0]` with the stored 64-bit value. §7.3. |
+| `0x80`–`0xBF` | mover config (alias) | W | A store writes mover register `pa[5:0]` — the low half of the mover's map. §7.3. |
 | `0xC0`–`0xFF` | interlink config | W | A store drives the complex's `db_*` port with address `{2'b10, pa[5:0]}` and the stored value, so it writes interlink client register `0x80 + pa[5:0]`. §7.4. |
+| `0x100`–`0x17F` | mover config | W | A store writes mover register `pa[6:0]` — the **whole** mover map, including `0x40` (immediate) and `0x50` (gather pitch). §7.3. |
+| `0x180` | `RX_HDR` | RW | Read: `[63]` valid, `[31:0]` the head flit's header (type at `[15:12]`). **A store pops the head.** §7.5. |
+| `0x188`–`0x1A0` | `RX_P0`–`RX_P3` | R | The head flit's payload, `flit[63:0]` up to `flit[255:192]`. |
+| `0x1A8` | `RX_USED` | R | Flits queued. |
+| `0x1C8` | `DCACHE` | RW | Store: `[0]` flush (write every dirty line back), `[1]` invalidate (drop every line; with `[0]`, after the flush). Read: `[0]` busy. Poll until 0 before the next cached access that depends on it. |
+| `0x1D0` | `XF_SEL` | W | Transform-bank config select: `[15:8]` slot id, `[7:0]` register. |
+| `0x1D8` | `XF_DATA` | W | Transform-bank config data; **the store is the write strobe**, to the slot and register named by `XF_SEL`. [transform-slot.md](transform-slot.md). |
 | everything else | — | R | `64'd0`. Writes are ignored. |
 
 Note the two status words differ from the RV32 complex's single `node_word`
@@ -876,19 +881,14 @@ Note the two status words differ from the RV32 complex's single `node_word`
 in different places and the occupant fault is absent. A driver **MUST NOT** share
 a decoder between them.
 
-### 7.3 The mover window reaches only half the mover
+### 7.3 The mover window
 
-A store at `0x80 + k` writes mover register `k`, for `k` in `0x00`–`0x3F`. The
-register index is `pa[5:0]` zero-extended.
-
-**`0x40` and above of the mover's map are therefore unreachable from the
-processor.** That is the mover's immediate register (`0x40`, the fill value and
-the padding value) and its gather pitch and word count (`0x50`) —
-[§3](#3-the-memory-movers-command-registers). A program running on the RV64
-complex can command `COPY`, `GENERATE` and `XFORM` moves, and cannot fully
-configure `FILL` or `GATHER`. The host's `AUX_CFG` window (§3) still reaches all
-of them, and the processor's writes win over the host's when both pulse in one
-cycle.
+A store at `0x100 + k` writes mover register `k`, for `k` in `0x00`–`0x7F` —
+the mover's whole map ([§3](#3-the-memory-movers-command-registers)), so every
+mode including `FILL` (immediate at `0x40`) and `GATHER` (pitch at `0x50`) is
+commanded from the processor. `0x80 + k` is an alias of the low half
+(`k` < `0x40`). The processor's writes win over the host's `AUX_CFG` when both
+pulse in one cycle.
 
 **There is no `MVGO` descriptor path.** The RV32 complex issues a move by storing
 a pointer to a register-write list; the RV64 complex has no such register, so a
@@ -931,8 +931,6 @@ so a count may survive a clear rather than a ring being lost.
 > itself: issue the writes, poll the mover's status at `0x20` until it is no
 > longer busy, and only then ring. Do not treat a doorbell as a release fence.
 
-The mover window (§7.3) reaches the mover's registers `0x00`–`0x3F` for the
-matching reason: the mover's own map starts at `0x00`, so it needs no offset.
 
 ### 7.5 The dispatch mailbox
 
@@ -950,7 +948,7 @@ Registers at `0x40 + index * 8`, the index being `pa[5:3]`:
 
 | Offset | Index | Name | Access | Contents |
 |---|---|---|---|---|
-| `0x40` | 0 | `M_DST` | RW | `[POS_WIDTH-1:0]` destination x, `[8+:POS_WIDTH]` destination y. Reads back in the same packing |
+| `0x40` | 0 | `M_DST` | RW | `[POS_WIDTH-1:0]` destination x, `[8+:POS_WIDTH]` destination y, `[23:20]` flit type, `[24]` use that type (0: `CU_INST`). Reads back x and y |
 | `0x48` | 1 | `M_ARG0` | RW | Payload `[63:0]` |
 | `0x50` | 2 | `M_ARG1` | RW | Payload `[127:64]` |
 | `0x58` | 3 | `M_ARG2` | RW | Payload `[191:128]` |
@@ -959,10 +957,20 @@ Registers at `0x40 + index * 8`, the index being `pa[5:3]`:
 | `0x70` | 6 | `M_STAT` | RO | `[7:0]` completions queued, `[15]` a dispatch is offered and not yet taken, `[31]` sticky queue overflow. All other bits zero |
 | `0x78` | 7 | `M_HEAD` | RW | RO: the oldest queued completion, or `64'd0` when empty. **A store discards the head** |
 
-The flit `M_GO` builds is a `CU_INST` (type `0x5`): destination from `M_DST`,
-source from the complex's own `(my_x, my_y)`, `last` set, an 8-bit `txn` the
-mailbox increments per dispatch, and `{M_ARG3, M_ARG2, M_ARG1, M_ARG0}` as the
-full 256-bit payload. Nothing else in the flit is reachable from software.
+The flit `M_GO` builds is a `CU_INST` (type `0x5`), or the type in
+`M_DST[23:20]` when `M_DST[24]` is set — `CU_CTRL` (`0x7`) for a capability or
+status read, `CU_DATA` (`0x8`) for a unit-to-unit burst. Destination from
+`M_DST`, source from the complex's own `(my_x, my_y)`, `last` set, an 8-bit
+`txn` the mailbox increments per dispatch, and `{M_ARG3, M_ARG2, M_ARG1,
+M_ARG0}` as the full 256-bit payload. A `CU_CTRL` read names its index in
+`M_ARG3[55:48]`; the reply arrives in the RX queue with the 64-bit value at
+`flit[239:176]` (`RX_P3[47:0]` above `RX_P2[63:48]`).
+
+**Inbound, every flit is kept.** A `CU_SIGNAL` is summarised into the completion
+queue below; every other type lands whole in the **RX queue** (8 deep):
+`RX_HDR`/`RX_P0`–`RX_P3`/`RX_USED` at `0x180`–`0x1A8` (§7.2). Neither queue
+drops: when either is full the mailbox holds the hub, which is live because the
+processor drains itself.
 
 A queued completion is one 64-bit word:
 
@@ -985,13 +993,11 @@ Four rules bind a dispatcher.
   downstream. A second `M_GO` inside that window does nothing and reports
   nothing. A dispatcher **MUST** check `M_STAT[15]` before every `M_GO` after the
   first.
-- **A completion the queue cannot hold is accepted and dropped.** The queue is
-  `CQ_DEPTH` deep, 16 at the reference build. The mailbox never raises busy on
-  the hub — held, an unwanted completion would sit at the head of the hub's queue
-  and stall the link for everything behind it, including the traffic that would
-  drain the queue. `M_STAT[31]` is **sticky** and is the only witness, because a
-  dropped completion and a unit that never finished are otherwise identical from
-  software.
+- **A full completion queue holds the hub.** The queue is `CQ_DEPTH` deep, 16
+  at the reference build; a completion it cannot take waits at the hub until the
+  program pops one. Memory traffic on the same hub port waits behind it, so a
+  dispatcher **MUST** keep draining. `M_STAT[31]` stays allocated and is never
+  set.
 - **Popping is a write to `M_HEAD`.** Reading it has no side effect; a store to
   it discards the head. The control region answers a read from a register one
   cycle later, so a read-triggered pop would have to guess which cycle the read
@@ -1003,9 +1009,15 @@ Four rules bind a dispatcher.
   hold — and in this configuration nothing in hardware enforces it. The depth is
   `inst_depth` from that node's `CU_CAPS` (§1.3).
 
-A non-empty queue raises the core's external interrupt, alongside the node's
-`irq_summary`. Waiting for a completion is exactly the condition a scheduler
-must not have to poll for.
+A non-empty completion or RX queue raises the core's external interrupt,
+alongside the node's `irq_summary`. Waiting for a completion is exactly the
+condition a scheduler must not have to poll for.
+
+**A completion means the unit's DRAM writes landed.** A matmul or vector unit
+(`noc_cu_base` `ACK_FENCE 1`, `CU_VERSION 0x05`) counts its local
+`MEM_WR_REQ`s against the `MEM_WR_ACK`s the memory port returns after the DRAM
+write response, and holds its `CU_SIGNAL` until the count is zero. A dispatcher
+reads results after the completion with no delay and no readback.
 
 ## 8. Known divergences
 
@@ -1019,9 +1031,7 @@ must not have to poll for.
 | Orchestrator location | `noc_orchestrator.v` lives under `src/kohakuaccel/noc/` but is the memory agent's control plane and is instantiated only by `mag.v`. |
 | `HR_PC` has no consumer | The RV64 host window accepts a 64-bit boot PC at `0x08` and stores it. `rv64_core` takes its start address from the `RESET_PC` parameter, which `rv64_syscore` fixes at 0, and has no PC input. The register is a reservation. §6.3. |
 | RV64 host-window read decode | `hs_rdata` is selected from `hs_addr[7:0]` with no test of `hs_addr[31:28]`, so every region aliases the control region for reads. §6.2. |
-| RV64 mover window is half-width | The control region carries mover register index `pa[5:0]`, so offsets `0x40` and above of the mover's map cannot be written by the processor. §7.3. |
 | Doorbells are not ordered against data | The interlink's outbound arbiter picks between a remote write, a flit and a doorbell by rotating priority, so a ring can leave ahead of a queued write. A producer must order it in software — writes, then the mover idle, then the ring. §7.4. |
 | RV64 coordinate is not enumerable | The complex is a live hub client at `(0, 0)` and dispatches, but it wears no compute-unit shell, so it answers no `CU_CTRL` read. A controller walking the mesh sees the coordinate as empty, and there is no runtime way to tell which configuration a bitstream carries. §6. |
 | RV64 dispatch has no credit mechanism | The orchestrator's dispatch path holds a credit counter and stalls locally at zero (§2.4). The mailbox has neither, so on this path the rule against over-dispatching a node's instruction FIFO is enforced only by the program. §7.5. |
-| RV64 ordering guarantee unpublished | A compute unit's completion means every write it made is visible; that is a dispatcher's only sequencing point. The RV64 complex has no shell and has not published an equivalent guarantee for traffic it originates. §7.5. |
-| RV64 status words differ from RV32's | The RV32 complex reports `{busy, mover fault, occupant fault}` in one 32-bit `node_word`; the RV64 control region reports mover busy, mover fault and moves-completed at `0x20` in different positions and carries no occupant fault, because its transform register port is tied off. §7.2, [transform-slot.md](transform-slot.md). |
+| RV64 status words differ from RV32's | The RV32 complex reports `{busy, mover fault, occupant fault}` in one 32-bit `node_word`; the RV64 control region reports mover busy, mover fault and moves-completed at `0x20` in different positions and carries no occupant fault. §7.2, [transform-slot.md](transform-slot.md). |

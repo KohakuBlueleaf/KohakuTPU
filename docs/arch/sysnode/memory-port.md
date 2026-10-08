@@ -105,9 +105,10 @@ three bits are needed: with only `val` and `rdy`, a slot whose write is on the
 bus is indistinguishable from one still waiting for its data, and the next data
 flit from that source binds to the in-flight slot.
 
-Slot count is a correctness parameter, not a performance one. A unit that
-discards its write ack — which it should, they are fire-and-forget — sends its
-next descriptor while the previous burst is still on the bus. With one slot per
+Slot count is a correctness parameter, not a performance one. A unit never
+waits for one write's ack before the next — its fence counts acks and holds only
+the completion signal — so it sends its next descriptor while the previous burst
+is still on the bus. With one slot per
 unit, the second descriptor finds nothing free, is never popped, and blocks the
 data flits behind it that would have freed one. **Under-sizing does not corrupt
 anything; it deadlocks.**

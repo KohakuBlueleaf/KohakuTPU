@@ -184,7 +184,7 @@ and a remote flit is `CU_DATA` or `MEM_WR_*`.
 | `0x0` | `MEM_RD_REQ` | any endpoint | the memory agent |
 | `0x1` | `MEM_WR_REQ` | any endpoint | the memory agent |
 | `0x2` | `MEM_RD_RESP` | the memory agent | the requester, or a listed peer |
-| `0x3` | `MEM_WR_ACK` | the memory agent | nobody — see §4.4 |
+| `0x3` | `MEM_WR_ACK` | the memory agent | the writer's `noc_cu_base` fence, or the writer ([compute-unit-port.md](compute-unit-port.md) §3.3) |
 | `0x4` | `MEM_WR_DATA` | any endpoint | the memory agent |
 | `0x5` | `CU_INST` | the orchestrator | a compute unit's instruction FIFO |
 | `0x6` | `CU_SIGNAL` | a compute unit | the orchestrator's status mirror |
@@ -317,11 +317,11 @@ shape from its own request.
 
 | Bits | Field | Owner |
 |---|---|---|
-| `[255:0]` | zero | reserved |
+| `[255:1]` | zero | reserved |
+| `[0]` | drop flag: the memory port dropped the write | framework |
 
-The payload is transmitted as all zeros. **There is no status field.** The
-pre-reframing snapshot documents `payload[7:0]` as a status byte; no RTL writes
-or reads it. A write's success or failure is not reported on the mesh.
+The drop flag is set when the port dropped the write without an AXI transaction
+([memory-protocol.md](memory-protocol.md) §8). The AXI `BRESP` is not carried.
 
 ### 4.5 `CU_INST` (`0x5`)
 
@@ -505,5 +505,4 @@ can only reassemble one burst at a time if that is the case.
 | `buf_id` allocation lives in an instance | The namespace in §4.7.1 exists as `BUF_L1A` / `BUF_L1B` / `BUF_PEER` localparams inside `src/kohakutpu/matmul/mx_cluster_cu.v`, and as a bare `!= 0` rejection inside `src/kohakutpu/vector/vec_cu.v`. Neither the allocation nor the reservation of index 3 is stated anywhere a second accelerator would look. |
 | `rsvd` semantics undeclared | The remote-mesh marker, the mesh id and the read-response word index all live in `rsvd` and none is declared in `noc_pkt.vh`. |
 | `NOC_MEM_LEN` comment | `noc_pkt.vh` describes `len` as "payload flits minus 1". On a `MEM_RD_REQ` served by the entry read engine it is not read at all. |
-| `MEM_WR_ACK` status byte | Documented in the snapshot, absent from the RTL. |
 | `CU_CTRL` `op` is honoured by one endpoint | `noc_l2_adapter.v:194` decodes `op` as 0 read / 1 write (`r_op = rt_data[255 -: 8]`); `noc_cu_base.v:241` takes only the index (`ctrl_idx = ctrl_req[247 -: 8]`) and nothing above it, so every compute unit treats a write as a read and replies with the old value. A controller cannot tell the two apart except by comparing the reply against what it wrote. Making `noc_cu_base` honour `op` would give units writable control registers, which is a framework decision nobody has taken. |

@@ -118,7 +118,7 @@ one for write descriptors and write data.
 | `0x1` | `MEM_WR_REQ` | any endpoint | the agent | 1, followed by data |
 | `0x4` | `MEM_WR_DATA` | the same endpoint | the agent | `len + 1` |
 | `0x2` | `MEM_RD_RESP` | the agent | the requester and any listed peers | 1 per word |
-| `0x3` | `MEM_WR_ACK` | the agent | **nobody** | 1 |
+| `0x3` | `MEM_WR_ACK` | the agent | the writer's port fence, or the writer itself (§5) | 1 |
 
 A requester **MUST NOT** send `MEM_RD_RESP` or `MEM_WR_ACK`. The agent **MUST
 NOT** be sent any other type expecting memory service; another type arriving at a
@@ -329,8 +329,10 @@ burst form safe to turn off.
 `WR_SLOTS` **MUST** be at least **two per node that can have a write in flight**,
 not one.
 
-A compute unit discards its `MEM_WR_ACK` and does not wait for it, so its next
-descriptor arrives while the previous burst is still on the AXI bus. A slot is
+A compute unit does not wait for one write's `MEM_WR_ACK` before sending the next
+(its fence waits only at the instruction's completion, [compute-unit-port.md](compute-unit-port.md)
+§3.3), so its next descriptor arrives while the previous burst is still on the
+AXI bus. A slot is
 held from descriptor until its ack is sent, so the previous write's slot is still
 allocated. With one slot per node the second descriptor finds nothing free, is
 never popped, and blocks the data flits behind it — which are what would have
@@ -340,18 +342,23 @@ Under-sizing does not corrupt anything. It deadlocks.
 
 ## 5. Acknowledgements
 
-`MEM_WR_ACK` is a single flit, `txn` echoed, `last` set, **payload all zero**.
+`MEM_WR_ACK` is a single flit, `txn` echoed, `last` set. **Payload bit 0 is the
+drop flag**; every other payload bit is zero.
 
-- It carries **no status**. Success and failure are indistinguishable on the mesh.
-- It is sent when the AXI slave's write response has been received, so it does
-  mean the data reached memory rather than a queue.
-- **Nothing consumes it.** Every compute unit in the tree drops it, and a unit
-  that does not drop it wedges — see [compute-unit-port.md](compute-unit-port.md)
-  §5. Acks are fire-and-forget by design.
+- Drop flag clear: the AXI slave's write response has been received, so the data
+  reached memory rather than a queue. `BRESP` is not reported.
+- Drop flag set: the memory port dropped the write without an AXI transaction
+  (§8).
+- A compute unit built with `ACK_FENCE = 1` — every KohakuTPU unit — consumes
+  the acks in its port and holds each completion until its writes are acked; a
+  set drop flag turns that completion into `SIG_FAULT`
+  ([compute-unit-port.md](compute-unit-port.md) §3.3). A unit at
+  `ACK_FENCE = 0` must consume or drop them itself (§5 of that page).
 
-A program that must read what it wrote therefore **MUST NOT** sequence on the
-ack. It sequences at an instruction boundary the host can observe: the writing
-instruction's completion, seen through the orchestrator's status mirror.
+A program that must read what it wrote sequences at an instruction boundary the
+host can observe: the writing instruction's completion, seen through the
+orchestrator's status mirror. From a fenced unit that completion follows the
+acks, so the data is in memory when it arrives.
 
 ## 6. Unit-to-unit transfers (`CU_DATA`)
 
@@ -473,8 +480,8 @@ that does not exist.
 | Write descriptor arrives with no free slot | Not popped. Blocks the write queue. | Nothing. Presents as a hang. |
 | **DRAM** read or write (`addr[39] = 0`) naming a mesh other than the agent's own, in `addr[37:36]`, on a flit **not** marked remote | **Not forwarded.** The access aliases to local memory with the mesh field ignored. | `mag.v` raises `bad_remote_req` into the interlink's status when `ILINK != 0`. A build without an interlink reports nothing. |
 | **Aperture** read (`addr[39] = 1`, `addr[38] = 0`) naming another mesh, or an aperture other than 0 | **Dropped**, not aliased. No `MEM_RD_RESP` is ever emitted, so the requester waits forever. | Simulation `$display` only. |
-| **Aperture** write, same condition | **Dropped.** No AXI transaction and **no `MEM_WR_ACK`**; the write slot is freed rather than wedged. | Simulation `$display` only. |
-| AXI slave error response (`BRESP`/`RRESP` non-OKAY) | Ignored. | Nothing. `MEM_WR_ACK` carries no status. |
+| **Aperture** write, same condition | **Dropped.** No AXI transaction; the write slot is freed and a `MEM_WR_ACK` with the drop flag set is sent. | The drop flag; a fenced unit completes with `SIG_FAULT`. |
+| AXI slave error response (`BRESP`/`RRESP` non-OKAY) | Ignored. | Nothing. `MEM_WR_ACK` does not carry `BRESP`. |
 
 The two aperture rows apply **only when the port decodes apertures at all** —
 `mag_mem_port`'s `AP_DECODE`, which `mag` drives from the node's `STAGE`
@@ -484,8 +491,9 @@ is not tested and an aperture address is served as DRAM.
 **The asymmetry between the DRAM rows and the aperture rows is deliberate and a
 requester must know which it is getting.** A wrong-mesh DRAM address is *aliased*
 — it reads or writes the local bytes at the same offset, plausibly and silently.
-A wrong-mesh or unimplemented *aperture* address is *dropped* — a read hangs and
-a write is never acknowledged. Neither is a fault a program can catch; the second
+A wrong-mesh or unimplemented *aperture* address is *dropped* — a read hangs, and
+a write is acknowledged with the drop flag, so a fenced unit faults the
+instruction. The DRAM alias is not a fault a program can catch; the aperture read
 is at least visible as a stall rather than as a wrong answer.
 
 **A memory request MUST address the local mesh.** There is no remote read and no

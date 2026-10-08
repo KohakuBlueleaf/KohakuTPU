@@ -129,6 +129,9 @@ module rv64_mag_pe #(
     wire [7:0]  pe_cfg_addr;
     wire [63:0] pe_cfg_data;
     wire [3:0]  xf_fault;
+    wire        xf_cfg_en;
+    wire [7:0]  xf_cfg_id, xf_cfg_addr;
+    wire [63:0] xf_cfg_data;
 
     rv64_syscore #(
         .ADDR_W(ADDR_W), .DATA_W(DATA_W),
@@ -157,6 +160,8 @@ module rv64_mag_pe #(
         .mv_busy(mv_busy), .mv_fault(mv_fault), .mv_done(mv_done),
         .db_en(db_en), .db_addr(db_addr), .db_data(db_data),
         .db_status(db_status),
+        .xf_cfg_en(xf_cfg_en), .xf_cfg_id(xf_cfg_id),
+        .xf_cfg_addr(xf_cfg_addr), .xf_cfg_data(xf_cfg_data),
         .irq_summary(irq_summary),
         .running(busy),
         .dbg_console_we(dbg_console_we), .dbg_console(dbg_console),
@@ -211,8 +216,8 @@ module rv64_mag_pe #(
         .start(x_start), .id(x_id), .mode(x_mode),
         .beat(x_beat), .beat_valid(x_bv),
         .done(x_done), .word0(x_w0), .word1(x_w1), .word2(x_w2), .word3(x_w3),
-        .cfg_en(1'b0), .cfg_id({XID_W{1'b0}}),
-        .cfg_addr(8'd0), .cfg_data(64'd0),
+        .cfg_en(xf_cfg_en), .cfg_id(xf_cfg_id[XID_W-1:0]),
+        .cfg_addr(xf_cfg_addr), .cfg_data(xf_cfg_data),
         .cfg_rdata(), .fault(xf_fault)
     );
 

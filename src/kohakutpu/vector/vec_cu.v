@@ -141,10 +141,10 @@ module vec_cu #(
         // 0x01 shipped 2026-08; 0x02 vector-datapath rebuild + merged cluster;
         // 0x03 CU_DATA peer writes and VDRAIN to_node (on 0x02 that drain hits
         // MEMORY in silence); 0x04 L2 staging adapters via CU_CTRL, and the
-        // mover's 40-bit descriptors.
-        .CU_TYPE(16'h5643), .CU_VERSION(8'h04), .N_BUFFERS(2),
+        // mover's 40-bit descriptors; 0x05 completion after the write ACKs.
+        .CU_TYPE(16'h5643), .CU_VERSION(8'h05), .N_BUFFERS(2),
         .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH), .RECV_MEM(RECV_MEM),
-        .MEM_TYPE(MEM_TYPE)
+        .MEM_TYPE(MEM_TYPE), .ACK_FENCE(1)
     ) u_base (
         .clk(u_clk), .resetn(u_resetn),
         .noc_in_data(bp_in_data), .noc_in_valid(bp_in_valid),
