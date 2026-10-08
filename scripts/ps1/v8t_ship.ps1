@@ -1,12 +1,11 @@
-# One multimesh image from start to bitstream, one Vivado at a time: block
-# design (rebuild) -> verify (stops on a FAIL line) -> synthesis with the
-# analysis -> impl through write_bitstream and the report. Stage marks go to
-# the ship log below; each Vivado session keeps its own log beside the project.
-#
-#   pwsh -NoProfile -File scripts/ps1/v8t_ship.ps1 -Ver v8t7 -Jobs 8
+# One multimesh image from start to bitstream: block design (rebuild), verify
+# (stops on a FAIL line), synthesis, impl through write_bitstream and the report.
+# -Jobs is synth_1's; OOC IP runs use the config's OOC_JOBS. Launch detached:
+#   Invoke-CimMethod Win32_Process Create -Arguments @{CurrentDirectory=<repo>;
+#     CommandLine='pwsh -NoProfile -File scripts/ps1/v8t_ship.ps1 -Ver v8t8 -Jobs 4'}
 param(
     [Parameter(Mandatory = $true)][string]$Ver,
-    [int]$Jobs = 8
+    [int]$Jobs = 4
 )
 $root = "C:/Users/apoll/Desktop/code/Project/KohakuTPU"
 $viv  = "D:/Xilinx/Vivado/2024.2/bin/vivado.bat"
@@ -31,13 +30,21 @@ if ($fails.Count -gt 0 -or $LASTEXITCODE -ne 0) {
 }
 Mark "verify: clean"
 
-Mark "synth: OOC module runs, synth_1, analysis"
+Mark "synth: OOC module runs, synth_1"
 & $viv -mode batch -log "$L/multimesh_${Ver}_synth.log" -nojournal -notrace `
-    -source "scripts/tcl/multimesh_${Ver}_bd.tcl" -tclargs synth jobs $Jobs analyze | Out-Null
+    -source "scripts/tcl/multimesh_${Ver}_bd.tcl" -tclargs synth jobs $Jobs | Out-Null
 if ($LASTEXITCODE -ne 0) { Mark "SYNTH FAILED ($LASTEXITCODE): $L/multimesh_${Ver}_synth.log"; exit 1 }
 
-Mark "impl: through write_bitstream and the report"
-& $viv -mode batch -log "$L/multimesh_${Ver}_impl.log" -nojournal -notrace `
-    -source "scripts/tcl/${Ver}_impl.tcl" | Out-Null
-if ($LASTEXITCODE -ne 0) { Mark "IMPL FAILED ($LASTEXITCODE): $L/multimesh_${Ver}_impl.log"; exit 1 }
-Mark "SHIP DONE"
+# Impl, retried once when runme.log reports Mig 66-119 (a %TEMP% transient).
+$runme = "$L/multimesh_${Ver}/multimesh_${Ver}.runs/impl_1/runme.log"
+for ($try = 1; $try -le 2; $try++) {
+    Mark "impl: through write_bitstream and the report (try $try)"
+    & $viv -mode batch -log "$L/multimesh_${Ver}_impl.log" -nojournal -notrace `
+        -source "scripts/tcl/${Ver}_impl.tcl" | Out-Null
+    if ($LASTEXITCODE -eq 0) { Mark "SHIP DONE"; exit 0 }
+    $mig = (Test-Path $runme) -and (Select-String -Quiet -Path $runme -Pattern 'Mig 66-119')
+    if (-not $mig) { break }
+    Mark "impl: Mig 66-119 transient"
+}
+Mark "IMPL FAILED ($LASTEXITCODE): $L/multimesh_${Ver}_impl.log"
+exit 1

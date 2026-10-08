@@ -78,11 +78,28 @@ foreach {mid mod} $MESHES {
     want mesh_$mid/axi_aresetn  [v8_rstn $mid]
     want mesh_$mid/dram_aclk    [v8_sys_clk $mid]
     want mesh_$mid/dram_aresetn [v8_rstn $mid]
-    if {[get_property -quiet CONFIG.ILINK $c] ne "$NODE_ILINK"} { bad "mesh_$mid ILINK is not $NODE_ILINK" }
-}
-# v8t3 has no mesh at all: no mesh clock domain and none of its cells.
-foreach n {div2_mesh0 dclr_mesh0 div2_mesh1 dclr_mesh1} {
-    if {[llength [get_bd_cells -quiet $n]]} { bad "$n exists: v8t3 carries no matmul pump" }
+    if {![v8_is_mesh $mod]} {
+        if {[get_property -quiet CONFIG.ILINK $c] ne "$NODE_ILINK"} { bad "mesh_$mid ILINK is not $NODE_ILINK" }
+        foreach n [list div2_mesh$mid dclr_mesh$mid] {
+            if {[llength [get_bd_cells -quiet $n]]} { bad "$n exists on a bare-node die" }
+        }
+        continue
+    }
+    # A mesh die: interlink ports, mesh parameters, unit clocks, the pump pair.
+    if {![llength [get_bd_intf_pins -quiet mesh_$mid/LINK0_OUT]] && ![llength [get_bd_pins -quiet mesh_$mid/LINK0_OUT_valid]]} {
+        bad "mesh_$mid has no interlink port"
+    }
+    foreach {p w} [list GA $MESH_GA GB $MESH_GB TILES $MESH_TILES TILE_PRIM $MESH_TILE_PRIM \
+                        VEC_PRIM $MESH_VEC_PRIM MAG_CDC $MESH_MAG_CDC UNIT_CDC $MESH_UNIT_CDC] {
+        if {[get_property -quiet CONFIG.$p $c] ne "$w"} { bad "mesh_$mid $p is [get_property -quiet CONFIG.$p $c], want $w" }
+    }
+    want mesh_$mid/noc_clk    clk_wiz_mesh$mid/clk_out1
+    want mesh_$mid/vec_clk    clk_wiz_mesh$mid/clk_out3
+    want mesh_$mid/mat_clk2x  clk_wiz_mesh$mid/clk_out2
+    want mesh_$mid/mat_clk    div2_mesh$mid/clk1x
+    want div2_mesh$mid/clk2x  clk_wiz_mesh$mid/clk_out2
+    want div2_mesh$mid/clr    dclr_mesh$mid/Res
+    want dclr_mesh$mid/Op1    clk_wiz_mesh$mid/locked
 }
 
 # ---- the interlink chain: mesh i's LINK1 faces mesh i+1's LINK0 ------------
@@ -165,21 +182,23 @@ if {![llength $kx]} { bad "xache absent" } else {
 
 # ---- one clock, one reset: every PSR's clock and lock, both trees ----------
 puts "\n=== resets ==="
+# Expected {name clock lock ext} per reset (docs/arch/physical/clocking.md).
 set ext [expr {$PER_DIE_CLK ? "lock_all/Res" : "clk_wiz_ctrl/locked"}]
-set psrw [list rst_ctrl $CTRL_CLK clk_wiz_ctrl/locked]
+set fix clk_wiz_ctrl/locked
+set psrw [list rst_ctrl $CTRL_CLK clk_wiz_ctrl/locked $fix]
 if {$PER_DIE_CLK} {
     foreach {mid mod} $MESHES {
-        lappend psrw rst_bus$mid [v8_bus_clk $mid] clk_wiz_ctrl/locked
-        lappend psrw rst_sys$mid [v8_sys_clk $mid] [v8_sys_lock $mid]
+        lappend psrw rst_bus$mid [v8_bus_clk $mid] clk_wiz_ctrl/locked $fix
+        lappend psrw rst_sys$mid [v8_sys_clk $mid] [v8_sys_lock $mid] $ext
     }
 } else {
-    lappend psrw rst_bus [v8_bus_clk 0] clk_wiz_ctrl/locked
-    lappend psrw rst_sys [v8_sys_clk 0] [v8_sys_lock 0]
+    lappend psrw rst_bus [v8_bus_clk 0] clk_wiz_ctrl/locked $ext
+    lappend psrw rst_sys [v8_sys_clk 0] [v8_sys_lock 0] $ext
 }
-foreach {name clkw lockw} $psrw {
+foreach {name clkw lockw extw} $psrw {
     want $name/slowest_sync_clk $clkw
     want $name/dcm_locked $lockw
-    want $name/ext_reset_in $ext
+    want $name/ext_reset_in $extw
 }
 if {$PER_DIE_CLK} {
     # No die leaves reset until every wizard has locked.

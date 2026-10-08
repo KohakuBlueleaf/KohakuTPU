@@ -118,6 +118,12 @@ set V8_SOURCES {
     src/kohakuaccel/sysnode/sysnode.v
     xilinx-fpga/xcvu13p/bd/ktpu_node_v8t.v
 }
+# A mesh die's generated top, once per distinct module.
+foreach {mid mod} $MESHES {
+    if {![v8_is_mesh $mod]} { continue }
+    set f src/kohakutpu/top/generated/$mod.v
+    if {[lsearch $V8_SOURCES $f] < 0} { lappend V8_SOURCES $f }
+}
 
 set v8_missing {}
 foreach f $V8_SOURCES {

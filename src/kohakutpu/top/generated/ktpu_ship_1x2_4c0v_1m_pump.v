@@ -31,6 +31,9 @@ module ktpu_ship_1x2_4c0v_1m_pump #(
     // The MEMORY's beat. the system node packs DW up to this before the
     // boundary, so the mesh never exposes the internal width.
     parameter integer MW       = 512,
+    // Memory beats one DRAM AR may carry; a Xache read slot of N beats
+    // needs N here (0 = no split).
+    parameter integer DRAM_AR_MAX = 0,
     // One flit per beat at 288, so a packet's framing is its own length; 96
     // is mag.v's TUSER_W.
     parameter integer LKW      = 288,
@@ -396,7 +399,7 @@ module ktpu_ship_1x2_4c0v_1m_pump #(
           .ID_W(IDW), .PORTS(2), .MEM_X(0), .MEM_Y(1), .MEM_X1(0), .MEM_Y1(2),
           .GRID_LO(1), .GRID_HI(2), .STAGE_FLITS(128),
           .ILINK(1), .MESH_ID(MESH_ID), .LINK_W(LKW), .TUSER_W(LKU), .IL_CN_W(LKC),
-          .MW(MW), .DRAM_CDC(DRAM_CDC),
+          .MW(MW), .DRAM_CDC(DRAM_CDC), .DRAM_AR_MAX(DRAM_AR_MAX),
           .STAGE(1), .STAGE_BANKS(L2_MAG_BANKS),
           .STAGE_ENTRIES(L2_MAG_ENTRIES), .STAGE_AT_PORT(1)) u_mag (
         .clk(mag_clk_i), .resetn(resetn),

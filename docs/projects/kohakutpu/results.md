@@ -1637,6 +1637,24 @@ The remaining families as RTL and place:
   upsizer and calibration paths, 7 and 4 levels with 2.6–2.9 ns of net,
   beside the Xache partitions now sitting on their column.
 
+### 5.14 v8t8 and v8t9 — the compute image
+
+`multimesh_v8t8` (`scripts/tcl/v8t8/00_config.tcl`) is v8t7's node, Xache,
+station bus and three-stage interlink with every die's node inside a generated
+2x2 mesh: 7 clusters + 2 vector cores on dies 0, 2 and 3, and 5 + 2 on die 1,
+which also carries the XDMA and station 1 (`ktpu_ship_2x2_{7,5}c2v_1m_nol2_pump`,
+from `mesh_2x2_{7,5}+2.txt`). The node's DRAM read split is the Xache read slot
+(`DRAM_AR_MAX = KX_RB_BEATS`). The pblocks are die-wide (`CMP_COLS` empty): a
+v8t7 compute half holds 161k LUT and a 7+2 mesh with its node is about 200k.
+Each die's wizard drives the mesh's fabric, matmul 2x (its 1x through
+`ktpu_div2`), vector and system-node clocks; the clock constraints are the v8t3
+asks (300 / 600 / 300 / 300 MHz), and the run rate is set by DRP afterwards.
+`multimesh_v8t9` is the same configuration on the RTL with the completed node
+primitives ([control-registers.md](../../spec/control-registers.md) §7) and the
+vector-core predicate fixes. `scripts/ps1/v8t_ship.ps1 -Ver <v>` builds either:
+block design, verify, synthesis, then implementation with nothing else opening
+the project.
+
 ## 6. Accuracy
 
 ### 6.1 The block scale: E5M3 against E8M0

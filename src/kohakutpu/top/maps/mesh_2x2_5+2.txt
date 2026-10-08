@@ -1,0 +1,6 @@
+# 5+2 on the 6+2 router grid: 6+2 with the north-edge cluster of column 1 tied
+# off. For the die that also carries the XDMA (53k LUT) and station 1 (10k).
+xxx nul vec xxx
+mag mat mat xxx
+mag mat mat xxx
+xxx mat vec xxx

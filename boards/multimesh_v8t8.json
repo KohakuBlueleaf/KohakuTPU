@@ -1,0 +1,39 @@
+{
+  "name": "multimesh_v8t8",
+  "design": "multimesh_v8t8",
+  "transport": "jtag",
+  "meshes": 4,
+  "vco_mhz": 1200,
+  "wizard_outputs": {
+    "noc": {"index": 0, "nominal_mhz": 300},
+    "mat2x": {"index": 1, "nominal_mhz": 600},
+    "vec": {"index": 2, "nominal_mhz": 300},
+    "sys": {"index": 3, "nominal_mhz": 300}
+  },
+  "profiles": {
+    "low":  {"noc": 100, "mat2x": 200, "vec": 100, "sys": 100},
+    "mid":  {"noc": 200, "mat2x": 400, "vec": 200, "sys": 200},
+    "ship": {"noc": 300, "mat2x": 600, "vec": 300, "sys": 300}
+  },
+  "idle_profile": "low",
+  "ctrl_stride": "0x10000",
+  "ctrl_base": "0x800000",
+  "wizard_base": "0x900000",
+  "ddrctrl_base": "0x0",
+  "ddrctrl_stride": "0x100000",
+  "mem_window_shift": 40,
+  "mem_window_offset": 1,
+  "dram_mesh_shift": 36,
+  "dram_flat_gb": 16,
+  "dram_interleave_kb": 16,
+  "mem_words": 536870912,
+  "agent_at_offset_zero": true,
+  "max_burst_beats": 64,
+  "chain": [0, 1, 2, 3],
+  "bitstream": "C:/Users/apoll/Desktop/vivado/multimesh_v8t8/multimesh_v8t8.runs/impl_1/multimesh_v8t8_wrapper.bit",
+  "probes": "",
+  "host_write_granule": 32,
+  "host_write_replicates": false,
+  "burst_read": true,
+  "notes": "v8t8, the compute image: four 2x2 meshes (7+2 on dies 0/2/3, 5+2 on die 1) around the v8 system node (RV64, staging, no CU/vector L2), the partition-aware Kohaku Xache and the station bus, addressing as v8t2. Every die has its own clocks: its mesh wizard drives noc/mat2x/vec AND that die's sysnode clock (out4, 'sys'); its station takes its own 200 MHz bus clock off the fixed control wizard. A LOAD on ANY mesh wizard drops its lock, and every die's sysnode domain (node, Xache partition, interlink) is held in reset until all wizards relock -- retune before a run, never during one; control, station bus, DDR controllers and XDMA stay up."
+}

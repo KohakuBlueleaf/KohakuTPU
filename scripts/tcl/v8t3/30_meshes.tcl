@@ -57,24 +57,46 @@ set zfl  [v8_zero zero_flit $IL_W]
 if {$DRAM_CDC} { error "the node's DRAM master shares its die's clock with the Xache partition; DRAM_CDC must be 0" }
 foreach {mid mod} $MESHES {
     create_bd_cell -type module -reference $mod mesh_$mid
-    # The cell keeps the name every later stage addresses; only the module
-    # behind it changed, from a 2x2 mesh to the bare system node.
-    set_property -dict [list CONFIG.MESH_ID $mid CONFIG.ILINK $NODE_ILINK \
-                             CONFIG.PORTS $NODE_PORTS \
-                             CONFIG.L2_MAG_BANKS $L2_MAG_BANKS \
-                             CONFIG.L2_MAG_ENTRIES $L2_MAG_ENTRIES \
-                             CONFIG.DRAM_CDC $DRAM_CDC \
-                             CONFIG.DRAM_AR_MAX $KX_RB_BEATS] [get_bd_cells mesh_$mid]
+    # Every die: node identity, staging, DRAM clocking, AR split = Xache read slot.
+    set cfg [list CONFIG.MESH_ID $mid CONFIG.L2_MAG_BANKS $L2_MAG_BANKS \
+                  CONFIG.L2_MAG_ENTRIES $L2_MAG_ENTRIES CONFIG.DRAM_CDC $DRAM_CDC \
+                  CONFIG.DRAM_AR_MAX $KX_RB_BEATS]
+    if {[v8_is_mesh $mod]} {
+        lappend cfg CONFIG.GA $MESH_GA CONFIG.GB $MESH_GB CONFIG.TILES $MESH_TILES \
+                    CONFIG.TILE_PRIM $MESH_TILE_PRIM CONFIG.VEC_PRIM $MESH_VEC_PRIM \
+                    CONFIG.MAG_CDC $MESH_MAG_CDC CONFIG.UNIT_CDC $MESH_UNIT_CDC
+    } else {
+        lappend cfg CONFIG.ILINK $NODE_ILINK CONFIG.PORTS $NODE_PORTS
+    }
+    set_property -dict $cfg [get_bd_cells mesh_$mid]
 
-    # axi_aclk IS the AXI ports' clock and they live in the node: the ONE
-    # sysnode clock, with die mid's copy of the ONE sysnode reset. The DRAM
-    # master is on it too (DRAM_CDC 0): it meets the Xache with no crossing.
+    # The node's AXI ports and DRAM master: die mid's sysnode clock and reset.
     connect_bd_net [get_bd_pins [v8_sys_clk $mid]] [get_bd_pins mesh_$mid/axi_aclk]
     connect_bd_net [get_bd_pins [v8_rstn $mid]] [get_bd_pins mesh_$mid/axi_aresetn]
     connect_bd_net [get_bd_pins [v8_sys_clk $mid]] [get_bd_pins mesh_$mid/dram_aclk]
     connect_bd_net [get_bd_pins [v8_rstn $mid]] [get_bd_pins mesh_$mid/dram_aresetn]
-    # No mesh: no noc, vector or matmul clock, no pump divider, and no host
-    # stub -- the host reaches the node through S_AXI_CTRL and S_AXI_MEM.
+    if {![v8_is_mesh $mod]} { continue }
+
+    # The mesh clocks: fabric clk_out1, vector cores clk_out3.
+    connect_bd_net [get_bd_pins clk_wiz_mesh$mid/clk_out1] [get_bd_pins mesh_$mid/noc_clk]
+    connect_bd_net [get_bd_pins clk_wiz_mesh$mid/clk_out3] [get_bd_pins mesh_$mid/vec_clk]
+
+    # Matmul 2x clk_out2 and its 1x through ktpu_div2, cleared by NOT(locked).
+    create_bd_cell -type module -reference ktpu_div2 div2_mesh$mid
+    connect_bd_net [get_bd_pins clk_wiz_mesh$mid/clk_out2] \
+                   [get_bd_pins div2_mesh$mid/clk2x] [get_bd_pins mesh_$mid/mat_clk2x]
+    connect_bd_net [get_bd_pins div2_mesh$mid/clk1x] [get_bd_pins mesh_$mid/mat_clk]
+    set dc [create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic dclr_mesh$mid]
+    set_property -dict [list CONFIG.C_OPERATION {not} CONFIG.C_SIZE {1}] $dc
+    connect_bd_net [get_bd_pins clk_wiz_mesh$mid/locked] [get_bd_pins dclr_mesh$mid/Op1]
+    connect_bd_net [get_bd_pins dclr_mesh$mid/Res] [get_bd_pins div2_mesh$mid/clr]
+
+    # The bench-only hs_* host window, tied off.
+    connect_bd_net [get_bd_pins $z32] [get_bd_pins mesh_$mid/hs_addr]
+    connect_bd_net [get_bd_pins $z1]  [get_bd_pins mesh_$mid/hs_wr]
+    connect_bd_net [get_bd_pins $z64] [get_bd_pins mesh_$mid/hs_wdata]
+    connect_bd_net [get_bd_pins $z8]  [get_bd_pins mesh_$mid/hs_wstrb]
+    connect_bd_net [get_bd_pins $z1]  [get_bd_pins mesh_$mid/hs_rd]
 }
 
 # ---- the interlink chain -------------------------------------------------

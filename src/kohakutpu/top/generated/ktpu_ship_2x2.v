@@ -25,6 +25,9 @@ module ktpu_ship_2x2 #(
     // The MEMORY's beat. the system node packs DW up to this before the
     // boundary, so the mesh never exposes the internal width.
     parameter integer MW       = 512,
+    // Memory beats one DRAM AR may carry; a Xache read slot of N beats
+    // needs N here (0 = no split).
+    parameter integer DRAM_AR_MAX = 0,
     parameter integer MODEL    = 0,
     parameter integer L1_DEPTH = 512,
     // driver/kohakutpu/machine's frozen-at-synthesis TILES / GA / GB. A generated
@@ -377,7 +380,7 @@ module ktpu_ship_2x2 #(
     sysnode #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .DATA_W(DW), .ADDR_W(AW),
           .ID_W(IDW), .PORTS(2), .MEM_X(0), .MEM_Y(1), .MEM_X1(0), .MEM_Y1(2),
           .GRID_LO(1), .GRID_HI(2), .STAGE_FLITS(128),
-          .MW(MW), .DRAM_CDC(DRAM_CDC),
+          .MW(MW), .DRAM_CDC(DRAM_CDC), .DRAM_AR_MAX(DRAM_AR_MAX),
           .STAGE(1), .STAGE_AT_PORT(1)) u_mag (
         .clk(mag_clk_i), .resetn(resetn),
         .dram_aclk(dram_aclk), .dram_aresetn(dram_aresetn),

@@ -79,6 +79,11 @@ v8_want_mhz $CTRL_CLK $CTRL_MHZ
 foreach {mid mod} $MESHES {
     v8_want_mhz [v8_bus_clk $mid] $BUS_MHZ
     v8_want_mhz [v8_sys_clk $mid] $SYS_MHZ
+    if {[v8_is_mesh $mod]} {
+        v8_want_mhz clk_wiz_mesh$mid/clk_out1 $MESH_MHZ
+        v8_want_mhz clk_wiz_mesh$mid/clk_out2 $MAT2X_MHZ
+        v8_want_mhz clk_wiz_mesh$mid/clk_out3 $VEC_MHZ
+    }
     if {!$PER_DIE_CLK && $mid != $SYS_WIZ \
         && [llength [get_pins -quiet $top/clk_wiz_mesh$mid/clk_out4]]} {
         v8_bad "clk_wiz_mesh$mid has a clk_out4 -- only SYS_WIZ carries the sysnode clock"
@@ -215,6 +220,11 @@ foreach c $unclaimed_cells {
     if {[llength $pbs] > 1 && [llength $dies] == 1 && [llength $dies] * 2 >= [llength $pbs]} {
         set pbs [list pb_slr[lindex $dies 0]]
     }
+    # A leaf with no pinned neighbour stays free.
+    if {![llength $pbs]} {
+        puts "  free [get_property NAME $c]: no pinned neighbour"
+        incr ring ; continue
+    }
     if {[llength $pbs] == 1} {
         puts $lfh "add_cells_to_pblock \[get_pblocks [lindex $pbs 0]\] \[get_cells -quiet \{[get_property NAME $c]\}\]"
         if {$pinned < 12} { puts "  pinned [get_property NAME $c] -> $pbs" }
@@ -267,7 +277,9 @@ foreach {mid mod} $MESHES {
     if {[llength [get_cells -quiet -hier -filter "NAME =~ $top/mesh_$mid/* && REF_NAME =~ *noc_l2_adapter*"]]} {
         v8_bad "mesh_$mid carries a noc_l2_adapter"
     }
-    foreach pin {axi_aclk dram_aclk} {
+    set mpins {axi_aclk dram_aclk}
+    if {[v8_is_mesh $mod]} { lappend mpins noc_clk vec_clk mat_clk mat_clk2x }
+    foreach pin $mpins {
         set p [get_pins -quiet $top/mesh_$mid/$pin]
         if {![llength $p]} { v8_bad "mesh_$mid/$pin missing" ; continue }
         set c [get_clocks -quiet -of_objects $p]
@@ -405,7 +417,9 @@ foreach psr $psrs {
             incr loads
             set lk [v8_clk_of_cell $lc]
             if {$lk eq "" || $lk eq $kn} { continue }
-            if {[string match "*u_rs_*" $lc] || [string match "*kh_rst_sync*" [get_property REF_NAME $lc]]} { incr synced ; continue }
+            # A synchroniser load: u_rs_*, kh_rst_sync, or an ASYNC_REG flop.
+            if {[string match "*u_rs_*" $lc] || [string match "*kh_rst_sync*" [get_property REF_NAME $lc]]
+                || [get_property -quiet ASYNC_REG $lc] eq "1" || [get_property -quiet ASYNC_REG $lc] eq "TRUE"} { incr synced ; continue }
             incr foreign
             if {$foreign <= 6} { puts "  FOREIGN [file tail $psr] -> $lc on $lk" }
         }

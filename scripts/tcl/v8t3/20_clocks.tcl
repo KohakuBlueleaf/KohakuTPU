@@ -60,10 +60,11 @@ proc v8_wiz {name outs drp} {
 # ext_reset_in is ACTIVE LOW, so a lock drives it directly; dcm_locked is the
 # reset's OWN generator, or the domain releases before its clock exists.
 set ::V8_EXT_RST clk_wiz_ctrl/locked
-proc v8_psr {name clkpin lockpin} {
+proc v8_psr {name clkpin lockpin {ext ""}} {
+    if {$ext eq ""} { set ext $::V8_EXT_RST }
     create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset $name
     connect_bd_net [get_bd_pins $clkpin] [get_bd_pins $name/slowest_sync_clk]
-    connect_bd_net [get_bd_pins $name/ext_reset_in] [get_bd_pins $::V8_EXT_RST]
+    connect_bd_net [get_bd_pins $name/ext_reset_in] [get_bd_pins $ext]
     connect_bd_net [get_bd_pins $lockpin] [get_bd_pins $name/dcm_locked]
 }
 
@@ -115,14 +116,15 @@ if {$PER_DIE_CLK} {
     set ::V8_EXT_RST lock_all/Res
 }
 
-v8_psr rst_ctrl $CTRL_CLK clk_wiz_ctrl/locked
+# Control and bus resets: the fixed wizard's lock only (docs/arch/physical/clocking.md).
+v8_psr rst_ctrl $CTRL_CLK clk_wiz_ctrl/locked clk_wiz_ctrl/locked
 
 # THE sysnode clock and its reset: every mesh's axi_aclk/axi_aresetn and
 # dram_aclk, the Xache, every station's port-0/1 domain, the interlink pipes,
 # the converters. One clock and one tree, or one of each per die.
 if {$PER_DIE_CLK} {
     foreach {mid mod} $MESHES {
-        v8_psr rst_bus$mid [v8_bus_clk $mid] clk_wiz_ctrl/locked
+        v8_psr rst_bus$mid [v8_bus_clk $mid] clk_wiz_ctrl/locked clk_wiz_ctrl/locked
         v8_psr rst_sys$mid [v8_sys_clk $mid] [v8_sys_lock $mid]
     }
 } else {

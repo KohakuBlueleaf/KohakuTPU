@@ -388,7 +388,11 @@ def emit(
         else ""
     )
     mod = "sysnode"
-    extra = ",\n          .MW(MW), .DRAM_CDC(DRAM_CDC)" if single else ""
+    extra = (
+        ",\n          .MW(MW), .DRAM_CDC(DRAM_CDC), .DRAM_AR_MAX(DRAM_AR_MAX)"
+        if single
+        else ""
+    )
     # STAGE_AT_PORT=1: one store on the converged path, reachable by the mover
     # and the interlink. 64 URAM against 256 per-port, measured.
     if l2_mag:
@@ -895,6 +899,9 @@ def render(
         "    // The MEMORY's beat. the system node packs DW up to this before the\n"
         "    // boundary, so the mesh never exposes the internal width.\n"
         "    parameter integer MW       = 512,\n"
+        "    // Memory beats one DRAM AR may carry; a Xache read slot of N beats\n"
+        "    // needs N here (0 = no split).\n"
+        "    parameter integer DRAM_AR_MAX = 0,\n"
         if single
         else ""
     )

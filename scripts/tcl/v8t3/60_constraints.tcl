@@ -74,10 +74,9 @@ foreach {mid mod} $MESHES {
     # carries the SLR index by construction.
     v8_pin $fh $pbs $top/station_bus/inst/u_line/g_stn\[$mid\].*
     v8_pin $fh $pbc $top/mesh_$mid
-    foreach c [list clk_wiz_mesh$mid bus_rst_inv$mid \
-                    ddr4_$mid rst_ddr4_$mid dwc_ctrl$mid] {
-        v8_pin $fh pb_slr$mid $top/$c
-    }
+    set dcells [list clk_wiz_mesh$mid bus_rst_inv$mid ddr4_$mid rst_ddr4_$mid dwc_ctrl$mid]
+    if {[v8_is_mesh $mod]} { lappend dcells div2_mesh$mid dclr_mesh$mid }
+    foreach c $dcells { v8_pin $fh pb_slr$mid $top/$c }
     v8_pin_scope $fh pb_slr$mid "$KX/g_hedge?$mid?" {}
     # A die half holds 128 URAM; the node's 65 and the home's 64 are 129, so
     # CMP_HOME says which dies' homes share the box at all.
@@ -217,9 +216,14 @@ proc v8_group {wiz outs} {
     return " \\\n    -group \[get_clocks -include_generated_clocks -of_objects\
  \[get_pins \{$pins\}\]\]"
 }
-# No mesh, so no mesh, vector or matmul clock group: the sysnode clock, the
-# two control clocks, the four MIG UI clocks and XDMA are all that run.
+# A mesh die adds three groups: fabric, vector cores, matmul 2x with its 1x.
 set grp {}
+foreach {mid mod} $MESHES {
+    if {![v8_is_mesh $mod]} { continue }
+    append grp [v8_group clk_wiz_mesh$mid {clk_out1}]
+    append grp [v8_group clk_wiz_mesh$mid {clk_out3}]
+    append grp [v8_group clk_wiz_mesh$mid {clk_out2}]
+}
 if {$PER_DIE_CLK} {
     # Four sysnode clocks and four bus clocks, each its own group: every path
     # between two of them goes through a crossing (KX_PCLK, IL_ASYNC, LINK_CDC).

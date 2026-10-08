@@ -185,6 +185,21 @@ Three rules come with it:
 The sequence is: quiesce, retune, wait for lock, reset, re-initialise, re-upload
 anything that lived on chip.
 
+**With one generator per die** (the per-die clocking of the multimesh images),
+each die's generator carries that die's fabric, matmul 2x, vector and system
+node clocks. Its reset rules:
+
+- **Every system-node domain waits on every generator.** The interlink has no
+  ready, so a die released before its neighbour has locked loses the flits sent
+  to it. Each die's system-node reset is held by the AND of all locks; a retune
+  of any one generator therefore resets every node, its Xache partition and the
+  interlink, on all dies.
+- **The control plane and the host bus wait on the fixed generator alone.** A
+  retune is a write over that bus; gating the bus on the generator being
+  retuned would reset the path carrying the write.
+- **The matmul 2x and its 1x come off one divider** whose clear is the
+  generator's lock, never a reset clocked by the divider itself.
+
 ### The resting state is low, and a boost is a lease
 
 Once frequency is a register write, it becomes a policy question rather than a

@@ -82,6 +82,17 @@ set MESHES {
 }
 set NODE_ILINK      1
 set NODE_PORTS      2
+# 1 when a die's module is a generated `_1m` mesh top, 0 for a bare ktpu_node_*.
+proc v8_is_mesh {mod} { return [expr {![string match ktpu_node_* $mod]}] }
+
+# Mesh-top parameters (gen_mesh.py documents each).
+set MESH_GA         512
+set MESH_GB         512
+set MESH_TILES      4096
+set MESH_TILE_PRIM  ultra
+set MESH_VEC_PRIM   block
+set MESH_MAG_CDC    1
+set MESH_UNIT_CDC   1
 # Staging: 4 banks of 4096 entries -- 64 SINGLE URAM, 2 MB per node. Never a
 # chain: a cascade is combinational from the first block's clock (~0.27 ns a
 # hop) and UG573 p.116 pins it bottom-up in one column.
