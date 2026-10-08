@@ -21,6 +21,7 @@ struct ka_pkg_run {
 };
 
 #define KA_RUN_F_CHECKSUM 1u /* verify the checksum whether or not the package asks */
+#define KA_RUN_F_IRQ      2u /* raise the host interrupt once the completion is posted */
 
 struct ka_pkg_result {
     int status;

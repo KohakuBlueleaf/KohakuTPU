@@ -34,7 +34,7 @@ CFLAGS = [
     "-fno-builtin",
     "-ffunction-sections",
     "-fdata-sections",
-    "-Os",
+    "-O2",
     "-g",
     "-Wall",
     "-Wextra",

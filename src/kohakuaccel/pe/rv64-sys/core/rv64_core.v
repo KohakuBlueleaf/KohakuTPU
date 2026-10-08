@@ -1055,6 +1055,29 @@ module rv64_core #(
     end
     assign dbg_retire = retire_q;
 
+`ifdef RV_PC_PROF
+    // Cycles a valid instruction spends at each execute-stage PC, stalls
+    // included, by PC modulo 32 KB (the scratchpad image); bubbles counted apart.
+    reg [31:0] prof [0:8191];
+    reg [31:0] prof_bub = 32'd0;
+    integer pi;
+    initial begin
+        for (pi = 0; pi < 8192; pi = pi + 1) prof[pi] = 32'd0;
+    end
+    always @(posedge clk) begin
+        if (resetn && !halted) begin
+            if (e_valid) prof[e_pc[14:2]] <= prof[e_pc[14:2]] + 32'd1;
+            else prof_bub <= prof_bub + 32'd1;
+        end
+    end
+    final begin
+        for (pi = 0; pi < 8192; pi = pi + 1) begin
+            if (prof[pi] != 32'd0) $display("PROF %m %h %0d", pi * 4, prof[pi]);
+        end
+        $display("PROFBUBBLE %m %0d", prof_bub);
+    end
+`endif
+
 endmodule
 
 `default_nettype wire

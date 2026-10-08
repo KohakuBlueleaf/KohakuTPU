@@ -15,6 +15,7 @@ enum {
     KA_R_MVSTAT  = 0x20, /* R: [32] busy, [31:28] fault, [27:0] moves done */
     KA_R_DBCNT   = 0x28, /* R: inbound doorbell counts, mesh n at [16n+15:16n] */
     KA_R_STDIN   = 0x30, /* R: {valid[8], byte}; W: pop */
+    KA_R_IRQ     = 0x38, /* W: toggle the host interrupt line; R: its level */
     KA_R_NM      = 0x40,  /* the dispatch mailbox, 8 registers */
     KA_R_IL      = 0xC0,  /* interlink config register 0x80 + k at 0xC0 + k */
     KA_R_MV      = 0x100, /* mover register k at 0x100 + k, k < 0x80 */
@@ -48,6 +49,10 @@ enum {
 
 #define KA_NM_STAT_COUNT(s) ((unsigned)((s) & 0xffu))
 #define KA_NM_STAT_OFFERED  (1UL << 15)
+
+/* The completion queue's depth (rv64_syscore CQ_DEPTH). A FULL queue holds the
+ * node's one inbound link in sn_hub, memory traffic behind it included. */
+#define KA_NM_CQ_DEPTH 16u
 
 /* A completion word: [55:52] src_y, [51:48] src_x, [47:40] code, [39:8] arg. */
 #define KA_CQ_Y(w)    ((unsigned)(((w) >> 52) & 0xfu))

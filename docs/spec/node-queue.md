@@ -115,7 +115,7 @@ word 1 is the tag, returned in the completion. Words 2–7 depend on the opcode:
 | Opcode | Word 2 | Word 3 | Word 4 | Word 5 | Word 6 | Completion value |
 |---|---|---|---|---|---|---|
 | 0 `NOP` | | | | | | 0 |
-| 1 `RUN` | the package's unit-global address | its length in bytes | the bindings' address (one 64-bit address per buffer), or 0 | per-wait timeout in cycles, 0 for the boot block's | flags: `[0]` verify the checksum | §3.2 |
+| 1 `RUN` | the package's unit-global address | its length in bytes | the bindings' address (one 64-bit address per buffer), or 0 | per-wait timeout in cycles, 0 for the boot block's | flags: `[0]` verify the checksum, `[1]` raise the host interrupt once the completion is posted (control-registers.md §7.2 `R_IRQ`; a host that cannot take one leaves it clear) | §3.2 |
 | 2 `STOP` | the exit value | | | | | 0 |
 | 3 `HEAP` | region `r` | base | bytes, 0 retires the region | granule, 0 for 64 | | 0 |
 | 4 `ALLOC` | region `r` | bytes | alignment, 0 for the granule | tag | | the block's address |

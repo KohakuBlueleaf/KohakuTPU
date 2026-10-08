@@ -88,13 +88,16 @@ the processor's memory paths, driven by `scripts/py/sw_memprobe.py`) and
    control-registers.md §2.4). The node-wide bound is the boot block's
    `cq_depth` less the package's `ack_reserve`, and is optional: with
    `cq_depth` 0 there is none, because the mailbox holds a completion it has no
-   room for at the hub instead of dropping it, and the engine drains whenever
-   it waits.
+   room for at the hub instead of dropping it. That hold is on `sn_hub`'s one
+   inbound link, so a full completion queue stops every memory request queued
+   behind the completion: the engine therefore also drains whenever a send
+   finds the mailbox completion queue half full (`KA_NM_CQ_DEPTH / 2`, from the
+   `STAT` read it makes anyway), not only when it waits.
 3. **Bindings.** One address per buffer, from the submission or the default.
 4. **Steps**, in order. A `DISPATCH` reads each payload (four uncached loads),
    applies the relocations naming it, waits for credit, and writes the mailbox;
-   completions are drained whenever the engine waits. `AWAIT` and `BARRIER`
-   drain until their counts hold. A unit's completion means its DRAM writes
+   completions are drained as item 2 says. `AWAIT` and `BARRIER` drain until
+   their counts hold. A unit's completion means its DRAM writes
    have landed (`noc_cu_base` `ACK_FENCE`), so the barrier is the whole
    ordering. `MOVER` writes (register, value) pairs into the mover's register
    window (`0x00`–`0x7F`, at control region `0x100` + register; anything else

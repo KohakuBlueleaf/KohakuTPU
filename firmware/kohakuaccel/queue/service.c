@@ -3,6 +3,7 @@
 #include <ka/boot/args.h>
 #include <ka/hal/cpu.h>
 #include <ka/hal/mem.h>
+#include <ka/hal/node.h>
 #include <ka/lib/stdio.h>
 #include <ka/os/mem.h>
 #include <ka/os/task.h>
@@ -237,6 +238,9 @@ uint64_t ka_queue_serve(void)
             ka_flush();
             push_cq(w[1], (uint64_t)res.status, res.detail, res.step, res.cycles,
                     res.status ? res.value : res.sent);
+            if (r.flags & KA_RUN_F_IRQ) {
+                ka_ctrl_wr(KA_R_IRQ, 1);
+            }
             if (res.status) {
                 ka_printf("[ka] package %lx failed: status %x detail %x step %u value %lx\n",
                           w[1], res.status, res.detail, res.step, res.value);

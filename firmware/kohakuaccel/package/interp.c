@@ -49,8 +49,15 @@ uint64_t ka_fnv_word(uint64_t h, uint64_t word)
     return h;
 }
 
+/* The unit table is fixed from boot, so its signature is computed once. */
+static uint64_t sig_cache;
+static int sig_ok;
+
 uint64_t ka_machine_signature(void)
 {
+    if (sig_ok) {
+        return sig_cache;
+    }
     uint64_t w[KA_MAX_UNITS];
     unsigned n = (unsigned)ka_boot.nunits;
     for (unsigned i = 0; i < n; ++i) {
@@ -65,6 +72,8 @@ uint64_t ka_machine_signature(void)
     for (unsigned i = 0; i < n; ++i) {
         h = ka_fnv_word(h, w[i]);
     }
+    sig_cache = h;
+    sig_ok = 1;
     return h;
 }
 

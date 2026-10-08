@@ -150,8 +150,18 @@ int ka_engine_send(struct ka_engine *e, unsigned u, const uint64_t w[4])
     ka_nm_wr(KA_NM_ARG2, w[2]);
     ka_nm_wr(KA_NM_ARG3, w[3]);
 
+    /* Pop completions at half depth, from the read the offer check makes anyway:
+     * a full queue stalls every memory read queued behind the next one. */
+    uint64_t stat = ka_nm_rd(KA_NM_STAT);
+    if (KA_NM_STAT_COUNT(stat) >= KA_NM_CQ_DEPTH / 2) {
+        if (ka_engine_drain(e)) {
+            return e->status;
+        }
+        stat = ka_nm_rd(KA_NM_STAT);
+    }
+
     /* GO only once the previous flit is taken. */
-    if (!not_offered(e, u) && wait_until(e, not_offered, u, KA_WAIT_OFFER)) {
+    if ((stat & KA_NM_STAT_OFFERED) && wait_until(e, not_offered, u, KA_WAIT_OFFER)) {
         return e->status;
     }
     ka_nm_wr(KA_NM_GO, 1);

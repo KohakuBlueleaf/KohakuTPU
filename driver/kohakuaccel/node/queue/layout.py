@@ -39,6 +39,10 @@ STATES = {ST_NONE: "none", ST_READY: "ready", ST_STOPPED: "stopped", ST_FATAL: "
 # SQ opcodes.
 OP_NOP, OP_RUN, OP_STOP, OP_HEAP, OP_ALLOC, OP_FREE = 0, 1, 2, 3, 4, 5
 
+# RUN flags (ka/package/interp.h KA_RUN_F_*). IRQ toggles the node's host
+# interrupt once the completion is posted; a host that cannot take one omits it.
+RUN_F_CHECKSUM, RUN_F_IRQ = 1, 2
+
 #: Completion status codes.
 STATUS = {
     0x00: "OK",
