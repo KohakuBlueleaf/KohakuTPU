@@ -46,6 +46,8 @@ module vec_lanes #(
     input  wire [1:0]   mode,
 
     input  wire         ls_we,
+    input  wire [1:0]   ls_pm,      // VSHUF predicate mode: 0 all, 1 P[ls_pr], 2 ~P[ls_pr]
+    input  wire [1:0]   ls_pr,
     input  wire [6:0]   ls_waddr,
     input  wire [383:0] ls_wdata,
     input  wire [6:0]   ls_raddr,
@@ -137,6 +139,7 @@ module vec_lanes #(
     reg  [MW-1:0] meta [1:MDEP];
     reg  [15:0]   tailv;
     reg  [127:0]  preg [0:3];
+    wire [15:0]   ls_pmask = preg[ls_pr][ls_waddr[2:0]*16 +: 16];
 
     // TREE writes its leaves back 8 per phase, the same slot width as D2.
     wire [4:0] wid = (mode == M_FLAT) ? 5'd16
@@ -452,7 +455,8 @@ module vec_lanes #(
         nx_we  = 16'd0;
         nx_wa  = p_wa;
         if (ls_we) begin
-            nx_we = 16'hFFFF;
+            nx_we = (ls_pm == 2'd0) ? 16'hFFFF
+                  : (ls_pm == 2'd1) ? ls_pmask : ~ls_pmask;
             nx_wa = ls_waddr;
         end else if (p_valid && !p_cmp && !p_tail
                      && ((mode != M_TREE) || red_wb)) begin

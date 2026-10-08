@@ -58,7 +58,8 @@ module vec_lanes_tb;
 
     vec_lanes #(.MODEL(1), .RF_PAD(`TB_RFPAD), .RF_PACK(`TB_RFPACK)) dut (
         .clk(clk), .rst(rst), .mode(mode),
-        .ls_we(ls_we), .ls_waddr(ls_waddr), .ls_wdata(ls_wdata),
+        .ls_we(ls_we), .ls_pm(2'd0), .ls_pr(2'd0),
+        .ls_waddr(ls_waddr), .ls_wdata(ls_wdata),
         .ls_raddr(ls_raddr), .ls_ractive(ls_ractive), .ls_rdata(ls_rdata),
         .iss_valid(iss_valid), .iss_phase(iss_phase),
         .iss_ra(iss_ra), .iss_rb(iss_rb), .iss_rc(iss_rc), .iss_wa(iss_wa),

@@ -474,7 +474,7 @@ V/16 accumulate rounding like `sqrt(V/16)` rather than `sqrt(V)`.
 
 Every ALU op carries `pr` (which of four 128-bit predicate registers) and `pm`
 (0 unconditional, 1 where the bit is set, 2 where it is clear) in `ir[4:1]`, and
-they gate the per-slice write enable. **`VSHUF` now carries them too.**
+they gate the per-slice write enable. **`VSHUF` carries them too.**
 
 It is the only load/store-port instruction that does. `VLD`, `VST`, `VCVT` and
 `VBCAST` share the opcode branch, but for those four `ir[4:1]` is the low end of
@@ -490,6 +490,11 @@ Two rules that differ from the ALU path, and both matter:
   `predicate & tail`; this one is the predicate alone, because a whole-chunk
   write is whole-chunk whatever `VL` says. Adding the tail here would corrupt
   silently at any `VL` that is not a multiple of 16.
+
+`vec_core` latches `pm` and `pr` into `ls_pm`/`ls_pr` when the instruction
+issues, and `vec_lanes` reads the mask `ls_pmask` from `P[ls_pr]` at the chunk
+being written. The predicate therefore stays bound to its own `VSHUF` while the
+next instruction decodes.
 
 **Why it exists.** The granule transpose — a 4x4 sub-tile of FP16 is exactly one
 32-byte word, but its sixteen elements come from four different rows — is 52% /
@@ -518,6 +523,18 @@ predicate file, because the load/store path shares neither the ALU pipeline's
 constant `16'hFFFF`. Timing did not move — both arms bind on the same 8-level
 path — so the predicate lookup did not land on the write-enable decode, which
 was the risk worth measuring.
+
+### 5.4 `VRED ANY` / `ALL` read the predicate after the lanes drain
+
+`VRED` kinds 6 (`ANY`) and 7 (`ALL`) reduce a predicate register, not a vector:
+`S[vd]` gets `1.0` if any (all) bit of `P[pr]` is set, else `0`. They do not
+use the tree, so the `VL` and `TREE`-mode checks of the other kinds do not apply.
+
+The core evaluates them in the `S_PRED` state, which waits for `pipe_empty`. A
+compare that writes `P[pr]` is still in the lane pipeline when the next
+instruction decodes; reading the predicate at decode would see the value from
+before that compare. Waiting for the drain makes `CMP` followed immediately by
+`VRED ANY` on the same register read the compare's result.
 
 ---
 

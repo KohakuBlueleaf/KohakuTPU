@@ -112,6 +112,9 @@ module vec_cu_tb;
     integer     rq_head, rq_tail, rq_wait;
     reg [39:0]  wr_addr_l;
     reg         wr_open;
+    // The memory's MEM_WR_ACK, one per write, sent between read responses.
+    localparam [3:0] T_MEM_WR_ACK = 4'h3;
+    integer     ack_owed;
 
     reg  [FW-1:0] mem_flit;
     reg           mem_valid;
@@ -121,6 +124,9 @@ module vec_cu_tb;
     // 40, NOT 34. NOC_MEM_ADDR is [255:216]; decoding the top 34 reads the
     // address shifted right by six and the drain lands where nothing looks.
     wire [39:0] o_addr = out_data[255 -: 40];
+
+    wire wd_now = out_valid && (o_type == T_MEM_WR_DATA) && wr_open;
+    wire ack_go = (ack_owed > 0) && (rq_head == rq_tail) && !in_busy;
 
     integer sig_count, dr_count;
     reg [31:0] last_sig_arg, last_dr_arg;
@@ -143,7 +149,7 @@ module vec_cu_tb;
 
     always @(posedge clk) begin
         if (!resetn) begin
-            rq_head <= 0; rq_tail <= 0; rq_wait <= 0;
+            rq_head <= 0; rq_tail <= 0; rq_wait <= 0; ack_owed <= 0;
             wr_open <= 1'b0; mem_valid <= 1'b0;
             sig_count <= 0; last_sig_arg <= 32'd0; last_sig_fault <= 1'b0;
             dr_count <= 0; last_dr_arg <= 32'd0;
@@ -204,7 +210,7 @@ module vec_cu_tb;
                 lb_head  <= lb_head + 1;
             end
 
-            // answer one queued read every few cycles
+            // answer one queued read every few cycles; acknowledge writes between
             if (rq_head != rq_tail) begin
                 if (rq_wait < 3) begin
                     rq_wait <= rq_wait + 1;
@@ -219,6 +225,12 @@ module vec_cu_tb;
                     rq_head   <= rq_head + 1;
                 end
             end
+            else if (ack_go) begin
+                mem_flit <= { CX[3:0], CY[3:0], MX[3:0], MY[3:0],
+                              T_MEM_WR_ACK, 8'h00, 1'b1, 3'b000, 256'd0 };
+                mem_valid <= 1'b1;
+            end
+            ack_owed <= ack_owed + (wd_now ? 1 : 0) - (ack_go ? 1 : 0);
         end
     end
 
@@ -505,38 +517,36 @@ module vec_cu_tb;
         // appears twice as a BARRIER: a compare's predicate lands 14 cycles
         // behind issue, and the load/store ops are the ones that wait for
         // pipe_empty. Its L1 words are scratch and get overwritten below.
+        // Both compares first, then ANY P0 and ALL P1: each reduction names a
+        // predicate the instruction before it did not.
         put_imem(9'd40, I_VSETMD);
         put_imem(9'd41, I_VSETI);      put_imem(9'd42, 32'd128);
         put_imem(9'd43, I_VSETVL);
         put_imem(9'd44, I_K_SET);      put_imem(9'd45, 32'h00428000);   // 64.0
         put_imem(9'd46, I_CMPGT_P0);
         put_imem(9'd47, I_VST_A5);
-        put_imem(9'd48, I_VSETI);      put_imem(9'd49, 32'd64);
-        put_imem(9'd50, I_VSETVL);
-        put_imem(9'd51, I_ANY_P0);
-        put_imem(9'd52, I_VSETI);      put_imem(9'd53, 32'd128);
+        put_imem(9'd48, I_K_SET);      put_imem(9'd49, 32'h00428200);   // 65.0
+        put_imem(9'd50, I_CMPLT_P1);
+        put_imem(9'd51, I_VST_A5);
+        put_imem(9'd52, I_VSETI);      put_imem(9'd53, 32'd64);
         put_imem(9'd54, I_VSETVL);
-        put_imem(9'd55, I_K_SET);      put_imem(9'd56, 32'h00428200);   // 65.0
-        put_imem(9'd57, I_CMPLT_P1);
-        put_imem(9'd58, I_VST_A5);
-        put_imem(9'd59, I_VSETI);      put_imem(9'd60, 32'd64);
-        put_imem(9'd61, I_VSETVL);
-        put_imem(9'd62, I_ALL_P1);
-        put_imem(9'd63, I_BC_S3_V8);
-        put_imem(9'd64, I_VST_V8_A5);
-        put_imem(9'd65, I_BC_S4_V9);
-        put_imem(9'd66, I_VST_V9_A6);
-        put_imem(9'd67, I_VDRAIN2);
-        put_imem(9'd68, I_VHALT);
+        put_imem(9'd55, I_ANY_P0);
+        put_imem(9'd56, I_ALL_P1);
+        put_imem(9'd57, I_BC_S3_V8);
+        put_imem(9'd58, I_VST_V8_A5);
+        put_imem(9'd59, I_BC_S4_V9);
+        put_imem(9'd60, I_VST_V9_A6);
+        put_imem(9'd61, I_VDRAIN2);
+        put_imem(9'd62, I_VHALT);
 
         do_run(9'd40);
         spin = 0;
-        // 29 imem writes on top of 44, then the kernel's own HALT
-        while ((sig_count < 74) && (spin < 60000)) begin
+        // 23 imem writes on top of 44, then the kernel's own HALT
+        while ((sig_count < 68) && (spin < 60000)) begin
             spin = spin + 1;
             @(negedge clk);
         end
-        chk(sig_count, 74, "third kernel retired");
+        chk(sig_count, 68, "third kernel retired");
         chk({31'd0, dbg_fault}, 64'd0, "third kernel must not fault");
         if (spin >= 60000) begin
             $display("  FAIL third kernel never retired");
@@ -589,11 +599,11 @@ module vec_cu_tb;
 
         do_run(9'd80);
         spin = 0;
-        while ((sig_count < 81) && (spin < 60000)) begin
+        while ((sig_count < 75) && (spin < 60000)) begin
             spin = spin + 1;
             @(negedge clk);
         end
-        chk(sig_count, 81, "fourth kernel retired");
+        chk(sig_count, 75, "fourth kernel retired");
         chk({31'd0, dbg_fault}, 64'd0, "fourth kernel must not fault");
         chk({31'd0, last_sig_fault}, 64'd0, "a peer write is not a fault");
         for (w = 0; w < 2; w = w + 1) begin
@@ -614,11 +624,11 @@ module vec_cu_tb;
 
         do_run(9'd80);
         spin = 0;
-        while ((sig_count < 82) && (spin < 60000)) begin
+        while ((sig_count < 76) && (spin < 60000)) begin
             spin = spin + 1;
             @(negedge clk);
         end
-        chk(sig_count, 82, "the run after a rejected burst retired");
+        chk(sig_count, 76, "the run after a rejected burst retired");
         chk({31'd0, last_sig_fault}, 64'd1, "a rejected burst must fault");
         chk({32'd0, last_sig_arg}, 64'd9, "fault code is F_CUDATA");
 
@@ -627,11 +637,11 @@ module vec_cu_tb;
         end
         do_run(9'd80);
         spin = 0;
-        while ((sig_count < 83) && (spin < 60000)) begin
+        while ((sig_count < 77) && (spin < 60000)) begin
             spin = spin + 1;
             @(negedge clk);
         end
-        chk(sig_count, 83, "the core recovers and runs again");
+        chk(sig_count, 77, "the core recovers and runs again");
         chk({31'd0, last_sig_fault}, 64'd0, "the fault must not be sticky");
         for (w = 0; w < 2; w = w + 1) begin
             for (i = 0; i < 16; i = i + 1) begin
@@ -653,13 +663,13 @@ module vec_cu_tb;
         spin = 0;
         // DATA_RECEIVED wins the send arbiter, so it lands BEFORE the kernel's
         // own retire; waiting on either alone races the other.
-        while (((dr_count < 2) || (sig_count < 91)) && (spin < 60000)) begin
+        while (((dr_count < 2) || (sig_count < 85)) && (spin < 60000)) begin
             spin = spin + 1;
             @(negedge clk);
         end
         chk(dr_count, 2, "the peer drain must carry signal_on_complete");
         chk(cud_out, 3, "one descriptor flit and two data flits");
-        chk(sig_count, 91, "fifth kernel retired");
+        chk(sig_count, 85, "fifth kernel retired");
         chk({31'd0, dbg_fault}, 64'd0, "fifth kernel must not fault");
 
         for (w = 0; w < 2; w = w + 1) begin
@@ -667,11 +677,11 @@ module vec_cu_tb;
         end
         do_run(9'd92);
         spin = 0;
-        while ((sig_count < 92) && (spin < 60000)) begin
+        while ((sig_count < 86) && (spin < 60000)) begin
             spin = spin + 1;
             @(negedge clk);
         end
-        chk(sig_count, 92, "sixth kernel retired");
+        chk(sig_count, 86, "sixth kernel retired");
         for (w = 0; w < 2; w = w + 1) begin
             for (i = 0; i < 16; i = i + 1) begin
                 chk({48'd0, dram[(A_DST3 >> 5) + w][i*16 +: 16]},
@@ -691,11 +701,11 @@ module vec_cu_tb;
 
         do_run(9'd92);
         spin = 0;
-        while ((sig_count < 93) && (spin < 60000)) begin
+        while ((sig_count < 87) && (spin < 60000)) begin
             spin = spin + 1;
             @(negedge clk);
         end
-        chk(sig_count, 93, "the run after an interleaved burst retired");
+        chk(sig_count, 87, "the run after an interleaved burst retired");
         chk({31'd0, last_sig_fault}, 64'd1, "an interleaved burst must fault");
         chk({32'd0, last_sig_arg}, 64'd9, "fault code is F_CUDATA");
         chk(dr_count, 2, "a corrupted burst must not be acknowledged");

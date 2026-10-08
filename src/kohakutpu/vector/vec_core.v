@@ -133,6 +133,7 @@ module vec_core #(
     // Entered only at L1_LAT=2, where URAM's extra beat has to be absorbed
     // before the walks may look at l1_q.
     localparam [5:0] S_LDX = 6'd36, S_DRX = 6'd37;
+    localparam [5:0] S_PRED = 6'd38;     // VRED ANY/ALL: evaluate P[g_pr]
 
     // ================================================== architectural state
     reg [5:0]  st;
@@ -219,6 +220,8 @@ module vec_core #(
     reg  [2:0]   iss_chunk, red_kind;
     reg  [15:0]  iss_tmask;
     reg          lw_we, lw_ract;
+    // VSHUF's predicate: pm 0 writes every lane, 1 the lanes P[pr] sets, 2 the rest.
+    reg  [1:0]   ls_pm, ls_pr;
     reg  [6:0]   lw_waddr, lw_raddr;
     reg  [383:0] lw_wdata;
     wire [383:0] lw_rdata;
@@ -230,7 +233,8 @@ module vec_core #(
     vec_lanes #(.MODEL(MODEL), .RF_PRIM(RF_PRIM), .RF_PAD(RF_PAD),
                 .RF_PACK(RF_PACK)) u_lanes (
         .clk(clk), .rst(rst), .mode(vmode),
-        .ls_we(lw_we), .ls_waddr(lw_waddr), .ls_wdata(lw_wdata),
+        .ls_we(lw_we), .ls_pm(ls_pm), .ls_pr(ls_pr),
+        .ls_waddr(lw_waddr), .ls_wdata(lw_wdata),
         .ls_raddr(lw_raddr), .ls_ractive(lw_ract), .ls_rdata(lw_rdata),
         .iss_valid(iss_valid), .iss_phase(iss_phase),
         .iss_ra(iss_ra), .iss_rb(iss_rb), .iss_rc(iss_rc), .iss_wa(iss_wa),
@@ -576,10 +580,8 @@ module vec_core #(
                                 g_pr <= d_pr;
                                 red_kind <= d_vc[2:0];
                                 if (d_vc[2:0] >= 3'd6) begin
-                                    sreg[d_vd] <= (d_vc[2:0] == 3'd6)
-                                                ? (p_any ? E8_ONE : 24'd0)
-                                                : (p_all ? E8_ONE : 24'd0);
-                                    st <= S_F1;
+                                    // ANY/ALL complete in S_PRED.
+                                    st <= S_PRED;
                                 end else if (|vl[3:0]) begin
                                     // a partial chunk would feed stale slots into the
                                     // tree, and the tree has no per-slot mask
@@ -599,6 +601,8 @@ module vec_core #(
                                 // load/store encoding it sits at vd.
                                 g_ra <= (d_op == O_VST) ? d_vd : d_va;
                                 shuf_k <= sreg[d_vb][3:0];
+                                ls_pm  <= (d_op == O_VSHUF) ? d_pm : 2'd0;
+                                ls_pr  <= d_pr;
                                 bc_to_s <= (d_op == O_VBCAST) && (d_sa != SRC_S);
                                 if ((d_op == O_VLD || d_op == O_VST || d_op == O_VCVT)
                                     && !dt_ok) begin
@@ -900,6 +904,13 @@ module vec_core #(
                 end
 
                 S_BAR:  if (fill_out == 16'd0) begin
+                    st <= S_F1;
+                end
+                // ANY/ALL of P[d_pr] into S[vd], once the lanes have drained.
+                S_PRED: if (pipe_empty) begin
+                    sreg[d_vd] <= (d_vc[2:0] == 3'd6)
+                                ? (p_any ? E8_ONE : 24'd0)
+                                : (p_all ? E8_ONE : 24'd0);
                     st <= S_F1;
                 end
                 S_SETI: st <= S_SETI2;
