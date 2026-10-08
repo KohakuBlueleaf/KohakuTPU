@@ -66,6 +66,9 @@ class Task(Node):
     #: Which mesh this task RUNS on; None infers it from the regions. Placement
     #: may not override it -- a task cannot run where its operands are not.
     mesh: int | None = None
+    #: Completions owed by OTHER units in this task's round, ``((coord, n),)``:
+    #: a peer acknowledging a transfer this task makes. Awaited, never kicked.
+    acks: tuple = ()
 
 
 @dataclass

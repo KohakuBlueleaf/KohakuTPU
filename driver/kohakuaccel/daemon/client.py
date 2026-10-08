@@ -7,11 +7,15 @@ to the daemon's own transport, done once when the daemon opened the
 card, not once per client that connects to it.
 """
 
+import dataclasses
+import pathlib
 import socket
 import threading
 
 from kohakuaccel.daemon.protocol import recv_msg, send_msg
 from kohakuaccel.daemon.server import DEFAULT_PORT
+from kohakuaccel.node.boot import BootArgs
+from kohakuaccel.node.queue import Completion, NodeError
 from kohakuaccel.transport.base import Transport, TransportUnavailable
 
 
@@ -88,6 +92,16 @@ class DaemonTransport(Transport):
         bb = self.client.hello.get("beat_bytes")
         if bb:
             self.beat_bytes = bb
+        mb = self.client.hello.get("max_block")
+        if mb:
+            self.max_block = mb
+
+    def run(self, cycles: int) -> None:
+        """Advance a simulated card's clock (the daemon's backend must have one)."""
+        self.client.call("sim_run", cycles=cycles)
+
+    def status(self) -> dict:
+        return self.client.call("sim_status")
 
     def write64(self, addr: int, data: int) -> None:
         self.client.call("write64", addr=addr, data=data)
@@ -109,3 +123,105 @@ class DaemonTransport(Transport):
 
     def close(self) -> None:
         self.client.close()
+
+
+class RemoteNodeQueue:
+    """A node's queue, held by the daemon: :class:`kohakuaccel.node.queue.NodeQueue`'s
+    surface, one round trip per call -- the daemon polls the completion ring.
+
+        q = RemoteNodeQueue(client, node=0, base=staging_addr)   # attaches, inits
+        q.load("build/fw/kohakutpu_node.elf", BootArgs(queue=q.base, mesh=0))
+        q.wait_ready()
+        q.run(package, bindings=[a, b])
+    """
+
+    def __init__(
+        self, client: DaemonClient, node: int, base: int, init: bool = True, **geo
+    ):
+        self.client, self.node = client, node
+        got = client.call("node_attach", node=node, base=base, init=init, **geo)
+        self.base, self.heap_off, self.size = got["base"], got["heap_off"], got["size"]
+
+    def _call(self, op: str, **kw):
+        return self.client.call(op, node=self.node, **kw)
+
+    def _final(self, d: dict, check: bool = True) -> Completion:
+        out = d.pop("stdout", "")
+        c = Completion(**d)
+        if check and not c.ok:
+            raise NodeError(c, out)
+        return c
+
+    # --------------------------------------------------------------- setup
+    def load(self, elf, args: BootArgs, mode: str = "burn") -> dict:
+        """Put firmware on the node and start it, daemon-side; the image travels."""
+        raw = pathlib.Path(elf).read_bytes()
+        return self._call(
+            "node_load", elf=raw.hex(), args=dataclasses.asdict(args), mode=mode
+        )
+
+    def wait_ready(self, timeout: float = 120.0) -> dict:
+        return self._call("node_ready", timeout=timeout)
+
+    def state(self) -> dict:
+        return self._call("node_state")
+
+    def units(self) -> list:
+        return [tuple(u) for u in self._call("node_units")]
+
+    @property
+    def counters(self) -> dict:
+        return self._call("node_counters")
+
+    # ------------------------------------------------------------- packages
+    def submit(self, package: bytes | None = None, bindings=None, **kw) -> int:
+        pkg = package.hex() if package is not None else None
+        return self._call(
+            "node_submit", package=pkg, bindings=list(bindings or []), **kw
+        )
+
+    def wait(self, tag: int, timeout: float = 300.0, check: bool = True) -> Completion:
+        return self._final(self._call("node_wait", tag=tag, timeout=timeout), check)
+
+    def run(
+        self, package: bytes, bindings=None, timeout: float = 300.0, **kw
+    ) -> Completion:
+        """Submit and wait in ONE round trip."""
+        d = self._call(
+            "node_run",
+            package=package.hex(),
+            bindings=list(bindings or []),
+            timeout=timeout,
+            **kw,
+        )
+        return self._final(d)
+
+    def nop(self) -> Completion:
+        return self._final(self._call("node_nop"))
+
+    def stop(self, value: int = 0) -> Completion:
+        return self._final(self._call("node_stop", value=value))
+
+    # ----------------------------------------------------------- node heaps
+    def heap(
+        self, region: int, base: int, nbytes: int, granule: int = 64
+    ) -> Completion:
+        return self._final(
+            self._call(
+                "node_heap", region=region, base=base, nbytes=nbytes, granule=granule
+            )
+        )
+
+    def alloc(self, region: int, nbytes: int, align: int = 0, tag: int = 0) -> int:
+        d = self._call("node_alloc", region=region, nbytes=nbytes, align=align, tag=tag)
+        return self._final(d).value
+
+    def free(self, region: int, addr: int) -> Completion:
+        return self._final(self._call("node_free", region=region, addr=addr))
+
+    def heap_stats(self, region: int) -> dict:
+        return self._call("node_heap_stats", region=region)
+
+    # ---------------------------------------------------------------- stdio
+    def read_stdout(self) -> str:
+        return self._call("node_stdout")

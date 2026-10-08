@@ -2,19 +2,25 @@
 
     python -m kohakuaccel.daemon --board multimesh_v65
     python -m kohakuaccel.daemon --board multimesh_v65 --backend model
+    python -m kohakuaccel.daemon --board multimesh_v8t8 --backend verilator \\
+        --build build/sw/vlt_card_v8t8_2n
 
 The CLI is the one place framework and project meet: the daemon library
 knows no wizard, so this wires the board's `CardClocks` in as the
-governor's clock control. `--backend model` runs the whole daemon
-against an in-memory card -- every feature testable with nothing
-attached, including here on a machine with no Vivado.
+governor's clock control, and the board's address map in as the node
+queues' unit-global memory and firmware loader (node-queue.md §9).
+`--backend model` runs the whole daemon against an in-memory card;
+`--backend verilator` against the Verilated card, ungoverned.
 """
 
 import argparse
 
 from kohakuaccel.daemon.server import DEFAULT_PORT, Daemon
+from kohakuaccel.node.boot import NodeBoot
 from kohakuaccel.transport.jtag import JtagTransport
 from kohakuaccel.transport.memory import MemoryTransport
+from kohakuaccel.transport.rebase import UnitGlobal
+from kohakuaccel.transport.verilator import VerilatorTransport
 
 # The project imports are DELIBERATELY INSIDE the functions. This module is the
 # seam, but the framework's claim is about IMPORT time -- `tests/test_isolation`
@@ -57,10 +63,36 @@ def model_transport(board: dict) -> MemoryTransport:
     return MemoryTransport(on_read=hooks)
 
 
+def node_wiring(transport, board: dict, sim=None):
+    """`(node_mem, node_loader)` from the board's address map, or (None, None)
+    for a board whose map names no per-node DRAM, staging and control."""
+    from kohakutpu.host import board_map
+
+    try:
+        m = board_map(board)
+        mem = UnitGlobal(transport, m["dram"], m["mem"], m["size"], staging=True)
+    except (KeyError, TypeError, ValueError):
+        return None, None
+
+    def loader(node: int, elf, args, mode: str) -> dict:
+        if mode == "burn" and sim is None:
+            raise ValueError("burn writes a model's arrays; this backend has none")
+        return NodeBoot(transport, m["ctrl"][node], node, sim=sim).load(elf, args, mode)
+
+    return mem, loader
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--board", required=True, help="boards/<name>.json")
-    ap.add_argument("--backend", choices=["jtag", "model"], default="jtag")
+    ap.add_argument("--backend", choices=["jtag", "model", "verilator"], default="jtag")
+    ap.add_argument("--build", help="--backend verilator: the model's build directory")
+    ap.add_argument(
+        "--poll-cycles",
+        type=int,
+        default=600,
+        help="--backend verilator: cycles the model advances between two node polls",
+    )
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     ap.add_argument("--idle-seconds", type=float, default=10.0)
     ap.add_argument("--no-governor", action="store_true")
@@ -70,8 +102,15 @@ def main() -> None:
     from kohakutpu.clock.card import load_board
 
     board = load_board(args.board)
+    sim = poll_idle = None
     if args.backend == "model":
         transport = model_transport(board)
+    elif args.backend == "verilator":
+        transport = sim = VerilatorTransport(build_dir=args.build)
+
+        def poll_idle():
+            transport.run(args.poll_cycles)
+
     else:
         transport = JtagTransport()
         beats = board.get("max_burst_beats")
@@ -79,7 +118,9 @@ def main() -> None:
         if beats and width:
             transport.max_block = min(transport.max_block, beats * width)
 
-    ctl = None if args.no_governor else WizardClockCtl(transport, board)
+    governed = not args.no_governor and args.backend != "verilator"
+    ctl = WizardClockCtl(transport, board) if governed else None
+    node_mem, node_loader = node_wiring(transport, board, sim)
     daemon = Daemon(
         transport,
         board=board,
@@ -87,9 +128,15 @@ def main() -> None:
         idle_seconds=args.idle_seconds,
         allow_program=args.allow_program,
         port=args.port,
+        node_mem=node_mem,
+        node_loader=node_loader,
+        poll_idle=poll_idle,
     )
     port = daemon.start()
-    print(f"kohaku daemon: {board['name']} via {args.backend} on 127.0.0.1:{port}")
+    print(
+        f"kohaku daemon: {board['name']} via {args.backend} on 127.0.0.1:{port}",
+        flush=True,
+    )
     try:
         daemon.serve_forever()
     finally:

@@ -34,6 +34,10 @@ packages = [
     "kohakuaccel.ir",
     "kohakuaccel.lang",
     "kohakuaccel.machine",
+    "kohakuaccel.node",
+    "kohakuaccel.node.boot",
+    "kohakuaccel.node.queue",
+    "kohakuaccel.package",
     "kohakuaccel.passes",
     "kohakuaccel.runtime",
     "kohakuaccel.sim",
@@ -62,6 +66,10 @@ packages = [
 "kohakuaccel.ir" = "compiler/kohakuaccel/ir"
 "kohakuaccel.lang" = "compiler/kohakuaccel/lang"
 "kohakuaccel.machine" = "driver/kohakuaccel/machine"
+"kohakuaccel.node" = "driver/kohakuaccel/node"
+"kohakuaccel.node.boot" = "driver/kohakuaccel/node/boot"
+"kohakuaccel.node.queue" = "driver/kohakuaccel/node/queue"
+"kohakuaccel.package" = "compiler/kohakuaccel/package"
 "kohakuaccel.passes" = "compiler/kohakuaccel/passes"
 "kohakuaccel.runtime" = "driver/kohakuaccel/runtime"
 "kohakuaccel.sim" = "driver/kohakuaccel/sim"

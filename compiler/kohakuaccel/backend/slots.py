@@ -50,3 +50,22 @@ class Backend(abc.ABC):
     def policy(self, task: Task) -> Policy:
         """Which units `task` may be placed on."""
         return task.policy
+
+    def addresses(self, word: int, unit_type: str) -> list:
+        """Every memory address `word` carries, as ``(segments, value)``;
+        `segments` is ``((bit, width, shift), ...)`` (package-format.md §2)."""
+        return []
+
+
+class Prebuilt(Backend):
+    """Tasks whose words are already encoded: `task.payload` is the word list.
+    `fields` is the project backend whose :meth:`addresses` reads them."""
+
+    def __init__(self, fields: Backend | None = None) -> None:
+        self.fields = fields
+
+    def encode(self, task: Task, ctx: EncodeContext) -> list[int]:
+        return list(task.payload)
+
+    def addresses(self, word: int, unit_type: str) -> list:
+        return self.fields.addresses(word, unit_type) if self.fields else []

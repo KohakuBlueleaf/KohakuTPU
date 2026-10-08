@@ -130,6 +130,7 @@ class Mesh:
         mem_size: int = MEMORY_SIZE,
         dram_base: int | None = None,
         granule: int = 0,
+        reply_at_agent: bool = False,
     ) -> None:
         self.raw = raw
         self.index = index
@@ -147,7 +148,10 @@ class Mesh:
         self.ctrl = Rebased(raw, ctrl_base)
         self.mem = Window(raw, mem_base, mem_size, granule)
         self.caps = read_agent_caps(self.ctrl)
-        self.endpoints = enumerate_mesh(self.ctrl, self.caps)
+        #: Where a unit answers a control read: the agent's own coordinate on a
+        #: node whose processor (the RV64 complex) owns (0, 0).
+        self.reply = self.agent if reply_at_agent else (0, 0)
+        self.endpoints = enumerate_mesh(self.ctrl, self.caps, self.reply)
 
     @property
     def dram_base(self) -> int:
@@ -191,7 +195,7 @@ class Mesh:
 
         out = []
         for coord in self.coords(unit_type):
-            word = control_read(self.ctrl, coord, CU_STATUS)
+            word = control_read(self.ctrl, coord, CU_STATUS, reply=self.reply)
             if word is not None and not decode_status(word)["busy"]:
                 out.append(coord)
         return tuple(out)
@@ -453,8 +457,10 @@ class Card:
         which=None,
         realign: bool = False,
         board: dict | None = None,
+        reply_at_agent: bool = False,
     ) -> None:
         self.board = board
+        self.reply_at_agent = reply_at_agent
         self._map = board_map(board) if board else None
         self.raw = transport or JtagTransport()
         if board:
@@ -529,6 +535,7 @@ class Card:
                         self._map["size"],
                         dram_base=self._map["dram"][i],
                         granule=self._map["granule"],
+                        reply_at_agent=self.reply_at_agent,
                     )
                 )
             return out

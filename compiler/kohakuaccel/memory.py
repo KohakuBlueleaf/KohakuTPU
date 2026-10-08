@@ -5,7 +5,7 @@ framework beyond four things: it can size itself, pack an array, unpack one
 back, and two layouts with the same `key` hold the same bytes.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol, runtime_checkable
 
 import numpy as np
@@ -192,6 +192,12 @@ class Batched:
     def stride(self) -> int:
         """Bytes between one batch element and the next."""
         return max(self.inner.nbytes(self.block), self.pad)
+
+    @property
+    def derived_from(self):
+        """This layout over `inner.derived_from`, or None."""
+        source = getattr(self.inner, "derived_from", None)
+        return None if source is None else replace(self, inner=source)
 
     def nbytes(self, shape: tuple) -> int:
         return self.count * self.stride

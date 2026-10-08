@@ -6,7 +6,7 @@ validation and disassembly.
 """
 
 from kohakuaccel.backend.isa import Field, InstFormat, InstSet, ISAError, roundtrip
-from kohakuaccel.backend.slots import Backend, EncodeContext
+from kohakuaccel.backend.slots import Backend, EncodeContext, Prebuilt
 
 __all__ = [
     "Backend",
@@ -15,5 +15,6 @@ __all__ = [
     "ISAError",
     "InstFormat",
     "InstSet",
+    "Prebuilt",
     "roundtrip",
 ]

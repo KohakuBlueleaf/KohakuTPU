@@ -104,6 +104,10 @@ class InstFormat:
         """Every field name, in layout order."""
         return [f.name for f in self.fields]
 
+    def span(self, name: str) -> tuple[int, int]:
+        """``(lowest bit, width)`` of field `name` in the container."""
+        return self._pos[name], self.by_name(name).width
+
     def settable(self) -> list[str]:
         """Field names :meth:`encode` accepts: everything without a `const`."""
         return [f.name for f in self.fields if f.const is None]

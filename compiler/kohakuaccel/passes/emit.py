@@ -34,6 +34,10 @@ class Emit(Pass):
 
             steps.append(SeedCredits(rnd.credits))
             waits = []
+            owed: dict[tuple[int, int], int] = {}
+            for i in rnd.tasks:
+                for coord, n in level.nodes[i].acks:
+                    owed[tuple(coord)] = owed.get(tuple(coord), 0) + n
 
             for coord in sorted(by_coord):
                 flits: list[int] = []
@@ -62,7 +66,9 @@ class Emit(Pass):
 
                 out.stage(coord, flits, signals, r, label=f"r{r}@{coord}")
                 steps.append(Kick(coord, base, len(flits)))
-                waits.append(Await(coord, signals))
+                # One Await per unit: its own signals plus the acks it owes.
+                waits.append(Await(coord, signals + owed.pop(coord, 0)))
+            waits += [Await(c, n) for c, n in sorted(owed.items())]
 
             steps.extend(waits)
             if r != len(level.rounds) - 1:

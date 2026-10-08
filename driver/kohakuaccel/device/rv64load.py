@@ -39,6 +39,24 @@ class LoadWindow:
 
     # ---------------------------------------------------------------- ELF
     def load_elf(self, path) -> dict:
+        info = self._parse(path)
+        self._stream(REGION_IMEM, 0, info["text"], 4)
+        self._stream(REGION_SPAD, SPAD_BASE, info["spad"], 8)
+        return info
+
+    def burn_elf(self, path, sim, cpu_scope: str) -> dict:
+        """Write the image straight into a simulated node's imem and spad
+        arrays (`sim.poke`); `cpu_scope` is its rv64_syscore scope."""
+        info = self._parse(path)
+        text = bytes(self._byte(a) for a in range((info["text"] + 3) & ~3))
+        spad = bytes(self._byte(SPAD_BASE + a) for a in range((info["spad"] + 7) & ~7))
+        if text:
+            sim.poke(f"{cpu_scope}.u_imem.u_ram", "mem", 0, text)
+        if spad:
+            sim.poke(cpu_scope, "spad", 0, spad)
+        return info
+
+    def _parse(self, path) -> dict:
         b = pathlib.Path(path).read_bytes()
         if b[:4] != b"\x7fELF" or b[4] != 2:
             raise ValueError(f"{path}: not a 64-bit ELF")
@@ -64,8 +82,6 @@ class LoadWindow:
             default=0,
         )
         dram = {a: v for a, v in self.image.items() if a >= NODE_BASE}
-        self._stream(REGION_IMEM, 0, text, 4)
-        self._stream(REGION_SPAD, SPAD_BASE, spad, 8)
         return {
             "entry": self.entry,
             "text": text,
@@ -91,6 +107,22 @@ class LoadWindow:
         """Queue bytes for the program to read at R_STDIN, before boot."""
         for ch in text.encode():
             self.t.write64(self.base + R_STDIN, ch)
+
+    def write_spad(self, offset: int, data: bytes) -> None:
+        """Stream `data` into the scratchpad from byte `offset` (8-byte words).
+        Only while the core is stopped: both share the scratchpad's write port."""
+        if offset % 8 or len(data) % 8:
+            raise ValueError("the scratchpad is streamed in whole 8-byte words")
+        # LOADC[23:8] holds the start offset.
+        self.t.write64(self.base + R_LOADC, REGION_SPAD | (offset << 8))
+        for a in range(0, len(data), 8):
+            self.t.write64(
+                self.base + R_LOADD, int.from_bytes(data[a : a + 8], "little")
+            )
+
+    def stop(self) -> None:
+        """Hold the core in reset (HR_BOOT = 0)."""
+        self.t.write64(self.base + R_BOOT, 0)
 
     def boot(self) -> None:
         self.t.write64(self.base + R_PC, self.entry)

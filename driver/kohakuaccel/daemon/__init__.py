@@ -16,7 +16,7 @@ unchanged over IPC. Direct JTAG remains possible when no daemon runs
 XDMA access is daemon-only by design, never direct.
 """
 
-from kohakuaccel.daemon.client import DaemonClient, DaemonTransport
+from kohakuaccel.daemon.client import DaemonClient, DaemonTransport, RemoteNodeQueue
 from kohakuaccel.daemon.governor import ClockGovernor
 from kohakuaccel.daemon.server import DEFAULT_PORT, Daemon
 
@@ -26,4 +26,5 @@ __all__ = [
     "Daemon",
     "DaemonClient",
     "DaemonTransport",
+    "RemoteNodeQueue",
 ]

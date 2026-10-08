@@ -64,13 +64,23 @@ class UnitGlobal(Transport):
     never learns the difference exists.
     """
 
-    def __init__(self, inner: Transport, dram_bases, mem_bases, size) -> None:
+    def __init__(
+        self, inner: Transport, dram_bases, mem_bases, size, staging: bool = False
+    ) -> None:
         self.inner = inner
         self.bulk = inner.bulk
         self.size = size
         self._spans = sorted(zip(dram_bases, mem_bases), reverse=True)
+        #: Whether a staging address (bit 39, mesh in [37:36]) maps to its
+        #: mesh's window with the address whole: ``window | addr``.
+        self.staging = staging
+        self._windows = list(mem_bases)
 
     def _map(self, addr: int, nbytes: int = WORD_BYTES) -> int:
+        if self.staging and addr >> 39 & 1:
+            mesh = (addr >> 36) & 3
+            if mesh < len(self._windows):
+                return self._windows[mesh] | addr
         for dram, mem in self._spans:
             if addr >= dram:
                 local = addr - dram

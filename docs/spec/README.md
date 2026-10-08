@@ -82,6 +82,8 @@ cannot forward a shape it does not know. See
 | [control-registers.md](control-registers.md) | Four register surfaces: the `CU_CTRL` block every unit answers, the orchestrator's AXI map, the mover's and the interlink's windows, and the RV64 control complex's host window and control region. | Fixed. One Convention (the dispatch order, §2.3). |
 | [transform-slot.md](transform-slot.md) | The shared transform bank on the mover's read-return path: where it sits, how an occupant is selected, and what the port and geometry contracts are. | Fixed interface, Addon occupant. |
 | [parameters.md](parameters.md) | Every parameter of every framework module: type, default, effect, legal range. | **Fixed** about ranges and meanings; the values are **Yours**. |
+| [package-format.md](package-format.md) | The work package a compile stores and a node's dispatcher runs: tables, steps, binding and relocation. | Fixed. Unit classes (§5.2) are Convention. |
+| [node-queue.md](node-queue.md) | How a host hands packages to a node and gets completions back: the boot block, the queue region, the rings, stdio. | Fixed; depths and placement are the host's. |
 
 **Two processors, one node.** The system node ships a control processor, and
 which one is a build-time choice: `CPU_RV64 = 0` selects the RV32 complex, which

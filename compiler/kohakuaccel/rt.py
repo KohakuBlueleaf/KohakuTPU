@@ -11,6 +11,10 @@ from typing import Protocol, runtime_checkable
 from kohakuaccel.dispatch import plan
 from kohakuaccel.machinespec import MachineSpec
 from kohakuaccel.memory import Arena, Buffer, Layout
+from kohakuaccel.package import mover
+from kohakuaccel.package.build import PackageBuilder
+from kohakuaccel.package.format import signature
+from kohakuaccel.package.lower import compile_stage, machine_units, unit_types
 
 
 @runtime_checkable
@@ -38,6 +42,14 @@ class Runtime:
     #: from the traced extent, so idle units take a share. Off: it is a trade.
     regrid = False
 
+    #: The node queue that runs packages (``run(package, bindings)``); None:
+    #: the host executes every round.
+    node = None
+    #: The project backend whose `addresses` reports a word's buffer fields.
+    fields = None
+    #: Whether every package built is kept in :attr:`packages`.
+    keep_packages = False
+
     def __init__(self, machine: MachineSpec, arena: Arena, transport, ctrl=None):
         self.machine = machine
         self.arena = arena
@@ -54,6 +66,10 @@ class Runtime:
         self.counters = dict.fromkeys(
             ("dispatches", "rounds", "flits", "sent", "fetched", "relayouts"), 0
         )
+        self._pending: PackageBuilder | None = None
+        self.packages: list[bytes] = []
+        #: The node's completion for the last package run.
+        self.last_completion = None
 
     # ---------------------------------------------------------------- memory
     def alloc(self, nbytes: int) -> int:
@@ -83,10 +99,12 @@ class Runtime:
         return made
 
     def write(self, addr: int, blob: bytes) -> None:
+        self.flush()
         self.counters["sent"] += len(blob)
         self.transport.write_block(addr, blob)
 
     def read(self, addr: int, nbytes: int) -> bytes:
+        self.flush()
         self.counters["fetched"] += nbytes
         return self.transport.read_block(addr, nbytes)
 
@@ -155,6 +173,8 @@ class Runtime:
 
         Raises :class:`ImportError` when no driver is installed alongside.
         """
+        if self.node is not None:
+            return self._gather(payloads, unit, name, nodes, acks)
         # Imported here and not at module scope: the compiler half installs and
         # imports on its own, and only running a round needs the driver half.
         from kohakuaccel.runtime import execute
@@ -173,13 +193,96 @@ class Runtime:
             execute(artifact.to_dict(), self.ctrl)
         return len(rounds)
 
+    # ------------------------------------------------------- node dispatch
+    def live_spans(self) -> dict:
+        """``{base: size}`` of every allocation a payload may address."""
+        return dict(self.arena.live)
+
+    def _gather(self, payloads, unit, name, nodes, acks) -> int:
+        """One stage through the framework pipeline, appended to the open package
+        and closed by a barrier."""
+        coords = tuple(nodes) if nodes is not None else self.machine.coords(unit)
+        result = compile_stage(payloads, unit, coords, self.machine, self.fields, acks)
+        b = self._package()
+        b.artifact(
+            result.artifact, addresses=self.fields.addresses if self.fields else None
+        )
+        b.barrier()
+        self.counters["dispatches"] += 1
+        self.counters["rounds"] += result.artifact.rounds
+        self.counters["flits"] += len(result.artifact.flits)
+        return result.artifact.rounds
+
+    def _package(self) -> PackageBuilder:
+        """The open package, opened if need be, its spans current."""
+        if self._pending is None:
+            units = machine_units(self.machine)
+            self._pending = PackageBuilder(
+                types=unit_types(self.machine),
+                credit=self.machine.inst_depth,
+                signature=signature(units),
+                mesh=self.machine.default,
+            )
+        self._pending.spans_from(self.live_spans())
+        return self._pending
+
+    def move(self, writes, name: str = "move") -> None:
+        """One memory-mover move, as its register writes (`package.mover`): a
+        MOVER step and a barrier on a node, else :meth:`host_move`."""
+        self.counters["moves"] = self.counters.get("moves", 0) + 1
+        if self.node is None:
+            self.host_move(list(writes))
+            return
+        b = self._package()
+        b.mover(writes, addresses=mover.addresses)
+        b.barrier()
+
+    def ring(self, mesh: int, tag: int = 0) -> None:
+        """Ring mesh `mesh`'s doorbell once this node's mover is idle.
+        Node-dispatched only."""
+        self._node_only("a doorbell").ring(mesh, tag)
+
+    def wait_bell(self, mesh: int, count: int = 1) -> None:
+        """Hold the node until `count` new doorbells from mesh `mesh` arrived.
+        Node-dispatched only."""
+        b = self._node_only("a doorbell wait")
+        b.wait_bell(mesh, count)
+        b.barrier()
+
+    def _node_only(self, what: str) -> PackageBuilder:
+        if self.node is None:
+            raise NotImplementedError(
+                f"{what} is a package step; this runtime dispatches from the host"
+            )
+        return self._package()
+
+    def host_move(self, writes: list) -> None:
+        """Issue a move from the host; a project overrides this. Raises
+        :class:`NotImplementedError`."""
+        raise NotImplementedError(
+            f"{type(self).__name__} has no host path to the memory mover; run "
+            f"it node-dispatched (Runtime.node), where a move is a MOVER step"
+        )
+
+    def flush(self) -> None:
+        """Run the open package on the node, if there is one, and wait for it."""
+        b, self._pending = self._pending, None
+        if b is None or not len(b):
+            return
+        pkg = b.build(defaults=False).to_bytes()
+        if self.keep_packages:
+            self.packages.append(pkg)
+        self.counters["packages"] = self.counters.get("packages", 0) + 1
+        self.last_completion = self.node.run(pkg, b.bindings())
+
     # --------------------------------------------------------------- control
     def sync(self) -> None:
         """Wait for outstanding work.
 
-        A round is awaited before :meth:`dispatch` returns, so this is already
-        true on arrival.
+        A host-dispatched round is awaited before :meth:`dispatch` returns; a
+        node's open package is run here.
         """
+        self.flush()
 
     def empty_cache(self) -> None:
         """Return memory nothing is using: folded constants, then the free tail.

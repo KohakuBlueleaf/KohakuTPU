@@ -380,6 +380,13 @@ class Compiled:
         for name, (array, layout) in self.constants().items():
             sizes[name] = _up(layout.nbytes(getattr(array, "shape", ())), align)
             roles[name] = "const"
+        # An input whose order the card derives also holds its source order.
+        for port in self.signature.inputs:
+            source = getattr(self.layouts.get(port.name), "derived_from", None)
+            if source is not None:
+                key = f"{port.name}<-{source.key}"
+                sizes[key] = _up(source.nbytes(self.sized(port.name)), align)
+                roles[key] = "in"
 
         temps = [n for n in self.temps if n not in self.tables]
         life = lifetimes(
@@ -678,6 +685,11 @@ class Kernel:
         _afford(rt, compiled, align, reuse)
 
         addrs: dict = {}
+        # Every input uploaded before any on-card conversion (package-format.md §7).
+        for port in self.signature.inputs:
+            prepare = getattr(bound[port.name], "prepare", None)
+            if prepare is not None:
+                prepare(compiled.layouts[port.name])
         for port in self.signature.inputs:
             addrs[port.name] = bound[port.name].address(compiled.layouts[port.name])
 

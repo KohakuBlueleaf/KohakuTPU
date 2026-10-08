@@ -99,16 +99,22 @@ def drain_mailbox(t: Transport, limit: int = 32) -> int:
 
 
 def control_exchange(
-    t: Transport, coord: Coord, index: int = CU_CAPS, txn: int = 1
+    t: Transport,
+    coord: Coord,
+    index: int = CU_CAPS,
+    txn: int = 1,
+    reply: Coord = (0, 0),
 ) -> dict | None:
     """One mailbox round trip to `coord`. Returns the decoded reply, or None.
 
     UNVALIDATED, and three things that are not an answer look like one: see
     :func:`control_read`, which is what callers want. None means the receive
     queue stayed empty.
+    `reply` is the request's source, where the unit answers: the agent's own
+    coordinate on a node whose processor owns (0, 0).
     """
     drain_mailbox(t)
-    flit = ctrl_request(dst=coord, src=(0, 0), idx=index, txn=txn)
+    flit = ctrl_request(dst=coord, src=reply, idx=index, txn=txn)
     for w in range(FLIT_WORDS):
         t.write64(MAG_BASE + A_TX_FLIT0 + w * WORD_BYTES, (flit >> (w * 64)) & MASK64)
     t.write64(MAG_BASE + A_TX_KICK, 1)
@@ -152,14 +158,20 @@ def control_write(
     return got["value"] if got["src"] == coord and got["idx"] == index else None
 
 
-def control_read(t: Transport, coord: Coord, index: int = CU_CAPS, txn: int = 1):
+def control_read(
+    t: Transport,
+    coord: Coord,
+    index: int = CU_CAPS,
+    txn: int = 1,
+    reply: Coord = (0, 0),
+):
     """Ask one node for a control register over the mailbox.
 
     Returns the 64-bit value, or None when NO UNIT LIVES AT `coord`. Three things
     look alike on this path and only one is an answer: an empty queue, our own
     flit looped back, and a reply from a unit that is not the one we asked.
     """
-    got = control_exchange(t, coord, index, txn)
+    got = control_exchange(t, coord, index, txn, reply)
     if got is None:
         return None
     # A memory-agent port returns the request itself rather than answering it, so
@@ -173,7 +185,7 @@ def control_read(t: Transport, coord: Coord, index: int = CU_CAPS, txn: int = 1)
     return got["value"]
 
 
-def confirmed_caps(t: Transport, coord: Coord, tries: int = 4):
+def confirmed_caps(t: Transport, coord: Coord, tries: int = 4, reply: Coord = (0, 0)):
     """CU_CAPS at `coord`, read until two reads agree. None if nothing is there.
 
     A read has been seen to carry the right `src` and ANOTHER endpoint's value,
@@ -181,9 +193,9 @@ def confirmed_caps(t: Transport, coord: Coord, tries: int = 4):
     cannot run the instruction never retires. Raises :class:`RuntimeError` if the
     reads never agree.
     """
-    seen = [control_read(t, coord, CU_CAPS)]
+    seen = [control_read(t, coord, CU_CAPS, reply=reply)]
     for _ in range(max(1, tries - 1)):
-        seen.append(control_read(t, coord, CU_CAPS))
+        seen.append(control_read(t, coord, CU_CAPS, reply=reply))
         if seen[-1] == seen[-2]:
             return seen[-1]
     raise RuntimeError(
@@ -192,7 +204,9 @@ def confirmed_caps(t: Transport, coord: Coord, tries: int = 4):
     )
 
 
-def enumerate_mesh(t: Transport, caps: AgentCaps | None = None) -> list[Endpoint]:
+def enumerate_mesh(
+    t: Transport, caps: AgentCaps | None = None, reply: Coord = (0, 0)
+) -> list[Endpoint]:
     """Every coordinate that answers a CU_CAPS read, in scan order.
 
     Scans the router grid and the edge ring around it, because endpoints sit on
@@ -204,7 +218,7 @@ def enumerate_mesh(t: Transport, caps: AgentCaps | None = None) -> list[Endpoint
     found = []
     for y in caps.span():
         for x in caps.span():
-            value = confirmed_caps(t, (x, y))
+            value = confirmed_caps(t, (x, y), reply=reply)
             if value is None:
                 continue
             got = decode_caps(value)
