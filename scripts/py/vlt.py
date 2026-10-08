@@ -94,6 +94,8 @@ def main() -> int:
     ap.add_argument("--cc", metavar="HARNESS.cpp", help="build a C++ model + harness")
     ap.add_argument("--trace", action="store_true", help="VCD; costs 10-100x")
     ap.add_argument("--run-args", default="", help="passed to the harness binary")
+    ap.add_argument("--vlt-config", action="append", default=[], help="a .vlt file")
+    ap.add_argument("--vflag", action="append", default=[], help="a raw verilator flag")
     args = ap.parse_args()
 
     if args.cc and args.lint_only:
@@ -172,12 +174,15 @@ def main() -> int:
     # MATCHES xelab's `-timescale 1ns/1ps`. Most RTL here carries no `timescale`
     # of its own (Verilator reports TIMESCALEMOD by the dozen), and without this
     # those modules take Verilator's default instead of the bench's unit.
-    cmd = ["verilator", "-sv", "--timing", "-Wno-fatal", "--timescale", "1ns/1ps"]
+    # --cc: the harness owns time, so RTL `#` delays are not scheduled.
+    timing = "--no-timing" if harness else "--timing"
+    cmd = ["verilator", "-sv", timing, "-Wno-fatal", "--timescale", "1ns/1ps"]
     if args.lint_only:
         cmd += ["--lint-only"]
     elif harness:
         cmd += ["--cc", "--exe", "--build", "-o", "vsim"]
-        cmd += ["-CFLAGS", "-O2 -std=c++17"]
+        # VTOP: the model class the harness includes.
+        cmd += ["-CFLAGS", f"-O2 -std=c++17 -DVTOP=V{top}"]
         if args.trace:
             cmd += ["--trace"]
     else:
@@ -187,6 +192,8 @@ def main() -> int:
         cmd += [f"-Wno-{w}" for w in SILENCED]
     cmd += [f"+define+{d}" for d in args.define + [f"MX_MODEL={args.model}"]]
     cmd += [f"-G{g}" for g in args.gparam]
+    cmd += args.vflag
+    cmd += [to_wsl(ROOT / v) for v in args.vlt_config]
     cmd += ["--top-module", top, "-f", "vlt.f"]
     if harness:
         cmd += [to_wsl(harness)]

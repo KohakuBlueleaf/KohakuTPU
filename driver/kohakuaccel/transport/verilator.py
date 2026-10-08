@@ -1,11 +1,12 @@
-"""The simulated card: a Verilated multimesh_v8t behind the two methods.
+"""The simulated card: a Verilated card behind the two methods.
 
-`VerilatorTransport` spawns the harness (sim/verilator/harness/v8t_card_main.cpp,
-built by `scripts/py/vlt.py v8t_card --cc ...`) and speaks its line protocol over
-stdin/stdout. Same addresses as the JTAG manager sees on silicon: the harness
-plays host manager 0, so a driver written for the card runs here unchanged.
+`VerilatorTransport` spawns the harness (sim/verilator/harness/card_main.cpp,
+built by `scripts/py/vlt.py card_v8t8_2n --cc ...`) and speaks its line protocol
+over stdin/stdout. Same addresses as the JTAG manager sees on silicon: the
+harness plays host manager 0, so a driver written for the card runs here
+unchanged.
 
-    t = VerilatorTransport()                       # build/vlt_v8t_card under WSL
+    t = VerilatorTransport()                       # build/vlt_card_v8t8_2n under WSL
     t.write64(0x1_0000_0000, 0x1234)               # node 0's memory window
     t.read_block(0x800000, 64)                     # node 0's control window
 
@@ -40,17 +41,19 @@ class VerilatorTransport(Transport):
         build_dir: pathlib.Path | str | None = None,
         wsl: bool = True,
         distro: str = WSL_DISTRO,
-        settle: int = 40000,
+        settle: int = 20000,
         timeout: float = 600.0,
     ) -> None:
         build = (
-            pathlib.Path(build_dir) if build_dir else ROOT / "build" / "vlt_v8t_card"
+            pathlib.Path(build_dir)
+            if build_dir
+            else ROOT / "build" / "vlt_card_v8t8_2n"
         )
         vsim = build / "obj_dir" / "vsim"
         if not vsim.exists():
             raise TransportUnavailable(
-                f"no model at {vsim}; build it with `python scripts/py/vlt.py v8t_card "
-                f"--cc sim/verilator/harness/v8t_card_main.cpp --keep`"
+                f"no model at {vsim}; build it with `python scripts/py/vlt.py "
+                f"card_v8t8_2n --cc sim/verilator/harness/card_main.cpp --keep`"
             )
         inv = f"./obj_dir/vsim --settle {settle}"
         if wsl:
@@ -80,6 +83,7 @@ class VerilatorTransport(Transport):
         )
         self.timeout = timeout
         self.calls = 0
+        self._ent: dict[tuple[str, str], int] = {}
         ready = self._line()
         if not ready.startswith("READY"):
             raise TransportUnavailable(f"harness did not come up: {ready!r}")
@@ -98,7 +102,8 @@ class VerilatorTransport(Transport):
                 except OSError:
                     pass
                 raise RuntimeError(f"harness closed the pipe: {tail.strip()}")
-            line = line.strip()
+            # Only the line end: an empty value is "V " and must keep its space.
+            line = line.rstrip("\r\n")
             if line.startswith(("V ", "OK", "E ", "READY")):
                 return line
             print(f"  [model] {line}", flush=True)
@@ -150,6 +155,32 @@ class VerilatorTransport(Transport):
         if len(data) != 64:
             raise ValueError("a DRAM word is 64 bytes")
         self._cmd(f"BW {channel:x} {word:x} {int.from_bytes(data, 'little'):0128x}")
+
+    def arrays(self, substr: str) -> list[tuple[str, str, int, int]]:
+        """(scope, var, elements, bytes per element) of every public array
+        (sim/verilator/card.vlt) whose scope contains `substr`."""
+        out = []
+        for item in self._cmd(f"SC {substr}")[1:].split():
+            scope, var, n, ent = item.rsplit(":", 3)
+            out.append((scope, var, int(n), int(ent)))
+        return out
+
+    def poke(self, scope: str, var: str, index: int, data: bytes) -> None:
+        """Write whole elements of a public array from `index`, little-endian."""
+        for off in range(0, len(data), 1 << 15):
+            chunk = data[off : off + (1 << 15)]
+            ent = self._ent.setdefault((scope, var), self._entsize(scope, var))
+            self._cmd(f"PK {scope} {var} {index + off // ent:x} {chunk.hex()}")
+
+    def peek(self, scope: str, var: str, index: int, count: int) -> bytes:
+        """Read `count` whole elements of a public array from `index`."""
+        return bytes.fromhex(self._cmd(f"PE {scope} {var} {index:x} {count:x}")[2:])
+
+    def _entsize(self, scope: str, var: str) -> int:
+        for s, v, _, ent in self.arrays(scope):
+            if s == scope and v == var:
+                return ent
+        raise RuntimeError(f"no public array {scope}.{var}")
 
     def run(self, cycles: int) -> None:
         """Advance the sysnode clock `cycles` cycles with no host traffic."""

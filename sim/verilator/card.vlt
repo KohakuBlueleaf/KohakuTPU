@@ -1,0 +1,5 @@
+`verilator_config
+// Arrays the harness reads and writes by name (SC/PE/PK): node scratchpads and
+// every XPM-shim memory (RV64 imem, staging banks).
+public_flat_rw -module "rv64_syscore" -var "spad"
+public_flat_rw -module "xpm_memory_sdpram" -var "mem"
