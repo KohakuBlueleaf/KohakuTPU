@@ -179,6 +179,10 @@ module sysnode #(
     input  wire                  pe_halt_req,
     output wire [63:0]           pe_status,
     output wire                  pe_busy,
+    // The host interrupt TOGGLE (CTRL 0x38): latency-insensitive, so the top
+    // may register it freely; the node beside the PCIe core is the one to wire
+    // it, through kohaku_irq_req.
+    output wire                  host_irq,
 
     // The processor's host window, direct: a bench's way in. On a card the same
     // window is the load slot at +0x8000 of the control port (rv64_load_win).
@@ -538,9 +542,9 @@ module sysnode #(
         .db_en(cpu_il_en), .db_addr(cpu_il_addr), .db_data(cpu_il_data),
         // The node conditions a runtime must react to rather than poll: a
         // mover descriptor that failed, the host asking it to stop, and a
-        // doorbell rung from another mesh. Tied low this line existed but
-        // could never fire, so `mie[11]` was dead.
+        // doorbell rung from another mesh.
         .irq_summary((|mv_fault) || pe_halt_req || dbell_pend), .busy(pe_busy),
+        .host_irq(host_irq),
         .dbg_console_we(hs_console_we), .dbg_console(hs_console)
     );
     // Enough for a host to tell a running node from a stopped one without the

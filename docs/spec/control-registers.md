@@ -864,6 +864,7 @@ an L1 hit is.
 | `0x18` | `R_SATP` | **R** | A **read-only mirror** of the `satp` CSR. `satp` is architectural state owned by supervisor software and written with `CSRRW`; this offset exists so a host can read the translation root without a path into the register file. A store here is decoded by no case and does nothing. |
 | `0x20` | mover status | R | `[32]` mover busy, `[31:28]` mover fault, `[27:0]` moves completed. `[63:33]` zero. |
 | `0x28` | doorbell status | R | The 64-bit word on the complex's `db_status` input: `mag_ilink`'s four inbound doorbell counts, mesh 0 in `[15:0]` up to mesh 3 in `[63:48]`, or zero when no interlink is built. |
+| `0x38` | `R_IRQ` | RW | **Any store flips** the complex's `host_irq` output; a load reads its level in `[0]`. A toggle, so the line may be registered any number of times on its way to the PCIe core and crosses into that core's clock with a 2-flop synchroniser (`kohaku_irq_req`, which turns each flip into one `usr_irq_req` held until `usr_irq_ack`). Two flips inside one receiver clock cancel. The dispatcher flips it once per package submitted with `KA_RUN_F_IRQ` (node-queue.md), after the completion is posted. The node beside the PCIe core is the one to wire the line. |
 | `0x40`–`0x7F` | dispatch mailbox | RW | A store writes mailbox register `pa[5:3]`; a load reads it. §7.5. |
 | `0x80`–`0xBF` | mover config (alias) | W | A store writes mover register `pa[5:0]` — the low half of the mover's map. §7.3. |
 | `0xC0`–`0xFF` | interlink config | W | A store drives the complex's `db_*` port with address `{2'b10, pa[5:0]}` and the stored value, so it writes interlink client register `0x80 + pa[5:0]`. §7.4. |
@@ -1014,7 +1015,7 @@ alongside the node's `irq_summary`. Waiting for a completion is exactly the
 condition a scheduler must not have to poll for.
 
 **A completion means the unit's DRAM writes landed.** A matmul or vector unit
-(`noc_cu_base` `ACK_FENCE 1`, `CU_VERSION 0x05`) counts its local
+(`noc_cu_base` `ACK_FENCE 1`, `CU_VERSION 0x06`) counts its local
 `MEM_WR_REQ`s against the `MEM_WR_ACK`s the memory port returns after the DRAM
 write response, and holds its `CU_SIGNAL` until the count is zero. A dispatcher
 reads results after the completion with no delay and no readback.

@@ -84,6 +84,34 @@ VECTOR = [
     "src/kohakutpu/vector/vec_alu.v",
 ]
 
+# The mm_mesh machine (cluster, vector core, MAG with its DRAM port); its
+# benches add their own tb file.
+MM_MESH = (
+    COMMON
+    + NOC
+    + MATMUL
+    + MOVER
+    + VECTOR
+    + [
+        "src/kohakutpu/matmul/mx_cluster_cu.v",
+        "src/kohakutpu/vector/vec_cvt.v",
+        "src/kohakutpu/vector/vec_regfile.v",
+        "src/kohakutpu/vector/vec_lanes.v",
+        "src/kohakutpu/vector/vec_agu.v",
+        "src/kohakutpu/vector/vec_core.v",
+        "src/kohakutpu/vector/vec_cu.v",
+        "src/kohakutpu/transform/mx_quant.v",
+        "src/kohakuaccel/verif/axi_ram.v",
+        "src/kohakuaccel/common/sb_skid.v",
+        "src/kohakuaccel/sysnode/core/mag_mem_port.v",
+        "src/kohakuaccel/sysnode/core/mag.v",
+        "src/kohakuaccel/common/kohaku_aring.v",
+        "src/kohakuaccel/common/async_fifo.v",
+        "src/kohakuaccel/sysnode/core/mag_dram_port.v",
+        "src/kohakutpu/top/mm_mesh.v",
+    ]
+)
+
 # One whole mesh behind one packed master, interlink included: everything
 # `ktpu_min_1m` needs. Shared by the 2-mesh and the chain benches.
 MESH_1M = (
@@ -912,60 +940,23 @@ BENCHES = {
     "mm_mesh_5clk_l2": ("mm_mesh_5clk_l2_tb", MESH_CDC),
     # The adapter in mm_mesh's cluster link, found by dispatched instructions:
     # CU_CTRL programs it, a real DRAIN is intercepted, DRAM stays clean.
-    "mm_mesh_l2": (
-        "mm_mesh_l2_tb",
-        COMMON
-        + NOC
-        + MATMUL
-        + MOVER
-        + VECTOR
-        + [
-            "src/kohakutpu/matmul/mx_cluster_cu.v",
-            "src/kohakutpu/vector/vec_cvt.v",
-            "src/kohakutpu/vector/vec_regfile.v",
-            "src/kohakutpu/vector/vec_lanes.v",
-            "src/kohakutpu/vector/vec_agu.v",
-            "src/kohakutpu/vector/vec_core.v",
-            "src/kohakutpu/vector/vec_cu.v",
-            "src/kohakutpu/transform/mx_quant.v",
-            "src/kohakuaccel/verif/axi_ram.v",
-            "src/kohakuaccel/common/sb_skid.v",
-            "src/kohakuaccel/sysnode/core/mag_mem_port.v",
-            "src/kohakuaccel/sysnode/core/mag.v",
-            "src/kohakuaccel/common/kohaku_aring.v",
-            "src/kohakuaccel/common/async_fifo.v",
-            "src/kohakuaccel/sysnode/core/mag_dram_port.v",
-            "src/kohakutpu/top/mm_mesh.v",
-            "tests/sysnode/mm_mesh_l2_tb.v",
-        ],
-    ),
+    "mm_mesh_l2": ("mm_mesh_l2_tb", MM_MESH + ["tests/sysnode/mm_mesh_l2_tb.v"]),
     # MAG staging proved rather than observed: DRAM is poisoned under the staged
     # copy, so a fill that quietly aliased onto DRAM gives a different answer.
     "mm_mesh_stage": (
         "mm_mesh_stage_tb",
-        COMMON
-        + NOC
-        + MATMUL
-        + MOVER
-        + VECTOR
-        + [
-            "src/kohakutpu/matmul/mx_cluster_cu.v",
-            "src/kohakutpu/vector/vec_cvt.v",
-            "src/kohakutpu/vector/vec_regfile.v",
-            "src/kohakutpu/vector/vec_lanes.v",
-            "src/kohakutpu/vector/vec_agu.v",
-            "src/kohakutpu/vector/vec_core.v",
-            "src/kohakutpu/vector/vec_cu.v",
-            "src/kohakutpu/transform/mx_quant.v",
-            "src/kohakuaccel/verif/axi_ram.v",
-            "src/kohakuaccel/common/sb_skid.v",
-            "src/kohakuaccel/sysnode/core/mag_mem_port.v",
-            "src/kohakuaccel/sysnode/core/mag.v",
-            "src/kohakuaccel/common/kohaku_aring.v",
-            "src/kohakuaccel/common/async_fifo.v",
-            "src/kohakuaccel/sysnode/core/mag_dram_port.v",
-            "src/kohakutpu/top/mm_mesh.v",
-            "tests/sysnode/mm_mesh_stage_tb.v",
+        MM_MESH + ["tests/sysnode/mm_mesh_stage_tb.v"],
+    ),
+    # FILL and DRAIN throughput on the mm_mesh machine, timed from DRAM and from
+    # staging, with the memory port's flits and stalls counted.
+    "mm_fill_rate": ("mm_fill_rate_tb", MM_MESH + ["tests/sysnode/mm_fill_rate_tb.v"]),
+    # The host interrupt's PCIe end: a toggle from an unrelated clock, through
+    # a pipe of flops, to usr_irq_req/ack.
+    "kohaku_irq_req": (
+        "kohaku_irq_req_tb",
+        [
+            "src/kohakuaccel/common/kohaku_irq_req.v",
+            "tests/common/kohaku_irq_req_tb.v",
         ],
     ),
     # The same machine, with the cluster draining INTO the vector core rather

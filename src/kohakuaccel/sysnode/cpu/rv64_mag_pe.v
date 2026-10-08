@@ -121,6 +121,7 @@ module rv64_mag_pe #(
     output wire [63:0]            db_data,
 
     input  wire                   irq_summary,
+    output wire                   host_irq,      // a toggle, rv64_syscore R_IRQ
     output wire                   busy,
     output wire                   dbg_console_we,
     output wire [7:0]             dbg_console
@@ -162,7 +163,7 @@ module rv64_mag_pe #(
         .db_status(db_status),
         .xf_cfg_en(xf_cfg_en), .xf_cfg_id(xf_cfg_id),
         .xf_cfg_addr(xf_cfg_addr), .xf_cfg_data(xf_cfg_data),
-        .irq_summary(irq_summary),
+        .irq_summary(irq_summary), .host_irq(host_irq),
         .running(busy),
         .dbg_console_we(dbg_console_we), .dbg_console(dbg_console),
         .dbg_cycles(), .dbg_retired()

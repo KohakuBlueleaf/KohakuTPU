@@ -105,6 +105,9 @@ module rv64_syscore #(
     output reg  [63:0]            xf_cfg_data,
 
     input  wire                   irq_summary,
+    // The host interrupt as a TOGGLE (a store to CTRL 0x38 flips it): any
+    // number of pipeline flops and a 2-flop crossing carry it to the PCIe end.
+    output reg                    host_irq,
 
     output wire                   running,
     output wire                   dbg_console_we,
@@ -606,7 +609,7 @@ module rv64_syscore #(
     // ISA unchanged and matches the rule that control is a range. 1 KB, mapped
     // in docs/spec/control-registers.md s7.2.
     localparam [7:0] R_EXIT = 8'h00, R_CONSOLE = 8'h08, R_DBELL = 8'h10;
-    localparam [7:0] R_STDIN = 8'h30;
+    localparam [7:0] R_STDIN = 8'h30, R_IRQ = 8'h38;
     localparam [7:0] R_SATP = 8'h18, R_NOC = 8'h40, R_MVCFG = 8'h80;
     localparam [7:0] R_DBCFG = 8'hC0;
     // Offsets inside 0x100-0x1FF.
@@ -632,8 +635,15 @@ module rv64_syscore #(
             xf_cfg_en <= 1'b0;
             l1_flush_p <= 1'b0;
             l1_inval_p <= 1'b0;
+            host_irq   <= 1'b0;
         end
         else begin
+            if (ctrl_wr && (ctrl_off == R_IRQ)) begin
+                host_irq <= ~host_irq;
+`ifdef HOST_IRQ_TRACE
+                $display("HOSTIRQ %m toggled to %0d", !host_irq);
+`endif
+            end
             mv_cfg_en <= 1'b0;
             db_en     <= 1'b0;
             nm_en     <= 1'b0;
@@ -743,6 +753,7 @@ module rv64_syscore #(
             case (ctrl_off_rd)
                 R_DBELL: ctrl_q <= {63'd0, dbell};
                 R_STDIN: ctrl_q <= {55'd0, !sin_empty, sin_head};
+                R_IRQ:   ctrl_q <= {63'd0, host_irq};
                 // A read-only mirror of the CSR.
                 R_SATP:  ctrl_q <= core_satp;
                 8'h20:   ctrl_q <= {31'd0, mv_busy, mv_fault, mv_done[27:0]};
