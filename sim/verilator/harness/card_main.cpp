@@ -32,6 +32,17 @@
 static VerilatedContext *ctx;
 static VTOP *dut;
 
+// Legacy hook verilated.cpp names (weak on Linux, undefined under mingw). Not
+// ctx->time(): that falls back to this hook and the two recurse.
+double sc_time_stamp() { return 0.0; }
+
+// Elements over every unpacked dimension (1..udims), so a 2-D array counts whole.
+static uint64_t var_elements(const VerilatedVar &v) {
+    uint64_t n = 1;
+    for (int d = 1; d <= v.udims(); ++d) n *= (uint64_t)v.elements(d);
+    return n;
+}
+
 // ---- clocks ----------------------------------------------------------------
 static const uint64_t NEVER = ~0ull;
 struct Clk {
@@ -213,7 +224,7 @@ static std::string scopes_with(const std::string &sub) {
         if (!strstr(kv.first, sub.c_str()) || !sp->varsp()) continue;
         for (const auto &v : *sp->varsp()) {
             const VerilatedVar &var = v.second;
-            uint64_t n = var.udims() ? (uint64_t)var.unpacked().elements() : 1;
+            uint64_t n = var_elements(var);
             o += std::string(" ") + kv.first + ":" + v.first + ":" + std::to_string(n) + ":" +
                  std::to_string(var.entSize());
         }
@@ -228,7 +239,7 @@ static bool peek(const std::string &scope, const std::string &var, uint64_t idx,
     const VerilatedVar *vp = sp->varFind(var.c_str());
     if (!vp) { err = "no var " + var; return false; }
     uint64_t ent = vp->entSize();
-    uint64_t n = vp->udims() ? (uint64_t)vp->unpacked().elements() : 1;
+    uint64_t n = var_elements(*vp);
     if (idx + cnt > n) { err = "past the end"; return false; }
     const uint8_t *base = (const uint8_t *)vp->datap() + idx * ent;
     char b[4];
@@ -243,7 +254,7 @@ static bool poke(const std::string &scope, const std::string &var, uint64_t idx,
     const VerilatedVar *vp = sp->varFind(var.c_str());
     if (!vp) { err = "no var " + var; return false; }
     uint64_t ent = vp->entSize();
-    uint64_t n = vp->udims() ? (uint64_t)vp->unpacked().elements() : 1;
+    uint64_t n = var_elements(*vp);
     if (hex.size() % (2 * ent)) { err = "hex not whole elements"; return false; }
     uint64_t cnt = hex.size() / (2 * ent);
     if (idx + cnt > n) { err = "past the end"; return false; }

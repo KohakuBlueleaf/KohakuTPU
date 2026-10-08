@@ -9,9 +9,11 @@ truth for what a bench is made of; this file only changes which simulator the
 list is handed to. A source file added there reaches Verilator with no second
 edit, which is the same reason xsim.py names benches instead of taking lists.
 
-Verilator does not run natively on Windows in this checkout -- it is installed
-inside WSL (Ubuntu-24.04, Verilator 5.020). Paths are translated on the way in;
-`--native` uses a `verilator` on PATH instead, for a Linux checkout.
+By default Verilator runs inside WSL (Ubuntu-24.04, Verilator 5.020), paths
+translated on the way in. `--native` runs the one on PATH instead: on Linux
+`verilator`, on Windows conda-forge's `verilator_bin.exe` with `make` and a
+mingw `g++` on PATH -- its verilated.mk names MSVC, so the toolchain is passed
+to make (`VLT_CXX` / `VLT_AR` override g++ / ar).
 
 The XPM cells are SHIMMED, not taken from Vivado: sim/verilator/shims/ explains
 why (Vivado's own xpm_memory.sv uses `deassign`, which Verilator rejects).
@@ -19,6 +21,7 @@ why (Vivado's own xpm_memory.sv uses `deassign`, which Verilator rejects).
 
 import argparse
 import importlib.util
+import os
 import pathlib
 import re
 import shlex
@@ -62,6 +65,41 @@ def to_wsl(p: pathlib.Path) -> str:
     s = pathlib.Path(p).resolve().as_posix()
     m = re.match(r"^([A-Za-z]):/(.*)$", s)
     return f"/mnt/{m.group(1).lower()}/{m.group(2)}" if m else s
+
+
+def to_native(p: pathlib.Path) -> str:
+    """The path as a native simulator sees it."""
+    return pathlib.Path(p).resolve().as_posix()
+
+
+def native_cmd() -> list:
+    """The native Verilator and, on Windows, the toolchain its make must use."""
+    if os.name != "nt":
+        return ["verilator"]
+    exe = shutil.which("verilator_bin")
+    if exe is None:
+        sys.exit("--native on Windows needs verilator_bin.exe on PATH (conda-forge)")
+    cxx = os.environ.get("VLT_CXX", "g++")
+    mk = [
+        f"CXX={cxx}",
+        f"LINK={cxx}",
+        f"AR={os.environ.get('VLT_AR', 'ar')}",
+        f"PYTHON3={pathlib.Path(sys.executable).as_posix()}",
+        # --timing benches are C++20 coroutines.
+        "CFG_CXXFLAGS_STD=-std=gnu++20",
+        "CFG_CXXFLAGS_COROUTINES=-fcoroutines",
+        "CFG_CXXFLAGS_PCH_I=-include",
+        "CFG_LDLIBS_THREADS=-pthread",
+    ]
+    # STATIC: the shared libstdc++ runs thread_local destructors after the
+    # thread pool is gone and faults at exit, and PATH picks which DLL loads.
+    return [exe, "-MAKEFLAGS", " ".join(mk), "-LDFLAGS", "-static"]
+
+
+def vsim_of(work: pathlib.Path) -> pathlib.Path:
+    """The linked model: `vsim`, or `vsim.exe` from a Windows toolchain."""
+    exe = work / "obj_dir" / "vsim.exe"
+    return exe if exe.exists() else work / "obj_dir" / "vsim"
 
 
 def main() -> int:
@@ -108,6 +146,9 @@ def main() -> int:
         if not harness.exists():
             sys.exit(f"harness not found: {harness}")
 
+    # The path form the simulator sees: WSL's /mnt view, or the native one.
+    to_sim = to_native if args.native else to_wsl
+
     xsim = load_xsim()
     if args.bench not in xsim.BENCHES:
         sys.exit(f"unknown bench {args.bench!r}; xsim.py knows {len(xsim.BENCHES)}")
@@ -147,10 +188,10 @@ def main() -> int:
 
     # The shims go FIRST so they win module lookup before any -I directory is
     # searched for a same-named file.
-    lines = [to_wsl(p) for p in sorted(SHIMS.glob("*.v"))]
-    lines += [to_wsl(predef)]
-    lines += [f"-I{to_wsl(ROOT / d)}" for d in xsim.INCDIRS]
-    lines += [to_wsl(p) for p in files]
+    lines = [to_sim(p) for p in sorted(SHIMS.glob("*.v"))]
+    lines += [to_sim(predef)]
+    lines += [f"-I{to_sim(ROOT / d)}" for d in xsim.INCDIRS]
+    lines += [to_sim(p) for p in files]
 
     if args.timebox:
         box = work / "vlt_timebox.v"
@@ -166,7 +207,7 @@ def main() -> int:
             "endmodule\n",
             encoding="utf-8",
         )
-        lines += [to_wsl(box)]
+        lines += [to_sim(box)]
         top = "vlt_timebox"
 
     (work / "vlt.f").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -176,7 +217,8 @@ def main() -> int:
     # those modules take Verilator's default instead of the bench's unit.
     # --cc: the harness owns time, so RTL `#` delays are not scheduled.
     timing = "--no-timing" if harness else "--timing"
-    cmd = ["verilator", "-sv", timing, "-Wno-fatal", "--timescale", "1ns/1ps"]
+    head = native_cmd() if args.native else ["verilator"]
+    cmd = head + ["-sv", timing, "-Wno-fatal", "--timescale", "1ns/1ps"]
     if args.lint_only:
         cmd += ["--lint-only"]
     elif harness:
@@ -193,10 +235,10 @@ def main() -> int:
     cmd += [f"+define+{d}" for d in args.define + [f"MX_MODEL={args.model}"]]
     cmd += [f"-G{g}" for g in args.gparam]
     cmd += args.vflag
-    cmd += [to_wsl(ROOT / v) for v in args.vlt_config]
+    cmd += [to_sim(ROOT / v) for v in args.vlt_config]
     cmd += ["--top-module", top, "-f", "vlt.f"]
     if harness:
-        cmd += [to_wsl(harness)]
+        cmd += [to_sim(harness)]
 
     t_build = time.monotonic()
     wwork = to_wsl(work)
@@ -239,7 +281,7 @@ def main() -> int:
             print(ln)
     t_build = time.monotonic() - t_build
     # A linked binary outranks the exit code, for the thread-pool abort above.
-    if rc and not (work / "obj_dir" / "vsim").exists():
+    if rc and not vsim_of(work).exists():
         return rc
     if args.lint_only:
         print(f"  LINT OK -- {top}  ({t_build:.1f}s)")
@@ -248,12 +290,13 @@ def main() -> int:
     inv = f"./obj_dir/vsim {args.run_args}".strip()
     run = ["wsl", "-d", WSL_DISTRO, "--", "bash", "-lc", f"cd {wwork} && {inv}"]
     if args.native:
-        run = [str(work / "obj_dir/vsim")] + args.run_args.split()
+        run = [str(vsim_of(work))] + args.run_args.split()
     t_run = time.monotonic()
     # utf-8 explicitly: the console codepage (cp950 here) cannot decode a
     # non-ASCII byte in the simulator's output and the whole run's text is lost
     rp = subprocess.run(
         run,
+        cwd=work,
         capture_output=True,
         text=True,
         check=False,
@@ -273,7 +316,7 @@ def main() -> int:
     if not args.keep and not harness:
         shutil.rmtree(work, ignore_errors=True)
     if harness:
-        print(f"  model at {work / 'obj_dir' / 'vsim'}")
+        print(f"  model at {vsim_of(work)}")
         return rp.returncode
     verdicts = [ln.strip() for ln in out.splitlines()]
     passed = any(v.startswith("PASS") for v in verdicts)

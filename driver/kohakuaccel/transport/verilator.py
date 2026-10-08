@@ -6,7 +6,7 @@ over stdin/stdout. Same addresses as the JTAG manager sees on silicon: the
 harness plays host manager 0, so a driver written for the card runs here
 unchanged.
 
-    t = VerilatorTransport()                       # build/vlt_card_v8t8_2n under WSL
+    t = VerilatorTransport()                       # build/vlt_card_v8t8_2n: vsim.exe, else WSL
     t.write64(0x1_0000_0000, 0x1234)               # node 0's memory window
     t.read_block(0x800000, 64)                     # node 0's control window
 
@@ -39,7 +39,7 @@ class VerilatorTransport(Transport):
     def __init__(
         self,
         build_dir: pathlib.Path | str | None = None,
-        wsl: bool = True,
+        wsl: bool | None = None,
         distro: str = WSL_DISTRO,
         settle: int = 20000,
         timeout: float = 600.0,
@@ -49,13 +49,18 @@ class VerilatorTransport(Transport):
             if build_dir
             else ROOT / "build" / "vlt_card_v8t8_2n"
         )
-        vsim = build / "obj_dir" / "vsim"
+        # A native Windows build links `vsim.exe` and runs as a plain process;
+        # a Linux build is `vsim`, run inside WSL. None picks by what is there.
+        native = build / "obj_dir" / "vsim.exe"
+        if wsl is None:
+            wsl = not native.exists()
+        vsim = build / "obj_dir" / "vsim" if wsl else native
         if not vsim.exists():
             raise TransportUnavailable(
                 f"no model at {vsim}; build it with `python scripts/py/vlt.py "
-                f"card_v8t8_2n --cc sim/verilator/harness/card_main.cpp --keep`"
+                f"card_v8t8_2n --cc sim/verilator/harness/card_main.cpp --keep "
+                f"--vlt-config sim/verilator/card.vlt` (add --native on Windows)"
             )
-        inv = f"./obj_dir/vsim --settle {settle}"
         if wsl:
             cmd = [
                 "wsl",
@@ -64,7 +69,7 @@ class VerilatorTransport(Transport):
                 "--",
                 "bash",
                 "-lc",
-                f"cd {_to_wsl(build)} && stdbuf -o0 {inv}",
+                f"cd {_to_wsl(build)} && stdbuf -o0 ./obj_dir/vsim --settle {settle}",
             ]
         else:
             cmd = [str(vsim), "--settle", str(settle)]

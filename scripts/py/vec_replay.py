@@ -6,7 +6,7 @@
 Builds the relayout program the runtime would send for `before -> after` over
 one tensor (the same `RL.for_conversion` + `RL.build(...).program` call
 `kohakutpu.rt.Holder.reorder` makes), lays the source and the lane-groups mask
-into a memory image, runs `tests/vector/vec_replay_tb.v` (vec_cu, Verilator)
+into a memory image, runs `tests/vector/vec_replay_tb.v` (vec_cu, native Verilator)
 on it, and compares the destination ELEMENT BY ELEMENT with
   - kohakutpu.model.VectorUnit running the same payloads, and
   - the destination order packed directly from the array (independent of both).
@@ -14,6 +14,7 @@ Prints which elements differ and how, so a divergence names its pattern.
 """
 
 import argparse
+import os
 import pathlib
 import re
 import subprocess
@@ -30,12 +31,6 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 SRC, DST, MASK = 0x1000, 0x8000, 0x10000
 WORDS = 4096
 PAYLOAD = (1 << 256) - 1
-
-
-def wsl(p: pathlib.Path) -> str:
-    s = p.resolve().as_posix()
-    m = re.match(r"^([A-Za-z]):/(.*)$", s)
-    return f"/mnt/{m.group(1).lower()}/{m.group(2)}" if m else s
 
 
 def layout(name: str, shape, gm: int, gn: int):
@@ -84,40 +79,37 @@ def main() -> int:
     (run / "prog.hex").write_text("".join(f"{p:064x}\n" for p in payloads))
     lines = [int.from_bytes(mem.read(32 * i, 32), "little") for i in range(WORDS)]
     (run / "mem.hex").write_text("".join(f"{v:064x}\n" for v in lines))
-    args = f"+prog={wsl(run / 'prog.hex')} +mem={wsl(run / 'mem.hex')} +out={wsl(run / 'out.hex')}"
-    if a.rebuild or not (work / "obj_dir" / "vsim").exists():
+    args = [
+        f"+{k}={(run / f'{k}.hex').resolve().as_posix()}"
+        for k in ("prog", "mem", "out")
+    ]
+    vsim = work / "obj_dir" / ("vsim.exe" if os.name == "nt" else "vsim")
+    if a.rebuild or not vsim.exists():
         done = subprocess.run(
             [
                 sys.executable,
                 str(ROOT / "scripts/py/vlt.py"),
                 a.bench,
+                "--native",
                 "--keep",
                 "--build-root",
                 a.build_root,
                 "--run-args",
-                args,
+                " ".join(args),
             ],
             capture_output=True,
             text=True,
             check=False,
         )
-        out = done.stdout + done.stderr
     else:
         done = subprocess.run(
-            [
-                "wsl",
-                "-d",
-                "Ubuntu-24.04",
-                "--",
-                "bash",
-                "-lc",
-                f"cd {wsl(work)} && ./obj_dir/vsim {args}",
-            ],
+            [str(vsim), *args],
+            cwd=work,
             capture_output=True,
             text=True,
             check=False,
         )
-        out = done.stdout + done.stderr
+    out = done.stdout + done.stderr
     print("\n".join(ln for ln in out.splitlines() if "@@@" in ln or "Error" in ln))
 
     got_lines = []
