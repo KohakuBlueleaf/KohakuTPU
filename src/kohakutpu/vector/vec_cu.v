@@ -17,8 +17,8 @@
 // (vector-core.md s7.2 counts 512 payload bit/cycle from two), not a
 // correctness one, and nothing here depends on it.
 //
-// FILL TAGGING. A response names its L1 slot in the 8-bit NoC txn field; the 9th
-// address bit does not fit, so it is kept per outstanding tag. ONE fill spans both.
+// FILL TAGGING. A fill run is one STREAM request; a response names its L1 slot's low
+// 8 bits in the txn field, and the run queue (fq_*) supplies the 9th, in issue order.
 
 `default_nettype none
 
@@ -76,7 +76,7 @@ module vec_cu #(
 
     localparam [3:0] C_IMEM = 4'd1, C_DESC = 4'd2, C_RUN = 4'd3;
 
-    localparam [2:0] W_IDLE = 3'd0, W_REQ = 3'd1, W_DATA = 3'd2;
+    localparam W_IDLE = 1'b0, W_BURST = 1'b1;
 
     // ================================================ framework
     wire [FLIT_WIDTH-1:0] inst_flit, recv_flit;
@@ -141,8 +141,9 @@ module vec_cu #(
         // 0x01 shipped 2026-08; 0x02 vector-datapath rebuild + merged cluster;
         // 0x03 CU_DATA peer writes and VDRAIN to_node (on 0x02 that drain hits
         // MEMORY in silence); 0x04 L2 staging adapters via CU_CTRL, and the
-        // mover's 40-bit descriptors; 0x05 completion after the write ACKs.
-        .CU_TYPE(16'h5643), .CU_VERSION(8'h05), .N_BUFFERS(2),
+        // mover's 40-bit descriptors; 0x05 completion after the write ACKs; 0x06
+        // streamed fill runs, drain write bursts, chained memory-port runs.
+        .CU_TYPE(16'h5643), .CU_VERSION(8'h06), .N_BUFFERS(2),
         .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH), .RECV_MEM(RECV_MEM),
         .MEM_TYPE(MEM_TYPE), .ACK_FENCE(1)
     ) u_base (
@@ -187,15 +188,24 @@ module vec_cu #(
     wire        rd_req_valid, wr_req_valid;
     wire [39:0] rd_req_addr, wr_req_addr;
     wire [8:0]  rd_req_tag;
+    wire [7:0]  rd_req_cnt;
     wire [255:0] wr_req_data;
-    reg         rd_req_ready, wr_req_ready;
+    wire        wr_req_first;
+    wire [3:0]  wr_req_cnt;
+    reg         rd_req_ready;
+    wire        wr_req_ready;
 
     reg         rr_valid;
     reg  [8:0]  rr_tag;
     reg  [255:0] rr_data;
-    // Per OUTSTANDING TAG, not per fill: one VFILL crosses word 256, so a single
-    // latch banks its early responses by the last request's bit. Written before read.
-    reg         fill_bank_tbl [0:255];
+    // `{bank, words}` per streamed run, in issue order (the header above).
+    localparam integer FQ  = 32;
+    localparam integer FQW = $clog2(FQ);
+    reg  [8:0]   fq_mem [0:FQ-1];
+    reg  [FQW:0] fq_wp, fq_rp;
+    reg  [7:0]   fq_seen;
+    wire [8:0]   fq_head = fq_mem[fq_rp[FQW-1:0]];
+    wire         fq_full = ((fq_wp - fq_rp) == FQ[FQW:0]);
 
     reg         cd_valid, cd_fault;
     reg  [8:0]  cd_addr;
@@ -230,12 +240,13 @@ module vec_cu #(
         .busy(busy), .halted(halted), .fault(fault), .fault_code(fault_code),
         .cycles(cycles),
         .rd_req_valid(rd_req_valid), .rd_req_addr(rd_req_addr),
-        .rd_req_tag(rd_req_tag), .rd_req_ready(rd_req_ready),
+        .rd_req_tag(rd_req_tag), .rd_req_cnt(rd_req_cnt), .rd_req_ready(rd_req_ready),
         .rr_valid(rr_valid), .rr_tag(rr_tag), .rr_data(rr_data),
         .cd_valid(cd_valid), .cd_addr(cd_addr), .cd_data(cd_data),
         .cd_fault(cd_fault),
         .wr_req_valid(wr_req_valid), .wr_req_addr(wr_req_addr),
-        .wr_req_data(wr_req_data), .wr_req_ready(wr_req_ready),
+        .wr_req_data(wr_req_data), .wr_req_first(wr_req_first),
+        .wr_req_cnt(wr_req_cnt), .wr_req_ready(wr_req_ready),
         .nd_valid(nd_valid), .nd_x(nd_x), .nd_y(nd_y), .nd_buf(nd_buf),
         .nd_off(nd_off), .nd_len(nd_len), .nd_sig(nd_sig), .nd_ack(nd_ack),
         .nd_mesh(nd_mesh), .nd_fin(nd_fin)
@@ -305,6 +316,7 @@ module vec_cu #(
             sg_x <= {POS_WIDTH{1'b0}}; sg_y <= {POS_WIDTH{1'b0}};
             cd_sx <= {POS_WIDTH{1'b0}}; cd_sy <= {POS_WIDTH{1'b0}};
             recv_ready <= 1'b0;
+            fq_rp <= {(FQW+1){1'b0}}; fq_seen <= 8'd0;
         end else begin
             rr_valid <= 1'b0;
             cd_valid <= 1'b0;
@@ -322,8 +334,14 @@ module vec_cu #(
             if (recv_valid && recv_ready) begin
                 if (rtype == T_MEM_RD_RESP) begin
                     rr_valid <= 1'b1;
-                    rr_tag   <= {fill_bank_tbl[rtag], rtag};
+                    rr_tag   <= {fq_head[8], rtag};
                     rr_data  <= recv_flit[255:0];
+                    if (fq_seen + 8'd1 == fq_head[7:0]) begin
+                        fq_rp   <= fq_rp + 1'b1;
+                        fq_seen <= 8'd0;
+                    end else begin
+                        fq_seen <= fq_seen + 8'd1;
+                    end
                 end else if (rtype == T_CU_DATA) begin
                     if (!cd_st) begin
                         cd_st    <= 1'b1;
@@ -367,28 +385,31 @@ module vec_cu #(
     end
 
     // ================================================ outbound memory traffic
-    // A fill and a drain never share the send path: they belong to different
-    // instructions and vec_core runs one at a time.
-    reg [39:0] w_addr;
-    reg [255:0] w_data;
+    // A memory drain leaves as write bursts (one MEM_WR_REQ, then `cnt` data
+    // flits); a drain word is taken in the cycle its flit is built.
     reg        nd_hdr;
     reg [7:0]  nd_cnt;
+    reg [3:0]  w_left;
+
+    wire tx_ok = !send_valid || send_ready;
+    wire rd_go = (wst == W_IDLE) && !sg_pend && rd_req_valid && !rd_req_ready && !fq_full;
+    assign wr_req_ready = tx_ok && wr_req_valid
+        && ((wst == W_BURST) || ((wst == W_IDLE) && !sg_pend && !rd_go && nd_valid && nd_hdr));
 
     always @(posedge u_clk) begin
         if (!u_resetn) begin
             send_valid <= 1'b0; send_flit <= {FLIT_WIDTH{1'b0}};
-            rd_req_ready <= 1'b0; wr_req_ready <= 1'b0;
+            rd_req_ready <= 1'b0;
             wst <= W_IDLE;
-            // w_addr/w_data are the staged write the send path qualifies.
-            nd_hdr <= 1'b0; nd_cnt <= 8'd0;
+            fq_wp <= {(FQW+1){1'b0}};
+            nd_hdr <= 1'b0; nd_cnt <= 8'd0; w_left <= 4'd0;
         end else begin
             rd_req_ready <= 1'b0;
-            wr_req_ready <= 1'b0;
             if (send_valid && send_ready) begin
                 send_valid <= 1'b0;
             end
 
-            if (!send_valid || send_ready) begin
+            if (tx_ok) begin
                 case (wst)
                     W_IDLE: begin
                         // First: the peer that sent us a burst is blocked on this.
@@ -399,18 +420,20 @@ module vec_cu #(
                                            SIG_DATA_RECEIVED, {24'd0, sg_buf},
                                            216'd0 };
                             send_valid <= 1'b1;
-                        end else if (rd_req_valid && !rd_req_ready) begin
+                        // A run is one STREAM descriptor of 1-word entries (ew = 1).
+                        end else if (rd_go) begin
                             send_flit <= { MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
                                            POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
                                            T_MEM_RD_REQ, rd_req_tag[7:0], 1'b1, 3'b000,
-                                           rd_req_addr, 8'd0, 8'd0, 200'd0 };
+                                           rd_req_addr, 8'd0, 8'h40, rd_req_cnt,
+                                           24'd0, 2'd0, 8'd1, 158'd0 };
                             send_valid   <= 1'b1;
                             rd_req_ready <= 1'b1;
-                            fill_bank_tbl[rd_req_tag[7:0]] <= rd_req_tag[8];
+                            fq_mem[fq_wp[FQW-1:0]] <= {rd_req_tag[8], rd_req_cnt};
+                            fq_wp <= fq_wp + 1'b1;
                         // A peer drain: ONE descriptor for the whole walk, then the
-                        // words. The first word waits a beat for the descriptor;
-                        // the walk itself is the memory drain's, unchanged.
-                        end else if (wr_req_valid && !wr_req_ready && nd_valid) begin
+                        // words, each taken as its flit is built.
+                        end else if (wr_req_valid && nd_valid) begin
                             if (!nd_hdr) begin
                                 send_flit <= { nd_dx, nd_dy,
                                     POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
@@ -425,31 +448,34 @@ module vec_cu #(
                                     POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
                                     T_CU_DATA, nd_txn, (nd_cnt == nd_len), nd_rsvd,
                                     wr_req_data };
-                                send_valid   <= 1'b1;
-                                wr_req_ready <= 1'b1;
-                                nd_cnt <= nd_cnt + 8'd1;
+                                send_valid <= 1'b1;
+                                nd_cnt     <= nd_cnt + 8'd1;
                                 if (nd_cnt == nd_len) begin
                                     nd_hdr <= 1'b0;
                                 end
                             end
-                        end else if (wr_req_valid && !wr_req_ready) begin
-                            w_addr <= wr_req_addr;
-                            w_data <= wr_req_data;
+                        // `len` is beats minus one; the burst's words follow in W_BURST.
+                        end else if (wr_req_valid && wr_req_first) begin
                             send_flit <= { MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
                                            POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
                                            T_MEM_WR_REQ, 8'h01, 1'b0, 3'b000,
-                                           wr_req_addr, 8'd0, 8'd0, 200'd0 };
-                            send_valid   <= 1'b1;
-                            wr_req_ready <= 1'b1;
-                            wst <= W_DATA;
+                                           wr_req_addr, {4'd0, wr_req_cnt} - 8'd1,
+                                           8'd0, 200'd0 };
+                            send_valid <= 1'b1;
+                            w_left     <= wr_req_cnt;
+                            wst        <= W_BURST;
                         end
                     end
-                    W_DATA: begin
+                    W_BURST: if (wr_req_valid) begin
                         send_flit <= { MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
                                        POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
-                                       T_MEM_WR_DATA, 8'h01, 1'b1, 3'b000, w_data };
+                                       T_MEM_WR_DATA, 8'h01, (w_left == 4'd1), 3'b000,
+                                       wr_req_data };
                         send_valid <= 1'b1;
-                        wst <= W_IDLE;
+                        w_left     <= w_left - 4'd1;
+                        if (w_left == 4'd1) begin
+                            wst <= W_IDLE;
+                        end
                     end
                     default: wst <= W_IDLE;
                 endcase
@@ -518,6 +544,44 @@ module vec_cu #(
             endcase
         end
     end
+
+`ifdef VC_STATE_PROF
+    // Why a fill request waits on the send path (link held, run queue full, the
+    // path busy), both link directions in flits, and the first runs' timeline.
+    reg [31:0] pq_link = 32'd0, pq_fq = 32'd0, pq_busy = 32'd0;
+    reg [31:0] pq_cyc = 32'd0, pq_n = 32'd0, pq_t0 = 32'd0;
+    reg [31:0] pq_out = 32'd0, pq_in = 32'd0, pq_runs = 32'd0;
+    reg        pq_h = 1'b0, pq_rw = 1'b0;
+    always @(posedge u_clk) begin
+        if (u_resetn) begin
+            pq_cyc <= pq_cyc + 32'd1;
+            if (rd_req_valid && !rd_req_ready && !rd_go) begin
+                if (send_valid && !send_ready) pq_link <= pq_link + 32'd1;
+                else if (fq_full) pq_fq <= pq_fq + 32'd1;
+                else pq_busy <= pq_busy + 32'd1;
+            end
+            if (rd_req_valid && !rd_req_ready && (pq_t0 == 32'd0)) pq_t0 <= pq_cyc;
+            if (rd_req_ready) begin
+                pq_t0 <= 32'd0;
+                pq_n  <= pq_n + 32'd1;
+                if (pq_n < 32'd12) $display("VCUREQ %m t %0d wait %0d fq %0d", pq_cyc,
+                                            pq_cyc - pq_t0, fq_wp - fq_rp);
+            end
+            if (send_valid && send_ready) pq_out <= pq_out + 32'd1;
+            if (recv_valid && recv_ready) pq_in <= pq_in + 32'd1;
+            pq_h  <= halted;
+            pq_rw <= (cst == C_RUNW);
+            if (start && (pq_runs < 32'd40)) $display("VRUN %m start %0d", pq_cyc);
+            if (halted && !pq_h && (pq_runs < 32'd40)) $display("VRUN %m halt %0d", pq_cyc);
+            if (exec_done && pq_rw) begin
+                pq_runs <= pq_runs + 32'd1;
+                if (pq_runs < 32'd40) $display("VRUN %m done %0d", pq_cyc);
+            end
+        end
+    end
+    final $display("VCUREQWAIT %m link %0d fq %0d busy %0d out_flits %0d in_flits %0d",
+                   pq_link, pq_fq, pq_busy, pq_out, pq_in);
+`endif
 
 endmodule
 

@@ -37,7 +37,11 @@ module vec_agu #(
     output wire [AW-1:0]      addr,
     output wire               last,
     output wire [31:0]        total,
-    output reg                busy
+    output reg                busy,
+    // Dimension 0's stride and the steps left in it, this one included: a
+    // consumer sizing a contiguous run reads them instead of re-deriving them.
+    output wire signed [17:0] stride0,
+    output wire [15:0]        left0
 );
     reg [AW-1:0] base  [0:7];
     reg [17:0] strd  [0:7][0:3];
@@ -107,6 +111,8 @@ module vec_agu #(
     reg signed [AW-1:0] ps0, ps1, ps2, ps3;
 
     assign addr  = cbase + {{(AW-18){off[17]}}, off} + ps0 + ps1 + ps2 + ps3;
+    assign stride0 = cs0;
+    assign left0   = b0 - idx0;
     assign last  = (idx0 == b0 - 16'd1) && (idx1 == b1 - 16'd1)
                 && (idx2 == b2 - 16'd1) && (idx3 == b3 - 16'd1);
 

@@ -35,6 +35,9 @@ from kohakutpu.units import MATMUL_CODE, VECTOR_CODE
 
 PAYLOAD = (1 << 256) - 1
 
+#: The mesh-wide build number the RTL endpoints report (noc_cu_base CU_VERSION).
+CU_VERSION = 6
+
 LANES = 4
 KBLOCK = 32
 WORD_BYTES = 32
@@ -156,7 +159,7 @@ class ClusterUnit(UnitModel):
 
     def __init__(
         self,
-        version: int = 4,
+        version: int = CU_VERSION,
         mem_base: int = MEM_BASE,
         banking: bool = True,
     ) -> None:
@@ -478,7 +481,7 @@ class VectorUnit(UnitModel):
     fp16 maximum.
     """
 
-    def __init__(self, version: int = 4, mem_base: int = MEM_BASE) -> None:
+    def __init__(self, version: int = CU_VERSION, mem_base: int = MEM_BASE) -> None:
         self.caps = encode_caps(VECTOR_CODE, version=version, buffers=1)
         self.mem_base = mem_base
         self.imem = np.zeros(IMEM_DEPTH, np.int64)

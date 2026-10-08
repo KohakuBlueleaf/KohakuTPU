@@ -70,7 +70,7 @@ int main(void)
     /* ctrl_val sits at flit[239:176]: P3[47:0] above P2[63:48] */
     unsigned long caps = ((REG(RX_P3) & 0xffffffffffffUL) << 16) | (REG(RX_P2) >> 48);
     check("matmul CU_TYPE", caps >> 48, 0x4D47UL);
-    check("matmul CU_VERSION 5 (fenced)", (caps >> 40) & 0xffUL, 5UL);
+    check("matmul CU_VERSION 6", (caps >> 40) & 0xffUL, 6UL);
     REG(RX_HDR) = 0;   /* pop */
 
     /* 12 replies, nothing popped: 8 queue, the rest held at the hub */

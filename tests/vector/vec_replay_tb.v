@@ -47,9 +47,12 @@ module vec_replay_tb;
     reg [255:0] dram [0:WORDS-1];
     reg [39:0]  rq_addr [0:63];
     reg [7:0]   rq_tag  [0:63];
+    reg [7:0]   rq_cnt  [0:63];   // words of a STREAM run (ew = 1 assumed), 1 for a plain read
+    reg [7:0]   rq_sub;
     integer     rq_head, rq_tail, rq_wait, ack_owed;
     reg [39:0]  wr_addr_l;
     reg         wr_open;
+    reg [8:0]   wr_left;          // beats the open write burst still owes
     reg  [FW-1:0] mem_flit;
     reg           mem_valid;
 
@@ -57,7 +60,7 @@ module vec_replay_tb;
     wire [7:0]  o_txn  = out_data[FW-4*PW-5 -: 8];
     wire [39:0] o_addr = out_data[255 -: 40];
     wire [7:0]  o_sig  = out_data[255 -: 8];
-    wire wd_now = out_valid && (o_type == T_MEM_WR_DATA) && wr_open;
+    wire wd_now = out_valid && (o_type == T_MEM_WR_DATA) && wr_open && (wr_left == 9'd1);
     wire ack_go = (ack_owed > 0) && (rq_head == rq_tail) && !in_busy;
 
     integer sig_count, faults;
@@ -65,8 +68,8 @@ module vec_replay_tb;
 
     always @(posedge clk) begin
         if (!resetn) begin
-            rq_head <= 0; rq_tail <= 0; rq_wait <= 0; ack_owed <= 0;
-            wr_open <= 1'b0; mem_valid <= 1'b0; sig_count <= 0; faults <= 0;
+            rq_head <= 0; rq_tail <= 0; rq_wait <= 0; ack_owed <= 0; rq_sub <= 8'd0;
+            wr_open <= 1'b0; wr_left <= 9'd0; mem_valid <= 1'b0; sig_count <= 0; faults <= 0;
         end else begin
             mem_valid <= 1'b0;
             if (out_valid) begin
@@ -74,15 +77,22 @@ module vec_replay_tb;
                     T_MEM_RD_REQ: begin
                         rq_addr[rq_tail[5:0]] <= o_addr;
                         rq_tag[rq_tail[5:0]]  <= o_txn;
+                        rq_cnt[rq_tail[5:0]]  <= (out_data[206] && (out_data[199 -: 8] != 8'd0))
+                                                 ? out_data[199 -: 8] : 8'd1;
                         rq_tail <= rq_tail + 1;
                     end
                     T_MEM_WR_REQ: begin
                         wr_addr_l <= o_addr;
                         wr_open   <= 1'b1;
+                        wr_left   <= {1'b0, out_data[215 -: 8]} + 9'd1;
                     end
                     T_MEM_WR_DATA: if (wr_open) begin
                         dram[wr_addr_l[16:5]] <= out_data[255:0];
-                        wr_open <= 1'b0;
+                        wr_addr_l <= wr_addr_l + 40'd32;
+                        wr_left   <= wr_left - 9'd1;
+                        if (wr_left == 9'd1) begin
+                            wr_open <= 1'b0;
+                        end
                     end
                     T_CU_SIGNAL: begin
                         sig_count <= sig_count + 1;
@@ -100,10 +110,15 @@ module vec_replay_tb;
                 end else begin
                     rq_wait  <= 0;
                     mem_flit <= { CX[3:0], CY[3:0], MX[3:0], MY[3:0],
-                                  T_MEM_RD_RESP, rq_tag[rq_head[5:0]], 1'b1, 3'b000,
-                                  dram[rq_addr[rq_head[5:0]][16:5]] };
+                                  T_MEM_RD_RESP, rq_tag[rq_head[5:0]] + rq_sub, 1'b1, 3'b000,
+                                  dram[rq_addr[rq_head[5:0]][16:5] + {4'd0, rq_sub}] };
                     mem_valid <= 1'b1;
-                    rq_head   <= rq_head + 1;
+                    if (rq_sub + 8'd1 == rq_cnt[rq_head[5:0]]) begin
+                        rq_head <= rq_head + 1;
+                        rq_sub  <= 8'd0;
+                    end else begin
+                        rq_sub  <= rq_sub + 8'd1;
+                    end
                 end
             end else if (ack_go) begin
                 mem_flit  <= { CX[3:0], CY[3:0], MX[3:0], MY[3:0],

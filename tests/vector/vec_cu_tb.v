@@ -26,6 +26,14 @@
 `ifndef TB_RFPACK
 `define TB_RFPACK 1
 `endif
+// -d TB_L1ULTRA: L1 in URAM, read latency 2, so every walk's landing moves a cycle.
+`ifdef TB_L1ULTRA
+`define TB_L1PRIM "ultra"
+`define TB_KD_BOUND 460
+`else
+`define TB_L1PRIM "block"
+`define TB_KD_BOUND 380
+`endif
 
 module vec_cu_tb;
     localparam FW = 288;
@@ -58,7 +66,7 @@ module vec_cu_tb;
 
     vec_cu #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .POS_X(CX), .POS_Y(CY),
              .MEM_X(MX), .MEM_Y(MY), .INST_DEPTH(32), .MODEL(1),
-             .L1_DEPTH(512), .L1_PRIM("block"),
+             .L1_DEPTH(512), .L1_PRIM(`TB_L1PRIM),
              .RF_PAD(`TB_RFPAD), .RF_PACK(`TB_RFPACK)) dut (
         .clk(clk), .resetn(resetn),
         .noc_in_data(in_data), .noc_in_valid(in_valid), .noc_in_busy(in_busy),
@@ -109,10 +117,21 @@ module vec_cu_tb;
     reg [255:0] dram [0:1023];
     reg [39:0]  rq_addr [0:63];
     reg [7:0]   rq_tag  [0:63];
+    reg [7:0]   rq_cnt  [0:63];   // words of a STREAM run (ew = 1 assumed), 1 for a plain read
+    reg [7:0]   rq_sub;
     integer     rq_head, rq_tail, rq_wait;
     reg [39:0]  wr_addr_l;
     reg         wr_open;
-    // The memory's MEM_WR_ACK, one per write, sent between read responses.
+    reg [8:0]   wr_left;
+    // Bursts and their words, and any burst that is malformed: over 8 beats,
+    // across 256 bytes, or data with no burst open.
+    integer     n_wburst, n_wword, n_wbad;
+    // Link backpressure: `out_busy` 1 cycle in 4 while set.
+    reg         bp_on;
+    always @(negedge clk) begin
+        out_busy <= bp_on && (($random & 3) == 0);
+    end
+    // The memory's MEM_WR_ACK, one per write burst, sent between read responses.
     localparam [3:0] T_MEM_WR_ACK = 4'h3;
     integer     ack_owed;
 
@@ -125,7 +144,8 @@ module vec_cu_tb;
     // address shifted right by six and the drain lands where nothing looks.
     wire [39:0] o_addr = out_data[255 -: 40];
 
-    wire wd_now = out_valid && (o_type == T_MEM_WR_DATA) && wr_open;
+    wire o_take = out_valid && !out_busy;
+    wire wd_now = o_take && (o_type == T_MEM_WR_DATA) && wr_open && (wr_left == 9'd1);
     wire ack_go = (ack_owed > 0) && (rq_head == rq_tail) && !in_busy;
 
     integer sig_count, dr_count;
@@ -149,8 +169,9 @@ module vec_cu_tb;
 
     always @(posedge clk) begin
         if (!resetn) begin
-            rq_head <= 0; rq_tail <= 0; rq_wait <= 0; ack_owed <= 0;
-            wr_open <= 1'b0; mem_valid <= 1'b0;
+            rq_head <= 0; rq_tail <= 0; rq_wait <= 0; ack_owed <= 0; rq_sub <= 8'd0;
+            wr_open <= 1'b0; mem_valid <= 1'b0; wr_left <= 9'd0;
+            n_wburst <= 0; n_wword <= 0; n_wbad <= 0;
             sig_count <= 0; last_sig_arg <= 32'd0; last_sig_fault <= 1'b0;
             dr_count <= 0; last_dr_arg <= 32'd0;
             lb_head <= 0; lb_tail <= 0; cud_out <= 0; lb_valid <= 1'b0;
@@ -160,20 +181,35 @@ module vec_cu_tb;
             mem_valid <= 1'b0;
             lb_valid  <= 1'b0;
 
-            if (out_valid) begin
+            if (o_take) begin
                 case (o_type)
                     T_MEM_RD_REQ: begin
                         rq_addr[rq_tail[5:0]] <= o_addr;
                         rq_tag[rq_tail[5:0]]  <= o_txn;
+                        rq_cnt[rq_tail[5:0]]  <= (out_data[206] && (out_data[199 -: 8] != 8'd0))
+                                                 ? out_data[199 -: 8] : 8'd1;
                         rq_tail <= rq_tail + 1;
                     end
                     T_MEM_WR_REQ: begin
                         wr_addr_l <= o_addr;
                         wr_open   <= 1'b1;
+                        wr_left   <= {1'b0, out_data[215 -: 8]} + 9'd1;
+                        n_wburst  <= n_wburst + 1;
+                        if (wr_open || (out_data[215 -: 8] > 8'd7)
+                            || ({1'b0, o_addr[7:5]} + out_data[215 -: 8] > 9'd7)) begin
+                            n_wbad <= n_wbad + 1;
+                        end
                     end
                     T_MEM_WR_DATA: if (wr_open) begin
                         dram[wr_addr_l[14:5]] <= out_data[255:0];
-                        wr_open <= 1'b0;
+                        wr_addr_l <= wr_addr_l + 40'd32;
+                        wr_left   <= wr_left - 9'd1;
+                        n_wword   <= n_wword + 1;
+                        if (wr_left == 9'd1) begin
+                            wr_open <= 1'b0;
+                        end
+                    end else begin
+                        n_wbad <= n_wbad + 1;
                     end
                     T_CU_SIGNAL: begin
                         sig_count      <= sig_count + 1;
@@ -210,7 +246,7 @@ module vec_cu_tb;
                 lb_head  <= lb_head + 1;
             end
 
-            // answer one queued read every few cycles; acknowledge writes between
+            // answer one queued word every 4 cycles; acknowledge writes between
             if (rq_head != rq_tail) begin
                 if (rq_wait < 3) begin
                     rq_wait <= rq_wait + 1;
@@ -218,11 +254,16 @@ module vec_cu_tb;
                 else begin
                     rq_wait  <= 0;
                     mem_flit <= { CX[3:0], CY[3:0], MX[3:0], MY[3:0],
-                                  T_MEM_RD_RESP, rq_tag[rq_head[5:0]],
+                                  T_MEM_RD_RESP, rq_tag[rq_head[5:0]] + rq_sub,
                                   1'b1, 3'b000,
-                                  dram[rq_addr[rq_head[5:0]][14:5]] };
+                                  dram[rq_addr[rq_head[5:0]][14:5] + {2'd0, rq_sub}] };
                     mem_valid <= 1'b1;
-                    rq_head   <= rq_head + 1;
+                    if (rq_sub + 8'd1 == rq_cnt[rq_head[5:0]]) begin
+                        rq_head <= rq_head + 1;
+                        rq_sub  <= 8'd0;
+                    end else begin
+                        rq_sub  <= rq_sub + 8'd1;
+                    end
                 end
             end
             else if (ack_go) begin
@@ -368,13 +409,53 @@ module vec_cu_tb;
     localparam [31:0] I_VDRAIN_ND   = 32'hF3266040;
     localparam [31:0] I_VDRAIN_BACK = 32'hF00000C8;
 
-    integer i, j, w, spin;
+    integer i, j, w, spin, s0;
+
+    // Section 12's DRAM pattern: every line distinct, so a misplaced word is visible.
+    function [255:0] pat(input integer k);
+        pat = {16{k[15:0] + 16'h1000}};
+    endfunction
+
+    // Section 13: FP32 integers, exact through E8M15; line i holds 8i+1 .. 8i+8.
+    function [31:0] f32i(input integer n);
+        integer p;
+        reg [31:0] m;
+        begin
+            p = 0;
+            while ((n >> (p + 1)) != 0) p = p + 1;
+            m = n << (23 - p);
+            f32i = (n == 0) ? 32'd0 : {1'b0, 8'd127 + p[7:0], m[22:0]};
+        end
+    endfunction
+    function [255:0] f32line(input integer i);
+        integer e;
+        begin
+            for (e = 0; e < 8; e = e + 1) f32line[e*32 +: 32] = f32i(i*8 + e + 1);
+        end
+    endfunction
+    // What section 13's kernels leave in L1 word w, given section 12 left pat(512+w).
+    function [255:0] l1x(input integer w);
+        begin
+            if (w < 16) l1x = f32line(w);
+            else if ((w >= 100) && (w <= 130) && ((w % 2) == 0)) l1x = f32line((w - 100) / 2);
+            else l1x = pat(512 + w);
+        end
+    endfunction
+
+    task fill_chk(input integer l1w, input integer dw, input [255:0] what);
+        begin
+            if (dram[l1w] !== pat(dw)) begin
+                $display("    L1 %0d: got %0h want line %0d", l1w, dram[l1w][15:0], dw);
+            end
+            chk({63'd0, dram[l1w] === pat(dw)}, 64'd1, what);
+        end
+    endtask
     reg [255:0] line;
     reg [255:0] cud_line [0:1];
     reg [15:0]  got16, want16;
 
     initial begin
-        agent_valid = 0; agent_flit = 0; out_busy = 0;
+        agent_valid = 0; agent_flit = 0; bp_on = 0;
         for (i = 0; i < 1024; i = i + 1) begin
             dram[i] = 256'd0;
         end
@@ -756,6 +837,195 @@ module vec_cu_tb;
             "the emitted descriptor carries {ack_y, ack_x}");
         chk({48'd0, last_cud_desc[247 -: 16]}, {48'd0, 16'd240},
             "and the offset is still the base's low half");
+
+        $display("--- 12. streamed fills: runs, the tag wrap, overlap ---");
+        // A: three unbarriered fills (across word 256; strided, its tags aliasing the
+        // first's bank-1 tags in flight; long). B: 256 words, hitting the 255 cap.
+        repeat (300) @(negedge clk);
+        for (w = 512; w < 1024; w = w + 1) begin
+            dram[w] = pat(w);
+        end
+        s0 = sig_count;
+        put_imem(9'd100, 32'hE80000C8);                 // VFILL A0 -> L1 200
+        put_imem(9'd101, 32'hE8200000);                 // VFILL A1 -> L1 0
+        put_imem(9'd102, 32'hE8400140);                 // VFILL A2 -> L1 320
+        put_imem(9'd103, I_VBAR);
+        put_imem(9'd104, 32'hF0600000);                 // VDRAIN A3 from L1 0
+        put_imem(9'd105, 32'hF0A00100);                 // VDRAIN A5 from L1 256
+        put_imem(9'd106, I_VHALT);
+        put_imem(9'd110, 32'hE8800000);                 // VFILL A4 -> L1 0
+        put_imem(9'd111, I_VBAR);
+        put_imem(9'd112, 32'hF0600000);
+        put_imem(9'd113, I_VHALT);
+        put_desc(3'd0, 3'd0, 34'd512 << 5);
+        put_desc(3'd0, 3'd1, {18'd32, 16'd120});
+        put_desc(3'd1, 3'd0, 34'd640 << 5);
+        put_desc(3'd1, 3'd1, {18'd64, 16'd20});
+        put_desc(3'd2, 3'd0, 34'd700 << 5);
+        put_desc(3'd2, 3'd1, {18'd32, 16'd191});
+        put_desc(3'd3, 3'd0, 34'd0);
+        put_desc(3'd3, 3'd1, {18'd32, 16'd256});
+        put_desc(3'd4, 3'd0, 34'd512 << 5);
+        put_desc(3'd4, 3'd1, {18'd32, 16'd256});
+        put_desc(3'd5, 3'd0, 34'd256 << 5);
+        put_desc(3'd5, 3'd1, {18'd32, 16'd256});
+
+        do_run(9'd100);
+        spin = 0;
+        while ((sig_count < s0 + 24) && (spin < 120000)) begin
+            spin = spin + 1;
+            @(negedge clk);
+        end
+        chk(sig_count, s0 + 24, "kernel A retired");
+        chk({31'd0, dbg_fault}, 64'd0, "kernel A must not fault");
+        $display("    kernel A retired in %0d cycles", last_sig_arg);
+        for (w = 0; w < 120; w = w + 1) fill_chk(200 + w, 512 + w, "fill across word 256");
+        for (w = 0; w < 20; w = w + 1) fill_chk(w, 640 + 2*w, "strided fill");
+        for (w = 0; w < 191; w = w + 1) fill_chk(320 + w, 700 + w, "long contiguous fill");
+
+        do_run(9'd110);
+        spin = 0;
+        while ((sig_count < s0 + 25) && (spin < 120000)) begin
+            spin = spin + 1;
+            @(negedge clk);
+        end
+        chk(sig_count, s0 + 25, "kernel B retired");
+        chk({31'd0, dbg_fault}, 64'd0, "kernel B must not fault");
+        $display("    kernel B retired in %0d cycles", last_sig_arg);
+        for (w = 0; w < 256; w = w + 1) fill_chk(w, 512 + w, "256-word fill");
+
+        $display("--- 13. a word a cycle: FP32 VLD/VST, strided, bursts, backpressure ---");
+        // C runs under link backpressure: an FP32 round trip into a stride-2 L1
+        // walk, then a misaligned drain (bursts 5,8,8,8,2) and a stride-64 one
+        // (bursts of 1). D, unthrottled, is the rate: 8-word VLD and VST and a
+        // 256-word aligned drain, bounded by TB_KD_BOUND.
+        for (w = 0; w < 16; w = w + 1) dram[w] = f32line(w);
+        for (w = 64; w < 240; w = w + 1) dram[w] = 256'd0;
+        s0 = sig_count;
+        put_imem(9'd120, I_VSETI);
+        put_imem(9'd121, 32'd128);
+        put_imem(9'd122, I_VSETVL);
+        put_imem(9'd123, I_VSETMD);
+        put_imem(9'd124, 32'hE8000000);                 // VFILL A0 -> L1 0
+        put_imem(9'd125, I_VBAR);
+        put_imem(9'd126, 32'hA2220000);                 // VLD.FP32 v1 <- A1
+        put_imem(9'd127, 32'hAA420000);                 // VST.FP32 v1 -> A2
+        put_imem(9'd128, 32'hF0800064);                 // VDRAIN A4 from L1 100
+        put_imem(9'd129, 32'hF0A00064);                 // VDRAIN A5 from L1 100
+        put_imem(9'd130, I_VHALT);
+        put_imem(9'd140, 32'hA1260000);                 // VLD.FP16 v3 <- A1
+        put_imem(9'd141, 32'hA9C60000);                 // VST.FP16 v3 -> A6
+        put_imem(9'd142, 32'hF0E00000);                 // VDRAIN A7 from L1 0
+        put_imem(9'd143, I_VHALT);
+        put_desc(3'd0, 3'd0, 34'd0);
+        put_desc(3'd0, 3'd1, {18'd32, 16'd16});
+        put_desc(3'd1, 3'd0, 34'd0);
+        put_desc(3'd1, 3'd1, {18'd1, 16'd16});
+        put_desc(3'd2, 3'd0, 34'd100);
+        put_desc(3'd2, 3'd1, {18'd2, 16'd16});
+        put_desc(3'd4, 3'd0, 34'd67 << 5);
+        put_desc(3'd4, 3'd1, {18'd32, 16'd31});
+        put_desc(3'd5, 3'd0, 34'd200 << 5);
+        put_desc(3'd5, 3'd1, {18'd64, 16'd16});
+        put_desc(3'd6, 3'd0, 34'd300);
+        put_desc(3'd6, 3'd1, {18'd1, 16'd8});
+        put_desc(3'd7, 3'd0, 34'd256 << 5);
+        put_desc(3'd7, 3'd1, {18'd32, 16'd256});
+
+        bp_on = 1;
+        i = n_wburst; j = n_wword;
+        do_run(9'd120);
+        spin = 0;
+        // 15 imem words + 14 descriptor fields + the run
+        while ((sig_count < s0 + 30) && (spin < 120000)) begin
+            spin = spin + 1;
+            @(negedge clk);
+        end
+        chk(sig_count, s0 + 30, "kernel C retired");
+        chk({31'd0, dbg_fault}, 64'd0, "kernel C must not fault");
+        $display("    kernel C retired in %0d cycles", last_sig_arg);
+        chk(n_wburst - i, 21, "kernel C: bursts 5,8,8,8,2 and 16 single words");
+        chk(n_wword - j, 47, "kernel C: words written");
+        for (w = 0; w < 31; w = w + 1) begin
+            chk({63'd0, dram[67 + w] === l1x(100 + w)}, 64'd1, "misaligned contiguous drain");
+        end
+        for (w = 0; w < 16; w = w + 1) begin
+            chk({63'd0, dram[200 + 2*w] === l1x(100 + w)}, 64'd1, "stride-64 drain");
+            if (w < 15) chk({63'd0, dram[201 + 2*w] === 256'd0}, 64'd1, "stride-64 gaps untouched");
+        end
+
+        bp_on = 0;
+        repeat (20) @(negedge clk);
+        i = n_wburst;
+        do_run(9'd140);
+        spin = 0;
+        while ((sig_count < s0 + 31) && (spin < 120000)) begin
+            spin = spin + 1;
+            @(negedge clk);
+        end
+        chk(sig_count, s0 + 31, "kernel D retired");
+        chk({31'd0, dbg_fault}, 64'd0, "kernel D must not fault");
+        $display("    kernel D retired in %0d cycles", last_sig_arg);
+        chk({63'd0, last_sig_arg < `TB_KD_BOUND}, 64'd1, "kernel D at a word a cycle");
+        chk(n_wburst - i, 32, "kernel D: 256 aligned words are 32 bursts");
+        for (w = 0; w < 256; w = w + 1) begin
+            chk({63'd0, dram[256 + w] === l1x(w)}, 64'd1, "256-word drain");
+        end
+        chk(n_wbad, 0, "no malformed write burst anywhere");
+
+        $display("--- 14. back-to-back ALU ops of different shape ---");
+        // VADD v7=v0+v1 then VMUL v8=v0*K2 (-1): the second's decode must not reach
+        // the first's last beat, which the lanes evaluate a cycle after issue.
+        for (w = 0; w < 8; w = w + 1) begin
+            for (i = 0; i < 16; i = i + 1) begin
+                line[i*16 +: 16] = f16i(w*16 + i + 1);
+            end
+            dram[(A_SRC >> 5) + w] = line;
+            for (i = 0; i < 16; i = i + 1) begin
+                line[i*16 +: 16] = f16i(2*(w*16 + i + 1));
+            end
+            dram[(A_SRC >> 5) + 8 + w] = line;
+        end
+        s0 = sig_count;
+        put_imem(9'd150, 32'hE8000000);                 // VFILL A0 -> L1 0
+        put_imem(9'd151, I_VBAR);
+        put_imem(9'd152, I_VLD_A1);                     // v0 <- L1 0..7
+        put_imem(9'd153, I_VLD_A2);                     // v1 <- L1 8..15
+        put_imem(9'd154, 32'h180E0220);                 // VADD v7 = v0 + v1
+        put_imem(9'd155, 32'h29900400);                 // VMUL v8 = v0 * K2
+        put_imem(9'd156, 32'hA96E0000);                 // VST v7 -> A3
+        put_imem(9'd157, 32'hA9900000);                 // VST v8 -> A4
+        put_imem(9'd158, 32'hF0A00010);                 // VDRAIN A5 from L1 16
+        put_imem(9'd159, I_VHALT);
+        put_desc(3'd0, 3'd0, A_SRC);
+        put_desc(3'd0, 3'd1, {18'd32, 16'd16});
+        put_desc(3'd1, 3'd0, 34'd0);
+        put_desc(3'd1, 3'd1, {18'd1, 16'd8});
+        put_desc(3'd2, 3'd0, 34'd8);
+        put_desc(3'd2, 3'd1, {18'd1, 16'd8});
+        put_desc(3'd3, 3'd0, 34'd16);
+        put_desc(3'd3, 3'd1, {18'd1, 16'd8});
+        put_desc(3'd4, 3'd0, 34'd24);
+        put_desc(3'd4, 3'd1, {18'd1, 16'd8});
+        put_desc(3'd5, 3'd0, 34'd640 << 5);
+        put_desc(3'd5, 3'd1, {18'd32, 16'd16});
+        do_run(9'd150);
+        spin = 0;
+        // 10 imem words + 12 descriptor fields + the run
+        while ((sig_count < s0 + 23) && (spin < 120000)) begin
+            spin = spin + 1;
+            @(negedge clk);
+        end
+        chk(sig_count, s0 + 23, "kernel E retired");
+        chk({31'd0, dbg_fault}, 64'd0, "kernel E must not fault");
+        for (w = 0; w < 16; w = w + 1) begin
+            for (i = 0; i < 16; i = i + 1) begin
+                got16  = dram[640 + w][i*16 +: 16];
+                want16 = (w < 8) ? f16i(3 * (w*16 + i + 1))
+                                 : (f16i((w-8)*16 + i + 1) | 16'h8000);
+                chk({48'd0, got16}, {48'd0, want16}, "VADD then VMUL by K2");
+            end
+        end
 
         $display("========================================");
         if (errors == 0) begin

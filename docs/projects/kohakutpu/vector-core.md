@@ -612,16 +612,19 @@ gain.
 `L1_PRIM` and `L1_DEPTH` are parameters and the walks around L1 derive from them
 rather than assuming the shape they were written for. **URAM cannot do
 `READ_LAT = 1` at all**, so the latency is a property of the primitive rather
-than a tuning knob, and the states that absorb the extra beat are entered only
-when it applies. Hardcoding either would fail in the quiet direction: a wrong
-latency reads the beat before the data lands, and a narrow address wraps.
+than a tuning knob: VLD and VDRAIN read L1 a word a cycle and take each word a
+fixed `L1_LAT`-derived distance later (VST writes L1 the cycle after its
+register-file read), and a landing that cannot be taken replays from that word.
+Hardcoding either would fail in the
+quiet direction: a wrong latency reads the beat before the data lands, and a
+narrow address wraps.
 
 **It ships as block RAM**, which is the opposite verdict to the accumulator's and
 for the opposite reason. The accumulator is already `READ_LAT = 2`, so URAM is
 free there ([accumulator.md](accumulator.md) §1.1); the vector core runs
-`READ_LAT = 1` and URAM would add a wait state to every load and drain — and the
-core is schedule-bound rather than capacity-bound, so a cycle on the load path is
-the wrong thing to spend.
+`READ_LAT = 1` and URAM would add a cycle to every VLD and VDRAIN walk, and one
+replay per drain write burst — and the core is schedule-bound rather than capacity-bound, so a
+cycle on the load path is the wrong thing to spend.
 
 > The trade only becomes interesting at a depth block RAM cannot reach, and **a
 > deeper vector L1 is blocked somewhere else entirely**: the fill protocol's tag

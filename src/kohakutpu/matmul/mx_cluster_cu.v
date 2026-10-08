@@ -234,7 +234,7 @@ module mx_cluster_cu #(
         .POS_X(CU_X), .POS_Y(CU_Y),
         // Mesh-wide build number -- see vec_cu.v. 0x03 is the CU_DATA
         // interconnect: unit-to-unit transfer on both halves of the mesh.
-        .CU_TYPE(16'h4D47), .CU_VERSION(8'h05), .N_BUFFERS(2),
+        .CU_TYPE(16'h4D47), .CU_VERSION(8'h06), .N_BUFFERS(2),
         .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
         .RECV_MEM(RECV_MEM), .MEM_TYPE(MEM_TYPE), .ACK_FENCE(1)
     ) u_base (
@@ -541,6 +541,35 @@ module mx_cluster_cu #(
             end
         end
     end
+
+`ifdef MX_SEQ_TRACE
+    // One line per sequencer state change, array busy edge and instruction
+    // arrival, stamped in u_clk cycles: the timeline behind the two counters.
+    reg [3:0]  tr_st;
+    reg        tr_gb, tr_sb, tr_iv;
+    reg [63:0] tr_cyc;
+    reg [31:0] tr_sw = 32'd0;
+    always @(posedge u_clk) begin
+        if (!u_resetn) begin
+            tr_st <= S_IDLE; tr_gb <= 1'b0; tr_sb <= 1'b0; tr_iv <= 1'b0;
+            tr_cyc <= 64'd0;
+        end else begin
+            tr_cyc <= tr_cyc + 64'd1;
+            tr_st <= st; tr_gb <= gemm_busy; tr_sb <= sweep_busy; tr_iv <= inst_valid;
+            if ((st != tr_st) || (gemm_busy != tr_gb) || (sweep_busy != tr_sb)
+                || (inst_valid && !tr_iv)) begin
+                $display("SEQ %0d cu %0d,%0d st %0d gb %0d sb %0d iv %0d rcv %0d n %0d op %0d at %h lead %0d np %0d peers %h sv %0d",
+                         tr_cyc, CU_X, CU_Y, st, gemm_busy, sweep_busy, inst_valid,
+                         rcv_ent, n_r, i_op, base_r, lead, npeer_r, peer_r, send_valid);
+            end
+            tr_sw <= (send_valid && !send_ready) ? tr_sw + 32'd1 : 32'd0;
+            if (tr_sw[9:0] == 10'd1023) begin
+                $display("SEQ %0d cu %0d,%0d SEND HELD %0d tx_valid %0d tx_ready %0d w_valid %0d sg %0d",
+                         tr_cyc, CU_X, CU_Y, tr_sw, tx_valid, tx_ready, w_valid, sg_valid);
+            end
+        end
+    end
+`endif
 
     // ================================================ CU_DATA reception
     // A stream is one descriptor flit then `len+1` pure data flits, the last of

@@ -223,7 +223,7 @@ At `ACK_FENCE = 1` a completion means the instruction's memory writes have
 
 At `ACK_FENCE = 0` (the default) the acks go to `recv_*` like any other flit,
 for a unit that fences its own writes. KohakuTPU's `mx_cluster_cu` and `vec_cu`
-build with `ACK_FENCE = 1` and report `CU_VERSION 0x05`.
+build with `ACK_FENCE = 1` and report `CU_VERSION 0x06`.
 
 ## 4. Instruction issue and retirement
 
@@ -410,7 +410,8 @@ Recorded because the RTL and the surrounding material disagree, and the RTL wins
 | Write fence | `ACK_FENCE = 1`; `MEM_WR_ACK` is the base's. | Same. |
 | Bounded coupling (§5.1) | `recv_ready` is low while a peer sub-tile or a `SIG_DATA_RECEIVED` is pending — both cleared by the send path. | `recv_ready` is low while `sg_pend`, cleared by the send path. |
 | Multi-flit framing | Frames `CU_DATA` by type, and checks each data flit's source against the open stream's. | Same, plus a `last`-versus-count check. |
-| Outstanding requests | One `MEM_RD_REQ` descriptor per `FILL`; the receive FIFO is the only bound, applied as backpressure rather than as a guessed constant. | One `VFILL` outstanding; the core holds a second until the first drains. |
+| Outstanding requests | One `MEM_RD_REQ` descriptor per `FILL`; the receive FIFO is the only bound, applied as backpressure rather than as a guessed constant. | One `STREAM` `MEM_RD_REQ` per contiguous fill run (≤ 255 words, never across L1 word 256); VFILLs overlap, up to 32 runs outstanding, the run queue's depth. Every response is written to L1 the cycle it arrives (fills take L1's write port ahead of VST), so the receive FIFO is drained, not budgeted. |
+| Memory writes | A DRAIN's sub-tiles leave as write bursts of up to 8. | A memory VDRAIN leaves as write bursts: one `MEM_WR_REQ` per contiguous run of ≤ 8 words inside one 256-byte block, then its data flits. |
 | `dbg_ctr` | `{compute_cycles, memory_cycles}`, both free-running. | `{32'd0, kernel_cycles}`, cleared at each `RUN`. |
 | `exec_result` | A running count of retired operations. | Kernel cycle count, or the fault code when `exec_fault`. |
 
