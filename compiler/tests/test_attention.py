@@ -202,3 +202,26 @@ def test_every_head_gets_its_own_answer(heads):
         if np.array_equal(got[a], got[b])
     ]
     assert not pairs, f"heads {pairs} got the same answer"
+
+
+@pytest.mark.parametrize("poison", [0x0000, 0x7E00, 0x7C00, 0x3C00])
+def test_the_answer_does_not_depend_on_what_the_arena_held(poison):
+    """Memory pre-filled with NaN, Inf or 1.0 must give the zeroed answer.
+
+    The running max, total and output start from constant writes, which read
+    no buffer.
+    """
+    rng = np.random.default_rng(3)
+    q, k, v = (np.asarray(rng.normal(0, 0.5, (2, 64, 64)), np.float16) for _ in "qkv")
+    got = []
+    for fill in (0x0000, poison):
+        dev = SimDevice(size=64 << 20)
+        buf = dev.card.mem.buf
+        buf[:] = np.full(len(buf) // 2, fill, np.uint16).tobytes()
+        got.append(
+            flash_attention(
+                dev.tensor(q), dev.tensor(k), dev.tensor(v), block=64
+            ).numpy()
+        )
+    assert np.isfinite(got[1]).all()
+    assert np.array_equal(got[0], got[1])

@@ -5,6 +5,9 @@ A pre-built FUSED kernel is a different topic and lives in `kernels/`: one op
 here is a whole pass over the operand, so a caller stringing several together
 is paying per pass and should reach for a kernel instead.
 
+The convolutions are the exception that is not a kernel: an on-card im2col
+(mover moves) followed by `matmul`, composed in `ops/conv2d.py`.
+
 EVERY KERNEL STATES ITS TILING. `part` is elements per instance, so a caller
 who wants a different split passes one; a bare `y <<= f(x)` says nothing about
 how the work divides and leaves the extent to a grid the compiler invented.
@@ -13,8 +16,6 @@ That is the "near full control" end -- `api.py` above this is "near none".
 
 from kohakutpu.ops.activation import gelu, relu, sigmoid, silu
 from kohakutpu.ops.conv2d import (
-    PLANE,
-    PLANE2,
     conv2d,
     conv2d_stride2,
     conv2d_upsample2,
@@ -46,8 +47,6 @@ LOG2E = 1.4426950408889634
 
 __all__ = [
     "LOG2E",
-    "PLANE",
-    "PLANE2",
     "absolute",
     "conv2d",
     "conv2d_stride2",

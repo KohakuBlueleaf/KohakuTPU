@@ -128,6 +128,16 @@ def device(card=None, kind: str | None = None) -> Device:
     return _device
 
 
+def attach(dev: Device) -> Device:
+    """Make an already-opened device the one tensors land on, and return it.
+
+    Attach before the first tinygrad `Device["KTPU"]`, which takes it then.
+    """
+    global _device
+    _device = dev
+    return dev
+
+
 def add_device_flag(parser) -> None:
     """Give `parser` the `--device` every demo and example takes."""
     parser.add_argument(

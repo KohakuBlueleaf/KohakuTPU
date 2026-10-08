@@ -333,8 +333,7 @@ class TpuBackend:
                             )
                         pin(
                             s.args["operand"],
-                            s.args.get("order")
-                            or LO.Entry(s.args["groups"], s.args["blocks"]),
+                            s.args.get("order") or _fill_order(s.args),
                             at,
                         )
                     case "reduce":
@@ -463,9 +462,19 @@ class TpuBackend:
                     eoff = region[sel, name]
                     _in_bank(compiled, name, eoff, span)
                     placed[(s.args["sel"], bank)] = eoff
+                    # The order THIS fill reads, not the buffer's first one: a
+                    # temp converted in place holds MXFP7 from the base.
+                    order = s.args.get("order") or _fill_order(s.args)
+                    ebytes = getattr(order, "entry_bytes", FP16_ENTRY_BYTES)
+                    if ebytes == FP16_ENTRY_BYTES:
+                        raise LangError(
+                            f"{compiled.name}: {name!r} fills the cluster as FP16 "
+                            f"({order.key}); a cluster FILL reads pre-quantised "
+                            f"MXFP7 only (mx_cluster_cu.v)"
+                        )
                     words.append(
                         self.isa.fill(
-                            addr=base + at * FP16_ENTRY_BYTES + off,
+                            addr=base + at * ebytes + off,
                             n=span,
                             sel=s.args["sel"],
                             eoff=eoff,
@@ -1215,6 +1224,17 @@ def _placeable(compiled) -> None:
             raise LangError(f"{compiled.name} stage {stage.index}: {exc}") from None
 
 
+def _fill_order(args: dict):
+    """The order a FILL streams: pre-quantised MXFP7 entries (relayout.md §13)."""
+    return LO.MxEntry(args["groups"], args["blocks"], int(args["sel"]))
+
+
+def _entry_bytes(compiled, name: str) -> int:
+    """Bytes one L1 entry of `name` occupies in memory, in its own order."""
+    lay = compiled.layouts[name]
+    return getattr(getattr(lay, "inner", lay), "entry_bytes", FP16_ENTRY_BYTES)
+
+
 def _within(compiled, operand: str, at: int, span: int, off: int = 0) -> None:
     """Raise :class:`LangError` for a fill that reaches past `operand`.
 
@@ -1223,7 +1243,14 @@ def _within(compiled, operand: str, at: int, span: int, off: int = 0) -> None:
     offset reaches further still, and a tap past the last entry is the one thing
     the tail padding exists to absorb -- so it is counted in BYTES.
     """
-    held = _held(compiled, operand) * 2
+    # In FP16-entry bytes whatever the order holds: a pre-quantised entry is
+    # one entry in fewer bytes, and the count is what bounds the fill.
+    held = (
+        _held(compiled, operand)
+        * 2
+        * FP16_ENTRY_BYTES
+        // _entry_bytes(compiled, operand)
+    )
     end = at * FP16_ENTRY_BYTES + off + span * FP16_ENTRY_BYTES
     if end > held:
         raise LangError(
@@ -1252,6 +1279,11 @@ def _conversions(compiled, wanted: dict) -> list:
                 )
             continue
         for (_, before), (at, after) in itertools.pairwise(needs):
+            # Into MXFP7 is TWO steps: a vector walk into the FP16 entries,
+            # then the mover's quantiser over them (Holder.convert).
+            if LO.mx_inner(after) is not None and not LO.quantises(before, after):
+                out.append((at, name, before, LO.mx_source(after)))
+                before = LO.mx_source(after)
             out.append((at, name, before, after))
     return out
 
@@ -1270,7 +1302,7 @@ def _walkable(compiled) -> None:
     from kohakutpu.isa import relayout as RL
 
     for n, (at, name, before, after) in enumerate(compiled.conversions):
-        if n in compiled.dead:
+        if n in compiled.dead or LO.quantises(before, after):
             continue
         if RL.plan(before, after, compiled.block(name)) is not None:
             continue

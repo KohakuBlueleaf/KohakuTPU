@@ -25,18 +25,18 @@ from kohakuaccel.memory import Arena
 from kohakuaccel.rt import Runtime
 from kohakuaccel.sim import MEM_BASE, Memory, Signal, SimMachine, UnitModel
 from kohakutpu.hw import mxfp7
+from kohakutpu.hw import tensor as T
 from kohakutpu.hw import vector as V
 from kohakutpu.isa import ISA
 from kohakutpu.isa.vecemit import BATCH_BYTES
 from kohakutpu.isa.vector import ISA as VEC_ISA
-from kohakutpu.rt import FP16, Holder
+from kohakutpu.rt import FP16, XFORM_MXFP7, Holder
 from kohakutpu.units import MATMUL_CODE, VECTOR_CODE
 
 PAYLOAD = (1 << 256) - 1
 
 LANES = 4
 KBLOCK = 32
-ENTRY_BYTES = LANES * KBLOCK * 2
 WORD_BYTES = 32
 
 #: L1 is two banks of 256 entries a side, not one flat 512 (isa/cluster.md §4.6).
@@ -122,10 +122,17 @@ def sweep(a, b):
 
     Returns a `(rows, cols)` float64 array.
     """
-    qa, esa, m8a = mxfp7.quantise_fp16(a)
-    qb, esb, m8b = mxfp7.quantise_fp16(b)
-    rows, k = a.shape
-    cols = b.shape[0]
+    return sweep_q(mxfp7.quantise_fp16(a), mxfp7.quantise_fp16(b))
+
+
+def sweep_q(qa_, qb_):
+    """:func:`sweep` on operands already quantised, ``(q, es, m8)`` each."""
+    qa, esa, m8a = qa_
+    qb, esb, m8b = qb_
+    rows, k = np.shape(qa)
+    cols = np.shape(qb)[0]
+    esa, m8a = np.asarray(esa), np.asarray(m8a)
+    esb, m8b = np.asarray(esb), np.asarray(m8b)
     blocks = k // KBLOCK
     ia = np.asarray(qa, np.int64).reshape(rows, blocks, KBLOCK)
     ib = np.asarray(qb, np.int64).reshape(cols, blocks, KBLOCK)
@@ -148,13 +155,22 @@ class ClusterUnit(UnitModel):
     """
 
     def __init__(
-        self, version: int = 4, mem_base: int = MEM_BASE, banking: bool = True
+        self,
+        version: int = 4,
+        mem_base: int = MEM_BASE,
+        banking: bool = True,
     ) -> None:
         self.caps = encode_caps(MATMUL_CODE, version=version, buffers=BANKS)
         self.mem_base = mem_base
         self.banking = banking
-        self.l1 = [
-            np.zeros((BANKS * BANK_ENTRIES, LANES, KBLOCK), FP16) for _ in range(2)
+        #: The L1, ``(q, es, m8)`` per side: a FILL reads 128 B MXFP7 entries.
+        self.l1q = [
+            (
+                np.zeros((BANKS * BANK_ENTRIES, LANES, KBLOCK), np.int64),
+                np.zeros((BANKS * BANK_ENTRIES, LANES), np.int64),
+                np.full((BANKS * BANK_ENTRIES, LANES), 8, np.int64),
+            )
+            for _ in range(2)
         ]
         self.acc = None
         self.tile = (0, 0)
@@ -223,13 +239,12 @@ class ClusterUnit(UnitModel):
             )
         self._hazard(f["sel"], at, n)
         where = full_addr(f)
-        raw = mem.read(where - self.mem_base, n * ENTRY_BYTES)
-        if len(raw) < n * ENTRY_BYTES:
+        raw = mem.read(where - self.mem_base, n * T.MXFP7_ENTRY_BYTES)
+        if len(raw) < n * T.MXFP7_ENTRY_BYTES:
             raise ModelError(f"FILL at {where:#x} reads past the memory window")
-        # An entry is `lanes` rows by `kblock` of K, lane-major (isa/cluster.md
-        # §3). That order is the machine's, not the packer's.
-        got = np.frombuffer(raw, FP16).reshape(n, LANES, KBLOCK)
-        self.l1[f["sel"]][at : at + n] = got
+        q, es, m8 = T.from_mxfp7_entries(raw, blayout=f["sel"])
+        for held, got in zip(self.l1q[f["sel"]], (q, es, m8), strict=True):
+            held[at : at + n] = got
 
     def _hazard(self, sel: int, at: int, n: int) -> None:
         """Refuse a FILL that lands inside the range a live sweep is reading.
@@ -251,19 +266,27 @@ class ClusterUnit(UnitModel):
                 f"corrupts sub-tiles silently -- alternate the bank per K chunk"
             )
 
-    def _operand(self, sel: int, bank: int, off: int, groups: int, blocks: int):
-        """The `groups*LANES x blocks*KBLOCK` tile a sweep reads from one side."""
+    def _operand_q(self, sel: int, bank: int, off: int, groups: int, blocks: int):
+        """``(q, es, m8)`` of the `groups*LANES x blocks*KBLOCK` tile a sweep reads."""
         at = bank * BANK_ENTRIES + off
-        got = self.l1[sel][at : at + groups * blocks]
-        got = got.reshape(groups, blocks, LANES, KBLOCK)
-        return got.transpose(0, 2, 1, 3).reshape(groups * LANES, blocks * KBLOCK)
+        q, es, m8 = (held[at : at + groups * blocks] for held in self.l1q[sel])
+        q = q.reshape(groups, blocks, LANES, KBLOCK).transpose(0, 2, 1, 3)
+        es = es.reshape(groups, blocks, LANES).transpose(0, 2, 1)
+        m8 = m8.reshape(groups, blocks, LANES).transpose(0, 2, 1)
+        rows = groups * LANES
+        return (
+            q.reshape(rows, blocks * KBLOCK),
+            es.reshape(rows, blocks),
+            m8.reshape(rows, blocks),
+        )
 
     def _gemm(self, f: dict) -> None:
         """Sweep `gm x gn` sub-tiles over `nk` K-blocks into the accumulator."""
         gm, gn, nk = f["gm"], f["gn"], f["nk"]
-        a = self._operand(0, f["abank"], f["aoff"], gm, nk)
-        b = self._operand(1, f["bbank"], f["boff"], gn, nk)
-        got = sweep(a, b)
+        got = sweep_q(
+            self._operand_q(0, f["abank"], f["aoff"], gm, nk),
+            self._operand_q(1, f["bbank"], f["boff"], gn, nk),
+        )
         if f["acc"] and self.acc is not None:
             if self.acc.shape != got.shape:
                 raise ModelError(
@@ -828,6 +851,73 @@ class VectorUnit(UnitModel):
             mem.write(int(at) - self.mem_base, held.tobytes())
 
 
+def _walk(base: int, dims: dict) -> list:
+    """Every address a walker visits: dimension 0 outermost (mx_tdesc)."""
+    out = [base]
+    for at in sorted(dims):
+        count, stride = dims[at]
+        out = [a + i * stride for a in out for i in range(count)]
+    return out
+
+
+def run_move(writes, mem: Memory, mem_base: int = MEM_BASE) -> None:
+    """A memory-mover move from its register writes: COPY, FILL or XFORM slot 1.
+
+    Raises :class:`ModelError` for a mode or a transform this model does not run.
+    """
+    hdr: dict = {}
+    dims: dict = {0: {}, 1: {}}
+    staged = None
+    imm = 0
+    for reg, val in writes:
+        if reg == 0x40:
+            imm = val & 0xFFFF_FFFF
+            continue
+        if reg == 0x10:
+            sel = val & 1
+            hdr[sel] = (
+                (val >> 4) & ((1 << 40) - 1),
+                (val >> 44) & 7,
+                (val >> 47) & 0xF,
+                (val >> 55) & 0xF,
+            )
+            dims[sel] = {}
+        elif reg == 0x18:
+            stride = (val >> 20) & 0xFFFF_FFFF
+            stride -= (stride >> 31) << 32
+            staged = (val & 1, (val >> 1) & 7, ((val >> 4) & 0xFFFF, stride))
+        elif reg == 0x20 and staged is not None:
+            dims[staged[0]][staged[1]] = staged[2]
+            staged = None
+        elif reg == 0 and val & (1 << 16):
+            mode = val & 7
+            dst = _walk(hdr[1][0], {k: v for k, v in dims[1].items() if k < hdr[1][1]})
+            if mode == 4:
+                word = imm.to_bytes(4, "little") * (WORD_BYTES // 4)
+                for d in dst:
+                    mem.write(d - mem_base, word)
+                continue
+            src = _walk(hdr[0][0], {k: v for k, v in dims[0].items() if k < hdr[0][1]})
+            if mode == 0:
+                for s, d in zip(src, dst, strict=False):
+                    mem.write(d - mem_base, mem.read(s - mem_base, WORD_BYTES))
+            elif mode == 5 and hdr[0][2] == XFORM_MXFP7:
+                for e, d in enumerate(dst):
+                    raw = b"".join(
+                        mem.read(s - mem_base, WORD_BYTES)
+                        for s in src[e * 8 : e * 8 + 8]
+                    )
+                    entry = np.frombuffer(raw, FP16).reshape(LANES, KBLOCK)
+                    words = T.to_mxfp7_words_tiled(entry, 1, 1, hdr[0][3] & 1)
+                    mem.write(
+                        d - mem_base, b"".join(w.to_bytes(32, "little") for w in words)
+                    )
+            else:
+                raise ModelError(
+                    f"the mover model runs COPY, FILL and XFORM slot 1, not mode {mode}"
+                )
+
+
 def _is_cluster(unit) -> bool:
     """Whether `unit` is a matmul cluster rather than a vector core."""
     return isinstance(unit, ClusterUnit)
@@ -867,6 +957,10 @@ class SimDevice(Holder, Runtime):
             Arena(base, size, align=BATCH_BYTES, mesh=machine.default),
             self.card,
         )
+
+    def host_move(self, writes: list) -> None:
+        """A mover move run by the model (:func:`run_move`)."""
+        run_move(writes, self.card.mem)
 
     @property
     def clusters(self) -> list:

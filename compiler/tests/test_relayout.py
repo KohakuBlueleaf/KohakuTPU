@@ -668,15 +668,17 @@ def _flash_plan(dev, heads, lq, lkv):
 
 @pytest.mark.parametrize("lkv, blocks", [(128, 2), (256, 4), (512, 8)], ids=str)
 def test_a_conversion_the_next_stage_overwrites_is_not_run(lkv, blocks):
-    """`3*blocks - 3` of `flash_attention`'s `6*blocks - 3` move dead bytes.
+    """`3*blocks - 3` of `flash_attention`'s `7*blocks - 3` move dead bytes.
 
     Its temps are reused across key blocks, so after one block reads `scores` as
     flat the next block's DRAIN rewrites the whole buffer as tile. A conversion
     is derived from the sequence of USES and never asked whether the old order
-    was still live.
+    was still live. One per key block is the mover's quantise of the
+    probabilities, the second half of their `flat -> MXFP7`.
     """
     held = _flash_plan(SimDevice(size=8192 << 20), 4, 256, lkv)
-    assert len(held.conversions) == 6 * blocks - 3
+    assert len(held.conversions) == 7 * blocks - 3
+    assert sum(LO.quantises(b, a) for _, _, b, a in held.conversions) == blocks
     assert len(held.dead) == 3 * blocks - 3
     ran = [c for at in range(len(held.stages)) for c in held.before(at)]
     assert len(ran) == len(held.conversions) - len(held.dead)
@@ -687,7 +689,8 @@ def test_dropping_them_changes_no_number_at_all():
 
     Run twice on one compilation, once with the dead set restored, and compare
     BIT for bit -- a tolerance would not tell a dropped conversion from a
-    wrongly dropped one.
+    wrongly dropped one. A dead conversion OUT of MXFP7 stays dropped: the
+    machine has no way back from it, so it is only ever legal dead.
     """
     rng = np.random.default_rng(1)
     q, k = (rng.standard_normal((4, 128, 64)).astype(np.float16) for _ in "qk")
@@ -700,7 +703,11 @@ def test_dropping_them_changes_no_number_at_all():
         saved = set(held.dead)
         assert saved, "this shape has no dead conversion to test with"
         if revive:
-            held.dead, held._touch = set(), None
+            out_of_mx = {
+                n for n in saved if LO.mx_inner(held.conversions[n][2]) is not None
+            }
+            assert saved - out_of_mx, "every dead conversion leaves MXFP7"
+            held.dead, held._touch = out_of_mx, None
         try:
             return np.asarray(flash_attention(*args).numpy()), len(saved)
         finally:

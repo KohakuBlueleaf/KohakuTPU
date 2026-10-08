@@ -5,8 +5,9 @@ places, and the machine cannot tell.
 
 * :class:`Entry` -- L1 entries of `lanes x kblock`, tile-major. What FILL
   streams, sized by the kernel's `gm`/`gn`/`nk`.
-* :class:`ConvEntry` -- an activation as `[C/32][plane][32]`, a 3x3 tap being a
-  constant offset rather than a stride. What a convolution FILLs.
+* :class:`PadHWC` -- an activation as a zero-padded channels-last image, what a
+  convolution's on-card im2col (the mover) reads.
+* :class:`MxEntry` -- `Entry` pre-quantised to MXFP7: what a cluster FILLs.
 * :class:`Tile` -- one 32-byte word per 4x4 sub-tile, blocked per instance.
 * :class:`ChannelBias` -- an `(N,)` vector as sub-tile words, each column group
   repeated down its rows. Read at stride 0 beside a fused epilogue's tile.
@@ -25,6 +26,89 @@ KBLOCK = T.KBLOCK
 
 class LayoutError(ValueError):
     """An array that cannot be put into this order, and why."""
+
+
+@dataclass(frozen=True)
+class MxEntry:
+    """An operand as the cluster FILLs it: `Entry`'s order, each entry 128-byte MXFP7.
+
+    `blayout` is the B side's transposed slot map; read back dequantised.
+    """
+
+    groups: int
+    blocks: int
+    blayout: int = 0
+    entry_bytes = T.MXFP7_ENTRY_BYTES
+
+    @property
+    def key(self) -> str:
+        return f"mxentry:{self.groups}x{self.blocks}:{self.blayout}"
+
+    @property
+    def source(self) -> "Entry":
+        """The FP16 order the mover converts from."""
+        return Entry(self.groups, self.blocks)
+
+    #: The framework's name for it: an order the card makes from another.
+    derived_from = source
+
+    def padded(self, shape: tuple) -> tuple:
+        return Entry(self.groups, self.blocks).padded(shape)
+
+    def nbytes(self, shape: tuple) -> int:
+        rows, k = self.padded(shape)
+        return rows * k * self.entry_bytes // (LANES * KBLOCK)
+
+    def pack(self, array) -> bytes:
+        arr = np.asarray(array, np.float16)
+        if arr.ndim != 2:
+            raise LayoutError(f"an operand is 2-d; got {arr.shape}")
+        rows, k = self.padded(arr.shape)
+        out = np.zeros((rows, k), np.float16)
+        out[: arr.shape[0], : arr.shape[1]] = arr
+        words = T.to_mxfp7_words_tiled(out, self.groups, self.blocks, self.blayout)
+        return b"".join(w.to_bytes(WORD_BYTES, "little") for w in words)
+
+    def unpack(self, raw: bytes, shape: tuple):
+        rows, k = self.padded(shape)
+        q, es, m8 = T.from_mxfp7_entries(raw[: self.nbytes(shape)], self.blayout)
+        vals = q * (2.0 ** es[..., None]) * (m8[..., None] / 8.0)
+        e = vals.reshape(
+            rows // (self.groups * LANES),
+            k // (self.blocks * KBLOCK),
+            self.groups,
+            self.blocks,
+            LANES,
+            KBLOCK,
+        )
+        e = e.transpose(0, 2, 4, 1, 3, 5).reshape(rows, k)
+        return np.asarray(e[: shape[0], : shape[1]], np.float64)
+
+
+def mx_inner(layout) -> MxEntry | None:
+    """The :class:`MxEntry` `layout` holds -- itself, or a batched one's -- else None."""
+    inner = getattr(layout, "inner", layout)
+    return inner if isinstance(inner, MxEntry) else None
+
+
+def mx_source(layout):
+    """The FP16 order the mover converts an MXFP7 `layout` from, batched alike."""
+    return layout.derived_from
+
+
+def quantises(before, after) -> bool:
+    """Whether `before -> after` is the mover's FP16 -> MXFP7 step itself."""
+    return mx_inner(after) is not None and before.key == mx_source(after).key
+
+
+def mx_runs(layout, shape: tuple) -> tuple:
+    """``(count, stride, entries)``: the batch elements of an MXFP7 `layout`,
+    their stride, and the FP16 entries the mover converts in each."""
+    inner = mx_inner(layout)
+    if inner is layout:
+        return 1, 0, inner.source.nbytes(shape) // T.FP16_ENTRY_BYTES
+    entries = inner.source.nbytes(layout.block) // T.FP16_ENTRY_BYTES
+    return layout.count, layout.stride, entries
 
 
 @dataclass(frozen=True)
@@ -114,68 +198,42 @@ class ChannelBias:
 
 
 @dataclass(frozen=True)
-class ConvEntry:
-    """An activation as `[C/32][plane][32]`: the 32-channel block outermost.
+class PadHWC:
+    """An ``[H][W][C]`` activation as a zero-padded ``[hp][wp][cp]`` FP16 image.
 
-    Four adjacent pixels of one block are 256 contiguous bytes -- one L1 entry --
-    so a fill is one run at `nk = 1` and a 3x3 tap is a constant added to the
-    address. `Entry` cannot describe this: its runs tile the operand, and nine
-    taps are nine OVERLAPPING windows at 64-byte offsets.
-
-    `gm` is the tile height the sweep will use, which decides only the tail --
-    the last tile reads a tap past the plane's end.
-
-    `step` is the convolution's STRIDE, splitting the plane by residue into
-    `step*step` sub-planes, which is what keeps a strided tap a constant offset.
-    It is not called `stride`: `lang.backend._held` reads that name off a layout
-    as a BATCH BYTE STRIDE, and a 2 there sizes the whole operand at one element.
+    The data sits at offset `pad` on both spatial axes; `cp` is C in whole 32s.
     """
 
+    hp: int
+    wp: int
+    cp: int
     pad: int = 1
-    gm: int = 8
-    step: int = 1
 
     @property
     def key(self) -> str:
-        step = f":s{self.step}" if self.step != 1 else ""
-        return f"conv:{self.pad}:{self.gm}{step}"
-
-    def geometry(self, shape: tuple) -> tuple:
-        """``(wp, plane, tail)`` for an ``[H][W][C]`` activation, in positions.
-
-        `wp` is one SUB-PLANE's; `plane` is all `stride*stride` of them.
-        """
-        h, w, _ = shape
-        s = self.step
-        _, wp, plane = T.conv_geometry(h, w, self.pad, s)
-        hs, ws = -(-h // s), -(-w // s)
-        useful = (hs - 1) * wp + ws
-        swept = -(-useful // (self.gm * LANES)) * self.gm * LANES
-        far = swept + T.stride_tap(2, 2, wp, plane // (s * s), s)
-        return wp, plane, max(0, -(-(far - plane) // LANES))
+        return f"hwc:{self.hp}x{self.wp}x{self.cp}:{self.pad}"
 
     def nbytes(self, shape: tuple) -> int:
-        _, plane, tail = self.geometry(shape)
-        blocks = -(-shape[2] // KBLOCK)
-        return (blocks * plane + tail * LANES) * KBLOCK * 2
+        return self.hp * self.wp * self.cp * 2
 
     def pack(self, array) -> bytes:
         arr = np.asarray(array, np.float16)
         if arr.ndim != 3:
-            raise LayoutError(f"a conv activation is [H][W][C]; got {arr.shape}")
-        _, _, tail = self.geometry(arr.shape)
-        words = T.to_fp16_words_conv(arr, self.pad, tail, stride=self.step)
-        return b"".join(w.to_bytes(WORD_BYTES, "little") for w in words)
+            raise LayoutError(f"an activation is [H][W][C]; got {arr.shape}")
+        h, w, c = arr.shape
+        p = self.pad
+        if p + h > self.hp or p + w > self.wp or c > self.cp:
+            raise LayoutError(f"{arr.shape} does not fit {self.key}")
+        out = np.zeros((self.hp, self.wp, self.cp), np.float16)
+        out[p : p + h, p : p + w, :c] = arr
+        return out.tobytes()
 
     def unpack(self, raw: bytes, shape: tuple):
-        words = [
-            int.from_bytes(raw[at : at + WORD_BYTES], "little")
-            for at in range(0, len(raw), WORD_BYTES)
-        ]
-        return np.asarray(
-            T.from_fp16_words_conv(words, tuple(shape), self.pad, stride=self.step),
-            np.float64,
-        )
+        h, w, c = shape
+        p = self.pad
+        img = np.frombuffer(raw, np.float16)[: self.hp * self.wp * self.cp]
+        img = img.reshape(self.hp, self.wp, self.cp)
+        return np.asarray(img[p : p + h, p : p + w, :c], np.float64)
 
 
 @dataclass(frozen=True)

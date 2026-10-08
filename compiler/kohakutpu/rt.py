@@ -12,10 +12,13 @@ import itertools
 import weakref
 
 import numpy as np
+from kohakuaccel.device import mover as DM
 from kohakuaccel.machinespec import MESH_SHIFT, MachineSpec, MeshSpec
 from kohakuaccel.memory import Arena, Buffer, Layout
+from kohakuaccel.package import mover as PM
 from kohakuaccel.rt import Runtime
 from kohakutpu.isa import relayout as RL
+from kohakutpu.isa.fields import FIELDS
 from kohakutpu.isa.vecemit import BATCH_BYTES
 
 from kohakutpu import layout as LO
@@ -28,6 +31,9 @@ ARENA_SIZE = 1 << 26
 
 #: The tier name `L.temp(tier=...)` uses for the MAG staging store.
 L2 = "l2"
+
+#: The transform bank's slot holding the FP16 -> MXFP7 quantiser.
+XFORM_MXFP7 = 1
 
 
 class RelayoutError(RuntimeError):
@@ -163,7 +169,11 @@ class Tensor:
         got = self.buffers.get(layout.key)
         if got is not None:
             return got.addr
-        if self.host is None:
+        mx = LO.mx_inner(layout) is not None
+        if mx and self.host is not None:
+            # MXFP7 is made on the card from the FP16 entries (relayout.md §13).
+            self.address(LO.mx_source(layout))
+        if self.host is None or mx:
             made = self._reorder(layout)
             if made is not None:
                 return made
@@ -173,6 +183,23 @@ class Tensor:
         buf = self.dev.put(self._contents(), layout, self.shape)
         self.buffers[layout.key] = buf
         return buf.addr
+
+    def upload(self, layout: Layout) -> int:
+        """Put the host copy up in `layout` now, packed by the host, MXFP7 included."""
+        self._adopt()
+        buf = self.dev.put(self._contents(), layout, self.shape)
+        self.buffers[layout.key] = buf
+        return buf.addr
+
+    def prepare(self, layout: Layout) -> None:
+        """Upload what `layout` will be made from on the card, if anything.
+
+        The upload half of :meth:`address`.
+        """
+        if LO.mx_inner(layout) is not None and self.host is not None:
+            self._adopt()
+            if layout.key not in self.buffers:
+                self.address(LO.mx_source(layout))
 
     def _reorder(self, layout: Layout) -> int | None:
         """This tensor in `layout`, rewritten on the card from an order it has.
@@ -190,7 +217,12 @@ class Tensor:
         if not self.buffers:
             return None
         held = next(iter(self.buffers.values()))
-        out = self.dev.empty(self.shape, layout)
+        tier = None
+        if LO.mx_inner(layout) is not None:
+            # From the FP16 entries when they are held.
+            held = self.buffers.get(LO.mx_source(layout).key, held)
+            tier = self.dev.mx_tier(layout.nbytes(self.shape), self.host is None)
+        out = self.dev.empty(self.shape, layout, tier=tier)
         buf = out.buffers[layout.key]
         if not self.dev.reorder(held.addr, buf.addr, self.shape, held.layout, layout):
             out.release()
@@ -334,6 +366,17 @@ class Holder:
         return out.claim(Buffer(self.alloc(span, tier), tuple(shape), layout))
 
     # ---------------------------------------------------------------- tiers
+    #: Where a converted (MXFP7) operand lives, the `mx_tier` policy
+    #: (relayout.md §13): produced up to 256 KB to L2, uploads to DRAM.
+    mx_staging_max = 256 << 10
+    mx_uploads_to_staging = False
+
+    def mx_tier(self, nbytes: int, produced: bool):
+        """The tier a converted operand of `nbytes` is placed in: `L2` or None (DRAM)."""
+        if self.staging is None or nbytes > self.mx_staging_max:
+            return None
+        return L2 if produced or self.mx_uploads_to_staging else None
+
     def alloc(self, nbytes: int, tier=None) -> int:
         """A span in `tier`, or in DRAM when this machine cannot give it one.
 
@@ -356,6 +399,13 @@ class Holder:
             return
         self.arena.release(addr)
 
+    def live_spans(self) -> dict:
+        """Every allocation a payload may address: DRAM and staging alike."""
+        spans = dict(self.arena.live)
+        if self.staging is not None:
+            spans.update(self.staging.live)
+        return spans
+
     # ------------------------------------------------------------- relayouts
     #: An arena over this mesh's MAG staging store, when one has been attached.
     #: `kohakutpu.staging.attach` sets it; without it a relayout stages in DRAM.
@@ -372,7 +422,27 @@ class Holder:
         ON A VECTOR CORE, ALWAYS. There is no host path: `TpuBackend.validate`
         refuses a kernel whose conversion this machine cannot walk, so reaching
         the refusal here means a caller assembled one the compiler never saw.
+
+        Into :class:`LO.MxEntry` it is the mover's quantiser, in place: entry `e`
+        writes 128 B at `128e` after reading 256 B at `256e` (relayout.md §13).
         """
+        mx = LO.mx_inner(after)
+        if mx is not None:
+            if not LO.quantises(before, after):
+                self.convert(addr, shape, before, LO.mx_source(after))
+            elif getattr(before, "stride", 0) != getattr(after, "stride", 0):
+                raise RelayoutError(
+                    f"{before.key} -> {after.key} in place needs one stride; "
+                    f"{getattr(before, 'stride', 0)} != {getattr(after, 'stride', 0)}"
+                )
+            count, stride, entries = LO.mx_runs(after, shape)
+            for i in range(count):
+                at = addr + i * stride
+                self.move(
+                    PM.convert(at, at, entries, XFORM_MXFP7, mx.blayout), "quantise"
+                )
+            self.counters["quantised"] = self.counters.get("quantised", 0) + 1
+            return
         made = RL.for_conversion(before, after, shape)
         plan, stride, wide, count = made if made else (None, 0, 0, 0)
         # In place has ONE buffer to step, so the two orders must agree on what
@@ -437,6 +507,10 @@ class Holder:
         `Tensor.address` raises `RelayoutError` -- because the only other way to
         do it is through the host and there is no host path.
         """
+        if LO.mx_inner(after) is not None:
+            return self._quantise(src, dst, shape, before, after)
+        if isinstance(after, LO.PadHWC):
+            return self._pad_image(src, dst, shape, before, after)
         ready = self.device_relayout and self.machine.has("VC")
         made = RL.for_conversion(before, after, shape) if ready else None
         if made is None:
@@ -448,6 +522,78 @@ class Holder:
         pairs = [(src + i * from_stride, dst + i * to_stride) for i in range(count)]
         self._run(RL.build(plan).program(pairs, mask))
         self.counters["relayouts_device"] = self.counters.get("relayouts_device", 0) + 1
+        return True
+
+    def _quantise(self, src: int, dst: int, shape: tuple, before, after) -> bool:
+        """`before`-ordered bytes at `src` as MXFP7 entries at `dst`, by the mover.
+
+        False when either step has no way (relayout.md §13).
+        """
+        fp = LO.mx_source(after)
+        held = None
+        if LO.quantises(before, after):
+            # The source's own stride: its pad may differ from the target's.
+            fp = before
+        else:
+            held = self.empty(shape, fp)
+            at = held.buffers[fp.key].addr
+            if not self.reorder(src, at, shape, before, fp):
+                held.release()
+                return False
+            src = at
+        count, to_stride, entries = LO.mx_runs(after, shape)
+        from_stride = getattr(fp, "stride", 0)
+        blayout = LO.mx_inner(after).blayout
+        for i in range(count):
+            self.move(
+                PM.convert(
+                    src + i * from_stride,
+                    dst + i * to_stride,
+                    entries,
+                    XFORM_MXFP7,
+                    blayout,
+                ),
+                "quantise",
+            )
+        if held is not None:
+            held.release()
+        self.counters["quantised"] = self.counters.get("quantised", 0) + 1
+        return True
+
+    def _pad_image(self, src: int, dst: int, shape: tuple, before, after) -> bool:
+        """An ``[H][W][C]`` activation into :class:`LO.PadHWC`, by the mover.
+
+        `C` must be a multiple of 16; False otherwise (conv2d.md §2, §6).
+        """
+        if len(shape) != 3 or (shape[2] * 2) % PM.WORD_BYTES:
+            return False
+        h, w, c = shape
+        flat, held = LO.Flat(), None
+        if before.key != flat.key:
+            held = self.empty(shape, flat)
+            at = held.buffers[flat.key].addr
+            if not self.reorder(src, at, shape, before, flat):
+                held.release()
+                return False
+            src = at
+        px = after.cp * 2
+        row = after.wp * px
+        self.move(
+            PM.fill((dst, [(after.hp, row), (row // PM.WORD_BYTES, PM.WORD_BYTES)])),
+            "pad",
+        )
+        per = c * 2 // PM.WORD_BYTES
+        origin = dst + (after.pad * after.wp + after.pad) * px
+        self.move(
+            PM.move(
+                PM.COPY,
+                (src, [(h, w * c * 2), (w, c * 2), (per, PM.WORD_BYTES)]),
+                (origin, [(h, after.wp * px), (w, px), (per, PM.WORD_BYTES)]),
+            ),
+            "pad",
+        )
+        if held is not None:
+            held.release()
         return True
 
     def _run(self, flits: list) -> None:
@@ -475,8 +621,17 @@ class Holder:
 class Device(Holder, Runtime):
     """An attached KohakuTPU: its mesh, its memory, and the tensors on it."""
 
-    def __init__(self, card=None, base: int = ARENA_BASE, size: int = ARENA_SIZE):
+    def __init__(
+        self,
+        card=None,
+        base: int = ARENA_BASE,
+        size: int = ARENA_SIZE,
+        node=None,
+    ):
         """Attach to `card` and open an arena of `size` bytes at `base`.
+
+        `node` is the mesh's node queue (`kohakuaccel.node.queue.NodeQueue`);
+        given, the node dispatches every kernel, else the host does.
 
         Raises :class:`ValueError` when the arena would run past the mesh's
         local space, since the top of it would carry the NEXT mesh's id and
@@ -514,6 +669,8 @@ class Device(Holder, Runtime):
         super().__init__(
             machine, arena, getattr(card, "global_mem", card.raw), self.mesh.ctrl
         )
+        self.node = node
+        self.fields = FIELDS
 
     def dispatch(
         self, payloads: dict, unit: str, name: str = "kernel", nodes=None, acks=None
@@ -523,8 +680,9 @@ class Device(Holder, Runtime):
         A unit left busy never retires what is sent to it, so dispatching there
         waits forever rather than failing. A stage that named its own `nodes`
         overrules this. Raises :class:`RuntimeError` when every unit is busy.
+        A node-dispatched device leaves unit choice to the node.
         """
-        if nodes is None:
+        if nodes is None and self.node is None:
             nodes = self.mesh.idle(unit)
             if not nodes:
                 raise RuntimeError(
@@ -532,6 +690,26 @@ class Device(Holder, Runtime):
                     f"a bitstream reload"
                 )
         return super().dispatch(payloads, unit, name, nodes, acks)
+
+    #: Polls of the mover's status a host-issued move may take before failing.
+    HOST_MOVE_POLLS = 2000
+
+    def host_move(self, writes: list) -> None:
+        """A move issued by the host through this mesh's agent window, awaited.
+
+        Raises :class:`RuntimeError` on a mover fault or a move that never goes
+        idle.
+        """
+        DM.issue(self.mesh.ctrl, list(writes), 0)
+        for _ in range(self.HOST_MOVE_POLLS):
+            st = DM.status(self.mesh.ctrl.read64(DM.AUX_STAT))
+            if st["fault_code"]:
+                raise RuntimeError(f"the mover faulted: {st['fault']}")
+            if not st["busy"]:
+                return
+        raise RuntimeError(
+            f"the mover was still busy after {self.HOST_MOVE_POLLS} polls"
+        )
 
     def __repr__(self) -> str:
         return (

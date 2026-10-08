@@ -159,8 +159,8 @@ projection out.
 
 | layer | shape | dtype | native layout wanted |
 |---|---|---|---|
-| activation, conv path | `[H][W][C]`, 128x128x320 / 64x64x640 / 32x32x1280 | fp16 | `ConvEntry` = `[C/32][plane][32]` |
-| conv weight | `[N][9C]` = 320x2880 / 640x5760 / 1280x11520 | fp16 or pre-quantised MXFP7 | `Entry(gn, 1)` |
+| activation, conv path | `[H][W][C]`, 128x128x320 / 64x64x640 / 32x32x1280 | fp16 | `PadHWC` = zero-padded channels-last `[H+2][W+2][C]`, the im2col's source |
+| conv weight | `[N][9C]` = 320x2880 / 640x5760 / 1280x11520 | fp16 or pre-quantised MXFP7 | `MxEntry`, converted once from fp16 (`weights_for_k`, tap-major) |
 | activation, token path | `[B, H*W, C]` = 4096x640 / 1024x1280 | fp16 | `Entry(gm, nk)` for a fill, `Flat` for a reduction, `Tile` after a drain |
 | `Linear` weight | `[out][in]`, torch order | fp16 / MXFP7 | `Entry(gn, nk)` |
 | attention q, k | `[B*heads, L, 64]` | fp16 | `Entry` |
@@ -318,10 +318,10 @@ Status is against `compiler/kohakutpu/{ops,kernels}` and the v7 bitstream.
 | 2 | GEMM + per-channel bias | **partial** | `kernels.linear_bias`, rides the resident tile via `layout.ChannelBias` | fused-only. A grid wider than the vector cores is refused, not staged (`hardware-wants.md` §7) |
 | 3 | GEMM + full-shape residual | **supported** | `kernels.linear_add` | — |
 | 4 | GEMM + SiLU / GELU / ReLU | **supported** | `kernels.linear_silu`, `_gelu`, `_relu`; MEASURED 0 relayouts | — |
-| 5 | 3x3 conv, stride 1, pad 1 | **supported** | `ops.conv2d`, branch C. MEASURED at 16x16x32 -> 32: 1 dispatch, 0 relayouts, peak-rel max 1.7e-2, identical to a matmul | `nk` forced to 1, so a pass is `3*(9C/32)+1` flits |
-| 6 | 3x3 conv + bias | **partial** | `kernels.conv2d_bias` | bias must arrive at FULL shape; the per-channel form is written in the file as a comment and not built |
-| 7 | **3x3 conv, stride 2** | **supported** | `ops.conv2d_stride2` + `layout.ConvEntry(step=)`, the residue packer `conv2d.md` §4.1 derives. MEASURED at three shapes: 1 dispatch, 0 relayouts, error identical to a stride-1 conv, and **4.00x / 4.00x / 3.67x fewer cycles** than dense-and-discard | the packer's field cannot be called `stride`: `lang/backend.py:_held` reads that name off a layout as a batch BYTE stride and sizes the whole activation at ONE element. It is `step` |
-| 8 | 1x1 conv | **supported** | identity-equivalent to a GEMM in the `ConvEntry` layout (`conv2d.md` §4) | — |
+| 5 | 3x3 conv, stride 1, pad 1 | **supported** | `ops.conv2d`: the mover's converting im2col into `MxEntry(gt, 1, 0)`, then `ops.matmul(nk=1)` ([conv2d.md](conv2d.md) §2-3). MEASURED on the card model at 8x8x32 -> 32: im2col byte-identical to numpy's, rel err 1.91e-2, 0.5 scale-ulp from the unit models | the im2col is materialised, `kh*kw` x the activation in MXFP7 (`conv2d.md` §6) |
+| 6 | 3x3 conv + bias | **partial** | `kernels.conv2d_bias`, a second pass (`ops.residual`) | bias must arrive at FULL shape `[rows][N]`; the per-channel drain epilogue is not built (`conv2d.md` §6) |
+| 7 | **3x3 conv, stride 2** | **supported** | `ops.conv2d_stride2`: the stride is a factor on two of the walk's source strides, so only real outputs are gathered (`conv2d.md` §4). MEASURED on the cost model at 16², 32², 64²: **2.02x / 2.77x / 3.08x** fewer matmul cycles and **3.07x / 3.62x / 3.88x** fewer im2col + matmul cycles than dense-and-discard (`scripts/py/conv_measure.py`), §5.6 | — |
+| 8 | 1x1 conv | **supported** | `ops.matmul` on the activation read as `[H*W][C]`: channels-last, a 1x1 patch matrix IS the activation | — |
 | 9 | LayerNorm, D <= 128 | **supported** | `kernels.layernorm` (fused), 1 stage | — |
 | 10 | **LayerNorm, D = 640 or 1280** | **supported** | `kernels.layernorm_wide` through the SPLIT fold (§5.4). MEASURED at m=16: D=640 p50 3.73e-5 / p99 3.80e-4 / max 8.99e-4; D=1280 p50 3.37e-5 / p99 3.45e-4 / max 7.28e-4. Nothing past 1%, 0 relayouts, 0 saturated | — |
 | 11 | softmax, N a power of two x 128 | **supported** | MEASURED OK at 1024 and 4096 | — |
@@ -338,9 +338,9 @@ Status is against `compiler/kohakutpu/{ops,kernels}` and the v7 bitstream.
 | 22 | **transpose for attention `v`** | **DELETED, not implemented** | `ops.matmul(heads_of(wv), source)` — the SHIPPED kernel with the weight as the batch and the operands swapped, giving `[heads][D][L]` COMPUTED rather than moved. No new kernel at all | — |
 | 23 | reshape (no element move) | **supported** | `Buffer.as_rows`, `Reshaped` | only within a layout; a reshape that changes the fold across layouts is a relayout |
 | 24 | broadcast / per-channel read | **supported** | `Buffer.repeated`, `per_group`, `Spread` — stride-0 in `vec_agu`, no pass at all | the only address-dependent operand the DSL has |
-| 25 | **slice / chunk** | **free on the channel axis** | MEASURED byte-identical at all five real SDXL shapes: a slice of the low channel blocks IS the leading prefix of a `ConvEntry` buffer | a slice of the last axis of a `Tile`-ordered result is still strided. GEGLU needs none — the two-GEMM `kernels.geglu` never chunks |
-| 26 | **channel concat** | **free, needs an allocator** | MEASURED byte-identical at all five real skip shapes: in `[C/32][plane][32]` the concatenation IS the two operands in order, provided the first is written without its tail | the allocator has to be able to say ADJACENT — one span, two halves. `kohakuaccel/lifetime.py`, §5.8 |
-| 27 | **nearest-2x upsample** | **supported** | `ops.conv2d_upsample2` + `weights_for_upsample2`: each output residue class is a 2x2 conv on the ORIGINAL plane, weights folded once at load. MEASURED 0 relayouts, error identical to a plain conv, **2.15x / 2.00x fewer cycles**, and the 4x activation never written | 1.08x only at 8x8, where the pad ring is the layer |
+| 25 | **slice / chunk** | **one mover COPY on the channel axis** | channels-last, a channel slice is a strided read: `C_a*2` bytes of every `C*2`-byte pixel, one walker level. MEASURED on the mover model byte-identical at all five real SDXL shapes (`scripts/py/conv_measure.py`), §5.8 | a slice of the last axis of a `Tile`-ordered result is still strided. GEGLU needs none — the two-GEMM `kernels.geglu` never chunks |
+| 26 | **channel concat** | **two mover COPYs, needs a runtime entry** | channels-last, the concatenation interleaves per pixel: each operand is copied into one `PadHWC` image at its channel offset — the pad copy a produced conv input takes anyway. MEASURED on the mover model byte-identical at all five real skip shapes (`scripts/py/conv_measure.py`), §5.8 | `rt.Holder._pad_image` copies ONE source at channel offset 0; a concat needs two sources into one image |
+| 27 | **nearest-2x upsample** | **supported** | `ops.conv2d_upsample2` + `weights_for_upsample2`: each output residue class is a 2x2 conv on the ORIGINAL image at a shifted window origin, weights folded once at load (`conv2d.md` §4). MEASURED on the cost model: **1.33x / 1.86x / 2.13x** fewer im2col + matmul cycles at 8², 16², 32² (`scripts/py/conv_measure.py`), and the 2x activation never written, §5.8 | — |
 | 28 | sinusoidal timestep embedding | **partial** | `L.exp2`, `L.table` exist | no sin/cos in the ALU. §5.9 |
 | 29 | cross-mesh split of a layer | **partial** | `kohakutpu.meshes`, MEASURED 2026-08-13 at 3.98x compute on 4 meshes, wall time worse either way — all transport | — |
 | 30 | **MAG L2 staging (2 MB/mesh)** | **built, unreachable** | `mag_stage.v` in the v7 top: 4 banks x 16,384 entries | no compiler or driver file names it. `machinespec.SPECIAL_BIT` is declared and **never used**, and `global_addr` raises for any base with bit 36 or above set — so the compiler cannot form an L2 address at all |
@@ -358,10 +358,11 @@ interchangeable:
 
 | layout | granule | who wants it |
 |---|---|---|
-| `Entry(groups, blocks)` | 4 lanes x 32 K elements = 256 B | a cluster **FILL** |
+| `MxEntry(groups, blocks, sel)` | 4 lanes x 32 K elements, MXFP7 = 128 B | a cluster **FILL**, which reads MXFP7 only |
+| `Entry(groups, blocks)` | 4 lanes x 32 K elements, fp16 = 256 B | the mover's converting move, the FP16 source of an `MxEntry` |
 | `Tile(grid, gm, gn)` | one 4x4 sub-tile = one 32 B word | a cluster **DRAIN** |
 | `Flat` | row-major fp16 | any vector-core row reduction |
-| `ConvEntry` | `[C/32][plane][32]` | a convolution fill |
+| `PadHWC(hp, wp, cp)` | zero-padded channels-last `[hp][wp][cp]` fp16 | the mover's im2col walk |
 | `ChannelBias(gn)` | one word per column group | a fused per-channel epilogue |
 
 MEASURED: `Tile((2,8),8,8)` and `Entry(8,2)` over a 64x256 array are 32,768 bytes
@@ -369,10 +370,12 @@ each and **16,192 of 16,384 elements land in different places**. They are not
 the same order under any reading.
 
 `lang/backend.py:_conversions` computes every order change a kernel implies and
-records it on `Compiled.conversions`. **Nothing executes that list.** The only
-mechanism that performs a relayout is `rt.Tensor.address`, which reads the
-tensor back to the host, repacks it in numpy, and uploads it again — counted in
-`Device.counters["relayouts"]`.
+records it on `Compiled.conversions`, and the card executes that list
+([relayout.md](relayout.md)): an order change runs on a vector core
+(`rt.Holder.convert` in place, `rt.Holder.reorder` between buffers, counted in `counters["relayouts_device"]`), and a change
+into MXFP7 is the mover's converting move (`counters["quantised"]`, relayout.md
+§13). There is no host path: `TpuBackend.validate` refuses a kernel whose
+conversion this machine cannot walk.
 
 ### 4.2 The measured bill
 
@@ -593,7 +596,7 @@ axis is head-major in the checkpoint too, so the weight's chunk index IS the
 sweep step and neither operand is sliced. `kernels.attn_out` sweeps `(head,
 K-chunk)` on ONE loop counter — a GEMM chains on the innermost counter and 0
 clears the tile, so two loops would keep only the last head — with the head half
-of the step rebound the way `Tap` rebinds a convolution's.
+of the step rebound through the `record._value` hook.
 
 MEASURED at 1, 2, 3 and 8 K-chunks per head, and priced against the two passes it
 replaces:
@@ -1004,37 +1007,39 @@ and is the exact pair every UNet and VAE resnet uses. The wide form should carry
 the same `y <<= h * sigmoid(h)` tail; it is two passes rather than one because
 `h` is read twice and a vector chain carries one running result.
 
-### 5.6 Convolution: what runs, and the one thing that does not
+### 5.6 Convolution: what runs, and what it costs
 
-Stride-1 3x3 is **built and MEASURED correct** at 1 dispatch and 0 relayouts.
-`conv2d.md` §4 has the derivation; nothing here changes it.
+A conv is an ordinary matmul over an im2col the mover builds on the card
+([conv2d.md](conv2d.md), the source of truth). The activation lands as a
+zero-padded channels-last `PadHWC`; the mover's converting move walks it in
+im2col order, quantises each FP16 entry and writes the dense MXFP7 operand
+`MxEntry(gt, 1, 0)`; `ops.matmul(nk=1)` runs on it against the weights
+`[C_out][kh*kw*cp]`, which the tracked-format rule converts once. The cluster
+path has nothing conv-specific. At 128x128x320 the im2col is three moves at
+`gt = 32`, six at `gt = 16` (`conv2d.md` §3).
 
-**Stride 2 is a packer, not a kernel — BUILT and MEASURED** as
-`ops.conv2d_stride2` over `layout.ConvEntry(step=)`: 1 dispatch, 0 relayouts,
-error identical to stride 1, and **4.00x / 4.00x / 3.67x fewer cycles** than
-dense-and-discard at 16², 32², 64². The field is `step`, not `stride`, because
-`lang/backend.py:_held` reads `.stride` off a layout as a batch BYTE stride and
-a 2 there sizes the whole activation at one element. `conv2d.md` §4.1 derives
-it and the derivation is verified numerically but not built. Splitting **both**
-axes by residue makes the tap offset constant again:
+**Stride 2 is two strides in the walk.** The lane step and the output-row step
+are multiplied by `s`; nothing else changes, and only outputs that exist are
+gathered (`ops.conv2d_stride2`, `conv2d.md` §4). Against dense-and-discard —
+a stride-1 conv over the same image — MEASURED on the cost model (`cost.time` of
+the matmul plan, the weight's conversion included; the im2col at
+`cost.quantise_cycles`) by `scripts/py/conv_measure.py stride2`:
 
-```
-    dy = qy*s + ry ,  dx = qx*s + rx
-    A[s*oy + dy, s*ox + dx]  ==  sub[ry, rx][oy + qy, ox + qx]
-    offset = (ry*s + rx)*plane + qy*Wsub + qx          a constant, as at stride 1
-```
+| conv | strided im2col entries | strided im2col + matmul | dense im2col + matmul | matmul alone | total |
+|---|---|---|---|---|---|
+| 16x16x32 -> 32, `gm=gn=8` | 144 | 13,724 + 1,760 | 43,964 + 3,552 | x2.02 | **x3.07** |
+| 32x32x32 -> 64, `gm=gn=8` | 576 | 43,964 + 7,104 | 164,924 + 19,712 | x2.77 | **x3.62** |
+| 64x64x32 -> 32, `gm=gn=16` | 2,304 | 164,924 + 10,752 | 648,764 + 33,088 | x3.08 | **x3.88** |
 
-So `ConvEntry` gains a `stride` parameter that packs `s*s` sub-planes instead of
-one, `Tap.rebind` gains the `(ry, rx)` term, and **nothing else changes** — no
-compiler mechanism beyond the lane offset that already exists, no ISA, no RTL.
-Cost is `s*s` sub-planes of the same total size. The alternative, computing dense
-and discarding, costs exactly `s^2` = **4.0x MAC, measured at all three shapes**.
+The entry ratio is exactly 4 at every shape; the matmul ratio is less because
+the weight's one conversion is the same on both sides. The im2col column prices
+an entry at the cost model's 70 cycles; the card model MEASURED 96 cycles an entry
+at stride 1 and 166 at stride 2 (`conv2d.md` §5), where a lane's two words are
+never adjacent to the next lane's.
 
-Two caveats stand, neither this page's to fix: a tapped fill straddles a 4 KB
-boundary on **6 of 9 taps** and `mag_mem_port.v` has no split logic
-(`hardware-wants.md` §5, untested on silicon); and `nk` is forced to 1, so a pass
-is `3*(9C/32) + 1` flits and the **tile is the only lever** — 22-26k flits near
-`gm*gn <= TILES` against 45-47 million at `gm=2, gn=1`.
+What stands: the im2col is materialised (`kh*kw` x the activation in MXFP7), and
+removing it is a descriptor-driven FILL, an RTL change in `mag_mem_port.v`
+(`conv2d.md` §6).
 
 ### 5.7 Cross-attention: the shape that suits this machine best
 
@@ -1057,73 +1062,71 @@ is only where `k` and `v` are allocated.
 
 ### 5.8 Upsample, downsample and concat
 
-Concat and slice are **allocation, not arithmetic**, and the bytes are now
-PROVED identical — what is left is a way to say ADJACENT. The upsample turned
-out not to be allocation at all: it folds into the convolution's weights, and
-that is BUILT.
+Concat and slice are **mover copies**, and the upsample folds into the
+convolution's weights.
 
-**Channel concat** (`torch.cat([h, hs.pop()], dim=1)`, 9 per forward). In the
-`ConvEntry` layout the activation is `[C/32][plane][32]`, so the channel axis is
-the **outermost**. Concatenating along it is placing two buffers adjacently:
-
-```
-    [Ca/32][plane][32]  followed by  [Cb/32][plane][32]
-    ==  [(Ca+Cb)/32][plane][32]
-```
-
-**The concat is free if the two producers wrote into one allocation.** That is a
-lifetime-planner requirement — "allocate `h` and the skip tensor as two halves of
-one span" — and `kohakuaccel/lifetime.py` already packs temps whose lives miss.
-It needs a way to say *adjacent*, which `lifetime.pack(groups=)` half provides.
-Every SDXL channel count is a multiple of 32, so no concat straddles a block.
-
-**MEASURED, and it is exact.** `pack(a)` without its tail entries, followed by
-`pack(b)`, is BYTE-IDENTICAL to `pack(concat(a, b))` at all five real skip
-shapes — `32x32 1280+1280`, `64x64 640+640`, `128x128 320+320`, `64x64 640+1280`
-and `8x8 32+64`. The one condition is the one the sentence above states: the
-first buffer must be written without its tail, which is what "one span, two
-halves" means. **A channel SLICE of the low blocks is the same fact backwards**
-— the leading prefix, byte-identical at the same five shapes — so requirement 25
-is closed on the channel axis for free. `compiler/tests/test_conv2d_stride2.py`.
-
-**Nearest-2x upsample** (2 in the UNet, 3 in the VAE). Output pixel `(2y+i,
-2x+j)` reads input `(y, x)` for all four `(i,j)`. In `ConvEntry` order a pixel's
-32-channel block is 64 contiguous bytes, so the upsample is a **stride-0 read on
-two axes** — precisely what `vec_agu` spells and what `Buffer.repeated` is. It is
-a 4-dimension affine walk:
+**Channel concat** (`torch.cat([h, hs.pop()], dim=1)`, 9 per forward). The conv
+activation is channels-last, `[hp][wp][cp]`, so the channel axis is the
+**innermost**: concatenating along it interleaves the two operands pixel by
+pixel, and is never two buffers placed adjacently.
 
 ```
-    dst (c, y, i, x, j)   strides (plane_out, 2*Wout, Wout, 2, 1)
-    src (c, y, _, x, _)   strides (plane_in,  Win,    0,    1, 0)
+    pixel (y, x):  a[y][x][0:Ca]  then  b[y][x][0:Cb]      stride (Ca+Cb)*2 bytes
 ```
 
-Five dimensions, which is one more than `vec_agu` has and one fewer than the
-mover's six. So: **either two vector passes (duplicate along x, then along y), or
-one mover `COPY`.** The mover is host-commanded and its rate is unmeasured since
-the rebuild (§6), so the two-pass vector form is what to build.
+Every conv input a kernel produced already takes one mover COPY into its
+`PadHWC` image (`rt.Holder._pad_image`: a FILL of zeros, then the copy). A
+concat is that same copy done twice into ONE image — `a` at channel offset 0,
+`b` at offset `Ca` — with the destination pixel stride `(Ca+Cb)*2`: the same
+bytes moved as the single copy it replaces. A copy moves whole 32-byte words, so
+each operand's channels must be a multiple of 16; every SDXL count is a
+multiple of 32.
 
-**Fusing it into the following conv is better still, and it is BUILT** —
-`ops.conv2d_upsample2` and `weights_for_upsample2`. `Upsample2D` is always
-`nearest2x -> Conv3x3`, so output `(2y+iy, 2x+ix)` reads
-`a[y + (iy+dy-1)//2][x + (ix+dx-1)//2]` — and over `dy` that takes only TWO
-values, whichever `iy` is. So each of the four output residue classes is a
-**2x2** convolution on the ORIGINAL plane, at ordinary stride-1 tap offsets
-shifted by `(iy, ix)`, with the taps that land on one input pixel ADDED
-together once at checkpoint load.
+**A channel SLICE** of the low `Ca` channels is the converse: one COPY reading
+`Ca*2` bytes of every `C*2`-byte pixel — one walker level, a strided read, never
+a prefix.
+
+MEASURED on the mover model (`model.run_move`) by
+`scripts/py/conv_measure.py concat`, each against numpy's
+`PadHWC.pack(concat(a, b))` and `Flat.pack(a)`, at all five real skip shapes —
+`32x32 1280+1280`, `64x64 640+640`, `128x128 320+320`, `64x64 640+1280` and
+`8x8 32+64`: the concat (a FILL and two COPYs) and the slice (one COPY) are
+BYTE-IDENTICAL at every one. The runtime half is not built: `_pad_image` copies
+one source at channel offset 0.
+
+**Nearest-2x upsample** (2 in the UNet, 3 in the VAE). `Upsample2D` is always
+`nearest2x -> Conv3x3`, and it is BUILT fused into that conv —
+`ops.conv2d_upsample2` and `weights_for_upsample2` (`conv2d.md` §4). Output
+`(2y+iy, 2x+ix)` reads `a[y + (iy+dy-1)//2][x + (ix+dx-1)//2]`, and over `dy`
+that takes only TWO values, whichever `iy` is. So each of the four output
+residue classes is a **2x2** convolution over the ORIGINAL image, its im2col
+walk starting at a window origin shifted by `(iy, ix)`, with the taps that land
+on one input pixel ADDED together once at checkpoint load.
 
 The tap index is `(iy+dy-1)//2 + 1 - iy`: the input offset runs `-1..1` and the
-operand's runs `0..1`, and the difference is exactly the class shift the kernel
+operand's runs `0..1`, and the difference is exactly the class shift the walk
 adds back. Off by one there reads the neighbouring pixel and still looks like a
-convolution, which is why the test checks that each class's folded weights sum
-to the whole 3x3.
+convolution, which is why `compiler/tests/test_conv2d_stride2.py` checks that
+each class's folded weights sum to the whole 3x3.
 
-MEASURED: 4 dispatches, 0 relayouts, error identical to a plain conv, and
-**2.15x / 2.00x fewer cycles** at 16x16 and 32x32 than materialising the 2x
-activation and running a 3x3 over it — 1.08x at 8x8, where the pad ring is the
-layer. The 4x activation is never written. The four results ARE the residue
-split of the `[2H][2W][N]` output, which is `ConvEntry(step=2)` order, so a
-consumer that wants the interleaved plane still pays for the interleave; the
-next thing in a resnet is a GroupNorm, which does not care about pixel order.
+MEASURED on the cost model by `scripts/py/conv_measure.py upsample`, the four
+classes against a 3x3 over the materialised 2x activation — the materialising
+itself NOT charged to the dense side, so the ratio is a floor:
+
+| conv | fused entries | fused im2col + matmul | dense entries | dense im2col + matmul | matmul alone | total |
+|---|---|---|---|---|---|---|
+| 8x8x32 -> 32 | 256 | 32,496 + 3,200 | 576 | 43,964 + 3,552 | x1.11 | **x1.33** |
+| 16x16x32 -> 64 | 1,024 | 86,256 + 13,056 | 2,304 | 164,924 + 19,712 | x1.51 | **x1.86** |
+| 32x32x64 -> 32 | 8,192 | 602,592 + 38,400 | 18,432 | 1,297,528 + 64,768 | x1.69 | **x2.13** |
+
+16 MAC per input pixel against 36: the entry ratio is exactly 9/4 at every
+shape. The total falls short of it at small images because the fused side
+issues at least four moves (one per class) against the dense side's one, each
+at a fixed 3,644 cycles (`cost.QUANTISE_SETUP_CYCLES`). The 2x
+activation is never written. The four results are the residue split of the
+`[2H][2W][N]` output; a consumer that wants the interleaved image pays a copy,
+and the next thing in a resnet is a GroupNorm, whose sums do not depend on
+pixel order.
 
 **Stride-2 downsample** is §5.6.
 
@@ -1160,7 +1163,7 @@ fit, for two reasons:
    but the temps become `span x 512`, and with `qblock` unset `span = 16,384` —
    16 MB per temp, against 2 MB of L2 and three temps.
 2. The `q/k/v/proj_out` projections are 1x1 **convolutions** over `[C][H][W]`,
-   which in `ConvEntry` order is a GEMM (`conv2d.md` §4) — that part is free.
+   which channels-last is a GEMM on `[H*W][C]` — that part is free.
 
 So the VAE mid attention needs `qblock` set, which the kernel already supports:
 `qblock=512` gives temps of `512 x 512` = 512 KB, three of them = 1.5 MB, which
@@ -1200,7 +1203,7 @@ blocker.
 |---|---|---|
 | H1 | **MAG L2 staging**, 2 MB/mesh, mesh-wide, read/write, addressable by every requester | in the v7 top; no software; **port A tied off**, so only the 256-bit path is live |
 | H2 | **NoC L2 adapter**, 256 KB x 10 per mesh | in the v7 top; `l2_en = 0` at reset; serves only its own endpoint; **refuses a quantised fill and multicast** |
-| H3 | the 6-D tensor descriptor walker `mx_tdesc.v`, conv-im2col validated | **not wired into the fill engine**. `conv2d.md` §5: this is the enabling change for conv at full speed, ~2-3 weeks in `mag_mem_port.v` |
+| H3 | the 6-D tensor descriptor walker `mx_tdesc.v` | drives the mover, which builds every conv's im2col; **not wired into the fill path**, so the im2col is materialised. A descriptor-driven FILL is an RTL change in `mag_mem_port.v` (`conv2d.md` §6) |
 | H4 | shared fetch (one DRAM read multicast to up to 4 units) | decoded by the hardware, **the driver does not set it**; a follower cannot yet tell which fill an entry belongs to |
 | H5 | split-K epilogue on a vector core | designed, not built |
 | H6 | `FWD`, chain bypass, second accumulator | not built |
@@ -1225,10 +1228,10 @@ blocker.
    land in local DRAM above 64 GB, where nothing answers. Only the mover
    crosses. §5.3's cross-mesh half therefore needs a mover pass on the
    **sending** side, not a remote address on the receiving one.
-2. **The memory mover's rate.** There is none to quote: the figure branch B in
-   [conv2d.md](conv2d.md) §6 was once decided against predates the mover rebuild
-   and has been withdrawn. Nothing here uses a mover rate; §5.8 chooses the
-   vector-core form partly for that reason.
+2. **The memory mover's rate on silicon.** The converting move is MEASURED on
+   the card model only: 96 node cycles an entry at stride 1 and 166 at stride 2
+   over a fixed cost per move ([conv2d.md](conv2d.md) §5); `cost.py` prices it
+   at 3,644 a move and 70 an entry.
 3. **Whether the unit models are byte-faithful across an unexecuted
    conversion.** MEASURED: `mlp` records a `Tile -> Entry` conversion, the
    two orders differ in 16,192 of 16,384 elements, and the kernel nonetheless
@@ -1257,8 +1260,9 @@ touches one pass, or an RTL change with a bench.
 | §5.5 `group_norm_wide` | kernel | one kernel sharing `layernorm_wide`'s arithmetic, plus the SiLU pair | the UNet and VAE resnet normalisation |
 | §5.2 head split as an N-partition | kernel | a RESHAPE and two kernels, at **x1.00 cycles and x1.00 flits** | requirements 20 and 22, and 4 host permutes per attention |
 | §5.1 execute `conversions` on the card | compiler | the relayout path in [relayout.md](relayout.md) | the host, out of every INTRA-kernel relayout |
-| §5.6 stride-2 packer | compiler | `ConvEntry(step=)` — the name is `step`, not `stride`, which collides with the batch byte stride the backend reads | the 2 `Downsample2D`, against a MEASURED **4.00x** |
-| §5.8 upsample fused into conv | kernel | four 2x2 convolutions on the original plane, weights folded at load | the 2 `Upsample2D` and the VAE's 3, at **2.0-2.15x** and a quarter of the activation |
+| §5.6 conv as mover im2col + matmul | compiler | `ops.conv2d`: a `PadHWC` image, the mover's converting im2col, `ops.matmul(nk=1)` | every 3x3 conv, with nothing conv-specific in the cluster path |
+| §5.6 stride 2 in the walk | compiler | two source strides multiplied by `s` | the 2 `Downsample2D`, MEASURED **3.07-3.88x** fewer cycles than dense-and-discard (`scripts/py/conv_measure.py`) |
+| §5.8 upsample fused into conv | kernel | four 2x2 convolutions over the original image at shifted window origins, weights folded at load | the 2 `Upsample2D` and the VAE's 3, MEASURED **1.33-2.13x** (`scripts/py/conv_measure.py`), and the 2x activation never written |
 
 **LEFT**, in the order the evidence now argues for:
 
@@ -1267,10 +1271,10 @@ touches one pass, or an RTL change with a bench.
 | a drain that writes ROW-MAJOR, or an L1 read granule matching the 4x4 drain | **RTL** | the matmul array's output granule | **the whole conversion bill.** It is 49-68% of a flash call and 99.6% of it is the two Tile crossings, which exist only because MG's output granule is a 4x4 sub-tile while everything else reads rows. §5.2b |
 | C6a a full-shape side operand in a fused epilogue | compiler + ISA | a SPELLING as well as a slot; the budget is already there | lets `part_o` fuse — but NOT a cycle of the transpose, since `corr` then crosses at the same size. Worth it for the DRAM round trip, not for the ALU. §5.2b |
 | C3b `Buffer.repeated` past one instance | compiler | exempt a broadcast from the instance offset in `_span`, as `_agree` already does | a BOUNDED edge mask, and a staged per-channel operand with it |
-| §5.8 adjacent allocation for concat | compiler | `lifetime.pack(groups=)` | the 9 skip concats, free — the bytes are already proved identical |
+| §5.8 concat into one `PadHWC` | compiler | `_pad_image` taking several sources at channel offsets | the 9 skip concats, at the cost of the pad copy the next conv takes anyway — the bytes are MEASURED identical on the mover model (`scripts/py/conv_measure.py`) |
 | §5.3 L2 tier in the allocator | compiler + driver | `SPECIAL_BIT`, a tier on `L.temp`, an arena region | **2 MB per mesh** that is on the card and unreachable |
 | §5.7 K/V resident in L2 | kernel | allocation only, once §5.3 lands | 64x fewer DRAM re-reads on a cross-attention |
-| H3 wire `mx_tdesc` into the fill engine | **RTL** | ~2-3 weeks in `mag_mem_port.v`, per `conv2d.md` §5 | conv at full speed; a 6-D operand descriptor is a **general** answer to much of §5.1 |
+| H3 wire `mx_tdesc` into the fill path | **RTL** | `mag_mem_port.v`, per `conv2d.md` §6 | a conv that never materialises its im2col; a 6-D operand descriptor is a **general** answer to much of §5.1 |
 | H9 quantiser on the vector-core drain path | **RTL** | a bench and a format | the `weights` handoff, one of the three in §5.2a; opens `linear -> act -> linear` |
 | H7 mover `TRANSPOSE` | **RTL** | mode 1 is allocated | an alternative to §5.1 for bulk, host-scheduled permutes |
 
@@ -1289,11 +1293,11 @@ the one nothing at the kernel or compiler level can reach.
    needs rows. This is the only item that changes the floor.
 2. **§5.3**, because until an L2 address can be formed, 2 MB per mesh of shipped
    silicon is unreachable and every staging design is untestable.
-3. **§5.8's allocator half and C3b**, both small and both blocking something
+3. **§5.8's runtime half and C3b**, both small and both blocking something
    already proved correct.
 4. **C6a**, worth it for the DRAM round trip it saves, not for the ALU — §5.2b
    shows it moves the crossing rather than deleting it.
-5. **H3**, which makes conv fast rather than merely correct.
+5. **H3**, which removes the materialised im2col, `kh*kw` x the activation.
 
 Nothing on this list is now what keeps an SDXL layer from running at its real
 width — §§5.2, 5.4, 5.5, 5.6 and 5.8's kernel half are built and measured. What
@@ -1312,69 +1316,50 @@ the rule that a fragment which only runs by going through numpy has not run.
 
 ### 9.1 What runs
 
-| fragment | shape | p50 | p99 | max | >1% | >10% | cycles | conversion | host moves |
-|---|---|---|---|---|---|---|---|---|---|
-| `ResnetBlock2D` | 8x8, 320 -> 320 | 3.64e-3 | 1.52e-2 | 2.68e-2 | 7.7% | **0%** | 301,568 | 0 | 10 |
-| `ResnetBlock2D` | 8x8, 320 -> 640 | 3.46e-3 | 1.44e-2 | 2.65e-2 | 6.4% | **0%** | 724,096 | 0 | 10 |
-| down-block: 2 resnets + `Downsample2D` | 8x8, 320 | 5.17e-3 | 2.32e-2 | 3.48e-2 | 21.8% | **0%** | 637,824 | 0 | 21 |
+No fragment is graded on the current conv lowering (§5.6): `ResnetBlock2D` and
+the down-block have not been re-assembled from `ops.conv2d` over the mover's
+im2col, so this page carries no composed figure for them. Their parts each run
+and are graded on their own — conv in `compiler/tests/test_conv2d.py`, the norms
+in §5.4-5.5.
 
-The group is 640 elements — `(320/32) * 8 * 8`, five sub-rows — which is a real
-SDXL group size and one of the shapes that was refused outright before §5.4.
-**Nothing in the convolution path refuses, and nothing past 10% comes out.** The
-error grows with depth exactly as composing fp16 stages should: one block 2.7e-2
-at the max, three blocks 3.5e-2.
+### 9.2 What composing will cost: the GroupNorm group in channels-last
 
-### 9.2 What it costs to compose: the host moves
+**The group's alignment is a channel-count fact.** A conv result read in `Flat`
+order is `[H*W][C]`, channels-last, so a `GroupNorm(32, C)` group is, at every
+pixel, a run of `C/32` adjacent channels repeating with period `C`. ARITHMETIC
+(printed by `scripts/py/conv_measure.py groupnorm`):
+both ways of reading that run in place need it to be whole units — a vector-core
+`Spread` takes whole 16-element sub-rows, and a mover walk moves whole 32-byte
+words, which is the same condition — so the run must be a multiple of 16
+channels:
 
-The 21 moves of the down-block, by cause. Eight are LOAD-TIME — the affine put
-into group order depends only on the weights and the plane — so **13 are per
-call**:
+| C | channels a group | bytes a pixel | whole 16-element / 32-byte units |
+|---|---|---|---|
+| **320** | **10** | 20 | no |
+| **640** | **20** | 40 | no |
+| **1280** | **40** | 80 | no |
+| 512 (VAE) | 16 | 32 | yes |
+| 256 (VAE) | 8 | 16 | no |
+| 128 (VAE) | 4 | 8 | no |
+| 1024 | 32 | 64 | yes |
 
-| moves | cause | per call? |
-|---|---|---|
-| 4 | gather the groups out of `[H][W][C]` | yes |
-| 4 | scatter the groups back | yes |
-| 4 | the gain into group order | no, once at load |
-| 4 | the shift into group order | no, once at load |
-| 5 | pick the real raster rows out of `[plane][N]` | yes |
+**None of the three UNet channel counts aligns**, nor do the VAE's 256 and 128.
+Only C = 512 and 1024 can be normed in place by a strided read; every other
+`norm -> conv` pair — and a resnet is two of them — needs the channels gathered
+into group order and scattered back.
 
-**The gather is the finding, and it is a channel-count fact.** A `GroupNorm(32,
-C)` group is `C/32` channels by the whole plane; a `ConvEntry` channel block is
-32 channels by the whole plane and is CONTIGUOUS. The two line up only when the
-group IS a block:
-
-| C | channels a group | against the 32-channel block |
-|---|---|---|
-| **320** | **10** | no |
-| **640** | **20** | no |
-| **1280** | **40** | no |
-| 512 (VAE) | 16 | divides 32 |
-| 256 (VAE) | 8 | divides 32 |
-| 128 (VAE) | 4 | divides 32 |
-| 1024 | 32 | the group IS a block |
-
-**None of the three UNet channel counts aligns.** So every `norm -> conv` pair —
-and a resnet is two of them — needs the channels gathered into group order and
-scattered back.
-
-And the obvious escape does not work either. The reductions are a sum and a sum
-of squares, which are order-free, so where a group IS a block the norm could read
-the convolution's own bytes. **MEASURED at `8x8x1024`, and it is wrong**: p50
-2.84e-2, max 2.35e-1, **2.7% of elements past 10%**. `ConvEntry`'s plane is
-PADDED — 100 positions for a 8x8 image — so the group carries 36 halo zeros per
-channel, and while a sum over them is a sum over zeros, the MEAN is not: it
-divides by the padded count. Fixing that needs the pad excluded from the
-reduction and the divisor told the real count, which is a masked reduction with a
-`valid=` count — a kernel change, and one that would only ever help the VAE,
-since no UNet count reaches 32 channels a group.
+The conv's result carries no halo: the `PadHWC` padding lives in the conv's
+input image, and the result is `[oh*ow4][C_out]`, whose only padding is the lane
+columns past `ow`. Every SDXL and VAE width is a multiple of 4, so `ow4 = ow` and
+a group's mean divides by the real count.
 
 ### 9.3 What refuses
 
 | fragment | state |
 |---|---|
-| `ResnetBlock2D` | runs |
-| down-block (2 resnets + downsample) | runs |
-| `BasicTransformerBlock` | not assembled here. Its parts each run; the composed fragment has not been graded, and §9.2's host-move accounting is what it would have to carry |
+| `ResnetBlock2D` | not assembled on the current conv lowering; its parts each run |
+| down-block (2 resnets + downsample) | not assembled on the current conv lowering; its parts each run |
+| `BasicTransformerBlock` | not assembled here. Its parts each run; the composed fragment has not been graded |
 
 Two traps the assembly turned up, both in the caller and worth writing down:
 

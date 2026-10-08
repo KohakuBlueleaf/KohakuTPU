@@ -17,10 +17,15 @@ from dataclasses import dataclass, field
 
 import numpy as np
 from kohakuaccel.collective import converge
+from kohakuaccel.memory import Buffer
+from kohakuaccel.package import mover as PM
 from kohakuaccel.rt import Runtime
 from kohakutpu.isa import ISA
 from kohakutpu.ops import matmul as _matmul
 from kohakutpu.rt import Device, Tensor
+
+from kohakutpu import layout as LO
+from kohakutpu import ops as _ops
 
 WORD_BYTES = 32
 
@@ -584,6 +589,48 @@ class MeshGroup:
         last = plans[-1]
         return _readout(self.devices[last.into], held[last.into], last.tile, last.shape)
 
+    def matmul_node_reduce(
+        self, a: Sharded, b: Sharded, into: int = 0, tag: int = 0x5D, **tiling
+    ) -> Tensor:
+        """``a @ b.T`` with the contraction split, the partials summed on node `into`.
+
+        Raises :class:`ValueError` for a plan that is not a contraction split, a
+        rank dispatched from the host, and a rank more than one link from `into`.
+        """
+        plan = self.plan_matmul(a, b, **tiling)
+        if plan.spec != PARTIAL:
+            raise ValueError(
+                f"a reduce needs a contraction split, but these are {a.spec} and "
+                f"{b.spec}, which give {plan.spec}"
+            )
+        hosted = [r for r, d in enumerate(self.devices) if d.node is None]
+        if hosted:
+            raise ValueError(
+                f"ranks {hosted} dispatch from the host; a node reduce is package "
+                f"steps (MOVER, RING, WAIT_BELL) and needs every rank's node"
+            )
+        far = [r for r in range(len(self)) if not self.adjacent(r, into)]
+        if far:
+            raise ValueError(f"ranks {far} are more than one link from rank {into}")
+        parts = self.run(plan)
+        dst = self.devices[into]
+        here = dst.machine.default
+        total = parts[into]
+        for r, part in enumerate(parts):
+            if r == into:
+                continue
+            src = self.devices[r]
+            held = next(iter(part.buffers.values()))
+            layout = held.layout
+            recv = dst.empty(part.shape, layout)
+            addr = recv.buffers[layout.key].addr
+            src.move(PM.copy(held.addr, addr, held.nbytes), "reduce:push")
+            src.ring(here, tag)
+            src.flush()
+            dst.wait_bell(src.machine.default, 1)
+            total = _add_in_place_order(dst, total, recv)
+        return total
+
     def _on_hardware(self, what: str) -> None:
         """Refuse a cross-mesh plan on a device with no card behind it.
 
@@ -747,6 +794,28 @@ class Pin:
         if self.patch is not None:
             payloads = {k: [*w[:-1], self.patch(w[-1])] for k, w in payloads.items()}
         return Runtime.dispatch(self.dev, payloads, unit, name, [self.node], acks)
+
+
+def _add_in_place_order(dev, a: Tensor, b: Tensor) -> Tensor:
+    """``a + b`` for two tensors in ONE byte order, added as flat runs of words.
+
+    Raises :class:`ValueError` when the orders or spans differ.
+    """
+    (ka, ha), (kb, hb) = (next(iter(t.buffers.items())) for t in (a, b))
+    if ka != kb or ha.nbytes != hb.nbytes:
+        raise ValueError(f"cannot add {ka} to {kb} as bytes")
+    n = ha.nbytes // 2
+    views = []
+    for held in (ha, hb):
+        v = dev.values(dev, (n,))
+        v.claim(Buffer(held.addr, (n,), LO.Flat()))
+        views.append(v)
+    flat = _ops.residual(*views)
+    for v in views:
+        v.buffers.clear()  # views own nothing
+    made = flat.buffers.pop("flat")
+    out = dev.values(dev, a.shape)
+    return out.claim(Buffer(made.addr, a.shape, ha.layout))
 
 
 def _forward(dev, words: int):

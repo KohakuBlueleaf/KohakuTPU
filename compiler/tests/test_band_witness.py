@@ -71,13 +71,13 @@ WITNESSED = {
     "residual": (F.residual, [(64, 64), (64, 64)], {}),
 }
 
-#: `count:sha256[:16]`, captured 2026-08-13. `mm` and `residual` carry over
-#: from the shipped library's own witness unchanged.
+#: `count:sha256[:16]`. `residual` carries over from the shipped library's own
+#: witness; `mm` and `mm_silu` are taken with MXFP7 fills (128-B entry steps).
 BEFORE = {
     "chained": "466:185ede3a4bf1beae",
     "masked": "132:fe2c2b0e0baf99b7",
-    "mm": "16:c8c20d2e748a004a",
-    "mm_silu": "300:88ed0def5a4883a3",
+    "mm": "16:2ed39010efd4d399",
+    "mm_silu": "300:2fcbcf85f8cc92f8",
     "residual": "66:236cedb85ea340e5",
     "rownorm": "522:bcd19a2f514f1bd0",
     "scale": "66:e8e97306f3491402",
@@ -95,9 +95,8 @@ def test_the_fixtures_emit_what_they_always_emitted(name):
 def test_the_witness_carried_over_from_the_shipped_library_unchanged():
     """Corroboration that a fixture is a faithful stand-in, not a weaker one.
 
-    These two digests were captured against `kohakutpu.kernels.matmul` and
-    `.residual` before this file was repointed. Same DSL text emits the same
-    words, so isolating the test cost no coverage on them.
+    This digest was captured against `kohakutpu.kernels.residual` before this
+    file was repointed. Same DSL text emits the same words, so isolating the
+    test cost no coverage on it.
     """
-    assert BEFORE["mm"] == "16:c8c20d2e748a004a"
     assert BEFORE["residual"] == "66:236cedb85ea340e5"

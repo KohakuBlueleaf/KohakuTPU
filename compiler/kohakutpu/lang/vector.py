@@ -397,9 +397,9 @@ class Part(Value):
         if isinstance(value, Reduction) and value.source is not None:
             return self._reduce(value)
         if isinstance(value, (int, float)):
-            # There is no store-immediate: a lane is written by the chain, so a
-            # constant is this buffer multiplied away and the value added back.
-            value = self * 0.0 + float(value)
+            # A constant is a chain over constants alone; it never reads the
+            # target, so whatever the target held cannot reach the result.
+            value = Value(Node(OpKind.ADD, (Const(0.0), Const(float(value)))))
         if not isinstance(value, Value):
             raise LangError("a vector result is written from an expression")
         if not isinstance(value.expr, Node):

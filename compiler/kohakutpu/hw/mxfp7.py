@@ -1,10 +1,7 @@
-"""MXFP7, as a MODEL only.
+"""MXFP7: the quantiser the hardware uses, bit for bit.
 
-Nothing here is used to produce what the driver uploads. Software uploads FP16;
-the quantiser in `src/kohakumas/mx_quant.v` converts it on the way out of MAG,
-so MXFP7 never crosses the driver boundary. This module exists so tests can
-predict what the hardware will produce and check it.
-
+The reference for the mover's converting move and for the models' mover
+(relayout.md §13).
 
 The format is a 7-bit signed integer significand per element, plus an E5M3
 scale shared by a block of 32 along the reduction dimension:

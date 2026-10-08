@@ -1,6 +1,6 @@
 ---
 title: Fast 3x3 convolution
-summary: The SDXL UNet convolutions as an implicit GEMM with the taps inside the K sweep — the layout fork, the branch that runs on today's bitstream, and what materialising the operand instead would cost.
+summary: The SDXL UNet convolutions as an ordinary matmul over an im2col the memory mover builds on the card — the walk, the address formulas, stride and upsampling, and what each costs.
 tags:
   - kohakutpu
   - compiler
@@ -10,12 +10,10 @@ tags:
 
 # Fast 3x3 conv on this machine
 
-> **Kind: Yours throughout.** Expressing 3x3 convolution as an implicit GEMM, and
-> the layout fork that follows, are kernel decisions answering this project's own
-> operand format. The framework neither offers nor forbids it, and an accelerator
-> with a different datapath would resolve the same fork differently. §5's branch A
-> is the exception and says so: it asks for a change inside the framework's own
-> fill path.
+> **Kind: Yours throughout.** Lowering a convolution to a matmul over an
+> on-card im2col is this project's decision about its own operand format. The
+> framework supplies the pieces it uses — the mover as a package step, the
+> tracked-format conversion — and neither offers nor forbids the lowering.
 
 Target: the SDXL UNet convolutions, on the instructions that already exist — no
 new opcode, no RTL change.
@@ -37,217 +35,114 @@ Every one of them is **15.1 GMAC**:
 | 32x32x1280 | 1024 | 1280 | 11520 | 1.51e10 |
 
 Resolution quarters as channels double, so the UNet holds compute constant down
-the stack. **One kernel tuned once serves all three**, and a regression at one
-resolution is a regression at all of them. Every shape already satisfies the
-hardware's `M = 4a, N = 4b, K = 32c`.
+the stack. Every shape satisfies the hardware's `M = 4a, N = 4b, K = 32c`.
 
 **ARITHMETIC**, at the v7 population of 30 matmul clusters and the measured
 512 MAC/cycle per cluster ([results.md](results.md) §8): 15,360 MAC/cycle, so
-one of these layers is 983,000 cycles — **9.8 ms at a 100 MHz matmul clock,
-3.3 ms at 300 MHz.** Those are peak-rate bounds on the arithmetic alone; no
-measured efficiency is applied, and [results.md](results.md) §8.2's best
-large-GEMM figure is 75.5%.
+one of these layers is 983,000 cycles — 9.8 ms at a 100 MHz matmul clock,
+3.3 ms at 300 MHz, on the arithmetic alone.
 
-## 2. Conv here is compute-bound, and not marginally
+## 2. Conv is a matmul; the memory pattern is the mover's
 
-| shape | activation | weights (MXFP7) | MAC per byte |
+A `C_in -> C_out`, `kh x kw` convolution is
+
+```
+    [patches] x [C_in*kh*kw] x [C_out]
+```
+
+one row per output pixel, K tap-major then channel. The cluster runs it as an
+ORDINARY matmul (`ops.matmul`, `nk = 1`): no conv-specific FILL, no lane
+offset, no conv order in the cluster path. Everything conv-specific is the
+operand's memory pattern, and that is the memory mover's job — its walkers are
+six-dimensional affine, and its transform slot quantises on the way:
+
+1. **The activation** lands as `PadHWC` — a zero-padded channels-last image
+   `[hp][wp][cp]`, FP16, with `C` rounded up to a whole 32-channel block. The
+   host packs it, or the mover copies a produced `[H][W][C]` into it (a FILL of
+   zeros, then one COPY).
+2. **The im2col** is the mover's converting move: its source walk gathers the
+   windows FP16 entry by FP16 entry, the quantiser converts each, and the
+   destination walk writes the dense MXFP7 operand `MxEntry(gt, 1, 0)` — the
+   exact order the matmul FILLs. The patch matrix never exists in FP16.
+3. **The weights** are `[C_out][kh*kw*cp]` (`weights_for_k`, zero-padded
+   channels), FP16 on the host; the tracked-format rule converts them once and
+   keeps the copy for every later call.
+
+Padding is the zeros around the image: nothing masks anything.
+
+## 3. The walk
+
+`gt` lane groups per tile, `ow4` the output width rounded to whole lanes (a lane
+group never crosses a row), `TX = ow4/(4*gt)` tiles per row, `nb = cp/32`
+channel blocks, `nch = kh*kw*nb` K-chunks, `px = cp*2` bytes a pixel. Output row
+`r = oy*ow4 + ox`. Every level of the walk is affine on both sides:
+
+| level | count | source stride (bytes) | destination stride (bytes) |
 |---|---|---|---|
-| 128x128x320 | 10.5 MB | 835 KB | 719 |
-| 32x32x1280 | 2.6 MB | 13.4 MB | 812 |
+| output row `oy` | `oh` | `s*wp*px` | `TX*nch*gt*128` |
+| tile `tx` | `TX` | `4*gt*s*px` | `nch*gt*128` |
+| tap row `dy` | `kh` | `wp*px` | `kw*nb*gt*128` |
+| tap column `dx` | `kw` | `px` | `nb*gt*128` |
+| channel block `cb` | `nb` | `64` | `gt*128` |
+| lane group `g` | `gt` | `4*s*px` | `128` |
+| lane (source only) | 4 | `s*px` | — |
+| word (source only) | 2 | 32 | — |
 
-Three orders of magnitude clear of the port. **So the design goal is to keep the
-clusters fed with the fewest instructions, not to save bandwidth** — which is
-what makes the layout question below worth paying memory for.
+The source base is the image plus `(sy*wp + sx)*px` (the window origin; zero
+except for an upsample class), the destination base the operand. The
+destination steps once per entry and writes its four words; the source walk
+feeds eight words per entry, lane-major, which is an FP16 entry.
 
-## 3. The formulation: implicit GEMM, taps inside the K sweep
+Eight levels against a walker's six: the source spends two on lane and word,
+so **the four widest entry levels go to the hardware and every other
+combination is one move** (`ops.conv2d.im2col_moves`). At 128x128x320, `gt =
+32` makes `TX = 1` and the layer is **three moves**; `gt = 16` makes it six.
 
-A 3x3 conv is a GEMM with a contraction of `9*C`, where the K axis runs over
-(tap, channel) and each tap is the same activation at a different spatial offset:
+`compiler/tests/test_conv2d.py` checks the operand the moves write BYTE FOR
+BYTE against the patch matrix built in numpy and packed by `MxEntry.pack`, and
+the convolutions against float64.
 
-```
-    C[p, n] = sum_t sum_c  A[p + delta(t), c] * W[n, t, c]
-```
+## 4. Stride and upsampling
 
-`delta(t) = dy*Wp + dx`. Nothing here needs im2col's 9x memory: a tap is a
-different **base address**, and the accumulator already persists across the GEMMs
-of one sweep, so all nine land in one tile with one drain.
+**Stride `s`** multiplies two source strides — lane and output row — and
+changes nothing else: only outputs that exist are gathered, so a stride-2
+layer is a quarter of the rows of a dense one and no MAC is discarded
+(`conv2d_stride2`).
 
-Weights are `[N][9C]`, K-index `(dy+1)*3C + (dx+1)*C + c` — a host-side permute of
-PyTorch's `(out, in, kh, kw)`, done once, free.
+**Nearest-2x then 3x3** (`Upsample2D`) needs no 2x activation: output `(2y+iy,
+2x+ix)` reads `a[y + (iy+dy-1)//2][x + (ix+dx-1)//2]`, which over three taps
+takes two values. Each residue class `(iy, ix)` is a 2x2 convolution over the
+ORIGINAL image with its window origin shifted by `(iy, ix)` and weights folded
+on the host (`weights_for_upsample2`, exact — a fold is an addition).
+16 MAC per input pixel against 36.
 
-**The whole difficulty is the operand layout, and it is one question: can a fetch
-stride?** A cluster's operand entry is 4 lanes x 32 K, and for conv the lanes are
-4 adjacent output columns. Lane `l` computes output `x0+l`, so for tap `dx` it
-needs input `x0+l+dx` — "the same entry, one position over". In a plain NHWC
-buffer that entry is 4 runs of 32 channels strided by `C`, so it needs a strided
-fetch. **The fill engine cannot stride:** `FILL` takes a base and a count, and
-entries are contiguous by construction, deliberately.
+## 5. What it costs
 
-## 4. Branch C — conv on the current bitstream
+The im2col is a write of the operand, `kh*kw` times the activation in MXFP7
+(half its FP16 bytes): 9 x 10.5 MB / 2 = 47 MB at 128x128x320. It reads each
+pixel `kh*kw` times.
 
-**Built and verified**, and what ships: `compiler/kohakutpu/kernels/conv2d.py`.
-What blocked it was never the hardware — the FILL `addr` field is a full 40-bit
-byte address and MAG reads at byte granularity — but the compiler, whose fill address
-was an integer times the fill's own span. `Slice` now carries an offset in lanes,
-and `LO.ConvEntry` describes the layout, which `LO.Entry` cannot: nine taps are
-nine OVERLAPPING windows, not a tiling.
+Measured on the card model (`scripts/py/sw_conv.py`, node cycles, the im2col in
+a package of its own; an empty package is 896):
 
-**Store the activation `[C/32][H][W][32]` and run with `nk = 1`.** One L1 entry
-is 4 lanes x 32 K. In this layout a pixel's 32-channel block is 64 B contiguous,
-so 4 consecutive pixels are **256 B contiguous = exactly one entry**, and the
-fill is a single run. The lane packing never breaks, because the channel block —
-not the pixel — is the outer axis. A 3x3 tap is then a **constant base offset of
-`(dy*Wp + dx) * 64` bytes**, straight into the FILL `addr` field. Nine taps, nine
-bases, one accumulator. Nothing in the hardware changes.
+| conv | im2col | entries | cycles | over empty | per entry | matmul package |
+|---|---|---|---|---|---|---|
+| 8x8x32 -> 32, s1 | 1 move | 144 | 14,660 | 13,764 | 96 | 220,119 |
+| 8x8x20 -> 32, s1 (C padded to 32) | 1 move | 144 | 14,660 | 13,764 | 96 | 220,119 |
+| 12x12x32 -> 32, s2 | 1 move | 108 | 18,837 | 17,941 | 166 | 169,288 |
 
-It is also **identity-equivalent for 1x1, linear and attention**, so the same
-layout serves the whole SDXL block with no conversion anywhere. Compare the
-alternatives at `gm=8`: NHWC gives 64 B runs (4 AXI transactions per entry), NCHW
-gives 2 B runs (16x amplification, which the mover cannot even express), this
-gives 256 B = one entry, one AR.
+Each im2col operand read back BYTE-IDENTICAL to the numpy patch matrix packed
+by `MxEntry.pack`; results 1.91e-2, 1.37e-2 and 1.46e-2 from float64, 0.5-1.0
+scale-ulp from the unit models. The stride-2 walk costs more per entry: its
+lane step is two pixels, so a lane's two words are never adjacent to the next
+lane's.
 
-Four consequences, each derived and each load-bearing:
+## 6. What is not done
 
-- **`nk = 1` is FORCED, not chosen.** Two channel blocks of one pixel are
-  `plane*64` bytes apart, so a fill of `nk > 1` entries is not a run. Any layout
-  that makes them adjacent makes the four lanes non-adjacent, which is what the
-  `dx` tap shifts. There is no trade to make. Bandwidth is `4(gm+gn)/(gm*gn)`,
-  independent of `nk`, so it costs instruction count only.
-- **A pass is `3*(9C/32) + 1` flits** = 271 / 541 / 1081 at the three shapes.
-  The 128-flit staging window is not a constraint: `dispatch.plan` cuts an
-  instance into windows and kicks them in order on one node, and nothing between
-  them touches the accumulator, so a 1081-flit sweep across nine rounds chains.
-- **The TILE is the lever.** Flits per pass do not move with `gm`/`gn`, so passes
-  do: a layer is **22–26k flits** near `gm*gn <= TILES` and **45–47 million** at
-  `gm=2, gn=1`. That is 2000x, and it is the only number in branch C worth
-  tuning.
-- **The M axis must be the PADDED raster**, `q = y*Wp + x`. Four adjacent outputs
-  are four adjacent inputs only WITHIN a row, so the sweep runs the whole plane
-  and discards `x >= W`: +3.1% / +6.3% / +12.9% of M. It is also what makes zero
-  padding free — the halo is already in the plane, so there is no masking.
-
-Two caveats, neither handled today: a 64 B-offset base puts **1 entry burst in 16
-across a 4 KB boundary** and `mag_mem_port.v` has no split logic — it is 6 of the
-9 taps, no packing removes it, and it is parked
-([hardware-wants.md](hardware-wants.md) §5). And the allocation needs one entry of
-tail padding, which `ConvEntry` derives from the tiling rather than assuming.
-
-### 4.1 Stride and dilation — both free, one needs a packer
-
-Analysis only, checked numerically but not built. The shipped kernel assumes
-stride 1, and SDXL's downsample path is 3x3 **stride 2**.
-
-**Dilation is already free.** At dilation `d` with `pad = d`, a tap reads
-`(oy + dy*d, ox + dx*d)`, still a constant `(dy*d*Wp + dx*d) * 64` bytes, and four
-adjacent outputs are still four adjacent inputs. Only the constant changes.
-
-**Stride breaks contiguity**, because four adjacent outputs then read inputs `s`
-apart. Three ways out:
-
-| | cost | what changes |
+| # | thing | why it stands |
 |---|---|---|
-| compute dense, discard | **exactly `s^2`** MAC — 4.0x measured at all three shapes | `positions()` only |
-| split by `x mod s` | 1.5–3.8x in per-row tiling waste | packer, 2-D grid, richer `Tap` |
-| **split by `(y mod s, x mod s)`** | **none** | **packer only** |
-
-The middle row is the trap: it restores contiguity along x, but the row index
-becomes `s*oy + dy`, which is not affine in a flat raster — so the grid must be
-per-row, and a `4*gm`-wide tile against a `ceil(Wp/s)`-wide row wastes 1.97x at
-128x128 and 3.76x at 32x32, no better than computing dense.
-
-The third works because splitting BOTH axes by residue makes the tap constant
-again. With `dy = qy*s + ry` and `dx = qx*s + rx`,
-
-```
-    A[s*oy + dy, s*ox + dx]  ==  sub[ry, rx][oy + qy, ox + qx]
-```
-
-so the offset is `(ry*s + rx)*plane + qy*Wsub + qx` — a constant, exactly as at
-stride 1. Verified exhaustively at 8x8 and 16x16 stride 2, 12x10 stride 2, 9x9
-stride 3. **So stride costs a packer variant and nothing else** — no compiler
-mechanism beyond the lane offset that already exists, no ISA change, no RTL.
-
-## 5. Branch A — the designed answer, built but not wired
-
-The architecture already decided how conv works, and the mechanism exists:
-
-> **Convolution is a memory request.** The compute instruction for a convolution
-> is *byte-identical* to the one for a matmul. Only the descriptor changes.
-
-`src/kohakuaccel/sysnode/mover/mx_tdesc.v` is a 6-dimensional affine walker,
-**built and conv2d im2col validated** — but **not wired into the fill engine**.
-The
-descriptor for a 3x3 conv is six lines:
-
-```
-   dim     n     oy     ox     ky    kx    c
-   stride  sN    S*sH   S*sW   sH    sW    sC
-   axis    -     H      W      H     W     -
-```
-
-Out-of-range addresses **inject zeros and issue no memory request**, so padding
-needs no halo buffer, no zero rows, and no handling anywhere else in the machine.
-**Cost: nothing at all.** Conv becomes a matmul whose operand descriptor happens
-to be six-dimensional.
-
-What is missing is the wiring, not the walker — roughly 2–3 weeks, all in
-`mag_mem_port.v`. In-order return is free, since every read uses `m_arid = 0`
-and AXI requires same-ID responses in order, so a lane's beats arrive where the
-entry assembler expects them however the bursts were split. Zero injection is at
-the input, not the emit path: for an invalid lane, do not issue the AR and drive
-`beat = 0`, `beat_valid = 1` — two wires the read engine already drives.
-
-Untouched: the whole cluster CU and manager, the emit buffer, response tagging,
-peer multicast, credit accounting, L1 write addressing. Two open risks, both
-ordinary engineering: widening the 8-bit count, and whether MAG's read engine
-can hold per-cluster descriptor state without serialising the eight clusters
-that share it. **The second is not determined.**
-
-> **THE ARGUMENT THIS SECTION USED TO MAKE IS GONE, AND SO IS THE PROBLEM IT
-> WORKED AROUND.** It reasoned about feeding the quantiser: that `mx_quant` has
-> no `last` port so four 2-beat bursts feed it byte-identically to one 8-beat
-> burst, and that pre-quantised *activations* were what conv gave up, because a
-> converted entry's word interleaves all four lanes at 7-bit granularity and conv
-> needs each lane from a different address.
->
-> **A fetch is never transformed now.** What is at an operand's address is
-> already in its final format, so there is no quantiser in this path to feed and
-> no per-operand choice to give up. The interleaving observation survives as a
-> LAYOUT fact and it still decides the same thing: a converted entry cannot be
-> assembled from four independently-addressed lanes, so a conv activation is
-> either held in FP16 or converted by a mover pass that walks the conv order.
-> The trade moved from the instruction to the schedule.
-
-## 6. Branch B — materialising the operand, and what it would cost
-
-Fold the x-tap into K. Build `A'[y][x][3][C]` with `A'[y][x][t][c] =
-A[y][x+t-1][c]`, zeros outside: the x tap is then inside the contraction so lanes
-never shift for it, and the y tap is a whole-row offset. The kernel is three
-accumulating sweeps of `K = 3C` at row offsets `-W`, `0`, `+W`, into one
-accumulator.
-
-Building `A'` is one mover descriptor, and the mover's ISA suits conv better than
-expected — `COPY` with both descriptors is an arbitrary N-D affine strided copy,
-and a source element whose `valid` is low injects an immediate, "which is how
-`pad` works", so bounded axes give zero padding natively.
-
-**Branch B is unpriced, because there is no mover rate to price it with.** The
-rate this section was once decided against was measured on a mover that sent one
-32-byte word per packet; that engine has since been rebuilt to coalesce, and the
-figure has been withdrawn rather than carried forward
-([multi-mesh.md](multi-mesh.md) §8). Nobody has measured the current one.
-
-What the branch has to beat is unchanged and can be stated without a rate:
-**`A'` is 31.5 MB against 9.8 ms of convolution at a 100 MHz matmul clock**
-(§1), so a build pass is worth wiring in only if it moves that operand in
-materially less time than the arithmetic it feeds. A build pass that costs more than its own
-convolution is not worth having at any rate, and the same arithmetic applies to
-full im2col and to a host-side build over any transport this machine has.
-
-Branch C is what runs meanwhile, and the enabling change for branch B is the
-same one it always was — the descriptor in the fill path, so `A'` is never
-materialised at all.
-
-> **"Fill engine" is a misnomer.** There is none in `mx_cluster_mgr.v` — the
-> manager only exposes a backdoor L1 write port. The FILL address walk lives in
-> **MAG**, one NoC hop away, and the CU issues *one* flit naming the whole run.
+| 1 | A batch axis | `conv2d` takes one `[H][W][C]` image; a batch is one call per image. |
+| 2 | Conv into conv | The result is `[oh*ow4][C_out]` with lane padding in each row; the next conv's `PadHWC` copy from it needs a walk that skips the padding columns. Not built. |
+| 3 | The im2col is materialised | `kh*kw` x the activation. The alternative is the walk in the FILL path itself (a descriptor-driven fill), which would never write it; that is an RTL change in `mag_mem_port.v`. |
+| 4 | `C` not a multiple of 16 from a produced activation | The pad copy moves whole 32-byte words, so a produced activation's channels must be a multiple of 16; a host upload has no such limit. |
+| 5 | A per-channel bias | `kernels.conv2d_bias` adds the bias in a second pass (`ops.residual`) at the result's full `[rows][N]` shape, broadcast once on the host: an elementwise pass takes operands of one length, and a per-channel read is address-dependent. The shape it should have is a drain epilogue taking the per-channel row; the emitter has no fill for a second epilogue operand. |

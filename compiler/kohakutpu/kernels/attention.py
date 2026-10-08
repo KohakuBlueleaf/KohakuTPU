@@ -50,7 +50,7 @@ class _HeadTile:
     ONE loop over `(head, K-chunk)`, because a GEMM chains on the innermost
     counter and 0 clears the tile, so two loops would keep only the last head.
     `//` and `%` are not index arithmetic, so this rebinds itself -- the hook
-    `record._value` provides, as :class:`kohakutpu.lang.Tap` does.
+    `record._value` provides.
     """
 
     def __init__(self, step, chunks, tiles, index) -> None:

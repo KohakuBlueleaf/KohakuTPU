@@ -6,6 +6,7 @@ here is the machine's, not a tuning knob.
 """
 
 from kohakuaccel.analysis.timing import Stage, time_of
+from kohakutpu.hw import tensor as T
 from kohakutpu.hw import vector as V
 from kohakutpu.isa import relayout as RL
 from kohakutpu.lang import backend as B
@@ -196,6 +197,27 @@ def route_for(made, room: int = 0, home: str = "M") -> str | None:
     return min(routes, key=lambda r: r[0])[1]
 
 
+#: Node cycles of one FP16 -> MXFP7 converting move: a fixed cost per MOVER step
+#: and a cost per entry (256 B read, 128 B written). MEASURED on the card model
+#: by sw_demo.py and sw_conv.py: 16 entries 4,769 and 144 entries 13,764 cycles
+#: over an empty package.
+QUANTISE_SETUP_CYCLES = 3644
+QUANTISE_CYCLES_PER_ENTRY = 70
+
+
+def _quantised(before, after, shape) -> int:
+    """FP16 entries a quantising conversion converts, or 0 for any other kind."""
+    if not LO.quantises(before, after):
+        return 0
+    count, _, entries = LO.mx_runs(after, shape)
+    return count * entries
+
+
+def quantise_cycles(moves: int, entries: int) -> int:
+    """Node cycles `moves` converting moves of `entries` FP16 entries in all take."""
+    return moves * QUANTISE_SETUP_CYCLES + entries * QUANTISE_CYCLES_PER_ENTRY
+
+
 def credits(compiled, room: int = 0, tier: str | None = "auto") -> dict:
     """What this call's byte-order changes cost in §5 credits.
 
@@ -210,6 +232,14 @@ def credits(compiled, room: int = 0, tier: str | None = "auto") -> dict:
     out: dict = {"total": 0, "bytes": 0, "host": 0, "detail": []}
     for n, (_, name, before, after) in enumerate(compiled.conversions):
         if n in compiled.dead:
+            continue
+        entries = _quantised(before, after, compiled.shape(name))
+        if entries:
+            nbytes = entries * (T.FP16_ENTRY_BYTES + T.MXFP7_ENTRY_BYTES)
+            c = move(nbytes, "M")
+            out["total"] += c
+            out["bytes"] += nbytes
+            out["detail"].append((name, f"quantise {entries} entries", "M", c, []))
             continue
         got = RL.for_conversion(before, after, compiled.shape(name))
         if got is None:
@@ -234,7 +264,7 @@ def link_credits(compiled, shards: int = UNITS) -> dict:
     """
     out = {"credits": 0, "bytes": 0, "local": True}
     for n, (_, name, before, after) in enumerate(compiled.conversions):
-        if n in compiled.dead:
+        if n in compiled.dead or _quantised(before, after, compiled.shape(name)):
             continue
         got = RL.for_conversion(before, after, compiled.shape(name))
         if got is None:
@@ -263,6 +293,11 @@ def relayouts(compiled) -> list:
     out: list = []
     for n, (at, name, before, after) in enumerate(compiled.conversions):
         if n in compiled.dead:
+            continue
+        entries = _quantised(before, after, compiled.shape(name))
+        if entries:
+            c = quantise_cycles(LO.mx_runs(after, compiled.shape(name))[0], entries)
+            out.append(Stage(at, "MV", c, per_unit={0: c}, by_kind={"quantise": c}))
             continue
         got = RL.for_conversion(before, after, compiled.shape(name))
         if got is None:

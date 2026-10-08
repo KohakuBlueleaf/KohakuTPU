@@ -800,7 +800,57 @@ One related detail, because `Subtile` depends on it: `VSEL`'s condition tests
 the **magnitude bits only**, so `-0.0` is false. The unit model agrees, because
 numpy also holds `-0.0 == 0.0`.
 
-## 13. What is not done
+## 13. Into MXFP7: every cluster operand through the mover
+
+A cluster FILL reads **pre-quantised MXFP7 entries** and nothing else
+(`mx_cluster_cu.v`: "PRE-QUANTISED ONLY"; 128 bytes an entry). The number
+format is TRACKED like the byte order: it is part of a buffer's layout
+(`MxEntry` against `Entry`, `Tile`, `Flat`), a FILL requires `MxEntry`, and the
+runtime converts wherever what a tensor holds differs from what is required --
+with no case for where the tensor came from:
+
+1. **FP16 on the card.** An uploaded operand goes up as FP16 `Entry` order
+   (`Tensor.prepare`); a produced one is already there in whatever order it
+   was drained. An operand uploaded ALREADY in the required `MxEntry`
+   (`Tensor.upload`, packed by the host: pre-quantised weights) is filled
+   directly and none of this runs.
+2. **A vector walk into `Entry`** when it is held in any other order (§9).
+3. **The converting move.** The mover streams the FP16 entries through the
+   transform bank's MXFP7 slot (slot 1, mode bit 0 the B side's slot map;
+   [transform-slot.md](../../spec/transform-slot.md)) into the `MxEntry` copy.
+   Node-dispatched it is a `MOVER` step of the package; host-dispatched,
+   `Device.host_move` issues it through the agent window.
+4. **The FILL** reads the copy at 128-byte entry steps.
+
+Inside a kernel the same two steps are compiled as two conversions — `before
+-> Entry` then `Entry -> MxEntry` — and the second runs IN PLACE: entry `e`
+writes 128 bytes at `128e` after reading 256 at `256e`, so no write lands on a
+byte still to be read. A conversion OUT of `MxEntry` has no walk and is only
+legal dead (§8). The unit models run the same moves (`model.run_move`), so the
+model and the card fill the same bytes by construction; `test_mxfp7_fill.py`
+checks the card-side copy byte-identical to `MxEntry.pack`, the reference.
+
+**Where the copy lives** (`Holder.mx_tier`, two knobs):
+
+| operand | placed | knob |
+|---|---|---|
+| produced by a kernel, ≤ `mx_staging_max` (256 KB) | L2 staging, when a staging arena is attached | `mx_staging_max` |
+| uploaded by the host (a weight: reused across calls) | DRAM, where the Xache holds it | `mx_uploads_to_staging` (default off) |
+| anything else, or a full staging store | DRAM | — |
+
+A copy stays with its tensor as long as the tensor does, so a reused weight is
+converted once.
+
+**What it costs**, measured on the card model: about 3,640 node cycles a
+converting move plus 70 an FP16 entry (16 entries 4,769, 144 entries 13,764,
+over an empty package); `cost.quantise_cycles` charges it as an `MV` stage
+ahead of the stage that fills it.
+
+A cluster FILL of any FP16 order is refused at compile time. A convolution
+does not need one: it is a matmul over an im2col the mover writes straight
+into `MxEntry`, quantising on the way ([conv2d.md](conv2d.md)).
+
+## 14. What is not done
 
 | # | thing | why it stands |
 |---|---|---|
@@ -810,7 +860,7 @@ numpy also holds `-0.0 == 0.0`.
 | 4 | The instruction stream still **grows**, 24,672 to 27,056 flits at 4x256 | §1.2. The remaining term is one `Subtile` image per conversion, which cannot be held resident because kernel programs reach 314 of the core's 512 instruction words. |
 | 4a | **A conversion is caused by a REDUCTION and only by a reduction** | MEASURED by `kernels`: a GEMM followed by an elementwise pass costs zero conversions — the drained temp stays `tile` and the other operands are assigned it. The same GEMM followed by a reduction costs one. So the compiler is already doing the only thing available at this level, and `flash_attention`'s floor is two granule transposes a key block. `sdxl-requirements.md` §5.2b. |
 | 5 | A conversion whose walk needs five dimensions **at every run width** | Falls back to the host. None of the shipped kernels' conversions do, but the planner does not tile a refusal into two passes. |
-| 6 | The mover is not wired to anything | The command path exists and is encoding-tested; nothing calls it, and nothing should until a mover appears in the simulator or someone measures one on the card. It is the better engine for the word-granular half — six dims, no walk cap, and it reaches the staging aperture. |
+| 6 | The mover runs only the MXFP7 conversions (§13) | Word-granular relayouts still walk on a vector core. The mover is the better engine for that half too — six dims, no walk cap, and it reaches the staging aperture. |
 | 7 | `L.temp(tier="l2")` has **no caller** | The surface is built and tested; which kernel should use it is [sdxl-requirements.md](sdxl-requirements.md) §5.7's question, and the answer there is cross-attention's K and V. |
 | 8 | `ρ` is not measured on this machine | §6.3. The route flip holds for `ρ > 2` and reverses below it. §8.2 does not depend on it: a buffer in `S` avoids the ragged access at any `ρ`. |
 | 9 | A temp too big for `S` falls back to DRAM | §8.2. Three `flash_attention` temps fit at 10 heads and Lq=512 and do not at SDXL level 1's Lq=4096. Tiling them by head or query block is [sdxl-requirements.md](sdxl-requirements.md) §5.3's question. The fallback is counted, not silent. |

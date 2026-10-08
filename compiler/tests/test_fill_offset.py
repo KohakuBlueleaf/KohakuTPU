@@ -1,18 +1,11 @@
-"""A fill may start at a lane offset, and nothing that does not ask for one moves.
+"""Every cluster FILL's address: the shipped kernels' flits, and the bound.
 
-`Slice` carries an optional offset in LANES of the entry stream -- 64 bytes, a
-quarter of an L1 entry -- which `TpuBackend._cluster` adds to the fill address.
-It exists because a 3x3 convolution's nine taps are the same operand read at
-nine constant offsets, six of which are not entry-aligned (branch C), and no
-`gm`, `gn` or `nk` can place one.
-
-The first two tests are the witness the rest of the change is measured against:
-an offset nobody asks for must leave every shipped kernel byte-identical.
+`Slice` can carry a lane offset that `TpuBackend._cluster` adds to the fill
+address; no shipped kernel asks for one. The last test checks the bound.
 """
 
 import hashlib
 
-import numpy as np
 import pytest
 from kohakuaccel.lang import iface
 from kohakuaccel.machinespec import MachineSpec
@@ -20,7 +13,6 @@ from kohakutpu.hw import tensor as T
 from kohakutpu.isa import ISA
 from kohakutpu.lang import BACKEND
 from kohakutpu.lang.errors import LangError
-from kohakutpu.model import SimDevice
 
 from kohakutpu import kernels as K
 from kohakutpu import ops as O
@@ -36,8 +28,8 @@ MACHINE = MachineSpec(
 )
 
 #: SHA-256 over every flit of every kernel below; the byte-identity claim.
-#: Re-baselined from `3636a354...1863948d` when `ops` took the plain kernels.
-BASELINE = "abe68e991c1a5e9d9b11b008a304187688e6401daa00623fdc1efcf04c094a5a"
+#: With MXFP7 fills (128-B entry steps) and constant writes that read no buffer.
+BASELINE = "c7c155495b36134470582c6fbd3859fa7aa821413508845bc78cd10448054800"
 
 
 class Shaped:
@@ -125,7 +117,8 @@ def test_a_fill_with_no_offset_keeps_the_old_address(name):
                     continue
                 span = s.args["groups"] * s.args["blocks"]
                 at = (s.args["tile"] * s.args["chunks"] + s.args["chunk"]) * span
-                want = addrs[s.args["operand"]] + at * T.FP16_ENTRY_BYTES
+                # A cluster fills MXFP7 entries, so the step is theirs.
+                want = addrs[s.args["operand"]] + at * T.MXFP7_ENTRY_BYTES
                 word = ISA.fill(
                     addr=want,
                     n=span,
@@ -138,108 +131,7 @@ def test_a_fill_with_no_offset_keeps_the_old_address(name):
         assert seen, f"{name} encoded no fill to check"
 
 
-# ------------------------------------------------------------- the offset used
-def conv_reference(x, kernel):
-    """Direct convolution in float64, pad 1."""
-    h, w, _ = x.shape
-    xp = np.pad(np.asarray(x, np.float64), ((1, 1), (1, 1), (0, 0)))
-    k = np.asarray(kernel, np.float64)
-    out = np.zeros((h, w, k.shape[0]))
-    for t in range(9):
-        dy, dx = divmod(t, 3)
-        out += np.tensordot(xp[dy : dy + h, dx : dx + w, :], k[:, :, dy, dx], (2, 1))
-    return out
-
-
-def run_conv(h, w, cin, cout, gm, gn, seed=11):
-    """`conv2d` on a SimDevice. Returns ``(got, float64 reference, device)``."""
-    rng = np.random.default_rng(seed)
-    x = (rng.standard_normal((h, w, cin)) * 0.5).astype(np.float16)
-    k = (rng.standard_normal((cout, cin, 3, 3)) * 0.2).astype(np.float16)
-    dev = SimDevice(size=1 << 25)
-    flat = O.conv2d(dev.tensor(x), dev.tensor(O.weights_for_k(k, cin)), gm=gm, gn=gn)
-    held = flat.numpy()
-    got = np.zeros((h, w, cout))
-    for row, y, at in O.positions(h, w):
-        got[y, at] = held[row, :cout]
-    return got, conv_reference(x, k), dev
-
-
-@pytest.mark.parametrize(
-    ("h", "w", "cin", "cout", "gm", "gn"),
-    [(8, 8, 32, 32, 4, 8), (12, 10, 64, 64, 6, 16), (16, 16, 96, 32, 8, 8)],
-)
-def test_the_conv2d_kernel_computes_a_convolution(h, w, cin, cout, gm, gn):
-    """The kernel, through the ordinary call path, against float64.
-
-    1.6e-2 is this machine's MXFP7 floor on a contraction this long, not
-    anything conv adds: `test_conv2d_branch_c` pins the same shapes to 3e-4
-    against an MXFP7 reference.
-    """
-    got, want, dev = run_conv(h, w, cin, cout, gm, gn)
-    assert np.abs(got - want).max() / np.abs(want).max() < 0.05
-    assert dev.saturated == 0
-
-
-def test_the_shipped_defaults_run_and_sit_near_the_tile_bound():
-    """The default tiling is the whole cost of this kernel, so it is asserted.
-
-    `gm=2, gn=1` costs 45 M flits on a 128x128x320 layer against 22 k near the
-    bound. A default that far off is a defect, not a preference, so the shipped
-    one is checked for both: it computes, and it is within a factor of two of
-    `TILES = 512`.
-    """
-    got, want, dev = run_conv(
-        12, 10, 64, 128, O.conv2d.signature.knobs["gm"], O.conv2d.signature.knobs["gn"]
-    )
-    assert np.abs(got - want).max() / np.abs(want).max() < 0.05
-    assert dev.saturated == 0
-
-    gm, gn = O.conv2d.signature.knobs["gm"], O.conv2d.signature.knobs["gn"]
-    assert 256 <= gm * gn <= 512, f"the default tile is {gm}x{gn} sub-tiles"
-    assert gm <= 255 and gn <= 255, "a FILL names at most 255 entries"
-
-
-def test_a_tile_at_the_uram_bound_still_computes():
-    """`gm*gn = 4096` is what a URAM-tiled top allows, and it is 6x cheaper.
-
-    Worth pinning because nothing else exercises a tile that large, and the tile
-    address wraps SILENTLY past `TILES`.
-    """
-    got, want, dev = run_conv(12, 10, 32, 64, 64, 64)
-    assert np.abs(got - want).max() / np.abs(want).max() < 0.05
-    assert dev.saturated == 0
-
-
-def test_the_plane_layout_round_trips_through_the_runtime():
-    """`ConvEntry` is what the runtime uploads, so it has to invert as well."""
-    from kohakutpu import layout as LO
-
-    rng = np.random.default_rng(12)
-    x = rng.standard_normal((9, 7, 64)).astype(np.float16)
-    conv = LO.ConvEntry(1, 8)
-    raw = conv.pack(x)
-    assert len(raw) == conv.nbytes(x.shape)
-    assert np.array_equal(conv.unpack(raw, x.shape), np.asarray(x, np.float64))
-
-
-def test_the_tail_is_sized_for_the_tile_the_sweep_will_use():
-    """`ConvEntry` takes `gm` because the tail is a property of the TILING.
-
-    A taller tile overruns the plane by more, so a layout packed for gm=8 is
-    short for gm=64 -- which is why the kernel hands its own `gm` to the layout
-    rather than the layout assuming one.
-    """
-    from kohakutpu import layout as LO
-
-    shape = (8, 8, 32)
-    small = LO.ConvEntry(1, 8)
-    large = LO.ConvEntry(1, 64)
-    assert small.geometry(shape)[2] < large.geometry(shape)[2]
-    assert small.nbytes(shape) < large.nbytes(shape)
-    assert small.key != large.key
-
-
+# ------------------------------------------------------------------ the bound
 def test_a_fill_that_reaches_past_the_operand_is_refused():
     """The bound check counts the offset, in bytes, or a tap reads the arena.
 
@@ -251,7 +143,7 @@ def test_a_fill_that_reaches_past_the_operand_is_refused():
     bound = {"a": Shaped((64, 128)), "b": Shaped((32, 128))}
     got = O.matmul.compile(MACHINE, iface.solve(O.matmul.signature, bound))
     held = got.layouts["a"].nbytes(got.block("a"))
-    span = held // T.FP16_ENTRY_BYTES
+    span = held // got.layouts["a"].entry_bytes
 
     _within(got, "a", 0, span, 0)
     with pytest.raises(LangError, match="reaches byte"):

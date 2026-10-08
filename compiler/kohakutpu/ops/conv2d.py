@@ -1,252 +1,218 @@
-"""3x3 convolution, as a matmul whose K sweep walks the taps. NO bias, no act.
+"""Convolution as an ordinary matmul over an im2col the mover builds on the card.
 
-A tensor-level operator: one pass, one operation. Fused with a bias or an
-activation it is a KERNEL and lives in `kernels/conv2d.py`.
-
-Branch C, whose derivations `compiler/tests/test_conv2d_branch_c.py` checks
-against a hand-computed schedule. Three facts those do not carry:
-
-* `nk` is FORCED to 1 -- two channel blocks of one pixel are `plane*64` bytes
-  apart -- so a pass is `3*(9C/32) + 1` flits and cannot amortise;
-* **the tile is the lever.** A layer is 22-26k flits near `gm*gn <= TILES` and
-  **45-47 M** at `gm=2, gn=1`;
-* a tapped fill straddles a 4 KB boundary on 6 of 9 taps, 1 burst in 16.
-  UNTESTED ON SILICON: `mag_mem_port.v` has no split logic. Parked.
+The result is ``[rows][C_out]``, row ``y * ow4 + x`` for output ``(y, x)``
+(:func:`positions`). The walk, stride and upsampling are conv2d.md §2-4.
 """
 
-from kohakuaccel.lang import ceildiv, dims, loop, units
-from kohakutpu.hw import tensor as T
-from kohakutpu.lang import kernel
+from dataclasses import dataclass
 
-from kohakutpu import lang as L
+import numpy as np
+from kohakuaccel.package import mover as PM
+from kohakutpu.ops.matmul import matmul
+
 from kohakutpu import layout as LO
 
-H, W, C, N, K = dims("H, W, C, N, K")
-
-#: The padded plane, rounded to whole entries. The result has a row per position
-#: of it, of which `(y, x)` with `y < H` and `x < W` are the wanted outputs.
-PLANE = ceildiv((H + 2) * (W + 2), L.LANES) * L.LANES
-
-#: The same for stride 2: the OUTPUT raster is one residue sub-plane's.
-PLANE2 = ceildiv((ceildiv(H, 2) + 2) * (ceildiv(W, 2) + 2), L.LANES) * L.LANES
+LANES = LO.LANES
+KBLOCK = LO.KBLOCK
+#: Walker levels: the source spends two on lane and word, so four for entries.
+WALK_LEVELS = PM.NDIM - 2
+MX_BYTES = 128
+WORD = PM.WORD_BYTES
 
 
-@kernel
-def conv2d(a=L.In(..., H, W, C), b=L.In(N, K), c=L.Out(..., PLANE, N), *, gm=16, gn=32):
-    """3x3 conv, pad 1. `a` is `[H][W][C]`, `b` is `[N][9C]`, `c` is `[plane][N]`.
+@dataclass(frozen=True)
+class Geometry:
+    """One convolution's shapes: input, taps, stride, shift, and what follows."""
 
-    `a`'s leading axes are a batch the compiler makes a grid axis; `b` has no
-    `...`, so ONE set of weights is shared by every element.
-
-    `b`'s K axis runs (tap, channel block, channel) -- a host-side permute of
-    torch's `(out, in, kh, kw)`, which :func:`weights_for_k` does.
-
-    The sweep runs the PADDED raster, because four adjacent outputs are four
-    adjacent inputs only WITHIN a row. :func:`positions` says which rows of `c`
-    carry an output; the other **3.1% (128x128) to 12.9% (32x32)** are computed
-    and discarded, which is also what makes zero padding free.
-
-    `gm*gn` is 512, the conservative `TILES`; a URAM-tiled top allows 4096 and
-    wants roughly `gm=51, gn=80` at 128x128x320 (`isa/cluster.md` §4.6).
-    """
-    x = L.plane(a, gm)
-    with units(x.tiles(gm), b.tiles(gn)) as (i, j):
-        acc = L.tile(gm, gn, 1)
-        for s in loop(b.chunks32(1)):
-            acc += x[i, 0, x.tap(s)] @ b[j, s]
-        c[i, j] <<= acc
-
-
-class _StrideTap:
-    """Sweep step `s`'s tap offset when the convolution strides.
-
-    The stride-1 :class:`kohakutpu.lang.Tap` with :func:`hw.tensor.stride_tap`
-    for the offset, and identical to it at `stride == 1`. Rebinds itself, the
-    hook `record._value` provides, because `//` is not index arithmetic.
-    """
-
-    def __init__(self, step, blocks, plane, wp, stride) -> None:
-        self.step, self.blocks, self.plane, self.wp = step, blocks, plane, wp
-        self.stride = stride
-
-    def rebind(self, value):
-        step, blocks = int(value(self.step)), int(value(self.blocks))
-        plane, wp = int(value(self.plane)), int(value(self.wp))
-        tap, block = divmod(step, blocks)
-        dy, dx = divmod(tap, 3)
-        sub = plane // (self.stride * self.stride)
-        return block * plane + T.stride_tap(dy, dx, wp, sub, self.stride)
-
-
-class StridePlane(L.Plane):
-    """A `[H][W][C]` activation read as `stride*stride` residue sub-planes.
-
-    Everything a :class:`kohakutpu.lang.Plane` is, over a plane the packer split
-    by residue, so the sweep walks the OUTPUT raster and a tap is a constant
-    into whichever sub-plane it lands in.
-    """
-
-    def __init__(self, buffer, gm: int, stride: int) -> None:
-        self.buffer, self.stride = buffer, stride
-        self.order = LO.ConvEntry(self.PAD, gm, stride)
+    h: int
+    w: int
+    c: int
+    kh: int = 3
+    kw: int = 3
+    stride: int = 1
+    #: Origin shift of the window in the padded image (an upsample class's).
+    sy: int = 0
+    sx: int = 0
+    pad: int = 1
+    #: Output extent; None for the ordinary `(H + 2*pad - k) // stride + 1`.
+    out: tuple | None = None
 
     @property
-    def rows(self):
-        """Output rows: the sub-plane's, which is what the sweep walks."""
-        return ceildiv(self.buffer.trailing[0], self.stride)
-
-    @property
-    def cols(self):
-        return ceildiv(self.buffer.trailing[1], self.stride)
-
-    @property
-    def wp(self):
-        return self.cols + 2 * self.PAD
-
-    @property
-    def plane(self):
-        """Positions ONE channel block occupies: every sub-plane of it."""
-        sub = ceildiv((self.rows + 2 * self.PAD) * self.wp, L.LANES) * L.LANES
-        return sub * self.stride * self.stride
-
-    @property
-    def groups(self):
-        """Lane groups worth sweeping, in the OUTPUT raster."""
-        return ceildiv((self.rows - 1) * self.wp + self.cols, L.LANES)
-
-    def tap(self, step) -> _StrideTap:
-        return _StrideTap(step, self.blocks, self.plane, self.wp, self.stride)
-
-
-def plane_strided(buffer, gm: int, stride: int) -> StridePlane:
-    """`buffer` read as a strided convolution's residue-split activation."""
-    return StridePlane(buffer, gm, stride)
-
-
-@kernel
-def conv2d_stride2(
-    a=L.In(..., H, W, C), b=L.In(N, K), c=L.Out(..., PLANE2, N), *, gm=16, gn=32
-):
-    """3x3 conv, STRIDE 2, pad 1. The same sweep; the plane is residue-split.
-
-    `a` is `[H][W][C]`, `b` is `[N][9C]` as :func:`weights_for_k` orders it, and
-    `c` is `[sub-plane][N]` -- one row per output position, which
-    :func:`positions` reads with `stride=2`.
-
-    Identical to :func:`conv2d` but for the layout the activation is packed in,
-    which is the whole content of `conv2d.md` 4.1: the alternative is computing
-    every output and discarding three in four, at 4.0x the MAC.
-    """
-    x = plane_strided(a, gm, 2)
-    with units(x.tiles(gm), b.tiles(gn)) as (i, j):
-        acc = L.tile(gm, gn, 1)
-        for s in loop(b.chunks32(1)):
-            acc += x[i, 0, x.tap(s)] @ b[j, s]
-        c[i, j] <<= acc
-
-
-class _UpTap:
-    """Tap offset for one residue class of a nearest-2x upsample.
-
-    Four taps rather than nine, at ordinary stride-1 offsets shifted by the
-    output's residue class -- see :func:`conv2d_upsample2`. Rebinds itself
-    because `//` is not index arithmetic.
-    """
-
-    def __init__(self, step, blocks, plane, wp, iy, ix) -> None:
-        self.step, self.blocks, self.plane, self.wp = step, blocks, plane, wp
-        self.iy, self.ix = iy, ix
-
-    def rebind(self, value):
-        step, blocks = int(value(self.step)), int(value(self.blocks))
-        tap, block = divmod(step, blocks)
-        ty, tx = divmod(tap, 2)
+    def oh(self) -> int:
         return (
-            block * int(value(self.plane))
-            + (self.iy + ty) * int(value(self.wp))
-            + (self.ix + tx)
+            self.out[0]
+            if self.out
+            else (self.h + 2 * self.pad - self.kh) // self.stride + 1
+        )
+
+    @property
+    def ow(self) -> int:
+        return (
+            self.out[1]
+            if self.out
+            else (self.w + 2 * self.pad - self.kw) // self.stride + 1
+        )
+
+    @property
+    def ow4(self) -> int:
+        """Output width in whole lanes: a lane group never crosses a row."""
+        return -(-self.ow // LANES) * LANES
+
+    @property
+    def cp(self) -> int:
+        return -(-self.c // KBLOCK) * KBLOCK
+
+    @property
+    def k(self) -> int:
+        return self.kh * self.kw * self.cp
+
+    @property
+    def rows(self) -> int:
+        return self.oh * self.ow4
+
+    def image(self) -> LO.PadHWC:
+        """The padded image every tap of every lane reads inside."""
+        s = self.stride
+        hp = max((self.oh - 1) * s + self.kh + self.sy, self.h + self.pad)
+        wp = max((self.ow4 - 1) * s + self.kw + self.sx, self.w + self.pad)
+        return LO.PadHWC(hp, wp, self.cp, self.pad)
+
+    def groups(self, gm: int) -> int:
+        """Lane groups per tile: the largest divisor of a row's groups <= `gm`."""
+        q = self.ow4 // LANES
+        return max(d for d in range(1, min(gm, q) + 1) if q % d == 0)
+
+
+def im2col_moves(g: Geometry, gt: int, src: int, dst: int) -> list:
+    """The converting moves that write ``MxEntry(gt, 1, 0)`` of the im2col.
+
+    Levels are ``(count, source stride, destination stride)`` (conv2d.md §3).
+    """
+    img = g.image()
+    px = g.cp * 2  # one pixel's channels
+    s = g.stride
+    nb = g.cp // KBLOCK
+    nch = g.kh * g.kw * nb
+    tx = g.ow4 // (LANES * gt)
+    levels = [
+        (g.oh, s * img.wp * px, tx * nch * gt * MX_BYTES),
+        (tx, LANES * gt * s * px, nch * gt * MX_BYTES),
+        (g.kh, img.wp * px, g.kw * nb * gt * MX_BYTES),
+        (g.kw, px, nb * gt * MX_BYTES),
+        (nb, KBLOCK * 2, gt * MX_BYTES),
+        (gt, LANES * s * px, MX_BYTES),
+    ]
+    levels = [lv for lv in levels if lv[0] > 1] or [(1, 0, 0)]
+    hw = sorted(range(len(levels)), key=lambda i: -levels[i][0])[:WALK_LEVELS]
+    hw = sorted(hw)
+    sw = [i for i in range(len(levels)) if i not in hw]
+    origin = src + (g.sy * img.wp + g.sx) * px
+    inner = [(LANES, s * px), (KBLOCK * 2 // WORD, WORD)]
+    out = []
+    for idx in np.ndindex(*[levels[i][0] for i in sw]):
+        so = sum(n * levels[i][1] for n, i in zip(idx, sw, strict=True))
+        do = sum(n * levels[i][2] for n, i in zip(idx, sw, strict=True))
+        sd = [(levels[i][0], levels[i][1]) for i in hw] + inner
+        dd = [(levels[i][0], levels[i][2]) for i in hw]
+        out.append(PM.convert_walk((origin + so, sd), (dst + do, dd)))
+    return out
+
+
+def lower(a, b, g: Geometry, gm: int, gn: int):
+    """`a` ``[H][W][C]`` through the mover's im2col, then a matmul against `b`."""
+    dev = a.dev
+    gt = g.groups(gm)
+    src = a.address(g.image())
+    lay = LO.MxEntry(gt, 1, 0)
+    nbytes = lay.nbytes((g.rows, g.k))
+    col = dev.empty((g.rows, g.k), lay, tier=dev.mx_tier(nbytes, True))
+    dst = col.buffers[lay.key].addr
+    for writes in im2col_moves(g, gt, src, dst):
+        dev.move(writes, "im2col")
+    dev.counters["im2col"] = dev.counters.get("im2col", 0) + 1
+    # No wider than the output channels: a later relayout has no walk for more.
+    gn = max(1, min(gn, -(-b.shape[0] // LANES)))
+    return matmul(col, b, gm=gt, gn=gn, nk=1)
+
+
+def _check(a, b, g: Geometry) -> None:
+    if len(a.shape) != 3:
+        raise ValueError(f"a convolution's activation is [H][W][C]; got {a.shape}")
+    if tuple(b.shape) != (b.shape[0], g.k):
+        raise ValueError(
+            f"weights are [C_out][{g.kh}*{g.kw}*{g.cp}] (weights_for_k pads C to "
+            f"{g.cp}); got {tuple(b.shape)}"
         )
 
 
-@kernel
-def conv2d_upsample2(
-    a=L.In(..., H, W, C),
-    b=L.In(N, K),
-    c=L.Out(..., PLANE, N),
-    *,
-    iy=0,
-    ix=0,
-    gm=16,
-    gn=32,
-):
-    """ONE residue class of `Conv3x3(nearest2x(a))`, without the 2x activation.
+def conv2d(a, b, *, gm=16, gn=32):
+    """3x3 convolution, stride 1, pad 1. `a` ``[H][W][C]``, `b` from :func:`weights_for_k`."""
+    g = Geometry(*a.shape)
+    _check(a, b, g)
+    return lower(a, b, g, gm, gn)
 
-    Output `(2y+iy, 2x+ix)` reads `a[y + (iy+dy-1)//2][x + (ix+dx-1)//2]`, and
-    over `dy` that takes TWO values -- so each output residue class is a 2x2
-    convolution on the ORIGINAL plane at stride-1 tap offsets shifted by
-    `(iy, ix)`, with weights :func:`weights_for_upsample2` folds at load.
 
-    Four calls of four taps: 16 MAC per input pixel against 36 for materialising
-    the 2x activation, which is never written. The four results ARE the residue
-    split of the `[2H][2W][N]` output, in `ConvEntry(step=2)` order.
+def conv2d_stride2(a, b, *, gm=16, gn=32):
+    """3x3 convolution, STRIDE 2, pad 1: the same walk at twice the pixel steps."""
+    g = Geometry(*a.shape, stride=2)
+    _check(a, b, g)
+    return lower(a, b, g, gm, gn)
+
+
+def conv2d_upsample2(a, b, *, iy=0, ix=0, gm=16, gn=32):
+    """Residue class ``(iy, ix)`` of ``Conv3x3(nearest2x(a))`` (conv2d.md §4).
+
+    `b` is that class's operand from :func:`weights_for_upsample2`.
     """
-    x = L.plane(a, gm)
-    with units(x.tiles(gm), b.tiles(gn)) as (i, j):
-        acc = L.tile(gm, gn, 1)
-        for s in loop(b.chunks32(1)):
-            acc += x[i, 0, _UpTap(s, x.blocks, x.plane, x.wp, iy, ix)] @ b[j, s]
-        c[i, j] <<= acc
+    h, w, c = a.shape
+    g = Geometry(h, w, c, kh=2, kw=2, sy=iy, sx=ix, out=(h, w))
+    _check(a, b, g)
+    return lower(a, b, g, gm, gn)
+
+
+def _padded_c(cin: int) -> int:
+    return -(-cin // KBLOCK) * KBLOCK
+
+
+def weights_for_k(kernel_hw, cin: int):
+    """``(out, in, kh, kw)`` as ``[N][kh*kw*cp]``: tap-major, C padded to `cp`.
+
+    The im2col's K order; the padded channels are zero on both sides.
+    """
+    k = np.asarray(kernel_hw)
+    kh, kw = k.shape[2], k.shape[3]
+    cp = _padded_c(cin)
+    out = np.zeros((k.shape[0], kh * kw * cp), k.dtype)
+    for t in range(kh * kw):
+        dy, dx = divmod(t, kw)
+        out[:, t * cp : t * cp + cin] = k[:, :, dy, dx]
+    return out
 
 
 def weights_for_upsample2(kernel_hw, cin: int):
-    """`(out, in, 3, 3)` as the four `[N][4C]` operands the four classes want.
+    """``(out, in, 3, 3)`` as the four ``[N][4*cp]`` operands the four classes want.
 
-    Returns `[4][N][4C]`, class `iy*2 + ix`. A tap of the upsampled convolution
-    that lands on the same input pixel as another is ADDED to it, which is the
-    whole fold and is exact: `iy=0` pairs `dy` 1 and 2, `iy=1` pairs 0 and 1.
-
-    The tap index is `(iy+dy-1)//2 + 1 - iy`, which is the input row offset put
-    back on 0..1 -- the `- iy` is what the kernel adds again as the class shift.
+    Returns ``[4][N][4*cp]``, class ``iy*2 + ix``; taps landing on one input
+    pixel are added, at tap ``(iy+dy-1)//2 + 1 - iy``.
     """
-    import numpy as np
-
     k = np.asarray(kernel_hw)
-    out = np.zeros((4, k.shape[0], 4 * cin), k.dtype)
+    cp = _padded_c(cin)
+    out = np.zeros((4, k.shape[0], 4 * cp), k.dtype)
     for iy in range(2):
         for ix in range(2):
             for dy in range(3):
                 for dx in range(3):
                     ty = (dy - 1 + iy) // 2 + 1 - iy
                     tx = (dx - 1 + ix) // 2 + 1 - ix
-                    at = (ty * 2 + tx) * cin
+                    at = (ty * 2 + tx) * cp
                     out[iy * 2 + ix, :, at : at + cin] += k[:, :, dy, dx]
     return out
 
 
-def weights_for_k(kernel_hw, cin: int):
-    """`(out, in, kh, kw)` as the `[N][9C]` operand this sweep's K order wants.
-
-    Step `s` is tap `s // (C/32)` at channel block `s % (C/32)`, so the taps are
-    the outer axis of K. Done once on the host; it moves no more bytes than the
-    upload does anyway.
-    """
-    import numpy as np
-
-    k = np.asarray(kernel_hw)
-    out = np.zeros((k.shape[0], 9 * cin), k.dtype)
-    for t in range(9):
-        dy, dx = divmod(t, 3)
-        out[:, t * cin : (t + 1) * cin] = k[:, :, dy, dx]
-    return out
-
-
-def positions(h: int, w: int, stride: int = 1):
+def positions(h: int, w: int, stride: int = 1, k: int = 3):
     """Result rows carrying a real output, as ``(row, y, x)``.
 
-    The rest of `c` is the padded raster the sweep had to run; see the header.
-    At `stride > 1` the raster is one residue SUB-PLANE's, so the rows are the
-    same expression over `ceil(h/stride)` by `ceil(w/stride)` outputs.
+    Row ``y * ow4 + x``: the rest of each row is the lane padding the walk ran.
     """
-    hs, ws = -(-h // stride), -(-w // stride)
-    wp = ws + 2
-    return [(y * wp + x, y, x) for y in range(hs) for x in range(ws)]
+    g = Geometry(h, w, 1, kh=k, kw=k, stride=stride)
+    return [(y * g.ow4 + x, y, x) for y in range(g.oh) for x in range(g.ow)]
