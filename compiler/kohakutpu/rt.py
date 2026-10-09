@@ -20,6 +20,7 @@ from kohakuaccel.package import mover as PM
 from kohakuaccel.rt import Runtime
 from kohakutpu.isa import relayout as RL
 from kohakutpu.isa.fields import FIELDS
+from kohakutpu.isa.schedule import late_drains
 from kohakutpu.isa.vecemit import BATCH_BYTES
 from kohakutpu.staging import STAGE_ALIGN
 
@@ -419,6 +420,10 @@ class Holder:
     #: has no walk, because there is no host path left to fall back to.
     device_relayout = True
 
+    #: Whether a cluster's tiles go as one stream with their fused DRAINs moved
+    #: late (isa.schedule.late_drains). False sends each tile as compiled.
+    drain_late = True
+
     def convert(self, addr: int, shape: tuple, before: Layout, after: Layout) -> None:
         """Rewrite a buffer from one byte order into another, in place.
 
@@ -605,20 +610,37 @@ class Holder:
     def dispatch(
         self, payloads: dict, unit: str, name: str = "kernel", nodes=None, acks=None
     ):
-        """Node-dispatched, a vector core already holding the program gets only its
-        DESC words and a RUN (imem.rewrite)."""
-        if unit == "VC" and self.node is not None:
+        """Node-dispatched, a vector core gets only the IMEM and DESC words that
+        change what it holds, and a RUN (imem.rewrite). A cluster gets its
+        instances as one stream, each tile's results draining under the next
+        tile's work (isa.schedule.late_drains)."""
+        if unit == "MG" and acks is None and self.drain_late and self.node is not None:
             coords = tuple(nodes) if nodes is not None else self.machine.coords(unit)
             placed = deal(payloads, coords)
-            # Per device, made on first use: Holder has no __init__ to declare it in.
-            held = self.__dict__.setdefault("_imem", {})
-            payloads = {
-                key: IM.rewrite(
-                    list(words), held.setdefault(tuple(placed[key]), IM.Resident())
-                )
-                for key, words in payloads.items()
-            }
-        return super().dispatch(payloads, unit, name, nodes, acks)
+            per: dict = {}
+            for key in sorted(payloads):
+                per.setdefault(placed[key], []).extend(payloads[key])
+            order = [c for c in coords if c in per]
+            payloads = {(i,): late_drains(per[c]) for i, c in enumerate(order)}
+            nodes = order
+        if unit != "VC" or self.node is None:
+            return super().dispatch(payloads, unit, name, nodes, acks)
+        coords = tuple(nodes) if nodes is not None else self.machine.coords(unit)
+        placed = deal(payloads, coords)
+        # Per device, made on first use: Holder has no __init__ to declare it in.
+        held = self.__dict__.setdefault("_imem", {})
+        cores = {
+            key: held.setdefault(tuple(placed[key]), IM.Resident()) for key in payloads
+        }
+        payloads = {
+            key: IM.rewrite(list(words), cores[key]) for key, words in payloads.items()
+        }
+        try:
+            return super().dispatch(payloads, unit, name, nodes, acks)
+        except Exception:
+            for core in cores.values():
+                core.forget()
+            raise
 
     def _route(self, plan, addr: int) -> str | None:
         """The tier this conversion walks into: `L2`, DRAM, or None for in place.
@@ -694,6 +716,11 @@ class Device(Holder, Runtime):
         self.fields = FIELDS
         if node is not None:
             self.staging = _staging_above(machine, node)
+        # The board names the memory port that streams instructions, if its
+        # memory ports take INST fetches (mag_mem_port flag [5]).
+        port = (getattr(card, "board", None) or {}).get("fetch_port")
+        if port is not None:
+            self.fetch_port = tuple(port)
 
     def dispatch(
         self, payloads: dict, unit: str, name: str = "kernel", nodes=None, acks=None
@@ -743,15 +770,18 @@ class Device(Holder, Runtime):
 
 
 def _staging_above(machine, node) -> Arena | None:
-    """The mesh's staging store above the node's queue region, as an arena.
+    """The mesh's staging store, above the node's queue region if it lives there.
 
-    None when the queue does not live in staging or leaves none of it free.
+    None when the queue leaves none of it free. A queue in DRAM leaves it all.
     """
     base = machine.stage_addr(0)
     start = getattr(node, "base", None)
-    if start is None or not base <= start < base + STAGE_BYTES:
+    if start is None:
         return None
-    start = -(-(start + node.size) // STAGE_ALIGN) * STAGE_ALIGN
+    if base <= start < base + STAGE_BYTES:
+        start = -(-(start + node.size) // STAGE_ALIGN) * STAGE_ALIGN
+    else:
+        start = base
     if start >= base + STAGE_BYTES:
         return None
     return Arena(

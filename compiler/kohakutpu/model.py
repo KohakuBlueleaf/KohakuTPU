@@ -177,6 +177,8 @@ class ClusterUnit(UnitModel):
         ]
         self.acc = None
         self.tile = (0, 0)
+        #: The last emitting sweep's result, which a fused DRAIN writes.
+        self.emitted = None
         self.saturated = 0
         self.clamped: list = []
         self.counts = {"FILL": 0, "GEMM": 0, "DRAIN": 0}
@@ -300,6 +302,10 @@ class ClusterUnit(UnitModel):
         self.tile = (gm, gn)
         self.reading[0] = (f["abank"] * BANK_ENTRIES + f["aoff"], gm * nk)
         self.reading[1] = (f["bbank"] * BANK_ENTRIES + f["boff"], gn * nk)
+        # An emitting sweep hands its sub-tiles out as it finishes them; a fused
+        # DRAIN only waits for them, however much later it comes.
+        if f["emit"]:
+            self.emitted = (got, (gm, gn))
 
     def _drain(self, f: dict, mem: Memory) -> list:
         """Write `n` sub-tiles of the accumulator out as saturating fp16.
@@ -335,8 +341,11 @@ class ClusterUnit(UnitModel):
         """
         if self.acc is None:
             raise ModelError("DRAIN before any GEMM filled the accumulator")
-        gm, gn = self.tile
-        held = self.acc.reshape(gm, LANES, gn, LANES).transpose(0, 2, 1, 3)
+        acc, (gm, gn) = self.acc, self.tile
+        if f["fuse"] and self.emitted is not None:
+            acc, (gm, gn) = self.emitted
+            self.emitted = None
+        held = acc.reshape(gm, LANES, gn, LANES).transpose(0, 2, 1, 3)
         held = held.reshape(gm * gn, LANES * LANES)[: f["n"]]
         over = np.abs(held) > FP16_MAX
         if over.any():
