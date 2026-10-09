@@ -106,6 +106,19 @@ module rv64_noc_mbox #(
         end
     end
 
+`ifdef MBOX_TRACE
+    // Each dispatch: the cycle GO offered it and the cycle the hub took it.
+    reg [31:0] tr_cyc = 32'd0, tr_go = 32'd0;
+    always @(posedge clk) begin
+        tr_cyc <= tr_cyc + 32'd1;
+        if (resetn && cfg_en && (cfg_addr == R_GO) && !tx_valid) tr_go <= tr_cyc;
+        if (resetn && tx_valid && !tx_busy) begin
+            $display("MBOX %0d go %0d taken %0d dst %0d,%0d op %0d", txn - 8'd1,
+                     tr_go, tr_cyc, dst_x, dst_y, arg3[63:60]);
+        end
+    end
+`endif
+
     // ---- inbound completions ----------------------------------------------
     localparam integer CQ_AW = $clog2(CQ_DEPTH);
 

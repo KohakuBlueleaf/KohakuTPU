@@ -184,7 +184,12 @@ module noc_cu_base #(
     // Issue also stops when the signal queue is full: the report returns the
     // dispatch credit, so an instruction executed but unreportable stalls the
     // orchestrator permanently.
+`ifdef CU_HOLD
+    // Sim-only: the card bench's dispatch-free measurement (tests/system/card_v9_2n.v).
+    assign inst_valid = !inst_empty && !in_flight && !sig_full && !card_v9_2n.cu_hold;
+`else
     assign inst_valid = !inst_empty && !in_flight && !sig_full;
+`endif
 
     // TX arbitration. Declared here, not next to the output register, because
     // the state machines above consume these and Verilog needs the declaration

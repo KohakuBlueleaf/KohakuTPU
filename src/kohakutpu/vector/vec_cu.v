@@ -571,11 +571,11 @@ module vec_cu #(
             if (recv_valid && recv_ready) pq_in <= pq_in + 32'd1;
             pq_h  <= halted;
             pq_rw <= (cst == C_RUNW);
-            if (start && (pq_runs < 32'd40)) $display("VRUN %m start %0d", pq_cyc);
-            if (halted && !pq_h && (pq_runs < 32'd40)) $display("VRUN %m halt %0d", pq_cyc);
+            if (start && (pq_runs < 32'd4096)) $display("VRUN %m start %0d", pq_cyc);
+            if (halted && !pq_h && (pq_runs < 32'd4096)) $display("VRUN %m halt %0d", pq_cyc);
             if (exec_done && pq_rw) begin
                 pq_runs <= pq_runs + 32'd1;
-                if (pq_runs < 32'd40) $display("VRUN %m done %0d", pq_cyc);
+                if (pq_runs < 32'd4096) $display("VRUN %m done %0d", pq_cyc);
             end
         end
     end
