@@ -104,13 +104,17 @@ def plan(kernel, m: int, n: int, cores: int, k: int = 0, machine=None) -> tuple:
     while `linear_silu` at the same shape does not cross by K=1152.
     """
     knobs = dict(kernel.signature.knobs)
+    # A kernel with a tiler picks its own tiling when the call names none, so
+    # its defaults are not passed back: naming them would bypass the tiler.
+    tiler = getattr(kernel, "tiler", None)
+    free = {k: v for k, v in knobs.items() if tiler is None or k not in tiler.knobs}
     if kernel.name not in FUSED:
-        return kernel, knobs
+        return kernel, free
     if fused_grid(knobs["gm"], knobs["gn"], m, n, cores):
         return kernel, knobs
     fits = list(_candidates(m, n, cores))
     if not fits:
-        return kernel, knobs
+        return kernel, free
     gm, gn = max(fits, key=lambda pair: _score(*pair, m, n))
     return kernel, {**knobs, "gm": gm, "gn": gn}
 

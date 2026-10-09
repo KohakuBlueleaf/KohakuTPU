@@ -81,7 +81,8 @@ def test_the_shared_fill_of_x_is_GIVEN_UP_and_why():
     x, wg, wu = operands()
     args = [d.tensor(a) for a in (x, wg, wu)]
     one = fills_of(_one_projection, [args[0], args[1]])
-    both = fills_of(geglu, args)
+    # The baseline's tiling, named: `geglu`'s tiler would otherwise pick its own.
+    both = fills_of(geglu, args, gm=8, gn=8, nk=2)
     assert one == 4, one
     assert both == 2 * one, both
 

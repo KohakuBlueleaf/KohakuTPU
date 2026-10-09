@@ -16,6 +16,7 @@ it is one pass over the WHOLE result, and a grid the compiler sizes is what
 
 from kohakuaccel.lang import dims, loop, units
 from kohakutpu.lang import kernel
+from kohakutpu.tiling import MatmulTiler
 
 from kohakutpu import lang as L
 
@@ -49,7 +50,7 @@ def gelu_tanh(v):
     return v * L.recip(L.exp2(inner * (-GELU_IN * LOG2E)) + 1.0)
 
 
-@kernel
+@kernel(tiler=MatmulTiler("M", "K", "N"))
 def linear_silu(
     x=L.In(..., M, K), w=L.In(N, K), y=L.Out(..., M, N), *, gm=8, gn=8, nk=2, fuse=True
 ):
@@ -66,7 +67,7 @@ def linear_silu(
         y[i, j] <<= acc * sigmoid(acc)
 
 
-@kernel
+@kernel(tiler=MatmulTiler("M", "K", "N"))
 def linear_relu(
     x=L.In(..., M, K), w=L.In(N, K), y=L.Out(..., M, N), *, gm=8, gn=8, nk=2, fuse=True
 ):
@@ -80,7 +81,7 @@ def linear_relu(
         y[i, j] <<= (acc + L.absolute(acc)) * 0.5
 
 
-@kernel
+@kernel(tiler=MatmulTiler("M", "K", "N"))
 def linear_gelu(
     x=L.In(..., M, K), w=L.In(N, K), y=L.Out(..., M, N), *, gm=8, gn=8, nk=2, fuse=True
 ):
@@ -92,7 +93,7 @@ def linear_gelu(
         y[i, j] <<= gelu_tanh(acc)
 
 
-@kernel
+@kernel(tiler=MatmulTiler("M", "K", "N"))
 def linear_scale(
     x=L.In(..., M, K),
     w=L.In(N, K),
@@ -112,7 +113,7 @@ def linear_scale(
         y[i, j] <<= acc * s
 
 
-@kernel
+@kernel(tiler=MatmulTiler("M", "K", "N"))
 def linear_bias(
     x=L.In(..., M, K),
     w=L.In(N, K),
@@ -137,7 +138,7 @@ def linear_bias(
         y[i, j] <<= acc + b[j]
 
 
-@kernel
+@kernel(tiler=MatmulTiler("M", "K", "N"))
 def linear_add(
     x=L.In(..., M, K),
     w=L.In(N, K),
@@ -164,7 +165,7 @@ def linear_add(
     y <<= h + b
 
 
-@kernel
+@kernel(tiler=MatmulTiler("M", "K", "N"))
 def linear_add_relu(
     x=L.In(..., M, K),
     w=L.In(N, K),
@@ -189,7 +190,7 @@ def linear_add_relu(
     y <<= (t + L.absolute(t)) * 0.5
 
 
-@kernel
+@kernel(tiler=MatmulTiler("M", "K", "N"))
 def linear_add_silu(
     x=L.In(..., M, K),
     w=L.In(N, K),
@@ -212,7 +213,7 @@ def linear_add_silu(
     y <<= t * sigmoid(t)
 
 
-@kernel
+@kernel(tiler=MatmulTiler("M", "K", "N"))
 def linear_add_gelu(
     x=L.In(..., M, K),
     w=L.In(N, K),
@@ -236,7 +237,7 @@ def linear_add_gelu(
     y <<= gelu_tanh(h + b)
 
 
-@kernel
+@kernel(tiler=MatmulTiler("M", "K", "N"))
 def linear_gate_add(
     x=L.In(..., M, K),
     w=L.In(N, K),

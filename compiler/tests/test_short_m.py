@@ -293,11 +293,12 @@ def test_the_flag_reaches_the_call_and_the_cache_keeps_them_apart():
     dev = SimDevice(size=ARENA)
     held = [dev.tensor(x), dev.tensor(w), dev.tensor(b)]
 
-    assert _elementwise(K.linear_add.plan(*held)) == 2
+    tile = {"gm": 8, "gn": 8, "nk": 2}
+    assert _elementwise(K.linear_add.plan(*held, **tile)) == 2
     dev.regrid = True
-    assert _elementwise(K.linear_add.plan(*held)) == 24
+    assert _elementwise(K.linear_add.plan(*held, **tile)) == 24
     dev.regrid = False
-    assert _elementwise(K.linear_add.plan(*held)) == 2
+    assert _elementwise(K.linear_add.plan(*held, **tile)) == 2
 
 
 @pytest.mark.parametrize(("first", "second"), [(True, False), (False, True)])

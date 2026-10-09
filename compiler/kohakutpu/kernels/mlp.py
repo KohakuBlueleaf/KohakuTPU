@@ -14,6 +14,7 @@ reset destroys the first tile.
 
 from kohakuaccel.lang import dims, loop, units
 from kohakutpu.lang import kernel
+from kohakutpu.tiling import MatmulTiler
 
 from kohakutpu import lang as L
 
@@ -40,7 +41,7 @@ def _act(v, kind: str | None):
     raise ValueError(f"act must be silu, gelu, relu or None, not {kind!r}")
 
 
-@kernel
+@kernel(tiler=MatmulTiler("M", "K", "F"))
 def mlp(
     x=L.In(..., M, K),
     up=L.In(F, K),
@@ -73,7 +74,7 @@ def mlp(
         y[i, j] <<= acc
 
 
-@kernel
+@kernel(tiler=MatmulTiler("M", "K", "N"))
 def geglu(
     x=L.In(..., M, K),
     wg=L.In(N, K),
@@ -116,7 +117,7 @@ def geglu(
         y[e] <<= gate[e] * up[e]
 
 
-@kernel
+@kernel(tiler=MatmulTiler("M", "K", "N"))
 def swiglu(
     x=L.In(..., M, K),
     wg=L.In(N, K),

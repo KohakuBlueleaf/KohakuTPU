@@ -29,7 +29,7 @@ MACHINE = MachineSpec(
 
 #: SHA-256 over every flit of every kernel below; the byte-identity claim.
 #: With MXFP7 fills (128-B entry steps) and constant writes that read no buffer.
-BASELINE = "cfd57aedd248dcd61b6df2469086e8148851efd6d825777f3dff152b18feca91"
+BASELINE = "d532a8e07be9aa7e82367cd9a5136eb2538b8667bfa8be420631479bd033d8aa"
 
 
 class Shaped:
@@ -75,7 +75,7 @@ def encoded(fn, bound, knobs):
 
 #: BASELINE with the fused drain on: each last GEMM before a memory DRAIN carries
 #: emit=1 and its address.
-FUSED = "05aa453823c07833dcb633378384c6990903e65a661e97d44bd7c6d19b920f0c"
+FUSED = "4ca595d5863f32f7c597a5a96944921088e95ca1e8e5b32276cd44fe8eb46039"
 
 
 def library_digest() -> str:

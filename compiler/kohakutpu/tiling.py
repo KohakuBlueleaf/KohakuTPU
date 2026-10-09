@@ -29,8 +29,13 @@ FILL_CYCLES = 50.0  # a FILL's descriptor round trip before its first entry
 ISSUE_CYCLES = 0.5  # one 4x4x32 sub-tile issue: one mat2x cycle
 SWEEP_CYCLES = 12.0  # a sweep's cascade and accumulator tail
 DRAIN_CYCLES = 1.4  # one sub-tile written back after the last sweep
-WORD_CYCLES = 600.0  # the dispatcher's cost per instruction word (-O2)
+#: The dispatcher's cost per instruction word while FILLs stream: words reach a
+#: cluster ~780 apart (MX_SEQ_TRACE, v9 256^3), 325 with the mesh idle.
+WORD_CYCLES = 780.0
 PACKAGE_CYCLES = 2200.0  # a package's header, bindings and final barrier
+#: Fill streams the memory side serves at once. MEASURED 1 on the card models:
+#: v9's four clusters, two per MAG port, filled strictly one after another.
+MEM_PATHS = 1
 
 
 @dataclass(frozen=True)
@@ -58,8 +63,14 @@ def cost(
 
     Per K step one bank fills (A then B) while the other is swept, so a step
     costs the larger of the two; the first fill and the last sweep are not
-    hidden, and the drain adds its per-sub-tile tail after the last sweep. Every word passes the
-    dispatcher, and one unit's words are all issued before the next unit's.
+    hidden, and the drain adds its per-sub-tile tail after the last sweep.
+
+    ONE dispatcher sends every word serially, instances dealt round-robin: an
+    instance begins once its first word is out and its unit is free, and ends
+    no sooner than its last word plus the final sweep and drain (v9, 256^3: a
+    per-wave charge priced 16 instances at 19.7k; they ran 55k). Every entry
+    of every instance crosses the memory side's `MEM_PATHS` streams, so the
+    plan ends no sooner than all of them plus one tail.
     """
     steps = ceil(kb, nk)
     fill = 2 * FILL_CYCLES + (gm + gn) * nk * ENTRY_CYCLES
@@ -67,12 +78,19 @@ def cost(
     # (measured: nk=1 sweeps as long as nk=2, 72,250 vs 39,440 at 256x512x256).
     sweep = gm * gn * (nk + nk % 2) * ISSUE_CYCLES + SWEEP_CYCLES
     words = 3 * steps + 1
-    run = fill + (steps - 1) * max(fill, sweep) + sweep + gm * gn * DRAIN_CYCLES
-    instance = max(run, words * WORD_CYCLES)
+    tail = sweep + gm * gn * DRAIN_CYCLES
+    run = fill + (steps - 1) * max(fill, sweep) + tail
     instances = batch * ceil(gy, gm) * ceil(gx, gn)
-    waves = ceil(instances, units)
-    issue_lag = (min(instances, units) - 1) * words * WORD_CYCLES
-    total = PACKAGE_CYCLES + waves * instance + issue_lag
+    free = [0.0] * min(instances, units)
+    end = 0.0
+    for i in range(instances):
+        u = i % units
+        begin = max(free[u], (i * words + 1) * WORD_CYCLES)
+        free[u] = max(begin + run, (i + 1) * words * WORD_CYCLES + tail)
+        end = max(end, free[u])
+    entries = instances * steps * (gm + gn) * nk
+    end = max(end, entries * ENTRY_CYCLES / MEM_PATHS + tail)
+    total = PACKAGE_CYCLES + end
     return Tiling(gm, gn, nk, total, instances * words)
 
 

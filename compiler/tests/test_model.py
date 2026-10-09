@@ -455,6 +455,7 @@ def test_a_node_addressed_drain_reaches_the_core_that_reads_it():
     """The fused epilogue's whole premise: the tile arrives without DRAM."""
     a, b = inputs(2, (32, 64), 0.3), inputs(3, (64, 64), 0.3)
     dev = SimDevice()
-    linear_silu(dev.tensor(a), dev.tensor(b))
+    # Tiles small enough to fuse, named: the tiler's would be staged instead.
+    linear_silu(dev.tensor(a), dev.tensor(b), gm=8, gn=8, nk=2)
     assert sum(u.counts["RUN"] for u in dev.cores) == 2
     assert sum(u.counts["DRAIN"] for u in dev.clusters) == 2
