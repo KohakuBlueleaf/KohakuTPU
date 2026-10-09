@@ -1,0 +1,35 @@
+# Flash attention, one query tile against every key tile: the online softmax in
+# base 2 (q arrives scaled by log2(e) / sqrt(d)), P quantised by the mover
+# before P @ v, O rescaled on the vector core each step. q, k and v^T arrive
+# packed in MXFP7 by the host.
+level l3
+
+program attention(q: mx7[H, L, 64], k: mx7[H, S, 64], vt: mx7[H, 64, S])
+    tile bq = 32
+    tile bk = 64
+    o = output                                  : f16[H, L, 64]
+    map h in 0..H, i in tiles(L, bq)
+        m = carry -inf                          : f32[bq]
+        l = carry 0.0                           : f32[bq]
+        acc = carry 0.0                         : f32[bq, 64]
+        scan j in tiles(S, bk)
+            s = mmt q[h, i, :], k[h, j, :]      : f16[bq, bk]
+            mj = reduce.max s axis=1            : f32[bq]
+            mn = max m, mj                      : f32[bq]
+            d = sub m, mn                       : f32[bq]
+            corr = exp2 d                       : f32[bq]
+            sm = sub s, mn[:, *]                : f32[bq, bk]
+            p = exp2 sm                         : f16[bq, bk]
+            ps = reduce.sum p axis=1            : f32[bq]
+            lc = mul l, corr                    : f32[bq]
+            ln = add lc, ps                     : f32[bq]
+            pq = quantise p                     : mx7[bq, bk]
+            pv = mmt pq, vt[h, :, j]            : f16[bq, 64]
+            ac = mul acc, corr[:, *]            : f32[bq, 64]
+            an = add ac, pv                     : f16[bq, 64]
+            next m = mn
+            next l = ln
+            next acc = an
+        il = inv l                              : f32[bq]
+        oi = mul acc, il[:, *]                  : f16[bq, 64]
+        store o[h, i, :] = oi

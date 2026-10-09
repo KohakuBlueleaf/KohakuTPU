@@ -1,0 +1,37 @@
+# y = x @ w^T + bias, and the same with silu fused after it: one cluster tile
+# a (bm, bn) block, the epilogue on the vector cores. x and w arrive packed in
+# MXFP7 by the host.
+level l3
+
+fn silu(x: f16[M, N]) -> f16[M, N]
+    t = mul x, -1.4426950408889634              : f32[M, N]
+    e = exp2 t                                  : f32[M, N]
+    d = add e, 1.0                              : f32[M, N]
+    r = inv d                                   : f32[M, N]
+    y = mul x, r                                : f16[M, N]
+    return y
+
+program linear(x: mx7[M, K], w: mx7[N, K], bias: f16[N])
+    tile bm = 32
+    tile bn = 32
+    y = output                                  : f16[M, N]
+    map i in tiles(M, bm), j in tiles(N, bn)
+        c = mmt x[i, :], w[j, :]                : f16[bm, bn]
+        r = add c, bias[j]                      : f16[bm, bn]
+        store y[i, j] = r
+
+program linear_silu(x: mx7[M, K], w: mx7[N, K])
+    tile bm = 64
+    tile bn = 64
+    y = output                                  : f16[M, N]
+    map i in tiles(M, bm), j in tiles(N, bn)
+        c = mmt x[i, :], w[j, :]                : f16[bm, bn]
+        a = inline silu(c)
+        store y[i, j] = a
+
+program silu_call(x: f16[M, N])
+    tile bm = 16
+    y = output                                  : f16[M, N]
+    map i in tiles(M, bm)
+        a = call silu(x[i, :])                  : f16[bm, N]
+        store y[i, :] = a

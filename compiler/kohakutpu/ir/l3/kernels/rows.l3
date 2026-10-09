@@ -1,0 +1,34 @@
+# Row kernels on the vector cores: softmax and layernorm, `br` rows a step.
+level l3
+
+program softmax(x: f16[R, C])
+    tile br = 8
+    y = output                                  : f16[R, C]
+    map i in tiles(R, br)
+        m = reduce.max x[i, :] axis=1           : f32[br]
+        d = sub x[i, :], m[:, *]                : f32[br, C]
+        t = mul d, 1.4426950408889634           : f32[br, C]
+        e = exp2 t                              : f32[br, C]
+        s = reduce.sum e axis=1                 : f32[br]
+        r = inv s                               : f32[br]
+        p = mul e, r[:, *]                      : f16[br, C]
+        store y[i, :] = p
+
+program layernorm(x: f16[R, C], g: f16[C], b: f16[C])
+    tile br = 8
+    y = output                                  : f16[R, C]
+    map i in tiles(R, br)
+        s1 = reduce.sum x[i, :] axis=1          : f32[br]
+        sq = mul x[i, :], x[i, :]               : f32[br, C]
+        s2 = reduce.sum sq axis=1               : f32[br]
+        rc = inv C                              : f32
+        mu = mul s1, rc                         : f32[br]
+        ex2 = mul s2, rc                        : f32[br]
+        mu2 = mul mu, mu                        : f32[br]
+        var = sub ex2, mu2                      : f32[br]
+        ve = add var, 1e-05                     : f32[br]
+        rs = rsqrt ve                           : f32[br]
+        d = sub x[i, :], mu[:, *]               : f32[br, C]
+        n = mul d, rs[:, *]                     : f32[br, C]
+        z = fma n, g, b                         : f16[br, C]
+        store y[i, :] = z
