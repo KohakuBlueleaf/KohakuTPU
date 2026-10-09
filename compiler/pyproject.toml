@@ -7,7 +7,7 @@ name = "kohakuaccel-compiler"
 version = "0.1.0"
 description = "Compiler framework for KohakuAccel machines"
 requires-python = ">=3.13"
-dependencies = ["numpy>=1.26"]
+dependencies = ["numpy>=1.26", "lark>=1.2"]
 
 [project.optional-dependencies]
 tinygrad = ["tinygrad>=0.13"]
@@ -22,3 +22,5 @@ namespaces = true
 # The playground is one HTML file served by `python -m kohakutpu.viz`.
 [tool.setuptools.package-data]
 "kohakutpu.viz" = ["*.html"]
+"kohakuaccel.text" = ["*.lark"]
+"kohakutpu.ir.l3" = ["kernels/*.l3"]

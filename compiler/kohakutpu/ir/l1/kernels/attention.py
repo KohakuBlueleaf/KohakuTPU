@@ -28,12 +28,12 @@ of 32 keys, row by row) with the 4x4 granule transpose of
 from functools import cache
 
 import numpy as np
-from kohakuaccel.package import mover as PM
 from kohakutpu.hw import vector as V
 from kohakutpu.ir.l1 import vsched
 from kohakutpu.ir.l1.cluster import Drain, Fill, Gemm
 from kohakutpu.ir.l1.kernels.matmul import ENTRY, SUBTILE
 from kohakutpu.ir.l1.kernels.stream import walk_offsets
+from kohakutpu.ir.l1.mover import Quantise
 from kohakutpu.ir.l1.vector import (
     Alu,
     Bar,
@@ -270,7 +270,7 @@ def attention(
         prog.wait(mg, tok)
         prog.send(vc, *run_ops(gm, "softmax", s_at))
         prog.wait(vc)
-        prog.move(PM.convert(p16_at, p7_at, gm * NK))
+        prog.move(Quantise(p16_at, p7_at, gm * NK))
         prog.send(
             mg,
             Fill(p7_at, gm * NK, sel=0, fbank=1),

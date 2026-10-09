@@ -10,7 +10,9 @@ supplies the unit op types and an optional per-unit-type lowering;
 KohakuTPU's are in [../projects/kohakutpu/ir/l1.md](../projects/kohakutpu/ir/l1.md).
 
 Code: `compiler/kohakuaccel/ir/l1/program.py` (`Program`); the pass pipeline's
-staged-flit form is `kohakuaccel.ir.l1.ProgramIR` (`staged.py`).
+staged-flit form is `kohakuaccel.ir.l1.ProgramIR` (`staged.py`). A program keeps
+the ops it was given beside their words, so it prints as text
+([ir-text.md](ir-text.md) §3).
 
 ## 1. A program
 
@@ -20,7 +22,7 @@ staged-flit form is `kohakuaccel.ir.l1.ProgramIR` (`staged.py`).
 | `wait(unit)` | hold the node until `unit` has completed every word sent to it since its last wait |
 | `mark(unit)` / `wait(unit, token)` | a point in `unit`'s stream; hold the node until everything sent to `unit` up to the mark has completed, whatever was sent after it (revision 2: a cross-unit dependence per tile, with the producer already holding its next work) |
 | `barrier()` | hold the node until every unit has |
-| `move(writes)` | one mover step (`kohakuaccel.package.mover`): a barrier on both sides |
+| `move(*ops)` | one mover step (`kohakuaccel.package.mover`): ops with `writes()` (the project's mover ops), or one list of raw `(register, value)` writes; a barrier on both sides |
 | `units(kind)` | the coordinates of every unit of `kind` |
 
 ## 2. Semantics

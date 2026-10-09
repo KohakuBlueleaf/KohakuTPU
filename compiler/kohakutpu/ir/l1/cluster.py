@@ -39,6 +39,11 @@ class Gemm:
     emit: bool = False
     addr: int = 0
 
+    def __post_init__(self) -> None:
+        # No word carries `addr` without `emit`: one GEMM, one value.
+        if not self.emit:
+            object.__setattr__(self, "addr", 0)
+
     def flits(self) -> list[int]:
         if not ISA.legal_nk(self.nk):
             raise ValueError(

@@ -1,0 +1,35 @@
+# A KohakuTPU schedule written by hand; test_l2_text.transcribed() is the same
+# schedule in Python. silu on both cores, P quantised by the mover, then one
+# matmul tile in a second package.
+level l2
+machine "kohakutpu-l1"
+unit mg0 MG (1, 0)
+unit vc0 VC (1, 2)
+unit vc1 VC (2, 2)
+
+buffer x Flat(n=8192) at 0x8010_0000
+buffer y Flat(n=8192) at 0x8010_4000
+buffer a MxA(rows=32, k=64, gm=8, nk=2) at 0x8010_8000
+buffer b MxB(rows=64, k=64, gm=16, nk=2) at 0x8010_8800
+buffer c Tiles(rows=32, cols=64, gm=8, gn=16) at 0x8010_9800
+buffer p7 at 0x8010_a800 bytes=2K
+
+package 0
+    item vec_stream on vc0
+        with body=("silu", 3, 2) words=128 runs=2 step=4096 srcs=(x,) dst=y
+        read x[0 : 0x2000]
+        write y[0 : 0x2000]
+    item vec_stream on vc1
+        with body=("silu", 3, 2) words=128 runs=2 step=4096 srcs=(x+0x2000,) dst=y+0x2000
+        read x[0x2000 : 0x4000]
+        write y[0x2000 : 0x4000]
+    item quantise on mover
+        with src=y dst=p7 entries=64
+        read y[0 : 2048]
+        write p7
+
+package 1
+    item gemm_tile on mg0
+        with a_at=a b_at=b c_at=c gm=8 gn=16 nk=2 chunks=1 late=true
+        read a, b
+        write c

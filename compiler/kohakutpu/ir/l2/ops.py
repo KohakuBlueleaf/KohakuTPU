@@ -271,7 +271,7 @@ def attention(
         3 * span, gm * AT.NK * ENTRY
     )
     kv = AT.COLS * AT.NK * ENTRY
-    local = s.buffer(f"attn@{vc}", 512 * 32, space=("local", tuple(vc)))
+    local = s.buffer(f"attn_{vc[0]}_{vc[1]}", 512 * 32, space=("local", tuple(vc)))
     state = local.view()
     run = {"gm": gm, "p16_at": p16_v.address, "o_at": o.base, "idx_at": idx.base}
     out = [

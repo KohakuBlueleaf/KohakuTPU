@@ -1,0 +1,53 @@
+# Every KohakuTPU L1 word, written by hand; test_l1_text.transcribed() is the
+# same program in Python.
+level l1
+machine "kohakutpu-l1"
+unit mg0 MG (1, 0)
+unit mg1 MG (1, 1)
+unit vc0 VC (1, 2)
+
+image kern
+    seti s0, 128
+    seti k3, 0x3f_8000
+    setvl s0
+    setmode tree
+    vld v1, a1, 8
+    vld v2, a1, 16 dt=f32
+    vadd v3, v1, s2, k3 pr=1 pm=2
+    vexp2 v3, v3, v3, v3
+    vshuf v4, v3, s5 pr=2
+    loop s1, 2
+    vst v4, a2, 0
+    vfill a1, 256
+    bar
+    vdrain a3, 0 node=(2, 2) buf=1 signal=1
+    vdrain a2, 64
+    halt
+
+program main
+    send mg0
+        fill A0 <- 0x8010_0000 n=128
+        fill B1 <- 0x8010_1000 n=64 l1=64
+    send mg0
+        gemm 8x8x2 a=A0 b=B1
+        drain 0x8010_2000 n=64
+    send mg1
+        gemm 8x8x2 acc a=A1 b=B0 aoff=16 boff=4 emit=0x8010_3000
+    t0 = mark mg1
+    send mg1
+        drain 0x8010_3000 fused n=64 to=(1, 2) flags=1 ack=(0, 1)
+    wait mg1 upto t0
+    send vc0
+        load kern at 4
+        desc a1 0x8010_0000
+        dims a1 (1, 8) (32, 4)
+        dims a2
+        run 4
+    wait vc0
+    move
+        quantise 0x8010_0000 -> 0x8010_4000 entries=512
+        copy 0x8010_4000 -> 0x8010_8000 bytes=4096
+    move
+        write 0x10 = 1
+        write 0x14 = 0xff
+    barrier

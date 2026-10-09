@@ -19,6 +19,20 @@ V9_MG = ((1, 0), (1, 1), (2, 0), (2, 1))
 V9_VC = ((1, 2), (2, 2))
 
 
+def machine(mg=V9_MG, vc=V9_VC, agent=(0, 1)) -> MachineSpec:
+    """The machine an L1 model runs: the v9 die's units by default."""
+    return MachineSpec(
+        name="kohakutpu-l1",
+        units={"MG": tuple(mg), "VC": tuple(vc)},
+        inst_depth=512,
+        agent=agent,
+    )
+
+
+#: The machines a text may name (`machine "NAME"`), by name.
+MACHINES = {"kohakutpu-l1": machine()}
+
+
 class L1Model:
     def __init__(self, mg=V9_MG, vc=V9_VC, agent=(0, 1), size: int = 1 << 24) -> None:
         cores = {c: VectorUnit() for c in vc}
@@ -27,12 +41,7 @@ class L1Model:
             unit.peers = cores
         units.update(cores)
         self.card = Mesh(units=units)
-        self.machine = MachineSpec(
-            name="kohakutpu-l1",
-            units={"MG": tuple(mg), "VC": tuple(vc)},
-            inst_depth=512,
-            agent=agent,
-        )
+        self.machine = machine(mg, vc, agent)
         self.mem = self.card.mem
         self.node = LocalNode(
             SimMailbox(self.card),

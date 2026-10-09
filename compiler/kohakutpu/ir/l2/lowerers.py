@@ -5,7 +5,6 @@ object a unit, its state kept across items, chunks out
 from functools import cache
 
 from kohakuaccel.ir.l2.lower import Chunk
-from kohakuaccel.package import mover as PM
 from kohakutpu.ir.l1 import vsched
 from kohakutpu.ir.l1.cluster import Drain, Fill, Gemm
 from kohakutpu.ir.l1.kernels import attention as AT
@@ -15,6 +14,7 @@ from kohakutpu.ir.l1.kernels import silu as SI
 from kohakutpu.ir.l1.kernels import softmax as SM
 from kohakutpu.ir.l1.kernels import stream
 from kohakutpu.ir.l1.kernels.matmul import ENTRY, fills
+from kohakutpu.ir.l1.mover import Copy, Quantise
 from kohakutpu.isa.cluster import ISA
 
 #: Entries a cluster fill moves a cycle when the four share memory (~30 B/cycle
@@ -305,10 +305,12 @@ class VectorLowerer:
 
 
 def mover(item) -> list:
-    """A mover item's register writes."""
+    """A mover item's L1 mover ops."""
+    p = item.params
     if item.kind == "quantise":
-        p = item.params
-        return PM.convert(p["src"], p["dst"], p["entries"])
+        return [Quantise(p["src"], p["dst"], p["entries"])]
+    if item.kind == "copy":
+        return [Copy(p["src"], p["dst"], p["nbytes"])]
     raise ValueError(f"no mover lowering for {item.kind!r}")
 
 

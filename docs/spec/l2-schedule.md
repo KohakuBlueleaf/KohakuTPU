@@ -21,8 +21,10 @@ kept until its callers are gone.
 |---|---|
 | `Buffer(name, nbytes, layout, space)` | bytes with a project LAYOUT tag (opaque here); `space` is `"mem"` (an address, given or allocated) or a unit's local storage `("local", coord)` |
 | `View(buffer, offset, nbytes)` | a byte range of a buffer: what a work item reads or writes |
-| `Item(kind, unit, params, reads, writes, at, package)` | one unit of work of a project KIND on one unit TYPE, its views, its placement `at` (a coordinate, or None: the compiler places it) and its package |
-| `Schedule` | the buffers and the items IN SEQUENCE ORDER |
+| `Item(kind, unit, params, reads, writes, at, package)` | one unit of work of a project KIND on one unit TYPE, its views, its placement `at` (a coordinate, or None: the compiler places it) and its package; a parameter is an int, a float, a string, a bool, None or a tuple of those (a list is kept as a tuple) |
+| `Schedule` | the buffers and the items IN SEQUENCE ORDER, and the `machine` its placement names when known (a schedule read from text knows it) |
+
+Its text is [ir-text.md](ir-text.md) §4.
 
 The `"mover"` unit type is the node's mover: its items lower to mover steps.
 
@@ -69,5 +71,5 @@ One L1 `Program` per package:
    holds its next work before the node blocks.
 
 The compiler emits correct, near-optimal L1. Optimality inside a unit's stream
-beyond what its lowerer knows is the L1 -> L1 optimizer's (plan only:
-`.plan/compiler/rebuild.md`).
+beyond what its lowerer knows is the L1 -> L1 optimizer's, a separate pass
+(planned, not built).

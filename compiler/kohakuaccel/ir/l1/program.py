@@ -22,7 +22,8 @@ from kohakuaccel.package.units import machine_units, unit_types
 @dataclass
 class Program:
     machine: object
-    #: ``("send", coord, words)`` / ``("wait", coord)`` / ``("barrier",)`` / ``("move", writes)``
+    #: ``("send", coord, words, ops)`` / ``("mark", coord, token)`` /
+    #: ``("wait", coord, token)`` / ``("barrier",)`` / ``("move", writes, ops)``
     steps: list = field(default_factory=list)
     #: unit type -> ``f(words, state, coord) -> words``; see the module docstring.
     lowerings: ClassVar[dict] = {}
@@ -30,7 +31,7 @@ class Program:
     def send(self, coord, *ops) -> "Program":
         words = [w for op in ops for w in op.flits()]
         if words:
-            self.steps.append(("send", tuple(coord), words))
+            self.steps.append(("send", tuple(coord), words, tuple(ops)))
         return self
 
     def mark(self, coord) -> int:
@@ -57,8 +58,16 @@ class Program:
         self.steps.append(("barrier",))
         return self
 
-    def move(self, writes) -> "Program":
-        self.steps.append(("move", list(writes)))
+    def move(self, *ops) -> "Program":
+        """A mover step: ops with ``writes()`` (register writes), a list of
+        them, or one list of raw ``(register, value)`` writes."""
+        if len(ops) == 1 and isinstance(ops[0], list):
+            if all(isinstance(w, tuple) for w in ops[0]):
+                self.steps.append(("move", list(ops[0]), ()))
+                return self
+            ops = tuple(ops[0])
+        writes = [w for op in ops for w in op.writes()]
+        self.steps.append(("move", writes, tuple(ops)))
         return self
 
     def units(self, kind: str) -> list:

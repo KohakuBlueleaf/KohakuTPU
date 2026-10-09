@@ -9,6 +9,11 @@ class ScheduleError(ValueError):
     """A schedule the checker refuses."""
 
 
+def _frozen(v):
+    """A parameter value with every list a tuple: one value, one form."""
+    return tuple(map(_frozen, v)) if isinstance(v, (list, tuple)) else v
+
+
 @dataclass(eq=False)
 class Buffer:
     """Bytes with a project layout tag. `space` is ``"mem"`` or a unit's local
@@ -69,10 +74,12 @@ class Item:
 
 @dataclass
 class Schedule:
-    """Buffers and the items in sequence order."""
+    """Buffers and the items in sequence order; `machine`, when known, the one
+    its placement names."""
 
     buffers: list = field(default_factory=list)
     items: list = field(default_factory=list)
+    machine: object = None
 
     def buffer(self, name, nbytes, layout=None, space="mem", base=None) -> Buffer:
         b = Buffer(name, nbytes, layout, space, base)
@@ -86,7 +93,7 @@ class Schedule:
             Item(
                 kind,
                 unit,
-                dict(params or {}),
+                {k: _frozen(v) for k, v in (params or {}).items()},
                 tuple(reads),
                 tuple(writes),
                 None if at is None else tuple(at),
