@@ -1492,6 +1492,12 @@ HARNESS = {
     "rv64_node_pair",
     "rv64_pe_pair",
     "card_v8t8_2n",
+    "card_v9_2n",
+    "card_v9_1n",
+    "card_v9x6_2n",
+    "card_v9x8_2n",
+    "card_v9x6_1n",
+    "card_v9x8_1n",
 }
 RV64_COMMON = ["src/kohakuaccel/common/kohaku_sdpram.v"]
 
@@ -2183,6 +2189,27 @@ BENCHES["card_v8t8_2n"] = (
     gen_card.image_sources("v8t8", "ktpu_sim_1x1_1c1v_1m_nol2_pump")
     + ["tests/system/card_v8t8_2n.v"],
 )
+# The v9 card: dies 0 and 1 hold the 2x1, 4+2 mesh (gen_card.py --ver v9).
+BENCHES["card_v9_2n"] = (
+    "card_v9_2n",
+    gen_card.image_sources("v9") + ["tests/system/card_v9_2n.v"],
+)
+# The v9 card with one compute die (die 0): half the simulated mesh logic.
+BENCHES["card_v9_1n"] = (
+    "card_v9_1n",
+    gen_card.image_sources("v9") + ["tests/system/card_v9_1n.v"],
+)
+# Cluster-count scaling: the v9 card with 6+2 / 8+2 dies on a 2x2 router grid.
+for _n in (6, 8):
+    for _d in (1, 2):
+        BENCHES[f"card_v9x{_n}_{_d}n"] = (
+            f"card_v9x{_n}_{_d}n",
+            [s for s in gen_card.image_sources("v9") if "2x1_4c2v" not in s]
+            + [
+                f"src/kohakutpu/top/generated/ktpu_ship_2x2_{_n}c2v_1m_nol2_pump.v",
+                f"tests/system/card_v9x{_n}_{_d}n.v",
+            ],
+        )
 
 # multimesh_v8 tops -- lint-only entries (top = the generated pump module).
 for _v8top in (

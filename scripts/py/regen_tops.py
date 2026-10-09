@@ -102,6 +102,24 @@ MANIFEST = [
         (True, False, False),
         True,
     ),
+    # multimesh_v9: the v8 node under 4+2 on a 2x1 router grid, every die.
+    (
+        "ktpu_ship_2x1_4c2v_1m_nol2",
+        "mesh_2x1_4+2.txt",
+        True,
+        True,
+        (True, False, False),
+        True,
+    ),
+    # Cluster-count scaling on the v9 node: 6+2 is the v8 die above; 8+2 here.
+    (
+        "ktpu_ship_2x2_8c2v_1m_nol2",
+        "mesh_2x2_8+2.txt",
+        True,
+        True,
+        (True, False, False),
+        True,
+    ),
     # The simulated card's die: the v8t8 node and port surface around one
     # matmul cluster and one vector core (gen_card.py --sim-mesh).
     (

@@ -1,0 +1,5 @@
+# v9: 4+2 on TWO routers, both fully packed. Each router carries two clusters,
+# one vector core and one MAG port, so the two ports serve equal halves.
+xxx mat mat xxx
+mag mat mat mag
+xxx vec vec xxx
