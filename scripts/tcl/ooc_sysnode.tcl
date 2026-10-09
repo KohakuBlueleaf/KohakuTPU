@@ -46,6 +46,7 @@ read_verilog [list \
     [file join $root src kohakuaccel common sb_skid.v] \
     [file join $root src kohakuaccel common kohaku_sdpram.v] \
     [file join $root src kohakuaccel common kohaku_sdpram_be.v] \
+    [file join $root src kohakuaccel common kohaku_mux.v] \
     [file join $root src kohakuaccel noc ctrl noc_orchestrator.v] \
     [file join $root src kohakuaccel noc endpoint noc_cu_base.v] \
     [file join $root src kohakutpu transform mx_quant.v] \

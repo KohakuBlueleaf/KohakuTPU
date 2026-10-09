@@ -532,9 +532,11 @@ module mag_mem_port #(
     );
     wire take_rd = take_rd_e || take_rd_p;
 
+    // 16, not PR_MAX: xpm_fifo_sync refuses a depth under 16 (XPM_FIFO 1-3, a
+    // synthesis error the simulators do not raise). `pr_cnt` still caps it at 8.
     sync_fifo #(
         .DATA_WIDTH  (2 * POS_WIDTH + 8),
-        .FIFO_DEPTH  (PR_MAX),
+        .FIFO_DEPTH  ((PR_MAX < 16) ? 16 : PR_MAX),
         .MEMORY_TYPE ("distributed")
     ) u_prq (
         .clk       (clk),
