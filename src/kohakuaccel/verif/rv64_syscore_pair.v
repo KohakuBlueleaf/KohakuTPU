@@ -101,7 +101,7 @@ module rv64_syscore_pair #(
         .cp_rvalid(a_rvalid), .cp_rready(a_rready),
         .mv_cfg_en(), .mv_cfg_addr(), .mv_cfg_data(),
         .mv_busy(1'b0), .mv_fault(4'd0), .mv_done(32'd0),
-        .db_en(), .db_addr(), .db_data(), .db_status(64'd0),
+        .db_en(), .db_addr(), .db_data(), .db_status(64'd0), .db_sig(64'd0),
         .irq_summary(1'b0), .running(),
         .dbg_console_we(a_console_we), .dbg_console(a_console),
         .dbg_cycles(a_cycles), .dbg_retired(a_retired)
@@ -124,7 +124,7 @@ module rv64_syscore_pair #(
         .cp_rvalid(b_rvalid), .cp_rready(b_rready),
         .mv_cfg_en(), .mv_cfg_addr(), .mv_cfg_data(),
         .mv_busy(1'b0), .mv_fault(4'd0), .mv_done(32'd0),
-        .db_en(), .db_addr(), .db_data(), .db_status(64'd0),
+        .db_en(), .db_addr(), .db_data(), .db_status(64'd0), .db_sig(64'd0),
         .irq_summary(1'b0), .running(),
         .dbg_console_we(b_console_we), .dbg_console(b_console),
         .dbg_cycles(b_cycles), .dbg_retired(b_retired)

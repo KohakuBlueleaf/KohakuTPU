@@ -552,10 +552,13 @@ wrong.
 
 ### Where a cross-mesh write lands
 
-The processor's own port is **local**: a load or store reaches this mesh's
-staging, this mesh's DRAM, and no other mesh's anything. Reads never cross a
-link. Moving data to another mesh is the mover's job, and the destination
-address decides where it arrives:
+A **load** is local: it reaches this mesh's staging and DRAM and no other
+mesh's anything. Reads never cross a link. A **store** whose address names
+another mesh (`[37:36]`) leaves on the interlink as a posted one-word write with
+its byte strobes, and its write response comes back once the word is on the
+link ([control-registers §7.4](../../../spec/control-registers.md#74-the-interlink-window)).
+Bulk data is the mover's job. Either way the destination address decides where
+it arrives:
 
 | a remote write whose address is | lands in |
 |---|---|
@@ -567,11 +570,10 @@ a staging address carries meaning above bit 32 — the mesh field selects whose
 store — so truncating it would drop the very bits that named the destination.
 A DRAM address does not, so its low 32 bits are the whole of it.
 
-**Nothing about a cross-mesh write is ordered against a doorbell by itself.**
-The rule that makes a write-then-announce handoff sound — wait for the mover to
-report idle *before* ringing, because the ring can otherwise overtake the burst
-— is [the interlink doorbell's](integration.md#the-interlink-doorbell), and it
-is the one part of this a program has to get right.
+**A plain ring is not ordered against a cross-mesh write.** A **fenced** ring
+waits until the mover is idle and every remote write of this node's is on the
+link, which makes it the release for them; a plain ring needs the mover polled
+idle first ([the interlink doorbell](integration.md#the-interlink-doorbell)).
 
 The node owns this behaviour rather than the processor;
 [arch/sysnode/abilities](../../sysnode/abilities.md#6-the-mover-from-the-processor)
@@ -602,25 +604,19 @@ is the one to build on.
 **Rule 3 — an uncached load returns data no older than every store before it**,
 by rules 1 and 2.
 
-**Rule 4 — a cached store is *not* in memory, and there is no way to put it
-there.** It lands in the L1 and reaches DRAM only when its line is evicted. The
-L1's `flush` and `inval` inputs exist and **the wrapper ties both to zero**, so
-software has no cache maintenance at all: no flush, no invalidate, no way to
-make a dirty line visible or to drop a stale one.
+**Rule 4 — a cached store is in memory once the L1 has been flushed.** It lands
+in the L1 and reaches DRAM when its line is evicted, or when software flushes:
+a store to control `0x1C8` with `[0]` writes every dirty line back, `[1]` drops
+every line, and the register reads busy until the sweep has its last write
+response. So a cached range is published to another agent by flush-then-poll,
+and read fresh after invalidate-then-poll.
 
-The practical rule that follows, and it is the one to write software against:
+> **Small cross-agent words go through the uncached range** (descriptors a
+> mover will fetch, doorbells, mailbox words, completion flags); **a buffer is
+> written cached and flushed.** Measured on `rv64_node_pair` (`sig_a.c` phase
+> 7), publishing 1 KB: 2,850 cycles as uncached stores, 2,440 cached plus flush.
 
-> **Anything another agent will read must be written through the uncached
-> range.** Descriptors a mover will fetch, doorbells, mailbox words, completion
-> flags. The cached range is for this core's own working set and nothing else.
-
-That is also why staging is uncached rather than merely happening to be: it is
-where the cross-agent structures live.
-
-**The obligation is not discharged.** For the cached range the core cannot yet
-publish anything equivalent to what the shell provided, and that is a gap rather
-than a decision. What is missing is a software-reachable flush and the ordering
-statement that would be built on it.
+Staging is uncached because the cross-agent structures live there.
 
 ## What this memory system deliberately does not do
 
@@ -634,8 +630,8 @@ statement that would be built on it.
   arbitration and per-client response routing.
 - **No write buffering and no write combining.** An uncached store waits for its
   response.
-- **No cache maintenance instructions.** See
-  [what the core publishes about ordering](#what-the-core-publishes-about-ordering).
+- **No cache maintenance instructions.** Flush and invalidate are a control
+  register, not an opcode: [rule 4](#what-the-core-publishes-about-ordering).
 - **A read-only I-cache over the cached range.** Fetch below the node base reads
   the on-chip window directly (nothing to cache — it answers in a cycle); fetch
   into the cached DRAM range goes through `rv64_icache`, a small fully-associative

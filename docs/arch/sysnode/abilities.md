@@ -155,7 +155,7 @@ map is in [address-map.md](../../address-map.md).
 | scratchpad | load/store | any width | every program |
 | the mesh's DRAM | load/store via the node port, cached or uncached by bit 31 | any width; the L1 writes back whole 32-byte lines | `sys_hello.c` |
 | **staging** — the mesh's 2 MB on-chip store at aperture 0 | load/store, uncached | **any width: byte strobes are honoured**, so 8-byte page-table entries and mailbox words are safe | `ring_a.c`, `sv39.c` |
-| another mesh's staging or DRAM | **not by load/store** — the processor's own port is local. Use the mover (§6) | — | `ring_a.c` |
+| another mesh's staging or DRAM | **store only**, posted over the interlink (§7); loads stay local. Bulk data: the mover (§6) | 8-byte stores with their strobes; honoured in staging, not by the card's DRAM endpoint | `sig_a.c` |
 
 Staging addresses: `{1'b1, 1'b0, mesh[37:36], aperture[35:32] = 0, offset[31:0]}`
 — mesh 0's staging is `0x80_0000_0000`, mesh 1's `0x90_0000_0000`. The
@@ -202,7 +202,8 @@ the cycle after.
 | `0x28` | DOORBELL COUNTS | R | inbound rings by source mesh: four 16-bit lanes, mesh 0 in `[15:0]` … mesh 3 in `[63:48]` |
 | `0x40`–`0x78` | DISPATCH MAILBOX | RW | §8 |
 | `0x80`–`0xB8` | MOVER CONFIG | W | §6 — `0x80 + register` |
-| `0xC0`–`0xD0` | INTERLINK CONFIG | W | §7 — `0xC0 + register` |
+| `0xC0`–`0xE8` | INTERLINK CONFIG | W | §7 — `0xC0 + register` |
+| `0xE0` | SIGNAL WORD | R | §7: the selected slot's count, rings sent, the interlink faults |
 
 ## 6. The mover, from the processor
 
@@ -252,16 +253,28 @@ staging; mesh 1's processor reads it back).
 
 Nodes chain **mesh 0 — mesh 1 — mesh 3 — mesh 2**, each with an up and a down
 link; a packet for a farther mesh transits. What crosses: mover writes (§6),
-compute-unit flits addressed to a remote memory node, and **doorbells**. What
-does not: processor loads and stores, and any read.
+compute-unit flits addressed to a remote memory node, processor stores to
+another mesh (posted, with byte strobes), and **doorbells**. What does not:
+processor loads, and any read.
 
 The processor configures its own interlink at `0xC0 + register`:
 
 | register | fields | meaning |
 |---|---|---|
-| `0xC0` | `[0]` enable, `[1]` clear the doorbell counts, `[2]` clear faults | enabled at reset |
+| `0xC0` | `[0]` enable, `[1]` clear the doorbell counts, `[2]` clear faults, `[3]` clear the signal slots | enabled at reset |
 | `0xC8` | `[1:0]` mesh id | defaults to the node's `MESH_ID` |
-| `0xD0` | `[1:0]` destination mesh, `[15:8]` transaction tag | **writing rings that mesh** |
+| `0xD0` | `[1:0]` destination mesh, `[15:8]` slot, `[31:16]` amount (0 counts 1), `[32]` fence | **queues a ring** (4 deep) |
+| `0xE0` | store `[3:0]` slot, `[63:32]` amount: **consume**; load: the signal word | |
+| `0xE8` | `[3:0]` the slot the signal word reports | |
+
+**Signals.** A ring adds its amount to the destination's slot (16 slots of 32
+bits) once the writes ahead of it have landed, so independent channels share
+the link and a consumer waits for "slot s has reached k". The signal word
+(`0xE0`) carries the selected slot's count and the number of rings sent; a
+producer keeps at most four rings unsent by that count. A **fenced** ring waits
+until the mover is idle and every remote write of this node's is on the link.
+Full map: [control-registers §7.4](../../spec/control-registers.md#74-the-interlink-window).
+Proven by `sig_a.c` / `sig_b.c` on `rv64_node_pair`.
 
 **Receiving.** Each inbound ring increments the count for its source mesh
 (read at `0x28`), and **raises the external interrupt** while any count is
@@ -271,14 +284,28 @@ drops with them. Proven by `ring_b.c` (mesh 1 services mesh 0's ring from its
 interrupt handler) and `ring_a.c` (mesh 0 polls the count for the reply).
 
 **The pattern for handing work to another mesh:** write the data into the far
-mesh's staging with the mover, **wait for the mover to report idle**, then
-ring. The ordering rests on two facts and needs both: the mover reports idle
-only once every write packet has been accepted onto the link, which delivers
-in order; and the receiving interlink holds an inbound doorbell until every
-write that arrived ahead of it has been acknowledged by its memory. **The ring
-is not a release fence on its own** — the sending arbiter rotates between
-writes, flits and doorbells, so a ring issued while a burst is still leaving
-can overtake it. Wait for idle first (`MV_STAT[32]` clear).
+mesh's staging with the mover (or, for a few words, with processor stores),
+then ring **fenced**. The ordering rests on two facts: the fenced ring leaves
+only after every write packet of this node's is on the link, which delivers in
+order; and the receiving interlink holds an inbound doorbell until every write
+that arrived ahead of it has been acknowledged by its memory. **A plain ring is
+not a release fence** — the sending arbiter rotates between writes, flits,
+stores and rings — so without the fence, wait for the mover's idle
+(`MV_STAT[32]` clear) first. Neither covers a compute unit's flits still inside
+the mesh.
+
+Measured on `rv64_node_pair` (`sig_a.c`, one clock, mesh 0 to mesh 1):
+
+| handoff | producer's cycles | round trip |
+|---|---|---|
+| 1 KB mover copy, fenced ring at once | 85 | 3,457 |
+| 1 KB mover copy, idle poll, plain ring | 279 | 3,481 |
+| 6 remote 8-byte stores, fenced ring | 128 | 538 |
+| 4 words via local staging + mover copy, idle poll, ring | 177 | 413 |
+| a ring and its answer (ping-pong) | | 98 |
+
+The round trips include the consumer's check of what landed (128 uncached
+loads in the first two rows, 8 and 4 in the next two).
 
 ## 8. The dispatch mailbox — commanding compute units
 
@@ -299,8 +326,8 @@ Proven by `dispatch.c` against a modelled unit.
 
 ## 9. What the node does *not* do
 
-- **No load/store to another mesh.** Cross-mesh data moves by the mover; the
-  processor's port is local. Reads never cross the link.
+- **No load from another mesh.** Reads never cross the link; a store does,
+  posted (§7).
 - **No physical-address fault.** An address outside every region aliases or is
   dropped rather than trapping; the MMU faults only on translation.
 - **No self-modifying code**, no `FENCE.I` semantics, no ASID, no PMP, no
@@ -340,6 +367,7 @@ without it the exit word lands in the scratchpad and the host reads 0.
 | `osloop` | user code under Sv39 preempted by the timer, resumed |
 | `dispatch` | the mailbox and the completion interrupt |
 | `ring_a` / `ring_b` on `rv64_node_pair` | strobed stores into staging, a mover copy into the far mesh's staging, the doorbell as an interrupt, the reply |
+| `sig_a` / `sig_b` on `rv64_node_pair` | signal slots with amounts and a consume, a fenced ring after a mover copy with no idle poll, posted remote stores keeping the untouched lanes, 16 ping-pongs, a D-cache flush publishing 1 KB; the cycle counts in §7 |
 | `mag_mem_port`, `mag_wslot`, `mag_stage`, `mm_mesh`, `mm_mesh_stage`, `mm_mesh_peer`, `mag_1m_upload`, `interlink_stage`, `mm_prng`, `sysnode_ctrlpe` | the memory agent, staging, mover and interlink under host-driven traffic |
 
 All under Verilator, `python scripts/py/vlt.py <bench> [--cc <harness>]`. Four

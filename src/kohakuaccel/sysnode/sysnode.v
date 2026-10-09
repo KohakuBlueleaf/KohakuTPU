@@ -276,6 +276,7 @@ module sysnode #(
     wire [7:0]  cpu_il_addr;
     wire [63:0] cpu_il_data;
     wire [63:0] cpu_dbell_counts;
+    wire [63:0] cpu_sig_word;
 
     // ---- the control port, split at 32 KB: below, the agent (through mag);
     // at +0x8000, the RV64 load window. The agent decodes 16 KB, so bit 15 is
@@ -453,6 +454,7 @@ module sysnode #(
         .aux_cfg_data(aux_cfg_data),
         .cpu_il_en(cpu_il_en), .cpu_il_addr(cpu_il_addr),
         .cpu_il_data(cpu_il_data), .cpu_dbell_counts(cpu_dbell_counts),
+        .cpu_sig_word(cpu_sig_word),
         .mv_busy(mv_busy), .mv_fault(mv_fault), .mv_done(mv_done),
         .cp_awaddr(cp_awaddr), .cp_awlen(cp_awlen), .cp_awvalid(cp_awvalid),
         .cp_awready(cp_awready),
@@ -538,7 +540,7 @@ module sysnode #(
         // another mesh through the config window, and reads the four inbound
         // counts back. Left dangling this was a control region that answered
         // writes and changed nothing.
-        .db_status(cpu_dbell_counts),
+        .db_status(cpu_dbell_counts), .db_sig(cpu_sig_word),
         .db_en(cpu_il_en), .db_addr(cpu_il_addr), .db_data(cpu_il_data),
         // The node conditions a runtime must react to rather than poll: a
         // mover descriptor that failed, the host asking it to stop, and a

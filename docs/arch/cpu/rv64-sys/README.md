@@ -188,6 +188,6 @@ one in a design, [performance](performance.md) then
 - **No outbound queue on the mailbox.** One dispatch flit at a time, and a
   16-deep completion queue whose overflow is reported rather than prevented
   ([integration](integration.md#the-dispatch-mailbox)).
-- **No cache maintenance from software.** The L1's flush and invalidate inputs
-  are tied off in the wrapper, so a program cannot force a dirty line out
+- **No cache maintenance instructions.** Flush and invalidate are a control
+  register (`0x1C8`), not opcodes
   ([memory-system](memory-system.md#what-the-core-publishes-about-ordering)).

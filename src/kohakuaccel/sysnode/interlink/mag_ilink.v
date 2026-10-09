@@ -17,6 +17,14 @@
 // to have its BRESP before it counts, so a consumer released by a doorbell is
 // released by data that is in DRAM rather than in a queue.
 //
+// SIGNALS. A doorbell names a SLOT (its tag) and an amount; the receiver adds
+// the amount to that slot's counter, so one link carries many independent
+// channels and a consumer waits for "slot s has reached k". A FENCED ring is
+// held until the mover is idle and nothing of this node's is left on the
+// outbound side, which makes the ring the release for every write before it.
+// The node processor's own stores to another mesh ride here too, posted, with
+// their byte strobes carried in the beat's spare bits.
+//
 // A BEAT IS ONE FLIT, and the link is 288 bits because that is what one NoC
 // port produces. 256 payload bits per beat is 9.6 GB/s at 300 MHz, and a single
 // port cannot exceed that -- so at this width the link is matched to its source
@@ -56,7 +64,10 @@ module mag_ilink #(
     parameter integer MESH_ID    = 0,
     parameter integer MAX_BEATS  = 32,
     parameter integer MEM_X      = 0,
-    parameter integer MEM_Y      = 1
+    parameter integer MEM_Y      = 1,
+    // Signal counters, one per slot, in LUTRAM: a ring's tag selects one.
+    parameter integer SIG_SLOTS  = 16,
+    parameter integer SIG_W      = 32
 )(
     input  wire                  clk,
     input  wire                  resetn,
@@ -71,7 +82,24 @@ module mag_ilink #(
     // them every wakeup. A second `stat_sel` port would duplicate a 16-way
     // 64-bit mux to deliver four registers this reads directly.
     output wire [63:0]           dbell_counts,
+    // {fault[7:0], 4'd0, slot[3:0], 6'd0, sweep, ring_pending, count[31:0]}:
+    // the slot selected at config 0xA8, registered.
+    output wire [63:0]           sig_word,
     output wire [1:0]            my_mesh,
+    // A fenced ring waits while this is high: the mover is still working.
+    input  wire                  fence_hold,
+
+    // ---- the node processor's posted stores to another mesh ---------------
+    // One beat; AW and W are taken together, B answers once the beat is on
+    // the link, so a ring the processor issues next cannot overtake it.
+    input  wire [ADDR_W-1:0]     c_awaddr,
+    input  wire                  c_awvalid,
+    output wire                  c_awready,
+    input  wire [DATA_W-1:0]     c_wdata,
+    input  wire [DATA_W/8-1:0]   c_wstrb,
+    input  wire                  c_wvalid,
+    output wire                  c_wready,
+    output reg                   c_bvalid,
 
     // ---- the mover's write channel: slave in, master out ------------------
     input  wire [ADDR_W-1:0]     s_awaddr,
@@ -105,7 +133,7 @@ module mag_ilink #(
     output reg                   lk_awvalid,
     input  wire                  lk_awready,
     output reg  [DATA_W-1:0]     lk_wdata,
-    output wire [DATA_W/8-1:0]   lk_wstrb,
+    output reg  [DATA_W/8-1:0]   lk_wstrb,
     output wire                  lk_wlast,
     output reg                   lk_wvalid,
     input  wire                  lk_wready,
@@ -154,7 +182,7 @@ module mag_ilink #(
     localparam integer U_LEN = 16, U_ADDR = 32;
 
     localparam integer F_RD_REMOTE = 0, F_ACK0 = 1, F_SWITCH = 2, F_AXI = 3;
-    localparam integer F_INJ = 4;
+    localparam integer F_INJ = 4, F_RING = 5, F_CW_OFF = 6;
 
     localparam integer LSB = $clog2(DATA_W/8);
 
@@ -178,6 +206,10 @@ module mag_ilink #(
     // 72, not 66: the address field below it is ADDR_W wide, and this header is
     // its OWN encoding -- widening noc_pkt.vh's spare did not move this one.
     localparam integer U_ODD  = U_ADDR + ADDR_W;  // last beat carries one slot
+    // A MEM_WR beat whose byte strobes ride in bits [DATA_W +: DATA_W/8], the
+    // spare above the word: LINK_W is FLIT_WIDTH, 288 = 256 + 32.
+    localparam integer U_STRB = U_ODD + 1;
+    localparam integer SIG_AW = $clog2(SIG_SLOTS);
 
     // =====================================================================
     // Registers
@@ -188,22 +220,80 @@ module mag_ilink #(
     reg [31:0] dbell_n  [0:3];
     reg [15:0] dbell_tx [0:3];
     reg [31:0] door_sent;
-    reg        door_req;
-    reg [1:0]  door_dst;
-    reg [7:0]  door_txn;
+    // Rings queue four deep, in order, so a processor may issue several back
+    // to back; it bounds itself by the sent count in `sig_word`, which never
+    // runs ahead of the hardware the way a pending bit read late would.
+    localparam integer DQ_W = 1 + 16 + 8 + 2;   // {fence, amount, tag, dst}
+    wire              door_req;
+    wire [1:0]        door_dst;
+    wire [7:0]        door_txn;
+    wire [15:0]       door_amt;
+    wire              door_fence;
+    wire              dq_full;
+    reg               dq_push;
+    reg  [DQ_W-1:0]   dq_in;
     reg        dbell_clr;
+    reg        sig_clr;           // restart the slot sweep: every count to 0
 
     // Declared here because the encapsulator reads them and the outbound
     // arbiter drives them; xvlog rejects the other order.
-    wire       ob_fl_ack, ob_db_ack;
+    wire       ob_fl_ack, ob_db_ack, ob_cw_ack;
     // Every fault is raised in one place, so the register has one driver. The
     // conditions are wires from wherever they are observed.
-    wire       flt_axi_wr, flt_axi_lk, flt_drop, flt_ack0;
+    wire       flt_axi_wr, flt_axi_lk, flt_drop, flt_ack0, flt_cw_off;
 
     assign my_mesh = mesh_r;
 
     assign dbell_counts = {dbell_n[3][15:0], dbell_n[2][15:0],
                            dbell_n[1][15:0], dbell_n[0][15:0]};
+
+    // =====================================================================
+    // Signal slots: one counter per slot, LUTRAM, one write port. An inbound
+    // ring adds its amount; a consume (config 0xA0) subtracts. They share the
+    // port, the ring first: a consume waits at most the one cycle a ring takes.
+    // A LUTRAM has no reset, so a sweep writes every slot to 0 after reset.
+    // =====================================================================
+    (* ram_style = "distributed" *) reg [SIG_W-1:0] sig_mem [0:SIG_SLOTS-1];
+    reg              sig_sweep;
+    reg [SIG_AW-1:0] sig_sw_i;
+    reg [SIG_AW-1:0] sig_sel;
+    reg [SIG_W-1:0]  sig_q;
+    reg              cons_req;
+    reg [SIG_AW-1:0] cons_slot;
+    reg [SIG_W-1:0]  cons_dec;
+    wire             sig_inc;           // the inbound ring that counts, this cycle
+    wire [SIG_AW-1:0] sig_inc_slot;
+    wire [SIG_W-1:0] sig_inc_amt;
+
+    wire [SIG_AW-1:0] sig_wa = sig_sweep ? sig_sw_i
+                             : sig_inc   ? sig_inc_slot : cons_slot;
+    wire [SIG_W-1:0]  sig_rd = sig_mem[sig_wa];
+    wire              sig_we = sig_sweep || sig_inc || cons_req;
+    wire [SIG_W-1:0]  sig_wd = sig_sweep ? {SIG_W{1'b0}}
+                             : sig_inc   ? sig_rd + sig_inc_amt
+                                         : sig_rd - cons_dec;
+
+    always @(posedge clk) begin
+        if (sig_we) begin
+            sig_mem[sig_wa] <= sig_wd;
+        end
+        sig_q <= sig_mem[sig_sel];
+    end
+
+    wire dq_empty;
+    sync_fifo #(.DATA_WIDTH(DQ_W), .FIFO_DEPTH(4), .MEMORY_TYPE("lean")) u_dq (
+        .clk(clk), .rst(!resetn),
+        .wr_en(dq_push), .wr_data(dq_in), .wr_busy(dq_full), .wr_almost(),
+        .rd_en(ob_db_ack), .rd_data({door_fence, door_amt, door_txn, door_dst}),
+        .rd_busy(dq_empty)
+    );
+    assign door_req = !dq_empty;
+
+    // {fault[63:56], 2'd0, slot[53:50], sweep[49], rings queued[48],
+    //  rings sent[47:32], count[31:0]}
+    wire [31:0] sig_q32 = sig_q;
+    assign sig_word = {fault_r, 2'd0, {(4-SIG_AW){1'b0}}, sig_sel, sig_sweep,
+                       door_req, door_sent[15:0], sig_q32};
 
     wire [63:0] caps = {32'd0, 4'd1, 4'd4, {2'd0, mesh_r}, 4'd2, 16'h494C};
 
@@ -455,43 +545,79 @@ module mag_ilink #(
     end
 
     // =====================================================================
-    // Outbound arbitration. Three sources, rotating so none can be starved.
+    // The processor's posted store: AW and W together, B once on the link.
+    // =====================================================================
+    reg                cw_req;
+    reg [ADDR_W-1:0]   cw_a;
+    reg [DATA_W-1:0]   cw_d;
+    reg [DATA_W/8-1:0] cw_s;
+
+    // Taken even with the link disabled, then dropped and answered (fault
+    // CW_OFF): a store that is never answered would hold the core forever.
+    assign c_awready = c_awvalid && c_wvalid && !cw_req && !c_bvalid;
+    assign c_wready  = c_awready;
+    assign flt_cw_off = c_awready && !enable_r;
+
+    always @(posedge clk) begin
+        // `cw_a`/`cw_d`/`cw_s` are not reset: `cw_req` qualifies them.
+        if (!resetn) begin
+            cw_req   <= 1'b0;
+            c_bvalid <= 1'b0;
+        end else begin
+            c_bvalid <= ob_cw_ack || flt_cw_off;
+            if (c_awready && enable_r) begin
+                cw_req <= 1'b1;
+                cw_a   <= c_awaddr;
+                cw_d   <= c_wdata;
+                cw_s   <= c_wstrb;
+            end
+            if (ob_cw_ack) begin
+                cw_req <= 1'b0;
+            end
+        end
+    end
+
+    // =====================================================================
+    // Outbound arbitration. Four sources, round robin from the last winner.
     // =====================================================================
     localparam [1:0] OB_IDLE = 2'd0, OB_HDR = 2'd1, OB_DAT = 2'd2;
+    localparam [1:0] W_WR = 2'd0, W_FL = 2'd1, W_DB = 2'd2, W_CW = 2'd3;
     reg [1:0]  obst;
     reg [1:0]  ob_who, ob_rr;
     reg [15:0] ob_left;
 
+    // Nothing of this node's is left to go out ahead of a ring: no mover work,
+    // no write in either path, no flit packet open or waiting.
+    wire ob_drained = !fence_hold && (ws == WS_IDLE) && !ob_wr_req && !cw_req
+                    && !acc_open && !acc_ready && ef_empty;
+
     wire req_wr = ob_wr_req;
     wire req_fl = acc_ready;
-    wire req_db = door_req;
+    wire req_db = door_req && (!door_fence || ob_drained);
+    wire req_cw = cw_req;
 
-    // Rotating priority: the last winner drops to the back.
-    wire [2:0] req = {req_db, req_fl, req_wr};
+    wire [3:0] req = {req_cw, req_db, req_fl, req_wr};
     reg  [1:0] pick;
+    reg        picked;
+    integer    pk;
     always @(*) begin
-        case (ob_rr)
-            2'd0:    pick = req_wr ? 2'd0 : req_fl ? 2'd1 : 2'd2;
-            2'd1:    pick = req_fl ? 2'd1 : req_db ? 2'd2 : 2'd0;
-            default: pick = req_db ? 2'd2 : req_wr ? 2'd0 : 2'd1;
-        endcase
+        pick   = ob_rr;
+        picked = 1'b0;
+        for (pk = 1; pk <= 4; pk = pk + 1) begin
+            if (!picked && req[(ob_rr + pk) % 4]) begin
+                pick   = (ob_rr + pk) % 4;
+                picked = 1'b1;
+            end
+        end
     end
 
-    assign ob_wr_ack = (obst == OB_HDR) && ltx_hready && (ob_who == 2'd0);
-    assign ob_fl_ack = (
-        (obst == OB_DAT)
-        && ltx_dready
-        && ltx_dlast
-        && (ob_who == 2'd1)
-    );
-    assign ob_db_ack = (
-        (obst == OB_DAT)
-        && ltx_dready
-        && ltx_dlast
-        && (ob_who == 2'd2)
-    );
+    wire ob_dat_end = (obst == OB_DAT) && ltx_dready && ltx_dlast;
+    assign ob_wr_ack = (obst == OB_HDR) && ltx_hready && (ob_who == W_WR);
+    assign ob_fl_ack = ob_dat_end && (ob_who == W_FL);
+    assign ob_db_ack = ob_dat_end && (ob_who == W_DB);
+    assign ob_cw_ack = ob_dat_end && (ob_who == W_CW);
     assign ef_pop = (
-        (ob_who == 2'd1)
+        (ob_who == W_FL)
         && (
             ((obst == OB_HDR) && ltx_hready)
             || ((obst == OB_DAT) && ltx_dready && (ob_left != 16'd1))
@@ -504,10 +630,14 @@ module mag_ilink #(
     // widening this to a run of words is a change here and nowhere else.
     // Destination mesh at [ADDR_W-1 -: 2] read {special, reserved} -- 00 for any
     // DRAM address -- so a remote write looped back into the sender's own DRAM.
-    wire [TUSER_W-1:0] hdr_wr = {{(TUSER_W-U_ODD-1){1'b0}}, 1'b1,
+    wire [TUSER_W-1:0] hdr_wr = {{(TUSER_W-U_STRB-1){1'b0}}, 1'b1, 1'b1,
                                  a_r,
                                  16'd0, 8'd0, mesh_r,
                                  a_r[ADDR_W-4 +: 2], K_MEM_WR};
+    wire [TUSER_W-1:0] hdr_cw = {{(TUSER_W-U_STRB-1){1'b0}}, 1'b1, 1'b1,
+                                 cw_a,
+                                 16'd0, 8'd0, mesh_r,
+                                 cw_a[ADDR_W-4 +: 2], K_MEM_WR};
     wire [TUSER_W-1:0] hdr_fl = {{(TUSER_W-U_ODD-1){1'b0}}, acc_nodd,
                                  {(ADDR_W-8){1'b0}}, acc_fin,
                                  acc_nb - 16'd1, 8'd0, mesh_r,
@@ -516,6 +646,20 @@ module mag_ilink #(
                                  {ADDR_W{1'b0}},
                                  16'd0, door_txn, mesh_r,
                                  door_dst, K_DOORBELL};
+
+    // The word with its strobes in the spare bits above it; a ring's amount
+    // (zero, as every ring before amounts existed sent, counts one).
+    reg [LINK_W-1:0] dat_wr, dat_cw, dat_db;
+    always @(*) begin
+        dat_wr = {LINK_W{1'b0}};
+        dat_wr[DATA_W-1:0]          = d_r;
+        dat_wr[DATA_W +: DATA_W/8]  = st_r;
+        dat_cw = {LINK_W{1'b0}};
+        dat_cw[DATA_W-1:0]          = cw_d;
+        dat_cw[DATA_W +: DATA_W/8]  = cw_s;
+        dat_db = {LINK_W{1'b0}};
+        dat_db[15:0]                = door_amt;
+    end
 
     always @(posedge clk) begin
         // `ltx_hdr`/`ltx_dat` are not reset: their valids qualify them.
@@ -529,9 +673,10 @@ module mag_ilink #(
                 OB_IDLE: if (|req && enable_r) begin
                     ob_who <= pick;
                     case (pick)
-                        2'd0: begin ltx_hdr <= hdr_wr; ob_left <= 16'd1; end
-                        2'd1: begin ltx_hdr <= hdr_fl; ob_left <= acc_nb; end
-                        default: begin ltx_hdr <= hdr_db; ob_left <= 16'd1; end
+                        W_WR: begin ltx_hdr <= hdr_wr; ob_left <= 16'd1; end
+                        W_FL: begin ltx_hdr <= hdr_fl; ob_left <= acc_nb; end
+                        W_DB: begin ltx_hdr <= hdr_db; ob_left <= 16'd1; end
+                        default: begin ltx_hdr <= hdr_cw; ob_left <= 16'd1; end
                     endcase
                     ltx_hvalid <= 1'b1;
                     obst <= OB_HDR;
@@ -540,9 +685,10 @@ module mag_ilink #(
                 OB_HDR: if (ltx_hready) begin
                     ltx_hvalid <= 1'b0;
                     case (ob_who)
-                        2'd0:    ltx_dat <= {{(LINK_W-DATA_W){1'b0}}, d_r};
-                        2'd1:    ltx_dat <= ef_q;
-                        default: ltx_dat <= {LINK_W{1'b0}};
+                        W_WR:    ltx_dat <= dat_wr;
+                        W_FL:    ltx_dat <= ef_q;
+                        W_DB:    ltx_dat <= dat_db;
+                        default: ltx_dat <= dat_cw;
                     endcase
                     ltx_dlast  <= (ob_left == 16'd1);
                     ltx_dvalid <= 1'b1;
@@ -554,7 +700,7 @@ module mag_ilink #(
                         ltx_dvalid <= 1'b0;
                         ltx_dlast  <= 1'b0;
                         ob_rr      <= ob_who;
-                        if (ob_who == 2'd2) begin
+                        if (ob_who == W_DB) begin
                             door_sent <= door_sent + 32'd1;
                         end
                         obst       <= OB_IDLE;
@@ -585,9 +731,9 @@ module mag_ilink #(
     reg [3:0]  wr_out;          // AXI writes issued, BRESP not yet back
     reg        in_slot;         // which half of the beat is next
     reg        in_odd;          // the last beat of this packet carries one slot
+    reg        in_strb;         // this MEM_WR's beats carry their byte strobes
     integer    dj;
 
-    assign lk_wstrb  = {(DATA_W/8){1'b1}};
     assign lk_wlast  = 1'b1;
     assign lk_bready = 1'b1;
 
@@ -612,9 +758,18 @@ module mag_ilink #(
     wire in_act_wr = (inst == IN_WR)   && lrx_dvalid && lk_free;
     wire in_act_fl = (inst == IN_FLIT) && lrx_dvalid && inj_free;
 
+    // A ring counts once the writes ahead of it have landed and the slots are
+    // not being swept; the slot port is the ring's that cycle.
+    wire in_door_go = (inst == IN_DOOR) && (wr_out == 4'd0) && !sig_sweep;
+    wire [15:0] in_amt = lrx_dat[15:0];
+    assign sig_inc      = in_door_go && lrx_dvalid;
+    assign sig_inc_slot = in_txn[SIG_AW-1:0];
+    assign sig_inc_amt  = (in_amt == 16'd0) ? {{(SIG_W-1){1'b0}}, 1'b1}
+                                            : {{(SIG_W-16){1'b0}}, in_amt};
+
     assign lrx_hready = (inst == IN_HDR);
     assign lrx_dready = ((in_act_wr || in_act_fl) && in_beat_done)
-                     || ((inst == IN_DOOR) && (wr_out == 4'd0))
+                     || in_door_go
                      || (inst == IN_SKIP);
 
     assign flt_axi_wr = m_bvalid && (m_bresp != 2'b00);
@@ -626,7 +781,7 @@ module mag_ilink #(
             // in_addr is ADDR_W wide and the header loads it; the 34'd0 here
             // was a leftover that zero-extended silently.
             in_left <= 16'd0; wr_out <= 4'd0;
-            in_slot <= 1'b0; in_odd <= 1'b0;
+            in_slot <= 1'b0; in_odd <= 1'b0; in_strb <= 1'b0;
             lk_awvalid <= 1'b0; lk_wvalid <= 1'b0;
             lk_awaddr <= {ADDR_W{1'b0}};
             // lk_wdata and inj_data are payload; lk_wvalid and inj_valid above
@@ -669,6 +824,7 @@ module mag_ilink #(
                         in_addr <= lrx_hdr[U_ADDR  +: ADDR_W];
                         in_left <= lrx_hdr[U_LEN   +: 16] + 16'd1;
                         in_odd  <= lrx_hdr[U_ODD];
+                        in_strb <= lrx_hdr[U_STRB];
                         in_slot <= 1'b0;
                         case (lrx_hdr[U_KIND +: 4])
                             K_MEM_WR:   inst <= IN_WR;
@@ -691,6 +847,8 @@ module mag_ilink #(
                     );
                     lk_awvalid <= 1'b1;
                     lk_wdata   <= in_slotd[DATA_W-1:0];
+                    lk_wstrb   <= in_strb ? in_slotd[DATA_W +: DATA_W/8]
+                                          : {(DATA_W/8){1'b1}};
                     lk_wvalid  <= 1'b1;
                     in_addr    <= in_addr + (1 << LSB);
                     if (in_beat_done) begin
@@ -735,7 +893,7 @@ module mag_ilink #(
                 // doorbell overtakes data that is still in the AXI pipeline, and
                 // the consumer it releases reads the previous contents.
                 IN_DOOR: begin
-                    if (lrx_dvalid && lrx_dready) begin
+                    if (sig_inc) begin
                         dbell_n[in_src]  <= dbell_n[in_src] + 32'd1;
                         dbell_tx[in_src] <= {8'd0, in_txn};
                         inst <= IN_HDR;
@@ -761,10 +919,26 @@ module mag_ilink #(
             mesh_r <= MESH_ID[1:0];
             enable_r <= 1'b1;
             fault_r <= 8'd0;
-            door_req <= 1'b0; door_dst <= 2'd0; door_txn <= 8'd0;
+            dq_push <= 1'b0;
             dbell_clr <= 1'b0;
+            sig_sweep <= 1'b1; sig_sw_i <= {SIG_AW{1'b0}};
+            sig_sel <= {SIG_AW{1'b0}};
+            cons_req <= 1'b0;
         end else begin
             dbell_clr <= 1'b0;
+            dq_push   <= 1'b0;
+
+            // The sweep owns the slot port until every slot is written once.
+            if (sig_sweep) begin
+                sig_sw_i <= sig_sw_i + 1'b1;
+                if (sig_sw_i == SIG_SLOTS[SIG_AW-1:0] - 1'b1) begin
+                    sig_sweep <= 1'b0;
+                end
+            end
+            // A consume waits out a ring that has the port this cycle.
+            if (cons_req && !sig_sweep && !sig_inc) begin
+                cons_req <= 1'b0;
+            end
 
             if (bad_remote_req) begin
                 fault_r[F_RD_REMOTE] <= 1'b1;
@@ -781,9 +955,8 @@ module mag_ilink #(
             if (flt_drop) begin
                 fault_r[F_INJ]       <= 1'b1;
             end
-
-            if (ob_db_ack) begin
-                door_req <= 1'b0;
+            if (flt_cw_off) begin
+                fault_r[F_CW_OFF]    <= 1'b1;
             end
 
             if (cfg_mine) begin
@@ -794,13 +967,30 @@ module mag_ilink #(
                         if (cfg_data[2]) begin
                             fault_r <= 8'd0;
                         end
+                        if (cfg_data[3]) begin
+                            sig_sweep <= 1'b1;
+                            sig_sw_i  <= {SIG_AW{1'b0}};
+                        end
                     end
                     8'h88: mesh_r <= cfg_data[1:0];
+                    // {fence[32], amount[31:16], slot/tag[15:8], dst[1:0]}. A
+                    // ring into a full queue is dropped and faulted.
                     8'h90: begin
-                        door_dst <= cfg_data[1:0];
-                        door_txn <= cfg_data[15:8];
-                        door_req <= 1'b1;
+                        if (dq_full) begin
+                            fault_r[F_RING] <= 1'b1;
+                        end else begin
+                            dq_push <= 1'b1;
+                            dq_in   <= {cfg_data[32], cfg_data[31:16],
+                                        cfg_data[15:8], cfg_data[1:0]};
+                        end
                     end
+                    // Consume: slot[7:0] -= dec[63:32].
+                    8'hA0: begin
+                        cons_req  <= 1'b1;
+                        cons_slot <= cfg_data[SIG_AW-1:0];
+                        cons_dec  <= cfg_data[32 +: SIG_W];
+                    end
+                    8'hA8: sig_sel <= cfg_data[SIG_AW-1:0];
                     default: ;
                 endcase
             end

@@ -97,6 +97,9 @@ module rv64_syscore #(
     output reg  [7:0]             db_addr,
     output reg  [63:0]            db_data,
     input  wire [63:0]            db_status,
+    // The interlink's signal word (the selected slot's count, ring pending),
+    // read at control 0xE0.
+    input  wire [63:0]            db_sig,
 
     // ---- the transform bank's config port (CTRL 0x1D0 select, 0x1D8 data) --
     output reg                    xf_cfg_en,
@@ -758,6 +761,7 @@ module rv64_syscore #(
                 R_SATP:  ctrl_q <= core_satp;
                 8'h20:   ctrl_q <= {31'd0, mv_busy, mv_fault, mv_done[27:0]};
                 8'h28:   ctrl_q <= db_status;
+                8'hE0:   ctrl_q <= db_sig;
                 default: ctrl_q <= 64'd0;
             endcase
         end

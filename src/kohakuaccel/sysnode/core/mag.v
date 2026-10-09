@@ -294,6 +294,8 @@ module mag #(
     input  wire [7:0]            cpu_il_addr,
     input  wire [63:0]           cpu_il_data,
     output wire [63:0]           cpu_dbell_counts,
+    // The interlink's signal word: the selected slot's count and ring state.
+    output wire [63:0]           cpu_sig_word,
     // Mirrored into AUX_STAT so the host reads liveness in one 64-bit load.
     input  wire                  mv_busy,
     input  wire [3:0]            mv_fault,
@@ -383,6 +385,9 @@ module mag #(
     // The mover's write channel, between the mover and whatever owns it.
     wire                  mvx_awready, mvx_wready, mvx_bvalid;
     wire [1:0]            mvx_bresp;
+    // A processor write whose mesh field is not this mesh's: the interlink's.
+    wire                  cp_rem;
+    wire                  cpr_awready, cpr_wready, cpr_bvalid;
 
     // =====================================================================
     // The agent. The existing, tested orchestrator: staging RAM, dispatcher,
@@ -701,6 +706,14 @@ module mag #(
             .cfg_data(aux_cfg_en ? aux_cfg_data : cpu_il_data),
             .stat_sel(il_stat_sel), .stat_q(il_stat_q), .my_mesh(il_mesh),
             .dbell_counts(cpu_dbell_counts),
+            .sig_word(cpu_sig_word),
+            .fence_hold(mv_busy),
+
+            .c_awaddr(cp_awaddr), .c_awvalid(cp_awvalid && cp_rem),
+            .c_awready(cpr_awready),
+            .c_wdata(cp_wdata), .c_wstrb(cp_wstrb),
+            .c_wvalid(cp_wvalid && cp_rem), .c_wready(cpr_wready),
+            .c_bvalid(cpr_bvalid),
 
             .s_awaddr(mv_awaddr), .s_awlen(mv_awlen), .s_awvalid(mv_awvalid),
             .s_awready(mvx_awready),
@@ -809,6 +822,9 @@ module mag #(
             .cred0_state(sw_c0), .cred1_state(sw_c1), .fault(sw_flt)
         );
         assign my_mesh = il_mesh;
+        // The mesh field sits at [37:36] of a DRAM and a staging address alike;
+        // `cp_awaddr` holds still for the whole of the processor's one write.
+        assign cp_rem  = (cp_awaddr[ADDR_W-4 +: 2] != il_mesh);
 
         assign m_arid[LK*ID_W +: ID_W]   = {ID_W{1'b0}};
         assign m_araddr[LK*ADDR_W +: ADDR_W] = {ADDR_W{1'b0}};
@@ -836,6 +852,11 @@ module mag #(
         assign my_mesh    = MESH_ID[1:0];
         assign il_stat_q  = 64'd0;
         assign cpu_dbell_counts = 64'd0;   // no interlink, no doorbells
+        assign cpu_sig_word = 64'd0;
+        assign cp_rem       = 1'b0;
+        assign cpr_awready  = 1'b0;
+        assign cpr_wready   = 1'b0;
+        assign cpr_bvalid   = 1'b0;
         assign enc_busy   = 1'b1;
         assign inj_data   = {FLIT_WIDTH{1'b0}};
         assign inj_valid  = 1'b0;
@@ -863,14 +884,14 @@ module mag #(
         assign m_awlen  [CP*8      +: 8]      = cp_awlen;
         assign m_awsize [CP*3      +: 3]      = LSB[2:0];
         assign m_awburst[CP*2      +: 2]      = 2'b01;
-        assign m_awvalid[CP]                  = cp_awvalid;
-        assign cp_awready                     = m_awready[CP];
+        assign m_awvalid[CP]                  = cp_awvalid && !cp_rem;
+        assign cp_awready                     = cp_rem ? cpr_awready : m_awready[CP];
         assign m_wdata  [CP*DATA_W +: DATA_W]     = cp_wdata;
         assign m_wstrb  [CP*(DATA_W/8) +: DATA_W/8] = cp_wstrb;
         assign m_wlast  [CP]                  = cp_wlast;
-        assign m_wvalid [CP]                  = cp_wvalid;
-        assign cp_wready                      = m_wready[CP];
-        assign cp_bvalid                      = m_bvalid[CP];
+        assign m_wvalid [CP]                  = cp_wvalid && !cp_rem;
+        assign cp_wready                      = cp_rem ? cpr_wready : m_wready[CP];
+        assign cp_bvalid                      = m_bvalid[CP] || cpr_bvalid;
         assign m_bready [CP]                  = cp_bready;
         assign m_arid   [CP*ID_W   +: ID_W]   = {ID_W{1'b0}};
         assign m_araddr [CP*ADDR_W +: ADDR_W] = cp_araddr;

@@ -116,6 +116,7 @@ module rv64_mag_pe #(
     output wire [31:0]            mv_done,
 
     input  wire [63:0]            db_status,
+    input  wire [63:0]            db_sig,
     output wire                   db_en,
     output wire [7:0]             db_addr,
     output wire [63:0]            db_data,
@@ -160,7 +161,7 @@ module rv64_mag_pe #(
         .mv_cfg_data(pe_cfg_data),
         .mv_busy(mv_busy), .mv_fault(mv_fault), .mv_done(mv_done),
         .db_en(db_en), .db_addr(db_addr), .db_data(db_data),
-        .db_status(db_status),
+        .db_status(db_status), .db_sig(db_sig),
         .xf_cfg_en(xf_cfg_en), .xf_cfg_id(xf_cfg_id),
         .xf_cfg_addr(xf_cfg_addr), .xf_cfg_data(xf_cfg_data),
         .irq_summary(irq_summary), .host_irq(host_irq),

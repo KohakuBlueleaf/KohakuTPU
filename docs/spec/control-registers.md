@@ -638,9 +638,22 @@ Writes:
 
 | Offset | Fields |
 |---|---|
-| `0x80` | `[0]` enable, `[1]` clear doorbell counters, `[2]` clear the fault register |
+| `0x80` | `[0]` enable, `[1]` clear doorbell counters, `[2]` clear the fault register, `[3]` clear every signal slot (a 16-cycle sweep; rings wait for it) |
 | `0x88` | `[1:0]` this mesh's id — a **runtime** value, not a parameter, so one bitstream is usable at any position in the grid |
-| `0x90` | `[1:0]` doorbell destination mesh, `[15:8]` doorbell tag. The write itself rings it |
+| `0x90` | Ring: `[1:0]` destination mesh, `[15:8]` tag — the **signal slot** at the destination, `[31:16]` amount (0 counts 1), `[32]` **fence**. The write queues the ring (4 deep, in order); into a full queue it is dropped and raises `RING` |
+| `0xA0` | Consume: `[3:0]` slot, `[63:32]` amount subtracted from it |
+| `0xA8` | `[3:0]` the slot the signal word reports |
+
+**Signal slots.** Sixteen 32-bit counters. An inbound ring adds its amount to
+the slot its tag names, once every write that arrived ahead of it has its write
+response, exactly as the per-source count. A consume and an inbound ring share
+one write port, the ring first. Slots are cleared by a sweep at reset.
+
+**A fenced ring** leaves only when the mover is idle and nothing of this node's
+is left on the outbound side: no remote-write packet, no processor store, no
+compute-unit flit packet open or queued. It is the release for every mover and
+processor write issued before it. A compute unit's flits still inside the mesh
+are not seen by it.
 
 Reads, by `AUX_STATW` index:
 
@@ -666,6 +679,8 @@ Fault register bits:
 | `2` | `SWITCH` | The inter-mesh switch reported a fault — a packet asking for a turn the routing model forbids. |
 | `3` | `AXI` | An AXI error on the mover's write path or the inbound write path. |
 | `4` | `INJ` | An inbound flit could not be injected into the local mesh and was dropped. |
+| `5` | `RING` | A ring was written while four were queued, and dropped. |
+| `6` | `CW_OFF` | A processor store to another mesh arrived while the interlink was disabled; it was answered and dropped. |
 
 All five are **sticky** and cleared only by writing `0x80` bit 2.
 
@@ -868,6 +883,7 @@ an L1 hit is.
 | `0x40`–`0x7F` | dispatch mailbox | RW | A store writes mailbox register `pa[5:3]`; a load reads it. §7.5. |
 | `0x80`–`0xBF` | mover config (alias) | W | A store writes mover register `pa[5:0]` — the low half of the mover's map. §7.3. |
 | `0xC0`–`0xFF` | interlink config | W | A store drives the complex's `db_*` port with address `{2'b10, pa[5:0]}` and the stored value, so it writes interlink client register `0x80 + pa[5:0]`. §7.4. |
+| `0xE0` | signal word | R | The complex's `db_sig` input: `[31:0]` the selected slot's count, `[47:32]` rings sent (low 16 bits), `[48]` a ring queued, `[49]` the slot sweep running, `[53:50]` the selected slot, `[63:56]` the interlink fault register. Zero without the interlink. §7.4. |
 | `0x100`–`0x17F` | mover config | W | A store writes mover register `pa[6:0]` — the **whole** mover map, including `0x40` (immediate) and `0x50` (gather pitch). §7.3. |
 | `0x180` | `RX_HDR` | RW | Read: `[63]` valid, `[31:0]` the head flit's header (type at `[15:12]`). **A store pops the head.** §7.5. |
 | `0x188`–`0x1A0` | `RX_P0`–`RX_P3` | R | The head flit's payload, `flit[63:0]` up to `flit[255:192]`. |
@@ -907,16 +923,36 @@ reaches through `AUX_CFG` ([§4](#4-the-interlink-registers)). `0x28` reads
 where **the host wins a same-cycle collision** — the host path is a debug path
 and the processor can retry.
 
-The three registers that exist, at their control-region offsets:
+The registers that exist, at their control-region offsets:
 
 | Offset | Interlink register | Fields |
 |---|---|---|
-| `0xC0` | `0x80` control | `[0]` enable — **reset to 1**; `[1]` clear the inbound doorbell counts; `[2]` clear the sticky fault register |
+| `0xC0` | `0x80` control | `[0]` enable — **reset to 1**; `[1]` clear the inbound doorbell counts; `[2]` clear the sticky fault register; `[3]` clear every signal slot |
 | `0xC8` | `0x88` mesh id | `[1:0]`, reset to the node's `MESH_ID` parameter |
-| `0xD0` | `0x90` ring | `[1:0]` destination mesh, `[15:8]` transaction tag. **The write itself rings the doorbell** |
+| `0xD0` | `0x90` ring | `[1:0]` destination mesh, `[15:8]` slot, `[31:16]` amount (0 counts 1), `[32]` fence. **The write queues the ring** |
+| `0xE0` | `0xA0` consume | store: `[3:0]` slot, `[63:32]` amount subtracted. **A load here reads the signal word** (§7.2) |
+| `0xE8` | `0xA8` select | `[3:0]` the slot the signal word reports |
 
-Offsets `0xD8`–`0xFF` decode to interlink registers that do not exist and are
-ignored.
+Other offsets decode to interlink registers that do not exist and are ignored.
+
+**Bounding the ring queue.** A ring is queued four deep. Software counts the
+rings it writes and compares with the sent count in the signal word, which
+never runs ahead of the hardware: while the difference is under four a write
+cannot be dropped. A queued bit read right after a ring write may still show
+the previous state, so it is not the bound.
+
+**Waiting on a slot.** Select the slot once, then poll the signal word's
+`[31:0]`. Counts only grow unless consumed, so "slot s has reached k" is a
+monotonic test and needs no clear. The select and a consume land two registers
+deep: the first reads after either may report the previous state.
+
+**Posted stores to another mesh.** A processor store whose address names
+another mesh in `[37:36]` leaves on the interlink as a one-word remote write,
+its byte strobes carried, and lands at the far side by the rule for remote
+writes (staging by its full address, DRAM by its low 32 bits). Its write
+response comes back once the word is on the link, so a ring issued after it
+cannot overtake it. Byte strobes are honoured where the destination honours
+them: staging does, the card's DRAM endpoint does not. Loads never cross.
 
 **Receiving a doorbell.** Each inbound ring increments the 16-bit count for its
 source mesh, read at `0x28`, and **raises the core's external interrupt as a
@@ -925,12 +961,13 @@ serviced is therefore not lost. A handler **MUST** clear the counts (`0xC0` bit
 1) to drop the line; a clear racing an arriving doorbell loses to the doorbell,
 so a count may survive a clear rather than a ring being lost.
 
-> **The doorbell is not ordered against data by hardware.** The interlink's
-> outbound arbiter selects between a remote write, a compute-unit flit and a
-> doorbell by **rotating priority**, so a ring requested while a remote write is
-> still queued may leave first. A producer **MUST** establish the ordering
-> itself: issue the writes, poll the mover's status at `0x20` until it is no
-> longer busy, and only then ring. Do not treat a doorbell as a release fence.
+> **A plain ring is not ordered against data.** The interlink's outbound
+> arbiter rotates between remote writes, compute-unit flit packets, processor
+> stores and rings, so a plain ring may leave ahead of a write still queued. A
+> **fenced** ring (`[32]`) is the release for the mover's and the processor's
+> writes before it; without the fence a producer **MUST** poll the mover's
+> status at `0x20` until it is no longer busy before it rings. Neither covers a
+> compute unit's flits still inside the mesh.
 
 
 ### 7.5 The dispatch mailbox

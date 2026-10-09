@@ -341,9 +341,11 @@ rings that arrive here.
 
 | index | offset | fields |
 |---|---|---|
-| 0 | `0xC0` | `[0]` enable — set at reset; `[1]` clear the inbound counts; `[2]` clear faults |
+| 0 | `0xC0` | `[0]` enable — set at reset; `[1]` clear the inbound counts; `[2]` clear faults; `[3]` clear the signal slots |
 | 1 | `0xC8` | `[1:0]` this node's mesh id, defaulting to its `MESH_ID` |
-| 2 | `0xD0` | `[1:0]` destination mesh, `[15:8]` transaction tag — **the write is the ring** |
+| 2 | `0xD0` | `[1:0]` destination mesh, `[15:8]` slot, `[31:16]` amount, `[32]` fence — **the write queues a ring** |
+| 4 | `0xE0` | consume: `[3:0]` slot, `[63:32]` amount; **a load reads the signal word** (`db_sig`) |
+| 5 | `0xE8` | `[3:0]` the slot the signal word reports |
 
 **The window's offsets are shifted into the interlink's own address space.**
 The interlink claims a config write only at `0x80` and above, so the wrapper
@@ -359,22 +361,22 @@ through `0xC0` bit 1. **While any count is non-zero the external interrupt line
 is held up**, so a ring that arrives while another is being serviced is not
 lost — and the handler must clear the counts, or it re-enters forever.
 
-**A ring is not a release fence on its own.** The sending arbiter rotates
-between writes, flits and doorbells, so **a ring issued while a burst is still
-leaving can overtake it** and arrive ahead of the data it is announcing.
+**A plain ring is not a release fence.** The sending arbiter rotates between
+writes, flits, processor stores and rings, so **a plain ring issued while a
+burst is still leaving can overtake it**.
 
-The handoff is correct only when both of these hold, and software supplies the
-first:
+The handoff is correct when both of these hold:
 
-1. **the sender waits for the mover to report idle** — `MV_STAT[32]` clear —
-   which is the point at which every write packet has been accepted onto the
-   link, and the link delivers in order;
+1. **the ring leaves after every write of this node's is on the link** — a
+   **fenced** ring (`[32]`) waits for that in hardware (the mover idle, nothing
+   queued outbound); a plain ring needs the sender to wait for `MV_STAT[32]`
+   clear first;
 2. **the receiving interlink holds an inbound doorbell** until every write that
    arrived ahead of it has been acknowledged by its memory.
 
-Fact 2 is the hardware's and needs nothing from software. Fact 1 is not: skip
-the wait and the ring races the burst, with nothing to report the loss. The
-sequence is therefore **write, wait for idle, ring** — never write-and-ring.
+Inbound, the ring also adds its amount to the signal slot its tag names; the
+processor polls the selected slot in the signal word at `0xE0`. Full map:
+[control-registers §7.4](../../../spec/control-registers.md#74-the-interlink-window).
 
 **The host and the processor share this window, and the host wins a same-cycle
 collision.** It is a debug path; the processor retries.
