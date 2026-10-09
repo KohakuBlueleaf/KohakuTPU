@@ -33,7 +33,7 @@ module vec_replay_tb;
     wire          dbg_fault;
 
     vec_cu #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .POS_X(CX), .POS_Y(CY),
-             .MEM_X(MX), .MEM_Y(MY), .INST_DEPTH(32), .MODEL(1),
+             .MEM_X(MX), .MEM_Y(MY), .INST_DEPTH(512), .MODEL(1),
              .L1_DEPTH(512), .L1_PRIM("block"),
              .RF_PAD(24), .RF_PACK(1)) dut (
         .clk(clk), .resetn(resetn),
@@ -71,7 +71,9 @@ module vec_replay_tb;
             rq_head <= 0; rq_tail <= 0; rq_wait <= 0; ack_owed <= 0; rq_sub <= 8'd0;
             wr_open <= 1'b0; wr_left <= 9'd0; mem_valid <= 1'b0; sig_count <= 0; faults <= 0;
         end else begin
-            mem_valid <= 1'b0;
+            // A response the link refuses is HELD, not dropped: a long program
+            // keeps the instruction FIFO full and `in_busy` high for whole RUNs.
+            if (!(mem_valid && in_busy)) mem_valid <= 1'b0;
             if (out_valid) begin
                 case (o_type)
                     T_MEM_RD_REQ: begin
@@ -104,7 +106,9 @@ module vec_replay_tb;
                     default: ;
                 endcase
             end
-            if (rq_head != rq_tail) begin
+            if (mem_valid && in_busy) begin
+                // the held response goes first
+            end else if (rq_head != rq_tail) begin
                 if (rq_wait < 3) begin
                     rq_wait <= rq_wait + 1;
                 end else begin
@@ -161,6 +165,16 @@ module vec_replay_tb;
     reg [255:0] prog [0:MAXP-1];
     reg [1023:0] f_prog, f_mem, f_out;
     integer n, i, spin;
+    integer clk_n = 0, t_go = 0, t_done = 0;
+    always @(posedge clk) clk_n <= clk_n + 1;
+    // A wedged unit stalls `send_cu` on `in_busy` forever; report where it stopped.
+    always @(posedge clk) begin
+        if (t_go != 0 && t_done == 0 && clk_n - t_go > 4000000) begin
+            $display("@@@ TIMEOUT sent %0d of %0d, completions %0d, faults %0d, pc %0d st %0d",
+                     i, n, sig_count, faults, dut.u_core.pc, dut.u_core.st);
+            $finish;
+        end
+    end
 
     initial begin
         agent_valid = 1'b0;
@@ -177,16 +191,20 @@ module vec_replay_tb;
         repeat (10) @(negedge clk);
         resetn = 1'b1;
         repeat (10) @(negedge clk);
+        t_go = clk_n;
         for (i = 0; i < n; i = i + 1) send_cu(prog[i]);
         spin = 0;
         while (sig_count < n && spin < 2000000) begin
             @(negedge clk);
             spin = spin + 1;
         end
+        t_done = clk_n;
         repeat (200) @(negedge clk);
         $writememh(f_out, dram);
         $display("@@@ REPLAY payloads %0d completions %0d faults %0d fault_arg %0h cycles %0d",
                  n, sig_count, faults, fault_arg, spin);
+        // First payload offered to the last completion, in core clocks.
+        $display("@@@ ELAPSED %0d", t_done - t_go);
         // The four predicate registers as the lanes hold them after the run.
         for (i = 0; i < 4; i = i + 1)
             $display("@@@ PREG %0d %032h", i, dut.u_core.u_lanes.preg[i]);

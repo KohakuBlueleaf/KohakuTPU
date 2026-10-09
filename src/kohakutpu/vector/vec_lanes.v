@@ -32,6 +32,8 @@
 
 module vec_lanes #(
     parameter integer MODEL   = 1,
+    // Elements per vector register, as vec_core's; sets the chunk-address width.
+    parameter integer VLMAX   = 128,
     parameter         RF_PRIM = "block",
     // The b/c copies' shape: PAD 36 names the RAMB18 36 x 512 word, PACK 2
     // stores two lanes per 54-bit strobed word. See vec_regfile.v.
@@ -39,7 +41,12 @@ module vec_lanes #(
     parameter integer RF_PACK = 1,
     // Passed DOWN to vec_alu rather than read from a macro there, so the array
     // and its ALUs cannot disagree about the latency the taps below assume.
-    parameter integer PIPE_MUX = `VL_PM
+    parameter integer PIPE_MUX = `VL_PM,
+    // vec_core's VLD read-to-`ls_we` distance plus one: `wb_ahead` looks that far.
+    parameter integer LA      = 4,
+    // Derived from VLMAX; parameters only because the port widths need them.
+    parameter integer CW = $clog2(VLMAX / 16),
+    parameter integer RW = 4 + CW
 )(
     input  wire         clk,
     input  wire         rst,
@@ -48,21 +55,22 @@ module vec_lanes #(
     input  wire         ls_we,
     input  wire [1:0]   ls_pm,      // VSHUF predicate mode: 0 all, 1 P[ls_pr], 2 ~P[ls_pr]
     input  wire [1:0]   ls_pr,
-    input  wire [6:0]   ls_waddr,
+    input  wire [RW-1:0] ls_waddr,
     input  wire [383:0] ls_wdata,
-    input  wire [6:0]   ls_raddr,
+    input  wire [RW-1:0] ls_raddr,
     input  wire         ls_ractive,
+    input  wire         ls_rsel,    // read through port c instead of a
     output wire [383:0] ls_rdata,
 
     input  wire         iss_valid,
     input  wire [1:0]   iss_phase,
-    input  wire [6:0]   iss_ra,
-    input  wire [6:0]   iss_rb,
-    input  wire [6:0]   iss_rc,
-    input  wire [6:0]   iss_wa,
+    input  wire [RW-1:0] iss_ra,
+    input  wire [RW-1:0] iss_rb,
+    input  wire [RW-1:0] iss_rc,
+    input  wire [RW-1:0] iss_wa,
     input  wire [1:0]   iss_pm,
     input  wire [1:0]   iss_pr,
-    input  wire [2:0]   iss_chunk,
+    input  wire [CW-1:0] iss_chunk,
     input  wire         iss_is_cmp,
     input  wire         iss_tail,
     input  wire [15:0]  iss_tmask,   // VL tail: slots past VL must not write
@@ -79,11 +87,14 @@ module vec_lanes #(
     input  wire [2:0]   red_kind,
 
     input  wire [1:0]   p_rd_sel,
-    output wire [127:0] p_rd_bits,
+    output wire [VLMAX-1:0] p_rd_bits,
 
     output wire [23:0]  red_result,
     output wire         red_valid,
     output wire         pipe_empty,
+    output wire         ls_quiet,
+    // An ALU result owns the write port about LA cycles from now (+-1).
+    output wire         wb_ahead,
 
     // One pulse per retiring beat, naming the register it wrote, so a
     // sequencer can run a pending-write scoreboard against a 14-deep lane.
@@ -101,9 +112,15 @@ module vec_lanes #(
     localparam [23:0] E8_PINF = 24'h7F8000;
     localparam [23:0] E8_NINF = 24'hFF8000;
 
-    // d_tail rides just BELOW d_valid so every field under it keeps its index;
     // d_valid stays at MW-1, which is what meta_any and tailv reach for.
-    localparam integer MW = 51;
+    localparam integer MW   = 41 + RW + CW;
+    localparam integer F_CH = 16;
+    localparam integer F_PM = F_CH + CW;
+    localparam integer F_PK = F_PM + 2;
+    localparam integer F_PH = F_PK + 16;
+    localparam integer F_WA = F_PH + 2;
+    localparam integer F_PR = F_WA + RW;
+    localparam integer F_CM = F_PR + 2;
 
     // ---------------------------------------------------------- declarations
     wire [383:0] rf_a, rf_b, rf_c;
@@ -114,7 +131,7 @@ module vec_lanes #(
 
     reg  [15:0]  rf_we;
     wire [383:0] rf_wdata;
-    reg  [6:0]   rf_waddr;
+    reg  [RW-1:0] rf_waddr;
     reg  [383:0] alu_a, alu_b, alu_c;
     reg  [79:0]  alu_op;
     reg  [15:0]  alu_iv;
@@ -123,8 +140,8 @@ module vec_lanes #(
     reg  [1:0]   d_phase;
     reg  [2:0]   d_kind;
     reg  [1:0]   q_pr, q_pm;
-    reg  [6:0]   q_wa;
-    reg  [2:0]   q_chunk;
+    reg  [RW-1:0] q_wa;
+    reg  [CW-1:0] q_chunk;
     reg  [15:0]  q_tmask;
 
     reg  [23:0]  acc [0:15];
@@ -138,8 +155,8 @@ module vec_lanes #(
 
     reg  [MW-1:0] meta [1:MDEP];
     reg  [15:0]   tailv;
-    reg  [127:0]  preg [0:3];
-    wire [15:0]   ls_pmask = preg[ls_pr][ls_waddr[2:0]*16 +: 16];
+    reg  [VLMAX-1:0] preg [0:3];
+    wire [15:0]   ls_pmask = preg[ls_pr][ls_waddr[CW-1:0]*16 +: 16];
 
     // TREE writes its leaves back 8 per phase, the same slot width as D2.
     wire [4:0] wid = (mode == M_FLAT) ? 5'd16
@@ -155,18 +172,22 @@ module vec_lanes #(
     integer ai, pq;
 
     // ================================================== register file
-    wire [6:0] rd_a_addr = ls_ractive ? ls_raddr : iss_ra;
-    assign ls_rdata = rf_a;
+    wire [RW-1:0] rd_a_addr = (ls_ractive && !ls_rsel) ? ls_raddr : iss_ra;
+    wire [RW-1:0] rd_c_addr = (ls_ractive && ls_rsel) ? ls_raddr : iss_rc;
+    // READ_LAT 1: the data answers last cycle's address, so its select lags too.
+    reg rsel_q;
+    always @(posedge clk) rsel_q <= ls_ractive && ls_rsel;
+    assign ls_rdata = rsel_q ? rf_c : rf_a;
 
     genvar s;
     generate
     if (RF_PACK == 2) begin : g_rf2
         for (s = 0; s < 8; s = s + 1) begin : g_rf
-            vec_regfile #(.AW(7), .DW(24), .PRIM(RF_PRIM), .LANES(2)) u_rf (
+            vec_regfile #(.AW(RW), .DW(24), .PRIM(RF_PRIM), .LANES(2)) u_rf (
                 .clk(clk),
                 .wr_en(rf_we[2*s +: 2]), .wr_addr(rf_waddr),
                 .wr_data(rf_wdata[s*48 +: 48]),
-                .ra_addr(rd_a_addr), .rb_addr(iss_rb), .rc_addr(iss_rc),
+                .ra_addr(rd_a_addr), .rb_addr(iss_rb), .rc_addr(rd_c_addr),
                 .ra_data(rf_a[s*48 +: 48]),
                 .rb_data(rf_b[s*48 +: 48]),
                 .rc_data(rf_c[s*48 +: 48])
@@ -175,10 +196,10 @@ module vec_lanes #(
     end
     else begin : g_rf1
         for (s = 0; s < 16; s = s + 1) begin : g_rf
-            vec_regfile #(.AW(7), .DW(24), .PRIM(RF_PRIM), .PAD_W(RF_PAD)) u_rf (
+            vec_regfile #(.AW(RW), .DW(24), .PRIM(RF_PRIM), .PAD_W(RF_PAD)) u_rf (
                 .clk(clk),
                 .wr_en(rf_we[s]), .wr_addr(rf_waddr), .wr_data(rf_wdata[s*24 +: 24]),
-                .ra_addr(rd_a_addr), .rb_addr(iss_rb), .rc_addr(iss_rc),
+                .ra_addr(rd_a_addr), .rb_addr(iss_rb), .rc_addr(rd_c_addr),
                 .ra_data(rf_a[s*24 +: 24]),
                 .rb_data(rf_b[s*24 +: 24]),
                 .rc_data(rf_c[s*24 +: 24])
@@ -206,7 +227,7 @@ module vec_lanes #(
         if (rst) begin
             d_valid <= 1'b0; d_phase <= 2'd0; d_tail <= 1'b0;
             d_is_cmp <= 1'b0; d_kind <= 3'd0;
-            q_pr <= 2'd0; q_pm <= 2'd0; q_wa <= 7'd0; q_chunk <= 3'd0;
+            q_pr <= 2'd0; q_pm <= 2'd0; q_wa <= {RW{1'b0}}; q_chunk <= {CW{1'b0}};
             q_tmask <= 16'd0;
         end else begin
             d_valid  <= iss_valid;
@@ -420,32 +441,32 @@ module vec_lanes #(
     wire [MW-1:0] wbp = (mode == M_FLAT) || (mode == M_TREE) ? meta[ALAT-1]
                       : (mode == M_D2)   ? meta[2*ALAT-1] : meta[MDEP-1];
 
-    wire        p_valid = wbp[MW-1];
-    wire        p_tail  = wbp[49];
-    wire        p_cmp   = wbp[48];
-    wire [6:0]  p_wa    = wbp[45:39];
-    wire [1:0]  p_ph    = wbp[38:37];
-    wire [15:0] p_pmask = wbp[36:21];
-    wire [1:0]  p_pm    = wbp[20:19];
-    wire [15:0] p_tmask = wbp[15:0];
+    wire          p_valid = wbp[MW-1];
+    wire          p_tail  = wbp[F_CM+1];
+    wire          p_cmp   = wbp[F_CM];
+    wire [RW-1:0] p_wa    = wbp[F_WA +: RW];
+    wire [1:0]    p_ph    = wbp[F_PH +: 2];
+    wire [15:0]   p_pmask = wbp[F_PK +: 16];
+    wire [1:0]    p_pm    = wbp[F_PM +: 2];
+    wire [15:0]   p_tmask = wbp[15:0];
 
-    wire        wb_valid = wb[MW-1];
-    wire        wb_tail  = wb[49];
-    wire        wb_cmp   = wb[48];
-    wire [1:0]  wb_pr    = wb[47:46];
-    wire [6:0]  wb_wa    = wb[45:39];
-    wire [1:0]  wb_ph    = wb[38:37];
-    wire [15:0] wb_pmask = wb[36:21];
-    wire [1:0]  wb_pm    = wb[20:19];
-    wire [2:0]  wb_chunk = wb[18:16];
-    wire [15:0] wb_tmask = wb[15:0];
+    wire          wb_valid = wb[MW-1];
+    wire          wb_tail  = wb[F_CM+1];
+    wire          wb_cmp   = wb[F_CM];
+    wire [1:0]    wb_pr    = wb[F_PR +: 2];
+    wire [RW-1:0] wb_wa    = wb[F_WA +: RW];
+    wire [1:0]    wb_ph    = wb[F_PH +: 2];
+    wire [15:0]   wb_pmask = wb[F_PK +: 16];
+    wire [1:0]    wb_pm    = wb[F_PM +: 2];
+    wire [CW-1:0] wb_chunk = wb[F_CH +: CW];
+    wire [15:0]   wb_tmask = wb[15:0];
 
     // ================================================== write-back
     // Group g's result leaves ALU g*D + D-1 and lands on slice wb_ph*W + g.
     wire [4:0] wwid = wid;
 
     reg [15:0] nx_we;
-    reg [6:0]  nx_wa;
+    reg [RW-1:0] nx_wa;
     reg [1:0]  md_r;
     reg        use_ls;
 
@@ -557,7 +578,7 @@ module vec_lanes #(
 
     assign wb_fire = wb_valid && !wb_cmp && !wb_tail
                   && ((mode != M_TREE) || red_wb);
-    assign wb_vreg = wb_wa[6:3];
+    assign wb_vreg = wb_wa[RW-1:CW];
 
     assign red_result = alu_out[14*24 +: 24];
     assign red_valid  = (mode == M_TREE) && alu_ovld[14] && d_tail_q;
@@ -572,6 +593,37 @@ module vec_lanes #(
         end
     end
     assign pipe_empty = !meta_any && !d_valid && !iss_valid;
+
+    // No write-back left IN THIS MODE (FLAT retires at ALAT, D2 at 2*ALAT). VSETMD
+    // must still wait for pipe_empty: a new mode taps a different depth.
+    reg meta_mode;
+    always @(*) begin
+        meta_mode = (mode == M_TREE) && (|tailv);
+        for (mj = 1; mj <= MDEP; mj = mj + 1) begin
+            if ((mode == M_D4) || (mode == M_TREE) || (mj <= ALAT)
+                || ((mode == M_D2) && (mj <= 2*ALAT))) begin
+                meta_mode = meta_mode | meta[mj][MW-1];
+            end
+        end
+    end
+    assign ls_quiet = !meta_mode && !d_valid && !iss_valid;
+
+    // A beat at meta[k] reaches the write-back tap T-1 in T-1-k cycles, the
+    // same cycle a VLD read issued now raises `ls_we`; VEC_WB_COLLISION checks it.
+    wire wa_fl = meta[ALAT-LA][MW-1];
+    wire wa_d2 = meta[2*ALAT-LA][MW-1];
+    wire wa_d4 = meta[MDEP-LA][MW-1];
+    assign wb_ahead = (mode == M_FLAT) || (mode == M_TREE) ? wa_fl
+                    : (mode == M_D2) ? wa_d2 : wa_d4;
+
+`ifndef SYNTHESIS
+    always @(posedge clk) begin
+        if (!rst && ls_we && p_valid && !p_cmp && !p_tail
+            && ((mode != M_TREE) || red_wb)) begin
+            $display("VEC_WB_COLLISION %m t=%0t", $time);
+        end
+    end
+`endif
 
 endmodule
 

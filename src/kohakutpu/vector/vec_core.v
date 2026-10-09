@@ -11,19 +11,29 @@
 //   The lane is 14 deep with no bypass, so without it a program could read a
 //   register whose write has not landed and be plausibly wrong.
 //
-//   VLD/VST/VSHUF/VBCAST/VCVT drain the lanes first. They drive the register
-//   file's whole-chunk port, which shares write ports with ALU write-back.
+//   VLD, VST, VFILL and VDRAIN walk in a load/store engine, one at a time, while
+//   ALU ops keep issuing; every other instruction waits for the engine. A VLD
+//   writes only into write-back slots no ALU result owns, a VST reads through
+//   whichever of ports a/c the issuing beat leaves free, and an ALU op waits
+//   while the walk's register is its operand or destination.
 //
-//   VFILL is non-blocking, VDRAIN is not: a fill only WRITES L1, so it can
-//   overlap compute; a drain reads L1 through the port VLD uses.
+//   VSHUF/VBCAST/VCVT wait until no write-back is left in the current mode: they
+//   drive the register file's whole-chunk port, which shares write ports with
+//   ALU write-back.
 //
 // VLD/VST/VDRAIN move a word a cycle; a blocked VST/VDRAIN landing REPLAYS from
 // that word (no 256-bit skid). The next instruction is fetched while this one runs.
 
 `default_nettype none
 
+`ifndef VEC_VLMAX
+  `define VEC_VLMAX 128
+`endif
+
 module vec_core #(
     parameter integer MODEL      = 1,
+    // Elements per vector register: 16 lanes x VLMAX/16 chunks, a power of two.
+    parameter integer VLMAX      = `VEC_VLMAX,
     parameter integer IMEM_DEPTH = 512,
     parameter integer L1_DEPTH   = 512,
     parameter         L1_PRIM    = "block",
@@ -124,13 +134,19 @@ module vec_core #(
     // a cycle later.
     localparam integer L1_LAT = (L1_PRIM == "ultra") ? 2 : 1;
     localparam integer LAW    = (L1_DEPTH <= 1) ? 1 : $clog2(L1_DEPTH);
+    // Chunk index, vl, register-file word address and beat-count widths.
+    localparam integer CW = $clog2(VLMAX / 16);
+    localparam integer VW = $clog2(VLMAX) + 1;
+    localparam integer RW = 4 + CW;
+    localparam integer BW = CW + 3;
 
     localparam [4:0] S_IDLE = 5'd0, S_F1 = 5'd1, S_F2 = 5'd2, S_DEC = 5'd3;
     localparam [4:0] S_EXEC = 5'd4, S_GA = 5'd5, S_GB = 5'd6, S_GC = 5'd7;
     localparam [4:0] S_GD = 5'd8, S_ALU = 5'd9, S_RED = 5'd10, S_RDRAIN = 5'd11;
-    localparam [4:0] S_RWAIT = 5'd13, S_LDA = 5'd14;
-    localparam [4:0] S_STP = 5'd15, S_STR = 5'd17, S_STW = 5'd18;
-    localparam [4:0] S_STD = 5'd19, S_FILL = 5'd20, S_DRA = 5'd21;
+    // VLD, VST, VFILL and VDRAIN walks run in the load/store engine (`ls_run`).
+    localparam [4:0] S_RWAIT = 5'd13;
+    localparam [4:0] S_STR = 5'd17, S_STW = 5'd18;
+    localparam [4:0] S_STD = 5'd19;
     localparam [4:0] S_BAR = 5'd24;
     localparam [4:0] S_WAITP = 5'd25, S_SETI = 5'd26, S_SETI2 = 5'd27;
     localparam [4:0] S_HALT = 5'd28, S_FAULT = 5'd29, S_MEM0 = 5'd30;
@@ -149,7 +165,7 @@ module vec_core #(
     reg [8:0]  pc;
     reg [31:0] ir;
     reg [1:0]  vmode;
-    reg [7:0]  vl;
+    reg [VW-1:0] vl;
     reg [23:0] sreg [0:15];
     reg [23:0] kreg [0:3];
 
@@ -164,8 +180,8 @@ module vec_core #(
     reg [3:0]  g_ra, g_rb, g_rc, g_wd;
     reg        g_cmp;
 
-    reg [5:0]  bcnt, nbeat;
-    reg [2:0]  cchunk;
+    reg [BW-1:0] bcnt, nbeat;
+    reg [CW-1:0] cchunk;
     reg [1:0]  cphase;
     reg [3:0]  ls_reg;
     reg [2:0]  ls_dt;
@@ -183,9 +199,9 @@ module vec_core #(
     integer    ii;
 
     // The pipelined walks: words left to issue, words landed, and in-flight valids.
-    reg [4:0]       ld_left;
+    reg [CW+1:0]    ld_left;
     reg [LD_TAP:0]  ld_v, ld_h;       // VLD in flight, and which FP32 half
-    reg [4:0]       sq_nw, sq_iw, sq_lw;
+    reg [CW+1:0]    sq_nw, sq_iw, sq_lw;
     reg [1:0]       sq_v, sq_h;       // VST in flight, and which FP32 half
     reg [LAW-1:0]   dr_ptr;
     reg [8:0]       dr_left;
@@ -224,18 +240,31 @@ module vec_core #(
     wire signed [17:0] ag_stride0;
     wire [15:0] ag_left0;
 
-    // VLD: an L1 read a cycle, landing LD_TAP cycles later through `cv_src`.
-    wire ld_iss  = (st == S_LDA) && (ld_left != 5'd0);
+    // THE LOAD/STORE ENGINE runs VLD and VST beside the sequencer, so ALU ops
+    // issue while a walk is in flight. `e_*` hold the walk's own operands.
+    localparam [2:0] LS_IDLE = 3'd0, LS_LD = 3'd1, LS_ST = 3'd2, LS_DR = 3'd3;
+    localparam [2:0] LS_FL = 3'd4;
+    reg  [2:0]    ls_run;
+    reg           ls_tail;          // the cycle after a walk ends: its last write lands
+    reg  [3:0]    e_reg;
+    reg           e_noreg;          // a VDRAIN walk touches no register
+    reg  [2:0]    e_dt;
+    reg  [CW-1:0] e_chunk;
+    wire          ls_busy = (ls_run != LS_IDLE) || ls_tail;
+    wire          wb_ahead;
+
+    // VLD: an L1 read a cycle, landing LD_TAP cycles later through `cv_src`. A read
+    // is not issued when its write-back slot is an ALU result's (`wb_ahead`).
+    wire ld_iss  = (ls_run == LS_LD) && (ld_left != {(CW+2){1'b0}}) && !wb_ahead;
     wire ld_land = ld_v[LD_TAP];
     // vec_lanes writes `ls_wdata` the cycle AFTER `ls_we`, so the enable goes up as
     // the chunk's last word is one cycle from landing; FP32's lo half writes nothing.
-    wire ld_wpre = ld_v[LD_TAP-1] && ((ls_dt != DT_FP32) || ld_h[LD_TAP-1]);
+    wire ld_wpre = ld_v[LD_TAP-1] && ((e_dt != DT_FP32) || ld_h[LD_TAP-1]);
     // VST: a register-file read a cycle; a landing that meets a fill on L1's one
     // write port replays from itself.
     wire sq_land = sq_v[1];
     wire sq_blk  = sq_land && (rr_valid || cd_valid);
     wire sq_wr   = sq_land && !sq_blk;
-    wire sq_iss  = (st == S_STP) && (sq_iw != sq_nw) && !sq_blk;
     // VDRAIN: a word lands in the request register when it is empty or being taken.
     wire dr_land = dr_v[DR_TAP];
     wire dr_room = !wr_req_valid || wr_req_ready;
@@ -252,7 +281,7 @@ module vec_core #(
     // so the read that would land then is not issued.
     wire dr_bend = dr_take && !nd_valid
                 && ((wb_left == 4'd0) ? (dr_blen == 4'd1) : (wb_left == 4'd1));
-    wire dr_iss  = (st == S_DRA) && (dr_left != 9'd0) && !dr_blk && !dr_bend;
+    wire dr_iss  = (ls_run == LS_DR) && (dr_left != 9'd0) && !dr_blk && !dr_bend;
 
     // THE FILL WALK COALESCES a word a cycle into one streamed request while the
     // address follows on and the L1 tag does not wrap; it steps the AGU directly.
@@ -262,8 +291,8 @@ module vec_core #(
     reg [7:0]    run_cnt;
     wire run_ext  = run_v && (ag_addr == run_next) && (run_cnt != 8'd255)
                  && (l1_cur[7:0] != 8'd0);
-    wire fill_walk = (st == S_FILL) && (mem_left != 32'd0) && (!run_v || run_ext);
-    wire fill_emit = (st == S_FILL) && run_v && !rd_req_valid
+    wire fill_walk = (ls_run == LS_FL) && (mem_left != 32'd0) && (!run_v || run_ext);
+    wire fill_emit = (ls_run == LS_FL) && run_v && !rd_req_valid
                   && ((mem_left == 32'd0) || !run_ext);
 
     vec_agu #(.AW(AW)) u_agu (
@@ -280,26 +309,34 @@ module vec_core #(
     // ================================================== lanes
     reg          iss_valid, iss_is_cmp, iss_tail, red_init;
     reg  [1:0]   iss_phase, g_pm, g_pr;
-    reg  [6:0]   iss_ra, iss_rb, iss_rc, iss_wa;
-    reg  [2:0]   iss_chunk, red_kind;
+    reg  [RW-1:0] iss_ra, iss_rb, iss_rc, iss_wa;
+    reg  [CW-1:0] iss_chunk;
+    reg  [2:0]   red_kind;
     reg  [15:0]  iss_tmask;
     reg          lw_we, lw_ract;
+    reg          lw_rsel;              // the read uses port c, not a
     // VSHUF's predicate: pm 0 writes every lane, 1 the lanes P[pr] sets, 2 the rest.
     reg  [1:0]   ls_pm, ls_pr;
-    reg  [6:0]   lw_waddr, lw_raddr;
+    reg  [RW-1:0] lw_waddr, lw_raddr;
     reg  [383:0] lw_wdata;
     wire [383:0] lw_rdata;
     wire [23:0]  red_result;
-    wire         red_valid, pipe_empty, wb_fire;
+    wire         red_valid, pipe_empty, ls_quiet, wb_fire;
+`ifdef VEC_LS_PIPE_EMPTY
+    wire         ls_gate = pipe_empty;
+`else
+    wire         ls_gate = ls_quiet;
+`endif
     wire [3:0]   wb_vreg;
-    wire [127:0] p_bits;
+    wire [VLMAX-1:0] p_bits;
 
-    vec_lanes #(.MODEL(MODEL), .RF_PRIM(RF_PRIM), .RF_PAD(RF_PAD),
-                .RF_PACK(RF_PACK)) u_lanes (
+    vec_lanes #(.MODEL(MODEL), .VLMAX(VLMAX), .LA(LD_TAP + 2), .RF_PRIM(RF_PRIM),
+                .RF_PAD(RF_PAD), .RF_PACK(RF_PACK)) u_lanes (
         .clk(clk), .rst(rst), .mode(vmode),
         .ls_we(lw_we), .ls_pm(ls_pm), .ls_pr(ls_pr),
         .ls_waddr(lw_waddr), .ls_wdata(lw_wdata),
-        .ls_raddr(lw_raddr), .ls_ractive(lw_ract), .ls_rdata(lw_rdata),
+        .ls_raddr(lw_raddr), .ls_ractive(lw_ract), .ls_rsel(lw_rsel),
+        .ls_rdata(lw_rdata),
         .iss_valid(iss_valid), .iss_phase(iss_phase),
         .iss_ra(iss_ra), .iss_rb(iss_rb), .iss_rc(iss_rc), .iss_wa(iss_wa),
         .iss_pm(g_pm), .iss_pr(g_pr), .iss_chunk(iss_chunk),
@@ -309,7 +346,8 @@ module vec_core #(
         .red_init(red_init), .red_kind(red_kind),
         .p_rd_sel(g_pr), .p_rd_bits(p_bits),
         .red_result(red_result), .red_valid(red_valid),
-        .pipe_empty(pipe_empty), .wb_fire(wb_fire), .wb_vreg(wb_vreg)
+        .pipe_empty(pipe_empty), .ls_quiet(ls_quiet), .wb_ahead(wb_ahead),
+        .wb_fire(wb_fire), .wb_vreg(wb_vreg)
     );
 
     // ================================================== decode
@@ -338,13 +376,13 @@ module vec_core #(
     wire dt_ok = (d_dt == DT_FP16) || (d_dt == DT_FP32);
 
     wire [2:0] dep = (vmode == M_FLAT) ? 3'd1 : (vmode == M_D2) ? 3'd2 : 3'd4;
-    // 4 bits and it CANNOT overflow: O_VSETVL faults with F_VL unless vl is
-    // 1..128, so vl[7:4] is at most 8 and the round-up at most 8.
-    wire [3:0] nchunk = vl[7:4] + {3'd0, |vl[3:0]};
+    // CW+1 bits and it CANNOT overflow: O_VSETVL faults with F_VL unless vl is
+    // 1..VLMAX, so vl[VW-1:4] is at most VLMAX/16 and so is the round-up.
+    wire [CW:0] nchunk = vl[VW-1:4] + {{CW{1'b0}}, |vl[3:0]};
 
     wire [15:0] tail_full = 16'hFFFF;
     wire [15:0] tail_part = (16'd1 << vl[3:0]) - 16'd1;
-    wire [15:0] tmask_now = ({1'b0, cchunk} < vl[7:4]) ? tail_full : tail_part;
+    wire [15:0] tmask_now = ({1'b0, cchunk} < vl[VW-1:4]) ? tail_full : tail_part;
 
     // ================================================== prefetch
     // `im_addr` follows the next pc while an instruction runs, so its word is in
@@ -357,10 +395,25 @@ module vec_core #(
     // A loop end still needs S_F1's bookkeeping, and S_F1 reports a CU_DATA fault.
     wire pf_go = (pf_addr == pc) && !(lp_act && (pc == lp_end)) && !cd_err;
 
-    reg [4:0] pend [0:15];
-    wire haz = (|pend[g_ra]) | (|pend[g_rb]) | (|pend[g_rc]) | (|pend[g_wd]);
+    // Beats in flight per register: at most the D4 line's 4*ALAT, plus one.
+    reg [6:0] pend [0:15];
+    // The walk's register is off limits to an ALU op until the walk ends: a VLD
+    // writes it (RAW, WAW), a VST reads it (WAR).
+    wire haz_ls = ls_busy && !e_noreg && ((g_ra == e_reg) || (g_rb == e_reg)
+                                          || (g_rc == e_reg) || (g_wd == e_reg));
+    wire haz = (|pend[g_ra]) | (|pend[g_rb]) | (|pend[g_rc]) | (|pend[g_wd]) | haz_ls;
 
-    wire alu_issue  = (st == S_ALU) && !((bcnt == 6'd0) && haz);
+    // A FLAT op leaves a VLD no write slot until it ends (measured: ~30% of core
+    // time stalled behind it), so while a VLD has words left ALU issue yields 1:1.
+    reg  thr;
+    wire ld_hungry  = (ls_run == LS_LD) && (ld_left != {(CW+2){1'b0}}) && (vmode == M_FLAT);
+    wire alu_issue  = (st == S_ALU) && !((bcnt == 6'd0) && haz) && !(ld_hungry && thr);
+    // VST reads through port a, or through port c when the issuing beat sources a
+    // vector at a; it waits only for a beat that sources vectors at both.
+    wire alu_va  = alu_issue && (g_sa[1:0] == SRC_V);
+    wire alu_vc  = alu_issue && (g_sc[1:0] == SRC_V);
+    wire sq_iss  = (ls_run == LS_ST) && (sq_iw != sq_nw) && !sq_blk
+                && !(alu_va && alu_vc);
     // EXPSUM retires a vector write per beat like an ALU op, so it has to be
     // counted or a later read of vd would not wait for it.
     wire red_issue  = (st == S_RED) && (bcnt != nbeat)
@@ -451,16 +504,16 @@ module vec_core #(
     // critical path: a 128-bit barrel shift and a 128-bit decrement sat in
     // front of the reduce, and `mm_mesh` reported vl_reg[6] -> sreg_reg at
     // 304.2 MHz. `vl` only moves on VSETVL, three states before any consumer.
-    reg [127:0] vlmask;
+    reg [VLMAX-1:0] vlmask;
     always @(posedge clk) begin
-        // vl resets to 128
+        // vl resets to VLMAX
         if (rst) begin
-            vlmask <= {128{1'b1}};
+            vlmask <= {VLMAX{1'b1}};
         end
         else begin
             vlmask <= (
-                (vl >= 8'd128) ? {128{1'b1}}
-                : ((128'd1 << vl[6:0]) - 128'd1)
+                (vl >= VLMAX[VW-1:0]) ? {VLMAX{1'b1}}
+                : (({{(VLMAX-1){1'b0}}, 1'b1} << vl[VW-2:0]) - 1'b1)
             );
         end
     end
@@ -486,19 +539,20 @@ module vec_core #(
         // qualify came to ~1,700 flops, g_k* and lw_wdata being the worst.
         if (rst) begin
             st <= S_IDLE; pc <= 9'd0; im_addr <= 9'd0;
-            vmode <= M_FLAT; vl <= 8'd128;
+            vmode <= M_FLAT; vl <= VLMAX[VW-1:0];
             busy <= 1'b0; halted <= 1'b0; fault <= 1'b0; fault_code <= 8'd0;
-            cycles <= 32'd0; bcnt <= 6'd0; nbeat <= 6'd0;
-            cchunk <= 3'd0; cphase <= 2'd0;
+            cycles <= 32'd0; bcnt <= {BW{1'b0}}; nbeat <= {BW{1'b0}};
+            cchunk <= {CW{1'b0}}; cphase <= 2'd0;
             lp_act <= 1'b0; lp_cnt <= 24'd0; lp_top <= 9'd0; lp_end <= 9'd0;
             g_have <= 3'd0; fill_out <= 16'd0; mem_left <= 32'd0;
             iss_valid <= 1'b0; iss_tail <= 1'b0; red_init <= 1'b0;
             iss_is_cmp <= 1'b0; iss_tmask <= 16'hFFFF;
-            lw_we <= 1'b0; lw_ract <= 1'b0;
+            lw_we <= 1'b0; lw_ract <= 1'b0; lw_rsel <= 1'b0;
             rd_req_valid <= 1'b0; wr_req_valid <= 1'b0; wr_req_first <= 1'b0;
             run_v <= 1'b0;
             pf_addr <= 9'd0;
-            ld_left <= 5'd0; ld_v <= {(LD_TAP+1){1'b0}};
+            ld_left <= {(CW+2){1'b0}}; ld_v <= {(LD_TAP+1){1'b0}};
+            ls_run <= LS_IDLE; ls_tail <= 1'b0; e_noreg <= 1'b1; thr <= 1'b0;
             sq_v <= 2'd0; dr_left <= 9'd0; dr_v <= {(DR_TAP+1){1'b0}}; wb_left <= 4'd0;
             nd_valid <= 1'b0;
             ag_start <= 1'b0;
@@ -507,7 +561,7 @@ module vec_core #(
             // RESET-RISK: sreg unreset like vec_regfile. pend stays -- it is a
             // hazard counter and a stale one stalls issue for good.
             for (ii = 0; ii < 16; ii = ii + 1) begin
-                pend[ii] <= 5'd0;
+                pend[ii] <= 7'd0;
             end
             kreg[0] <= 24'h000000; kreg[1] <= E8_ONE;
             kreg[2] <= 24'hBF8000; kreg[3] <= 24'h000000;
@@ -524,9 +578,11 @@ module vec_core #(
             end
             ld_v <= {ld_v[LD_TAP-1:0], ld_iss};
             // FP32 issues an even count, so the word's half is the parity of what is left.
-            ld_h <= {ld_h[LD_TAP-1:0], (ls_dt == DT_FP32) && ld_left[0]};
+            ld_h <= {ld_h[LD_TAP-1:0], (e_dt == DT_FP32) && ld_left[0]};
             sq_v <= sq_blk ? 2'd0 : {sq_v[0], sq_iss};
-            sq_h <= {sq_h[0], (ls_dt == DT_FP32) && sq_iw[0]};
+            sq_h <= {sq_h[0], (e_dt == DT_FP32) && sq_iw[0]};
+            ls_tail <= 1'b0;
+            thr     <= ~thr;
             dr_v <= dr_blk ? {(DR_TAP+1){1'b0}} : {dr_v[DR_TAP-1:0], dr_iss};
             if (rd_req_valid && rd_req_ready) begin
                 rd_req_valid <= 1'b0;
@@ -618,12 +674,16 @@ module vec_core #(
                     ls_kind <= d_op;
                     ls_reg  <= d_vd;
                     ls_dt   <= d_dt;
-                    cchunk  <= 3'd0;
+                    cchunk  <= {CW{1'b0}};
                     cphase  <= 2'd0;
-                    bcnt    <= 6'd0;
-                    l1_cur  <= d_off[LAW-1:0];
-                    ag_sel  <= d_ad;
-                    ag_off  <= 18'd0;
+                    bcnt    <= {BW{1'b0}};
+                    // A walk in the engine still reads `l1_cur` and `ag_off` (vec_agu
+                    // adds `off` combinationally), so only an idle engine lets go.
+                    if (!ls_busy) begin
+                        l1_cur <= d_off[LAW-1:0];
+                        ag_sel <= d_ad;
+                        ag_off <= 18'd0;
+                    end
 
                     // vec_lanes reads g_op/g_s*/g_k* the cycle AFTER a beat is
                     // visible, so the previous op's last beat holds them one more.
@@ -648,13 +708,16 @@ module vec_core #(
                             g_have <= 3'd1;
                             st <= S_GA;
                         end
+                    end else if (ls_busy) begin
+                        // Only ALU ops run beside a walk; everything else waits.
+                        pc <= pc;
                     end else begin
                         case (d_op)
                             O_VSETVL: begin
-                                if ((sreg[d_va] == 24'd0) || (sreg[d_va] > 24'd128)) begin
+                                if ((sreg[d_va] == 24'd0) || (sreg[d_va] > VLMAX)) begin
                                     fault_code <= F_VL; st <= S_FAULT;
                                 end else begin
-                                    vl <= sreg[d_va][7:0];
+                                    vl <= sreg[d_va][VW-1:0];
                                     st <= S_F1;
                                 end
                             end
@@ -712,7 +775,8 @@ module vec_core #(
                                 if ((d_op == O_VLD || d_op == O_VST || d_op == O_VCVT)
                                     && !dt_ok) begin
                                     fault_code <= F_DTYPE; st <= S_FAULT;
-                                end else if (!pipe_empty) begin
+                                end else if ((d_op == O_VLD) || (d_op == O_VST)
+                                             ? (|pend[d_vd]) : !ls_gate) begin
                                     pc <= pc;
                                 end else begin
                                     ag_start <= 1'b1;
@@ -773,7 +837,7 @@ module vec_core #(
 
                 // ---------------------------------------------------- ALU beats
                 S_ALU: begin
-                    if (!((bcnt == 6'd0) && haz)) begin
+                    if (alu_issue) begin
                         iss_valid  <= 1'b1;
                         iss_is_cmp <= g_cmp;
                         iss_chunk  <= cchunk;
@@ -830,62 +894,16 @@ module vec_core #(
                     iss_valid <= 1'b1;
                     iss_tail  <= 1'b1;
                     iss_phase <= 2'd0;
-                    iss_chunk <= 3'd0;
+                    iss_chunk <= {CW{1'b0}};
                     iss_tmask <= 16'hFFFF;
-                    iss_ra <= {g_ra, 3'd0};
-                    iss_rb <= {g_rb, 3'd0};
-                    iss_rc <= {g_ra, 3'd0};
+                    iss_ra <= {g_ra, {CW{1'b0}}};
+                    iss_rb <= {g_rb, {CW{1'b0}}};
+                    iss_rc <= {g_ra, {CW{1'b0}}};
                     st <= S_RWAIT;
                 end
                 S_RWAIT: if (red_valid) begin
                     sreg[ls_reg] <= red_result;
                     st <= S_F1;
-                end
-
-                // ---------------------------------------------------- VLD
-                S_LDA: begin
-                    if (ld_iss) begin
-                        l1_raddr <= ag_addr[LAW-1:0];
-                        ld_left  <= ld_left - 5'd1;
-                    end
-                    if (ld_wpre) begin
-                        lw_waddr <= {ls_reg, cchunk};
-                        lw_we    <= 1'b1;
-                        cchunk   <= cchunk + 3'd1;
-                    end
-                    if (ld_land) begin
-                        if ((ls_dt == DT_FP32) && !ld_h[LD_TAP]) begin
-                            ls_hold <= i_f32;
-                        end
-                        else begin
-                            lw_wdata <= (ls_dt == DT_FP16) ? i_f16 : {i_f32, ls_hold};
-                        end
-                        if ((ld_left == 5'd0) && (ld_v[LD_TAP-1:0] == {LD_TAP{1'b0}})) begin
-                            next_insn;
-                        end
-                    end
-                end
-
-                // ---------------------------------------------------- VST
-                S_STP: begin
-                    if (sq_iss) begin
-                        lw_raddr <= {g_ra, (ls_dt == DT_FP32) ? sq_iw[3:1] : sq_iw[2:0]};
-                        sq_iw    <= sq_iw + 5'd1;
-                    end
-                    if (sq_blk) begin
-                        sq_iw <= sq_lw;
-                    end
-                    if (sq_wr) begin
-                        l1_waddr <= ag_addr[LAW-1:0];
-                        l1_we    <= 1'b1;
-                        l1_wdata <= (ls_dt == DT_FP16) ? o_f16
-                                  : (sq_h[1] ? o_f32hi : o_f32lo);
-                        sq_lw    <= sq_lw + 5'd1;
-                        if (sq_lw + 5'd1 == sq_nw) begin
-                            lw_ract <= 1'b0;
-                            next_insn;
-                        end
-                    end
                 end
 
                 // ------------------------------------- VCVT / VSHUF / VBCAST
@@ -919,7 +937,7 @@ module vec_core #(
                         end
                     endcase
 
-                    if (bc_to_s || (cchunk + 3'd1 == nchunk[2:0])) begin
+                    if (bc_to_s || ({1'b0, cchunk} + 1'b1 == nchunk)) begin
                         lw_ract <= 1'b0;
                         st <= S_F1;
                     end else begin
@@ -928,62 +946,6 @@ module vec_core #(
                     end
                 end
 
-                // ---------------------------------------------------- VFILL
-                S_FILL: begin
-                    if (fill_walk) begin
-                        if (!run_v) begin
-                            run_v    <= 1'b1;
-                            run_addr <= ag_addr;
-                            run_tag  <= l1_cur;
-                            run_cnt  <= 8'd1;
-                        end else begin
-                            run_cnt  <= run_cnt + 8'd1;
-                        end
-                        run_next <= ag_addr + 32;
-                        l1_cur   <= l1_cur + 1'b1;
-                        mem_left <= mem_left - 32'd1;
-                    end
-                    if (fill_emit) begin
-                        rd_req_valid <= 1'b1;
-                        rd_req_addr  <= run_addr;
-                        rd_req_tag   <= run_tag;
-                        rd_req_cnt   <= run_cnt;
-                        run_v        <= 1'b0;
-                    end
-                    if ((mem_left == 32'd0) && !run_v) next_insn;
-                end
-
-                // ---------------------------------------------------- VDRAIN
-                // `l1_cur`/`mem_left` count words TAKEN; `dr_ptr`/`dr_left` words
-                // read, and a blocked landing rewinds the latter to the former.
-                S_DRA: begin
-                    if (dr_iss) begin
-                        l1_raddr <= dr_ptr;
-                        dr_ptr   <= dr_ptr + 1'b1;
-                        dr_left  <= dr_left - 9'd1;
-                    end
-                    if (dr_blk) begin
-                        dr_ptr  <= l1_cur;
-                        dr_left <= mem_left[8:0];
-                    end
-                    if (dr_take) begin
-                        wr_req_valid <= 1'b1;
-                        wr_req_addr  <= ag_addr;
-                        wr_req_data  <= l1_q;
-                        wr_req_first <= (wb_left == 4'd0);
-                        wr_req_cnt   <= dr_blen;
-                        wb_left      <= (wb_left == 4'd0) ? (dr_blen - 4'd1)
-                                                          : (wb_left - 4'd1);
-                        l1_cur       <= l1_cur + 1'b1;
-                        mem_left     <= mem_left - 32'd1;
-                        if (mem_left == 32'd1) begin
-                            next_insn;
-                        end
-                    end
-                    if (mem_left == 32'd0) begin
-                        st <= S_F1;
-                    end
-                end
 
                 // ---------------------------------------------------- misc
                 // ag_start is still high in THIS state and the AGU latches its
@@ -992,15 +954,19 @@ module vec_core #(
                 S_AGW: begin
                     ld_left <= (ls_dt == DT_FP32) ? {nchunk, 1'b0} : {1'b0, nchunk};
                     sq_nw   <= (ls_dt == DT_FP32) ? {nchunk, 1'b0} : {1'b0, nchunk};
-                    sq_iw   <= 5'd0;
-                    sq_lw   <= 5'd0;
-                    if (ls_kind == O_VST) begin
-                        lw_ract <= 1'b1;
+                    sq_iw   <= {(CW+2){1'b0}};
+                    sq_lw   <= {(CW+2){1'b0}};
+                    e_reg   <= ls_reg;
+                    e_noreg <= (ls_kind != O_VLD) && (ls_kind != O_VST);
+                    e_dt    <= ls_dt;
+                    e_chunk <= {CW{1'b0}};
+                    if ((ls_kind == O_VLD) || (ls_kind == O_VST)) begin
+                        ls_run <= (ls_kind == O_VLD) ? LS_LD : LS_ST;
+                        next_insn;
+                    end else begin
+                        st <= ((ls_kind == O_VFILL) || (ls_kind == O_VDRAIN)) ? S_MEMW1
+                            : S_STR;
                     end
-                    st <= (ls_kind == O_VLD) ? S_LDA
-                        : (ls_kind == O_VST) ? S_STP
-                        : ((ls_kind == O_VFILL) || (ls_kind == O_VDRAIN)) ? S_MEMW1
-                        : S_STR;
                 end
 
                 S_MEMW1: st <= S_MEMW2;
@@ -1029,7 +995,8 @@ module vec_core #(
                     dr_ptr  <= l1_cur;
                     dr_left <= ag_total[8:0];
                     wb_left <= 4'd0;
-                    st <= (ls_kind == O_VFILL) ? S_FILL : S_DRA;
+                    ls_run <= (ls_kind == O_VFILL) ? LS_FL : LS_DR;
+                    next_insn;
                 end
 
                 S_BAR:  if (fill_out == 16'd0) begin
@@ -1069,6 +1036,115 @@ module vec_core #(
                 default: st <= S_FAULT;
             endcase
 
+            // ---------------------------------------- the load/store engine
+            case (ls_run)
+                LS_LD: begin
+                    if (ld_iss) begin
+                        l1_raddr <= ag_addr[LAW-1:0];
+                        ld_left  <= ld_left - 1'b1;
+                    end
+                    if (ld_wpre) begin
+                        lw_waddr <= {e_reg, e_chunk};
+                        lw_we    <= 1'b1;
+                        e_chunk  <= e_chunk + 1'b1;
+                    end
+                    if (ld_land) begin
+                        if ((e_dt == DT_FP32) && !ld_h[LD_TAP]) begin
+                            ls_hold <= i_f32;
+                        end
+                        else begin
+                            lw_wdata <= (e_dt == DT_FP16) ? i_f16 : {i_f32, ls_hold};
+                        end
+                        if ((ld_left == {(CW+2){1'b0}})
+                            && (ld_v[LD_TAP-1:0] == {LD_TAP{1'b0}})) begin
+                            ls_run  <= LS_IDLE;
+                            ls_tail <= 1'b1;
+                        end
+                    end
+                end
+                LS_ST: begin
+                    // A port is VST's only in the cycles it reads.
+                    lw_ract <= sq_iss;
+                    lw_rsel <= alu_va;
+                    if (sq_iss) begin
+                        lw_raddr <= {e_reg, (e_dt == DT_FP32) ? sq_iw[CW:1] : sq_iw[CW-1:0]};
+                        sq_iw    <= sq_iw + 1'b1;
+                    end
+                    if (sq_blk) begin
+                        sq_iw <= sq_lw;
+                    end
+                    if (sq_wr) begin
+                        l1_waddr <= ag_addr[LAW-1:0];
+                        l1_we    <= 1'b1;
+                        l1_wdata <= (e_dt == DT_FP16) ? o_f16
+                                  : (sq_h[1] ? o_f32hi : o_f32lo);
+                        sq_lw    <= sq_lw + 1'b1;
+                        if (sq_lw + 1'b1 == sq_nw) begin
+                            lw_ract <= 1'b0;
+                            lw_rsel <= 1'b0;
+                            ls_run  <= LS_IDLE;
+                            ls_tail <= 1'b1;
+                        end
+                    end
+                end
+                // VFILL's walk: a word address a cycle, coalesced into streamed runs.
+                LS_FL: begin
+                    if (fill_walk) begin
+                        if (!run_v) begin
+                            run_v    <= 1'b1;
+                            run_addr <= ag_addr;
+                            run_tag  <= l1_cur;
+                            run_cnt  <= 8'd1;
+                        end else begin
+                            run_cnt  <= run_cnt + 8'd1;
+                        end
+                        run_next <= ag_addr + 32;
+                        l1_cur   <= l1_cur + 1'b1;
+                        mem_left <= mem_left - 32'd1;
+                    end
+                    if (fill_emit) begin
+                        rd_req_valid <= 1'b1;
+                        rd_req_addr  <= run_addr;
+                        rd_req_tag   <= run_tag;
+                        rd_req_cnt   <= run_cnt;
+                        run_v        <= 1'b0;
+                    end
+                    if ((mem_left == 32'd0) && !run_v) begin
+                        ls_run  <= LS_IDLE;
+                        ls_tail <= 1'b1;
+                    end
+                end
+                // VDRAIN. `l1_cur`/`mem_left` count words TAKEN; `dr_ptr`/`dr_left`
+                // words read, and a blocked landing rewinds the latter to the former.
+                LS_DR: begin
+                    if (dr_iss) begin
+                        l1_raddr <= dr_ptr;
+                        dr_ptr   <= dr_ptr + 1'b1;
+                        dr_left  <= dr_left - 9'd1;
+                    end
+                    if (dr_blk) begin
+                        dr_ptr  <= l1_cur;
+                        dr_left <= mem_left[8:0];
+                    end
+                    if (dr_take) begin
+                        wr_req_valid <= 1'b1;
+                        wr_req_addr  <= ag_addr;
+                        wr_req_data  <= l1_q;
+                        wr_req_first <= (wb_left == 4'd0);
+                        wr_req_cnt   <= dr_blen;
+                        wb_left      <= (wb_left == 4'd0) ? (dr_blen - 4'd1)
+                                                          : (wb_left - 4'd1);
+                        l1_cur       <= l1_cur + 1'b1;
+                        mem_left     <= mem_left - 32'd1;
+                    end
+                    if ((mem_left == 32'd0) || (dr_take && (mem_left == 32'd1))) begin
+                        ls_run  <= LS_IDLE;
+                        ls_tail <= 1'b1;
+                    end
+                end
+                default: ;
+            endcase
+
             // LAST, so a fault arriving in the same cycle one is cleared above
             // is not the one that gets dropped.
             if (cd_fault) begin
@@ -1091,7 +1167,7 @@ module vec_core #(
     end
     // Fill runs: how many requests the fills became, and the first few verbatim.
     reg [31:0] pr_runs = 32'd0, pr_words = 32'd0;
-    // S_FILL split into walking, waiting on the previous request, and the rest;
+    // The fill walk split into walking, waiting on the previous request, the rest;
     // S_EXEC cycles per opcode, so a stall names the instruction it holds.
     reg [31:0] pf_walk = 32'd0, pf_blk = 32'd0, pf_oth = 32'd0;
     reg [31:0] pexec [0:31];
@@ -1099,7 +1175,7 @@ module vec_core #(
         for (si = 0; si < 32; si = si + 1) pexec[si] = 32'd0;
     end
     always @(posedge clk) begin
-        if (!rst && (st == S_FILL)) begin
+        if (!rst && (ls_run == LS_FL)) begin
             if (fill_walk) pf_walk <= pf_walk + 32'd1;
             else if (run_v && rd_req_valid) pf_blk <= pf_blk + 32'd1;
             else pf_oth <= pf_oth + 32'd1;
@@ -1121,6 +1197,15 @@ module vec_core #(
     reg [31:0] pu_busy = 32'd0, pu_beat = 32'd0, pu_rfls = 32'd0, pu_rfrd = 32'd0;
     reg [31:0] pu_l1r = 32'd0, pu_l1w = 32'd0, pu_fill = 32'd0, pu_drw = 32'd0;
     reg [31:0] pu_drblk = 32'd0, pu_sqblk = 32'd0, pu_insn = 32'd0;
+    reg [31:0] pu_ls = 32'd0, pu_ovl = 32'd0, pu_ldgap = 32'd0, pu_stgap = 32'd0;
+    always @(posedge clk) begin
+        if (!rst) begin
+            if (ls_run != LS_IDLE) pu_ls <= pu_ls + 32'd1;
+            if ((ls_run != LS_IDLE) && iss_valid) pu_ovl <= pu_ovl + 32'd1;
+            if ((ls_run == LS_LD) && (ld_left != 0) && wb_ahead) pu_ldgap <= pu_ldgap + 32'd1;
+            if ((ls_run == LS_ST) && (sq_iw != sq_nw) && !sq_iss) pu_stgap <= pu_stgap + 32'd1;
+        end
+    end
     reg [5:0]  pu_pst = 6'd0;
     always @(posedge clk) begin
         if (!rst) begin
@@ -1142,6 +1227,8 @@ module vec_core #(
         $display("VRES %m busy %0d beats %0d rf_ls_wr %0d rf_ls_rd %0d l1_rd %0d l1_wr %0d fill_words %0d drain_words %0d drain_replays %0d vst_replays %0d insns %0d",
                  pu_busy, pu_beat, pu_rfls, pu_rfrd, pu_l1r, pu_l1w, pu_fill, pu_drw,
                  pu_drblk, pu_sqblk, pu_insn);
+        $display("VLSENG %m busy %0d overlap %0d ld_wait %0d st_wait %0d",
+                 pu_ls, pu_ovl, pu_ldgap, pu_stgap);
         for (si = 0; si < 64; si = si + 1) begin
             if (sprof[si] != 32'd0) $display("VSTATE %m %0d %0d", si, sprof[si]);
         end

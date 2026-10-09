@@ -1027,6 +1027,54 @@ module vec_cu_tb;
             end
         end
 
+        $display("--- 15. ALU ops issue while a walk with an offset runs ---");
+        // Every walk below carries an instruction offset or an L1 start and is
+        // followed by an independent ALU op, which decodes while the walk runs.
+        s0 = sig_count;
+        put_imem(9'd170, 32'hE8000000);                 // VFILL A0 -> L1 0
+        put_imem(9'd171, I_VBAR);
+        put_imem(9'd172, 32'hA1200000);                 // VLD v0 <- A1
+        put_imem(9'd173, 32'hA1240008);                 // VLD v2 <- A1 + 8
+        put_imem(9'd174, 32'h29920400);                 // VMUL v9 = v0 * K2
+        put_imem(9'd175, 32'hA9640004);                 // VST v2 -> A3 + 4
+        put_imem(9'd176, 32'h18140000);                 // VADD v10 = v0 + v0
+        put_imem(9'd177, 32'hA9920000);                 // VST v9 -> A4
+        put_imem(9'd178, 32'hA9940008);                 // VST v10 -> A4 + 8
+        put_imem(9'd179, 32'hF0A00014);                 // VDRAIN A5 from L1 20
+        put_imem(9'd180, 32'h29960400);                 // VMUL v11 = v0 * K2
+        put_imem(9'd181, 32'hF0C00028);                 // VDRAIN A6 from L1 40
+        put_imem(9'd182, 32'h29960400);                 // VMUL v11 = v0 * K2
+        put_imem(9'd183, I_VHALT);
+        put_desc(3'd3, 3'd0, 34'd16);
+        put_desc(3'd3, 3'd1, {18'd1, 16'd8});
+        put_desc(3'd4, 3'd0, 34'd40);
+        put_desc(3'd4, 3'd1, {18'd1, 16'd8});
+        put_desc(3'd5, 3'd0, 34'd700 << 5);
+        put_desc(3'd5, 3'd1, {18'd32, 16'd8});
+        put_desc(3'd6, 3'd0, 34'd720 << 5);
+        put_desc(3'd6, 3'd1, {18'd32, 16'd16});
+        do_run(9'd170);
+        spin = 0;
+        // 14 imem words + 8 descriptor fields + the run
+        while ((sig_count < s0 + 23) && (spin < 120000)) begin
+            spin = spin + 1;
+            @(negedge clk);
+        end
+        chk(sig_count, s0 + 23, "kernel F retired");
+        chk({31'd0, dbg_fault}, 64'd0, "kernel F must not fault");
+        for (w = 0; w < 8; w = w + 1) begin
+            for (i = 0; i < 16; i = i + 1) begin
+                got16 = dram[700 + w][i*16 +: 16];
+                chk({48'd0, got16}, {48'd0, f16i(2*(w*16 + i + 1))}, "VLD+8 then VST+4");
+                got16 = dram[720 + w][i*16 +: 16];
+                chk({48'd0, got16}, {48'd0, f16i(w*16 + i + 1) | 16'h8000},
+                    "VMUL during a VLD walk");
+                got16 = dram[728 + w][i*16 +: 16];
+                chk({48'd0, got16}, {48'd0, f16i(2*(w*16 + i + 1))},
+                    "VADD during a VST walk");
+            end
+        end
+
         $display("========================================");
         if (errors == 0) begin
             $display("  PASS -- %0d checks, 0 errors", checks);
