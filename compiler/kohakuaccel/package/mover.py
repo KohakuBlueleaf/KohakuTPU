@@ -19,6 +19,10 @@ W16, W32 = 1, 2
 FLAG_WCOAL = 1 << 3
 GO = 1 << 16
 WORD_BYTES = 32
+#: Words one move carries at most, well under a dimension's 16 bits: the node
+#: bounds a MOVER step's wait by PROGRESS (a move finishing), and a 512 KB move
+#: finishes in ~500k cycles even at the quantiser's ~1 B a cycle.
+MOVE_WORDS = 1 << 14
 ADDR_BITS = 40
 NDIM = 6
 #: Bits of the header word: base at [43:4], transform id [50:47], mode [58:55].
@@ -79,9 +83,17 @@ def move(
 
 
 def copy(src: int, dst: int, nbytes: int) -> list:
-    """`nbytes` (whole words) from `src` to `dst`, contiguous."""
+    """`nbytes` (whole words) from `src` to `dst`, contiguous. More than
+    `MOVE_WORDS` is several moves."""
     words = nbytes // WORD_BYTES
-    return move(COPY, (src, [(words, WORD_BYTES)]), (dst, [(words, WORD_BYTES)]))
+    step = MOVE_WORDS
+    out = []
+    for at in range(0, words, step):
+        n, off = min(step, words - at), at * WORD_BYTES
+        out += move(
+            COPY, (src + off, [(n, WORD_BYTES)]), (dst + off, [(n, WORD_BYTES)])
+        )
+    return out
 
 
 def convert(
@@ -98,10 +110,10 @@ def convert(
 
     The SOURCE walker counts source words and defines the iteration space; the
     destination steps once per entry (mm_mover.v MODE_XFORM). No bound axis:
-    a transform move tiles whole entries. A count past one dimension's 16 bits
+    a transform move tiles whole entries. More than `MOVE_WORDS` source words
     is several moves, each of whole entries.
     """
-    step = ((1 << 16) - 1) // in_words
+    step = MOVE_WORDS // in_words
     out = []
     for at in range(0, entries, step):
         n = min(step, entries - at)

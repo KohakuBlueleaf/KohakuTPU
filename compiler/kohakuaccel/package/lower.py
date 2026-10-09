@@ -10,7 +10,9 @@ from kohakuaccel.backend.slots import Prebuilt
 from kohakuaccel.compile import compile
 from kohakuaccel.dispatch import deal
 from kohakuaccel.ir.l2 import Policy, ScheduleIR
-from kohakuaccel.package.format import type_code, unit_word
+from kohakuaccel.package.units import machine_units, unit_types
+
+__all__ = ["compile_stage", "machine_units", "schedule", "unit_types"]
 
 #: What Pack sees in place of the host's staging/command/FIFO bounds.
 UNBOUNDED = 1 << 30
@@ -46,19 +48,3 @@ def compile_stage(payloads: dict, unit: str, nodes, machine, fields=None, acks=N
     return compile(
         schedule(payloads, unit, nodes, acks, machine.default), roomy, Prebuilt(fields)
     )
-
-
-def machine_units(machine, mesh: int | None = None) -> list[int]:
-    """Every unit on one mesh of `machine`, as package unit words."""
-    here = machine.mesh(mesh)
-    return [
-        unit_word(type_code(kind), x, y, here.index)
-        for kind, coords in sorted(here.units.items())
-        for x, y in coords
-    ]
-
-
-def unit_types(machine, mesh: int | None = None) -> dict:
-    """Coordinate -> unit type name, for one mesh."""
-    here = machine.mesh(mesh)
-    return {tuple(c): kind for kind, coords in here.units.items() for c in coords}

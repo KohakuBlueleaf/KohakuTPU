@@ -15,6 +15,7 @@
 
 struct ka_unit_state {
     uint8_t x, y, mesh;
+    uint8_t plain;     /* the generic classifier: `ka_engine_drain` decides inline */
     uint16_t type;
     uint32_t credit;   /* in flight at most */
     uint32_t inflight; /* sent, not retired */
@@ -32,6 +33,7 @@ struct ka_engine {
     uint32_t outstanding; /* sum of inflight */
     uint64_t timeout;     /* cycles any one wait may take */
     uint32_t stray;       /* completions from a unit not in the package */
+    uint32_t popped;      /* completions taken off the queue, ever */
     uint32_t sent;
     uint64_t dst;         /* what M_DST holds, so it is written on change */
     uint8_t at[16][16];   /* unit index + 1 by (x, y), 0 for none */

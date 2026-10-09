@@ -49,6 +49,7 @@ int ka_engine_add(struct ka_engine *e, uint64_t word, uint32_t credit, uint32_t 
     s->mesh = (uint8_t)((word >> 16) & 0xff);
     s->type = (uint16_t)((word >> 32) & 0xffff);
     s->cls = ka_unit_class(s->type);
+    s->plain = s->cls->classify == ka_unit_generic_classify;
     uint32_t c = credit ? credit : e->cap;
     if (s->cls->credit && s->cls->credit < c) {
         c = s->cls->credit;
@@ -78,6 +79,39 @@ static int find(struct ka_engine *e, unsigned x, unsigned y)
     return -1;
 }
 
+/* A completion the inline path does not take: a unit not in the package, a
+ * fault, or a unit with its own classifier. Returns 1 when it retired a send.
+ * Out of line so the drain loop calls nothing and keeps its state in registers. */
+static __attribute__((noinline)) unsigned drain_slow(struct ka_engine *e, uint64_t w)
+{
+    int i = find(e, KA_CQ_X(w), KA_CQ_Y(w));
+    if (i < 0) {
+        ++e->stray;
+        if (KA_CQ_CODE(w) == KA_SIG_FAULT) {
+            ka_engine_fail(e, KA_ST_UNIT_FAULT, 0xffff, w);
+        }
+        return 0;
+    }
+    struct ka_unit_state *s = &e->u[i];
+    enum ka_verdict v = s->cls->classify(KA_CQ_CODE(w), KA_CQ_ARG(w));
+    unsigned retired = 0;
+    ++s->received;
+    if (v != KA_V_ACK && s->inflight) {
+        --s->inflight;
+        retired = 1;
+    }
+    if (v == KA_V_FAULT) {
+        if (s->cls->describe) {
+            s->cls->describe(KA_CQ_CODE(w), KA_CQ_ARG(w));
+        }
+        ka_engine_fail(e, KA_ST_UNIT_FAULT, (unsigned)i, w);
+    }
+    return retired;
+}
+
+/* MEASURED (RV_PC_PROF, card_v9_1n, 4 units x 200 one-cycle words): through
+ * the classifier pointer a completion cost 66 node cycles, and units whose
+ * words retire faster than that wait on the node. */
 int ka_engine_drain(struct ka_engine *e)
 {
     uint64_t stat = ka_nm_rd(KA_NM_STAT);
@@ -87,47 +121,41 @@ int ka_engine_drain(struct ka_engine *e)
         ka_rx_pop();
         ++e->stray;
     }
+    unsigned k = KA_NM_STAT_COUNT(stat);
     uint32_t retired = 0;
-    for (unsigned k = KA_NM_STAT_COUNT(stat); k; --k) {
+    e->popped += k;
+    for (; k; --k) {
         uint64_t w = ka_nm_rd(KA_NM_HEAD);
         ka_nm_wr(KA_NM_HEAD, 1);
-        int i = find(e, KA_CQ_X(w), KA_CQ_Y(w));
-        if (i < 0) {
-            ++e->stray;
-            if (KA_CQ_CODE(w) == KA_SIG_FAULT) {
-                ka_engine_fail(e, KA_ST_UNIT_FAULT, 0xffff, w);
+        unsigned code = KA_CQ_CODE(w);
+        uintptr_t at = e->at[KA_CQ_X(w)][KA_CQ_Y(w)];
+        struct ka_unit_state *s = (struct ka_unit_state *)((uintptr_t)e->u + at * sizeof *s) - 1;
+        if (at && s->plain && code != KA_SIG_FAULT) {
+            ++s->received;
+            if (code != KA_SIG_DATA_RECEIVED && s->inflight) {
+                --s->inflight;
+                ++retired;
             }
             continue;
         }
-        struct ka_unit_state *s = &e->u[i];
-        unsigned code = KA_CQ_CODE(w);
-        enum ka_verdict v = s->cls->classify != ka_unit_generic_classify
-                                ? s->cls->classify(code, KA_CQ_ARG(w))
-                            : code == KA_SIG_FAULT         ? KA_V_FAULT
-                            : code == KA_SIG_DATA_RECEIVED ? KA_V_ACK
-                                                           : KA_V_DONE;
-        ++s->received;
-        if (v != KA_V_ACK && s->inflight) {
-            --s->inflight;
-            ++retired;
-        }
-        if (v == KA_V_FAULT) {
-            if (s->cls->describe) {
-                s->cls->describe(KA_CQ_CODE(w), KA_CQ_ARG(w));
-            }
-            ka_engine_fail(e, KA_ST_UNIT_FAULT, (unsigned)i, w);
-        }
+        retired += drain_slow(e, w);
     }
     e->outstanding -= retired;
     return e->status;
 }
 
-/* Drain until `done(e, arg)` holds; TIMEOUT(`what`) after e->timeout cycles. */
+/* Drain until `done(e, arg)` holds; TIMEOUT(`what`) after e->timeout cycles.
+ * Yields only after KA_WAIT_SPIN empty polls: a yield is two context switches,
+ * and a completion queue left full holds the node's inbound link, memory
+ * traffic behind it included. */
+#define KA_WAIT_SPIN 64
 static int wait_until(struct ka_engine *e, int (*done)(struct ka_engine *, unsigned),
                       unsigned arg, unsigned what)
 {
     uint64_t t0 = ka_cycles();
+    unsigned idle = 0;
     for (;;) {
+        uint32_t seen = e->popped;
         if (ka_engine_drain(e)) {
             return e->status;
         }
@@ -137,7 +165,11 @@ static int wait_until(struct ka_engine *e, int (*done)(struct ka_engine *, unsig
         if (ka_cycles() - t0 > e->timeout) {
             return ka_engine_fail(e, KA_ST_TIMEOUT, what, arg);
         }
-        ka_yield();
+        idle = e->popped == seen ? idle + 1 : 0;
+        if (idle >= KA_WAIT_SPIN) {
+            idle = 0;
+            ka_yield();
+        }
     }
 }
 

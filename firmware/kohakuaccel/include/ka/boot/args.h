@@ -16,6 +16,8 @@
 #define KA_BOOT_F_TIMING (1UL << 1)
 /* Ignore the package's fetch ports and send every word through the mailbox. */
 #define KA_BOOT_F_NOFETCH (1UL << 2)
+/* Print each step's end cycle as it ends (PKGS lines), the printing excluded. */
+#define KA_BOOT_F_STEPS (1UL << 3)
 
 struct ka_bootargs {
     uint64_t magic;

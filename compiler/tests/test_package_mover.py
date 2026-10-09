@@ -37,18 +37,19 @@ def test_transform_fields_sit_where_the_slot_spec_puts_them():
     assert ctrl & 7 == 5 and ctrl >> 16 & 1
 
 
-def test_a_conversion_past_16_bits_is_several_whole_entry_moves():
-    entries = 3 * 8191 + 5
+def test_a_long_conversion_is_several_whole_entry_moves():
+    per = PM.MOVE_WORDS // 8  # entries a move carries
+    entries = 3 * per + 5
     writes = PM.convert(0x40_0000, 0x400_0000, entries)
     gos = [v for r, v in writes if r == PM.R_CTRL]
     assert len(gos) == 4 and all(v & PM.GO for v in gos)
     hdrs = [v for r, v in writes if r == PM.R_HDR]
     src = [(v >> PM.BASE_LSB) & ((1 << 40) - 1) for v in hdrs[0::2]]
     dst = [(v >> PM.BASE_LSB) & ((1 << 40) - 1) for v in hdrs[1::2]]
-    assert src == [0x40_0000 + k * 8191 * 8 * 32 for k in range(4)]
-    assert dst == [0x400_0000 + k * 8191 * 4 * 32 for k in range(4)]
+    assert src == [0x40_0000 + k * per * 8 * 32 for k in range(4)]
+    assert dst == [0x400_0000 + k * per * 4 * 32 for k in range(4)]
     counts = [(v >> 4) & 0xFFFF for r, v in writes if r == PM.R_DIM and not v & 1]
-    assert counts == [8191 * 8] * 3 + [5 * 8]
+    assert counts == [per * 8] * 3 + [5 * 8]
 
 
 def test_mover_bases_are_relocated():
@@ -76,6 +77,17 @@ def test_converting_move_model_equals_the_packer():
         n = fp.nbytes(x.shape) // 256
         run_move(PM.convert(MEM_BASE + 0x1000, MEM_BASE + 0x8000, n, 1, side), mem)
         assert mem.read(0x8000, mx.nbytes(x.shape)) == mx.pack(x)
+
+
+def test_a_copy_past_one_dimensions_count_copies_every_word():
+    """70,000 words is past a dimension's 16-bit count: several whole moves."""
+    words = 70_000
+    blob = np.arange(words * 16, dtype=np.uint16).tobytes()
+    mem = Memory()
+    mem.write(0x1000, blob)
+    moves = PM.copy(MEM_BASE + 0x1000, MEM_BASE + 0x40_0000, words * 32)
+    run_move(moves, mem)
+    assert mem.read(0x40_0000, len(blob)) == blob
 
 
 def _models(node: bool) -> SimDevice:

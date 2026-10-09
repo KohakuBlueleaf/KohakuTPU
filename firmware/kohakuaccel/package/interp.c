@@ -453,13 +453,14 @@ static int is_send(uint64_t w0)
  * one pass rather than after the whole programs ahead of it. Returns the steps
  * taken, 0 when the run reaches fewer than two units (the caller then steps
  * normally). */
-static uint32_t dispatch_group(uint32_t s0)
+/* `head` is step s0's first word, which the caller has already read. */
+static uint32_t dispatch_group(uint32_t s0, uint64_t head)
 {
     struct src g[KA_MAX_PKG_UNITS];
     uint32_t at[KA_MAX_PKG_UNITS];
     uint32_t n = 0, s1 = s0;
     for (; s1 < pk.nstep; ++s1) {
-        uint64_t w0 = step_word(s1, 0);
+        uint64_t w0 = s1 == s0 ? head : step_word(s1, 0);
         if (!is_send(w0)) {
             break;
         }
@@ -521,12 +522,40 @@ static uint32_t dispatch_group(uint32_t s0)
     return s1 - s0;
 }
 
+/* Until `gos` moves since `s0` are done and the mover is idle. The bound is on
+ * PROGRESS, not on the step: many moves may take far longer than one wait's
+ * timeout, and only a mover that stops finishing moves is hung. */
+static int moves_done(uint64_t s0, uint32_t gos)
+{
+    uint64_t t0 = ka_cycles(), s;
+    uint32_t seen = KA_MV_DONE(s0);
+    for (;;) {
+        s = ka_ctrl_rd(KA_R_MVSTAT);
+        if (KA_MV_FAULT(s)) {
+            return ka_engine_fail(&eng, KA_ST_MOVER_FAULT, KA_MV_FAULT(s), s);
+        }
+        if (!KA_MV_BUSY(s) && ((KA_MV_DONE(s) - KA_MV_DONE(s0)) & 0x0fffffff) >= gos) {
+            return 0;
+        }
+        if (KA_MV_DONE(s) != seen) {
+            seen = KA_MV_DONE(s);
+            t0 = ka_cycles();
+        }
+        if (ka_cycles() - t0 > eng.timeout) {
+            return ka_engine_fail(&eng, KA_ST_TIMEOUT, KA_WAIT_MOVER, s);
+        }
+        ka_yield();
+    }
+}
+
 /* Mover register writes, two (register, value) pairs per payload, then a wait
- * for the moves they start. */
+ * for the moves they start. A move's registers are written only once every
+ * earlier move of the step has finished: the walkers are not queued. */
 static int mover(uint32_t first, uint32_t count)
 {
     uint64_t s0 = ka_ctrl_rd(KA_R_MVSTAT);
     uint32_t gos = 0;
+    int fresh = 0; /* a GO went out since the last wait */
     for (uint32_t k = 0; k < count; ++k) {
         uint64_t w[4];
         if (payload(first + k, w)) {
@@ -539,24 +568,20 @@ static int mover(uint32_t first, uint32_t count)
             if (w[p] >= KA_MV_SPAN || (w[p] & 7)) {
                 return ka_engine_fail(&eng, KA_ST_NO_REACH, (unsigned)w[p], w[p + 1]);
             }
+            if (fresh) {
+                if (moves_done(s0, gos)) {
+                    return eng.status;
+                }
+                fresh = 0;
+            }
             ka_ctrl_wr(KA_R_MV + (unsigned)w[p], w[p + 1]);
-            gos += (w[p] == 0 && (w[p + 1] & (1UL << 16))) ? 1 : 0;
+            if (w[p] == 0 && (w[p + 1] & (1UL << 16))) {
+                ++gos;
+                fresh = 1;
+            }
         }
     }
-    uint64_t t0 = ka_cycles(), s;
-    for (;;) {
-        s = ka_ctrl_rd(KA_R_MVSTAT);
-        if (KA_MV_FAULT(s)) {
-            return ka_engine_fail(&eng, KA_ST_MOVER_FAULT, KA_MV_FAULT(s), s);
-        }
-        if (!KA_MV_BUSY(s) && ((KA_MV_DONE(s) - KA_MV_DONE(s0)) & 0x0fffffff) >= gos) {
-            return 0;
-        }
-        if (ka_cycles() - t0 > eng.timeout) {
-            return ka_engine_fail(&eng, KA_ST_TIMEOUT, KA_WAIT_MOVER, s);
-        }
-        ka_yield();
-    }
+    return moves_done(s0, gos);
 }
 
 static int mover_idle(void)
@@ -654,9 +679,8 @@ static int bindings(const struct ka_pkg_run *r)
     return 0;
 }
 
-static int step(const struct ka_pkg_run *r, uint32_t s, int *end)
+static int step(const struct ka_pkg_run *r, uint32_t s, uint64_t w0, int *end)
 {
-    uint64_t w0 = rd(pk.ostep + (uint64_t)s * KA_PKG_STEP_BYTES);
     uint64_t arg = rd(pk.ostep + (uint64_t)s * KA_PKG_STEP_BYTES + 8);
     unsigned op = w0 & 0xff, unit = (w0 >> 16) & 0xffff;
     uint32_t count = (uint32_t)(w0 >> 32);
@@ -743,13 +767,24 @@ int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out)
         t_bind = ka_cycles();
         int rr = !(ka_boot.flags & KA_BOOT_F_SERIAL);
         int end = 0;
+        int trace = (ka_boot.flags & KA_BOOT_F_STEPS) != 0;
+        uint64_t skew = 0;
         for (; s < pk.nstep && !eng.status && !end; ++s) {
-            uint32_t took = rr ? dispatch_group(s) : 0;
+            uint32_t first = s;
+            uint64_t w0 = step_word(s, 0);
+            uint32_t took = rr && is_send(w0) ? dispatch_group(s, w0) : 0;
             if (took) {
                 s += took - 1;
-                continue;
             }
-            step(r, s, &end);
+            else {
+                step(r, s, w0, &end);
+            }
+            if (trace) {
+                /* Steps first..s ended at this cycle, every earlier print removed. */
+                uint64_t t = ka_cycles();
+                ka_printf("PKGS %u %u %lu\n", first, s, t - t_bind - skew);
+                skew += ka_cycles() - t;
+            }
         }
         t_steps = ka_cycles();
         if (!eng.status) {
@@ -757,6 +792,13 @@ int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out)
         }
     }
     if (eng.status) {
+        /* Every unit's counters at the failure: which one stopped, and where. */
+        for (unsigned i = 0; i < eng.n; ++i) {
+            const struct ka_unit_state *u = &eng.u[i];
+            ka_printf("PKGF u%u (%u,%u) sent %u recv %u want %u inflight %u\n", i, u->x, u->y,
+                      u->sent, u->received, u->expected, u->inflight);
+        }
+        ka_printf("PKGF stray %u outstanding %u\n", eng.stray, eng.outstanding);
         ka_engine_quiesce(&eng);
         s = s ? s - 1 : 0;
     }
