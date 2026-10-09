@@ -9,6 +9,14 @@
 #define KA_BOOT_VERSION 2
 #define KA_MAX_UNITS    16
 
+/* Send each DISPATCH step whole, in package order, rather than round-robin
+ * across a run of consecutive DISPATCH steps to distinct units. */
+#define KA_BOOT_F_SERIAL (1UL << 0)
+/* Print each package run's phase cycles after it ends. */
+#define KA_BOOT_F_TIMING (1UL << 1)
+/* Ignore the package's fetch ports and send every word through the mailbox. */
+#define KA_BOOT_F_NOFETCH (1UL << 2)
+
 struct ka_bootargs {
     uint64_t magic;
     uint64_t version;
@@ -17,8 +25,8 @@ struct ka_bootargs {
     uint64_t scan;     /* nunits == 0: enumerate coordinates 0..scan, 0 = none */
     uint64_t timeout;  /* default bound on any one wait, cycles */
     uint64_t cq_depth; /* node-wide bound on outstanding completions, 0 = none */
-    uint64_t flags;
-    uint64_t nunits;   /* 0: the firmware enumerates its own units */
+    uint64_t flags;    /* KA_BOOT_F_* */
+    uint64_t nunits;  /* 0: the firmware enumerates its own units */
     uint64_t units[KA_MAX_UNITS]; /* type << 32 | mesh << 16 | y << 8 | x */
 };
 

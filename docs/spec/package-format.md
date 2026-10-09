@@ -83,6 +83,7 @@ know, and one whose sections run past the total.
 | | `[23:16]` | mesh |
 | | `[47:32]` | `CU_TYPE` — two ASCII characters ([control-registers.md](control-registers.md) §1.3) |
 | 1 | `[31:0]` | credit: instructions the unit may hold in flight, normally its `inst_depth` |
+| | `[63:32]` | fetch: `1 << 16 \| y << 8 \| x` names the memory port that streams this unit's `DISPATCH` payloads (§4.7); 0 sends them through the node's mailbox |
 
 Steps name a unit by its **index** in this table. A unit the package only waits
 on — a peer that acknowledges a transfer — is in the table too, so its
@@ -183,9 +184,17 @@ flight** (sent, not yet retired), and the completions **received** and
 | 6 | `WAIT_BELL` | mesh | n | | waits until n doorbells from that mesh have arrived that no earlier `WAIT_BELL` consumed, and consumes them; the count runs from the firmware's start, so a ring that lands before the waiting package begins is still found |
 | 7 | `SIGNAL` | | value | value | posts a progress completion to the host now ([node-queue.md](node-queue.md) §4) |
 | 8 | `SETTLE` | | cycles | | holds that many cycles |
+| 9 | `REPEAT` | unit | n | first payload, repeats, increments (§4.6) | sends the n template payloads `repeats` times, each as `DISPATCH` would; repetition r adds r × delta to every increment's field |
 
 Reaching the end of the list is an implicit `BARRIER`. Any other opcode fails
 the package.
+
+A run of consecutive `DISPATCH` and `REPEAT` steps naming distinct units goes
+out **round-robin**, one payload of each in turn, so every unit starts within
+one pass rather than after the whole programs ahead of it. Each unit's own
+payloads stay in order, which is the only order a unit can observe. Boot flag
+`SERIAL` ([node-queue.md](node-queue.md) §2) sends each step whole instead. A
+step for a unit that fetches (§4.7) ends the run and goes on its own.
 
 ### 4.1 Credit
 
@@ -234,6 +243,35 @@ set is a GO, and the step waits until as many moves as GOs have completed. The
 processor reaches the mover's whole map, `0x00`–`0x7F`, in its control region
 at `0x100` + offset; a register outside it, or not 8-byte aligned, fails the
 package with `NO_REACH`.
+
+### 4.6 `REPEAT`
+
+The argument is `first | repeats << 32 | increments << 48`. Payloads
+`[first, first + n)` are the template, relocated like any payload; the
+`increments` entries follow it, two per payload, in template order (index
+non-decreasing): bytes 0–7 `index | bit << 32 | width << 40` (index into the
+template, field position and width, `width` ≤ 64 and `bit + width` ≤ 256),
+bytes 8–15 the delta. Repetition r sends template
+word `index` with `r × delta` added to that field modulo 2^width; the writer
+guarantees no repetition wraps a field. A program whose K loop is periodic is
+one template and its address steps, so its size does not grow with K.
+
+### 4.7 Fetch
+
+When a package carries no relocations and a unit's table entry names a fetch
+port, a `DISPATCH` to it is not sent word by word. The node sends that memory
+port one streamed `MEM_RD_REQ` per at most 255 payloads, flags `STREAM | INST`,
+one-word entries, peer 0 the unit ([flit-format.md](flit-format.md) §4.1.1);
+the port delivers each payload to the unit as a `CU_INST` whose source is the
+node, so completions return to the node as if it had sent them. The payloads are
+read straight out of the package in memory, which is why relocations rule it
+out. The words count against the unit's credit as they would sent one at a
+time, bounded further by the unit's 512-entry instruction queue: a word the unit
+has no room for would hold the port's whole response stream. `REPEAT` steps are
+always sent by the node, so a writer that fetches does not compress. Boot flag
+`NOFETCH` ignores every fetch port. Measured on the v9 card (1024x512x1024
+matmul): 400 words in 4 requests, clusters never starved, 69.9% of peak against
+70.9% with every word queued before the clusters start.
 
 ## 5. What a project adds
 

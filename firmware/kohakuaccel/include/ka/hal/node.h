@@ -30,6 +30,7 @@ enum {
 /* M_DST: [24] send the type in [23:20] instead of CU_INST. */
 #define KA_NM_TYPED(t) ((1UL << 24) | ((uint64_t)((t) & 0xf) << 20))
 #define KA_T_CU_CTRL   0x7
+#define KA_T_MEM_RD_REQ 0x0
 
 /* RX queue registers, index * 8 from KA_R_RX. HDR is {valid[63], header[31:0]}
  * with src x at [23:20], src y at [19:16], type at [15:12]; a write pops. */

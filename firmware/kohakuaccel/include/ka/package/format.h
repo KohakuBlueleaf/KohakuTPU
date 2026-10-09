@@ -43,6 +43,7 @@ enum ka_step_op {
     KA_OP_WAIT_BELL = 6, /* unit = source mesh, count = rings since the start */
     KA_OP_SIGNAL    = 7, /* tell the host now: count = value32, arg = value64 */
     KA_OP_SETTLE    = 8, /* hold count cycles */
+    KA_OP_REPEAT    = 9, /* unit, count template payloads from arg, repeated */
 };
 
 /* A MOVER pair whose register is this is skipped (pads an odd count). */
