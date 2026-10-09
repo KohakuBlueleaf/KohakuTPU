@@ -206,9 +206,12 @@ module noc_cu_base #(
     reg         wr_err;
     wire        wr_clear  = (ACK_FENCE == 0) || (wr_out == 16'd0);
 
-    wire sig_sent  = sig_pend  && tx_free && wr_clear;
-    wire ctrl_sent = ctrl_pend && tx_free && !sig_pend;
-    assign send_ready = tx_free && !sig_pend && !ctrl_pend;
+    // A signal held by the write fence must not hold the datapath too: the
+    // writes it waits on may still be in that datapath's queue.
+    wire sig_go    = sig_pend && wr_clear;
+    wire sig_sent  = sig_go && tx_free;
+    wire ctrl_sent = ctrl_pend && tx_free && !sig_go;
+    assign send_ready = tx_free && !sig_go && !ctrl_pend;
 
     sync_fifo #(.DATA_WIDTH(SIG_W), .FIFO_DEPTH(SIG_DEPTH),
                 .MEMORY_TYPE("distributed")) u_sig (
