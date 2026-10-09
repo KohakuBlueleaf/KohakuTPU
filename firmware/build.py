@@ -1,7 +1,8 @@
-"""Build the node firmware images with the WSL riscv64 toolchain.
+"""Build the node firmware images, with the WSL riscv64 gcc or native clang.
 
     python firmware/build.py                    # every image
     python firmware/build.py kohakutpu_node     # one image
+    python firmware/build.py --toolchain clang  # clang + ld.lld on PATH, no WSL
     python firmware/build.py --list
 
 Each image is the framework core plus the parts named in IMAGES; the output is
@@ -117,6 +118,57 @@ def sources(parts: list[str]) -> list[pathlib.Path]:
     return out
 
 
+def build_clang(name: str) -> dict:
+    """Compile and link one image with native clang and ld.lld; returns sizes.
+
+    The same flags as the gcc build; libgcc is not linked, so an image needing
+    one of its helpers fails at link rather than at run.
+    """
+    srcs = sources(IMAGES[name])
+    obj_dir = OUT / "obj-clang" / name
+    obj_dir.mkdir(parents=True, exist_ok=True)
+    # -nostdlib already implies -nostartfiles to clang's bare-metal driver, and
+    # an unused flag is an error under -Werror.
+    flags = ["--target=riscv64-unknown-elf", "-Wno-unused-command-line-argument"]
+    flags += CFLAGS + [f"-I{(FW / i).as_posix()}" for i in INCLUDES]
+    objs = []
+    for s in srcs:
+        rel = s.relative_to(FW).with_suffix(".o").as_posix().replace("/", "__")
+        o = obj_dir / rel
+        objs.append(o.as_posix())
+        run(["clang", *flags, "-c", s.as_posix(), "-o", o.as_posix()], name)
+    elf = OUT / f"{name}.elf"
+    run(
+        [
+            "clang",
+            *flags,
+            "-fuse-ld=lld",
+            "-T",
+            LINK.as_posix(),
+            "-Wl,--gc-sections",
+            f"-Wl,-Map={(OUT / f'{name}.map').as_posix()}",
+            *objs,
+            "-o",
+            elf.as_posix(),
+        ],
+        name,
+    )
+    lst = run(["llvm-objdump", "-d", "-S", elf.as_posix()], name)
+    (OUT / f"{name}.lst").write_text(lst, encoding="utf-8")
+    size = run(["llvm-size", "-A", elf.as_posix()], name)
+    (OUT / f"{name}.size").write_text(size, encoding="utf-8")
+    return sizes(OUT / f"{name}.size")
+
+
+def run(cmd: list, name: str) -> str:
+    """One native tool call; its stdout, or SystemExit naming the image."""
+    done = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if done.returncode:
+        sys.stderr.write(done.stdout + done.stderr)
+        raise SystemExit(f"firmware image {name} failed to build: {cmd[0]}")
+    return done.stdout
+
+
 def build(name: str) -> dict:
     """Compile and link one image in ONE WSL call; returns its section sizes."""
     srcs = sources(IMAGES[name])
@@ -167,7 +219,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("images", nargs="*")
     ap.add_argument("--list", action="store_true")
+    ap.add_argument("--toolchain", choices=("gcc", "clang"), default="gcc")
     a = ap.parse_args()
+    make = build_clang if a.toolchain == "clang" else build
     if a.list:
         for k, v in IMAGES.items():
             print(f"{k:20s} {' '.join(v)}")
@@ -179,7 +233,7 @@ def main() -> int:
         if name not in IMAGES:
             raise SystemExit(f"no image {name!r}; have {sorted(IMAGES)}")
         t0 = time.monotonic()
-        s = build(name)
+        s = make(name)
         imem = sum(s.get(k, 0) for k in IMEM_SECTIONS)
         spad = sum(s.get(k, 0) for k in SPAD_SECTIONS)
         ok = imem <= IMEM_BYTES and spad <= SPAD_BYTES
