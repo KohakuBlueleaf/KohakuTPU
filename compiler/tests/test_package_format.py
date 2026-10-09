@@ -88,6 +88,26 @@ def _tiny() -> F.Package:
     )
 
 
+def test_a_fetch_port_is_the_high_half_of_the_credit_word():
+    # Spec: unit entry word 1 = credit [31:0] | fetch [63:32], fetch = 1<<16|y<<8|x.
+    pkg = F.Package(
+        units=[F.Unit(F.type_code("MG"), 1, 1, 0, 512, 1 << 16 | 1 << 8 | 3)]
+    )
+    got = pkg.to_bytes()
+    want = struct.pack(
+        "<QQ", 0x4D47 << 32 | 1 << 8 | 1, 512 | (1 << 16 | 1 << 8 | 3) << 32
+    )
+    assert got[96:112] == want
+    assert F.Package.from_bytes(got).units[0].fetch == 1 << 16 | 1 << 8 | 3
+
+
+def test_a_builder_with_a_fetch_port_names_it_on_every_unit():
+    b = PackageBuilder(types={(1, 0): "MG", (2, 2): "VC"}, credit=512, fetch=(3, 1))
+    assert [b.units[b.unit(c)].fetch for c in ((1, 0), (2, 2))] == [0x10103, 0x10103]
+    plain = PackageBuilder(types={(1, 0): "MG"})
+    assert plain.units[plain.unit((1, 0))].fetch == 0
+
+
 def test_layout_against_bytes_packed_from_the_spec():
     got = _tiny().to_bytes()
     # Section offsets per the spec: header 96, then 32-aligned sections.
@@ -297,8 +317,10 @@ def test_node_dispatch_matches_host_dispatch_exactly():
 
 
 def test_one_package_serves_calls_at_different_addresses():
-    """Relocation, witnessed by RESULTS: the second call's operands are elsewhere."""
+    """Relocation, witnessed by RESULTS: the second call's operands are elsewhere.
+    Only an unbound package relocates; a bound one carries each call's addresses."""
     dev = _device(True)
+    dev.bind_packages = False
     rng = np.random.default_rng(4)
     held, outs, refs = [], [], []
     for _ in range(3):
@@ -314,6 +336,25 @@ def test_one_package_serves_calls_at_different_addresses():
     assert len({tuple(b) for _, b in ran}) == 3, "the bindings never moved"
     for o, r in zip(outs, refs, strict=True):
         assert np.array_equal(o, r)
+
+
+@pytest.mark.parametrize("bind", [False, True])
+@pytest.mark.parametrize("compress", [False, True])
+def test_node_dispatch_is_exact_for_every_package_form(bind, compress):
+    """Bound, relocated, compressed or plain: the same results as the host."""
+    rng = np.random.default_rng(5)
+    a = rng.standard_normal((64, 256)).astype(np.float16)
+    w = rng.standard_normal((64, 256)).astype(np.float16)
+    host = _device(False)
+    want = ops.matmul(host.tensor(a), host.tensor(w), gm=4, gn=4, nk=1).numpy()
+    dev = _device(True)
+    dev.bind_packages, dev.compress_packages = bind, compress
+    got = ops.matmul(dev.tensor(a), dev.tensor(w), gm=4, gn=4, nk=1).numpy()
+    assert np.array_equal(got, want)
+    ops_seen = {s.op for raw in dev.packages for s in F.Package.from_bytes(raw).steps}
+    assert (F.Op.REPEAT in ops_seen) == compress
+    relocs = sum(len(F.Package.from_bytes(raw).relocs) for raw in dev.packages)
+    assert (relocs == 0) == bind
 
 
 class _CountingMailbox(SimMailbox):
@@ -350,6 +391,73 @@ def test_reference_interpreter_keeps_the_mailbox_bound():
     ops.residual(dev.tensor(x), dev.tensor(x)).numpy()
     assert mb.sent > 16
     assert mb.most <= 16
+
+
+class _Recorder:
+    """Keeps every payload sent and retires each at once."""
+
+    def __init__(self) -> None:
+        self.sent: list = []
+        self.owed: list = []
+
+    def send(self, x, y, payload):
+        self.sent.append((x, y, payload))
+        self.owed.append((x, y, 0x01, 0))
+
+    def drain(self):
+        out, self.owed = self.owed, []
+        return out
+
+
+def _k_loop(steps: int) -> list[int]:
+    """A cluster K loop as the compiler emits it: FILL A, FILL B, GEMM per step,
+    banks alternating, then a DRAIN."""
+    out = []
+    for s in range(steps):
+        bank = s % 2
+        out += [
+            ISA.fill(addr=0x4000 + s * 0x4000, n=128, fbank=bank),
+            ISA.fill(addr=0x40000 + s * 0x4000, n=128, sel=1, fbank=bank),
+            ISA.gemm(gm=64, gn=64, nk=2, acc=int(s > 0), abank=bank, bbank=bank),
+        ]
+    return out + [ISA.drain(addr=0x500000, n=4096)]
+
+
+def test_repeat_layout_is_the_spec():
+    b = PackageBuilder(types={(1, 1): "MG"})
+    words = [ISA.gemm(gm=1, gn=1, nk=1), ISA.fill(addr=0x100, n=1)]
+    lo, width = ISA.FILL.span("addr")
+    b.repeat(b.unit((1, 1)), words, 5, [(1, lo, width, 0x40)])
+    raw = b.build().to_bytes()
+    h = struct.unpack_from("<12Q", raw)
+    steps, pay = h[7], h[9]
+    w0, arg = struct.unpack_from("<QQ", raw, steps)
+    assert w0 == 9 | 0 << 16 | 2 << 32
+    assert arg == 0 | 5 << 32 | 1 << 48
+    inc = raw[pay + 2 * 32 : pay + 3 * 32]
+    assert inc == struct.pack("<QQQQ", 1 | lo << 32 | width << 40, 0x40, 0, 0)
+
+
+@pytest.mark.parametrize("steps", [2, 3, 8, 64])
+def test_a_periodic_program_repeats_and_sends_the_same_words(steps):
+    words = _k_loop(steps)
+    b = PackageBuilder(types={(1, 1): "MG"})
+    b.dispatch_periodic(b.unit((1, 1)), words, [ISA.FILL.span("addr")])
+    pkg = F.Package.from_bytes(b.build().to_bytes())
+    if steps >= 8:
+        assert len(pkg.payloads) <= 15 < len(words)
+        assert [s.op for s in pkg.steps].count(F.Op.REPEAT) == 1
+    mb = _Recorder()
+    res = Interpreter(mb).run(pkg)
+    assert res.status == 0
+    assert [p for _, _, p in mb.sent] == words
+
+
+def test_a_repeat_that_would_wrap_its_field_is_refused():
+    b = PackageBuilder(types={(1, 1): "MG"})
+    lo, width = ISA.FILL.span("addr")
+    with pytest.raises(F.PackageError, match="wraps"):
+        b.repeat(b.unit((1, 1)), [ISA.fill(addr=0, n=1)], 4, [(0, lo, width, 1 << 33)])
 
 
 def test_a_wrong_signature_is_refused_before_anything_is_sent():

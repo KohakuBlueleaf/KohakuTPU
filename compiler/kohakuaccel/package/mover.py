@@ -98,17 +98,21 @@ def convert(
 
     The SOURCE walker counts source words and defines the iteration space; the
     destination steps once per entry (mm_mover.v MODE_XFORM). No bound axis:
-    a transform move tiles whole entries.
+    a transform move tiles whole entries. A count past one dimension's 16 bits
+    is several moves, each of whole entries.
     """
-    if entries * in_words >= 1 << 16:
-        raise PackageError(f"{entries} entries is past one dimension's 16-bit count")
-    return move(
-        XFORM,
-        (src, [(entries * in_words, WORD_BYTES)]),
-        (dst, [(entries, out_words * WORD_BYTES)]),
-        ewidth=W16,
-        xform=(xform_id, mode),
-    )
+    step = ((1 << 16) - 1) // in_words
+    out = []
+    for at in range(0, entries, step):
+        n = min(step, entries - at)
+        out += move(
+            XFORM,
+            (src + at * in_words * WORD_BYTES, [(n * in_words, WORD_BYTES)]),
+            (dst + at * out_words * WORD_BYTES, [(n, out_words * WORD_BYTES)]),
+            ewidth=W16,
+            xform=(xform_id, mode),
+        )
+    return out
 
 
 def convert_walk(src, dst, xform_id: int = 1, mode: int = 0) -> list:

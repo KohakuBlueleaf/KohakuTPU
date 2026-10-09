@@ -49,6 +49,16 @@ class Runtime:
     fields = None
     #: Whether every package built is kept in :attr:`packages`.
     keep_packages = False
+    #: Whether a package keeps its compiled addresses: it is built per call, and
+    #: relocating on the node costs a pass (~11k cycles, 512^3 matmul on v9).
+    bind_packages = True
+    #: Whether a kick whose words step only in address fields goes as a REPEAT,
+    #: which keeps the package -- and the node's copy of it -- from growing with K.
+    compress_packages = True
+    #: The memory port ``(x, y)`` that streams a unit's words out of the package,
+    #: or None to send them through the node. Fetched words are plain, so a
+    #: package built for it is neither compressed nor relocated.
+    fetch_port = None
 
     def __init__(self, machine: MachineSpec, arena: Arena, transport, ctrl=None):
         self.machine = machine
@@ -205,7 +215,10 @@ class Runtime:
         result = compile_stage(payloads, unit, coords, self.machine, self.fields, acks)
         b = self._package()
         b.artifact(
-            result.artifact, addresses=self.fields.addresses if self.fields else None
+            result.artifact,
+            addresses=self.fields.addresses if self.fields else None,
+            bind=self.bind_packages,
+            compress=self.compress_packages and self.fetch_port is None,
         )
         b.barrier()
         self.counters["dispatches"] += 1
@@ -222,6 +235,7 @@ class Runtime:
                 credit=self.machine.inst_depth,
                 signature=signature(units),
                 mesh=self.machine.default,
+                fetch=self.fetch_port if self.bind_packages else None,
             )
         self._pending.spans_from(self.live_spans())
         return self._pending
@@ -234,7 +248,7 @@ class Runtime:
             self.host_move(list(writes))
             return
         b = self._package()
-        b.mover(writes, addresses=mover.addresses)
+        b.mover(writes, addresses=None if self.bind_packages else mover.addresses)
         b.barrier()
 
     def ring(self, mesh: int, tag: int = 0) -> None:

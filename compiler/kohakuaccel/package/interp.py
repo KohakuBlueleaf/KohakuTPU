@@ -24,6 +24,8 @@ from kohakuaccel.package.format import (
     signature,
 )
 
+MASK32, MASK64 = (1 << 32) - 1, (1 << 64) - 1
+
 SIG_DATA_RECEIVED = 0x03
 SIG_FAULT = 0x04
 
@@ -113,6 +115,36 @@ class Interpreter:
                     self.mb.send(u.x, u.y, words[s.arg + k])
                     inflight[s.unit] += 1
                     res.sent += 1
+            elif s.op == Op.REPEAT:
+                u = pkg.units[s.unit]
+                first, repeats, nincs = (
+                    s.arg & MASK32,
+                    (s.arg >> 32) & 0xFFFF,
+                    s.arg >> 48,
+                )
+                incs = []
+                for k in range(nincs):
+                    w = words[first + s.count + k // 2] >> (128 * (k % 2))
+                    head, delta = w & MASK64, (w >> 64) & MASK64
+                    incs.append(
+                        (head & MASK32, (head >> 32) & 0xFF, (head >> 40) & 0xFF, delta)
+                    )
+                for r in range(repeats):
+                    for j in range(s.count):
+                        w = words[first + j]
+                        for index, bit, width, delta in incs:
+                            if index == j:
+                                mask = (1 << width) - 1
+                                field = (((w >> bit) & mask) + r * delta) & mask
+                                w = (w & ~(mask << bit)) | field << bit
+                        if not wait(
+                            lambda i=s.unit: inflight[i] < credit[i]
+                            and sum(inflight) < cap
+                        ):
+                            return res
+                        self.mb.send(u.x, u.y, w)
+                        inflight[s.unit] += 1
+                        res.sent += 1
             elif s.op == Op.AWAIT:
                 expected[s.unit] += s.count
                 if not wait(lambda i=s.unit: received[i] >= expected[i]):

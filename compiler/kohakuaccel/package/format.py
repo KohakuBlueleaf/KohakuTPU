@@ -49,6 +49,7 @@ class Op(enum.IntEnum):
     WAIT_BELL = 6
     SIGNAL = 7
     SETTLE = 8
+    REPEAT = 9
 
 
 class Kind(enum.IntEnum):
@@ -96,13 +97,19 @@ def signature(unit_words) -> int:
 
 @dataclass(frozen=True)
 class Unit:
-    """A unit the package dispatches to. `credit` bounds its in-flight count."""
+    """A unit the package dispatches to. `credit` bounds its in-flight count.
+
+    `fetch` names the memory port that streams this unit's DISPATCH words from
+    the package itself, as ``1 << 16 | y << 8 | x``; 0 sends them through the
+    node's mailbox.
+    """
 
     type: int
     x: int
     y: int
     mesh: int = 0
     credit: int = 0
+    fetch: int = 0
 
     @property
     def word(self) -> int:
@@ -179,7 +186,12 @@ class Package:
         self._check()
         sections = [
             b"".join(
-                struct.pack("<QQ", u.word, u.credit & 0xFFFF_FFFF) for u in self.units
+                struct.pack(
+                    "<QQ",
+                    u.word,
+                    u.credit & 0xFFFF_FFFF | (u.fetch & 0xFFFF_FFFF) << 32,
+                )
+                for u in self.units
             ),
             b"".join(
                 struct.pack(
@@ -267,7 +279,13 @@ class Package:
         for i, s in enumerate(self.steps):
             if s.op in (Op.DISPATCH, Op.MOVER) and s.arg + s.count > len(self.payloads):
                 raise PackageError(f"step {i} reads payloads past {len(self.payloads)}")
-            if s.op in (Op.DISPATCH, Op.AWAIT) and s.unit >= len(self.units):
+            if s.op == Op.REPEAT:
+                first, incs = s.arg & 0xFFFF_FFFF, s.arg >> 48
+                if first + s.count + (incs + 1) // 2 > len(self.payloads):
+                    raise PackageError(
+                        f"step {i} reads payloads past {len(self.payloads)}"
+                    )
+            if s.op in (Op.DISPATCH, Op.REPEAT, Op.AWAIT) and s.unit >= len(self.units):
                 raise PackageError(f"step {i} names unit {s.unit} of {len(self.units)}")
 
     # ----------------------------------------------------------------- read
@@ -308,6 +326,7 @@ class Package:
                     (w >> 8) & 0xFF,
                     (w >> 16) & 0xFF,
                     credit & 0xFFFF_FFFF,
+                    credit >> 32,
                 )
             )
         buffers = []

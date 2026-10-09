@@ -34,6 +34,79 @@ Segments = tuple[tuple[int, int, int], ...]
 AddressFn = Callable[[int, str], Iterable[tuple[Segments, int]]]
 
 
+def _field(word: int, bit: int, width: int) -> int:
+    return (word >> bit) & ((1 << width) - 1)
+
+
+#: The longest template :func:`_periodic` tries: a K step is 3 words, a vector
+#: RUN a handful, and the search is quadratic in the kick's length.
+MAX_PERIOD = 16
+
+
+def _periodic(words: list[int], fields: list) -> tuple | None:
+    """``(head, period, repeats, increments)`` of the run saving the most
+    payload slots, or None when no run saves any.
+
+    A run repeats `words[head:head+period]` with every bit outside `fields`
+    equal and each field stepping by one constant per repetition.
+    """
+    rest = (1 << 256) - 1
+    for bit, width in fields:
+        rest &= ~(((1 << width) - 1) << bit)
+    best, saved = None, 0
+    n = len(words)
+    for period in range(1, min(MAX_PERIOD, n // 2) + 1):
+        for head in range(n - 2 * period + 1):
+            if (words[head] ^ words[head + period]) & rest:
+                continue
+            incs = []
+            for j in range(period):
+                a, b = words[head + j], words[head + period + j]
+                if (a ^ b) & rest:
+                    break
+                for bit, width in fields:
+                    d = _field(b, bit, width) - _field(a, bit, width)
+                    if d < 0:
+                        break
+                    if d:
+                        incs.append((j, bit, width, d))
+                else:
+                    continue
+                break
+            else:
+                repeats = 2
+                while head + (repeats + 1) * period <= n:
+                    base = head + repeats * period
+                    ok = all(
+                        not (words[base + j] ^ words[head + j]) & rest
+                        for j in range(period)
+                    )
+                    for j in range(period):
+                        for bit, width in fields:
+                            want = _field(words[head + j], bit, width) + repeats * next(
+                                (d for jj, bb, _, d in incs if jj == j and bb == bit), 0
+                            )
+                            ok = ok and _field(words[base + j], bit, width) == want
+                    if not ok:
+                        break
+                    repeats += 1
+                gain = (repeats - 1) * period - (len(incs) + 1) // 2
+                if gain > saved:
+                    best, saved = (head, period, repeats, incs), gain
+    return best
+
+
+def _address_fields(words, addresses: AddressFn | None, unit_type: str) -> list:
+    """Every ``(bit, width)`` address segment the backend reports in `words`."""
+    if addresses is None:
+        return []
+    out = set()
+    for w in words:
+        for segments, _ in addresses(w & ((1 << 256) - 1), unit_type):
+            out.update((bit, width) for bit, width, _ in segments)
+    return sorted(out)
+
+
 def type_name(code: int) -> str:
     """0x4D47 -> 'MG'."""
     return bytes(((code >> 8) & 0xFF, code & 0xFF)).decode("ascii", "replace")
@@ -54,9 +127,12 @@ class PackageBuilder:
         credit: int = 32,
         signature: int = 0,
         mesh: int = 0,
+        fetch: tuple | None = None,
     ) -> None:
         self.types = dict(types or {})
         self.credit = credit
+        #: The memory port every unit's DISPATCH words stream from, or None.
+        self.fetch = fetch
         self.signature = signature
         self.mesh = mesh
         self.units: list[Unit] = []
@@ -85,7 +161,10 @@ class PackageBuilder:
         name = type_name or self.types.get(tuple(coord))
         if name is None:
             raise PackageError(f"no unit type is known for {tuple(coord)}")
-        self.units.append(Unit(type_code(name), coord[0], coord[1], m, self.credit))
+        port = 0 if self.fetch is None else 1 << 16 | self.fetch[1] << 8 | self.fetch[0]
+        self.units.append(
+            Unit(type_code(name), coord[0], coord[1], m, self.credit, port)
+        )
         self._unit[key] = len(self.units) - 1
         return self._unit[key]
 
@@ -154,6 +233,62 @@ class PackageBuilder:
                 Step(Op.DISPATCH, unit, len(self.payloads) - first, first)
             )
 
+    def repeat(
+        self,
+        unit: int,
+        template,
+        repeats: int,
+        increments,
+        addresses: AddressFn | None = None,
+    ) -> None:
+        """`template` sent `repeats` times; repetition r adds r * delta to each
+        ``(index, bit, width, delta)`` field (package-format.md §4.6).
+
+        Raises :class:`PackageError` for an empty template, a field outside the
+        word, or a field the last repetition would wrap.
+        """
+        template, incs = list(template), sorted(increments)
+        if not template or not 1 <= repeats <= 0xFFFF or len(incs) > 0xFFFF:
+            raise PackageError(f"a REPEAT of {len(template)} words x {repeats}")
+        for index, bit, width, delta in incs:
+            field = (template[index] >> bit) & ((1 << width) - 1)
+            if not 0 < width <= 64 or bit + width > 256:
+                raise PackageError(f"increment field [{bit}, +{width}) leaves the word")
+            if field + (repeats - 1) * delta >= 1 << width or delta < 0:
+                raise PackageError(
+                    f"word {index}'s field [{bit}, +{width}) wraps within {repeats} "
+                    f"repetitions of {delta:+d}"
+                )
+        first = len(self.payloads)
+        kind = type_name(self.units[unit].type)
+        for w in template:
+            self.payload(w, addresses, kind)
+        for k in range(0, len(incs), 2):
+            word = 0
+            for half, (index, bit, width, delta) in enumerate(incs[k : k + 2]):
+                word |= (index | bit << 32 | width << 40) << (128 * half)
+                word |= delta << (128 * half + 64)
+            self.payloads.append(word)
+        arg = first | repeats << 32 | len(incs) << 48
+        self.steps.append(Step(Op.REPEAT, unit, len(template), arg))
+
+    def dispatch_periodic(
+        self, unit: int, words, fields, addresses: AddressFn | None = None
+    ) -> None:
+        """`words` as DISPATCH, REPEAT, DISPATCH: the longest run that repeats
+        with only `fields` (``(bit, width)`` spans) stepping by a constant
+        becomes one REPEAT, so a periodic program's size does not grow with its
+        length. Words the run does not cover go out as plain DISPATCH."""
+        words = [w & ((1 << 256) - 1) for w in words]
+        best = _periodic(words, list(fields))
+        if best is None:
+            self.dispatch(unit, words, addresses)
+            return
+        head, period, repeats, incs = best
+        self.dispatch(unit, words[:head], addresses)
+        self.repeat(unit, words[head : head + period], repeats, incs, addresses)
+        self.dispatch(unit, words[head + period * repeats :], addresses)
+
     def await_(self, unit: int, count: int) -> None:
         if count:
             self.steps.append(Step(Op.AWAIT, unit, count))
@@ -187,11 +322,22 @@ class PackageBuilder:
         self.steps.append(Step(Op.MOVER, 0, len(self.payloads) - first, first))
 
     # ---------------------------------------------------------------- artifacts
-    def artifact(self, art: Artifact, addresses: AddressFn | None = None) -> None:
+    def artifact(
+        self,
+        art: Artifact,
+        addresses: AddressFn | None = None,
+        bind: bool = False,
+        compress: bool = False,
+    ) -> None:
         """One compile's artifact: each kick a DISPATCH of its slots, each await
         an AWAIT, each barrier a BARRIER. Seeds are dropped: credit is the
         firmware's, per unit. A round awaiting more than it kicked on some unit
-        reserves that much mailbox room for acknowledgements."""
+        reserves that much mailbox room for acknowledgements.
+
+        `bind` keeps every address as compiled (no relocation): the package then
+        runs only at these addresses, and the node does no relocation pass.
+        `compress` sends a kick whose words repeat with only their address
+        fields stepping as a REPEAT (:meth:`dispatch_periodic`)."""
         kicked: dict[int, int] = {}
         owed: dict[int, int] = {}
         for s in art.steps:
@@ -199,7 +345,15 @@ class PackageBuilder:
                 continue
             if isinstance(s, Kick):
                 u = self.unit(s.coord)
-                self.dispatch(u, art.flits[s.base : s.base + s.nflits], addresses)
+                words = art.flits[s.base : s.base + s.nflits]
+                reloc = None if bind else addresses
+                fields = _address_fields(
+                    words, addresses, type_name(self.units[u].type)
+                )
+                if compress and fields:
+                    self.dispatch_periodic(u, words, fields, reloc)
+                else:
+                    self.dispatch(u, words, reloc)
                 kicked[u] = kicked.get(u, 0) + s.nflits
             elif isinstance(s, Await):
                 u = self.unit(s.coord)

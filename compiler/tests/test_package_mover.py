@@ -37,6 +37,20 @@ def test_transform_fields_sit_where_the_slot_spec_puts_them():
     assert ctrl & 7 == 5 and ctrl >> 16 & 1
 
 
+def test_a_conversion_past_16_bits_is_several_whole_entry_moves():
+    entries = 3 * 8191 + 5
+    writes = PM.convert(0x40_0000, 0x400_0000, entries)
+    gos = [v for r, v in writes if r == PM.R_CTRL]
+    assert len(gos) == 4 and all(v & PM.GO for v in gos)
+    hdrs = [v for r, v in writes if r == PM.R_HDR]
+    src = [(v >> PM.BASE_LSB) & ((1 << 40) - 1) for v in hdrs[0::2]]
+    dst = [(v >> PM.BASE_LSB) & ((1 << 40) - 1) for v in hdrs[1::2]]
+    assert src == [0x40_0000 + k * 8191 * 8 * 32 for k in range(4)]
+    assert dst == [0x400_0000 + k * 8191 * 4 * 32 for k in range(4)]
+    counts = [(v >> 4) & 0xFFFF for r, v in writes if r == PM.R_DIM and not v & 1]
+    assert counts == [8191 * 8] * 3 + [5 * 8]
+
+
 def test_mover_bases_are_relocated():
     b = PackageBuilder()
     b.spans_from({0x40_0000: 0x1000, 0x50_0000: 0x1000})
