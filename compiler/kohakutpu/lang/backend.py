@@ -8,13 +8,13 @@ words.
 
 import itertools
 
-import numpy as np
 from kohakuaccel.dispatch import deal
 from kohakuaccel.lang import Dim, Stmt, resolve
 from kohakuaccel.lang import kernel as _traced
 from kohakutpu.hw import vector as V
 from kohakutpu.isa import ISA
 from kohakutpu.isa.vecemit import (
+    BAND_IMAGE,
     BATCH_BYTES,
     BATCH_ELEMS,
     DESCRIPTORS,
@@ -34,11 +34,9 @@ from kohakutpu.lang import cluster, vector
 from kohakutpu.lang.buffers import PART, In, Out
 from kohakutpu.lang.errors import CannotFuse, LangError
 from kohakutpu.lang.vector import Const, Ref, Resident
+from kohakutpu.tiling import ENTRY_CYCLES, FILL_CYCLES, WORD_CYCLES
 
 from kohakutpu import layout as LO
-
-#: The emitter's own default, and the widest pass a band builds.
-MAX_CHUNKS = 8
 
 FP16_ENTRY_BYTES = LO.LANES * LO.KBLOCK * 2
 
@@ -207,7 +205,7 @@ class TpuBackend:
                 if _budget(run) <= DESCRIPTORS:
                     continue
                 held = list(dict.fromkeys(s.args["result"] for s in run))
-                if len(held) > 1 and 2 * len(_slots(run)) + 2 <= DESCRIPTORS:
+                if len(held) > 1 and len(_slots(run)) + 2 <= DESCRIPTORS:
                     out.append(tuple(held))
         return out
 
@@ -400,33 +398,12 @@ class TpuBackend:
         return (max(1, -(-room // per)),)
 
     def constants(self, compiled) -> dict:
-        """Every folded scalar, as an array one instance's STRIDE long.
+        """Arrays a kernel's folded scalars need in memory: none.
 
-        Each batch steps every operand base forward, so a broadcast scalar has to
-        cover the whole stride -- not one element, and not one batch. A statement
-        the descriptor budget already refuses gets no array: its band seeds the
-        scalar into a register instead, and a run holding it costs no less.
+        A band carries every scalar as an S or K instruction operand and a fused
+        epilogue as a register, so no constant is ever filled from DRAM.
         """
-        out: dict = {}
-        for stage in compiled.stages:
-            for s in _stmts(stage):
-                if s.kind != "apply" or s.args.get("resident"):
-                    continue
-                if _seeds(s):
-                    continue
-                # The instance STRIDE, not `part=`: a pass over a padded buffer
-                # steps further, and a shorter array is read past its end.
-                wide = _stride(compiled, stage, s, _per(compiled))
-                for leaf in s.args["leaves"]:
-                    if not isinstance(leaf, Const):
-                        continue
-                    held = out.get(_const(compiled, leaf))
-                    if held is None or held[0].size < wide:
-                        out[_const(compiled, leaf)] = (
-                            np.full(wide, _scalar(compiled, leaf), np.float16),
-                            LO.Flat(),
-                        )
-        return out
+        return {}
 
     def encode(self, compiled, stage, addrs: dict) -> dict:
         """Grid coordinate -> instruction words, for one stage."""
@@ -619,12 +596,8 @@ class TpuBackend:
         # Each leaf carries its OWN part, so an expression can read one block
         # of a long buffer while writing another.
         srcs = [
-            (
-                addrs[_const(compiled, leaf)]
-                if isinstance(leaf, Const)
-                else self._base(compiled, stage, inst, addrs, leaf.name)
-                + _at(compiled, leaf, stride) * 2
-            )
+            self._base(compiled, stage, inst, addrs, leaf.name)
+            + _at(compiled, leaf, stride) * 2
             for leaf in keys
         ]
         where = [
@@ -685,16 +658,6 @@ def _folds(stmt) -> bool:
     )
 
 
-def _seeds(stmt) -> bool:
-    """Whether this statement's band holds its constants in registers.
-
-    A scalar costs a register and no descriptor, so it moves out of DRAM exactly
-    when the descriptor budget cannot afford it. The budget only grows as a run
-    takes more statements, so a statement that seeds alone seeds in any run.
-    """
-    return _budget([stmt]) > DESCRIPTORS
-
-
 def _spellable(compiled, stmts: list) -> None:
     """Refuse a fold this run carries no row width for.
 
@@ -753,16 +716,11 @@ def _build(compiled, stmts: list, stride: int | None = None) -> tuple:
     nin = len(keys)
     walks = [_walk(compiled, leaf) for leaf in keys]
     groups = _regions(stmts)
-    if not any(_folds(s) for s in stmts):
-        if any(walks):
-            return _fit(chains, nin, span, V.VLMAX, consts, walks, groups), keys, span
-        made = BandKernel(
-            chains, nin, chunks=_chunks(span), consts=consts, groups=groups
-        )
-        return made, keys, span
-    span = _folded(stmts, span)
-    kernel = _fit(chains, nin, span, _width(stmts, span), consts, walks, groups)
-    return kernel, keys, span
+    vl = V.VLMAX
+    if any(_folds(s) for s in stmts):
+        span = _folded(stmts, span)
+        vl = _width(stmts, span)
+    return _fit(chains, nin, span, vl, consts, walks, groups), keys, span
 
 
 def _one_row(run: list, extents: dict) -> bool:
@@ -857,30 +815,46 @@ def _width(stmts: list, span: int) -> int:
 def _fit(
     chains, nin: int, span: int, vl: int, consts=(), walks=None, groups=None
 ) -> BandKernel:
-    """The widest RUN of this band a core holds, stepping `vl` elements at once.
+    """The band covering `span` in the fewest RUNs a core holds, `vl` per step.
 
-    A RUN stores its WHOLE batch whatever `nelem` says, so the step count must
-    DIVIDE the run or the last one writes over what follows it. Raises the
-    emitter's own refusal for a band no step count fits.
+    A RUN stores its WHOLE batch whatever `nelem` says, so the steps one RUN
+    takes must DIVIDE the span or the last writes over what follows it. The node
+    streams a RUN's base words while the core runs the one before, so a RUN
+    costs the larger of its core cycles and its words at `WORD_CYCLES` each;
+    the cheapest total wins, an image over BAND_IMAGE only when nothing under
+    it fits. Raises the emitter's own refusal for a band no RUN fits.
     """
-    steps = max(1, span // vl)
+    steps = max(1, -(-span // vl))
     why: Exception = VecEmitError(f"a {steps}-step band fits no RUN")
-    for tile in range(steps, 0, -1):
-        if steps % tile:
-            continue
-        try:
-            return BandKernel(
-                chains,
-                nin,
-                chunks=tile,
-                vl=vl,
-                consts=consts,
-                walks=walks,
-                groups=groups,
-            )
-        except (VecEmitError, ValueError) as exc:
-            why = exc
-    raise why
+    best, best_key = None, None
+    for per_run in [d for d in range(steps, 0, -1) if steps % d == 0]:
+        for halves in (3, 2, 1):
+            if per_run % halves:
+                continue
+            try:
+                made = BandKernel(
+                    chains,
+                    nin,
+                    chunks=per_run // halves,
+                    vl=vl,
+                    consts=consts,
+                    walks=walks,
+                    groups=groups,
+                    halves=halves,
+                )
+            except (VecEmitError, ValueError) as exc:
+                why = exc
+                continue
+            words = halves * (nin + len(made.spans)) + 1
+            # A 128-B entry is four 32-B flits (tiling.py), so a word is a quarter.
+            core = made.cycles(ENTRY_CYCLES / 4, FILL_CYCLES)
+            total = steps // per_run * max(core, words * WORD_CYCLES)
+            key = (len(made.image) > BAND_IMAGE, total, len(made.image))
+            if best_key is None or key < best_key:
+                best, best_key = made, key
+    if best is None:
+        raise why
+    return best
 
 
 def _why(compiled, stmts: list, exc) -> str:
@@ -895,8 +869,9 @@ def _why(compiled, stmts: list, exc) -> str:
     leaves = stmts[0].args["leaves"]
     return (
         f"{compiled.name}: this expression reads {len(leaves)} operands "
-        f"({_names(leaves)}); the core has eight descriptors and a chain needs "
-        f"two per operand plus two, so split it across statements. ({exc})"
+        f"({_names(leaves)}); the core has eight descriptors and a band needs "
+        f"one per operand, one per result region and one for L1, so split it "
+        f"across statements. ({exc})"
     )
 
 
@@ -964,7 +939,9 @@ def _slots(stmts: list) -> set:
     slots: set = set()
     made: set = set()
     for s in stmts:
-        slots |= {_leaf_key(le) for le in s.args["leaves"]} - made
+        slots |= {
+            _leaf_key(le) for le in s.args["leaves"] if not isinstance(le, Const)
+        } - made
         made.add(_wrote(s))
     return slots
 
@@ -984,12 +961,12 @@ def _regions(stmts: list) -> list[int]:
 
 
 def _budget(stmts: list) -> int:
-    """Descriptors ONE program holding these chains would need.
+    """Descriptors ONE program holding these chains needs at one half per RUN.
 
-    Two per filled operand, one store between them all, and one drain per
-    REGION. A leaf an earlier chain of the run wrote fills nothing.
+    One per filled operand, one drain per REGION, and the L1 window every VLD
+    and VST shares. A leaf an earlier chain of the run wrote fills nothing.
     """
-    return 2 * len(_slots(stmts)) + 1 + len(set(_regions(stmts)))
+    return 1 + len(_slots(stmts)) + len(set(_regions(stmts)))
 
 
 def _spec(compiled, stmts: list, stride: int | None = None) -> tuple:
@@ -997,8 +974,8 @@ def _spec(compiled, stmts: list, stride: int | None = None) -> tuple:
 
     `operands` is the leaves the band fills, in slot order; a leaf an earlier
     chain of this run wrote takes no slot and is forwarded in a register, and so
-    does a subexpression the statement lifted. `consts` are the scalars a band
-    over the descriptor budget seeds into registers instead of filling.
+    does a subexpression the statement lifted. `consts` are the folded scalars,
+    which ride in instruction operands and are never filled.
 
     Every STATEMENT stores -- whether a later stage reads its result is not
     known here and a wrong elision is a silent stale read. A lifted chain does
@@ -1009,7 +986,6 @@ def _spec(compiled, stmts: list, stride: int | None = None) -> tuple:
     """
     stride = _per(compiled) if stride is None else stride
     span = _span(compiled, stmts[0], stride)
-    seeds = any(_seeds(s) for s in stmts)
     operands: list = []
     consts: list = []
     slots: dict = {}
@@ -1032,7 +1008,7 @@ def _spec(compiled, stmts: list, stride: int | None = None) -> tuple:
             key = _leaf_key(leaf)
             if key in made:
                 remap[n] = forward(made[key])
-            elif seeds and isinstance(leaf, Const):
+            elif isinstance(leaf, Const):
                 if key not in slots:
                     slots[key] = konst(len(consts))
                     consts.append(_scalar(compiled, leaf))
@@ -1420,17 +1396,6 @@ def _per(compiled) -> int:
     return compiled.knobs.get("part", PART)
 
 
-def _chunks(span: int) -> int:
-    """Chunks one pass should walk to cover `span` and no more.
-
-    A RUN stores its WHOLE batch whatever `nelem` says, so a short statement at
-    an offset writes over what follows it. Sized to the span this is exact once
-    the span is a whole `VLMAX`; at `span >= BATCH_ELEMS` it is the old constant
-    and the program is unchanged.
-    """
-    return max(1, min(MAX_CHUNKS, -(-span // V.VLMAX)))
-
-
 def _span(compiled, stmt, stride: int) -> int:
     """Elements one instance of an elementwise statement covers.
 
@@ -1583,18 +1548,6 @@ def _names(leaves) -> str:
     return ", ".join(
         leaf.name if isinstance(leaf, Ref) else repr(leaf.value) for leaf in leaves
     )
-
-
-def _const(compiled, leaf: Const) -> str:
-    """The DRAM array a folded scalar lives in, named by its VALUE.
-
-    Named by the SYMBOL it arrived as, an extent gave `constName(name='N')` at
-    EVERY N while `_scalar` resolved the array per compilation, so a second
-    shape read the first shape's array -- measured 0.334 against 8.8e-4 on
-    `layernorm` at 64x128 behind 64x64, silent. What the array holds is the
-    number, so that is what names it.
-    """
-    return f"const{_scalar(compiled, leaf)!r}"
 
 
 def _scalar(compiled, leaf: Const) -> float:

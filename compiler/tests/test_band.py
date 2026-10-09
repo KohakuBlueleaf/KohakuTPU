@@ -71,18 +71,31 @@ def close(got, want, tol=3e-3) -> bool:
         ([(OpKind.SUM, [0]), (OpKind.MUL, [OUT_REG, 1])], 2),
     ],
 )
-@pytest.mark.parametrize("chunks", [1, 4, 8])
-def test_a_band_of_one_chain_is_the_old_kernel_word_for_word(ops, nin, chunks):
-    """The witness that makes replacing the per-statement path safe.
+@pytest.mark.parametrize("chunks,halves", [(1, 1), (4, 1), (8, 1), (4, 2), (2, 3)])
+def test_a_band_of_one_chain_computes_what_the_old_kernel_computed(
+    ops, nin, chunks, halves
+):
+    """The witness that makes the scheduled band safe: the same bits, any shape.
 
-    Anything that does not use a new feature must emit a byte-identical
-    program, and a band of one storing chain is exactly that case.
+    `ElementwiseKernel` runs one step at a time, in order. The band runs steps
+    `group` at a time, op-major, over double-buffered halves with the result
+    stored in place -- the same ops on the same values, so the same bits.
     """
+    if 1 + halves * (nin + 1) > 8:
+        pytest.skip(f"{halves} halves of {nin} operands exceed the 8 descriptors")
+    nelem = 128 * chunks * halves * 2
+    arrays = [rows(40 + i, 1, nelem, scale=0.5).reshape(-1) for i in range(nin)]
     old = ElementwiseKernel(ops, nin, chunks=chunks)
-    new = BandKernel([Chain(tuple(ops))], nin, chunks=chunks)
-    assert new.image == old.image
-    srcs = [0x1000 * (i + 1) for i in range(nin)]
-    assert new.flits(srcs, [0x9000], 4096) == old.flits(srcs, 0x9000, 4096)
+    unit, mem = VectorUnit(mem_base=0), Memory(1 << 22)
+    srcs = [(i + 1) * SLAB for i in range(nin)]
+    for at, a in zip(srcs, arrays, strict=True):
+        mem.write(at, np.asarray(a, FP16).tobytes())
+    for flit in old.flits(srcs, (nin + 1) * SLAB, nelem):
+        unit.execute(flit, mem)
+    want = np.frombuffer(mem.read((nin + 1) * SLAB, nelem * 2), FP16)
+    new = BandKernel([Chain(tuple(ops))], nin, chunks=chunks, halves=halves)
+    got = run(new, arrays, nelem)[0]
+    assert np.array_equal(got, want.astype(np.float64))
 
 
 def test_two_independent_chains_share_one_image_and_one_fill():
@@ -147,7 +160,9 @@ def test_the_whole_softmax_is_one_band():
         chunks=1,
         vl=64,
     )
-    assert band.nout == 1 and len(band.held) == 3
+    # Both folds stay in S registers; only `exp2(x - max)` holds a vector.
+    assert band.nout == 1 and band.scalar == {(0, 0), (2, 0)}
+    assert len(band.r_held[0]) == 1
     x = rows(5, 1, 64)
     got = run(band, [x.reshape(-1)], 64)[0]
     e = np.exp2(x - x.max(axis=1, keepdims=True))
@@ -174,24 +189,26 @@ def test_a_reduction_folds_exactly_vl_lanes():
 
 # ------------------------------------------------------------------- refusals
 def test_a_band_over_the_descriptor_budget_is_refused():
-    """Two per filled operand, ONE store between them all, one drain each."""
+    """One per filled operand and per drain, per half, and the L1 window."""
     with pytest.raises(VecEmitError, match="descriptors"):
-        BandKernel([Chain(((OpKind.ADD, [0, 1]),))] * 2, nin=3, chunks=1)
+        BandKernel([Chain(((OpKind.ADD, [0, 1]),))] * 2, nin=6, chunks=1)
+    with pytest.raises(VecEmitError, match="descriptors"):
+        BandKernel([Chain(((OpKind.ADD, [0, 1]),))], nin=3, chunks=1, halves=2)
 
 
-def test_every_result_shares_one_store_descriptor():
-    """What lets four chains fit: the VST offset reaches every output region.
+def test_every_load_and_store_shares_one_l1_descriptor():
+    """What lets four chains fit: VLD and VST name L1 at an absolute offset.
 
-    A descriptor per result would cost `2*nin + 2*nout` and a four-chain
-    softmax would need ten. Sharing the store makes it `2*nin + 1 + nout`, so
-    the same band is seven and fits.
+    A load window per operand and a store window would cost `2*nin + 1 + nout`
+    and a four-chain softmax with four results would be seven; one window makes
+    it `1 + nin + nout`, so two results over two operands is five.
     """
     band = BandKernel(
         [Chain(((OpKind.MUL, [0, 1]),)), Chain(((OpKind.ADD, [0, 1]),))],
         nin=2,
         chunks=1,
     )
-    assert isinstance(band.ad_st, int) and len(band.ad_drain) == 2
+    assert band.ad_fill == [[1, 2]] and band.ad_drain == [[3, 4]]
     a, b = rows(11, 1, 128).reshape(-1), rows(12, 1, 128).reshape(-1)
     got = run(band, [a, b], 128, nout=2)
     assert close(got[0], a * b)
@@ -310,12 +327,11 @@ def test_sumsq_squares_its_own_operand():
 
 
 # ----------------------------------------------- constants that are not filled
-def test_a_folded_constant_costs_a_register_and_no_descriptor():
-    """`y = (x + eps) * scale` with both scalars in registers: one operand.
+def test_a_folded_constant_costs_no_register_and_no_descriptor():
+    """`y = (x + eps) * scale` with both scalars as S operands: one operand.
 
-    Filled from DRAM the same band reads three operands and needs nine
-    descriptors. Seeded, it reads one and needs four, which is what buys
-    `layernorm_fused` its seat at the table.
+    Filled from DRAM the same band would read three operands. As instruction
+    operands they cost one VSETI each and nothing else.
     """
     band = BandKernel(
         [
@@ -327,20 +343,17 @@ def test_a_folded_constant_costs_a_register_and_no_descriptor():
         chunks=1,
         consts=(0.25, 3.0),
     )
-    assert 2 * band.nin + 1 + band.nout == 4
-    assert len(band.seeded) == 2
-    assert set(band.seeded.values()).isdisjoint(band.held.values())
+    assert 1 + band.nin + band.nout == 3 and band.ad_drain == [[2]]
+    assert sorted(band.sconst) == [0.25, 3.0]
     x = rows(31, 1, 128)
     got = run(band, [x.reshape(-1)], 128)[0]
     assert close(got, (x + 0.25) * 3.0)
 
 
-def test_a_folded_constant_reaches_a_slot_a_scalar_operand_cannot():
-    """A broadcast constant is a VECTOR register, so every slot takes it.
+def test_a_folded_constant_rides_in_the_addend_slot():
+    """`VSUB`'s `vc` as an S operand: `vec_lanes.v:333` selects S or K in any slot.
 
-    `("vc", SRC_S)` has never been demonstrated, so `VADD`'s addend cannot be a
-    scalar operand -- and `var + eps` is exactly that shape. Through a VBCAST
-    the addend is an ordinary vector source and the question does not arise.
+    Run on RTL too: softmax's `x - max` is this shape (vperf on vec_replay_tb).
     """
     band = BandKernel(
         [Chain(((OpKind.SUB, [0, konst(0)]),))], nin=1, chunks=1, consts=(1.5,)
@@ -349,12 +362,12 @@ def test_a_folded_constant_reaches_a_slot_a_scalar_operand_cannot():
     assert close(run(band, [x.reshape(-1)], 128)[0], x - 1.5)
 
 
-def test_a_band_with_no_constants_emits_the_image_it_always_did():
-    """The byte-identity claim: seeding costs nothing when nothing is seeded."""
-    ops = [(OpKind.MUL, [0, 1])]
-    assert BandKernel([Chain(tuple(ops))], 2, chunks=4, consts=()).image == (
-        ElementwiseKernel(ops, 2, chunks=4).image
-    )
+def test_a_constant_costs_its_vseti_and_nothing_else():
+    """Two words per S constant; a K constant (0, 1, -1) costs none."""
+    ops = (OpKind.MUL, [0, konst(0)]), (OpKind.ADD, [OUT_REG, konst(1)])
+    k = BandKernel([Chain(ops)], 1, chunks=4, consts=(3.0, 1.0))
+    s = BandKernel([Chain(ops)], 1, chunks=4, consts=(3.0, 2.0))
+    assert len(s.image) == len(k.image) + 2
 
 
 def test_a_band_that_outruns_instruction_memory_is_refused():
@@ -385,12 +398,10 @@ def test_a_forward_of_a_chain_that_has_not_run_is_refused():
 def test_a_band_too_wide_for_l1_is_refused():
     """`require_l1`'s measured bad band, where the card returns wrong data.
 
-    At the eight chunks `_chunks` caps at, the descriptor budget always binds
-    first -- four regions of 64 words is 256 and the band starts at 321. It
-    takes a wider batch to reach L1 at all, which is why this asks for sixteen.
+    Stored in place, two operands of 24 chunks are 384 words, inside 321..511.
     """
     with pytest.raises(ValueError, match="L1 words"):
-        BandKernel([Chain(((OpKind.ADD, [0, 1]),))], nin=2, chunks=16)
+        BandKernel([Chain(((OpKind.ADD, [0, 1]),))], nin=2, chunks=24)
 
 
 def test_flits_wants_one_address_per_operand_and_per_drain():

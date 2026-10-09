@@ -9,8 +9,9 @@ schedules, and every fixture run twice and compared element for element.
 `tests/test_arena.py` does the same job for the heap underneath. This is the
 layer that decides WHEN a span dies.
 
-The kernels are FIXTURES (rule 2b). `staged_norm` is the vehicle for anything
-about sharing: seven temps over eight passes, some provably never co-live.
+The kernels are FIXTURES (rule 2b). `wide_passes` is the vehicle for the
+saving -- four stages, `t1` and `t3` never co-live -- and `staged_norm`, seven
+temps in one stage, for a placement the guard must catch.
 """
 
 import gc
@@ -39,6 +40,7 @@ from tests.fixtures import (
     rownorm,
     scale,
     staged_norm,
+    wide_passes,
 )
 
 #: The submodule, not the decorator: `kohakuaccel.lang` re-exports `kernel`, so
@@ -55,9 +57,11 @@ CASES = [
     ("mm", mm, [(64, 128), (64, 128)], {}),
     ("mm_silu", mm_silu, [(64, 128), (64, 128)], {}),
     ("masked", masked, [(2, 64, 64)], {"block": 64}),
+    ("wide_passes", wide_passes, [(64, 64)] * 6, {}),
 ]
 
 NORM = [(64, 64)] * 3
+WIDE = [(64, 64)] * 6
 
 
 def run(kern, shapes, knobs, reuse, seed=11):
@@ -249,16 +253,16 @@ def test_reuse_is_off_unless_it_is_asked_for():
 
 
 def test_reuse_lowers_the_peak_where_lifetimes_allow():
-    """`staged_norm` has seven temps and not all are ever live together.
+    """`wide_passes` runs four stages and `t1` is dead before `t3` is born.
 
-    The saving is 8,192 -- one temp -- rather than the four it looks entitled
-    to: a band that writes and reads a temp inside ONE stage default-refuses
-    its lifetime, and three of the seven end up whole-run that way.
+    The saving is 8,192 -- one 64x64 temp. `staged_norm` saves nothing now: a
+    band holds its reductions beside its passes, so every temp is written and
+    read inside one stage and default-refused to the whole run.
     """
-    _, plain = run(staged_norm, NORM, {}, False)
-    _, shared = run(staged_norm, NORM, {}, True)
+    _, plain = run(wide_passes, WIDE, {}, False)
+    _, shared = run(wide_passes, WIDE, {}, True)
     assert shared < plain
-    assert shared == 114688 and plain == 122880
+    assert shared == 73728 and plain == 81920
 
 
 def test_a_raising_stage_leaves_ONE_scratch_block_and_empty_cache_returns_it():
@@ -385,7 +389,7 @@ def test_the_guard_sees_sharing_only_where_reuse_put_it(monkeypatch):
         rng = np.random.default_rng(2)
         args = [
             dev.tensor(np.asarray(rng.normal(0, 1, (64, 64)), np.float16))
-            for _ in range(3)
+            for _ in range(6)
         ]
-        staged_norm(*args)
+        wide_passes(*args)
         assert seen[-1].sharing is reuse

@@ -241,6 +241,69 @@ def lower_op(kind: OpKind, srcs: list[int], dst: int, sreg: int = 1) -> list[int
     )
 
 
+def lower_word(
+    kind, ops: list, dst: int, tmp: int = TMP_REG, pr: int = PRED_REG
+) -> list:
+    """Instruction words for one op whose operands are ``(selector, register)``.
+
+    A scalar or constant rides in the operand slot itself (`vec_lanes.v:333`
+    reads S or K in any of the three); a commuting op written scalar-first
+    swaps it into the second slot. Raises what :func:`lower_op` raises for an
+    op this cannot place.
+    """
+
+    def put(slot, opnd):
+        sel, reg = opnd
+        return {slot: reg, "s" + slot[1]: sel}
+
+    if kind in UNARY:
+        return [V.alu(UNARY[kind], vd=dst, **put("va", ops[0]))]
+    if kind in BINARY:
+        a, b = ops
+        if kind in COMMUTES and a[0] != V.SRC_V and b[0] == V.SRC_V:
+            a, b = b, a
+        op, slot = BINARY[kind]
+        return [V.alu(op, vd=dst, **put("va", a), **put(slot, b))]
+    if kind is OpKind.DIV:
+        return [
+            V.alu("VINV", vd=tmp, **put("va", ops[1])),
+            V.alu("VMUL", vd=dst, **put("va", ops[0]), vb=tmp),
+        ]
+    if kind is OpKind.FMA:
+        return [
+            V.alu(
+                "VFMA",
+                vd=dst,
+                **put("va", ops[0]),
+                **put("vb", ops[1]),
+                **put("vc", ops[2]),
+            )
+        ]
+    if kind is OpKind.SELECT:
+        return [
+            V.alu(
+                "VSEL",
+                vd=dst,
+                **put("va", ops[1]),
+                **put("vb", ops[2]),
+                **put("vc", ops[0]),
+            )
+        ]
+    if isinstance(kind, Select):
+        # vd 0 is a register only VLD writes, so the compare's WAW check never stalls.
+        return [
+            V.alu(
+                COMPARE[kind.cmp], vd=0, **put("va", ops[0]), **put("vb", ops[1]), pr=pr
+            ),
+            V.alu("VMOV", vd=dst, **put("va", ops[2]), pr=pr, pm=1),
+            V.alu("VMOV", vd=dst, **put("va", ops[3]), pr=pr, pm=2),
+        ]
+    return lower_op(kind, [reg for _, reg in ops], dst)
+
+
+#: Ops whose operands commute, so a scalar written first moves to the second slot.
+COMMUTES = {OpKind.MUL, OpKind.ADD, OpKind.MAX, OpKind.MIN}
+
 #: L1 reduction kinds, by the op that asks for them.
 REDUCE = {
     OpKind.SUM: "SUM",
@@ -361,29 +424,26 @@ class RowReduceKernel:
 #: and no `VSETI`. `vec_core.v` writes 0x3F8000 for 1.0 and 0xBF8000 for -1.0.
 KREG = {0.0: K_ZERO, 1.0: K_ONE, -1.0: K_NEG1}
 
-#: Selector-and-slot pairs `_silu` and `_gelu` demonstrate on silicon. Outside
-#: this table is a legal word computing something else, so it is refused.
-DEMONSTRATED = {("va", V.SRC_K), ("vb", V.SRC_S), ("vb", V.SRC_K), ("vc", V.SRC_K)}
-
 
 class ResidentEpilogueKernel:
     """A chain over a tile the NoC delivered, and optionally ONE DRAM operand.
 
     A cluster's `DRAIN` that names this core writes `words` L1 words of FP16
     sub-tiles -- byte-identical to what a memory drain would have written -- so
-    the epilogue reads L1 directly.
+    the epilogue reads L1 directly. Chunks run `group` at a time on disjoint
+    registers, op-major, as a band's steps do, and the result is stored over
+    the first tile.
 
     `operand` is a leaf index read per channel: a bias, laid out by
     `layout.ChannelBias` as one word per column group, filled once and re-read
-    at stride 0. Without it this emits exactly what it always did.
+    at stride 0.
     """
 
     #: Where slot 0's tile starts. Slot `r` starts `r * span_w` above it.
     PEER_WORD = 0
-    #: A vector core carries eight, and every region below claims one.
+    #: A vector core carries eight: the L1 window, the drain, a bias's two.
     DESCRIPTORS = 8
-    #: Clear of `OUT_REG` and `TMP_REG`.
-    SIDE_REG = 9
+    AD_DRAIN, AD_BFILL, AD_BREAD = 1, 2, 3
 
     @staticmethod
     def peer_word(words: int, slot: int = 0) -> int:
@@ -423,104 +483,101 @@ class ResidentEpilogueKernel:
         # A VLD walks a whole VLMAX chunk whatever the tail is, so each region
         # is padded to one and only `words` of it are drained.
         self.span_w = -(-words // CHUNK_WORDS) * CHUNK_WORDS
-        self.AD_IN = list(range(len(held)))
-        self.AD_OUT, self.AD_DRAIN = len(held), len(held) + 1
-        self.AD_BFILL, self.AD_BREAD = len(held) + 2, len(held) + 3
-        need = self.AD_BREAD + 1 if operand is not None else self.AD_DRAIN + 1
-        if need > self.DESCRIPTORS:
-            raise VecEmitError(
-                f"{len(held)} tiles and {'a' if operand else 'no'} per-channel "
-                f"operand need {need} descriptors; a vector core has "
-                f"{self.DESCRIPTORS}"
-            )
-        self.out_word = len(held) * self.span_w
-        self.side_word = self.out_word + self.span_w
+        self.side_word = len(held) * self.span_w
         side = gn if operand is not None else 0
         require_l1(f"fused epilogue {words}w", self.side_word + side)
+        if operand is not None and (not gn or not gm):
+            raise VecEmitError("a per-channel operand needs the tile's gm/gn")
 
-        asm = Asm()
-        self.sources = {at: ("V", r) for r, at in enumerate(held)}
-        if operand is not None:
-            if not gn or not gm:
-                raise VecEmitError("a per-channel operand needs the tile's gm/gn")
-            self.sources[operand] = ("V", self.SIDE_REG)
-        for at, value in consts.items():
-            reg = KREG.get(float(value))
-            self.sources[at] = (
-                ("K", reg) if reg is not None else ("S", asm.const(value))
-            )
+        div = any(kind is OpKind.DIV for kind, _ in self.ops)
+        per = len(held) + (operand is not None) + 1 + div
+        chunks = self.span_w // CHUNK_WORDS
+        self.group = group = min(chunks, REGISTERS // per)
+        regs = iter(range(REGISTERS))
+        self.r_src = [
+            {
+                at: next(regs)
+                for at in (*held, *([operand] if operand is not None else []))
+            }
+            for _ in range(group)
+        ]
+        self.r_run = [next(regs) for _ in range(group)]
+        self.r_tmp = [next(regs) if div else TMP_REG for _ in range(group)]
+        distinct = list(
+            dict.fromkeys(float(v) for v in consts.values() if float(v) not in KREG)
+        )
+        # Parked at numbers only VLD writes: see `BandKernel._allocate`.
+        loaded = group * (per - 1 - div)
+        quiet = sorted(CONST_SREGS, key=lambda s: s >= loaded)
+        self.sconst = dict(zip(distinct, quiet, strict=False))
+        if len(distinct) > len(CONST_SREGS):
+            raise VecEmitError(f"{len(distinct)} distinct constants in one epilogue")
+        self.consts = {at: float(v) for at, v in consts.items()}
 
         body: list[int] = []
         if operand is not None:
             body += [V.vfill(self.AD_BFILL, self.side_word), V.vbar()]
-        for c in range(self.span_w // CHUNK_WORDS):
-            off = c * CHUNK_WORDS
-            for r, _ in enumerate(held):
-                body.append(V.vld(r, self.AD_IN[r], off))
-            if operand is not None:
-                # The walk restarts at zero each VLD, so the chunk's own phase
-                # into the `gn` words has to be the offset.
-                body.append(V.vld(self.SIDE_REG, self.AD_BREAD, off % gn))
+        for c0 in range(0, chunks, group):
+            steps = list(range(c0, min(c0 + group, chunks)))
+            for g, c in enumerate(steps):
+                off = c * CHUNK_WORDS
+                for r, at in enumerate(held):
+                    body.append(V.vld(self.r_src[g][at], AD_L1, r * self.span_w + off))
+                if operand is not None:
+                    # The walk restarts at zero each VLD, so the chunk's own phase
+                    # into the `gn` words has to be the offset.
+                    body.append(V.vld(self.r_src[g][operand], self.AD_BREAD, off % gn))
             for kind, srcs in self.ops:
-                body += self._lower(kind, srcs)
-            body.append(V.vst(OUT_REG, self.AD_OUT, off))
+                words = [
+                    lower_word(
+                        kind,
+                        [self._operand(x, g) for x in srcs],
+                        self.r_run[g],
+                        self.r_tmp[g],
+                    )
+                    for g in range(len(steps))
+                ]
+                for w in range(len(words[0])):
+                    body += [step[w] for step in words]
+            for g, c in enumerate(steps):
+                body.append(V.vst(self.r_run[g], AD_L1, c * CHUNK_WORDS))
 
-        pre = [V.vseti(S_VL), V.VLMAX] + asm.preamble_consts()
+        pre = [V.vseti(S_VL), V.VLMAX]
+        for value, reg in self.sconst.items():
+            pre += [V.vseti(reg), V.e8m15(value)]
         pre += [V.vsetvl(S_VL), V.vsetmode(V.FLAT)]
-        self.image = pre + body + [V.vdrain(self.AD_DRAIN, self.out_word), V.vhalt()]
+        self.image = pre + body + [V.vdrain(self.AD_DRAIN, 0), V.vhalt()]
 
-    def _place(self, src: int, slot: str) -> dict:
-        """One operand in one slot, as the `V.alu` keywords that name it."""
-        kind, reg = ("V", OUT_REG) if src == OUT_REG else self.sources[src]
-        sel = {"V": V.SRC_V, "S": V.SRC_S, "K": V.SRC_K}[kind]
-        if sel is not V.SRC_V and (slot, sel) not in DEMONSTRATED:
+    def _operand(self, src: int, g: int) -> tuple[int, int]:
+        """A chain source as ``(selector, register)`` for step `g` of a group."""
+        if src == OUT_REG:
+            return V.SRC_V, self.r_run[g]
+        if src in self.consts:
+            value = self.consts[src]
+            if value in KREG:
+                return V.SRC_K, KREG[value]
+            return V.SRC_S, self.sconst[value]
+        if src not in self.r_src[g]:
             raise VecEmitError(
-                f"a {kind} operand in the {slot} slot has never been demonstrated "
-                f"by a kernel that has run; fold the constant or use a temp"
+                f"source {src} is neither a delivered tile nor a constant"
             )
-        return {slot: reg, "s" + slot[1]: sel}
-
-    def _lower(self, kind: OpKind, srcs: list[int]) -> list[int]:
-        """One elementwise op, with each operand placed in the slot the ISA reads."""
-        if kind in UNARY:
-            return [V.alu(UNARY[kind], vd=OUT_REG, **self._place(srcs[0], "va"))]
-        if kind in BINARY:
-            op, slot = BINARY[kind]
-            args = {**self._place(srcs[0], "va"), **self._place(srcs[1], slot)}
-            return [V.alu(op, vd=OUT_REG, **args)]
-        if kind is OpKind.DIV:
-            return [
-                V.alu("VINV", vd=TMP_REG, **self._place(srcs[1], "va")),
-                V.alu("VMUL", vd=OUT_REG, **self._place(srcs[0], "va"), vb=TMP_REG),
-            ]
-        raise VecEmitError(
-            f"{kind.value} has no lowering here; the emitter covers "
-            f"{sorted(k.value for k in (*UNARY, *BINARY))} and div"
-        )
+        return V.SRC_V, self.r_src[g][src]
 
     def static_descs(self) -> list[int]:
-        """The L1 read and write windows, and the length of the drain."""
-        out = []
-        for r, _ in enumerate(self.residents):
-            out += [
-                V.desc_flit(self.AD_IN[r], 0, r * self.span_w),
-                V.desc_flit(self.AD_IN[r], 1, V.dim(1, CHUNK_WORDS)),
-            ]
-        out += [
-            V.desc_flit(self.AD_OUT, 0, self.out_word),
-            V.desc_flit(self.AD_OUT, 1, V.dim(1, CHUNK_WORDS)),
-            V.desc_flit(self.AD_DRAIN, 1, V.dim(V.WORD_BYTES, self.words)),
-        ]
+        """The L1 window, the drain, and a bias's fill and stride-0 read, all dims."""
+        out = [V.desc_flit(AD_L1, 0, 0)]
+        out += _dims(AD_L1, [(1, CHUNK_WORDS)])
+        out += _dims(self.AD_DRAIN, [(V.WORD_BYTES, self.words)])
         if self.operand is None:
             return out
         # The `gm` dimension is at stride 0 and is NOT decoration: `_walk`
         # CLAMPS at its last index, so without it the read sticks at `gn - 1`.
-        return out + [
-            V.desc_flit(self.AD_BFILL, 1, V.dim(V.WORD_BYTES, self.gn)),
-            V.desc_flit(self.AD_BREAD, 0, self.side_word),
-            V.desc_flit(self.AD_BREAD, 1, V.dim(1, self.gn)),
-            V.desc_flit(self.AD_BREAD, 2, V.dim(0, self.gm)),
-        ]
+        return (
+            out
+            + _dims(self.AD_BFILL, [(V.WORD_BYTES, self.gn)])
+            + [V.desc_flit(self.AD_BREAD, 0, self.side_word)]
+            + _dims(self.AD_BREAD, [(1, self.gn), (0, self.gm)])
+        )
 
     def flits(self, dst: int, side: int = 0) -> list[int]:
         """Image, descriptors and one RUN. `side` is the per-channel operand's
@@ -677,6 +734,12 @@ REGISTERS = 16
 IMEM_WORDS = 512
 
 
+def _dims(ad: int, dims: list) -> list[int]:
+    """DESC words setting all `AGU_DIMS` dims of `ad`, the unused ones reset."""
+    full = list(dims) + [DIM_UNUSED] * (AGU_DIMS - len(dims))
+    return [V.desc_flit(ad, n + 1, V.dim(s, b)) for n, (s, b) in enumerate(full)]
+
+
 def forward(k: int) -> int:
     """The band source index naming chain `k`'s result."""
     return FWD + k
@@ -780,20 +843,37 @@ class Spread:
         return (run * batch // self.period) * self.period
 
 
+#: Scalar registers a folded constant may occupy: S0 is VL, S1..S3 take VRED
+#: results. A constant there costs one VSETI and no vector register.
+CONST_SREGS = tuple(range(4, 16))
+
+#: The descriptor every VLD and VST addresses L1 through, at an absolute offset.
+AD_L1 = 0
+
+#: The image a band prefers to stay under, so other resident programs keep IMEM.
+BAND_IMAGE = 320
+
+#: Core cycles beyond the beats, MEASURED by state on vec_replay_tb (silu and
+#: softmax, VC_STATE_PROF): an ALU word's S_EXEC, a VLD's and a VST's walk
+#: overhead, `pipe_empty`'s 4*ALAT line after an ALU word, and a VRED's
+#: S_RDRAIN + S_RWAIT (~140 at VL 128).
+ALU_GAP, LD_GAP, ST_GAP, LANE_DRAIN, RED_WAIT = 2, 3, 2, 60, 132
+
+
 class BandKernel:
     """Several chains as ONE vector program, the intermediates in registers.
 
-    `vl` is the elements one step covers -- VLMAX for elementwise work, and the
-    ROW WIDTH when a chain reduces, since VRED folds exactly VL lanes.
+    `vl` is the elements one STEP covers: VLMAX, or the ROW WIDTH when a chain
+    reduces. A RUN is `halves` batches of `chunks` steps; half h+1 fills while
+    half h computes. An ALU result lands 14 cycles after issue but `pipe_empty`
+    stays low for the 4*ALAT metadata line (`vec_lanes.v:565`), so a VLD/VST
+    after an ALU op waits ~60: steps run `group` at a time on disjoint
+    registers, op-major, and one drain serves a group. Constants are S/K
+    operands; one descriptor addresses L1 for every VLD/VST; a result with an
+    input slot of its own is stored over it (`inplace`).
 
-    `consts` are scalars the preamble broadcasts into registers rather than
-    filling from DRAM, named by :func:`konst`; they cost a register each and no
-    descriptor, which is what buys a band its fourth and fifth operand. `walks`
-    is one :class:`Spread` per operand, or None for a contiguous read.
-
-    Raises :class:`VecEmitError` for a band needing more than the eight
-    descriptors, more L1 than `require_l1` allows, more registers than the file
-    has, a forward of a chain that has not run, or a walk the RUN cuts.
+    Raises :class:`VecEmitError` for a band over the descriptors, L1 or
+    registers, a forward of a chain that has not run, or a walk the batch cuts.
     """
 
     def __init__(
@@ -805,8 +885,10 @@ class BandKernel:
         consts=(),
         walks=None,
         groups=None,
+        halves: int = 1,
     ) -> None:
         self.chains, self.nin, self.chunks, self.vl = list(chains), nin, chunks, vl
+        self.halves = halves
         self.consts = [float(c) for c in consts]
         self.walks = list(walks) if walks else [None] * nin
         if len(self.walks) != nin:
@@ -824,69 +906,69 @@ class BandKernel:
             self._fill_dims(i)
         if nin > OUT_REG:
             raise VecEmitError(
-                f"a band reads {nin} operands and register {OUT_REG} is the "
-                f"running result; the descriptor budget caps this well below it"
+                f"a band reads {nin} operands and source {OUT_REG} is the running "
+                f"result; the descriptor budget caps this well below it"
             )
         # Results sharing one DRAM region share one DRAIN, which is how the
         # hand-written flash step fits 3 operands and FOUR results in eight.
         self.spans = _spans(groups, self.nout)
-        # ONE store descriptor however many results there are: the L1 output
-        # regions are consecutive, so the VST offset reaches them all.
-        need = 2 * nin + 1 + len(self.spans)
+        self.inplace = self.nout <= nin and all(n == 1 for _, n in self.spans)
+        self.slots = nin if self.inplace else nin + self.nout
+        per = nin + len(self.spans)
+        need = 1 + halves * per
         if need > DESCRIPTORS:
             raise VecEmitError(
                 f"a band of {len(self.chains)} chains reading {nin} operands and "
-                f"writing {self.nout} in {len(self.spans)} regions needs {need} "
-                f"descriptors, have {DESCRIPTORS}"
+                f"writing {self.nout} in {len(self.spans)} regions over {halves} "
+                f"halves needs {need} descriptors, have {DESCRIPTORS}"
             )
-        require_l1(f"band x{chunks}", (nin + self.nout) * self.bw)
+        require_l1(f"band x{chunks}x{halves}", halves * self.slots * self.bw)
         if self.bw > AGU_WALK:
             raise VecEmitError(f"a {self.bw}-word fill exceeds the {AGU_WALK} limit")
 
-        self.ad_fill = list(range(nin))
-        self.ad_ld = [nin + i for i in range(nin)]
-        self.ad_st = 2 * nin
-        self.ad_drain = [2 * nin + 1 + g for g in range(len(self.spans))]
-        self.held, self.seeded = self._allocate()
-
-        asm = Asm()
-        sregs = [asm.const(value) for value in self.consts]
-        body: list[int] = []
-        for step in range(chunks):
-            off = step * self.step_words
-            for i in range(nin):
-                body.append(V.vld(i, self.ad_ld[i], off))
-            body += self._body(off)
-        pre = [V.vseti(S_VL), vl]
-        pre += asm.preamble_consts()
-        pre += [V.vsetvl(S_VL), V.vsetmode(V.FLAT)]
-        # After VSETVL: a broadcast writes the lanes VL names.
-        pre += [V.vbcast(self.seeded[k], s) for k, s in enumerate(sregs)]
-        pre += [V.vfill(self.ad_fill[i], i * self.bw) for i in range(nin)]
-        pre += [V.vbar()]
-        tail = [
-            V.vdrain(self.ad_drain[g], (nin + at) * self.bw)
-            for g, (at, _) in enumerate(self.spans)
+        self.ad_fill = [[1 + h * per + i for i in range(nin)] for h in range(halves)]
+        self.ad_drain = [
+            [1 + h * per + nin + g for g in range(len(self.spans))]
+            for h in range(halves)
         ]
-        self.image = pre + body + tail + [V.vhalt()]
+        self._allocate()
+
+        pre = [V.vseti(S_VL), vl]
+        for value, reg in self.sconst.items():
+            pre += [V.vseti(reg), V.e8m15(value)]
+        pre += [V.vsetvl(S_VL), V.vsetmode(V.FLAT)]
+        body = self._fills(0) + [V.vbar()]
+        for h in range(halves):
+            if h + 1 < halves:
+                body += self._fills(h + 1)
+            body += self._half(h)
+            body += self._drains(h)
+            if h + 1 < halves:
+                body.append(V.vbar())
+        self.image = pre + body + [V.vhalt()]
         if len(self.image) > IMEM_WORDS:
             raise VecEmitError(
                 f"a {len(self.image)}-word image over {IMEM_WORDS} instruction "
                 f"words; a band unrolls every step, so take fewer chunks"
             )
 
-    def _allocate(self) -> tuple[dict, dict]:
-        """``(held, seeded)`` -- a register per forwarded chain and per constant.
+    def _allocate(self) -> None:
+        """Registers for `group` steps at once, and an S register per constant.
 
-        Keyed by chain index and by constant index. Nothing is reused: the pool
-        is eleven deep at the widest band the descriptor budget admits, so a
-        liveness walk would buy nothing and a wrong reuse is a silent wrong
-        answer. Raises :class:`VecEmitError` for a backward forward, or for more
-        live values than the file holds.
+        Each step in a group holds its inputs, its running result, every chain
+        a later one forwards, every stored result a later chain would overwrite,
+        and a scratch for DIV. INPUTS TAKE THE LOW NUMBERS: only VLD writes them,
+        and `vec_core` checks a pending write on the register NUMBER an operand
+        field names even when it selects S or K -- so a constant parked at an
+        input's number never stalls an op. Raises :class:`VecEmitError` for a
+        backward forward, too many constants, or a step needing more registers
+        than the file holds.
         """
         wanted: set = set()
+        div = False
         for k, chain in enumerate(self.chains):
-            for _, srcs in chain.ops:
+            for kind, srcs in chain.ops:
+                div |= kind is OpKind.DIV
                 for s in srcs:
                     if not FWD <= s < KONST:
                         continue
@@ -896,64 +978,273 @@ class BandKernel:
                             f"run; a band hands results forward, never back"
                         )
                     wanted.add(s - FWD)
-        pool = [
-            r for r in range(REGISTERS) if r >= self.nin and r not in (OUT_REG, TMP_REG)
+        self.fused = [fuse_compares(c.ops) for c in self.chains]
+        self.scalar = self._scalars()
+        for k, at in self.scalar:
+            if at == len(self.fused[k]) - 1:
+                wanted.discard(k)
+        last = len(self.chains) - 1
+        keep = [
+            k
+            for k, c in enumerate(self.chains)
+            if c.store and k not in wanted and k != last
         ]
-        if len(wanted) + len(self.consts) > len(pool):
+        held = sorted(wanted)
+        per = self.nin + 1 + len(held) + len(keep) + int(div)
+
+        distinct = list(dict.fromkeys(v for v in self.consts if v not in KREG))
+        if len(distinct) > len(CONST_SREGS):
             raise VecEmitError(
-                f"{len(wanted)} forwarded results and {len(self.consts)} folded "
-                f"constants against {len(pool)} free registers; split the band"
+                f"{len(distinct)} distinct constants and {len(CONST_SREGS)} scalar "
+                f"registers to hold them; split the band"
             )
-        held = dict(zip(sorted(wanted), pool, strict=False))
-        rest = pool[len(wanted) : len(wanted) + len(self.consts)]
-        return held, dict(enumerate(rest))
+        npool = len(RED_SREGS) + len(CONST_SREGS) - len(distinct)
+        spare = int(
+            any(
+                kind in REDUCE and (k, at) not in self.scalar
+                for k, ops in enumerate(self.fused)
+                for at, (kind, _) in enumerate(ops)
+            )
+        )
+        group = min(self.chunks, REGISTERS // per)
+        if self.scalar:
+            group = min(group, (npool - spare) // len(self.scalar))
+        if group < 1:
+            raise VecEmitError(
+                f"one step holds {per} registers ({self.nin} inputs, "
+                f"{len(held)} forwarded and {len(keep)} kept results) and "
+                f"{len(self.scalar)} folded scalars; the files have {REGISTERS} "
+                f"and {npool}; split the band"
+            )
+        self.group = group
+        self.r_in = [[g * self.nin + i for i in range(self.nin)] for g in range(group)]
+        free = iter(range(group * self.nin, REGISTERS))
+        self.r_run = [next(free) for _ in range(group)]
+        self.r_held = [{k: next(free) for k in held} for _ in range(group)]
+        self.r_keep = [{k: next(free) for k in keep} for _ in range(group)]
+        self.r_tmp = [next(free) if div else TMP_REG for _ in range(group)]
 
-    def _reg(self, src: int) -> int:
-        """A band source index as the register that holds it."""
-        if src >= KONST:
-            return self.seeded[src - KONST]
-        return self.held[src - FWD] if src >= FWD else src
+        def quiet(regs):
+            return sorted(regs, key=lambda s: s >= group * self.nin)
 
-    def _body(self, off: int) -> list[int]:
-        """Every chain's ops for one step, and the stores they feed.
+        self.sconst = dict(zip(distinct, quiet(CONST_SREGS), strict=False))
+        taken = set(self.sconst.values())
+        pool = iter(quiet([*RED_SREGS, *(s for s in CONST_SREGS if s not in taken)]))
+        self.s_fold = {
+            key: [next(pool) for _ in range(group)] for key in sorted(self.scalar)
+        }
+        self.red_sregs = list(pool)
 
-        The VRED scalar cycles S1..S3 although `reduce_row` broadcasts it
-        immediately, so no two are ever live at once.
+    def _scalars(self) -> set:
+        """``(chain, op)`` of every fold whose readers all take a scalar operand.
+
+        Such a fold's result stays in its S register and is read from there, so
+        it pays no VBCAST (a 3-state walk per chunk, 24 cycles at VL 128) and
+        holds no vector register. A reader is the chain's next op, or for a
+        chain's last op every later op forwarding it; a store or another fold
+        needs a vector register.
         """
+        out = set()
+        for k, ops in enumerate(self.fused):
+            for at, (kind, _) in enumerate(ops):
+                if kind not in REDUCE:
+                    continue
+                if at + 1 < len(ops):
+                    readers = [ops[at + 1][0]]
+                elif self.chains[k].store:
+                    continue
+                else:
+                    readers = [
+                        kd
+                        for later in self.fused[k + 1 :]
+                        for kd, srcs in later
+                        if FWD + k in srcs
+                    ]
+                if readers and not any(r in REDUCE for r in readers):
+                    out.add((k, at))
+        return out
+
+    def _operand(self, src: int, g: int, run_s=None) -> tuple[int, int]:
+        """A band source index as ``(selector, register)`` for step `g` of a group.
+
+        `run_s` is set when the running result is a fold still in S registers.
+        """
+        if src >= KONST:
+            value = self.consts[src - KONST]
+            if value in KREG:
+                return V.SRC_K, KREG[value]
+            return V.SRC_S, self.sconst[value]
+        if src >= FWD:
+            k = src - FWD
+            key = (k, len(self.fused[k]) - 1)
+            if key in self.s_fold:
+                return V.SRC_S, self.s_fold[key][g]
+            return V.SRC_V, self.r_held[g][k]
+        if src == OUT_REG:
+            if run_s is not None:
+                return V.SRC_S, run_s[g]
+            return V.SRC_V, self.r_run[g]
+        return V.SRC_V, self.r_in[g][src]
+
+    def _dst(self, k: int, g: int) -> int:
+        """Where chain `k`'s result lands for step `g`."""
+        return self.r_held[g].get(k, self.r_keep[g].get(k, self.r_run[g]))
+
+    def _l1(self, h: int, slot: int) -> int:
+        """L1 word where half `h`'s region `slot` starts."""
+        return (h * self.slots + slot) * self.bw
+
+    def _out(self, h: int, t: int) -> int:
+        """L1 word where half `h`'s `t`-th stored result starts."""
+        return self._l1(h, t if self.inplace else self.nin + t)
+
+    def _fills(self, h: int) -> list[int]:
+        return [V.vfill(self.ad_fill[h][i], self._l1(h, i)) for i in range(self.nin)]
+
+    def _drains(self, h: int) -> list[int]:
+        return [
+            V.vdrain(self.ad_drain[h][g], self._out(h, at))
+            for g, (at, _) in enumerate(self.spans)
+        ]
+
+    def _half(self, h: int) -> list[int]:
+        """Half `h`'s steps, `group` at a time: loads, ops op-major, then stores."""
         out: list[int] = []
-        reds, stored = 0, 0
-        for k, chain in enumerate(self.chains):
-            dst = self.held.get(k, OUT_REG)
-            fused = fuse_compares(chain.ops)
-            for n, (kind, srcs) in enumerate(fused):
-                last = n == len(fused) - 1
-                out += lower_op(
-                    kind,
-                    [self._reg(s) for s in srcs],
-                    dst if last else OUT_REG,
-                    RED_SREGS[reds % len(RED_SREGS)],
-                )
-                reds += kind in REDUCE
-            if chain.store:
-                out.append(V.vst(dst, self.ad_st, off + stored * self.bw))
+        for s0 in range(0, self.chunks, self.group):
+            steps = list(range(s0, min(s0 + self.group, self.chunks)))
+            n = len(steps)
+            for g, s in enumerate(steps):
+                off = s * self.step_words
+                for i in range(self.nin):
+                    out.append(V.vld(self.r_in[g][i], AD_L1, self._l1(h, i) + off))
+            for k, fused in enumerate(self.fused):
+                run_s = None
+                for at, (kind, srcs) in enumerate(fused):
+                    last = at == len(fused) - 1
+                    ops = [[self._operand(x, g, run_s) for x in srcs] for g in range(n)]
+                    run_s = self.s_fold.get((k, at))
+                    if run_s is not None:
+                        out += self._fold(kind, ops, None, run_s)
+                        continue
+                    dsts = [
+                        self._dst(k, g) if last else self.r_run[g] for g in range(n)
+                    ]
+                    if kind in REDUCE:
+                        out += self._fold(kind, ops, dsts)
+                    else:
+                        out += self._interleave(kind, ops, dsts)
+            stored = 0
+            for k, chain in enumerate(self.chains):
+                if not chain.store:
+                    continue
+                for g, s in enumerate(steps):
+                    at = self._out(h, stored) + s * self.step_words
+                    out.append(V.vst(self._dst(k, g), AD_L1, at))
                 stored += 1
         return out
 
+    def _interleave(self, kind, ops: list, dsts: list) -> list[int]:
+        """One op over a group's steps, word-major, so no word waits on its step's last.
+
+        A fused compare-and-select keeps its predicate live across the words, so
+        it interleaves four steps at a time, one predicate register each.
+        """
+        width = 4 if isinstance(kind, Select) else len(ops)
+        out: list[int] = []
+        for at in range(0, len(ops), width):
+            words = [
+                lower_word(kind, ops[g], dsts[g], self.r_tmp[g], pr=g - at)
+                for g in range(at, min(at + width, len(ops)))
+            ]
+            for w in range(len(words[0])):
+                out += [step[w] for step in words]
+        return out
+
+    def _fold(self, kind, ops: list, dsts: list, keep=None) -> list[int]:
+        """A row reduction over a group's steps: one TREE window per batch of scalars.
+
+        The mode switch either side is part of the idiom (a TREE-mode word that is
+        not a VRED faults F_OPCODE), so the steps share it rather than paying it each.
+        With `keep` the results stay in those S registers and nothing is broadcast.
+        """
+        if keep is not None:
+            out = [V.vsetmode(V.TREE)]
+            for g, opnd in enumerate(ops):
+                sel, reg = opnd[0]
+                if sel != V.SRC_V:
+                    raise VecEmitError("a row reduction folds a vector register")
+                out.append(V.vred(keep[g], reg, REDUCE[kind], vb=reg))
+            return out + [V.vsetmode(V.FLAT)]
+        pool = self.red_sregs
+        out: list[int] = []
+        for at in range(0, len(ops), len(pool)):
+            part = range(at, min(at + len(pool), len(ops)))
+            out.append(V.vsetmode(V.TREE))
+            for j, g in enumerate(part):
+                sel, reg = ops[g][0]
+                if sel != V.SRC_V:
+                    raise VecEmitError("a row reduction folds a vector register")
+                out.append(V.vred(pool[j], reg, REDUCE[kind], vb=reg))
+            out.append(V.vsetmode(V.FLAT))
+            out += [V.vbcast(dsts[g], pool[j]) for j, g in enumerate(part)]
+        return out
+
+    def cycles(self, fill_word: float, fill_lat: float) -> float:
+        """Core cycles one RUN takes, priced word by word over the image.
+
+        `fill_word` and `fill_lat` are the memory side's per-word streaming and
+        first-word latency; only a RUN's first fill waits on them, the rest land
+        while a half computes.
+        """
+        beats = -(-self.vl // V.LANES)
+        busy, total, first = False, 0.0, True
+        imm = False
+        for w in self.image:
+            if imm:
+                imm = False
+                continue
+            op = w >> 27
+            if op <= V.OPS["VRSQRT"]:
+                total += beats + ALU_GAP
+                busy = True
+                continue
+            if busy and op in (V.OPS["VLD"], V.OPS["VST"], V.OPS["VSETMODE"]):
+                total += LANE_DRAIN
+            busy = False
+            if op == V.OPS["VLD"]:
+                total += beats + LD_GAP
+            elif op == V.OPS["VST"]:
+                total += beats + ST_GAP
+            elif op == V.OPS["VRED"]:
+                total += beats + RED_WAIT
+            elif op == V.OPS["VBCAST"]:
+                total += 3 * beats
+            elif op in (V.OPS["VFILL"], V.OPS["VDRAIN"]):
+                total += self.bw
+            elif op == V.OPS["VBAR"] and first:
+                total += fill_lat + self.nin * self.bw * fill_word
+                first = False
+            elif op == V.OPS["VSETI"]:
+                imm = True
+                total += 2
+            else:
+                total += 1
+        return total
+
     def static_descs(self) -> list[int]:
-        """The L1 read and write windows, and the length of each transfer."""
-        out = []
-        for i in range(self.nin):
-            out.append(V.desc_flit(self.ad_ld[i], 0, i * self.bw))
-            out.append(V.desc_flit(self.ad_ld[i], 1, V.dim(1, self.step_words)))
-        out.append(V.desc_flit(self.ad_st, 0, self.nin * self.bw))
-        out.append(V.desc_flit(self.ad_st, 1, V.dim(1, self.step_words)))
-        for i in range(self.nin):
-            for n, (stride, bound) in enumerate(self._fill_dims(i)):
-                out.append(V.desc_flit(self.ad_fill[i], n + 1, V.dim(stride, bound)))
-        for g, (_, n) in enumerate(self.spans):
-            out.append(
-                V.desc_flit(self.ad_drain[g], 1, V.dim(V.WORD_BYTES, n * self.bw))
-            )
+        """The L1 window, and every fill's and drain's walk, ALL FOUR dims each.
+
+        A descriptor is core state another program may have widened, so every
+        dim this band relies on is written; `imem.rewrite` drops the ones the
+        core already holds.
+        """
+        out = [V.desc_flit(AD_L1, 0, 0)]
+        out += _dims(AD_L1, [(1, self.step_words)])
+        for h in range(self.halves):
+            for i in range(self.nin):
+                out += _dims(self.ad_fill[h][i], self._fill_dims(i))
+            for g, (_, n) in enumerate(self.spans):
+                out += _dims(self.ad_drain[h][g], [(V.WORD_BYTES, n * self.bw)])
         return out
 
     def _fill_dims(self, i: int) -> list:
@@ -971,30 +1262,41 @@ class BandKernel:
         reuse that descriptor -- which sets only the first.
         """
         out = []
-        for i in range(self.nin):
-            for n in range(1, len(self._fill_dims(i))):
-                out.append(V.desc_flit(self.ad_fill[i], n + 1, V.dim(*DIM_UNUSED)))
+        for h in range(self.halves):
+            for i in range(self.nin):
+                for n in range(1, len(self._fill_dims(i))):
+                    out.append(
+                        V.desc_flit(self.ad_fill[h][i], n + 1, V.dim(*DIM_UNUSED))
+                    )
         return out
 
     def flits(self, srcs, dsts, nelem: int) -> list[int]:
-        """The whole program: image, descriptors, then one RUN per batch.
+        """The whole program: image, descriptors, then one RUN per `halves` batches.
 
         Raises :class:`VecEmitError` unless one address arrives per filled
-        operand and per drained result.
+        operand and per drained result, and the batches fill whole RUNs.
         """
         if len(srcs) != self.nin or len(dsts) != len(self.spans):
             raise VecEmitError(
                 f"this band fills {self.nin} operands and drains "
                 f"{len(self.spans)} regions; got {len(srcs)} and {len(dsts)}"
             )
+        nb = -(-nelem // self.batch)
+        if nb % self.halves:
+            raise VecEmitError(
+                f"{nb} batches do not make whole RUNs of {self.halves}; a RUN "
+                f"stores every half whatever `nelem` says"
+            )
         out = imem_flits(self.image) + self.static_descs()
         step = self.batch * 2
-        for b in range(-(-nelem // self.batch)):
-            for i in range(self.nin):
-                walk = self.walks[i]
-                at = b * step if walk is None else walk.at(self.batch, b) * 2
-                out.append(V.desc_flit(self.ad_fill[i], 0, srcs[i] + at))
-            for g in range(len(self.spans)):
-                out.append(V.desc_flit(self.ad_drain[g], 0, dsts[g] + b * step))
+        for r in range(nb // self.halves):
+            for h in range(self.halves):
+                b = r * self.halves + h
+                for i in range(self.nin):
+                    walk = self.walks[i]
+                    at = b * step if walk is None else walk.at(self.batch, b) * 2
+                    out.append(V.desc_flit(self.ad_fill[h][i], 0, srcs[i] + at))
+                for g in range(len(self.spans)):
+                    out.append(V.desc_flit(self.ad_drain[h][g], 0, dsts[g] + b * step))
             out.append(V.run_flit(0))
         return out + self._restore()

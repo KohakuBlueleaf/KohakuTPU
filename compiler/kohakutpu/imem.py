@@ -1,16 +1,21 @@
-"""Vector programs kept resident in each vector core's instruction memory.
+"""Vector programs and descriptors kept resident in each vector core.
 
 A vector kernel arrives as IMEM words, DESC words and a RUN. The program part
 does not change between calls and the core keeps it across RUNs, so a
 program already loaded is sent as its DESC words and a RUN at its slot. VLOOP
 is pc-relative, so a program runs at any base and several share the memory.
+
+Descriptors are core state too: a DESC word writing the value its field already
+holds is dropped. Every DESC word is one the node dispatches on its own (~600
+cycles, tiling.md), so a program may write every field it relies on and pay
+for it only when something else changed it.
 """
 
 import hashlib
 from collections import OrderedDict
 
 from kohakutpu.isa.vector import ISA as VEC
-from kohakutpu.isa.vector import OP_IMEM, OP_RUN
+from kohakutpu.isa.vector import OP_DESC, OP_IMEM, OP_RUN
 
 #: Words of one core's instruction memory (vec_core.v IMEM_DEPTH).
 IMEM_WORDS = 1 << VEC.cfg.addr_bits
@@ -38,6 +43,14 @@ class Resident:
         self.slots: OrderedDict = OrderedDict()
         #: Where the last program placed here starts: a RUN with no IMEM words
         #: before it runs the program loaded by an earlier dispatch.
+        self.last = 0
+        #: (descriptor, field) -> the (value, value_hi) the core holds.
+        self.desc: dict = {}
+
+    def forget(self) -> None:
+        """Assume nothing is resident: after a fault the core's state is unknown."""
+        self.slots.clear()
+        self.desc.clear()
         self.last = 0
 
     def _free(self, length: int) -> int | None:
@@ -73,7 +86,8 @@ def rewrite(words: list, memory: Resident) -> list:
 
     Each program (a run of IMEM words) is placed in a slot: its words are
     dropped when that slot already holds it, or rebased into it otherwise, and
-    the RUN that follows starts at the slot. DESC words pass unchanged.
+    the RUN that follows starts at the slot. A DESC word is dropped when its
+    field already holds that value.
     """
     out: list = []
     prog: list = []
@@ -83,6 +97,12 @@ def rewrite(words: list, memory: Resident) -> list:
         if code == OP_IMEM:
             prog.append((w, VEC.IMEM.decode(w & PAYLOAD)))
             continue
+        if code == OP_DESC:
+            f = VEC.DESC.decode(w & PAYLOAD)
+            key, value = (f["ad"], f["fld"]), (f["value"], f["value_hi"])
+            if memory.desc.get(key) == value:
+                continue
+            memory.desc[key] = value
         if prog:
             body = [(f["addr"], f["word"]) for _, f in prog]
             key = hashlib.sha1(repr(body).encode()).digest()

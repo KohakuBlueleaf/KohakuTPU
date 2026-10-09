@@ -16,7 +16,6 @@ from dataclasses import dataclass
 from kohakutpu.hw import vector as V
 from kohakutpu.hw.ops import OpKind
 from kohakutpu.isa.vecemit import DESCRIPTORS, IMEM_WORDS, OUT_REG, REGISTERS
-from kohakutpu.lang.backend import MAX_CHUNKS
 from tinygrad.dtype import dtypes
 from tinygrad.uop.ops import Ops
 
@@ -82,6 +81,10 @@ MAX_LEAVES = OUT_REG
 #: A band's preamble and tail at the widest legal shape: length, three words per
 #: seeded constant, mode, a fill each, VBAR, then one drain and VHALT.
 OVERHEAD = 4 + 3 * (MAX_LEAVES - MAX_OPERANDS) + MAX_OPERANDS + 1 + 2
+
+#: Steps of a band this bound is sized for. The backend fits fewer per RUN when
+#: an image would not fit, so a chain accepted here always has a band.
+MAX_CHUNKS = 8
 
 #: Instruction words one chain may hold. A band UNROLLS every step, so 62 unary
 #: ops built a 520-word image -- measured, against `IMEM_WORDS`' 512.

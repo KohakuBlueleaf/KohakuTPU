@@ -15,6 +15,7 @@ from kohakutpu.isa import ISA
 from kohakutpu.kernels import linear_silu, sigmoid
 from kohakutpu.lang import BACKEND, kernel
 
+from kohakutpu import imem as IM
 from kohakutpu import lang as L
 
 M, K, N = dims("M, K, N")
@@ -185,38 +186,49 @@ def test_the_cluster_stage_waits_on_the_receivers():
 
 # ------------------------------------------------------------------- the cost
 def test_fusing_moves_less():
-    """Fewer instruction words, fewer rounds, and no intermediate in DRAM.
+    """No more rounds, no intermediate in DRAM, and words within one per tile.
 
-    The vector half loses its whole `VFILL` side and its folded constants, which
-    is what a fill of a broadcast array cost.
+    Steady state: the second call's words through `imem.rewrite`, one record per
+    vector instance, so neither form is charged for a program or descriptor its
+    core already holds. Measured 10 words fused against 9 staged: a fused tile
+    is a RUN and a drain base of its own, where the staged band covers the
+    whole temp in one RUN -- and the staged form writes and reads that temp.
     """
     fused, apart = compile_at(linear_silu), staged()
 
     def cost(got):
-        flits = rounds = 0
-        for stage in got.stages:
-            words = BACKEND.encode(got, stage, addresses(got))
-            flits += sum(len(w) for w in words.values())
-            rounds += len(plan(words, MACHINE.coords(stage.unit)))
+        cores: dict = {}
+        for _ in range(2):
+            flits = rounds = 0
+            for stage in got.stages:
+                words = BACKEND.encode(got, stage, addresses(got))
+                if stage.unit == "VC":
+                    words = {
+                        at: IM.rewrite(list(w), cores.setdefault(at, IM.Resident()))
+                        for at, w in words.items()
+                    }
+                flits += sum(len(w) for w in words.values())
+                rounds += len(plan(words, MACHINE.coords(stage.unit)))
         return flits, rounds
 
     fused_flits, fused_rounds = cost(fused)
     apart_flits, apart_rounds = cost(apart)
-    assert fused_flits < apart_flits, (fused_flits, apart_flits)
+    tiles = len(fused.stages[-1].instances)
+    assert fused_flits <= apart_flits + tiles, (fused_flits, apart_flits, tiles)
     assert fused_rounds <= apart_rounds, (fused_rounds, apart_rounds)
 
 
 def test_the_epilogue_reads_no_dram_operand():
-    """Folded scalars go into registers, not into a broadcast array on the card."""
+    """Folded scalars are instruction operands in both forms, never a DRAM array."""
     assert BACKEND.constants(compile_at(linear_silu)) == {}
-    assert BACKEND.constants(staged()) != {}
+    assert BACKEND.constants(staged()) == {}
 
 
 def test_nothing_of_the_intermediate_is_allocated():
-    """The bytes fusing removes, counted: the temp both ways plus the constants.
+    """The bytes fusing removes, counted: the temp, written and read back.
 
-    The staged form writes `h`, reads it back, and fills two broadcast arrays
-    one `part` long apiece. The fused form allocates none of it.
+    The staged form writes `h` and reads it back; the fused form allocates
+    nothing. Neither fills a constant.
     """
 
     def dram(got):
@@ -228,7 +240,7 @@ def test_nothing_of_the_intermediate_is_allocated():
 
     assert dram(compile_at(linear_silu)) == (0, 0)
     temps, folded = dram(staged())
-    assert temps == 32 * 32 * 2 and folded > 0, (temps, folded)
+    assert temps == 32 * 32 * 2 and folded == 0, (temps, folded)
 
 
 # --------------------------------------------- what a refusal turns into now
@@ -366,9 +378,9 @@ def test_both_forms_write_the_same_bytes_of_y():
     assert fused.layouts["y"].nbytes(shape) == apart.layouts["y"].nbytes(shape)
 
 
-def test_sigmoid_lowers_with_no_guessed_operand_slot():
-    """Every source selector this epilogue uses is one a run kernel demonstrates."""
-    from kohakutpu.isa.vecemit import DEMONSTRATED, ResidentEpilogueKernel
+def test_sigmoid_lowers_with_its_constants_as_operands():
+    """-log2 e rides in an S register and 1.0 in K1; neither is a vector."""
+    from kohakutpu.isa.vecemit import ResidentEpilogueKernel
 
     got = compile_at(linear_silu)
     stmt = next(s for s in got.stages[1].instances[0].stmts)
@@ -378,5 +390,5 @@ def test_sigmoid_lowers_with_no_guessed_operand_slot():
         {1: -1.4426950408889634, 2: 1.0},
         TILING["gm"] * TILING["gn"],
     )
-    assert kernel.image and DEMONSTRATED
+    assert kernel.image and list(kernel.sconst) == [-1.4426950408889634]
     assert sigmoid is not None

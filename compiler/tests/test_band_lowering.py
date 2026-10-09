@@ -194,7 +194,7 @@ def test_a_subexpression_read_twice_runs_once():
     """
     x = operand()
     band = band_of(repeated, x)
-    assert len(band.chains) == 2 and len(band.held) == 1
+    assert len(band.chains) == 2 and len(band.r_held[0]) == 1
     got, stages = run(repeated, x)
     d = np.float64(x) - 1.0
     want = d / d.sum(axis=1, keepdims=True)

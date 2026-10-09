@@ -10,12 +10,18 @@ a construct that states no tiling is a tensor op, and one that names an address
 is IR. Neither belongs here.
 """
 
+import struct
+
 import numpy as np
 import pytest
 from kohakuaccel.lang import dims, grid, iface, stage, sweep
 from kohakuaccel.machinespec import MachineSpec
+from kohakutpu.hw import vector as V
+from kohakutpu.isa.vector import ISA as IM_
 from kohakutpu.lang import kernel
+from kohakutpu.lang.backend import BACKEND
 
+from kohakutpu import imem as IM
 from kohakutpu import lang as L
 
 M, K, N = dims("M, K, N")
@@ -155,8 +161,8 @@ def test_a_read_after_write_is_banded_only_when_one_program_holds_it():
     A unit does not wait between the programs of one stage, so the second
     reading what the first wrote reads whatever was there before: 79% error,
     measured on `t <<= x * w; y <<= t + x`. A band makes that pair one image
-    with `t` in a register, so the rule is now the descriptor budget -- `y`
-    below reads a folded constant too, which costs 9 of 8 and splits.
+    with `t` in a register, so the rule is now the descriptor budget -- six
+    filled operands, two drain regions and the L1 window cost 9 of 8 and split.
     """
 
     @kernel
@@ -166,10 +172,20 @@ def test_a_read_after_write_is_banded_only_when_one_program_holds_it():
         y <<= t + x
 
     @kernel
-    def too_wide(x=L.In(M, N), w=L.In(M, N), y=L.Out(M, N), *, part=8192):
+    def too_wide(
+        x=L.In(M, N),
+        w=L.In(M, N),
+        a=L.In(M, N),
+        b=L.In(M, N),
+        c=L.In(M, N),
+        d=L.In(M, N),
+        y=L.Out(M, N),
+        *,
+        part=8192,
+    ):
         t = L.temp(M, N)
-        t <<= x * w
-        y <<= t * 0.5 + x
+        t <<= x * w + a
+        y <<= t * b + c * d
 
     @kernel
     def independent(x=L.In(M, N), w=L.In(M, N), y=L.Out(M, N), z=L.Out(M, N)):
@@ -181,7 +197,8 @@ def test_a_read_after_write_is_banded_only_when_one_program_holds_it():
     assert (
         len(dependent.compile(MACHINE, extents).stages) == 1
     ), "a read-after-write one program holds should be one stage"
-    extents = iface.solve(too_wide.signature, bound)
+    wide = {**bound, **{n: Shaped((16, 64)) for n in "abcd"}}
+    extents = iface.solve(too_wide.signature, wide)
     assert (
         len(too_wide.compile(MACHINE, extents).stages) == 2
     ), "a read-after-write over the descriptor budget must still split"
@@ -205,10 +222,8 @@ def test_a_folded_constant_keeps_its_fraction():
 
     extents = iface.solve(scaled.signature, {"x": Shaped((16, 64))})
     got = scaled.compile(MACHINE, extents)
-    folded = sorted(
-        float(array[0]) for array, _ in scaled.backend.constants(got).values()
-    )
-    assert folded == pytest.approx([0.5, 1.4426950408889634], rel=1e-3), folded
+    folded = sorted(seti_values(got))
+    assert folded == pytest.approx([0.5, 1.4426950408889634], rel=1e-4), folded
 
 
 def test_an_extent_valued_constant_resolves():
@@ -220,8 +235,27 @@ def test_an_extent_valued_constant_resolves():
 
     extents = iface.solve(averaged.signature, {"x": Shaped((16, 64))})
     got = averaged.compile(MACHINE, extents)
-    folded = [float(a[0]) for a, _ in averaged.backend.constants(got).values()]
-    assert folded == [64.0], folded
+    assert seti_values(got) == [64.0]
+
+
+def seti_values(compiled) -> list[float]:
+    """Every scalar a compiled band's image loads with VSETI, VL excepted.
+
+    The constant reaches the card as the instruction's 24-bit immediate, the
+    lane's E8M15, so this reads it back from the words themselves.
+    """
+    addrs = {n: 0x10000 * (i + 1) for i, n in enumerate(sorted(compiled.layouts))}
+    out = []
+    for st in compiled.stages:
+        for words in BACKEND.encode(compiled, st, addrs).values():
+            image = [
+                IM_.IMEM.decode(w & IM.PAYLOAD)["word"] for w in words if IM.op(w) == 1
+            ]
+            for at, w in enumerate(image[:-1]):
+                if w >> 27 == V.OPS["VSETI"] and (w >> 17) & 0xF != 0:
+                    bits = image[at + 1] << 8
+                    out.append(float(struct.unpack("<f", struct.pack("<I", bits))[0]))
+    return out
 
 
 def test_numbers_agree_offline():

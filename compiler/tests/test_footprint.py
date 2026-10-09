@@ -20,7 +20,16 @@ from kohakuaccel.machinespec import MachineSpec, MeshSpec
 from kohakuaccel.memory import Arena, OutOfMemory
 from kohakutpu.model import SimDevice
 
-from tests.fixtures import CORPUS, chained, masked, mm, operands, rownorm, scale
+from tests.fixtures import (
+    CORPUS,
+    chained,
+    masked,
+    mm,
+    operands,
+    rownorm,
+    scale,
+    wide_passes,
+)
 
 
 @pytest.mark.parametrize(
@@ -46,16 +55,18 @@ def test_the_footprint_is_the_bytes_the_arena_really_hands_out(
 def test_every_buffer_the_call_places_is_priced():
     """A missing buffer is worse than a wrong number: it under-reports silently.
 
-    Layouts cover the ports and the temps; the folded constants are the ones a
-    caller never named and are the easy ones to forget.
+    Layouts cover the ports and the temps. Folded constants are instruction
+    operands, so a kernel full of them (`rownorm` folds 1/N and eps) places
+    no constant array and the priced set is exactly the layouts.
     """
     dev = SimDevice(size=1 << 26)
     got = rownorm.footprint(*operands(dev, [(64, 64)]))
     compiled = rownorm.plan(*operands(dev, [(64, 64)]))
-    assert compiled.constants(), "no folded constant here, so this proves nothing"
-    assert set(got.sizes) == set(compiled.layouts) | set(compiled.constants())
+    assert compiled.temps, "no temp here, so this proves nothing"
+    assert compiled.constants() == {}
+    assert set(got.sizes) == set(compiled.layouts)
     assert set(got.roles) == set(got.sizes)
-    assert set(got.by_role()) == {"in", "out", "temp", "const"}
+    assert set(got.by_role()) == {"in", "out", "temp"}
 
 
 def test_a_call_that_cannot_fit_says_so_before_it_runs():
@@ -81,12 +92,11 @@ def test_a_temps_lifetime_is_the_stages_that_touch_it():
     A temp is EITHER an interval inside the stages or the whole-run default,
     and never anything else. A band that writes and reads a temp inside ONE
     stage gets default-refused to the whole run -- losing the saving, never the
-    answer -- which is why `rownorm`'s first temp is whole-run and its later
-    two are not.
+    answer. `wide_passes` spreads its three temps over four stages.
     """
     dev = SimDevice(size=1 << 26)
-    got = rownorm.footprint(*operands(dev, [(64, 64)]))
-    stages = len(rownorm.plan(*operands(dev, [(64, 64)])).stages)
+    got = wide_passes.footprint(*operands(dev, [(64, 64)] * 6))
+    stages = len(wide_passes.plan(*operands(dev, [(64, 64)] * 6)).stages)
     established = 0
     for name, role in got.roles.items():
         first, last = got.life[name]

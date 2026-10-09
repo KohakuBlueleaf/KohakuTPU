@@ -48,8 +48,8 @@ def rownorm(x=L.In(..., M, N), y=L.Out(..., M, N), *, eps=1e-5):
     """A row reduction, which names NO coordinate and so used to compile
     anywhere and die at dispatch.
 
-    Three temps, each live from the stage that writes it to the stage that
-    reads it.
+    Three temps; one band holds all four statements, so all three are written
+    and read inside one stage.
     """
     sq, total, inv = L.temp(M, N), L.temp(M, N), L.temp(M, N)
     sq <<= (x / N) * x
@@ -60,12 +60,11 @@ def rownorm(x=L.In(..., M, N), y=L.Out(..., M, N), *, eps=1e-5):
 
 @kernel
 def chained(x=L.In(..., M, N), y=L.Out(..., M, N), *, eps=1e-5):
-    """Passes whose first and third temps never coexist.
+    """Two reductions of one row shape between elementwise passes.
 
-    What reuse has to find: `mu` is dead before `var` is born, so an allocator
-    packing by lifetime puts them on the same bytes and one that does not
-    cannot tell. The reductions are what hold the passes apart -- an
-    elementwise chain fuses into one stage and then every temp is whole-run.
+    A band holds a reduction beside the passes around it, so these five
+    statements are one program and every temp is whole-run; `wide_passes` is
+    the fixture whose temps have lifetimes.
     """
     a, b, c, d = (L.temp(M, N) for _ in range(4))
     a <<= L.row_sum(x)
@@ -113,6 +112,29 @@ def staged_norm(
 
 
 @kernel
+def wide_passes(
+    a=L.In(..., M, N),
+    b=L.In(..., M, N),
+    c=L.In(..., M, N),
+    d=L.In(..., M, N),
+    e=L.In(..., M, N),
+    f=L.In(..., M, N),
+    y=L.Out(..., M, N),
+):
+    """Passes too wide to share a program, so each temp lives across two stages.
+
+    A band needs a descriptor per filled operand, per result region and one for
+    L1 -- eight in all -- and any two neighbours here need nine or ten. `t1` is
+    dead before `t3` is born, which is what reuse has to find.
+    """
+    t1, t2, t3 = (L.temp(M, N) for _ in range(3))
+    t1 <<= a * b + c * d + e
+    t2 <<= t1 * f + a * b
+    t3 <<= t2 * c + d * e
+    y <<= t3 * a + b * c + f
+
+
+@kernel
 def scale(x=L.In(...), y=L.Out(...)):
     """One pass at any rank, so a shape can be small enough to test alignment."""
     y <<= x * 2.0
@@ -132,6 +154,7 @@ CORPUS = [
     ("chained", chained, [(64, 64)], {}),
     ("masked", masked, [(2, 64, 64)], {"block": 64}),
     ("scale", scale, [(64, 64)], {}),
+    ("wide_passes", wide_passes, [(64, 64)] * 6, {}),
 ]
 
 

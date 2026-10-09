@@ -74,14 +74,14 @@ WITNESSED = {
 #: `count:sha256[:16]`. `residual` carries over from the shipped library's own
 #: witness; `mm` and `mm_silu` are taken with MXFP7 fills (128-B entry steps).
 BEFORE = {
-    "chained": "466:185ede3a4bf1beae",
-    "masked": "132:fe2c2b0e0baf99b7",
+    "chained": "251:7fa7ebd304581f4a",
+    "masked": "316:05d44b764f5b4dda",
     "mm": "16:2ed39010efd4d399",
-    "mm_silu": "300:2fcbcf85f8cc92f8",
-    "residual": "66:236cedb85ea340e5",
-    "rownorm": "522:bcd19a2f514f1bd0",
-    "scale": "66:e8e97306f3491402",
-    "staged_norm": "850:9b2e77f6dfb3aec1",
+    "mm_silu": "316:2abce6f7816e8164",
+    "residual": "158:791e5f27c85c7703",
+    "rownorm": "288:39ff619bb5d7804c",
+    "scale": "122:ea7d8be3e51246b2",
+    "staged_norm": "481:524d3f0d39e704dc",
 }
 
 
@@ -108,11 +108,14 @@ def test_the_fused_drain_moves_only_what_it_fuses(name, monkeypatch):
     assert digest(kern, operands(*shapes), **knobs) == FUSED.get(name, BEFORE[name])
 
 
-def test_the_witness_carried_over_from_the_shipped_library_unchanged():
+def test_the_fixture_emits_what_the_shipped_kernel_emits():
     """Corroboration that a fixture is a faithful stand-in, not a weaker one.
 
-    This digest was captured against `kohakutpu.kernels.residual` before this
-    file was repointed. Same DSL text emits the same words, so isolating the
-    test cost no coverage on it.
+    Same statement as `kohakutpu.ops.residual`, so the same words: isolating the
+    witness from the library cost no coverage on it.
     """
-    assert BEFORE["residual"] == "66:236cedb85ea340e5"
+    from kohakutpu import ops
+
+    arrays = operands((64, 64), (64, 64))
+    shipped = digest(ops.residual, arrays)
+    assert shipped == digest(F.residual, arrays) == BEFORE["residual"]

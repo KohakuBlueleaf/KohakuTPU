@@ -18,6 +18,7 @@ from kohakutpu.lang.backend import BACKEND
 from kohakutpu.lang.errors import LangError
 from kohakutpu.model import SimDevice
 
+from kohakutpu import imem as IM
 from kohakutpu import lang as L
 
 FP16 = np.float16
@@ -115,18 +116,23 @@ SHAPES = [(32, 128), (64, 64)]
 
 
 def flits_of(kern, arrays):
-    """``(stages, instruction words, folded DRAM scalars)`` for one compilation."""
+    """``(stages, dispatched words, temps)`` for one compilation.
+
+    Words of the SECOND call through `imem.rewrite` against one vector core, as
+    `Holder.dispatch` sends them: the program and every descriptor field the
+    core already holds is not resent, which is the steady state.
+    """
     dev = SimDevice(size=64 << 20)
     compiled = kern.plan(*[dev.tensor(a) for a in arrays])
-    consts = BACKEND.constants(compiled) or {}
-    names = list(compiled.layouts) + list(consts)
-    addrs = {n: 0x100000 * (i + 1) for i, n in enumerate(sorted(names))}
-    words = sum(
-        len(w)
-        for stage in compiled.stages
-        for w in BACKEND.encode(compiled, stage, addrs).values()
-    )
-    return len(compiled.stages), words, len(consts)
+    addrs = {n: 0x100000 * (i + 1) for i, n in enumerate(sorted(compiled.layouts))}
+    core = IM.Resident()
+    for _ in range(2):
+        words = sum(
+            len(IM.rewrite(list(w), core) if stage.unit == "VC" else w)
+            for stage in compiled.stages
+            for w in BACKEND.encode(compiled, stage, addrs).values()
+        )
+    return len(compiled.stages), words, len(compiled.temps)
 
 
 @pytest.mark.parametrize("shape", SHAPES, ids=str)
@@ -152,18 +158,20 @@ def test_the_fused_shape_is_one_stage_and_computes_the_right_numbers(
 
 @pytest.mark.parametrize(("name", "nargs", "want"), CASES, ids=[c[0] for c in CASES])
 def test_the_fused_form_costs_less_than_the_staged_one(name, nargs, want):
-    """Measured at 64x64: softmax 974 -> 290 words, layernorm 1254 -> 416.
+    """Measured at 64x64, steady-state words: softmax 24 -> 20, rmsnorm 24 -> 16,
+    layernorm 86 -> 20.
 
-    The staged forms allocate a full-shape temp per intermediate and make a
-    pass per statement, so this is the whole claim of the fused shape.
+    A band now holds the staged statements too, but every statement stores, so
+    the staged forms still allocate a full-shape temp per intermediate and
+    drain it; the fused shape allocates none.
     """
     from kohakutpu import kernels as K
 
     args = operands((64, 64))[:nargs]
     assert getattr(K, name.removesuffix("_fused")) is getattr(fused, name)
-    was_stages, was_words, _ = flits_of(STAGED[name], args)
-    now_stages, now_words, _ = flits_of(getattr(fused, name), args)
-    assert now_stages < was_stages
+    was_stages, was_words, was_temps = flits_of(STAGED[name], args)
+    now_stages, now_words, now_temps = flits_of(getattr(fused, name), args)
+    assert now_stages <= was_stages and now_temps == 0 < was_temps
     assert now_words < was_words, f"{name}: {was_words} -> {now_words}"
 
 
@@ -182,23 +190,23 @@ def test_no_intermediate_of_a_fused_kernel_reaches_memory():
     band, _, _ = B._build(compiled, list(compiled.stages[0].instances[0].stmts))
     assert compiled.temps == {}
     assert band.nout == 1 and len(band.chains) == 2
-    assert len(band.held) == 1, "the deviation should live in one register"
+    assert len(band.r_held[0]) == 1, "the deviation should live in one register"
 
 
 @pytest.mark.parametrize(
     ("name", "nargs", "descriptors"),
     [
-        ("softmax_fused", 1, 6),
-        ("rmsnorm_fused", 2, 6),
-        ("layernorm_fused", 3, 8),
-        ("group_norm_fused", 3, 8),
+        ("softmax_fused", 1, 3),
+        ("rmsnorm_fused", 2, 4),
+        ("layernorm_fused", 3, 5),
+        ("group_norm_fused", 3, 5),
     ],
 )
 def test_each_kernel_fits_the_eight_descriptors(name, nargs, descriptors):
-    """`2*nin + 1 + nout`, and layernorm lands at exactly 8 of 8.
+    """`1 + nin + nout` a half: the L1 window, a fill per operand, a drain.
 
-    The budget is what constants in registers buy: with `N` and `eps` filled
-    from DRAM instead, rmsnorm needs 10 and layernorm 12.
+    Constants are S operands and cost no descriptor, so even layernorm leaves
+    room for a second half to fill while the first computes.
     """
     from kohakutpu.lang import backend as B
 
@@ -206,7 +214,8 @@ def test_each_kernel_fits_the_eight_descriptors(name, nargs, descriptors):
     dev = SimDevice(size=64 << 20)
     compiled = getattr(fused, name).plan(*[dev.tensor(a) for a in args])
     band, _, _ = B._build(compiled, list(compiled.stages[0].instances[0].stmts))
-    assert 2 * band.nin + 1 + band.nout == descriptors
+    assert 1 + band.nin + band.nout == descriptors
+    assert 1 + band.halves * (band.nin + band.nout) <= 8
     assert band.vl == 128, "a reducing band steps one ROW, not VLMAX"
 
 
@@ -236,12 +245,13 @@ def test_a_reduction_composes_and_lowers():
 
 
 @pytest.mark.parametrize(("name", "nargs", "want"), CASES, ids=[c[0] for c in CASES])
-def test_no_operand_reaches_an_undemonstrated_slot(name, nargs, want):
-    """A folded constant is a VECTOR register, so every ALU source is `SRC_V`.
+def test_every_scalar_operand_names_a_register_holding_one(name, nargs, want):
+    """An S or K source names a register the band loaded, never a stray number.
 
-    Guessing an operand slot produces a legal word that computes something else,
-    which is the one failure an assembled image cannot show. Seeding through a
-    VBCAST means no chain here emits a `K` or `S` ALU source at all.
+    `vec_lanes.v:333` takes S or K in any of the three slots (softmax's
+    `x - max` runs S in `vc` on RTL, vperf against vec_replay_tb), so the slot
+    is not the risk: an S register no VSETI or VRED wrote is, and source C
+    outside D2/D4/TREE faults.
     """
     from kohakutpu.hw import vector as V
     from kohakutpu.isa.vecemit import BINARY, UNARY
@@ -253,6 +263,7 @@ def test_no_operand_reaches_an_undemonstrated_slot(name, nargs, want):
     dev = SimDevice(size=64 << 20)
     compiled = getattr(fused, name).plan(*[dev.tensor(a) for a in args])
     band, _, _ = B._build(compiled, list(compiled.stages[0].instances[0].stmts))
+    loaded = set(band.sconst.values()) | {s for v in band.s_fold.values() for s in v}
     names = {code: op for op, code in V.OPS.items()}
     seen, immediate = 0, False
     for word in band.image:
@@ -261,8 +272,13 @@ def test_no_operand_reaches_an_undemonstrated_slot(name, nargs, want):
         if op not in alu:
             continue
         seen += 1
-        sels = [(word >> shift) & 3 for shift in (25, 23, 21)]
-        assert sels == [V.SRC_V] * 3, f"{op} reads a non-vector operand: {sels}"
+        for sel_at, reg_at in ((25, 13), (23, 9), (21, 5)):
+            sel, reg = (word >> sel_at) & 3, (word >> reg_at) & 0xF
+            assert sel != V.SRC_C, f"{op} chains a source in FLAT mode"
+            if sel == V.SRC_S:
+                assert reg in loaded, f"{op} reads S{reg}, which nothing loaded"
+            if sel == V.SRC_K:
+                assert reg < 3, f"{op} reads K{reg}, which no VSETI wrote"
     assert seen, "no ALU word was checked"
 
 
