@@ -44,6 +44,9 @@ class IsaConfig:
 
     max_fill: int = 255
     max_peers: int = 3
+    #: K blocks one sweep issue carries: two on the double-pumped manager
+    #: (mx_cluster_mgr_pump.v KSTEP), one on the single. The larger bounds both.
+    kstep: int = 2
 
 
 DEFAULT = IsaConfig()
@@ -136,6 +139,27 @@ class CuIsa:
     def gemm(self, gm: int, gn: int, nk: int, **kw) -> int:
         """A GEMM payload."""
         return self.GEMM.encode(gm=gm, gn=gn, nk=nk, **kw)
+
+    def can_emit(self, acc: int, nk: int) -> bool:
+        """Whether a GEMM may hand its sub-tiles out (`emit`).
+
+        An emitting issue must not also OPEN its tile: there is no load-and-emit
+        accumulator op, the load wins, and the fused DRAIN waits forever for
+        sub-tiles that never come (mx_cluster_mgr_pump.v, `cmd_op`). A sweep's
+        first issue opens the tile unless it accumulates, and it is also the
+        last when `nk` fits one issue.
+        """
+        return bool(acc) or nk > self.cfg.kstep
+
+    def legal_nk(self, nk: int) -> bool:
+        """Whether a GEMM may sweep `nk` K-blocks: one, or a whole number of issues.
+
+        MEASURED on card_v9_1n (pumped manager, two K-blocks an issue): an odd
+        nk >= 3 ends its sweep in a single-block pass and sub-tile (0, 0) comes
+        out wrong -- nk 3 and 5, every tile, every cluster; nk 1 and 2 exact
+        (scripts/py/l1/k_matmul.py, graded against the quantised model).
+        """
+        return nk == 1 or nk % self.cfg.kstep == 0
 
     def drain(self, addr: int, n: int, **kw) -> int:
         """A DRAIN payload."""
