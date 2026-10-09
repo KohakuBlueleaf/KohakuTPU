@@ -33,8 +33,24 @@ class Program:
             self.steps.append(("send", tuple(coord), words))
         return self
 
-    def wait(self, coord) -> "Program":
-        self.steps.append(("wait", tuple(coord)))
+    def mark(self, coord) -> int:
+        """A point in `coord`'s stream: everything sent to it so far. Returns
+        the token a `wait` names."""
+        token = sum(1 for s in self.steps if s[0] == "mark")
+        self.steps.append(("mark", tuple(coord), token))
+        return token
+
+    def wait(self, coord, token: int | None = None) -> "Program":
+        """Hold the node until `coord` has completed everything sent to it --
+        or, given a `mark` token of that unit, everything sent up to the mark,
+        whatever was sent after it."""
+        if token is not None:
+            at = next(
+                (s[1] for s in self.steps if s[0] == "mark" and s[2] == token), None
+            )
+            if at != tuple(coord):
+                raise ValueError(f"token {token} marks {at}, not {tuple(coord)}")
+        self.steps.append(("wait", tuple(coord), token))
         return self
 
     def barrier(self) -> "Program":
@@ -61,14 +77,20 @@ class Program:
             mesh=self.machine.default,
             fetch=fetch,
         )
-        owed: dict = {}
+        # Words dispatched to and awaited from each unit, cumulative: an AWAIT
+        # raises a unit's expected count (package-format.md), so a wait up to a
+        # mark is the difference.
+        sent: dict = {}
+        awaited: dict = {}
+        marks: dict = {}
         # Sends between two sync points are unordered across units, so each
         # unit's go out as ONE dispatch: a fetch-port request costs ~1k node
         # cycles whatever its length (MEASURED on card_v9_1n).
         pending: dict = {}
 
-        def flush() -> None:
-            for u, words in pending.items():
+        def flush(only=None) -> None:
+            for u in [only] if only is not None else list(pending):
+                words = pending.pop(u, [])
                 coord = (b.units[u].x, b.units[u].y)
                 lower = self.lowerings.get(types.get(coord))
                 if resident is not None and lower is not None:
@@ -76,30 +98,39 @@ class Program:
                 if not words:
                     continue
                 b.dispatch(u, words)
-                owed[u] = owed.get(u, 0) + len(words)
-            pending.clear()
+                sent[u] = sent.get(u, 0) + len(words)
+
+        def await_to(u, upto: int) -> None:
+            if upto > awaited.get(u, 0):
+                b.await_(u, upto - awaited.get(u, 0))
+                awaited[u] = upto
 
         for step in self.steps:
             match step[0]:
                 case "send":
                     pending.setdefault(b.unit(step[1]), []).extend(step[2])
+                case "mark":
+                    # The unit's words up to here go out now, so the count a
+                    # wait names is what the unit is actually sent.
+                    u = b.unit(step[1])
+                    flush(u)
+                    marks[step[2]] = sent.get(u, 0)
                 case "wait":
                     u = b.unit(step[1])
                     flush()
-                    b.await_(u, owed.pop(u, 0))
+                    await_to(u, sent.get(u, 0) if step[2] is None else marks[step[2]])
                 case "barrier":
                     flush()
-                    for u, n in sorted(owed.items()):
-                        b.await_(u, n)
-                    owed.clear()
+                    for u in sorted(sent):
+                        await_to(u, sent[u])
                     b.barrier()
                 case "move":
                     flush()
                     b.mover(step[1])
                     b.barrier()
         flush()
-        for u, n in sorted(owed.items()):
-            b.await_(u, n)
+        for u in sorted(sent):
+            await_to(u, sent[u])
         b.barrier()
         return b
 

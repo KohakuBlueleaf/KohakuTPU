@@ -35,6 +35,38 @@ def test_sends_between_syncs_are_one_dispatch_per_unit_and_waits_count_words():
     assert got == sends + [(Op.DISPATCH, 1), (Op.AWAIT, 1), (Op.AWAIT, 1)]
 
 
+def test_a_wait_up_to_a_mark_awaits_only_the_words_before_it():
+    """The unit keeps the words sent after the mark: they are dispatched before
+    the AWAIT, and the final barrier awaits the rest."""
+    p = Program(MACHINE)
+    a, b = p.units("UA")
+    p.send(a, Word(1), Word(2))
+    tok = p.mark(a)
+    p.send(a, Word(3), Word(4), Word(5)).send(b, Word(6))
+    p.wait(a, tok).send(b, Word(7))
+    got = [(s.op, s.count) for s in steps(p) if s.op in (Op.DISPATCH, Op.AWAIT)]
+    assert got == [
+        (Op.DISPATCH, 2),  # the mark sends a's words so far
+        (Op.DISPATCH, 3),
+        (Op.DISPATCH, 1),
+        (Op.AWAIT, 2),  # up to the mark only
+        (Op.DISPATCH, 1),
+        (Op.AWAIT, 3),  # the rest of a, at the end
+        (Op.AWAIT, 2),
+    ]
+
+
+def test_a_token_names_its_own_unit():
+    p = Program(MACHINE)
+    a, b = p.units("UA")
+    tok = p.mark(a)
+    try:
+        p.wait(b, tok)
+    except ValueError:
+        return
+    raise AssertionError("a wait on b accepted a's mark")
+
+
 def _held(words: list, state: dict, coord) -> list:
     """Drop the words this unit already holds."""
     held = state.setdefault(coord, set())

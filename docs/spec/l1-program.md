@@ -18,6 +18,7 @@ staged-flit form is `kohakuaccel.ir.l1.ProgramIR` (`staged.py`).
 |---|---|
 | `send(unit, *ops)` | append the ops' words (`op.flits()`) to `unit`'s stream |
 | `wait(unit)` | hold the node until `unit` has completed every word sent to it since its last wait |
+| `mark(unit)` / `wait(unit, token)` | a point in `unit`'s stream; hold the node until everything sent to `unit` up to the mark has completed, whatever was sent after it (revision 2: a cross-unit dependence per tile, with the producer already holding its next work) |
 | `barrier()` | hold the node until every unit has |
 | `move(writes)` | one mover step (`kohakuaccel.package.mover`): a barrier on both sides |
 | `units(kind)` | the coordinates of every unit of `kind` |
@@ -43,6 +44,10 @@ staged-flit form is `kohakuaccel.ir.l1.ProgramIR` (`staged.py`).
 3. `wait`/`barrier` become `AWAIT` steps counting exactly the words dispatched
    since that unit's last await, then `BARRIER`; a `move` is a `MOVER` step and
    a `BARRIER`. The program ends with every unit awaited and a barrier.
+4. A `mark` dispatches that unit's pending words at once and records how many
+   it has been sent; `wait(unit, token)` awaits up to that count. An AWAIT is
+   cumulative (it raises the unit's expected count), so a partial wait is the
+   difference, and the words after the mark stay queued in the unit.
 
 Units resolve through the package unit table (`kohakuaccel.package.units`).
 
