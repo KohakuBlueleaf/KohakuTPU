@@ -68,7 +68,7 @@ def silu(prog, src: int, dst: int, n: int, words=256, group=3, sets=2, cores=0) 
         raise ValueError(f"{per} elements a core is not whole {batch}-element RUNs")
     dims = ((1, SLICE),)
     progs = stream.programs(
-        head(), lambda region: body(region, words, group, sets), words, dims
+        head(), lambda slots: body(slots[0], words, group, sets), words, dims
     )
     size = 0
     for c, core in enumerate(units):

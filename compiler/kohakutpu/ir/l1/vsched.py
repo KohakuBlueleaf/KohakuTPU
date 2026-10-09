@@ -97,13 +97,17 @@ def _reads(inst) -> set:
             if name in used and sel == V.SRC_V:
                 out.add(("v", reg))
         if inst.pm:
+            # A predicated write keeps the lanes it does not write (vec_lanes.v
+            # nx_we): it reads its destination.
             out.add(("p", inst.pr))
+            if inst.op not in _CMP:
+                out.add(("v", inst.vd))
     elif isinstance(inst, Vst):
         out.add(("v", inst.vs))
     elif isinstance(inst, Vshuf):
         out.add(("v", inst.va))
         if inst.pm:
-            out.add(("p", inst.pr))
+            out |= {("p", inst.pr), ("v", inst.vd)}
     return out
 
 

@@ -1,16 +1,17 @@
 """The streaming RUN pipeline a vector kernel runs in.
 
-Two L1 regions of `words` words and two program variants by parity. RUN k
-(r = k mod 2) waits for region r's fill, drains region 1-r (RUN k-1's result),
-refills region 1-r with RUN k+1's input, and computes region r in place; an
-epilogue RUN drains the last region. The drain and the fill run in the
-load/store engine beside RUN k's compute, so neither is exposed: a walk is one
-at a time, so the drain has read every word before the fill's requests go out.
+Two L1 regions by parity, each of `inputs` slots of `words` words (one slot an
+input stream, at most two: a core has eight descriptors), and an optional
+resident block after them, filled once. RUN k (r = k mod 2) waits for region
+r's fills, drains region 1-r's slot 0 (RUN k-1's result), refills region 1-r
+with RUN k+1's inputs, and computes region r, its result in slot 0; an epilogue
+RUN drains the last region. The drain and the fills run in the load/store
+engine beside RUN k's compute, so neither is exposed: a walk is one at a time,
+so the drain has read every word before the fill's requests go out.
 
-Before RUN k the node sets `F[1-r]` to RUN k+1's input and `D[1-r]` to RUN
-k-1's output. RUN 0 has no previous result: its drain writes region 1's stale
-words where a later drain of the same core overwrites them (RUN 1's output, or
-RUN 0's own when it is the only one).
+Before RUN k the node sets `F[s][1-r]` to RUN k+1's input `s` and `D[1-r]` to
+RUN k-1's output. RUN 0 has no previous result: its drain writes region 1's
+stale words to a sink (`send`).
 
 Each body is ordered by `vsched` against the core's timing model.
 """
@@ -20,7 +21,11 @@ from kohakutpu.ir.l1 import vsched
 from kohakutpu.ir.l1.vector import Bar, Desc, Dims, Halt, Image, Run, Vdrain, Vfill
 
 AD_L1 = 0
-F, D = (1, 2), (3, 4)
+#: Fill descriptors by input slot, then parity; drain descriptors by parity.
+F, D = ((1, 2), (5, 6)), (3, 4)
+#: The resident block's fill.
+R = 7
+L1_WORDS = 512
 
 
 def walk_offsets(dims) -> list[int]:
@@ -31,30 +36,103 @@ def walk_offsets(dims) -> list[int]:
     return offs
 
 
-def l1_map(l1_dims, words: int) -> vsched.L1Map:
-    return vsched.L1Map(
-        walks={AD_L1: (0, walk_offsets(l1_dims))}, fills={a: words for a in (*F, *D)}
-    )
+def slot(r: int, s: int, words: int, inputs: int) -> int:
+    """L1 word where region `r`'s slot `s` starts."""
+    return (r * inputs + s) * words
 
 
-def programs(head: list, body, words: int, l1_dims) -> list:
-    """``[prologue, even, odd, last even, last odd]``; `body(region)` computes
-    one region in place."""
-    l1 = l1_map(l1_dims, words)
-    out = [(Vfill(F[0], 0), Halt())]
+def resident_at(words: int, inputs: int) -> int:
+    """L1 word where the resident block starts."""
+    return 2 * inputs * words
+
+
+def l1_map(
+    l1_dims, words: int, inputs: int = 1, resident: int = 0, walks=None
+) -> vsched.L1Map:
+    """`walks` adds a kernel's own load/store descriptors: ``{ad: dims}``, base 0."""
+    fills = {a: words for a in (*F[0], *F[1][: 2 * (inputs - 1)], *D)}
+    if resident:
+        fills[R] = resident
+    every = {AD_L1: (0, walk_offsets(l1_dims))}
+    every.update({ad: (0, walk_offsets(d)) for ad, d in (walks or {}).items()})
+    return vsched.L1Map(walks=every, fills=fills)
+
+
+def _check(words: int, inputs: int, resident: int) -> None:
+    if not 1 <= inputs <= 2:
+        raise ValueError(f"{inputs} input streams; a core's descriptors hold two")
+    if resident_at(words, inputs) + resident > L1_WORDS:
+        raise ValueError(
+            f"{inputs} inputs of {words} words a region and {resident} resident "
+            f"words pass L1's {L1_WORDS}"
+        )
+
+
+def programs(
+    head: list,
+    body,
+    words: int,
+    l1_dims,
+    inputs: int = 1,
+    resident: int = 0,
+    walks=None,
+) -> list:
+    """``[prologue, even, odd, last even, last odd]``; `body(slots)` computes one
+    region from its slots' L1 bases into ``slots[0]``. `walks` names the
+    kernel's other L1 descriptors (``{ad: dims}``, base 0), set up by `send`'s
+    `setup`."""
+    _check(words, inputs, resident)
+    l1 = l1_map(l1_dims, words, inputs, resident, walks)
+    pro = [Vfill(F[s][0], slot(0, s, words, inputs)) for s in range(inputs)]
+    if resident:
+        pro.append(Vfill(R, resident_at(words, inputs)))
+    out = [tuple(pro + [Halt()])]
     for r in (0, 1):
-        region, other = r * words, (1 - r) * words
-        code = [Bar(), Vdrain(D[1 - r], other), Vfill(F[1 - r], other)] + body(region)
+        mine = [slot(r, s, words, inputs) for s in range(inputs)]
+        other = [slot(1 - r, s, words, inputs) for s in range(inputs)]
+        code = [Bar(), Vdrain(D[1 - r], other[0])]
+        code += [Vfill(F[s][1 - r], other[s]) for s in range(inputs)]
+        code += body(mine)
         out.append(tuple(head + vsched.schedule(code, l1) + [Halt()]))
-    out += [(Vdrain(D[r], r * words), Halt()) for r in (0, 1)]
+    out += [(Vdrain(D[r], slot(r, 0, words, inputs)), Halt()) for r in (0, 1)]
     return out
 
 
-def send(
-    prog, core, progs, l1_dims, words: int, src: int, dst: int, nruns: int, step: int
-) -> int:
-    """Queue `nruns` RUNs on `core` over `src`/`dst`, `step` bytes apart. Returns
-    the instruction words the programs take."""
+def send(prog, core, *args, **kw) -> int:
+    """`ops` queued on `core`; returns the instruction words the programs take."""
+    ops, size = stream_ops(*args, **kw)
+    prog.send(core, *ops)
+    return size
+
+
+def stream_ops(
+    progs,
+    l1_dims,
+    words: int,
+    srcs,
+    dst: int,
+    nruns: int,
+    step: int,
+    resident_src: int | None = None,
+    resident: int = 0,
+    setup=(),
+    sink: int | None = None,
+) -> tuple[list, int]:
+    """``(ops, image words)`` for `nruns` RUNs: input `s` from ``srcs[s]``,
+    output to `dst`, `step` bytes apart a RUN; the resident block's `resident`
+    words from `resident_src`; `setup` (descriptor ops) before the first RUN.
+
+    `sink` (`words` words) takes RUN 0's stale drain. Without one it lands on
+    RUN 1's output, which a later drain overwrites -- unless the output IS an
+    input (in place): then it lands on RUN 1's input before RUN 0 fills it
+    (MEASURED, card_v9_1n: 5% of a fused epilogue wrong), so in place needs one.
+    """
+    srcs = [srcs] if isinstance(srcs, int) else list(srcs)
+    inputs = len(srcs)
+    span = nruns * step
+    if sink is None and any(s < dst + span and dst < s + span for s in srcs):
+        raise ValueError("an in-place stream needs a `sink` for RUN 0's stale drain")
+    first = sink if sink is not None else dst + min(1, nruns - 1) * step
     pcs, at = [], 0
     for p in progs:
         pcs.append(at)
@@ -62,14 +140,19 @@ def send(
     walk = ((V.WORD_BYTES, words),)
     ops = [Image(p, pc) for p, pc in zip(progs, pcs, strict=True)]
     ops += [Desc(AD_L1, 0), Dims(AD_L1, l1_dims)]
-    ops += [Dims(a, walk) for a in (*F, *D)]
-    ops += [Desc(F[0], src), Run(pcs[0])]
+    ops += [Dims(a, walk) for s in range(inputs) for a in F[s]]
+    ops += [Dims(a, walk) for a in D]
+    ops += [Desc(F[s][0], srcs[s]) for s in range(inputs)]
+    if resident:
+        ops += [Dims(R, ((V.WORD_BYTES, resident),)), Desc(R, resident_src)]
+    ops += list(setup)
+    ops.append(Run(pcs[0]))
     for k in range(nruns):
         r = k % 2
-        nxt = src + (k + 1) * step if k + 1 < nruns else src + k * step
-        prev = dst + (k - 1 if k else min(1, nruns - 1)) * step
-        ops += [Desc(F[1 - r], nxt), Desc(D[1 - r], prev), Run(pcs[1 + r])]
+        nxt = (k + 1) * step if k + 1 < nruns else k * step
+        prev = dst + (k - 1) * step if k else first
+        ops += [Desc(F[s][1 - r], srcs[s] + nxt) for s in range(inputs)]
+        ops += [Desc(D[1 - r], prev), Run(pcs[1 + r])]
     r = (nruns - 1) % 2
     ops += [Desc(D[r], dst + (nruns - 1) * step), Run(pcs[3 + r])]
-    prog.send(core, *ops)
-    return at
+    return ops, at

@@ -104,7 +104,7 @@ def a_runs(a_at, r0, h, c, gm, nk, chunks) -> list:
     return out
 
 
-def matmul(
+def cluster_ops(
     prog,
     a_at,
     b_at,
@@ -119,13 +119,13 @@ def matmul(
     ones_at=None,
     bias_at=None,
     stagger=False,
-) -> list:
-    """Queue the program on `prog`; returns ``[(first sub-row, sub-rows, tile j,
-    byte address)]``. `stagger` selects `plan`'s staggered bands.
-
-    `parts` keeps fills (f), sweeps (s) and drains (d); dropping one measures the
-    rest (a run without fills sweeps stale L1, without drains writes one sub-tile).
-    """
+    late=True,
+):
+    """The clusters' words, tile by tile: yields ``(unit, ops, drained)`` in send
+    order, `drained` the ``(first sub-row, sub-rows, tile j, byte address)``
+    tiles whose DRAIN is in `ops`. `late` places a fused DRAIN after the next
+    tile's non-emitting work (it holds the sequencer until its last sub-tile has
+    left); otherwise right behind its tile, so the tile is in memory sooner."""
     if m % (LANES * gm) or n % (LANES * gn) or k % (KBLOCK * nk):
         raise ValueError(f"{m}x{k}x{n} is not whole {gm}x{gn}x{nk} tiles")
     tm, tn, chunks = m // (LANES * gm), n // (LANES * gn), k // (KBLOCK * nk)
@@ -137,20 +137,18 @@ def matmul(
         if gm * nk + gm > BANK or gn * nk + gn > BANK:
             raise ValueError("the bias block does not fit beside a chunk in one bank")
         for u in mgs:
-            prog.send(
-                u, *[Fill(ones_at, gm, sel=0, eoff=gm * nk, fbank=q) for q in (0, 1)]
-            )
+            ones = [Fill(ones_at, gm, sel=0, eoff=gm * nk, fbank=q) for q in (0, 1)]
+            yield u, ones, []
     tiles = plan(tm, tn, gm, len(mgs), stagger)
     held = {u: None for u in mgs}
-    where = []
     out = c_at
     for step in range(max(len(t) for t in tiles)):
         for u, mine in zip(mgs, tiles, strict=True):
             if step >= len(mine):
                 continue
             r0, h, j = mine[step]
-            where.append((r0, h, j, out))
-            ops = []
+            tile = (r0, h, j, out)
+            ops, drained = [], []
             emit = False
             for c in range(chunks):
                 q = bank[u] % 2
@@ -162,7 +160,8 @@ def matmul(
                 last = c == chunks - 1 and not biased
                 emit = last and "d" in parts and ISA.can_emit(int(c > 0), nk)
                 if last and held[u] is not None:
-                    ops.append(held[u])
+                    ops.append(held[u][0])
+                    drained.append(held[u][1])
                     held[u] = None
                 if "s" in parts:
                     ops.append(
@@ -178,7 +177,8 @@ def matmul(
                 )
                 emit = "d" in parts
                 if held[u] is not None:
-                    ops.append(held[u])
+                    ops.append(held[u][0])
+                    drained.append(held[u][1])
                     held[u] = None
                 ops.append(
                     Gemm(
@@ -195,17 +195,33 @@ def matmul(
                     )
                 )
             drain = Drain(out, h * gn if "d" in parts else 1, fuse=emit)
-            if emit:
-                held[u] = drain
+            if emit and late:
+                held[u] = (drain, tile)
             else:
                 ops.append(drain)
-            prog.send(u, *ops)
+                drained.append(tile)
+            yield u, ops, drained
             out += h * gn * SUBTILE
     for u in mgs:
         if held[u] is not None:
-            prog.send(u, held[u])
+            yield u, [held[u][0]], [held[u][1]]
+
+
+def matmul(prog, a_at, b_at, c_at, m, n, k, gm, gn, nk, parts="fsd", **kw) -> list:
+    """Queue the program on `prog`; returns ``[(first sub-row, sub-rows, tile j,
+    byte address)]``. `kw` is `cluster_ops`'s (bias, `stagger`, `late`).
+
+    `parts` keeps fills (f), sweeps (s) and drains (d); dropping one measures the
+    rest (a run without fills sweeps stale L1, without drains writes one sub-tile).
+    """
+    where = []
+    for u, ops, drained in cluster_ops(
+        prog, a_at, b_at, c_at, m, n, k, gm, gn, nk, parts, **kw
+    ):
+        prog.send(u, *ops)
+        where += drained
     prog.barrier()
-    return where
+    return sorted(where, key=lambda t: t[3])
 
 
 def unpack(get, where, m, n, gm, gn) -> np.ndarray:

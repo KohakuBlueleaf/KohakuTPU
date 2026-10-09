@@ -135,8 +135,8 @@ def softmax(prog, src: int, dst: int, n_rows: int, cols: int, rows=8, block=8) -
     if n_rows % len(units) or per % rows or rows % ROWS:
         raise ValueError(f"{per} rows a core is not whole RUNs of {rows}")
 
-    def body(region):
-        bases = [region + s * ROWS * w for s in range(rows // ROWS)]
+    def body(slots):
+        bases = [slots[0] + s * ROWS * w for s in range(rows // ROWS)]
         return [
             x
             for g in range(0, len(bases), STEPS)
