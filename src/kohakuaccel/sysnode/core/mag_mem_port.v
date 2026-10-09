@@ -109,7 +109,7 @@ module mag_mem_port #(
 
     localparam [3:0] T_MEM_RD_REQ = 4'h0, T_MEM_WR_REQ = 4'h1;
     localparam [3:0] T_MEM_RD_RESP = 4'h2, T_MEM_WR_ACK = 4'h3;
-    localparam [3:0] T_MEM_WR_DATA = 4'h4;
+    localparam [3:0] T_MEM_WR_DATA = 4'h4, T_CU_INST = 4'h5;
 
     localparam integer LSB = $clog2(DATA_W/8);
 
@@ -234,10 +234,13 @@ module mag_mem_port #(
     wire [7:0]  wi_txn  = wq_flit[FLIT_WIDTH-4*POS_WIDTH-5 -: 8];
 
     // Request flags. Bits 0..3 are the spec's cache hints, unused here.
-    //   [4] [5] reserved and ignored -- a fetch is never transformed, so a
-    //           request cannot select a transform at all (spec/flit-format s4)
+    //   [4] reserved and ignored -- a fetch is never transformed, so a request
+    //       cannot select a transform at all (spec/flit-format s4)
+    //   [5] INST: each word goes to peer 0 as a CU_INST sourced by the requester,
+    //       which streams a program into a unit and gets its completions
     //   [6] STREAM: this is a DESCRIPTOR, fetch `count` consecutive entries
     wire in_stream = in_flags[6];
+    wire in_inst   = in_flags[5];
 
     // Entries in a streaming fetch. Contiguous by construction -- the driver
     // stores operands tile-major precisely so a pass's entries are one run
@@ -288,6 +291,7 @@ module mag_mem_port #(
     reg [7:0]           nx_txn, nx_cnt;
     reg [23:0]          nx_peer;
     reg [1:0]           nx_nd, nx_elast;
+    reg                 nx_inst;
 
     // MESH FIRST, THEN APERTURE -- the same order mag_stage decodes in, and the
     // reason a packet only transiting this mesh is never claimed.
@@ -362,20 +366,20 @@ module mag_mem_port #(
     reg [1:0]   e_dst;
     reg [23:0]  rd_peer;
     reg [1:0]   rd_nd;
+    reg         rd_inst;
 
-    // Destination 0 is the requester itself; the rest come from the list. A
-    // node index is {y,x} with y in the high nibble -- the packing PROG_DST and
-    // NODE_STATUS use.
+    // Destination 0 is the requester itself (peer 0 for INST), the rest the
+    // list's. A node index is {y,x}, y high -- the PROG_DST/NODE_STATUS packing.
     wire [7:0] e_peer_sel = (
-        (e_dst == 2'd1)   ? rd_peer[7:0]
-        : (e_dst == 2'd2) ? rd_peer[15:8]
+        ((e_dst == 2'd1) || rd_inst) ? rd_peer[7:0]
+        : (e_dst == 2'd2)           ? rd_peer[15:8]
         : rd_peer[23:16]
     );
     wire [POS_WIDTH-1:0] e_dx = (
-        (e_dst == 2'd0) ? rd_x : e_peer_sel[POS_WIDTH-1:0]
+        ((e_dst == 2'd0) && !rd_inst) ? rd_x : e_peer_sel[POS_WIDTH-1:0]
     );
     wire [POS_WIDTH-1:0] e_dy = (
-        (e_dst == 2'd0) ? rd_y : e_peer_sel[4 +: POS_WIDTH]
+        ((e_dst == 2'd0) && !rd_inst) ? rd_y : e_peer_sel[4 +: POS_WIDTH]
     );
     // The entry is complete. Remembered rather than acted on directly: if the
     // emit buffer is still busy when it completes, the read engine would
@@ -967,6 +971,8 @@ module mag_mem_port #(
             rd_ent  <= 8'd0;
             rd_peer <= 24'd0;
             rd_nd   <= 2'd0;
+            rd_inst <= 1'b0;
+            nx_inst <= 1'b0;
             e_dst   <= 2'd0;
             p_cnt   <= 2'd0;
             rd_ebytes <= P_ENTRY_BYTES;
@@ -1031,6 +1037,7 @@ module mag_mem_port #(
                         rd_txn <= in_txn;
                         rd_peer <= in_peer;
                         rd_nd   <= in_nd;
+                        rd_inst <= in_inst;
                         rd_cnt  <= in_count;
                         rd_ent  <= 8'd0;
                         rd_ebytes <= in_ebytes;
@@ -1098,6 +1105,7 @@ module mag_mem_port #(
                     rd_txn   <= nx_txn;
                     rd_peer  <= nx_peer;
                     rd_nd    <= nx_nd;
+                    rd_inst  <= nx_inst;
                     rd_cnt   <= nx_cnt;
                     rd_elast <= nx_elast;
                     rd_ent   <= 8'd0;
@@ -1118,6 +1126,7 @@ module mag_mem_port #(
                 nx_txn   <= in_txn;
                 nx_peer  <= in_peer;
                 nx_nd    <= in_nd;
+                nx_inst  <= in_inst;
                 nx_cnt   <= in_count;
                 nx_elast <= in_ew[1:0] - 2'd1;
                 ar_left  <= in_beats;
@@ -1144,11 +1153,15 @@ module mag_mem_port #(
             // entry, so the receiver needs no cursor and arrival order stops
             // being load-bearing. That is what makes a streaming fetch possible.
             if (emit_go) begin
+                // An INST word goes out as the node's mailbox would send it.
                 mem_out_data <= {
                     e_dx, e_dy,
-                    MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
-                    T_MEM_RD_RESP, e_tag, (q_emit == rd_elast),
-                    1'b0, q_emit,
+                    rd_inst ? rd_x : MEM_X[POS_WIDTH-1:0],
+                    rd_inst ? rd_y : MEM_Y[POS_WIDTH-1:0],
+                    rd_inst ? T_CU_INST : T_MEM_RD_RESP,
+                    rd_inst ? rd_txn : e_tag,
+                    rd_inst || (q_emit == rd_elast),
+                    1'b0, rd_inst ? 2'd0 : q_emit,
                     (
                         (q_emit == 2'd0)   ? e_w0
                         : (q_emit == 2'd1) ? e_w1

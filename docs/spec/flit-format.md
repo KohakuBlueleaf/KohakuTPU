@@ -279,16 +279,16 @@ view of the same map.
 | 2 | `flush` | Declared. No RTL reads it. |
 | 3 | — | Unallocated. MUST be 0. |
 | 4 | — | **Reserved.** Was `QUANT`. A fetch is never transformed; a requester that sets this gets an untransformed read. |
-| 5 | — | **Reserved.** Was `BLAYOUT`, the packing select for that transform. |
+| 5 | `INST` | With `STREAM`: each word of the run goes to peer 0 as a `CU_INST` whose source is the requester, so a node streams a program from memory into a unit and the unit's completions return to the node. `npeer` MUST be 0. |
 | 6 | `STREAM` | This descriptor covers `count` consecutive entries, not one fetch. |
 | 7 | — | Unallocated. MUST be 0. |
 
-Bits 4 and 5 named a format conversion applied to a **fetch**. A fetch is never
-transformed now: conversion happens on the memory mover's read-return path,
-before any fetch reads the result, and it is selected by the mover's descriptor
-rather than by a request flag. Both bits are reserved, and a requester that sets
-one gets an untransformed read — which is the right answer, because what is at
-that address is already in its final format. See
+Bit 4 named a format conversion applied to a **fetch**. A fetch is never
+transformed: conversion happens on the memory mover's read-return path, before
+any fetch reads the result, and it is selected by the mover's descriptor rather
+than by a request flag. The bit is reserved, and a requester that sets it gets an
+untransformed read — which is the right answer, because what is at that address
+is already in its final format. See
 [transform-slot.md](transform-slot.md) and
 [memory-protocol.md](memory-protocol.md) §10.
 
