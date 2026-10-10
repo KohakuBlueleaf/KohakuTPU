@@ -330,11 +330,14 @@ the queue carries the burst until the gap after it; past that the **sweep** is
 held, because once a command is in the accumulator its result arrives ~19 cycles
 later whatever happens downstream.
 
-> There is no load-and-emit opcode, so an emitting sweep must not also be the one
-> that opens the tile. It never is in practice — the emitting sweep is the last K
-> chunk — and only a single chunk of a single K block collides, where the driver
-> falls back to an issuing `DRAIN` and the manager reports the collision if it
-> ever happens.
+> There is no load-and-emit opcode. The first K issue of a sweep with `acc=0`
+> opens the tile with LOAD, which takes priority over `emit` and does not output
+> a result. An emitting sweep therefore requires `acc=1` or `max(1, nk)` greater
+> than the number of K blocks per issue: 2 for a pumped cluster, 1 for an
+> unpumped cluster. The compiler uses an ordinary, issuing `DRAIN` when this
+> condition is false. Its `k_blocks_per_issue` setting defaults to 2; set it to
+> 1 only for a matching unpumped hardware build. The compiler does not detect
+> this hardware setting automatically.
 
 ### 5.2 Bursts, and why one transaction per sub-tile does not fit
 
