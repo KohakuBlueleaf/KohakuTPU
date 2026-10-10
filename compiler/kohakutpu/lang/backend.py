@@ -69,8 +69,16 @@ class TpuBackend:
     #: A memory DRAIN rides the last sweep of its chain (`emit`/`fuse`).
     fuse_drain = True
 
-    def __init__(self, isa=ISA) -> None:
+    def __init__(self, isa=ISA, *, k_blocks_per_issue: int = 2) -> None:
+        """Configure drain fusion for the target cluster's K issue width.
+
+        The default of 2 matches a pumped build. Use 1 only with an unpumped
+        build; the compiler does not detect this hardware setting automatically.
+        """
+        if k_blocks_per_issue not in (1, 2):
+            raise ValueError("cluster issues one or two K blocks at a time")
         self.isa = isa
+        self.k_blocks_per_issue = k_blocks_per_issue
 
     def prune(self, compiled, stmts: list) -> list:
         """Drop a FILL of what is already in that L1 slot, unchanged.
@@ -531,10 +539,19 @@ class TpuBackend:
                     at = (s.args["i"] * stage.body_grid[1] + s.args["j"]) * span
                     base = self._base(compiled, stage, inst, addrs, s.args["result"])
                     addr = base + at * LO.WORD_BYTES
-                    if self.fuse_drain and last_gemm == len(words) - 1:
+                    g = (
+                        self.isa.GEMM.decode(words[last_gemm])
+                        if self.fuse_drain and last_gemm == len(words) - 1
+                        else None
+                    )
+                    # LOAD and ADD_EMIT are distinct accumulator operations.
+                    # The last sweep can emit only if the tile is already open,
+                    # or a later issue follows this sweep's initial LOAD.
+                    if g is not None and (
+                        g["acc"] or max(1, g["nk"]) > self.k_blocks_per_issue
+                    ):
                         # The chain's last sweep writes each sub-tile as its last
                         # K block completes; the DRAIN only waits for them.
-                        g = self.isa.GEMM.decode(words[last_gemm])
                         g.pop("op", None)
                         words[last_gemm] = self.isa.GEMM.encode(
                             **{**g, "emit": 1, **self.isa.split_addr(addr)}

@@ -85,11 +85,10 @@ BEFORE = {
 }
 
 
-#: Digests with the fused drain on (the last GEMM before a memory DRAIN
-#: re-encoded with emit=1, the DRAIN with fuse=1).
-FUSED = {
-    "mm": "16:681fdc65621ff869",
-}
+#: This frozen corpus's memory GEMM has only one pumped K issue: LOAD cannot
+#: also emit. Its legal fallback is byte-identical to BEFORE. Longer K and
+#: already-open accumulators witness fused drains in backend/cluster tests.
+FUSED = {}
 
 
 @pytest.mark.parametrize("name", sorted(WITNESSED))
