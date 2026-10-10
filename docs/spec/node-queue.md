@@ -86,7 +86,7 @@ uncached stores honour byte strobes, so the firmware may write single words.
 
 | Offset | Writer | Words |
 |---|---|---|
-| `0x000` | host | magic `0x314555455551414B` ("KAQUEUE1"), version `1`, `sq_n \| cq_n << 16`, `so_bytes \| si_bytes << 32` |
+| `0x000` | host | magic `0x314555455551414B` ("KAQUEUE1"), version `2`, `sq_n \| cq_n << 16`, `so_bytes \| si_bytes << 32` |
 | `0x020` | firmware | state (0 none, 1 ready, 2 stopped, 3 fatal), ABI version, entries completed, fatal code |
 | `0x040` | host | SQ tail — entries submitted, ever |
 | `0x060` | firmware | SQ head — entries consumed |
@@ -96,9 +96,9 @@ uncached stores honour byte strobes, so the firmware may write single words.
 | `0x0E0` | host | stdout read |
 | `0x100` | host | stdin written |
 | `0x120` | firmware | stdin read |
-| `0x140` | firmware | the number of units served; the unit words follow from `0x160`, one per 8 bytes |
-| `0x180` + 32·r | firmware | node heap `r` (r = 0..3, §7): free bytes, largest free block, `live \| table entries << 32`, failed requests; all 0 while unconfigured |
-| `0x200` | host | the SQ: `sq_n` entries of 64 bytes |
+| `0x140` | firmware | the number of units served; the unit words follow from `0x160`, one per 8 bytes, room for 16 |
+| `0x1E0` + 32·r | firmware | node heap `r` (r = 0..3, §7): free bytes, largest free block, `live \| table entries << 32`, failed requests; all 0 while unconfigured |
+| `0x280` | host | the SQ: `sq_n` entries of 64 bytes |
 | then | firmware | the CQ: `cq_n` entries of 32 bytes |
 | then | firmware | stdout ring, `so_bytes` (a multiple of 32) |
 | then | host | stdin ring, `si_bytes` (a multiple of 32) |

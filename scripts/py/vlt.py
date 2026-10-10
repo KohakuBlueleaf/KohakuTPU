@@ -17,6 +17,11 @@ to make (`VLT_CXX` / `VLT_AR` override g++ / ar).
 
 The XPM cells are SHIMMED, not taken from Vivado: sim/verilator/shims/ explains
 why (Vivado's own xpm_memory.sv uses `deassign`, which Verilator rejects).
+
+Every module with a wrapper in sim/verilator/models/ is built under a
+quiescence clock gate unless `--rtl` is given: its source file is copied with
+the module renamed `<name>__rtl` and the wrapper takes the name. The RTL is read,
+never edited. sim/verilator/docs/models.md has the exactness argument.
 """
 
 import argparse
@@ -32,6 +37,7 @@ import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SHIMS = ROOT / "sim/verilator/shims"
+MODELS = ROOT / "sim/verilator/models"
 WSL_DISTRO = "Ubuntu-24.04"
 
 # Warnings this repo's RTL trips wholesale and that no xsim run has ever gated
@@ -72,10 +78,16 @@ def to_native(p: pathlib.Path) -> str:
     return pathlib.Path(p).resolve().as_posix()
 
 
-def native_cmd() -> list:
+def opt_make(fast: str) -> str:
+    """verilated.mk's optimisation levels: OPT_FAST for the per-cycle code (its
+    own default is -Os), the run-once constructors at -O1."""
+    return f"OPT_FAST={fast} OPT_GLOBAL=-O3 OPT_SLOW=-O1"
+
+
+def native_cmd(fast: str) -> list:
     """The native Verilator and, on Windows, the toolchain its make must use."""
     if os.name != "nt":
-        return ["verilator"]
+        return ["verilator", "-MAKEFLAGS", opt_make(fast)]
     exe = shutil.which("verilator_bin")
     if exe is None:
         sys.exit("--native on Windows needs verilator_bin.exe on PATH (conda-forge)")
@@ -90,10 +102,58 @@ def native_cmd() -> list:
         "CFG_CXXFLAGS_COROUTINES=-fcoroutines",
         "CFG_CXXFLAGS_PCH_I=-include",
         "CFG_LDLIBS_THREADS=-pthread",
+        opt_make(fast),
     ]
     # STATIC: the shared libstdc++ runs thread_local destructors after the
     # thread pool is gone and faults at exit, and PATH picks which DLL loads.
     return [exe, "-MAKEFLAGS", " ".join(mk), "-LDFLAGS", "-static"]
+
+
+def module_decl(name: str) -> re.Pattern:
+    """A line declaring module `name` (comments start with `//`, so never match)."""
+    return re.compile(rf"^(\s*module\s+){name}\b", re.MULTILINE)
+
+
+def apply_models(files: list, work: pathlib.Path) -> tuple:
+    """`files` with every modelled module's source swapped for a renamed copy,
+    and the wrappers and their library ahead of them. Also the copied files'
+    original directories, for their relative `include`s."""
+    wrappers = {p.stem: p for p in sorted(MODELS.glob("*.v"))}
+    out, used, incdirs = [], [], []
+    for f in files:
+        text = f.read_text(encoding="utf-8", errors="replace")
+        hit = [n for n in wrappers if module_decl(n).search(text)]
+        if not hit:
+            out.append(f)
+            continue
+        for n in hit:
+            text = module_decl(n).sub(rf"\g<1>{n}__rtl", text)
+        copy = work / "rtl" / f.name
+        copy.parent.mkdir(exist_ok=True)
+        copy.write_text(text, encoding="utf-8")
+        out.append(copy)
+        used += hit
+        incdirs.append(f.parent)
+    if not used:
+        return files, []
+    lib = sorted((MODELS / "lib").glob("*.v"))
+    return lib + [wrappers[n] for n in used] + out, incdirs
+
+
+def model_benches(xsim) -> dict:
+    """The models' differential benches: each gated wrapper beside its own
+    free-running `__rtl` copy. Verilator only -- xsim has no `__rtl` module."""
+    tests = "sim/verilator/models/tests"
+    alu = [s for s in xsim.BENCHES["vec_alu"][1] if not s.startswith("tests/")]
+    lanes = [s for s in xsim.BENCHES["vec_lanes"][1] if not s.startswith("tests/")]
+    mm = xsim.COMMON + xsim.MATMUL
+    return {
+        "gate_lanes": ("gate_lanes_tb", lanes + [f"{tests}/gate_lanes_tb.v"]),
+        "gate_core": ("gate_core_tb", mm + [f"{tests}/gate_core_tb.v"]),
+        "gate_acu": ("gate_acu_tb", mm + [f"{tests}/gate_acu_tb.v"]),
+        "gate_acu_pump": ("gate_acu_pump_tb", mm + [f"{tests}/gate_acu_pump_tb.v"]),
+        "gate_vec_alu": ("gate_vec_alu_tb", alu + [f"{tests}/gate_vec_alu_tb.v"]),
+    }
 
 
 def vsim_of(work: pathlib.Path) -> pathlib.Path:
@@ -131,9 +191,26 @@ def main() -> int:
     # backend and differential testing against a golden ISA model all need.
     ap.add_argument("--cc", metavar="HARNESS.cpp", help="build a C++ model + harness")
     ap.add_argument("--trace", action="store_true", help="VCD; costs 10-100x")
+    ap.add_argument(
+        "--opt-fast", default="-O3", help="OPT_FAST, the per-cycle code's -O"
+    )
+    # No -O here: these reach EVERY file, and an -O3 would override OPT_SLOW for
+    # the run-once constructors. The levels are opt_make's.
+    ap.add_argument(
+        "--cxx-opt",
+        default="-march=native",
+        help="C++ flags of a --cc model, added to every file",
+    )
     ap.add_argument("--run-args", default="", help="passed to the harness binary")
     ap.add_argument("--vlt-config", action="append", default=[], help="a .vlt file")
     ap.add_argument("--vflag", action="append", default=[], help="a raw verilator flag")
+    ap.add_argument(
+        "--rtl", action="store_true", help="no sim/verilator/models wrappers"
+    )
+    # Profile-guided C++: `gen` instruments the model, a run of it writes the
+    # profile to <build-root>/pgo/<bench> (outside the work directory, which
+    # every build removes), and `use` rebuilds from that profile.
+    ap.add_argument("--pgo", choices=["gen", "use"], help="profile-guided --cc build")
     args = ap.parse_args()
 
     if args.cc and args.lint_only:
@@ -150,9 +227,12 @@ def main() -> int:
     to_sim = to_native if args.native else to_wsl
 
     xsim = load_xsim()
-    if args.bench not in xsim.BENCHES:
+    benches = {**xsim.BENCHES, **model_benches(xsim)}
+    if args.bench not in benches:
         sys.exit(f"unknown bench {args.bench!r}; xsim.py knows {len(xsim.BENCHES)}")
-    top, srcs = xsim.BENCHES[args.bench]
+    if args.rtl and args.bench in model_benches(xsim):
+        sys.exit(f"{args.bench} compares against the models; --rtl removes them")
+    top, srcs = benches[args.bench]
 
     if args.model == 0:
         sys.exit(
@@ -186,11 +266,16 @@ def main() -> int:
         f'`define PE_DIR "{(ROOT / "tests/pe/build").as_posix()}"\n', encoding="utf-8"
     )
 
+    model_inc = []
+    if not args.rtl:
+        files, model_inc = apply_models(files, work)
+
     # The shims go FIRST so they win module lookup before any -I directory is
     # searched for a same-named file.
     lines = [to_sim(p) for p in sorted(SHIMS.glob("*.v"))]
     lines += [to_sim(predef)]
     lines += [f"-I{to_sim(ROOT / d)}" for d in xsim.INCDIRS]
+    lines += [f"-I{to_sim(d)}" for d in dict.fromkeys(model_inc)]
     lines += [to_sim(p) for p in files]
 
     if args.timebox:
@@ -217,14 +302,31 @@ def main() -> int:
     # those modules take Verilator's default instead of the bench's unit.
     # --cc: the harness owns time, so RTL `#` delays are not scheduled.
     timing = "--no-timing" if harness else "--timing"
-    head = native_cmd() if args.native else ["verilator"]
+    head = (
+        native_cmd(args.opt_fast)
+        if args.native
+        else ["verilator", "-MAKEFLAGS", opt_make(args.opt_fast)]
+    )
     cmd = head + ["-sv", timing, "-Wno-fatal", "--timescale", "1ns/1ps"]
     if args.lint_only:
         cmd += ["--lint-only"]
     elif harness:
         cmd += ["--cc", "--exe", "--build", "-o", "vsim"]
+        cxx = args.cxx_opt
+        if args.pgo:
+            pgo = root / "pgo" / args.bench
+            pgo.mkdir(parents=True, exist_ok=True)
+            if args.pgo == "gen":
+                cxx += f" -fprofile-generate={to_sim(pgo)} -fprofile-update=single"
+                cmd += ["-LDFLAGS", "-fprofile-generate"]
+            else:
+                if not any(pgo.rglob("*.gcda")):
+                    sys.exit(
+                        f"--pgo use: no profile under {pgo}; build --pgo gen and run it"
+                    )
+                cxx += f" -fprofile-use={to_sim(pgo)} -fprofile-partial-training -Wno-missing-profile"
         # VTOP: the model class the harness includes.
-        cmd += ["-CFLAGS", f"-O2 -std=c++17 -DVTOP=V{top}"]
+        cmd += ["-CFLAGS", f"{cxx} -std=c++17 -DVTOP=V{top}"]
         if args.trace:
             cmd += ["--trace"]
     else:

@@ -63,8 +63,10 @@ def test_queue_layout_matches_the_firmware():
         assert s[f"KA_ST_{name}"] == code, name
     m = c_defines(INC / "os/mem.h")
     assert m["KA_MEM_REGIONS"] == L.MEM_REGIONS and m["KA_MEM_DRAM"] == L.MEM_DRAM
-    # The firmware's lines sit between the unit table and the SQ, one per region.
-    assert L.UNITS + 2 * L.LINE <= L.HEAPS and L.HEAPS + L.MEM_REGIONS * L.LINE <= L.SQ
+    # A full unit table (count line, then MAX_UNITS words) ends before the heap
+    # lines, which end before the SQ.
+    assert L.UNITS + L.LINE + 8 * MAX_UNITS <= L.HEAPS
+    assert L.HEAPS + L.MEM_REGIONS * L.LINE <= L.SQ
 
 
 def test_boot_block_matches_the_firmware():

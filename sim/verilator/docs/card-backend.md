@@ -77,19 +77,64 @@ that read-merges a duty half fails here as it does on the card.
 `card_main.cpp` owns `main()`, every clock and host manager 0 (64-bit AXI4 on
 `bus_clk[1]`, the JTAG-to-AXI port on the card).
 
-**Clocks** advance by the earliest pending edge across all of them:
+**Clocks** advance by the earliest pending edge, one edge per `eval()`; at a
+tie `mat2x` goes first, so the matmul 1x clock that `ktpu_div2` divides from it
+never follows a sysnode edge in time. `--coalesce` lets edges due at one
+instant share an eval (`--join a,b` restricts it to the named clocks); host
+reads fail with it, so it is a bisecting tool, not a mode.
 
-| clock | period |
-|---|---|
-| `clk_ctrl` | 10.000 ns |
-| `clk_xdma` | 4.000 ns |
-| `bus_clk[0..3]` | 5.000, 5.010, 4.990, 5.020 ns |
-| `ddr_clk[0..3]` | 3.332, 3.336, 3.328, 3.340 ns |
-| mesh wizard outputs | `10 ns * D * div / M`, from `wiz_divclk`, `wiz_mult`, `wiz_div` |
+**Dead clocks.** A die's `noc_clk`, `mat2x_clk` and `vec_clk` reach only its
+mesh, and a die without one (a RAM stub) leaves them unconnected. The harness
+finds the dies with a mesh from the model's public scopes (`.u_mesh<d>.`) and
+never schedules the others' three clocks: 24 of 54 evals per sysnode cycle on
+card_v9_1n, 12 on card_v9_2n. `--all-clocks` runs them anyway; rawmm and
+doorbell runs give identical cycle counts either way.
+
+The mesh wizards' periods are recomputed only when a wizard's lock, divider or
+multiplier changes, or `rstn` does.
+
+| clock | period | `--aligned` |
+|---|---|---|
+| `clk_ctrl` | 10.000 ns | |
+| `clk_xdma` | 40.000 ns (`--xdma-ps`; idle on the card with the cable out) | |
+| `bus_clk[0..3]` | 5.000, 5.010, 4.990, 5.020 ns | 5.000 ns |
+| `ddr_clk[0..3]` | 3.332, 3.336, 3.328, 3.340 ns | 3.332 ns, the sysnode's as the wizard gives it |
+| mesh wizard outputs | `10 ns * D * div / M` in whole ps, from `wiz_divclk`, `wiz_mult`, `wiz_div` | |
 
 The bus and DDR periods differ per die so no two domains stay phase-locked.
-A mesh-wizard output stops while its wizard is unlocked and restarts at the
-applied rate, so a driver retune behaves as on the card.
+The DDR phase moves cross-die memory contention by up to ~10% (2 dies of
+rawmm, 49-60% per die across clockings); the card's DRAM is `axi_ram`, one
+transaction outstanding, so none of them is DDR4's number. A mesh-wizard
+output stops while its wizard is unlocked and restarts at the applied rate,
+so a driver retune behaves as on the card.
+
+**Build for speed.** `vlt.py` builds the per-cycle code at `--opt-fast`
+(`-O3`), the run-once constructors at `-O1`, every file with `--cxx-opt`
+(`-march=native`), and puts the idle pipelines behind exact quiescence gates
+([models.md](models.md); `--rtl` builds without). `--pgo gen`, one
+representative run, then `--pgo use` lays the code out by profile.
+
+`scripts/py/card_model.py <card>` does all three: the instrumented build,
+`card_run.py` on every compute node as training (plus any `--train` command),
+the profiled build. Die-0 sysnode kcycles/s, one thread:
+
+| card | `--no-pgo` idle | `card_model.py` idle | under load (`--no-pgo`) |
+|---|---|---|---|
+| card_v9_1n | 53 | 66 | 47: rawmm solo, 250k cycles in 5.3 s |
+| card_v9_2n | 31 | 39 | 19: both nodes' rawmm, 311k cycles in 16.7 s |
+| card_v9_4n | 7.5 | 17 | |
+
+Profile-guided layout is what makes a 4-die model affordable: without it every
+die's identical code runs ~3.5x slower per call than on 2 dies (the station
+bus, the same logic on both cards, costs 3.3x per cycle), because each die is
+its own copy of the code and the hot set no longer fits a 2 MB L2. Shrinking
+the dies' RAM arrays changes nothing (7.6 against 7.5). Not helped either:
+`--threads 4` (3.1, the per-eval work is too small for the thread sync),
+`--opt-fast=-Os` (5.4), `-O2` (6.7). `-fno-inline`, which would share one copy
+of the per-die code, crashes MinGW's cc1plus on its 2.6 MB `Syms` header.
+
+`--aligned` (every bus and DDR clock phase-locked) is faster but host reads
+fail with it: do not use it.
 
 **Start-up:** `rstn` low for 50 control cycles, then every clock runs until
 `sys_rstn` is all ones, then `--settle` die-0 sysnode cycles, then `READY`.
@@ -113,8 +158,19 @@ so a `$display` from the model is never read as a reply. `VerilatorTransport`
 sends stderr to `<build>/model.log`.
 
 **Public arrays** are declared in `sim/verilator/card.vlt`: each node's
-`rv64_syscore.spad` and every `xpm_memory_sdpram.mem` (the RV64 imem, the
-staging banks). An element sits at `datap + k * entSize`, little-endian.
+`rv64_syscore.spad`, every `xpm_memory_sdpram.mem` (the RV64 imem, the
+staging banks, the Xache's carray banks) and every `axi_ram.mem` (the DRAM
+channels). An element sits at `datap + k * entSize`, little-endian.
+
+**Host fast path.** Over the modelled AXI the host moves ~70 KB of wall time a
+second, so a 512 KB tensor costs ~7 s. `kohakuaccel.transport.simdram.SimDram`
+wraps the transport and serves `read_block`/`write_block` inside a mesh's DRAM
+window from the `axi_ram` arrays, through the Xache's address map. The Xache is
+write-through, so DRAM is always current for a read; a write zeroes the carray
+rows of every line it touches (`{valid, tag, word}`), so the next access
+refetches. `card_run.py --fast-dram` checks it against the AXI path through a
+warm Xache, unaligned and across a home boundary, and fails with the
+invalidation removed. `scripts/py/card_bench.py` uses it unless `--axi`.
 
 **`--no-timing`.** `vlt.py --cc` builds without `--timing`: the harness owns
 time, so RTL `#` delays are not scheduled. With `--timing`, a model whose RTL

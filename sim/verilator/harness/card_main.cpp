@@ -32,6 +32,63 @@
 static VerilatedContext *ctx;
 static VTOP *dut;
 
+#ifdef _WIN32
+// A sampling profiler for the model (`PS` starts, `PX <file>` stops and writes
+// "base <hex>", one "mod <base> <size> <path>" per loaded module, then one
+// sampled instruction address per line): gprof gets no samples under MinGW.
+// Symbolise with `nm` on vsim.exe.
+#define PSAPI_VERSION 2  // the K32* entry points in kernel32: no -lpsapi
+#include <windows.h>
+#include <psapi.h>
+static HANDLE prof_target;
+static std::vector<uint64_t> prof_pcs;
+static volatile bool prof_on = false;
+static DWORD WINAPI prof_loop(LPVOID) {
+    while (prof_on) {
+        if (SuspendThread(prof_target) != (DWORD)-1) {
+            CONTEXT c;
+            c.ContextFlags = CONTEXT_CONTROL;
+            if (GetThreadContext(prof_target, &c)) prof_pcs.push_back(c.Rip);
+            ResumeThread(prof_target);
+        }
+        // Spin ~100 us: Sleep(1) sleeps a scheduler tick (~15 ms).
+        LARGE_INTEGER f, a, b;
+        QueryPerformanceFrequency(&f);
+        QueryPerformanceCounter(&a);
+        do { QueryPerformanceCounter(&b); } while ((b.QuadPart - a.QuadPart) * 10000 < f.QuadPart);
+    }
+    return 0;
+}
+static void prof_start() {
+    DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &prof_target,
+                    0, FALSE, DUPLICATE_SAME_ACCESS);
+    prof_pcs.clear();
+    prof_on = true;
+    CreateThread(nullptr, 0, prof_loop, nullptr, 0, nullptr);
+}
+static void prof_stop(const std::string &path) {
+    prof_on = false;
+    Sleep(20);
+    FILE *f = fopen(path.c_str(), "w");
+    if (!f) return;
+    fprintf(f, "base %llx\n", (unsigned long long)(uintptr_t)GetModuleHandle(nullptr));
+    HMODULE mods[512];
+    DWORD need = 0;
+    if (EnumProcessModules(GetCurrentProcess(), mods, sizeof mods, &need)) {
+        for (DWORD i = 0; i < need / sizeof(HMODULE) && i < 512; ++i) {
+            MODULEINFO mi;
+            char name[MAX_PATH];
+            if (!GetModuleInformation(GetCurrentProcess(), mods[i], &mi, sizeof mi)) continue;
+            if (!GetModuleFileNameA(mods[i], name, sizeof name)) continue;
+            fprintf(f, "mod %llx %lx %s\n", (unsigned long long)(uintptr_t)mi.lpBaseOfDll,
+                    (unsigned long)mi.SizeOfImage, name);
+        }
+    }
+    for (uint64_t pc : prof_pcs) fprintf(f, "%llx\n", (unsigned long long)pc);
+    fclose(f);
+}
+#endif
+
 // Legacy hook verilated.cpp names (weak on Linux, undefined under mingw). Not
 // ctx->time(): that falls back to this hook and the two recurse.
 double sc_time_stamp() { return 0.0; }
@@ -54,13 +111,18 @@ struct Clk {
     int      level;
     int      die, out;  // >= 0: mesh-wizard output `out` of die `die`
     uint64_t rises;
+    bool     mat2x;
+    bool     dead;      // drives no logic in this card: never scheduled
 };
 static std::vector<Clk> clks;
+static std::vector<int> live;  // indices of the clocks that are not dead
 static uint64_t now_ps = 0;
+static uint64_t evals = 0;  // dut->eval() calls, for `S`: the model's cost is per eval
 static int ctrl_idx, bus1_idx, sys0_idx, ddr_idx[4];
 
 static int add_clk(const char *name, uint64_t period_ps, CData *vec, int bit, int die = -1, int out = -1) {
-    clks.push_back({name, vec, bit, period_ps / 2, period_ps / 2, 0, die, out, 0});
+    clks.push_back({name, vec, bit, period_ps / 2, period_ps / 2, 0, die, out, 0,
+                    strcmp(name, "mat2x") == 0, false});
     *vec &= (CData)~(1u << bit);
     return (int)clks.size() - 1;
 }
@@ -70,11 +132,35 @@ static void drive(Clk &c) {
     else         *c.vec &= (CData)~(1u << c.bit);
 }
 
+// The wizard state the clocks below are timed from; retiming runs only when it
+// changes, which after lock is never.
+struct WizState {
+    uint64_t locked, rstn, divclk, mult, div[4];
+    bool operator==(const WizState &o) const {
+        return locked == o.locked && rstn == o.rstn && divclk == o.divclk && mult == o.mult &&
+               div[0] == o.div[0] && div[1] == o.div[1] && div[2] == o.div[2] && div[3] == o.div[3];
+    }
+};
+static WizState wiz_seen;
+static bool wiz_valid = false;
+
+static WizState wiz_now() {
+    WizState w{};
+    w.locked = dut->wiz_locked; w.rstn = dut->rstn;
+    w.divclk = dut->wiz_divclk; w.mult = dut->wiz_mult;
+    for (int d = 0; d < 4; ++d) w.div[d] = dut->wiz_div[d];
+    return w;
+}
+
 // A mesh-wizard output: f = 100 MHz * M / (D * div), period ps = 10000 * D * div / M;
 // stopped while its wizard is unlocked.
 static void retime_wizard_clocks() {
+    WizState w = wiz_now();
+    if (wiz_valid && w == wiz_seen) return;
+    wiz_seen = w;
+    wiz_valid = true;
     for (auto &c : clks) {
-        if (c.die < 0) continue;
+        if (c.die < 0 || c.dead) continue;
         bool locked = (dut->wiz_locked >> c.die) & 1;
         if (!locked || !dut->rstn) {
             if (c.level) { c.level = 0; drive(c); }
@@ -92,22 +178,85 @@ static void retime_wizard_clocks() {
     }
 }
 
+static bool is_mat2x(const Clk &c) { return c.mat2x; }
+
+// The earliest edge; at a tie, mat2x FIRST, as one edge per eval always ran it
+// (its divided 1x edge must not follow the sysnode's in time). A dead clock's
+// next_ps is NEVER, so it is never picked.
 static int next_clk() {
-    int k = 0;
-    for (size_t i = 1; i < clks.size(); ++i)
-        if (clks[i].next_ps < clks[k].next_ps) k = (int)i;
+    int k = live[0];
+    for (size_t j = 1; j < live.size(); ++j) {
+        int i = live[j];
+        const Clk &c = clks[i], &b = clks[k];
+        if (c.next_ps < b.next_ps || (c.next_ps == b.next_ps && c.mat2x && !b.mat2x)) k = i;
+    }
     return k;
+}
+
+// Die d's noc/mat2x/vec clocks reach only its mesh (tests/system/card_v9_*.v); a
+// die without one, a RAM stub, leaves them unconnected. A die has a mesh iff the
+// model has a public scope under `u_mesh<d>.` (card.vlt makes the sysnode's
+// scratchpad public). Without any such scope nothing is presumed dead.
+static void mark_dead_clocks() {
+    const VerilatedScopeNameMap *m = ctx->scopeNameMap();
+    if (!m) return;
+    bool mesh[4] = {false, false, false, false};
+    for (const auto &kv : *m)
+        for (int d = 0; d < 4; ++d)
+            if (strstr(kv.first, (std::string(".u_mesh") + std::to_string(d) + ".").c_str()))
+                mesh[d] = true;
+    if (!(mesh[0] || mesh[1] || mesh[2] || mesh[3])) return;
+    for (auto &c : clks) {
+        if (c.die < 0 || mesh[c.die] || strcmp(c.name, "sys") == 0) continue;
+        c.dead = true;
+        c.next_ps = NEVER;
+    }
+}
+
+// Edges due at one instant share ONE eval, except that `mat2x` shares only with
+// `mat2x`: the matmul 1x clock is DIVIDED from it in RTL (ktpu_div2), so in an
+// eval with a sysnode edge the derived edge lands after the sysnode flops have
+// updated and samples their new values (a host read came back 1 beat of 4
+// with RLAST). --one-edge: every edge its own eval.
+static bool coalesce = false;  // --coalesce: measured 1.25x, and host reads fail
+
+// --join a,b: only clocks so named may share an eval (bisecting a fault).
+static std::string join_names;
+
+static bool named(const Clk &c) {
+    if (join_names.empty()) return true;
+    return ("," + join_names + ",").find(std::string(",") + c.name + ",") != std::string::npos;
+}
+
+// Whether `c`, due at the same instant as `lead`, may share its eval. Both are
+// read BEFORE either edge is applied: applying one advances its next_ps.
+static bool joins(const Clk &lead, const Clk &c) {
+    if (!coalesce || c.next_ps != lead.next_ps || !named(lead) || !named(c)) return false;
+    return is_mat2x(lead) == is_mat2x(c);
+}
+
+static void apply_edge(Clk &c) {
+    c.level ^= 1;
+    drive(c);
+    if (c.level) c.rises++;
+    c.next_ps += c.half_ps;
 }
 
 static void tick_one() {
     int k = next_clk();
     now_ps = clks[k].next_ps;
     ctx->time(now_ps);
-    clks[k].level ^= 1;
-    drive(clks[k]);
-    if (clks[k].level) clks[k].rises++;
+    if (coalesce) {
+        // Decided before any edge is applied: applying one advances its next_ps.
+        bool due[64] = {false};
+        for (size_t i = 0; i < clks.size(); ++i) due[i] = (int)i == k || joins(clks[k], clks[i]);
+        for (size_t i = 0; i < clks.size(); ++i)
+            if (due[i]) apply_edge(clks[i]);
+    } else {
+        apply_edge(clks[k]);
+    }
     dut->eval();
-    clks[k].next_ps += clks[k].half_ps;
+    ++evals;
     retime_wizard_clocks();
 }
 
@@ -115,16 +264,23 @@ static void tick_one() {
 static void until_before_rise(int idx) {
     for (;;) {
         int k = next_clk();
-        if (k == idx && clks[k].level == 0) return;
+        bool due = k == idx || joins(clks[k], clks[idx]);
+        if (due && clks[idx].level == 0) return;
         tick_one();
     }
 }
 
-// After until_before_rise(idx), the next edge is idx's rise.
-static void take_rise() { tick_one(); }
+// After until_before_rise(idx): tick until idx has risen (an edge that may not
+// share its eval, mat2x, can be due at the same instant and goes first).
+static void take_rise(int idx) {
+    for (uint64_t r = clks[idx].rises; clks[idx].rises == r;) tick_one();
+}
 
 static void cycles(int idx, uint64_t n) {
-    for (uint64_t i = 0; i < n; ++i) { until_before_rise(idx); take_rise(); }
+    for (uint64_t i = 0; i < n; ++i) {
+        until_before_rise(idx);
+        take_rise(idx);
+    }
 }
 
 // ---- manager 0: 64-bit AXI4 on bus_clk[1] ----------------------------------
@@ -145,7 +301,7 @@ static bool axi_write(uint64_t addr, const std::vector<uint64_t> &beats, std::st
         bool w_hs  = dut->h0_wvalid && dut->h0_wready;
         bool b_hs  = dut->h0_bvalid && dut->h0_bready;
         CData bresp = dut->h0_bresp;
-        take_rise();
+        take_rise(bus1_idx);
         if (aw_hs) { dut->h0_awvalid = 0; aw_done = true; }
         if (w_hs) {
             ++wi;
@@ -176,7 +332,7 @@ static bool axi_read(uint64_t addr, size_t n, std::vector<uint64_t> &out, std::s
         uint64_t rdata = dut->h0_rdata;
         CData rresp = dut->h0_rresp;
         bool rlast = dut->h0_rlast;
-        take_rise();
+        take_rise(bus1_idx);
         if (ar_hs) dut->h0_arvalid = 0;
         if (r_hs) {
             out.push_back(rdata);
@@ -186,7 +342,11 @@ static bool axi_read(uint64_t addr, size_t n, std::vector<uint64_t> &out, std::s
     }
     dut->h0_rready = 0;
     if (!last) { err = "read stalled after " + std::to_string(out.size()) + " beats"; return false; }
-    if (out.size() != n) { err = "beat count"; return false; }
+    if (out.size() != n) {
+        err = "beat count " + std::to_string(out.size()) + " of " + std::to_string(n) +
+              " at " + std::to_string(now_ps) + " ps";
+        return false;
+    }
     return true;
 }
 
@@ -280,9 +440,23 @@ int main(int argc, char **argv) {
     ctx = new VerilatedContext;
     ctx->commandArgs(argc, argv);
     uint64_t settle = 2000;   // die-0 sysnode cycles after every reset releases
+    // Each bus and DDR clock at its own MMCM's period, as on the board.
+    // --aligned: one period per family (a timing experiment, not the default).
+    bool skew_bus = true, skew_ddr = true;
+    uint64_t xdma_ps = 40000; // the PCIe clock: idle with the cable out; slow here
+    bool all_clocks = false;  // --all-clocks: toggle the dead ones too
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
+        if (a == "--all-clocks") all_clocks = true;
         if (a == "--settle" && i + 1 < argc) settle = strtoull(argv[++i], nullptr, 0);
+        if (a == "--coalesce") coalesce = true;
+        if (a == "--join" && i + 1 < argc) join_names = argv[++i];
+        if (a == "--skew") skew_bus = skew_ddr = true;
+        if (a == "--skew-ddr") skew_ddr = true;
+        if (a == "--aligned") skew_bus = skew_ddr = false;
+        if (a == "--ddr-sync") skew_ddr = false;  // DDR on the sysnode's edges only
+        if (a == "--bus-sync") skew_bus = false;  // one bus period on every die
+        if (a == "--xdma-ps" && i + 1 < argc) xdma_ps = strtoull(argv[++i], nullptr, 0);
     }
     dut = new VTOP(ctx);
 
@@ -299,13 +473,14 @@ int main(int argc, char **argv) {
     dut->sys_clk = 0; dut->noc_clk = 0; dut->mat2x_clk = 0; dut->vec_clk = 0;
     // fixed clocks in ps; the four bus and DDR clocks each off their own MMCM
     ctrl_idx = add_clk("ctrl", 10000, &dut->clk_ctrl, 0);
-    add_clk("xdma", 4000, &dut->clk_xdma, 0);
-    static const uint64_t bus_ps[4] = {5000, 5010, 4990, 5020};
-    static const uint64_t ddr_ps[4] = {3332, 3336, 3328, 3340};
+    add_clk("xdma", xdma_ps, &dut->clk_xdma, 0);
+    static const uint64_t bus_skew[4] = {5000, 5010, 4990, 5020};
+    static const uint64_t ddr_skew[4] = {3332, 3336, 3328, 3340};
     for (int d = 0; d < 4; ++d) {
-        int b = add_clk("bus", bus_ps[d], &dut->bus_clk, d);
+        int b = add_clk("bus", skew_bus ? bus_skew[d] : 5000, &dut->bus_clk, d);
         if (d == 1) bus1_idx = b;
-        ddr_idx[d] = add_clk("ddr", ddr_ps[d], &dut->ddr_clk, d);
+        // Aligned: the sysnode's period as the wizard gives it, 2 x 1666 ps.
+        ddr_idx[d] = add_clk("ddr", skew_ddr ? ddr_skew[d] : 3332, &dut->ddr_clk, d);
     }
     for (int d = 0; d < 4; ++d) {
         add_clk("noc",   3334, &dut->noc_clk,   d, d, 0);
@@ -314,6 +489,9 @@ int main(int argc, char **argv) {
         int s = add_clk("sys", 3334, &dut->sys_clk, d, d, 3);
         if (d == 0) sys0_idx = s;
     }
+    if (!all_clocks) mark_dead_clocks();
+    for (size_t i = 0; i < clks.size(); ++i)
+        if (!clks[i].dead) live.push_back((int)i);
 
     dut->rstn = 0;
     dut->h0_awvalid = dut->h0_wvalid = dut->h0_bready = dut->h0_arvalid = dut->h0_rready = 0;
@@ -431,10 +609,28 @@ int main(int argc, char **argv) {
             fprintf(proto, "OK\n");
         }
         else if (t[0] == "S") {
-            fprintf(proto, "V sys=%llx ctrl=%llx decerr=%08x sys_rstn=%x locked=%x ps=%llx\n",
+            fprintf(proto, "V sys=%llx ctrl=%llx decerr=%08x sys_rstn=%x locked=%x ps=%llx evals=%llx\n",
                     (unsigned long long)clks[sys0_idx].rises, (unsigned long long)clks[ctrl_idx].rises,
                     (unsigned)dut->stat_decerr, (unsigned)dut->sys_rstn, (unsigned)dut->wiz_locked,
-                    (unsigned long long)now_ps);
+                    (unsigned long long)now_ps, (unsigned long long)evals);
+        }
+#ifdef _WIN32
+        else if (t[0] == "PS") { prof_start(); fprintf(proto, "OK\n"); }
+        else if (t[0] == "PX" && t.size() == 2) {
+            prof_stop(t[1]);
+            fprintf(proto, "V %zu\n", prof_pcs.size());
+        }
+#endif
+        else if (t[0] == "C") {
+            std::string o;
+            char b[96];
+            for (const auto &c : clks) {
+                snprintf(b, sizeof b, " %s%d:%llu:%llu", c.name, c.die < 0 ? 0 : c.die,
+                         (unsigned long long)(2 * c.half_ps),
+                         (unsigned long long)(c.next_ps == NEVER ? 0 : c.next_ps % (2 * c.half_ps)));
+                o += b;
+            }
+            fprintf(proto, "V%s\n", o.c_str());
         }
         else fprintf(proto, "E unknown\n");
     }

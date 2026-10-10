@@ -4,7 +4,7 @@
 #define KA_QUEUE_LAYOUT_H
 
 #define KA_Q_MAGIC   0x314555455551414BUL /* "KAQUEUE1" */
-#define KA_Q_VERSION 1
+#define KA_Q_VERSION 2
 
 enum {
     KA_Q_INFO    = 0x000, /* host: magic, version, sq_n | cq_n << 16, so | si << 32 */
@@ -17,9 +17,9 @@ enum {
     KA_Q_SO_RD   = 0x0E0, /* host */
     KA_Q_SI_WR   = 0x100, /* host */
     KA_Q_SI_RD   = 0x120, /* fw */
-    KA_Q_UNITS   = 0x140, /* fw: unit count, then the unit words from 0x160 */
-    KA_Q_HEAPS   = 0x180, /* fw: one line per region: free, largest, live | blocks << 32, fails */
-    KA_Q_SQ      = 0x200, /* sq_n entries of 64 bytes, then cq_n of 32, then stdout, stdin */
+    KA_Q_UNITS   = 0x140, /* fw: unit count, then KA_MAX_UNITS unit words from 0x160 */
+    KA_Q_HEAPS   = 0x1E0, /* fw: one line per region: free, largest, live | blocks << 32, fails */
+    KA_Q_SQ      = 0x280, /* sq_n entries of 64 bytes, then cq_n of 32, then stdout, stdin */
 };
 
 #define KA_Q_SQ_BYTES 64

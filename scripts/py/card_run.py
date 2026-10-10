@@ -20,6 +20,7 @@ import time
 
 from kohakuaccel.device import mover, rv64load
 from kohakuaccel.device.registers import A_CAPS
+from kohakuaccel.transport.simdram import SimDram
 from kohakuaccel.transport.verilator import VerilatorTransport
 from kohakutpu.clock.card import load_board
 from kohakutpu.host import board_map
@@ -40,6 +41,35 @@ def rotate(addr: int) -> tuple[int, int]:
     return (a >> HOME_LSB) & 3, a & ((1 << HOME_LSB) - 1)
 
 
+def fast_dram_check(t, board: dict, mem, nodes, size: int) -> int:
+    """SimDram against the AXI path, through a WARM Xache: the lines are first
+    written and read over AXI so the array holds them, then rewritten through the
+    fast path, so a missed invalidation reads back the old bytes. Unaligned and
+    across a 16 KB home boundary. Returns the failures."""
+    fast = SimDram(t, board, mem, size)
+    fails = 0
+    base = mem[nodes[0]] + 0x0003_C000 - 0x100  # 256 B before a home boundary
+
+    def pattern(seed: int, n: int) -> bytes:
+        return bytes(((k * 29 + seed) ^ (k >> 7)) & 0xFF for k in range(n))
+
+    old, new = pattern(1, 4096), pattern(2, 4096)
+    t.write_block(base, old)
+    warm = t.read_block(base, 4096) == old  # fills the Xache with `old`
+    fast.write_block(base + 8, new[8:4000])  # unaligned head and tail
+    want = old[:8] + new[8:4000] + old[4000:]
+    for i in nodes:
+        got = t.read_block(mem[i] + (base - mem[nodes[0]]), 4096)
+        ok = warm and got == want
+        fails += not ok
+        print(f"  fast write, AXI read via node {i}: {'ok' if ok else 'MISMATCH'}")
+    t.write_block(base, old)
+    ok = fast.read_block(base, 4096) == old
+    fails += not ok
+    print(f"  AXI write, fast read: {'ok' if ok else 'MISMATCH'}  ({fast!r})")
+    return fails
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--board", default="multimesh_v8t8")
@@ -50,6 +80,7 @@ def main() -> int:
     # axi: stream through the load window (what the card does); burn: write the
     # imem/spad arrays directly (the model only, sim/verilator/card.vlt).
     ap.add_argument("--load", choices=("axi", "burn"), default="axi")
+    ap.add_argument("--fast-dram", action="store_true", help="check transport.simdram")
     a = ap.parse_args()
     nodes = [int(x) for x in a.nodes.split(",")]
 
@@ -162,7 +193,11 @@ def main() -> int:
             f"{'ok' if ok else 'WRONG'}"
         )
 
-    # 5 ------------------------------------------------------------- decerr
+    # 5 --------------------- the host fast path, against the AXI path and the Xache
+    if a.fast_dram:
+        fails += fast_dram_check(t, load_board(a.board), mem, nodes, m["size"])
+
+    # 6 ------------------------------------------------------------- decerr
     s = t.status()
     print(
         f"  station DECERR {s['decerr']:#x}; sys cycles {s['sys']}, host calls {t.calls}"

@@ -8,7 +8,7 @@ own, because the host's write granule is 32 bytes and zero-fills the rest.
 import struct
 
 MAGIC = 0x314555455551414B  # "KAQUEUE1"
-VERSION = 1
+VERSION = 2
 LINE = 32
 
 INFO = 0x000  # host: magic, version, sq_n | cq_n << 16, so | si << 32
@@ -21,9 +21,9 @@ SO_WR = 0x0C0  # fw: produced, lost
 SO_RD = 0x0E0  # host
 SI_WR = 0x100  # host
 SI_RD = 0x120  # fw
-UNITS = 0x140  # fw: unit count, then the unit words from 0x160
-HEAPS = 0x180  # fw: one line per region: free, largest, live | blocks << 32, fails
-SQ = 0x200
+UNITS = 0x140  # fw: unit count, then up to 16 unit words from 0x160
+HEAPS = 0x1E0  # fw: one line per region: free, largest, live | blocks << 32, fails
+SQ = 0x280
 
 #: Heap regions the firmware holds (ka/os/mem.h); 0 is by convention DRAM, 1 staging.
 MEM_REGIONS = 4

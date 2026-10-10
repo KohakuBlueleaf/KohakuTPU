@@ -1494,6 +1494,7 @@ HARNESS = {
     "card_v8t8_2n",
     "card_v9_2n",
     "card_v9_1n",
+    "card_v9_4n",
     "card_v9x6_2n",
     "card_v9x8_2n",
     "card_v9x6_1n",
@@ -2198,6 +2199,11 @@ BENCHES["card_v9_2n"] = (
 BENCHES["card_v9_1n"] = (
     "card_v9_1n",
     gen_card.image_sources("v9") + ["tests/system/card_v9_1n.v"],
+)
+# Every die a compute die: four sysnodes on the interlink chain.
+BENCHES["card_v9_4n"] = (
+    "card_v9_4n",
+    gen_card.image_sources("v9") + ["tests/system/card_v9_4n.v"],
 )
 # Cluster-count scaling: the v9 card with 6+2 / 8+2 dies on a 2x2 router grid.
 for _n in (6, 8):

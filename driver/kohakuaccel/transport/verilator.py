@@ -43,6 +43,7 @@ class VerilatorTransport(Transport):
         distro: str = WSL_DISTRO,
         settle: int = 20000,
         timeout: float = 600.0,
+        args=(),
     ) -> None:
         build = (
             pathlib.Path(build_dir)
@@ -69,10 +70,11 @@ class VerilatorTransport(Transport):
                 "--",
                 "bash",
                 "-lc",
-                f"cd {_to_wsl(build)} && stdbuf -o0 ./obj_dir/vsim --settle {settle}",
+                f"cd {_to_wsl(build)} && stdbuf -o0 ./obj_dir/vsim --settle {settle} "
+                + " ".join(args),
             ]
         else:
-            cmd = [str(vsim), "--settle", str(settle)]
+            cmd = [str(vsim), "--settle", str(settle), *args]
         # The model's own $display lines go to stderr (the harness keeps the
         # reply channel private), into a file rather than a pipe nobody drains.
         self.model_log = build / "model.log"
