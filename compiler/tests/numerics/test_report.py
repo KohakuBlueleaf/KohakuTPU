@@ -1,14 +1,14 @@
-"""The numerics report: every source (L3 interpreter, compiled program on the
-unit models) within its stated bound of the host MXFP7 reference, and no
-further from the fp32 reference than the quantisation itself is."""
+"""The numerics report: every source (L3 interpreter, the hand-written
+schedule and the compiled L3 program on the unit models) within its stated
+bound of the host MXFP7 reference, and no further from the fp32 reference than
+the quantisation itself is."""
 
 import pytest
 from kohakutpu.ir import numerics
 
 #: rel_l2 against the MXFP7 reference: an fp16 store's rounding (2^-11), except
-#: where the hardware rounds more than the reference -- attention stores S and P
-#: in fp16 before P is quantised; the cluster's bias path quantises the bias.
-BOUND = {"attention": 6e-3, ("linear+bias", "model"): 5e-3}
+#: attention, which stores S and P in fp16 before P is quantised.
+BOUND = {"attention": 6e-3}
 FP16 = 6e-4
 
 
@@ -17,11 +17,11 @@ def rows():
     return numerics.report(seed=0)
 
 
-def test_every_case_has_both_sources_against_both_references(rows):
+def test_every_case_has_every_source_against_both_references(rows):
     got = {(r["case"], r["shape"], r["source"], r["ref"]) for r in rows}
     for c in numerics.cases(seed=0):
         assert (c.name, c.shape, "mx-ref", "fp32") in got
-        for s in ("interp", "model"):
+        for s in ("interp", "model", "l3"):
             assert {(c.name, c.shape, s, "fp32"), (c.name, c.shape, s, "mx")} <= got
 
 

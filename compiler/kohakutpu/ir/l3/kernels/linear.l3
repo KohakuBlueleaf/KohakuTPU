@@ -11,6 +11,14 @@ fn silu(x: f16[M, N]) -> f16[M, N]
     y = mul x, r                                : f16[M, N]
     return y
 
+program matmul(x: mx7[M, K], w: mx7[N, K])
+    tile bm = 32
+    tile bn = 32
+    y = output                                  : f16[M, N]
+    map i in tiles(M, bm), j in tiles(N, bn)
+        c = mmt x[i, :], w[j, :]                : f16[bm, bn]
+        store y[i, j] = c
+
 program linear(x: mx7[M, K], w: mx7[N, K], bias: f16[N])
     tile bm = 32
     tile bn = 32

@@ -37,16 +37,18 @@ selector: `v` register, `s` scalar, `c` chained, `k` constant.
 
 ## 2. L2
 
-Layouts, as `Name(field=value, ...)`: `MxA`, `MxB`, `Tiles`, `Flat`, `Rows`,
-`BandLane`, `ConvB` ([l2.md](l2.md) §1).
+Layouts, as `Name(field=value, ...)`: `MxA`, `MxB`, `Tiles`, `TileCols`,
+`ConvTiles`, `OnesA`, `BiasB`, `Flat`, `Rows`, `BandLane`, `ConvB`
+([l2.md](l2.md) §1).
 
 | kind | unit | parameters (optional after `;`) |
 |---|---|---|
 | `gemm_tile` | MG | a_at b_at c_at gm gn nk chunks; late ones_at bias_at |
 | `conv_tile` | MG | a_at a_chunk row0 wp b_at c_at gm gn cbc chunks; late ones_at bias_at |
 | `gemm` | MG | a b gm gn nk c_at (`a`, `b` are `(address, entries, keep)`) |
-| `vec_stream` | VC | body words runs step srcs dst; sink resident_at |
+| `vec_stream` | VC | body words runs step srcs dst; sink resident_at install |
 | `vec_run` | VC | gm run p16_at o_at idx_at; in_at |
+| `vec_prog` | VC | prog run ix_at; in_at out_at |
 | `quantise` | mover | src dst entries |
 | `copy` | mover | src dst nbytes |
 
@@ -62,4 +64,5 @@ vector cores (`kohakutpu.ir.l1.model.MACHINES`).
 | `check FILE...` | read and verify each text, by its `level` line |
 | `fmt FILE` | the canonical text |
 | `lower FILE.l2 [-o FILE.l1]` | the L2 -> L1 compiler, text in and text out |
+| `lower FILE.l3 [-p PROG] --shape NAME=AxB ... [--bias cluster\|core] [--installs N] [-o FILE.l2]` | the L3 -> L2 compiler ([l3.md](l3.md) §5) at the inputs' shapes, buffers from `MEM_BASE` up; `-p` when the file holds more than one program |
 | `build FILE.l1 -o DIR` | one L0 package a program, `DIR/NAME.pN.pkg`; a vector core's resident images carried across the file's programs |

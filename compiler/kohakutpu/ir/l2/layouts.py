@@ -73,6 +73,13 @@ class Tiles:
         span = self.gm * self.gn * SUBTILE
         return (i * self.tn + j) * span, span
 
+    def pack(self, x) -> bytes:
+        """`(rows, cols)` fp16 as the clusters drain it: tile (i, j), then
+        sub-tile row and column, then a 4x4 sub-tile row-major in one word."""
+        tm = self.rows // (4 * self.gm)
+        a = np.asarray(x, np.float16).reshape(tm, self.gm, 4, self.tn, self.gn, 4)
+        return np.ascontiguousarray(a.transpose(0, 3, 1, 4, 2, 5)).tobytes()
+
     def unpack(self, get, base: int) -> np.ndarray:
         tm = self.rows // (4 * self.gm)
         where = [
@@ -81,6 +88,110 @@ class Tiles:
             for j in range(self.tn)
         ]
         return MM.unpack(get, where, self.rows, self.cols, self.gm, self.gn)
+
+
+@dataclass(frozen=True)
+class OnesA:
+    """The A side of the bias K-block (`matmul.ones_block`): `4*gm` rows of
+    `matmul.BIAS_A`, one K-block, MXFP7."""
+
+    gm: int
+
+    @property
+    def nbytes(self) -> int:
+        return self.gm * ENTRY
+
+    def pack(self, _=None) -> bytes:
+        return MM.ones_block(self.gm)
+
+
+@dataclass(frozen=True)
+class BiasB:
+    """The B side of the bias K-block (`matmul.bias_block`): `n` channels'
+    bias as ``hi, lo`` against the quantised ones row, MXFP7, `gn` a tile."""
+
+    n: int
+    gn: int
+
+    @property
+    def nbytes(self) -> int:
+        return self.n // 4 * ENTRY
+
+    def pack(self, bias) -> bytes:
+        return MM.bias_block(bias, self.gn)
+
+
+@dataclass(frozen=True)
+class TileCols:
+    """`count` column vectors of `cols` fp16 as a drained tile's columns: for
+    each column tile `j`, each vector's `gn` words, word `sc` holding columns
+    ``4*(j*gn + sc) ..`` in every one of its four rows."""
+
+    cols: int
+    gn: int
+    count: int
+
+    @property
+    def tn(self) -> int:
+        return self.cols // (4 * self.gn)
+
+    @property
+    def nbytes(self) -> int:
+        return self.tn * self.count * self.gn * SUBTILE
+
+    def tile(self, j: int) -> tuple:
+        span = self.count * self.gn * SUBTILE
+        return j * span, span
+
+    def pack(self, vectors) -> bytes:
+        a = np.asarray(vectors, np.float16).reshape(self.count, self.tn, self.gn, 1, 4)
+        a = np.broadcast_to(a, (self.count, self.tn, self.gn, 4, 4))
+        return np.ascontiguousarray(a.transpose(1, 0, 2, 3, 4)).tobytes()
+
+
+@dataclass(frozen=True)
+class ConvTiles:
+    """A 3x3 conv's `(h, w, cout)` result as `conv_tile` drains it: `Tiles` of
+    the band-lane positions (``conv2d.geometry``), four bands a sub-tile row."""
+
+    h: int
+    w: int
+    cout: int
+    gm: int
+    gn: int
+
+    @property
+    def tiles(self) -> Tiles:
+        positions = CV.geometry(self.h, self.w, self.gm)[2]
+        return Tiles(positions * CV.LANES, self.cout, self.gm, self.gn)
+
+    @property
+    def nbytes(self) -> int:
+        return self.tiles.nbytes
+
+    def tile(self, i: int, j: int) -> tuple:
+        return self.tiles.tile(i, j)
+
+    def pack(self, x) -> bytes:
+        hs, wp, _ = CV.geometry(self.h, self.w, self.gm)
+        t = self.tiles
+        y = np.zeros((t.rows, self.cout), np.float16)
+        xp = np.zeros((self.h, wp, self.cout), np.float16)
+        xp[:, : self.w] = x
+        for k in range(CV.LANES):
+            y[k :: CV.LANES][: hs * wp] = xp[k * hs : (k + 1) * hs].reshape(
+                -1, self.cout
+            )
+        return t.pack(y)
+
+    def unpack(self, get, base: int) -> np.ndarray:
+        t = self.tiles
+        where = [
+            (i * self.gm, self.gm, j, base + t.tile(i, j)[0])
+            for i in range(t.rows // (4 * self.gm))
+            for j in range(t.tn)
+        ]
+        return CV.unpack(get, where, self.h, self.w, self.cout, self.gm, self.gn)
 
 
 @dataclass(frozen=True)

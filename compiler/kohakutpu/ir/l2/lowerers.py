@@ -5,7 +5,6 @@ object a unit, its state kept across items, chunks out
 from functools import cache
 
 from kohakuaccel.ir.l2.lower import Chunk
-from kohakutpu.ir.l1 import vsched
 from kohakutpu.ir.l1.cluster import Drain, Fill, Gemm
 from kohakutpu.ir.l1.kernels import attention as AT
 from kohakutpu.ir.l1.kernels import binary as BI
@@ -13,6 +12,8 @@ from kohakutpu.ir.l1.kernels import layernorm as LN
 from kohakutpu.ir.l1.kernels import silu as SI
 from kohakutpu.ir.l1.kernels import softmax as SM
 from kohakutpu.ir.l1.kernels import stream
+from kohakutpu.ir.l1.kernels import vgen as VG
+from kohakutpu.ir.l1.kernels import vrun as VR
 from kohakutpu.ir.l1.kernels.matmul import ENTRY, fills
 from kohakutpu.ir.l1.mover import Copy, Quantise
 from kohakutpu.isa.cluster import ISA
@@ -193,8 +194,18 @@ class ClusterLowerer:
 
 # --------------------------------------------------------------- vector core
 @cache
-def _stream_programs(body: tuple, words: int) -> tuple:
-    """The stream images for a body spec, and the L1 walk and resident size."""
+def _stream_programs(body: tuple, words: int, runs: int, install: float) -> tuple:
+    """The stream images for a body spec run `runs` times paying `install` of
+    one image install, the L1 walk, the resident size, the inputs, the
+    descriptor setup, the kernel's own walks and a region's slots."""
+    if body[0] == "vp":
+        return VG.programs(body, words, runs, install)
+    progs, dims, resident, inputs, setup = _hand_programs(body, words)
+    walks = {LN.AD_B: LN.BROADCAST} if body[0] == "layernorm" else None
+    return progs, dims, resident, inputs, setup, walks, inputs
+
+
+def _hand_programs(body: tuple, words: int) -> tuple:
     kind = body[0]
     if kind == "silu":
         _, group, sets = body
@@ -255,10 +266,27 @@ def _stream_programs(body: tuple, words: int) -> tuple:
 
 
 @cache
-def _run_cycles(body: tuple, words: int) -> float:
-    progs, dims, resident, inputs, _ = _stream_programs(body, words)
-    walks = {LN.AD_B: LN.BROADCAST} if body[0] == "layernorm" else None
-    return vsched.cycles(progs[1], stream.l1_map(dims, words, inputs, resident, walks))
+def _run_cycles(body: tuple, words: int, runs: int, install: float = 1.0) -> float:
+    progs, dims, resident, inputs, _, walks, _ = _stream_programs(
+        body, words, runs, install
+    )
+    return VG.run_cycles(progs, stream.l1_map(dims, words, inputs, resident, walks))
+
+
+#: Node cycles a RUN dispatch costs beyond its image's modelled cycles
+#: (MEASURED, card_v9_1n: the hand softmax 256x256, 2,584 a RUN against
+#: `vsched`'s 2,322).
+DISPATCH = 260
+
+
+def stream_cost(body: tuple, words: int, runs: int, install: float = 1.0) -> float:
+    """Modelled cycles of `runs` RUNs: each image's, a dispatch a RUN (two when
+    the images are `shared`), and `install` of one install of the images (1: the
+    core does not hold them; 0: it does; 1/n: n streams share one install)."""
+    progs = _stream_programs(body, words, runs, install)[0]
+    run = _run_cycles(body, words, runs, install)
+    per = run + DISPATCH * (2 if len(progs) == 6 else 1)
+    return runs * per + install * stream.INSTALL * stream.image_words(progs)
 
 
 class VectorLowerer:
@@ -266,13 +294,27 @@ class VectorLowerer:
 
     def __init__(self, coord) -> None:
         self.coord = coord
-        self.attention = None  # the (gm, p16, o, idx) its images were set up for
+        #: what instruction memory and the descriptors hold: attention's
+        #: ``("attn", gm, p16, o, idx)``, a run program's ``("vr", spec, ix)``
+        self.installed = None
 
     def lower(self, index, item) -> list:
         p = item.params
+        if item.kind == "vec_prog":
+            spec = p["prog"]
+            ops = []
+            if self.installed != ("vr", spec, p["ix_at"]):
+                ops += VR.setup_ops(spec, p["ix_at"])
+                self.installed = ("vr", spec, p["ix_at"])
+            ops += VR.run_ops(spec, p["run"], p.get("in_at"), p.get("out_at"))
+            return [Chunk(ops, (index,), VR.cycles(spec, p["run"]) + 200)]
         if item.kind == "vec_stream":
+            self.installed = None
             body, words = tuple(p["body"]), p["words"]
-            progs, dims, resident, _, setup = _stream_programs(body, words)
+            install = p.get("install", 1.0)
+            progs, dims, resident, _, setup, _, slots = _stream_programs(
+                body, words, p["runs"], install
+            )
             ops, _ = stream.stream_ops(
                 progs,
                 dims,
@@ -285,16 +327,17 @@ class VectorLowerer:
                 resident=resident,
                 setup=setup,
                 sink=p.get("sink"),
+                slots=slots,
             )
-            cycles = _run_cycles(body, words) * p["runs"] + 600
+            cycles = stream_cost(body, words, p["runs"], install) + 600
             return [Chunk(ops, (index,), cycles)]
         if item.kind == "vec_run":
             gm = p["gm"]
-            want = (gm, p["p16_at"], p["o_at"], p["idx_at"])
+            want = ("attn", gm, p["p16_at"], p["o_at"], p["idx_at"])
             ops = []
-            if self.attention != want:
+            if self.installed != want:
                 ops += AT.setup_ops(gm, p["p16_at"], p["o_at"], p["idx_at"])
-                self.attention = want
+                self.installed = want
             ops += AT.run_ops(gm, p["run"], p.get("in_at"))
             cost = {"init": 300, "softmax": 4100, "update": 1300, "final": 700}
             return [Chunk(ops, (index,), float(cost[p["run"]]))]

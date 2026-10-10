@@ -11,6 +11,10 @@ for _cls in (
     layouts.MxA,
     layouts.MxB,
     layouts.Tiles,
+    layouts.TileCols,
+    layouts.ConvTiles,
+    layouts.OnesA,
+    layouts.BiasB,
     layouts.Flat,
     layouts.Rows,
     layouts.BandLane,
@@ -36,9 +40,10 @@ TEXT.kind(
     "vec_stream",
     "VC",
     ("body", "words", "runs", "step", "srcs", "dst"),
-    ("sink", "resident_at"),
+    ("sink", "resident_at", "install"),
 )
 TEXT.kind("vec_run", "VC", ("gm", "run", "p16_at", "o_at", "idx_at"), ("in_at",))
+TEXT.kind("vec_prog", "VC", ("prog", "run", "ix_at"), ("in_at", "out_at"))
 TEXT.kind("quantise", "mover", ("src", "dst", "entries"))
 TEXT.kind("copy", "mover", ("src", "dst", "nbytes"))
 

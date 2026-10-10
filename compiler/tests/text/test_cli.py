@@ -40,6 +40,20 @@ def test_lower_then_build_is_the_compiler_in_memory(tmp_path):
     assert got == want and len(want) == 2
 
 
+def test_lower_takes_an_l3_program_down_to_l1(tmp_path, capsys):
+    l2_path, l1_path = tmp_path / "ln.l2", tmp_path / "ln.l1"
+    rows = str(l3.KERNELS / "rows.l3")
+    shape = ["--shape", "x=32x128", "--shape", "g=128", "--shape", "b=128"]
+    assert main(["lower", rows, "-p", "layernorm", *shape, "-o", str(l2_path)]) == 0
+    assert main(["lower", str(l2_path), "-o", str(l1_path)]) == 0
+    assert main(["check", str(l2_path), str(l1_path)]) == 0
+    text = l2_path.read_text(encoding="utf-8")
+    assert text == l2_text.write(l2_text.read(text))
+    assert "vec_stream" in text and '"vp"' in text
+    assert main(["lower", rows, "--shape", "x=32x128"]) == 1
+    assert "holds 2 programs; name one with -p" in capsys.readouterr().err
+
+
 def test_fmt_prints_the_canonical_text(capsys):
     assert main(["fmt", str(GOLDEN / "schedule.l2")]) == 0
     text = capsys.readouterr().out

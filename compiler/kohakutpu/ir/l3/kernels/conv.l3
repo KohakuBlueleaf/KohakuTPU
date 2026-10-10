@@ -1,6 +1,11 @@
-# A 3x3 same convolution on the clusters, then y = conv + x2 on the cores. x
-# and the taps-major weights arrive packed in MXFP7 by the host.
+# A 3x3 same convolution on the clusters, alone and then y = conv + x2 on the
+# cores. x and the taps-major weights arrive packed in MXFP7 by the host.
 level l3
+
+program conv_only(x: mx7[H, W, C], w: mx7[O, 3, 3, C])
+    y = output                                  : f16[H, W, O]
+    c = conv3x3 x, w                            : f16[H, W, O]
+    store y = c
 
 program conv(x: mx7[H, W, C], w: mx7[O, 3, 3, C], x2: f16[H, W, O])
     y = output                                  : f16[H, W, O]

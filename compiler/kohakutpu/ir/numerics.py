@@ -7,11 +7,12 @@ kernel's result against two host references, both computed in float32 --
 
 -- for each SOURCE of the result: ``interp`` (the L3 reference interpreter on
 ``kernels/*.l3``), ``model`` (the hand-written L2 schedule compiled to L1 and
-run on the unit models) and, given a card target, ``rtl`` (the same packages on
-the Verilated card: `scripts/py/numerics_rtl.py`). A ``mx-ref`` row is the
-mx reference against the fp32 one: the quantisation's own error, the floor any
-source is judged beside; an ``rtl`` row against ``model`` counts the elements
-that differ (`ndiff`).
+run on the unit models), ``l3`` (the L3 program compiled, `l3.lower`, on the
+unit models) and, given a card target, ``rtl`` and ``l3-rtl`` (the same
+packages on the Verilated card: `scripts/py/numerics_rtl.py`). A ``mx-ref``
+row is the mx reference against the fp32 one: the quantisation's own error,
+the floor any source is judged beside; ``rtl`` against ``model`` and
+``l3-rtl`` against ``l3`` count the elements that differ (`ndiff`).
 """
 
 import json
@@ -29,6 +30,7 @@ from kohakutpu.ir.l1.kernels import conv2d as CV
 from kohakutpu.ir.l1.kernels import matmul as MM
 from kohakutpu.ir.l1.model import L1Model
 from kohakutpu.ir.l2.layouts import BandLane, ConvB, Flat, MxA, MxB, Rows, Tiles
+from kohakutpu.ir.l3 import lower
 
 LOG2E = float(np.log2(np.e))
 
@@ -149,6 +151,13 @@ class _Rig:
         return np.frombuffer(raw, np.float16).astype(np.float64).reshape(shape)
 
 
+def _compiled(target, module, program, arrays, out, **knobs):
+    """`program` compiled from L3 (`l3.lower`) and run on `target`."""
+    shapes = {k: np.shape(v) for k, v in arrays.items()}
+    comp = lower.compile(module, program, shapes, target, **knobs)
+    return comp.run(target, arrays)[out]
+
+
 def _model_matmul(target, x, w, bias=None, silu=False):
     m, k = x.shape
     n = w.shape[0]
@@ -244,7 +253,6 @@ def cases(seed: int = 0) -> list:
 
     out = []
     x, w = h(128, 128, scale=0.5), h(128, 128, scale=0.5)
-    zero = np.zeros(128, np.float16)
     linear, rows = l3.kernel("linear"), l3.kernel("rows")
     out.append(
         Case(
@@ -253,10 +261,9 @@ def cases(seed: int = 0) -> list:
             matmul_ref(x, w, False),
             matmul_ref(x, w, True),
             {
-                "interp": lambda: l3.run(
-                    linear, "linear", {"x": x, "w": w, "bias": zero}
-                )["y"],
+                "interp": lambda: l3.run(linear, "matmul", {"x": x, "w": w})["y"],
                 "hw": lambda t: _model_matmul(t, x, w),
+                "l3": lambda t: _compiled(t, linear, "matmul", {"x": x, "w": w}, "y"),
             },
         )
     )
@@ -272,6 +279,17 @@ def cases(seed: int = 0) -> list:
                     "y"
                 ],
                 "hw": lambda t: _model_matmul(t, x, w, bias=b),
+                "l3": lambda t: _compiled(
+                    t, linear, "linear", {"x": x, "w": w, "bias": b}, "y"
+                ),
+                "l3:core-bias": lambda t: _compiled(
+                    t,
+                    linear,
+                    "linear",
+                    {"x": x, "w": w, "bias": b},
+                    "y",
+                    bias="core",
+                ),
             },
         )
     )
@@ -287,6 +305,9 @@ def cases(seed: int = 0) -> list:
                     "y"
                 ],
                 "hw": lambda t: _model_matmul(t, xs, ws, silu=True),
+                "l3": lambda t: _compiled(
+                    t, linear, "linear_silu", {"x": xs, "w": ws}, "y"
+                ),
             },
         )
     )
@@ -300,6 +321,7 @@ def cases(seed: int = 0) -> list:
             {
                 "interp": lambda: l3.run(linear, "silu_call", {"x": xe})["y"],
                 "hw": lambda t: _model_stream(t, "silu", xe),
+                "l3": lambda t: _compiled(t, linear, "silu_call", {"x": xe}, "y"),
             },
         )
     )
@@ -313,6 +335,7 @@ def cases(seed: int = 0) -> list:
             {
                 "interp": lambda: l3.run(rows, "softmax", {"x": xr})["y"],
                 "hw": lambda t: _model_stream(t, "softmax", xr),
+                "l3": lambda t: _compiled(t, rows, "softmax", {"x": xr}, "y"),
             },
         )
     )
@@ -332,6 +355,9 @@ def cases(seed: int = 0) -> list:
                     "y"
                 ],
                 "hw": lambda t: _model_stream(t, "layernorm", xl, g, bb),
+                "l3": lambda t: _compiled(
+                    t, rows, "layernorm", {"x": xl, "g": g, "b": bb}, "y"
+                ),
             },
         )
     )
@@ -350,13 +376,19 @@ def cases(seed: int = 0) -> list:
                         attn, "attention", {"q": q[None], "k": k[None], "vt": v.T[None]}
                     )["o"][0],
                     "hw": lambda t, q=q, k=k, v=v: _model_attention(t, q, k, v),
+                    "l3": lambda t, q=q, k=k, v=v: _compiled(
+                        t,
+                        attn,
+                        "attention",
+                        {"q": q[None], "k": k[None], "vt": v.T[None]},
+                        "o",
+                    )[0],
                 },
             )
         )
     xc, wc = h(16, 16, 64, scale=0.5), h(32, 64, 3, 3, scale=0.2)
     conv = l3.kernel("conv")
     taps = np.ascontiguousarray(wc.transpose(0, 2, 3, 1))
-    zeros = np.zeros((16, 16, 32), np.float16)
     out.append(
         Case(
             "conv3x3",
@@ -364,10 +396,11 @@ def cases(seed: int = 0) -> list:
             conv_ref(xc, wc, False),
             conv_ref(xc, wc, True),
             {
-                "interp": lambda: l3.run(
-                    conv, "conv", {"x": xc, "w": taps, "x2": zeros}
-                )["y"],
+                "interp": lambda: l3.run(conv, "conv_only", {"x": xc, "w": taps})["y"],
                 "hw": lambda t: _model_conv(t, xc, wc),
+                "l3": lambda t: _compiled(
+                    t, conv, "conv_only", {"x": xc, "w": taps}, "y"
+                ),
             },
         )
     )
@@ -385,34 +418,44 @@ def report(seed: int = 0, rtl=None, only=None) -> list:
             continue
         head = {"case": c.name, "shape": c.shape}
         rows.append(head | {"source": "mx-ref", "ref": "fp32"} | errors(c.mx, c.fp32))
+        compiled = [k for k in c.sources if k.startswith("l3")]
         got = {"interp": c.sources["interp"](), "model": c.sources["hw"](UnitModel())}
+        got |= {k: c.sources[k](UnitModel()) for k in compiled}
+        cycles = {}
+        pairs = []
         if rtl is not None:
-            got["rtl"] = c.sources["hw"](rtl.fresh())
+            for source, kind in [("rtl", "hw")] + [(f"{k}-rtl", k) for k in compiled]:
+                got[source] = c.sources[kind](rtl.fresh())
+                cycles[source] = getattr(rtl, "cycles", None)
+                pairs.append((source, "model" if kind == "hw" else kind))
         for source, g in got.items():
             for ref, want in (("fp32", c.fp32), ("mx", c.mx)):
-                rows.append(head | {"source": source, "ref": ref} | errors(g, want))
-        if rtl is not None:
-            ndiff = int(np.count_nonzero(got["rtl"] != got["model"]))
+                row = head | {"source": source, "ref": ref} | errors(g, want)
+                if cycles.get(source) is not None:
+                    row["cycles"] = cycles[source]
+                rows.append(row)
+        for a, b in pairs:
             rows.append(
                 head
                 | {
-                    "source": "rtl",
-                    "ref": "model",
-                    "ndiff": ndiff,
-                    "n": got["rtl"].size,
+                    "source": a,
+                    "ref": b,
+                    "ndiff": int(np.count_nonzero(got[a] != got[b])),
+                    "n": got[a].size,
                 }
-                | errors(got["rtl"], got["model"])
+                | errors(got[a], got[b])
             )
     return rows
 
 
 def markdown(rows) -> str:
-    head = ["case", "shape", "source", "ref", *FIELDS, "ndiff"]
+    head = ["case", "shape", "source", "ref", *FIELDS, "ndiff", "cycles"]
     lines = ["| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
     for r in rows:
         cells = [r["case"], r["shape"], r["source"], r["ref"]]
         cells += [f"{r[f]:.3e}" for f in FIELDS]
         cells.append(f"{r['ndiff']}/{r['n']}" if "ndiff" in r else "")
+        cells.append(str(r["cycles"]) if "cycles" in r else "")
         lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines) + "\n"
 

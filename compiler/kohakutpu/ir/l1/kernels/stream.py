@@ -58,13 +58,13 @@ def l1_map(
     return vsched.L1Map(walks=every, fills=fills)
 
 
-def _check(words: int, inputs: int, resident: int) -> None:
+def _check(words: int, inputs: int, resident: int, scratch: int = 0) -> None:
     if not 1 <= inputs <= 2:
         raise ValueError(f"{inputs} input streams; a core's descriptors hold two")
-    if resident_at(words, inputs) + resident > L1_WORDS:
+    if resident_at(words, inputs + scratch) + resident > L1_WORDS:
         raise ValueError(
-            f"{inputs} inputs of {words} words a region and {resident} resident "
-            f"words pass L1's {L1_WORDS}"
+            f"{inputs} inputs and {scratch} scratch slots of {words} words a "
+            f"region and {resident} resident words pass L1's {L1_WORDS}"
         )
 
 
@@ -76,26 +76,54 @@ def programs(
     inputs: int = 1,
     resident: int = 0,
     walks=None,
+    scratch: int = 0,
+    shared: bool = False,
 ) -> list:
     """``[prologue, even, odd, last even, last odd]``; `body(slots)` computes one
-    region from its slots' L1 bases into ``slots[0]``. `walks` names the
+    region from its slots' L1 bases into ``slots[0]``: the `inputs` filled
+    slots, then `scratch` slots nothing fills or drains. `walks` names the
     kernel's other L1 descriptors (``{ad: dims}``, base 0), set up by `send`'s
-    `setup`."""
-    _check(words, inputs, resident)
+    `setup`.
+
+    `shared`: one compute image for both regions, its slots relative to
+    `AD_L1`'s base, which the node sets to the region before each RUN; the
+    even and odd images then only wait, drain and fill (the other region) and
+    a sixth image computes. Half the instruction memory, one RUN more a step.
+    """
+    _check(words, inputs, resident, scratch)
+    n = inputs + scratch
     l1 = l1_map(l1_dims, words, inputs, resident, walks)
-    pro = [Vfill(F[s][0], slot(0, s, words, inputs)) for s in range(inputs)]
+    pro = [Vfill(F[s][0], slot(0, s, words, n)) for s in range(inputs)]
     if resident:
-        pro.append(Vfill(R, resident_at(words, inputs)))
+        pro.append(Vfill(R, resident_at(words, n)))
     out = [tuple(pro + [Halt()])]
     for r in (0, 1):
-        mine = [slot(r, s, words, inputs) for s in range(inputs)]
-        other = [slot(1 - r, s, words, inputs) for s in range(inputs)]
+        mine = [slot(r, s, words, n) for s in range(n)]
+        other = [slot(1 - r, s, words, n) for s in range(n)]
         code = [Bar(), Vdrain(D[1 - r], other[0])]
         code += [Vfill(F[s][1 - r], other[s]) for s in range(inputs)]
+        if shared:
+            out.append(tuple(code + [Halt()]))
+            continue
         code += body(mine)
         out.append(tuple(head + vsched.schedule(code, l1) + [Halt()]))
-    out += [(Vdrain(D[r], slot(r, 0, words, inputs)), Halt()) for r in (0, 1)]
+    out += [(Vdrain(D[r], slot(r, 0, words, n)), Halt()) for r in (0, 1)]
+    if shared:
+        rel = [slot(0, s, words, n) for s in range(n)]
+        out.append(tuple(head + vsched.schedule(body(rel), l1) + [Halt()]))
     return out
+
+
+def image_words(progs) -> int:
+    """Instruction-memory words the images take."""
+    return sum(len(i.words()) for p in progs for i in p)
+
+
+#: Node cycles one instruction-memory word costs to install on a core that
+#: does not hold the image (MEASURED, card_v9_1n: a package's node cycles not
+#: resident minus resident, over the words installed -- softmax and layer norm
+#: 32x128 at 64 and 128 words a RUN, 50.4 to 50.9).
+INSTALL = 51
 
 
 def send(prog, core, *args, **kw) -> int:
@@ -117,10 +145,13 @@ def stream_ops(
     resident: int = 0,
     setup=(),
     sink: int | None = None,
+    slots: int | None = None,
 ) -> tuple[list, int]:
     """``(ops, image words)`` for `nruns` RUNs: input `s` from ``srcs[s]``,
     output to `dst`, `step` bytes apart a RUN; the resident block's `resident`
     words from `resident_src`; `setup` (descriptor ops) before the first RUN.
+    `slots`: a region's slots, inputs and scratch (`programs`), when the
+    images are `shared`.
 
     `sink` (`words` words) takes RUN 0's stale drain. Without one it lands on
     RUN 1's output, which a later drain overwrites -- unless the output IS an
@@ -137,6 +168,8 @@ def stream_ops(
     for p in progs:
         pcs.append(at)
         at += sum(len(i.words()) for i in p)
+    shared = len(progs) == 6
+    region = slot(1, 0, words, slots or inputs)
     walk = ((V.WORD_BYTES, words),)
     ops = [Image(p, pc) for p, pc in zip(progs, pcs, strict=True)]
     ops += [Desc(AD_L1, 0), Dims(AD_L1, l1_dims)]
@@ -153,6 +186,8 @@ def stream_ops(
         prev = dst + (k - 1) * step if k else first
         ops += [Desc(F[s][1 - r], srcs[s] + nxt) for s in range(inputs)]
         ops += [Desc(D[1 - r], prev), Run(pcs[1 + r])]
+        if shared:
+            ops += [Desc(AD_L1, r * region), Run(pcs[5])]
     r = (nruns - 1) % 2
     ops += [Desc(D[r], dst + (nruns - 1) * step), Run(pcs[3 + r])]
     return ops, at

@@ -9,8 +9,8 @@ ops and dtypes (`OpSet`); KohakuTPU's are in
 
 Code: `compiler/kohakuaccel/ir/l3/` -- `nodes.py` (the IR), `text.py`,
 `verify.py`, `interp.py` (the numpy reference), `ops.py` (`OpSet`, shared shape
-rules). The pass pipeline's old graph IR is `kohakuaccel.ir.l3.legacy`, kept
-until its callers are gone.
+rules), `instance.py` (a program at concrete shapes, §5). The pass pipeline's
+old graph IR is `kohakuaccel.ir.l3.legacy`, kept until its callers are gone.
 
 ## 1. Contents
 
@@ -86,3 +86,25 @@ Each problem is a `TextError` at its statement's line.
 the inputs, rounds each input to its parameter's dtype, runs the program in
 float64 with the rounding of §2, and returns the outputs. It is the meaning of
 an L3 program: the L3 -> L2 compiler's output is graded against it.
+
+## 5. A program at concrete shapes (`instance.instantiate`)
+
+What a project's L3 -> L2 compiler reads. `instantiate(module, program,
+shapes)`:
+
+- binds every dimension symbol from the inputs' shapes and the `tile`
+  statements, and every loop domain to ints (`Loop(kind, vars, body)`, a var
+  ``(name, "span", lo, hi)`` or ``(name, "tiles", extent, size)``);
+- expands `inline` and `call` alike -- they compute the same value (§2) -- the
+  function's values named ``site.name``, its shape symbols bound from the
+  arguments' shapes, an argument of another dtype than its parameter rounded
+  by a `copy` (§2's rounding);
+- resolves every operand to an `Operand`: a constant (a literal or a
+  dimension's value), or a tensor (parameter, output) or value with its index
+  entries (``("full",)``, ``("new",)``, ``("at", i)``, ``("var", name)``,
+  ``("range", lo, hi)``);
+- drops every statement no `store` or `next` reads.
+
+The result is an `Instance`: parameters and outputs with their dtypes and
+shapes, every value's dtype and shape, and the body as `Stmt`, `Loop`, `Put`
+(a store), `CarryInit` and `Update` (a `next`).
