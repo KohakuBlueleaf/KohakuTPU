@@ -1,15 +1,11 @@
-"""The two square roots, and the reason neither can be graded on `SimDevice`.
+"""The two square roots on `SimDevice`.
 
 This ALU has no square root -- `vec_alu.v` carries OP_INV and OP_RSQRT and
 nothing else -- so `L.sqrt_approx` composes one from two seeds at two words and
-`L.sqrt_newton` refines it at six.
-
-WHAT THE ASSERTIONS BELOW ARE WORTH. `model.py` computes VRSQRT as
-`1/np.sqrt(a)` and VINV as `1/a`, EXACTLY, so on this device both paths are
-perfect by construction and agreement with numpy pins the ALGEBRA and nothing
-else. The accuracy claim lives in `scripts/py/sqrt_paths.py`, which evaluates
-the seeds' coefficient ROM and fixed point the way the RTL does; the last two
-tests here hold that script to its numbers.
+`L.sqrt_newton` refines it at six. `model.py` evaluates the seeds as the RTL
+does (its coefficient table and fixed point), so the accuracy graded here is
+the hardware's; `scripts/py/sqrt_paths.py` and the last two tests hold the
+script's figures.
 """
 
 import pathlib
@@ -21,7 +17,7 @@ from kohakuaccel.lang import dims
 from kohakutpu.lang import kernel
 from kohakutpu.lang.errors import LangError
 from kohakutpu.lang.vector import Ref, Value, chain_of, chains_of, leaves_of
-from kohakutpu.model import SimDevice
+from kohakutpu.model import SimDevice, e8_bits, e8_value, lane, to_e8m15
 
 from kohakutpu import lang as L
 
@@ -95,13 +91,14 @@ def test_each_path_costs_the_words_it_claims(build, words):
     assert words_of(build) == words
 
 
-def test_the_model_computes_both_seeds_EXACTLY():
-    """Why no test above can grade accuracy: the seeds have no error here at all."""
-    from kohakutpu.model import LANE_VALUE
-
-    v = np.array([0.3, 1.0, 2.0, 7.5], np.float64)
-    assert np.array_equal(LANE_VALUE["VRSQRT"](v, 0, 0), 1.0 / np.sqrt(v))
-    assert np.array_equal(LANE_VALUE["VINV"](v, 0, 0), 1.0 / v)
+def test_the_model_seeds_are_the_rtls_approximation():
+    """What the tests above grade: `vec_alu.v`'s seeds, within one lane ulp of
+    the exact function and not correctly rounded everywhere."""
+    v = np.linspace(0.3, 7.5, 997)
+    for name, exact in (("VRSQRT", 1.0 / np.sqrt(v)), ("VINV", 1.0 / v)):
+        got = e8_value(lane(name, e8_bits(to_e8m15(v)), 0, 0)[0])
+        assert (np.abs(got - exact) <= 2.0**-15 * np.abs(exact)).all(), name
+        assert (got != to_e8m15(exact)).any(), name
 
 
 def test_only_the_two_word_path_fits_a_fused_epilogue():

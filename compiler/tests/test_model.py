@@ -28,6 +28,9 @@ from kohakutpu.model import (
     SimDevice,
     VecFault,
     VectorUnit,
+    e8_bits,
+    e8_value,
+    lane,
     to_e8m15,
 )
 from kohakutpu.ops import matmul, silu
@@ -193,27 +196,39 @@ def operand(seed, size=BATCH_ELEMS, scale=2.0, positive=False):
 
 
 #: Each op, the operands it is safe on, and what it should compute.
+#: The opcode each kind lowers to, and which fields its operands take.
 UNARY = {
-    OpKind.NEG: np.negative,
-    OpKind.ABS: np.abs,
-    OpKind.EXP2: np.exp2,
-    OpKind.LOG2: np.log2,
-    OpKind.RECIP: lambda a: 1.0 / a,
-    OpKind.RSQRT: lambda a: 1.0 / np.sqrt(a),
+    OpKind.NEG: "VNEG",
+    OpKind.ABS: "VABS",
+    OpKind.EXP2: "VEXP2",
+    OpKind.LOG2: "VLOG2",
+    OpKind.RECIP: "VINV",
+    OpKind.RSQRT: "VRSQRT",
 }
 BINARY = {
-    OpKind.MUL: np.multiply,
-    OpKind.ADD: np.add,
-    OpKind.SUB: np.subtract,
+    OpKind.MUL: ("VMUL", "b"),
+    OpKind.ADD: ("VADD", "c"),
+    OpKind.SUB: ("VSUB", "c"),
 }
+
+
+def lane_of(name, a, b=0.0, c=0.0):
+    """`vec_alu.v`'s result (`model.lane`) for float operands, as float64."""
+    words = [e8_bits(to_e8m15(np.asarray(x, np.float64))) for x in (a, b, c)]
+    return e8_value(lane(name, *words)[0])
+
+
+def fp16(x):
+    return np.asarray(x).astype(FP16).astype(np.float64)
 
 
 @pytest.mark.parametrize("kind", list(UNARY), ids=lambda k: k.value)
-def test_every_unary_op_is_the_function_it_names(kind):
-    """Bit for bit: the lane rounds once, so there is nothing to be near."""
+def test_every_unary_op_is_the_lane_it_names(kind):
+    """Bit for bit against the lane: a wrong opcode is a legal word computing
+    something else."""
     x = operand(2, positive=True)
     got, _ = elementwise([(kind, [0])], [x])
-    want = np.asarray(to_e8m15(UNARY[kind](x))).astype(FP16).astype(np.float64)
+    want = fp16(lane_of(UNARY[kind], x))
     assert (got == want).all(), np.abs(got - want).max()
 
 
@@ -226,21 +241,22 @@ def test_every_binary_op_reads_the_slot_the_isa_reads(kind):
     """
     x, y = operand(3), operand(4, positive=True)
     got, _ = elementwise([(kind, [0, 1])], [x, y])
-    want = np.asarray(to_e8m15(BINARY[kind](x, y))).astype(FP16).astype(np.float64)
+    name, field = BINARY[kind]
+    want = fp16(lane_of(name, x, **{field: y}))
     assert (got == want).all(), np.abs(got - want).max()
 
 
 def test_a_divide_is_a_reciprocal_and_a_multiply():
     """The negative control for the two above: DIV is NOT one rounded divide.
 
-    `lower_op` emits VINV then VMUL, so a quotient carries two E8M15 roundings
-    and a model that computed `a / b` would be wrong in the last bit.
+    `lower_op` emits VINV then VMUL, so a quotient carries two roundings and a
+    model that computed `a / b` would be wrong in the last bit.
     """
     x, y = operand(3), operand(4, positive=True)
     got, _ = elementwise([(OpKind.DIV, [0, 1])], [x, y])
-    once = np.asarray(to_e8m15(x / y)).astype(FP16).astype(np.float64)
-    twice = to_e8m15(x * np.asarray(to_e8m15(1.0 / y)))
-    assert (got == np.asarray(twice).astype(FP16).astype(np.float64)).all()
+    once = fp16(to_e8m15(x / y))
+    twice = fp16(lane_of("VMUL", x, lane_of("VINV", y)))
+    assert (got == twice).all()
     assert (
         got != once
     ).any(), "a two-rounding quotient cannot equal a one-rounding one"

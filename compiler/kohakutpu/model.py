@@ -5,12 +5,13 @@ would compute. It owns the DATAPATH only -- `kohakuaccel.sim.SimMachine` owns
 staging, kick, dispatch and completion -- so what runs here is the same artifact
 the driver dispatches to the card, byte for byte.
 
-Not cycle-accurate and not bit-accurate below the arithmetic: no routing, no
-backpressure, no DSP pipeline. What it does model is what changes answers --
-where every operand comes from, MXFP7 quantisation, ACC24 accumulation, E8M15
+Not cycle-accurate: no routing, no backpressure, no DSP pipeline. What it does
+model is what changes answers -- where every operand comes from, MXFP7
+quantisation, the pumped accumulator's pair merge and M14 rounding, E8M15
 rounding in the vector lane, and every conversion's saturation to fp16.
 """
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -48,8 +49,13 @@ BANK_ENTRIES = 256
 
 FP16_MAX = 65504.0
 
-#: ACC24 is S1E7M16, so sixteen stored mantissa bits plus the implicit one.
-ACC_SIG = 17
+#: The pumped cluster's accumulator is S1E7M14 (`mx_acu_fp_pump` ACC_MW 14):
+#: fourteen stored mantissa bits plus the implicit one.
+ACC_MW = 14
+ACC_SIG = ACC_MW + 1
+#: The pair merge's magnitude width: a K-block's 22-bit partial times the 8-bit
+#: scale-mantissa product; an alignment shift is capped there.
+ACC_VWM = 30
 
 #: Granules a cluster gathers into one CU_DATA descriptor, so a node-addressed
 #: DRAIN of `n` sub-tiles is that many bursts and that many acknowledgements.
@@ -108,8 +114,9 @@ class Mesh(SimMachine):
         super()._signal(node_index(*at) if at else idx, sig)
 
 
-def to_acc24(x):
-    """Round `x` to ACC24's significand. Returns a float64 array."""
+def to_acc(x):
+    """Round `x` to the accumulator's significand, nearest even. Returns a
+    float64 array."""
     m, e = np.frexp(np.asarray(x, np.float64))
     s = float(1 << ACC_SIG)
     return np.ldexp(np.round(m * s) / s, e)
@@ -119,33 +126,68 @@ def sweep(a, b):
     """One GEMM sweep: `a @ b.T` the way the cluster computes it.
 
     `a` is `(rows, k)` and `b` is `(cols, k)`, both fp16 as memory holds them.
-    Each is quantised to MXFP7 per K-block, the significands multiply as
-    integers, and the block scales are applied afterwards -- which is what
-    `mx_acu_fp.v` does. Blocks accumulate through ACC24, one round per block.
+    Each is quantised to MXFP7 per K-block; see :func:`sweep_q` for the rest.
 
     Returns a `(rows, cols)` float64 array.
     """
     return sweep_q(mxfp7.quantise_fp16(a), mxfp7.quantise_fp16(b))
 
 
-def sweep_q(qa_, qb_):
-    """:func:`sweep` on operands already quantised, ``(q, es, m8)`` each."""
+def _block(ia, ib, esa, esb, m8a, m8b, at):
+    """One K-block's exact product: sign, integer magnitude, exponent (value =
+    magnitude * 2^exponent), the scale mantissas multiplied in as integers."""
+    dot = ia[:, at, :] @ ib[:, at, :].T
+    mag = np.abs(dot) * (m8a[:, at, None] * m8b[None, :, at])
+    exp = esa[:, at, None] + esb[None, :, at] - 6
+    return np.sign(dot), mag.astype(np.int64), exp
+
+
+def sweep_q(qa_, qb_, acc=None):
+    """:func:`sweep` on operands already quantised, ``(q, es, m8)`` each, as
+    `mx_acu_fp_pump` computes it: K-blocks two at a time (a lone last block
+    alone), the pair merged at full width with the smaller-exponent product
+    aligned by a TRUNCATING shift (capped at `ACC_VWM`; a carry out drops the
+    low bit), rounded to the accumulator nearest even, then added into the tile
+    nearest even. `acc` is the tile to add into, or None to open it.
+
+    MEASURED: equal to the Verilated card's cluster on every element of a
+    128^3 matmul; exact per-block accumulation at M16 differed on 6%.
+    """
     qa, esa, m8a = qa_
     qb, esb, m8b = qb_
     rows, k = np.shape(qa)
     cols = np.shape(qb)[0]
-    esa, m8a = np.asarray(esa), np.asarray(m8a)
-    esb, m8b = np.asarray(esb), np.asarray(m8b)
+    esa, m8a = np.asarray(esa, np.int64), np.asarray(m8a, np.int64)
+    esb, m8b = np.asarray(esb, np.int64), np.asarray(m8b, np.int64)
     blocks = k // KBLOCK
     ia = np.asarray(qa, np.int64).reshape(rows, blocks, KBLOCK)
     ib = np.asarray(qb, np.int64).reshape(cols, blocks, KBLOCK)
 
-    out = np.zeros((rows, cols))
-    for at in range(blocks):
-        dot = (ia[:, at, :] @ ib[:, at, :].T).astype(np.float64)
-        scale = 2.0 ** (esa[:, at, None] + esb[None, :, at])
-        scale = scale * (m8a[:, at, None] * m8b[None, :, at]) / 64.0
-        out = to_acc24(out + dot * scale)
+    out = acc
+    for p in range(0, blocks, 2):
+        s0, m0, e0 = _block(ia, ib, esa, esb, m8a, m8b, p)
+        if p + 1 < blocks:
+            s1, m1, e1 = _block(ia, ib, esa, esb, m8a, m8b, p + 1)
+            big1 = e1 > e0
+            sb, mb, eb = (
+                np.where(big1, s1, s0),
+                np.where(big1, m1, m0),
+                np.maximum(e0, e1),
+            )
+            ss, ms = np.where(big1, s0, s1), np.where(big1, m0, m1)
+            ms = ms >> np.minimum(np.abs(e0 - e1), ACC_VWM)
+            val = sb * mb + ss * ms
+            mag = np.abs(val)
+            over = mag >= (1 << ACC_VWM)
+            mag = np.where(over, mag >> 1, mag)
+            eb = np.where(over, eb + 1, eb)
+            merged = (
+                np.sign(val) * mag.astype(np.float64) * np.exp2(eb.astype(np.float64))
+            )
+        else:
+            merged = (s0 * m0).astype(np.float64) * np.exp2(e0.astype(np.float64))
+        t = to_acc(merged)
+        out = t if out is None else to_acc(out + t)
     return out
 
 
@@ -288,16 +330,19 @@ class ClusterUnit(UnitModel):
     def _gemm(self, f: dict) -> None:
         """Sweep `gm x gn` sub-tiles over `nk` K-blocks into the accumulator."""
         gm, gn, nk = f["gm"], f["gn"], f["nk"]
+        into = None
+        if f["acc"] and self.acc is not None:
+            if self.acc.shape != (gm * LANES, gn * LANES):
+                raise ModelError(
+                    f"GEMM chains a {(gm * LANES, gn * LANES)} tile onto a "
+                    f"{self.acc.shape} one"
+                )
+            into = self.acc
         got = sweep_q(
             self._operand_q(0, f["abank"], f["aoff"], gm, nk),
             self._operand_q(1, f["bbank"], f["boff"], gn, nk),
+            into,
         )
-        if f["acc"] and self.acc is not None:
-            if self.acc.shape != got.shape:
-                raise ModelError(
-                    f"GEMM chains a {got.shape} tile onto a {self.acc.shape} one"
-                )
-            got = to_acc24(self.acc + got)
         self.acc = got
         self.tile = (gm, gn)
         self.reading[0] = (f["abank"] * BANK_ENTRIES + f["aoff"], gm * nk)
@@ -392,32 +437,82 @@ FAULT = {msg.split(":")[0]: code for code, msg in V.FAULTS.items()}
 
 #: VRED kinds taking one element per leaf, so a chunk is two beats not one.
 RED_HALF = (3, 4, 5)
-#: What each VRED kind folds with, and what its accumulators are seeded to.
-RED_COMB = {0: np.add, 1: np.maximum, 2: np.minimum, 3: np.add, 4: np.add, 5: np.add}
-RED_IDENT = {0: 0.0, 1: -np.inf, 2: np.inf, 3: 0.0, 4: 0.0, 5: 0.0}
-
-#: Every ALU opcode as ``(a, b, c) -> value``. MOV/NEG/ABS/MAX/MIN/SEL pick an
-#: operand and pass it through the FMA as `winner * 1.0 + 0`, which is exact.
-LANE_VALUE = {
-    "VMOV": lambda a, b, c: a,
-    "VNEG": lambda a, b, c: -a,
-    "VABS": lambda a, b, c: np.abs(a),
-    "VADD": lambda a, b, c: a + c,
-    "VSUB": lambda a, b, c: a - c,
-    "VMUL": lambda a, b, c: a * b,
-    "VFMA": lambda a, b, c: a * b + c,
-    "VFNMA": lambda a, b, c: -(a * b) + c,
-    "VMAX": lambda a, b, c: np.where(a < b, b, a),
-    "VMIN": lambda a, b, c: np.where(a > b, b, a),
-    "VSEL": lambda a, b, c: np.where(c != 0.0, a, b),
-    "VEXP2": lambda a, b, c: np.exp2(a),
-    "VLOG2": lambda a, b, c: np.log2(a),
-    "VINV": lambda a, b, c: 1.0 / a,
-    "VRSQRT": lambda a, b, c: 1.0 / np.sqrt(a),
-}
+#: The ALU op each VRED kind's tree nodes and accumulators run (`vec_lanes.v`
+#: `comb_op`), and the word its accumulators are seeded to (`ident`).
+RED_COMB = {0: "VADD", 1: "VMAX", 2: "VMIN", 3: "VADD", 4: "VADD", 5: "VADD"}
+RED_IDENT = {0: 0x000000, 1: 0xFF8000, 2: 0x7F8000, 3: 0x000000, 4: 0x000000, 5: 0}
 
 #: The three that write a predicate register instead of a vector one.
-LANE_PRED = {"VCMPLT": np.less, "VCMPGT": np.greater, "VCMPEQ": np.equal}
+LANE_PRED = ("VCMPLT", "VCMPGT", "VCMPEQ")
+
+#: `vec_alu.v`'s opcode field. `vec_core` sends the four seeds' ISA opcodes
+#: (0x0E..0x11) to the ALU two higher and every other ALU opcode unchanged.
+ALU_OP = {
+    name: code + (2 if V.OPS["VEXP2"] <= code <= V.OPS["VRSQRT"] else 0)
+    for name, code in V.OPS.items()
+    if code <= V.OPS["VRSQRT"]
+}
+SEEDS = ("VEXP2", "VLOG2", "VINV", "VRSQRT")
+
+E8_ONE = 0x3F8000
+E8_NAN = 0x7FC000
+E8_INF = 0x7F8000
+E8_SIGN = 0x800000
+E8_MAG = 0x7FFFFF
+
+# ------------------------------------------------- the seeds' coefficient ROM
+#: `vec_tables.v`, regenerated by `scripts/py/vec_tables.py`'s fit: c0, c1, c2
+#: 22-bit signed at weights 2^-20, 2^-24, 2^-28; rsqrt has an octave-parity bit.
+SEED_SEG = 32
+SEED_CW = 22
+SEED_Q = (20, 24, 28)
+SEED_SH = 16
+
+
+def _seed_fn(fsel: int, idx6: int):
+    """Segment `idx6` of seed `fsel` (0 exp2, 1 log2, 2 inv, 3 rsqrt), u in [0,1)."""
+    idx, par = idx6 % SEED_SEG, idx6 // SEED_SEG
+    if fsel == 0:
+        return lambda u: 2.0 ** (idx / 32.0 + u / 32.0) - 1.0
+    if fsel == 1:
+        return lambda u: math.log2(1.0 + (idx + u) / 32.0)
+    if fsel == 2:
+        return lambda u: 1.0 / (1.0 + (idx + u) / 32.0)
+    scale = 2.0 if par else 1.0
+    return lambda u: 1.0 / math.sqrt(scale * (1.0 + (idx + u) / 32.0))
+
+
+def _seed_fit(g) -> tuple:
+    """`g` interpolated at [0,1]'s three Chebyshev nodes: ``(c0, c1, c2)``.
+
+    Gaussian elimination with partial pivoting, in the generator's operation
+    order: the quantised coefficients are a function of every rounding here.
+    """
+    nodes = [0.5 + 0.5 * math.cos((2 * j + 1) * math.pi / 6.0) for j in range(3)]
+    rows = [[1.0, x, x * x, g(x)] for x in nodes]
+    for col in range(3):
+        piv = max(range(col, 3), key=lambda r: abs(rows[r][col]))
+        rows[col], rows[piv] = rows[piv], rows[col]
+        for r in range(3):
+            if r == col:
+                continue
+            f = rows[r][col] / rows[col][col]
+            for k in range(col, 4):
+                rows[r][k] -= f * rows[col][k]
+    return tuple(rows[i][3] / rows[i][i] for i in range(3))
+
+
+def seed_table() -> np.ndarray:
+    """The ROM as ``[fsel, idx6] -> (c0, c1, c2)``, int64; unused rows are 0."""
+    tab = np.zeros((4, 2 * SEED_SEG, 3), np.int64)
+    for fsel in range(4):
+        for idx6 in range(2 * SEED_SEG if fsel == 3 else SEED_SEG):
+            fit = _seed_fit(_seed_fn(fsel, idx6))
+            tab[fsel, idx6] = [round(c * (1 << q)) for c, q in zip(fit, SEED_Q)]
+    return tab
+
+
+SEED_TABLE = seed_table()
 
 
 class VecFault(ModelError):
@@ -442,14 +537,197 @@ def to_e8m15(x):
     return np.where(mag < LANE_MIN, np.copysign(0.0, out), out)
 
 
+def e8_value(bits):
+    """24-bit E8M15 words as float64, exactly. E == 0 is a zero whatever M holds."""
+    bits = np.asarray(bits, np.int64)
+    bits = np.where((bits >> 15) & 0xFF == 0, bits & E8_SIGN, bits & 0xFFFFFF)
+    return (bits << 8).astype(np.uint32).view(np.float32).astype(np.float64)
+
+
+def e8_bits(x):
+    """Float64s that are E8M15 values as their 24-bit words, exactly."""
+    raw = np.asarray(x, np.float64).astype(np.float32).view(np.uint32)
+    return raw.astype(np.int64) >> 8
+
+
+def e8_of_f32(raw):
+    """`vec_cvt_f32_to_e8`: FP32 words to E8M15, RNE, subnormals flushed."""
+    raw = np.asarray(raw, np.int64) & 0xFFFFFFFF
+    s, e, m = (raw >> 31) << 23, (raw >> 23) & 0xFF, raw & 0x7FFFFF
+    keep = m >> 8
+    rnd = keep + (((m >> 7) & 1) & (((m & 0x7F) != 0) | (keep & 1)))
+    e_adj = e + (rnd >> 15)
+    out = np.where(e_adj >= 255, s | E8_INF, s | (e_adj << 15) | (rnd & 0x7FFF))
+    out = np.where(e == 255, s | E8_INF | np.where(m != 0, 0x4000 | keep, 0), out)
+    return np.where(e == 0, s, out)
+
+
 def from_bits(raw) -> float:
     """One 24-bit scalar or constant register as a float."""
-    return float(np.array(int(raw) << 8, np.uint32).view(np.float32))
+    return float(e8_value(int(raw)))
 
 
 def to_bits(x) -> int:
     """A float as a scalar register's 24-bit word, which is FP32's top 24 bits."""
-    return int(np.float32(to_e8m15(x)).view(np.uint32)) >> 8
+    return int(e8_bits(to_e8m15(x)))
+
+
+def _wrap(x, bits: int):
+    """`x` as a `bits`-wide two's-complement number."""
+    half = 1 << (bits - 1)
+    return ((x + half) & ((1 << bits) - 1)) - half
+
+
+def _fields(w):
+    """A word's sign, exponent and mantissa."""
+    return w >> 23, (w >> 15) & 0xFF, w & 0x7FFF
+
+
+def _fma(va, vb, vc):
+    """The FMA family's specials, magnitude and exponent base (`vec_alu.v`).
+
+    DSP-E aligns the addend with ONE right shift of ``{sig_c, 32'b0}``; a
+    negative shift (the product below half the addend's ulp) drops the product
+    and passes the addend. The sticky mask is 16 bits wide, so a ZERO addend
+    (shift 48) sets sticky from its implicit one: every MUL rounds a tie up.
+    """
+    sa, ea, ma = _fields(va)
+    sb, eb, mb = _fields(vb)
+    sc, ec, mc = _fields(vc)
+    pz, cz = (ea == 0) | (eb == 0), ec == 0
+    sab = sa ^ sb
+    neg = sab ^ sc
+    an, ai = (ea == 255) & (ma != 0), (ea == 255) & (ma == 0)
+    bn, bi = (eb == 255) & (mb != 0), (eb == 255) & (mb == 0)
+    cn, ci = (ec == 255) & (mc != 0), (ec == 255) & (mc == 0)
+    p_nan = an | bn | (ai & (eb == 0)) | ((ea == 0) & bi)
+    p_inf = (ai | bi) & ~p_nan
+    f_nan = p_nan | cn | (p_inf & ci & (sab != sc))
+    spec = (f_nan, (p_inf | ci) & ~f_nan, np.zeros_like(f_nan))
+    sum_e = np.where(pz, 2, ea + eb)
+    s_raw = sum_e - ec - 110
+    byp = (s_raw < 0) & ~cz
+    s_amt = np.where(cz, 48, np.where(byp, 0, np.minimum(s_raw, 48)))
+    ebase = np.where(byp, ec - 47, sum_e - 157)
+    gc = 0x8000 | mc
+    algn = (gc << 32) >> s_amt
+    lost = np.clip(s_amt - 32, 0, 16)
+    stk = (s_amt >= 33) & ((gc & ((1 << lost) - 1)) != 0)
+    prod = np.where(byp | pz, 0, (0x8000 | ma) * (0x8000 | mb))
+    p = np.where(neg == 1, algn - prod, algn + prod) & ((1 << 48) - 1)
+    res_neg = (neg == 1) & (s_amt != 0) & (p >> 47 == 1)
+    mag = np.where(res_neg, -p & ((1 << 33) - 1), p)
+    sign = np.where(neg == 1, np.where(res_neg, sab, sc), sab)
+    canc = (neg == 1) & ~pz & ~cz
+    return spec, np.where(p_inf, sab, sc), mag, sign, stk, ebase, canc
+
+
+def _seed(name: str, a):
+    """A seed's specials, magnitude and exponent base (`vec_alu.v`).
+
+    exp2 reduces x to s8.17 fixed point, R = round-half-up(|x| * 2^17) negated
+    for x < 0, in a 25-bit signed word: |x| in [128, 256) is NOT a special
+    (only e > 134 is) and wraps, so exp2(200) is 2^-56 and exp2(-200) is 2^56.
+    A segment origin (index and u both zero) takes the exact identity value in
+    place of c0; h is still evaluated.
+    """
+    s, e, m = _fields(a)
+    z, x = e == 0, e == 255
+    n, i = x & (m != 0), x & (m == 0)
+    fsel = SEEDS.index(name)
+    false = np.zeros_like(z)
+    if fsel == 0:
+        sh = np.where(e > 134, 0, np.minimum((134 - e) & 0xFF, 26))
+        rr = ((1 << 25) | (m << 10)) >> sh
+        hi, lo = rr >> 1, rr & 1
+        rr_v = _wrap(np.where(s == 1, -(hi + lo), hi + lo), 25)
+        k, f = rr_v >> 17, rr_v & 0x1FFFF
+        idx, u = f >> 12, f & 0xFFF
+        big = i | (e > 134)
+        spec = (n, ~n & (s == 0) & big, ~n & (s == 1) & big)
+        ssign, ebase = false.astype(np.int64), k + 107
+    else:
+        idx, u = m >> 10, (m & 0x3FF) << 2
+        neg = (s == 1) & ~z
+        if fsel == 1:
+            spec, ssign, ebase = (n | neg, ~n & ~neg & (i | z), false), z, 107
+        elif fsel == 2:
+            spec, ssign, ebase = (n, ~n & z, ~n & i), s, 234 - e
+        else:
+            idx = idx | ((~e & 1) << 5)
+            spec = (n | neg, ~n & ~neg & z, ~n & ~neg & i)
+            ssign, ebase = (s == 1) & z, 107 - ((e - 127) >> 1)
+    ident = (idx & 31 == 0) & (u == 0) & ((fsel != 3) | (idx >> 5 == 0))
+    c0, c1, c2 = np.moveaxis(SEED_TABLE[fsel][idx], -1, 0)
+    c0 = np.where(ident, 0 if fsel < 2 else 1 << 20, c0)
+    c0 = c0 + (1 << 20 if fsel == 0 else ((e - 127) << 20) if fsel == 1 else 0)
+    c0 = _wrap(c0, 30)
+    h = _wrap((c2 * u + (c1 << SEED_SH) + (1 << 15)) >> SEED_SH, 22)
+    f = _wrap((h * u + (c0 << SEED_SH) + (1 << 15)) >> SEED_SH, 30)
+    sign = (f < 0) if fsel == 1 else ssign
+    return spec, ssign, np.abs(f), sign, false, ebase, false
+
+
+def lane(name: str, a, b, c):
+    """One `vec_alu.v` instruction over 24-bit words: ``(result, predicate)``.
+
+    Every opcode goes through the FMA or a seed and one normaliser: the
+    magnitude's leading one sets the exponent over ``ebase``, the 16 bits under
+    it round to nearest even with a guard and a sticky, and the exponent bounds
+    flush to a signed zero or saturate to an infinity. MOV/NEG/ABS/MAX/MIN/SEL
+    ride as ``winner * 1.0 + 0``, which is why a -0 operand comes out +0.
+    """
+    a, b, c = np.broadcast_arrays(
+        *(np.asarray(w, np.int64) & 0xFFFFFF for w in (a, b, c))
+    )
+    ma, mb = a & E8_MAG, b & E8_MAG
+    sa, sb = a >> 23, b >> 23
+    nan = (((a >> 15) & 0xFF == 255) & (a & 0x7FFF != 0)) | (
+        ((b >> 15) & 0xFF == 255) & (b & 0x7FFF != 0)
+    )
+    eq = ((ma == 0) & (mb == 0)) | ((ma == mb) & (sa == sb))
+    lt = ~(nan | eq) & np.where(sa != sb, sa == 1, (ma < mb) ^ (sa == 1))
+    gt = ~nan & ~eq & ~lt
+    pred = {"VCMPLT": lt, "VCMPGT": gt, "VCMPEQ": eq & ~nan}.get(
+        name, np.zeros_like(lt)
+    )
+    va = {
+        "VMAX": np.where(lt, b, a),
+        "VMIN": np.where(gt, b, a),
+        "VNEG": a ^ E8_SIGN,
+        "VFNMA": a ^ E8_SIGN,
+        "VABS": ma,
+        "VSEL": np.where(c & E8_MAG != 0, a, b),
+    }.get(name, np.where(pred, E8_ONE, 0) if name in LANE_PRED else a)
+    vb = b if name in ("VMUL", "VFMA", "VFNMA") else np.full_like(a, E8_ONE)
+    vc = {"VADD": c, "VFMA": c, "VFNMA": c, "VSUB": c ^ E8_SIGN}.get(name, 0 * a)
+    if name in SEEDS:
+        spec, ssign, mag, sign, stk, ebase, canc = _seed(name, a)
+    else:
+        spec, ssign, mag, sign, stk, ebase, canc = _fma(va, vb, vc)
+    nz = mag != 0
+    pos = np.frexp(mag.astype(np.float64))[1] - 1
+    nrm = np.where(nz, mag << np.clip(47 - pos, 0, 47), 0)
+    sig = nrm >> 32
+    up = ((nrm >> 31) & 1 == 1) & ((nrm & ((1 << 31) - 1) != 0) | stk | (sig & 1 == 1))
+    sig = sig + up
+    carry = sig >> 16
+    e_fin = pos + ebase + carry
+    sign = sign.astype(np.int64) << 23
+    ssign = np.asarray(ssign, np.int64) << 23
+    out = np.where(e_fin <= 0, sign, sign | (e_fin << 15) | (sig & 0x7FFF))
+    out = np.where(e_fin >= 255, sign | E8_INF, out)
+    out = np.where(nz, out, np.where(canc, 0, sign))
+    out = np.where(spec[2], ssign, out)
+    out = np.where(spec[1], ssign | E8_INF, out)
+    return np.where(spec[0], E8_NAN, out), pred
+
+
+def _fold(words, comb: str):
+    """A `vec_lanes` tree over the last axis: adjacent pairs, `a` the left one."""
+    while words.shape[-1] > 1:
+        words, _ = lane(comb, words[..., 0::2], words[..., 1::2], words[..., 1::2])
+    return words[..., 0]
 
 
 def to_fp16(x):
@@ -466,18 +744,6 @@ def to_fp16(x):
         out = np.where(over, np.copysign(FP16_MAX, x), out.astype(np.float64))
         out = out.astype(FP16)
     return out, int(over.sum())
-
-
-def reduce_tree(values, comb):
-    """Fold `values` down its first axis pairwise, as `vec_lanes` wires the tree.
-
-    Every node is one ALU, so every level rounds and the answer depends on the
-    tree's shape as much as on the operands.
-    """
-    cur = np.asarray(values, np.float64)
-    while cur.shape[0] > 1:
-        cur = to_e8m15(comb(cur[0::2], cur[1::2]))
-    return cur[0]
 
 
 class VectorUnit(UnitModel):
@@ -725,15 +991,16 @@ class VectorUnit(UnitModel):
         c = self._source((word >> 21) & 3, (word >> 5) & 0xF)
         span = self.nchunk * SLICES
         keep = np.arange(span) < self.vl
+        out, pred = lane(name, e8_bits(a), e8_bits(b), e8_bits(c))
         if name in LANE_PRED:
-            got = np.broadcast_to(LANE_PRED[name](a, b), (span,))
+            got = np.broadcast_to(pred, (span,))
             np.copyto(self.preg[(word >> 3) & 3][:span], got, where=keep)
             return
         pm = (word >> 1) & 3
         if pm:
             held = self.preg[(word >> 3) & 3][:span]
             keep = keep & (held if pm == 1 else ~held)
-        got = to_e8m15(LANE_VALUE[name](a, b, c))
+        got = np.broadcast_to(e8_value(out), (span,))
         np.copyto(self.vreg[(word >> 17) & 0xF][:span], got, where=keep)
 
     def _reduce(self, word: int) -> None:
@@ -755,22 +1022,26 @@ class VectorUnit(UnitModel):
         if self.vmode != V.TREE:
             raise VecFault(FAULT["F_OPCODE"], ": VRED outside TREE mode")
         n = self.vl // SLICES
-        a = self.vreg[va][: self.vl].reshape(n, SLICES)
-        comb, ident = RED_COMB[kind], RED_IDENT[kind]
+        a = e8_bits(self.vreg[va][: self.vl]).reshape(n, SLICES)
+        comb = RED_COMB[kind]
         if kind in RED_HALF:
             # The leaf takes ONE element, so a chunk is two beats over the two
             # halves of its slices, and eight leaves feed the seven-node tree.
-            other = self.vreg[vb][: self.vl].reshape(n, SLICES)
-            leaves = to_e8m15(np.exp2(a) if kind == 5 else a * other)
+            other = e8_bits(self.vreg[vb][: self.vl]).reshape(n, SLICES)
+            leaves, _ = (
+                lane("VEXP2", a, 0, 0) if kind == 5 else lane("VMUL", a, other, 0)
+            )
             if kind == 5:
-                self.vreg[vb][: self.vl] = leaves.reshape(-1)
-            beats = leaves.reshape(2 * n, SLICES // 2).T
+                self.vreg[vb][: self.vl] = e8_value(leaves).reshape(-1)
+            totals = _fold(leaves.reshape(2 * n, SLICES // 2), comb)
         else:
-            beats = a.T
-        acc = np.full(SLICES, ident)
-        totals = reduce_tree(beats, comb)
-        acc[: totals.size] = to_e8m15(comb(totals, ident))
-        self.sreg[vd] = to_bits(reduce_tree(acc.reshape(SLICES, 1), comb)[0])
+            totals = _fold(a, comb)
+        # Sixteen rotating partials, beat j into partial j mod 16 as
+        # `comb(tree, partial)`; the tail beat folds the partials in the tree.
+        acc = np.full(SLICES, RED_IDENT[kind], np.int64)
+        for j, total in enumerate(totals):
+            acc[j % SLICES] = lane(comb, total, acc[j % SLICES], acc[j % SLICES])[0]
+        self.sreg[vd] = int(_fold(acc, comb))
 
     # ---------------------------------------------------------- L1 and memory
     def _load(self, dt: int, ad: int, off: int, vd: int) -> None:
@@ -782,7 +1053,8 @@ class VectorUnit(UnitModel):
         if dt == DT_FP16:
             got = raw.reshape(-1).view(FP16)
         else:
-            got = raw.reshape(self.nchunk, 2 * WORD_BYTES).view(np.float32).reshape(-1)
+            got = raw.reshape(self.nchunk, 2 * WORD_BYTES).view(np.uint32).reshape(-1)
+            got = e8_value(e8_of_f32(got))
         self.vreg[vd][: got.size] = got
 
     def _store(self, dt: int, ad: int, off: int, vs: int) -> None:
