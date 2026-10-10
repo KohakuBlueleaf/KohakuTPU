@@ -10,13 +10,14 @@ holds the sequencer until its last sub-tile has left.
 
 Bias: one more ACCUMULATING GEMM per tile over a K-block whose A is a constant
 ones block (resident in both banks after the chunk entries) and whose B holds
-the bias in column 0. It accumulates, so it may emit.
+the bias split over two columns (`bias_block`). It accumulates, so it may emit.
 """
 
 from itertools import pairwise
 
 import numpy as np
 from kohakutpu.hw import tensor as T
+from kohakutpu.hw.mxfp7 import value_fp16
 from kohakutpu.ir.l1.cluster import Drain, Fill, Gemm
 from kohakutpu.isa.cluster import ISA
 
@@ -39,17 +40,39 @@ def pack_b(w, gn: int, nk: int) -> bytes:
     return pack(w, gn, nk, 1)
 
 
+#: The bias K-block's A row: two columns, so the bias rides as hi*A0 + lo*A1.
+#: One column carries it at MXFP7's int7 (rel_l2 4.7e-3, and A0 quantises to
+#: 1.00195, not 1); two carry it to rel_l2 8.3e-5, past fp16, in the same
+#: sweep (MEASURED, host model of mx_quant.v). 2**-12 for a third underflows.
+BIAS_A = (1.0, 2.0**-6)
+
+
+def _ones(rows: int):
+    ones = np.zeros((rows, KBLOCK), np.float16)
+    for c, v in enumerate(BIAS_A):
+        ones[:, c] = v
+    return ones
+
+
+#: The A row's values as the clusters read them, after quantisation.
+BIAS_AQ = value_fp16(_ones(1))[0, : len(BIAS_A)]
+
+
 def ones_block(gm: int) -> bytes:
-    """The A side of the bias K-block: column 0 is 1, `4*gm` rows."""
-    ones = np.zeros((LANES * gm, KBLOCK), np.float16)
-    ones[:, 0] = 1
-    return pack(ones, gm, 1, 0)
+    """The A side of the bias K-block: `BIAS_A` in every one of `4*gm` rows."""
+    return pack(_ones(LANES * gm), gm, 1, 0)
 
 
 def bias_block(bias, gn: int) -> bytes:
-    """The B side of the bias K-block: column 0 is the bias, one row a channel."""
-    block = np.zeros((len(bias), KBLOCK), np.float16)
-    block[:, 0] = bias
+    """The B side of the bias K-block, one row a channel: column `c` holds what
+    the bias still lacks over `BIAS_AQ[c]`, so the row's dot product with the
+    ones row is the bias to past fp16 precision."""
+    v = np.asarray(bias, np.float64)
+    block = np.zeros((len(v), KBLOCK), np.float16)
+    have = np.zeros(len(v))
+    for c, a in enumerate(BIAS_AQ):
+        block[:, c] = ((v - have) / a).astype(np.float16)
+        have = value_fp16(block)[:, : c + 1] @ BIAS_AQ[: c + 1]
     return pack(block, gn, 1, 1)
 
 

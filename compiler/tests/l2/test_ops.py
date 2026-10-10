@@ -73,9 +73,7 @@ def test_matmul(bias, late):
     r.run()
     want = value_fp16(x) @ value_fp16(w).T
     if bias:
-        want = (
-            want + value_fp16(np.pad(bv[:, None], ((0, 0), (0, MM.KBLOCK - 1))))[:, 0]
-        )
+        want = want + bv.astype(np.float64)
     assert rel(c.layout.unpack(r.mdl.get, c.base), want) < TOL
 
 

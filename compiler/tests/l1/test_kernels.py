@@ -66,8 +66,31 @@ def test_matmul_and_linear_bias(shape, tile, stagger, bias):
     mdl.run(prog)
     want = value_fp16(x) @ value_fp16(w).T
     if bias:
-        want = want + value_fp16(np.pad(b[:, None], ((0, 0), (0, MM.KBLOCK - 1))))[:, 0]
+        want = want + b.astype(np.float64)
     assert rel(MM.unpack(mdl.get, where, m, n, gm, gn), want) < TOL
+
+
+def test_the_bias_block_carries_the_bias_past_fp16():
+    """Linear against the product plus the EXACT bias: an fp16 store's rel_l2.
+    One MXFP7 column (the bias at int7, the ones at 1.00195) measured 3.5e-3."""
+    m, k, n, gm, gn, nk = 64, 64, 128, 8, 8, 2
+    rng = np.random.default_rng(5)
+    x = (rng.standard_normal((m, k)) * 0.5).astype(np.float16)
+    w = (rng.standard_normal((n, k)) * 0.5).astype(np.float16)
+    b = (rng.standard_normal(n) * 4).astype(np.float16)
+    mdl = L1Model()
+    a_at, b_at = mdl.put(MM.pack_a(x, gm, nk)), mdl.put(MM.pack_b(w, gn, nk))
+    kw = {
+        "ones_at": mdl.put(MM.ones_block(gm)),
+        "bias_at": mdl.put(MM.bias_block(b, gn)),
+    }
+    prog = Program(mdl.machine)
+    c_at = mdl.alloc(m * n * 2)
+    where = MM.matmul(prog, a_at, b_at, c_at, m, n, k, gm, gn, nk, **kw)
+    mdl.run(prog)
+    got = MM.unpack(mdl.get, where, m, n, gm, gn)
+    want = value_fp16(x) @ value_fp16(w).T + b.astype(np.float64)
+    assert np.linalg.norm(got - want) / np.linalg.norm(want) < 6e-4
 
 
 @pytest.mark.parametrize("late", [False, True])
