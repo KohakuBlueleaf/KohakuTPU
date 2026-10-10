@@ -92,22 +92,33 @@ class Program:
         sent: dict = {}
         awaited: dict = {}
         marks: dict = {}
-        # Sends between two sync points are unordered across units, so each
-        # unit's go out as ONE dispatch: a fetch-port request costs ~1k node
-        # cycles whatever its length (MEASURED on card_v9_1n).
+        # Sends between two sync points are unordered across units, so they go
+        # out as few dispatches as the node allows: a fetch-port request costs
+        # ~1k node cycles whatever its length (MEASURED on card_v9_1n). The node
+        # sends a fetched step whole, waiting on that unit's credit, before the
+        # next step, so a stream past its unit's credit is cut at the credit and
+        # the units' pieces interleave: no unit waits idle behind another's
+        # credit (MEASURED: 16 vector epilogues, 973 words a core, 411k cycles as
+        # one step a core, 310k split by package). A stream within the credit
+        # stays one step: cut at 255 anyway, add 262144 ran 93.9k -> 107.8k.
         pending: dict = {}
+        piece = self.machine.inst_depth
 
         def flush(only=None) -> None:
+            ready = []
             for u in [only] if only is not None else list(pending):
                 words = pending.pop(u, [])
                 coord = (b.units[u].x, b.units[u].y)
                 lower = self.lowerings.get(types.get(coord))
                 if resident is not None and lower is not None:
                     words = lower(words, resident, coord)
-                if not words:
-                    continue
-                b.dispatch(u, words)
-                sent[u] = sent.get(u, 0) + len(words)
+                if words:
+                    ready.append((u, words))
+                    sent[u] = sent.get(u, 0) + len(words)
+            for k in range(0, max((len(w) for _, w in ready), default=0), piece):
+                for u, words in ready:
+                    if words[k : k + piece]:
+                        b.dispatch(u, words[k : k + piece])
 
         def await_to(u, upto: int) -> None:
             if upto > awaited.get(u, 0):

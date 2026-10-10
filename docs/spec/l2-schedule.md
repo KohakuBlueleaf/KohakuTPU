@@ -66,9 +66,11 @@ One L1 `Program` per package:
    is a barrier on both sides).
 3. **Node order.** The node is single-threaded: a wait blocks every step behind
    it. Chunks are sent as early as their waits allow; when nothing can be sent,
-   the wait emitted next is the one whose producer the cost estimates finish
-   first. This is what the hand-written overlapped kernels do: every producer
-   holds its next work before the node blocks.
+   the wait emitted next unblocks the unit the cost estimates let start
+   soonest -- its producers finished and the unit itself free -- so one unit's
+   waits never queue ahead of another's ready work. This is what the
+   hand-written overlapped kernels do: every producer holds its next work
+   before the node blocks.
 
 The compiler emits correct, near-optimal L1. Optimality inside a unit's stream
 beyond what its lowerer knows is the L1 -> L1 optimizer's, a separate pass

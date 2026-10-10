@@ -35,6 +35,29 @@ def test_sends_between_syncs_are_one_dispatch_per_unit_and_waits_count_words():
     assert got == sends + [(Op.DISPATCH, 1), (Op.AWAIT, 1), (Op.AWAIT, 1)]
 
 
+def test_a_stream_past_its_credit_interleaves_in_credit_sized_steps():
+    """The node sends a fetched step whole, waiting on that unit's credit: a
+    stream longer than the credit (64 here) is cut at it and the units' pieces
+    alternate, each unit's words in order; a stream within it stays whole."""
+    p = Program(MACHINE)
+    a, b = p.units("UA")
+    p.send(a, *[Word(k) for k in range(150)]).send(
+        b, *[Word(1000 + k) for k in range(100)]
+    )
+    p.barrier()
+    p.send(a, *[Word(k) for k in range(40)]).send(b, *[Word(k) for k in range(30)])
+    pkg = p.build(None, None).build(defaults=False)
+    units = [(u.x, u.y) for u in pkg.units]
+    got = [(units[s.unit], s.count) for s in pkg.steps if s.op == Op.DISPATCH]
+    assert got == [(a, 64), (b, 64), (a, 64), (b, 36), (a, 22), (a, 40), (b, 30)]
+    first = pkg.steps[: next(i for i, s in enumerate(pkg.steps) if s.op == Op.BARRIER)]
+    words = {u: [] for u in units}
+    for s in first:
+        if s.op == Op.DISPATCH:
+            words[units[s.unit]] += pkg.payloads[s.arg : s.arg + s.count]
+    assert words[a] == list(range(150)) and words[b] == [1000 + k for k in range(100)]
+
+
 def test_a_wait_up_to_a_mark_awaits_only_the_words_before_it():
     """The unit keeps the words sent after the mark: they are dispatched before
     the AWAIT, and the final barrier awaits the rest."""

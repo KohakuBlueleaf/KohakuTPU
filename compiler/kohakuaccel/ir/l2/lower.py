@@ -55,6 +55,7 @@ def compile(schedule: Schedule, machine, lowerers: dict, mover=None, program=Pro
                 _segment(schedule, segment, deps, units, prog, i)
                 if mover is None:
                     raise ScheduleError("a mover item and no `mover` to lower it")
+                _note(prog, i)
                 prog.move(mover(schedule.items[i]))
                 segment = []
             else:
@@ -63,6 +64,14 @@ def compile(schedule: Schedule, machine, lowerers: dict, mover=None, program=Pro
         prog.barrier()
         out.append(prog)
     return out
+
+
+def _note(prog, item: int) -> None:
+    """Tell a program that keeps provenance (a ``note(item)`` method) which
+    item the ops it is sent next come from."""
+    note = getattr(prog, "note", None)
+    if note is not None:
+        note(item)
 
 
 def _segment(schedule, items, deps, units, prog, closer) -> None:
@@ -131,6 +140,7 @@ def _segment(schedule, items, deps, units, prog, closer) -> None:
         nonlocal node_t
         k = head[at]
         p = streams[at][k]
+        _note(prog, p.item)
         prog.send(at, *p.chunk.ops)
         unit_free[at] = max(node_t, unit_free[at]) + p.chunk.cycles
         finish[(at, k)] = unit_free[at]
@@ -158,17 +168,25 @@ def _segment(schedule, items, deps, units, prog, closer) -> None:
             for at in ready:
                 send(at)
             continue
-        blocking = {
-            r
-            for at in streams
-            if pending(at)
-            for r in streams[at][head[at]].requires
-            if not satisfied(r)
-        }
-        sent = [r for r in blocking if r in finish]
-        if not sent:
+        # Wait for the blocked unit that can start soonest: its producers done
+        # and the unit itself free. Waiting on the soonest producer alone, ties
+        # broken arbitrarily, let one core's waits queue ahead of another
+        # core's ready work (MEASURED: 16 tile epilogues on two cores).
+        blocked = []
+        for at in streams:
+            if not pending(at):
+                continue
+            unsat = [r for r in streams[at][head[at]].requires if not satisfied(r)]
+            if not unsat:
+                continue
+            if any(r not in finish for r in unsat):
+                continue
+            start = max(max(finish[r] for r in unsat), unit_free[at])
+            blocked.append((start, min(finish[r] for r in unsat), unsat))
+        if not blocked:
             raise ScheduleError("the node would wait on a chunk never sent")
-        wait(min(sent, key=lambda r: finish[r]))
+        _, _, unsat = min(blocked, key=lambda b: (b[0], b[1]))
+        wait(min(unsat, key=lambda r: finish[r]))
     for r in sorted(closing, key=lambda r: finish[r]):
         if not satisfied(r):
             wait(r)

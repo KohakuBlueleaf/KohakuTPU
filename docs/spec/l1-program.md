@@ -36,10 +36,16 @@ the ops it was given beside their words, so it prints as text
 
 ## 3. Lowering to L0 (`Program.build(fetch, resident)`)
 
-1. Each unit's sends in one sync interval become ONE `DISPATCH` step. MEASURED
-   (card_v9_1n): a fetch-port request costs ~1k node cycles whatever its length;
-   four clusters sent one instruction a dispatch ran at 73% of sweep rate,
-   coalesced 99%.
+1. Each unit's sends in one sync interval become one `DISPATCH` step, or --
+   past the unit's credit (`inst_depth`) -- steps of the credit's size, the
+   units' steps interleaved: A's first 512, B's first 512, A's next, ...
+   MEASURED (card_v9_1n): a fetch-port request costs ~1k node cycles whatever
+   its length (four clusters sent one instruction a dispatch ran at 73% of sweep
+   rate, coalesced 99%), and the node sends a fetched step whole, waiting on
+   that unit's credit, before the next: two vector cores each sent 973 words as
+   one step ran 16 epilogues in 411k cycles, split by package in 310k. A stream
+   within the credit cut smaller costs: add 262144 cut at 255 ran 93.9k ->
+   107.8k.
 2. A unit type named in `Program.lowerings` has its interval's words rewritten
    by ``f(words, resident, coord)`` against `resident`, the caller's state kept
    across packages (what the unit already holds). `resident=None` runs no hook.
