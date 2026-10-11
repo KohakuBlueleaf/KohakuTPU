@@ -36,9 +36,10 @@ def test_sends_between_syncs_are_one_dispatch_per_unit_and_waits_count_words():
 
 
 def test_a_stream_past_its_credit_interleaves_in_credit_sized_steps():
-    """The node sends a fetched step whole, waiting on that unit's credit: a
-    stream longer than the credit (64 here) is cut at it and the units' pieces
-    alternate, each unit's words in order; a stream within it stays whole."""
+    """The node sends a fetched step whole, waiting on that unit's credit, and
+    a dispatch's `last` flit keeps one credit: a stream longer than half the
+    credit (32 here) is cut at it and the units' pieces alternate, each unit's
+    words in order; a stream within it stays whole."""
     p = Program(MACHINE)
     a, b = p.units("UA")
     p.send(a, *[Word(k) for k in range(150)]).send(
@@ -49,7 +50,8 @@ def test_a_stream_past_its_credit_interleaves_in_credit_sized_steps():
     pkg = p.build(None, None).build(defaults=False)
     units = [(u.x, u.y) for u in pkg.units]
     got = [(units[s.unit], s.count) for s in pkg.steps if s.op == Op.DISPATCH]
-    assert got == [(a, 64), (b, 64), (a, 64), (b, 36), (a, 22), (a, 40), (b, 30)]
+    first = [(a, 32), (b, 32)] * 3 + [(a, 32), (b, 4), (a, 22)]
+    assert got == first + [(a, 32), (b, 30), (a, 8)]
     first = pkg.steps[: next(i for i, s in enumerate(pkg.steps) if s.op == Op.BARRIER)]
     words = {u: [] for u in units}
     for s in first:

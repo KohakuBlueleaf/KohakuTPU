@@ -246,7 +246,9 @@ class Program:
         pending: dict = {}
         #: unit -> [Patch], word indices into its pending words
         patched: dict = {}
-        piece = self.machine.inst_depth
+        # Half the credit: a dispatch's `last` flit keeps one credit (isa.md §8),
+        # so a second full-credit piece to one unit never fits.
+        piece = self.machine.inst_depth // 2
         # The package's moves so far (its GOs), and the count each post ends at.
         gos, posts = 0, {}
         labels: dict = {}
@@ -362,10 +364,10 @@ class Program:
                     unit = 0xFFFF if step[3] is None else b.unit(step[3])
                     b.recv(step[1], step[2], unit)
                 case "mark":
-                    # The unit's words up to here go out now, so the count a
-                    # wait names is what the unit is actually sent.
+                    # Every queued word goes out now, the units interleaved, so
+                    # the count a wait names is what the unit is actually sent.
                     u = b.unit(step[1])
-                    flush(u)
+                    flush()
                     marks[step[2]] = sent.get(u, 0)
                 case "wait":
                     u = b.unit(step[1])
