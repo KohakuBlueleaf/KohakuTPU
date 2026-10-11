@@ -1,0 +1,73 @@
+# silu(x) = x / (1 + 2^(-x log2 e)): five lane-ops an element.
+target ktpu.v9
+
+fn silu.l3(x: f16[N]) -> f16[N]
+    t = mul x, -1.4426950408889634              : f32[N]
+    e = exp2 t                                  : f32[N]
+    d = add e, 1.0                              : f32[N]
+    r = inv d                                   : f32[N]
+    y = mul x, r                                : f16[N]
+    return y
+
+# Two cores, each 32768 elements in 128-word tiles, two tiles in flight.
+fn silu.l2(x: f16[65536] @dram, y: f16[65536] @dram)
+    par c in 0..2 on vc[c]
+        for t in 0..16 pipe=2
+            xt = load x[c*32768 + t*2048 : +2048]   : f16[2048] @l1
+            u = mul xt, -1.4426950408889634         : f32[2048]
+            e = exp2 u                              : f32[2048]
+            d = add e, 1.0                          : f32[2048]
+            r = inv d                               : f32[2048]
+            yt = mul xt, r                          : f16[2048] @l1
+            store y[c*32768 + t*2048 : +2048] <- yt
+
+# A pass is two 128-word tiles: input buffers l1[0], l1[128], output buffers
+# l1[256], l1[384]; each tile is four groups of four registers, unpacked one
+# group ahead of the math. Registers v0..v7 hold x, v16..v23 the chains.
+image silu_stream(passes, x, y)
+    desc a0 = x walk=(32, 128)
+    desc a1 = y walk=(32, 128)
+    ainc a0 += 4K
+    ainc a1 += 4K
+    seti s0 = -1.4426950408889634
+    vfill a0 -> l1[0] rel
+    seti s5 = passes
+    loop s5
+        expand unpk(0)
+        for i in 0..8
+            when i < 7
+                expand unpk(i + 1)
+            for j in 0..4
+                vmul v{16 + (i%2)*4 + j}, v{(i%2)*4 + j}, s0
+            for j in 0..4
+                vexp2 v{16 + (i%2)*4 + j}, v{16 + (i%2)*4 + j}
+            for j in 0..4
+                vadd v{16 + (i%2)*4 + j}, v{16 + (i%2)*4 + j}, k1
+            for j in 0..4
+                vinv v{16 + (i%2)*4 + j}, v{16 + (i%2)*4 + j}
+            for j in 0..4
+                vmul v{16 + (i%2)*4 + j}, v{(i%2)*4 + j}, v{16 + (i%2)*4 + j}
+            when i % 4 == 0
+                vsync pack on=drain slack=1         # this buffer's drain, two tiles back
+            for j in 0..4
+                vpack v{16 + (i%2)*4 + j} -> l1[256 + 128*(i/4) + ((i%4)*4 + j)*8] f16
+            when i % 4 == 3
+                vsync drain on=pack
+                vdrain a1 <- l1[256 + 128*(i/4)] rel
+    halt
+
+# Group i's unpacks; a tile's first group also starts the next tile's fill
+# (one past the end on the last pass: read, never used).
+macro unpk(i)
+    when i % 4 == 0
+        vbar
+        vsync fill on=unpack                    # the other input buffer is read out
+        vfill a0 -> l1[128 - 128*(i/4)] rel
+    for j in 0..4
+        vunpk v{(i%2)*4 + j} <- l1[128*(i/4) + ((i%4)*4 + j)*8] f16
+
+fn silu.l1(x: f16[65536] @dram, y: f16[65536] @dram)
+    for c in 0..2
+        send vc[c]
+            run silu_stream(8, x + c*64K, y + c*64K)
+    barrier

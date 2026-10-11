@@ -1,0 +1,205 @@
+# Row softmax over 128 columns, in base 2: s = x log2 e, p = 2^(s - max s),
+# y = p / sum p.
+target ktpu.v9
+
+fn softmax.l3(x: f16[R, 128]) -> f16[R, 128]
+    s = mul x, 1.4426950408889634               : f32[R, 128]
+    m = reduce.max s                            : f32[R]
+    d = sub s, m[:, *]                          : f32[R, 128]
+    p = exp2 d                                  : f32[R, 128]
+    l = reduce.sum p                            : f32[R]
+    r = inv l                                   : f32[R]
+    y = mul p, r[:, *]                          : f16[R, 128]
+    return y
+
+# Two cores, 512 rows each, in tiles of 16 rows.
+fn softmax.l2(x: f16[1024, 128] @dram, y: f16[1024, 128] @dram)
+    par c in 0..2 on vc[c]
+        for t in 0..32 pipe=2
+            xt = load x[c*512 + t*16 : +16, :]      : f16[16, 128] @l1
+            s = mul xt, 1.4426950408889634          : f32[16, 128]
+            m = reduce.max s                        : f32[16]
+            d = sub s, m[:, *]                      : f32[16, 128]
+            p = exp2 d                              : f32[16, 128]
+            l = reduce.sum p                        : f32[16]
+            r = inv l                               : f32[16]
+            yt = mul p, r[:, *]                     : f16[16, 128] @l1
+            store y[c*512 + t*16 : +16, :] <- yt
+
+# A tile is 16 rows, one register a row (v0..v15), as two halves h of 8 rows
+# run in lockstep so each hides the other's latency. Half h's reduce
+# temporaries are v{16+7h}..v{19+7h}, its partials v{20+7h}, its merge
+# register v{21+7h}, its row statistics v{22+7h}: chunk 0 the row max, 1 the
+# row sum, 2 its inverse, lane r = row r of the half. The input buffer l1[0]
+# refills for the next tile once this tile is unpacked; out is l1[256].
+image softmax_rows(tiles, x, y)
+    desc a0 = x walk=(32, 128)
+    desc a1 = y walk=(32, 128)
+    ainc a0 += 4K
+    ainc a1 += 4K
+    seti s0 = 1.4426950408889634
+    seti s5 = tiles
+    vfill a0 -> l1[0] rel
+    loop s5
+        vbar
+        for r in 0..16
+            vunpk v{r} <- l1[r*8] f16
+        vsync fill on=unpack
+        vfill a0 -> l1[0] rel
+        vsync pack on=drain
+        for r in 0..8
+            for h in 0..2
+                vmul v{8*h + r}, v{8*h + r}, s0
+        expand rowreduce(vmax, 0)
+        for r in 0..8
+            for h in 0..2
+                vexp2d v{8*h + r}, v{8*h + r}, bcast(v{22 + 7*h}[0], lane=r, sh=3)
+        expand rowreduce(vadd, 1)
+        for h in 0..2
+            vinv v{22 + 7*h}[2:], v{22 + 7*h}[1:] vl=16
+        for r in 0..8
+            for h in 0..2
+                vmul v{8*h + r}, v{8*h + r}, bcast(v{22 + 7*h}[2], lane=r, sh=3)
+                vpack v{8*h + r} -> l1[256 + (8*h + r)*8] f16
+        vsync drain on=pack
+        vdrain a1 <- l1[256] rel
+    halt
+
+# Two stages over 8-row tiles, software-pipelined: a step runs stage A of tile
+# k (unpack, scale, row max) beside stage B of tile k-1, still in registers
+# (EXP2D, row sum, 1/sum, scale, out). B's sum chain waits while A's
+# reductions run, A's max chain while B scales. Tile parity j's rows are
+# v{8j}..v{8j+7} and its statistics v{22+7j} (chunk 0 max, 1 sum, 2 1/sum);
+# A reduces through v16..v19, v20, v21, B through v23..v26, v27, v28. Buffers:
+# x l1[64j], out l1[256 + 64j]; m0, m1 mark x(j) filled. The last step's A
+# runs on the fill past the end, and its tile is never written.
+image softmax_pipe(passes, x, y)
+    desc a0 = x walk=(32, 64)
+    desc a1 = y walk=(32, 64)
+    ainc a0 += 2K
+    ainc a1 += 2K
+    seti s0 = 1.4426950408889634
+    vfill a0 -> l1[0] rel
+    vmark m0 on=fill
+    vfill a0 -> l1[64] rel
+    vmark m1 on=fill
+    expand unpack_x(0)
+    for r in 0..8
+        expand scale(0, r)
+    for i in 0..8
+        expand red1(vmax, 0, 16, i)
+    for i in 0..8
+        expand red2(vmax, 16, i)
+    for r in 0..8
+        expand red3(vmax, 16, 20, r)
+    for s in 0..4
+        expand mstep(vmax, 20, 21, 22, 0, s)
+    seti s5 = passes
+    loop s5
+        expand step(1)
+        expand step(0)
+    halt
+
+# A on parity j beside B on parity 1 - j.
+macro step(j)
+    expand unpack_x(j)
+    expand scale(j, 0)
+    expand scale(j, 1)
+    for r in 0..8
+        vexp2d v{8 - 8*j + r}, v{8 - 8*j + r}, bcast(v{29 - 7*j}[0], lane=r, sh=3)
+        when r < 6
+            expand scale(j, r + 2)
+    for i in 0..8
+        expand red1(vadd, 8 - 8*j, 23, i)
+    for i in 0..8
+        expand red2(vadd, 23, i)
+    for r in 0..8
+        expand red3(vadd, 23, 27, r)
+    expand mstep(vadd, 27, 28, 29 - 7*j, 1, 0)
+    for i in 0..4
+        expand red1(vmax, 8*j, 16, i)
+    expand mstep(vadd, 27, 28, 29 - 7*j, 1, 1)
+    for i in 4..8
+        expand red1(vmax, 8*j, 16, i)
+    expand mstep(vadd, 27, 28, 29 - 7*j, 1, 2)
+    for i in 0..8
+        expand red2(vmax, 16, i)
+    expand mstep(vadd, 27, 28, 29 - 7*j, 1, 3)
+    for r in 0..8
+        expand red3(vmax, 16, 20, r)
+    vinv v{29 - 7*j}[2:], v{29 - 7*j}[1:] vl=16
+    expand mstep(vmax, 20, 21, 22 + 7*j, 0, 0)
+    vsync pack on=drain slack=1                 # out(1-j) drained two tiles back
+    for r in 0..8
+        vmul v{8 - 8*j + r}, v{8 - 8*j + r}, bcast(v{29 - 7*j}[2], lane=r, sh=3)
+        vpack v{8 - 8*j + r} -> l1[320 - 64*j + 8*r] f16
+        when r == 1
+            expand mstep(vmax, 20, 21, 22 + 7*j, 0, 1)
+        when r == 3
+            expand mstep(vmax, 20, 21, 22 + 7*j, 0, 2)
+        when r == 5
+            expand mstep(vmax, 20, 21, 22 + 7*j, 0, 3)
+    vsync drain on=pack
+    vdrain a1 <- l1[320 - 64*j] rel
+
+# Tile parity j's rows in, and the next tile's fill into its buffer.
+macro unpack_x(j)
+    vsync unpack mark=m{j}
+    for r in 0..8
+        vunpk v{8*j + r} <- l1[64*j + 8*r] f16
+    vsync fill on=unpack
+    vfill a0 -> l1[64*j] rel
+    vmark m{j} on=fill
+
+macro scale(j, r)
+    vmul v{8*j + r}, v{8*j + r}, s0
+
+# One 8-row reduction level i of `op`: rows from register x, temporaries t,
+# partials g; `mstep` s of the 15-op merge into chunk dch of d.
+macro red1(op, x, t, i)
+    op v{t + i%4}[4*(i/4):], v{x + 2*(i%4) + i/4}[0:], v{x + 2*(i%4) + i/4}[4:] vl=64
+
+macro red2(op, t, i)
+    op v{t + i%4}[4*(i/4):], v{t + i%4}[4*(i/4):], v{t + i%4}[4*(i/4) + 2:] vl=32
+
+macro red3(op, t, g, r)
+    op v{g}[r:], v{t + r/2}[4*(r%2):], v{t + r/2}[4*(r%2) + 1:] vl=16
+
+macro mstep(op, g, m, d, dch, s)
+    when s == 0
+        op v{m}, v{g}, merge(v{g}, 8)
+    when s == 1
+        op v{m}, v{m}, merge(v{m}[4:], 4) vl=64
+    when s == 2
+        op v{m}, v{m}, merge(v{m}[2:], 2) vl=32
+    when s == 3
+        op v{d}[dch:], v{m}, merge(v{m}[1:], 1) vl=16
+
+# Row reduction by `op` of each half's 8 rows into chunk `dch` of its
+# statistics register: chunk halves, quarters, eighths, then the 15-op merge.
+macro rowreduce(op, dch)
+    for p in 0..2
+        for k in 0..4
+            for h in 0..2
+                op v{16 + 7*h + k}[4*p:], v{8*h + 2*k + p}[0:], v{8*h + 2*k + p}[4:] vl=64
+    for p in 0..2
+        for k in 0..4
+            for h in 0..2
+                op v{16 + 7*h + k}[4*p:], v{16 + 7*h + k}[4*p:], v{16 + 7*h + k}[4*p + 2:] vl=32
+    for r in 0..8
+        for h in 0..2
+            op v{20 + 7*h}[r:], v{16 + 7*h + r/2}[4*(r%2):], v{16 + 7*h + r/2}[4*(r%2) + 1:] vl=16
+    for h in 0..2
+        op v{21 + 7*h}, v{20 + 7*h}, merge(v{20 + 7*h}, 8)
+    for h in 0..2
+        op v{21 + 7*h}, v{21 + 7*h}, merge(v{21 + 7*h}[4:], 4) vl=64
+    for h in 0..2
+        op v{21 + 7*h}, v{21 + 7*h}, merge(v{21 + 7*h}[2:], 2) vl=32
+    for h in 0..2
+        op v{22 + 7*h}[dch:], v{21 + 7*h}, merge(v{21 + 7*h}[1:], 1) vl=16
+
+fn softmax.l1(x: f16[1024, 128] @dram, y: f16[1024, 128] @dram)
+    for c in 0..2
+        send vc[c]
+            run softmax_pipe(32, x + c*128K, y + c*128K)
+    barrier

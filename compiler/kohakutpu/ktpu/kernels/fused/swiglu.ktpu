@@ -1,0 +1,179 @@
+# SwiGLU: y = (silu(x wg^T) * (x wu^T)) wd^T, MXFP7 operands on the
+# clusters, the gate and the requantisation on the vector cores.
+target ktpu.v9
+
+fn swiglu.l3(x: f16[M, D], wg: f16[F, D], wu: f16[F, D], wd: f16[E, F]) -> f16[M, E]
+    xq = quantise x                             : mx7[M, D]
+    wgq = quantise wg                           : mx7[F, D]
+    wuq = quantise wu                           : mx7[F, D]
+    g = mmt xq, wgq                             : f16[M, F]
+    up = mmt xq, wuq                            : f16[M, F]
+    t = mul g, -1.4426950408889634              : f32[M, F]
+    e = exp2 t                                  : f32[M, F]
+    d = add e, 1.0                              : f32[M, F]
+    r = inv d                                   : f32[M, F]
+    s = mul g, r                                : f32[M, F]
+    a = mul s, up                               : f16[M, F]
+    hq = quantise a                             : mx7[M, F]
+    wdq = quantise wd                           : mx7[E, F]
+    y = mmt hq, wdq                             : f16[M, E]
+    return y
+
+# 256x256 output tiles: cluster u owns column tile u of the gate, the up
+# projection and the output; a vector core gates each (g, up) tile pair into
+# MXFP7 rows of hq as soon as both are drained.
+fn swiglu.l2(x: mx7a[1024, 1024] @dram, wg: mx7b[1024, 1024] @dram, wu: mx7b[1024, 1024] @dram, wd: mx7b[1024, 1024] @dram, y: f16[1024, 1024] @dram)
+    hq = buffer                                 : mx7a[1024, 1024] @dram
+    par u in 0..4 on mg[u]
+        for i in 0..4
+            ga = gemm x[i*256 : +256, :], wg[u*256 : +256, :] k=1024  : f32[256, 256] @acc
+            g = drain ga                        : f16[256, 256] @dram
+            ua = gemm x[i*256 : +256, :], wu[u*256 : +256, :] k=1024  : f32[256, 256] @acc
+            up = drain ua                       : f16[256, 256] @dram
+            par c in 0..1 on vc[u % 2]
+                gt = load g                     : f16[256, 256] @l1
+                ut = load up                    : f16[256, 256] @l1
+                t = mul gt, -1.4426950408889634 : f32[256, 256]
+                e = exp2 t                      : f32[256, 256]
+                d = add e, 1.0                  : f32[256, 256]
+                r = inv d                       : f32[256, 256]
+                s = mul gt, r                   : f32[256, 256]
+                a = mul s, ut                   : f16[256, 256]
+                store hq[i*256 : +256, u*256 : +256] <- quantise a
+    par u in 0..4 on mg[u]
+        for i in 0..4
+            acc = gemm hq[i*256 : +256, :], wd[u*256 : +256, :] k=1024  : f32[256, 256] @acc
+            store y[i*256 : +256, u*256 : +256] <- drain acc
+
+# One drained (g, up) tile pair to hq's 512 MXFP7 A entries, in units of half
+# a sub-row (K-blocks 4q..4q+3 of sub-row s): GT4 unpacks, silu(g) * up, an
+# F16 pack walked (2, 1) and a flat unpack into the quantiser's order, MX7
+# packs. Units run two in flight: half q's g in v{4q}.., up in v{8+4q}.., the
+# product in v{16+4q}..; sub-row parity p's g in l1[64p], up in l1[128 + 64p];
+# half q's round trip l1[256 + 32q], entries l1[320 + 16q], drained by a1
+# (q = 0) or a3 (q = 1). Marks: m{p} sub-row filled, m{2+q} round trip
+# packed, m{4+q} round trip read.
+image swiglu_quant(subrows, g, up, hq)
+    desc a0 = g walk=(32, 64)
+    desc a2 = up walk=(32, 64)
+    desc a1 = hq walk=((32, 8), (16K, 2))
+    desc a3 = hq + 32K walk=((32, 8), (16K, 2))
+    ainc a0 += 2K
+    ainc a2 += 2K
+    ainc a1 += 256
+    ainc a3 += 256
+    seti s0 = -1.4426950408889634
+    for p in 0..2
+        vfill a0 -> l1[64*p] rel
+        vfill a2 -> l1[128 + 64*p] rel
+        vmark m{p} on=fill
+    expand head(0, 0)
+    seti s5 = subrows/2 - 1
+    loop s5
+        expand head(0, 1)
+        expand tail(0)
+        expand head(1, 0)
+        expand tail(1)
+        expand head(1, 1)
+        expand tail(0)
+        expand head(0, 0)
+        expand tail(1)
+    expand head(0, 1)
+    expand tail(0)
+    expand head(1, 0)
+    expand tail(1)
+    expand head(1, 1)
+    expand tail(0)
+    expand tail(1)
+    halt
+
+# Half q of a sub-row of parity p in, gated, and its round-trip pack.
+macro head(p, q)
+    when q == 0
+        vsync unpack mark=m{p}
+    for b in 0..4
+        vunpk v{4*q + b} <- l1[64*p + 32*q + 8*b] gt4
+        vunpk v{8 + 4*q + b} <- l1[128 + 64*p + 32*q + 8*b] gt4
+    when q == 1
+        vsync fill on=unpack
+        vfill a0 -> l1[64*p] rel
+        vfill a2 -> l1[128 + 64*p] rel
+        vmark m{p} on=fill
+    for b in 0..4
+        vmul v{16 + 4*q + b}, v{4*q + b}, s0
+    for b in 0..4
+        vexp2 v{16 + 4*q + b}, v{16 + 4*q + b}
+    for b in 0..4
+        vadd v{16 + 4*q + b}, v{16 + 4*q + b}, k1
+    for b in 0..4
+        vinv v{16 + 4*q + b}, v{16 + 4*q + b}
+    for b in 0..4
+        vmul v{16 + 4*q + b}, v{4*q + b}, v{16 + 4*q + b}
+    for b in 0..4
+        vmul v{16 + 4*q + b}, v{16 + 4*q + b}, v{8 + 4*q + b}
+    vsync pack mark=m{4 + q}                    # the round trip buffer is read out
+    for b in 0..4
+        vpack v{16 + 4*q + b} -> l1[256 + 32*q + 8*b] f16 walk=(2, 1)
+    vmark m{2 + q} on=pack
+
+# Half q's round trip back into the quantiser's order, and its entries out.
+macro tail(q)
+    vsync unpack mark=m{2 + q}
+    for b in 0..4
+        vunpk v{4*q + b} <- l1[256 + 32*q + 8*b] f16
+    vmark m{4 + q} on=unpack
+    vsync pack on=drain slack=1                 # these entries' buffer drained
+    for b in 0..4
+        vpack v{4*q + b} -> l1[320 + 16*q + 4*b] mx7a
+    vsync drain on=pack
+    vdrain a{1 + 2*q} <- l1[320 + 16*q] rel
+
+# Tile of A B^T on cluster u, as mlp.ktpu's: A's row tile at `a`, B's column
+# tile at `b`, the last sweep streaming to `c`; the previous tile's fused
+# drain (to `pc`, when `held`) before it, marked `mk`.
+macro gemm_tile(u, a, b, c, held, pc, mk)
+    send mg[u]
+        for k in 0..16
+            fill A{k % 2} <- a + k*16K n=128
+            fill B{k % 2} <- b + k*16K n=128
+            when k < 15
+                gemm 64x64x2 a=A{k % 2} b=B{k % 2} acc=(k > 0)
+        when held
+            drain pc n=4096 fused
+    mk = mark mg[u]
+    send mg[u]
+        gemm 64x64x2 a=A1 b=B1 acc emit=c
+
+fn swiglu.l1(x: mx7a[1024, 1024] @dram(gm=64, nk=2), wg: mx7b[1024, 1024] @dram(gn=64, nk=2), wu: mx7b[1024, 1024] @dram(gn=64, nk=2), wd: mx7b[1024, 1024] @dram(gn=64, nk=2), y: f16[1024, 1024] @dram(tile=64x64), g: f16[1024, 1024] @dram(tile=64x64), up: f16[1024, 1024] @dram(tile=64x64), hq: mx7a[1024, 1024] @dram(gm=64, nk=2))
+    # Layer 1, step s: cluster u computes g tile (s, u), then up tile (s, u);
+    # the pairs of step s - 1, drained by now, go through the vector cores.
+    for s in 0..4
+        for u in 0..4
+            expand gemm_tile(u, x + s*256K, wg + u*256K, g + (s*4 + u)*128K, s > 0, up + ((s - 1)*4 + u)*128K, e{s*4 + u})
+            expand gemm_tile(u, x + s*256K, wu + u*256K, up + (s*4 + u)*128K, 1, g + (s*4 + u)*128K, r{s*4 + u})
+        when s > 0
+            for u in 0..4
+                wait mg[u] upto=e{s*4 + u}
+                send vc[u % 2]
+                    run swiglu_quant(64, g + ((s - 1)*4 + u)*128K, up + ((s - 1)*4 + u)*128K, hq + (s - 1)*256K + u*64K)
+                q{(s - 1)*4 + u} = mark vc[u % 2]
+    for u in 0..4
+        send mg[u]
+            drain up + (12 + u)*128K n=4096 fused
+        e{16 + u} = mark mg[u]
+    # Layer 2: row tile i of y once the vector cores have written row i of hq.
+    for i in 0..4
+        when i == 1
+            for u in 0..4
+                wait mg[u] upto=e{16 + u}
+                send vc[u % 2]
+                    run swiglu_quant(64, g + (12 + u)*128K, up + (12 + u)*128K, hq + 3*256K + u*64K)
+                q{12 + u} = mark vc[u % 2]
+        for u in 2..4
+            wait vc[u % 2] upto=q{i*4 + u}
+        for u in 0..4
+            expand gemm_tile(u, hq + i*256K, wd + u*256K, y + (i*4 + u)*128K, i > 0, y + ((i - 1)*4 + u)*128K, f{i*4 + u})
+    for u in 0..4
+        send mg[u]
+            drain y + (12 + u)*128K n=4096 fused
+    barrier

@@ -1,0 +1,140 @@
+# Row layernorm over 128 columns with gamma and beta:
+# y = (x - mean) * rsqrt(E[x^2] - mean^2 + 1e-5) * g + b.
+target ktpu.v9
+
+fn layernorm.l3(x: f16[R, 128], g: f16[128], b: f16[128]) -> f16[R, 128]
+    s = reduce.sum x                            : f32[R]
+    mean = mul s, 0.0078125                     : f32[R]
+    sq = mul x, x                               : f32[R, 128]
+    ss = reduce.sum sq                          : f32[R]
+    ex2 = mul ss, 0.0078125                     : f32[R]
+    m2 = mul mean, mean                         : f32[R]
+    var = sub ex2, m2                           : f32[R]
+    ve = add var, 0.00001                       : f32[R]
+    rs = rsqrt ve                               : f32[R]
+    d = sub x, mean[:, *]                       : f32[R, 128]
+    n = mul d, rs[:, *]                         : f32[R, 128]
+    y = fma n, g, b                             : f16[R, 128]
+    return y
+
+# Two cores, 512 rows each, in tiles of 16 rows, two tiles in flight.
+fn layernorm.l2(x: f16[1024, 128] @dram, g: f16[128] @dram, b: f16[128] @dram, y: f16[1024, 128] @dram)
+    par c in 0..2 on vc[c]
+        gt = load g                                 : f16[128] @l1
+        bt = load b                                 : f16[128] @l1
+        for t in 0..32 pipe=2
+            xt = load x[c*512 + t*16 : +16, :]      : f16[16, 128] @l1
+            s = reduce.sum xt                       : f32[16]
+            mean = mul s, 0.0078125                 : f32[16]
+            sq = mul xt, xt                         : f32[16, 128]
+            ss = reduce.sum sq                      : f32[16]
+            ex2 = mul ss, 0.0078125                 : f32[16]
+            m2 = mul mean, mean                     : f32[16]
+            var = sub ex2, m2                       : f32[16]
+            ve = add var, 0.00001                   : f32[16]
+            rs = rsqrt ve                           : f32[16]
+            d = sub xt, mean[:, *]                  : f32[16, 128]
+            n = mul d, rs[:, *]                     : f32[16, 128]
+            yt = fma n, gt, bt                      : f16[16, 128] @l1
+            store y[c*512 + t*16 : +16, :] <- yt
+
+# A tile is 16 rows, one register a row (v0..v15), as two halves h of 8 rows
+# in lockstep. Half h: squares v{16+7h}..v{19+7h}, partial sums v{20+7h},
+# partial squares v{21+7h}, statistics v{22+7h} (chunk 0 sum, 1 sum of
+# squares, 2 mean, 3 variance, 4 rsqrt; lane r = row r). g in v30, b in v31.
+# Tile j of a pass reads l1[128j] and writes l1[256 + 128j]. Marks: m0, m1
+# input j reloaded; m2, m3 input j filled; m4, m5 output j packed.
+image layernorm_rows(passes, x, g, b, y)
+    desc a0 = x walk=(32, 128)
+    desc a1 = y walk=(32, 128)
+    desc a2 = g walk=(32, 8)
+    desc a3 = b walk=(32, 8)
+    seti s1 = 0.0078125
+    seti s2 = 0.00001
+    vfill a2 -> l1[384]
+    vfill a3 -> l1[392]
+    vbar
+    vunpk v30 <- l1[384] f16
+    vunpk v31 <- l1[392] f16
+    vsync fe on=unpack
+    ainc a0 += 4K
+    ainc a1 += 4K
+    vfill a0 -> l1[0] rel
+    vmark m2 on=fill
+    seti s5 = passes
+    loop s5
+        expand tile(0)
+        expand tile(1)
+    halt
+
+macro tile(j)
+    vsync fill mark=m{1 - j}                    # the other input is reloaded
+    vfill a0 -> l1[128 - 128*j] rel
+    vmark m{3 - j} on=fill
+    vsync unpack mark=m{2 + j}
+    for r in 0..8
+        for h in 0..2
+            vunpk v{8*h + r} <- l1[128*j + (8*h + r)*8] f16
+    for r in 0..8
+        for h in 0..2
+            vmul v{16 + 7*h + r/2}[4*(r%2):], v{8*h + r}[4:], v{8*h + r}[4:] vl=64
+    for r in 0..8
+        for h in 0..2
+            vfma v{16 + 7*h + r/2}[4*(r%2):], v{8*h + r}[0:], v{8*h + r}[0:], v{16 + 7*h + r/2}[4*(r%2):] vl=64
+    for r in 0..8
+        for h in 0..2
+            vadd v{8*h + r}[0:], v{8*h + r}[0:], v{8*h + r}[4:] vl=64
+    for r in 0..8
+        for h in 0..2
+            vadd v{8*h + r}[0:], v{8*h + r}[0:], v{8*h + r}[2:] vl=32
+            vadd v{16 + 7*h + r/2}[4*(r%2):], v{16 + 7*h + r/2}[4*(r%2):], v{16 + 7*h + r/2}[4*(r%2) + 2:] vl=32
+    for r in 0..8
+        for h in 0..2
+            vadd v{20 + 7*h}[r:], v{8*h + r}[0:], v{8*h + r}[1:] vl=16
+            vadd v{21 + 7*h}[r:], v{16 + 7*h + r/2}[4*(r%2):], v{16 + 7*h + r/2}[4*(r%2) + 1:] vl=16
+    for k in 0..2
+        for h in 0..2
+            vadd v{20 + 7*h + k}, v{20 + 7*h + k}, merge(v{20 + 7*h + k}, 8)
+    for k in 0..2
+        for h in 0..2
+            vadd v{20 + 7*h + k}, v{20 + 7*h + k}, merge(v{20 + 7*h + k}[4:], 4) vl=64
+    for k in 0..2
+        for h in 0..2
+            vadd v{20 + 7*h + k}, v{20 + 7*h + k}, merge(v{20 + 7*h + k}[2:], 2) vl=32
+    for k in 0..2
+        for h in 0..2
+            vadd v{22 + 7*h}[k:], v{20 + 7*h + k}, merge(v{20 + 7*h + k}[1:], 1) vl=16
+    for h in 0..2
+        vmul v{22 + 7*h}[2:], v{22 + 7*h}[0:], s1 vl=16
+    for h in 0..2
+        vmul v{22 + 7*h}[3:], v{22 + 7*h}[1:], s1 vl=16
+    for h in 0..2
+        vfnma v{22 + 7*h}[3:], v{22 + 7*h}[2:], v{22 + 7*h}[2:], v{22 + 7*h}[3:] vl=16
+    for h in 0..2
+        vadd v{22 + 7*h}[3:], v{22 + 7*h}[3:], s2 vl=16
+    for h in 0..2
+        vrsqrt v{22 + 7*h}[4:], v{22 + 7*h}[3:] vl=16
+    for r in 0..8
+        for h in 0..2
+            vunpk v{8*h + r} <- l1[128*j + (8*h + r)*8] f16
+    vmark m{j} on=unpack
+    for r in 0..8
+        for h in 0..2
+            vsub v{8*h + r}, v{8*h + r}, bcast(v{22 + 7*h}[2], lane=r, sh=3)
+    for r in 0..8
+        for h in 0..2
+            vmul v{8*h + r}, v{8*h + r}, bcast(v{22 + 7*h}[4], lane=r, sh=3)
+    vsync pack on=drain slack=1                 # this output buffer drained
+    for r in 0..8
+        for h in 0..2
+            vfma v{8*h + r}, v{8*h + r}, v30, v31
+            vpack v{8*h + r} -> l1[256 + 128*j + (8*h + r)*8] f16
+    vmark m{4 + j} on=pack
+    vsync drain mark=m{4 + j}
+    vdrain a1 <- l1[256 + 128*j] rel
+
+fn layernorm.l1(x: f16[1024, 128] @dram, g: f16[128] @dram, b: f16[128] @dram, y: f16[1024, 128] @dram)
+    for c in 0..2
+        send vc[c]
+            run layernorm_rows(16, x + c*128K, g, b, y + c*128K)
+    barrier

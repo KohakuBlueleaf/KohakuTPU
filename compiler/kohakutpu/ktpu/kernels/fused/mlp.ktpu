@@ -1,0 +1,153 @@
+# MLP: y = silu(x w1^T) w2^T, MXFP7 operands on the clusters, the silu and the
+# requantisation on the vector cores.
+target ktpu.v9
+
+fn mlp.l3(x: f16[M, D], w1: f16[F, D], w2: f16[E, F]) -> f16[M, E]
+    xq = quantise x                             : mx7[M, D]
+    w1q = quantise w1                           : mx7[F, D]
+    h = mmt xq, w1q                             : f16[M, F]
+    t = mul h, -1.4426950408889634              : f32[M, F]
+    e = exp2 t                                  : f32[M, F]
+    d = add e, 1.0                              : f32[M, F]
+    r = inv d                                   : f32[M, F]
+    s = mul h, r                                : f16[M, F]
+    hq = quantise s                             : mx7[M, F]
+    w2q = quantise w2                           : mx7[E, F]
+    y = mmt hq, w2q                             : f16[M, E]
+    return y
+
+# 256x256 output tiles: cluster u owns column tile u of each layer; a vector
+# core turns each h tile into MXFP7 rows of hq as soon as it is drained.
+fn mlp.l2(x: mx7a[1024, 1024] @dram, w1: mx7b[1024, 1024] @dram, w2: mx7b[1024, 1024] @dram, y: f16[1024, 1024] @dram)
+    hq = buffer                                 : mx7a[1024, 1024] @dram
+    par u in 0..4 on mg[u]
+        for i in 0..4
+            acc = gemm x[i*256 : +256, :], w1[u*256 : +256, :] k=1024   : f32[256, 256] @acc
+            h = drain acc                       : f16[256, 256] @dram
+            par c in 0..1 on vc[u % 2]
+                ht = load h                     : f16[256, 256] @l1
+                t = mul ht, -1.4426950408889634 : f32[256, 256]
+                e = exp2 t                      : f32[256, 256]
+                d = add e, 1.0                  : f32[256, 256]
+                r = inv d                       : f32[256, 256]
+                s = mul ht, r                   : f16[256, 256]
+                store hq[i*256 : +256, u*256 : +256] <- quantise s
+    par u in 0..4 on mg[u]
+        for i in 0..4
+            acc = gemm hq[i*256 : +256, :], w2[u*256 : +256, :] k=1024  : f32[256, 256] @acc
+            store y[i*256 : +256, u*256 : +256] <- drain acc
+
+# One drained 256x256 h tile (64 sub-rows of 64 sub-tile words, as the
+# cluster drains it) to its 512 MXFP7 A entries in hq. Per sub-row s: GT4
+# unpacks give register b rows 0..3 of K-block b (chunk 4q + i = row i,
+# columns 16q..); after silu, an F16 pack walked (2, 1) and a flat unpack put
+# chunk 2i + q in the quantiser's order, and an MX7 pack makes the entry.
+# Two sub-rows are in flight: parity p's x in v{8p}.., its silu in v{16+8p}..;
+# buffers in l1[64p], round trip l1[128 + 64p], entries l1[256 + 32p]. Marks:
+# m{p} in filled, m{2+p} round trip packed, m{4+p} round trip read.
+image silu_quant(subrows, h, hq)
+    desc a0 = h walk=(32, 64)
+    desc a1 = hq walk=((32, 8), (16K, 4))
+    ainc a0 += 2K
+    ainc a1 += 256
+    seti s0 = -1.4426950408889634
+    vfill a0 -> l1[0] rel
+    vmark m0 on=fill
+    vfill a0 -> l1[64] rel
+    vmark m1 on=fill
+    expand head(0)
+    seti s5 = subrows/2 - 1
+    loop s5
+        expand head(1)
+        expand tail(0)
+        expand head(0)
+        expand tail(1)
+    expand head(1)
+    expand tail(0)
+    expand tail(1)
+    halt
+
+# Sub-row in, silu, and its round-trip pack.
+macro head(p)
+    vsync unpack mark=m{p}
+    for b in 0..8
+        vunpk v{8*p + b} <- l1[64*p + 8*b] gt4
+    vsync fill on=unpack
+    vfill a0 -> l1[64*p] rel
+    vmark m{p} on=fill
+    for b in 0..8
+        vmul v{16 + 8*p + b}, v{8*p + b}, s0
+    for b in 0..8
+        vexp2 v{16 + 8*p + b}, v{16 + 8*p + b}
+    for b in 0..8
+        vadd v{16 + 8*p + b}, v{16 + 8*p + b}, k1
+    for b in 0..8
+        vinv v{16 + 8*p + b}, v{16 + 8*p + b}
+    for b in 0..8
+        vmul v{16 + 8*p + b}, v{8*p + b}, v{16 + 8*p + b}
+    vsync pack mark=m{4 + p}                    # the round trip buffer is read out
+    for b in 0..8
+        vpack v{16 + 8*p + b} -> l1[128 + 64*p + 8*b] f16 walk=(2, 1)
+    vmark m{2 + p} on=pack
+
+# The round trip back into the quantiser's order, and the entries out.
+macro tail(p)
+    vsync unpack mark=m{2 + p}
+    for b in 0..8
+        vunpk v{8*p + b} <- l1[128 + 64*p + 8*b] f16
+    vmark m{4 + p} on=unpack
+    vsync pack on=drain slack=1                 # these entries' buffer drained
+    for b in 0..8
+        vpack v{8*p + b} -> l1[256 + 32*p + 4*b] mx7a
+    vsync drain on=pack
+    vdrain a1 <- l1[256 + 32*p] rel
+
+# Tile (row i, column u) of A B^T on cluster u: A's row tile at `a` and B's
+# column tile at `b`, each 16 K-chunks of 128 entries. The last sweep streams
+# the sub-tiles to `c`; the previous tile's fused drain (to `pc`, when
+# `held`) goes before it, and `mk` marks the stream right after that drain.
+macro gemm_tile(u, a, b, c, held, pc, mk)
+    send mg[u]
+        for k in 0..16
+            fill A{k % 2} <- a + k*16K n=128
+            fill B{k % 2} <- b + k*16K n=128
+            when k < 15
+                gemm 64x64x2 a=A{k % 2} b=B{k % 2} acc=(k > 0)
+        when held
+            drain pc n=4096 fused
+    mk = mark mg[u]
+    send mg[u]
+        gemm 64x64x2 a=A1 b=B1 acc emit=c
+
+fn mlp.l1(x: mx7a[1024, 1024] @dram(gm=64, nk=2), w1: mx7b[1024, 1024] @dram(gn=64, nk=2), w2: mx7b[1024, 1024] @dram(gn=64, nk=2), y: f16[1024, 1024] @dram(tile=64x64), h: f16[1024, 1024] @dram(tile=64x64), hq: mx7a[1024, 1024] @dram(gm=64, nk=2))
+    # Layer 1, step s: cluster u computes h tile (s, u); the tiles of step
+    # s - 1, drained by now, go through the vector cores.
+    for s in 0..4
+        for u in 0..4
+            expand gemm_tile(u, x + s*256K, w1 + u*256K, h + (s*4 + u)*128K, s > 0, h + ((s - 1)*4 + u)*128K, e{s*4 + u})
+        when s > 0
+            for u in 0..4
+                wait mg[u] upto=e{s*4 + u}
+                send vc[u % 2]
+                    run silu_quant(64, h + ((s - 1)*4 + u)*128K, hq + (s - 1)*256K + u*64K)
+                q{(s - 1)*4 + u} = mark vc[u % 2]
+    for u in 0..4
+        send mg[u]
+            drain h + (12 + u)*128K n=4096 fused
+        e{16 + u} = mark mg[u]
+    # Layer 2: row tile i of y once the vector cores have written row i of hq.
+    for i in 0..4
+        when i == 1
+            for u in 0..4
+                wait mg[u] upto=e{16 + u}
+                send vc[u % 2]
+                    run silu_quant(64, h + (12 + u)*128K, hq + 3*256K + u*64K)
+                q{12 + u} = mark vc[u % 2]
+        for u in 2..4
+            wait vc[u % 2] upto=q{i*4 + u}
+        for u in 0..4
+            expand gemm_tile(u, hq + i*256K, w2 + u*256K, y + (i*4 + u)*128K, i > 0, y + ((i - 1)*4 + u)*128K, f{i*4 + u})
+    for u in 0..4
+        send mg[u]
+            drain y + (12 + u)*128K n=4096 fused
+    barrier

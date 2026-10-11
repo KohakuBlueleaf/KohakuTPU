@@ -1,0 +1,243 @@
+# Attention in base 2: y = softmax2(q k^T) v, q arriving pre-scaled by
+# log2(e)/sqrt(d). Exact two-pass: the row max over every key first, then P =
+# 2^(s - m) <= 1 and its row sum, then P v on the clusters and o / l. No step
+# depends on the data.
+target ktpu.v9
+
+fn attention.l3(q: f16[N, D], k: f16[M, D], v: f16[M, D]) -> f16[N, D]
+    qq = quantise q                             : mx7[N, D]
+    kq = quantise k                             : mx7[M, D]
+    s = mmt qq, kq                              : f16[N, M]
+    m = reduce.max s                            : f32[N]
+    d = sub s, m[:, *]                          : f32[N, M]
+    p = exp2 d                                  : f16[N, M]
+    l = reduce.sum p                            : f32[N]
+    pq = quantise p                             : mx7[N, M]
+    vt = transpose v                            : f16[D, M]
+    vq = quantise vt                            : mx7[D, M]
+    o = mmt pq, vq                              : f16[N, D]
+    r = inv l                                   : f32[N]
+    y = mul o, r[:, *]                          : f16[N, D]
+    return y
+
+# 256-row query tiles: cluster u owns tile u's scores and its P v; a vector
+# core turns tile u's scores into P and l, and o into y.
+fn attention.l2(q: mx7a[1024, 64] @dram, k: mx7b[1024, 64] @dram, v: mx7b[64, 1024] @dram, y: f16[1024, 64] @dram)
+    s = buffer                                  : f16[1024, 1024] @dram
+    p = buffer                                  : mx7a[1024, 1024] @dram
+    o = buffer                                  : f16[1024, 64] @dram
+    l = buffer                                  : f32[1024] @dram
+    par u in 0..4 on mg[u]
+        for t in 0..4
+            acc = gemm q[u*256 : +256, :], k[t*256 : +256, :] k=64     : f32[256, 256] @acc
+            store s[u*256 : +256, t*256 : +256] <- drain acc
+        par c in 0..1 on vc[u % 2]
+            st = load s[u*256 : +256, :]        : f16[256, 1024] @l1
+            m = reduce.max st                   : f32[256]
+            d = sub st, m[:, *]                 : f32[256, 1024]
+            pt = exp2 d                         : f16[256, 1024]
+            store l[u*256 : +256] <- reduce.sum pt
+            store p[u*256 : +256, :] <- quantise pt
+        acc = gemm p[u*256 : +256, :], v k=1024 : f32[256, 64] @acc
+        store o[u*256 : +256, :] <- drain acc
+        par c in 0..1 on vc[u % 2]
+            lt = load l[u*256 : +256]           : f32[256] @l1
+            ot = load o[u*256 : +256, :]        : f16[256, 64] @l1
+            r = inv lt                          : f32[256]
+            store y[u*256 : +256, :] <- mul ot, r[:, *]
+
+# One query tile's P and l, a sub-row of 4 rows at a time over S's four
+# 256-key tiles (sub-row s of tile t at s + t*ts + s*2K, 64 words). Slot t
+# (l1[64t]) holds tile t's piece for both passes: pass A takes the row max,
+# pass B unpacks the slot again for P = 2^(S - floor m) in the quantiser's
+# order and its row sum, then refills it with the next sub-row. S in v0..v15
+# by tile parity in pass A, in v0..v7 in pass B; P in v8..v15 / v16..v23 by
+# tile parity, so a tile's exponentials overlap the previous tile's MX7 packs.
+# Max v24, sum v25, m lanes v26 (rows 0..3 twice), m per chunk v27, l lanes
+# v30; temporaries v24 v28 v29 v31. Staging: P halves l1[256 + 64h] (K-chunks
+# 8h..8h+7, `pc` bytes apart, drained by a4 / a5), l l1[384].
+image attn_p(subrows, s, ts, p, pc, lsum)
+    desc a0 = s walk=(32, 64)
+    desc a1 = s + ts walk=(32, 64)
+    desc a2 = s + 2*ts walk=(32, 64)
+    desc a3 = s + 3*ts walk=(32, 64)
+    desc a4 = p walk=((32, 8), (pc, 8))
+    desc a5 = p + 8*pc walk=((32, 8), (pc, 8))
+    desc a6 = lsum walk=(32, 1)
+    ainc a4 += 256
+    ainc a5 += 256
+    ainc a6 += 32
+    for t in 0..4
+        ainc a{t} += 2K
+        vfill a{t} -> l1[64*t] rel
+        vmark m{t} on=fill
+    seti s5 = subrows
+    loop s5
+        for t in 0..4
+            vsync unpack mark=m{t}
+            expand unpk(t, 8*(t % 2))
+            expand tree(vmax, 8*(t % 2), 24, t)
+        vmax v28, v24, v24[4:] vl=64
+        vmax v28[4:], v24, v24[4:] vl=64
+        expand rowmerge(vmax, 28, 29, 26)
+        vmul v27, k1, bcast(v26[0], lane=0, sh=0)
+        expand unpk(0, 0)
+        expand refill(0)
+        for t in 0..4
+            expand pexp(t, 8 + 8*(t % 2))
+            when t < 3
+                expand unpk(t + 1, 0)           # once tile t's exponentials read S
+                expand refill(t + 1)
+            expand pquant(t, 8 + 8*(t % 2))
+        for r in 0..4
+            for h in 0..2
+                vmov v28[r + 4*h:], v25[2*r + h:] vl=16
+        vadd v29, v28, v28[4:] vl=64
+        vadd v29[4:], v28, v28[4:] vl=64
+        expand rowmerge(vadd, 29, 31, 30)
+        vsync pack on=drain slack=2             # the l staging word drained
+        vpack v30 -> l1[384] f16 n=1
+        vsync drain on=pack
+        vdrain a6 <- l1[384] rel
+    halt
+
+# Slot t's piece into S registers from x.
+macro unpk(t, x)
+    for b in 0..8
+        vunpk v{x + b} <- l1[64*t + 8*b] gt4
+
+# Slot t refilled with the next sub-row's piece once it is unpacked.
+macro refill(t)
+    vsync fill on=unpack
+    vfill a{t} -> l1[64*t] rel
+    vmark m{t} on=fill
+
+# Tile t's P (S in v0..v7) into x..x+7: chunk r + 4h (row r, keys 16h..) to
+# chunk 2r + h, chunk-major so neighbouring ops write different registers
+# under one chunk config.
+macro pexp(t, x)
+    for r in 0..4
+        for h in 0..2
+            for b in 0..8
+                vexp2d v{x + b}[2*r + h:], v{b}[r + 4*h:], v27[r + 4*h:] vl=16
+
+# Tile t's P MX7 packs into its half's staging, the half drained after its
+# second tile, and its row sum into v25.
+macro pquant(t, x)
+    when t % 2 == 0
+        vsync pack on=drain slack=2             # this half's staging drained
+    for b in 0..8
+        vpack v{x + b} -> l1[256 + 64*(t/2) + 32*(t % 2) + 4*b] mx7a
+    when t % 2 == 1
+        vsync drain on=pack
+        vdrain a{4 + t/2} <- l1[256 + 64*(t/2)] rel
+    expand sum8(x, t)
+
+# Eight registers from x summed into v25 through temporaries, leaving x for
+# the MX7 packs still reading it (tile t > 0 folds into v25).
+macro sum8(x, t)
+    vadd v24, v{x}, v{x + 1}
+    vadd v28, v{x + 2}, v{x + 3}
+    vadd v29, v{x + 4}, v{x + 5}
+    vadd v31, v{x + 6}, v{x + 7}
+    vadd v24, v24, v28
+    vadd v29, v29, v31
+    when t == 0
+        vadd v25, v24, v29
+    when t > 0
+        vadd v24, v24, v29
+        vadd v25, v25, v24
+
+# Eight registers from x by `op` into acc (tile t > 0 folds into it).
+macro tree(op, x, acc, t)
+    op v{x}, v{x}, v{x + 1}
+    op v{x + 2}, v{x + 2}, v{x + 3}
+    op v{x + 4}, v{x + 4}, v{x + 5}
+    op v{x + 6}, v{x + 6}, v{x + 7}
+    op v{x}, v{x}, v{x + 2}
+    op v{x + 4}, v{x + 4}, v{x + 6}
+    when t == 0
+        op v{acc}, v{x}, v{x + 4}
+    when t > 0
+        op v{x}, v{x}, v{x + 4}
+        op v{acc}, v{acc}, v{x}
+
+# g's chunks (one row each) to lanes of d chunk 0: lane c = `op` over chunk c.
+macro rowmerge(op, g, m, d)
+    op v{m}, v{g}, merge(v{g}, 8)
+    op v{m}, v{m}, merge(v{m}[4:], 4) vl=64
+    op v{m}, v{m}, merge(v{m}[2:], 2) vl=32
+    op v{d}, v{m}, merge(v{m}[1:], 1) vl=16
+
+# o / l for one query tile, eight sub-rows a group: o's sub-row j (16 words,
+# two GT4 registers) times 1/l from l's word j (lanes 0..7 rows 0..3 twice).
+image attn_out(groups, o, lsum, y)
+    desc a0 = o walk=(32, 128)
+    desc a1 = lsum walk=(32, 8)
+    desc a2 = y walk=(32, 128)
+    ainc a0 += 4K
+    ainc a1 += 256
+    ainc a2 += 4K
+    seti s5 = groups
+    loop s5
+        vsync fill on=unpack
+        vfill a0 -> l1[0] rel
+        vfill a1 -> l1[128] rel
+        vbar
+        vunpk v24 <- l1[128] f16
+        for j in 0..8
+            for h in 0..2
+                vunpk v{2*j + h} <- l1[16*j + 8*h] gt4
+        vinv v25, v24
+        vsync pack on=drain
+        for j in 0..8
+            for h in 0..2
+                vmul v{2*j + h}, v{2*j + h}, bcast(v25[j], lane=0, sh=0)
+                vpack v{2*j + h} -> l1[256 + 16*j + 8*h] gt4
+        vsync drain on=pack
+        vdrain a2 <- l1[256] rel
+    halt
+
+# Cluster u's scores, query tile u against the four key tiles, then mark e{u}.
+# A d = 64 sweep is one issue, which cannot emit, so each tile drains after its
+# sweep, behind the next key tile's fill.
+macro scores(u)
+    send mg[u]
+        fill A0 <- q + u*16K n=128
+        fill B0 <- k n=128
+        for t in 0..4
+            gemm 64x64x2 a=A0 b=B{t % 2}
+            when t < 3
+                fill B{(t + 1) % 2} <- k + (t + 1)*16K n=128
+            drain s + (u*4 + t)*128K n=4096
+    e{u} = mark mg[u]
+
+fn attention.l1(q: mx7a[1024, 64] @dram(gm=64, nk=2), k: mx7b[1024, 64] @dram(gn=64, nk=2), v: mx7b[64, 1024] @dram(gn=16, nk=2, t=1), y: f16[1024, 64] @dram(tile=64x16), s: f16[1024, 1024] @dram(tile=64x64), p: mx7a[1024, 1024] @dram(gm=64, nk=2), o: f16[1024, 64] @dram(tile=64x16), l: f16[256, 16] @dram)
+    # Scores of tiles 0 and 1 first; tiles 2 and 3 are written while the
+    # cores turn 0 and 1 into P, so the score writes do not all come first.
+    for half in 0..2
+        for u in 2*half..2*half + 2
+            expand scores(u)
+        # P and l: core u % 2 takes tile u once its scores are in memory.
+        for u in 2*half..2*half + 2
+            wait mg[u] upto=e{u}
+            send vc[u % 2]
+                run attn_p(64, s + u*512K, 128K, p + u*256K, 16K, l + u*2K)
+            f{u} = mark vc[u % 2]
+    # P v over the 16 key chunks, then o / l.
+    for u in 0..4
+        wait vc[u % 2] upto=f{u}
+        send mg[u]
+            for c in 0..16
+                fill A{c % 2} <- p + u*256K + c*16K n=128
+                fill B{c % 2} <- v + c*4K n=32
+                when c < 15
+                    gemm 64x16x2 a=A{c % 2} b=B{c % 2} acc=(c > 0)
+            gemm 64x16x2 a=A1 b=B1 acc emit=o + u*32K
+            drain o + u*32K n=1024 fused
+        g{u} = mark mg[u]
+    for u in 0..4
+        wait mg[u] upto=g{u}
+        send vc[u % 2]
+            run attn_out(8, o + u*32K, l + u*2K, y + u*32K)
+    barrier

@@ -1,0 +1,540 @@
+# Flash attention over heads of 1024 queries x 1024 keys, d = 64, in base 2
+# (q arrives scaled by log2(e) / sqrt(d)): y_h = softmax2(q_h k_h^T) v_h, with
+# an online softmax: each 512-key half of a row gets its own offset I_h, and
+# the two halves' P V partials are rescaled by 2^(I_h - max I) and summed.
+target ktpu.v9
+
+fn flash.l3(q: f16[R, D], k: f16[R, D], v: f16[R, D]) -> f16[R, D]
+    tile n = 1024
+    y = output                                  : f16[R, D]
+    map h in tiles(R, n)
+        qq = quantise q[h, :]                   : mx7[n, D]
+        kq = quantise k[h, :]                   : mx7[n, D]
+        s = mmt qq, kq                          : f16[n, n]
+        m = reduce.max s                        : f32[n]
+        d = sub s, m[:, *]                      : f32[n, n]
+        p = exp2 d                              : f16[n, n]
+        l = reduce.sum p                        : f32[n]
+        pq = quantise p                         : mx7[n, n]
+        vt = transpose v[h, :]                  : f16[D, n]
+        vq = quantise vt                        : mx7[D, n]
+        o = mmt pq, vq                          : f16[n, D]
+        r = inv l                               : f32[n]
+        yh = mul o, r[:, *]                     : f16[n, D]
+        store y[h, :] = yh
+    return y
+
+# Ten heads. Scores tile g (128 queries of head g / 8) on mg[2 (g % 2)]
+# against its head's two key halves; each of its four 32-row tiles t = 4g + r:
+# core h's half of P with the lazy offset I = round(max of its first 32 keys)
+# + 4, the P V partials of half h (and its row sums, against ones) on
+# mg[1 + 2h], then core h's rows 16h.. of y from both halves.
+fn flash.l2(q: mx7a[10240, 64] @dram, k: mx7b[10240, 64] @dram, v: mx7b[64, 10240] @dram, y: f16[10240, 64] @dram)
+    s = buffer                                  : f16[512, 1024] @dram
+    pb = buffer                                 : mx7a[128, 1024] @dram
+    o = buffer                                  : f16[512, 64] @dram
+    lb = buffer                                 : f16[512, 4] @dram
+    ib = buffer                                 : f16[16, 32] @dram
+    ones = buffer                               : mx7b[4, 512] @dram
+    par c in 0..1 on vc[0]
+        store ones <- quantise 1.0
+    par g in 0..80 on mg[2*(g % 2)]
+        for kh in 0..2
+            acc = gemm q[g*128 : +128, :], k[(g/8)*1024 + kh*512 : +512, :] k=64     : f32[128, 512] @acc
+            store s[(g%4)*128 : +128, kh*512 : +512] <- drain acc
+        for r in 0..4
+            par h in 0..2 on vc[h]
+                st = load s[(g%4)*128 + r*32 : +32, h*512 : +512]           : f16[32, 512] @l1
+                m0 = reduce.max st[:, 0 : +32]          : f32[32]
+                m1 = add m0, 49156.0                    : f32[32]
+                i = sub m1, 49152.0                     : f32[32]
+                d = sub st, i[:, *]                     : f32[32, 512]
+                p = exp2 d                              : f16[32, 512]
+                store pb[r*32 : +32, h*512 : +512] <- quantise p
+                store ib[((4*g + r)%8)*2 + h, :] <- i
+            par kh in 0..2 on mg[1 + 2*kh]
+                pv = gemm pb[r*32 : +32, kh*512 : +512], v[:, (g/8)*1024 + kh*512 : +512] k=512   : f32[32, 64] @acc
+                store o[(((4*g + r)%8)*2 + kh)*32 : +32, :] <- drain pv
+                pl = gemm pb[r*32 : +32, kh*512 : +512], ones k=512    : f32[32, 4] @acc
+                store lb[(((4*g + r)%8)*2 + kh)*32 : +32, :] <- drain pl
+            par h in 0..2 on vc[h]
+                oa = load o[(((4*g + r)%8)*2)*32 + 16*h : +16, :]          : f16[16, 64] @l1
+                ob = load o[(((4*g + r)%8)*2 + 1)*32 + 16*h : +16, :]      : f16[16, 64] @l1
+                la = load lb[(((4*g + r)%8)*2)*32 + 16*h : +16, 0]         : f16[16] @l1
+                lc = load lb[(((4*g + r)%8)*2 + 1)*32 + 16*h : +16, 0]     : f16[16] @l1
+                ia = load ib[((4*g + r)%8)*2, 16*h : +16]                  : f16[16] @l1
+                ic = load ib[((4*g + r)%8)*2 + 1, 16*h : +16]              : f16[16] @l1
+                mx = max ia, ic                         : f32[16]
+                da = sub ia, mx                         : f32[16]
+                ea = exp2 da                            : f32[16]
+                dc = sub ic, mx                         : f32[16]
+                ec = exp2 dc                            : f32[16]
+                xa = mul la, ea                         : f32[16]
+                den = fma lc, ec, xa                    : f32[16]
+                rd = inv den                            : f32[16]
+                wa = mul ea, rd                         : f32[16]
+                wc = mul ec, rd                         : f32[16]
+                ya = mul oa, wa[:, *]                   : f32[16, 64]
+                store y[(4*g + r)*32 + 16*h : +16, :] <- fma ob, wc[:, *], ya
+
+# Half h (keys 512h..) of one 32-row tile's P, on core h: eight sub-rows of
+# 4 rows x 512 keys, each four blocks of 128 keys (four GT4 registers; block j
+# of every sub-row in slot j at l1[32j], refilled with the next sub-row's as
+# soon as it is unpacked). Half h of a sub-row is S block h of the scores
+# tile, row group g at + 4K g.
+#
+# Online softmax with a lazy offset: row r of a sub-row uses I = round(max of
+# its first 32 keys of the half) + 4 (EXP2D floors an integral I exactly), so
+# P = 2^(S - I) <= 2^-3.5 near that max, and the half's I goes out with its P
+# V partials (io); the combine rescales each half by 2^(I_h - max I). A RUN
+# whose EXP2D saw a result >= 2^8 (the sticky flag) redoes its half with I =
+# round(row max over the half) + 4.
+#
+# The eight I of the next tile (ir: its half's first registers, fetched to
+# l1[448] at the start) are computed during this tile's last sub-row (eight
+# independent reductions, one stage a batch) and left as L1 words at
+# l1[352 + i], where the next RUN reads them into v28 (sub-row i's in chunk 0
+# after i shifts); a warm-up RUN before the first tile seeds them. The last
+# sub-row's S refills fetch the next tile's first sub-row, so a RUN with
+# pre = 0 starts on resident slots (its S descriptor then starts a sub-row
+# in). P goes out MX7, two blocks a drain, into the L1 A of the P V cluster
+# at (1 + h, 1) (granule pg on).
+#
+# With comb, the RUN also writes y of rows 16h.. of the tile 5 back, a half
+# sub-row (4 rows x 32 columns) a sub-row of its own (`ca`, `cm`, `cb` in
+# blocks 1..3), from O, l and I the previous RUN fetched; with pf it fetches
+# the tile 4 back's (oa, li) for the next RUN once its own are read. pre, comb
+# and pf are skip flags, so every RUN of a core holds the same words but three.
+#
+# L1: S slots 0..127, O 128..255, P out 256..319, l and I 320..351, the I
+# words 352..359, y 384..447, ir 448..511; the redo's scratch 384..511.
+image flash_p(s, ir, pg, h, pre, comb, pf, oa, li, ya, io)
+    desc a0 = s walk=(32, 32)
+    desc a1 = ir walk=((32, 8), (4K, 8))
+    desc a2 = pg walk=(32, 32)
+    desc a3 = pg walk=(32, 32)
+    desc a6 = io walk=(32, 8)
+    when pf == 1
+        desc a4 = oa walk=((32, 8), (4K, 2), (256, 2), (512, 4))
+        desc a5 = li walk=((32, 8), (256, 4))
+    when comb == 1
+        desc a7 = ya walk=(32, 64)
+    ainc a0 += 1K
+    ainc a2 += 32
+    ainc a3 += 32
+    seti k3 = 49156.0
+    seti s3 = 49152.0
+    seti s9 = pre
+    seti s10 = comb
+    seti s13 = pf
+    getstk s11
+    skipz s9
+        for j in 0..4
+            vfill a0 -> l1[32*j] rel
+    vfill a1 -> l1[448]
+    expand ld(0)
+    vsync unpack on=pack
+    vunpk v28 <- l1[352] f16
+    skipz s10
+        expand csetup(h)
+    uptr 128
+    uinc 8
+    pptr 384
+    pinc 8
+    seti s5 = 7
+    loop s5
+        for j in 0..4
+            expand blk(j, h, 1)
+        vmov v28, v28[1:] vl=112
+    for j in 0..4
+        expand blk(j, h, 0)
+    skipz s10
+        vsync drain on=pack
+        vdrain a7 <- l1[384]
+    getstk s11
+    expand redo(h)
+    vsync drain on=pack
+    vdrain a6 <- l1[352]
+    vsync pack on=drain
+    expand ipack()
+    vsync fe on=drain
+    halt
+
+# Block j: block j + 1 into the other register bank, block j's P (eight
+# chunk ops a register: GT4 chunk 4q + r to quantiser chunk 2r + q, I of row
+# r by the crossbar), its MX7 packs; two blocks' P out after the second. In
+# the last sub-row (nxt = 0) the next tile's eight I are reduced, a stage
+# every half block, and once the combine's last O is read the next RUN's O,
+# l and I are fetched.
+macro blk(j, h, nxt)
+    when j == 1
+        skipz s10
+            expand ca()
+    when j == 2
+        skipz s10
+            expand cm()
+    when j == 3
+        skipz s10
+            expand cb()
+    when nxt == 1
+        expand ld((j + 1) % 4)
+    when nxt == 0
+        when j < 3
+            expand ld(j + 1)
+        when j == 2
+            skipz s13
+                vsync fill on=unpack
+                vfill a4 -> l1[128]
+                vfill a5 -> l1[320]
+        when j == 0
+            vsync unpack on=fill slack=3
+            expand iregs()
+    for g in 0..8
+        for r in 0..4
+            vexp2d v{8 + 4*(j % 2) + r}[g:], v{4*(j % 2) + r}[g/2 + 4*(g % 2):], bcast(v28[0], lane=4*(g/2), sh=0) vl=16
+        when nxt == 0
+            when g % 4 == 3
+                when 2*j + g/4 < 7
+                    expand ibatch(2*j + g/4)
+    when j % 2 == 0
+        vsync pack on=drain slack=1
+    for r in 0..4
+        vpack v{8 + 4*(j % 2) + r} -> l1[256 + 32*(j/2) + 16*(j % 2) + 4*r] mx7a
+    when j % 2 == 1
+        vsync drain on=pack
+        vdrain a2 <- l1[256 + 32*(j/2)] rel to=(1 + h, 1) buf=0
+
+# Slot t into register bank t % 2, then the slot refilled with the next
+# sub-row's block t (every fill but the youngest three is done).
+macro ld(t)
+    vsync unpack on=fill slack=3
+    for r in 0..4
+        vunpk v{4*(t % 2) + r} <- l1[32*t + 8*r] gt4
+    vsync fill on=unpack
+    vfill a0 -> l1[32*t] rel
+
+# The eight sub-rows' first registers (4 rows x 32 keys) into v16..v23.
+macro iregs()
+    for i in 0..8
+        vunpk v{16 + i} <- l1[448 + 8*i] gt4
+
+# Stage c of eight independent row-max reductions (v16..v23 in place): rows
+# end in lanes 4r..4r+3 of chunk 0, plus 4, rounded (k3 = 1.5 * 2^15 + 4).
+macro ibatch(c)
+    for i in 0..8
+        expand istage(c, 16 + i)
+
+macro istage(c, x)
+    when c == 0
+        vmax v{x}, v{x}, merge(v{x}, 1)
+    when c == 1
+        vmax v{x}, v{x}, merge(v{x}, 2)
+    when c == 2
+        vmax v{x}, v{x}, v{x}[4:] vl=64
+    when c == 3
+        vmax v{x}, v{x}, merge(v{x}[2:], 8) vl=32
+    when c == 4
+        vmax v{x}, v{x}, merge(v{x}[1:], 4) vl=16
+    when c == 5
+        vadd v{x}, v{x}, k3 vl=16
+    when c == 6
+        vsub v{x}, v{x}, s3 vl=16
+
+# The eight I words to l1[352..359].
+macro ipack()
+    for i in 0..8
+        vpack v{16 + i} -> l1[352 + i] f16 n=1
+
+# The rare path, when the sticky flag is set: S walked twice more from the
+# tile's start (a0 rewound by a dummy fill), first for each sub-row's row max
+# over the half (I' to l1[352 + i]), then for P again with I', over the same
+# granules of the P V cluster (a3). Scratch l1[384..511] (ir and y are not
+# live; y's drain is waited for).
+macro redo(h)
+    skipz s11
+        ainc a0 += -36K
+        vsync fill on=unpack
+        vsync fill on=drain
+        vfill a0 -> l1[384] rel
+        ainc a0 += 1K
+        pptr 352
+        pinc 1
+        seti s12 = 8
+        loop s12
+            vsync fill on=unpack
+            for j in 0..4
+                vfill a0 -> l1[384 + 32*j] rel
+            vsync unpack on=fill
+            for j in 0..4
+                for r in 0..4
+                    vunpk v{4*j + r} <- l1[384 + 32*j + 8*r] gt4
+            for m in 0..8
+                vmax v{m}, v{m}, v{m + 8}
+            for m in 0..4
+                vmax v{m}, v{m}, v{m + 4}
+            vmax v0, v0, v2
+            vmax v1, v1, v3
+            vmax v0, v0, v1
+            for c in 0..7
+                expand istage(c, 0)
+            vpack v0 -> l1[0] f16 rel n=1
+    skipz s11
+        ainc a0 += -32K
+        vsync fill on=unpack
+        vfill a0 -> l1[384] rel
+        ainc a0 += 1K
+        vsync unpack on=pack
+        uptr 352
+        uinc 1
+        seti s12 = 8
+        loop s12
+            vsync fill on=unpack
+            for j in 0..4
+                vfill a0 -> l1[384 + 32*j] rel
+            vunpk v28 <- l1[0] f16 rel n=1
+            vsync unpack on=fill
+            for half in 0..2
+                for b in 0..2
+                    for r in 0..4
+                        vunpk v{4*b + r} <- l1[384 + 64*half + 32*b + 8*r] gt4
+                for g in 0..8
+                    for b in 0..2
+                        for r in 0..4
+                            vexp2d v{8 + 4*b + r}[g:], v{4*b + r}[g/2 + 4*(g % 2):], bcast(v28[0], lane=4*(g/2), sh=0) vl=16
+                vsync pack on=drain slack=1
+                for b in 0..2
+                    for r in 0..4
+                        vpack v{8 + 4*b + r} -> l1[256 + 32*half + 16*b + 4*r] mx7a
+                vsync drain on=pack
+                vdrain a3 <- l1[256 + 32*half] rel to=(1 + h, 1) buf=0
+
+# The combine: y of rows 16h.. from the two halves' O, l and I. l_a, l_b,
+# I_a, I_b of all 32 rows are at l1[320] (a sub-tile a sub-row, rows in lanes
+# 4r..4r+3); w_h = 2^(I_h - max I) / (l_a 2^(I_a - max I) + l_b 2^(I_b -
+# max I)), each sub-row's chunk twice in v26 (w_a) and v29 (w_b), so half
+# sub-row k's w is chunk 0 after k shifts. O at l1[128] by half sub-row k
+# (sub-row k/2, columns 32(k%2)..): O_a 8 words, then O_b 8; y out at l1[384]
+# in the same order (uptr, pptr: 128 and 384, increments 8).
+macro csetup(h)
+    vunpk v20 <- l1[320] f16
+    vunpk v21 <- l1[328] f16
+    vunpk v24 <- l1[336] f16
+    vunpk v25 <- l1[344] f16
+    vmax v16, v24, v25
+    vexp2d v24, v24, v16
+    vexp2d v25, v25, v16
+    vmul v20, v20, v24
+    vfma v21, v21, v25, v20
+    vinv v21, v21
+    vmul v22, v24, v21
+    vmul v23, v25, v21
+    for i in 0..4
+        vmov v26[2*i:], v22[4*h + i:] vl=16
+        vmov v29[2*i:], v23[4*h + i:] vl=16
+        vmov v26[2*i + 1:], v22[4*h + i:] vl=16
+        vmov v29[2*i + 1:], v23[4*h + i:] vl=16
+
+# Half sub-row k: its O halves in as sub-tiles (`ca`; a chunk is a 4 x 4
+# sub-tile, row r in lanes 4r..4r+3, as w's chunk), O_a w_a (`cm`), + O_b w_b
+# and y out as sub-tiles, and the w moved on (`cb`).
+macro ca()
+    vunpk v24 <- l1[0] f16 rel
+    vunpk v25 <- l1[0] f16 rel
+
+macro cm()
+    vmul v30, v24, v26[0]
+
+macro cb()
+    vfma v31, v25, v29[0], v30
+    vpack v31 -> l1[0] f16 rel
+    vmov v26, v26[1:] vl=112
+    vmov v29, v29[1:] vl=112
+
+# The combine alone (the last five tiles).
+image flash_y(h, oa, li, ya)
+    desc a4 = oa walk=((32, 8), (4K, 2), (256, 2), (512, 4))
+    desc a5 = li walk=((32, 8), (256, 4))
+    desc a7 = ya walk=(32, 64)
+    vfill a4 -> l1[128]
+    vfill a5 -> l1[320]
+    vsync unpack on=fill
+    expand csetup(h)
+    uptr 128
+    uinc 8
+    pptr 384
+    pinc 8
+    seti s6 = 8
+    loop s6
+        expand ca()
+        expand cm()
+        expand cb()
+    vsync drain on=pack
+    vdrain a7 <- l1[384]
+    vsync fe on=drain
+    halt
+
+# MXFP7 ones (B packing) into the P V clusters' L1 B1, entries 0..15: the
+# l columns of P V.
+image flash_ones()
+    desc a0 = 1024 walk=(32, 64)
+    desc a1 = 1024 walk=(32, 64)
+    vmul v30, k1, k1
+    for e in 0..16
+        vpack v30 -> l1[4*e] mx7b
+    vsync drain on=pack
+    vdrain a0 <- l1[0] to=(1, 1) buf=1
+    vdrain a1 <- l1[0] to=(2, 1) buf=1
+    vsync fe on=drain
+    halt
+
+# Clusters: scores on mg0 (1,0) and mg2 (2,0), P V on mg1 (1,1) (keys
+# 0..511, from core 0) and mg3 (2,1) (keys 512..1023, core 1): one of each
+# on each of the die's two routers, so each router carries half the S traffic.
+#
+# Scores tile T (128 queries of head T / 8) on mg[2 (T % 2)] against head
+# T / 8's two key halves, resident in B0 / B1 (loaded at the head's first
+# tile there), each sweep in two K-block passes so the second emits into
+# region T % 4 of the S ring.
+macro scores(T)
+    send mg[2*(T % 2)]
+        when T % 8 < 2
+            fill B0 <- k + (T/8)*64K n=128
+            fill B0 <- k + (T/8)*64K + 16K n=128 at=128
+            fill B1 <- k + (T/8)*64K + 32K n=128
+            fill B1 <- k + (T/8)*64K + 48K n=128 at=128
+        fill A{(T/2) % 2} <- q + T*8K n=64
+        for kh in 0..2
+            gemm 32x128x1 a=A{(T/2) % 2} b=B{kh}
+            gemm 32x128x1 a=A{(T/2) % 2} aoff=32 b=B{kh} boff=128 acc emit=s + (T % 4)*256K + kh*128K
+            drain s + (T % 4)*256K + kh*128K n=4096 fused
+    e{T} = mark mg[2*(T % 2)]
+
+# P V of 32-row tile t on mg1 / mg3: O (emitted by the sweep, its drain
+# fused) and l partials. P sits in A bank t % 2, slot (t / 2) % 2. o and li
+# are rings of eight tiles (a tile's partials are read four tiles later);
+# tile t's l_a, l_b, I_a, I_b are li + 1K (t % 8), 256 apart.
+macro pv(t)
+    for kh in 0..2
+        send mg[1 + 2*kh]
+            gemm 8x16x16 a=A{t % 2} aoff=128*((t/2) % 2) b=B0 emit=o + (2*(t % 8) + kh)*4K
+            drain o + (2*(t % 8) + kh)*4K n=128 fused
+            gemm 8x1x16 a=A{t % 2} aoff=128*((t/2) % 2) b=B1
+            drain li + (t % 8)*1K + kh*256 n=8
+    pa{t} = mark mg[1]
+    pb{t} = mark mg[3]
+
+# Head H's v^T halves into mg1 / mg3's B0. A cluster assembles one inbound
+# entry at a time, so this FILL runs only while no vector core streams P into
+# it: at a head's start, after the last tile's P has landed.
+macro vload(H)
+    for kh in 0..2
+        send mg[1 + 2*kh]
+            fill B0 <- v + (2*H + kh)*32K n=128
+            fill B0 <- v + (2*H + kh)*32K + 16K n=128 at=128
+    va{H} = mark mg[1]
+    vb{H} = mark mg[3]
+    wait mg[1] upto=va{H}
+    wait mg[3] upto=vb{H}
+
+# The last tile t of head H - 1's P V with head H's v^T into B0 right behind
+# its O sweep (a FILL has no interlock with a sweep reading its bank: it
+# follows the fused drain, which waits for the sweep).
+macro pvv(t, H)
+    for kh in 0..2
+        send mg[1 + 2*kh]
+            gemm 8x16x16 a=A{t % 2} aoff=128*((t/2) % 2) b=B0 emit=o + (2*(t % 8) + kh)*4K
+            drain o + (2*(t % 8) + kh)*4K n=128 fused
+            fill B0 <- v + (2*H + kh)*32K n=128
+            fill B0 <- v + (2*H + kh)*32K + 16K n=128 at=128
+    va{H} = mark mg[1]
+    vb{H} = mark mg[3]
+    for kh in 0..2
+        send mg[1 + 2*kh]
+            gemm 8x1x16 a=A{t % 2} aoff=128*((t/2) % 2) b=B1
+            drain li + (t % 8)*1K + kh*256 n=8
+    pa{t} = mark mg[1]
+    pb{t} = mark mg[3]
+
+# Tile t - 1's P V once both cores' RUNs are done, then the scores tile whose
+# S region it freed; at a head's first tile t, with head t/32's v^T. nt: the
+# tiles (32 a head).
+macro after(t, nt)
+    wait vc[0] upto=fa{t - 1}
+    wait vc[1] upto=fb{t - 1}
+    when t % 32 > 0
+        expand pv(t - 1)
+    when t % 32 == 0
+        when t < nt
+            expand pvv(t - 1, t/32)
+        when t == nt
+            expand pv(t - 1)
+    when (t - 1) % 4 == 3
+        when (t - 1)/4 + 4 < nt/4
+            expand scores((t - 1)/4 + 4)
+    when t % 32 == 0
+        when t < nt
+            wait mg[1] upto=va{t/32}
+            wait mg[3] upto=vb{t/32}
+
+# Tile t's P on both cores, core h on half h. The first tile of a scores
+# tile starts cold (pre = 1); the rest were fetched by the RUN before.
+macro runp(t, nt)
+    when t % 4 == 3
+        when t < nt - 1
+            wait mg[2*(((t + 1)/4) % 2)] upto=e{(t + 1)/4}
+    when t > 3
+        wait mg[1] upto=pa{t - 4}
+        wait mg[3] upto=pb{t - 4}
+    for h in 0..2
+        when t % 4 == 0
+            expand runx(t, h, 1)
+        when t % 4 > 0
+            expand runx(t, h, 0)
+    fa{t} = mark vc[0]
+    fb{t} = mark vc[1]
+
+# RUN t combines tile t - 5 (from t = 5) and fetches tile t - 4's partials
+# for the next (from t = 4).
+macro runx(t, h, pre)
+    when t < 4
+        expand runh(t, h, pre, 0, 0)
+    when t == 4
+        expand runh(t, h, pre, 0, 1)
+    when t > 4
+        expand runh(t, h, pre, 1, 1)
+
+macro runh(t, h, pre, comb, pf)
+    send vc[h]
+        run flash_p(s + ((t/4) % 4)*256K + h*128K + (t % 4)*32K + (1 - pre)*4K, s + (((t + 1)/4) % 4)*256K + h*128K + ((t + 1) % 4)*32K, 1024*(t % 2) + 512*((t/2) % 2), h, pre, comb, pf, pf*(o + 2*((t + 4) % 8)*4K + h*2K), pf*(li + ((t + 4) % 8)*1K), comb*(y + (t - 5)*4K + h*2K), li + (t % 8)*1K + 512 + h*256)
+
+# S (a ring of four scores tiles) in DRAM; the P V partials o and li in
+# staging, where their writes do not take DRAM write bandwidth from S.
+fn flash.l1(q: mx7a[10240, 64] @dram(gm=32, nk=1), k: mx7b[10240, 64] @dram(gn=128, nk=1), v: mx7b[64, 10240] @dram(gn=16, nk=16, t=1), y: f16[10240, 64] @dram(tile=8x16), s: f16[512, 1024] @dram, o: f16[512, 64] @stage(tile=8x16), li: f16[256, 32] @stage(tile=8x16))
+    # 10 heads: 320 tiles of 32 rows, 80 scores tiles of 128.
+    send vc[0]
+        run flash_ones()
+    wait vc[0]
+    expand vload(0)
+    for T in 0..4
+        expand scores(T)
+    # Warm-up: tile 0's I into each core's L1 (its P lands in tile 0's slot,
+    # which RUN 0 rewrites before P V reads it).
+    wait mg[0] upto=e{0}
+    for h in 0..2
+        send vc[h]
+            run flash_p(s + h*128K, s + h*128K, 0, h, 1, 0, 0, 0, 0, 0, li + 7*1K + 512 + h*256)
+    for t in 0..321
+        when t > 0
+            when t % 32 == 0
+                expand after(t, 320)
+        when t < 320
+            expand runp(t, 320)
+        when t % 32 > 0
+            expand after(t, 320)
+    for t in 315..320
+        wait mg[1] upto=pa{t}
+        wait mg[3] upto=pb{t}
+        for h in 0..2
+            send vc[h]
+                run flash_y(h, o + 2*(t % 8)*4K + h*2K, li + (t % 8)*1K, y + t*4K + h*2K)
+    barrier

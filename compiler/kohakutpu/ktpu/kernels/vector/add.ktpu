@@ -1,0 +1,61 @@
+# out = x + y: one lane-op an element, three memory streams.
+target ktpu.v9
+
+fn add.l3(x: f16[N], y: f16[N]) -> f16[N]
+    out = add x, y                              : f16[N]
+    return out
+
+# Two cores, each 32768 elements in 64-word tiles, two tiles in flight.
+fn add.l2(x: f16[65536] @dram, y: f16[65536] @dram, out: f16[65536] @dram)
+    par c in 0..2 on vc[c]
+        for t in 0..32 pipe=2
+            xt = load x[c*32768 + t*1024 : +1024]   : f16[1024] @l1
+            yt = load y[c*32768 + t*1024 : +1024]   : f16[1024] @l1
+            ot = add xt, yt                         : f16[1024] @l1
+            store out[c*32768 + t*1024 : +1024] <- ot
+
+# A pass is two 64-word tiles: x buffers l1[0], l1[64], y buffers l1[128],
+# l1[192], out buffers l1[256], l1[320]; a tile is two groups of four
+# registers (x in v0..v7, y in v8..v15, sums in v16..v23).
+image add_stream(passes, x, y, out)
+    desc a0 = x walk=(32, 64)
+    desc a1 = out walk=(32, 64)
+    desc a2 = y walk=(32, 64)
+    ainc a0 += 2K
+    ainc a1 += 2K
+    ainc a2 += 2K
+    vfill a0 -> l1[0] rel
+    vfill a2 -> l1[128] rel
+    seti s5 = passes
+    loop s5
+        expand unpk(0)
+        for i in 0..4
+            when i < 3
+                expand unpk(i + 1)
+            for j in 0..4
+                vadd v{16 + (i%2)*4 + j}, v{(i%2)*4 + j}, v{8 + (i%2)*4 + j}
+            when i % 2 == 0
+                vsync pack on=drain slack=1         # this buffer's drain, two tiles back
+            for j in 0..4
+                vpack v{16 + (i%2)*4 + j} -> l1[256 + 64*(i/2) + ((i%2)*4 + j)*8] f16
+            when i % 2 == 1
+                vsync drain on=pack
+                vdrain a1 <- l1[256 + 64*(i/2)] rel
+    halt
+
+# Group i's unpacks; a tile's first group starts the next tile's fills.
+macro unpk(i)
+    when i % 2 == 0
+        vbar
+        vsync fill on=unpack
+        vfill a0 -> l1[64 - 64*(i/2)] rel
+        vfill a2 -> l1[192 - 64*(i/2)] rel
+    for j in 0..4
+        vunpk v{(i%2)*4 + j} <- l1[64*(i/2) + ((i%2)*4 + j)*8] f16
+        vunpk v{8 + (i%2)*4 + j} <- l1[128 + 64*(i/2) + ((i%2)*4 + j)*8] f16
+
+fn add.l1(x: f16[65536] @dram, y: f16[65536] @dram, out: f16[65536] @dram)
+    for c in 0..2
+        send vc[c]
+            run add_stream(16, x + c*64K, y + c*64K, out + c*64K)
+    barrier
