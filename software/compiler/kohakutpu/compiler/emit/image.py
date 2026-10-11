@@ -8,7 +8,7 @@ unknown state unless the caller states one. A `loop` body enters in the state
 its own end leaves, set up once before the loop.
 """
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, is_dataclass, replace
 
 from kohakuaccel.compiler.isa import ISAError
 from kohakutpu.compiler.encode import vector as A
@@ -613,30 +613,99 @@ def desc(fail, st) -> dict:
     return out
 
 
+def _descs_only(st) -> bool:
+    """A `desc`, or a `when` holding nothing else."""
+    if st.op == "desc":
+        return True
+    return st.op == "when" and st.target is None and all(map(_descs_only, st.body))
+
+
+def _words(x, out: set) -> set:
+    """Every string a statement tree holds: a superset of the names it reads."""
+    if isinstance(x, str):
+        out.add(x)
+    elif isinstance(x, (list, tuple)):
+        for y in x:
+            _words(y, out)
+    elif is_dataclass(x):
+        for f in fields(x):
+            _words(getattr(x, f.name), out)
+    return out
+
+
+class Images:
+    """`module`'s images, each encoded once per value of the parameters its
+    instructions read. The leading descriptor statements are expanded on every
+    call: a parameter only they read (an address) changes the descriptors sent
+    before the RUN, never the words, so it costs no encoding."""
+
+    def __init__(self, module, entry: State = UNKNOWN) -> None:
+        self.module, self.entry = module, entry
+        self.r = module.reader()
+        self.macros = {m.name: (m.params, m.stmts) for m in module.macros.values()}
+        #: image -> (its leading descriptor statements, the rest, key params)
+        self.plans: dict = {}
+        #: (image, key args) -> (words, the descriptors the rest leads with)
+        self.encoded: dict = {}
+
+    def plan(self, name: str, d) -> tuple:
+        if name not in self.plans:
+            n = 0
+            while n < len(d.stmts) and _descs_only(d.stmts[n]):
+                n += 1
+            prefix, rest = d.stmts[:n], d.stmts[n:]
+            seen, todo = set(), _words(rest, set())
+            while todo:
+                w = todo.pop()
+                if w in self.macros and w not in seen:
+                    seen.add(w)
+                    todo |= _words(self.macros[w][1], set()) - seen
+                seen.add(w)
+            keys = tuple(i for i, p in enumerate(d.params) if p in seen)
+            self.plans[name] = (prefix, rest, keys)
+        return self.plans[name]
+
+    def __call__(self, name: str, args: tuple) -> tuple:
+        """``(words, descs)`` of image `name` for constant `args`: the IMEM
+        words, and the descriptor fields its leading `desc` statements set
+        (sent before the RUN, outside the image, so the words stay resident)."""
+        d = self.module.images.get(name)
+        if d is None:
+            raise KeyError(
+                f"no image {name} in {self.module.file}; it has "
+                f"{sorted(self.module.images)}"
+            )
+        if len(args) != len(d.params):
+            raise ValueError(
+                f"image {name} takes {len(d.params)} arguments, got {len(args)}"
+            )
+        prefix, rest, keys = self.plan(name, d)
+        env = dict(zip(d.params, args, strict=True))
+        expand = Expander(self.macros, self.r.fail, unroll_all=True)
+        descs: dict = {}
+        for st in expand.stmts(prefix, env):
+            descs.update(desc(self.r.fail, st))
+        key = (name, tuple(args[i] for i in keys))
+        if key not in self.encoded:
+            stmts = expand.stmts(rest, env)
+            lead: dict = {}
+            while stmts and stmts[0].op == "desc":
+                lead.update(desc(self.r.fail, stmts.pop(0)))
+            for st in stmts:
+                if st.op == "desc":
+                    self.r.fail(
+                        st,
+                        "an image's descriptors lead it: they are set before its RUN",
+                    )
+            self.encoded[key] = (Encoder(self.r.fail, self.entry).encode(stmts), lead)
+        words, lead = self.encoded[key]
+        return words, {**descs, **lead}
+
+
 def image(module, name: str, args: tuple, entry: State = UNKNOWN) -> tuple:
-    """``(words, descs)`` of `module`'s image `name` for constant `args`: the
-    IMEM words, and the descriptor fields its leading `desc` statements set
-    (sent before the RUN, outside the image, so the words stay resident)."""
-    r = module.reader()
-    d = module.images.get(name)
-    if d is None:
-        raise KeyError(
-            f"no image {name} in {module.file}; it has {sorted(module.images)}"
-        )
-    if len(args) != len(d.params):
-        raise ValueError(
-            f"image {name} takes {len(d.params)} arguments, got {len(args)}"
-        )
-    macros = {m.name: (m.params, m.stmts) for m in module.macros.values()}
-    env = dict(zip(d.params, args, strict=True))
-    stmts = Expander(macros, r.fail, unroll_all=True).stmts(d.stmts, env)
-    descs: dict = {}
-    while stmts and stmts[0].op == "desc":
-        descs.update(desc(r.fail, stmts.pop(0)))
-    for st in stmts:
-        if st.op == "desc":
-            r.fail(st, "an image's descriptors lead it: they are set before its RUN")
-    return Encoder(r.fail, entry).encode(stmts), descs
+    """``(words, descs)`` of `module`'s image `name` for constant `args`
+    (`Images`, for one call)."""
+    return Images(module, entry)(name, args)
 
 
-__all__ = ["RESET", "UNKNOWN", "Encoder", "State", "image", "meet"]
+__all__ = ["RESET", "UNKNOWN", "Encoder", "Images", "State", "image", "meet"]

@@ -46,8 +46,7 @@ class NodeReader:
         self.p = program
         self.entry = entry
         self.tokens: dict = {}
-        #: (image, args) -> its words, encoded once.
-        self.images: dict = {}
+        self.images = vector.Images(module, entry)
         #: cluster -> [(addr, sub-tiles, stmt)] emitted and not yet collected.
         self.emits: dict = {}
 
@@ -110,10 +109,7 @@ class NodeReader:
         if not isinstance(call, Call):
             self.fail(st, "run IMAGE(args)")
         args = tuple(self.const(st, a) for a in call.args)
-        key = (call.name, args)
-        if key not in self.images:
-            self.images[key] = vector.image(self.module, call.name, args, self.entry)
-        words, own = self.images[key]
+        words, own = self.images(call.name, args)
         descs = {**descs, **own}
         out = [A.desc_flit(ad, f, v) for (ad, f), v in sorted(descs.items())]
         out += [A.imem_flit(i, w) for i, w in enumerate(words)]
