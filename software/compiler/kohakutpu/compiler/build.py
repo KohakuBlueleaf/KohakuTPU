@@ -8,6 +8,7 @@
 
 from kohakuaccel.compiler.package import engine
 from kohakutpu.compiler import target as T
+from kohakutpu.compiler import verify
 from kohakutpu.compiler.emit import node
 
 
@@ -28,9 +29,19 @@ def programs(module, name: str, binds: dict, machine, entry=None) -> dict:
 def package(prog, fetch=None, resident=None, addresses=None, spans=None) -> tuple:
     """``(Package, bindings)``: `prog` lowered for the node's dispatch engine,
     with no buffer defaults (it runs only at `bindings`). `fetch`, `resident`,
-    `addresses`, `spans` are `Program.build`'s."""
+    `addresses`, `spans` are `Program.build`'s. The step order is the
+    program's; :func:`packages` is what a card is sent."""
     b = prog.build(fetch, resident, addresses, spans)
     return engine.lower(b.build(defaults=False)), b.bindings()
 
 
-__all__ = ["package", "program", "programs"]
+def packages(progs: dict, machine, fetch=None, residents=None) -> dict:
+    """``{node: (Package, bindings)}`` for ``{node: Program}`` run together,
+    each segment's dispatches ordered by the dispatch scheduler
+    (`verify.schedule`): no order it returns deadlocks. `residents` is
+    ``{node: imem.Cores}``, the vector programs each node's cores hold."""
+    got = verify.schedule(progs, machine, fetch, residents)
+    return {n: (engine.lower(pkg), bindings) for n, (pkg, bindings) in got.items()}
+
+
+__all__ = ["package", "packages", "program", "programs"]

@@ -161,7 +161,7 @@ flit remote, H1). What L1 cannot express, and why:
 |---|---|
 | H1 | the node's mailbox sends no flit to another mesh |
 | H2 | the processor's coordinate (0, 0) is the "local / the sender" value of `dfin` and of an ack, so no unit can aim a remote burst or a `DATA_RECEIVED` at a node |
-| H3 | nothing reports a unit's remote flits landed: a fenced ring covers the mover and the processor, not a cluster's flits still in the meshes, so a consumer settles |
+| H3 | a unit's words retire once its flits left, and a fenced ring covers the mover and the processor, not a cluster's flits still in the meshes: a burst's landing is seen only by its receiver -- COUNT for a vector core's L1 and a cluster's A / B; an accumulator add by a COUNTed entry its sender drains right behind it (one source's flits land in order) |
 | H4 | a FILL's `peers` follower has no rendezvous of its own: the node's `mark` / `wait` is it (§3), at a node step a K chunk |
 | H5 | a vector core's memory drain never crosses a mesh (no remote marker on `MEM_WR`); with shared memory it need not |
 | H6 | the mailbox sets `last` on every flit it sends |
@@ -264,8 +264,8 @@ What sets the numbers:
   1.66x on four. A direct cluster -> core hand-off per block needs a
   unit-level landed-burst signal (H3), which the node can only stand in for.
 - **Small fused tiles** (`tilesilu`, `mlpdirect`, `mmsoftmax`) are bound by
-  the node's steps: a wait, a settle and the sends of an iteration cost
-  several hundred cycles each against tiles of a few thousand.
+  the node's steps: a wait and the sends of an iteration cost several hundred
+  cycles each against tiles of a few thousand.
 
 ## 9. L2 (`fn NAME.l2`)
 
@@ -290,16 +290,18 @@ KohakuTPU's spaces and ops. Code: `software/compiler/kohakutpu/compiler/l2/`.
 | `par v in LO..HI on node[E]` | | a `node N` block |
 | `for v in LO..HI [pipe=K]` (node scope) | | its stages in order; with `pipe`, the next K - 1 iterations' words may be sent ahead of this one's waits |
 | `par v in LO..HI on mg[E]` | `x = fill VIEW [share=cross\|port\|all] : mx7a[M, K] @A` | FILLs of the view's runs, a bank the latest sweep does not read; with `share`, one read for a group of clusters, the node the rendezvous |
-| | `x = recv vc[H] : mx7a[M, K] @A` | nothing: the entries core H sent into this cluster's bank (`send`); a gemm reads them there (`aoff` / `boff`) |
-| | `c = zero : f32[M, N] @acc`; `c = gemm a, b[, c] : f32[M, N] @acc` | the next sweep opens the tile; a GEMM |
+| | `x = recv vc[H] : mx7a[M, K] @A` | `fill A recv n=` for the counted entries core H sent into this cluster's bank (`send`); a gemm reads them there (`aoff` / `boff`). Inside a loop, a **stream**: `fill A recv n=` waits for the counted entries in a two-slot ring from entry 0; the stage's first recv posts the ring as credits after the stage's own fills, each later one returns its slot after its last sweep but the last two |
+| | `c = zero : f32[M, N] @acc`; `c = gemm a, b[, c] : f32[M, N] @acc`; `gemm a[LO : +R, :], b` | the next sweep opens the tile; a GEMM; a row slice of an operand is the same bank `LO / 4 * nk` entries in |
 | | `drain c -> VIEW` | an emitting last sweep plus a fused DRAIN placed before the unit's next emitting sweep, else a DRAIN |
-| | `drain c -> vc[H]` | a DRAIN of the sub-tiles into core H's L1: a ring over its top 256 words (a `recv` there) |
-| | `drain c -> mg[J] add` | J's sweeps waited, a peer DRAIN into J's accumulator, a settle; J's own drain plain |
+| | `drain c -> vc[H]` | a COUNTed DRAIN of the sub-tiles into core H's L1: a ring over its top 256 words (a `recv` there). To a core that receives inside its stream loop, a **stream**: the last sweep emits `to=vc[H] count credit` into a two-slot ring at the top of the L1, its fused drain before the next emitting sweep |
+| | `drain c -> mg[J] add` | J's sweeps waited, a peer DRAIN into J's accumulator and a COUNTed entry into J's A0 entry 0 behind it, which J takes (`fill A0 recv`) before the rest of its stream; J's own drain plain |
 | `par v in LO..HI on vc[E]` | `x = load VIEW : f16[R, C] @l1[(gt4)]` | a descriptor (`ainc` along the stream loop), filled one iteration ahead |
-| | `h = recv mg[U] : f16[R, C] @l1(gt4)` (before the loop); `r = unpack h[ROWS, :]` (in it) | nothing: the tile cluster U drained here; each trip's row band unpacked through the unpack pointer (`uptr`, `uinc 8`) |
+| | `h = recv mg[U] : f16[R, C] @l1(gt4)` (before the loop); `r = unpack h[ROWS, :]` (in it) | `vwait unpack rx` for the tile's granules cluster U drained here; each trip's row band unpacked through the unpack pointer (`uptr`, `uinc 8`) |
+| | `s = recv mg[U] : f16[R, C] @l1(gt4)` (in the loop) | a stream: each trip `vwait unpack rx` for the tile's granules in the ring slot of its parity, and once unpacked `vpost mg[U]` returns the slot; the core's open image posts the whole ring at the program's start, the cluster spends the last lap's credits at its end |
 | | `r = unpack x : f32[...] @reg[(gt4)]`; `p = pack r : f16[...] @l1[(gt4)]`; `store VIEW <- p` | VUNPK / VPACK of each register; a VDRAIN after the iteration's packs |
-| | `p = pack r : mx7a[4k, C] @l1`; `store A_VIEW <- p` | each GT4 block's chunks moved to the quantiser's order (8 VMOVs), a VPACK MX7 an entry; the drain walks the A packing (a chunk's `nk` entries, chunks `gm * nk` entries apart, bands `nk` apart) |
-| | `send p -> mg[I] side=A\|B` (`p` packed MXFP7) | a peer VDRAIN of each trip's entries into cluster I's bank, the trips one after another (a granule is a quarter entry) |
+| | `p = pack r : mx7a[4k, C] @l1`; `store A_VIEW <- p` | the op that made `r` (read by nothing else) writes it in the quantiser's chunk order, one chunk an op (GT4 chunk 4q + i to chunk 2i + q, every register operand chunk-selected alike), else 8 VMOVs; a VPACK MX7 an entry; the drain walks the A packing (a chunk's `nk` entries, chunks `gm * nk` entries apart, bands `nk` apart) |
+| | `send p -> mg[I] side=A\|B` (`p` packed MXFP7) | a COUNT-flagged peer VDRAIN of each trip's entries into cluster I's bank, the trips one after another (a granule is a quarter entry); the cluster's `recv` takes them by `fill recv`. To a cluster that receives inside a loop, a stream: one descriptor a ring slot by parity, each trip after `vwait drain cr` for its granules |
+| | `m = rmax x[:, C0:C1]` | the reduction over the 32-column blocks C0..C1 of each band |
 | | `add sub mul max min exp2d fma fnma exp2 inv rsqrt log2 neg abs mov` | one instruction a register; a constant in an S or K register; `m[:, *]` a statistic broadcast to its row |
 | | `m = cmplt\|cmpgt\|cmpeq a, b`; `o = sel m, a, b` | a compare into a predicate, then 1.0 / 0.0 by a move and a predicated move; VSEL (a where m is not 0, else b) |
 | | `rmax`, `rsum` (rows to `f32[R] @reg`) | the merge tree over 8 rows; `rsum (mul a, b)` folds the product. Of `@reg(gt4)` rows (drained tiles): a 4-row band's registers folded, chunk 4 + i onto chunk i, an xor butterfly over the 16 lanes, chunks 0-3 copied to 4-7 -- one register a band whose every chunk holds its row's value, an elementwise operand to the band (`m[:, *]`) |
@@ -313,9 +315,16 @@ a cluster's bank entries and its receive port (FILL responses and incoming
 `CU_DATA` share one entry register). A later stage waits only for the units
 of earlier stages it conflicts with (one writes what the other reads or
 writes), up to a mark after that stage; a unit touching its own memory twice
-is ordered by its own run. After a unit-to-unit transfer's write comes
-`settle 256`: no unit reports such flits landed (H2, H3). Moves are posted;
-the last stage of a program is a plain `move`, or a `barrier` follows it.
+is ordered by its own run. A unit-to-unit transfer's reader waits for its
+landing itself (a COUNT it takes; H3), so the wait
+on its sender only orders the reuse of the landing place. A stream's ring
+orders itself (credits and counted arrivals): its accesses make no wait, and
+consecutive stages joined by one are sent as one, the cores' RUNs first, the
+clusters' segments interleaved by progress (a unit's queue holds a bounded
+number of words). Moves are posted; the last stage of a program is a plain
+`move`, or a `barrier` follows it. The node's dispatch order within a run of
+DISPATCH steps is the dispatch scheduler's ([verify.md](../verify.md) §6),
+and every package is checked by the static verifier.
 
 `for` inside a vector instance is the stream loop: its body runs twice a
 VLOOP pass (two L1 buffers a stream), rows in groups of 4 (8 with a
@@ -352,4 +361,5 @@ memory like `@mem`.
 **Not in L2.** A `for` inside a vector stream loop, a vector value carried
 from one stage to the next (a running statistic across key blocks), any
 run-time condition other than `sticky`, and the `send` direction of `@any`
-(a core's packed output into a cluster bank) are written out or refused.
+(a core's packed output into a cluster bank) are written out or refused. A
+stream's receiver takes an even number of transfers a stage (two slots).

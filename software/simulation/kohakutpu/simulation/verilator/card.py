@@ -191,22 +191,24 @@ class VerilatorCard:
         ``{node: Program}`` (None for this card's first node), every node's
         package is submitted before any is waited on; the result is per node
         under ``"nodes"`` and ``"cycles"`` is the longest."""
-        if isinstance(program, dict):
-            progs = {self.nodes[0] if n is None else n: p for n, p in program.items()}
-            tags = {}
-            for n, p in progs.items():
-                pkg, bindings = B.package(p, self.fetch, self.residents[n])
-                tags[n] = (self.queues[n].submit(pkg.to_bytes(), bindings), pkg)
-            out = {}
-            for n, (tag, pkg) in tags.items():
-                done = self.queues[n].wait(tag, timeout=self.timeout)
-                out[n] = self._result(self.queues[n], done, pkg)
+        single = not isinstance(program, dict)
+        progs = {self.nodes[0]: program} if single else program
+        progs = {self.nodes[0] if n is None else n: p for n, p in progs.items()}
+        built = B.packages(progs, self.machine, self.fetch, self.residents)
+        if single:
+            pkg, bindings = built[self.nodes[0]]
+            done = self.q.run(pkg.to_bytes(), bindings, timeout=self.timeout)
             self.runs += 1
-            return {"cycles": max(r["cycles"] for r in out.values()), "nodes": out}
-        pkg, bindings = B.package(program, self.fetch, self.resident)
-        done = self.q.run(pkg.to_bytes(), bindings, timeout=self.timeout)
+            return self._result(self.q, done, pkg)
+        tags = {}
+        for n, (pkg, bindings) in built.items():
+            tags[n] = (self.queues[n].submit(pkg.to_bytes(), bindings), pkg)
+        out = {}
+        for n, (tag, pkg) in tags.items():
+            done = self.queues[n].wait(tag, timeout=self.timeout)
+            out[n] = self._result(self.queues[n], done, pkg)
         self.runs += 1
-        return self._result(self.q, done, pkg)
+        return {"cycles": max(r["cycles"] for r in out.values()), "nodes": out}
 
     def _result(self, q, done, pkg) -> dict:
         steps, phases = [], {}
