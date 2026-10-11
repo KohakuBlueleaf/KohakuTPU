@@ -3,6 +3,6 @@
 # instead of four. Both clusters share that engine -- fine at 100 MHz on one
 # DDR, and the thing to grow first when bandwidth starts to bind.
 xxx vec vec xxx
-mag mat nul nul
+sys mat nul nul
 nul mat nul nul
 xxx vec vec xxx

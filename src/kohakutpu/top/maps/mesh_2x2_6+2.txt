@@ -8,6 +8,6 @@
 # first. Adding the control processor (mesh_2x2_6+2_pe.txt) costs +3,844 LUT
 # and +9 BRAM, and takes WNS to -0.413.
 xxx mat vec xxx
-mag mat mat xxx
-mag mat mat xxx
+sys mat mat xxx
+sys mat mat xxx
 xxx mat vec xxx

@@ -4,6 +4,6 @@
 # they held the accumulators of the two-port cluster, and a cluster is one node
 # now. See mesh_2x4.txt for the shape that spends them instead.
 xxx vec vec xxx
-mag mat nul nul
-mag mat nul nul
+sys mat nul nul
+sys mat nul nul
 xxx vec vec xxx

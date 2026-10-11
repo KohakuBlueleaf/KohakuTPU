@@ -35,6 +35,6 @@
   "host_write_granule": 32,
   "host_write_replicates": false,
   "burst_read": true,
-  "fetch_port": [3, 1],
-  "notes": "v9: v8t9's node, Xache, station bus, interlink and clocks, with every die's node inside a generated 2x1 mesh of two routers: 4 matmul clusters and 2 vector cores, two MAG ports (one per router). Addressing, clocking and the wizard rules are v8t8's."
+  "fetch_port": [0, 2],
+  "notes": "v9: v8t9's node, Xache, station bus, interlink and clocks, with every die's system node inside a generated mesh of two stacked routers (maps/mesh_1x2_4+2.txt): 4 matmul clusters and 2 vector cores, the system node's two ports on the west edge, one per router. Addressing, clocking and the wizard rules are v8t8's."
 }

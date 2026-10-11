@@ -27,7 +27,7 @@
 # attention latency. 5+4 at 73.0% is the honest alternative if that inverts.
 
 xxx vec vec xxx
-mag mat mat vec
-mag mat mat nul
-mag mat mat nul
+sys mat mat vec
+sys mat mat nul
+sys mat mat nul
 xxx nul nul xxx

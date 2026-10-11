@@ -304,11 +304,11 @@ def test_drain_into_l1b_the_accumulator_and_another_mesh():
     mg = sorted(T.MG)
     assert (l1b.dst, l1b.buf, l1b.addr, l1b.dflags) == (mg[1], 1, 128, 1)
     assert (acc.dst, acc.buf) == (mg[2], C.BUF_ACC)
-    assert (far.dst, far.mesh, far.fin, far.ack) == (T.MEM_PORTS[0], 1, mg[3], T.AGENT)
+    assert (far.dst, far.mesh, far.fin, far.ack) == (T.SYS_PORTS[0], 1, mg[3], T.SYS_REPLY)
     word = far.flits()[0]
     got = ISA.DRAIN.decode(word)
     assert (got["dmesh"], got["dfin"], got["dbuf"]) == (1, mg[3][1] << 4 | mg[3][0], 2)
-    assert (mem.mesh, mem.fin, mem.dst) == (1, T.MEM_PORTS[0], None)
+    assert (mem.mesh, mem.fin, mem.dst) == (1, T.SYS_PORTS[0], None)
 
 
 def test_node_blocks_are_one_program_per_node():

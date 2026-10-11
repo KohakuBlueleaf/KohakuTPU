@@ -7,5 +7,5 @@
 # out. NOT K-splits -- peer_out is unconnected in mx_cluster_cu, so partial
 # sums from another mesh have no accumulation path.
 xxx mat mat xxx
-mag mat mat mag
+sys mat mat sys
 xxx mat mat xxx

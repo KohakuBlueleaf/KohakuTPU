@@ -2,5 +2,5 @@
 # core. Exists so a two-mesh interlink bench can carry whole MAGs without
 # paying for compute it never exercises.
 xxx vec xxx
-mag mat nul
+sys mat nul
 xxx nul xxx

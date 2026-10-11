@@ -102,10 +102,10 @@ MANIFEST = [
         (True, False, False),
         True,
     ),
-    # multimesh_v9: the v8 node under 4+2 on a 2x1 router grid, every die.
+    # multimesh_v9: the v8 node under 4+2 on two stacked routers, every die.
     (
-        "ktpu_ship_2x1_4c2v_1m_nol2",
-        "mesh_2x1_4+2.txt",
+        "ktpu_ship_1x2_4c2v_1m_nol2",
+        "mesh_1x2_4+2.txt",
         True,
         True,
         (True, False, False),

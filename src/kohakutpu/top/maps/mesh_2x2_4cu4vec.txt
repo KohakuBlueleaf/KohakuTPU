@@ -21,6 +21,6 @@
 # the SmartConnect are placed.
 
 xxx vec vec xxx
-mag mat mat vec
-mag mat mat vec
+sys mat mat vec
+sys mat mat vec
 xxx nul nul xxx

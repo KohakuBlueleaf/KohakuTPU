@@ -6,6 +6,6 @@
 # unconnected in mx_cluster_cu, so partial sums arriving from another mesh have
 # no accumulation path.
 xxx mat nul xxx
-mag mat mat xxx
-mag mat mat xxx
+sys mat mat xxx
+sys mat mat xxx
 xxx mat nul xxx

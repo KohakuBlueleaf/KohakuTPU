@@ -30,7 +30,7 @@ target ktpu.v9
 # sub-row's S refills fetch the next tile's first sub-row, so a RUN with
 # pre = 0 starts on resident slots (its S descriptor then starts a sub-row
 # in). P goes out MX7, two blocks a drain, into the L1 A of the P V cluster
-# at (1 + h, 1) (granule pg on).
+# mg[1 + 2h] (granule pg on).
 #
 # With comb, the RUN also writes y of rows 16h.. of the tile 5 back, a half
 # sub-row (4 rows x 32 columns) a sub-row of its own (`ca`, `cm`, `cb` in
@@ -134,7 +134,7 @@ macro blk(j, h, nxt)
         vpack v{8 + 4*(j % 2) + r} -> l1[256 + 32*(j/2) + 16*(j % 2) + 4*r] mx7a
     when j % 2 == 1
         vsync drain on=pack
-        vdrain a2 <- l1[256 + 32*(j/2)] rel to=(1 + h, 1) buf=0
+        vdrain a2 <- l1[256 + 32*(j/2)] rel to=mg[1 + 2*h] buf=0
 
 # Slot t into register bank t % 2, then the slot refilled with the next
 # sub-row's block t (every fill but the youngest three is done).
@@ -238,7 +238,7 @@ macro redo(h)
                     for r in 0..4
                         vpack v{8 + 4*b + r} -> l1[256 + 32*half + 16*b + 4*r] mx7a
                 vsync drain on=pack
-                vdrain a3 <- l1[256 + 32*half] rel to=(1 + h, 1) buf=0
+                vdrain a3 <- l1[256 + 32*half] rel to=mg[1 + 2*h] buf=0
 
 # The combine: y of rows 16h.. from the two halves' O, l and I. l_a, l_b,
 # I_a, I_b of all 32 rows are at l1[320] (a sub-tile a sub-row, rows in lanes
@@ -314,14 +314,14 @@ image flash_ones()
     for e in 0..16
         vpack v30 -> l1[4*e] mx7b
     vsync drain on=pack
-    vdrain a0 <- l1[0] to=(1, 1) buf=1
-    vdrain a1 <- l1[0] to=(2, 1) buf=1
+    vdrain a0 <- l1[0] to=mg[1] buf=1
+    vdrain a1 <- l1[0] to=mg[3] buf=1
     vsync fe on=drain
     halt
 
-# Clusters: scores on mg0 (1,0) and mg2 (2,0), P V on mg1 (1,1) (keys
-# 0..511, from core 0) and mg3 (2,1) (keys 512..1023, core 1): one of each
-# on each of the die's two routers, so each router carries half the S traffic.
+# Clusters: scores on mg0 and mg2, P V on mg1 (keys 0..511, from core 0) and
+# mg3 (keys 512..1023, core 1): one of each on each of the die's two routers,
+# so each router carries half the S traffic.
 #
 # Scores tile T (128 queries of head T / 8) on mg[2 (T % 2)] against head
 # T / 8's two key halves, resident in B0 / B1 (loaded at the head's first

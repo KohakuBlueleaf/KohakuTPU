@@ -5,6 +5,6 @@
 # ~305k LUT extrapolated from 6+2's ~260,200 plus 22,524 per cluster -- not
 # synthesised, and whether it PLACES is the open question.
 xxx mat mat xxx
-mag mat mat vec
-mag mat mat vec
+sys mat mat vec
+sys mat mat vec
 xxx mat mat xxx

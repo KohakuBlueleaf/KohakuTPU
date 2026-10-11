@@ -6,7 +6,7 @@
 # 6+4 measures 331,503 LUT = 76.7% of an SLR, past the ~75% routability
 # ceiling; 6+3 is 295,874 = 68.5%.
 xxx xxx xxx xxx
-mag mat mat vec
-mag mat mat vec
-mag mat mat vec
+sys mat mat vec
+sys mat mat vec
+sys mat mat vec
 xxx xxx xxx xxx

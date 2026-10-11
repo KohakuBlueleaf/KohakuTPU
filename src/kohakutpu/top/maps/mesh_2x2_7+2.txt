@@ -5,6 +5,6 @@
 # against ~25k of headroom from an 88.70% SLR against a 97% placement ceiling.
 # One east port is still free.
 xxx mat vec xxx
-mag mat mat mat
-mag mat mat xxx
+sys mat mat mat
+sys mat mat xxx
 xxx mat vec xxx

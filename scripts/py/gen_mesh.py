@@ -6,10 +6,10 @@
 
 The map is a grid of THREE-CHARACTER tokens separated by spaces or dashes:
 
-    xxx vec vec xxx
-    mag mat mat vec
-    mag mat mat vec
-    xxx vec vec xxx
+    xxx mat xxx
+    sys mat vec
+    sys mat vec
+    xxx mat xxx
 
 The interior is the router grid; the first and last row are the north and south
 edges, the first and last column the west and east edges. Routers sit at
@@ -20,16 +20,10 @@ edges, the first and last column the west and east edges. Routers sit at
        so a token there would have nowhere to attach.
   nul  the port exists but is tied off. This is how you leave a side empty
        without changing the grid's shape.
-  mag  one of MAG's NoC memory ports. At most four -- mag.v declares exactly
-       four port coordinate pairs.
+  sys  one NoC port of the system node. All of them are ONE node (one hub,
+       one memory path, one control processor). At most four.
   vec  a vector core.
   mat  a matmul cluster, one mx_cluster_cu on one router local.
-`mgr`, `acu` and `cpu` are RETIRED, not deprecated, and a map using one is
-rejected by name. `mgr`/`acu` named the two locals of a two-port cluster and
-mx_cluster_cu presents one. `cpu` placed the system node's control processor at
-a mesh coordinate; the processor is part of the node, answers at (0,0) -- a
-corner, which touches no router and which no map may fill -- and costs no
-attach point at all.
 
 A PROJECT can register its own unit tokens without touching this file:
 
@@ -51,10 +45,7 @@ from pathlib import Path
 
 EMPTY = {"xxx", "   ", "..."}
 TIED = EMPTY | {"nul"}
-KNOWN = TIED | {"mag", "vec", "mat"}
-# Named so the error says what to write instead. Falling through to "unknown
-# token" would read as a typo rather than as a shape the hardware dropped.
-RETIRED = {"mgr", "acu", "cpu"}
+KNOWN = TIED | {"sys", "vec", "mat"}
 
 
 class MeshError(Exception):
@@ -77,17 +68,6 @@ def parse_map(text, extra=frozenset()):
         for t in toks:
             if len(t) != 3:
                 raise MeshError(f"line {lineno}: token {t!r} is {len(t)} chars, want 3")
-            if t == "cpu":
-                raise MeshError(
-                    f"line {lineno}: 'cpu' is retired. The control processor is "
-                    "part of the system node, answers at (0,0), and costs no "
-                    "attach point -- delete the token, keep the grid"
-                )
-            if t in RETIRED:
-                raise MeshError(
-                    f"line {lineno}: {t!r} named one local of the two-port cluster, "
-                    "which no longer exists; a cluster is one 'mat'"
-                )
             if t not in known:
                 raise MeshError(
                     f"line {lineno}: unknown token {t!r}; "
@@ -146,7 +126,7 @@ class Mesh:
                 t = self.tok(x, y)
                 if t in TIED:
                     continue
-                if t == "mag":
+                if t == "sys":
                     self.mags.append((x, y))
                 elif t == "vec":
                     self.vecs.append((x, y))
@@ -158,9 +138,9 @@ class Mesh:
                     self.units.setdefault(t, []).append((x, y))
 
         if len(self.mags) > 4:
-            raise MeshError(f"{len(self.mags)} mag tiles; mag.v declares only 4 ports")
+            raise MeshError(f"{len(self.mags)} sys tiles; the system node has at most 4 ports")
         if not self.mags:
-            raise MeshError("no mag tile: nothing would serve memory")
+            raise MeshError("no sys tile: the mesh has no system node")
 
     def _interior(self, x, y):
         return 1 <= x <= self.nx and 1 <= y <= self.ny
@@ -171,7 +151,7 @@ class Mesh:
         return t if t not in TIED else None
 
     def nearest_mag(self, x, y):
-        """The mag port a node at (x,y) should address, by clamped Manhattan hops.
+        """The system-node port a unit at (x,y) addresses, by clamped Manhattan hops.
 
         Distance is measured on the clamped coordinates because that is what the
         router actually routes on -- an edge node and the router it hangs off
@@ -965,11 +945,11 @@ def render(
 //
 {picture}
 //
-// {m.nx}x{m.ny} routers, {len(m.mags)} MAG port(s), {ncu} cluster(s), {nvec} vector core(s).
+// {m.nx}x{m.ny} routers, 1 system node on {len(m.mags)} port(s), {ncu} cluster(s), {nvec} vector core(s).
 // GRID_X_HI={m.nx} GRID_Y_HI={m.ny}: the clamp is per axis, so the grid need not
 // be square. Edge endpoints live outside the router grid and are reached by it.
 //
-// MAG presents {MASTER_SUM} = {nm} AXI masters -- one per memory port, plus the
+// The system node presents {MASTER_SUM} = {nm} AXI masters -- one per memory port, plus the
 // host upload and the memory mover{LINK_MASTER_NOTE}. Merge them with one SmartConnect in the
 // block design; hand-written arbitration here would duplicate it badly.{LINK_HEADER}
 
@@ -1027,7 +1007,7 @@ module {name} #(
     // `mat_clk` and every vector core `vec_clk`. THE NoC FABRIC STAYS ONE
     // CLOCK -- router to router is untouched, so the deadlock argument holds.
     parameter integer UNIT_CDC  = {1 if mat_pump else 0},
-    // MAG is an endpoint too. At 0 its `enc_in_busy` reaches the router's flow
+    // The system node is an endpoint too. At 0 its `enc_in_busy` reaches the router's flow
     // control combinationally: 12 levels, -0.561, the mesh WNS in every config
     // measured. The FIFO flags are registered even when both clocks are one.
     parameter integer MAG_CDC   = {1 if mat_pump else 0},
@@ -1037,8 +1017,8 @@ module {name} #(
     parameter integer DRAM_CDC  = 1,
     parameter integer CDC_DEPTH = 16
 )(
-    // axi_aclk IS the clock the AXI and AXIS ports run on, which is MAG's: they
-    // all live in the system node. noc_clk is the fabric and carries no interface.
+    // axi_aclk IS the clock the AXI and AXIS ports run on, the system node's:
+    // they all live in it. noc_clk is the fabric and carries no interface.
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 axi_aclk CLK" *)
     (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF {ASSOC}, ASSOCIATED_RESET axi_aresetn" *)
     input  wire axi_aclk,
@@ -1238,7 +1218,7 @@ def main():
             ns,
         )
         tokens = ns["TOKENS"]
-        clash = set(tokens) & (KNOWN | RETIRED)
+        clash = set(tokens) & KNOWN
         if clash:
             sys.exit(f"gen_mesh: --tokens redefines built-in {sorted(clash)}")
 
@@ -1266,7 +1246,7 @@ def main():
     if args.out:
         Path(args.out).write_text(text, encoding="utf-8")
         print(
-            f"{args.out}: {mesh.nx}x{mesh.ny} routers, {len(mesh.mags)} mag, "
+            f"{args.out}: {mesh.nx}x{mesh.ny} routers, {len(mesh.mags)} sys port(s), "
             f"{len(mesh.cus)} cu, {len(mesh.vecs)} vec, "
             f"{1 if args.single_master else len(mesh.mags) + (3 if args.ilink else 2)}"
             f" AXI master(s)"

@@ -5,6 +5,6 @@
 # heterogeneous shape across system nodes can be exercised, at a fraction of
 # 6+2's bulk.
 xxx nul vec xxx
-mag mat nul xxx
-mag mat nul xxx
+sys mat nul xxx
+sys mat nul xxx
 xxx nul vec xxx

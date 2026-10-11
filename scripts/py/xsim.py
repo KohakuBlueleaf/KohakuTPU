@@ -2237,7 +2237,7 @@ BENCHES["card_v8t8_2n"] = (
     gen_card.image_sources("v8t8", "ktpu_sim_1x1_1c1v_1m_nol2_pump")
     + ["tests/system/card_v8t8_2n.v"],
 )
-# The v9 card: dies 0 and 1 hold the 2x1, 4+2 mesh (gen_card.py --ver v9).
+# The v9 card: dies 0 and 1 hold the 4+2 mesh (gen_card.py --ver v9).
 BENCHES["card_v9_2n"] = (
     "card_v9_2n",
     gen_card.image_sources("v9") + ["tests/system/card_v9_2n.v"],
@@ -2270,7 +2270,7 @@ for _n in (6, 8):
     for _d in (1, 2):
         BENCHES[f"card_v9x{_n}_{_d}n"] = (
             f"card_v9x{_n}_{_d}n",
-            [s for s in gen_card.image_sources("v9") if "2x1_4c2v" not in s]
+            [s for s in gen_card.image_sources("v9") if "1x2_4c2v" not in s]
             + [
                 f"src/kohakutpu/top/generated/ktpu_ship_2x2_{_n}c2v_1m_nol2_pump.v",
                 f"tests/system/card_v9x{_n}_{_d}n.v",
