@@ -21,6 +21,7 @@ module mx_acu_fp_pump #(
     input  wire [31:0]  sb2,
     input  wire         single,
     input  wire [2:0]   op,
+    input  wire         le,
     input  wire [((DEPTH <= 1) ? 1 : $clog2(DEPTH))-1:0] tile_addr,
     input  wire         cmd_valid,
     input  wire [16*(ACC_MW+8)-1:0] peer_in,
@@ -35,11 +36,11 @@ module mx_acu_fp_pump #(
 
     wire gclk;
     vlt_qgate #(
-        .W(2 + 2*(384 + 32 + 32) + 8 + 1 + 3 + TAW + 1 + TW), .SETTLE(32)
+        .W(2 + 2*(384 + 32 + 32) + 8 + 1 + 3 + 1 + TAW + 1 + TW), .SETTLE(32)
     ) u_gate (
         .clk(clk),
         .in({rst, en, part_in, sa, sb, anchor, part_in2, sa2, sb2, single,
-             op, tile_addr, cmd_valid, peer_in}),
+             op, le, tile_addr, cmd_valid, peer_in}),
         .idle(!cmd_valid), .gclk(gclk)
     );
 
@@ -47,7 +48,7 @@ module mx_acu_fp_pump #(
         .clk(gclk), .rst(rst), .en(en),
         .part_in(part_in), .sa(sa), .sb(sb), .anchor(anchor),
         .part_in2(part_in2), .sa2(sa2), .sb2(sb2), .single(single),
-        .op(op), .tile_addr(tile_addr), .cmd_valid(cmd_valid),
+        .op(op), .le(le), .tile_addr(tile_addr), .cmd_valid(cmd_valid),
         .peer_in(peer_in), .peer_out(peer_out), .peer_valid(peer_valid),
         .emit_out(emit_out), .emit_valid(emit_valid), .busy(busy)
     );

@@ -25,7 +25,11 @@ module mx_cluster_node_pump #(
     parameter         L1_PRIM = "distributed",
     // SEPARATE from L1_PRIM: the accumulator is already READ_LAT=2, so it
     // takes "ultra" with no pipeline change, where L1 A/B needs one.
-    parameter         TILE_PRIM = "block"
+    parameter         TILE_PRIM = "block",
+    // Drain queue depth in sub-tiles: a whole tile, so an emitting sweep never
+    // waits for the write path. 512 is the floor because 272 bits is four
+    // RAMB36 at any depth up to it; deeper goes to UltraRAM (4 x 4096 x 72).
+    parameter integer DQ_DEPTH = (TILES < 512) ? 512 : TILES
 )(
     // Ports are clk1x/clk2x, not clk, because ooc_pump.tcl constrains by name.
     input  wire         clk1x,
@@ -108,6 +112,7 @@ module mx_cluster_node_pump #(
     wire [31:0]     m_sa, m_sb, m_sa2, m_sb2;
     wire            m_single;
     wire [7:0]      m_anchor;
+    wire            m_le;
 
     // GEMM is finished when the sweep has stopped issuing AND the accumulator
     // has settled. The manager knows only the first half -- its counters say
@@ -154,7 +159,7 @@ module mx_cluster_node_pump #(
         .acu_op(m_op), .acu_addr(m_addr), .acu_cmd(m_cmd),
         .acu_sa(m_sa), .acu_sb(m_sb),
         .acu_sa2(m_sa2), .acu_sb2(m_sb2), .acu_single(m_single),
-        .acu_anchor(m_anchor)
+        .acu_anchor(m_anchor), .acu_le(m_le)
     );
 
     // ---- the cascade ----------------------------------------------------
@@ -220,19 +225,17 @@ module mx_cluster_node_pump #(
     // between them and the accumulator accepts a command every cycle. The FIFO
     // holds results that arrive while the write port is busy.
     //
-    // DEEP, because a fused emit arrives in a BURST: the last K block of a sweep
-    // completes one sub-tile per cycle, while memory retires a WBURST in ~11
-    // cycles and serves every cluster. Averaged over a pass the write path keeps
-    // up (512 sub-tiles per 4,096 cycles of compute), so the buffer only has to
-    // carry the burst until the gap after it. Too small and the sweep stalls,
-    // which is the serialisation the fusion removes. (Floor of 16 regardless:
-    // xpm_fifo_sync's minimum write depth. Asking for less does not get a
-    // smaller FIFO, it gets one that does not behave.)
-    localparam integer DQ_DEPTH = 128;
+    // DQ_DEPTH deep, because a fused emit arrives in a BURST: the last K block
+    // of a sweep completes one sub-tile per cycle, while the write path retires
+    // ~1 sub-tile per cycle alone and a fraction of that when the clusters share
+    // memory. Holding the whole tile lets the emitting sweep finish at compute
+    // rate and the write-out overlap the next tile's fills and sweeps; a
+    // shallower queue holds the sweep through `emit_stall` instead.
     // Sub-tiles that may be outstanding: issued into the accumulator but not
     // yet taken by the write port. Bounded rather than trusted, because a
     // result arriving with nowhere to go is silently lost.
     localparam integer DQ_LIMIT = DQ_DEPTH - 16;
+    localparam         DQ_MEM   = (DQ_DEPTH > 512) ? "ultra" : "block";
 
     // `d_iss` counts SUB-TILES and the other three count GRANULES, because a
     // send produces two of them per command and an emit one. `drain_idx` is
@@ -289,13 +292,11 @@ module mx_cluster_node_pump #(
                         : pq_pend    ? {{(512-PW){1'b0}}, pq_hi}
                                      : emit_out;
 
-    // "block", not "distributed": 272 x 128 is 624 LUTRAM sites, the largest
-    // single block of distributed RAM in a cluster and 24 of them on the die.
     // Nothing here reads the FIFO's internals -- `d_got`/`d_pop`/`d_out` are
     // counters of their own, so a deeper write-to-not-empty latency only delays
     // `drain_valid`, which the write port already waits on.
     sync_fifo #(.DATA_WIDTH(272), .FIFO_DEPTH(DQ_DEPTH),
-                .MEMORY_TYPE("block")) u_dq (
+                .MEMORY_TYPE(DQ_MEM)) u_dq (
         .clk(clk), .rst(rst),
         .wr_en(dq_wr), .wr_data({d_got, dq_dat}),
         .wr_busy(dq_full), .wr_almost(),
@@ -504,6 +505,7 @@ module mx_cluster_node_pump #(
         .sb(m_sb),
         .anchor(m_anchor),
         .op(acu_busy_drain ? d_op : m_op),
+        .le(!acu_busy_drain && m_le),
         .tile_addr(acu_busy_drain ? d_addr : m_addr),
         .cmd_valid(acu_busy_drain ? d_cmd : m_cmd),
         .peer_in(d_peer), .peer_out(acu_peer), .peer_valid(acu_peer_v),

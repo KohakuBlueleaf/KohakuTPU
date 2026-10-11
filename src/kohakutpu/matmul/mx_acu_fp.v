@@ -67,6 +67,8 @@ module mx_acu_fp #(
     input  wire [7:0]   anchor,
 
     input  wire [2:0]   op,
+    // With OP_LOAD: also hand the loaded value out (an emitting one-block sweep).
+    input  wire         le,
     // width derived from DEPTH -- see the TAW localparam below
     input  wire [((DEPTH <= 1) ? 1 : $clog2(DEPTH))-1:0] tile_addr,
     input  wire         cmd_valid,
@@ -419,7 +421,17 @@ module mx_acu_fp #(
     wire sum_iss  = v2 && ((op_r2 == OP_EMIT) || (op_r2 == OP_SEND));
     // ADD_EMIT both writes the tile back and hands the value out, so it is in
     // norm_iss (the write) and drives OUT_EMIT (the output) at once.
-    wire out_emit = v2 && ((op_r2 == OP_EMIT) || (op_r2 == OP_ADD_EMIT));
+    // `le` beside `op`, through the same four stages (op_r .. op_r2).
+    reg [3:0] le_p;
+    always @(posedge clk) begin
+        if (rst) begin
+            le_p <= 4'd0;
+        end else if (en) begin
+            le_p <= {le_p[2:0], le};
+        end
+    end
+    wire out_emit = v2 && ((op_r2 == OP_EMIT) || (op_r2 == OP_ADD_EMIT)
+                           || ((op_r2 == OP_LOAD) && le_p[3]));
 
     // ONE mux level, on registered selects, and NOTHING in front of it: these
     // are the stage-2b flops themselves, not a decode of an encoded source id.

@@ -24,6 +24,7 @@ module mx_cluster_cu_pump #(
     parameter integer MODEL      = 0,
     parameter         L1_PRIM    = "distributed",
     parameter         TILE_PRIM  = "block",
+    parameter integer DQ_DEPTH   = (TILES < 512) ? 512 : TILES,
     parameter         RECV_MEM   = "block"
 )(
     input  wire                   clk2x,
@@ -70,7 +71,7 @@ module mx_cluster_cu_pump #(
         .TILES(TILES), .GA(GA), .GB(GB), .ACC_MW(ACC_MW),
         .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
         .MODEL(MODEL), .L1_PRIM(L1_PRIM), .TILE_PRIM(TILE_PRIM),
-        .RECV_MEM(RECV_MEM), .PUMP(1)
+        .DQ_DEPTH(DQ_DEPTH), .RECV_MEM(RECV_MEM), .PUMP(1)
     ) u_cu (
         // UNIT_CDC 0, so `unit_clk` aliases `clk` inside and reaches nothing.
         .clk(clk1x), .clk2x(clk2x), .unit_clk(clk1x), .resetn(resetn),

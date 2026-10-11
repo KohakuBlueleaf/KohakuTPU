@@ -78,6 +78,9 @@ module mx_acu_fp_pump #(
     input  wire         single,     // the pair's second block is past NK
 
     input  wire [2:0]   op,
+    // With OP_LOAD: also hand the loaded value out. A sweep whose one issue
+    // both opens and completes its tile (nk <= 2) emits through this.
+    input  wire         le,
     // width derived from DEPTH -- see the TAW localparam below
     input  wire [((DEPTH <= 1) ? 1 : $clog2(DEPTH))-1:0] tile_addr,
     input  wire         cmd_valid,
@@ -642,6 +645,17 @@ module mx_acu_fp_pump #(
     u_tile (.clk(clk), .wr_en(wr_bank_en), .wr_addr(wr_addr), .wr_data(wr_data),
             .rd_en(en), .rd_addr(addr_a), .rd_data(t0));
 
+    // `le` beside `op`, through the same eight stages (op_q .. op_r2).
+    reg [7:0] le_p;
+    always @(posedge clk) begin
+        if (rst) begin
+            le_p <= 8'd0;
+        end else if (en) begin
+            le_p <= {le_p[6:0], le};
+        end
+    end
+    wire le_r2 = le_p[7];
+
     wire norm_iss = v2 && (
         (op_r2 == OP_LOAD)
         || (op_r2 == OP_ADD)
@@ -652,7 +666,8 @@ module mx_acu_fp_pump #(
     wire sum_iss  = v2 && ((op_r2 == OP_EMIT) || (op_r2 == OP_SEND));
     // ADD_EMIT both writes the tile back and hands the value out, so it is in
     // norm_iss (the write) and drives OUT_EMIT (the output) at once.
-    wire out_emit = v2 && ((op_r2 == OP_EMIT) || (op_r2 == OP_ADD_EMIT));
+    wire out_emit = v2 && ((op_r2 == OP_EMIT) || (op_r2 == OP_ADD_EMIT)
+                           || ((op_r2 == OP_LOAD) && le_r2));
 
     // ONE mux level, on registered selects, and NOTHING in front of it: these
     // are the stage-2b flops themselves, not a decode of an encoded source id.

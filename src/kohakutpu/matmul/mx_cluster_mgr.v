@@ -87,7 +87,9 @@ module mx_cluster_mgr #(
     output wire            acu_cmd,
     output wire [31:0]     acu_sa,
     output wire [31:0]     acu_sb,
-    output wire [7:0]      acu_anchor
+    output wire [7:0]      acu_anchor,
+    // OP_LOAD that also emits: an emitting sweep whose issue opens its tile.
+    output wire            acu_le
 );
     localparam [2:0] OP_NOP = 3'd0, OP_LOAD = 3'd1, OP_ADD = 3'd2;
     localparam [2:0] OP_ADD_EMIT = 3'd7;
@@ -334,17 +336,16 @@ module mx_cluster_mgr #(
     // ================================================ ACU command FIFO
     // Depth 64: the chain is ~19 deep and this must never fill, because a full
     // FIFO would silently drop a command and corrupt one output element.
-    localparam integer CW = 3 + TAW + 64 + 8;
+    localparam integer CW = 1 + 3 + TAW + 64 + 8;
 
-    // OP_LOAD_EMIT does not exist and does not need to: an emitting sweep is the
-    // LAST chunk of an output tile, so `s2_first` and `s2_emit` cannot both be
-    // set. kernel.plan guarantees it and falls back to a DRAIN when it cannot.
+    // An issue that both opens and completes its tile (an emitting sweep of one
+    // K block) is OP_LOAD with `le`.
     wire [2:0] cmd_op = (
         s2_first ? OP_LOAD
         : s2_emit ? OP_ADD_EMIT
         : OP_ADD
     );
-    wire [CW-1:0] cmd_in = {cmd_op, s2_addr, s2_sa, s2_sb, anc_r};
+    wire [CW-1:0] cmd_in = {s2_first && s2_emit, cmd_op, s2_addr, s2_sa, s2_sb, anc_r};
     assign emit_issue = s2_valid && s2_emit;
     wire [CW-1:0] cmd_out;
     wire          cmd_full;
@@ -354,8 +355,9 @@ module mx_cluster_mgr #(
            .wr_en(s2_valid), .wr_data(cmd_in), .wr_busy(cmd_full),
            .rd_en(part_valid), .rd_data(cmd_out), .rd_busy(cmd_empty));
 
-    assign acu_op     = part_valid ? cmd_out[CW-1 -: 3] : OP_NOP;
-    assign acu_addr   = cmd_out[CW-4 -: TAW];
+    assign acu_le     = cmd_out[CW-1];
+    assign acu_op     = part_valid ? cmd_out[CW-2 -: 3] : OP_NOP;
+    assign acu_addr   = cmd_out[CW-5 -: TAW];
     assign acu_sa     = cmd_out[71:40];
     assign acu_sb     = cmd_out[39:8];
     assign acu_anchor = cmd_out[7:0];
@@ -399,11 +401,6 @@ module mx_cluster_mgr #(
     always @(posedge clk) if (!rst && part_valid && cmd_empty) begin
         $display("%0t ERROR mx_cluster_mgr: part_valid with no pending command", $time);
     end
-    // The LOAD wins, so the sub-tile is computed and never handed out, and the
-    // drain waits for results that are not coming.
-    always @(posedge clk) if (!rst && s2_valid && s2_first && s2_emit)
-        $display("%0t ERROR mx_cluster_mgr: emitting sweep also opens tile %0d",
-                 $time, s2_addr);
 `endif
 
 endmodule

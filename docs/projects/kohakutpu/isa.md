@@ -327,16 +327,19 @@ them", and it does not wait for the sweep — so one tile's results can still be
 draining while the next tile's sweep runs.
 
 What replaces the command slots is buffering and backpressure. The last K block
-completes one sub-tile per cycle while memory retires a burst in about eleven, so
-the queue carries the burst until the gap after it; past that the **sweep** is
-held, because once a command is in the accumulator its result arrives ~19 cycles
-later whatever happens downstream.
+completes one sub-tile per cycle, faster than the write path retires them when
+clusters share memory, so the drain queue holds a whole tile (`DQ_DEPTH`
+sub-tiles, default `TILES` with a floor of 512; 4,096 x 272 bits is four
+UltraRAMs). The emitting sweep finishes at compute rate and the tile's write-out
+overlaps the next tile's fills and sweeps. Past `DQ_DEPTH - 16` outstanding the
+**sweep** is held, because once a command is in the accumulator its result
+arrives ~19 cycles later whatever happens downstream.
 
-> There is no load-and-emit opcode, so an emitting sweep must not also be the one
-> that opens the tile. It never is in practice — the emitting sweep is the last K
-> chunk — and only a single chunk of a single K block collides, where the driver
-> falls back to an issuing `DRAIN` and the manager reports the collision if it
-> ever happens.
+An emitting issue that also opens its tile (a sweep of one issue, `nk` ≤ 2 with
+`acc` 0) is a **load-and-emit**: the manager's command carries an `le` bit next
+to the op, and the accumulator emits the loaded value the same way it emits a
+sum. So any sweep may emit, and a one-issue score sweep (d = 64) emits at full
+rate instead of needing two half-rate passes.
 
 ### 5.2 Bursts, and why one transaction per sub-tile does not fit
 

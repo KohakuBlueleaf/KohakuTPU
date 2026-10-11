@@ -92,6 +92,8 @@ module mx_cluster_cu #(
     // The accumulator's primitive, separate from L1's: it is already
     // READ_LAT=2, so "ultra" costs no pipeline change here.
     parameter         TILE_PRIM  = "block",
+    // Drain queue depth in sub-tiles (mx_cluster_node_pump.v): a whole tile.
+    parameter integer DQ_DEPTH   = (TILES < 512) ? 512 : TILES,
     // The receive queue is 288 x RECV_DEPTH and the largest single item in
     // noc_cu_base. Block RAM by default; a knob so the trade can be measured.
     parameter         RECV_MEM   = "block",
@@ -428,7 +430,7 @@ module mx_cluster_cu #(
     generate if (PUMP == 0) begin : g_p1
     mx_cluster_node #(.TILES(TILES), .GA(GA), .GB(GB),
                       .ACC_MW(ACC_MW), .MODEL(MODEL), .L1_PRIM(L1_PRIM),
-                      .TILE_PRIM(TILE_PRIM)) u_node (
+                      .TILE_PRIM(TILE_PRIM), .DQ_DEPTH(DQ_DEPTH)) u_node (
         .clk(u_clk), .rst(!u_resetn),
         .l1_we(l1_we), .l1_sel(l1_sel), .l1_addr(l1_addr), .l1_data(l1_data),
         .gemm_start(gemm_start), .gemm_gm(gm_r), .gemm_gn(gn_r),
@@ -448,7 +450,7 @@ module mx_cluster_cu #(
     end else begin : g_p2
     mx_cluster_node_pump #(.TILES(TILES), .GA(GA), .GB(GB),
                       .ACC_MW(ACC_MW), .MODEL(MODEL), .L1_PRIM(L1_PRIM),
-                      .TILE_PRIM(TILE_PRIM)) u_node (
+                      .TILE_PRIM(TILE_PRIM), .DQ_DEPTH(DQ_DEPTH)) u_node (
         .clk1x(u_clk), .clk2x(clk2x), .rst(!u_resetn),
         .l1_we(l1_we), .l1_sel(l1_sel), .l1_addr(l1_addr), .l1_data(l1_data),
         .gemm_start(gemm_start), .gemm_gm(gm_r), .gemm_gn(gn_r),

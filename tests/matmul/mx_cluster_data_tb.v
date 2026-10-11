@@ -234,6 +234,10 @@ module mx_cluster_data_tb;
     end
 
     // ================================================ instruction encoders
+    // While set, a GEMM emits its sub-tiles to the drain's address and the DRAIN
+    // is the fused barrier behind it: a sweep of one issue loads and emits.
+    reg gemm_emit = 1'b0;
+
     task send_gemm(input integer gm, input integer gn, input integer nk,
                    input integer acc, input integer bank);
         reg [255:0] p;
@@ -241,6 +245,7 @@ module mx_cluster_data_tb;
             p = 256'd0;
             p[255 -: 4]   = 4'd2;                 // OP_GEMM
             p[200]        = acc[0];
+            p[116]        = gemm_emit;            // emit
             p[114]        = bank[0];              // abank
             p[113]        = bank[0];              // bbank
             p[199 -: 8]   = gm[7:0];
@@ -259,6 +264,7 @@ module mx_cluster_data_tb;
             p[251 -: 34]  = 34'd0;                // destination base
             p[217 -: 16]  = nt[15:0];
             p[175 -: 8]   = ANCHOR[7:0];
+            p[115]        = gemm_emit;            // fuse
             noc_send(hdr(CU_X[3:0], CU_Y[3:0], T_CU_INST, 8'h40, 1'b0, p));
         end
     endtask
@@ -1111,6 +1117,19 @@ module mx_cluster_data_tb;
         run_case(4, 2, 2);      // a drain longer than one WBURST
         if (errors == err_before) begin
             $display("    L1 over CU_DATA matches the model");
+        end
+
+        // nk 1 (and nk 2 on the pumped cluster) is one issue: it opens the tile
+        // and emits. nk 4 is the accumulate-and-emit control.
+        $display("--- an emitting sweep with its fused drain ---");
+        err_before = errors;
+        gemm_emit = 1'b1;
+        run_case(2, 2, 1);
+        run_case(3, 3, 2);
+        run_case(4, 2, 4);
+        gemm_emit = 1'b0;
+        if (errors == err_before) begin
+            $display("    load-and-emit and add-and-emit both hand out the tile");
         end
 
         $display("--- L1 as two banks of 256 ---");
