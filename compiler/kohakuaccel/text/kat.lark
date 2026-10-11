@@ -12,6 +12,7 @@ block: _INDENT stmt+ _DEDENT
 
 ?line: command
      | NAME "=" command          -> binding
+     | CNAME "{" expr "}" "=" command   -> computed_binding
 
 command: NAME args? annot?
 annot: ":" term
@@ -22,14 +23,29 @@ COMMA: ","
 
 ?arg: term
     | term "=" term              -> assign
+    | term "+=" term             -> addassign
     | term "in" term             -> member
     | ARROW                      -> arrow
 
-?term: atom
-     | term "+" atom             -> offset
-     | term ".." atom            -> span
-     | "-" atom                  -> neg
-     | "!" atom                  -> notpred
+?term: expr
+     | expr ".." expr            -> span
+     | expr CMP expr             -> compare
+
+// Arithmetic on constants, loop variables and buffer names. Binary operators
+// bind tighter than argument separation: `a -b` is a subtraction, so a
+// negative argument after another is written with a comma.
+?expr: product
+     | expr "+" product          -> offset
+     | expr "-" product          -> sub
+?product: unary
+     | product "*" unary         -> mul
+     | product "/" unary         -> div
+     | product "%" unary         -> mod
+?unary: atom
+     | "-" unary                 -> neg
+     | "+" unary                 -> pos
+     | "!" unary                 -> notpred
+     | atom "@" atom             -> placed
 
 ?atom: NAME                      -> name
      | INT                       -> int
@@ -40,6 +56,8 @@ COMMA: ","
      | STRING                    -> string
      | CALLNAME "(" cargs? ")"   -> call
      | VIEWNAME "[" slices? "]"  -> view
+     | CNAME "{" expr "}"        -> computed
+     | CNAME "{" expr "}" "[" slices? "]"   -> computed_view
      | "(" ")"                   -> tuple
      | "(" term "," ")"          -> tuple
      | "(" term "," term ("," term)* ","? ")"   -> tuple
@@ -58,14 +76,17 @@ slices: slice ("," slice)* ","?
       | ":"                      -> slice_all
       | "*"                      -> newaxis
 
-ARROW: "->" | "<-"
+// The arrow outranks the comparisons: `a <- b` is an arrow, `a < -b` a compare.
+ARROW.3: "->" | "<-"
+CMP: "==" | "!=" | "<=" | ">=" | "<" | ">"
 
 // A call or a view is a name with its bracket touching it; `MG (1, 0)` is a
-// name and a tuple, `tiles(L, bq)` a call, `q[h, i, :]` a view.
-// A dot inside a name is followed by a letter (`reduce.max`), so `0..H` and
-// `i..j` are spans.
+// name and a tuple, `tiles(L, bq)` a call, `q[h, i, :]` a view, `v{i+1}` a
+// name computed from an expression. A dot inside a name is followed by a
+// letter (`reduce.max`), so `0..H` and `i..j` are spans.
 CALLNAME.2: /[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*(?=\()/
 VIEWNAME.2: /[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*(?=\[)/
+CNAME.2: /[A-Za-z_][A-Za-z0-9_]*(?=\{)/
 NAME: /[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*/
 
 HEX.3: /0x[0-9A-Fa-f][0-9A-Fa-f_]*/

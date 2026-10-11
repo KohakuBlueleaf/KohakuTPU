@@ -85,6 +85,52 @@ class Offset:
 
 
 @dataclass(frozen=True)
+class BinOp:
+    """`a - b`, `a * b`, `a / b` (integer division), `a % b`; `+` is `Offset`."""
+
+    op: str
+    a: object
+    b: object
+
+
+@dataclass(frozen=True)
+class Pos:
+    """`+x`: in a slice's upper bound, an extent from the lower bound."""
+
+    x: object
+
+
+@dataclass(frozen=True)
+class Placed:
+    """`TYPE @SPACE`: where a value lives."""
+
+    x: object
+    space: object
+
+
+@dataclass(frozen=True)
+class Compare:
+    op: str
+    a: object
+    b: object
+
+
+@dataclass(frozen=True)
+class Computed:
+    """`v{expr}`: a name whose index is an expression; `slices` its view."""
+
+    prefix: str
+    index: object
+    slices: tuple | None = None
+
+
+@dataclass(frozen=True)
+class AddAssign:
+    lhs: object
+    rhs: object
+
+
+@dataclass(frozen=True)
 class Span:
     lo: object
     hi: object
@@ -179,8 +225,8 @@ class Stmt:
 # --------------------------------------------------------------------- parsing
 class _Indenter(Indenter):
     NL_type = "_NL"
-    OPEN_PAREN_types = ("LPAR", "LSQB")
-    CLOSE_PAREN_types = ("RPAR", "RSQB")
+    OPEN_PAREN_types = ("LPAR", "LSQB", "LBRACE")
+    CLOSE_PAREN_types = ("RPAR", "RSQB", "RBRACE")
     INDENT_type = "_INDENT"
     DEDENT_type = "_DEDENT"
     tab_len = 4
@@ -234,6 +280,36 @@ class _Build(Transformer):
 
     def offset(self, base, off):
         return Offset(base, off)
+
+    def sub(self, a, b):
+        return BinOp("-", a, b)
+
+    def mul(self, a, b):
+        return BinOp("*", a, b)
+
+    def div(self, a, b):
+        return BinOp("/", a, b)
+
+    def mod(self, a, b):
+        return BinOp("%", a, b)
+
+    def pos(self, x):
+        return Pos(x)
+
+    def placed(self, x, space):
+        return Placed(x, space)
+
+    def compare(self, a, op, b):
+        return Compare(str(op), a, b)
+
+    def computed(self, n, index):
+        return Computed(str(n), index)
+
+    def computed_view(self, n, index, slices=()):
+        return Computed(str(n), index, tuple(slices))
+
+    def addassign(self, a, b):
+        return AddAssign(a, b)
 
     def span(self, lo, hi):
         return Span(lo, hi)
@@ -311,6 +387,10 @@ def _stmts(tree, build) -> list:
         target = None
         if line.data == "binding":
             target, cmd = str(line.children[0]), line.children[1]
+        elif line.data == "computed_binding":
+            # A name from an expression: the meta expander makes it a name.
+            target = Computed(str(line.children[0]), build.transform(line.children[1]))
+            cmd = line.children[2]
         else:
             cmd = line
         op = str(cmd.children[0])
@@ -408,7 +488,23 @@ def fmt(t) -> str:
         case Not(x):
             return f"!{fmt(x)}"
         case Offset(b, o):
-            return f"{fmt(b)}+{fmt(o)}"
+            if _simple(b) and _simple(o):
+                return f"{fmt(b)}+{fmt(o)}"
+            return f"{fmt(b)} + {_paren(o, '+')}"
+        case BinOp(op, a, b):
+            return f"{_paren(a, op, left=True)} {op} {_paren(b, op)}"
+        case Pos(x):
+            return f"+{fmt(x)}"
+        case Placed(x, space):
+            return f"{fmt(x)} @{fmt(space)}"
+        case Compare(op, a, b):
+            return f"{fmt(a)} {op} {fmt(b)}"
+        case Computed(p, i, None):
+            return f"{p}{{{fmt(i)}}}"
+        case Computed(p, i, slices):
+            return f"{p}{{{fmt(i)}}}[{', '.join(fmt(s) for s in slices)}]"
+        case AddAssign(a, b):
+            return f"{fmt(a)} += {fmt(b)}"
         case Span(lo, hi):
             return f"{fmt(lo)}..{fmt(hi)}"
         case Typed(n, ty):
@@ -442,6 +538,34 @@ def fmt(t) -> str:
     raise TypeError(f"no text for {t!r}")
 
 
+#: Binding strength; a sub-term binding less tightly than its parent is bracketed.
+_RANK = {"+": 1, "-": 1, "*": 2, "/": 2, "%": 2}
+
+
+def _simple(t) -> bool:
+    return isinstance(t, (Name, Int, Float, View, Computed, Call))
+
+
+def _rank(t) -> int:
+    if isinstance(t, Offset):
+        return 1
+    if isinstance(t, BinOp):
+        return _RANK[t.op]
+    return 3
+
+
+def _paren(t, op: str, left: bool = False) -> str:
+    """`t` as an operand of `op`: bracketed when it binds less tightly, or
+    equally on the right of a non-associative operator."""
+    r, mine = _rank(t), _RANK[op]
+    # On the right, an equal-rank operand keeps its brackets unless both are
+    # the associative op: a * (b % c) is not a * b % c.
+    inner = t.op if isinstance(t, BinOp) else "+"
+    if r < mine or (not left and r == mine and (op in "-/%" or inner != op)):
+        return f"({fmt(t)})"
+    return fmt(t)
+
+
 def _head(st: Stmt) -> str:
     if len(st.args) == 1 and isinstance(st.args[0], Assign):
         # A statement that is one binding (`tile bq = 32`, `next m = mn`).
@@ -470,7 +594,10 @@ def _head(st: Stmt) -> str:
 
 
 def _op(st: Stmt) -> str:
-    return f"{st.target} = {st.op}" if st.target is not None else st.op
+    if st.target is None:
+        return st.op
+    target = st.target if isinstance(st.target, str) else fmt(st.target)
+    return f"{target} = {st.op}"
 
 
 def emit(stmts: list, indent: int = 0, align: int = 48) -> str:

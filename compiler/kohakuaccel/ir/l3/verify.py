@@ -168,9 +168,11 @@ class _Verifier:
                 case N.Tile(name, value):
                     scope.bind(name, Entry("dim", size=value), s)
                 case N.Output(name, t):
-                    if ctx["where"] != "program" or not ctx["top"]:
+                    # A function may build its result in an output, written
+                    # piecewise by `store` inside a map, and return it.
+                    if not ctx["top"]:
                         raise VerifyError(
-                            "an output is declared in a program's body", s
+                            "an output is declared at the top of a body", s
                         )
                     scope.bind(name, Entry("output", self.type(scope, t, s)), s)
                 case N.Let():

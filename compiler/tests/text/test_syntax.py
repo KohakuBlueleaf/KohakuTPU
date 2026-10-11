@@ -5,6 +5,7 @@ import pytest
 from kohakuaccel.text.syntax import (
     Arrow,
     Assign,
+    BinOp,
     Call,
     Dims,
     Float,
@@ -73,6 +74,46 @@ def test_a_term_parses_to_its_node_and_prints_back(src, term):
     st = one(f"op {src}\n")
     assert st.args == [term]
     assert fmt(term) == src
+
+
+def _eval(t, env):
+    match t:
+        case Int(v, _):
+            return v
+        case Name(n):
+            return env[n]
+        case Offset(a, b):
+            return _eval(a, env) + _eval(b, env)
+        case BinOp(op, a, b):
+            x, y = _eval(a, env), _eval(b, env)
+            if op == "-":
+                return x - y
+            if op == "*":
+                return x * y
+            return x // y if op == "/" else x % y
+    raise TypeError(t)
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        "8*(t % 2)",
+        "64*(t/2) + 32*(t % 2)",
+        "a - (b - c)",
+        "a - (b + c)",
+        "a + (b - c)",
+        "(a - b) - c",
+        "a*(b*c)",
+        "a/(b*c)",
+        "a % (b % c)",
+        "(a*b) % c",
+    ],
+)
+def test_printed_arithmetic_keeps_its_value(src):
+    (t,) = one(f"op {src}\n").args
+    again = one(f"op {fmt(t)}\n").args[0]
+    for env in ({"t": 3, "a": 17, "b": 5, "c": 3}, {"t": 6, "a": 40, "b": 7, "c": 4}):
+        assert _eval(again, env) == _eval(t, env), fmt(t)
 
 
 def test_digit_groups_are_read_and_printed_canonically():
