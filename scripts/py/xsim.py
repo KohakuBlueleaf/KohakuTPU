@@ -1495,6 +1495,7 @@ HARNESS = {
     "card_v8t8_2n",
     "card_v9_2n",
     "card_v9_1n",
+    "card_v9_1n_v2",
     "card_v9_4n",
     "card_v9x6_2n",
     "card_v9x8_2n",
@@ -2196,6 +2197,30 @@ BENCHES["vec_replay"] = (
     + ["tests/vector/vec_replay_tb.v"],
 )
 
+# The V2 vector core (src/kohakutpu/vector2). vec_cu selects it under
+# -d VEC_CORE_V2, which every build of these benches passes.
+VECTOR2 = [
+    "src/kohakutpu/vector2/v2_fifo.v",
+    "src/kohakutpu/vector2/v2_agu.v",
+    "src/kohakutpu/vector2/v2_gt4.v",
+    "src/kohakutpu/vector2/v2_mxq.v",
+    "src/kohakutpu/vector2/v2_cvt.v",
+    "src/kohakutpu/vector2/v2_xbar.v",
+    "src/kohakutpu/vector2/v2_alu.v",
+    "src/kohakutpu/vector2/v2_lanes.v",
+    "src/kohakutpu/vector2/v2_core.v",
+]
+BENCHES["vec2_replay"] = (
+    "vec_replay_tb",
+    [p for p in BENCHES["vec_cu"][1] if p != "tests/vector/vec_cu_tb.v"]
+    + VECTOR2
+    + ["tests/vector/vec_replay_tb.v"],
+)
+BENCHES["v2_gt4"] = (
+    "v2_gt4_tb",
+    ["src/kohakutpu/vector2/v2_gt4.v", "tests/vector2/v2_gt4_tb.v"],
+)
+
 # The 2-node card model (gen_card.py --compute 0,1; harness card_main.cpp).
 BENCHES["card_v8t8_2n"] = (
     "card_v8t8_2n",
@@ -2211,6 +2236,11 @@ BENCHES["card_v9_2n"] = (
 BENCHES["card_v9_1n"] = (
     "card_v9_1n",
     gen_card.image_sources("v9") + ["tests/system/card_v9_1n.v"],
+)
+# The same card with V2 vector cores: build it with -d VEC_CORE_V2.
+BENCHES["card_v9_1n_v2"] = (
+    "card_v9_1n",
+    BENCHES["card_v9_1n"][1] + VECTOR2,
 )
 # Every die a compute die: four sysnodes on the interlink chain.
 BENCHES["card_v9_4n"] = (

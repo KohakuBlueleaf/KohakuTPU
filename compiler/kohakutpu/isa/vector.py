@@ -31,6 +31,9 @@ class VecConfig:
     payload_bits: int = 256
     op_bits: int = 4
     addr_bits: int = 9
+    #: IMEM's address bits past `addr_bits`, at [242]: a V2 core's 1024 words
+    #: (`hw/vector2.py`); a v1 core reads the bit as padding. RUN's pc stays 9.
+    addr_hi_bits: int = 1
     word_bits: int = 32
     desc_sel_bits: int = 3
     #: A base address is SPLIT: the low 34 stay put and the high 6 sit in a tail
@@ -54,12 +57,19 @@ class VecIsa:
 
     def __init__(self, cfg: VecConfig = DEFAULT) -> None:
         self.cfg = cfg
-        pad_imem = cfg.payload_bits - cfg.op_bits - cfg.addr_bits - cfg.word_bits
+        pad_imem = (
+            cfg.payload_bits
+            - cfg.op_bits
+            - cfg.addr_bits
+            - cfg.addr_hi_bits
+            - cfg.word_bits
+        )
         self.IMEM = InstFormat(
             "IMEM",
             [
                 Field("op", cfg.op_bits, const=OP_IMEM),
                 Field("addr", cfg.addr_bits, doc="instruction memory word index"),
+                Field("addr_hi", cfg.addr_hi_bits, default=0, doc="its high bits"),
                 Field("_pad", pad_imem, default=0),
                 Field("word", cfg.word_bits, doc="the kernel instruction itself"),
             ],
@@ -100,7 +110,12 @@ class VecIsa:
 
     def imem(self, addr: int, word: int) -> int:
         """One instruction-memory word."""
-        return self.IMEM.encode(addr=addr, word=word)
+        lo = addr & ((1 << self.cfg.addr_bits) - 1)
+        return self.IMEM.encode(addr=lo, addr_hi=addr >> self.cfg.addr_bits, word=word)
+
+    def imem_addr(self, fields: dict) -> int:
+        """The word index a decoded IMEM names."""
+        return fields["addr"] | fields["addr_hi"] << self.cfg.addr_bits
 
     def desc(self, ad: int, fld: int, value: int) -> int:
         """One descriptor field.

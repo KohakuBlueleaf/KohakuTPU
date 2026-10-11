@@ -65,6 +65,8 @@ module vec_replay_tb;
 
     integer sig_count, faults;
     reg [31:0] fault_arg;
+    // Cycles between read response words (+memwait=, default 3: one word every 4).
+    integer memwait = 3;
 
     always @(posedge clk) begin
         if (!resetn) begin
@@ -109,7 +111,7 @@ module vec_replay_tb;
             if (mem_valid && in_busy) begin
                 // the held response goes first
             end else if (rq_head != rq_tail) begin
-                if (rq_wait < 3) begin
+                if (rq_wait < memwait) begin
                     rq_wait <= rq_wait + 1;
                 end else begin
                     rq_wait  <= 0;
@@ -170,8 +172,13 @@ module vec_replay_tb;
     // A wedged unit stalls `send_cu` on `in_busy` forever; report where it stopped.
     always @(posedge clk) begin
         if (t_go != 0 && t_done == 0 && clk_n - t_go > 4000000) begin
+`ifdef VEC_CORE_V2
+            $display("@@@ TIMEOUT sent %0d of %0d, completions %0d, faults %0d, pc %0d dv %0d",
+                     i, n, sig_count, faults, dut.u_core.d_pc, dut.u_core.d_v);
+`else
             $display("@@@ TIMEOUT sent %0d of %0d, completions %0d, faults %0d, pc %0d st %0d",
                      i, n, sig_count, faults, dut.u_core.pc, dut.u_core.st);
+`endif
             $finish;
         end
     end
@@ -184,6 +191,7 @@ module vec_replay_tb;
             $display("@@@ need +prog= +mem= +out=");
             $finish;
         end
+        if (!$value$plusargs("memwait=%d", memwait)) memwait = 3;
         $readmemh(f_prog, prog);
         $readmemh(f_mem, dram);
         n = 0;
@@ -208,6 +216,9 @@ module vec_replay_tb;
         // The four predicate registers as the lanes hold them after the run.
         for (i = 0; i < 4; i = i + 1)
             $display("@@@ PREG %0d %032h", i, dut.u_core.u_lanes.preg[i]);
+`ifdef VEC_CORE_V2
+        $display("@@@ STICKY %04h", dut.u_core.u_lanes.sticky);
+`endif
         $finish;
     end
 endmodule

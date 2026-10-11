@@ -15,7 +15,9 @@ from kohakutpu import imem
 
 
 def _vector(words: list, resident: dict, coord) -> list:
-    return imem.rewrite(words, resident.setdefault(coord, imem.Resident()))
+    if coord not in resident:
+        resident[coord] = imem.Resident(getattr(resident, "words", imem.IMEM_WORDS))
+    return imem.rewrite(words, resident[coord])
 
 
 class Program(_Program):

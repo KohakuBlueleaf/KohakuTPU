@@ -232,8 +232,15 @@ module vec_cu #(
     wire [7:0]  nd_txn  = nd_rem ? nd_fin : 8'h00;
     wire [2:0]  nd_rsvd = nd_rem ? {1'b1, nd_mesh} : 3'b000;
 
+    // -d VEC_CORE_V2 builds the V2 core (src/kohakutpu/vector2) behind the
+    // same ports; v1 stays the default.
+`ifdef VEC_CORE_V2
+    v2_core #(.MODEL(MODEL), .L1_DEPTH(L1_DEPTH), .L1_PRIM(L1_PRIM),
+              .RF_PAD(RF_PAD), .RF_PACK(RF_PACK)) u_core (
+`else
     vec_core #(.MODEL(MODEL), .L1_DEPTH(L1_DEPTH), .L1_PRIM(L1_PRIM),
                .RF_PAD(RF_PAD), .RF_PACK(RF_PACK)) u_core (
+`endif
         .clk(u_clk), .rst(!u_resetn),
         .ld_en(ld_en), .ld_kind(ld_kind), .ld_addr(ld_addr), .ld_data(ld_data),
         .start(start), .start_pc(start_pc),
@@ -508,7 +515,9 @@ module vec_cu #(
                     case (c_op)
                         C_IMEM: begin
                             ld_en <= 1'b1; ld_kind <= 1'b0;
-                            ld_addr <= c_addr; ld_data <= {8'd0, c_word};
+                            // Flit bit 242 is the IMEM address's bit 9, for
+                            // a core with more than 512 words; v1 ignores it.
+                            ld_addr <= c_addr; ld_data <= {7'd0, inst_flit[242], c_word};
                             cst <= C_RET;
                         end
                         C_DESC: begin
