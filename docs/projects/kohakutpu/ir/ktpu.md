@@ -177,7 +177,7 @@ Hand-written L1 (`l1/`), each a standalone file:
 | `node/` | `loop` (a trip count loaded from memory, patched mover addresses), `memops` (store, load, ALU, transform-bank readback, `CU_CTRL` query, mover status), `push` (node -> core L1, core -> node peer drain, `recv`) |
 | `matmul/` | `matmul` (1024^3 on four clusters), `longk` (1024 x 2048 x 1024), `tiles` (a data-dependent tile loop, patched cluster addresses), `splitk` (K over two clusters through the accumulator), `tonode` (a drain into the node) |
 | `vector/` | `silu`, `add`, `softmax`, `layernorm` (two cores) |
-| `fused/` | `flash` (online-softmax attention, 10 heads x 1024 x 1024, d = 64: scores on two clusters through a DRAM ring, P quantised to MXFP7 on the cores, P V on the other two) |
+| `fused/` | `flash` (online-softmax attention, 10 heads x 1024 x 1024, d = 64: scores on two clusters through a DRAM ring, P quantised to MXFP7 on the cores, P V on the other two), `flashd` (the same with S on the direct path: load-and-emit sub-rows into the cores' L1 rings under credits, P drained block by block into the P V clusters, the two key halves combined on the cores) |
 | `multinode/` | `silu2`, `matmul2` (two nodes, tensor parallel, shared A fills), `ring` (slot and doorbell), `remote` (a processor store into another node's staging), `xsplitk` (K over two meshes through the accumulator), `xpeer` (a core's L1 into another mesh's core) |
 
 Hand-written L2 (`l2/`), compiled to L1 by §9's pipeline:
@@ -186,7 +186,7 @@ Hand-written L2 (`l2/`), compiled to L1 by §9's pipeline:
 |---|---|
 | `matmul/` | `matmul`, `longk` (compile to the hand L1's bytes), `splitk` (`drain ... add`) |
 | `vector/` | `silu`, `add`, `softmax` (16-row tiles), `layernorm`, `leaky` (`cmpgt` / `sel`), `lazysoftmax` (the row max only when `if sticky`) |
-| `fused/` | `mmsilu` (a cluster tile, then silu on its drained GT4 sub-tiles), `mlp` (matmul, silu quantised to MXFP7 on the cores, matmul), `tilesilu` (tiles drained straight into the cores, `pipe=2`), `mlpdirect` (cluster -> core -> cluster, nothing in memory between the layers), `mmsoftmax` (row softmax of score tiles straight from the clusters: GT4 row reductions), `anysilu` (`tilesilu` written through an `@any` scratch) |
+| `fused/` | `ffn`, `swiglu` (production size: 1024 tokens, 1024 -> 2048 -> 1024 on four clusters and two cores, row blocks of 256 tokens, h / a2 holding two blocks so the pipeline pass overlaps the layers), `mmsilu` (a cluster tile, then silu on its drained GT4 sub-tiles), `mlp` (matmul, silu quantised to MXFP7 on the cores, matmul), `tilesilu` (tiles drained straight into the cores, `pipe=2`), `mlpdirect` (cluster -> core -> cluster, nothing in memory between the layers), `mmsoftmax` (row softmax of score tiles straight from the clusters: GT4 row reductions), `anysilu` (`tilesilu` written through an `@any` scratch) |
 | `mover/` | `transpose` (`perm=`), `gather`, `scatter`, `fill`, `generate`, `convert` (`quant` A and B packing, `gt4`) |
 | `multinode/` | `matmul2` (`share=cross`), `share2` (a small witness of shared fills), `silu2`, `matmul4` (four nodes) |
 
@@ -330,7 +330,10 @@ instance.
 `share` (in a body over several nodes, a fill whose view does not name the
 cluster becomes `share=cross`), `split` (`gemm ... split`: the K loop),
 `pipeline` (a node-scope `for` whose iterations run pars of two unit kinds
-gets `pipe=2`), `retile` (a vector stream loop's rows a trip: of 1/4 to 4
+gets `pipe=2`; when the body's first `par` runs on units a later `par` of it
+also runs on, the loop is rotated -- that `par` of iteration i + 1 ahead of
+the rest of iteration i -- where no memory view of it meets one of the `par`s
+it passes), `retile` (a vector stream loop's rows a trip: of 1/4 to 4
 times the written tile, the one the issue model times fastest over all its
 trips, kept only 2% better; a `par` inside node-scope loops costed at their
 first iteration, its transfers landing at the top of the L1), the lowering,
