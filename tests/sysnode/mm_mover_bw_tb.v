@@ -383,6 +383,51 @@ module mm_mover_bw_tb;
         end
     endtask
 
+    // GATHER / SCATTER of `grows` rows of `grw` words through an index list
+    // at IDXA: row r is table row (37 r + 11) mod (16384 / grw), so a
+    // scattered table at DST + 512 KB stays inside the model.
+    localparam [AW-1:0] IDXA = 40'h1F_0000;
+    integer grows, grw;
+    function integer gidx(input integer r);
+        begin gidx = (r * 37 + 11) % (16384 / grw); end
+    endfunction
+
+    task setup_indexed(input scatter);
+        begin
+            for (k = 0; k < grows; k = k + 1) begin
+                u_mem.mem[(IDXA >> 5) + k / 8][(k % 8) * 32 +: 32] = gidx(k);
+            end
+            wr(8'h30, {8'd0, grows[15:0], IDXA});
+            wr(8'h50, {16'd0, grw[15:0], grw * 32});
+            if (scatter) begin
+                // DST's rows back out to SRC + 1 MB + 512 KB, as indexed.
+                hdr(1'b0, DST, 3'd1);
+                dim(1'b0, 3'd0, grows * grw, 32'sd32);
+                hdr(1'b1, DST + 40'h8_0000, 3'd1);
+            end else begin
+                hdr(1'b0, SRC, 3'd1);
+                hdr(1'b1, DST, 3'd1);
+                dim(1'b1, 3'd0, grows * grw, 32'sd32);
+            end
+        end
+    endtask
+
+    task check_indexed(input scatter);
+        begin
+            for (i = 0; i < grows; i = i + 1) begin
+                for (j = 0; j < grw; j = j + 1) begin
+                    if (scatter) begin
+                        chk(u_mem.mem[((DST + 40'h8_0000) >> 5) + gidx(i) * grw + j],
+                            u_mem.mem[(DST >> 5) + i * grw + j], "scatter", i * grw + j);
+                    end else begin
+                        chk(u_mem.mem[(DST >> 5) + i * grw + j],
+                            {8{(gidx(i) * grw + j)}}, "gather", i * grw + j);
+                    end
+                end
+            end
+        end
+    endtask
+
     task setup_fill(input integer nw);
         begin
             wr(8'h40, 64'h0000_0000_0000_1234);
@@ -404,20 +449,27 @@ module mm_mover_bw_tb;
               input [255:0] tag, input integer nw);
         begin
             sel = which[0];
-            clear_dst(nw);
+            if (kind != 6) begin
+                clear_dst(nw);
+            end
             case (kind)
                 0: setup_copy(nw);
                 1: setup_conv;
                 2: setup_relayout;
                 4: setup_pad4;
+                5: setup_indexed(1'b0);
+                6: setup_indexed(1'b1);
                 default: setup_fill(nw);
             endcase
-            launch((kind == 3) ? 3'd4 : 3'd0, fl);
+            launch((kind == 3) ? 3'd4 : (kind == 5) ? 3'd2 : (kind == 6) ? 3'd6 : 3'd0,
+                   fl);
             case (kind)
                 0: check_copy(nw);
                 1: check_conv;
                 2: check_relayout;
                 4: check_pad4;
+                5: check_indexed(1'b0);
+                6: check_indexed(1'b1);
                 default: check_fill(nw);
             endcase
             report(tag, nw);
@@ -499,6 +551,18 @@ module mm_mover_bw_tb;
         $display("--- the ceiling: one large copy and one large fill ---");
         move(1, 0, 8'h08, "copy 512KB rd+wr   ", NBIG);
         move(1, 3, 8'h08, "fill 512KB rd+wr   ", NBIG);
+
+        // Indexed rows, 1,024 words each: a row costs one index pass.
+        $display("--- indexed rows: gather, then the rows scattered back ---");
+        grows = 1024; grw = 1;
+        move(1, 5, 8'h08, "gather  1 w rows   ", 1024);
+        move(1, 6, 8'h08, "scatter 1 w rows   ", 1024);
+        grows = 256; grw = 4;
+        move(1, 5, 8'h08, "gather  4 w rows   ", 1024);
+        move(1, 6, 8'h08, "scatter 4 w rows   ", 1024);
+        grows = 16; grw = 64;
+        move(1, 5, 8'h08, "gather 64 w rows   ", 1024);
+        move(1, 6, 8'h08, "scatter 64 w rows  ", 1024);
 
         // =================================================================
         setclk(100.09, 22, 22);

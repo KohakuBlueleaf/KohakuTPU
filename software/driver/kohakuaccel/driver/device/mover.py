@@ -49,7 +49,10 @@ AUX_CLIENT_SPAN = 0x80
 R_CTRL, R_HDR, R_DIM, R_AXIS = 0x00, 0x10, 0x18, 0x20
 R_WINDOW, R_INDEX, R_SEED, R_IMM, R_GATHER = 0x28, 0x30, 0x38, 0x40, 0x50
 
-COPY, TRANSPOSE, GATHER, GENERATE, FILL = 0, 1, 2, 3, 4
+COPY, TRANSPOSE, GATHER, GENERATE, FILL, XFORM, SCATTER = 0, 1, 2, 3, 4, 5, 6
+
+#: CTRL[17]: the index list holds fp32 values.
+INDEX_FP = 1 << 17
 
 #: Element widths the datapath carries. 3 faults `F_EWIDTH`.
 W8, W16, W32 = 0, 1, 2
@@ -80,6 +83,7 @@ FAULTS = {
     7: "a bound axis on a MODE_XFORM move; a transform descriptor tiles whole",
     8: "the transform slot faulted (KohakuTPU's bank: an id naming no occupant)",
     9: "configuration queue overflow: writes arrived with ROOM low; latched to reset",
+    10: "an fp32 index that is not an index (a fraction, negative, >= 2^31, inf, NaN)",
 }
 
 
@@ -123,6 +127,8 @@ class Walker:
     dims: list = field(default_factory=list)
     axes: list = field(default_factory=list)
     window: dict = field(default_factory=dict)
+    #: The transform slot's (id, mode), carried on a SOURCE walker's header.
+    xform: tuple = (0, 0)
 
     def program(self, sel: int) -> list:
         """The `(offset, value)` writes that load this walker.
@@ -154,7 +160,9 @@ class Walker:
                 R_HDR,
                 sel
                 | _fits("base", self.base, ADDR_BITS) << 4
-                | _fits("ndim", len(self.dims), 3) << 44,
+                | _fits("ndim", len(self.dims), 3) << 44
+                | _fits("transform id", self.xform[0], 4) << 47
+                | _fits("transform mode", self.xform[1], 4) << 55,
             )
         ]
         for at, (count, stride) in enumerate(self.dims):
@@ -207,10 +215,11 @@ def program(
     *,
     ewidth: int = W16,
     flags: int = FLAG_WCOAL,
-    imm: int = 0,
-    seed: int = 0,
+    imm: int | None = None,
+    seed: int | None = None,
     index: tuple | None = None,
     gather: tuple | None = None,
+    fp: bool = False,
 ) -> list:
     """One move, as `(client offset, 64-bit value)` writes in the order to issue.
 
@@ -254,9 +263,9 @@ def program(
                 _fits("pitch", pitch, 32) | _fits("gather words", words, 16) << 32,
             )
         )
-    if seed:
+    if seed is not None:
         out.append((R_SEED, _fits("seed", seed, 64)))
-    if imm:
+    if imm is not None:
         out.append((R_IMM, _fits("immediate", imm, 32)))
     out.append(
         (
@@ -264,7 +273,8 @@ def program(
             _fits("mode", mode, 3)
             | _fits("element width", ewidth, 2) << 3
             | _fits("flags", flags, 8) << 8
-            | 1 << 16,
+            | 1 << 16
+            | (INDEX_FP if fp else 0),
         )
     )
     return out

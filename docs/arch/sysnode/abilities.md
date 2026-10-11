@@ -215,19 +215,22 @@ pitch are host-only).
 
 | register | fields | meaning |
 |---|---|---|
-| `0x00` | `[2:0]` mode, `[4:3]` element width, `[15:8]` flags, `[16]` go | writing with `go` set starts the descriptor |
+| `0x00` | `[2:0]` mode, `[4:3]` element width, `[15:8]` flags, `[16]` go, `[17]` fp32 index list | writing with `go` set starts the descriptor |
 | `0x10` | `[0]` sel (0 source, 1 destination), `[43:4]` base address, `[46:44]` ndim | a header |
 | `0x18` | `[0]` sel, `[3:1]` dim, `[19:4]` count, `[51:20]` stride (bytes, signed) | one dimension |
 | `0x20` | `[1:0]` axis, `[17:2]` axis step | the dimension's axis (0 for a plain copy) |
 | `0x28` | `[0]` sel, `[1]` which, `[17:2]` bound, `[33:18]` extent | a bound axis (padding) |
-| `0x30` | `[39:0]` index base, `[55:40]` index count | gather |
+| `0x30` | `[39:0]` index base, `[55:40]` index count | gather, scatter |
 | `0x38` | seed | generate |
 
-Modes: `0` COPY, `2` GATHER, `3` GENERATE, `4` FILL, `5` transform (the slot);
-`1` transpose faults (the transform slot does it). Element width codes `0`/`1`/`2`
-= 8/16/32-bit fill elements; `3` faults. Fault codes at STATUS `[31:28]`:
-1 index length, 2 range, 3 AXI error, 4 mode, 5 element width, 6 alignment,
-7 transform padding.
+Modes: `0` COPY, `2` GATHER, `3` GENERATE, `4` FILL, `5` transform (the slot),
+`6` SCATTER; `1` transpose faults (the transform slot does it). GATHER and
+SCATTER also need the row shape at `0x50`, outside this alias
+([control-registers.md §3.3](../../spec/control-registers.md#33-indexed-moves-gather-and-scatter)).
+Element width codes `0`/`1`/`2` = 8/16/32-bit fill elements; `3` faults. Fault
+codes at STATUS `[31:28]`: 1 index length, 2 range (never raised), 3 AXI error,
+4 mode, 5 element width, 6 alignment, 7 transform padding, 8 occupant,
+9 configuration queue, 10 fp32 index.
 
 **A copy of N words, source to destination** (the sequence `ring_a.c` runs):
 

@@ -6,19 +6,25 @@ from dataclasses import dataclass
 from kohakuaccel.compiler.package import mover as PM
 
 #: Transform ids of KohakuTPU's slot bank (src/kohakutpu/transform/xform_bank.v).
-XF_QUANT, XF_GT4 = 1, 2
+XF_BYPASS, XF_QUANT, XF_GT4 = 0, 1, 2
+#: The quantiser's mode[0]: the clusters' B packing.
+QUANT_B = 1
 
 
 @dataclass(frozen=True)
 class Quantise:
-    """`entries` FP16 entries at `src` (eight words each) to MXFP7 at `dst`."""
+    """`entries` FP16 entries at `src` (eight words each) to MXFP7 at `dst`,
+    in the A packing, or the B packing with `b`."""
 
     src: int
     dst: int
     entries: int
+    b: bool = False
 
     def writes(self) -> list:
-        return PM.convert(self.src, self.dst, self.entries, xform_id=XF_QUANT)
+        return PM.convert(
+            self.src, self.dst, self.entries, xform_id=XF_QUANT, mode=int(self.b)
+        )
 
 
 @dataclass(frozen=True)
@@ -46,3 +52,15 @@ class Copy:
 
     def writes(self) -> list:
         return PM.copy(self.src, self.dst, self.nbytes)
+
+
+@dataclass(frozen=True)
+class Move:
+    """Any one move, as its register writes (`PM.move`); `patches` set fields
+    of them from registers (word = the write's index)."""
+
+    regs: tuple
+    patches: tuple = ()
+
+    def writes(self) -> list:
+        return list(self.regs)

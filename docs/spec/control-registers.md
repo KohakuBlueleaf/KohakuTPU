@@ -512,21 +512,25 @@ Mover registers, at client offsets. Writes only; status is read back through
 
 | Offset | Fields |
 |---|---|
-| `0x00` | `[2:0]` mode, `[4:3]` element width, `[15:8]` flags, `[16]` **GO** |
+| `0x00` | `[2:0]` mode, `[4:3]` element width, `[15:8]` flags, `[16]` **GO**, `[17]` fp32 index list (§3.3) |
 | `0x10` | `[0]` which walker (0 source, 1 destination), `[4+:ADDR_W]` base address, `[46:44]` number of dimensions, and on the SOURCE walker `[50:47]` `XFORM_ID`, `[58:55]` `XFORM_MODE` — §3.2 |
 | `0x18` | `[0]` walker, `[3:1]` dimension, `[19:4]` count, `[51:20]` signed stride |
 | `0x20` | `[1:0]` axis, `[17:2]` signed axis step |
 | `0x28` | `[0]` walker, `[1]` axis select, `[17:2]` signed axis base, `[33:18]` axis extent |
-| `0x30` | `[ADDR_W-1:0]` index-buffer base address, `[55:40]` index count |
+| `0x30` | `[ADDR_W-1:0]` index list base address (32-byte aligned), `[55:40]` index count |
 | `0x38` | `[63:0]` PRNG seed |
 | `0x40` | `[31:0]` immediate, used as the fill value and as padding |
-| `0x50` | `[31:0]` gather pitch, `[47:32]` gather words |
+| `0x50` | `[31:0]` row pitch in bytes, `[47:32]` row words — gather and scatter, §3.3 |
 
 Modes: `0` copy, `1` transpose (**faults — not implemented**), `2` gather,
-`3` generate, `4` fill, `5` transform. §3.2.
+`3` generate, `4` fill, `5` transform (§3.2), `6` scatter (§3.3). Mode `7`
+runs as a copy.
 
-Fault codes: `0` none, `1` index length, `2` range, `3` AXI, `4` mode,
-`5` element width, `6` alignment, `7` a bound axis in a transform move.
+Fault codes: `0` none, `1` index length, `2` range (reserved, never raised),
+`3` AXI, `4` mode, `5` element width, `6` alignment, `7` a bound axis in a
+transform move, `8` the transform slot's occupant faulted, `9` a register write
+arrived with the configuration queue full, `10` an fp32 index is not an index
+(§3.3).
 
 ### 3.1 The RV32 control processor does not use this window
 
@@ -610,6 +614,38 @@ leave an entry a beat short forever.
 
 Progress and faults are reported through `AUX_STAT` as for any other mode.
 
+### 3.3 Indexed moves: gather and scatter
+
+Both take an **index list** — `0x30`: `count` 32-bit indices, eight to a
+32-byte word, index `r` in lane `r % 8` of word `r / 8` — and a **row shape** —
+`0x50`: `words` 32-byte words a row, `pitch` bytes between rows. Row `r`'s
+base is `base + index[r] × pitch`; the row's words follow it contiguously.
+
+| mode | iterates | indexed side | `base` |
+|---|---|---|---|
+| `2` gather | the destination walker | the source: row `r` read from `base + index[r] × pitch` | the source header's |
+| `6` scatter | the source walker | the destination: row `r` written to `base + index[r] × pitch` | the destination header's |
+
+The walked side is an ordinary walker and consumes `words` elements a row; the
+move ends with its last element. The indexed side's header supplies only
+`base`; its dimensions are not read. A scatter faults `6` (alignment) when
+`base` or `pitch` is not a multiple of 32. Indices that repeat in a scatter write the same row more than once, in
+list order.
+
+**The list is loaded first**, in bursts to each 4 KB page end, into a
+`IDX_WORDS`-word buffer: more than `IDX_WORDS × 8` indices faults `1`.
+
+**A row costs one index lookup, not one per word.** The next row's base is
+computed while the current row's words issue, so rows of five words or more
+issue a word a cycle; shorter rows pay the difference, about five cycles a row.
+
+**`0x00` bit 17 reads the list as fp32**, as a vector core's F32 pack writes an
+integral value. Each index must be `+0`, `-0`, or a positive integer below
+2³¹; anything else — a fraction, a negative value, 2³¹ or more, an infinity or
+a NaN — faults `10` when its row is reached, after the rows before it have
+been written. The conversion is one more pipeline stage; the u32 path is
+unchanged.
+
 `AUX_STAT` at `0x0078` reports:
 
 | Bits | Field |
@@ -617,7 +653,7 @@ Progress and faults are reported through `AUX_STAT` as for any other mode.
 | `[63:40]` | moves completed |
 | `[39:24]` | memory-agent read count, summed across ports |
 | `[23:8]` | memory-agent write count, summed across ports |
-| `[7:4]` | fault code: 0 none, 1 index length, 2 range, 3 AXI, 4 mode, 5 element width, 6 alignment |
+| `[7:4]` | fault code, §3: 0 none, 1 index length, 2 range, 3 AXI, 4 mode, 5 element width, 6 alignment, 7 transform padding, 8 occupant, 9 configuration queue, 10 fp32 index |
 | `[3:1]` | zero |
 | `[0]` | busy |
 

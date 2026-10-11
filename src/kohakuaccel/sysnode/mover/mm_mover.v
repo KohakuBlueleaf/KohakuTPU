@@ -1,5 +1,7 @@
-// A layout, gather and fill engine with its own AXI master. Two mx_tdesc
-// walkers: the DESTINATION defines the iteration space, so stride 0 broadcasts.
+// A layout, gather, scatter and fill engine with its own AXI master. Two mx_tdesc
+// walkers: the DESTINATION defines the iteration space, so stride 0 broadcasts;
+// SCATTER (and a transform) iterate the SOURCE. GATHER / SCATTER take each row
+// of `gath_words` words at base + index * pitch, one index pipeline pass a row.
 
 // src_valid low injects MV_IMM, which is how padding works; dst_valid low
 // suppresses the write. Word granular, so a misaligned destination faults.
@@ -127,19 +129,20 @@ module mm_mover #(
 );
     localparam [2:0] MODE_COPY = 3'd0, MODE_TRANSPOSE = 3'd1;
     localparam [2:0] MODE_GATHER = 3'd2, MODE_GENERATE = 3'd3, MODE_FILL = 3'd4;
-    localparam [2:0] MODE_XFORM = 3'd5;
+    localparam [2:0] MODE_XFORM = 3'd5, MODE_SCATTER = 3'd6;
 
     localparam [3:0] F_NONE = 4'd0, F_IDXLEN = 4'd1, F_RANGE = 4'd2;
     localparam [3:0] F_AXI = 4'd3, F_MODE = 4'd4, F_EWIDTH = 4'd5;
     localparam [3:0] F_ALIGN = 4'd6, F_XPAD = 4'd7;
-    localparam [3:0] F_XFORM = 4'd8, F_CFGQ = 4'd9;
+    localparam [3:0] F_XFORM = 4'd8, F_CFGQ = 4'd9, F_INDEX = 4'd10;
 
     localparam [8:0]   OUT_W9   = XF_OUT_WORDS[8:0];
 
-    // The issue engine. I_GA1..3 are the gather address pipeline and I_LAT is
-    // the element latch; everything else walks one element per cycle in I_RUN.
+    // The issue engine. I_ROW waits for an indexed row's base (`p_ready`);
+    // I_LAT is the element latch; everything else walks one element per cycle
+    // in I_RUN, an indexed row starting there when its base is already ready.
     localparam [3:0] I_IDLE = 4'd0, I_IXA = 4'd1, I_IXD = 4'd2, I_IXW = 4'd3;
-    localparam [3:0] I_GO = 4'd4, I_GA1 = 4'd5, I_GA2 = 4'd6, I_GA3 = 4'd7;
+    localparam [3:0] I_GO = 4'd4, I_ROW = 4'd5;
     localparam [3:0] I_LAT = 4'd8, I_RUN = 4'd9, I_FLUSH = 4'd10;
     localparam [3:0] I_DRAIN = 4'd11, I_DONE = 4'd12, I_FAULT = 4'd13;
     // One cycle between the walkers' start and the element latch: their
@@ -184,6 +187,8 @@ module mm_mover #(
 
     reg [31:0] gath_pitch;
     reg [15:0] gath_words;
+    // Each index an fp32 (a V2 core's F32 pack of an integral lane value).
+    reg        idx_fp;
 
     reg        ld_sel;
     reg [2:0]  ld_dim;
@@ -275,7 +280,10 @@ module mm_mover #(
     // entry's words at the PREVIOUS entry's address.
     wire ent_pen   = (xin_m1 == 4'd0) || (xb_cnt == xin_m2);
 
-    wire walk_last  = xf ? src_last : dst_last;
+    // SCATTER walks its source and writes where the index says.
+    wire sc = (mode == MODE_SCATTER);
+    wire gs = (mode == MODE_GATHER) || sc;
+    wire walk_last  = (xf || sc) ? src_last : dst_last;
     wire desc_start = (ist == I_GO);
     wire desc_next  = elem_adv && !walk_last;
     wire dst_next   = xf ? (desc_next && ent_pen) : desc_next;
@@ -325,10 +333,22 @@ module mm_mover #(
         .rd_en(1'b1), .rd_addr(ix_raddr), .rd_data(ix_q)
     );
 
-    reg [15:0] ix_got;
-    reg [15:0] g_row, g_word;
-    wire [2:0] g_lane = g_row[2:0];
+    // The index list loads in bursts to the 4 KB page end, then whole pages.
+    reg  [15:0] ix_left;                    // words not yet asked for
+    wire [15:0] ix_need = ((idx_count == 16'd0) ? 16'd8 : idx_count + 16'd7) >> 3;
+    wire [7:0]  ix_pg   = 8'd128 - {1'b0, idx_base[11:5]};
+    wire [15:0] ix_first = (ix_need < {8'd0, ix_pg}) ? ix_need : {8'd0, ix_pg};
+    wire [15:0] ix_next  = (ix_left < 16'd128) ? ix_left : 16'd128;
+    // The row pipeline runs ONE ROW AHEAD: `p_row` is the row whose base it is
+    // computing, `p_age` the cycles since p_row last changed. A new index word
+    // is a BRAM read (one cycle), the lane mux, the multiply and the base add,
+    // and a float index its conversion: `row_base` is p_row's after 4 (5).
+    reg [15:0] p_row, g_left;               // g_left: the row's words after this one
+    reg [2:0]  p_age;
+    wire       p_ready = (p_age >= (idx_fp ? 3'd5 : 3'd4));
+    wire [2:0] g_lane = p_row[2:0];
     wire [31:0] g_index = ix_q[g_lane*32 +: 32];
+    wire       g_end  = (g_left == 16'd0);
 
     // ================================================== PRNG
     reg          pr_start;
@@ -386,8 +406,19 @@ module mm_mover #(
     reg [31:0]       idx_r, prod_r;
     reg [ADDR_W-1:0] row_base;
 
-    wire [ADDR_W-1:0] gath_addr =
-        row_base + {{(ADDR_W-21){1'b0}}, g_word[15:0], 5'd0};
+    // A float index: integral, non-negative and below 2^31, else F_INDEX. Its
+    // own register stage, so the u32 path keeps its latency.
+    reg  [31:0] idx_c;
+    reg         idx_bad;
+    wire [7:0]  fx_e    = idx_r[30:23];
+    wire        fx_zero = (idx_r[30:0] == 31'd0);
+    wire [7:0]  fx_sh   = fx_e - 8'd127;
+    wire        fx_rng  = (fx_e >= 8'd127) && (fx_e <= 8'd157);
+    wire [54:0] fx_wide = {31'd0, 1'b1, idx_r[22:0]} << fx_sh[4:0];
+    wire        fx_bad  = !fx_zero && (idx_r[31] || !fx_rng || (|fx_wide[22:0]));
+
+    // A row's first word: its words after it stream from e_rd / e_wr + 32.
+    wire [ADDR_W-1:0] gath_addr = row_base;
 
     // ================================================== element latch
     reg [ADDR_W-1:0] e_rd, e_wr;
@@ -396,11 +427,13 @@ module mm_mover #(
 
     wire [ADDR_W-1:0] lt_rd = (mode == MODE_GATHER) ? gath_addr : src_addr;
     wire              lt_rv = (mode == MODE_GATHER) ? 1'b1      : src_valid;
-    wire              lt_ma = dst_low_nz;
+    wire [ADDR_W-1:0] lt_wr = sc ? gath_addr : dst_addr;
+    wire              lt_dv = sc || dst_valid;
+    wire              lt_ma = !sc && dst_low_nz;
     // A padded element issues no read, and a transform counts its entry's beats
     // off the FIFO -- a bound axis leaves the occupant a beat short. Faulted.
     wire              lt_xpad = xf && !lt_rv;
-    wire [1:0]        lt_kind = (!dst_valid || lt_ma)  ? K_SKIP
+    wire [1:0]        lt_kind = (!lt_dv || lt_ma)      ? K_SKIP
                               : (mode == MODE_FILL)     ? K_FILL
                               : (mode == MODE_GENERATE) ? K_GEN
                               : lt_rv                   ? K_RD
@@ -654,10 +687,9 @@ module mm_mover #(
         occ_up = proc && (e_kind == K_RD);
         occ_dn = f_rd;
         // The walkers step on every element the issue engine consumes, except
-        // in GATHER where the address pipeline re-latches from I_LAT.
+        // at an indexed row's end with the next base not ready (I_ROW, I_LAT).
         elem_adv = (ist == I_LAT)
-                || (proc && !e_last && !e_flt && !e_xp
-                    && (mode != MODE_GATHER));
+                || (proc && !e_last && !e_flt && !e_xp && (!gs || !g_end || p_ready));
     end
 
     wire err_ax = (m_rvalid && (m_rresp != 2'b00))
@@ -680,10 +712,11 @@ module mm_mover #(
             // state, occupancy counters and status registers all keep theirs.
             m_awvalid <= 1'b0; wv_r <= 1'b0; ar_valid_i <= 1'b0;
             stat_fault <= F_NONE; stat_done <= 32'd0;
-            ix_we <= 1'b0; ix_waddr <= 8'd0; ix_raddr <= 8'd0; ix_got <= 16'd0;
-            ix_wr_a <= 8'd0; ix_active <= 1'b0;
+            ix_we <= 1'b0; ix_waddr <= 8'd0; ix_raddr <= 8'd0;
+            ix_wr_a <= 8'd0; ix_active <= 1'b0; ix_left <= 16'd0;
             row_base <= {ADDR_W{1'b0}}; idx_r <= 32'd0; prod_r <= 32'd0;
-            g_row <= 16'd0; g_word <= 16'd0;
+            idx_c <= 32'd0; idx_bad <= 1'b0; idx_fp <= 1'b0;
+            p_row <= 16'd0; p_age <= 3'd0; g_left <= 16'd0;
             pr_start <= 1'b0; pr_ctr <= 128'd0; pr_half <= 1'b0;
             pr_lo <= 128'd0;
             // RESET-RISK: e_rd/e_wr, ra_base/wa_base, ra_nxt/wa_nxt and w_addr
@@ -707,8 +740,11 @@ module mm_mover #(
             d_hdr_en <= 1'b0; d_dim_en <= 1'b0; d_ax_en <= 1'b0;
             ix_we <= 1'b0; pr_start <= 1'b0; go <= 1'b0;
             idx_r    <= g_index;
-            prod_r   <= idx_r * gath_pitch;
-            row_base <= d_src_base + {{(ADDR_W-32){1'b0}}, prod_r};
+            idx_c    <= fx_zero ? 32'd0 : fx_wide[54:23];
+            idx_bad  <= fx_bad;
+            prod_r   <= (idx_fp ? idx_c : idx_r) * gath_pitch;
+            row_base <= (sc ? dst_base : d_src_base) + {{(ADDR_W-32){1'b0}}, prod_r};
+            p_age    <= (p_age == 3'd7) ? 3'd7 : p_age + 3'd1;
 
             occ  <= occ  + (occ_up ? {{(CNT_W-1){1'b0}}, 1'b1} : {CNT_W{1'b0}})
                          - (occ_dn ? {{(CNT_W-1){1'b0}}, 1'b1} : {CNT_W{1'b0}});
@@ -761,6 +797,7 @@ module mm_mover #(
                         ewidth <= a_data[4:3];
                         flags  <= a_data[15:8];
                         go     <= a_data[16];
+                        idx_fp <= a_data[17];
                     end
                     8'h10: begin
                         ld_sel   <= a_data[0];
@@ -839,8 +876,8 @@ module mm_mover #(
                 // ------------------------------------------------------------
                 I_IDLE: if (go) begin
                     stat_fault <= cq_ovf ? F_CFGQ : F_NONE;
-                    g_row <= 16'd0; g_word <= 16'd0;
-                    ix_got <= 16'd0; ix_waddr <= 8'd0; ix_raddr <= 8'd0;
+                    p_row <= 16'd0; g_left <= 16'd0;
+                    ix_waddr <= 8'd0; ix_raddr <= 8'd0;
                     pr_half <= 1'b0;
                     ra_open <= 1'b0; wa_open <= 1'b0;
                     xb_cnt <= 4'd0; fd_left <= 4'd0; x_out <= 3'd0; fd_gap <= 2'd0;
@@ -858,13 +895,17 @@ module mm_mover #(
                         stat_fault <= F_MODE; ist <= I_FAULT;
                     end else if (mode == MODE_TRANSPOSE) begin
                         stat_fault <= F_MODE; ist <= I_FAULT;
-                    end else if (mode == MODE_GATHER) begin
+                    end else if (gs) begin
                         if (idx_count > {IDX_WORDS[12:0], 3'd0}) begin
                             stat_fault <= F_IDXLEN; ist <= I_FAULT;
+                        end else if (sc && ((|dst_base[4:0]) || (|gath_pitch[4:0]))) begin
+                            // Word granular: every scattered row must start on a word.
+                            stat_fault <= F_ALIGN; ist <= I_FAULT;
                         end else begin
                             ar_addr_i  <= idx_base;
-                            ar_len_i   <= 8'd0;
+                            ar_len_i   <= ix_first[7:0] - 8'd1;
                             ar_valid_i <= 1'b1;
+                            ix_left    <= ix_need - ix_first;
                             ix_active <= 1'b1;
                             ist <= I_IXA;
                         end
@@ -882,15 +923,19 @@ module mm_mover #(
                     ix_we    <= 1'b1;
                     ix_wr_a  <= ix_waddr;
                     ix_data  <= m_rdata;
-                    ix_got   <= ix_got + 16'd8;
                     ix_waddr <= ix_waddr + 8'd1;
-                    if (ix_got + 16'd8 >= idx_count) begin
-                        ix_active <= 1'b0;
-                        ist <= I_IXW;
-                    end else begin
-                        ar_addr_i  <= ar_addr_i + {{(ADDR_W-6){1'b0}}, 6'd32};
-                        ar_valid_i <= 1'b1;
-                        ist <= I_IXA;
+                    if (m_rlast) begin
+                        if (ix_left == 16'd0) begin
+                            ix_active <= 1'b0;
+                            ist <= I_IXW;
+                        end else begin
+                            ar_addr_i  <= ar_addr_i + {{(ADDR_W-13){1'b0}}, ar_len_i, 5'd0}
+                                                    + {{(ADDR_W-6){1'b0}}, 6'd32};
+                            ar_len_i   <= ix_next[7:0] - 8'd1;
+                            ar_valid_i <= 1'b1;
+                            ix_left    <= ix_left - ix_next;
+                            ist <= I_IXA;
+                        end
                     end
                 end
 
@@ -898,26 +943,36 @@ module mm_mover #(
                 // the same cycle would return the old contents (read_first).
                 I_IXW: ist <= I_GO;
 
+                // The index buffer was written up to I_IXW: row 0 restarts its age.
                 I_GO: begin
                     ix_raddr <= 8'd0;
-                    ist <= (mode == MODE_GATHER) ? I_GA1 : I_GO2;
+                    p_age    <= 3'd0;
+                    ist <= gs ? I_ROW : I_GO2;
                 end
                 I_GO2: ist <= I_LAT;
 
-                // One cycle for the index to leave the buffer into `idx_r`, one
-                // for the multiply, one for the base add.
-                I_GA1: ist <= I_GA2;
-                I_GA2: ist <= I_GA3;
-                I_GA3: ist <= I_LAT;
+                I_ROW: if (p_ready) begin
+                    ist <= I_LAT;
+                end
 
+                // Latches row p_row and starts the next row's base.
                 I_LAT: begin
                     e_rd   <= lt_rd;
-                    e_wr   <= dst_addr;
+                    e_wr   <= lt_wr;
                     e_kind <= lt_kind;
                     e_last <= walk_last;
-                    e_flt  <= dst_valid && lt_ma;
+                    e_flt  <= lt_dv && lt_ma;
                     e_xp   <= lt_xpad;
-                    ist    <= I_RUN;
+                    g_left <= gath_words - 16'd1;
+                    p_row    <= p_row + 16'd1;
+                    ix_raddr <= (p_row + 16'd1) >> 3;
+                    p_age    <= 3'd0;
+                    if (gs && idx_fp && idx_bad) begin
+                        stat_fault <= F_INDEX;
+                        ist    <= I_FLUSH;
+                    end else begin
+                        ist    <= I_RUN;
+                    end
                 end
 
                 // ------------------------------------------------------------
@@ -968,23 +1023,37 @@ module mm_mover #(
                             ist <= I_FLUSH;
                         end else if (e_last || (stat_fault == F_AXI)) begin
                             ist <= I_FLUSH;
-                        end else if (mode == MODE_GATHER) begin
-                            if (g_word + 16'd1 == gath_words) begin
-                                g_word   <= 16'd0;
-                                g_row    <= g_row + 16'd1;
-                                ix_raddr <= (g_row + 16'd1) >> 3;
+                        end else if (gs && g_end) begin
+                            // The row's last word: the next row latches here, as
+                            // at I_LAT, when its base is ready, else at I_ROW.
+                            if (p_ready) begin
+                                e_rd     <= lt_rd;
+                                e_wr     <= lt_wr;
+                                e_kind   <= lt_kind;
+                                e_last   <= walk_last;
+                                e_flt    <= lt_dv && lt_ma;
+                                e_xp     <= lt_xpad;
+                                g_left   <= gath_words - 16'd1;
+                                p_row    <= p_row + 16'd1;
+                                ix_raddr <= (p_row + 16'd1) >> 3;
+                                p_age    <= 3'd0;
+                                if (idx_fp && idx_bad) begin
+                                    stat_fault <= F_INDEX;
+                                    ist <= I_FLUSH;
+                                end
+                            end else begin
+                                ist <= I_ROW;
                             end
-                            else begin
-                                g_word <= g_word + 16'd1;
-                            end
-                            ist <= I_GA1;
                         end else begin
-                            e_rd   <= lt_rd;
-                            e_wr   <= dst_addr;
+                            // Within an indexed row the indexed side steps a
+                            // word; everything else comes off the walkers.
+                            e_rd   <= (mode == MODE_GATHER) ? e_rd + w32 : lt_rd;
+                            e_wr   <= sc ? e_wr + w32 : lt_wr;
                             e_kind <= lt_kind;
                             e_last <= walk_last;
-                            e_flt  <= dst_valid && lt_ma;
+                            e_flt  <= lt_dv && lt_ma;
                             e_xp   <= lt_xpad;
+                            g_left <= g_left - 16'd1;
                         end
                     end else if (rflush) begin
                         ra_open <= 1'b0;

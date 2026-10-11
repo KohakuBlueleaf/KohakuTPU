@@ -600,7 +600,7 @@ Command registers: [control-registers.md](control-registers.md) §3.
 | `DATA_W` | integer | `256` | AXI data width. Every transfer is one beat, so this is also the transfer granule. | Strides must be multiples of `DATA_W/8`. |
 | `ADDR_W` | integer | `40` | Address width. The map is **absolute** — `[39]` aperture, `[37:36]` mesh — so a narrower build is a different map, and the module refuses anything but 40. | `40` only. |
 | `ID_W` | integer | `4` | AXI ID width. | Any. |
-| `IDX_WORDS` | integer | `256` | Depth of the gather index buffer, in `DATA_W`-bit words — 8 indices per word. | Sets the maximum gather index count at `IDX_WORDS * 8`. Must be large enough that the port address width matches the module's index registers. |
+| `IDX_WORDS` | integer | `256` | Depth of the gather / scatter index buffer, in `DATA_W`-bit words — 8 indices per word. | Sets the maximum gather / scatter index count at `IDX_WORDS * 8`. Must be large enough that the port address width matches the module's index registers. |
 | `XID_W`, `XMODE_W` | integer | `4`, `4` | Widths of the transform id and mode it carries to the slot. | Must match `mag_xform`. |
 | `XF_IN_BITS`, `XF_OUT_WORDS` | integer | `2048`, `4` | The occupant's geometry, used to size both walks of a mode-5 move. | Must match the bank; `XF_OUT_WORDS <= 4`. |
 | `BURST_MAX` | integer | `128` | Longest AXI burst the mover issues, in beats. | `<= 256`, and short enough that the 4 KB boundary rule still holds. |
