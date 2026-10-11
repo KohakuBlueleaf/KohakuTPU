@@ -311,6 +311,33 @@ A unit whose receive path waits on an inbound flit deadlocks the mesh, not just
 itself: `noc_in_busy` goes high, the link stalls, and in-order delivery means
 everything behind it on that link stalls too.
 
+### 5.2 Credits: unit-to-unit flow control
+
+With `CREDITS = 1` the base carries the flow control two units need to stream
+through each other's buffers with no orchestrator between them. A consumer
+returns slots it has finished with as a `CU_SIGNAL` `CREDIT` (code `0x05`,
+`arg[15:0]` the amount, in units the two ends agree on — KohakuTPU counts
+32-byte granules); a producer spends them before it sends.
+
+| Port | Direction | Meaning |
+|---|---|---|
+| `cr_valid`, `cr_amt[15:0]` | out | One pulse per `CREDIT` received, with its amount. The flit does not reach `recv_*`. |
+| `post_valid`, `post_x`, `post_y`, `post_amt[15:0]` | in | Send one `CREDIT` of `post_amt` to (`post_x`, `post_y`); hold until `post_ready`. |
+| `post_ready` | out | The credit leaves this cycle. |
+
+- A credit is never held by the write fence (§3.3): it says a slot is free,
+  not that a write landed. It leaves after a completion that is ready and a
+  `CU_CTRL` reply, before the datapath's own flits, on the completion flit's
+  output path (its fields differ; the 288-bit output mux does not grow).
+- The arrival side is the unit's: a `CU_DATA` burst whose descriptor sets
+  `flags[1]` (COUNT, [flit-format.md](flit-format.md) §4.7) is counted by the
+  receiver as it lands, and the unit's ISA waits on that count. A burst
+  without COUNT lands as before and is not counted, so plain transfers never
+  move a counter a later wait reads.
+- With `CREDITS = 0` (the default) a `CREDIT` reaches `recv_*` like any other
+  signal and `post_*` is not read: a unit that does not use flow control is
+  built exactly as before.
+
 ## 6. Reset
 
 - `resetn` is active low and synchronous to `clk`.

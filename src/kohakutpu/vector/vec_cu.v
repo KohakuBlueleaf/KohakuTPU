@@ -86,6 +86,9 @@ module vec_cu #(
     reg  [31:0]           exec_result;
     reg  [FLIT_WIDTH-1:0] send_flit;
     reg                   send_valid;
+    wire                  cr_valid, post_valid, post_ready;
+    wire [15:0]           cr_amt, post_amt;
+    wire [3:0]            post_x, post_y;
 
     // ---- the unit's own clock, and the crossing to the NoC's ---------------
     // `bp_*` is noc_cu_base's port face; at UNIT_CDC 0 it IS the boundary.
@@ -145,7 +148,7 @@ module vec_cu #(
         // streamed fill runs, drain write bursts, chained memory-port runs.
         .CU_TYPE(16'h5643), .CU_VERSION(8'h06), .N_BUFFERS(2),
         .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH), .RECV_MEM(RECV_MEM),
-        .MEM_TYPE(MEM_TYPE), .ACK_FENCE(1)
+        .MEM_TYPE(MEM_TYPE), .ACK_FENCE(1), .CREDITS(1)
     ) u_base (
         .clk(u_clk), .resetn(u_resetn),
         .noc_in_data(bp_in_data), .noc_in_valid(bp_in_valid),
@@ -160,6 +163,9 @@ module vec_cu #(
         .dbg_ctr({32'd0, cycles}),
         .send_flit(send_flit), .send_valid(send_valid), .send_ready(send_ready),
         .recv_flit(recv_flit), .recv_valid(recv_valid), .recv_ready(recv_ready),
+        .cr_valid(cr_valid), .cr_amt(cr_amt),
+        .post_valid(post_valid), .post_x(post_x[POS_WIDTH-1:0]),
+        .post_y(post_y[POS_WIDTH-1:0]), .post_amt(post_amt), .post_ready(post_ready),
         .inst_space(), .busy()
     );
 
@@ -211,7 +217,7 @@ module vec_cu #(
     reg  [8:0]  cd_addr;
     reg  [255:0] cd_data;
 
-    wire        nd_valid, nd_sig;
+    wire        nd_valid, nd_sig, nd_count;
     wire [3:0]  nd_x, nd_y, nd_buf;
     wire [15:0] nd_off;
     wire [7:0]  nd_len, nd_ack;
@@ -257,7 +263,18 @@ module vec_cu #(
         .nd_valid(nd_valid), .nd_x(nd_x), .nd_y(nd_y), .nd_buf(nd_buf),
         .nd_off(nd_off), .nd_len(nd_len), .nd_sig(nd_sig), .nd_ack(nd_ack),
         .nd_mesh(nd_mesh), .nd_fin(nd_fin)
+`ifdef VEC_CORE_V2
+        , .cd_count(cd_count), .nd_count(nd_count),
+        .cr_valid(cr_valid), .cr_amt(cr_amt),
+        .post_valid(post_valid), .post_x(post_x), .post_y(post_y),
+        .post_amt(post_amt), .post_ready(post_ready)
     );
+`else
+    );
+    assign nd_count = 1'b0;
+    assign post_valid = 1'b0;
+    assign post_x = 4'd0; assign post_y = 4'd0; assign post_amt = 16'd0;
+`endif
 
     assign dbg_cycles = cycles;
     assign dbg_fault  = fault;
@@ -286,6 +303,9 @@ module vec_cu #(
     wire        cud_bad = (cud_buf != 8'd0) || (cud_end >= L1_DEPTH[16:0]);
 
     reg         cd_st, cd_drop, cd_sig;
+    // flags[1] COUNT: the core counts this burst's granules as they land.
+    reg         cd_cnt;
+    reg         cd_count;
     reg  [7:0]  cd_left;
     reg  [8:0]  cd_ptr;
 
@@ -318,6 +338,7 @@ module vec_cu #(
             cd_valid <= 1'b0; cd_addr <= 9'd0; cd_data <= 256'd0;
             cd_fault <= 1'b0;
             cd_st <= 1'b0; cd_drop <= 1'b0; cd_sig <= 1'b0;
+            cd_cnt <= 1'b0; cd_count <= 1'b0;
             cd_left <= 8'd0; cd_ptr <= 9'd0;
             sg_pend <= 1'b0; sg_buf <= 8'd0;
             sg_x <= {POS_WIDTH{1'b0}}; sg_y <= {POS_WIDTH{1'b0}};
@@ -327,6 +348,7 @@ module vec_cu #(
         end else begin
             rr_valid <= 1'b0;
             cd_valid <= 1'b0;
+            cd_count <= 1'b0;
             cd_fault <= 1'b0;
             if (sg_go) begin
                 sg_pend <= 1'b0;
@@ -359,6 +381,7 @@ module vec_cu #(
                         cd_drop  <= cud_bad;
                         cd_fault <= cud_bad;
                         cd_sig   <= cud_flg[0] && !cud_bad;
+                        cd_cnt   <= cud_flg[1];
                         sg_buf   <= cud_buf;
                         sg_x     <= (cud_ack != 8'd0) ? cud_ack[3:0] : rsx;
                         sg_y     <= (cud_ack != 8'd0) ? cud_ack[7:4] : rsy;
@@ -366,6 +389,7 @@ module vec_cu #(
                         cd_sy    <= rsy;
                     end else begin
                         cd_valid <= !cd_drop && !cd_alien;
+                        cd_count <= cd_cnt && !cd_drop && !cd_alien;
                         cd_addr  <= cd_ptr;
                         cd_data  <= recv_flit[255:0];
                         cd_ptr   <= cd_ptr + 9'd1;
@@ -446,7 +470,7 @@ module vec_cu #(
                                     POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
                                     T_CU_DATA, nd_txn, 1'b0, nd_rsvd,
                                     {4'd0, nd_buf}, nd_off, nd_len,
-                                    7'd0, nd_sig, nd_ack, 208'd0 };
+                                    6'd0, nd_count, nd_sig, nd_ack, 208'd0 };
                                 send_valid <= 1'b1;
                                 nd_hdr     <= 1'b1;
                                 nd_cnt     <= 8'd0;

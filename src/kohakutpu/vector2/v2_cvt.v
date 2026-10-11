@@ -17,6 +17,18 @@ module v2_e8_to_f16 (
     input  wire [23:0] e8,
     output wire [15:0] f16
 );
+    wire [30:0] mid;
+    v2_e8_to_f16_s1 u_s1 (.e8(e8), .mid(mid));
+    v2_e8_to_f16_s2 u_s2 (.mid(mid), .f16(f16));
+endmodule
+
+// The conversion in two halves, so a pipeline can register between them: the
+// shift and the exponent field, then the rounding add and the result select.
+// `mid` is {s, zero, nan, max, m[13:5], over_e, eb, k, round}.
+module v2_e8_to_f16_s1 (
+    input  wire [23:0] e8,
+    output wire [30:0] mid
+);
     wire        s   = e8[23];
     wire [7:0]  e   = e8[22:15];
     wire [14:0] m   = e8[14:0];
@@ -36,15 +48,31 @@ module v2_e8_to_f16 (
 
     // e - 113 for e in 113..143 (113 = 17 mod 32).
     wire [4:0]  eb  = nrm ? (e[4:0] - 5'd17) : 5'd0;
-    wire [15:0] sum = {1'b0, eb, 10'd0} + {5'd0, k} + {15'd0, g & (st | k[0])};
-    wire        over = (e >= 8'd143) || (sum[14:10] == 5'h1F);
+    assign mid = {s, is_zero, is_nan, is_max, m[13:5], (e >= 8'd143), eb, k, g & (st | k[0])};
+endmodule
+
+module v2_e8_to_f16_s2 (
+    input  wire [30:0] mid,
+    output wire [15:0] f16
+);
+    wire        s       = mid[30];
+    wire        is_zero = mid[29];
+    wire        is_nan  = mid[28];
+    wire        is_max  = mid[27];
+    wire [8:0]  mt      = mid[26:18];
+    wire        over_e  = mid[17];
+    wire [4:0]  eb      = mid[16:12];
+    wire [10:0] k       = mid[11:1];
+    wire        rnd     = mid[0];
+
+    wire [15:0] sum  = {1'b0, eb, 10'd0} + {5'd0, k} + {15'd0, rnd};
+    wire        over = over_e || (sum[14:10] == 5'h1F);
 
     assign f16 = is_zero ? {s, 15'd0}
-               : is_nan  ? {s, 5'h1F, 1'b1, m[13:5]}
+               : is_nan  ? {s, 5'h1F, 1'b1, mt}
                : is_max  ? {s, 5'h1F, 10'd0}
                : over    ? {s, 5'h1E, 10'h3FF}
                          : {s, sum[14:0]};
-
 endmodule
 
 `default_nettype wire

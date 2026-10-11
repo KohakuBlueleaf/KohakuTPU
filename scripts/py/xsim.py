@@ -2219,6 +2219,13 @@ BENCHES["vec2_replay"] = (
     + VECTOR2
     + ["tests/vector/vec_replay_tb.v"],
 )
+# The V2 core's arrival and credit counts and VPOST (scripts/py/v2_flow.py).
+BENCHES["v2_flow"] = (
+    "v2_flow_tb",
+    [p for p in BENCHES["vec_cu"][1] if p != "tests/vector/vec_cu_tb.v"]
+    + VECTOR2
+    + ["tests/vector2/v2_flow_tb.v"],
+)
 BENCHES["v2_gt4"] = (
     "v2_gt4_tb",
     ["src/kohakutpu/vector2/v2_gt4.v", "tests/vector2/v2_gt4_tb.v"],

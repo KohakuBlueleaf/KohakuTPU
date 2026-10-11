@@ -20,9 +20,11 @@
 //
 // Instruction, in the CU_INST payload:
 //
-//   [255:252] op      1 = FILL, 2 = GEMM, 3 = DRAIN
+//   [255:252] op      1 = FILL, 2 = GEMM, 3 = DRAIN, 4 = POST
 //   [251:218] addr    FILL: operand base   DRAIN: destination base
 //   [217:202] n       FILL: entries        DRAIN: sub-tiles
+//                     POST: credits, 32-byte granules, sent to (dst_x, dst_y)
+//                     once the array has stopped reading L1
 //   [201]     sel     FILL: 0 = A, 1 = B
 //   [200]     acc     GEMM: accumulate into the resident tile instead of
 //                     reloading it, so one output tile can span several
@@ -33,8 +35,8 @@
 //   [175:168] anchor  GEMM/DRAIN: common output exponent
 //   [167:144] peers   FILL: other clusters receiving this fetch, {y,x} each
 //   [143:142] npeer   FILL: how many of them are present
-//   [141]     --      RESERVED. Was `preq`. Every operand is already in its
-//                     final format before any fetch reads it.
+//   [141]     recv    FILL: no fetch; wait until `n` entries have landed on
+//                     this side by COUNT CU_DATA, and take them
 //   [140:133] eoff    FILL: first L1 entry to write
 //   [132:125] aoff    GEMM: base L1 entry on the A side
 //   [124:117] boff    GEMM: base L1 entry on the B side
@@ -53,6 +55,9 @@
 //   [86:83]   dack_y  DRAIN: where the receiver sends its completion,
 //   [82:79]   dack_x         0 meaning back to this cluster
 //   [78:77]   dmesh   DRAIN: the destination MESH, meaningful only when dfin is
+//   [62]      credit  DRAIN, emitting GEMM, to a node: each burst first spends
+//                     its length in credits the sink returns
+//                     (docs/projects/kohakutpu/isa.md s5.4)
 //   [76:69]   dfin           nonzero. dfin is {fin_y, fin_x} in that mesh, and
 //                            nonzero is what makes the drain remote -- (0,0) is
 //                            a mesh corner and can hold no endpoint. Zero in
@@ -146,7 +151,7 @@ module mx_cluster_cu #(
     localparam [7:0]  SIG_DATA_RECEIVED = 8'h03;
     localparam integer PAD_SIG = FLIT_WIDTH - 4*POS_WIDTH - 16 - 40;
 
-    localparam [3:0] OP_FILL = 4'd1, OP_GEMM = 4'd2, OP_DRAIN = 4'd3;
+    localparam [3:0] OP_FILL = 4'd1, OP_GEMM = 4'd2, OP_DRAIN = 4'd3, OP_POST = 4'd4;
 
     // Which buffer of this CU a CU_DATA stream is addressed to. 0 and 1 match
     // `l1_sel`; 2 is the accumulator's resident tile, reached through
@@ -176,6 +181,13 @@ module mx_cluster_cu #(
 
     // Every inbound flit, MEM_WR_ACK included, goes to noc_cu_base (ACK_FENCE 1).
     wire       base_in_busy;
+
+    // Credits: received from the unit this cluster sends to, and a POST's.
+    wire        cr_valid, post_ready;
+    wire [15:0] cr_amt;
+    reg         post_v;
+    reg  [3:0]  post_x, post_y;
+    reg  [15:0] post_amt;
 
     wire [FLIT_WIDTH-1:0] tx_flit;
     wire                  tx_valid, tx_ready;
@@ -236,7 +248,7 @@ module mx_cluster_cu #(
         // interconnect: unit-to-unit transfer on both halves of the mesh.
         .CU_TYPE(16'h4D47), .CU_VERSION(8'h06), .N_BUFFERS(2),
         .INST_DEPTH(INST_DEPTH), .RECV_DEPTH(RECV_DEPTH),
-        .RECV_MEM(RECV_MEM), .MEM_TYPE(MEM_TYPE), .ACK_FENCE(1)
+        .RECV_MEM(RECV_MEM), .MEM_TYPE(MEM_TYPE), .ACK_FENCE(1), .CREDITS(1)
     ) u_base (
         .clk(u_clk), .resetn(u_resetn),
         .noc_in_data(bp_in_data), .noc_in_valid(bp_in_valid),
@@ -248,6 +260,9 @@ module mx_cluster_cu #(
         .dbg_ctr({ctr_comp, ctr_fill}),
         .send_flit(tx_flit), .send_valid(tx_valid), .send_ready(tx_ready),
         .recv_flit(recv_flit), .recv_valid(recv_valid), .recv_ready(recv_ready),
+        .cr_valid(cr_valid), .cr_amt(cr_amt),
+        .post_valid(post_v), .post_x(post_x[POS_WIDTH-1:0]),
+        .post_y(post_y[POS_WIDTH-1:0]), .post_amt(post_amt), .post_ready(post_ready),
         .inst_space(), .busy()
     );
 
@@ -318,6 +333,8 @@ module mx_cluster_cu #(
     // the descriptor's flags byte verbatim and has to stay that.
     wire [3:0]  i_dacky = inst_flit[86 -: 4];
     wire [3:0]  i_dackx = inst_flit[82 -: 4];
+    wire        i_recv   = inst_flit[141];
+    wire        i_credit = inst_flit[62];
 
     wire [3:0] rtype = recv_flit[FLIT_WIDTH-4*POS_WIDTH-1 -: 4];
     // A response carries its own address. `rtag` is the L1 entry this flit
@@ -353,7 +370,7 @@ module mx_cluster_cu #(
     reg  [3:0]   dackx_r, dacky_r;
     reg  [1:0]   dmesh_r;
     reg  [7:0]   dfin_r;
-    reg          acc_r, emit_r, fuse_r;
+    reg          acc_r, emit_r, fuse_r, recv_r, credit_r;
     wire         sweep_busy;
     // mx_acu_fp's REUSE_MIN. A tiling this size or larger cannot revisit a
     // tile address inside the reuse window, which is what lets one sweep start
@@ -453,7 +470,7 @@ module mx_cluster_cu #(
     // ================================================ fill / sequencer
     localparam [3:0] S_IDLE = 4'd0, S_FILL = 4'd1, S_GEMM = 4'd3;
     localparam [3:0] S_GWAIT = 4'd4, S_DRAIN = 4'd5, S_DWAIT = 4'd6;
-    localparam [3:0] S_DONE = 4'd7;
+    localparam [3:0] S_DONE = 4'd7, S_POST = 4'd8;
 
     // No PREFETCH parameter: a descriptor removes the requester rather than
     // pipelining it. One flit names the whole run and MAG streams it, so there
@@ -754,6 +771,24 @@ module mx_cluster_cu #(
     wire [8:0]  pl_ent   = pl_data ? cd_off[10:2] : {fbank_r, rtag};
     wire [1:0]  pl_word  = pl_data ? cd_off[1:0]  : rword;
 
+    // Entries landed by CU_DATA bursts flagged COUNT (flags[1]), per side,
+    // that no `recv` FILL has taken yet.
+    reg  [9:0]  rx_ent [0:1];
+    wire        rx_land = pl_data && (pl_word == 2'd3) && cd_flg[1];
+    wire        rx_take = (st == S_FILL) && recv_r && (rx_ent[sel_r] >= n_r[9:0]);
+    integer     ri;
+    always @(posedge u_clk) begin
+        for (ri = 0; ri < 2; ri = ri + 1) begin
+            if (!u_resetn) begin
+                rx_ent[ri] <= 10'd0;
+            end else begin
+                rx_ent[ri] <= rx_ent[ri]
+                            + ((rx_land && (pl_sel == ri[0])) ? 10'd1 : 10'd0)
+                            - ((rx_take && (sel_r == ri[0])) ? n_r[9:0] : 10'd0);
+            end
+        end
+    end
+
     integer bi, bk, bj;
     always @(posedge u_clk) begin
         if (!u_resetn) begin
@@ -837,6 +872,8 @@ module mx_cluster_cu #(
             wide_r <= 1'b0;
             aoff_r <= 8'd0; boff_r <= 8'd0; eoff_r <= 8'd0;
             acc_r <= 1'b0; emit_r <= 1'b0; fuse_r <= 1'b0;
+            recv_r <= 1'b0; credit_r <= 1'b0;
+            post_v <= 1'b0; post_x <= 4'd0; post_y <= 4'd0; post_amt <= 16'd0;
             base_r <= 40'd0; n_r <= 16'd1;
             peer_r <= 24'd0; npeer_r <= 2'd0;
             nfill <= 16'd0; ngemm <= 16'd0; ndrain <= 16'd0;
@@ -865,6 +902,7 @@ module mx_cluster_cu #(
                     dackx_r <= i_dackx; dacky_r <= i_dacky;
                     dmesh_r <= i_dmesh; dfin_r  <= i_dfin;
                     emit_r <= i_emit; fuse_r <= i_fuse;
+                    recv_r <= i_recv; credit_r <= i_credit;
                     peer_r <= i_peer; npeer_r <= i_npeer;
                     inst_ready <= 1'b1;
                     req_ent <= 8'd0; rcv_ent <= 8'd0;
@@ -872,6 +910,7 @@ module mx_cluster_cu #(
                         OP_FILL:  st <= S_FILL;
                         OP_GEMM:  st <= S_GEMM;
                         OP_DRAIN: st <= S_DRAIN;
+                        OP_POST:  st <= S_POST;
                         default:  st <= S_DONE;
                     endcase
                 end
@@ -887,14 +926,14 @@ module mx_cluster_cu #(
                     // sharing set. A follower sends nothing: its operands are
                     // already on the way. `req_ent` marks the decision either way.
                     if (!send_valid && (req_ent == 8'd0)) begin
-                        if (lead) begin
+                        if (lead && !recv_r) begin
                             send_flit  <= rd_req(base_r, eoff_r,
                                                  n_r[7:0], peer_r, npeer_r);
                             send_valid <= 1'b1;
                         end
                         req_ent <= 8'd1;
                     end
-                    if ({8'd0, rcv_ent} == n_r) begin
+                    if (recv_r ? rx_take : ({8'd0, rcv_ent} == n_r)) begin
                         nfill <= nfill + 16'd1;
                         st <= S_DONE;
                     end
@@ -965,6 +1004,20 @@ module mx_cluster_cu #(
                     st <= S_DONE;
                 end
 
+                // ---- POST: once `gemm_busy` falls no earlier sweep reads L1
+                // any more, so the credits name slots that are free.
+                S_POST: if (post_v) begin
+                    if (post_ready) begin
+                        post_v <= 1'b0;
+                        st <= S_DONE;
+                    end
+                end else if (!gemm_busy) begin
+                    post_v   <= 1'b1;
+                    post_x   <= dstx_r;
+                    post_y   <= dsty_r;
+                    post_amt <= n_r;
+                end
+
                 S_DONE: begin
                     exec_done   <= 1'b1;
                     exec_result <= {16'd0, nfill + ngemm + ndrain};
@@ -1013,6 +1066,11 @@ module mx_cluster_cu #(
     reg [3:0]            w_ackx, w_acky;
     reg [1:0]            w_mesh;
     reg [7:0]            w_fin;
+    // A `credit` drain to a node sends a burst only once it holds credits for
+    // it; the receiver returns them as it frees the slots.
+    reg                  w_credit;
+    reg [15:0]           cr_cnt;
+    wire                 w_cred = !(w_node && w_credit) || (cr_cnt >= {12'd0, w_fill});
     // W_DATA holds while the descriptor is on the wire AND while every payload
     // flit is, so the state cannot say which one `w_flit` is. This can.
     reg                  w_isdesc;
@@ -1030,7 +1088,7 @@ module mx_cluster_cu #(
     // necessarily idle -- either the bank is full, or `!drain_busy` says there
     // is nothing left in the queue to take -- so the two never contend for
     // `w_fill`.
-    wire w_hand  = (w_st == W_IDLE) && w_flush;
+    wire w_hand  = (w_st == W_IDLE) && w_flush && w_cred;
     assign w_full = (w_fill == WBURST[WBW:0]);
     // ONE OUTBOUND QUEUE, AND THE FETCH DESCRIPTOR WINS. A FILL is a single
     // flit and the sequencer sits in S_FILL until its responses come back, so
@@ -1093,12 +1151,15 @@ module mx_cluster_cu #(
             w_dbuf <= 8'd0; w_dflag <= 8'd0;
             w_ackx <= 4'd0; w_acky <= 4'd0;
             w_mesh <= 2'd0; w_fin <= 8'd0; w_isdesc <= 1'b0;
+            w_credit <= 1'b0; cr_cnt <= 16'd0;
             // `w_buf` is NOT reset -- 2*WBURST x 256 flops whose valid extent is
             // `w_fill`/`w_send`, both of which are.
         end else begin
             if (w_take) begin
                 w_valid <= 1'b0;
             end
+            cr_cnt <= cr_cnt + (cr_valid ? cr_amt : 16'd0)
+                             - ((w_hand && w_node && w_credit) ? {12'd0, w_fill} : 16'd0);
             // The destination comes from whichever instruction produces the
             // sub-tiles. A fused sweep starts emitting long before its DRAIN
             // is decoded, so it carries the address itself.
@@ -1109,6 +1170,7 @@ module mx_cluster_cu #(
                 w_dbuf  <= dbuf_r;   w_dflag <= dflag_r;
                 w_ackx  <= dackx_r;  w_acky  <= dacky_r;
                 w_mesh  <= dmesh_r;  w_fin   <= dfin_r;
+                w_credit <= credit_r;
             end
 
             // Collection is not a state any more -- it runs every cycle there

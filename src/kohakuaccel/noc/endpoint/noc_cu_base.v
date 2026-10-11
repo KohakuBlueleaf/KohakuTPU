@@ -33,7 +33,10 @@ module noc_cu_base #(
     parameter RECV_MEM    = "distributed",
     // 1: CU_SIGNAL waits for every local write's MEM_WR_ACK
     // (docs/spec/compute-unit-port.md s3.3); 0: MEM_WR_ACKs pass to the datapath.
-    parameter ACK_FENCE   = 0
+    parameter ACK_FENCE   = 0,
+    // 1: CREDIT signals in (`cr_*`) and out (`post_*`), compute-unit-port.md
+    // s5.2; 0: a CREDIT reaches recv_* like any signal, `post_*` is not read.
+    parameter CREDITS     = 0
 ) (
     input  wire                   clk,
     input  wire                   resetn,
@@ -73,6 +76,15 @@ module noc_cu_base #(
     output wire                   recv_valid,
     input  wire                   recv_ready,
 
+    // ---- credits (CREDITS = 1): a pulse per CREDIT received, and one to send ----
+    output reg                    cr_valid,
+    output reg  [15:0]            cr_amt,
+    input  wire                   post_valid,
+    input  wire [POS_WIDTH-1:0]   post_x,
+    input  wire [POS_WIDTH-1:0]   post_y,
+    input  wire [15:0]            post_amt,
+    output wire                   post_ready,
+
     // ---- visibility ----
     output wire [15:0]            inst_space,
     output wire                   busy
@@ -85,6 +97,7 @@ module noc_cu_base #(
     localparam [7:0] SIG_INST_COMPLETE  = 8'h00;
     localparam [7:0] SIG_BATCH_COMPLETE = 8'h01;
     localparam [7:0] SIG_FAULT          = 8'h04;
+    localparam [7:0] SIG_CREDIT         = 8'h05;
 
     // header field extraction, matching src/kohakunoc/noc_pkt.vh
     `define HDR_DX(f) f[FLIT_WIDTH-1              -: POS_WIDTH]
@@ -100,6 +113,8 @@ module noc_cu_base #(
     wire       in_inst = (in_type == T_CU_INST);
     wire       in_ctrl = (in_type == T_CU_CTRL);
     wire       in_ack  = (ACK_FENCE != 0) && (in_type == T_MEM_WR_ACK);
+    wire       in_cred = (CREDITS != 0) && (in_type == T_CU_SIGNAL)
+                         && (noc_in_data[255 -: 8] == SIG_CREDIT);
 
     wire inst_full, inst_empty, recv_full, recv_empty;
     wire inst_almost, recv_almost;
@@ -131,7 +146,7 @@ module noc_cu_base #(
     sync_fifo #(.DATA_WIDTH(FLIT_WIDTH), .FIFO_DEPTH(RECV_DEPTH),
                 .MEMORY_TYPE(RECV_MEM)) u_recv (
         .clk(clk), .rst(!resetn),
-        .wr_en(noc_in_valid && !noc_in_busy && !in_inst && !in_ctrl && !in_ack),
+        .wr_en(noc_in_valid && !noc_in_busy && !in_inst && !in_ctrl && !in_ack && !in_cred),
         .wr_data(noc_in_data), .wr_busy(recv_full), .wr_almost(recv_almost),
         .rd_en(recv_valid && recv_ready), .rd_data(recv_flit), .rd_busy(recv_empty)
     );
@@ -216,7 +231,11 @@ module noc_cu_base #(
     wire sig_go    = sig_pend && wr_clear;
     wire sig_sent  = sig_go && tx_free;
     wire ctrl_sent = ctrl_pend && tx_free && !sig_go;
-    assign send_ready = tx_free && !sig_go && !ctrl_pend;
+    // A CREDIT leaves on the signal flit's fields, after a ready completion
+    // and a control reply; it is never fenced (a slot is free, no write owed).
+    wire post_go   = (CREDITS != 0) && post_valid && !sig_go && !ctrl_pend;
+    assign post_ready = post_go && tx_free;
+    assign send_ready = tx_free && !sig_go && !ctrl_pend && !post_go;
 
     sync_fifo #(.DATA_WIDTH(SIG_W), .FIFO_DEPTH(SIG_DEPTH),
                 .MEMORY_TYPE("distributed")) u_sig (
@@ -322,20 +341,34 @@ module noc_cu_base #(
 
     // ONE enable, ONE mux: as an if/else chain Vivado built the zero fields from
     // the flops' SYNC RESET, and those 288 R pins routed -3.726 ns at 3.334.
-    wire [FLIT_WIDTH-1:0] out_sig =
-        { s_x, s_y, POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
-          T_CU_SIGNAL, s_id, 1'b1, 3'b000,
-          (wr_err ? SIG_FAULT : s_code), s_arg, {PAD_SIG{1'b0}} };
+    // A CREDIT is the same flit with its fields from `post_*`.
+    wire [FLIT_WIDTH-1:0] out_sig = post_go
+        ? { post_x, post_y, POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
+            T_CU_SIGNAL, 8'h00, 1'b1, 3'b000,
+            SIG_CREDIT, 16'd0, post_amt, {PAD_SIG{1'b0}} }
+        : { s_x, s_y, POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
+            T_CU_SIGNAL, s_id, 1'b1, 3'b000,
+            (wr_err ? SIG_FAULT : s_code), s_arg, {PAD_SIG{1'b0}} };
     wire [FLIT_WIDTH-1:0] out_ctrl =
         { ctrl_x, ctrl_y, POS_X[POS_WIDTH-1:0], POS_Y[POS_WIDTH-1:0],
           T_CU_CTRL, ctrl_txn, 1'b1, 3'b000,
           8'd2 /*read response*/, ctrl_ridx, ctrl_val,
           {(FLIT_WIDTH-4*POS_WIDTH-16-16-64){1'b0}} };
     // Priority as the if/else chain had it.
-    wire [FLIT_WIDTH-1:0] out_next = sig_sent  ? out_sig
-                                   : ctrl_sent ? out_ctrl
-                                               : send_flit;
-    wire out_take = sig_sent | ctrl_sent | (send_valid && send_ready);
+    wire [FLIT_WIDTH-1:0] out_next = (sig_sent | post_ready) ? out_sig
+                                   : ctrl_sent               ? out_ctrl
+                                                             : send_flit;
+    wire out_take = sig_sent | ctrl_sent | post_ready | (send_valid && send_ready);
+
+    // An inbound CREDIT, as one pulse.
+    always @(posedge clk) begin
+        if (!resetn) begin
+            cr_valid <= 1'b0;
+        end else begin
+            cr_valid <= noc_in_valid && !noc_in_busy && in_cred;
+        end
+        cr_amt <= noc_in_data[231 -: 16];
+    end
 
     // A local MEM_WR_REQ leaving (NOC_RSVD bit 2 clear), and a MEM_WR_ACK arriving.
     wire wr_req_out = (ACK_FENCE != 0) && send_valid && send_ready

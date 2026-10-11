@@ -353,7 +353,7 @@ same document.
 | `[255:248]` | `buf_id` | 8 | **framework namespace** | Which buffer of the destination unit. See §4.7.1. |
 | `[247:232]` | `offset` | 16 | framework | Start offset **in 32-byte granules**, and it advances by one per data flit. |
 | `[231:224]` | `len` | 8 | framework | Data flits following, minus one. A burst is therefore 1–256 flits. |
-| `[223:216]` | `flags` | 8 | framework, bit 0 only | Bit 0 `signal_on_complete`. Bits 7:1 unallocated, MUST be 0. |
+| `[223:216]` | `flags` | 8 | framework, bits 1:0 | Bit 0 `signal_on_complete`. Bit 1 `count`: the receiver counts the burst's granules toward its unit-to-unit waits ([compute-unit-port.md](compute-unit-port.md) §5.2). Bits 7:2 unallocated, MUST be 0. |
 | `[215:212]` | `ack_y` | 4 | framework | Where the completion goes. |
 | `[211:208]` | `ack_x` | 4 | framework | |
 | `[207:0]` | reserved | 208 | reserved | MUST be 0. |
@@ -463,7 +463,8 @@ Register contents are in [control-registers.md](control-registers.md) §1.
 | `0x02` | `BARRIER_REACHED` | **nothing.** Allocated, unimplemented. | barrier id |
 | `0x03` | `DATA_RECEIVED` | the unit, on completing a `CU_DATA` burst whose `flags[0]` was set | `{24'd0, buf_id}` by convention |
 | `0x04` | `FAULT` | the framework, when `exec_fault` is set at `exec_done` | `exec_result` |
-| `0x05`–`0x3F` | reserved to the framework | — | — |
+| `0x05` | `CREDIT` | the framework, for a unit that posts one ([compute-unit-port.md](compute-unit-port.md) §5.2) | `[15:0]` the amount |
+| `0x06`–`0x3F` | reserved to the framework | — | — |
 | `0x40`–`0xFF` | **unit-defined** | the unit | unit-defined |
 
 Codes below `0x40` are centrally allocated so a controller can act on any unit's

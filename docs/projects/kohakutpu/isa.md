@@ -72,12 +72,14 @@ stop the level above it from having to say the same thing 256 times.**
 
 ---
 
-## 2. The cluster's three opcodes
+## 2. The cluster's four opcodes
 
 ```
-   FILL  addr, n, sel            load n L1 entries from memory
+   FILL  addr, n, sel, recv      load n L1 entries from memory, or wait for n
+                                 another unit sent (recv)
    GEMM  gm, gn, nk, anchor, acc sweep gm x gn output sub-tiles over nk K blocks
-   DRAIN addr, n, fuse, last     get n resident sub-tiles out
+   DRAIN addr, n, fuse, credit   get n resident sub-tiles out
+   POST  dst, n                  return n credits to the unit that fills L1
 ```
 
 One 256-bit payload each, with the opcode in `[255:252]`. Two things about the
@@ -427,6 +429,32 @@ reuse contract still applies within a stream.
 > that is trying to retire. Nothing needs that configuration — peer exists to
 > span clusters — and the bench tests the round trip by capturing the burst and
 > replaying it after the drain finishes.
+
+### 5.4 Flow control: streaming through another unit with no node between
+
+Two units can stream through each other's buffers on their own: the consumer
+waits on what has *landed*, the producer on *credits* the consumer returns. The
+credit signal itself is the framework's
+([compute-unit-port.md](../../spec/compute-unit-port.md) §5.2); these are the
+cluster's words for it. Counts are 32-byte granules on the wire and entries on
+a FILL.
+
+| field | bit | on | meaning |
+|---|---|---|---|
+| `recv` | 141 | FILL | No memory request. The FILL completes once `n` entries have landed on its side from `CU_DATA` bursts flagged COUNT, and takes them; later instructions follow it in order, so a GEMM after it sweeps what arrived. |
+| `credit` | 62 | DRAIN, emitting GEMM, to a node | Each burst (up to 8 granules) leaves only once the cluster holds that many credits, and spends them. A stalled burst backs up into the sweep through `emit_stall`, so the array runs at the consumer's pace. |
+| op 4 `POST` | — | — | Once `gemm_busy` is low (no earlier sweep still reads L1), send a `CREDIT` of `n` to (`dst_x`, `dst_y`). |
+
+A COUNT burst is `dflags` bit 1 on the sender's side (any unit's `CU_DATA`
+descriptor `flags[1]`); a burst without it lands as before and is not counted.
+Entries land into the cluster's counter per side and a `recv` FILL subtracts
+its `n`, so a stream of tiles is one producer, one consumer and two numbers.
+
+Measured on the module bench (`tests/matmul/mx_cluster_data_tb.v`): a `recv`
+FILL issued 2,000 cycles before its operands waits for them and the GEMM sums
+exactly what landed; POST leaves 56 ns after the sweep's last L1 read; a
+16-sub-tile credit drain sends 0 flits before a credit, one 9-flit burst per 8
+credits after (the same drain without `credit`: all 18 at once).
 
 ---
 

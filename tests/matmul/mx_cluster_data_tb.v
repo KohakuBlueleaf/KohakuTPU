@@ -362,13 +362,15 @@ module mx_cluster_data_tb;
     // 32-byte granules through them, so the whole side is a single run.
     // `bank` needs no field of its own: `off` counts granules through the whole
     // 512-entry buffer, so the upper bank simply starts at granule 256*4.
+    // flags[1] COUNT on every operand stream while set (the unit-fill cases).
+    reg [7:0] fill_flags = 8'd0;
     task fill_side(input integer side, input integer ng, input integer nk,
                    input integer bank);
         integer e, w, ne;
         reg [255:0] p;
         begin
             ne = ng*nk;
-            send_desc(side[7:0], bank*1024, (ne*4 - 1));
+            send_desc_ack(side[7:0], bank*1024, (ne*4 - 1), fill_flags, 4'd0, 4'd0);
             for (e = 0; e < ne; e = e + 1) begin
                 for (w = 0; w < 4; w = w + 1) begin
                     // entry e is lane group e/nk at K block e%nk -- the same
@@ -902,6 +904,194 @@ module mx_cluster_data_tb;
         end
     endtask
 
+    // ================================================ unit flow control
+    // A `unit` FILL waits for entries landed by CU_DATA; POST returns credits
+    // once the array is idle; a `unit` drain to a node spends credits a burst.
+    localparam [7:0] SIG_CREDIT = 8'h05;
+    integer cr_n = 0, cr_arg = -1, cr_dx = -1, cr_dy = -1, t_cr = 0, t_gemm_end = 0;
+    // The sweep's L1 reads (the manager), not `gemm_busy`: the DRAIN after the
+    // POST keeps the accumulator, and so `gemm_busy`, high on its own.
+`ifdef MX_CU_PUMP
+    wire dut_gemm_busy = dut.u_cu.sweep_busy;
+`else
+    wire dut_gemm_busy = dut.sweep_busy;
+`endif
+    always @(posedge clk) if (resetn) begin
+        if (dut_gemm_busy) t_gemm_end <= $time;
+        if (noc_out_valid && (noc_out_data[FLIT-4*PWID-1 -: 4] == T_CU_SIGNAL)
+            && (noc_out_data[255 -: 8] == SIG_CREDIT)) begin
+            cr_n   <= cr_n + 1;
+            cr_arg <= noc_out_data[247 -: 32];
+            cr_dx  <= noc_out_data[FLIT-1 -: PWID];
+            cr_dy  <= noc_out_data[FLIT-PWID-1 -: PWID];
+            t_cr   <= $time;
+        end
+    end
+
+    task send_unit_fill(input integer side, input integer ne);
+        reg [255:0] p;
+        begin
+            p = 256'd0;
+            p[255 -: 4] = 4'd1;                  // OP_FILL
+            p[217 -: 16] = ne[15:0];
+            p[201] = side[0];
+            p[141] = 1'b1;                       // recv: wait for CU_DATA
+            noc_send(hdr(CU_X[3:0], CU_Y[3:0], T_CU_INST, 8'h40, 1'b0, p));
+        end
+    endtask
+
+    task send_post(input integer n);
+        reg [255:0] p;
+        begin
+            p = 256'd0;
+            p[255 -: 4] = 4'd4;                  // OP_POST
+            p[217 -: 16] = n[15:0];
+            p[110 -: 4] = SRC_X[3:0];
+            p[106 -: 4] = SRC_Y[3:0];
+            noc_send(hdr(CU_X[3:0], CU_Y[3:0], T_CU_INST, 8'h40, 1'b0, p));
+        end
+    endtask
+
+    task send_credit(input integer n);
+        begin
+            noc_send(hdr(CU_X[3:0], CU_Y[3:0], T_CU_SIGNAL, 8'h00, 1'b1,
+                         {SIG_CREDIT, 16'd0, n[15:0], 216'd0}));
+        end
+    endtask
+
+    // A drain of `nt` FP16 sub-tiles to the bench's buf 0, gated (`unit`) or not.
+    task send_drain_bench(input integer nt, input integer unit);
+        reg [255:0] p;
+        begin
+            p = 256'd0;
+            p[255 -: 4]  = 4'd3;                 // OP_DRAIN
+            p[217 -: 16] = nt[15:0];
+            p[175 -: 8]  = ANCHOR[7:0];
+            p[62]        = unit[0];              // credit
+            p[111]       = 1'b1;                 // dnode
+            p[110 -: 4]  = SRC_X[3:0];
+            p[106 -: 4]  = SRC_Y[3:0];
+            noc_send(hdr(CU_X[3:0], CU_Y[3:0], T_CU_INST, 8'h40, 1'b0, p));
+        end
+    endtask
+
+    // The operands arrive 2,000 cycles after the FILLs and the GEMM were sent:
+    // L1 still holds the previous case's operands, so a FILL that did not wait
+    // sweeps those and the tile is wrong.
+    task run_unit(input integer gm, input integer gn, input integer nk);
+        integer m, n, kk, nt, ii, jj, kkk, bb, tt, t_data;
+        integer signed acc;
+        real want, peak, err, tol;
+        begin
+            m = gm*4; n = gn*4; kk = nk*32; nt = gm*gn;
+            cur_gn = gn;
+            for (tt = 0; tt < nt; tt = tt + 1) got[tt] = 1'b0;
+            w_tot = 0; cr_n = 0;
+            for (ii = 0; ii < m; ii = ii + 1)
+                for (kkk = 0; kkk < kk; kkk = kkk + 1) A[ii][kkk] = ($random(seed) & 127) - 64;
+            for (kkk = 0; kkk < kk; kkk = kkk + 1)
+                for (jj = 0; jj < n; jj = jj + 1) B[kkk][jj] = ($random(seed) & 127) - 64;
+            for (ii = 0; ii < m; ii = ii + 1)
+                for (bb = 0; bb < nk; bb = bb + 1) SA[ii][bb] = ($random(seed) & 3);
+            for (jj = 0; jj < n; jj = jj + 1)
+                for (bb = 0; bb < nk; bb = bb + 1) SB[jj][bb] = ($random(seed) & 3);
+            for (ii = 0; ii < m; ii = ii + 1) begin
+                for (jj = 0; jj < n; jj = jj + 1) begin
+                    fp64_c[ii][jj] = 0.0;
+                    for (bb = 0; bb < nk; bb = bb + 1) begin
+                        acc = 0;
+                        for (kkk = 0; kkk < 32; kkk = kkk + 1)
+                            acc = acc + A[ii][bb*32+kkk]*B[bb*32+kkk][jj];
+                        fp64_c[ii][jj] = fp64_c[ii][jj]
+                            + $itor(acc) * (2.0 ** (SA[ii][bb] + SB[jj][bb]));
+                    end
+                    fp64_c[ii][jj] = fp64_c[ii][jj] * (2.0 ** -HEADROOM);
+                end
+            end
+
+            send_unit_fill(0, gm*nk);
+            send_unit_fill(1, gn*nk);
+            send_gemm(gm, gn, nk, 0, 0);
+            send_post(gm*nk*4);
+            send_drain(nt);
+            repeat (2000) @(posedge clk);
+            checks = checks + 1;
+            if (w_tot != 0 || cr_n != 0) begin
+                errors = errors + 1;
+                $display("  FAIL unit fill: %0d sub-tiles and %0d credits before the operands",
+                         w_tot, cr_n);
+            end
+            t_data = $time;
+            fill_flags = 8'd2;
+            fill_side(0, gm, nk, 0);
+            fill_side(1, gn, nk, 0);
+            fill_flags = 8'd0;
+            tt = 0;
+            while ((w_tot < nt) && tt < 200000) begin @(posedge clk); tt = tt + 1; end
+            repeat (20) @(posedge clk);
+
+            checks = checks + 3;
+            if (cr_n != 1 || cr_arg != gm*nk*4 || cr_dx != SRC_X || cr_dy != SRC_Y) begin
+                errors = errors + 1;
+                $display("  FAIL POST: %0d credits, arg %0d to (%0d,%0d)", cr_n, cr_arg, cr_dx, cr_dy);
+            end
+            if (t_cr <= t_gemm_end || t_gemm_end <= t_data) begin
+                errors = errors + 1;
+                $display("  FAIL POST at %0t, sweep busy until %0t, operands from %0t",
+                         t_cr, t_gemm_end, t_data);
+            end
+            peak = 0.0;
+            for (ii = 0; ii < m; ii = ii + 1)
+                for (jj = 0; jj < n; jj = jj + 1) begin
+                    want = fp64_c[ii][jj] < 0.0 ? -fp64_c[ii][jj] : fp64_c[ii][jj];
+                    if (want > peak) peak = want;
+                end
+            if (peak == 0.0) peak = 1.0;
+            tol = 4.0/1024.0 * $itor(nk);
+            for (ii = 0; ii < m; ii = ii + 1)
+                for (jj = 0; jj < n; jj = jj + 1) begin
+                    checks = checks + 1;
+                    err = (hw_c[ii][jj] - fp64_c[ii][jj]) / peak;
+                    if (err < 0.0) err = -err;
+                    if (err > tol) begin
+                        errors = errors + 1;
+                        if (errors <= 8)
+                            $display("  FAIL unit fill C[%0d][%0d] got %0f want %0f",
+                                     ii, jj, hw_c[ii][jj], fp64_c[ii][jj]);
+                    end
+                end
+            $display("    unit fills %0dx%0d nk=%0d: C[0][0] %0f; POST %0d at %0t after the sweep (%0t)",
+                     gm, gn, nk, hw_c[0][0], cr_arg, t_cr, t_gemm_end);
+        end
+    endtask
+
+    // 16 sub-tiles to the bench: two bursts of 8. Gated, none leaves before a
+    // credit and each 8 credits release exactly one burst (9 flits); ungated,
+    // both leave at once -- the control that makes the counts a check.
+    task run_credit(input integer unit);
+        integer tt, n0, n1, n2;
+        begin
+            lb_n = 0;
+            send_drain_bench(16, unit);
+            repeat (1500) @(posedge clk);
+            n0 = lb_n;
+            if (unit) send_credit(8);
+            repeat (1500) @(posedge clk);
+            n1 = lb_n;
+            if (unit) send_credit(8);
+            tt = 0;
+            while ((lb_n < 18) && tt < 20000) begin @(posedge clk); tt = tt + 1; end
+            n2 = lb_n;
+            checks = checks + 1;
+            if (unit ? (n0 != 0 || n1 != 9 || n2 != 18) : (n0 != 18)) begin
+                errors = errors + 1;
+                $display("  FAIL credit drain (unit %0d): %0d / %0d / %0d flits", unit, n0, n1, n2);
+            end
+            $display("    drain to a node, unit %0d: %0d flits before credit, %0d after 8, %0d after 16",
+                     unit, n0, n1, n2);
+        end
+    endtask
+
     integer err_before;
 
     initial begin
@@ -953,6 +1143,16 @@ module mx_cluster_data_tb;
         run_peer_loop(3, 3);        // 18 granules: three, and a short tail
         if (errors == err_before) begin
             $display("    OP_SEND round trips to OP_ADD_PEER");
+        end
+
+        $display("--- unit flow control: FILL waits for CU_DATA, POST, credit drains ---");
+        err_before = errors;
+        run_unit(2, 2, 1);
+        run_unit(3, 3, 2);
+        run_credit(1);
+        run_credit(0);
+        if (errors == err_before) begin
+            $display("    a unit FILL waits for its entries; credits gate each burst");
         end
 
         $display("========================================");

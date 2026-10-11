@@ -130,9 +130,34 @@ instructions, however many of the kind have been dispatched since. A front-end s
 compares registers: a per-kind outstanding count against `slack`, or a per-mark
 "reached" bit that the core refreshes every cycle and clears when the mark is set.
 
-A waiter or kind above 6 faults (F_SYNC). With `DUALQ = 0`, queue 1 does not exist.
+A waiter above 6 faults (F_SYNC). With `DUALQ = 0`, queue 1 does not exist.
 An instruction that names it runs on queue 0, and K_U1 / K_P1 count as K_U / K_P, so a
 program written for two queues keeps its ordering on one.
+
+### 4.1 Counts from other units: `vwait`
+
+Kind 7 is not instructions but a **count**, kept across RUNs (reset only with
+the core): `counter` 0 (RX) the 32-byte granules landed in L1 by `CU_DATA`
+bursts flagged COUNT, 1 (CR) the credits received in `CU_SIGNAL` CREDITs
+([compute-unit-port.md](../../spec/compute-unit-port.md) §5.2). `VSYNC
+waiter, on=7, n` (written `vwait WAITER rx|cr n=N`) makes `waiter` wait until
+the counter has reached `n` more than every earlier wait on it asked for — the
+same "reached a target" test as the other kinds, against a target the waits
+advance. A landed granule counts the cycle after its L1 write is issued, so a
+reader it releases sees the data. A count is never marked (`W_MK` on kind 7
+faults).
+
+`VPOST dst, n` sends a CREDIT of `n` to `dst` from the drain queue: after every
+VDRAIN before it, and after a `vsync drain on=...` before it, so
+`vsync drain on=unpack; vpost` returns a slot only once its unpacks have read
+it. A peer VDRAIN's bursts carry COUNT when its descriptor base sets bit 34
+(`peer(OFF, count=1)`).
+
+The two make a stream with no node in it: a producer cluster drains a tile
+into a slot only with credits for it, the core waits for the tile's granules,
+unpacks, and posts the slot back; the core's P goes the other way into a
+cluster's L1 the same way (`vwait drain cr`, a COUNT peer drain, the cluster's
+`recv` FILL and POST, [isa.md](isa.md) §5.4).
 
 ## 5. DMA
 
@@ -174,13 +199,14 @@ The base is the instruction's offset, or `UPTR`/`PPTR` + offset with `rel`. `UIN
 | 0x12 | EXP2D | exp2(a − ⌊b⌋); a per-lane sticky bit records a result ≥ 2^TAU |
 | 0x13 | VCFG | sel [26:23], payload [22:0]: 0 CHK, 1 XB, 2 UPTR, 3 UINC, 4 USTR, 5 PPTR, 6 PINC, 7 PSTR, 8 GETSTK (S[r] = sticky, clears), 9 AINC, 10 CHKVL (vl − 1 [22:16], chk [15:0]) |
 | 0x14 / 0x15 | VUNPK / VPACK | reg [26:22], mode [21:20], chunks − 1 [19:17], chunk base [16:14], rel [13], queue [12], offset [11:0] |
-| 0x16 | VSYNC | waiter [26:24], on [23:21], slack [20:15], mark? [14], mark [13:11], queue [10] |
+| 0x16 | VSYNC | waiter [26:24], on [23:21], slack [20:15], mark? [14], mark [13:11], queue [10]; on = 7 (`vwait`): n [20:11], queue [10], counter [9] (§4.1) |
 | 0x17 | VSKIPZ | sreg [25:22], skip [7:0]: skip forward if S[sreg] = 0 |
 | 0x18 | VSETVL | sreg [20:17] |
+| 0x19 | VPOST | dst_x [26:23], dst_y [22:19], n [15:0]: a CREDIT, from the drain queue (§4.1) |
 | 0x1A | VSETI | sreg [25:22], to K [0]; the next word is the 24-bit immediate |
 | 0x1B | VLOOP | sreg [20:17], body [16:7]: zero-overhead loop, S[sreg] times |
 | 0x1C | VBAR | queue [10]: an unpack queue waits for every VFILL before it |
-| 0x1D / 0x1E | VFILL / VDRAIN | v1's layout; rel [26] |
+| 0x1D / 0x1E | VFILL / VDRAIN | v1's layout; rel [26]; a peer VDRAIN's descriptor base: granule [15:0], ack {y, x} [23:16], mesh [25:24], fin {y, x} [33:26], COUNT [34] |
 | 0x1F | VHALT | waits until every engine is idle |
 
 IMEM holds 1024 words. A load's address bit 9 is CU_INST flit bit 242. RUN starts
@@ -196,13 +222,18 @@ OOC synthesis, xcvu13p-2L, `-flatten_hierarchy rebuilt`, `DUALQ = 0`, L1 block R
 
 | | v1 `vec_core` | V2 `v2_core` |
 |---|---|---|
-| LUT cells | 32,860 | 35,239 |
-| CLB LUTs | 31,113 | 31,257 |
-| LUT as memory | 2,639 | 1,632 |
-| registers | 25,809 | 34,235 |
+| LUT cells | 32,860 | 36,065 |
+| CLB LUTs | 31,113 | 31,946 |
+| LUT as memory | 2,639 | 1,675 |
+| registers | 25,809 | 36,792 |
 | block RAM tiles | 36.5 | 89 |
-| DSP | 51 | 54 |
-| Fmax | 254.8 MHz | 338.6 MHz |
+| DSP | 51 | 76 |
+| Fmax | 254.8 MHz | 338.0 MHz |
+
+The pack converter runs in two stages (`v2_e8_to_f16_s1`, `_s2`: the shift and
+exponent field, then the rounding add and select), registered between them; in one
+cycle its 8 to 13 logic levels decided the core's Fmax depending on how synthesis
+mapped the rest of the core.
 
 `DUALQ = 1` adds 692 LUT cells. The register file is 128 RAMB18 (2 banks × 4 read
 copies × 16 lanes). A read copy whose address names the other bank resets its output

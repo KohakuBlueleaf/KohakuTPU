@@ -103,12 +103,24 @@ module v2_core #(
     output reg          nd_sig,
     output reg  [7:0]   nd_ack,
     output reg  [1:0]   nd_mesh,
-    output reg  [7:0]   nd_fin
+    output reg  [7:0]   nd_fin,
+
+    // A landed CU_DATA granule of a COUNT burst (with cd_valid); a peer
+    // drain's COUNT flag (descriptor base bit 34); credits in, VPOST's out.
+    input  wire         cd_count,
+    output reg          nd_count,
+    input  wire         cr_valid,
+    input  wire [15:0]  cr_amt,
+    output reg          post_valid,
+    output reg  [3:0]   post_x,
+    output reg  [3:0]   post_y,
+    output reg  [15:0]  post_amt,
+    input  wire         post_ready
 );
     // ================================================== encoding
     localparam [4:0] O_EXP2D = 5'h12, O_VCFG = 5'h13, O_VUNPK = 5'h14;
     localparam [4:0] O_VPACK = 5'h15, O_VSYNC = 5'h16, O_VSKIPZ = 5'h17;
-    localparam [4:0] O_VSETVL = 5'h18, O_VSETI = 5'h1A, O_VLOOP = 5'h1B;
+    localparam [4:0] O_VSETVL = 5'h18, O_VPOST = 5'h19, O_VSETI = 5'h1A, O_VLOOP = 5'h1B;
     localparam [4:0] O_VBAR = 5'h1C, O_VFILL = 5'h1D, O_VDRAIN = 5'h1E;
     localparam [4:0] O_VHALT = 5'h1F;
 
@@ -121,7 +133,10 @@ module v2_core #(
     localparam [2:0] W_MK = 3'd5, W_D = 3'd6;
     // K_U / K_P count unpack / pack queue 0, K_U1 / K_P1 queue 1.
     localparam [2:0] K_F = 3'd0, K_U = 3'd1, K_M = 3'd2, K_P = 3'd3, K_D = 3'd4;
-    localparam [2:0] K_U1 = 3'd5, K_P1 = 3'd6;
+    localparam [2:0] K_U1 = 3'd5, K_P1 = 3'd6, K_EXT = 3'd7;
+    // Kind 7 in an instruction is a COUNT, not instructions: `n` more granules
+    // landed by CU_DATA (ir[9] = 0, K_RX) or credits received (1, K_CR).
+    localparam [3:0] K_RX = 4'd7, K_CR = 4'd8;
 
     localparam [7:0] F_OPCODE = 8'd4, F_LEN = 8'd5, F_LOOP = 8'd6, F_VL = 8'd7;
     localparam [7:0] F_CUDATA = 8'd9, F_GT4 = 8'd10, F_SRC = 8'd11, F_MODE = 8'd12;
@@ -165,8 +180,10 @@ module v2_core #(
     reg         cd_err;
 
     // Instructions dispatched, and finished, per kind (K_*): VSYNC compares.
-    reg  [15:0] n_disp [0:6];
-    reg  [15:0] n_done [0:6];
+    // K_RX / K_CR: granules or credits asked for, and arrived.
+    reg  [15:0] n_disp [0:8];
+    reg  [15:0] n_done [0:8];
+    reg         cd_land;
     // Marks: a VSYNC can wait for "everything of kind mk_on dispatched before
     // mark i", whatever has been dispatched since.
     reg  [2:0]  mk_on  [0:7];
@@ -217,6 +234,10 @@ module v2_core #(
     wire [5:0] d_slack = ir[20:15];
     wire       d_mk    = ir[14];                 // wait on mark d_mid, not on d_on
     wire [2:0] d_mid   = ir[13:11];
+    // Kind 7: ir[20:11] the count, ir[9] which counter (ir[10] stays the queue).
+    wire       d_ext   = (d_on_ir == K_EXT);
+    wire [3:0] d_on4   = d_ext ? (ir[9] ? K_CR : K_RX) : {1'b0, d_on};
+    wire [15:0] d_cnt  = {6'd0, ir[20:11]};
     wire [9:0] d_body = ir[16:7];
     wire [7:0] d_skip = ir[7:0];
     // VFILL/VDRAIN: exactly vec_core's layout, so hw/vector.py encodes both.
@@ -329,7 +350,7 @@ module v2_core #(
     // A sync entry's condition: every instruction of kind `on` dispatched
     // before it has finished.
     function sync_ok;
-        input [2:0]  on;
+        input [3:0]  on;
         input [15:0] tgt;
         begin
             sync_ok = ((n_done[on] - tgt) < 16'h8000);
@@ -346,9 +367,11 @@ module v2_core #(
 
     wire all_idle;
     // A sync waits for kind s_on to reach s_tgt: from the instruction, or a mark.
-    wire [15:0] d_tgt = n_disp[d_on] - {10'd0, d_slack};
-    wire [2:0]  s_on  = d_mk ? mk_on[d_mid]  : d_on;
-    wire [15:0] s_tgt = d_mk ? mk_tgt[d_mid] : d_tgt;
+    wire [15:0] d_tgt = d_ext ? (n_disp[d_on4] + d_cnt) : (n_disp[d_on] - {10'd0, d_slack});
+    // A count's bits [20:11] overlap the mark fields, so a count is never marked.
+    wire        d_mkd = d_mk && !d_ext;
+    wire [3:0]  s_on  = d_mkd ? {1'b0, mk_on[d_mid]} : d_on4;
+    wire [15:0] s_tgt = d_mkd ? mk_tgt[d_mid] : d_tgt;
 
     // Slow conditions (front-end VSYNC, VSETVL, VSKIPZ, VSETI, VHALT) are
     // evaluated into registers; such an instruction leaves on its second cycle
@@ -357,7 +380,8 @@ module v2_core #(
     reg  d_old, sl_ok_q, sl_vl_q, sl_skip_q;
     wire [23:0] sr_va = sreg[d_va[3:0]];
     always @(posedge clk) begin
-        sl_ok_q   <= (d_op == O_VSYNC) ? (d_mk ? (mk_cnt[d_mid] == 8'd0)
+        sl_ok_q   <= (d_op == O_VSYNC) ? (d_ext ? sync_ok(d_on4, d_tgt)
+                                         : d_mk ? (mk_cnt[d_mid] == 8'd0)
                                                : (n_out[d_on] <= {2'b0, d_slack}))
                    : (d_op == O_VSETI) ? (f_v && (f_pc == d_pc + 1'b1))
                    : all_idle;
@@ -387,7 +411,7 @@ module v2_core #(
                     O_VPACK:  if ((d_mode == MD_MX7) && mx_bad) fe_fault = F_MODE;
                               else if (gt4_bad) fe_fault = F_GT4;
                               else fe_ok = !pq_f;
-                    O_VSYNC:  if (d_on > K_P1 || d_wt > W_D) fe_fault = F_SYNC;
+                    O_VSYNC:  if (d_wt > W_D || (d_ext && d_wt == W_MK)) fe_fault = F_SYNC;
                               else case (d_wt)
                                   W_FE: fe_ok = d_old && sl_ok_q;
                                   W_U:  fe_ok = !uq_f;
@@ -405,7 +429,7 @@ module v2_core #(
                     O_VSETI:  fe_ok = d_old && sl_ok_q;
                     O_VLOOP:  if (lp_act) fe_fault = F_LOOP; else fe_ok = 1'b1;
                     O_VFILL:  fe_ok = !fq_f;
-                    O_VDRAIN: fe_ok = !dq_f;
+                    O_VDRAIN, O_VPOST: fe_ok = !dq_f;
                     O_VHALT:  fe_ok = d_old && sl_ok_q;
                     default:  fe_fault = F_OPCODE;
                 endcase
@@ -481,7 +505,7 @@ module v2_core #(
 
     wire m_end  = m_act && ({1'b0, m_i} + 4'd1 == e_nb);
     wire m_free = !m_act || m_end;
-    wire m_sync_go = !mq_e && h_sync && sync_ok(h_k[2:0], h_k[23:8]);
+    wire m_sync_go = !mq_e && h_sync && sync_ok(h_k[3:0], h_k[23:8]);
     wire m_take = !mq_e && !h_sync && !h_haz && m_free;
     assign mq_pop = m_take || (m_sync_go && m_free);
 
@@ -587,8 +611,8 @@ module v2_core #(
     endfunction
     wire u0_sync = !uq0_e && uq0_q[UQW-1];
     wire u1_sync = !uq1_e && uq1_q[UQW-1];
-    wire u0_go   = u0_sync && sync_ok(uq0_q[2:0], uq0_q[18:3]);
-    wire u1_go   = u1_sync && sync_ok(uq1_q[2:0], uq1_q[18:3]);
+    wire u0_go   = u0_sync && sync_ok(uq0_q[3:0], uq0_q[19:4]);
+    wire u1_go   = u1_sync && sync_ok(uq1_q[3:0], uq1_q[19:4]);
     wire u0_rdy  = !uq0_e && !u0_sync && u_clear(uq0_q);
     wire u1_rdy  = !uq1_e && !u1_sync && u_clear(uq1_q);
     wire u_sel   = (DUALQ != 0) && !u0_rdy;   // queue the engine takes from
@@ -739,8 +763,8 @@ module v2_core #(
     endfunction
     wire p0_sync = !pq0_e && pq0_q[UQW-1];
     wire p1_sync = !pq1_e && pq1_q[UQW-1];
-    wire p0_go   = p0_sync && sync_ok(pq0_q[2:0], pq0_q[18:3]);
-    wire p1_go   = p1_sync && sync_ok(pq1_q[2:0], pq1_q[18:3]);
+    wire p0_go   = p0_sync && sync_ok(pq0_q[3:0], pq0_q[19:4]);
+    wire p1_go   = p1_sync && sync_ok(pq1_q[3:0], pq1_q[19:4]);
     wire p0_rdy  = !pq0_e && !p0_sync && p_clear(pq0_q);
     wire p1_rdy  = !pq1_e && !p1_sync && p_clear(pq1_q);
     wire p_sel   = (DUALQ != 0) && !p0_rdy;
@@ -813,11 +837,17 @@ module v2_core #(
         m_tag2 <= m_tag1; m_tag3 <= m_tag2; m_tag4 <= m_tag3;
     end
 
-    // pk_rd answers p_tag3's read; convert, register, then GT4.
+    // pk_rd answers p_tag3's read. Two stages: the FP16 conversion's shift
+    // half and the FP32 conversions into registers, then the rounding add and
+    // the select into p_cv; then GT4.
+    wire [495:0] po_mid;
     wire [255:0] po_f16, po_f32lo, po_f32hi;
+    reg  [495:0] po_mid_r;
+    reg  [255:0] po_f32lo_r, po_f32hi_r;
     generate
     for (e = 0; e < 16; e = e + 1) begin : g_po16
-        v2_e8_to_f16 u_c (.e8(pk_rd[e*24 +: 24]), .f16(po_f16[e*16 +: 16]));
+        v2_e8_to_f16_s1 u_a (.e8(pk_rd[e*24 +: 24]), .mid(po_mid[e*31 +: 31]));
+        v2_e8_to_f16_s2 u_b (.mid(po_mid_r[e*31 +: 31]), .f16(po_f16[e*16 +: 16]));
     end
     for (e = 0; e < 8; e = e + 1) begin : g_po32
         vec_cvt_e8_to_f32 u_l (.e8(pk_rd[e*24 +: 24]),     .f32(po_f32lo[e*32 +: 32]));
@@ -825,28 +855,34 @@ module v2_core #(
     end
     endgenerate
 
-    reg            p_v4;
+    reg            p_v4, p_v5;
     reg  [255:0]   p_cv;
-    reg  [PTW-1:0] p_tag4;
+    reg  [PTW-1:0] p_tag4, p_tag5;
+    reg  [4:0]     m_tag5;
     always @(posedge clk) begin
         if (erst) begin
-            p_v4 <= 1'b0;
+            p_v4 <= 1'b0; p_v5 <= 1'b0;
         end else begin
-            p_v4 <= p_v3;
+            p_v4 <= p_v3; p_v5 <= p_v4;
         end
-        p_cv   <= !p_tag3[0] ? po_f16 : (p_tag3[2] ? po_f32hi : po_f32lo);
-        p_tag4 <= p_tag3;
+        po_mid_r   <= po_mid;
+        po_f32lo_r <= po_f32lo;
+        po_f32hi_r <= po_f32hi;
+        p_tag4     <= p_tag3;
+        p_cv   <= !p_tag4[0] ? po_f16 : (p_tag4[2] ? po_f32hi_r : po_f32lo_r);
+        p_tag5 <= p_tag4;
+        m_tag5 <= m_tag4;
     end
 
     wire           mx_v, mx_eq, mx_last;
     wire [255:0]   mx_word;
     wire [LAW-1:0] mx_addr;
-    wire           p_mx4 = p_v4 && m_tag4[4];
+    wire           p_mx4 = p_v5 && m_tag5[4];
     generate
     if (HAS_MX != 0) begin : g_mx
         v2_mxq #(.LAW(LAW)) u_mxq (
             .clk(clk), .rst(erst),
-            .in_v(p_mx4), .in_pass(m_tag4[3]), .in_chunk(m_tag4[2:0]), .in_f16(p_cv),
+            .in_v(p_mx4), .in_pass(m_tag5[3]), .in_chunk(m_tag5[2:0]), .in_f16(p_cv),
             .in_bl(pe_cb[0]), .in_base(p_base), .in_s0(pe_s0), .in_eq(p_eq),
             .out_v(mx_v), .out_word(mx_word), .out_addr(mx_addr), .out_eq(mx_eq),
             .out_last(mx_last), .busy(mx_busy));
@@ -860,10 +896,10 @@ module v2_core #(
     wire [PTW-1:0] pg_tag;
     wire           pg_v, pg_busy;
     // An MX7 word is a plain word: {addr, queue, last, f32 half, gt4, f32}.
-    wire [PTW-1:0] pg_in_tag = mx_v ? {mx_addr, mx_eq, mx_last, 3'b000} : p_tag4;
+    wire [PTW-1:0] pg_in_tag = mx_v ? {mx_addr, mx_eq, mx_last, 3'b000} : p_tag5;
     v2_gt4 #(.G(64), .TW(PTW)) u_pgt (
         .clk(clk), .rst(erst),
-        .in_valid((p_v4 && !m_tag4[4]) || mx_v), .in_gt4(!mx_v && p_tag4[1]),
+        .in_valid((p_v5 && !m_tag5[4]) || mx_v), .in_gt4(!mx_v && p_tag5[1]),
         .in_data(mx_v ? mx_word : p_cv), .in_tag(pg_in_tag),
         .out_valid(pg_v), .out_data(pg_out), .out_tag(pg_tag), .busy(pg_busy));
 
@@ -997,14 +1033,17 @@ module v2_core #(
         .addr(ag_addr2), .total(ag_total2), .stride0(ag_stride2), .left0(ag_left2)
     );
 
-    wire f_sync_go = !fq_e && fh_sync && sync_ok(fh_ir[2:0], fh_ir[18:3]);
-    wire d_sync_go = !dq_e && dh_sync && sync_ok(dh_ir[2:0], dh_ir[18:3]);
+    wire f_sync_go = !fq_e && fh_sync && sync_ok(fh_ir[3:0], fh_ir[19:4]);
+    wire d_sync_go = !dq_e && dh_sync && sync_ok(dh_ir[3:0], dh_ir[19:4]);
+    // A VPOST rides the drain queue, so it leaves after the drains before it.
+    wire dh_post   = !dh_sync && (dh_ir[31:27] == O_VPOST);
+    wire post_take = (d_st == E_IDLE) && !dq_e && dh_post && !post_valid;
     // nd_* frame the word in wr_req, so a new drain waits for the last to
     // leave. A drain's start wins the shared table read; a fill's waits.
-    wire d_take    = (d_st == E_IDLE) && !dq_e && !dh_sync && !wr_req_valid;
+    wire d_take    = (d_st == E_IDLE) && !dq_e && !dh_sync && !dh_post && !wr_req_valid;
     wire f_take    = (f_st == E_IDLE) && !fq_e && !fh_sync && !d_take;
     assign fq_pop  = f_take || ((f_st == E_IDLE) && f_sync_go);
-    assign dq_pop  = d_take || ((d_st == E_IDLE) && d_sync_go);
+    assign dq_pop  = d_take || post_take || ((d_st == E_IDLE) && d_sync_go);
     wire a_done_dr = (d_st == E_RUN) && ((d_left == 9'd0) || (dr_take && (d_left == 9'd1)));
     wire a_done_fl = (f_st == E_RUN) && (f_left == 9'd0) && !c_v && !run_v;
     reg  a_fault;
@@ -1034,9 +1073,19 @@ module v2_core #(
             rd_req_valid <= 1'b0; wr_req_valid <= 1'b0; wr_req_first <= 1'b0;
             nd_valid <= 1'b0; f_left <= 9'd0; d_left <= 9'd0; dr_left <= 9'd0; c_v <= 1'b0;
             a_fault <= 1'b0; fill_out <= 16'd0;
+            post_valid <= 1'b0;
         end else begin
             ag_start <= {d_take, f_take};
             a_fault  <= 1'b0;
+            // VPOST: [26:23] x, [22:19] y, [15:0] credits.
+            if (post_take) begin
+                post_valid <= 1'b1;
+                post_x     <= dh_ir[26:23];
+                post_y     <= dh_ir[22:19];
+                post_amt   <= dh_ir[15:0];
+            end else if (post_ready) begin
+                post_valid <= 1'b0;
+            end
             dr_v <= dr_blk ? {(DR_TAP+1){1'b0}} : {dr_v[DR_TAP-1:0], dr_iss};
             if (rd_req_valid && rd_req_ready) rd_req_valid <= 1'b0;
             if (wr_req_valid && wr_req_ready) wr_req_valid <= 1'b0;
@@ -1116,6 +1165,7 @@ module v2_core #(
                     nd_ack   <= d_addr[23:16];
                     nd_mesh  <= d_addr[25:24];
                     nd_fin   <= d_addr[33:26];
+                    nd_count <= d_addr[34];
                     nd_len   <= d_total[7:0] - 8'd1;
                     dr_ptr   <= dd_l1;
                     dr_left  <= d_total[8:0];
@@ -1158,7 +1208,7 @@ module v2_core #(
     assign all_idle = mq_e && uq_e && pq_e && fq_e && dq_e && !m_act && !u_act && !p_act
                    && (f_st == E_IDLE) && (d_st == E_IDLE) && pipe_empty && uf_e && pf_e
                    && (u_occ == 4'd0) && (p_occ == 4'd0) && !ug_busy && !pg_busy && !mx_busy
-                   && (fill_out == 16'd0) && !wr_req_valid && ft_e && !iss_valid;
+                   && (fill_out == 16'd0) && !wr_req_valid && ft_e && !iss_valid && !post_valid;
 
     // ================================================== front end: sequencing
     wire disp_m = fe_ok && is_math;
@@ -1234,6 +1284,21 @@ module v2_core #(
             end
         end
         n_out[7] <= 8'd0;
+        // The count kinds, reset by `rst` only: data and credits may arrive
+        // before the RUN that waits for them. A granule counts the cycle after
+        // its L1 write is issued, so a reader the count releases sees it.
+        cd_land <= !rst && cd_valid && cd_count;
+        if (rst) begin
+            n_disp[K_RX] <= 16'd0; n_done[K_RX] <= 16'd0;
+            n_disp[K_CR] <= 16'd0; n_done[K_CR] <= 16'd0;
+        end else begin
+            if (fe_ok && (d_op == O_VSYNC) && d_ext && (d_on4 == K_RX))
+                n_disp[K_RX] <= n_disp[K_RX] + d_cnt;
+            if (fe_ok && (d_op == O_VSYNC) && d_ext && (d_on4 == K_CR))
+                n_disp[K_CR] <= n_disp[K_CR] + d_cnt;
+            if (cd_land) n_done[K_RX] <= n_done[K_RX] + 16'd1;
+            if (cr_valid) n_done[K_CR] <= n_done[K_CR] + cr_amt;
+        end
     end
 
     // Queue entries, formed from `ir` and the front end's state.
@@ -1241,9 +1306,9 @@ module v2_core #(
     wire [14:0] xb_now  = d_om ? c_xb  : 15'd0;
     wire [LAW-1:0] ua_now = d_rel ? (c_uptr + d_off[LAW-1:0]) : d_off[LAW-1:0];
     wire [LAW-1:0] pa_now = d_rel ? (c_pptr + d_off[LAW-1:0]) : d_off[LAW-1:0];
-    // A sync entry: {1, 0..., target[15:0], on[2:0]}; `slack` exempts the
+    // A sync entry: {1, 0..., target[15:0], on[3:0]}; `slack` exempts the
     // youngest instructions of the kind (a double buffer's other half).
-    wire [UQW-1:0] sync_q = {1'b1, {(UQW-20){1'b0}}, s_tgt, s_on};
+    wire [UQW-1:0] sync_q = {1'b1, {(UQW-21){1'b0}}, s_tgt, s_on};
 
     // The entries depend on the instruction only; fe_ok gates the pushes.
     wire is_sync = (d_op == O_VSYNC);
@@ -1252,21 +1317,21 @@ module v2_core #(
         uq_push = fe_ok && ((d_op == O_VUNPK) || (d_op == O_VBAR) || (is_sync && (d_wt == W_U)));
         pq_push = fe_ok && ((d_op == O_VPACK) || (is_sync && (d_wt == W_P)));
         fq_push = fe_ok && ((d_op == O_VFILL) || (is_sync && (d_wt == W_A)));
-        dq_push = fe_ok && ((d_op == O_VDRAIN) || (is_sync && (d_wt == W_D)));
+        dq_push = fe_ok && ((d_op == O_VDRAIN) || (d_op == O_VPOST) || (is_sync && (d_wt == W_D)));
         // aop 31 marks a sync entry; target and kind ride in the kc slot.
-        mq_din  = is_sync ? {5'd31, 26'd0, 48'd0, s_tgt, 5'd0, s_on, 42'd0, 30'd0}
+        mq_din  = is_sync ? {5'd31, 26'd0, 48'd0, s_tgt, 4'd0, s_on, 42'd0, 30'd0}
                 : {alu_op, d_vd, d_va, d_vb, d_vc, e_sa_d, e_sb_d, e_sc_d,
                    pick(e_sa_d, d_va), pick(e_sb_d, d_vb), pick(e_sc_d, d_vc),
                    nb_vl, vl[3:0], chk_now, xb_now, is_cmp,
                    (d_op == O_EXP2D), !is_cmp,
                    Wd[d_va], Wd[d_vb], Wd[d_vc], UWd[d_vd], PRd[d_vd]};
         uq_din  = is_sync ? sync_q
-                : (d_op == O_VBAR) ? {1'b1, {(UQW-20){1'b0}}, n_disp[K_F], K_F}
+                : (d_op == O_VBAR) ? {1'b1, {(UQW-21){1'b0}}, n_disp[K_F], 1'b0, K_F}
                 : {1'b0, d_vd, d_mode, d_n, d_cb, ua_now, c_ustr,
                    Wd[d_vd], UWd[d_vd], MRd[d_vd], PRd[d_vd]};
         pq_din  = is_sync ? sync_q
                 : {1'b0, d_vd, d_mode, d_n, d_cb, pa_now, c_pstr, Wd[d_vd], PRd[d_vd], 12'd0};
-        aq_din  = is_sync ? {1'b1, {AW{1'b0}}, 13'd0, s_tgt, s_on}
+        aq_din  = is_sync ? {1'b1, {AW{1'b0}}, 12'd0, s_tgt, s_on}
                 : {1'b0, ir[26] ? a_off[d_ad] : {AW{1'b0}}, ir};
     end
 
