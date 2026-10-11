@@ -1,0 +1,32 @@
+# A vector core's L1 into another mesh's vector core: node 0's core fills 64
+# words of x and peer-drains them across the interlink into the L1 of mesh
+# 1's core at (1, 2) -- the flits leave by this mesh's memory port (0, 1), the
+# far coordinate and mesh ride in the descriptor's base, and the burst's ack
+# names the far agent. Node 1's core then drains that L1 to y.
+target ktpu.v9
+
+image send_far(x)
+    desc a0 = x walk=(32, 64)
+    desc a1 = peer(64, ack=(0, 1), mesh=1, fin=(1, 2)) walk=(32, 64)
+    vfill a0 -> l1[0]
+    vsync drain on=fill
+    vdrain a1 <- l1[0] to=(0, 1)
+    halt
+
+image out(y)
+    desc a0 = y walk=(32, 64)
+    vdrain a0 <- l1[64]
+    halt
+
+fn xpeer.l1(x: f16[1024] @dram, y: f16[1024] @dram)
+    node 0
+        send vc[0]
+            run send_far(x)
+        wait vc[0]
+        ring mesh=1 slot=5
+    node 1
+        wait slot 5 n=1 consume
+        settle 2000
+        send vc[0]
+            run out(y)
+        wait vc[0]

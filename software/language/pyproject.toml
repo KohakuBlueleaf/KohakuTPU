@@ -16,4 +16,4 @@ namespaces = true
 
 [tool.setuptools.package-data]
 "kohakutpu.language.text" = ["*.lark"]
-"kohakutpu.language.kernels" = ["**/*.ktpu"]
+"kohakutpu.language.examples" = ["**/*.ktpu"]

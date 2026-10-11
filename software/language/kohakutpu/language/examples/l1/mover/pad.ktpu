@@ -1,0 +1,8 @@
+# y = x shifted one word right, the word shifted in being the immediate (fp16
+# 1.0 pairs): the source walk binds axis 1 with step 1 under a window that
+# starts at -1, so element 0 falls outside it, issues no read and is padded.
+target ktpu.v9
+
+fn pad.l1(x: f16[256] @dram, y: f16[272] @dram)
+    move
+        copy w(x - 32, (17, 32, 1, 1), win1=(-1, 16)) -> w(y, (17, 32)) pad=0x3c003c00

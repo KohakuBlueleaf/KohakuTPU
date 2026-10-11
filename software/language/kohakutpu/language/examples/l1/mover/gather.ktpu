@@ -1,0 +1,8 @@
+# Rows of t selected by an index list: u32 indices into y, the same indices
+# as fp32 (a vector core's F32 pack of an integral value) into z.
+target ktpu.v9
+
+fn gather.l1(t: f16[64, 64] @dram, idx: u32[16] @dram, idxf: f32[16] @dram, y: f16[12, 64] @dram, z: f16[12, 64] @dram)
+    move
+        gather t -> w(y, (48, 32)) index=idx n=12 pitch=128 words=4
+        gather t -> w(z, (48, 32)) index=idxf n=12 pitch=128 words=4 fp

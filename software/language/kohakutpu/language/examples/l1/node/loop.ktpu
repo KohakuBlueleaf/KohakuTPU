@@ -1,0 +1,15 @@
+# A loop whose trip count is data: the node loads n, then copies row k of x
+# to y for k < n, each move's addresses patched from a register; the count it
+# reached goes back to memory.
+target ktpu.v9
+
+fn loop.l1(cnt: u64[4] @dram, x: f16[16, 256] @dram, y: f16[16, 256] @dram)
+    r1 = load cnt
+    r2 = set 0
+    label top
+    r3 = mul r2, 512
+    move
+        copy w(x + r3, (16, 32)) -> w(y + r3, (16, 32))
+    r2 = add r2, 1
+    goto top if r2 < r1
+    store cnt + 8 <- r2

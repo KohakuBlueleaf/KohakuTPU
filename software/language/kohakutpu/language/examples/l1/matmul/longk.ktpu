@@ -1,0 +1,27 @@
+# y = x w^T, 1024 x 2048 x 1024 on four clusters: cluster u owns column tile u.
+# A 256 x 256 tile is 32 K-chunks of 128 entries, filled into alternate banks;
+# its last sweep streams the sub-tiles out, and the fused drain that collects
+# them goes just before the next tile's last sweep. Every cluster sweeps the
+# same row tile at once, so the four drains coincide; at K = 2048 a tile's
+# sweeps cover them (1024^3 pays the same drains over half the sweeps).
+target ktpu.v9
+
+macro tile(u, a, b, c, held, pc)
+    send mg[u]
+        for k in 0..32
+            fill A{k % 2} <- a + k*16K n=128
+            fill B{k % 2} <- b + k*16K n=128
+            when k < 31
+                gemm 64x64x2 a=A{k % 2} b=B{k % 2} acc=(k > 0)
+        when held
+            drain pc n=4096 fused
+        gemm 64x64x2 a=A1 b=B1 acc emit=c
+
+fn longk.l1(x: mx7a[1024, 2048] @dram(gm=64, nk=2), w: mx7b[1024, 2048] @dram(gn=64, nk=2), y: f16[1024, 1024] @dram(tile=64x64))
+    for i in 0..4
+        for u in 0..4
+            expand tile(u, x + i*512K, w + u*512K, y + (i*4 + u)*128K, i > 0, y + ((i - 1)*4 + u)*128K)
+    for u in 0..4
+        send mg[u]
+            drain y + (12 + u)*128K n=4096 fused
+    barrier

@@ -1,10 +1,8 @@
-"""`.ktpu`: KohakuTPU's language, one IR with a body at L3, L2 or L1 per `fn`.
+"""`.ktpu`: KohakuTPU's kernel text, at L1 -- one instruction stream per unit
+and the node's steps, as the node runs them.
 
-- `text`: the syntax every level shares, modules, read-time expansion
-- `l3`, `l2`, `l1`: each level's nodes, reader, verifier and facts
-- `lower`: L3 -> L2 planning, L2 -> L1 lowering
-- `opt`: L2 -> L2 and L1 -> L1 passes
-- `pipeline`: the stages in order, against a `target.Target`
-- `numerics`: the number formats the types name
-- `kernels`: the hand-written kernels
+- `text`: the statement syntax, modules, read-time expansion
+- `l1`: the vector core's math mnemonics and what each reads and writes
+- `numerics`: the number formats (MXFP7, the lanes' E8M15)
+- `examples`: hand-written L1 kernels
 """

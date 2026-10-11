@@ -1,0 +1,15 @@
+# A processor store into another node's staging store: node 0 writes a word
+# at 1.5 MB into mesh 1's staging (bit 39, mesh 1 in [37:36]), posted over
+# the interlink, then rings mesh 1 fenced -- the release for the store. Node 1
+# reads it locally, adds one and stores the sum beside it.
+target ktpu.v9
+
+fn remote.l1(unused: u64[4] @dram)
+    node 0
+        store 0x90_0018_0000 <- 0xabcd
+        ring mesh=1 slot=1
+    node 1
+        wait slot 1 n=1 consume
+        r1 = load 0x90_0018_0000
+        r1 = add r1, 1
+        store 0x90_0018_0008 <- r1

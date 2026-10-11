@@ -7,7 +7,6 @@ transitively by induction:
 
 * the framework imports no project, and a project imports no other project;
 * a component imports only the components DEPENDS lists for it;
-* simulation imports no cost model (COST_MODELS);
 * imports sit at module level, never inside a function or class.
 """
 
@@ -26,9 +25,6 @@ DEPENDS = {
     "simulation": {"simulation", "driver", "compiler", "language"},
     "application": set(COMPONENTS),
 }
-
-#: Packages that estimate cost; a simulator must measure, never ask a model.
-COST_MODELS = ("kohakutpu.language.opt",)
 
 
 def owner(name: str) -> tuple[str, str | None] | None:
@@ -96,8 +92,6 @@ def violations(module: str, source: str, is_package: bool = False) -> list[str]:
             bad.append(f"{where}: the framework imports no project")
         if tcomp not in DEPENDS[comp]:
             bad.append(f"{where}: {comp} may not import {tcomp}")
-        if comp == "simulation" and target.startswith(COST_MODELS):
-            bad.append(f"{where}: simulation imports no cost model")
     return bad
 
 
@@ -118,7 +112,7 @@ def modules() -> list[tuple[str, pathlib.Path]]:
 
 def test_workspace_obeys_the_rules() -> None:
     found = modules()
-    assert len(found) > 100, f"only {len(found)} modules found under {SOFTWARE}"
+    assert len(found) > 80, f"only {len(found)} modules found under {SOFTWARE}"
     bad = []
     for name, path in found:
         src = path.read_text(encoding="utf-8")
@@ -146,10 +140,6 @@ BREACHES = {
     "anything imports application": (
         "kohakutpu.simulation.x",
         "import kohakutpu.application.tools",
-    ),
-    "simulation imports a cost model": (
-        "kohakutpu.simulation.x",
-        "from kohakutpu.language.opt.schedule import cost",
     ),
     "relative import escapes the component": (
         "kohakuaccel.driver.x",

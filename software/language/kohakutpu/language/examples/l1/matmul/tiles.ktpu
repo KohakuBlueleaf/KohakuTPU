@@ -1,0 +1,21 @@
+# As many 256 x 256 row tiles of y = x w^T as memory says (n at cnt), on one
+# cluster: one tile's words, its row's addresses patched from registers each
+# pass. K = 256: four chunks of 128 entries.
+target ktpu.v9
+
+fn tiles.l1(cnt: u64[4] @dram, x: mx7a[1024, 256] @dram(gm=64, nk=2), w: mx7b[256, 256] @dram(gn=64, nk=2), y: f16[1024, 256] @dram(tile=64x64))
+    r1 = load cnt
+    r2 = set 0
+    label top
+    r3 = mul r2, 64K
+    r4 = mul r2, 128K
+    send mg[0]
+        for c in 0..4
+            fill A{c % 2} <- x + c*16K + r3 n=128
+            fill B{c % 2} <- w + c*16K n=128
+            when c < 3
+                gemm 64x64x2 a=A{c % 2} b=B{c % 2} acc=(c > 0)
+        gemm 64x64x2 a=A1 b=B1 acc emit=y + r4
+        drain y + r4 n=4096 fused
+    r2 = add r2, 1
+    goto top if r2 < r1

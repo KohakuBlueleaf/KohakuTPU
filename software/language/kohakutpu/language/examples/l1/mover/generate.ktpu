@@ -1,0 +1,12 @@
+# Generated words depend on the seed and each word's address, not on how
+# the walk is cut: y generated whole is copied to z, cleared, and generated
+# again in two halves; y must equal z.
+target ktpu.v9
+
+fn generate.l1(y: u32[256] @dram, z: u32[256] @dram)
+    move
+        gen w(y, (32, 32)) seed=7
+        copy w(y, (32, 32)) -> w(z, (32, 32))
+        fill w(y, (32, 32)) value=0
+        gen w(y, (16, 32)) seed=7
+        gen w(y + 512, (16, 32)) seed=7

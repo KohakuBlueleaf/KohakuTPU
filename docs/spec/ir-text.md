@@ -11,12 +11,11 @@ tags:
 
 Every IR level has a text, and no level's text is Python. The levels share one
 statement grammar; what a statement means is its level's reader's, which a
-project writes for its own words (its unit ops, layouts, L3 ops).
+project writes for its own words (its unit ops, layouts).
 
 Code: `software/language/kohakutpu/language/text/` (the grammar `ktpu.lark`,
-`syntax.py`, `reader.py`, `writer.py`, `meta.py`, `module.py`). The level
-readers: `language/l3/reader.py`, `language/l2/reader.py`, and the L1 body's
-in the compiler (`software/compiler/kohakutpu/compiler/emit/`).
+`syntax.py`, `reader.py`, `meta.py`, `module.py`). The L1 reader is in the
+compiler (`software/compiler/kohakutpu/compiler/emit/`).
 
 ## 1. Statements
 
@@ -70,28 +69,25 @@ naming the file, the line and the column, with the line and a caret.
 
 ## 2. Modules
 
-A module is one text holding a kernel at every level, the levels' bodies side
-by side (`module.py`). Its top-level statements:
+A module is one text holding fns, images and macros (`module.py`). Its
+top-level statements:
 
 ```
-target ktpu.v9                       # the machine the L1 bodies address
+target ktpu.v9                       # the machine the bodies address
 fn NAME.LEVEL(p: TYPE, ...) [-> TYPE]
-    body                             # LEVEL is l3, l2 or l1
+    body                             # LEVEL: module.LEVELS (l1)
 image NAME(params)
     statements                       # a unit's program, its params constants
 macro NAME(params)
     statements                       # text expanded where `expand NAME(args)` stands
 ```
 
-- One name carries at most one body a level, and the bodies under one name are
-  one kernel written at several levels: a compiler's output from the higher
-  body is gated against the hand-written lower one.
+- One name carries at most one body a level.
 - A body stays statements in the module; its level's reader gives it meaning.
   A project's reader for each level is its own.
 - `image` and `macro` names share one table; a name defined twice is refused.
 
-The L3 body's text is [l3-program.md](l3-program.md) §2. KohakuTPU's modules
-(suffix `.ktpu`), their L1 words and kernels:
+KohakuTPU's modules (suffix `.ktpu`), their L1 words and examples:
 [../projects/kohakutpu/ir/ktpu.md](../projects/kohakutpu/ir/ktpu.md).
 
 **Read-time expansion** (`meta.py`). Before a level reader sees a body, the
@@ -116,12 +112,11 @@ never substituted. The expanded body holds no meta statement.
 The grammar is LALR(1) with a contextual lexer (lark), the indentation a
 post-lexer. `ktpu.lark` is the grammar's one definition: a port to another
 parser (pest behind pyo3 and wasm; tree-sitter for editors) is written from it
-and is conformant when it reads the kernels of
-`software/language/kohakutpu/language/kernels/` to the same statements.
+and is conformant when it reads the examples of
+`software/language/kohakutpu/language/examples/` to the same statements.
 
 ## 4. Gates
 
 `software/language/tests/test_syntax.py` (the grammar, canonical text, each
-kind of wrong text refused at its line), `test_l3.py` and `test_l2.py` (the
-level readers), `software/compiler/tests/test_emit_image.py` and
-`test_emit_node.py` (the L1 bodies).
+kind of wrong text refused at its line), `software/compiler/tests/test_emit_image.py`,
+`test_emit_node.py` and `test_l1_coverage.py` (the L1 bodies).

@@ -1,13 +1,12 @@
-"""A unified IR module: one text, fns whose bodies are at any level.
+"""A `.ktpu` module: one text of fns, images and macros.
 
     target ktpu.v9
-    fn silu.l3(x: f16[N])           # a body at L3; `.l2`, `.l1` likewise
-    image silu_stream(passes)       # an L1 definition a level reader expands
-    macro unpk(i)                   # an L1 text macro (`expand unpk(0)`)
+    fn silu.l2(x: f16[65536] @dram)     # a body; LEVELS names the levels read
+    fn silu.l1(x: f16[65536] @dram)
+    image silu_stream(passes)           # a vector core image the body runs
+    macro unpk(i)                       # a text macro (`expand unpk(0)`)
 
 A body stays statements here: what its statements mean is its level's reader.
-One name may carry a body per level; those bodies are one kernel written at
-three levels, and the gates compare them.
 """
 
 from dataclasses import dataclass, field
@@ -16,7 +15,7 @@ from kohakutpu.language.text.meta import macro_params
 from kohakutpu.language.text.reader import Reader
 from kohakutpu.language.text.syntax import Arrow, Call, Name, Typed, parse
 
-LEVELS = ("l3", "l2", "l1")
+LEVELS = ("l2", "l1")
 
 
 @dataclass

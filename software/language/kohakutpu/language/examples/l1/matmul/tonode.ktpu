@@ -1,0 +1,13 @@
+# A cluster's result straight to the node: an 8 x 16 tile (2 x 4 sub-tiles)
+# drained into the node's RX queue as one burst -- a descriptor, then a
+# sub-tile a flit -- and the node writes the flits to z.
+target ktpu.v9
+
+fn tonode.l1(x: mx7a[8, 64] @dram(gm=2, nk=2), w: mx7b[16, 64] @dram(gn=4, nk=2), z: f16[144] @dram)
+    send mg[0]
+        fill A0 <- x n=4
+        fill B0 <- w n=8
+        gemm 2x4x2 a=A0 b=B0
+        drain n=8 to=node l1=0
+    recv n=9 -> z from=mg[0]
+    wait mg[0]

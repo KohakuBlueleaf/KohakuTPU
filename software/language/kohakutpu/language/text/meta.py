@@ -68,6 +68,9 @@ class Expander:
                 self.fail(st, "wanted `when CONDITION`")
             v = self.term(cond, env, st)
             if not isinstance(v, Int):
+                if not self.unroll_all:
+                    # A level that keeps loops decides it per instance.
+                    return [replace(st, args=[v], body=self.stmts(st.body, env))]
                 self.fail(st, f"`when` wants a constant condition, got {v!r}")
             return self.stmts(st.body, env) if v.value else []
         if st.op == "expand" and st.target is None:
@@ -163,6 +166,14 @@ class Expander:
             case Computed(prefix, index, slices):
                 i = self.term(index, env, st)
                 if not isinstance(i, Int):
+                    if not self.unroll_all:
+                        # A level that keeps loops binds the index later.
+                        kept = (
+                            None
+                            if slices is None
+                            else tuple(self.term(s, env, st) for s in slices)
+                        )
+                        return Computed(prefix, i, kept)
                     self.fail(st, f"{prefix}{{...}} wants a constant index, got {i!r}")
                 name = f"{prefix}{i.value}"
                 if slices is None:

@@ -1,0 +1,7 @@
+# A masked copy: the destination walk's axis 1 window keeps words 4..11, so
+# only those are written; the walk still steps through all 16.
+target ktpu.v9
+
+fn mask.l1(x: f16[256] @dram, y: f16[256] @dram)
+    move
+        copy w(x, (16, 32)) -> w(y, (16, 32, 1, 1), win1=(-4, 8))

@@ -1,0 +1,26 @@
+# Node to node over the interlink: node 0's vector core copies x to y, the
+# node waits for the core (its writes have landed) and rings node 1's signal
+# slot 3 by 2, fenced; node 1 waits until the slot holds 2, takes it, also
+# waits for one doorbell from mesh 0, and copies y to z on its own core.
+target ktpu.v9
+
+image copy(words, src, dst)
+    desc a0 = src walk=(32, words)
+    desc a1 = dst walk=(32, words)
+    vfill a0 -> l1[0]
+    vsync drain on=fill
+    vdrain a1 <- l1[0]
+    halt
+
+fn ring.l1(x: f16[2048] @dram, y: f16[2048] @dram, z: f16[2048] @dram)
+    node 0
+        send vc[0]
+            run copy(128, x, y)
+        wait vc[0]
+        ring mesh=1 slot=3 amount=2
+    node 1
+        wait slot 3 n=2 consume
+        wait bell 0 n=1
+        send vc[0]
+            run copy(128, y, z)
+        wait vc[0]

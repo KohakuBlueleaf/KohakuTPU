@@ -1,0 +1,8 @@
+# A transpose of 32-byte words by walk order alone: x is 8 rows of 16 words,
+# y is 16 rows of 8 words. The destination walk is the iteration order; the
+# source walk visits the same words column-first.
+target ktpu.v9
+
+fn transpose.l1(x: f16[8, 256] @dram, y: f16[16, 128] @dram)
+    move
+        copy w(x, (16, 32), (8, 512)) -> w(y, (16, 256), (8, 32))

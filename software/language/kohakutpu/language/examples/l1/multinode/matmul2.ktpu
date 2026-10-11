@@ -1,0 +1,57 @@
+# y = x w^T, 1024 x 2048 x 2048 on two nodes, tensor parallel by columns:
+# node n's cluster u owns column tile 4n + u. The four clusters of a node
+# sweep the same row tile, so each A chunk is read once a pair -- mg[0]
+# leads mg[2], mg[1] leads mg[3] (one cluster of each memory port; the
+# lowest {y, x} reads) -- and the node is the rendezvous: a follower's own B
+# fills go first, the node marks them, and the leader's words (its shared A
+# fill) go only once that mark completes, so the shared entries find the
+# follower in its FILL A. K-chunks of 128 (nk=4) fill a whole bank in two
+# 128-entry runs and halve the rendezvous a tile.
+target ktpu.v9
+
+macro gemm(n, u, i, k)
+    when k < 15
+        gemm 64x64x4 a=A{k % 2} b=B{k % 2} acc=(k > 0)
+    when k == 15
+        when i > 0
+            drain y + ((i - 1)*8 + 4*n + u)*128K n=4096 fused
+        gemm 64x64x4 a=A1 b=B1 acc emit=(y + (i*8 + 4*n + u)*128K)
+
+macro follow(n, f, i, k)
+    send mg[f]
+        fill B{k % 2} <- w + (4*n + f)*512K + k*32K n=128
+        fill B{k % 2} <- w + (4*n + f)*512K + k*32K + 16K n=128 at=128
+
+macro listen(n, f, i, k)
+    send mg[f]
+        fill A{k % 2} <- x + i*512K + k*32K n=128 peers=(mg[f - 2])
+        fill A{k % 2} <- x + i*512K + k*32K + 16K n=128 at=128 peers=(mg[f - 2])
+        expand gemm(n, f, i, k)
+
+macro lead(n, l, i, k)
+    send mg[l]
+        fill A{k % 2} <- x + i*512K + k*32K n=128 peers=(mg[l + 2])
+        fill A{k % 2} <- x + i*512K + k*32K + 16K n=128 at=128 peers=(mg[l + 2])
+        fill B{k % 2} <- w + (4*n + l)*512K + k*32K n=128
+        fill B{k % 2} <- w + (4*n + l)*512K + k*32K + 16K n=128 at=128
+        expand gemm(n, l, i, k)
+
+fn matmul2.l1(x: mx7a[1024, 2048] @dram(gm=64, nk=4), w: mx7b[2048, 2048] @dram(gn=64, nk=4), y: f16[1024, 2048] @dram(tile=64x64))
+    for n in 0..2
+        node n
+            for i in 0..4
+                for k in 0..16
+                    expand follow(n, 2, i, k)
+                    t2 = mark mg[2]
+                    expand listen(n, 2, i, k)
+                    expand follow(n, 3, i, k)
+                    t3 = mark mg[3]
+                    expand listen(n, 3, i, k)
+                    wait mg[2] upto=t2
+                    expand lead(n, 0, i, k)
+                    wait mg[3] upto=t3
+                    expand lead(n, 1, i, k)
+            for u in 0..4
+                send mg[u]
+                    drain y + (24 + 4*n + u)*128K n=4096 fused
+            barrier

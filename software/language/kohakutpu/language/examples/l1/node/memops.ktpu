@@ -1,0 +1,18 @@
+# The node's own reach: a store, a load and an ALU step, the transform bank
+# read back (slot 1's geometry), a unit's CU_CAPS asked over CU_CTRL, the
+# mover's status word, a progress signal and a settle.
+target ktpu.v9
+
+fn memops.l1(out: u64[16] @dram)
+    store out <- 0x1234
+    r1 = load out
+    r1 = add r1, 1
+    store out + 8 <- r1
+    ctrl xf_sel <- 0x0104
+    r2 = ctrl xf_data
+    store out + 16 <- r2
+    query mg[0] index=0 -> out + 32
+    r3 = ctrl mvstat
+    store out + 64 <- r3
+    signal 5 6
+    settle 100

@@ -1,0 +1,18 @@
+# The node writes a vector core's L1 itself (a CU_DATA burst read from x,
+# waiting for the core's DATA_RECEIVED), the core drains that L1 to y and
+# peer-drains it back to the node, and the node takes those flits into z.
+target ktpu.v9
+
+image bounce(y)
+    desc a0 = y walk=(32, 64)
+    desc a1 = peer(0) walk=(32, 64)
+    vdrain a0 <- l1[64]
+    vdrain a1 <- l1[64] to=(0, 0)
+    halt
+
+fn push.l1(x: f16[1024] @dram, y: f16[1024] @dram, z: f16[1040] @dram)
+    push vc[0] buf=0 at=64 <- x n=64 wait
+    send vc[0]
+        run bounce(y)
+    recv n=65 -> z from=vc[0]
+    wait vc[0]

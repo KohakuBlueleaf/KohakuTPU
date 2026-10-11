@@ -1,0 +1,8 @@
+# The same immediate written at each element width, two words each.
+target ktpu.v9
+
+fn fill.l1(y8: u8[64] @dram, y16: u8[64] @dram, y32: u8[64] @dram)
+    move
+        fill w(y8, (2, 32)) value=0x12345678 ew=8
+        fill w(y16, (2, 32)) value=0x12345678 ew=16
+        fill w(y32, (2, 32)) value=0x12345678 ew=32

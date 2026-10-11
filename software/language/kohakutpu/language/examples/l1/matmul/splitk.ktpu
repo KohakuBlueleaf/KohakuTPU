@@ -1,0 +1,26 @@
+# One 256 x 256 tile of x w^T with K = 1024 split over two clusters: each sums
+# half of K, cluster 1 drains its accumulator into cluster 0's (buffer 2, an
+# add at full accumulator precision), and cluster 0 drains the sum.
+#
+# Cluster 0's tile must be open before the stream lands: its sweeps are
+# waited for first (the stream itself waits out a running sweep). The node
+# cannot see the stream land -- a DATA_RECEIVED reaches no node (H2) -- so
+# a settle covers the flits still in the mesh when cluster 1's drain retires;
+# cluster 0's own drain then waits out a stream still adding.
+target ktpu.v9
+
+fn splitk.l1(x: mx7a[256, 1024] @dram(gm=64, nk=2), w: mx7b[256, 1024] @dram(gn=64, nk=2), y: f16[256, 256] @dram(tile=64x64))
+    for u in 0..2
+        send mg[u]
+            for k in 8*u..8*u + 8
+                fill A{k % 2} <- x + k*16K n=128
+                fill B{k % 2} <- w + k*16K n=128
+                gemm 64x64x2 a=A{k % 2} b=B{k % 2} acc=(k % 8 > 0)
+    wait mg[0]
+    send mg[1]
+        drain n=4096 to=mg[0] buf=2 l1=0
+    wait mg[1]
+    settle 2000
+    send mg[0]
+        drain y n=4096
+    barrier
