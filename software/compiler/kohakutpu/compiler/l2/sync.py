@@ -7,16 +7,16 @@ or a cluster's receive port (``("mg[0]", "rx")``: FILL responses and CU_DATA
 share one entry register). Accesses conflict when one writes and the ranges
 meet, unless one unit touches its own memory both times (its in-order run
 orders them). The wait is on the earlier access's unit, up to a mark after
-that stage; after a unit-to-unit transfer's write, a settle (H2, H3). A
-`pipe` group sends a later iteration's words ahead of this one's waits when
-they need no wait and share no unit with the stages they pass.
+that stage. A unit-to-unit transfer's landing is seen by its receiver
+(COUNTed bursts it waits for, or DATA_RECEIVED the node waits for), never
+by a wait on its sender, whose words retire once their flits left. A `pipe`
+group sends a later iteration's words ahead of this one's waits when they
+need no wait and share no unit with the stages they pass. A streamed
+transfer (`flow`: a ring under credits, arrivals counted by the receiver)
+orders itself: its accesses never make the node wait for one another.
 """
 
 from dataclasses import dataclass, field
-
-#: Node cycles a unit-to-unit transfer's flits may still be in the mesh after
-#: its sender retires: no unit reports them landed (H2, H3).
-LANDING = 256
 
 
 @dataclass(frozen=True)
@@ -26,7 +26,7 @@ class Access:
     key: tuple
     lo: int
     hi: int
-    direct: bool = False  # written by a unit-to-unit transfer
+    flow: bool = False  # a streamed transfer's ring: credits and counts order it
 
 
 def mem(unit: str, write: bool, buf: str, lo: int, hi: int) -> Access:
@@ -38,7 +38,7 @@ def _own(a: Access) -> bool:
 
 
 def clash(a: Access, b: Access) -> bool:
-    if a.key != b.key or not (a.write or b.write):
+    if a.key != b.key or not (a.write or b.write) or (a.flow and b.flow):
         return False
     if a.lo >= b.hi or b.lo >= a.hi:
         return False
@@ -57,6 +57,8 @@ class Stage:
     group: tuple | None = None  # (loop id, iteration, pipe)
     post: str | None = None
     closes: bool = False  # a blocking move: everything is complete after it
+    #: the lines as the segments the node may interleave with another stage's
+    segs: list = field(default_factory=list)
 
 
 @dataclass
@@ -75,7 +77,7 @@ def _mark(s: int, unit: str) -> str:
 
 def schedule(stages: list) -> list:
     """The node's lines: the stages in program order, each preceded by the
-    waits (and settle) its conflicts need; a `pipe` group's later
+    waits its conflicts need; a `pipe` group's later
     iterations sent ahead where they need no wait. Ends with a barrier."""
     st = _State()
     for s in range(len(stages)):
@@ -153,13 +155,11 @@ def _hoistable(stages, st, j) -> bool:
 
 def _emit(stages, st, s) -> None:
     waits: dict = {}
-    settle = False
     for p, a in _needs(stages, st, s):
         if a.unit == "mover":
             waits["mover"] = max(waits.get("mover", -1), st.pos[p])
         else:
             waits[a.unit] = max(waits.get(a.unit, -1), st.pos[p])
-        settle |= a.direct
     for unit, at in sorted(waits.items(), key=lambda kv: kv[1]):
         p = st.order[at]
         if unit == "mover":
@@ -173,8 +173,6 @@ def _emit(stages, st, s) -> None:
         st.used.add(name)
         st.out.append(f"wait {unit} upto={name}")
         st.done[unit] = max(st.done.get(unit, -1), at)
-    if settle:
-        st.out.append(f"settle {LANDING}")
     st.pos[s] = len(st.order)
     st.order.append(s)
     st.out += stages[s].lines
@@ -182,4 +180,4 @@ def _emit(stages, st, s) -> None:
         st.out.append(("mark", _mark(s, u), u))
 
 
-__all__ = ["LANDING", "Access", "Stage", "clash", "mem", "schedule"]
+__all__ = ["Access", "Stage", "clash", "mem", "schedule"]

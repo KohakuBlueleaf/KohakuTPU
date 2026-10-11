@@ -61,6 +61,7 @@ class Val:
     zero: bool = False
     at: int = -1  # the item that defined it
     entry: int = 0  # A / B: its first entry in the bank
+    flow: bool = False  # A / B: landed by a stream, ordered by its credits
 
     def span(self) -> tuple:
         """Entries of both banks of its side it occupies."""
@@ -91,7 +92,19 @@ def lower(body, inst, fail, fuse: bool = True, links=None, reading=None) -> Stre
     s.reading = dict(reading or {"A": None, "B": None})
     seg = 0
     cuts = set(inst.cuts)
+    first = min(inst.cuts) if inst.cuts else None
     uses = _last_uses(inst.items)
+    posts: dict = {}  # item of a value's last use -> its stream credits
+    # Stream recvs of this stage, per sender: the first posts the ring (after
+    # the stage's own fills), each later one's room goes back but the last two.
+    streams = {"n": {}, "k": {}}
+    if first is not None and links is not None:
+        for j, (op, env) in enumerate(inst.items):
+            if isinstance(op, Op) and op.op == "recv" and j >= first:
+                src = value(body, op.st, op.st.positional()[0], env)
+                key = f"{src.name}[{src.slices[0].value}]"
+                if links.stream(key, s.unit, op.type.space) is not None:
+                    streams["n"][key] = streams["n"].get(key, 0) + 1
     for i, (op, env) in enumerate(inst.items):
         if i in cuts and i:
             seg += 1
@@ -100,19 +113,70 @@ def lower(body, inst, fail, fuse: bool = True, links=None, reading=None) -> Stre
         st = op.st
         if op.op == "fill":
             _fill(body, s, vals, uses, i, op, env, seg, fail)
+        elif op.op == "recv" and first is not None and i >= first:
+            got = _recv_stream(s, vals, op, env, body, links, fail, i, seg, streams)
+            if got is not None:
+                n, src, k = got
+                if k + 2 < streams["n"][src]:
+                    posts.setdefault(uses.get(i, i), []).append((n, src))
+                continue
+            _recv(s, vals, op, env, body, links, fail, i, seg)
         elif op.op == "recv":
-            _recv(s, vals, op, env, body, links, fail, i)
+            _recv(s, vals, op, env, body, links, fail, i, seg)
         elif op.op == "zero":
             t = _ty(op, fail, "acc")
             _acc_fits(op, t.shape, fail)
             vals[op.target] = Val("acc", t.shape, zero=True)
         elif op.op == "gemm":
-            _gemm(s, vals, op, seg, fail)
+            _gemm(s, vals, op, seg, fail, body, env)
         elif op.op == "drain":
             _drain(body, s, vals, op, env, seg, fail, fuse, links)
         else:
             fail(st, f"no cluster op {op.op!r}: fill, recv, zero, gemm, drain")
+        for n, src in posts.pop(i, []):
+            # Once no sweep reads it, the room goes back to the sender.
+            s.lines.append(Line(f"post n={n} to={src}", seg))
     return _place_held(s)
+
+
+def _recv_stream(s, vals, op, env, body, links, fail, i, seg, streams):
+    """`a = recv vc[H] : mx7a[M, K] @A` inside a loop, when core H streams
+    into this side: wait until M/4 x K/32 entries have landed (`fill ...
+    recv`); the stage's first posts the ring. ``(credits, sender, index in
+    the stage)`` to return after the value's last use, or None when the pair
+    is no stream."""
+    t = op.type
+    pos = op.st.positional()
+    if t is None or t.space not in ("A", "B") or len(pos) != 1 or links is None:
+        fail(op.st, "NAME = recv vc[H] : mx7a[M, K] @A | mx7b[N, K] @B")
+    src = value(body, op.st, pos[0], env)
+    if not isinstance(src, View) or src.name != "vc" or len(src.slices) != 1:
+        fail(op.st, "a cluster receives from a core: recv vc[H]")
+    sender = f"vc[{src.slices[0].value}]"
+    if links.stream(sender, s.unit, t.space) is None:
+        return None
+    want = {"A": "mx7a", "B": "mx7b"}[t.space]
+    if t.dtype != want:
+        fail(op.st, f"@{t.space} holds {want}, not {t.dtype}")
+    rows, k = t.shape
+    entries = (rows // 4) * (k // 32)
+    if entries > BANK or BANK % entries:
+        fail(op.st, f"{entries} entries a recv: a bank holds a whole number of them")
+    if streams["n"].get(sender, 0) < 2:
+        fail(op.st, "a stage receives a stream at least twice (its two slots)")
+    x = links.take_stream(op.st, sender, s.unit, t.space, entries)
+    k_in = streams["k"].get(sender, 0)
+    streams["k"][sender] = k_in + 1
+    if k_in == 0:
+        total = links.stream(sender, s.unit, t.space).granules()
+        for c in range(0, total, 512):
+            s.lines.append(Line(f"post n={min(512, total - c)} to={sender}", seg))
+    bank, entry = divmod(x.at, BANK)
+    s.lines.append(Line(f"fill {t.space}{bank} recv n={entries}", seg))
+    v = Val(t.space, t.shape, bank=bank, nk=k // 32, at=i, entry=entry, flow=True)
+    vals[op.target] = v
+    s.accesses.append(sync.Access(s.unit, False, (s.unit, t.space), *v.span(), flow=True))
+    return 4 * entries, sender, k_in
 
 
 def _ty(op, fail, space):
@@ -140,8 +204,9 @@ def _last_uses(items) -> dict:
     out, defs = {}, {}
     for i, (op, _) in enumerate(items):
         for a in op.args:
-            if isinstance(a, Name) and a.text in defs:
-                out[defs[a.text]] = i
+            n = a.text if isinstance(a, Name) else a.name if isinstance(a, View) else None
+            if n in defs:
+                out[defs[n]] = i
         if op.target is not None:
             defs[op.target] = i
             out.setdefault(i, i)
@@ -236,9 +301,9 @@ def _fill(body, s, vals, uses, i, op, env, seg, fail):
     vals[op.target] = Val(t.space, t.shape, bank=bank, nk=nk, at=i)
 
 
-def _recv(s, vals, op, env, body, links, fail, i):
+def _recv(s, vals, op, env, body, links, fail, i, seg):
     """`a = recv vc[H] : mx7a[M, K] @A`: the oldest transfer core H made
-    into this cluster's side, not yet received."""
+    into this cluster's side, not yet received, once its entries landed."""
     t = op.type
     pos = op.st.positional()
     if t is None or t.space not in ("A", "B") or len(pos) != 1 or links is None:
@@ -260,18 +325,54 @@ def _recv(s, vals, op, env, body, links, fail, i):
             f"core sent {x.shape} into @{t.space}; this receives {t.dtype}{list(t.shape)}",
         )
     bank, entry = divmod(x.at, BANK)
+    s.lines.append(Line(f"fill {t.space}{bank} recv n={x.size}", seg))
     v = Val(t.space, t.shape, bank=bank, nk=k // 32, at=i, entry=entry)
     vals[op.target] = v
     s.accesses.append(sync.Access(s.unit, False, (s.unit, t.space), *v.span()))
 
 
-def _gemm(s, vals, op, seg, fail):
+def _rows_of(body, v: Val, view: View, env, fail, st) -> Val:
+    """`v[LO : +R, :]`: rows LO.. of an @A / @B value, whole groups of 4 --
+    the same bank, `LO / 4 * nk` entries further in."""
+    rows, cols = view.slices
+    if cols.lo is not None or cols.hi is not None or rows.lo is None:
+        fail(st, "a slice of an operand takes rows: X[LO : +R, :]")
+    lo = value(body, st, rows.lo, env)
+    hi = value(body, st, rows.hi.x if hasattr(rows.hi, "x") else rows.hi, env)
+    if not isinstance(lo, Int) or not isinstance(hi, Int):
+        fail(st, "an operand's rows are constants of the instance")
+    n = hi.value if hasattr(rows.hi, "x") else hi.value - lo.value
+    if lo.value % 4 or n % 4 or lo.value + n > v.shape[0]:
+        fail(st, f"rows {lo.value} +{n} of {v.shape[0]}: whole groups of 4 inside")
+    return Val(
+        v.kind,
+        (n, v.shape[1]),
+        bank=v.bank,
+        nk=v.nk,
+        at=v.at,
+        entry=v.entry + (lo.value // 4) * v.nk,
+    )
+
+
+def _gemm(s, vals, op, seg, fail, body=None, env=None):
     reading = s.reading
     t = _ty(op, fail, "acc")
-    names = [a.text for a in op.args if isinstance(a, Name)]
-    if len(names) != len(op.args) or len(names) not in (2, 3):
+    names = []
+    for a in op.args:
+        if isinstance(a, View) and len(a.slices) == 2 and a.name in vals:
+            names.append(a)
+        elif isinstance(a, Name):
+            names.append(a.text)
+        else:
+            fail(op.st, "NAME = gemm A, B[, ACC] : f32[M, N] @acc")
+    if len(names) not in (2, 3):
         fail(op.st, "NAME = gemm A, B[, ACC] : f32[M, N] @acc")
-    a, b = (vals.get(n) for n in names[:2])
+    a, b = (
+        _rows_of(body, vals[n.name], n, env, fail, op.st)
+        if isinstance(n, View)
+        else vals.get(n)
+        for n in names[:2]
+    )
     if a is None or a.kind != "A" or b is None or b.kind != "B":
         fail(op.st, "gemm reads an @A value and an @B value of this cluster")
     m, n = t.shape
@@ -285,6 +386,8 @@ def _gemm(s, vals, op, seg, fail):
         )
     acc = 0
     if len(names) == 3:
+        if not isinstance(names[2], str):
+            fail(op.st, "the accumulator operand is a name")
         c = vals.get(names[2])
         if c is None or c.kind != "acc" or c.shape != t.shape:
             fail(op.st, f"{names[2]} is not an f32{list(t.shape)} @acc value")
@@ -303,8 +406,8 @@ def _gemm(s, vals, op, seg, fail):
     s.lines.append(line)
     reading["A"], reading["B"] = a.bank, b.bank
     s.accesses += [
-        sync.Access(s.unit, False, (s.unit, "A"), *a.span()),
-        sync.Access(s.unit, False, (s.unit, "B"), *b.span()),
+        sync.Access(s.unit, False, (s.unit, "A"), *a.span(), flow=a.flow),
+        sync.Access(s.unit, False, (s.unit, "B"), *b.span(), flow=b.flow),
     ]
     vals[op.target] = Val("acc", t.shape, gemm=line)
 
@@ -330,9 +433,26 @@ def _drain(body, s, vals, op, env, seg, fail, fuse, links):
             if add or links is None:
                 fail(op.st, "drain ACC -> vc[H]: the tile's sub-tiles into core H's L1")
             to = f"vc[{j}]"
-            at = links.send(op.st, s.unit, to, "l1", n, c.shape).at
-            s.lines.append(Line(f"drain n={n} to={to} l1={at}", seg, drain=True))
-            s.accesses.append(sync.Access(s.unit, True, (to, "l1"), at, at + n, True))
+            x = links.send(op.st, s.unit, to, "l1", n, c.shape)
+            at = x.at
+            if x.flow:
+                # A stream: the sweep emits under credits, its bursts counted
+                # by the core; the fused drain collects them.
+                g = c.gemm.gemm
+                if "emit" in g:
+                    fail(op.st, "a streamed tile leaves by its own last sweep")
+                g["emit"] = f"to={to} l1={at} count credit"
+                g["to"] = True
+                s.held.append((c.gemm, f"drain n={n} to={to} l1={at} fused count credit"))
+                s.accesses.append(
+                    sync.Access(s.unit, True, (to, "l1"), at, at + n, flow=True)
+                )
+                c.gemm = None
+                return
+            # COUNTed: the core waits for the granules to land, not for the
+            # drain to leave (a DRAIN retires when its flits are sent).
+            s.lines.append(Line(f"drain n={n} to={to} l1={at} count", seg, drain=True))
+            s.accesses.append(sync.Access(s.unit, True, (to, "l1"), at, at + n))
             c.gemm = None
             return
         if not add:
@@ -340,10 +460,8 @@ def _drain(body, s, vals, op, env, seg, fail, fuse, links):
                 op.st,
                 "drain ACC -> mg[J] add: into cluster J's tile, at full precision",
             )
-        s.lines.append(
-            Line(f"drain n={n} to=mg[{j}] buf=2 l1=0", seg, into=j, drain=True)
-        )
-        s.accesses.append(sync.Access(s.unit, True, (f"mg[{j}]", "acc"), 0, 1, True))
+        s.lines.append(Line(f"drain n={n} to=mg[{j}] buf=2 l1=0", seg, into=j, drain=True))
+        s.accesses.append(sync.Access(s.unit, True, (f"mg[{j}]", "acc"), 0, 1))
         c.gemm = None
         return
     if add:
@@ -375,6 +493,8 @@ def _place_held(s: Stream) -> Stream:
         if line.gemm is not None:
             g = line.gemm
             emit = f" emit={g['emit']}" if "emit" in g else ""
+            if g.get("to"):
+                emit = f" emit {g['emit']}"
             offs = "".join(f" {k}={g[k]}" for k in ("aoff", "boff") if g.get(k))
             line.text = (
                 f"gemm {g['gm']}x{g['gn']}x{g['nk']} a=A{g['ab']} b=B{g['bb']} "
@@ -393,6 +513,10 @@ def _place_held(s: Stream) -> Stream:
         )
         if nxt is None:
             out.append(Line(text, out[-1].seg))
+            if out.index(sweep) == max(k for k, ln in enumerate(out) if ln.gemm):
+                # The last sweep's fused drain holds the sequencer until the
+                # sweep is done: the next stage may fill any bank.
+                s.reading = {"A": None, "B": None}
         else:
             out.insert(nxt, Line(text, out[nxt].seg))
     s.lines = out

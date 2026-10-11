@@ -27,7 +27,8 @@ POOL = 256
 @dataclass
 class Transfer:
     """A unit-to-unit transfer: into `dst`'s `side` ("l1" words of a core,
-    "A" / "B" entries of a cluster's banks) at `at`, `size` long."""
+    "A" / "B" entries of a cluster's banks) at `at`, `size` long; `flow` when
+    it belongs to a stream."""
 
     src: str
     dst: str
@@ -35,20 +36,66 @@ class Transfer:
     at: int
     size: int
     shape: tuple
+    flow: bool = False
+    #: a stream sent a trip at a time: each trip's landing by parity
+    slots: tuple = ()
+    per: int = 0
+
+
+#: A stream's ring holds two receiver transfers: the top of a core's L1 (at
+#: most `POOL` words) or a cluster side's banks from entry 0 (at most both).
+RING_ENTRIES = 2 * cluster.BANK
+
+
+@dataclass
+class Ring:
+    """A stream from `src` into `dst`'s `side`: transfers land one after
+    another in [lo, lo + size) and wrap; the receiver returns a transfer's
+    room as credits once it has read it, the sender's bursts wait for them,
+    and the receiver counts what lands."""
+
+    src: str
+    dst: str
+    side: str
+    lo: int
+    size: int
+    sent: int = 0
+    taken: int = 0
+
+    def granules(self) -> int:
+        """The ring's room in credits (32-byte granules)."""
+        return self.size if self.side == "l1" else 4 * self.size
 
 
 class Links:
     """One node's transfers: each lands where `send` allocates it (a ring at
     the top of a core's L1; a cluster bank, alternating) and is taken by the
-    receiver's `recv`s in order."""
+    receiver's `recv`s in order. A pair whose receiver takes inside a loop is
+    a stream (`rings`): its transfers follow one another around a ring."""
 
-    def __init__(self, fail) -> None:
+    def __init__(self, fail, streams=()) -> None:
         self.fail = fail
         self.queues: dict = {}
         self.ring: dict = {}
         self.banks: dict = {}
+        self.rings: dict = {}
+        for (src, dst, side), size in dict(streams).items():
+            lo = vector.L1_WORDS - size if side == "l1" else 0
+            self.rings[(src, dst, side)] = Ring(src, dst, side, lo, size)
+
+    def stream(self, src, dst, side) -> Ring | None:
+        return self.rings.get((src, dst, side))
 
     def send(self, st, src, dst, side, size, shape) -> Transfer:
+        r = self.stream(src, dst, side)
+        if r is not None:
+            if r.size % size:
+                self.fail(st, f"{size} into {dst}'s ring of {r.size}: whole transfers")
+            at = r.lo + r.sent % r.size
+            r.sent += size
+            x = Transfer(src, dst, side, at, size, tuple(shape), flow=True)
+            self.queues.setdefault((src, dst, side), []).append(x)
+            return x
         if side == "l1":
             if size > POOL:
                 self.fail(st, f"{size} words into {dst}: a core takes {POOL} at a time")
@@ -72,6 +119,25 @@ class Links:
             self.fail(st, f"recv: {src} sent nothing into {dst} ({side}) before this")
         return q.pop(0)
 
+    def take_stream(self, st, src, dst, side, size) -> Transfer:
+        """`size` units of the stream, from the oldest transfers not yet
+        taken (several make one take when the sender sends less at a time)."""
+        r = self.stream(src, dst, side)
+        q = self.queues.get((src, dst, side)) or []
+        first, got = None, 0
+        while got < size:
+            if not q:
+                self.fail(st, f"recv: {src} sent {got} of {size} into {dst} ({side})")
+            x = q.pop(0)
+            if x.at != r.lo + (r.taken + got) % r.size:
+                self.fail(st, f"recv: {src}'s transfers into {dst} are out of order")
+            first = first or x
+            got += x.size
+        if got != size:
+            self.fail(st, f"recv of {size} splits {src}'s transfer into {dst}")
+        r.taken += size
+        return Transfer(src, dst, side, first.at, size, first.shape, flow=True)
+
     def check(self, st) -> None:
         for (src, dst, side), q in self.queues.items():
             if q:
@@ -91,16 +157,18 @@ def lower(module, name: str, machine=None) -> str:
     land = vector.L1_WORDS - POOL if _drains_to_cores(body.stmts) else None
     out, images = [], []
     for n in nodes:
-        links = Links(fail)
+        mine = [(k, x, tag) for k, nd, x, tag in stages if nd == n]
+        links = Links(fail, _streams(body, mine))
         reading: dict = {}
         built = []
-        mine = [(k, x, tag) for k, nd, x, tag in stages if nd == n]
+        if any(r.dst.startswith("vc") for r in links.rings.values()):
+            built.append(_open(body.name, n, links, images))
         for i, (kind, x, tag) in enumerate(mine):
             if kind == "par":
-                lines, units, acc = _par(
+                lines, units, acc, segs = _par(
                     body, x, fail, machine, images, links, land, reading
                 )
-                built.append(sync.Stage(lines, units, acc, tag))
+                built.append(sync.Stage(lines, units, acc, tag, segs=segs))
                 continue
             op, env = x
             if op.op not in mover.OPS:
@@ -128,7 +196,9 @@ def lower(module, name: str, machine=None) -> str:
                 )
             )
         links.check(body.stmts[-1].st if body.stmts else None)
-        lines = sync.schedule(_close(built))
+        if any(r.dst.startswith("vc") for r in links.rings.values()):
+            built.append(_spend(body.name, n, links, images))
+        lines = sync.schedule(_close(_grouped(built)))
         if multi:
             out.append(f"node {n}")
             out += [IND + ln for ln in lines]
@@ -143,6 +213,132 @@ def lower(module, name: str, machine=None) -> str:
         [*head, "", *images, f"fn {name}.l1({params})", *(IND + ln for ln in out)]
     )
     return text + "\n"
+
+
+def _streams(body, stages) -> dict:
+    """``{(src, dst, side): ring size}`` of every pair whose receiver takes
+    inside a loop of its instance: a stream. Into a core, two of the
+    receiver's tiles at the top of its L1; into a cluster, both banks."""
+    out = {}
+    for kind, x, _ in stages:
+        if kind != "par":
+            continue
+        for inst in x:
+            first = inst.cuts[0] if inst.cuts else None
+            for i, (op, env) in enumerate(inst.items):
+                if not isinstance(op, B.Op) or op.op != "recv" or first is None:
+                    continue
+                if i < first:
+                    continue
+                src = B.value(body, op.st, op.st.positional()[0], env)
+                if not isinstance(src, View) or len(src.slices) != 1:
+                    continue
+                me = f"{inst.kind}[{inst.index}]"
+                side = "l1" if inst.kind == "vc" else op.type.space
+                key = (f"{src.name}[{src.slices[0].value}]", me, side)
+                if side == "l1":
+                    size = 2 * op.type.shape[0] * op.type.shape[1] // 16
+                    if size > POOL:
+                        body.reader.fail(op.st, f"two of these tiles exceed {POOL} words")
+                else:
+                    # A cluster rejects a burst past its L1 (no wrap): two
+                    # slots the sender alternates between.
+                    size = 2 * (op.type.shape[0] // 4) * (op.type.shape[1] // 32)
+                    if size > RING_ENTRIES:
+                        body.reader.fail(op.st, "two of these tiles exceed a side's banks")
+                out.setdefault(key, size)
+    return out
+
+
+#: The largest credit count one POST / VPOST / VWAIT word carries here.
+CREDIT_WORD = 512
+
+
+def _counts(total: int) -> list:
+    return [min(CREDIT_WORD, total - k) for k in range(0, total, CREDIT_WORD)]
+
+
+def _open(name, node, links, images) -> sync.Stage:
+    """Each stream into a core: the core hands its whole ring to the sender as
+    credits. (A cluster returns its own per stage: `cluster.lower`.)"""
+    lines, units, posts = [], [], {}
+    for r in links.rings.values():
+        if r.dst.startswith("vc"):
+            posts.setdefault(r.dst, []).append(r)
+    for dst, rings in posts.items():
+        img = f"{name}_n{node}_open_{dst.replace('[', '').replace(']', '')}"
+        words = [f"    vpost {r.src} n={c}" for r in rings for c in _counts(r.granules())]
+        images.append("\n".join([f"image {img}()", *words, "    halt"]) + "\n")
+        lines += [f"send {dst}", f"{IND}run {img}()"]
+        units.append(dst)
+    return sync.Stage(lines, units, [])
+
+
+def _spend(name, node, links, images) -> sync.Stage:
+    """Each stream into a core: the sending cluster spends the credits the core
+    returned for the ring's last lap, so the next run starts with none, by
+    drains into the ring (nothing reads it again)."""
+    lines, units, spends = [], [], {}
+    for r in links.rings.values():
+        if r.dst.startswith("vc"):
+            spends.setdefault(r.src, []).append(r)
+    for src, rings in spends.items():
+        lines.append(f"send {src}")
+        for r in rings:
+            for c in _counts(r.granules()):
+                lines += [
+                    f"{IND}drain n={min(c, 128)} to={r.dst} l1={r.lo} credit"
+                    for _ in range(0, c, 128)
+                ]
+        units.append(src)
+    return sync.Stage(lines, units, [])
+
+
+def _rings_of(stage) -> set:
+    return {a.key for a in stage.accesses if a.flow}
+
+
+def _grouped(stages: list) -> list:
+    """Consecutive stages joined by a stream as one stage: a unit's queue
+    holds a bounded number of words, so a producer's words waiting on credits
+    must not fill it before the consumer's are sent. The cores' RUNs go first;
+    the clusters' segments follow interleaved by progress (each next from the
+    stage least far through its own)."""
+    out = []
+    for s in stages:
+        prev = out[-1] if out else None
+        if (
+            prev is not None
+            and prev.segs
+            and s.segs
+            and prev.group == s.group
+            and _rings_of(prev) & _rings_of(s)
+        ):
+            prev.members.append(s)
+            prev.accesses = prev.accesses + s.accesses
+            prev.units = list(dict.fromkeys(prev.units + s.units))
+            continue
+        s.members = [s]
+        out.append(s)
+    for s in out:
+        if len(s.members) > 1:
+            s.lines = _merge_segs([m.segs for m in s.members])
+    return out
+
+
+def _merge_segs(groups: list) -> list:
+    runs = [g for g in groups if all(ln.lstrip().startswith(("send vc", "run ")) for seg in g for ln in seg)]
+    rest = [g for g in groups if g not in runs]
+    lines = [ln for g in runs for seg in g for ln in seg]
+    at = [0] * len(rest)
+    while any(at[k] < len(g) for k, g in enumerate(rest)):
+        k = min(
+            (k for k, g in enumerate(rest) if at[k] < len(g)),
+            key=lambda k: at[k] / len(rest[k]),
+        )
+        lines += rest[k][at[k]]
+        at[k] += 1
+    return lines
 
 
 def _close(stages: list) -> list:
@@ -186,7 +382,7 @@ def _par(body, insts: list, fail, machine, images: list, links, land, reading) -
             acc += got
             units.append(f"vc[{i.index}]")
             lines += [f"send vc[{i.index}]", f"{IND}run {img}({', '.join(params)})"]
-        return lines, units, acc
+        return lines, units, acc, [lines]
     if kind != "mg":
         fail(insts[0].par.st, f"L2 -> L1 has no {kind} lowering yet")
     insts = _merge(insts)
@@ -207,10 +403,13 @@ def _par(body, insts: list, fail, machine, images: list, links, land, reading) -
     units = [s.unit for _, s in streams]
     acc = [a for _, s in streams for a in s.accesses]
     if into:
-        return _added(streams, into, fail, insts[0].par.st), units, acc
+        lines = _added(streams, into, fail, insts[0].par.st)
+        return lines, units, acc, [lines]
     if any(ln.share for _, s in streams for ln in s.lines):
-        return _shared(insts, streams, machine, fail), units, acc
-    return _interleave([(idx, s.lines) for idx, s in streams]), units, acc
+        lines = _shared(insts, streams, machine, fail)
+        return lines, units, acc, [lines]
+    segs = _segments([(idx, s.lines) for idx, s in streams])
+    return [ln for seg in segs for ln in seg], units, acc, segs
 
 
 def _added_into(body, insts) -> set:
@@ -229,27 +428,31 @@ def _added_into(body, insts) -> set:
 
 def _interleave(streams: list) -> list:
     """Each stream's lines sent segment by segment, the units in turn."""
-    segs = max((ln.seg for _, ls in streams for ln in ls), default=-1) + 1
-    lines = []
-    for seg in range(segs):
+    return [ln for seg in _segments(streams) for ln in seg]
+
+
+def _segments(streams: list) -> list:
+    """The node lines of each segment: every unit's words of it, in turn."""
+    count = max((ln.seg for _, ls in streams for ln in ls), default=-1) + 1
+    out = []
+    for seg in range(count):
+        lines = []
         for idx, ls in streams:
             words = [ln.render() for ln in ls if ln.seg == seg]
             if words:
                 lines.append(f"send mg[{idx}]")
                 lines += [IND + w for w in words]
-    return lines
-
-
-#: Node cycles a cluster's flits may still be in the mesh after its drain
-#: retires: no unit reports a peer burst landed (H2, H3).
-SETTLE = 2000
+        out.append(lines)
+    return out
 
 
 def _added(streams, into, fail, st) -> list:
     """Clusters adding their tiles into others' (`drain ACC -> mg[J] add`):
     every cluster runs up to its first drain; each addition goes once its
-    target has swept (its tile is open and no sweep runs), then a settle
-    covers the flits in flight; the rest follows."""
+    target has swept (its tile is open and no sweep runs), followed by a
+    COUNTed entry into the target's L1 A0 entry 0, which the target takes
+    before the rest of its stream: one source's flits land in order, and no
+    unit counts an add landing."""
     heads, tails, adds = [], [], []
     for idx, s in streams:
         cut = next((k for k, ln in enumerate(s.lines) if ln.drain), len(s.lines))
@@ -264,12 +467,21 @@ def _added(streams, into, fail, st) -> list:
         heads.append((idx, s.lines[:cut]))
         tails.append((idx, s.lines[cut_tail:]))
     out = _interleave(heads)
+    marked = {}
     for src, line in adds:
         out.append(f"wait mg[{line.into}]")
         out += [f"send mg[{src}]", IND + line.render()]
-        out.append(f"wait mg[{src}]")
-    out.append(f"settle {SETTLE}")
+        out.append(f"{IND}drain n=4 to=mg[{line.into}] buf=0 l1=0 count")
+        marked[line.into] = marked.get(line.into, 0) + 1
+    tails = [
+        (idx, [_take(marked[idx], ls)] + ls if idx in marked else ls) for idx, ls in tails
+    ]
     return out + _interleave(tails)
+
+
+def _take(n: int, lines: list):
+    """The added-into cluster takes the markers first, in its first segment."""
+    return cluster.Line(f"fill A0 recv n={n}", lines[0].seg if lines else 0)
 
 
 def _merge(insts: list) -> list:

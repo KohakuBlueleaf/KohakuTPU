@@ -276,14 +276,17 @@ def test_stages_wait_only_for_what_they_touch():
     assert "barrier" not in lines
 
 
-def test_a_direct_transfer_is_settled_before_its_reader():
+def test_a_direct_transfer_is_counted_by_its_reader():
+    # A drain retires once its flits left: the reader waits for them to land.
     l2 = examples.load(examples.example("mlpdirect", "l2"))
-    lines = _stage_lines(lower.lower(l2, "mlpdirect"))
-    run = lines.index("run mlpdirect_n0_vc0_0()")
-    assert lines[run - 2 : run] == ["settle 256", "send vc[0]"]
-    assert "drain n=256 to=vc[0] l1=256" in lines
-    sends = [ln for ln in lower.lower(l2, "mlpdirect").splitlines() if "vdrain" in ln]
+    text = lower.lower(l2, "mlpdirect")
+    lines = _stage_lines(text)
+    assert not any(ln.startswith("settle") for ln in lines)
+    assert "drain n=256 to=vc[0] l1=256 count" in lines
+    assert "vwait unpack rx n=256" in text
+    sends = [ln for ln in text.splitlines() if "vdrain" in ln]
     assert all("to=mg[" in ln and "buf=0" in ln for ln in sends)
+    assert "count=1" in text and any("recv n=" in ln for ln in lines)
 
 
 def test_pipe_sends_the_next_tile_before_waiting():

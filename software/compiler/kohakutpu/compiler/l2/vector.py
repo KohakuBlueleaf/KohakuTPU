@@ -117,6 +117,9 @@ class Desc:
     side: int = 0
     kind: str = "load"  # "load" | "store" | "send"
     kind_op: int = 0  # a send: id() of its op
+    count: bool = False  # a send: its bursts counted by the receiver
+    credit: bool = False  # a streamed send: sent under credits
+    alt: object = None  # a streamed send: the odd trips' descriptor
 
     def extent(self) -> int:
         """Bytes one walk spans."""
@@ -245,9 +248,10 @@ def _transfers(body, par, env, fail, links) -> dict:
         if links is None:
             fail(op.st, f"{op.op}: a transfer between units needs the node lowering")
         pos = op.st.positional()
+        if op.op == "recv" and inloop:
+            out[id(op)] = _recv_stream(body, op, env, me, trips, fail, links)
+            continue
         if op.op == "recv":
-            if inloop:
-                fail(op.st, "recv is before the stream loop")
             t = op.type
             if t is None or t.space != "l1" or t.dtype != "f16" or len(pos) != 1:
                 fail(op.st, "NAME = recv mg[U] : f16[R, C] @l1(gt4)")
@@ -296,11 +300,66 @@ def _transfers(body, par, env, fail, links) -> dict:
             fail(op.st, "a core sends a packed MXFP7 value into a cluster's bank")
         r, c = packed.type.shape
         side = kw.get("side", Name("A")).text
+        to = f"mg[{dst.slices[0].value}]"
+        stream = getattr(links, "stream", lambda *a: None)(me, to, side)
+        if stream is not None:
+            # One transfer a trip into the cluster's two slots, by parity.
+            per = (r // 4) * (c // 32)
+            if trips % 2:
+                fail(op.st, "a streamed send runs an even number of trips")
+            xs = [links.send(op.st, me, to, side, per, (r, c)) for _ in range(trips)]
+            slots = (xs[0].at, xs[1].at if trips > 1 else xs[0].at)
+            if any(x.at != slots[k % 2] for k, x in enumerate(xs)):
+                fail(op.st, f"{to}'s ring takes two of these at a time")
+            out[id(op)] = replace(
+                xs[0], at=min(slots), size=per * len(set(slots)), slots=slots, per=per
+            )
+            continue
         shape = (r * trips, c)
         entries = (r // 4) * (c // 32) * trips
-        to = f"mg[{dst.slices[0].value}]"
         out[id(op)] = links.send(op.st, me, to, side, entries, shape)
     return out
+
+
+@dataclass
+class _StreamIn:
+    """A stream into this core: the trip's sub-tiles land in `slots` by
+    parity, `size` words each, from `src`."""
+
+    src: str
+    dst: str
+    slots: tuple
+    size: int
+    shape: tuple
+    flow: bool = True
+
+
+def _recv_stream(body, op, env, me, trips, fail, links) -> _StreamIn:
+    """`x = recv mg[U] : f16[R, C] @l1(gt4)` in the stream loop: each trip
+    takes the next tile cluster U streams into this core's ring."""
+    t = op.type
+    pos = op.st.positional()
+    if t is None or t.space != "l1" or t.dtype != "f16" or len(pos) != 1:
+        fail(op.st, "NAME = recv mg[U] : f16[R, C] @l1(gt4)")
+    if _mode(t) != "gt4":
+        fail(op.st, "a cluster streams sub-tiles: @l1(gt4)")
+    src = value(body, op.st, pos[0], env)
+    if not (isinstance(src, View) and src.name == "mg" and len(src.slices) == 1):
+        fail(op.st, "a core receives from a cluster: recv mg[U]")
+    unit = f"mg[{src.slices[0].value}]"
+    words = t.shape[0] * t.shape[1] // 16
+    if not hasattr(links, "take_stream"):  # costed alone: two slots at the top
+        lo = L1_WORDS - 2 * words
+        return _StreamIn(unit, me, (lo, lo + words), words, t.shape)
+    if links.stream(unit, me, "l1") is None:
+        fail(op.st, f"{unit} streams nothing into {me}")
+    if trips % 2:
+        fail(op.st, "a streamed recv runs an even number of trips")
+    xs = [links.take_stream(op.st, unit, me, "l1", words) for _ in range(trips)]
+    slots = (xs[0].at, xs[1].at if trips > 1 else xs[0].at)
+    if any(x.at != slots[k % 2] for k, x in enumerate(xs)):
+        fail(op.st, f"{unit}'s ring into {me} holds two of these tiles")
+    return _StreamIn(unit, me, slots, words, t.shape)
 
 
 #: The V2 core `estimate` models (bench trace): an in-order front end into
@@ -401,7 +460,8 @@ def _lower(
     # Parameters prefixed: a buffer may share a register's name (a0, v1, s2).
     head = [f"image {name}({', '.join(f'p_{p}' for p in params)})"]
     for d in ctx.descs:
-        base = f"peer({d.off})" if d.to else f"p_{d.buffer} + {d.off}"
+        count = ", count=1" if d.count else ""
+        base = f"peer({d.off}{count})" if d.to else f"p_{d.buffer} + {d.off}"
         head.append(f"    desc a{d.ad} = {base} walk=({d.walk})")
     for d in ctx.descs:
         if d.inc:
@@ -464,6 +524,31 @@ class _Ctx:
         self.inplace = False
         #: GT4 rows: the registers of a 4-row band (0: rows are registers)
         self.per_band = 0
+        #: registers of the stream loop's widest row value
+        self.tile = 1
+
+    def index(self, v: "Val", r: int) -> int:
+        """Which of `v`'s registers row register `r` of the loop reads: its
+        own; a band value's (a 32-wide GT4 value beside wider ones: one
+        register a band) the band's; a one-register value's only."""
+        if v.rows >= self.tile:
+            return r
+        if self.per_band and v.rows * self.per_band == self.tile:
+            return r // self.per_band
+        if v.rows == 1:
+            return 0
+        raise ValueError(f"a {v.rows}-register value in a {self.tile}-register loop")
+
+    def once(self, v: "Val", rows) -> list:
+        """``[(row, register)]``: each of `v`'s registers `rows` covers, at
+        the first row reading it."""
+        out, seen = [], set()
+        for r in rows:
+            i = self.index(v, r)
+            if i not in seen:
+                seen.add(i)
+                out.append((r, i))
+        return out
 
     def accesses(self) -> list:
         u, out, trips = self.unit, [], len(self.trips)
@@ -471,15 +556,23 @@ class _Ctx:
             if d.to:
                 x = self.plan[d.kind_op]
                 key = (d.to, "AB"[d.side])
+                if getattr(x, "flow", False):
+                    # The receiver posts credits only after its own fills.
+                    out.append(sync.Access(u, True, key, x.at, x.at + x.size, flow=True))
+                    continue
+                # COUNTed: the cluster takes it by `fill ... recv`.
                 out += [
-                    sync.Access(u, True, key, x.at, x.at + x.size, True),
-                    sync.Access(u, True, (d.to, "rx"), 0, 1, True),
+                    sync.Access(u, True, key, x.at, x.at + x.size),
+                    sync.Access(u, True, (d.to, "rx"), 0, 1),
                 ]
                 continue
             lo, hi = d.span(trips if d.inc else 1)
             out.append(sync.mem(u, d.kind == "store", d.buffer, lo, hi))
         for x in self.plan.values():
-            if x.dst == u:
+            if isinstance(x, _StreamIn):
+                lo, hi = min(x.slots), max(x.slots) + x.size
+                out.append(sync.Access(u, False, (u, "l1"), lo, hi, flow=True))
+            elif x.dst == u:
                 out.append(sync.Access(u, False, (u, "l1"), x.at, x.at + x.size))
         out.append(sync.Access(u, True, (u, "l1"), 0, max(self.top, 1)))
         if self.down < self.land:
@@ -605,7 +698,20 @@ class _Ctx:
             side=side,
             kind="send",
             kind_op=id(op),
+            count=True,
         )
+        # Only a stream's bursts are sent under credits.
+        d.credit = getattr(x, "flow", False)
+        if getattr(x, "slots", ()):
+            # A stream: one descriptor a slot, the trips alternating.
+            d.off, d.inc = 4 * x.slots[0], 0
+            if len(self.descs) + 1 == DESCS:
+                self.fail(op.st, f"more than {DESCS} memory views")
+            d.alt = replace(d, ad=d.ad + 1, off=4 * x.slots[1])
+            self.descs.append(d)
+            self.descs.append(d.alt)
+            self.of[id(op)] = d
+            return
         self.descs.append(d)
         self.of[id(op)] = d
 
@@ -667,6 +773,8 @@ class _Ctx:
     def prologue(self, g: Gen, op) -> None:
         if op.op == "recv":
             x = self.plan[id(op)]
+            # The cluster's drain is COUNTed: unpack once its granules landed.
+            g.raw(f"vwait unpack rx n={x.size}")
             self.vals[op.target] = Val(
                 "l1", _count(op.type), buf=x.at, mode=_mode(op.type)
             )
@@ -720,6 +828,7 @@ class _Ctx:
             self.per_band = wide // 32
         rows = {_count(o.type) for o in typed}
         tile = max(rows)
+        self.tile = tile
         if any(r not in (tile, 1) for r in rows):
             self.fail(
                 ops[0].st, f"one register count in the stream loop, got {sorted(rows)}"
@@ -733,6 +842,7 @@ class _Ctx:
             g.raw("vsync fill on=unpack")
             for d in self.loads:
                 g.raw(f"vfill a{d.ad} -> l1[{d.buf[1 - parity]}] rel")
+        streams = [o for o in ops if o.op == "recv"]
         for o in ops:
             if o.op == "load":
                 self.vals[o.target] = Val(
@@ -741,6 +851,13 @@ class _Ctx:
                     buf=self.of[id(o)].buf[parity],
                     mode=_mode(o.type),
                 )
+            elif o.op == "recv":
+                x = self.plan[id(o)]
+                self.vals[o.target] = Val(
+                    "l1", _count(o.type), buf=x.slots[parity], mode="gt4"
+                )
+                # The unpacks wait for the trip's sub-tiles to have landed.
+                g.raw(f"vwait unpack rx n={x.size}")
         local: dict = {}
         groups = [range(k, k + group) for k in range(0, tile, group)]
         if self.band < len(groups) and len(groups) % self.band:
@@ -776,7 +893,7 @@ class _Ctx:
                     g.raw("}")
                     continue
                 if (
-                    o.op in ("load", "store", "send", "unpack", "pack")
+                    o.op in ("load", "store", "send", "recv", "unpack", "pack")
                     or o.target in fused
                 ):
                     continue
@@ -786,13 +903,22 @@ class _Ctx:
             if k == 0:
                 g.raw(f"vsync pack on=drain slack={len(stores)}")
             self._packs(g, ops, rws, local, parity)
+        for o in streams:
+            # Once unpacked, the slot goes back to the cluster as credits.
+            x = self.plan[id(o)]
+            g.raw("vsync drain on=unpack")
+            g.raw(f"vpost {x.src} n={x.size}")
         g.raw("vsync drain on=pack")
         for o in stores:
             d = self.of[id(o)]
+            if d.alt is not None and parity:
+                d = d.alt
             name = o.st.positional()[0 if o.op == "send" else 2]
             src = self._get(o, name, "l1", local)
             at = d.buf[parity] if src.buf is None else src.buf
             peer = f" to={d.to} buf={d.side}" if d.to else ""
+            if d.credit:
+                g.raw(f"vwait drain cr n={d.words}")
             g.raw(f"vdrain a{d.ad} <- l1[{at}] rel{peer}")
 
     def _compute(self, g, o, grps, rws, local, fused) -> None:
@@ -839,10 +965,10 @@ class _Ctx:
             if _mode(o.type) != src.mode:
                 self.fail(o.st, f"an @l1({src.mode}) value unpacks to @reg({src.mode})")
             v = local.setdefault(o.target, Val("row", _count(o.type), mode=src.mode))
-            for r in rows:
+            for _, i in self.once(v, rows):
                 s = g.sym()
-                v.regs[r] = s
-                g.emit(f"vunpk {{0}} <- l1[{src.buf + r * 8}] {src.mode}", s)
+                v.regs[i] = s
+                g.emit(f"vunpk {{0}} <- l1[{src.buf + i * 8}] {src.mode}", s)
 
     def _reunpack(self, g, ops, o, rows, local, again) -> None:
         """Past a reduction, an unpacked row value read again is unpacked
@@ -912,7 +1038,7 @@ class _Ctx:
                 self.fail(o.st, "a reduction runs over groups of 8 rows")
             if name in fused:
                 a, b = (self._get(o, t, "row", local) for t in fused[name])
-                rows = [(_reg(a, r), _reg(b, r)) for r in rws]
+                rows = [(a.regs[self.index(a, r)], b.regs[self.index(b, r)]) for r in rws]
             else:
                 src = self._get(o, pos[0], "row", local)
                 rows = [src.regs[r] for r in rws]
@@ -962,8 +1088,8 @@ class _Ctx:
                 local[o.target] = Val("l1", _count(o.type), buf=buf, mode=o.type.dtype)
                 continue
             mode = _mode(o.type)
-            for r in rows:
-                g.emit(f"vpack {{0}} -> l1[{buf + r * 8}] {mode}", src.regs[r])
+            for _, i in self.once(src, rows):
+                g.emit(f"vpack {{0}} -> l1[{buf + i * 8}] {mode}", src.regs[i])
             local[o.target] = Val("l1", _count(o.type), buf=buf, mode=mode)
 
     def _pack_stat(self, g, o, ops, stat, rows, local, parity) -> None:
@@ -1029,7 +1155,7 @@ class _Ctx:
                 out.regs[grp] = d
             return
         out = local.setdefault(o.target, Val("row", _count(t), mode=_mode(t)))
-        for r in rows:
+        for r, i in self.once(out, rows):
             syms, srcs = [], []
             for a in pos:
                 f = _number(a)
@@ -1050,9 +1176,9 @@ class _Ctx:
                     srcs.append(f"bcast({{{len(syms)}}}[0], lane={r % 8}, sh=3)")
                 else:
                     v = self._get(o, a, "row", local)
-                    syms.append(_reg(v, r))
+                    syms.append(v.regs[self.index(v, r)])
                     srcs.append(f"{{{len(syms)}}}")
-            d = out.regs[r] if inplace else g.sym()
+            d = out.regs[i] if inplace else g.sym()
             if o.op in CMP:
                 g.emit(f"{code} p1, {', '.join(srcs)}", d, *syms)
                 g.emit("vmov {0}, k0", d)
@@ -1062,7 +1188,7 @@ class _Ctx:
                 g.emit(f"vsel {{0}}, {a}, {b}, {c}", d, *syms)
             else:
                 g.emit(f"{code} {{0}}, {', '.join(srcs)}", d, *syms)
-            out.regs[r] = d
+            out.regs[i] = d
 
 
 def _read_once(ops, pack) -> bool:
@@ -1119,11 +1245,6 @@ def _quantiser_order(g: Gen, sym: str, into: str) -> bool:
             out.append((f"{op} {{0}}[{2 * i + q}:], {', '.join(ops_)} vl=16", (into, *srcs)))
     g.code[at : at + 1] = out
     return True
-
-
-def _reg(v: Val, r: int) -> str:
-    """Row r's register; a one-row value is every row's."""
-    return v.regs[r] if v.rows > 1 else v.regs[0]
 
 
 def _rows(groups) -> list:
