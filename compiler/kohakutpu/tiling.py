@@ -32,6 +32,13 @@ DRAIN_CYCLES = 1.4  # one sub-tile written back after the last sweep
 #: The dispatcher's cost per instruction word while FILLs stream: words reach a
 #: cluster ~780 apart (MX_SEQ_TRACE, v9 256^3), 325 with the mesh idle.
 WORD_CYCLES = 780.0
+#: A word streamed by a fetch port (mag_mem_port flag INST). DERIVED, not
+#: measured: one 32-B read-return beat, plus one ~300-cycle descriptor per 255.
+FETCH_WORD_CYCLES = 1.0 + 300.0 / 255
+#: One vector core's memory traffic per 32-B word, fills and drains together.
+#: MEASURED on card_v9_1n (VC_STATE_PROF): `residual` over 64k elements, one
+#: ALU op, moves 192 KB a core in 26.3k cycles -- 7.4 B a cycle.
+VC_WORD_CYCLES = 4.3
 PACKAGE_CYCLES = 2200.0  # a package's header, bindings and final barrier
 #: Fill streams the memory side serves at once. MEASURED 1 on the card models:
 #: v9's four clusters, two per MAG port, filled strictly one after another.
@@ -57,7 +64,16 @@ def ceil(a: int, b: int) -> int:
 
 
 def cost(
-    gy: int, gx: int, kb: int, batch: int, units: int, gm: int, gn: int, nk: int
+    gy: int,
+    gx: int,
+    kb: int,
+    batch: int,
+    units: int,
+    gm: int,
+    gn: int,
+    nk: int,
+    dispatchers: int = 1,
+    word: float = WORD_CYCLES,
 ) -> Tiling:
     """Cycles to run a `gy x gx` grid of output groups over `kb` K-blocks.
 
@@ -71,6 +87,12 @@ def cost(
     per-wave charge priced 16 instances at 19.7k; they ran 55k). Every entry
     of every instance crosses the memory side's `MEM_PATHS` streams, so the
     plan ends no sooner than all of them plus one tail.
+
+    With several `dispatchers` (one node per mesh, `units` each) the instances
+    are cut into one contiguous share per dispatcher and each share is priced
+    as above on its own mesh; the plan ends with the largest share. `word` is
+    the dispatcher's cost per word: `WORD_CYCLES` through the mailbox,
+    `FETCH_WORD_CYCLES` streamed by a fetch port.
     """
     steps = ceil(kb, nk)
     fill = 2 * FILL_CYCLES + (gm + gn) * nk * ENTRY_CYCLES
@@ -81,21 +103,29 @@ def cost(
     tail = sweep + gm * gn * DRAIN_CYCLES
     run = fill + (steps - 1) * max(fill, sweep) + tail
     instances = batch * ceil(gy, gm) * ceil(gx, gn)
-    free = [0.0] * min(instances, units)
+    share = ceil(instances, max(1, dispatchers))
+    free = [0.0] * min(share, units)
     end = 0.0
-    for i in range(instances):
+    for i in range(share):
         u = i % units
-        begin = max(free[u], (i * words + 1) * WORD_CYCLES)
-        free[u] = max(begin + run, (i + 1) * words * WORD_CYCLES + tail)
+        begin = max(free[u], (i * words + 1) * word)
+        free[u] = max(begin + run, (i + 1) * words * word + tail)
         end = max(end, free[u])
-    entries = instances * steps * (gm + gn) * nk
+    entries = share * steps * (gm + gn) * nk
     end = max(end, entries * ENTRY_CYCLES / MEM_PATHS + tail)
     total = PACKAGE_CYCLES + end
     return Tiling(gm, gn, nk, total, instances * words)
 
 
 def choose(
-    m: int, k: int, n: int, units: int, batch: int = 1, acc: int = ACC_TILES
+    m: int,
+    k: int,
+    n: int,
+    units: int,
+    batch: int = 1,
+    acc: int = ACC_TILES,
+    dispatchers: int = 1,
+    word: float = WORD_CYCLES,
 ) -> Tiling:
     """The tiling of an `m x k` by `k x n` product that the model prices lowest.
 
@@ -109,9 +139,11 @@ def choose(
             if gm * gn > acc:
                 continue
             for nk in divisors(kb, FILL_ENTRIES):
-                if max(gm, gn) * nk > FILL_ENTRIES:
+                if max(gm, gn) * nk > FILL_ENTRIES or not CU.legal_nk(nk):
                     continue
-                t = cost(gy, gx, kb, batch, max(1, units), gm, gn, nk)
+                t = cost(
+                    gy, gx, kb, batch, max(1, units), gm, gn, nk, dispatchers, word
+                )
                 if best is None or (t.cycles, t.words) < (best.cycles, best.words):
                     best = t
     return best
@@ -134,5 +166,7 @@ class MatmulTiler:
             machine.count("MG"),
             int(extents.get(BATCH, 1) or 1),
             int(getattr(machine, "tiles", ACC_TILES)),
+            int(getattr(machine, "dispatchers", 1)),
+            FETCH_WORD_CYCLES if getattr(machine, "fetched", False) else WORD_CYCLES,
         )
         return {"gm": t.gm, "gn": t.gn, "nk": t.nk}

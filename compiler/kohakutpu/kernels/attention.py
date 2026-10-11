@@ -218,7 +218,7 @@ def flash_attention(
 
         # ONE band. `c` and `p` stay VALUES: reading `corr` back here instead
         # costs a ninth descriptor and the band is refused.
-        with units(1) as e:
+        with units(top.parts(part)) as e:
             m2 = L.maximum(top[e], L.row_max(scores[e]))
             c = L.exp2(top[e] - m2)
             p = L.exp2(scores[e] - m2)
@@ -230,7 +230,7 @@ def flash_attention(
         if mask is not None:
             # Zeroing AFTER the exponential is exact: softmax is shift
             # invariant, and a row keeps its diagonal element either way.
-            with units(1) as e:
+            with units(top.parts(part)) as e:
                 masked = weights[e] * mask[e]
                 weights[e] <<= masked
                 # An OVERWRITE, not an accumulation: a masked block is always

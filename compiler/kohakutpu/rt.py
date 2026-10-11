@@ -10,6 +10,7 @@ level 5 and lives in :mod:`kohakutpu.api`. Nothing here names a kernel.
 
 import itertools
 import weakref
+from dataclasses import replace
 
 import numpy as np
 from kohakuaccel.device import mover as DM
@@ -20,7 +21,7 @@ from kohakuaccel.package import mover as PM
 from kohakuaccel.rt import Runtime
 from kohakutpu.isa import relayout as RL
 from kohakutpu.isa.fields import FIELDS
-from kohakutpu.isa.schedule import late_drains
+from kohakutpu.isa.schedule import late_drains, node_drain
 from kohakutpu.isa.vecemit import BATCH_BYTES
 from kohakutpu.staging import STAGE_ALIGN
 
@@ -340,6 +341,14 @@ class Holder:
     answer, in one place so no runtime can hand back a different one.
     """
 
+    def flush(self) -> None:
+        """Refuse to run a package that holds a fused cluster stage without its
+        epilogue: its tiles would drain into cores nothing ever runs."""
+        held = self.__dict__.get("_fused")
+        if held is not None:
+            raise RuntimeError(f"{held[3]}: a fused cluster stage has no epilogue")
+        super().flush()
+
     @property
     def values(self) -> type:
         """The class a device value is, deferred because it is a level ABOVE.
@@ -613,7 +622,26 @@ class Holder:
         """Node-dispatched, a vector core gets only the IMEM and DESC words that
         change what it holds, and a RUN (imem.rewrite). A cluster gets its
         instances as one stream, each tile's results draining under the next
-        tile's work (isa.schedule.late_drains)."""
+        tile's work (isa.schedule.late_drains). A cluster stage draining into
+        vector cores (`acks`) is held until its epilogue stage arrives, and the
+        two go out as one schedule (:meth:`_stream_fused`)."""
+        held = self.__dict__.get("_fused")
+        if held is not None and unit == "VC" and nodes is not None:
+            self._fused = None
+            return self._stream_fused(held, payloads, nodes, name)
+        if unit == "MG" and acks is not None and self.node is not None:
+            if held is not None:
+                raise RuntimeError(
+                    f"{name}: a fused cluster stage arrived while {held[3]} still "
+                    f"waits for its epilogue"
+                )
+            self._fused = (payloads, nodes, acks, name)
+            return 1
+        if held is not None and unit == "MG":
+            raise RuntimeError(
+                f"{name}: a cluster stage arrived while {held[3]} still waits for "
+                f"its epilogue; only a conversion may run in between"
+            )
         if unit == "MG" and acks is None and self.drain_late and self.node is not None:
             coords = tuple(nodes) if nodes is not None else self.machine.coords(unit)
             placed = deal(payloads, coords)
@@ -641,6 +669,140 @@ class Holder:
             for core in cores.values():
                 core.forget()
             raise
+
+    def _stream_fused(self, held, vc_payloads: dict, vc_nodes, name: str) -> int:
+        """A fused cluster stage and its epilogue as ONE gated schedule.
+
+        A vector core holds one open receive stream, so the tiles that drain
+        into it take turns: tile `q` on core `r` lands in L1 region `q % 2`
+        (backend `_rank`/`_buffers`), and before the step loop releases tile
+        `q+1`'s drain and tile `q`'s RUN it awaits on `r` exactly the acks of
+        drains `0..q` and the completions of RUNs `0..q-1` -- at that point
+        nothing else from `r` can be in flight, so the cumulative count means
+        exactly that. A cluster's words up to its first node drain go out as
+        soon as its previous tile's drain did, so it computes the next tile
+        while the gate holds the drain. Ends with exact AWAITs on every unit,
+        so later stages' counts stay true.
+
+        Raises :class:`RuntimeError` when the dealing does not keep each
+        cluster's tiles on one core in order -- the schedule assumes it.
+        """
+        mg_payloads, mg_nodes, acks, mg_name = held
+        coords = tuple(mg_nodes) if mg_nodes is not None else self.machine.coords("MG")
+        cluster = deal(mg_payloads, coords)
+        core = deal(vc_payloads, tuple(vc_nodes))
+        keys = sorted(mg_payloads)
+        if sorted(vc_payloads) != keys or any(
+            tuple(core[k]) != tuple(acks[k][0]) for k in keys
+        ):
+            raise RuntimeError(
+                f"{mg_name}: the epilogue's instances are not the drains' receivers"
+            )
+        mine = self.__dict__.setdefault("_imem", {})
+        used = {tuple(core[k]) for k in keys}
+        try:
+            run = {
+                k: IM.rewrite(
+                    list(vc_payloads[k]), mine.setdefault(tuple(core[k]), IM.Resident())
+                )
+                for k in keys
+            }
+        except Exception:
+            for c in used:
+                mine[c].forget()
+            raise
+        by_cluster: dict = {}
+        by_core: dict = {}
+        for k in keys:
+            by_cluster.setdefault(tuple(cluster[k]), []).append(k)
+            by_core.setdefault(tuple(core[k]), []).append(k)
+        for ks in by_cluster.values():
+            if len({tuple(core[k]) for k in ks}) != 1:
+                raise RuntimeError(
+                    f"{mg_name}: a cluster's tiles drain into several cores; the "
+                    f"streamed schedule needs clusters a whole multiple of cores"
+                )
+
+        def cut(words):
+            at = next((i for i, w in enumerate(words) if node_drain(w)), len(words))
+            return list(words[:at]), list(words[at:])
+
+        pre = {k: cut(mg_payloads[k])[0] for k in keys}
+        post = {k: cut(mg_payloads[k])[1] for k in keys}
+        b = self._package()
+        reloc = (
+            None
+            if self.bind_packages
+            else (self.fields.addresses if self.fields else None)
+        )
+        sent: dict = {}
+        awaited: dict = {}
+        #: Each tile's cluster position just past its last node drain: a unit
+        #: retires in order, so `received` reaching it means the drain retired.
+        landed: dict = {}
+
+        def send(coord, words) -> None:
+            if words:
+                b.dispatch(b.unit(coord), words, reloc)
+                sent[coord] = sent.get(coord, 0) + len(words)
+
+        def wait(coord, upto: int) -> None:
+            n = upto - awaited.get(coord, 0)
+            if n > 0:
+                b.await_(b.unit(coord), n)
+                awaited[coord] = upto
+
+        def release(k) -> None:
+            c = tuple(cluster[k])
+            last = max(i for i, w in enumerate(post[k]) if node_drain(w))
+            landed[k] = sent.get(c, 0) + last + 1
+            send(c, post[k])
+            line = by_cluster[c]
+            at = line.index(k) + 1
+            if at < len(line):
+                send(c, pre[line[at]])
+
+        acked = self.machine.transfer_acks
+        for c, ks in sorted(by_cluster.items()):
+            send(c, pre[ks[0]])
+        for ks in by_core.values():
+            release(ks[0])
+        for q in range(max(len(ks) for ks in by_core.values())):
+            for r, ks in sorted(by_core.items()):
+                if q >= len(ks):
+                    continue
+                prev = len(run[ks[q - 1]]) if q else 0
+                if acked:
+                    # The receiver's own acks: exactly the data landed.
+                    b.await_(b.unit(r), acks[ks[q]][1] + prev)
+                    awaited[r] = awaited.get(r, 0) + acks[ks[q]][1] + prev
+                else:
+                    # The sender retiring the drain: the data has LEFT the
+                    # cluster; the RUN still crosses node, fetch port and DRAM
+                    # before it reaches the core (MachineSpec.transfer_acks).
+                    wait(tuple(cluster[ks[q]]), landed[ks[q]])
+                    b.await_(b.unit(r), prev)
+                    awaited[r] = awaited.get(r, 0) + prev
+                send(r, run[ks[q]])
+                if q + 1 < len(ks):
+                    release(ks[q + 1])
+        for r, ks in sorted(by_core.items()):
+            b.await_(b.unit(r), len(run[ks[-1]]))
+        for c in sorted(by_cluster):
+            wait(c, sent.get(c, 0))
+        b.barrier()
+        if acked:
+            # Acks are completions no word was sent for: one stream's per core.
+            b.ack_reserve = max(
+                b.ack_reserve,
+                sum(max(acks[k][1] for k in ks) for ks in by_core.values()),
+            )
+        self.counters["dispatches"] += 2
+        self.counters["rounds"] += 1
+        self.counters["streamed_tiles"] = self.counters.get("streamed_tiles", 0) + len(
+            keys
+        )
+        return 1
 
     def _route(self, plan, addr: int) -> str | None:
         """The tier this conversion walks into: `L2`, DRAM, or None for in place.
@@ -716,11 +878,17 @@ class Device(Holder, Runtime):
         self.fields = FIELDS
         if node is not None:
             self.staging = _staging_above(machine, node)
+            # The node's package sequences a fused epilogue tile by tile; the
+            # transfers' acks cannot reach it (MachineSpec.transfer_acks).
+            self.machine = replace(
+                self.machine, stream_epilogue=True, transfer_acks=False
+            )
         # The board names the memory port that streams instructions, if its
         # memory ports take INST fetches (mag_mem_port flag [5]).
         port = (getattr(card, "board", None) or {}).get("fetch_port")
         if port is not None:
             self.fetch_port = tuple(port)
+            self.machine = replace(self.machine, fetched=self.bind_packages)
 
     def dispatch(
         self, payloads: dict, unit: str, name: str = "kernel", nodes=None, acks=None

@@ -16,6 +16,8 @@ import time
 from dataclasses import replace
 
 import numpy as np
+from kohakuaccel.memory import Buffer
+from kohakuaccel.package import mover as PM
 from tinygrad.device import Device
 from tinygrad.engine import realize
 from tinygrad.helpers import BEAM, NOOPT
@@ -23,6 +25,7 @@ from tinygrad.renderer import Estimates
 from tinygrad.uop.ops import Ops, PatternMatcher, ProgramInfo, UOp
 
 from kohakutpu import kernels as K
+from kohakutpu import layout as LO
 from kohakutpu import ops as _o
 from ktpugrad.chain import Recipe, read_chain
 from ktpugrad.device import NAME, WORD_BYTES, register
@@ -54,10 +57,12 @@ LIBRARY = {
 class LibraryRunner:
     """One matched library kernel, run where a rendered program would be.
 
-    The operands come back to the host and the result goes out again: a tinygrad
-    buffer is flat row-major fp16 and a kernel operand is in a device layout.
-    That is one readback and one upload per kernel and it is this prototype's
-    main cost.
+    A tinygrad buffer is flat row-major fp16 and a kernel operand is in a device
+    layout. An operand is a VIEW of tinygrad's own span, converted on the card
+    when the kernel asks for its layout, and the result is reordered on the card
+    into tinygrad's output span: no byte crosses the link. An operand the card
+    has no walk for (a K-major one) goes through the host, counted in
+    `host_operands`.
     """
 
     def __init__(self, device: str, match: Match) -> None:
@@ -91,29 +96,56 @@ class LibraryRunner:
         """Run the kernel over the arena spans `addrs`, result first."""
         out, *held = addrs
         match = self.match
-        got = self.kernel(
-            *(rt.tensor(a) for a in self._operands(rt, held)), **self.knobs
-        )
-        _upload(rt, out, got.numpy(), match.m * match.n)
+        views, args = self._operands(rt, held)
+        try:
+            got = self.kernel(*args, **self.knobs)
+            _store(rt, out, got, (match.m, match.n))
+            got.release()
+        finally:
+            for v in views:
+                _drop(v)
 
-    def _operands(self, rt, held: list) -> list:
-        """Each input span as the row-major fp16 array its kernel takes."""
+    def _operands(self, rt, held: list) -> tuple:
+        """``(views, tensors)``: each input span as the tensor its kernel takes.
+
+        A span already in the kernel's order is a view; a transposed operand
+        or a spread addend is a host array, since no walk on the card makes it.
+        """
         match = self.match
-        out = [
-            _download(rt, held[0], match.a_shape, match.a.order == "KM"),
-            _download(rt, held[1], match.b_shape, match.b.order == "KN"),
-        ]
+        views, out = [], []
+
+        def view(addr, shape):
+            v = _view(rt, addr, shape)
+            views.append(v)
+            out.append(v)
+
+        def host(array):
+            rt.counters["host_operands"] = rt.counters.get("host_operands", 0) + 1
+            out.append(rt.tensor(array))
+
+        for at, (shape, trans) in enumerate(
+            (
+                (match.a_shape, match.a.order == "KM"),
+                (match.b_shape, match.b.order == "KN"),
+            )
+        ):
+            if trans:
+                host(_download(rt, held[at], shape, True))
+            else:
+                view(held[at], shape)
         for at, addend in enumerate(match.addends, start=2):
             shape = addend.held(match.m, match.n)
-            got = _download(rt, held[at], shape, False)
             if self.channelwise:
-                # `linear_bias` reads the N values themselves; nothing to spread.
-                out.append(np.ascontiguousarray(got.reshape(-1)))
-                continue
-            # A gate and a residual are as long as the result already; a bias
-            # this kernel cannot read per-channel is spread to match.
-            out.append(np.ascontiguousarray(np.broadcast_to(got, (match.m, match.n))))
-        return out
+                # N values, repeated down each sub-tile by the host's packer: no
+                # walk on the card makes `ChannelBias` from row-major fp16.
+                host(_download(rt, held[at], shape, False).reshape(-1))
+            elif tuple(shape) == (match.m, match.n):
+                view(held[at], shape)
+            else:
+                # A bias this kernel cannot read per-channel is spread to match.
+                got = _download(rt, held[at], shape, False)
+                host(np.ascontiguousarray(np.broadcast_to(got, (match.m, match.n))))
+        return views, out
 
 
 class ChainRunner:
@@ -244,6 +276,37 @@ def _download(rt, addr: int, shape: tuple, transposed: bool):
     held = np.frombuffer(rt.read(addr, _words(2 * want)), FP16)[:want]
     held = held.reshape(shape)
     return np.ascontiguousarray(held.T if transposed else held)
+
+
+def _view(rt, addr: int, shape: tuple):
+    """A device tensor over tinygrad's own span, row-major fp16. It owns nothing:
+    release it with :func:`_drop`, never `release`."""
+    held = rt.values(rt, tuple(shape))
+    return held.claim(Buffer(addr, tuple(shape), LO.Flat()))
+
+
+def _drop(view) -> None:
+    """Free what the card made from a view, keeping the span the view names."""
+    view.buffers.pop(LO.Flat().key, None)
+    view.release()
+
+
+def _store(rt, out: int, got, shape: tuple) -> None:
+    """`got`'s contents as row-major fp16 at `out`, made on the card.
+
+    Raises :class:`KTPUUnsupported` when the card has no walk from the order
+    `got` is held in.
+    """
+    flat = got.buffers.get(LO.Flat().key)
+    if flat is not None:
+        rt.move(PM.copy(flat.addr, out, -(-flat.nbytes // 32) * 32), "ktpu:store")
+        return
+    held = next(iter(got.buffers.values()))
+    if not rt.reorder(held.addr, out, tuple(shape), held.layout, LO.Flat()):
+        raise KTPUUnsupported(
+            f"no walk on the card turns a {held.layout.key} result into row-major "
+            f"fp16; the result would have to cross the host"
+        )
 
 
 def _upload(rt, addr: int, held, want: int) -> None:

@@ -32,6 +32,11 @@ DEFAULT_TARGET = "sim"
 
 _device: Device | None = None
 
+#: The widest row one program folds directly: a row band unrolls every word
+#: of the row, and at 1024 softmax/layernorm images pass IMEM's 512 words. A
+#: wider row folds hierarchically, in `_VLMAX` sub-rows.
+_DIRECT = 512
+
 
 class Array(Tensor):
     """A device tensor and everything you can compute with it.
@@ -252,8 +257,8 @@ def relu(x: Tensor, **tiling) -> Tensor:
     return _o.relu(x, **tiling)
 
 
-def _fold(x: Tensor, width: int = _VLMAX, **tiling):
-    """`{}` when this row fits ONE reduction pass, else the `rows`/`part` for it.
+def _fold(x: Tensor, width: int = _VLMAX, direct: int = _DIRECT, **tiling):
+    """`{}` when this row folds in ONE program, else the `rows`/`part` for it.
 
     The dispatch a kernel cannot make: while tracing, an extent is a symbol and
     `x.cols > width` raises `TypeError`. Here the shape is a concrete tuple.
@@ -263,7 +268,7 @@ def _fold(x: Tensor, width: int = _VLMAX, **tiling):
     keeps it.
     """
     cols = int(x.shape[-1])
-    if cols <= width:
+    if cols <= direct and not cols % _LANES:
         return {}
     rows = _k.split(cols, width)
     part = tiling.get("part") or _k.part_for(rows * width)
@@ -273,9 +278,9 @@ def _fold(x: Tensor, width: int = _VLMAX, **tiling):
 def softmax(x: Tensor, keys: int | None = None, **tiling) -> Tensor:
     """Row-wise softmax, at ANY row width; over the first `keys` columns of it.
 
-    `VRED` folds at most VLMAX lanes, so a wider row goes to the hierarchical
-    kernel. Which one is not the caller's problem -- a DiT's 1024-wide row and
-    a 64-wide one are the same call.
+    A row past what one program folds goes to the hierarchical kernel. Which
+    one is not the caller's problem -- a DiT's 1024-wide row and a 64-wide one
+    are the same call.
 
     `keys` is for a row whose real length `VRED` has no fold for -- SDXL's
     77-token context -- padded with ZEROS to a width it does have. Raises

@@ -11,8 +11,10 @@ import itertools
 from kohakuaccel.dispatch import deal
 from kohakuaccel.lang import Dim, Stmt, resolve
 from kohakuaccel.lang import kernel as _traced
+from kohakuaccel.lang.iface import BATCH
 from kohakutpu.hw import vector as V
 from kohakutpu.isa import ISA
+from kohakutpu.isa.rowband import RowBandKernel
 from kohakutpu.isa.vecemit import (
     BAND_IMAGE,
     BATCH_BYTES,
@@ -24,7 +26,6 @@ from kohakutpu.isa.vecemit import (
     BandKernel,
     Chain,
     ResidentEpilogueKernel,
-    RowReduceKernel,
     Spread,
     VecEmitError,
     forward,
@@ -32,9 +33,14 @@ from kohakutpu.isa.vecemit import (
 )
 from kohakutpu.lang import cluster, vector
 from kohakutpu.lang.buffers import PART, In, Out
-from kohakutpu.lang.errors import CannotFuse, LangError
+from kohakutpu.lang.errors import CannotFuse, CutsRows, LangError
 from kohakutpu.lang.vector import Const, Ref, Resident
-from kohakutpu.tiling import ENTRY_CYCLES, FILL_CYCLES, WORD_CYCLES
+from kohakutpu.tiling import (
+    FETCH_WORD_CYCLES,
+    FILL_CYCLES,
+    VC_WORD_CYCLES,
+    WORD_CYCLES,
+)
 
 from kohakutpu import layout as LO
 
@@ -186,6 +192,10 @@ class TpuBackend:
         the fused form and the COMPILER stages it where that is impossible.
         Every other refusal is about the expression and no retiling fixes it.
         """
+        if isinstance(exc, CutsRows):
+            per = knobs.get("part", PART)
+            whole = max(1, per // exc.cols) * exc.cols
+            return {**knobs, "part": whole} if whole != per else None
         if not isinstance(exc, CannotFuse) or not knobs.get("fuse", True):
             return None
         return {**knobs, "fuse": False}
@@ -301,6 +311,7 @@ class TpuBackend:
         _agree(compiled)
         _reachable(compiled)
         _walkable(compiled)
+        _whole_rows(compiled)
 
     def _requirements(self, compiled) -> dict:
         """Buffer -> the order each stage needs it in, in stage order.
@@ -372,6 +383,23 @@ class TpuBackend:
                             # group, so it never takes the result's order.
                             pin(le.name, LO.Flat() if le.period else order, at)
         return wanted
+
+    def part_for(self, machine, signature, extents: dict) -> int | None:
+        """A `part=` that gives every vector core an instance, or None for PART.
+
+        Only where the call is too small to: fewer batch elements than cores
+        and less than PART a core. Whole RUN batches, so `_stride` keeps it;
+        a fold that would cut a row is rounded to whole rows by `relax`.
+        """
+        cores = machine.count("VC")
+        batch = int(extents.get(BATCH, 1) or 1)
+        if cores < 2 or batch >= cores:
+            return None
+        elems = max(_count(p.resolve_trailing(extents)) for p in signature.ports)
+        want = -(-cores // batch)
+        per = -(-elems // want)
+        per = -(-per // BATCH_ELEMS) * BATCH_ELEMS
+        return per if per < signature.knobs.get("part", PART) else None
 
     def regrid(self, compiled, stage) -> tuple | None:
         """The extent an elementwise stage needs, now that its layout is known.
@@ -466,6 +494,12 @@ class TpuBackend:
                         )
                     )
                 case "gemm":
+                    if not self.isa.legal_nk(s.args["nk"]):
+                        raise LangError(
+                            f"{compiled.name}: nk={s.args['nk']} -- the pumped sweep takes "
+                            f"K-blocks in pairs and an odd nk >= 3 corrupts sub-tile (0, 0) "
+                            f"on the card; use nk=1 or an even nk"
+                        )
                     # `acc` counts K chunks, so it also picks the bank the fill
                     # ahead of this sweep wrote.
                     bank = int(s.args["acc"]) % BANKS
@@ -484,13 +518,23 @@ class TpuBackend:
                     )
                 case "drain" if s.args.get("node"):
                     dst = _receiver(compiled, stage, inst.at)
-                    agent = compiled.machine.agent
+                    acked = compiled.machine.transfer_acks
+                    agent = compiled.machine.agent if acked else (0, 0)
+                    turn = _rank(compiled, stage, inst.at) % _buffers(compiled, stage)
+                    held = sum(
+                        1
+                        for t in inst.stmts
+                        if t.kind == "drain" and t.args.get("node")
+                    )
                     words.append(
                         self.isa.drain(
                             # A node-addressed drain sends addr[20:5] as the
                             # descriptor's granule off, so this is an L1 word.
                             addr=ResidentEpilogueKernel.peer_word(
-                                s.args["gm"] * s.args["gn"], s.args.get("slot", 0)
+                                s.args["gm"] * s.args["gn"],
+                                s.args.get("slot", 0),
+                                turn,
+                                held,
                             )
                             * LO.WORD_BYTES,
                             n=s.args["gm"] * s.args["gn"],
@@ -498,7 +542,7 @@ class TpuBackend:
                             dst_x=dst[0],
                             dst_y=dst[1],
                             dbuf=0,
-                            dflags=DFLAG_SIGNAL,
+                            dflags=DFLAG_SIGNAL if acked else 0,
                             dack_x=agent[0],
                             dack_y=agent[1],
                         )
@@ -508,10 +552,15 @@ class TpuBackend:
                     at = (s.args["i"] * stage.body_grid[1] + s.args["j"]) * span
                     base = self._base(compiled, stage, inst, addrs, s.args["result"])
                     addr = base + at * LO.WORD_BYTES
-                    if self.fuse_drain and last_gemm == len(words) - 1:
+                    behind = 0 <= last_gemm == len(words) - 1
+                    g = self.isa.GEMM.decode(words[last_gemm]) if behind else {}
+                    if (
+                        self.fuse_drain
+                        and behind
+                        and self.isa.can_emit(g["acc"], g["nk"])
+                    ):
                         # The chain's last sweep writes each sub-tile as its last
                         # K block completes; the DRAIN only waits for them.
-                        g = self.isa.GEMM.decode(words[last_gemm])
                         g.pop("op", None)
                         words[last_gemm] = self.isa.GEMM.encode(
                             **{**g, "emit": 1, **self.isa.split_addr(addr)}
@@ -526,8 +575,7 @@ class TpuBackend:
     def _vector(self, compiled, stage, inst, addrs: dict) -> list:
         """One program per RUN of chain statements, not one per statement.
 
-        A fused epilogue keeps its own image and closes the run before it, and
-        so does a lone reduction, which is the program it has always been.
+        A fused epilogue keeps its own image and closes the run before it.
         """
         words: list[int] = []
         run: list = []
@@ -535,10 +583,7 @@ class TpuBackend:
         def flush() -> None:
             if not run:
                 return
-            if len(run) == 1 and run[0].kind == "reduce":
-                words.extend(self._fold(compiled, stage, inst, addrs, run[0]))
-            else:
-                words.extend(self._band(compiled, stage, inst, addrs, list(run)))
+            words.extend(self._band(compiled, stage, inst, addrs, list(run)))
             run.clear()
 
         for s in inst.stmts:
@@ -553,7 +598,8 @@ class TpuBackend:
             span = s.args["gm"] * s.args["gn"]
             at = (s.args["i"] * stage.body_grid[1] + s.args["j"]) * span
             base = self._base(compiled, stage, inst, addrs, s.args["result"])
-            made = _epilogue(compiled, s)
+            buffers = _buffers(compiled, stage)
+            made = _epilogue(compiled, s, buffers)
             side = 0
             if made.operand is not None:
                 # `ChannelBias` is one word a column group, so tile `j` starts
@@ -563,23 +609,10 @@ class TpuBackend:
                     self._base(compiled, stage, inst, addrs, leaf.name)
                     + s.args["j"] * s.args["gn"] * LO.WORD_BYTES
                 )
-            words += made.flits(base + at * LO.WORD_BYTES, side)
+            region = _rank(compiled, stage, inst.at) % buffers
+            words += made.flits(base + at * LO.WORD_BYTES, side, region)
         flush()
         return words
-
-    def _fold(self, compiled, stage, inst, addrs: dict, stmt) -> list:
-        """One reduction on its own: the pass a `RowReduceKernel` has always run.
-
-        A band of exactly one reduce chain lowers here rather than through
-        :class:`BandKernel`, so every shipped reduction keeps its bytes.
-        """
-        kernel = RowReduceKernel(
-            stmt.args["fold"], stmt.args["rows"], stmt.args["cols"]
-        )
-        return kernel.flits(
-            self._base(compiled, stage, inst, addrs, stmt.args["source"]),
-            self._base(compiled, stage, inst, addrs, stmt.args["result"]),
-        )
 
     def _band(self, compiled, stage, inst, addrs: dict, stmts: list) -> list:
         """One vector program for a run of chain statements.
@@ -591,6 +624,8 @@ class TpuBackend:
         _spellable(compiled, stmts)
         try:
             kernel, keys, span = _build(compiled, stmts, stride)
+        except RowsCut as exc:
+            raise CutsRows(_why(compiled, stmts, exc), exc.cols) from None
         except VecEmitError as exc:
             raise LangError(_why(compiled, stmts, exc)) from None
         # Each leaf carries its OWN part, so an expression can read one block
@@ -716,18 +751,20 @@ def _build(compiled, stmts: list, stride: int | None = None) -> tuple:
     nin = len(keys)
     walks = [_walk(compiled, leaf) for leaf in keys]
     groups = _regions(stmts)
-    vl = V.VLMAX
+    word = FETCH_WORD_CYCLES if compiled.machine.fetched else WORD_CYCLES
     if any(_folds(s) for s in stmts):
         span = _folded(stmts, span)
-        vl = _width(stmts, span)
-    return _fit(chains, nin, span, vl, consts, walks, groups), keys, span
+        cols = _width(stmts, span)
+        made = _fit_rows(chains, nin, span, cols, consts, walks, groups, word)
+        return made, keys, span
+    return _fit(chains, nin, span, V.VLMAX, consts, walks, groups, word), keys, span
 
 
 def _one_row(run: list, extents: dict) -> bool:
-    """Whether a run that folds names ONE row `VRED` can walk, resolved.
+    """Whether a run that folds names ONE row shape of whole words, resolved.
 
     Answered before any layout exists, so it is the conservative half of
-    `_width`: one row shape across the run, a width the fold tree takes, and an
+    `_width`: one row shape across the run, whole 16-element words, and an
     extent that is a number here rather than after the grid is built.
     """
     shapes = {(s.args.get("rows"), s.args.get("cols")) for s in run if _folds(s)}
@@ -738,8 +775,7 @@ def _one_row(run: list, extents: dict) -> bool:
     cols = {_extent(s.args["cols"], extents) for s in run if _folds(s)}
     if len(cols) > 1 or None in cols:
         return False
-    wide = cols.pop()
-    return not wide % V.LANES and wide <= V.VLMAX
+    return not cols.pop() % V.LANES
 
 
 def _extent(value, extents: dict) -> int | None:
@@ -782,14 +818,49 @@ def _walk(compiled, leaf):
     )
 
 
-def _width(stmts: list, span: int) -> int:
-    """Elements one step covers when this run folds: the ROW, not VLMAX.
+def _count(shape) -> int:
+    n = 1
+    for axis in shape:
+        n *= int(axis)
+    return n
 
-    `VRED` folds exactly VL lanes, so a reducing band steps a row at a time.
-    An instance needs WHOLE ROWS, not the whole array: a row is folded by one
-    step, so which instance takes it does not change the answer. Raises
-    :class:`VecEmitError` when the run names two row shapes, when its span is
-    not whole rows, or when the row is not a width the tree folds.
+
+def _whole_rows(compiled) -> None:
+    """Raise :class:`CutsRows` for a folding statement whose instance cuts a row.
+
+    Here, inside compile, so `relax` retries with a `part=` of whole rows
+    rather than the encoder refusing at dispatch.
+    """
+    for stage in compiled.stages:
+        if stage.unit != "VC" or not stage.instances:
+            continue
+        for s in stage.instances[0].stmts:
+            if not (_bandable(s) and _folds(s)) or s.args.get("cols") is None:
+                continue
+            stride = _stride(compiled, stage, s, _per(compiled))
+            try:
+                _width([s], _folded([s], _span(compiled, s, stride)))
+            except RowsCut as exc:
+                raise CutsRows(f"{compiled.name}: {exc}", exc.cols) from None
+            except VecEmitError:
+                continue
+
+
+class RowsCut(VecEmitError):
+    """An instance span that is not whole rows of `cols`."""
+
+    def __init__(self, message: str, cols: int) -> None:
+        super().__init__(message)
+        self.cols = cols
+
+
+def _width(stmts: list, span: int) -> int:
+    """The row width of a run that folds: a step holds whole rows.
+
+    An instance needs WHOLE ROWS, not the whole array: which instance folds a
+    row does not change the answer. Raises :class:`VecEmitError` when the run
+    names two row shapes, when its span is not whole rows, or when the row is
+    not whole 16-element words.
     """
     shapes = {(s.args["rows"], s.args["cols"]) for s in stmts if _folds(s)}
     if len(shapes) > 1:
@@ -797,32 +868,43 @@ def _width(stmts: list, span: int) -> int:
             f"this run folds {sorted(shapes)}; one program walks one row shape"
         )
     rows, cols = shapes.pop()
-    if cols % V.LANES or cols > V.VLMAX:
+    if cols % V.LANES:
         raise VecEmitError(
-            f"a {cols}-wide row: VRED needs a multiple of {V.LANES} at most "
-            f"{V.VLMAX}, or the tree carries a partial across steps. A wider row "
-            f"folds hierarchically instead -- `kernels.wide` takes it as "
-            f"`(-1, {V.VLMAX})` with `rows=K.split(cols)`"
+            f"a {cols}-wide row: a fold walks whole {V.LANES}-element words. Pad "
+            f"the row with what the fold ignores and mask it"
         )
     if span % cols or span > rows * cols:
-        raise VecEmitError(
+        raise RowsCut(
             f"this run covers {span} elements against {rows}x{cols} folded "
-            f"rows; a step that is not one whole row folds two into one answer"
+            f"rows; a step that is not one whole row folds two into one answer",
+            cols,
         )
     return cols
 
 
 def _fit(
-    chains, nin: int, span: int, vl: int, consts=(), walks=None, groups=None
+    chains,
+    nin: int,
+    span: int,
+    vl: int,
+    consts=(),
+    walks=None,
+    groups=None,
+    word: float = WORD_CYCLES,
 ) -> BandKernel:
     """The band covering `span` in the fewest RUNs a core holds, `vl` per step.
 
     A RUN stores its WHOLE batch whatever `nelem` says, so the steps one RUN
     takes must DIVIDE the span or the last writes over what follows it. The node
     streams a RUN's base words while the core runs the one before, so a RUN
-    costs the larger of its core cycles and its words at `WORD_CYCLES` each;
+    costs the larger of its core cycles and its words at `word` cycles each;
     the cheapest total wins, an image over BAND_IMAGE only when nothing under
     it fits. Raises the emitter's own refusal for a band no RUN fits.
+
+    A core's memory traffic is priced at VC_WORD_CYCLES a 32-B word, fills and
+    drains alike: one half fills, computes and drains in turn; with more, the
+    first fill is exposed and each half costs the larger of its compute and
+    its traffic.
     """
     steps = max(1, -(-span // vl))
     why: Exception = VecEmitError(f"a {steps}-step band fits no RUN")
@@ -846,12 +928,76 @@ def _fit(
                 why = exc
                 continue
             words = halves * (nin + len(made.spans)) + 1
-            # A 128-B entry is four 32-B flits (tiling.py), so a word is a quarter.
-            core = made.cycles(ENTRY_CYCLES / 4, FILL_CYCLES)
-            total = steps // per_run * max(core, words * WORD_CYCLES)
+            compute = made.cycles(0.0, 0.0) / halves
+            fill = nin * made.bw * VC_WORD_CYCLES
+            drain = len(made.spans) * made.bw * VC_WORD_CYCLES
+            if halves == 1:
+                core = FILL_CYCLES + fill + compute + drain
+            else:
+                core = FILL_CYCLES + fill + halves * max(compute, fill + drain)
+            total = steps // per_run * max(core, words * word)
             key = (len(made.image) > BAND_IMAGE, total, len(made.image))
             if best_key is None or key < best_key:
                 best, best_key = made, key
+    if best is None:
+        raise why
+    return best
+
+
+def _fit_rows(
+    chains,
+    nin: int,
+    span: int,
+    cols: int,
+    consts=(),
+    walks=None,
+    groups=None,
+    word: float = WORD_CYCLES,
+) -> RowBandKernel:
+    """The row band covering `span`, priced as `_fit` prices a band.
+
+    A step is `rb` rows, one a chunk; the most rows a register holds that the
+    instance's row count allows, and fewer when L1 or the image refuse it.
+    Raises the emitter's own refusal for a band no RUN fits.
+    """
+    rows = max(1, span // cols)
+    why: Exception = VecEmitError(f"{rows} rows of {cols} fit no row band")
+    best, best_key = None, None
+    for rb in (8, 4, 2, 1):
+        if rows % rb:
+            continue
+        steps = rows // rb
+        for per_run in [d for d in range(steps, 0, -1) if steps % d == 0]:
+            for halves in (3, 2, 1):
+                if per_run % halves:
+                    continue
+                try:
+                    made = RowBandKernel(
+                        chains,
+                        nin,
+                        cols,
+                        rb=rb,
+                        chunks=per_run // halves,
+                        consts=consts,
+                        walks=walks,
+                        groups=groups,
+                        halves=halves,
+                    )
+                except (VecEmitError, ValueError) as exc:
+                    why = exc
+                    continue
+                words = halves * (nin + len(made.spans)) + 1
+                compute = made.cycles(0.0, 0.0) / halves
+                fill = nin * made.bw * VC_WORD_CYCLES
+                drain = len(made.spans) * made.bw * VC_WORD_CYCLES
+                if halves == 1:
+                    core = FILL_CYCLES + fill + compute + drain
+                else:
+                    core = FILL_CYCLES + fill + halves * max(compute, fill + drain)
+                total = steps // per_run * max(core, words * word)
+                key = (len(made.image) > BAND_IMAGE, total, len(made.image))
+                if best_key is None or key < best_key:
+                    best, best_key = made, key
     if best is None:
         raise why
     return best
@@ -1069,7 +1215,20 @@ def _receiver(compiled, stage, at: tuple) -> tuple:
     return deal([i.at for i in stage.instances], cores)[at]
 
 
-def _epilogue(compiled, stmt) -> ResidentEpilogueKernel:
+def _rank(compiled, stage, at: tuple) -> int:
+    """Instance `at`'s place among the tiles its core receives, in arrival order:
+    `deal`'s round-robin over sorted keys, so its index over the core count."""
+    cores = compiled.machine.coords("VC")
+    return sorted(i.at for i in stage.instances).index(at) // len(cores)
+
+
+def _buffers(compiled, stage) -> int:
+    """L1 regions a fused epilogue takes turns over: two once a core receives
+    more than one tile, so one lands while the other is worked on."""
+    return 2 if len(stage.instances) > len(compiled.machine.coords("VC")) else 1
+
+
+def _epilogue(compiled, stmt, buffers: int = 1) -> ResidentEpilogueKernel:
     """The vector program for one fused epilogue statement.
 
     Raises :class:`LangError` for a leaf that is neither the accumulator nor a
@@ -1109,6 +1268,7 @@ def _epilogue(compiled, stmt) -> ResidentEpilogueKernel:
             operand=side[0] if side else None,
             gm=stmt.args["gm"],
             gn=stmt.args["gn"],
+            buffers=buffers,
         )
     except (VecEmitError, ValueError) as exc:
         raise CannotFuse(
@@ -1134,19 +1294,21 @@ def _pair(compiled) -> None:
     for at, stage in fused:
         # SIMULATED, mm_mesh_peer: left at zero the answer goes to the SENDING
         # cluster, which drops it, and no status register ever moves.
-        if compiled.machine.agent is None:
+        if compiled.machine.transfer_acks and compiled.machine.agent is None:
             raise CannotFuse(
                 f"{compiled.name}: a fused epilogue's transfer is acknowledged to "
                 f"the orchestrator and this machine does not say where it is; set "
                 f"MachineSpec.agent, or drain into a temp and write the "
                 f"elementwise pass separately"
             )
-        if len(stage.instances) > len(cores):
+        if len(stage.instances) > len(cores) and not compiled.machine.stream_epilogue:
             raise CannotFuse(
                 f"{compiled.name}: {len(stage.instances)} tiles drain into "
-                f"{len(cores)} vector cores, and a core takes one open stream at "
-                f"a time. Raise gm/gn until the grid fits, or drain into a temp "
-                f"and write the elementwise pass separately"
+                f"{len(cores)} vector cores, a core takes one open stream at a "
+                f"time, and this runtime does not sequence them tile by tile "
+                f"(MachineSpec.stream_epilogue). Raise gm/gn until the grid "
+                f"fits, or drain into a temp and write the elementwise pass "
+                f"separately"
             )
         after = compiled.stages[at + 1] if at + 1 < len(compiled.stages) else None
         held = [s for s in _stmts(after or stage) if s.args.get("resident")]
@@ -1161,7 +1323,7 @@ def _pair(compiled) -> None:
         }
         after.nodes = cores
         for s in held:
-            _epilogue(compiled, s)
+            _epilogue(compiled, s, _buffers(compiled, stage))
 
 
 def _bursts(stmts) -> int:

@@ -78,6 +78,29 @@ def spent(dev, run):
     return {k: dev.counters[k] - before[k] for k in WATCH}, got
 
 
+def programs(dev, run) -> list:
+    """`(stage name, unit, words)` of every kernel stage `run` dispatched.
+
+    Relayout walks are left out: the tinygrad path converts its row-major
+    operands and result ON THE CARD, which a host-packed library call does on
+    the host, so the KERNEL's own program is what the two must share.
+    """
+    seen = []
+    real = dev.dispatch
+
+    def spy(payloads, unit, name="kernel", nodes=None, acks=None):
+        if name != "relayout":
+            seen.append((name, unit, sum(len(w) for w in payloads.values())))
+        return real(payloads, unit, name, nodes, acks)
+
+    dev.dispatch = spy
+    try:
+        run()
+    finally:
+        del dev.dispatch
+    return seen
+
+
 # ------------------------------------------------------------- the round trip
 def test_a_tensor_round_trips_through_the_arena(dev):
     """Step 1: the allocator alone, with no kernel anywhere in it."""
@@ -184,12 +207,30 @@ def test_the_epilogue_dispatches_the_librarys_program(dev, operands):
     """
     xa, wa = operands
     kern, knobs = picked(dev, *xa.shape, wa.shape[0])
-    theirs, _ = spent(
+    theirs = programs(
         dev, lambda: kern(dev.tensor(xa), dev.tensor(wa), **knobs).numpy()
     )
     x, w = Tensor(xa, device=ktpugrad.NAME), Tensor(wa, device=ktpugrad.NAME)
-    through, _ = spent(dev, lambda: (x @ w.T).silu().numpy())
-    assert through == theirs
+    through = programs(dev, lambda: (x @ w.T).silu().numpy())
+    assert through == theirs and theirs
+
+
+def test_a_matched_kernel_moves_no_byte_across_the_link(dev, operands):
+    """Operands are read where tinygrad put them and the result is written into
+    tinygrad's own span, both converted on the card: once the inputs are up,
+    running the kernel sends and fetches nothing."""
+    xa, wa = operands
+    x = Tensor(xa, device=ktpugrad.NAME).realize()
+    w = Tensor(wa, device=ktpugrad.NAME).realize()
+    ((x @ w.T).silu()).realize()  # compile, and every one-time table
+    before = dict(dev.counters)
+    y = ((x @ w.T).silu()).realize()
+    assert dev.counters["fetched"] == before["fetched"]
+    assert dev.counters["sent"] == before["sent"]
+    assert dev.counters.get("host_operands", 0) == before.get("host_operands", 0)
+    want = xa.astype(np.float32) @ wa.astype(np.float32).T
+    want = want / (1 + np.exp(-want))
+    assert np.abs(y.numpy() - want).max() / np.abs(want).max() < 0.05
 
 
 def test_there_is_ONE_kernel_to_return_now_that_the_twin_is_gone(dev, operands):
@@ -313,7 +354,7 @@ def test_a_bias_then_a_clamp_dispatches_the_fused_program(dev, operands, bias):
     """Same rounds and flits as the library kernel, or the fusion is a claim."""
     xa, wa = operands
     spread = np.broadcast_to(bias, (M, N))
-    fused, _ = spent(
+    fused = programs(
         dev,
         lambda: K.linear_add_relu(
             dev.tensor(xa), dev.tensor(wa), dev.tensor(spread)
@@ -321,8 +362,8 @@ def test_a_bias_then_a_clamp_dispatches_the_fused_program(dev, operands, bias):
     )
     x, w = Tensor(xa, device=ktpugrad.NAME), Tensor(wa, device=ktpugrad.NAME)
     b = Tensor(bias, device=ktpugrad.NAME)
-    through, _ = spent(dev, lambda: ((x @ w.T) + b).relu().numpy())
-    assert through == fused
+    through = programs(dev, lambda: ((x @ w.T) + b).relu().numpy())
+    assert through == fused and fused
 
 
 def test_a_bias_then_a_clamp_agrees_with_numpy(dev, operands, bias):

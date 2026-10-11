@@ -437,6 +437,12 @@ class ResidentEpilogueKernel:
     `operand` is a leaf index read per channel: a bias, laid out by
     `layout.ChannelBias` as one word per column group, filled once and re-read
     at stride 0.
+
+    `buffers` regions, each holding every delivered tile, so a core runs one
+    tile's epilogue while the next tile lands in the other region. Every L1
+    access but the drain goes through `AD_L1`, whose base is the region; the
+    drain's L1 word is an immediate, so the image differs per region in that
+    one word.
     """
 
     #: Where slot 0's tile starts. Slot `r` starts `r * span_w` above it.
@@ -446,13 +452,15 @@ class ResidentEpilogueKernel:
     AD_DRAIN, AD_BFILL, AD_BREAD = 1, 2, 3
 
     @staticmethod
-    def peer_word(words: int, slot: int = 0) -> int:
-        """L1 word where slot `slot`'s delivered tile starts.
+    def peer_word(words: int, slot: int = 0, buffer: int = 0, held: int = 1) -> int:
+        """L1 word where slot `slot`'s delivered tile starts in region `buffer`,
+        a region holding `held` tiles.
 
         The sender needs this before the epilogue exists, so it is arithmetic on
         `words` rather than a field of a built kernel.
         """
-        return slot * (-(-words // CHUNK_WORDS) * CHUNK_WORDS)
+        span_w = -(-words // CHUNK_WORDS) * CHUNK_WORDS
+        return (buffer * held + slot) * span_w
 
     def __init__(
         self,
@@ -463,6 +471,7 @@ class ResidentEpilogueKernel:
         operand: int | None = None,
         gm: int = 0,
         gn: int = 0,
+        buffers: int = 1,
     ) -> None:
         if words > 256:
             raise VecEmitError(
@@ -483,9 +492,11 @@ class ResidentEpilogueKernel:
         # A VLD walks a whole VLMAX chunk whatever the tail is, so each region
         # is padded to one and only `words` of it are drained.
         self.span_w = -(-words // CHUNK_WORDS) * CHUNK_WORDS
-        self.side_word = len(held) * self.span_w
+        self.buffers = buffers
+        self.region_w = len(held) * self.span_w
+        self.side_word = buffers * self.region_w
         side = gn if operand is not None else 0
-        require_l1(f"fused epilogue {words}w", self.side_word + side)
+        require_l1(f"fused epilogue {words}w x{buffers}", self.side_word + side)
         if operand is not None and (not gn or not gm):
             raise VecEmitError("a per-channel operand needs the tile's gm/gn")
 
@@ -546,7 +557,11 @@ class ResidentEpilogueKernel:
         for value, reg in self.sconst.items():
             pre += [V.vseti(reg), V.e8m15(value)]
         pre += [V.vsetvl(S_VL), V.vsetmode(V.FLAT)]
-        self.image = pre + body + [V.vdrain(self.AD_DRAIN, 0), V.vhalt()]
+        self.images = [
+            pre + body + [V.vdrain(self.AD_DRAIN, b * self.region_w), V.vhalt()]
+            for b in range(buffers)
+        ]
+        self.image = self.images[0]
 
     def _operand(self, src: int, g: int) -> tuple[int, int]:
         """A chain source as ``(selector, register)`` for step `g` of a group."""
@@ -563,9 +578,10 @@ class ResidentEpilogueKernel:
             )
         return V.SRC_V, self.r_src[g][src]
 
-    def static_descs(self) -> list[int]:
-        """The L1 window, the drain, and a bias's fill and stride-0 read, all dims."""
-        out = [V.desc_flit(AD_L1, 0, 0)]
+    def static_descs(self, buffer: int = 0) -> list[int]:
+        """The L1 window over region `buffer`, the drain, and a bias's fill and
+        stride-0 read, all dims."""
+        out = [V.desc_flit(AD_L1, 0, buffer * self.region_w)]
         out += _dims(AD_L1, [(1, CHUNK_WORDS)])
         out += _dims(self.AD_DRAIN, [(V.WORD_BYTES, self.words)])
         if self.operand is None:
@@ -579,10 +595,10 @@ class ResidentEpilogueKernel:
             + _dims(self.AD_BREAD, [(1, self.gn), (0, self.gm)])
         )
 
-    def flits(self, dst: int, side: int = 0) -> list[int]:
-        """Image, descriptors and one RUN. `side` is the per-channel operand's
-        address, ignored when this epilogue reads none."""
-        out = imem_flits(self.image) + self.static_descs()
+    def flits(self, dst: int, side: int = 0, buffer: int = 0) -> list[int]:
+        """Image, descriptors and one RUN over region `buffer`. `side` is the
+        per-channel operand's address, ignored when this epilogue reads none."""
+        out = imem_flits(self.images[buffer]) + self.static_descs(buffer)
         if self.operand is not None:
             out.append(V.desc_flit(self.AD_BFILL, 0, side))
         return out + [V.desc_flit(self.AD_DRAIN, 0, dst), V.run_flit(0)]

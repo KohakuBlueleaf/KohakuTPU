@@ -14,3 +14,15 @@ class CannotFuse(LangError):
     where the unfused form would succeed -- never for an expression that is
     wrong however it is scheduled.
     """
+
+
+class CutsRows(LangError):
+    """An instance of a stage that folds rows would start part way through one.
+
+    `cols` is the row width; an instance `part=` of whole rows fixes it, which
+    the compiler retries with rather than refusing.
+    """
+
+    def __init__(self, message: str, cols: int) -> None:
+        super().__init__(message)
+        self.cols = cols

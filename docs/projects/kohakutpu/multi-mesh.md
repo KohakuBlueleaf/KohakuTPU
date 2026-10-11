@@ -28,6 +28,37 @@ This page is specific on purpose.
 
 ---
 
+## 0. v8t and v9: one memory, several nodes
+
+From v8t on, every die's node reaches DRAM through the partitioned Xache
+(`scripts/tcl/v8t/00_config.tcl`, [pxache](../kohakuaxi/pxache.md)): one flat
+16 GB, interleaved over the four channels at 16 KB, every node master reaching
+every home. Sections 1 to 8 describe the per-mesh memory of the earlier cards;
+on these cards:
+
+- **A value written by one node's units is read by another's at the same
+  address.** Nothing is copied between meshes; splitting a layer across nodes
+  costs ordering, not transfer. A column split's all-gather is free.
+- **One spelling per address: mesh bits `[37:36]` zero.** Unit DRAM traffic is
+  local whatever those bits say (`mag_dram_port` reads them only for the
+  staging aperture), but the Xache carries bits 34 to 39 into the tag and the
+  DRAM address, so two spellings are two cache lines.
+- **Mover writes are still split by mesh bits** (`mag_ilink`): on node `i != 0`
+  a mesh-0 write crosses the interlink a word per packet. Run moves on node 0.
+  Interlink config bit 0 gates the WHOLE outbound link, doorbells included, so
+  it is not a way to keep them local.
+- **Order is a doorbell.** A node rings another once its units have completed
+  (a completion is posted after its writes are acknowledged), and the reader's
+  package waits for the ring: 1,040-1,060 node cycles per round trip on the
+  Verilated card, firmware included, on two and four nodes.
+
+`kohakutpu.nodes.Nodes` is the runtime for these cards: one device over every
+node, one arena in the shared memory, each stage's instances cut into one share
+per node's package, and RING / WAIT_BELL steps before a stage that may read
+another node's writes. Kernels, ops and the tinygrad seam see one device.
+
+---
+
 ## 1. What each mesh carries
 
 **Every index is the SLR.** Mesh `i` sits in SLR `i`, is station `i` on the

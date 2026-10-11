@@ -349,6 +349,16 @@ class ClusterUnit(UnitModel):
         self.reading[1] = (f["bbank"] * BANK_ENTRIES + f["boff"], gn * nk)
         # An emitting sweep hands its sub-tiles out as it finishes them; a fused
         # DRAIN only waits for them, however much later it comes.
+        if not ISA.legal_nk(nk):
+            raise ModelError(
+                f"a GEMM of nk {nk}: the pumped sweep takes K-blocks in pairs and an "
+                f"odd nk >= 3 corrupts sub-tile (0, 0) on the card"
+            )
+        if f["emit"] and not ISA.can_emit(f["acc"], nk):
+            raise ModelError(
+                f"an emitting GEMM (nk {nk}, acc 0) also opens its tile: the "
+                f"accumulator loads and emits nothing, and its fused DRAIN hangs"
+            )
         if f["emit"]:
             self.emitted = (got, (gm, gn))
 

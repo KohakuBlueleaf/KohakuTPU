@@ -93,6 +93,23 @@ class MachineSpec:
     #: Mesh index pairs a link joins, undirected. EMPTY MEANS FULLY CONNECTED,
     #: which is what a machine that never said otherwise has always assumed.
     links: tuple[tuple[int, int], ...] = ()
+    #: Identical meshes over ONE shared memory that a stage's instances are
+    #: dealt across, each sending its share through its own node. The unit
+    #: table is one mesh's; a planner multiplies.
+    dispatchers: int = 1
+    #: Whether units' words stream from memory through a fetch port rather than
+    #: one mailbox send each: a word then costs memory bandwidth, not firmware.
+    fetched: bool = False
+    #: Whether the runtime sequences a fused epilogue tile by tile, so several
+    #: clusters' tiles may take turns draining into one vector core.
+    stream_epilogue: bool = False
+    #: Whether a unit-to-unit transfer's acknowledgement reaches whoever
+    #: dispatches. True for the host (the agent's NODE_STATUS mirror). False
+    #: node-dispatched on v9: a receiver reads an ack target of 0 as "the
+    #: sender" (vec_cu.v), the node's mailbox IS (0, 0), and the node cannot
+    #: read the agent's mirror -- so a streamed epilogue gates on the cluster
+    #: retiring its drain instead.
+    transfer_acks: bool = True
 
     def __post_init__(self):
         meshes = tuple(self.meshes) or (

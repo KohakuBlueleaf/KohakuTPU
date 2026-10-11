@@ -14,6 +14,11 @@ def _op(word: int) -> int:
     return (word >> 252) & 0xF
 
 
+def node_drain(word: int) -> bool:
+    """Whether `word` is a DRAIN into a NoC node (a fused epilogue's transfer)."""
+    return _op(word) == OP_DRAIN and bool(ISA.DRAIN.decode(word).get("dnode", 0))
+
+
 def late_drains(words: list[int]) -> list[int]:
     """`words` with each fused DRAIN moved to just before the next emitting GEMM.
 

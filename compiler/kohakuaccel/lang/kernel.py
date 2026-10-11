@@ -464,10 +464,21 @@ class Kernel:
         functools.update_wrapper(self, fn)
 
     def knobs_for(self, machine, extents: dict, given: dict) -> dict:
-        """`given`, completed by the tiler when the caller named none of its knobs."""
-        if self.tiler is None or any(k in given for k in self.tiler.knobs):
-            return given
-        return {**self.tiler(machine, extents), **given}
+        """`given`, completed by the tiler when the caller named none of its knobs,
+        and by the backend's `part_for` when the kernel has a `part=` it left open."""
+        knobs = given
+        if self.tiler is not None and not any(k in given for k in self.tiler.knobs):
+            knobs = {**self.tiler(machine, extents), **given}
+        part_for = getattr(self._backend, "part_for", None)
+        if (
+            part_for is not None
+            and "part" in self.signature.knobs
+            and "part" not in knobs
+        ):
+            per = part_for(machine, self.signature, extents)
+            if per is not None:
+                knobs = {**knobs, "part": per}
+        return knobs
 
     @property
     def backend(self) -> Backend:
@@ -530,14 +541,17 @@ class Kernel:
         got = self._compiled.get(key)
         if got is not None:
             return got
-        try:
-            out = self._build(machine, extents, regrid, settings)
-        except Exception as exc:
-            relax = getattr(self._backend, "relax", None)
-            eased = relax(exc, settings) if relax is not None else None
-            if eased is None:
-                raise
-            out = self._build(machine, extents, regrid, eased)
+        relax = getattr(self._backend, "relax", None)
+        # Each retry changes a different knob, so a few at most ever apply.
+        for _ in range(4):
+            try:
+                out = self._build(machine, extents, regrid, settings)
+                break
+            except Exception as exc:
+                eased = relax(exc, settings) if relax is not None else None
+                if eased is None or eased == settings:
+                    raise
+                settings = eased
         self._compiled[key] = out
         return out
 
