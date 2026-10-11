@@ -227,6 +227,28 @@ def attention_case(heads, length=1024, d=64):
     return make, check, ("mac", 2 * heads * length * length * d)
 
 
+def ffn_case(m=1024, d=1024, hidden=2048, glu=False):
+    """silu(x w1^T) w2^T (with `glu`: times x w3^T before w2), network-init
+    weights."""
+
+    def make(rng):
+        x = rng.standard_normal((m, d)).astype(np.float16)
+        w1 = (rng.standard_normal((hidden, d)) / np.sqrt(d)).astype(np.float16)
+        w2 = (rng.standard_normal((d, hidden)) / np.sqrt(hidden)).astype(np.float16)
+        ins = {"x": x, "w1": w1, "w2": w2}
+        if glu:
+            ins["w3"] = (rng.standard_normal((hidden, d)) / np.sqrt(d)).astype(np.float16)
+        return ins, ins
+
+    def check(r, o):
+        a = silu(mxmm(r["x"], r["w1"]).astype(np.float16))
+        if glu:
+            a = a * mxmm(r["x"], r["w3"]).astype(np.float16)
+        return rel(o["y"], mxmm(a.astype(np.float16), r["w2"]))
+
+    return make, check, ("mac", (3 if glu else 2) * m * d * hidden)
+
+
 #: (example, levels, nodes, case): a case is (make inputs, check, work).
 CASES = [
     ("matmul", ("l1", "l2"), 1, matmul_case(1024, 1024, 1024)),
@@ -234,6 +256,8 @@ CASES = [
     ("splitk", ("l1", "l2"), 1, matmul_case(256, 256, 1024)),
     ("mmsilu", ("l2",), 1, mmsilu_case()),
     ("mlp", ("l2",), 1, mlp_case()),
+    ("ffn", ("l2",), 1, ffn_case()),
+    ("swiglu", ("l2",), 1, ffn_case(glu=True)),
     ("tilesilu", ("l2",), 1, tilesilu_case()),
     ("mlpdirect", ("l2",), 1, mlpdirect_case()),
     ("mmsoftmax", ("l2",), 1, mmsoftmax_case()),

@@ -1,0 +1,36 @@
+# y = silu(x w1^T) w2^T, 1024 tokens, 1024 in, 2048 hidden, 1024 out, on
+# four clusters and two cores, row block i (256 tokens) at a time: the
+# clusters sweep the block's 8 column tiles of h, the cores apply silu a band
+# of 4 rows at a time and quantise into a2, then the clusters sweep y's row
+# block from a2. h and a2 hold two blocks, so the pipeline pass can sweep
+# block i + 1's h while the cores and the second layer work on block i.
+target ktpu.v9
+
+fn ffn.l2(x: mx7a[1024, 1024] @dram(gm=64, nk=2), w1: mx7b[2048, 1024] @dram(gn=64, nk=2), w2: mx7b[1024, 2048] @dram(gn=64, nk=2), h: f16[512, 2048] @dram(tile=64x64), a2: mx7a[512, 2048] @dram(gm=64, nk=2), y: f16[1024, 1024] @dram(tile=64x64))
+    for i in 0..4
+        par u in 0..4 on mg[u]
+            for j in 0..2
+                acc = zero                                          : f32[256, 256] @acc
+                for k in 0..16
+                    a = fill x[i*256 : +256, k*64 : +64]            : mx7a[256, 64] @A
+                    b = fill w1[(4*j + u)*256 : +256, k*64 : +64]   : mx7b[256, 64] @B
+                    acc = gemm a, b, acc                            : f32[256, 256] @acc
+                drain acc -> h[(i % 2)*256 : +256, (4*j + u)*256 : +256]
+        par c in 0..16 on vc[any]
+            for t in 0..32
+                hl = load h[(i % 2)*256 + (c % 2)*128 + t*4 : +4, (c / 2)*256 : +256] : f16[4, 256] @l1(gt4)
+                v = unpack hl                                       : f32[4, 256] @reg(gt4)
+                e = mul v, -1.4426950408889634                      : f32[4, 256] @reg(gt4)
+                e = exp2 e                                          : f32[4, 256] @reg(gt4)
+                e = add e, 1.0                                      : f32[4, 256] @reg(gt4)
+                e = inv e                                           : f32[4, 256] @reg(gt4)
+                o = mul v, e                                        : f32[4, 256] @reg(gt4)
+                q = pack o                                          : mx7a[4, 256] @l1
+                store a2[(i % 2)*256 + (c % 2)*128 + t*4 : +4, (c / 2)*256 : +256] <- q
+        par u in 0..4 on mg[u]
+            acc = zero                                              : f32[256, 256] @acc
+            for k in 0..32
+                a = fill a2[(i % 2)*256 : +256, k*64 : +64]         : mx7a[256, 64] @A
+                b = fill w2[u*256 : +256, k*64 : +64]               : mx7b[256, 64] @B
+                acc = gemm a, b, acc                                : f32[256, 256] @acc
+            drain acc -> y[i*256 : +256, u*256 : +256]
