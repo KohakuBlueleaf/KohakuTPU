@@ -159,6 +159,7 @@ MESH_1M = (
         "src/kohakuaccel/pe/rv64-sys/core/rv64_mmu.v",
         "src/kohakuaccel/pe/rv64-sys/core/rv64_nport.v",
         "src/kohakuaccel/pe/rv64-sys/rv64_noc_mbox.v",
+        "src/kohakuaccel/sysnode/dispatch/dispatch_engine.v",
         "src/kohakuaccel/pe/rv64-sys/rv64_syscore.v",
         "src/kohakuaccel/sysnode/mover/mv_exec.v",
         "src/kohakuaccel/sysnode/cpu/rv64_mag_pe.v",
@@ -1668,10 +1669,21 @@ RV64_SYSCORE = RV64_CORE + [
     "src/kohakuaccel/pe/rv64-sys/core/rv64_mmu.v",
     "src/kohakuaccel/pe/rv64-sys/core/rv64_nport.v",
     "src/kohakuaccel/pe/rv64-sys/rv64_noc_mbox.v",
+    "src/kohakuaccel/sysnode/dispatch/dispatch_engine.v",
     "src/kohakuaccel/pe/rv64-sys/rv64_syscore.v",
 ]
 
 BENCHES["rv64_syscore"] = ("rv64_syscore", RV64_SYSCORE)
+
+# The dispatch engine alone: directed and randomised entry streams against a
+# reference model in the bench (queue order, interlocks, waits, claims).
+BENCHES["dispatch_engine"] = (
+    "dispatch_engine_tb",
+    [
+        "src/kohakuaccel/sysnode/dispatch/dispatch_engine.v",
+        "tests/sysnode/dispatch_engine_tb.v",
+    ],
+)
 
 # The whole mesh under Verilator: RV64 node + router + 2 mat + 2 vec + axi_ram.
 # Shared by the hand-wired top and the gen_mesh-generated top.

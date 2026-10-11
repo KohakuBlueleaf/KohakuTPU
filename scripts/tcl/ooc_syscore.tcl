@@ -32,6 +32,7 @@ read_verilog [glob \
     [file join $root src kohakuaccel sysnode mover mm_prng.v] \
     [file join $root src kohakuaccel sysnode mover mm_mover.v] \
     [file join $root src kohakuaccel sysnode cpu rv64_mag_pe.v] \
+    [file join $root src kohakuaccel sysnode dispatch dispatch_engine.v] \
     [file join $root src kohakuaccel pe rv64-sys *.v] \
     [file join $root src kohakuaccel pe rv64-sys core *.v]]
 

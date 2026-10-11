@@ -46,7 +46,15 @@ module rv64_noc_mbox #(
     input  wire                   rx_valid,
     output wire                   rx_busy,
 
-    output wire                   cq_nonempty
+    output wire                   cq_nonempty,
+
+    // ---- completions as they are accepted; a claimed one skips the queue ----
+    output wire                   sig_v,
+    output wire [POS_WIDTH-1:0]   sig_x,
+    output wire [POS_WIDTH-1:0]   sig_y,
+    output wire [7:0]             sig_code,
+    input  wire                   sig_claim,
+    output wire                   offered
 );
     localparam [3:0] T_CU_INST   = 4'h5;
     localparam [3:0] T_CU_SIGNAL = 4'h6;
@@ -139,15 +147,17 @@ module rv64_noc_mbox #(
     wire                 rq_full = (rq_used == RQ_DEPTH[RQ_AW:0]);
     assign rq_nonempty = (rq_wr != rq_rd);
 
-    // Busy while either queue is full.
+    // Busy while either queue is full. A flit is taken only on valid && !busy,
+    // so one held behind the other queue's backpressure is queued once.
     assign rx_busy = cq_full || rq_full;
+    wire   rx_take = rx_valid && !rx_busy;
 
     always @(posedge clk) begin
         if (!resetn) begin
             rq_wr <= {(RQ_AW+1){1'b0}};
             rq_rd <= {(RQ_AW+1){1'b0}};
         end else begin
-            if (rx_valid && !rx_sig && !rq_full) begin
+            if (rx_take && !rx_sig) begin
                 rq[rq_wr[RQ_AW-1:0]] <= rx_data;
                 rq_wr <= rq_wr + 1'b1;
             end
@@ -176,13 +186,19 @@ module rv64_noc_mbox #(
     wire [7:0]  rx_code = rx_data[FLIT_WIDTH-4*POS_WIDTH-17 -: 8];
     wire [31:0] rx_arg  = rx_data[FLIT_WIDTH-4*POS_WIDTH-25 -: 32];
 
+    assign sig_v    = rx_take && rx_sig;
+    assign sig_x    = rx_sx;
+    assign sig_y    = rx_sy;
+    assign sig_code = rx_code;
+    assign offered  = tx_valid;
+
     always @(posedge clk) begin
         if (!resetn) begin
             cq_wr  <= {(CQ_AW+1){1'b0}};
             cq_rd  <= {(CQ_AW+1){1'b0}};
         end
         else begin
-            if (rx_valid && rx_sig && !cq_full) begin
+            if (sig_v && !sig_claim) begin
                 cq[cq_wr[CQ_AW-1:0]] <= {
                     8'd0,               // [63:56]
                     rx_sy,              // [55:52] source y

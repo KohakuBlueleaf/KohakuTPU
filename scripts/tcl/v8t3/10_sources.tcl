@@ -107,6 +107,7 @@ set V8_SOURCES {
     src/kohakuaccel/pe/rv64-sys/core/rv64_mmu.v
     src/kohakuaccel/pe/rv64-sys/core/rv64_nport.v
     src/kohakuaccel/pe/rv64-sys/rv64_noc_mbox.v
+    src/kohakuaccel/sysnode/dispatch/dispatch_engine.v
     src/kohakuaccel/pe/rv64-sys/rv64_syscore.v
     src/kohakuaccel/sysnode/mover/mv_exec.v
     src/kohakuaccel/sysnode/cpu/rv64_mag_pe.v

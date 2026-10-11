@@ -891,6 +891,8 @@ an L1 hit is.
 | `0x1C8` | `DCACHE` | RW | Store: `[0]` flush (write every dirty line back), `[1]` invalidate (drop every line; with `[0]`, after the flush). Read: `[0]` busy. Poll until 0 before the next cached access that depends on it. |
 | `0x1D0` | `XF_SEL` | W | Transform-bank config select: `[15:8]` slot id, `[7:0]` register. |
 | `0x1D8` | `XF_DATA` | W | Transform-bank config data; **the store is the write strobe**, to the slot and register named by `XF_SEL`. [transform-slot.md](transform-slot.md). |
+| `0x200`–`0x2FF` | dispatch engine queue | W | A store queues a write of engine target `pa[7:3]`: mailbox `0x40 + 8c` (c < 8), mover `0x100 + 8(c-8)` (c < 24), interlink `0xC0 + 8(c-24)`. [dispatch-engine.md](dispatch-engine.md). |
+| `0x300`–`0x3FF` | dispatch engine control | RW | `0x300` store: queue a `WAIT`; load: `STAT`. `0x308` store: `CTL`; load: moves. `0x310` store: `MAP`. `0x380 + 8k` load: counter k. Zero when built without one (`DE_DEPTH` 0). [dispatch-engine.md](dispatch-engine.md) §4. |
 | everything else | — | R | `64'd0`. Writes are ignored. |
 
 Note the two status words differ from the RV32 complex's single `node_word`

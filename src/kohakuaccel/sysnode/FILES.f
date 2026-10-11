@@ -7,6 +7,7 @@ kohakuaccel/sysnode/core/sn_hub.v
 kohakuaccel/sysnode/cpu/rv64_load_axi.v
 kohakuaccel/sysnode/cpu/rv64_load_win.v
 kohakuaccel/sysnode/cpu/rv64_mag_pe.v
+kohakuaccel/sysnode/dispatch/dispatch_engine.v
 kohakuaccel/sysnode/interlink/il_pkt_arb.v
 kohakuaccel/sysnode/interlink/mag_ilink.v
 kohakuaccel/sysnode/interlink/mag_link.v

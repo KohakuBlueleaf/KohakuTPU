@@ -34,6 +34,9 @@ module rv64_syscore #(
     // Fetch stages between the PC and decode (rv64_core FETCH_LAT): 2 keeps
     // the instruction RAM's output register in front of decode.
     parameter integer FETCH_LAT  = 2,
+    // The dispatch engine's queued entries; 0 builds none (control 0x200-0x3FF
+    // then reads 0, which is how firmware tells).
+    parameter integer DE_DEPTH   = 64,
 
     parameter [63:0]  SPAD_BASE  = 64'h0000_0000_0001_0000,
     parameter [63:0]  CTRL_BASE  = 64'h0000_0000_0002_0000,
@@ -146,6 +149,9 @@ module rv64_syscore #(
     wire        noc_cq_nonempty;
     wire [63:0] rx_rdata;
     wire        noc_rq_nonempty;
+    wire        sig_v, mb_offered;
+    wire [POS_WIDTH-1:0] sig_x, sig_y;
+    wire [7:0]  sig_code;
     reg         rx_pop;
     reg         l1_flush_p, l1_inval_p;
 
@@ -630,6 +636,30 @@ module rv64_syscore #(
     wire       c_lo        = (ctrl_off[9:8] == 2'b00);
     wire       c_hi        = (ctrl_off[9:8] == 2'b01);
 
+    // THE ENGINE WRITES THROUGH THE CORE'S OWN DECODE. Its codes name mailbox
+    // (0-7), mover (8-23) and interlink (24-31) registers; a core store to one
+    // of those windows takes the cycle and the engine holds.
+    wire        de_en;
+    wire [4:0]  de_code;
+    wire [63:0] de_data;
+    wire [63:0] de_rdata;
+    wire        de_claim;
+    wire [9:0]  de_off  = (de_code < 5'd8)  ? {4'b0001, de_code[2:0], 3'b000}
+                        : (de_code < 5'd24) ? {3'b010, de_code[3:0] ^ 4'h8, 3'b000}
+                        :                     {4'b0011, de_code[2:0], 3'b000};
+    wire        cpu_sh  = ctrl_wr && ((c_lo && ctrl_off[7:6] != 2'b00)
+                                   || (c_hi && !ctrl_off[7]));
+    wire        sh_wr   = cpu_sh || de_en;
+    wire [9:0]  sh_off  = cpu_sh ? ctrl_off : de_off;
+    wire [63:0] sh_data = cpu_sh ? m_wd_q   : de_data;
+    wire        sh_lo   = (sh_off[9:8] == 2'b00);
+    wire        sh_hi   = (sh_off[9:8] == 2'b01);
+    // 0x200-0x2FF queue a write (code = dword index), 0x300 a WAIT; 0x308 CTL,
+    // 0x310 MAP.
+    wire        de_enq  = ctrl_wr && (ctrl_off[9:8] == 2'b10 || ctrl_off == 10'h300);
+    wire [5:0]  de_ecode = ctrl_off[8] ? 6'd32 : {1'b0, ctrl_off[7:3]};
+    wire        de_cfg  = ctrl_wr && (ctrl_off == 10'h308 || ctrl_off == 10'h310);
+
     always @(posedge clk) begin
         if (!resetn) begin
             exited    <= 1'b0;
@@ -656,12 +686,12 @@ module rv64_syscore #(
             xf_cfg_en <= 1'b0;
             l1_flush_p <= 1'b0;
             l1_inval_p <= 1'b0;
+            if (sh_wr && sh_hi) begin
+                mv_cfg_en   <= 1'b1;
+                mv_cfg_addr <= {1'b0, sh_off[6:0]};
+                mv_cfg_data <= sh_data;
+            end
             if (ctrl_wr && c_hi) begin
-                if (ctrl_off[7] == 1'b0) begin
-                    mv_cfg_en   <= 1'b1;
-                    mv_cfg_addr <= {1'b0, ctrl_off[6:0]};
-                    mv_cfg_data <= m_wd_q;
-                end
                 if (ctrl_off[7:0] == R1_RXPOP) begin
                     rx_pop <= 1'b1;
                 end
@@ -678,31 +708,30 @@ module rv64_syscore #(
                     xf_cfg_data <= m_wd_q;
                 end
             end
-            if (ctrl_wr && c_lo) begin
-                if (ctrl_off[7:6] == 2'b01) begin
+            if (ctrl_wr && c_lo && ctrl_off == R_EXIT) begin
+                exited    <= 1'b1;
+                exit_word <= m_wd_q;
+            end
+            if (sh_wr && sh_lo) begin
+                if (sh_off[7:6] == 2'b01) begin
                     nm_en   <= 1'b1;
-                    nm_addr <= ctrl_off[5:3];
-                    nm_data <= m_wd_q;
-                end
-                if (ctrl_off == R_EXIT) begin
-                    exited    <= 1'b1;
-                    exit_word <= m_wd_q;
+                    nm_addr <= sh_off[5:3];
+                    nm_data <= sh_data;
                 end
                 // The mover's window and the doorbell's are sub-ranges, so the
                 // register index comes from the address rather than a decode.
-                if (ctrl_off[7:6] == 2'b10) begin
+                if (sh_off[7:6] == 2'b10) begin
                     mv_cfg_en   <= 1'b1;
-                    mv_cfg_addr <= {2'd0, ctrl_off[5:0]};
-                    mv_cfg_data <= m_wd_q;
+                    mv_cfg_addr <= {2'd0, sh_off[5:0]};
+                    mv_cfg_data <= sh_data;
                 end
-                if (ctrl_off[7:6] == 2'b11) begin
+                if (sh_off[7:6] == 2'b11) begin
                     // BIT 7 SET: the interlink claims a config write only at
                     // 0x80 and above (enable 0x80, mesh 0x88, ring 0x90), so
                     // the window's offset 0x00..0x3F maps onto 0x80..0xBF.
-                    // Without it every doorbell write was dropped, silently.
                     db_en   <= 1'b1;
-                    db_addr <= {2'b10, ctrl_off[5:0]};
-                    db_data <= m_wd_q;
+                    db_addr <= {2'b10, sh_off[5:0]};
+                    db_data <= sh_data;
                 end
             end
             if (boot_req) begin
@@ -745,7 +774,9 @@ module rv64_syscore #(
 
     reg [63:0] ctrl_q;
     always @(posedge clk) begin
-        if (ctrl_off_rd[9:8] == 2'b01) begin
+        if (ctrl_off_rd[9]) begin
+            ctrl_q <= de_rdata;
+        end else if (ctrl_off_rd[9:8] == 2'b01) begin
             case (ctrl_off_rd[7:6])
                 2'b10:   ctrl_q <= rx_rdata;
                 2'b11:   ctrl_q <= (ctrl_off_rd[7:0] == R1_DCACHE) ? {63'd0, l1_flush_busy}
@@ -782,8 +813,33 @@ module rv64_syscore #(
         .tx_data(noc_out_data), .tx_valid(noc_out_valid),
         .tx_busy(noc_out_busy),
         .rx_data(noc_in_data), .rx_valid(noc_in_valid), .rx_busy(noc_in_busy),
-        .cq_nonempty(noc_cq_nonempty)
+        .cq_nonempty(noc_cq_nonempty),
+        .sig_v(sig_v), .sig_x(sig_x), .sig_y(sig_y), .sig_code(sig_code),
+        .sig_claim(de_claim), .offered(mb_offered)
     );
+
+    // ------------------------------------------------------ dispatch engine
+    generate if (DE_DEPTH > 0) begin : g_de
+        dispatch_engine #(
+            .DEPTH(DE_DEPTH), .POS_WIDTH(POS_WIDTH)
+        ) u_de (
+            .clk(clk), .resetn(core_rstn),
+            .enq_en(de_enq), .enq_code(de_ecode), .enq_data(m_wd_q),
+            .cfg_en(de_cfg), .cfg_addr(ctrl_off[4:3]), .cfg_data(m_wd_q),
+            .rd_addr(ctrl_off_rd[7:3]), .rd_data(de_rdata),
+            .t_en(de_en), .t_code(de_code), .t_data(de_data), .t_hold(cpu_sh),
+            .tx_offered(mb_offered), .mv_busy(mv_busy), .mv_done(mv_done[15:0]),
+            .mv_room(mv_room),
+            .sig_v(sig_v), .sig_x(sig_x), .sig_y(sig_y), .sig_code(sig_code),
+            .sig_claim(de_claim)
+        );
+    end else begin : g_no_de
+        assign de_en    = 1'b0;
+        assign de_code  = 5'd0;
+        assign de_data  = 64'd0;
+        assign de_rdata = 64'd0;
+        assign de_claim = 1'b0;
+    end endgenerate
 
     // ------------------------------------------------------ the return path
     localparam [1:0] P_SPAD = 2'd0, P_CTRL = 2'd1, P_L1 = 2'd2, P_UNC = 2'd3;
