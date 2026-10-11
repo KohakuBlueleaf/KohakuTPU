@@ -298,8 +298,9 @@ the members.
 
 ```
     software/
-      language/     kohakutpu.language     the .ktpu text, L3 / L2 readers,
-                                           the L3 -> L1 compilers
+      language/     kohakutpu.language     the .ktpu text, the vector core's
+                                           math facts, number formats, the
+                                           hand-written L1 examples
       compiler/     kohakuaccel.compiler   L1 programs, packages, the machine
                                            description, the ISA field tables
                     kohakutpu.compiler     the ISA, encoders, layouts, the L1
@@ -339,8 +340,7 @@ it moves bytes, words and packages, and what they mean is the compiler's.
 
 2. **Machine geometry against project capacities.** `kohakuaccel.compiler.machine`
    (`MachineSpec`, a `MeshSpec` per mesh) carries the geometry; a project's
-   target (`kohakutpu.language.target`, `kohakutpu.compiler.target`) its
-   capacities.
+   target (`kohakutpu.compiler.target`) its units and ports.
 
 3. **The bench source list is a hand-maintained file list** naming every RTL file
    the driver-to-simulator path elaborates, framework and project mixed. Adding a

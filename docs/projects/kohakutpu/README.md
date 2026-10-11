@@ -199,8 +199,8 @@ one before it.
    fits one DSP exactly, and four base-2 seeds at full rate.
 5. **[isa.md](isa.md)** — one worked example of spending the framework's
    instruction payload bits, at three scales.
-6. **[ir/ktpu.md](ir/ktpu.md)** — the software stack's language: a `.ktpu`
-   kernel's L3, L2 and L1 bodies, and how each lowers to the next.
+6. **[ir/ktpu.md](ir/ktpu.md)** — the software stack's language: `.ktpu` L1
+   text, every hardware feature it reaches, and the hand-written examples.
 7. **[ship.md](ship.md)** — the device, and why the machine is four meshes.
 8. **[multi-mesh.md](multi-mesh.md)** — writing kernels across those four: what an
    address means, which splits the silicon takes, and the one it refuses.

@@ -174,28 +174,21 @@ instead of six modules downstream.
 ## KohakuTPU: the machine
 
 The flagship project: matrix and vector units on the KohakuAccel mesh, four
-meshes on one device, programmed in `.ktpu` text. A kernel is one module with a
-body at each level — what it computes (L3), where tiles of it run (L2), and the
-per-unit programs (L1) — and the compilers take the higher body down to the
-lower one:
+meshes on one device, programmed in `.ktpu` text at L1: one instruction stream
+per unit and the node's steps, which lower one to one to the package a node's
+firmware runs:
 
 ```
-fn silu.l3(x: f16[N]) -> f16[N]
-    t = mul x, -1.4426950408889634              : f32[N]
-    e = exp2 t                                  : f32[N]
-    d = add e, 1.0                              : f32[N]
-    r = inv d                                   : f32[N]
-    y = mul x, r                                : f16[N]
-    return y
+fn gather.l1(t: f16[64, 64] @dram, idx: u32[16] @dram, y: f16[12, 64] @dram)
+    move
+        gather t -> w(y, (48, 32)) index=idx n=12 pitch=128 words=4
 ```
 
 ```bash
-python -m kohakutpu.application.tools.run --build build/v9v2c/vlt_card_v9_1n_v2 \
-    --level l3 silu
+python -m kohakutpu.application.tools.l1 --build build/l1cov/vlt_card_v9_1n_v2 gather
 ```
 
-compiles `silu.l3` to L1, runs it on the simulated card, and grades it against
-the L3 body's reference interpreter. The language is
+runs the example on the simulated card. The language is
 [`ir/ktpu.md`](docs/projects/kohakutpu/ir/ktpu.md).
 
 ### Status
@@ -238,12 +231,11 @@ a compute unit or consume the completion that comes back, which is the job the
 configuration exists for. See
 [`docs/arch/cpu/rv64-sys/`](docs/arch/cpu/rv64-sys/README.md).
 
-**Software: a working driver and compiler stack.** Kernels compile from L3 to
-cluster *and* vector programs, and the compiled programs are measured against
-the hand-written ones on the simulated card: silu, add, softmax, layernorm, an
-MLP, SwiGLU, attention and flash attention
-([`ir/ktpu.md`](docs/projects/kohakutpu/ir/ktpu.md) §8). The application layer
-— a tensor API and a DSL above `.ktpu` — is a skeleton.
+**Software: a working driver and L1 stack.** Hand-written L1 kernels reach
+every unit feature — the mover's every mode, the clusters, the V2 vector
+cores, the node's interlink, memory and register steps, several nodes — and
+run on the simulated card ([`ir/ktpu.md`](docs/projects/kohakutpu/ir/ktpu.md)).
+The levels above L1 are being rebuilt.
 
 Every measured number, with the conditions it was taken under, is in
 [`results.md`](docs/projects/kohakutpu/results.md). Unless a row there says
@@ -274,11 +266,10 @@ Holding a large output tile resident does close it. A `Gm x Gn` block needs
 `4(Gm+Gn)/(Gm*Gn)` words per cycle, which is 0.375 at 16x32. This is an
 arithmetic property, not a concession.
 
-**A compiler that knows the machine has no threads.** Three levels of text —
-L3 (what), L2 (where), L1 (each unit's program and the node's sync points) —
-above the package a node runs, and every stage's output is text the next
-stage's reader verifies. A unit is *programmed*, not commanded. There is no
-`program_id` and no `__syncthreads`.
+**A stack that knows the machine has no threads.** L1 text is each unit's
+program and the node's sync points, directly above the package a node runs. A
+unit is *programmed*, not commanded. There is no `program_id` and no
+`__syncthreads`.
 
 ### Future work
 
@@ -347,7 +338,7 @@ does, what it costs, and where it stops.
 | [the glossary](docs/glossary.md) | every project-specific term, what it is, where it sits, and which page covers it properly. Start here if a word is unfamiliar |
 | [the framework](docs/integrate/README.md) | what you own, what is fixed, and how to put your own compute unit on it |
 | [the machine](docs/projects/kohakutpu/README.md) | KohakuTPU top to bottom, in the order the decisions were forced |
-| [`.ktpu`](docs/projects/kohakutpu/ir/ktpu.md) | the kernel text at every level, the compilers between them, and what they measure |
+| [`.ktpu`](docs/projects/kohakutpu/ir/ktpu.md) | the L1 kernel text, every hardware feature it reaches, the examples and what they measure |
 | [the ISA](docs/projects/kohakutpu/isa.md) | the most accurate description of what it executes |
 | [architecture](docs/arch/README.md) · [specs](docs/spec/README.md) · [workflow](docs/workflow/README.md) | the mesh and memory agent, the normative contracts, and the build/measure/bringup practice |
 
