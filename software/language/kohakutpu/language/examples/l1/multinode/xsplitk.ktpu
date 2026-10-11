@@ -4,10 +4,10 @@
 # interlink into node 1's (buffer 2, an add); node 1 drains the sum.
 #
 # Node 1 rings once its sweeps are under way (the stream waits out a running
-# sweep, but the tile must be open). Node 0 rings when its drain has left the
-# cluster; that ring's fence covers the mover and the processor, not a
-# cluster's flits still in the meshes (H3), so node 1 settles before it
-# drains -- and its drain waits out a stream still adding.
+# sweep, but the tile must be open). Nothing counts an add landing, so node
+# 0's cluster sends a COUNTed entry into node 1's L1 right behind it: one
+# source's flits arrive in order, and node 1's `fill A0 recv` of that entry
+# follows the whole add. Its drain then waits out the last sub-tile adding.
 target ktpu.v9
 
 fn xsplitk.l1(x: mx7a[256, 1024] @dram(gm=64, nk=2), w: mx7b[256, 1024] @dram(gn=64, nk=2), y: f16[256, 256] @dram(tile=64x64))
@@ -19,9 +19,8 @@ fn xsplitk.l1(x: mx7a[256, 1024] @dram(gm=64, nk=2), w: mx7b[256, 1024] @dram(gn
                 gemm 64x64x2 a=A{k % 2} b=B{k % 2} acc=(k > 0)
         wait mg[0]
         ring mesh=0 slot=2
-        wait slot 4 n=1 consume
-        settle 4000
         send mg[0]
+            fill A0 recv n=1
             drain y n=4096
         wait mg[0]
     node 0
@@ -33,5 +32,5 @@ fn xsplitk.l1(x: mx7a[256, 1024] @dram(gm=64, nk=2), w: mx7b[256, 1024] @dram(gn
         wait slot 2 n=1 consume
         send mg[0]
             drain n=4096 to=mesh1.mg[0] buf=2 l1=0
+            drain n=4 to=mesh1.mg[0] buf=0 l1=0 count
         wait mg[0]
-        ring mesh=1 slot=4

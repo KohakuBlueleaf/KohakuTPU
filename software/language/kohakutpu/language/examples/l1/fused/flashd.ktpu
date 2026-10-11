@@ -22,7 +22,7 @@
 target ktpu.v9
 
 image flash_d(pg, h, comb, pf, oa, li, ya, io, oc)
-    desc a2 = pg walk=(32, 16)
+    desc a2 = peer(pg, count=1) walk=(32, 16)
     desc a6 = io walk=(32, 8)
     when pf == 1
         desc a3 = oa walk=((32, 8), (4K, 2), (256, 2))
@@ -78,6 +78,8 @@ macro sub(p, h)
 macro blk(j, p, h)
     when j == 1
         skipz s10
+            # This slot's fill is the older of the two in flight.
+            vsync unpack on=fill slack=1
             vunpk v24 <- l1[256 + 16*p] f16
             vunpk v25 <- l1[264 + 16*p] f16
             vsync fill on=unpack
@@ -112,7 +114,8 @@ macro blk(j, p, h)
             expand ired(j)
         when g == 4
             expand ired2(j)
-    vsync pack on=drain slack=5
+    # Slot j's last drain has 3 younger ones (4 with the combine's).
+    vsync pack on=drain slack=3
     for r in 0..4
         vpack v{8 + 4*(j % 2) + r} -> l1[384 + 16*j + 4*r] mx7a
     vsync drain on=pack
@@ -222,10 +225,10 @@ image flash_y(h, oa, li, ya)
     halt
 
 # MXFP7 ones (B packing) into the P V clusters' L1 B1, entries 0..15: the
-# l columns of P V.
+# l columns of P V, COUNTed (the clusters take them before their first sweep).
 image flash_ones()
-    desc a0 = 1024 walk=(32, 64)
-    desc a1 = 1024 walk=(32, 64)
+    desc a0 = peer(1024, count=1) walk=(32, 64)
+    desc a1 = peer(1024, count=1) walk=(32, 64)
     vmul v30, k1, k1
     for e in 0..16
         vpack v30 -> l1[4*e] mx7b
@@ -274,6 +277,7 @@ macro scores(T, nt, nh)
 macro pv(t)
     for kh in 0..2
         send mg[1 + 2*kh]
+            fill A{t % 2} recv n=128
             gemm 8x16x16 a=A{t % 2} aoff=128*((t/2) % 2) b=B0 emit=o + (2*(t % 8) + kh)*4K
             drain o + (2*(t % 8) + kh)*4K n=128 fused
             gemm 8x1x16 a=A{t % 2} aoff=128*((t/2) % 2) b=B1
@@ -296,6 +300,7 @@ macro vload(H)
 macro pvv(t, H)
     for kh in 0..2
         send mg[1 + 2*kh]
+            fill A{t % 2} recv n=128
             gemm 8x16x16 a=A{t % 2} aoff=128*((t/2) % 2) b=B0 emit=o + (2*(t % 8) + kh)*4K
             drain o + (2*(t % 8) + kh)*4K n=128 fused
             fill B0 <- v + (2*H + kh)*32K n=128
@@ -345,7 +350,9 @@ fn flashd.l1(q: mx7a[10240, 64] @dram(gm=32, nk=2), k: mx7b[10240, 64] @dram(gn=
     # 10 heads: 320 tiles of 32 rows, 2,560 sub-rows a core.
     send vc[0]
         run flash_ones()
-    wait vc[0]
+    for kh in 0..2
+        send mg[1 + 2*kh]
+            fill B1 recv n=16
     expand vload(0)
     for T in 0..4
         expand scores(T, 320, 10)
