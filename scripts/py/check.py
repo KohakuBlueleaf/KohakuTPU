@@ -2,7 +2,7 @@
 
     python scripts/py/check.py [fast|unit|blocks|e2e|full] [-j N]
 
-    fast     11 s   DSL and autoschedule against the L1 simulator, pure Python
+    fast            the software suites, the linters and the doc checks
     unit     40 s   + the RTL benches that have caught the most
     blocks   63 s   every block's own bench, one fault per module
     e2e      40 s   L1 -> machine code -> xsim, planner and DSL both
@@ -32,8 +32,17 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-# The repo venv, NOT whatever launched this: it is the only interpreter with
-# tinygrad and both namespace halves installed.
+#: The software workspace's members (software/pyproject.toml).
+SOFTWARE_MEMBERS = (
+    "language",
+    "compiler",
+    "driver",
+    "simulation",
+    "application",
+    "template",
+)
+# The repo venv, NOT whatever launched this: it is the interpreter with the
+# software's dependencies installed.
 _VENV = ROOT / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 PY = str(_VENV) if _VENV.exists() else sys.executable
 
@@ -97,21 +106,19 @@ def bench_var(name, *extra):
 
 # ------------------------------------------------------------------- tiers
 FAST = [
-    py("pytest compiler", "-m", "pytest", "compiler/tests", "-q"),
-    # FROM `driver/`: at the repo root `examples` resolves to the top-level
-    # examples/, and driver/examples/saxpy is then invisible.
-    check(
-        "pytest driver",
-        [PY, "-m", "pytest", "tests", "-q"],
-        cwd=ROOT / "driver",
-    ),
-    # A demo nobody runs is a claim nobody checks, and this one is 28 DiT blocks
-    # end to end. Not in `testpaths`, so it is named here.
-    py("pytest anima", "-m", "pytest", "demos/kohakutpu/anima/tests", "-q"),
+    # FROM `software/`: the workspace's pyproject names every component's tests.
+    check("pytest software", [PY, "-m", "pytest", "-q"], cwd=ROOT / "software"),
     # EVERY directory, for the reason `vstyle` covers every .v file: a gate over
     # a subset reads as done, and tests/pe/tools is 34 files the suites grade by.
     py("ruff", "-m", "ruff", "check", "."),
     py("black", "-m", "black", "--check", "-q", "."),
+    # The workspace has its own config and the root's excludes it.
+    check("ruff software", [PY, "-m", "ruff", "check", "."], cwd=ROOT / "software"),
+    check(
+        "black software",
+        [PY, "-m", "black", "--check", "-q", "."],
+        cwd=ROOT / "software",
+    ),
     # A doc naming a moved file is drift a rename produces by the dozen and
     # nothing else measures: 103 of these had accumulated behind two renames.
     py("doc paths", "scripts/py/docpaths.py"),
@@ -280,12 +287,8 @@ SNAP_DIRS = (
     "src",
     "tests",
     "scripts",
-    "examples",
     "boards",
-    "compiler",
-    "driver",
-    # Linted like everything else, so it has to be in the copy the gate reads.
-    "demos",
+    "software",
     "docs",
     "docs-web/src",
     # README.md links to both; without them the doc check reports two dangling
@@ -440,10 +443,12 @@ def main():
             dict(c, cwd=root / pathlib.Path(c["cwd"]).relative_to(ROOT)) for c in checks
         ]
         print(f"  snapshot {root}")
-    # `kohakutpu` is a namespace package split across both, so neither half
-    # imports without the other on the path.
+    # `kohakuaccel` and `kohakutpu` are namespace packages split across every
+    # workspace member, so no component imports without the others on the path.
     env = dict(os.environ)
-    env["PYTHONPATH"] = os.pathsep.join([str(root / "compiler"), str(root / "driver")])
+    env["PYTHONPATH"] = os.pathsep.join(
+        str(root / "software" / m) for m in SOFTWARE_MEMBERS
+    )
     jobs = max(1, args.jobs)
     # Only at -j1: in parallel the later checks are already in flight, so
     # stopping early would hide results that were paid for anyway.

@@ -6,7 +6,7 @@ C intrinsic header (`khs_intrin.h`, likewise). `rv_simd_isa_test.py` proves they
 agree bit for bit, which is what makes "one source of truth" true rather than
 intended.
 
-It is built on the framework's own `kohakuaccel.backend.isa` -- the same `Field`
+It is built on the framework's own `kohakuaccel.compiler.isa` -- the same `Field`
 / `InstFormat` / `InstSet` that encode compute-unit instructions, at a 32-bit
 container instead of 256 -- because 09B S2.2 asks for exactly that and because
 `Field.fit` already raises with the legal range, which is the check that catches
@@ -69,7 +69,7 @@ from dataclasses import dataclass
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compiler"))
 
-from kohakuaccel.backend.isa import Field, InstFormat, InstSet, ISAError
+from kohakuaccel.compiler.isa import Field, InstFormat, InstSet, ISAError
 
 OPC_KHD = 0x0B  # custom-0: tier 1
 OPC_KHF = 0x2B  # custom-1: reserved to the float tiers

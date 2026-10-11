@@ -97,7 +97,7 @@ def main() -> int:
     run(
         [
             sys.executable,
-            str(ROOT / "scripts/py/card_run.py"),
+            str(ROOT / "software/driver/tools/card/card_run.py"),
             "--board",
             board,
             "--build",

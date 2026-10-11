@@ -1,7 +1,7 @@
-// mx_quant against the driver's model, which is the spec.
+// mx_quant against the software model, which is the spec.
 //
 // The bench computes nothing. It reads FP16 entries, runs them through the
-// quantiser, and dumps what came out; kohakutpu.mxfp7 says what SHOULD have
+// quantiser, and dumps what came out; numerics/mxfp7.py says what SHOULD have
 // come out and the comparison happens there. Writing a second E5M3 model in
 // Verilog would only test that two hand-written models agree, and they would
 // agree because the same person wrote both.
@@ -9,7 +9,7 @@
 //   quant_in.hex    one 256-bit word per line, 8 per entry, FP16 lane-major
 //   quant_out.hex   per entry: 4 operand words then the 4 scale fields
 //
-// Driven by driver/run_quant_check.py.
+// Driven by scripts/py/run_quant_check.py.
 
 `default_nettype none
 `timescale 1ns/1ps

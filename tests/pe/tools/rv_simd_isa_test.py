@@ -5,8 +5,8 @@
 The four are the Python assembler, the golden model, the generated RTL decode
 header and the generated C intrinsic header. "One source of truth" means
 nothing unless something checks it, and the thing that checks it is this file --
-`compiler/tests/test_ktpu_isa.py` applies the same discipline to the cluster and
-vector ISAs, which is where the shape comes from.
+`software/compiler/tests/test_isa.py` applies the same discipline to the cluster
+and vector ISAs.
 
 What each check would catch:
 

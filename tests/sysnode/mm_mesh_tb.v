@@ -355,8 +355,8 @@ module mm_mesh_tb #(
         $display("--- 3. cluster: a FILL served by MAG over the mesh ---");
         // op=1 FILL, addr=A_MSRC, n=1 entry, sel=A, quantise on the way out
 `ifdef PROG_HEX
-        // THE COMPILER'S OWN BITS. gen_prog.py writes what kohakutpu.hw.matmul
-        // emits, so an encoder that drifts from the RTL fails here, not on card.
+        // THE COMPILER'S OWN BITS (gen_prog.py, kohakutpu.compiler.isa.cluster):
+        // an encoder that drifts from the RTL fails here, not on card.
         // xsim.py runs from build/xsim_<bench>, so the repo root is two up.
         $readmemh("../../build/prog/mm_mesh_fill.hex", prog_mem);
         if (prog_mem[0] === {256{1'bx}}) begin

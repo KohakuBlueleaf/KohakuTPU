@@ -3,5 +3,5 @@
 // every XPM-shim memory (RV64 imem, staging banks).
 public_flat_rw -module "rv64_syscore" -var "spad"
 public_flat_rw -module "xpm_memory_sdpram" -var "mem"
-// The DRAM channels, for kohakuaccel.transport.simdram's host fast path.
+// The DRAM channels, for kohakuaccel.driver.transport.simdram's host fast path.
 public_flat_rw -module "axi_ram" -var "mem"

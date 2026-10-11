@@ -2190,7 +2190,8 @@ BENCHES["cu_ack_fence"] = (
     ],
 )
 
-# vec_cu replaying a compiler-emitted program from files (scripts/py/vec_replay.py).
+# vec_cu replaying a compiler-emitted program from files
+# (kohakutpu.simulation.verilator.replay).
 BENCHES["vec_replay"] = (
     "vec_replay_tb",
     [p for p in BENCHES["vec_cu"][1] if p != "tests/vector/vec_cu_tb.v"]

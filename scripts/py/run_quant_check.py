@@ -1,4 +1,4 @@
-"""Check mx_quant.v against kohakutpu.hw.mxfp7, element by element.
+"""Check mx_quant.v against kohakutpu.language.numerics.mxfp7, element by element.
 
     python scripts/py/run_quant_check.py
 
@@ -15,7 +15,7 @@ import subprocess
 import sys
 
 import numpy as np
-from kohakutpu.hw import mxfp7
+from kohakutpu.language.numerics import mxfp7
 
 # parents[2], not parent.parent: this file is scripts/py/, so two levels up is
 # the repo root and one is scripts/, where src/ does not exist.

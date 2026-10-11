@@ -351,7 +351,7 @@ module mm_mover_bw_tb;
         end
     endtask
 
-    // The 4x4 granule transpose (relayout.md s3) done ENTIRELY IN WORD MOVES by
+    // The 4x4 granule transpose done ENTIRELY IN WORD MOVES by
     // padding each 8-byte granule to its own 32-byte word: a group of 4 words
     // becomes 16, and the granule transpose becomes a 4x4 WORD transpose. 4x the
     // traffic; the question is what run length it leaves, which decides whether

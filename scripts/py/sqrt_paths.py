@@ -3,10 +3,10 @@
     python scripts/py/sqrt_paths.py            # the report
     python scripts/py/sqrt_paths.py --octaves 8
 
-`compiler/kohakutpu/model.py` computes `VRSQRT` and `VINV` as `1/np.sqrt(a)` and
-`1/a` -- EXACTLY -- so a green SimDevice test says nothing about how accurate a
-square root built out of them is on the card. This answers that without the
-card, evaluating the seeds as `vec_alu.v` does: the ROM `vec_tables.py`
+An exact model computes `VRSQRT` and `VINV` as `1/np.sqrt(a)` and `1/a`, so it
+says nothing about how accurate a square root built out of them is on the card.
+This answers that without the card, evaluating the seeds as `vec_alu.v` does:
+the ROM `vec_tables.py`
 generates, the same two Horner stages, `ebase`, leading-one search and round.
 
 The seed path is structural, so it reproduces the ALU rather than approximating

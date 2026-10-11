@@ -1,6 +1,5 @@
 // The vector ALU on a file of operands, its results to a file: the RTL side of
-// compiler/tests/numerics/lane_rtl.py, which diffs them against
-// kohakutpu.model.lane bit for bit.
+// a bit-for-bit diff against a software model of the lane.
 //
 //   +in=FILE   one 80-bit hex word per instruction: {3'b0, op[4:0], a, b, c}
 //   +out=FILE  one line per result: `out[23:0] out_pred`, in issue order

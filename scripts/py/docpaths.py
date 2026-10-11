@@ -24,7 +24,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 DEFAULTS = ("docs", "docs-web/src", "README.md", "CLAUDE.md", "CONTRIBUTING.md")
 
 # Where a citation may point. A path outside these is not ours to check.
-TOPS = ("src", "tests", "scripts", "compiler", "driver", "boards", "docs")
+TOPS = ("src", "tests", "scripts", "software", "boards", "docs")
 
 EXTS = ("v", "vh", "sv", "py", "tcl", "ps1", "md", "json", "txt", "xdc", "f")
 

@@ -11,7 +11,7 @@ consumer. The reason is the source language: these programs are shaders through
 a frontend, not C through GCC, and a `.insn` macro whose semantics are "for each
 active lane" has no meaning in a C expression.
 
-Built on the framework's own `kohakuaccel.backend.isa` at a 32-bit container,
+Built on the framework's own `kohakuaccel.compiler.isa` at a 32-bit container,
 exactly as the SIMD tier's table is, so the two PEs share the encoding machinery
 and never two copies of it.
 
@@ -122,7 +122,7 @@ from dataclasses import dataclass
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compiler"))
 
-from kohakuaccel.backend.isa import Field, InstFormat, InstSet, ISAError
+from kohakuaccel.compiler.isa import Field, InstFormat, InstSet, ISAError
 
 OPC_KHG = 0x5B  # custom-2: the R-type groups
 OPC_KHGI = 0x7B  # custom-3: the I-type groups
