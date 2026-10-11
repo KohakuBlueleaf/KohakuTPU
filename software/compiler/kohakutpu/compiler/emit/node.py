@@ -418,11 +418,19 @@ class NodeReader:
             self.fail(st, f"`{st.op}` takes no block and binds no name")
         match st.op:
             case "fill":
-                if len(pos) != 3 or pos[1] != Arrow("<-") or "n" not in kw:
-                    self.fail(
-                        st,
-                        "fill A0|A1|B0|B1 <- ADDR n=ENTRIES [at=ENTRY] [peers=(UNIT, ...)]",
+                form = (
+                    "fill A0|A1|B0|B1 <- ADDR n=ENTRIES [at=ENTRY] [peers=(UNIT, ...)]"
+                    " | fill A0|A1|B0|B1 recv n=ENTRIES"
+                )
+                if len(pos) == 2 and pos[1] == Name("recv") and set(kw) == {"n"}:
+                    sel, bank = self.side(st, pos[0])
+                    patches = []
+                    n = self.field(st, kw["n"], "n", patches)
+                    return C.Fill(
+                        0, n, sel=sel, fbank=bank, recv=True, patches=tuple(patches)
                     )
+                if len(pos) != 3 or pos[1] != Arrow("<-") or "n" not in kw:
+                    self.fail(st, form)
                 sel, bank = self.side(st, pos[0])
                 patches = []
                 addr = self.field(st, pos[2], "addr", patches)
@@ -445,19 +453,32 @@ class NodeReader:
                 if not pos or not isinstance(pos[0], Dims) or len(pos[0].values) != 3:
                     self.fail(
                         st,
-                        "gemm GMxGNxNK a=A0 b=B0 [acc] [aoff=] [boff=] [emit=ADDR] [anchor=]",
+                        "gemm GMxGNxNK a=A0 b=B0 [acc] [aoff=] [boff=] [anchor=] "
+                        "[emit=ADDR | emit to=UNIT l1=GRANULE [buf=] [count] [credit]]",
                     )
-                if flags - {"acc"}:
-                    self.fail(st, f"gemm flags: acc; got {sorted(flags)}")
+                if flags - {"acc", "emit", "count", "credit", "signal"}:
+                    self.fail(
+                        st,
+                        f"gemm flags: acc emit count credit signal; got {sorted(flags)}",
+                    )
                 acc = "acc" in flags or bool(self.const(st, kw.get("acc", Int(0))))
                 gm, gn, nk = pos[0].values
                 sa, abank = self.side(st, kw.get("a", Name("A0")))
                 sb, bbank = self.side(st, kw.get("b", Name("B0")))
                 if (sa, sb) != (0, 1):
                     self.fail(st, "a= names an A bank, b= a B bank")
-                emit = "emit" in kw
+                emit = "emit" in kw or "emit" in flags
                 patches = []
-                addr = self.field(st, kw["emit"], "addr", patches) if emit else 0
+                to = None
+                if "emit" in flags:
+                    if "to" not in kw:
+                        self.fail(
+                            st, "gemm ... emit to=UNIT l1=GRANULE: emit names its sink"
+                        )
+                    to = self.drain(st, [], kw, (flags - {"acc", "emit"}) | {"fused"})
+                    addr = to.addr
+                else:
+                    addr = self.field(st, kw["emit"], "addr", patches) if emit else 0
                 g = C.Gemm(
                     gm,
                     gn,
@@ -470,6 +491,7 @@ class NodeReader:
                     emit=emit,
                     addr=addr,
                     anchor=self.const(st, kw.get("anchor", Int(C.ISA.cfg.anchor))),
+                    to=to,
                     patches=tuple(patches),
                 )
                 try:
@@ -478,18 +500,29 @@ class NodeReader:
                     self.fail(st, str(e))
                 return g
             case "drain":
+                if "n" not in kw:
+                    self.fail(st, "drain ... n=SUBTILES")
                 return self.drain(st, pos, kw, flags)
-        self.fail(st, f"a cluster's send holds fill, gemm, drain; not {st.op!r}")
+            case "post":
+                if pos or set(kw) != {"n", "to"}:
+                    self.fail(st, "post n=CREDITS to=UNIT")
+                mesh, dst = self.target(st, kw["to"])
+                if mesh != self.p.machine.default:
+                    self.fail(st, "a POST is a CU_SIGNAL inside this mesh")
+                return C.Post(dst, self.const(st, kw["n"]))
+        self.fail(st, f"a cluster's send holds fill, gemm, drain, post; not {st.op!r}")
 
     def drain(self, st, pos, kw, flags):
-        if "n" not in kw or flags - {"fused", "signal"}:
+        if flags - {"fused", "signal", "count", "credit"}:
             self.fail(
                 st,
                 "drain ADDR n=N [fused] [mesh=M] | drain n=N to=UNIT l1=GRANULE "
-                "[buf=0|1|2] [signal] [ack=UNIT]",
+                "[buf=0|1|2] [signal] [count] [credit] [ack=UNIT]",
             )
         patches = []
-        n = self.field(st, kw["n"], "n", patches)
+        n = self.field(st, kw["n"], "n", patches) if "n" in kw else 0
+        if "to" not in kw and {"count", "credit"} & flags:
+            self.fail(st, "count and credit are a drain to a unit's (to=UNIT)")
         if "to" not in kw:
             addrs = [p for p in pos if not isinstance(p, Name)]
             if len(addrs) != 1:
@@ -507,7 +540,11 @@ class NodeReader:
             mesh, dst = self.p.machine.default, NODE
         else:
             mesh, dst = self.target(st, kw["to"])
-        dflags = self.const(st, kw.get("flags", Int(0))) | int("signal" in flags)
+        dflags = (
+            self.const(st, kw.get("flags", Int(0)))
+            | (C.DFLAG_SIGNAL if "signal" in flags else 0)
+            | (C.DFLAG_COUNT if "count" in flags else 0)
+        )
         ack = self.coord(st, kw["ack"]) if "ack" in kw else (0, 0)
         here = self.p.machine.default
         far = {}
@@ -526,6 +563,7 @@ class NodeReader:
             dflags=dflags,
             ack=ack,
             buf=self.const(st, kw.get("buf", Int(C.BUF_L1A))),
+            credit="credit" in flags,
             patches=tuple(patches),
             **far,
         )
@@ -548,21 +586,25 @@ class NodeReader:
         order: one without an emit before it waits forever."""
         pending = self.emits.setdefault(coord, [])
         if isinstance(op, C.Gemm) and op.emit:
-            pending.append((op.addr, op.gm * op.gn, st))
+            sink = op.to.node_fields() if op.to is not None else {}
+            pending.append((op.addr, op.gm * op.gn, sink, st))
         elif isinstance(op, C.Drain) and op.fuse:
             if not pending:
                 self.fail(
                     st,
                     "a fused drain collects an emitting gemm's sub-tiles; none is open",
                 )
-            addr, n, _ = pending.pop(0)
-            if (op.addr, op.n) != (addr, n):
-                self.fail(st, f"the open emit streams {n} sub-tiles to {addr:#x}")
+            addr, n, sink, _ = pending.pop(0)
+            # The DRAIN re-latches the sink while the bursts are still leaving.
+            if (op.addr, op.n, op.node_fields()) != (addr, n, sink):
+                self.fail(
+                    st, f"the open emit streams {n} sub-tiles to {addr:#x} {sink or ''}"
+                )
 
     def finish(self) -> None:
         for pending in self.emits.values():
             if pending:
-                self.fail(pending[0][2], "an emitting gemm no fused drain collects")
+                self.fail(pending[0][3], "an emitting gemm no fused drain collects")
 
     def side(self, st, t) -> tuple:
         if (

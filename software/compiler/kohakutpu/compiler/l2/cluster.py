@@ -9,10 +9,10 @@
     drain c -> vc[H]                       ... into core H's L1 (a `recv` there)
 
 Allocation: a fill takes the bank of its side that holds no live value and
-that the latest sweep does not read. Order: program order; a drain of a tile
-whose last sweep may emit (`ISA.can_emit`) becomes that sweep's `emit=` plus a
-fused DRAIN placed just before the unit's next emitting sweep (it holds the
-sequencer until its sub-tiles have left), else a plain DRAIN after the sweep.
+that the latest sweep does not read. Order: program order; a drain to memory
+becomes the tile's last sweep's `emit=` plus a fused DRAIN placed just before
+the unit's next emitting sweep (it holds the sequencer until its sub-tiles have
+left); without `fuse`, or when that sweep already emits, a plain DRAIN after it.
 """
 
 from dataclasses import dataclass, field
@@ -361,7 +361,7 @@ def _drain(body, s, vals, op, env, seg, fail, fuse, links):
     g = c.gemm.gemm
     where = f"{view.name} + {off}"
     s.accesses.append(sync.mem(s.unit, True, view.name, off, off + n * M.SUBTILE))
-    if fuse and ISA.can_emit(g["acc"], g["nk"]) and "emit" not in g:
+    if fuse and "emit" not in g:
         g["emit"] = where
         s.held.append((c.gemm, f"drain {where} n={n} fused"))
     else:

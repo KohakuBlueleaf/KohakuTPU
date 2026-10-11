@@ -74,6 +74,8 @@ _FIXED = {
     "vfill",
     "vdrain",
     "vsync",
+    "vwait",
+    "vpost",
     "vmark",
     "vbar",
     "vsetvl",

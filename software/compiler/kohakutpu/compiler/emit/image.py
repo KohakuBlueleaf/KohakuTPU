@@ -515,6 +515,49 @@ class Encoder:
         slack = self._int(st, kw.get("slack", Int(0)))
         return [A.vsync(waiter, self._kind(st, kw["on"]), slack, q=q)]
 
+    def _vwait(self, st):
+        pos = st.positional()
+        kw = st.kwargs()
+        form = "vwait WAITER rx|cr n=N [q=Q]"
+        if (
+            len(pos) != 2
+            or not isinstance(pos[0], Name)
+            or pos[0].text not in WAITERS
+            or pos[1] not in (Name("rx"), Name("cr"))
+            or "n" not in kw
+            or set(kw) - {"n", "q"}
+        ):
+            self.fail(st, form)
+        waiter = WAITERS[pos[0].text]
+        if waiter == A.W_MK:
+            self.fail(st, "a count is waited on, not marked")
+        try:
+            return [
+                A.vwait(
+                    waiter,
+                    A.CR if pos[1] == Name("cr") else A.RX,
+                    self._int(st, kw["n"]),
+                    q=self._int(st, kw.get("q", Int(0))),
+                )
+            ]
+        except ISAError as e:
+            self.fail(st, str(e))
+
+    def _vpost(self, st):
+        pos = st.positional()
+        kw = st.kwargs()
+        if len(pos) != 1 or set(kw) != {"n"}:
+            self.fail(st, "vpost UNIT n=CREDITS")
+        try:
+            return [
+                A.vpost(
+                    coord(self.fail, st, pos[0], self.units, local=True),
+                    self._int(st, kw["n"]),
+                )
+            ]
+        except ISAError as e:
+            self.fail(st, str(e))
+
     def _vmark(self, st):
         pos = st.positional()
         kw = st.kwargs()
@@ -692,15 +735,21 @@ def desc(fail, st, units=None) -> dict:
 
 
 def peer_base(fail, st, call, units=None) -> int:
-    """`peer(OFF, ack=UNIT, mesh=M, fin=UNIT)`: a peer drain's descriptor
-    base -- the destination granule [15:0], the ack's {y, x} [23:16], and for
-    a sink in another mesh its id [25:24] and {y, x} there [33:26]
-    (`v2_core.v` E_MEM0). A unit is `(x, y)` or a name; `fin=meshM.vc[i]`
-    implies `mesh=M`. The drain's `to=` then names this mesh's memory port."""
+    """`peer(OFF, ack=UNIT, mesh=M, fin=UNIT, count=1)`: a peer drain's
+    descriptor base -- the destination granule [15:0], the ack's {y, x}
+    [23:16], for a sink in another mesh its id [25:24] and {y, x} there
+    [33:26], and [34] COUNT: the sink counts the bursts toward its unit FILLs
+    or `vwait rx` (`v2_core.v` E_MEM0). A unit is `(x, y)` or a name;
+    `fin=meshM.vc[i]` implies `mesh=M`. The drain's `to=` then names this
+    mesh's memory port."""
     pos = [a for a in call.args if not isinstance(a, Kw)]
     kw = {a.name: a.value for a in call.args if isinstance(a, Kw)}
-    if len(pos) != 1 or not isinstance(pos[0], Int) or set(kw) - {"ack", "mesh", "fin"}:
-        fail(st, "peer(OFF, ack=UNIT, mesh=M, fin=UNIT)")
+    if (
+        len(pos) != 1
+        or not isinstance(pos[0], Int)
+        or set(kw) - {"ack", "mesh", "fin", "count"}
+    ):
+        fail(st, "peer(OFF, ack=UNIT, mesh=M, fin=UNIT, count=1)")
 
     def yx(t) -> int:
         x, y = coord(fail, st, t, units)
@@ -725,6 +774,11 @@ def peer_base(fail, st, call, units=None) -> int:
             mesh = far
     if mesh is not None:
         out |= mesh << 24
+    if "count" in kw:
+        c = kw["count"]
+        if c not in (Int(0), Int(1)):
+            fail(st, f"count= 0 or 1, got {c!r}")
+        out |= c.value << 34
     return out
 
 

@@ -26,7 +26,9 @@ from kohakutpu.compiler.isa.core import (
     CFG_UPTR,
     CFG_USTR,
     CFG_XB,
+    CR,
     OPS,
+    RX,
     VBAR,
     VCFG,
     VDRAIN,
@@ -34,6 +36,7 @@ from kohakutpu.compiler.isa.core import (
     VHALT,
     VLOOP,
     VPACK,
+    VPOST,
     VSETI,
     VSETVL,
     VSKIPZ,
@@ -86,7 +89,7 @@ FAULTS = {
     10: "F_GT4: a GT4 unpack/pack whose chunk count is not a multiple of 4",
     11: "F_SRC: operand selector 2 (v1's chain source) does not exist in V2",
     12: "F_MODE: unpack mode 3, or an MX7 pack not of 8 chunks at chunk base 0/1",
-    13: "F_SYNC: VSYNC waiter or kind out of range",
+    13: "F_SYNC: VSYNC waiter out of range, or a count kind marked",
 }
 
 _BY_CODE = {code: op for op, code in OPS.items()}
@@ -191,6 +194,20 @@ def vsync(waiter, on=0, slack=0, mark=None, q=0):
     of that engine."""
     marked = {} if mark is None else {"marked": 1, "mark": mark}
     return W.SYNC.encode(waiter=waiter, on=on, slack=slack, q=q, **marked)
+
+
+def vwait(waiter, counter, n, q=0):
+    """`waiter` waits until `n` more granules have landed by CU_DATA
+    (`counter` RX) or `n` more credits have arrived (CR) than every earlier
+    `vwait` on that counter asked for. The counters persist across RUNs."""
+    return W.WAIT.encode(waiter=waiter, n=n, q=q, counter=counter)
+
+
+def vpost(dst, n):
+    """A CREDIT of `n` granules to the unit at `dst` = ``(x, y)``, sent from
+    the drain queue: after every VDRAIN before it, and after a `vsync`
+    W_D before it."""
+    return W.POST.encode(dst_x=dst[0], dst_y=dst[1], n=n)
 
 
 def vmark(mark, on, slack=0):
@@ -309,9 +326,11 @@ __all__ = [
     "CFG_UPTR",
     "CFG_USTR",
     "CFG_XB",
+    "CR",
     "FAULTS",
     "IMEM_WORDS",
     "OPS",
+    "RX",
     "VBAR",
     "VCFG",
     "VDRAIN",
@@ -319,6 +338,7 @@ __all__ = [
     "VHALT",
     "VLOOP",
     "VPACK",
+    "VPOST",
     "VSETI",
     "VSETVL",
     "VSKIPZ",
@@ -339,7 +359,9 @@ __all__ = [
     "vfill",
     "vpack",
     "vpack_mx7",
+    "vpost",
     "vsync",
     "vunpk",
+    "vwait",
     "xb",
 ]

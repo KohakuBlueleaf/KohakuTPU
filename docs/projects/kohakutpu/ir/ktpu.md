@@ -66,9 +66,12 @@ register:** `fill A0 <- x + r2 n=r3`, `desc a1 = b + r0`, `copy w(x + r3, ...)`,
 | statement | |
 |---|---|
 | `fill A0\|A1\|B0\|B1 <- ADDR n=ENTRIES [at=ENTRY] [peers=(UNIT, ...)]` | MXFP7 entries into an L1 side and bank; with `peers` the lowest {y, x} of the set reads once and every member receives: a follower must be in this FILL when the entries come, which the node orders (follower's own fills, `mark`, then the leader's words after a `wait` on that mark) |
+| `fill A0\|A1\|B0\|B1 recv n=ENTRIES` | no fetch: wait until another unit's COUNT bursts have landed `n` entries on that side, and take them ([isa.md](../isa.md) §5.4) |
 | `gemm GMxGNxNK a=A? b=B? [acc \| acc=EXPR] [aoff=] [boff=] [emit=ADDR] [anchor=]` | one sweep; `emit=` streams the tile out of its last sweep |
+| `gemm ... emit to=UNIT l1=GRANULE [buf=] [count] [credit] [signal]` | the same, streamed into a unit's buffer; the fused drain that collects it names the same sink and flags |
 | `drain ADDR n=SUBTILES [fused] [mesh=M]` | the accumulator to memory, fused into an emitting sweep or not; `mesh=` to another mesh's memory |
-| `drain n=N to=UNIT [buf=0\|1\|2] l1=GRANULE [signal] [ack=UNIT]` | to a unit's buffer: a vector core's L1 (buffer 0), a cluster's L1 A or B, or its accumulator (2, an add at full precision) |
+| `drain n=N to=UNIT [buf=0\|1\|2] l1=GRANULE [signal] [count] [credit] [ack=UNIT]` | to a unit's buffer: a vector core's L1 (buffer 0), a cluster's L1 A or B, or its accumulator (2, an add at full precision); `count` flags the bursts for the sink's count, `credit` sends each burst only with credits for it |
+| `post n=CREDITS to=UNIT` | once no sweep reads L1, return `n` credits to the unit that fills it |
 | `drain n=N to=meshM.mg[i] buf=2 l1=0` | the same into another mesh: the flits leave by this mesh's memory port, the far coordinate rides in `dfin`, the ack defaults to the far agent |
 | `drain n=N to=node l1=0` | to the node's RX queue, a descriptor and up to 8 sub-tiles a burst |
 
@@ -118,6 +121,8 @@ its RUN and are not IMEM words; a `desc` after the first instruction is refused.
 | `vpack vN[cb:] -> l1[OFF] f16\|gt4\|f32\|mx7a\|mx7b [n=] [walk=] [rel] [q=]` | registers to L1; MXFP7 packs a whole register |
 | `vfill aN -> l1[OFF] [rel]` / `vdrain aN <- l1[OFF] [rel] [to=(x, y) buf=B signal]` | DMA through a descriptor; a peer drain |
 | `vsync WAITER on=KIND [slack=N] [q=]` / `vsync WAITER mark=mN [q=]` / `vmark mN on=KIND [slack=N]` | WAITER `fe unpack math pack fill drain`; KIND `fill unpack math pack drain unpack1 pack1` |
+| `vwait WAITER rx\|cr n=N [q=]` | WAITER waits for `n` more granules landed by COUNT bursts (`rx`) or `n` more credits (`cr`) ([vector-core-v2.md](../vector-core-v2.md) §4.1) |
+| `vpost UNIT n=N` | a CREDIT of `n` to UNIT, from the drain queue |
 | `vbar [q=1]` | unpack waits for fills |
 | `ainc aN += BYTES` (signed 18 bits) / `uptr N` `uinc N` `pptr N` `pinc N` | descriptor and pointer increments |
 | `seti sN = VALUE` / `seti k3 = VALUE` / `setvl sN` / `getstk sN` | scalars: an integer is 24 raw bits, a float is E8M15 |
@@ -136,9 +141,10 @@ shorter body wins. After `skipz` only the fields both paths agree on are known.
 
 **Descriptors** (`desc aN = BASE walk=(STRIDE, BOUND)` or `walk=((S, B), ...)`):
 all four dims are written, an unused one as (0, 0). A peer drain's base is
-`peer(OFF, ack=(x, y), mesh=M, fin=(x, y))`: the destination granule, the
-ack's coordinate, and for a sink in another mesh its id and coordinate there
--- the drain's `to=` then names this mesh's memory port.
+`peer(OFF, ack=(x, y), mesh=M, fin=(x, y), count=1)`: the destination
+granule, the ack's coordinate, for a sink in another mesh its id and
+coordinate there -- the drain's `to=` then names this mesh's memory port --
+and `count` flags the bursts for the sink's count.
 
 A program already in a core's IMEM is not sent again: the lowering places
 each image in a slot and RUNs at it, so several stay resident.

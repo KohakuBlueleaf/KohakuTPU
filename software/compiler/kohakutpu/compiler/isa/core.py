@@ -39,7 +39,7 @@ if set(OPS) != MATH:
         "kohakutpu.language.l1.ops.MATH: one is stale"
     )
 VCFG, VUNPK, VPACK, VSYNC, VSKIPZ = 0x13, 0x14, 0x15, 0x16, 0x17
-VSETVL, VSETI, VLOOP, VBAR = 0x18, 0x1A, 0x1B, 0x1C
+VSETVL, VPOST, VSETI, VLOOP, VBAR = 0x18, 0x19, 0x1A, 0x1B, 0x1C
 VFILL, VDRAIN, VHALT = 0x1D, 0x1E, 0x1F
 
 #: VCFG selectors.
@@ -48,6 +48,9 @@ CFG_PPTR, CFG_PINC, CFG_PSTR, CFG_GETSTK, CFG_AINC, CFG_CHKVL = 5, 6, 7, 8, 9, 1
 
 #: The VSYNC waiter that records a mark instead of waiting.
 W_MK = 5
+#: The VSYNC kind that is a count: granules landed by CU_DATA, or credits.
+K_COUNT = 7
+RX, CR = 0, 1
 
 WORD = 32
 
@@ -169,6 +172,26 @@ SYNC = _fmt(
     _f("q", 1),
     _zero("z", 10),
 )
+WAIT = _fmt(
+    "VWAIT",
+    _op(VSYNC),
+    Field("waiter", 3),
+    Field("on", 3, const=K_COUNT),
+    Field("n", 10, doc="granules or credits more than the last VWAIT on the counter"),
+    _f("q", 1),
+    Field("counter", 1, doc="0: landed by CU_DATA, 1: credits"),
+    _zero("z", 9),
+    doc="`waiter` waits until its counter has reached n more",
+)
+POST = _fmt(
+    "VPOST",
+    _op(VPOST),
+    Field("dst_x", 4),
+    Field("dst_y", 4),
+    _zero("z", 3),
+    Field("n", 16),
+    doc="a CU_SIGNAL CREDIT of n to (dst_x, dst_y), from the drain queue",
+)
 SKIPZ = _fmt(
     "VSKIPZ",
     _op(VSKIPZ),
@@ -235,7 +258,9 @@ CORE = InstSet(
         UNPK,
         PACK,
         MARK,
+        WAIT,
         SYNC,
+        POST,
         SKIPZ,
         SETVL,
         SETI,

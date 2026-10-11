@@ -12,6 +12,11 @@ from kohakuaccel.compiler.isa import Field, InstFormat, InstSet
 OP_FILL = 1
 OP_GEMM = 2
 OP_DRAIN = 3
+OP_POST = 4
+
+#: CU_DATA descriptor flags: [0] answer DATA_RECEIVED, [1] COUNT -- the
+#: receiver counts the burst toward its unit FILLs / VSYNC rx.
+DFLAG_SIGNAL, DFLAG_COUNT = 1, 2
 
 
 @dataclass(frozen=True)
@@ -66,9 +71,12 @@ def _tail(cfg: IsaConfig) -> list[Field]:
         Field("anchor", g, default=cfg.anchor),
         Field("peers", cfg.peer_bits, default=0, doc="{y,x} sharers, peer 0 low"),
         Field("npeer", 2, default=0),
-        # Reserved; positional, so it holds `eoff` and every field below in
-        # place.
-        Field("rsvd141", 1, default=0, doc="reserved; MUST be 0"),
+        Field(
+            "recv",
+            1,
+            default=0,
+            doc="FILL: no fetch; wait for n entries landed by COUNT CU_DATA",
+        ),
         Field("eoff", g, default=0, doc="where a FILL lands in L1"),
         Field("aoff", g, default=0, doc="where a sweep reads A"),
         Field("boff", g, default=0, doc="where a sweep reads B"),
@@ -89,6 +97,12 @@ def _tail(cfg: IsaConfig) -> list[Field]:
         # LAST, so `addr`'s high bits cost no other field a bit position. All
         # zero is mesh 0 DRAM, which is what every pre-40-bit encoding carries.
         Field("addr_hi", cfg.addr_hi_bits, default=0, doc="addr[39:34]"),
+        Field(
+            "credit",
+            1,
+            default=0,
+            doc="DRAIN / emitting GEMM to a node: each burst spends its length in credits",
+        ),
     ]
 
 
@@ -116,7 +130,15 @@ class CuIsa:
             width=cfg.payload_bits,
             doc="write `n` sub-tiles to `addr`, or to a node when dnode",
         )
-        self.set = InstSet("kohakutpu-cu", [self.FILL, self.GEMM, self.DRAIN])
+        self.POST = InstFormat(
+            "POST",
+            op(OP_POST) + _tail(cfg),
+            width=cfg.payload_bits,
+            doc="once the array stops reading L1, a CREDIT of `n` to (dst_x, dst_y)",
+        )
+        self.set = InstSet(
+            "kohakutpu-cu", [self.FILL, self.GEMM, self.DRAIN, self.POST]
+        )
 
     def fill(self, addr: int, n: int, sel: int = 0, **kw) -> int:
         """A FILL payload.
@@ -136,17 +158,6 @@ class CuIsa:
         """A GEMM payload."""
         return self.GEMM.encode(gm=gm, gn=gn, nk=nk, **kw)
 
-    def can_emit(self, acc: int, nk: int) -> bool:
-        """Whether a GEMM may hand its sub-tiles out (`emit`).
-
-        An emitting issue must not also OPEN its tile: there is no load-and-emit
-        accumulator op, the load wins, and the fused DRAIN waits forever for
-        sub-tiles that never come (mx_cluster_mgr_pump.v, `cmd_op`). A sweep's
-        first issue opens the tile unless it accumulates, and it is also the
-        last when `nk` fits one issue.
-        """
-        return bool(acc) or nk > self.cfg.kstep
-
     def legal_nk(self, nk: int) -> bool:
         """Whether a GEMM may sweep `nk` K-blocks: one, or a whole number of issues.
 
@@ -159,6 +170,10 @@ class CuIsa:
     def drain(self, addr: int, n: int, **kw) -> int:
         """A DRAIN payload."""
         return self.DRAIN.encode(n=n, **self.split_addr(addr), **kw)
+
+    def post(self, dst_x: int, dst_y: int, n: int) -> int:
+        """A POST payload: `n` credits (32-byte granules) to (dst_x, dst_y)."""
+        return self.POST.encode(n=n, dst_x=dst_x, dst_y=dst_y)
 
     def split_addr(self, addr: int) -> dict:
         """Split a 40-bit address into its two encoded fields.
