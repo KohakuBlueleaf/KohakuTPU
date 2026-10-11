@@ -256,8 +256,10 @@ class Program:
         looping = False
 
         def flush(only=None) -> None:
+            # `only`: that unit and every unit queued before it, in queue order.
+            order = list(pending)
             ready = []
-            for u in [only] if only is not None else list(pending):
+            for u in order[: order.index(only) + 1] if only in pending else order if only is None else []:
                 words = pending.pop(u, [])
                 fixes = patched.pop(u, [])
                 coord = (b.units[u].x, b.units[u].y)
