@@ -1,3 +1,12 @@
+---
+title: L1 program
+summary: L1, the level a sysnode dispatches -- one instruction stream per unit plus the node's sync points -- and how it lowers to a package.
+tags:
+  - spec
+  - ir
+  - compiler
+---
+
 # L1 program: per-unit streams and sync points
 
 **Status: frozen.** A change to anything below is an owner-reviewed spec change.

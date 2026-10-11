@@ -952,10 +952,10 @@ the captured length → `src/kohakuaccel/sysnode/core/mag_dram_port.v:285`
 `rd_push` → `:287` `rd_take` → `:819` `q_ready` →
 `src/kohakuaccel/sysnode/core/mag.v:931` `m_arready = q_ready && ar_r` (and
 `:930` for AW) → the endpoints: `mag.v:556` `mv_arready` →
-`src/kohakuaccel/sysnode/mover/mm_mover.v:460` the AR skid →
+`src/kohakuaccel/sysnode/mover/mm_mover.v:523` the AR skid →
 `src/kohakuaccel/common/sb_skid.v:34` `out_en`, `:35` `hold_en`, `:64`
 `hold_data` (48 CE pins), `:61` `out_data`; `mag.v:624` `h_arvalid` cleared
-on `m_arready[UP]`; `mag.v:880` `cp_arready` into the node port;
+on `m_arready[UP]`; `mag.v:902` `cp_arready` into the node port;
 `src/kohakuaccel/sysnode/interlink/mag_ilink.v:286` `loc_aw`; `mag.v:911`
 `sel_h`/`sel_w`; and back inside the port, `mag_dram_port.v:305` `rd_gnt`,
 `:315` the capture registers, the split's own counter, `rr_rd`, and the
@@ -1206,7 +1206,7 @@ carries (§5.11 measures it):
   v8t5; in the tree the write lands in `cfg_*_q` (`mm_mover.v:186`–`:194`)
   first, and `stat_busy` covers the cycle through `go`.
 - **DRAM port R queue**. v8t5 read the block-RAM `sync_fifo`
-  (`src/kohakuaccel/sysnode/core/mag_dram_port.v:626`, first-word
+  (`src/kohakuaccel/sysnode/core/mag_dram_port.v:641`, first-word
   fall-through) into the return-side compares and back into its own enable:
   1.075 ns on the enable net to eight RAMB36 alone. In the tree the queue's
   head is a register (`hd_*`, `:638`–`:674`) refilled as it leaves.
@@ -1430,11 +1430,11 @@ The families as RTL:
   adder into the queue entry (12–13 levels). The queue took the mover's
   compare out of the enable; the walker's own chain and adder are the
   depth that is left.
-- **Mover burst counter.** `src/kohakuaccel/sysnode/mover/mm_mover.v:216`–`:224`
+- **Mover burst counter.** `src/kohakuaccel/sysnode/mover/mm_mover.v:269`–`:271`
   (`xb_cnt`, `ent_first`, `ent_last`: 16-bit compares), `:887`: the
   compares feed the address and enable registers and the command FIFO's
   write, 8–9 levels.
-- **DRAM port controls.** `src/kohakuaccel/sysnode/core/mag_dram_port.v:166`
+- **DRAM port controls.** `src/kohakuaccel/sysnode/core/mag_dram_port.v:167`
   (`rd_busy`), `:252` (`rd_req`), `:759`; `:194` (`sr_v`), `:570`
   (`sr_go`), `:583`–`:600`; `:747` (`rleft` under reset): `rd_busy` gates
   the mover's AR skid 10 levels away, `sr_v` fans out to the mover, the

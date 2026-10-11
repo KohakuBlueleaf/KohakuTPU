@@ -1,3 +1,12 @@
+---
+title: IR text
+summary: The one statement syntax every IR level is written in, the module that holds a kernel's bodies, and the read-time expansion before a level reader sees a body.
+tags:
+  - spec
+  - ir
+  - language
+---
+
 # IR text: one statement syntax, a module per kernel
 
 Every IR level has a text, and no level's text is Python. The levels share one

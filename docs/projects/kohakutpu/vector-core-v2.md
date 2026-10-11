@@ -1,3 +1,12 @@
+---
+title: Vector core V2
+summary: The V2 vector core -- its control machine, register file, operand network and ISA -- and the kernels measured on it.
+tags:
+  - kohakutpu
+  - vector
+  - isa
+---
+
 # Vector core V2
 
 `src/kohakutpu/vector2/`, top `v2_core`. It has the same ports as v1's `vec_core`, so

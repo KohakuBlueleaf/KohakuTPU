@@ -1,3 +1,12 @@
+---
+title: L3 program
+summary: L3, what a kernel computes -- tiles of tensors through a project's hardware ops -- with its verifier and its reference interpreter.
+tags:
+  - spec
+  - ir
+  - language
+---
+
 # L3 program: tiles of tensors in a project's hardware ops
 
 L3 is what a kernel computes, written by hand or emitted by a front end:

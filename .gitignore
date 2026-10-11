@@ -195,3 +195,6 @@ cython_debug/
 
 # internal planning notes (working memory, not documentation)
 .plan/
+
+# card_v9_2n bench input: the mailbox sends a run holds the CUs for
+/cu_hold.txt

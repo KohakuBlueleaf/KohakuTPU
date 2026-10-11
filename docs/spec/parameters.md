@@ -649,7 +649,7 @@ No master in the framework drives them.
 
 N requesters onto one AXI4 master, packing a narrow internal beat up to a wider
 memory beat across a clock crossing. This is where every internal requester
-converges and where AXI exists exactly once; `mag.v:954` instantiates it with
+converges and where AXI exists exactly once; `mag.v:1000` instantiates it with
 `N = MP1`.
 
 | Name | Type | Default | Controls | Legal range |
