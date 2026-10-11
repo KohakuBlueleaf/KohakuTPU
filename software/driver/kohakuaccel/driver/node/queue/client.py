@@ -62,8 +62,13 @@ class NodeError(RuntimeError):
 
     def __init__(self, completion: Completion, console: str = "") -> None:
         self.completion = completion
+        self.console = console
         tail = f"\nnode said:\n{console.rstrip()}" if console.strip() else ""
         super().__init__(completion.describe() + tail)
+
+    def __reduce__(self):
+        # Rebuilt from its own arguments: a process pool pickles it back.
+        return (NodeError, (self.completion, self.console))
 
 
 class NodeQueue:
