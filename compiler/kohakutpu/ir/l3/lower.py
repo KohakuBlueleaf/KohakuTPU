@@ -153,7 +153,7 @@ class _Lower:
     def index_words(self):
         """`attention.index_words`, once: the lane-group predicates' source."""
         if self.ix is None:
-            self.ix = self.buf("index_words", Flat(32))
+            self.ix = self.buf("index_words", Flat(16 * AT.IX_WORDS))
             self.out.inputs.append((self.ix, lambda a: AT.index_words().tobytes()))
         return self.ix
 
@@ -639,6 +639,10 @@ class _Lower:
 #: (the hand-written attention's value).
 INF = 60000.0
 
+#: Copies of a scan lane's cluster and mover results, by step: a cluster
+#: writes step j+1's while the core reads step j's.
+RING = 2
+
 
 def _points(vars) -> list:
     """Every point of a map's domains: ``{var: index}`` (a tile's number)."""
@@ -748,6 +752,12 @@ class Scan:
             state.append((name, kind, width, at))
             at += gm * max(width, 1)
 
+        for carry, v in self.updates.items():
+            reads = [r for r in readers.get(carry, ()) if r > made.get(v.name, -1)]
+            if reads:
+                raise LowerError(f"{carry} is read after the phase that updates it")
+        self.skew = self.skewed(phases, made, readers)
+        ring = self.skew[2] if self.skew else ()
         for c in self.inits:
             k, w = self.kind(c.name)
             slot(c.name, k, w)
@@ -758,13 +768,15 @@ class Scan:
             for s in x:
                 later = {r for r in readers.get(s.name, ()) if r > k}
                 if any(phases[r][0] == "vec" for r in later):
-                    kk, w = self.kind(s.name)
-                    slot(s.name, kk, w)
                     crossing.append(s.name)
-        for carry, v in self.updates.items():
-            reads = [r for r in readers.get(carry, ()) if r > made.get(v.name, -1)]
-            if reads:
-                raise LowerError(f"{carry} is read after the phase that updates it")
+                    if s.name not in ring:
+                        kk, w = self.kind(s.name)
+                        slot(s.name, kk, w)
+        # the ring: one block of its values, RING copies of it
+        for n in sorted(ring):
+            state.append((n, "R", 0, at))
+            at += gm
+        at += gm * len(ring) * (RING - 1)
         fills = [
             self.kind(s.name)[1]
             for kind, s in phases
@@ -778,13 +790,13 @@ class Scan:
         slot("$in", "$in", max(fills, default=1))
         slot("$out", "$out", max(wide, default=1))
         state.append(("$ix", "$ix", 0, at))
-        at += 2
+        at += AT.IX_WORDS
         if at > stream.L1_WORDS:
             raise LowerError(
                 f"the scan's state takes {at} of L1's {stream.L1_WORDS} words"
             )
         put_value = self.put.value.name
-        skind = {n: k for n, k, _, _ in state}
+        skind = {n: "P" if k == "R" else k for n, k, _, _ in state}
 
         def kind_of(a):
             return "S" if a[0] == "s" else "W" if a[0] == "in" else skind[a[1]]
@@ -877,6 +889,45 @@ class Scan:
     def start(self, c) -> float:
         return max(-INF, min(INF, c.init))
 
+    def skewed(self, phases, made, readers):
+        """``(early, late, ring)`` when the scan's two vector phases may run a
+        step apart on the core -- step j+1's `early` before step j's `late`, so
+        the cluster and mover work between them runs beside the core instead
+        of in front of it -- else None. Valid when `late` touches nothing
+        `early` reads or writes, and `early` writes nothing `late` touches but
+        per-row values made for it, which the `ring` keeps one copy a step
+        parity of."""
+        vec = [k for k, ph in enumerate(phases) if ph[0] == "vec"]
+        if len(vec) != 2:
+            return None
+        early, late = vec
+
+        def touched(k) -> tuple:
+            names = {s.name for s in phases[k][1]}
+            reads = {
+                a.name
+                for s in phases[k][1]
+                for a in s.args
+                if a.name is not None
+                and not a.tensor
+                and a.name not in names
+                and (a.name in self.carries or phases[made.get(a.name, k)][0] == "vec")
+            }
+            writes = {c for c, v in self.updates.items() if made.get(v.name) == k}
+            writes |= {
+                n for n in names if any(r > k for r in readers.get(n, ()) if r in vec)
+            }
+            return reads, writes
+
+        r1, w1 = touched(early)
+        r2, w2 = touched(late)
+        ring = w1 & (r2 | w2)
+        if w2 & (r1 | w1):
+            return None
+        if any(n in self.carries or self.kind(n)[0] != "P" for n in ring):
+            return None
+        return early, late, tuple(sorted(ring))
+
     # ------------------------------------------------------------- emission
     def operand(self, o, which: str) -> tuple:
         """A cluster operand's layout and buffer: a tensor parameter packed
@@ -941,7 +992,6 @@ class Scan:
     def emit(self, spec, phases, quant_of) -> None:
         low, s = self.low, self.low.s
         gm = self.gm
-        pairs = list(zip(low.mgs, low.vcs))
         ix = low.index_words()
         tname = self.put.target.name
         dtype, oshape = self.inst.outputs[tname]
@@ -970,123 +1020,202 @@ class Scan:
                     )
             elif ph[0] == "unit" and ph[1].op != "quantise":
                 raise LowerError(f"{ph[1].op} inside a scan is not lowered")
+        # One lane a vector core: a map point at a time, its state in the
+        # core's L1. A lane's cluster ops go to clusters of their own, one a
+        # phase, so a lane's next score sweep runs beside its last P.V; its
+        # cluster and mover results are double-buffered by step, so a cluster
+        # runs a step ahead of the core.
+        units = [
+            k for k, ph in enumerate(phases) if ph[0] == "unit" and ph[1].op == "mmt"
+        ]
+        lanes = low.vcs
+        mg_of = {
+            (p, k): low.mgs[(p * len(units) + u) % len(low.mgs)]
+            for p in range(len(lanes))
+            for u, k in enumerate(units)
+        }
         bufs = {}
-        for p, (mg, vc) in enumerate(pairs):
+        for p, vc in enumerate(lanes):
             local = s.buffer(
                 f"state_{vc[0]}_{vc[1]}",
                 stream.L1_WORDS * 32,
                 space=("local", tuple(vc)),
             )
             per = {}
-            for k, ph in enumerate(phases):
-                if ph[0] == "unit":
+            for r in range(RING):
+                for k, ph in enumerate(phases):
+                    if ph[0] != "unit":
+                        continue
                     st = ph[1]
                     if st.op == "mmt":
                         w = st.shape[1] // 4
-                        per[k] = low.buf(f"{st.name}.{p}", Flat(gm * w * 16))
+                        per[k, r] = low.buf(f"{st.name}.{p}.{r}", Flat(gm * w * 16))
                     else:
                         src_k, src = quant_of[st.name]
                         w = self.kind(src)[1]
-                        per[("q16", k)] = low.buf(f"{src}.q16.{p}", Flat(gm * w * 16))
-                        per[k] = low.buf(f"{st.name}.{p}", None, gm * (w // 8) * 128)
-                        per[("drain", src_k)] = per[("q16", k)]
+                        per[("q16", k), r] = low.buf(
+                            f"{src}.q16.{p}.{r}", Flat(gm * w * 16)
+                        )
+                        per[k, r] = low.buf(
+                            f"{st.name}.{p}.{r}", None, gm * (w // 8) * 128
+                        )
+                        per[("drain", src_k), r] = per[("q16", k), r]
             bufs[p] = (local, per)
-        for n, point in enumerate(
-            _points(tuple((v, *self.loops[v]) for v in self.loops))
-        ):
-            p = n % len(pairs)
-            mg, vc = pairs[p]
-            local, per = bufs[p]
-            state = local.view()
-
-            def run(name, in_view=None, out_view=None, state=state, vc=vc):
-                params = {"prog": spec, "run": name, "ix_at": ix.base}
-                reads, writes = [state, ix.view()], [state]
-                if in_view is not None:
-                    params["in_at"] = in_view.address
-                    reads.append(in_view)
-                if out_view is not None:
-                    params["out_at"] = out_view.address
-                    writes.append(out_view)
-                low.s.add("vec_prog", "VC", params, reads=reads, writes=writes, at=vc)
-
-            low.here = tuple(c.name for c in self.inits)
-            run("init")
+        points = list(_points(tuple((v, *self.loops[v]) for v in self.loops)))
+        for w0 in range(0, len(points), len(lanes)):
+            wave = list(enumerate(points[w0 : w0 + len(lanes)]))
+            for p, point in wave:
+                self.emit_init(spec, ix, bufs[p][0], lanes[p])
+            early, late = self.skew[:2] if self.skew else (None, None)
             for j in range(self.steps):
-                for k, ph in enumerate(phases):
-                    low.here = tuple(
-                        s.name for s in (ph[1] if ph[0] == "vec" else [ph[1]])
-                    )
-                    if ph[0] == "vec":
-                        fill_src = ph[2]
-                        in_view = (
-                            per[made_k(phases, fill_src)].view() if fill_src else None
+                for p, point in wave:
+                    for k in range(len(phases)):
+                        if k == late:
+                            continue
+                        self.emit_phase(
+                            spec,
+                            ix,
+                            phases,
+                            ops,
+                            bufs[p],
+                            lanes[p],
+                            mg_of,
+                            p,
+                            point,
+                            j,
+                            k,
                         )
-                        dv = per.get(("drain", k))
-                        run(f"p{k}", in_view, dv.view() if dv is not None else None)
-                        continue
-                    st = ph[1]
-                    if st.op == "quantise":
-                        src, dst = per[("q16", k)], per[k]
-                        s.add(
-                            "quantise",
-                            "mover",
-                            {
-                                "src": src.base,
-                                "dst": dst.base,
-                                "entries": dst.nbytes // 128,
-                            },
-                            reads=[src.view()],
-                            writes=[dst.view()],
-                        )
-                        continue
-                    a, b = st.args
-                    if a.tensor:
-                        aa = self.address(ops[(k, "a")], point, j)
-                        areads = [
-                            ops[(k, "a")][0].view(
-                                aa[0] - ops[(k, "a")][0].base, aa[1] * 128
+                        if k == early and j:
+                            self.emit_phase(
+                                spec,
+                                ix,
+                                phases,
+                                ops,
+                                bufs[p],
+                                lanes[p],
+                                mg_of,
+                                p,
+                                point,
+                                j - 1,
+                                late,
                             )
-                        ]
-                        nk = ops[(k, "a")][2]
-                    else:
-                        src = per[made_k(phases, a.name)]
-                        nk = self.kind_q(a.name, phases)
-                        aa = (src.base, gm * nk, False)
-                        areads = [src.view()]
-                    bb = self.address(ops[(k, "b")], point, j)
-                    bbuf = ops[(k, "b")][0]
-                    if ops[(k, "b")][2] != nk:
-                        raise LowerError(
-                            f"{st.name}: operands of {nk} and {ops[(k, 'b')][2]} K-blocks"
-                        )
-                    c = per[k]
-                    s.add(
-                        "gemm",
-                        "MG",
-                        {
-                            "a": aa,
-                            "b": bb,
-                            "gm": gm,
-                            "gn": st.shape[1] // 4,
-                            "nk": nk,
-                            "c_at": c.base,
-                        },
-                        reads=areads + [bbuf.view(bb[0] - bbuf.base, bb[1] * 128)],
-                        writes=[c.view()],
-                        at=mg,
+            for p, point in wave:
+                if late is not None:
+                    self.emit_phase(
+                        spec,
+                        ix,
+                        phases,
+                        ops,
+                        bufs[p],
+                        lanes[p],
+                        mg_of,
+                        p,
+                        point,
+                        self.steps - 1,
+                        late,
                     )
-            t = 0
-            for v in okey[:-1]:
-                kind, a, b = self.loops[v]
-                t = (
-                    t * ((b - a) if kind == "span" else a // b)
-                    + point[v]
-                    - (a if kind == "span" else 0)
-                )
-            off, size = lo.tile(t, 0)
-            low.here = tuple(s.name for s in self.post)
-            run("final", None, out.view(off, size))
+                self.emit_final(spec, ix, bufs[p][0], lanes[p], point, okey, lo, out)
+
+    def vrun(
+        self, spec, ix, local, vc, name, in_view=None, out_view=None, ring=None
+    ) -> None:
+        params = {"prog": spec, "run": name, "ix_at": ix.base}
+        if ring is not None:
+            params["ring"] = ring
+        state = local.view()
+        reads, writes = [state, ix.view()], [state]
+        if in_view is not None:
+            params["in_at"] = in_view.address
+            reads.append(in_view)
+        if out_view is not None:
+            params["out_at"] = out_view.address
+            writes.append(out_view)
+        self.low.s.add("vec_prog", "VC", params, reads=reads, writes=writes, at=vc)
+
+    def emit_init(self, spec, ix, local, vc) -> None:
+        self.low.here = tuple(c.name for c in self.inits)
+        self.vrun(spec, ix, local, vc, "init")
+
+    def emit_final(self, spec, ix, local, vc, point, okey, lo, out) -> None:
+        t = 0
+        for v in okey[:-1]:
+            kind, a, b = self.loops[v]
+            t = (
+                t * ((b - a) if kind == "span" else a // b)
+                + point[v]
+                - (a if kind == "span" else 0)
+            )
+        off, size = lo.tile(t, 0)
+        self.low.here = tuple(s.name for s in self.post)
+        self.vrun(spec, ix, local, vc, "final", None, out.view(off, size))
+
+    def emit_phase(
+        self, spec, ix, phases, ops, bufs, vc, mg_of, p, point, j, k
+    ) -> None:
+        """Phase `k` of step `j` on lane `p`."""
+        low, s, gm = self.low, self.low.s, self.gm
+        local, ring = bufs
+        r = j % RING
+        per = {key: b for (key, rr), b in ring.items() if rr == r}
+        ph = phases[k]
+        low.here = tuple(x.name for x in (ph[1] if ph[0] == "vec" else [ph[1]]))
+        if ph[0] == "vec":
+            fill_src = ph[2]
+            in_view = per[made_k(phases, fill_src)].view() if fill_src else None
+            dv = per.get(("drain", k))
+            self.vrun(
+                spec,
+                ix,
+                local,
+                vc,
+                f"p{k}",
+                in_view,
+                dv.view() if dv is not None else None,
+                r if self.skew else None,
+            )
+            return
+        st = ph[1]
+        if st.op == "quantise":
+            src, dst = per[("q16", k)], per[k]
+            s.add(
+                "quantise",
+                "mover",
+                {"src": src.base, "dst": dst.base, "entries": dst.nbytes // 128},
+                reads=[src.view()],
+                writes=[dst.view()],
+            )
+            return
+        a = st.args[0]
+        if a.tensor:
+            aa = self.address(ops[(k, "a")], point, j)
+            areads = [ops[(k, "a")][0].view(aa[0] - ops[(k, "a")][0].base, aa[1] * 128)]
+            nk = ops[(k, "a")][2]
+        else:
+            src = per[made_k(phases, a.name)]
+            nk = self.kind_q(a.name, phases)
+            aa = (src.base, gm * nk, False)
+            areads = [src.view()]
+        bb = self.address(ops[(k, "b")], point, j)
+        bbuf = ops[(k, "b")][0]
+        if ops[(k, "b")][2] != nk:
+            raise LowerError(
+                f"{st.name}: operands of {nk} and {ops[(k, 'b')][2]} K-blocks"
+            )
+        s.add(
+            "gemm",
+            "MG",
+            {
+                "a": aa,
+                "b": bb,
+                "gm": gm,
+                "gn": st.shape[1] // 4,
+                "nk": nk,
+                "c_at": per[k].base,
+            },
+            reads=areads + [bbuf.view(bb[0] - bbuf.base, bb[1] * 128)],
+            writes=[per[k].view()],
+            at=mg_of[p, k],
+        )
 
     def kind_q(self, name, phases) -> int:
         """K-blocks of a quantised value: its columns over 32."""

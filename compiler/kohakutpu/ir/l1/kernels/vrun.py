@@ -2,17 +2,18 @@
 sub-tile layout: the vector phases of a scan.
 
 The spec ``("vr", gm, state, runs)`` and its layout: docs/projects/kohakutpu/
-ir/l3.md §5. A row reduction folds the columns into two partials, reduces each
-lane group of four (rotate 1 and 2: lane 4i exact) and broadcasts lane 4i to
-its group with three predicated rotates; a quantiser-order drain is
-`attention`'s 4x4 granule transpose. Per-row state writes land at the RUN's
-end, after every read.
+ir/l3.md §5. A row reduction folds the columns into two partials and reduces
+each lane group of four cyclically (`attention.group_reduce`: every lane
+exact); a quantiser-order drain is `attention.transpose`'s 4x4 granule
+butterfly. Both read `attention.predicates`, set once a RUN. Per-row state
+writes land at the RUN's end, after every read.
 """
 
 from functools import cache
 
 from kohakutpu.hw import vector as V
 from kohakutpu.ir.l1 import vsched
+from kohakutpu.ir.l1.kernels import attention as AT
 from kohakutpu.ir.l1.kernels.stream import walk_offsets
 from kohakutpu.ir.l1.kernels.vgen import (
     BINARY,
@@ -59,23 +60,48 @@ def widths(state, runs) -> tuple:
     return tuple(sorted(ws))
 
 
+def ring_ad(state, runs):
+    """The descriptor ring state ("R": per-row values with one copy a step
+    parity) is read through, its base set before each RUN; None without."""
+    if not any(k == "R" for _, k, _, _ in state):
+        return None
+    ws = widths(state, runs)
+    if len(ws) == len(AD_W):
+        raise VgenError(f"{len(ws)} tile widths and a ring; {len(AD_W)} walk them")
+    return AD_W[len(ws)]
+
+
 def walks(gm: int, state, runs) -> dict:
     """Every load/store descriptor's walk, by descriptor."""
     out = {AD_W[k]: ((w, gm),) for k, w in enumerate(widths(state, runs))}
     out[AD_ST] = ((1, gm),)
     out[AD_IX] = ((0, gm),)
+    ring = ring_ad(state, runs)
+    if ring is not None:
+        out[ring] = ((1, gm),)
     return out
 
 
+def ring_base(state, slot: int, gm: int) -> int:
+    """L1 word of ring slot `slot`: the ring values are one block, `slot`
+    copies of it apart."""
+    ring = [(at, n) for n, k, _, at in state if k == "R"]
+    lo = min(at for at, _ in ring)
+    return lo + slot * gm * len(ring)
+
+
 class _Run:
-    def __init__(self, gm, state, run, ad_w) -> None:
-        self.gm, self.ad_w = gm, ad_w
+    def __init__(self, gm, state, run, ad_w, ad_ring=None) -> None:
+        self.gm, self.ad_w, self.ad_ring = gm, ad_w, ad_ring
         self.state = {n: (k, w, at) for n, k, w, at in state}
+        ring = sorted((at, n) for n, k, _, at in state if k == "R")
+        #: a ring value's word in its slot, through `ad_ring`
+        self.ring_at = {n: at - ring[0][0] for at, n in ring}
         self.name, self.fill, nodes, self.outs = run
         self.vregs = _Pool(16, "vector")
         self.code: list = []
         self.sreg: list = []
-        self.pred_word = None
+        self.preds_set = False
         self.analyse(nodes)
 
     # ------------------------------------------------------------ analysis
@@ -84,10 +110,16 @@ class _Run:
             case ("in",):
                 return "W"
             case ("st", n):
-                return self.state[n][0]
+                return "P" if self.state[n][0] == "R" else self.state[n][0]
             case ("v", n):
                 return self.kind[n]
         return "S"
+
+    def p_addr(self, n) -> tuple:
+        """``(descriptor, word)`` of per-row state `n`."""
+        if n in self.ring_at:
+            return self.ad_ring, self.ring_at[n]
+        return AD_ST, self.state[n][2]
 
     def width_of(self, a) -> int:
         match a:
@@ -156,7 +188,7 @@ class _Run:
                     raise VgenError("a quantiser-order tile is whole 32-column blocks")
             elif o[1][0] == "v":
                 n, target = o[1][1], o[2]
-                tk = self.state[target][0]
+                tk = self.kind_of(("st", target))
                 if self.kind[n] != tk:
                     raise VgenError(f"{target} is {tk}; {n} is {self.kind[n]}")
                 (self.st_w if tk == "W" else self.st_p)[n] = target
@@ -180,25 +212,28 @@ class _Run:
             self.sreg.append(key)
         return key
 
-    def predicates(self, word: int) -> list:
-        """P1..P3 = (index word `word` == 1, 2, 3), unless they hold it."""
-        if self.pred_word == word:
+    def predicates(self) -> list:
+        """`attention.predicates`, unless the RUN has set them."""
+        if self.preds_set:
             return []
-        self.pred_word = word
+        self.preds_set = True
         t = self.vregs.get()
-        out = [Vld(t, AD_IX, self.state["$ix"][2] + word)]
-        out += [
-            _alu(
-                "VCMPEQ",
-                t,
-                [(V.SRC_V, t), (V.SRC_S, self.sr(("k", k)))],
-                pr=k,
+        at = self.state["$ix"][2]
+        out = AT.predicates(
+            lambda w: ([Vld(t, AD_IX, at + w)], t),
+            lambda op, r, k, pr: _alu(
+                op,
+                r,
+                [(V.SRC_V, r), (V.SRC_S, self.sr(("k", k)))],
+                pr=pr,
                 fields=("va", "vb"),
-            )
-            for k in (1, 2, 3)
-        ]
+            ),
+        )
         self.vregs.put(t)
         return out
+
+    def rot(self, n: int) -> tuple:
+        return self.sr(("r", n))
 
     def alu(self, op, args, regs, vd) -> list:
         srcs = [
@@ -252,7 +287,7 @@ class _Run:
                     self.finish(n, accs, persist)
             self.per_row(pas + 1, persist)
             self.release(pas, persist)
-        code += [Vst(persist[n], AD_ST, self.state[t][2]) for n, t in self.st_p.items()]
+        code += [Vst(persist[n], *self.p_addr(t)) for n, t in self.st_p.items()]
         if self.drain is not None:
             code.append(Vdrain(AD_OUT, self.state["$out"][2]))
         return code
@@ -274,8 +309,8 @@ class _Run:
         k, w, at = self.state[target]
         r = self.vregs.get()
         out = [_alu("VMOV", r, [(V.SRC_S, self.sr(("c", value)))], fields=("va",))]
-        if k == "P":
-            out.append(Vst(r, AD_ST, at))
+        if k in ("P", "R"):
+            out.append(Vst(r, *self.p_addr(target)))
         else:
             out += [Vst(r, self.ad_w[w], at + c) for c in range(w)]
         self.vregs.put(r)
@@ -285,7 +320,7 @@ class _Run:
         key = ("$st", a[1])
         if key not in persist:
             r = self.vregs.get()
-            self.code.append(Vld(r, AD_ST, self.state[a[1]][2]))
+            self.code.append(Vld(r, *self.p_addr(a[1])))
             persist[key] = r
         return persist[key]
 
@@ -380,27 +415,26 @@ class _Run:
         return REDUCE[next(op for m, op, _ in self.nodes if m == n)]
 
     def transpose(self, h: int, xs: list, width: int) -> None:
-        """Four columns (16 keys) to the quantiser's order: output `i` takes
-        granule `i` of input `j` into granule `j`, a rotation of 4(i-j) lanes."""
-        self.code += self.predicates(0)
+        """Four columns (16 keys) to the quantiser's order, in place: output
+        `i` takes granule `i` of input `j` into granule `j`."""
+        self.code += self.predicates()
         at = self.state["$out"][2]
-        for i in range(4):
-            out = self.vregs.get()
-            for j in range(4):
-                lanes = 4 * ((i - j) % 4)
-                kw = {"pr": j, "pm": 1} if j else {}
-                if lanes:
-                    self.code.append(Vshuf(out, xs[j], self.sr(("r", lanes)), **kw))
-                else:
-                    self.code.append(
-                        _alu("VMOV", out, [(V.SRC_V, xs[j])], fields=("va",), **kw)
-                    )
+        t1, t2 = self.vregs.get(), self.vregs.get()
+        self.code += AT.transpose(
+            xs,
+            t1,
+            t2,
+            self.rot,
+            lambda d, s, pr, pm: _alu(
+                "VMOV", d, [(V.SRC_V, s)], pr=pr, pm=pm, fields=("va",)
+            ),
+        )
+        for i, x in enumerate(xs):
             self.code.append(
-                Vst(out, self.ad_w[width], at + ((h // 2) * 4 + i) * 2 + h % 2)
+                Vst(x, self.ad_w[width], at + ((h // 2) * 4 + i) * 2 + h % 2)
             )
-            self.vregs.put(out)
-        for x in xs:
-            self.vregs.put(x)
+        for r in (t1, t2, *xs):
+            self.vregs.put(r)
 
     def finish(self, n, accs, persist) -> None:
         op = self.reduce_op(n)
@@ -409,18 +443,13 @@ class _Run:
             self.code.append(_combine(op, live[0], live[0], live[1]))
             self.vregs.put(live[1])
         acc = live[0]
-        self.code += self.predicates(1)
+        self.code += self.predicates()
         t = self.vregs.get()
-        for r in (1, 2):
-            self.code += [Vshuf(t, acc, self.sr(("r", r))), _combine(op, acc, acc, t)]
+        self.code += AT.group_reduce(
+            lambda d, a, b: _combine(op, d, a, b), acc, t, self.rot
+        )
         self.vregs.put(t)
-        bc = self.vregs.get()
-        self.code.append(_alu("VMOV", bc, [(V.SRC_V, acc)], fields=("va",)))
-        self.code += [
-            Vshuf(bc, acc, self.sr(("r", 16 - k)), pr=k, pm=1) for k in (1, 2, 3)
-        ]
-        self.vregs.put(acc)
-        persist[n] = bc
+        persist[n] = acc
 
     def release(self, pas, persist) -> None:
         """Per-row values no later pass reads, but those the state takes."""
@@ -480,10 +509,11 @@ def images(spec: tuple) -> tuple:
         raise VgenError(f"not a run program of 1..8 bands: {spec[:2]}")
     ws = widths(state, runs)
     ad_w = {w: AD_W[k] for k, w in enumerate(ws)}
+    ad_ring = ring_ad(state, runs)
     l1_walks = {ad: (0, walk_offsets(d)) for ad, d in walks(gm, state, runs).items()}
     out, pc = [], 0
     for run in runs:
-        r = _Run(gm, state, run, ad_w)
+        r = _Run(gm, state, run, ad_w, ad_ring)
         try:
             code = r.emit()
         except OutOfRegisters as e:
@@ -492,7 +522,11 @@ def images(spec: tuple) -> tuple:
         drain = r.width[r.drain[1][1]] if r.drain is not None else 0
         l1 = vsched.L1Map(
             walks=l1_walks,
-            fills={AD_IN: gm * max(run[1], 1), AD_OUT: gm * max(drain, 1), AD_IF: 2},
+            fills={
+                AD_IN: gm * max(run[1], 1),
+                AD_OUT: gm * max(drain, 1),
+                AD_IF: AT.IX_WORDS,
+            },
         )
         img = tuple(head + vsched.schedule(body, l1) + [Halt()])
         out.append((run[0], img, pc, vsched.cycles(img, l1), drain))
@@ -511,15 +545,18 @@ def setup_ops(spec: tuple, ix_at: int) -> list:
     ops = [Image(img, pc) for _, img, pc, _, _ in images(spec)]
     for ad, dims in walks(gm, state, runs).items():
         ops += [Desc(ad, 0), Dims(ad, dims)]
-    return ops + [Desc(AD_IF, ix_at), Dims(AD_IF, ((V.WORD_BYTES, 2),))]
+    return ops + [Desc(AD_IF, ix_at), Dims(AD_IF, ((V.WORD_BYTES, AT.IX_WORDS),))]
 
 
-def run_ops(spec: tuple, name: str, in_at=None, out_at=None) -> list:
-    """One RUN: its input's and its drain's walks, then the RUN."""
-    _, gm, _, runs = spec
+def run_ops(spec: tuple, name: str, in_at=None, out_at=None, ring=None) -> list:
+    """One RUN: its input's and its drain's walks, the ring slot its ring
+    values are in, then the RUN."""
+    _, gm, state, runs = spec
     fill = next(r[1] for r in runs if r[0] == name)
     _, _, pc, _, drain = next(i for i in images(spec) if i[0] == name)
     ops = []
+    if ring is not None:
+        ops.append(Desc(ring_ad(state, runs), ring_base(state, ring, gm)))
     if fill:
         ops += [Desc(AD_IN, in_at), Dims(AD_IN, ((V.WORD_BYTES, gm * fill),))]
     if drain:

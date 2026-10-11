@@ -306,7 +306,9 @@ class VectorLowerer:
             if self.installed != ("vr", spec, p["ix_at"]):
                 ops += VR.setup_ops(spec, p["ix_at"])
                 self.installed = ("vr", spec, p["ix_at"])
-            ops += VR.run_ops(spec, p["run"], p.get("in_at"), p.get("out_at"))
+            ops += VR.run_ops(
+                spec, p["run"], p.get("in_at"), p.get("out_at"), p.get("ring")
+            )
             return [Chunk(ops, (index,), VR.cycles(spec, p["run"]) + 200)]
         if item.kind == "vec_stream":
             self.installed = None

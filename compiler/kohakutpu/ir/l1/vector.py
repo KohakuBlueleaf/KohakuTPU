@@ -44,6 +44,55 @@ class Alu:
 
 
 @dataclass(frozen=True)
+class Chain:
+    """`ops` as ONE D2/D4 group (`vec_core.v` S_GA..S_GD): the first reads
+    vectors, each later one reads the previous stage's result (source C), S or
+    K -- never a vector register -- and only the last writes, its `vd`. Runs in
+    the mode of its length, at ``len(ops)`` beats a chunk."""
+
+    ops: tuple
+
+    def __post_init__(self) -> None:
+        if len(self.ops) not in (2, 4):
+            raise ValueError(f"a chain of {len(self.ops)}; D2 and D4 take 2 or 4")
+        if V.SRC_C in (self.ops[0].sa, self.ops[0].sb, self.ops[0].sc):
+            raise ValueError("a chain's first stage reads no previous stage")
+        for op in self.ops[1:]:
+            if V.SRC_V in (op.sa, op.sb, op.sc):
+                raise ValueError(f"chain stage {op.op} names a vector register")
+
+    @property
+    def mode(self) -> int:
+        return V.D2 if len(self.ops) == 2 else V.D4
+
+    def words(self) -> list[int]:
+        return [w for op in self.ops for w in op.words()]
+
+
+def stage(
+    op: str, b: int = 0, c: int = 0, sb: int = V.SRC_C, sc: int = V.SRC_C, vd: int = 0
+) -> Alu:
+    """A chain stage reading the previous result at `va`; `b`/`c` and their
+    selectors (S or K) for a second and third operand, C when unused; `vd` is
+    read only on the last stage."""
+    return Alu(op, vd=vd, va=0, vb=b, vc=c, sa=V.SRC_C, sb=sb, sc=sc)
+
+
+@dataclass(frozen=True)
+class Vred:
+    """`S[sd] = reduce(va)` in TREE mode; EXPSUM also writes ``exp2(va)`` to
+    `vb`. VL a multiple of 16. The core waits for the reduction to land."""
+
+    sd: int
+    va: int
+    kind: str = "SUM"
+    vb: int = 0
+
+    def words(self) -> list[int]:
+        return [V.vred(self.sd, self.va, self.kind, self.vb)]
+
+
+@dataclass(frozen=True)
 class Vld:
     vd: int
     ad: int

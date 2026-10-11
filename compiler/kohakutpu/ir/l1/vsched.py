@@ -24,7 +24,19 @@ with an ALU op 22.4 a pair, a VSHUF 27.
 from dataclasses import dataclass, field
 
 from kohakutpu.hw import vector as V
-from kohakutpu.ir.l1.vector import Alu, Bar, Halt, Vdrain, Vfill, Vld, Vshuf, Vst
+from kohakutpu.ir.l1.vector import (
+    Alu,
+    Bar,
+    Chain,
+    Halt,
+    Setmode,
+    Vdrain,
+    Vfill,
+    Vld,
+    Vred,
+    Vshuf,
+    Vst,
+)
 
 #: Which of va / vb / vc an ALU op reads as data (`vec_alu.v`'s operand muxes).
 _UNARY = {"VMOV", "VNEG", "VABS", "VEXP2", "VLOG2", "VINV", "VRSQRT"}
@@ -60,15 +72,51 @@ class Timing:
     mem_setup: float = 6.0
     #: Any other instruction (VSETVL, VSETI word, ...).
     other: float = 3.0
+    #: Gathering each chained instruction after the first (S_GA..S_GD).
+    gather: float = 4.0
+    #: A chain's result latency past FLAT's, per stage after the first.
+    stage_lat: float = 14.0
+    #: A VRED's last beat to its scalar landing (S_RDRAIN, the tail, S_RWAIT).
+    red_lat: float = 60.0
 
 
 TIMING = Timing()
 
 
+def _used(op: str) -> set:
+    """Which of a, b, c an ALU op reads (`vec_alu.v`'s operand muxes)."""
+    if op in _UNARY:
+        return {"a"}
+    if op in _AB:
+        return {"a", "b"}
+    if op in _AC:
+        return {"a", "c"}
+    return {"a", "b", "c"}
+
+
+def _scalars(inst: Alu) -> set:
+    """S registers an ALU op reads."""
+    return {
+        ("s", reg)
+        for name, reg, sel in (
+            ("a", inst.va, inst.sa),
+            ("b", inst.vb, inst.sb),
+            ("c", inst.vc, inst.sc),
+        )
+        if name in _used(inst.op) and sel == V.SRC_S
+    }
+
+
 def _regs_named(inst) -> set:
-    """Vector registers the issue hazard checks: all four ALU fields."""
+    """Vector registers the issue hazard checks: all four ALU fields (a chain:
+    its first stage's sources and its last stage's destination)."""
     if isinstance(inst, Alu):
         return {inst.va, inst.vb, inst.vc, inst.vd}
+    if isinstance(inst, Chain):
+        first = inst.ops[0]
+        return {first.va, first.vb, first.vc, inst.ops[-1].vd}
+    if isinstance(inst, Vred):
+        return {inst.va, inst.vb}
     if isinstance(inst, (Vld, Vst)):
         return {inst.vd if isinstance(inst, Vld) else inst.vs}
     if isinstance(inst, Vshuf):
@@ -79,16 +127,16 @@ def _regs_named(inst) -> set:
 def _reads(inst) -> set:
     """What an instruction reads as data: vector registers and predicates."""
     out: set = set()
+    if isinstance(inst, Chain):
+        out |= _reads(inst.ops[0])
+        for op in inst.ops[1:]:
+            out |= _scalars(op)
+        return out
+    if isinstance(inst, Vred):
+        return {("v", inst.va)}
     if isinstance(inst, Alu):
-        used = (
-            {"a"}
-            if inst.op in _UNARY
-            else (
-                {"a", "b"}
-                if inst.op in _AB
-                else {"a", "c"} if inst.op in _AC else {"a", "b", "c"}
-            )
-        )
+        used = _used(inst.op)
+        out |= _scalars(inst)
         for name, reg, sel in (
             ("a", inst.va, inst.sa),
             ("b", inst.vb, inst.sb),
@@ -112,6 +160,11 @@ def _reads(inst) -> set:
 
 
 def _writes(inst) -> set:
+    if isinstance(inst, Chain):
+        return _writes(inst.ops[-1])
+    if isinstance(inst, Vred):
+        out = {("s", inst.sd)}
+        return out | ({("v", inst.vb)} if inst.kind == "EXPSUM" else set())
     if isinstance(inst, Alu):
         return {("p", inst.pr)} if inst.op in _CMP else {("v", inst.vd)}
     if isinstance(inst, (Vld, Vshuf)):
@@ -151,7 +204,7 @@ class L1Map:
 
 def _fixed(inst) -> bool:
     """Instructions nothing is reordered across."""
-    return not isinstance(inst, (Alu, Vld, Vst, Vshuf, Vfill, Vdrain, Bar))
+    return not isinstance(inst, (Alu, Chain, Vred, Vld, Vst, Vshuf, Vfill, Vdrain, Bar))
 
 
 def _deps(code: list, l1: L1Map) -> list[set]:
@@ -233,7 +286,7 @@ class Core:
         named = _regs_named(inst)
         reg_ready = max((self.ready.get(r, 0.0) for r in named), default=0.0)
         w = self.walk
-        if isinstance(inst, Alu):
+        if isinstance(inst, (Alu, Chain)):
             s = max(s, reg_ready)
             if w is not None and w.reg is not None and w.reg in named:
                 s = max(s, w.end)
@@ -241,8 +294,10 @@ class Core:
         engine = w.end if w is not None else 0.0
         if isinstance(inst, (Vld, Vst)):
             return max(s, engine, reg_ready)
-        if isinstance(inst, Vshuf):
+        if isinstance(inst, (Vshuf, Setmode)):
             return max(s, engine, self.wb_until)
+        if isinstance(inst, Vred):
+            return max(s, engine, reg_ready)
         return max(s, engine)
 
     def issue(self, inst) -> None:
@@ -271,6 +326,24 @@ class Core:
                 if r[0] == "v":
                     self.ready[r[1]] = beats_end + tm.alu_lat
             self.wb_until = max(self.wb_until, beats_end + tm.alu_lat)
+            return
+        if isinstance(inst, Chain):
+            # A chained mode writes a chunk every `depth` beats, so a walk's
+            # words take the free write slots: no 1:1 sharing.
+            depth = len(inst.ops)
+            beats_end = s + tm.gather * (depth - 1) + b * depth
+            self.seq = beats_end + tm.alu_gap
+            lat = beats_end + tm.alu_lat + tm.stage_lat * (depth - 1)
+            self.ready[inst.ops[-1].vd] = lat
+            self.wb_until = max(self.wb_until, lat)
+            return
+        if isinstance(inst, Vred):
+            beats = b * (2 if inst.kind in ("SUMSQ", "DOT", "EXPSUM") else 1)
+            end = max(s + beats, self.wb_until) + tm.red_lat
+            if inst.kind == "EXPSUM":
+                self.ready[inst.vb] = end
+            self.seq = end
+            self.wb_until = max(self.wb_until, end)
             return
         if isinstance(inst, Vld):
             first = s + tm.walk_setup
@@ -320,7 +393,11 @@ def _critical(code: list, preds: list) -> list[float]:
     """Longest latency path from each instruction to the end."""
     lat = []
     for inst in code:
-        if isinstance(inst, Alu):
+        if isinstance(inst, Chain):
+            lat.append(26.0 * len(inst.ops))
+        elif isinstance(inst, Vred):
+            lat.append(80.0)
+        elif isinstance(inst, Alu):
             lat.append(26.0)
         elif isinstance(inst, Vld):
             lat.append(14.4)

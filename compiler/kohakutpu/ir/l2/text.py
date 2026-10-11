@@ -43,7 +43,7 @@ TEXT.kind(
     ("sink", "resident_at", "install"),
 )
 TEXT.kind("vec_run", "VC", ("gm", "run", "p16_at", "o_at", "idx_at"), ("in_at",))
-TEXT.kind("vec_prog", "VC", ("prog", "run", "ix_at"), ("in_at", "out_at"))
+TEXT.kind("vec_prog", "VC", ("prog", "run", "ix_at"), ("in_at", "out_at", "ring"))
 TEXT.kind("quantise", "mover", ("src", "dst", "entries"))
 TEXT.kind("copy", "mover", ("src", "dst", "nbytes"))
 

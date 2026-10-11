@@ -19,10 +19,10 @@ THE VECTOR CORE WORKS IN SUB-TILE LAYOUT. A drained word is a 4x4 sub-tile
 and one sub-tile column per register, so a row statistic is a register whose
 lanes 4i..4i+3 all hold row i's value -- and it applies to every column
 register as it stands. A row reduce folds the columns, then reduces each group
-of four lanes (rotate 1 and 2: lane 4i is exact) and broadcasts lane 4i to its
-group with three predicated rotates. P goes to the quantiser's order (four rows
-of 32 keys, row by row) with the 4x4 granule transpose of
-`kohakutpu.isa.relayout.Subtile`: predicated rotates, no merge.
+of four lanes cyclically (`group_reduce`: every lane exact, no broadcast). P
+goes to the quantiser's order (four rows of 32 keys, row by row) with the 4x4
+granule transpose of `kohakutpu.isa.relayout.Subtile` as a two-stage
+butterfly (`transpose`). The four lane-group predicates are set once a RUN.
 """
 
 from functools import cache
@@ -61,16 +61,29 @@ NEG = -60000.0
 S_VL, S_NEG = 0, 4
 S_ROT = {1: 5, 2: 6, 13: 7, 14: 8, 15: 9, 4: 10, 8: 11, 12: 12}
 S_K = {1: 13, 2: 14, 3: 15}  # the lane-group numbers predicates compare with
-# Vector registers.
-P_IN = (0, 1, 2, 3)
-R_OUT = (4, 5, 6, 7)
-ACC, TMP, MNEW, CORR, OLD, IDX, BC = 8, 9, 10, 11, 12, 13, 14
+# Vector registers: two sets of four columns, so one set's loads and exps run
+# beside the other's transpose.
+SETS = ((0, 1, 2, 3), (4, 5, 6, 7))
+ACC, TMP, MNEW, CORR, OLD, IDX, TMP2 = 8, 9, 10, 11, 12, 13, 14
 # Descriptors.
 AD_COL, AD_ST, AD_IX, AD_IN, AD_PD, AD_OD, AD_IF = 0, 1, 2, 3, 4, 5, 6
+# Predicates: lane % 4 == 3, lane % 4 >= 2, granule >= 2, granule odd.
+PM3, PM23, PG23, PGODD = 0, 1, 2, 3
+
+
+def index_words() -> np.ndarray:
+    """fp16 words: each lane's granule (lane // 4), its place in it (lane % 4),
+    and the granule's parity."""
+    lanes = np.arange(16)
+    return np.concatenate([lanes // 4, lanes % 4, (lanes // 4) % 2]).astype(np.float16)
+
+
+#: Words `index_words` takes.
+IX_WORDS = index_words().size // 16
 
 
 def layout(gm: int) -> dict:
-    """L1 word offsets: S/PV, P, O, stats (m, l, corr), the two index words."""
+    """L1 word offsets: S/PV, P, O, stats (m, l, corr), the index words."""
     span = gm * COLS
     st = 3 * span
     return {
@@ -80,15 +93,8 @@ def layout(gm: int) -> dict:
         "m": st,
         "l": st + gm,
         "corr": st + 2 * gm,
-        "ixg": st + 3 * gm,
-        "ixm": st + 3 * gm + 1,
+        "ix": st + 3 * gm,
     }
-
-
-def index_words() -> np.ndarray:
-    """Two fp16 words: each lane's granule (lane // 4), then its place in it."""
-    lanes = np.arange(16)
-    return np.concatenate([lanes // 4, lanes % 4]).astype(np.float16)
 
 
 def _op(name, vd, a, b=None, c=None, **kw) -> Alu:
@@ -98,50 +104,92 @@ def _op(name, vd, a, b=None, c=None, **kw) -> Alu:
     )
 
 
-def _rotate(dst: int, src: int, lanes: int, pred: int):
-    """``dst = src`` rotated by `lanes`, written where predicate `pred` holds
-    (0: everywhere)."""
-    kw = {"pr": pred, "pm": 1} if pred else {}
-    if lanes:
-        return Vshuf(dst, src, S_ROT[lanes], **kw)
-    return _op("VMOV", dst, src, **kw)
-
-
-def _predicates(ix: int) -> list:
-    """P1..P3 = (index word `ix` == 1, 2, 3), the word in every chunk."""
-    out = [Vld(IDX, AD_IX, ix)]
-    out += [_op("VCMPEQ", IDX, IDX, b=S_K[k], sb=V.SRC_S, pr=k) for k in (1, 2, 3)]
+def predicates(load, cmp) -> list:
+    """The four lane-group predicates (`PM3`, `PM23`, `PG23`, `PGODD`).
+    `load(word)` loads index word `word` (0 granule, 1 lane % 4, 2 parity) and
+    returns ``(code, reg)``; ``cmp(op, reg, k, pr)`` compares it with k."""
+    out = []
+    for word, tests in (
+        (1, (("VCMPEQ", 3, PM3), ("VCMPGT", 1, PM23))),
+        (0, (("VCMPGT", 1, PG23),)),
+        (2, (("VCMPEQ", 1, PGODD),)),
+    ):
+        code, r = load(word)
+        out += code + [cmp(op, r, k, pr) for op, k, pr in tests]
     return out
 
 
-def _row_reduce(op: str, reg: int, lay: dict) -> list:
-    """`reg`'s lane groups of four reduced by `op`, the result in every lane of
-    its group (predicates: lane // 4 ... built here as lane % 4)."""
-    comb = (
-        (lambda d, a, b: _op("VMAX", d, a, b=b))
-        if op == "max"
-        else (lambda d, a, b: _op("VADD", d, a, c=b))
+def group_reduce(comb, reg: int, tmp: int, rot) -> list:
+    """Every lane of `reg` = `comb` over its group of four (lanes 4i..4i+3): a
+    rotation by one within the group, then by two. `comb(d, a, b)` combines;
+    `rot(n)` names the S register holding rotation n."""
+    out = []
+    for r, pr in ((1, PM3), (2, PM23)):
+        out += [
+            Vshuf(tmp, reg, rot(r)),
+            Vshuf(tmp, reg, rot(12 + r), pr=pr, pm=1),
+            comb(reg, reg, tmp),
+        ]
+    return out
+
+
+def transpose(xs, t1: int, t2: int, rot, move) -> list:
+    """The 4x4 granule transpose of four registers in place: ``xs[i]``'s
+    granule j takes ``xs[j]``'s granule i. Two butterfly stages, on the
+    granule's high bit (rotate 8) then its low bit (rotate 4), each over two
+    register pairs (a, c): a's upper granules take c's lower, c's lower take
+    a's upper. `move(d, s, pr, pm)` is a predicated copy."""
+    x0, x1, x2, x3 = xs
+    out = []
+    for (a, b, c, d), lanes, pr in (
+        ((x0, x1, x2, x3), 8, PG23),
+        ((x0, x2, x1, x3), 4, PGODD),
+    ):
+        out += [
+            Vshuf(t1, a, rot(lanes)),
+            Vshuf(t2, b, rot(lanes)),
+            Vshuf(a, c, rot(16 - lanes), pr=pr, pm=1),
+            Vshuf(b, d, rot(16 - lanes), pr=pr, pm=1),
+            move(c, t1, pr, 2),
+            move(d, t2, pr, 2),
+        ]
+    return out
+
+
+def _predicates(lay: dict) -> list:
+    return predicates(
+        lambda w: ([Vld(IDX, AD_IX, lay["ix"] + w)], IDX),
+        lambda op, r, k, pr: _op(op, r, r, b=S_K[k], sb=V.SRC_S, pr=pr),
     )
-    out = _predicates(lay["ixm"])
-    for r in (1, 2):
-        out += [Vshuf(TMP, reg, S_ROT[r]), comb(reg, reg, TMP)]
-    out.append(_op("VMOV", BC, reg))
-    out += [Vshuf(BC, reg, S_ROT[16 - k], pr=k, pm=1) for k in (1, 2, 3)]
-    return out
+
+
+def _comb(op: str):
+    if op == "max":
+        return lambda d, a, b: _op("VMAX", d, a, b=b)
+    return lambda d, a, b: _op("VADD", d, a, c=b)
+
+
+def _move(d: int, s: int, pr: int, pm: int) -> Alu:
+    return _op("VMOV", d, s, pr=pr, pm=pm)
+
+
+def _rot(n: int) -> int:
+    return S_ROT[n]
 
 
 def softmax_image(gm: int) -> tuple:
     """The online-softmax RUN: S in at "in", P out at "p", stats updated."""
     lay = layout(gm)
     code = [Vfill(AD_IN, lay["in"]), Bar(), Vld(OLD, AD_ST, lay["m"])]
+    code += _predicates(lay)
     # Row max over the 16 sub-tile columns.
     for c in range(COLS):
-        x = P_IN[c % 4]
+        x = SETS[(c // 4) % 2][c % 4]
         code.append(Vld(x, AD_COL, lay["in"] + c))
         code.append(_op("VMOV", ACC, x) if c == 0 else _op("VMAX", ACC, ACC, b=x))
-    code += _row_reduce("max", ACC, lay)
+    code += group_reduce(_comb("max"), ACC, TMP, _rot)
     code += [
-        _op("VMAX", MNEW, OLD, b=BC),
+        _op("VMAX", MNEW, OLD, b=ACC),
         _op("VSUB", CORR, OLD, c=MNEW),
         _op("VEXP2", CORR, CORR),
         Vst(MNEW, AD_ST, lay["m"]),
@@ -150,10 +198,9 @@ def softmax_image(gm: int) -> tuple:
     # P = 2^(S - m') a group of four columns at a time, summed, then transposed
     # into the quantiser's order: word ((h//2)*4 + i)*2 + h%2 of a band is row
     # i, keys 16h..16h+15.
-    code += _predicates(lay["ixg"])
     for h in range(4):
-        for k in range(4):
-            x = P_IN[k]
+        xs = SETS[h % 2]
+        for k, x in enumerate(xs):
             code += [
                 Vld(x, AD_COL, lay["in"] + 4 * h + k),
                 _op("VSUB", x, x, c=MNEW),
@@ -161,16 +208,15 @@ def softmax_image(gm: int) -> tuple:
             ]
             first = h == 0 and k == 0
             code.append(_op("VMOV", ACC, x) if first else _op("VADD", ACC, ACC, c=x))
-        for i in range(4):
-            # Output i takes granule i of input j into granule j: a rotation of
-            # 4(i-j) lanes; input 0's write is whole, the rest predicated.
-            out = R_OUT[i]
-            code += [_rotate(out, P_IN[j], 4 * ((i - j) % 4), j) for j in range(4)]
-            code.append(Vst(out, AD_COL, lay["p"] + ((h // 2) * 4 + i) * 2 + h % 2))
-    code += _row_reduce("sum", ACC, lay)
+        code += transpose(xs, TMP, TMP2, _rot, _move)
+        code += [
+            Vst(x, AD_COL, lay["p"] + ((h // 2) * 4 + i) * 2 + h % 2)
+            for i, x in enumerate(xs)
+        ]
+    code += group_reduce(_comb("sum"), ACC, TMP, _rot)
     code += [
         Vld(OLD, AD_ST, lay["l"]),
-        _op("VFMA", OLD, OLD, b=CORR, c=BC),
+        _op("VFMA", OLD, OLD, b=CORR, c=ACC),
         Vst(OLD, AD_ST, lay["l"]),
         Vdrain(AD_PD, lay["p"]),
     ]
@@ -182,7 +228,7 @@ def update_image(gm: int) -> tuple:
     lay = layout(gm)
     code = [Vfill(AD_IN, lay["in"]), Bar(), Vld(CORR, AD_ST, lay["corr"])]
     for c in range(COLS):
-        o, pv = P_IN[c % 4], R_OUT[c % 4]
+        o, pv = SETS[0][c % 4], SETS[1][c % 4]
         code += [
             Vld(o, AD_COL, lay["o"] + c),
             Vld(pv, AD_COL, lay["in"] + c),
@@ -198,7 +244,7 @@ def init_image(gm: int) -> tuple:
     code = [Seti(S_VL, 16 * gm), Seti(S_NEG, V.e8m15(NEG))]
     code += [Seti(s, r) for r, s in S_ROT.items()]
     code += [Seti(s, V.e8m15(float(k))) for k, s in S_K.items()]
-    code += [Setvl(S_VL), Setmode(V.FLAT), Vfill(AD_IF, lay["ixg"]), Bar()]
+    code += [Setvl(S_VL), Setmode(V.FLAT), Vfill(AD_IF, lay["ix"]), Bar()]
     code += [
         _op("VMOV", OLD, S_NEG, sa=V.SRC_S),
         Vst(OLD, AD_ST, lay["m"]),
@@ -214,7 +260,7 @@ def final_image(gm: int) -> tuple:
     lay = layout(gm)
     code = [Vld(OLD, AD_ST, lay["l"]), _op("VINV", OLD, OLD)]
     for c in range(COLS):
-        o = P_IN[c % 4]
+        o = SETS[(c // 4) % 2][c % 4]
         code += [
             Vld(o, AD_COL, lay["o"] + c),
             _op("VMUL", o, o, b=OLD),
@@ -232,7 +278,7 @@ def l1_map(gm: int) -> vsched.L1Map:
             AD_ST: (0, list(range(gm))),
             AD_IX: (0, [0] * gm),
         },
-        fills={AD_IN: span, AD_PD: span, AD_OD: span, AD_IF: 2},
+        fills={AD_IN: span, AD_PD: span, AD_OD: span, AD_IF: IX_WORDS},
     )
 
 
@@ -322,7 +368,7 @@ def setup_ops(gm: int, p16_at: int, o_at: int, idx_at: int) -> list:
         Desc(AD_PD, p16_at),
         Desc(AD_OD, o_at),
         Desc(AD_IF, idx_at),
-        Dims(AD_IF, walk(2)),
+        Dims(AD_IF, walk(IX_WORDS)),
     ]
 
 

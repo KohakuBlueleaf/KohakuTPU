@@ -177,7 +177,7 @@ def test_attention(gm, blocks):
     vb = r.buf("v", None, vraw, nbytes=len(vraw))
     ob = r.buf("o", Tiles(rows, 64, gm, 16))
     scratch = r.buf("scratch", None, nbytes=4 * gm * 16 * 32)
-    idx = r.buf("idx", Flat(32), AT.index_words())
+    idx = r.buf("idx", Flat(16 * AT.IX_WORDS), AT.index_words())
     l2.ops.attention(r.s, r.mgs[0], r.vcs[0], qb, kb, vb, ob, scratch, idx, gm, blocks)
     r.run()
     got = MM.unpack(r.mdl.get, [(0, gm, 0, ob.base)], rows, 64, gm, 16)

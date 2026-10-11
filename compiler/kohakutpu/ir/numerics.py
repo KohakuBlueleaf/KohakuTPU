@@ -211,7 +211,7 @@ def _model_attention(target, q, k, v, gm=8):
     vb = r.buf("v", None, vraw, len(vraw))
     ob = r.buf("o", Tiles(q.shape[0], 64, gm, 16))
     scratch = r.buf("scratch", None, nbytes=4 * gm * 16 * 32)
-    idx = r.buf("idx", Flat(32), AT.index_words())
+    idx = r.buf("idx", Flat(16 * AT.IX_WORDS), AT.index_words())
     l2.ops.attention(r.s, r.mgs[0], r.vcs[0], qb, kb, vb, ob, scratch, idx, gm, blocks)
     r.run()
     return MM.unpack(r.t.get, [(0, gm, 0, ob.base)], q.shape[0], 64, gm, 16)
