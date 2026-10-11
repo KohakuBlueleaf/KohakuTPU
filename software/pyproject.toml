@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest>=8.0", "ruff>=0.6", "black>=24.0"]
+dev = ["pytest>=8.0", "pytest-xdist>=3.6", "ruff>=0.6", "black>=24.0"]
 
 [tool.uv]
 package = false
@@ -53,6 +53,7 @@ ignore = ["C408"]
 
 [tool.pytest.ini_options]
 # Every component has a `tests` directory; importlib names a test module by
-# its path, so same-named test files in two components do not collide.
-addopts = "--import-mode=importlib"
+# its path, so same-named test files in two components do not collide. Tests
+# run on every CPU (xdist); `-p no:xdist` runs one in a debugger.
+addopts = "--import-mode=importlib -n auto"
 testpaths = ["language/tests", "compiler/tests", "driver/tests", "tests"]

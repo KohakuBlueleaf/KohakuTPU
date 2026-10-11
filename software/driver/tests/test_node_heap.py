@@ -8,6 +8,7 @@ the properties the policy promises: aligned, granule-rounded, disjoint blocks.
 """
 
 import itertools
+import os
 import pathlib
 import random
 import re
@@ -34,7 +35,8 @@ def wsl(p: pathlib.Path) -> str:
 @pytest.fixture(scope="module")
 def trace_bin() -> pathlib.Path:
     OUT.mkdir(parents=True, exist_ok=True)
-    exe = OUT / "heap_trace"
+    # One binary per xdist worker: a worker running it holds the file busy.
+    exe = OUT / f"heap_trace_{os.environ.get('PYTEST_XDIST_WORKER', 'main')}"
     cmd = (
         f"gcc -std=c11 -O1 -Wall -Wextra -Werror -I{wsl(FW / 'kohakuaccel/include')} "
         f"{wsl(FW / 'tests/host/heap_trace.c')} {wsl(FW / 'kohakuaccel/os/heap/heap.c')} "
