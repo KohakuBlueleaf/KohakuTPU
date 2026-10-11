@@ -203,7 +203,7 @@ core alone.
 
 ## 8. Measured
 
-Verilated card models `build/l1cov/vlt_card_v9_{1,2,4}n_v2` (V2 cores), each
+Verilated card models `build/v9f/vlt_card_v9_{1,2,4}n_v2` (V2 cores), each
 case on a card of its own, the second of two identical runs, checked against
 a float64 numpy reference on MXFP7 operands (`tools.measure`, reports
 `build/measure/{1n,2n,4n}/report.json`). MFU counts multiply-adds over 1,024
@@ -212,26 +212,29 @@ beats over 16 a core-cycle on every core; B/cycle, the bytes a kernel moves.
 
 | kernel | nodes | hand L1 | compiled L2 | efficiency (compiled) | rel err |
 |---|---|---|---|---|---|
-| matmul 1024³ | 1 | 312,797 | 312,797 | 83.8% MFU | 4.7e-4 |
-| longk 1024×2048×1024 | 1 | 577,786 | 577,786 | 90.7% MFU | 4.4e-4 |
-| splitk 256×256×1024 (2 clusters) | 1 | 74,732 | 74,732 | 21.9% MFU | 4.5e-4 |
-| mmsilu | 1 | | 51,296 | 16.0% MFU | 4.8e-4 |
-| mlp 256³ ×2 | 1 | | 66,987 | 12.2% MFU | 4.9e-3 |
-| tilesilu 256³ (direct, `pipe=2`) | 1 | | 68,996 | 5.9% MFU | 6.7e-4 |
-| mlpdirect | 1 | | 12,099 | 2.1% MFU | 1.6e-3 |
-| mmsoftmax | 1 | | 27,697 | 3.7% MFU | 2.3e-3 |
-| convert (quant A, B, gt4) | 1 | | 10,755 | 7.6 B/cycle | bit-exact |
-| silu 512×128 | 1 | 13,505 | 13,667 | 74.9% lane | 2.6e-4 |
-| add 512×128 | 1 | 12,759 | 12,866 | 30.6 B/cycle | 3.2e-4 |
-| softmax 1024×128 | 1 | 33,433 | 34,281 | 62.5% lane | 3.9e-4 |
-| lazysoftmax 1024×128 | 1 | | 32,169 | 52.5% lane | 3.9e-4 |
-| leaky 512×128 | 1 | | 15,470 | 66.2% lane | 2.4e-5 |
-| layernorm 1024×128 | 1 | 38,945 | 38,309 | 62.0% lane | 2.9e-4 |
-| matmul2 1024×2048×2048 | 2 | 660,880 | 668,895 | 78.4% MFU | 4.4e-4 |
-| share2 | 2 | | 73,145 | 44.8% MFU | 4.1e-4 |
-| silu2 1024×128 | 2 | 17,060 | 17,164 | 44.7% lane | 3.8e-4 |
-| matmul4 1024×4096×1024 | 4 | | 425,966 | 61.5% MFU | 4.2e-4 |
-| flash 10 heads | 1 | 1,553,908 | | 21.1% MFU | 3.1e-2 |
+| matmul 1024³ | 1 | 307,578 | 307,578 | 85.2% MFU | 4.7e-4 |
+| longk 1024×2048×1024 | 1 | 571,771 | 571,771 | 91.7% MFU | 4.4e-4 |
+| splitk 256×256×1024 (2 clusters) | 1 | 73,456 | 73,456 | 22.3% MFU | 4.5e-4 |
+| mmsilu | 1 | | 51,664 | 15.9% MFU | 4.8e-4 |
+| mlp 256³ ×2 | 1 | | 60,689 | 13.5% MFU | 4.9e-3 |
+| ffn 1024×1024→2048→1024 | 1 | | 1,517,985 | 69.1% MFU | 4.9e-3 |
+| swiglu 1024×1024→2048→1024 | 1 | | 2,439,751 | 64.5% MFU | 4.2e-3 |
+| tilesilu 256³ (direct, `pipe=2`) | 1 | | 44,754 | 9.2% MFU | 6.7e-4 |
+| mlpdirect | 1 | | 8,586 | 3.0% MFU | 1.6e-3 |
+| mmsoftmax | 1 | | 23,148 | 4.4% MFU | 2.3e-3 |
+| convert (quant A, B, gt4) | 1 | | 10,753 | 7.6 B/cycle | bit-exact |
+| silu 512×128 | 1 | 13,516 | 13,728 | 74.6% lane | 2.6e-4 |
+| add 512×128 | 1 | 13,343 | 13,078 | 30.1 B/cycle | 3.2e-4 |
+| softmax 1024×128 | 1 | 33,441 | 34,495 | 62.2% lane | 3.9e-4 |
+| lazysoftmax 1024×128 | 1 | | 32,177 | 52.5% lane | 3.9e-4 |
+| leaky 512×128 | 1 | | 15,462 | 66.2% lane | 2.4e-5 |
+| layernorm 1024×128 | 1 | 39,110 | 38,523 | 61.6% lane | 2.9e-4 |
+| flash 10 heads (S via DRAM) | 1 | 1,571,091 | | 20.9% MFU | 1.5e-2 |
+| flashd 10 heads (S direct) | 1 | 1,148,007 | | 28.5% MFU | 1.5e-2 |
+| matmul2 1024×2048×2048 | 2 | 668,655 | 667,511 | 78.5% MFU | 4.4e-4 |
+| share2 | 2 | | 75,081 | 43.6% MFU | 4.1e-4 |
+| silu2 1024×128 | 2 | 17,169 | 17,277 | 44.5% lane | 3.8e-4 |
+| matmul4 1024×4096×1024 | 4 | | 413,567 | 63.4% MFU | 4.2e-4 |
 | flash 2 heads a node | 1 | 348,406 | | 18.8% MFU | 2.3e-2 |
 | flash 2 heads a node | 2 | 449,792 | | 14.6% MFU | 2.6e-2 |
 | flash 2 heads a node | 4 | 578,587 | | 11.3% MFU | 2.6e-2 |
@@ -250,19 +253,24 @@ What sets the numbers:
   (`share=cross`, K chunks of 128) gives 79.3%.
 - **Four nodes** (`build/measure/4n/probes.json`). A node's share alone runs
   at 84.0% with its weights in staging (76.2% with cross pairs, whose
-  rendezvous costs on one node); the four together 61.5% (68.0% the first
+  rendezvous costs on one node); the four together 63.4% (70.8% the first
   run); with the weights in DRAM, 44.9%.
 - **Vector.** Compiled within 0-3% of the hand images. `lazysoftmax` skips
   the max pass while no exponent reaches 2^8 (6% faster than `softmax` on
   N(0, 1) rows; a tile that overflows redoes it: 49,787 cycles at 8 N(0, 1)).
-- **Flash.** S (20 MB a node per 10 heads) makes a memory round trip:
-  cluster drain to DRAM, core read back. That route carries 24.7 B/cycle at
-  best (S traffic alone, no softmax: 1,699,091 cycles for 10 heads = 19.3%
-  attention-equivalent), so the kernel sits at its memory route. Removing
-  the cores' packs or math moves the total by under 4%. Split by heads, the
+- **Flash, S via DRAM** (`flash`). S (20 MB a node per 10 heads) makes a
+  memory round trip: cluster drain to DRAM, core read back. That route
+  carries 24.7 B/cycle at best (S traffic alone, no softmax: 1,699,091
+  cycles for 10 heads = 19.3% attention-equivalent). Split by heads, the
   nodes share that memory: per node 1.29x the one-node time on two nodes,
-  1.66x on four. A direct cluster -> core hand-off per block needs a
-  unit-level landed-burst signal (H3), which the node can only stand in for.
+  1.66x on four.
+- **Flash, S direct** (`flashd`). The score clusters drain S into the cores'
+  L1 under credits; the core counts landed granules (`vwait drain rx`).
+  Core state profile (`build/measure/v9s_1n_attn/flashd.l1.model.log`):
+  a 32-row tile costs a core ~3,690 cycles: MX7 pack 2,206 (128 registers
+  at ~16.4), math 1,457, unpack waiting on the shared register-file write
+  port ~600. Pack beside the write port bounds a tile at ~2,050 cycles
+  (~50% MFU); the clusters wait on the cores.
 - **Small fused tiles** (`tilesilu`, `mlpdirect`, `mmsoftmax`) are bound by
   the node's steps: a wait and the sends of an iteration cost several hundred
   cycles each against tiles of a few thousand.
