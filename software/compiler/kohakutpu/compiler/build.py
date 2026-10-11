@@ -22,9 +22,11 @@ def l1_text(
     l2=pipeline.DEFAULT_L2,
     options=None,
     target=T.TARGET,
+    shapes=None,
 ) -> str:
-    """`name`'s L1 text compiled from its body at `level` (`l2` or `l3`)."""
-    return pipeline.compile_l1(module, name, level, target, l1, l2, options)
+    """`name`'s L1 text compiled from its body at `level` (`l2` or `l3`, the
+    L3 body at `shapes`)."""
+    return pipeline.compile_l1(module, name, level, target, l1, l2, options, shapes)
 
 
 def program(module, name: str, binds: dict, machine=None, entry=None):

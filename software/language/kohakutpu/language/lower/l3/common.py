@@ -1,16 +1,50 @@
-"""Shared pieces of the L3 -> L2 planners: the problem's dimensions, L3
-operands as L2 text, value renaming away from memory names."""
+"""Shared pieces of the L3 -> L2 planners: the problem's dimensions, the
+target's units, L3 operands as L2 text, value renaming away from memory
+names."""
 
 from kohakutpu.language.l3 import nodes as N
 from kohakutpu.language.lower.l2.emit import LowerError
 
-#: The vector cores and clusters a plan places on.
-CORES = 2
-CLUSTERS = 4
-
 
 class PlanError(LowerError):
     pass
+
+
+def cores(target) -> int:
+    """The vector cores a plan places on."""
+    n = target.units.get("VC", 0)
+    if not n:
+        raise PlanError(f"{target.name} has no vector core")
+    return n
+
+
+def clusters(target) -> int:
+    """The matmul clusters a plan places on."""
+    n = target.units.get("MG", 0)
+    if not n:
+        raise PlanError(f"{target.name} has no matmul cluster")
+    return n
+
+
+def all_lets(body) -> list:
+    """Every let of `body`, inside maps and scans too."""
+    out = []
+    for s in body:
+        if isinstance(s, N.Let):
+            out.append(s)
+        elif isinstance(s, (N.Map, N.Scan)):
+            out += all_lets(s.body)
+    return out
+
+
+def transposed(fn: N.Fn) -> set:
+    """Parameters the body reads through `transpose`: L2 holds them
+    transposed."""
+    return {
+        s.args[0].name
+        for s in all_lets(fn.body)
+        if s.op == "transpose" and s.args[0].name in dict(fn.params)
+    }
 
 
 def dims_of(fn: N.Fn, shapes: dict) -> dict:
@@ -94,13 +128,15 @@ def returned(fn: N.Fn) -> str:
 
 
 __all__ = [
-    "CLUSTERS",
-    "CORES",
     "Names",
     "PlanError",
+    "all_lets",
+    "clusters",
+    "cores",
     "dims_of",
     "lets",
     "returned",
     "size",
+    "transposed",
     "ty",
 ]

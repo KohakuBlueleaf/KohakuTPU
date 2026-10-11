@@ -2,18 +2,18 @@
 
 Parameters used only through `quantise` become MXFP7 memory: `mx7a` where a
 gemm reads them as A, `mx7b` as B. Each gemm C = A B^T runs in 256 x 256
-output tiles: column tile u on cluster u % 4, row tiles in order. Gemms of
-one A read by one epilogue share a phase, so the epilogue sees all its tiles
-in one instance. An epilogue (the elementwise ops from gemm results to a
-`quantise`) runs on core u % 2 and writes its tile of an `mx7a` scratch
-buffer; the result gemm drains straight to the output.
+output tiles: column tile u on cluster u % clusters, row tiles in order.
+Gemms of one A read by one epilogue share a phase, so the epilogue sees all
+its tiles in one instance. An epilogue (the elementwise ops from gemm results
+to a `quantise`) runs on core u % cores and writes its tile of an `mx7a`
+scratch buffer; the result gemm drains straight to the output.
 """
 
 from kohakutpu.language.lower.l3.common import (
-    CLUSTERS,
-    CORES,
     Names,
     PlanError,
+    clusters,
+    cores,
     lets,
     returned,
     size,
@@ -24,7 +24,7 @@ from kohakutpu.language.text.writer import Text
 TILE = 256
 
 
-def plan(fn, dims: dict) -> str:
+def plan(fn, dims: dict, target) -> str:
     body = lets(fn)
     res = returned(fn)
     by = {s.name: s for s in body}
@@ -81,8 +81,9 @@ def plan(fn, dims: dict) -> str:
     with out.block():
         for k, shape in scratch.items():
             out(f"{k} = buffer : {ty('mx7a', shape, 'dram')}")
+        units = (clusters(target), cores(target))
         for key, group in phases:
-            _phase(out, group, key, by, readers, mem_of, names, dims, res)
+            _phase(out, group, key, by, readers, mem_of, names, dims, res, units)
     return out.text()
 
 
@@ -103,7 +104,8 @@ def _epilogue(g: str, by: dict, readers: dict) -> str:
     raise PlanError(f"{g} reaches no quantise and is not the result")
 
 
-def _phase(out, group, key, by, readers, mem_of, names, dims, res) -> None:
+def _phase(out, group, key, by, readers, mem_of, names, dims, res, units) -> None:
+    n_clusters, n_cores = units
     a = group[0].args[0].name
     if any(g.args[0].name != a for g in group):
         raise PlanError("gemms of one phase read one A")
@@ -112,7 +114,7 @@ def _phase(out, group, key, by, readers, mem_of, names, dims, res) -> None:
     n = size(group[0].type.shape, dims)[1]
     if m % TILE or n % TILE:
         raise PlanError(f"gemm {m} x {n} is not whole {TILE} tiles")
-    out(f"par u in 0..{n // TILE} on mg[u % {CLUSTERS}]")
+    out(f"par u in 0..{n // TILE} on mg[u % {n_clusters}]")
     with out.block():
         out(f"for i in 0..{m // TILE}")
         with out.block():
@@ -133,7 +135,7 @@ def _phase(out, group, key, by, readers, mem_of, names, dims, res) -> None:
                     )
             if key is None:
                 return
-            out(f"par c in 0..1 on vc[u % {CORES}]")
+            out(f"par c in 0..1 on vc[u % {n_cores}]")
             with out.block():
                 loc = Names(
                     list(names.map.values()) + list(mem_of.values()) + ["u", "i", "c"]

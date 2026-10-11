@@ -7,9 +7,9 @@ L3 body must have exactly this dataflow; names and sizes come from it.
 
 from kohakutpu.language.l3 import nodes as N
 from kohakutpu.language.lower.l3.common import (
-    CLUSTERS,
-    CORES,
     PlanError,
+    clusters,
+    cores,
     lets,
     returned,
     size,
@@ -62,10 +62,15 @@ def check(fn) -> tuple:
     return q.args[0].name, k.args[0].name, vt.args[0].name, y.name
 
 
-def heads(fn, dims: dict) -> str:
+def heads(fn, dims: dict, target) -> str:
     """Per-head attention (`map h in tiles(R, n)` around the attention body,
     each head's y stored) in the online form: flash.ktpu's `flash.l2` shape
-    for R / n heads of n = 1024 keys, d = 64."""
+    for R / n heads of n = 1024 keys, d = 64, on clusters 0..3 and cores 0, 1."""
+    if clusters(target) < 4 or cores(target) < 2:
+        raise PlanError(
+            f"the online form places on 4 clusters and 2 cores; {target.name} "
+            f"has {clusters(target)} and {cores(target)}"
+        )
     maps = [s for s in fn.body if isinstance(s, N.Map)]
     tiles = {s.name: s.value for s in fn.body if isinstance(s, N.Tile)}
     if len(maps) != 1 or len(maps[0].vars) != 1:
@@ -133,8 +138,9 @@ FLASH = """fn {name}.l2({q}: mx7a[{r}, 64] @dram, {k}: mx7b[{r}, 64] @dram, {v}:
 """
 
 
-def plan(fn, dims: dict, softmax: str) -> str:
+def plan(fn, dims: dict, softmax: str, target) -> str:
     qn, kn, vn, yn = check(fn)
+    n_clusters, n_cores = clusters(target), cores(target)
     params = {p: size(t.shape, dims) for p, t in fn.params}
     n, dd = params[qn]
     m, _ = params[kn]
@@ -152,7 +158,7 @@ def plan(fn, dims: dict, softmax: str) -> str:
         out(f"p = buffer : mx7a[{n}, {m}] @dram")
         out(f"o = buffer : f16[{n}, {dd}] @dram")
         out(f"l = buffer : f32[{n}] @dram")
-        out(f"par u in 0..{n // TILE} on mg[u % {CLUSTERS}]")
+        out(f"par u in 0..{n // TILE} on mg[u % {n_clusters}]")
         with out.block():
             out(f"for t in 0..{m // TILE}")
             with out.block():
@@ -161,7 +167,7 @@ def plan(fn, dims: dict, softmax: str) -> str:
                     f"k={dd} : f32[{TILE}, {TILE}] @acc"
                 )
                 out(f"store s[u*{TILE} : +{TILE}, t*{TILE} : +{TILE}] <- drain acc")
-            out(f"par c in 0..1 on vc[u % {CORES}]")
+            out(f"par c in 0..1 on vc[u % {n_cores}]")
             with out.block():
                 out(f"st = load s[u*{TILE} : +{TILE}, :] : f16[{TILE}, {m}] @l1")
                 out(f"m = reduce.max st : f32[{TILE}]")
@@ -173,7 +179,7 @@ def plan(fn, dims: dict, softmax: str) -> str:
                 f"acc = gemm p[u*{TILE} : +{TILE}, :], {vn} k={m} : f32[{TILE}, {dd}] @acc"
             )
             out(f"store o[u*{TILE} : +{TILE}, :] <- drain acc")
-            out(f"par c in 0..1 on vc[u % {CORES}]")
+            out(f"par c in 0..1 on vc[u % {n_cores}]")
             with out.block():
                 out(f"lt = load l[u*{TILE} : +{TILE}] : f32[{TILE}] @l1")
                 out(f"ot = load o[u*{TILE} : +{TILE}, :] : f16[{TILE}, {dd}] @l1")

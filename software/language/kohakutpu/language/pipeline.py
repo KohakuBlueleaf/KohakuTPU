@@ -84,23 +84,31 @@ def l1_passes(text: str, target, passes=DEFAULT_L1) -> str:
     return text
 
 
-def compile_l3(module, name: str, target, options=None) -> str:
-    """The L2 module text planned from `name.l3`, read back and verified."""
-    text = plan_l2(
-        module, name, {k: v for k, v in (options or {}).items() if k in PLAN_OPTIONS}
-    )
+def compile_l3(module, name: str, target, options=None, shapes=None) -> str:
+    """The L2 module text planned from `name.l3` at `shapes` (L3 parameter ->
+    shape; default the hand L2 signature's), read back and verified."""
+    opts = {k: v for k, v in (options or {}).items() if k in PLAN_OPTIONS}
+    text = plan_l2(module, name, target, shapes, opts)
     body = l2_reader.body(read_module(text, f"<{name}.l3 planned>"), name)
     l2_verify.check(body, target.units)
     return text
 
 
 def compile_l1(
-    module, name: str, level: str, target, l1=DEFAULT_L1, l2=DEFAULT_L2, options=None
+    module,
+    name: str,
+    level: str,
+    target,
+    l1=DEFAULT_L1,
+    l2=DEFAULT_L2,
+    options=None,
+    shapes=None,
 ) -> str:
     """L1 text of `name` compiled from its body at `level` (`l2` or `l3`):
-    the L3 plan, L2 passes, lowering, L1 passes."""
+    the L3 plan (at `shapes`), L2 passes, lowering, L1 passes."""
     if level == "l3":
-        module = _with_l2(module, name, compile_l3(module, name, target, options))
+        planned = compile_l3(module, name, target, options, shapes)
+        module = _with_l2(module, name, planned)
         level = "l2"
     if level == "l2":
         return l1_passes(compile_l2(module, name, target, l2, options), target, l1)

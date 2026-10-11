@@ -1,3 +1,13 @@
+---
+title: ".ktpu: KohakuTPU kernels"
+summary: KohakuTPU kernels as one text at every level -- the L3, L2 and L1 bodies, the V2 images, the compilers between the levels, and what each kernel measures.
+tags:
+  - kohakutpu
+  - ir
+  - compiler
+  - kernels
+---
+
 # `.ktpu`: KohakuTPU kernels as one text at every level
 
 A `.ktpu` file is a module ([docs/spec/ir-text.md](../../../spec/ir-text.md)
@@ -30,7 +40,8 @@ words), `layout/buffer.py` (a parameter's memory layout from its type),
 | `fused/attention.ktpu` | yes | yes | 4 clusters + 2 cores, 1024 x 1024, d = 64, exact two-pass softmax | `attn_p`, `attn_out` |
 
 The L3 bodies are read and verified by the L3 reader and run by its reference
-interpreter. The L2 bodies are read and verified by the L2 reader (§4).
+interpreter. The L2 bodies are read and verified by the L2 reader and run by
+the L2 reference interpreter (§4).
 
 ## 2. L1 node bodies (`fn NAME.l1`)
 
@@ -123,6 +134,22 @@ A name a `for` body rebinds from outside the loop is **loop-carried**: it keeps
 its type, and the next iteration and the code after the loop see the new value
 (`m = copy mn` carries flash attention's running max).
 
+**The interpreter** (`l2/interp.py`) runs a verified body in numpy: instances
+in `par` order, each with its own values; `for` trips in order. An op computes
+in float64 and rounds to its annotated dtype (`f32` when unannotated; `f32` is
+the lane format, E8M15, in both interpreters); a gemm's accumulator holds the
+exact sum, a drain rounds it to f16, a store rounds to the destination's
+dtype, and an MXFP7 value moves without requantising. Every hand and planned
+L2 body is checked against its L3 body's interpreter on inputs at the network
+initialisation scale (`kernels.scale`: a weight N(0, 1 / fan-in), a query
+pre-scaled by log2(e) / sqrt(d), an activation N(0, 1)):
+
+| form | agreement with L3 |
+|---|---|
+| elementwise, rows, gemm chains | exact |
+| attention (`exact`) | within one f16 ulp of the peak: y is stored through the lane format where L3 rounds once |
+| the online form | P is quantised at its lazy offset, not the row max; its distance from unrounded math is within 1.5x L3's own (measured 1.0-1.3x) |
+
 ## 5. Buffer types (`kohakutpu.compiler.layout.buffer`)
 
 | type | layout |
@@ -164,21 +191,25 @@ stage's reader:
     L3 --plan--> L2 --L2 passes--> L2 --lower--> L1 --L1 passes--> L1
 
 `compile_l1(module, name, level, target, l1=("schedule",),
-l2=("retile=auto",), options)` compiles from `l2` or `l3`; `compile_l3(module,
-name, target, options)` gives the planned L2 text. `tools.run --level l2|l3
-[--l2-passes ...] [--l1-passes ...] [--lower KEY=VALUE]` runs the result and
-writes the texts next to the report.
+l2=("retile=auto",), options, shapes)` compiles from `l2` or `l3`;
+`compile_l3(module, name, target, options, shapes)` gives the planned L2 text.
+`tools.run --level l2|l3 [--l2-passes ...] [--l1-passes ...] [--lower
+KEY=VALUE]` runs the result and writes the texts next to the report.
 
-**L3 -> L2** (`lower/l3/`). The problem size is the hand L2 signature's; a
-parameter read through `transpose` is laid out transposed.
+**L3 -> L2** (`lower/l3/`). The problem size is `shapes` (L3 parameter ->
+shape), else the hand L2 signature's; a kernel with neither is refused. A
+parameter read through `transpose` is laid out transposed. A plan places on
+the target's units: `C` vector cores (`units["VC"]`) and `G` clusters
+(`units["MG"]`), and sizes tiles against `l1_words`. A size a form cannot
+tile is refused with the reason (`PlanError`).
 
 | body | form |
 |---|---|
-| no gemm, all `[N]` | elementwise: `N / 2` a core, tiles of the largest of 2048 / 1024 / 512 values whose double buffers fit L1 |
-| no gemm, `[R, C]` and `[C]` | rows: `R / 2` a core, 16-row tiles, `[C]` loaded once |
-| gemms with elementwise epilogues (`quantise` -> `mmt` chains) | 256 x 256 tiles, column tile u on mg[u % 4], gemms reading one A into one epilogue share a phase, the epilogue on vc[u % 2] into an `mx7a` scratch, the result gemm drained to the output |
-| the attention dataflow | `exact`: scores tiles drained, P and l on a core, P V, the division (`--lower softmax=exact`) |
-| a `map` over heads of the attention dataflow | the online form of `flash.l2` for R / 1024 heads |
+| no gemm, all `[N]` | elementwise: `N / C` a core, tiles of the largest of 2048 / 1024 / 512 values whose double buffers fit L1 and whose pairs make up the share |
+| no gemm, `[R, C]` and `[C]` | rows: `R / C` a core, 16-row tiles, else 8, in pairs; `[C]` loaded once |
+| gemms with elementwise epilogues (`quantise` -> `mmt` chains) | 256 x 256 tiles, column tile u on mg[u % G], gemms reading one A into one epilogue share a phase, the epilogue on vc[u % C] into an `mx7a` scratch, the result gemm drained to the output |
+| the attention dataflow | `exact`: 256-query tiles on mg[u % G], scores drained, P and l on vc[u % C], P V, the division (`--lower softmax=exact`) |
+| a `map` over heads of the attention dataflow | the online form of `flash.l2` for R / 1024 heads of 1024 x 64, a fixed placement on clusters 0..3 and cores 0, 1 |
 
 **L2 -> L2** (`opt/retile.py`). `retile=N` splits each vector loop's S-row
 tiles into N-row tiles (contiguous rows, the loop S / N times as long);
@@ -222,9 +253,11 @@ as written. `schedule=N` sets the latency.
 `card_v9_1n` with the V2 vector cores (`build/v9v2c/vlt_card_v9_1n_v2`), warm
 runs, reports in `build/ktpu/v9v2c/levels/NAME.LEVEL.json` (the compiled
 texts beside them). Inputs: MLP / SwiGLU weights normal(0, 0.03); flash q
-normal(0, 0.5), k normal(0, 0.6), v normal(0, 1); the rest normal(0, 1).
-Default passes (`retile=auto`, `schedule`). Error is against the L3 body run
-with fp16 / MXFP7 rounding.
+normal(0, 0.5), k normal(0, 0.6), v normal(0, 1); the rest normal(0, 1) (set
+with `--init`; `tools.run`'s default is `kernels.scale`). Default passes
+(`retile=auto`, `schedule`). Error is against the L3 body run with fp16 /
+MXFP7 rounding and binary32 lane values; the interpreters' E8M15 lanes differ
+from binary32 by a 2^-16 step, below every error in the table.
 
 | kernel | hand L1 | from L2 | from L3 | cold (hand) | lane use (hand) | MFU (hand / compiled) | error |
 |---|---|---|---|---|---|---|---|

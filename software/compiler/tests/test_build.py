@@ -3,7 +3,9 @@ compiled flash is the hand-written one step for step."""
 
 import pytest
 from kohakutpu.compiler import build
+from kohakutpu.compiler.layout.buffer import Buffer
 from kohakutpu.language import kernels
+from kohakutpu.language.lower.l2.emit import LowerError
 from kohakutpu.language.text import module
 
 
@@ -50,3 +52,38 @@ def test_compiled_l1_builds(kernel, level, compiled):
     mine = [p for p, _ in got.body(kernel, "l1").params]
     n_in = len(m.body(kernel, "l3").params) + 1
     assert mine[:n_in] == hand[:n_in]
+
+
+#: L3 problem sizes other than the hand L2's, each planned, lowered and built.
+SIZES = [
+    ("silu", {"x": (6144,)}),
+    ("add", {"x": (2048,), "y": (2048,)}),
+    ("softmax", {"x": (96, 128)}),
+    ("layernorm", {"x": (64, 128), "g": (128,), "b": (128,)}),
+    ("mlp", {"x": (256, 256), "w1": (512, 256), "w2": (256, 512)}),
+    (
+        "swiglu",
+        {"x": (512, 256), "wg": (256, 256), "wu": (256, 256), "wd": (256, 256)},
+    ),
+    ("attention", {"q": (512, 64), "k": (1024, 64), "v": (1024, 64)}),
+    ("flash", {"q": (2048, 64), "k": (2048, 64), "v": (2048, 64)}),
+]
+
+
+@pytest.mark.parametrize(
+    "kernel, shapes", SIZES, ids=[f"{k}-{next(iter(s.values()))}" for k, s in SIZES]
+)
+def test_compiled_l1_builds_at_other_sizes(kernel, shapes):
+    text = build.l1_text(load(kernel), kernel, "l3", shapes=shapes)
+    got = module.read(text)
+    prog = build.program(got, kernel, addresses(got, kernel))
+    assert prog.steps[-1] == ("barrier",)
+    params = [Buffer.of(t).host_shape for _, t in got.body(kernel, "l1").params]
+    assert params[: len(shapes)] == list(shapes.values())
+    assert params[len(shapes)][0] == next(iter(shapes.values()))[0]
+
+
+def test_attention_lowers_only_its_library_images_key_count():
+    shapes = {"q": (512, 64), "k": (512, 64), "v": (512, 64)}
+    with pytest.raises(LowerError, match="256 rows of 1024 columns"):
+        build.l1_text(load("attention"), "attention", "l3", shapes=shapes)

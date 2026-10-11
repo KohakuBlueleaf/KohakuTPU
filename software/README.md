@@ -13,14 +13,14 @@ project (`kohakutpu`, `toyaccel`); `kohakuaccel` and `kohakutpu` are namespace
 packages spread across the members.
 
     uv sync                                     # every member, editable
-    uv run pytest                               # every component's tests
+    uv run pytest                               # every component's tests, every CPU
     uv run python -m toyaccel.application.run   # the template, end to end
 
 ## The components
 
 | member | modules | what it is |
 |---|---|---|
-| `language/` | `kohakutpu.language` | the `.ktpu` text (`text/`), the L3 and L2 readers and verifiers (`l3/`, `l2/`), the L1 op names (`l1/`), the compilers (`lower/`: L3 -> L2 -> L1; `opt/`: retile, schedule), `pipeline.py`, the numerics (`numerics/mxfp7.py`), the kernels (`kernels/`) |
+| `language/` | `kohakutpu.language` | the `.ktpu` text (`text/`), the L3 and L2 readers, verifiers and reference interpreters (`l3/`, `l2/`), the L1 op names (`l1/`), the compilers (`lower/`: L3 -> L2 -> L1; `opt/`: retile, schedule), `pipeline.py`, the numerics (`numerics/mxfp7.py`), the kernels (`kernels/`) |
 | `compiler/` | `kohakuaccel.compiler` | the ISA toolkit (`isa.py`: `Field`, `InstFormat`, `InstSet`), the L1 `Program` (`program.py`), the work package (`package/`: format, builder, mover moves, the dispatch-engine lowering), the machine description (`machine.py`) |
 | | `kohakutpu.compiler` | the ISA field tables (`isa/`), the encoders (`encode/`), the memory layouts (`layout/`), the L1 body and image emitters (`emit/`), resident IMEM (`imem.py`), `build.py` (a kernel to a package) |
 | `driver/` | `kohakuaccel.driver` | transports (`transport/`), flits, registers, staging and discovery (`device/`), the unit registry (`unit/`), node boot, heaps and queues (`node/`), the card daemon (`daemon/`), the kick-list loader (`runtime/`) |
