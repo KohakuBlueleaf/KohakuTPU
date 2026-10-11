@@ -21,6 +21,7 @@ struct ka_unit_state {
     uint32_t inflight; /* sent, not retired */
     uint32_t expected; /* completions AWAITed so far */
     uint32_t received; /* completions seen, retirements and acks alike */
+    uint32_t acks;     /* DATA_RECEIVED acknowledgements among them */
     uint32_t sent;
     uint32_t fetch;    /* 1 << 16 | port y << 8 | port x, or 0: see ka_engine_fetch */
     const struct ka_unit_class *cls;
@@ -38,6 +39,7 @@ struct ka_engine {
     uint64_t dst;         /* what M_DST holds, so it is written on change */
     uint8_t at[16][16];   /* unit index + 1 by (x, y), 0 for none */
     uint64_t t_first, t_last; /* cycle of the first and the latest GO */
+    int keep_rx;          /* the package RECVs: leave the RX queue alone */
     /* the first error, kept for the completion entry */
     int status;
     unsigned detail;

@@ -18,6 +18,7 @@ enum {
     KA_R_IRQ     = 0x38, /* W: toggle the host interrupt line; R: its level */
     KA_R_NM      = 0x40,  /* the dispatch mailbox, 8 registers */
     KA_R_IL      = 0xC0,  /* interlink config register 0x80 + k at 0xC0 + k */
+    KA_R_SIG     = 0xE0,  /* R: the selected signal slot's word (KA_SIG_*) */
     KA_R_MV      = 0x100, /* mover register k at 0x100 + k, k < 0x80 */
     KA_R_RX      = 0x180, /* RX queue: HDR, P0..P3, USED (8 bytes apart) */
     KA_R_DCACHE  = 0x1C8, /* W: [0] flush, [1] invalidate; R: busy */
@@ -26,6 +27,23 @@ enum {
 };
 
 #define KA_MV_SPAN 0x80
+/* The control region's end: offsets a package's LOAD may read. */
+#define KA_CTRL_SPAN 0x400
+
+/* Interlink registers, from KA_R_IL (control-registers.md s7.4). */
+enum {
+    KA_IL_CTL     = 0x00, /* [0] enable, [1] clear doorbells, [2] clear faults, [3] clear slots */
+    KA_IL_MESH    = 0x08,
+    KA_IL_RING    = 0x10, /* [1:0] mesh, [15:8] slot, [31:16] amount (0 counts 1), [32] fence */
+    KA_IL_CONSUME = 0x20, /* [3:0] slot, [63:32] amount */
+    KA_IL_SELECT  = 0x28, /* [3:0] the slot KA_R_SIG reports */
+};
+/* KA_R_SIG: [31:0] count, [47:32] rings sent, [53:50] the selected slot. */
+#define KA_SIG_COUNT(w) ((uint32_t)(w))
+#define KA_SIG_SENT(w)  ((uint32_t)(((w) >> 32) & 0xffffu))
+#define KA_SIG_SLOT(w)  ((unsigned)(((w) >> 50) & 0xfu))
+/* Rings the interlink queues before it drops one. */
+#define KA_IL_RING_DEPTH 4u
 
 /* M_DST: [24] send the type in [23:20] instead of CU_INST. */
 #define KA_NM_TYPED(t) ((1UL << 24) | ((uint64_t)((t) & 0xf) << 20))

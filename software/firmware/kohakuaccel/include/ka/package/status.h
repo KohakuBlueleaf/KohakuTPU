@@ -36,6 +36,10 @@ enum ka_wait {
     KA_WAIT_MOVER  = 4,
     KA_WAIT_BELL   = 5,
     KA_WAIT_OFFER  = 6,
+    KA_WAIT_SLOT   = 7,
+    KA_WAIT_RX     = 8,
+    KA_WAIT_ACK    = 9,
+    KA_WAIT_RING   = 10,
 };
 
 #endif

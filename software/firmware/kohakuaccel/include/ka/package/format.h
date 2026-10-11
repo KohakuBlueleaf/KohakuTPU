@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #define KA_PKG_MAGIC   0x4B50414Bu /* "KAPK" */
-#define KA_PKG_VERSION 1
+#define KA_PKG_VERSION 2
 #define KA_PKG_HEADER  96 /* bytes: twelve 64-bit words */
 
 /* Header words. */
@@ -25,6 +25,8 @@ enum {
 };
 
 #define KA_PKG_F_CHECKSUM 1u
+/* The package RECVs: flits in the RX queue are its, not strays to drop. */
+#define KA_PKG_F_RX 2u
 
 /* Entry sizes in bytes. */
 #define KA_PKG_UNIT_BYTES 16 /* w0 type<<32|mesh<<16|y<<8|x, w1 [31:0] credit */
@@ -39,7 +41,7 @@ enum ka_step_op {
     KA_OP_AWAIT     = 2, /* unit, count more completions */
     KA_OP_BARRIER   = 3,
     KA_OP_MOVER     = 4, /* count payloads of (register, value) pairs from arg */
-    KA_OP_RING      = 5, /* unit = destination mesh, count = tag */
+    KA_OP_RING      = 5, /* unit = destination mesh, count = slot, arg = amount | fence << 16 */
     KA_OP_WAIT_BELL = 6, /* unit = source mesh, count = rings since the start */
     KA_OP_SIGNAL    = 7, /* tell the host now: count = value32, arg = value64 */
     KA_OP_SETTLE    = 8, /* hold count cycles */
@@ -47,6 +49,28 @@ enum ka_step_op {
     KA_OP_MWAIT     = 10, /* count = moves of this package that must be done */
     KA_OP_ENGINE    = 11, /* count dispatch-engine entries, 3 a payload, from arg */
     KA_OP_FETCH     = 12, /* unit, count words its fetch port reads from address arg */
+    KA_OP_WAIT_SLOT = 13, /* unit = slot: until it holds count; CONSUME takes count */
+    KA_OP_STORE     = 14, /* count (address, value) pairs from payload arg */
+    KA_OP_LOAD      = 15, /* unit = register := 64 bits at payload arg's address */
+    KA_OP_ALU       = 16, /* unit = rd, count = op | ra << 8 | rb << 12 */
+    KA_OP_JUMP      = 17, /* unit = target step, count = cond | ra << 8 | rb << 12 */
+    KA_OP_PATCH     = 18, /* unit = register, count = index, arg = where (s4.12) */
+    KA_OP_SEND      = 19, /* unit, count flits of type arg >> 32 from payload arg */
+    KA_OP_RECV      = 20, /* count RX flits from unit (0xffff any) to payload arg's address */
+    KA_OP_CTRL      = 21, /* count (control offset, value) pairs from payload arg */
+};
+
+/* Package registers: LOAD writes one, ALU computes, JUMP tests, PATCH writes
+ * one into a payload or a step. Zero at a package's start. */
+#define KA_PKG_REGS 16
+
+enum ka_alu_op {
+    KA_ALU_MOV = 0, KA_ALU_ADD, KA_ALU_SUB, KA_ALU_MUL, KA_ALU_AND, KA_ALU_OR,
+    KA_ALU_XOR, KA_ALU_SHL, KA_ALU_SHR, KA_ALU_MIN, KA_ALU_MAX, KA_ALU_DIVU, KA_ALU_REMU,
+};
+
+enum ka_jump_cond {
+    KA_JC_ALWAYS = 0, KA_JC_EQ, KA_JC_NE, KA_JC_LTU, KA_JC_GEU, KA_JC_LT, KA_JC_GE,
 };
 
 /* An ENGINE entry's code byte: the engine's code (0..32) | REL, where REL adds
@@ -55,7 +79,22 @@ enum ka_step_op {
 
 /* Step flags (w0 [15:8]). A MOVER step POSTED starts its moves and goes on:
  * the moves it starts are waited for by an MWAIT, a BARRIER or the end. */
-#define KA_STEP_F_POSTED 1u
+#define KA_STEP_F_POSTED  1u
+#define KA_STEP_F_IMM     2u   /* ALU / JUMP: operand b is arg, not rb */
+#define KA_STEP_F_REG     4u   /* STORE / CTRL: a pair's value names a register */
+#define KA_STEP_F_INDEXED 8u   /* LOAD: the address adds register count[3:0] */
+#define KA_STEP_F_CTRL    16u  /* LOAD: the address is a control-region offset */
+#define KA_STEP_F_CONSUME 32u  /* WAIT_SLOT: take count from the slot once reached */
+#define KA_STEP_F_MEM     64u  /* SEND: one CU_DATA descriptor, then count words from memory */
+#define KA_STEP_F_ACK     128u /* SEND: wait for the unit's DATA_RECEIVED */
+
+/* PATCH's argument: bits [bit, bit+width) of word `count` of a section :=
+ * reg >> shift, or += it with ADD. */
+#define KA_PATCH_BIT(a)   ((unsigned)((a) & 0xff))
+#define KA_PATCH_WIDTH(a) ((unsigned)(((a) >> 8) & 0xff))
+#define KA_PATCH_SHIFT(a) ((unsigned)(((a) >> 16) & 0xff))
+#define KA_PATCH_STEPS(a) ((unsigned)(((a) >> 24) & 1)) /* 0 payloads, 1 steps */
+#define KA_PATCH_ADD(a)   ((unsigned)(((a) >> 26) & 1))
 
 /* A MOVER pair whose register is this is skipped (pads an odd count). */
 #define KA_MOVER_SKIP 0xFFFFFFFFFFFFFFFFUL

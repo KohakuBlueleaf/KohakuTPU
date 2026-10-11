@@ -17,11 +17,21 @@ from typing import Protocol
 
 from kohakuaccel.compiler.package import engine
 from kohakuaccel.compiler.package.format import (
+    ANY_UNIT,
+    F_CTRL,
+    F_IMM,
+    F_INDEXED,
+    F_MEM,
     F_POSTED,
+    F_REG,
     MOVER_SKIP,
+    REGS,
+    Alu,
+    Cond,
     Op,
     Package,
     PackageError,
+    Step,
     apply_reloc,
     bind_addresses,
     signature,
@@ -34,6 +44,23 @@ SIG_FAULT = 0x04
 
 #: Status codes, as software/firmware/kohakuaccel/include/ka/package/status.h.
 OK, BAD_SIGNATURE, UNIT_FAULT, TIMEOUT, BAD_STEP = 0x00, 0x12, 0x20, 0x30, 0x14
+BAD_UNIT = 0x17
+
+
+def _step_word(s: Step) -> int:
+    """A step as its 128 stored bits."""
+    w0 = (
+        int(s.op)
+        | (s.flags & 0xFF) << 8
+        | (s.unit & 0xFFFF) << 16
+        | (s.count & MASK32) << 32
+    )
+    return w0 | (s.arg & MASK64) << 64
+
+
+def _word_step(w: int) -> Step:
+    w0 = w & MASK64
+    return Step(Op(w0 & 0xFF), (w0 >> 16) & 0xFFFF, w0 >> 32, w >> 64, (w0 >> 8) & 0xFF)
 
 
 class Mailbox(Protocol):
@@ -50,14 +77,65 @@ class Result:
     value: int = 0
     sent: int = 0
     signals: list = field(default_factory=list)
+    #: The package's registers at its end.
+    regs: list = field(default_factory=lambda: [0] * REGS)
+    #: ``(step, op, unit, count, arg)`` of every interlink / control step, in
+    #: the order the node reached them.
+    events: list = field(default_factory=list)
+    #: ``(x, y, type, payload)`` of every SEND flit.
+    flits: list = field(default_factory=list)
+
+
+def _alu(op: int, a: int, b: int) -> int:
+    m = (1 << 64) - 1
+    return {
+        Alu.MOV: b,
+        Alu.ADD: a + b,
+        Alu.SUB: a - b,
+        Alu.MUL: a * b,
+        Alu.AND: a & b,
+        Alu.OR: a | b,
+        Alu.XOR: a ^ b,
+        Alu.SHL: a << (b & 63),
+        Alu.SHR: a >> (b & 63),
+        Alu.MIN: min(a, b),
+        Alu.MAX: max(a, b),
+        Alu.DIVU: a // b if b else m,
+        Alu.REMU: a % b if b else a,
+    }[Alu(op)] & m
+
+
+def _taken(cond: int, a: int, b: int) -> bool:
+    sa, sb = (a ^ 1 << 63) - (1 << 63), (b ^ 1 << 63) - (1 << 63)
+    return {
+        Cond.ALWAYS: True,
+        Cond.EQ: a == b,
+        Cond.NE: a != b,
+        Cond.LTU: a < b,
+        Cond.GEU: a >= b,
+        Cond.LT: sa < sb,
+        Cond.GE: sa >= sb,
+    }[Cond(cond)]
 
 
 class Interpreter:
     """Runs packages over `mailbox`; `units` is the machine's unit words (the
-    boot table) for the signature check, `cq_depth` the mailbox's depth."""
+    boot table) for the signature check, `cq_depth` the mailbox's depth.
+
+    `store(addr, value)` takes a STORE's 64-bit writes and `ctrl(offset)` /
+    `rx()` answer a control-register LOAD and a RECV; each None refuses its
+    step."""
 
     def __init__(
-        self, mailbox: Mailbox, units=(), cq_depth: int = 16, mover=None, memory=None
+        self,
+        mailbox: Mailbox,
+        units=(),
+        cq_depth: int = 16,
+        mover=None,
+        memory=None,
+        store=None,
+        ctrl=None,
+        rx=None,
     ):
         self.mb = mailbox
         self.machine_sig = signature(units) if units else 0
@@ -66,11 +144,17 @@ class Interpreter:
         self.mover = mover
         #: ``memory(addr, nbytes) -> bytes`` for FETCH; None refuses them.
         self.memory = memory
+        self.store = store
+        self.ctrl = ctrl
+        self.rx = rx
+
+    def fetched_bytes(self, addr: int, nbytes: int) -> bytes:
+        if self.memory is None:
+            raise PackageError("this interpreter was given no memory to read")
+        return self.memory(addr, nbytes)
 
     def fetched(self, addr: int, n: int) -> list[int]:
-        if self.memory is None:
-            raise PackageError("this interpreter was given no memory to fetch from")
-        raw = self.memory(addr, n * engine.PAYLOAD)
+        raw = self.fetched_bytes(addr, n * engine.PAYLOAD)
         return [
             int.from_bytes(raw[k : k + engine.PAYLOAD], "little")
             for k in range(0, len(raw), engine.PAYLOAD)
@@ -134,7 +218,12 @@ class Interpreter:
                 self.mover(writes)
                 moves_done += gos
 
-        for n, s in enumerate(pkg.steps):
+        steps = list(pkg.steps)
+        regs = res.regs
+        pc = 0
+        while pc < len(steps):
+            n, s = pc, steps[pc]
+            pc += 1
             res.step = n
             if s.op == Op.END:
                 break
@@ -264,17 +353,87 @@ class Interpreter:
                             self.mover(moving)
                             moves_done += 1
                             moving = []
+                    else:
+                        res.events.append((n, "il", 0xC0 + 8 * (reg - 24), 0, value))
             elif s.op == Op.SIGNAL:
                 res.signals.append((n, s.count, s.arg))
-            elif s.op in (Op.SETTLE, Op.RING, Op.WAIT_BELL):
-                continue
+            elif s.op in (Op.SETTLE, Op.RING, Op.WAIT_BELL, Op.WAIT_SLOT):
+                res.events.append((n, s.op.name, s.unit, s.count, s.arg))
+            elif s.op in (Op.STORE, Op.CTRL):
+                for k in range(s.count):
+                    w = words[(s.arg & MASK32) + k]
+                    for half in (0, 128):
+                        at, v = (w >> half) & MASK64, (w >> (half + 64)) & MASK64
+                        if at == MOVER_SKIP:
+                            continue
+                        v = regs[v & (REGS - 1)] if s.flags & F_REG else v
+                        if s.op == Op.CTRL:
+                            res.events.append((n, "CTRL", at, 0, v))
+                        elif self.store is None:
+                            raise PackageError("this interpreter was given no store")
+                        else:
+                            self.store(at, v)
+            elif s.op == Op.LOAD:
+                at = words[s.arg & MASK32] & MASK64
+                if s.flags & F_INDEXED:
+                    at = (at + regs[s.count & (REGS - 1)]) & MASK64
+                if s.flags & F_CTRL:
+                    if self.ctrl is None:
+                        raise PackageError("this interpreter reads no control register")
+                    regs[s.unit] = self.ctrl(at) & MASK64
+                else:
+                    regs[s.unit] = int.from_bytes(self.fetched_bytes(at, 8), "little")
+            elif s.op == Op.ALU:
+                b = s.arg if s.flags & F_IMM else regs[(s.count >> 12) & 15]
+                regs[s.unit] = _alu(s.count & 0xFF, regs[(s.count >> 8) & 15], b)
+            elif s.op == Op.JUMP:
+                b = s.arg if s.flags & F_IMM else regs[(s.count >> 12) & 15]
+                if _taken(s.count & 0xFF, regs[(s.count >> 8) & 15], b):
+                    pc = s.unit
+            elif s.op == Op.PATCH:
+                bit, width = s.arg & 0xFF, (s.arg >> 8) & 0xFF
+                shift, on_steps, add = (
+                    (s.arg >> 16) & 0xFF,
+                    s.arg >> 24 & 1,
+                    s.arg >> 26 & 1,
+                )
+                mask = (1 << width) - 1
+                old = _step_word(steps[s.count]) if on_steps else words[s.count]
+                v = regs[s.unit] >> shift
+                if add:
+                    v += (old >> bit) & mask
+                new = (old & ~(mask << bit)) | (v & mask) << bit
+                if on_steps:
+                    steps[s.count] = _word_step(new)
+                else:
+                    words[s.count] = new
+            elif s.op == Op.SEND:
+                u, first = pkg.units[s.unit], s.arg & MASK32
+                kind = (s.arg >> 32) & 0xF
+                got = words[first : first + (1 if s.flags & F_MEM else s.count)]
+                if s.flags & F_MEM:
+                    got += self.fetched(words[first + 1] & MASK64, s.count)
+                res.flits += [(u.x, u.y, kind, w) for w in got]
+            elif s.op == Op.RECV:
+                if self.rx is None or self.store is None:
+                    raise PackageError("this interpreter was given no RX queue")
+                to = words[s.arg & MASK32] & MASK64
+                for k in range(s.count):
+                    x, y, payload = self.rx()
+                    if s.unit != ANY_UNIT:
+                        want = pkg.units[s.unit]
+                        if (x, y) != (want.x, want.y):
+                            res.status, res.detail = BAD_UNIT, s.unit
+                            return res
+                    for j in range(4):
+                        self.store(to + 32 * k + 8 * j, (payload >> (64 * j)) & MASK64)
             else:
                 res.status, res.detail = BAD_STEP, int(s.op)
                 return res
             if res.status:
                 return res
         if wait(lambda: not any(inflight)):
-            res.step = len(pkg.steps)
+            res.step = pc
         run_moves()
         return res
 

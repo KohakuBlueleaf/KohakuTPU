@@ -29,17 +29,26 @@ static struct {
     int cached;   /* read through the L1 */
     int local;    /* copied whole into `pk_copy` */
     int prereloc; /* every relocation already applied to `pk_copy` */
+    uint32_t foreign; /* units of another mesh: in the table, never sent to */
 } pk;
+
+/* The package's registers (LOAD, ALU, JUMP, PATCH) and the step run next. */
+static uint64_t reg[KA_PKG_REGS];
+static uint32_t pc_next;
 
 /* A package read during a FILL waits out the stream: the read is served by the
  * MAG engine in order behind it (MBOX_TRACE, v9: each GO ~180 cycles after the
  * target's FILL ended). A cached package that fits is copied here up front, a
  * line fill per 32 bytes; an uncached one stays where it is, since four 8-byte
  * round trips per word up front cost a small package more than it saves. */
-#define KA_PKG_COPY_WORDS 1408
+#define KA_PKG_COPY_WORDS 1344
 static uint64_t pk_copy[KA_PKG_COPY_WORDS];
 
-static uint64_t rd(uint64_t off)
+/* The file is built for size; the dispatch-engine path, what a v9 node runs
+ * per step, is built for speed (all -Os: silu 14,211 node cycles, not 13,111). */
+#define KA_HOT __attribute__((optimize("O2")))
+
+static KA_HOT uint64_t rd(uint64_t off)
 {
     if (pk.local) {
         return pk_copy[off >> 3];
@@ -176,7 +185,7 @@ static inline int may_relocate(uint32_t idx)
     return pk.rcur < pk.nrel && (idx < pk.rlast || !pk.rpeek_ok || (uint32_t)pk.rpeek <= idx);
 }
 
-static int payload(uint32_t idx, uint64_t w[4])
+static KA_HOT int payload(uint32_t idx, uint64_t w[4])
 {
     if (idx >= pk.npay) {
         return ka_engine_fail(&eng, KA_ST_BAD_LAYOUT, idx, pk.npay);
@@ -475,8 +484,8 @@ static uint32_t dispatch_group(uint32_t s0, uint64_t head)
             break;
         }
         unsigned unit = (w0 >> 16) & 0xffff;
-        if (unit < eng.n && (eng.u[unit].fetch >> 16) && !pk.nrel) {
-            break; /* its words are fetched, not sent: `dispatch` */
+        if (unit < eng.n && (((eng.u[unit].fetch >> 16) && !pk.nrel) || ((pk.foreign >> unit) & 1))) {
+            break; /* fetched, not sent (`dispatch`), or refused (`step`) */
         }
         uint32_t j = 0;
         while (j < n && g[j].unit != unit) {
@@ -662,18 +671,6 @@ static int mover(uint32_t first, uint32_t count, int posted)
     return posted ? 0 : moves_all_done();
 }
 
-static int mover_idle(void)
-{
-    uint64_t t0 = ka_cycles();
-    while (KA_MV_BUSY(ka_ctrl_rd(KA_R_MVSTAT))) {
-        if (ka_cycles() - t0 > eng.timeout) {
-            return ka_engine_fail(&eng, KA_ST_TIMEOUT, KA_WAIT_MOVER, 0);
-        }
-        ka_yield();
-    }
-    return 0;
-}
-
 /* ------------------------------------------------------------------------
  * Engine mode (docs/spec/dispatch-engine.md): each step is QUEUED as the
  * register writes and WAITs it stands for, and the dispatch engine issues them
@@ -752,7 +749,7 @@ static int de_wait(unsigned src, uint32_t want)
     return want ? de_push(KA_DE_WAIT, (uint64_t)src << 56 | (want & KA_DE_CTR_MASK)) : 0;
 }
 
-static int de_send_word(unsigned unit, const uint64_t w[4])
+static KA_HOT int de_send_word(unsigned unit, const uint64_t w[4])
 {
     struct ka_unit_state *s = &eng.u[unit];
     if (s->sent + 1 > s->credit && de_wait(unit, s->sent + 1 - s->credit)) {
@@ -768,7 +765,7 @@ static int de_send_word(unsigned unit, const uint64_t w[4])
     return 0;
 }
 
-static int de_fetch(unsigned unit, uint64_t at, uint32_t count)
+static KA_HOT int de_fetch(unsigned unit, uint64_t at, uint32_t count)
 {
     struct ka_unit_state *s = &eng.u[unit];
     if (!(s->fetch >> 16)) {
@@ -867,7 +864,7 @@ static int de_mover(uint32_t first, uint32_t count, int posted)
 
 /* An ENGINE step: entries the host compiled, copied into the engine as read.
  * A code past WAIT would land on the engine's own control registers. */
-static int de_stream(uint32_t first, uint32_t count)
+static KA_HOT int de_stream(uint32_t first, uint32_t count)
 {
     if (first > pk.npay || (count + 2) / 3 > pk.npay - first) {
         return ka_engine_fail(&eng, KA_ST_BAD_LAYOUT, first, pk.npay);
@@ -1002,7 +999,320 @@ static int wait_bell(unsigned mesh, uint32_t count)
     }
 }
 
-static int header(const struct ka_pkg_run *r)
+/* ------------------------------------------------------------------------
+ * Interlink, memory, control-region and register steps (package-format.md
+ * s4.9-4.14). Out of line and laid out cold: none sits in a dispatch loop. */
+#define KA_COLD __attribute__((cold, noinline, optimize("Os")))
+
+/* Rings this node has queued, as the interlink's 16-bit sent count runs. */
+static uint16_t rings;
+
+/* A step's timeout check: TIMEOUT(what, value) once `t0` is a timeout old. */
+static int expired(uint64_t t0, unsigned what, uint64_t value)
+{
+    return ka_cycles() - t0 > eng.timeout ? ka_engine_fail(&eng, KA_ST_TIMEOUT, what, value) : 0;
+}
+
+/* A ring once fewer than KA_IL_RING_DEPTH are queued: a fifth would be dropped.
+ * Engine-issued rings are not counted here, so a sent count past ours resyncs. */
+static KA_COLD int ring(unsigned mesh, uint32_t slot, uint64_t arg)
+{
+    uint64_t t0 = ka_cycles();
+    for (;;) {
+        uint16_t sent = (uint16_t)KA_SIG_SENT(ka_ctrl_rd(KA_R_SIG));
+        int16_t ahead = (int16_t)(rings - sent);
+        if (ahead < 0) {
+            rings = sent;
+            ahead = 0;
+        }
+        if ((unsigned)ahead < KA_IL_RING_DEPTH) {
+            break;
+        }
+        if (expired(t0, KA_WAIT_RING, sent)) {
+            return eng.status;
+        }
+    }
+    ka_ctrl_wr(KA_R_IL + KA_IL_RING, (mesh & 3) | (uint64_t)(slot & 0xff) << 8 |
+                                         (arg & 0xffff) << 16 | ((arg >> 16) & 1) << 32);
+    ++rings;
+    return 0;
+}
+
+/* Until signal slot `slot` holds `n`; CONSUME then subtracts `n`. A select or a
+ * consume lands two registers deep, so two reads follow each. */
+static KA_COLD int wait_slot(unsigned slot, uint32_t n, unsigned flags)
+{
+    if (slot >= 16) {
+        return ka_engine_fail(&eng, KA_ST_BAD_STEP, KA_OP_WAIT_SLOT, slot);
+    }
+    ka_ctrl_wr(KA_R_IL + KA_IL_SELECT, slot);
+    (void)ka_ctrl_rd(KA_R_SIG);
+    (void)ka_ctrl_rd(KA_R_SIG);
+    uint64_t t0 = ka_cycles(), w;
+    while (w = ka_ctrl_rd(KA_R_SIG), KA_SIG_SLOT(w) != slot || KA_SIG_COUNT(w) < n) {
+        if (expired(t0, KA_WAIT_SLOT, w)) {
+            return eng.status;
+        }
+        ka_yield();
+    }
+    if (flags & KA_STEP_F_CONSUME) {
+        ka_ctrl_wr(KA_R_IL + KA_IL_CONSUME, slot | (uint64_t)n << 32);
+        (void)ka_ctrl_rd(KA_R_SIG);
+        (void)ka_ctrl_rd(KA_R_SIG);
+    }
+    return 0;
+}
+
+/* The control-region offsets a package may write: the host interrupt, the
+ * interlink, the D-cache and the transform bank. */
+static int ctrl_ok(uint64_t o)
+{
+    return o == KA_R_IRQ || (o >= KA_R_IL && o < KA_R_MV && !(o & 7)) || o == KA_R_DCACHE ||
+           o == KA_R_XF_SEL || o == KA_R_XF_DATA;
+}
+
+/* STORE and CTRL: (address or offset, value) pairs, two a payload. */
+static KA_COLD int pairs(unsigned op, uint32_t first, uint32_t count, unsigned flags)
+{
+    for (uint32_t k = 0; k < count; ++k) {
+        uint64_t w[4];
+        if (payload(first + k, w)) {
+            return eng.status;
+        }
+        for (int p = 0; p < 4; p += 2) {
+            uint64_t at = w[p], v = w[p + 1];
+            if (at == KA_MOVER_SKIP) {
+                continue;
+            }
+            if (flags & KA_STEP_F_REG) {
+                v = reg[v & (KA_PKG_REGS - 1)];
+            }
+            if (op == KA_OP_STORE) {
+                if (at & 7) {
+                    return ka_engine_fail(&eng, KA_ST_BAD_STEP, KA_OP_STORE, at);
+                }
+                ka_st64(at, v);
+            }
+            else if (!ctrl_ok(at)) {
+                return ka_engine_fail(&eng, KA_ST_NO_REACH, (unsigned)at, v);
+            }
+            else if (at == KA_R_DCACHE) {
+                ka_dcache((unsigned)v);
+            }
+            else {
+                ka_ctrl_wr((unsigned)at, v);
+            }
+        }
+    }
+    return 0;
+}
+
+/* reg[rd] := the 64 bits at payload `arg`'s address (+ reg[count] INDEXED), or
+ * the control register at that offset (CTRL). */
+static KA_COLD int load(unsigned rd, uint32_t count, uint64_t arg, unsigned flags)
+{
+    uint64_t w[4];
+    if (rd >= KA_PKG_REGS) {
+        return ka_engine_fail(&eng, KA_ST_BAD_STEP, KA_OP_LOAD, rd);
+    }
+    if (payload((uint32_t)arg, w)) {
+        return eng.status;
+    }
+    uint64_t at = w[0] + ((flags & KA_STEP_F_INDEXED) ? reg[count & (KA_PKG_REGS - 1)] : 0);
+    if ((flags & KA_STEP_F_CTRL) && at < KA_CTRL_SPAN && !(at & 7)) {
+        reg[rd] = ka_ctrl_rd((unsigned)at);
+    }
+    else if (!(flags & KA_STEP_F_CTRL) && !(at & 7)) {
+        reg[rd] = ka_ld64(at);
+    }
+    else {
+        return ka_engine_fail(&eng, KA_ST_NO_REACH, KA_OP_LOAD, at);
+    }
+    return 0;
+}
+
+static KA_COLD int alu(unsigned rd, uint32_t count, uint64_t arg, unsigned flags)
+{
+    uint64_t a = reg[(count >> 8) & 15];
+    uint64_t b = (flags & KA_STEP_F_IMM) ? arg : reg[(count >> 12) & 15], v;
+    switch (count & 0xff) {
+    case KA_ALU_MOV: v = b; break;
+    case KA_ALU_ADD: v = a + b; break;
+    case KA_ALU_SUB: v = a - b; break;
+    case KA_ALU_MUL: v = a * b; break;
+    case KA_ALU_AND: v = a & b; break;
+    case KA_ALU_OR:  v = a | b; break;
+    case KA_ALU_XOR: v = a ^ b; break;
+    case KA_ALU_SHL: v = a << (b & 63); break;
+    case KA_ALU_SHR: v = a >> (b & 63); break;
+    case KA_ALU_MIN: v = a < b ? a : b; break;
+    case KA_ALU_MAX: v = a > b ? a : b; break;
+    case KA_ALU_DIVU: v = b ? a / b : ~0UL; break;
+    case KA_ALU_REMU: v = b ? a % b : a; break;
+    default: return ka_engine_fail(&eng, KA_ST_BAD_STEP, KA_OP_ALU, count);
+    }
+    if (rd >= KA_PKG_REGS) {
+        return ka_engine_fail(&eng, KA_ST_BAD_STEP, KA_OP_ALU, rd);
+    }
+    reg[rd] = v;
+    return 0;
+}
+
+static KA_COLD int jump(unsigned target, uint32_t count, uint64_t arg, unsigned flags)
+{
+    uint64_t a = reg[(count >> 8) & 15];
+    uint64_t b = (flags & KA_STEP_F_IMM) ? arg : reg[(count >> 12) & 15];
+    int take;
+    switch (count & 0xff) {
+    case KA_JC_ALWAYS: take = 1; break;
+    case KA_JC_EQ: take = a == b; break;
+    case KA_JC_NE: take = a != b; break;
+    case KA_JC_LTU: take = a < b; break;
+    case KA_JC_GEU: take = a >= b; break;
+    case KA_JC_LT: take = (int64_t)a < (int64_t)b; break;
+    case KA_JC_GE: take = (int64_t)a >= (int64_t)b; break;
+    default: return ka_engine_fail(&eng, KA_ST_BAD_STEP, KA_OP_JUMP, count);
+    }
+    if (target > pk.nstep) {
+        return ka_engine_fail(&eng, KA_ST_BAD_STEP, KA_OP_JUMP, target);
+    }
+    if (take) {
+        pc_next = target;
+    }
+    return 0;
+}
+
+/* One 64-bit word of the package, wherever later reads take it from: the local
+ * copy, and the package itself (a fetch port reads that). */
+static void pk_put(uint64_t off, uint64_t v)
+{
+    if (pk.local) {
+        pk_copy[off >> 3] = v;
+    }
+    if (pk.cached) {
+        *(volatile uint64_t *)(uintptr_t)(pk.base + off) = v;
+    }
+    else {
+        ka_st64(pk.base + off, v);
+    }
+}
+
+/* Payload or step `index`'s field := reg[rs] >> shift, or += it (ADD). */
+static KA_COLD int patch(unsigned rs, uint32_t index, uint64_t arg)
+{
+    unsigned bit = KA_PATCH_BIT(arg), width = KA_PATCH_WIDTH(arg), steps = KA_PATCH_STEPS(arg);
+    unsigned shift = KA_PATCH_SHIFT(arg);
+    if (rs >= KA_PKG_REGS || !width || width > 64 || shift > 63 ||
+        bit + width > (steps ? 128u : 256u) || index >= (steps ? pk.nstep : pk.npay)) {
+        return ka_engine_fail(&eng, KA_ST_BAD_STEP, KA_OP_PATCH, arg);
+    }
+    uint64_t off = steps ? pk.ostep + (uint64_t)index * KA_PKG_STEP_BYTES
+                         : pk.opay + (uint64_t)index * KA_PKG_PAY_BYTES;
+    uint64_t w[4] = {0, 0, 0, 0};
+    unsigned lo = bit / 64, hi = (bit + width - 1) / 64;
+    for (unsigned k = lo; k <= hi; ++k) {
+        w[k] = rd(off + 8 * k);
+    }
+    uint64_t v = reg[rs] >> shift;
+    insert(w, bit, width, KA_PATCH_ADD(arg) ? extract(w, bit, width) + v : v);
+    for (unsigned k = lo; k <= hi; ++k) {
+        pk_put(off + 8 * k, w[k]);
+    }
+    if (pk.cached) {
+        ka_dcache(KA_DCACHE_FLUSH);
+    }
+    return 0;
+}
+
+/* One flit through the mailbox once the previous one is taken, draining
+ * completions meanwhile: a full queue holds the hub that would take it. */
+static int mb_go(uint64_t dst, const uint64_t w[4])
+{
+    uint64_t t0 = ka_cycles();
+    while (ka_nm_rd(KA_NM_STAT) & KA_NM_STAT_OFFERED) {
+        if (ka_engine_drain(&eng) || expired(t0, KA_WAIT_OFFER, dst)) {
+            return eng.status;
+        }
+    }
+    ka_nm_wr(KA_NM_DST, dst);
+    ka_nm_wr(KA_NM_ARG0, w[0]);
+    ka_nm_wr(KA_NM_ARG1, w[1]);
+    ka_nm_wr(KA_NM_ARG2, w[2]);
+    ka_nm_wr(KA_NM_ARG3, w[3]);
+    ka_nm_wr(KA_NM_GO, 1);
+    return 0;
+}
+
+/* `count` flits of type arg >> 32 to unit `u`: payloads from (uint32_t)arg,
+ * or (MEM) that payload as a CU_DATA descriptor and `count` words from the
+ * address in the next payload. ACK waits for the unit's DATA_RECEIVED. */
+static KA_COLD int send(unsigned u, uint32_t count, uint64_t arg, unsigned flags)
+{
+    if (u >= eng.n || ((pk.foreign >> u) & 1)) {
+        return ka_engine_fail(&eng, KA_ST_BAD_UNIT, u, arg);
+    }
+    struct ka_unit_state *s = &eng.u[u];
+    uint64_t dst = KA_NM_TYPED((arg >> 32) & 0xf) | (uint64_t)s->y << 8 | s->x;
+    uint32_t first = (uint32_t)arg, acks = s->acks;
+    uint64_t w[4], src[4];
+    eng.dst = ~0UL;
+    if (flags & KA_STEP_F_MEM) {
+        if (payload(first, w) || payload(first + 1, src) || mb_go(dst, w)) {
+            return eng.status;
+        }
+        for (uint32_t k = 0; k < count; ++k) {
+            for (int j = 0; j < 4; ++j) {
+                w[j] = ka_ld64(src[0] + 32 * (uint64_t)k + 8 * (uint64_t)j);
+            }
+            if (mb_go(dst, w)) {
+                return eng.status;
+            }
+        }
+    }
+    else {
+        for (uint32_t k = 0; k < count; ++k) {
+            if (payload(first + k, w) || mb_go(dst, w)) {
+                return eng.status;
+            }
+        }
+    }
+    uint64_t t0 = ka_cycles();
+    while ((flags & KA_STEP_F_ACK) && s->acks == acks) {
+        if (ka_engine_drain(&eng) || expired(t0, KA_WAIT_ACK, u)) {
+            return eng.status;
+        }
+    }
+    return 0;
+}
+
+/* `count` RX flits, from unit `u` (0xffff: any), their 256-bit payloads to the
+ * address in payload `arg`, one 32-byte word each. */
+static KA_COLD int recv(unsigned u, uint32_t count, uint64_t arg)
+{
+    uint64_t w[4];
+    if (payload((uint32_t)arg, w)) {
+        return eng.status;
+    }
+    for (uint32_t k = 0; k < count; ++k) {
+        uint64_t t0 = ka_cycles(), h;
+        while (!((h = ka_rx_rd(KA_RX_HDR)) >> 63)) {
+            if (ka_engine_drain(&eng) || expired(t0, KA_WAIT_RX, k)) {
+                return eng.status;
+            }
+        }
+        if (u != 0xffff && (u >= eng.n || ((h >> 20) & 0xf) != eng.u[u].x ||
+                            ((h >> 16) & 0xf) != eng.u[u].y)) {
+            return ka_engine_fail(&eng, KA_ST_BAD_UNIT, u, h);
+        }
+        for (unsigned j = 0; j < 4; ++j) {
+            ka_st64(w[0] + 32 * (uint64_t)k + 8 * j, ka_rx_rd(KA_RX_P0 + j));
+        }
+        ka_rx_pop();
+    }
+    return 0;
+}
+
+static KA_HOT int header(const struct ka_pkg_run *r)
 {
     uint64_t h = rd(KA_PH_MAGIC * 8);
     if ((uint32_t)h != KA_PKG_MAGIC) {
@@ -1013,6 +1323,7 @@ static int header(const struct ka_pkg_run *r)
     }
     uint64_t size = rd(KA_PH_SIZE * 8), c1 = rd(KA_PH_COUNTS * 8), c2 = rd(KA_PH_COUNTS2 * 8);
     pk.total = (uint32_t)size;
+    eng.keep_rx = ((size >> 32) & KA_PKG_F_RX) != 0;
     pk.npay = (uint32_t)c1;
     pk.nrel = (uint32_t)(c1 >> 32);
     pk.nbuf = c2 & 0xffff;
@@ -1063,8 +1374,12 @@ static int bindings(const struct ka_pkg_run *r)
 static int step(const struct ka_pkg_run *r, uint32_t s, uint64_t w0, int *end)
 {
     uint64_t arg = rd(pk.ostep + (uint64_t)s * KA_PKG_STEP_BYTES + 8);
-    unsigned op = w0 & 0xff, unit = (w0 >> 16) & 0xffff;
+    unsigned op = w0 & 0xff, unit = (w0 >> 16) & 0xffff, flags = (w0 >> 8) & 0xff;
     uint32_t count = (uint32_t)(w0 >> 32);
+    if ((op == KA_OP_DISPATCH || op == KA_OP_REPEAT || op == KA_OP_FETCH) && unit < eng.n &&
+        ((pk.foreign >> unit) & 1)) {
+        return ka_engine_fail(&eng, KA_ST_BAD_UNIT, unit, eng.u[unit].mesh);
+    }
     switch (op) {
     case KA_OP_END:
         *end = 1;
@@ -1096,11 +1411,7 @@ static int step(const struct ka_pkg_run *r, uint32_t s, uint64_t w0, int *end)
         }
         return ka_engine_drain(&eng);
     case KA_OP_RING:
-        if (mover_idle()) {
-            return eng.status;
-        }
-        ka_ctrl_wr(KA_R_IL + 0x10, ((uint64_t)(count & 0xff) << 8) | (unit & 3));
-        return 0;
+        return ring(unit, count, arg);
     case KA_OP_WAIT_BELL:
         return wait_bell(unit, count);
     case KA_OP_SIGNAL:
@@ -1111,6 +1422,23 @@ static int step(const struct ka_pkg_run *r, uint32_t s, uint64_t w0, int *end)
     case KA_OP_SETTLE:
         ka_delay(count);
         return 0;
+    case KA_OP_WAIT_SLOT:
+        return wait_slot(unit, count, flags);
+    case KA_OP_STORE:
+    case KA_OP_CTRL:
+        return pairs(op, (uint32_t)arg, count, flags);
+    case KA_OP_LOAD:
+        return load(unit, count, arg, flags);
+    case KA_OP_ALU:
+        return alu(unit, count, arg, flags);
+    case KA_OP_JUMP:
+        return jump(unit, count, arg, flags);
+    case KA_OP_PATCH:
+        return patch(unit, count, arg);
+    case KA_OP_SEND:
+        return send(unit, count, arg, flags);
+    case KA_OP_RECV:
+        return recv(unit, count, arg);
     default:
         return ka_engine_fail(&eng, KA_ST_BAD_STEP, op, w0);
     }
@@ -1118,13 +1446,17 @@ static int step(const struct ka_pkg_run *r, uint32_t s, uint64_t w0, int *end)
 
 /* One step in engine mode: queued, except the ones only the firmware can do,
  * which wait for the queue to drain and then run as `step`. */
-static int de_step(const struct ka_pkg_run *r, uint32_t s, uint64_t w0, int *end)
+static KA_HOT int de_step(const struct ka_pkg_run *r, uint32_t s, uint64_t w0, int *end)
 {
     uint64_t arg = rd(pk.ostep + (uint64_t)s * KA_PKG_STEP_BYTES + 8);
-    unsigned op = w0 & 0xff, unit = (w0 >> 16) & 0xffff;
+    unsigned op = w0 & 0xff, unit = (w0 >> 16) & 0xffff, flags = (w0 >> 8) & 0xff;
     uint32_t count = (uint32_t)(w0 >> 32);
     if ((op == KA_OP_DISPATCH || op == KA_OP_AWAIT || op == KA_OP_FETCH) && unit >= eng.n) {
         return ka_engine_fail(&eng, KA_ST_BAD_UNIT, unit, 0);
+    }
+    if ((op == KA_OP_DISPATCH || op == KA_OP_REPEAT || op == KA_OP_FETCH) && unit < eng.n &&
+        ((pk.foreign >> unit) & 1)) {
+        return ka_engine_fail(&eng, KA_ST_BAD_UNIT, unit, eng.u[unit].mesh);
     }
     switch (op) {
     case KA_OP_END:
@@ -1144,13 +1476,26 @@ static int de_step(const struct ka_pkg_run *r, uint32_t s, uint64_t w0, int *end
     case KA_OP_MWAIT:
         return de_wait(KA_DE_MOVER, count);
     case KA_OP_RING:
-        return de_push(KA_DE_IL(0x10), ((uint64_t)(count & 0xff) << 8) | (unit & 3));
+        return de_push(KA_DE_IL(KA_IL_RING), (unit & 3) | (uint64_t)(count & 0xff) << 8 |
+                                                 (arg & 0xffff) << 16 | ((arg >> 16) & 1) << 32);
     case KA_OP_ENGINE:
         return de_stream((uint32_t)arg, count);
     case KA_OP_FETCH:
         return de_fetch(unit, arg, count);
+    case KA_OP_ALU:
+        return alu(unit, count, arg, flags);
+    case KA_OP_JUMP:
+        return jump(unit, count, arg, flags);
+    case KA_OP_PATCH:
+        return patch(unit, count, arg);
     default:
-        return de_drain() ? eng.status : step(r, s, w0, end);
+        /* The rest wait for what the engine holds; a SEND or RECV writes the
+         * mailbox registers the engine's shadow tracks. */
+        if (de_drain() || step(r, s, w0, end)) {
+            return eng.status;
+        }
+        de.mbv = 0;
+        return 0;
     }
 }
 
@@ -1174,7 +1519,11 @@ int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out)
     mv.gos = 0;
     mv.fresh = 0;
     mv_credit = 0;
-    uint32_t s = 0;
+    pk.foreign = 0;
+    for (unsigned i = 0; i < KA_PKG_REGS; ++i) {
+        reg[i] = 0;
+    }
+    uint32_t s = 0, at = 0;
     uint64_t t_head = 0, t_copy = 0, t_bind = 0, t_steps = 0;
     if (!header(r)) {
         t_head = ka_cycles();
@@ -1187,8 +1536,12 @@ int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out)
             uint64_t off = pk.ounit + (uint64_t)u * KA_PKG_UNIT_BYTES;
             uint64_t cw = rd(off + 8);
             uint32_t fetch = (ka_boot.flags & KA_BOOT_F_NOFETCH) ? 0 : (uint32_t)(cw >> 32);
-            if (ka_engine_add(&eng, rd(off), (uint32_t)cw, fetch) < 0) {
+            int i = ka_engine_add(&eng, rd(off), (uint32_t)cw, fetch);
+            if (i < 0) {
                 ka_engine_fail(&eng, KA_ST_TOO_LARGE, u, 0);
+            }
+            else if (eng.u[i].mesh != (uint8_t)ka_boot.mesh) {
+                pk.foreign |= 1u << i;
             }
         }
         if (!eng.status) {
@@ -1205,12 +1558,13 @@ int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out)
         int end = 0;
         int trace = (ka_boot.flags & KA_BOOT_F_STEPS) != 0;
         uint64_t skew = 0;
-        for (; s < pk.nstep && !eng.status && !end; ++s) {
-            uint32_t first = s;
+        while (s < pk.nstep && !eng.status && !end) {
+            at = s;
             uint64_t w0 = step_word(s, 0);
+            pc_next = s + 1;
             uint32_t took = rr && !de.on && is_send(w0) ? dispatch_group(s, w0) : 0;
             if (took) {
-                s += took - 1;
+                pc_next = s + took;
             }
             else if (de.on) {
                 de_step(r, s, w0, &end);
@@ -1219,11 +1573,12 @@ int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out)
                 step(r, s, w0, &end);
             }
             if (trace) {
-                /* Steps first..s ended at this cycle, every earlier print removed. */
+                /* Steps at..pc_next-1 ended at this cycle, every earlier print removed. */
                 uint64_t t = ka_cycles();
-                ka_printf("PKGS %u %u %lu\n", first, s, t - t_bind - skew);
+                ka_printf("PKGS %u %u %lu\n", at, took ? pc_next - 1 : at, t - t_bind - skew);
                 skew += ka_cycles() - t;
             }
+            s = pc_next;
         }
         if (de.on && !eng.status && !de_barrier()) {
             de_drain();
@@ -1243,7 +1598,7 @@ int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out)
         }
         ka_printf("PKGF stray %u outstanding %u\n", eng.stray, eng.outstanding);
         ka_engine_quiesce(&eng);
-        s = s ? s - 1 : 0;
+        s = at;
     }
     out->status = eng.status;
     out->detail = eng.detail;

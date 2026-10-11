@@ -16,7 +16,7 @@ import struct
 from dataclasses import dataclass, field
 
 MAGIC = 0x4B50414B  # "KAPK"
-VERSION = 1
+VERSION = 2
 HEADER_BYTES = 96
 ALIGN = 32
 
@@ -27,6 +27,8 @@ RELOC_BYTES = 16
 PAYLOAD_BYTES = 32
 
 FLAG_CHECKSUM = 1
+#: The package RECVs: flits in the node's RX queue are its own.
+FLAG_RX = 2
 #: Header word holding the checksum; it reads as zero while the sum is taken.
 CHECK_WORD = 10
 
@@ -57,11 +59,80 @@ class Op(enum.IntEnum):
     #: `count` words for `unit`, streamed by its fetch port from the absolute
     #: address `arg` -- words a unit wrote to memory while the package ran.
     FETCH = 12
+    WAIT_SLOT = 13
+    STORE = 14
+    LOAD = 15
+    ALU = 16
+    JUMP = 17
+    PATCH = 18
+    SEND = 19
+    RECV = 20
+    CTRL = 21
 
 
 #: Step flags. A MOVER step POSTED starts its moves and goes on; an MWAIT, a
 #: BARRIER or the package's end waits for them.
 F_POSTED = 1
+#: ALU / JUMP: operand b is the argument, not register rb.
+F_IMM = 2
+#: STORE / CTRL: a pair's value names a register.
+F_REG = 4
+#: LOAD: the address adds register count[3:0].
+F_INDEXED = 8
+#: LOAD: the address is a control-region offset.
+F_CTRL = 16
+#: WAIT_SLOT: take the count from the slot once it is reached.
+F_CONSUME = 32
+#: SEND: a CU_DATA descriptor payload, then `count` words from the address in
+#: the next payload.
+F_MEM = 64
+#: SEND: wait for the unit's DATA_RECEIVED.
+F_ACK = 128
+
+#: Package registers (LOAD, ALU, JUMP, PATCH).
+REGS = 16
+#: RECV from any unit.
+ANY_UNIT = 0xFFFF
+
+
+class Alu(enum.IntEnum):
+    MOV = 0
+    ADD = 1
+    SUB = 2
+    MUL = 3
+    AND = 4
+    OR = 5
+    XOR = 6
+    SHL = 7
+    SHR = 8
+    MIN = 9
+    MAX = 10
+    DIVU = 11
+    REMU = 12
+
+
+class Cond(enum.IntEnum):
+    ALWAYS = 0
+    EQ = 1
+    NE = 2
+    LTU = 3
+    GEU = 4
+    LT = 5
+    GE = 6
+
+
+def patch_arg(
+    bit: int, width: int, shift: int = 0, steps: bool = False, add: bool = False
+) -> int:
+    """A PATCH step's argument: bits ``[bit, bit+width)`` of a payload (or, with
+    `steps`, a step) := register >> shift, or += it with `add`."""
+    if (
+        not 0 < width <= 64
+        or not 0 <= shift < 64
+        or bit + width > (128 if steps else 256)
+    ):
+        raise PackageError(f"patch field [{bit}+{width}] >> {shift} leaves the word")
+    return bit | width << 8 | shift << 16 | int(steps) << 24 | int(add) << 26
 
 
 class Kind(enum.IntEnum):
@@ -248,6 +319,8 @@ class Package:
             at += -(-len(s) // ALIGN) * ALIGN
         total = at
         flags = FLAG_CHECKSUM if self.checksum else 0
+        if any(s.op == Op.RECV for s in self.steps):
+            flags |= FLAG_RX
         head = struct.pack(
             "<12Q",
             MAGIC | VERSION << 32 | HEADER_BYTES << 48,
@@ -307,6 +380,30 @@ class Package:
                 raise PackageError(
                     f"step {i} fetches for unit {s.unit}: it has no port"
                 )
+            reads = {
+                Op.STORE: s.count,
+                Op.CTRL: s.count,
+                Op.LOAD: 1,
+                Op.RECV: 1,
+                Op.SEND: 2 if s.flags & F_MEM else s.count,
+            }.get(s.op)
+            first = s.arg & 0xFFFF_FFFF
+            if reads is not None and first + reads > len(self.payloads):
+                raise PackageError(f"step {i} reads payloads past {len(self.payloads)}")
+            if s.op == Op.SEND and s.unit >= len(self.units):
+                raise PackageError(f"step {i} names unit {s.unit} of {len(self.units)}")
+            if s.op == Op.RECV and s.unit != ANY_UNIT and s.unit >= len(self.units):
+                raise PackageError(f"step {i} names unit {s.unit} of {len(self.units)}")
+            if s.op == Op.JUMP and s.unit > len(self.steps):
+                raise PackageError(f"step {i} jumps to {s.unit} of {len(self.steps)}")
+            if s.op in (Op.LOAD, Op.ALU, Op.PATCH) and s.unit >= REGS:
+                raise PackageError(f"step {i} names register {s.unit} of {REGS}")
+            if s.op == Op.PATCH:
+                section = self.steps if s.arg >> 24 & 1 else self.payloads
+                if s.count >= len(section):
+                    raise PackageError(
+                        f"step {i} patches word {s.count} of {len(section)}"
+                    )
 
     # ----------------------------------------------------------------- read
     @classmethod
@@ -407,6 +504,10 @@ class Package:
         for r in self.relocs:
             out[r.payload] = apply_reloc(out[r.payload], r, addrs[r.buffer])
         return out
+
+    def jumps(self) -> bool:
+        """Whether any step jumps: its steps may run in another order, or again."""
+        return any(s.op == Op.JUMP for s in self.steps)
 
     def summary(self) -> str:
         ops = {}

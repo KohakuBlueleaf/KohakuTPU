@@ -13,9 +13,20 @@ address field inside a live span becomes a relocation (package-format.md §2).
 from collections.abc import Callable, Iterable
 
 from kohakuaccel.compiler.package.format import (
+    ANY_UNIT,
+    F_ACK,
+    F_CONSUME,
+    F_CTRL,
+    F_IMM,
+    F_INDEXED,
+    F_MEM,
     F_POSTED,
+    F_REG,
     MOVER_SKIP,
+    REGS,
+    Alu,
     Buffer,
+    Cond,
     Kind,
     Op,
     Package,
@@ -23,8 +34,21 @@ from kohakuaccel.compiler.package.format import (
     Reloc,
     Step,
     Unit,
+    patch_arg,
     type_code,
 )
+
+
+def _pairs(pairs) -> list:
+    """`(first, second)` 64-bit pairs, two to a payload, an odd one padded."""
+    pairs = list(pairs)
+    if len(pairs) % 2:
+        pairs.append((MOVER_SKIP, 0))
+    return [
+        a | b << 64 | c << 128 | d << 192
+        for (a, b), (c, d) in zip(pairs[0::2], pairs[1::2], strict=True)
+    ]
+
 
 #: ``((bit, width, shift), ...)``: payload bits ``[bit, bit+width)`` hold
 #: ``address >> shift``. A split field is two segments.
@@ -304,11 +328,178 @@ class PackageBuilder:
     def settle(self, cycles: int) -> None:
         self.steps.append(Step(Op.SETTLE, 0, cycles))
 
-    def ring(self, mesh: int, tag: int = 0) -> None:
-        self.steps.append(Step(Op.RING, mesh, tag & 0xFF))
+    def ring(
+        self, mesh: int, slot: int = 0, amount: int = 1, fence: bool = True
+    ) -> None:
+        """Ring `mesh`: its signal slot `slot` gains `amount` (1..65535), and its
+        per-source doorbell count one. `fence` holds the ring until this node's
+        mover and outbound writes are done: the release for data sent before it."""
+        if not 0 <= slot < 256 or not 1 <= amount < 1 << 16:
+            raise PackageError(f"ring slot {slot} amount {amount}")
+        self.steps.append(
+            Step(Op.RING, mesh, slot, (amount & 0xFFFF) | int(fence) << 16)
+        )
 
     def wait_bell(self, mesh: int, count: int = 1) -> None:
         self.steps.append(Step(Op.WAIT_BELL, mesh, count))
+
+    def wait_slot(self, slot: int, count: int, consume: bool = False) -> None:
+        """Wait until signal slot `slot` holds `count`; `consume` takes it."""
+        if not 0 <= slot < 16:
+            raise PackageError(f"signal slot {slot} is not 0..15")
+        self.steps.append(
+            Step(Op.WAIT_SLOT, slot, count, 0, F_CONSUME if consume else 0)
+        )
+
+    def _addressed(self, words, relocate: bool, halves=(0, 128)) -> int:
+        """Append framework words holding a 64-bit address at each of `halves`
+        (a pair's first, or a LOAD/RECV/push word's [63:0]); with `relocate`
+        one in a live span becomes a relocation. Returns the first index."""
+        first = len(self.payloads)
+        for w in words:
+            fields = []
+            for half in halves:
+                value = (w >> half) & ((1 << 64) - 1)
+                if value != MOVER_SKIP:
+                    fields.append((((half, 64, 0),), value))
+            self.payload(w, (lambda _w, _t, f=fields: f) if relocate else None)
+        return first
+
+    def store(self, pairs, from_regs: bool = False, relocate: bool = False) -> None:
+        """64-bit stores ``[(address, value), ...]`` in order, through the
+        processor's uncached path; with `from_regs` each value names a register.
+        A store to another mesh's address is a posted remote write."""
+        words = _pairs(pairs)
+        first = self._addressed(words, relocate)
+        self.steps.append(
+            Step(Op.STORE, 0, len(words), first, F_REG if from_regs else 0)
+        )
+
+    def ctrl(self, pairs, from_regs: bool = False) -> None:
+        """Control-region writes ``[(offset, value), ...]``: the host interrupt,
+        the interlink (0xC0..0xF8), the D-cache, the transform bank."""
+        words = _pairs(pairs)
+        first = len(self.payloads)
+        for w in words:
+            self.payloads.append(w)
+        self.steps.append(
+            Step(Op.CTRL, 0, len(words), first, F_REG if from_regs else 0)
+        )
+
+    def load(
+        self,
+        reg: int,
+        address: int,
+        index: int | None = None,
+        ctrl: bool = False,
+        relocate: bool = False,
+    ) -> None:
+        """Register `reg` := the 64 bits at `address` (+ register `index`), or
+        the control register at offset `address` with `ctrl`."""
+        flags = (F_INDEXED if index is not None else 0) | (F_CTRL if ctrl else 0)
+        first = self._addressed([address], relocate and not ctrl, (0,))
+        self.steps.append(Step(Op.LOAD, reg, index or 0, first, flags))
+
+    def alu(self, rd: int, op: Alu, ra: int = 0, b: int = 0, imm: bool = True) -> None:
+        """rd := ra OP b, `b` an immediate or (`imm=False`) a register."""
+        if not (0 <= rd < REGS and 0 <= ra < REGS) or (not imm and not 0 <= b < REGS):
+            raise PackageError(f"alu r{rd} = r{ra} {op.name} {b}")
+        count = int(op) | ra << 8 | (0 if imm else b << 12)
+        self.steps.append(
+            Step(
+                Op.ALU,
+                rd,
+                count,
+                b & ((1 << 64) - 1) if imm else 0,
+                F_IMM if imm else 0,
+            )
+        )
+
+    def jump(
+        self,
+        target: int,
+        cond: Cond = Cond.ALWAYS,
+        ra: int = 0,
+        b: int = 0,
+        imm: bool = True,
+    ) -> int:
+        """Go to step `target` when ra COND b; returns this step's index (a
+        forward target is patched in with :meth:`retarget`)."""
+        count = int(cond) | ra << 8 | (0 if imm else b << 12)
+        self.steps.append(
+            Step(
+                Op.JUMP,
+                target,
+                count,
+                b & ((1 << 64) - 1) if imm else 0,
+                F_IMM if imm else 0,
+            )
+        )
+        return len(self.steps) - 1
+
+    def repoint(self, start: int, index: int) -> None:
+        """Every step-patching PATCH from `start` on patches step `index`."""
+        for i in range(start, len(self.steps)):
+            s = self.steps[i]
+            if s.op == Op.PATCH and s.arg >> 24 & 1:
+                self.steps[i] = Step(s.op, s.unit, index, s.arg, s.flags)
+
+    def retarget(self, step: int, target: int) -> None:
+        s = self.steps[step]
+        self.steps[step] = Step(s.op, target, s.count, s.arg, s.flags)
+
+    def patch(
+        self,
+        reg: int,
+        index: int,
+        bit: int,
+        width: int,
+        shift: int = 0,
+        steps: bool = False,
+        add: bool = False,
+    ) -> None:
+        """Payload (or step) `index`'s bits ``[bit, bit+width)`` := register
+        `reg` >> `shift`, or += it with `add`, when the node reaches here."""
+        self.steps.append(
+            Step(Op.PATCH, reg, index, patch_arg(bit, width, shift, steps, add))
+        )
+
+    def send(self, unit: int, flit_type: int, words, ack: bool = False) -> None:
+        """Raw flits of `flit_type` (CU_CTRL 7, CU_DATA 8, ...) to `unit`, one a
+        word, outside any credit or completion count."""
+        words = list(words)
+        first = len(self.payloads)
+        self.payloads += [w & ((1 << 256) - 1) for w in words]
+        self.steps.append(
+            Step(
+                Op.SEND, unit, len(words), first | flit_type << 32, F_ACK if ack else 0
+            )
+        )
+
+    def push(
+        self,
+        unit: int,
+        descriptor: int,
+        address: int,
+        words: int,
+        ack: bool = False,
+        relocate: bool = False,
+    ) -> None:
+        """A CU_DATA burst to `unit`: `descriptor`, then `words` 32-byte words
+        the node reads from `address`."""
+        first = len(self.payloads)
+        self.payloads.append(descriptor & ((1 << 256) - 1))
+        self._addressed([address], relocate, (0,))
+        flags = F_MEM | (F_ACK if ack else 0)
+        self.steps.append(Step(Op.SEND, unit, words, first | 8 << 32, flags))
+
+    def recv(
+        self, address: int, count: int, unit: int = ANY_UNIT, relocate: bool = False
+    ) -> None:
+        """`count` flits from the node's RX queue (from `unit`), each one's
+        256-bit payload to `address` + 32 * i."""
+        first = self._addressed([address], relocate, (0,))
+        self.steps.append(Step(Op.RECV, unit, count, first))
 
     def mover(
         self, writes, addresses: AddressFn | None = None, posted: bool = False

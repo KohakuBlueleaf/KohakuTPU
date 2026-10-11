@@ -97,6 +97,16 @@ IMAGES = {
 
 INCLUDES = ["kohakuaccel/include"]
 
+#: Sources compiled for size: the instruction window is 32 KB, and the per-word
+#: loops these hold run on the dispatch engine, which issues the words itself.
+SIZE_OPT = ("kohakuaccel/package/", "kohakuaccel/os/", "kohakuaccel/queue/")
+
+
+def file_flags(src: pathlib.Path) -> list[str]:
+    rel = src.relative_to(FW).as_posix()
+    return ["-Os"] if rel.startswith(SIZE_OPT) else []
+
+
 #: The two arrays an image must fit, and the sections each holds.
 IMEM_BYTES = 32 * 1024
 SPAD_BYTES = 32 * 1024
@@ -141,7 +151,10 @@ def build_clang(name: str) -> dict:
         rel = s.relative_to(FW).with_suffix(".o").as_posix().replace("/", "__")
         o = obj_dir / rel
         objs.append(o.as_posix())
-        run(["clang", *flags, "-c", s.as_posix(), "-o", o.as_posix()], name)
+        run(
+            ["clang", *flags, *file_flags(s), "-c", s.as_posix(), "-o", o.as_posix()],
+            name,
+        )
     elf = OUT / f"{name}.elf"
     run(
         [
@@ -186,7 +199,10 @@ def build(name: str) -> dict:
         rel = s.relative_to(FW).with_suffix(".o").as_posix().replace("/", "__")
         o = obj_dir / rel
         objs.append(wsl_path(o))
-        cmds.append(f"{CROSS}gcc {flags} {inc} -c {wsl_path(s)} -o {wsl_path(o)}")
+        extra = " ".join(file_flags(s))
+        cmds.append(
+            f"{CROSS}gcc {flags} {extra} {inc} -c {wsl_path(s)} -o {wsl_path(o)}"
+        )
     elf = OUT / f"{name}.elf"
     cmds.append(
         f"{CROSS}gcc {flags} -T {wsl_path(LINK)} "

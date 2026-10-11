@@ -33,6 +33,7 @@ void ka_engine_reset(struct ka_engine *e, uint32_t cap, uint64_t timeout)
     e->stray = 0;
     e->sent = 0;
     e->dst = ~0UL;
+    e->keep_rx = 0;
     e->status = 0;
     e->detail = 0;
     e->value = 0;
@@ -58,7 +59,7 @@ int ka_engine_add(struct ka_engine *e, uint64_t word, uint32_t credit, uint32_t 
         c = e->cap;
     }
     s->credit = c ? c : 1;
-    s->inflight = s->expected = s->received = s->sent = 0;
+    s->inflight = s->expected = s->received = s->acks = s->sent = 0;
     s->fetch = fetch;
     if (s->x < 16 && s->y < 16 && !e->at[s->x][s->y]) {
         e->at[s->x][s->y] = (uint8_t)(e->n + 1);
@@ -96,6 +97,7 @@ static __attribute__((noinline)) unsigned drain_slow(struct ka_engine *e, uint64
     enum ka_verdict v = s->cls->classify(KA_CQ_CODE(w), KA_CQ_ARG(w));
     unsigned retired = 0;
     ++s->received;
+    s->acks += v == KA_V_ACK;
     if (v != KA_V_ACK && s->inflight) {
         --s->inflight;
         retired = 1;
@@ -116,8 +118,9 @@ int ka_engine_drain(struct ka_engine *e)
 {
     uint64_t stat = ka_nm_rd(KA_NM_STAT);
 
-    /* Pop and count every unrequested non-signal flit. */
-    while (ka_rx_rd(KA_RX_HDR) >> 63) {
+    /* Pop and count every unrequested non-signal flit; a package that RECVs
+     * takes its own. */
+    while (!e->keep_rx && ka_rx_rd(KA_RX_HDR) >> 63) {
         ka_rx_pop();
         ++e->stray;
     }
@@ -132,7 +135,10 @@ int ka_engine_drain(struct ka_engine *e)
         struct ka_unit_state *s = (struct ka_unit_state *)((uintptr_t)e->u + at * sizeof *s) - 1;
         if (at && s->plain && code != KA_SIG_FAULT) {
             ++s->received;
-            if (code != KA_SIG_DATA_RECEIVED && s->inflight) {
+            if (code == KA_SIG_DATA_RECEIVED) {
+                ++s->acks;
+            }
+            else if (s->inflight) {
                 --s->inflight;
                 ++retired;
             }

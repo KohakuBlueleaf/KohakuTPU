@@ -174,10 +174,26 @@ class _Stream:
             self.wait(SRC_MOVER, self.gos)
 
 
+def ring_value(s: Step) -> int:
+    """A RING step's interlink write: mesh, slot, amount, fence."""
+    return (
+        (s.unit & 3)
+        | (s.count & 0xFF) << 8
+        | (s.arg & 0xFFFF) << 16
+        | (s.arg >> 16 & 1) << 32
+    )
+
+
 def lower(pkg: Package) -> Package:
     """`pkg` for a node with a dispatch engine. Raises :class:`PackageError`
     for one it cannot carry: relocations (the entries are final values), or
-    more units than the engine counts."""
+    more units than the engine counts.
+
+    A package that jumps or patches is returned as it is: its steps may run
+    again, or read words the node rewrites as it runs, so their entries cannot
+    be fixed here. The node queues them as it reaches them."""
+    if any(s.op in (Op.JUMP, Op.PATCH) for s in pkg.steps):
+        return pkg
     if pkg.relocs:
         raise PackageError("an engine package is bound: it has no relocations")
     if len(pkg.units) > UNITS:
@@ -203,7 +219,7 @@ def lower(pkg: Package) -> Package:
             case Op.FETCH:
                 st.fetch(s.unit, s.arg, s.count, 0)
             case Op.RING:
-                st.put(il_code(IL_RING), (s.count & 0xFF) << 8 | (s.unit & 3))
+                st.put(il_code(IL_RING), ring_value(s))
             case Op.ENGINE:
                 raise PackageError("this package is lowered already")
             case _:

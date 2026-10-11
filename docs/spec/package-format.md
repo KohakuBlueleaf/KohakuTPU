@@ -53,11 +53,11 @@ offsets in the header and MUST NOT assume the order.
 | Word | Bits | Field |
 |---|---|---|
 | 0 | `[31:0]` | magic `0x4B50414B` ("KAPK") |
-| | `[47:32]` | version, `1` |
+| | `[47:32]` | version, `2` |
 | | `[63:48]` | header bytes, `96` |
 | 1 | `[63:0]` | machine signature (§3), `0` = any machine |
 | 2 | `[31:0]` | total bytes |
-| | `[63:32]` | flags: `[0]` checksum present |
+| | `[63:32]` | flags: `[0]` checksum present, `[1]` the package `RECV`s (§4.13): flits in the node's RX queue are its own, not strays to drop |
 | 3 | `[31:0]` | `n_payload` |
 | | `[63:32]` | `n_reloc` |
 | 4 | `[15:0]` | `n_buffer` |
@@ -104,8 +104,8 @@ completions are attributed.
 | Word | Bits | Field |
 |---|---|---|
 | 0 | `[7:0]` | opcode (§4) |
-| | `[15:8]` | flags, `0` |
-| | `[31:16]` | unit index, or a mesh index for the doorbell steps |
+| | `[15:8]` | flags (§4) |
+| | `[31:16]` | unit index, a mesh, a slot, a register or a step, by opcode (§4) |
 | | `[63:32]` | count |
 | 1 | `[63:0]` | argument |
 
@@ -181,7 +181,7 @@ flight** (sent, not yet retired), and the completions **received** and
 | 2 | `AWAIT` | unit | n | | expected += n; waits until received ≥ expected |
 | 3 | `BARRIER` | | | | waits until nothing is in flight and every AWAIT holds (§4.4) |
 | 4 | `MOVER` | | n | first payload | issues mover register writes (§4.5) and waits for the moves they start |
-| 5 | `RING` | mesh | tag | | waits for the mover to be idle, then rings that mesh's doorbell |
+| 5 | `RING` | mesh | slot | amount `[15:0]` (0 counts 1), fence `[16]` | rings that mesh: its signal slot gains the amount and its doorbell count from this mesh one. Fenced, the ring leaves only once this node's mover is idle and its outbound writes and processor stores are on the link -- the release for them; it does not cover a compute unit's flits still inside a mesh. The node keeps at most four rings queued (a fifth is dropped by the interlink) |
 | 6 | `WAIT_BELL` | mesh | n | | waits until n doorbells from that mesh have arrived that no earlier `WAIT_BELL` consumed, and consumes them; the count runs from the firmware's start, so a ring that lands before the waiting package begins is still found |
 | 7 | `SIGNAL` | | value | value | posts a progress completion to the host now ([node-queue.md](node-queue.md) §4) |
 | 8 | `SETTLE` | | cycles | | holds that many cycles |
@@ -189,10 +189,31 @@ flight** (sent, not yet retired), and the completions **received** and
 | 10 | `MWAIT` | | n | | waits until n of the package's moves (its GOs, counted from its start) are done |
 | 11 | `ENGINE` | | n | first payload | copies n dispatch-engine entries into the engine (§4.8) |
 | 12 | `FETCH` | unit | n | absolute address | the unit's fetch port reads n words from the address, in requests of at most 255 within its credit; they count as sent to it. Words a unit wrote while the package ran. A unit without a fetch port fails the package with `BAD_STEP` |
+| 13 | `WAIT_SLOT` | slot | n | | waits until signal slot `slot` (0-15) holds n; `CONSUME` then subtracts n (§4.9) |
+| 14 | `STORE` | | n | first payload | n payloads of (address, value) pairs, as `MOVER`'s: 64-bit stores in order (§4.10) |
+| 15 | `LOAD` | register | index register | payload | register := the 64 bits at the address in the payload's `[63:0]` (§4.11) |
+| 16 | `ALU` | rd | op `[7:0]`, ra `[11:8]`, rb `[15:12]` | immediate | rd := ra op b (§4.11) |
+| 17 | `JUMP` | target step | cond `[7:0]`, ra `[11:8]`, rb `[15:12]` | immediate | the next step is `target` when ra cond b (§4.11) |
+| 18 | `PATCH` | register | word index | where (§4.12) | a field of a payload or a step := the register, before a later step reads it |
+| 19 | `SEND` | unit | n | first payload `[31:0]`, flit type `[35:32]` | n flits of that type to the unit, outside credit and completions (§4.13) |
+| 20 | `RECV` | unit, or `0xFFFF` any | n | payload | n flits from the node's RX queue, each payload to the address in the payload's `[63:0]` + 32 i (§4.13) |
+| 21 | `CTRL` | | n | first payload | n payloads of (offset, value) pairs: control-region writes (§4.14) |
 
-Step flags are `w0[15:8]`. `POSTED` (1) on a `MOVER` step starts its moves and
-goes on: an `MWAIT`, a `BARRIER` or the end waits for them. The mover keeps no
-queue, so a move's registers are written only once every earlier move is done.
+Step flags are `w0[15:8]`:
+
+| flag | bit | on |
+|---|---|---|
+| `POSTED` | 0 | `MOVER`: start the moves and go on; an `MWAIT`, a `BARRIER` or the end waits for them |
+| `IMM` | 1 | `ALU`, `JUMP`: operand b is the argument, not register rb |
+| `REG` | 2 | `STORE`, `CTRL`: a pair's value is register `value & 15` |
+| `INDEXED` | 3 | `LOAD`: the address adds the register in `count[3:0]` |
+| `CTRL` | 4 | `LOAD`: the address is a control-region offset (§4.14) |
+| `CONSUME` | 5 | `WAIT_SLOT`: take n from the slot once reached |
+| `MEM` | 6 | `SEND`: the first payload is a `CU_DATA` descriptor, then n words read from the address in the next payload's `[63:0]` |
+| `ACK` | 7 | `SEND`: wait for the unit's `SIG_DATA_RECEIVED` |
+
+The mover takes its registers into a configuration queue, so a later move's
+registers wait behind an earlier move's GO.
 
 Reaching the end of the list is an implicit `BARRIER`. Any other opcode fails
 the package.
@@ -304,6 +325,86 @@ as the firmware would, spells `REPEAT` out into payloads it fetches, and ends
 the stream with the end's barrier. The node then decodes nothing; measured on
 the v9 card, a firmware-translated `DISPATCH` costs it ~360 cycles, an `AWAIT`
 ~150, a `MOVER` of 11 registers ~1,380.
+
+A package holding a `JUMP` or a `PATCH` is not lowered: its steps may run
+again or read words the node rewrites, so the counts an `ENGINE` entry fixes
+would be wrong. The node queues its steps into the engine as it reaches them,
+from counts it keeps itself. `ALU`, `JUMP` and `PATCH` run without waiting for
+the engine; every other step past the engine's reach (`WAIT_BELL`, `SIGNAL`,
+`SETTLE`, `WAIT_SLOT`, `STORE`, `LOAD`, `SEND`, `RECV`, `CTRL`) lets it drain
+first, so it acts after everything queued before it.
+
+### 4.9 Signal slots
+
+A node's interlink holds sixteen 32-bit signal slots
+([control-registers.md](control-registers.md) §4). A `RING` adds its amount to
+the destination's slot; `WAIT_SLOT` selects the slot, waits until it holds n,
+and with `CONSUME` subtracts n, so one slot carries a stream of releases (a
+producer rings 1 a tile; the consumer waits for 1 and takes it). A slot only
+grows unless consumed, so "holds n" is a monotonic test. `WAIT_BELL` remains
+for the per-source doorbell count, which every ring also raises.
+
+### 4.10 Stores
+
+Each pair is a 64-bit store through the processor's uncached path, completed
+before the next. An address naming another mesh in `[37:36]` is a posted
+remote write over the interlink, landing by the remote-write rule (staging by
+its full address, DRAM by its low 32 bits); a fenced `RING` after it is its
+release. Byte strobes are honoured where the destination honours them:
+staging does, the card's DRAM endpoint does not. Addresses relocate as a
+`MOVER` payload's do, a pair's address at `[63:0]` of its half.
+
+### 4.11 Registers
+
+A package has sixteen 64-bit registers, zero at its start. `LOAD` reads 64
+bits at an address (8-byte aligned; through the uncached path, so it sees what
+a unit wrote) or, with `CTRL`, a control register. `ALU` ops: 0 `MOV` (rd :=
+b), 1 `ADD`, 2 `SUB`, 3 `MUL`, 4 `AND`, 5 `OR`, 6 `XOR`, 7 `SHL`, 8 `SHR`
+(logical), 9 `MIN`, 10 `MAX` (unsigned), 11 `DIVU` (by zero: all ones), 12
+`REMU` (by zero: ra). `JUMP` conditions: 0 always, 1 `EQ`, 2 `NE`, 3 `LTU`, 4
+`GEU`, 5 `LT`, 6 `GE` (signed). A target is a step index, at most the step
+count (which ends the package). `AWAIT` counts are increments, so a loop's
+waits stay right however many times it runs; an `MWAIT`'s count is absolute
+and does not belong inside a loop.
+
+### 4.12 `PATCH`
+
+The argument says where: `[7:0]` bit, `[15:8]` width (1-64), `[23:16]` shift,
+`[24]` section (0 a payload, 1 a step), `[26]` add. The field
+`[bit, bit+width)` of word `count` of that section becomes `register >> shift`
+mod 2^width, or that plus its old value with add. A split field is one
+`PATCH` a segment. The node writes the package where later steps read it: its
+local copy, and the package in memory, which a fetch port reads. A field a
+relocation sets is not patched.
+
+A `DISPATCH` to a fetching unit is read by its port after the node has queued
+it, so a word patched again in a loop must not still be on its way: the
+writer waits for the unit before re-patching its words.
+
+### 4.13 `SEND` and `RECV`
+
+`SEND` puts raw flits on the mesh through the node's mailbox: a `CU_CTRL`
+request (index at `[247:240]`; the reply comes back as an RX flit), a
+`CU_DATA` burst (a descriptor and its data words, or with `MEM` a descriptor
+and n words read from memory), or any other type. None counts against credit
+or as a completion; with `ACK` the step waits for the unit's
+`SIG_DATA_RECEIVED`, which a burst whose ack is `(0, 0)` sends to its
+source, the node. The mailbox sets `last` on every flit it sends.
+
+`RECV` takes flits a unit sent to the node's coordinate `(0, 0)` -- a peer
+drain, a `CU_CTRL` reply -- writing each one's 256-bit payload at
+`address + 32 i`. With `unit` named, a flit from anywhere else fails the
+package. The RX queue is 8 deep and holds the node's inbound link while
+full, so a package keeps its `RECV` close behind the unit that sends.
+
+### 4.14 Control-region access
+
+`CTRL` writes the host interrupt (`0x38`), the interlink window
+(`0xC0`-`0xF8`: enable and clears, mesh id, ring, consume, slot select), the
+D-cache (`0x1C8`, waited until done) and the transform bank (`0x1D0` select,
+`0x1D8` data); any other offset fails `NO_REACH`. A `LOAD` with `CTRL` reads
+any control register (`0x20` mover status, `0x28` doorbell counts, `0xE0` the
+selected slot's signal word, `0x1D8` the transform bank's selected register).
 
 ## 5. What a project adds
 
