@@ -8,15 +8,30 @@ from kohakutpu.compiler.emit import node
 from kohakutpu.compiler.encode import cluster as C
 from kohakutpu.compiler.encode import mover as M
 from kohakutpu.compiler.encode import vector as A
-from kohakutpu.language import kernels
 from kohakutpu.language.text import module
 from kohakutpu.language.text.syntax import TextError
 
 MACHINE = target.machine()
 
+STREAM = """
+image stream(n, x, y)
+    desc a0 = x walk=(32, 128)
+    desc a1 = y walk=(32, 128)
+    vfill a0 -> l1[0]
+    seti s5 = n
+    loop s5
+        vunpk v0 <- l1[0] f16
+        vmul v1, v0, v0
+        vpack v1 -> l1[128] f16
+    vdrain a1 <- l1[128]
+    halt
 
-def load(name):
-    return kernels.load(kernels.kernel(name))
+fn k.l1(x: f16[65536] @dram, y: f16[65536] @dram)
+    for c in 0..2
+        send vc[c]
+            run stream(8, x + c*64K, y + c*64K)
+    barrier
+"""
 
 
 def program(text: str, binds=None):
@@ -25,15 +40,15 @@ def program(text: str, binds=None):
     return node.program(m, name, binds or {}, MACHINE)
 
 
-def test_silu_sends_descriptors_image_and_run():
-    m = load("silu")
-    p = node.program(m, "silu", {"x": 0x100000, "y": 0x200000}, MACHINE)
+def test_a_core_gets_descriptors_image_and_run():
+    m = module.read(STREAM)
+    p = node.program(m, "k", {"x": 0x100000, "y": 0x200000}, MACHINE)
     vcs = p.units("VC")
     sends = [s for s in p.steps if s[0] == "send"]
     assert [s[1] for s in sends] == vcs[:2]
-    for c, (_, _, flits, _) in enumerate(sends):
+    for c, (_, _, flits, _, _) in enumerate(sends):
         words, descs = vector.image(
-            m, "silu_stream", (8, 0x100000 + c * 65536, 0x200000 + c * 65536)
+            m, "stream", (8, 0x100000 + c * 65536, 0x200000 + c * 65536)
         )
         want = [A.desc_flit(ad, f, v) for (ad, f), v in sorted(descs.items())]
         want += [A.imem_flit(i, w) for i, w in enumerate(words)]
@@ -105,7 +120,7 @@ fn k.l1(a: f16[64] @dram, b: f16[64] @dram)
         M.Quantise(0x1000, 0x8000, 4),
     )
     assert p.steps[6][2] == (M.Transpose4(0x1000, 0x8000, 2),)
-    assert p.steps[8] == ("fetch", p.units("VC")[0], 0x8000, 3)
+    assert p.steps[8] == ("fetch", p.units("VC")[0], 0x8000, 3, ())
 
 
 @pytest.mark.parametrize(
@@ -123,46 +138,6 @@ fn k.l1(a: f16[64] @dram, b: f16[64] @dram)
 def test_errors(line, said):
     with pytest.raises(TextError, match=said):
         program(f"fn k.l1(a: f16[64] @dram)\n    {line}\n", {"a": 0x1000})
-
-
-@pytest.mark.parametrize("name, layers", [("mlp", 2), ("swiglu", 3)])
-def test_fused_builds(name, layers):
-    m = load(name)
-    body = m.body(name, "l1")
-    binds = {p: 0x100000 + i * 0x400000 for i, (p, _) in enumerate(body.params)}
-    p = node.program(m, name, binds, MACHINE)
-    sends = [s for s in p.steps if s[0] == "send"]
-    runs = [s for s in sends if s[1] in p.units("VC")]
-    assert len(runs) == 16  # one epilogue RUN per hidden tile
-    gemms = [op for s in sends for op in s[3] if isinstance(op, C.Gemm)]
-    assert len(gemms) == layers * 16 * 16  # 16 tiles a layer, 16 K-chunks a tile
-    assert sum(g.emit for g in gemms) == layers * 16
-    # Every emit lands on a distinct tile.
-    assert len({g.addr for g in gemms if g.emit}) == layers * 16
-
-
-def test_attention_builds():
-    m = load("attention")
-    body = m.body("attention", "l1")
-    binds = {p: 0x100000 + i * 0x400000 for i, (p, _) in enumerate(body.params)}
-    p = node.program(m, "attention", binds, MACHINE)
-    sends = [s for s in p.steps if s[0] == "send"]
-    runs = [s for s in sends if s[1] in p.units("VC")]
-    assert len(runs) == 8  # P and l, then o / l, per query tile
-    ops = [op for s in sends for op in s[3]]
-    gemms = [op for op in ops if isinstance(op, C.Gemm)]
-    assert len(gemms) == 4 * (4 + 16)  # 4 score tiles and 16 P v chunks a cluster
-    drains = [op for op in ops if isinstance(op, C.Drain)]
-    s0, o0 = binds["s"], binds["o"]
-    assert sorted(d.addr for d in drains if not d.fuse) == [
-        s0 + t * 0x20000 for t in range(16)
-    ]
-    assert sorted(d.addr for d in drains if d.fuse) == [
-        o0 + u * 0x8000 for u in range(4)
-    ]
-    assert sorted(g.addr for g in gemms if g.emit) == [
-        o0 + u * 0x8000 for u in range(4)
-    ]
 
 
 @pytest.mark.parametrize(

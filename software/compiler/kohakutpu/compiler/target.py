@@ -1,52 +1,36 @@
-"""KohakuTPU v9: the machine the compiler emits for, and the answers the
-language's passes ask of it (`TARGET`).
+"""KohakuTPU v9: the machine the compiler emits for.
 
 A v9 die is one mesh of 4 matmul clusters and 2 V2 vector cores; its node's
-dispatcher sits at the agent.
+dispatcher sits at the agent. A v9 card chains several dies, one node each.
 """
 
-from kohakuaccel.compiler.machine import MachineSpec
-from kohakutpu.compiler.encode import vector as V
-from kohakutpu.language.target import Target
+from kohakuaccel.compiler.machine import MachineSpec, MeshSpec
 
 NAME = "ktpu.v9"
 MG = ((1, 0), (1, 1), (2, 0), (2, 1))
 VC = ((1, 2), (2, 2))
 AGENT = (0, 1)
+#: MAG's two ports, one on each router's row end (`ktpu_ship_2x1_4c2v_1m_nol2`
+#: MEM_X/MEM_Y and MEM_X1/MEM_Y1); a flit for another mesh crosses at either.
+MEM_PORTS = ((0, 1), (3, 1))
 #: A unit's instruction FIFO: the most words in flight to it.
 INST_DEPTH = 512
-#: A vector core's L1, in 32-byte words.
-VC_L1_WORDS = 512
-#: Cycles from a vector op's last beat to a dependent op's first (the L1
-#: scheduler's model).
-VC_LATENCY = 20
 
 
-def machine(mg=MG, vc=VC, agent=AGENT, mesh: int = 0) -> MachineSpec:
-    """The v9 die's units, on mesh `mesh`."""
+def machine(
+    mg=MG, vc=VC, agent=AGENT, mesh: int = 0, nodes: int | None = None
+) -> MachineSpec:
+    """The v9 die's units, seen from mesh `mesh`; with `nodes`, a card of that
+    many identical dies (meshes 0..nodes-1, a chain)."""
+    units = {"MG": tuple(mg), "VC": tuple(vc)}
+    which = range(nodes) if nodes else (mesh,)
     return MachineSpec(
         name=NAME,
-        units={"MG": tuple(mg), "VC": tuple(vc)},
         inst_depth=INST_DEPTH,
-        agent=agent,
+        meshes=tuple(MeshSpec(i, units, MEM_PORTS, agent) for i in which),
         default=mesh,
+        links=tuple((i, i + 1) for i in range((nodes or 1) - 1)),
     )
 
 
-def target(m: MachineSpec | None = None) -> Target:
-    """What the language's passes ask of machine `m` (the v9 die by default)."""
-    m = m or machine()
-    return Target(
-        name=NAME,
-        units={kind: len(at) for kind, at in m.units.items()},
-        lanes=V.LANES,
-        chunks=V.CHUNKS,
-        l1_words=VC_L1_WORDS,
-        registers=V.REGS,
-        vector_latency=VC_LATENCY,
-    )
-
-
-TARGET = target()
-
-__all__ = ["MG", "NAME", "TARGET", "VC", "machine", "target"]
+__all__ = ["AGENT", "MEM_PORTS", "MG", "NAME", "VC", "machine"]

@@ -9,7 +9,9 @@ tags:
 
 # L1 program: per-unit streams and sync points
 
-**Status: frozen.** A change to anything below is an owner-reviewed spec change.
+**Status: frozen** (revision 3, 2026-10-11: every L0 v2 step reachable,
+fields set from registers, labels, several nodes). A change to anything below
+is an owner-reviewed spec change.
 
 L1 is the lowest level a kernel is written at, and the level a sysnode
 dispatches: one instruction stream per unit plus the node's sync points between
@@ -34,7 +36,18 @@ Code: `software/compiler/kohakuaccel/compiler/program.py` (`Program`).
 | `post(*ops) -> token` | a mover step the node does not wait for: it goes on while the moves run |
 | `wait_moves(token)` | hold the node until the moves of that `post`, and every move before them, are done |
 | `fetch(unit, addr, count)` | `count` words for `unit` that its fetch port reads from `addr` when the node gets here: words a unit wrote while the package ran. They count as sent to `unit`; no lowering hook sees them |
+| `ring(mesh, slot, amount, fence)` / `wait_bell(mesh, n)` / `wait_slot(slot, n, consume)` | the interlink's doorbells and signal slots |
+| `store(pairs, from_regs)` / `ctrl(pairs, from_regs)` | 64-bit stores (another mesh's address is a posted remote write) / control-region writes |
+| `load(reg, addr, index, ctrl)` / `alu(rd, op, ra, b, imm)` | a package register from memory or a control register / from arithmetic |
+| `label(name)` / `jump(name, cond, ra, b, imm)` | a jump target / a jump to it when `ra cond b` |
+| `signal(v32, v64)` / `settle(cycles)` | a progress completion to the host / a fixed wait |
+| `send_raw(unit, type, words, ack)` / `push(unit, desc, addr, n, ack)` / `recv(addr, n, unit)` | flits of any type from the node / a `CU_DATA` burst from memory / RX flits into memory |
 | `units(kind)` | the coordinates of every unit of `kind` |
+
+An op passed to `send` or `move` may carry `patches`: `Patch(word, segments,
+reg, const)` sets each `(bit, width, shift)` segment of its word to
+`(reg + const) >> shift` when the node reaches it, so any field of a unit word
+or a mover register may take a run-time value.
 
 ## 2. Semantics
 
@@ -70,6 +83,20 @@ Code: `software/compiler/kohakuaccel/compiler/program.py` (`Program`).
    it has been sent; `wait(unit, token)` awaits up to that count. An AWAIT is
    cumulative (it raises the unit's expected count), so a partial wait is the
    difference, and the words after the mark stay queued in the unit.
+5. Every node step (`ring`, `store`, `load`, `alu`, `label`, `jump`, ...)
+   dispatches every unit's pending words first, so a register a patch reads
+   holds the value it had where the op was written. A patch is an `ALU` into
+   the scratch register r15 (when `const` is nonzero) and a `PATCH` a segment,
+   right before the dispatch that sends its word; a word's lowering hook does
+   not run on a dispatch that carries patches. Past a label a patched unit is
+   awaited before its words are patched again (a fetch port may still be
+   reading the last pass's).
+6. A `label` is the index of the next step; a `jump` resolves to it at the
+   end. A `wait_moves` past a label is refused: an `MWAIT`'s count is absolute.
+
+Several nodes are several programs, one per node, each on its node's mesh
+(`MachineSpec.for_mesh`); they share memory and meet through `ring` and
+`wait_slot`.
 
 Units resolve through the package unit table (`kohakuaccel.compiler.package.units`).
 

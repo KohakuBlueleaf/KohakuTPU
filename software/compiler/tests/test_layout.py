@@ -78,3 +78,31 @@ def test_a_tiled_buffer_reads_back_what_it_wrote():
     b = Buffer.of(st.annot)
     x = np.random.default_rng(1).standard_normal((16, 32)).astype(np.float16)
     assert np.array_equal(b.unpack(b.pack(x)), x.astype(np.float64))
+
+
+def _buffer(text: str) -> Buffer:
+    (st,) = parse(f"b = buffer : {text}")
+    return Buffer.of(st.annot)
+
+
+@pytest.mark.parametrize(
+    "batch, slab",
+    [
+        ("mx7a[3, 32, 64] @dram(gm=8, nk=1)", "mx7a[32, 64] @dram(gm=8, nk=1)"),
+        (
+            "mx7b[2, 64, 128] @dram(gn=16, nk=2, t=1)",
+            "mx7b[64, 128] @dram(gn=16, nk=2, t=1)",
+        ),
+        ("f16[2, 16, 32] @dram(tile=2x2)", "f16[16, 32] @dram(tile=2x2)"),
+        ("f16[2, 16, 32] @dram", "f16[16, 32] @dram"),
+    ],
+)
+def test_a_batch_buffer_is_its_slabs_one_after_another(batch, slab):
+    b, s = _buffer(batch), _buffer(slab)
+    assert b.host_shape[1:] == s.host_shape
+    x = np.random.default_rng(2).standard_normal(b.host_shape).astype(np.float16)
+    raw = b.pack(x)
+    assert raw == b"".join(s.pack(xi) for xi in x)
+    assert b.nbytes == len(raw)
+    if not b.dtype.startswith("mx7"):
+        assert np.array_equal(b.unpack(raw), x.astype(np.float64))

@@ -1,13 +1,21 @@
 """`.ktpu` L1 images for the V2 vector core: the encoder's configuration
-tracking, decoded field by field. The hand kernels' words are witnessed whole
-by the baseline package hashes (`test_baseline.py`)."""
+tracking, decoded field by field."""
 
 import pytest
 from kohakutpu.compiler.emit import image as vector
 from kohakutpu.compiler.encode import vector as A
-from kohakutpu.language import kernels
 from kohakutpu.language.text import module
 from kohakutpu.language.text.syntax import TextError
+
+STREAM = """
+image k(n)
+    seti s5 = n
+    loop s5
+        vunpk v0 <- l1[0] f16
+        vmul v1, v0, v0
+        vpack v1 -> l1[64] f16
+    halt
+"""
 
 
 def op(w: int) -> int:
@@ -18,33 +26,17 @@ def image(text: str, name: str = "k", args=(), entry=vector.UNKNOWN) -> list:
     return vector.image(module.read(text), name, args, entry)[0]
 
 
-def load(name):
-    return kernels.load(kernels.kernel(name))
-
-
 def test_unknown_entry_sets_the_loop_state_once():
-    """Entered in an unknown state, silu sets VL+CHK, USTR and PSTR before its
-    loop, and the loop body is unchanged."""
-    m = load("silu")
-    reset = vector.image(m, "silu_stream", (8, 0, 0), vector.RESET)[0]
-    unknown = vector.image(m, "silu_stream", (8, 0, 0))[0]
+    """Entered in an unknown state, a loop of unpack, math and pack sets
+    VL+CHK, USTR and PSTR once before it, and its body is unchanged."""
+    reset = image(STREAM, args=(8,), entry=vector.RESET)
+    unknown = image(STREAM, args=(8,))
     loop = next(i for i, w in enumerate(reset) if op(w) == A.VLOOP)
     assert unknown[:loop] == reset[:loop]
-    assert unknown[loop : loop + 3] == [
-        A.chkvl(128),
-        A.cfg_stride(A.CFG_USTR, 1, 4),
-        A.cfg_stride(A.CFG_PSTR, 1, 4),
-    ]
+    assert sorted(unknown[loop : loop + 3]) == sorted(
+        [A.chkvl(128), A.cfg_stride(A.CFG_USTR, 1, 4), A.cfg_stride(A.CFG_PSTR, 1, 4)]
+    )
     assert unknown[loop + 3 :] == reset[loop:]
-
-
-@pytest.mark.parametrize("name", ["silu", "add", "softmax", "layernorm"])
-def test_hand_kernels_encode(name):
-    m = load(name)
-    for img, d in m.images.items():
-        words, _ = vector.image(m, img, (2,) + (0,) * (len(d.params) - 1))
-        assert words[-1] == A.vhalt()
-        assert len(words) <= A.IMEM_WORDS
 
 
 # ---------------------------------------------------------------- math

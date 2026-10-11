@@ -36,6 +36,8 @@ MODES = {"f16": A.F16, "gt4": A.GT4, "f32": A.F32}
 XMODES = {"xor": A.XM_XOR, "rot": A.XM_ROT, "bcast": A.XM_BCAST, "merge": A.XM_MERGE}
 POINTERS = {"uptr": A.CFG_UPTR, "uinc": A.CFG_UINC}
 POINTERS |= {"pptr": A.CFG_PPTR, "pinc": A.CFG_PINC}
+#: Config words a program may write out itself.
+EXPLICIT = ("chk", "chkvl", "xb", "ustr", "pstr")
 FLAT = (1, 4)
 DEF_NIB = (0, 1)
 
@@ -89,11 +91,15 @@ class Encoder:
     """Encodes one image body (statements already expanded) to words.
 
     `fail(st, message)` reports at a statement. `config` counts the CHKVL /
-    XB / USTR / PSTR words the encoder chose, for reports."""
+    XB / USTR / PSTR words the encoder chose, for reports. `units`, when
+    given, resolves a unit name (`mg[1]`, `mesh1.vc[0]`) to ``(mesh, (x, y))``
+    on the target, with ``units.home`` this image's mesh; without it only
+    coordinates are accepted."""
 
-    def __init__(self, fail, entry: State = UNKNOWN) -> None:
+    def __init__(self, fail, entry: State = UNKNOWN, units=None) -> None:
         self.fail = fail
         self.entry = entry
+        self.units = units
         self.config = 0
 
     def encode(self, stmts: list) -> list:
@@ -116,6 +122,8 @@ class Encoder:
         op = st.op
         if op in MATH:
             return self.math(st, state)
+        if op in EXPLICIT:
+            return self.explicit(st, state)
         if op == "loop":
             return self.loop(st, state, depth)
         if op == "skipz":
@@ -215,6 +223,54 @@ class Encoder:
                 state = replace(state, **{kind: w})
         self.config += len(out)
         return out, state
+
+    # ------------------------------------------------- explicit configuration
+    def explicit(self, st, state: State) -> tuple:
+        """A config word written out (`chk`, `chkvl`, `xb`, `ustr`, `pstr`);
+        the encoder then knows the core holds it and adds none an op already
+        has."""
+        kw = st.kwargs()
+        pos = st.positional()
+        try:
+            if st.op in ("chk", "chkvl"):
+                nibs = tuple(
+                    self._pair(st, kw[x]) if x in kw else DEF_NIB for x in "abcd"
+                )
+                if st.op == "chk":
+                    return [A.chk(*nibs)], replace(state, chk=nibs)
+                vl = self._int(st, kw.get("vl", Int(128)))
+                return [A.chkvl(vl, *nibs)], replace(state, vl=vl, chk=nibs)
+            if st.op == "xb":
+                flags = {p.text for p in pos if isinstance(p, Name)}
+                xm = (
+                    XMODES.get(self._name(st, kw["mode"]), None)
+                    if "mode" in kw
+                    else A.XM_NONE
+                )
+                if xm is None:
+                    self.fail(st, f"xb mode=none|{'|'.join(XMODES)}")
+                pm, pr = self._pred(st, kw)
+                xb = (
+                    xm,
+                    self._int(st, kw.get("k", Int(0))),
+                    self._int(st, kw.get("sh", Int(0))),
+                    int("xc" in flags),
+                    pm,
+                    pr,
+                )
+                return [A.xb(*xb)], replace(state, xb=xb)
+            if len(pos) != 2:
+                self.fail(st, f"{st.op} S0 S1")
+            walk = (self._int(st, pos[0]), self._int(st, pos[1]))
+            sel = A.CFG_USTR if st.op == "ustr" else A.CFG_PSTR
+            return [A.cfg_stride(sel, *walk)], replace(state, **{st.op: walk})
+        except ISAError as e:
+            self.fail(st, str(e))
+
+    def _name(self, st, t) -> str:
+        if isinstance(t, Name):
+            return t.text
+        self.fail(st, f"wanted a name, got {t!r}")
 
     # -------------------------------------------------------------- math
     def math(self, st, state: State) -> tuple:
@@ -421,7 +477,7 @@ class Encoder:
             if "buf" in kw or "signal" in flags:
                 self.fail(st, "buf= and signal are a peer drain's (to=(x, y))")
             return [A.vdrain(ad, off, "rel" in flags)]
-        x, y = self._pair(st, kw["to"])
+        x, y = coord(self.fail, st, kw["to"], self.units, local=True)
         buf = self._int(st, kw.get("buf", Int(0)))
         return [
             A.vdrain(
@@ -570,7 +626,26 @@ class Encoder:
         return self._int(st, t.slices[0])
 
 
-def desc(fail, st) -> dict:
+def coord(fail, st, t, units, local: bool = False) -> tuple:
+    """A unit's ``(x, y)``: written `(x, y)`, or a name (`mg[1]`,
+    `mesh1.vc[0]`) resolved by `units`; `local` refuses another mesh's."""
+    if isinstance(t, Tuple):
+        if len(t.items) == 2 and all(isinstance(i, Int) for i in t.items):
+            return tuple(i.value for i in t.items)
+        fail(st, f"a coordinate is (x, y), got {t!r}")
+    if units is None:
+        fail(st, f"{t!r}: unit names need the target; write (x, y)")
+    mesh, xy = units(st, t)
+    if local and mesh != units.home:
+        fail(
+            st,
+            f"{t!r} is in mesh {mesh}: a drain names this mesh's memory port and "
+            f"carries the far unit in its descriptor (peer(OFF, mesh=, fin=))",
+        )
+    return xy
+
+
+def desc(fail, st, units=None) -> dict:
     """`desc aN = BASE walk=(STRIDE, BOUND) | walk=((S, B), ...)` as
     ``{(ad, field): value}``. All four dims are written (an unused one as
     (0, 0), a bound of 0 reading as 1): a dim left out would keep whatever the
@@ -604,12 +679,52 @@ def desc(fail, st) -> dict:
         dims.append(tuple(x.value for x in p.items))
     if len(dims) > 4:
         fail(st, f"{len(dims)} dims: a descriptor holds 4")
-    if not isinstance(rest[0].rhs, Int):
-        fail(st, f"a descriptor's base is a constant address, got {rest[0].rhs!r}")
-    out = {(ad, 0): rest[0].rhs.value}
+    base = rest[0].rhs
+    if isinstance(base, Call) and base.name == "peer":
+        base = Int(peer_base(fail, st, base, units))
+    if not isinstance(base, Int):
+        fail(st, f"a descriptor's base is a constant address, got {base!r}")
+    out = {(ad, 0): base.value}
     for i in range(4):
         s, b = dims[i] if i < len(dims) else (0, 0)
         out[(ad, i + 1)] = A.dim(s, b)
+    return out
+
+
+def peer_base(fail, st, call, units=None) -> int:
+    """`peer(OFF, ack=UNIT, mesh=M, fin=UNIT)`: a peer drain's descriptor
+    base -- the destination granule [15:0], the ack's {y, x} [23:16], and for
+    a sink in another mesh its id [25:24] and {y, x} there [33:26]
+    (`v2_core.v` E_MEM0). A unit is `(x, y)` or a name; `fin=meshM.vc[i]`
+    implies `mesh=M`. The drain's `to=` then names this mesh's memory port."""
+    pos = [a for a in call.args if not isinstance(a, Kw)]
+    kw = {a.name: a.value for a in call.args if isinstance(a, Kw)}
+    if len(pos) != 1 or not isinstance(pos[0], Int) or set(kw) - {"ack", "mesh", "fin"}:
+        fail(st, "peer(OFF, ack=UNIT, mesh=M, fin=UNIT)")
+
+    def yx(t) -> int:
+        x, y = coord(fail, st, t, units)
+        return (y & 0xF) << 4 | (x & 0xF)
+
+    out = pos[0].value & 0xFFFF
+    if "ack" in kw:
+        out |= yx(kw["ack"]) << 16
+    mesh = None
+    if "mesh" in kw:
+        m = kw["mesh"]
+        if not isinstance(m, Int) or not 0 <= m.value < 4:
+            fail(st, f"mesh= 0..3, got {m!r}")
+        mesh = m.value
+    if "fin" in kw:
+        t = kw["fin"]
+        out |= yx(t) << 26
+        if not isinstance(t, Tuple):
+            far = units(st, t)[0]
+            if mesh is not None and mesh != far:
+                fail(st, f"mesh={mesh} but fin= is in mesh {far}")
+            mesh = far
+    if mesh is not None:
+        out |= mesh << 24
     return out
 
 
@@ -637,10 +752,11 @@ class Images:
     """`module`'s images, each encoded once per value of the parameters its
     instructions read. The leading descriptor statements are expanded on every
     call: a parameter only they read (an address) changes the descriptors sent
-    before the RUN, never the words, so it costs no encoding."""
+    before the RUN, never the words, so it costs no encoding. `units` resolves
+    unit names (`Encoder`)."""
 
-    def __init__(self, module, entry: State = UNKNOWN) -> None:
-        self.module, self.entry = module, entry
+    def __init__(self, module, entry: State = UNKNOWN, units=None) -> None:
+        self.module, self.entry, self.units = module, entry, units
         self.r = module.reader()
         self.macros = {m.name: (m.params, m.stmts) for m in module.macros.values()}
         #: image -> (its leading descriptor statements, the rest, key params)
@@ -684,20 +800,21 @@ class Images:
         expand = Expander(self.macros, self.r.fail, unroll_all=True)
         descs: dict = {}
         for st in expand.stmts(prefix, env):
-            descs.update(desc(self.r.fail, st))
+            descs.update(desc(self.r.fail, st, self.units))
         key = (name, tuple(args[i] for i in keys))
         if key not in self.encoded:
             stmts = expand.stmts(rest, env)
             lead: dict = {}
             while stmts and stmts[0].op == "desc":
-                lead.update(desc(self.r.fail, stmts.pop(0)))
+                lead.update(desc(self.r.fail, stmts.pop(0), self.units))
             for st in stmts:
                 if st.op == "desc":
                     self.r.fail(
                         st,
                         "an image's descriptors lead it: they are set before its RUN",
                     )
-            self.encoded[key] = (Encoder(self.r.fail, self.entry).encode(stmts), lead)
+            enc = Encoder(self.r.fail, self.entry, self.units)
+            self.encoded[key] = (enc.encode(stmts), lead)
         words, lead = self.encoded[key]
         return words, {**descs, **lead}
 
