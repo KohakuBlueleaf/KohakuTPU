@@ -112,6 +112,7 @@ module noc_cu_base #(
     // USE_ADV_FEATURES(0) -- which is safe only because the link RETRIES.
     // See docs/noc/spec.md s2.1.
     // Also held while a CU_CTRL reply is pending.
+    reg ctrl_pend;
     assign noc_in_busy = inst_almost | recv_almost | ctrl_pend;
 
     sync_fifo #(.DATA_WIDTH(FLIT_WIDTH), .FIFO_DEPTH(INST_DEPTH),
@@ -172,7 +173,6 @@ module noc_cu_base #(
     wire             sig_full, sig_empty;
     wire [SIG_W-1:0] sig_head;
     wire             sig_pend = !sig_empty;
-    reg              ctrl_pend;
 
     wire [7:0]  ret_code = exec_fault ? SIG_FAULT
                          : rep_last   ? SIG_BATCH_COMPLETE
