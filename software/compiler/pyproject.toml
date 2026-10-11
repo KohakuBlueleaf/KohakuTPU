@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kohaku-compiler"
+version = "0.1.0"
+description = "IR to machine code: the KohakuAccel backend framework and KohakuTPU's encoders"
+requires-python = ">=3.13"
+dependencies = ["numpy>=1.26", "kohakutpu-language"]
+
+[tool.uv.sources]
+kohakutpu-language = { workspace = true }
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["kohakuaccel*", "kohakutpu*"]
+namespaces = true

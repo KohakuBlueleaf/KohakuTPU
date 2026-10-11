@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kohaku-simulation"
+version = "0.1.0"
+description = "Simulated cards: the package interpreter, the simulated machine, the Verilator card"
+requires-python = ">=3.13"
+dependencies = ["numpy>=1.26", "kohaku-driver", "kohaku-compiler"]
+
+[tool.uv.sources]
+kohaku-driver = { workspace = true }
+kohaku-compiler = { workspace = true }
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["kohakuaccel*", "kohakutpu*"]
+namespaces = true

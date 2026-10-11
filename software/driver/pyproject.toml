@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kohaku-driver"
+version = "0.1.0"
+description = "Host driver: the KohakuAccel framework and KohakuTPU's card"
+requires-python = ">=3.13"
+dependencies = ["numpy>=1.26"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["kohakuaccel*", "kohakutpu*"]
+namespaces = true

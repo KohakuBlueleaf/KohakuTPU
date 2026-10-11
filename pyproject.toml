@@ -1,127 +1,18 @@
-[build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
-
-[project]
-name = "kohakutpu-workspace"
-version = "0.1.0"
-description = "KohakuTPU: the compiler, the driver, and the tinygrad frontend"
-authors = [
-    { name = "Shih-Ying Yeh (KohakuBlueLeaf)", email = "apolloyeh0123@gmail.com" },
-]
-readme = "README.md"
-requires-python = ">=3.13"
-# numpy for the numeric model and the operand packer, and nothing else in the
-# core. A dependency has to remove more code than it adds.
-dependencies = ["numpy>=1.26"]
-
-[project.optional-dependencies]
-tinygrad = ["tinygrad>=0.13"]
-dev = ["pytest>=8.0", "ruff>=0.6", "black>=24.0"]
-# torch only to check our MX quantiser against somebody else's; a format
-# comparison where we wrote both sides proves nothing.
-compare = ["torch>=2.4", "torchao>=0.7"]
-
-# A package maps to ONE directory, so the shared `kohakuaccel` and `kohakutpu`
-# namespaces are listed per tree; driver's four are packages to keep their paths.
-[tool.setuptools]
-packages = [
-    "kohakuaccel",
-    "kohakuaccel.analysis",
-    "kohakuaccel.backend",
-    "kohakuaccel.device",
-    "kohakuaccel.frontend",
-    "kohakuaccel.ir",
-    "kohakuaccel.lang",
-    "kohakuaccel.machine",
-    "kohakuaccel.node",
-    "kohakuaccel.node.boot",
-    "kohakuaccel.node.queue",
-    "kohakuaccel.package",
-    "kohakuaccel.passes",
-    "kohakuaccel.runtime",
-    "kohakuaccel.sim",
-    "kohakuaccel.transport",
-    "kohakuaccel.unit",
-    "kohakutpu",
-    "kohakutpu.clock",
-    "kohakutpu.host",
-    "kohakutpu.hw",
-    "kohakutpu.isa",
-    "kohakutpu.kernels",
-    "kohakutpu.lang",
-    "kohakutpu.machine",
-    "kohakutpu.ops",
-    "kohakutpu.units",
-    "kohakutpu.viz",
-    "ktpugrad",
-]
-
-[tool.setuptools.package-dir]
-"kohakuaccel" = "compiler/kohakuaccel"
-"kohakuaccel.analysis" = "compiler/kohakuaccel/analysis"
-"kohakuaccel.backend" = "compiler/kohakuaccel/backend"
-"kohakuaccel.device" = "driver/kohakuaccel/device"
-"kohakuaccel.frontend" = "compiler/kohakuaccel/frontend"
-"kohakuaccel.ir" = "compiler/kohakuaccel/ir"
-"kohakuaccel.lang" = "compiler/kohakuaccel/lang"
-"kohakuaccel.machine" = "driver/kohakuaccel/machine"
-"kohakuaccel.node" = "driver/kohakuaccel/node"
-"kohakuaccel.node.boot" = "driver/kohakuaccel/node/boot"
-"kohakuaccel.node.queue" = "driver/kohakuaccel/node/queue"
-"kohakuaccel.package" = "compiler/kohakuaccel/package"
-"kohakuaccel.passes" = "compiler/kohakuaccel/passes"
-"kohakuaccel.runtime" = "driver/kohakuaccel/runtime"
-"kohakuaccel.sim" = "driver/kohakuaccel/sim"
-"kohakuaccel.transport" = "driver/kohakuaccel/transport"
-"kohakuaccel.unit" = "driver/kohakuaccel/unit"
-"kohakutpu" = "compiler/kohakutpu"
-"kohakutpu.clock" = "driver/kohakutpu/clock"
-"kohakutpu.host" = "driver/kohakutpu/host"
-"kohakutpu.hw" = "compiler/kohakutpu/hw"
-"kohakutpu.isa" = "compiler/kohakutpu/isa"
-"kohakutpu.kernels" = "compiler/kohakutpu/kernels"
-"kohakutpu.lang" = "compiler/kohakutpu/lang"
-"kohakutpu.machine" = "driver/kohakutpu/machine"
-"kohakutpu.ops" = "compiler/kohakutpu/ops"
-"kohakutpu.units" = "driver/kohakutpu/units"
-"kohakutpu.viz" = "compiler/kohakutpu/viz"
-"ktpugrad" = "compiler/ktpugrad"
-
-# The playground is one HTML file served by `python -m kohakutpu.viz`.
-[tool.setuptools.package-data]
-"kohakutpu.viz" = ["*.html"]
+# Tool settings for the hardware-flow scripts and benches at the root. The
+# software is its own uv workspace: software/pyproject.toml.
 
 # black formats, ruff lints. Same line length or they fight over every wrap.
 [tool.black]
 line-length = 88
 target-version = ["py313"]
+extend-exclude = "software/"
 
 [tool.ruff]
 line-length = 88
 target-version = "py313"
-
-[tool.ruff.lint]
-# B008: `a=L.In(M, K)` is a port declaration, a value, so it cannot be an
-# annotation. C408: an ISA field table reads as `dict(op=1, n=64)`, not quoted.
-ignore = ["B008", "C408"]
+extend-exclude = ["software"]
 
 [tool.ruff.lint.per-file-ignores]
-# A test harness that reports every failure has to catch every failure; the
-# alternative is a suite that stops at the first one and names only it.
-"compiler/tests/*" = ["BLE001"]
-"driver/tests/*" = ["BLE001"]
 # UP031: 442 `%` format strings across 34 generators and golden models, most of
-# them aligned table rows. Ruff's own fix rewrites them as `.format()`, which
-# UP032 then flags -- two mechanical passes over code the PE suites are graded
-# by, to arrive at a style this tree never asked for. `%` is not a defect.
+# them aligned table rows; `%` is not a defect.
 "tests/pe/tools/*" = ["BLE001", "UP031"]
-# RUF059: `B, C, H, W = x.shape` names the layout. Writing `_, _, H, W` to
-# satisfy the rule deletes the one thing that line is there to say.
-"demos/*" = ["RUF059"]
-
-[tool.pytest.ini_options]
-# Both test roots are packages named `tests`, so the default prepend mode
-# collides on the two `test_isolation.py`; importlib names a module by its path.
-addopts = "--import-mode=importlib"
-testpaths = ["compiler/tests", "driver/tests"]

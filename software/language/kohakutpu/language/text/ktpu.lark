@@ -1,0 +1,106 @@
+// .ktpu text: the one statement grammar every level is written in. A level's
+// reader gives the statements their meaning; the grammar knows no keyword.
+//
+// Parser: LALR(1), contextual lexer. Indentation: syntax._Indenter
+// (4 columns; newlines inside ( ) and [ ] are not statement ends).
+
+start: _NL? stmt*
+
+stmt: line _NL block?
+block: _INDENT stmt+ _DEDENT
+
+?line: command
+     | NAME "=" command          -> binding
+     | CNAME "{" expr "}" "=" command   -> computed_binding
+
+command: NAME args? annot?
+annot: ":" term
+
+// Arguments apart by spaces or by commas; which, the printer keeps.
+args: arg (COMMA? arg)*
+COMMA: ","
+
+?arg: term
+    | term "=" term              -> assign
+    | term "+=" term             -> addassign
+    | term "in" term             -> member
+    | ARROW                      -> arrow
+
+?term: expr
+     | expr ".." expr            -> span
+     | expr CMP expr             -> compare
+
+// Arithmetic on constants, loop variables and buffer names. Binary operators
+// bind tighter than argument separation: `a -b` is a subtraction, so a
+// negative argument after another is written with a comma.
+?expr: product
+     | expr "+" product          -> offset
+     | expr "-" product          -> sub
+?product: unary
+     | product "*" unary         -> mul
+     | product "/" unary         -> div
+     | product "%" unary         -> mod
+?unary: atom
+     | "-" unary                 -> neg
+     | "+" unary                 -> pos
+     | "!" unary                 -> notpred
+     | atom "@" atom             -> placed
+
+?atom: NAME                      -> name
+     | INT                       -> int
+     | HEX                       -> hex
+     | SIZE                      -> size
+     | FLOAT                     -> float
+     | DIMS                      -> dims
+     | STRING                    -> string
+     | CALLNAME "(" cargs? ")"   -> call
+     | VIEWNAME "[" slices? "]"  -> view
+     | CNAME "{" expr "}"        -> computed
+     | CNAME "{" expr "}" "[" slices? "]"   -> computed_view
+     | "(" ")"                   -> tuple
+     | "(" term "," ")"          -> tuple
+     | "(" term "," term ("," term)* ","? ")"   -> tuple
+     | "(" term ")"
+
+cargs: carg ("," carg)* ","?
+?carg: term
+     | NAME ":" term             -> typed
+     | NAME "=" term             -> kwarg
+
+slices: slice ("," slice)* ","?
+?slice: term
+      | term ":" term            -> slice_both
+      | term ":"                 -> slice_from
+      | ":" term                 -> slice_to
+      | ":"                      -> slice_all
+      | "*"                      -> newaxis
+
+// The arrow outranks the comparisons: `a <- b` is an arrow, `a < -b` a compare.
+ARROW.3: "->" | "<-"
+CMP: "==" | "!=" | "<=" | ">=" | "<" | ">"
+
+// A call or a view is a name with its bracket touching it; `MG (1, 0)` is a
+// name and a tuple, `tiles(L, bq)` a call, `q[h, i, :]` a view, `v{i+1}` a
+// name computed from an expression. A dot inside a name is followed by a
+// letter (`reduce.max`), so `0..H` and `i..j` are spans.
+CALLNAME.2: /[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*(?=\()/
+VIEWNAME.2: /[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*(?=\[)/
+CNAME.2: /[A-Za-z_][A-Za-z0-9_]*(?=\{)/
+NAME: /[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*/
+
+HEX.3: /0x[0-9A-Fa-f][0-9A-Fa-f_]*/
+DIMS.2: /\d+(x\d+)+/
+SIZE.2: /\d[\d_]*[KMG]/
+FLOAT.2: /\d[\d_]*\.\d[\d_]*([eE][+-]?\d+)?|\d[\d_]*[eE][+-]?\d+/
+INT: /\d[\d_]*/
+// A string holds no quote and no newline: names a machine or a file, nothing
+// a statement computes with.
+STRING: /"[^"\n]*"/
+
+// Comments ride the newline token, so a comment-only line is no statement and
+// the indentation is the one after the token's last newline.
+COMMENT: /#[^\n]*/
+_NL: (/\r?\n[\t ]*/ | COMMENT)+
+
+%declare _INDENT _DEDENT
+%ignore /[\t \f]+/

@@ -39,7 +39,7 @@ downloads/
 eggs/
 .eggs/
 lib/
-!firmware/**/lib/
+!software/firmware/**/lib/
 !sim/**/lib/
 lib64/
 parts/

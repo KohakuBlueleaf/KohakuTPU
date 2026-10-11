@@ -1,0 +1,58 @@
+# The software workspace: one member per component. Each member is one
+# distribution; its imports name the component (`kohakutpu.language`,
+# `kohakuaccel.compiler`), and `kohakuaccel` / `kohakutpu` are namespace
+# packages shared across members.
+
+[project]
+name = "kohaku-software"
+version = "0.1.0"
+description = "KohakuTPU software: language, compiler, driver, simulation, application, template"
+requires-python = ">=3.13"
+dependencies = [
+    "kohakutpu-language",
+    "kohaku-compiler",
+    "kohaku-driver",
+    "kohaku-simulation",
+    "kohakutpu-application",
+    "toyaccel",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0", "ruff>=0.6", "black>=24.0"]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["language", "compiler", "driver", "simulation", "application", "template"]
+
+[tool.uv.sources]
+kohakutpu-language = { workspace = true }
+kohaku-compiler = { workspace = true }
+kohaku-driver = { workspace = true }
+kohaku-simulation = { workspace = true }
+kohakutpu-application = { workspace = true }
+toyaccel = { workspace = true }
+
+# black formats, ruff lints. Same line length or they fight over every wrap.
+[tool.black]
+line-length = 88
+target-version = ["py313"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+
+[tool.ruff.lint]
+# C408: an ISA field table reads as `dict(op=1, n=64)`, not quoted.
+ignore = ["C408"]
+
+[tool.ruff.lint.per-file-ignores]
+# A test harness that reports every failure has to catch every failure.
+"*/tests/*" = ["BLE001"]
+
+[tool.pytest.ini_options]
+# Every component has a `tests` directory; importlib names a test module by
+# its path, so same-named test files in two components do not collide.
+addopts = "--import-mode=importlib"
+testpaths = ["language/tests", "compiler/tests", "driver/tests", "tests"]

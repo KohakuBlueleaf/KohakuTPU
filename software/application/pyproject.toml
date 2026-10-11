@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kohakutpu-application"
+version = "0.1.0"
+description = "What runs on KohakuTPU: a skeleton, and the kernel tools"
+requires-python = ">=3.13"
+dependencies = [
+    "numpy>=1.26",
+    "kohakutpu-language",
+    "kohaku-compiler",
+    "kohaku-driver",
+    "kohaku-simulation",
+]
+
+[tool.uv.sources]
+kohakutpu-language = { workspace = true }
+kohaku-compiler = { workspace = true }
+kohaku-driver = { workspace = true }
+kohaku-simulation = { workspace = true }
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["kohakutpu*"]
+namespaces = true

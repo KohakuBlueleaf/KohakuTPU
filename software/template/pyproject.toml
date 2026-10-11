@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "toyaccel"
+version = "0.1.0"
+description = "A toy accelerator on the KohakuAccel framework: the template a project starts from"
+requires-python = ">=3.13"
+dependencies = ["kohaku-compiler", "kohaku-driver", "kohaku-simulation"]
+
+[tool.uv.sources]
+kohaku-compiler = { workspace = true }
+kohaku-driver = { workspace = true }
+kohaku-simulation = { workspace = true }
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["toyaccel*"]
+namespaces = true
