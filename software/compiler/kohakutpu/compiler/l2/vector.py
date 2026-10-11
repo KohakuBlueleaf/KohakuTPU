@@ -874,14 +874,34 @@ class _Ctx:
         inplace = self.inplace and o.target in local
         out = local.setdefault(o.target, Val("stat", o.type.shape[0]))
         if self.per_band:
-            src = self._get(o, pos[0], "row", local)
+            cols = range(self.per_band)
+            arg = pos[0]
+            if isinstance(arg, View):
+                # `x[:, C0:C1]`: the band's registers of those 32-column blocks.
+                rows_s, cols_s = arg.slices if len(arg.slices) == 2 else (None, None)
+                lo = value(self.body, o.st, cols_s.lo, self.env) if cols_s else None
+                hi = value(self.body, o.st, cols_s.hi, self.env) if cols_s else None
+                if (
+                    rows_s is None
+                    or rows_s.lo is not None
+                    or rows_s.hi is not None
+                    or not isinstance(lo, Int)
+                    or not isinstance(hi, Int)
+                    or lo.value % 32
+                    or hi.value % 32
+                    or not 0 <= lo.value < hi.value <= 32 * self.per_band
+                ):
+                    self.fail(o.st, "a reduction over X[:, C0:C1]: blocks of 32 columns")
+                cols = range(lo.value // 32, hi.value // 32)
+                arg = Name(arg.name)
+            src = self._get(o, arg, "row", local)
             out.mode = "gt4"
             trees = []
             for grp in grps:
                 band = grp[0] // self.per_band
                 into = out.regs.get(band) if inplace else None
                 steps, out.regs[band] = _tree4(
-                    g, code, [src.regs[r] for r in grp], into
+                    g, code, [src.regs[r] for r in grp if r % self.per_band in cols], into
                 )
                 trees.append(steps)
             _interleave(g, trees)
@@ -925,17 +945,19 @@ class _Ctx:
                     self.fail(
                         o.st, "an MXFP7 pack takes 4 x 32 blocks: a @reg(gt4) value"
                     )
+                only = _read_once(ops, o)
                 for r in rows:
                     t = g.sym()
                     # GT4 holds row i, column half q in chunk 4q + i; the
                     # quantiser takes lane i's 32 values from chunks 2i, 2i + 1.
-                    for i in range(4):
-                        for q in range(2):
-                            g.emit(
-                                f"vmov {{0}}[{2 * i + q}:], {{1}}[{4 * q + i}:] vl=16",
-                                t,
-                                src.regs[r],
-                            )
+                    if not (only and _quantiser_order(g, src.regs[r], t)):
+                        for i in range(4):
+                            for q in range(2):
+                                g.emit(
+                                    f"vmov {{0}}[{2 * i + q}:], {{1}}[{4 * q + i}:] vl=16",
+                                    t,
+                                    src.regs[r],
+                                )
                     g.emit(f"vpack {{0}} -> l1[{buf + r * 4}] {o.type.dtype}", t)
                 local[o.target] = Val("l1", _count(o.type), buf=buf, mode=o.type.dtype)
                 continue
@@ -1041,6 +1063,62 @@ class _Ctx:
             else:
                 g.emit(f"{code} {{0}}, {', '.join(srcs)}", d, *syms)
             out.regs[r] = d
+
+
+def _read_once(ops, pack) -> bool:
+    """Whether `pack` is the only op reading its source value."""
+    name = pack.st.positional()[0]
+    name = name.text if isinstance(name, Name) else None
+    readers = [
+        u
+        for u in ops
+        if any(
+            (isinstance(a, Name) and a.text == name)
+            or (isinstance(a, View) and a.name == name)
+            for a in u.st.positional()
+        )
+    ]
+    return name is not None and readers == [pack]
+
+
+_PLAIN = re.compile(r"^\{\d+\}$|^[sk]\d+$")
+
+
+def _quantiser_order(g: Gen, sym: str, into: str) -> bool:
+    """Rewrite the full-register op that made `sym` (read by nothing else) as
+    eight one-chunk ops writing `into` in the MXFP7 quantiser's chunk order
+    (chunk 2i + q from GT4 chunk 4q + i of every register operand). False
+    when no such op is found."""
+    at = None
+    for j in range(len(g.code) - 1, -1, -1):
+        c = g.code[j]
+        if not isinstance(c, tuple) or sym not in c[1]:
+            continue
+        if c[1][0] == sym and at is None:
+            at = j
+            break
+        return False
+    if at is None:
+        return False
+    tmpl, syms = g.code[at]
+    if " vl=" in tmpl or " if=" in tmpl or "[" in tmpl or sym in syms[1:]:
+        return False
+    op, _, rest = tmpl.partition(" ")
+    parts = [p.strip() for p in rest.split(",")]
+    if op.startswith("vcmp") or parts[0] != "{0}" or not all(_PLAIN.match(p) for p in parts[1:]):
+        return False
+    # The sources' symbols renumbered after the new destination.
+    srcs = list(syms[1:])
+    out = []
+    for i in range(4):
+        for q in range(2):
+            ops_ = [
+                f"{{{int(p[1:-1])}}}[{4 * q + i}:]" if p.startswith("{") else p
+                for p in parts[1:]
+            ]
+            out.append((f"{op} {{0}}[{2 * i + q}:], {', '.join(ops_)} vl=16", (into, *srcs)))
+    g.code[at : at + 1] = out
+    return True
 
 
 def _reg(v: Val, r: int) -> str:

@@ -511,7 +511,12 @@ PIPE = 2
 
 def pipeline(module, name, machine):
     """`for` at node scope (outside any unit's `par`) whose body runs pars of
-    two unit kinds: the node may send the next iteration ahead (`pipe=2`)."""
+    two unit kinds: the node may send the next iteration ahead (`pipe=2`).
+    Where the body's first `par` runs on units a later `par` of the body
+    also runs on (so the node cannot send it ahead: one unit runs its words
+    in order), the loop is rotated -- the first `par` of iteration i + 1
+    before the rest of iteration i -- when no memory view of the moved `par`
+    meets one of the `par`s it passes (one of them writing)."""
     src, stmts, _ = _body(module, name)
 
     def kinds(s) -> set:
@@ -527,9 +532,124 @@ def pipeline(module, name, machine):
         unit = any(p.op == "par" and _unit(p) != "node" for p in scopes)
         if s.op != "for" or unit or "pipe" in s.kwargs() or len(kinds(s)) < 2:
             return s
-        return replace(s, args=[*s.args, Assign(Name("pipe"), Int(PIPE))])
+        piped = replace(s, args=[*s.args, Assign(Name("pipe"), Int(PIPE))])
+        return _rotated(module, name, src, piped) or piped
 
     return _write(module, name, src, _walk(stmts, f))
+
+
+def _rotated(module, name, src, loop) -> list | None:
+    """`loop` as [first par at LO, loop over LO..HI-1 of (first par at VAR +
+    1, the rest), the rest at HI - 1], or None (see `pipeline`)."""
+    head = loop.positional()[0]
+    var, dom = head.lhs.text, head.rhs
+    if not isinstance(dom.lo, Int) or not isinstance(dom.hi, Int):
+        return None
+    lo, hi = dom.lo.value, dom.hi.value
+    if hi - lo < 2 or not all(b.op == "par" and _unit(b) not in (None, "node") for b in loop.body):
+        return None
+    first, rest = loop.body[0], loop.body[1:]
+    try:
+        body = B.read(_write(module, name, src, [loop]), name)
+    except TextError:
+        return None
+    units = [_stage_units(body, b, var, lo) for b in loop.body]
+    if not any(units[0] & u for u in units[1:]):
+        return None
+    for i in range(lo, hi - 1):
+        moved = _stage_views(body, first, var, i + 1)
+        if moved is None:
+            return None
+        for b in rest:
+            got = _stage_views(body, b, var, i)
+            if got is None or _meets(moved, got):
+                return None
+    nxt = _subst_stmt(first, {var: BinOp("+", Name(var), Int(1))})
+    span = Member(Name(var), Span(Int(lo), Int(hi - 1)))
+    body_loop = replace(loop, args=[span, *loop.args[1:]], body=[nxt, *rest])
+    tail = [_subst_stmt(b, {var: Int(hi - 1)}) for b in rest]
+    return [_subst_stmt(first, {var: Int(lo)}), body_loop, *tail]
+
+
+def _subst_stmt(s, names: dict):
+    """A statement (and its block) with each name in `names` replaced."""
+    args = [
+        Assign(a.name, _subst(a.value, names)) if isinstance(a, Assign) else _subst(a, names)
+        for a in s.args
+    ]
+    return replace(s, args=args, body=[_subst_stmt(b, names) for b in s.body])
+
+
+def _stage_insts(body, par_stmt, var, i):
+    node = next(
+        (n for n in _tree(body.stmts) if isinstance(n, B.Par) and n.st.line == par_stmt.line),
+        None,
+    )
+    if node is None:
+        return None
+    try:
+        got = B.instances(body, [node], {var: i})
+    except TextError:
+        return None
+    return [inst for kind, _, x, _ in got if kind == "par" for inst in x]
+
+
+def _tree(stmts):
+    for s in stmts:
+        yield s
+        if hasattr(s, "body"):
+            yield from _tree(s.body)
+
+
+def _stage_units(body, par_stmt, var, i) -> set:
+    insts = _stage_insts(body, par_stmt, var, i) or []
+    return {(x.kind, x.index) for x in insts}
+
+
+def _stage_views(body, par_stmt, var, i) -> list | None:
+    """``[(buffer, write, box)]`` of every memory view a stage's instances
+    read or write at iteration `i`, a box an interval per axis; None when a
+    view does not evaluate."""
+    insts = _stage_insts(body, par_stmt, var, i)
+    if insts is None:
+        return None
+    out = []
+    for inst in insts:
+        for op, env in inst.items:
+            if not isinstance(op, B.Op):
+                continue
+            pos = op.st.positional()
+            if op.op in ("fill", "load") and pos:
+                t, write = pos[0], False
+            elif op.op == "drain" and len(pos) == 3:
+                t, write = pos[2], True
+            elif op.op == "store" and pos:
+                t, write = pos[0], True
+            else:
+                continue
+            v = B.value(body, op.st, t, env)
+            if isinstance(v, Name):
+                v = View(v.text, ())
+            buf = body.buffers.get(getattr(v, "name", None))
+            if buf is None:
+                continue
+            try:
+                ax = MEM.axes(v, buf.shape)
+            except MEM.ViewError:
+                return None
+            box = tuple((a, a + n) for a, n, kept in ax if kept is not None)
+            out.append((v.name, write, box))
+    return out
+
+
+def _meets(xs, ys) -> bool:
+    for bx, wx, box_x in xs:
+        for by, wy, box_y in ys:
+            if bx != by or not (wx or wy):
+                continue
+            if all(a0 < b1 and b0 < a1 for (a0, a1), (b0, b1) in zip(box_x, box_y, strict=False)):
+                return True
+    return False
 
 
 # ----------------------------------------------------------------- retile

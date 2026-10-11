@@ -185,10 +185,15 @@ def test_an_mxfp7_store_walks_the_a_packing():
     # 64 * 2 entries apart (16 KB), the next band 2 entries on (256 B).
     assert "desc a1 = p_a2 + 0 walk=((32, 8), (16384, 4))" in text
     assert "ainc a1 += 256" in text
-    # Row i, column half q (GT4 chunk 4q + i) to the quantiser's chunk 2i + q.
-    moves = [ln.split() for ln in text.splitlines() if ln.strip().startswith("vmov")]
+    # Row i, column half q (GT4 chunk 4q + i) to the quantiser's chunk 2i + q:
+    # the op making the packed register writes one chunk at a time.
+    moves = [
+        ln.split()
+        for ln in text.splitlines()
+        if ln.strip().endswith("vl=16") and "[" in ln.split()[1]
+    ]
     pairs = {
-        (m[1].split("[")[1].rstrip(":],"), m[2].split("[")[1].rstrip(":]"))
+        (m[1].split("[")[1].rstrip(":],"), m[2].split("[")[1].rstrip(":],"))
         for m in moves[:8]
     }
     assert pairs == {
