@@ -64,7 +64,7 @@ python tests/pe/tools/rv_simt_suite.py --gates
   so a bare run of the assembled-PE bench is not the configuration the card
   runs. Pass the writeback explicitly, and publish both columns rather than one.
 - **No SIMD feature has shipping-workload evidence, because there is no
-  compiler path to this PE.** Nothing under `compiler/` references the SIMD PE
+  compiler path to this PE.** Nothing under `software/` references the SIMD PE
   or any of its instructions. Its only kernel library is
   `tests/pe/tools/rv_simd_kernels.py`, which exists to exercise the RTL.
 - **The float tier has no kernel evidence at all.** That library contains zero

@@ -248,7 +248,7 @@ Two details decide whether it is honest:
   uncorrectable error rather than into zeros, so a probe that skips this fails on
   memory it did not write and reads as a dispatch fault.
 
-*In this tree, that is `kohakutpu.host.Mesh.probe_dispatch`, with
+*In this tree, that is `kohakutpu.driver.host.Mesh.probe_dispatch`, with
 `probe_type` as the per-type sibling that kicks every idle unit of a type before
 waiting on any — which is also the unit of work a clock ladder should step,
 since units of one type are the same netlist and differ only in placement.*

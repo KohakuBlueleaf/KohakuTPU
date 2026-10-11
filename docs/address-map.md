@@ -75,7 +75,7 @@ bit 38 reserved-zero. Decoded in `rv64_syscore.v` (`in_cache`,
 `pa[31]` test that striped a 16 GB space into alternating cached and uncached
 2 GB bands.
 
-`kohakuaccel/machinespec.py:global_addr` builds this form for the compiler, and
+`kohakuaccel.compiler.machine.MachineSpec.global_addr` builds this form for the compiler, and
 raises for a `base` that does not fit one mesh's 64 GB.
 
 ## The outside address

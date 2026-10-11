@@ -165,7 +165,7 @@ machine, and the gap is fixed function.
   extension's opcode major is not in the legal set, so an atomic raises an
   illegal-instruction fault rather than being quietly ignored.
 - **There is no shading-language path.** SPIR-V to this ISA is a designed route
-  with no implementation anywhere in `src/` or `compiler/`. Nothing here runs a
+  with no implementation anywhere in `src/` or `software/`. Nothing here runs a
   shader written in a shading language today.
 - **No mesh has been placed.** Every figure this project has for either PE is
   out-of-context synthesis of one PE. The interconnect and the memory agent are

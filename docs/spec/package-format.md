@@ -21,11 +21,12 @@ given call — and **relocatable**: the addresses are supplied when the package 
 submitted (*binding*) and patched into the words by the dispatcher
 (*relocation*). One compile therefore serves every call of a kernel at a shape.
 
-The writer is `compiler/kohakuaccel/package/` (`format.py`, `build.py`); the
-reader that runs on the node is `firmware/kohakuaccel/package/interp.c`, with the
-offsets in `firmware/kohakuaccel/include/ka/package/format.h`; a reference
+The writer is `software/compiler/kohakuaccel/compiler/package/` (`format.py`,
+`build.py`); the reader that runs on the node is
+`software/firmware/kohakuaccel/package/interp.c`, with the offsets in
+`software/firmware/kohakuaccel/include/ka/package/format.h`; a reference
 interpreter with the firmware's semantics is
-`compiler/kohakuaccel/package/interp.py`. How a package reaches a node is
+`software/simulation/kohakuaccel/simulation/package.py`. How a package reaches a node is
 [node-queue.md](node-queue.md).
 
 ## 1. Layout
@@ -297,8 +298,8 @@ bytes (`0xFF` for none) and words 1–3 their values. A code is the engine's
 `ARG3` and the node adds the package's payload address, shifted left 24, to it.
 A code past `WAIT` fails the package with `BAD_STEP`, as does an `ENGINE` step on
 a node that runs the package without an engine. The writer lowers a bound
-package into `ENGINE` steps (`kohakuaccel/package/engine.py`, `Runtime.
-engine_packages`): it tracks each unit's words sent, credit and `AWAIT`s exactly
+package into `ENGINE` steps (`kohakuaccel.compiler.package.engine.lower`): it
+tracks each unit's words sent, credit and `AWAIT`s exactly
 as the firmware would, spells `REPEAT` out into payloads it fetches, and ends
 the stream with the end's barrier. The node then decodes nothing; measured on
 the v9 card, a firmware-translated `DISPATCH` costs it ~360 cycles, an `AWAIT`
@@ -314,10 +315,11 @@ and patches the fields §2 names; it reads nothing else.
 ### 5.2 Unit classes — Convention
 
 The node looks up each unit's `CU_TYPE` in a table of **unit classes** the
-firmware image carries (`firmware/kohakuaccel/include/ka/unit/unit.h`): a name,
-an optional credit bound, how to read a completion's code (§4.2 is the default)
-and how to describe a fault. A type with no class gets the framework's generic
-reading. KohakuTPU registers `MG` and `VC` (`firmware/kohakutpu/units/`).
+firmware image carries (`software/firmware/kohakuaccel/include/ka/unit/unit.h`):
+a name, an optional credit bound, how to read a completion's code (§4.2 is the
+default) and how to describe a fault. A type with no class gets the framework's
+generic reading. KohakuTPU registers `MG` and `VC`
+(`software/firmware/kohakutpu/units/`).
 
 ## 6. Failure
 
@@ -326,43 +328,22 @@ flight retire (bounded by the same timeout) and empties the mailbox, so the next
 package starts clean, and reports the status, the step index and a detail word
 ([node-queue.md](node-queue.md) §4).
 
-## 7. How a runtime builds packages
+## 7. How a compiler builds packages
 
-A `Runtime` whose `node` is set dispatches nothing from the host. Each stage —
-one `dispatch` call, one `move`, one `wait_bell` — is appended to an **open
-package**, and the open package runs on the node at the next `read`, `write` or
-`sync`. A host transfer is the only point the host and the node must agree on
-memory, so a whole call between two transfers is one package and one round
-trip.
+A package is an L1 program lowered ([l1-program.md](l1-program.md) §3):
+`Program.build(fetch, resident, addresses, spans)`
+(`kohakuaccel.compiler.program`) returns the `PackageBuilder`, and
+`kohakuaccel.compiler.package.engine.lower` turns its steps into `ENGINE`
+steps. KohakuTPU's `kohakutpu.compiler.build.package` is the two in a row.
 
-**A barrier closes every stage.** The next stage reads what this one wrote, and
-the runtime does not know which stages are independent. `ring` is the one step
-not closed by a barrier: it already waits for the mover to be idle (§4).
+**Acknowledgements are awaited once per unit.** A unit both dispatched to and
+acknowledging is awaited once, for its own completions plus the
+acknowledgements, because `AWAIT` counts are cumulative (§4) and one total is
+the same wait as two parts.
 
-**Per-call words enter the framework pipeline.** A frontend that encodes per
-call (`kohakutpu.lang`) hands over `{instance: [words]}` for one stage. Each
-instance becomes a pinned task, dealt round-robin over the stage's units as
-`dispatch.plan` deals them, and Place, Pack, Coalesce and Emit run over it with
-the `Prebuilt` backend, whose `encode` returns the words unchanged. The node
-streams a unit's words under credit (§4.1), so the staging, command and FIFO
-bounds that split host rounds are lifted: one stage is one round.
-
-**Acknowledgements are awaited once per unit.** A task's `acks` names peers that
-acknowledge a transfer it makes. Emit folds them into the round's `AWAIT`s: a
-unit both dispatched to and acknowledging is awaited once, for its own
-completions plus the acknowledgements, because `AWAIT` counts are cumulative
-(§4) and one total is the same wait as two parts.
-
-**Relocation makes packages reusable.** The runtime passes the arena's live
-allocations to the builder; a field the project's `addresses` reports inside
-one becomes a relocation (§2), and the package is built with no defaults. Two
-calls of one kernel then build byte-identical packages, which a node can keep
-and run again with new bindings. With no `fields` backend, packages are bound to
-the addresses they were built at.
-
-**Uploads come before conversions.** An upload is a host `write`, so it runs the
-open package. A kernel therefore uploads every input before it issues any
-on-card conversion, keeping a call's conversions and compute in one package. An
-input whose order the card derives (a layout's `derived_from`, as KohakuTPU's
-MXFP7 entries) is uploaded in its source order to an extra allocation, and the
-conversion step writes the derived order from it.
+**Relocation makes packages reusable.** With `addresses` (the project's address
+fields, ``f(word, unit_type)``) and `spans` (``{base: size}``), every address
+field inside a span becomes a relocation (§2), and the package is built with no
+defaults. Two calls of one kernel then build byte-identical packages, which a
+node can keep and run again with new bindings. Without them, a package is bound
+to the addresses it was built at.

@@ -916,7 +916,7 @@ const notOwned = {
       title="The float tier has no kernel evidence on either class"
     >
       <p>
-        Nothing under <span class="chip">compiler/</span> references either PE,
+        Nothing under <span class="chip">software/</span> references either PE,
         and the SIMD PE's only kernel library —
         <span class="chip">tests/pe/tools/rv_simd_kernels.py</span> — contains
         <b>zero float instructions</b>. The integer features each have a paired

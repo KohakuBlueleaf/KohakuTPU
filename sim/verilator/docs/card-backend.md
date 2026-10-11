@@ -8,7 +8,7 @@ process in place of the board.
   driver (kohakuaccel, kohakutpu)          unchanged
         |  write64 / read64 / write_block / read_block
         v
-  VerilatorTransport                       driver/kohakuaccel/transport/verilator.py
+  VerilatorTransport                       kohakuaccel.driver.transport.verilator
         |  line protocol on stdin/stdout
         v
   card_main.cpp                            sim/verilator/harness/
@@ -32,7 +32,7 @@ python scripts/py/gen_card.py --ver v8t8 --sim-mesh ktpu_sim_1x1_1c1v_1m_nol2_pu
     --compute 0,1 -o tests/system/card_v8t8_2n.v --module card_v8t8_2n
 python scripts/py/vlt.py card_v8t8_2n --cc sim/verilator/harness/card_main.cpp \
     --keep --vlt-config sim/verilator/card.vlt
-python scripts/py/card_run.py --load burn
+python software/driver/tools/card/card_run.py --load burn
 ```
 
 ## The generated card
@@ -69,7 +69,7 @@ silicon.
 
 **`clk_wiz_model`** answers the PG065 register map. Duty registers read 0 and a
 full-word zero written to one answers SLVERR: the IP faults that write, and
-`driver/kohakutpu/clock/card.py` composes 64-bit words around it, so a driver
+`kohakutpu.driver.clock.card` composes 64-bit words around it, so a driver
 that read-merges a duty half fails here as it does on the card.
 
 ## The harness
@@ -163,14 +163,14 @@ staging banks, the Xache's carray banks) and every `axi_ram.mem` (the DRAM
 channels). An element sits at `datap + k * entSize`, little-endian.
 
 **Host fast path.** Over the modelled AXI the host moves ~70 KB of wall time a
-second, so a 512 KB tensor costs ~7 s. `kohakuaccel.transport.simdram.SimDram`
+second, so a 512 KB tensor costs ~7 s. `kohakuaccel.driver.transport.simdram.SimDram`
 wraps the transport and serves `read_block`/`write_block` inside a mesh's DRAM
 window from the `axi_ram` arrays, through the Xache's address map. The Xache is
 write-through, so DRAM is always current for a read; a write zeroes the carray
 rows of every line it touches (`{valid, tag, word}`), so the next access
 refetches. `card_run.py --fast-dram` checks it against the AXI path through a
 warm Xache, unaligned and across a home boundary, and fails with the
-invalidation removed. `scripts/py/card_bench.py` uses it unless `--axi`.
+invalidation removed.
 
 **`--no-timing`.** `vlt.py --cc` builds without `--timing`: the harness owns
 time, so RTL `#` delays are not scheduled. With `--timing`, a model whose RTL
@@ -192,8 +192,8 @@ either.
 
 | script | what it checks |
 |---|---|
-| `scripts/py/card_run.py` | A_CAPS on every node; a block written through one node's memory window reads back through every node and sits in DRAM (backdoor); a mover copy across all four channels; `hello_kohakuaccel` on every node's RV64; station DECERR zero |
-| `scripts/py/card_staging_check.py` | a pattern through each node's staging aperture reads back through the window and sits in that node's staging banks (`PE`); DECERR zero |
-| `scripts/py/card_elf_run.py` | one RV64 ELF on one node; exit status is the program's exit word |
+| `software/driver/tools/card/card_run.py` | A_CAPS on every node; a block written through one node's memory window reads back through every node and sits in DRAM (backdoor); a mover copy across all four channels; `hello_kohakuaccel` on every node's RV64; station DECERR zero |
+| `software/driver/tools/card/staging_check.py` | a pattern through each node's staging aperture reads back through the window and sits in that node's staging banks (`PE`); DECERR zero |
+| `software/firmware/tools/elf_run.py` | one RV64 ELF on one node; exit status is the program's exit word |
 
 Each takes `--build <dir>` for a model built under another `--build-root`.

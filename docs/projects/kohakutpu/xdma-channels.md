@@ -21,8 +21,8 @@ independent DMA engines it instantiates, `h2c` host-to-card and `c2h` card-to-
 host. Channels are a synthesis-time parameter, not a runtime one.
 
 **This build has four of each and the driver opens one of each.** The block
-design sets `xdma_rnum_chnl` and `xdma_wnum_chnl` to 4; `driver/kohakuaccel/
-transport/xdma.py` opens `h2c_0` and `c2h_0` and nothing else.
+design sets `xdma_rnum_chnl` and `xdma_wnum_chnl` to 4; `kohakuaccel.driver.
+transport.xdma` opens `h2c_0` and `c2h_0` and nothing else.
 
 **Narrowing to 1/1 is a recommendation, not a description.** It has not been
 made, and the measurement below is of the 4/4 configuration that is built.

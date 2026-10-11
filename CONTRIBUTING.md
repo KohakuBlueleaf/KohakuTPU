@@ -51,20 +51,20 @@ sentence. The scope is **every** directory:
 ```
 python -m ruff check .
 python -m black --check -q .
+(cd software && python -m ruff check . && python -m black --check -q .)
 ```
 
-The scope was `compiler driver scripts` and that was the same mistake the
-Verilog table made below — `tests/pe/tools/` alone is dozens of generators and
-golden models that every PE suite is graded by, and `demos/` is what a reader
-runs first. A gate over a subset reads as done. `scripts` is in scope because it
-is not scratch either: `check.py`, `xsim.py` and `gen_mesh.py` are load-bearing.
+`software/` is its own workspace with its own `pyproject.toml`, and the root's
+config excludes it, so it is run from there; `check.py` runs both.
+`tests/pe/tools/` alone is dozens of generators and golden models that every PE
+suite is graded by, and a gate over a subset reads as done. `scripts` is in
+scope because it is not scratch either: `check.py`, `xsim.py` and `gen_mesh.py`
+are load-bearing.
 
-Three rules carry a per-file exemption, each with its reason in `pyproject.toml`:
+Two rules carry a per-file exemption, each with its reason in a `pyproject.toml`:
 
-- **`BLE001`** in the three test-harness trees. A harness that reports every
-  failure has to catch every failure.
-- **`RUF059`** in `demos/`. `B, C, H, W = x.shape` names the layout, and
-  `_, _, H, W` deletes the only thing that line says.
+- **`BLE001`** in the test-harness trees (`software/*/tests`, `tests/pe/tools`).
+  A harness that reports every failure has to catch every failure.
 - **`UP031`** in `tests/pe/tools/`. Several hundred `%` format strings across the
   generators and golden models, most of them aligned table rows. Ruff's own fix
   rewrites them as `.format()`, which `UP032` then flags — two mechanical passes

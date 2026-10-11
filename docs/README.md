@@ -276,8 +276,15 @@ it, and a framework doc that quotes them as if they were is wrong.
     src/reference/       reference and proof-of-concept copies; nothing ships
     src/attic/           dead
 
-    compiler/          tensors, kernels, schedules, machine code
-    driver/            kohakuaccel (framework) and kohakutpu (project)
+    software/          the uv workspace, one package per component
+                       (software/README.md):
+      language/          the kohakutpu IR text and its L3 -> L1 compilers
+      compiler/          IR to machine code: ISA, encoders, layout, packages
+      driver/            the card, the nodes, the daemon, the runtime
+      simulation/        the package interpreter and the Verilator card
+      firmware/          the node firmware (C) and its host tools
+      application/       a skeleton, and the kernel tools
+      template/          toyaccel: the smallest project
     scripts/py/        check.py, xsim.py, gen_mesh.py, the linters
     docs/              this tree
     docs-web/          the same material as a site

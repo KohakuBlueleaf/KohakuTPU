@@ -827,7 +827,7 @@ const invRows = [
   },
   {
     l: "<b>software</b>",
-    w: "the driver and hand-built encoders, <code>kohakutpu.lang</code> → <code>kohakutpu.isa</code>, a tinygrad frontend, the bench harnesses and the OOC measurement flow",
+    w: "the driver, the <code>.ktpu</code> language and its L3 → L1 compilers, the ISA encoders, the bench harnesses and the OOC measurement flow",
     m: "runs on the card · 6.8 % → 87.6 % of datapath peak on a 256-cube in simulation",
     p: "<RouterLink to='/tpu/results' class='doc-link'>What was measured</RouterLink> · <RouterLink to='/framework/measurements' class='doc-link'>Measurements</RouterLink>",
   },

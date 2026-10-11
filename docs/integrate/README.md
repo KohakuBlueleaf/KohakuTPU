@@ -229,8 +229,9 @@ The directory shape that follows from that, as the tree has it today:
     src/kohakumpe/       a project: the SIMT PE, and the SIMD unit that
                          fills the framework's SIMD_EN slot
 
-    compiler/kohakuaccel/  the compiler framework   compiler/kohakutpu/  project
-    driver/kohakuaccel/    the driver framework     driver/kohakutpu/    project
+    software/<component>/kohakuaccel/   the framework half of each component
+    software/<component>/kohakutpu/     this project's half
+    software/template/toyaccel/         the smallest project
 ```
 
 The mesh generator is `scripts/py/gen_mesh.py` and a project keeps its ship
@@ -239,7 +240,7 @@ explicit about which couplings are cut and which are still open.
 
 > **The separation is by directory, not by repository.** Framework and projects
 > share one tree, one test suite and one build flow, and two checks measure the
-> split rather than assuming it: `driver/tests/test_isolation.py` for the
+> split rather than assuming it: `software/tests/test_imports.py` for the
 > software half, and `scripts/py/deps.py` for the RTL, which reads
 > instantiations rather than build lists — so adding a file to a list cannot
 > hide an edge. A second project would sit beside `kohakutpu/` rather than

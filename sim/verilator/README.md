@@ -28,7 +28,7 @@ question. Recorded so nobody re-derives them:
 
 | | |
 |---|---|
-| **[docs/card-backend.md](docs/card-backend.md)** | **The point of all this.** Verilator as a real backend for the software stack, and how it plugs into `driver/kohakuaccel` with no driver changes. |
+| **[docs/card-backend.md](docs/card-backend.md)** | **The point of all this.** Verilator as a real backend for the software stack, and how it plugs into `kohakuaccel.driver` with no driver changes. |
 | [docs/status.md](docs/status.md) | Work log. What runs today, what is open, what was measured. Updated as work lands. |
 | [docs/setup.md](docs/setup.md) | Install, and `scripts/py/vlt.py`. |
 | [docs/shims.md](docs/shims.md) | The primitive replacements, why each exists, and the cross-check method that validates them. |

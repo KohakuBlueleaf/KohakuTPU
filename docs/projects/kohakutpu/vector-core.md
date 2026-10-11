@@ -424,8 +424,7 @@ mesh bandwidth and a depth-2 chain meet.
 Halving the pass count is worth exactly as much as doubling the ALU count and
 costs far less — a `D4` chain writes no intermediate to the register file at all.
 **Chaining is not an optimisation here; it is what makes the core compute-bound
-at all**, and it is why the compiler's most valuable pass is fusion
-([compiler.md](compiler.md) §2.3).
+at all**, and it is why the compiler's most valuable pass is fusion.
 
 A mode is a factorisation, `W lanes × D chain depth` with `W·D = 16`, plus a
 reduction tree:
@@ -507,7 +506,7 @@ next instruction decodes.
 62% / 81% of total cycles for `mlp` / `flash 4x128` / `flash 4x256`. The merge
 was four rotates and three selects per output register; predicated, the selects
 go away and the block drops from **36 instructions per 32 words to 24, a 1.5x**
-on the dominant term. See [relayout.md](relayout.md) §12.
+on the dominant term.
 
 **What it cost**, `vec_core` out of context on `xcvu13p-fhgb2104-2L-e` at
 3.333 ns, `MODEL=0`, `-flatten_hierarchy rebuilt`, two frozen source snapshots

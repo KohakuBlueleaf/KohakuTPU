@@ -39,7 +39,8 @@ common one.
 src/kohakuaccel/     THE FRAMEWORK (noc, sysnode, pe, axi, common, verif)
 src/kohakutpu/       reference accelerator          src/kohakumpe/  SIMT + SIMD
 src/templates/       framework worked examples      src/examples/   example projects
-compiler/            the toolchain                  driver/         host/runtime driver
+software/            the uv workspace: language, compiler, driver, simulation, firmware,
+                     application, template (toyaccel)
 tests/               benches (one source list per bench lives in scripts/py/xsim.py)
 scripts/             tcl (ooc_*, synth), py (check, xsim, vlint, vstyle, deps, ...)
 docs/                public design tree              docs-web/       public web docs

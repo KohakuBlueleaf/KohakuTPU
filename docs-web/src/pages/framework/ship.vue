@@ -1524,7 +1524,7 @@ const rungs = {
     <SpecTable
       :cols="placeOrder.cols"
       :rows="placeOrder.rows"
-      caption="Place resolves the mesh before it considers a coordinate (compiler/kohakuaccel/passes/place.py)."
+      caption="A placement pass resolves the mesh before it considers a coordinate."
     />
 
     <Callout kind="rule" title="Reads decide before writes">

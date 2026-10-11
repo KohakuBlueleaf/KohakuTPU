@@ -21,9 +21,10 @@ submissions and reads completions. **Both sides poll** — the host the completi
 tail, the firmware the submission tail; nothing in the protocol needs an
 interrupt.
 
-The firmware side is `firmware/kohakuaccel/queue/service.c` with the layout in
-`firmware/kohakuaccel/include/ka/queue/layout.h`; the host side is
-`driver/kohakuaccel/node/queue/` (`NodeQueue`), with the layout in `layout.py`.
+The firmware side is `software/firmware/kohakuaccel/queue/service.c` with the
+layout in `software/firmware/kohakuaccel/include/ka/queue/layout.h`; the host
+side is `software/driver/kohakuaccel/driver/node/queue/` (`NodeQueue`), with
+the layout in `layout.py`.
 
 ## 1. Addresses
 
@@ -201,7 +202,7 @@ empties the heap only when nothing submitted is still outstanding.
 
 ## 7. Node heaps
 
-The firmware holds four **region heaps** (`firmware/kohakuaccel/os/heap/`,
+The firmware holds four **region heaps** (`software/firmware/kohakuaccel/os/heap/`,
 `ka/os/mem.h`). Each covers one span of unit-global memory the host names with
 `HEAP` — by convention region 0 is the node's DRAM and region 1 its staging —
 and hands out blocks from it to the host (`ALLOC`/`FREE`) and to the
@@ -213,7 +214,7 @@ firmware's own code (`ka_mem_alloc`/`ka_mem_free`), from one pool.
   share a granule.
 - **Placement** is first fit by address; a pad left in front of an aligned
   block stays free; a free merges with both free neighbours. The policy is
-  deterministic: `driver/kohakuaccel/node/heap.py` is the same policy in Python
+  deterministic: `kohakuaccel.driver.node.heap` is the same policy in Python
   and predicts every address the firmware returns.
 - **Bookkeeping is off the managed memory.** The block table (64 entries per
   region, so at least 31 live blocks) is in the scratchpad: a heap never
@@ -235,9 +236,9 @@ firmware's own code (`ka_mem_alloc`/`ka_mem_free`), from one pool.
 
 ## 9. Through the card daemon
 
-The card daemon (`python -m kohakuaccel.daemon`) can be the host: it holds
+The card daemon (`python -m kohakutpu.driver.daemon`) can be the host: it holds
 each node's queue (`NodeQueue`) and polls it itself, so a remote client
-(`kohakuaccel.daemon.RemoteNodeQueue`, the same method surface) pays one
+(`kohakuaccel.driver.daemon.client.RemoteNodeQueue`, the same method surface) pays one
 round trip per operation:
 
 | Op | Does | Returns |
@@ -253,7 +254,7 @@ round trip per operation:
 A waiting op polls in steps on the daemon's hardware thread and gives the
 thread to other clients between steps; on the Verilator backend
 (`--backend verilator --build <dir>`) each step also advances the model
-(`--poll-cycles`, 600). `scripts/py/sw_daemon.py` runs the DSL through it.
+(`--poll-cycles`, 600).
 
 The daemon library knows no board, so three pieces are injected, all optional:
 `node_mem`, a transport addressed by unit-global address (the board's rebase

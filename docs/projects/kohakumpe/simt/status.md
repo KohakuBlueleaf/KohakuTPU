@@ -223,7 +223,7 @@ per workgroup the no-op happens to be correct.
 fault. Divide-by-a-constant strength-reduces to `mulhu`.
 
 **A graphics API path.** SPIR-V to this ISA is a designed path with no
-implementation anywhere in `src/` or `compiler/`. Nothing here runs a shader
+implementation anywhere in `src/` or `software/`. Nothing here runs a shader
 written in a shading language today.
 
 ## What is measured, and what is not

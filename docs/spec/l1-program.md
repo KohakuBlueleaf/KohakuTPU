@@ -7,12 +7,11 @@ dispatches: one instruction stream per unit plus the node's sync points between
 them. It sits directly on L0, the package bytes the node firmware runs
 ([package-format.md](package-format.md)), and touches nothing above. A project
 supplies the unit op types and an optional per-unit-type lowering;
-KohakuTPU's are in [../projects/kohakutpu/ir/l1.md](../projects/kohakutpu/ir/l1.md).
+KohakuTPU's L1 body text is in
+[../projects/kohakutpu/ir/ktpu.md](../projects/kohakutpu/ir/ktpu.md), its ops in
+`kohakutpu.compiler.encode` and its lowering in `kohakutpu.compiler.program`.
 
-Code: `compiler/kohakuaccel/ir/l1/program.py` (`Program`); the pass pipeline's
-staged-flit form is `kohakuaccel.ir.l1.ProgramIR` (`staged.py`). A program keeps
-the ops it was given beside their words, so it prints as text
-([ir-text.md](ir-text.md) §3).
+Code: `software/compiler/kohakuaccel/compiler/program.py` (`Program`).
 
 ## 1. A program
 
@@ -22,7 +21,7 @@ the ops it was given beside their words, so it prints as text
 | `wait(unit)` | hold the node until `unit` has completed every word sent to it since its last wait |
 | `mark(unit)` / `wait(unit, token)` | a point in `unit`'s stream; hold the node until everything sent to `unit` up to the mark has completed, whatever was sent after it (revision 2: a cross-unit dependence per tile, with the producer already holding its next work) |
 | `barrier()` | hold the node until every unit has |
-| `move(*ops)` | one mover step (`kohakuaccel.package.mover`): ops with `writes()` (the project's mover ops), or one list of raw `(register, value)` writes; a barrier on both sides |
+| `move(*ops)` | one mover step (`kohakuaccel.compiler.package.mover`): ops with `writes()` (the project's mover ops), or one list of raw `(register, value)` writes; a barrier on both sides |
 | `post(*ops) -> token` | a mover step the node does not wait for: it goes on while the moves run |
 | `wait_moves(token)` | hold the node until the moves of that `post`, and every move before them, are done |
 | `fetch(unit, addr, count)` | `count` words for `unit` that its fetch port reads from `addr` when the node gets here: words a unit wrote while the package ran. They count as sent to `unit`; no lowering hook sees them |
@@ -63,12 +62,12 @@ the ops it was given beside their words, so it prints as text
    cumulative (it raises the unit's expected count), so a partial wait is the
    difference, and the words after the mark stay queued in the unit.
 
-Units resolve through the package unit table (`kohakuaccel.package.units`).
+Units resolve through the package unit table (`kohakuaccel.compiler.package.units`).
 
 ## 4. What the node costs (L0 executor, card_v9_1n)
 
 Per package: header ~430 node cycles, ~215 per unit to bind, ~150 to barrier.
 Per completion ~50 cycles of firmware, serial across units: a unit whose words
-retire faster than that waits on the node (`firmware/kohakuaccel/dispatch/
-engine.c`, measured with RV_PC_PROF). A MOVER step's wait is bounded by
+retire faster than that waits on the node (`software/firmware/kohakuaccel/
+dispatch/engine.c`, measured with RV_PC_PROF). A MOVER step's wait is bounded by
 progress (a move finishing), not by the step.

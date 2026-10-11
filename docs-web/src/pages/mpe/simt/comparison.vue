@@ -199,7 +199,7 @@ const missing = {
     },
     {
       w: "<b>a driver and a shading-language path</b>",
-      us: "SPIR-V to this ISA is a <b>designed route with no implementation</b> anywhere in <code>src/</code> or <code>compiler/</code>. Nothing here runs a shader written in a shading language today",
+      us: "SPIR-V to this ISA is a <b>designed route with no implementation</b> anywhere in <code>src/</code> or <code>software/</code>. Nothing here runs a shader written in a shading language today",
       _tone: "bad",
     },
     {

@@ -192,7 +192,7 @@ also **included by nothing** — `` `include `` appears zero times anywhere in
 `src/`. Every module restates the same constants as local parameters or local
 macros: `noc_cu_base.v`, `noc_cu_null.v`, `noc_l2_adapter.v`, `mag_mem_port.v`,
 `mag.v`, `noc_orchestrator.v`, `mag_ilink.v` and `vec_cu.v`. The driver
-restates them again in `driver/kohakuaccel/device/flit.py`. `mag_ilink.v` says
+restates them again in `software/driver/kohakuaccel/driver/device/flit.py`. `mag_ilink.v` says
 so at the point of restatement:
 
 > `// Flit header positions, restated from noc_pkt.vh -- nothing includes it.`

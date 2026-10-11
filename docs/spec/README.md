@@ -85,9 +85,8 @@ cannot forward a shape it does not know. See
 | [package-format.md](package-format.md) | The work package a compile stores and a node's dispatcher runs: tables, steps, binding and relocation. | Fixed. Unit classes (§5.2) are Convention. |
 | [node-queue.md](node-queue.md) | How a host hands packages to a node and gets completions back: the boot block, the queue region, the rings, stdio. | Fixed; depths and placement are the host's. |
 | [l1-program.md](l1-program.md) | L1: per-unit streams and the node's sync points, lowered to a package. | Fixed structure; unit ops are the project's. |
-| [l2-schedule.md](l2-schedule.md) | L2: buffers, work items, placement, packages, and the L2 -> L1 compiler. | Fixed structure; layouts, kinds and lowerers are the project's. |
 | [l3-program.md](l3-program.md) | L3: tiles of tensors in a project's hardware ops; the verifier and the reference interpreter. | Fixed structure; ops and dtypes are the project's. |
-| [ir-text.md](ir-text.md) | The one statement syntax every IR level is written in, and each level's text. | Fixed syntax; each level's words beyond its structure are the project's. |
+| [ir-text.md](ir-text.md) | The one statement syntax every IR level is written in, and the module that holds a kernel's bodies. | Fixed syntax; each level's words beyond its structure are the project's. |
 
 **Two processors, one node.** The system node ships a control processor, and
 which one is a build-time choice: `CPU_RV64 = 0` selects the RV32 complex, which

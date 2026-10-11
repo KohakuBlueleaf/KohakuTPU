@@ -1,18 +1,20 @@
 # `.ktpu`: KohakuTPU kernels as one text at every level
 
 A `.ktpu` file is a module ([docs/spec/ir-text.md](../../../spec/ir-text.md)
-§6): one kernel under one name, with a hand-written body at L3, L2 and L1, plus
+§2): one kernel under one name, with a hand-written body at L3, L2 and L1, plus
 the vector-core `image`s and `macro`s its L1 body uses. The hand bodies are the
 references the compilers are gated against, and the hand L1 body is the
 measurement of what the hardware does on that kernel. No Python builds a
 kernel: a runner loads the file, binds buffers to addresses and runs.
 
-Code: `compiler/kohakutpu/ktpu/` — `l1/node.py` (an `fn NAME.l1` body to an L1
-`Program`), `l1/vector.py` (an `image` to V2 IMEM words), `l2/` (an
-`fn NAME.l2` body read to nodes and verified), `l3/reference.py` (the L3 body
-as the numeric reference and the work count), `buffers.py` (a parameter's
-memory layout from its type). Kernels: `compiler/kohakutpu/ktpu/kernels/`.
-Tests: `compiler/tests/ktpu/`.
+Code: `software/language/kohakutpu/language/` — `l2/` (an `fn NAME.l2` body
+read to nodes and verified), `l3/reference.py` (the L3 body as the numeric
+reference and the work count), `lower/` and `opt/` (the compilers, §7),
+`pipeline.py`; `software/compiler/kohakutpu/compiler/` — `emit/node.py` (an
+`fn NAME.l1` body to an L1 `Program`), `emit/image.py` (an `image` to V2 IMEM
+words), `layout/buffer.py` (a parameter's memory layout from its type),
+`build.py`. Kernels: `software/language/kohakutpu/language/kernels/`. Tests:
+`software/language/tests/`, `software/compiler/tests/`.
 
 ## 1. Kernels
 
@@ -121,7 +123,7 @@ A name a `for` body rebinds from outside the loop is **loop-carried**: it keeps
 its type, and the next iteration and the code after the loop see the new value
 (`m = copy mn` carries flash attention's running max).
 
-## 5. Buffer types (`buffers.py`)
+## 5. Buffer types (`kohakutpu.compiler.layout.buffer`)
 
 | type | layout |
 |---|---|
@@ -135,7 +137,7 @@ layout and reads an output back through it.
 
 ## 6. Runners
 
-`scripts/py/ktpu/run.py --build MODEL KERNEL [--init NAME=normal:S] [--out DIR]`
+`python -m kohakutpu.application.tools.run --build MODEL KERNEL [--init NAME=normal:S] [--out DIR]`
 runs a kernel's L1 body on a card model. The L1 parameters are the L3 inputs,
 then the result, then scratch (zeroed). Inputs are seeded random, packed by
 type. The program runs twice; the second run, image and descriptors resident,
@@ -150,23 +152,24 @@ L3 body's interpreter as written (fp16 and MXFP7 rounding where its types say,
 | work use | the L3 body's lane operations / (16 x cores used x cycles) |
 | MFU | the L3 body's multiply-adds / (1024 x clusters x cycles) |
 
-`scripts/py/ktpu/core.py KERNEL IMAGE NAME=INT|in:N|out:N` runs one image on
+`python -m kohakutpu.application.tools.core KERNEL IMAGE NAME=INT|in:N|out:N` runs one image on
 the V2 core alone (`vec_replay_tb`, 128 KB memory with no round-trip latency):
 busy cycles, lane use and every engine's busy and stall counters, in seconds.
 
-## 7. Compilers (`compile.py`)
+## 7. Compilers (`pipeline.py`)
 
 Every stage's output is `.ktpu` text, read back and verified by the next
 stage's reader:
 
     L3 --plan--> L2 --L2 passes--> L2 --lower--> L1 --L1 passes--> L1
 
-`compile_l1(module, name, level, l1=("schedule",), l2=("retile=auto",),
-options)` compiles from `l2` or `l3`; `compile_l3` gives the planned L2 text.
-`run.py --level l2|l3 [--l2-passes ...] [--l1-passes ...] [--lower KEY=VALUE]`
-runs the result and writes the texts next to the report.
+`compile_l1(module, name, level, target, l1=("schedule",),
+l2=("retile=auto",), options)` compiles from `l2` or `l3`; `compile_l3(module,
+name, target, options)` gives the planned L2 text. `tools.run --level l2|l3
+[--l2-passes ...] [--l1-passes ...] [--lower KEY=VALUE]` runs the result and
+writes the texts next to the report.
 
-**L3 -> L2** (`l3/plan/`). The problem size is the hand L2 signature's; a
+**L3 -> L2** (`lower/l3/`). The problem size is the hand L2 signature's; a
 parameter read through `transpose` is laid out transposed.
 
 | body | form |
@@ -177,13 +180,13 @@ parameter read through `transpose` is laid out transposed.
 | the attention dataflow | `exact`: scores tiles drained, P and l on a core, P V, the division (`--lower softmax=exact`) |
 | a `map` over heads of the attention dataflow | the online form of `flash.l2` for R / 1024 heads |
 
-**L2 -> L2** (`l2/passes.py`). `retile=N` splits each vector loop's S-row
+**L2 -> L2** (`opt/retile.py`). `retile=N` splits each vector loop's S-row
 tiles into N-row tiles (contiguous rows, the loop S / N times as long);
 `retile=auto` takes 8 where a reduction follows the first op reading a row
 statistic (a second reduction chain only overlaps another tile's work), else
 leaves the loop.
 
-**L2 -> L1** (`l2/lower.py`):
+**L2 -> L1** (`lower/l2/`):
 
 - `stream.py`: 1-D elementwise. Groups of four registers, a pass of two tiles,
   group i + 1 unpacking while group i computes; results reuse dying operands'
@@ -207,7 +210,7 @@ leaves the loop.
   The flash form (`fused/flash.py`) is matched whole and lowered to its node
   program over flash.ktpu's images and node macros.
 
-**L1 -> L1** (`l1/schedule.py`): each run of consecutive math statements in an
+**L1 -> L1** (`opt/schedule.py`): each run of consecutive math statements in an
 expanded image is list-scheduled over a model of the in-order math queue
 (`ceil(vl / 16)` beats, results `LATENCY` = 20 cycles after the last beat, a
 cycle for a config word on a VL / select / crossbar change); dependences per

@@ -1621,7 +1621,7 @@ const passBroken = [
     >
       <p>
         The last two rows above are the weakest part of this page and are stated
-        rather than omitted. Nothing under <code>compiler/</code> references
+        rather than omitted. Nothing under <code>software/</code> references
         this PE or any of its instructions, and its only kernel library contains
         <b>zero float instructions</b>. The integer features each have a paired
         kernel representing real work; the float tier — <b>the largest single

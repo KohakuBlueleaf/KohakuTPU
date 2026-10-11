@@ -57,7 +57,7 @@ the conversion choice decides it.
 crosses the NoC into a vector core's L1 still in sub-tile order and is computed
 there, so it never lands in memory in a shape something later has to convert. The
 staging fallback pays that conversion; fusing avoids it. That is the real cost of
-the shapes where fusion is refused — see [fused-epilogue.md](fused-epilogue.md).
+the shapes where fusion is refused.
 
 **What is NOT modelled: DRAM row locality.** Nothing here knows a page size or a
 bank, so two buffers read together may land in the same bank and serialise. No

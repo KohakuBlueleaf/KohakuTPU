@@ -220,7 +220,7 @@ A register the processor can read and one it can write are not different things,
 and whether a write is followed by a move is the program's business.
 
 The **host** has no path to them. The host talks to the processor for work.
-`scripts/py/sw_xfprobe.py` boots a probe image that reads every id's geometry and
+`software/firmware/tools/xfprobe.py` boots a probe image that reads every id's geometry and
 the bank's fault word through these two registers on the card model.
 
 ### Configuration is only legal while ungranted

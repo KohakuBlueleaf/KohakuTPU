@@ -48,9 +48,9 @@ written here.
 | **completion** | the signal a compute unit returns when an instruction retires. It is also what refills dispatch credit, so completions are flow control and not only notification. |
 | **mover** | the descriptor-driven engine inside the system node that walks memory and copies it, without a compute unit's involvement. |
 | **transform slot** | a place on the memory agent's path where a project may insert a datapath that rewrites data as it streams past. KohakuTPU's MXFP7 quantiser is what occupies it here. |
-| **staging** | the 2 MB store inside each mesh's memory agent, reachable by address rather than by instruction. Built; see [results.md](results.md) and [relayout.md](relayout.md) for what is and is not wired to it. |
+| **staging** | the 2 MB store inside each mesh's memory agent, reachable by address rather than by instruction. Built; see [results.md](results.md). |
 | **granule** | 32 bytes — the smallest unit any data path on this machine moves. A 4x4 FP16 sub-tile is exactly one. |
-| **relayout** | changing a buffer's byte order. This machine's orders are not interchangeable, and [relayout.md](relayout.md) is what one costs. |
+| **relayout** | changing a buffer's byte order. This machine's orders are not interchangeable; the mover's GT4 transform and the vector core's GT4 mode do the 4x4 granule transpose. |
 | **station** | one node of the AXI fabric outside the meshes — see [kohakuaxi/](../kohakuaxi/README.md). Distinct from a mesh node; the two networks do not share a vocabulary. |
 
 The four categories every page labels its subjects with — **fixed protocol**,
@@ -171,8 +171,7 @@ a project to prove anything.
 | vector ALU | **built and measured** — FMA within one ulp (correctly rounded outside one stated subtractive corner), faithful seeds |
 | vector core around it | **built**, and its instruction set partly so |
 | driver and hand-built encoders | **run on the card** |
-| compiler path | one path, `kohakutpu.lang` to `kohakutpu.isa`; cluster **and** vector ops emit |
-| tinygrad frontend | **built** on 0.13 — matmul, epilogues and elementwise chains lower and run |
+| software | `software/`: `.ktpu` L3 → L2 → L1 (`language`), L1 → machine code and packages (`compiler`), the driver, the Verilated card (`simulation`), the node firmware |
 | tensor-descriptor ISA | designed, walker built and validated, **not wired in** |
 | chain bypass, `FWD` | **not built** |
 | split-K epilogue on a vector core | **designed, not built** |
@@ -200,37 +199,19 @@ one before it.
    fits one DSP exactly, and four base-2 seeds at full rate.
 5. **[isa.md](isa.md)** — one worked example of spending the framework's
    instruction payload bits, at three scales.
-6. **[compiler.md](compiler.md)** — the software stack: six levels and what each
-   is forbidden to know, tile choice discounted by padding, and the
-   round-cutting a machine without hardware loops forces on its compiler.
+6. **[ir/ktpu.md](ir/ktpu.md)** — the software stack's language: a `.ktpu`
+   kernel's L3, L2 and L1 bodies, and how each lowers to the next.
 7. **[ship.md](ship.md)** — the device, and why the machine is four meshes.
 8. **[multi-mesh.md](multi-mesh.md)** — writing kernels across those four: what an
    address means, which splits the silicon takes, and the one it refuses.
 9. **[results.md](results.md)** — every measured number, with its conditions.
 
-Then the pages about writing against it, in no particular order:
+Then the pages about writing against it:
 
-- **[writing-kernels.md](writing-kernels.md)** — how much of the schedule to say,
-  the one rule about stages, and why a tiling is a view rather than a checkpoint.
-- **[tiling.md](tiling.md)** — how a matmul-shaped kernel picks `gm`, `gn`, `nk`
-  per call: the cost model and what it chooses on the card model.
-- **[fused-epilogue.md](fused-epilogue.md)** — the drain that lands in a vector
-  core's L1 instead of DRAM: the encoding, the sequencing, and the band it fits.
 - **[memory.md](memory.md)** — the two granules that bind every span, why the
   drained byte order is the fast one, and what a model-sized placement still needs.
-- **[conv2d.md](conv2d.md)** — 3x3 convolution as an implicit GEMM, the branch that
-  runs on today's bitstream, and why the materialised fallback is not viable.
-- **[sdxl-requirements.md](sdxl-requirements.md)** — a modern network used as a
-  probe: every layer SDXL issues, whether the op exists, the kernels the gaps
-  need, and the measured relayout bill that is the actual blocker.
-- **[relayout.md](relayout.md)** — that bill, paid on the card: the 32-byte
-  granularity wall a `Tile` order runs into, the 4x4 granule transpose that
-  closes it, the MAG L2 as an allocatable tier, and the relayout counts before
-  and after.
-- **[tinygrad.md](tinygrad.md)** — the optional tensor frontend, what it switches
-  off, and the ops where it is worse than calling the library.
-- **[hardware-wants.md](hardware-wants.md)** — ten asks the compiler and the
-  kernels ran into, each naming the level it was established at.
+- **[vector-core-v2.md](vector-core-v2.md)** — the V2 vector core: its engines,
+  ordering, operand network and ISA.
 
 And three about the device image rather than the datapath:
 

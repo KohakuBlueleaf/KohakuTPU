@@ -21,7 +21,7 @@ already does, named so we can build on it.
 ## The artifact (compiler-owned, unchanged)
 
 `{ flits: [256-bit CU_INST payloads], steps: [seed | kick | await | barrier] }`,
-exactly as `kohakuaccel.artifact.Artifact` serialises. The payloads are
+the kick list `kohakuaccel.driver.runtime.loader` reads. The payloads are
 **header-less** — the routing header is the dispatcher's, stamped by hardware.
 Operands are **already in DRAM** before dispatch; the artifact never carries data,
 because every unit L1 load is a self-fill descriptor reading DRAM.

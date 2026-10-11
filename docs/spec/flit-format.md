@@ -440,7 +440,7 @@ Request:
 > base and enable registers are writable and a unit's `CU_CTRL` block is not.
 >
 > A controller that writes a register **MUST** compare the reply's `value`
-> against what it wrote. `kohakuaccel.device.control_write` returns it for
+> against what it wrote. `kohakuaccel.driver.device.control_write` returns it for
 > exactly that reason.
 
 Reply:

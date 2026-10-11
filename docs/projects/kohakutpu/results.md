@@ -2167,7 +2167,7 @@ a rung that added exactly one thing.
 
 ### 9.5 `multimesh_v7` clocks: three of four ship rates are unreachable
 
-Measured on mesh 0, 2026-08-23, `scripts/py/fmax_ladder.py`. **Each domain is
+Measured on mesh 0, 2026-08-23. **Each domain is
 laddered while the other three are held at low**, and each is driven by a
 workload that actually reaches the unit it clocks — a matmul for `mat2x` (MG), an
 `rmsnorm` for `vec` (VC). Scored as relative error against fp32, never as

@@ -27,7 +27,7 @@ All are in `sim/verilator/harness/`.
 - **The clock plan.** One clock for a bare core; for the card, every domain at its own period, with the mesh-wizard outputs re-timed from `clk_wiz_model`.
 - **Memory.** A C++ map behind the core's ports, or the design's own `axi_ram`, reached through backdoor ports.
 - **Program load.** The image is written before reset releases. On the card it goes through the load window, or straight into the public arrays (`burn_elf`).
-- **The outside interface.** The card harness speaks a line protocol on stdin/stdout, which `driver/kohakuaccel/transport/verilator.py` drives. The daemon's `--backend verilator` wraps that transport, so any driver client reaches the model.
+- **The outside interface.** The card harness speaks a line protocol on stdin/stdout, which `kohakuaccel.driver.transport.verilator` drives. The daemon's `--backend verilator` wraps that transport, so any driver client reaches the model.
 
 ## What Verilator does not check
 

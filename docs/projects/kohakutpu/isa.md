@@ -170,7 +170,7 @@ Three fields on it are worth naming:
 **Capacity wraps silently.** The write address truncates, so `n` beyond L1's
 capacity overwrites entries from 0 with no error and the sweep then reads
 whatever survived. That is one of several silent-wrap limits the driver has to
-respect rather than discover ([compiler.md](compiler.md) §2).
+respect rather than discover.
 
 ---
 
@@ -516,7 +516,7 @@ loop counter ([vector-core.md](vector-core.md) §9).
 ### 7.1 A vector instruction is not a flit
 
 This is the structural difference from the cluster and the reason the two
-encoders in [compiler.md](compiler.md) §4 have not merged. The 32-bit word is
+encoders (`kohakutpu/compiler/encode/cluster.py`, `encode/vector.py`) are separate. The 32-bit word is
 **cargo**: it rides inside an envelope that says "write this into instruction
 memory at this address". A kernel is therefore *a program, not an instruction* —
 N writes to instruction memory, M descriptor writes, then one run.
@@ -579,7 +579,7 @@ so it retires as a batch completion instead of an instruction completion. That
 distinction has two consequences the driver must handle: the completion counter
 counts every signal type regardless of code, so the expected total is the flit
 count; and dispatch credit is returned only for instruction completions, **so the
-`last` flit costs a credit permanently** ([compiler.md](compiler.md) §3).
+`last` flit costs a credit permanently**.
 
 ---
 
@@ -599,7 +599,7 @@ addressing a descriptor would have generated computed by the driver instead.
 The trade is worth stating exactly, because it is a live decision rather than a
 gap: the driver can compute any address a descriptor could, so nothing is
 *unreachable* today — but it must unroll, which is what makes a program grow with
-the problem and forces the round-cutting in [compiler.md](compiler.md) §3. A
+the problem and forces a compiler to cut it into rounds. A
 descriptor moves that loop into hardware. It is the right next step for
 convolution; it is not needed for GEMM, which is why it has not happened.
 

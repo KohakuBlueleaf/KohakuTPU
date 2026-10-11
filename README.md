@@ -114,23 +114,26 @@ a Python file that maps a token to instance text. A new accelerator never
 edits the generator. The `--split-reset` option plants a reset synchronizer
 at each clock domain entry, so only the raw reset ever crosses domains.
 
-**Software, `driver/kohakuaccel/` and `compiler/kohakuaccel/`.** The same
-split, and it is enforced: the framework imports nothing from any project, and
-a test fails the moment it does. The driver owns transports, dispatch,
-completion, and device discovery. The compiler ships a three-level IR (graph,
-schedule, program). The middle level does placement, packing, coalescing, and
-completion accounting. It is machine-determined and identical for every
-workload. A declarative ISA toolkit turns a field table into an encoder, a
-decoder, a validator, and a disassembler. See [`compiler/`](compiler/README.md).
+**Software, [`software/`](software/README.md).** One uv workspace with one
+package per component: language, compiler, driver, simulation, firmware,
+application, and the `toyaccel` template. The same split runs through every
+component, and it is enforced: the framework (`kohakuaccel`) imports nothing
+from any project, and `software/tests/test_imports.py` fails the moment it
+does. The driver owns transports, dispatch, completion, device discovery and
+the node queues. The compiler owns the L1 program (a stream per unit and the
+node's sync points), the work package a node's firmware runs, and a
+declarative ISA toolkit that turns a field table into an encoder, a decoder, a
+validator and a disassembler.
 
-### The proof: `examples/saxpy`
+### The proof: `saxpy`
 
 Claims about frameworks are cheap. The platform carries an acceptance test: a
 second, unrelated accelerator built from the framework alone.
 
-- **Software half** (`driver/examples/saxpy/`). One instruction, `y = a*x + y`
-  over float32. About 60 lines of ISA and unit model, registered as CU_TYPE
-  `'SX'`.
+- **Software half** (`software/template/`, the `toyaccel` project). One
+  instruction, `y = a*x + y` over float32: a field table, a unit model, and a
+  unit type registered as CU_TYPE `'SX'`. `python -m toyaccel.application.run`
+  discovers, dispatches and grades it on the framework's simulated card.
 - **Hardware half** (`src/examples/saxpy/`). `saxpy_cu.v` is built from the CU
   template. It decodes the same ISA field for field, and does plain reads and
   a burst write against the real memory agent. Its bench runs with the
@@ -150,16 +153,16 @@ is a new compute unit plus a new ISA" is demonstrated rather than claimed.
 For a project named `NAME`, these five files are yours and nothing else is:
 
 ```
-src/examples/NAME/NAME_cu.v         your unit: datapath + noc_cu_base wrap
-                  tokens_NAME.py    token -> instance text, for gen_mesh
-                  NAME.map          the mesh picture
-driver/examples/NAME/isa.py         how a shape becomes instruction words
-                     unit.py        type registration + simulation model
+src/examples/NAME/NAME_cu.v              your unit: datapath + noc_cu_base wrap
+                  tokens_NAME.py         token -> instance text, for gen_mesh
+                  NAME.map               the mesh picture
+software/.../NAME/compiler/isa.py        how a shape becomes instruction words
+                  driver/unit.py         the unit type, registered
+                  simulation/unit.py     the model that stands in for the datapath
 ```
 
-`saxpy` is that shape filled in, and it is the only example in the tree that
-runs end to end: `src/examples/saxpy/` and `driver/examples/saxpy/`, checked by
-the `saxpy_cu` and `saxpy_mesh` benches.
+`saxpy` is that shape filled in: `src/examples/saxpy/`, checked by the
+`saxpy_cu` and `saxpy_mesh` benches, and `software/template/toyaccel/`.
 
 Start from `docs/integrate/README.md`. Copy `src/templates/cu/`, which is a
 conforming unit with a bench of its own. Keep `kh_port_check` mounted in your
@@ -171,42 +174,29 @@ instead of six modules downstream.
 ## KohakuTPU: the machine
 
 The flagship project: matrix and vector units on the KohakuAccel mesh, four
-meshes on one device, programmed from Python.
+meshes on one device, programmed in `.ktpu` text. A kernel is one module with a
+body at each level — what it computes (L3), where tiles of it run (L2), and the
+per-unit programs (L1) — and the compilers take the higher body down to the
+lower one:
 
-```python
-from kohakuaccel.lang import dims, loop, units
-from kohakutpu.lang import kernel
-
-from kohakutpu import lang as L
-
-M, K, N = dims("M, K, N")
-LOG2E = 1.4426950408889634
-
-
-@kernel
-def linear_silu(
-    x=L.In(..., M, K), w=L.In(N, K), y=L.Out(..., M, N), *, gm=8, gn=8, nk=2
-):
-    """silu(x @ w.T), with the activation fused onto the accumulator."""
-    with units(x.tiles(gm), w.tiles(gn)) as (i, j):
-        acc = L.tile(gm, gn, nk)
-        for k in loop(x.chunks32(nk)):
-            acc += x[i, k] @ w[j, k]
-        y[i, j] <<= acc * L.recip(L.exp2(acc * -LOG2E) + 1.0)
+```
+fn silu.l3(x: f16[N]) -> f16[N]
+    t = mul x, -1.4426950408889634              : f32[N]
+    e = exp2 t                                  : f32[N]
+    d = add e, 1.0                              : f32[N]
+    r = inv d                                   : f32[N]
+    y = mul x, r                                : f16[N]
+    return y
 ```
 
-The last line expresses the epilogue as part of the matmul. The fused path is
-built and simulated but **not yet proven on silicon**. Today's scheduler still
-stages the activation through DRAM between the two units. See
-[`fused-epilogue.md`](docs/projects/kohakutpu/fused-epilogue.md). Write the
-kernel, call it like a function, and the compiler places it:
-
-```python
-from kohakutpu import api as ktpu
-
-y = linear_silu(ktpu.tensor(x), ktpu.tensor(w))  # no launcher, no addresses
-print(y.numpy())  # the only line that crosses the link
+```bash
+python -m kohakutpu.application.tools.run --build build/v9v2c/vlt_card_v9_1n_v2 \
+    --level l3 silu
 ```
+
+compiles `silu.l3` to L1, runs it on the simulated card, and grades it against
+the L3 body's reference interpreter. The language is
+[`ir/ktpu.md`](docs/projects/kohakutpu/ir/ktpu.md).
 
 ### Status
 
@@ -248,9 +238,12 @@ a compute unit or consume the completion that comes back, which is the job the
 configuration exists for. See
 [`docs/arch/cpu/rv64-sys/`](docs/arch/cpu/rv64-sys/README.md).
 
-**Software: a working driver and compiler stack.** Kernels compile to cluster
-*and* vector programs. Flash attention runs. Tinygrad works as an optional
-frontend into the same kernel library.
+**Software: a working driver and compiler stack.** Kernels compile from L3 to
+cluster *and* vector programs, and the compiled programs are measured against
+the hand-written ones on the simulated card: silu, add, softmax, layernorm, an
+MLP, SwiGLU, attention and flash attention
+([`ir/ktpu.md`](docs/projects/kohakutpu/ir/ktpu.md) §8). The application layer
+— a tensor API and a DSL above `.ktpu` — is a skeleton.
 
 Every measured number, with the conditions it was taken under, is in
 [`results.md`](docs/projects/kohakutpu/results.md). Unless a row there says
@@ -281,10 +274,11 @@ Holding a large output tile resident does close it. A `Gm x Gn` block needs
 `4(Gm+Gn)/(Gm*Gn)` words per cycle, which is 0.375 at 16x32. This is an
 arithmetic property, not a concession.
 
-**A compiler that knows the machine has no threads.** Six levels, and only
-adjacent levels may appear in one piece of code. A unit is *programmed*, not
-commanded. There is no `program_id` and no `__syncthreads`. The grid places
-independent programs.
+**A compiler that knows the machine has no threads.** Three levels of text —
+L3 (what), L2 (where), L1 (each unit's program and the node's sync points) —
+above the package a node runs, and every stage's output is text the next
+stage's reader verifies. A unit is *programmed*, not commanded. There is no
+`program_id` and no `__syncthreads`.
 
 ### Future work
 
@@ -295,22 +289,19 @@ independent programs.
 
 ## Quickstart
 
-Python 3.13+, and numpy is the only hard dependency.
+Python 3.13+ and [uv](https://docs.astral.sh/uv/). The software is one
+workspace under `software/`:
 
 ```bash
-pip install -e .               # the whole tree: compiler, driver, kernels
-pip install -e ".[tinygrad]"   # optional, adds the tinygrad frontend
-pytest                         # no hardware needed
+cd software
+uv sync                                  # every component, editable
+uv run pytest                            # no hardware needed
+uv run python -m toyaccel.application.run   # the second project, end to end
 ```
 
-Nothing reaches the card unless you ask for it. Everything runs against unit
-models by default, and `--device card` is a decision rather than a fallback.
-
-```bash
-python examples/kohakutpu/01_tensors.py       # learn by reading the code
-python demos/kohakutpu/flash_attention.py     # learn by reading the output
-python -m kohakutpu.viz                       # a kernel, at every level
-```
+Nothing reaches the card unless you ask for it: the tests run against the
+package interpreter and the simulated machine, and a kernel run names its card
+model with `--build`.
 
 For the RTL there are two simulators and a synthesiser, and they answer different
 questions. **Verilator is the inner loop**: `--lint-only` reaches a missing
@@ -356,7 +347,7 @@ does, what it costs, and where it stops.
 | [the glossary](docs/glossary.md) | every project-specific term, what it is, where it sits, and which page covers it properly. Start here if a word is unfamiliar |
 | [the framework](docs/integrate/README.md) | what you own, what is fixed, and how to put your own compute unit on it |
 | [the machine](docs/projects/kohakutpu/README.md) | KohakuTPU top to bottom, in the order the decisions were forced |
-| [writing kernels](docs/projects/kohakutpu/writing-kernels.md) | how much of the schedule to say, and what a tiling actually means |
+| [`.ktpu`](docs/projects/kohakutpu/ir/ktpu.md) | the kernel text at every level, the compilers between them, and what they measure |
 | [the ISA](docs/projects/kohakutpu/isa.md) | the most accurate description of what it executes |
 | [architecture](docs/arch/README.md) · [specs](docs/spec/README.md) · [workflow](docs/workflow/README.md) | the mesh and memory agent, the normative contracts, and the build/measure/bringup practice |
 
@@ -373,16 +364,15 @@ does, what it costs, and where it stops.
    src/examples/      saxpy, the platform acceptance test (RTL half)
    src/reference/     retained knowledge: arithmetic cores, PoCs. attic/ holds
                       deletion candidates, and nothing is removed unreviewed
-   compiler/          kernels, schedules and machine code  (kohakuaccel + kohakutpu)
-   driver/            transports, dispatch, completion     (kohakuaccel + kohakutpu)
-   examples/          read the code           demos/    read the output
+   software/          language, compiler, driver, simulation, firmware,
+                      application, template  (kohakuaccel + kohakutpu + toyaccel)
    tests/             Verilog benches         scripts/  build, simulate, measure
 ```
 
-`src/kohakutpu/` is Verilog. `compiler/kohakutpu/` and `driver/kohakutpu/` are
-Python. The names collide, so when a comment names a path:
-`src/kohakutpu/vector/vec_alu.v` is hardware, and
-`compiler/kohakutpu/hw/vector.py` is the model of it.
+`src/kohakutpu/` is Verilog. `software/<component>/kohakutpu/` is Python (and
+the firmware C). The names collide, so when a comment names a path:
+`src/kohakutpu/vector2/v2_core.v` is hardware, and
+`software/compiler/kohakutpu/compiler/encode/vector.py` is its encoder.
 
 ## License
 

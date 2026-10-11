@@ -325,14 +325,8 @@ cheap local passes may beat one expensive global one.
    NP-hard?
 3. **Shard-axis invariants.** Formalise "the shard axis survives the layout
    change". This predicts *zero* link credits and is the single highest-value
-   compile-time test.
-
-   *Partly answered in the instance, and the answer is a computation rather than
-   a theorem: `kohakutpu.cost.link_credits` walks every conversion a compilation
-   implies and returns the cross-unit credits at a given shard count, and
-   `isa.relayout.crossing` decides per conversion whether a shard's words stay
-   within it. Zero is the survival case. What is still open is the
-   CHARACTERISATION — a test on `(L, π)` rather than a walk over the words.*
+   compile-time test. What is wanted is a CHARACTERISATION — a test on
+   `(L, π)` rather than a walk over the words.
 4. **Intermediate layouts.** When is a deliberately non-final intermediate
    strictly cheaper? Both the `d_max` bound and the `30:1` penalty on
    non-sequential slow memory suggest it often is, but there is no theory for

@@ -83,7 +83,7 @@ bit until the next clear: firmware reads `STAT` for room instead.
 
 ## 5. Firmware
 
-`firmware/kohakuaccel/package/interp.c` runs a package through the engine when
+`software/firmware/kohakuaccel/package/interp.c` runs a package through the engine when
 it has one ([package-format.md](package-format.md) §4.8): it maps the package's
 units to counters 0..n-1, clears and enables the engine, queues each step's
 entries (or copies an `ENGINE` step's), and at the end waits for the queue to

@@ -326,11 +326,11 @@ const status = {
     },
     {
       p: "compiler path",
-      s: "one path, <code>kohakutpu.lang</code> to <code>kohakutpu.isa</code>; cluster <b>and</b> vector ops emit",
+      s: "<code>.ktpu</code> L3 → L2 → L1 → package; cluster <b>and</b> vector programs emit",
     },
     {
-      p: "tinygrad frontend",
-      s: "built on 0.13 — matmul, epilogues and elementwise chains lower and run",
+      p: "tensor API and DSL",
+      s: "a skeleton",
     },
     {
       p: "tensor-descriptor ISA",

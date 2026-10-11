@@ -6,7 +6,8 @@ with one SFU each. The format, the FMA and the transcendentals are in
 [vector-core.md](vector-core.md) §1-4. This page covers what V2 changes: the control
 machine, the register file, the operand network, and the ISA.
 
-Machine code: `compiler/kohakutpu/hw/vector2.py` (encoders, `Kernel2`).
+Machine code: `kohakutpu.compiler.encode.vector` (the encoders) and
+`kohakutpu.compiler.emit.image` (a `.ktpu` image to IMEM words).
 
 ## 1. Structure
 
@@ -205,9 +206,10 @@ between chunks so its size limit comes from a register.
 
 ## 9. Measured kernels
 
-One core on `vec_replay_tb` (Verilator, `DUALQ = 0`), run by
-`python scripts/py/vec2/bench.py KERNEL [memwait=N] [key=value ...]`. The kernels are
-hand-written in `scripts/py/vec2/kernels.py` (`ew`, `softmax`, `layernorm`, `attn`,
+One core on `vec_replay_tb` (Verilator, `DUALQ = 0`), driven by
+`kohakutpu.simulation.verilator.replay`; a `.ktpu` image runs on it with
+`python -m kohakutpu.application.tools.core KERNEL IMAGE ... [--memwait N]`. The kernels
+below are hand-written V2 programs (`ew`, `softmax`, `layernorm`, `attn`,
 `attn_om`). The memory answers one word every `memwait + 1` cycles: 0 gives the core
 bound, and 1 gives 0.5 word a cycle, the NoC rate one vector core sees. Lane use is lane
 beats ÷ (16 × busy cycles).

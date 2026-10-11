@@ -101,8 +101,8 @@ taken. The vector core's L1 is the opposite case and pays for it
 ([vector-core.md](vector-core.md) §6).
 
 > **A ceiling is not a shape.** `TILES = 4096` *permits* a 256x256 output block;
-> it does not impose one. The compiler's `choose_tile` ranks candidates by
-> intensity **discounted by padding** ([compiler.md](compiler.md) §2.1), so a
+> it does not impose one. A compiler ranks candidate tiles by intensity
+> **discounted by padding**, so a
 > small problem still picks a small tile out of a deep accumulator, while a
 > shallow accumulator cannot offer a large tile to a problem that wants one.
 > This was rejected once on the grounds that it would pad every dimension up to

@@ -77,7 +77,7 @@ SLR1 holds the host interface (XDMA, JTAG, the clock root), so it is the most
 crowded die and carries the smallest mesh on the compute card. The four meshes
 are otherwise the same module, differing only by `MESH_ID`. `MachineSpec`
 carries a `MeshSpec` per mesh so a placement pass reads each mesh's unit table
-and refuses precisely (`compiler/kohakuaccel/machinespec.py`).
+and refuses precisely (`kohakuaccel.compiler.machine`).
 
 Unit populations come from enumeration over the control plane, not from this
 table — read them off the card rather than trusting a document.
@@ -98,9 +98,9 @@ buildable fabric is the SLR stack in order, and the mesh ids ARE that order:
 `mag_switch.v` writes that order exactly once, as `CH_SEQ`, and *derives* each
 neighbour from it rather than taking a configured peer id — a separately
 configured id would be a second place for the topology to be wrong, and the two
-would disagree in silence. The compiler mirrors it as `CHAIN = (0, 1, 2, 3)` in
-`compiler/kohakutpu/rt.py`, and `MachineSpec.mesh_hops` is a breadth-first search
-over the link list built from that. The block design wires mesh `i`'s `LINK1`
+would disagree in silence. The compiler's machine description takes the chain as
+`MachineSpec.links` (the joined mesh pairs), and `MachineSpec.mesh_hops` is a
+breadth-first search over that list. The block design wires mesh `i`'s `LINK1`
 to mesh `i+1`'s `LINK0` and its verify stage checks the order against `CH_SEQ`.
 
 **mesh_0 to mesh_3 is three hops** — the diameter. They are the two ends of the
@@ -141,7 +141,7 @@ with no ready travelling back; each stage is a cycle of the credit loop.
 
 `MachineSpec.global_addr(base, mesh)` builds `mesh << 36 | base` — a 40-bit
 address with the mesh id in **`[37:36]`**, 64 GB per mesh
-(`compiler/kohakuaccel/machinespec.py`). It raises for a mesh this machine does
+(`kohakuaccel.compiler.machine`). It raises for a mesh this machine does
 not have and for a `base` that does not fit one mesh's 64 GB;
 `MachineSpec.addr_mesh` reads the id back out. Above it, `[39]` selects a
 command aperture instead of DRAM and `[38]` is reserved for a third mesh bit —

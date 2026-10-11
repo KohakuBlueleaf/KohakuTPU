@@ -244,43 +244,29 @@ silent failures live, and it is solved.
 "generic utilities against specific ones" — it is **mechanism against
 vocabulary**:
 
-| | `kohakuaccel` (mechanism, every project) | a project (vocabulary, one machine) |
+| component | `kohakuaccel` (mechanism, every project) | a project (vocabulary, one machine) |
 |---|---|---|
-| L5 | tensor/buffer protocol, op registration | the op library |
-| L4 | `dims`, `record`, `kernel`, `In`/`Out`, dim solving, `units`, `loop` | what `<<=`, `@` and `+=` **mean** |
-| L3 | graph, values, bands, lifetimes | which ops exist |
-| L2 | `Arena`, `Buffer`, the **`Layout` protocol**, placement | the layouts themselves |
-| L1 | program-per-unit container | which instructions exist |
-| L0 | `Field`/`InstFormat`, artifacts, dispatch, round packing, await accounting | the ISA field table |
+| language | — | the IR text, its levels, the compilers between them |
+| compiler | `Field`/`InstFormat`/`InstSet`, the L1 `Program` (per-unit streams, sync points), the package format and builder, `MachineSpec` | the ISA field tables, the encoders, the memory layouts, the emitters |
+| driver | transports, flits, staging, dispatch, discovery, the unit registry, node queues, the daemon | the unit types' CU_DBG decoders, the board's clock and host entry points |
+| simulation | the package interpreter, `SimMachine` and its `UnitModel` slot | the unit models, the RTL simulator card |
 
-The framework never knows what a layout *means*. It knows a layout can answer
-`nbytes(shape)`, `pack(array)` and `unpack(raw, shape)`. That is the whole
-contract, and it is why the same L2 serves a machine whose native order is 4x4
-sub-tiles and one whose native order is Morton-ordered tiles.
+The framework never knows what an instruction *means*. A unit op is anything
+whose `flits()` gives the words to send; `Program.send` appends them, and the
+waits, barriers, moves and fetches around them lower to the package the node's
+firmware runs ([spec/l1-program.md](../spec/l1-program.md)).
 
-**The generality test.** A ray tracer changes only the right-hand column. Nothing
-below is a real API — `L.slab`, `L.trace` and `L.shade` are the statement kinds
-*that project* would define, and they are the point:
+**The generality test.** A second project changes only the right-hand column.
+`toyaccel` (`software/template/`) is one: a saxpy unit with its own field table
+(`toyaccel.compiler.isa`), its own unit type registered with the framework
+(`toyaccel.driver.unit`), its own unit model (`toyaccel.simulation.unit`), and a
+run that discovers, dispatches and grades through the framework's driver and
+`SimMachine` untouched. A ray tracer, a DSP mesh or a CPU mesh is the same: a
+field table, a unit type, and the compiler that emits its words.
 
-```python
-@kernel
-def render(scene=In(NPRIM, 8), rays=In(NRAY, 8), img=Out(H, W), *, batch=64):
-    with units(rays.tiles(batch)) as i:
-        bvh = L.region(batch, like=scene)     # -> a "load nodes" instruction
-        hit = L.slab(batch)                   # -> the resident hit record
-        for d in loop(scene.depth):
-            hit <<= L.trace(bvh, rays[i, d])  # -> a "trace" instruction
-        img[i] <<= L.shade(hit)               # -> a "shade" instruction
-```
-
-`dims`, `units`, `loop`, `In`/`Out`, dim solving, the arena, the dispatcher and
-the round/await rules are reused untouched. What the project supplies is the
-statement kinds, their layouts, its ISA and its kernel library. The same holds
-for a DSP mesh (`L.fft`, `L.window`) or a CPU mesh (`L.load`, `L.branch`).
-
-The split is enforced rather than intended: `driver/tests/test_isolation.py`
-walks every `kohakuaccel` module in a subprocess and fails if importing them
-pulls in any project module — see [software-stack.md](software-stack.md) §6.
+The split is enforced rather than intended: `software/tests/test_imports.py`
+reads every `kohakuaccel` module's imports and fails on one that names a project
+module — see [software-stack.md](software-stack.md) §6.
 
 ---
 

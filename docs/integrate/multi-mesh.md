@@ -49,8 +49,8 @@ generates programs that are wrong rather than slow:
   extra destinations, and a destination is a coordinate — which identifies a unit
   only within one mesh.
 
-The framework's `Region` therefore carries its mesh
-(`compiler/kohakuaccel/ir/l2.py`), and both `overlaps` and coalescing group on it.
+A region in a compiler's IR therefore carries its mesh, and both the overlap
+test and coalescing group on it.
 
 ---
 
@@ -63,7 +63,7 @@ wrong thing about every mesh that differs from the first.
 `MachineSpec` therefore holds a `MeshSpec` per mesh — its units, memory ports and
 orchestrator — and the flat accessors answer for a default one, so every caller
 written before the machine had several keeps working
-(`compiler/kohakuaccel/machinespec.py`).
+(`software/compiler/kohakuaccel/compiler/machine.py`).
 
 Two design rules worth copying:
 
@@ -93,8 +93,8 @@ job is to *honour* it, not to optimise it:
 task.mesh          # stated, or None to infer it
 ```
 
-`Place` resolves the mesh before it considers a coordinate, in this order
-(`compiler/kohakuaccel/passes/place.py`):
+A placement pass resolves the mesh before it considers a coordinate, in this
+order:
 
 1. the task's own `mesh`, if it names one;
 2. otherwise the mesh its **reads** live on — a unit fetches through its own
@@ -116,8 +116,9 @@ it cannot see.
 
 ## 4. Traffic between meshes is a result, not an input
 
-`Place` leaves `place.remote` in the context: the tasks whose regions touch a
-mesh other than the one they run on. That set is worth having explicitly.
+A placement pass should leave behind the remote set: the tasks whose regions
+touch a mesh other than the one they run on. That set is worth having
+explicitly.
 
 - It is exactly **the traffic the interlink has to carry**, so a cost model has
   something to price and a report has something to show.

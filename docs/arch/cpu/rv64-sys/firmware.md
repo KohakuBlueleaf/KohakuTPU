@@ -18,8 +18,9 @@ compute units itself. The host submits and polls; it never touches a unit.
 ## The tree
 
 ```
-firmware/
+software/firmware/
   build.py                       images -> build/fw/<image>.elf (+ .map .lst .size)
+  tools/                         host drivers: memprobe, os, xfprobe, elf_run, two_node
   kohakuaccel/                   the framework
     arch/rv64/                   crt0.S (mtvec before anything can fault), node.ld
     hal/                         the fatal-trap path and the exit store
@@ -39,10 +40,12 @@ firmware/
     apps/dispatcher/  apps/memprobe/  apps/osprobe/
   kohakutpu/                     the project
     units/                       'MG' and 'VC' unit classes
-  tests/host/                    heap_trace.c: heap.c natively, for driver/tests/test_node_heap.py
+    apps/xfprobe/                the transform bank's geometry and fault word
+  tests/                         host/heap_trace.c: heap.c natively, for
+                                 software/driver/tests/test_node_heap.py
 ```
 
-`python firmware/build.py [image]` compiles every source of an image in one
+`python software/firmware/build.py [image]` compiles every source of an image in one
 call to the WSL `riscv64-unknown-elf` toolchain with
 `-march=rv64ima_zicsr_zifencei -mabi=lp64 -mcmodel=medany -Os -Werror` and
 `-DEXIT_ADDR=0x20000` (the control region's exit register), links against
@@ -73,8 +76,9 @@ without). The ready banner reports the cycle counter at `main` and at ready.
 Images:
 `kohakutpu_node` (the dispatcher with KohakuTPU's units), `kohakuaccel_node`
 (the dispatcher with the generic class only), `memprobe` (a measurement of
-the processor's memory paths, driven by `scripts/py/sw_memprobe.py`) and
-`osprobe` (tasks and heaps checked on the node, driven by `scripts/py/sw_os.py`).
+the processor's memory paths, driven by `software/firmware/tools/memprobe.py`)
+and `osprobe` (tasks and heaps checked on the node, driven by
+`software/firmware/tools/os.py`).
 
 ## What happens to a package
 
@@ -130,7 +134,7 @@ go through the processor's **uncached alias**, address bit 38
 (`rv64_syscore.v`, cleared on the way out), so they see what another agent
 wrote with no cache maintenance; staging is uncached anyway. One uncached
 access is one node-port round trip, about 30 processor cycles per 8 bytes on
-the simulated card (`scripts/py/sw_memprobe.py`). Cached DRAM is shared only
+the simulated card (`software/firmware/tools/memprobe.py`). Cached DRAM is shared only
 with a D-cache flush or invalidate (control region `0x1C8`) around it.
 
 The queue and its indices are always accessed uncached. An uncached store
@@ -223,8 +227,8 @@ write cannot corrupt it. Region 0 is by convention the node's DRAM and 1 its
 staging; what each covers is the host's choice through the queue's `HEAP`
 entry. One `osprobe` churn op with its table check costs about 3,800 cycles at
 12 live blocks on the card model, so the node runs a short churn and the long
-traces run natively. `driver/kohakuaccel/node/heap.py` is the
-same policy in Python; `driver/tests/test_node_heap.py` runs `heap.c` natively
+traces run natively. `kohakuaccel.driver.node.heap` is the same policy in
+Python; `software/driver/tests/test_node_heap.py` runs `heap.c` natively
 on random traces and requires the two to agree on every status, address and
 table.
 
