@@ -45,8 +45,8 @@ module ktpu_ship_3x2_6c3v_il_pump #(
     parameter integer MESH_ID  = 0,
     parameter integer MODEL    = 0,
     parameter integer L1_DEPTH = 512,
-    // driver/kohakutpu/machine's frozen-at-synthesis TILES / GA / GB. A generated
-    // top that omits them elaborates mx_cluster_cu's 256/32/32 instead.
+    // The cluster tile store and L1 depths this machine is synthesised with. A
+    // generated top that omits them elaborates mx_cluster_cu's 256/32/32 instead.
     // 4096 in URAM, not 512 in BRAM: width sets the primitive count (5 either
     // way) so depth is free, and gm*gn<=TILES bounds arithmetic intensity --
     // 21.3 at 512 against 64.0 at 4096.
