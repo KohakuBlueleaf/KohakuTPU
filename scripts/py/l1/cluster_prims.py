@@ -118,13 +118,13 @@ def main() -> int:
     def quants(p, nbytes):
         p.move(PM.convert(big, sink, nbytes // 256))
 
-    per("mover copy", "KB", 8 << 10, 64 << 10, lambda p, n: copies(p, n), None)
+    per("mover copy", "KB", 8, 64, lambda p, n: copies(p, n << 10), None)
     per(
         "mover FP16->MXFP7 quantise",
         "KB of source",
-        8 << 10,
-        64 << 10,
-        lambda p, n: quants(p, n),
+        8,
+        64,
+        lambda p, n: quants(p, n << 10),
         None,
     )
     card.close()

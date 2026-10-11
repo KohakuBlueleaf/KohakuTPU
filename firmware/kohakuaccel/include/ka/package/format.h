@@ -44,7 +44,18 @@ enum ka_step_op {
     KA_OP_SIGNAL    = 7, /* tell the host now: count = value32, arg = value64 */
     KA_OP_SETTLE    = 8, /* hold count cycles */
     KA_OP_REPEAT    = 9, /* unit, count template payloads from arg, repeated */
+    KA_OP_MWAIT     = 10, /* count = moves of this package that must be done */
+    KA_OP_ENGINE    = 11, /* count dispatch-engine entries, 3 a payload, from arg */
+    KA_OP_FETCH     = 12, /* unit, count words its fetch port reads from address arg */
 };
+
+/* An ENGINE entry's code byte: the engine's code (0..32) | REL, where REL adds
+ * the package's payload address << 24 to the value (a fetch request's ARG3). */
+#define KA_ENGINE_REL 0x40u
+
+/* Step flags (w0 [15:8]). A MOVER step POSTED starts its moves and goes on:
+ * the moves it starts are waited for by an MWAIT, a BARRIER or the end. */
+#define KA_STEP_F_POSTED 1u
 
 /* A MOVER pair whose register is this is skipped (pads an odd count). */
 #define KA_MOVER_SKIP 0xFFFFFFFFFFFFFFFFUL

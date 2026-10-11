@@ -2,7 +2,8 @@
 
 The framework reads and writes the program structure -- the head
 (`kohakuaccel.text.machine`), `program` blocks of `send`, `mark`, `wait`,
-`barrier`, `move` -- and nothing a unit is sent: those words are a project's,
+`barrier`, `move`, `post` and `wait mover upto` -- and nothing a unit is sent:
+those words are a project's,
 registered per unit type on `L1Text.units`, for a move on `L1Text.mover`, and
 for a top-level definition block (``image img0``) on `L1Text.defs`.
 """
@@ -41,6 +42,7 @@ class L1Reader(LevelReader):
     def __init__(self, source: str, file: str) -> None:
         super().__init__(source, file)
         self.tokens: dict = {}
+        self.posts: dict = {}
 
 
 class L1Text:
@@ -91,15 +93,25 @@ class L1Text:
                 case "barrier":
                     out.append(Stmt("barrier"))
                 case "move":
-                    _, writes, ops = step
-                    if ops:
-                        lines = [s for op in ops for s in self.mover.write(w, op)]
-                    else:
-                        lines = [
-                            Stmt("write", [Assign(hexa(r), hexa(v))]) for r, v in writes
-                        ]
-                    out.append(Stmt("move", body=lines))
+                    out.append(Stmt("move", body=self._move_lines(w, *step[1:3])))
+                case "post":
+                    out.append(
+                        Stmt(
+                            "post",
+                            body=self._move_lines(w, *step[1:3]),
+                            target=f"m{step[3]}",
+                        )
+                    )
+                case "wait_moves":
+                    out.append(
+                        Stmt("wait", [Name("mover"), Name("upto"), Name(f"m{step[1]}")])
+                    )
         return out
+
+    def _move_lines(self, w, writes, ops) -> list:
+        if ops:
+            return [s for op in ops for s in self.mover.write(w, op)]
+        return [Stmt("write", [Assign(hexa(r), hexa(v))]) for r, v in writes]
 
     # ------------------------------------------------------------------ read
     def read(self, text: str, machine=None, machines=None, file="<l1>") -> list:
@@ -123,7 +135,7 @@ class L1Text:
 
     def _program(self, r, st):
         prog = self.program(r.machine)
-        r.tokens = {}
+        r.tokens, r.posts = {}, {}
         for s in st.body:
             args = s.positional()
             match s.op:
@@ -135,6 +147,13 @@ class L1Text:
                     if s.target is None or s.target in r.tokens:
                         r.fail(s, "a mark wants a new name: `tN = mark UNIT`")
                     r.tokens[s.target] = prog.mark(r.unit(s, args[0] if args else None))
+                case "wait" if args and args[0] == Name("mover"):
+                    if len(args) != 3 or args[1] != Name("upto"):
+                        r.fail(s, "wanted `wait mover upto POST`")
+                    t = r.name(s, args[2])
+                    if t not in r.posts:
+                        r.fail(s, f"no post {t!r} before this wait")
+                    prog.wait_moves(r.posts[t])
                 case "wait":
                     coord = r.unit(s, args[0] if args else None)
                     token = None
@@ -152,15 +171,19 @@ class L1Text:
                 case "barrier":
                     prog.barrier()
                 case "move":
-                    if s.body and all(b.op == "write" for b in s.body):
-                        prog.move([self._write(r, b) for b in s.body])
-                    else:
-                        prog.move(
-                            [self._op(r, b, self.mover, "writes") for b in s.body]
-                        )
+                    prog.move(self._move_body(r, s))
+                case "post":
+                    if s.target is None or s.target in r.posts:
+                        r.fail(s, "a post wants a new name: `mN = post`")
+                    r.posts[s.target] = prog.post(self._move_body(r, s))
                 case _:
                     r.fail(s, f"no program statement {s.op!r}")
         return prog
+
+    def _move_body(self, r, s) -> list:
+        if s.body and all(b.op == "write" for b in s.body):
+            return [self._write(r, b) for b in s.body]
+        return [self._op(r, b, self.mover, "writes") for b in s.body]
 
     @staticmethod
     def _op(r, st, voc, lower: str):

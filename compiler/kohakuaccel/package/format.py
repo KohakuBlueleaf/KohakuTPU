@@ -50,6 +50,17 @@ class Op(enum.IntEnum):
     SIGNAL = 7
     SETTLE = 8
     REPEAT = 9
+    MWAIT = 10
+    #: Dispatch-engine entries, three a payload (package/engine.py).
+    ENGINE = 11
+    #: `count` words for `unit`, streamed by its fetch port from the absolute
+    #: address `arg` -- words a unit wrote to memory while the package ran.
+    FETCH = 12
+
+
+#: Step flags. A MOVER step POSTED starts its moves and goes on; an MWAIT, a
+#: BARRIER or the package's end waits for them.
+F_POSTED = 1
 
 
 class Kind(enum.IntEnum):
@@ -279,14 +290,22 @@ class Package:
         for i, s in enumerate(self.steps):
             if s.op in (Op.DISPATCH, Op.MOVER) and s.arg + s.count > len(self.payloads):
                 raise PackageError(f"step {i} reads payloads past {len(self.payloads)}")
+            if s.op == Op.ENGINE and s.arg + -(-s.count // 3) > len(self.payloads):
+                raise PackageError(f"step {i} reads payloads past {len(self.payloads)}")
             if s.op == Op.REPEAT:
                 first, incs = s.arg & 0xFFFF_FFFF, s.arg >> 48
                 if first + s.count + (incs + 1) // 2 > len(self.payloads):
                     raise PackageError(
                         f"step {i} reads payloads past {len(self.payloads)}"
                     )
-            if s.op in (Op.DISPATCH, Op.REPEAT, Op.AWAIT) and s.unit >= len(self.units):
+            if s.op in (Op.DISPATCH, Op.REPEAT, Op.AWAIT, Op.FETCH) and s.unit >= len(
+                self.units
+            ):
                 raise PackageError(f"step {i} names unit {s.unit} of {len(self.units)}")
+            if s.op == Op.FETCH and not self.units[s.unit].fetch >> 16:
+                raise PackageError(
+                    f"step {i} fetches for unit {s.unit}: it has no port"
+                )
 
     # ----------------------------------------------------------------- read
     @classmethod

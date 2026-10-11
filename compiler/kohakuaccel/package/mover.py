@@ -20,8 +20,8 @@ FLAG_WCOAL = 1 << 3
 GO = 1 << 16
 WORD_BYTES = 32
 #: Words one move carries at most, well under a dimension's 16 bits: the node
-#: bounds a MOVER step's wait by PROGRESS (a move finishing), and a 512 KB move
-#: finishes in ~500k cycles even at the quantiser's ~1 B a cycle.
+#: bounds a MOVER step's wait by PROGRESS (a move finishing), so one move must
+#: finish inside the node's timeout at the slowest transform's rate.
 MOVE_WORDS = 1 << 14
 ADDR_BITS = 40
 NDIM = 6

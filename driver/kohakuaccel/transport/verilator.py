@@ -44,6 +44,7 @@ class VerilatorTransport(Transport):
         settle: int = 20000,
         timeout: float = 600.0,
         args=(),
+        log: pathlib.Path | str | None = None,
     ) -> None:
         build = (
             pathlib.Path(build_dir)
@@ -76,8 +77,9 @@ class VerilatorTransport(Transport):
         else:
             cmd = [str(vsim), "--settle", str(settle), *args]
         # The model's own $display lines go to stderr (the harness keeps the
-        # reply channel private), into a file rather than a pipe nobody drains.
-        self.model_log = build / "model.log"
+        # reply channel private), into a file rather than a pipe nobody drains;
+        # `log` names it per run so models of one build run side by side.
+        self.model_log = pathlib.Path(log) if log else build / "model.log"
         self._errf = open(self.model_log, "w")  # noqa: SIM115 -- closed in close()
         self.proc = subprocess.Popen(
             cmd,

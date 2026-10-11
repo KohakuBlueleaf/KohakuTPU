@@ -18,6 +18,7 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass
 
+from kohakuaccel.device import mover as MV
 from kohakuaccel.node.queue import layout as L
 
 #: The default region: rings, then a package heap.
@@ -51,6 +52,8 @@ class Completion:
             what += f" waiting on {L.WAITS.get(self.detail, self.detail)}"
         elif self.status == 0x20:
             what += f" from unit {self.detail}, signal word {self.value:#x}"
+        elif self.status == 0x22:
+            what += f" {self.detail}: {MV.FAULTS.get(self.detail, 'unknown')}"
         return f"tag {self.tag:#x}: {what} at step {self.step} ({self.cycles} cycles)"
 
 
@@ -77,6 +80,7 @@ class NodeQueue:
         si_bytes: int = 256,
         idle=None,
         poll_seconds: float = 0.0,
+        spill=None,
     ) -> None:
         if base % 4096:
             raise ValueError(f"a queue region is page aligned; {base:#x} is not")
@@ -93,6 +97,9 @@ class NodeQueue:
             raise ValueError(f"{size:#x} bytes leaves no package heap")
         self.idle = idle
         self.poll_seconds = poll_seconds
+        #: `spill(nbytes) -> address` places a package larger than the heap
+        #: anywhere the node reads (an entry carries the package's address).
+        self.spill = spill
         self.sq_tail = self.cq_head = self.so_rd = self.si_wr = 0
         self._cache: OrderedDict[bytes, tuple[int, int]] = OrderedDict()
         self._heap_top = self.heap_off
@@ -168,8 +175,9 @@ class NodeQueue:
     def upload(self, package: bytes) -> int:
         """Where `package` is in the heap, uploading it the first time.
 
-        Raises :class:`ValueError` for a package larger than the heap. A full
-        heap is emptied only when nothing submitted is still outstanding.
+        A package larger than the heap goes where `spill` puts it, or raises
+        :class:`ValueError` without one. A full heap is emptied only when
+        nothing submitted is still outstanding.
         """
         if len(package) % L.LINE:
             raise ValueError("a package is whole 32-byte lines")
@@ -179,6 +187,13 @@ class NodeQueue:
             self._cache.move_to_end(key)
             self.counters["cache_hits"] += 1
             return got[0]
+        if self.heap_off + len(package) > self.size and self.spill is not None:
+            at = self.spill(len(package))
+            self.mem.write_block(at, package)
+            self._cache[key] = (at, len(package))
+            self.counters["uploads"] += 1
+            self.counters["upload_bytes"] += len(package)
+            return at
         if self.heap_off + len(package) > self.size:
             raise ValueError(
                 f"a {len(package)}-byte package exceeds the {self.size - self.heap_off}-byte heap"

@@ -5,6 +5,9 @@ from dataclasses import dataclass
 
 from kohakuaccel.package import mover as PM
 
+#: Transform ids of KohakuTPU's slot bank (src/kohakutpu/transform/xform_bank.v).
+XF_QUANT, XF_GT4 = 1, 2
+
 
 @dataclass(frozen=True)
 class Quantise:
@@ -15,7 +18,22 @@ class Quantise:
     entries: int
 
     def writes(self) -> list:
-        return PM.convert(self.src, self.dst, self.entries)
+        return PM.convert(self.src, self.dst, self.entries, xform_id=XF_QUANT)
+
+
+@dataclass(frozen=True)
+class Transpose4:
+    """`groups` groups of four words at `src`, each a 4 x 4 array of 64-bit
+    granules, transposed to `dst`: out word i, granule w = in word w, granule i."""
+
+    src: int
+    dst: int
+    groups: int
+
+    def writes(self) -> list:
+        return PM.convert(
+            self.src, self.dst, self.groups, xform_id=XF_GT4, in_words=4, out_words=4
+        )
 
 
 @dataclass(frozen=True)

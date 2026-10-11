@@ -185,6 +185,13 @@ flight** (sent, not yet retired), and the completions **received** and
 | 7 | `SIGNAL` | | value | value | posts a progress completion to the host now ([node-queue.md](node-queue.md) §4) |
 | 8 | `SETTLE` | | cycles | | holds that many cycles |
 | 9 | `REPEAT` | unit | n | first payload, repeats, increments (§4.6) | sends the n template payloads `repeats` times, each as `DISPATCH` would; repetition r adds r × delta to every increment's field |
+| 10 | `MWAIT` | | n | | waits until n of the package's moves (its GOs, counted from its start) are done |
+| 11 | `ENGINE` | | n | first payload | copies n dispatch-engine entries into the engine (§4.8) |
+| 12 | `FETCH` | unit | n | absolute address | the unit's fetch port reads n words from the address, in requests of at most 255 within its credit; they count as sent to it. Words a unit wrote while the package ran. A unit without a fetch port fails the package with `BAD_STEP` |
+
+Step flags are `w0[15:8]`. `POSTED` (1) on a `MOVER` step starts its moves and
+goes on: an `MWAIT`, a `BARRIER` or the end waits for them. The mover keeps no
+queue, so a move's registers are written only once every earlier move is done.
 
 Reaching the end of the list is an implicit `BARRIER`. Any other opcode fails
 the package.
@@ -272,6 +279,30 @@ always sent by the node, so a writer that fetches does not compress. Boot flag
 `NOFETCH` ignores every fetch port. Measured on the v9 card (1024x512x1024
 matmul): 400 words in 4 requests, clusters never starved, 69.9% of peak against
 70.9% with every word queued before the clusters start.
+
+### 4.8 The dispatch engine
+
+A node with a dispatch engine ([dispatch-engine.md](dispatch-engine.md)) runs a
+package through it. Every step it can carry is queued as the register writes and
+`WAIT`s it stands for; the engine issues them while the node reads ahead, and
+counts each unit's completions itself. `WAIT_BELL`, `SIGNAL` and `SETTLE` let
+the engine drain, then run as above. Boot flag `NOENGINE` keeps every package on
+the firmware path. A package with more than 16 units, or a unit class with its
+own completion reading (§5.2), runs on the firmware path too.
+
+The queueing is the firmware's work per step unless the package carries it
+already: an `ENGINE` step's payloads hold three entries each, word 0 their code
+bytes (`0xFF` for none) and words 1–3 their values. A code is the engine's
+(0–31 a register, 32 a `WAIT`), plus `0x40` when the value is a fetch request's
+`ARG3` and the node adds the package's payload address, shifted left 24, to it.
+A code past `WAIT` fails the package with `BAD_STEP`, as does an `ENGINE` step on
+a node that runs the package without an engine. The writer lowers a bound
+package into `ENGINE` steps (`kohakuaccel/package/engine.py`, `Runtime.
+engine_packages`): it tracks each unit's words sent, credit and `AWAIT`s exactly
+as the firmware would, spells `REPEAT` out into payloads it fetches, and ends
+the stream with the end's barrier. The node then decodes nothing; measured on
+the v9 card, a firmware-translated `DISPATCH` costs it ~360 cycles, an `AWAIT`
+~150, a `MOVER` of 11 registers ~1,380.
 
 ## 5. What a project adds
 

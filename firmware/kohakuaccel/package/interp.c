@@ -3,6 +3,7 @@
 #include <stddef.h>
 
 #include <ka/boot/args.h>
+#include <ka/dispatch/de.h>
 #include <ka/dispatch/engine.h>
 #include <ka/hal/cpu.h>
 #include <ka/hal/mem.h>
@@ -208,6 +209,25 @@ static int prerelocate(void)
     return 0;
 }
 
+/* `count` words for `unit` streamed by its fetch port from address `at`. */
+static int fetch(unsigned unit, uint64_t at, uint32_t count)
+{
+    if (!(eng.u[unit].fetch >> 16)) {
+        return ka_engine_fail(&eng, KA_ST_BAD_STEP, KA_OP_FETCH, unit);
+    }
+    uint32_t most = eng.u[unit].credit < 255 ? eng.u[unit].credit : 255;
+    most = most ? most : 1;
+    while (count) {
+        uint32_t n = count < most ? count : most;
+        if (ka_engine_fetch(&eng, unit, eng.u[unit].fetch & 0xffffu, at, n)) {
+            return eng.status;
+        }
+        at += (uint64_t)n * KA_PKG_PAY_BYTES;
+        count -= n;
+    }
+    return 0;
+}
+
 /* One DISPATCH step: `count` payloads from `first`, each relocated and sent.
  * MEASURED (RV_PC_PROF, card_v8t8_2n): through `payload` a word cost ~167 cycles
  * of interpreter around four ~7-cycle loads; this walks the pointer instead. */
@@ -219,18 +239,8 @@ static int dispatch(unsigned unit, uint32_t first, uint32_t count)
     /* A unit with a fetch port pulls a relocation-free step from the package
      * itself: one request per <= 255 words instead of a mailbox send each. */
     if ((eng.u[unit].fetch >> 16) && !pk.nrel) {
-        uint64_t at = (pk.base & ~KA_UNCACHED) + pk.opay + (uint64_t)first * KA_PKG_PAY_BYTES;
-        uint32_t most = eng.u[unit].credit < 255 ? eng.u[unit].credit : 255;
-        most = most ? most : 1;
-        while (count) {
-            uint32_t n = count < most ? count : most;
-            if (ka_engine_fetch(&eng, unit, eng.u[unit].fetch & 0xffffu, at, n)) {
-                return eng.status;
-            }
-            at += (uint64_t)n * KA_PKG_PAY_BYTES;
-            count -= n;
-        }
-        return 0;
+        return fetch(unit, (pk.base & ~KA_UNCACHED) + pk.opay + (uint64_t)first * KA_PKG_PAY_BYTES,
+                     count);
     }
     uint64_t at = pk.base + pk.opay + (uint64_t)first * KA_PKG_PAY_BYTES;
     if (pk.local) {
@@ -548,14 +558,85 @@ static int moves_done(uint64_t s0, uint32_t gos)
     }
 }
 
-/* Mover register writes, two (register, value) pairs per payload, then a wait
- * for the moves they start. A move's registers are written only once every
- * earlier move of the step has finished: the walkers are not queued. */
-static int mover(uint32_t first, uint32_t count)
+/* The package's moves: MVSTAT at its start, GOs issued since, and whether a GO
+ * went out since the last wait for all of them. */
+static struct {
+    uint64_t s0;
+    uint32_t gos;
+    int fresh;
+} mv;
+
+static int moves_all_done(void)
 {
-    uint64_t s0 = ka_ctrl_rd(KA_R_MVSTAT);
-    uint32_t gos = 0;
-    int fresh = 0; /* a GO went out since the last wait */
+    if (!mv.fresh) {
+        return 0;
+    }
+    mv.fresh = 0;
+    return moves_done(mv.s0, mv.gos);
+}
+
+/* Until `n` of the package's moves are done; the mover may be busy with a
+ * later one. */
+static int moves_upto(uint32_t n)
+{
+    uint64_t t0 = ka_cycles(), s;
+    uint32_t seen = KA_MV_DONE(mv.s0);
+    for (;;) {
+        s = ka_ctrl_rd(KA_R_MVSTAT);
+        if (KA_MV_FAULT(s)) {
+            return ka_engine_fail(&eng, KA_ST_MOVER_FAULT, KA_MV_FAULT(s), s);
+        }
+        if (((KA_MV_DONE(s) - KA_MV_DONE(mv.s0)) & 0x0fffffff) >= n) {
+            return 0;
+        }
+        if (KA_MV_DONE(s) != seen) {
+            seen = KA_MV_DONE(s);
+            t0 = ka_cycles();
+        }
+        if (ka_cycles() - t0 > eng.timeout) {
+            return ka_engine_fail(&eng, KA_ST_TIMEOUT, KA_WAIT_MOVER, s);
+        }
+        ka_yield();
+    }
+}
+
+/* Writes the mover's configuration queue takes before ROOM is read again. */
+static uint32_t mv_credit;
+
+/* Until the configuration queue has room; bounded on progress like
+ * moves_done, since the queue drains only as moves finish. */
+static int mover_room(void)
+{
+    uint64_t t0 = ka_cycles(), s;
+    uint32_t seen = KA_MV_DONE(mv.s0);
+    while (!mv_credit) {
+        s = ka_ctrl_rd(KA_R_MVSTAT);
+        if (KA_MV_FAULT(s)) {
+            return ka_engine_fail(&eng, KA_ST_MOVER_FAULT, KA_MV_FAULT(s), s);
+        }
+        if (KA_MV_ROOM(s)) {
+            mv_credit = KA_MV_ROOM_WRITES;
+            break;
+        }
+        if (KA_MV_DONE(s) != seen) {
+            seen = KA_MV_DONE(s);
+            t0 = ka_cycles();
+        }
+        if (ka_cycles() - t0 > eng.timeout) {
+            return ka_engine_fail(&eng, KA_ST_TIMEOUT, KA_WAIT_MOVER, s);
+        }
+        ka_yield();
+    }
+    --mv_credit;
+    return 0;
+}
+
+/* Mover register writes, two (register, value) pairs per payload, into the
+ * mover's configuration queue: a later move's registers wait in the queue
+ * behind an earlier move's GO. Unless `posted`, the step then waits for the
+ * moves it started; posted, the node goes on while they run. */
+static int mover(uint32_t first, uint32_t count, int posted)
+{
     for (uint32_t k = 0; k < count; ++k) {
         uint64_t w[4];
         if (payload(first + k, w)) {
@@ -568,20 +649,17 @@ static int mover(uint32_t first, uint32_t count)
             if (w[p] >= KA_MV_SPAN || (w[p] & 7)) {
                 return ka_engine_fail(&eng, KA_ST_NO_REACH, (unsigned)w[p], w[p + 1]);
             }
-            if (fresh) {
-                if (moves_done(s0, gos)) {
-                    return eng.status;
-                }
-                fresh = 0;
+            if (mover_room()) {
+                return eng.status;
             }
             ka_ctrl_wr(KA_R_MV + (unsigned)w[p], w[p + 1]);
             if (w[p] == 0 && (w[p + 1] & (1UL << 16))) {
-                ++gos;
-                fresh = 1;
+                ++mv.gos;
+                mv.fresh = 1;
             }
         }
     }
-    return moves_done(s0, gos);
+    return posted ? 0 : moves_all_done();
 }
 
 static int mover_idle(void)
@@ -594,6 +672,309 @@ static int mover_idle(void)
         ka_yield();
     }
     return 0;
+}
+
+/* ------------------------------------------------------------------------
+ * Engine mode (docs/spec/dispatch-engine.md): each step is QUEUED as the
+ * register writes and WAITs it stands for, and the dispatch engine issues them
+ * while this thread reads ahead. Completions are counted in hardware; only a
+ * fault or a code the engine does not claim reaches the completion queue. */
+static struct {
+    int on;
+    unsigned cap, room;
+    uint64_t mb[KA_NM_GO];   /* DST, ARG0..3 as last queued */
+    unsigned mbv;            /* which of them `mb` holds */
+    uint32_t exp[KA_MAX_PKG_UNITS];
+    unsigned issued;         /* STAT's issue count when it last moved */
+    uint64_t t_moved;
+    uint16_t mapped[KA_MAX_PKG_UNITS]; /* coordinates the map holds, y << 8 | x */
+    unsigned nmapped;
+} de;
+
+/* Faults and unclaimed signals, and no progress for a timeout. */
+static int de_watch(uint64_t stat)
+{
+    if (KA_NM_STAT_COUNT(ka_nm_rd(KA_NM_STAT)) && ka_engine_drain(&eng)) {
+        return eng.status;
+    }
+    if (KA_DE_STAT_OVF(stat)) {
+        return ka_engine_fail(&eng, KA_ST_BAD_STEP, 0xde, stat);
+    }
+    uint64_t now = ka_cycles();
+    if (KA_DE_STAT_ISSUED(stat) != de.issued) {
+        de.issued = KA_DE_STAT_ISSUED(stat);
+        de.t_moved = now;
+    }
+    else if (now - de.t_moved > eng.timeout) {
+        return ka_engine_fail(&eng, KA_ST_TIMEOUT, KA_WAIT_AWAIT, stat);
+    }
+    return 0;
+}
+
+/* Out of line: only a full queue gets here, and inlined it spilled six
+ * registers on every entry (PC profile: 25 cycles a push). */
+static __attribute__((noinline)) int de_refill(void)
+{
+    while (!de.room) {
+        uint64_t s = ka_ctrl_rd(KA_R_DE_STAT);
+        unsigned used = KA_DE_STAT_USED(s);
+        de.room = used < de.cap ? de.cap - used : 0;
+        if (!de.room && de_watch(s)) {
+            return eng.status;
+        }
+    }
+    return 0;
+}
+
+static inline __attribute__((always_inline)) int de_push(unsigned code, uint64_t v)
+{
+    if (__builtin_expect(!de.room, 0) && de_refill()) {
+        return eng.status;
+    }
+    --de.room;
+    ka_de_queue(code, v);
+    return 0;
+}
+
+/* Mailbox register `r`, skipped when it already holds `v`. */
+static inline __attribute__((always_inline)) int de_mb(unsigned r, uint64_t v)
+{
+    if ((de.mbv >> r) & 1u && de.mb[r] == v) {
+        return 0;
+    }
+    de.mb[r] = v;
+    de.mbv |= 1u << r;
+    return de_push(KA_DE_MB(r), v);
+}
+
+static int de_wait(unsigned src, uint32_t want)
+{
+    return want ? de_push(KA_DE_WAIT, (uint64_t)src << 56 | (want & KA_DE_CTR_MASK)) : 0;
+}
+
+static int de_send_word(unsigned unit, const uint64_t w[4])
+{
+    struct ka_unit_state *s = &eng.u[unit];
+    if (s->sent + 1 > s->credit && de_wait(unit, s->sent + 1 - s->credit)) {
+        return eng.status;
+    }
+    if (de_mb(KA_NM_DST, ((uint64_t)s->y << 8) | s->x) || de_mb(KA_NM_ARG0, w[0]) ||
+        de_mb(KA_NM_ARG1, w[1]) || de_mb(KA_NM_ARG2, w[2]) || de_mb(KA_NM_ARG3, w[3]) ||
+        de_push(KA_DE_MB(KA_NM_GO), 1)) {
+        return eng.status;
+    }
+    ++s->sent;
+    ++eng.sent;
+    return 0;
+}
+
+static int de_fetch(unsigned unit, uint64_t at, uint32_t count)
+{
+    struct ka_unit_state *s = &eng.u[unit];
+    if (!(s->fetch >> 16)) {
+        return ka_engine_fail(&eng, KA_ST_BAD_STEP, KA_OP_FETCH, unit);
+    }
+    uint32_t room = s->credit < KA_FETCH_DEPTH ? s->credit : KA_FETCH_DEPTH;
+    uint32_t most = room < 255 ? room : 255;
+    most = most ? most : 1;
+    while (count) {
+        uint32_t n = count < most ? count : most;
+        if ((s->sent + n > room && de_wait(unit, s->sent + n - room)) ||
+            de_mb(KA_NM_DST, KA_NM_TYPED(KA_T_MEM_RD_REQ) | (s->fetch & 0xffffu)) ||
+            de_mb(KA_NM_ARG0, 0) || de_mb(KA_NM_ARG1, 0) ||
+            de_mb(KA_NM_ARG2, ((uint64_t)((s->y << 4) | s->x) << 40) | (1UL << 30)) ||
+            de_mb(KA_NM_ARG3, (at << 24) | (0x60UL << 8) | n) ||
+            de_push(KA_DE_MB(KA_NM_GO), 1)) {
+            return eng.status;
+        }
+        s->sent += n;
+        eng.sent += n;
+        at += (uint64_t)n * KA_PKG_PAY_BYTES;
+        count -= n;
+    }
+    return 0;
+}
+
+static int de_dispatch(unsigned unit, uint32_t first, uint32_t count)
+{
+    if (first > pk.npay || count > pk.npay - first) {
+        return ka_engine_fail(&eng, KA_ST_BAD_LAYOUT, first, pk.npay);
+    }
+    if ((eng.u[unit].fetch >> 16) && !pk.nrel) {
+        return de_fetch(unit, (pk.base & ~KA_UNCACHED) + pk.opay + (uint64_t)first * KA_PKG_PAY_BYTES,
+                        count);
+    }
+    for (uint32_t k = 0; k < count; ++k) {
+        uint64_t w[4];
+        if (payload(first + k, w) || de_send_word(unit, w)) {
+            return eng.status;
+        }
+    }
+    return 0;
+}
+
+static int de_repeat(uint64_t w0, uint64_t arg)
+{
+    struct src q;
+    if (src_open(&q, w0, arg)) {
+        return eng.status;
+    }
+    uint64_t w[4];
+    while (src_left(&q)) {
+        const uint64_t *p = src_next(&q, w);
+        if (!p || de_send_word(q.unit, p)) {
+            return eng.status;
+        }
+    }
+    return 0;
+}
+
+static int de_mover(uint32_t first, uint32_t count, int posted)
+{
+    if (first > pk.npay || count > pk.npay - first) {
+        return ka_engine_fail(&eng, KA_ST_BAD_LAYOUT, first, pk.npay);
+    }
+    for (uint32_t k = 0; k < count; ++k) {
+        uint64_t w[4];
+        if (pk.nrel) {
+            if (payload(first + k, w)) {
+                return eng.status;
+            }
+        }
+        else {
+            uint64_t off = pk.opay + (uint64_t)(first + k) * KA_PKG_PAY_BYTES;
+            for (int j = 0; j < 4; ++j) {
+                w[j] = rd(off + 8 * j);
+            }
+        }
+        for (int p = 0; p < 4; p += 2) {
+            if (w[p] == KA_MOVER_SKIP) {
+                continue;
+            }
+            if (w[p] >= KA_MV_SPAN || (w[p] & 7)) {
+                return ka_engine_fail(&eng, KA_ST_NO_REACH, (unsigned)w[p], w[p + 1]);
+            }
+            if (de_push(KA_DE_MV(w[p]), w[p + 1])) {
+                return eng.status;
+            }
+            if (w[p] == 0 && (w[p + 1] & (1UL << 16))) {
+                ++mv.gos;
+            }
+        }
+    }
+    return posted ? 0 : de_wait(KA_DE_MOVER, mv.gos);
+}
+
+/* An ENGINE step: entries the host compiled, copied into the engine as read.
+ * A code past WAIT would land on the engine's own control registers. */
+static int de_stream(uint32_t first, uint32_t count)
+{
+    if (first > pk.npay || (count + 2) / 3 > pk.npay - first) {
+        return ka_engine_fail(&eng, KA_ST_BAD_LAYOUT, first, pk.npay);
+    }
+    uint64_t rel = ((pk.base & ~KA_UNCACHED) + pk.opay) << 24;
+    uint64_t off = pk.opay + (uint64_t)first * KA_PKG_PAY_BYTES;
+    while (count) {
+        uint64_t codes = rd(off);
+        for (unsigned j = 1; j <= 3 && count; ++j, --count, codes >>= 8) {
+            unsigned c = codes & 0xff;
+            uint64_t v = rd(off + 8 * j);
+            if (c & KA_ENGINE_REL) {
+                v += rel;
+            }
+            c &= ~KA_ENGINE_REL;
+            if (c > KA_DE_WAIT) {
+                return ka_engine_fail(&eng, KA_ST_BAD_STEP, KA_OP_ENGINE, codes);
+            }
+            if (de_push(c, v)) {
+                return eng.status;
+            }
+        }
+        off += KA_PKG_PAY_BYTES;
+    }
+    return 0;
+}
+
+/* Every unit has retired what it was sent and every AWAIT holds; every move
+ * is done. */
+static int de_barrier(void)
+{
+    for (unsigned u = 0; u < eng.n; ++u) {
+        uint32_t t = eng.u[u].sent > de.exp[u] ? eng.u[u].sent : de.exp[u];
+        if (de_wait(u, t)) {
+            return eng.status;
+        }
+    }
+    return de_wait(KA_DE_MOVER, mv.gos);
+}
+
+/* Until every queued entry has issued. */
+static int de_drain(void)
+{
+    for (;;) {
+        uint64_t s = ka_ctrl_rd(KA_R_DE_STAT);
+        if (!KA_DE_STAT_USED(s)) {
+            de.room = de.cap;
+            return 0;
+        }
+        if (de_watch(s)) {
+            return eng.status;
+        }
+    }
+}
+
+/* Whether this package runs through the engine, and if so the engine set up
+ * for it: its units mapped to counters 0..n-1, counters and queue cleared. */
+static int de_begin(void)
+{
+    de.on = 0;
+    uint64_t s = ka_ctrl_rd(KA_R_DE_STAT);
+    if ((ka_boot.flags & KA_BOOT_F_NOENGINE) || KA_DE_STAT_MAGIC(s) != KA_DE_MAGIC ||
+        eng.n > KA_DE_UNITS) {
+        return 0;
+    }
+    for (unsigned u = 0; u < eng.n; ++u) {
+        if (!eng.u[u].plain) {
+            return 0;
+        }
+    }
+    for (unsigned i = 0; i < de.nmapped; ++i) {
+        ka_ctrl_wr(KA_R_DE_MAP, de.mapped[i]);
+    }
+    de.nmapped = 0;
+    for (unsigned u = 0; u < eng.n; ++u) {
+        uint16_t at = (uint16_t)((eng.u[u].y << 8) | eng.u[u].x);
+        ka_ctrl_wr(KA_R_DE_MAP, (1UL << 31) | ((uint64_t)u << 16) | at);
+        de.mapped[de.nmapped++] = at;
+        de.exp[u] = 0;
+    }
+    ka_ctrl_wr(KA_R_DE_CTL, 3);
+    de.cap = KA_DE_STAT_DEPTH(s);
+    de.room = de.cap;
+    de.mbv = 0;
+    de.issued = 0;
+    de.t_moved = ka_cycles();
+    de.on = 1;
+    return 0;
+}
+
+/* The engine off; after a failure, each unit's words not yet retired are
+ * handed to the firmware's counters so its quiesce drains them. */
+static void de_end(void)
+{
+    if (!de.on) {
+        return;
+    }
+    if (eng.status) {
+        for (unsigned u = 0; u < eng.n; ++u) {
+            uint32_t got = (uint32_t)ka_ctrl_rd(KA_R_DE_CTR + 8 * u) & KA_DE_CTR_MASK;
+            uint32_t left = (eng.u[u].sent - got) & KA_DE_CTR_MASK;
+            eng.u[u].inflight = left;
+            eng.outstanding += left;
+        }
+    }
+    ka_ctrl_wr(KA_R_DE_CTL, 2);
+    de.on = 0;
 }
 
 /* Rings consumed so far, per source mesh, as the hardware's 16-bit counts. */
@@ -701,9 +1082,19 @@ static int step(const struct ka_pkg_run *r, uint32_t s, uint64_t w0, int *end)
     case KA_OP_AWAIT:
         return ka_engine_await(&eng, unit, count);
     case KA_OP_BARRIER:
-        return ka_engine_barrier(&eng);
+        return ka_engine_barrier(&eng) ? eng.status : moves_all_done();
     case KA_OP_MOVER:
-        return mover((uint32_t)arg, count);
+        return mover((uint32_t)arg, count, (w0 >> 8) & KA_STEP_F_POSTED);
+    case KA_OP_MWAIT:
+        return moves_upto(count);
+    case KA_OP_FETCH:
+        if (unit >= eng.n) {
+            return ka_engine_fail(&eng, KA_ST_BAD_UNIT, unit, 0);
+        }
+        if (fetch(unit, arg, count)) {
+            return eng.status;
+        }
+        return ka_engine_drain(&eng);
     case KA_OP_RING:
         if (mover_idle()) {
             return eng.status;
@@ -725,6 +1116,44 @@ static int step(const struct ka_pkg_run *r, uint32_t s, uint64_t w0, int *end)
     }
 }
 
+/* One step in engine mode: queued, except the ones only the firmware can do,
+ * which wait for the queue to drain and then run as `step`. */
+static int de_step(const struct ka_pkg_run *r, uint32_t s, uint64_t w0, int *end)
+{
+    uint64_t arg = rd(pk.ostep + (uint64_t)s * KA_PKG_STEP_BYTES + 8);
+    unsigned op = w0 & 0xff, unit = (w0 >> 16) & 0xffff;
+    uint32_t count = (uint32_t)(w0 >> 32);
+    if ((op == KA_OP_DISPATCH || op == KA_OP_AWAIT || op == KA_OP_FETCH) && unit >= eng.n) {
+        return ka_engine_fail(&eng, KA_ST_BAD_UNIT, unit, 0);
+    }
+    switch (op) {
+    case KA_OP_END:
+        *end = 1;
+        return 0;
+    case KA_OP_DISPATCH:
+        return de_dispatch(unit, (uint32_t)arg, count);
+    case KA_OP_REPEAT:
+        return de_repeat(w0, arg);
+    case KA_OP_AWAIT:
+        de.exp[unit] += count;
+        return de_wait(unit, de.exp[unit]);
+    case KA_OP_BARRIER:
+        return de_barrier();
+    case KA_OP_MOVER:
+        return de_mover((uint32_t)arg, count, (w0 >> 8) & KA_STEP_F_POSTED);
+    case KA_OP_MWAIT:
+        return de_wait(KA_DE_MOVER, count);
+    case KA_OP_RING:
+        return de_push(KA_DE_IL(0x10), ((uint64_t)(count & 0xff) << 8) | (unit & 3));
+    case KA_OP_ENGINE:
+        return de_stream((uint32_t)arg, count);
+    case KA_OP_FETCH:
+        return de_fetch(unit, arg, count);
+    default:
+        return de_drain() ? eng.status : step(r, s, w0, end);
+    }
+}
+
 int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out)
 {
     uint64_t t0 = ka_cycles();
@@ -741,6 +1170,10 @@ int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out)
         ka_dcache(KA_DCACHE_INVAL);
     }
     ka_engine_reset(&eng, cap, r->timeout ? r->timeout : ka_boot.timeout);
+    mv.s0 = ka_ctrl_rd(KA_R_MVSTAT);
+    mv.gos = 0;
+    mv.fresh = 0;
+    mv_credit = 0;
     uint32_t s = 0;
     uint64_t t_head = 0, t_copy = 0, t_bind = 0, t_steps = 0;
     if (!header(r)) {
@@ -764,6 +1197,9 @@ int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out)
         if (!eng.status && pk.local) {
             prerelocate();
         }
+        if (!eng.status) {
+            de_begin();
+        }
         t_bind = ka_cycles();
         int rr = !(ka_boot.flags & KA_BOOT_F_SERIAL);
         int end = 0;
@@ -772,9 +1208,12 @@ int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out)
         for (; s < pk.nstep && !eng.status && !end; ++s) {
             uint32_t first = s;
             uint64_t w0 = step_word(s, 0);
-            uint32_t took = rr && is_send(w0) ? dispatch_group(s, w0) : 0;
+            uint32_t took = rr && !de.on && is_send(w0) ? dispatch_group(s, w0) : 0;
             if (took) {
                 s += took - 1;
+            }
+            else if (de.on) {
+                de_step(r, s, w0, &end);
             }
             else {
                 step(r, s, w0, &end);
@@ -786,9 +1225,13 @@ int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out)
                 skew += ka_cycles() - t;
             }
         }
+        if (de.on && !eng.status && !de_barrier()) {
+            de_drain();
+        }
+        de_end();
         t_steps = ka_cycles();
-        if (!eng.status) {
-            ka_engine_barrier(&eng);
+        if (!eng.status && !ka_engine_barrier(&eng)) {
+            moves_all_done();
         }
     }
     if (eng.status) {

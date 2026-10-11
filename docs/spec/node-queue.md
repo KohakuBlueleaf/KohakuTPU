@@ -59,7 +59,7 @@ first section and refuses to run when the magic is wrong.
 | 4 | `scan` — with `n_units` zero, the firmware enumerates coordinates `0..scan` in x and y |
 | 5 | `timeout` — cycles any one wait may take before the package fails |
 | 6 | `cq_depth` — a node-wide bound on outstanding completions, `0` for none ([package-format.md](package-format.md) §4.1) |
-| 7 | flags: `[0]` `SERIAL`, send each dispatch step whole rather than round-robin ([package-format.md](package-format.md) §4); `[1]` `TIMING`, print each package run's phase cycles to stdout after it ends; `[2]` `NOFETCH`, ignore the packages' fetch ports and send every payload through the mailbox ([package-format.md](package-format.md) §4.7) |
+| 7 | flags: `[0]` `SERIAL`, send each dispatch step whole rather than round-robin ([package-format.md](package-format.md) §4); `[1]` `TIMING`, print each package run's phase cycles to stdout after it ends; `[2]` `NOFETCH`, ignore the packages' fetch ports and send every payload through the mailbox ([package-format.md](package-format.md) §4.7); `[3]` `STEPS`, print each step's end cycle; `[4]` `NOENGINE`, run every package on the firmware path even where a dispatch engine exists ([package-format.md](package-format.md) §4.8) |
 | 8 | `n_units`, at most 16; `0` asks the firmware to find its own |
 | 9–24 | the units, as unit words ([package-format.md](package-format.md) §1.2) |
 

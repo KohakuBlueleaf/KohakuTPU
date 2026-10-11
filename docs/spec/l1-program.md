@@ -23,6 +23,9 @@ the ops it was given beside their words, so it prints as text
 | `mark(unit)` / `wait(unit, token)` | a point in `unit`'s stream; hold the node until everything sent to `unit` up to the mark has completed, whatever was sent after it (revision 2: a cross-unit dependence per tile, with the producer already holding its next work) |
 | `barrier()` | hold the node until every unit has |
 | `move(*ops)` | one mover step (`kohakuaccel.package.mover`): ops with `writes()` (the project's mover ops), or one list of raw `(register, value)` writes; a barrier on both sides |
+| `post(*ops) -> token` | a mover step the node does not wait for: it goes on while the moves run |
+| `wait_moves(token)` | hold the node until the moves of that `post`, and every move before them, are done |
+| `fetch(unit, addr, count)` | `count` words for `unit` that its fetch port reads from `addr` when the node gets here: words a unit wrote while the package ran. They count as sent to `unit`; no lowering hook sees them |
 | `units(kind)` | the coordinates of every unit of `kind` |
 
 ## 2. Semantics
@@ -51,7 +54,10 @@ the ops it was given beside their words, so it prints as text
    across packages (what the unit already holds). `resident=None` runs no hook.
 3. `wait`/`barrier` become `AWAIT` steps counting exactly the words dispatched
    since that unit's last await, then `BARRIER`; a `move` is a `MOVER` step and
-   a `BARRIER`. The program ends with every unit awaited and a barrier.
+   a `BARRIER`; a `post` is a `MOVER` step flagged `POSTED`, and `wait_moves`
+   an `MWAIT` counting the package's moves up to that post's last; a `fetch` is
+   a `FETCH` step after the unit's queued words. The program ends with every
+   unit awaited and a barrier.
 4. A `mark` dispatches that unit's pending words at once and records how many
    it has been sent; `wait(unit, token)` awaits up to that count. An AWAIT is
    cumulative (it raises the unit's expected count), so a partial wait is the

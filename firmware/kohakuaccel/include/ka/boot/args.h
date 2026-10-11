@@ -18,6 +18,8 @@
 #define KA_BOOT_F_NOFETCH (1UL << 2)
 /* Print each step's end cycle as it ends (PKGS lines), the printing excluded. */
 #define KA_BOOT_F_STEPS (1UL << 3)
+/* Run every package through the firmware even where a dispatch engine exists. */
+#define KA_BOOT_F_NOENGINE (1UL << 4)
 
 struct ka_bootargs {
     uint64_t magic;

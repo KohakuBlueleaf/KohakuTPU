@@ -71,6 +71,8 @@ def witness(schedule, prog):
     marks: dict = {}
     where: dict = {}  # item -> (unit, position after its last word)
     firstsend: dict = {}  # item -> {unit: awaited counts at its first word}
+    moved = [i for i, it in enumerate(schedule.items) if it.unit == "mover"]
+    posts = 0
     for step in prog.steps:
         if step[0] == "send":
             u = step[1]
@@ -85,16 +87,24 @@ def witness(schedule, prog):
         elif step[0] == "wait":
             upto = sent.get(step[1], 0) if step[2] is None else marks[step[2]]
             awaited[step[1]] = max(awaited.get(step[1], 0), upto)
+        elif step[0] == "post":
+            # mover items post in schedule order, one post each
+            item = moved[posts]
+            posts += 1
+            firstsend[item] = dict(awaited)
+            where[item] = ("mover", posts)
+        elif step[0] == "wait_moves":
+            awaited["mover"] = max(awaited.get("mover", 0), step[1] + 1)
         elif step[0] in ("barrier", "move"):
-            awaited = dict(sent)
+            awaited = dict(sent) | {"mover": posts}
     for b, ds in enumerate(schedule.deps()):
         for a in ds:
             ua, ub = schedule.items[a].at, schedule.items[b].at
-            if ua == ub or schedule.items[a].unit == "mover":
-                continue
-            if schedule.items[b].unit == "mover":
+            if ua == ub and schedule.items[a].unit != "mover":
                 continue
             unit, pos = where[a]
+            if unit == "mover" and schedule.items[b].unit == "mover":
+                continue
             assert (
                 firstsend[b].get(unit, 0) >= pos
             ), f"item {b} sent before item {a} is awaited"
@@ -202,18 +212,26 @@ def test_a_held_result_is_marked_where_it_completes():
     witness(s, prog)
 
 
-def test_a_mover_item_waits_for_its_producers_and_is_a_barrier():
+def test_a_mover_item_waits_for_its_producers_and_is_no_barrier():
+    """The move is posted after its producer; its consumer waits for it; work
+    that does not touch its bytes goes out while it runs."""
     s = Schedule()
-    x, y = buf(s, "x"), buf(s, "y")
+    x, y, z = buf(s, "x"), buf(s, "y"), buf(s, "z")
     s.add("p", "UA", writes=[x.view()], at=UA0)
     s.add("mv", "mover", reads=[x.view()], writes=[y.view()])
     s.add("c", "UB", reads=[y.view()], at=UB)
-    (prog,) = compile(s, MACHINE, LOWER, mover=lambda item: [(0x10, 1)])
+    s.add("i", "UA", writes=[z.view()], at=UA1)
+    (prog,) = compile(s, MACHINE, LOWER, mover=lambda item: [(0, 1 << 16)])
     witness(s, prog)
     kinds = [st[0] for st in prog.steps]
-    m = kinds.index("move")
+    m = kinds.index("post")
     assert "wait" in kinds[:m], "the move waits for its producer"
-    assert any(st[0] == "send" and st[1] == UB for st in prog.steps[m:])
+    assert "wait_moves" in kinds[m : kinds.index("send", m)], "the consumer waits"
+    assert "move" not in kinds and kinds.count("barrier") == 1
+    assert any(
+        st[0] == "send" and st[1] == UA1
+        for st in prog.steps[: kinds.index("wait_moves")]
+    )
 
 
 def _random_schedule(seed: int) -> Schedule:

@@ -14,6 +14,7 @@ import sys
 
 from kohakuaccel.node.boot import BootArgs, NodeBoot
 from kohakuaccel.node.queue import NodeQueue
+from kohakuaccel.package import engine as engine_package
 from kohakuaccel.transport.rebase import UnitGlobal
 from kohakuaccel.transport.simdram import SimDram
 from kohakuaccel.transport.verilator import VerilatorTransport
@@ -34,6 +35,8 @@ class CardModel:
     ARENA, ARENA_END = 0x0010_0000, 0x00F0_0000
     Q_SIZE = 0x0010_0000
     F_TIMING = 2
+    #: Lower each package for the node's dispatch engine (package/engine.py).
+    ENGINE = False
 
     def __init__(self, build, fw=None, board="multimesh_v9") -> None:
         fw = pathlib.Path(fw or ROOT / "build/fw/kohakutpu_node.elf")
@@ -92,7 +95,10 @@ class CardModel:
 
     def run(self, program) -> None:
         b = program.build(self.fetch, self.resident)
-        done = self.q.run(b.build(defaults=False).to_bytes(), b.bindings())
+        pkg = b.build(defaults=False)
+        if self.ENGINE:
+            pkg = engine_package.lower(pkg)
+        done = self.q.run(pkg.to_bytes(), b.bindings())
         self.cycles += done.cycles
 
     def close(self) -> None:

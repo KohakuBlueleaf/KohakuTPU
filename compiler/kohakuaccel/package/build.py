@@ -13,6 +13,7 @@ from collections.abc import Callable, Iterable
 
 from kohakuaccel.artifact import Artifact, Await, Barrier, Kick, SeedCredits
 from kohakuaccel.package.format import (
+    F_POSTED,
     MOVER_SKIP,
     Buffer,
     Kind,
@@ -309,9 +310,12 @@ class PackageBuilder:
     def wait_bell(self, mesh: int, count: int = 1) -> None:
         self.steps.append(Step(Op.WAIT_BELL, mesh, count))
 
-    def mover(self, writes, addresses: AddressFn | None = None) -> None:
+    def mover(
+        self, writes, addresses: AddressFn | None = None, posted: bool = False
+    ) -> None:
         """Mover register writes ``[(reg, value), ...]``, issued in order; the
-        step waits for every move a GO in them starts. Two pairs per payload."""
+        step waits for every move a GO in them starts -- unless `posted`, when
+        an `mwait`, a barrier or the end does. Two pairs per payload."""
         pairs = list(writes)
         if len(pairs) % 2:
             pairs.append((MOVER_SKIP, 0))
@@ -319,7 +323,28 @@ class PackageBuilder:
         for k in range(0, len(pairs), 2):
             (r0, v0), (r1, v1) = pairs[k], pairs[k + 1]
             self.payload(r0 | v0 << 64 | r1 << 128 | v1 << 192, addresses, "mover")
-        self.steps.append(Step(Op.MOVER, 0, len(self.payloads) - first, first))
+        self.steps.append(
+            Step(
+                Op.MOVER,
+                0,
+                len(self.payloads) - first,
+                first,
+                F_POSTED if posted else 0,
+            )
+        )
+
+    def fetch_from(self, unit: int, addr: int, count: int) -> None:
+        """`count` words for `unit` read by its fetch port from `addr`, an
+        absolute address; they count as words sent to it."""
+        if not self.units[unit].fetch >> 16:
+            raise PackageError(f"unit {unit} has no fetch port to stream from")
+        if count:
+            self.steps.append(Step(Op.FETCH, unit, count, addr))
+
+    def mwait(self, moves: int) -> None:
+        """Wait until `moves` of the package's moves (its GOs, counted from its
+        start) are done."""
+        self.steps.append(Step(Op.MWAIT, 0, moves))
 
     # ---------------------------------------------------------------- artifacts
     def artifact(

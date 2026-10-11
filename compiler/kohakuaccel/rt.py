@@ -11,6 +11,7 @@ from typing import Protocol, runtime_checkable
 from kohakuaccel.dispatch import plan
 from kohakuaccel.machinespec import MachineSpec
 from kohakuaccel.memory import Arena, Buffer, Layout
+from kohakuaccel.package import engine as engine_package
 from kohakuaccel.package import mover
 from kohakuaccel.package.build import PackageBuilder
 from kohakuaccel.package.format import signature
@@ -59,6 +60,10 @@ class Runtime:
     #: or None to send them through the node. Fetched words are plain, so a
     #: package built for it is neither compressed nor relocated.
     fetch_port = None
+    #: Whether a package is lowered for the node's dispatch engine
+    #: (package/engine.py): its steps become engine entries the node copies
+    #: without decoding. Only a bound package can be; the node must have one.
+    engine_packages = False
 
     def __init__(self, machine: MachineSpec, arena: Arena, transport, ctrl=None):
         self.machine = machine
@@ -283,7 +288,10 @@ class Runtime:
         b, self._pending = self._pending, None
         if b is None or not len(b):
             return
-        pkg = b.build(defaults=False).to_bytes()
+        built = b.build(defaults=False)
+        if self.engine_packages:
+            built = engine_package.lower(built)
+        pkg = built.to_bytes()
         if self.keep_packages:
             self.packages.append(pkg)
         self.counters["packages"] = self.counters.get("packages", 0) + 1

@@ -46,24 +46,39 @@ def compile(schedule: Schedule, machine, lowerers: dict, mover=None, program=Pro
             if it.unit not in lowerers:
                 raise ScheduleError(f"no lowerer for unit type {it.unit!r}")
             units[it.at] = lowerers[it.unit](it.at)
+    if any(it.unit == "mover" for it in schedule.items):
+        if mover is None:
+            raise ScheduleError("a mover item and no `mover` to lower it")
+        units[MOVER] = _MoverLowerer(mover)
     out = []
     for items in schedule.packages():
         prog = program(machine)
-        segment: list = []
-        for i in items:
-            if schedule.items[i].unit == "mover":
-                _segment(schedule, segment, deps, units, prog, i)
-                if mover is None:
-                    raise ScheduleError("a mover item and no `mover` to lower it")
-                _note(prog, i)
-                prog.move(mover(schedule.items[i]))
-                segment = []
-            else:
-                segment.append(i)
-        _segment(schedule, segment, deps, units, prog, None)
+        _segment(schedule, list(items), deps, units, prog)
         prog.barrier()
         out.append(prog)
     return out
+
+
+#: The stream key of mover items: the mover is one more unit to the node
+#: order, its work posted (the node goes on while a move runs) and waited for
+#: only by the items that read or overwrite what it touches.
+MOVER = "mover"
+
+#: Node cycles of a mover item a byte moved, for the node order (MODEL).
+MOVE_BYTES_A_CYCLE = 30.0
+
+
+class _MoverLowerer:
+    def __init__(self, mover) -> None:
+        self.mover = mover
+
+    def lower(self, index, item) -> list:
+        writes = self.mover(item)
+        nbytes = item.params.get("nbytes") or item.params.get("entries", 0) * 384
+        return [Chunk(writes, (index,), nbytes / MOVE_BYTES_A_CYCLE)]
+
+    def finish(self) -> list:
+        return []
 
 
 def _note(prog, item: int) -> None:
@@ -74,12 +89,15 @@ def _note(prog, item: int) -> None:
         note(item)
 
 
-def _segment(schedule, items, deps, units, prog, closer) -> None:
-    """Send `items` (no mover among them) to their units with the waits their
-    cross-unit dependences need; then, for a mover item `closer`, wait for its
-    producers. Every lowerer finishes: the segment ends at a barrier."""
+def _segment(schedule, items, deps, units, prog) -> None:
+    """Send `items` to their units -- mover items to the mover, posted -- with
+    the waits their cross-unit dependences need. Every lowerer finishes: the
+    segment ends at a barrier."""
     streams: dict = {}
     here = set(items)
+
+    def at_of(it):
+        return MOVER if it.unit == "mover" else it.at
 
     def flush(at) -> None:
         tail = units[at].finish()
@@ -89,14 +107,13 @@ def _segment(schedule, items, deps, units, prog, closer) -> None:
 
     for i in items:
         it = schedule.items[i]
+        at = at_of(it)
         # A result a lowerer holds back goes out before an item that waits on
         # another unit: that unit may be waiting on the held result, and the
         # node, blocked on the item, would never send it.
-        if any(a in here and schedule.items[a].at != it.at for a in deps[i]):
-            flush(it.at)
-        streams.setdefault(it.at, []).extend(
-            _Part(c, i) for c in units[it.at].lower(i, it)
-        )
+        if any(a in here and at_of(schedule.items[a]) != at for a in deps[i]):
+            flush(at)
+        streams.setdefault(at, []).extend(_Part(c, i) for c in units[at].lower(i, it))
     for at in units:
         flush(at)
     done_at: dict = {}
@@ -117,14 +134,7 @@ def _segment(schedule, items, deps, units, prog, closer) -> None:
                     raise ScheduleError(f"item {a} never completes on its unit")
                 if done_at[a][0] != at:
                     p.requires.add(done_at[a])
-    closing = (
-        {done_at[a] for a in deps[closer] if a in done_at}
-        if closer is not None
-        else set()
-    )
-    needed = {
-        r for parts in streams.values() for p in parts for r in p.requires
-    } | closing
+    needed = {r for parts in streams.values() for p in parts for r in p.requires}
 
     head = {at: 0 for at in streams}
     tokens: dict = {}
@@ -141,17 +151,24 @@ def _segment(schedule, items, deps, units, prog, closer) -> None:
         k = head[at]
         p = streams[at][k]
         _note(prog, p.item)
-        prog.send(at, *p.chunk.ops)
         unit_free[at] = max(node_t, unit_free[at]) + p.chunk.cycles
         finish[(at, k)] = unit_free[at]
-        if (at, k) in needed:
-            tokens[(at, k)] = prog.mark(at)
+        if at == MOVER:
+            tokens[(at, k)] = prog.post(p.chunk.ops)
             node_t += SEND_CYCLES
+        else:
+            prog.send(at, *p.chunk.ops)
+            if (at, k) in needed:
+                tokens[(at, k)] = prog.mark(at)
+                node_t += SEND_CYCLES
         head[at] = k + 1
 
     def wait(req) -> None:
         nonlocal node_t
-        prog.wait(req[0], tokens[req])
+        if req[0] == MOVER:
+            prog.wait_moves(tokens[req])
+        else:
+            prog.wait(req[0], tokens[req])
         node_t = max(node_t, finish[req])
         waited[req[0]] = max(waited.get(req[0], -1), req[1])
 
@@ -187,6 +204,3 @@ def _segment(schedule, items, deps, units, prog, closer) -> None:
             raise ScheduleError("the node would wait on a chunk never sent")
         _, _, unsat = min(blocked, key=lambda b: (b[0], b[1]))
         wait(min(unsat, key=lambda r: finish[r]))
-    for r in sorted(closing, key=lambda r: finish[r]):
-        if not satisfied(r):
-            wait(r)

@@ -14,7 +14,9 @@ A Mailbox sends one payload and reports completions as they arrive:
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from kohakuaccel.package import engine
 from kohakuaccel.package.format import (
+    F_POSTED,
     MOVER_SKIP,
     Op,
     Package,
@@ -53,12 +55,25 @@ class Interpreter:
     """Runs packages over `mailbox`; `units` is the machine's unit words (the
     boot table) for the signature check, `cq_depth` the mailbox's depth."""
 
-    def __init__(self, mailbox: Mailbox, units=(), cq_depth: int = 16, mover=None):
+    def __init__(
+        self, mailbox: Mailbox, units=(), cq_depth: int = 16, mover=None, memory=None
+    ):
         self.mb = mailbox
         self.machine_sig = signature(units) if units else 0
         self.cq_depth = cq_depth
         #: Called with a MOVER step's (register, value) writes; None refuses them.
         self.mover = mover
+        #: ``memory(addr, nbytes) -> bytes`` for FETCH; None refuses them.
+        self.memory = memory
+
+    def fetched(self, addr: int, n: int) -> list[int]:
+        if self.memory is None:
+            raise PackageError("this interpreter was given no memory to fetch from")
+        raw = self.memory(addr, n * engine.PAYLOAD)
+        return [
+            int.from_bytes(raw[k : k + engine.PAYLOAD], "little")
+            for k in range(0, len(raw), engine.PAYLOAD)
+        ]
 
     def run(
         self, pkg: Package | bytes, bindings=None, max_polls: int = 1_000_000
@@ -78,6 +93,7 @@ class Interpreter:
         inflight = [0] * len(pkg.units)
         expected = [0] * len(pkg.units)
         received = [0] * len(pkg.units)
+        retired = [0] * len(pkg.units)
         where = {(u.x, u.y): i for i, u in enumerate(pkg.units)}
 
         def drain() -> None:
@@ -86,6 +102,8 @@ class Interpreter:
                 if i is None:
                     continue
                 received[i] += 1
+                if code in (0x00, 0x01):
+                    retired[i] += 1
                 if code != SIG_DATA_RECEIVED and inflight[i]:
                     inflight[i] -= 1
                 if code == SIG_FAULT and not res.status:
@@ -101,18 +119,37 @@ class Interpreter:
             res.status = TIMEOUT
             return False
 
+        # Posted moves run here only when the package waits for them -- an
+        # MWAIT reaching them, the next MOVER (the walkers are not queued), a
+        # barrier or the end -- so a package that reads a move's result
+        # without waiting for it reads what was there before.
+        posted: list = []  # [(gos, writes)]
+        moves_done = 0
+
+        def run_moves(upto=None) -> None:
+            nonlocal moves_done
+            while posted and (upto is None or moves_done < upto):
+                gos, writes = posted.pop(0)
+                self.mover(writes)
+                moves_done += gos
+
         for n, s in enumerate(pkg.steps):
             res.step = n
             if s.op == Op.END:
                 break
-            if s.op == Op.DISPATCH:
+            if s.op in (Op.DISPATCH, Op.FETCH):
                 u = pkg.units[s.unit]
-                for k in range(s.count):
+                got = (
+                    self.fetched(s.arg, s.count)
+                    if s.op == Op.FETCH
+                    else words[s.arg : s.arg + s.count]
+                )
+                for w in got:
                     if not wait(
                         lambda i=s.unit: inflight[i] < credit[i] and sum(inflight) < cap
                     ):
                         return res
-                    self.mb.send(u.x, u.y, words[s.arg + k])
+                    self.mb.send(u.x, u.y, w)
                     inflight[s.unit] += 1
                     res.sent += 1
             elif s.op == Op.REPEAT:
@@ -155,6 +192,9 @@ class Interpreter:
                     and all(r >= e for r, e in zip(received, expected, strict=True))
                 ):
                     return res
+                run_moves()
+            elif s.op == Op.MWAIT:
+                run_moves(s.count)
             elif s.op == Op.MOVER:
                 writes = []
                 for k in range(s.count):
@@ -167,7 +207,62 @@ class Interpreter:
                             writes.append((reg, val))
                 if self.mover is None:
                     raise PackageError("this interpreter was given no mover")
-                self.mover(writes)
+                run_moves()
+                gos = sum(1 for r, v in writes if r == 0 and v >> 16 & 1)
+                if s.flags & F_POSTED:
+                    posted.append((gos, writes))
+                else:
+                    self.mover(writes)
+                    moves_done += gos
+            elif s.op == Op.ENGINE:
+                regs: dict = {}
+                rel = False
+                moving: list = []
+                for code, value in engine.entries(pkg, s):
+                    reg = code & 0x3F
+                    if reg == engine.ARG3:
+                        rel = bool(code & engine.REL)
+                    if reg == engine.WAIT:
+                        src, want = value >> 56, value & engine.CTR_MASK
+                        if src == engine.SRC_MOVER:
+                            continue  # moves run at their GO, below
+                        if not wait(
+                            lambda i=src, w=want: ((retired[i] - w) & engine.CTR_MASK)
+                            < (engine.CTR_MASK + 1) // 2
+                        ):
+                            return res
+                    elif reg < 8:
+                        regs[reg] = value
+                        if reg == engine.GO:
+                            dst = regs.get(engine.DST, 0)
+                            if dst & engine.TYPED_MEM_RD_REQ:
+                                arg2, arg3 = regs[engine.ARG2], regs[engine.ARG3]
+                                yx, n = (arg2 >> 40) & 0xFF, arg3 & 0xFF
+                                if rel:
+                                    first = (arg3 >> 24) // engine.PAYLOAD
+                                    got = words[first : first + n]
+                                else:
+                                    got = self.fetched(arg3 >> 24, n)
+                                for w in got:
+                                    self.mb.send(yx & 0xF, yx >> 4, w)
+                                    res.sent += 1
+                            else:
+                                w = sum(
+                                    regs.get(engine.ARG0 + j, 0) << (64 * j)
+                                    for j in range(4)
+                                )
+                                self.mb.send(dst & 0xF, (dst >> 8) & 0xF, w)
+                                res.sent += 1
+                    elif reg < 24:
+                        moving.append(((reg - 8) * 8, value))
+                        if reg == 8 and value >> 16 & 1:
+                            if self.mover is None:
+                                raise PackageError(
+                                    "this interpreter was given no mover"
+                                )
+                            self.mover(moving)
+                            moves_done += 1
+                            moving = []
             elif s.op == Op.SIGNAL:
                 res.signals.append((n, s.count, s.arg))
             elif s.op in (Op.SETTLE, Op.RING, Op.WAIT_BELL):
@@ -179,6 +274,7 @@ class Interpreter:
                 return res
         if wait(lambda: not any(inflight)):
             res.step = len(pkg.steps)
+        run_moves()
         return res
 
 
@@ -191,9 +287,9 @@ class LocalNode:
     """
 
     def __init__(
-        self, mailbox: Mailbox, units=(), cq_depth: int = 16, mover=None
+        self, mailbox: Mailbox, units=(), cq_depth: int = 16, mover=None, memory=None
     ) -> None:
-        self.interp = Interpreter(mailbox, units, cq_depth, mover)
+        self.interp = Interpreter(mailbox, units, cq_depth, mover, memory)
         self.ran: list[tuple[bytes, list]] = []
 
     def run(self, package: bytes, bindings=None) -> Result:

@@ -62,8 +62,10 @@ One L1 `Program` per package:
 2. **Sync from dependences.** A dependence between two items on one unit needs
    nothing (program order). Across units: a `mark` after the producer's
    completing chunk, a `wait(unit, token)` before the consumer's first chunk.
-   A mover item waits for its producers and is a barrier after (a mover step
-   is a barrier on both sides).
+   The mover is one more unit to the node order: a mover item is a `post`
+   after its producers' waits, and only the items that read or overwrite
+   what it touches `wait_moves` for it; other work goes out while it runs.
+   Its cost estimate is its bytes at 30 a cycle.
 3. **Node order.** The node is single-threaded: a wait blocks every step behind
    it. Chunks are sent as early as their waits allow; when nothing can be sent,
    the wait emitted next unblocks the unit the cost estimates let start
