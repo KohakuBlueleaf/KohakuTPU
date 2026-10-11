@@ -1075,6 +1075,58 @@ module vec_cu_tb;
             end
         end
 
+        $display("--- 16. two D4 chains back to back, the second reading the first ---");
+        // Chain A: v3 = ((v0*1)+1)*1+1. Chain B: v5 = -((-(v3+1))+1) = v3, its
+        // later stages naming other ops and constants than A's. B is gathered
+        // while A's last beats are still in stages 1..3, so a stage that took
+        // its control from the sequencer rather than from its beat would run
+        // B's op on A's data. No mode drain between them.
+        s0 = sig_count;
+        put_imem(9'd190, 32'hE8000000);                 // VFILL A0 -> L1 0
+        put_imem(9'd191, I_VBAR);
+        put_imem(9'd192, I_MD_D4);
+        put_imem(9'd193, 32'hA1200000);                 // VLD v0 <- A1
+        put_imem(9'd194, I_CH_MUL0);                    // A: v0*K1
+        put_imem(9'd195, I_CH_ADD1);                    //    +K1
+        put_imem(9'd196, I_CH_MUL2);                    //    *K1
+        put_imem(9'd197, I_CH_ADD1);                    //    +K1 -> v3
+        put_imem(9'd198, 32'h19EA6220);                 // B: v3+K1
+        put_imem(9'd199, 32'h2DEA0400);                 //    *K2
+        put_imem(9'd200, 32'h1DEA0220);                 //    +K1
+        put_imem(9'd201, 32'h2DEA0400);                 //    *K2 -> v5
+        put_imem(9'd202, I_VSETMD);
+        put_imem(9'd203, 32'hA9660000);                 // VST v3 -> A3
+        put_imem(9'd204, 32'hA98A0000);                 // VST v5 -> A4
+        put_imem(9'd205, 32'hF0A00010);                 // VDRAIN A5 from L1 16
+        put_imem(9'd206, I_VHALT);
+        put_desc(3'd3, 3'd0, 34'd16);
+        put_desc(3'd3, 3'd1, {18'd1, 16'd8});
+        put_desc(3'd4, 3'd0, 34'd24);
+        put_desc(3'd4, 3'd1, {18'd1, 16'd8});
+        put_desc(3'd5, 3'd0, 34'd760 << 5);
+        put_desc(3'd5, 3'd1, {18'd32, 16'd16});
+        do_run(9'd190);
+        spin = 0;
+        // 17 imem words + 6 descriptor fields + the run
+        while ((sig_count < s0 + 24) && (spin < 120000)) begin
+            spin = spin + 1;
+            @(negedge clk);
+        end
+        chk(sig_count, s0 + 24, "kernel G retired");
+        chk({31'd0, dbg_fault}, 64'd0, "kernel G must not fault");
+        for (w = 0; w < 16; w = w + 1) begin
+            for (i = 0; i < 16; i = i + 1) begin
+                got16 = dram[760 + w][i*16 +: 16];
+                want16 = f16i((w % 8)*16 + i + 3);
+                if (got16 !== want16) begin
+                    $display("    G word %0d elem %0d: got %04h want %04h",
+                             w, i, got16, want16);
+                end
+                chk({48'd0, got16}, {48'd0, want16},
+                    (w < 8) ? "chain A under a following chain" : "chain B after A");
+            end
+        end
+
         $display("========================================");
         if (errors == 0) begin
             $display("  PASS -- %0d checks, 0 errors", checks);

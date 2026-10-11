@@ -441,6 +441,12 @@ reduction tree:
 true.** Below 16 the tree wastes ALUs; above it the tree needs a fifth level and
 depth-4 chains stop dividing evenly.
 
+A chain's stage T reads its op, selectors and constants T x ALAT cycles after
+the head, when the sequencer has already gathered the next chain's. So each
+stage's control rides a T x ALAT delay line beside its beat (`vec_lanes.v`, "stage
+control", 83 bits a stage), and chains of any ops issue back to back with no mode
+drain between them (`tests/vector/vec_cu_tb.v` section 16 is the witness).
+
 ### 5.1 A chain OR a tree, never both
 
 The hard constraint on every fused reduction. `TREE` spends its sixteen ALUs as 8

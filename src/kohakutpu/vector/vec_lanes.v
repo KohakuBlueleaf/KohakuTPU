@@ -291,6 +291,27 @@ module vec_lanes #(
     end
     endgenerate
 
+    // ================================================== stage control
+    // Stage T of a chain reads its op, selectors and constants when its beat
+    // arrives, T*ALAT after the head, and by then vec_core may hold the next
+    // chain's (its gather rewrites them ~6 cycles after the last issue). So
+    // stage T's control rides a T*ALAT line beside the beat.
+    localparam integer SCW = 5 + 6 + 72;
+    wire [19:0] sx_op;
+    wire [7:0]  sx_sa, sx_sb, sx_sc;
+    wire [95:0] sx_ka, sx_kb, sx_kc;
+    generate
+    for (s = 0; s < 4; s = s + 1) begin : g_stc
+        wire [SCW-1:0] now = {st_op[s*5 +: 5], st_sa[s*2 +: 2], st_sb[s*2 +: 2],
+                              st_sc[s*2 +: 2], st_ka[s*24 +: 24], st_kb[s*24 +: 24],
+                              st_kc[s*24 +: 24]};
+        wire [SCW-1:0] q;
+        vec_delay #(.W(SCW), .D(s*ALAT)) u_d (.clk(clk), .d(now), .q(q));
+        assign {sx_op[s*5 +: 5], sx_sa[s*2 +: 2], sx_sb[s*2 +: 2], sx_sc[s*2 +: 2],
+                sx_ka[s*24 +: 24], sx_kb[s*24 +: 24], sx_kc[s*24 +: 24]} = q;
+    end
+    endgenerate
+
     // ================================================== operand wiring
     wire [383:0] nx_a, nx_b, nx_c;
     wire [79:0]  nx_op;
@@ -303,12 +324,12 @@ module vec_lanes #(
         localparam integer G2 = s / 2, T2 = s % 2;
         localparam integer G4 = s / 4, T4 = s % 4;
 
-        wire [1:0] sa = (mode == M_FLAT) ? st_sa[1:0]
-                      : (mode == M_D2)   ? st_sa[T2*2 +: 2] : st_sa[T4*2 +: 2];
-        wire [1:0] sb = (mode == M_FLAT) ? st_sb[1:0]
-                      : (mode == M_D2)   ? st_sb[T2*2 +: 2] : st_sb[T4*2 +: 2];
-        wire [1:0] sc = (mode == M_FLAT) ? st_sc[1:0]
-                      : (mode == M_D2)   ? st_sc[T2*2 +: 2] : st_sc[T4*2 +: 2];
+        wire [1:0] sa = (mode == M_FLAT) ? sx_sa[1:0]
+                      : (mode == M_D2)   ? sx_sa[T2*2 +: 2] : sx_sa[T4*2 +: 2];
+        wire [1:0] sb = (mode == M_FLAT) ? sx_sb[1:0]
+                      : (mode == M_D2)   ? sx_sb[T2*2 +: 2] : sx_sb[T4*2 +: 2];
+        wire [1:0] sc = (mode == M_FLAT) ? sx_sc[1:0]
+                      : (mode == M_D2)   ? sx_sc[T2*2 +: 2] : sx_sc[T4*2 +: 2];
 
         // ONLY A CHAIN HEAD MAY SOURCE A VECTOR REGISTER (s8 above; vec_core
         // raises F_VSRC otherwise), so an ALU that is never a head in a mode
@@ -331,12 +352,12 @@ module vec_lanes #(
             assign vc = wvc[s*24 +: 24];
         end
 
-        wire [23:0] ka = (mode == M_FLAT) ? st_ka[23:0]
-                       : (mode == M_D2)   ? st_ka[T2*24 +: 24] : st_ka[T4*24 +: 24];
-        wire [23:0] kb = (mode == M_FLAT) ? st_kb[23:0]
-                       : (mode == M_D2)   ? st_kb[T2*24 +: 24] : st_kb[T4*24 +: 24];
-        wire [23:0] kc = (mode == M_FLAT) ? st_kc[23:0]
-                       : (mode == M_D2)   ? st_kc[T2*24 +: 24] : st_kc[T4*24 +: 24];
+        wire [23:0] ka = (mode == M_FLAT) ? sx_ka[23:0]
+                       : (mode == M_D2)   ? sx_ka[T2*24 +: 24] : sx_ka[T4*24 +: 24];
+        wire [23:0] kb = (mode == M_FLAT) ? sx_kb[23:0]
+                       : (mode == M_D2)   ? sx_kb[T2*24 +: 24] : sx_kb[T4*24 +: 24];
+        wire [23:0] kc = (mode == M_FLAT) ? sx_kc[23:0]
+                       : (mode == M_D2)   ? sx_kc[T2*24 +: 24] : sx_kc[T4*24 +: 24];
 
         // Stage 0 of a chain: takes the beat's valid and no chained operand.
         wire head = (mode == M_FLAT) ? 1'b1
@@ -354,9 +375,9 @@ module vec_lanes #(
         assign nx_a[s*24 +: 24] = (sa == SRC_V) ? va : (sa == SRC_C) ? chain : ka;
         assign nx_b[s*24 +: 24] = (sb == SRC_V) ? vb : (sb == SRC_C) ? chain : kb;
         assign nx_c[s*24 +: 24] = (sc == SRC_V) ? vc : (sc == SRC_C) ? chain : kc;
-        assign nx_op[s*5 +: 5]  = (mode == M_FLAT) ? st_op[4:0]
-                                : (mode == M_D2)   ? st_op[T2*5 +: 5]
-                                                   : st_op[T4*5 +: 5];
+        assign nx_op[s*5 +: 5]  = (mode == M_FLAT) ? sx_op[4:0]
+                                : (mode == M_D2)   ? sx_op[T2*5 +: 5]
+                                                   : sx_op[T4*5 +: 5];
         assign nx_iv[s] = head ? d_valid : upv;
     end
     endgenerate
