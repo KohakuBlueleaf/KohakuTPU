@@ -7,15 +7,20 @@ read back.
     card.get(a, nbytes)
     card.close()                        # each vector core's counters
 
+    card = VerilatorCard(build, nodes=(0, 1))
+    got = card.run({0: p0, 1: p1})      # one package a node, all submitted first
+
 `cycles` is the package's own count (node clock); with `steps=True` the
 firmware prints each step's end (KA_BOOT_F_STEPS), prints excluded. The
 machine programs are built for must be the card's: the enumerated units are
-checked against it at boot.
+checked against it at boot. The nodes share DRAM (the Xache); each node's
+queue sits in its own staging store.
 """
 
 import json
 import pathlib
 import re
+import tempfile
 
 import numpy as np
 from kohakuaccel.compiler.machine import STAGE_BYTES
@@ -52,52 +57,82 @@ class VerilatorCard:
         steps=False,
         machine=None,
         log=None,
+        nodes=(0,),
+        timeout: float = 300.0,
     ) -> None:
         self.build = pathlib.Path(build)
-        self.machine = machine or T.machine()
+        self.nodes = tuple(nodes)
+        #: Wall seconds a package may take before its wait raises.
+        self.timeout = timeout
+        self.machine = machine or T.machine(
+            nodes=max(self.nodes) + 1 if len(self.nodes) > 1 else None
+        )
         fw = pathlib.Path(fw or ROOT / "build/fw/kohakutpu_node.elf")
         b = load_board(board)
         mp = board_map(b)
         #: The memory port a fetched dispatch reads through, from the board.
         self.fetch = tuple(b["fetch_port"]) if "fetch_port" in b else None
+        # A log of its own: cards run in parallel on one build.
+        log = log or pathlib.Path(tempfile.mkdtemp(prefix="ktpu_card_")) / "model.log"
         self.t = VerilatorTransport(self.build, log=log)
         self.host = SimDram(self.t, b, mp["mem"], mp["size"])
         card = Card.from_board(
-            board, transport=self.host, which=[0], verify=False, reply_at_agent=True
+            board,
+            transport=self.host,
+            which=list(self.nodes),
+            verify=False,
+            reply_at_agent=True,
         )
-        self.check_units(card.mesh)
+        for mesh in card.meshes:
+            self.check_units(mesh)
         self.mem = UnitGlobal(
             self.host, mp["dram"], mp["mem"], mp["size"], staging=True
         )
-        staging = self.machine.stage_addr(0)
-        self.q = NodeQueue(
-            self.mem,
-            staging,
-            size=Q_SIZE,
-            idle=lambda: self.t.run(600),
-            spill=lambda n: self.alloc(n),
-        )
-        self.q.init()
         flags = F_TIMING | (F_STEPS if steps else 0)
-        args = BootArgs(
-            queue=self.q.base, mesh=0, scan=card.mesh.caps.grid_hi + 1, flags=flags
-        )
-        NodeBoot(self.t, mp["ctrl"][0], 0, sim=self.t).load(fw, args, "burn")
-        self.q.wait_ready()
+        #: node -> its queue, in its own staging store
+        self.queues = {}
+        for mesh in card.meshes:
+            i = mesh.index
+            q = NodeQueue(
+                self.mem,
+                self.machine.stage_addr(0, mesh=i),
+                size=Q_SIZE,
+                idle=lambda: self.t.run(600),
+                spill=lambda n: self.alloc(n),
+            )
+            q.init()
+            args = BootArgs(
+                queue=q.base, mesh=i, scan=mesh.caps.grid_hi + 1, flags=flags
+            )
+            NodeBoot(self.t, mp["ctrl"][i], i, sim=self.t).load(fw, args, "burn")
+            self.queues[i] = q
+        for q in self.queues.values():
+            q.wait_ready()
+        self.q = self.queues[self.nodes[0]]
         self.top = ARENA
-        self.stage_top, self.stage_end = staging + Q_SIZE, staging + STAGE_BYTES
+        #: node -> (next free, end) of its staging store past its queue
+        self.stages = {
+            n: (
+                self.machine.stage_addr(0, mesh=n) + Q_SIZE,
+                self.machine.stage_addr(0, mesh=n) + STAGE_BYTES,
+            )
+            for n in self.queues
+        }
         self.runs = 0
-        #: Each vector core's instruction memory and descriptors, across packages.
-        self.resident = imem.Cores(imem.IMEM_WORDS)
+        #: Each node's vector cores' instruction memory and descriptors.
+        self.residents = {i: imem.Cores(imem.IMEM_WORDS) for i in self.queues}
+        self.resident = self.residents[self.nodes[0]]
 
     def check_units(self, mesh) -> None:
-        """Raise :class:`CardMismatch` unless mesh 0's units are the machine's."""
-        for kind, want in self.machine.units.items():
+        """Raise :class:`CardMismatch` unless the mesh's units are the machine's.
+        Programs name units by coordinate, so the scan order does not matter."""
+        for kind, want in self.machine.mesh(mesh.index).units.items():
             got = mesh.coords(kind)
-            if tuple(got) != tuple(want):
+            if sorted(got) != sorted(want):
                 raise CardMismatch(
-                    f"the card's {kind} units are {list(got)}, the machine's "
-                    f"{list(want)}: a program built for one runs wrong on the other"
+                    f"mesh {mesh.index}'s {kind} units are {list(got)}, the "
+                    f"machine's {list(want)}: a program built for one runs wrong "
+                    f"on the other"
                 )
 
     # ---------------------------------------------------------- memory
@@ -108,21 +143,34 @@ class VerilatorCard:
         self.top = at + nbytes
         return at
 
-    def stage(self, nbytes: int, align: int = 256) -> int:
-        """`nbytes` of the MAG staging store, past the queue."""
-        at = -(-self.stage_top // align) * align
-        if at + nbytes > self.stage_end:
-            raise MemoryError(f"{nbytes} B past staging ({self.stage_end - at} left)")
-        self.stage_top = at + nbytes
+    def mark(self) -> tuple:
+        """Where the arena and every staging store are filled to; `release`
+        returns them there, freeing everything placed since."""
+        return self.top, dict(self.stages)
+
+    def release(self, mark: tuple) -> None:
+        self.top, self.stages = mark[0], dict(mark[1])
+
+    def stage(self, nbytes: int, align: int = 256, node: int | None = None) -> int:
+        """`nbytes` of a node's MAG staging store (the card's first by
+        default), past its queue."""
+        n = self.nodes[0] if node is None else node
+        top, end = self.stages[n]
+        at = -(-top // align) * align
+        if at + nbytes > end:
+            raise MemoryError(f"{nbytes} B past node {n}'s staging ({end - at} left)")
+        self.stages[n] = (at + nbytes, end)
         return at
 
-    def place(self, nbytes: int, space: str = "dram") -> int:
-        """`nbytes` in DRAM or, for ``space == "stage"``, in staging."""
-        return self.stage(nbytes) if space == "stage" else self.alloc(nbytes)
+    def place(self, nbytes: int, space: str = "dram", node: int | None = None) -> int:
+        """`nbytes` in DRAM or, for ``space == "stage"``, in a node's staging."""
+        if space == "stage":
+            return self.stage(nbytes, node=node)
+        return self.alloc(nbytes)
 
-    def put(self, array, space: str = "dram") -> int:
+    def put(self, array, space: str = "dram", node: int | None = None) -> int:
         raw = np.ascontiguousarray(array).tobytes()
-        at = self.place(len(raw), space)
+        at = self.place(len(raw), space, node)
         self.mem.write_block(at, raw)
         return at
 
@@ -134,11 +182,30 @@ class VerilatorCard:
 
     # ------------------------------------------------------------- run
     def run(self, program) -> dict:
-        """Run `program` once: ``{"cycles", "steps", "phases", "pkg"}``."""
+        """Run `program` once: ``{"cycles", "steps", "phases", "pkg"}``. Given
+        ``{node: Program}`` (None for this card's first node), every node's
+        package is submitted before any is waited on; the result is per node
+        under ``"nodes"`` and ``"cycles"`` is the longest."""
+        if isinstance(program, dict):
+            progs = {self.nodes[0] if n is None else n: p for n, p in program.items()}
+            tags = {}
+            for n, p in progs.items():
+                pkg, bindings = B.package(p, self.fetch, self.residents[n])
+                tags[n] = (self.queues[n].submit(pkg.to_bytes(), bindings), pkg)
+            out = {}
+            for n, (tag, pkg) in tags.items():
+                done = self.queues[n].wait(tag, timeout=self.timeout)
+                out[n] = self._result(self.queues[n], done, pkg)
+            self.runs += 1
+            return {"cycles": max(r["cycles"] for r in out.values()), "nodes": out}
         pkg, bindings = B.package(program, self.fetch, self.resident)
-        done = self.q.run(pkg.to_bytes(), bindings)
+        done = self.q.run(pkg.to_bytes(), bindings, timeout=self.timeout)
+        self.runs += 1
+        return self._result(self.q, done, pkg)
+
+    def _result(self, q, done, pkg) -> dict:
         steps, phases = [], {}
-        for ln in self.q.read_stdout().splitlines():
+        for ln in q.read_stdout().splitlines():
             if ln.startswith("PKGT "):
                 words = ln.split()[1:]
                 phases = {
@@ -152,25 +219,27 @@ class VerilatorCard:
                     for s in pkg.steps[first : last + 1]
                 ]
                 steps.append((first, last, at, ", ".join(what)))
-        self.runs += 1
         return {"cycles": done.cycles, "steps": steps, "phases": phases, "pkg": pkg}
 
     def close(self) -> dict:
         """Stop the model; each vector core's counters from its log."""
-        self.q.stop()
+        for q in self.queues.values():
+            q.stop()
         self.t.close()
         return counters(self.t.model_log)
 
 
 def counters(log: pathlib.Path) -> dict:
-    """Per vector core: the VRES totals and the V2MATH issue breakdown that
+    """Per vector core, keyed ``DIE.CORE`` (the instance holding the mesh, then
+    the core's): the VRES totals and the V2MATH issue breakdown that
     `v2_core.v` prints at the end of simulation."""
     out: dict = {}
     for ln in log.read_text(encoding="utf-8", errors="replace").splitlines():
         m = re.match(r"(VRES|V2MATH) (\S+) (.*)", ln)
         if not m:
             continue
-        core = m[2].split(".u_mesh0.")[-1].split(".")[0]
+        die, _, inner = m[2].partition(".u_mesh0.")
+        core = f"{die.rsplit('.', 1)[-1]}.{inner.split('.')[0]}"
         rest = m[3].split()
         fields = {rest[i]: int(rest[i + 1]) for i in range(0, len(rest) - 1, 2)}
         out.setdefault(core, {})["vres" if m[1] == "VRES" else "math"] = fields

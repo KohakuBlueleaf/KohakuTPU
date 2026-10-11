@@ -4,8 +4,8 @@ before a card run. The replay memory is 128 KB and answers one word every
 memwait + 1 cycles with no round-trip latency, so a card run still gates
 memory effects.
 
-    python -m kohakutpu.application.tools.core softmax softmax_pipe passes=4 \
-        x=in:16384 y=out:16384 [--memwait 1]
+    python -m kohakutpu.application.tools.core softmax softmax_rows rows=64 \
+        x=in:8192 y=out:8192 [--memwait 1]
 
 Each image parameter is an integer or a buffer: `in:N` (N seeded-random fp16)
 or `out:N` (N fp16, zeroed). Prints busy cycles, lane use and every engine's
@@ -23,7 +23,7 @@ import sys
 import numpy as np
 from kohakutpu.compiler.emit import image as vector
 from kohakutpu.compiler.encode import vector as A
-from kohakutpu.language import kernels as ktpu
+from kohakutpu.language import examples
 from kohakutpu.simulation.verilator import replay as bench
 
 MASK = (1 << 256) - 1
@@ -32,7 +32,7 @@ MASK = (1 << 256) - 1
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument(
-        "kernel", help="a kernel name under language/kernels, or a .ktpu path"
+        "kernel", help="an example name under language/examples, or a .ktpu path"
     )
     ap.add_argument("image")
     ap.add_argument("params", nargs="*", help="NAME=INT | NAME=in:N | NAME=out:N")
@@ -42,7 +42,7 @@ def main() -> int:
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
     path = pathlib.Path(a.kernel)
-    m = ktpu.load(path if path.suffix == ".ktpu" else ktpu.kernel(a.kernel))
+    m = examples.load(path if path.suffix == ".ktpu" else examples.example(a.kernel))
     given = dict(p.split("=", 1) for p in a.params)
     rng = np.random.default_rng(a.seed)
     mem = bytearray(bench.WORDS * 32)
