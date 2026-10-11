@@ -1,0 +1,368 @@
+# Flash attention with S on the direct path: ten heads of 1024 queries x 1024
+# keys, d = 64, in base 2 (q arrives scaled by log2(e) / sqrt(d)).
+#
+# Scores: mg[2h] holds key half h of the head (B, nk = 2) and streams every
+# 4-row sub-row of S (4 x 512 keys, 128 granules) with one load-and-emit sweep
+# (gemm 1x128x2) into vc[h]'s L1, a ring of two sub-rows (slots 0 / 128) under
+# credits; one extra sub-row closes the stream, and four 32-granule drains into
+# l1[288] spend the ring's last 128 credits, so every run starts with none.
+#
+# vc[h], RUN t (32 rows = 8 sub-rows): sub-row s's offset I = round(max of its
+# first 16 keys) + 4 (reduced during sub-row s - 1), P = 2^(S - I) packed MX7
+# a block (4 rows x 128 keys) at a time into four 16-granule slots and drained
+# to mg[1 + 2h]'s L1 A. A block's slot goes back to the scores cluster two
+# blocks at a time. Block 0 of the next sub-row is unpacked during block 3.
+# With comb, RUN t also writes y of rows 16h.. of tile t - 5 from O, l and I
+# (O in two 16-granule slots fetched two sub-rows ahead; the next RUN's first
+# two and its l / I fetched by this RUN, the next RUN's weights at this RUN's
+# tail).
+#
+# L1: S 0..255, O slots 256..287, credit sink 288..319, P 384..447, l and I 448..479, I words
+# 480..487, next RUN's first I 488, y 496..503.
+target ktpu.v9
+
+image flash_d(pg, h, comb, pf, oa, li, ya, io, oc)
+    desc a2 = pg walk=(32, 16)
+    desc a6 = io walk=(32, 8)
+    when pf == 1
+        desc a3 = oa walk=((32, 8), (4K, 2), (256, 2))
+        desc a5 = li walk=((32, 8), (256, 4))
+    when comb == 1
+        desc a4 = oc walk=((32, 8), (4K, 2))
+        desc a7 = ya walk=(32, 8)
+        ainc a7 += 256
+        ainc a4 += 256
+    ainc a2 += 16
+    seti k3 = 49156.0
+    seti s3 = 49152.0
+    seti s10 = comb
+    seti s13 = pf
+    vsync unpack on=pack
+    vsync unpack on=fill
+    vunpk v27 <- l1[488] f16 n=1
+    skipz s13
+        vsync fill on=unpack
+        vfill a5 -> l1[448]
+    uptr 256
+    uinc 8
+    pptr 480
+    pinc 1
+    seti s5 = 4
+    loop s5
+        expand sub(0, h)
+        expand sub(1, h)
+    vpack v27 -> l1[488] f16 n=1
+    skipz s13
+        vsync unpack on=fill
+        expand csetup(h)
+    skipz s13
+        vsync fill on=unpack
+        vfill a3 -> l1[256]
+    vsync drain on=pack
+    vdrain a6 <- l1[480]
+    vsync fe on=drain
+    halt
+
+# Sub-row parity p (S slot 128p): its I into v28 and out as a word, then its
+# four blocks.
+macro sub(p, h)
+    vmov v28, v27 vl=16
+    vpack v28 -> l1[0] f16 rel n=1
+    for j in 0..4
+        expand blk(j, p, h)
+
+# Block j: the combine's part, block j + 1 unpacked (block 0 of the next
+# sub-row after block 3), the next sub-row's first 16 keys for its I, the 32
+# EXP2Ds (GT4 chunk 4q + r to quantiser chunk 2r + q, I of row r by the
+# crossbar), the MX7 packs and the drain of the block's P.
+macro blk(j, p, h)
+    when j == 1
+        skipz s10
+            vunpk v24 <- l1[256 + 16*p] f16
+            vunpk v25 <- l1[264 + 16*p] f16
+            vsync fill on=unpack
+            vfill a4 -> l1[256 + 16*p] rel
+    when j == 2
+        skipz s10
+            vmul v30, v24, v26[0]
+    when j == 3
+        skipz s10
+            vfma v31, v25, v29[0], v30
+            vpack v31 -> l1[496] f16
+            vmov v26, v26[1:] vl=112
+            vmov v29, v29[1:] vl=112
+            vsync drain on=pack
+            vdrain a7 <- l1[496] rel
+    when j < 3
+        for r in 0..4
+            vunpk v{4*((j + 1) % 2) + r} <- l1[128*p + 32*(j + 1) + 8*r] gt4
+        when j % 2 == 0
+            vsync drain on=unpack
+            vpost mg[2*h] n=64
+    when j == 3
+        for r in 0..4
+            vunpk v{r} <- l1[128 - 128*p + 8*r] gt4
+    when j == 0
+        vwait unpack rx n=128
+        vunpk v16 <- l1[128 - 128*p] gt4 n=4
+    for g in 0..8
+        for r in 0..4
+            vexp2d v{8 + 4*(j % 2) + r}[g:], v{4*(j % 2) + r}[g/2 + 4*(g % 2):], bcast(v28[0], lane=4*(g/2), sh=0) vl=16
+        when g == 0
+            expand ired(j)
+        when g == 4
+            expand ired2(j)
+    vsync pack on=drain slack=5
+    for r in 0..4
+        vpack v{8 + 4*(j % 2) + r} -> l1[384 + 16*j + 4*r] mx7a
+    vsync drain on=pack
+    vdrain a2 <- l1[384 + 16*j] rel to=mg[1 + 2*h] buf=0
+
+# The next sub-row's I in v16: row max over 16 keys into lanes 4r..4r+3 of
+# chunk 0, + 4, rounded (k3 = 1.5 * 2^15 + 4), to v27.
+macro ired(j)
+    when j == 0
+        vmax v16, v16, merge(v16, 1) vl=64
+    when j == 1
+        vmax v16, v16, merge(v16, 2) vl=64
+    when j == 2
+        vmax v16, v16, merge(v16[2:], 8) vl=32
+    when j == 3
+        vadd v16, v16, k3 vl=16
+
+macro ired2(j)
+    when j == 2
+        vmax v16, v16, merge(v16[1:], 4) vl=16
+    when j == 3
+        vsub v27, v16, s3 vl=16
+
+# The combine's weights: w_h = 2^(I_h - max I) / (l_a 2^(I_a - max I) + l_b
+# 2^(I_b - max I)) from l and I at l1[448]; half sub-row k's in chunk k of v26
+# (w_a) and v29 (w_b).
+macro csetup(h)
+    vunpk v20 <- l1[448] f16
+    vunpk v21 <- l1[456] f16
+    vunpk v24 <- l1[464] f16
+    vunpk v25 <- l1[472] f16
+    vmax v16, v24, v25
+    vexp2d v24, v24, v16
+    vexp2d v25, v25, v16
+    vmul v20, v20, v24
+    vfma v21, v21, v25, v20
+    vinv v21, v21
+    vmul v22, v24, v21
+    vmul v23, v25, v21
+    for i in 0..4
+        vmov v26[2*i:], v22[4*h + i:] vl=16
+        vmov v29[2*i:], v23[4*h + i:] vl=16
+        vmov v26[2*i + 1:], v22[4*h + i:] vl=16
+        vmov v29[2*i + 1:], v23[4*h + i:] vl=16
+
+# Warm-up: the ring's credits, sub-row 0's I to l1[488] and its block 0.
+image flash_w(h)
+    seti k3 = 49156.0
+    seti s3 = 49152.0
+    vpost mg[2*h] n=256
+    vwait unpack rx n=128
+    vunpk v16 <- l1[0] gt4 n=4
+    vmax v16, v16, merge(v16, 1) vl=64
+    vmax v16, v16, merge(v16, 2) vl=64
+    vmax v16, v16, merge(v16[2:], 8) vl=32
+    vmax v16, v16, merge(v16[1:], 4) vl=16
+    vadd v16, v16, k3 vl=16
+    vsub v27, v16, s3 vl=16
+    for r in 0..4
+        vunpk v{r} <- l1[8*r] gt4
+    vpack v27 -> l1[488] f16 n=1
+    vsync drain on=pack
+    vsync fe on=drain
+    halt
+
+# The combine alone (the last five tiles).
+image flash_y(h, oa, li, ya)
+    desc a4 = oa walk=((32, 8), (4K, 2), (256, 2), (512, 4))
+    desc a5 = li walk=((32, 8), (256, 4))
+    desc a7 = ya walk=(32, 64)
+    vfill a4 -> l1[128]
+    vfill a5 -> l1[320]
+    vsync unpack on=fill
+    vunpk v20 <- l1[320] f16
+    vunpk v21 <- l1[328] f16
+    vunpk v24 <- l1[336] f16
+    vunpk v25 <- l1[344] f16
+    vmax v16, v24, v25
+    vexp2d v24, v24, v16
+    vexp2d v25, v25, v16
+    vmul v20, v20, v24
+    vfma v21, v21, v25, v20
+    vinv v21, v21
+    vmul v22, v24, v21
+    vmul v23, v25, v21
+    for i in 0..4
+        vmov v26[2*i:], v22[4*h + i:] vl=16
+        vmov v29[2*i:], v23[4*h + i:] vl=16
+        vmov v26[2*i + 1:], v22[4*h + i:] vl=16
+        vmov v29[2*i + 1:], v23[4*h + i:] vl=16
+    uptr 128
+    uinc 8
+    pptr 384
+    pinc 8
+    seti s6 = 8
+    loop s6
+        vunpk v24 <- l1[0] f16 rel
+        vunpk v25 <- l1[0] f16 rel
+        vmul v30, v24, v26[0]
+        vfma v31, v25, v29[0], v30
+        vpack v31 -> l1[0] f16 rel
+        vmov v26, v26[1:] vl=112
+        vmov v29, v29[1:] vl=112
+    vsync drain on=pack
+    vdrain a7 <- l1[384]
+    vsync fe on=drain
+    halt
+
+# MXFP7 ones (B packing) into the P V clusters' L1 B1, entries 0..15: the
+# l columns of P V.
+image flash_ones()
+    desc a0 = 1024 walk=(32, 64)
+    desc a1 = 1024 walk=(32, 64)
+    vmul v30, k1, k1
+    for e in 0..16
+        vpack v30 -> l1[4*e] mx7b
+    vsync drain on=pack
+    vdrain a0 <- l1[0] to=mg[1] buf=1
+    vdrain a1 <- l1[0] to=mg[3] buf=1
+    vsync fe on=drain
+    halt
+
+# Sub-row g (of ns) of vc[h]'s S on mg[2h]: the previous sub-row's barrier,
+# the sweep that emits g, the next q block at a block's first sub-row, the
+# next head's keys at a head's first.
+macro srow(g, h, ns, nh)
+    when g > 0
+        drain n=128 to=vc[h] l1=128*((g - 1) % 2) fused count credit
+    gemm 1x128x2 a=A{(g/32) % 2} aoff=2*(g % 32) b=B{(g/256) % 2} emit to=vc[h] l1=128*(g % 2) count credit
+    when g % 32 == 0
+        when g/32 + 1 < ns/32
+            fill A{(g/32 + 1) % 2} <- q + (g/32 + 1)*8K n=64
+    when g % 256 == 0
+        when g/256 + 1 < nh
+            fill B{(g/256 + 1) % 2} <- k + (g/256 + 1)*64K + h*32K n=128
+            fill B{(g/256 + 1) % 2} <- k + (g/256 + 1)*64K + h*32K + 16K n=128 at=128
+
+# Tile T's eight sub-rows on both scores clusters (the first loads head 0's
+# keys and q block 0; the last adds the closing sub-row and spends the last
+# credits).
+macro scores(T, nt, nh)
+    for h in 0..2
+        send mg[2*h]
+            when T == 0
+                fill B0 <- k + h*32K n=128
+                fill B0 <- k + h*32K + 16K n=128 at=128
+                fill A0 <- q n=64
+            for g in 8*T..8*T + 8
+                expand srow(g, h, 8*nt, nh)
+            when T == nt - 1
+                drain n=128 to=vc[h] l1=128*((8*nt - 1) % 2) fused count credit
+                gemm 1x128x2 a=A{((8*nt - 1)/32) % 2} b=B{((8*nt - 1)/256) % 2} emit to=vc[h] l1=128*((8*nt) % 2) count credit
+                drain n=128 to=vc[h] l1=128*((8*nt) % 2) fused count credit
+                for i in 0..4
+                    drain n=32 to=vc[h] l1=288 credit
+
+# P V of 32-row tile t on mg1 / mg3: O (emitted, its drain fused) and l
+# partials into the staging rings o and li (eight tiles each).
+macro pv(t)
+    for kh in 0..2
+        send mg[1 + 2*kh]
+            gemm 8x16x16 a=A{t % 2} aoff=128*((t/2) % 2) b=B0 emit=o + (2*(t % 8) + kh)*4K
+            drain o + (2*(t % 8) + kh)*4K n=128 fused
+            gemm 8x1x16 a=A{t % 2} aoff=128*((t/2) % 2) b=B1
+            drain li + (t % 8)*1K + kh*256 n=8
+    pa{t} = mark mg[1]
+    pb{t} = mark mg[3]
+
+# Head H's v^T halves into mg1 / mg3's B0.
+macro vload(H)
+    for kh in 0..2
+        send mg[1 + 2*kh]
+            fill B0 <- v + (2*H + kh)*32K n=128
+            fill B0 <- v + (2*H + kh)*32K + 16K n=128 at=128
+    va{H} = mark mg[1]
+    vb{H} = mark mg[3]
+    wait mg[1] upto=va{H}
+    wait mg[3] upto=vb{H}
+
+# A head's last tile t: its O sweep, head H's v^T behind it, then its l.
+macro pvv(t, H)
+    for kh in 0..2
+        send mg[1 + 2*kh]
+            gemm 8x16x16 a=A{t % 2} aoff=128*((t/2) % 2) b=B0 emit=o + (2*(t % 8) + kh)*4K
+            drain o + (2*(t % 8) + kh)*4K n=128 fused
+            fill B0 <- v + (2*H + kh)*32K n=128
+            fill B0 <- v + (2*H + kh)*32K + 16K n=128 at=128
+    va{H} = mark mg[1]
+    vb{H} = mark mg[3]
+    for kh in 0..2
+        send mg[1 + 2*kh]
+            gemm 8x1x16 a=A{t % 2} aoff=128*((t/2) % 2) b=B1
+            drain li + (t % 8)*1K + kh*256 n=8
+    pa{t} = mark mg[1]
+    pb{t} = mark mg[3]
+
+# Tile t's RUN on both cores: P slot pg, the combine of tile t - 5 (from t =
+# 5), the prefetch for the next RUN (from t = 4).
+macro runt(t)
+    when t > 3
+        wait mg[1] upto=pa{t - 4}
+        wait mg[3] upto=pb{t - 4}
+    for h in 0..2
+        send vc[h]
+            when t < 4
+                run flash_d(1024*(t % 2) + 512*((t/2) % 2), h, 0, 0, 0, 0, 0, li + (t % 8)*1K + 512 + h*256, 0)
+            when t == 4
+                run flash_d(1024*(t % 2) + 512*((t/2) % 2), h, 0, 1, o + 2*((t + 4) % 8)*4K + h*2K, li + ((t + 4) % 8)*1K, 0, li + (t % 8)*1K + 512 + h*256, 0)
+            when t > 4
+                run flash_d(1024*(t % 2) + 512*((t/2) % 2), h, 1, 1, o + 2*((t + 4) % 8)*4K + h*2K, li + ((t + 4) % 8)*1K, y + (t - 5)*4K + h*2K, li + (t % 8)*1K + 512 + h*256, o + 2*((t + 3) % 8)*4K + h*2K + 512)
+    fa{t} = mark vc[0]
+    fb{t} = mark vc[1]
+
+# Tile t - 1's P V once both cores' RUNs are done; at a head's first tile t,
+# with head t/32's v^T.
+macro after(t, nt)
+    wait vc[0] upto=fa{t - 1}
+    wait vc[1] upto=fb{t - 1}
+    when t % 32 == 0
+        when t < nt
+            expand pvv(t - 1, t/32)
+            wait mg[1] upto=va{t/32}
+            wait mg[3] upto=vb{t/32}
+        when t == nt
+            expand pv(t - 1)
+    when t % 32 > 0
+        expand pv(t - 1)
+
+fn flashd.l1(q: mx7a[10240, 64] @dram(gm=32, nk=2), k: mx7b[10240, 64] @dram(gn=128, nk=2), v: mx7b[64, 10240] @dram(gn=16, nk=16, t=1), y: f16[10240, 64] @dram(tile=8x16), o: f16[512, 64] @stage(tile=8x16), li: f16[128, 64] @stage(tile=8x16))
+    # 10 heads: 320 tiles of 32 rows, 2,560 sub-rows a core.
+    send vc[0]
+        run flash_ones()
+    wait vc[0]
+    expand vload(0)
+    for T in 0..4
+        expand scores(T, 320, 10)
+    for h in 0..2
+        send vc[h]
+            run flash_w(h)
+    for t in 0..321
+        when t > 0
+            expand after(t, 320)
+        when t < 320
+            when t < 316
+                expand scores(t + 4, 320, 10)
+            expand runt(t)
+    for t in 315..320
+        wait mg[1] upto=pa{t}
+        wait mg[3] upto=pb{t}
+        for h in 0..2
+            send vc[h]
+                run flash_y(h, o + 2*(t % 8)*4K + h*2K, li + (t % 8)*1K, y + t*4K + h*2K)
+    barrier

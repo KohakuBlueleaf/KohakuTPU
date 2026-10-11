@@ -204,6 +204,29 @@ def leaky_case():
     return make, check, ("lane", None)
 
 
+def attention_case(heads, length=1024, d=64):
+    """`heads` heads of base-2 attention, q and k at network-init magnitudes."""
+
+    def make(rng):
+        q = (rng.standard_normal((heads * length, d)) * 0.5).astype(np.float16)
+        k = (rng.standard_normal((heads * length, d)) * 0.6).astype(np.float16)
+        v = rng.standard_normal((heads * length, d)).astype(np.float16)
+        return {"q": q, "k": k, "v": v}, {"q": q, "k": k, "v": v}
+
+    def check(r, o):
+        err, peak = 0.0, 0.0
+        for h in range(heads):
+            sl = slice(h * length, (h + 1) * length)
+            s = value_fp16(r["q"][sl]) @ value_fp16(r["k"][sl]).T
+            p = np.exp2(s - s.max(1, keepdims=True))
+            want = (p / p.sum(1, keepdims=True)) @ r["v"][sl].astype(np.float64)
+            err = max(err, float(np.abs(o["y"][sl] - want).max()))
+            peak = max(peak, float(np.abs(want).max()))
+        return err / peak
+
+    return make, check, ("mac", 2 * heads * length * length * d)
+
+
 #: (example, levels, nodes, case): a case is (make inputs, check, work).
 CASES = [
     ("matmul", ("l1", "l2"), 1, matmul_case(1024, 1024, 1024)),
@@ -221,6 +244,8 @@ CASES = [
     ("lazysoftmax", ("l2",), 1, softmax_case()),
     ("leaky", ("l2",), 1, leaky_case()),
     ("layernorm", ("l1", "l2"), 1, layernorm_case()),
+    ("flash", ("l1",), 1, attention_case(10)),
+    ("flashd", ("l1",), 1, attention_case(10)),
     ("matmul2", ("l1", "l2"), 2, matmul_case(1024, 2048, 2048)),
     ("share2", ("l2",), 2, matmul_case(256, 2048, 512)),
     ("silu2", ("l1", "l2"), 2, silu_case(1024)),
