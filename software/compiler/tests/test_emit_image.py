@@ -176,6 +176,10 @@ image k()
     halt
 """)
     assert w == [
+        # The increment outlives a RUN: a `rel` transfer of an image that
+        # sets none steps by 0, not by what an earlier image left.
+        A.ainc(0, 0),
+        A.ainc(2, 0),
         A.cfg_stride(A.CFG_USTR, 1, 4),
         A.vunpk(4, 96, 2, A.F16, 2, rel=True),
         A.cfg_stride(A.CFG_USTR, 1, 16),
@@ -188,6 +192,20 @@ image k()
         A.vmark(5, A.K_PACK1, 1),
         A.vhalt(),
     ]
+
+
+def test_rel_keeps_a_stated_ainc():
+    w = image("""
+image k()
+    ainc a1 += 512
+    seti s0 = 4
+    loop s0
+        vfill a1 -> l1[0] rel
+        vfill a1 -> l1[64] rel
+    halt
+""")
+    assert w[0] == A.ainc(1, 512)
+    assert A.ainc(1, 0) not in w
 
 
 @pytest.mark.parametrize(

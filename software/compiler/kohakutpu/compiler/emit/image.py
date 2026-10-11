@@ -104,7 +104,7 @@ class Encoder:
 
     def encode(self, stmts: list) -> list:
         words, _ = self.block(stmts, self.entry)
-        return words
+        return [A.ainc(ad, 0) for ad in self._stale(stmts)] + words
 
     # ------------------------------------------------------------ blocks
     def block(self, stmts: list, state: State, depth: int = 0) -> tuple:
@@ -142,6 +142,25 @@ class Encoder:
         if op == "setvl":
             return got, replace(state, vl=None)
         return got, state
+
+    def _stale(self, stmts, done=None, out=None) -> list:
+        """Descriptors a `rel` transfer steps before the image's own `ainc`
+        sets them, in program order: their increment is whatever an earlier
+        image left (a RUN restarts the running offsets, not the increments)."""
+        done = set() if done is None else done
+        out = [] if out is None else out
+        for st in stmts:
+            if st.op == "ainc":
+                (a,) = st.args or [None]
+                if isinstance(a, AddAssign):
+                    done.add(self._numbered(st, a.lhs, "a", 8))
+            elif st.op in ("vfill", "vdrain"):
+                ad, _, flags = self._dma(st, "->" if st.op == "vfill" else "<-", ("signal",))
+                if "rel" in flags and ad not in done and ad not in out:
+                    out.append(ad)
+            if st.body:
+                self._stale(st.body, done, out)
+        return out
 
     def loop(self, st, state: State, depth: int) -> tuple:
         sreg = self._sreg(st, self._one(st, "loop sN"))
