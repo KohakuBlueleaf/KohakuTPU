@@ -131,6 +131,7 @@ module rv64_mag_pe #(
     wire [7:0]  pe_cfg_addr;
     wire [63:0] pe_cfg_data;
     wire [3:0]  xf_fault;
+    wire        mv_room;
     wire        xf_cfg_en;
     wire [7:0]  xf_cfg_id, xf_cfg_addr;
     wire [63:0] xf_cfg_data;
@@ -160,6 +161,7 @@ module rv64_mag_pe #(
         .mv_cfg_en(pe_cfg_en), .mv_cfg_addr(pe_cfg_addr),
         .mv_cfg_data(pe_cfg_data),
         .mv_busy(mv_busy), .mv_fault(mv_fault), .mv_done(mv_done),
+        .mv_room(mv_room), .xf_rdata(xf_rdata),
         .db_en(db_en), .db_addr(db_addr), .db_data(db_data),
         .db_status(db_status), .db_sig(db_sig),
         .xf_cfg_en(xf_cfg_en), .xf_cfg_id(xf_cfg_id),
@@ -178,11 +180,14 @@ module rv64_mag_pe #(
     wire [7:0]  cfg_addr_i    = pe_cfg_en ? pe_cfg_addr : aux_cfg_addr;
     wire [63:0] cfg_data_i    = pe_cfg_en ? pe_cfg_data : aux_cfg_data;
 
-    // ---- the transform slot, on the mover's read-return path ---------------
+    // ---- the transform slot, between the mover's FIFO and its writes --------
     wire                x_req, x_gnt, x_start, x_bv, x_done;
-    wire [XID_W-1:0]    x_id;
+    wire [XID_W-1:0]    x_id, x_gid;
     wire [XMODE_W-1:0]  x_mode;
     wire [DATA_W-1:0]   x_beat, x_w0, x_w1, x_w2, x_w3;
+    wire [3:0]          x_geo_beats;
+    wire [2:0]          x_geo_depth;
+    wire [31:0]         xf_rdata;
 
     mm_mover #(.DATA_W(DATA_W), .ADDR_W(ADDR_W), .ID_W(ID_W),
                .XID_W(XID_W), .XMODE_W(XMODE_W),
@@ -191,6 +196,7 @@ module rv64_mag_pe #(
         .clk(clk), .resetn(resetn),
         .cfg_en(cfg_en_i), .cfg_addr(cfg_addr_i), .cfg_data(cfg_data_i),
         .stat_busy(mv_busy), .stat_fault(mv_fault), .stat_done(mv_done),
+        .cfg_room(mv_room),
         .m_awid(mv_awid), .m_awaddr(mv_awaddr), .m_awlen(mv_awlen),
         .m_awsize(mv_awsize), .m_awburst(mv_awburst),
         .m_awvalid(mv_awvalid), .m_awready(mv_awready),
@@ -206,7 +212,9 @@ module rv64_mag_pe #(
         .x_req(x_req), .x_gnt(x_gnt), .x_start(x_start),
         .x_id(x_id), .x_mode(x_mode),
         .x_beat(x_beat), .x_beat_valid(x_bv),
-        .x_done(x_done), .x_w0(x_w0), .x_w1(x_w1), .x_w2(x_w2), .x_w3(x_w3)
+        .x_done(x_done), .x_w0(x_w0), .x_w1(x_w1), .x_w2(x_w2), .x_w3(x_w3),
+        .x_gid(x_gid), .x_geo_beats(x_geo_beats), .x_geo_depth(x_geo_depth),
+        .x_fault(xf_fault)
     );
 
     mag_xform #(.DATA_W(DATA_W), .NREQ(1), .SLOTS(XFORM_SLOTS),
@@ -218,9 +226,10 @@ module rv64_mag_pe #(
         .start(x_start), .id(x_id), .mode(x_mode),
         .beat(x_beat), .beat_valid(x_bv),
         .done(x_done), .word0(x_w0), .word1(x_w1), .word2(x_w2), .word3(x_w3),
+        .geo_id(x_gid), .geo_in_beats(x_geo_beats), .geo_depth(x_geo_depth),
         .cfg_en(xf_cfg_en), .cfg_id(xf_cfg_id[XID_W-1:0]),
-        .cfg_addr(xf_cfg_addr), .cfg_data(xf_cfg_data),
-        .cfg_rdata(), .fault(xf_fault)
+        .cfg_addr(xf_cfg_addr), .cfg_data(xf_cfg_data[31:0]),
+        .cfg_rdata(xf_rdata), .fault(xf_fault)
     );
 
 endmodule

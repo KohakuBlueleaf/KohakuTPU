@@ -15,11 +15,9 @@
 // occupants are all resident -- fabric does not reconfigure per request -- so
 // XFORM_SLOTS>1 costs N occupants of area and buys a choice, not concurrency.
 //
-// Grant is held for a whole RUN and a requester must not issue its AXI read
-// until it holds one; that is what makes it impossible for a beat to arrive
-// with nowhere to go. Per-entry grant would be finer, but a port issues the
-// next entry's AR while the current entry is still in the occupant, so its
-// beats can land before it could re-acquire.
+// Grant is held for a whole RUN and a requester presents no beat until it holds
+// one. `start` may come with an entry's first beat, so entries stream back to
+// back; a requester keeps at most `geo_depth` entries started and not done.
 
 `default_nettype none
 
@@ -50,6 +48,12 @@ module mag_xform #(
     // Broadcast; a requester qualifies these with its own `gnt`.
     output wire                    done,
     output wire [DATA_W-1:0]       word0, word1, word2, word3,
+
+    // The bank's geometry for `geo_id`: source beats an entry takes, and how
+    // many entries it holds started and not done. Combinational.
+    input  wire [ID_W-1:0]         geo_id,
+    output wire [3:0]              geo_in_beats,
+    output wire [2:0]              geo_depth,
 
     // ---- the occupant register space ------------------------------------
     // Carried, never interpreted: which registers exist is the occupant's
@@ -151,8 +155,8 @@ module mag_xform #(
     // occupants and demuxes `id` internally; the framework never names a
     // transform. A project with none instantiates the identity bank, where
     // every id is bypass, and the read path is a wire.
-    // SLOTS=0 generates NO occupant: the bank is absent, an entry never
-    // completes, and a requester that asks for one holds forever.
+    // SLOTS=0 generates NO occupant: the bank is absent and its geometry is
+    // zero, which the mover faults at GO.
     generate
     if (SLOTS > 0) begin : g_bank
         xform_bank #(.DATA_W(DATA_W), .SLOTS(SLOTS), .ID_W(ID_W),
@@ -163,10 +167,14 @@ module mag_xform #(
             .beat(s_beat), .beat_valid(s_bv),
             .need_beat(), .done(done),
             .word0(word0), .word1(word1), .word2(word2), .word3(word3),
+            .geo_id(geo_id), .geo_in_beats(geo_in_beats), .geo_depth(geo_depth),
             .cfg_en(cfg_en), .cfg_id(cfg_id), .cfg_addr(cfg_addr),
             .cfg_data(cfg_data), .cfg_rdata(cfg_rdata), .fault(fault)
         );
     end else begin : g_no_bank
+        // Geometry zero: a requester faults the move rather than wait forever.
+        assign geo_in_beats = 4'd0;
+        assign geo_depth    = 3'd0;
         assign done      = 1'b0;
         assign word0     = {DATA_W{1'b0}};
         assign word1     = {DATA_W{1'b0}};

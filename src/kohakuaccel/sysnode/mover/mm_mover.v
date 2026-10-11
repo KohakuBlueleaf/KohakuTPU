@@ -7,11 +7,19 @@
 // An ISSUE engine folds consecutive addresses into bursts and keeps k reads in
 // flight; a WRITE engine drains the FIFO behind it and never waits for B.
 
-// MODE_XFORM puts the transform slot ON THE READ-RETURN PATH, between R and the
-// FIFO, so one pass is mem -> occupant -> mem with the walker feeding the
-// occupant directly. An entry is IN_BEATS source words in, OUT_WORDS out; the
-// SOURCE walker defines the iteration space and the destination steps once per
-// entry. The reservation is OUT_WORDS per entry, taken before the entry's ARs.
+// MODE_XFORM runs mem -> FIFO -> occupant -> X-OUT -> mem in one pass. Reads
+// are a copy's: raw source words stage in the FIFO, one reserved word each. A
+// feeder hands the occupant its entries back to back (`start` with an entry's
+// first beat) while it holds fewer than its depth and X-OUT has room for their
+// words; the write engine drains X-OUT one OUT_WORDS burst per entry. An entry
+// is the slot's `x_geo_beats` source words for this id; the SOURCE walker
+// defines the iteration space and the destination steps once per entry.
+
+// CONFIGURATION IS QUEUED. A register write lands in a CFGQ_D-deep queue and is
+// applied in order while the mover is idle; a GO stops the queue until its move
+// is done. So the next move is written while this one runs. `cfg_room` says the
+// queue takes CFGQ_MARGIN more writes; a write into a full queue is dropped and
+// latches F_CFGQ until reset.
 
 // mag_dram_port's return path is shared, so a burst's FIFO space is reserved
 // before its AR and its AW waits until the data is resident.
@@ -50,7 +58,12 @@ module mm_mover #(
     parameter integer XID_W     = 4,
     parameter integer XMODE_W   = 4,
     parameter integer XF_IN_BITS   = 2048,
-    parameter integer XF_OUT_WORDS = 4
+    parameter integer XF_OUT_WORDS = 4,
+    // Transform output words held for the write engine: four entries.
+    parameter integer XO_D      = 16,
+    parameter integer CFGQ_D    = 64,
+    // Writes the dispatch engine can have in flight when it reads `cfg_room`.
+    parameter integer CFGQ_MARGIN = 8
 )(
     input  wire                clk,
     input  wire                resetn,
@@ -63,6 +76,7 @@ module mm_mover #(
     output wire                stat_busy,
     output reg  [3:0]          stat_fault,
     output reg  [31:0]         stat_done,
+    output wire                cfg_room,
 
     // ---- AXI4 master -----------------------------------------------------
     output reg  [ID_W-1:0]     m_awid,
@@ -104,7 +118,12 @@ module mm_mover #(
     output reg  [DATA_W-1:0]   x_beat,
     output reg                 x_beat_valid,
     input  wire                x_done,
-    input  wire [DATA_W-1:0]   x_w0, x_w1, x_w2, x_w3
+    input  wire [DATA_W-1:0]   x_w0, x_w1, x_w2, x_w3,
+    // The slot's geometry for the configured id, latched at GO.
+    output wire [XID_W-1:0]    x_gid,
+    input  wire [3:0]          x_geo_beats,  // source words an entry takes
+    input  wire [2:0]          x_geo_depth,  // entries the occupant holds at once
+    input  wire [3:0]          x_fault
 );
     localparam [2:0] MODE_COPY = 3'd0, MODE_TRANSPOSE = 3'd1;
     localparam [2:0] MODE_GATHER = 3'd2, MODE_GENERATE = 3'd3, MODE_FILL = 3'd4;
@@ -113,9 +132,8 @@ module mm_mover #(
     localparam [3:0] F_NONE = 4'd0, F_IDXLEN = 4'd1, F_RANGE = 4'd2;
     localparam [3:0] F_AXI = 4'd3, F_MODE = 4'd4, F_EWIDTH = 4'd5;
     localparam [3:0] F_ALIGN = 4'd6, F_XPAD = 4'd7;
+    localparam [3:0] F_XFORM = 4'd8, F_CFGQ = 4'd9;
 
-    // One entry: IN_BEATS source words in, XF_OUT_WORDS destination words out.
-    localparam integer IN_BEATS = XF_IN_BITS / DATA_W;
     localparam [8:0]   OUT_W9   = XF_OUT_WORDS[8:0];
 
     // The issue engine. I_GA1..3 are the gather address pipeline and I_LAT is
@@ -132,8 +150,10 @@ module mm_mover #(
     localparam [1:0] W_IDLE = 2'd0, W_ARM = 2'd1, W_GEN = 2'd2, W_DATA = 2'd3;
 
     // What a destination element's data comes from. K_SKIP is a suppressed
-    // write: no read, no command, and it breaks both runs.
+    // write: no read, no command, and it breaks both runs. Never a command, so
+    // its code names X-OUT data in the command FIFO (K_XO).
     localparam [1:0] K_RD = 2'd0, K_FILL = 2'd1, K_GEN = 2'd2, K_SKIP = 2'd3;
+    localparam [1:0] K_XO = 2'd3;
 
     localparam integer CNT_W = 16;
     localparam integer CMD_W = ADDR_W + 10;
@@ -185,8 +205,6 @@ module mm_mover #(
 
     // The configuration write lands in a register first: the processor is
     // most of a die away and the wire alone was 3.5 ns at the v8t5 route.
-    // `stat_busy` covers the cycle through `go`, so a poll after the write
-    // sees busy exactly when it did.
     reg        cfg_en_q;
     reg [7:0]  cfg_addr_q;
     reg [63:0] cfg_data_q;
@@ -195,7 +213,40 @@ module mm_mover #(
         cfg_addr_q <= cfg_addr;
         cfg_data_q <= cfg_data;
     end
-    wire [7:0] reg_sel = {cfg_addr_q[7:3], 3'b000};
+
+    // ---- the config queue: in order, applied while idle, one a cycle ------
+    localparam integer CQA = $clog2(CFGQ_D);
+    (* ram_style = "distributed" *) reg [71:0] cq_mem [0:CFGQ_D-1];
+    reg  [CQA-1:0] cq_wp, cq_rp;
+    reg  [CQA:0]   cq_cnt;
+    reg            cq_ovf;
+    reg            a_en;                  // the write being applied this cycle
+    reg  [7:0]     a_addr;
+    reg  [63:0]    a_data;
+    wire           cq_full = (cq_cnt == CFGQ_D[CQA:0]);
+    wire           cq_push = cfg_en_q && !cq_full;
+    // A GO stops the queue until its move starts; the move then holds it.
+    wire           a_go    = a_en && (a_addr[7:3] == 5'd0) && a_data[16];
+    wire           cq_pop  = (cq_cnt != {(CQA+1){1'b0}}) && (ist == I_IDLE) && !go && !a_go;
+    assign cfg_room = (cq_cnt <= CFGQ_D[CQA:0] - CFGQ_MARGIN[CQA:0]);
+    always @(posedge clk) begin
+        if (cq_push) begin
+            cq_mem[cq_wp] <= {cfg_addr_q, cfg_data_q};
+        end
+        a_addr <= cq_mem[cq_rp][71:64];
+        a_data <= cq_mem[cq_rp][63:0];
+        if (!resetn) begin
+            cq_wp <= {CQA{1'b0}}; cq_rp <= {CQA{1'b0}};
+            cq_cnt <= {(CQA+1){1'b0}}; cq_ovf <= 1'b0; a_en <= 1'b0;
+        end else begin
+            a_en <= cq_pop;
+            if (cq_push) cq_wp <= cq_wp + 1'b1;
+            if (cq_pop)  cq_rp <= cq_rp + 1'b1;
+            cq_cnt <= cq_cnt + {{CQA{1'b0}}, cq_push} - {{CQA{1'b0}}, cq_pop};
+            if (cfg_en_q && cq_full) cq_ovf <= 1'b1;
+        end
+    end
+    wire [7:0] reg_sel = {a_addr[7:3], 3'b000};
 
     // Burst caps. flags[7:5] is a log2 cap with 0 meaning BURST_MAX, so a
     // driver can reproduce the pre-burst behaviour with flags[7:5] = 1.
@@ -213,15 +264,16 @@ module mm_mover #(
     // A transform move iterates SOURCE words and its dst walker steps once per
     // ENTRY, so a dst descriptor counts entries, not words.
     wire xf = (mode == MODE_XFORM);
-    reg  [15:0] xb_cnt;                     // source word within the entry
-    wire ent_first = (xb_cnt == 16'd0);
-    wire ent_last  = (xb_cnt == (IN_BEATS[15:0] - 16'd1));
+    reg  [3:0]  xin_m1, xin_m2;             // the entry's words, less 1 and 2
+    reg  [2:0]  x_dep;
+    reg  [3:0]  xb_cnt;                     // source word within the entry
+    wire ent_first = (xb_cnt == 4'd0);
+    wire ent_last  = (xb_cnt == xin_m1);
     // The walkers run ONE ELEMENT AHEAD of the element latch, so the dst walker
     // must reach entry e+1 while the last element of entry e is being latched --
     // one step before `ent_last`, not on it. Advancing on `ent_last` puts every
     // entry's words at the PREVIOUS entry's address.
-    wire ent_pen   = (IN_BEATS == 1) ? 1'b1
-                                     : (xb_cnt == (IN_BEATS[15:0] - 16'd2));
+    wire ent_pen   = (xin_m1 == 4'd0) || (xb_cnt == xin_m2);
 
     wire walk_last  = xf ? src_last : dst_last;
     wire desc_start = (ist == I_GO);
@@ -324,7 +376,10 @@ module mm_mover #(
     // Space for a whole burst is reserved before its AR goes out, so the read
     // return can never be refused and never backs up into the shared FIFO.
     assign m_rready  = 1'b1;
-    assign stat_busy = (ist != I_IDLE) || go;
+    // Busy from the write's register stage through the move it starts, so a
+    // poll after the write sees busy.
+    assign stat_busy = (ist != I_IDLE) || go || cfg_en_q || a_en
+                    || (cq_cnt != {(CQA+1){1'b0}});
 
     // TWO registers before the address: BRAM output straight into a 32x32
     // multiply measured 188 MHz, so the index is captured before the multiplier.
@@ -342,8 +397,8 @@ module mm_mover #(
     wire [ADDR_W-1:0] lt_rd = (mode == MODE_GATHER) ? gath_addr : src_addr;
     wire              lt_rv = (mode == MODE_GATHER) ? 1'b1      : src_valid;
     wire              lt_ma = dst_low_nz;
-    // A padded element issues no read, and a transform counts IN_BEATS off the
-    // return -- a bound axis leaves the occupant a beat short, forever. Faulted.
+    // A padded element issues no read, and a transform counts its entry's beats
+    // off the FIFO -- a bound axis leaves the occupant a beat short. Faulted.
     wire              lt_xpad = xf && !lt_rv;
     wire [1:0]        lt_kind = (!dst_valid || lt_ma)  ? K_SKIP
                               : (mode == MODE_FILL)     ? K_FILL
@@ -352,43 +407,43 @@ module mm_mover #(
                               :                           K_FILL;
 
     // ================================================== the transform slot
-    // Between R and the FIFO: the FIFO holds CONVERTED words and the walker
-    // feeds the occupant directly, so a strided source needs no gather pass.
-    //
-    // `start` LEADS the first beat. mx_quant is `if (start) ... else if (filling
-    // && beat_valid)`, so a beat presented WITH start is silently dropped.
-    reg  [15:0]       xr_cnt;               // source word within the entry
-    reg               xb_v1;
-    reg  [DATA_W-1:0] xb_d1;
-    wire              xr_beat = xf && m_rvalid && !ix_active;
-
-    // ONE ENTRY IN THE SLOT: the occupant is not double-buffered, so `start`
-    // would reset the entry still packing. Entry k's WRITE still overlaps k+1's
-    // reads -- the command FIFO already decoupled those.
-    reg               ent_busy, xo_busy, xf_pend;
+    // The occupant's words land on a serialiser, one into X-OUT a cycle; X-OUT
+    // holds them for the write engine's K_XO bursts.
+    reg               xo_busy;
     reg  [1:0]        xo_sel;
     reg  [DATA_W-1:0] xo0, xo1, xo2, xo3;
     wire [DATA_W-1:0] xo_word = (xo_sel == 2'd0) ? xo0
                               : (xo_sel == 2'd1) ? xo1
                               : (xo_sel == 2'd2) ? xo2 : xo3;
 
+    localparam integer XOA = $clog2(XO_D);
+    (* ram_style = "distributed" *) reg [DATA_W-1:0] xo_mem [0:XO_D-1];
+    reg  [XOA-1:0] xo_wp, xo_rp;
+    reg  [XOA:0]   xo_cnt;                  // words present
+    reg  [XOA:0]   xo_res;                  // words present or owed by entries begun
+    wire [DATA_W-1:0] xo_dout = xo_mem[xo_rp];
+    wire           xo_rd;                   // driven by the write engine
+
+    // The feeder. An entry begins when the occupant holds fewer than its depth
+    // and X-OUT has room for its words; then its beats follow as the FIFO
+    // presents them. `fd_gap` spaces entries OUT_WORDS cycles apart so the
+    // serialiser, one word a cycle, never meets a second `done` early.
+    reg  [3:0]     fd_left;                 // beats of the entry being fed
+    reg  [2:0]     x_out;                   // entries begun, not done
+    reg  [1:0]     fd_gap;
+    wire           fd_new  = (fd_left == 4'd0);
+    wire           fd_pop;                  // after the FIFO's declarations
+    assign x_gid = xf_id;
+
     // ================================================== staging FIFO
     reg  [CNT_W-1:0] occ;                   // reserved + present
     reg  [CNT_W-1:0] fcnt;                  // present
 
-    // THE ROOM LIMIT IS A CONSTANT PER RUN, computed at config so the hot path
-    // is one compare against a register, not an add-then-compare with `mode` in
-    // it. `occ + occ_need <= FIFO_D` is `occ <= FIFO_D - occ_need`, and occ_need
-    // is one of two compile-time constants, so the subtraction folds. This was
-    // the node's last cone: mode_reg -> the adder -> stall -> the command FIFO
-    // write enable, 12 levels, WNS -0.081.
-    localparam [CNT_W-1:0] XF_OCC = {{(CNT_W-9){1'b0}}, OUT_W9};
-    localparam [CNT_W-1:0] XF_ROOM_LIM = FIFO_D[CNT_W-1:0] - XF_OCC;
-    localparam [CNT_W-1:0] CP_ROOM_LIM = FIFO_D[CNT_W-1:0] - 16'd1;
-    reg  [CNT_W-1:0] room_lim;
-    wire             f_wr = xf ? xo_busy : (m_rvalid && !ix_active);
-    wire [DATA_W-1:0] f_din = xf ? xo_word : m_rdata;
-    wire             f_rd;                  // driven by the write engine
+    // A constant room limit: one compare against a register on the hot path.
+    localparam [CNT_W-1:0] ROOM_LIM = FIFO_D[CNT_W-1:0] - 16'd1;
+    wire             f_wr = m_rvalid && !ix_active;
+    wire [DATA_W-1:0] f_din = m_rdata;
+    wire             f_rd;                  // the feeder's, or the write engine's
     wire [DATA_W-1:0] f_dout;
     wire             f_empty, f_full;
 
@@ -398,6 +453,10 @@ module mm_mover #(
         .wr_en(f_wr), .wr_data(f_din), .wr_busy(f_full), .wr_almost(),
         .rd_en(f_rd), .rd_data(f_dout), .rd_busy(f_empty)
     );
+
+    assign fd_pop = xf && x_req && x_gnt && !f_empty
+                 && (!fd_new || ((x_out < x_dep) && (fd_gap == 2'd0)
+                     && (xo_res <= XO_D[XOA:0] - OUT_W9[XOA:0])));
 
     // ================================================== command FIFO
     wire             c_wr, c_rd;
@@ -473,19 +532,13 @@ module mm_mover #(
 
     wire ar_slot  = !ar_valid_i || ar_ready_i;
     wire ar_ok    = ar_slot && (ar_out < MAX_OUT[7:0]);
-    // A transform entry reserves OUT_WORDS at once: still a static count, still
-    // known before the AR, which is what m_rready = 1 rests on.
-    wire [CNT_W-1:0] occ_need = xf ? {{(CNT_W-9){1'b0}}, OUT_W9}
-                                   : {{(CNT_W-1){1'b0}}, 1'b1};
-    wire fifo_room = (occ <= room_lim);
-    wire ent_gate  = !xf || ent_first;
+    wire fifo_room = (occ <= ROOM_LIM);
     wire xf_cmd    = xf && ent_first && (e_kind == K_RD);
 
     wire stall_ar   = close_ar && !ar_ok;
     wire stall_cmd  = xf ? (xf_cmd && c_full) : (close_wc && c_full);
-    wire stall_fifo = (e_kind == K_RD) && ent_gate && !fifo_room;
-    wire stall_slot = xf_cmd && (ent_busy || !x_gnt);
-    wire stall      = stall_ar || stall_cmd || stall_fifo || stall_slot;
+    wire stall_fifo = (e_kind == K_RD) && !fifo_room;
+    wire stall      = stall_ar || stall_cmd || stall_fifo;
 
     wire proc = (ist == I_RUN) && !stall;
 
@@ -514,12 +567,14 @@ module mm_mover #(
     assign m_wvalid = wv_r;
 
     assign c_rd = w_take;
-    assign f_rd = (wst == W_DATA) && (w_kind == K_RD) && m_wvalid && m_wready;
+    assign f_rd = xf ? fd_pop : ((wst == W_DATA) && (w_kind == K_RD) && m_wvalid && m_wready);
+    assign xo_rd = (wst == W_DATA) && (w_kind == K_XO) && m_wvalid && m_wready;
     // Registering `fill_word` here to keep the generator out of this cone was
     // MEASURED at +665 LUT in the processor, not the -256 predicted: it breaks
     // sharing between the generator and the walkers. Left combinational.
     assign m_wdata = (w_kind == K_RD) ? f_dout
-                   : (w_kind == K_FILL) ? fill_word : gdata;
+                   : (w_kind == K_FILL) ? fill_word
+                   : (w_kind == K_XO) ? xo_dout : gdata;
     assign m_wlast = (w_left == 9'd1);
 
     // The counter is the destination's ABSOLUTE word address, so one fill and
@@ -555,8 +610,15 @@ module mm_mover #(
     wire gt_w     = fcnt_hi || (fcnt[8:0] >  w_left);
     wire ge_c     = fcnt_hi || (fcnt[8:0] >= c_beats);
     wire gt_c     = fcnt_hi || (fcnt[8:0] >  c_beats);
-    wire w_ready_rd = (w_kind != K_RD) || (rd_ok && (f_rd ? gt_w : ge_w));
-    wire c_ready    = (c_kind != K_RD) || (rd_ok && (f_rd ? gt_c : ge_c));
+    // X-OUT's count is exact (its own LUTRAM, no FWFT lag).
+    wire xo_ge_w  = ({{(9-XOA-1){1'b0}}, xo_cnt} >= w_left);
+    wire xo_gt_w  = ({{(9-XOA-1){1'b0}}, xo_cnt} >  w_left);
+    wire xo_ge_c  = ({{(9-XOA-1){1'b0}}, xo_cnt} >= c_beats);
+    wire xo_gt_c  = ({{(9-XOA-1){1'b0}}, xo_cnt} >  c_beats);
+    wire w_ready_rd = (w_kind == K_XO) ? (xo_rd ? xo_gt_w : xo_ge_w)
+                    : (w_kind != K_RD) || (rd_ok && (f_rd ? gt_w : ge_w));
+    wire c_ready    = (c_kind == K_XO) ? (xo_rd ? xo_gt_c : xo_ge_c)
+                    : (c_kind != K_RD) || (rd_ok && (f_rd ? gt_c : ge_c));
     // Straight into W_DATA when the data is already there: stopping in W_ARM
     // would cost a third cycle on every single-beat write.
     wire w_now      = w_take && (c_kind != K_GEN) && c_ready;
@@ -572,26 +634,24 @@ module mm_mover #(
     // late still breaks it, and combinational it put m_wready on the AR enable.
     reg  w_starve;
     wire w_starve_d = ((wst == W_ARM) && !w_ready_rd)
-                 || ((wst == W_IDLE) && !c_empty && (c_kind == K_RD) && !c_ready);
+                 || ((wst == W_IDLE) && !c_empty && ((c_kind == K_RD) || (c_kind == K_XO))
+                     && !c_ready);
     wire rflush   = (ist == I_RUN) && stall_cmd && ra_open && ar_ok && w_starve;
     wire flush_ar = (ist == I_FLUSH) && ra_open && ar_ok;
     wire flush_wc = (ist == I_FLUSH) && !ra_open && wa_open && !c_full;
-    // A transform entry's run MUST close at the boundary: held open across the
-    // stall waiting for `x_done`, its AR never goes out and the wait is forever.
-    wire xflush   = xf_pend && ra_open && ar_ok;
 
-    wire ar_load = (proc && close_ar) || flush_ar || rflush || xflush;
+    wire ar_load = (proc && close_ar) || flush_ar || rflush;
 
     // A transform writes ONE burst of OUT_WORDS per entry, named when the entry
     // opens; the run accumulator is a copy-mode device and stays idle.
     assign c_wr  = xf ? (proc && xf_cmd) : ((proc && close_wc) || flush_wc);
-    assign c_din = xf ? {K_RD, OUT_W9[7:0] - 8'd1, e_wr}
+    assign c_din = xf ? {K_XO, OUT_W9[7:0] - 8'd1, e_wr}
                       : {wa_kind, wa_n[7:0] - 8'd1, wa_base};
 
     reg  ar_dec, occ_up, occ_dn;
     always @(*) begin
         ar_dec = m_rvalid && m_rlast && (ar_out != 8'd0);
-        occ_up = proc && (e_kind == K_RD) && ent_gate;
+        occ_up = proc && (e_kind == K_RD);
         occ_dn = f_rd;
         // The walkers step on every element the issue engine consumes, except
         // in GATHER where the address pipeline re-latches from I_LAT.
@@ -632,15 +692,16 @@ module mm_mover #(
             xf_id <= {XID_W{1'b0}}; xf_mode <= {XMODE_W{1'b0}};
             x_req <= 1'b0; x_start <= 1'b0; x_beat_valid <= 1'b0;
             x_id <= {XID_W{1'b0}}; x_mode <= {XMODE_W{1'b0}};
-            xb_cnt <= 16'd0; xr_cnt <= 16'd0; xb_v1 <= 1'b0;
-            ent_busy <= 1'b0; xo_busy <= 1'b0; xf_pend <= 1'b0;
-            xo_sel <= 2'd0;
+            xb_cnt <= 4'd0; xin_m1 <= 4'd0; xin_m2 <= 4'd0; x_dep <= 3'd0;
+            fd_left <= 4'd0; x_out <= 3'd0; fd_gap <= 2'd0;
+            xo_busy <= 1'b0; xo_sel <= 2'd0;
+            xo_wp <= {XOA{1'b0}}; xo_rp <= {XOA{1'b0}};
+            xo_cnt <= {(XOA+1){1'b0}}; xo_res <= {(XOA+1){1'b0}};
             ra_room <= 8'd0; wa_room <= 8'd0;
             ra_n <= 9'd0; wa_n <= 9'd0;
             ra_open <= 1'b0; wa_open <= 1'b0; wa_kind <= K_SKIP;
             ar_out <= 8'd0; wr_out <= 8'd0; w_starve <= 1'b0;
             occ <= {CNT_W{1'b0}}; fcnt <= {CNT_W{1'b0}};
-            room_lim <= CP_ROOM_LIM;        // mode resets to COPY
             w_left <= 9'd0; w_kind <= K_SKIP;
         end else begin
             d_hdr_en <= 1'b0; d_dim_en <= 1'b0; d_ax_en <= 1'b0;
@@ -649,30 +710,32 @@ module mm_mover #(
             prod_r   <= idx_r * gath_pitch;
             row_base <= d_src_base + {{(ADDR_W-32){1'b0}}, prod_r};
 
-            occ  <= occ  + (occ_up ? occ_need : {CNT_W{1'b0}})
+            occ  <= occ  + (occ_up ? {{(CNT_W-1){1'b0}}, 1'b1} : {CNT_W{1'b0}})
                          - (occ_dn ? {{(CNT_W-1){1'b0}}, 1'b1} : {CNT_W{1'b0}});
             fcnt <= fcnt + (f_wr   ? 16'd1 : 16'd0) - (f_rd   ? 16'd1 : 16'd0);
 
-            // ---- the slot's return side ----
-            // Beats two registers behind R, `start` one, so start never shares a
-            // cycle with a beat.
-            xb_d1        <= m_rdata;
-            xb_v1        <= xr_beat;
-            x_beat       <= xb_d1;
-            x_beat_valid <= xb_v1;
-            x_start      <= xr_beat && (xr_cnt == 16'd0);
-            if (xr_beat) begin
-                xr_cnt <= (xr_cnt == (IN_BEATS[15:0] - 16'd1))
-                        ? 16'd0 : xr_cnt + 16'd1;
+            // ---- the feeder ----
+            x_beat       <= f_dout;
+            x_beat_valid <= fd_pop;
+            x_start      <= fd_pop && fd_new;
+            if (fd_pop) begin
+                fd_left <= fd_new ? xin_m1 : fd_left - 4'd1;
             end
+            if (fd_pop && fd_new) begin
+                fd_gap <= OUT_W9[1:0] - 2'd1;
+            end else if (fd_gap != 2'd0) begin
+                fd_gap <= fd_gap - 2'd1;
+            end
+            x_out  <= x_out + ((fd_pop && fd_new) ? 3'd1 : 3'd0) - ((xf && x_done) ? 3'd1 : 3'd0);
+            xo_res <= xo_res + ((fd_pop && fd_new) ? OUT_W9[XOA:0] : {(XOA+1){1'b0}})
+                             - (xo_rd ? {{XOA{1'b0}}, 1'b1} : {(XOA+1){1'b0}});
 
-            // The occupant emits OUT_WORDS in parallel and the FIFO takes one a
+            // The occupant emits OUT_WORDS in parallel and X-OUT takes one a
             // cycle, so `done` starts a serialiser rather than writing directly.
-            if (x_done) begin
+            if (xf && x_done) begin
                 xo0 <= x_w0; xo1 <= x_w1; xo2 <= x_w2; xo3 <= x_w3;
                 xo_sel   <= 2'd0;
                 xo_busy  <= 1'b1;
-                ent_busy <= 1'b0;
             end
             else if (xo_busy) begin
                 if (xo_sel == (OUT_W9[1:0] - 2'd1)) begin
@@ -680,61 +743,68 @@ module mm_mover #(
                 end
                 xo_sel <= xo_sel + 2'd1;
             end
+            if (xo_busy) begin
+                xo_mem[xo_wp] <= xo_word;
+                xo_wp <= xo_wp + 1'b1;
+            end
+            if (xo_rd) begin
+                xo_rp <= xo_rp + 1'b1;
+            end
+            xo_cnt <= xo_cnt + (xo_busy ? {{XOA{1'b0}}, 1'b1} : {(XOA+1){1'b0}})
+                             - (xo_rd   ? {{XOA{1'b0}}, 1'b1} : {(XOA+1){1'b0}});
 
-            // ---- register writes ----
-            if (cfg_en_q) begin
+            // ---- register writes, from the queue ----
+            if (a_en) begin
                 case (reg_sel)
                     8'h00: begin
-                        mode   <= cfg_data_q[2:0];
-                        ewidth <= cfg_data_q[4:3];
-                        flags  <= cfg_data_q[15:8];
-                        go     <= cfg_data_q[16];
-                        room_lim <= (cfg_data_q[2:0] == MODE_XFORM)
-                                  ? XF_ROOM_LIM : CP_ROOM_LIM;
+                        mode   <= a_data[2:0];
+                        ewidth <= a_data[4:3];
+                        flags  <= a_data[15:8];
+                        go     <= a_data[16];
                     end
                     8'h10: begin
-                        ld_sel   <= cfg_data_q[0];
-                        d_base   <= cfg_data_q[4 +: ADDR_W];
-                        d_ndim   <= cfg_data_q[46:44];
+                        ld_sel   <= a_data[0];
+                        d_base   <= a_data[4 +: ADDR_W];
+                        d_ndim   <= a_data[46:44];
                         d_hdr_en <= 1'b1;
-                        if (cfg_data_q[0]) begin
-                            dst_base   <= cfg_data_q[4 +: ADDR_W];
+                        if (a_data[0]) begin
+                            dst_base   <= a_data[4 +: ADDR_W];
                         end
                         else begin
-                            d_src_base <= cfg_data_q[4 +: ADDR_W];
+                            d_src_base <= a_data[4 +: ADDR_W];
                             // The transform applies to the READ side, so its id
                             // and mode ride the source header's free upper bits.
-                            xf_id      <= cfg_data_q[47 +: XID_W];
-                            xf_mode    <= cfg_data_q[55 +: XMODE_W];
+                            xf_id      <= a_data[47 +: XID_W];
+                            xf_mode    <= a_data[55 +: XMODE_W];
                         end
                     end
                     8'h18: begin
-                        ld_sel    <= cfg_data_q[0];
-                        ld_dim    <= cfg_data_q[3:1];
-                        ld_count  <= cfg_data_q[19:4];
-                        ld_stride <= cfg_data_q[51:20];
+                        ld_sel    <= a_data[0];
+                        ld_dim    <= a_data[3:1];
+                        ld_count  <= a_data[19:4];
+                        ld_stride <= a_data[51:20];
                     end
                     8'h20: begin
-                        d_axis   <= cfg_data_q[1:0];
-                        d_astep  <= cfg_data_q[17:2];
+                        d_axis   <= a_data[1:0];
+                        d_astep  <= a_data[17:2];
                         d_dim_en <= 1'b1;
                     end
                     8'h28: begin
-                        ld_sel   <= cfg_data_q[0];
-                        d_ax_sel <= cfg_data_q[1];
-                        d_abase  <= cfg_data_q[17:2];
-                        d_aext   <= cfg_data_q[33:18];
+                        ld_sel   <= a_data[0];
+                        d_ax_sel <= a_data[1];
+                        d_abase  <= a_data[17:2];
+                        d_aext   <= a_data[33:18];
                         d_ax_en  <= 1'b1;
                     end
                     8'h30: begin
-                        idx_base  <= cfg_data_q[ADDR_W-1:0];
-                        idx_count <= cfg_data_q[55:40];
+                        idx_base  <= a_data[ADDR_W-1:0];
+                        idx_count <= a_data[55:40];
                     end
-                    8'h38: seed <= cfg_data_q;
-                    8'h40: imm  <= cfg_data_q[31:0];
+                    8'h38: seed <= a_data;
+                    8'h40: imm  <= a_data[31:0];
                     8'h50: begin
-                        gath_pitch <= cfg_data_q[31:0];
-                        gath_words <= cfg_data_q[47:32];
+                        gath_pitch <= a_data[31:0];
+                        gath_words <= a_data[47:32];
                     end
                     default: ;
                 endcase
@@ -757,24 +827,35 @@ module mm_mover #(
             if (err_ax && (ist != I_IDLE)) begin
                 stat_fault <= F_AXI;
             end
+            // The slot's own fault (an id naming no occupant) fails the move.
+            if (xf && x_req && (x_fault != 4'd0) && (stat_fault == F_NONE)) begin
+                stat_fault <= F_XFORM;
+            end
+            if (cfg_en_q && cq_full) begin
+                stat_fault <= F_CFGQ;
+            end
 
             case (ist)
                 // ------------------------------------------------------------
                 I_IDLE: if (go) begin
-                    stat_fault <= F_NONE;
+                    stat_fault <= cq_ovf ? F_CFGQ : F_NONE;
                     g_row <= 16'd0; g_word <= 16'd0;
                     ix_got <= 16'd0; ix_waddr <= 8'd0; ix_raddr <= 8'd0;
                     pr_half <= 1'b0;
                     ra_open <= 1'b0; wa_open <= 1'b0;
-                    xb_cnt <= 16'd0; xr_cnt <= 16'd0;
-                    xf_pend <= 1'b0; ent_busy <= 1'b0; xo_busy <= 1'b0;
+                    xb_cnt <= 4'd0; fd_left <= 4'd0; x_out <= 3'd0; fd_gap <= 2'd0;
+                    xin_m1 <= x_geo_beats - 4'd1;
+                    xin_m2 <= x_geo_beats - 4'd2;
+                    x_dep  <= x_geo_depth;
                     // The grant is held for the whole run, so it is taken once
-                    // here and the first entry waits on it.
+                    // here and the feeder waits on it.
                     x_req  <= xf;
                     x_id   <= xf_id;
                     x_mode <= xf_mode;
                     if (ewidth == 2'd3) begin
                         stat_fault <= F_EWIDTH; ist <= I_FAULT;
+                    end else if (xf && ((x_geo_beats == 4'd0) || (x_geo_depth == 3'd0))) begin
+                        stat_fault <= F_MODE; ist <= I_FAULT;
                     end else if (mode == MODE_TRANSPOSE) begin
                         stat_fault <= F_MODE; ist <= I_FAULT;
                     end else if (mode == MODE_GATHER) begin
@@ -876,16 +957,7 @@ module mm_mover #(
                         end
 
                         if (xf) begin
-                            if (ent_first) begin
-                                ent_busy <= 1'b1;
-                            end
-                            if (ent_last) begin
-                                xb_cnt  <= 16'd0;
-                                xf_pend <= 1'b1;
-                            end
-                            else begin
-                                xb_cnt <= xb_cnt + 16'd1;
-                            end
+                            xb_cnt <= ent_last ? 4'd0 : xb_cnt + 4'd1;
                         end
 
                         if (e_flt) begin
@@ -916,9 +988,6 @@ module mm_mover #(
                         end
                     end else if (rflush) begin
                         ra_open <= 1'b0;
-                    end else if (xflush) begin
-                        ra_open <= 1'b0;
-                        xf_pend <= 1'b0;
                     end
                 end
 
@@ -939,12 +1008,12 @@ module mm_mover #(
                     end
                 end
 
-                // arch.md s8: a move is not done until its writes have retired.
-                // The slot counts too: an entry still packing owes the FIFO
-                // words the reservation has already promised.
+                // arch.md s8: a move is not done until its writes have retired,
+                // and every entry begun has left the slot.
                 I_DRAIN: if ((wst == W_IDLE) && c_empty && (wr_out == 8'd0)
                              && (ar_out == 8'd0) && (occ == {CNT_W{1'b0}})
-                             && !ent_busy && !xo_busy)
+                             && (x_out == 3'd0) && !xo_busy
+                             && (xo_cnt == {(XOA+1){1'b0}}))
                     ist <= I_DONE;
 
                 I_DONE: begin

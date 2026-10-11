@@ -12,7 +12,7 @@ enum {
     KA_R_CONSOLE = 0x08, /* W: one console byte (the load window's 256-B FIFO) */
     KA_R_DBELL   = 0x10, /* R: the host's doorbell bit */
     KA_R_SATP    = 0x18, /* R: satp mirror */
-    KA_R_MVSTAT  = 0x20, /* R: [32] busy, [31:28] fault, [27:0] moves done */
+    KA_R_MVSTAT  = 0x20, /* R: [33] room, [32] busy, [31:28] fault, [27:0] moves done */
     KA_R_DBCNT   = 0x28, /* R: inbound doorbell counts, mesh n at [16n+15:16n] */
     KA_R_STDIN   = 0x30, /* R: {valid[8], byte}; W: pop */
     KA_R_IRQ     = 0x38, /* W: toggle the host interrupt line; R: its level */
@@ -70,6 +70,9 @@ enum {
     KA_SIG_FAULT          = 0x04,
 };
 
+/* ROOM: the mover's configuration queue takes KA_MV_ROOM_WRITES more writes. */
+#define KA_MV_ROOM(s)  (((s) >> 33) & 1u)
+#define KA_MV_ROOM_WRITES 8u
 #define KA_MV_BUSY(s)  (((s) >> 32) & 1u)
 #define KA_MV_FAULT(s) ((unsigned)(((s) >> 28) & 0xfu))
 #define KA_MV_DONE(s)  ((uint32_t)((s) & 0x0fffffffu))

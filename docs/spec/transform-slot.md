@@ -43,18 +43,33 @@ the host wrote them that way or the mover converted them in place.
 
 **The slot is ON the mover's datapath, not beside it.** There is one walker in
 the system and the mover owns it; a transform is pre- or post-processing on a
-move, never an engine that traverses memory for itself. It sits on the
-**read-return path**, between R and the mover's FIFO — the slot's input is pushed
-at line rate and never handshaken, which is what an in-order R return already is,
-and the FIFO holds converted words rather than source ones. A converting move is
-mover mode 5.
+move, never an engine that traverses memory for itself. A converting move is
+mover mode 5, and it runs memory → FIFO → occupant → X-OUT → memory in one pass:
+
+```
+   R --> FIFO --> feeder --> [ occupant ] --> serialiser --> X-OUT --> write engine --> W
+        raw words   entries back to back      OUT_WORDS        16 words    one OUT_WORDS
+        one reserved                           a done                       burst an entry
+        word each
+```
+
+- **Reads are a copy's.** Raw source words land in the mover's FIFO, one
+  reserved word per beat, so the read side keeps a copy's reservation, bursts and
+  reads in flight.
+- **The feeder hands the occupant whole entries back to back.** It pops an
+  entry's `geo_in_beats` words at one a cycle, with `start` on the first, while
+  the occupant holds fewer than `geo_depth` entries started and not `done`, and
+  X-OUT has room for every word those entries will produce.
+- **`done` is captured, then serialised.** The occupant presents `OUT_WORDS`
+  words in parallel in the cycle `done` is high; the mover copies them and
+  writes them into X-OUT one a cycle, and the write engine drains X-OUT as one
+  `OUT_WORDS`-beat burst per entry.
 
 The invariant this placement breaks, and which the mover therefore does not
-have, is *one word in per word out*: a transform consumes `IN_BITS` and produces
-`OUT_WORDS`, so the mover's read-side reservation counts `OUT_WORDS` per entry
-rather than one per beat. That reservation is still taken before the AR and is
-still static. [arch/sysnode/simd-model](../arch/sysnode/simd-model.md) has the
-argument for the arrangement.
+have, is *one word in per word out*: an entry consumes `IN_BITS` and produces
+`OUT_WORDS`. The source walker defines the iteration space and the destination
+steps once per entry. [arch/sysnode/simd-model](../arch/sysnode/simd-model.md)
+has the argument for the arrangement.
 
 ### Why one is enough
 
@@ -92,6 +107,7 @@ the id routes one request to one of them.
 |---|---|
 | `0` | no transform — bypass |
 | `1` | slot 1 (KohakuTPU: the MXFP7 quantiser) |
+| `2` | slot 2 (KohakuTPU: GT4, the 4 × 4 granule transpose) |
 | `n` | slot n |
 
 Two fields travel together:
@@ -150,14 +166,17 @@ An occupant bank presents:
 | port | dir | width | contract |
 |---|---|---|---|
 | `clk`, `rst` | in | 1 | `rst` active-high, synchronous, the agent's domain |
-| `start` | in | 1 | one-cycle pulse opening an entry; `id` and `mode` are valid during `start` |
+| `start` | in | 1 | one-cycle pulse opening an entry; `id` and `mode` are valid during `start`. It may come WITH the entry's first beat (the mover's feeder sends it so) or a cycle ahead of it |
 | `id` | in | `ID_W` | which occupant; 0 is bypass |
 | `mode` | in | `MODE_W` | opaque configuration, captured at `start` |
 | `beat` | in | `DATA_W` | one source beat, already registered by the agent |
 | `beat_valid` | in | 1 | qualifies `beat`; beats are pushed at line rate, never handshaken |
 | `need_beat` | out | 1 | for an occupant that cannot take line rate; the agent ignores it today, so tie it high or drive it truthfully |
 | `done` | out | 1 | one-cycle pulse: outputs are final |
-| `word0..word3` | out | `DATA_W` each | the transformed entry, stable from `done` until the next `start` |
+| `word0..word3` | out | `DATA_W` each | the transformed entry, valid in the cycle `done` is high; the agent captures them there |
+| `geo_id` | in | `ID_W` | the id whose geometry the two ports below answer for |
+| `geo_in_beats` | out | 4 | source beats one entry of `geo_id` takes, 1..15 |
+| `geo_depth` | out | 3 | entries of `geo_id` the occupant holds started and not `done`, 1..7 |
 | `cfg_en` | in | 1 | write strobe for the register at `cfg_addr` |
 | `cfg_id` | in | `ID_W` | which occupant the register access names |
 | `cfg_addr`, `cfg_data` | in | 8, 32 | byte offset and value; registers are 4 bytes |
@@ -189,30 +208,20 @@ none, so on that bank `fault` is `[0]` and nothing else.*
 
 ### How a register is reached
 
-By ordinary load and store from the control processor's **node range**:
+Through two registers of the control processor's control region
+([arch/sysnode/control-processor](../arch/sysnode/control-processor.md)):
 
-    0xF001_0000 | (id << 8) | reg
+| offset | name | W | R |
+|---|---|---|---|
+| `0x1D0` | `XF_SEL` | `{id[15:8], reg[7:0]}`: the register the next access names | — |
+| `0x1D8` | `XF_DATA` | the write itself: `cfg_en` with `cfg_data` = bits `[31:0]` | `cfg_rdata` of the selected register, in bits `[31:0]` |
 
 A register the processor can read and one it can write are not different things,
 and whether a write is followed by a move is the program's business.
 
 The **host** has no path to them. The host talks to the processor for work.
-
-> **This holds only for the RV32 control complex** — `sysnode`'s `CPU_RV64 = 0`,
-> the default. `rv_mag_pe` decodes that range and drives `mag_xform`'s
-> `cfg_en / cfg_id / cfg_addr / cfg_data` from it, and returns `cfg_rdata`.
->
-> **With `CPU_RV64` non-zero the register port is tied off.** `rv64_mag_pe`
-> instantiates `mag_xform` with `cfg_en` at zero and `cfg_rdata` unconnected, and
-> the RV64 control region carries no occupant window, so **an occupant's
-> registers are unreachable in that configuration** — the bank's own `0x00` fault
-> and `0x04` geometry included. An occupant with no registers of its own is
-> unaffected, which is the case the shipping bank is in; one that needs
-> configuration cannot be driven there.
->
-> Because `0x00` cannot be written, `fault` is also **unclearable** in that
-> configuration: it is sticky, and any write to register `0x00` is the only thing
-> that clears it. See [parameters.md](parameters.md) §5.1.
+`scripts/py/sw_xfprobe.py` boots a probe image that reads every id's geometry and
+the bank's fault word through these two registers on the card model.
 
 ### Configuration is only legal while ungranted
 
@@ -223,7 +232,7 @@ its registers at `start` and needs no further guard.
 ### A fault aborts the run, and the run still completes
 
 An occupant raising `fault` stops the move: the agent issues no further reads,
-`busy` falls normally, and the mover reports a fault code meaning *the occupant
+`busy` falls normally, and the mover reports fault 8 (`F_XFORM`), *the occupant
 faulted*. The occupant's own sticky `fault` says which.
 
 The completion still arrives, so nothing above has to learn a new wait. The
@@ -255,11 +264,29 @@ must fetch and how far apart entries sit.
 
 KohakuTPU's quantiser declares `IN_BITS = 2048`, `OUT_WORDS = 4` — eight source
 beats in, four words out, the 2:1 ratio the mover needs to size a converting
-move. These replace the `Q_ENTRY_BITS` / `P_ENTRY_BITS` literals that used to
-live in the framework.
+move.
 
 `IN_BITS` is free; `OUT_WORDS` is bounded by the port list above. A 1:2
 expansion is `IN_BITS 512 / OUT_WORDS 4`, not `1024 / 8`.
+
+### Geometry per id
+
+A bank whose occupants differ in shape answers per id, combinationally, on
+`geo_id`: `geo_in_beats` is the source beats one entry takes and `geo_depth` the
+entries the occupant can hold started and not `done`. The mover latches both
+for the move's id at GO, tiles the source into entries of `geo_in_beats`, and
+never has more than `geo_depth` entries in the occupant. A move whose id
+answers zero for either is refused with fault 4 (`F_MODE`).
+
+| id (KohakuTPU) | `geo_in_beats` | `geo_depth` |
+|---|---|---|
+| 0 bypass | 4 | 2 |
+| 1 quantiser | 8 | 2 (`Q_DBUF = 1`), 1 (`Q_DBUF = 0`) |
+| 2 GT4 | 4 | 2 |
+
+The quantiser's `Q_DBUF` is the define `KH_XF_Q_DBUF` (default 1), because the
+framework instantiates the bank without naming occupant parameters. At 1 the
+pack works from its own copy of the source while the next entry fills.
 
 ## Arbitration
 

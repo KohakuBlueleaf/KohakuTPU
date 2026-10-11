@@ -211,27 +211,27 @@ module mx_tdesc #(
     // mux. Together they were 7 of the ship top's 10 worst paths.
     //
     // Padded to a power of two so the in-place pairwise fold is ceil(log2)
-    // levels: at NDIM=6 that is 3 instead of 6.
+    // levels: at NDIM=6 that is 3 instead of 6. The base is a leaf of the
+    // same tree (slot NDIM), not an adder after it.
     localparam integer AN = 1 << $clog2(NDIM + 1);
 
     integer oi, on2, ok;
-    reg signed [SW-1:0] os_t [0:AN-1];
-    reg signed [SW-1:0] off_sum;
+    reg [AW-1:0] os_t [0:AN-1];
     always @(*) begin
         for (oi = 0; oi < AN;   oi = oi + 1) begin
-            os_t[oi] = {SW{1'b0}};
+            os_t[oi] = {AW{1'b0}};
         end
         for (oi = 0; oi < NDIM; oi = oi + 1) begin
-            os_t[oi] = psum[oi];
+            os_t[oi] = {{(AW-SW){psum[oi][SW-1]}}, psum[oi]};
         end
+        os_t[NDIM] = d_base;
         for (on2 = AN >> 1; on2 > 0; on2 = on2 >> 1) begin
             for (ok = 0; ok < on2; ok = ok + 1) begin
                 os_t[ok] = os_t[ok] + os_t[ok + on2];
             end
         end
-        off_sum = os_t[0];
     end
-    wire [AW-1:0] w_addr = d_base + {{(AW-SW){off_sum[SW-1]}}, off_sum};
+    wire [AW-1:0] w_addr = os_t[0];
 
     // An alignment test reads only the low LOWB bits, which carry nothing from
     // above: folded narrow it is one CARRY8, not a slice of the 40-bit sum.
@@ -244,13 +244,14 @@ module mx_tdesc #(
         for (li = 0; li < NDIM; li = li + 1) begin
             ls_t[li] = psum[li][LOWB-1:0];
         end
+        ls_t[NDIM] = d_base[LOWB-1:0];
         for (ln2 = AN >> 1; ln2 > 0; ln2 = ln2 >> 1) begin
             for (lk = 0; lk < ln2; lk = lk + 1) begin
                 ls_t[lk] = ls_t[lk] + ls_t[lk + ln2];
             end
         end
     end
-    wire w_low_nz = |(d_base[LOWB-1:0] + ls_t[0]);
+    wire w_low_nz = |ls_t[0];
 `ifndef SYNTHESIS
     always @(posedge clk) begin
         if (!rst && (low_nz !== |addr[LOWB-1:0])) begin

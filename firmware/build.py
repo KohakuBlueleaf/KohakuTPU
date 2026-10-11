@@ -82,6 +82,11 @@ IMAGES = {
         "kohakuaccel/boot",
         "kohakuaccel/apps/memprobe",
     ],
+    # The transform bank's registers and the mover status (scripts/py/sw_xfprobe.py).
+    "xfprobe": [
+        "kohakuaccel/boot",
+        "kohakutpu/apps/xfprobe",
+    ],
     # Tasks and region heaps, self-checked on the node (scripts/py/sw_os.py).
     "osprobe": [
         "kohakuaccel/boot",

@@ -91,6 +91,7 @@ module rv64_syscore #(
     input  wire                   mv_busy,
     input  wire [3:0]             mv_fault,
     input  wire [31:0]            mv_done,
+    input  wire                   mv_room,    // the mover's config queue has room
 
     // ---- the interlink doorbell, both directions ---------------------------
     output reg                    db_en,
@@ -106,6 +107,7 @@ module rv64_syscore #(
     output reg  [7:0]             xf_cfg_id,
     output reg  [7:0]             xf_cfg_addr,
     output reg  [63:0]            xf_cfg_data,
+    input  wire [31:0]            xf_rdata,   // the register xf_cfg_id/addr select
 
     input  wire                   irq_summary,
     // The host interrupt as a TOGGLE (a store to CTRL 0x38 flips it): any
@@ -747,6 +749,7 @@ module rv64_syscore #(
             case (ctrl_off_rd[7:6])
                 2'b10:   ctrl_q <= rx_rdata;
                 2'b11:   ctrl_q <= (ctrl_off_rd[7:0] == R1_DCACHE) ? {63'd0, l1_flush_busy}
+                                 : (ctrl_off_rd[7:0] == R1_XFDAT)  ? {32'd0, xf_rdata}
                                                                   : 64'd0;
                 default: ctrl_q <= 64'd0;
             endcase
@@ -759,7 +762,7 @@ module rv64_syscore #(
                 R_IRQ:   ctrl_q <= {63'd0, host_irq};
                 // A read-only mirror of the CSR.
                 R_SATP:  ctrl_q <= core_satp;
-                8'h20:   ctrl_q <= {31'd0, mv_busy, mv_fault, mv_done[27:0]};
+                8'h20:   ctrl_q <= {30'd0, mv_room, mv_busy, mv_fault, mv_done[27:0]};
                 8'h28:   ctrl_q <= db_status;
                 8'hE0:   ctrl_q <= db_sig;
                 default: ctrl_q <= 64'd0;

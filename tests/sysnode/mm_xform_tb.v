@@ -6,10 +6,11 @@
 // that the right bytes reach it, in the right order, and that its four words
 // land at the right destination.
 //
-// CASE 2 IS THE POINT. A source strided WITHIN an entry is what the separate
-// engine could not do: it had no walker, so a strided source cost a gather pass
-// into staging first. Here the walker issues the entry's eight reads wherever
-// they live and the returns stream into the occupant in order.
+// CASE 2: a source strided WITHIN an entry -- the walker issues the entry's
+// eight reads wherever they live and the words reach the occupant in order.
+// CASE 3: GT4 (id 2) against the granule transpose computed here. CASE 4: 256
+// quantiser entries back to back, every 16th checked, cycles printed. CASE 5:
+// a second move configured and started while the first runs (the queue).
 
 `default_nettype none
 `timescale 1ns/1ps
@@ -26,6 +27,13 @@ module mm_xform_tb;
     localparam [AW-1:0] DST1 = 40'h20_0000;
     localparam [AW-1:0] SRC2 = 40'h30_0000;
     localparam [AW-1:0] DST2 = 40'h40_0000;
+    // Case 3/5: GT4 and identity. Case 4: a long quantise, for the rate.
+    localparam integer  NG = 16, NQ = 256;
+    localparam [AW-1:0] SRC3 = 40'h50_0000;
+    localparam [AW-1:0] DST3 = 40'h58_0000;
+    localparam [AW-1:0] SRC4 = 40'h60_0000;
+    localparam [AW-1:0] DST4 = 40'h70_0000;
+    reg  [DW-1:0] gw;
 
     reg clk = 0, resetn = 0;
     always begin
@@ -50,7 +58,9 @@ module mm_xform_tb;
     wire           wlast, wvalid, wready, bvalid, bready, rlast, rvalid, rready;
 
     wire        x_req, x_gnt, x_start, x_bv, x_done;
-    wire [3:0]  x_id, x_mode;
+    wire [3:0]  x_id, x_mode, x_gid, x_fault;
+    wire [3:0]  x_geo_beats;
+    wire [2:0]  x_geo_depth;
     wire [DW-1:0] x_beat, x_w0, x_w1, x_w2, x_w3;
 
     mm_mover #(.DATA_W(DW), .ADDR_W(AW), .ID_W(IDW), .IDX_WORDS(128),
@@ -71,7 +81,9 @@ module mm_xform_tb;
         .x_req(x_req), .x_gnt(x_gnt), .x_start(x_start),
         .x_id(x_id), .x_mode(x_mode),
         .x_beat(x_beat), .x_beat_valid(x_bv),
-        .x_done(x_done), .x_w0(x_w0), .x_w1(x_w1), .x_w2(x_w2), .x_w3(x_w3)
+        .x_done(x_done), .x_w0(x_w0), .x_w1(x_w1), .x_w2(x_w2), .x_w3(x_w3),
+        .x_gid(x_gid), .x_geo_beats(x_geo_beats), .x_geo_depth(x_geo_depth),
+        .x_fault(x_fault)
     );
 
     mag_xform #(.DATA_W(DW), .NREQ(1), .SLOTS(1), .ID_W(4), .MODE_W(4),
@@ -80,10 +92,13 @@ module mm_xform_tb;
         .req(x_req), .gnt(x_gnt),
         .start(x_start), .id(x_id), .mode(x_mode),
         .beat(x_beat), .beat_valid(x_bv),
-        .done(x_done), .word0(x_w0), .word1(x_w1), .word2(x_w2), .word3(x_w3)
+        .done(x_done), .word0(x_w0), .word1(x_w1), .word2(x_w2), .word3(x_w3),
+        .geo_id(x_gid), .geo_in_beats(x_geo_beats), .geo_depth(x_geo_depth),
+        .cfg_en(1'b0), .cfg_id(4'd0), .cfg_addr(8'd0), .cfg_data(32'd0),
+        .cfg_rdata(), .fault(x_fault)
     );
 
-    axi_ram #(.DATA_W(DW), .ADDR_W(AW), .ID_W(IDW), .WORDS(200000), .PORTS(1))
+    axi_ram #(.DATA_W(DW), .ADDR_W(AW), .ID_W(IDW), .WORDS(262144), .PORTS(1))
     u_ram (
         .clk(clk), .resetn(resetn),
         .s_awid(awid), .s_awaddr(awaddr), .s_awlen(awlen), .s_awsize(awsize),
@@ -111,7 +126,7 @@ module mm_xform_tb;
         .word0(g_w0), .word1(g_w1), .word2(g_w2), .word3(g_w3)
     );
 
-    reg [DW-1:0] ref_w [0:NENT*4-1];
+    reg [DW-1:0] ref_w [0:NQ*4-1];
 
     integer errors = 0, checks = 0, spin, i, e, b;
 
@@ -181,6 +196,13 @@ module mm_xform_tb;
     task go(input [2:0] mode);
         begin
             wr(8'h00, {47'd0, 1'b1, 8'd0, 3'd0, 2'd1, mode});
+            idle();
+        end
+    endtask
+
+    integer t_go;
+    task idle;
+        begin
             @(negedge clk);
             spin = 0;
             while (stat_busy && spin < 200000) begin
@@ -189,7 +211,7 @@ module mm_xform_tb;
             end
             if (spin >= 200000) begin
                 errors = errors + 1;
-                $display("  FAIL the mover never went idle (mode %0d)", mode);
+                $display("  FAIL the mover never went idle");
             end
         end
     endtask
@@ -279,6 +301,86 @@ module mm_xform_tb;
 
         // Every entry of both moves reported.
         chk({224'd0, stat_done}, {224'd0, 32'd2}, "both moves completed", 0);
+
+        // ============ 3. GT4 (id 2): the granule transpose ============
+        $display("--- 3. GT4: out word i granule w = in word w granule i ---");
+        for (i = 0; i < NG*4; i = i + 1) begin
+            u_ram.mem[(SRC3 >> 5) + i] = {$urandom, $urandom, $urandom, $urandom,
+                                          $urandom, $urandom, $urandom, $urandom};
+            u_ram.mem[(DST3 >> 5) + i] = {8{32'hA5A5_A5A5}};
+        end
+        hdrx(1'b0, SRC3, 3'd1, 4'd2, 4'd0);
+        dim(1'b0, 3'd0, NG*4, 32'sd32);
+        hdrx(1'b1, DST3, 3'd1, 4'd0, 4'd0);
+        dim(1'b1, 3'd0, NG, 32'sd128);
+        t_go = $time;
+        go(3'd5);
+        $display("  GT4: %0d entries, %0d cycles", NG, ($time - t_go) / 4);
+        chk({252'd0, stat_fault}, 256'd0, "no fault on GT4", 3);
+        for (e = 0; e < NG; e = e + 1) begin
+            for (i = 0; i < 4; i = i + 1) begin
+                for (b = 0; b < 4; b = b + 1) begin
+                    gw[b*64 +: 64] = u_ram.mem[(SRC3 >> 5) + e*4 + b][i*64 +: 64];
+                end
+                chk(u_ram.mem[(DST3 >> 5) + e*4 + i], gw, "GT4 destination word", e*4 + i);
+            end
+        end
+
+        // ============ 4. rate: a long quantise, entries back to back ============
+        $display("--- 4. quantise %0d entries ---", NQ);
+        for (i = 0; i < NQ*8; i = i + 1) begin
+            sv = 16'h3800 + i[15:0];
+            u_ram.mem[(SRC4 >> 5) + i] = {16{sv}};
+        end
+        hdrx(1'b0, SRC4, 3'd1, 4'd1, 4'd0);
+        dim(1'b0, 3'd0, NQ*8, 32'sd32);
+        hdrx(1'b1, DST4, 3'd1, 4'd0, 4'd0);
+        dim(1'b1, 3'd0, NQ, 32'sd128);
+        t_go = $time;
+        go(3'd5);
+        $display("  quantise: %0d entries, %0d cycles", NQ, ($time - t_go) / 4);
+        chk({252'd0, stat_fault}, 256'd0, "no fault on the long quantise", 4);
+        for (e = 0; e < NQ; e = e + 1) begin
+            if (e % 16 == 0) begin
+                reference(e, (SRC4 >> 5) + e*8, 1);
+                for (i = 0; i < 4; i = i + 1) begin
+                    chk(u_ram.mem[(DST4 >> 5) + e*4 + i], ref_w[e*4 + i],
+                        "long quantise word", e*4 + i);
+                end
+            end
+        end
+
+        // ============ 5. the config queue: move B written while A runs ============
+        $display("--- 5. queued configuration ---");
+        for (i = 0; i < NG*4; i = i + 1) begin
+            u_ram.mem[(DST3 >> 5) + i] = {8{32'hA5A5_A5A5}};
+            u_ram.mem[(DST4 >> 5) + i] = {8{32'h5A5A_5A5A}};
+        end
+        // A: GT4 into DST3. B: identity (id 0) into DST4, written at once.
+        hdrx(1'b0, SRC3, 3'd1, 4'd2, 4'd0);
+        dim(1'b0, 3'd0, NG*4, 32'sd32);
+        hdrx(1'b1, DST3, 3'd1, 4'd0, 4'd0);
+        dim(1'b1, 3'd0, NG, 32'sd128);
+        wr(8'h00, {47'd0, 1'b1, 8'd0, 3'd0, 2'd1, 3'd5});
+        hdrx(1'b0, SRC3, 3'd1, 4'd0, 4'd0);
+        dim(1'b0, 3'd0, NG*4, 32'sd32);
+        hdrx(1'b1, DST4, 3'd1, 4'd0, 4'd0);
+        dim(1'b1, 3'd0, NG, 32'sd128);
+        wr(8'h00, {47'd0, 1'b1, 8'd0, 3'd0, 2'd1, 3'd5});
+        chk({255'd0, stat_busy}, 256'd1, "busy while queued", 5);
+        idle();
+        chk({252'd0, stat_fault}, 256'd0, "no fault on queued moves", 5);
+        chk({224'd0, stat_done}, {224'd0, 32'd6}, "both queued moves completed", 5);
+        for (e = 0; e < NG; e = e + 1) begin
+            for (i = 0; i < 4; i = i + 1) begin
+                for (b = 0; b < 4; b = b + 1) begin
+                    gw[b*64 +: 64] = u_ram.mem[(SRC3 >> 5) + e*4 + b][i*64 +: 64];
+                end
+                chk(u_ram.mem[(DST3 >> 5) + e*4 + i], gw, "queued A (GT4) word", e*4 + i);
+                chk(u_ram.mem[(DST4 >> 5) + e*4 + i], u_ram.mem[(SRC3 >> 5) + e*4 + i],
+                    "queued B (identity) word", e*4 + i);
+            end
+        end
 
         checks = checks + mchk;
         errors = errors + merr;

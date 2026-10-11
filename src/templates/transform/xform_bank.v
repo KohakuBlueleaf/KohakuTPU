@@ -32,6 +32,10 @@ module xform_bank #(
     output wire                 done,
     output wire [DATA_W-1:0]    word0, word1, word2, word3,
 
+    input  wire [ID_W-1:0]      geo_id,
+    output wire [3:0]           geo_in_beats,
+    output wire [2:0]           geo_depth,
+
     input  wire                 cfg_en,
     input  wire [ID_W-1:0]      cfg_id,
     input  wire [7:0]           cfg_addr,
@@ -47,25 +51,34 @@ module xform_bank #(
     reg [DATA_W-1:0] p_w0, p_w1, p_w2, p_w3;
     reg              p_done;
 
+    // A beat with `start` is the entry's first. The words are registered on
+    // the fourth beat, so the next entry's beats may follow at once.
+    reg  [DATA_W-1:0] p_b0, p_b1, p_b2;
+    wire [1:0] p_bc = start ? 2'd0 : p_cnt;
     always @(posedge clk) begin
         p_done <= 1'b0;
         if (rst) begin
             p_cnt <= 2'd0;
-        end else if (start) begin
+        end else if (start && !beat_valid) begin
             p_cnt <= 2'd0;
         end else if (beat_valid) begin
-            case (p_cnt)
-                2'd0: p_w0 <= beat;
-                2'd1: p_w1 <= beat;
-                2'd2: p_w2 <= beat;
-                default: p_w3 <= beat;
+            case (p_bc)
+                2'd0: p_b0 <= beat;
+                2'd1: p_b1 <= beat;
+                2'd2: p_b2 <= beat;
+                default: begin
+                    p_w0 <= p_b0; p_w1 <= p_b1; p_w2 <= p_b2; p_w3 <= beat;
+                    p_done <= 1'b1;
+                end
             endcase
-            p_cnt <= p_cnt + 2'd1;
-            if (p_cnt == 2'd3) begin
-                p_done <= 1'b1;
-            end
+            p_cnt <= p_bc + 2'd1;
         end
     end
+
+    // Every id: four beats an entry, two entries in flight (one filling, one
+    // whose words are held).
+    assign geo_in_beats = 4'd4;
+    assign geo_depth    = 3'd2;
 
     // Every id is bypass here, so no id can be wrong and the fault is constant.
     always @(*) begin

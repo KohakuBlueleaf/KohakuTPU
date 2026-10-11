@@ -31,6 +31,12 @@
 // is a row of A, for a B operand a column of B. Only the output packing differs,
 // which `b_layout` selects.
 //
+// FILL AND PACK RUN IN PARALLEL. With DBUF = 1 the pack works from its own
+// copy of the source: entry k+1 fills while entry k packs, and moves into the
+// copy in one cycle when k is done, so the pack's read select stays one
+// buffer wide. The requester holds at most DEPTH entries in here and counts
+// `done` back; `start` never aborts an entry.
+//
 // Timing and area rationale: docs/mas/quantiser-timing.md.
 
 `default_nettype none
@@ -38,12 +44,13 @@
 module mx_quant #(
     // Scale exponent bias. scale = peak/63 with an FP16 peak spans
     // 2^-20 .. 2^10, so 20 centres that on the 5-bit field.
-    parameter integer SBIAS = 20
+    parameter integer SBIAS = 20,
+    parameter integer DBUF  = 1
 )(
     input  wire         clk,
     input  wire         rst,
 
-    input  wire         start,        // begin a new entry
+    input  wire         start,        // begin a new entry; a beat with it is its first
     input  wire         b_layout,     // 0 = A packing, 1 = B packing
 
     input  wire [255:0] beat,         // 16 FP16 values, element 0 in bits [15:0]
@@ -61,9 +68,12 @@ module mx_quant #(
     // words at once and the pack stage reads 32 through a 4:1 select, so this
     // is a register file and no RAM primitive can hold it.
     (* ram_style = "registers" *)
-    reg [15:0] src [0:127];           // lane*32 + k
+    reg [15:0] src  [0:127];          // the fill's: lane*32 + k
+    (* ram_style = "registers" *)
+    reg [15:0] srcp [0:127];          // DBUF: the pack's copy
     reg [3:0]  bcnt;
     reg        filling;
+    reg        full;                  // src holds a whole entry not yet taken
 
     assign need_beat = filling;
 
@@ -84,7 +94,10 @@ module mx_quant #(
     reg [1:0]  r4_lane;
     reg        r4_first;              // first beat of its lane: load, not max
     reg        r4_valid;
-    reg [14:0] acc [0:7];             // lane*2 + half
+    reg [14:0] acc  [0:7];            // lane*2 + half
+    // The pack's copy, at either DBUF: NORM read straight off `acc` synthesised
+    // at 259.9 MHz OOC (DBUF 0) against 399.7 from the copy.
+    reg [14:0] accp [0:7];
 
     // ---- per-lane block scale -------------------------------------------
     reg [10:0]       n_sig [0:3];     // peak significand renormalised to [1024,2048)
@@ -144,7 +157,7 @@ module mx_quant #(
     reg [1:0] pkw, pkw_d;
     reg       pk2_valid;
 
-    integer i, si, sj, oi, lane, j, hh;
+    integer i, ci, si, sj, oi, lane, j, hh;
     reg [4:0]  norm;
 
     // Per-stage temporaries, live within one stage only.
@@ -167,16 +180,38 @@ module mx_quant #(
     reg [6:0]   q_v [0:31];
     reg [255:0] nw_v;
 
-    // ---- control, the peak accumulator, and the scale --------------------
+    // ---- fill: source buffer and the peak accumulator ---------------------
+    // The pack takes `src` into its copy on the edge into PK_DRAIN (DBUF), or
+    // reads it until PK_TAIL. The next entry's first beat can land on that same
+    // edge, and its first fold on the next one, where the peaks are copied.
+    wire to_drain = full && ((pk == PK_IDLE) || ((DBUF != 0) && (pk == PK_TAIL)));
+    wire take     = (DBUF != 0) ? to_drain : (pk == PK_TAIL);
+    wire fill_we  = (filling || start) && beat_valid;
+
+    // Data, outside the reset branch: one enable, no reset term per bit.
+    always @(posedge clk) begin
+        if (fill_we) begin
+            for (i = 0; i < 16; i = i + 1) begin
+                src[{bcnt, 4'd0} + i] <= beat[i*16 +: 16];
+            end
+            // 16 -> 4 in two compare levels. Beat b holds lane b/2, so
+            // which accumulator these belong to is the beat counter.
+            for (j = 0; j < 4; j = j + 1) begin
+                ha_v = (beat[(4*j+0)*16 +: 15] > beat[(4*j+1)*16 +: 15])
+                     ?  beat[(4*j+0)*16 +: 15] : beat[(4*j+1)*16 +: 15];
+                hb_v = (beat[(4*j+2)*16 +: 15] > beat[(4*j+3)*16 +: 15])
+                     ?  beat[(4*j+2)*16 +: 15] : beat[(4*j+3)*16 +: 15];
+                r4[j] <= (ha_v > hb_v) ? ha_v : hb_v;
+            end
+        end
+    end
+
     always @(posedge clk) begin
         if (rst) begin
-            filling <= 1'b0; pk <= PK_IDLE; done <= 1'b0; bcnt <= 4'd0;
-            r4_valid <= 1'b0; pk2_valid <= 1'b0; pkw <= 2'd0; pkw_d <= 2'd0;
+            filling <= 1'b0; bcnt <= 4'd0; r4_valid <= 1'b0;
+            full <= 1'b0;
         end else begin
-            done      <= 1'b0;
-            r4_valid  <= 1'b0;
-            pk2_valid <= (pk == PK_PACK) && !start;
-            pkw_d     <= pkw;
+            r4_valid <= 1'b0;
 
             // Fold the previous beat's four maxima into its lane. Runs beside
             // the fill rather than inside it, so a beat cycle never carries
@@ -194,33 +229,48 @@ module mx_quant #(
                 end
             end
 
-            if (start) begin
-                filling <= 1'b1; pk <= PK_IDLE; bcnt <= 4'd0;
-            end else if (filling && beat_valid) begin
-                for (i = 0; i < 16; i = i + 1) begin
-                    src[{bcnt, 4'd0} + i] <= beat[i*16 +: 16];
-                end
-                // 16 -> 4 in two compare levels. Beat b holds lane b/2, so
-                // which accumulator these belong to is the beat counter.
-                for (j = 0; j < 4; j = j + 1) begin
-                    ha_v = (beat[(4*j+0)*16 +: 15] > beat[(4*j+1)*16 +: 15])
-                         ?  beat[(4*j+0)*16 +: 15] : beat[(4*j+1)*16 +: 15];
-                    hb_v = (beat[(4*j+2)*16 +: 15] > beat[(4*j+3)*16 +: 15])
-                         ?  beat[(4*j+2)*16 +: 15] : beat[(4*j+3)*16 +: 15];
-                    r4[j] <= (ha_v > hb_v) ? ha_v : hb_v;
-                end
+            if (take) begin
+                full <= 1'b0;
+            end
+            // bcnt is 0 at every entry boundary, so a beat WITH `start` lands
+            // as the entry's first without a select on `start`.
+            if (start && !beat_valid) begin
+                filling <= 1'b1; bcnt <= 4'd0;
+            end else if (fill_we) begin
                 r4_lane  <= bcnt[2:1];
                 r4_first <= ~bcnt[0];
                 r4_valid <= 1'b1;
                 if (bcnt == 4'd7) begin
                     filling <= 1'b0;
-                    pk <= PK_DRAIN;
+                    full    <= 1'b1;
+                    bcnt    <= 4'd0;
                 end
                 else begin
-                    bcnt <= bcnt + 4'd1;
+                    filling <= 1'b1;
+                    bcnt    <= bcnt + 4'd1;
                 end
+            end
+        end
+    end
+
+    // ---- pack: the next full buffer, in fill order ------------------------
+    always @(posedge clk) begin
+        if (rst) begin
+            pk <= PK_IDLE; done <= 1'b0;
+            pk2_valid <= 1'b0; pkw <= 2'd0; pkw_d <= 2'd0;
+        end else begin
+            done      <= 1'b0;
+            pk2_valid <= (pk == PK_PACK);
+            pkw_d     <= pkw;
+            if ((DBUF != 0) && to_drain) begin
+                for (ci = 0; ci < 128; ci = ci + 1) srcp[ci] <= src[ci];
+            end
+            if (pk == PK_IDLE) begin
+                // full is set with the last beat; its fold lands a cycle later
+                if (full) pk <= PK_DRAIN;
             end else if (pk == PK_DRAIN) begin
                 // one cycle for the last beat's fold to land in `acc`
+                for (ci = 0; ci < 8; ci = ci + 1) accp[ci] <= acc[ci];
                 pk <= PK_NORM;
             end else if (pk == PK_NORM) begin
                 // Renormalise a subnormal peak into [1024,2048).
@@ -232,7 +282,7 @@ module mx_quant #(
                 // mux. See docs/mas/quantiser-timing.md.
                 for (lane = 0; lane < 4; lane = lane + 1) begin
                     for (hh = 0; hh < 2; hh = hh + 1) begin
-                        {ef_v, sig_v} = decode(acc[lane*2+hh]);
+                        {ef_v, sig_v} = decode(accp[lane*2+hh]);
                         // LEFT AS A LOOP DELIBERATELY. Rewritten as smear /
                         // isolate / one-hot select -- the shape CLAUDE.md
                         // prescribes -- this measured 3,745 LUT against 3,657
@@ -250,7 +300,7 @@ module mx_quant #(
                         cs_v[hh] = tmp_v;
                         ce_v[hh] = ep_v;
                     end
-                    hi_v = (acc[lane*2+0] > acc[lane*2+1]);
+                    hi_v = (accp[lane*2+0] > accp[lane*2+1]);
                     n_sig[lane] <= hi_v ? cs_v[0] : cs_v[1];
                     n_ep[lane]  <= hi_v ? ce_v[0] : ce_v[1];
                 end
@@ -315,7 +365,9 @@ module mx_quant #(
                     pkw <= pkw + 2'd1;
                 end
             end else if (pk == PK_TAIL) begin
-                pk   <= PK_IDLE;
+                // The next entry already filled: its copy follows at once --
+                // eight cycles an entry, the fill's eight beats.
+                pk   <= ((DBUF != 0) && full) ? PK_DRAIN : PK_IDLE;
                 done <= 1'b1;
             end
         end
@@ -332,7 +384,8 @@ module mx_quant #(
     //   t = 21 + sexp - e   is that shift measured from bit 15 of the product.
     always @(posedge clk) begin
         for (si = 0; si < 32; si = si + 1) begin
-            h_v = src[(si/8)*32 + (si%8) + pkw*8];
+            h_v = (DBUF != 0) ? srcp[(si/8)*32 + (si%8) + pkw*8]
+                              : src[(si/8)*32 + (si%8) + pkw*8];
             {e_v, s_v} = decode(h_v[14:0]);
             t_v = sbase[si/8] - $signed({3'b000, e_v});
             pmul[si]  <= s_v * srec[si/8];

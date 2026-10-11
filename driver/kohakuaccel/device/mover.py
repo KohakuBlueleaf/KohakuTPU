@@ -78,6 +78,8 @@ FAULTS = {
     # F_XPAD: a padded element issues no read, so the occupant's fixed IN_BITS
     # would be a beat short forever.
     7: "a bound axis on a MODE_XFORM move; a transform descriptor tiles whole",
+    8: "the transform slot faulted (KohakuTPU's bank: an id naming no occupant)",
+    9: "configuration queue overflow: writes arrived with ROOM low; latched to reset",
 }
 
 

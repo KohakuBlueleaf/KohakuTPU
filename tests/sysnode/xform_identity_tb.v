@@ -48,7 +48,8 @@ module xform_identity_tb;
     wire [3:0]  x_id, x_mode;
     wire [DW-1:0] x_beat, x_w0, x_w1, x_w2, x_w3;
     wire [31:0] x_rdata;
-    wire [3:0]  x_fault;
+    wire [3:0]  x_fault, x_gid, x_geo_beats;
+    wire [2:0]  x_geo_depth;
 
     mm_mover #(.DATA_W(DW), .ADDR_W(AW), .ID_W(IDW), .IDX_WORDS(128),
                .XID_W(4), .XMODE_W(4),
@@ -68,7 +69,9 @@ module xform_identity_tb;
         .x_req(x_req), .x_gnt(x_gnt), .x_start(x_start),
         .x_id(x_id), .x_mode(x_mode),
         .x_beat(x_beat), .x_beat_valid(x_bv),
-        .x_done(x_done), .x_w0(x_w0), .x_w1(x_w1), .x_w2(x_w2), .x_w3(x_w3)
+        .x_done(x_done), .x_w0(x_w0), .x_w1(x_w1), .x_w2(x_w2), .x_w3(x_w3),
+        .x_gid(x_gid), .x_geo_beats(x_geo_beats), .x_geo_depth(x_geo_depth),
+        .x_fault(x_fault)
     );
 
     mag_xform #(.DATA_W(DW), .NREQ(1), .SLOTS(1), .ID_W(4), .MODE_W(4),
@@ -78,6 +81,7 @@ module xform_identity_tb;
         .start(x_start), .id(x_id), .mode(x_mode),
         .beat(x_beat), .beat_valid(x_bv),
         .done(x_done), .word0(x_w0), .word1(x_w1), .word2(x_w2), .word3(x_w3),
+        .geo_id(x_gid), .geo_in_beats(x_geo_beats), .geo_depth(x_geo_depth),
         .cfg_en(1'b0), .cfg_id(4'd0), .cfg_addr(8'd4), .cfg_data(32'd0),
         .cfg_rdata(x_rdata), .fault(x_fault)
     );
