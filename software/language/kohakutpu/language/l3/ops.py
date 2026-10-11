@@ -1,5 +1,6 @@
-"""KohakuTPU's L3 ops, each one hardware feature, and `mx7`, the clusters'
-operand format: a value quantised the way ``mx_quant.v`` quantises it."""
+"""KohakuTPU's L3 ops, each one hardware feature; `mx7`, the clusters'
+operand format: a value quantised the way ``mx_quant.v`` quantises it; and
+`f32`, the vector core's lane values (E8M15)."""
 
 import numpy as np
 from kohakutpu.language.l3.opset import (
@@ -9,9 +10,11 @@ from kohakutpu.language.l3.opset import (
     fmt_shape,
     reduced,
 )
+from kohakutpu.language.numerics import e8m15
 from kohakutpu.language.numerics.mxfp7 import KBLOCK, value_fp16
 
 OPS = OpSet("kohakutpu")
+OPS.dtype("f32", e8m15.value)
 
 
 def _mx7(x):

@@ -5,8 +5,10 @@ body: the runner loads the file, binds buffers, runs; the kernel is the text.
         [--fn NAME] [--init x=normal:3] [--seed 2] [--out DIR]
 
 The L1 body's parameters are the L3 body's inputs, then its result, then
-scratch; each is laid out as its type says (`kohakutpu.compiler.layout.buffer`). Inputs
-are seeded random fp16 (`--init NAME=normal:SCALE|uniform:LO:HI`). Each run
+scratch; each is laid out as its type says (`kohakutpu.compiler.layout.buffer`).
+Inputs are seeded random fp16 at the kernel's scales (`kernels.scale`: a
+weight N(0, 1 / fan-in), a query pre-scaled), or as
+`--init NAME=normal:SCALE|uniform:LO:HI` says. Each run
 goes twice; the second (image and descriptors resident) is the one timed.
 Lane use is lane beats over 16 lanes x busy cores x node cycles; work use is
 the L3 body's lane ops over the same; MFU is its multiply-adds over 1024 a
@@ -105,7 +107,12 @@ def main() -> int:
     rng = np.random.default_rng(a.seed)
     bufs = [(p, Buffer.of(t)) for p, t in l1.params]
     inputs = [
-        make(rng, inits.get(p, "normal:1"), b.host_dtype, b.host_shape)
+        make(
+            rng,
+            inits.get(p, f"normal:{ktpu.scale(name, p, b.host_shape)!r}"),
+            b.host_dtype,
+            b.host_shape,
+        )
         for p, b in bufs[:n_in]
     ]
     want = reference.run(hand, name, inputs)

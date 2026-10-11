@@ -1,12 +1,13 @@
 """L3: every kernel's `fn NAME.l3` reads, verifies and prints to a fixed point;
 the reference interpreter computes what numpy computes on the hardware's
-numerics (MXFP7 operands, fp16 results); the verifier refuses each kind of
-wrong body at its line."""
+numerics (MXFP7 operands, E8M15 lane values, fp16 results); the verifier
+refuses each kind of wrong body at its line."""
 
 import numpy as np
 import pytest
 from kohakutpu.language import kernels
 from kohakutpu.language.l3 import reader, reference
+from kohakutpu.language.numerics.e8m15 import value as lane
 from kohakutpu.language.numerics.mxfp7 import value_fp16
 from kohakutpu.language.text import module
 from kohakutpu.language.text.syntax import TextError
@@ -82,26 +83,32 @@ def test_layernorm():
     assert rel(run("layernorm", x, g, b), want) < 4e-3
 
 
+def sig(h):
+    """sigmoid(h) as the kernels state it: 2^(-h log2 e), + 1 and the
+    reciprocal, each rounded to the lane format."""
+    e = lane(np.exp2(lane(h * -LOG2E)))
+    return lane(1.0 / lane(e + 1.0))
+
+
 def test_mlp_is_the_quantised_products():
-    x = rng_f16(7, 64, 128, scale=0.5)
-    w1 = rng_f16(8, 96, 128, scale=0.5)
-    w2 = rng_f16(9, 64, 96, scale=0.5)
+    x = rng_f16(7, 64, 128, scale=1.0)
+    w1 = rng_f16(8, 96, 128, scale=128**-0.5)
+    w2 = rng_f16(9, 64, 96, scale=96**-0.5)
     h = f16(value_fp16(x) @ value_fp16(w1).T)
-    s = f16(h * sigmoid(h))
-    want = f16(value_fp16(s) @ value_fp16(w2).T)
-    assert rel(run("mlp", x, w1, w2), want) < 2e-3
+    want = f16(value_fp16(f16(h * sig(h))) @ value_fp16(w2).T)
+    assert np.array_equal(run("mlp", x, w1, w2), want)
 
 
 def test_swiglu_is_the_quantised_products():
-    x = rng_f16(10, 64, 128, scale=0.5)
-    wg = rng_f16(11, 96, 128, scale=0.5)
-    wu = rng_f16(12, 96, 128, scale=0.5)
-    wd = rng_f16(13, 64, 96, scale=0.5)
+    x = rng_f16(10, 64, 128, scale=1.0)
+    wg = rng_f16(11, 96, 128, scale=128**-0.5)
+    wu = rng_f16(12, 96, 128, scale=128**-0.5)
+    wd = rng_f16(13, 64, 96, scale=96**-0.5)
     g = f16(value_fp16(x) @ value_fp16(wg).T)
     up = f16(value_fp16(x) @ value_fp16(wu).T)
-    a = f16(g * sigmoid(g) * up)
+    a = f16(lane(g * sig(g)) * up)
     want = f16(value_fp16(a) @ value_fp16(wd).T)
-    assert rel(run("swiglu", x, wg, wu, wd), want) < 2e-3
+    assert np.array_equal(run("swiglu", x, wg, wu, wd), want)
 
 
 def attention(q, k, v):

@@ -142,12 +142,12 @@
   "numerics": {
    "packed": {
     "k": "b983bb7203c6ca6b006ad488b64ecb21db166262f7fae175296ad6128808a02d",
-    "q": "3aea59b67894973e71540df94d1a2c20371c39ba23e609a2bbb8fc8782d24e1c",
+    "q": "c79589d58de6f2e6b27a36a8e9b2f6ccbf95879750a0ec9466c9a1fc1ab6b03c",
     "v": "880e885fb2550ce3324847db05ae464a77ae0061b7d57352d8c2cec16b7a95a8"
    },
    "reference": {
-    "exact": "f4e2ed30beb3c911302611b4de013c797ec9c5957495d12053f0fb661d9aea73",
-    "rounded": "804858020acdcb307b80d6045711afeb01ecfbfc6f71f103aef4bd11a6cdc4eb"
+    "exact": "ac3fcaaa45cdf5dd170f45196d921730bca7731b34165d29befba943783b288a",
+    "rounded": "9574f2a7b70ab33ea7b9f0c8759d24fb2d1e8344a5fd3a50cafd05aa5f55256b"
    },
    "work": {
     "lane_ops": 5571584,
@@ -225,12 +225,12 @@
   "numerics": {
    "packed": {
     "k": "18c6e33d3cf7b98f84bea35eaaf02b9e13d49e4f88c6e793800ffd805bebc705",
-    "q": "97ec64e65916a17957116a9a92418146223e47dd29d2ac6b2c723772f57f9a4c",
+    "q": "4dd9f44811537580e48bc4ba355cb5fd26a01bd469ad9d8f4f8024c65782ed47",
     "v": "6c0fe4a1a3379cad36c46096f9de0ea9eadeb6c04637b6c8302e78df2f5b5366"
    },
    "reference": {
-    "exact": "326a736222da7040232b2539d7f2572ba5d283105424a0b76e140f00994d17ce",
-    "rounded": "9ae80269d1a4176ed09ac5f9b9f20f6dd8b139b9f1cb666182bb54b2ae7f8dc4"
+    "exact": "814b61aaabb6d98fb67dd7b52b46bb96e16de2d958cd1e331c7febbb97d38153",
+    "rounded": "60ea947345a56e55a89285d5f9b7a40321fec5faf211b7be19f05c2949622410"
    },
    "work": {
     "lane_ops": 73410560,
@@ -304,7 +304,7 @@
    },
    "reference": {
     "exact": "2641c9d9947c1d6671d39b6971a2941cb53e253f1e159460216a180f725f3cd5",
-    "rounded": "41ef177a911b6518ead27a6520261f5b139d3dcdb1b63748225ebde03591dd8f"
+    "rounded": "4adb0795e8c9faf31338a69b59dc49876e2a078304474da1f575ad6af7be1501"
    },
    "work": {
     "lane_ops": 792576,
@@ -378,13 +378,13 @@
   },
   "numerics": {
    "packed": {
-    "w1": "eb30f987f508ae1e59689d769f29ad3d26682dc41a244f8d473885dfab113808",
-    "w2": "87816470e3bc0294c12ef02eac7d077c4e318fd8ad1ec8a569918cfd9d58a98b",
+    "w1": "e773e4d94822c4fdbdc8f2c24e29e9ad685ee96589150ade197b95cbd79ac90c",
+    "w2": "085d82d6550d50c6935704c3b89af5c04ed62270aea4201fa3c65d65fa0df845",
     "x": "e77b4656bdf5291c55a438cfc23800073c47dc22581466fce71dd7c937c72239"
    },
    "reference": {
-    "exact": "672a1e2ba630db9ecbfe90ee28ead5f74766d88b52217920bef585e3f57a2911",
-    "rounded": "fea3d7bb7a903c7ebdec304d9b1fc3418cadbd8bceebdd05fe3c662e006dc1b7"
+    "exact": "cd47cca231fa6843beb22875c4a81fa06d846829195387b924966120d5e5aaa0",
+    "rounded": "ff7c3f89878c11f5a18048a3f5fc6eca015fea34e156022ae024d04c262acc98"
    },
    "work": {
     "lane_ops": 9437184,
@@ -450,7 +450,7 @@
    },
    "reference": {
     "exact": "ebbadbae9300ce3b6c426d9f682b4a56eea077574d6d5f14053fef6cb5d73594",
-    "rounded": "4847f6dc11864f69afe24dd5e71b14748b0af543a05d413aa92ce762813275e7"
+    "rounded": "046b3258a1d4db6edf6523177980632f8a3a044ee3bb76b53cb68dddb17d84c1"
    },
    "work": {
     "lane_ops": 327680,
@@ -516,7 +516,7 @@
    },
    "reference": {
     "exact": "3f78d48ae8a10cf08cb186dd2490a92ded87633f2d0b855d7cce84e116177662",
-    "rounded": "c6f72f3a0df62b45b84e22d4d3fb207760462dcf94aaf434be69cd0b9826100e"
+    "rounded": "e98e810e385193fa1b02e4a2badfcb14c4c578292c3dfe883e0416416fa91bc0"
    },
    "work": {
     "lane_ops": 787456,
@@ -596,14 +596,14 @@
   },
   "numerics": {
    "packed": {
-    "wd": "751f271349b9a0b44a5ac144ccc39094df6ff390826d4a92ec39c5e8733acbda",
-    "wg": "eb30f987f508ae1e59689d769f29ad3d26682dc41a244f8d473885dfab113808",
-    "wu": "87816470e3bc0294c12ef02eac7d077c4e318fd8ad1ec8a569918cfd9d58a98b",
+    "wd": "2d92ed4ac266b041427c486d791b132b2dca7b1b2813b72ce63ab84503a9f573",
+    "wg": "e773e4d94822c4fdbdc8f2c24e29e9ad685ee96589150ade197b95cbd79ac90c",
+    "wu": "085d82d6550d50c6935704c3b89af5c04ed62270aea4201fa3c65d65fa0df845",
     "x": "e77b4656bdf5291c55a438cfc23800073c47dc22581466fce71dd7c937c72239"
    },
    "reference": {
-    "exact": "c541976293a78f691ef29d79d3d8ecd91fdf37eaa7fa1355178b34636c4ce921",
-    "rounded": "0954ee8f7413db7621e7cca1ca42eadf670ad726dd438a6e60115316853bd8d0"
+    "exact": "e163d292ef5399aa63b9115c0b584824055c44883bedd70a55e0d4ec3d683e97",
+    "rounded": "c2a77674ddf62fbdcd41cd164225788931de1f139a00df510d5f0878249916c6"
    },
    "work": {
     "lane_ops": 11534336,

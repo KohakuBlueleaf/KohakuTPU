@@ -30,7 +30,7 @@ ARENA, STAGING, QUEUE = 0x0010_0000, 1 << 39, 0x0010_0000
 ALIGN = 256
 #: The memory port a fetched dispatch reads through.
 FETCH = (3, 1)
-#: The inputs' generator: standard normal, this seed, the host dtype.
+#: The inputs' generator: `kernels.inputs` at this seed, in the host dtype.
 SEED = 2
 
 
@@ -91,8 +91,12 @@ def numerics(name: str) -> dict:
     bufs = [(p, Buffer.of(t)) for p, t in m.body(name, "l1").params]
     n_in = len(m.body(name, "l3").params)
     rng = np.random.default_rng(SEED)
+    shapes = [(p, b.host_shape) for p, b in bufs[:n_in]]
     inputs = [
-        rng.standard_normal(b.host_shape).astype(b.host_dtype) for _, b in bufs[:n_in]
+        x.astype(b.host_dtype)
+        for x, (_, b) in zip(
+            kernels.inputs(name, shapes, rng), bufs[:n_in], strict=True
+        )
     ]
     rounded = np.asarray(reference.run(m, name, inputs), np.float64)
     exact = np.asarray(reference.run(m, name, inputs, exact=True), np.float64)
