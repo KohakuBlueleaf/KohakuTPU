@@ -37,8 +37,11 @@ from kohakutpu.driver.clock.card import BOARDS, load_board
 from kohakutpu.driver.host import Card, board_map
 
 ROOT = pathlib.Path(__file__).resolve().parents[5]
-#: Host arrays below the model's 16 MB (it wraps).
+#: Host arrays from 1 MB (the queue's alias at 0) to 1 MB short of the
+#: model's DRAM (it wraps): 16 MB unless the model was built with more.
 ARENA, ARENA_END = 0x0010_0000, 0x00F0_0000
+#: The node queue's address: a larger DRAM keeps the arena below it.
+QUEUE_ALIAS = 0x1000_0000
 #: The node queue, at the start of mesh 0's staging store.
 Q_SIZE = 0x0010_0000
 F_TIMING, F_STEPS = 2, 8
@@ -76,6 +79,8 @@ class VerilatorCard:
         log = log or pathlib.Path(tempfile.mkdtemp(prefix="ktpu_card_")) / "model.log"
         self.t = VerilatorTransport(self.build, log=log)
         self.host = SimDram(self.t, b, mp["mem"], mp["size"])
+        dram = min(len(self.host.dram) * self.host.words * 64, QUEUE_ALIAS)
+        self.arena_end = dram - (0x0100_0000 - ARENA_END)
         card = Card.from_board(
             board,
             transport=self.host,
@@ -138,8 +143,8 @@ class VerilatorCard:
     # ---------------------------------------------------------- memory
     def alloc(self, nbytes: int, align: int = 256) -> int:
         at = -(-self.top // align) * align
-        if at + nbytes > ARENA_END:
-            raise MemoryError(f"{nbytes} B past the arena ({ARENA_END - at} left)")
+        if at + nbytes > self.arena_end:
+            raise MemoryError(f"{nbytes} B past the arena ({self.arena_end - at} left)")
         self.top = at + nbytes
         return at
 

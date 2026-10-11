@@ -76,8 +76,12 @@ def main() -> int:
     ap.add_argument(
         "--define", "-d", action="append", default=[], help="passed to vlt.py -d"
     )
+    ap.add_argument(
+        "--gparam", "-G", action="append", default=[], help="passed to vlt.py -G"
+    )
     a = ap.parse_args()
     defs = [x for d in a.define for x in ("-d", d)]
+    defs += [x for g in a.gparam for x in ("-G", g)]
 
     root = pathlib.Path(a.build_root)
     root = root if root.is_absolute() else ROOT / root
