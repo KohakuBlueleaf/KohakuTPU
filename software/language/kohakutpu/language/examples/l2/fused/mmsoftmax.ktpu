@@ -1,0 +1,26 @@
+# y = softmax(x w^T) over rows of 128, 256 rows, with the scores never in
+# memory: two clusters sweep 32-row score tiles and drain them into the cores'
+# L1; each core takes the row max and sum of a 4-row band straight from the
+# drained sub-tiles (GT4 registers: a band's statistic is one register) and
+# writes y. Attention's score half, without the value matmul.
+target ktpu.v9
+
+fn mmsoftmax.l2(x: mx7a[256, 128] @dram(gm=8, nk=4), w: mx7b[128, 128] @dram(gn=32, nk=4), y: f16[256, 128] @dram(tile=8x32))
+    for q in 0..4 pipe=2
+        par c in 0..2 on mg[c]
+            a = fill x[(2*q + c)*32 : +32, :]                   : mx7a[32, 128] @A
+            b = fill w                                          : mx7b[128, 128] @B
+            s = gemm a, b                                       : f32[32, 128] @acc
+            drain s -> vc[c]
+        par c in 0..2 on vc[c]
+            h = recv mg[c]                                      : f16[32, 128] @l1(gt4)
+            for t in 0..8
+                v = unpack h[t*4 : +4, :]                       : f32[4, 128] @reg(gt4)
+                e = mul v, 1.4426950408889634                   : f32[4, 128] @reg(gt4)
+                m = rmax e                                      : f32[4] @reg
+                p = exp2d e, m[:, *]                            : f32[4, 128] @reg(gt4)
+                l = rsum p                                      : f32[4] @reg
+                r = inv l                                       : f32[4] @reg
+                o = mul p, r[:, *]                              : f32[4, 128] @reg(gt4)
+                ol = pack o                                     : f16[4, 128] @l1(gt4)
+                store y[(2*q + c)*32 + t*4 : +4, :] <- ol

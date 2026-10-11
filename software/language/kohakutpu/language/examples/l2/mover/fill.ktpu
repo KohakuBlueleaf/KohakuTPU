@@ -1,0 +1,7 @@
+# The same immediate written at each element width.
+target ktpu.v9
+
+fn fill.l2(y8: u8[64] @dram, y16: u8[64] @dram, y32: u8[64] @dram)
+    fill y8 value=0x12345678 ew=8
+    fill y16 value=0x12345678 ew=16
+    fill y32 value=0x12345678 ew=32

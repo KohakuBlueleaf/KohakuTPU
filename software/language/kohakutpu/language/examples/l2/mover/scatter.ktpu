@@ -1,0 +1,5 @@
+# Rows of s written to the rows of t an index list names.
+target ktpu.v9
+
+fn scatter.l2(s: f16[12, 64] @dram, idx: u32[16] @dram, t: f16[64, 64] @dram)
+    scatter t <- s index=idx

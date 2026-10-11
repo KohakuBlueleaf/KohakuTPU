@@ -1,0 +1,16 @@
+# y = x w^T, 1024 x 2048 x 2048 on two nodes, tensor parallel by columns:
+# node n owns output columns [1024n, 1024n + 1024) and w's rows for them,
+# cluster u of it column tile 4n + u. The clusters of a node read the same A
+# chunk; `share=cross` reads it once a pair (one cluster of each memory port).
+target ktpu.v9
+
+fn matmul2.l2(x: mx7a[1024, 2048] @dram(gm=64, nk=4), w: mx7b[2048, 2048] @dram(gn=64, nk=4), y: f16[1024, 2048] @dram(tile=64x64))
+    par n in 0..2 on node[n]
+        par u in 0..4 on mg[u]
+            for i in 0..4
+                acc = zero                                              : f32[256, 256] @acc
+                for k in 0..16
+                    a = fill x[i*256 : +256, k*128 : +128] share=cross  : mx7a[256, 128] @A
+                    b = fill w[(4*n + u)*256 : +256, k*128 : +128]      : mx7b[256, 128] @B
+                    acc = gemm a, b, acc                                : f32[256, 256] @acc
+                drain acc -> y[i*256 : +256, (4*n + u)*256 : +256]

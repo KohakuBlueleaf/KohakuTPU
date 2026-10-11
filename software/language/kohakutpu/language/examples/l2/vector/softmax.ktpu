@@ -1,0 +1,17 @@
+# Row softmax over 128 columns in base 2, 1024 rows on two cores, 16 rows a
+# tile: s = x log2 e, p = 2^(s - floor(max s)), y = p / sum p.
+target ktpu.v9
+
+fn softmax.l2(x: f16[1024, 128] @dram, y: f16[1024, 128] @dram)
+    par c in 0..2 on vc[c]
+        for t in 0..32
+            xl = load x[c*512 + t*16 : +16, :]          : f16[16, 128] @l1
+            v = unpack xl                               : f32[16, 128] @reg
+            s = mul v, 1.4426950408889634               : f32[16, 128] @reg
+            m = rmax s                                  : f32[16] @reg
+            p = exp2d s, m[:, *]                        : f32[16, 128] @reg
+            l = rsum p                                  : f32[16] @reg
+            r = inv l                                   : f32[16] @reg
+            o = mul p, r[:, *]                          : f32[16, 128] @reg
+            ol = pack o                                 : f16[16, 128] @l1
+            store y[c*512 + t*16 : +16, :] <- ol

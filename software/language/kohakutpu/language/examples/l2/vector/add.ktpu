@@ -1,0 +1,13 @@
+# out = x + y, 65,536 values on two cores, 1024 a tile.
+target ktpu.v9
+
+fn add.l2(x: f16[512, 128] @dram, y: f16[512, 128] @dram, out: f16[512, 128] @dram)
+    par c in 0..2 on vc[c]
+        for t in 0..32
+            xl = load x[c*256 + t*8 : +8, :]            : f16[8, 128] @l1
+            yl = load y[c*256 + t*8 : +8, :]            : f16[8, 128] @l1
+            a = unpack xl                               : f32[8, 128] @reg
+            b = unpack yl                               : f32[8, 128] @reg
+            s = add a, b                                : f32[8, 128] @reg
+            sl = pack s                                 : f16[8, 128] @l1
+            store out[c*256 + t*8 : +8, :] <- sl

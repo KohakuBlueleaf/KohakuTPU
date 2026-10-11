@@ -1,0 +1,24 @@
+# y = silu(x w^T), 256 x 512 x 256: one cluster sweeps the tile into h (the
+# drained 4 x 4 sub-tile layout), then two cores read h a band of 4 rows at a
+# time as GT4 blocks, apply silu and write y in the same layout.
+target ktpu.v9
+
+fn mmsilu.l2(x: mx7a[256, 512] @dram(gm=64, nk=2), w: mx7b[256, 512] @dram(gn=64, nk=2), h: f16[256, 256] @dram(tile=64x64), y: f16[256, 256] @dram(tile=64x64))
+    par u in 0..1 on mg[u]
+        acc = zero                                      : f32[256, 256] @acc
+        for k in 0..8
+            a = fill x[0 : +256, k*64 : +64]            : mx7a[256, 64] @A
+            b = fill w[0 : +256, k*64 : +64]            : mx7b[256, 64] @B
+            acc = gemm a, b, acc                        : f32[256, 256] @acc
+        drain acc -> h
+    par c in 0..2 on vc[c]
+        for t in 0..32
+            hl = load h[c*128 + t*4 : +4, :]            : f16[4, 256] @l1(gt4)
+            v = unpack hl                               : f32[4, 256] @reg(gt4)
+            e = mul v, -1.4426950408889634              : f32[4, 256] @reg(gt4)
+            e = exp2 e                                  : f32[4, 256] @reg(gt4)
+            e = add e, 1.0                              : f32[4, 256] @reg(gt4)
+            e = inv e                                   : f32[4, 256] @reg(gt4)
+            o = mul v, e                                : f32[4, 256] @reg(gt4)
+            ol = pack o                                 : f16[4, 256] @l1(gt4)
+            store y[c*128 + t*4 : +4, :] <- ol

@@ -1,0 +1,17 @@
+# y = x w^T, 1024 x 1024 x 4096 on four nodes, tensor parallel by columns:
+# node n owns output columns [1024n, 1024n + 1024), and its weight shard
+# w{n} (those columns' rows of w) sits in its own staging store, like a
+# card's weights in its own memory; x is in DRAM, read by every node and
+# shared within a node by cross-port pairs of clusters.
+target ktpu.v9
+
+fn matmul4.l2(x: mx7a[1024, 1024] @dram(gm=64, nk=4), w0: mx7b[1024, 1024] @stage(gn=64, nk=4, node=0), w1: mx7b[1024, 1024] @stage(gn=64, nk=4, node=1), w2: mx7b[1024, 1024] @stage(gn=64, nk=4, node=2), w3: mx7b[1024, 1024] @stage(gn=64, nk=4, node=3), y: f16[1024, 4096] @dram(tile=64x64))
+    par n in 0..4 on node[n]
+        par u in 0..4 on mg[u]
+            for i in 0..4
+                acc = zero                                              : f32[256, 256] @acc
+                for k in 0..8
+                    a = fill x[i*256 : +256, k*128 : +128] share=cross  : mx7a[256, 128] @A
+                    b = fill w{n}[u*256 : +256, k*128 : +128]           : mx7b[256, 128] @B
+                    acc = gemm a, b, acc                                : f32[256, 256] @acc
+                drain acc -> y[i*256 : +256, (4*n + u)*256 : +256]

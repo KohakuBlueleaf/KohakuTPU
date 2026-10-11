@@ -1,0 +1,26 @@
+# Row layernorm over 128 columns with gamma and beta, 1024 rows on two cores,
+# 16 rows a tile: y = (x - mean) * rsqrt(E[x^2] - mean^2 + 1e-5) * g + b.
+target ktpu.v9
+
+fn layernorm.l2(x: f16[1024, 128] @dram, g: f16[1, 128] @dram, b: f16[1, 128] @dram, y: f16[1024, 128] @dram)
+    par c in 0..2 on vc[c]
+        gl = load g                                     : f16[1, 128] @l1
+        bl = load b                                     : f16[1, 128] @l1
+        gv = unpack gl                                  : f32[1, 128] @reg
+        bv = unpack bl                                  : f32[1, 128] @reg
+        for t in 0..32
+            xl = load x[c*512 + t*16 : +16, :]          : f16[16, 128] @l1
+            v = unpack xl                               : f32[16, 128] @reg
+            q = mul v, v                                : f32[16, 128] @reg
+            s1 = rsum v                                 : f32[16] @reg
+            s2 = rsum q                                 : f32[16] @reg
+            mu = mul s1, 0.0078125                      : f32[16] @reg
+            var = mul s2, 0.0078125                     : f32[16] @reg
+            var = fnma mu, mu, var                      : f32[16] @reg
+            var = add var, 0.00001                      : f32[16] @reg
+            rs = rsqrt var                              : f32[16] @reg
+            d = sub v, mu[:, *]                         : f32[16, 128] @reg
+            d = mul d, rs[:, *]                         : f32[16, 128] @reg
+            o = fma d, gv, bv                           : f32[16, 128] @reg
+            ol = pack o                                 : f16[16, 128] @l1
+            store y[c*512 + t*16 : +16, :] <- ol

@@ -1,0 +1,6 @@
+# A transpose of 32-byte words: x is 8 rows of 16 words, y 16 rows of 8;
+# y's row j is word j of every x row (x's two word axes swapped).
+target ktpu.v9
+
+fn transpose.l2(x: f16[8, 256] @dram, y: f16[16, 128] @dram)
+    copy y <- x perm=(1, 0)

@@ -1,0 +1,25 @@
+# y = silu(x w^T), 256 x 256 x 256, tile by tile without memory in between:
+# each iteration two clusters sweep a 64 x 32 tile each and drain it straight
+# into a core's L1; the core applies silu a band of 4 rows at a time and
+# writes y. `pipe=2` lets the node send the next tiles' words while the cores
+# work, so clusters and cores overlap.
+target ktpu.v9
+
+fn tilesilu.l2(x: mx7a[256, 256] @dram(gm=16, nk=8), w: mx7b[256, 256] @dram(gn=8, nk=8), y: f16[256, 256] @dram(tile=16x8))
+    for q in 0..16 pipe=2
+        par c in 0..2 on mg[c]
+            a = fill x[(q / 4)*64 : +64, :]                     : mx7a[64, 256] @A
+            b = fill w[((2*q + c) % 8)*32 : +32, :]             : mx7b[32, 256] @B
+            acc = gemm a, b                                     : f32[64, 32] @acc
+            drain acc -> vc[c]
+        par c in 0..2 on vc[c]
+            h = recv mg[c]                                      : f16[64, 32] @l1(gt4)
+            for t in 0..16
+                v = unpack h[t*4 : +4, :]                       : f32[4, 32] @reg(gt4)
+                e = mul v, -1.4426950408889634                  : f32[4, 32] @reg(gt4)
+                e = exp2 e                                      : f32[4, 32] @reg(gt4)
+                e = add e, 1.0                                  : f32[4, 32] @reg(gt4)
+                e = inv e                                       : f32[4, 32] @reg(gt4)
+                o = mul v, e                                    : f32[4, 32] @reg(gt4)
+                ol = pack o                                     : f16[4, 32] @l1(gt4)
+                store y[(q / 4)*64 + t*4 : +4, ((2*q + c) % 8)*32 : +32] <- ol

@@ -85,7 +85,7 @@ cannot forward a shape it does not know. See
 | [package-format.md](package-format.md) | The work package a compile stores and a node's dispatcher runs: tables, steps, binding and relocation. | Fixed. Unit classes (§5.2) are Convention. |
 | [node-queue.md](node-queue.md) | How a host hands packages to a node and gets completions back: the boot block, the queue region, the rings, stdio. | Fixed; depths and placement are the host's. |
 | [l1-program.md](l1-program.md) | L1: per-unit streams and the node's sync points, lowered to a package. | Fixed structure; unit ops are the project's. |
-| [l3-program.md](l3-program.md) | L3: tiles of tensors in a project's hardware ops; the verifier and the reference interpreter. | Fixed structure; ops and dtypes are the project's. |
+| [l2-program.md](l2-program.md) | L2: batches of work on named units, hardware-sized values in named spaces; the L2 -> L2 passes and the L2 -> L1 compiler. | Fixed structure; spaces and ops are the project's. |
 | [ir-text.md](ir-text.md) | The one statement syntax every IR level is written in, and the module that holds a kernel's bodies. | Fixed syntax; each level's words beyond its structure are the project's. |
 
 **Two processors, one node.** The system node ships a control processor, and

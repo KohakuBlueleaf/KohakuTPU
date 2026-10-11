@@ -1,0 +1,25 @@
+# tilesilu written through memory: each cluster drains its tile into the
+# scratch h and a core reads it back a band at a time. h is `@any`: the
+# space pass sees each core read exactly one cluster's tile, which fits a
+# core's landing ring, and makes the drain a transfer into that core's L1.
+target ktpu.v9
+
+fn anysilu.l2(x: mx7a[256, 256] @dram(gm=16, nk=8), w: mx7b[256, 256] @dram(gn=8, nk=8), y: f16[256, 256] @dram(tile=16x8))
+    h = buffer : f16[256, 256] @any(tile=16x8)
+    for q in 0..16 pipe=2
+        par c in 0..2 on mg[c]
+            a = fill x[(q / 4)*64 : +64, :]                     : mx7a[64, 256] @A
+            b = fill w[((2*q + c) % 8)*32 : +32, :]             : mx7b[32, 256] @B
+            acc = gemm a, b                                     : f32[64, 32] @acc
+            drain acc -> h[(q / 4)*64 : +64, ((2*q + c) % 8)*32 : +32]
+        par c in 0..2 on vc[c]
+            for t in 0..16
+                hl = load h[(q / 4)*64 + t*4 : +4, ((2*q + c) % 8)*32 : +32] : f16[4, 32] @l1(gt4)
+                v = unpack hl                                   : f32[4, 32] @reg(gt4)
+                e = mul v, -1.4426950408889634                  : f32[4, 32] @reg(gt4)
+                e = exp2 e                                      : f32[4, 32] @reg(gt4)
+                e = add e, 1.0                                  : f32[4, 32] @reg(gt4)
+                e = inv e                                       : f32[4, 32] @reg(gt4)
+                o = mul v, e                                    : f32[4, 32] @reg(gt4)
+                ol = pack o                                     : f16[4, 32] @l1(gt4)
+                store y[(q / 4)*64 + t*4 : +4, ((2*q + c) % 8)*32 : +32] <- ol

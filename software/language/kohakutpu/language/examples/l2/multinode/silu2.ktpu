@@ -1,0 +1,17 @@
+# silu over 131,072 values on two nodes, each node's two cores a quarter: a
+# node's work is a one-node silu on its own half of memory.
+target ktpu.v9
+
+fn silu2.l2(x: f16[1024, 128] @dram, y: f16[1024, 128] @dram)
+    par n in 0..2 on node[n]
+        par c in 0..2 on vc[c]
+            for t in 0..16
+                xl = load x[(2*n + c)*256 + t*16 : +16, :]      : f16[16, 128] @l1
+                v = unpack xl                                   : f32[16, 128] @reg
+                e = mul v, -1.4426950408889634                  : f32[16, 128] @reg
+                e = exp2 e                                      : f32[16, 128] @reg
+                e = add e, 1.0                                  : f32[16, 128] @reg
+                e = inv e                                       : f32[16, 128] @reg
+                o = mul v, e                                    : f32[16, 128] @reg
+                ol = pack o                                     : f16[16, 128] @l1
+                store y[(2*n + c)*256 + t*16 : +16, :] <- ol

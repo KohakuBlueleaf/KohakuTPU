@@ -1,0 +1,22 @@
+# Row softmax that skips the row max while it can: p = 2^s with no offset;
+# only when an exponent reached 2^8 (EXP2D's sticky flag) does the tile
+# compute the row max and redo p = 2^(s - floor(max s)). Either way
+# y = p / sum p; the max pass runs only on tiles that need it. 8-row tiles:
+# the flag covers a whole tile, so s and p of every row stay in registers.
+target ktpu.v9
+
+fn lazysoftmax.l2(x: f16[1024, 128] @dram, y: f16[1024, 128] @dram)
+    par c in 0..2 on vc[c]
+        for t in 0..64
+            xl = load x[c*512 + t*8 : +8, :]            : f16[8, 128] @l1
+            v = unpack xl                               : f32[8, 128] @reg
+            s = mul v, 1.4426950408889634               : f32[8, 128] @reg
+            p = exp2d s, 0.0                            : f32[8, 128] @reg
+            if sticky
+                m = rmax s                              : f32[8] @reg
+                p = exp2d s, m[:, *]                    : f32[8, 128] @reg
+            l = rsum p                                  : f32[8] @reg
+            r = inv l                                   : f32[8] @reg
+            o = mul p, r[:, *]                          : f32[8, 128] @reg
+            ol = pack o                                 : f16[8, 128] @l1
+            store y[c*512 + t*8 : +8, :] <- ol

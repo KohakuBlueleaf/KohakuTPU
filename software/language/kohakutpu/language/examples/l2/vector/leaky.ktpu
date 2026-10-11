@@ -1,0 +1,14 @@
+# Leaky ReLU, y = x where x > 0 else 0.1 x, 512 x 128 on two cores: a
+# compare makes a 1.0 / 0.0 mask and `sel` picks per element.
+target ktpu.v9
+
+fn leaky.l2(x: f16[512, 128] @dram, y: f16[512, 128] @dram)
+    par c in 0..2 on vc[c]
+        for t in 0..32
+            xl = load x[c*256 + t*8 : +8, :]            : f16[8, 128] @l1
+            v = unpack xl                               : f32[8, 128] @reg
+            m = cmpgt v, 0.0                            : f32[8, 128] @reg
+            s = mul v, 0.1                              : f32[8, 128] @reg
+            o = sel m, v, s                             : f32[8, 128] @reg
+            ol = pack o                                 : f16[8, 128] @l1
+            store y[c*256 + t*8 : +8, :] <- ol

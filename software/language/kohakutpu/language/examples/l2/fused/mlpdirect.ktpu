@@ -1,0 +1,29 @@
+# y = silu(x w1^T) w2^T, 64 rows, 64 in, 128 hidden, 64 out, with nothing
+# in memory between the layers: clusters 0 and 1 sweep the hidden rows and
+# drain them into the cores' L1; each core applies silu, quantises a band at
+# a time and sends it into cluster 2 + c's A bank; those clusters sweep the
+# second layer from it.
+target ktpu.v9
+
+fn mlpdirect.l2(x: mx7a[64, 64] @dram(gm=8, nk=2), w1: mx7b[128, 64] @dram(gn=32, nk=2), w2: mx7b[64, 128] @dram(gn=16, nk=4), y: f16[64, 64] @dram(tile=8x16))
+    par u in 0..2 on mg[u]
+        a = fill x[u*32 : +32, :]                               : mx7a[32, 64] @A
+        b = fill w1                                             : mx7b[128, 64] @B
+        h = gemm a, b                                           : f32[32, 128] @acc
+        drain h -> vc[u]
+    par c in 0..2 on vc[c]
+        hl = recv mg[c]                                         : f16[32, 128] @l1(gt4)
+        for t in 0..8
+            v = unpack hl[t*4 : +4, :]                          : f32[4, 128] @reg(gt4)
+            e = mul v, -1.4426950408889634                      : f32[4, 128] @reg(gt4)
+            e = exp2 e                                          : f32[4, 128] @reg(gt4)
+            e = add e, 1.0                                      : f32[4, 128] @reg(gt4)
+            e = inv e                                           : f32[4, 128] @reg(gt4)
+            o = mul v, e                                        : f32[4, 128] @reg(gt4)
+            q = pack o                                          : mx7a[4, 128] @l1
+            send q -> mg[2 + c] side=A
+    par u in 0..2 on mg[2 + u]
+        a = recv vc[u]                                          : mx7a[32, 128] @A
+        b = fill w2                                             : mx7b[64, 128] @B
+        o = gemm a, b                                           : f32[32, 64] @acc
+        drain o -> y[u*32 : +32, :]
