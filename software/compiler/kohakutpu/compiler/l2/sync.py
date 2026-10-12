@@ -59,6 +59,15 @@ class Stage:
     closes: bool = False  # a blocking move: everything is complete after it
     #: the lines as the segments the node may interleave with another stage's
     segs: list = field(default_factory=list)
+    #: a cross-node handshake (a ring or a slot wait): nothing is sent ahead
+    #: of it, and its `FENCE` accesses only make it wait
+    fence: bool = False
+    #: its phase: a run of a `par` over nodes (cross-node order is by phase)
+    phase: int = -1
+
+
+#: The unit of a fence's accesses: what it waits for, never waited on.
+FENCE = "fence"
 
 
 @dataclass
@@ -111,7 +120,7 @@ def _needs(stages, st, s) -> list:
     got = []
     for p in st.order:
         for a in stages[p].accesses:
-            if _complete(stages, st, p, a.unit):
+            if a.unit == FENCE or _complete(stages, st, p, a.unit):
                 continue
             if any(clash(a, b) for b in stages[s].accesses):
                 got.append((p, a))
@@ -139,7 +148,7 @@ def _hoistable(stages, st, j) -> bool:
     for k in range(j):
         if k in st.pos:
             continue
-        if set(stages[k].units) & set(stages[j].units):
+        if stages[k].fence or set(stages[k].units) & set(stages[j].units):
             return False
         for a in stages[k].accesses:
             for b in stages[j].accesses:
@@ -180,4 +189,4 @@ def _emit(stages, st, s) -> None:
         st.out.append(("mark", _mark(s, u), u))
 
 
-__all__ = ["Access", "Stage", "clash", "mem", "schedule"]
+__all__ = ["FENCE", "Access", "Stage", "clash", "mem", "schedule"]

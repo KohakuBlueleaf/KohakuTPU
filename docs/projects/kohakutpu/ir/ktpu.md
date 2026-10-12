@@ -146,8 +146,13 @@ granule, the ack's coordinate, for a sink in another mesh its id and
 coordinate there -- the drain's `to=` then names this mesh's memory port --
 and `count` flags the bursts for the sink's count.
 
-A program already in a core's IMEM is not sent again: the lowering places
-each image in a slot and RUNs at it, so several stay resident.
+A program already in a core's IMEM is not sent again: the node emitter skips
+an image's words when the core last ran that same encoded image (along
+straight-line node code; a `label` or `goto` forgets it). The L2 lowering
+writes one image a distinct body -- every memory descriptor's base is a
+parameter (`desc aK = p_aK`) the `run` binds (`run IMG(x+0, y+4096)`) -- so
+the instances of one shape share an image: `linear` at 512 rows runs 16
+instances of one image, 559 L1 lines.
 
 ## 6. Several nodes and other meshes
 
@@ -188,7 +193,7 @@ Hand-written L2 (`l2/`), compiled to L1 by §9's pipeline:
 | `vector/` | `silu`, `add`, `softmax` (16-row tiles), `layernorm`, `leaky` (`cmpgt` / `sel`), `lazysoftmax` (the row max only when `if sticky`) |
 | `fused/` | `ffn`, `swiglu` (production size: 1024 tokens, 1024 -> 2048 -> 1024 on four clusters and two cores, row blocks of 256 tokens, h / a2 holding two blocks so the pipeline pass overlaps the layers), `mmsilu` (a cluster tile, then silu on its drained GT4 sub-tiles), `mlp` (matmul, silu quantised to MXFP7 on the cores, matmul), `tilesilu` (tiles drained straight into the cores, `pipe=2`), `mlpdirect` (cluster -> core -> cluster, nothing in memory between the layers), `mmsoftmax` (row softmax of score tiles straight from the clusters: GT4 row reductions), `anysilu` (`tilesilu` written through an `@any` scratch) |
 | `mover/` | `transpose` (`perm=`), `gather`, `scatter`, `fill`, `generate`, `convert` (`quant` A and B packing, `gt4`) |
-| `multinode/` | `matmul2` (`share=cross`), `share2` (a small witness of shared fills), `silu2`, `matmul4` (four nodes) |
+| `multinode/` | `matmul2` (`share=cross`), `share2` (a small witness of shared fills), `silu2`, `matmul4` (four nodes), `xsplitk` (node 0 adds its K half into node 1's accumulators: `drain ... add node=1`) |
 
 `python -m kohakutpu.application.tools.l1 --build MODEL [--nodes 0,1] NAME
 [--out DIR]` runs an example (or any `.ktpu` file) on a Verilated card with
@@ -303,6 +308,7 @@ KohakuTPU's spaces and ops. Code: `software/compiler/kohakutpu/compiler/l2/`.
 | | `drain c -> VIEW` | an emitting last sweep plus a fused DRAIN placed before the unit's next emitting sweep, else a DRAIN |
 | | `drain c -> vc[H]` | a COUNTed DRAIN of the sub-tiles into core H's L1: a ring over its top 256 words (a `recv` there). To a core that receives inside its stream loop, a **stream**: the last sweep emits `to=vc[H] count credit` into a two-slot ring at the top of the L1, its fused drain before the next emitting sweep |
 | | `drain c -> mg[J] add` | J's sweeps waited, a peer DRAIN into J's accumulator and a COUNTed entry into J's A0 entry 0 behind it, which J takes (`fill A0 recv`) before the rest of its stream; J's own drain plain |
+| | `drain c -> mg[J] add node=N` | the same into node N's cluster J across the interlink (`to=meshN.mg[J]`): J opens its tile, rings this node (`ring mesh=.. slot=ADD+n`), which waits that slot before sending; one node's far adds go one at a time |
 | `par v in LO..HI on vc[E]` | `x = load VIEW : f16[R, C] @l1[(gt4)]` | a descriptor (`ainc` along the stream loop), filled one iteration ahead |
 | | `h = recv mg[U] : f16[R, C] @l1(gt4)` (before the loop); `r = unpack h[ROWS, :]` (in it) | `vwait unpack rx` for the tile's granules cluster U drained here; each trip's row band unpacked through the unpack pointer (`uptr`, `uinc 8`) |
 | | `s = recv mg[U] : f16[R, C] @l1(gt4)` (in the loop) | a stream: each trip `vwait unpack rx` for the tile's granules in the ring slot of its parity, and once unpacked `vpost mg[U]` returns the slot; the core's open image posts the whole ring at the program's start, the cluster spends the last lap's credits at its end |
@@ -312,10 +318,14 @@ KohakuTPU's spaces and ops. Code: `software/compiler/kohakutpu/compiler/l2/`.
 | | `m = rmax x[:, C0:C1]` | the reduction over the 32-column blocks C0..C1 of each band |
 | | `add sub mul max min exp2d fma fnma exp2 inv rsqrt log2 neg abs mov` | one instruction a register; a constant in an S or K register; `m[:, *]` a statistic broadcast to its row |
 | | `m = cmplt\|cmpgt\|cmpeq a, b`; `o = sel m, a, b` | a compare into a predicate, then 1.0 / 0.0 by a move and a predicated move; VSEL (a where m is not 0, else b) |
+| | `y = xlane x, K` | lane l of every 16-lane chunk takes lane `l xor K`: `vmul d, k1, xor(x, K)` a register (exact); with `sel` over a lane mask, any swap inside a chunk (a 4 x 4 transpose is two) |
+| | `x = load VIEW : f16[1, C] @l1(gt4)` read by a band of R rows; `s = load VIEW : f16[R] @l1` | one row broadcast to every row of the band; a 1-D view loaded as a row statistic |
 | | `rmax`, `rsum` (rows to `f32[R] @reg`) | the merge tree over 8 rows; `rsum (mul a, b)` folds the product. Of `@reg(gt4)` rows (drained tiles): a 4-row band's registers folded, chunk 4 + i onto chunk i, an xor butterfly over the 16 lanes, chunks 0-3 copied to 4-7 -- one register a band whose every chunk holds its row's value, an elementwise operand to the band (`m[:, *]`) |
 | | `if sticky` (a block of math) | the front end waits for the math, GETSTK, VSKIPZ over the block; the block's results overwrite their names' registers, so the skipped path keeps the values |
 | node scope | `copy DST <- SRC [perm=]`, `fill`, `gen`, `gather`, `scatter` | one move of walks |
+| | `copy BUF <- BUF walk=((N, S), ...) [at=B] [dwalk=(...)] [dat=B]`; `fill BUF value=V walk=(...) [at=B]` | explicit signed byte walks of whole buffers (the last level whole words; a stride of 0 repeats): flips, permutes, broadcasts, windows |
 | | `quant DST <- SRC`; `gt4 DST <- SRC` (row-major f16 to an `mx7a` / `mx7b` buffer, or to `tile=` sub-tiles) | a transform move: the source walked in the destination's entry order, cut into moves of at most 16,384 source words |
+| | `gt4 BUF <- BUF walk=(..., (4, S)) dwalk=(...)` | any GT4 move: each group of four source words (the walk's last level) to four consecutive words, the destination stepping once a group |
 
 **Order.** Each `par` of units and each run of node-scope moves is a stage.
 A stage records what it touches: byte ranges of buffers, a core's L1 words,
@@ -333,6 +343,18 @@ number of words). Moves are posted; the last stage of a program is a plain
 `move`, or a `barrier` follows it. The node's dispatch order within a run of
 DISPATCH steps is the dispatch scheduler's ([verify.md](../verify.md) §6),
 and every package is checked by the static verifier.
+
+**Several nodes.** A `par v on node[n]` body runs one program a node; the
+nodes share memory. A stage carries its phase (one run of a `par` over the
+nodes); when a stage of a later phase touches memory a stage of an earlier
+phase on another node wrote (or reads what it read), the earlier node waits
+its units and rings the later one (`ring mesh=B slot=ORDER+A`), which waits
+that slot (`wait slot ORDER+A n=1 consume`) before it starts. A fill shared
+by a group of clusters (`share=`) carries at most 64 B entries (a shared B
+fill past 64 entries gives a follower wrong data, measured on the Verilated
+card); the `share` pass leaves larger ones plain. A vector store of loaded
+L1 bytes (no unpack / pack) orders the next fill behind its drain and the
+drain behind its fill (`vsync drain on=fill`).
 
 `for` inside a vector instance is the stream loop: its body runs twice a
 VLOOP pass (two L1 buffers a stream), rows in groups of 4 (8 with a

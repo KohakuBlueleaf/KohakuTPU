@@ -2,7 +2,10 @@
 kernel's compiled package is witnessed against the hand-written L1's bytes;
 the rest against the L1 text the lowering must write."""
 
+import re
+
 import pytest
+
 from kohakutpu.compiler import build
 from kohakutpu.compiler import target as T
 from kohakutpu.compiler.l2 import lower, passes, pipeline
@@ -183,8 +186,10 @@ def test_an_mxfp7_store_walks_the_a_packing():
     text = lower.lower(l2, "mlp")
     # a2 is gm=64, nk=2: a band's 4 chunks of 2 entries (8 words), the chunks
     # 64 * 2 entries apart (16 KB), the next band 2 entries on (256 B).
-    assert "desc a1 = p_a2 + 0 walk=((32, 8), (16384, 4))" in text
+    assert "desc a1 = p_a1 walk=((32, 8), (16384, 4))" in text
     assert "ainc a1 += 256" in text
+    # Each descriptor's base is the run's argument: here a2 from its start.
+    assert re.search(r"run mlp_n0_vc0_0\([^)]*\ba2\+0\b", text)
     # Row i, column half q (GT4 chunk 4q + i) to the quantiser's chunk 2i + q:
     # the op making the packed register writes one chunk at a time.
     moves = [

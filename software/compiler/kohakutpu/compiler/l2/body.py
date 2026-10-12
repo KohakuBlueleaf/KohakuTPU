@@ -231,20 +231,41 @@ class Instance:
     cuts: list = field(default_factory=list)
 
 
-def instances(body: Body, stmts=None, env=None, node: int = 0, tag=None) -> list:
+def instances(
+    body: Body, stmts=None, env=None, node: int = 0, tag=None, phases=None, _ph=None
+) -> list:
     """Every top-level unit instance under `stmts`, nodes resolved: a list of
     stages ``(kind, node, x, tag)``, `x` a list of instances that run
     concurrently (one `par`) or an `Op` with its env (a node-level
     statement); `tag` is ``(loop, iteration, pipe)`` inside a node-scope
-    `for ... pipe=K` (the innermost), else None."""
+    `for ... pipe=K` (the innermost), else None. `phases`, when given, gets
+    each stage's phase: one a run of a `par` over nodes (its nodes run it
+    concurrently), else one a stage."""
     out = []
+    ph = _ph if _ph is not None else {"next": 0, "cur": None}
+
+    def emit(stage) -> None:
+        out.append(stage)
+        if phases is not None:
+            if ph["cur"] is None:
+                phases.append(ph["next"])
+                ph["next"] += 1
+            else:
+                phases.append(ph["cur"])
+
     for s in body.stmts if stmts is None else stmts:
         e = {} if env is None else env
         if isinstance(s, Par) and s.kind == "node":
+            outer = ph["cur"] is None
+            if outer:
+                ph["cur"] = ph["next"]
+                ph["next"] += 1
             for v in span(body, s, e):
                 inner = {**e, s.var: v}
                 n = const(body, s.st, s.index, inner)
-                out += instances(body, s.body, inner, n, tag)
+                out += instances(body, s.body, inner, n, tag, phases, ph)
+            if outer:
+                ph["cur"] = None
         elif isinstance(s, Par):
             stage = []
             for v in span(body, s, e):
@@ -253,18 +274,20 @@ def instances(body: Body, stmts=None, env=None, node: int = 0, tag=None) -> list
                 inst = Instance(s.kind, idx, node, inner, s)
                 _flatten(body, s.body, inner, inst, top=True)
                 stage.append(inst)
-            out.append(("par", node, stage, tag))
+            emit(("par", node, stage, tag))
         elif isinstance(s, For):
             for k, v in enumerate(span(body, s, e)):
                 inner_tag = (id(s), k, s.pipe) if s.pipe else tag
-                out += instances(body, s.body, {**e, s.var: v}, node, inner_tag)
+                out += instances(
+                    body, s.body, {**e, s.var: v}, node, inner_tag, phases, ph
+                )
         elif isinstance(s, When):
             if const(body, s.st, s.cond, e):
-                out += instances(body, s.body, e, node, tag)
+                out += instances(body, s.body, e, node, tag, phases, ph)
         elif isinstance(s, If):
             body.reader.fail(s.st, "if sticky is a vector core's (its stream loop)")
         else:
-            out.append(("op", node, (s, e), tag))
+            emit(("op", node, (s, e), tag))
     return out
 
 

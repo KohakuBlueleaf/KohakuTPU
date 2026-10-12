@@ -1,0 +1,18 @@
+# One 256 x 256 tile of x w^T, K = 1024 split over two nodes at full
+# accumulator precision, by a cross-node connection: node 1's cluster sums
+# K[0, 512) and keeps its tile open; node 0's sums K[512, 1024) and adds its
+# accumulator into node 1's across the interlink; node 1 drains the sum.
+target ktpu.v9
+
+fn xsplitk.l2(x: mx7a[256, 1024] @dram(gm=64, nk=2), w: mx7b[256, 1024] @dram(gn=64, nk=2), y: f16[256, 256] @dram(tile=64x64))
+    par n in 0..2 on node[n]
+        par u in 0..1 on mg[u]
+            acc = zero                                          : f32[256, 256] @acc
+            for k in 0..8
+                a = fill x[0 : +256, (8*(1 - n) + k)*64 : +64]  : mx7a[256, 64] @A
+                b = fill w[0 : +256, (8*(1 - n) + k)*64 : +64]  : mx7b[256, 64] @B
+                acc = gemm a, b, acc                            : f32[256, 256] @acc
+            when n == 0
+                drain acc -> mg[0] add node=1
+            when n == 1
+                drain acc -> y

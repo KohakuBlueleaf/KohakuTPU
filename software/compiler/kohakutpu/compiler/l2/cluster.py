@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from kohakutpu.compiler.isa.cluster import ISA
 from kohakutpu.compiler.l2 import memory as M
 from kohakutpu.compiler.l2 import sync
-from kohakutpu.compiler.l2.body import Op, value
+from kohakutpu.compiler.l2.body import Op, const, value
 from kohakutpu.language.text.syntax import Arrow, Int, Name, View
 
 BANK = 256
@@ -41,9 +41,11 @@ class Line:
     key: tuple | None = None
     peers: tuple = ()
     fill: bool = False
-    #: a drain added into cluster `into`'s accumulator
+    #: a drain added into cluster `into`'s accumulator (on node `far`, when
+    #: that is another node's: the add crosses the interlink)
     into: int | None = None
     drain: bool = False
+    far: int | None = None
 
     def render(self) -> str:
         if not self.peers:
@@ -80,6 +82,7 @@ class Stream:
     held: list = field(default_factory=list)  # (emitting gemm Line, drain text)
     accesses: list = field(default_factory=list)
     reading: dict = field(default_factory=dict)
+    node: int = 0
 
 
 def lower(body, inst, fail, fuse: bool = True, links=None, reading=None) -> Stream:
@@ -88,7 +91,7 @@ def lower(body, inst, fail, fuse: bool = True, links=None, reading=None) -> Stre
     must not leave before that addition. `links` pairs transfers with their
     `recv`s; `reading` is the banks the unit's previous stage left read."""
     vals: dict = {}
-    s = Stream(f"mg[{inst.index}]")
+    s = Stream(f"mg[{inst.index}]", node=inst.node)
     s.reading = dict(reading or {"A": None, "B": None})
     seg = 0
     cuts = set(inst.cuts)
@@ -175,7 +178,9 @@ def _recv_stream(s, vals, op, env, body, links, fail, i, seg, streams):
     s.lines.append(Line(f"fill {t.space}{bank} recv n={entries}", seg))
     v = Val(t.space, t.shape, bank=bank, nk=k // 32, at=i, entry=entry, flow=True)
     vals[op.target] = v
-    s.accesses.append(sync.Access(s.unit, False, (s.unit, t.space), *v.span(), flow=True))
+    s.accesses.append(
+        sync.Access(s.unit, False, (s.unit, t.space), *v.span(), flow=True)
+    )
     return 4 * entries, sender, k_in
 
 
@@ -204,7 +209,11 @@ def _last_uses(items) -> dict:
     out, defs = {}, {}
     for i, (op, _) in enumerate(items):
         for a in op.args:
-            n = a.text if isinstance(a, Name) else a.name if isinstance(a, View) else None
+            n = (
+                a.text
+                if isinstance(a, Name)
+                else a.name if isinstance(a, View) else None
+            )
             if n in defs:
                 out[defs[n]] = i
         if op.target is not None:
@@ -214,6 +223,9 @@ def _last_uses(items) -> dict:
 
 
 SHARE = ("port", "all", "cross")
+#: The largest shared B fill a follower receives right, in entries: measured
+#: on the Verilated card (64 right, 96 and 128 wrong; A right at 128).
+SHARED_B = 64
 
 
 def _fill(body, s, vals, uses, i, op, env, seg, fail):
@@ -249,6 +261,12 @@ def _fill(body, s, vals, uses, i, op, env, seg, fail):
         fail(
             op.st,
             f"{want}[{rows}, {k}] is {(rows // 4) * nk} entries; a bank holds {BANK}",
+        )
+    if share and t.space == "B" and (rows // 4) * nk > SHARED_B:
+        fail(
+            op.st,
+            f"a shared B fill of {(rows // 4) * nk} entries: a follower's B entries past "
+            f"{SHARED_B} come back wrong (Verilated card); fill it unshared",
         )
     view = value(body, op.st, pos[0], env)
     buf = body.buffers.get(view.name)
@@ -368,9 +386,11 @@ def _gemm(s, vals, op, seg, fail, body=None, env=None):
     if len(names) not in (2, 3):
         fail(op.st, "NAME = gemm A, B[, ACC] : f32[M, N] @acc")
     a, b = (
-        _rows_of(body, vals[n.name], n, env, fail, op.st)
-        if isinstance(n, View)
-        else vals.get(n)
+        (
+            _rows_of(body, vals[n.name], n, env, fail, op.st)
+            if isinstance(n, View)
+            else vals.get(n)
+        )
         for n in names[:2]
     )
     if a is None or a.kind != "A" or b is None or b.kind != "B":
@@ -417,7 +437,15 @@ def _drain(body, s, vals, op, env, seg, fail, fuse, links):
     add = Name("add") in pos
     pos = [p for p in pos if p != Name("add")]
     if len(pos) != 3 or not isinstance(pos[0], Name) or pos[1] != Arrow("->"):
-        fail(op.st, "drain ACC -> VIEW | drain ACC -> vc[H] | drain ACC -> mg[J] add")
+        fail(
+            op.st,
+            "drain ACC -> VIEW | drain ACC -> vc[H] | drain ACC -> mg[J] add [node=M]",
+        )
+    kw = op.st.kwargs()
+    if set(kw) - {"node"}:
+        fail(op.st, f"drain takes node=M only, got {sorted(kw)}")
+    far = const(body, op.st, kw["node"], env) if "node" in kw else None
+    far = None if far == s.node else far
     c = vals.get(pos[0].text)
     if c is None or c.kind != "acc" or c.gemm is None:
         fail(op.st, f"{pos[0].text} is no swept @acc value of this cluster")
@@ -430,6 +458,10 @@ def _drain(body, s, vals, op, env, seg, fail, fuse, links):
             fail(op.st, f"drain ACC -> {view.name}[J]: J a constant per instance")
         j = view.slices[0].value
         if view.name == "vc":
+            if far is not None:
+                fail(
+                    op.st, "drain ACC -> vc[H] node=M: a tile into another node's core"
+                )
             if add or links is None:
                 fail(op.st, "drain ACC -> vc[H]: the tile's sub-tiles into core H's L1")
             to = f"vc[{j}]"
@@ -443,7 +475,9 @@ def _drain(body, s, vals, op, env, seg, fail, fuse, links):
                     fail(op.st, "a streamed tile leaves by its own last sweep")
                 g["emit"] = f"to={to} l1={at} count credit"
                 g["to"] = True
-                s.held.append((c.gemm, f"drain n={n} to={to} l1={at} fused count credit"))
+                s.held.append(
+                    (c.gemm, f"drain n={n} to={to} l1={at} fused count credit")
+                )
                 s.accesses.append(
                     sync.Access(s.unit, True, (to, "l1"), at, at + n, flow=True)
                 )
@@ -460,10 +494,22 @@ def _drain(body, s, vals, op, env, seg, fail, fuse, links):
                 op.st,
                 "drain ACC -> mg[J] add: into cluster J's tile, at full precision",
             )
-        s.lines.append(Line(f"drain n={n} to=mg[{j}] buf=2 l1=0", seg, into=j, drain=True))
-        s.accesses.append(sync.Access(s.unit, True, (f"mg[{j}]", "acc"), 0, 1))
+        if far is None:
+            text, key = f"drain n={n} to=mg[{j}] buf=2 l1=0", (f"mg[{j}]", "acc")
+        else:
+            # Over the interlink: the flits leave by this mesh's memory port.
+            text, key = f"drain n={n} to=mesh{far}.mg[{j}] buf=2 l1=0", (
+                f"node{far}",
+                f"mg[{j}]",
+            )
+        s.lines.append(Line(text, seg, into=j, drain=True, far=far))
+        s.accesses.append(sync.Access(s.unit, True, key, 0, 1))
         c.gemm = None
         return
+    if far is not None:
+        fail(
+            op.st, "node=M names another node's cluster: drain ACC -> mg[J] add node=M"
+        )
     if add:
         fail(op.st, "`add` is a drain into another cluster's accumulator")
     if not isinstance(view, View) or view.name not in body.buffers:

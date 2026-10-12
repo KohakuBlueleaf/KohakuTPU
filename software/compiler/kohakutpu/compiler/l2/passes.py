@@ -403,6 +403,12 @@ def share(module, name, machine):
         view = s.positional()[0]
         if var in _names(view):
             return s
+        t = s.annot
+        if isinstance(t, Placed) and isinstance(t.x, View) and t.space == Name("B"):
+            rows, k = (getattr(d, "value", 0) for d in t.x.slices)
+            if (rows // 4) * (k // 32) > cluster.SHARED_B:
+                return s  # a follower takes no larger shared B fill right
+        return replace(s, args=[*s.args, Assign(Name("share"), Name("cross"))])
         return replace(s, args=[*s.args, Assign(Name("share"), Name("cross"))])
 
     return _write(module, name, src, _walk(stmts, f))
@@ -546,7 +552,9 @@ def _rotated(module, name, src, loop) -> list | None:
     if not isinstance(dom.lo, Int) or not isinstance(dom.hi, Int):
         return None
     lo, hi = dom.lo.value, dom.hi.value
-    if hi - lo < 2 or not all(b.op == "par" and _unit(b) not in (None, "node") for b in loop.body):
+    if hi - lo < 2 or not all(
+        b.op == "par" and _unit(b) not in (None, "node") for b in loop.body
+    ):
         return None
     first, rest = loop.body[0], loop.body[1:]
     try:
@@ -574,7 +582,11 @@ def _rotated(module, name, src, loop) -> list | None:
 def _subst_stmt(s, names: dict):
     """A statement (and its block) with each name in `names` replaced."""
     args = [
-        Assign(a.name, _subst(a.value, names)) if isinstance(a, Assign) else _subst(a, names)
+        (
+            Assign(a.name, _subst(a.value, names))
+            if isinstance(a, Assign)
+            else _subst(a, names)
+        )
         for a in s.args
     ]
     return replace(s, args=args, body=[_subst_stmt(b, names) for b in s.body])
@@ -582,7 +594,11 @@ def _subst_stmt(s, names: dict):
 
 def _stage_insts(body, par_stmt, var, i):
     node = next(
-        (n for n in _tree(body.stmts) if isinstance(n, B.Par) and n.st.line == par_stmt.line),
+        (
+            n
+            for n in _tree(body.stmts)
+            if isinstance(n, B.Par) and n.st.line == par_stmt.line
+        ),
         None,
     )
     if node is None:
@@ -647,7 +663,10 @@ def _meets(xs, ys) -> bool:
         for by, wy, box_y in ys:
             if bx != by or not (wx or wy):
                 continue
-            if all(a0 < b1 and b0 < a1 for (a0, a1), (b0, b1) in zip(box_x, box_y, strict=False)):
+            if all(
+                a0 < b1 and b0 < a1
+                for (a0, a1), (b0, b1) in zip(box_x, box_y, strict=False)
+            ):
                 return True
     return False
 

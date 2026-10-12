@@ -63,6 +63,16 @@ class Val:
     buf: int = 0  # l1: word offset
     regs: dict = field(default_factory=dict)  # row: register -> sym; stat: group -> sym
     mode: str = "f16"  # l1 / row: "f16" (one row a register) or "gt4"
+    #: l1: words a register's unpack reads (8 f16, 16 f32), and in what mode
+    #: ("" is the value's own mode)
+    per: int = 8
+    unpk: str = ""
+    #: l1, rows mode (GT4 registers from a row-major band): words an L1 row
+    #: holds; `bcast` when every row reads the one row loaded
+    rows_w: int = 0
+    bcast: bool = False
+    #: row: the value's columns (a band value's width beside the loop's)
+    cols: int = 0
 
 
 def _mode(t) -> str:
@@ -76,6 +86,42 @@ def _count(t) -> int:
         r, c = t.shape
         return r * c // ROW
     return t.shape[0]
+
+
+def _l1val(d, t, buf: int) -> "Val":
+    """The @l1 value a load or recv of type `t` makes, through Desc `d` (None
+    for a transfer): how its registers unpack."""
+    f32 = t.dtype == "f32"
+    v = Val("l1", _count(t), buf=buf, mode=_mode(t), per=16 if f32 else 8)
+    v.unpk = "f32" if f32 else ""
+    if d is not None and d.rows_w:
+        v.rows_w, v.bcast, v.unpk = d.rows_w, d.bcast, "f16"
+    return v
+
+
+def _pack_line(d: "Desc", buf: int, i: int, mode: str, dtype: str) -> str:
+    """The pack of register `i` for a store through Desc `d`: in rows mode
+    (a row-major band) chunk 4q + i to L1 row i, columns 16q.. of block j."""
+    if d.rows_w:
+        nb = d.rows_w // 2
+        b, j = divmod(i, nb)
+        return f"vpack {{0}} -> l1[{buf + 4 * b * d.rows_w + 2 * j}] f16 walk=({d.rows_w}, 1)"
+    if dtype == "f32":
+        return f"vpack {{0}} -> l1[{buf + i * 16}] f32"
+    return f"vpack {{0}} -> l1[{buf + i * 8}] {mode}"
+
+
+def _unpack_line(src: "Val", i: int) -> str:
+    """The unpack of register `i` of an @l1 value: a GT4 / f16 / f32 run, or
+    in rows mode band b's 32-column block j read across its four L1 rows
+    (chunk 4q + i = row i, columns 16q.. of the block)."""
+    if not src.rows_w:
+        return f"vunpk {{0}} <- l1[{src.buf + i * src.per}] {src.unpk or src.mode}"
+    nb = src.rows_w // 2
+    b, j = divmod(i, nb)
+    base = src.buf + (0 if src.bcast else 4 * b * src.rows_w) + 2 * j
+    s0 = 0 if src.bcast else src.rows_w
+    return f"vunpk {{0}} <- l1[{base}] f16 walk=({s0}, 1)"
 
 
 def _broadcasts(o) -> bool:
@@ -120,6 +166,8 @@ class Desc:
     count: bool = False  # a send: its bursts counted by the receiver
     credit: bool = False  # a streamed send: sent under credits
     alt: object = None  # a streamed send: the odd trips' descriptor
+    rows_w: int = 0  # rows mode: words an L1 row holds
+    bcast: bool = False  # rows mode: one row, read by every row of the value
 
     def extent(self) -> int:
         """Bytes one walk spans."""
@@ -456,12 +504,14 @@ def _lower(
     cost = estimate(g.code)
     whole = estimate(_expand(g.code, len(ctx.trips) // 2))
     lines = _assign(g, ctx.pinned, fail, par.st)
-    params = sorted(ctx.buffers)
-    # Parameters prefixed: a buffer may share a register's name (a0, v1, s2).
-    head = [f"image {name}({', '.join(f'p_{p}' for p in params)})"]
+    # One parameter a memory descriptor, its base the run's argument: the
+    # instances of one shape share the image (one encoding, one IMEM load).
+    mem = [d for d in ctx.descs if not d.to]
+    params = [f"{d.buffer}+{d.off}" for d in mem]
+    head = [f"image {name}({', '.join(f'p_a{d.ad}' for d in mem)})"]
     for d in ctx.descs:
         count = ", count=1" if d.count else ""
-        base = f"peer({d.off}{count})" if d.to else f"p_{d.buffer} + {d.off}"
+        base = f"peer({d.off}{count})" if d.to else f"p_a{d.ad}"
         head.append(f"    desc a{d.ad} = {base} walk=({d.walk})")
     for d in ctx.descs:
         if d.inc:
@@ -533,6 +583,9 @@ class _Ctx:
         register a band) the band's; a one-register value's only."""
         if v.rows >= self.tile:
             return r
+        if self.per_band and v.cols == 32 * self.per_band and v.rows == self.per_band:
+            # One band at the loop's width (a row broadcast before the loop).
+            return r % self.per_band
         if self.per_band and v.rows * self.per_band == self.tile:
             return r // self.per_band
         if v.rows == 1:
@@ -558,7 +611,9 @@ class _Ctx:
                 key = (d.to, "AB"[d.side])
                 if getattr(x, "flow", False):
                     # The receiver posts credits only after its own fills.
-                    out.append(sync.Access(u, True, key, x.at, x.at + x.size, flow=True))
+                    out.append(
+                        sync.Access(u, True, key, x.at, x.at + x.size, flow=True)
+                    )
                     continue
                 # COUNTed: the cluster takes it by `fill ... recv`.
                 out += [
@@ -580,10 +635,13 @@ class _Ctx:
         return out
 
     # ---------------------------------------------------------- memory
-    def _walk(self, op, view: View, at):
-        """``(buffer, byte offset, walk text, words, gt4)`` of a view: a
-        row-major f16 view is one run of whole rows; a view of a `tile=`
-        buffer is bands of 4 rows, each a run of 4x4 sub-tiles (GT4)."""
+    def _walk(self, op, view: View, at, rows: bool = False):
+        """``(buffer, byte offset, walk text, words, kind, rows_w, view
+        rows)`` of a view: a row-major view is one run of whole rows (kind
+        False); with `rows`, a band of a row-major f16 buffer whose L1 rows
+        unpack as GT4 registers (kind "rows", `rows_w` words an L1 row; the
+        rows a pitch apart); a view of a `tile=` buffer is bands of 4 rows,
+        each a run of 4x4 sub-tiles (kind True)."""
         env = dict(self.env)
         if self.loop is not None and at is not None:
             env[self.loop.var] = at
@@ -596,20 +654,60 @@ class _Ctx:
         try:
             ax = M.axes(v, buf.shape)
             if "tile" in buf.layout:
-                return (v.name, *_tiled(buf, ax), True)
+                return (v.name, *_tiled(buf, ax), True, 0, 0)
             if buf.dtype in ("mx7a", "mx7b"):
-                return (v.name, *_mx7(buf, ax), "mx7")
+                return (v.name, *_mx7(buf, ax), "mx7", 0, 0)
             off, dims, item = M.rowmajor_walk(buf, ax)
         except M.ViewError as e:
             self.fail(op.st, str(e))
+        if rows:
+            return (v.name, off, *self._rows_walk(op, buf, ax, dims, item))
         nbytes = item
         for n, _ in dims:
             nbytes *= n
-        if item != 2 or not _contiguous(dims, item):
+        if item not in (2, 4) or not _contiguous(dims, item) or nbytes % 32:
             self.fail(
-                op.st, "a row-major load or store view is contiguous f16, whole rows"
+                op.st,
+                "a row-major load or store view is contiguous f16 or f32, whole words",
             )
-        return v.name, off, f"32, {nbytes // 32}", nbytes // 32, False
+        return v.name, off, f"32, {nbytes // 32}", nbytes // 32, False, 0, 0
+
+    def _rows_walk(self, op, buf, ax, dims, item) -> tuple:
+        """``(walk, words, "rows", rows_w, view rows)`` of a band of a
+        row-major f16 buffer: R rows a pitch apart, each W contiguous values
+        (W a multiple of 32, a GT4 register's columns)."""
+        shape = M.shape_of(ax)
+        if item != 2:
+            self.fail(op.st, "a GT4 band of a row-major buffer is f16")
+        w = shape[-1]
+        r = shape[0] if len(shape) == 2 else 1
+        if w % 32:
+            self.fail(
+                op.st, f"a GT4 band is whole 32-column blocks; this view is {w} wide"
+            )
+        inner = [d for d in dims if d[1] == item]
+        outer = [d for d in dims if d[1] != item]
+        if (inner and inner[0][0] != w) or len(outer) > 1:
+            self.fail(
+                op.st, "a GT4 band of a row-major buffer is rows of contiguous columns"
+            )
+        row_words = w * 2 // 32
+        if r == 1 or not outer:
+            return f"32, {row_words * r}", row_words * r, "rows", row_words, r
+        pitch = outer[0][1]
+        if pitch % 32:
+            self.fail(op.st, f"rows {pitch} bytes apart: a DMA walk steps whole words")
+        if pitch == w * 2:
+            return f"32, {row_words * r}", row_words * r, "rows", row_words, r
+        return f"(32, {row_words}), ({pitch}, {r})", row_words * r, "rows", row_words, r
+
+    def _packed(self, name):
+        """The `pack` op that made `name`, in the loop or before it."""
+        loop = _ops(self.loop.body) if self.loop is not None else []
+        return next(
+            (o for o in [*self.pre, *loop] if isinstance(o, Op) and o.target == name),
+            None,
+        )
 
     def prepare(self, op, looped: bool) -> None:
         if isinstance(op, Op) and op.op == "send":
@@ -627,31 +725,56 @@ class _Ctx:
             t = op.type
             if len(pos) != 1 or not isinstance(pos[0], (View, Name)):
                 self.fail(op.st, "NAME = load VIEW : f16[R, C] @l1")
-            if t is None or t.space != "l1" or t.dtype != "f16":
-                self.fail(op.st, "a load is f16[R, C] @l1")
+            if t is None or t.space != "l1" or t.dtype not in ("f16", "f32"):
+                self.fail(op.st, "a load is f16[R, C] or f32[R, C] @l1")
             view = pos[0] if isinstance(pos[0], View) else View(pos[0].text, ())
-            want = t.shape[0] * t.shape[-1] * 2 // 32
+            item = 4 if t.dtype == "f32" else 2
+            n = t.shape[0] * (t.shape[-1] if len(t.shape) == 2 else 1)
+            want = n * item // 32
+            rows = t.mode == "gt4"
         else:
             if len(pos) != 3 or not isinstance(pos[0], (View, Name)):
                 self.fail(op.st, "store VIEW <- VALUE")
             view = pos[0] if isinstance(pos[0], View) else View(pos[0].text, ())
             want = None
+            packed = self._packed(pos[2].text) if isinstance(pos[2], Name) else None
+            rows = (
+                packed is not None
+                and packed.type is not None
+                and (packed.type.mode == "gt4")
+            )
         first = self.trips[0] if looped else None
-        name, off, walk, words, gt4 = self._walk(op, view, first)
+        name, off, walk, words, kind, rows_w, vrows = self._walk(op, view, first, rows)
+        bcast = (
+            kind == "rows" and op.op == "load" and vrows == 1 and op.type.shape[0] > 1
+        )
+        if bcast:
+            want = rows_w
         if want is not None and words != want:
             self.fail(op.st, f"the view holds {words} words, the value {want}")
-        if op.op == "load" and gt4 == "mx7":
+        if op.op == "load" and kind == "mx7":
             self.fail(
                 op.st, "an MXFP7 buffer is a cluster's operand: a core stores into it"
             )
-        if op.op == "load" and gt4 != (op.type.mode == "gt4"):
+        if op.op == "load" and bool(kind) != (op.type.mode == "gt4"):
             self.fail(op.st, "a tile= buffer loads @l1(gt4); a row-major one @l1")
-        if not gt4 and op.op == "load" and op.type.shape[-1] != ROW:
-            self.fail(op.st, f"a row-major load is f16[R, {ROW}]")
+        if (
+            not kind
+            and op.op == "load"
+            and len(op.type.shape) == 2
+            and op.type.shape[-1] != ROW
+        ):
+            self.fail(
+                op.st,
+                f"a row-major load is f16[R, {ROW}], or a GT4 band (@l1(gt4)) of "
+                "whole 32-column blocks",
+            )
+        if op.op == "load" and len(op.type.shape) == 1 and op.type.dtype != "f16":
+            self.fail(op.st, "a row statistic loads from f16")
         inc = 0
         if looped and len(self.trips) > 1:
-            inc = self._walk(op, view, first + 1)[1] - off
-            end = self._walk(op, view, self.trips[-1])[1]
+            inc = self._walk(op, view, first + 1, rows)[1] - off
+            end = self._walk(op, view, self.trips[-1], rows)[1]
             if end != off + inc * (len(self.trips) - 1):
                 self.fail(op.st, "the view is not affine in the loop variable")
             if not -(1 << 17) <= inc < 1 << 17:
@@ -669,6 +792,7 @@ class _Ctx:
                 self.fail(op.st, f"L1 holds {self.land} words for this core's buffers")
             buf = (self.down,)
         d = Desc(len(self.descs), name, off, words, inc, buf, walk, kind=op.op)
+        d.rows_w, d.bcast = (rows_w, bcast) if kind == "rows" else (0, False)
         self.descs.append(d)
         self.buffers.add(name)
         self.of[id(op)] = d
@@ -782,17 +906,17 @@ class _Ctx:
             d = self.of[id(op)]
             g.raw(f"vfill a{d.ad} -> l1[{d.buf[0]}]")
             g.raw("vbar")
-            self.vals[op.target] = Val(
-                "l1", _count(op.type), buf=d.buf[0], mode=_mode(op.type)
-            )
+            self.vals[op.target] = _l1val(d, op.type, d.buf[0])
         elif op.op == "unpack":
             src = self._get(op, op.st.positional()[0], "l1")
-            v = Val("row", _count(op.type), mode=src.mode)
+            if len(op.type.shape) == 1:
+                self.fail(op.st, "a row statistic unpacks in the stream loop")
+            v = Val("row", _count(op.type), mode=src.mode, cols=op.type.shape[-1])
             for r in range(v.rows):
                 s = g.sym()
                 v.regs[r] = s
                 self.pinned.add(s)
-                g.emit(f"vunpk {{0}} <- l1[{src.buf + r * 8}] {src.mode}", s)
+                g.emit(_unpack_line(src, r), s)
             self.vals[op.target] = v
         else:
             self.fail(op.st, f"before the stream loop: load and unpack, not {op.op}")
@@ -815,6 +939,15 @@ class _Ctx:
         reduces = any(o.op in REDUCE for o in ops)
         gt4 = any(o.type and o.type.mode == "gt4" for o in ops)
         typed = [o for o in ops if o.type and o.type.space in ("l1", "reg")]
+        # Row values made before the loop and read in it set its width too.
+        before = [
+            self.vals[a.name if isinstance(a, View) else a.text]
+            for o in ops
+            for a in o.st.positional()
+            if isinstance(a, (Name, View))
+            and (a.name if isinstance(a, View) else a.text) in self.vals
+        ]
+        before = [v for v in before if v.kind == "row" and v.mode == "gt4" and v.cols]
         if gt4:
             # A GT4 register is a 4-row band's 32 columns: a row statistic is
             # one register a band, every chunk holding its row's value.
@@ -822,14 +955,20 @@ class _Ctx:
             # One width for the rows; 32-wide values (one register a band:
             # a statistic stored or loaded back) beside them.
             widths = {o.type.shape[1] for o in typed if _mode(o.type) == "gt4"}
+            widths |= {v.cols for v in before}
             wide = max(widths)
             if wide % 32 or widths - {wide, 32}:
                 self.fail(ops[0].st, "GT4 values of one width, a multiple of 32")
             self.per_band = wide // 32
         rows = {_count(o.type) for o in typed}
-        tile = max(rows)
+        tile = max(rows | {v.rows for v in before if gt4})
         self.tile = tile
-        if any(r not in (tile, 1) for r in rows):
+        # A 32-wide GT4 value beside wider rows takes one register a band; a
+        # band at the loop's width (a row broadcast) one register a block.
+        narrow = (
+            {tile // self.per_band, self.per_band} if gt4 and self.per_band else set()
+        )
+        if any(r not in {tile, 1, *narrow} for r in rows):
             self.fail(
                 ops[0].st, f"one register count in the stream loop, got {sorted(rows)}"
             )
@@ -837,20 +976,27 @@ class _Ctx:
         if tile % group:
             self.fail(ops[0].st, f"{tile} rows do not split into groups of {group}")
         stores = [o for o in ops if o.op in ("store", "send")]
+        packed = {o.target for o in ops if o.op == "pack"}
+        # A store of loaded bytes as they are: its drain reads a fill's buffer.
+        direct = [
+            o
+            for o in stores
+            if o.st.positional()[0 if o.op == "send" else 2]
+            not in {Name(t) for t in packed}
+        ]
         g.raw("vbar")
         if prefetch:
             g.raw("vsync fill on=unpack")
+            if direct:
+                # The buffer refilled now was drained last trip.
+                g.raw("vsync fill on=drain")
             for d in self.loads:
                 g.raw(f"vfill a{d.ad} -> l1[{d.buf[1 - parity]}] rel")
         streams = [o for o in ops if o.op == "recv"]
         for o in ops:
             if o.op == "load":
-                self.vals[o.target] = Val(
-                    "l1",
-                    _count(o.type),
-                    buf=self.of[id(o)].buf[parity],
-                    mode=_mode(o.type),
-                )
+                d = self.of[id(o)]
+                self.vals[o.target] = _l1val(d, o.type, d.buf[parity])
             elif o.op == "recv":
                 x = self.plan[id(o)]
                 self.vals[o.target] = Val(
@@ -909,6 +1055,9 @@ class _Ctx:
             g.raw("vsync drain on=unpack")
             g.raw(f"vpost {x.src} n={x.size}")
         g.raw("vsync drain on=pack")
+        if direct:
+            # This trip's fills have landed (the next trip's, just issued, may not).
+            g.raw(f"vsync drain on=fill slack={len(self.loads) if prefetch else 0}")
         for o in stores:
             d = self.of[id(o)]
             if d.alt is not None and parity:
@@ -962,13 +1111,44 @@ class _Ctx:
                     g.emit(f"vunpk {{0}} <- l1[0] {mode} rel", s)
                 continue
             src = self._get(o, o.st.positional()[0], "l1", local)
+            if len(o.type.shape) == 1:
+                self._unpack_stat(g, o, src, rows, local)
+                continue
             if _mode(o.type) != src.mode:
                 self.fail(o.st, f"an @l1({src.mode}) value unpacks to @reg({src.mode})")
-            v = local.setdefault(o.target, Val("row", _count(o.type), mode=src.mode))
+            v = local.setdefault(
+                o.target,
+                Val("row", _count(o.type), mode=src.mode, cols=o.type.shape[-1]),
+            )
             for _, i in self.once(v, rows):
                 s = g.sym()
                 v.regs[i] = s
-                g.emit(f"vunpk {{0}} <- l1[{src.buf + i * 8}] {src.mode}", s)
+                g.emit(_unpack_line(src, i), s)
+
+    def _unpack_stat(self, g, o, src, rows, local) -> None:
+        """A row statistic loaded from memory (16 rows a word): each GT4 band's
+        register, chunk 4q + i holding row i's value in every lane -- the
+        band's four values broadcast across the lanes of chunks 0-3, then
+        copied to 4-7."""
+        if not self.per_band:
+            self.fail(
+                o.st, "a loaded row statistic is a GT4 band's (rows of @reg(gt4))"
+            )
+        v = local.setdefault(o.target, Val("stat", o.type.shape[0], mode="gt4"))
+        words: dict = {}
+        for b in sorted({r // self.per_band for r in rows}):
+            w, lane = divmod(4 * b, 16)
+            if w not in words:
+                words[w] = g.sym()
+                g.emit(f"vunpk {{0}} <- l1[{src.buf + w}] f16 n=1", words[w])
+            d = g.sym()
+            g.emit(
+                f"vmul {{0}}[0:], k1, bcast({{1}}[0], lane={lane}, sh=0) vl=64",
+                d,
+                words[w],
+            )
+            g.emit("vmov {0}[4:], {0}[0:] vl=64", d)
+            v.regs[b] = d
 
     def _reunpack(self, g, ops, o, rows, local, again) -> None:
         """Past a reduction, an unpacked row value read again is unpacked
@@ -1017,7 +1197,9 @@ class _Ctx:
                     or hi.value % 32
                     or not 0 <= lo.value < hi.value <= 32 * self.per_band
                 ):
-                    self.fail(o.st, "a reduction over X[:, C0:C1]: blocks of 32 columns")
+                    self.fail(
+                        o.st, "a reduction over X[:, C0:C1]: blocks of 32 columns"
+                    )
                 cols = range(lo.value // 32, hi.value // 32)
                 arg = Name(arg.name)
             src = self._get(o, arg, "row", local)
@@ -1027,7 +1209,10 @@ class _Ctx:
                 band = grp[0] // self.per_band
                 into = out.regs.get(band) if inplace else None
                 steps, out.regs[band] = _tree4(
-                    g, code, [src.regs[r] for r in grp if r % self.per_band in cols], into
+                    g,
+                    code,
+                    [src.regs[r] for r in grp if r % self.per_band in cols],
+                    into,
                 )
                 trees.append(steps)
             _interleave(g, trees)
@@ -1038,7 +1223,9 @@ class _Ctx:
                 self.fail(o.st, "a reduction runs over groups of 8 rows")
             if name in fused:
                 a, b = (self._get(o, t, "row", local) for t in fused[name])
-                rows = [(a.regs[self.index(a, r)], b.regs[self.index(b, r)]) for r in rws]
+                rows = [
+                    (a.regs[self.index(a, r)], b.regs[self.index(b, r)]) for r in rws
+                ]
             else:
                 src = self._get(o, pos[0], "row", local)
                 rows = [src.regs[r] for r in rws]
@@ -1088,8 +1275,9 @@ class _Ctx:
                 local[o.target] = Val("l1", _count(o.type), buf=buf, mode=o.type.dtype)
                 continue
             mode = _mode(o.type)
+            d = self.of[id(store[0])]
             for _, i in self.once(src, rows):
-                g.emit(f"vpack {{0}} -> l1[{buf + i * 8}] {mode}", src.regs[i])
+                g.emit(_pack_line(d, buf, i, mode, o.type.dtype), src.regs[i])
             local[o.target] = Val("l1", _count(o.type), buf=buf, mode=mode)
 
     def _pack_stat(self, g, o, ops, stat, rows, local, parity) -> None:
@@ -1103,17 +1291,38 @@ class _Ctx:
         ]
         if len(store) != 1:
             self.fail(o.st, "a packed value is stored once")
-        buf = self.of[id(store[0])].buf[parity]
+        d = self.of[id(store[0])]
+        buf = d.buf[parity]
         bands = sorted({r // self.per_band for r in rows})
         for b in bands:
-            g.emit(f"vpack {{0}} -> l1[{buf + b * 8}] gt4", stat.regs[b])
+            g.emit(_pack_line(d, buf, b, "gt4", "f16"), stat.regs[b])
         local[o.target] = Val("l1", len(bands), buf=buf, mode="gt4")
+
+    def _xlane(self, g, o, rows, local) -> None:
+        """``y = xlane x, K``: lane l of every chunk takes lane l xor K of
+        `x` (the crossbar on a multiply by 1.0: exact)."""
+        t = o.type
+        k = _xlane_k(o, self.fail)
+        if len(t.shape) == 1:
+            self.fail(o.st, "xlane runs on rows (f32[R, C] @reg)")
+        out = local.setdefault(
+            o.target, Val("row", _count(t), mode=_mode(t), cols=t.shape[-1])
+        )
+        src = o.st.positional()[0]
+        for r, i in self.once(out, rows):
+            v = self._get(o, src, "row", local)
+            d = out.regs[i] if self.inplace and o.target in local else g.sym()
+            g.emit(f"vmul {{0}}, k1, xor({{1}}, {k})", d, v.regs[self.index(v, r)])
+            out.regs[i] = d
 
     def _math(self, g, o, rows, local) -> None:
         pos = o.st.positional()
         t = o.type
         if t is None or t.space != "reg" or o.target is None:
             self.fail(o.st, f"NAME = {o.op} ... : f32[..] @reg")
+        if o.op == "xlane":
+            self._xlane(g, o, rows, local)
+            return
         code = (
             UNARY.get(o.op)
             or BINARY.get(o.op)
@@ -1154,7 +1363,9 @@ class _Ctx:
                 g.emit(f"{code} {{0}}{sel}, {', '.join(srcs)}{vl}", d, *syms)
                 out.regs[grp] = d
             return
-        out = local.setdefault(o.target, Val("row", _count(t), mode=_mode(t)))
+        out = local.setdefault(
+            o.target, Val("row", _count(t), mode=_mode(t), cols=t.shape[-1])
+        )
         for r, i in self.once(out, rows):
             syms, srcs = [], []
             for a in pos:
@@ -1189,6 +1400,16 @@ class _Ctx:
             else:
                 g.emit(f"{code} {{0}}, {', '.join(srcs)}", d, *syms)
             out.regs[i] = d
+
+
+def _xlane_k(o, fail) -> int:
+    pos = o.st.positional()
+    k = _number(pos[1]) if len(pos) == 2 else None
+    if k is None or k != int(k) or not 0 < k < 16:
+        fail(
+            o.st, "xlane X, K: every 16 lanes of a chunk read lane l xor K (0 < K < 16)"
+        )
+    return int(k)
 
 
 def _read_once(ops, pack) -> bool:
@@ -1231,7 +1452,11 @@ def _quantiser_order(g: Gen, sym: str, into: str) -> bool:
         return False
     op, _, rest = tmpl.partition(" ")
     parts = [p.strip() for p in rest.split(",")]
-    if op.startswith("vcmp") or parts[0] != "{0}" or not all(_PLAIN.match(p) for p in parts[1:]):
+    if (
+        op.startswith("vcmp")
+        or parts[0] != "{0}"
+        or not all(_PLAIN.match(p) for p in parts[1:])
+    ):
         return False
     # The sources' symbols renumbered after the new destination.
     srcs = list(syms[1:])
@@ -1242,7 +1467,9 @@ def _quantiser_order(g: Gen, sym: str, into: str) -> bool:
                 f"{{{int(p[1:-1])}}}[{4 * q + i}:]" if p.startswith("{") else p
                 for p in parts[1:]
             ]
-            out.append((f"{op} {{0}}[{2 * i + q}:], {', '.join(ops_)} vl=16", (into, *srcs)))
+            out.append(
+                (f"{op} {{0}}[{2 * i + q}:], {', '.join(ops_)} vl=16", (into, *srcs))
+            )
     g.code[at : at + 1] = out
     return True
 

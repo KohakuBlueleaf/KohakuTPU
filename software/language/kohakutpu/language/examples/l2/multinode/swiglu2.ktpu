@@ -1,0 +1,44 @@
+# swiglu on two nodes, data parallel: node n runs tokens [1024n, 1024n +
+# 1024) through y = (silu(x w1^T) * (x w3^T)) w2^T (1024 in, 2048 hidden, 1024
+# out) exactly as the one-node `swiglu`, both reading the weights from the
+# shared memory.
+target ktpu.v9
+
+fn swiglu2.l2(x: mx7a[2048, 1024] @dram(gm=64, nk=2), w1: mx7b[2048, 1024] @dram(gn=64, nk=2), w3: mx7b[2048, 1024] @dram(gn=64, nk=2), w2: mx7b[1024, 2048] @dram(gn=64, nk=2), g: f16[1024, 2048] @dram(tile=64x64), u: f16[1024, 2048] @dram(tile=64x64), a2: mx7a[1024, 2048] @dram(gm=64, nk=2), y: f16[2048, 1024] @dram(tile=64x64))
+    par n in 0..2 on node[n]
+        for i in 0..4
+            par c in 0..4 on mg[c]
+                for j in 0..2
+                    acc = zero                                          : f32[256, 256] @acc
+                    for k in 0..16
+                        a = fill x[n*1024 + i*256 : +256, k*64 : +64]   : mx7a[256, 64] @A
+                        b = fill w1[(4*j + c)*256 : +256, k*64 : +64]   : mx7b[256, 64] @B
+                        acc = gemm a, b, acc                            : f32[256, 256] @acc
+                    drain acc -> g[n*512 + (i % 2)*256 : +256, (4*j + c)*256 : +256]
+                    acc = zero                                          : f32[256, 256] @acc
+                    for k in 0..16
+                        a = fill x[n*1024 + i*256 : +256, k*64 : +64]   : mx7a[256, 64] @A
+                        b = fill w3[(4*j + c)*256 : +256, k*64 : +64]   : mx7b[256, 64] @B
+                        acc = gemm a, b, acc                            : f32[256, 256] @acc
+                    drain acc -> u[n*512 + (i % 2)*256 : +256, (4*j + c)*256 : +256]
+            par c in 0..16 on vc[any]
+                for t in 0..32
+                    gl = load g[n*512 + (i % 2)*256 + (c % 2)*128 + t*4 : +4, (c / 2)*256 : +256] : f16[4, 256] @l1(gt4)
+                    ul = load u[n*512 + (i % 2)*256 + (c % 2)*128 + t*4 : +4, (c / 2)*256 : +256] : f16[4, 256] @l1(gt4)
+                    v = unpack gl                                       : f32[4, 256] @reg(gt4)
+                    w = unpack ul                                       : f32[4, 256] @reg(gt4)
+                    e = mul v, -1.4426950408889634                      : f32[4, 256] @reg(gt4)
+                    e = exp2 e                                          : f32[4, 256] @reg(gt4)
+                    e = add e, 1.0                                      : f32[4, 256] @reg(gt4)
+                    e = inv e                                           : f32[4, 256] @reg(gt4)
+                    o = mul v, e                                        : f32[4, 256] @reg(gt4)
+                    o = mul o, w                                        : f32[4, 256] @reg(gt4)
+                    q = pack o                                          : mx7a[4, 256] @l1
+                    store a2[n*512 + (i % 2)*256 + (c % 2)*128 + t*4 : +4, (c / 2)*256 : +256] <- q
+            par c in 0..4 on mg[c]
+                acc = zero                                              : f32[256, 256] @acc
+                for k in 0..32
+                    a = fill a2[n*512 + (i % 2)*256 : +256, k*64 : +64] : mx7a[256, 64] @A
+                    b = fill w2[c*256 : +256, k*64 : +64]               : mx7b[256, 64] @B
+                    acc = gemm a, b, acc                                : f32[256, 256] @acc
+                drain acc -> y[n*1024 + i*256 : +256, c*256 : +256]

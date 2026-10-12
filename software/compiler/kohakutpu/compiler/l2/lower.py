@@ -150,25 +150,35 @@ def lower(module, name: str, machine=None) -> str:
     answers where units and memory ports are."""
     body = B.read(module, name)
     fail = body.reader.fail
-    stages = B.instances(body)
-    nodes = sorted({n for _, n, _, _ in stages})
+    phases: list = []
+    stages = [(*s, ph) for s, ph in zip(B.instances(body, phases=phases), phases)]
+    nodes = sorted({n for _, n, _, _, _ in stages})
     machine = machine or T.machine(nodes=max(nodes) + 1)
     multi = any(isinstance(s, B.Par) and s.kind == "node" for s in body.stmts)
     land = vector.L1_WORDS - POOL if _drains_to_cores(body.stmts) else None
-    out, images = [], []
+    remote = _remote_adds(body, stages)
+    out, images, built_by = [], [], {}
     for n in nodes:
-        mine = [(k, x, tag) for k, nd, x, tag in stages if nd == n]
-        links = Links(fail, _streams(body, mine))
+        mine = [(k, x, tag, ph) for k, nd, x, tag, ph in stages if nd == n]
+        links = Links(fail, _streams(body, [(k, x, t) for k, x, t, _ in mine]))
         reading: dict = {}
         built = []
         if any(r.dst.startswith("vc") for r in links.rings.values()):
             built.append(_open(body.name, n, links, images))
-        for i, (kind, x, tag) in enumerate(mine):
+        for i, (kind, x, tag, ph) in enumerate(mine):
             if kind == "par":
                 lines, units, acc, segs = _par(
-                    body, x, fail, machine, images, links, land, reading
+                    body,
+                    x,
+                    fail,
+                    machine,
+                    images,
+                    links,
+                    land,
+                    reading,
+                    remote.get((n, _stage_key(body, x)), ()),
                 )
-                built.append(sync.Stage(lines, units, acc, tag, segs=segs))
+                built.append(sync.Stage(lines, units, acc, tag, segs=segs, phase=ph))
                 continue
             op, env = x
             if op.op not in mover.OPS:
@@ -193,12 +203,17 @@ def lower(module, name: str, machine=None) -> str:
                     acc,
                     tag,
                     post=tok,
+                    phase=ph,
                 )
             )
         links.check(body.stmts[-1].st if body.stmts else None)
         if any(r.dst.startswith("vc") for r in links.rings.values()):
             built.append(_spend(body.name, n, links, images))
-        lines = sync.schedule(_close(_grouped(built)))
+        built_by[n] = built
+    if len(nodes) > 1:
+        _order_nodes(built_by, fail, body.stmts[0].st if body.stmts else None)
+    for n in nodes:
+        lines = sync.schedule(_close(_grouped(built_by[n])))
         if multi:
             out.append(f"node {n}")
             out += [IND + ln for ln in lines]
@@ -239,13 +254,17 @@ def _streams(body, stages) -> dict:
                 if side == "l1":
                     size = 2 * op.type.shape[0] * op.type.shape[1] // 16
                     if size > POOL:
-                        body.reader.fail(op.st, f"two of these tiles exceed {POOL} words")
+                        body.reader.fail(
+                            op.st, f"two of these tiles exceed {POOL} words"
+                        )
                 else:
                     # A cluster rejects a burst past its L1 (no wrap): two
                     # slots the sender alternates between.
                     size = 2 * (op.type.shape[0] // 4) * (op.type.shape[1] // 32)
                     if size > RING_ENTRIES:
-                        body.reader.fail(op.st, "two of these tiles exceed a side's banks")
+                        body.reader.fail(
+                            op.st, "two of these tiles exceed a side's banks"
+                        )
                 out.setdefault(key, size)
     return out
 
@@ -267,7 +286,9 @@ def _open(name, node, links, images) -> sync.Stage:
             posts.setdefault(r.dst, []).append(r)
     for dst, rings in posts.items():
         img = f"{name}_n{node}_open_{dst.replace('[', '').replace(']', '')}"
-        words = [f"    vpost {r.src} n={c}" for r in rings for c in _counts(r.granules())]
+        words = [
+            f"    vpost {r.src} n={c}" for r in rings for c in _counts(r.granules())
+        ]
         images.append("\n".join([f"image {img}()", *words, "    halt"]) + "\n")
         lines += [f"send {dst}", f"{IND}run {img}()"]
         units.append(dst)
@@ -327,7 +348,11 @@ def _grouped(stages: list) -> list:
 
 
 def _merge_segs(groups: list) -> list:
-    runs = [g for g in groups if all(ln.lstrip().startswith(("send vc", "run ")) for seg in g for ln in seg)]
+    runs = [
+        g
+        for g in groups
+        if all(ln.lstrip().startswith(("send vc", "run ")) for seg in g for ln in seg)
+    ]
     rest = [g for g in groups if g not in runs]
     lines = [ln for g in runs for seg in g for ln in seg]
     at = [0] * len(rest)
@@ -364,7 +389,22 @@ def _drains_to_cores(stmts) -> bool:
     return False
 
 
-def _par(body, insts: list, fail, machine, images: list, links, land, reading) -> tuple:
+def _shared_image(images: list, text: str, name: str) -> str:
+    """The name of an image already kept whose body is `text`'s (instances
+    of one shape differ only in their run's arguments), else `text` kept."""
+    head, _, rest = text.partition("\n")
+    args = head[head.index("(") :]
+    for kept in images:
+        h, _, r = kept.partition("\n")
+        if r == rest and h.endswith(args):
+            return h[len("image ") : h.index("(")]
+    images.append(text)
+    return name
+
+
+def _par(
+    body, insts: list, fail, machine, images: list, links, land, reading, remote=()
+) -> tuple:
     """``(lines, units, accesses)`` of one `par` stage."""
     kinds = {i.kind for i in insts}
     if len(kinds) != 1:
@@ -378,7 +418,7 @@ def _par(body, insts: list, fail, machine, images: list, links, land, reading) -
         for i in insts:
             img = f"{body.name}_n{i.node}_vc{i.index}_{len(images)}"
             text, params, got = vector.lower(body, i.par, i.env, img, fail, links, land)
-            images.append(text)
+            img = _shared_image(images, text, img)
             acc += got
             units.append(f"vc[{i.index}]")
             lines += [f"send vc[{i.index}]", f"{IND}run {img}({', '.join(params)})"]
@@ -386,7 +426,7 @@ def _par(body, insts: list, fail, machine, images: list, links, land, reading) -
     if kind != "mg":
         fail(insts[0].par.st, f"L2 -> L1 has no {kind} lowering yet")
     insts = _merge(insts)
-    into = _added_into(body, insts)
+    into = _added_into(body, insts, remote)
     streams = []
     for i in insts:
         unit = f"mg[{i.index}]"
@@ -402,8 +442,9 @@ def _par(body, insts: list, fail, machine, images: list, links, land, reading) -
         streams.append((i.index, s))
     units = [s.unit for _, s in streams]
     acc = [a for _, s in streams for a in s.accesses]
-    if into:
-        lines = _added(streams, into, fail, insts[0].par.st)
+    sends_far = any(ln.far is not None for _, s in streams for ln in s.lines)
+    if into or sends_far:
+        lines = _added(streams, into, fail, insts[0].par.st, remote, insts[0].node)
         return lines, units, acc, [lines]
     if any(ln.share for _, s in streams for ln in s.lines):
         lines = _shared(insts, streams, machine, fail)
@@ -412,18 +453,129 @@ def _par(body, insts: list, fail, machine, images: list, links, land, reading) -
     return [ln for seg in segs for ln in seg], units, acc, segs
 
 
-def _added_into(body, insts) -> set:
-    """Clusters another cluster of the stage adds its tile into
-    (`drain ACC -> mg[J] add`)."""
-    out = set()
+def _adds(body, insts) -> list:
+    """``(source node, source index, target node, target index)`` of every
+    accumulator add of the stage (`drain ACC -> mg[J] add [node=M]`)."""
+    out = []
     for i in insts:
+        if i.kind != "mg":
+            continue
         for op, env in i.items:
-            if op.op != "drain" or Name("add") not in op.st.positional():
+            if (
+                getattr(op, "op", None) != "drain"
+                or Name("add") not in op.st.positional()
+            ):
                 continue
             to = B.value(body, op.st, op.st.positional()[2], env)
-            if isinstance(to, View) and to.name == "mg" and to.slices:
-                out.add(getattr(to.slices[0], "value", None))
+            if not (isinstance(to, View) and to.name == "mg" and to.slices):
+                continue
+            kw = op.st.kwargs()
+            far = B.const(body, op.st, kw["node"], env) if "node" in kw else i.node
+            out.append((i.node, i.index, far, getattr(to.slices[0], "value", None)))
     return out
+
+
+def _added_into(body, insts, remote=()) -> set:
+    """Clusters of this node another cluster adds its tile into, here or from
+    another node (`remote`: ``(source node, target index)``)."""
+    out = {t for s, _, n, t in _adds(body, insts) if n == s}
+    return out | {t for _, t in remote}
+
+
+#: Signal slots of the cross-node handshakes: `ORDER + n` counts node n's
+#: memory releases, `ADD + n` node n's opened accumulator tiles.
+ORDER, ADD = 0, 8
+
+
+def _node_vars(stmts) -> set:
+    out = set()
+    for s in stmts:
+        if isinstance(s, B.Par) and s.kind == "node":
+            out.add(s.var)
+        if hasattr(s, "body") and s.body:
+            out |= _node_vars(s.body)
+    return out
+
+
+def _stage_key(body, insts) -> tuple:
+    """The same `par` run on every node: its statement and the loop values
+    around it, the node's own left out."""
+    skip = _node_vars(body.stmts) | {insts[0].par.var}
+    env = tuple(sorted((k, repr(v)) for k, v in insts[0].env.items() if k not in skip))
+    return id(insts[0].par), env
+
+
+def _remote_adds(body, stages) -> dict:
+    """``{(target node, stage key): [(source node, target index), ...]}`` of
+    every accumulator add across nodes; refused when the target node runs no
+    instance of that stage (its tile would never open)."""
+    have = {(n, _stage_key(body, x)) for k, n, x, _, _ in stages if k == "par"}
+    out: dict = {}
+    for k, n, x, _, _ in stages:
+        if k != "par":
+            continue
+        for s, _, t, j in _adds(body, x):
+            if t == s:
+                continue
+            key = (t, _stage_key(body, x))
+            if key not in have:
+                body.reader.fail(
+                    x[0].par.st,
+                    f"node {s} adds into node {t}, which runs no instance of this par",
+                )
+            out.setdefault(key, []).append((s, j))
+    return out
+
+
+def _order_nodes(built_by: dict, fail, st) -> None:
+    """Cross-node order through the shared memory: where a stage reads or
+    writes what another node's stage of an earlier phase wrote (or read and
+    this one writes), the earlier node waits for those units and rings this
+    node's slot `ORDER + itself`; this node waits on it first. Stages of one
+    phase run concurrently on their nodes, as the units of one `par` do."""
+    mem = {
+        n: [[a for a in s.accesses if a.key[0] == "mem"] for s in built]
+        for n, built in built_by.items()
+    }
+    rings: dict = {}  # (node, stage) -> [(to node, accesses)]
+    waits: dict = {}  # (node, stage) -> [from node]
+    for b, built in built_by.items():
+        seen: dict = {}  # source node -> latest stage of it already waited for
+        for j, sj in enumerate(built):
+            for a, other in built_by.items():
+                if a == b:
+                    continue
+                hit = None
+                for i, si in enumerate(other):
+                    if si.phase < 0 or sj.phase < 0:
+                        continue
+                    if si.phase >= sj.phase:
+                        continue
+                    if any(sync.clash(x, y) for x in mem[a][i] for y in mem[b][j]):
+                        hit = i
+                if hit is None or seen.get(a, -1) >= hit:
+                    continue
+                seen[a] = hit
+                rings.setdefault((a, hit), []).append((b, mem[a][hit]))
+                waits.setdefault((b, j), []).append(a)
+    for n, built in built_by.items():
+        out = []
+        for j, s in enumerate(built):
+            got = waits.get((n, j))
+            if got:
+                lines = [f"wait slot {ORDER + a} n=1 consume" for a in got]
+                out.append(sync.Stage(lines, [], [], fence=True, phase=s.phase))
+            out.append(s)
+            to = rings.get((n, j))
+            if to:
+                lines = [f"ring mesh={b} slot={ORDER + n}" for b, _ in to]
+                acc = [
+                    sync.Access(sync.FENCE, True, x.key, x.lo, x.hi)
+                    for _, xs in to
+                    for x in xs
+                ]
+                out.append(sync.Stage(lines, [], acc, fence=True, phase=s.phase))
+        built_by[n] = out
 
 
 def _interleave(streams: list) -> list:
@@ -446,13 +598,15 @@ def _segments(streams: list) -> list:
     return out
 
 
-def _added(streams, into, fail, st) -> list:
+def _added(streams, into, fail, st, remote=(), node=0) -> list:
     """Clusters adding their tiles into others' (`drain ACC -> mg[J] add`):
     every cluster runs up to its first drain; each addition goes once its
     target has swept (its tile is open and no sweep runs), followed by a
     COUNTed entry into the target's L1 A0 entry 0, which the target takes
     before the rest of its stream: one source's flits land in order, and no
-    unit counts an add landing."""
+    unit counts an add landing. Across nodes (`remote`: the sources adding
+    into this node's clusters) the target's node rings each source's slot
+    `ADD + this node` once the tile is open; the source waits on it."""
     heads, tails, adds = [], [], []
     for idx, s in streams:
         cut = next((k for k, ln in enumerate(s.lines) if ln.drain), len(s.lines))
@@ -468,13 +622,31 @@ def _added(streams, into, fail, st) -> list:
         tails.append((idx, s.lines[cut_tail:]))
     out = _interleave(heads)
     marked = {}
+    for src_node, j in remote:
+        # The tile is open once its sweeps ran: the adding node may go.
+        out.append(f"wait mg[{j}]")
+        out.append(f"ring mesh={src_node} slot={ADD + node}")
+        marked[j] = marked.get(j, 0) + 1
+    sent_far = None
     for src, line in adds:
+        if line.far is not None:
+            if sent_far is not None:
+                # One cross-node add in flight at a time (two at once hang).
+                out.append(f"wait mg[{sent_far}]")
+            out.append(f"wait slot {ADD + line.far} n=1 consume")
+            out += [f"send mg[{src}]", IND + line.render()]
+            out.append(
+                f"{IND}drain n=4 to=mesh{line.far}.mg[{line.into}] buf=0 l1=0 count"
+            )
+            sent_far = src
+            continue
         out.append(f"wait mg[{line.into}]")
         out += [f"send mg[{src}]", IND + line.render()]
         out.append(f"{IND}drain n=4 to=mg[{line.into}] buf=0 l1=0 count")
         marked[line.into] = marked.get(line.into, 0) + 1
     tails = [
-        (idx, [_take(marked[idx], ls)] + ls if idx in marked else ls) for idx, ls in tails
+        (idx, [_take(marked[idx], ls)] + ls if idx in marked else ls)
+        for idx, ls in tails
     ]
     return out + _interleave(tails)
 

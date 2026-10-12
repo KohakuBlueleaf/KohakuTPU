@@ -3,7 +3,11 @@
     copy DST <- SRC [perm=(1, 0)]        words of SRC to DST; perm reorders
                                          SRC's word axes (the last view axis
                                          counted in 32-byte words)
-    fill DST value=V [ew=8|16|32]        the immediate
+    copy DST <- BUF walk=((N, S), ..) [at=B]   BUF walked by signed byte
+                                         strides from byte B (flip, permute,
+                                         broadcast: a stride of 0 repeats);
+                                         dwalk= / dat= the same for DST
+    fill DST value=V [ew=8|16|32]        the immediate (walk= / at= as copy)
     gen DST seed=S                       address-keyed pseudo-random words
     gather DST <- SRC index=IDX [fp]     DST row r := SRC row IDX[r]
     scatter DST <- SRC index=IDX [fp]    DST row IDX[r] := SRC row r
@@ -18,7 +22,7 @@ once per converted entry).
 from kohakuaccel.compiler.package.mover import MOVE_WORDS, NDIM
 from kohakutpu.compiler.l2 import memory as M
 from kohakutpu.compiler.l2 import sync
-from kohakutpu.compiler.l2.body import value
+from kohakutpu.compiler.l2.body import const, value
 from kohakutpu.language.text.syntax import Arrow, Int, Name, Tuple, View
 
 WORD = 32
@@ -87,6 +91,13 @@ def lower(body, op, env, fail) -> tuple:
         if len(pos) != 1:
             fail(st, f"{op.op} DST {'value=V' if op.op == 'fill' else 'seed=S'}")
         name, off, lv = words(body, st, pos[0], env, fail)
+        if "walk" in kw:
+            if not isinstance(pos[0], Name):
+                fail(st, f"{op.op} BUFFER walk=((COUNT, STRIDE), ...) [at=BYTES]")
+            lv = _squeeze(_levels(body, st, kw["walk"], env, fail))
+            off = const(body, st, kw["at"], env) if "at" in kw else 0
+            if off % WORD or any(s % WORD for _, s in lv):
+                fail(st, "a walk steps whole 32-byte words")
         key = "value" if op.op == "fill" else "seed"
         if key not in kw:
             fail(st, f"{op.op} needs {key}=")
@@ -98,11 +109,30 @@ def lower(body, op, env, fail) -> tuple:
     if len(pos) != 3 or pos[1] != Arrow("<-"):
         fail(st, f"{op.op} DST <- SRC ...")
     dst, src = pos[0], pos[2]
+    if op.op == "gt4" and "walk" in kw:
+        return _gt4_walks(body, op, dst, src, env, fail)
     if op.op in ("quant", "gt4"):
         return _convert(body, op, dst, src, env, fail)
     if op.op == "copy":
         dn, doff, dl = words(body, st, dst, env, fail)
         sn, soff, sl = words(body, st, src, env, fail)
+        if "walk" in kw:
+            # An explicit signed walk of the source buffer (bytes, outermost
+            # first), from `at` bytes in: a flip, a permute, a broadcast.
+            if not isinstance(src, Name) or "perm" in kw:
+                fail(st, "copy DST <- BUFFER walk=((COUNT, STRIDE), ...) [at=BYTES]")
+            sl = _levels(body, st, kw["walk"], env, fail)
+            soff = const(body, st, kw["at"], env) if "at" in kw else 0
+            if soff % WORD or any(s % WORD for _, s in sl):
+                fail(st, "a walk steps whole 32-byte words")
+        if "dwalk" in kw:
+            # The destination's own walk (a window of it), from `dat` bytes in.
+            if not isinstance(dst, Name):
+                fail(st, "copy BUFFER <- SRC dwalk=((COUNT, STRIDE), ...) [dat=BYTES]")
+            dl = _levels(body, st, kw["dwalk"], env, fail)
+            doff = const(body, st, kw["dat"], env) if "dat" in kw else 0
+            if doff % WORD or any(s % WORD for _, s in dl):
+                fail(st, "a walk steps whole 32-byte words")
         if "perm" in kw:
             p = kw["perm"]
             if not isinstance(p, Tuple) or sorted(i.value for i in p.items) != list(
@@ -112,6 +142,14 @@ def lower(body, op, env, fail) -> tuple:
             sl = [sl[i.value] for i in p.items]
         if _count(dl) != _count(sl):
             fail(st, f"copy of {_count(sl)} words into {_count(dl)}")
+        for lv in (sl, dl):
+            if len(_merge(_squeeze(lv))) > NDIM:
+                fail(
+                    st,
+                    f"a walk of {len(_merge(_squeeze(lv)))} levels; a walker holds {NDIM}",
+                )
+        if "walk" in kw or "dwalk" in kw:
+            sl, dl = _squeeze(sl), _squeeze(dl)
         text = f"copy {_walk(sn, soff, sl)} -> {_walk(dn, doff, dl)}"
         return [text], [
             sync.mem(UNIT, False, *_span(sn, soff, sl)),
@@ -153,6 +191,45 @@ def lower(body, op, env, fail) -> tuple:
 
 
 # ------------------------------------------------------------- conversions
+def _gt4_walks(body, op, dst, src, env, fail) -> tuple:
+    """`gt4 DST <- SRC walk=.. dwalk=..`: whole buffers, the source walk's
+    innermost level the four words of a group, the destination one level
+    fewer (a group's four words land consecutively)."""
+    st = op.st
+    kw = st.kwargs()
+    if not isinstance(dst, Name) or not isinstance(src, Name) or "dwalk" not in kw:
+        fail(
+            st, "gt4 BUFFER <- BUFFER walk=((COUNT, STRIDE), ..) dwalk=(..) [at= dat=]"
+        )
+    sl = _levels(body, st, kw["walk"], env, fail)
+    dl = _levels(body, st, kw["dwalk"], env, fail)
+    soff = const(body, st, kw["at"], env) if "at" in kw else 0
+    doff = const(body, st, kw["dat"], env) if "dat" in kw else 0
+    if (
+        sl[-1][0] != 4
+        or len(dl) != len(sl) - 1
+        or [n for n, _ in dl] != [n for n, _ in sl[:-1]]
+    ):
+        fail(
+            st,
+            "gt4 walks: the source's innermost level is the 4 words of a group, the rest match the destination's",
+        )
+    if soff % WORD or doff % WORD or any(s % WORD for _, s in sl + dl):
+        fail(st, "a walk steps whole 32-byte words")
+    lines = []
+    for s0, d0, sl_, dl_ in _cut(sl, dl):
+        sl_, dl_ = _merge(_squeeze(sl_)), _merge(_squeeze(dl_))
+        if max(len(sl_), len(dl_)) > NDIM:
+            fail(st, f"gt4: {max(len(sl_), len(dl_))} levels; a walker holds {NDIM}")
+        lines.append(
+            f"gt4 {_walk(src.text, soff + s0, sl_)} -> {_walk(dst.text, doff + d0, dl_)}"
+        )
+    return lines, [
+        sync.mem(UNIT, False, *_span(src.text, soff, sl)),
+        sync.mem(UNIT, True, *_span(dst.text, doff, dl, 4 * WORD)),
+    ]
+
+
 def _convert(body, op, dst, src, env, fail) -> tuple:
     """`quant` / `gt4`: the source walk visits the destination's entries in
     its own order -- each entry's source words innermost -- and the
@@ -292,6 +369,21 @@ def _count(levels) -> int:
     out = 1
     for n, *_ in levels:
         out *= n
+    return out
+
+
+def _levels(body, st, t, env, fail) -> list:
+    """``[(count, stride)]`` of a ``((COUNT, STRIDE), ...)`` keyword."""
+    if not isinstance(t, Tuple) or not t.items:
+        fail(st, "walk=((COUNT, STRIDE), ...)")
+    out = []
+    for lv in t.items:
+        if not isinstance(lv, Tuple) or len(lv.items) != 2:
+            fail(st, f"a walk level is (COUNT, STRIDE), got {lv!r}")
+        n, s = (const(body, st, x, env) for x in lv.items)
+        if n < 1:
+            fail(st, f"a walk level of {n} steps")
+        out.append((n, s))
     return out
 
 

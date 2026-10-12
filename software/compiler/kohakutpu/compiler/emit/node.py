@@ -113,6 +113,8 @@ class NodeReader:
         self.images = vector.Images(module, entry, self.units)
         #: cluster -> [(addr, sub-tiles, stmt)] emitted and not yet collected.
         self.emits: dict = {}
+        #: core -> the encoded image its IMEM holds, along straight-line code
+        self.resident: dict = {}
 
     def stmts(self, stmts) -> None:
         for st in stmts:
@@ -161,8 +163,10 @@ class NodeReader:
             case "settle":
                 self.p.settle(self.const(st, self.one(st)))
             case "label":
+                self.resident.clear()  # reached from more than one place
                 self.p.label(self.name(st, self.one(st)))
             case "goto":
+                self.resident.clear()
                 self.goto(st)
             case "push":
                 self.push(st)
@@ -377,7 +381,9 @@ class NodeReader:
                 for key in own:
                     held.pop(key, None)
                 emit({**descs, **own})
-                words += [A.imem_flit(i, w) for i, w in enumerate(img)]
+                if self.resident.get(coord) is not img:
+                    words += [A.imem_flit(i, w) for i, w in enumerate(img)]
+                    self.resident[coord] = img
                 words.append(A.run_flit(0))
                 descs = {}
             else:
