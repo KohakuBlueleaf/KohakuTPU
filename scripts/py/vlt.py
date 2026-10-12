@@ -61,6 +61,8 @@ SILENCED = [
 
 def load_xsim():
     spec = importlib.util.spec_from_file_location("xsim", ROOT / "scripts/py/xsim.py")
+    if spec is None or spec.loader is None:
+        sys.exit("cannot load scripts/py/xsim.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -233,6 +235,7 @@ def main() -> int:
     if args.rtl and args.bench in model_benches(xsim):
         sys.exit(f"{args.bench} compares against the models; --rtl removes them")
     top, srcs = benches[args.bench]
+    args.define = list(dict.fromkeys(xsim.DEFINES.get(args.bench, []) + args.define))
 
     if args.model == 0:
         sys.exit(

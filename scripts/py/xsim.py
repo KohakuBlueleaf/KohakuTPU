@@ -2200,19 +2200,12 @@ BENCHES["vec_replay"] = (
     + ["tests/vector/vec_replay_tb.v"],
 )
 
-# The V2 vector core (src/kohakutpu/vector2). vec_cu selects it under
-# -d VEC_CORE_V2, which every build of these benches passes.
-VECTOR2 = [
-    "src/kohakutpu/vector2/v2_fifo.v",
-    "src/kohakutpu/vector2/v2_agu.v",
-    "src/kohakutpu/vector2/v2_gt4.v",
-    "src/kohakutpu/vector2/v2_mxq.v",
-    "src/kohakutpu/vector2/v2_cvt.v",
-    "src/kohakutpu/vector2/v2_xbar.v",
-    "src/kohakutpu/vector2/v2_alu.v",
-    "src/kohakutpu/vector2/v2_lanes.v",
-    "src/kohakutpu/vector2/v2_core.v",
-]
+# Defines a bench always builds with, merged with -d by xsim.py and vlt.py.
+DEFINES = {}
+
+# The V2 vector core and the define vec_cu selects it by, as the block design
+# takes them (scripts/tcl/v8t3/00_config.tcl V8_VEC_CORES).
+VECTOR2, VECTOR2_DEFINES = gen_card.vec_core("v2")
 BENCHES["vec2_replay"] = (
     "vec_replay_tb",
     [p for p in BENCHES["vec_cu"][1] if p != "tests/vector/vec_cu_tb.v"]
@@ -2230,6 +2223,8 @@ BENCHES["v2_gt4"] = (
     "v2_gt4_tb",
     ["src/kohakutpu/vector2/v2_gt4.v", "tests/vector2/v2_gt4_tb.v"],
 )
+for _b in ("vec2_replay", "v2_flow"):
+    DEFINES[_b] = VECTOR2_DEFINES
 
 # The 2-node card model (gen_card.py --compute 0,1; harness card_main.cpp).
 BENCHES["card_v8t8_2n"] = (
@@ -2237,34 +2232,16 @@ BENCHES["card_v8t8_2n"] = (
     gen_card.image_sources("v8t8", "ktpu_sim_1x1_1c1v_1m_nol2_pump")
     + ["tests/system/card_v8t8_2n.v"],
 )
-# The v9 card: dies 0 and 1 hold the 4+2 mesh (gen_card.py --ver v9).
-BENCHES["card_v9_2n"] = (
-    "card_v9_2n",
-    gen_card.image_sources("v9") + ["tests/system/card_v9_2n.v"],
-)
-# The v9 card with one compute die (die 0): half the simulated mesh logic.
-BENCHES["card_v9_1n"] = (
-    "card_v9_1n",
-    gen_card.image_sources("v9") + ["tests/system/card_v9_1n.v"],
-)
-# The same card with V2 vector cores: build it with -d VEC_CORE_V2.
-BENCHES["card_v9_1n_v2"] = (
-    "card_v9_1n",
-    BENCHES["card_v9_1n"][1] + VECTOR2,
-)
-BENCHES["card_v9_2n_v2"] = (
-    "card_v9_2n",
-    BENCHES["card_v9_2n"][1] + VECTOR2,
-)
-# Every die a compute die: four sysnodes on the interlink chain.
-BENCHES["card_v9_4n"] = (
-    "card_v9_4n",
-    gen_card.image_sources("v9") + ["tests/system/card_v9_4n.v"],
-)
-BENCHES["card_v9_4n_v2"] = (
-    "card_v9_4n",
-    BENCHES["card_v9_4n"][1] + VECTOR2,
-)
+# The v9 card on its first n dies (gen_card.py --ver v9), the image's sources
+# and defines; `_v2` names the same bench (models in vlt_card_v9_<n>n_v2).
+for _n in (1, 2, 4):
+    BENCHES[f"card_v9_{_n}n"] = (
+        f"card_v9_{_n}n",
+        gen_card.image_sources("v9") + [f"tests/system/card_v9_{_n}n.v"],
+    )
+    BENCHES[f"card_v9_{_n}n_v2"] = BENCHES[f"card_v9_{_n}n"]
+    DEFINES[f"card_v9_{_n}n"] = gen_card.image_defines("v9")
+    DEFINES[f"card_v9_{_n}n_v2"] = DEFINES[f"card_v9_{_n}n"]
 # Cluster-count scaling: the v9 card with 6+2 / 8+2 dies on a 2x2 router grid.
 for _n in (6, 8):
     for _d in (1, 2):
@@ -2276,6 +2253,7 @@ for _n in (6, 8):
                 f"tests/system/card_v9x{_n}_{_d}n.v",
             ],
         )
+        DEFINES[f"card_v9x{_n}_{_d}n"] = gen_card.image_defines("v9")
 
 # multimesh_v8 tops -- lint-only entries (top = the generated pump module).
 for _v8top in (
@@ -2321,6 +2299,7 @@ def main():
         help="where xsim_<bench> is built (default build/, env KOHAKU_XSIM_BUILD)",
     )
     args = ap.parse_args()
+    args.define = list(dict.fromkeys(DEFINES.get(args.bench, []) + args.define))
 
     top, srcs = BENCHES[args.bench]
     # Resolved against ROOT: xvlog's cwd IS `work`, so a relative --build-root
@@ -2383,6 +2362,7 @@ def main():
         # SPIN_MAX, and standalone xsim has no timeout of its own.
         deadline = time.monotonic() + args.wall
         got = []
+        assert proc.stdout is not None  # stdout=PIPE
         for ln in proc.stdout:
             got.append(ln)
             if keep(ln):

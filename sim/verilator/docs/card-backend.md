@@ -38,9 +38,11 @@ python software/driver/tools/card/card_run.py --load burn
 ## The generated card
 
 `gen_card.py` reads every value from the image's own Tcl: `scripts/tcl/<ver>/00_config.tcl`
-sourced through tkinter, its source list from `10_sources.tcl` with the Vivado
-procs stubbed, and the station map from `v8/50_addr_lit.tcl`. Only
-`PER_DIE_CLK 1` images are emitted.
+sourced through tkinter, its source list and defines from `10_sources.tcl` with
+the Vivado procs stubbed (`image_sources`, `image_defines`: the v9 image's
+`VEC_CORE v2` brings the V2 sources and `VEC_CORE_V2`, which `xsim.py` `DEFINES`
+passes to every build of a v9 card), and the station map from
+`v8/50_addr_lit.tcl`. Only `PER_DIE_CLK 1` images are emitted.
 
 | block-design part | stand-in |
 |---|---|

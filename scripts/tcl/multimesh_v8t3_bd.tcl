@@ -129,6 +129,19 @@ if {[lsearch $argv resynth] >= 0} {
     puts "@@@ resynth: reset [llength $v8_reset] run(s) -- [join $v8_mref {, }]"
 }
 
+# The block design's OOC runs exist only once asked for (launch_runs synth_1
+# makes them itself); make them first so the mesh runs take the core's defines.
+if {![llength [get_runs -quiet ${design_name}_*_synth_1]]} {
+    create_ip_run [get_files ${design_name}.bd]
+}
+v8_apply_defines
+foreach {mid mod} $MESHES {
+    if {![v8_is_mesh $mod]} { continue }
+    set r [get_runs -quiet ${design_name}_mesh_${mid}_0_synth_1]
+    if {![llength $r]} { error "mesh_$mid has no OOC run ${design_name}_mesh_${mid}_0_synth_1" }
+    puts "@@@ mesh_$mid OOC run {$r} options {[get_property {STEPS.SYNTH_DESIGN.ARGS.MORE OPTIONS} $r]}\
+ fileset {[get_property verilog_define [get_filesets ${design_name}_mesh_${mid}_0]]}"
+}
 # OOC IP first and explicitly, at OOC_JOBS. IP runs do not carry IS_SYNTHESIS;
 # match them by name.
 set ooc [v8_pending [get_runs -quiet -filter {NAME =~ "*_synth_1" && NAME != "synth_1"}]]
@@ -143,6 +156,22 @@ if {[llength $ooc]} {
     }
 } else {
     puts "@@@ ${design_name} ooc: every IP run already complete"
+}
+# Every mesh's OOC synthesis ran with the core's defines, read from the
+# synth_design command its log records before synth_1 links it in. (Its
+# "synthesizing module" lines stop at Vivado's 100-message limit; the module
+# itself is checked on the netlist by 70_analyze.)
+foreach {mid mod} $MESHES {
+    if {![v8_is_mesh $mod]} { continue }
+    set r [get_runs -quiet ${design_name}_mesh_${mid}_0_synth_1]
+    if {![llength $r]} { error "mesh_$mid has no OOC run to check its vector core in" }
+    set log [get_property DIRECTORY $r]/runme.log
+    set fh [open $log r] ; set t [read $fh] ; close $fh
+    if {![regexp -line {^Command: synth_design .*$} $t cmd]} { error "mesh_$mid OOC log has no synth_design command: $log" }
+    foreach d [v8_vec_core define] {
+        if {[string first "-verilog_define $d" $cmd] < 0} { error "mesh_$mid OOC ran without $d (VEC_CORE $VEC_CORE): $cmd" }
+    }
+    puts "@@@ mesh_$mid OOC: $cmd"
 }
 if {[llength [v8_pending synth_1]]} {
     puts "@@@ ${design_name} synth_1: launched at [clock format [clock seconds] -format %H:%M:%S]"

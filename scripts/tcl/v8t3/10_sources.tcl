@@ -119,6 +119,9 @@ set V8_SOURCES {
     src/kohakuaccel/sysnode/sysnode.v
     xilinx-fpga/xcvu13p/bd/ktpu_node_v8t.v
 }
+# The vector core's own sources (VEC_CORE, 00_config.tcl).
+set V8_DEFINES [v8_vec_core define]
+foreach f [v8_vec_core sources] { lappend V8_SOURCES $f }
 # A mesh die's generated top, once per distinct module.
 foreach {mid mod} $MESHES {
     if {![v8_is_mesh $mod]} { continue }
@@ -145,5 +148,6 @@ foreach f $V8_SOURCES {
         set_property is_global_include true     [get_files $root/$f]
     }
 }
+v8_apply_defines
 update_compile_order -fileset sources_1
-puts "@@@ v8t3 sources: [llength $V8_SOURCES] files"
+puts "@@@ v8t3 sources: [llength $V8_SOURCES] files, defines {$V8_DEFINES}"

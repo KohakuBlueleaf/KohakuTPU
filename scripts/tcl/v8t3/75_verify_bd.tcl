@@ -311,6 +311,17 @@ foreach need [list ${design_name}_pblocks.xdc ${design_name}_clocks.xdc pcie.xdc
     if {![llength $f]} { bad "constraint $need is not in constrs_1" } \
     elseif {![get_property is_enabled [lindex $f 0]]} { bad "$need is disabled" }
 }
+# ---- the vector core: define and sources on sources_1 (the mesh block filesets
+# appear with the synth step, which checks each mesh's OOC log) ------------------
+puts "\n=== vector core ($VEC_CORE) ==="
+set vdef [v8_vec_core define]
+set got [get_property verilog_define [get_filesets sources_1]]
+puts "  sources_1  {$got}"
+if {$got ne $vdef} { bad "sources_1 defines {$got}, want {$vdef}" }
+foreach f [v8_vec_core sources] {
+    if {![llength [get_files -quiet -of_objects [get_filesets sources_1] $root/$f]]} { bad "$f is not in sources_1" }
+}
+
 puts ""
 if {$fail} { error "$design_name BD verify:$fail check(s) FAILED" }
 puts "@@@ v8t3 BD verify: all checks passed"

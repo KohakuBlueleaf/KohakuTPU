@@ -277,6 +277,16 @@ foreach {mid mod} $MESHES {
     if {[llength [get_cells -quiet -hier -filter "NAME =~ $top/mesh_$mid/* && REF_NAME =~ *noc_l2_adapter*"]]} {
         v8_bad "mesh_$mid carries a noc_l2_adapter"
     }
+    # Every vector core is the configured one (VEC_CORE), by its cell's reference.
+    if {[v8_is_mesh $mod]} {
+        set cores [get_cells -quiet $top/mesh_$mid/inst/u_vec*/u_core]
+        if {![llength $cores]} { v8_bad "mesh_$mid: no cell matches inst/u_vec*/u_core" }
+        foreach c $cores {
+            set cref [get_property REF_NAME $c]
+            puts "  mesh_$mid [file tail [file dirname $c]]/u_core  $cref"
+            if {![string match "*[v8_vec_core module]*" $cref]} { v8_bad "$c is $cref, want [v8_vec_core module] (VEC_CORE $VEC_CORE)" }
+        }
+    }
     set mpins {axi_aclk dram_aclk}
     if {[v8_is_mesh $mod]} { lappend mpins noc_clk vec_clk mat_clk mat_clk2x }
     foreach pin $mpins {
@@ -514,6 +524,9 @@ foreach p [get_timing_paths -quiet -max_paths 10 -nworst 1 -delay_type max -sort
 report_utilization -file $out/${design_name}_synth_util.rpt
 report_utilization -hierarchical -hierarchical_depth 3 \
     -file $out/${design_name}_synth_util_hier.rpt
+# Down to each mesh unit's core (mesh_N/inst/u_vec0/u_core is depth 5).
+report_utilization -hierarchical -hierarchical_depth 6 \
+    -file $out/${design_name}_synth_util_hier6.rpt
 if {$pinned} { read_xdc -quiet $leafxdc }
 puts "\n=== per-SLR (pblock) usage === [v8_t]"
 foreach pb [lsort [get_pblocks]] {

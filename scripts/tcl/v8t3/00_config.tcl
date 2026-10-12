@@ -93,6 +93,54 @@ set MESH_TILE_PRIM  ultra
 set MESH_VEC_PRIM   block
 set MESH_MAG_CDC    1
 set MESH_UNIT_CDC   1
+# The core every vec_cu frames. Each entry: its sources beyond the base list,
+# the define vec_cu selects it by, the module the mesh's synthesis must hold.
+set VEC_CORE        v1
+set V8_VEC_CORES {
+    v1 {sources {} define {} module vec_core}
+    v2 {sources {
+            src/kohakutpu/vector2/v2_fifo.v
+            src/kohakutpu/vector2/v2_agu.v
+            src/kohakutpu/vector2/v2_gt4.v
+            src/kohakutpu/vector2/v2_mxq.v
+            src/kohakutpu/vector2/v2_cvt.v
+            src/kohakutpu/vector2/v2_xbar.v
+            src/kohakutpu/vector2/v2_alu.v
+            src/kohakutpu/vector2/v2_lanes.v
+            src/kohakutpu/vector2/v2_core.v
+        } define VEC_CORE_V2 module v2_core}
+}
+proc v8_vec_core {field} {
+    global VEC_CORE V8_VEC_CORES
+    if {![dict exists $V8_VEC_CORES $VEC_CORE]} {
+        error "VEC_CORE $VEC_CORE is not one of [dict keys $V8_VEC_CORES]"
+    }
+    return [dict get $V8_VEC_CORES $VEC_CORE $field]
+}
+# The core's defines on sources_1 and, once the synth step has made them, on each
+# mesh's block fileset and OOC run; the mesh OOC log check proves they took.
+proc v8_apply_defines {} {
+    global design_name MESHES
+    set defs [v8_vec_core define]
+    set opts {}
+    foreach d $defs { lappend opts -verilog_define $d }
+    if {[get_property verilog_define [get_filesets sources_1]] ne $defs} {
+        set_property verilog_define $defs [get_filesets sources_1]
+    }
+    foreach {mid mod} $MESHES {
+        if {![v8_is_mesh $mod]} { continue }
+        # Set only when different: a changed run property makes a finished run stale.
+        foreach fs [get_filesets -quiet ${design_name}_mesh_${mid}_0] {
+            if {[get_property verilog_define $fs] ne $defs} { set_property verilog_define $defs $fs }
+        }
+        set mo {STEPS.SYNTH_DESIGN.ARGS.MORE OPTIONS}
+        foreach r [get_runs -quiet ${design_name}_mesh_${mid}_0_synth_1] {
+            if {[get_property $mo $r] ne [join $opts " "]} {
+                set_property -name $mo -value [join $opts " "] -objects $r
+            }
+        }
+    }
+}
 # Staging: 4 banks of 4096 entries -- 64 SINGLE URAM, 2 MB per node. Never a
 # chain: a cascade is combinational from the first block's clock (~0.27 ns a
 # hop) and UG573 p.116 pins it bottom-up in one column.

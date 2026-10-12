@@ -119,19 +119,48 @@ STAND_INS = [
 ]
 
 
-def image_sources(ver, sim_mesh=""):
-    """The image's RTL as its 10_sources.tcl adds it, headers dropped (they are
-    on xsim.py's INCDIRS), plus the stand-ins and the simulation mesh."""
+def image_tcl(ver):
+    """The image's config and 10_sources.tcl evaluated, Vivado procs stubbed."""
     t = tkinter.Tcl()
     t.eval(f"source {{{(TCL / ver / '00_config.tcl').as_posix()}}}")
-    stubs = ("add_files", "set_property", "get_files", "update_compile_order", "puts")
+    stubs = (
+        "add_files",
+        "set_property",
+        "get_files",
+        "get_filesets",
+        "get_runs",
+        "update_compile_order",
+        "puts",
+    )
     for stub in stubs:
         t.eval(f"proc {stub} {{args}} {{}}")
     t.eval(f"source {{{(TCL / 'v8t3' / '10_sources.tcl').as_posix()}}}")
+    return t
+
+
+def image_sources(ver, sim_mesh=""):
+    """The image's RTL as its 10_sources.tcl adds it, headers dropped (they are
+    on xsim.py's INCDIRS), plus the stand-ins and the simulation mesh."""
+    t = image_tcl(ver)
     srcs = [f for f in t.splitlist(t.eval("set V8_SOURCES")) if not f.endswith(".vh")]
     if sim_mesh:
         srcs.append(f"src/kohakutpu/top/generated/{sim_mesh}.v")
     return srcs + STAND_INS
+
+
+def image_defines(ver):
+    """The defines the image's synthesis runs with (its VEC_CORE's)."""
+    t = image_tcl(ver)
+    return list(t.splitlist(t.eval("set V8_DEFINES")))
+
+
+def vec_core(core):
+    """(sources, defines) of one VEC_CORE entry, from the base config."""
+    t = tkinter.Tcl()
+    t.eval(f"source {{{(TCL / 'v8t3' / '00_config.tcl').as_posix()}}}")
+    t.eval(f"set VEC_CORE {core}")
+    srcs = list(t.splitlist(t.eval("v8_vec_core sources")))
+    return srcs, list(t.splitlist(t.eval("v8_vec_core define")))
 
 
 def cat(vals, w):
