@@ -43,6 +43,7 @@ IMG = h(2, 4, 8, 8)
 LAB = RNG.integers(0, 64, 32)
 INTS = RNG.integers(-200, 200, (8, 64))
 N10, ODD = h(24, 10), h(3, 5, 7)
+POS = h(32, 64)
 W10 = (h(10, 96) / 3).astype(np.float16)
 
 ELEMENTWISE = {
@@ -77,6 +78,11 @@ ELEMENTWISE = {
         lambda: np.arange(64) * f(X),
     ),
     "row_broadcast": (lambda: T(X) + T(X[0].copy()), lambda: f(X) + X[0]),
+    # Once a loop: a [T, D] table across the batch has no row view even laid out.
+    "batch_table": (
+        lambda: T(BX) + T(POS) + T(BX[0, 0].copy()),
+        lambda: f(BX) + POS + BX[0, 0],
+    ),
     # Once wrong: a value a row beside one row took the narrower width.
     "one_hot": (lambda: I(LAB).one_hot(64), lambda: np.eye(64)[LAB]),
 }

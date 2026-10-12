@@ -1060,12 +1060,19 @@ def _relayout(dev, plan: Plan, bufs) -> list | None:
     try:
         for i in fix:
             a = plan.accesses[i]
+            key = ("lay", i, id(plan))
             own = [r for r in rs if a.c(r)]
+            if (
+                classify(
+                    Access(key, a.dtype, tuple(_dense(own).items()), 0), rs[:-1], cols
+                )
+                is None
+            ):
+                own = rs  # broadcast across a row range no view takes: laid out in full
             n = int(np.prod([U.extent(r) for r in own])) if own else 1
             item = np.dtype(F.np_dtype(a.dtype)).itemsize
             t = Storage(dev, max(32, item * n))
             tmps.append(t)
-            key = ("lay", i, id(plan))
             bufs2[key] = t
             sub = replace(
                 plan,

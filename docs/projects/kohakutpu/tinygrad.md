@@ -90,7 +90,7 @@ sum over one range of a product of two reads, any layout, any epilogue) and
 | flip | one read walking its innermost axis backwards, rows of whole words | mover walks words last to first, `xlane(v, 15)` reverses lanes |
 | gather | any other single read (a transpose or flip of rows not of whole words, odd permutes, strided slices) | every source value expanded to a 64-byte row of its own (the `[n, 32]` statistic form), one mover walk into the output's order (any element stride is a word stride there), the on-card transpose back to row-major -- exact; 128 bytes of scratch a value |
 | boxes | a `where` on index tables (pad, cat, stack): the kept ranges cut where any table changes | each box with the tables constant: a fill, a move, or a rows kernel into a window -- no read leaves its buffer |
-| rows | elementwise math and row reductions over rows of whole 32-column blocks | the rows kernel (GT4 bands, every core); a row wider than one band's registers is one phase a column block (the band narrowed until every operand fits L1), a single long range (a flat update beside scalars) folded into rows first |
+| rows | elementwise math and row reductions over rows of whole 32-column blocks | the rows kernel (GT4 bands, every core); a row wider than one band's registers is one phase a column block (the band narrowed until every operand fits L1), a single long range (a flat update beside scalars) folded into rows first; a read no row view takes (a transposed operand) laid out first in the output's order over the ranges it reads, or over every output range when it is broadcast across a row range (a `[T, D]` table added across the batch) |
 | narrow rows | rows of W not whole 32-column blocks | the rows kernel 32-wide over padded reads (a reduction's padding lanes masked to its identity), into the padded-rows form |
 | column | reductions down the rows (`sum(0)`, batch statistics) | a halving tree of rows kernels |
 | materialise / segments / narrow | several reduction range sets; a value broadcast over some kept ranges; more than 7 reads | an inner part first into a temporary; one launch an index of the outer ranges (up to 64); a sub-expression first |
@@ -106,7 +106,7 @@ strides. A product's output of `N` not whole words stays in that form.
 
 ## 4. Coverage
 
-`software/application/tests/ktpugrad/test_tinygrad.py` (65 program cases,
+`software/application/tests/ktpugrad/test_tinygrad.py` (66 program cases,
 an assign read back in the same realize, a bridged kernel, a kernel of 12
 reads, refusals; `test_train.py` the optimizer and a module step; all on
 `build/v9f/vlt_card_v9_1n_v2`; data movement and integer cases bit-exact,
@@ -134,9 +134,9 @@ The defaults are short simulator runs; full-size runs are flags.
 
 | script | what | measured on `build/v9f/vlt_card_v9_1n_v2` |
 |---|---|---|
-| `quickstart.py` (`DEV=KTPU`, no KohakuTPU import) | plain tinygrad | gelu 3.2e-4, softmax 4.3e-4, relu(x @ w.T + b) 1.0e-2, x.T @ x 5.5e-3, cat + flip exact, layernorm(x).sum(0) 7.3e-4; 28 kernel runs, 183,682 card cycles |
+| `quickstart.py` (`DEV=KTPU`, no KohakuTPU import) | plain tinygrad | gelu 3.2e-4, softmax 4.2e-4, relu(x @ w.T + b) 1.0e-2, x.T @ x 5.5e-3, cat + flip exact, layernorm(x).sum(0) 7.3e-4; 26 kernel runs, 179,512 card cycles |
 | `mnist_mlp.py` (784 -> 128 -> 10) | TRAINED on the card: forward, backward and `Adam16` (§6) | 4 steps of 64: loss 2.12 -> 1.95, 431 kernel runs, 5,819,153 cycles (~1.45 M a step); test accuracy 50.8% on 256 images after those 4 steps |
-| `vit_mnist.py` (2 blocks, 64 wide, 2 heads, 64 patches of 4 x 4) | a pretrained f32 checkpoint (tinygrad on the host) transferred to the card; attention = the DSL `attention` kernel (§7) | checkpoint: 600 f32 Adam steps on the CPU; one encoder block on the card against f32 on the CPU rel 8.4e-3 (31 kernels, 335,086 cycles, 2 images); the attention of 16 images (32 heads) one DSL call, rel 7.1e-3, 112,831 cycles |
+| `vit_mnist.py` (2 blocks, 64 wide, 2 heads, 64 patches of 4 x 4) | a pretrained f32 checkpoint (tinygrad on the host) transferred to the card; attention = the DSL `attention` kernel (§7) | checkpoint: 600 f32 Adam steps on the CPU; one encoder block on the card against f32 on the CPU rel 8.4e-3 (31 kernels, 335,086 cycles, 2 images); the attention of 16 images (32 heads) one DSL call, rel 7.1e-3, 112,831 cycles; the whole model on 16 test images: accuracy 1.0000 (CPU f32 1.0000), agreement 1.0000, max logit difference 0.259, 202 kernel runs, 2,946,627 card cycles, 276 s wall |
 
 Products are MXFP7, so a model's logits differ from f32 by the format's
 rounding.
