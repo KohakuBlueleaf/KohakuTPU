@@ -1,11 +1,15 @@
 # One multimesh image from start to bitstream: block design (rebuild), verify
-# (stops on a FAIL line), synthesis, impl through write_bitstream and the report.
-# -Jobs is synth_1's; OOC IP runs use the config's OOC_JOBS. Launch detached:
+# (stops on a FAIL line), synthesis, then impl through write_bitstream and the
+# report the moment synthesis ends, with the synthesis analysis (read-only
+# project) started beside it. -Jobs is synth_1's; OOC IP runs use the config's
+# OOC_JOBS. Launch detached:
 #   Invoke-CimMethod Win32_Process Create -Arguments @{CurrentDirectory=<repo>;
-#     CommandLine='pwsh -NoProfile -File scripts/ps1/v8t_ship.ps1 -Ver v8t8 -Jobs 4'}
+#     CommandLine='pwsh -NoProfile -File scripts/ps1/v8t_ship.ps1 -Ver v9 -Jobs 4'}
+#   -FromSynth reopens the built project instead (block design kept, verify rerun).
 param(
     [Parameter(Mandatory = $true)][string]$Ver,
-    [int]$Jobs = 4
+    [int]$Jobs = 4,
+    [switch]$FromSynth
 )
 $root = "C:/Users/apoll/Desktop/code/Project/KohakuTPU"
 $viv  = "D:/Xilinx/Vivado/2024.2/bin/vivado.bat"
@@ -15,10 +19,18 @@ Set-Location $root
 
 function Mark([string]$s) { Add-Content -Path $stage -Value "$(Get-Date -Format 'HH:mm:ss')  $s" -Encoding utf8 }
 
-Mark "bd: rebuild"
-& $viv -mode batch -log "$L/multimesh_${Ver}_bd.log" -nojournal -notrace `
-    -source "scripts/tcl/multimesh_${Ver}_bd.tcl" -tclargs rebuild jobs $Jobs | Out-Null
-if ($LASTEXITCODE -ne 0) { Mark "BD FAILED ($LASTEXITCODE): $L/multimesh_${Ver}_bd.log"; exit 1 }
+foreach ($t in "multimesh_${Ver}_bd.tcl", "${Ver}_verify.tcl", "${Ver}_impl.tcl", "${Ver}_analyze.tcl") {
+    if (-not (Test-Path "scripts/tcl/$t")) { Mark "MISSING scripts/tcl/$t"; exit 1 }
+}
+
+if ($FromSynth) {
+    Mark "bd: kept (-FromSynth)"
+} else {
+    Mark "bd: rebuild"
+    & $viv -mode batch -log "$L/multimesh_${Ver}_bd.log" -nojournal -notrace `
+        -source "scripts/tcl/multimesh_${Ver}_bd.tcl" -tclargs rebuild jobs $Jobs | Out-Null
+    if ($LASTEXITCODE -ne 0) { Mark "BD FAILED ($LASTEXITCODE): $L/multimesh_${Ver}_bd.log"; exit 1 }
+}
 
 Mark "verify: 75_verify_bd"
 $v = & $viv -mode batch -log "$L/multimesh_${Ver}_verify.log" -nojournal -notrace `
@@ -30,10 +42,16 @@ if ($fails.Count -gt 0 -or $LASTEXITCODE -ne 0) {
 }
 Mark "verify: clean"
 
-Mark "synth: OOC module runs, synth_1"
+Mark "synth: OOC module runs, vector-core check, synth_1"
 & $viv -mode batch -log "$L/multimesh_${Ver}_synth.log" -nojournal -notrace `
     -source "scripts/tcl/multimesh_${Ver}_bd.tcl" -tclargs synth jobs $Jobs | Out-Null
 if ($LASTEXITCODE -ne 0) { Mark "SYNTH FAILED ($LASTEXITCODE): $L/multimesh_${Ver}_synth.log"; exit 1 }
+
+# The analysis opens the project read-only, so it never holds impl back.
+$an = Start-Process -FilePath $viv -PassThru -WindowStyle Hidden -ArgumentList @(
+    "-mode", "batch", "-log", "$L/multimesh_${Ver}_analyze.log", "-nojournal", "-notrace",
+    "-source", "scripts/tcl/${Ver}_analyze.tcl")
+Mark "analyze: started beside impl (pid $($an.Id)), $L/multimesh_${Ver}_analyze.log"
 
 # Impl, retried once when runme.log reports Mig 66-119 (a %TEMP% transient).
 $runme = "$L/multimesh_${Ver}/multimesh_${Ver}.runs/impl_1/runme.log"

@@ -1651,9 +1651,24 @@ Each die's wizard drives the mesh's fabric, matmul 2x (its 1x through
 asks (300 / 600 / 300 / 300 MHz), and the run rate is set by DRP afterwards.
 `multimesh_v8t9` is the same configuration on the RTL with the completed node
 primitives ([control-registers.md](../../spec/control-registers.md) §7) and the
-vector-core predicate fixes. `scripts/ps1/v8t_ship.ps1 -Ver <v>` builds either:
-block design, verify, synthesis, then implementation with nothing else opening
-the project.
+vector-core predicate fixes.
+
+`multimesh_v9` (`scripts/tcl/v9/00_config.tcl`) keeps v8t9's node, Xache,
+station bus, interlink and clocks and puts the same mesh on every SLR: a 1x2
+router mesh with 4 clusters and 2 vector cores (`ktpu_ship_1x2_4c2v_1m_nol2_pump`,
+from `mesh_1x2_4+2.txt`), the vector cores V2. `VEC_CORE` picks the core;
+`V8_VEC_CORES` in `scripts/tcl/v8t3/00_config.tcl` gives each core's sources, the
+define `vec_cu` selects it by and the module it elaborates. The block design,
+the simulated card (`gen_card.image_sources` / `image_defines`) and the benches
+(`xsim.py` `DEFINES`) all read that table. Three checks hold the image to it: the
+BD verify reads the define on `sources_1` and on every mesh block fileset, the
+build reads each mesh's OOC synthesis log for the core's module (and no other)
+before `synth_1` starts, and the synthesis analysis reads the reference of
+every `u_vec*/u_core` cell.
+
+`scripts/ps1/v8t_ship.ps1 -Ver <v>` builds any of them: block design, verify,
+synthesis, then implementation the moment synthesis ends, with the synthesis
+analysis (`<v>_analyze.tcl`, a read-only open of the project) started beside it.
 
 ## 6. Accuracy
 
