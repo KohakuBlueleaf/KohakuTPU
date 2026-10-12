@@ -19,6 +19,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
+
 from kohakutpu.application.tools.l1 import run
 from kohakutpu.compiler import target as T
 from kohakutpu.compiler.l2 import pipeline
@@ -237,7 +238,9 @@ def ffn_case(m=1024, d=1024, hidden=2048, glu=False):
         w2 = (rng.standard_normal((d, hidden)) / np.sqrt(hidden)).astype(np.float16)
         ins = {"x": x, "w1": w1, "w2": w2}
         if glu:
-            ins["w3"] = (rng.standard_normal((hidden, d)) / np.sqrt(d)).astype(np.float16)
+            ins["w3"] = (rng.standard_normal((hidden, d)) / np.sqrt(d)).astype(
+                np.float16
+            )
         return ins, ins
 
     def check(r, o):

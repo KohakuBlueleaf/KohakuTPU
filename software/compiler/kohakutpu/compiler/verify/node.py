@@ -76,9 +76,11 @@ def _cond(c: int, a: int, b: int) -> bool:
 class _Item:
     """A DISPATCH (or a REPEAT, written out, sent whole) of one segment."""
 
-    __slots__ = ("unit", "arg", "count", "atomic", "step", "sent")
+    __slots__ = ("arg", "atomic", "count", "sent", "step", "unit")
 
-    def __init__(self, unit: int, arg: int, count: int, atomic: bool, step: Step) -> None:
+    def __init__(
+        self, unit: int, arg: int, count: int, atomic: bool, step: Step
+    ) -> None:
         self.unit, self.arg, self.count = unit, arg, count
         self.atomic, self.step = atomic, step
         self.sent = 0
@@ -108,7 +110,11 @@ class Node(Proc):
         self.units = [card.unit((mesh, u.x, u.y)) for u in pkg.units]
         for u, spec in zip(self.units, pkg.units):
             if u is None:
-                card.m.find("route", self.name, f"the package names ({spec.x},{spec.y}), where no unit is")
+                card.m.find(
+                    "route",
+                    self.name,
+                    f"the package names ({spec.x},{spec.y}), where no unit is",
+                )
                 continue
             card.feed(self, u)
         self.credit = [u.credit or CAP for u in pkg.units]
@@ -179,12 +185,18 @@ class Node(Proc):
     def _repeat(self, s, base: int) -> tuple:
         """A REPEAT's words written out: (first payload, words)."""
         payloads = self.payloads
-        first, repeats, nincs = base + (s.arg & 0xFFFF_FFFF), (s.arg >> 32) & 0xFFFF, s.arg >> 48
+        first, repeats, nincs = (
+            base + (s.arg & 0xFFFF_FFFF),
+            (s.arg >> 32) & 0xFFFF,
+            s.arg >> 48,
+        )
         incs = []
         for k in range(nincs):
             w = payloads[first + s.count + k // 2] >> (128 * (k % 2))
             head, delta = w & MASK, (w >> 64) & MASK
-            incs.append((head & 0xFFFF_FFFF, (head >> 32) & 0xFF, (head >> 40) & 0xFF, delta))
+            incs.append(
+                (head & 0xFFFF_FFFF, (head >> 32) & 0xFF, (head >> 40) & 0xFF, delta)
+            )
         at = len(payloads)
         for r in range(repeats):
             for j in range(s.count):
@@ -192,7 +204,9 @@ class Node(Proc):
                 for index, bit, width, delta in incs:
                     if index == j:
                         mask = (1 << width) - 1
-                        w = (w & ~(mask << bit)) | ((((w >> bit) & mask) + r * delta) & mask) << bit
+                        w = (w & ~(mask << bit)) | (
+                            (((w >> bit) & mask) + r * delta) & mask
+                        ) << bit
                 payloads.append(w)
         return at, repeats * s.count
 
@@ -258,10 +272,14 @@ class Node(Proc):
                 self.expected[u] += s.count
                 self.armed = True
             if not unit.recv.reached(self.expected[u]):
-                self.why = f"{unit.name}: {unit.recv.value} of {self.expected[u]} completions"
+                self.why = (
+                    f"{unit.name}: {unit.recv.value} of {self.expected[u]} completions"
+                )
                 return False
             # The unit completes at most the words this node sent it so far.
-            self.tick(unit.recv.clock_to(self.expected[u], {unit.completer: self.sent[u]}))
+            self.tick(
+                unit.recv.clock_to(self.expected[u], {unit.completer: self.sent[u]})
+            )
             self.armed = False
             self.at += 1
             return True
@@ -388,7 +406,9 @@ class Node(Proc):
         if not seg.logs:
             return [it.step for it in seg.items]
         if any(log != seg.logs[0] for log in seg.logs):
-            raise ValueError(f"node {self.mesh}: a segment in a loop was sent in two orders")
+            raise ValueError(
+                f"node {self.mesh}: a segment in a loop was sent in two orders"
+            )
         out = []
         for i, first, n in seg.logs[0]:
             it = seg.items[i]
@@ -425,7 +445,9 @@ class Node(Proc):
             return True
         if s.op == Op.SEND:
             return self._send(s)
-        self.card.m.find("model", self.name, f"step {self.at}: {s.op.name} is not modelled")
+        self.card.m.find(
+            "model", self.name, f"step {self.at}: {s.op.name} is not modelled"
+        )
         self.tick()
         self.at += 1
         return True
@@ -512,5 +534,7 @@ class Node(Proc):
         """What the node leaves behind: flits no RECV took."""
         out = []
         if self.rx.value != self.rx_taken:
-            out.append(f"{self.rx.value - self.rx_taken} flits landed here and never received")
+            out.append(
+                f"{self.rx.value - self.rx_taken} flits landed here and never received"
+            )
         return out

@@ -47,7 +47,9 @@ class Card:
         mesh, x, y = key
         for kind, coords in self.machine.mesh(mesh).units.items():
             if (x, y) in coords and kind in KINDS:
-                u = self.units[key] = KINDS[kind](self, key, f"{kind.lower()}({mesh}:{x},{y})")
+                u = self.units[key] = KINDS[kind](
+                    self, key, f"{kind.lower()}({mesh}:{x},{y})"
+                )
                 return u
         return None
 
@@ -85,11 +87,15 @@ class Card:
             return
         dst = self.unit((mesh, *to))
         if dst is None:
-            self.m.find("route", u.name, f"a burst of {n} to {mesh}:{to}, where no unit is")
+            self.m.find(
+                "route", u.name, f"a burst of {n} to {mesh}:{to}, where no unit is"
+            )
             return
         landed = dst.port.tick(clock, *dst.joins(sink["buf"]))
         dst.landings.append((owner, clock.copy(), landed))
-        why = dst.land(sink["buf"], off, n, sink["count"], landed, f"a burst from {u.name}", clock)
+        why = dst.land(
+            sink["buf"], off, n, sink["count"], landed, f"a burst from {u.name}", clock
+        )
         if why:
             self.m.find("bounds", u.name, f"burst to {dst.name} rejected: {why}")
         if sink["signal"]:

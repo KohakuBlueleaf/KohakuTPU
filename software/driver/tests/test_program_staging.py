@@ -7,6 +7,7 @@ error. `docs/spec/control-registers.md` §2.7. Only a test holds this.
 """
 
 import pytest
+
 from kohakuaccel.driver.device.program import Program
 from kohakuaccel.driver.device.registers import A_STAGE, FLIT_WORDS, MAG_BASE
 from kohakuaccel.driver.transport.base import Transport

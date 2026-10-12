@@ -11,6 +11,7 @@ silicon.
 """
 
 import pytest
+
 from kohakuaccel.driver.device import mover as MV
 
 

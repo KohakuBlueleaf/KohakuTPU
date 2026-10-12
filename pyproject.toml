@@ -12,6 +12,18 @@ line-length = 88
 target-version = "py313"
 extend-exclude = ["software"]
 
+# Pylance / pyright opened at the repo root: every software member's import
+# root (the namespace packages install through a finder it cannot run).
+[tool.pyright]
+extraPaths = [
+    "software/language",
+    "software/compiler",
+    "software/driver",
+    "software/simulation",
+    "software/application",
+    "software/template",
+]
+
 [tool.ruff.lint.per-file-ignores]
 # UP031: 442 `%` format strings across 34 generators and golden models, most of
 # them aligned table rows; `%` is not a defect.

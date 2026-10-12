@@ -19,6 +19,7 @@ transposes each slab.
 from dataclasses import dataclass, field
 
 import numpy as np
+
 from kohakutpu.compiler.layout import tensor as T
 from kohakutpu.language.text.syntax import Call, Dims, Int, Kw, Name, Placed, View
 

@@ -23,6 +23,7 @@ import re
 import tempfile
 
 import numpy as np
+
 from kohakuaccel.compiler.machine import STAGE_BYTES
 from kohakuaccel.driver.node.boot import BootArgs, NodeBoot
 from kohakuaccel.driver.node.queue import NodeQueue

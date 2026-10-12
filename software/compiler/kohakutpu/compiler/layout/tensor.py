@@ -15,6 +15,7 @@ as stored, and ``C[M][N]`` is already the next layer's A operand.
 """
 
 import numpy as np
+
 from kohakutpu.language.numerics import mxfp7
 
 LANES = 4

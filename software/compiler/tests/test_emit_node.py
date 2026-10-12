@@ -2,6 +2,7 @@
 name, against the framework's own unit ops."""
 
 import pytest
+
 from kohakutpu.compiler import target
 from kohakutpu.compiler.emit import image as vector
 from kohakutpu.compiler.emit import node

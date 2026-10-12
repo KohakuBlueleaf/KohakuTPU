@@ -12,6 +12,7 @@ import re
 import struct
 
 import pytest
+
 from kohakuaccel.compiler.package.build import PackageBuilder
 from kohakuaccel.compiler.package.format import Package
 from kohakuaccel.driver.node.boot import MAX_UNITS, BootArgs, unit_word

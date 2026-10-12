@@ -7,6 +7,7 @@ than as traffic that routes plausibly and computes something else.
 """
 
 import pytest
+
 from kohakuaccel.compiler.isa import ISAError
 from kohakutpu.compiler.encode import vector as A
 from kohakutpu.compiler.isa.cluster import ISA

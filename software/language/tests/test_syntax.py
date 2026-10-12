@@ -2,6 +2,7 @@
 canonical print, and where an error is reported."""
 
 import pytest
+
 from kohakutpu.language.text.syntax import (
     Arrow,
     Assign,

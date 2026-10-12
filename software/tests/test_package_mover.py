@@ -6,6 +6,7 @@ neither may import the other; this is the test that ties the two copies.
 """
 
 import pytest
+
 from kohakuaccel.compiler.package import mover as PM
 from kohakuaccel.compiler.package.build import PackageBuilder
 from kohakuaccel.driver.device import mover as DM

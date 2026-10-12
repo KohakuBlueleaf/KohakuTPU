@@ -18,6 +18,7 @@ import sys
 import tempfile
 
 import numpy as np
+
 from kohakutpu.compiler import build
 from kohakutpu.compiler.layout.buffer import Buffer
 from kohakutpu.language import examples

@@ -9,6 +9,7 @@ drives packages and node heaps through `RemoteNodeQueue`.
 import threading
 
 import pytest
+
 from kohakuaccel.compiler.package.build import PackageBuilder
 from kohakuaccel.compiler.package.format import Package
 from kohakuaccel.driver.daemon.client import (

@@ -13,8 +13,9 @@ the other 24 bytes zeroed, and CTRL/HDR/DIM share one flit.
 
 import time
 
-import kohakutpu.driver.units  # noqa: F401
 import numpy as np
+
+import kohakutpu.driver.units  # noqa: F401
 from kohakuaccel.driver.device import mover as MV
 from kohakuaccel.driver.transport.jtag import JtagTransport
 from kohakutpu.driver.host import Card

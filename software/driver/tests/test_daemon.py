@@ -11,6 +11,7 @@ import threading
 import time
 
 import pytest
+
 from kohakuaccel.driver.daemon.client import (
     DaemonClient,
     DaemonError,

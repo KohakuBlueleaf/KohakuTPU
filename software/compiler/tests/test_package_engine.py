@@ -4,6 +4,7 @@ run against the reference interpreter."""
 import struct
 
 import pytest
+
 from kohakuaccel.compiler.package import engine
 from kohakuaccel.compiler.package.format import (
     F_POSTED,

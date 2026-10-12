@@ -46,7 +46,7 @@ class Counter:
     whole run; `totals` holds them from a first run (absent there, the
     first run joins its own order, which only that run's totals use)."""
 
-    __slots__ = ("name", "value", "owners", "totals")
+    __slots__ = ("name", "owners", "totals", "value")
 
     def __init__(self, name: str, totals: dict | None = None) -> None:
         self.name = name
@@ -156,10 +156,11 @@ class Machine:
                     if self.events > limit:
                         self.find("model", "machine", f"over {limit} events")
                         return
-            if not moved:
-                # Stuck: a scheduling node may send past its blocked item.
-                if not any(getattr(p, "relax", lambda: False)() for p in self.procs):
-                    break
+            # Stuck: a scheduling node may send past its blocked item.
+            if not moved and not any(
+                getattr(p, "relax", lambda: False)() for p in self.procs
+            ):
+                break
         stuck = [p for p in self.procs if not p.done()]
         for p in stuck:
             self.find("deadlock", p.name, p.blocked())

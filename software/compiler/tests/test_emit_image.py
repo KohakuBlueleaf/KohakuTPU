@@ -2,6 +2,7 @@
 tracking, decoded field by field."""
 
 import pytest
+
 from kohakutpu.compiler.emit import image as vector
 from kohakutpu.compiler.encode import vector as A
 from kohakutpu.language.text import module

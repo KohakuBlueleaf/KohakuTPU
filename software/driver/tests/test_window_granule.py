@@ -7,6 +7,7 @@ reports success -- so nothing but a refusal can hold this.
 """
 
 import pytest
+
 from kohakuaccel.driver.transport.base import Transport
 from kohakuaccel.driver.transport.rebase import Window
 

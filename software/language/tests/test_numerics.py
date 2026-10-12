@@ -1,6 +1,7 @@
 """The lane format E8M15 against FP32 bit patterns rounded at bit 8."""
 
 import numpy as np
+
 from kohakutpu.language.numerics import e8m15
 
 

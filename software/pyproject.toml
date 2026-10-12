@@ -44,12 +44,26 @@ line-length = 88
 target-version = "py313"
 
 [tool.ruff.lint]
+# I: imports in three groups -- standard library, third party, ours.
+extend-select = ["I"]
 # C408: an ISA field table reads as `dict(op=1, n=64)`, not quoted.
 ignore = ["C408"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["kohakutpu", "kohakuaccel", "toyaccel"]
+
+[tool.ruff.lint.flake8-bugbear]
+# A DSL kernel declares its buffers and tuned constants as parameter defaults.
+extend-immutable-calls = ["kt.In", "kt.Out", "kt.auto", "kohakutpu.language.dsl.In", "kohakutpu.language.dsl.Out", "kohakutpu.language.dsl.auto", "kohakutpu.language.examples.dsl.cluster.sweep.a_layout", "kohakutpu.language.examples.dsl.cluster.sweep.b_layout"]
 
 [tool.ruff.lint.per-file-ignores]
 # A test harness that reports every failure has to catch every failure.
 "*/tests/*" = ["BLE001"]
+
+# Pylance / pyright: every member's import root, so `kohakutpu.*` resolves
+# across members however the editor's interpreter installed them.
+[tool.pyright]
+extraPaths = ["language", "compiler", "driver", "simulation", "application", "template"]
 
 [tool.pytest.ini_options]
 # Every component has a `tests` directory; importlib names a test module by

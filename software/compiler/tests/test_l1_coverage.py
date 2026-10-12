@@ -5,6 +5,7 @@ the PATCHed word must equal the word the encoder makes with that value."""
 import struct
 
 import pytest
+
 from kohakuaccel.compiler.package import engine
 from kohakuaccel.compiler.package import mover as PM
 from kohakuaccel.compiler.package.build import PackageBuilder
@@ -304,7 +305,12 @@ def test_drain_into_l1b_the_accumulator_and_another_mesh():
     mg = sorted(T.MG)
     assert (l1b.dst, l1b.buf, l1b.addr, l1b.dflags) == (mg[1], 1, 128, 1)
     assert (acc.dst, acc.buf) == (mg[2], C.BUF_ACC)
-    assert (far.dst, far.mesh, far.fin, far.ack) == (T.SYS_PORTS[0], 1, mg[3], T.SYS_REPLY)
+    assert (far.dst, far.mesh, far.fin, far.ack) == (
+        T.SYS_PORTS[0],
+        1,
+        mg[3],
+        T.SYS_REPLY,
+    )
     word = far.flits()[0]
     got = ISA.DRAIN.decode(word)
     assert (got["dmesh"], got["dfin"], got["dbuf"]) == (1, mg[3][1] << 4 | mg[3][0], 2)

@@ -4,6 +4,7 @@ Every word is checked against the RTL's bit positions (mx_cluster_cu.v's
 header, v2_core.v's decode), not against the encoder that made it."""
 
 import pytest
+
 from kohakutpu.compiler import target
 from kohakutpu.compiler.emit import image as vector
 from kohakutpu.compiler.emit import node

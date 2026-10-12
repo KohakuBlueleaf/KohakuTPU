@@ -11,6 +11,7 @@ import os
 
 import numpy as np
 import pytest
+
 from kohakutpu.application.tools.l1 import run
 from kohakutpu.compiler import target as T
 from kohakutpu.compiler.l2 import pipeline

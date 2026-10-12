@@ -28,7 +28,9 @@ class Memory:
         self.found = 0
         self.seen: set = set()
 
-    def access(self, space, locs, write: bool, clock: Clock, proc: int, what: str) -> None:
+    def access(
+        self, space, locs, write: bool, clock: Clock, proc: int, what: str
+    ) -> None:
         e = (clock, proc, what)
         for loc in locs:
             key = (space, loc)

@@ -6,6 +6,7 @@ check bytes and invalidated rows, not just that a round trip agrees.
 """
 
 import pytest
+
 from kohakuaccel.driver.transport.simdram import LINE, DramMap, SimDram
 
 BOARD = {"dram_interleave_kb": 16, "dram_flat_gb": 16}

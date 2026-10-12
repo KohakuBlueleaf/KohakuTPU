@@ -21,6 +21,7 @@ import subprocess
 import sys
 
 import numpy as np
+
 from kohakutpu.compiler.emit import image as vector
 from kohakutpu.compiler.encode import vector as A
 from kohakutpu.language import examples

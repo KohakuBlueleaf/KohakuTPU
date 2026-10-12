@@ -3,6 +3,7 @@ the MXFP7 entry bits slot by slot, a drained tile sub-tile by sub-tile."""
 
 import numpy as np
 import pytest
+
 from kohakutpu.compiler.layout import tensor as T
 from kohakutpu.compiler.layout.buffer import Buffer
 from kohakutpu.language.numerics import mxfp7

@@ -155,7 +155,9 @@ class Encoder:
                 if isinstance(a, AddAssign):
                     done.add(self._numbered(st, a.lhs, "a", 8))
             elif st.op in ("vfill", "vdrain"):
-                ad, _, flags = self._dma(st, "->" if st.op == "vfill" else "<-", ("signal",))
+                ad, _, flags = self._dma(
+                    st, "->" if st.op == "vfill" else "<-", ("signal",)
+                )
                 if "rel" in flags and ad not in done and ad not in out:
                     out.append(ad)
             if st.body:

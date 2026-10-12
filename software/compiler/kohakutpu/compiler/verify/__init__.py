@@ -27,7 +27,9 @@ from kohakutpu.compiler.verify.node import Node
 class ScheduleError(Exception):
     def __init__(self, findings: list) -> None:
         self.findings = findings
-        super().__init__("no dispatch order completes:\n" + "\n".join(str(f) for f in findings[:20]))
+        super().__init__(
+            "no dispatch order completes:\n" + "\n".join(str(f) for f in findings[:20])
+        )
 
 
 def _nodes(programs) -> dict:
@@ -66,7 +68,10 @@ def schedule(programs, machine=None, fetch=None, residents=None) -> dict:
             if u is not None and hasattr(u, "imem"):
                 u.imem.update(mem)
                 u.desc.update(desc)
-    nodes = {mesh: Node(card, mesh, [pkg], free=True) for mesh, (pkg, _) in sorted(built.items())}
+    nodes = {
+        mesh: Node(card, mesh, [pkg], free=True)
+        for mesh, (pkg, _) in sorted(built.items())
+    }
     m.run()
     stuck = [f for f in m.findings if f.kind == "deadlock"]
     if stuck:
@@ -121,7 +126,13 @@ def _rest(m: Machine, card: Card) -> list:
         # A count no wait of the program reads only grows: the program's
         # reruns cannot tell.
         if key in card.waited and c.value != taken:
-            out.append(Finding("rest", f"node {mesh}", f"{kind} {which}: {c.value - taken} never taken"))
+            out.append(
+                Finding(
+                    "rest",
+                    f"node {mesh}",
+                    f"{kind} {which}: {c.value - taken} never taken",
+                )
+            )
     # A DATA_RECEIVED belongs to the package whose step sent the burst it
     # answers; the next package counts completions from zero.
     for node, dst, sent, landed in card.acks:
@@ -129,7 +140,13 @@ def _rest(m: Machine, card: Card) -> list:
         end = next((c for n, c in node.ends if n >= at), None)
         port = dst.port.ix
         if end is None or end.v.get(port, 0) < landed.v.get(port, 0):
-            out.append(Finding("rest", node.name, f"a DATA_RECEIVED from {dst.name} may arrive after its package ends"))
+            out.append(
+                Finding(
+                    "rest",
+                    node.name,
+                    f"a DATA_RECEIVED from {dst.name} may arrive after its package ends",
+                )
+            )
     return out
 
 
@@ -143,7 +160,11 @@ def _ports(card: Card) -> list:
         port = u.port.ix
         prev = None
         for owner, sent, landed in u.landings:
-            if prev is not None and prev[0] != owner and prev[2].v.get(port, 0) > sent.v.get(port, 0):
+            if (
+                prev is not None
+                and prev[0] != owner
+                and prev[2].v.get(port, 0) > sent.v.get(port, 0)
+            ):
                 out.append(
                     Finding(
                         "port",
@@ -199,11 +220,19 @@ def _collisions(card: Card) -> list:
                     bad = i
                     break
                 if own[i]:
-                    later = shared[bisect.bisect_right(shared, i):]
-                    bad = next((j for j in later if at > windows[j][0].v.get(port, 0)), None)
+                    later = shared[bisect.bisect_right(shared, i) :]
+                    bad = next(
+                        (j for j in later if at > windows[j][0].v.get(port, 0)), None
+                    )
                     break
             if bad is not None:
-                out.append(Finding("port", u.name, f"{what} may land while FILL {bad}'s responses arrive"))
+                out.append(
+                    Finding(
+                        "port",
+                        u.name,
+                        f"{what} may land while FILL {bad}'s responses arrive",
+                    )
+                )
     return out
 
 

@@ -31,7 +31,14 @@ MATH = {op.upper() for op in C.OPS}
 UNARY = {"VMOV", "VNEG", "VABS", "VEXP2", "VLOG2", "VINV", "VRSQRT"}
 READS_AC = {"VADD", "VSUB"}
 READS_AB = {"VMUL", "VMAX", "VMIN", "VEXP2D", "VCMPLT", "VCMPGT", "VCMPEQ"}
-QUEUE = {"VUNPK": "U", "VPACK": "P", "VFILL": "F", "VDRAIN": "D", "VPOST": "D", "VBAR": "U"}
+QUEUE = {
+    "VUNPK": "U",
+    "VPACK": "P",
+    "VFILL": "F",
+    "VDRAIN": "D",
+    "VPOST": "D",
+    "VBAR": "U",
+}
 #: the instruction kind an op counts as for VSYNC / marks
 OWN_KIND = {"VUNPK": "U", "VPACK": "P", "VFILL": "F", "VDRAIN": "D"}
 
@@ -61,7 +68,14 @@ class Vector:
         self.ainc: dict = {}  # descriptor -> its running offset's increment
         #: walk configuration, kept across RUNs (`v2_core.v` resets it only
         #: with the core): pointers, increments, (s0, s1) strides
-        self.cfg = {"UPTR": 0, "UINC": 0, "PPTR": 0, "PINC": 0, "USTR": (1, 4), "PSTR": (1, 4)}
+        self.cfg = {
+            "UPTR": 0,
+            "UINC": 0,
+            "PPTR": 0,
+            "PINC": 0,
+            "USTR": (1, 4),
+            "PSTR": (1, 4),
+        }
         self.port = Port(m, name)
         self.mem = Memory(m, name)
         self.cu = _Cu(self)
@@ -75,7 +89,9 @@ class Vector:
     def deliver(self, word: int, clock) -> None:
         self.words.append((word, clock))
 
-    def land(self, buf: int, off: int, n: int, count: bool, clock, what: str, sent=None) -> str:
+    def land(
+        self, buf: int, off: int, n: int, count: bool, clock, what: str, sent=None
+    ) -> str:
         """`n` granules at word `off` of the one L1 (`vec_cu.v`: buffer 0
         only, rejected past L1_WORDS). Returns why it is rejected, or ""."""
         if buf != 0:
@@ -96,9 +112,13 @@ class Vector:
     def rest(self) -> list:
         out = []
         if self.rx.value != self.target[C.RX]:
-            out.append(f"{self.rx.value - self.target[C.RX]} granules landed and never waited for")
+            out.append(
+                f"{self.rx.value - self.target[C.RX]} granules landed and never waited for"
+            )
         if self.cr.value != self.target[C.CR]:
-            out.append(f"{self.cr.value - self.target[C.CR]} credits received and never waited for")
+            out.append(
+                f"{self.cr.value - self.target[C.CR]} credits received and never waited for"
+            )
         return out
 
     def walk_words(self, ad: int) -> int:
@@ -120,7 +140,11 @@ class _Cu(Proc):
         self.running = False
 
     def done(self) -> bool:
-        return self.pc >= len(self.u.words) and not self.running and self.u.card.node_done(self.u)
+        return (
+            self.pc >= len(self.u.words)
+            and not self.running
+            and self.u.card.node_done(self.u)
+        )
 
     def blocked(self) -> str:
         if self.running:
@@ -144,7 +168,9 @@ class _Cu(Proc):
         self.pc += 1
         clock = self.tick(given)
         if fmt is None:
-            u.card.m.find("model", self.name, "a word decodes as no vector CU instruction")
+            u.card.m.find(
+                "model", self.name, "a word decodes as no vector CU instruction"
+            )
         else:
             f = fmt.decode(word)
             if fmt.name == "IMEM":
@@ -162,7 +188,7 @@ class _Cu(Proc):
 
 
 class _Entry:
-    __slots__ = ("op", "f", "deps", "guard", "clock", "done", "roff", "l1")
+    __slots__ = ("clock", "deps", "done", "f", "guard", "l1", "op", "roff")
 
     def __init__(self, op, f, clock) -> None:
         self.op, self.f, self.clock = op, f, clock
@@ -267,7 +293,11 @@ class _Front(Proc):
         if name == "VLOOP":
             trips = self.s.get(f["sreg"])
             if not isinstance(trips, int):
-                u.card.m.find("model", self.name, f"pc {self.pc}: a loop over a count not set by VSETI")
+                u.card.m.find(
+                    "model",
+                    self.name,
+                    f"pc {self.pc}: a loop over a count not set by VSETI",
+                )
                 self.halted = True
                 return False
             self.tick()
@@ -363,7 +393,9 @@ class _Front(Proc):
             base = f["off"]
             if f["rel"]:
                 base += u.cfg[f"{p}PTR"]
-                u.cfg[f"{p}PTR"] = (u.cfg[f"{p}PTR"] + u.cfg[f"{p}INC"]) & (L1_WORDS - 1)
+                u.cfg[f"{p}PTR"] = (u.cfg[f"{p}PTR"] + u.cfg[f"{p}INC"]) & (
+                    L1_WORDS - 1
+                )
             s0, s1 = u.cfg[f"{p}STR"]
             n = _walk_words(f["mode"], f["n1"] + 1, name == "VPACK")
             words = [(base + (w % 4) * s0 + (w // 4) * s1) % L1_WORDS for w in range(n)]
@@ -446,7 +478,11 @@ class _Front(Proc):
             key = ("skip", pc + k)
             if key not in self.u.card.m.flagged:
                 self.u.card.m.flagged.add(key)
-                self.u.card.m.find("model", self.name, f"pc {pc + k}: {fmt.name} under a data-dependent skip")
+                self.u.card.m.find(
+                    "model",
+                    self.name,
+                    f"pc {pc + k}: {fmt.name} under a data-dependent skip",
+                )
 
 
 class _Engine(Proc):
@@ -482,7 +518,9 @@ class _Engine(Proc):
             words, write, what = e.l1
             self.u.mem.access("L1", words, write, clock, self.ix, what)
         if e.op == "VPOST":
-            self.u.card.post(self.u, (e.f["dst_x"], e.f["dst_y"]), e.f["n"], clock, self.ix)
+            self.u.card.post(
+                self.u, (e.f["dst_x"], e.f["dst_y"]), e.f["n"], clock, self.ix
+            )
         elif e.op == "VDRAIN" and (e.f["dst_x"] or e.f["dst_y"] or e.f["node"]):
             self._peer(e.f, e.roff, clock)
         e.done = clock
@@ -500,7 +538,9 @@ class _Engine(Proc):
         base = u.desc.get((f["ad"], 0), 0) + roff
         n = u.walk_words(f["ad"])
         if n > PEER_WORDS:
-            u.card.m.find("bounds", self.name, f"a peer drain of {n} words faults (F_LEN)")
+            u.card.m.find(
+                "bounds", self.name, f"a peer drain of {n} words faults (F_LEN)"
+            )
             return
         fin, ack = base >> 26 & 0xFF, base >> 16 & 0xFF
         sink = {

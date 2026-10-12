@@ -16,6 +16,7 @@ import shutil
 import subprocess
 
 import pytest
+
 from kohakuaccel.driver.node.heap import Heap
 from kohakuaccel.driver.node.queue import layout as L
 

@@ -51,7 +51,10 @@ class Cluster:
         self.card, self.key, self.name = card, key, name
         m = card.m
         self.words: list = []  # (word, clock) delivered by the node
-        self.rx = {BUF_L1A: m.counter(f"rx:{name}:A"), BUF_L1B: m.counter(f"rx:{name}:B")}
+        self.rx = {
+            BUF_L1A: m.counter(f"rx:{name}:A"),
+            BUF_L1B: m.counter(f"rx:{name}:B"),
+        }
         self.taken = {BUF_L1A: 0, BUF_L1B: 0}
         self.cr = m.counter(f"cr:{name}")
         self.spent = 0
@@ -79,7 +82,9 @@ class Cluster:
     def deliver(self, word: int, clock) -> None:
         self.words.append((word, clock))
 
-    def land(self, buf: int, off: int, n: int, count: bool, clock, what: str, sent=None) -> str:
+    def land(
+        self, buf: int, off: int, n: int, count: bool, clock, what: str, sent=None
+    ) -> str:
         """`n` granules at granule `off` of buffer `buf`, sent at `sent`; a
         COUNT burst counts each entry whose last word lands. Returns why the
         cluster rejects it ("" when it takes it)."""
@@ -93,7 +98,9 @@ class Cluster:
             self.l1_bursts.append((clock, sent, what))
         else:
             # An add into the accumulator, sub-tile t granules 2t and 2t + 1.
-            self.mem.access("acc", range(off // 2, (off + n) // 2), True, clock, self.port.ix, what)
+            self.mem.access(
+                "acc", range(off // 2, (off + n) // 2), True, clock, self.port.ix, what
+            )
         if count and buf in self.rx:
             self.rx[buf].add((off + n) // 4 - off // 4, clock, self.port.ix)
         return ""
@@ -111,7 +118,9 @@ class Cluster:
         out = []
         for side, c in self.rx.items():
             if c.value != self.taken[side]:
-                out.append(f"{c.value - self.taken[side]} entries landed on side {'AB'[side]} and never taken")
+                out.append(
+                    f"{c.value - self.taken[side]} entries landed on side {'AB'[side]} and never taken"
+                )
         if self.cr.value != self.spent:
             out.append(f"{self.cr.value - self.spent} credits received and never spent")
         return out
@@ -150,7 +159,9 @@ class _Seq(Proc):
         word, given = u.words[self.pc]
         fmt, f = _decode(word)
         if fmt is None:
-            u.card.m.find("model", self.name, f"word {self.pc} decodes as no cluster instruction")
+            u.card.m.find(
+                "model", self.name, f"word {self.pc} decodes as no cluster instruction"
+            )
             self.pc = len(u.words)
             return False
         rel = [given]
@@ -194,7 +205,9 @@ class _Seq(Proc):
                 if not self._queued:
                     self._push(f, f["n"], given)
                 if u.dq.left < self._until:
-                    self.why = f"drain: {self._until - u.dq.left} sub-tiles still to leave"
+                    self.why = (
+                        f"drain: {self._until - u.dq.left} sub-tiles still to leave"
+                    )
                     return False
                 rel.append(u.dq.clock_left(self._until))
                 self._queued = False
@@ -204,7 +217,9 @@ class _Seq(Proc):
             # busy until enough of its sub-tiles left.
             need = self.pushed - DQ_ROOM
             if u.dq.left < need:
-                self.why = f"the array waits for the drain queue: {need - u.dq.left} sub-tiles"
+                self.why = (
+                    f"the array waits for the drain queue: {need - u.dq.left} sub-tiles"
+                )
                 return False
             rel += [u.array.clock, u.dq.clock_left(need)]
         elif fmt.name == "DRAIN":
@@ -212,13 +227,34 @@ class _Seq(Proc):
         clock = self.tick(*rel)
         if fmt.name == "FILL" and not f["recv"]:
             side = "AB"[f["sel"]]
-            u.mem.access(side, _entries(f["fbank"], f["eoff"], f["n"]), True, clock, self.ix, f"FILL {side} word {self.pc}")
+            u.mem.access(
+                side,
+                _entries(f["fbank"], f["eoff"], f["n"]),
+                True,
+                clock,
+                self.ix,
+                f"FILL {side} word {self.pc}",
+            )
             u.fill_windows.append((start, clock))
         elif fmt.name == "GEMM":
             at = u.array.tick(clock)
             what = f"GEMM word {self.pc}"
-            u.mem.access("A", _entries(f["abank"], f["aoff"], f["gm"] * f["nk"]), False, at, u.array.ix, what)
-            u.mem.access("B", _entries(f["bbank"], f["boff"], f["gn"] * f["nk"]), False, at, u.array.ix, what)
+            u.mem.access(
+                "A",
+                _entries(f["abank"], f["aoff"], f["gm"] * f["nk"]),
+                False,
+                at,
+                u.array.ix,
+                what,
+            )
+            u.mem.access(
+                "B",
+                _entries(f["bbank"], f["boff"], f["gn"] * f["nk"]),
+                False,
+                at,
+                u.array.ix,
+                what,
+            )
             u.mem.access("acc", range(f["gm"] * f["gn"]), True, at, u.array.ix, what)
             if f["emit"]:
                 # Sub-tiles leave from the issue on; only the last implies
@@ -241,7 +277,9 @@ class _Seq(Proc):
         waits !gemm_busy); into another cluster's accumulator a sub-tile is
         two granules (`mx_cluster_node.v` OP_SEND)."""
         clock = self.tick(given, self.u.array.clock)
-        self.u.mem.access("acc", range(n), False, clock, self.ix, f"DRAIN word {self.pc}")
+        self.u.mem.access(
+            "acc", range(n), False, clock, self.ix, f"DRAIN word {self.pc}"
+        )
         g = 2 * n if f["dnode"] and f["dbuf"] == BUF_PEER else n
         self.u.dq.push(f, g, clock)
         self.pushed += g
@@ -276,7 +314,7 @@ class _Queue(Proc):
         return self.head >= len(self.items)
 
     def blocked(self) -> str:
-        g, f, _ = self.items[self.head]
+        g, _, _ = self.items[self.head]
         need = self.u.spent + min(self.into + BURST, g)
         return f"sub-tile {self.into} of {g} waits for credits: {self.u.cr.value} of {need}"
 
@@ -296,7 +334,9 @@ class _Queue(Proc):
         clock = self.tick(*rel)
         n = upto - self.into
         if f["dnode"]:
-            u.card.burst(u, f, ((f["addr"] >> 5) + self.into) & 0xFFFF, n, clock, self.ix)
+            u.card.burst(
+                u, f, ((f["addr"] >> 5) + self.into) & 0xFFFF, n, clock, self.ix
+            )
         self.into = upto
         self.left += n
         self.marks.append((self.left, clock))

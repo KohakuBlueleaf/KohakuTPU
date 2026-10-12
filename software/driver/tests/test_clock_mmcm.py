@@ -5,6 +5,7 @@ outputs are several dividers of one number and never several frequencies.
 """
 
 import pytest
+
 from kohakutpu.driver.clock.mmcm import (
     DEFAULT_D,
     DEFAULT_K,

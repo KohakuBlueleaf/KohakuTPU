@@ -4,6 +4,7 @@ the examples verify clean, and each hazard it claims to catch is caught on a
 program built to have exactly that hazard."""
 
 import pytest
+
 from kohakutpu.compiler import build, verify
 from kohakutpu.compiler import target as T
 from kohakutpu.compiler.layout.buffer import Buffer
@@ -33,19 +34,36 @@ def kinds(text: str) -> list:
     return [(f.kind, f.text) for f in verify.check(prog, machine)]
 
 
-L1 = [n for n in examples.names() if n not in ("silu2", "ring", "remote", "xsplitk", "matmul2", "xpeer")]
+L1 = [
+    n
+    for n in examples.names()
+    if n not in ("silu2", "ring", "remote", "xsplitk", "matmul2", "xpeer")
+]
 
 
 @pytest.mark.parametrize(
     "name",
-    ["add", "softmax", "layernorm", "silu", "matmul", "longk", "splitk", "tonode", "push", "memops"],
+    [
+        "add",
+        "softmax",
+        "layernorm",
+        "silu",
+        "matmul",
+        "longk",
+        "splitk",
+        "tonode",
+        "push",
+        "memops",
+    ],
 )
 def test_examples_verify_clean(name):
     prog, machine = programs(examples.load(examples.example(name)))
     assert verify.check(prog, machine) == []
 
 
-@pytest.mark.parametrize("name", ["silu2", "ring", "remote", "xsplitk", "matmul2", "xpeer"])
+@pytest.mark.parametrize(
+    "name", ["silu2", "ring", "remote", "xsplitk", "matmul2", "xpeer"]
+)
 def test_multinode_examples_verify_clean(name):
     prog, machine = programs(examples.load(examples.example(name)), nodes=2)
     assert verify.check(prog, machine) == []
@@ -62,7 +80,9 @@ def test_an_add_ordered_by_a_settle_races():
     # the add: no unit counts an accumulator add landing.
     got = _splitk("        fill A0 recv n=1\n", "")
     got = [g for g in got if g[0] == "race"] or got
-    assert any(k == "race" and t.startswith("acc ") and "DRAIN" in t for k, t in got), got
+    assert any(
+        k == "race" and t.startswith("acc ") and "DRAIN" in t for k, t in got
+    ), got
 
 
 def test_a_marker_never_taken_is_a_rest_finding():
