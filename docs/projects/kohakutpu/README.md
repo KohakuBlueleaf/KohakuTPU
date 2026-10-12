@@ -171,7 +171,7 @@ a project to prove anything.
 | vector ALU | **built and measured** — FMA within one ulp (correctly rounded outside one stated subtractive corner), faithful seeds |
 | vector core around it | **built**, and its instruction set partly so |
 | driver and hand-built encoders | **run on the card** |
-| software | `software/`: `.ktpu` L3 → L2 → L1 (`language`), L1 → machine code and packages (`compiler`), the driver, the Verilated card (`simulation`), the node firmware |
+| software | `software/`: the `kt` DSL and `.ktpu` L2 / L1 (`language`), L2 → L1 → machine code and packages (`compiler`), the Tensor API and the tinygrad device (`application`), the driver, the Verilated card (`simulation`), the node firmware |
 | tensor-descriptor ISA | designed, walker built and validated, **not wired in** |
 | chain bypass, `FWD` | **not built** |
 | split-K epilogue on a vector core | **designed, not built** |
@@ -212,6 +212,12 @@ Then the pages about writing against it:
   drained byte order is the fast one, and what a model-sized placement still needs.
 - **[vector-core-v2.md](vector-core-v2.md)** — the V2 vector core: its engines,
   ordering, operand network and ISA.
+- **[dsl.md](dsl.md)** — `kt`: kernels written in Python and traced once into
+  L2, on one node or several (shared memory or cross-node adds).
+- **[api.md](api.md)** — `kp`: numpy-like tensors on the card, chains fused
+  into one generated kernel each, your own DSL kernel on tensors.
+- **[tinygrad.md](tinygrad.md)** — `ktpugrad`: tinygrad's `KTPU` device, what
+  it switches off, how each kernel runs, coverage, and models on the simulator.
 
 And three about the device image rather than the datapath:
 
