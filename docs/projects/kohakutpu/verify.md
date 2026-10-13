@@ -395,7 +395,20 @@ for every node before the next submission).
 | A5 | A unit's memory write is visible to any reader ordered after that unit's completion. | `noc_cu_base` holds a completion until every MEM_WR_REQ the unit sent is acknowledged (write fence, `ACK_FENCE 1` on clusters and vector cores). Cross-mesh writes are fenced by the ring (`interlink.md`). |
 | A6 | A node loop on loaded data is checked for 0..`trips` trips. | Reported as `loop`. Its body being the same on every trip is checked by the scheduler (§6). |
 
-## 10. Where it runs
+## 10. Register-file banks: `verify.lint`
+
+`verify.lint(module, machine)` checks every image of a module, hand-written
+or compiled, against the read copies of `machine`'s vector cores
+(`target.vcopies`; `kohakutpu.compiler.l2.banks.lint`). A register file is
+two banks by chunk parity, each with that many read copies; math reads take
+them first. One `bank` finding names a math statement with the beats it
+costs: on two copies, a beat reading three distinct words of one bank holds
+the math engine a cycle, and a beat that uses both copies of a bank leaves the
+pack engine none that cycle. These are cycles, never wrong values, so `check`
+does not report them. The vector lowering places compiled values to avoid them
+(`banks.rotate`); a hand-written image avoids them by the same rotation.
+
+## 11. Where it runs
 
 - `kohakutpu.compiler.build.packages` → `verify.schedule`: every package a
   `VerilatorCard` runs is scheduled.

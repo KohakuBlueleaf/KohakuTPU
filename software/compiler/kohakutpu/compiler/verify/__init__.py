@@ -19,6 +19,7 @@ import bisect
 from kohakutpu.compiler import imem
 from kohakutpu.compiler import target as T
 from kohakutpu.compiler.isa.vector import ISA as VEC
+from kohakutpu.compiler.l2 import banks
 from kohakutpu.compiler.verify.card import Card
 from kohakutpu.compiler.verify.model import Finding, Machine
 from kohakutpu.compiler.verify.node import Node
@@ -99,6 +100,13 @@ def check(programs, machine=None, fetch=None, runs: int = 2) -> list:
     if any(f.kind == "deadlock" for f in out):
         return out
     return out + _rest(m, card) + _ports(card)
+
+
+def lint(module, machine=None) -> list:
+    """`bank` findings for every image of `module` on `machine`'s vector
+    cores: math beats that hold or starve for want of register-file read
+    copies (docs/projects/kohakutpu/verify.md s10)."""
+    return banks.lint(module, T.vcopies(machine or T.machine()))
 
 
 def run(pkgs: dict, machine, totals=None) -> tuple:
@@ -236,4 +244,4 @@ def _collisions(card: Card) -> list:
     return out
 
 
-__all__ = ["Finding", "ScheduleError", "check", "schedule"]
+__all__ = ["Finding", "ScheduleError", "check", "lint", "schedule"]

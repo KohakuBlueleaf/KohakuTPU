@@ -5,6 +5,7 @@ names every beat that still holds the math engine or starves the pack."""
 from dataclasses import replace
 
 from kohakutpu.compiler import target as T
+from kohakutpu.compiler import verify
 from kohakutpu.compiler.l2 import banks, pipeline
 from kohakutpu.language import examples
 from kohakutpu.language.text import module
@@ -47,6 +48,13 @@ def test_three_words_of_one_bank_hold_the_math_engine():
     text = "image k()\n    vfma v0, v1, v2, v3\n    halt\n"
     (f,) = banks.lint(module.read(text), 2)
     assert f.kind == "bank" and "8 beats hold the math engine" in f.text
+
+
+def test_verify_lint_checks_every_image_for_the_machines_copies():
+    m = examples.load(examples.example("silu"))  # hand-written: x * sigmoid(x) in place
+    assert verify.lint(m, T.machine()) == []  # four copies: no rule to break
+    found = verify.lint(m, T.machine(core="v21"))
+    assert found and all(f.kind == "bank" and "pack engine" in f.text for f in found)
 
 
 def test_compiled_vector_examples_hold_no_math_beat_on_two_copies():
