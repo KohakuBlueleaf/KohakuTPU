@@ -33,6 +33,12 @@ DIES = {
 CORES = {"v2": (32, 4), "v21": (128, 2)}
 #: The core a machine has when it names none.
 CORE = "v2"
+#: A vector core's fill on the node's memory path: (cycles before its first
+#: word, cycles a 32-byte word), alone and with clusters streaming beside it.
+#: Measured on card_v9t3_1n (a core's serial fills of 2 KB and 256 B): alone
+#: 142.6 / 86.3 cycles, beside a four-cluster matmul 664 / 371. Alone takes
+#: two cycles a word: the node's 32 B/cycle read bus split by the two cores.
+MEM = {"alone": (78, 2), "shared": (330, 5)}
 VREGS, VCOPIES = CORES[CORE]
 
 
@@ -46,13 +52,15 @@ def machine(
     core: str = CORE,
     vregs: int | None = None,
     vcopies: int | None = None,
+    mem: dict | None = None,
 ) -> MachineSpec:
     """The units of a `die`-shaped die, seen from mesh `mesh`; with `nodes`, a
     card of that many identical dies (meshes 0..nodes-1, a chain). `mg`/`vc`
     override the die's unit lists. The vector cores are build `core`
     (`CORES`); `vregs` / `vcopies` override its register count (`v2_core.v`
     2**RW: 32, 64 or 128) and its register file's read copies a bank
-    (RF_COPIES: 2, 3 or 4)."""
+    (RF_COPIES: 2, 3 or 4). `mem` overrides MEM, the fill costs a vector
+    lowering prefetches against (`mem`)."""
     regs, copies = CORES[core]
     vregs = regs if vregs is None else vregs
     vcopies = copies if vcopies is None else vcopies
@@ -65,7 +73,10 @@ def machine(
         meshes=tuple(MeshSpec(i, units, SYS_PORTS, reply) for i in which),
         default=mesh,
         links=tuple((i, i + 1) for i in range((nodes or 1) - 1)),
-        params={"VC": {"regs": vregs, "copies": vcopies}},
+        params={
+            "VC": {"regs": vregs, "copies": vcopies},
+            **({"MEM": dict(mem)} if mem is not None else {}),
+        },
     )
 
 
@@ -79,10 +90,18 @@ def vcopies(m: MachineSpec) -> int:
     return m.params.get("VC", {}).get("copies", VCOPIES)
 
 
+def mem(m: MachineSpec, shared: bool = False) -> tuple:
+    """``(latency, cycles a word)`` of a vector core's fill on `m`: the node's
+    memory path to the cores alone, or `shared` with clusters streaming
+    beside them."""
+    return tuple(m.params.get("MEM", MEM)["shared" if shared else "alone"])
+
+
 __all__ = [
     "CORE",
     "CORES",
     "DIES",
+    "MEM",
     "MG",
     "NAME",
     "SYS_PORTS",
@@ -91,6 +110,7 @@ __all__ = [
     "VCOPIES",
     "VREGS",
     "machine",
+    "mem",
     "vcopies",
     "vregs",
 ]

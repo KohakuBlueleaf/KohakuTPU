@@ -12,6 +12,7 @@ walks the tree with every `par` and `for` variable bound.
 
 from dataclasses import dataclass, field
 
+from kohakutpu.compiler import target as T
 from kohakutpu.compiler.layout.buffer import Buffer
 from kohakutpu.language.text.meta import Expander
 from kohakutpu.language.text.syntax import (
@@ -108,6 +109,9 @@ class Body:
     #: `target ... vregs= vcopies=`).
     vregs: int = 32
     vcopies: int = 4
+    #: A vector core's fill cost, (latency, cycles a word) (`target.mem`),
+    #: set by the lowering for the body's vector stages.
+    fill: tuple = T.MEM["alone"]
 
 
 def read(module, name: str) -> Body:

@@ -12,8 +12,9 @@ answering a word a cycle (memwait 0):
 - each engine runs its queue in order, an op's beats back to back (a math op
   a beat a 16-lane chunk, held a beat where a two-copy register file reads
   three words of one bank, `modulo.parse`; an unpack or pack a word a cycle;
-  a fill or drain a word a cycle of the one memory port, a fill landing
-  MEM_LATENCY after its last word leaves memory);
+  a fill or drain occupying the one memory port its words times the path's
+  cycles a word, a fill landing the path's latency after its last word
+  (`target.mem`: the node alone, or clusters streaming beside the core));
 - a math result is read `modulo.LAT_MM` cycles after the producer's last beat
   (`LAT_XB` more through the crossbar; a pack's `LAT_MP`), an unpack's
   `LAT_UM` after its last word; a chunk-selected write waits on no earlier
@@ -36,6 +37,7 @@ import math
 import re
 from dataclasses import replace
 
+from kohakutpu.compiler import target as T
 from kohakutpu.compiler.emit import image as EI
 from kohakutpu.compiler.l2 import banks
 from kohakutpu.compiler.l2 import modulo as MO
@@ -45,8 +47,6 @@ from kohakutpu.language.text.syntax import Assign, Int, emit, fmt
 
 QUEUE = 8
 DMA_QUEUE = 4
-#: cycles from a fill's last word leaving memory to its landing in L1
-MEM_LATENCY = 16
 #: dispatch cycles of a front-end instruction that evaluates a condition
 COND = 2
 LOOP_PASSES = 4
@@ -64,8 +64,9 @@ _DEPTH = {"M": QUEUE, "U": QUEUE, "P": QUEUE, "F": DMA_QUEUE, "D": DMA_QUEUE}
 
 
 class _Core:
-    def __init__(self, copies: int) -> None:
+    def __init__(self, copies: int, fill: tuple) -> None:
         self.copies = copies
+        self.lat, self.cpw = fill  # a fill's latency, cycles a word
         self.fe = 0
         self.mem = 0  # the memory port's next free cycle
         self.free = dict.fromkeys(_DEPTH, 0)
@@ -149,9 +150,9 @@ class _Core:
     def dma(self, eng: str, words: int) -> None:
         """A fill (F) or drain (D) of `words` memory words."""
         start = max(self._enter(eng, 1), self.free[eng], self.mem)
-        self.mem = self.free[eng] = start + words
+        self.mem = self.free[eng] = start + words * self.cpw
         self.starts[eng].append(start)
-        self.done[eng].append(start + words + (MEM_LATENCY if eng == "F" else 0))
+        self.done[eng].append(self.mem + (self.lat if eng == "F" else 0))
 
     def sync(self, waiter: str, kind: str, slack: int) -> None:
         n = len(self.done[kind]) - slack
@@ -187,9 +188,13 @@ def _walk_words(walk) -> int:
     return math.prod(counts) if counts else 1
 
 
-def cycles(text: str, name: str, vregs: int, copies: int) -> int:
+def cycles(
+    text: str, name: str, vregs: int, copies: int, fill: tuple | None = None
+) -> int:
     """Cycles image `name` of `text` takes on a core of `vregs` registers and
-    `copies` register-file read copies, its parameters at 0."""
+    `copies` register-file read copies, its parameters at 0, a fill or drain
+    taking `fill` = (latency, cycles a word) of the memory path (default:
+    `target.MEM` alone)."""
     mod = replace(TM.read(text, f"<{name}>"), vregs=vregs)
     r = mod.reader()
     img = mod.images[name]
@@ -198,7 +203,7 @@ def cycles(text: str, name: str, vregs: int, copies: int) -> int:
         img.stmts, dict.fromkeys(img.params, Int(0))
     )
     enc = EI.Encoder(r.fail, regs=vregs)
-    core = _Core(copies)
+    core = _Core(copies, T.MEM["alone"] if fill is None else fill)
     state = EI.UNKNOWN
     scalars: dict = {}
     words_of: dict = {}
@@ -261,4 +266,4 @@ def cycles(text: str, name: str, vregs: int, copies: int) -> int:
     return core.end()
 
 
-__all__ = ["COND", "DMA_QUEUE", "LOOP_PASSES", "MEM_LATENCY", "QUEUE", "cycles"]
+__all__ = ["COND", "DMA_QUEUE", "LOOP_PASSES", "QUEUE", "cycles"]

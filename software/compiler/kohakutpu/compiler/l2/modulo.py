@@ -46,16 +46,14 @@ LAT_MP = 20
 PAD_MIN = 64
 #: the loop counter's scalar register
 LOOP_S = 15
-#: a fill issues this many cycles, plus LEAD_WORD a word, before its first
-#: unpack (the NoC gives a vector core about half a word a cycle)
-LEAD_FIXED = 64
-LEAD_WORD = 2
 
 
-def lead(words: int) -> int:
+def lead(words: int, fill: tuple) -> int:
     """Cycles an iteration's fills of `words` L1 words issue ahead of its
-    first unpack."""
-    return LEAD_FIXED + LEAD_WORD * words
+    first unpack: `fill` = (latency, cycles a word) of the memory path
+    (`target.mem`)."""
+    latency, cpw = fill
+    return latency + cpw * words
 
 
 #: the predicate register P1 a compare writes and a predicated op reads, as a

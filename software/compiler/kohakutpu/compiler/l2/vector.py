@@ -275,7 +275,7 @@ def _best(body, par, env, name, fail, plan, land) -> tuple:
 
     def take(got) -> None:
         nonlocal best
-        c = timing.cycles(got[0], name, body.vregs, body.vcopies)
+        c = timing.cycles(got[0], name, body.vregs, body.vcopies, body.fill)
         if best is None or c < best[2]:
             best = (got[0], got[1], c, got[3], c)
 
@@ -645,7 +645,7 @@ def _modulo(body, par, env, name, fail, plan, land) -> tuple | None:
     k_max = min(8, 2 + room // max(per_iter, 1))
     lower = max(sum(o.occ for o in mops if o.eng == e) for e in "MUP")
     ii_max = 4 * lower + 400
-    lead = MO.lead(sum(d.words for d in ctx.loads))
+    lead = MO.lead(sum(d.words for d in ctx.loads), body.fill)
     head = []
     for c in head_code:
         if isinstance(c, str):

@@ -154,6 +154,13 @@ def lower(module, name: str, machine=None) -> str:
     stages = [(*s, ph) for s, ph in zip(B.instances(body, phases=phases), phases)]
     nodes = sorted({n for _, n, _, _, _ in stages})
     machine = machine or T.machine(nodes=max(nodes) + 1)
+    # One latency a body, so every instance of a stage shares its image.
+    cores = [
+        i.par for k, _, x, _, _ in stages if k == "par" for i in x if i.kind == "vc"
+    ]
+    body.fill = T.mem(
+        machine, shared=any(_beside_clusters(body.stmts, p) for p in cores)
+    )
     multi = any(isinstance(s, B.Par) and s.kind == "node" for s in body.stmts)
     land = vector.L1_WORDS - POOL if _drains_to_cores(body.stmts) else None
     remote = _remote_adds(body, stages)
@@ -387,6 +394,31 @@ def _drains_to_cores(stmts) -> bool:
         elif hasattr(s, "body") and _drains_to_cores(s.body):
             return True
     return False
+
+
+def _beside_clusters(stmts, par, loop=None) -> bool:
+    """Whether vector stage `par` can run while clusters stream: a node loop
+    holds it and a cluster stage (the pipeline pass overlaps the iterations),
+    or a loop holds it and clusters drain into the cores' L1."""
+    for s in stmts:
+        if s is par:
+            return loop is not None and (
+                _has_cluster_par(loop.body) or _drains_to_cores(loop.body)
+            )
+        if isinstance(s, B.For) and loop is None:
+            if _beside_clusters(s.body, par, s):
+                return True
+        elif hasattr(s, "body") and s.body and _beside_clusters(s.body, par, loop):
+            return True
+    return False
+
+
+def _has_cluster_par(stmts) -> bool:
+    return any(
+        (isinstance(s, B.Par) and s.kind == "mg")
+        or (hasattr(s, "body") and s.body and _has_cluster_par(s.body))
+        for s in stmts
+    )
 
 
 def _shared_image(images: list, text: str, name: str) -> str:

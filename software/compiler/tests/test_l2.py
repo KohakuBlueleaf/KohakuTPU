@@ -9,8 +9,10 @@ import pytest
 
 from kohakutpu.compiler import build
 from kohakutpu.compiler import target as T
+from kohakutpu.compiler.l2 import body as B
 from kohakutpu.compiler.l2 import lower, passes, pipeline
 from kohakutpu.compiler.l2 import modulo as MO
+from kohakutpu.compiler.l2 import timing as TI
 from kohakutpu.compiler.l2 import vector as V
 from kohakutpu.language import examples
 from kohakutpu.language.text import module
@@ -462,6 +464,51 @@ def test_modulo_pipelines_the_stream_loop_through_rings(monkeypatch):
     assert "vsync fill on=unpack" in image and "vsync pack on=drain" in image
     assert "vsync unpack on=fill" in image and "vsync drain on=pack" in image
     packages(module.read(text), "softmax")
+
+
+def _vector_stages_beside_clusters(text: str, name: str) -> set:
+    body = B.read(module.read(text), name)
+    return {
+        lower._beside_clusters(body.stmts, i.par)
+        for kind, _, x, _ in B.instances(body)
+        if kind == "par"
+        for i in x
+        if i.kind == "vc"
+    }
+
+
+def test_a_vector_stage_in_a_loop_with_clusters_takes_the_shared_latency():
+    src = examples.example("mmsilu", "l2").read_text(encoding="utf-8")
+    head, _, rest = src.partition("    par u")
+    looped = (
+        head
+        + "    for i in 0..2\n"
+        + "".join("    " + ln + "\n" for ln in ("    par u" + rest).splitlines())
+    )
+    assert _vector_stages_beside_clusters(src, "mmsilu") == {False}
+    assert _vector_stages_beside_clusters(looped, "mmsilu") == {True}
+    assert T.mem(T.machine()) == T.MEM["alone"]
+    assert T.mem(T.machine(), shared=True) == T.MEM["shared"]
+    mach = T.machine(mem={"alone": (5, 1), "shared": (7, 3)})
+    assert T.mem(mach, shared=True) == (7, 3)
+
+
+def test_a_fill_lands_the_memory_latency_after_its_last_word():
+    text = (
+        "target ktpu.v9\n"
+        "image k()\n"
+        "    desc a0 = 0 walk=(32, 64)\n"
+        "    vfill a0 -> l1[0]\n"
+        "    vsync unpack on=fill\n"
+        "    vunpk v0 <- l1[0] f16\n"
+        "    halt\n"
+    )
+    near, far = (TI.cycles(text, "k", 32, 4, (lat, 1)) for lat in (16, 400))
+    assert far - near == 384
+    # each word of the 64 holds the memory port its cycles
+    slow = TI.cycles(text, "k", 32, 4, (16, 5))
+    assert slow - near == 4 * 64
+    assert MO.lead(64, (330, 5)) == 330 + 5 * 64
 
 
 def test_modulo_rotates_the_predicate_over_its_copies(monkeypatch):
