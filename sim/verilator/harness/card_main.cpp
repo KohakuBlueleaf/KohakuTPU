@@ -32,6 +32,14 @@
 static VerilatedContext *ctx;
 static VTOP *dut;
 
+#if VM_TRACE
+// A `--trace` build: `--vcd FILE [--vcd-from PS] [--vcd-to PS] [--vcd-depth N]`
+// dumps every eval inside the window.
+#include "verilated_vcd_c.h"
+static VerilatedVcdC *vcd = nullptr;
+static uint64_t vcd_from = 0, vcd_to = ~0ull;
+#endif
+
 #ifdef _WIN32
 // A sampling profiler for the model (`PS` starts, `PX <file>` stops and writes
 // "base <hex>", one "mod <base> <size> <path>" per loaded module, then one
@@ -217,12 +225,11 @@ static void mark_dead_clocks() {
     }
 }
 
-// Edges due at one instant share ONE eval, except that `mat2x` shares only with
-// `mat2x`: the matmul 1x clock is DIVIDED from it in RTL (ktpu_div2), so in an
-// eval with a sysnode edge the derived edge lands after the sysnode flops have
-// updated and samples their new values (a host read came back 1 beat of 4
-// with RLAST). --one-edge: every edge its own eval.
-static bool coalesce = false;  // --coalesce: measured 1.25x, and host reads fail
+// --coalesce: edges due at one instant share ONE eval, except that `mat2x`
+// shares only with `mat2x`: the matmul 1x clock is DIVIDED from it in RTL
+// (ktpu_div2), and in an eval with a sysnode edge the derived edge would land
+// after the sysnode flops have updated.
+static bool coalesce = false;
 
 // --join a,b: only clocks so named may share an eval (bisecting a fault).
 static std::string join_names;
@@ -265,6 +272,15 @@ static void tick_one() {
     }
     dut->eval();
     ++evals;
+#if VM_TRACE
+    if (vcd && now_ps >= vcd_from && now_ps <= vcd_to) {
+        // Evals at one instant (mat2x first at a tie): the dumper drops a dump
+        // whose time is not past the last one, so each takes the next ps.
+        static uint64_t last = 0;
+        last = now_ps > last ? now_ps : last + 1;
+        vcd->dump(last);
+    }
+#endif
     retime_wizard_clocks();
 }
 
@@ -294,6 +310,14 @@ static void cycles(int idx, uint64_t n) {
 // ---- manager 0: 64-bit AXI4 on bus_clk[1] ----------------------------------
 static const int TIMEOUT_CYC = 400000;
 
+// An edge-free eval before a handshake sample: the readies may depend on a
+// VALID raised since the last eval. Without it, when bus_clk[1]'s rise is the
+// next edge, an AR is held across two accepting edges and served twice.
+static void settle() {
+    dut->eval();
+    ++evals;
+}
+
 static bool axi_write(uint64_t addr, const std::vector<uint64_t> &beats, std::string &err) {
     size_t n = beats.size();
     if (n == 0 || n > 256) { err = "burst length"; return false; }
@@ -305,6 +329,7 @@ static bool axi_write(uint64_t addr, const std::vector<uint64_t> &beats, std::st
     bool aw_done = false, w_done = false, b_done = false;
     for (int c = 0; c < TIMEOUT_CYC && !b_done; ++c) {
         until_before_rise(bus1_idx);
+        settle();
         bool aw_hs = dut->h0_awvalid && dut->h0_awready;
         bool w_hs  = dut->h0_wvalid && dut->h0_wready;
         bool b_hs  = dut->h0_bvalid && dut->h0_bready;
@@ -335,6 +360,7 @@ static bool axi_read(uint64_t addr, size_t n, std::vector<uint64_t> &out, std::s
     bool last = false;
     for (int c = 0; c < TIMEOUT_CYC && !last; ++c) {
         until_before_rise(bus1_idx);
+        settle();
         bool ar_hs = dut->h0_arvalid && dut->h0_arready;
         bool r_hs  = dut->h0_rvalid && dut->h0_rready;
         uint64_t rdata = dut->h0_rdata;
@@ -467,7 +493,26 @@ int main(int argc, char **argv) {
         if (a == "--xdma-ps" && i + 1 < argc) xdma_ps = strtoull(argv[++i], nullptr, 0);
         if (a == "--mesh-mask" && i + 1 < argc) mesh_mask = (int)strtoul(argv[++i], nullptr, 0);
     }
+#if VM_TRACE
+    std::string vcd_path;
+    int vcd_depth = 99;
+    for (int i = 1; i + 1 < argc; ++i) {
+        std::string a = argv[i];
+        if (a == "--vcd") vcd_path = argv[i + 1];
+        if (a == "--vcd-from") vcd_from = strtoull(argv[i + 1], nullptr, 0);
+        if (a == "--vcd-to") vcd_to = strtoull(argv[i + 1], nullptr, 0);
+        if (a == "--vcd-depth") vcd_depth = (int)strtol(argv[i + 1], nullptr, 0);
+    }
+    if (!vcd_path.empty()) ctx->traceEverOn(true);
+#endif
     dut = new VTOP(ctx);
+#if VM_TRACE
+    if (!vcd_path.empty()) {
+        vcd = new VerilatedVcdC;
+        dut->trace(vcd, vcd_depth);
+        vcd->open(vcd_path.c_str());
+    }
+#endif
 
     // Replies go to the ORIGINAL stdout, taken private; fd 1 becomes stderr so a
     // $display from the model is never read as a reply.
@@ -642,7 +687,13 @@ int main(int argc, char **argv) {
             fprintf(proto, "V%s\n", o.c_str());
         }
         else fprintf(proto, "E unknown\n");
+#if VM_TRACE
+        if (vcd) vcd->flush();  // a client that dies on an error still leaves the dump
+#endif
     }
+#if VM_TRACE
+    if (vcd) vcd->close();
+#endif
     dut->final();
     delete dut;
     delete ctx;

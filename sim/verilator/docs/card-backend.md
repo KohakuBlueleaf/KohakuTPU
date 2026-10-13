@@ -85,18 +85,31 @@ never follows a sysnode edge in time.
 
 **`--coalesce`** lets edges due at one instant share an eval; `mat2x` shares
 only with `mat2x`. `--join a,b` restricts it to the named clocks, a family
-(`sys`) or one die's (`sys1`). Measured on card_v9t3 (add, softmax L1 on one
-node; silu2 L1/L2 and share2 L2 on two):
+(`sys`) or one die's (`sys1`). Every clock pair on the card meets through a
+crossing, so any order of same-instant edges is a legal run. Measured on
+card_v9t3 (add, softmax L1 on one node; silu2 L1/L2 and share2 L2 on two;
+matmul4 L2 on four):
 
 | joined | outputs | cycles |
 |---|---|---|
 | `noc,vec,mat2x,bus,ddr,ctrl,xdma` | identical | within 1% (17,224 against 17,074) |
 | any two or three of `sys0..3` | identical | within 4% (13,237 against 12,813..13,717) |
-| all four `sys` clocks | a host read (`RB 18000000020 20`, station 0 port 0) returns 1 beat of 4 at 193,964,655 ps | |
+| every clock (`--coalesce`), matmul4 on 4 nodes | identical (059a2898837853d4) | 431,095 against 417,881 (+3.2%) |
+
+Host manager 0 samples a handshake only after an edge-free eval (`settle`):
+its ARREADY / AWREADY / WREADY / RVALID may depend on the VALID it raised
+since the last eval, and a sample without one, when bus_clk[1]'s rise is
+the very next edge, holds an AR across two accepting edges (the read is
+served twice, the second burst's first beat answers the next read).
 
 A run's cycle count depends on how same-instant edges are ordered, so
 coalesced and one-edge runs do not compare cycle for cycle; the default stays
 one edge per eval.
+
+**`--vcd FILE`** (a `vlt.py --trace` build only) dumps every eval in
+`[--vcd-from PS, --vcd-to PS]`, `--vcd-depth N` scopes deep; evals at one
+instant (mat2x first at a tie) take successive picoseconds, which the dumper
+needs to keep each. A 1 us window of card_v9t3_1n is ~14 MB.
 
 **`--mesh-mask M`** stops the mesh clocks of the dies not in `M` (their
 sysnodes keep running): the cost of one more live die, measured below.
