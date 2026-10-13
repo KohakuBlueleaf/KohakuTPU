@@ -11,6 +11,7 @@ core-cycle), a memory-bound kernel's bytes a cycle.
 """
 
 import argparse
+import hashlib
 import json
 import pathlib
 import sys
@@ -280,26 +281,37 @@ CASES = [
 ]
 
 
-def compiled(name: str, nodes: int, tmp: pathlib.Path, die: str = "4+2") -> str:
+def compiled(
+    name: str, nodes: int, tmp: pathlib.Path, die: str = "4+2", core: str = T.CORE
+) -> str:
     """The L2 example through the whole pipeline (passes, lowering, image
-    scheduling), as an L1 file."""
+    scheduling) for vector core build `core`, as an L1 file."""
     m = examples.load(examples.example(name, "l2"))
-    l1 = pipeline.compile_l1(m, name, T.machine(nodes=nodes, die=die))
+    l1 = pipeline.compile_l1(m, name, T.machine(nodes=nodes, die=die, core=core))
     p = tmp / f"{name}.ktpu"
     p.write_text(l1.source, encoding="utf-8")
     return str(p)
 
 
 def measure(
-    build: str, nodes: tuple, name: str, level: str, out: str, die: str = "4+2"
+    build: str,
+    nodes: tuple,
+    name: str,
+    level: str,
+    out: str,
+    die: str = "4+2",
+    core: str = T.CORE,
 ) -> dict:
     """One case at one level on a card of its own: its report row. MFU and
-    lane use count every cluster and core the `die` has."""
+    lane use count every cluster and core the `die` has; `out_hash` names the
+    outputs' bytes, so two cards' runs compare bit for bit."""
     _, _, n, (make, check, work) = next(c for c in CASES if c[0] == name)
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="ktpu_measure_"))
-    path = name if level == "l1" else compiled(name, n, tmp, die)
+    path = name if level == "l1" else compiled(name, n, tmp, die, core)
     log = pathlib.Path(out) / f"{name}.{level}.model.log"
-    machine = T.machine(nodes=len(nodes) if len(nodes) > 1 else None, die=die)
+    machine = T.machine(
+        nodes=len(nodes) if len(nodes) > 1 else None, die=die, core=core
+    )
     mg, vc = (len(u) for u in T.DIES[die])
     card = VerilatorCard(build, nodes=nodes, machine=machine, log=log, timeout=3600.0)
     ins, ref = make(np.random.default_rng(7))
@@ -324,8 +336,18 @@ def measure(
         "efficiency": eff,
         "metric": {"mac": "MFU", "lane": "lane use", "bytes": "B/cycle"}[kind],
         "rel_err": check(ref, res["out"]),
+        "out_hash": _digest(res["out"]),
         "wall_s": round(time.monotonic() - t0, 1),
     }
+
+
+def _digest(outs: dict) -> str:
+    """The outputs' bytes, in name order, as a short hash."""
+    h = hashlib.sha256()
+    for k in sorted(outs):
+        h.update(k.encode())
+        h.update(np.ascontiguousarray(outs[k]).tobytes())
+    return h.hexdigest()[:16]
 
 
 def main() -> int:
@@ -336,6 +358,12 @@ def main() -> int:
     ap.add_argument("--only", default=None, help="comma-separated example names")
     ap.add_argument("--jobs", type=int, default=32, help="cards run at once")
     ap.add_argument("--die", default="4+2", choices=sorted(T.DIES))
+    ap.add_argument(
+        "--core",
+        default=T.CORE,
+        choices=sorted(T.CORES),
+        help="the vector cores compiled for",
+    )
     a = ap.parse_args()
     nodes = tuple(int(n) for n in a.nodes.split(","))
     out = pathlib.Path(a.out)
@@ -350,7 +378,7 @@ def main() -> int:
     # Every case on a card of its own, all at once: a case is one process.
     with ProcessPoolExecutor(max_workers=max(1, min(a.jobs, len(todo)))) as pool:
         futs = [
-            pool.submit(measure, a.build, nodes, nm, lv, str(out), a.die)
+            pool.submit(measure, a.build, nodes, nm, lv, str(out), a.die, a.core)
             for nm, lv in todo
         ]
         rows = []
