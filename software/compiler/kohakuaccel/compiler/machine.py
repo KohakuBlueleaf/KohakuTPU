@@ -90,6 +90,10 @@ class MachineSpec:
     default: int = 0
     #: Mesh index pairs a link joins, undirected. EMPTY MEANS FULLY CONNECTED.
     links: tuple[tuple[int, int], ...] = ()
+    #: Per unit type, the build parameters a compiler targets (a project's
+    #: names, e.g. ``{"VC": {"regs": 128}}``); a type absent here is built
+    #: with its defaults.
+    params: dict[str, dict] = field(default_factory=dict)
 
     def __post_init__(self):
         meshes = tuple(self.meshes) or (

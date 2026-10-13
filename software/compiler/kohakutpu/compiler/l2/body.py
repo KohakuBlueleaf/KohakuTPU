@@ -104,6 +104,10 @@ class Body:
     reader: object
     expander: object = None
     buffers: dict = field(default_factory=dict)
+    #: The vector cores' register count and read copies (the module's
+    #: `target ... vregs= vcopies=`).
+    vregs: int = 32
+    vcopies: int = 4
 
 
 def read(module, name: str) -> Body:
@@ -128,7 +132,9 @@ def read(module, name: str) -> Body:
             scratch[st.target] = Buffer.of(st.annot)
         except (TypeError, ValueError) as e:
             r.fail(st, str(e))
-    body = Body(name, params, scratch, [], r, ex)
+    body = Body(
+        name, params, scratch, [], r, ex, vregs=module.vregs, vcopies=module.vcopies
+    )
     body.buffers = {**dict(params), **scratch}
     body.stmts = [_node(r, st) for st in stmts]
     return body

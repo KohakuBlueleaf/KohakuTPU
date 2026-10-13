@@ -104,10 +104,26 @@ class VecIsa:
         )
         self.set = InstSet("kohakutpu-vec", [self.IMEM, self.DESC, self.RUN])
 
+    #: A wide core's (more than 32 registers) word bits past `word_bits`, in
+    #: the pad just above the word (`vec_cu.v` ld_hi = flit bits 39:32).
+    WORD_HI = 8
+
     def imem(self, addr: int, word: int) -> int:
         """One instruction-memory word."""
+        if word >> (self.cfg.word_bits + self.WORD_HI):
+            raise ISAError(
+                f"word {word:#x} is wider than {self.cfg.word_bits + self.WORD_HI} bits"
+            )
         lo = addr & ((1 << self.cfg.addr_bits) - 1)
-        return self.IMEM.encode(addr=lo, addr_hi=addr >> self.cfg.addr_bits, word=word)
+        low = word & ((1 << self.cfg.word_bits) - 1)
+        out = self.IMEM.encode(addr=lo, addr_hi=addr >> self.cfg.addr_bits, word=low)
+        return out | (word >> self.cfg.word_bits) << self.cfg.word_bits
+
+    def imem_word(self, payload: int) -> int:
+        """The whole instruction word an IMEM payload carries (:meth:`imem`)."""
+        low = payload & ((1 << self.cfg.word_bits) - 1)
+        hi = (payload >> self.cfg.word_bits) & ((1 << self.WORD_HI) - 1)
+        return low | hi << self.cfg.word_bits
 
     def imem_addr(self, fields: dict) -> int:
         """The word index a decoded IMEM names."""

@@ -67,6 +67,9 @@ W_FE, W_U, W_M, W_P, W_A, W_D = 0, 1, 2, 3, 4, 6
 #: K_PACK.
 K_FILL, K_UNPACK, K_MATH, K_PACK, K_DRAIN, K_UNPACK1, K_PACK1 = 0, 1, 2, 3, 4, 5, 6
 
+#: A core's vector registers when its build names none (v2_core 2**RW). Past
+#: 32, each register field's bits past 5 sit above the 32-bit word, {vd, va,
+#: vb, vc} from bit 32; every register-naming word takes the core's `regs`.
 REGS = 32
 CHUNKS = 8
 LANES = 16
@@ -96,13 +99,25 @@ _BY_CODE = {code: op for op, code in OPS.items()}
 
 
 # ----------------------------------------------------------------- words
-def math(op, vd, va=0, vb=0, vc=0, sa=SRC_V, sb=SRC_V, sc=SRC_V, om=False):
-    """One math word; `op` a mnemonic or its opcode. S/K operands name
-    S[reg & 15] / K[reg & 3]."""
+def math(op, vd, va=0, vb=0, vc=0, sa=SRC_V, sb=SRC_V, sc=SRC_V, om=False, regs=REGS):
+    """One math word for a core of `regs` registers; `op` a mnemonic or its
+    opcode. S/K operands name S[reg & 15] / K[reg & 3]."""
     name = op if isinstance(op, str) else _BY_CODE[op]
-    return W.MATHS[name].encode(
-        vd=vd, va=va, vb=vb, vc=vc, sa=sa, sb=sb, sc=sc, om=int(om)
+    word = W.MATHS[name].encode(
+        vd=vd & 31, va=va & 31, vb=vb & 31, vc=vc & 31, sa=sa, sb=sb, sc=sc, om=int(om)
     )
+    return word | _high(regs, vd, va, vb, vc)
+
+
+def _high(regs, vd, va=0, vb=0, vc=0) -> int:
+    """The register fields' bits past 5, above the 32-bit word."""
+    xr = max(0, (regs - 1).bit_length() - 5)
+    out = 0
+    for k, r in enumerate((vc, vb, va, vd)):
+        if r >> 5 >> xr:
+            raise ISAError(f"register {r} is not below {regs}")
+        out |= (r >> 5) << (32 + k * xr)
+    return out
 
 
 def vcfg(sel, payload):
@@ -162,29 +177,32 @@ def getstk(sreg):
     return W.GETSTK.encode(sreg=sreg)
 
 
-def _walk(fmt, reg, off, n, mode, cb, rel, q):
+def _walk(fmt, reg, off, n, mode, cb, rel, q, regs):
     if mode == GT4 and n % 4:
         raise ISAError(f"GT4 walks whole groups of 4 chunks, not {n}")
-    return fmt.encode(reg=reg, off=off, n1=n - 1, mode=mode, cb=cb, rel=int(rel), q=q)
+    word = fmt.encode(
+        reg=reg & 31, off=off, n1=n - 1, mode=mode, cb=cb, rel=int(rel), q=q
+    )
+    return word | _high(regs, reg)
 
 
-def vunpk(vd, off, n=CHUNKS, mode=F16, cb=0, rel=False, q=0):
+def vunpk(vd, off, n=CHUNKS, mode=F16, cb=0, rel=False, q=0, regs=REGS):
     """vd chunks cb.. = L1 words off + i*USTR (UPTR + off when `rel`), through
     unpack queue `q`."""
-    return _walk(W.UNPK, vd, off, n, mode, cb, rel, q)
+    return _walk(W.UNPK, vd, off, n, mode, cb, rel, q, regs)
 
 
-def vpack(vs, off, n=CHUNKS, mode=F16, cb=0, rel=False, q=0):
+def vpack(vs, off, n=CHUNKS, mode=F16, cb=0, rel=False, q=0, regs=REGS):
     """L1 words off + i*PSTR (PPTR + off when `rel`) = vs chunks cb.., through
     pack queue `q`."""
-    return _walk(W.PACK, vs, off, n, mode, cb, rel, q)
+    return _walk(W.PACK, vs, off, n, mode, cb, rel, q, regs)
 
 
-def vpack_mx7(vs, off, b_layout=False, rel=False, q=0):
+def vpack_mx7(vs, off, b_layout=False, rel=False, q=0, regs=REGS):
     """One MXFP7 L1 entry from all of vs: words off + w*s0 (w = 0..3) = the
     quantiser's entry for lane r = chunks 2r, 2r+1 (k = (chunk & 1)*16 + vector
     lane), A packing, or B packing with `b_layout`."""
-    return _walk(W.PACK, vs, off, CHUNKS, MX7, 1 if b_layout else 0, rel, q)
+    return _walk(W.PACK, vs, off, CHUNKS, MX7, 1 if b_layout else 0, rel, q, regs)
 
 
 def vsync(waiter, on=0, slack=0, mark=None, q=0):

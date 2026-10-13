@@ -1,6 +1,6 @@
 """A `.ktpu` module: one text of fns, images and macros.
 
-    target ktpu.v9
+    target ktpu.v9 vregs=128            # vregs: the vector core's registers (32)
     fn silu.l2(x: f16[65536] @dram)     # a body; LEVELS names the levels read
     fn silu.l1(x: f16[65536] @dram)
     image silu_stream(passes)           # a vector core image the body runs
@@ -16,6 +16,10 @@ from kohakutpu.language.text.reader import Reader
 from kohakutpu.language.text.syntax import Arrow, Call, Name, Typed, parse
 
 LEVELS = ("l2", "l1")
+#: Vector register counts a V2 core is built with (`v2_core.v` 2**RW), and
+#: its register file's read copies a bank (RF_COPIES).
+VREGS = (32, 64, 128)
+VCOPIES = (2, 3, 4)
 
 
 @dataclass
@@ -47,9 +51,19 @@ class Module:
     source: str = ""
     file: str = "<ktpu>"
     target: str | None = None
+    #: The vector core the images are written for: its register count and its
+    #: register file's read copies a bank.
+    vregs: int = 32
+    vcopies: int = 4
     fns: dict = field(default_factory=dict)
     images: dict = field(default_factory=dict)
     macros: dict = field(default_factory=dict)
+
+    def target_line(self) -> str:
+        """The `target` statement that reads back to this module's target."""
+        extra = f" vregs={self.vregs}" if self.vregs != 32 else ""
+        extra += f" vcopies={self.vcopies}" if self.vcopies != 4 else ""
+        return f"target {self.target}{extra}"
 
     def body(self, name: str, level: str) -> Body:
         got = self.fns.get((name, level))
@@ -80,13 +94,21 @@ def read(text: str, file: str = "<ktpu>") -> Module:
         pos = st.positional()
         match st.op:
             case "target":
+                kw = st.kwargs()
                 if (
                     m.target is not None
                     or len(pos) != 1
                     or not isinstance(pos[0], Name)
+                    or set(kw) - {"vregs", "vcopies"}
                 ):
-                    r.fail(st, "wanted one `target NAME`")
+                    r.fail(st, "wanted one `target NAME [vregs=N] [vcopies=N]`")
                 m.target = pos[0].text
+                for key, legal in (("vregs", VREGS), ("vcopies", VCOPIES)):
+                    if key in kw:
+                        n = getattr(kw[key], "value", None)
+                        if n not in legal:
+                            r.fail(st, f"{key} is one of {legal}")
+                        setattr(m, key, n)
             case "fn":
                 body = _fn(r, st, pos)
                 key = (body.name, body.level)

@@ -94,12 +94,15 @@ class Encoder:
     XB / USTR / PSTR words the encoder chose, for reports. `units`, when
     given, resolves a unit name (`mg[1]`, `mesh1.vc[0]`) to ``(mesh, (x, y))``
     on the target, with ``units.home`` this image's mesh; without it only
-    coordinates are accepted."""
+    coordinates are accepted. `regs` is the core's vector register count."""
 
-    def __init__(self, fail, entry: State = UNKNOWN, units=None) -> None:
+    def __init__(
+        self, fail, entry: State = UNKNOWN, units=None, regs: int = A.REGS
+    ) -> None:
         self.fail = fail
         self.entry = entry
         self.units = units
+        self.regs = regs
         self.config = 0
 
     def encode(self, stmts: list) -> list:
@@ -361,7 +364,9 @@ class Encoder:
         words += pre
         (va, sa), (vb, sb), (vc, sc) = reg["a"], reg["b"], reg["c"]
         try:
-            words.append(A.math(code, dreg, va, vb, vc, sa, sb, sc, om=om))
+            words.append(
+                A.math(code, dreg, va, vb, vc, sa, sb, sc, om=om, regs=self.regs)
+            )
         except ISAError as e:
             self.fail(st, str(e))
         return words, state
@@ -388,7 +393,7 @@ class Encoder:
 
     def _dest(self, st, t, compare: bool):
         prefix = "p" if compare else "v"
-        limit = 4 if compare else A.REGS
+        limit = 4 if compare else self.regs
         if isinstance(t, View):
             return self._numbered(st, Name(t.name), prefix, limit), self._nib(st, t)
         return self._numbered(st, t, prefix, limit), None
@@ -420,7 +425,7 @@ class Encoder:
             return replace(src, nib=self._nib(st, t))
         if isinstance(t, Name) and len(t.text) > 1 and t.text[1:].isdigit():
             kind, n = t.text[0], int(t.text[1:])
-            limit = {"v": A.REGS, "s": 16, "k": 4}.get(kind)
+            limit = {"v": self.regs, "s": 16, "k": 4}.get(kind)
             if limit is not None:
                 if n >= limit:
                     self.fail(st, f"{t.text}: {kind}0..{kind}{limit - 1}")
@@ -470,7 +475,7 @@ class Encoder:
                         st,
                         "an MX7 pack takes a whole register: vpack vN -> l1[OFF] mx7a",
                     )
-                word = A.vpack_mx7(reg, off, mode == "mx7b", rel, q)
+                word = A.vpack_mx7(reg, off, mode == "mx7b", rel, q, regs=self.regs)
             else:
                 if mode not in MODES:
                     self.fail(
@@ -481,7 +486,7 @@ class Encoder:
                 cb = nib[0] if nib else 0
                 n = self._int(st, kw.get("n", Int(A.CHUNKS - cb)))
                 fn = A.vunpk if unpack else A.vpack
-                word = fn(reg, off, n, MODES[mode], cb, rel, q)
+                word = fn(reg, off, n, MODES[mode], cb, rel, q, regs=self.regs)
         except ISAError as e:
             self.fail(st, str(e))
         return pre + [word], state
@@ -888,7 +893,7 @@ class Images:
                         st,
                         "an image's descriptors lead it: they are set before its RUN",
                     )
-            enc = Encoder(self.r.fail, self.entry, self.units)
+            enc = Encoder(self.r.fail, self.entry, self.units, regs=self.module.vregs)
             self.encoded[key] = (enc.encode(stmts), lead)
         words, lead = self.encoded[key]
         return words, {**descs, **lead}

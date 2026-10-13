@@ -223,7 +223,7 @@ def lower(module, name: str, machine=None) -> str:
     # Scratch buffers become parameters: the caller places them (zeroed).
     scratch = [(s.target, s.annot) for s in src.stmts if s.op == "buffer"]
     params = ", ".join(f"{p}: {fmt(t)}" for p, t in [*src.params, *scratch])
-    head = [f"target {module.target}"] if module.target else []
+    head = [module.target_line()] if module.target else []
     text = "\n".join(
         [*head, "", *images, f"fn {name}.l1({params})", *(IND + ln for ln in out)]
     )

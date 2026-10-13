@@ -29,7 +29,6 @@ from kohakutpu.compiler.l2 import sync
 from kohakutpu.compiler.l2.body import For, If, Op, Par, When, const, span, value
 from kohakutpu.language.text.syntax import Float, Int, Name, NewAxis, TextError, View
 
-REGS = 32
 L1_WORDS = 512
 DESCS = 8
 ROW = 128
@@ -274,7 +273,7 @@ def _best(body, par, env, name, fail, plan, land) -> tuple:
                 if best is None or got[2] < best[2]:
                     best = got
     if best is None:
-        fail(par.st, "the stream loop needs more than 32 vector registers")
+        fail(par.st, f"the stream loop needs more than {body.vregs} vector registers")
     return best
 
 
@@ -503,7 +502,7 @@ def _lower(
     g.raw("halt")
     cost = estimate(g.code)
     whole = estimate(_expand(g.code, len(ctx.trips) // 2))
-    lines = _assign(g, ctx.pinned, fail, par.st)
+    lines = _assign(g, ctx.pinned, fail, par.st, body.vregs)
     # One parameter a memory descriptor, its base the run's argument: the
     # instances of one shape share the image (one encoding, one IMEM load).
     mem = [d for d in ctx.descs if not d.to]
@@ -1673,18 +1672,18 @@ def _number(a):
     return None
 
 
-def _assign(g: Gen, pinned: set, fail, st) -> list:
-    """Physical registers over the emitted order: a symbol holds its register
-    from its first to its last appearance; a symbol first appearing as an
-    instruction's result (template position 0) takes the register of one whose
-    last appearance is that instruction."""
+def _assign(g: Gen, pinned: set, fail, st, regs: int) -> list:
+    """Physical registers v0..v{regs-1} over the emitted order: a symbol holds
+    its register from its first to its last appearance; a symbol first
+    appearing as an instruction's result (template position 0) takes the
+    register of one whose last appearance is that instruction."""
     last: dict = {}
     for i, c in enumerate(g.code):
         if isinstance(c, tuple):
             for s in c[1]:
                 last[s] = i
     reg: dict = {}
-    free = list(range(REGS))
+    free = list(range(regs))
     out = []
     for i, c in enumerate(g.code):
         if isinstance(c, str):

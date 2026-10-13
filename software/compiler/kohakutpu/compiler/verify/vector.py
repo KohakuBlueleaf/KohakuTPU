@@ -44,9 +44,23 @@ OWN_KIND = {"VUNPK": "U", "VPACK": "P", "VFILL": "F", "VDRAIN": "D"}
 
 
 @functools.lru_cache(maxsize=1 << 16)
-def _decode(word: int) -> tuple:
-    fmt = C.CORE.find(word)
-    return (None, None) if fmt is None else (fmt, fmt.decode(word))
+def _decode(word: int, xr: int = 0) -> tuple:
+    """A core word: 32 bits, and on a core of more than 32 registers each
+    register field's `xr` bits past 5 above them, {vd, va, vb, vc} from bit 32
+    (an unpack's or pack's `reg` sits where vd does)."""
+    low = word & 0xFFFFFFFF
+    fmt = C.CORE.find(low)
+    if fmt is None:
+        return (None, None)
+    f = dict(fmt.decode(low))
+    hi, mask = word >> 32, (1 << xr) - 1
+    for k, name in enumerate(("vc", "vb", "va", "vd")):
+        part = (hi >> (k * xr)) & mask if xr else 0
+        if name in f:
+            f[name] |= part << 5
+        if name == "vd" and "reg" in f:
+            f["reg"] |= part << 5
+    return fmt, f
 
 
 class Vector:
@@ -55,6 +69,9 @@ class Vector:
     def __init__(self, card, key: tuple, name: str) -> None:
         self.card, self.key, self.name = card, key, name
         m = card.m
+        regs = card.machine.params.get("VC", {}).get("regs", A.REGS)
+        #: register-field bits past 5 the core's words carry
+        self.xr = max(0, (regs - 1).bit_length() - 5)
         self.words: list = []
         self.rx = m.counter(f"rx:{name}")
         self.cr = m.counter(f"cr:{name}")
@@ -174,7 +191,7 @@ class _Cu(Proc):
         else:
             f = fmt.decode(word)
             if fmt.name == "IMEM":
-                u.imem[VEC.imem_addr(f)] = f["word"]
+                u.imem[VEC.imem_addr(f)] = VEC.imem_word(word)
             elif fmt.name == "DESC":
                 hi = f["value_hi"] << VEC.cfg.desc_value_bits
                 u.desc[(f["ad"], f["fld"])] = f["value"] | hi
@@ -269,7 +286,7 @@ class _Front(Proc):
             return False
         u = self.u
         word = self.fetch(self.pc)
-        fmt, f = _decode(word)
+        fmt, f = _decode(word, u.xr)
         if fmt is None:
             u.card.m.find("model", self.name, f"pc {self.pc}: no core instruction")
             self.halted = True
@@ -470,7 +487,7 @@ class _Front(Proc):
     def _check_block(self, pc: int, n: int) -> None:
         """Lemma 4: no VWAIT, VPOST or peer VDRAIN under a data-dependent skip."""
         for k in range(n):
-            fmt, f = _decode(self.fetch(pc + k))
+            fmt, f = _decode(self.fetch(pc + k), self.u.xr)
             if fmt is None or fmt.name not in ("VWAIT", "VPOST", "VDRAIN"):
                 continue
             if fmt.name == "VDRAIN" and not (f["dst_x"] or f["dst_y"] or f["node"]):

@@ -69,7 +69,7 @@ def _body(module, name):
 
 def _write(module, name, src, stmts) -> object:
     params = ", ".join(f"{p}: {fmt(t)}" for p, t in src.params)
-    head = f"target {module.target}\n\n" if module.target else ""
+    head = f"{module.target_line()}\n\n" if module.target else ""
     body = emit(stmts, 1)
     text = f"{head}fn {name}.l2({params})\n{body}"
     return M.read(text, module.file)
