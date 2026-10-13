@@ -280,23 +280,28 @@ CASES = [
 ]
 
 
-def compiled(name: str, nodes: int, tmp: pathlib.Path) -> str:
+def compiled(name: str, nodes: int, tmp: pathlib.Path, die: str = "4+2") -> str:
     """The L2 example through the whole pipeline (passes, lowering, image
     scheduling), as an L1 file."""
     m = examples.load(examples.example(name, "l2"))
-    l1 = pipeline.compile_l1(m, name, T.machine(nodes=nodes))
+    l1 = pipeline.compile_l1(m, name, T.machine(nodes=nodes, die=die))
     p = tmp / f"{name}.ktpu"
     p.write_text(l1.source, encoding="utf-8")
     return str(p)
 
 
-def measure(build: str, nodes: tuple, name: str, level: str, out: str) -> dict:
-    """One case at one level on a card of its own: its report row."""
+def measure(
+    build: str, nodes: tuple, name: str, level: str, out: str, die: str = "4+2"
+) -> dict:
+    """One case at one level on a card of its own: its report row. MFU and
+    lane use count every cluster and core the `die` has."""
     _, _, n, (make, check, work) = next(c for c in CASES if c[0] == name)
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="ktpu_measure_"))
-    path = name if level == "l1" else compiled(name, n, tmp)
+    path = name if level == "l1" else compiled(name, n, tmp, die)
     log = pathlib.Path(out) / f"{name}.{level}.model.log"
-    card = VerilatorCard(build, nodes=nodes, log=log, timeout=3600.0)
+    machine = T.machine(nodes=len(nodes) if len(nodes) > 1 else None, die=die)
+    mg, vc = (len(u) for u in T.DIES[die])
+    card = VerilatorCard(build, nodes=nodes, machine=machine, log=log, timeout=3600.0)
     ins, ref = make(np.random.default_rng(7))
     t0 = time.monotonic()
     res = run(card, path, ins)
@@ -305,8 +310,8 @@ def measure(build: str, nodes: tuple, name: str, level: str, out: str) -> dict:
     cycles = res["cycles"]
     kind, amount = work
     eff = {
-        "mac": amount / (1024 * 4 * len(nodes) * cycles) if amount else None,
-        "lane": beats / (16 * 2 * len(nodes) * cycles),
+        "mac": amount / (1024 * mg * len(nodes) * cycles) if amount else None,
+        "lane": beats / (16 * vc * len(nodes) * cycles),
         "bytes": (amount or 0) / cycles,
     }[kind]
     return {
@@ -330,6 +335,7 @@ def main() -> int:
     ap.add_argument("--out", required=True)
     ap.add_argument("--only", default=None, help="comma-separated example names")
     ap.add_argument("--jobs", type=int, default=32, help="cards run at once")
+    ap.add_argument("--die", default="4+2", choices=sorted(T.DIES))
     a = ap.parse_args()
     nodes = tuple(int(n) for n in a.nodes.split(","))
     out = pathlib.Path(a.out)
@@ -344,7 +350,8 @@ def main() -> int:
     # Every case on a card of its own, all at once: a case is one process.
     with ProcessPoolExecutor(max_workers=max(1, min(a.jobs, len(todo)))) as pool:
         futs = [
-            pool.submit(measure, a.build, nodes, nm, lv, str(out)) for nm, lv in todo
+            pool.submit(measure, a.build, nodes, nm, lv, str(out), a.die)
+            for nm, lv in todo
         ]
         rows = []
         for f in futs:
