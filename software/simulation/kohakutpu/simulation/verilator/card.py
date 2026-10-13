@@ -63,6 +63,7 @@ class VerilatorCard:
         log=None,
         nodes=(0,),
         timeout: float = 300.0,
+        args=(),
     ) -> None:
         self.build = pathlib.Path(build)
         self.nodes = tuple(nodes)
@@ -78,7 +79,8 @@ class VerilatorCard:
         self.fetch = tuple(b["fetch_port"]) if "fetch_port" in b else None
         # A log of its own: cards run in parallel on one build.
         log = log or pathlib.Path(tempfile.mkdtemp(prefix="ktpu_card_")) / "model.log"
-        self.t = VerilatorTransport(self.build, log=log)
+        # `args`: harness flags (sim/verilator/docs/card-backend.md).
+        self.t = VerilatorTransport(self.build, log=log, args=tuple(args))
         self.host = SimDram(self.t, b, mp["mem"], mp["size"])
         dram = min(len(self.host.dram) * self.host.words * 64, QUEUE_ALIAS)
         self.arena_end = dram - (0x0100_0000 - ARENA_END)

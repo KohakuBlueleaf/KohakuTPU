@@ -301,6 +301,7 @@ def measure(
     out: str,
     die: str = "4+2",
     core: str = T.CORE,
+    args: tuple = (),
 ) -> dict:
     """One case at one level on a card of its own: its report row. MFU and
     lane use count every cluster and core the `die` has; `out_hash` names the
@@ -313,7 +314,9 @@ def measure(
         nodes=len(nodes) if len(nodes) > 1 else None, die=die, core=core
     )
     mg, vc = (len(u) for u in T.DIES[die])
-    card = VerilatorCard(build, nodes=nodes, machine=machine, log=log, timeout=3600.0)
+    card = VerilatorCard(
+        build, nodes=nodes, machine=machine, log=log, timeout=3600.0, args=args
+    )
     ins, ref = make(np.random.default_rng(7))
     t0 = time.monotonic()
     res = run(card, path, ins)
@@ -364,7 +367,11 @@ def main() -> int:
         choices=sorted(T.CORES),
         help="the vector cores compiled for",
     )
+    ap.add_argument(
+        "--harness", default="", help="the model's harness flags, space-separated"
+    )
     a = ap.parse_args()
+    harness = tuple(a.harness.split())
     nodes = tuple(int(n) for n in a.nodes.split(","))
     out = pathlib.Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -378,7 +385,9 @@ def main() -> int:
     # Every case on a card of its own, all at once: a case is one process.
     with ProcessPoolExecutor(max_workers=max(1, min(a.jobs, len(todo)))) as pool:
         futs = [
-            pool.submit(measure, a.build, nodes, nm, lv, str(out), a.die, a.core)
+            pool.submit(
+                measure, a.build, nodes, nm, lv, str(out), a.die, a.core, harness
+            )
             for nm, lv in todo
         ]
         rows = []
