@@ -10,7 +10,8 @@
 
 set part        xcvu13p-fhgb2104-2L-e
 set design_name multimesh_v8t3
-set root        C:/Users/apoll/Desktop/code/Project/KohakuTPU
+# The tree this file sits in (a worktree builds its own sources).
+set root        [file normalize [file join [file dirname [info script]] .. .. ..]]
 # Board pin XDCs (ddr4_c*.xdc, pcie.xdc) live with the board project.
 set BOARD_DIR   C:/Users/apoll/Desktop/vivado/JTAG-DMA-test
 set proj_dir    C:/Users/apoll/Desktop/vivado/multimesh_v8t3
