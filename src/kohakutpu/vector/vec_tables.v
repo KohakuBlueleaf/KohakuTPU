@@ -27,7 +27,9 @@
 
 `default_nettype none
 
-module vec_tables (
+module vec_tables #(
+    parameter ROM_PRIM = "block"   // "block" one RAMB36 a ROM, "distributed" LUTs
+) (
     input  wire               clk,
     input  wire [1:0]         fsel,   // 0 exp2, 1 log2, 2 inv, 3 rsqrt
     input  wire [5:0]         idx,    // idx[5] is the octave parity, rsqrt only
@@ -42,182 +44,361 @@ module vec_tables (
 );
     // ONE 66-bit word {c2, c1, c0}: three 22-bit ROMs were three
     // RAMB18 per ALU (routed v7); one word is one RAMB36-class ROM.
-    (* rom_style = "block" *) reg [65:0] w;
+    wire [65:0] w;
     assign c0 = w[21:0];
     assign c1 = w[43:22];
     assign c2 = w[65:44];
-    // One flat case over {fsel, idx}, constant-indexed throughout.
-    // NON-BLOCKING: u_d_c1 in vec_alu registers c1 on the same edge, so
-    // blocking assignments here are a scheduler race, not a style point.
-    always @(posedge clk) begin
-        case ({fsel, idx})
-            // ---- exp2 ----
-            8'd0  : begin w <= {22'h00f8ac, 22'h058b81, 22'h000000}; end
-            8'd1  : begin w <= {22'h00fe1e, 22'h05aa96, 22'h0059b1}; end
-            8'd2  : begin w <= {22'h0103af, 22'h05ca59, 22'h00b558}; end
-            8'd3  : begin w <= {22'h01095e, 22'h05eacf, 22'h011302}; end
-            8'd4  : begin w <= {22'h010f2e, 22'h060bfa, 22'h0172b8}; end
-            8'd5  : begin w <= {22'h01151e, 22'h062de0, 22'h01d487}; end
-            8'd6  : begin w <= {22'h011b2f, 22'h065083, 22'h02387a}; end
-            8'd7  : begin w <= {22'h012163, 22'h0673e9, 22'h029e9e}; end
-            8'd8  : begin w <= {22'h0127b9, 22'h069815, 22'h0306fe}; end
-            8'd9  : begin w <= {22'h012e33, 22'h06bd0c, 22'h0371a7}; end
-            8'd10 : begin w <= {22'h0134d1, 22'h06e2d2, 22'h03dea6}; end
-            8'd11 : begin w <= {22'h013b94, 22'h07096c, 22'h044e08}; end
-            8'd12 : begin w <= {22'h01427d, 22'h0730de, 22'h04bfdb}; end
-            8'd13 : begin w <= {22'h01498d, 22'h07592d, 22'h05342b}; end
-            8'd14 : begin w <= {22'h0150c4, 22'h07825e, 22'h05ab08}; end
-            8'd15 : begin w <= {22'h015824, 22'h07ac77, 22'h06247f}; end
-            8'd16 : begin w <= {22'h015fad, 22'h07d77b, 22'h06a09e}; end
-            8'd17 : begin w <= {22'h016760, 22'h080370, 22'h071f76}; end
-            8'd18 : begin w <= {22'h016f3f, 22'h08305c, 22'h07a115}; end
-            8'd19 : begin w <= {22'h01774a, 22'h085e43, 22'h08258a}; end
-            8'd20 : begin w <= {22'h017f81, 22'h088d2c, 22'h08ace5}; end
-            8'd21 : begin w <= {22'h0187e7, 22'h08bd1c, 22'h093738}; end
-            8'd22 : begin w <= {22'h01907c, 22'h08ee18, 22'h09c492}; end
-            8'd23 : begin w <= {22'h019941, 22'h092027, 22'h0a5504}; end
-            8'd24 : begin w <= {22'h01a237, 22'h09534f, 22'h0ae8a0}; end
-            8'd25 : begin w <= {22'h01ab60, 22'h098796, 22'h0b7f77}; end
-            8'd26 : begin w <= {22'h01b4bb, 22'h09bd01, 22'h0c199c}; end
-            8'd27 : begin w <= {22'h01be4b, 22'h09f398, 22'h0cb721}; end
-            8'd28 : begin w <= {22'h01c811, 22'h0a2b61, 22'h0d5819}; end
-            8'd29 : begin w <= {22'h01d20e, 22'h0a6463, 22'h0dfc97}; end
-            8'd30 : begin w <= {22'h01dc42, 22'h0a9ea4, 22'h0ea4b0}; end
-            8'd31 : begin w <= {22'h01e6b0, 22'h0ada2c, 22'h0f5076}; end
-            // ---- log2 ----
-            8'd64 : begin w <= {22'h3d33d4, 22'h0b8a1e, 22'h000000}; end
-            8'd65 : begin w <= {22'h3d5df4, 22'h0b30a1, 22'h00b5d7}; end
-            8'd66 : begin w <= {22'h3d8477, 22'h0adc66, 22'h016640}; end
-            8'd67 : begin w <= {22'h3da7c4, 22'h0a8cfc, 22'h02118b}; end
-            8'd68 : begin w <= {22'h3dc835, 22'h0a41fa, 22'h02b804}; end
-            8'd69 : begin w <= {22'h3de617, 22'h09fb06, 22'h0359ec}; end
-            8'd70 : begin w <= {22'h3e01ac, 22'h09b7ce, 22'h03f783}; end
-            8'd71 : begin w <= {22'h3e1b2f, 22'h097807, 22'h049102}; end
-            8'd72 : begin w <= {22'h3e32d5, 22'h093b71, 22'h05269e}; end
-            8'd73 : begin w <= {22'h3e48ca, 22'h0901cf, 22'h05b889}; end
-            8'd74 : begin w <= {22'h3e5d38, 22'h08caec, 22'h0646ef}; end
-            8'd75 : begin w <= {22'h3e7040, 22'h089695, 22'h06d1fb}; end
-            8'd76 : begin w <= {22'h3e8204, 22'h0864a0, 22'h0759d5}; end
-            8'd77 : begin w <= {22'h3e929f, 22'h0834e3, 22'h07dea2}; end
-            8'd78 : begin w <= {22'h3ea22b, 22'h080739, 22'h086083}; end
-            8'd79 : begin w <= {22'h3eb0bf, 22'h07db81, 22'h08df99}; end
-            8'd80 : begin w <= {22'h3ebe6e, 22'h07b19a, 22'h095c02}; end
-            8'd81 : begin w <= {22'h3ecb4a, 22'h07896a, 22'h09d5da}; end
-            8'd82 : begin w <= {22'h3ed765, 22'h0762d5, 22'h0a4d3c}; end
-            8'd83 : begin w <= {22'h3ee2ce, 22'h073dc3, 22'h0ac241}; end
-            8'd84 : begin w <= {22'h3eed90, 22'h071a1e, 22'h0b3500}; end
-            8'd85 : begin w <= {22'h3ef7ba, 22'h06f7d1, 22'h0ba590}; end
-            8'd86 : begin w <= {22'h3f0156, 22'h06d6c9, 22'h0c1405}; end
-            8'd87 : begin w <= {22'h3f0a6f, 22'h06b6f5, 22'h0c8073}; end
-            8'd88 : begin w <= {22'h3f130c, 22'h069844, 22'h0ceaed}; end
-            8'd89 : begin w <= {22'h3f1b38, 22'h067aa7, 22'h0d5385}; end
-            8'd90 : begin w <= {22'h3f22f9, 22'h065e0f, 22'h0dba4a}; end
-            8'd91 : begin w <= {22'h3f2a57, 22'h06426e, 22'h0e1f4e}; end
-            8'd92 : begin w <= {22'h3f3158, 22'h0627ba, 22'h0e82a0}; end
-            8'd93 : begin w <= {22'h3f3803, 22'h060de6, 22'h0ee44d}; end
-            8'd94 : begin w <= {22'h3f3e5c, 22'h05f4e7, 22'h0f4463}; end
-            8'd95 : begin w <= {22'h3f4469, 22'h05dcb3, 22'h0fa2f0}; end
-            // ---- inv ----
-            8'd128: begin w <= {22'h03d1a3, 22'h380113, 22'h0fffff}; end
-            8'd129: begin w <= {22'h037caa, 22'h387b31, 22'h0f83e0}; end
-            8'd130: begin w <= {22'h033143, 22'h38eab3, 22'h0f0f0e}; end
-            8'd131: begin w <= {22'h02ee1e, 22'h3950cb, 22'h0ea0e9}; end
-            8'd132: begin w <= {22'h02b222, 22'h39ae81, 22'h0e38e3}; end
-            8'd133: begin w <= {22'h027c60, 22'h3a04b8, 22'h0dd67c}; end
-            8'd134: begin w <= {22'h024c10, 22'h3a5439, 22'h0d7943}; end
-            8'd135: begin w <= {22'h022084, 22'h3a9db2, 22'h0d20d2}; end
-            8'd136: begin w <= {22'h01f92b, 22'h3ae1ba, 22'h0ccccc}; end
-            8'd137: begin w <= {22'h01d585, 22'h3b20d7, 22'h0c7ce0}; end
-            8'd138: begin w <= {22'h01b526, 22'h3b5b81, 22'h0c30c3}; end
-            8'd139: begin w <= {22'h0197af, 22'h3b9220, 22'h0be82f}; end
-            8'd140: begin w <= {22'h017cd0, 22'h3bc511, 22'h0ba2e8}; end
-            8'd141: begin w <= {22'h016440, 22'h3bf4a6, 22'h0b60b6}; end
-            8'd142: begin w <= {22'h014dc1, 22'h3c212a, 22'h0b2164}; end
-            8'd143: begin w <= {22'h01391e, 22'h3c4ade, 22'h0ae4c4}; end
-            8'd144: begin w <= {22'h012625, 22'h3c71fe, 22'h0aaaaa}; end
-            8'd145: begin w <= {22'h0114ac, 22'h3c96c0, 22'h0a72f0}; end
-            8'd146: begin w <= {22'h01048f, 22'h3cb953, 22'h0a3d70}; end
-            8'd147: begin w <= {22'h00f5ad, 22'h3cd9e2, 22'h0a0a0a}; end
-            8'd148: begin w <= {22'h00e7e7, 22'h3cf895, 22'h09d89d}; end
-            8'd149: begin w <= {22'h00db23, 22'h3d1590, 22'h09a90e}; end
-            8'd150: begin w <= {22'h00cf4b, 22'h3d30f2, 22'h097b42}; end
-            8'd151: begin w <= {22'h00c44a, 22'h3d4ada, 22'h094f20}; end
-            8'd152: begin w <= {22'h00ba0d, 22'h3d6362, 22'h092492}; end
-            8'd153: begin w <= {22'h00b083, 22'h3d7aa2, 22'h08fb82}; end
-            8'd154: begin w <= {22'h00a79d, 22'h3d90b1, 22'h08d3dd}; end
-            8'd155: begin w <= {22'h009f4d, 22'h3da5a3, 22'h08ad8f}; end
-            8'd156: begin w <= {22'h009788, 22'h3db98c, 22'h088888}; end
-            8'd157: begin w <= {22'h009043, 22'h3dcc7c, 22'h0864b9}; end
-            8'd158: begin w <= {22'h008972, 22'h3dde83, 22'h084210}; end
-            8'd159: begin w <= {22'h00830e, 22'h3defb1, 22'h082082}; end
-            // ---- rsqrt ----
-            8'd192: begin w <= {22'h017173, 22'h3c0057, 22'h100000}; end
-            8'd193: begin w <= {22'h01567d, 22'h3c2e7f, 22'h0fc176}; end
-            8'd194: begin w <= {22'h013e35, 22'h3c5949, 22'h0f85b4}; end
-            8'd195: begin w <= {22'h012844, 22'h3c810b, 22'h0f4c86}; end
-            8'd196: begin w <= {22'h011463, 22'h3ca60f, 22'h0f15bf}; end
-            8'd197: begin w <= {22'h010254, 22'h3cc898, 22'h0ee134}; end
-            8'd198: begin w <= {22'h00f1e0, 22'h3ce8df, 22'h0eaebf}; end
-            8'd199: begin w <= {22'h00e2db, 22'h3d0718, 22'h0e7e3f}; end
-            8'd200: begin w <= {22'h00d51c, 22'h3d2371, 22'h0e4f93}; end
-            8'd201: begin w <= {22'h00c881, 22'h3d3e12, 22'h0e229f}; end
-            8'd202: begin w <= {22'h00bcea, 22'h3d5720, 22'h0df748}; end
-            8'd203: begin w <= {22'h00b23e, 22'h3d6ebc, 22'h0dcd77}; end
-            8'd204: begin w <= {22'h00a866, 22'h3d8502, 22'h0da515}; end
-            8'd205: begin w <= {22'h009f4c, 22'h3d9a0d, 22'h0d7e0d}; end
-            8'd206: begin w <= {22'h0096df, 22'h3dadf5, 22'h0d584d}; end
-            8'd207: begin w <= {22'h008f0e, 22'h3dc0d0, 22'h0d33c3}; end
-            8'd208: begin w <= {22'h0087cb, 22'h3dd2b0, 22'h0d105f}; end
-            8'd209: begin w <= {22'h00810a, 22'h3de3a8, 22'h0cee11}; end
-            8'd210: begin w <= {22'h007abf, 22'h3df3c9, 22'h0ccccd}; end
-            8'd211: begin w <= {22'h0074df, 22'h3e0320, 22'h0cac84}; end
-            8'd212: begin w <= {22'h006f63, 22'h3e11bb, 22'h0c8d2b}; end
-            8'd213: begin w <= {22'h006a41, 22'h3e1fa6, 22'h0c6eb6}; end
-            8'd214: begin w <= {22'h006572, 22'h3e2cee, 22'h0c511a}; end
-            8'd215: begin w <= {22'h0060f0, 22'h3e399b, 22'h0c344e}; end
-            8'd216: begin w <= {22'h005cb5, 22'h3e45b9, 22'h0c1849}; end
-            8'd217: begin w <= {22'h0058ba, 22'h3e514f, 22'h0bfd01}; end
-            8'd218: begin w <= {22'h0054fc, 22'h3e5c66, 22'h0be26f}; end
-            8'd219: begin w <= {22'h005175, 22'h3e6705, 22'h0bc88a}; end
-            8'd220: begin w <= {22'h004e22, 22'h3e7133, 22'h0baf4c}; end
-            8'd221: begin w <= {22'h004aff, 22'h3e7af7, 22'h0b96ad}; end
-            8'd222: begin w <= {22'h004808, 22'h3e8456, 22'h0b7ea7}; end
-            8'd223: begin w <= {22'h00453b, 22'h3e8d57, 22'h0b6735}; end
-            8'd224: begin w <= {22'h01053d, 22'h3d2c29, 22'h0b504f}; end
-            8'd225: begin w <= {22'h00f22d, 22'h3d4ccd, 22'h0b2416}; end
-            8'd226: begin w <= {22'h00e101, 22'h3d6b0f, 22'h0af9d5}; end
-            8'd227: begin w <= {22'h00d17e, 22'h3d872b, 22'h0ad167}; end
-            8'd228: begin w <= {22'h00c370, 22'h3da158, 22'h0aaaab}; end
-            8'd229: begin w <= {22'h00b6aa, 22'h3db9c3, 22'h0a8583}; end
-            8'd230: begin w <= {22'h00ab08, 22'h3dd096, 22'h0a61d6}; end
-            8'd231: begin w <= {22'h00a069, 22'h3de5f5, 22'h0a3f8a}; end
-            8'd232: begin w <= {22'h0096b1, 22'h3dfa01, 22'h0a1e8a}; end
-            8'd233: begin w <= {22'h008dc7, 22'h3e0cd5, 22'h09fec0}; end
-            8'd234: begin w <= {22'h008595, 22'h3e1e8d, 22'h09e01b}; end
-            8'd235: begin w <= {22'h007e0a, 22'h3e2f3e, 22'h09c289}; end
-            8'd236: begin w <= {22'h007713, 22'h3e3efe, 22'h09a5fb}; end
-            8'd237: begin w <= {22'h0070a4, 22'h3e4ddf, 22'h098a62}; end
-            8'd238: begin w <= {22'h006aae, 22'h3e5bf3, 22'h096fb0}; end
-            8'd239: begin w <= {22'h006527, 22'h3e6948, 22'h0955da}; end
-            8'd240: begin w <= {22'h006005, 22'h3e75ec, 22'h093cd4}; end
-            8'd241: begin w <= {22'h005b3e, 22'h3e81ec, 22'h092492}; end
-            8'd242: begin w <= {22'h0056cb, 22'h3e8d53, 22'h090d0c}; end
-            8'd243: begin w <= {22'h0052a4, 22'h3e982c, 22'h08f638}; end
-            8'd244: begin w <= {22'h004ec3, 22'h3ea27f, 22'h08e00d}; end
-            8'd245: begin w <= {22'h004b22, 22'h3eac57, 22'h08ca84}; end
-            8'd246: begin w <= {22'h0047bc, 22'h3eb5bb, 22'h08b594}; end
-            8'd247: begin w <= {22'h00448c, 22'h3ebeb2, 22'h08a138}; end
-            8'd248: begin w <= {22'h00418d, 22'h3ec743, 22'h088d67}; end
-            8'd249: begin w <= {22'h003ebd, 22'h3ecf74, 22'h087a1d}; end
-            8'd250: begin w <= {22'h003c18, 22'h3ed74c, 22'h086753}; end
-            8'd251: begin w <= {22'h003999, 22'h3edece, 22'h085504}; end
-            8'd252: begin w <= {22'h003740, 22'h3ee601, 22'h08432a}; end
-            8'd253: begin w <= {22'h003508, 22'h3eece9, 22'h0831c2}; end
-            8'd254: begin w <= {22'h0032ef, 22'h3ef38a, 22'h0820c5}; end
-            8'd255: begin w <= {22'h0030f4, 22'h3ef9e7, 22'h081031}; end
-            default: begin w <= 66'd0; end
-        endcase
-    end
+    generate if (ROM_PRIM == "distributed") begin : g_lut
+        (* rom_style = "distributed" *) reg [65:0] wr;
+        assign w = wr;
+        // One flat case over {fsel, idx}, constant-indexed throughout.
+        // NON-BLOCKING: u_d_c1 in vec_alu registers c1 on the same edge, so
+        // blocking assignments here are a scheduler race, not a style point.
+        always @(posedge clk) begin
+            case ({fsel, idx})
+                // ---- exp2 ----
+                8'd0  : begin wr <= {22'h00f8ac, 22'h058b81, 22'h000000}; end
+                8'd1  : begin wr <= {22'h00fe1e, 22'h05aa96, 22'h0059b1}; end
+                8'd2  : begin wr <= {22'h0103af, 22'h05ca59, 22'h00b558}; end
+                8'd3  : begin wr <= {22'h01095e, 22'h05eacf, 22'h011302}; end
+                8'd4  : begin wr <= {22'h010f2e, 22'h060bfa, 22'h0172b8}; end
+                8'd5  : begin wr <= {22'h01151e, 22'h062de0, 22'h01d487}; end
+                8'd6  : begin wr <= {22'h011b2f, 22'h065083, 22'h02387a}; end
+                8'd7  : begin wr <= {22'h012163, 22'h0673e9, 22'h029e9e}; end
+                8'd8  : begin wr <= {22'h0127b9, 22'h069815, 22'h0306fe}; end
+                8'd9  : begin wr <= {22'h012e33, 22'h06bd0c, 22'h0371a7}; end
+                8'd10 : begin wr <= {22'h0134d1, 22'h06e2d2, 22'h03dea6}; end
+                8'd11 : begin wr <= {22'h013b94, 22'h07096c, 22'h044e08}; end
+                8'd12 : begin wr <= {22'h01427d, 22'h0730de, 22'h04bfdb}; end
+                8'd13 : begin wr <= {22'h01498d, 22'h07592d, 22'h05342b}; end
+                8'd14 : begin wr <= {22'h0150c4, 22'h07825e, 22'h05ab08}; end
+                8'd15 : begin wr <= {22'h015824, 22'h07ac77, 22'h06247f}; end
+                8'd16 : begin wr <= {22'h015fad, 22'h07d77b, 22'h06a09e}; end
+                8'd17 : begin wr <= {22'h016760, 22'h080370, 22'h071f76}; end
+                8'd18 : begin wr <= {22'h016f3f, 22'h08305c, 22'h07a115}; end
+                8'd19 : begin wr <= {22'h01774a, 22'h085e43, 22'h08258a}; end
+                8'd20 : begin wr <= {22'h017f81, 22'h088d2c, 22'h08ace5}; end
+                8'd21 : begin wr <= {22'h0187e7, 22'h08bd1c, 22'h093738}; end
+                8'd22 : begin wr <= {22'h01907c, 22'h08ee18, 22'h09c492}; end
+                8'd23 : begin wr <= {22'h019941, 22'h092027, 22'h0a5504}; end
+                8'd24 : begin wr <= {22'h01a237, 22'h09534f, 22'h0ae8a0}; end
+                8'd25 : begin wr <= {22'h01ab60, 22'h098796, 22'h0b7f77}; end
+                8'd26 : begin wr <= {22'h01b4bb, 22'h09bd01, 22'h0c199c}; end
+                8'd27 : begin wr <= {22'h01be4b, 22'h09f398, 22'h0cb721}; end
+                8'd28 : begin wr <= {22'h01c811, 22'h0a2b61, 22'h0d5819}; end
+                8'd29 : begin wr <= {22'h01d20e, 22'h0a6463, 22'h0dfc97}; end
+                8'd30 : begin wr <= {22'h01dc42, 22'h0a9ea4, 22'h0ea4b0}; end
+                8'd31 : begin wr <= {22'h01e6b0, 22'h0ada2c, 22'h0f5076}; end
+                // ---- log2 ----
+                8'd64 : begin wr <= {22'h3d33d4, 22'h0b8a1e, 22'h000000}; end
+                8'd65 : begin wr <= {22'h3d5df4, 22'h0b30a1, 22'h00b5d7}; end
+                8'd66 : begin wr <= {22'h3d8477, 22'h0adc66, 22'h016640}; end
+                8'd67 : begin wr <= {22'h3da7c4, 22'h0a8cfc, 22'h02118b}; end
+                8'd68 : begin wr <= {22'h3dc835, 22'h0a41fa, 22'h02b804}; end
+                8'd69 : begin wr <= {22'h3de617, 22'h09fb06, 22'h0359ec}; end
+                8'd70 : begin wr <= {22'h3e01ac, 22'h09b7ce, 22'h03f783}; end
+                8'd71 : begin wr <= {22'h3e1b2f, 22'h097807, 22'h049102}; end
+                8'd72 : begin wr <= {22'h3e32d5, 22'h093b71, 22'h05269e}; end
+                8'd73 : begin wr <= {22'h3e48ca, 22'h0901cf, 22'h05b889}; end
+                8'd74 : begin wr <= {22'h3e5d38, 22'h08caec, 22'h0646ef}; end
+                8'd75 : begin wr <= {22'h3e7040, 22'h089695, 22'h06d1fb}; end
+                8'd76 : begin wr <= {22'h3e8204, 22'h0864a0, 22'h0759d5}; end
+                8'd77 : begin wr <= {22'h3e929f, 22'h0834e3, 22'h07dea2}; end
+                8'd78 : begin wr <= {22'h3ea22b, 22'h080739, 22'h086083}; end
+                8'd79 : begin wr <= {22'h3eb0bf, 22'h07db81, 22'h08df99}; end
+                8'd80 : begin wr <= {22'h3ebe6e, 22'h07b19a, 22'h095c02}; end
+                8'd81 : begin wr <= {22'h3ecb4a, 22'h07896a, 22'h09d5da}; end
+                8'd82 : begin wr <= {22'h3ed765, 22'h0762d5, 22'h0a4d3c}; end
+                8'd83 : begin wr <= {22'h3ee2ce, 22'h073dc3, 22'h0ac241}; end
+                8'd84 : begin wr <= {22'h3eed90, 22'h071a1e, 22'h0b3500}; end
+                8'd85 : begin wr <= {22'h3ef7ba, 22'h06f7d1, 22'h0ba590}; end
+                8'd86 : begin wr <= {22'h3f0156, 22'h06d6c9, 22'h0c1405}; end
+                8'd87 : begin wr <= {22'h3f0a6f, 22'h06b6f5, 22'h0c8073}; end
+                8'd88 : begin wr <= {22'h3f130c, 22'h069844, 22'h0ceaed}; end
+                8'd89 : begin wr <= {22'h3f1b38, 22'h067aa7, 22'h0d5385}; end
+                8'd90 : begin wr <= {22'h3f22f9, 22'h065e0f, 22'h0dba4a}; end
+                8'd91 : begin wr <= {22'h3f2a57, 22'h06426e, 22'h0e1f4e}; end
+                8'd92 : begin wr <= {22'h3f3158, 22'h0627ba, 22'h0e82a0}; end
+                8'd93 : begin wr <= {22'h3f3803, 22'h060de6, 22'h0ee44d}; end
+                8'd94 : begin wr <= {22'h3f3e5c, 22'h05f4e7, 22'h0f4463}; end
+                8'd95 : begin wr <= {22'h3f4469, 22'h05dcb3, 22'h0fa2f0}; end
+                // ---- inv ----
+                8'd128: begin wr <= {22'h03d1a3, 22'h380113, 22'h0fffff}; end
+                8'd129: begin wr <= {22'h037caa, 22'h387b31, 22'h0f83e0}; end
+                8'd130: begin wr <= {22'h033143, 22'h38eab3, 22'h0f0f0e}; end
+                8'd131: begin wr <= {22'h02ee1e, 22'h3950cb, 22'h0ea0e9}; end
+                8'd132: begin wr <= {22'h02b222, 22'h39ae81, 22'h0e38e3}; end
+                8'd133: begin wr <= {22'h027c60, 22'h3a04b8, 22'h0dd67c}; end
+                8'd134: begin wr <= {22'h024c10, 22'h3a5439, 22'h0d7943}; end
+                8'd135: begin wr <= {22'h022084, 22'h3a9db2, 22'h0d20d2}; end
+                8'd136: begin wr <= {22'h01f92b, 22'h3ae1ba, 22'h0ccccc}; end
+                8'd137: begin wr <= {22'h01d585, 22'h3b20d7, 22'h0c7ce0}; end
+                8'd138: begin wr <= {22'h01b526, 22'h3b5b81, 22'h0c30c3}; end
+                8'd139: begin wr <= {22'h0197af, 22'h3b9220, 22'h0be82f}; end
+                8'd140: begin wr <= {22'h017cd0, 22'h3bc511, 22'h0ba2e8}; end
+                8'd141: begin wr <= {22'h016440, 22'h3bf4a6, 22'h0b60b6}; end
+                8'd142: begin wr <= {22'h014dc1, 22'h3c212a, 22'h0b2164}; end
+                8'd143: begin wr <= {22'h01391e, 22'h3c4ade, 22'h0ae4c4}; end
+                8'd144: begin wr <= {22'h012625, 22'h3c71fe, 22'h0aaaaa}; end
+                8'd145: begin wr <= {22'h0114ac, 22'h3c96c0, 22'h0a72f0}; end
+                8'd146: begin wr <= {22'h01048f, 22'h3cb953, 22'h0a3d70}; end
+                8'd147: begin wr <= {22'h00f5ad, 22'h3cd9e2, 22'h0a0a0a}; end
+                8'd148: begin wr <= {22'h00e7e7, 22'h3cf895, 22'h09d89d}; end
+                8'd149: begin wr <= {22'h00db23, 22'h3d1590, 22'h09a90e}; end
+                8'd150: begin wr <= {22'h00cf4b, 22'h3d30f2, 22'h097b42}; end
+                8'd151: begin wr <= {22'h00c44a, 22'h3d4ada, 22'h094f20}; end
+                8'd152: begin wr <= {22'h00ba0d, 22'h3d6362, 22'h092492}; end
+                8'd153: begin wr <= {22'h00b083, 22'h3d7aa2, 22'h08fb82}; end
+                8'd154: begin wr <= {22'h00a79d, 22'h3d90b1, 22'h08d3dd}; end
+                8'd155: begin wr <= {22'h009f4d, 22'h3da5a3, 22'h08ad8f}; end
+                8'd156: begin wr <= {22'h009788, 22'h3db98c, 22'h088888}; end
+                8'd157: begin wr <= {22'h009043, 22'h3dcc7c, 22'h0864b9}; end
+                8'd158: begin wr <= {22'h008972, 22'h3dde83, 22'h084210}; end
+                8'd159: begin wr <= {22'h00830e, 22'h3defb1, 22'h082082}; end
+                // ---- rsqrt ----
+                8'd192: begin wr <= {22'h017173, 22'h3c0057, 22'h100000}; end
+                8'd193: begin wr <= {22'h01567d, 22'h3c2e7f, 22'h0fc176}; end
+                8'd194: begin wr <= {22'h013e35, 22'h3c5949, 22'h0f85b4}; end
+                8'd195: begin wr <= {22'h012844, 22'h3c810b, 22'h0f4c86}; end
+                8'd196: begin wr <= {22'h011463, 22'h3ca60f, 22'h0f15bf}; end
+                8'd197: begin wr <= {22'h010254, 22'h3cc898, 22'h0ee134}; end
+                8'd198: begin wr <= {22'h00f1e0, 22'h3ce8df, 22'h0eaebf}; end
+                8'd199: begin wr <= {22'h00e2db, 22'h3d0718, 22'h0e7e3f}; end
+                8'd200: begin wr <= {22'h00d51c, 22'h3d2371, 22'h0e4f93}; end
+                8'd201: begin wr <= {22'h00c881, 22'h3d3e12, 22'h0e229f}; end
+                8'd202: begin wr <= {22'h00bcea, 22'h3d5720, 22'h0df748}; end
+                8'd203: begin wr <= {22'h00b23e, 22'h3d6ebc, 22'h0dcd77}; end
+                8'd204: begin wr <= {22'h00a866, 22'h3d8502, 22'h0da515}; end
+                8'd205: begin wr <= {22'h009f4c, 22'h3d9a0d, 22'h0d7e0d}; end
+                8'd206: begin wr <= {22'h0096df, 22'h3dadf5, 22'h0d584d}; end
+                8'd207: begin wr <= {22'h008f0e, 22'h3dc0d0, 22'h0d33c3}; end
+                8'd208: begin wr <= {22'h0087cb, 22'h3dd2b0, 22'h0d105f}; end
+                8'd209: begin wr <= {22'h00810a, 22'h3de3a8, 22'h0cee11}; end
+                8'd210: begin wr <= {22'h007abf, 22'h3df3c9, 22'h0ccccd}; end
+                8'd211: begin wr <= {22'h0074df, 22'h3e0320, 22'h0cac84}; end
+                8'd212: begin wr <= {22'h006f63, 22'h3e11bb, 22'h0c8d2b}; end
+                8'd213: begin wr <= {22'h006a41, 22'h3e1fa6, 22'h0c6eb6}; end
+                8'd214: begin wr <= {22'h006572, 22'h3e2cee, 22'h0c511a}; end
+                8'd215: begin wr <= {22'h0060f0, 22'h3e399b, 22'h0c344e}; end
+                8'd216: begin wr <= {22'h005cb5, 22'h3e45b9, 22'h0c1849}; end
+                8'd217: begin wr <= {22'h0058ba, 22'h3e514f, 22'h0bfd01}; end
+                8'd218: begin wr <= {22'h0054fc, 22'h3e5c66, 22'h0be26f}; end
+                8'd219: begin wr <= {22'h005175, 22'h3e6705, 22'h0bc88a}; end
+                8'd220: begin wr <= {22'h004e22, 22'h3e7133, 22'h0baf4c}; end
+                8'd221: begin wr <= {22'h004aff, 22'h3e7af7, 22'h0b96ad}; end
+                8'd222: begin wr <= {22'h004808, 22'h3e8456, 22'h0b7ea7}; end
+                8'd223: begin wr <= {22'h00453b, 22'h3e8d57, 22'h0b6735}; end
+                8'd224: begin wr <= {22'h01053d, 22'h3d2c29, 22'h0b504f}; end
+                8'd225: begin wr <= {22'h00f22d, 22'h3d4ccd, 22'h0b2416}; end
+                8'd226: begin wr <= {22'h00e101, 22'h3d6b0f, 22'h0af9d5}; end
+                8'd227: begin wr <= {22'h00d17e, 22'h3d872b, 22'h0ad167}; end
+                8'd228: begin wr <= {22'h00c370, 22'h3da158, 22'h0aaaab}; end
+                8'd229: begin wr <= {22'h00b6aa, 22'h3db9c3, 22'h0a8583}; end
+                8'd230: begin wr <= {22'h00ab08, 22'h3dd096, 22'h0a61d6}; end
+                8'd231: begin wr <= {22'h00a069, 22'h3de5f5, 22'h0a3f8a}; end
+                8'd232: begin wr <= {22'h0096b1, 22'h3dfa01, 22'h0a1e8a}; end
+                8'd233: begin wr <= {22'h008dc7, 22'h3e0cd5, 22'h09fec0}; end
+                8'd234: begin wr <= {22'h008595, 22'h3e1e8d, 22'h09e01b}; end
+                8'd235: begin wr <= {22'h007e0a, 22'h3e2f3e, 22'h09c289}; end
+                8'd236: begin wr <= {22'h007713, 22'h3e3efe, 22'h09a5fb}; end
+                8'd237: begin wr <= {22'h0070a4, 22'h3e4ddf, 22'h098a62}; end
+                8'd238: begin wr <= {22'h006aae, 22'h3e5bf3, 22'h096fb0}; end
+                8'd239: begin wr <= {22'h006527, 22'h3e6948, 22'h0955da}; end
+                8'd240: begin wr <= {22'h006005, 22'h3e75ec, 22'h093cd4}; end
+                8'd241: begin wr <= {22'h005b3e, 22'h3e81ec, 22'h092492}; end
+                8'd242: begin wr <= {22'h0056cb, 22'h3e8d53, 22'h090d0c}; end
+                8'd243: begin wr <= {22'h0052a4, 22'h3e982c, 22'h08f638}; end
+                8'd244: begin wr <= {22'h004ec3, 22'h3ea27f, 22'h08e00d}; end
+                8'd245: begin wr <= {22'h004b22, 22'h3eac57, 22'h08ca84}; end
+                8'd246: begin wr <= {22'h0047bc, 22'h3eb5bb, 22'h08b594}; end
+                8'd247: begin wr <= {22'h00448c, 22'h3ebeb2, 22'h08a138}; end
+                8'd248: begin wr <= {22'h00418d, 22'h3ec743, 22'h088d67}; end
+                8'd249: begin wr <= {22'h003ebd, 22'h3ecf74, 22'h087a1d}; end
+                8'd250: begin wr <= {22'h003c18, 22'h3ed74c, 22'h086753}; end
+                8'd251: begin wr <= {22'h003999, 22'h3edece, 22'h085504}; end
+                8'd252: begin wr <= {22'h003740, 22'h3ee601, 22'h08432a}; end
+                8'd253: begin wr <= {22'h003508, 22'h3eece9, 22'h0831c2}; end
+                8'd254: begin wr <= {22'h0032ef, 22'h3ef38a, 22'h0820c5}; end
+                8'd255: begin wr <= {22'h0030f4, 22'h3ef9e7, 22'h081031}; end
+                default: begin wr <= 66'd0; end
+            endcase
+        end
+    end else begin : g_bram
+        (* rom_style = "block" *) reg [65:0] wr;
+        assign w = wr;
+        // One flat case over {fsel, idx}, constant-indexed throughout.
+        // NON-BLOCKING: u_d_c1 in vec_alu registers c1 on the same edge, so
+        // blocking assignments here are a scheduler race, not a style point.
+        always @(posedge clk) begin
+            case ({fsel, idx})
+                // ---- exp2 ----
+                8'd0  : begin wr <= {22'h00f8ac, 22'h058b81, 22'h000000}; end
+                8'd1  : begin wr <= {22'h00fe1e, 22'h05aa96, 22'h0059b1}; end
+                8'd2  : begin wr <= {22'h0103af, 22'h05ca59, 22'h00b558}; end
+                8'd3  : begin wr <= {22'h01095e, 22'h05eacf, 22'h011302}; end
+                8'd4  : begin wr <= {22'h010f2e, 22'h060bfa, 22'h0172b8}; end
+                8'd5  : begin wr <= {22'h01151e, 22'h062de0, 22'h01d487}; end
+                8'd6  : begin wr <= {22'h011b2f, 22'h065083, 22'h02387a}; end
+                8'd7  : begin wr <= {22'h012163, 22'h0673e9, 22'h029e9e}; end
+                8'd8  : begin wr <= {22'h0127b9, 22'h069815, 22'h0306fe}; end
+                8'd9  : begin wr <= {22'h012e33, 22'h06bd0c, 22'h0371a7}; end
+                8'd10 : begin wr <= {22'h0134d1, 22'h06e2d2, 22'h03dea6}; end
+                8'd11 : begin wr <= {22'h013b94, 22'h07096c, 22'h044e08}; end
+                8'd12 : begin wr <= {22'h01427d, 22'h0730de, 22'h04bfdb}; end
+                8'd13 : begin wr <= {22'h01498d, 22'h07592d, 22'h05342b}; end
+                8'd14 : begin wr <= {22'h0150c4, 22'h07825e, 22'h05ab08}; end
+                8'd15 : begin wr <= {22'h015824, 22'h07ac77, 22'h06247f}; end
+                8'd16 : begin wr <= {22'h015fad, 22'h07d77b, 22'h06a09e}; end
+                8'd17 : begin wr <= {22'h016760, 22'h080370, 22'h071f76}; end
+                8'd18 : begin wr <= {22'h016f3f, 22'h08305c, 22'h07a115}; end
+                8'd19 : begin wr <= {22'h01774a, 22'h085e43, 22'h08258a}; end
+                8'd20 : begin wr <= {22'h017f81, 22'h088d2c, 22'h08ace5}; end
+                8'd21 : begin wr <= {22'h0187e7, 22'h08bd1c, 22'h093738}; end
+                8'd22 : begin wr <= {22'h01907c, 22'h08ee18, 22'h09c492}; end
+                8'd23 : begin wr <= {22'h019941, 22'h092027, 22'h0a5504}; end
+                8'd24 : begin wr <= {22'h01a237, 22'h09534f, 22'h0ae8a0}; end
+                8'd25 : begin wr <= {22'h01ab60, 22'h098796, 22'h0b7f77}; end
+                8'd26 : begin wr <= {22'h01b4bb, 22'h09bd01, 22'h0c199c}; end
+                8'd27 : begin wr <= {22'h01be4b, 22'h09f398, 22'h0cb721}; end
+                8'd28 : begin wr <= {22'h01c811, 22'h0a2b61, 22'h0d5819}; end
+                8'd29 : begin wr <= {22'h01d20e, 22'h0a6463, 22'h0dfc97}; end
+                8'd30 : begin wr <= {22'h01dc42, 22'h0a9ea4, 22'h0ea4b0}; end
+                8'd31 : begin wr <= {22'h01e6b0, 22'h0ada2c, 22'h0f5076}; end
+                // ---- log2 ----
+                8'd64 : begin wr <= {22'h3d33d4, 22'h0b8a1e, 22'h000000}; end
+                8'd65 : begin wr <= {22'h3d5df4, 22'h0b30a1, 22'h00b5d7}; end
+                8'd66 : begin wr <= {22'h3d8477, 22'h0adc66, 22'h016640}; end
+                8'd67 : begin wr <= {22'h3da7c4, 22'h0a8cfc, 22'h02118b}; end
+                8'd68 : begin wr <= {22'h3dc835, 22'h0a41fa, 22'h02b804}; end
+                8'd69 : begin wr <= {22'h3de617, 22'h09fb06, 22'h0359ec}; end
+                8'd70 : begin wr <= {22'h3e01ac, 22'h09b7ce, 22'h03f783}; end
+                8'd71 : begin wr <= {22'h3e1b2f, 22'h097807, 22'h049102}; end
+                8'd72 : begin wr <= {22'h3e32d5, 22'h093b71, 22'h05269e}; end
+                8'd73 : begin wr <= {22'h3e48ca, 22'h0901cf, 22'h05b889}; end
+                8'd74 : begin wr <= {22'h3e5d38, 22'h08caec, 22'h0646ef}; end
+                8'd75 : begin wr <= {22'h3e7040, 22'h089695, 22'h06d1fb}; end
+                8'd76 : begin wr <= {22'h3e8204, 22'h0864a0, 22'h0759d5}; end
+                8'd77 : begin wr <= {22'h3e929f, 22'h0834e3, 22'h07dea2}; end
+                8'd78 : begin wr <= {22'h3ea22b, 22'h080739, 22'h086083}; end
+                8'd79 : begin wr <= {22'h3eb0bf, 22'h07db81, 22'h08df99}; end
+                8'd80 : begin wr <= {22'h3ebe6e, 22'h07b19a, 22'h095c02}; end
+                8'd81 : begin wr <= {22'h3ecb4a, 22'h07896a, 22'h09d5da}; end
+                8'd82 : begin wr <= {22'h3ed765, 22'h0762d5, 22'h0a4d3c}; end
+                8'd83 : begin wr <= {22'h3ee2ce, 22'h073dc3, 22'h0ac241}; end
+                8'd84 : begin wr <= {22'h3eed90, 22'h071a1e, 22'h0b3500}; end
+                8'd85 : begin wr <= {22'h3ef7ba, 22'h06f7d1, 22'h0ba590}; end
+                8'd86 : begin wr <= {22'h3f0156, 22'h06d6c9, 22'h0c1405}; end
+                8'd87 : begin wr <= {22'h3f0a6f, 22'h06b6f5, 22'h0c8073}; end
+                8'd88 : begin wr <= {22'h3f130c, 22'h069844, 22'h0ceaed}; end
+                8'd89 : begin wr <= {22'h3f1b38, 22'h067aa7, 22'h0d5385}; end
+                8'd90 : begin wr <= {22'h3f22f9, 22'h065e0f, 22'h0dba4a}; end
+                8'd91 : begin wr <= {22'h3f2a57, 22'h06426e, 22'h0e1f4e}; end
+                8'd92 : begin wr <= {22'h3f3158, 22'h0627ba, 22'h0e82a0}; end
+                8'd93 : begin wr <= {22'h3f3803, 22'h060de6, 22'h0ee44d}; end
+                8'd94 : begin wr <= {22'h3f3e5c, 22'h05f4e7, 22'h0f4463}; end
+                8'd95 : begin wr <= {22'h3f4469, 22'h05dcb3, 22'h0fa2f0}; end
+                // ---- inv ----
+                8'd128: begin wr <= {22'h03d1a3, 22'h380113, 22'h0fffff}; end
+                8'd129: begin wr <= {22'h037caa, 22'h387b31, 22'h0f83e0}; end
+                8'd130: begin wr <= {22'h033143, 22'h38eab3, 22'h0f0f0e}; end
+                8'd131: begin wr <= {22'h02ee1e, 22'h3950cb, 22'h0ea0e9}; end
+                8'd132: begin wr <= {22'h02b222, 22'h39ae81, 22'h0e38e3}; end
+                8'd133: begin wr <= {22'h027c60, 22'h3a04b8, 22'h0dd67c}; end
+                8'd134: begin wr <= {22'h024c10, 22'h3a5439, 22'h0d7943}; end
+                8'd135: begin wr <= {22'h022084, 22'h3a9db2, 22'h0d20d2}; end
+                8'd136: begin wr <= {22'h01f92b, 22'h3ae1ba, 22'h0ccccc}; end
+                8'd137: begin wr <= {22'h01d585, 22'h3b20d7, 22'h0c7ce0}; end
+                8'd138: begin wr <= {22'h01b526, 22'h3b5b81, 22'h0c30c3}; end
+                8'd139: begin wr <= {22'h0197af, 22'h3b9220, 22'h0be82f}; end
+                8'd140: begin wr <= {22'h017cd0, 22'h3bc511, 22'h0ba2e8}; end
+                8'd141: begin wr <= {22'h016440, 22'h3bf4a6, 22'h0b60b6}; end
+                8'd142: begin wr <= {22'h014dc1, 22'h3c212a, 22'h0b2164}; end
+                8'd143: begin wr <= {22'h01391e, 22'h3c4ade, 22'h0ae4c4}; end
+                8'd144: begin wr <= {22'h012625, 22'h3c71fe, 22'h0aaaaa}; end
+                8'd145: begin wr <= {22'h0114ac, 22'h3c96c0, 22'h0a72f0}; end
+                8'd146: begin wr <= {22'h01048f, 22'h3cb953, 22'h0a3d70}; end
+                8'd147: begin wr <= {22'h00f5ad, 22'h3cd9e2, 22'h0a0a0a}; end
+                8'd148: begin wr <= {22'h00e7e7, 22'h3cf895, 22'h09d89d}; end
+                8'd149: begin wr <= {22'h00db23, 22'h3d1590, 22'h09a90e}; end
+                8'd150: begin wr <= {22'h00cf4b, 22'h3d30f2, 22'h097b42}; end
+                8'd151: begin wr <= {22'h00c44a, 22'h3d4ada, 22'h094f20}; end
+                8'd152: begin wr <= {22'h00ba0d, 22'h3d6362, 22'h092492}; end
+                8'd153: begin wr <= {22'h00b083, 22'h3d7aa2, 22'h08fb82}; end
+                8'd154: begin wr <= {22'h00a79d, 22'h3d90b1, 22'h08d3dd}; end
+                8'd155: begin wr <= {22'h009f4d, 22'h3da5a3, 22'h08ad8f}; end
+                8'd156: begin wr <= {22'h009788, 22'h3db98c, 22'h088888}; end
+                8'd157: begin wr <= {22'h009043, 22'h3dcc7c, 22'h0864b9}; end
+                8'd158: begin wr <= {22'h008972, 22'h3dde83, 22'h084210}; end
+                8'd159: begin wr <= {22'h00830e, 22'h3defb1, 22'h082082}; end
+                // ---- rsqrt ----
+                8'd192: begin wr <= {22'h017173, 22'h3c0057, 22'h100000}; end
+                8'd193: begin wr <= {22'h01567d, 22'h3c2e7f, 22'h0fc176}; end
+                8'd194: begin wr <= {22'h013e35, 22'h3c5949, 22'h0f85b4}; end
+                8'd195: begin wr <= {22'h012844, 22'h3c810b, 22'h0f4c86}; end
+                8'd196: begin wr <= {22'h011463, 22'h3ca60f, 22'h0f15bf}; end
+                8'd197: begin wr <= {22'h010254, 22'h3cc898, 22'h0ee134}; end
+                8'd198: begin wr <= {22'h00f1e0, 22'h3ce8df, 22'h0eaebf}; end
+                8'd199: begin wr <= {22'h00e2db, 22'h3d0718, 22'h0e7e3f}; end
+                8'd200: begin wr <= {22'h00d51c, 22'h3d2371, 22'h0e4f93}; end
+                8'd201: begin wr <= {22'h00c881, 22'h3d3e12, 22'h0e229f}; end
+                8'd202: begin wr <= {22'h00bcea, 22'h3d5720, 22'h0df748}; end
+                8'd203: begin wr <= {22'h00b23e, 22'h3d6ebc, 22'h0dcd77}; end
+                8'd204: begin wr <= {22'h00a866, 22'h3d8502, 22'h0da515}; end
+                8'd205: begin wr <= {22'h009f4c, 22'h3d9a0d, 22'h0d7e0d}; end
+                8'd206: begin wr <= {22'h0096df, 22'h3dadf5, 22'h0d584d}; end
+                8'd207: begin wr <= {22'h008f0e, 22'h3dc0d0, 22'h0d33c3}; end
+                8'd208: begin wr <= {22'h0087cb, 22'h3dd2b0, 22'h0d105f}; end
+                8'd209: begin wr <= {22'h00810a, 22'h3de3a8, 22'h0cee11}; end
+                8'd210: begin wr <= {22'h007abf, 22'h3df3c9, 22'h0ccccd}; end
+                8'd211: begin wr <= {22'h0074df, 22'h3e0320, 22'h0cac84}; end
+                8'd212: begin wr <= {22'h006f63, 22'h3e11bb, 22'h0c8d2b}; end
+                8'd213: begin wr <= {22'h006a41, 22'h3e1fa6, 22'h0c6eb6}; end
+                8'd214: begin wr <= {22'h006572, 22'h3e2cee, 22'h0c511a}; end
+                8'd215: begin wr <= {22'h0060f0, 22'h3e399b, 22'h0c344e}; end
+                8'd216: begin wr <= {22'h005cb5, 22'h3e45b9, 22'h0c1849}; end
+                8'd217: begin wr <= {22'h0058ba, 22'h3e514f, 22'h0bfd01}; end
+                8'd218: begin wr <= {22'h0054fc, 22'h3e5c66, 22'h0be26f}; end
+                8'd219: begin wr <= {22'h005175, 22'h3e6705, 22'h0bc88a}; end
+                8'd220: begin wr <= {22'h004e22, 22'h3e7133, 22'h0baf4c}; end
+                8'd221: begin wr <= {22'h004aff, 22'h3e7af7, 22'h0b96ad}; end
+                8'd222: begin wr <= {22'h004808, 22'h3e8456, 22'h0b7ea7}; end
+                8'd223: begin wr <= {22'h00453b, 22'h3e8d57, 22'h0b6735}; end
+                8'd224: begin wr <= {22'h01053d, 22'h3d2c29, 22'h0b504f}; end
+                8'd225: begin wr <= {22'h00f22d, 22'h3d4ccd, 22'h0b2416}; end
+                8'd226: begin wr <= {22'h00e101, 22'h3d6b0f, 22'h0af9d5}; end
+                8'd227: begin wr <= {22'h00d17e, 22'h3d872b, 22'h0ad167}; end
+                8'd228: begin wr <= {22'h00c370, 22'h3da158, 22'h0aaaab}; end
+                8'd229: begin wr <= {22'h00b6aa, 22'h3db9c3, 22'h0a8583}; end
+                8'd230: begin wr <= {22'h00ab08, 22'h3dd096, 22'h0a61d6}; end
+                8'd231: begin wr <= {22'h00a069, 22'h3de5f5, 22'h0a3f8a}; end
+                8'd232: begin wr <= {22'h0096b1, 22'h3dfa01, 22'h0a1e8a}; end
+                8'd233: begin wr <= {22'h008dc7, 22'h3e0cd5, 22'h09fec0}; end
+                8'd234: begin wr <= {22'h008595, 22'h3e1e8d, 22'h09e01b}; end
+                8'd235: begin wr <= {22'h007e0a, 22'h3e2f3e, 22'h09c289}; end
+                8'd236: begin wr <= {22'h007713, 22'h3e3efe, 22'h09a5fb}; end
+                8'd237: begin wr <= {22'h0070a4, 22'h3e4ddf, 22'h098a62}; end
+                8'd238: begin wr <= {22'h006aae, 22'h3e5bf3, 22'h096fb0}; end
+                8'd239: begin wr <= {22'h006527, 22'h3e6948, 22'h0955da}; end
+                8'd240: begin wr <= {22'h006005, 22'h3e75ec, 22'h093cd4}; end
+                8'd241: begin wr <= {22'h005b3e, 22'h3e81ec, 22'h092492}; end
+                8'd242: begin wr <= {22'h0056cb, 22'h3e8d53, 22'h090d0c}; end
+                8'd243: begin wr <= {22'h0052a4, 22'h3e982c, 22'h08f638}; end
+                8'd244: begin wr <= {22'h004ec3, 22'h3ea27f, 22'h08e00d}; end
+                8'd245: begin wr <= {22'h004b22, 22'h3eac57, 22'h08ca84}; end
+                8'd246: begin wr <= {22'h0047bc, 22'h3eb5bb, 22'h08b594}; end
+                8'd247: begin wr <= {22'h00448c, 22'h3ebeb2, 22'h08a138}; end
+                8'd248: begin wr <= {22'h00418d, 22'h3ec743, 22'h088d67}; end
+                8'd249: begin wr <= {22'h003ebd, 22'h3ecf74, 22'h087a1d}; end
+                8'd250: begin wr <= {22'h003c18, 22'h3ed74c, 22'h086753}; end
+                8'd251: begin wr <= {22'h003999, 22'h3edece, 22'h085504}; end
+                8'd252: begin wr <= {22'h003740, 22'h3ee601, 22'h08432a}; end
+                8'd253: begin wr <= {22'h003508, 22'h3eece9, 22'h0831c2}; end
+                8'd254: begin wr <= {22'h0032ef, 22'h3ef38a, 22'h0820c5}; end
+                8'd255: begin wr <= {22'h0030f4, 22'h3ef9e7, 22'h081031}; end
+                default: begin wr <= 66'd0; end
+            endcase
+        end
+    end endgenerate
 endmodule
 
 `default_nettype wire

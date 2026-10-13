@@ -79,7 +79,9 @@ module v2_alu #(
     // seed hardware absent from a lane that still does FMAs.
     parameter integer HAS_POLY  = 1,
     // vec_delay's MAX_FF: raise it where LUT binds and the flops do not.
-    parameter integer DLY_FF    = 6
+    parameter integer DLY_FF    = 6,
+    // The coefficient ROM's primitive (vec_tables ROM_PRIM).
+    parameter         TAB_PRIM  = "block"
 )(
     input  wire        clk,
     input  wire        rst,
@@ -516,7 +518,7 @@ module v2_alu #(
     // u_d_ix is GONE: the ROM is synchronous, so its own address register is
     // that stage. tab_idx goes in raw and c0/c1/c2 still land on cycle 3.
     wire signed [21:0] tc0, tc1, tc2;
-    vec_tables u_tab (.clk(clk), .fsel(d2_fsel), .idx(tab_idx),
+    vec_tables #(.ROM_PRIM(TAB_PRIM)) u_tab (.clk(clk), .fsel(d2_fsel), .idx(tab_idx),
                       .c0(tc0), .c1(tc1), .c2(tc2));
 
     // exp2's 1.0 and log2's integer part are exact integers at F's own weight,

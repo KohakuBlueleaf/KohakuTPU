@@ -231,7 +231,14 @@ def emit(tab, err, split=False):
     L.append("")
     L.append("`default_nettype none")
     L.append("")
-    L.append("module vec_tables (")
+    if split:
+        L.append("module vec_tables (")
+    else:
+        L.append("module vec_tables #(")
+        L.append(
+            '    parameter ROM_PRIM = "block"   // "block" one RAMB36 a ROM, "distributed" LUTs'
+        )
+        L.append(") (")
     L.append("    input  wire               clk,")
     L.append("    input  wire [1:0]         fsel,   // 0 exp2, 1 log2, 2 inv, 3 rsqrt")
     L.append(
@@ -263,45 +270,64 @@ def emit(tab, err, split=False):
             f"    // ONE {3 * CW}-bit word {{c2, c1, c0}}: three 22-bit ROMs were three"
         )
         L.append("    // RAMB18 per ALU (routed v7); one word is one RAMB36-class ROM.")
-        L.append(f'    (* rom_style = "block" *) reg [{3 * CW - 1}:0] w;')
+        L.append(f"    wire [{3 * CW - 1}:0] w;")
         L.append(f"    assign c0 = w[{CW - 1}:0];")
         L.append(f"    assign c1 = w[{2 * CW - 1}:{CW}];")
         L.append(f"    assign c2 = w[{3 * CW - 1}:{2 * CW}];")
-    L.append("    // One flat case over {fsel, idx}, constant-indexed throughout.")
-    L.append("    // NON-BLOCKING: u_d_c1 in vec_alu registers c1 on the same edge, so")
-    L.append(
-        "    // blocking assignments here are a scheduler race, not a style point."
-    )
-    L.append("    always @(posedge clk) begin")
-    L.append("        case ({fsel, idx})")
     cmask = (1 << CW) - 1
-    # Case items sit one level inside `case` (vstyle F5).
-    ind = " " * 12
-    for fsel in (F_EXP2, F_LOG2, F_INV, F_RSQRT):
-        nidx = 2 * NSEG if fsel == F_RSQRT else NSEG
-        L.append(f"{ind}// ---- {FNAMES[fsel]} ----")
-        for idx6 in range(nidx):
-            C0, C1, C2 = tab[(fsel, idx6)]
-            a = (fsel << 6) | idx6
-            if split:
-                f = [f"-{CW}'sd{-v}" if v < 0 else f"{CW}'sd{v}" for v in (C0, C1, C2)]
-                L.append(
-                    f"{ind}8'd{a:<3}: begin c0 <= {f[0]} ; c1 <= {f[1]} ;"
-                    f" c2 <= {f[2]} ; end"
-                )
-            else:
-                # Two's complement hex fields: a signed literal's minus sign
-                # inside a concatenation is legal but reads as a subtraction.
-                h = [f"{CW}'h{(v & cmask):06x}" for v in (C2, C1, C0)]
-                L.append(f"{ind}8'd{a:<3}: begin w <= {{{h[0]}, {h[1]}, {h[2]}}}; end")
+
+    def body(lhs, ind0):
+        """The synchronous case over {fsel, idx}, assigning `lhs`."""
+        out = [
+            f"{ind0}// One flat case over {{fsel, idx}}, constant-indexed throughout.",
+            f"{ind0}// NON-BLOCKING: u_d_c1 in vec_alu registers c1 on the same edge, so",
+            f"{ind0}// blocking assignments here are a scheduler race, not a style point.",
+            f"{ind0}always @(posedge clk) begin",
+            f"{ind0}    case ({{fsel, idx}})",
+        ]
+        # Case items sit one level inside `case` (vstyle F5).
+        ind = ind0 + " " * 8
+        for fsel in (F_EXP2, F_LOG2, F_INV, F_RSQRT):
+            nidx = 2 * NSEG if fsel == F_RSQRT else NSEG
+            out.append(f"{ind}// ---- {FNAMES[fsel]} ----")
+            for idx6 in range(nidx):
+                C0, C1, C2 = tab[(fsel, idx6)]
+                a = (fsel << 6) | idx6
+                if split:
+                    f = [f"-{CW}'sd{-v}" if v < 0 else f"{CW}'sd{v}" for v in (C0, C1, C2)]
+                    out.append(
+                        f"{ind}8'd{a:<3}: begin c0 <= {f[0]} ; c1 <= {f[1]} ;"
+                        f" c2 <= {f[2]} ; end"
+                    )
+                else:
+                    # Two's complement hex fields: a signed literal's minus sign
+                    # inside a concatenation is legal but reads as a subtraction.
+                    h = [f"{CW}'h{(v & cmask):06x}" for v in (C2, C1, C0)]
+                    out.append(
+                        f"{ind}8'd{a:<3}: begin {lhs} <= {{{h[0]}, {h[1]}, {h[2]}}}; end"
+                    )
+        if split:
+            out.append(
+                f"{ind}default: begin c0 <= 22'sd0 ; c1 <= 22'sd0 ; c2 <= 22'sd0 ; end"
+            )
+        else:
+            out.append(f"{ind}default: begin {lhs} <= {3 * CW}'d0; end")
+        out += [f"{ind0}    endcase", f"{ind0}end"]
+        return out
+
     if split:
-        L.append(
-            f"{ind}default: begin c0 <= 22'sd0 ; c1 <= 22'sd0 ; c2 <= 22'sd0 ; end"
-        )
+        L += body("", "    ")
     else:
-        L.append(f"{ind}default: begin w <= {3 * CW}'d0; end")
-    L.append("        endcase")
-    L.append("    end")
+        # rom_style takes no parameter, so each primitive is its own branch.
+        L.append('    generate if (ROM_PRIM == "distributed") begin : g_lut')
+        L.append(f'        (* rom_style = "distributed" *) reg [{3 * CW - 1}:0] wr;')
+        L.append("        assign w = wr;")
+        L += body("wr", "        ")
+        L.append("    end else begin : g_bram")
+        L.append(f'        (* rom_style = "block" *) reg [{3 * CW - 1}:0] wr;')
+        L.append("        assign w = wr;")
+        L += body("wr", "        ")
+        L.append("    end endgenerate")
     L.append("endmodule")
     L.append("")
     L.append("`default_nettype wire")
