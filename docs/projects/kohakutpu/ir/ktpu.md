@@ -189,9 +189,9 @@ Hand-written L2 (`l2/`), compiled to L1 by §9's pipeline:
 
 | area | examples |
 |---|---|
-| `matmul/` | `matmul`, `longk` (compile to the hand L1's bytes), `splitk` (`drain ... add`) |
+| `matmul/` | `matmul`, `longk` (compile to the hand L1's bytes), `splitk` (`drain ... add`); x an FP16 activation, w pre-quantised: `matmulq` (the cores quantise each 256-row block into a two-block DRAM ring while the clusters sweep the one before), `matmulqm` (the node mover's `quant` instead), `matmulqs` (the cores quantise all of x into staging, then the both-MXFP7 sweep) |
 | `vector/` | `silu`, `add`, `softmax` (16-row tiles), `layernorm`, `leaky` (`cmpgt` / `sel`), `lazysoftmax` (the row max only when `if sticky`) |
-| `fused/` | `ffn`, `swiglu` (production size: 1024 tokens, 1024 -> 2048 -> 1024 on four clusters and two cores, row blocks of 256 tokens, h / a2 holding two blocks so the pipeline pass overlaps the layers), `mmsilu` (a cluster tile, then silu on its drained GT4 sub-tiles), `mlp` (matmul, silu quantised to MXFP7 on the cores, matmul), `tilesilu` (tiles drained straight into the cores, `pipe=2`), `mlpdirect` (cluster -> core -> cluster, nothing in memory between the layers), `mmsoftmax` (row softmax of score tiles straight from the clusters: GT4 row reductions), `anysilu` (`tilesilu` written through an `@any` scratch) |
+| `fused/` | `ffn`, `swiglu` (production size: 1024 tokens, 1024 -> 2048 -> 1024 on four clusters and two cores, row blocks of 256 tokens, h / a2 holding two blocks so the pipeline pass overlaps the layers), `mmsilu` (four clusters' 64-row strips, then silu on the drained GT4 sub-tiles), `mlp` (matmul on four clusters, silu quantised to MXFP7 on the cores, matmul), `tilesilu` (tiles drained straight into the cores, `pipe=2`), `mlpdirect` (cluster -> core -> cluster, nothing in memory between the layers), `mmsoftmax` (row softmax of score tiles straight from the clusters: GT4 row reductions), `anysilu` (`tilesilu` written through an `@any` scratch) |
 | `mover/` | `transpose` (`perm=`), `gather`, `scatter`, `fill`, `generate`, `convert` (`quant` A and B packing, `gt4`) |
 | `multinode/` | `matmul2` (`share=cross`), `share2` (a small witness of shared fills), `silu2`, `matmul4` (four nodes), `xsplitk` (node 0 adds its K half into node 1's accumulators: `drain ... add node=1`) |
 
@@ -249,6 +249,37 @@ the same program on its own heads; MFU counts both products). The flashd row:
 `build/measure/c1/report.md`, which also has it on the V2.1 core (two
 register-file read copies, card_v9t3): 1,146,024 cycles, 1.3% over the
 four-copy core, from the combine's three-register FMA.
+
+The V2.1 card (`build/simfix/vlt_card_v9t3_1n`: V2.1 cores, 128 registers,
+two read copies; compiled with `--core v21`, the fill costs of `target.MEM`),
+one node, the same method:
+
+| kernel | cycles | efficiency | rel err |
+|---|---|---|---|
+| matmul 1024³ (hand L1 = compiled) | 308,917 | 84.9% MFU | 4.7e-4 |
+| longk 1024×2048×1024 | 571,431 | 91.8% MFU | 4.4e-4 |
+| splitk | 73,457 | 22.3% MFU | 4.5e-4 |
+| matmulq (x FP16, cores quantise beside the sweep) | 424,818 | 61.7% MFU | 4.7e-4 |
+| matmulqs (x FP16, cores quantise into staging first) | 397,659 | 65.9% MFU | 4.7e-4 |
+| matmulqm (x FP16, the mover's quant) | 647,813 | 40.5% MFU | 4.7e-4 |
+| ffn | 1,491,551 | 70.3% MFU | 4.9e-3 |
+| swiglu | 2,418,921 | 65.0% MFU | 4.2e-3 |
+| mmsilu (four clusters) | 41,599 | 19.7% MFU | 4.8e-4 |
+| mlp (four clusters) | 49,412 | 16.6% MFU | 4.9e-3 |
+| tilesilu / mlpdirect / mmsoftmax | 44,733 / 8,586 / 23,189 | 9.2 / 3.0 / 4.4% MFU | ≤2.3e-3 |
+| silu / add / softmax / layernorm (L2) | 13,236 / 12,602 / 27,499 / 31,319 | 77.4% lane / 31.2 B/cycle / 79.7% / 75.8% | ≤3.9e-4 |
+| lazysoftmax / leaky | 32,173 / 10,288 | 52.5% / 39.8% lane | ≤3.9e-4 |
+| flashd | 1,146,024 | 28.6% MFU | 1.5e-2 |
+
+`flash` is refused by the static checker ([verify.md](../verify.md) §11). An FP16 activation against
+pre-quantised weights is bound by the node's 32 B/cycle read bus: the clusters
+read 7.2 MB (A and B each four times over 256 x 256 tiles), x's FP16 adds 2
+MB, a floor of ~288k cycles beside the sweep's 263k. Quantising first into
+staging, then sweeping, leaves the cores' fills 41k cycles of waiting
+(alone); quantising beside the sweep gets a core ~5 cycles a word. One read
+of A for all four clusters (`share=all`) is slower on one node (374,182
+against 311,698 at K chunks of 128): the rendezvous costs more than the
+reads it saves.
 
 Row normalisations by width and register budget (DSL kernels, card
 `build/v9t3/vlt_card_v9t3_1n`: V2.1 cores of 128 registers, two read copies;
@@ -393,6 +424,16 @@ a read that would find another iteration's value fails the compile. The
 lowering takes whichever of the two the image timing model (`l2/timing.py`)
 times faster; a sticky block, a cluster stream, a banded unpack or a store
 packed over its load keeps the band lowering.
+
+Both price a fill by the machine's memory path (`target.MEM`, `target.mem`):
+a latency before its first word and cycles a 32-byte word, measured on
+card_v9t3_1n by a core's serial fills of 2 KB and 256 B. Alone (the node's
+memory path to the cores only) 78 cycles and 2 a word (142.6 / 86.3 cycles a
+fill; two cores split the node's 32 B/cycle read bus); beside a four-cluster
+matmul 330 and 5 (664 / 371). A body whose vector stage shares a node loop
+with a cluster stage (the pipeline pass overlaps them) takes the shared
+figures; the modulo schedule issues an iteration's fills that latency plus
+its words' cycles ahead of its first unpack.
 
 **Passes** (`l2/passes.py`, `l2/pipeline.py compile_l1`): `place`, `space`,
 `share` (in a body over several nodes, a fill whose view does not name the
