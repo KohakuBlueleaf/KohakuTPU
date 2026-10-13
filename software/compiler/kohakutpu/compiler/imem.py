@@ -118,7 +118,8 @@ def rewrite(words: list, memory: Resident) -> list:
     for w in words:
         code = op(w)
         if code == OP_IMEM:
-            prog.append((w, VEC.IMEM.decode(w & PAYLOAD)))
+            # the whole word: a deep core's register bits ride the flit's pad
+            prog.append((w, VEC.imem_addr(VEC.IMEM.decode(w & PAYLOAD)), VEC.imem_word(w & PAYLOAD)))
             continue
         if code == OP_DESC:
             f = VEC.DESC.decode(w & PAYLOAD)
@@ -127,16 +128,16 @@ def rewrite(words: list, memory: Resident) -> list:
                 continue
             memory.desc[key] = value
         if prog:
-            body = [(VEC.imem_addr(f), f["word"]) for _, f in prog]
+            body = [(addr, word) for _, addr, word in prog]
             key = hashlib.sha1(repr(body).encode()).digest()
             base, loaded = memory.place(key, max(a for a, _ in body) + 1)
             memory.last = base
             if not loaded:
-                for raw, f in prog:
-                    at = base + VEC.imem_addr(f)
-                    if memory.mem.get(at) != f["word"]:
-                        memory.mem[at] = f["word"]
-                        out.append(keep_header(raw, VEC.imem(at, f["word"])))
+                for raw, addr, word in prog:
+                    at = base + addr
+                    if memory.mem.get(at) != word:
+                        memory.mem[at] = word
+                        out.append(keep_header(raw, VEC.imem(at, word)))
             prog = []
         if code == OP_RUN:
             out.append(

@@ -8,6 +8,7 @@ import re
 import pytest
 
 from kohakuaccel.compiler.isa import ISAError
+from kohakutpu.compiler import imem
 from kohakutpu.compiler import target as T
 from kohakutpu.compiler.emit import image as vector
 from kohakutpu.compiler.encode import vector as A
@@ -51,6 +52,15 @@ def test_imem_flit_carries_the_word_past_bit_32():
     assert VEC.imem_word(payload) == word
     with pytest.raises(ISAError):
         VEC.imem(0, 1 << 40)
+
+
+def test_resident_imem_rebase_keeps_the_word_past_bit_32():
+    word = A.math("vfma", 100, 65, 3, 127, regs=128)
+    flits = [A.imem_flit(0, word), A.run_flit(0)]
+    # a placed program's IMEM flits are rebuilt at their slot's addresses
+    got = imem.rewrite(flits, imem.Resident(imem.IMEM_WORDS))
+    loads = [w for w in got if imem.op(w) == imem.OP_IMEM]
+    assert [VEC.imem_word(w & imem.PAYLOAD) for w in loads] == [word]
 
 
 def test_verifier_rejoins_register_fields():
