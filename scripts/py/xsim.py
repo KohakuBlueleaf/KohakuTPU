@@ -1507,6 +1507,9 @@ HARNESS = {
     "card_v9x4s_4n",
     "card_v9x6s_1n",
     "card_v9x6s_4n",
+    "card_v9t3_1n",
+    "card_v9t3_2n",
+    "card_v9t3_4n",
 }
 RV64_COMMON = ["src/kohakuaccel/common/kohaku_sdpram.v"]
 
@@ -2246,6 +2249,13 @@ for _n in (1, 2, 4):
     BENCHES[f"card_v9_{_n}n_v2"] = BENCHES[f"card_v9_{_n}n"]
     DEFINES[f"card_v9_{_n}n"] = gen_card.image_defines("v9")
     DEFINES[f"card_v9_{_n}n_v2"] = DEFINES[f"card_v9_{_n}n"]
+# The v9t3 card (gen_card.py --ver v9t3): v9's dies with the V2.1 vector core.
+for _n in (1, 2, 4):
+    BENCHES[f"card_v9t3_{_n}n"] = (
+        f"card_v9t3_{_n}n",
+        gen_card.image_sources("v9t3") + [f"tests/system/card_v9t3_{_n}n.v"],
+    )
+    DEFINES[f"card_v9t3_{_n}n"] = gen_card.image_defines("v9t3")
 # Cluster-count scaling: the v9 card with 6+2 / 8+2 dies on a 2x2 router grid.
 for _n in (6, 8):
     for _d in (1, 2):
