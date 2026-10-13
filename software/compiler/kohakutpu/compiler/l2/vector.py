@@ -24,9 +24,12 @@ a cluster's bank (a `recv` there).
 import re
 from dataclasses import dataclass, field, replace
 
+from kohakutpu.compiler.emit import image as EI
+from kohakutpu.compiler.l2 import banks, sync, timing
 from kohakutpu.compiler.l2 import memory as M
-from kohakutpu.compiler.l2 import sync
+from kohakutpu.compiler.l2 import modulo as MO
 from kohakutpu.compiler.l2.body import For, If, Op, Par, When, const, span, value
+from kohakutpu.language.text import module as TM
 from kohakutpu.language.text.syntax import Float, Int, Name, NewAxis, TextError, View
 
 L1_WORDS = 512
@@ -257,23 +260,57 @@ class _Alone:
         return _Landing(src, dst, side, 0, size, tuple(shape))
 
 
+#: How a stream loop lowers: "band" (one trip in one L1 tile, row groups
+#: interleaved), "modulo" (trips software-pipelined, `modulo.py`, where it
+#: covers the loop) or "auto" (the fewer modelled cycles over every trip).
+STRATEGY = "auto"
+
+
 def _best(body, par, env, name, fail, plan, land) -> tuple:
+    """The candidate image (every band shape, the modulo schedule; `STRATEGY`)
+    the core's timing (`timing.cycles`) of the whole image gives the fewest
+    cycles, those cycles its cost."""
     best = None
-    # On a tie the narrower band with its unpacks ahead wins: the model does
-    # not see the lookahead, and on the card it is worth 10% (silu, band 1).
-    for band in (1, 2, 4, 8, 16):
-        for remat in (False, True):
-            for ahead in (True, False):
-                try:
-                    got = _lower(
-                        body, par, env, name, fail, band, remat, ahead, plan, land
-                    )
-                except Pressure:
-                    continue
-                if best is None or got[2] < best[2]:
-                    best = got
+
+    def take(got) -> None:
+        nonlocal best
+        c = timing.cycles(got[0], name, body.vregs, body.vcopies)
+        if best is None or c < best[2]:
+            best = (got[0], got[1], c, got[3], c)
+
+    if STRATEGY != "modulo":
+        # On a tie the narrower band with its unpacks ahead wins: the model does
+        # not see the lookahead, and on the card it is worth 10% (silu, band 1).
+        for band in (1, 2, 4, 8, 16):
+            for remat in (False, True):
+                for ahead in (True, False):
+                    try:
+                        take(
+                            _lower(
+                                body,
+                                par,
+                                env,
+                                name,
+                                fail,
+                                band,
+                                remat,
+                                ahead,
+                                plan,
+                                land,
+                            )
+                        )
+                    except Pressure:
+                        continue
+    if STRATEGY != "band":
+        got = _modulo(body, par, env, name, fail, plan, land)
+        if got is not None:
+            take(got)
     if best is None:
-        fail(par.st, f"the stream loop needs more than {body.vregs} vector registers")
+        why = f" (modulo: {MODULO_WHY[0]})" if STRATEGY == "modulo" else ""
+        fail(
+            par.st,
+            f"the stream loop needs more than {body.vregs} vector registers{why}",
+        )
     return best
 
 
@@ -445,9 +482,10 @@ def estimate(code: list) -> int:
             done[eng] = start + WALK
         else:
             vl = int(tmpl.split(" vl=")[1].split()[0]) if " vl=" in tmpl else 128
-            reads = syms[1:]
-            if "{0}[" in tmpl.split(",")[0] or " if=" in tmpl:
-                reads = syms  # a partial write keeps the rest: a read too
+            dest, _, srcs = tmpl.partition(",")
+            reads = [syms[int(i)] for i in re.findall(r"\{(\d+)\}", srcs)]
+            if "{0}[" in dest or " if=" in tmpl:
+                reads = [*reads, syms[0]]  # a partial write keeps the rest: a read too
             start = max([start, wport, *(ready.get(s, 0) for s in reads)])
             done[eng] = wport = start + max(1, vl // 16)
             if not op.startswith("vcmp"):
@@ -500,6 +538,7 @@ def _lower(
         if rest:
             ctx.iteration(g, loop.body, 0, prefetch=False)
     g.raw("halt")
+    g.code = banks.rotate(g.code, body.vcopies)
     cost = estimate(g.code)
     whole = estimate(_expand(g.code, len(ctx.trips) // 2))
     lines = _assign(g, ctx.pinned, fail, par.st, body.vregs)
@@ -517,6 +556,151 @@ def _lower(
             head.append(f"    ainc a{d.ad} += {d.inc}")
     text = "\n".join(head + ["    " + ln for ln in _indent(lines)]) + "\n"
     return text, params, cost, ctx.accesses(), whole
+
+
+#: IMEM words an image may take (a RUN starts below 512; the rest is the loop)
+IMEM_ROOM = 1000
+#: Raw lines one trip of the band lowering writes that the modulo emission
+#: rebuilds itself (the L1 rings' fills, drains and syncs).
+_REBUILT = ("vbar", "vsync pack on=drain", "vsync drain on=pack", "vdrain ")
+#: Why the last `_modulo` call declined its loop (None when it did not).
+MODULO_WHY: list = [None]
+#: The stream tails the modulo lowering may emit (`modulo.TAILS`): "kernel"
+#: over-reads each streamed input past its end, which the card's DRAM
+#: answers (no buffer ends at its top).
+MODULO_TAILS = MO.TAILS
+
+
+def _no(why: str) -> None:
+    MODULO_WHY[0] = why
+
+
+def _modulo(body, par, env, name, fail, plan, land) -> tuple | None:
+    """The stream loop software-pipelined (`modulo.py`): one trip's code from
+    the band lowering with every row group in one band, scheduled as an
+    iteration every II cycles; None where the loop is not a plain load ->
+    compute -> store stream (a sticky block, a cluster stream, a banded
+    unpack, a store of loaded bytes) or its image does not fit, the reason
+    in MODULO_WHY."""
+    MODULO_WHY[0] = None
+    pre, loop = _split(par, fail)
+    if loop is None:
+        return _no("no stream loop")
+    ops = _ops(loop.body)
+    if any(isinstance(o, If) for o in loop.body):
+        return _no("a sticky block")
+    if any(o.op in ("recv", "send") for o in [*ops, *pre]):
+        return _no("a cluster stream")
+    ctx = _Ctx(body, env, fail, loop)
+    ctx.ahead, ctx.band, ctx.remat = True, 1 << 10, False
+    ctx.plan, ctx.land = plan or {}, land or L1_WORDS
+    ctx.unit = _unit(body, par, env)
+    ctx.pre = pre
+    for op in loop.body:
+        if isinstance(op, For):
+            return _no("a nested loop")
+        ctx.prepare(op, looped=True)
+    if ctx.rel is not None or any(d.kind == "send" for d in ctx.descs):
+        return _no("a banded unpack or a send")
+    packed = {o.target for o in ops if o.op == "pack"}
+    if any(
+        o.op == "store" and o.st.positional()[2] not in {Name(t) for t in packed}
+        for o in ops
+    ):
+        return _no("a store of loaded bytes")
+    ctx.down = ctx.land
+    for op in pre:
+        ctx.prepare(op, looped=False)
+    g = Gen()
+    ctx.constants(g, [*pre, *ops])
+    for op in pre:
+        ctx.prologue(g, op)
+    if any(op.op == "unpack" for op in pre):
+        g.raw("vsync fe on=unpack")
+    head_code = list(g.code)
+    try:
+        ctx.iteration(g, loop.body, 0, prefetch=False)
+    except Pressure:
+        return _no("one trip in one band exceeds the registers")
+    placed = banks.rotate(g.code, body.vcopies)
+    head_code, trip = placed[: len(head_code)], placed[len(head_code) :]
+    for c in trip:
+        if isinstance(c, str) and not c.startswith(_REBUILT):
+            return _no(f"a raw line the emission does not rebuild: {c}")
+    pinned = {s: r for r, s in enumerate(sorted(ctx.pinned, key=lambda x: int(x[1:])))}
+    mops = [
+        MO.parse(t, syms, body.vcopies)
+        for t, syms in (c for c in trip if isinstance(c, tuple))
+    ]
+    if not mops:
+        return _no("no vector ops in the trip")
+    room = ctx.land - ctx.top
+    per_iter = sum(d.words for d in ctx.descs if d.kind in ("load", "store"))
+    k_max = min(8, 2 + room // max(per_iter, 1))
+    lower = max(sum(o.occ for o in mops if o.eng == e) for e in "MUP")
+    ii_max = 4 * lower + 400
+    lead = MO.lead(sum(d.words for d in ctx.descs if d.kind == "load"))
+    head = []
+    for c in head_code:
+        if isinstance(c, str):
+            head.append(c)
+        else:
+            tmpl, syms = c
+            head.append(tmpl.format(*(f"v{pinned[s]}" for s in syms)))
+    mem = [d for d in ctx.descs if not d.to]
+    params = [f"{d.buffer}+{d.off}" for d in mem]
+    out = [f"image {name}({', '.join(f'p_a{d.ad}' for d in mem)})"]
+    for d in ctx.descs:
+        out.append(f"    desc a{d.ad} = p_a{d.ad} walk=({d.walk})")
+    for d in ctx.descs:
+        if d.inc:
+            out.append(f"    ainc a{d.ad} += {d.inc}")
+    trips = len(ctx.trips)
+    ii_min, tried = 1, []
+    while True:
+        p = MO.plan(mops, body.vregs, pinned, k_max, ii_max, lead, ii_min)
+        if p is None:
+            return _no(
+                f"no II up to {ii_max} colours in {body.vregs} registers (K <= {k_max})"
+                f" with an image in IMEM: {', '.join(tried) or 'none planned'}"
+            )
+        top, rings = ctx.top, []
+        for d in ctx.descs:
+            if d.kind in ("load", "store"):
+                own = tuple(d.buf[: p.k])
+                extra = tuple(top + i * d.words for i in range(p.k - len(own)))
+                top += d.words * len(extra)
+                rings.append(MO.Ring(d.ad, d.kind, d.buf[0], d.words, own + extra))
+        best = None
+        for tail in MODULO_TAILS:
+            lines, cycles = MO.emit(p, rings, trips, pinned, tail)
+            if lines is None or top > ctx.land:
+                tried.append(
+                    f"II {p.ii} K {p.k} {tail}: {'L1' if lines else 'no loop body'}"
+                )
+                continue
+            text = (
+                "\n".join(
+                    out + ["    " + ln for ln in _indent([*head, *lines, "halt"])]
+                )
+                + "\n"
+            )
+            words = _imem_words(text, name, len(mem), body.vregs)
+            tried.append(f"II {p.ii} K {p.k} S {p.stages} {tail}: {words} words")
+            if words <= IMEM_ROOM and (best is None or cycles < best[1]):
+                best = (text, cycles)
+        if best is not None:
+            ctx.top = top
+            return best[0], params, best[1], ctx.accesses(), best[1]
+        ii_min = p.ii + max(1, p.ii // 16)
+
+
+def _imem_words(text: str, name: str, nparams: int, vregs: int) -> int:
+    """The IMEM words image `name` of `text` encodes to (its configuration
+    words included)."""
+    mod = replace(TM.read(text, f"<{name}>"), vregs=vregs)
+    words, _ = EI.image(mod, name, (0,) * nparams)
+    return len(words)
 
 
 def _expand(code: list, passes: int) -> list:

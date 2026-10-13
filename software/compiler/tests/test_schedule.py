@@ -2,6 +2,7 @@
 independent work moved into a chain's latency."""
 
 from kohakutpu.compiler.emit import image as vector
+from kohakutpu.compiler.l2 import timing
 from kohakutpu.compiler.opt import schedule as S
 from kohakutpu.language.text import module
 
@@ -14,8 +15,9 @@ CHAIN = """image k()
     vmul v9, v8, v8
     vmul v10, v8, v8
     vsync pack on=drain
-    vpack v3 -> l1[16] f16
     vpack v9 -> l1[24] f16
+    vpack v10 -> l1[32] f16
+    vpack v3 -> l1[16] f16
     halt
 """
 
@@ -27,7 +29,10 @@ def order(text) -> list:
 
 def test_a_chain_waits_and_independent_work_fills_the_wait():
     ops = [s.op for s in order(CHAIN)]
-    # The second unpack and its multiplies move between the dependent exp2s.
+    # The second unpack and its multiplies move between the dependent exp2s:
+    # their packs, first in the pack queue, then leave before the chain ends.
+    tuned = S.schedule_module(module.read(CHAIN)).source
+    assert timing.cycles(tuned, "k", 32, 4) < timing.cycles(CHAIN, "k", 32, 4)
     first_exp, last_exp = ops.index("vexp2"), len(ops) - 1 - ops[::-1].index("vexp2")
     between = ops[first_exp:last_exp]
     assert "vmul" in between
@@ -59,6 +64,17 @@ def test_an_l1_word_is_not_read_before_its_pack():
 """
     ops = [s.op for s in order(text)]
     assert ops.index("vpack") < ops.index("vunpk")
+
+
+def test_a_reorder_the_timing_does_not_gain_keeps_the_written_order():
+    # The chain's own pack ends the image either way: nothing to gain.
+    text = CHAIN.replace(
+        "    vpack v9 -> l1[24] f16\n    vpack v10 -> l1[32] f16\n    vpack v3 -> l1[16] f16\n",
+        "    vpack v3 -> l1[16] f16\n    vpack v9 -> l1[24] f16\n",
+    )
+    assert [s.op for s in order(text)] == [
+        s.op for s in module.read(text).images["k"].stmts
+    ]
 
 
 def test_a_scheduled_image_still_encodes():

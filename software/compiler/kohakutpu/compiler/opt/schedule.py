@@ -6,6 +6,9 @@ issue model (`kohakutpu.compiler.l2.vector.estimate`'s) allows; every other
 statement (a sync, a fill or drain, a scalar op, a loop) stays where it is
 and bounds the runs on either side. Configuration words are the encoder's
 (it tracks the core's state), so a reorder never changes what an op reads.
+The reordered image replaces the written one only where the core's timing
+(`kohakutpu.compiler.l2.timing`) of the whole image says it is faster: a
+written order that is already a modulo schedule stays.
 
 Dependences: on vector registers (a chunk select counts as the whole
 register), scalar and predicate registers, and the L1 words an unpack reads
@@ -14,6 +17,7 @@ or a pack writes.
 
 from dataclasses import replace
 
+from kohakutpu.compiler.l2 import timing
 from kohakutpu.language.text import module as M
 from kohakutpu.language.text.meta import Expander
 from kohakutpu.language.text.syntax import (
@@ -34,15 +38,23 @@ MOVABLE = {"vunpk", "vpack"}
 
 
 def schedule_module(module) -> object:
-    """`module` with every image's runs list-scheduled; the result is read
-    back. Images are expanded first (macros, `for`, `when`)."""
+    """`module` with every image's runs list-scheduled where the core's
+    timing (`l2.timing`) of the whole image is better than as written; the
+    result is read back. Images are expanded first (macros, `for`, `when`)."""
     r = module.reader()
     macros = {m.name: (m.params, m.stmts) for m in module.macros.values()}
-    texts = [f"target {module.target}\n"] if module.target else []
+    texts = [f"{module.target_line()}\n"] if module.target else []
     for img in module.images.values():
         body = Expander(macros, r.fail, unroll_all=True).stmts(img.stmts, {})
         head = f"image {img.name}({', '.join(img.params)})\n"
-        texts.append(head + emit(_block(body), 1))
+        written, tuned = head + emit(body, 1), head + emit(_block(body), 1)
+        if tuned != written:
+            regs, copies = module.vregs, module.vcopies
+            if timing.cycles(tuned, img.name, regs, copies) >= timing.cycles(
+                written, img.name, regs, copies
+            ):
+                tuned = written
+        texts.append(tuned)
     for m in module.macros.values():
         texts.append(f"macro {m.name}({', '.join(m.params)})\n" + emit(m.stmts, 1))
     for (name, level), b in module.fns.items():

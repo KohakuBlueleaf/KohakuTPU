@@ -3,16 +3,29 @@ kernel's compiled package is witnessed against the hand-written L1's bytes;
 the rest against the L1 text the lowering must write."""
 
 import re
+from dataclasses import replace
 
 import pytest
 
 from kohakutpu.compiler import build
 from kohakutpu.compiler import target as T
 from kohakutpu.compiler.l2 import lower, passes, pipeline
+from kohakutpu.compiler.l2 import modulo as MO
 from kohakutpu.compiler.l2 import vector as V
 from kohakutpu.language import examples
 from kohakutpu.language.text import module
 from kohakutpu.language.text.syntax import TextError
+
+
+@pytest.fixture
+def band(monkeypatch):
+    """The band lowering only: these tests read its loop's shape."""
+    monkeypatch.setattr(V, "STRATEGY", "band")
+
+
+def replace_vregs(m, n: int):
+    """Module `m` for vector cores of `n` registers."""
+    return replace(m, vregs=n)
 
 
 def packages(m, name, nodes=None) -> dict:
@@ -85,7 +98,7 @@ def test_each_pass_writes_its_choice_in():
     assert set(got) == {0, 1}
 
 
-def test_retile_takes_the_row_tile_the_issue_model_times_fastest():
+def test_retile_takes_the_row_tile_the_issue_model_times_fastest(band):
     l2 = examples.load(examples.example("softmax", "l2"))
     eight = module.read(
         l2.source.replace("t*16 : +16", "t*8 : +8")
@@ -172,7 +185,7 @@ def test_cluster_refusals(line, said):
 
 
 @pytest.mark.parametrize("name", ["silu", "add", "softmax", "layernorm"])
-def test_a_vector_kernel_lowers_to_a_loop_of_two_iterations(name):
+def test_a_vector_kernel_lowers_to_a_loop_of_two_iterations(name, band):
     l2 = examples.load(examples.example(name, "l2"))
     text = lower.lower(l2, name)
     image = text.split("image ")[1]
@@ -181,7 +194,7 @@ def test_a_vector_kernel_lowers_to_a_loop_of_two_iterations(name):
     packages(module.read(text), name)
 
 
-def test_an_mxfp7_store_walks_the_a_packing():
+def test_an_mxfp7_store_walks_the_a_packing(band):
     l2 = examples.load(examples.example("mlp", "l2"))
     text = lower.lower(l2, "mlp")
     # a2 is gm=64, nk=2: a band's 4 chunks of 2 entries (8 words), the chunks
@@ -408,11 +421,66 @@ def test_a_gt4_band_reduces_to_one_register_every_chunk_holds():
     assert "vexp2d v0, v0, v4" in lines  # the band's statistic, elementwise
 
 
-def test_a_compare_is_a_predicate_and_two_moves():
+def test_a_compare_is_a_predicate_and_two_moves(band):
     l2 = examples.load(examples.example("leaky", "l2"))
     image = lower.lower(l2, "leaky").split("image ")[1]
     assert "vcmpgt p1, v0, k0" in image and "k1 if=p1" in image
     assert image.count("vsel ") == 16  # 8 rows a trip, two trips a VLOOP pass
+
+
+def test_modulo_pipelines_the_stream_loop_through_rings(monkeypatch):
+    monkeypatch.setattr(V, "STRATEGY", "modulo")
+    l2 = examples.load(examples.example("softmax", "l2"))
+    mach = T.machine(vregs=128)
+    text = lower.lower(replace_vregs(l2, 128), "softmax", mach)
+    image = text.split("image ")[1].split("\n    send")[0]
+    assert "loop s15" in image
+    # every slot of a ring is reused behind a sync on the iteration K back
+    assert "vsync fill on=unpack" in image and "vsync pack on=drain" in image
+    assert "vsync unpack on=fill" in image and "vsync drain on=pack" in image
+    packages(module.read(text), "softmax")
+
+
+def test_modulo_rotates_the_predicate_over_its_copies(monkeypatch):
+    monkeypatch.setattr(V, "STRATEGY", "modulo")
+    l2 = examples.load(examples.example("leaky", "l2"))
+    image = lower.lower(replace_vregs(l2, 128), "leaky", T.machine(vregs=128))
+    # K >= 2 copies of an iteration in flight: at least p1 and p2
+    assert "vcmpgt p1," in image and "vcmpgt p2," in image
+    assert "if=p1" in image and "if=p2" in image
+
+
+def test_modulo_parse_reads_an_ops_own_destination():
+    o = MO.parse("vadd {0}, {0}, merge({0}[4 :], 4) vl=64", ("%1",), 4)
+    assert o.reads == ("%1",) and o.writes == ("%1",) and o.occ == 4
+    assert o.xreads == ("%1",)  # through the crossbar: LAT_XB later
+    # a chunk-selected result writes its words in place: no read of the rest
+    o = MO.parse("vadd {0}[4 :], {1}[0 :], {1}[4 :] vl=64", ("%1", "%2"), 4)
+    assert o.reads == ("%2",) and o.writes == ("%1",) and o.xreads == ()
+
+
+def test_modulo_placement_runs_each_op_back_to_back():
+    ops = [
+        MO.parse(t, s, 4)
+        for t, s in [
+            ("vunpk {0} <- l1[0] f16", ("%1",)),
+            ("vmul {0}, {1}, s0", ("%2", "%1")),
+            ("vmax {0}[0 :], {1}[0 :], {1}[4 :] vl=64", ("%3", "%2")),
+            ("vadd {0}, {1}, merge({1}, 8)", ("%4", "%3")),
+            ("vmul {0}, {1}, s0", ("%5", "%2")),
+            ("vpack {0} -> l1[64] f16", ("%5",)),
+        ]
+    ]
+    MO._link(ops)
+    ii = 30  # the math ops' 28 beats and two free slots
+    assert MO._place(ops, ii)
+    for eng in "MUP":
+        slots = [(o.t + b) % ii for o in ops if o.eng == eng for b in range(o.occ)]
+        assert len(slots) == len(set(slots))  # no two ops share a slot
+    for o in ops:
+        assert o.e - o.t == o.occ
+        for p, lat, end in o.deps:
+            assert o.t >= (ops[p].e if end else ops[p].t) + lat
 
 
 def test_a_vector_body_past_its_registers_is_refused():
