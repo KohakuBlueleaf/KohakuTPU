@@ -197,6 +197,9 @@ static int next_clk() {
 // die without one, a RAM stub, leaves them unconnected. A die has a mesh iff the
 // model has a public scope under `u_mesh<d>.` (card.vlt makes the sysnode's
 // scratchpad public). Without any such scope nothing is presumed dead.
+// --mesh-mask M: only dies in M keep their mesh clocks; the others' meshes are
+// stopped, their sysnodes still run (a cost-per-die measurement).
+static int mesh_mask = 0xf;
 static void mark_dead_clocks() {
     const VerilatedScopeNameMap *m = ctx->scopeNameMap();
     if (!m) return;
@@ -206,6 +209,7 @@ static void mark_dead_clocks() {
             if (strstr(kv.first, (std::string(".u_mesh") + std::to_string(d) + ".").c_str()))
                 mesh[d] = true;
     if (!(mesh[0] || mesh[1] || mesh[2] || mesh[3])) return;
+    for (int d = 0; d < 4; ++d) mesh[d] = mesh[d] && ((mesh_mask >> d) & 1);
     for (auto &c : clks) {
         if (c.die < 0 || mesh[c.die] || strcmp(c.name, "sys") == 0) continue;
         c.dead = true;
@@ -223,9 +227,13 @@ static bool coalesce = false;  // --coalesce: measured 1.25x, and host reads fai
 // --join a,b: only clocks so named may share an eval (bisecting a fault).
 static std::string join_names;
 
+// A clock is named by its family (`sys`) or by family and die (`sys1`).
 static bool named(const Clk &c) {
     if (join_names.empty()) return true;
-    return ("," + join_names + ",").find(std::string(",") + c.name + ",") != std::string::npos;
+    const std::string list = "," + join_names + ",";
+    if (list.find(std::string(",") + c.name + ",") != std::string::npos) return true;
+    return c.die >= 0 &&
+           list.find("," + std::string(c.name) + std::to_string(c.die) + ",") != std::string::npos;
 }
 
 // Whether `c`, due at the same instant as `lead`, may share its eval. Both are
@@ -457,6 +465,7 @@ int main(int argc, char **argv) {
         if (a == "--ddr-sync") skew_ddr = false;  // DDR on the sysnode's edges only
         if (a == "--bus-sync") skew_bus = false;  // one bus period on every die
         if (a == "--xdma-ps" && i + 1 < argc) xdma_ps = strtoull(argv[++i], nullptr, 0);
+        if (a == "--mesh-mask" && i + 1 < argc) mesh_mask = (int)strtoul(argv[++i], nullptr, 0);
     }
     dut = new VTOP(ctx);
 

@@ -81,9 +81,25 @@ that read-merges a duty half fails here as it does on the card.
 
 **Clocks** advance by the earliest pending edge, one edge per `eval()`; at a
 tie `mat2x` goes first, so the matmul 1x clock that `ktpu_div2` divides from it
-never follows a sysnode edge in time. `--coalesce` lets edges due at one
-instant share an eval (`--join a,b` restricts it to the named clocks); host
-reads fail with it, so it is a bisecting tool, not a mode.
+never follows a sysnode edge in time.
+
+**`--coalesce`** lets edges due at one instant share an eval; `mat2x` shares
+only with `mat2x`. `--join a,b` restricts it to the named clocks, a family
+(`sys`) or one die's (`sys1`). Measured on card_v9t3 (add, softmax L1 on one
+node; silu2 L1/L2 and share2 L2 on two):
+
+| joined | outputs | cycles |
+|---|---|---|
+| `noc,vec,mat2x,bus,ddr,ctrl,xdma` | identical | within 1% (17,224 against 17,074) |
+| any two or three of `sys0..3` | identical | within 4% (13,237 against 12,813..13,717) |
+| all four `sys` clocks | a host read (`RB 18000000020 20`, station 0 port 0) returns 1 beat of 4 at 193,964,655 ps | |
+
+A run's cycle count depends on how same-instant edges are ordered, so
+coalesced and one-edge runs do not compare cycle for cycle; the default stays
+one edge per eval.
+
+**`--mesh-mask M`** stops the mesh clocks of the dies not in `M` (their
+sysnodes keep running): the cost of one more live die, measured below.
 
 **Dead clocks.** A die's `noc_clk`, `mat2x_clk` and `vec_clk` reach only its
 mesh, and a die without one (a RAM stub) leaves them unconnected. The harness
@@ -134,6 +150,23 @@ the dies' RAM arrays changes nothing (7.6 against 7.5). Not helped either:
 `--threads 4` (3.1, the per-eval work is too small for the thread sync),
 `--opt-fast=-Os` (5.4), `-O2` (6.7). `-fno-inline`, which would share one copy
 of the per-die code, crashes MinGW's cc1plus on its 2.6 MB `Syms` header.
+
+card_v9t3 (V2.1 vector cores), idle, `--no-pgo`, microseconds a die-0 sysnode
+cycle:
+
+| card, build | one edge per eval | `--coalesce` | `--coalesce --join noc,vec,mat2x,bus,ddr,ctrl,xdma` |
+|---|---|---|---|
+| 1n | 22.3 | | |
+| 4n without the `v2_lanes`/`v2_alu` gates | 420 | | |
+| 4n | 249 | 193 | 230 |
+| 4n, `--vflag=--threads --vflag=4` | 352 | 153 | 205 |
+
+Threads pay only once a die's edges share an eval with the other dies'; one
+edge per eval leaves each eval one die's work. `--opt-fast=-Os` (254) and
+`-O2` (251) change nothing on the gated 4n.
+
+By `--mesh-mask` on the gated 4n: die 0's mesh alone 69, each further die
++60, against 22.3 for the whole 1n card.
 
 `--aligned` (every bus and DDR clock phase-locked) is faster but host reads
 fail with it: do not use it.
