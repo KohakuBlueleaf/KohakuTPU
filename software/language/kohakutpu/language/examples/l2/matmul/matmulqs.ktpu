@@ -1,0 +1,21 @@
+# y = x w^T, 1024 x 1024 x 1024, x an FP16 activation (a drained layer's
+# 64 x 64 sub-tiles) and w pre-quantised: the two cores quantise all of x
+# into xq in the node's staging store, a band of 4 rows at a time, then the
+# four clusters sweep both MXFP7 operands, cluster u owning column tile u.
+target ktpu.v9
+
+fn matmulqs.l2(x: f16[1024, 1024] @dram(tile=64x64), w: mx7b[1024, 1024] @dram(gn=64, nk=2), xq: mx7a[1024, 1024] @stage(gm=64, nk=2), y: f16[1024, 1024] @dram(tile=64x64))
+    par c in 0..32 on vc[any]
+        for t in 0..32
+            xl = load x[(c % 8)*128 + t*4 : +4, (c / 8)*256 : +256] : f16[4, 256] @l1(gt4)
+            v = unpack xl                                       : f32[4, 256] @reg(gt4)
+            q = pack v                                          : mx7a[4, 256] @l1
+            store xq[(c % 8)*128 + t*4 : +4, (c / 8)*256 : +256] <- q
+    par u in 0..4 on mg[u]
+        for i in 0..4
+            acc = zero                                      : f32[256, 256] @acc
+            for k in 0..16
+                a = fill xq[i*256 : +256, k*64 : +64]       : mx7a[256, 64] @A
+                b = fill w[u*256 : +256, k*64 : +64]        : mx7b[256, 64] @B
+                acc = gemm a, b, acc                        : f32[256, 256] @acc
+            drain acc -> y[i*256 : +256, u*256 : +256]

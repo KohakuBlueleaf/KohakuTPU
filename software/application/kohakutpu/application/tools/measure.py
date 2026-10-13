@@ -261,6 +261,10 @@ CASES = [
     ("matmul", ("l1", "l2"), 1, matmul_case(1024, 1024, 1024)),
     ("longk", ("l1", "l2"), 1, matmul_case(1024, 1024, 2048)),
     ("splitk", ("l1", "l2"), 1, matmul_case(256, 256, 1024)),
+    # x an FP16 activation quantised on the card (cores / mover), w MXFP7.
+    ("matmulq", ("l2",), 1, matmul_case(1024, 1024, 1024)),
+    ("matmulqm", ("l2",), 1, matmul_case(1024, 1024, 1024)),
+    ("matmulqs", ("l2",), 1, matmul_case(1024, 1024, 1024)),
     ("mmsilu", ("l2",), 1, mmsilu_case()),
     ("mlp", ("l2",), 1, mlp_case()),
     ("ffn", ("l2",), 1, ffn_case()),

@@ -1,17 +1,18 @@
-# y = silu(x w1^T) w2^T, 256 x 256 x 256 twice: a cluster sweeps h = x w1^T
-# into the drained sub-tile layout; two cores read it a band of 4 rows at a
-# time as GT4 blocks, apply silu and quantise each band straight into a2,
-# the second matmul's MXFP7 A operand; a cluster then sweeps y = a2 w2^T.
+# y = silu(x w1^T) w2^T, 256 x 256 x 256 twice: four clusters sweep 64-row
+# strips of h = x w1^T into the drained sub-tile layout; two cores read it a
+# band of 4 rows at a time as GT4 blocks, apply silu and quantise each band
+# straight into a2, the second matmul's MXFP7 A operand; the clusters then
+# sweep y = a2 w2^T the same way.
 target ktpu.v9
 
 fn mlp.l2(x: mx7a[256, 256] @dram(gm=64, nk=2), w1: mx7b[256, 256] @dram(gn=64, nk=2), w2: mx7b[256, 256] @dram(gn=64, nk=2), h: f16[256, 256] @dram(tile=64x64), a2: mx7a[256, 256] @dram(gm=64, nk=2), y: f16[256, 256] @dram(tile=64x64))
-    par u in 0..1 on mg[u]
-        acc = zero                                      : f32[256, 256] @acc
+    par u in 0..4 on mg[u]
+        acc = zero                                      : f32[64, 256] @acc
         for k in 0..4
-            a = fill x[0 : +256, k*64 : +64]            : mx7a[256, 64] @A
+            a = fill x[u*64 : +64, k*64 : +64]          : mx7a[64, 64] @A
             b = fill w1[0 : +256, k*64 : +64]           : mx7b[256, 64] @B
-            acc = gemm a, b, acc                        : f32[256, 256] @acc
-        drain acc -> h
+            acc = gemm a, b, acc                        : f32[64, 256] @acc
+        drain acc -> h[u*64 : +64, 0 : +256]
     par c in 0..2 on vc[c]
         for t in 0..32
             hl = load h[c*128 + t*4 : +4, :]            : f16[4, 256] @l1(gt4)
@@ -23,10 +24,10 @@ fn mlp.l2(x: mx7a[256, 256] @dram(gm=64, nk=2), w1: mx7b[256, 256] @dram(gn=64, 
             o = mul v, e                                : f32[4, 256] @reg(gt4)
             q = pack o                                  : mx7a[4, 256] @l1
             store a2[c*128 + t*4 : +4, :] <- q
-    par u in 0..1 on mg[u]
-        acc = zero                                      : f32[256, 256] @acc
+    par u in 0..4 on mg[u]
+        acc = zero                                      : f32[64, 256] @acc
         for k in 0..4
-            a = fill a2[0 : +256, k*64 : +64]           : mx7a[256, 64] @A
+            a = fill a2[u*64 : +64, k*64 : +64]         : mx7a[64, 64] @A
             b = fill w2[0 : +256, k*64 : +64]           : mx7b[256, 64] @B
-            acc = gemm a, b, acc                        : f32[256, 256] @acc
-        drain acc -> y
+            acc = gemm a, b, acc                        : f32[64, 256] @acc
+        drain acc -> y[u*64 : +64, 0 : +256]

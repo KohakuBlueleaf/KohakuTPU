@@ -1,0 +1,17 @@
+# y = x w^T, 1024 x 1024 x 1024, x a row-major FP16 activation and w
+# pre-quantised: row block i (256 rows) at a time, the node's mover quantises
+# the block into xq (the A packing), then the four clusters sweep it, cluster
+# u owning column tile u. xq holds two blocks, so the pipeline pass quantises
+# block i + 1 while the clusters sweep block i.
+target ktpu.v9
+
+fn matmulqm.l2(x: f16[1024, 1024] @dram, w: mx7b[1024, 1024] @dram(gn=64, nk=2), xq: mx7a[512, 1024] @dram(gm=64, nk=2), y: f16[1024, 1024] @dram(tile=64x64))
+    for i in 0..4
+        quant xq[(i % 2)*256 : +256, :] <- x[i*256 : +256, :]
+        par u in 0..4 on mg[u]
+            acc = zero                                              : f32[256, 256] @acc
+            for k in 0..16
+                a = fill xq[(i % 2)*256 : +256, k*64 : +64]         : mx7a[256, 64] @A
+                b = fill w[u*256 : +256, k*64 : +64]                : mx7b[256, 64] @B
+                acc = gemm a, b, acc                                : f32[256, 256] @acc
+            drain acc -> y[i*256 : +256, u*256 : +256]
