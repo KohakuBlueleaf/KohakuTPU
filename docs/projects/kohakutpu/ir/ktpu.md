@@ -235,7 +235,7 @@ beats over 16 a core-cycle on every core; B/cycle, the bytes a kernel moves.
 | leaky 512×128 | 1 | | 15,462 | 66.2% lane | 2.4e-5 |
 | layernorm 1024×128 | 1 | 39,110 | 38,523 | 61.6% lane | 2.9e-4 |
 | flash 10 heads (S via DRAM) | 1 | 1,571,091 | | 20.9% MFU | 1.5e-2 |
-| flashd 10 heads (S direct) | 1 | 1,148,007 | | 28.5% MFU | 1.5e-2 |
+| flashd 10 heads (S direct) | 1 | 1,131,543 | | 28.9% MFU | 1.5e-2 |
 | matmul2 1024×2048×2048 | 2 | 668,655 | 667,511 | 78.5% MFU | 4.4e-4 |
 | share2 | 2 | | 75,081 | 43.6% MFU | 4.1e-4 |
 | silu2 1024×128 | 2 | 17,169 | 17,277 | 44.5% lane | 3.8e-4 |
@@ -245,7 +245,25 @@ beats over 16 a core-cycle on every core; B/cycle, the bytes a kernel moves.
 | flash 2 heads a node | 4 | 578,587 | | 11.3% MFU | 2.6e-2 |
 
 Flash rows: `build/measure/flash/report.json` (split by heads: every node runs
-the same program on its own heads; MFU counts both products).
+the same program on its own heads; MFU counts both products). The flashd row:
+`build/measure/c1/report.md`, which also has it on the V2.1 core (two
+register-file read copies, card_v9t3): 1,146,024 cycles, 1.3% over the
+four-copy core, from the combine's three-register FMA.
+
+Row normalisations by width and register budget (DSL kernels, card
+`build/v9t3/vlt_card_v9t3_1n`: V2.1 cores of 128 registers, two read copies;
+256 rows, cycles / lane use; `build/measure/b5/report.md`). Every budget gives
+the same output bytes; a refused cell is "the stream loop needs more than N
+vector registers".
+
+| kernel | W | 32 registers | 64 registers | 128 registers |
+|---|---|---|---|---|
+| rmsnorm | 256 | 13,136 / 64.3% | 12,864 / 65.7% | 12,864 / 65.7% |
+| rmsnorm | 512 | refused | 20,499 / 76.2% | 20,499 / 76.2% |
+| rmsnorm | 1024 | refused | refused | 54,529 / 54.9% |
+| layernorm | 256 | 32,163 / 47.8% | 19,599 / 78.4% | 19,597 / 78.4% |
+| layernorm | 512 | refused | 44,349 / 64.7% | 35,604 / 84.4% |
+| layernorm | 1024 | refused | refused | 86,329 / 64.1% |
 
 What sets the numbers:
 
@@ -312,7 +330,7 @@ KohakuTPU's spaces and ops. Code: `software/compiler/kohakutpu/compiler/l2/`.
 | `par v in LO..HI on vc[E]` | `x = load VIEW : f16[R, C] @l1[(gt4)]` | a descriptor (`ainc` along the stream loop), filled one iteration ahead |
 | | `h = recv mg[U] : f16[R, C] @l1(gt4)` (before the loop); `r = unpack h[ROWS, :]` (in it) | `vwait unpack rx` for the tile's granules cluster U drained here; each trip's row band unpacked through the unpack pointer (`uptr`, `uinc 8`) |
 | | `s = recv mg[U] : f16[R, C] @l1(gt4)` (in the loop) | a stream: each trip `vwait unpack rx` for the tile's granules in the ring slot of its parity, and once unpacked `vpost mg[U]` returns the slot; the core's open image posts the whole ring at the program's start, the cluster spends the last lap's credits at its end |
-| | `r = unpack x : f32[...] @reg[(gt4)]`; `p = pack r : f16[...] @l1[(gt4)]`; `store VIEW <- p` | VUNPK / VPACK of each register; a VDRAIN after the iteration's packs |
+| | `r = unpack x : f32[...] @reg[(gt4)]`; `p = pack r : f16[...] @l1[(gt4)]`; `store VIEW <- p` | VUNPK / VPACK of each register; a VDRAIN after the iteration's packs. A store whose two buffers do not fit the L1 beside the loop's loads packs over the trip's load of the same words and layout (`vsync pack on=unpack` before the packs, `vsync fill on=drain` before the refill): a band of 4 rows x 1024 columns (256 words) double-buffers in the whole L1 |
 | | `p = pack r : mx7a[4k, C] @l1`; `store A_VIEW <- p` | the op that made `r` (read by nothing else) writes it in the quantiser's chunk order, one chunk an op (GT4 chunk 4q + i to chunk 2i + q, every register operand chunk-selected alike), else 8 VMOVs; a VPACK MX7 an entry; the drain walks the A packing (a chunk's `nk` entries, chunks `gm * nk` entries apart, bands `nk` apart) |
 | | `send p -> mg[I] side=A\|B` (`p` packed MXFP7) | a COUNT-flagged peer VDRAIN of each trip's entries into cluster I's bank, the trips one after another (a granule is a quarter entry); the cluster's `recv` takes them by `fill recv`. To a cluster that receives inside a loop, a stream: one descriptor a ring slot by parity, each trip after `vwait drain cr` for its granules |
 | | `m = rmax x[:, C0:C1]` | the reduction over the 32-column blocks C0..C1 of each band |
@@ -320,7 +338,7 @@ KohakuTPU's spaces and ops. Code: `software/compiler/kohakutpu/compiler/l2/`.
 | | `m = cmplt\|cmpgt\|cmpeq a, b`; `o = sel m, a, b` | a compare into a predicate, then 1.0 / 0.0 by a move and a predicated move; VSEL (a where m is not 0, else b) |
 | | `y = xlane x, K` | lane l of every 16-lane chunk takes lane `l xor K`: `vmul d, k1, xor(x, K)` a register (exact); with `sel` over a lane mask, any swap inside a chunk (a 4 x 4 transpose is two) |
 | | `x = load VIEW : f16[1, C] @l1(gt4)` read by a band of R rows; `s = load VIEW : f16[R] @l1` | one row broadcast to every row of the band; a 1-D view loaded as a row statistic |
-| | `rmax`, `rsum` (rows to `f32[R] @reg`) | the merge tree over 8 rows; `rsum (mul a, b)` folds the product. Of `@reg(gt4)` rows (drained tiles): a 4-row band's registers folded, chunk 4 + i onto chunk i, an xor butterfly over the 16 lanes, chunks 0-3 copied to 4-7 -- one register a band whose every chunk holds its row's value, an elementwise operand to the band (`m[:, *]`) |
+| | `rmax`, `rsum` (rows to `f32[R] @reg`) | the merge tree over 8 rows; `rsum (mul a, b)` folds the product. Of `@reg(gt4)` rows (drained tiles): a 4-row band's registers folded, chunk 4 + i onto chunk i, an xor butterfly over the 16 lanes, chunks 0-3 copied to 4-7 -- one register a band whose every chunk holds its row's value, an elementwise operand to the band (`m[:, *]`); `rsum (mul a, b)` there folds the product too (a multiply, then a fused multiply-add of the next register pair: the product is never held) |
 | | `if sticky` (a block of math) | the front end waits for the math, GETSTK, VSKIPZ over the block; the block's results overwrite their names' registers, so the skipped path keeps the values |
 | node scope | `copy DST <- SRC [perm=]`, `fill`, `gen`, `gather`, `scatter` | one move of walks |
 | | `copy BUF <- BUF walk=((N, S), ...) [at=B] [dwalk=(...)] [dat=B]`; `fill BUF value=V walk=(...) [at=B]` | explicit signed byte walks of whole buffers (the last level whole words; a stride of 0 repeats): flips, permutes, broadcasts, windows |
@@ -364,6 +382,17 @@ chosen by a model of the V2 issue (in-order dispatch into 8-deep engine
 queues, unpack words and math beats sharing the write port, a result 20
 cycles after issue). `when` on an instance variable keeps a block per
 instance.
+
+The other lowering of a stream loop is a **modulo schedule** (`l2/modulo.py`):
+one trip's code becomes an iteration started every II cycles, several in
+flight; its registers rotate over K copies, coloured on a circle of K x II
+(an arc starts at its time modulo the circle), each load and store a ring of
+K L1 slots, each VSYNC's slack the exact count it may leave outstanding.
+Before an image is kept its register dataflow is replayed in program order:
+a read that would find another iteration's value fails the compile. The
+lowering takes whichever of the two the image timing model (`l2/timing.py`)
+times faster; a sticky block, a cluster stream, a banded unpack or a store
+packed over its load keeps the band lowering.
 
 **Passes** (`l2/passes.py`, `l2/pipeline.py compile_l1`): `place`, `space`,
 `share` (in a body over several nodes, a fill whose view does not name the
