@@ -428,6 +428,29 @@ def test_a_compare_is_a_predicate_and_two_moves(band):
     assert image.count("vsel ") == 16  # 8 rows a trip, two trips a VLOOP pass
 
 
+@pytest.mark.parametrize(
+    "cmp, a, arms, want",
+    [
+        ("cmpgt v, 0.0", "0.1", "m, v, s", "max v, s"),  # leaky relu
+        ("cmpgt v, 0.0", "0.1", "m, s, v", "min v, s"),
+        ("cmplt v, 0.0", "0.1", "m, s, v", "max v, s"),
+        ("cmpgt 0.0, v", "0.1", "m, s, v", "max v, s"),
+        ("cmpgt v, 0.0", "4.0", "m, v, s", "min v, s"),
+        ("cmpgt v, 0.0", "-0.5", "m, v, s", None),  # a sign flip: no order
+        ("cmpgt v, 1.0", "0.1", "m, v, s", None),  # not a sign test
+    ],
+)
+def test_select_turns_a_sign_select_of_a_scale_into_max_or_min(cmp, a, arms, want):
+    src = examples.example("leaky", "l2").read_text(encoding="utf-8")
+    src = src.replace("cmpgt v, 0.0", cmp).replace("mul v, 0.1", f"mul v, {a}")
+    src = src.replace("sel m, v, s", f"sel {arms}")
+    got = passes.run(module.read(src), "leaky", ("select",)).source
+    if want is None:
+        assert f"sel {arms}" in got
+    else:
+        assert f"o = {want}" in got and "cmp" not in got and "sel" not in got
+
+
 def test_modulo_pipelines_the_stream_loop_through_rings(monkeypatch):
     monkeypatch.setattr(V, "STRATEGY", "modulo")
     l2 = examples.load(examples.example("softmax", "l2"))

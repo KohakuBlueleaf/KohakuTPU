@@ -3,6 +3,7 @@ left open and prints L2 text with it written in; nothing computed changes.
 
 | pass | decides |
 |---|---|
+| select | `sel` of x and a nonnegative scale of x on x's sign: `max` / `min`, the compare dropped |
 | place | `mg[any]` / `vc[any]`: instance i on unit i mod the count |
 | space | `@any` scratch: a cluster -> core transfer where the tiles allow; `@mem` / else: staging when it fits, else DRAM |
 | share | a fill every cluster of a `par` makes on one view, in a body over several nodes: `share=cross` (one read a pair) |
@@ -27,6 +28,7 @@ from kohakutpu.language.text.meta import Expander
 from kohakutpu.language.text.syntax import (
     Assign,
     BinOp,
+    Float,
     Int,
     Member,
     Name,
@@ -47,15 +49,11 @@ from kohakutpu.language.text.syntax import (
 STAGE_ROOM = STAGE_BYTES // 2
 
 
-def run(
-    module,
-    name: str,
-    passes=("place", "space", "share", "split", "pipeline", "retile"),
-    machine=None,
-):
-    """`module` with `fn name.l2` rewritten by `passes`, in order; each
-    result is read back (and so re-verified by the reader) before the next."""
-    for p in passes:
+def run(module, name: str, passes=None, machine=None):
+    """`module` with `fn name.l2` rewritten by `passes` (default every pass,
+    in `PASSES` order), in order; each result is read back (and so
+    re-verified by the reader) before the next."""
+    for p in PASSES if passes is None else passes:
         module = PASSES[p](module, name, machine or T.machine(nodes=4))
     return module
 
@@ -671,6 +669,93 @@ def _meets(xs, ys) -> bool:
     return False
 
 
+# ----------------------------------------------------------------- select
+#: (compare, the 0's operand) -> whether the compare holds where x > 0:
+#: `cmpgt x, 0` and `cmplt 0, x` do
+_SIGN = {
+    ("cmpgt", 1): True,
+    ("cmplt", 1): False,
+    ("cmpgt", 0): False,
+    ("cmplt", 0): True,
+}
+
+
+def select(module, name, machine):
+    """`o = sel m, P, Q` where `m` compares a value x with 0 and the arms are x
+    and `s = mul x, a` (a >= 0): one `max x, s` or `min x, s` -- the arm the
+    select takes for x > 0 is x and s alike for x <= 0 exactly when the scale
+    lies on that side of 1 -- and the compare goes when nothing else reads it.
+    The values are the select's bit for bit: x > 0 meets a x on its side of x,
+    and at x = 0 both arms are x * a = x."""
+    src, stmts, _ = _body(module, name)
+
+    def f(s, scopes):
+        if s.op not in ("par", "for") or not s.body:
+            return s
+        defs = {b.target: b for b in s.body if b.target is not None}
+        body = [_minmax(b, defs) or b for b in s.body]
+        read: set = set()
+        todo = list(body)
+        while todo:
+            b = todo.pop()
+            read |= _names(b.args) | {a.name for a in b.args if isinstance(a, View)}
+            todo += b.body
+        body = [
+            b
+            for b in body
+            if not (
+                b.op in ("cmpgt", "cmplt")
+                and b.target is not None
+                and b.target not in read
+            )
+        ]
+        return replace(s, body=body)
+
+    return _write(module, name, src, _walk(stmts, f))
+
+
+def _minmax(st, defs: dict):
+    """`st` as a max / min where it is a select of x and a nonnegative scale of
+    x on x's sign, else None."""
+    if st.op != "sel" or st.target is None:
+        return None
+    pos = st.positional()
+    if len(pos) != 3 or not all(isinstance(p, Name) for p in pos):
+        return None
+    m, p, q = (p.text for p in pos)
+    cmp = defs.get(m)
+    if cmp is None or cmp.op not in ("cmpgt", "cmplt"):
+        return None
+    cargs = cmp.positional()
+    zero = [
+        i for i, a in enumerate(cargs) if isinstance(a, (Float, Int)) and a.value == 0
+    ]
+    if len(cargs) != 2 or len(zero) != 1 or not isinstance(cargs[1 - zero[0]], Name):
+        return None
+    x = cargs[1 - zero[0]].text
+    positive = p if _SIGN[(cmp.op, zero[0])] else q
+    other = q if positive == p else p
+    if x not in (p, q) or other == positive:
+        return None
+    scaled = other if positive == x else positive
+    mul = defs.get(scaled)
+    if mul is None or mul.op != "mul":
+        return None
+    margs = mul.positional()
+    consts = [a for a in margs if isinstance(a, (Float, Int))]
+    if (
+        len(margs) != 2
+        or len(consts) != 1
+        or Name(x) not in margs
+        or consts[0].value < 0
+    ):
+        return None
+    a = consts[0].value
+    # x itself for x > 0: the larger of x and a x when a <= 1, the smaller past 1
+    op = "max" if (positive == x) == (a <= 1) else "min"
+    return replace(st, op=op, args=[Name(x), Name(scaled)])
+
+
 # ----------------------------------------------------------------- retile
 #: Rows a trip the retile pass tries, as multiples of the written tile; the
 #: written tile first, the one the others must beat.
@@ -810,6 +895,7 @@ def _vector_cost(module, name, src, stmts):
 
 
 PASSES = {
+    "select": select,
     "place": place,
     "space": space,
     "share": share,
