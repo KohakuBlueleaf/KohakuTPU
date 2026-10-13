@@ -19,7 +19,7 @@ import tempfile
 
 import numpy as np
 
-from kohakutpu.compiler import build
+from kohakutpu.compiler import build, verify
 from kohakutpu.compiler.layout.buffer import Buffer
 from kohakutpu.language import examples
 from kohakutpu.simulation.verilator.card import VerilatorCard
@@ -88,6 +88,12 @@ def main() -> int:
     ap.add_argument("--fn", default=None)
     ap.add_argument("--seed", type=int, default=2)
     ap.add_argument("--out", default=None)
+    ap.add_argument(
+        "--check",
+        default="refuse",
+        choices=verify.GATES,
+        help="the static checker before the run",
+    )
     ap.add_argument("name")
     a = ap.parse_args()
     nodes = tuple(int(n) for n in a.nodes.split(","))
@@ -99,7 +105,9 @@ def main() -> int:
     out = pathlib.Path(a.out or tempfile.mkdtemp(prefix="ktpu_l1_"))
     out.mkdir(parents=True, exist_ok=True)
     stem = pathlib.Path(a.name).stem
-    card = VerilatorCard(a.build, nodes=nodes, log=out / f"{stem}.model.log")
+    card = VerilatorCard(
+        a.build, nodes=nodes, log=out / f"{stem}.model.log", check=a.check
+    )
     res = run(card, a.name, inputs, fn)
     stats = card.close()
     beats = sum(s.get("vres", {}).get("lanes", 0) for s in stats.values()) // 2

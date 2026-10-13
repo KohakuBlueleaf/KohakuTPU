@@ -22,12 +22,16 @@ class Clock:
         self.v = dict(v or {})
 
     def join(self, other: "Clock") -> None:
+        v = self.v
+        get = v.get
         for k, n in other.v.items():
-            if self.v.get(k, 0) < n:
-                self.v[k] = n
+            if get(k, 0) < n:
+                v[k] = n
 
     def copy(self) -> "Clock":
-        return Clock(self.v)
+        c = Clock.__new__(Clock)
+        c.v = self.v.copy()
+        return c
 
     def before(self, other: "Clock", owner: int) -> bool:
         """Whether the event this clock stamps (on process `owner`) happens
@@ -180,11 +184,13 @@ class Proc:
 
     def tick(self, *releases: Clock) -> Clock:
         """One event of this process, after everything `releases` saw."""
+        clock = self.clock
         for r in releases:
-            self.clock.join(r)
+            if r is not clock:
+                clock.join(r)
         self.n += 1
-        self.clock.v[self.ix] = self.n
-        return self.clock.copy()
+        clock.v[self.ix] = self.n
+        return clock.copy()
 
     def step(self) -> bool:
         raise NotImplementedError

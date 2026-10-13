@@ -41,6 +41,13 @@ Entry points:
 - `verify.schedule(programs, machine, fetch, residents)` is the dispatch
   scheduler; `kohakutpu.compiler.build.packages` and `VerilatorCard.run` send
   only what it returns.
+- `verify.gate(programs, machine, fetch, mode, cache)` is `check` before a
+  run. `mode` "refuse" raises `verify.Refused` when a finding is of a
+  `verify.REFUSE` kind (every kind above but `loop` and `model`), "warn"
+  returns the findings, "off" checks nothing. With `cache`, the findings are
+  kept as `<cache>/<verify.key>.json`: the key digests the checker's own
+  source, the machine, the fetch port and each node's package built against
+  empty vector cores, so a program set already checked is read back.
 
 ## 2. The machine
 
@@ -412,7 +419,15 @@ does not report them. The vector lowering places compiled values to avoid them
 
 - `kohakutpu.compiler.build.packages` → `verify.schedule`: every package a
   `VerilatorCard` runs is scheduled.
+- `VerilatorCard(check="refuse")` gates each new set of programs before its
+  first run (cache `build/verify/`); `tools.measure --check` and
+  `tools.l1 --check` pass the mode. A refused measure case is a report row
+  with its findings and no cycles.
 - `software/compiler/tests/test_verify.py`: the examples verify clean, and
   each finding kind fires on a program built to have exactly that hazard.
 - Cost: about 80k events a second in Python. The 2-head compiled flash
-  checks (two runs, two passes) in 26 s.
+  checks (two runs, two passes) in 26 s; on the v21 machine, flashd (10
+  heads) in 165 s, ffn in 24 s, every other measure case under 6 s. Of the
+  measure cases only `flash` (S through DRAM) has findings: 8 `model` (the
+  peer VDRAINs of its redo block, under `skipz` on the sticky flag), 16
+  `race`, 39,047 `port`, so it is refused by default.

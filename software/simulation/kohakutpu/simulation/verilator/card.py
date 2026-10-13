@@ -10,6 +10,10 @@ read back.
     card = VerilatorCard(build, nodes=(0, 1))
     got = card.run({0: p0, 1: p1})      # one package a node, all submitted first
 
+Before a set of programs first runs, the static checker runs on it
+(`check="refuse"`: a finding of a `verify.REFUSE` kind raises
+`verify.Refused`; "warn" prints the findings and runs; "off").
+
 `cycles` is the package's own count (node clock); with `steps=True` the
 firmware prints each step's end (KA_BOOT_F_STEPS), prints excluded. The
 machine programs are built for must be the card's: the enumerated units are
@@ -20,6 +24,7 @@ queue sits in its own staging store.
 import json
 import pathlib
 import re
+import sys
 import tempfile
 
 import numpy as np
@@ -31,13 +36,16 @@ from kohakuaccel.driver.transport.rebase import UnitGlobal
 from kohakuaccel.driver.transport.simdram import SimDram
 from kohakuaccel.driver.transport.verilator import VerilatorTransport
 from kohakutpu.compiler import build as B
-from kohakutpu.compiler import imem
+from kohakutpu.compiler import imem, verify
 from kohakutpu.compiler import target as T
 from kohakutpu.driver import units as _units  # noqa: F401  (names MG and VC)
 from kohakutpu.driver.clock.card import BOARDS, load_board
 from kohakutpu.driver.host import Card, board_map
 
 ROOT = pathlib.Path(__file__).resolve().parents[5]
+#: The checker's findings by `verify.key`: a program set seen before is not
+#: checked again.
+VERIFY_CACHE = ROOT / "build" / "verify"
 #: Host arrays from 1 MB (the queue's alias at 0) to 1 MB short of the
 #: model's DRAM (it wraps): 16 MB unless the model was built with more.
 ARENA, ARENA_END = 0x0010_0000, 0x00F0_0000
@@ -64,9 +72,16 @@ class VerilatorCard:
         nodes=(0,),
         timeout: float = 300.0,
         args=(),
+        check: str = "refuse",
     ) -> None:
+        if check not in verify.GATES:
+            raise ValueError(f"check={check!r}: one of {verify.GATES}")
         self.build = pathlib.Path(build)
         self.nodes = tuple(nodes)
+        #: The static checker before a program's first run (`verify.gate`).
+        self.check = check
+        #: (node, id(program)) pairs -> (the programs, their findings)
+        self.checked: dict = {}
         #: Wall seconds a package may take before its wait raises.
         self.timeout = timeout
         self.machine = machine or T.machine(
@@ -197,6 +212,7 @@ class VerilatorCard:
         single = not isinstance(program, dict)
         progs = {self.nodes[0]: program} if single else program
         progs = {self.nodes[0] if n is None else n: p for n, p in progs.items()}
+        self.verify(progs)
         built = B.packages(progs, self.machine, self.fetch, self.residents)
         if single:
             pkg, bindings = built[self.nodes[0]]
@@ -212,6 +228,20 @@ class VerilatorCard:
             out[n] = self._result(self.queues[n], done, pkg)
         self.runs += 1
         return {"cycles": max(r["cycles"] for r in out.values()), "nodes": out}
+
+    def verify(self, progs: dict) -> list:
+        """The checker's findings for `progs` (``{node: Program}``), once per
+        set of programs: raises `verify.Refused` under ``check="refuse"``."""
+        key = tuple(sorted((n, id(p)) for n, p in progs.items()))
+        if key not in self.checked:
+            found = verify.gate(
+                progs, self.machine, self.fetch, self.check, cache=VERIFY_CACHE
+            )
+            # The programs are held so their ids are not reused.
+            self.checked[key] = (tuple(progs.values()), found)
+            for f in found:
+                print(f"verify: {f}", file=sys.stderr, flush=True)
+        return self.checked[key][1]
 
     def _result(self, q, done, pkg) -> dict:
         steps, phases = [], {}

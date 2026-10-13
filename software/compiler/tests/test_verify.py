@@ -173,6 +173,37 @@ def test_two_unordered_senders_into_one_unit_are_found():
     assert any(k == "port" and "interleave" in t for k, t in got), got
 
 
+def test_the_gate_refuses_a_port_finding_and_warn_runs_it():
+    prog, machine = programs(_module.read(TWO, "t.ktpu"))
+    with pytest.raises(verify.Refused) as e:
+        verify.gate(prog, machine, mode="refuse")
+    assert any(f.kind == "port" for f in e.value.findings)
+    assert any(f.kind == "port" for f in verify.gate(prog, machine, mode="warn"))
+    assert verify.gate(prog, machine, mode="off") == []
+
+
+def test_the_gate_reads_its_cache_and_the_key_follows_the_program(tmp_path):
+    clean = STREAM.format(credits=16, wait=16, sink="")
+    prog, machine = programs(_module.read(clean, "t.ktpu"))
+    assert verify.gate(prog, machine, mode="refuse", cache=tmp_path) == []
+    (entry,) = tmp_path.glob("*.json")
+    assert entry.stem == verify.key(prog, machine)
+    # A finding planted in the entry is what the next gate decides from.
+    entry.write_text('[["port", "mg(0:1,0)", "planted"]]', encoding="utf-8")
+    with pytest.raises(verify.Refused, match="planted"):
+        verify.gate(prog, machine, mode="refuse", cache=tmp_path)
+    other, _ = programs(
+        _module.read(STREAM.format(credits=24, wait=16, sink=""), "t.ktpu")
+    )
+    assert verify.key(other, machine) != entry.stem
+
+
+def test_the_gate_passes_a_clean_stream():
+    text = STREAM.format(credits=16, wait=16, sink="")
+    prog, machine = programs(_module.read(text, "t.ktpu"))
+    assert verify.gate(prog, machine, mode="refuse") == []
+
+
 def test_a_rel_transfer_steps_by_its_own_ainc():
     # An earlier image leaves AINC 512 on a0; the next image's `rel` drains
     # step by 0 because the encoder states it.

@@ -7,7 +7,9 @@ example and each L2 example compiled to L1, checked against numpy, timed warm
 Writes ``DIR/report.json`` (a row a case) and ``DIR/report.md`` (the table).
 Efficiency: a matmul's MFU (multiply-adds over 1024 a cluster-cycle on every
 cluster the card has), a vector kernel's lane use (lane beats over 16 a
-core-cycle), a memory-bound kernel's bytes a cycle.
+core-cycle), a memory-bound kernel's bytes a cycle. Each case passes the
+static checker first (`--check`, default refuse): a refused case's row carries
+its findings and no cycles.
 """
 
 import argparse
@@ -23,6 +25,7 @@ import numpy as np
 
 from kohakutpu.application.tools.l1 import run
 from kohakutpu.compiler import target as T
+from kohakutpu.compiler import verify
 from kohakutpu.compiler.l2 import pipeline
 from kohakutpu.compiler.layout import tensor
 from kohakutpu.language import examples
@@ -302,10 +305,12 @@ def measure(
     die: str = "4+2",
     core: str = T.CORE,
     args: tuple = (),
+    gate: str = "refuse",
 ) -> dict:
     """One case at one level on a card of its own: its report row. MFU and
     lane use count every cluster and core the `die` has; `out_hash` names the
-    outputs' bytes, so two cards' runs compare bit for bit."""
+    outputs' bytes, so two cards' runs compare bit for bit. A case the static
+    checker refuses (`gate`) is a row with its findings and no cycles."""
     _, _, n, (make, check, work) = next(c for c in CASES if c[0] == name)
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="ktpu_measure_"))
     path = name if level == "l1" else compiled(name, n, tmp, die, core)
@@ -315,11 +320,29 @@ def measure(
     )
     mg, vc = (len(u) for u in T.DIES[die])
     card = VerilatorCard(
-        build, nodes=nodes, machine=machine, log=log, timeout=3600.0, args=args
+        build,
+        nodes=nodes,
+        machine=machine,
+        log=log,
+        timeout=3600.0,
+        args=args,
+        check=gate,
     )
     ins, ref = make(np.random.default_rng(7))
     t0 = time.monotonic()
-    res = run(card, path, ins)
+    try:
+        res = run(card, path, ins)
+    except verify.Refused as e:
+        card.close()
+        bad = [str(f) for f in e.findings if f.kind in verify.REFUSE]
+        return {
+            "example": name,
+            "level": level,
+            "nodes": len(nodes),
+            "refused": len(bad),
+            "findings": bad[:20],
+            "wall_s": round(time.monotonic() - t0, 1),
+        }
     stats = card.close()
     beats = sum(s.get("vres", {}).get("lanes", 0) for s in stats.values()) // 2
     cycles = res["cycles"]
@@ -370,6 +393,12 @@ def main() -> int:
     ap.add_argument(
         "--harness", default="", help="the model's harness flags, space-separated"
     )
+    ap.add_argument(
+        "--check",
+        default="refuse",
+        choices=verify.GATES,
+        help="the static checker before each case's run",
+    )
     a = ap.parse_args()
     harness = tuple(a.harness.split())
     nodes = tuple(int(n) for n in a.nodes.split(","))
@@ -386,7 +415,16 @@ def main() -> int:
     with ProcessPoolExecutor(max_workers=max(1, min(a.jobs, len(todo)))) as pool:
         futs = [
             pool.submit(
-                measure, a.build, nodes, nm, lv, str(out), a.die, a.core, harness
+                measure,
+                a.build,
+                nodes,
+                nm,
+                lv,
+                str(out),
+                a.die,
+                a.core,
+                harness,
+                a.check,
             )
             for nm, lv in todo
         ]
@@ -400,6 +438,12 @@ def main() -> int:
         "|---|---|---|---|---|---|",
     ]
     for r in rows:
+        if "refused" in r:
+            lines.append(
+                f"| {r['example']} | {r['level']} | {r['nodes']} | refused: "
+                f"{r['refused']} checker findings | | |"
+            )
+            continue
         e = r["efficiency"]
         eff = (
             f"{e:.1%} {r['metric']}" if r["metric"] != "B/cycle" else f"{e:.1f} B/cycle"

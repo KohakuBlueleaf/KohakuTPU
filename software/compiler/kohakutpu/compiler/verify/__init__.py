@@ -3,6 +3,7 @@
 
     pkgs = verify.schedule({0: prog}, machine, fetch, residents)
     findings = verify.check({0: prog}, machine)
+    verify.gate({0: prog}, machine, mode="refuse")   # raises Refused
 
 `schedule` builds each node's package and orders each segment's dispatches
 on the abstract machine: deadlock-free by construction, or ScheduleError.
@@ -11,10 +12,15 @@ programs then resident) and runs both on the machine. Finding kinds:
 deadlock, rest (a count left for the next run), port (bursts into one unit
 not ordered, or queued behind a shared fill), bounds (a burst the receiver
 rejects), route (aimed where no unit is), loop (a node loop on data, run a
-bounded number of trips), model (what the model does not decide).
+bounded number of trips), model (what the model does not decide). `gate`
+is `check` before a run: it refuses one with a finding of a REFUSE kind.
 """
 
 import bisect
+import functools
+import hashlib
+import json
+import pathlib
 
 from kohakutpu.compiler import imem
 from kohakutpu.compiler import target as T
@@ -24,12 +30,30 @@ from kohakutpu.compiler.verify.card import Card
 from kohakutpu.compiler.verify.model import Finding, Machine
 from kohakutpu.compiler.verify.node import Node
 
+#: Finding kinds a run is refused for: each names a way the run can go wrong.
+#: `model` (what the abstract machine does not decide) and `loop` (a node loop
+#: on data, run a bounded number of trips) are reported, not refused.
+REFUSE = ("deadlock", "rest", "port", "race", "bounds", "route")
+GATES = ("refuse", "warn", "off")
+
 
 class ScheduleError(Exception):
     def __init__(self, findings: list) -> None:
         self.findings = findings
         super().__init__(
             "no dispatch order completes:\n" + "\n".join(str(f) for f in findings[:20])
+        )
+
+
+class Refused(Exception):
+    """A run the checker finds a REFUSE kind of finding in."""
+
+    def __init__(self, findings: list) -> None:
+        self.findings = findings
+        bad = [f for f in findings if f.kind in REFUSE]
+        super().__init__(
+            f"the static checker refuses this run ({len(bad)} findings; "
+            "check='warn' runs it anyway):\n" + "\n".join(str(f) for f in bad[:20])
         )
 
 
@@ -100,6 +124,57 @@ def check(programs, machine=None, fetch=None, runs: int = 2) -> list:
     if any(f.kind == "deadlock" for f in out):
         return out
     return out + _rest(m, card) + _ports(card)
+
+
+def gate(programs, machine=None, fetch=None, mode: str = "refuse", cache=None) -> list:
+    """`check`'s findings for a run about to start. ``mode``: "refuse" raises
+    :class:`Refused` when any finding is of a REFUSE kind, "warn" returns
+    them all, "off" checks nothing and returns ``[]``. With `cache` (a
+    directory), the findings are kept in ``<cache>/<key>.json`` and read back
+    for the same programs, machine and checker."""
+    if mode not in GATES:
+        raise ValueError(f"check mode {mode!r}: one of {GATES}")
+    if mode == "off":
+        return []
+    path = None
+    if cache is not None:
+        path = pathlib.Path(cache) / f"{key(programs, machine, fetch)}.json"
+    if path is not None and path.exists():
+        rows = json.loads(path.read_text(encoding="utf-8"))
+        found = [Finding(*r) for r in rows]
+    else:
+        found = check(programs, machine, fetch)
+        if path is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            rows = [[f.kind, f.where, f.text] for f in found]
+            path.write_text(json.dumps(rows), encoding="utf-8")
+    if mode == "refuse" and any(f.kind in REFUSE for f in found):
+        raise Refused(found)
+    return found
+
+
+def key(programs, machine=None, fetch=None) -> str:
+    """A digest of what `check` decides from: the checker's own source, the
+    machine, the fetch port, and each node's package as built against empty
+    vector cores (every image it loads, every dispatch)."""
+    programs = _nodes(programs)
+    machine = machine or T.machine(nodes=max(programs) + 1)
+    h = hashlib.sha256(_source_digest())
+    h.update(repr(machine).encode())
+    h.update(repr(fetch).encode())
+    for mesh, prog in sorted(programs.items()):
+        built = prog.build(fetch, imem.Cores(imem.IMEM_WORDS))
+        h.update(str(mesh).encode())
+        h.update(built.build(defaults=False).to_bytes())
+    return h.hexdigest()[:32]
+
+
+@functools.cache
+def _source_digest() -> bytes:
+    h = hashlib.sha256()
+    for p in sorted(pathlib.Path(__file__).parent.glob("*.py")):
+        h.update(p.read_bytes())
+    return h.digest()
 
 
 def lint(module, machine=None) -> list:
@@ -244,4 +319,15 @@ def _collisions(card: Card) -> list:
     return out
 
 
-__all__ = ["Finding", "ScheduleError", "check", "lint", "schedule"]
+__all__ = [
+    "GATES",
+    "REFUSE",
+    "Finding",
+    "Refused",
+    "ScheduleError",
+    "check",
+    "gate",
+    "key",
+    "lint",
+    "schedule",
+]
