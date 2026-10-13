@@ -14,6 +14,7 @@ module v2_fifo #(
     input  wire [W-1:0] din,
     input  wire         pop,
     output wire [W-1:0] dout,
+    output wire [W-1:0] dout1,      // the entry behind the head (count >= 2)
     output wire         empty,
     output wire         full,
     output reg  [$clog2(D):0] count
@@ -23,6 +24,7 @@ module v2_fifo #(
     reg [AW-1:0] wp, rp;
 
     assign dout  = mem[rp];
+    assign dout1 = mem[rp + 1'b1];
     assign empty = (count == 0);
     assign full  = (count == D[AW:0]);
 

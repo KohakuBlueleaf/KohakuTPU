@@ -36,17 +36,23 @@ waits on another for a port.
 and one write port. On a bank, fill writes win and pack yields; unpack reads win and
 drain yields.
 
-**Register file**: 32 registers × 8 chunks × 16 lanes × 24 bit, in two banks by chunk
-parity. Each bank has one write port and four read copies (a, b, c for math, d for
-pack), all block RAM: 2 banks × 4 copies × 16 lanes = 128 RAMB18. A streaming op writes
-chunk *i* on beat *i*, so math alternates banks every cycle. An unpack write is offered
-one cycle ahead and taken when math leaves that bank free next cycle. After that the
-two run out of phase and both write every cycle.
+**Register file**: 2^`RW` registers (`RW` 5, 6 or 7: 32, 64 or 128) × 8 chunks × 16
+lanes × 24 bit, in two banks by chunk parity. Each bank has one write port and
+`RF_COPIES` read copies, all block RAM: 2 banks × copies × 16 lanes RAMB18 (128 at four
+copies, 64 at two); up to `RW` 7 the depth fits each RAMB18, so more registers cost no
+block RAM. With four copies a, b, c (math) and d (pack) each own one. With two or three,
+every copy serves any read: a beat's distinct reads of a bank take its copies in order
+a, b, c, pack, and reads of one word share a copy. On two copies a math beat reading
+three distinct words of one bank is held a cycle (c is read ahead in it), and a pack
+read waits for a cycle that leaves its bank a copy (math reads first). A streaming op
+writes chunk *i* on beat *i*, so math alternates banks every cycle. An unpack write is
+offered one cycle ahead and taken when math leaves that bank free next cycle. After
+that the two run out of phase and both write every cycle.
 
 ## 2. Ordering
 
-**Register hazards never stall dispatch.** Each register keeps four pairs of 6-bit
-counts, dispatched (d) and finished (c), per access kind:
+**Register hazards never stall dispatch.** Each register keeps four pairs of `SB_W`-bit
+(6) counts, dispatched (d) and finished (c), per access kind:
 
 | count | access |
 |---|---|
@@ -70,6 +76,15 @@ math in its pipeline, and every write (math or unpack) waits for the register's 
 writes. Pack reads of one register finish in order across the pack queues. At most 31
 accesses of one kind are outstanding on one register (8 queued plus VL − 1 in the
 pipeline), so 6 bits do not wrap.
+
+The counts live in `v2_cnt` arrays, one counter a register, as flip-flops
+(`SB_PRIM = "ff"`) or LUTRAM (`"distributed"`: one copy per read port plus one for the
+increment; a read costs about SB_W × 2^RW / 64 LUT rather than a 2^RW:1 mux a bit). A
+LUTRAM array is cleared by a sweep, one register a cycle, after reset and after a start
+that drops accesses in flight; dispatch waits for it. A queue head's verdict is
+registered a cycle ahead (`HEAD_NEXT = 1`): for the entry behind the head and for an
+entry pushed into an empty queue, counting this cycle's finishes, so a verdict path
+never runs from the counters' read through the comparison in one cycle.
 
 **L1 hazards are the program's.** `VSYNC` makes one engine queue, or the front end,
 wait until every instruction of a kind dispatched before it has finished (§4).
@@ -212,6 +227,11 @@ The base is the instruction's offset, or `UPTR`/`PPTR` + offset with `rel`. `UIN
 IMEM holds 1024 words. A load's address bit 9 is CU_INST flit bit 242. RUN starts
 below word 512.
 
+Past `RW` 5, each register field's high RW − 5 bits sit above word bit 32: vc at bit 32,
+then vb, va and vd (an unpack's or pack's `reg` with vd), so an IMEM word is 32 + 4 ×
+(RW − 5) bits. A CU_INST load carries them in flit bits 39:32 (`vec_cu` `ld_hi`). A word
+encoded for 32 registers has them zero and runs unchanged on a deeper core.
+
 Faults: F_OPCODE 4, F_LEN 5 (a walk over 256 words), F_LOOP 6 (nested VLOOP), F_VL 7,
 F_CUDATA 9, F_GT4 10, F_SRC 11 (selector 2), F_MODE 12 (mode 3), F_SYNC 13.
 
@@ -238,6 +258,22 @@ mapped the rest of the core.
 `DUALQ = 1` adds 692 LUT cells. The register file is 128 RAMB18 (2 banks × 4 read
 copies × 16 lanes). A read copy whose address names the other bank resets its output
 latch, so the two banks of a port combine by OR inside the next multiplexer.
+
+The register count, the read copies and the scoreboard's storage, every combination
+(`scripts/tcl/ooc_v2_core.tcl`, 3.0 ns; LUT cells, flip-flops and block RAM primitives,
+a RAMB18 or RAMB36 each one, as `ooc_count` reports them):
+
+| copies | scoreboard | `RW` 5 (32) | `RW` 6 (64) | `RW` 7 (128) |
+|---|---|---|---|---|
+| 2 | LUTRAM | 34,973 / 89 / 344.5 MHz | 35,162 / 89 / 337.7 MHz | **35,438 / 90 / 343.9 MHz** |
+| 2 | flip-flops | 40,206 / 89 / 359.6 MHz | 45,109 / 89 / 322.5 MHz | 55,014 / 90 / 311.2 MHz |
+| 4 | LUTRAM | 33,716 / 153 / 356.4 MHz | 33,679 / 153 / 356.4 MHz | 34,120 / 154 / 342.6 MHz |
+| 4 | flip-flops | 38,718 / 153 / 351.4 MHz | 43,590 / 153 / 355.5 MHz | 53,716 / 154 / 311.2 MHz |
+
+V2.1 (bold) is two copies, a LUTRAM scoreboard and 128 registers: 35,344 flip-flops,
+2,810 LUT as memory; the register file and lanes (`u_lanes`) take 24,643 LUT cells and 80
+of the 90 block RAMs. Its slowest path runs from the unpack queue's read pointer to the
+head verdict, 11 levels. A flip-flop scoreboard pays a 2^RW:1 mux a counter bit a read.
 
 Front-end instructions whose condition reads a counter or a scalar register (`VSYNC` on
 the front end, `VSETVL`, `VSKIPZ`, `VSETI`, `VHALT`) evaluate that condition into a
@@ -318,3 +354,12 @@ closes.
 | `QD` | 8 | MQ, UQ and PQ depth |
 | `HAS_EXPD`, `TAU` | 1, 8 | EXP2D and its sticky threshold |
 | `L1_PRIM` | block | `ultra` adds a read cycle |
+| `RW` | 5 (`-d V2_RW=N`) | 2^RW registers, 5-7 |
+| `RF_COPIES` | 4 (`-d V2_RF_COPIES=N`) | register file read copies a bank, 2-4 |
+| `SB_PRIM`, `SB_W` | ff, 6 (`-d V2_SB_LUT`, `-d V2_SB_W=N`) | the scoreboard counters' storage and width |
+| `HEAD_NEXT` | 1 (`-d V2_HEAD_NEXT=0`) | queue-head verdicts a cycle ahead |
+| `TAB_PRIM` | block (`-d V2_TAB_LUT` distributed) | the coefficient ROMs |
+
+**V2.1** is the build `VEC_CORE v21` (`scripts/tcl/v8t3/00_config.tcl`): `RW` 7,
+`RF_COPIES` 2, a LUTRAM scoreboard. The compiler targets it with
+`target.machine(core="v21")` (128 registers, two copies).

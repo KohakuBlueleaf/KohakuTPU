@@ -101,6 +101,7 @@ set V8_VEC_CORES {
     v1 {sources {} define {} module vec_core}
     v2 {sources {
             src/kohakutpu/vector2/v2_fifo.v
+            src/kohakutpu/vector2/v2_cnt.v
             src/kohakutpu/vector2/v2_agu.v
             src/kohakutpu/vector2/v2_gt4.v
             src/kohakutpu/vector2/v2_mxq.v
@@ -111,6 +112,12 @@ set V8_VEC_CORES {
             src/kohakutpu/vector2/v2_core.v
         } define VEC_CORE_V2 module v2_core}
 }
+# V2.1: V2's sources with 128 registers, two read copies a bank and a LUTRAM
+# scoreboard (vector-core-v2.md s10). software/compiler target.CORES names the
+# same register count and copies.
+dict set V8_VEC_CORES v21 [dict merge [dict get $V8_VEC_CORES v2] {
+    define {VEC_CORE_V2 V2_RW=7 V2_RF_COPIES=2 V2_SB_LUT}
+}]
 proc v8_vec_core {field} {
     global VEC_CORE V8_VEC_CORES
     if {![dict exists $V8_VEC_CORES $VEC_CORE]} {

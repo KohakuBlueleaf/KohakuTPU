@@ -55,7 +55,43 @@ module v2_core #(
     // VPACK mode 3, MX7: a register to one MXFP7 L1 entry (v2_mxq).
     parameter integer HAS_MX     = 1,
     // The operand crossbar (v2_xbar): 0 one 16:1 select a lane, 1 two 4:1 levels.
-    parameter integer XNET       = 1
+    parameter integer XNET       = 1,
+    // v2_lanes RF_COPIES (read copies a bank: 4, 3 or 2) and TAB_PRIM.
+`ifdef V2_RF_COPIES
+    parameter integer RF_COPIES  = `V2_RF_COPIES,
+`else
+    parameter integer RF_COPIES  = 4,
+`endif
+`ifdef V2_TAB_LUT
+    parameter         TAB_PRIM   = "distributed",
+`else
+    parameter         TAB_PRIM   = "block",
+`endif
+    // 2**RW registers; past 5, the fields' high bits {vd, va, vb, vc} sit at word bit 32+.
+`ifdef V2_RW
+    parameter integer RW         = `V2_RW,
+`else
+    parameter integer RW         = 5,
+`endif
+    // 1: a queue head's verdict adds this cycle's finishes to the counts it
+    // reads (exact); 0: it reads the counts as registered (a cycle late).
+`ifdef V2_HEAD_NEXT
+    parameter integer HEAD_NEXT  = `V2_HEAD_NEXT,
+`else
+    parameter integer HEAD_NEXT  = 1,
+`endif
+    // The scoreboard's counters (v2_cnt): "ff" or "distributed" (LUTRAM, a
+    // read ~SB_W x 2^RW/64 LUT; cleared by a sweep, see `sb_ok`), SB_W bits.
+`ifdef V2_SB_LUT
+    parameter         SB_PRIM    = "distributed",
+`else
+    parameter         SB_PRIM    = "ff",
+`endif
+`ifdef V2_SB_W
+    parameter integer SB_W       = `V2_SB_W
+`else
+    parameter integer SB_W       = 6
+`endif
 )(
     input  wire         clk,
     input  wire         rst,
@@ -64,6 +100,7 @@ module v2_core #(
     input  wire         ld_kind,
     input  wire [8:0]   ld_addr,
     input  wire [AW-1:0] ld_data,
+    input  wire [7:0]   ld_hi,      // an IMEM word's bits past 32 (RW > 5)
 
     input  wire         start,
     input  wire [8:0]   start_pc,
@@ -148,6 +185,10 @@ module v2_core #(
     localparam integer HD    = L1_DEPTH / 2;           // words per L1 bank
     localparam integer L1_LAT = (L1_PRIM == "ultra") ? 2 : 1;
     localparam integer DR_TAP = L1_LAT;
+    localparam integer NR    = 1 << RW;               // registers
+    localparam integer RA    = RW + 3;                // {vreg, chunk}
+    localparam integer XR    = RW - 5;                // a field's bits past 5
+    localparam integer IW    = 32 + 4 * XR;           // instruction word
 
     integer ii;
 
@@ -159,7 +200,7 @@ module v2_core #(
     // ================================================== front end state
     reg  [PCW-1:0] f_pc, d_pc;
     reg         f_v, d_v, run;
-    reg  [31:0] ir;
+    reg  [IW-1:0] ir;
     reg  [23:0] sreg [0:15];
     reg  [23:0] kreg [0:3];
     reg  [7:0]  vl;
@@ -194,12 +235,20 @@ module v2_core #(
     reg  [7:0]  mk_cnt [0:7];
 
     // ================================================== memories
-    wire [31:0] im_q;
+    wire [IW-1:0] im_q;
     reg  [PCW-1:0] im_addr;
     // A load's address bit 9 rides in ld_data[32] (vec_cu: flit bit 242).
     wire [9:0]  im_wa = {ld_data[32], ld_addr};
-    kohaku_sdpram #(.WIDTH(32), .DEPTH(IMEM_DEPTH), .MEM_PRIM("block"), .READ_LAT(1)) u_imem (
-        .clk(clk), .wr_en(ld_en && !ld_kind), .wr_addr(im_wa[PCW-1:0]), .wr_data(ld_data[31:0]),
+    wire [IW-1:0] im_wd;
+    generate
+    if (XR > 0) begin : g_imx
+        assign im_wd = {ld_hi[4 * XR - 1:0], ld_data[31:0]};
+    end else begin : g_imx
+        assign im_wd = ld_data[31:0];
+    end
+    endgenerate
+    kohaku_sdpram #(.WIDTH(IW), .DEPTH(IMEM_DEPTH), .MEM_PRIM("block"), .READ_LAT(1)) u_imem (
+        .clk(clk), .wr_en(ld_en && !ld_kind), .wr_addr(im_wa[PCW-1:0]), .wr_data(im_wd),
         .rd_en(1'b1), .rd_addr(im_addr), .rd_data(im_q));
 
     reg              l1_we [0:1];
@@ -218,7 +267,18 @@ module v2_core #(
 
     // ================================================== decode
     wire [4:0] d_op  = ir[31:27];
-    wire [4:0] d_vd  = ir[26:22], d_va = ir[21:17], d_vb = ir[16:12], d_vc = ir[11:7];
+    wire [RW-1:0] d_vd, d_va, d_vb, d_vc;
+    generate
+    if (XR > 0) begin : g_rx
+        assign d_vd = {ir[32 + 3*XR +: XR], ir[26:22]};
+        assign d_va = {ir[32 + 2*XR +: XR], ir[21:17]};
+        assign d_vb = {ir[32 + XR +: XR], ir[16:12]};
+        assign d_vc = {ir[32 +: XR], ir[11:7]};
+    end else begin : g_rx
+        assign d_vd = ir[26:22]; assign d_va = ir[21:17];
+        assign d_vb = ir[16:12]; assign d_vc = ir[11:7];
+    end
+    endgenerate
     wire [1:0] d_sa  = ir[6:5], d_sb = ir[4:3], d_sc = ir[2:1];
     wire       d_om  = ir[0];
     wire [3:0] d_csel = ir[26:23];
@@ -263,7 +323,7 @@ module v2_core #(
 
     function [23:0] pick;
         input [1:0] sel;
-        input [4:0] rn;
+        input [RW-1:0] rn;
         begin
             pick = (sel == SRC_S) ? sreg[rn[3:0]]
                  : (sel == SRC_K) ? kreg[rn[1:0]] : 24'd0;
@@ -271,35 +331,39 @@ module v2_core #(
     endfunction
 
     // ================================================== scoreboard
-    // Dispatched (d) and finished (c) counts, modulo 64: at most 31 of a kind
-    // are outstanding on one register (8 queued plus a pipeline of VL-1 ops).
-    reg [5:0] Wd  [0:31], Wc  [0:31];     // writes, math and unpack
-    reg [5:0] UWd [0:31], UWc [0:31];     // unpack writes
-    reg [5:0] MRd [0:31], MRc [0:31];     // math reads
-    reg [5:0] PRd [0:31], PRc [0:31];     // pack reads
+    // Per register, dispatched (d) and finished (c) counts of each access kind,
+    // modulo 2^SB_W: math writes (WM), unpack writes (UW), math reads by
+    // operand slot (MRa / MRb / MRc) and pack reads (PR). One kind takes one
+    // +1 a cycle, at one register. At most 31 of a kind are outstanding on one
+    // register (8 queued plus a pipeline of VL-1 ops), so SB_W >= 6. The
+    // arrays (v2_cnt) sit with their update terms, after the done counters.
+    localparam integer SBW = SB_W;
+    reg sb_ok;                  // counts valid; a LUTRAM sweep clears it (below)
     // Compares ISSUED and not yet retired: math issues in order, so these are
     // all older than the head.
     reg [4:0] pP [0:3];
 
     // `c` has reached snapshot `s`.
     function reached;
-        input [5:0] c;
-        input [5:0] s;
-        reg   [5:0] df;
+        input [SBW-1:0] c;
+        input [SBW-1:0] s;
+        reg   [SBW-1:0] df;
         begin
             df = c - s;
-            reached = !df[5];
+            reached = !df[SBW-1];
         end
     endfunction
 
     // ================================================== queues
     // MQ entry, MSB first: aop vd va vb vc sa sb sc ka kb kc nb tl chk xb cmp
-    // expd wr, then the snapshots Wd of a, b, c and UWd, PRd of vd.
-    localparam integer MQW = 5 + 20 + 6 + 72 + 4 + 4 + 16 + 15 + 3 + 30;
+    // expd wr, then the snapshots WMd UWd of a, b, c and UWd PRd of vd.
+    localparam integer MQS = 8 * SBW;
+    localparam integer MQW = 5 + 4*RW + 6 + 72 + 4 + 4 + 16 + 15 + 3 + MQS;
     // UQ/PQ entry: sync vreg mode n cb addr s1 s0 snap | sync: on target. An
-    // unpack's snapshot is Wd MRd PRd of vd, a pack's Wd of vs.
-    localparam integer SNW = 24;
-    localparam integer UQW = 1 + 5 + 2 + 3 + 3 + 3*LAW + SNW;
+    // unpack's snapshot is WMd UWd MRad MRbd MRcd PRd of vd; a pack's WMd UWd
+    // PRd of vs, then zeros.
+    localparam integer SNW = 6 * SBW;
+    localparam integer UQW = 1 + RW + 2 + 3 + 3 + 3*LAW + SNW;
     // FQ (fills) / DQ (drains) entry: sync offset ir | sync: on target
     localparam integer AQW = 1 + AW + 32;
 
@@ -321,21 +385,31 @@ module v2_core #(
     wire              d_q = (DUALQ != 0)
                          && (((d_op == O_VUNPK) || (d_op == O_VPACK)) ? ir[12] : ir[10]);
     wire [UQW-1:0]    uq0_q, uq1_q, pq0_q, pq1_q;
+    // The entry behind each head and each queue's count: a head's clear is
+    // decided a cycle ahead (unpack / pack engines).
+    wire [UQW-1:0]    uq0_q1, uq1_q1, pq0_q1, pq1_q1;
+    wire [$clog2(QD):0] uq0_n, uq1_n, pq0_n, pq1_n;
     wire              uq0_e, uq1_e, pq0_e, pq1_e, uq0_f, uq1_f, pq0_f, pq1_f;
     wire              uq0_pop, uq1_pop, pq0_pop, pq1_pop;
     v2_fifo #(.W(UQW), .D(QD)) u_uq (.clk(clk), .rst(erst), .push(uq_push && !d_q),
-        .din(uq_din), .pop(uq0_pop), .dout(uq0_q), .empty(uq0_e), .full(uq0_f), .count());
+        .din(uq_din), .pop(uq0_pop), .dout(uq0_q), .dout1(uq0_q1), .empty(uq0_e),
+        .full(uq0_f), .count(uq0_n));
     v2_fifo #(.W(UQW), .D(QD)) u_pq (.clk(clk), .rst(erst), .push(pq_push && !d_q),
-        .din(pq_din), .pop(pq0_pop), .dout(pq0_q), .empty(pq0_e), .full(pq0_f), .count());
+        .din(pq_din), .pop(pq0_pop), .dout(pq0_q), .dout1(pq0_q1), .empty(pq0_e),
+        .full(pq0_f), .count(pq0_n));
     generate
     if (DUALQ != 0) begin : g_q1
         v2_fifo #(.W(UQW), .D(QD)) u_uq1 (.clk(clk), .rst(erst), .push(uq_push && d_q),
-            .din(uq_din), .pop(uq1_pop), .dout(uq1_q), .empty(uq1_e), .full(uq1_f), .count());
+            .din(uq_din), .pop(uq1_pop), .dout(uq1_q), .dout1(uq1_q1), .empty(uq1_e),
+            .full(uq1_f), .count(uq1_n));
         v2_fifo #(.W(UQW), .D(QD)) u_pq1 (.clk(clk), .rst(erst), .push(pq_push && d_q),
-            .din(pq_din), .pop(pq1_pop), .dout(pq1_q), .empty(pq1_e), .full(pq1_f), .count());
+            .din(pq_din), .pop(pq1_pop), .dout(pq1_q), .dout1(pq1_q1), .empty(pq1_e),
+            .full(pq1_f), .count(pq1_n));
     end else begin : g_q1
         assign uq1_q = {UQW{1'b0}}; assign uq1_e = 1'b1; assign uq1_f = 1'b0;
         assign pq1_q = {UQW{1'b0}}; assign pq1_e = 1'b1; assign pq1_f = 1'b0;
+        assign uq1_q1 = {UQW{1'b0}}; assign pq1_q1 = {UQW{1'b0}};
+        assign uq1_n = 0; assign pq1_n = 0;
     end
     endgenerate
     assign uq_e = uq0_e && uq1_e;
@@ -394,7 +468,7 @@ module v2_core #(
     always @(*) begin
         fe_fault = 8'd0;
         fe_ok    = 1'b0;
-        if (d_v && run) begin
+        if (d_v && run && sb_ok) begin
             if (cd_err) begin
                 fe_fault = F_CUDATA;
             end else if (is_math) begin
@@ -473,37 +547,54 @@ module v2_core #(
     reg  [2:0]        f_st, d_st;
 
     // ================================================== math engine
-    wire [4:0]  h_aop, h_vd, h_va, h_vb, h_vc;
+    wire [4:0]  h_aop;
+    wire [RW-1:0] h_vd, h_va, h_vb, h_vc;
     wire [1:0]  h_sa, h_sb, h_sc;
     wire [71:0] h_k;
     wire [3:0]  h_nb, h_tl;
     wire [15:0] h_chk;
     wire [14:0] h_xb;
     wire        h_cmp, h_expd, h_wr;
-    wire [5:0]  hs_a, hs_b, hs_c, hs_uw, hs_pr;
+    wire [SBW-1:0] hs_am, hs_au, hs_bm, hs_bu, hs_cm, hs_cu, hs_uw, hs_pr;
     assign {h_aop, h_vd, h_va, h_vb, h_vc, h_sa, h_sb, h_sc, h_k, h_nb, h_tl, h_chk, h_xb,
-            h_cmp, h_expd, h_wr, hs_a, hs_b, hs_c, hs_uw, hs_pr} = mq_q;
+            h_cmp, h_expd, h_wr, hs_am, hs_au, hs_bm, hs_bu, hs_cm, hs_cu, hs_uw, hs_pr} = mq_q;
     wire [1:0]  h_pm = h_xb[12:11], h_pr = h_xb[14:13];
     // A sync entry rides the MQ as aop 31 with the target in the constants.
     wire        h_sync = (h_aop == 5'd31);
-    wire        h_haz  = ((h_sa == SRC_V) && !reached(Wc[h_va], hs_a))
-                       || ((h_sb == SRC_V) && !reached(Wc[h_vb], hs_b))
-                       || ((h_sc == SRC_V) && !reached(Wc[h_vc], hs_c))
-                       || (h_wr && !(reached(UWc[h_vd], hs_uw) && reached(PRc[h_vd], hs_pr)))
+    // The head's finished counts (scoreboard reads at its operands and vd).
+    wire [SBW-1:0] hc_am, hc_au, hc_bm, hc_bu, hc_cm, hc_cu, hc_uw, hc_pr;
+    wire        h_haz  = ((h_sa == SRC_V) && !(reached(hc_am, hs_am) && reached(hc_au, hs_au)))
+                       || ((h_sb == SRC_V) && !(reached(hc_bm, hs_bm) && reached(hc_bu, hs_bu)))
+                       || ((h_sc == SRC_V) && !(reached(hc_cm, hs_cm) && reached(hc_cu, hs_cu)))
+                       || (h_wr && !(reached(hc_uw, hs_uw) && reached(hc_pr, hs_pr)))
                        || ((h_pm != 2'd0) && (|pP[h_pr]));
 
-    wire [4:0]  e_aop, e_vd, e_va, e_vb, e_vc;
+    wire [4:0]  e_aop;
+    wire [RW-1:0] e_vd, e_va, e_vb, e_vc;
     wire [1:0]  e_sa, e_sb, e_sc;
     wire [71:0] e_k;
     wire [3:0]  e_nb, e_tl;
     wire [15:0] e_chk;
     wire [14:0] e_xb;
     wire        e_cmp, e_expd, e_wr;
-    wire [29:0] e_snap;
+    wire [MQS-1:0] e_snap;
     assign {e_aop, e_vd, e_va, e_vb, e_vc, e_sa, e_sb, e_sc, e_k, e_nb, e_tl, e_chk, e_xb,
             e_cmp, e_expd, e_wr, e_snap} = m_e;
 
-    wire m_end  = m_act && ({1'b0, m_i} + 4'd1 == e_nb);
+    // RF_COPIES 2: a beat reading a, b and c from three words of one bank is
+    // held a cycle (`m_hold`), in which c is read ahead (v2_lanes pre_v).
+    // (chk_of, declared below: base + stride * beat.)
+    wire [RA-1:0] n_ra = {e_va, e_chk[3:1]  + (e_chk[0] ? m_i : 3'd0)};
+    wire [RA-1:0] n_rb = {e_vb, e_chk[7:5]  + (e_chk[4] ? m_i : 3'd0)};
+    wire [RA-1:0] n_rc = {e_vc, e_chk[11:9] + (e_chk[8] ? m_i : 3'd0)};
+    wire n_ua = (e_sa == SRC_V), n_ub = (e_sb == SRC_V);
+    wire n_uc = (e_sc == SRC_V) && !e_xb[10];
+    reg  m_pre_d;
+    wire m_conf = (RF_COPIES == 2) && m_act && n_ua && n_ub && n_uc
+               && (n_ra[0] == n_rb[0]) && (n_rb[0] == n_rc[0])
+               && (n_ra != n_rb) && (n_rc != n_ra) && (n_rc != n_rb);
+    wire m_hold = m_conf && !m_pre_d;
+    wire m_end  = m_act && !m_hold && ({1'b0, m_i} + 4'd1 == e_nb);
     wire m_free = !m_act || m_end;
     wire m_sync_go = !mq_e && h_sync && sync_ok(h_k[3:0], h_k[23:8]);
     wire m_take = !mq_e && !h_sync && !h_haz && m_free;
@@ -519,8 +610,10 @@ module v2_core #(
     endfunction
 
     reg         iss_valid, iss_last, iss_wr, iss_cmp, iss_expd, iss_xc;
+    reg         pre_v, iss_ch;
+    reg  [RA-1:0] pre_rc;
     reg  [4:0]  iss_op;
-    reg  [7:0]  iss_ra, iss_rb, iss_rc, iss_wa;
+    reg  [RA-1:0] iss_ra, iss_rb, iss_rc, iss_wa;
     reg  [1:0]  iss_sa, iss_sb, iss_sc, iss_pr, iss_pm;
     reg  [23:0] iss_ka, iss_kb, iss_kc;
     reg  [2:0]  iss_xm;
@@ -537,16 +630,21 @@ module v2_core #(
     always @(posedge clk) begin
         if (erst) begin
             m_act <= 1'b0; m_i <= 3'd0; iss_valid <= 1'b0;
+            m_pre_d <= 1'b0; pre_v <= 1'b0; iss_ch <= 1'b0;
         end else begin
-            iss_valid <= m_act;
+            iss_valid <= m_act && !m_hold;
+            m_pre_d   <= m_hold;
+            pre_v     <= m_hold;
+            iss_ch    <= m_pre_d;
             if (m_take) begin
                 m_e <= mq_q; m_act <= 1'b1; m_i <= 3'd0;
             end else if (m_end) begin
                 m_act <= 1'b0;
-            end else if (m_act) begin
+            end else if (m_act && !m_hold) begin
                 m_i <= m_i + 3'd1;
             end
         end
+        pre_rc   <= n_rc;
         iss_last <= m_end;
         iss_op   <= e_aop;
         iss_ra   <= {e_va, chk_of(e_chk[3:0],   m_i)};
@@ -565,19 +663,22 @@ module v2_core #(
 
     // ================================================== lanes
     wire         uw_we;
-    wire [7:0]   uw_wa;
+    wire [RA-1:0] uw_wa;
     wire [383:0] uw_wd;
     wire [1:0]   mw_bank_next;
-    reg  [7:0]   pk_ra;
+    reg  [RA-1:0] pk_ra;
     wire [383:0] pk_rd;
     wire         wb_last, wb_wr, wb_cmp, pipe_empty;
-    wire [4:0]   wb_vreg;
+    wire [RW-1:0] wb_vreg;
     wire [1:0]   wb_pr;
     reg          stk_clr;
     wire [15:0]  sticky;
+    wire         pk_vw;              // pk_ra is a pack read (p_v1)
 
-    v2_lanes #(.MODEL(MODEL), .HAS_EXPD(HAS_EXPD), .TAU(TAU), .XNET(XNET)) u_lanes (
+    v2_lanes #(.MODEL(MODEL), .HAS_EXPD(HAS_EXPD), .TAU(TAU), .XNET(XNET),
+               .RF_COPIES(RF_COPIES), .TAB_PRIM(TAB_PRIM), .RW(RW)) u_lanes (
         .clk(clk), .rst(erst),
+        .pk_v(pk_vw), .pre_v(pre_v), .pre_rc(pre_rc), .iss_ch(iss_ch),
         .iss_valid(iss_valid), .iss_last(iss_last), .iss_op(iss_op),
         .iss_ra(iss_ra), .iss_rb(iss_rb), .iss_rc(iss_rc),
         .iss_sa(iss_sa), .iss_sb(iss_sb), .iss_sc(iss_sc),
@@ -598,33 +699,25 @@ module v2_core #(
     // when its registers are clear. Older MATH writes are Wc - UWc against
     // Wd - UWd; older unpack writes (either queue) UWc against UWd; then
     // math reads and pack reads. Snapshot {Wd, UWd, MRd, PRd}.
-    function u_clear;
-        input [UQW-1:0] q;
-        reg   [4:0] vd;
-        begin
-            vd = q[UQW-2 -: 5];
-            u_clear = reached(Wc[vd] - UWc[vd], q[23:18] - q[17:12])
-                   && reached(UWc[vd], q[17:12])
-                   && reached(MRc[vd], q[11:6])
-                   && reached(PRc[vd], q[5:0]);
-        end
-    endfunction
+    // Each head's verdict (its sync met / its registers clear) is decided a
+    // cycle ahead ("head verdicts", after the scoreboard).
+    wire u0_okn, u1_okn;
     wire u0_sync = !uq0_e && uq0_q[UQW-1];
     wire u1_sync = !uq1_e && uq1_q[UQW-1];
-    wire u0_go   = u0_sync && sync_ok(uq0_q[3:0], uq0_q[19:4]);
-    wire u1_go   = u1_sync && sync_ok(uq1_q[3:0], uq1_q[19:4]);
-    wire u0_rdy  = !uq0_e && !u0_sync && u_clear(uq0_q);
-    wire u1_rdy  = !uq1_e && !u1_sync && u_clear(uq1_q);
+    wire u0_go   = u0_sync && u0_okn;
+    wire u1_go   = u1_sync && u1_okn;
+    wire u0_rdy  = !uq0_e && !u0_sync && u0_okn;
+    wire u1_rdy  = !uq1_e && !u1_sync && u1_okn;
     wire u_sel   = (DUALQ != 0) && !u0_rdy;   // queue the engine takes from
     assign uq_q  = u_sel ? uq1_q : uq0_q;
     // Every waiting head is a sync entry.
     wire uh_sync = !(uq0_e && uq1_e) && (uq0_e || u0_sync) && (uq1_e || u1_sync);
-    wire [4:0]        uh_vd   = uq_q[UQW-2 -: 5];
-    wire              ue_f32  = (u_e[UQW-7 -: 2] == MD_F32);
-    wire              ue_gt4  = (u_e[UQW-7 -: 2] == MD_GT4);
-    wire [4:0]        ue_vd   = u_e[UQW-2 -: 5];
-    wire [2:0]        ue_n    = u_e[UQW-9 -: 3];
-    wire [2:0]        ue_cb   = u_e[UQW-12 -: 3];
+    wire [RW-1:0]     uh_vd   = uq_q[UQW-2 -: RW];
+    wire              ue_f32  = (u_e[UQW-2-RW -: 2] == MD_F32);
+    wire              ue_gt4  = (u_e[UQW-2-RW -: 2] == MD_GT4);
+    wire [RW-1:0]     ue_vd   = u_e[UQW-2 -: RW];
+    wire [2:0]        ue_n    = u_e[UQW-4-RW -: 3];
+    wire [2:0]        ue_cb   = u_e[UQW-7-RW -: 3];
     wire [LAW-1:0]    ue_s0   = u_e[SNW+LAW-1:SNW];
     wire [LAW-1:0]    ue_s1   = u_e[SNW+2*LAW-1:SNW+LAW];
     wire [3:0]        ue_nw   = ue_f32 ? {ue_n, 1'b1} : {1'b0, ue_n};   // words - 1
@@ -641,7 +734,7 @@ module v2_core #(
     reg  u_eq;                              // the running entry's queue
 
     // tag: vd chunk queue last half gt4 f32
-    localparam integer UTW = 5 + 3 + 1 + 1 + 1 + 1 + 1;
+    localparam integer UTW = RW + 3 + 1 + 1 + 1 + 1 + 1;
     wire [2:0]  u_chunk = ue_cb + (ue_f32 ? u_w[3:1] : u_w[2:0]);
     wire [UTW-1:0] u_tag0 = {ue_vd, u_chunk, u_eq, (u_w == ue_nw), ue_f32 & u_w[0], ue_gt4, ue_f32};
     reg  [UTW-1:0] u_tag1, u_tag2;
@@ -714,8 +807,8 @@ module v2_core #(
     // FP32: the lo word's eight lanes wait for the hi word's.
     reg  [191:0] u_hold;
     reg          uf_push;
-    reg  [8+2+384-1:0] uf_din;
-    wire [8+2+384-1:0] uf_q;
+    reg  [RA+2+384-1:0] uf_din;
+    wire [RA+2+384-1:0] uf_q;
     wire         uf_e, uf_pop;
     always @(posedge clk) begin
         if (erst) begin
@@ -726,16 +819,16 @@ module v2_core #(
         if (ug_v && ug_tag[0] && !ug_tag[2]) begin
             u_hold <= ui_f32;
         end
-        uf_din <= {ug_tag[UTW-1 -: 8], ug_tag[4], ug_tag[3],
+        uf_din <= {ug_tag[UTW-1 -: RA], ug_tag[4], ug_tag[3],
                    ug_tag[0] ? {ui_f32, u_hold} : ui_f16};
     end
 
-    v2_fifo #(.W(8+2+384), .D(8)) u_uf (.clk(clk), .rst(erst), .push(uf_push), .din(uf_din),
+    v2_fifo #(.W(RA+2+384), .D(8)) u_uf (.clk(clk), .rst(erst), .push(uf_push), .din(uf_din),
         .pop(uf_pop), .dout(uf_q), .empty(uf_e), .full(), .count());
 
     wire       uf_last = uf_q[384];
     wire       uf_qb   = uf_q[385];
-    assign uw_wa  = uf_q[393:386];
+    assign uw_wa  = uf_q[386 +: RA];
     assign uw_wd  = uf_q[383:0];
     assign uf_pop = !uf_e && !mw_bank_next[uw_wa[0]];
     assign uw_we  = uf_pop;
@@ -752,46 +845,53 @@ module v2_core #(
 
     // ================================================== pack engine
     // As unpack's: a pack starts once vs's older writes and older pack reads
-    // (either queue) are done. Snapshot {Wd, PRd}.
-    function p_clear;
-        input [UQW-1:0] q;
-        reg   [4:0] vs;
-        begin
-            vs = q[UQW-2 -: 5];
-            p_clear = reached(Wc[vs], q[23:18]) && reached(PRc[vs], q[17:12]);
-        end
-    endfunction
+    // (either queue) are done ("head verdicts").
+    wire p0_okn, p1_okn;
     wire p0_sync = !pq0_e && pq0_q[UQW-1];
     wire p1_sync = !pq1_e && pq1_q[UQW-1];
-    wire p0_go   = p0_sync && sync_ok(pq0_q[3:0], pq0_q[19:4]);
-    wire p1_go   = p1_sync && sync_ok(pq1_q[3:0], pq1_q[19:4]);
-    wire p0_rdy  = !pq0_e && !p0_sync && p_clear(pq0_q);
-    wire p1_rdy  = !pq1_e && !p1_sync && p_clear(pq1_q);
+    wire p0_go   = p0_sync && p0_okn;
+    wire p1_go   = p1_sync && p1_okn;
+    wire p0_rdy  = !pq0_e && !p0_sync && p0_okn;
+    wire p1_rdy  = !pq1_e && !p1_sync && p1_okn;
     wire p_sel   = (DUALQ != 0) && !p0_rdy;
     assign pq_q  = p_sel ? pq1_q : pq0_q;
     wire ph_sync = !(pq0_e && pq1_e) && (pq0_e || p0_sync) && (pq1_e || p1_sync);
-    wire [4:0]        ph_vs   = pq_q[UQW-2 -: 5];
-    wire              pe_f32  = (p_e[UQW-7 -: 2] == MD_F32);
-    wire              pe_gt4  = (p_e[UQW-7 -: 2] == MD_GT4);
-    wire              pe_mx   = (HAS_MX != 0) && (p_e[UQW-7 -: 2] == MD_MX7);
-    wire [4:0]        pe_vs   = p_e[UQW-2 -: 5];
-    wire [2:0]        pe_n    = p_e[UQW-9 -: 3];
-    wire [2:0]        pe_cb   = p_e[UQW-12 -: 3];
+    wire [RW-1:0]     ph_vs   = pq_q[UQW-2 -: RW];
+    wire              pe_f32  = (p_e[UQW-2-RW -: 2] == MD_F32);
+    wire              pe_gt4  = (p_e[UQW-2-RW -: 2] == MD_GT4);
+    wire              pe_mx   = (HAS_MX != 0) && (p_e[UQW-2-RW -: 2] == MD_MX7);
+    wire [RW-1:0]     pe_vs   = p_e[UQW-2 -: RW];
+    wire [2:0]        pe_n    = p_e[UQW-4-RW -: 3];
+    wire [2:0]        pe_cb   = p_e[UQW-7-RW -: 3];
     wire [LAW-1:0]    pe_s0   = p_e[SNW+LAW-1:SNW];
     wire [LAW-1:0]    pe_s1   = p_e[SNW+2*LAW-1:SNW+LAW];
     // MX7 reads its 8 chunks twice (v2_mxq) and writes 4 words.
     wire [3:0]        pe_nw   = pe_mx ? 4'd15 : pe_f32 ? {pe_n, 1'b1} : {1'b0, pe_n};
 
     // MX7's words appear after its reads: they are reserved at its first read,
-    // and no other mode starts while v2_mxq holds anything, so its words never
-    // meet another entry's in the GT4 stage and retire in order.
-    wire mx_busy;
-    wire pq_mx  = (HAS_MX != 0) && (pq_q[UQW-7 -: 2] == MD_MX7);
+    // and no other mode starts while v2_mxq holds anything or an MX7 read is
+    // being made or on its way there (`mx_fly`; pack reads may have gaps), so its words
+    // never meet another entry's in the GT4 stage and retire in order.
+    wire mx_busy, mx_fly;
+    wire pq_mx  = (HAS_MX != 0) && (pq_q[UQW-2-RW -: 2] == MD_MX7);
     wire p_room = pe_mx ? ((p_w != 4'd0) || (p_occ <= 4'd4)) : (p_occ < 4'd8);
-    wire p_rd   = p_act && p_room;
+    // RF_COPIES < 4: this pack read goes out next cycle beside that cycle's math
+    // reads, and only if its bank keeps a copy free (or it shares a read).
+    wire [2:0] pk_ch = pe_mx ? p_w[2:0] : pe_cb + (pe_f32 ? p_w[3:1] : p_w[2:0]);
+    wire [RA-1:0] pka = {pe_vs, pk_ch};
+    wire       nx_v  = m_act && !m_hold;
+    wire       xa = nx_v && n_ua, xb = nx_v && n_ub;
+    wire       xc = (nx_v && n_uc && !m_pre_d) || m_hold;
+    wire       pk_sh = (xa && n_ra == pka) || (xb && n_rb == pka) || (xc && n_rc == pka);
+    wire       ka = xa && (n_ra[0] == pka[0]);
+    wire       kb = xb && (n_rb[0] == pka[0]) && !(xa && n_rb == n_ra);
+    wire       kc = xc && (n_rc[0] == pka[0]) && !(xa && n_rc == n_ra) && !(xb && n_rc == n_rb);
+    wire [1:0] pk_nk = {1'b0, ka} + {1'b0, kb} + {1'b0, kc};
+    wire       pk_ok = (RF_COPIES >= 4) || pk_sh || ({30'd0, pk_nk} <= RF_COPIES - 1);
+    wire p_rd   = p_act && p_room && pk_ok;
     wire p_endw = p_rd && (p_w == pe_nw);
     wire p_free = !p_act || p_endw;
-    wire p_take = (p0_rdy || p1_rdy) && p_free && !(mx_busy && !pq_mx);
+    wire p_take = (p0_rdy || p1_rdy) && p_free && !((mx_busy || mx_fly) && !pq_mx);
     wire p_haz  = !p0_rdy && !p1_rdy && !(pq0_e && pq1_e) && !ph_sync;
     assign pq0_pop = (p_take && !p_sel) || p0_go;
     assign pq1_pop = (p_take && p_sel) || p1_go;
@@ -802,6 +902,7 @@ module v2_core #(
     wire [PTW-1:0] p_tag0 = {p_wa, p_eq, (p_w == pe_nw), pe_f32 & p_w[0], pe_gt4, pe_f32};
     reg  [PTW-1:0] p_tag1, p_tag2, p_tag3;
     reg            p_v1, p_v2, p_v3;
+    assign pk_vw = p_v1;
     wire [2:0]     p_chunk = pe_mx ? p_w[2:0] : pe_cb + (pe_f32 ? p_w[3:1] : p_w[2:0]);
     // MX7 read tag, beside p_tag: {mx, pass, chunk}.
     reg  [4:0]     m_tag1, m_tag2, m_tag3, m_tag4;
@@ -878,6 +979,15 @@ module v2_core #(
     wire [255:0]   mx_word;
     wire [LAW-1:0] mx_addr;
     wire           p_mx4 = p_v5 && m_tag5[4];
+    assign mx_fly = (p_act && pe_mx) || (p_v1 && m_tag1[4]) || (p_v2 && m_tag2[4])
+                 || (p_v3 && m_tag3[4]) || (p_v4 && m_tag4[4]) || p_mx4;
+`ifndef SYNTHESIS
+    // u_pgt takes one word a cycle: a plain pack word beside an MX7 word is lost.
+    always @(posedge clk) begin
+        if (!erst && p_v5 && !m_tag5[4] && mx_v)
+            $display("V2_PACK_COLLIDE %m t=%0t: plain pack word beside an MX7 word", $time);
+    end
+`endif
     generate
     if (HAS_MX != 0) begin : g_mx
         v2_mxq #(.LAW(LAW)) u_mxq (
@@ -1224,35 +1334,99 @@ module v2_core #(
     // less the slack (n_disp does not move: this cycle dispatches the VSYNC).
     wire [8:0] mk_owed = {1'b0, n_out[d_on]} - {8'd0, k_done8[d_on]} - {3'd0, d_slack};
 
-    // Scoreboard bookkeeping: one update per register per cycle.
+    // Scoreboard updates: each array takes at most one +1 a cycle.
     wire m_rel_a = m_end && (e_sa == SRC_V);
     wire m_rel_b = m_end && (e_sb == SRC_V);
     wire m_rel_c = m_end && (e_sc == SRC_V);
     wire p_rel   = p_endw;
-    reg  [4:0] p_rel_vs;
+    reg  [RW-1:0] p_rel_vs;
     always @(*) p_rel_vs = pe_vs;
+    wire [RW-1:0] u_ret_vs = uw_wa[RA-1:3];
+    wire i_wmc = wb_last && wb_wr;
+
+    // A LUTRAM scoreboard keeps its counts across a start of an idle core
+    // (each register's dispatched and finished counts then agree). After
+    // `rst`, or a start that kills accesses in flight, a sweep writes zero to
+    // every register's counts, one register a cycle, and dispatch waits.
+    localparam integer SB_LUT = (SB_PRIM == "distributed") ? 1 : 0;
+    reg [RW-1:0] sb_i;
+    wire         sb_clr = (SB_LUT != 0) && !sb_ok;
+`ifdef V2_SB_NOSWEEP
+    wire         sb_kill = 1'b0;    // bench negative control: a killed RUN's counts stay
+`else
+    wire         sb_kill = srst && !all_idle;
+`endif
+    always @(posedge clk) begin
+        if (rst || sb_kill) begin
+            sb_ok <= (SB_LUT == 0);
+            sb_i  <= {RW{1'b0}};
+        end else if (!sb_ok) begin
+            sb_i <= sb_i + 1'b1;
+            if (sb_i == NR - 1) sb_ok <= 1'b1;
+        end
+    end
+
+    // Dispatched counts, read at the instruction's registers for its snapshot.
+    wire [4*SBW-1:0] r_wmd, r_uwd;                        // at d_va d_vb d_vc d_vd
+    wire [SBW-1:0]   r_mrad, r_mrbd, r_mrcd, r_prd;       // at d_vd
+    v2_cnt #(.N(NR), .W(SBW), .R(4), .PRIM(SB_PRIM)) u_wmd (.clk(clk), .rst(erst),
+        .clr(sb_clr), .clr_a(sb_i), .inc(disp_m && !is_cmp), .inc_a(d_vd),
+        .ra({d_vd, d_vc, d_vb, d_va}), .rd(r_wmd));
+    v2_cnt #(.N(NR), .W(SBW), .R(4), .PRIM(SB_PRIM)) u_uwd (.clk(clk), .rst(erst),
+        .clr(sb_clr), .clr_a(sb_i), .inc(disp_u), .inc_a(d_vd),
+        .ra({d_vd, d_vc, d_vb, d_va}), .rd(r_uwd));
+    v2_cnt #(.N(NR), .W(SBW), .R(1), .PRIM(SB_PRIM)) u_mrad (.clk(clk), .rst(erst),
+        .clr(sb_clr), .clr_a(sb_i), .inc(disp_m && uses_a), .inc_a(d_va),
+        .ra(d_vd), .rd(r_mrad));
+    v2_cnt #(.N(NR), .W(SBW), .R(1), .PRIM(SB_PRIM)) u_mrbd (.clk(clk), .rst(erst),
+        .clr(sb_clr), .clr_a(sb_i), .inc(disp_m && uses_b), .inc_a(d_vb),
+        .ra(d_vd), .rd(r_mrbd));
+    v2_cnt #(.N(NR), .W(SBW), .R(1), .PRIM(SB_PRIM)) u_mrcd (.clk(clk), .rst(erst),
+        .clr(sb_clr), .clr_a(sb_i), .inc(disp_m && uses_c), .inc_a(d_vc),
+        .ra(d_vd), .rd(r_mrcd));
+    v2_cnt #(.N(NR), .W(SBW), .R(1), .PRIM(SB_PRIM)) u_prd (.clk(clk), .rst(erst),
+        .clr(sb_clr), .clr_a(sb_i), .inc(disp_p), .inc_a(d_vd),
+        .ra(d_vd), .rd(r_prd));
+
+    // Finished counts, read at the math head's registers and at each queue
+    // head candidate (head and next of every unpack / pack queue, and the
+    // instruction being pushed). Reads a configuration leaves unused trim away.
+    wire [RW-1:0] cu_h0 = uq0_q[UQW-2 -: RW], cu_n0 = uq0_q1[UQW-2 -: RW];
+    wire [RW-1:0] cu_h1 = uq1_q[UQW-2 -: RW], cu_n1 = uq1_q1[UQW-2 -: RW];
+    wire [RW-1:0] cp_h0 = pq0_q[UQW-2 -: RW], cp_n0 = pq0_q1[UQW-2 -: RW];
+    wire [RW-1:0] cp_h1 = pq1_q[UQW-2 -: RW], cp_n1 = pq1_q1[UQW-2 -: RW];
+    wire [12*SBW-1:0] r_wmc;    // h_va h_vb h_vc | u h0 n0 h1 n1 | p h0 n0 h1 n1 | d_vd
+    wire [13*SBW-1:0] r_uwc;    // h_va h_vb h_vc h_vd | u ... | p ... | d_vd
+    wire [5*SBW-1:0]  r_mrac, r_mrbc, r_mrcc;          // u h0 n0 h1 n1 | d_vd
+    wire [10*SBW-1:0] r_prc;    // h_vd | u ... | p ... | d_vd
+    v2_cnt #(.N(NR), .W(SBW), .R(12), .PRIM(SB_PRIM)) u_wmc (.clk(clk), .rst(erst),
+        .clr(sb_clr), .clr_a(sb_i), .inc(i_wmc), .inc_a(wb_vreg),
+        .ra({d_vd, cp_n1, cp_h1, cp_n0, cp_h0, cu_n1, cu_h1, cu_n0, cu_h0, h_vc, h_vb, h_va}),
+        .rd(r_wmc));
+    v2_cnt #(.N(NR), .W(SBW), .R(13), .PRIM(SB_PRIM)) u_uwc (.clk(clk), .rst(erst),
+        .clr(sb_clr), .clr_a(sb_i), .inc(u_retire), .inc_a(u_ret_vs),
+        .ra({d_vd, cp_n1, cp_h1, cp_n0, cp_h0, cu_n1, cu_h1, cu_n0, cu_h0, h_vd, h_vc, h_vb,
+             h_va}),
+        .rd(r_uwc));
+    v2_cnt #(.N(NR), .W(SBW), .R(5), .PRIM(SB_PRIM)) u_mrac (.clk(clk), .rst(erst),
+        .clr(sb_clr), .clr_a(sb_i), .inc(m_rel_a), .inc_a(e_va),
+        .ra({d_vd, cu_n1, cu_h1, cu_n0, cu_h0}), .rd(r_mrac));
+    v2_cnt #(.N(NR), .W(SBW), .R(5), .PRIM(SB_PRIM)) u_mrbc (.clk(clk), .rst(erst),
+        .clr(sb_clr), .clr_a(sb_i), .inc(m_rel_b), .inc_a(e_vb),
+        .ra({d_vd, cu_n1, cu_h1, cu_n0, cu_h0}), .rd(r_mrbc));
+    v2_cnt #(.N(NR), .W(SBW), .R(5), .PRIM(SB_PRIM)) u_mrcc (.clk(clk), .rst(erst),
+        .clr(sb_clr), .clr_a(sb_i), .inc(m_rel_c), .inc_a(e_vc),
+        .ra({d_vd, cu_n1, cu_h1, cu_n0, cu_h0}), .rd(r_mrcc));
+    v2_cnt #(.N(NR), .W(SBW), .R(10), .PRIM(SB_PRIM)) u_prc (.clk(clk), .rst(erst),
+        .clr(sb_clr), .clr_a(sb_i), .inc(p_rel), .inc_a(p_rel_vs),
+        .ra({d_vd, cp_n1, cp_h1, cp_n0, cp_h0, cu_n1, cu_h1, cu_n0, cu_h0, h_vd}),
+        .rd(r_prc));
+    assign hc_am = r_wmc[0*SBW +: SBW];  assign hc_au = r_uwc[0*SBW +: SBW];
+    assign hc_bm = r_wmc[1*SBW +: SBW];  assign hc_bu = r_uwc[1*SBW +: SBW];
+    assign hc_cm = r_wmc[2*SBW +: SBW];  assign hc_cu = r_uwc[2*SBW +: SBW];
+    assign hc_uw = r_uwc[3*SBW +: SBW];  assign hc_pr = r_prc[0*SBW +: SBW];
 
     always @(posedge clk) begin
-        for (ii = 0; ii < 32; ii = ii + 1) begin
-            if (erst) begin
-                Wd[ii] <= 6'd0; Wc[ii] <= 6'd0; UWd[ii] <= 6'd0; UWc[ii] <= 6'd0;
-                MRd[ii] <= 6'd0; MRc[ii] <= 6'd0; PRd[ii] <= 6'd0; PRc[ii] <= 6'd0;
-            end else begin
-                if (((disp_m && !is_cmp) || disp_u) && (d_vd == ii[4:0])) Wd[ii] <= Wd[ii] + 6'd1;
-                // A math write-back and an unpack retire never finish the same
-                // register in one cycle: each waits for the other's older writes.
-                if ((wb_last && wb_wr && (wb_vreg == ii[4:0]))
-                    || (u_retire && (uw_wa[7:3] == ii[4:0]))) Wc[ii] <= Wc[ii] + 6'd1;
-                if (disp_u && (d_vd == ii[4:0])) UWd[ii] <= UWd[ii] + 6'd1;
-                if (u_retire && (uw_wa[7:3] == ii[4:0])) UWc[ii] <= UWc[ii] + 6'd1;
-                if (disp_m && ((uses_a && d_va == ii[4:0]) || (uses_b && d_vb == ii[4:0])
-                               || (uses_c && d_vc == ii[4:0]))) MRd[ii] <= MRd[ii] + 6'd1;
-                if ((m_rel_a && e_va == ii[4:0]) || (m_rel_b && e_vb == ii[4:0])
-                    || (m_rel_c && e_vc == ii[4:0])) MRc[ii] <= MRc[ii] + 6'd1;
-                if (disp_p && (d_vd == ii[4:0])) PRd[ii] <= PRd[ii] + 6'd1;
-                if (p_rel && (p_rel_vs == ii[4:0])) PRc[ii] <= PRc[ii] + 6'd1;
-            end
-        end
         for (ii = 0; ii < 4; ii = ii + 1) begin
             if (erst) begin
                 pP[ii] <= 5'd0;
@@ -1301,6 +1475,118 @@ module v2_core #(
         end
     end
 
+    // ================================================== head verdicts
+    // An unpack / pack queue head's verdict (its sync met; or its register's
+    // older accesses done) is computed a cycle ahead for every entry that can
+    // be the head next cycle -- the head, the entry behind it, the instruction
+    // being pushed -- and registered; the next cycle picks by this cycle's
+    // pop, push and count. A verdict holds the counts after this edge: a
+    // difference of registered values, with this cycle's finish (HEAD_NEXT)
+    // joining only at the last gate. A finished count only moves toward a
+    // waiting entry's snapshot (younger accesses of the register wait for it)
+    // and n_done only grows: without HEAD_NEXT a verdict is a cycle late,
+    // never early. Credits (K_CR) arrive in amounts: their verdict is late.
+    function rn;                        // c reaches s after this edge
+        input [SBW-1:0] c, s;
+        input           inc;            // c takes +1 this cycle
+        reg   [SBW-1:0] df;
+        begin
+            df = c - s;
+            rn = !df[SBW-1] || ((HEAD_NEXT != 0) && inc && (&df));
+        end
+    endfunction
+    function sn;                        // a queued sync: n_done[on] reaches tgt
+        input [3:0]  on;
+        input [15:0] tgt;
+        reg   [15:0] df;
+        begin
+            df = n_done[on] - tgt;
+            sn = !df[15] || ((HEAD_NEXT != 0) && (&df)
+                             && ((on < 4'd7) ? k_done[on[2:0]] : (on == K_RX) && cd_land));
+        end
+    endfunction
+    // An unpack waits for vd's older math writes, unpack writes (either
+    // queue), math reads (each operand slot) and pack reads: snapshot
+    // {WMd, UWd, MRad, MRbd, MRcd, PRd}. A pack waits for vs's older writes
+    // and pack reads: snapshot {WMd, UWd, PRd}. Writes to one register finish
+    // in dispatch order, so each kind against its own snapshot is exact.
+    // Candidate s at register v: 0 / 1 queue 0's head / next, 2 / 3 queue 1's;
+    // the read indices follow the port orders of u_wmc / u_uwc / u_mr*c / u_prc.
+    function u_slot;
+        input [UQW-1:0] q;
+        input integer   s;
+        input [RW-1:0]  v;
+        u_slot = q[UQW-1] ? sn(q[3:0], q[19:4])
+               : rn(r_wmc[(3 + s)*SBW +: SBW], q[5*SBW +: SBW], i_wmc && (wb_vreg == v))
+                 && rn(r_uwc[(4 + s)*SBW +: SBW], q[4*SBW +: SBW], u_retire && (u_ret_vs == v))
+                 && rn(r_mrac[s*SBW +: SBW], q[3*SBW +: SBW], m_rel_a && (e_va == v))
+                 && rn(r_mrbc[s*SBW +: SBW], q[2*SBW +: SBW], m_rel_b && (e_vb == v))
+                 && rn(r_mrcc[s*SBW +: SBW], q[SBW +: SBW], m_rel_c && (e_vc == v))
+                 && rn(r_prc[(1 + s)*SBW +: SBW], q[0 +: SBW], p_rel && (p_rel_vs == v));
+    endfunction
+    function p_slot;
+        input [UQW-1:0] q;
+        input integer   s;
+        input [RW-1:0]  v;
+        p_slot = q[UQW-1] ? sn(q[3:0], q[19:4])
+               : rn(r_wmc[(7 + s)*SBW +: SBW], q[5*SBW +: SBW], i_wmc && (wb_vreg == v))
+                 && rn(r_uwc[(8 + s)*SBW +: SBW], q[4*SBW +: SBW], u_retire && (u_ret_vs == v))
+                 && rn(r_prc[(5 + s)*SBW +: SBW], q[3*SBW +: SBW], p_rel && (p_rel_vs == v));
+    endfunction
+    // The instruction being pushed, from its decode. A sync: kind d_on has at
+    // most `slack` outstanding after this edge (n_out, which the front end
+    // keeps), or its mark owes nothing; a count sync (vwait) is a cycle late.
+    // VBAR: no fill outstanding. An unpack / pack: the dispatched counts it
+    // snapshots against the finished ones, both read at d_vd now.
+    function out_ok;
+        input [2:0] on;
+        input [5:0] slack;
+        out_ok = (n_out[on] <= {2'b0, slack})
+              || ((HEAD_NEXT != 0) && k_done[on] && (n_out[on] == {2'b0, slack} + 8'd1));
+    endfunction
+    wire d_sync_ok = d_ext ? 1'b0
+                   : d_mkd ? ((mk_cnt[d_mid] == 8'd0)
+                              || ((HEAD_NEXT != 0) && (mk_cnt[d_mid] == 8'd1)
+                                  && k_done8[mk_on[d_mid]]))
+                   : out_ok(d_on, d_slack);
+    wire d_w_ok  = rn(r_wmc[11*SBW +: SBW], r_wmd[3*SBW +: SBW], i_wmc && (wb_vreg == d_vd))
+                && rn(r_uwc[12*SBW +: SBW], r_uwd[3*SBW +: SBW], u_retire && (u_ret_vs == d_vd));
+    wire d_pr_ok = rn(r_prc[9*SBW +: SBW], r_prd, p_rel && (p_rel_vs == d_vd));
+    wire d_u_ok  = (d_op == O_VBAR) ? out_ok(K_F, 6'd0)
+                 : (d_op == O_VSYNC) ? d_sync_ok
+                 : d_w_ok && d_pr_ok
+                   && rn(r_mrac[4*SBW +: SBW], r_mrad, m_rel_a && (e_va == d_vd))
+                   && rn(r_mrbc[4*SBW +: SBW], r_mrbd, m_rel_b && (e_vb == d_vd))
+                   && rn(r_mrcc[4*SBW +: SBW], r_mrcd, m_rel_c && (e_vc == d_vd));
+    wire d_p_ok  = (d_op == O_VSYNC) ? d_sync_ok : d_w_ok && d_pr_ok;
+    reg  [2:0] u0_ok, u1_ok, p0_ok, p1_ok;      // [0] head, [1] next, [2] pushed
+    reg  [1:0] u0_v, u1_v, p0_v, p1_v;          // count > 0, count > 1
+    reg        u0_pd, u1_pd, p0_pd, p1_pd, u0_pu, u1_pu, p0_pu, p1_pu;
+    always @(posedge clk) begin
+        u0_ok <= {d_u_ok, u_slot(uq0_q1, 1, cu_n0), u_slot(uq0_q, 0, cu_h0)};
+        u1_ok <= {d_u_ok, u_slot(uq1_q1, 3, cu_n1), u_slot(uq1_q, 2, cu_h1)};
+        p0_ok <= {d_p_ok, p_slot(pq0_q1, 1, cp_n0), p_slot(pq0_q, 0, cp_h0)};
+        p1_ok <= {d_p_ok, p_slot(pq1_q1, 3, cp_n1), p_slot(pq1_q, 2, cp_h1)};
+        u0_v  <= {uq0_n > 1, uq0_n != 0};
+        u1_v  <= {uq1_n > 1, uq1_n != 0};
+        p0_v  <= {pq0_n > 1, pq0_n != 0};
+        p1_v  <= {pq1_n > 1, pq1_n != 0};
+        u0_pd <= uq0_pop;  u1_pd <= uq1_pop;
+        p0_pd <= pq0_pop;  p1_pd <= pq1_pop;
+        u0_pu <= uq_push && !d_q;  u1_pu <= uq_push && d_q;
+        p0_pu <= pq_push && !d_q;  p1_pu <= pq_push && d_q;
+    end
+    // The head now: after a pop the entry behind the old head, else the old
+    // head; with neither, the entry pushed into the empty queue.
+    assign u0_okn = u0_pd ? (u0_v[1] ? u0_ok[1] : (u0_pu && u0_ok[2]))
+                          : (u0_v[0] ? u0_ok[0] : (u0_pu && u0_ok[2]));
+    assign u1_okn = u1_pd ? (u1_v[1] ? u1_ok[1] : (u1_pu && u1_ok[2]))
+                          : (u1_v[0] ? u1_ok[0] : (u1_pu && u1_ok[2]));
+    assign p0_okn = p0_pd ? (p0_v[1] ? p0_ok[1] : (p0_pu && p0_ok[2]))
+                          : (p0_v[0] ? p0_ok[0] : (p0_pu && p0_ok[2]));
+    assign p1_okn = p1_pd ? (p1_v[1] ? p1_ok[1] : (p1_pu && p1_ok[2]))
+                          : (p1_v[0] ? p1_ok[0] : (p1_pu && p1_ok[2]));
+
     // Queue entries, formed from `ir` and the front end's state.
     wire [15:0] chk_now = d_om ? c_chk : 16'h1111;
     wire [14:0] xb_now  = d_om ? c_xb  : 15'd0;
@@ -1319,20 +1605,25 @@ module v2_core #(
         fq_push = fe_ok && ((d_op == O_VFILL) || (is_sync && (d_wt == W_A)));
         dq_push = fe_ok && ((d_op == O_VDRAIN) || (d_op == O_VPOST) || (is_sync && (d_wt == W_D)));
         // aop 31 marks a sync entry; target and kind ride in the kc slot.
-        mq_din  = is_sync ? {5'd31, 26'd0, 48'd0, s_tgt, 4'd0, s_on, 42'd0, 30'd0}
+        mq_din  = is_sync ? {5'd31, {(4*RW+6){1'b0}}, 48'd0, s_tgt, 4'd0, s_on, 42'd0,
+                             {MQS{1'b0}}}
                 : {alu_op, d_vd, d_va, d_vb, d_vc, e_sa_d, e_sb_d, e_sc_d,
                    pick(e_sa_d, d_va), pick(e_sb_d, d_vb), pick(e_sc_d, d_vc),
                    nb_vl, vl[3:0], chk_now, xb_now, is_cmp,
                    (d_op == O_EXP2D), !is_cmp,
-                   Wd[d_va], Wd[d_vb], Wd[d_vc], UWd[d_vd], PRd[d_vd]};
+                   r_wmd[0*SBW +: SBW], r_uwd[0*SBW +: SBW],
+                   r_wmd[1*SBW +: SBW], r_uwd[1*SBW +: SBW],
+                   r_wmd[2*SBW +: SBW], r_uwd[2*SBW +: SBW],
+                   r_uwd[3*SBW +: SBW], r_prd};
         uq_din  = is_sync ? sync_q
                 : (d_op == O_VBAR) ? {1'b1, {(UQW-21){1'b0}}, n_disp[K_F], 1'b0, K_F}
                 : {1'b0, d_vd, d_mode, d_n, d_cb, ua_now, c_ustr,
-                   Wd[d_vd], UWd[d_vd], MRd[d_vd], PRd[d_vd]};
+                   r_wmd[3*SBW +: SBW], r_uwd[3*SBW +: SBW], r_mrad, r_mrbd, r_mrcd, r_prd};
         pq_din  = is_sync ? sync_q
-                : {1'b0, d_vd, d_mode, d_n, d_cb, pa_now, c_pstr, Wd[d_vd], PRd[d_vd], 12'd0};
+                : {1'b0, d_vd, d_mode, d_n, d_cb, pa_now, c_pstr,
+                   r_wmd[3*SBW +: SBW], r_uwd[3*SBW +: SBW], r_prd, {(3*SBW){1'b0}}};
         aq_din  = is_sync ? {1'b1, {AW{1'b0}}, 12'd0, s_tgt, s_on}
-                : {1'b0, ir[26] ? a_off[d_ad] : {AW{1'b0}}, ir};
+                : {1'b0, ir[26] ? a_off[d_ad] : {AW{1'b0}}, ir[31:0]};
     end
 
     // ================================================== front end: registers
@@ -1494,11 +1785,23 @@ module v2_core #(
             if (dr_take) pc_drw <= pc_drw + 1;
         end
     end
-    // The modulo-64 counts need fewer than 32 outstanding of a kind.
+    // The modulo-2^SBW counts need fewer than 2^(SBW-1) outstanding of a kind.
+    function sb_over;
+        input [SBW-1:0] d, c;
+        reg   [SBW-1:0] df;
+        begin
+            df = d - c;
+            sb_over = df[SBW-1];
+        end
+    endfunction
     always @(posedge clk) begin
-        for (pi = 0; pi < 32; pi = pi + 1) begin
-            if (!rst && (((Wd[pi] - Wc[pi]) & 6'h20) || ((MRd[pi] - MRc[pi]) & 6'h20)
-                         || ((PRd[pi] - PRc[pi]) & 6'h20)))
+        for (pi = 0; pi < NR; pi = pi + 1) begin
+            if (!rst && sb_ok && (sb_over(u_wmd.sh[pi], u_wmc.sh[pi])
+                                  || sb_over(u_uwd.sh[pi], u_uwc.sh[pi])
+                                  || sb_over(u_mrad.sh[pi], u_mrac.sh[pi])
+                                  || sb_over(u_mrbd.sh[pi], u_mrbc.sh[pi])
+                                  || sb_over(u_mrcd.sh[pi], u_mrcc.sh[pi])
+                                  || sb_over(u_prd.sh[pi], u_prc.sh[pi])))
                 $display("V2_SB_OVERFLOW v%0d t=%0t", pi, $time);
         end
     end
@@ -1532,16 +1835,25 @@ module v2_core #(
                  pc_d_mq, pc_d_sbm, pc_d_uq, pc_d_sbu, pc_d_pq, pc_d_aq, pc_d_seti, pc_d_fe,
                  pc_d_idle, pc_redir);
         // Left over at the end: anything nonzero here is a stuck engine.
-        for (pi = 0; pi < 32; pi = pi + 1) begin
-            if (Wd[pi] != Wc[pi] || UWd[pi] != UWc[pi] || MRd[pi] != MRc[pi] || PRd[pi] != PRc[pi])
-                $display("V2SB_LEFT v%0d W %0d/%0d UW %0d/%0d MR %0d/%0d PR %0d/%0d", pi,
-                         Wc[pi], Wd[pi], UWc[pi], UWd[pi], MRc[pi], MRd[pi], PRc[pi], PRd[pi]);
+        for (pi = 0; pi < NR; pi = pi + 1) begin
+            if (u_wmd.sh[pi] != u_wmc.sh[pi] || u_uwd.sh[pi] != u_uwc.sh[pi]
+                || u_mrad.sh[pi] != u_mrac.sh[pi] || u_mrbd.sh[pi] != u_mrbc.sh[pi]
+                || u_mrcd.sh[pi] != u_mrcc.sh[pi] || u_prd.sh[pi] != u_prc.sh[pi])
+                $display("V2SB_LEFT v%0d WM %0d/%0d UW %0d/%0d MR %0d/%0d %0d/%0d %0d/%0d PR %0d/%0d",
+                         pi, u_wmc.sh[pi], u_wmd.sh[pi], u_uwc.sh[pi], u_uwd.sh[pi],
+                         u_mrac.sh[pi], u_mrad.sh[pi], u_mrbc.sh[pi], u_mrbd.sh[pi],
+                         u_mrcc.sh[pi], u_mrcd.sh[pi], u_prc.sh[pi], u_prd.sh[pi]);
         end
         if (!mq_e) $display("V2HEAD_M aop %0d vd %0d va %0d vb %0d vc %0d s %0d%0d%0d haz %0d",
                             h_aop, h_vd, h_va, h_vb, h_vc, h_sa, h_sb, h_sc, h_haz);
         if (!uq_e) $display("V2HEAD_U sync %0d vd %0d", uh_sync, uh_vd);
         if (!pq_e) $display("V2HEAD_P sync %0d vs %0d haz %0d", ph_sync, ph_vs, p_haz);
         $display("V2FE d_v %0d op %0d pc %0d", d_v, d_op, d_pc);
+        // Each all_idle term (1 = idle): a VHALT that never retires names its engine.
+        $display("V2IDLE %m run %0d mq %0d uq %0d pq %0d fq %0d dq %0d m %0d u %0d p %0d f_st %0d d_st %0d pipe %0d uf %0d pf %0d u_occ %0d p_occ %0d ug %0d pg %0d mx %0d fill_out %0d wr_req %0d ft %0d iss %0d post %0d",
+                 run, mq_e, uq_e, pq_e, fq_e, dq_e, !m_act, !u_act, !p_act, f_st, d_st,
+                 pipe_empty, uf_e, pf_e, u_occ, p_occ, !ug_busy, !pg_busy, !mx_busy,
+                 fill_out, !wr_req_valid, ft_e, !iss_valid, !post_valid);
     end
 `endif
 

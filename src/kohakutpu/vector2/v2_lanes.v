@@ -22,7 +22,16 @@ module v2_lanes #(
     parameter integer PIPE_MUX = 1,
     parameter integer HAS_EXPD = 1,
     parameter integer TAU      = 8,
-    parameter integer XNET     = 1     // v2_xbar: 0 one 16:1 select, 1 two 4:1 levels
+    parameter integer XNET     = 1,    // v2_xbar: 0 one 16:1 select, 1 two 4:1 levels
+    // Read copies a bank. 4: a, b, c, pack each own one. 2 or 3: every copy
+    // serves any read, so a beat needs at most RF_COPIES distinct reads a
+    // bank -- v2_core holds an FMA beat whose a, b, c share a bank at 2 and
+    // gives pack a port only when one is free.
+    parameter integer RF_COPIES = 4,
+    // The ALU coefficient ROMs: "block" (a RAMB36 a lane) or "distributed".
+    parameter         TAB_PRIM  = "block",
+    // Register-number bits: 2**RW registers; a bank's word is {vreg, chunk[2:1]}.
+    parameter integer RW        = 5
 )(
     input  wire         clk,
     input  wire         rst,
@@ -31,13 +40,13 @@ module v2_lanes #(
     input  wire         iss_valid,
     input  wire         iss_last,     // last beat of its instruction
     input  wire [4:0]   iss_op,       // vec_alu numbering
-    input  wire [7:0]   iss_ra, iss_rb, iss_rc,   // {vreg, chunk}
+    input  wire [RW+2:0] iss_ra, iss_rb, iss_rc,  // {vreg, chunk}
     input  wire [1:0]   iss_sa, iss_sb, iss_sc,   // 0 V, 1 S, 3 K
     input  wire [23:0]  iss_ka, iss_kb, iss_kc,
     input  wire [2:0]   iss_xm,       // 0 none 1 xor 2 rot 3 bcast 4 merge
     input  wire [3:0]   iss_xk,       // xor/rot amount, merge bit; bcast lane
     input  wire         iss_xc,       // the crossbar output also feeds c
-    input  wire [7:0]   iss_wa,
+    input  wire [RW+2:0] iss_wa,
     input  wire         iss_wr,       // writes a vector register
     input  wire         iss_cmp,
     input  wire [1:0]   iss_pr, iss_pm,
@@ -46,17 +55,25 @@ module v2_lanes #(
 
     // ---- unpack write, offered one cycle ahead ----------------------------
     input  wire         uw_we,
-    input  wire [7:0]   uw_wa,
+    input  wire [RW+2:0] uw_wa,
     input  wire [383:0] uw_wd,
     output wire [1:0]   mw_bank_next, // math writes bank b next cycle
 
     // ---- pack read port, READ_LAT 1 + one bank-select register ------------
-    input  wire [7:0]   pk_ra,
+    input  wire [RW+2:0] pk_ra,
+    input  wire         pk_v,         // pk_ra is a read this cycle (RF_COPIES < 4)
     output reg  [383:0] pk_rd,        // answers pk_ra two cycles later
+
+    // ---- c read ahead of its beat (RF_COPIES 2): `pre_v` reads `pre_rc` in
+    // the bubble before an FMA beat whose a, b, c share a bank; that beat
+    // comes with `iss_ch` and takes c from the hold ----------------------------
+    input  wire         pre_v,
+    input  wire [RW+2:0] pre_rc,
+    input  wire         iss_ch,
 
     // ---- write-back report ------------------------------------------------
     output wire         wb_last,      // an instruction's last beat retired
-    output wire [4:0]   wb_vreg,
+    output wire [RW-1:0] wb_vreg,
     output wire         wb_wr,
     output wire         wb_cmp,
     output wire [1:0]   wb_pr,
@@ -73,32 +90,96 @@ module v2_lanes #(
     genvar l, b;
     integer i;
 
+    localparam integer RA = RW + 3;        // {vreg, chunk}
+    localparam integer BA = RW + 2;        // a bank's word address
     // {vreg, chunk} -> a bank's word address; the bank is chunk bit 0.
-    function [6:0] bad;
-        input [7:0] a;
-        bad = {a[7:3], a[2:1]};
+    function [BA-1:0] bad;
+        input [RA-1:0] a;
+        bad = {a[RA-1:3], a[2:1]};
     endfunction
 
     // ================================================== register file
     reg  [15:0]  bw_we [0:1];
-    reg  [6:0]   bw_wa [0:1];
+    reg  [BA-1:0] bw_wa [0:1];
     wire [383:0] bw_wd [0:1];
-    // Read copies a, b, c, d of each bank. A copy whose address names the
-    // other bank resets its output latch (BRAM RSTRAM), so a port's two banks
-    // combine by OR, which folds into the next mux: no bank-select LUTs.
-    wire [7:0]   rf_ad [0:3];
-    assign rf_ad[0] = iss_ra; assign rf_ad[1] = iss_rb;
-    assign rf_ad[2] = iss_rc; assign rf_ad[3] = pk_ra;
+    localparam integer NC = (RF_COPIES < 2) ? 2 : (RF_COPIES > 4) ? 4 : RF_COPIES;
     wire [383:0] rf_q [0:7];              // [copy*2 + bank]
+    wire [BA-1:0] cb_ad [0:7];             // each copy-bank's read address
+    wire         cb_rst [0:7];
+    // A read port's source: {bank, copy}, registered beside the read.
+    reg  [2:0]   q_sa, q_sb, q_sc, q_sp;
+    reg          q_pre, q1_ch;
+    reg  [383:0] c_hold;
     genvar p;
     generate
+    if (NC == 4) begin : g_rd4
+        // Read copies a, b, c, d of each bank. A copy whose address names the
+        // other bank resets its output latch (BRAM RSTRAM), so a port's two banks
+        // combine by OR, which folds into the next mux: no bank-select LUTs.
+        wire [RA-1:0] rf_ad [0:3];
+        assign rf_ad[0] = iss_ra; assign rf_ad[1] = iss_rb;
+        assign rf_ad[2] = iss_rc; assign rf_ad[3] = pk_ra;
+        for (p = 0; p < 8; p = p + 1) begin : g_cb
+            assign cb_ad[p]  = bad(rf_ad[p / 2]);
+            assign cb_rst[p] = rf_ad[p / 2][0] != (p % 2 == 1);
+        end
+    end else begin : g_rdn
+        // Every copy serves any read: per bank, the distinct reads a, b, c (or
+        // the bubble's c), pack take copies 0, 1, ... in that order. Reads of
+        // one address share a copy. v2_core keeps each bank within NC.
+        wire [RA-1:0] rcx = pre_v ? pre_rc : iss_rc;
+        wire ua = iss_valid && (iss_sa == SRC_V);
+        wire ub = iss_valid && (iss_sb == SRC_V);
+        wire uc = pre_v || (iss_valid && (iss_sc == SRC_V) && !iss_xc && !iss_ch);
+        wire bA = iss_ra[0], bB = iss_rb[0], bC = rcx[0], bP = pk_ra[0];
+        wire dB = ub && ua && (iss_rb == iss_ra);
+        wire nB = ub && !dB;
+        wire cA = ua && (rcx == iss_ra), cB = nB && (rcx == iss_rb);
+        wire nC = uc && !cA && !cB;
+        wire pA = ua && (pk_ra == iss_ra), pB = nB && (pk_ra == iss_rb);
+        wire pC = nC && (pk_ra == rcx);
+        wire nP = pk_v && !pA && !pB && !pC;
+        wire [1:0] rB = {1'b0, ua && (bA == bB)};
+        wire [1:0] rC = {1'b0, ua && (bA == bC)} + {1'b0, nB && (bB == bC)};
+        wire [1:0] rP = {1'b0, ua && (bA == bP)} + {1'b0, nB && (bB == bP)}
+                      + {1'b0, nC && (bC == bP)};
+        for (p = 0; p < 8; p = p + 1) begin : g_cb
+            localparam integer CP = p / 2, BK = p % 2;
+            wire [RA-1:0] ad = (ua && (bA == BK) && (CP == 0))  ? iss_ra
+                          : (nB && (bB == BK) && (rB == CP)) ? iss_rb
+                          : (nC && (bC == BK) && (rC == CP)) ? rcx : pk_ra;
+            assign cb_ad[p]  = bad(ad);
+            assign cb_rst[p] = 1'b0;
+        end
+        wire [2:0] sA = {bA, 2'd0};
+        wire [2:0] sB = dB ? sA : {bB, rB};
+        wire [2:0] sC = cA ? sA : cB ? sB : {bC, rC};
+        wire [2:0] sP = pA ? sA : pB ? sB : pC ? sC : {bP, rP};
+        always @(posedge clk) begin
+            q_sa <= sA; q_sb <= sB; q_sc <= sC; q_sp <= sP;
+            q_pre <= pre_v; q1_ch <= iss_ch;
+        end
+`ifndef SYNTHESIS
+        // v2_core's contract: no bank is asked for more reads than it has copies.
+        always @(posedge clk) begin
+            if (!rst && ((nP && rP >= NC) || (nC && rC >= NC) || (nB && rB >= NC)))
+                $display("V2_RF_PORTS_EXCEEDED %m t=%0t", $time);
+        end
+`endif
+    end
+    if (NC == 4) begin : g_rd4_q
+        always @(posedge clk) begin
+            q_sa <= 3'd0; q_sb <= 3'd0; q_sc <= 3'd0; q_sp <= 3'd0;
+            q_pre <= 1'b0; q1_ch <= 1'b0;
+        end
+    end
     for (b = 0; b < 2; b = b + 1) begin : g_bank
-        for (p = 0; p < 4; p = p + 1) begin : g_copy
+        for (p = 0; p < NC; p = p + 1) begin : g_copy
             for (l = 0; l < 16; l = l + 1) begin : g_lane
                 xpm_memory_sdpram #(
-                    .ADDR_WIDTH_A(7), .ADDR_WIDTH_B(7),
+                    .ADDR_WIDTH_A(BA), .ADDR_WIDTH_B(BA),
                     .WRITE_DATA_WIDTH_A(24), .READ_DATA_WIDTH_B(24), .BYTE_WRITE_WIDTH_A(24),
-                    .MEMORY_SIZE(24 * 128), .MEMORY_PRIMITIVE("block"),
+                    .MEMORY_SIZE(24 * (1 << BA)), .MEMORY_PRIMITIVE("block"),
                     .CLOCKING_MODE("common_clock"), .READ_LATENCY_B(1),
                     .WRITE_MODE_B("read_first"),
                     .MEMORY_INIT_FILE("none"), .USE_MEM_INIT(0), .ECC_MODE("no_ecc"),
@@ -107,19 +188,34 @@ module v2_lanes #(
                 ) u_rf (
                     .clka(clk), .ena(bw_we[b][l]), .wea(1'b1), .addra(bw_wa[b]),
                     .dina(bw_wd[b][l*24 +: 24]),
-                    .clkb(clk), .enb(1'b1), .addrb(bad(rf_ad[p])),
+                    .clkb(clk), .enb(1'b1), .addrb(cb_ad[p*2 + b]),
                     .doutb(rf_q[p*2 + b][l*24 +: 24]),
-                    .rstb(rf_ad[p][0] != (b == 1)), .regceb(1'b1),
+                    .rstb(cb_rst[p*2 + b]), .regceb(1'b1),
                     .injectsbiterra(1'b0), .injectdbiterra(1'b0),
                     .sbiterrb(), .dbiterrb(), .sleep(1'b0));
             end
         end
     end
+    for (p = NC * 2; p < 8; p = p + 1) begin : g_nocopy
+        assign rf_q[p] = 384'd0;
+    end
     endgenerate
+
+    // A source {bank, copy} -> that copy-bank's read data.
+    function [2:0] cbi;
+        input [2:0] s;
+        cbi = {s[1:0], s[2]};
+    endfunction
+    wire [383:0] rd_a = (NC == 4) ? (rf_q[0] | rf_q[1]) : rf_q[cbi(q_sa)];
+    wire [383:0] rd_b = (NC == 4) ? (rf_q[2] | rf_q[3]) : rf_q[cbi(q_sb)];
+    wire [383:0] rd_c = (NC == 4) ? (rf_q[4] | rf_q[5]) : rf_q[cbi(q_sc)];
 
     // Pack's converter starts from a flop rather than a BRAM.
     always @(posedge clk) begin
-        pk_rd <= rf_q[6] | rf_q[7];
+        pk_rd <= (NC == 4) ? (rf_q[6] | rf_q[7]) : rf_q[cbi(q_sp)];
+        if (q_pre) begin
+            c_hold <= rd_c;
+        end
     end
 
     // ================================================== s1: bank select, merge
@@ -129,7 +225,7 @@ module v2_lanes #(
     reg  [3:0]  q1_xk;
     reg  [1:0]  q1_sa, q1_sb, q1_sc, q1_pr, q1_pm;
     reg  [23:0] q1_ka, q1_kb, q1_kc;
-    reg  [7:0]  q1_wa;
+    reg  [RA-1:0] q1_wa;
     reg  [15:0] q1_tm;
     reg  [15:0] q1_swap;            // per lane: merge takes b as P, a as Z
 
@@ -151,8 +247,8 @@ module v2_lanes #(
         end
     end
 
-    wire [383:0] va = rf_q[0] | rf_q[1];
-    wire [383:0] vb = rf_q[2] | rf_q[3];
+    wire [383:0] va = rd_a;
+    wire [383:0] vb = rd_b;
 
     reg  [383:0] s2_p, s2_z, s2_c0, s2_c1;
     reg          q2_kc_on;
@@ -160,7 +256,7 @@ module v2_lanes #(
     reg  [4:0]   q2_op;
     reg  [1:0]   q2_sa, q2_sb, q2_sc, q2_pr, q2_pm;
     reg  [23:0]  q2_ka, q2_kb, q2_kc;
-    reg  [7:0]   q2_wa;
+    reg  [RA-1:0] q2_wa;
     reg  [15:0]  q2_tm;
 
     always @(posedge clk) begin
@@ -173,8 +269,8 @@ module v2_lanes #(
                 s2_z[i*24 +: 24] <= vb[i*24 +: 24];
             end
         end
-        s2_c0 <= rf_q[4];
-        s2_c1 <= rf_q[5];
+        s2_c0 <= (NC == 4) ? rf_q[4] : (q1_ch ? c_hold : rd_c);
+        s2_c1 <= (NC == 4) ? rf_q[5] : 384'd0;
         q2_kc_on <= (q1_sc != SRC_V);
         if (rst) begin
             q2_v <= 1'b0;
@@ -217,7 +313,8 @@ module v2_lanes #(
     wire [15:0]  alu_ovld, alu_pred, alu_ovf;
     generate
     for (l = 0; l < 16; l = l + 1) begin : g_alu
-        v2_alu #(.MODEL(MODEL), .PIPE_MUX(PIPE_MUX), .HAS_EXPD(HAS_EXPD), .TAU(TAU)) u_alu (
+        v2_alu #(.MODEL(MODEL), .PIPE_MUX(PIPE_MUX), .HAS_EXPD(HAS_EXPD), .TAU(TAU),
+                 .TAB_PRIM(TAB_PRIM)) u_alu (
             .clk(clk), .rst(rst),
             .in_valid(alu_iv), .op(alu_op),
             .a(alu_a[l*24 +: 24]), .b(alu_b[l*24 +: 24]), .c(alu_c[l*24 +: 24]),
@@ -233,7 +330,7 @@ module v2_lanes #(
     localparam integer MD = ALAT + 1;
     reg [127:0] preg [0:3];
     wire [15:0] pmask_now = preg[q2_pr][q2_wa[2:0]*16 +: 16];
-    localparam integer MW = 1 + 1 + 1 + 1 + 1 + 2 + 2 + 16 + 16 + 8;
+    localparam integer MW = 1 + 1 + 1 + 1 + 1 + 2 + 2 + 16 + 16 + RA;
     reg [MW-1:0] meta [1:MD];
     wire [MW-1:0] meta_in = {q2_v, q2_last, q2_wr, q2_cmp, q2_expd, q2_pr, q2_pm,
                              pmask_now, q2_tm, q2_wa};
@@ -255,19 +352,19 @@ module v2_lanes #(
     wire          p_v   = pm_[MW-1];
     wire          p_wr  = pm_[MW-3];
     wire          p_cmp = pm_[MW-4];
-    wire [1:0]    p_pm  = pm_[40 +: 2];
-    wire [15:0]   p_pk  = pm_[24 +: 16];
-    wire [15:0]   p_tm  = pm_[8 +: 16];
-    wire [7:0]    p_wa  = pm_[0 +: 8];
+    wire [1:0]    p_pm  = pm_[RA+32 +: 2];
+    wire [15:0]   p_pk  = pm_[RA+16 +: 16];
+    wire [15:0]   p_tm  = pm_[RA +: 16];
+    wire [RA-1:0] p_wa  = pm_[0 +: RA];
 
     wire          w_v    = wm_[MW-1];
     wire          w_last = wm_[MW-2];
     wire          w_wr   = wm_[MW-3];
     wire          w_cmp  = wm_[MW-4];
     wire          w_expd = wm_[MW-5];
-    wire [1:0]    w_pr   = wm_[42 +: 2];
-    wire [15:0]   w_tm   = wm_[8 +: 16];
-    wire [7:0]    w_wa   = wm_[0 +: 8];
+    wire [1:0]    w_pr   = wm_[RA+34 +: 2];
+    wire [15:0]   w_tm   = wm_[RA +: 16];
+    wire [RA-1:0] w_wa   = wm_[0 +: RA];
 
     wire p_write = p_v & p_wr & ~p_cmp;
     assign mw_bank_next = {p_write & p_wa[0], p_write & ~p_wa[0]};
@@ -316,7 +413,7 @@ module v2_lanes #(
     end
 
     assign wb_last = w_v & w_last;
-    assign wb_vreg = w_wa[7:3];
+    assign wb_vreg = w_wa[RA-1:3];
     assign wb_wr   = w_wr & ~w_cmp;
     assign wb_cmp  = w_cmp;
     assign wb_pr   = w_pr;

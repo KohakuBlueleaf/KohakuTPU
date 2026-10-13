@@ -187,6 +187,7 @@ module vec_cu #(
     reg         ld_en, ld_kind, start;
     reg  [8:0]  ld_addr, start_pc;
     reg  [39:0] ld_data;
+    reg  [7:0]  ld_hi;      // V2: an IMEM word's bits past 32 (flit bits 39:32)
     wire        busy, halted, fault;
     wire [7:0]  fault_code;
     wire [31:0] cycles;
@@ -264,7 +265,7 @@ module vec_cu #(
         .nd_off(nd_off), .nd_len(nd_len), .nd_sig(nd_sig), .nd_ack(nd_ack),
         .nd_mesh(nd_mesh), .nd_fin(nd_fin)
 `ifdef VEC_CORE_V2
-        , .cd_count(cd_count), .nd_count(nd_count),
+        , .ld_hi(ld_hi), .cd_count(cd_count), .nd_count(nd_count),
         .cr_valid(cr_valid), .cr_amt(cr_amt),
         .post_valid(post_valid), .post_x(post_x), .post_y(post_y),
         .post_amt(post_amt), .post_ready(post_ready)
@@ -542,6 +543,7 @@ module vec_cu #(
                             // Flit bit 242 is the IMEM address's bit 9, for
                             // a core with more than 512 words; v1 ignores it.
                             ld_addr <= c_addr; ld_data <= {7'd0, inst_flit[242], c_word};
+                            ld_hi <= inst_flit[39:32];
                             cst <= C_RET;
                         end
                         C_DESC: begin

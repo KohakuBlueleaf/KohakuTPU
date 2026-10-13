@@ -38,6 +38,7 @@ set repo_path [dict create \
     vec_cvt.v       [file join $root src kohakutpu vector vec_cvt.v] \
     v2_agu.v        [file join $root src kohakutpu vector2 v2_agu.v] \
     v2_fifo.v       [file join $root src kohakutpu vector2 v2_fifo.v] \
+    v2_cnt.v        [file join $root src kohakutpu vector2 v2_cnt.v] \
     v2_gt4.v        [file join $root src kohakutpu vector2 v2_gt4.v] \
     v2_mxq.v        [file join $root src kohakutpu vector2 v2_mxq.v] \
     v2_cvt.v        [file join $root src kohakutpu vector2 v2_cvt.v] \
