@@ -170,6 +170,7 @@ class Desc:
     alt: object = None  # a streamed send: the odd trips' descriptor
     rows_w: int = 0  # rows mode: words an L1 row holds
     bcast: bool = False  # rows mode: one row, read by every row of the value
+    shared: object = None  # a store packed over this load's buffers (no room)
 
     def extent(self) -> int:
         """Bytes one walk spans."""
@@ -602,6 +603,8 @@ def _modulo(body, par, env, name, fail, plan, land) -> tuple | None:
         ctx.prepare(op, looped=True)
     if ctx.rel is not None or any(d.kind == "send" for d in ctx.descs):
         return _no("a banded unpack or a send")
+    if any(d.shared is not None for d in ctx.descs):
+        return _no("a store packed over a load (no L1 room for its own ring)")
     packed = {o.target for o in ops if o.op == "pack"}
     if any(
         o.op == "store" and o.st.positional()[2] not in {Name(t) for t in packed}
@@ -635,11 +638,14 @@ def _modulo(body, par, env, name, fail, plan, land) -> tuple | None:
     if not mops:
         return _no("no vector ops in the trip")
     room = ctx.land - ctx.top
-    per_iter = sum(d.words for d in ctx.descs if d.kind in ("load", "store"))
+    # The stream's rings: the loop's loads and its stores (a load before the
+    # loop is filled once, in the head).
+    streamed = [d for d in ctx.descs if d in ctx.loads or d.kind == "store"]
+    per_iter = sum(d.words for d in streamed)
     k_max = min(8, 2 + room // max(per_iter, 1))
     lower = max(sum(o.occ for o in mops if o.eng == e) for e in "MUP")
     ii_max = 4 * lower + 400
-    lead = MO.lead(sum(d.words for d in ctx.descs if d.kind == "load"))
+    lead = MO.lead(sum(d.words for d in ctx.loads))
     head = []
     for c in head_code:
         if isinstance(c, str):
@@ -665,12 +671,11 @@ def _modulo(body, par, env, name, fail, plan, land) -> tuple | None:
                 f" with an image in IMEM: {', '.join(tried) or 'none planned'}"
             )
         top, rings = ctx.top, []
-        for d in ctx.descs:
-            if d.kind in ("load", "store"):
-                own = tuple(d.buf[: p.k])
-                extra = tuple(top + i * d.words for i in range(p.k - len(own)))
-                top += d.words * len(extra)
-                rings.append(MO.Ring(d.ad, d.kind, d.buf[0], d.words, own + extra))
+        for d in streamed:
+            own = tuple(d.buf[: p.k])
+            extra = tuple(top + i * d.words for i in range(p.k - len(own)))
+            top += d.words * len(extra)
+            rings.append(MO.Ring(d.ad, d.kind, d.buf[0], d.words, own + extra))
         best = None
         for tail in MODULO_TAILS:
             lines, cycles = MO.emit(p, rings, trips, pinned, tail)
@@ -964,7 +969,23 @@ class _Ctx:
                 self.fail(op.st, f"a {inc}-byte step: ainc takes 18 signed bits")
         if len(self.descs) == DESCS:
             self.fail(op.st, f"more than {DESCS} memory views")
-        if looped:
+        shared = None
+        if looped and op.op == "store" and self.top + 2 * words > self.land:
+            # No room for its own two buffers: the store packs over a load of
+            # the trip whose bytes it replaces (same words, same L1 layout).
+            shared = next(
+                (
+                    x
+                    for x in self.loads
+                    if x.words == words
+                    and x.rows_w == (rows_w if kind == "rows" else 0)
+                    and not any(s.shared is x for s in self.descs)
+                ),
+                None,
+            )
+        if shared is not None:
+            buf = shared.buf
+        elif looped:
             buf = tuple(self._alloc(words, op) for _ in range(2))
         else:
             self.down -= words
@@ -976,6 +997,7 @@ class _Ctx:
             buf = (self.down,)
         d = Desc(len(self.descs), name, off, words, inc, buf, walk, kind=op.op)
         d.rows_w, d.bcast = (rows_w, bcast) if kind == "rows" else (0, False)
+        d.shared = shared
         self.descs.append(d)
         self.buffers.add(name)
         self.of[id(op)] = d
@@ -1167,10 +1189,11 @@ class _Ctx:
             if o.st.positional()[0 if o.op == "send" else 2]
             not in {Name(t) for t in packed}
         ]
+        shared = [o for o in stores if self.of[id(o)].shared is not None]
         g.raw("vbar")
         if prefetch:
             g.raw("vsync fill on=unpack")
-            if direct:
+            if direct or shared:
                 # The buffer refilled now was drained last trip.
                 g.raw("vsync fill on=drain")
             for d in self.loads:
@@ -1196,7 +1219,7 @@ class _Ctx:
         if any(isinstance(o, If) for o in body) and width != len(groups):
             raise Pressure
         bands = [groups[k : k + width] for k in range(0, len(groups), width)]
-        fused = {} if gt4 else _fusions(ops)
+        fused = _fusions(ops)
         first_reduce = next(
             (i for i, o in enumerate(body) if getattr(o, "op", "") in REDUCE), None
         )
@@ -1231,6 +1254,9 @@ class _Ctx:
                 self._compute(g, o, grps, rws, local, fused)
             if k == 0:
                 g.raw(f"vsync pack on=drain slack={len(stores)}")
+                if shared:
+                    # Packed over the trip's load: its unpacks have read it.
+                    g.raw("vsync pack on=unpack")
             self._packs(g, ops, rws, local, parity)
         for o in streams:
             # Once unpacked, the slot goes back to the cluster as credits.
@@ -1385,18 +1411,25 @@ class _Ctx:
                     )
                 cols = range(lo.value // 32, hi.value // 32)
                 arg = Name(arg.name)
-            src = self._get(o, arg, "row", local)
+            # The reduced value's registers, or with a folded product its two
+            # factors' (a pair a register).
+            got = [self._get(o, t, "row", local) for t in fused.get(name, (arg,))]
+            vals = [v for v in got if v is not None]  # `_get` fails on a missing one
             out.mode = "gt4"
             trees = []
             for grp in grps:
                 band = grp[0] // self.per_band
                 into = out.regs.get(band) if inplace else None
-                steps, out.regs[band] = _tree4(
-                    g,
-                    code,
-                    [src.regs[r] for r in grp if r % self.per_band in cols],
-                    into,
-                )
+                rs = [r for r in grp if r % self.per_band in cols]
+                regs = [
+                    (
+                        tuple(v.regs[self.index(v, r)] for v in vals)
+                        if len(vals) == 2
+                        else vals[0].regs[r]
+                    )
+                    for r in rs
+                ]
+                steps, out.regs[band] = _tree4(g, code, regs, into, len(vals) == 2)
                 trees.append(steps)
             _interleave(g, trees)
             return
@@ -1678,13 +1711,16 @@ def _fusions(ops) -> dict:
             u
             for u in ops
             if any(
-                isinstance(a, Name) and a.text == o.target for a in u.st.positional()
+                (isinstance(a, Name) and a.text == o.target)
+                or (isinstance(a, View) and a.name == o.target)
+                for a in u.st.positional()
             )
         ]
         a, b = o.st.positional()
         if (
             len(readers) == 1
             and readers[0].op == "rsum"
+            and list(readers[0].st.positional()) == [Name(o.target)]
             and isinstance(a, Name)
             and isinstance(b, Name)
         ):
@@ -1703,14 +1739,27 @@ def _interleave(g, trees) -> None:
                     g.emit(*t[s][i])
 
 
-def _tree4(g, code, regs, into=None) -> tuple:
+def _tree4(g, code, regs, into=None, fused=False) -> tuple:
     """A 4-row band's row reduction over its GT4 registers (row i, columns
     16q.. in chunk 4q + i): the registers folded pairwise, chunk 4 + i onto
     chunk i, the 16 lanes by an xor butterfly (8, 4, 2, 1: every lane ends
     with the total), chunks 0-3 copied to 4-7 -- so chunk 4q + i holds row
     i's value in every lane, an elementwise operand to the band's registers.
-    ``(steps, the result's symbol)``."""
+    With `fused`, `regs` are (a, b) pairs whose products are summed: the
+    first fold is a multiply and a fused multiply-add, the product never
+    held. ``(steps, the result's symbol)``."""
     steps, syms = [], list(regs)
+    if fused:
+        muls, fmas, nxt = [], [], []
+        for k in range(0, len(syms), 2):
+            d = g.sym()
+            muls.append(("vmul {0}, {1}, {2}", d, *syms[k]))
+            if k + 1 < len(syms):
+                fmas.append(("vfma {0}, {1}, {2}, {0}", d, *syms[k + 1]))
+            nxt.append(d)
+        # Every multiply first: no add waits on the multiply just before it.
+        steps.append(muls + fmas)
+        syms = nxt
     while len(syms) > 1:
         level, nxt = [], []
         for k in range(0, len(syms) - 1, 2):

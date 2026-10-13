@@ -306,14 +306,17 @@ def _lifetimes(ops: list, pinned: set) -> dict:
 
 def _colour(life: dict, ii: int, k: int, regs: int, first: int) -> dict | None:
     """Registers for (symbol, copy j): arcs on a circle of K x II, lowest
-    free register from `first`."""
+    free register from `first`. An arc starts at its time modulo the circle:
+    a value of a late stage lies many circles from an early one's, so only a
+    start on the circle makes the two comparable."""
     period = ii * k
     arcs = []
     for x, (s, e) in life.items():
         if e - s > period:
             return None
         for j in range(k):
-            arcs.append((s + j * ii, e + j * ii, x, j))
+            a = (s + j * ii) % period
+            arcs.append((a, a + e - s, x, j))
     arcs.sort()
     busy: dict = {}
     out = {}
@@ -518,6 +521,7 @@ def emit(
     lo_loop = s_n - 1
     reps = max(0, (n_inst if tail == "kernel" else trips) - lo_loop) // k
     hi_loop = lo_loop + reps * k
+    _dataflow(p, order, trips, pinned, n_inst, tail, lo_loop, hi_loop)
     marks = []  # seq index at each instance's start
     for n in range(n_inst):
         marks.append(len(seq))
@@ -609,6 +613,35 @@ def emit(
         lines.append("}")
     put(marks[hi_loop], marks[n_inst], lambda q: exact[q])
     return lines, ii * n_inst
+
+
+def _dataflow(p, order, trips, pinned, n_inst, tail, lo_loop, hi_loop) -> None:
+    """Replay the emission's register writes in program order: every read of
+    iteration j's value finds it in that copy's register. Raises where a
+    register was given to a value still to be read (a colouring defect)."""
+    holds: dict = {}
+    for n in range(n_inst):
+        past = tail == "kernel" and lo_loop <= n < hi_loop
+        for t, i in order:
+            if i < 0:
+                continue
+            j = n - p.stage(t)
+            if j < 0 or (j >= trips and not past):
+                continue
+            o = p.ops[i]
+            if j < trips:
+                for x in o.reads:
+                    if x in pinned or x == PRED:
+                        continue
+                    r = p.phys[(x, j % p.k)]
+                    if holds.get(r) != (x, j):
+                        raise RuntimeError(
+                            f"modulo II {p.ii} K {p.k}: iteration {j}'s {o.tmpl.split()[0]} "
+                            f"reads {x} from v{r}, which holds {holds.get(r)}"
+                        )
+            for x in o.writes:
+                if x not in pinned and x != PRED:
+                    holds[p.phys[(x, j % p.k)]] = (x, j)
 
 
 __all__ = ["MOp", "Plan", "Ring", "emit", "parse", "plan"]

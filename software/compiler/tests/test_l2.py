@@ -506,6 +506,88 @@ def test_modulo_placement_runs_each_op_back_to_back():
             assert o.t >= (ops[p].e if end else ops[p].t) + lat
 
 
+def _norm(w: int) -> str:
+    """A GT4 layernorm over rows of `w` columns, 4-row trips, gamma and beta
+    one row broadcast to the band (the DSL's form)."""
+    return (
+        "target ktpu.v9\n"
+        f"fn ln.l2(x: f16[64, {w}] @dram, g: f16[{w}] @dram, b: f16[{w}] @dram, "
+        f"y: f16[64, {w}] @dram)\n"
+        "    par c in 0..2 on vc[c]\n"
+        f"        gl = load g : f16[4, {w}] @l1(gt4)\n"
+        f"        gv = unpack gl : f32[4, {w}] @reg(gt4)\n"
+        f"        bl = load b : f16[4, {w}] @l1(gt4)\n"
+        f"        bv = unpack bl : f32[4, {w}] @reg(gt4)\n"
+        "        for t in 0..8\n"
+        f"            xl = load x[c*32 + t*4 : +4] : f16[4, {w}] @l1(gt4)\n"
+        f"            v = unpack xl : f32[4, {w}] @reg(gt4)\n"
+        "            s1 = rsum v : f32[4] @reg\n"
+        f"            mu = mul s1, {1 / w} : f32[4] @reg\n"
+        f"            d = sub v, mu[:, *] : f32[4, {w}] @reg(gt4)\n"
+        f"            q = mul d, d : f32[4, {w}] @reg(gt4)\n"
+        "            s2 = rsum q : f32[4] @reg\n"
+        f"            var = mul s2, {1 / w} : f32[4] @reg\n"
+        "            var = add var, 1e-05 : f32[4] @reg\n"
+        "            rs = rsqrt var : f32[4] @reg\n"
+        f"            n = mul d, rs[:, *] : f32[4, {w}] @reg(gt4)\n"
+        f"            n = mul n, gv : f32[4, {w}] @reg(gt4)\n"
+        f"            o = add n, bv : f32[4, {w}] @reg(gt4)\n"
+        f"            ol = pack o : f16[4, {w}] @l1(gt4)\n"
+        "            store y[c*32 + t*4 : +4] <- ol\n"
+    )
+
+
+def test_a_gt4_sum_of_squares_folds_the_product(band):
+    m = replace_vregs(module.read(_norm(256)), 128)
+    image = lower.lower(m, "ln", T.machine(vregs=128)).split("image ")[1]
+    # q = d * d is never formed: the first fold multiplies one register pair
+    # and adds the other's product (4 multiplies + 4 FMAs over 8 registers).
+    trip = image.split("loop s15")[1].split("vpack")[0]
+    reg = r"v\d+(?:\[[^\]]*\])?"
+    assert len(re.findall(rf"vfma ({reg}), ({reg}), \2, \1\n", trip + "\n")) >= 4
+
+
+def test_a_store_without_l1_room_packs_over_its_trips_load(band):
+    m = replace_vregs(module.read(_norm(1024)), 128)
+    image = lower.lower(m, "ln", T.machine(vregs=128)).split("image ")[1]
+    # Two 256-word load buffers fill the L1: the packs go over the trip's
+    # load after its unpacks, the refill after the drain.
+    assert "vsync pack on=unpack" in image and "vsync fill on=drain" in image
+    loads = set(re.findall(r"vfill a\d+ -> l1\[(\d+)\] rel", image))
+    drains = set(re.findall(r"vdrain a\d+ <- l1\[(\d+)\] rel", image))
+    assert drains and drains <= loads
+
+
+def test_a_wide_band_past_the_registers_is_refused():
+    m = replace_vregs(module.read(_norm(1024)), 64)
+    with pytest.raises(TextError, match="needs more than 64 vector registers"):
+        lower.lower(m, "ln", T.machine(vregs=64))
+
+
+def test_modulo_colouring_compares_arcs_on_the_circle():
+    # II 300, K 3: a period of 900. The second value lives two periods after
+    # the first; on the circle the two overlap.
+    life = {"%a": (0, 100), "%b": (1800, 1900)}
+    phys = MO._colour(life, 300, 3, 8, 0)
+    assert phys is not None
+    for j in range(3):
+        assert phys[("%a", j)] != phys[("%b", j)]
+
+
+def test_modulo_emission_reads_every_value_it_wrote(monkeypatch):
+    monkeypatch.setattr(V, "STRATEGY", "modulo")
+    m = replace_vregs(module.read(_norm(256)), 128)
+    lower.lower(m, "ln", T.machine(vregs=128))  # the replay check passes
+
+    # The check fails a colouring that gives every value one register.
+    def one(life, ii, k, regs, first):
+        return dict.fromkeys(((x, j) for x in life for j in range(k)), first)
+
+    monkeypatch.setattr(MO, "_colour", one)
+    with pytest.raises(RuntimeError, match="which holds"):
+        lower.lower(m, "ln", T.machine(vregs=128))
+
+
 def test_a_vector_body_past_its_registers_is_refused():
     rows = 40
     text = (
