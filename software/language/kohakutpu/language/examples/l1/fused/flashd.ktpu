@@ -63,10 +63,12 @@ image flash_d(pg, h, comb, pf, oa, li, ya, io, oc)
     vsync fe on=drain
     halt
 
-# Sub-row parity p (S slot 128p): its I into v28 and out as a word, then its
-# four blocks.
+# Sub-row parity p (S slot 128p): its I into chunks 0 and 1 of v28 (one copy
+# a bank: the EXP2Ds broadcast it from the bank their S chunk is not in) and
+# out as a word, then its four blocks.
 macro sub(p, h)
     vmov v28, v27 vl=16
+    vmov v28[1:], v27 vl=16
     vpack v28 -> l1[0] f16 rel n=1
     for j in 0..4
         expand blk(j, p, h)
@@ -86,10 +88,12 @@ macro blk(j, p, h)
             vfill a4 -> l1[256 + 16*p] rel
     when j == 2
         skipz s10
-            vmul v30, v24, v26[0]
+            # w_a in every chunk, read one chunk on: one word a bank a beat.
+            vmov v18, v26[0]
+            vmul v30[1:], v24, v18[1:]
     when j == 3
         skipz s10
-            vfma v31, v25, v29[0], v30
+            vfma v31, v25, v29[0], v30[1:]
             vpack v31 -> l1[496] f16
             vmov v26, v26[1:] vl=112
             vmov v29, v29[1:] vl=112
@@ -109,7 +113,7 @@ macro blk(j, p, h)
         vunpk v16 <- l1[128 - 128*p] gt4 n=4
     for g in 0..8
         for r in 0..4
-            vexp2d v{8 + 4*(j % 2) + r}[g:], v{4*(j % 2) + r}[g/2 + 4*(g % 2):], bcast(v28[0], lane=4*(g/2), sh=0) vl=16
+            vexp2d v{8 + 4*(j % 2) + r}[g:], v{4*(j % 2) + r}[g/2 + 4*(g % 2):], bcast(v28[1 - (g/2) % 2], lane=4*(g/2), sh=0) vl=16
         when g == 0
             expand ired(j)
         when g == 4
@@ -141,20 +145,21 @@ macro ired2(j)
 
 # The combine's weights: w_h = 2^(I_h - max I) / (l_a 2^(I_a - max I) + l_b
 # 2^(I_b - max I)) from l and I at l1[448]; half sub-row k's in chunk k of v26
-# (w_a) and v29 (w_b).
+# (w_a) and v29 (w_b). I_a and I_b sit one chunk rotated (`banks.choose`):
+# their ops read the other bank than l's and the maximum's.
 macro csetup(h)
     vunpk v20 <- l1[448] f16
     vunpk v21 <- l1[456] f16
-    vunpk v24 <- l1[464] f16
-    vunpk v25 <- l1[472] f16
-    vmax v16, v24, v25
-    vexp2d v24, v24, v16
-    vexp2d v25, v25, v16
-    vmul v20, v20, v24
-    vfma v21, v21, v25, v20
+    vunpk v24[1:] <- l1[464] f16 n=8
+    vunpk v25[1:] <- l1[472] f16 n=8
+    vmax v16, v24[1:], v25[1:]
+    vexp2d v24[1:], v24[1:], v16
+    vexp2d v25[1:], v25[1:], v16
+    vmul v20, v20, v24[1:]
+    vfma v21, v21, v25[1:], v20
     vinv v21, v21
-    vmul v22, v24, v21
-    vmul v23, v25, v21
+    vmul v22, v24[1:], v21
+    vmul v23, v25[1:], v21
     for i in 0..4
         vmov v26[2*i:], v22[4*h + i:] vl=16
         vmov v29[2*i:], v23[4*h + i:] vl=16
@@ -191,16 +196,16 @@ image flash_y(h, oa, li, ya)
     vsync unpack on=fill
     vunpk v20 <- l1[320] f16
     vunpk v21 <- l1[328] f16
-    vunpk v24 <- l1[336] f16
-    vunpk v25 <- l1[344] f16
-    vmax v16, v24, v25
-    vexp2d v24, v24, v16
-    vexp2d v25, v25, v16
-    vmul v20, v20, v24
-    vfma v21, v21, v25, v20
+    vunpk v24[1:] <- l1[336] f16 n=8
+    vunpk v25[1:] <- l1[344] f16 n=8
+    vmax v16, v24[1:], v25[1:]
+    vexp2d v24[1:], v24[1:], v16
+    vexp2d v25[1:], v25[1:], v16
+    vmul v20, v20, v24[1:]
+    vfma v21, v21, v25[1:], v20
     vinv v21, v21
-    vmul v22, v24, v21
-    vmul v23, v25, v21
+    vmul v22, v24[1:], v21
+    vmul v23, v25[1:], v21
     for i in 0..4
         vmov v26[2*i:], v22[4*h + i:] vl=16
         vmov v29[2*i:], v23[4*h + i:] vl=16
@@ -214,8 +219,9 @@ image flash_y(h, oa, li, ya)
     loop s6
         vunpk v24 <- l1[0] f16 rel
         vunpk v25 <- l1[0] f16 rel
-        vmul v30, v24, v26[0]
-        vfma v31, v25, v29[0], v30
+        vmov v18, v26[0]
+        vmul v30[1:], v24, v18[1:]
+        vfma v31, v25, v29[0], v30[1:]
         vpack v31 -> l1[0] f16 rel
         vmov v26, v26[1:] vl=112
         vmov v29, v29[1:] vl=112
@@ -331,11 +337,9 @@ macro runt(t)
     fa{t} = mark vc[0]
     fb{t} = mark vc[1]
 
-# Tile t - 1's P V once both cores' RUNs are done; at a head's first tile t,
+# Tile t - 1's P V (both cores' RUNs are done); at a head's first tile t,
 # with head t/32's v^T.
 macro after(t, nt)
-    wait vc[0] upto=fa{t - 1}
-    wait vc[1] upto=fb{t - 1}
     when t % 32 == 0
         when t < nt
             expand pvv(t - 1, t/32)
@@ -359,13 +363,24 @@ fn flashd.l1(q: mx7a[10240, 64] @dram(gm=32, nk=2), k: mx7b[10240, 64] @dram(gn=
     for h in 0..2
         send vc[h]
             run flash_w(h)
+    # Once tile t - 1's RUNs are done, tile t's go first: the cores wait on
+    # nothing the P V and scores sends of this step do. A head's first tile
+    # goes after the head's v^T fills (`after`): its P would land on the
+    # P V clusters' receive port beside their responses.
     for t in 0..321
+        when t > 0
+            wait vc[0] upto=fa{t - 1}
+            wait vc[1] upto=fb{t - 1}
+        when t < 320
+            when t % 32 > 0
+                expand runt(t)
         when t > 0
             expand after(t, 320)
         when t < 320
-            when t < 316
-                expand scores(t + 4, 320, 10)
-            expand runt(t)
+            when t % 32 == 0
+                expand runt(t)
+        when t < 316
+            expand scores(t + 4, 320, 10)
     for t in 315..320
         wait mg[1] upto=pa{t}
         wait mg[3] upto=pb{t}
