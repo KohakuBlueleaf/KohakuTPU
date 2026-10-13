@@ -10,6 +10,7 @@ set V8_SOURCES {
     src/kohakuaccel/common/kohaku_sdpram_be.v
     src/kohakuaccel/common/kh_rst_sync.v
     src/kohakuaccel/common/clk/ktpu_div2.v
+    src/kohakuaccel/common/kohaku_irq_req.v
 
     src/kohakuaccel/common/sb_skid.v
     src/kohakuaccel/axi/station/sb_hub.v

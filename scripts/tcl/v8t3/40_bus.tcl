@@ -50,23 +50,42 @@ connect_bd_intf_net [get_bd_intf_pins jtag_ctrl/M_AXI] \
                     [get_bd_intf_pins station_bus/S00_AXI]
 
 set xdma [create_bd_cell -type ip -vlnv xilinx.com:ip:xdma xdma_0]
-set_property -dict [list \
-  CONFIG.axi_data_width {512_bit} CONFIG.axi_id_width {4} \
+set n_irq [expr {$XDMA_IRQ ? [llength $MESHES] / 2 : 1}]
+set xcfg [list \
+  CONFIG.axi_data_width ${XDMA_AXI_W}_bit CONFIG.axi_id_width {4} \
   CONFIG.axilite_master_en {true} CONFIG.axilite_master_scale {Megabytes} \
   CONFIG.axilite_master_size {16} CONFIG.axisten_freq {250} \
   CONFIG.functional_mode {DMA} CONFIG.mode_selection {Basic} \
   CONFIG.pcie_blk_locn {X0Y1} CONFIG.pf0_device_id {903F} \
   CONFIG.pf0_subsystem_id {0007} CONFIG.pf0_subsystem_vendor_id {10EE} \
   CONFIG.pl_link_cap_max_link_speed {8.0_GT/s} \
-  CONFIG.pl_link_cap_max_link_width {X16} CONFIG.ref_clk_freq {100_MHz} \
-  CONFIG.xdma_num_usr_irq {1} CONFIG.xdma_rnum_chnl $XDMA_RCHNL \
-  CONFIG.xdma_wnum_chnl $XDMA_WCHNL] $xdma
+  CONFIG.pl_link_cap_max_link_width $XDMA_LANES CONFIG.ref_clk_freq {100_MHz} \
+  CONFIG.xdma_num_usr_irq $n_irq CONFIG.xdma_rnum_chnl $XDMA_RCHNL \
+  CONFIG.xdma_wnum_chnl $XDMA_WCHNL]
+if {[llength $XDMA_CLASS]} {
+    lassign $XDMA_CLASS cb cs ci
+    lappend xcfg CONFIG.pf0_class_code_base $cb CONFIG.pf0_class_code_sub $cs \
+                 CONFIG.pf0_class_code_interface $ci
+}
+set_property -dict $xcfg $xdma
 # XDMA's OWN clock and reset: its masters are synchronous to the axi_aclk the
 # PCIe core derives from the link -- an MMCM output here is a false domain.
 connect_bd_net [get_bd_pins xdma_0/axi_aclk]    [get_bd_pins station_bus/clk_xdma]
 connect_bd_net [get_bd_pins xdma_0/axi_aresetn] [get_bd_pins station_bus/aresetn_xdma]
-connect_bd_intf_net [get_bd_intf_pins xdma_0/M_AXI] \
-                    [get_bd_intf_pins station_bus/S01_AXI]
+if {$XDMA_AXI_W == 512} {
+    connect_bd_intf_net [get_bd_intf_pins xdma_0/M_AXI] \
+                        [get_bd_intf_pins station_bus/S01_AXI]
+} else {
+    # Station 1's XDMA manager is 512-bit (sb_line4): upsize on axi_aclk, no FIFO.
+    set dx [create_bd_cell -type ip -vlnv xilinx.com:ip:axi_dwidth_converter dwc_xdma]
+    set_property -dict [list CONFIG.SI_DATA_WIDTH $XDMA_AXI_W CONFIG.MI_DATA_WIDTH {512} \
+                             CONFIG.ACLK_ASYNC {0} CONFIG.FIFO_MODE {0}] $dx
+    connect_bd_net [get_bd_pins xdma_0/axi_aclk]    [get_bd_pins dwc_xdma/s_axi_aclk]
+    connect_bd_net [get_bd_pins xdma_0/axi_aresetn] [get_bd_pins dwc_xdma/s_axi_aresetn]
+    connect_bd_intf_net [get_bd_intf_pins xdma_0/M_AXI] [get_bd_intf_pins dwc_xdma/S_AXI]
+    connect_bd_intf_net [get_bd_intf_pins dwc_xdma/M_AXI] \
+                        [get_bd_intf_pins station_bus/S01_AXI]
+}
 connect_bd_intf_net [get_bd_intf_pins xdma_0/M_AXI_LITE] \
                     [get_bd_intf_pins station_bus/S02_AXI]
 
@@ -83,7 +102,27 @@ connect_bd_net [get_bd_ports pcie_reset] [get_bd_pins xdma_0/sys_rst_n]
 connect_bd_net [get_bd_pins util_ds_buf_pcie/IBUF_DS_ODIV2] [get_bd_pins xdma_0/sys_clk]
 connect_bd_net [get_bd_pins util_ds_buf_pcie/IBUF_OUT]      [get_bd_pins xdma_0/sys_clk_gt]
 connect_bd_net [get_bd_pins xdma_0/user_lnk_up] [get_bd_ports user_lnk_up]
-connect_bd_net [get_bd_pins zero_1/dout] [get_bd_pins xdma_0/usr_irq_req]
+if {$XDMA_IRQ} {
+    # Die i's host_irq toggle -> usr_irq_req[i], each through kohaku_irq_req on
+    # axi_aclk (its two flops are the crossing; the toggle holds between flips).
+    set ic [create_bd_cell -type ip -vlnv xilinx.com:ip:xlconcat irq_cat]
+    set_property CONFIG.NUM_PORTS $n_irq $ic
+    foreach {mid mod} $MESHES {
+        create_bd_cell -type module -reference kohaku_irq_req irq_req$mid
+        set sl [create_bd_cell -type ip -vlnv xilinx.com:ip:xlslice irq_ack$mid]
+        set_property -dict [list CONFIG.DIN_WIDTH $n_irq CONFIG.DIN_FROM $mid \
+                                 CONFIG.DIN_TO $mid] $sl
+        connect_bd_net [get_bd_pins xdma_0/axi_aclk]    [get_bd_pins irq_req$mid/clk]
+        connect_bd_net [get_bd_pins xdma_0/axi_aresetn] [get_bd_pins irq_req$mid/resetn]
+        connect_bd_net [get_bd_pins mesh_$mid/host_irq] [get_bd_pins irq_req$mid/evt]
+        connect_bd_net [get_bd_pins xdma_0/usr_irq_ack] [get_bd_pins irq_ack$mid/Din]
+        connect_bd_net [get_bd_pins irq_ack$mid/Dout]   [get_bd_pins irq_req$mid/ack]
+        connect_bd_net [get_bd_pins irq_req$mid/req]    [get_bd_pins irq_cat/In$mid]
+    }
+    connect_bd_net [get_bd_pins irq_cat/dout] [get_bd_pins xdma_0/usr_irq_req]
+} else {
+    connect_bd_net [get_bd_pins zero_1/dout] [get_bd_pins xdma_0/usr_irq_req]
+}
 
 # ---- endpoints: every die is real -----------------------------------------
 foreach {mid mod} $MESHES {

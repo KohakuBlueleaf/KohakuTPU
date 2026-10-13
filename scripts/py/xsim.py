@@ -1503,6 +1503,10 @@ HARNESS = {
     "card_v9x8_2n",
     "card_v9x6_1n",
     "card_v9x8_1n",
+    "card_v9x4s_1n",
+    "card_v9x4s_4n",
+    "card_v9x6s_1n",
+    "card_v9x6s_4n",
 }
 RV64_COMMON = ["src/kohakuaccel/common/kohaku_sdpram.v"]
 
@@ -2254,6 +2258,19 @@ for _n in (6, 8):
             ],
         )
         DEFINES[f"card_v9x{_n}_{_d}n"] = gen_card.image_defines("v9")
+# The shrink knobs on 4+2 and 6+2 dies: routers ROUTER_DEPTH 32 / "distributed",
+# station 1 SB_LPB1 820 (gen_card.py --mesh-param / --set; same RTL as v9).
+for _n, _top in ((4, "1x2_4c2v"), (6, "2x2_6c2v")):
+    for _d in (1, 4):
+        BENCHES[f"card_v9x{_n}s_{_d}n"] = (
+            f"card_v9x{_n}s_{_d}n",
+            [s for s in gen_card.image_sources("v9") if "1x2_4c2v" not in s]
+            + [
+                f"src/kohakutpu/top/generated/ktpu_ship_{_top}_1m_nol2_pump.v",
+                f"tests/system/card_v9x{_n}s_{_d}n.v",
+            ],
+        )
+        DEFINES[f"card_v9x{_n}s_{_d}n"] = gen_card.image_defines("v9")
 
 # multimesh_v8 tops -- lint-only entries (top = the generated pump module).
 for _v8top in (

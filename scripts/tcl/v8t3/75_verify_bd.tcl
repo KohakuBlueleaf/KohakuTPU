@@ -276,9 +276,55 @@ want station_bus/clk_xdma     xdma_0/axi_aclk
 want jtag_ctrl/aclk           [v8_bus_clk 1]
 want jtag_ctrl/aresetn        [v8_bus_rstn 1]
 if {[peer_of jtag_ctrl/M_AXI] ne "station_bus/S00_AXI"} { bad "jtag_ctrl is not S00" }
-if {[peer_of xdma_0/M_AXI] ne "station_bus/S01_AXI"} { bad "xdma M_AXI is not S01" }
+if {$XDMA_AXI_W == 512} {
+    if {[peer_of xdma_0/M_AXI] ne "station_bus/S01_AXI"} { bad "xdma M_AXI is not S01" }
+    if {[llength [get_bd_cells -quiet dwc_xdma]]} { bad "dwc_xdma exists on a 512-bit XDMA" }
+} else {
+    if {[peer_of xdma_0/M_AXI] ne "dwc_xdma/S_AXI"} { bad "xdma M_AXI is not dwc_xdma/S_AXI" }
+    if {[peer_of dwc_xdma/M_AXI] ne "station_bus/S01_AXI"} { bad "dwc_xdma M_AXI is not S01" }
+    set dx [get_bd_cells -quiet dwc_xdma]
+    foreach {p w} [list SI_DATA_WIDTH $XDMA_AXI_W MI_DATA_WIDTH 512 ACLK_ASYNC 0 FIFO_MODE 0] {
+        if {[get_property -quiet CONFIG.$p $dx] ne "$w"} { bad "dwc_xdma $p is [get_property -quiet CONFIG.$p $dx], want $w" }
+    }
+    want dwc_xdma/s_axi_aclk    xdma_0/axi_aclk
+    want dwc_xdma/s_axi_aresetn xdma_0/axi_aresetn
+}
 if {[peer_of xdma_0/M_AXI_LITE] ne "station_bus/S02_AXI"} { bad "xdma M_AXI_LITE is not S02" }
 ok "every station port on its intended endpoint"
+
+# ---- XDMA: link, width, class code, user interrupts ------------------------
+puts "\n=== XDMA ==="
+set xd [get_bd_cells -quiet xdma_0]
+set n_irq [expr {$XDMA_IRQ ? [llength $MESHES] / 2 : 1}]
+set xwant [list pl_link_cap_max_link_width $XDMA_LANES axi_data_width ${XDMA_AXI_W}_bit \
+                xdma_num_usr_irq $n_irq]
+if {[llength $XDMA_CLASS]} { lappend xwant pf0_class_code [join $XDMA_CLASS ""] }
+foreach {p w} $xwant {
+    set got [get_property -quiet CONFIG.$p $xd]
+    puts [format "  %-28s %s" $p $got]
+    if {$got ne "$w"} { bad "xdma_0 $p is $got, want $w" }
+}
+if {$XDMA_IRQ} {
+    foreach {mid mod} $MESHES {
+        set c [get_bd_cells -quiet irq_req$mid]
+        if {![llength $c] || ![string match "*module_ref:kohaku_irq_req:*" [get_property VLNV $c]]} {
+            bad "irq_req$mid is not a kohaku_irq_req" ; continue
+        }
+        want irq_req$mid/clk    xdma_0/axi_aclk
+        want irq_req$mid/resetn xdma_0/axi_aresetn
+        want irq_req$mid/evt    mesh_$mid/host_irq
+        want irq_req$mid/ack    irq_ack$mid/Dout
+        want irq_ack$mid/Din    xdma_0/usr_irq_ack
+        want irq_cat/In$mid     irq_req$mid/req
+        set sl [get_bd_cells -quiet irq_ack$mid]
+        if {[get_property -quiet CONFIG.DIN_FROM $sl] ne "$mid" || [get_property -quiet CONFIG.DIN_TO $sl] ne "$mid"} {
+            bad "irq_ack$mid does not slice bit $mid"
+        }
+    }
+    want xdma_0/usr_irq_req irq_cat/dout
+} else {
+    want xdma_0/usr_irq_req zero_1/dout
+}
 
 # ---- the address map ------------------------------------------------------
 puts "\n=== address map ==="
@@ -305,11 +351,17 @@ foreach f [get_files -quiet -of_objects [get_filesets constrs_1]] {
     puts [format "  %-44s enabled=%s order=%s" [file tail $f] \
           [get_property is_enabled $f] [get_property -quiet PROCESSING_ORDER $f]]
 }
-foreach need [list ${design_name}_pblocks.xdc ${design_name}_clocks.xdc pcie.xdc \
+set pcie_xdc [expr {$XDMA_LANES eq "X16" ? "pcie.xdc" : "${design_name}_pcie.xdc"}]
+foreach need [list ${design_name}_pblocks.xdc ${design_name}_clocks.xdc $pcie_xdc \
                    ddr4_c0.xdc ddr4_c1.xdc ddr4_c2.xdc ddr4_c3.xdc] {
     set f [get_files -quiet -of_objects [get_filesets constrs_1] *$need]
     if {![llength $f]} { bad "constraint $need is not in constrs_1" } \
     elseif {![get_property is_enabled [lindex $f 0]]} { bad "$need is disabled" }
+}
+if {$XDMA_LANES ne "X16"} {
+    foreach f [get_files -quiet -of_objects [get_filesets constrs_1] */pcie.xdc] {
+        if {[get_property is_enabled $f]} { bad "the 16-lane pcie.xdc is enabled on a $XDMA_LANES link" }
+    }
 }
 # ---- the vector core: define and sources on sources_1 (the mesh block filesets
 # appear with the synth step, which checks each mesh's OOC log) ------------------

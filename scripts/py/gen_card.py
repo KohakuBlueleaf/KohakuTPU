@@ -126,6 +126,7 @@ def image_tcl(ver):
     stubs = (
         "add_files",
         "set_property",
+        "get_property",
         "get_files",
         "get_filesets",
         "get_runs",

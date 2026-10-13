@@ -263,6 +263,15 @@ set MGR0_DOM     1
 # ---- XDMA ----------------------------------------------------------------
 set XDMA_RCHNL   1
 set XDMA_WCHNL   1
+# Link width and AXI width. Station 1's XDMA manager is 512-bit (sb_line4), so a
+# narrower XDMA meets it through an axi_dwidth_converter on XDMA's own clock.
+set XDMA_LANES   X16
+set XDMA_AXI_W   512
+# PCIe class code, base/sub/interface as hex; empty keeps the IP's default.
+set XDMA_CLASS   {}
+# 1: each die's host_irq toggle reaches XDMA usr_irq_req[die] through
+# kohaku_irq_req on axi_aclk; 0 ties usr_irq_req off.
+set XDMA_IRQ     0
 
 # ---- OOC IP runs ---------------------------------------------------------
 set OOC_JOBS     4

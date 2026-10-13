@@ -487,6 +487,26 @@ if {![llength $glink]} { v8_bad "nothing under station_bus/inst/u_line/g_link*: 
 if {[llength $links] != 6} { v8_bad "[llength $links] station link instances, want 6 (3 boundaries x REQ + RSP)" }
 if {$LINK_CDC && $nlcdc != 6} { v8_bad "$nlcdc sb_link_cdc instance(s), want 6: LINK_CDC did not take" }
 if {!$LINK_CDC && $nlcdc} { v8_bad "$nlcdc sb_link_cdc instance(s): LINK_CDC did not take" }
+# Station 1's managers' queue storage: at SB_LPB1 820 every sb_nmu FIFO's LUTRAM
+# cost is under 820 a tile (sb_nmu AUTO_*), so none may land in block RAM.
+set mgr $top/station_bus/inst/u_line/g_stn?1?.g_mgr.*
+set mgr_ram [get_cells -quiet -hier -filter "NAME =~ $mgr && REF_NAME =~ RAMB*"]
+puts "  station 1 manager block RAM primitives: [llength $mgr_ram] (SB_LPB1 $SB_LPB1)"
+if {$SB_LPB1 >= 820 && [llength $mgr_ram]} { v8_bad "station 1's managers hold [llength $mgr_ram] block RAM(s) at SB_LPB1 $SB_LPB1" }
+
+puts "\n=== XDMA side === [v8_t]"
+set dwx [get_cells -quiet $top/dwc_xdma]
+if {$XDMA_AXI_W != 512 && ![llength $dwx]} { v8_bad "dwc_xdma absent on a $XDMA_AXI_W-bit XDMA" }
+if {$XDMA_AXI_W == 512 && [llength $dwx]} { v8_bad "dwc_xdma present on a 512-bit XDMA" }
+set irqs [get_cells -quiet $top/irq_req*]
+puts "  width converter [llength $dwx], interrupt requesters [llength $irqs]"
+if {$XDMA_IRQ} {
+    if {[llength $irqs] != [llength $MESHES] / 2} { v8_bad "[llength $irqs] irq_req cells, want [expr {[llength $MESHES] / 2}]" }
+    foreach c $irqs {
+        set sy [get_cells -quiet -hier -filter "NAME =~ $c/* && IS_SEQUENTIAL && ASYNC_REG"]
+        if {[llength $sy] < 2} { v8_bad "$c keeps [llength $sy] ASYNC_REG flop(s), want its 2-flop crossing" }
+    }
+} elseif {[llength $irqs]} { v8_bad "irq_req cells present with XDMA_IRQ 0" }
 if {[catch {open_bd_design [get_files ${design_name}.bd]} bdmsg]} {
     puts "  (block design not readable here: $bdmsg -- its parameters and address map are 75_verify_bd's)"
 } else {
