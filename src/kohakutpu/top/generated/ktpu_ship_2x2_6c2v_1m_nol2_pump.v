@@ -132,6 +132,7 @@ module ktpu_ship_2x2_6c2v_1m_nol2_pump #(
     output wire [63:0]  hs_rdata,
     output wire         hs_console_we,
     output wire [7:0]   hs_console,
+    output wire         host_irq,
 
     input  wire [IDW-1:0]   S_AXI_MEM_awid,
     input  wire [AW-1:0]    S_AXI_MEM_awaddr,
@@ -531,6 +532,7 @@ module ktpu_ship_2x2_6c2v_1m_nol2_pump #(
         .hs_addr(hs_addr), .hs_wr(hs_wr), .hs_wdata(hs_wdata), .hs_wstrb(hs_wstrb),
         .hs_rd(hs_rd), .hs_rdata(hs_rdata),
         .hs_console_we(hs_console_we), .hs_console(hs_console),
+        .host_irq(host_irq),
         .pe_halt_req(1'b0), .pe_status(pe_status), .pe_busy(pe_busy),
         .mem_in_data(mag_i_d), .mem_in_valid(mag_i_v), .mem_in_busy(mag_i_b),
         .mem_out_data(mag_o_d), .mem_out_valid(mag_o_v), .mem_out_busy(mag_o_b),
