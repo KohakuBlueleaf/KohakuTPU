@@ -2303,6 +2303,9 @@ def main():
     # so a debug loop should stop at ~1.5x where the answer was due.
     ap.add_argument("--max-time", help="stop after this sim time, e.g. 200us")
     ap.add_argument(
+        "--plusarg", action="append", default=[], help="NAME=VALUE, the bench's $value$plusargs"
+    )
+    ap.add_argument(
         "--wall",
         type=float,
         default=600.0,
@@ -2477,6 +2480,11 @@ def main():
         if not args.keep:
             shutil.rmtree(work, ignore_errors=True)
         sys.exit(0)
+    # In an option file: xsim.bat splits a command-line `NAME=VALUE` at the `=`.
+    plus = []
+    if args.plusarg:
+        (work / "plus.txt").write_text("".join(f"-testplusarg {p}\n" for p in args.plusarg))
+        plus = ["-f", "plus.txt"]
     # --vcd dumps a scope's signals for reading cycle by cycle.
     if args.vcd:
         # COUNTED: a wrong scope returns an empty list and writes a VCD with no
@@ -2490,15 +2498,15 @@ def main():
             "run -all\n"
             "flush_vcd\nclose_vcd\nquit\n"
         )
-        out = run(["xsim.bat", "tb", "-t", "dump.tcl"], stream=True)
+        out = run(["xsim.bat", "tb", "-t", "dump.tcl"] + plus, stream=True)
         print(f"  VCD {work / args.vcd_file}")
     elif args.max_time:
         (work / "budget.tcl").write_text(
             f'run {args.max_time}\nputs "@@@ BUDGET {args.max_time} reached"\nquit\n'
         )
-        out = run(["xsim.bat", "tb", "-t", "budget.tcl"], stream=True)
+        out = run(["xsim.bat", "tb", "-t", "budget.tcl"] + plus, stream=True)
     else:
-        out = run(["xsim.bat", "tb", "-runall"], stream=True)
+        out = run(["xsim.bat", "tb", "-runall"] + plus, stream=True)
 
     if not args.keep and not args.vcd:
         shutil.rmtree(work, ignore_errors=True)
