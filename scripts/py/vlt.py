@@ -148,8 +148,11 @@ def model_benches(xsim) -> dict:
     tests = "sim/verilator/models/tests"
     alu = [s for s in xsim.BENCHES["vec_alu"][1] if not s.startswith("tests/")]
     lanes = [s for s in xsim.BENCHES["vec_lanes"][1] if not s.startswith("tests/")]
+    v2 = [s for s in xsim.BENCHES["vec2_replay"][1] if not s.startswith("tests/")]
     mm = xsim.COMMON + xsim.MATMUL
     return {
+        "gate_v2_lanes": ("gate_v2_lanes_tb", v2 + [f"{tests}/gate_v2_lanes_tb.v"]),
+        "gate_v2_alu": ("gate_v2_alu_tb", v2 + [f"{tests}/gate_v2_alu_tb.v"]),
         "gate_lanes": ("gate_lanes_tb", lanes + [f"{tests}/gate_lanes_tb.v"]),
         "gate_core": ("gate_core_tb", mm + [f"{tests}/gate_core_tb.v"]),
         "gate_acu": ("gate_acu_tb", mm + [f"{tests}/gate_acu_tb.v"]),

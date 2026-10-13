@@ -20,6 +20,11 @@ nothing in them. Idle card_v9_1n profile, by RTL path:
 | 4 x `mx_acu_fp_pump` | 11.3% |
 | 2 x 16 `vec_alu` | 13.0% |
 
+On card_v9t3 (V2.1 vector cores) the V2 lanes take the same place: idle 4n,
+by module, `vec_delay` 12.4%, `v2_alu` 10.4%, `xpm_memory_sdpram` 9.1% (the
+lanes' register file), `vec_dsp` 2.4%, `v2_lanes` 2.3%. Gating `v2_lanes` and
+`v2_alu` takes idle card_v9t3_4n from 420 to 249 us a sysnode cycle.
+
 Each of these evaluates its whole datapath on every edge of its clock, idle or
 not, because the hardware does: the pipelines carry no valid gating on their
 payload registers.
@@ -57,6 +62,12 @@ the two pure pipelines it is exactly `D - 1`.
 | `mx_acu_fp` | pipeline plus a tile RAM written only by a valid command, and `busy_tail` counting down to 0 | `!cmd_valid` | <= 10 | 32 |
 | `mx_acu_fp_pump` | as `mx_acu_fp`, with the two-stage merge in front | `!cmd_valid` | 13..18 | 32 |
 | `vec_lanes` | the 4 x ALAT metadata line drains; its last write-back reaches the register file and ripples through up to five chained ALUs, whose own gates then saturate | `!iss_valid && !ls_we && !red_init` | 121..140 | 255 |
+| `v2_alu` | feed-forward, `D` = 15: delay lines, three DSP models, a synchronous ROM | 1 | 14 | 32 |
+| `v2_lanes` | the ALAT + 1 metadata line drains; its last write reaches the register file, is read back through the two operand stages into the ALUs, whose own gates (32) then saturate: about 56 edges | `!iss_valid && !uw_we && !pre_v` | 17..24 | 96 |
+
+The measured minimum sets every gate to the same bound, the inner ones
+included; the chosen `SETTLE` of a module holding gated modules covers their
+saturation at their own `SETTLE`.
 
 A module with a free-running counter, or one whose RAM can be written with its
 inputs held, does not converge and cannot be wrapped this way. The accumulators
@@ -82,17 +93,23 @@ the pumped accumulator moves the 2x-domain partials on the intermediate 2x edge.
 | `gate_acu` | 100,000 | 37,816 | 0 |
 | `gate_acu_pump` | 100,000 | 29,273 | 0 |
 | `gate_lanes` | 200,000 | 53,543 | 0 |
+| `gate_v2_alu` | 200,000 | 80,552 | 0 |
+| `gate_v2_lanes` (RF_COPIES 4 and 2) | 200,000 | 150,547 | 0 |
 
 A bench passes only with zero mismatches and more than a tenth of its edges
 withheld, so a gate that never closes cannot pass it.
 
 **Negative control.** `-d VLT_QGATE_SETTLE=n` sets every gate below its
 module's `D`: at 2 the four pipeline and accumulator benches fail (68k to 154k
-mismatches), at 8 `gate_lanes` does (190k).
+mismatches), at 8 `gate_lanes` does (190k). `gate_v2_alu` fails at 13 (93k) and
+passes at 14; `gate_v2_lanes` fails at 16 (107k) and passes at 24.
 
 **The functional benches** that contain these modules (`vec_alu`, `vec_lanes`,
 `vec_cu`, `acu`, `cluster_node`, `cluster_node_pump`) print byte-identical
 output with and without the models, cycle counts included.
 
 **The card.** rawmm solo on card_v9_1n gives the same node cycles (196,413 and
-185,671) and spans built `--rtl` and with the models.
+185,671) and spans built `--rtl` and with the models. On card_v9t3_1n every
+one-node case of `kohakutpu.application.tools.measure` (26, `--core v21`)
+gives the same output bytes and the same cycle count with and without the
+`v2_lanes`/`v2_alu` models.
