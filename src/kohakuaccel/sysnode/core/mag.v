@@ -40,6 +40,25 @@
 `ifndef KOHAKU_DRAM_RD_OUT
   `define KOHAKU_DRAM_RD_OUT 4
 `endif
+// The handshake cuts below (PORT_OSKID .. IL_MVSKID), each 0 or 1.
+`ifndef KOHAKU_PORT_OSKID
+  `define KOHAKU_PORT_OSKID 0
+`endif
+`ifndef KOHAKU_PORT_LEAN
+  `define KOHAKU_PORT_LEAN 0
+`endif
+`ifndef KOHAKU_PORT_HCOPY
+  `define KOHAKU_PORT_HCOPY 0
+`endif
+`ifndef KOHAKU_PORT_ARSKID
+  `define KOHAKU_PORT_ARSKID 0
+`endif
+`ifndef KOHAKU_IL_TXSKID
+  `define KOHAKU_IL_TXSKID 0
+`endif
+`ifndef KOHAKU_IL_MVSKID
+  `define KOHAKU_IL_MVSKID 0
+`endif
 
 module mag #(
     parameter integer FLIT_WIDTH = 288,
@@ -101,7 +120,23 @@ module mag #(
     parameter integer STAGE_RLAT    = 0,      // mag_stage RLAT; 0 = blocks deep + 1
     // 0 = a store inside each mag_mem_port, unreachable by mover and interlink
     // and costing PORTS x 64 URAM. 1 = one store on the converged path.
-    parameter integer STAGE_AT_PORT = 0
+    parameter integer STAGE_AT_PORT = 0,
+    // ---- handshake cuts, 0 or 1: a ready that was a function of the far
+    // side's decode comes off a register instead. Macro defaults so synthesis
+    // defines reach them under a generated top. A skid costs its channel one
+    // cycle of latency and no throughput.
+    //   PORT_OSKID   sb_skid on each port's flit output (hub decode -> emit/ACK)
+    //   PORT_LEAN    every port FIFO sync_fifo "lean"
+    //   PORT_HCOPY   mag_mem_port HEAD_COPY
+    //   PORT_ARSKID  sb_skid on each port's AR into the converged path
+    //   IL_TXSKID    sb_skid on the interlink's header and data into the switch
+    //   IL_MVSKID    sb_skid on the mover's AW and W into the interlink
+    parameter integer PORT_OSKID  = `KOHAKU_PORT_OSKID,
+    parameter integer PORT_LEAN   = `KOHAKU_PORT_LEAN,
+    parameter integer PORT_HCOPY  = `KOHAKU_PORT_HCOPY,
+    parameter integer PORT_ARSKID = `KOHAKU_PORT_ARSKID,
+    parameter integer IL_TXSKID   = `KOHAKU_IL_TXSKID,
+    parameter integer IL_MVSKID   = `KOHAKU_IL_MVSKID
 )(
     input  wire                clk,
     input  wire                resetn,
@@ -451,6 +486,18 @@ module mag #(
     for (gp = 0; gp < PORTS; gp = gp + 1) begin : g_port
         localparam integer PX = (gp == 0) ? MEM_X : (gp == 1) ? MEM_X1 : (gp == 2) ? MEM_X2 : MEM_X3;
         localparam integer PY = (gp == 0) ? MEM_Y : (gp == 1) ? MEM_Y1 : (gp == 2) ? MEM_Y2 : MEM_Y3;
+        localparam integer ARW = ID_W + ADDR_W + 8 + 3 + 2;
+
+        // The engine's own AR and flit output, before the PORT_ARSKID and
+        // PORT_OSKID cuts below.
+        wire [ID_W-1:0]       e_arid;
+        wire [ADDR_W-1:0]     e_araddr;
+        wire [7:0]            e_arlen;
+        wire [2:0]            e_arsize;
+        wire [1:0]            e_arburst;
+        wire                  e_arvalid, e_arready;
+        wire [FLIT_WIDTH-1:0] e_odata;
+        wire                  e_ovalid, e_obusy;
 
         mag_mem_port #(
             .FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH),
@@ -462,7 +509,10 @@ module mag #(
             .STAGE_RLAT(STAGE_RLAT),
             .MESH_ID(MESH_ID[1:0]),
             // As many beats ahead as the DRAM port holds reads of one AR each.
-            .RD_AHEAD(DRAM_RD_OUT * 16)
+            .RD_AHEAD(DRAM_RD_OUT * 16),
+            .MEM_TYPE((PORT_LEAN != 0) ? "lean" : "distributed"),
+            .CTL_MEM_TYPE((PORT_LEAN != 0) ? "lean" : "distributed"),
+            .HEAD_COPY(PORT_HCOPY)
         ) u_eng (
             .clk(clk), .resetn(resetn),
             .m_awid(m_awid[gp*ID_W +: ID_W]),
@@ -477,12 +527,9 @@ module mag #(
             .m_wready(m_wready[gp]),
             .m_bid(m_bid[gp*ID_W +: ID_W]), .m_bresp(m_bresp[gp*2 +: 2]),
             .m_bvalid(m_bvalid[gp]), .m_bready(m_bready[gp]),
-            .m_arid(m_arid[gp*ID_W +: ID_W]),
-            .m_araddr(m_araddr[gp*ADDR_W +: ADDR_W]),
-            .m_arlen(m_arlen[gp*8 +: 8]),
-            .m_arsize(m_arsize[gp*3 +: 3]),
-            .m_arburst(m_arburst[gp*2 +: 2]),
-            .m_arvalid(m_arvalid[gp]), .m_arready(m_arready[gp]),
+            .m_arid(e_arid), .m_araddr(e_araddr), .m_arlen(e_arlen),
+            .m_arsize(e_arsize), .m_arburst(e_arburst),
+            .m_arvalid(e_arvalid), .m_arready(e_arready),
             .m_rid(m_rid[gp*ID_W +: ID_W]),
             .m_rdata(m_rdata[gp*DATA_W +: DATA_W]),
             .m_rresp(m_rresp[gp*2 +: 2]), .m_rlast(m_rlast[gp]),
@@ -492,11 +539,47 @@ module mag #(
             .mem_in_data(hub_data[gp*FLIT_WIDTH +: FLIT_WIDTH]),
             .mem_in_valid(eng_rx_valid[gp]),
             .mem_in_busy(eng_rx_busy[gp]),
-            .mem_out_data(eng_tx_data[gp*FLIT_WIDTH +: FLIT_WIDTH]),
-            .mem_out_valid(eng_tx_valid[gp]),
-            .mem_out_busy(eng_tx_busy[gp]),
+            .mem_out_data(e_odata), .mem_out_valid(e_ovalid),
+            .mem_out_busy(e_obusy),
             .mem_rd_count(p_rd[gp]), .mem_wr_count(p_wr[gp])
         );
+
+        // The flit output: the port holds valid and data until a cycle with
+        // busy low, which is sb_skid's input handshake with busy = !i_ready.
+        if (PORT_OSKID != 0) begin : g_oskid
+            wire o_rdy;
+            sb_skid #(.W(FLIT_WIDTH)) u_oskid (
+                .clk(clk), .rst(!resetn),
+                .i_valid(e_ovalid), .i_ready(o_rdy), .i_data(e_odata),
+                .o_valid(eng_tx_valid[gp]), .o_ready(!eng_tx_busy[gp]),
+                .o_data(eng_tx_data[gp*FLIT_WIDTH +: FLIT_WIDTH])
+            );
+            assign e_obusy = !o_rdy;
+        end else begin : g_odirect
+            assign eng_tx_data[gp*FLIT_WIDTH +: FLIT_WIDTH] = e_odata;
+            assign eng_tx_valid[gp] = e_ovalid;
+            assign e_obusy = eng_tx_busy[gp];
+        end
+
+        if (PORT_ARSKID != 0) begin : g_arskid
+            sb_skid #(.W(ARW)) u_arskid (
+                .clk(clk), .rst(!resetn),
+                .i_valid(e_arvalid), .i_ready(e_arready),
+                .i_data({e_arid, e_araddr, e_arlen, e_arsize, e_arburst}),
+                .o_valid(m_arvalid[gp]), .o_ready(m_arready[gp]),
+                .o_data({m_arid[gp*ID_W +: ID_W], m_araddr[gp*ADDR_W +: ADDR_W],
+                         m_arlen[gp*8 +: 8], m_arsize[gp*3 +: 3],
+                         m_arburst[gp*2 +: 2]})
+            );
+        end else begin : g_ardirect
+            assign m_arid[gp*ID_W +: ID_W]       = e_arid;
+            assign m_araddr[gp*ADDR_W +: ADDR_W] = e_araddr;
+            assign m_arlen[gp*8 +: 8]            = e_arlen;
+            assign m_arsize[gp*3 +: 3]           = e_arsize;
+            assign m_arburst[gp*2 +: 2]          = e_arburst;
+            assign m_arvalid[gp]                 = e_arvalid;
+            assign e_arready                     = m_arready[gp];
+        end
 
         assign port_y[gp*POS_WIDTH +: POS_WIDTH] = PY[POS_WIDTH-1:0];
     end
@@ -571,16 +654,9 @@ module mag #(
     assign mv_bvalid  = mvx_bvalid;
     assign mv_bresp   = mvx_bresp;
 
-    assign m_awid[MV*ID_W +: ID_W]            = mv_awid;
-    assign m_awlen[MV*8 +: 8]                 = mv_awlen;
-    assign m_awsize[MV*3 +: 3]                = mv_awsize;
-    assign m_awburst[MV*2 +: 2]               = mv_awburst;
-    assign m_wstrb[MV*(DATA_W/8) +: DATA_W/8] = mv_wstrb;
-    assign m_wlast[MV]                        = mv_wlast;
     assign m_bready[MV]                       = mv_bready;
-    // AWADDR / AWVALID / WDATA / WVALID are driven by the generate at the
-    // bottom: with the interlink they pass through the address split, without
-    // it they are the mover's own.
+    // AW and W are driven by the generate at the bottom: with the interlink
+    // they pass through the address split, without it they are the mover's own.
     assign m_arid[MV*ID_W +: ID_W]            = mv_arid;
     assign m_araddr[MV*ADDR_W +: ADDR_W]      = mv_araddr;
     assign m_arlen[MV*8 +: 8]                 = mv_arlen;
@@ -693,6 +769,16 @@ module mag #(
         wire [63:0] sw_fwd, sw_lblk;
         wire [31:0] sw_c0, sw_c1;
         wire [3:0]  sw_flt;
+        // The mover's AW and W as u_il takes them (IL_MVSKID below).
+        wire [ID_W-1:0]     mvs_awid;
+        wire [ADDR_W-1:0]   mvs_awaddr;
+        wire [7:0]          mvs_awlen;
+        wire [2:0]          mvs_awsize;
+        wire [1:0]          mvs_awburst;
+        wire                mvs_awvalid, mvs_awready;
+        wire [DATA_W-1:0]   mvs_wdata;
+        wire [DATA_W/8-1:0] mvs_wstrb;
+        wire                mvs_wlast, mvs_wvalid, mvs_wready;
 
         mag_ilink #(
             .FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH), .DATA_W(DATA_W),
@@ -715,10 +801,10 @@ module mag #(
             .c_wvalid(cp_wvalid && cp_rem), .c_wready(cpr_wready),
             .c_bvalid(cpr_bvalid),
 
-            .s_awaddr(mv_awaddr), .s_awlen(mv_awlen), .s_awvalid(mv_awvalid),
-            .s_awready(mvx_awready),
-            .s_wdata(mv_wdata), .s_wstrb(mv_wstrb), .s_wvalid(mv_wvalid),
-            .s_wready(mvx_wready),
+            .s_awaddr(mvs_awaddr), .s_awlen(mvs_awlen), .s_awvalid(mvs_awvalid),
+            .s_awready(mvs_awready),
+            .s_wdata(mvs_wdata), .s_wstrb(mvs_wstrb), .s_wvalid(mvs_wvalid),
+            .s_wready(mvs_wready),
             .s_bvalid(mvx_bvalid), .s_bresp(mvx_bresp), .s_bready(mv_bready),
 
             .m_awaddr(m_awaddr[MV*ADDR_W +: ADDR_W]), .m_awvalid(m_awvalid[MV]),
@@ -789,14 +875,99 @@ module mag #(
                      m_wdata[LK*DATA_W +: DATA_W]})
         );
 
+        // ---- the mover's AW and W into the address split (IL_MVSKID) -------
+        // The mover's own AW id/len/size/burst and W strobe/last pass beside
+        // u_il, so they come off the same skids; the AW fields the converged
+        // path sees are captured where u_il takes the AW, beside its `a_r`,
+        // since a skid may present the next AW while this one is still queued.
+        localparam integer MAW = ID_W + ADDR_W + 8 + 3 + 2;
+        localparam integer MWW = DATA_W + DATA_W/8 + 1;
+
+        if (IL_MVSKID != 0) begin : g_mvskid
+            reg [ID_W-1:0] aw_id;
+            reg [7:0]      aw_len;
+            reg [2:0]      aw_size;
+            reg [1:0]      aw_burst;
+
+            sb_skid #(.W(MAW)) u_mv_awskid (
+                .clk(clk), .rst(!resetn),
+                .i_valid(mv_awvalid), .i_ready(mvx_awready),
+                .i_data({mv_awid, mv_awaddr, mv_awlen, mv_awsize, mv_awburst}),
+                .o_valid(mvs_awvalid), .o_ready(mvs_awready),
+                .o_data({mvs_awid, mvs_awaddr, mvs_awlen, mvs_awsize, mvs_awburst})
+            );
+            sb_skid #(.W(MWW)) u_mv_wskid (
+                .clk(clk), .rst(!resetn),
+                .i_valid(mv_wvalid), .i_ready(mvx_wready),
+                .i_data({mv_wlast, mv_wstrb, mv_wdata}),
+                .o_valid(mvs_wvalid), .o_ready(mvs_wready),
+                .o_data({mvs_wlast, mvs_wstrb, mvs_wdata})
+            );
+            always @(posedge clk) begin
+                if (mvs_awvalid && mvs_awready) begin
+                    aw_id    <= mvs_awid;
+                    aw_len   <= mvs_awlen;
+                    aw_size  <= mvs_awsize;
+                    aw_burst <= mvs_awburst;
+                end
+            end
+            assign m_awid[MV*ID_W +: ID_W] = aw_id;
+            assign m_awlen[MV*8 +: 8]      = aw_len;
+            assign m_awsize[MV*3 +: 3]     = aw_size;
+            assign m_awburst[MV*2 +: 2]    = aw_burst;
+        end else begin : g_mvdirect
+            assign {mvs_awid, mvs_awaddr, mvs_awlen, mvs_awsize, mvs_awburst} =
+                   {mv_awid, mv_awaddr, mv_awlen, mv_awsize, mv_awburst};
+            assign mvs_awvalid = mv_awvalid;
+            assign mvx_awready = mvs_awready;
+            assign {mvs_wlast, mvs_wstrb, mvs_wdata} = {mv_wlast, mv_wstrb, mv_wdata};
+            assign mvs_wvalid  = mv_wvalid;
+            assign mvx_wready  = mvs_wready;
+            assign m_awid[MV*ID_W +: ID_W] = mv_awid;
+            assign m_awlen[MV*8 +: 8]      = mv_awlen;
+            assign m_awsize[MV*3 +: 3]     = mv_awsize;
+            assign m_awburst[MV*2 +: 2]    = mv_awburst;
+        end
+        assign m_wstrb[MV*(DATA_W/8) +: DATA_W/8] = mvs_wstrb;
+        assign m_wlast[MV]                        = mvs_wlast;
+
+        // ---- the interlink's packets into the switch (IL_TXSKID) ------------
+        // il_pkt_demux takes a packet's data only after its header, so the two
+        // channels skid independently.
+        wire [TUSER_W-1:0] swt_hdr;
+        wire [LINK_W-1:0]  swt_dat;
+        wire swt_hvalid, swt_hready, swt_dvalid, swt_dready, swt_dlast;
+
+        if (IL_TXSKID != 0) begin : g_txskid
+            sb_skid #(.W(TUSER_W)) u_ltx_hskid (
+                .clk(clk), .rst(!resetn),
+                .i_valid(ltx_hvalid), .i_ready(ltx_hready), .i_data(ltx_hdr),
+                .o_valid(swt_hvalid), .o_ready(swt_hready), .o_data(swt_hdr)
+            );
+            sb_skid #(.W(LINK_W + 1)) u_ltx_dskid (
+                .clk(clk), .rst(!resetn),
+                .i_valid(ltx_dvalid), .i_ready(ltx_dready),
+                .i_data({ltx_dlast, ltx_dat}),
+                .o_valid(swt_dvalid), .o_ready(swt_dready),
+                .o_data({swt_dlast, swt_dat})
+            );
+        end else begin : g_txdirect
+            assign swt_hdr    = ltx_hdr;
+            assign swt_hvalid = ltx_hvalid;
+            assign ltx_hready = swt_hready;
+            assign {swt_dlast, swt_dat} = {ltx_dlast, ltx_dat};
+            assign swt_dvalid = ltx_dvalid;
+            assign ltx_dready = swt_dready;
+        end
+
         mag_switch #(
             .LINK_W(LINK_W), .TUSER_W(TUSER_W), .RX_BEATS(IL_RX_BEATS),
             .MAX_BEATS(IL_MAX_BEATS), .CN_W(IL_CN_W)
         ) u_sw (
             .clk(clk), .resetn(resetn), .my_mesh(il_mesh),
-            .ltx_hdr(ltx_hdr), .ltx_hvalid(ltx_hvalid), .ltx_hready(ltx_hready),
-            .ltx_dat(ltx_dat), .ltx_dlast(ltx_dlast), .ltx_dvalid(ltx_dvalid),
-            .ltx_dready(ltx_dready),
+            .ltx_hdr(swt_hdr), .ltx_hvalid(swt_hvalid), .ltx_hready(swt_hready),
+            .ltx_dat(swt_dat), .ltx_dlast(swt_dlast), .ltx_dvalid(swt_dvalid),
+            .ltx_dready(swt_dready),
             .lrx_hdr(lrx_hdr), .lrx_hvalid(lrx_hvalid), .lrx_hready(lrx_hready),
             .lrx_dat(lrx_dat), .lrx_dlast(lrx_dlast), .lrx_dvalid(lrx_dvalid),
             .lrx_dready(lrx_dready),
@@ -839,9 +1010,15 @@ module mag #(
         assign m_awburst[LK*2 +: 2]      = 2'b01;
     end else begin : g_no_ilink
         // The mover owns its channel outright, exactly as before.
+        assign m_awid[MV*ID_W +: ID_W]       = mv_awid;
         assign m_awaddr[MV*ADDR_W +: ADDR_W] = mv_awaddr;
+        assign m_awlen[MV*8 +: 8]            = mv_awlen;
+        assign m_awsize[MV*3 +: 3]           = mv_awsize;
+        assign m_awburst[MV*2 +: 2]          = mv_awburst;
         assign m_awvalid[MV]                 = mv_awvalid;
         assign m_wdata[MV*DATA_W +: DATA_W]  = mv_wdata;
+        assign m_wstrb[MV*(DATA_W/8) +: DATA_W/8] = mv_wstrb;
+        assign m_wlast[MV]                   = mv_wlast;
         assign m_wvalid[MV]                  = mv_wvalid;
         assign mvx_awready = m_awready[MV];
         assign mvx_wready  = m_wready[MV];

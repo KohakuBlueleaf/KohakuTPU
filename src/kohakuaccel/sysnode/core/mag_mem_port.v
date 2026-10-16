@@ -44,6 +44,14 @@ module mag_mem_port #(
     // 320 floor -- `wq_flit` feeds the slot match and the worst path already
     // starts at this FIFO's output, where a BRAM CLKARDCLK is far slower.
     parameter MEM_TYPE           = "distributed",
+    // The narrow queues: plain-read context, ready order, posted ACKs.
+    parameter CTL_MEM_TYPE       = "distributed",
+    // 1: the write queue's head is decoded from a narrow queue beside it that
+    // holds each flit's {is WR_REQ, is WR_DATA, src x, src y}, so the slot match
+    // that pops the queue reads 2 + 2*POS_WIDTH registers rather than a
+    // 288-bit head; and the ACK queue carries each ACK's header fields, so the
+    // ACK leaves without a slot-table read behind the queue's head.
+    parameter integer HEAD_COPY  = 0,
     // ---- MAG L2 staging, aperture 0. 0 generates none of it ---------------
     // A staged fill reads port A rather than issuing AR; a write uses port B.
     parameter integer STAGE         = 0,      // a store AT THIS PORT
@@ -227,8 +235,35 @@ module mag_mem_port #(
     // ---- the write queue's head -----------------------------------------
     wire        wi_valid = !wq_empty;
     wire [3:0]  wi_ty  = `MP_HDR_TY(wq_flit);
-    wire [POS_WIDTH-1:0] wi_sx = `MP_SRC_X(wq_flit);
-    wire [POS_WIDTH-1:0] wi_sy = `MP_SRC_Y(wq_flit);
+    wire        wi_req, wi_dat;              // the head is a WR_REQ / a WR_DATA
+    wire [POS_WIDTH-1:0] wi_sx, wi_sy;
+    generate
+    if (HEAD_COPY != 0) begin : g_wq_hd
+        // Same depth, type and enables as u_wrq, so its head is u_wrq's.
+        wire [3:0] mi_ty_w = `MP_HDR_TY(mem_in_data);
+        sync_fifo #(
+            .DATA_WIDTH  (2 + 2 * POS_WIDTH),
+            .FIFO_DEPTH  (Q_DEPTH),
+            .MEMORY_TYPE (MEM_TYPE)
+        ) u_wrq_hd (
+            .clk       (clk),
+            .rst       (!resetn),
+            .wr_en     (mi_wr),
+            .wr_data   ({mi_ty_w == T_MEM_WR_REQ, mi_ty_w == T_MEM_WR_DATA,
+                         `MP_SRC_X(mem_in_data), `MP_SRC_Y(mem_in_data)}),
+            .wr_busy   (),
+            .wr_almost (),
+            .rd_en     (wq_pop),
+            .rd_data   ({wi_req, wi_dat, wi_sx, wi_sy}),
+            .rd_busy   ()
+        );
+    end else begin : g_wq_hd_none
+        assign wi_req = (wi_ty == T_MEM_WR_REQ);
+        assign wi_dat = (wi_ty == T_MEM_WR_DATA);
+        assign wi_sx  = `MP_SRC_X(wq_flit);
+        assign wi_sy  = `MP_SRC_Y(wq_flit);
+    end
+    endgenerate
     wire [ADDR_W-1:0] wi_addr = wq_flit[255 -: FA];
     wire [7:0]  wi_len  = wq_flit[215 -: 8];
     wire [7:0]  wi_txn  = wq_flit[FLIT_WIDTH-4*POS_WIDTH-5 -: 8];
@@ -506,8 +541,8 @@ module mag_mem_port #(
     // One flit leaves each queue per cycle: a write descriptor when a slot is
     // free, its data when the slot is waiting for it, or a read when the engine
     // can take one. Anything else is simply not popped and waits.
-    wire take_wr_req  = wi_valid && (wi_ty == T_MEM_WR_REQ)  && ws_has_free;
-    wire take_wr_data = wi_valid && (wi_ty == T_MEM_WR_DATA) && ws_has_match;
+    wire take_wr_req  = wi_valid && wi_req && ws_has_free;
+    wire take_wr_data = wi_valid && wi_dat && ws_has_match;
 
     // A STREAM goes to the read engine; a plain read returns its beats verbatim.
     // One AXI read channel, so the two kinds never overlap.
@@ -537,7 +572,7 @@ module mag_mem_port #(
     sync_fifo #(
         .DATA_WIDTH  (2 * POS_WIDTH + 8),
         .FIFO_DEPTH  ((PR_MAX < 16) ? 16 : PR_MAX),
-        .MEMORY_TYPE ("distributed")
+        .MEMORY_TYPE (CTL_MEM_TYPE)
     ) u_prq (
         .clk       (clk),
         .rst       (!resetn),
@@ -582,7 +617,7 @@ module mag_mem_port #(
     sync_fifo #(
         .DATA_WIDTH  (WS_BITS),
         .FIFO_DEPTH  (WR_SLOTS),
-        .MEMORY_TYPE ("distributed")
+        .MEMORY_TYPE (CTL_MEM_TYPE)
     ) u_rdyq (
         .clk       (clk),
         .rst       (!resetn),
@@ -693,6 +728,16 @@ module mag_mem_port #(
                      $time, MESH_ID, ws_match, wi_sx, wi_sy);
         end
 `endif
+        if (
+            resetn
+            && wi_valid
+            && ({wi_req, wi_dat, wi_sx, wi_sy}
+                != {wi_ty == T_MEM_WR_REQ, wi_ty == T_MEM_WR_DATA,
+                    `MP_SRC_X(wq_flit), `MP_SRC_Y(wq_flit)})
+        ) begin
+            $display("%0t ERROR mag_mem_port(mesh %0d, %0d,%0d):write-queue head copy disagrees with the head",
+                     $time, MESH_ID, MEM_X, MEM_Y);
+        end
         if (
             resetn
             && wi_valid
@@ -884,21 +929,64 @@ module mag_mem_port #(
     wire wr_b = (b_have != 0);
     assign ack_rdy = !ackq_empty && (!ackq_needb || wr_b);
 
-    sync_fifo #(
-        .DATA_WIDTH  (WS_BITS + 1),
-        .FIFO_DEPTH  (WR_SLOTS),
-        .MEMORY_TYPE ("distributed")
-    ) u_ackq (
-        .clk       (clk),
-        .rst       (!resetn),
-        .wr_en     (d_go && d_last),
-        .wr_data   ({d_slot, !d_stg && !d_bad}),
-        .wr_busy   (),
-        .wr_almost (),
-        .rd_en     (ack_go),
-        .rd_data   ({ackq_slot, ackq_needb}),
-        .rd_busy   (ackq_empty)
-    );
+    // The ACK's header: the slot's source and txn and its drop flag. A slot's
+    // fields are written only while it is free, so they hold from the burst's
+    // last beat to its ACK and are as good read here as at the ACK.
+    localparam integer AQH = 2 * POS_WIDTH + 8 + 1;
+    wire [AQH-1:0] ackq_hdr;
+
+    generate
+    if (HEAD_COPY != 0) begin : g_ackq_hd
+        sync_fifo #(
+            .DATA_WIDTH  (WS_BITS + 1 + AQH),
+            .FIFO_DEPTH  (WR_SLOTS),
+            .MEMORY_TYPE (CTL_MEM_TYPE)
+        ) u_ackq (
+            .clk       (clk),
+            .rst       (!resetn),
+            .wr_en     (d_go && d_last),
+            .wr_data   ({d_slot, !d_stg && !d_bad,
+                         ws_x[d_slot], ws_y[d_slot], ws_txn[d_slot], ws_bad[d_slot]}),
+            .wr_busy   (),
+            .wr_almost (),
+            .rd_en     (ack_go),
+            .rd_data   ({ackq_slot, ackq_needb, ackq_hdr}),
+            .rd_busy   (ackq_empty)
+        );
+    end else begin : g_ackq
+        sync_fifo #(
+            .DATA_WIDTH  (WS_BITS + 1),
+            .FIFO_DEPTH  (WR_SLOTS),
+            .MEMORY_TYPE (CTL_MEM_TYPE)
+        ) u_ackq (
+            .clk       (clk),
+            .rst       (!resetn),
+            .wr_en     (d_go && d_last),
+            .wr_data   ({d_slot, !d_stg && !d_bad}),
+            .wr_busy   (),
+            .wr_almost (),
+            .rd_en     (ack_go),
+            .rd_data   ({ackq_slot, ackq_needb}),
+            .rd_busy   (ackq_empty)
+        );
+        assign ackq_hdr = {ws_x[ackq_slot], ws_y[ackq_slot], ws_txn[ackq_slot],
+                           ws_bad[ackq_slot]};
+    end
+    endgenerate
+    wire [POS_WIDTH-1:0] ack_x, ack_y;
+    wire [7:0]           ack_txn;
+    wire                 ack_bad;
+    assign {ack_x, ack_y, ack_txn, ack_bad} = ackq_hdr;
+
+`ifndef SYNTHESIS
+    always @(posedge clk) begin
+        if (resetn && ack_go && (ackq_hdr != {ws_x[ackq_slot], ws_y[ackq_slot],
+                                              ws_txn[ackq_slot], ws_bad[ackq_slot]})) begin
+            $display("%0t ERROR mag_mem_port(mesh %0d, %0d,%0d):ACK header %h disagrees with slot %0d",
+                     $time, MESH_ID, MEM_X, MEM_Y, ackq_hdr, ackq_slot);
+        end
+    end
+`endif
 
     integer wj;
     always @(posedge clk) begin
@@ -1001,10 +1089,10 @@ module mag_mem_port #(
             ack_turn <= ack_rdy && emit_go;
             if (ack_go) begin
                 mem_out_data <= {
-                    ws_x[ackq_slot], ws_y[ackq_slot],
+                    ack_x, ack_y,
                     MEM_X[POS_WIDTH-1:0], MEM_Y[POS_WIDTH-1:0],
-                    T_MEM_WR_ACK, ws_txn[ackq_slot], 1'b1, 3'b000,
-                    {(FLIT_WIDTH-4*POS_WIDTH-17){1'b0}}, ws_bad[ackq_slot]
+                    T_MEM_WR_ACK, ack_txn, 1'b1, 3'b000,
+                    {(FLIT_WIDTH-4*POS_WIDTH-17){1'b0}}, ack_bad
                 };
                 mem_out_valid <= 1'b1;
             end

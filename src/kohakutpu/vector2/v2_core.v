@@ -80,6 +80,15 @@ module v2_core #(
 `else
     parameter integer HEAD_NEXT  = 1,
 `endif
+    // 1: the math queue's head is an sb_skid's output register, so its pop
+    // (hazard verdict -> m_take) no longer reaches the queue's read pointer
+    // and head mux. Dispatch then sees the queue full at QD - 2 entries: the
+    // skid's two make up the QD the scoreboard's count width is sized for.
+`ifdef V2_MQ_SKID
+    parameter integer MQ_SKID    = `V2_MQ_SKID,
+`else
+    parameter integer MQ_SKID    = 0,
+`endif
     // The scoreboard's counters (v2_cnt): "ff" or "distributed" (LUTRAM, a
     // read ~SB_W x 2^RW/64 LUT; cleared by a sweep, see `sb_ok`), SB_W bits.
 `ifdef V2_SB_LUT
@@ -377,8 +386,28 @@ module v2_core #(
     wire [AQW-1:0]    fq_q, dq_q;
     wire              mq_e, uq_e, pq_e, fq_e, dq_e, mq_f, uq_f, pq_f, fq_f, dq_f;
 
+    // The math queue's head as the engine takes it: `mh_v`/`mh_q`, popped by
+    // `mq_pop`; `mq_rd` pops the FIFO, `mq_fd` is full as dispatch sees it.
+    wire [$clog2(QD):0] mq_n;
+    wire              mq_rd, mq_fd, mh_v;
+    wire [MQW-1:0]    mh_q;
     v2_fifo #(.W(MQW), .D(QD)) u_mq (.clk(clk), .rst(erst), .push(mq_push), .din(mq_din),
-        .pop(mq_pop), .dout(mq_q), .empty(mq_e), .full(mq_f), .count());
+        .pop(mq_rd), .dout(mq_q), .empty(mq_e), .full(mq_f), .count(mq_n));
+    generate
+    if (MQ_SKID != 0) begin : g_mq_skid
+        wire mh_irdy;
+        sb_skid #(.W(MQW)) u_mh (.clk(clk), .rst(erst),
+            .i_valid(!mq_e), .i_ready(mh_irdy), .i_data(mq_q),
+            .o_valid(mh_v), .o_ready(mq_pop), .o_data(mh_q));
+        assign mq_rd = !mq_e && mh_irdy;
+        assign mq_fd = (mq_n >= QD - 2);
+    end else begin : g_mq_head
+        assign mh_v  = !mq_e;
+        assign mh_q  = mq_q;
+        assign mq_rd = mq_pop;
+        assign mq_fd = mq_f;
+    end
+    endgenerate
     // Unpack and pack each have two queues; an instruction names its own
     // (d_q). The engine serves queue 0's head when it can start, else queue
     // 1's, so one stream waiting on L1 data does not hold the other.
@@ -473,7 +502,7 @@ module v2_core #(
                 fe_fault = F_CUDATA;
             end else if (is_math) begin
                 if ((d_sa == 2'd2) || (d_sb == 2'd2) || (d_sc == 2'd2)) fe_fault = F_SRC;
-                else fe_ok = !mq_f;
+                else fe_ok = !mq_fd;
             end else begin
                 case (d_op)
                     O_VCFG:   if ((d_csel == 4'd10) && ({1'b0, d_cpay[22:16]} >= VLMAX))
@@ -489,7 +518,7 @@ module v2_core #(
                               else case (d_wt)
                                   W_FE: fe_ok = d_old && sl_ok_q;
                                   W_U:  fe_ok = !uq_f;
-                                  W_M:  fe_ok = !mq_f;
+                                  W_M:  fe_ok = !mq_fd;
                                   W_P:  fe_ok = !pq_f;
                                   W_MK: fe_ok = 1'b1;
                                   W_D:  fe_ok = !dq_f;
@@ -557,7 +586,7 @@ module v2_core #(
     wire        h_cmp, h_expd, h_wr;
     wire [SBW-1:0] hs_am, hs_au, hs_bm, hs_bu, hs_cm, hs_cu, hs_uw, hs_pr;
     assign {h_aop, h_vd, h_va, h_vb, h_vc, h_sa, h_sb, h_sc, h_k, h_nb, h_tl, h_chk, h_xb,
-            h_cmp, h_expd, h_wr, hs_am, hs_au, hs_bm, hs_bu, hs_cm, hs_cu, hs_uw, hs_pr} = mq_q;
+            h_cmp, h_expd, h_wr, hs_am, hs_au, hs_bm, hs_bu, hs_cm, hs_cu, hs_uw, hs_pr} = mh_q;
     wire [1:0]  h_pm = h_xb[12:11], h_pr = h_xb[14:13];
     // A sync entry rides the MQ as aop 31 with the target in the constants.
     wire        h_sync = (h_aop == 5'd31);
@@ -596,8 +625,8 @@ module v2_core #(
     wire m_hold = m_conf && !m_pre_d;
     wire m_end  = m_act && !m_hold && ({1'b0, m_i} + 4'd1 == e_nb);
     wire m_free = !m_act || m_end;
-    wire m_sync_go = !mq_e && h_sync && sync_ok(h_k[3:0], h_k[23:8]);
-    wire m_take = !mq_e && !h_sync && !h_haz && m_free;
+    wire m_sync_go = mh_v && h_sync && sync_ok(h_k[3:0], h_k[23:8]);
+    wire m_take = mh_v && !h_sync && !h_haz && m_free;
     assign mq_pop = m_take || (m_sync_go && m_free);
 
     // Chunk of beat i for an operand nibble {base[2:0], stride}.
@@ -637,7 +666,7 @@ module v2_core #(
             pre_v     <= m_hold;
             iss_ch    <= m_pre_d;
             if (m_take) begin
-                m_e <= mq_q; m_act <= 1'b1; m_i <= 3'd0;
+                m_e <= mh_q; m_act <= 1'b1; m_i <= 3'd0;
             end else if (m_end) begin
                 m_act <= 1'b0;
             end else if (m_act && !m_hold) begin
@@ -1315,7 +1344,7 @@ module v2_core #(
     wire d_retire = a_done_dr;
     wire f_retire = ft_pop;
 
-    assign all_idle = mq_e && uq_e && pq_e && fq_e && dq_e && !m_act && !u_act && !p_act
+    assign all_idle = mq_e && !mh_v && uq_e && pq_e && fq_e && dq_e && !m_act && !u_act && !p_act
                    && (f_st == E_IDLE) && (d_st == E_IDLE) && pipe_empty && uf_e && pf_e
                    && (u_occ == 4'd0) && (p_occ == 4'd0) && !ug_busy && !pg_busy && !mx_busy
                    && (fill_out == 16'd0) && !wr_req_valid && ft_e && !iss_valid && !post_valid;
@@ -1747,7 +1776,7 @@ module v2_core #(
             end
             if (fe_ok) pc_insn <= pc_insn + 1;
             if (m_act) pc_m_act <= pc_m_act + 1;
-            else if (mq_e) pc_m_empty <= pc_m_empty + 1;
+            else if (mq_e && !mh_v) pc_m_empty <= pc_m_empty + 1;
             else if (h_sync) pc_m_sync <= pc_m_sync + 1;
             else pc_m_haz <= pc_m_haz + 1;
             if (u_act) begin
@@ -1768,7 +1797,7 @@ module v2_core #(
             if (dr_blk) pc_a_drblk <= pc_a_drblk + 1;
             if (dr_want && !dr_gnt) pc_a_drarb <= pc_a_drarb + 1;
             if (d_v && !fe_ok) begin
-                if (is_math && mq_f) pc_d_mq <= pc_d_mq + 1;
+                if (is_math && mq_fd) pc_d_mq <= pc_d_mq + 1;
                 else if (is_math) pc_d_sbm <= pc_d_sbm + 1;
                 else if (d_op == O_VUNPK && uq_f) pc_d_uq <= pc_d_uq + 1;
                 else if (d_op == O_VUNPK) pc_d_sbu <= pc_d_sbu + 1;
@@ -1812,7 +1841,7 @@ module v2_core #(
     always @(posedge clk) begin
         if (!rst && busy) begin
             $fwrite(tf, "%0d %0d %0d %0d %0d %0d %0d %0d %0d %0d %0d %0d %0d %0d %0d %0d %0d %0d %0d %0d %0d\n",
-                    pc_busy, m_act, m_take, e_aop, mq_e ? 99 : h_aop, h_haz, u_act, p_act,
+                    pc_busy, m_act, m_take, e_aop, !mh_v ? 99 : h_aop, h_haz, u_act, p_act,
                     d_v, d_op, fe_ok, d_pc, uq_e,
                     {d_st, 3'd0} | f_st, fq_e, (!fq_e && fh_sync) | ((!dq_e && dh_sync) << 1),
                     !uq_e && uh_sync, pq_e, !pq_e && ph_sync,
@@ -1844,14 +1873,14 @@ module v2_core #(
                          u_mrac.sh[pi], u_mrad.sh[pi], u_mrbc.sh[pi], u_mrbd.sh[pi],
                          u_mrcc.sh[pi], u_mrcd.sh[pi], u_prc.sh[pi], u_prd.sh[pi]);
         end
-        if (!mq_e) $display("V2HEAD_M aop %0d vd %0d va %0d vb %0d vc %0d s %0d%0d%0d haz %0d",
+        if (mh_v) $display("V2HEAD_M aop %0d vd %0d va %0d vb %0d vc %0d s %0d%0d%0d haz %0d",
                             h_aop, h_vd, h_va, h_vb, h_vc, h_sa, h_sb, h_sc, h_haz);
         if (!uq_e) $display("V2HEAD_U sync %0d vd %0d", uh_sync, uh_vd);
         if (!pq_e) $display("V2HEAD_P sync %0d vs %0d haz %0d", ph_sync, ph_vs, p_haz);
         $display("V2FE d_v %0d op %0d pc %0d", d_v, d_op, d_pc);
         // Each all_idle term (1 = idle): a VHALT that never retires names its engine.
         $display("V2IDLE %m run %0d mq %0d uq %0d pq %0d fq %0d dq %0d m %0d u %0d p %0d f_st %0d d_st %0d pipe %0d uf %0d pf %0d u_occ %0d p_occ %0d ug %0d pg %0d mx %0d fill_out %0d wr_req %0d ft %0d iss %0d post %0d",
-                 run, mq_e, uq_e, pq_e, fq_e, dq_e, !m_act, !u_act, !p_act, f_st, d_st,
+                 run, mq_e && !mh_v, uq_e, pq_e, fq_e, dq_e, !m_act, !u_act, !p_act, f_st, d_st,
                  pipe_empty, uf_e, pf_e, u_occ, p_occ, !ug_busy, !pg_busy, !mx_busy,
                  fill_out, !wr_req_valid, ft_e, !iss_valid, !post_valid);
     end
