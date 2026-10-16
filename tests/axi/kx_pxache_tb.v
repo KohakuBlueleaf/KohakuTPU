@@ -100,6 +100,12 @@ module kx_pxache_tb;
     localparam integer HOPRX=`TB_HOPRX;
     localparam integer TRUNK=`TB_TRUNK;
     localparam integer DLAT=`TB_DLAT;
+    // -d TB_URAM: the array in URAM as the card builds it (read latency 4)
+`ifdef TB_URAM
+    localparam RAMSTYLE = "ultra";
+`else
+    localparam RAMSTYLE = "block";
+`endif
     localparam integer W=512, IDW_S=4, HOME_LSB=32, SETS=`TB_SETS, SET_W=`TB_SET_W;
     localparam integer AW=40, IDW=IDW_S+((M<=1)?1:$clog2(M)), STRB=W/8;
     localparam integer HIW = (N<=1) ? 1 : $clog2(N);
@@ -110,6 +116,13 @@ module kx_pxache_tb;
     // nets are the same is a wiring property, checked in 75_verify_bd, not here.
     localparam [M-1:0] MCDC = (`TB_PCLK != 0) ? {M{1'b1}} : {M{1'b0}};
     localparam [N-1:0] HCDC = (TWOCLK != 0 || `TB_PCLK != 0) ? {N{1'b1}} : {N{1'b0}};
+    // -d TB_DUT_PCLK: the DUT built at PCLK 1 (every trunk ring a crossing)
+    // while the bench keeps one partition clock -- the card's Xache, MCDC 0.
+`ifdef TB_DUT_PCLK
+    localparam integer DUT_PCLK = 1;
+`else
+    localparam integer DUT_PCLK = `TB_PCLK;
+`endif
     function [M*PW-1:0] mk_mp; input integer dummy; integer i;
         begin mk_mp = 0; for (i = 0; i < M; i = i + 1) begin mk_mp[i*PW +: PW] = i % P; end end
     endfunction
@@ -182,10 +195,10 @@ module kx_pxache_tb;
     wire [N*STRB-1:0] d_wstrb;
 
     kx_pxache #(.P(P), .M(M), .N_HOME(N), .MP(MP), .HP(HP), .AW(AW), .W(W), .ID_W(IDW_S),
-                .HOME_LSB(HOME_LSB), .SETS(SETS), .SET_W(SET_W), .K(K), .RAM_STYLE("block"),
+                .HOME_LSB(HOME_LSB), .SETS(SETS), .SET_W(SET_W), .K(K), .RAM_STYLE(RAMSTYLE),
                 .BANKS(BANKS), .RING_WR_REG(RINGREG), .ARR_WP_REG(WPREG),
                 .ARR_LAT(ARRLAT), .HOP_RXREG(HOPRX), .BND_TRUNK(TRUNK),
-                .BND_KTS(`TB_KTS), .BND_SCODE(`TB_SCODE), .PCLK(`TB_PCLK),
+                .BND_KTS(`TB_KTS), .BND_SCODE(`TB_SCODE), .PCLK(DUT_PCLK),
                 .MEM_TRUNK((`TB_LRAM >= 1) ? "distributed" : "block"),
                 .MEM_RB   ((`TB_LRAM == 6) ? "ultra"
                            : (`TB_LRAM >= 2) ? "distributed" : "block"),
@@ -246,6 +259,122 @@ module kx_pxache_tb;
     end endgenerate
 
     integer errors=0, checks=0;
+`ifdef TB_LOCKSTEP
+    // -d TB_LOCKSTEP: the netlist (kx_pxache_lk) beside the RTL dut, own DRAM
+    // models; outputs compared each falling edge, payloads under their valid.
+    wire [M-1:0]       l_awready, l_wready, l_arready, l_bvalid, l_rvalid, l_rlast;
+    wire [M*IDW_S-1:0] l_bid, l_rid;
+    wire [M*2-1:0]     l_bresp, l_rresp;
+    wire [M*W-1:0]     l_rdata;
+    wire [N*IDW-1:0]   e_awid, e_arid, e_bid, e_rid;
+    wire [N*AW-1:0]    e_awaddr, e_araddr;
+    wire [N*8-1:0]     e_awlen, e_arlen;
+    wire [N*3-1:0]     e_awsize, e_arsize;
+    wire [N*2-1:0]     e_awburst, e_arburst, e_bresp, e_rresp;
+    wire [N-1:0]       e_awvalid, e_awready, e_wvalid, e_wready, e_wlast;
+    wire [N-1:0]       e_bvalid, e_bready, e_arvalid, e_arready, e_rvalid, e_rready, e_rlast;
+    wire [N*W-1:0]     e_wdata, e_rdata;
+    wire [N*STRB-1:0]  e_wstrb;
+    kx_pxache_lk #(.P(P), .M(M), .N_HOME(N), .AW(AW), .W(W), .ID_W(IDW_S)) dut_lk (
+        .clk_p(clk_p_w), .rstn_p(rstn_p), .h_clk({N{dclk}}), .h_rstn({N{drstn}}),
+        .s_awid(s_awid), .s_awaddr(s_awaddr), .s_awlen(s_awlen), .s_awsize(s_awsize),
+        .s_awburst(s_awburst), .s_awvalid(s_awvalid), .s_awready(l_awready),
+        .s_wdata(s_wdata), .s_wstrb(s_wstrb), .s_wlast(s_wlast),
+        .s_wvalid(s_wvalid), .s_wready(l_wready),
+        .s_bid(l_bid), .s_bresp(l_bresp), .s_bvalid(l_bvalid), .s_bready(s_bready),
+        .s_arid(s_arid), .s_araddr(s_araddr), .s_arlen(s_arlen), .s_arsize(s_arsize),
+        .s_arburst(s_arburst), .s_arvalid(s_arvalid), .s_arready(l_arready),
+        .s_rid(l_rid), .s_rdata(l_rdata), .s_rresp(l_rresp), .s_rlast(l_rlast),
+        .s_rvalid(l_rvalid), .s_rready(s_rready),
+        .d_awid(e_awid), .d_awaddr(e_awaddr), .d_awlen(e_awlen), .d_awsize(e_awsize),
+        .d_awburst(e_awburst), .d_awvalid(e_awvalid), .d_awready(e_awready),
+        .d_wdata(e_wdata), .d_wstrb(e_wstrb), .d_wlast(e_wlast),
+        .d_wvalid(e_wvalid), .d_wready(e_wready),
+        .d_bid(e_bid), .d_bresp(e_bresp), .d_bvalid(e_bvalid), .d_bready(e_bready),
+        .d_arid(e_arid), .d_araddr(e_araddr), .d_arlen(e_arlen), .d_arsize(e_arsize),
+        .d_arburst(e_arburst), .d_arvalid(e_arvalid), .d_arready(e_arready),
+        .d_rid(e_rid), .d_rdata(e_rdata), .d_rresp(e_rresp), .d_rlast(e_rlast),
+        .d_rvalid(e_rvalid), .d_rready(e_rready));
+    genvar gl;
+    generate for (gl = 0; gl < N; gl = gl + 1) begin : ram_lk
+        axi4_ram #(.DATA_WIDTH(W), .ADDR_WIDTH(AW), .ID_WIDTH(IDW), .DEPTH(4096),
+                   .RD_LAT_CYC(DLAT)) u (
+            .clk(dclk), .resetn(drstn),
+            .s_axi_awid(e_awid[gl*IDW +: IDW]), .s_axi_awaddr(e_awaddr[gl*AW +: AW]),
+            .s_axi_awlen(e_awlen[gl*8 +: 8]), .s_axi_awsize(e_awsize[gl*3 +: 3]),
+            .s_axi_awburst(e_awburst[gl*2 +: 2]), .s_axi_awvalid(e_awvalid[gl]),
+            .s_axi_awready(e_awready[gl]),
+            .s_axi_wdata(e_wdata[gl*W +: W]), .s_axi_wstrb(e_wstrb[gl*STRB +: STRB]),
+            .s_axi_wlast(e_wlast[gl]), .s_axi_wvalid(e_wvalid[gl]), .s_axi_wready(e_wready[gl]),
+            .s_axi_bid(e_bid[gl*IDW +: IDW]), .s_axi_bresp(e_bresp[gl*2 +: 2]),
+            .s_axi_bvalid(e_bvalid[gl]), .s_axi_bready(e_bready[gl]),
+            .s_axi_arid(e_arid[gl*IDW +: IDW]), .s_axi_araddr(e_araddr[gl*AW +: AW]),
+            .s_axi_arlen(e_arlen[gl*8 +: 8]), .s_axi_arsize(e_arsize[gl*3 +: 3]),
+            .s_axi_arburst(e_arburst[gl*2 +: 2]), .s_axi_arvalid(e_arvalid[gl]),
+            .s_axi_arready(e_arready[gl]),
+            .s_axi_rid(e_rid[gl*IDW +: IDW]), .s_axi_rdata(e_rdata[gl*W +: W]),
+            .s_axi_rresp(e_rresp[gl*2 +: 2]), .s_axi_rlast(e_rlast[gl]),
+            .s_axi_rvalid(e_rvalid[gl]), .s_axi_rready(e_rready[gl])
+        );
+    end endgenerate
+    integer lk_err = 0, lk_cmp = 0, li;
+    localparam [AW-1:0] LK_HOME = {{(AW-HIW){1'b0}}, {HIW{1'b1}}} << HOME_LSB;
+    task automatic lk_diff(input [8*24-1:0] what, input integer idx, input [W-1:0] r, input [W-1:0] n);
+        begin
+            if (r !== n && !$isunknown(r)) begin
+                lk_err = lk_err + 1;
+                if (lk_err <= 40) begin
+                    $display("  LOCKSTEP %0s[%0d] rtl %h net %h @%0t", what, idx, r, n, $time);
+                end
+            end
+        end
+    endtask
+    always @(negedge clk) if (rstn) begin
+        lk_cmp = lk_cmp + 1;
+        for (li = 0; li < M; li = li + 1) begin
+            lk_diff("s_awready", li, s_awready[li], l_awready[li]);
+            lk_diff("s_wready",  li, s_wready[li],  l_wready[li]);
+            lk_diff("s_arready", li, s_arready[li], l_arready[li]);
+            lk_diff("s_bvalid",  li, s_bvalid[li],  l_bvalid[li]);
+            lk_diff("s_rvalid",  li, s_rvalid[li],  l_rvalid[li]);
+            if (s_bvalid[li]) begin
+                lk_diff("s_bid",   li, s_bid[li*IDW_S +: IDW_S], l_bid[li*IDW_S +: IDW_S]);
+                lk_diff("s_bresp", li, s_bresp[li*2 +: 2],       l_bresp[li*2 +: 2]);
+            end
+            if (s_rvalid[li]) begin
+                lk_diff("s_rid",   li, s_rid[li*IDW_S +: IDW_S], l_rid[li*IDW_S +: IDW_S]);
+                lk_diff("s_rresp", li, s_rresp[li*2 +: 2],       l_rresp[li*2 +: 2]);
+                lk_diff("s_rlast", li, s_rlast[li],              l_rlast[li]);
+                lk_diff("s_rdata", li, s_rdata[li*W +: W],       l_rdata[li*W +: W]);
+            end
+        end
+    end
+    always @(negedge dclk) if (drstn) begin
+        for (li = 0; li < N; li = li + 1) begin
+            lk_diff("d_awvalid", li, d_awvalid[li], e_awvalid[li]);
+            lk_diff("d_wvalid",  li, d_wvalid[li],  e_wvalid[li]);
+            lk_diff("d_arvalid", li, d_arvalid[li], e_arvalid[li]);
+            lk_diff("d_bready",  li, d_bready[li],  e_bready[li]);
+            lk_diff("d_rready",  li, d_rready[li],  e_rready[li]);
+            // the netlist's block-design wrapper clears the home field of the DRAM address
+            if (d_awvalid[li]) begin
+                lk_diff("d_awaddr", li, d_awaddr[li*AW +: AW] & ~LK_HOME, e_awaddr[li*AW +: AW]);
+                lk_diff("d_awlen",  li, d_awlen[li*8 +: 8],    e_awlen[li*8 +: 8]);
+                lk_diff("d_awid",   li, d_awid[li*IDW +: IDW], e_awid[li*IDW +: IDW]);
+            end
+            if (d_wvalid[li]) begin
+                lk_diff("d_wdata", li, d_wdata[li*W +: W],       e_wdata[li*W +: W]);
+                lk_diff("d_wstrb", li, d_wstrb[li*STRB +: STRB], e_wstrb[li*STRB +: STRB]);
+                lk_diff("d_wlast", li, d_wlast[li],              e_wlast[li]);
+            end
+            if (d_arvalid[li]) begin
+                lk_diff("d_araddr", li, d_araddr[li*AW +: AW] & ~LK_HOME, e_araddr[li*AW +: AW]);
+                lk_diff("d_arlen",  li, d_arlen[li*8 +: 8],    e_arlen[li*8 +: 8]);
+                lk_diff("d_arid",   li, d_arid[li*IDW +: IDW], e_arid[li*IDW +: IDW]);
+            end
+        end
+    end
+`endif
     reg [M-1:0] rv_held;
     always @(posedge clk) begin
         rv_held <= s_rvalid & ~s_rready;
@@ -257,9 +386,40 @@ module kx_pxache_tb;
     integer cyc = 0;
     always @(posedge clk) begin cyc <= cyc + 1; end
     integer wm;
+`ifdef TB_FOCUS
+    // a step that takes 200 us is a hang: a remote step takes < 0.2 us, the
+    // first write to a home waits ~55 us for its array to clear
+    time    focus_t = 0;
+    integer focus_m = 0, focus_h = 0;
+    reg [15:0] focus_op = "--";
+    always begin
+        #10_000 $display("  @@@ beat %0t cyc %0d checks %0d errors %0d", $time, cyc, checks, errors);
+        if (focus_t > 0 && $time - focus_t > 200_000) begin
+            $display("  FAIL -- kx_pxache FOCUS: m%0d->h%0d %s hung since %0t (%0d checks, %0d errors)",
+                     focus_m, focus_h, focus_op, focus_t, checks, errors);
+`ifdef TB_LOCKSTEP
+            $display("@@@ LOCKSTEP %0d cycles compared, %0d differences", lk_cmp, lk_err);
+`endif
+            $finish;
+        end
+    end
+`endif
     initial begin
         #4_000_000;
         $display("  FAIL -- kx_pxache watchdog: no finish after 4 ms (%0d checks, %0d errors)", checks, errors);
+`ifdef TB_NETLIST
+        // a netlist DUT has no RTL internals: the ports only
+        for (wm = 0; wm < M; wm = wm + 1) begin
+            $display("  m%0d ar v/r %b/%b aw v/r %b/%b w v/r %b/%b r v/r %b/%b b v/r %b/%b",
+                     wm, s_arvalid[wm], s_arready[wm], s_awvalid[wm], s_awready[wm], s_wvalid[wm], s_wready[wm],
+                     s_rvalid[wm], s_rready[wm], s_bvalid[wm], s_bready[wm]);
+        end
+        for (wm = 0; wm < N; wm = wm + 1) begin
+            $display("  h%0d d aw v/r %b/%b w v/r %b/%b ar v/r %b/%b r v/r %b/%b b v/r %b/%b  n_aw %0d n_ar %0d",
+                     wm, d_awvalid[wm], d_awready[wm], d_wvalid[wm], d_wready[wm], d_arvalid[wm], d_arready[wm],
+                     d_rvalid[wm], d_rready[wm], d_bvalid[wm], d_bready[wm], n_aw[wm], n_ar[wm]);
+        end
+`else
         for (wm = 0; wm < M; wm = wm + 1) begin
             $display("  m%0d ar v/r %b/%b aw v/r %b/%b w v/r %b/%b r v/r %b/%b b v/r %b/%b  dut ar v/r %b/%b rd_ok %b wh_v %b rbusy %b",
                      wm, s_arvalid[wm], s_arready[wm], s_awvalid[wm], s_awready[wm], s_wvalid[wm], s_wready[wm],
@@ -272,6 +432,7 @@ module kx_pxache_tb;
                      dut.r_val_h[wm], dut.r_rdy_h[wm], dut.b_val_h[wm], dut.b_rdy_h[wm],
                      d_arvalid[wm], d_arready[wm], d_rvalid[wm], d_rready[wm]);
         end
+`endif
         $finish;
     end
 
@@ -495,6 +656,52 @@ module kx_pxache_tb;
         end
         repeat(SETS+80) @(posedge clk);
 
+`ifdef TB_FOCUS
+        // -d TB_FOCUS: one write and one read per (master, home) pair, each
+        // step stamped and watched; a netlist DUT does not finish the full list
+        // below in 2 h.
+        for (p = 0; p < M*N; p = p + 1) begin
+            mm = p / N; h = p % N;
+            focus_t = $time; focus_m = mm; focus_h = h; focus_op = "wr";
+            $display("  @@@ FOCUS m%0d->h%0d wr @%0t", mm, h, $time);
+            wr1(mm, haddr(h, 40'h400 + p*64), {8{64'hF0C5_0000 + (mm<<8) + h}});
+            focus_t = $time; focus_op = "rd";
+            $display("  @@@ FOCUS m%0d->h%0d rd @%0t", mm, h, $time);
+`ifdef TB_NET_DUMP
+            // 3 us of the die3->die2 trunk and its landing head around the
+            // m2->h3 read (instance names are the v9t5 netlist's)
+            if (mm == 2 && h == 3) begin
+                $dumpfile("net_dump.vcd");
+                $dumpvars(0, kx_pxache_tb.dut.u_net.inst.u_kx.\g_chain.g_b[2].g_d[0].u_tk );
+                $dumpvars(1, kx_pxache_tb.dut.u_net.inst.u_kx.\g_chain.g_p[2].g_d[0].s_knd );
+                $dumpvars(1, kx_pxache_tb.dut.u_net.inst.u_kx.\g_chain.g_p[2].g_d[0].g_ch[1].g_hr.hv_q );
+                $dumpvars(1, kx_pxache_tb.d_arvalid, kx_pxache_tb.d_arready, kx_pxache_tb.d_rvalid,
+                          kx_pxache_tb.d_rready, kx_pxache_tb.d_rlast, kx_pxache_tb.d_rid,
+                          kx_pxache_tb.s_arvalid, kx_pxache_tb.s_arready, kx_pxache_tb.s_rvalid,
+                          kx_pxache_tb.s_rready, kx_pxache_tb.clk, kx_pxache_tb.dclk);
+                fork begin #3000 $dumpoff; $dumpflush; end join_none
+            end
+`endif
+            rd1(mm, haddr(h, 40'h400 + p*64), {8{64'hF0C5_0000 + (mm<<8) + h}});
+        end
+        // every master reads every other master's line
+        for (p = 0; p < M*N; p = p + 1) begin
+            mm = (p / N + 1) % M; h = p % N;
+            focus_t = $time; focus_m = mm; focus_h = h; focus_op = "xr";
+            rd1(mm, haddr(h, 40'h400 + p*64), {8{64'hF0C5_0000 + ((p / N)<<8) + h}});
+        end
+`ifdef TB_LOCKSTEP
+        repeat(40) @(posedge clk);
+        $display("@@@ LOCKSTEP %0d cycles compared, %0d differences", lk_cmp, lk_err);
+        errors = errors + lk_err;
+`endif
+        if (errors == 0) begin
+            $display("  PASS -- kx_pxache FOCUS, %0d checks, 0 errors", checks);
+        end else begin
+            $display("  FAIL -- kx_pxache FOCUS: %0d errors / %0d checks", errors, checks);
+        end
+        $finish;
+`endif
         for (p=0;p<N;p=p+1) begin wr1(0, haddr(p,40'h200), {8{64'hC0DE_0000 + (p<<20)}}); end
         for (p=0;p<N;p=p+1) begin rd1(0, haddr(p,40'h200), {8{64'hC0DE_0000 + (p<<20)}}); end
         if (K > 1) begin
@@ -700,6 +907,10 @@ module kx_pxache_tb;
         end
 
         repeat(40) @(posedge clk);
+`ifdef TB_LOCKSTEP
+        $display("@@@ LOCKSTEP %0d cycles compared, %0d differences", lk_cmp, lk_err);
+        errors = errors + lk_err;
+`endif
         if (errors==0) begin
             $display("  PASS -- kx_pxache P%0d M%0d N%0d K%0d twoclk%0d ilv%0d dlat%0d rstag%0d, %0d checks, 0 errors",
                      P, M, N, K, TWOCLK, ILV, DLAT, RSTAG, checks);

@@ -1510,6 +1510,9 @@ HARNESS = {
     "card_v9t3_1n",
     "card_v9t3_2n",
     "card_v9t3_4n",
+    "card_v9t4_1n",
+    "card_v9t4_2n",
+    "card_v9t4_4n",
 }
 RV64_COMMON = ["src/kohakuaccel/common/kohaku_sdpram.v"]
 
@@ -2256,6 +2259,94 @@ for _n in (1, 2, 4):
         gen_card.image_sources("v9t3") + [f"tests/system/card_v9t3_{_n}n.v"],
     )
     DEFINES[f"card_v9t3_{_n}n"] = gen_card.image_defines("v9t3")
+# The v9t4 card (gen_card.py --ver v9t4): 2+2 dies (maps/mesh_1x2_2+2.txt).
+for _n in (1, 2, 4):
+    BENCHES[f"card_v9t4_{_n}n"] = (
+        f"card_v9t4_{_n}n",
+        gen_card.image_sources("v9t4") + [f"tests/system/card_v9t4_{_n}n.v"],
+    )
+    DEFINES[f"card_v9t4_{_n}n"] = gen_card.image_defines("v9t4")
+# The v9t5 card (gen_card.py --ver v9t5): v9t4's dies with the handshake cuts.
+for _n in (1, 2, 4):
+    BENCHES[f"card_v9t5_{_n}n"] = (
+        f"card_v9t5_{_n}n",
+        gen_card.image_sources("v9t5") + [f"tests/system/card_v9t5_{_n}n.v"],
+    )
+    DEFINES[f"card_v9t5_{_n}n"] = gen_card.image_defines("v9t5")
+# The v9t6 card (gen_card.py --ver v9t6): v9t5's dies; v9t6 differs in placement.
+for _n in (1, 2, 4):
+    BENCHES[f"card_v9t6_{_n}n"] = (
+        f"card_v9t6_{_n}n",
+        gen_card.image_sources("v9t6") + [f"tests/system/card_v9t6_{_n}n.v"],
+    )
+    DEFINES[f"card_v9t6_{_n}n"] = gen_card.image_defines("v9t6")
+# Diagnostic: the 4-node v9t4 card with the die 3 -> die 2 trunk's slot bit 523
+# held at 1 (tests/system/diag/kx_trunk_stuck.v), the card's observed fault.
+BENCHES["card_v9t4_4n_stuck523"] = (
+    "card_v9t4_4n",
+    [
+        "tests/system/diag/kx_trunk_stuck.v" if s.endswith("lane/kx_trunk.v") else s
+        for s in BENCHES["card_v9t4_4n"][1]
+    ],
+)
+DEFINES["card_v9t4_4n_stuck523"] = DEFINES["card_v9t4_4n"]
+# Diagnostic: kx_pxache_tb over a shipped Xache's OOC synthesis netlist (path in
+# KOHAKU_XACHE_NET), driven in the card's configuration with one partition clock.
+BENCHES["kx_pxache_net_tb"] = (
+    "kx_pxache_tb",
+    [
+        "src/kohakuaccel/verif/axi4_ram.v",
+        "tests/axi/diag/kx_pxache_net.v",
+        os.environ.get("KOHAKU_XACHE_NET", "build/diag/xache_routed.v"),
+        "tests/axi/kx_pxache_tb.v",
+    ],
+)
+KX_PXACHE_CARD_DEFS = [
+    "TB_M=4",
+    "TB_N=4",
+    "TB_K=2",
+    "TB_P=4",
+    "TB_SETS=16384",
+    "TB_SET_W=14",
+    "TB_BANKS=4",
+    "TB_TRUNK=1",
+    "TB_PCLK=0",
+    "TB_TWOCLK=1",
+    "TB_ILV=14",
+    "TB_RBB=16",
+    "TB_LRAM=5",
+    "TB_DUT_PCLK",
+    "TB_FOCUS",
+    "TB_URAM",
+    "TB_RINGREG=1",
+]
+DEFINES["kx_pxache_net_tb"] = ["TB_NETLIST"] + KX_PXACHE_CARD_DEFS
+NEEDS_GLBL.add("kx_pxache_net_tb")
+# Its RTL control: the same bench and configuration over the kx_pxache source.
+BENCHES["kx_pxache_net_dump_tb"] = BENCHES["kx_pxache_net_tb"]
+DEFINES["kx_pxache_net_dump_tb"] = DEFINES["kx_pxache_net_tb"] + ["TB_NET_DUMP"]
+NEEDS_GLBL.add("kx_pxache_net_dump_tb")
+BENCHES["kx_pxache_card_tb"] = BENCHES["kx_pxache"]
+DEFINES["kx_pxache_card_tb"] = KX_PXACHE_CARD_DEFS
+# Lockstep: the RTL and the netlist (KOHAKU_XACHE_NET, its submodules renamed)
+# on the same inputs, every output compared each cycle; _full runs the whole
+# bench sequence instead of the all-pairs FOCUS one.
+BENCHES["kx_pxache_lk_tb"] = (
+    "kx_pxache_tb",
+    BENCHES["kx_pxache"][1][:-1]
+    + [
+        "tests/axi/diag/kx_pxache_lk.v",
+        os.environ.get("KOHAKU_XACHE_NET", "build/diag/xache_routed.v"),
+        BENCHES["kx_pxache"][1][-1],
+    ],
+)
+DEFINES["kx_pxache_lk_tb"] = ["TB_LOCKSTEP"] + KX_PXACHE_CARD_DEFS
+NEEDS_GLBL.add("kx_pxache_lk_tb")
+BENCHES["kx_pxache_lk_full_tb"] = BENCHES["kx_pxache_lk_tb"]
+DEFINES["kx_pxache_lk_full_tb"] = ["TB_LOCKSTEP"] + [
+    d for d in KX_PXACHE_CARD_DEFS if d != "TB_FOCUS"
+]
+NEEDS_GLBL.add("kx_pxache_lk_full_tb")
 # Cluster-count scaling: the v9 card with 6+2 / 8+2 dies on a 2x2 router grid.
 for _n in (6, 8):
     for _d in (1, 2):
@@ -2313,7 +2404,10 @@ def main():
     # so a debug loop should stop at ~1.5x where the answer was due.
     ap.add_argument("--max-time", help="stop after this sim time, e.g. 200us")
     ap.add_argument(
-        "--plusarg", action="append", default=[], help="NAME=VALUE, the bench's $value$plusargs"
+        "--plusarg",
+        action="append",
+        default=[],
+        help="NAME=VALUE, the bench's $value$plusargs",
     )
     ap.add_argument(
         "--wall",
@@ -2493,7 +2587,9 @@ def main():
     # In an option file: xsim.bat splits a command-line `NAME=VALUE` at the `=`.
     plus = []
     if args.plusarg:
-        (work / "plus.txt").write_text("".join(f"-testplusarg {p}\n" for p in args.plusarg))
+        (work / "plus.txt").write_text(
+            "".join(f"-testplusarg {p}\n" for p in args.plusarg)
+        )
         plus = ["-f", "plus.txt"]
     # --vcd dumps a scope's signals for reading cycle by cycle.
     if args.vcd:

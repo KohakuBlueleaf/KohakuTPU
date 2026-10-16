@@ -420,6 +420,44 @@ module kx_pxache #(
     function integer f_in(input integer b, input integer d, input integer pp_);
         f_in = d ? (pp_ <= b) : (pp_ > b);
     endfunction
+    // any master in a partition above / below p_
+    function integer f_mup(input integer p_);
+        integer i;
+        begin
+            f_mup = 0;
+            for (i = 0; i < M; i = i + 1) begin
+                if (f_mp(i) > p_) begin f_mup = 1; end
+            end
+        end
+    endfunction
+    function integer f_mdn(input integer p_);
+        integer i;
+        begin
+            f_mdn = 0;
+            for (i = 0; i < M; i = i + 1) begin
+                if (f_mp(i) < p_) begin f_mdn = 1; end
+            end
+        end
+    endfunction
+    // any home in a partition above / below p_
+    function integer f_hup(input integer p_);
+        integer i;
+        begin
+            f_hup = 0;
+            for (i = 0; i < N_HOME; i = i + 1) begin
+                if (f_hp(i) > p_) begin f_hup = 1; end
+            end
+        end
+    endfunction
+    function integer f_hdn(input integer p_);
+        integer i;
+        begin
+            f_hdn = 0;
+            for (i = 0; i < N_HOME; i = i + 1) begin
+                if (f_hp(i) < p_) begin f_hdn = 1; end
+            end
+        end
+    endfunction
     function integer f_nlm(input integer p_);
         integer i;
         begin
@@ -1253,9 +1291,33 @@ module kx_pxache #(
                 assign lar_h[h] = 1'b0;  assign law_h[h] = 1'b0;  assign lw_h[h] = 1'b0;
             end
         end
-        assign x_arready[m] = rd_ok && (ar_loc ? (|lar_h) : (ar_up ? up_ar_r : dn_ar_r));
-        assign x_awready[m] = wr_ok && !wh_v && (aw_loc ? (|law_h) : (aw_up ? up_aww_r : dn_aww_r));
-        assign x_wready[m]  = wh_v  && (w_loc  ? (|lw_h)  : (w_up  ? up_aww_r : dn_aww_r));
+        // One term per direction a home lies in, as at the homes' readies (the
+        // mux form lost dn_aww_r from master 3's AW ready in elaboration).
+        wire ar_t_loc, ar_t_up, ar_t_dn, aw_t_loc, aw_t_up, aw_t_dn, w_t_loc, w_t_up, w_t_dn;
+        if (f_nlh(PM) > 0) begin : g_ql
+            assign ar_t_loc = ar_loc && (|lar_h);
+            assign aw_t_loc = aw_loc && (|law_h);
+            assign w_t_loc  = w_loc  && (|lw_h);
+        end else begin : g_ql0
+            assign ar_t_loc = 1'b0;  assign aw_t_loc = 1'b0;  assign w_t_loc = 1'b0;
+        end
+        if (f_hup(PM)) begin : g_qu
+            assign ar_t_up = ar_up && up_ar_r;
+            assign aw_t_up = aw_up && up_aww_r;
+            assign w_t_up  = w_up  && up_aww_r;
+        end else begin : g_qu0
+            assign ar_t_up = 1'b0;  assign aw_t_up = 1'b0;  assign w_t_up = 1'b0;
+        end
+        if (f_hdn(PM)) begin : g_qd
+            assign ar_t_dn = !ar_loc && !ar_up && dn_ar_r;
+            assign aw_t_dn = !aw_loc && !aw_up && dn_aww_r;
+            assign w_t_dn  = !w_loc  && !w_up  && dn_aww_r;
+        end else begin : g_qd0
+            assign ar_t_dn = 1'b0;  assign aw_t_dn = 1'b0;  assign w_t_dn = 1'b0;
+        end
+        assign x_arready[m] = rd_ok && (ar_t_loc || ar_t_up || ar_t_dn);
+        assign x_awready[m] = wr_ok && !wh_v && (aw_t_loc || aw_t_up || aw_t_dn);
+        assign x_wready[m]  = wh_v  && (w_t_loc  || w_t_up  || w_t_dn);
 
         // ---- response sources: the RSP chain head here, or the lane taps
         for (h = 0; h < N_HOME; h = h + 1) begin : g_src
@@ -1770,8 +1832,37 @@ module kx_pxache #(
         assign rb_tv[h*P + PH]   = 1'b0;
         assign rb_tdst[h*P + PH] = {MIDX_W{1'b0}};
         assign rb_td[h*P + PH]   = {RBW{1'b0}};
-        assign r_rdy_h[h] = r_loc ? (|rs_r_h) : (r_up ? (up_rb_r && !up_b) : (dn_rb_r && !dn_b));
-        assign b_rdy_h[h] = b_loc ? (|bs_r_h) : (b_up ? up_rb_r : dn_rb_r);
+        // The ready is a sum over the directions this home's responses can
+        // take, each term present only where the map has a master that way.
+        // No term is a mux on a select the elaborator can prove constant:
+        // Vivado 2024.2 elaborates `r_up ? .. : (dn_rb_r && ..)` with r_up
+        // never true as the dead arm, dropping the live one, depending only
+        // on the engines' instance order (minimal case:
+        // tests/axi/diag/vivado_fold_repro.v).
+        wire r_t_loc, r_t_up, r_t_dn, b_t_loc, b_t_up, b_t_dn;
+        if (f_nlm(PH) > 0) begin : g_tl
+            assign r_t_loc = r_loc && (|rs_r_h);
+            assign b_t_loc = b_loc && (|bs_r_h);
+        end else begin : g_tl0
+            assign r_t_loc = 1'b0;
+            assign b_t_loc = 1'b0;
+        end
+        if (f_mup(PH)) begin : g_tu
+            assign r_t_up = r_up && up_rb_r && !up_b;
+            assign b_t_up = b_up && up_rb_r;
+        end else begin : g_tu0
+            assign r_t_up = 1'b0;
+            assign b_t_up = 1'b0;
+        end
+        if (f_mdn(PH)) begin : g_td
+            assign r_t_dn = !r_loc && !r_up && dn_rb_r && !dn_b;
+            assign b_t_dn = !b_loc && !b_up && dn_rb_r;
+        end else begin : g_td0
+            assign r_t_dn = 1'b0;
+            assign b_t_dn = 1'b0;
+        end
+        assign r_rdy_h[h] = r_t_loc || r_t_up || r_t_dn;
+        assign b_rdy_h[h] = b_t_loc || b_t_up || b_t_dn;
     end endgenerate
 
     // ============================ tap readies ============================
