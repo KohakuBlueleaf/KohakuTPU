@@ -1,0 +1,7 @@
+# v9t4: 2+2 on two routers stacked -- mesh_1x2_4+2.txt without the north and
+# south edge clusters. Each router carries one cluster (local), one vector core
+# (east) and one system-node port (west).
+xxx nul xxx
+sys mat vec
+sys mat vec
+xxx nul xxx

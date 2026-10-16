@@ -111,6 +111,15 @@ MANIFEST = [
         (True, False, False),
         True,
     ),
+    # multimesh_v9t4: the same two routers with one cluster each, every die.
+    (
+        "ktpu_ship_1x2_2c2v_1m_nol2",
+        "mesh_1x2_2+2.txt",
+        True,
+        True,
+        (True, False, False),
+        True,
+    ),
     # Cluster-count scaling on the v9 node: 6+2 is the v8 die above; 8+2 here.
     (
         "ktpu_ship_2x2_8c2v_1m_nol2",
