@@ -146,16 +146,19 @@ module mx_quant #(
     localparam [2:0] PK_SCALE = 3'd3, PK_PACK = 3'd4, PK_TAIL = 3'd5;
     reg [2:0] pk;
 
-    // Pack stage 1: the source select, the FP16 decode, the multiply by the
-    // scale reciprocal, and the shift control. The product register is the
-    // DSP48's own MREG, so the multiply costs no fabric and no logic level.
+    // Pack stage 1: the source select and the FP16 decode, registered as the
+    // DSP48's A operand. Stage 2: the multiply by the scale reciprocal (the
+    // product register is the DSP48's own MREG) and the shift control.
     (* use_dsp = "yes" *) reg [23:0] pmul [0:31];
+    reg [10:0] s_q   [0:31];          // decoded significand
+    reg [4:0]  e_q   [0:31];
+    reg        sg_q  [0:31];
     reg [2:0] u_r   [0:31];           // window offset, 0..7
     reg       z_r   [0:31];           // element quantises to zero
     reg       sat_r [0:31];           // element saturates the int7 range
     reg       sgn_r [0:31];
-    reg [1:0] pkw, pkw_d;
-    reg       pk2_valid;
+    reg [1:0] pkw, pkw_d0, pkw_d;
+    reg       pk1_valid, pk2_valid, done_t;
 
     integer i, ci, si, sj, oi, lane, j, hh;
     reg [4:0]  norm;
@@ -171,7 +174,6 @@ module mx_quant #(
     reg              hi_v;
 
     reg [15:0]       h_v;
-    reg [4:0]        e_v;
     reg [10:0]       s_v;
     reg signed [7:0] t_v;
 
@@ -256,12 +258,16 @@ module mx_quant #(
     // ---- pack: the next full buffer, in fill order ------------------------
     always @(posedge clk) begin
         if (rst) begin
-            pk <= PK_IDLE; done <= 1'b0;
-            pk2_valid <= 1'b0; pkw <= 2'd0; pkw_d <= 2'd0;
+            pk <= PK_IDLE; done <= 1'b0; done_t <= 1'b0;
+            pk1_valid <= 1'b0; pk2_valid <= 1'b0;
+            pkw <= 2'd0; pkw_d0 <= 2'd0; pkw_d <= 2'd0;
         end else begin
-            done      <= 1'b0;
-            pk2_valid <= (pk == PK_PACK);
-            pkw_d     <= pkw;
+            done_t    <= 1'b0;
+            done      <= done_t;
+            pk1_valid <= (pk == PK_PACK);
+            pk2_valid <= pk1_valid;
+            pkw_d0    <= pkw;
+            pkw_d     <= pkw_d0;
             if ((DBUF != 0) && to_drain) begin
                 for (ci = 0; ci < 128; ci = ci + 1) srcp[ci] <= src[ci];
             end
@@ -367,13 +373,13 @@ module mx_quant #(
             end else if (pk == PK_TAIL) begin
                 // The next entry already filled: its copy follows at once --
                 // eight cycles an entry, the fill's eight beats.
-                pk   <= ((DBUF != 0) && full) ? PK_DRAIN : PK_IDLE;
-                done <= 1'b1;
+                pk     <= ((DBUF != 0) && full) ? PK_DRAIN : PK_IDLE;
+                done_t <= 1'b1;
             end
         end
     end
 
-    // ---- pack stage 1: select, decode, multiply, shift control -----------
+    // ---- pack stages 1-2: select and decode, then multiply and shift -----
     // Slot s carries lane s/8 and K-slice element s%8 of the word `pkw`
     // selects, so the source select is 4:1 and the scale reciprocal is fixed
     // per lane for the whole entry.
@@ -382,21 +388,31 @@ module mx_quant #(
     //     q = round(sig * recip(m8) * 2^(e - 25 - sexp - 12))
     //
     //   t = 21 + sexp - e   is that shift measured from bit 15 of the product.
+    //
+    // The select + decode cone ends at a register, not at the DSP's A port:
+    // as one cycle it measured 4,082 failing endpoints at 6.6 levels routed
+    // (v9t5); split, the family gains +0.41 ns OOC at 3.333 ns.
     always @(posedge clk) begin
         for (si = 0; si < 32; si = si + 1) begin
             h_v = (DBUF != 0) ? srcp[(si/8)*32 + (si%8) + pkw*8]
                               : src[(si/8)*32 + (si%8) + pkw*8];
-            {e_v, s_v} = decode(h_v[14:0]);
-            t_v = sbase[si/8] - $signed({3'b000, e_v});
+            {e_q[si], s_q[si]} <= decode(h_v[14:0]);
+            sg_q[si] <= h_v[15];
+        end
+    end
+    always @(posedge clk) begin
+        for (si = 0; si < 32; si = si + 1) begin
+            s_v = s_q[si];
+            t_v = sbase[si/8] - $signed({3'b000, e_q[si]});
             pmul[si]  <= s_v * srec[si/8];
             u_r[si]   <= t_v[2:0];
             z_r[si]   <= (s_v == 11'd0) || (!t_v[7] && (|t_v[6:3]));
             sat_r[si] <= t_v[7];
-            sgn_r[si] <= h_v[15];
+            sgn_r[si] <= sg_q[si];
         end
     end
 
-    // ---- pack stage 2: window, round, clamp, sign, place -----------------
+    // ---- pack stage 3: window, round, clamp, sign, place -----------------
     // AN 8-BIT WINDOW, NOT A 24-BIT BARREL SHIFT. The product is under 2^23 and
     // the scale comes from the block peak, so t is in [0,7] for every element
     // that produces a nonzero result: above that the window clears the product
