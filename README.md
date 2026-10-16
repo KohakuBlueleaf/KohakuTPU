@@ -173,6 +173,34 @@ def silu(x=kt.In("R", 128), y=kt.Out("R", 128), *, rows=kt.auto(16, 8)):
 
 ---
 
+## Next: KohakuAccel OS
+
+Every node carries a full RV64 core (machine, supervisor and user modes, Sv39,
+interrupts), but today each one runs its own dispatcher: an **AMP** machine,
+one hart per node, private caches, no coherence hardware, and a push-only link
+between nodes. The plan is a small OS that makes those cores behave as **one
+SMP system, simulated in firmware on top of the AMP hardware**, using what the
+nodes already have:
+
+| needed for SMP | what the hardware already gives |
+|---|---|
+| one memory | the Xache: every core reaches every DRAM channel |
+| cache coherence | **simulated**: there is no snoop and no remote or per-line invalidate, only a whole-L1 flush and invalidate per core. The OS enforces coherence at synchronisation (flush before a release, invalidate after an acquire) and maps shared mutable pages uncached or leaves them to their home |
+| inter-processor interrupt | a doorbell from another node raises the external interrupt |
+| release / acquire | a fenced ring leaves only after the node's writes, and lands only after they are in memory; 16 signal slots count events per channel |
+| a lock or a shared queue | no remote atomics or reads, so each shared object gets a **home node** that runs every operation on it, sent as posted stores plus a ring |
+| tasks and memory | per-node cooperative tasks and region heaps, already in the firmware |
+
+On top of that: one run queue across all node CPUs, tasks that migrate by
+shipping their context, processes in their own Sv39 address spaces, and
+dispatch decisions made on the card instead of the host. Data-dependent
+schedules, kernels spanning nodes without host orchestration, and a few
+long-lived processes (a serving loop, a prefetcher, a profiler) all become
+possible. It is a platform feature: any project's units are dispatched through
+it, and KohakuTPU is its first user.
+
+---
+
 ## Build your own
 
 The platform does not remove the design work; it removes **the connection
