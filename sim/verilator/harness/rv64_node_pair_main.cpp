@@ -20,6 +20,9 @@ static const uint8_t  HR_BOOT = 0x00, HR_PC = 0x08, HR_STATUS = 0x18,
                       HR_EXIT = 0x20, HR_HALTPC = 0x28;
 static const uint64_t SPAD_BASE = 0x0001'0000ull;
 
+// Legacy hook verilated.cpp names (weak on Linux, undefined under mingw).
+double sc_time_stamp() { return 0.0; }
+
 static VerilatedContext *ctx;
 static Vrv64_node_pair *dut;
 static uint64_t cycles = 0;

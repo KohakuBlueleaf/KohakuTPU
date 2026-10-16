@@ -93,6 +93,20 @@ IMAGES = {
         "kohakuaccel/os",
         "kohakuaccel/apps/osprobe",
     ],
+    # The processor's datapaths on known answers (tools/cpuprobe.py); the _m1
+    # image is the bench's mesh-1 node.
+    "cpuprobe": ["kohakuaccel/boot", "kohakuaccel/apps/cpuprobe"],
+    "cpuprobe_m1": ["kohakuaccel/boot", "kohakuaccel/apps/cpuprobe"],
+}
+
+#: Extra compile defines per image.
+DEFINES = {"cpuprobe_m1": ["-DCPUPROBE_MESH=1"]}
+
+#: (link map, instruction bytes, scratchpad bytes) of an image not on node.ld.
+CPUPROBE_LD = FW / "kohakuaccel" / "apps" / "cpuprobe" / "cpuprobe.ld"
+MEMORY = {
+    "cpuprobe": (CPUPROBE_LD, 8 * 1024, 4 * 1024),
+    "cpuprobe_m1": (CPUPROBE_LD, 8 * 1024, 4 * 1024),
 }
 
 INCLUDES = ["kohakuaccel/include"]
@@ -110,6 +124,13 @@ def file_flags(src: pathlib.Path) -> list[str]:
 #: The two arrays an image must fit, and the sections each holds.
 IMEM_BYTES = 32 * 1024
 SPAD_BYTES = 32 * 1024
+
+
+def memory(name: str) -> tuple:
+    """(link map, instruction bytes, scratchpad bytes) of image `name`."""
+    return MEMORY.get(name, (LINK, IMEM_BYTES, SPAD_BYTES))
+
+
 IMEM_SECTIONS = (".text",)
 SPAD_SECTIONS = (".bootargs", ".rodata", ".data", ".bss", ".noinit", ".stack")
 
@@ -145,7 +166,8 @@ def build_clang(name: str) -> dict:
     # -nostdlib already implies -nostartfiles to clang's bare-metal driver, and
     # an unused flag is an error under -Werror.
     flags = ["--target=riscv64-unknown-elf", "-Wno-unused-command-line-argument"]
-    flags += CFLAGS + [f"-I{(FW / i).as_posix()}" for i in INCLUDES]
+    flags += CFLAGS + DEFINES.get(name, [])
+    flags += [f"-I{(FW / i).as_posix()}" for i in INCLUDES]
     objs = []
     for s in srcs:
         rel = s.relative_to(FW).with_suffix(".o").as_posix().replace("/", "__")
@@ -162,7 +184,7 @@ def build_clang(name: str) -> dict:
             *flags,
             "-fuse-ld=lld",
             "-T",
-            LINK.as_posix(),
+            memory(name)[0].as_posix(),
             "-Wl,--gc-sections",
             f"-Wl,-Map={(OUT / f'{name}.map').as_posix()}",
             *objs,
@@ -193,7 +215,7 @@ def build(name: str) -> dict:
     obj_dir = OUT / "obj" / name
     obj_dir.mkdir(parents=True, exist_ok=True)
     inc = " ".join(f"-I{wsl_path(FW / i)}" for i in INCLUDES)
-    flags = " ".join(CFLAGS)
+    flags = " ".join(CFLAGS + DEFINES.get(name, []))
     cmds, objs = [], []
     for s in srcs:
         rel = s.relative_to(FW).with_suffix(".o").as_posix().replace("/", "__")
@@ -205,7 +227,7 @@ def build(name: str) -> dict:
         )
     elf = OUT / f"{name}.elf"
     cmds.append(
-        f"{CROSS}gcc {flags} -T {wsl_path(LINK)} "
+        f"{CROSS}gcc {flags} -T {wsl_path(memory(name)[0])} "
         f"-Wl,-Map={wsl_path(OUT / f'{name}.map')} {' '.join(objs)} "
         f"-o {wsl_path(elf)} {' '.join(LDFLAGS)}"
     )
@@ -257,10 +279,11 @@ def main() -> int:
         s = make(name)
         imem = sum(s.get(k, 0) for k in IMEM_SECTIONS)
         spad = sum(s.get(k, 0) for k in SPAD_SECTIONS)
-        ok = imem <= IMEM_BYTES and spad <= SPAD_BYTES
+        _, imem_max, spad_max = memory(name)
+        ok = imem <= imem_max and spad <= spad_max
         bad += not ok
         print(
-            f"{name:20s} imem {imem:6d}/{IMEM_BYTES} B  spad {spad:6d}/{SPAD_BYTES} B"
+            f"{name:20s} imem {imem:6d}/{imem_max} B  spad {spad:6d}/{spad_max} B"
             f"  {time.monotonic() - t0:4.1f}s  {'ok' if ok else 'DOES NOT FIT'}"
         )
     return 1 if bad else 0
