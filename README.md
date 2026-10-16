@@ -1,6 +1,6 @@
 # KohakuAccel & KohakuTPU
 
-![KohakuTPU overall architecture](image/README/KohakuTPU-new-arch.png)
+![KohakuAccel architecture: Xache and DRAM, SysNodes, NoC meshes and the host stack](image/README/KohakuAccelFramework.png)
 
 **KohakuAccel is an open hardware and software platform for building FPGA
 accelerators. KohakuTPU is the AI accelerator built on it. This repository
