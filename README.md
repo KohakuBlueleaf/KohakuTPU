@@ -1,156 +1,197 @@
 # KohakuAccel & KohakuTPU
 
-![KohakuAccel architecture: Xache and DRAM, SysNodes, NoC meshes and the host stack](image/README/KohakuAccelFramework.png)
+![KohakuAccel architecture: Xache and DRAM, system nodes, NoC meshes and the host stack](image/README/KohakuAccelFramework.png)
 
-**KohakuAccel is an open hardware and software platform for building FPGA
-accelerators. KohakuTPU is the AI accelerator built on it. This repository
-holds both: the RTL, the compiler, and the driver.**
+**KohakuAccel is an open hardware and software platform for building
+accelerators. KohakuTPU is the AI accelerator built on it, and the example
+this page uses for every part of the platform. This repository holds both: the
+RTL, the firmware, the compiler, the driver and the runtime.**
 
 > Work in progress, built more for fun and for learning than for production. If
 > you want to make it work for real, PRs are welcome.
 
-The idea comes from how ML research works. A field moves fast when there is a
-standard codebase to fork, like BasicSR or taming-transformers. Accelerator
-research has no such codebase. Every new machine rebuilds the same transport,
-dispatch and memory plumbing before its first interesting instruction runs.
+ML research moves fast when there is a standard codebase to fork, like BasicSR
+or taming-transformers. Accelerator research has none: every new machine
+rebuilds the same host link, dispatch and memory plumbing before its first
+interesting instruction runs. KohakuAccel is that codebase. **A new
+accelerator is a new compute unit and a new instruction set; the
+interconnect, the memory system, the control processor, dispatch, completion,
+the compiler and driver stack are reused unchanged.** KohakuTPU is the first
+machine built this way, and deliberately not the only one in the tree.
 
-KohakuAccel is that standard codebase. **To build a new accelerator, you write
-a new compute unit and a new instruction set. Everything else is reused
-unchanged: the host link, the on-card interconnect, the memory agent, the
-mesh, dispatch, completion, the compiler IR, and the driver.** KohakuTPU is
-the first machine built this way. It is deliberately not the only one in the
-tree.
+The platform names no device. Its RTL is written against generic memories,
+FIFOs and clock-domain crossings, each vendor primitive behind a wrapper with a
+portable replacement, so the same design targets another vendor's FPGA or an
+ASIC flow. What belongs to one chip (how nodes map onto dies, the clocks, the
+I/O, the floorplan) lives in the block design, the constraints and a top named
+for that chip.
 
 ---
 
-## KohakuAccel: the platform
+## The machine
 
-### What the framework removes
+**KohakuAccel.** A machine is a chain of **nodes** sharing one memory. A node
+is complete on its own: a NoC mesh carrying the compute units, a system node
+that owns the mesh's memory and dispatch, and a partition of the Xache in
+front of its own DRAM channel. Everything in green below is the platform;
+the orange slots are what a project writes.
 
-The framework does not remove the design work. It removes **the connection
-problem.**
+```mermaid
+flowchart TD
+  node["Machine = node × N"] --> mesh["NoC mesh"]
+  node --> sn["System node"]
+  node --> xp["Xache partition"]
+  node --> st["Station<br/>on the host bus: JTAG · PCIe"]
+  mesh --> cu["Your compute units<br/>on noc_cu_base"]
+  sn --> cpu["RV64 control core"]
+  sn --> mag["MAG<br/>memory agent · staging"]
+  sn --> mv["Mover"]
+  mv --> tf["Your transform"]
+  sn --> il["Interlink<br/>to the next node"]
+  xp --> dram["DRAM channel"]
+  classDef yours fill:#fad7ac,stroke:#b46504,color:#000
+  classDef fw fill:#d5e8d4,stroke:#82b366,color:#000
+  class cu,tf yours
+  class node,st,mesh,sn,xp,cpu,mag,mv,il,dram fw
+```
 
-You design the whole compute unit: the datapath, the memories, the pipeline,
-and what the instructions mean. The framework has no opinion about any of
-that. What the framework fully defines is how you receive and how you send:
-the port, the flit format, dispatch, credits, completion, faults, discovery,
-memory requests, unit-to-unit transfer, and cross-mesh addressing. That work
-is unglamorous. It is where the silent failures live. You do not have to work
-it out. [`docs/integrate/`](docs/integrate/README.md) is the surface you build
-against, and [`docs/glossary.md`](docs/glossary.md) defines every word on this
-page that means something specific here — flit, granule, station, mover, MAG,
-system node, kick, completion — in one alphabetical place.
+- **A compute unit** attaches to the mesh at one port through `noc_cu_base`,
+  which owns framing, discovery, credits and completion, so a unit conforms by
+  construction. Its datapath, memories and instruction meaning are entirely
+  its own.
+- **The system node** is fused, not a set of peers: an RV64IMA core runs the
+  dispatcher firmware, the memory agent (MAG) turns mesh traffic into memory
+  traffic and holds a staging store, the mover walks strided descriptors with
+  a transform slot on its read return, and the interlink carries pushes and
+  doorbells to the next node.
+- **The Xache** is a crossbar and cache in one, partitioned across the nodes:
+  every node reaches every DRAM channel through one coherent address space,
+  each partition boundary one registered, credited hop.
+- **The station bus** carries host traffic (JTAG, PCIe through XDMA) along a
+  line of stations, one per node, each on its own clock.
 
-Ownership has four categories, not two ([full table](docs/integrate/what-you-own.md)):
+**KohakuTPU** fills the slots with two compute units and one transform:
+
+- **Matmul cluster.** MXFP7 operands (int7 elements with an **E5M3** scale
+  shared by a block of 32, a scale chosen so a block's peak always lands at
+  full significand) multiplied in DSP48E2 chains: four tensor units cascade
+  through `PCOUT -> PCIN`, so the multiply and the whole K=32 reduction happen
+  inside the DSPs, double-pumped on a 2x clock. The fabric holds control, not
+  arithmetic.
+- **Vector core.** 16 E8M15 lanes with a transcendental unit each, and five
+  engines fed by one instruction stream, so fills, drains and math overlap.
+- **Transform.** The mover's slot holds the MXFP7 quantiser and a 4x4 granule
+  transposer, so conversion happens while data moves.
+
+Its current FPGA build places one node per die, two clusters and two vector
+cores each, four nodes in all:
+
+![The v9t5 build, routed, every fabric site coloured by the block it holds](image/README/dieshot_v9t5.png)
+
+*The v9t5 build, routed, the four dies in a row as they abut: each die's mesh
+on top, its DDR4 controller's column, then the system node and Xache partition;
+the host link on die 1.*
+
+| KohakuTPU | |
+|---|---|
+| **On silicon** | All four nodes: the RV64 system nodes boot the dispatcher firmware over JTAG, and every matmul cluster, vector core and mover runs its workload at the bring-up clock profile. |
+| **Fixed, rebuilding** | A Vivado 2024.2 elaboration fault dropped a live term from one Xache ready between nodes 2 and 3; the RTL now writes those readies so no select can fold ([repro](tests/axi/diag/vivado_fold_repro.v)). |
+| **In simulation** | The whole four-node card in Verilator, running the same firmware, driver and compiled programs as the silicon; every unit bench in xsim. |
+| **In progress** | Timing closure at the target clocks (no frequency in this repository is a closed-timing result yet), and four clusters a node. |
+
+Measured figures, each with the run it came from:
+[results.md](docs/projects/kohakutpu/results.md).
+
+---
+
+## The software
+
+**KohakuAccel.** One shared stack carries any project from instruction words
+to a running unit. A project's program is an **L1 program**: one instruction
+stream per unit and the node's sync points, packed into a **package** the
+node's dispatcher firmware runs.
+
+```mermaid
+flowchart LR
+  isa["ISA field table<br/>encoder · decoder · validator"] --> l1["L1 program<br/>a stream per unit"]
+  l1 --> pkg["Package"]
+  pkg --> drv["Driver<br/>transport · node queue"]
+  drv --> fw["Dispatcher firmware<br/>on the RV64"]
+  fw --> u["Units"]
+  u -. "completions refill credit" .-> fw
+```
+
+| | |
+|---|---|
+| **compiler** (`kohakuaccel.compiler`) | the ISA toolkit (a field table becomes an encoder, decoder, validator and disassembler), the L1 program, the package format and builder, the machine description |
+| **driver** (`kohakuaccel.driver`) | transports (JTAG, PCIe, a Verilated card), discovery, node boot, the node queue, the card daemon |
+| **firmware** (`software/firmware/kohakuaccel/`) | the RV64 dispatcher: queue service, package interpreter, unit enumeration and a unit-class registry |
+| **simulation** (`kohakuaccel.simulation`) | the package interpreter and a simulated machine, so a project runs before it has RTL |
+
+The framework imports nothing from any project, and a test fails the moment it
+does.
+
+**KohakuTPU** adds a language and compiler on top of that stack, and almost
+nothing beneath it:
+
+```mermaid
+flowchart LR
+  tg["tinygrad<br/>DEV=KTPU"] --> dsl["DSL kernel<br/>Python, traced once"]
+  api["Tensor API"] --> dsl
+  dsl --> l2["L2 .ktpu<br/>work on named units"]
+  l2 --> l1["L1 .ktpu"]
+  l1 --> vf{"static<br/>verifier"}
+  vf --> pkg["KohakuAccel package"]
+```
+
+- **`.ktpu`**, a custom language with L2 (work on named units and memory
+  spaces) and L1 (each unit's stream) in text, a compiler from one to the
+  other, a Python DSL that traces into L2, and a tinygrad device that turns
+  every scheduled kernel into a DSL kernel. Every level can be written by hand.
+- **A static verifier** proves every compiled program free of deadlock and
+  races before it reaches the card
+  ([verify.md](docs/projects/kohakutpu/verify.md)).
+- **Firmware:** KohakuTPU writes no dispatcher. It registers two unit classes
+  (`software/firmware/kohakutpu/units/`, the matmul cluster and the vector
+  core) with the dispatcher the platform provides.
+
+```python
+import kohakutpu.language.dsl as kt
+
+@kt.kernel
+def silu(x=kt.In("R", 128), y=kt.Out("R", 128), *, rows=kt.auto(16, 8)):
+    for c in kt.par(kt.machine().vc, on=kt.vc):          # one instance a core
+        for t in kt.range(x.shape[0] // 2 // rows):      # the core's stream loop
+            r = c * (x.shape[0] // 2) + t * rows
+            v = kt.load(x[r : r + rows, :])
+            kt.store(y[r : r + rows, :], v * kt.recip(1.0 + kt.exp2(v * -kt.LOG2E)))
+```
+
+[tinygrad.md](docs/projects/kohakutpu/tinygrad.md) ·
+[dsl.md](docs/projects/kohakutpu/dsl.md) ·
+[ir/ktpu.md](docs/projects/kohakutpu/ir/ktpu.md)
+
+---
+
+## Build your own
+
+The platform does not remove the design work; it removes **the connection
+problem**. Ownership has four categories
+([full table](docs/integrate/what-you-own.md)):
 
 | | examples | may you change it |
 |---|---|---|
-| **Fixed protocol** | flit format, port handshake, memory encoding, credits | No. If you change it, you are off the framework |
-| **Customizable addon** | the read-path transform in the memory agent, L2 staging, the endpoint adapter | Yes. That is what the slot is for |
+| **Fixed protocol** | flit format, port handshake, memory encoding, credits | No: change it and you are off the platform |
+| **Customizable addon** | the mover's transform slot, L2 staging, the endpoint adapter | Yes: that is what the slot is for |
 | **Convention** | how a well-behaved unit is shaped, each marked *forced* or *free* | Follow or don't, but know which is which |
 | **Yours** | datapath, memories, instruction semantics, pipeline depth | Entirely |
 
-### What ships
-
-**Hardware, `src/kohakuaccel/`.** The spine that every accelerator reuses:
-
-- `axi/` is the station bus. A line of stations carries host traffic (XDMA and
-  JTAG) to every die of a multi-SLR part, with per-station clocks and link
-  CDCs.
-- `sysnode/` is the system node, one per mesh. The agent (`mag`, the *memory
-  access gateway*) turns mesh traffic into DRAM traffic, with streaming fetches
-  and multicast; the memory mover walks six-dimensional strided descriptors and
-  carries a swappable transform slot on its read return; and the interlink joins
-  one mesh to the next.
-
-  **A control processor is structural, not an option.** There is no parameter
-  that removes it: the node cannot be built without a processor, and the mover
-  is that processor's execution unit rather than a peer with a command window.
-  What *is* a parameter is `CPU_RV64` (default 0), and it chooses **which**
-  processor — the RV32 complex, which answers on the mesh at `(0,0)`, or the
-  RV64 complex, which has no mesh presence and is loaded through a host window.
-- `noc/` is the mesh: XY routers, the orchestrator, the L2 endpoint adapter,
-  and `noc_cu_base`. Every compute unit wraps `noc_cu_base`. It handles
-  framing, discovery, completion, and credits, so a unit conforms by
-  construction.
-- `common/` and `verif/` hold fifos, CDC primitives, reset entry, AXI RAM
-  models, and `kh_port_check`. The checker makes the port conventions
-  executable instead of prose.
-- `pe/rv32/` is the RV32I controller PE, a compute unit that happens to be a
-  processor. `SIMD_EN` names a wide datapath it does not own — a slot, 0 by
-  default, filled by [KohakuMPE](docs/projects/kohakumpe/README.md).
-- `pe/rv64-sys/` is the RV64IMA + Zicsr system core: an in-order pipeline with a
-  branch predictor, an Sv39 page-table walker, a write-back L1 and a
-  machine-mode trap and interrupt model. It ships in two wrappers — a mesh
-  compute unit (`rv64_sys_pe`) and a shell-less core that fuses to MAG
-  (`rv64_syscore`). [`docs/arch/cpu/`](docs/arch/cpu/README.md) says why the
-  framework carries two processors, how to choose, and what the RV64 branch does
-  not do yet.
-
-**The build list is `scripts/py/xsim.py`**, and only that. Each library also
-carries a `FILES.f` inventory, generated from the tree by
-`scripts/py/filesf.py` and checked in the standard suite — but **nothing builds
-from one**, so adding a file to a manifest by hand has no effect on any build.
-
-**Contracts, [`docs/spec/`](docs/spec/README.md).** Normative pages, one per
-surface: flit format, compute-unit port, memory protocol, control registers,
-instruction encoding, and the transform slot. Each page gives every field and
-every MUST. A known-divergences section records where reality and declaration
-differ.
-
-**Extension points, `src/templates/`.** Each template is a working skeleton
-**with its self-checking bench**, because a template without a bench is a
-trap:
-
-| template | the slot |
-|---|---|
-| `cu/` | a compute unit on `noc_cu_base`: accept and retire, discovery, disposal, backpressure, all demonstrated |
-| `transform/` | the transform slot on the memory mover's read return, as an identity occupant |
-| `adapter/` | the endpoint-link adapter, which observes or intercepts between a router and its endpoint |
-
-**The generator, `scripts/py/gen_mesh.py`.** It emits a mesh top from a text
-picture of the mesh. A project registers its own unit tokens with `--tokens`,
-a Python file that maps a token to instance text. A new accelerator never
-edits the generator. The `--split-reset` option plants a reset synchronizer
-at each clock domain entry, so only the raw reset ever crosses domains.
-
-**Software, [`software/`](software/README.md).** One uv workspace with one
-package per component: language, compiler, driver, simulation, firmware,
-application, and the `toyaccel` template. The same split runs through every
-component, and it is enforced: the framework (`kohakuaccel`) imports nothing
-from any project, and `software/tests/test_imports.py` fails the moment it
-does. The driver owns transports, dispatch, completion, device discovery and
-the node queues. The compiler owns the L1 program (a stream per unit and the
-node's sync points), the work package a node's firmware runs, and a
-declarative ISA toolkit that turns a field table into an encoder, a decoder, a
-validator and a disassembler.
-
-### The proof: `saxpy`
-
-Claims about frameworks are cheap. The platform carries an acceptance test: a
-second, unrelated accelerator built from the framework alone.
-
-- **Software half** (`software/template/`, the `toyaccel` project). One
-  instruction, `y = a*x + y` over float32: a field table, a unit model, and a
-  unit type registered as CU_TYPE `'SX'`. `python -m toyaccel.application.run`
-  discovers, dispatches and grades it on the framework's simulated card.
-- **Hardware half** (`src/examples/saxpy/`). `saxpy_cu.v` is built from the CU
-  template. It decodes the same ISA field for field, and does plain reads and
-  a burst write against the real memory agent. Its bench runs with the
-  convention checker mounted: `python scripts/py/xsim.py saxpy_cu`.
-- **Composed.** A three-line token table and a map picture generate a real
-  mesh: a router, the memory agent, the orchestrator, and two saxpy units.
-  The mesh bench drives it the way a host drives the card. It uploads
-  operands over AXI, stages and dispatches the program through the
-  orchestrator, observes completion in the status mirror, and reads the
-  results back bit-exact: `python scripts/py/xsim.py saxpy_mesh`.
-
-Both print a verdict and a check count. When they are green, "a new accelerator
-is a new compute unit plus a new ISA" is demonstrated rather than claimed.
-
-### Building your own
-
-For a project named `NAME`, these five files are yours and nothing else is:
+**The smallest proof is `saxpy`:** a second, unrelated accelerator built from
+the platform alone. One instruction, `y = a*x + y`, as a unit
+(`src/examples/saxpy/`), an ISA field table and a unit model
+(`software/template/`). Composed into a generated mesh, its bench uploads
+operands, dispatches, observes completion and reads the results back
+bit-exact: `python scripts/py/xsim.py saxpy_mesh`. A project is these files:
 
 ```
 src/examples/NAME/NAME_cu.v              your unit: datapath + noc_cu_base wrap
@@ -161,208 +202,69 @@ software/.../NAME/compiler/isa.py        how a shape becomes instruction words
                   simulation/unit.py     the model that stands in for the datapath
 ```
 
-`saxpy` is that shape filled in: `src/examples/saxpy/`, checked by the
-`saxpy_cu` and `saxpy_mesh` benches, and `software/template/toyaccel/`.
-
-Start from `docs/integrate/README.md`. Copy `src/templates/cu/`, which is a
-conforming unit with a bench of its own. Keep `kh_port_check` mounted in your
-bench from day one — it is what catches a protocol violation at the port
-instead of six modules downstream.
-
----
-
-## KohakuTPU: the machine
-
-The flagship project: matrix and vector units on the KohakuAccel mesh, four
-meshes on one device, programmed in `.ktpu` text at L1: one instruction stream
-per unit and the node's steps, which lower one to one to the package a node's
-firmware runs:
-
-```
-fn gather.l1(t: f16[64, 64] @dram, idx: u32[16] @dram, y: f16[12, 64] @dram)
-    move
-        gather t -> w(y, (48, 32)) index=idx n=12 pitch=128 words=4
-```
-
-```bash
-python -m kohakutpu.application.tools.l1 --build build/l1cov/vlt_card_v9_1n_v2 gather
-```
-
-runs the example on the simulated card. The language is
-[`ir/ktpu.md`](docs/projects/kohakutpu/ir/ktpu.md).
-
-### Status
-
-**Hardware, implemented.** Synthesised, implemented, and running on a real
-FPGA: the matrix clusters, the vector cores, the NoC mesh and its routers, the
-system node with its mover and transform slot, the interlink that joins four
-meshes, and **40-bit addressing** with one global space across all four
-([`address-map.md`](docs/address-map.md)).
-
-**Hardware, synthesised but not yet on silicon.** These are verified in
-simulation against real instruction streams, and carried through synthesis in
-the four-mesh design, but they have not run on hardware yet:
-
-- **L2.** Staging in the memory agent, reached by address, and an adapter at
-  the NoC endpoint, reached by instruction. Either is optional, and
-  `gen_mesh.py` selects them independently. The agent's banks are split rather
-  than one array, and how the banking and the pipelining were arrived at is a
-  measured table in [`results.md`](docs/projects/kohakutpu/results.md) — read it
-  there, with the conditions each row was taken under, rather than as a
-  frequency quoted here.
-- **Per-mesh, per-component clock control.** One generator per mesh. The
-  matrix core, the vector core, and the fabric sit on separate outputs.
-- **Double-pumped matrix core.** The DSPs take a 2x clock. A `BUFGCE_DIV`
-  derives the fabric's 1x from it, so the two are edge-aligned by
-  construction.
-- **Per-domain reset architecture.** Every clock domain releases its reset
-  locally through a domain-entry synchronizer. Only the raw reset crosses
-  domains.
-
-**Hardware, built but not finished: the RV64 system processor.** Every mesh has
-a control processor, and `CPU_RV64` chooses which. It defaults to 0, so what
-ships is the RV32 complex. The RV64 branch elaborates, simulates and runs
-programs — core, mover, transform slot, memory path, host window and console are
-all connected — but in the node configuration the hub's compute-unit port is
-tied off in both directions, the interlink doorbell is unconnected, and
-`irq_summary` and `pe_status` are tied off
-(`src/kohakuaccel/sysnode/sysnode.v`). It cannot yet dispatch an instruction to
-a compute unit or consume the completion that comes back, which is the job the
-configuration exists for. See
-[`docs/arch/cpu/rv64-sys/`](docs/arch/cpu/rv64-sys/README.md).
-
-**Software: a working driver and L1 stack.** Hand-written L1 kernels reach
-every unit feature — the mover's every mode, the clusters, the V2 vector
-cores, the node's interlink, memory and register steps, several nodes — and
-run on the simulated card ([`ir/ktpu.md`](docs/projects/kohakutpu/ir/ktpu.md)).
-The levels above L1 are being rebuilt.
-
-Every measured number, with the conditions it was taken under, is in
-[`results.md`](docs/projects/kohakutpu/results.md). Unless a row there says
-otherwise, a figure is `xcvu13p-fhgb2104-2L-e` under Vivado 2024.2,
-**out-of-context synthesis only** — no place, no route. **No frequency anywhere
-in this repository is a closed-timing result**, and synthesis slack is
-optimistic, so read one as an upper bound on the logic rather than as a speed
-the assembled machine runs at.
-
-### What makes it interesting
-
-**A number format built for the DSP.** Elements are int7 with an **E5M3**
-scale shared by a block of 32. This is a microscaling format, but the scale is
-deliberately *not* a power of two. An E8M0 scale wastes up to a full bit of
-significand, depending on where a block's peak falls in its binade. Three
-mantissa bits put that peak at 63 every time. The field is still 8 bits, and the
-p50 relative error drops from 0.54% to 0.38% — E8M0 against E5M3, measured per
-element on correlated operands,
-[`results.md`](docs/projects/kohakutpu/results.md) §6.1.
-
-**MACs that cost zero LUTs.** Four tensor CUs chain through the DSP48E2's
-`PCOUT -> PCIN` cascade. The multiply *and* the whole K=32 reduction happen
-inside the DSPs. The fabric holds control, not arithmetic.
-
-**Two mesh ports per cluster, not five.** The DSP chain eats eight operand
-words per cycle, and a port delivers one, so more ports never close that gap.
-Holding a large output tile resident does close it. A `Gm x Gn` block needs
-`4(Gm+Gn)/(Gm*Gn)` words per cycle, which is 0.375 at 16x32. This is an
-arithmetic property, not a concession.
-
-**A stack that knows the machine has no threads.** L1 text is each unit's
-program and the node's sync points, directly above the package a node runs. A
-unit is *programmed*, not commanded. There is no `program_id` and no
-`__syncthreads`.
-
-### Future work
-
-- **Vector ISA** improvements.
-- **Driver** improvements.
+Start from [`docs/integrate/`](docs/integrate/README.md) and copy
+`src/templates/cu/`, a conforming unit with a bench of its own; keep
+`kh_port_check` mounted from day one.
 
 ---
 
 ## Quickstart
 
-Python 3.13+ and [uv](https://docs.astral.sh/uv/). The software is one
-workspace under `software/`:
+Python 3.13+ and [uv](https://docs.astral.sh/uv/) (`uv pip` only: the
+workspace keeps no lock file).
 
 ```bash
-cd software
-uv sync                                  # every component, editable
-uv run pytest                            # no hardware needed
-uv run python -m toyaccel.application.run   # the second project, end to end
+python -m venv .venv && source .venv/bin/activate        # .venv\Scripts\activate on Windows
+uv pip install -e software/language -e software/compiler -e software/driver \
+               -e software/simulation -e software/application -e software/template
+cd software && python -m pytest                           # no hardware, no card model
+python -m toyaccel.application.run                        # the template project, end to end
 ```
 
-Nothing reaches the card unless you ask for it: the tests run against the
-package interpreter and the simulated machine, and a kernel run names its card
-model with `--build`.
-
-For the RTL there are two simulators and a synthesiser, and they answer different
-questions. **Verilator is the inner loop**: `--lint-only` reaches a missing
-module, a port mismatch or a bad parameter in seconds, and a built model runs a
-long program far faster than xsim can. **xsim is the gate of record** — it is
-Vivado's, it propagates X, and the mesh needs `-L xpm`, so iverilog will not do.
-**Vivado owns every resource and frequency number**; neither simulator sees
-whether an array actually became block RAM.
-
-Verilator is installed **in WSL**. The conda and MSYS2 packages are 4.x, which
-has no `--timing`, and every bench here generates its clock with `always #N` —
-4.x drops that silently. [`sim/verilator/docs/setup.md`](sim/verilator/docs/setup.md)
-has the install and the reasoning; `sim/verilator/` also holds the XPM shims,
-the C++ harnesses and the cross-check benches.
-
-Benches run against both a behavioural DSP and the real `DSP48E2`, so a failure
-is attributable to one or the other.
+KohakuTPU kernels run on a Verilated card model (setup:
+[sim/verilator/docs/setup.md](sim/verilator/docs/setup.md)):
 
 ```bash
-python scripts/py/vlt.py cluster_node --lint-only   # seconds, no C++ build
-python scripts/py/xsim.py saxpy_mesh                # the platform acceptance test
-python scripts/py/check.py fast                     # no Vivado; 11 s at -j4
-python scripts/py/check.py full -j 6                # every bench
+python scripts/py/card_model.py card_v9_1n_v2 --build-root build/v9g -d VEC_CORE_V2 -G DRAM_WORDS=1048576
+python -m kohakutpu.application.ktpugrad --autoload       # once per environment
+DEV=KTPU python software/application/examples/tinygrad/quickstart.py
 ```
 
-`check.py`'s own header names each tier and the cost measured for it at `-j4`;
-that header is the figure to trust, not one copied into a README.
-[`docs/workflow/simulate.md`](docs/workflow/simulate.md) covers which simulator
-answers which question, the four levels of test, and what a passing suite does
-and does not mean.
+For the RTL, **Verilator is the inner loop**, **xsim is the gate of record**
+and **Vivado owns every resource and frequency number**
+([simulate.md](docs/workflow/simulate.md)):
 
-`full --counts <file>` records the numbers each check printed and
-`--counts-baseline <file>` fails the run when any of them moved. That is what a
-refactor or a reformat has to clear: a green suite does not say a count held.
+```bash
+python scripts/py/vlt.py cluster_node --lint-only         # seconds, no C++ build
+python scripts/py/xsim.py saxpy_mesh                      # the platform acceptance test
+python scripts/py/check.py fast                           # no Vivado; tiers in its header
+```
 
 ## Documentation
 
-**[`docs/`](docs/README.md)** is written to be read. Every page says what it
-does, what it costs, and where it stops.
-
 | | |
 |---|---|
-| [the glossary](docs/glossary.md) | every project-specific term, what it is, where it sits, and which page covers it properly. Start here if a word is unfamiliar |
-| [the framework](docs/integrate/README.md) | what you own, what is fixed, and how to put your own compute unit on it |
-| [the machine](docs/projects/kohakutpu/README.md) | KohakuTPU top to bottom, in the order the decisions were forced |
-| [`.ktpu`](docs/projects/kohakutpu/ir/ktpu.md) | the L1 kernel text, every hardware feature it reaches, the examples and what they measure |
-| [the ISA](docs/projects/kohakutpu/isa.md) | the most accurate description of what it executes |
-| [architecture](docs/arch/README.md) · [specs](docs/spec/README.md) · [workflow](docs/workflow/README.md) | the mesh and memory agent, the normative contracts, and the build/measure/bringup practice |
+| [glossary](docs/glossary.md) | every project-specific word; start here if one is unfamiliar |
+| [the platform](docs/integrate/README.md) | what you own, what is fixed, and how to put your own unit on it |
+| [KohakuTPU](docs/projects/kohakutpu/README.md) | the machine top to bottom, in the order the decisions were forced |
+| [architecture](docs/arch/README.md) · [specs](docs/spec/README.md) · [workflow](docs/workflow/README.md) | the mesh, system node and physical design; the normative contracts; build, measure and bring-up |
 
 ## Repository
 
 ```
-   src/kohakuaccel/   the hardware framework: station bus, system node, NoC,
-                      and the two CPU processing elements -- pe/rv32/ and
-                      pe/rv64-sys/
-   src/kohakutpu/     this machine: matmul, vector, transform, generated tops
-   src/kohakumpe/     a second project: the SIMT processing element, and the
-                      SIMD unit that fills the framework's SIMD_EN slot
-   src/templates/     the extension points, each with its bench
-   src/examples/      saxpy, the platform acceptance test (RTL half)
-   src/reference/     retained knowledge: arithmetic cores, PoCs. attic/ holds
-                      deletion candidates, and nothing is removed unreviewed
-   software/          language, compiler, driver, simulation, firmware,
-                      application, template  (kohakuaccel + kohakutpu + toyaccel)
-   tests/             Verilog benches         scripts/  build, simulate, measure
+src/kohakuaccel/     the platform hardware: station bus, system node, NoC, the RV64 and RV32 cores
+src/kohakuaxi/       the Xache (crossbar + cache) and its partitioned form
+src/kohakutransmit/  KTS, the credited link library the node crossings are built on
+src/kohakutpu/       KohakuTPU: matmul, vector, transform, generated tops
+src/kohakumpe/       a second project: the SIMT and SIMD processing elements
+src/templates/       the extension points, each with its bench
+src/examples/        saxpy, the platform acceptance test (RTL half)
+software/            language, compiler, driver, simulation, firmware, application, template
+tests/  scripts/     Verilog benches; build, simulate, measure
 ```
 
-`src/kohakutpu/` is Verilog. `software/<component>/kohakutpu/` is Python (and
-the firmware C). The names collide, so when a comment names a path:
-`src/kohakutpu/vector2/v2_core.v` is hardware, and
+`src/kohakutpu/` is Verilog and `software/<component>/kohakutpu/` is Python
+(and the firmware C): `src/kohakutpu/vector2/v2_core.v` is hardware,
 `software/compiler/kohakutpu/compiler/encode/vector.py` is its encoder.
 
 ## License
