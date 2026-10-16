@@ -81,10 +81,21 @@ foreach {mid mod} $MESHES {
     connect_bd_net [get_bd_pins clk_wiz_mesh$mid/clk_out1] [get_bd_pins mesh_$mid/noc_clk]
     connect_bd_net [get_bd_pins clk_wiz_mesh$mid/clk_out3] [get_bd_pins mesh_$mid/vec_clk]
 
-    # Matmul 2x clk_out2 and its 1x through ktpu_div2, cleared by NOT(locked).
-    create_bd_cell -type module -reference ktpu_div2 div2_mesh$mid
-    connect_bd_net [get_bd_pins clk_wiz_mesh$mid/clk_out2] \
-                   [get_bd_pins div2_mesh$mid/clk2x] [get_bd_pins mesh_$mid/mat_clk2x]
+    # Matmul 2x clk_out2 and its 1x, cleared by NOT(locked): MAT_CLK_PAIR 0
+    # divides the 1x off the 2x's buffered net (ktpu_div2); 1 buffers both off
+    # the unbuffered MMCM output (ktpu_clk_pair). The cell is div2_mesh$mid in
+    # both, so the pblock and verify lines name one cell.
+    if {$MAT_CLK_PAIR} {
+        create_bd_cell -type module -reference ktpu_clk_pair div2_mesh$mid
+        connect_bd_net [get_bd_pins clk_wiz_mesh$mid/clk_out2] [get_bd_pins div2_mesh$mid/clk_in]
+        connect_bd_net [get_bd_pins div2_mesh$mid/clk2x] [get_bd_pins mesh_$mid/mat_clk2x]
+        set_property CONFIG.FREQ_HZ [expr {round($MAT2X_MHZ * 1e6)}] [get_bd_pins div2_mesh$mid/clk2x]
+        set_property CONFIG.FREQ_HZ [expr {round($MAT2X_MHZ * 5e5)}] [get_bd_pins div2_mesh$mid/clk1x]
+    } else {
+        create_bd_cell -type module -reference ktpu_div2 div2_mesh$mid
+        connect_bd_net [get_bd_pins clk_wiz_mesh$mid/clk_out2] \
+                       [get_bd_pins div2_mesh$mid/clk2x] [get_bd_pins mesh_$mid/mat_clk2x]
+    }
     connect_bd_net [get_bd_pins div2_mesh$mid/clk1x] [get_bd_pins mesh_$mid/mat_clk]
     set dc [create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic dclr_mesh$mid]
     set_property -dict [list CONFIG.C_OPERATION {not} CONFIG.C_SIZE {1}] $dc
@@ -105,11 +116,11 @@ foreach {mid mod} $MESHES {
 # u_tx pinned with the leaving die and u_rx with the landing die
 # (60_constraints), each half on its own die's reset copy.
 proc v8_pipe {name sp dp tx rx} {
-    global IL_W IL_VCW IL_CN_W IL_ASYNC IL_CRED IL_STAGES
+    global IL_W IL_VCW IL_CN_W IL_ASYNC IL_CRED IL_STAGES IL_MEM
     create_bd_cell -type module -reference kts_pipe_bd $name
     set_property -dict [list CONFIG.W $IL_W CONFIG.VCW $IL_VCW CONFIG.CN_W $IL_CN_W \
                              CONFIG.ASYNC $IL_ASYNC CONFIG.CRED $IL_CRED \
-                             CONFIG.STAGES $IL_STAGES] \
+                             CONFIG.STAGES $IL_STAGES CONFIG.MEM $IL_MEM] \
         [get_bd_cells $name]
     connect_bd_net [get_bd_pins [v8_sys_clk $tx]] [get_bd_pins $name/clk]
     connect_bd_net [get_bd_pins [v8_sys_clk $rx]] [get_bd_pins $name/clk_rx]

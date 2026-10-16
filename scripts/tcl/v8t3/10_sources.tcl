@@ -10,6 +10,7 @@ set V8_SOURCES {
     src/kohakuaccel/common/kohaku_sdpram_be.v
     src/kohakuaccel/common/kh_rst_sync.v
     src/kohakuaccel/common/clk/ktpu_div2.v
+    src/kohakuaccel/common/clk/ktpu_clk_pair.v
     src/kohakuaccel/common/kohaku_irq_req.v
 
     src/kohakuaccel/common/sb_skid.v
@@ -121,8 +122,10 @@ set V8_SOURCES {
     xilinx-fpga/xcvu13p/bd/ktpu_node_v8t.v
 }
 # The vector core's own sources (VEC_CORE, 00_config.tcl).
-set V8_DEFINES [v8_vec_core define]
-foreach f [v8_vec_core sources] { lappend V8_SOURCES $f }
+set V8_DEFINES [v8_rtl_defines]
+foreach f [v8_vec_core sources] {
+    if {[lsearch $V8_SOURCES $f] < 0} { lappend V8_SOURCES $f }
+}
 # A mesh die's generated top, once per distinct module.
 foreach {mid mod} $MESHES {
     if {![v8_is_mesh $mod]} { continue }

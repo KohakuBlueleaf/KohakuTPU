@@ -7,8 +7,9 @@
 # optimistic against route, so V8_PATH_MARGIN (ns, default 1.0; `-tclargs
 # margin X`) collects what the router will be handed, not only what fails
 # here; hold is not reported, it is meaningless before placement. With V8_DCP
-# set the census runs on that ROUTED checkpoint instead, tagged `_routed`, and
-# adds the router's congestion table (report_design_analysis -congestion).
+# set the census runs on that checkpoint instead, tagged `_$V8_TAG` (default
+# `_routed`; a placed checkpoint passes `placed`), and adds the congestion
+# table (report_design_analysis -congestion).
 # With V8_BASE (`-tclargs base FILE`) naming an earlier run's
 # *_classes_merged.txt, every merged class is set against that run in
 # *_classes_diff.txt (design and clock names normalised v8tN -> vN).
@@ -24,7 +25,7 @@ set MAXP 200000
 
 if {[info exists V8_DCP]} {
     open_checkpoint $V8_DCP
-    set V8_TAG routed
+    if {![info exists V8_TAG]} { set V8_TAG routed }
 } else {
     open_run synth_1 -name ${design_name}_paths
     set V8_TAG synth
@@ -286,7 +287,7 @@ set n2 [v8_full ${tag}_near_full.rpt $near $V8_NEAR_FULL "near-failing classes (
 puts "@@@ node-by-node: $n2 near classes in ${tag}_near_full.rpt  [v8_t]"
 report_timing -quiet -max_paths 500 -nworst 1 -delay_type max -slack_lesser_than 0 \
     -input_pins -file ${tag}_failing500_full.rpt
-if {$V8_TAG eq "routed"} {
+if {$V8_TAG ne "synth"} {
     report_design_analysis -congestion -file ${tag}_congestion.rpt
     puts "@@@ congestion table in ${tag}_congestion.rpt  [v8_t]"
 }

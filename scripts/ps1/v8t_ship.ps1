@@ -6,10 +6,12 @@
 #   Invoke-CimMethod Win32_Process Create -Arguments @{CurrentDirectory=<repo>;
 #     CommandLine='pwsh -NoProfile -File scripts/ps1/v8t_ship.ps1 -Ver v9 -Jobs 4'}
 #   -FromSynth reopens the built project instead (block design kept, verify rerun).
+#   -SynthOnly stops after synthesis and its analysis; no impl.
 param(
     [Parameter(Mandatory = $true)][string]$Ver,
     [int]$Jobs = 4,
-    [switch]$FromSynth
+    [switch]$FromSynth,
+    [switch]$SynthOnly
 )
 $root = "C:/Users/apoll/Desktop/code/Project/KohakuTPU"
 $viv  = "D:/Xilinx/Vivado/2024.2/bin/vivado.bat"
@@ -47,11 +49,22 @@ Mark "synth: OOC module runs, vector-core check, synth_1"
     -source "scripts/tcl/multimesh_${Ver}_bd.tcl" -tclargs synth jobs $Jobs | Out-Null
 if ($LASTEXITCODE -ne 0) { Mark "SYNTH FAILED ($LASTEXITCODE): $L/multimesh_${Ver}_synth.log"; exit 1 }
 
+if ($SynthOnly) {
+    Mark "analyze: $L/multimesh_${Ver}_analyze.log"
+    & $viv -mode batch -log "$L/multimesh_${Ver}_analyze.log" -nojournal -notrace `
+        -source "scripts/tcl/${Ver}_analyze.tcl" | Out-Null
+    Mark "SYNTH DONE (analyze exit $LASTEXITCODE)"
+    exit $LASTEXITCODE
+}
+
 # The analysis opens the project read-only, so it never holds impl back.
 $an = Start-Process -FilePath $viv -PassThru -WindowStyle Hidden -ArgumentList @(
     "-mode", "batch", "-log", "$L/multimesh_${Ver}_analyze.log", "-nojournal", "-notrace",
     "-source", "scripts/tcl/${Ver}_analyze.tcl")
 Mark "analyze: started beside impl (pid $($an.Id)), $L/multimesh_${Ver}_analyze.log"
+$pm = Start-Process -FilePath pwsh -PassThru -WindowStyle Hidden -ArgumentList @(
+    "-NoProfile", "-File", "scripts/ps1/v8t_placed.ps1", "-Ver", $Ver)
+Mark "placed: waiting for the placed checkpoint (pid $($pm.Id))"
 
 # Impl, retried once when runme.log reports Mig 66-119 (a %TEMP% transient).
 $runme = "$L/multimesh_${Ver}/multimesh_${Ver}.runs/impl_1/runme.log"

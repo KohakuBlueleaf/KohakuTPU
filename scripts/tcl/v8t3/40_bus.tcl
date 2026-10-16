@@ -46,8 +46,24 @@ proc v8_jtag {name clkpin rstpin} {
     connect_bd_net [get_bd_pins $rstpin] [get_bd_pins $name/aresetn]
 }
 v8_jtag jtag_ctrl [v8_bus_clk 1] [v8_bus_rstn 1]
-connect_bd_intf_net [get_bd_intf_pins jtag_ctrl/M_AXI] \
-                    [get_bd_intf_pins station_bus/S00_AXI]
+# A manager's AXI into its station port, through an axi_register_slice on the
+# manager's own clock and reset at SB_MGR_RS 1: every channel fully registered
+# (REG_* 1), widths propagated from both ends.
+proc v8_mgr_rs {name src dst clkpin rstpin} {
+    global SB_MGR_RS
+    if {!$SB_MGR_RS} {
+        connect_bd_intf_net [get_bd_intf_pins $src] [get_bd_intf_pins $dst]
+        return
+    }
+    set rs [create_bd_cell -type ip -vlnv xilinx.com:ip:axi_register_slice $name]
+    set_property -dict [list CONFIG.REG_AW {1} CONFIG.REG_AR {1} CONFIG.REG_W {1} \
+                             CONFIG.REG_R {1} CONFIG.REG_B {1}] $rs
+    connect_bd_net [get_bd_pins $clkpin] [get_bd_pins $name/aclk]
+    connect_bd_net [get_bd_pins $rstpin] [get_bd_pins $name/aresetn]
+    connect_bd_intf_net [get_bd_intf_pins $src] [get_bd_intf_pins $name/S_AXI]
+    connect_bd_intf_net [get_bd_intf_pins $name/M_AXI] [get_bd_intf_pins $dst]
+}
+v8_mgr_rs rs_jtag jtag_ctrl/M_AXI station_bus/S00_AXI [v8_bus_clk 1] [v8_bus_rstn 1]
 
 set xdma [create_bd_cell -type ip -vlnv xilinx.com:ip:xdma xdma_0]
 set n_irq [expr {$XDMA_IRQ ? [llength $MESHES] / 2 : 1}]
@@ -73,8 +89,8 @@ set_property -dict $xcfg $xdma
 connect_bd_net [get_bd_pins xdma_0/axi_aclk]    [get_bd_pins station_bus/clk_xdma]
 connect_bd_net [get_bd_pins xdma_0/axi_aresetn] [get_bd_pins station_bus/aresetn_xdma]
 if {$XDMA_AXI_W == 512} {
-    connect_bd_intf_net [get_bd_intf_pins xdma_0/M_AXI] \
-                        [get_bd_intf_pins station_bus/S01_AXI]
+    v8_mgr_rs rs_xdma xdma_0/M_AXI station_bus/S01_AXI \
+              xdma_0/axi_aclk xdma_0/axi_aresetn
 } else {
     # Station 1's XDMA manager is 512-bit (sb_line4): upsize on axi_aclk, no FIFO.
     set dx [create_bd_cell -type ip -vlnv xilinx.com:ip:axi_dwidth_converter dwc_xdma]
@@ -83,8 +99,8 @@ if {$XDMA_AXI_W == 512} {
     connect_bd_net [get_bd_pins xdma_0/axi_aclk]    [get_bd_pins dwc_xdma/s_axi_aclk]
     connect_bd_net [get_bd_pins xdma_0/axi_aresetn] [get_bd_pins dwc_xdma/s_axi_aresetn]
     connect_bd_intf_net [get_bd_intf_pins xdma_0/M_AXI] [get_bd_intf_pins dwc_xdma/S_AXI]
-    connect_bd_intf_net [get_bd_intf_pins dwc_xdma/M_AXI] \
-                        [get_bd_intf_pins station_bus/S01_AXI]
+    v8_mgr_rs rs_xdma dwc_xdma/M_AXI station_bus/S01_AXI \
+              xdma_0/axi_aclk xdma_0/axi_aresetn
 }
 connect_bd_intf_net [get_bd_intf_pins xdma_0/M_AXI_LITE] \
                     [get_bd_intf_pins station_bus/S02_AXI]

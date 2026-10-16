@@ -17,17 +17,19 @@ connect_bd_intf_net $sysp [get_bd_intf_pins util_ds_buf_sys/CLK_IN_D]
 connect_bd_net [get_bd_pins util_ds_buf_sys/IBUF_OUT] \
                [get_bd_pins util_ds_buf_bufg/BUFG_I]
 
-# `outs` is {clkout_index requested_mhz mmcm_divide}. The IP's DIVIDE property
-# names run one behind its port names: CLKOUT0_DIVIDE_F feeds clk_out1.
+# `outs` is {clkout_index requested_mhz mmcm_divide ?drives?}, drives Buffer
+# unless named. The IP's DIVIDE property names run one behind its port names:
+# CLKOUT0_DIVIDE_F feeds clk_out1.
 proc v8_wiz {name outs drp} {
     set w [create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz $name]
     set cfg [list CONFIG.PRIM_SOURCE {No_buffer} CONFIG.PRIM_IN_FREQ {100.000} \
                   CONFIG.PRIMITIVE {MMCM} CONFIG.USE_RESET {false} \
                   CONFIG.FEEDBACK_SOURCE {FDBK_AUTO}]
     foreach o $outs {
-        lassign $o idx mhz div
+        lassign $o idx mhz div drives
+        if {$drives eq ""} { set drives Buffer }
         lappend cfg CONFIG.CLKOUT${idx}_REQUESTED_OUT_FREQ [format %.3f $mhz] \
-                    CONFIG.CLKOUT${idx}_DRIVES {Buffer}
+                    CONFIG.CLKOUT${idx}_DRIVES $drives
         if {$idx > 1} { lappend cfg CONFIG.CLKOUT${idx}_USED {true} }
     }
     if {$drp} {
@@ -90,9 +92,12 @@ v8_wiz clk_wiz_ctrl $couts 0
 # on SYS_WIZ alone or on every wizard at PER_DIE_CLK 1. The NoC, mat and vec
 # domains take their resets INSIDE the top (kh_rst_sync from axi_aresetn); a
 # proc_sys_reset here would have no load (v8: measured 0).
+# At MAT_CLK_PAIR 1 clk_out2 is unbuffered: ktpu_clk_pair's two BUFGCE_DIVs are
+# its only buffers (30_meshes).
 foreach {mid mod} $MESHES {
     set outs [list [list 1 $MESH_MHZ  $DIV_MESH] \
-                   [list 2 $MAT2X_MHZ $DIV_MAT2X] \
+                   [list 2 $MAT2X_MHZ $DIV_MAT2X \
+                         [expr {$MAT_CLK_PAIR ? "No_buffer" : "Buffer"}]] \
                    [list 3 $VEC_MHZ   $DIV_VEC]]
     if {$PER_DIE_CLK || $mid == $SYS_WIZ} { lappend outs [list 4 $SYS_MHZ $DIV_SYS] }
     v8_wiz clk_wiz_mesh$mid $outs 1

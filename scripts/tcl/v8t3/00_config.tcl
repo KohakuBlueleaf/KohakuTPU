@@ -100,6 +100,7 @@ set VEC_CORE        v1
 set V8_VEC_CORES {
     v1 {sources {} define {} module vec_core}
     v2 {sources {
+            src/kohakuaccel/common/sb_skid.v
             src/kohakutpu/vector2/v2_fifo.v
             src/kohakutpu/vector2/v2_cnt.v
             src/kohakutpu/vector2/v2_agu.v
@@ -125,11 +126,21 @@ proc v8_vec_core {field} {
     }
     return [dict get $V8_VEC_CORES $VEC_CORE $field]
 }
-# The core's defines on sources_1 and, once the synth step has made them, on each
-# mesh's block fileset and OOC run; the mesh OOC log check proves they took.
+# RTL macros every synthesis of the image takes beside the core's: the system
+# node's and the vector core's handshake cuts (KOHAKU_PORT_* / KOHAKU_IL_* in
+# mag.v, V2_MQ_SKID in v2_core.v), each NAME=0|1. Empty is every cut off.
+set RTL_DEFINES {}
+proc v8_rtl_defines {} {
+    global RTL_DEFINES
+    # A canonical list: v8_apply_defines compares it, as a string, with what
+    # Vivado reports, and a spurious difference makes a finished run stale.
+    return [list {*}[v8_vec_core define] {*}$RTL_DEFINES]
+}
+# The image's defines on sources_1 and, once the synth step has made them, on
+# each mesh's block fileset and OOC run; the mesh OOC log check proves they took.
 proc v8_apply_defines {} {
     global design_name MESHES
-    set defs [v8_vec_core define]
+    set defs [v8_rtl_defines]
     set opts {}
     foreach d $defs { lappend opts -verilog_define $d }
     if {[get_property verilog_define [get_filesets sources_1]] ne $defs} {
@@ -169,6 +180,9 @@ set IL_CRED     64
 # Register stages in each pipe half, free to walk from the node's port to the
 # die boundary; 1 is the v8t3..v8t6 image, each stage a cycle the credits absorb.
 set IL_STAGES   1
+# kts_pipe_bd's kts_cdc storage at IL_ASYNC 1. block = a dual-clock BRAM, so one
+# die's clock must reach the other; distributed = LUTRAM on the write clock only.
+set IL_MEM      block
 
 # ---- dies ----------------------------------------------------------------
 # The board controller whose pins are in SLR s -- read off three builds'
@@ -188,6 +202,32 @@ set SLR_ROWS   {0 {Y0 Y3}  1 {Y4 Y7}  2 {Y8 Y11}  3 {Y12 Y15}}
 set CMP_COLS   {}
 set CMP_STN    {0 1 2 3}
 set CMP_HOME   {0 1 2 3}
+# The die split at the MIG's I/O column (60_constraints): off, soft (IS_SOFT
+# boxes) or hard. pb_sn$i over SN_COLS holds the system node (mesh inst/u_mag),
+# its Xache partition and station, and the mesh instances SN_UNITS names;
+# pb_cmp$i over SN_CMP_COLS holds SN_CMP_UNITS. Columns are {xlo xhi} over the
+# die's rows. SN_PIPES 1 puts the interlink pipe halves in pb_sn too. Exclusive
+# with CMP_COLS.
+set SN_BOX       off
+set SN_COLS      {}
+set SN_CMP_COLS  {}
+set SN_UNITS     {}
+set SN_CMP_UNITS {}
+set SN_PIPES     0
+# How the compute side is placed under SN_BOX. box: pb_cmp$i over SN_CMP_COLS
+# holds SN_CMP_UNITS. cluster: no compute box -- the units stay die-wide, pb_sn
+# is the die's only box, and each USER_CLUSTERS entry is one USER_CLUSTER.
+set CMP_PLACE    box
+# Per die, mesh-relative instance paths, each made ONE USER_CLUSTER
+# (uc_d<die>_<path>) on its leaf cells; `xache` names the die's Xache partition
+# (g_hedge, g_home, g_m minus their trunk halves, g_chain.g_p). Any CMP_PLACE.
+set USER_CLUSTERS {}
+# MIG_FLOORPLAN_MODE on every ddr4_$i (UG912): FULL places the controller to the
+# right of its I/O column; empty leaves the property unset.
+set MIG_FLOORPLAN {}
+# 0: the matmul 1x is ktpu_div2 off the 2x's buffered net. 1: ktpu_clk_pair --
+# clk_out2 unbuffered into BUFGCE_DIV /1 and /2 in one CLOCK_DELAY_GROUP.
+set MAT_CLK_PAIR 0
 
 # ---- Kohaku Xache (partition-aware) --------------------------------------
 # The routed proof shape (impl_pxache d4_k2b4_f4): 16384 sets x 2 ways in FOUR
@@ -281,5 +321,82 @@ set XDMA_CLASS   {}
 # kohaku_irq_req on axi_aclk; 0 ties usr_irq_req off.
 set XDMA_IRQ     0
 
+# 1: an axi_register_slice on each station-1 manager's AXI -- JTAG on S00,
+# XDMA (behind dwc_xdma when it upsizes) on S01 -- on that manager's clock.
+set SB_MGR_RS    0
+
+# ---- die crossings ---------------------------------------------------------
+# 1: every Xache trunk's sending and landing registers (tx_d/tx_ch, rx_d/rx_ch)
+# are Laguna TX/RX flops (USER_SLL_REG), so each boundary hop is the
+# characterised Laguna pair rather than two fabric flops either side of a
+# bypassed SLL.
+set TRUNK_SLL_REG  0
+# 1 (KX_PCLK 1 only): each trunk's landing rings in a pblock of their own on the
+# receiving die's clock-region row at the boundary, over that die's SN_COLS
+# (all eight columns without SN_BOX) -- the ring's write port runs on the
+# SENDING die's clock, so the cells on that clock stay beside the Laguna sites.
+set TRUNK_RING_PIN 0
+# > 0: set_min_delay of this many ns on every trunk's tx -> rx and rx -> ring
+# paths (sender's clock across the die), a margin over the tool's skew estimate.
+set TRUNK_HOLD_NS  0
+# KX_PCLK trunk ring: rx = on the receiving die (the sender's clock enters it);
+# tx = storage + write side on the sender, read side on the receiver (no clock leaves its die).
+set TRUNK_RING_SIDE rx
+# 1: every interlink kts_cdc FIFO and station link CDC cell sits on the die of
+# the clock driving it (60_constraints); 0 leaves them to the placer.
+set CDC_DIE_SPLIT  0
+# CDC_DIE_SPLIT: where each interlink kts_cdc FIFO's LUTRAM goes. tx = with its
+# write clock (the read crosses to it and back in one cycle); rx = on its read
+# die (the write crosses once, as TRUNK_RING_SIDE rx does for the trunks).
+set IL_RAM_SIDE    tx
+# 0: every pb_slr$i is hard, so nothing pinned to a die leaves it. Vivado 2024.2
+# creates a pblock SOFT (measured: a fresh create_pblock reads IS_SOFT 1), so
+# 60_constraints writes IS_SOFT on every pblock it makes.
+set DIE_PB_SOFT    0
+# 1 (PER_DIE_CLK 1 only): the sysnode and DDR UI clocks are NOT cut from one
+# another. Every path between two of them is held to XING_MAX_NS of datapath
+# (set_max_delay -datapath_only, no hold check), and each trunk's gray buses --
+# a ring's write pointer into the reader, a channel's pop count back -- to
+# XING_MAX_NS of skew (set_bus_skew). 0 is the blanket set_clock_groups cut.
+set XING_TIMED     0
+# Below the shortest destination period among those clocks (3.332 ns DDR UI,
+# 3.333 ns sysnode at the 300 MHz target).
+set XING_MAX_NS    3.0
+
 # ---- OOC IP runs ---------------------------------------------------------
 set OOC_JOBS     4
+
+# ---- implementation (v8t3_impl.tcl) ---------------------------------------
+# IMPL_DIRS names one entry of IMPL_VARIANTS: impl_1's per-step directives
+# (opt, place, phys_opt, route) and its post-route phys_opt directive (empty:
+# the step stays off). One variant per impl_1; a run launches alone.
+set IMPL_DIRS default
+set IMPL_VARIANTS {
+    default {
+        opt Default place Default phys_opt Default route Default post_route {}
+    }
+    timing {
+        opt Default place ExtraNetDelay_high phys_opt AggressiveExplore
+        route AggressiveExplore post_route Explore
+    }
+    congestion {
+        opt Default place SSI_SpreadLogic_high phys_opt AggressiveExplore
+        route AggressiveExplore post_route Explore
+    }
+}
+proc v8_impl_dirs {} {
+    global IMPL_DIRS IMPL_VARIANTS
+    if {![dict exists $IMPL_VARIANTS $IMPL_DIRS]} {
+        error "IMPL_DIRS $IMPL_DIRS is not one of [dict keys $IMPL_VARIANTS]"
+    }
+    return [dict get $IMPL_VARIANTS $IMPL_DIRS]
+}
+# Regexps over register names (never the Xache) whose Q nets get XDC
+# MAX_FANOUT_MODE REPL_MODE (CLOCK_REGION | SLR | MACRO), applied by place_design.
+set REPL_NETS {}
+set REPL_MODE CLOCK_REGION
+proc v8_repl_nets {re} {
+    return "get_nets -quiet -of_objects \[get_pins -quiet -filter \{REF_PIN_NAME == Q\}\
+ -of_objects \[get_cells -quiet -hierarchical -regexp \{$re\}\
+ -filter \{IS_PRIMITIVE && REF_NAME =~ \"FD.*\" && NAME !~ \".*/xache/.*\"\}\]\]"
+}

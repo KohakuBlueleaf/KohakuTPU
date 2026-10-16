@@ -168,8 +168,8 @@ foreach {mid mod} $MESHES {
     set log [get_property DIRECTORY $r]/runme.log
     set fh [open $log r] ; set t [read $fh] ; close $fh
     if {![regexp -line {^Command: synth_design .*$} $t cmd]} { error "mesh_$mid OOC log has no synth_design command: $log" }
-    foreach d [v8_vec_core define] {
-        if {[string first "-verilog_define $d" $cmd] < 0} { error "mesh_$mid OOC ran without $d (VEC_CORE $VEC_CORE): $cmd" }
+    foreach d [v8_rtl_defines] {
+        if {[string first "-verilog_define $d" $cmd] < 0} { error "mesh_$mid OOC ran without $d (VEC_CORE $VEC_CORE, RTL_DEFINES {$RTL_DEFINES}): $cmd" }
     }
     puts "@@@ mesh_$mid OOC: $cmd"
 }

@@ -83,6 +83,24 @@ foreach {mid mod} $MESHES {
         v8_want_mhz clk_wiz_mesh$mid/clk_out1 $MESH_MHZ
         v8_want_mhz clk_wiz_mesh$mid/clk_out2 $MAT2X_MHZ
         v8_want_mhz clk_wiz_mesh$mid/clk_out3 $VEC_MHZ
+        v8_want_mhz div2_mesh$mid/clk1x [expr {$MAT2X_MHZ / 2.0}]
+        # The pair: both dividers read the MMCM output itself, so the only
+        # buffers on the matmul clocks are the two BUFGCE_DIVs.
+        if {$MAT_CLK_PAIR} {
+            v8_want_mhz div2_mesh$mid/clk2x $MAT2X_MHZ
+            set divs [get_cells -quiet -hier -filter "NAME =~ $top/div2_mesh$mid/* && REF_NAME == BUFGCE_DIV"]
+            set drv {}
+            foreach d $divs {
+                set dn [get_nets -quiet -segments -of_objects [get_pins -quiet $d/I]]
+                foreach p [get_pins -quiet -leaf -of_objects $dn -filter {DIRECTION == OUT}] {
+                    lappend drv [get_property REF_NAME [get_cells -of_objects $p]]
+                }
+            }
+            set drv [lsort -unique $drv]
+            puts "  div2_mesh$mid: [llength $divs] BUFGCE_DIV, input driven by {$drv}"
+            if {[llength $divs] != 2} { v8_bad "div2_mesh$mid has [llength $divs] BUFGCE_DIV, want 2" }
+            if {$drv ne "MMCME4_ADV"} { v8_bad "div2_mesh$mid's dividers are driven by {$drv}, want the MMCM itself" }
+        }
     }
     if {!$PER_DIE_CLK && $mid != $SYS_WIZ \
         && [llength [get_pins -quiet $top/clk_wiz_mesh$mid/clk_out4]]} {
@@ -131,9 +149,74 @@ foreach {mid mod} $MESHES {
 puts "\n=== pblock lines === [v8_t]"
 foreach e $::V8_PB {
     lassign $e pb args
-    set n [llength [v8_cells {*}$args]]
+    # args is Tcl source (a line may nest [get_pins ...]): eval it, never {*} it
+    set n [llength [eval get_cells -quiet $args]]
     puts [format "  %-8s %-96s %6d" $pb [string range $args 0 95] $n]
     if {$n == 0} { v8_bad "pblock $pb: $args resolves to NO cells" }
+}
+# SN_BOX: every cluster and vector core in exactly one of the two boxes; at
+# CMP_PLACE cluster, in no box and in exactly one USER_CLUSTERS entry.
+if {$SN_BOX ne "off"} {
+    foreach {mid mod} $MESHES {
+        if {![v8_is_mesh $mod]} { continue }
+        set ucs [expr {[dict exists $USER_CLUSTERS $mid] ? [dict get $USER_CLUSTERS $mid] : {}}]
+        set named [concat [dict get $SN_UNITS $mid] [dict get $SN_CMP_UNITS $mid]]
+        if {$CMP_PLACE eq "cluster"} { set named [concat [dict get $SN_UNITS $mid] $ucs] }
+        foreach u [get_cells -quiet [list $top/mesh_$mid/inst/u_cu* $top/mesh_$mid/inst/u_vec*]] {
+            set n [llength [lsearch -all -exact $named [file tail $u]]]
+            if {$n != 1} { v8_bad "mesh_$mid [file tail $u] is named $n times in SN_UNITS and the compute list ($CMP_PLACE)" }
+        }
+        puts "  mesh_$mid: pb_sn$mid {u_mag [dict get $SN_UNITS $mid]}  $CMP_PLACE {[expr {$CMP_PLACE eq "box" ? [dict get $SN_CMP_UNITS $mid] : $ucs}]}"
+        foreach pb [get_pblocks -quiet [list pb_sn$mid pb_cmp$mid]] {
+            set soft [get_property IS_SOFT $pb] ; set excl [get_property EXCLUDE_PLACEMENT $pb]
+            puts "  $pb IS_SOFT $soft EXCLUDE_PLACEMENT $excl"
+            if {($SN_BOX eq "soft") != $soft} { v8_bad "$pb IS_SOFT is $soft at SN_BOX $SN_BOX" }
+            if {$excl} { v8_bad "$pb is EXCLUDE_PLACEMENT" }
+        }
+        set has_cmp [llength [get_pblocks -quiet pb_cmp$mid]]
+        if {$has_cmp != ($CMP_PLACE eq "box")} { v8_bad "pb_cmp$mid exists $has_cmp at CMP_PLACE $CMP_PLACE" }
+    }
+}
+foreach {mid mod} $MESHES {
+    set soft [get_property IS_SOFT [get_pblocks pb_slr$mid]]
+    puts "  pb_slr$mid IS_SOFT $soft"
+    if {$soft != $DIE_PB_SOFT} { v8_bad "pb_slr$mid IS_SOFT is $soft at DIE_PB_SOFT $DIE_PB_SOFT" }
+}
+# USER_CLUSTERS: each tag on every leaf its filter names, and on nothing else.
+puts "\n=== user clusters === [v8_t]"
+set uc_want 0
+foreach {mid paths} $USER_CLUSTERS { incr uc_want [llength $paths] }
+set uc_lines 0
+foreach ln [split [v8_slurp $out/${design_name}_pblocks.xdc] \n] {
+    if {![regexp {^set_property USER_CLUSTER (\S+) \[get_cells -quiet -hier -filter \{(.*)\}\]\s*$} $ln all tag f]} {
+        continue
+    }
+    incr uc_lines
+    set named [get_cells -quiet -hier -filter $f]
+    set tagged [get_cells -quiet -hier -filter "USER_CLUSTER == $tag"]
+    set lut [llength [filter -quiet $named {REF_NAME =~ LUT*}]]
+    set ff  [llength [filter -quiet $named {REF_NAME =~ FD*}]]
+    puts [format "  %-30s leaves %7d  tagged %7d  LUT %6d  FF %6d" $tag [llength $named] [llength $tagged] $lut $ff]
+    if {![llength $named]} { v8_bad "USER_CLUSTER $tag: its filter names no cell" }
+    if {[llength $tagged] != [llength $named]} {
+        v8_bad "USER_CLUSTER $tag on [llength $tagged] cell(s), its filter names [llength $named]"
+    }
+}
+if {$uc_lines != $uc_want} { v8_bad "$uc_lines USER_CLUSTER line(s) in the XDC, USER_CLUSTERS names $uc_want" }
+if {$MIG_FLOORPLAN ne ""} {
+    foreach {mid mod} $MESHES {
+        set v [get_property -quiet MIG_FLOORPLAN_MODE [get_cells -quiet $top/ddr4_$mid]]
+        puts "  ddr4_$mid MIG_FLOORPLAN_MODE $v"
+        if {$v ne $MIG_FLOORPLAN} { v8_bad "ddr4_$mid MIG_FLOORPLAN_MODE is '$v', want $MIG_FLOORPLAN" }
+    }
+}
+puts "\n=== REPL_NETS ($REPL_MODE) === [v8_t]"
+foreach re $REPL_NETS {
+    set nets [eval [v8_repl_nets $re]]
+    set off [filter -quiet $nets "MAX_FANOUT_MODE != $REPL_MODE"]
+    puts [format "  %6d nets %6d without the mode  %s" [llength $nets] [llength $off] $re]
+    if {![llength $nets]} { v8_bad "REPL_NETS $re resolves to NO net" }
+    if {[llength $off]} { v8_bad "REPL_NETS $re: [llength $off] net(s) lack MAX_FANOUT_MODE $REPL_MODE" }
 }
 foreach {mid mod} $MESHES {
     set pat $top/station_bus/inst/u_line/g_stn?$mid?.*/*g_link*
@@ -210,11 +293,11 @@ foreach c $unclaimed_cells {
         }
     }
     set pbs [lsort -unique $pbs]
-    # pb_cmpN lies inside pb_slrN: neighbours split between the two are one
+    # pb_cmpN and pb_snN lie inside pb_slrN: neighbours split between them are one
     # die, and the leaf goes to the die pblock (the box is a preference).
     set dies {}
     foreach pb $pbs {
-        if {[regexp {^pb_(?:slr|cmp)(\d+)$} $pb -> d]} { lappend dies $d }
+        if {[regexp {^pb_(?:slr|cmp|sn)(\d+)$} $pb -> d]} { lappend dies $d }
     }
     set dies [lsort -unique $dies]
     if {[llength $pbs] > 1 && [llength $dies] == 1 && [llength $dies] * 2 >= [llength $pbs]} {
@@ -285,6 +368,13 @@ foreach {mid mod} $MESHES {
             set cref [get_property REF_NAME $c]
             puts "  mesh_$mid [file tail [file dirname $c]]/u_core  $cref"
             if {![string match "*[v8_vec_core module]*" $cref]} { v8_bad "$c is $cref, want [v8_vec_core module] (VEC_CORE $VEC_CORE)" }
+        }
+        # Every unit keeps its own reset synchroniser (KEEP on ur_q): two
+        # registers a unit, none merged into another unit's.
+        foreach u [get_cells -quiet [list $top/mesh_$mid/inst/u_cu* $top/mesh_$mid/inst/u_vec*]] {
+            set n [llength [get_cells -quiet -hier -filter "NAME =~ [v8_glob $u]/g_ucdc.ur_q_reg*"]]
+            puts "  mesh_$mid [file tail $u] ur_q registers $n"
+            if {$n != 2} { v8_bad "[file tail $u] in mesh_$mid has $n ur_q registers, want 2" }
         }
     }
     set mpins {axi_aclk dram_aclk}

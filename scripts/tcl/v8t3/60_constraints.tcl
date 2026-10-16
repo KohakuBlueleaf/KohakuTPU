@@ -74,6 +74,7 @@ foreach {mid mod} $MESHES {
     lassign [dict get $SLR_ROWS $mid] ylo yhi
     puts $fh "create_pblock pb_slr$mid"
     puts $fh "resize_pblock \[get_pblocks pb_slr$mid\] -add \{CLOCKREGION_X0${ylo}:CLOCKREGION_X7${yhi}\}"
+    puts $fh "set_property IS_SOFT [expr {$DIE_PB_SOFT ? "true" : "false"}] \[get_pblocks pb_slr$mid\]"
     # CMP_COLS: the compute half of the die gets a narrower pblock, and the node,
     # its Xache partition and (CMP_STN) its station go in THAT one instead -- a
     # cell may sit in only one pblock, and 70_analyze fails a cell that sits in
@@ -87,23 +88,59 @@ foreach {mid mod} $MESHES {
         puts $fh "resize_pblock \[get_pblocks $pbc\] -add\
  \{CLOCKREGION_${xlo}${cylo}:CLOCKREGION_${xhi}${cyhi}\}"
         puts $fh "set_property CONTAIN_ROUTING false \[get_pblocks $pbc\]"
+        puts $fh "set_property IS_SOFT false \[get_pblocks $pbc\]"
         incr ncmp
     }
     set pbs [expr {[lsearch $CMP_STN $mid] >= 0 ? $pbc : "pb_slr$mid"}]
+    # SN_BOX: the die split at its MIG's I/O column into two children of
+    # pb_slr$mid -- pb_sn (the system node, its Xache partition and station,
+    # SN_UNITS) and pb_cmp (SN_CMP_UNITS). The mesh's routers, crossings and
+    # reset synchronisers stay die-wide.
+    set pbsn "pb_slr$mid"
+    if {$SN_BOX ne "off"} {
+        if {[dict size $CMP_COLS]} { error "SN_BOX and CMP_COLS both split die $mid; set one" }
+        if {[lsearch {soft hard} $SN_BOX] < 0} { error "SN_BOX is $SN_BOX, want off, soft or hard" }
+        if {[lsearch {box cluster} $CMP_PLACE] < 0} { error "CMP_PLACE is $CMP_PLACE, want box or cluster" }
+        if {$CMP_PLACE eq "cluster" && [llength [dict get $SN_CMP_UNITS $mid]]} {
+            error "CMP_PLACE cluster has no compute box; SN_CMP_UNITS names [dict get $SN_CMP_UNITS $mid] on die $mid"
+        }
+        set pbsn pb_sn$mid
+        set pbs  $pbsn
+        set boxes [list $pbsn [dict get $SN_COLS $mid]]
+        if {$CMP_PLACE eq "box"} { lappend boxes pb_cmp$mid [dict get $SN_CMP_COLS $mid] }
+        foreach {pb cols} $boxes {
+            lassign $cols xlo xhi
+            puts $fh "create_pblock $pb"
+            puts $fh "resize_pblock \[get_pblocks $pb\] -add\
+ \{CLOCKREGION_${xlo}${ylo}:CLOCKREGION_${xhi}${yhi}\}"
+            puts $fh "set_property PARENT pb_slr$mid \[get_pblocks $pb\]"
+            puts $fh "set_property CONTAIN_ROUTING false \[get_pblocks $pb\]"
+            # Non-exclusive: cells outside the box may still use its sites.
+            puts $fh "set_property EXCLUDE_PLACEMENT false \[get_pblocks $pb\]"
+            puts $fh "set_property IS_SOFT [expr {$SN_BOX eq "soft" ? "true" : "false"}] \[get_pblocks $pb\]"
+            incr ncmp
+        }
+    }
     # g_link is deliberately absent -- its pipeline registers ARE the die
     # crossing and must be free to place across it. Everything else in die i
     # carries the SLR index by construction.
     v8_pin $fh $pbs $top/station_bus/inst/u_line/g_stn\[$mid\].*
     v8_pin $fh $pbc $top/mesh_$mid
+    if {$SN_BOX ne "off"} {
+        v8_pin $fh $pbsn $top/mesh_$mid/inst/u_mag
+        foreach u [dict get $SN_UNITS $mid] { v8_pin $fh $pbsn $top/mesh_$mid/inst/$u }
+        foreach u [dict get $SN_CMP_UNITS $mid] { v8_pin $fh pb_cmp$mid $top/mesh_$mid/inst/$u }
+    }
     set dcells [list clk_wiz_mesh$mid bus_rst_inv$mid ddr4_$mid rst_ddr4_$mid dwc_ctrl$mid]
     if {[v8_is_mesh $mod]} { lappend dcells div2_mesh$mid dclr_mesh$mid }
     foreach c $dcells { v8_pin $fh pb_slr$mid $top/$c }
-    v8_pin_scope $fh pb_slr$mid "$KX/g_hedge?$mid?" {}
+    v8_pin_scope $fh $pbsn "$KX/g_hedge?$mid?" {}
     # A die half holds 128 URAM; the node's 65 and the home's 64 are 129, so
     # CMP_HOME says which dies' homes share the box at all.
     set pbh [expr {[lsearch $CMP_HOME $mid] >= 0 ? $pbc : "pb_slr$mid"}]
+    if {$SN_BOX ne "off"} { set pbh $pbsn ; set pbm $pbsn } else { set pbm $pbc }
     v8_pin_scope $fh $pbh "$KX/g_home?$mid?" {g_up g_dn}
-    v8_pin_scope $fh $pbc "$KX/g_m?$mid?" {g_up g_dn}
+    v8_pin_scope $fh $pbm "$KX/g_m?$mid?" {g_up g_dn}
     # die i's copies of the sysnode and bus resets: at PER_DIE_CLK 1 they are
     # generated here, otherwise the tree's landing and fan-out registers are.
     if {$PER_DIE_CLK} {
@@ -136,9 +173,16 @@ for {set b 0} {$b < $NP - 1} {incr b} {
         # -4.382 at v8t4 synthesis, 6.881 ns of 7.427 in route) -- and the ring
         # becomes an async FIFO whose write half is the sender's and read half
         # the receiver's, so it belongs to neither pblock.
-        set rxpat [list rx_* pp_tx* fok_tx*]
+        # TRUNK_RING_SIDE tx: rx_* run on clk and stay with the sender.
+        set rxpat [expr {$TRUNK_RING_SIDE eq "tx" ? {} : [list rx_* pp_tx* fok_tx*]}]
         if {$KX_PCLK} {
+            # pb/pg AND their next-state LUTs (pb[k]_i_*) run on m_clk; a LUT left
+            # with the sender crosses twice on that clock. =~ has no character
+            # class, and pb* would also take the sender's pbin, so bit by bit.
             lappend rxpat g_ret_a.fok_m_reg* g_ret_a.g_pc*.pb_reg* g_ret_a.g_pc*.pg_reg*
+            for {set k 0} {$k < 8} {incr k} {
+                lappend rxpat "g_ret_a.g_pc*.pb?$k?_i*" "g_ret_a.g_pc*.pg?$k?_i*"
+            }
         } else {
             lappend rxpat g_ring*
         }
@@ -151,6 +195,56 @@ for {set b 0} {$b < $NP - 1} {incr b} {
         v8_pin_filter $fh pb_slr$dst [join $ors " || "]
         v8_pin_filter $fh pb_slr$src "NAME =~ \"$base/*\" && [join $ands " && "]"
         incr nhop 2
+        if {$TRUNK_SLL_REG} {
+            puts $fh "set_property USER_SLL_REG TRUE \[get_cells -quiet -hier -filter \{IS_SEQUENTIAL &&\
+ (NAME =~ \"$base/g_tx?*?.tx_d_reg*\" || NAME =~ \"$base/g_tx?*?.tx_ch_reg*\"\
+ || NAME =~ \"$base/rx_d_reg*\" || NAME =~ \"$base/rx_ch_reg*\")\}\]"
+        }
+        # No -quiet: an empty side warns instead of dropping the margin.
+        if {$TRUNK_HOLD_NS > 0} {
+            set txf "\[get_cells -hier -filter \{IS_SEQUENTIAL && (NAME =~ \"$base/g_tx?*?.tx_d_reg*\" || NAME =~ \"$base/g_tx?*?.tx_ch_reg*\")\}\]"
+            set rxf "\[get_cells -hier -filter \{IS_SEQUENTIAL && (NAME =~ \"$base/rx_d_reg*\" || NAME =~ \"$base/rx_ch_reg*\")\}\]"
+            set rgf "\[get_cells -hier -filter \{IS_SEQUENTIAL && NAME =~ \"$base/g_ring*\"\}\]"
+            puts $fh "set_min_delay $TRUNK_HOLD_NS -from $txf -to $rxf"
+            puts $fh "set_min_delay $TRUNK_HOLD_NS -from $rxf -to $rgf"
+        }
+        if {$TRUNK_RING_SIDE eq "tx"} {
+            if {!$KX_PCLK} { error "TRUNK_RING_SIDE tx needs KX_PCLK 1 (the ring is the crossing)" }
+            if {$TRUNK_SLL_REG || $TRUNK_HOLD_NS > 0} {
+                error "TRUNK_RING_SIDE tx: tx_d -> rx_d is inside the sending die; TRUNK_SLL_REG and TRUNK_HOLD_NS must be 0"
+            }
+        }
+        # {die filter} per ring half; tx: LUTRAM + write pointer (clk) with the
+        # sender, read-side registers (m_clk) with the receiver, LUTs free.
+        set wr "NAME =~ \"$base/g_ring*\" && IS_PRIMITIVE && (REF_NAME =~ \"RAM*\"\
+ || NAME =~ \"$base/g_ring*/wp_reg*\" || NAME =~ \"$base/g_ring*/wp_g_reg*\")"
+        set rd "NAME =~ \"$base/g_ring*\" && IS_SEQUENTIAL && REF_NAME !~ \"RAM*\"\
+ && NAME !~ \"$base/g_ring*/wp_reg*\" && NAME !~ \"$base/g_ring*/wp_g_reg*\""
+        set halves [expr {$TRUNK_RING_SIDE eq "tx"
+            ? [list $src $wr $dst $rd] : [list $dst "NAME =~ \"$base/g_ring*\" && IS_PRIMITIVE"]}]
+        if {$TRUNK_RING_PIN} {
+            if {!$KX_PCLK} { error "TRUNK_RING_PIN needs KX_PCLK 1: at 0 the rings go with rx_*" }
+            foreach {die f} $halves {
+                # die's row at this boundary: going up (d 1) the sender's top
+                # and the receiver's bottom row, going down the reverse
+                lassign [dict get $SLR_ROWS $die] rlo rhi
+                set row [expr {($d == 1) == ($die == $dst) ? $rlo : $rhi}]
+                set cols {X0 X7}
+                set par pb_slr$die
+                if {$SN_BOX ne "off"} { set cols [dict get $SN_COLS $die] ; set par pb_sn$die }
+                lassign $cols xlo xhi
+                set pbr [expr {$die == $dst ? "pb_ring_b${b}_d$d" : "pb_ringw_b${b}_d$d"}]
+                puts $fh "create_pblock $pbr"
+                puts $fh "resize_pblock \[get_pblocks $pbr\] -add \{CLOCKREGION_${xlo}${row}:CLOCKREGION_${xhi}${row}\}"
+                puts $fh "set_property PARENT $par \[get_pblocks $pbr\]"
+                puts $fh "set_property CONTAIN_ROUTING false \[get_pblocks $pbr\]"
+                # Soft, as every ring box has been placed (the tool's default).
+                puts $fh "set_property IS_SOFT true \[get_pblocks $pbr\]"
+                v8_pin_filter $fh $pbr $f
+            }
+        } elseif {$TRUNK_RING_SIDE eq "tx"} {
+            foreach {die f} $halves { v8_pin_filter $fh pb_slr$die $f }
+        }
     }
 }
 foreach {p mod} $MESHES {
@@ -160,24 +254,69 @@ foreach {p mod} $MESHES {
 # lands on; every register of a half has exactly one load in the other half,
 # so each pair is a Laguna crossing.
 set npipe 0
+# SN_PIPES 1 puts each half in its die's system-node box, beside the node port
+# it serves; 0 leaves it die-wide.
+proc v8_pipe_pb {d} {
+    global SN_BOX SN_PIPES
+    return [expr {$SN_BOX ne "off" && $SN_PIPES ? "pb_sn$d" : "pb_slr$d"}]
+}
 foreach hop {{0 1} {1 2} {2 3}} {
     lassign $hop lo hi
-    v8_pin $fh pb_slr$lo $top/pipe_${lo}_to_${hi}/inst/u_tx
-    v8_pin $fh pb_slr$hi $top/pipe_${lo}_to_${hi}/inst/u_rx
-    v8_pin $fh pb_slr$hi $top/pipe_${hi}_to_${lo}/inst/u_tx
-    v8_pin $fh pb_slr$lo $top/pipe_${hi}_to_${lo}/inst/u_rx
+    v8_pin $fh [v8_pipe_pb $lo] $top/pipe_${lo}_to_${hi}/inst/u_tx
+    v8_pin $fh [v8_pipe_pb $hi] $top/pipe_${lo}_to_${hi}/inst/u_rx
+    v8_pin $fh [v8_pipe_pb $hi] $top/pipe_${hi}_to_${lo}/inst/u_tx
+    v8_pin $fh [v8_pipe_pb $lo] $top/pipe_${hi}_to_${lo}/inst/u_rx
     incr npipe 4
     # At IL_ASYNC 1 the crossing is kts_cdc. Its two FIFOs each hold registers
     # of BOTH clocks, so neither belongs to a die and both are left unpinned;
     # everything else in it is on the receiving clock except the credit output.
+    # Leaves only: `$cdc/*` also names the FIFO instances u_f and u_b, whose
+    # unclaimed leaves (LUTs, placer-made registers) would follow them to rx.
     if {$IL_ASYNC} {
         foreach {tx rx} [list $lo $hi $hi $lo] {
             set cdc $top/pipe_${tx}_to_${rx}/inst/g_async.u_x
             v8_pin_filter $fh pb_slr$rx "NAME =~ \"$cdc/*\" && NAME !~ \"$cdc/u_f/*\"\
-                 && NAME !~ \"$cdc/u_b/*\" && NAME !~ \"$cdc/o_crd_*\""
-            v8_pin_filter $fh pb_slr$tx "NAME =~ \"$cdc/o_crd_*\""
+                 && NAME !~ \"$cdc/u_b/*\" && NAME !~ \"$cdc/o_crd_*\" && IS_PRIMITIVE"
+            v8_pin_filter $fh pb_slr$tx "NAME =~ \"$cdc/o_crd_*\" && IS_PRIMITIVE"
             incr npipe 2
         }
+    }
+}
+# CDC_DIE_SPLIT: inside every die-crossing CDC (the interlink kts_cdc FIFOs,
+# the station links), each register/RAM goes to the die of the clock driving it.
+proc v8_pin_clk {fh pb scope clkpin {extra ""}} {
+    v8_pin_args $fh $pb "-filter \{NAME =~ \"$scope\" && IS_PRIMITIVE$extra\} -of_objects\
+ \[get_pins -quiet -leaf -filter \{IS_CLOCK\} -of_objects \[get_nets -quiet -of_objects \[get_pins \{$clkpin\}\]\]\]"
+}
+proc v8_pin_args {fh pb args_} {
+    puts $fh "add_cells_to_pblock \[get_pblocks $pb\] \[get_cells -quiet $args_\]"
+    lappend ::V8_PB [list $pb $args_]
+}
+if {$CDC_DIE_SPLIT} {
+    if {!$PER_DIE_CLK || !$IL_ASYNC || !$LINK_CDC} { error "CDC_DIE_SPLIT needs PER_DIE_CLK, IL_ASYNC and LINK_CDC 1" }
+    if {$IL_MEM ne "distributed"} { error "CDC_DIE_SPLIT needs IL_MEM distributed: a dual-clock BRAM has both clocks" }
+    if {[lsearch {tx rx} $IL_RAM_SIDE] < 0} { error "IL_RAM_SIDE is $IL_RAM_SIDE, want tx or rx" }
+    # IL_RAM_SIDE rx: each FIFO's LUTRAM goes to its READ die (u_f is read on
+    # the hop's rx die, u_b on its tx die), so a read never crosses and back.
+    set noram [expr {$IL_RAM_SIDE eq "rx" ? { && REF_NAME !~ "RAM*"} : ""}]
+    foreach hop {{0 1} {1 2} {2 3}} {
+        foreach {tx rx} [list {*}$hop [lindex $hop 1] [lindex $hop 0]] {
+            set cdc $top/pipe_${tx}_to_${rx}/inst/g_async.u_x
+            foreach die [list $tx $rx] {
+                foreach f {u_f u_b} {
+                    v8_pin_clk $fh pb_slr$die "$cdc/$f/*" $top/clk_wiz_mesh$die/clk_out4 $noram
+                }
+            }
+            if {$IL_RAM_SIDE eq "rx"} {
+                foreach {f rd} [list u_f $rx u_b $tx] {
+                    v8_pin_filter $fh pb_slr$rd "NAME =~ \"$cdc/$f/*\" && IS_PRIMITIVE && REF_NAME =~ \"RAM*\""
+                }
+            }
+        }
+    }
+    foreach {mid mod} $MESHES {
+        v8_pin_clk $fh pb_slr$mid "$top/station_bus/inst/u_line/g_link*" \
+            $top/clk_wiz_ctrl/clk_out[expr {$mid + 2}]
     }
 }
 # Only at IL_ASYNC 0 is a pipe half's register the TX flop of an SLL pair. With
@@ -207,9 +346,47 @@ set s1cells {xdma_0 jtag_ctrl clk_wiz_ctrl rst_ctrl \
              util_ds_buf_bufg util_ds_buf_sys util_ds_buf_pcie}
 # XDMA's width converter and the interrupt requesters run on its axi_aclk.
 if {$XDMA_AXI_W != 512} { lappend s1cells dwc_xdma }
+# The managers' register slices (SB_MGR_RS) sit with their managers.
+if {$SB_MGR_RS} { lappend s1cells rs_jtag rs_xdma }
 if {$XDMA_IRQ} { foreach {mid mod} $MESHES { lappend s1cells irq_req$mid } }
 foreach c $s1cells {
     v8_pin $fh pb_slr1 $top/$c
+}
+# MIG_FLOORPLAN: the memory interface's side of its I/O column (UG912; FULL is
+# the right of it, AUTO the tool's choice). Empty writes nothing.
+if {$MIG_FLOORPLAN ne ""} {
+    foreach {mid mod} $MESHES {
+        puts $fh "set_property MIG_FLOORPLAN_MODE $MIG_FLOORPLAN \[get_cells -quiet \{$top/ddr4_$mid\}\]"
+    }
+}
+# USER_CLUSTERS: one USER_CLUSTER per named unit, on its leaf cells. A DSP or
+# URAM macro's internals take it from the macro.
+set ::V8_UC {}
+proc v8_uc_filter {mid path} {
+    global top KX
+    set leaf "IS_PRIMITIVE && PRIMITIVE_LEVEL != INTERNAL"
+    if {$path ne "xache"} {
+        return "NAME =~ \"[string map {[ ? ] ?} $top/mesh_$mid/inst/$path]/*\" && $leaf"
+    }
+    set ors {}
+    foreach s [list g_hedge?$mid? g_home?$mid? g_m?$mid?] {
+        lappend ors "(NAME =~ \"$KX/$s.*\" && NAME !~ \"$KX/$s.g_up*\" && NAME !~ \"$KX/$s.g_dn*\")"
+    }
+    lappend ors "NAME =~ \"$KX/g_chain.g_p?$mid?.*\""
+    return "([join $ors { || }]) && $leaf"
+}
+foreach {mid paths} $USER_CLUSTERS {
+    foreach p $paths {
+        set tag uc_d${mid}_[string map {/ _ . _ [ _ ] _} $p]
+        set f [v8_uc_filter $mid $p]
+        puts $fh "set_property USER_CLUSTER $tag \[get_cells -quiet -hier -filter \{$f\}\]"
+        lappend ::V8_UC [list $tag $f]
+    }
+}
+# REPL_NETS: place_design replicates each matched register's driver per
+# REPL_MODE unit of its loads (UG912 MAX_FANOUT_MODE: nets driven by FD/LUT).
+foreach re $REPL_NETS {
+    puts $fh "set_property MAX_FANOUT_MODE $REPL_MODE \[[v8_repl_nets $re]\]"
 }
 close $fh
 if {![llength [get_files -quiet -of_objects [get_filesets constrs_1] $xdc]]} {
@@ -249,10 +426,17 @@ foreach {mid mod} $MESHES {
     append grp [v8_group clk_wiz_mesh$mid {clk_out3}]
     append grp [v8_group clk_wiz_mesh$mid {clk_out2}]
 }
+# XING_TIMED: the sysnode and DDR UI clocks share ONE group (not cut from each
+# other) and every ordered pair of them gets a datapath bound below.
+set xing {}
+if {$XING_TIMED && !$PER_DIE_CLK} { error "XING_TIMED needs PER_DIE_CLK 1" }
 if {$PER_DIE_CLK} {
     # Four sysnode clocks and four bus clocks, each its own group: every path
     # between two of them goes through a crossing (KX_PCLK, IL_ASYNC, LINK_CDC).
-    foreach {mid mod} $MESHES { append grp [v8_group clk_wiz_mesh$mid {clk_out4}] }
+    foreach {mid mod} $MESHES { lappend xing $top/clk_wiz_mesh$mid/clk_out4 }
+    if {!$XING_TIMED} {
+        foreach {mid mod} $MESHES { append grp [v8_group clk_wiz_mesh$mid {clk_out4}] }
+    }
     append grp [v8_group clk_wiz_ctrl {clk_out1}]
     foreach {mid mod} $MESHES {
         append grp [v8_group clk_wiz_ctrl [list clk_out[expr {$mid + 2}]]]
@@ -262,11 +446,50 @@ if {$PER_DIE_CLK} {
     append grp [v8_group clk_wiz_ctrl {clk_out1}]
     append grp [v8_group clk_wiz_ctrl {clk_out2}]
 }
-foreach i {0 1 2 3} { append grp [v8_group ddr4_$i {c0_ddr4_ui_clk}] }
+foreach i {0 1 2 3} {
+    lappend xing $top/ddr4_$i/c0_ddr4_ui_clk
+    if {!$XING_TIMED} { append grp [v8_group ddr4_$i {c0_ddr4_ui_clk}] }
+}
+if {$XING_TIMED} {
+    lappend ::V8_CLKPINS {*}$xing
+    append grp " \\\n    -group \[get_clocks -include_generated_clocks -of_objects \[get_pins \{$xing\}\]\]"
+}
 # No group of its own for xdma_0/axi_aclk: it is a generated clock of
 # pcie_refclk and the reference's group carries it (XDCB-3, TIMING-47).
 append grp " \\\n    -group \[get_clocks -include_generated_clocks pcie_refclk\]"
 puts $fh "set_clock_groups -asynchronous$grp"
+if {$XING_TIMED} {
+    foreach a $xing {
+        foreach z $xing {
+            if {$a eq $z} { continue }
+            puts $fh "set_max_delay -datapath_only -from \[get_clocks -of_objects \[get_pins \{$a\}\]\]\
+ -to \[get_clocks -of_objects \[get_pins \{$z\}\]\] $XING_MAX_NS"
+        }
+    }
+    for {set b 0} {$b < $NP - 1} {incr b} {
+        foreach d {0 1} {
+            set base "$KX/g_chain.g_b?$b?.g_d?$d?.u_tk"
+            foreach c {0 1} {
+                foreach {from to} [list \
+                        "$base/g_ring?$c?.u_f/g_lean.u_r/wp_g_reg*" "$base/g_ring?$c?.u_f/g_lean.u_r/wg_s1_reg*" \
+                        "$base/g_ret_a.g_pc?$c?.pg_reg*" "$base/g_ret_a.g_pc?$c?.ps1_reg*"] {
+                    puts $fh "set_bus_skew -from \[get_cells -quiet -hier -filter \{NAME =~ \"$from\"\}\]\
+ -to \[get_cells -quiet -hier -filter \{NAME =~ \"$to\"\}\] $XING_MAX_NS"
+                }
+            }
+        }
+    }
+}
+# MAT_CLK_PAIR: the two BUFGCE_DIV output nets of each pair routed with one
+# insertion delay (UG949, synchronous CDC).
+if {$MAT_CLK_PAIR} {
+    foreach {mid mod} $MESHES {
+        if {![v8_is_mesh $mod]} { continue }
+        puts $fh "set_property CLOCK_DELAY_GROUP mat_pair$mid \[get_nets -of_objects \[get_pins\
+ -of_objects \[get_cells -hier -filter \{NAME =~ \"$top/div2_mesh$mid/*\" && REF_NAME == BUFGCE_DIV\}\]\
+ -filter \{REF_PIN_NAME == O\}\]\]"
+    }
+}
 close $fh
 if {![llength [get_files -quiet -of_objects [get_filesets constrs_1] $clk]]} {
     add_files -fileset constrs_1 -norecurse $clk
@@ -288,4 +511,5 @@ foreach pat {*multimesh_v*_clocks.xdc *multimesh_v*_pblocks.xdc *multimesh_v*_pc
     }
 }
 puts "@@@ constraints: [llength $::V8_PB] pblock lines ($nhop hop halves,\
- $npipe pipe halves, $ncmp compute-half pblocks), [llength $::V8_CLKPINS] clock pins"
+ $npipe pipe halves, $ncmp compute-half pblocks), [llength $::V8_UC] user clusters,\
+ [llength $::V8_CLKPINS] clock pins"

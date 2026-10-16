@@ -95,10 +95,21 @@ foreach {mid mod} $MESHES {
     }
     want mesh_$mid/noc_clk    clk_wiz_mesh$mid/clk_out1
     want mesh_$mid/vec_clk    clk_wiz_mesh$mid/clk_out3
-    want mesh_$mid/mat_clk2x  clk_wiz_mesh$mid/clk_out2
     want mesh_$mid/mat_clk    div2_mesh$mid/clk1x
-    want div2_mesh$mid/clk2x  clk_wiz_mesh$mid/clk_out2
     want div2_mesh$mid/clr    dclr_mesh$mid/Res
+    set dref [get_property VLNV [get_bd_cells div2_mesh$mid]]
+    set drv [get_property CONFIG.CLKOUT2_DRIVES [get_bd_cells clk_wiz_mesh$mid]]
+    if {$MAT_CLK_PAIR} {
+        if {![string match "*module_ref:ktpu_clk_pair:*" $dref]} { bad "div2_mesh$mid is $dref, want ktpu_clk_pair" }
+        if {$drv ne "No_buffer"} { bad "clk_wiz_mesh$mid clk_out2 drives $drv, want No_buffer" }
+        want mesh_$mid/mat_clk2x  div2_mesh$mid/clk2x
+        want div2_mesh$mid/clk_in clk_wiz_mesh$mid/clk_out2
+    } else {
+        if {![string match "*module_ref:ktpu_div2:*" $dref]} { bad "div2_mesh$mid is $dref, want ktpu_div2" }
+        if {$drv ne "Buffer"} { bad "clk_wiz_mesh$mid clk_out2 drives $drv, want Buffer" }
+        want mesh_$mid/mat_clk2x  clk_wiz_mesh$mid/clk_out2
+        want div2_mesh$mid/clk2x  clk_wiz_mesh$mid/clk_out2
+    }
     want dclr_mesh$mid/Op1    clk_wiz_mesh$mid/locked
 }
 
@@ -111,7 +122,7 @@ foreach hop {{0 1} {1 2} {2 3}} {
         set c [get_bd_cells -quiet $name]
         if {![llength $c]} { bad "$name absent" ; continue }
         if {![string match "*module_ref:kts_pipe_bd:*" [get_property VLNV $c]]} { bad "$name is not kts_pipe_bd" }
-        foreach {p w} [list W $IL_W VCW $IL_VCW CN_W $IL_CN_W ASYNC $IL_ASYNC CRED $IL_CRED STAGES $IL_STAGES] {
+        foreach {p w} [list W $IL_W VCW $IL_VCW CN_W $IL_CN_W ASYNC $IL_ASYNC CRED $IL_CRED STAGES $IL_STAGES MEM $IL_MEM] {
             if {[get_property -quiet CONFIG.$p $c] ne "$w"} { bad "$name $p is [get_property -quiet CONFIG.$p $c], want $w" }
         }
         want $name/clk     [v8_sys_clk $tx]
@@ -275,13 +286,30 @@ want station_bus/aresetn_ctrl rst_ctrl/peripheral_aresetn
 want station_bus/clk_xdma     xdma_0/axi_aclk
 want jtag_ctrl/aclk           [v8_bus_clk 1]
 want jtag_ctrl/aresetn        [v8_bus_rstn 1]
-if {[peer_of jtag_ctrl/M_AXI] ne "station_bus/S00_AXI"} { bad "jtag_ctrl is not S00" }
+# SB_MGR_RS: each manager reaches its port through rs_<manager>, on its clock.
+proc v8_mgr_peer {src dst rs clk rst} {
+    global SB_MGR_RS
+    if {!$SB_MGR_RS} {
+        if {[llength [get_bd_cells -quiet $rs]]} { bad "$rs exists at SB_MGR_RS 0" }
+        if {[peer_of $src] ne $dst} { bad "$src is not $dst" }
+        return
+    }
+    if {[peer_of $src] ne "$rs/S_AXI"} { bad "$src is not $rs/S_AXI" }
+    if {[peer_of $rs/M_AXI] ne $dst} { bad "$rs/M_AXI is not $dst" }
+    foreach ch {AW AR W R B} {
+        set v [get_property -quiet CONFIG.REG_$ch [get_bd_cells -quiet $rs]]
+        if {$v ne "1"} { bad "$rs REG_$ch is $v, want 1 (fully registered)" }
+    }
+    want $rs/aclk    $clk
+    want $rs/aresetn $rst
+}
+v8_mgr_peer jtag_ctrl/M_AXI station_bus/S00_AXI rs_jtag [v8_bus_clk 1] [v8_bus_rstn 1]
 if {$XDMA_AXI_W == 512} {
-    if {[peer_of xdma_0/M_AXI] ne "station_bus/S01_AXI"} { bad "xdma M_AXI is not S01" }
+    v8_mgr_peer xdma_0/M_AXI station_bus/S01_AXI rs_xdma xdma_0/axi_aclk xdma_0/axi_aresetn
     if {[llength [get_bd_cells -quiet dwc_xdma]]} { bad "dwc_xdma exists on a 512-bit XDMA" }
 } else {
     if {[peer_of xdma_0/M_AXI] ne "dwc_xdma/S_AXI"} { bad "xdma M_AXI is not dwc_xdma/S_AXI" }
-    if {[peer_of dwc_xdma/M_AXI] ne "station_bus/S01_AXI"} { bad "dwc_xdma M_AXI is not S01" }
+    v8_mgr_peer dwc_xdma/M_AXI station_bus/S01_AXI rs_xdma xdma_0/axi_aclk xdma_0/axi_aresetn
     set dx [get_bd_cells -quiet dwc_xdma]
     foreach {p w} [list SI_DATA_WIDTH $XDMA_AXI_W MI_DATA_WIDTH 512 ACLK_ASYNC 0 FIFO_MODE 0] {
         if {[get_property -quiet CONFIG.$p $dx] ne "$w"} { bad "dwc_xdma $p is [get_property -quiet CONFIG.$p $dx], want $w" }
@@ -363,10 +391,10 @@ if {$XDMA_LANES ne "X16"} {
         if {[get_property is_enabled $f]} { bad "the 16-lane pcie.xdc is enabled on a $XDMA_LANES link" }
     }
 }
-# ---- the vector core: define and sources on sources_1 (the mesh block filesets
-# appear with the synth step, which checks each mesh's OOC log) ------------------
-puts "\n=== vector core ($VEC_CORE) ==="
-set vdef [v8_vec_core define]
+# ---- sources_1: the image's defines and the vector core's sources (the mesh
+# block filesets appear with the synth step, which checks each mesh's OOC log) --
+puts "\n=== vector core ($VEC_CORE) and RTL_DEFINES ==="
+set vdef [v8_rtl_defines]
 set got [get_property verilog_define [get_filesets sources_1]]
 puts "  sources_1  {$got}"
 if {$got ne $vdef} { bad "sources_1 defines {$got}, want {$vdef}" }
