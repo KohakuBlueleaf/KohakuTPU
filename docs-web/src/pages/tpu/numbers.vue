@@ -534,8 +534,8 @@ const notCovered = [
     <p class="doc-p">
       The request no longer carries a flag for any of this.
       <code>flags[4]</code> and <code>flags[5]</code> — <code>QUANT</code> and
-      <code>BLAYOUT</code> — are reserved and ignored, and so is a cluster's
-      <code>preq</code>.
+      <code>BLAYOUT</code> — are reserved and ignored, and a cluster's
+      <code>FILL</code> carries no format bit.
       <b
         >The driver states the format by scheduling the conversion, not by
         flagging the read.</b

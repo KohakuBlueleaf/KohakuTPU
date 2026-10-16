@@ -149,13 +149,12 @@ forces; **the descriptor removed the requester rather than pipelining it.**
 
 Three fields on it are worth naming:
 
-- **`preq` is RESERVED** and the cluster no longer decodes it. It used to say the
-  operand was already int7+E5M3 so the quantiser would not be involved; now that
-  is the only case there is — a fetch is never transformed, so every `FILL` reads
-  4 words per entry and no request can ask for anything else
-  ([number-format.md](number-format.md) §5.1). Memory still holds no map of which
+- **No format bit.** A fetch is never transformed, so every `FILL` reads 4 words
+  per entry and no request can ask for anything else
+  ([number-format.md](number-format.md) §5.1). Memory holds no map of which
   addresses are which format: the driver states the format by *scheduling the
-  conversion*, not by flagging the read.
+  conversion*, not by flagging the read. Bit 141 is `recv` (§5.4), and a fetching
+  `FILL` drives it 0.
 - **`eoff`** is which L1 entry the run starts at. It costs nothing to carry: it
   rides in the memory request's transaction field, which memory echoes back
   alongside each entry's position in the run, so the response names the exact

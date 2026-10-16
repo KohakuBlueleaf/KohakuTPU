@@ -313,7 +313,7 @@ Opcodes: 1 `FILL`, 2 `GEMM`, 3 `DRAIN`.
 | `[175:168]` | `anchor` | GEMM, DRAIN | Common output exponent. |
 | `[167:144]` | `peers` | FILL | Other clusters receiving this fetch, `{y,x}` each. Copied straight into the read descriptor's `peer` field. |
 | `[143:142]` | `npeer` | FILL | How many are present. |
-| `[141]` | `preq` | FILL | **Reserved.** Every operand is already converted in memory — the cluster drives the retired `QUANT` bit to 0 unconditionally. |
+| `[141]` | `recv` | FILL | No memory request: the FILL completes once `n` entries have landed on its side from `CU_DATA` bursts flagged COUNT. 0 fetches from `addr`. Every operand is already in its final format, so no FILL carries a format bit. |
 | `[140:133]` | `eoff` | FILL | First local entry to write. Becomes the request's `txn`. |
 | `[132:125]` | `aoff` | GEMM | Base entry on the A side. |
 | `[124:117]` | `boff` | GEMM | Base entry on the B side. |
@@ -332,7 +332,8 @@ Opcodes: 1 `FILL`, 2 `GEMM`, 3 `DRAIN`.
 | `[78:77]` | `dmesh` | DRAIN | Destination mesh, meaningful only when `dfin` is nonzero. |
 | `[76:69]` | `dfin` | DRAIN | `{fin_y, fin_x}` in that mesh. Nonzero is what makes the drain remote. |
 | `[68:63]` | `addr_hi` | FILL, DRAIN | `addr[39:34]`. See below. |
-| `[62:0]` | — | | Unused. |
+| `[62]` | `credit` | DRAIN, emitting GEMM | To a node: each burst first spends its length in credits the sink returns ([isa.md](../projects/kohakutpu/isa.md) §5.4). |
+| `[61:0]` | — | | Unused. |
 
 Two encoding decisions worth copying, both of which are about **not breaking old
 programs**:

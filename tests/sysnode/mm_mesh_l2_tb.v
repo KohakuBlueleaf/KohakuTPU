@@ -295,9 +295,8 @@ module mm_mesh_l2_tb;
         begin drain_at(nt, 40'(word * 32)); end
     endtask
 
-    // op 1 FILL. `preq` says the operand is ALREADY quantised, which is what
-    // staging holds -- MAG serves it verbatim instead of converting.
-    task cl_fill(input [39:0] addr, input [15:0] n, input sel, input preq);
+    // op 1 FILL, fetching: [141] `recv` stays 0, since 1 waits for peer CU_DATA.
+    task cl_fill(input [39:0] addr, input [15:0] n, input sel);
         reg [255:0] p;
         begin
             p = 256'd0;
@@ -306,9 +305,6 @@ module mm_mesh_l2_tb;
             p[68  -: 6]  = addr[39:34];
             p[217 -: 16] = n;
             p[201]       = sel;
-            // [141], NOT [200] -- 200 is the GEMM's `acc`. With preq low the
-            // fetch quantises, and a quantising fetch is never staged.
-            p[141]       = preq;
             cl_inst(p);
         end
     endtask
@@ -445,7 +441,7 @@ module mm_mesh_l2_tb;
 
         // The fill can only complete if MAG answered it from staging: nothing
         // ever wrote DRAM at an address with bit 39 set.
-        cl_fill(A_MAGL2, 16'd1, 1'b0, 1'b1);
+        cl_fill(A_MAGL2, 16'd1, 1'b0);
         spin = 0;
         while ((dbg_cluster[47:32] < 16'd1) && (spin < 200000)) begin
             spin = spin + 1; @(negedge clk);
@@ -457,8 +453,8 @@ module mm_mesh_l2_tb;
         // The SAME tile sits at DRAM word 0 and at aperture 0, so filling both
         // operands from each and draining the GEMM must agree bit for bit.
         $display("--- 5b. fill from DRAM vs fill from aperture 0 ---");
-        cl_fill(40'd0, 16'd1, 1'b0, 1'b1);
-        cl_fill(40'd0, 16'd1, 1'b1, 1'b1);
+        cl_fill(40'd0, 16'd1, 1'b0);
+        cl_fill(40'd0, 16'd1, 1'b1);
         send_gemm(1, 1, 1);
         drain_at(1, 40'(W_R1 * 32));
         wait_drains(5, 400000);
@@ -477,8 +473,8 @@ module mm_mesh_l2_tb;
             @(negedge clk); bd_we = 1'b0;
         end
 
-        cl_fill(A_MAGL2, 16'd1, 1'b0, 1'b1);
-        cl_fill(A_MAGL2, 16'd1, 1'b1, 1'b1);
+        cl_fill(A_MAGL2, 16'd1, 1'b0);
+        cl_fill(A_MAGL2, 16'd1, 1'b1);
         send_gemm(1, 1, 1);
         drain_at(1, 40'(W_R2 * 32));
         wait_drains(6, 400000);
@@ -492,7 +488,7 @@ module mm_mesh_l2_tb;
 
         // ============ 6. a reserved aperture faults rather than aliasing ====
         $display("--- 6. aperture 3 is reserved: 1 ERROR expected, no fill ---");
-        cl_fill(A_RSVD, 16'd1, 1'b0, 1'b1);
+        cl_fill(A_RSVD, 16'd1, 1'b0);
         repeat (20000) @(negedge clk);
         chk(dbg_cluster[47:32] == 16'd5,
             "a reserved aperture is DROPPED, not answered", dbg_cluster[47:32]);

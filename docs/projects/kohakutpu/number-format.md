@@ -260,8 +260,8 @@ path is paid once per read, and there is no shape at which that is the cheaper
 of the two.
 
 **Nothing on a request selects it any more.** `flags[4]`/`[5]` — the old `QUANT`
-and `BLAYOUT` — are reserved and ignored, and `preq` on a `FILL` is reserved
-with them. The memory system holds no map of which addresses are which format
+and `BLAYOUT` — are reserved and ignored, and a `FILL` carries no format bit
+(its bit 141 is `recv`, [isa.md](isa.md) §5.4). The memory system holds no map of which addresses are which format
 and still must not learn one; what changed is that the driver states the format
 by *scheduling the conversion*, not by flagging the read. A `GEMM` therefore
 reads operands that are already in their final format, always.

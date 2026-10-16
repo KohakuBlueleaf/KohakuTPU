@@ -336,9 +336,8 @@ module mm_mesh_stage_tb;
         end
     endtask
 
-    // preq is bit 141, NOT 200 -- 200 is GEMM's `acc`. At preq=0 MAG quantises,
-    // which takes the DRAM branch and never consults staging at all.
-    task cl_fill(input [39:0] addr, input [15:0] n, input sel, input preq);
+    // op 1 FILL, fetching: [141] `recv` stays 0, since 1 waits for peer CU_DATA.
+    task cl_fill(input [39:0] addr, input [15:0] n, input sel);
         reg [255:0] p;
         begin
             p = 256'd0;
@@ -347,7 +346,6 @@ module mm_mesh_stage_tb;
             p[68  -: 6]  = addr[39:34];
             p[217 -: 16] = n;
             p[201]       = sel;
-            p[141]       = preq;
             cl_inst(p);
         end
     endtask
@@ -454,8 +452,8 @@ module mm_mesh_stage_tb;
         // ==== 3. THE DISCRIMINATED FILL: reference first, then DRAM poisoned
         // underneath, so only the store can still match it. ====
         $display("--- 3a. reference: fill both operands from DRAM word 0 ---");
-        cl_fill(40'd0, 16'd1, 1'b0, 1'b1);
-        cl_fill(40'd0, 16'd1, 1'b1, 1'b1);
+        cl_fill(40'd0, 16'd1, 1'b0);
+        cl_fill(40'd0, 16'd1, 1'b1);
         send_gemm(1, 1, 1);
         drain_at(1, 40'(W_REF * 32));
         wait_drains(3, 400000);
@@ -475,8 +473,8 @@ module mm_mesh_stage_tb;
         end
 
         $display("--- 3c. the poison is VISIBLE through a DRAM fill ---");
-        cl_fill(40'd0, 16'd1, 1'b0, 1'b1);
-        cl_fill(40'd0, 16'd1, 1'b1, 1'b1);
+        cl_fill(40'd0, 16'd1, 1'b0);
+        cl_fill(40'd0, 16'd1, 1'b1);
         send_gemm(1, 1, 1);
         drain_at(1, 40'(W_POI * 32));
         wait_drains(4, 400000);
@@ -487,8 +485,8 @@ module mm_mesh_stage_tb;
         chk(poi1 !== ref1, "poisoned DRAM gives a DIFFERENT answer", 0);
 
         $display("--- 3d. the STAGED fill still equals the reference ---");
-        cl_fill(A_STG, 16'd1, 1'b0, 1'b1);
-        cl_fill(A_STG, 16'd1, 1'b1, 1'b1);
+        cl_fill(A_STG, 16'd1, 1'b0);
+        cl_fill(A_STG, 16'd1, 1'b1);
         send_gemm(1, 1, 1);
         drain_at(1, 40'(W_STG * 32));
         wait_drains(5, 400000);
@@ -555,7 +553,7 @@ module mm_mesh_stage_tb;
             dbg_cluster[47:32]);
         i = ax_ar_any;
         ar_sp0 = ax_ar_special;
-        cl_fill(A_STG_M1, 16'd1, 1'b0, 1'b1);
+        cl_fill(A_STG_M1, 16'd1, 1'b0);
         spin = 0;
         while ((mag_rem_rd == 0) && (spin < 40000)) begin
             spin = spin + 1; @(negedge clk);

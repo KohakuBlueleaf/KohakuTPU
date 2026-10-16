@@ -674,16 +674,16 @@ module mag_system_tb;
         input        sel;
         input        acc;
         input [7:0]  i_gm, i_gn, i_nk, i_anch;
-        input        preq;
+        input        recv;      // FILL: no fetch; wait for peers' CU_DATA
         input        emit;      // GEMM: hand sub-tiles out as they finish
         input        fuse;      // DRAIN: they already came out; just wait
         input        lst;
         begin
-            //  ... peers(24) npeer(2) preq eoff(8) aoff(8) boff(8) emit fuse
+            //  ... peers(24) npeer(2) recv eoff(8) aoff(8) boff(8) emit fuse
             cu_inst = { 16'h0000, 4'h5, 8'h40, lst, 3'b000,
                         op, adr, nn, sel, acc,
                         i_gm, i_gn, i_nk, i_anch,
-                        24'd0, 2'd0, preq, 24'd0, emit, fuse, 115'd0 };
+                        24'd0, 2'd0, recv, 24'd0, emit, fuse, 115'd0 };
         end
     endfunction
 
@@ -692,7 +692,7 @@ module mag_system_tb;
     reg [DW-1:0] wtmp, res_word;
     reg [63:0]  rv;
     reg [33:0]  ad34;
-    reg         preq, fuse;
+    reg         fuse;
     real got_r, want_r, err;
 
     // stage one CU instruction flit at program slot `slot` for the agent
@@ -835,24 +835,18 @@ module mag_system_tb;
         // ---------------------------------------------------------------
         $display("--- 3. build the control program (driver ISA) ---");
         for (cu = 0; cu < 2; cu = cu + 1) begin
-            // four CU instructions: FILL A, FILL B, GEMM, DRAIN.
-            //
-            // `preq` is 1 on BOTH clusters and is no longer a route: a cluster
-            // cannot ask memory to convert any more, so every fill is of an
-            // operand already in its final format. What still differs is where
-            // those bytes came from -- placed, or converted on card -- and the
-            // drain style.
-            preq = 1'b1;
+            // four CU instructions: FILL A, FILL B, GEMM, DRAIN. Both fills
+            // fetch (`recv` 0); `recv` 1 waits for peer CU_DATA that never comes.
             fuse = (cu == 1);
             ad34 = ((cu == 0) ? Q0A_BASE : Q1A_BASE) * 32;
             stage_flit(0, cu_inst(4'd1, ad34, GM[15:0]*NKB[15:0], 1'b0, 1'b0,
                                   8'd0, 8'd0, 8'd0, 8'd0,
-                                  preq, 1'b0, 1'b0, 1'b0));
+                                  1'b0, 1'b0, 1'b0, 1'b0));
 
             ad34 = ((cu == 0) ? Q0B_BASE : Q1B_BASE) * 32;
             stage_flit(1, cu_inst(4'd1, ad34, GNC[15:0]*NKB[15:0], 1'b1, 1'b0,
                                   8'd0, 8'd0, 8'd0, 8'd0,
-                                  preq, 1'b0, 1'b0, 1'b0));
+                                  1'b0, 1'b0, 1'b0, 1'b0));
 
             ad34 = ((cu == 0) ? WC0_BASE : WC1_BASE) * 32;
             stage_flit(2, cu_inst(4'd2, fuse ? ad34 : 34'd0, 16'd0, 1'b0, 1'b0,
