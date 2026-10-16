@@ -100,8 +100,10 @@ module vec_cu #(
         assign u_clk = unit_clk;
 
         // `resetn` is released on the NoC clock, so its edge means nothing
-        // here. Async-assert, sync-deassert, as mag_link_cdc does.
-        reg [1:0] ur_q;
+        // here. Async-assert, sync-deassert, as mag_link_cdc does. KEEP: every
+        // core's copy is logically equal, and synthesis otherwise merges them
+        // into one register driving all cores across the die.
+        (* KEEP = "true" *) reg [1:0] ur_q;
         always @(posedge unit_clk or negedge resetn) begin
             if (!resetn) begin
                 ur_q <= 2'b00;

@@ -136,14 +136,18 @@ module mx_acu_fp_pump #(
     (* shreg_extract = "no" *) reg [TW-1:0] peer_q;
 
     always @(posedge clk) begin
-        // VALID AND OPCODE ONLY. part_q is 384 bits and peer_q is TW, both of
-        // them qualified downstream by cmdv_q.
+        // VALID AND OPCODE ONLY; the payload below is qualified by cmdv_q.
         if (rst) begin
             op_q <= OP_NOP; cmdv_q <= 1'b0;
         end else if (en) begin
+            op_q <= op; cmdv_q <= cmd_valid;
+        end
+    end
+
+    always @(posedge clk) begin
+        if (en) begin
             part_q <= part_in; sa_q <= sa; sb_q <= sb; anchor_q <= anchor;
-            op_q <= op; addr_q <= tile_addr; cmdv_q <= cmd_valid;
-            peer_q <= peer_in;
+            addr_q <= tile_addr; peer_q <= peer_in;
         end
     end
 
@@ -384,6 +388,11 @@ module mx_acu_fp_pump #(
         end else if (en) begin
             v1     <= cmdv_d2;
             op_r   <= op_d2;
+        end
+    end
+
+    always @(posedge clk) begin
+        if (en) begin
             addr_r <= addr_d2;
             peer_r <= peer_d2;
             for (i = 0; i < 4; i = i + 1) begin
@@ -438,7 +447,13 @@ module mx_acu_fp_pump #(
         if (rst) begin
             v1_s <= 1'b0; op_s <= OP_NOP;
         end else if (en) begin
-            v1_s <= v1; op_s <= op_r; addr_s <= addr_r; peer_s <= peer_r;
+            v1_s <= v1; op_s <= op_r;
+        end
+    end
+
+    always @(posedge clk) begin
+        if (en) begin
+            addr_s <= addr_r; peer_s <= peer_r;
             for (q = 0; q < 16; q = q + 1) begin
                 y_r[q]   <= smear[q]; val_s[q] <= val_r[q];
                 sgn_s[q] <= sgn_r[q]; exp_s[q] <= exp_r[q];
@@ -493,6 +508,11 @@ module mx_acu_fp_pump #(
         end else if (en) begin
             v1a    <= v1_s;
             op_1a  <= op_s;
+        end
+    end
+
+    always @(posedge clk) begin
+        if (en) begin
             addr_a <= addr_s;
             peer_a <= peer_s;
             for (i = 0; i < 16; i = i + 1) begin
@@ -527,6 +547,11 @@ module mx_acu_fp_pump #(
         end else if (en) begin
             v1b    <= v1a;
             op_1b  <= op_1a;
+        end
+    end
+
+    always @(posedge clk) begin
+        if (en) begin
             addr_b <= addr_a;
             peer_b <= peer_a;
             for (i = 0; i < 16; i = i + 1) begin
@@ -574,22 +599,13 @@ module mx_acu_fp_pump #(
     reg b_zero_r;       // align operand B is zero
 
     always @(posedge clk) begin
-        // a_zero_r/b_zero_r reset HIGH, so they stay; chain_r/peer_r2/addr_r2
-        // are 2*TW+TAW of payload that v2 gates.
+        // a_zero_r/b_zero_r reset HIGH, so they stay; the payload is below.
         if (rst) begin
             op_r2 <= OP_NOP; v2 <= 1'b0;
             a_zero_r <= 1'b1; b_peer_r <= 1'b0; b_zero_r <= 1'b1;
         end else if (en) begin
-            chain_r <= chain_fp;
-            peer_r2 <= peer_b;
             op_r2   <= op_1b;
             v2      <= v1b;
-
-            // only updated on a valid command; everything downstream of it is
-            // gated by v2, so it holds rather than clears
-            if (v1b) begin
-                addr_r2 <= addr_b;
-            end
 
             // Operand sources, resolved one stage ahead of the align cycle so
             // nothing combinational sits in front of the tile read.
@@ -603,6 +619,18 @@ module mx_acu_fp_pump #(
                 a_zero_r <= 1'b0; b_peer_r <= 1'b0; b_zero_r <= 1'b0;  // tile+chain
             end else if (v1b && ((op_1b == OP_EMIT) || (op_1b == OP_SEND))) begin
                 a_zero_r <= 1'b0; b_peer_r <= 1'b0; b_zero_r <= 1'b1;  // pass out
+            end
+        end
+    end
+
+    always @(posedge clk) begin
+        if (en) begin
+            chain_r <= chain_fp;
+            peer_r2 <= peer_b;
+            // only updated on a valid command; everything downstream of it is
+            // gated by v2, so it holds rather than clears
+            if (v1b) begin
+                addr_r2 <= addr_b;
             end
         end
     end
@@ -756,6 +784,11 @@ module mx_acu_fp_pump #(
             // sum_iss is EMIT/SEND: they produce an output but no tile write,
             // so they must be counted valid separately from iss_wr
             v3       <= iss_wr || fwd_iss || sum_iss;
+        end
+    end
+
+    always @(posedge clk) begin
+        if (en) begin
             s3_addr  <= addr_r2;
             s3_chain <= chain_r;
             s3_wr    <= iss_wr;
@@ -802,6 +835,11 @@ module mx_acu_fp_pump #(
             v4 <= 1'b0;
         end else if (en) begin
             v4       <= v3;
+        end
+    end
+
+    always @(posedge clk) begin
+        if (en) begin
             s4_addr  <= s3_addr;
             s4_chain <= s3_chain;
             s4_wr    <= s3_wr;
@@ -899,26 +937,26 @@ module mx_acu_fp_pump #(
         if (rst) begin
             peer_valid <= 1'b0; emit_valid <= 1'b0; emit_pend <= 1'b0;
         end else if (en) begin
-            peer_valid <= 1'b0;
-            emit_valid <= 1'b0;
-            emit_pend  <= 1'b0;
+            peer_valid <= v4 && (s4_out == OUT_SEND
+                                 || (s4_out != OUT_EMIT && s4_fwd));
+            emit_pend  <= v4 && (s4_out == OUT_EMIT);
+            emit_valid <= emit_pend;
+        end
+    end
 
+    always @(posedge clk) begin
+        if (en) begin
             if (v4) begin
                 if (s4_out == OUT_SEND) begin
-                    peer_out   <= rounded;
-                    peer_valid <= 1'b1;
+                    peer_out <= rounded;
                 end else if (s4_out == OUT_EMIT) begin
-                    emit_acc  <= rounded;
-                    emit_pend <= 1'b1;
+                    emit_acc <= rounded;
                 end else if (s4_fwd) begin
-                    peer_out   <= s4_chain;
-                    peer_valid <= 1'b1;
+                    peer_out <= s4_chain;
                 end
             end
-
             if (emit_pend) begin
-                emit_out   <= emit_fp16;
-                emit_valid <= 1'b1;
+                emit_out <= emit_fp16;
             end
         end
     end

@@ -103,6 +103,15 @@ module mx_cluster_node_pump #(
     localparam [2:0] OP_EMIT = 3'd5;
     localparam integer PW = 16*(ACC_MW+8);
 
+    // `rst` is released on clk; every clk2x flop takes this local copy, so the
+    // 1x reset net reaches one flop per cluster on the 2x side instead of the
+    // whole cascade at the 2x period.
+    reg rst2x_q;
+    always @(posedge clk2x) begin
+        rst2x_q <= rst;
+    end
+    wire rst2x = rst2x_q;
+
     // ---- manager --------------------------------------------------------
     wire [895:0] a_bus, b_bus;
     wire         core_valid, core_first, part_valid;
@@ -144,7 +153,7 @@ module mx_cluster_node_pump #(
     wire emit_issue;
 
     mx_cluster_mgr_pump #(.GA(GA), .GB(GB), .TAW(TAW), .L1_PRIM(L1_PRIM)) u_mgr (
-        .clk(clk), .clk2x(clk2x), .rst(rst),
+        .clk(clk), .clk2x(clk2x), .rst(rst), .rst2x(rst2x),
         .l1_we(l1_we), .l1_sel(l1_sel), .l1_addr(l1_addr), .l1_data(l1_data),
         .gemm_start(gemm_start), .gemm_gm(gemm_gm), .gemm_gn(gemm_gn),
         .gemm_nk(gemm_nk), .gemm_anchor(gemm_anchor), .gemm_acc(gemm_acc),
@@ -170,7 +179,7 @@ module mx_cluster_node_pump #(
     wire         core_pv, core_pf;
 
     mx_cluster_core #(.MODEL(MODEL)) u_core (
-        .clk(clk2x), .rst(rst), .en(1'b1),
+        .clk(clk2x), .rst(rst2x), .en(1'b1),
         .a_in(a_bus), .b_in(b_bus),
         .in_valid(core_valid), .in_first(core_first),
         .part_out(core_part), .part_valid(core_pv), .part_first(core_pf)
@@ -186,22 +195,28 @@ module mx_cluster_node_pump #(
 
     // `pp` follows VALID, not the clock phase.
     always @(posedge clk2x) begin
-        // `pp` is the pair phase and must survive reset; p_lo is 384 bits of
-        // half-pair that `pair_v` gates, as p_lo_h beside it already shows.
-        if (rst) begin
+        // `pp` is the pair phase and must survive reset; the half-pairs below
+        // are gated by `pair_v`.
+        if (rst2x) begin
             pp <= 1'b0; pair_v <= 1'b0; pair_f <= 1'b0;
         end else begin
-            pair_v <= 1'b0;
+            pair_v <= core_pv && pp;
             if (core_pv) begin
                 pp <= ~pp;
                 if (!pp) begin
-                    p_lo   <= core_part;
                     pair_f <= core_pf;
-                end else begin
-                    p_lo_h <= p_lo;        // both halves latched together
-                    p_hi   <= core_part;
-                    pair_v <= 1'b1;
                 end
+            end
+        end
+    end
+
+    always @(posedge clk2x) begin
+        if (core_pv) begin
+            if (!pp) begin
+                p_lo   <= core_part;
+            end else begin
+                p_lo_h <= p_lo;        // both halves latched together
+                p_hi   <= core_part;
             end
         end
     end
@@ -210,7 +225,7 @@ module mx_cluster_node_pump #(
     // toggle handshake: part_bus is read WITH part_valid, so sync latency breaks.
     reg pair_v2;
     always @(posedge clk2x) begin
-        pair_v2 <= (rst ? 1'b0 : pair_v);
+        pair_v2 <= (rst2x ? 1'b0 : pair_v);
     end
 
     assign part_bus   = p_hi;

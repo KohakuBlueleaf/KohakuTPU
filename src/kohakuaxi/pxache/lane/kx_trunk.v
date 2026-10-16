@@ -233,7 +233,8 @@ module kx_trunk #(
     reg  [N_CH-1:0] pp_tx;
     reg             fok_tx;
     generate if (ASYNC != 0) begin : g_ret_a
-        reg fok_m, fok_s1, fok_s2;
+        reg fok_m;
+        (* ASYNC_REG = "TRUE" *) reg fok_s1, fok_s2;
         always @(posedge m_clk) begin fok_m <= m_rstn; end
         always @(posedge clk) begin
             fok_s1 <= fok_m;
@@ -242,7 +243,8 @@ module kx_trunk #(
         end
         genvar gc;
         for (gc = 0; gc < N_CH; gc = gc + 1) begin : g_pc
-            reg  [CW:0] pb, pg, ps1, ps2, seen;
+            reg  [CW:0] pb, pg, seen;
+            (* ASYNC_REG = "TRUE" *) reg [CW:0] ps1, ps2;
             wire [CW:0] pnext = pb + 1'b1;
             always @(posedge m_clk) begin
                 if (!m_rstn) begin pb <= 0; pg <= 0; end

@@ -37,6 +37,7 @@ module mx_cluster_mgr_pump #(
     input  wire         clk,
     input  wire         clk2x,
     input  wire         rst,
+    input  wire         rst2x,          // `rst` registered on clk2x
 
     // ---- backdoor L1 load (bench / fill engine) ------------------------
     input  wire         l1_we,
@@ -126,7 +127,7 @@ module mx_cluster_mgr_pump #(
         end
     end
     always @(posedge clk2x) begin
-        if (rst) begin tog_q <= 1'b0; tog_qq <= 1'b0; end
+        if (rst2x) begin tog_q <= 1'b0; tog_qq <= 1'b0; end
         else     begin tog_q <= tog;  tog_qq <= tog_q; end
     end
     // kb FIRST then kb+1: the reverse order put the out-of-range entry of an odd
@@ -394,9 +395,8 @@ module mx_cluster_mgr_pump #(
     // ================================================ operand register, 2x
     // L1 clock-to-out lands here; nothing else has to close at the 2x period.
     always @(posedge clk2x) begin
-        // a_out/b_out alone are 1,792 flops that `core_valid` qualifies, and a
-        // reset that wide is what makes routing impossible.
-        if (rst) begin
+        if (rst2x) begin
+            s1v_2x <= 1'b0; s1f_2x <= 1'b0;
             core_valid <= 1'b0; core_first <= 1'b0;
         end else begin
             // TWO clk2x registers off s1_valid: a_out holds kb in clk2x cycle 2
@@ -405,9 +405,14 @@ module mx_cluster_mgr_pump #(
             s1f_2x     <= s1_first;
             core_valid <= s1v_2x;
             core_first <= s1f_2x;
-            a_out      <= a_ent[895:0];
-            b_out      <= b_ent[895:0];
         end
+    end
+
+    // a_out/b_out are 1,792 flops that `core_valid` qualifies: no reset and no
+    // enable, so no reset net reaches them in either form.
+    always @(posedge clk2x) begin
+        a_out <= a_ent[895:0];
+        b_out <= b_ent[895:0];
     end
 
     // ================================================ ACU command FIFO
