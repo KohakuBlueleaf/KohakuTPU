@@ -96,11 +96,13 @@ class LoadWindow:
         if nbytes == 0:
             return
         self.t.write64(self.base + R_LOADC, region | (0 << 8))
+        words = []
         for a in range(0, nbytes, width):
             w = 0
             for j in range(width):
                 w |= self._byte(base + a + j) << (8 * j)
-            self.t.write64(self.base + R_LOADD, w)
+            words.append(w)
+        self.t.write_seq(self.base + R_LOADD, words)
 
     # ----------------------------------------------------------------- run
     def stdin(self, text: str) -> None:
@@ -115,10 +117,10 @@ class LoadWindow:
             raise ValueError("the scratchpad is streamed in whole 8-byte words")
         # LOADC[23:8] holds the start offset.
         self.t.write64(self.base + R_LOADC, REGION_SPAD | (offset << 8))
-        for a in range(0, len(data), 8):
-            self.t.write64(
-                self.base + R_LOADD, int.from_bytes(data[a : a + 8], "little")
-            )
+        self.t.write_seq(
+            self.base + R_LOADD,
+            [int.from_bytes(data[a : a + 8], "little") for a in range(0, len(data), 8)],
+        )
 
     def stop(self) -> None:
         """Hold the core in reset (HR_BOOT = 0)."""

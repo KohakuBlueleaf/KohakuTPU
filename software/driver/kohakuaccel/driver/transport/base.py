@@ -63,6 +63,13 @@ class Transport(abc.ABC):
             out += (self.read64(addr + off) & MASK64).to_bytes(WORD_BYTES, "little")
         return bytes(out)
 
+    def write_seq(self, addr: int, words) -> None:
+        """`write64(addr, w)` for each of `words`, in order, at ONE address: a
+        streaming register (a load window's data port). A backend whose round
+        trip dominates overrides it to send many in one exchange."""
+        for w in words:
+            self.write64(addr, w)
+
 
 def require_words(nbytes: int) -> None:
     """Raise unless `nbytes` is a whole number of 64-bit words.

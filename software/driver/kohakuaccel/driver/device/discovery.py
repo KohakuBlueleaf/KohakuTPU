@@ -103,6 +103,16 @@ def drain_mailbox(t: Transport, limit: int = 32) -> int:
     return limit
 
 
+def reply_waiting(t: Transport, polls: int = 4) -> bool:
+    """Whether a reply sits in the receive queue within `polls` status reads.
+    A single read right after the kick can beat a far unit's round trip (on a
+    Verilated card a host access is only a few hundred node cycles)."""
+    for _ in range(polls):
+        if not t.read64(MAG_BASE + A_RX_STATUS) & (1 << 16):
+            return True
+    return False
+
+
 def control_exchange(
     t: Transport,
     coord: Coord,
@@ -124,13 +134,13 @@ def control_exchange(
         t.write64(MAG_BASE + A_TX_FLIT0 + w * WORD_BYTES, (flit >> (w * 64)) & MASK64)
     t.write64(MAG_BASE + A_TX_KICK, 1)
 
-    if t.read64(MAG_BASE + A_RX_STATUS) & (1 << 16):
+    if not reply_waiting(t):
         return None
-    reply = 0
+    word = 0
     for w in range(FLIT_WORDS):
-        reply |= t.read64(MAG_BASE + A_RX_FLIT0 + w * WORD_BYTES) << (w * 64)
+        word |= t.read64(MAG_BASE + A_RX_FLIT0 + w * WORD_BYTES) << (w * 64)
     t.write64(MAG_BASE + A_RX_POP, 1)
-    return ctrl_reply(reply)
+    return ctrl_reply(word)
 
 
 def control_write(
@@ -151,7 +161,7 @@ def control_write(
         t.write64(MAG_BASE + A_TX_FLIT0 + w * WORD_BYTES, (flit >> (w * 64)) & MASK64)
     t.write64(MAG_BASE + A_TX_KICK, 1)
 
-    if t.read64(MAG_BASE + A_RX_STATUS) & (1 << 16):
+    if not reply_waiting(t):
         return None
     reply = 0
     for w in range(FLIT_WORDS):

@@ -203,6 +203,23 @@ class JtagTransport(Transport):
         self._eval(script)
         self._eval("jaxi::reset_cache; jaxi::connect")
 
+    def mig_status(self) -> list:
+        """Every memory controller the hardware manager sees, refreshed:
+        ``[(name, {property: value})]`` for its calibration properties."""
+        raw = self._eval(
+            "set o {}; foreach m [get_hw_migs] { refresh_hw_mig $m; "
+            "set p {}; foreach k [list_property $m] { "
+            "if {[string match -nocase *CAL* $k] || [string match -nocase *STATUS* $k]} "
+            '{ lappend p "$k=[get_property $k $m]" } }; '
+            'lappend o "[get_property NAME $m]|[join $p {;}]" }; join $o "\\n"'
+        )
+        out = []
+        for line in raw.strip().splitlines():
+            name, _, props = line.partition("|")
+            kv = dict(p.split("=", 1) for p in props.split(";") if "=" in p)
+            out.append((name.strip(), kv))
+        return out
+
     def reset_core(self) -> None:
         """Reset the JTAG-AXI master, clearing a wedged channel.
 
@@ -266,6 +283,19 @@ class JtagTransport(Transport):
         else:
             word = (word & (0xFFFFFFFF << 32)) | (data & 0xFFFFFFFF)
         self.write64(base, word)
+
+    def write_seq(self, addr: int, words, batch: int = 1024) -> None:
+        """Single-beat writes to one address, `batch` per Tcl exchange: the
+        exchange (~12 ms) and not the beat is the cost, so an 8 KB image is 2
+        exchanges rather than 2,048."""
+        words = list(words)
+        at = self.base + addr
+        for off in range(0, len(words), batch):
+            beats = " ".join(
+                _beats((w & MASK64).to_bytes(WORD_BYTES, "little"), self.beat_bytes)[0]
+                for w in words[off : off + batch]
+            )
+            self._eval(f"foreach v {{{beats}}} {{ jaxi::write {at} [list $v] }}")
 
     def read32(self, addr: int) -> int:
         """One 32-bit register, extracted from its 64-bit word."""
