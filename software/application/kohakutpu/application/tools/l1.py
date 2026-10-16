@@ -19,10 +19,10 @@ import tempfile
 
 import numpy as np
 
+from kohakutpu.application.runtime.card import VerilatorCard
 from kohakutpu.compiler import build, verify
 from kohakutpu.compiler.layout.buffer import Buffer
 from kohakutpu.language import examples
-from kohakutpu.simulation.verilator.card import VerilatorCard
 
 
 def bufs(m, name: str) -> list:

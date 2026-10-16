@@ -1,6 +1,7 @@
 """The device tensors live on and kernels run on: the Verilated card by
-default (``KOHAKUTPU_DEVICE=sim``), its model build from
-``KOHAKUTPU_SIM_BUILD``.
+default (``KOHAKUTPU_DEVICE=sim``, its model build from
+``KOHAKUTPU_SIM_BUILD``), or the card itself over JTAG
+(``KOHAKUTPU_DEVICE=card``, its board from ``KOHAKUTPU_BOARD``).
 
     dev = runtime.device()              # opened once, shared
     a = dev.alloc(nbytes)               # an address in the card's DRAM
@@ -18,14 +19,17 @@ import time
 from dataclasses import dataclass, field
 
 from kohakutpu.application.runtime.arena import Arena
+from kohakutpu.application.runtime.card import SiliconCard, VerilatorCard
 from kohakutpu.compiler.layout.buffer import Buffer
-from kohakutpu.simulation.verilator.card import VerilatorCard
 
 ROOT = pathlib.Path(__file__).resolve().parents[5]
 DEVICE_ENV = "KOHAKUTPU_DEVICE"
 BUILD_ENV = "KOHAKUTPU_SIM_BUILD"
 #: How many nodes (sysnodes sharing memory through the Xache) the card has.
 NODES_ENV = "KOHAKUTPU_SIM_NODES"
+#: The board a `card` device opens (boards/<name>.json).
+BOARD_ENV = "KOHAKUTPU_BOARD"
+BOARD = "multimesh_v9t4"
 
 
 #: The card models' build root: fast models (no probes) with V2 vector cores
@@ -63,21 +67,28 @@ class Device:
         self, kind: str | None = None, build=None, log=None, nodes: int | None = None
     ) -> None:
         kind = kind or os.environ.get(DEVICE_ENV, "sim")
-        if kind != "sim":
-            raise ValueError(
-                f"{DEVICE_ENV}={kind!r}: this runtime opens the Verilated card "
-                "(sim); the silicon path goes through the driver daemon"
-            )
+        if kind not in ("sim", "card"):
+            raise ValueError(f"{DEVICE_ENV}={kind!r}: one of sim, card")
         nodes = int(nodes or os.environ.get(NODES_ENV) or 1)
-        build = pathlib.Path(build or os.environ.get(BUILD_ENV) or default_build(nodes))
-        if not build.exists():
-            raise FileNotFoundError(
-                f"no card model at {build}; build one (scripts/py/card_model.py) or "
-                f"set {BUILD_ENV}"
+        self.kind, self.nodes = kind, nodes
+        if kind == "card":
+            self.build = None
+            board = os.environ.get(BOARD_ENV, BOARD)
+            self.card = SiliconCard(board, nodes=tuple(range(nodes)))
+        else:
+            build = pathlib.Path(
+                build or os.environ.get(BUILD_ENV) or default_build(nodes)
             )
-        log = log or pathlib.Path(tempfile.mkdtemp(prefix="ktpu_dev_")) / "model.log"
-        self.kind, self.build, self.nodes = kind, build, nodes
-        self.card = VerilatorCard(build, nodes=tuple(range(nodes)), log=log)
+            if not build.exists():
+                raise FileNotFoundError(
+                    f"no card model at {build}; build one (scripts/py/card_model.py) "
+                    f"or set {BUILD_ENV}"
+                )
+            log = (
+                log or pathlib.Path(tempfile.mkdtemp(prefix="ktpu_dev_")) / "model.log"
+            )
+            self.build = build
+            self.card = VerilatorCard(build, nodes=tuple(range(nodes)), log=log)
         self.machine = self.card.machine
         self.dram = Arena(self.card.top, self.card.arena_end)
         self.staging = {
@@ -170,6 +181,7 @@ def attach(dev: Device) -> Device:
 
 
 __all__ = [
+    "BOARD_ENV",
     "BUILD_ENV",
     "DEVICE_ENV",
     "NODES_ENV",

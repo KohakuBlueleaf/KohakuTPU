@@ -80,6 +80,28 @@ def machine(
     )
 
 
+def machine_of(
+    board: dict, nodes: int | None = None, mesh: int = 0, **kw
+) -> MachineSpec:
+    """`machine` for a board file: its die's units and system-node ports when
+    it carries them (scripts/py/gen_board.py), the 4+2 die otherwise."""
+    units = board.get("units")
+    if not units:
+        return machine(mesh=mesh, nodes=nodes, **kw)
+    ports = tuple(tuple(p) for p in board["sys_ports"])
+    if ports != SYS_PORTS:
+        raise ValueError(
+            f"{board['name']}: system-node ports {ports}, the compiler's {SYS_PORTS}"
+        )
+    return machine(
+        mg=[tuple(p) for p in units["MG"]],
+        vc=[tuple(p) for p in units["VC"]],
+        mesh=mesh,
+        nodes=nodes,
+        **kw,
+    )
+
+
 def vregs(m: MachineSpec) -> int:
     """`m`'s vector core register count."""
     return m.params.get("VC", {}).get("regs", VREGS)
@@ -110,6 +132,7 @@ __all__ = [
     "VCOPIES",
     "VREGS",
     "machine",
+    "machine_of",
     "mem",
     "vcopies",
     "vregs",

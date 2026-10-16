@@ -23,6 +23,7 @@ from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 
+from kohakutpu.application.runtime.card import VerilatorCard
 from kohakutpu.application.tools.l1 import run
 from kohakutpu.compiler import target as T
 from kohakutpu.compiler import verify
@@ -30,7 +31,6 @@ from kohakutpu.compiler.l2 import pipeline
 from kohakutpu.compiler.layout import tensor
 from kohakutpu.language import examples
 from kohakutpu.language.numerics.mxfp7 import value_fp16
-from kohakutpu.simulation.verilator.card import VerilatorCard
 
 
 def rel(got, want) -> float:

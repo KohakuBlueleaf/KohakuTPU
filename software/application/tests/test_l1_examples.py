@@ -1,7 +1,8 @@
 """The hand-written L1 examples, and the L2 examples compiled to L1, on a
 Verilated card, each against numpy.
 
-    KTPU_CARD1=build/l1cov/vlt_card_v9_1n_v2 KTPU_CARD2=build/l1cov/vlt_card_v9_2n_v2 pytest ...
+    KTPU_CARD1=build/v9g/vlt_card_v9_1n_v2 KTPU_CARD2=build/v9g/vlt_card_v9_2n_v2 pytest ...
+    KTPU_BOARD=multimesh_v9t4 KTPU_CARD1=build/v9t4m/vlt_card_v9t4_1n pytest ...
 
 A test whose card model is not named is skipped. One card is booted per
 module and node count; each example runs twice, the second timed.
@@ -12,23 +13,24 @@ import os
 import numpy as np
 import pytest
 
+from kohakutpu.application.runtime.card import VerilatorCard
 from kohakutpu.application.tools.l1 import run
-from kohakutpu.compiler import target as T
 from kohakutpu.compiler.l2 import pipeline
 from kohakutpu.compiler.layout import tensor
 from kohakutpu.language import examples
 from kohakutpu.language.numerics.mxfp7 import value_fp16
-from kohakutpu.simulation.verilator.card import VerilatorCard
 
 CARD1 = os.environ.get("KTPU_CARD1")
 CARD2 = os.environ.get("KTPU_CARD2")
+#: The board the models were generated from (boards/<name>.json).
+BOARD = os.environ.get("KTPU_BOARD", "multimesh_v9")
 
 
 @pytest.fixture(scope="module")
 def card1():
     if not CARD1:
         pytest.skip("KTPU_CARD1 names no card model")
-    card = VerilatorCard(CARD1)
+    card = VerilatorCard(CARD1, board=BOARD)
     yield card
     card.close()
 
@@ -37,7 +39,7 @@ def card1():
 def card2():
     if not CARD2:
         pytest.skip("KTPU_CARD2 names no two-node card model")
-    card = VerilatorCard(CARD2, nodes=(0, 1))
+    card = VerilatorCard(CARD2, board=BOARD, nodes=(0, 1))
     yield card
     card.close()
 
@@ -246,11 +248,11 @@ def test_vector_peer_drain_across_meshes(card2):
 
 
 # ------------------------------------------------------- compiled from L2
-def l2(name: str, tmp_path, nodes=None) -> str:
+def l2(name: str, tmp_path, card) -> str:
     """The L2 example `name` through the compile pipeline (passes, lowering,
-    image scheduling) as an L1 file; its path."""
+    image scheduling) for `card`'s machine, as an L1 file; its path."""
     m = examples.load(examples.example(name, "l2"))
-    l1 = pipeline.compile_l1(m, name, T.machine(nodes=nodes))
+    l1 = pipeline.compile_l1(m, name, card.machine)
     p = tmp_path / f"{name}.ktpu"
     p.write_text(l1.source, encoding="utf-8")
     return str(p)
@@ -258,14 +260,14 @@ def l2(name: str, tmp_path, nodes=None) -> str:
 
 def test_l2_silu(card1, tmp_path):
     x = f16(np.random.default_rng(22), 512, 128)
-    y = run(card1, l2("silu", tmp_path), {"x": x})["out"]["y"]
+    y = run(card1, l2("silu", tmp_path, card1), {"x": x})["out"]["y"]
     assert rel(y, silu(x)) < 2e-3
 
 
 def test_l2_add(card1, tmp_path):
     rng = np.random.default_rng(23)
     x, y = f16(rng, 512, 128), f16(rng, 512, 128)
-    got = run(card1, l2("add", tmp_path), {"x": x, "y": y})["out"]["out"]
+    got = run(card1, l2("add", tmp_path, card1), {"x": x, "y": y})["out"]["out"]
     assert rel(got, x.astype(np.float64) + y) < 1e-3
 
 
@@ -273,7 +275,7 @@ def test_l2_softmax(card1, tmp_path):
     x = f16(np.random.default_rng(24), 1024, 128)
     v = x.astype(np.float64)
     e = np.exp(v - v.max(1, keepdims=True))
-    got = run(card1, l2("softmax", tmp_path), {"x": x})["out"]["y"]
+    got = run(card1, l2("softmax", tmp_path, card1), {"x": x})["out"]["y"]
     assert rel(got, e / e.sum(1, keepdims=True)) < 2e-3
 
 
@@ -284,13 +286,15 @@ def test_l2_layernorm(card1, tmp_path):
     b = (rng.standard_normal(128) * 0.5).astype(np.float16)
     v = x.astype(np.float64)
     want = (v - v.mean(1, keepdims=True)) / np.sqrt(v.var(1, keepdims=True) + 1e-5)
-    got = run(card1, l2("layernorm", tmp_path), {"x": x, "g": g, "b": b})["out"]["y"]
+    got = run(card1, l2("layernorm", tmp_path, card1), {"x": x, "g": g, "b": b})["out"][
+        "y"
+    ]
     assert rel(got, want * g + b) < 4e-3
 
 
 def test_l2_compare_and_select(card1, tmp_path):
     x = f16(np.random.default_rng(42), 512, 128)
-    y = run(card1, l2("leaky", tmp_path), {"x": x})["out"]["y"]
+    y = run(card1, l2("leaky", tmp_path, card1), {"x": x})["out"]["y"]
     v = x.astype(np.float64)
     assert rel(y, np.where(v > 0, v, 0.1 * v)) < 1e-3
 
@@ -301,7 +305,7 @@ def test_l2_sticky_softmax_on_both_paths(card1, tmp_path, scale):
     x = (np.random.default_rng(43).standard_normal((1024, 128)) * scale).astype(
         np.float16
     )
-    got = run(card1, l2("lazysoftmax", tmp_path), {"x": x})["out"]["y"]
+    got = run(card1, l2("lazysoftmax", tmp_path, card1), {"x": x})["out"]["y"]
     v = x.astype(np.float64)
     p = np.exp(v - v.max(1, keepdims=True))
     assert rel(got, p / p.sum(1, keepdims=True)) < 2e-3
@@ -309,13 +313,13 @@ def test_l2_sticky_softmax_on_both_paths(card1, tmp_path, scale):
 
 def test_l2_split_k(card1, tmp_path):
     x, w = operands(28, 256, 256, 1024)
-    y = run(card1, l2("splitk", tmp_path), {"x": x, "w": w}, reps=1)["out"]["y"]
+    y = run(card1, l2("splitk", tmp_path, card1), {"x": x, "w": w}, reps=1)["out"]["y"]
     assert rel(y, mxmm(x, w)) < 1e-2
 
 
 def test_l2_matmul_then_silu_through_gt4(card1, tmp_path):
     x, w = operands(30, 256, 256, 512)
-    y = run(card1, l2("mmsilu", tmp_path), {"x": x, "w": w}, reps=1)["out"]["y"]
+    y = run(card1, l2("mmsilu", tmp_path, card1), {"x": x, "w": w}, reps=1)["out"]["y"]
     assert rel(y, silu(mxmm(x, w))) < 1e-2
 
 
@@ -325,9 +329,9 @@ def test_l2_mlp_quantises_its_activation_on_the_core(card1, tmp_path):
     w1, w2 = (
         (rng.standard_normal((256, 256)) / 16).astype(np.float16) for _ in range(2)
     )
-    y = run(card1, l2("mlp", tmp_path), {"x": x, "w1": w1, "w2": w2}, reps=1)["out"][
-        "y"
-    ]
+    y = run(card1, l2("mlp", tmp_path, card1), {"x": x, "w1": w1, "w2": w2}, reps=1)[
+        "out"
+    ]["y"]
     h = mxmm(x, w1).astype(np.float16)
     a = silu(h).astype(np.float16)
     assert rel(y, mxmm(a, w2)) < 2e-2
@@ -337,7 +341,9 @@ def test_l2_tiles_drain_into_the_cores_and_overlap(card1, tmp_path):
     rng = np.random.default_rng(40)
     x = rng.standard_normal((256, 256)).astype(np.float16)
     w = (rng.standard_normal((256, 256)) / 16).astype(np.float16)
-    y = run(card1, l2("tilesilu", tmp_path), {"x": x, "w": w}, reps=1)["out"]["y"]
+    y = run(card1, l2("tilesilu", tmp_path, card1), {"x": x, "w": w}, reps=1)["out"][
+        "y"
+    ]
     assert rel(y, silu(mxmm(x, w).astype(np.float16))) < 2e-3
 
 
@@ -345,7 +351,9 @@ def test_l2_softmax_of_scores_never_in_memory(card1, tmp_path):
     rng = np.random.default_rng(44)
     x = rng.standard_normal((256, 128)).astype(np.float16)
     w = (rng.standard_normal((128, 128)) / 4).astype(np.float16)
-    y = run(card1, l2("mmsoftmax", tmp_path), {"x": x, "w": w}, reps=1)["out"]["y"]
+    y = run(card1, l2("mmsoftmax", tmp_path, card1), {"x": x, "w": w}, reps=1)["out"][
+        "y"
+    ]
     s = mxmm(x, w).astype(np.float16).astype(np.float64)
     p = np.exp(s - s.max(1, keepdims=True))
     assert rel(y, p / p.sum(1, keepdims=True)) < 4e-3
@@ -357,14 +365,14 @@ def test_l2_mlp_with_nothing_in_memory_between_layers(card1, tmp_path):
     w1 = (rng.standard_normal((128, 64)) / 8).astype(np.float16)
     w2 = (rng.standard_normal((64, 128)) / 11).astype(np.float16)
     ins = {"x": x, "w1": w1, "w2": w2}
-    y = run(card1, l2("mlpdirect", tmp_path), ins, reps=1)["out"]["y"]
+    y = run(card1, l2("mlpdirect", tmp_path, card1), ins, reps=1)["out"]["y"]
     a = silu(mxmm(x, w1).astype(np.float16)).astype(np.float16)
     assert rel(y, mxmm(a, w2)) < 2e-2
 
 
 def test_l2_mover_quantises_and_tiles(card1, tmp_path):
     x = f16(np.random.default_rng(3), 64, 128)
-    out = run(card1, l2("convert", tmp_path), {"x": x}, reps=1)["out"]
+    out = run(card1, l2("convert", tmp_path, card1), {"x": x}, reps=1)["out"]
     # Witnessed against the host packing, byte for byte.
     assert bytes(out["a"]) == tensor.pack_a(x, 8, 2)
     assert bytes(out["b"]) == tensor.pack_b(x, 16, 4)
@@ -378,23 +386,23 @@ def test_l2_mover_gather_and_transpose(card1, tmp_path):
     idx = np.zeros(16, np.uint32)
     idx[:12] = rng.choice(64, 12, replace=True)
     ins = {"t": t, "idx": idx, "idxf": idx.astype(np.float32)}
-    out = run(card1, l2("gather", tmp_path), ins)["out"]
+    out = run(card1, l2("gather", tmp_path, card1), ins)["out"]
     assert np.array_equal(out["y"], t[idx[:12]])
     assert np.array_equal(out["z"], t[idx[:12]])
     x = f16(rng, 8, 256)
-    y = run(card1, l2("transpose", tmp_path), {"x": x})["out"]["y"]
+    y = run(card1, l2("transpose", tmp_path, card1), {"x": x})["out"]["y"]
     assert np.array_equal(y, x.reshape(8, 16, 16).transpose(1, 0, 2).reshape(16, 128))
 
 
 def test_l2_shared_fills_on_two_nodes(card2, tmp_path):
     x, w = operands(26, 256, 2048, 512)
-    y = run(card2, l2("share2", tmp_path, 2), {"x": x, "w": w}, reps=1)["out"]["y"]
+    y = run(card2, l2("share2", tmp_path, card2), {"x": x, "w": w}, reps=1)["out"]["y"]
     assert rel(y, mxmm(x, w)) < 1e-2
 
 
 def test_l2_silu_on_two_nodes(card2, tmp_path):
     x = f16(np.random.default_rng(27), 1024, 128)
-    y = run(card2, l2("silu2", tmp_path, 2), {"x": x})["out"]["y"]
+    y = run(card2, l2("silu2", tmp_path, card2), {"x": x})["out"]["y"]
     assert rel(y, silu(x)) < 2e-3
 
 

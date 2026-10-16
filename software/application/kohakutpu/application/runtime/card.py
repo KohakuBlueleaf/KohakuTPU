@@ -1,24 +1,27 @@
-"""Run node programs on the Verilated card: boot once, place arrays, run, time,
-read back.
+"""Node programs on a card: boot once, place arrays, run, time, read back.
 
-    card = VerilatorCard(build)         # boots node 0 with the queue firmware
+    card = VerilatorCard(build)                         # the Verilated card
+    card = SiliconCard("multimesh_v9t4", nodes=(0,))    # the card, over JTAG
     a = card.put(np.float16 array)      # unit-global byte address
     got = card.run(program)             # node cycles, per-step ends, phases
     card.get(a, nbytes)
-    card.close()                        # each vector core's counters
+    card.close()
 
-    card = VerilatorCard(build, nodes=(0, 1))
     got = card.run({0: p0, 1: p1})      # one package a node, all submitted first
+
+`NodeCard` is the one runtime; the two cards differ only in what they are
+handed: the transport, how the host reaches DRAM, how a poll idles, how a
+firmware image is placed, and the arena. The machine programs are built for
+comes from the board (`target.machine_of`) and is checked against the
+enumerated units at boot.
 
 Before a set of programs first runs, the static checker runs on it
 (`check="refuse"`: a finding of a `verify.REFUSE` kind raises
 `verify.Refused`; "warn" prints the findings and runs; "off").
 
 `cycles` is the package's own count (node clock); with `steps=True` the
-firmware prints each step's end (KA_BOOT_F_STEPS), prints excluded. The
-machine programs are built for must be the card's: the enumerated units are
-checked against it at boot. The nodes share DRAM (the Xache); each node's
-queue sits in its own staging store.
+firmware prints each step's end (KA_BOOT_F_STEPS), prints excluded. The nodes
+share DRAM (the Xache); each node's queue sits in its own staging store.
 """
 
 import json
@@ -26,12 +29,14 @@ import pathlib
 import re
 import sys
 import tempfile
+import time
 
 import numpy as np
 
 from kohakuaccel.compiler.machine import STAGE_BYTES
 from kohakuaccel.driver.node.boot import BootArgs, NodeBoot
 from kohakuaccel.driver.node.queue import NodeQueue
+from kohakuaccel.driver.transport.jtag import JtagTransport
 from kohakuaccel.driver.transport.rebase import UnitGlobal
 from kohakuaccel.driver.transport.simdram import SimDram
 from kohakuaccel.driver.transport.verilator import VerilatorTransport
@@ -39,19 +44,17 @@ from kohakutpu.compiler import build as B
 from kohakutpu.compiler import imem, verify
 from kohakutpu.compiler import target as T
 from kohakutpu.driver import units as _units  # noqa: F401  (names MG and VC)
-from kohakutpu.driver.clock.card import BOARDS, load_board
-from kohakutpu.driver.host import Card, board_map
+from kohakutpu.driver.clock.card import BOARDS, CardClocks, load_board
+from kohakutpu.driver.host import ARENA_LIMIT, Card, board_map
 
 ROOT = pathlib.Path(__file__).resolve().parents[5]
+FIRMWARE = ROOT / "build/fw/kohakutpu_node.elf"
 #: The checker's findings by `verify.key`: a program set seen before is not
 #: checked again.
 VERIFY_CACHE = ROOT / "build" / "verify"
-#: Host arrays from 1 MB (the queue's alias at 0) to 1 MB short of the
-#: model's DRAM (it wraps): 16 MB unless the model was built with more.
-ARENA, ARENA_END = 0x0010_0000, 0x00F0_0000
-#: The node queue's address: a larger DRAM keeps the arena below it.
-QUEUE_ALIAS = 0x1000_0000
-#: The node queue, at the start of mesh 0's staging store.
+#: Host arrays start past the node queue's alias at 0.
+ARENA = 0x0010_0000
+#: The node queue, at the start of each node's staging store.
 Q_SIZE = 0x0010_0000
 F_TIMING, F_STEPS = 2, 8
 
@@ -60,74 +63,84 @@ class CardMismatch(RuntimeError):
     """The card's enumerated units are not the machine programs are built for."""
 
 
-class VerilatorCard:
+class ClockMismatch(RuntimeError):
+    """A node's wizard is not at the profile the card was opened for."""
+
+
+class NodeCard:
+    """The runtime over one card: `t` the transport, `host` the DRAM path the
+    host writes through, `idle` what a queue poll does between reads, `boot`
+    the firmware placement ("axi" through the load window, "burn" a model's
+    arrays), arrays in [ARENA, `arena_end`)."""
+
     def __init__(
         self,
-        build,
+        t,
+        host,
+        board: str,
+        *,
+        nodes: tuple[int, ...] = (0,),
         fw=None,
-        board="multimesh_v9",
         steps=False,
         machine=None,
-        log=None,
-        nodes=(0,),
         timeout: float = 300.0,
-        args=(),
         check: str = "refuse",
+        idle=None,
+        boot: str = "axi",
+        arena_end: int = ARENA_LIMIT,
     ) -> None:
         if check not in verify.GATES:
             raise ValueError(f"check={check!r}: one of {verify.GATES}")
-        self.build = pathlib.Path(build)
-        self.nodes = tuple(nodes)
-        #: The static checker before a program's first run (`verify.gate`).
+        self.t, self.host = t, host
+        self.nodes: tuple[int, ...] = tuple(nodes)
         self.check = check
         #: (node, id(program)) pairs -> (the programs, their findings)
         self.checked: dict = {}
         #: Wall seconds a package may take before its wait raises.
         self.timeout = timeout
-        self.machine = machine or T.machine(
-            nodes=max(self.nodes) + 1 if len(self.nodes) > 1 else None
+        self.board = load_board(board)
+        mp = board_map(self.board)
+        span = max(self.nodes) + 1
+        self.machine = machine or T.machine_of(
+            self.board, nodes=span if span > 1 else None
         )
-        fw = pathlib.Path(fw or ROOT / "build/fw/kohakutpu_node.elf")
-        b = load_board(board)
-        mp = board_map(b)
         #: The memory port a fetched dispatch reads through, from the board.
+        b = self.board
         self.fetch = tuple(b["fetch_port"]) if "fetch_port" in b else None
-        # A log of its own: cards run in parallel on one build.
-        log = log or pathlib.Path(tempfile.mkdtemp(prefix="ktpu_card_")) / "model.log"
-        # `args`: harness flags (sim/verilator/docs/card-backend.md).
-        self.t = VerilatorTransport(self.build, log=log, args=tuple(args))
-        self.host = SimDram(self.t, b, mp["mem"], mp["size"])
-        dram = min(len(self.host.dram) * self.host.words * 64, QUEUE_ALIAS)
-        self.arena_end = dram - (0x0100_0000 - ARENA_END)
+        self.arena_end = arena_end
         card = Card.from_board(
             board,
-            transport=self.host,
+            transport=host,
             which=list(self.nodes),
             verify=False,
             reply_at_agent=True,
         )
         for mesh in card.meshes:
             self.check_units(mesh)
-        self.mem = UnitGlobal(
-            self.host, mp["dram"], mp["mem"], mp["size"], staging=True
-        )
+        self.mem = UnitGlobal(host, mp["dram"], mp["mem"], mp["size"], staging=True)
         flags = F_TIMING | (F_STEPS if steps else 0)
+        fw = pathlib.Path(fw or FIRMWARE)
         #: node -> its queue, in its own staging store
         self.queues = {}
         for mesh in card.meshes:
             i = mesh.index
+            sim = t if boot == "burn" else None
+            loader = NodeBoot(t, mp["ctrl"][i], i, sim=sim)
+            # A firmware left running (a session that never sent STOP) still
+            # writes its queue: stop the core before the header is rewritten.
+            loader.win.stop()
             q = NodeQueue(
                 self.mem,
                 self.machine.stage_addr(0, mesh=i),
                 size=Q_SIZE,
-                idle=lambda: self.t.run(600),
+                idle=idle,
                 spill=lambda n: self.alloc(n),
             )
             q.init()
             args = BootArgs(
                 queue=q.base, mesh=i, scan=mesh.caps.grid_hi + 1, flags=flags
             )
-            NodeBoot(self.t, mp["ctrl"][i], i, sim=self.t).load(fw, args, "burn")
+            loader.load(fw, args, boot)
             self.queues[i] = q
         for q in self.queues.values():
             q.wait_ready()
@@ -261,12 +274,86 @@ class VerilatorCard:
                 steps.append((first, last, at, ", ".join(what)))
         return {"cycles": done.cycles, "steps": steps, "phases": phases, "pkg": pkg}
 
-    def close(self) -> dict:
-        """Stop the model; each vector core's counters from its log."""
+    def stop(self) -> None:
+        """Ask every node's firmware to leave its loop."""
         for q in self.queues.values():
             q.stop()
+
+
+class VerilatorCard(NodeCard):
+    """The Verilated card: host DRAM traffic through the model's arrays
+    (`SimDram`), polls advance the model, firmware burnt into its memories."""
+
+    def __init__(
+        self, build, board: str = "multimesh_v9", log=None, args=(), **kw
+    ) -> None:
+        self.build = pathlib.Path(build)
+        # A log of its own: cards run in parallel on one build.
+        log = log or pathlib.Path(tempfile.mkdtemp(prefix="ktpu_card_")) / "model.log"
+        # `args`: harness flags (sim/verilator/docs/card-backend.md).
+        t = VerilatorTransport(self.build, log=log, args=tuple(args))
+        b = load_board(board)
+        mp = board_map(b)
+        host = SimDram(t, b, mp["mem"], mp["size"])
+        # 1 MB short of the model's DRAM (it wraps), and below the node range.
+        dram = min(len(host.dram) * host.words * 64, 0x1000_0000)
+        super().__init__(
+            t,
+            host,
+            board,
+            idle=lambda: t.run(600),
+            boot="burn",
+            arena_end=dram - 0x0010_0000,
+            **kw,
+        )
+
+    def close(self) -> dict:
+        """Stop the model; each vector core's counters from its log."""
+        self.stop()
         self.t.close()
         return counters(self.t.model_log)
+
+
+class SiliconCard(NodeCard):
+    """The card itself: `transport` (JTAG by default) for everything, polls
+    sleep `poll` seconds, firmware streamed through each node's load window.
+
+    Opens only at `profile` ("idle": the board's idle profile) on every node
+    used, else raises :class:`ClockMismatch`: a session never starts at rates
+    nobody chose. `profile=None` skips the check (a clock ladder sets them)."""
+
+    def __init__(
+        self,
+        board: str,
+        transport=None,
+        poll: float = 0.02,
+        profile: str | None = "idle",
+        idle=None,
+        **kw,
+    ) -> None:
+        t = transport or JtagTransport()
+        b = load_board(board)
+        want = b.get("idle_profile", "low") if profile == "idle" else profile
+        if want is not None:
+            clocks = CardClocks(t, b)
+            for n in kw.get("nodes", (0,)):
+                got = clocks.mesh(n).read_all()
+                rates = b["profiles"][want]
+                off = {
+                    k: (got[k], v) for k, v in rates.items() if abs(got[k] - v) > 1e-6
+                }
+                if off:
+                    raise ClockMismatch(
+                        f"node {n} is not at profile {want!r}: (now, want) {off}; "
+                        f"set the clocks first (CardClocks.set_all({want!r}))"
+                    )
+        idle = idle or (lambda: time.sleep(poll))
+        super().__init__(t, t, board, idle=idle, boot="axi", **kw)
+
+    def close(self) -> dict:
+        """Stop every node's firmware; the card keeps its clocks."""
+        self.stop()
+        return {}
 
 
 def counters(log: pathlib.Path) -> dict:
@@ -307,4 +394,13 @@ def boards() -> list:
     return sorted(json.loads(p.read_text())["name"] for p in BOARDS.glob("*.json"))
 
 
-__all__ = ["CardMismatch", "VerilatorCard", "counters", "report"]
+__all__ = [
+    "CardMismatch",
+    "ClockMismatch",
+    "NodeCard",
+    "SiliconCard",
+    "VerilatorCard",
+    "boards",
+    "counters",
+    "report",
+]
