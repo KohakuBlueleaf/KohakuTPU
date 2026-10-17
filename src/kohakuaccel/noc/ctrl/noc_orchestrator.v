@@ -252,13 +252,28 @@ module noc_orchestrator #(
     // "block" is rejected here too and is deliberately not written.
     reg [63:0] node_status [0:N_STATUS-1];
 
-    wire [POS_WIDTH-1:0] in_src_x = noc_in_data[FLIT_WIDTH-2*POS_WIDTH-1 -: POS_WIDTH];
-    wire [POS_WIDTH-1:0] in_src_y = noc_in_data[FLIT_WIDTH-3*POS_WIDTH-1 -: POS_WIDTH];
-    wire [2*POS_WIDTH-1:0] in_idx = {in_src_y, in_src_x};
-    wire                 in_is_signal = noc_in_valid && in_is_sig;
-
-    wire [7:0]  sig_code = noc_in_data[255 -: 8];
-    wire [31:0] sig_arg  = noc_in_data[247 -: 32];
+    // A signal is absorbed a cycle after it arrives: everything a CU_SIGNAL
+    // updates reads these registers, not the flit (the mesh's CDC FIFO output
+    // through the type decode into `prog_credit` was 9 levels).
+    reg                   in_is_signal;
+    reg                   in_inst_done;
+    reg [2*POS_WIDTH-1:0] in_idx;
+    reg [7:0]             sig_code;
+    reg [31:0]            sig_arg;
+    always @(posedge clk) begin
+        if (!resetn) begin
+            in_is_signal <= 1'b0;
+            in_inst_done <= 1'b0;
+        end else begin
+            in_is_signal <= noc_in_valid && in_is_sig;
+            // SIG_INST_COMPLETE
+            in_inst_done <= noc_in_valid && in_is_sig && (noc_in_data[255 -: 8] == 8'h00);
+        end
+        in_idx   <= {noc_in_data[FLIT_WIDTH-3*POS_WIDTH-1 -: POS_WIDTH],
+                     noc_in_data[FLIT_WIDTH-2*POS_WIDTH-1 -: POS_WIDTH]};
+        sig_code <= noc_in_data[255 -: 8];
+        sig_arg  <= noc_in_data[247 -: 32];
+    end
     reg  [15:0] status_count_next;
 
     integer si;
@@ -282,13 +297,6 @@ module noc_orchestrator #(
     // destination to prog_dst, and pushes. Stalls on credit rather than on the
     // network: backpressuring CU_INST into the mesh is the protocol deadlock
     // spec s7 exists to prevent.
-    // SIG_INST_COMPLETE
-    wire in_inst_done = (
-        noc_in_valid
-        && in_is_sig
-        && (noc_in_data[255 -: 8] == 8'h00)
-    );
-
     // Completions from EVERY node, in one register: NODE_STATUS is per node, so
     // "is everyone finished" would otherwise cost N polls and grow the program
     // with the machine. Cleared by writing SIG_DONE.

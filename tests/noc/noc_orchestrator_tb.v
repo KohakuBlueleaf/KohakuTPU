@@ -151,12 +151,20 @@ module noc_orchestrator_tb;
 
     // Loopback node at (HI,HI): swap src/dst and send it back. Turns "did the
     // flit route correctly" into something observable purely through RX.
-    reg [FW-1:0] lb_data; reg lb_valid;
+    // lb_sig: a CU_INST is answered with SIG_INST_COMPLETE, as a CU does.
+    reg [FW-1:0] lb_data; reg lb_valid; reg lb_sig = 1'b0;
     assign l_i_d[HI][HI] = lb_data;
     assign l_i_v[HI][HI] = lb_valid;
     assign l_o_b[HI][HI] = 1'b0;
     always @(posedge clk) begin
         if (!resetn) begin lb_valid <= 1'b0; lb_data <= {FW{1'b0}}; end
+        else if (l_o_v[HI][HI] && !l_i_b[HI][HI] && lb_sig
+                 && (l_o_d[HI][HI][FW-4*POSW-1 -: 4] == 4'h5)) begin
+            lb_data <= { l_o_d[HI][HI][FW-2*POSW-1 -: 2*POSW],   // old src -> dst
+                         l_o_d[HI][HI][FW-1        -: 2*POSW],   // old dst -> src
+                         4'h6, 8'h00, 1'b1, 3'b000, 8'h00, 32'h0000_C0DE, 216'd0 };
+            lb_valid <= 1'b1;
+        end
         else if (l_o_v[HI][HI] && !l_i_b[HI][HI]) begin
             lb_data <= { l_o_d[HI][HI][FW-2*POSW-1 -: 2*POSW],   // old src -> dst
                          l_o_d[HI][HI][FW-1        -: 2*POSW],   // old dst -> src
@@ -338,6 +346,41 @@ module noc_orchestrator_tb;
 
         axi_read1(A_PROG_STAT, rv);
         expect_eq(rv[0], 1'b0, "PROG_STATUS.running clear when done");
+
+        // Completions refill the credit: with one credit, six dispatches finish
+        // only if every SIG_INST_COMPLETE returns it; with six, the completions
+        // arrive as a burst and NODE_STATUS must count each one.
+        lb_sig = 1'b1;
+        for (i = 0; i < 6; i = i + 1) begin
+            flit = {8'h00, LO[3:0], LO[3:0], 4'h5, 8'h10 + i[7:0], 1'b1, 3'b000,
+                    8'h00, 8'h00, 240'hBB00 + i};
+            for (j = 0; j < WORDS; j = j + 1) begin
+                axi_write1(32'h2000 + (i*WORDS + j)*8, flit[j*DW +: DW]);
+            end
+        end
+        for (n_back = 1; n_back <= 6; n_back = n_back + 5) begin
+            $display("--- six dispatches on %0d credit(s), completions refill it ---", n_back);
+            axi_read1(A_NODE + ({HI[3:0], HI[3:0]}) * 8, rv);
+            j = rv[23:8];
+            axi_write1(A_PROG_LEN,  64'd6);
+            axi_write1(A_PROG_CRED, n_back);
+            axi_write1(A_PROG_KICK, 64'd1);
+            guard = 0;
+            axi_read1(A_PROG_STAT, rv);
+            while (rv[0] && guard < 400) begin
+                repeat (10) @(posedge clk);
+                axi_read1(A_PROG_STAT, rv);
+                guard = guard + 1;
+            end
+            expect_eq(rv[0], 1'b0, "PROG_STATUS.running clear after six");
+            repeat (100) @(posedge clk);
+            axi_read1(A_NODE + ({HI[3:0], HI[3:0]}) * 8, rv);
+            expect_eq(rv[23:8], j + 6, "NODE_STATUS.signal_count +6");
+            expect_eq(rv[55:24], 32'h0000_C0DE, "NODE_STATUS.last_arg");
+            axi_read1(A_PROG_CRED, rv);
+            expect_eq(rv[15:0], n_back, "credit back to its seed");
+        end
+        lb_sig = 1'b0;
 
         repeat (20) @(posedge clk);
         $display("");
