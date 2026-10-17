@@ -846,6 +846,28 @@ module mag_mem_port #(
     wire we_end  = we_rd && (we_cnt + 1'b1 == we_len);
     wire nb_take = nb_v && (!we_act || we_end);
 
+    // THE SLOT WRITE LANDS A CYCLE AFTER THE TAKE, so the slot search and the
+    // RAM address are in different cycles. A slot is read no earlier than two
+    // cycles after its last beat is taken (rdyq -> pick -> nb -> we).
+    reg               wd_we;
+    reg [WS_BITS-1:0] wd_slot;
+    reg [WBW-1:0]     wd_beat;
+    reg [DATA_W-1:0]  wd_data;
+    always @(posedge clk) begin
+        wd_we   <= resetn && take_wr_data;
+        wd_slot <= ws_match;
+        wd_beat <= ws_cnt[ws_match][WBW-1:0];
+        wd_data <= wq_flit[DATA_W-1:0];
+    end
+`ifndef SYNTHESIS
+    always @(posedge clk) begin
+        if (resetn && wd_we && we_rd && (we_slot == wd_slot)) begin
+            $display("%0t ERROR mag_mem_port(mesh %0d, %0d,%0d): slot %0d read while its beat %0d is still being written",
+                     $time, MESH_ID, MEM_X, MEM_Y, wd_slot, wd_beat);
+        end
+    end
+`endif
+
     // THE SLOT DATA IS BLOCK RAM: as a reg array read at three indices it cost
     // 1,218 LUT per port. Its output holds while `rd_en` is low, which is `d`.
     kohaku_sdpram #(
@@ -855,9 +877,9 @@ module mag_mem_port #(
         .READ_LAT (1)
     ) u_wsdata (
         .clk     (clk),
-        .wr_en   (take_wr_data),
-        .wr_addr ({ws_match, ws_cnt[ws_match][WBW-1:0]}),
-        .wr_data (wq_flit[DATA_W-1:0]),
+        .wr_en   (wd_we),
+        .wr_addr ({wd_slot, wd_beat}),
+        .wr_data (wd_data),
         .rd_en   (we_rd),
         .rd_addr ({we_slot, we_cnt[WBW-1:0]}),
         .rd_data (wd_next)
