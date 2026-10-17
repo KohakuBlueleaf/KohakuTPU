@@ -172,6 +172,8 @@ block without it means you have drifted: re-read this file, reconcile, continue.
 Mid-round (PreToolUse) the block needs only its header and at least the item you
 are working on; the ending block (Stop) must carry the FULL list, each item
 `[ ]` or `[x]`. Nothing is dropped, reordered, or rescoped; every item is the
-same priority. The goal hook holds the canonical list (set when a goal ships) and
-an `ACTIVE` arg; when every item is `[x]` it fires once telling you to CLOSE it by
-setting `ACTIVE = False` (an arg, not removal from settings).
+same priority. A goal is per project, never global: it lives in
+`~/.claude/hooks/goals/<project>.json` (`{"active": true, "items": [["key",
+"text"], ...]}`, `<project>` = the session's folder under `~/.claude/projects`);
+when every item is `[x]` the hook fires once telling you to CLOSE it by setting
+`"active": false` in that file. Never edit another project's goal file.
