@@ -6,15 +6,20 @@
 // finish X; it routes toward the adjacent router (GRID_LO,y) and only takes the
 // outward hop on arrival. Pure XY, so the channel dependency graph stays acyclic.
 //
-// ONE holding slot, not one per direction: two flits bound for the same output
+// ONE holding queue, not one per direction: two flits bound for the same output
 // were already serialised, so per-direction slots only helped when successive
 // flits diverged. The trade is head-of-line blocking on a congested direction
 // against two thirds of the router's flip-flops.
 //
-// The slot is kept rather than removed. Feeding the FIFO output straight to the
+// The queue is kept rather than removed. Feeding the FIFO output straight to the
 // arbiter saves more flops but puts FIFO read, route computation, arbitration
 // and a 5:1 DATA_WIDTH mux in one combinational path, which does not clear
 // 300 MHz with enough slack to survive placement.
+//
+// TWO ENTRIES, loaded on the queue's own count: the FIFO read does not wait
+// for a grant. With one slot it loaded on `taken`, and an output port's
+// round-robin reached this FIFO's BRAM REGCE (`port_rr -> REGCE`, 7 levels,
+// 2.7 ns of route between the two switches).
 
 module InPortSwitch #(
     parameter DATA_WIDTH  = 288,
@@ -70,17 +75,17 @@ module InPortSwitch #(
     // itself, as MAG does with Q_MARGIN.
     assign port_busy = fifo_almost;
 
-    reg [DATA_WIDTH-1:0] hold;
-    reg [4:0]            hold_req;   // one-hot; all zero means the slot is empty
+    reg [DATA_WIDTH-1:0] hold0, hold1;
+    reg [4:0]            hreq0, hreq1;   // one-hot output request per entry
+    reg [1:0]            hcnt;
+    reg                  hwr, hrd;
 
     wire taken = |grant;
 
-    // Load whenever the slot is free, INCLUDING the cycle it is being emptied:
-    // that is what sustains one flit per cycle rather than one every two.
-    // First-word-fall-through makes rd_data the head already, so rd_en is the
-    // load itself -- nothing is popped speculatively and no spill register is
-    // needed.
-    wire load = !rd_busy && (hold_req == 5'b00000 || taken);
+    // Load whenever an entry is free: at one entry occupied a load and a take
+    // in the same cycle sustain one flit per cycle. First-word-fall-through
+    // makes rd_data the head already, so rd_en is the load itself.
+    wire load = !rd_busy && !hcnt[1];
 
     sync_fifo #(
         .DATA_WIDTH(DATA_WIDTH),
@@ -161,19 +166,23 @@ module InPortSwitch #(
     wire [4:0] port_choice = {want_local, want_west, want_south, want_east, want_north};
 
     always @(posedge clk, posedge rst) begin
-        // `hold` is not reset: `hold_req` says whether it means anything.
         if (rst) begin
-            hold_req <= 5'b00000;
-        end else if (load) begin
-            hold     <= rd_data;
-            hold_req <= port_choice;
-        end else if (taken) begin
-            hold_req <= 5'b00000;
+            hcnt <= 2'd0; hwr <= 1'b0; hrd <= 1'b0;
+        end else begin
+            hcnt <= hcnt + {1'b0, load} - {1'b0, taken};
+            if (load)  hwr <= !hwr;
+            if (taken) hrd <= !hrd;
         end
     end
 
-    assign head_data = hold;
-    assign head_req  = hold_req;
+    // The entries are not reset: `hcnt` says whether they mean anything.
+    always @(posedge clk) begin
+        if (load && !hwr) begin hold0 <= rd_data; hreq0 <= port_choice; end
+        if (load && hwr)  begin hold1 <= rd_data; hreq1 <= port_choice; end
+    end
+
+    assign head_data = hrd ? hold1 : hold0;
+    assign head_req  = (hcnt == 2'd0) ? 5'b00000 : (hrd ? hreq1 : hreq0);
 
 `ifndef SYNTHESIS
     // A flit offered while busy must still be offered next cycle. Testing THAT,
