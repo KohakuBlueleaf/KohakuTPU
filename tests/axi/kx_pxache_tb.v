@@ -674,7 +674,7 @@ module kx_pxache_tb;
                 $dumpfile("net_dump.vcd");
                 $dumpvars(0, kx_pxache_tb.dut.u_net.inst.u_kx.\g_chain.g_b[2].g_d[0].u_tk );
                 $dumpvars(1, kx_pxache_tb.dut.u_net.inst.u_kx.\g_chain.g_p[2].g_d[0].s_knd );
-                $dumpvars(1, kx_pxache_tb.dut.u_net.inst.u_kx.\g_chain.g_p[2].g_d[0].g_ch[1].g_hr.hv_q );
+                $dumpvars(1, kx_pxache_tb.dut.u_net.inst.u_kx.\g_chain.g_p[2].g_d[0].g_ch[1].g_hr.hc_q );
                 $dumpvars(1, kx_pxache_tb.d_arvalid, kx_pxache_tb.d_arready, kx_pxache_tb.d_rvalid,
                           kx_pxache_tb.d_rready, kx_pxache_tb.d_rlast, kx_pxache_tb.d_rid,
                           kx_pxache_tb.s_arvalid, kx_pxache_tb.s_arready, kx_pxache_tb.s_rvalid,

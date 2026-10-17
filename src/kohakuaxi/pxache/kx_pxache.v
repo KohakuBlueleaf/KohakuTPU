@@ -537,6 +537,43 @@ module kx_pxache #(
     wire [P*2-1:0]        cq_iv, cq_ir, cs_iv, cs_ir;     // injects
     wire [P*2*TSLOT-1:0]  cq_id, cs_id;
     wire [P*2*STRB-1:0]   cq_wx;                          // last WX strb per head
+    // Each head's consumer slot, one-hot and already gated by the head's
+    // valid: REQ (h, m, type), RSP (m, h, kind). Decoded where an entry is
+    // written, so a consumer reads one bit of the entry mux, not the fields.
+    localparam integer QSW = N_HOME * M * 4;
+    localparam integer SSW = M * N_HOME * 2;
+    wire [P*2*QSW-1:0]    cq_hs;
+    wire [P*2*SSW-1:0]    cs_hs;
+    function [QSW-1:0] f_qsel(input [TSLOT-1:0] f);
+        integer a_, b_, c_;
+        begin
+            f_qsel = {QSW{1'b0}};
+            for (a_ = 0; a_ < N_HOME; a_ = a_ + 1) begin
+                for (b_ = 0; b_ < M; b_ = b_ + 1) begin
+                    for (c_ = 0; c_ < 4; c_ = c_ + 1) begin
+                        f_qsel[(a_*M + b_)*4 + c_] = (f[TSLOT-1 -: HIDX_W] == a_[HIDX_W-1:0])
+                            && (f[TSLOT-1-HIDX_W-2 -: MIDX_W] == b_[MIDX_W-1:0])
+                            && (f[TSLOT-1-HIDX_W -: 2] == c_[1:0]);
+                    end
+                end
+            end
+        end
+    endfunction
+    function [SSW-1:0] f_ssel(input [TSLOT-1:0] f);
+        integer a_, b_, c_;
+        begin
+            f_ssel = {SSW{1'b0}};
+            for (a_ = 0; a_ < M; a_ = a_ + 1) begin
+                for (b_ = 0; b_ < N_HOME; b_ = b_ + 1) begin
+                    for (c_ = 0; c_ < 2; c_ = c_ + 1) begin
+                        f_ssel[(a_*N_HOME + b_)*2 + c_] = (f[TSLOT-1 -: MIDX_W] == a_[MIDX_W-1:0])
+                            && (f[TSLOT-1-MIDX_W-1 -: HIDX_W] == b_[HIDX_W-1:0])
+                            && (f[TSLOT-1-MIDX_W] == c_[0]);
+                    end
+                end
+            end
+        end
+    endfunction
     // per-source offers into the partition inject arbs
     wire [M*2-1:0]            qo_v, qo_r;
     wire [M*2*TSLOT-1:0]      qo_d;
@@ -577,8 +614,7 @@ module kx_pxache #(
                 localparam integer IBASE = ((d ? cp - 1 : cp) * 2 + d) * MAXCH;
                 localparam integer OBASE = ((d ? cp : cp - 1) * 2 + d) * MAXCH;
                 for (cc2 = 0; cc2 < 2; cc2 = cc2 + 1) begin : g_ch
-                    // The head is a REGISTER after the landing ring, one
-                    // entry at full rate: the ring refills it as it leaves.
+                    // The head is a two-entry queue after the landing ring.
                     wire        hv;
                     wire [TSLOT-1:0] hd_w;
                     wire        iv, ir, fw_v, fw_r, loc_take;
@@ -598,32 +634,63 @@ module kx_pxache #(
                         assign id_w = cs_id[(cp*2 + d)*TSLOT +: TSLOT];
                         assign cs_ir[cp*2 + d] = ir;
                     end
-                    // dst decode: a head whose destination is NOT here forwards.
-                    // Decoded from the head, not registered with it: a `here_q`
-                    // flop put the response-ready cone a level deeper out of
-                    // context (-0.143 against +0.064 at 2.857, kxlive_v8t6c).
-                    wire [PW-1:0] hdst_p = (cc2 == 0)
-                        ? HP[hd_w[TSLOT-1 -: HIDX_W]*PW +: PW]
-                        : MP[hd_w[TSLOT-1 -: MIDX_W]*PW +: PW];
-                    wire here = (hdst_p == cp[PW-1:0]);
+                    // A head whose destination is NOT here forwards.
+                    wire here;
                     assign fw_v = hv && !here;
                     wire head_pop = here ? loc_take : (fw_v && fw_r);
                     if (HAS_IN) begin : g_hr
-                        reg              hv_q;
-                        reg [TSLOT-1:0]  hd_q;
-                        wire             acc = tk_mv[IBASE + cc2] && (!hv_q || head_pop);
+                        // Ready from the count alone: the pop reaches only the
+                        // pointers (one entry: 9-10 levels to tk_mr / hd_q CE).
+                        // The dst partition and the consumer slot are decoded
+                        // per entry on its write, from the ring's register.
+                        reg [1:0]        hc_q;
+                        reg              hw_q, hr_q;
+                        reg [TSLOT-1:0]  he0, he1;
+                        reg              hh0, hh1;
+                        wire [TSLOT-1:0] tin = tk_md[(IBASE + cc2)*TSLOT +: TSLOT];
+                        wire [PW-1:0]    tdst_p = (cc2 == 0)
+                            ? HP[tin[TSLOT-1 -: HIDX_W]*PW +: PW]
+                            : MP[tin[TSLOT-1 -: MIDX_W]*PW +: PW];
+                        wire             acc = tk_mv[IBASE + cc2] && !hc_q[1];
                         always @(posedge pc[cp]) begin
-                            if (!rstn_p[cp]) begin hv_q <= 1'b0; end
-                            else if (acc) begin hv_q <= 1'b1; end
-                            else if (head_pop) begin hv_q <= 1'b0; end
-                            if (acc) begin hd_q <= tk_md[(IBASE + cc2)*TSLOT +: TSLOT]; end
+                            if (!rstn_p[cp]) begin
+                                hc_q <= 2'd0; hw_q <= 1'b0; hr_q <= 1'b0;
+                            end else begin
+                                hc_q <= hc_q + {1'b0, acc} - {1'b0, head_pop};
+                                if (acc) begin hw_q <= !hw_q; end
+                                if (head_pop) begin hr_q <= !hr_q; end
+                            end
+                            if (acc && !hw_q) begin he0 <= tin; hh0 <= (tdst_p == cp[PW-1:0]); end
+                            if (acc && hw_q)  begin he1 <= tin; hh1 <= (tdst_p == cp[PW-1:0]); end
                         end
-                        assign hv   = hv_q;
-                        assign hd_w = hd_q;
-                        assign tk_mr[IBASE + cc2] = !hv_q || head_pop;
+                        assign hv   = (hc_q != 2'd0);
+                        assign hd_w = hr_q ? he1 : he0;
+                        assign here = hr_q ? hh1 : hh0;
+                        assign tk_mr[IBASE + cc2] = !hc_q[1];
+                        if (cc2 == 0) begin : g_qs
+                            reg [QSW-1:0] hs0, hs1;
+                            always @(posedge pc[cp]) begin
+                                if (acc && !hw_q) begin hs0 <= f_qsel(tin); end
+                                if (acc && hw_q)  begin hs1 <= f_qsel(tin); end
+                            end
+                            assign cq_hs[(cp*2 + d)*QSW +: QSW] = hv ? (hr_q ? hs1 : hs0) : {QSW{1'b0}};
+                        end else begin : g_ss
+                            reg [SSW-1:0] hs0, hs1;
+                            always @(posedge pc[cp]) begin
+                                if (acc && !hw_q) begin hs0 <= f_ssel(tin); end
+                                if (acc && hw_q)  begin hs1 <= f_ssel(tin); end
+                            end
+                            assign cs_hs[(cp*2 + d)*SSW +: SSW] = hv ? (hr_q ? hs1 : hs0) : {SSW{1'b0}};
+                        end
                     end else begin : g_hr0
                         assign hv   = 1'b0;
                         assign hd_w = {TSLOT{1'b0}};
+                        assign here = 1'b0;
+                        if (cc2 == 0) begin : g_qs0
+                            assign cq_hs[(cp*2 + d)*QSW +: QSW] = {QSW{1'b0}};
+                        end else begin : g_ss0
+                            assign cs_hs[(cp*2 + d)*SSW +: SSW] = {SSW{1'b0}};
+                        end
                     end
                     if (HAS_OUT) begin : g_out
                         assign tk_sv[OBASE + cc2] = fw_v;
@@ -753,29 +820,26 @@ module kx_pxache #(
 
                 // ---- consume readies: the head against this partition's slots
                 wire [TSLOT-1:0]  qh    = cq_hd[(cp*2 + d)*TSLOT +: TSLOT];
-                wire [HIDX_W-1:0] q_dst = qh[TSLOT-1 -: HIDX_W];
                 wire [1:0]        q_typ = qh[TSLOT-1-HIDX_W -: 2];
-                wire [MIDX_W-1:0] q_src = qh[TSLOT-1-HIDX_W-2 -: MIDX_W];
-                reg qrdy, q_mine;
+                wire [QSW-1:0]    qs    = cq_hs[(cp*2 + d)*QSW +: QSW];
+                reg qrdy;
                 integer hh_, mm_;
                 always @(*) begin
                     qrdy = 1'b0;
-                    q_mine = 1'b0;
                     for (hh_ = 0; hh_ < N_HOME; hh_ = hh_ + 1) begin
                         if (f_hp(hh_) == cp) begin
                             for (mm_ = 0; mm_ < M; mm_ = mm_ + 1) begin
-                                if (f_mp(mm_) != cp && (q_dst == hh_[HIDX_W-1:0]) && (q_src == mm_[MIDX_W-1:0])) begin
-                                    q_mine = 1'b1;
-                                    qrdy = (q_typ == 2'd0) ? hq_aw_r[hh_][mm_]
-                                         : (q_typ == 2'd1) ? hq_w_r[hh_][mm_]
-                                                           : hq_ar_r[hh_][mm_];
+                                if (f_mp(mm_) != cp) begin
+                                    // type 3, a WX, carries only the strb of the
+                                    // beat behind it: latch and drop
+                                    qrdy = qrdy
+                                        || (qs[(hh_*M + mm_)*4 + 0] && hq_aw_r[hh_][mm_])
+                                        || (qs[(hh_*M + mm_)*4 + 1] && hq_w_r[hh_][mm_])
+                                        || (qs[(hh_*M + mm_)*4 + 2] && hq_ar_r[hh_][mm_])
+                                        || qs[(hh_*M + mm_)*4 + 3];
                                 end
                             end
                         end
-                    end
-                    // a WX carries only the strb of the beat behind it: latch and drop
-                    if (q_mine && q_typ == 2'd3) begin
-                        qrdy = 1'b1;
                     end
                 end
                 assign cq_hr[cp*2 + d] = cq_hv[cp*2 + d] && qrdy;
@@ -789,10 +853,7 @@ module kx_pxache #(
                     end
                 end
                 assign cq_wx[(cp*2 + d)*STRB +: STRB] = wx_s;
-                wire [TSLOT-1:0]  sh    = cs_hd[(cp*2 + d)*TSLOT +: TSLOT];
-                wire [MIDX_W-1:0] s_dst = sh[TSLOT-1 -: MIDX_W];
-                wire              s_knd = sh[TSLOT-1-MIDX_W];
-                wire [HIDX_W-1:0] s_src = sh[TSLOT-1-MIDX_W-1 -: HIDX_W];
+                wire [SSW-1:0]    ss    = cs_hs[(cp*2 + d)*SSW +: SSW];
                 reg srdy;
                 integer h2_, m2_;
                 always @(*) begin
@@ -800,8 +861,10 @@ module kx_pxache #(
                     for (m2_ = 0; m2_ < M; m2_ = m2_ + 1) begin
                         if (f_mp(m2_) == cp) begin
                             for (h2_ = 0; h2_ < N_HOME; h2_ = h2_ + 1) begin
-                                if (f_hp(h2_) != cp && (s_dst == m2_[MIDX_W-1:0]) && (s_src == h2_[HIDX_W-1:0])) begin
-                                    srdy = s_knd ? bs_r[m2_][h2_] : rs_r[m2_][h2_];
+                                if (f_hp(h2_) != cp) begin
+                                    srdy = srdy
+                                        || (ss[(m2_*N_HOME + h2_)*2 + 0] && rs_r[m2_][h2_])
+                                        || (ss[(m2_*N_HOME + h2_)*2 + 1] && bs_r[m2_][h2_]);
                                 end
                             end
                         end
@@ -918,6 +981,10 @@ module kx_pxache #(
                     end
                 end
             end
+            assign cq_hs[(cp*2 + 0)*QSW +: QSW] = hq_v ? f_qsel(hq_f) : {QSW{1'b0}};
+            assign cs_hs[(cp*2 + 0)*SSW +: SSW] = hs_v ? f_ssel(hs_f) : {SSW{1'b0}};
+            assign cq_hs[(cp*2 + 1)*QSW +: QSW] = {QSW{1'b0}};
+            assign cs_hs[(cp*2 + 1)*SSW +: SSW] = {SSW{1'b0}};
             assign cq_hv[cp*2 + 0] = hq_v;
             assign cq_hd[(cp*2 + 0)*TSLOT +: TSLOT] = hq_f;
             assign cq_hr[cp*2 + 0] = hq_v && kqrdy;
@@ -1325,16 +1392,12 @@ module kx_pxache #(
             if (TRK && PH != PM) begin : g_ctap
                 localparam integer DIRH = (KTSM != 0) ? 0 : ((PH < PM) ? 1 : 0);
                 wire [TSLOT-1:0]  sh   = cs_hd[(PM*2 + DIRH)*TSLOT +: TSLOT];
-                wire              sv   = cs_hv[PM*2 + DIRH];
-                wire [MIDX_W-1:0] sdst = sh[TSLOT-1 -: MIDX_W];
-                wire              sknd = sh[TSLOT-1-MIDX_W];
-                wire [HIDX_W-1:0] ssrc = sh[TSLOT-1-MIDX_W-1 -: HIDX_W];
+                wire [SSW-1:0]    ss   = cs_hs[(PM*2 + DIRH)*SSW +: SSW];
                 wire [SPW-1:0]    spay = sh[TSLOT-1-MIDX_W-1-HIDX_W -: SPW];
-                wire mine = sv && (sdst == m[MIDX_W-1:0]) && (ssrc == h[HIDX_W-1:0]);
-                assign rs_v[m][h] = mine && !sknd;
+                assign rs_v[m][h] = ss[(m*N_HOME + h)*2 + 0];
                 assign rs_d[m][h] = spay[W +: RNW];
                 assign rs_w[m][h] = spay[W-1:0];
-                assign bs_v[m][h] = mine && sknd;
+                assign bs_v[m][h] = ss[(m*N_HOME + h)*2 + 1];
                 assign bs_d[m][h] = spay[W+1 +: BW];
             end else if (PH != PM) begin : g_tap
                 wire              tv   = rb_tv[h*P + PM];
@@ -1586,17 +1649,13 @@ module kx_pxache #(
             if (TRK && PM != PH) begin : g_ctap
                 localparam integer DIRM = (KTSM != 0) ? 0 : ((PM < PH) ? 1 : 0);
                 wire [TSLOT-1:0]  qh   = cq_hd[(PH*2 + DIRM)*TSLOT +: TSLOT];
-                wire              qv   = cq_hv[PH*2 + DIRM];
-                wire [HIDX_W-1:0] qdst = qh[TSLOT-1 -: HIDX_W];
-                wire [1:0]        qtyp = qh[TSLOT-1-HIDX_W -: 2];
-                wire [MIDX_W-1:0] qsrc = qh[TSLOT-1-HIDX_W-2 -: MIDX_W];
+                wire [QSW-1:0]    qs   = cq_hs[(PH*2 + DIRM)*QSW +: QSW];
                 wire [QPW-1:0]    qpay = qh[TSLOT-1-HIDX_W-2-MIDX_W -: QPW];
-                wire mine = qv && (qdst == h[HIDX_W-1:0]) && (qsrc == m[MIDX_W-1:0]);
-                assign hq_ar_v[h][m] = mine && (qtyp == 2'd2);
+                assign hq_ar_v[h][m] = qs[(h*M + m)*4 + 2];
                 assign hq_ar_d[h][m] = qpay[ARQW-1:0];
-                assign hq_aw_v[h][m] = mine && (qtyp == 2'd0);
+                assign hq_aw_v[h][m] = qs[(h*M + m)*4 + 0];
                 assign hq_aw_d[h][m] = qpay[AWQW-1:0];
-                assign hq_w_v[h][m]  = mine && (qtyp == 2'd1);
+                assign hq_w_v[h][m]  = qs[(h*M + m)*4 + 1];
                 if (SC != 0) begin : g_sc
                     wire [STRB-1:0] ws = (qpay[4:1] == 4'hF)
                         ? {STRB{1'b1}}
