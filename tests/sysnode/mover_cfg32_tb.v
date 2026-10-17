@@ -229,10 +229,11 @@ module mover_cfg32_core #(
     // ---- the descriptor the mover ended up holding -------------------------
     wire [AW-1:0] src_base = u.u_mag.u_pe.u_mover.u_src.d_base;
     wire [2:0]    src_ndim = u.u_mag.u_pe.u_mover.u_src.d_ndim;
-    wire [15:0]   src_cnt0 = u.u_mag.u_pe.u_mover.u_src.d_count[0];
+    // The walker holds a dimension's last index (count - 1), not its count.
+    wire [15:0]   src_cnt0 = u.u_mag.u_pe.u_mover.u_src.d_lim[0] + 16'd1;
     wire [AW-1:0] dst_base = u.u_mag.u_pe.u_mover.u_dst.d_base;
     wire [2:0]    dst_ndim = u.u_mag.u_pe.u_mover.u_dst.d_ndim;
-    wire [15:0]   dst_cnt0 = u.u_mag.u_pe.u_mover.u_dst.d_count[0];
+    wire [15:0]   dst_cnt0 = u.u_mag.u_pe.u_mover.u_dst.d_lim[0] + 16'd1;
 
     integer errors = 0, checks = 0, i, spin;
     reg [255:0] rd;

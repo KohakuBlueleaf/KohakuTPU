@@ -72,7 +72,9 @@ module mx_tdesc #(
     genvar  g;
 
     // ---- descriptor storage --------------------------------------------
-    reg [CW-1:0]        d_count  [0:NDIM-1];
+    // The dimension's last index, set at load (count 0 loads as 1 so the walk
+    // always ends): the walk's compare reads a register, not a decrement.
+    reg [CW-1:0]        d_lim    [0:NDIM-1];
     reg signed [SW-1:0] d_stride [0:NDIM-1];
     reg [1:0]           d_axis   [0:NDIM-1];
     reg signed [XW-1:0] d_astep  [0:NDIM-1];
@@ -86,7 +88,7 @@ module mx_tdesc #(
             d_base <= {AW{1'b0}};
             d_ndim <= 3'd1;
             for (i = 0; i < NDIM; i = i + 1) begin
-                d_count[i]  <= {CW{1'b0}};
+                d_lim[i]    <= {CW{1'b0}};
                 d_stride[i] <= {SW{1'b0}};
                 d_axis[i]   <= 2'd0;
                 d_astep[i]  <= {XW{1'b0}};
@@ -95,7 +97,7 @@ module mx_tdesc #(
             d_abase[1] <= {XW{1'b0}}; d_aext[1] <= {XW{1'b0}};
         end else begin
             if (ld_dim_en) begin
-                d_count[ld_dim]  <= ld_count;
+                d_lim[ld_dim]    <= (ld_count == {CW{1'b0}}) ? {CW{1'b0}} : ld_count - 1'b1;
                 d_stride[ld_dim] <= ld_stride;
                 d_axis[ld_dim]   <= ld_axis;
                 d_astep[ld_dim]  <= ld_astep;
@@ -110,17 +112,6 @@ module mx_tdesc #(
             end
         end
     end
-
-    // A count of 0 would make the walk never terminate; treat it as 1 so a
-    // partially-initialised descriptor degenerates to a single element rather
-    // than hanging the fill engine.
-    wire [CW-1:0] eff_count [0:NDIM-1];
-    generate
-    for (g = 0; g < NDIM; g = g + 1) begin : g_cnt
-        assign eff_count[g] = (d_count[g] == {CW{1'b0}}) ? {{(CW-1){1'b0}}, 1'b1}
-                                                        : d_count[g];
-    end
-    endgenerate
 
     // A dimension beyond ndim is inert: it holds index 0 and never carries.
     wire [NDIM-1:0] dim_live;
@@ -142,7 +133,7 @@ module mx_tdesc #(
     wire [NDIM-1:0] at_max;
     generate
     for (g = 0; g < NDIM; g = g + 1) begin : g_max
-        assign at_max[g] = !dim_live[g] || (idx[g] == eff_count[g] - 1'b1);
+        assign at_max[g] = !dim_live[g] || (idx[g] == d_lim[g]);
     end
     endgenerate
 
@@ -168,8 +159,7 @@ module mx_tdesc #(
     wire [NDIM-1:0] at_max0;
     generate
     for (g = 0; g < NDIM; g = g + 1) begin : g_zero
-        assign at_max0[g] = !dim_live[g]
-                          || (eff_count[g] == {{(CW-1){1'b0}}, 1'b1});
+        assign at_max0[g] = !dim_live[g] || (d_lim[g] == {CW{1'b0}});
     end
     endgenerate
     wire last0 = &at_max0;
