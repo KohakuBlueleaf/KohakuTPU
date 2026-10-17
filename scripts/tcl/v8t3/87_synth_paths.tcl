@@ -105,6 +105,8 @@ set COLS {SLACK LOGIC_LEVELS REQUIREMENT DATAPATH_DELAY DATAPATH_LOGIC_DELAY DAT
 set tsv [open ${tag}_paths.tsv w]
 puts $tsv [join {CLOCK SLACK LEVELS REQ DPATH LOGIC NET SKEW S_CLK E_CLK S_OWNER E_OWNER S_CLASS E_CLASS START END} \t]
 set N 0
+# PC is a list here; 80_report keeps an array of the same name in the impl session.
+unset -nocomplain PC
 set PC {}
 array set LV {}
 foreach c [lsort -dictionary [get_property NAME [get_clocks]]] {
