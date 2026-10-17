@@ -420,18 +420,20 @@ module v2_core #(
     wire [$clog2(QD):0] uq0_n, uq1_n, pq0_n, pq1_n;
     wire              uq0_e, uq1_e, pq0_e, pq1_e, uq0_f, uq1_f, pq0_f, pq1_f;
     wire              uq0_pop, uq1_pop, pq0_pop, pq1_pop;
-    v2_fifo #(.W(UQW), .D(QD)) u_uq (.clk(clk), .rst(erst), .push(uq_push && !d_q),
+    // OREG: each head's verdict reads the head's fields into the scoreboard
+    // compares (u_uq rp -> u0_ok, 10-11 levels through the LUTRAM read).
+    v2_fifo #(.W(UQW), .D(QD), .OREG(1)) u_uq (.clk(clk), .rst(erst), .push(uq_push && !d_q),
         .din(uq_din), .pop(uq0_pop), .dout(uq0_q), .dout1(uq0_q1), .empty(uq0_e),
         .full(uq0_f), .count(uq0_n));
-    v2_fifo #(.W(UQW), .D(QD)) u_pq (.clk(clk), .rst(erst), .push(pq_push && !d_q),
+    v2_fifo #(.W(UQW), .D(QD), .OREG(1)) u_pq (.clk(clk), .rst(erst), .push(pq_push && !d_q),
         .din(pq_din), .pop(pq0_pop), .dout(pq0_q), .dout1(pq0_q1), .empty(pq0_e),
         .full(pq0_f), .count(pq0_n));
     generate
     if (DUALQ != 0) begin : g_q1
-        v2_fifo #(.W(UQW), .D(QD)) u_uq1 (.clk(clk), .rst(erst), .push(uq_push && d_q),
+        v2_fifo #(.W(UQW), .D(QD), .OREG(1)) u_uq1 (.clk(clk), .rst(erst), .push(uq_push && d_q),
             .din(uq_din), .pop(uq1_pop), .dout(uq1_q), .dout1(uq1_q1), .empty(uq1_e),
             .full(uq1_f), .count(uq1_n));
-        v2_fifo #(.W(UQW), .D(QD)) u_pq1 (.clk(clk), .rst(erst), .push(pq_push && d_q),
+        v2_fifo #(.W(UQW), .D(QD), .OREG(1)) u_pq1 (.clk(clk), .rst(erst), .push(pq_push && d_q),
             .din(pq_din), .pop(pq1_pop), .dout(pq1_q), .dout1(pq1_q1), .empty(pq1_e),
             .full(pq1_f), .count(pq1_n));
     end else begin : g_q1

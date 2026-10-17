@@ -87,8 +87,16 @@ module v2_agu #(
         reg [15:0] cb0, cb1m, cb2m, cb3;
         reg signed [17:0] cs0, cs1, cs2, cs3;
         reg [15:0] lft, r1, r2, r3;
+        // r_k != 0 and cb_km != 0 as registers: the run selects reach `a`
+        // through bstep without a 16-bit zero test (r2 -> a, 8 levels).
+        reg r1nz, r2nz, r3nz, cb1nz, cb2nz;
         reg [AW-1:0] a, b1;
         reg busy, c32;
+        // The start address is summed the cycle after `go` from the latched
+        // table word: sel -> table mux -> 40-bit add -> `a` was 11 levels. The
+        // core's first use of `addr` is four cycles after `go` (E_MEM0).
+        reg          a_pend;
+        reg [AW-1:0] base_q, off_q;
 
         reg  signed [34:0] p1, p2;
         reg  [AW-1:0]      d2, d3, q12;
@@ -99,10 +107,10 @@ module v2_agu #(
             q12 <= {{(AW-35){p1[34]}}, p1} + {{(AW-35){p2[34]}}, p2};
             d3  <= {{(AW-18){cs3[17]}}, cs3} - q12;
         end
-        wire [AW-1:0] bstep = (r1 != 16'd0) ? {{(AW-18){cs1[17]}}, cs1}
-                            : (r2 != 16'd0) ? d2 : d3;
+        wire [AW-1:0] bstep = r1nz ? {{(AW-18){cs1[17]}}, cs1}
+                            : r2nz ? d2 : d3;
         wire [AW-1:0] bsum = b1 + bstep;
-        wire [AW-1:0] a0 = t_base + w_off;
+        wire [AW-1:0] a0 = base_q + off_q;
         // in0: the step stays in dimension 0.
         wire in0 = c32 ? (cp < lft) : (lft != 16'd1);
         wire [15:0] nw = !c32 ? 16'd1 : in0 ? cp : lft;
@@ -127,12 +135,20 @@ module v2_agu #(
         assign total[w*32 +: 32] = total_r;
 
         always @(posedge clk) begin
+            if (go) begin
+                base_q <= t_base;
+                off_q  <= w_off;
+            end
+        end
+
+        always @(posedge clk) begin
             if (rst) begin
                 cb0 <= 16'd1; cb1m <= 16'd0; cb2m <= 16'd0; cb3 <= 16'd1;
                 cs0 <= 18'd0; cs1 <= 18'd0; cs2 <= 18'd0; cs3 <= 18'd0;
                 lft <= 16'd1; r1 <= 16'd0; r2 <= 16'd0; r3 <= 16'd0;
+                r1nz <= 1'b0; r2nz <= 1'b0; r3nz <= 1'b0; cb1nz <= 1'b0; cb2nz <= 1'b0;
                 a <= {AW{1'b0}}; b1 <= {AW{1'b0}};
-                busy <= 1'b0; c32 <= 1'b0;
+                busy <= 1'b0; c32 <= 1'b0; a_pend <= 1'b0;
             end else if (go) begin
                 cb0 <= t_b0; cb1m <= t_b1 - 16'd1; cb2m <= t_b2 - 16'd1; cb3 <= t_b3;
                 cs0 <= strd[rsel][0]; cs1 <= strd[rsel][1];
@@ -140,27 +156,42 @@ module v2_agu #(
                 c32 <= (strd[rsel][0] == 18'd32);
                 lft <= t_b0;
                 r1 <= t_b1 - 16'd1; r2 <= t_b2 - 16'd1; r3 <= t_b3 - 16'd1;
-                a <= a0; b1 <= a0;
+                r1nz <= (t_b1 != 16'd1); r2nz <= (t_b2 != 16'd1); r3nz <= (t_b3 != 16'd1);
+                cb1nz <= (t_b1 != 16'd1); cb2nz <= (t_b2 != 16'd1);
+                a_pend <= 1'b1;
                 busy <= 1'b1;
+            end else if (a_pend) begin
+                a <= a0; b1 <= a0;
+                a_pend <= 1'b0;
             end else if (step[w] && busy) begin
                 if (in0) begin
                     lft <= lft - nw;
                     a   <= a_in;
-                end else if ((r1 | r2 | r3) != 16'd0) begin
+                end else if (r1nz || r2nz || r3nz) begin
                     lft <= cb0;
                     a <= bsum; b1 <= bsum;
-                    if (r1 != 16'd0) begin
-                        r1 <= r1 - 16'd1;
-                    end else if (r2 != 16'd0) begin
-                        r1 <= cb1m; r2 <= r2 - 16'd1;
+                    if (r1nz) begin
+                        r1 <= r1 - 16'd1; r1nz <= (r1 != 16'd1);
+                    end else if (r2nz) begin
+                        r1 <= cb1m; r1nz <= cb1nz;
+                        r2 <= r2 - 16'd1; r2nz <= (r2 != 16'd1);
                     end else begin
-                        r1 <= cb1m; r2 <= cb2m; r3 <= r3 - 16'd1;
+                        r1 <= cb1m; r1nz <= cb1nz;
+                        r2 <= cb2m; r2nz <= cb2nz;
+                        r3 <= r3 - 16'd1; r3nz <= (r3 != 16'd1);
                     end
                 end else begin
                     busy <= 1'b0;
                 end
             end
         end
+`ifndef SYNTHESIS
+        always @(posedge clk) begin
+            if (!rst && a_pend && step[w]) begin
+                $display("%0t ERROR v2_agu: walker %0d stepped the cycle after its start", $time, w);
+            end
+        end
+`endif
     end
     endgenerate
 
