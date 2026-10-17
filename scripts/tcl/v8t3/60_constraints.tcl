@@ -359,28 +359,29 @@ if {$MIG_FLOORPLAN ne ""} {
         puts $fh "set_property MIG_FLOORPLAN_MODE $MIG_FLOORPLAN \[get_cells -quiet \{$top/ddr4_$mid\}\]"
     }
 }
-# USER_CLUSTERS: one USER_CLUSTER per named unit, on its leaf cells. A DSP or
-# URAM macro's internals take it from the macro.
+# USER_CLUSTERS: one USER_CLUSTER per named unit, on HIERARCHICAL cells only --
+# on a leaf the placer ignores it (Vivado 12-24627). A mesh unit is its own
+# instance; the Xache partition is the instances in its generate scopes (the
+# scopes' own leaves sit in u_kx and stay out).
 set ::V8_UC {}
-proc v8_uc_filter {mid path} {
+proc v8_uc_cells {mid path} {
     global top KX
-    set leaf "IS_PRIMITIVE && PRIMITIVE_LEVEL != INTERNAL"
     if {$path ne "xache"} {
-        return "NAME =~ \"[string map {[ ? ] ?} $top/mesh_$mid/inst/$path]/*\" && $leaf"
+        return "\{$top/mesh_$mid/inst/$path\}"
     }
     set ors {}
     foreach s [list g_hedge?$mid? g_home?$mid? g_m?$mid?] {
         lappend ors "(NAME =~ \"$KX/$s.*\" && NAME !~ \"$KX/$s.g_up*\" && NAME !~ \"$KX/$s.g_dn*\")"
     }
     lappend ors "NAME =~ \"$KX/g_chain.g_p?$mid?.*\""
-    return "([join $ors { || }]) && $leaf"
+    return "-filter \{!IS_PRIMITIVE && ([join $ors { || }])\} \{$KX/*\}"
 }
 foreach {mid paths} $USER_CLUSTERS {
     foreach p $paths {
         set tag uc_d${mid}_[string map {/ _ . _ [ _ ] _} $p]
-        set f [v8_uc_filter $mid $p]
-        puts $fh "set_property USER_CLUSTER $tag \[get_cells -quiet -hier -filter \{$f\}\]"
-        lappend ::V8_UC [list $tag $f]
+        set a [v8_uc_cells $mid $p]
+        puts $fh "set_property USER_CLUSTER $tag \[get_cells -quiet $a\]"
+        lappend ::V8_UC [list $tag $a]
     }
 }
 # REPL_NETS: place_design replicates each matched register's driver per

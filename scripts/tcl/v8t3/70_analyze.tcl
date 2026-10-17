@@ -182,25 +182,31 @@ foreach {mid mod} $MESHES {
     puts "  pb_slr$mid IS_SOFT $soft"
     if {$soft != $DIE_PB_SOFT} { v8_bad "pb_slr$mid IS_SOFT is $soft at DIE_PB_SOFT $DIE_PB_SOFT" }
 }
-# USER_CLUSTERS: each tag on every leaf its filter names, and on nothing else.
+# USER_CLUSTERS: each tag on exactly the hierarchical cells its line names, on
+# no leaf (the placer ignores a leaf's tag: 12-24627), and the leaves under it.
 puts "\n=== user clusters === [v8_t]"
 set uc_want 0
 foreach {mid paths} $USER_CLUSTERS { incr uc_want [llength $paths] }
 set uc_lines 0
 foreach ln [split [v8_slurp $out/${design_name}_pblocks.xdc] \n] {
-    if {![regexp {^set_property USER_CLUSTER (\S+) \[get_cells -quiet -hier -filter \{(.*)\}\]\s*$} $ln all tag f]} {
+    if {![regexp {^set_property USER_CLUSTER (\S+) \[get_cells -quiet (.*)\]\s*$} $ln all tag a]} {
         continue
     }
     incr uc_lines
-    set named [get_cells -quiet -hier -filter $f]
+    set named [eval get_cells -quiet $a]
     set tagged [get_cells -quiet -hier -filter "USER_CLUSTER == $tag"]
-    set lut [llength [filter -quiet $named {REF_NAME =~ LUT*}]]
-    set ff  [llength [filter -quiet $named {REF_NAME =~ FD*}]]
-    puts [format "  %-30s leaves %7d  tagged %7d  LUT %6d  FF %6d" $tag [llength $named] [llength $tagged] $lut $ff]
-    if {![llength $named]} { v8_bad "USER_CLUSTER $tag: its filter names no cell" }
+    set leaf [filter -quiet $tagged {IS_PRIMITIVE}]
+    set under 0
+    foreach c $named { incr under [llength [get_cells -quiet -hier -filter {IS_PRIMITIVE} $c/*]] }
+    puts [format "  %-30s hier cells %4d  tagged %4d  leaf-tagged %4d  leaves under %7d" \
+        $tag [llength $named] [llength $tagged] [llength $leaf] $under]
+    if {![llength $named]} { v8_bad "USER_CLUSTER $tag: its line names no cell" }
+    if {[llength [filter -quiet $named {IS_PRIMITIVE}]]} { v8_bad "USER_CLUSTER $tag names a leaf cell" }
+    if {[llength $leaf]} { v8_bad "USER_CLUSTER $tag is on [llength $leaf] leaf cell(s)" }
     if {[llength $tagged] != [llength $named]} {
-        v8_bad "USER_CLUSTER $tag on [llength $tagged] cell(s), its filter names [llength $named]"
+        v8_bad "USER_CLUSTER $tag on [llength $tagged] cell(s), its line names [llength $named]"
     }
+    if {$under == 0} { v8_bad "USER_CLUSTER $tag: no leaf under its cells" }
 }
 if {$uc_lines != $uc_want} { v8_bad "$uc_lines USER_CLUSTER line(s) in the XDC, USER_CLUSTERS names $uc_want" }
 if {$MIG_FLOORPLAN ne ""} {
