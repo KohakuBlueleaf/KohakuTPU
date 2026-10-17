@@ -42,7 +42,7 @@ M = (1 << 64) - 1
 M32 = (1 << 32) - 1
 SEED = 0x6B6F68616B755450  # "PTukahok"
 MAGIC = 0x3142525055504355  # "UCPUPRB1"
-NAMES = ("alu", "mul", "div", "flow", "call", "spad", "dram", "amo", "csr")
+NAMES = ("alu", "mul", "div", "flow", "call", "spad", "dram", "amo", "csr", "ctrl")
 RESULT_OFF, DRAM_OFF, DRAM_BYTES = 0x40, 0x1000, 16 << 10
 #: Result block words: magic, fails, rounds, seed, cycles, 3 pad, hashes, cycles.
 RESULT_WORDS = 8 + 2 * len(NAMES)
@@ -331,6 +331,19 @@ def chk_csr(h, rounds, rnd):
     return mix(h, 0)
 
 
+def chk_ctrl(h, n, rnd):
+    def value(r, w):
+        return w & 0x0F0F if r == 0 else w  # DST reads back x [3:0], y [11:8]
+
+    regs = [value(r, rnd()) for r in range(5)]
+    for _ in range(n):
+        v, w = rnd(), rnd()
+        r, k = v % 5, (v >> 8) % 5
+        regs[r] = value(r, w)
+        h = mix(h, regs[k])
+    return h
+
+
 CHECKS = (
     (chk_alu, 256),
     (chk_mul, 256),
@@ -341,6 +354,7 @@ CHECKS = (
     (chk_dram, 1),
     (chk_amo, 200),
     (chk_csr, 1),
+    (chk_ctrl, 256),
 )
 
 

@@ -17,6 +17,7 @@ static const uint64_t cpuprobe_expect[] = {
     0x68c2df49559509a6UL, /* dram */
     0x1a5c086813244241UL, /* amo */
     0xaf63c549fd1fef13UL, /* csr */
+    0x783f35be5a2f8aefUL, /* ctrl */
 };
 
 #endif

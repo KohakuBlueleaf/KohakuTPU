@@ -627,11 +627,10 @@ module rv64_syscore #(
     localparam [7:0] R1_RXPOP = 8'h80;
     localparam [7:0] R1_DCACHE = 8'hC8, R1_XFSEL = 8'hD0, R1_XFDAT = 8'hD8;
 
-    // READS EARLY, WRITES REGISTERED, for the same reason as the spad: the read
-    // must be answered in the second cycle, the write must not carry the address
-    // adder into a register's clock enable (`wb_val_reg -> db_addr_reg/CE`).
-    wire [9:0] ctrl_off_rd = pa[9:0];
+    // The core reads `ctrl_q` in M, i.e. the capture of the access's second
+    // cycle, when `m_pa_q` holds the address (`pa` here: 10 levels into ctrl_q).
     wire [9:0] ctrl_off    = m_pa_q[9:0];
+    wire [9:0] ctrl_off_rd = ctrl_off;
     wire       ctrl_wr     = mem_started && sel_ctrl && m_st_q;
     wire       c_lo        = (ctrl_off[9:8] == 2'b00);
     wire       c_hi        = (ctrl_off[9:8] == 2'b01);

@@ -15,6 +15,8 @@
  *         flush, uncached reloads, an invalidate and cached reloads
  *   amo   every AMO and LR/SC on the scratchpad
  *   csr   the cycle and instret counters move forward
+ *   ctrl  control-region reads: the mailbox's DST and ARG0..3 written and read
+ *         back in a random order (GO is never written: nothing is sent)
  *
  * With a boot block the host gives the work region at ka_boot.queue: a
  * parameter line there ({CPUPRB_MAGIC, rounds, seed}), the result block at
@@ -44,9 +46,9 @@
 #define DRAM_BYTES   (16UL << 10)
 #define SPAD_BYTES   512u
 
-enum { C_ALU, C_MUL, C_DIV, C_FLOW, C_CALL, C_SPAD, C_DRAM, C_AMO, C_CSR, NCHK };
+enum { C_ALU, C_MUL, C_DIV, C_FLOW, C_CALL, C_SPAD, C_DRAM, C_AMO, C_CSR, C_CTRL, NCHK };
 static const char *const names[NCHK] = {"alu",  "mul",  "div", "flow", "call",
-                                        "spad", "dram", "amo", "csr"};
+                                        "spad", "dram", "amo", "csr",  "ctrl"};
 
 /* The result block: status, fail mask, rounds, seed, total cycles, then a
  * hash and a cycle count per check. Whole 64-byte lines, written back from the
@@ -336,6 +338,24 @@ static uint64_t chk_csr(uint64_t h, uint64_t n)
     return mix(h, bad);
 }
 
+/* ---- ctrl --------------------------------------------------------------- */
+/* DST reads back x [3:0] and y [11:8] only. */
+static uint64_t nm_value(unsigned r, uint64_t w) { return r == KA_NM_DST ? (w & 0x0F0FUL) : w; }
+
+static uint64_t chk_ctrl(uint64_t h, uint64_t n)
+{
+    for (unsigned r = KA_NM_DST; r <= KA_NM_ARG3; ++r) {
+        ka_nm_wr(r, nm_value(r, rnd()));
+    }
+    for (uint64_t i = 0; i < n; ++i) {
+        uint64_t v = rnd(), w = rnd();
+        unsigned r = (unsigned)(v % 5), k = (unsigned)((v >> 8) % 5);
+        ka_nm_wr(r, nm_value(r, w));
+        h = mix(h, ka_nm_rd(k));
+    }
+    return h;
+}
+
 /* ------------------------------------------------------------------------- */
 static uint64_t run(int c, uint64_t rounds, uint64_t dram)
 {
@@ -349,6 +369,7 @@ static uint64_t run(int c, uint64_t rounds, uint64_t dram)
     case C_SPAD: return chk_spad(h, 512 * rounds);
     case C_DRAM: return chk_dram(h, rounds, dram);
     case C_AMO: return chk_amo(h, 200 * rounds);
+    case C_CTRL: return chk_ctrl(h, 256 * rounds);
     default: return chk_csr(h, rounds);
     }
 }
